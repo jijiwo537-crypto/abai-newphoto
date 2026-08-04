@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" class="dark">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+    <title>ABAI</title>
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="64x64" href="./favicon-64.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png" />
+    <script src="https://cdn.tailwindcss.com?plugins=forms,typography,container-queries"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Noto+Sans+TC:wght@300;400;500;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+    <script>
+        // Smoothly handle critical font loading to prevent layout shifts and FOUT
+        if (document.fonts) {
+            document.documentElement.classList.add('fonts-loading');
+            Promise.all([
+                document.fonts.load('12px "Material Symbols Outlined"'),
+                document.fonts.load('12px "Noto Sans TC"'),
+                document.fonts.load('12px "Playfair Display"')
+            ]).then(function() {
+                document.documentElement.classList.remove('fonts-loading');
+                document.documentElement.classList.add('fonts-loaded');
+            }).catch(function() {
+                document.documentElement.classList.remove('fonts-loading');
+                document.documentElement.classList.add('fonts-loaded');
+            });
+            setTimeout(function() {
+                document.documentElement.classList.remove('fonts-loading');
+                document.documentElement.classList.add('fonts-loaded');
+            }, 1000);
+        }
+    </script>
+    <script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#FFFFFF",
+                        "background-dark": "#000000",
+                        "gray-panel": "#1A1A1A",
+                        "gray-control": "#333333",
+                    },
+                    fontFamily: {
+                        sans: ["Inter", "Noto Sans TC", "sans-serif"],
+                        serif: ["Playfair Display", "serif"],
+                    },
+                    borderRadius: {
+                        'camera': '12px',
+                    },
+                },
+            },
+        };
+    </script>
+    <style>
+        *, *::before, *::after {
+            -webkit-user-select: none !important;
+            -moz-user-select: none !important;
+            -ms-user-select: none !important;
+            user-select: none !important;
+            -webkit-touch-callout: none !important;
+        }
+        input, textarea, [contenteditable="true"] {
+            -webkit-user-select: text !important;
+            -moz-user-select: text !important;
+            -ms-user-select: text !important;
+            user-select: text !important;
+        }
+        body {
+            background-color: #000;
+            color: #fff;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'wght' 300, 'opsz' 24, 'FILL' 0;
+        }
+        /* Prevent layout shift and FOUT during font loading */
+        html.fonts-loading .material-symbols-outlined {
+            color: transparent !important;
+            width: 24px !important;
+            height: 24px !important;
+            overflow: hidden !important;
+            display: inline-block !important;
+            white-space: nowrap !important;
+        }
+        html.fonts-loading body {
+            opacity: 0 !important;
+        }
+        html.fonts-loaded body {
+            opacity: 1 !important;
+            transition: opacity 0.25s ease-in-out;
+        }
+        /* ─────────────────────────────────────────────
+           電腦版：直接照手機的樣子顯示
+           ─────────────────────────────────────────────
+           每一頁都是照手機比例排的，拉滿寬螢幕會整個變形。這裡不另外設計
+           電腦版，就是把畫面收成一支手機的寬度擺在正中央、兩側留黑，
+           所以在電腦上看到的跟手機上一模一樣，方便對照檢查。
+
+           框本身是完整的視窗高度，裡面用 100dvh 排版的頁面完全不用改。
+           translateZ(0) 讓裡面 position:fixed 的全螢幕遮罩以框為基準，
+           蓋在框裡而不是整個螢幕。
+
+           條件是「夠寬」而且「有精準游標」—— 手機轉成橫向時寬度也會超過 768px，
+           光看寬度會把橫向的手機也框起來。加上 hover/pointer 的條件之後，
+           只有滑鼠操作的裝置會套用，任何觸控裝置一個像素都不會動到。 */
+        @media (min-width: 768px) and (hover: hover) and (pointer: fine) {
+            .abai-shell {
+                position: fixed;
+                inset: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: #000;
+                overflow: hidden;
+            }
+            .abai-frame {
+                position: relative;
+                width: 390px;
+                height: 100dvh;
+                overflow: hidden;
+                background: #000;
+                transform: translateZ(0);
+                box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+            }
+        }
+        .shutter-btn-outer {
+            box-shadow: 0 0 0 4px #000, 0 0 0 6px #fff;
+        }
+        /* Hide scrollbar for Chrome, Safari and Opera */
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        /* Hide scrollbar for IE, Edge and Firefox */
+        .no-scrollbar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/"
+  }
+}
+</script>
+</head>
+<body class="bg-black text-white antialiased">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+</body>
+</html>

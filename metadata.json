@@ -1,0 +1,7 @@
+{
+  "name": "ABAI",
+  "description": "A high-end, professional camera interface featuring real-time viewfinder, manual controls, and Gemini-powered scene analysis.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
