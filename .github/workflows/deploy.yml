@@ -1,24 +1,49 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+name: Build and deploy to GitHub Pages
 
-node_modules
-dist
-dist-ssr
-*.local
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+# 只給發布 Pages 需要的權限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時只跑一個發布；後來的推送會取代排隊中的那一次，但不會中斷正在跑的
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # vite.config.ts 已經設成相對路徑，所以放在使用者名稱底下的子路徑也能正常載入
+      - run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
