@@ -170,7 +170,20 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         
         const vTrack = mediaStream.getVideoTracks()[0];
         setVideoTrack(vTrack);
-        setCapabilities(vTrack.getCapabilities());
+        /* 有些 Android 是「軌道真的跑起來之後」才把 torch／zoom 這些能力填進去，
+           開機那一瞬間問會拿到空的 —— 結果就是明明有閃光燈卻顯示沒有。
+           所以隔一下再問幾次。getCapabilities 在部分瀏覽器不存在，要先確認。 */
+        const readCaps = () => {
+          if (!mounted) return;
+          try {
+            if (typeof (vTrack as any).getCapabilities === 'function') {
+              setCapabilities(vTrack.getCapabilities());
+            }
+          } catch { /* 問不到就維持原本的 */ }
+        };
+        readCaps();
+        setTimeout(readCaps, 500);
+        setTimeout(readCaps, 1500);
 
         if (videoEl) {
           videoEl.srcObject = mediaStream;
@@ -218,10 +231,44 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facingMode, videoEl]);
 
-  /* 閃光燈只在按下快門那一刻亮，不再一直開著手電筒。
-     前鏡頭沒有手電筒，改用整片白色螢幕補光（真的相機 app 都是這樣做）。 */
-  const hasTorch = !!capabilities && 'torch' in capabilities;
-  const [screenFlash, setScreenFlash] = useState(false);
+  /* ---------- 閃光燈 ----------
+     瀏覽器上真正能控制閃光燈的只有兩條路，優先用第一條：
+
+     ① ImageCapture.takePhoto({ fillLightMode: 'flash' })
+        這才是「相機閃光燈」—— 由系統把 LED 的觸發跟曝光同步，
+        跟原生相機 app 拍出來的一樣。要先問 getPhotoCapabilities()
+        的 fillLightMode 有沒有列出 'flash'。
+     ② torch 約束（手電筒常亮）
+        沒有 ① 的裝置退而求其次：按下快門前點亮、等自動曝光跟上、
+        拍完立刻熄掉。亮度與白平衡不如 ①，但至少是真的補光。
+
+     兩條都沒有就是這台裝置／這顆鏡頭沒有閃光燈（多數前鏡頭、
+     以及目前所有 iOS Safari 都是這樣）。這時按鈕直接停用 ——
+     不會假裝有，也不會用白螢幕充數。 */
+  /* 注意是比對「值」不是「有沒有這個鍵」：部分裝置會列出 torch 但值是 false，
+     只看鍵存不存在的話會誤判成有閃光燈，按下去卻什麼都不會發生。 */
+  const hasTorch = (capabilities as any)?.torch === true;
+  /** 這顆鏡頭支不支援真正的閃光燈（takePhoto 的 fillLightMode） */
+  const [hasPhotoFlash, setHasPhotoFlash] = useState(false);
+  const flashAvailable = hasPhotoFlash || hasTorch;
+
+  useEffect(() => {
+    let alive = true;
+    setHasPhotoFlash(false);
+    const IC = (window as any).ImageCapture;
+    if (!IC || !videoTrack) return;
+    (async () => {
+      try {
+        const caps: any = await new IC(videoTrack).getPhotoCapabilities();
+        const modes: string[] = caps?.fillLightMode || [];
+        if (alive) setHasPhotoFlash(Array.isArray(modes) && modes.includes('flash'));
+      } catch { /* 問不到就當作沒有 */ }
+    })();
+    return () => { alive = false; };
+  }, [videoTrack]);
+
+  /* 沒有閃光燈的鏡頭就把開關關掉，不然按鈕亮著卻不會亮燈 */
+  useEffect(() => { if (!flashAvailable && flashOn) setFlashOn(false); }, [flashAvailable, flashOn]);
 
   const setTorch = useCallback(async (on: boolean) => {
     if (!videoTrack || !hasTorch) return false;
@@ -343,17 +390,16 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     capturingRef.current = true;
 
     try {
-    /* 閃光：後鏡頭點手電筒；前鏡頭沒有手電筒，改把螢幕整片打白當補光。
-       後鏡頭如果連手電筒都沒有，打白螢幕照不到被攝物，只會閃一下眼睛，
-       所以就不打了。 */
-    let torchOn = false;
-    if (flashOn) {
-      try { torchOn = await withLimit(setTorch(true), 800); } catch { torchOn = false; }
-      if (!torchOn && visualFacingMode === 'user') setScreenFlash(true);
-      await new Promise(r => setTimeout(r, 260));
-    }
-
     setIsCapturing(true);
+
+    /* 走 ① 真閃光的話，燈是由 takePhoto 自己在曝光那一瞬間打的，
+       這裡什麼都不用做；走 ② 手電筒才需要先點亮、等自動曝光跟上。 */
+    const useFillLight = flashOn && hasPhotoFlash;
+    let torchOn = false;
+    if (flashOn && !useFillLight && hasTorch) {
+      try { torchOn = await withLimit(setTorch(true), 800); } catch { torchOn = false; }
+      if (torchOn) await new Promise(r => setTimeout(r, 300));   // 等 AE 收斂
+    }
 
     /* 跟相機要一張「完整感光元件解析度」的靜態照，再走跟預覽同一條 GPU
        管線 —— 顏色、濾鏡、特效完全一致，但畫素比預覽影像多好幾倍。
@@ -366,6 +412,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
        iOS Safari 至今沒有 ImageCapture，會自動落到下面的退路，
        解析度跟原本一樣，不會變差。 */
     let webglCanvas: HTMLCanvasElement | null = null;
+    let usedStill = false;
     const vf = viewfinderRef.current as any;
     const liveW = videoEl?.videoWidth || 0;
     try {
@@ -374,14 +421,21 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         const ic = new IC(videoTrack);
         let bmp: ImageBitmap | null = null;
         try {
-          let opts: any = undefined;
+          const opts: any = {};
+          if (useFillLight) opts.fillLightMode = 'flash';
           try {
             const caps: any = await withLimit<any>(ic.getPhotoCapabilities(), 800);
             if (caps?.imageWidth?.max && caps?.imageHeight?.max) {
-              opts = { imageWidth: caps.imageWidth.max, imageHeight: caps.imageHeight.max };
+              /* 不要無腦要最大值：48MP 那種一張就要好幾秒，而且解碼＋上傳貼圖
+                 很容易把手機記憶體吃爆 —— 那正是「拍完常常什麼都沒出來」的原因。
+                 夾在 GPU 貼圖上限與 4096 之間，畫質已經遠高於預覽影像。 */
+              const cap = Math.min(4096, vf.maxTextureSize?.() || 4096);
+              const k = Math.min(1, cap / Math.max(caps.imageWidth.max, caps.imageHeight.max));
+              opts.imageWidth = Math.round(caps.imageWidth.max * k);
+              opts.imageHeight = Math.round(caps.imageHeight.max * k);
             }
           } catch { /* 拿不到能力表就用預設設定拍 */ }
-          const blob: any = await withLimit<any>(ic.takePhoto(opts), 2500);
+          const blob: any = await withLimit<any>(ic.takePhoto(opts), 3000);
           if (blob) bmp = await createImageBitmap(blob);
         } catch {
           // takePhoto 在部分裝置上不穩，退一步用預覽那一幀
@@ -389,6 +443,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         }
         if (bmp && bmp.width > liveW) {
           webglCanvas = vf.renderStill(bmp, bmp.width, bmp.height);
+          usedStill = !!webglCanvas;
         }
         if (bmp && (bmp as any).close) (bmp as any).close();
       }
@@ -396,7 +451,24 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (!webglCanvas) webglCanvas = viewfinderRef.current.getCanvas();
 
     if (torchOn) setTorch(false);
-    setScreenFlash(false);
+
+    /* 手機上把幾千萬像素塞進畫布有時會靜靜地失敗（不丟錯，就是一片黑）。
+       抽樣檢查一下，真的空白就退回預覽畫布，至少一定拍得到東西。
+       一定要在算裁切尺寸之前做，換了來源尺寸也會跟著換。 */
+    const looksBlank = (cv: HTMLCanvasElement) => {
+      try {
+        const t = document.createElement('canvas'); t.width = 16; t.height = 16;
+        const g = t.getContext('2d')!; g.drawImage(cv, 0, 0, 16, 16);
+        const d = g.getImageData(0, 0, 16, 16).data;
+        for (let i = 0; i < d.length; i += 4) if (d[i] > 8 || d[i + 1] > 8 || d[i + 2] > 8) return false;
+        return true;
+      } catch { return false; }
+    };
+    if (usedStill && webglCanvas && looksBlank(webglCanvas)) {
+      vf.releaseStill?.();
+      usedStill = false;
+      webglCanvas = viewfinderRef.current.getCanvas();
+    }
 
     if (webglCanvas) {
       // Crop logic based on aspectRatio
@@ -437,6 +509,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           ctx.scale(-1, 1);
         }
         ctx.drawImage(webglCanvas, offsetX, offsetY, cropW, cropH, 0, 0, cropW, cropH);
+        // 裁完就把觀景窗畫布還原，那份幾十 MB 的緩衝區不要多留
+        if (usedStill) vf.releaseStill?.();
         try {
           const url = await canvasToBlobUrl(tempCvs);
           ownedUrlsRef.current.add(url);
@@ -447,13 +521,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       }
     }
     } finally {
-      /* 不管中間哪一步出錯，白畫面一定要收掉、快門一定要恢復，
-         不然畫面就會卡在一片白、看起來像「一直沒拍」。 */
-      setScreenFlash(false);
+      /* 不管中間哪一步出錯，手電筒一定要熄、快門一定要恢復 */
+      setTorch(false);
       capturingRef.current = false;
-      setTimeout(() => setIsCapturing(false), 200);
+      setIsCapturing(false);
     }
-  }, [aspectRatio, flashOn, setTorch, videoTrack, videoEl, visualFacingMode]);
+  }, [aspectRatio, flashOn, hasPhotoFlash, hasTorch, setTorch, videoTrack, videoEl, visualFacingMode]);
 
   /* 倒數用的計時器要抓在 ref 上：離開相機時一定要取消，
      不然頁面關掉之後它還會跳出來呼叫拍照。 */
@@ -631,11 +704,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       />
 
       {/* Home Button (Top Left) */}
-      {/* 前鏡頭沒有手電筒，按快門時整片打白當補光 */}
-      {screenFlash && (
-        <div className="fixed inset-0 z-[300] bg-white pointer-events-none" />
-      )}
-
       {/* 濾鏡／特效面板打開時退出鍵先收起來，關掉面板才回來 */}
       {!showGallery && !editingPhoto && activeControl !== 'filters' && activeControl !== 'effects' && (
         <div className="absolute top-2 left-4 z-[60]">
@@ -763,7 +831,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             <video ref={setVideoEl} autoPlay playsInline muted className="hidden" />
             <canvas ref={canvasRef} className="hidden" />
 
-            {isCapturing && flashOn && <div className="absolute inset-0 bg-white z-20 animate-pulse"></div>}
+            {/* 這裡原本有一層「拍照中就整片白 + 一直脈動」的遮罩，
+                拍照稍微久一點就變成白畫面閃個不停、看起來像沒在拍。
+                真正的補光是相機的閃光燈在做，畫面不需要跟著變白。 */}
 
             {countdown !== null && (
               <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -814,7 +884,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 </div>
               </button>
 
-              <button className="p-3 active:scale-90 transition-transform shrink-0 text-white" onClick={() => setFlashOn(!flashOn)}>
+              <button
+                disabled={!flashAvailable}
+                title={flashAvailable ? '閃光燈' : '這顆鏡頭沒有閃光燈'}
+                className={`p-3 active:scale-90 transition-transform shrink-0 ${flashAvailable ? 'text-white' : 'text-white/25'}`}
+                onClick={() => setFlashOn(!flashOn)}
+              >
                   <Icon name="bolt" className="text-[28px]" fill={flashOn} />
               </button>
 

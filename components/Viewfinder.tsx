@@ -108,13 +108,16 @@ in vec2 v_texCoord;
 out vec4 outColor;
 
 /* 亮部萃取：跟編輯頁的柔光同一組係數 —— 超過門檻的部分 ×5 當強度。
-   重點是「先挑亮部、再模糊」，不是「先模糊、再挑亮部」，
-   這樣光暈才會從亮的地方往外散開，暗部保持乾淨。 */
-vec3 tap(vec2 uv) {
-    vec3 c = texture(u_tex, uv).rgb;
+   重點有兩個，缺一個就跟編輯頁對不起來：
+   ① 先挑亮部、再模糊（不是先模糊再挑亮部），光暈才會從亮的地方往外散開；
+   ② 顏色與遮罩分開走 —— 編輯頁的柔光是一張「RGB＝原色、A＝亮部強度」的
+      圖層，RGB 與 A 各自模糊之後才相乘疊回去。先相乘再模糊的話，
+      邊緣附近的顏色會偏向亮的那一側。 */
+vec4 tap(vec2 uv) {
+    vec4 c = texture(u_tex, uv);
     if (u_brightTh < 0.0) return c;
-    float lum = dot(c, vec3(0.299, 0.587, 0.114));
-    return c * clamp((lum - u_brightTh) * 5.0, 0.0, 1.0);
+    float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+    return vec4(c.rgb, clamp((lum - u_brightTh) * 5.0, 0.0, 1.0));
 }
 
 const float O1 = 1.3846153846;
@@ -126,12 +129,12 @@ const float W2 = 0.0702702703;
 void main() {
     vec2 d1 = u_step * O1 * u_radius;
     vec2 d2 = u_step * O2 * u_radius;
-    vec3 c = tap(v_texCoord) * W0;
+    vec4 c = tap(v_texCoord) * W0;
     c += tap(v_texCoord + d1) * W1;
     c += tap(v_texCoord - d1) * W1;
     c += tap(v_texCoord + d2) * W2;
     c += tap(v_texCoord - d2) * W2;
-    outColor = vec4(c, 1.0);
+    outColor = c;
 }
 `;
 
@@ -157,10 +160,11 @@ void main() {
     /* 朦朧：跟編輯頁同一組係數 —— 模糊過的自己用 0.625 的不透明度蓋上去 */
     vec3 c = mix(base, bl, u_blurAmt * 0.625);
 
-    /* 柔光：把「先挑亮部再模糊」的那張用濾色疊回去，
-       疊加量是強度 ×1.5，跟編輯頁的柔光同一組係數。 */
+    /* 柔光：亮部圖層（RGB×A）用濾色疊回去，疊加量是強度 ×1.5。
+       畫布的 globalAlpha 上限是 1，所以這裡也夾到 1，跟編輯頁一致。 */
     if (u_soft > 0.0) {
-        vec3 glow = texture(u_glow, tc).rgb * clamp(u_soft * 1.5, 0.0, 1.0);
+        vec4 g = texture(u_glow, tc);
+        vec3 glow = g.rgb * g.a * clamp(u_soft * 1.5, 0.0, 1.0);
         c = 1.0 - (1.0 - c) * (1.0 - clamp(glow, 0.0, 1.0));
     }
 
@@ -168,8 +172,15 @@ void main() {
 }
 `;
 
-/** 模糊在 1/4 邊長上算：肉眼看不出差別，但快 16 倍 */
+/** 朦朧的模糊在 1/4 邊長上算：肉眼看不出差別，但快 16 倍 */
 const BLUR_DIV = 4;
+
+/* 柔光的光暈固定在「長邊 176」的小圖上算，跟畫面多大無關 ——
+   編輯頁的柔光也是先縮到 800px 再用固定半徑模糊，擴散範圍不隨解析度改變。
+   下面這組數字是拿編輯頁「柔光 100／範圍 50／門檻 70」逐像素比對調出來的。 */
+const GLOW_LONG = 176;
+const GLOW_RADIUS = 1.6;
+const GLOW_PASSES = 4;
 
 export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, digitalZoom, onClick }: ViewfinderProps, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -188,8 +199,10 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     ping: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
     pong: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
     blurOut: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
-    glowOut: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
-  }>({ w: 0, h: 0, bw: 0, bh: 0, scene: null, ping: null, pong: null, blurOut: null, glowOut: null });
+    gw: number; gh: number;
+    gPing: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
+    gPong: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
+  }>({ w: 0, h: 0, bw: 0, bh: 0, gw: 0, gh: 0, scene: null, ping: null, pong: null, blurOut: null, gPing: null, gPong: null });
 
   /* 滑桿是每一幀都可能在動的，放進 effect 依賴會不停重建 render loop。
      用 ref 讓迴圈每一幀讀最新值，迴圈本身只建立一次。 */
@@ -200,6 +213,8 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   /* 讓「拍全解析度靜態照」也能走同一條管線 —— 一模一樣的著色器、
      一模一樣的參數，所以拍出來跟畫面上看到的完全一致。 */
   const drawRef = useRef<((src: TexImageSource, w: number, h: number, out: HTMLCanvasElement | null) => void) | null>(null);
+  /** 拍靜態照時暫存預覽的畫布尺寸，拍完還原 */
+  const stillSizeRef = useRef<{ w: number; h: number } | null>(null);
   /* 曝光／色溫／濾鏡也一律走 ref。以前它們在 render loop 的依賴裡，
      滑桿每動一格（色溫是 50K 一格）就把整個迴圈拆掉重建一次，
      拉起來就是一頓一頓的。現在迴圈只建立一次，每一幀讀最新值。 */
@@ -208,13 +223,31 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
   useImperativeHandle(ref, () => ({
     getCanvas: () => canvasRef.current,
-    /** 把一張全解析度的靜態影像走完同一條管線，回傳畫好的畫布 */
+    /** GPU 能吃的最大貼圖邊長 —— 拍照時用來夾住靜態照的尺寸 */
+    maxTextureSize: () => {
+      const gl = glRef.current;
+      try { return gl ? gl.getParameter(gl.MAX_TEXTURE_SIZE) as number : 4096; } catch { return 4096; }
+    },
+    /**
+     * 把一張全解析度的靜態影像走完同一條管線。
+     *
+     * 回傳的就是觀景窗那張畫布本身，不再另外複製一份 ——
+     * 一張 4096×3072 的畫布大約 48MB，多留一份在手機上很容易直接爆掉
+     * （那正是「拍完常常什麼都沒出來」的原因）。
+     * 呼叫端把要的部分裁走之後，一定要呼叫 releaseStill() 把尺寸還原。
+     */
     renderStill: (src: TexImageSource, w: number, h: number): HTMLCanvasElement | null => {
-      if (!drawRef.current || !w || !h) return null;
-      const out = document.createElement('canvas');
-      out.width = w; out.height = h;
-      drawRef.current(src, w, h, out);
-      return out;
+      const cv = canvasRef.current;
+      if (!drawRef.current || !cv || !w || !h) return null;
+      stillSizeRef.current = { w: cv.width, h: cv.height };
+      cv.width = w; cv.height = h;
+      drawRef.current(src, w, h, null);
+      return cv;
+    },
+    /** 把畫布尺寸還原成預覽用的大小 */
+    releaseStill: () => {
+      const cv = canvasRef.current, prev = stillSizeRef.current;
+      if (cv && prev) { cv.width = prev.w; cv.height = prev.h; stillSizeRef.current = null; }
     },
   }));
 
@@ -278,10 +311,10 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
     return () => {
       const rt = rtRef.current;
-      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.glowOut]) {
+      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.gPing, rt.gPong]) {
         if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
       }
-      rtRef.current = { w: 0, h: 0, bw: 0, bh: 0, scene: null, ping: null, pong: null, blurOut: null, glowOut: null };
+      rtRef.current = { w: 0, h: 0, bw: 0, bh: 0, gw: 0, gh: 0, scene: null, ping: null, pong: null, blurOut: null, gPing: null, gPong: null };
       gl.deleteProgram(prog);
       if (blurProgRef.current) gl.deleteProgram(blurProgRef.current);
       if (compProgRef.current) gl.deleteProgram(compProgRef.current);
@@ -317,11 +350,15 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       const bw = Math.max(1, Math.floor(w / BLUR_DIV));
       const bh = Math.max(1, Math.floor(h / BLUR_DIV));
       if (rt.scene && rt.w === w && rt.h === h) return rt;
-      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.glowOut]) {
+      // 柔光的光暈自己一個固定大小的小格網，跟畫面解析度脫鉤
+      const gk = Math.max(w, h) / GLOW_LONG;
+      const gw = Math.max(2, Math.round(w / gk)), gh = Math.max(2, Math.round(h / gk));
+      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.gPing, rt.gPong]) {
         if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
       }
-      const next = { w, h, bw, bh, scene: makeTarget(w, h), ping: makeTarget(bw, bh),
-                     pong: makeTarget(bw, bh), blurOut: makeTarget(bw, bh), glowOut: makeTarget(bw, bh) };
+      const next = { w, h, bw, bh, gw, gh, scene: makeTarget(w, h), ping: makeTarget(bw, bh),
+                     pong: makeTarget(bw, bh), blurOut: makeTarget(bw, bh),
+                     gPing: makeTarget(gw, gh), gPong: makeTarget(gw, gh) };
       rtRef.current = next;
       return next;
     };
@@ -362,7 +399,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       if (!anyFx) return;
 
       const bp = blurProgRef.current!, cp = compProgRef.current!;
-      const { bw, bh, scene, ping, pong, blurOut, glowOut } = rt!;
+      const { bw, bh, gw, gh, scene, ping, pong, blurOut, gPing, gPong } = rt!;
 
       gl.useProgram(bp);
       gl.viewport(0, 0, bw, bh);
@@ -373,28 +410,32 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
           反過來做的話暗部也會被算進去，整張變濁。
           兩種效果各有自己的輸出暫存，不會互相蓋掉。 */
       const chain = (radius: number, passes: number, brightTh: number,
+                     W2: number, H2: number,
+                     a: { fb: WebGLFramebuffer; tex: WebGLTexture },
+                     b: { fb: WebGLFramebuffer; tex: WebGLTexture },
                      out: { fb: WebGLFramebuffer; tex: WebGLTexture }) => {
+        gl.viewport(0, 0, W2, H2);
         let srcTex: WebGLTexture = scene!.tex;
         for (let i = 0; i < passes; i++) {
           const last = i === passes - 1;
           gl.uniform1f(gl.getUniformLocation(bp, 'u_radius'), radius);
           // 亮部萃取只在第一趟做，之後就是單純的模糊
           gl.uniform1f(gl.getUniformLocation(bp, 'u_brightTh'), i === 0 ? brightTh : -1);
-          gl.bindFramebuffer(gl.FRAMEBUFFER, ping!.fb);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, a.fb);
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, srcTex);
           gl.uniform1i(gl.getUniformLocation(bp, 'u_tex'), 0);
-          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 1 / bw, 0);
+          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 1 / W2, 0);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
           gl.uniform1f(gl.getUniformLocation(bp, 'u_brightTh'), -1);
-          gl.bindFramebuffer(gl.FRAMEBUFFER, last ? out.fb : pong!.fb);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, last ? out.fb : b.fb);
           gl.activeTexture(gl.TEXTURE0);
-          gl.bindTexture(gl.TEXTURE_2D, ping!.tex);
-          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 0, 1 / bh);
+          gl.bindTexture(gl.TEXTURE_2D, a.tex);
+          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 0, 1 / H2);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-          srcTex = last ? out.tex : pong!.tex;
+          srcTex = last ? out.tex : b.tex;
         }
         return out.tex;
       };
@@ -403,11 +444,12 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       let glowTex: WebGLTexture = scene!.tex;
       if (blurAmt > 0) {
         const st = blurAmt;
-        blurTex = chain(0.6 + st * 3.2, st > 0.55 ? 2 : 1, -1, blurOut!);
+        blurTex = chain(0.6 + st * 3.2, st > 0.55 ? 2 : 1, -1, bw, bh, ping!, pong!, blurOut!);
       }
       if (soft > 0) {
-        const st = soft * 0.55;
-        glowTex = chain(0.6 + st * 3.2, st > 0.55 ? 2 : 1, 0.70, glowOut!);
+        // 柔光固定用這一組（對齊編輯頁調出來的），跟強度無關；
+        // 強度只影響最後疊上去的量，擴散範圍不變 —— 編輯頁也是這樣。
+        glowTex = chain(GLOW_RADIUS, GLOW_PASSES, 0.70, gw, gh, gPing!, gPong!, gPong!);
       }
 
       // ---- 最後一趟：清晰 + 模糊 合成到畫面 ----
@@ -428,16 +470,11 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     };
 
-    /* 全解析度靜態照：暫時把畫布撐到照片的尺寸畫一次，複製走再還原。
-       下一幀 tick 會把畫布尺寸設回影像的大小。 */
-    drawRef.current = (src, w, h, out) => {
-      const cv = canvasRef.current;
-      if (!cv || !out) return;
-      const ow = cv.width, oh = cv.height;
-      cv.width = w; cv.height = h;
+    /* 全解析度靜態照：畫布尺寸由 renderStill 負責設好與還原，
+       這裡只管把那一幀畫出來。 */
+    drawRef.current = (src, w, h) => {
+      if (!canvasRef.current) return;
       draw(src, w, h);
-      out.getContext('2d')!.drawImage(cv, 0, 0);
-      cv.width = ow; cv.height = oh;
     };
 
     const tick = () => {
