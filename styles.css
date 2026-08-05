@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---- 自己放的字型 ----
+   原本是從 Google Fonts 載的。改成打包進 app 有三個好處：
+   沒有網路也能正常顯示、不會因為 CDN 掛掉整個字型跑掉、
+   上架 App Store 時不算「連遠端網站」。
+
+   Inter 與 Playfair 都用可變字型（一個檔案涵蓋所有字重），
+   並且只留拉丁字母的字符範圍。 */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./fonts/Inter.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url('./fonts/PlayfairDisplay.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: italic;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url('./fonts/PlayfairDisplay-Italic.woff2') format('woff2');
+}
+
+/* 圖示字型只留 app 真的用到的那 73 顆圖示：
+   完整的 Material Symbols 可變字型是 3.96MB，子集之後只有 62KB。 */
+@font-face {
+  font-family: 'Material Symbols Outlined';
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: block;
+  src: url('./fonts/MaterialSymbolsOutlined.woff2') format('woff2');
+}
+.material-symbols-outlined {
+  font-family: 'Material Symbols Outlined';
+  font-weight: normal;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+}

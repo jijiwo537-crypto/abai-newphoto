@@ -7,18 +7,13 @@
     <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
     <link rel="icon" type="image/png" sizes="64x64" href="./favicon-64.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png" />
-    <script src="https://cdn.tailwindcss.com?plugins=forms,typography,container-queries"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Noto+Sans+TC:wght@300;400;500;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet"/>
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
     <script>
         // Smoothly handle critical font loading to prevent layout shifts and FOUT
         if (document.fonts) {
             document.documentElement.classList.add('fonts-loading');
             Promise.all([
                 document.fonts.load('12px "Material Symbols Outlined"'),
-                document.fonts.load('12px "Noto Sans TC"'),
+                document.fonts.load('12px "Inter"'),
                 document.fonts.load('12px "Playfair Display"')
             ]).then(function() {
                 document.documentElement.classList.remove('fonts-loading');
@@ -32,28 +27,6 @@
                 document.documentElement.classList.add('fonts-loaded');
             }, 1000);
         }
-    </script>
-    <script>
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    colors: {
-                        primary: "#FFFFFF",
-                        "background-dark": "#000000",
-                        "gray-panel": "#1A1A1A",
-                        "gray-control": "#333333",
-                    },
-                    fontFamily: {
-                        sans: ["Inter", "Noto Sans TC", "sans-serif"],
-                        serif: ["Playfair Display", "serif"],
-                    },
-                    borderRadius: {
-                        'camera': '12px',
-                    },
-                },
-            },
-        };
     </script>
     <style>
         *, *::before, *::after {
@@ -141,15 +114,6 @@
             scrollbar-width: none;  /* Firefox */
         }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "react": "https://esm.sh/react@^19.2.4",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/"
-  }
-}
-</script>
 </head>
 <body class="bg-black text-white antialiased">
     <div id="root"></div>
