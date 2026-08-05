@@ -103,8 +103,19 @@ precision highp float;
 uniform sampler2D u_tex;
 uniform vec2 u_step;      // 一個紋素的大小 × 方向
 uniform float u_radius;   // 幾個紋素
+uniform float u_brightTh; // >=0 時只取亮部（柔光用），<0 是一般模糊
 in vec2 v_texCoord;
 out vec4 outColor;
+
+/* 亮部萃取：跟編輯頁的柔光同一組係數 —— 超過門檻的部分 ×5 當強度。
+   重點是「先挑亮部、再模糊」，不是「先模糊、再挑亮部」，
+   這樣光暈才會從亮的地方往外散開，暗部保持乾淨。 */
+vec3 tap(vec2 uv) {
+    vec3 c = texture(u_tex, uv).rgb;
+    if (u_brightTh < 0.0) return c;
+    float lum = dot(c, vec3(0.299, 0.587, 0.114));
+    return c * clamp((lum - u_brightTh) * 5.0, 0.0, 1.0);
+}
 
 const float O1 = 1.3846153846;
 const float O2 = 3.2307692308;
@@ -115,11 +126,11 @@ const float W2 = 0.0702702703;
 void main() {
     vec2 d1 = u_step * O1 * u_radius;
     vec2 d2 = u_step * O2 * u_radius;
-    vec3 c = texture(u_tex, v_texCoord).rgb * W0;
-    c += texture(u_tex, v_texCoord + d1).rgb * W1;
-    c += texture(u_tex, v_texCoord - d1).rgb * W1;
-    c += texture(u_tex, v_texCoord + d2).rgb * W2;
-    c += texture(u_tex, v_texCoord - d2).rgb * W2;
+    vec3 c = tap(v_texCoord) * W0;
+    c += tap(v_texCoord + d1) * W1;
+    c += tap(v_texCoord - d1) * W1;
+    c += tap(v_texCoord + d2) * W2;
+    c += tap(v_texCoord - d2) * W2;
     outColor = vec4(c, 1.0);
 }
 `;
@@ -129,7 +140,8 @@ void main() {
 const FS_COMPOSITE = `#version 300 es
 precision highp float;
 uniform sampler2D u_scene;
-uniform sampler2D u_blur;
+uniform sampler2D u_blur;   // 一般模糊（朦朧用）
+uniform sampler2D u_glow;   // 亮部模糊（柔光用）
 uniform float u_soft;    // 0–1
 uniform float u_blurAmt; // 0–1
 in vec2 v_texCoord;
@@ -145,12 +157,10 @@ void main() {
     /* 朦朧：跟編輯頁同一組係數 —— 模糊過的自己用 0.625 的不透明度蓋上去 */
     vec3 c = mix(base, bl, u_blurAmt * 0.625);
 
-    /* 柔光：亮部挑出來（門檻 0.70、超出的部分 ×5 當強度）用濾色疊回去，
+    /* 柔光：把「先挑亮部再模糊」的那張用濾色疊回去，
        疊加量是強度 ×1.5，跟編輯頁的柔光同一組係數。 */
     if (u_soft > 0.0) {
-        float lum = dot(bl, vec3(0.299, 0.587, 0.114));
-        float mask = clamp((lum - 0.70) * 5.0, 0.0, 1.0);
-        vec3 glow = bl * mask * clamp(u_soft * 1.5, 0.0, 1.0);
+        vec3 glow = texture(u_glow, tc).rgb * clamp(u_soft * 1.5, 0.0, 1.0);
         c = 1.0 - (1.0 - c) * (1.0 - clamp(glow, 0.0, 1.0));
     }
 
@@ -177,7 +187,9 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     scene: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
     ping: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
     pong: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
-  }>({ w: 0, h: 0, bw: 0, bh: 0, scene: null, ping: null, pong: null });
+    blurOut: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
+    glowOut: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
+  }>({ w: 0, h: 0, bw: 0, bh: 0, scene: null, ping: null, pong: null, blurOut: null, glowOut: null });
 
   /* 滑桿是每一幀都可能在動的，放進 effect 依賴會不停重建 render loop。
      用 ref 讓迴圈每一幀讀最新值，迴圈本身只建立一次。 */
@@ -266,10 +278,10 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
     return () => {
       const rt = rtRef.current;
-      for (const t of [rt.scene, rt.ping, rt.pong]) {
+      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.glowOut]) {
         if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
       }
-      rtRef.current = { w: 0, h: 0, bw: 0, bh: 0, scene: null, ping: null, pong: null };
+      rtRef.current = { w: 0, h: 0, bw: 0, bh: 0, scene: null, ping: null, pong: null, blurOut: null, glowOut: null };
       gl.deleteProgram(prog);
       if (blurProgRef.current) gl.deleteProgram(blurProgRef.current);
       if (compProgRef.current) gl.deleteProgram(compProgRef.current);
@@ -305,10 +317,11 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       const bw = Math.max(1, Math.floor(w / BLUR_DIV));
       const bh = Math.max(1, Math.floor(h / BLUR_DIV));
       if (rt.scene && rt.w === w && rt.h === h) return rt;
-      for (const t of [rt.scene, rt.ping, rt.pong]) {
+      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.glowOut]) {
         if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
       }
-      const next = { w, h, bw, bh, scene: makeTarget(w, h), ping: makeTarget(bw, bh), pong: makeTarget(bw, bh) };
+      const next = { w, h, bw, bh, scene: makeTarget(w, h), ping: makeTarget(bw, bh),
+                     pong: makeTarget(bw, bh), blurOut: makeTarget(bw, bh), glowOut: makeTarget(bw, bh) };
       rtRef.current = next;
       return next;
     };
@@ -349,33 +362,52 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       if (!anyFx) return;
 
       const bp = blurProgRef.current!, cp = compProgRef.current!;
-      const { bw, bh, scene, ping, pong } = rt!;
-
-      /* 三種效果吃的模糊程度不一樣，取最大的那個；
-         半徑跟著強度長，弱的時候只是輕輕柔化。 */
-      const strength = Math.max(blurAmt * 1.0, soft * 0.55);
-      const radius = 0.6 + strength * 3.2;
-      const passes = strength > 0.55 ? 2 : 1;
+      const { bw, bh, scene, ping, pong, blurOut, glowOut } = rt!;
 
       gl.useProgram(bp);
-      gl.uniform1f(gl.getUniformLocation(bp, 'u_radius'), radius);
       gl.viewport(0, 0, bw, bh);
 
-      let srcTex: WebGLTexture = scene!.tex;
-      for (let i = 0; i < passes; i++) {
-        gl.bindFramebuffer(gl.FRAMEBUFFER, ping!.fb);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, srcTex);
-        gl.uniform1i(gl.getUniformLocation(bp, 'u_tex'), 0);
-        gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 1 / bw, 0);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      /** 走一趟模糊鏈（橫一趟、直一趟；強度大時兩輪），結果寫進指定的暫存。
+          brightTh >= 0 就是「先挑亮部再模糊」，柔光用的 ——
+          順序很重要：先挑亮部再模糊，光暈才會從亮的地方往外散開；
+          反過來做的話暗部也會被算進去，整張變濁。
+          兩種效果各有自己的輸出暫存，不會互相蓋掉。 */
+      const chain = (radius: number, passes: number, brightTh: number,
+                     out: { fb: WebGLFramebuffer; tex: WebGLTexture }) => {
+        let srcTex: WebGLTexture = scene!.tex;
+        for (let i = 0; i < passes; i++) {
+          const last = i === passes - 1;
+          gl.uniform1f(gl.getUniformLocation(bp, 'u_radius'), radius);
+          // 亮部萃取只在第一趟做，之後就是單純的模糊
+          gl.uniform1f(gl.getUniformLocation(bp, 'u_brightTh'), i === 0 ? brightTh : -1);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, ping!.fb);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, srcTex);
+          gl.uniform1i(gl.getUniformLocation(bp, 'u_tex'), 0);
+          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 1 / bw, 0);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-        gl.bindFramebuffer(gl.FRAMEBUFFER, pong!.fb);
-        gl.bindTexture(gl.TEXTURE_2D, ping!.tex);
-        gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 0, 1 / bh);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+          gl.uniform1f(gl.getUniformLocation(bp, 'u_brightTh'), -1);
+          gl.bindFramebuffer(gl.FRAMEBUFFER, last ? out.fb : pong!.fb);
+          gl.activeTexture(gl.TEXTURE0);
+          gl.bindTexture(gl.TEXTURE_2D, ping!.tex);
+          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 0, 1 / bh);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-        srcTex = pong!.tex;
+          srcTex = last ? out.tex : pong!.tex;
+        }
+        return out.tex;
+      };
+
+      let blurTex: WebGLTexture = scene!.tex;
+      let glowTex: WebGLTexture = scene!.tex;
+      if (blurAmt > 0) {
+        const st = blurAmt;
+        blurTex = chain(0.6 + st * 3.2, st > 0.55 ? 2 : 1, -1, blurOut!);
+      }
+      if (soft > 0) {
+        const st = soft * 0.55;
+        glowTex = chain(0.6 + st * 3.2, st > 0.55 ? 2 : 1, 0.70, glowOut!);
       }
 
       // ---- 最後一趟：清晰 + 模糊 合成到畫面 ----
@@ -386,8 +418,11 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.bindTexture(gl.TEXTURE_2D, scene!.tex);
       gl.uniform1i(gl.getUniformLocation(cp, 'u_scene'), 0);
       gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, srcTex);
+      gl.bindTexture(gl.TEXTURE_2D, blurTex);
       gl.uniform1i(gl.getUniformLocation(cp, 'u_blur'), 1);
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, glowTex);
+      gl.uniform1i(gl.getUniformLocation(cp, 'u_glow'), 2);
       gl.uniform1f(gl.getUniformLocation(cp, 'u_soft'), soft);
       gl.uniform1f(gl.getUniformLocation(cp, 'u_blurAmt'), blurAmt);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

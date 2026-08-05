@@ -23,10 +23,11 @@ type ActiveControl = 'none' | 'kelvin' | 'exposure' | 'filters' | 'effects';
 
 /* 拍照時就能即時看到的三種特效。名稱與滑桿範圍跟編輯頁一致，
    拍下來的就是畫面上看到的樣子（快門是直接抓 WebGL 畫布）。 */
-/** 跟編輯頁同款的兩個特效（編輯頁的「朦朧」就是這條模糊） */
-const FX_ITEMS: { id: keyof ViewfinderFx; label: string }[] = [
-  { id: 'soft', label: '柔光' },
-  { id: 'blur', label: '朦朧' },
+/* 跟編輯頁同款的兩個特效（編輯頁的「朦朧」就是這條模糊）。
+   拍照時只要開關，不用調整 —— 強度固定用調好的這一組。 */
+const FX_ITEMS: { id: keyof ViewfinderFx; label: string; on: number }[] = [
+  { id: 'soft', label: '柔光', on: 70 },
+  { id: 'blur', label: '朦朧', on: 70 },
 ];
 
 /** 變焦按鈕上寫幾倍就真的是幾倍 */
@@ -329,15 +330,26 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     }
   };
 
+  /* 有些裝置的 takePhoto／applyConstraints 會卡住不回來，
+     整個拍照流程就停在半路 —— 白畫面收不掉、快門也一直是停用的。
+     所有會跟相機硬體打交道的呼叫一律加上時限，逾時就走下一條路。 */
+  const withLimit = <T,>(p: Promise<T>, ms: number): Promise<T> =>
+    Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
+
+  const capturingRef = useRef(false);
   const capturePhoto = useCallback(async () => {
     if (!viewfinderRef.current) return;
+    if (capturingRef.current) return;      // 上一張還沒拍完就不要再進來
+    capturingRef.current = true;
 
-    /* 閃光：後鏡頭點手電筒、前鏡頭把螢幕整片打白，
-       都先等一下讓自動曝光跟上再按下去。 */
+    try {
+    /* 閃光：後鏡頭點手電筒；前鏡頭沒有手電筒，改把螢幕整片打白當補光。
+       後鏡頭如果連手電筒都沒有，打白螢幕照不到被攝物，只會閃一下眼睛，
+       所以就不打了。 */
     let torchOn = false;
     if (flashOn) {
-      torchOn = await setTorch(true);
-      if (!torchOn) setScreenFlash(true);
+      try { torchOn = await withLimit(setTorch(true), 800); } catch { torchOn = false; }
+      if (!torchOn && visualFacingMode === 'user') setScreenFlash(true);
       await new Promise(r => setTimeout(r, 260));
     }
 
@@ -364,16 +376,16 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         try {
           let opts: any = undefined;
           try {
-            const caps = await ic.getPhotoCapabilities();
+            const caps: any = await withLimit<any>(ic.getPhotoCapabilities(), 800);
             if (caps?.imageWidth?.max && caps?.imageHeight?.max) {
               opts = { imageWidth: caps.imageWidth.max, imageHeight: caps.imageHeight.max };
             }
           } catch { /* 拿不到能力表就用預設設定拍 */ }
-          const blob = await ic.takePhoto(opts);
+          const blob: any = await withLimit<any>(ic.takePhoto(opts), 2500);
           if (blob) bmp = await createImageBitmap(blob);
         } catch {
           // takePhoto 在部分裝置上不穩，退一步用預覽那一幀
-          try { bmp = await ic.grabFrame(); } catch { bmp = null; }
+          try { bmp = await withLimit<any>(ic.grabFrame(), 800); } catch { bmp = null; }
         }
         if (bmp && bmp.width > liveW) {
           webglCanvas = vf.renderStill(bmp, bmp.width, bmp.height);
@@ -434,7 +446,13 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         }
       }
     }
-    setTimeout(() => setIsCapturing(false), 200);
+    } finally {
+      /* 不管中間哪一步出錯，白畫面一定要收掉、快門一定要恢復，
+         不然畫面就會卡在一片白、看起來像「一直沒拍」。 */
+      setScreenFlash(false);
+      capturingRef.current = false;
+      setTimeout(() => setIsCapturing(false), 200);
+    }
   }, [aspectRatio, flashOn, setTorch, videoTrack, videoEl, visualFacingMode]);
 
   /* 倒數用的計時器要抓在 ref 上：離開相機時一定要取消，
@@ -796,11 +814,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 </div>
               </button>
 
-              <button className={`p-3 active:scale-90 transition-transform shrink-0 ${flashOn ? 'text-yellow-400' : 'text-white'}`} onClick={() => setFlashOn(!flashOn)}>
+              <button className="p-3 active:scale-90 transition-transform shrink-0 text-white" onClick={() => setFlashOn(!flashOn)}>
                   <Icon name="bolt" className="text-[28px]" fill={flashOn} />
               </button>
 
-              <button onClick={() => setActiveControl('effects')} className={`p-3 active:scale-90 transition-transform shrink-0 ${fxOn ? 'text-yellow-400' : 'text-white'}`}>
+              <button onClick={() => setActiveControl('effects')} className="p-3 active:scale-90 transition-transform shrink-0 text-white">
                 <Icon name="magic_button" className="text-[28px]" fill={fxOn} />
               </button>
 
@@ -839,38 +857,26 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                </div>
             </div>
           ) : activeControl === 'effects' ? (
-            <div className="w-full flex flex-col animate-in h-full justify-center px-4 gap-1.5">
-              {FX_ITEMS.map(it => (
-                <div key={it.id} className="flex items-center gap-3">
-                  <span className="w-8 shrink-0 text-[10px] font-bold tracking-[0.1em] text-white/70">{it.label}</span>
-                  <div className="relative flex-1 h-6 flex items-center">
-                    <div className="absolute inset-x-0 h-[2px] bg-white/15 rounded-full pointer-events-none" />
-                    <div className="absolute h-[2px] bg-white rounded-full pointer-events-none" style={{ width: `${fx[it.id]}%` }} />
-                    <div
-                      className="absolute w-[10px] h-[10px] bg-white rounded-full shadow-[0_0_10px_rgba(255,255,255,0.9)] pointer-events-none"
-                      style={{ left: `${fx[it.id]}%`, transform: 'translateX(-50%)' }}
-                    />
-                    <input
-                      type="range" min="0" max="100" step="1"
-                      value={fx[it.id]}
-                      onChange={(e) => { const v = parseInt(e.target.value); setFx(prev => (prev[it.id] === v ? prev : { ...prev, [it.id]: v })); }}
-                      className="absolute left-0 -top-2 w-full h-10 opacity-0 z-20 cursor-pointer [&::-webkit-slider-thumb]:w-10 [&::-webkit-slider-thumb]:h-10 [&::-webkit-slider-thumb]:appearance-none"
-                    />
-                  </div>
-                  <span className="w-6 shrink-0 text-[10px] font-bold text-white/50 text-right tabular-nums">{fx[it.id]}</span>
-                </div>
-              ))}
-              <div className="flex items-center justify-center gap-4 pt-0.5">
-                <button
-                  onClick={() => { triggerHaptic(); setFx(FX_ZERO); }}
-                  className="text-[10px] font-bold tracking-[0.1em] text-white/40 hover:text-white active:scale-90 transition-all"
-                >
-                  重設
-                </button>
-                <button onClick={() => { triggerHaptic(); setActiveControl('none'); }} className="w-7 h-7 bg-white/5 hover:bg-white/15 text-white/40 hover:text-white rounded-full flex items-center justify-center active:scale-90 transition-all border border-white/5 backdrop-blur-lg">
-                  <Icon name="expand_more" className="text-base" />
-                </button>
+            <div className="w-full flex flex-col items-center animate-in h-full justify-center gap-3 px-4">
+              <div className="flex items-center justify-center gap-3">
+                {FX_ITEMS.map(it => {
+                  const on = fx[it.id] > 0;
+                  return (
+                    <button
+                      key={it.id}
+                      onClick={() => { triggerHaptic(); setFx(prev => ({ ...prev, [it.id]: on ? 0 : it.on })); }}
+                      className={`px-5 h-10 rounded-full text-[12px] font-bold tracking-[0.12em] border transition-all active:scale-90 ${
+                        on ? 'bg-white text-black border-white' : 'bg-white/5 text-white/60 border-white/15'
+                      }`}
+                    >
+                      {it.label}
+                    </button>
+                  );
+                })}
               </div>
+              <button onClick={() => { triggerHaptic(); setActiveControl('none'); }} className="w-7 h-7 bg-white/5 hover:bg-white/15 text-white/40 hover:text-white rounded-full flex items-center justify-center active:scale-90 transition-all border border-white/5 backdrop-blur-lg">
+                <Icon name="expand_more" className="text-base" />
+              </button>
             </div>
           ) : (
             <div className="w-full flex flex-col items-center animate-in h-full justify-center">
