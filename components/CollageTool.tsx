@@ -1,4 +1,6 @@
 
+import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
+import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Settings2, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off } from 'lucide-react';
@@ -337,6 +339,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [dotGap, setDotGap] = useState(20);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [finalImage, setFinalImage] = useState<string | null>(null);
+  /* 成品是 blob 網址：換一張新的之前先回收，離開時也要回收 */
+  const finalUrlRef = useRef<string | null>(null);
+  /* 離開時晚一點再回收：導出紀錄的縮圖與分享用的檔案都是非同步去讀這個
+     網址的，按下儲存後馬上離開的話會來不及讀完。 */
+  useEffect(() => () => { const keep = finalUrlRef.current; setTimeout(() => revokeUrl(keep as any), 15000); }, []);
   const [, setForceRender] = useState(0);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -1044,7 +1051,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1) => {
     if (!imageState) return;
     const { baseW, baseH, globalScale: gs } = imageState;
-    const ctx = targetCanvas.getContext('2d', { alpha: false });
+    const ctx = get2dWide(targetCanvas, { alpha: false });
     if (!ctx) return;
 
     const s = renderScale;
@@ -1077,7 +1084,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const isMain = renderScale === 1 && targetCanvas === canvasRef.current;
     const bCanvas = isMain ? baseMaskCanvasRef.current : document.createElement('canvas');
     bCanvas.width = maskW; bCanvas.height = maskH;
-    const bCtx = bCanvas.getContext('2d')!;
+    const bCtx = get2dWide(bCanvas)!;
     bCtx.fillStyle = maskColor;
     bCtx.fillRect(0, 0, maskW, maskH);
     if (maskImageState && maskImageState.img) {
@@ -1092,7 +1099,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
     const fCanvas = isMain ? fullMaskCanvasRef.current : document.createElement('canvas');
     fCanvas.width = maskW; fCanvas.height = maskH;
-    const fCtx = fCanvas.getContext('2d')!;
+    const fCtx = get2dWide(fCanvas)!;
     fCtx.drawImage(bCanvas, 0, 0);
 
     if (patternType === 'dot') {
@@ -1175,7 +1182,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
     const lmc = isMain ? lowerMaskCanvasRef.current : document.createElement('canvas');
     lmc.width = maskW; lmc.height = maskH;
-    const lmx = lmc.getContext('2d')!;
+    const lmx = get2dWide(lmc)!;
     lmx.drawImage(fCanvas, 0, 0);
     lmx.globalCompositeOperation = 'destination-out';
     holes.forEach(h => {
@@ -1280,7 +1287,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setSelectedTarget(null);
     setSaveState('processing');
     
-    setTimeout(() => {
+    setTimeout(async () => {
       try {
         const { originalW, originalH, baseW, baseH } = imageState;
         
@@ -1312,9 +1319,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         // Render at optimized resolution
         renderToCanvas(exportCanvas, exportScale);
         
-        // Match ImageEditor's reliable export pattern: lossless PNG
-        const dataUrl = exportCanvas.toDataURL('image/png');
-        setFinalImage(dataUrl);
+        // 一樣是無損 PNG，只是改用 blob 網址拿在手上（dataURL 會多吃一份 33% 膨脹的字串）
+        const url = await canvasToUrl(exportCanvas);
+        revokeUrl(finalUrlRef.current);
+        finalUrlRef.current = url;
+        setFinalImage(url);
         setSaveState('success');
         
         // Explicit cleanup

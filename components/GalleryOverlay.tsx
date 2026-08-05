@@ -1,4 +1,5 @@
 
+import { canvasToUrl } from '../utils/blobUrl';
 import React from 'react';
 import { Icon } from './Icon';
 import { processImageFile } from '../utils/imageLoader';
@@ -29,7 +30,8 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({ photos, onClose,
               const ctx = canvas.getContext('2d');
               if (ctx) {
                 ctx.drawImage(img, 0, 0);
-                resolve(canvas.toDataURL('image/png'));
+                // 一樣是無損 PNG，改用 blob 網址拿在手上
+                canvasToUrl(canvas).then(resolve);
               } else {
                 resolve('');
               }
@@ -84,11 +86,15 @@ export const GalleryOverlay: React.FC<GalleryOverlayProps> = ({ photos, onClose,
                   alt={`Capture ${idx}`}
                   onClick={() => onEdit(src, idx)}
                 />
+                {/* 刪除鍵：固定 26×26 的正圓，圖示用行高歸零 + flex 置中，
+                    不然圖示字的行高會把它撐成不對稱的形狀、看起來沒對準。
+                    另外原本是 hover 才浮現 —— 手機沒有 hover，等於按不到。 */}
                 <button 
                   onClick={(e) => { e.stopPropagation(); onDelete(idx); }}
-                  className="absolute top-1 right-1 bg-black/60 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                  aria-label="刪除"
+                  className="absolute top-1 right-1 w-[26px] h-[26px] rounded-full bg-black/55 backdrop-blur-md border border-white/10 flex items-center justify-center active:scale-90 transition-transform"
                 >
-                  <Icon name="delete" className="text-sm text-red-400" />
+                  <Icon name="delete" className="text-[15px] leading-none text-white/90" />
                 </button>
               </div>
             ))}

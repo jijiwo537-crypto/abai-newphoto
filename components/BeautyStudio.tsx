@@ -1,3 +1,4 @@
+import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
@@ -156,6 +157,11 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const [ratio, setRatio] = useState<string | undefined>(undefined);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [finalImage, setFinalImage] = useState<string | null>(null);
+  /* 成品是 blob 網址：重新導出時先回收上一張，離開時也要回收 */
+  const finalUrlRef = useRef<string | null>(null);
+  /* 離開時晚一點再回收：導出紀錄的縮圖與分享用的檔案都是非同步去讀這個
+     網址的，按下儲存後馬上離開的話會來不及讀完。 */
+  useEffect(() => () => { const keep = finalUrlRef.current; setTimeout(() => revokeUrl(keep as any), 15000); }, []);
   const [showOriginal, setShowOriginal] = useState(false);
 
   const viewRef = useRef<HTMLCanvasElement>(null);
@@ -775,12 +781,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       im.src = imageSrc;
     });
     // 讀不到原圖就退回工作解析度，至少不會失敗
-    if (!img) return cv.toDataURL('image/png');
+    if (!img) return canvasToUrl(cv);
 
     const sc = Math.min(1, EXPORT_MAX / Math.max(img.width, img.height));
     const FW = Math.max(2, Math.round(img.width * sc));
     const FH = Math.max(2, Math.round(img.height * sc));
-    if (FW <= s.W) return cv.toDataURL('image/png');   // 原圖本來就不大
+    if (FW <= s.W) return canvasToUrl(cv);   // 原圖本來就不大
 
     const c = document.createElement('canvas');
     c.width = FW; c.height = FH;
@@ -800,7 +806,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     } else {
       ctx.putImageData(base, 0, 0);
     }
-    return c.toDataURL('image/png');
+    return canvasToUrl(c);
   }, [imageSrc]);
 
   const handleSave = () => {
@@ -810,6 +816,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     setTimeout(async () => {
       const url = await exportFullRes();
       if (url) {
+        revokeUrl(finalUrlRef.current);
+        finalUrlRef.current = url;
         setFinalImage(url);
         setSaveState('success');
         // 首頁的「最近輸出」：記下成品縮圖＋這張圖導出當下的原圖與筆觸

@@ -1,3 +1,4 @@
+import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { Icon } from './Icon';
@@ -57,6 +58,16 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const [strength, setStrength] = useState(100);
   const [skin, setSkin] = useState(80);
   const [finalUrl, setFinalUrl] = useState<string | null>(null);
+  /* 成品是 blob 網址：換新的之前先回收，離開時也要回收 */
+  const finalUrlRef = useRef<string | null>(null);
+  const putFinal = useCallback((u: string) => {
+    revokeUrl(finalUrlRef.current);
+    finalUrlRef.current = u;
+    setFinalUrl(u);
+  }, []);
+  /* 離開時晚一點再回收：導出紀錄的縮圖與分享用的檔案都是非同步去讀這個
+     網址的，按下儲存後馬上離開的話會來不及讀完。 */
+  useEffect(() => () => { const keep = finalUrlRef.current; setTimeout(() => revokeUrl(keep as any), 15000); }, []);
   const [saving, setSaving] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -243,7 +254,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const w = srcImg.naturalWidth || srcImg.width, h = srcImg.naturalHeight || srcImg.height;
     // GPU 一次畫完，全解析度也是瞬間 —— 按下去就直接進導出畫面，不用等
     const gpu = LutRenderer.renderOnce(srcImg, w, h, luts[picked], strength / 100, skin / 100);
-    if (gpu) { setFinalUrl(gpu.toDataURL('image/png')); return; }   // 無損
+    if (gpu) { canvasToUrl(gpu).then(putFinal); return; }   // 一樣無損，只是用 blob 網址
     // 沒有 WebGL2（或圖太大塞不進貼圖）才退回 CPU
     setSaving(true);
     window.setTimeout(() => {
@@ -255,7 +266,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         const d = x.getImageData(0, 0, w, h);
         applyLut(d.data, luts[picked], { strength: strength / 100, skinProtect: skin / 100, preserveLuminance: true });
         x.putImageData(d, 0, 0);
-        setFinalUrl(c.toDataURL('image/png'));
+        canvasToUrl(c).then(putFinal);
       } finally { setSaving(false); }
     }, 30);
   };

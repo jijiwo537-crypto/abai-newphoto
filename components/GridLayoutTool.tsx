@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, Slid
 import { Icon } from './Icon';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
+import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
 import { ComposeStudio } from './ComposeStudio';
@@ -5831,13 +5832,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         const off = document.createElement('canvas');
         off.width = Math.max(1, Math.round(iw + lw * 2));
         off.height = Math.max(1, Math.round(ih + lw * 2));
-        const oc = off.getContext('2d')!;
+        const oc = get2dWide(off)!;
         oc.drawImage(src, lw, lw, iw, ih);
         if (fImg.imgRadius || fImg.feather) {
           // 只把「圖片那一塊」裁形狀，描邊的區域不能被裁掉
           const shapeOnly = document.createElement('canvas');
           shapeOnly.width = iw; shapeOnly.height = ih;
-          const sc = shapeOnly.getContext('2d')!;
+          const sc = get2dWide(shapeOnly)!;
           sc.drawImage(src, 0, 0, iw, ih);
           sc.globalCompositeOperation = 'destination-in';
           if (fImg.feather) {
@@ -6097,7 +6098,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
     try {
       const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d')!;
+      /* 導出鏈上的畫布用 Display P3：照片本身的廣色域不會在這裡被裁掉。
+         已經套過特效的那些是 sRGB 的畫布，畫進來時瀏覽器會做色彩管理轉換，
+         看起來完全一樣 —— 所以現有成品的樣子不會變。 */
+      const ctx = get2dWide(canvas)!;
 
       // 輸出寬度跟著頁面裡最大的原圖走，而不是永遠壓在 1800。
       // 原本 4000px 的照片存出來只剩不到一半的細節。上限 4096 是為了避免

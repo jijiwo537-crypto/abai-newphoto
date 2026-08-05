@@ -23,19 +23,10 @@ type ActiveControl = 'none' | 'kelvin' | 'exposure' | 'filters' | 'effects';
 
 /* 拍照時就能即時看到的三種特效。名稱與滑桿範圍跟編輯頁一致，
    拍下來的就是畫面上看到的樣子（快門是直接抓 WebGL 畫布）。 */
+/** 跟編輯頁同款的兩個特效（編輯頁的「朦朧」就是這條模糊） */
 const FX_ITEMS: { id: keyof ViewfinderFx; label: string }[] = [
   { id: 'soft', label: '柔光' },
-  { id: 'blur', label: '模糊' },
-  { id: 'haze', label: '朦朧' },
-];
-
-/** 常用搭配，一按就套用；還是可以再自己拉滑桿微調 */
-const FX_PRESETS: { name: string; fx: ViewfinderFx }[] = [
-  { name: '無',   fx: { soft: 0,  blur: 0,  haze: 0  } },
-  { name: '柔焦', fx: { soft: 55, blur: 0,  haze: 0  } },
-  { name: '晨霧', fx: { soft: 30, blur: 0,  haze: 45 } },
-  { name: '夢境', fx: { soft: 70, blur: 22, haze: 35 } },
-  { name: '奶油', fx: { soft: 20, blur: 45, haze: 20 } },
+  { id: 'blur', label: '朦朧' },
 ];
 
 /** 變焦按鈕上寫幾倍就真的是幾倍 */
@@ -85,7 +76,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [activeControl, setActiveControl] = useState<ActiveControl>('none');
   const [selectedLutIdx, setSelectedLutIdx] = useState(0);
   const [fx, setFx] = useState<ViewfinderFx>(FX_ZERO);
-  const fxOn = fx.soft > 0 || fx.blur > 0 || fx.haze > 0;
+  const fxOn = fx.soft > 0 || fx.blur > 0;
   const [flashOn, setFlashOn] = useState(false);
   
   // Default Aspect Ratio changed to 3:2
@@ -320,12 +311,21 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         setFocusPoint(prev => prev ? { ...prev, visible: false } : null);
     }, 800);
 
-    if (videoTrack && capabilities && 'focusMode' in capabilities) {
-        try {
-             videoTrack.applyConstraints({
-                 advanced: [{ focusMode: 'continuous' } as any]
-             });
-        } catch(e) {}
+    /* 把點到的位置換算成 0–1 的座標送給相機，才是真的「點哪裡對哪裡」。
+       同時把測光點也指過去（專業相機 app 都是這樣一起做的）。
+       裝置不支援指定座標時退回原本的持續自動對焦，行為跟以前一樣。 */
+    if (videoTrack && capabilities) {
+        const nx = Math.min(1, Math.max(0, x / (rect.width || 1)));
+        const ny = Math.min(1, Math.max(0, y / (rect.height || 1)));
+        const caps = capabilities as any;
+        const adv: any = {};
+        if ('pointsOfInterest' in caps) adv.pointsOfInterest = [{ x: nx, y: ny }];
+        if (Array.isArray(caps.focusMode) && caps.focusMode.includes('single-shot')) adv.focusMode = 'single-shot';
+        else if ('focusMode' in caps) adv.focusMode = 'continuous';
+        if (Array.isArray(caps.exposureMode) && caps.exposureMode.includes('single-shot')) adv.exposureMode = 'single-shot';
+        if (Object.keys(adv).length) {
+          try { videoTrack.applyConstraints({ advanced: [adv] }); } catch(e) {}
+        }
     }
   };
 
@@ -343,19 +343,42 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
     setIsCapturing(true);
 
-    /* 先試著跟相機要一張「完整感光元件解析度」的靜態照，
-       再走跟預覽同一條 GPU 管線 —— 顏色、濾鏡、特效完全一致，
-       但畫素比預覽影像多很多。拿不到就退回抓預覽畫布。 */
+    /* 跟相機要一張「完整感光元件解析度」的靜態照，再走跟預覽同一條 GPU
+       管線 —— 顏色、濾鏡、特效完全一致，但畫素比預覽影像多好幾倍。
+
+       要用 takePhoto()：grabFrame() 取的只是「預覽影像」那一幀，解析度
+       跟預覽一模一樣，換了等於沒換。takePhoto 才會真的按下感光元件那一張，
+       而且要自己把 imageWidth/imageHeight 指定成裝置支援的最大值，
+       不指定的話多數裝置只會給預設（通常還是預覽大小）。
+
+       iOS Safari 至今沒有 ImageCapture，會自動落到下面的退路，
+       解析度跟原本一樣，不會變差。 */
     let webglCanvas: HTMLCanvasElement | null = null;
     const vf = viewfinderRef.current as any;
+    const liveW = videoEl?.videoWidth || 0;
     try {
       const IC = (window as any).ImageCapture;
       if (IC && videoTrack && vf.renderStill) {
-        const shot = await new IC(videoTrack).grabFrame();
-        if (shot && shot.width > (videoEl?.videoWidth || 0)) {
-          webglCanvas = vf.renderStill(shot, shot.width, shot.height);
+        const ic = new IC(videoTrack);
+        let bmp: ImageBitmap | null = null;
+        try {
+          let opts: any = undefined;
+          try {
+            const caps = await ic.getPhotoCapabilities();
+            if (caps?.imageWidth?.max && caps?.imageHeight?.max) {
+              opts = { imageWidth: caps.imageWidth.max, imageHeight: caps.imageHeight.max };
+            }
+          } catch { /* 拿不到能力表就用預設設定拍 */ }
+          const blob = await ic.takePhoto(opts);
+          if (blob) bmp = await createImageBitmap(blob);
+        } catch {
+          // takePhoto 在部分裝置上不穩，退一步用預覽那一幀
+          try { bmp = await ic.grabFrame(); } catch { bmp = null; }
         }
-        if (shot && shot.close) shot.close();
+        if (bmp && bmp.width > liveW) {
+          webglCanvas = vf.renderStill(bmp, bmp.width, bmp.height);
+        }
+        if (bmp && (bmp as any).close) (bmp as any).close();
       }
     } catch (e) { /* 不支援就用預覽畫布，畫質跟原本一樣 */ }
     if (!webglCanvas) webglCanvas = viewfinderRef.current.getCanvas();
@@ -414,14 +437,28 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     setTimeout(() => setIsCapturing(false), 200);
   }, [aspectRatio, flashOn, setTorch, videoTrack, videoEl, visualFacingMode]);
 
+  /* 倒數用的計時器要抓在 ref 上：離開相機時一定要取消，
+     不然頁面關掉之後它還會跳出來呼叫拍照。 */
+  const countdownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopCountdown = useCallback(() => {
+    if (countdownTimerRef.current) { clearInterval(countdownTimerRef.current); countdownTimerRef.current = null; }
+    setCountdown(null);
+  }, []);
+  useEffect(() => () => {
+    if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+  }, []);
+
   const handleShutterClick = () => {
-    if (countdown !== null) return;
+    if (countdown !== null) {          // 倒數中再按一下＝取消
+      stopCountdown();
+      return;
+    }
     if (timer > 0) {
       setCountdown(timer);
-      const interval = setInterval(() => {
+      countdownTimerRef.current = setInterval(() => {
         setCountdown(prev => {
           if (prev === null || prev <= 1) {
-            clearInterval(interval);
+            if (countdownTimerRef.current) { clearInterval(countdownTimerRef.current); countdownTimerRef.current = null; }
             capturePhoto();
             return null;
           }
@@ -432,6 +469,25 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       capturePhoto();
     }
   };
+
+  /* 切到別的 app 或鎖屏時把影像擷取關掉 —— 串流跟每一幀的 GPU 運算
+     都還在跑的話很耗電。回到前景再打開，不需要重新要一次權限。 */
+  useEffect(() => {
+    const onVis = () => {
+      const tracks = streamRef.current?.getVideoTracks() || [];
+      const hidden = document.visibilityState === 'hidden';
+      tracks.forEach(t => { t.enabled = !hidden; });
+      if (hidden) {
+        stopCountdown();
+        setTorch(false);
+        videoEl?.pause();
+      } else {
+        videoEl?.play().catch(() => {});
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [videoEl, stopCountdown, setTorch]);
 
   const getFrameStyle = (): React.CSSProperties => {
     if (containerSize.w === 0 || containerSize.h === 0) return { opacity: 0 };
@@ -784,20 +840,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             </div>
           ) : activeControl === 'effects' ? (
             <div className="w-full flex flex-col animate-in h-full justify-center px-4 gap-1.5">
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
-                {FX_PRESETS.map(ps => {
-                  const on = ps.fx.soft === fx.soft && ps.fx.blur === fx.blur && ps.fx.haze === fx.haze;
-                  return (
-                    <button
-                      key={ps.name}
-                      onClick={() => { triggerHaptic(); setFx(ps.fx); }}
-                      className={`shrink-0 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-[0.08em] border transition-all active:scale-90 ${on ? 'bg-white text-black border-white' : 'bg-white/5 text-white/60 border-white/10'}`}
-                    >
-                      {ps.name}
-                    </button>
-                  );
-                })}
-              </div>
               {FX_ITEMS.map(it => (
                 <div key={it.id} className="flex items-center gap-3">
                   <span className="w-8 shrink-0 text-[10px] font-bold tracking-[0.1em] text-white/70">{it.label}</span>
@@ -819,6 +861,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 </div>
               ))}
               <div className="flex items-center justify-center gap-4 pt-0.5">
+                <button
+                  onClick={() => { triggerHaptic(); setFx(FX_ZERO); }}
+                  className="text-[10px] font-bold tracking-[0.1em] text-white/40 hover:text-white active:scale-90 transition-all"
+                >
+                  重設
+                </button>
                 <button onClick={() => { triggerHaptic(); setActiveControl('none'); }} className="w-7 h-7 bg-white/5 hover:bg-white/15 text-white/40 hover:text-white rounded-full flex items-center justify-center active:scale-90 transition-all border border-white/5 backdrop-blur-lg">
                   <Icon name="expand_more" className="text-base" />
                 </button>
@@ -849,14 +897,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                             {/* Visual Thumb - Independent of input */}
                             <div 
                                 className="absolute top-1/2 -translate-y-1/2 h-8 w-[2px] bg-white rounded-full shadow-[0_0_15px_rgba(255,255,255,1)] z-10 pointer-events-none transition-none"
-                                style={{ left: `${((parseFloat(settings.exposure) + 2) / 4) * 100}%`, transform: 'translate(-50%, -50%)' }}
+                                style={{ left: `${((parseFloat(settings.exposure) + 1) / 2) * 100}%`, transform: 'translate(-50%, -50%)' }}
                             ></div>
 
                             {/* Interactive Input - Invisible but large hit area */}
                             <input 
                                 type="range" 
-                                min="-2" 
-                                max="2" 
+                                min="-1" 
+                                max="1" 
                                 step="0.1" 
                                 value={parseFloat(settings.exposure)} 
                                 onChange={(e) => { const rawVal = parseFloat(e.target.value); const val = (rawVal > 0 ? '+' : '') + rawVal.toFixed(1); if (val !== settings.exposure) { triggerHaptic(); setSettings(prev => ({ ...prev, exposure: val })); } }} 
@@ -880,7 +928,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                                 type="range" 
                                 min="2500" 
                                 max="9000" 
-                                step="50" 
+                                step="100" 
                                 value={settings.kelvin} 
                                 onChange={(e) => { const val = parseInt(e.target.value); if (val !== settings.kelvin) { triggerHaptic(); setSettings(prev => ({ ...prev, kelvin: val })); } }} 
                                 className="absolute left-0 -top-4 w-full h-16 opacity-0 z-20 cursor-pointer [&::-webkit-slider-thumb]:w-12 [&::-webkit-slider-thumb]:h-12 [&::-webkit-slider-thumb]:appearance-none" 

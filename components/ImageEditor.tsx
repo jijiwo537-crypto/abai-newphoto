@@ -7,6 +7,7 @@ import { SaveButton } from './SaveButton';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
+import { canvasToUrl, revokeUrls } from '../utils/blobUrl';
 import { motion, AnimatePresence } from 'motion/react';
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { ChevronLeft } from 'lucide-react';
@@ -1627,6 +1628,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   const [finalImage, setFinalImage] = useState<string | null>(null);
   /** 批量編輯時，一次存出來的所有成品 */
   const [finalImages, setFinalImages] = useState<string[]>([]);
+  /* 成品是 blob 網址，換掉舊的之前要回收，不然按第二次儲存
+     上一輪那幾張會一直留在記憶體裡。 */
+  const finalImagesRef = useRef<string[]>([]);
+  /* 離開時晚一點再回收：導出紀錄的縮圖與分享用的檔案都是非同步去讀這個
+     網址的，按下儲存後馬上離開的話會來不及讀完。 */
+  useEffect(() => () => { const keep = finalImagesRef.current; setTimeout(() => revokeUrls(keep as any), 15000); }, []);
   const [isPortrait, setIsPortrait] = useState(false);
 
   // Curve Specific State
@@ -5127,9 +5134,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     return canvas;
   };
 
-  /** 導出用：跟合併走同一支全解析度管線，只是最後轉成 PNG */
-  const renderOne = (img: HTMLImageElement, snap: BatchSnap): string =>
-    renderOneCanvas(img, snap).toDataURL('image/png');
+  /** 導出用：跟合併走同一支全解析度管線，只是最後轉成 PNG。
+      成品用 blob 網址 —— 批次十張的話 dataURL 會是好幾百 MB 的字串。 */
+  const renderOne = (img: HTMLImageElement, snap: BatchSnap): Promise<string> =>
+    canvasToUrl(renderOneCanvas(img, snap));
 
   const loadImg = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
     const im = new Image();
@@ -5347,8 +5355,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
               const img = i === safeIdx && originalImgRef.current
                 ? originalImgRef.current
                 : await loadImg(srcList[i]);
-              out.push(renderOne(img, snap));
+              out.push(await renderOne(img, snap));
             }
+            revokeUrls(finalImagesRef.current.filter(u => !out.includes(u)));
+            finalImagesRef.current = out;
             setFinalImages(out);
             setFinalImage(out[safeIdx] || out[0]);
             setSaveState('success');

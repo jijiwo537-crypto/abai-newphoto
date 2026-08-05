@@ -1,14 +1,13 @@
 
 import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState } from 'react';
 
-/** 拍照時可以即時看到的三種特效，數值都是 0–100 */
+/** 拍照時可以即時看到的特效，跟編輯頁同款、數值都是 0–100 */
 export interface ViewfinderFx {
-  soft: number;   // 柔光：亮部往外暈開
-  blur: number;   // 模糊：整張變朦朧的散景
-  haze: number;   // 朦朧：像隔著一層霧，黑階被提起來
+  soft: number;   // 柔光：亮部挑出來模糊之後用濾色疊回去
+  blur: number;   // 朦朧：模糊過的自己淡淡蓋一層
 }
 
-export const FX_ZERO: ViewfinderFx = { soft: 0, blur: 0, haze: 0 };
+export const FX_ZERO: ViewfinderFx = { soft: 0, blur: 0 };
 
 interface ViewfinderProps {
   video: HTMLVideoElement | null;
@@ -133,34 +132,26 @@ uniform sampler2D u_scene;
 uniform sampler2D u_blur;
 uniform float u_soft;    // 0–1
 uniform float u_blurAmt; // 0–1
-uniform float u_haze;    // 0–1
 in vec2 v_texCoord;
 out vec4 outColor;
 
 void main() {
-    vec3 base = texture(u_scene, v_texCoord).rgb;
-    vec3 bl   = texture(u_blur,  v_texCoord).rgb;
+    /* 離屏畫布的原點在左下、螢幕在左上，所以讀回來要把 Y 翻回去，
+       不然套上特效整張會上下顛倒。 */
+    vec2 tc = vec2(v_texCoord.x, 1.0 - v_texCoord.y);
+    vec3 base = texture(u_scene, tc).rgb;
+    vec3 bl   = texture(u_blur,  tc).rgb;
 
-    // 模糊：直接往模糊那張靠過去
-    vec3 c = mix(base, bl, u_blurAmt);
+    /* 朦朧：跟編輯頁同一組係數 —— 模糊過的自己用 0.625 的不透明度蓋上去 */
+    vec3 c = mix(base, bl, u_blurAmt * 0.625);
 
-    // 柔光：只讓亮部暈開，用濾色疊上去 —— 暗部保持乾淨，
-    // 這是柔焦鏡的作法，不是整張打霧。
+    /* 柔光：亮部挑出來（門檻 0.70、超出的部分 ×5 當強度）用濾色疊回去，
+       疊加量是強度 ×1.5，跟編輯頁的柔光同一組係數。 */
     if (u_soft > 0.0) {
-        float th = 0.55;
-        vec3 bright = max(bl - th, 0.0) / (1.0 - th);
-        vec3 glow = bright * u_soft;
+        float lum = dot(bl, vec3(0.299, 0.587, 0.114));
+        float mask = clamp((lum - 0.70) * 5.0, 0.0, 1.0);
+        vec3 glow = bl * mask * clamp(u_soft * 1.5, 0.0, 1.0);
         c = 1.0 - (1.0 - c) * (1.0 - clamp(glow, 0.0, 1.0));
-    }
-
-    // 朦朧：模糊那張淡淡蓋一層，再把黑階提起來、彩度收一點，
-    // 就是隔著一層霧的樣子。
-    if (u_haze > 0.0) {
-        c = mix(c, bl, u_haze * 0.45);
-        float lift = 0.18 * u_haze;
-        c = c * (1.0 - lift) + lift;
-        float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
-        c = mix(c, vec3(lum), u_haze * 0.12);
     }
 
     outColor = vec4(clamp(c, 0.0, 1.0), 1.0);
@@ -197,6 +188,11 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   /* 讓「拍全解析度靜態照」也能走同一條管線 —— 一模一樣的著色器、
      一模一樣的參數，所以拍出來跟畫面上看到的完全一致。 */
   const drawRef = useRef<((src: TexImageSource, w: number, h: number, out: HTMLCanvasElement | null) => void) | null>(null);
+  /* 曝光／色溫／濾鏡也一律走 ref。以前它們在 render loop 的依賴裡，
+     滑桿每動一格（色溫是 50K 一格）就把整個迴圈拆掉重建一次，
+     拉起來就是一頓一頓的。現在迴圈只建立一次，每一幀讀最新值。 */
+  const paramRef = useRef({ exposure, kelvin, isUserFacing });
+  paramRef.current = { exposure, kelvin, isUserFacing };
 
   useImperativeHandle(ref, () => ({
     getCanvas: () => canvasRef.current,
@@ -321,8 +317,8 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
        所以拍下來的顏色、特效跟畫面上看到的一定一致。 */
     const draw = (source: TexImageSource, W: number, H: number) => {
       const f = fxRef.current;
-      const soft = (f.soft || 0) / 100, blurAmt = (f.blur || 0) / 100, haze = (f.haze || 0) / 100;
-      const anyFx = soft > 0 || blurAmt > 0 || haze > 0;
+      const soft = (f.soft || 0) / 100, blurAmt = (f.blur || 0) / 100;
+      const anyFx = soft > 0 || blurAmt > 0;
       const rt = anyFx ? ensureTargets(W, H) : null;
 
       // ---- 第一趟：影像 → 曝光／色溫／濾鏡 ----
@@ -335,12 +331,13 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source as any);
       gl.uniform1i(gl.getUniformLocation(prog, 'u_video'), 0);
 
-      const useLut = !!lutUrl && lutLoaded && !!lutTexRef.current;
+      const useLut = !!lutTexRef.current;
       gl.uniform1i(gl.getUniformLocation(prog, 'u_useLut'), useLut ? 1 : 0);
-      gl.uniform1f(gl.getUniformLocation(prog, 'u_exposure'), exposure);
-      gl.uniform1f(gl.getUniformLocation(prog, 'u_kelvin'), kelvin);
+      const pr = paramRef.current;
+      gl.uniform1f(gl.getUniformLocation(prog, 'u_exposure'), pr.exposure);
+      gl.uniform1f(gl.getUniformLocation(prog, 'u_kelvin'), pr.kelvin);
       gl.uniform1f(gl.getUniformLocation(prog, 'u_zoom'), zoomRef.current);
-      gl.uniform1i(gl.getUniformLocation(prog, 'u_isUserFacing'), isUserFacing ? 1 : 0);
+      gl.uniform1i(gl.getUniformLocation(prog, 'u_isUserFacing'), pr.isUserFacing ? 1 : 0);
 
       if (useLut) {
         gl.activeTexture(gl.TEXTURE1);
@@ -356,7 +353,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
       /* 三種效果吃的模糊程度不一樣，取最大的那個；
          半徑跟著強度長，弱的時候只是輕輕柔化。 */
-      const strength = Math.max(blurAmt * 1.0, soft * 0.55, haze * 0.7);
+      const strength = Math.max(blurAmt * 1.0, soft * 0.55);
       const radius = 0.6 + strength * 3.2;
       const passes = strength > 0.55 ? 2 : 1;
 
@@ -393,7 +390,6 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.uniform1i(gl.getUniformLocation(cp, 'u_blur'), 1);
       gl.uniform1f(gl.getUniformLocation(cp, 'u_soft'), soft);
       gl.uniform1f(gl.getUniformLocation(cp, 'u_blurAmt'), blurAmt);
-      gl.uniform1f(gl.getUniformLocation(cp, 'u_haze'), haze);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     };
 
@@ -422,21 +418,31 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
     tick();
     return () => { cancelAnimationFrame(rafId); drawRef.current = null; };
-  }, [video, exposure, kelvin, isUserFacing, lutUrl, lutLoaded]);
+  }, [video]);
 
   // Handle LUT Loading
+  /* 換濾鏡時會閃一下白（其實是閃「沒有濾鏡的原樣」），原因是一按下去就把
+     現在這顆清掉，等新的圖檔載完中間那幾幀等於沒有濾鏡。
+     改成：新的載好了才換過去，中間畫面維持前一顆。
+     而且每顆只解碼一次，之後來回切換都是瞬間的。 */
+  const lutCacheRef = useRef<Map<string, WebGLTexture>>(new Map());
   useEffect(() => {
-    if (!lutUrl || !glRef.current) {
-      setLutLoaded(false);
+    if (!glRef.current) return;
+    if (!lutUrl) {                       // 「原始」要立刻生效，不能延遲
       lutTexRef.current = null;
+      setLutLoaded(false);
       return;
     }
 
-    setLutLoaded(false);
+    const cached = lutCacheRef.current.get(lutUrl);
+    if (cached) { lutTexRef.current = cached; setLutLoaded(true); return; }
+
+    let cancelled = false;
     const img = new Image();
     img.crossOrigin = "anonymous";
     img.onload = () => {
-      const gl = glRef.current!;
+      const gl = glRef.current;
+      if (!gl || cancelled) return;
       const tex = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
@@ -444,10 +450,12 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      if (tex) lutCacheRef.current.set(lutUrl, tex);
       lutTexRef.current = tex;
       setLutLoaded(true);
     };
     img.src = lutUrl;
+    return () => { cancelled = true; };
   }, [lutUrl]);
 
   return (
