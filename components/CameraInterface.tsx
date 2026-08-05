@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Icon } from './Icon';
 import { CameraSettings } from '../types';
 import { GalleryOverlay } from './GalleryOverlay';
-import { Viewfinder, FX_ZERO, type ViewfinderFx, type FaceBox } from './Viewfinder';
+import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
 import { ImageEditor } from './ImageEditor';
 import { processImageFile } from '../utils/imageLoader';
 
@@ -26,7 +26,6 @@ type ActiveControl = 'none' | 'kelvin' | 'exposure' | 'filters' | 'effects';
 /* 跟編輯頁同款的兩個特效（編輯頁的「朦朧」就是這條模糊）。
    拍照時只要開關，不用調整 —— 強度固定用調好的這一組。 */
 const FX_ITEMS: { id: keyof ViewfinderFx; label: string; on: number }[] = [
-  { id: 'smooth', label: '磨皮', on: 100 },
   { id: 'soft', label: '柔光', on: 70 },
   { id: 'blur', label: '朦朧', on: 70 },
 ];
@@ -78,122 +77,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [activeControl, setActiveControl] = useState<ActiveControl>('none');
   const [selectedLutIdx, setSelectedLutIdx] = useState(0);
   const [fx, setFx] = useState<ViewfinderFx>(FX_ZERO);
-  const fxOn = fx.soft > 0 || fx.blur > 0 || fx.smooth > 0;
-
-  /* ---------- 人臉偵測 ----------
-     磨皮只作用在臉上，所以一定要先知道臉在哪。兩條路：
-
-     ① 瀏覽器內建的 FaceDetector（Chrome 系）—— 不用下載任何模型。
-     ② 沒有 ① 的瀏覽器（含 iOS Safari）用膚色連通區塊自己找：
-        把畫面縮到 128px、標出膚色像素、找出最大的一塊，再用「形狀像不像
-        一張臉」的條件篩選（長寬比、佔畫面比例、實心程度）。
-        這是深度學習之前業界標準的人臉定位法，準度不如 ①，但零下載、
-        任何裝置都能跑，而且對「畫面裡有一張臉」這種自拍情境很夠用。
-
-     兩條路都找不到臉時磨皮完全不作用 —— 寧可不做，也不要把背景磨掉。 */
-  const [face, setFace] = useState<FaceBox | null>(null);
-  const faceSmoothRef = useRef<FaceBox | null>(null);
-
-  useEffect(() => {
-    if (!videoEl || !fx.smooth) { setFace(null); faceSmoothRef.current = null; return; }
-    let alive = true, busy = false, missed = 0;
-    const FD = (window as any).FaceDetector;
-    let detector: any = null;
-    if (FD) { try { detector = new FD({ maxDetectedFaces: 1, fastMode: true }); } catch { detector = null; } }
-
-    const small = document.createElement('canvas');
-    const sctx = small.getContext('2d', { willReadFrequently: true });
-
-    /** 膚色連通區塊找臉：回傳 0–1 的相對框，找不到就 null */
-    const findBySkin = (w: number, h: number): FaceBox | null => {
-      if (!sctx) return null;
-      const img = sctx.getImageData(0, 0, w, h).data;
-      const n = w * h;
-      const skin = new Uint8Array(n);
-      for (let i = 0, p = 0; i < n; i++, p += 4) {
-        const r = img[p] / 255, g = img[p + 1] / 255, b = img[p + 2] / 255;
-        const y = 0.299 * r + 0.587 * g + 0.114 * b;
-        const cb = (b - y) * 0.564 + 0.5, cr = (r - y) * 0.713 + 0.5;
-        skin[i] = (cb > 0.30 && cb < 0.50 && cr > 0.52 && cr < 0.70 && y > 0.15 && y < 0.95) ? 1 : 0;
-      }
-      // 走訪每一塊連通區域，記下最大的那一塊
-      const seen = new Uint8Array(n);
-      const stack = new Int32Array(n);
-      let best: { area: number; x0: number; y0: number; x1: number; y1: number } | null = null;
-      for (let i = 0; i < n; i++) {
-        if (!skin[i] || seen[i]) continue;
-        let sp = 0; stack[sp++] = i; seen[i] = 1;
-        let area = 0, x0 = w, y0 = h, x1 = 0, y1 = 0;
-        while (sp) {
-          const c = stack[--sp];
-          const cx = c % w, cy = (c / w) | 0;
-          area++;
-          if (cx < x0) x0 = cx; if (cx > x1) x1 = cx;
-          if (cy < y0) y0 = cy; if (cy > y1) y1 = cy;
-          if (cx > 0     && skin[c - 1] && !seen[c - 1]) { seen[c - 1] = 1; stack[sp++] = c - 1; }
-          if (cx < w - 1 && skin[c + 1] && !seen[c + 1]) { seen[c + 1] = 1; stack[sp++] = c + 1; }
-          if (cy > 0     && skin[c - w] && !seen[c - w]) { seen[c - w] = 1; stack[sp++] = c - w; }
-          if (cy < h - 1 && skin[c + w] && !seen[c + w]) { seen[c + w] = 1; stack[sp++] = c + w; }
-        }
-        if (!best || area > best.area) best = { area, x0, y0, x1, y1 };
-      }
-      if (!best) return null;
-      const bw = best.x1 - best.x0 + 1, bh = best.y1 - best.y0 + 1;
-      const ratio = bw / bh;
-      const frac = best.area / n;
-      const solid = best.area / (bw * bh);          // 實心程度：臉是一整塊，不是散開的雜訊
-      if (frac < 0.015 || frac > 0.7) return null;   // 太小是雜訊、太大多半是整片背景
-      if (ratio < 0.45 || ratio > 1.9) return null;  // 臉大致是直的橢圓
-      if (solid < 0.45) return null;
-      return { x: best.x0 / w, y: best.y0 / h, w: bw / w, h: bh / h };
-    };
-
-    const id = window.setInterval(async () => {
-      if (!alive || busy || !sctx || !videoEl.videoWidth) return;
-      busy = true;
-      try {
-        const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
-        const k = 128 / Math.max(vw, vh);
-        small.width = Math.max(2, Math.round(vw * k));
-        small.height = Math.max(2, Math.round(vh * k));
-        sctx.drawImage(videoEl, 0, 0, small.width, small.height);
-
-        let raw: FaceBox | null = null;
-        if (detector) {
-          try {
-            const found = await detector.detect(small);
-            if (found && found.length) {
-              const b = found[0].boundingBox;
-              raw = { x: b.x / small.width, y: b.y / small.height,
-                      w: b.width / small.width, h: b.height / small.height };
-            }
-          } catch { detector = null; }   // 這個瀏覽器的實作壞了就改走膚色那條
-        }
-        if (!raw) raw = findBySkin(small.width, small.height);
-        if (!alive) return;
-
-        if (raw) {
-          /* 偵測結果每一幀都會抖，直接用的話磨皮範圍會跳。
-             用指數平滑跟過去 —— 人臉移動是連續的，這樣看起來才穩。 */
-          const p0 = faceSmoothRef.current;
-          const a = p0 ? 0.3 : 1;
-          const next = p0 ? {
-            x: p0.x + (raw.x - p0.x) * a, y: p0.y + (raw.y - p0.y) * a,
-            w: p0.w + (raw.w - p0.w) * a, h: p0.h + (raw.h - p0.h) * a,
-          } : raw;
-          faceSmoothRef.current = next;
-          setFace(next);
-          missed = 0;
-        } else if (++missed > 4) {
-          // 連續幾次都沒找到才收掉，轉個頭不會一直閃
-          faceSmoothRef.current = null;
-          setFace(null);
-        }
-      } catch { /* 偵測失敗就當作沒偵測到 */ }
-      finally { busy = false; }
-    }, 180);
-    return () => { alive = false; window.clearInterval(id); };
-  }, [videoEl, fx.smooth]);
+  const fxOn = fx.soft > 0 || fx.blur > 0;
 
   const [flashOn, setFlashOn] = useState(false);
   
@@ -879,7 +763,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               kelvin={settings.kelvin}
               isUserFacing={visualFacingMode === 'user'}
               fx={fx}
-              face={face}
               digitalZoom={digitalZoom}
               onClick={handleFocus}
               onPointerDown={() => {

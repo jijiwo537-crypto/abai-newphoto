@@ -5,13 +5,9 @@ import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState } f
 export interface ViewfinderFx {
   soft: number;   // 柔光：亮部挑出來模糊之後用濾色疊回去
   blur: number;   // 朦朧：模糊過的自己淡淡蓋一層
-  smooth: number; // 磨皮：只在皮膚上做保邊平滑
 }
 
-export const FX_ZERO: ViewfinderFx = { soft: 0, blur: 0, smooth: 0 };
-
-/** 偵測到的人臉框（0–1 的相對座標）。沒偵測到就是 null。 */
-export interface FaceBox { x: number; y: number; w: number; h: number }
+export const FX_ZERO: ViewfinderFx = { soft: 0, blur: 0 };
 
 interface ViewfinderProps {
   video: HTMLVideoElement | null;
@@ -20,8 +16,6 @@ interface ViewfinderProps {
   kelvin: number;
   isUserFacing: boolean;
   fx?: ViewfinderFx;
-  /** 偵測到的人臉，用來把磨皮範圍收斂到臉上。沒有就只靠膚色判斷。 */
-  face?: FaceBox | null;
   /** 硬體變焦不夠時補上的數位變焦，1 = 不放大 */
   digitalZoom?: number;
   onClick?: (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => void;
@@ -155,38 +149,10 @@ precision highp float;
 uniform sampler2D u_scene;
 uniform sampler2D u_blur;   // 一般模糊（朦朧用）
 uniform sampler2D u_glow;   // 亮部模糊（柔光用）
-uniform sampler2D u_low;    // 小半徑模糊（磨皮的低頻層）
 uniform float u_soft;    // 0–1
 uniform float u_blurAmt; // 0–1
-uniform float u_smooth;  // 0–1
-uniform vec4 u_face;     // 人臉框 x,y,w,h（0–1）；w<=0 表示沒偵測到
 in vec2 v_texCoord;
 out vec4 outColor;
-
-/* 膚色判斷：轉成 YCbCr 之後看 Cb／Cr 落在不落在人的膚色範圍裡。
-   這個範圍對各種膚色都成立（膚色差在亮度 Y，色度 CbCr 很集中），
-   是文獻上最常用、也最穩的一組。邊界用平滑過渡，不會有硬邊。 */
-float skinMask(vec3 rgb) {
-    float y  = dot(rgb, vec3(0.299, 0.587, 0.114));
-    float cb = (rgb.b - y) * 0.564 + 0.5;
-    float cr = (rgb.r - y) * 0.713 + 0.5;
-    float mCb = smoothstep(0.28, 0.34, cb) * (1.0 - smoothstep(0.47, 0.53, cb));
-    float mCr = smoothstep(0.50, 0.54, cr) * (1.0 - smoothstep(0.66, 0.72, cr));
-    // 太暗或全黑的地方色度不可靠，直接排除
-    float mY  = smoothstep(0.10, 0.20, y);
-    return mCb * mCr * mY;
-}
-
-/** 人臉框內是 1、往外柔和收掉。沒偵測到人臉就整張都是 0 ——
-    磨皮只對臉有效果，找不到臉寧可完全不做，也不要把背景磨掉。 */
-float faceMask(vec2 uv) {
-    if (u_face.z <= 0.0) return 0.0;
-    vec2 c = u_face.xy + u_face.zw * 0.5;
-    // 框稍微放大一點，下巴與脖子的交界才不會有硬邊
-    vec2 r = u_face.zw * 0.72;
-    float d = length((uv - c) / max(r, vec2(0.0001)));
-    return 1.0 - smoothstep(0.85, 1.25, d);
-}
 
 void main() {
     /* 離屏畫布的原點在左下、螢幕在左上，所以讀回來要把 Y 翻回去，
@@ -195,28 +161,7 @@ void main() {
     vec3 base = texture(u_scene, tc).rgb;
     vec3 bl   = texture(u_blur,  tc).rgb;
 
-    /* 磨皮：頻率分離。把畫面拆成「低頻（膚色、明暗）」與「高頻（毛孔、
-       痘痘、睫毛、髮絲）」，只壓掉高頻裡「振幅小」的那些 ——
-       毛孔痘痘振幅小會被磨掉，眼睛睫毛髮絲振幅大會完整保留。
-       這是修圖師用了幾十年的作法，也是專業美顏濾鏡真正在做的事，
-       比整張高斯模糊自然非常多（不會糊成一片塑膠感）。
-       範圍再乘上膚色遮罩與人臉框，衣服跟背景不會被動到。 */
-    if (u_smooth > 0.0) {
-        vec3 low = texture(u_low, tc).rgb;
-        vec3 hi = base - low;
-        float amp = abs(dot(hi, vec3(0.299, 0.587, 0.114)));
-        /* 0.10 以下整段都算「毛孔、細紋、痘痘」，全部壓掉；
-           0.10～0.30 之間漸漸保留；再大就是眼睛、睫毛、髮絲、輪廓，完整保留。
-           （範圍比一開始寬一倍，磨皮力道才夠得上專業美顏相機） */
-        float isEdge = smoothstep(0.10, 0.30, amp);
-        float m = skinMask(base) * faceMask(tc) * u_smooth;
-        /* 保留一點點原本的皮膚質感（下限 12%）。全部抹平的話會變成
-           塑膠臉 —— 專業美顏相機也是留一點細節，看起來才像真的皮膚。 */
-        float keep = max(0.12, 1.0 - m * (1.0 - isEdge));
-        base = low + hi * keep;
-    }
-
-    /* 朦朧：跟編輯頁同一組係數 —— 模糊過的自己用 0.625 的不透明度蓋上去 */
+        /* 朦朧：跟編輯頁同一組係數 —— 模糊過的自己用 0.625 的不透明度蓋上去 */
     vec3 c = mix(base, bl, u_blurAmt * 0.625);
 
     /* 柔光：亮部圖層（RGB×A）用濾色疊回去，疊加量是強度 ×1.5。
@@ -241,7 +186,7 @@ const GLOW_LONG = 176;
 const GLOW_RADIUS = 1.6;
 const GLOW_PASSES = 4;
 
-export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, face, digitalZoom, onClick, onPointerDown, onPointerUp, onPointerCancel }: ViewfinderProps, ref) => {
+export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, digitalZoom, onClick, onPointerDown, onPointerUp, onPointerCancel }: ViewfinderProps, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const glRef = useRef<WebGL2RenderingContext | null>(null);
   const progRef = useRef<WebGLProgram | null>(null);
@@ -261,17 +206,12 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     gw: number; gh: number;
     gPing: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
     gPong: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
-    sw: number; sh: number;
-    sPing: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
-    sPong: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
-  }>({ w: 0, h: 0, bw: 0, bh: 0, gw: 0, gh: 0, sw: 0, sh: 0, scene: null, ping: null, pong: null, blurOut: null, gPing: null, gPong: null, sPing: null, sPong: null });
+  }>({ w: 0, h: 0, bw: 0, bh: 0, gw: 0, gh: 0, scene: null, ping: null, pong: null, blurOut: null, gPing: null, gPong: null });
 
   /* 滑桿是每一幀都可能在動的，放進 effect 依賴會不停重建 render loop。
      用 ref 讓迴圈每一幀讀最新值，迴圈本身只建立一次。 */
   const fxRef = useRef<ViewfinderFx>(fx || FX_ZERO);
   fxRef.current = fx || FX_ZERO;
-  const faceRef = useRef<FaceBox | null>(null);
-  faceRef.current = face || null;
   const zoomRef = useRef(1);
   zoomRef.current = digitalZoom && digitalZoom > 0 ? digitalZoom : 1;
   /* 讓「拍全解析度靜態照」也能走同一條管線 —— 一模一樣的著色器、
@@ -375,10 +315,10 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
     return () => {
       const rt = rtRef.current;
-      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.gPing, rt.gPong, rt.sPing, rt.sPong]) {
+      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.gPing, rt.gPong]) {
         if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
       }
-      rtRef.current = { w: 0, h: 0, bw: 0, bh: 0, gw: 0, gh: 0, sw: 0, sh: 0, scene: null, ping: null, pong: null, blurOut: null, gPing: null, gPong: null, sPing: null, sPong: null };
+      rtRef.current = { w: 0, h: 0, bw: 0, bh: 0, gw: 0, gh: 0, scene: null, ping: null, pong: null, blurOut: null, gPing: null, gPong: null };
       gl.deleteProgram(prog);
       if (blurProgRef.current) gl.deleteProgram(blurProgRef.current);
       if (compProgRef.current) gl.deleteProgram(compProgRef.current);
@@ -417,15 +357,12 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       // 柔光的光暈自己一個固定大小的小格網，跟畫面解析度脫鉤
       const gk = Math.max(w, h) / GLOW_LONG;
       const gw = Math.max(2, Math.round(w / gk)), gh = Math.max(2, Math.round(h / gk));
-      // 磨皮的低頻層：半解析度就夠，半徑本來就小
-      const sw = Math.max(2, Math.floor(w / 2)), sh = Math.max(2, Math.floor(h / 2));
-      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.gPing, rt.gPong, rt.sPing, rt.sPong]) {
+      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.gPing, rt.gPong]) {
         if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
       }
-      const next = { w, h, bw, bh, gw, gh, sw, sh, scene: makeTarget(w, h), ping: makeTarget(bw, bh),
+      const next = { w, h, bw, bh, gw, gh, scene: makeTarget(w, h), ping: makeTarget(bw, bh),
                      pong: makeTarget(bw, bh), blurOut: makeTarget(bw, bh),
-                     gPing: makeTarget(gw, gh), gPong: makeTarget(gw, gh),
-                     sPing: makeTarget(sw, sh), sPong: makeTarget(sw, sh) };
+                     gPing: makeTarget(gw, gh), gPong: makeTarget(gw, gh) };
       rtRef.current = next;
       return next;
     };
@@ -434,8 +371,8 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
        所以拍下來的顏色、特效跟畫面上看到的一定一致。 */
     const draw = (source: TexImageSource, W: number, H: number) => {
       const f = fxRef.current;
-      const soft = (f.soft || 0) / 100, blurAmt = (f.blur || 0) / 100, smooth = (f.smooth || 0) / 100;
-      const anyFx = soft > 0 || blurAmt > 0 || smooth > 0;
+      const soft = (f.soft || 0) / 100, blurAmt = (f.blur || 0) / 100;
+      const anyFx = soft > 0 || blurAmt > 0;
       const rt = anyFx ? ensureTargets(W, H) : null;
 
       // ---- 第一趟：影像 → 曝光／色溫／濾鏡 ----
@@ -466,7 +403,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       if (!anyFx) return;
 
       const bp = blurProgRef.current!, cp = compProgRef.current!;
-      const { bw, bh, gw, gh, sw, sh, scene, ping, pong, blurOut, gPing, gPong, sPing, sPong } = rt!;
+      const { bw, bh, gw, gh, scene, ping, pong, blurOut, gPing, gPong } = rt!;
 
       gl.useProgram(bp);
       gl.viewport(0, 0, bw, bh);
@@ -518,11 +455,6 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
         // 強度只影響最後疊上去的量，擴散範圍不變 —— 編輯頁也是這樣。
         glowTex = chain(GLOW_RADIUS, GLOW_PASSES, 0.70, gw, gh, gPing!, gPong!, gPong!);
       }
-      let lowTex: WebGLTexture = scene!.tex;
-      if (smooth > 0) {
-        // 磨皮的低頻層。半徑加大一倍，連稍微大一點的斑塊也能抹平
-        lowTex = chain(2.8, 3, -1, sw, sh, sPing!, sPong!, sPong!);
-      }
 
       // ---- 最後一趟：清晰 + 模糊 合成到畫面 ----
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -538,14 +470,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.bindTexture(gl.TEXTURE_2D, glowTex);
       gl.uniform1i(gl.getUniformLocation(cp, 'u_glow'), 2);
       gl.uniform1f(gl.getUniformLocation(cp, 'u_soft'), soft);
-      gl.activeTexture(gl.TEXTURE3);
-      gl.bindTexture(gl.TEXTURE_2D, lowTex);
-      gl.uniform1i(gl.getUniformLocation(cp, 'u_low'), 3);
       gl.uniform1f(gl.getUniformLocation(cp, 'u_blurAmt'), blurAmt);
-      gl.uniform1f(gl.getUniformLocation(cp, 'u_smooth'), smooth);
-      const fb2 = faceRef.current;
-      gl.uniform4f(gl.getUniformLocation(cp, 'u_face'),
-        fb2 ? fb2.x : 0, fb2 ? fb2.y : 0, fb2 ? fb2.w : 0, fb2 ? fb2.h : 0);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     };
 
