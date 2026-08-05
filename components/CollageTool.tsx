@@ -547,7 +547,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     } else if (id === 'random-num') {
       nextSize = 15;
     } else if (id === 'seagrass') {
-      nextSize = 20;
+      nextSize = 40;
     } else if (id === 'darkstar') {
       nextSize = 45;
     } else if (id === 'sparkle') {
