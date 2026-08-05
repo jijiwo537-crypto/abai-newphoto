@@ -93,7 +93,7 @@ const readAccount = (): Account | null => {
 const NAV_ITEMS = [
   { id: 'home', label: '修圖' },
   { id: 'lib', label: '模板' },
-  { id: 'me', label: '我' },
+  { id: 'me', label: '我的' },
 ] as const;
 
 export const HomePage: React.FC<HomePageProps> = ({
@@ -323,10 +323,11 @@ export const HomePage: React.FC<HomePageProps> = ({
         onPointerDown={releaseNavLock}
         onWheel={releaseNavLock}
         onTouchStart={releaseNavLock}
-        /* pb-[26px]：分頁列少了那排圖示、矮了 26px，這一格就會多長 26px，
-           整疊貼著下緣排的東西也會跟著往下掉。把那 26px 以內距補回來，
-           可用高度就跟原本一樣，主頁上面所有東西都待在原位。 */
-        className={`no-scrollbar relative z-[5] flex-1 min-h-0 overflow-y-auto box-border pb-[26px] ${nav === 'me' ? 'hidden' : 'block'}`}
+        /* 這個內距是拿來抵銷分頁列高度變化的：分頁列一矮，這一格就多長，
+           貼著下緣排的那一疊東西就會跟著移動。內距補回同樣的量，可用高度不變，
+           主頁上面所有東西就都待在原位。
+           拿掉圖示時分頁列矮了 26px；字級 9→12px 之後又高回 5px，所以是 26-5=21。 */
+        className={`no-scrollbar relative z-[5] flex-1 min-h-0 overflow-y-auto box-border pb-[21px] ${nav === 'me' ? 'hidden' : 'block'}`}
       >
       {/* 這一疊是靠 mt-auto 貼著下緣排的，底部留白加大就等於整組一起往上。
            用 min-h-full 而不是 h-full：矮的機型內容會比一屏高，寫死高度會被切掉；
@@ -469,11 +470,13 @@ export const HomePage: React.FC<HomePageProps> = ({
         {/* 廣告版位 —— 原本兩格預設模板併成一整塊，之後放廣告圖。
              外框（佔版面的那個）維持 342/147：這一疊是靠 mt-auto 貼著下緣排的，
              外框一長高，上面每一排就會跟著往上跑。所以真正的版位用絕對定位往下
-             多長 26px —— 看得到的格子變長了，版面上佔的高度卻沒變，
-             上面幾排按鈕一個像素都不會動。 */}
+             多長 —— 看得到的格子變長了，版面上佔的高度卻沒變，
+             上面幾排按鈕一個像素都不會動。
+             50px 是量出來的：版位下緣到分頁列上緣原本有 42px，多長 24px 之後
+             還留 13px 的空隙，不會貼到分頁列。 */}
         <div className="relative z-10 -mt-1.5">
           <div className="relative aspect-[342/147]">
-            <div className={`absolute inset-x-0 top-0 bottom-[-26px] rounded-[14px] overflow-hidden ${EMPTY_TILE}`} />
+            <div className={`absolute inset-x-0 top-0 bottom-[-50px] rounded-[14px] overflow-hidden ${EMPTY_TILE}`} />
           </div>
         </div>
       </div>
@@ -536,7 +539,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               onClick={() => goNav(n.id)}
               className="flex-1 bg-transparent border-none flex flex-col items-center py-1.5"
             >
-              <span className={`text-[9px] tracking-[0.18em] ${on ? 'font-black text-white' : 'font-bold text-white/35'}`}>
+              <span className={`text-[12px] tracking-[0.16em] ${on ? 'font-black text-white' : 'font-bold text-white/35'}`}>
                 {n.label}
               </span>
             </button>

@@ -360,6 +360,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
   }, [patternType]);
 
+  // 選中「自訂文字」時，自動把下方的輸入框捲進視野，並在底下留一點空隙
+  useEffect(() => {
+    if (activeTab !== 'shape' || holeType !== 'text') return;
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const id = requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [activeTab, holeType]);
+
   const [historyState, setHistoryState] = useState<{
     history: any[][];
     index: number;
@@ -1612,7 +1623,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         )}
         
         <div ref={scrollContainerRef} className={`flex-1 p-5 ${colorPickerTarget ? 'pb-5' : 'pb-20'} custom-scrollbar ${
-          activeTab === 'mask' && !colorPickerTarget && patternType !== 'none'
+          (activeTab === 'mask' && !colorPickerTarget && patternType !== 'none') ||
+          (activeTab === 'shape' && !colorPickerTarget && holeType === 'text')
             ? 'overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]' 
             : 'overflow-hidden'
         }`}>
@@ -1704,6 +1716,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       placeholder="輸入文字..." 
                       className="w-full p-2.5 bg-[#111] border border-transparent rounded-[8px] text-center text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#333]" 
                     />
+                    {/* 捲到底時輸入框下面還留一點空隙，不會貼著邊 */}
+                    <div className="h-6" />
                   </div>
                 )}
               </div>}

@@ -2101,7 +2101,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   
   // Optimize re-renders by caching the last processed pixels state with zero-cost primitive checks
   /** b.lut0（只有調節、沒有濾鏡的那一份）上次是照什麼算出來的 */
-  const lut0StateRef = useRef<any>({ w: 0, h: 0, src: '' });
+  /* lut0（只有調節、沒有濾鏡的那一份）跟選哪顆濾鏡無關，所以只要調節沒動就能一直沿用。
+     但畫面會在「低解析度代理」與「完整預覽」兩種尺寸之間交替，只記一份的話
+     每次換尺寸就得重算一次 —— 兩種尺寸各記一份，換來換去都不用再算。 */
+  const lut0StateRef = useRef<Record<number, any>>({});
   const lastProcessedParamsRef = useRef<{
       brightness: number;
       exposure: number;
@@ -2173,8 +2176,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     toneStr: string;
   }>>({});
 
+  /* 快取的鍵要帶上解析度。畫面會在「低解析度代理」與「完整預覽」兩種尺寸之間
+     交替（剛換濾鏡先出代理那張、下一幀再補完整的），兩者共用同一個鍵的話
+     會一直互相覆蓋 —— 結果就是每點一次濾鏡都得整份重算，
+     連剛剛才看過的那一顆也一樣。實測是 100% 沒命中。 */
+  const cacheKeyOf = (lutId: string, w: number) => `${lutId}@${w}`;
   const getCachedFilterPixels = useCallback((lutId: string, p: EditorParams, w: number, h: number) => {
-    const cached = filterPixelCacheRef.current[lutId];
+    const cached = filterPixelCacheRef.current[cacheKeyOf(lutId, w)];
     if (!cached) return null;
     // 批量編輯時兩張照片的尺寸常常一模一樣，只比尺寸會拿到「另一張的像素」——
     // 一定要連「這份是哪一張的」也對得上才敢用。
@@ -2194,8 +2202,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     return cached;
   }, []);
 
+  /* 一份 lut0 + lut100 在 1350×1800 就要 19 MB，手機上留太多份會直接把記憶體吃光
+     （進而觸發回收、變得更卡）。只留最近用到的幾份，夠涵蓋「兩顆濾鏡來回比較」
+     這個最常見的情境。 */
+  const FILTER_CACHE_KEEP = 6;
+  const cacheOrderRef = useRef<string[]>([]);
   const cacheFilterPixels = useCallback((lutId: string, p: EditorParams, w: number, h: number, lut0: Uint8ClampedArray, lut100: Uint8ClampedArray | null) => {
-    filterPixelCacheRef.current[lutId] = {
+    const key = cacheKeyOf(lutId, w);
+    const order = cacheOrderRef.current;
+    const at = order.indexOf(key);
+    if (at >= 0) order.splice(at, 1);
+    order.push(key);
+    while (order.length > FILTER_CACHE_KEEP) {
+      const drop = order.shift()!;
+      delete filterPixelCacheRef.current[drop];
+    }
+    filterPixelCacheRef.current[key] = {
       src: buffersSrcRef.current,
       lut0: new Uint8ClampedArray(lut0),
       lut100: lut100 ? new Uint8ClampedArray(lut100) : null,
@@ -2412,7 +2434,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     const warm = warmPixelsRef.current.get(src);
     if (!warm || warm.w !== w || warm.h !== h) return;
     const p = warm.p;
-    filterPixelCacheRef.current[warm.lutId] = {
+    filterPixelCacheRef.current[cacheKeyOf(warm.lutId, warm.w)] = {
       src,
       lut0: warm.lut0,
       lut100: warm.lut100,
@@ -4337,6 +4359,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
         if (shouldReprocessPixels) {
             const cached = getCachedFilterPixels(lut.id, pRender, b.w, b.h);
             if (cached && (activeLut ? cached.lut100 !== null : true)) {
+                // 命中的也算「最近用過」，不要被當成最舊的踢掉
+                const hitKey = cacheKeyOf(lut.id, b.w);
+                const ord = cacheOrderRef.current;
+                const hi = ord.indexOf(hitKey);
+                if (hi >= 0) { ord.splice(hi, 1); ord.push(hitKey); }
                 b.lut0!.set(cached.lut0);
                 if (activeLut && b.lut100 && cached.lut100) {
                     b.lut100.set(cached.lut100);
@@ -4366,8 +4393,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                 /* b.lut0＝「只有調節、完全沒有濾鏡」的那一份，跟選哪一顆濾鏡無關。
                    只換濾鏡時整份沿用 —— 原本每點一次濾鏡都連它一起重算，
                    等於白跑一趟全解析度的像素運算（等待時間有一半在這裡）。 */
-                const l0 = lut0StateRef.current;
+                const l0 = lut0StateRef.current[b.w] || {};
                 const canReuseLut0 =
+                    l0.buf === b.lut0 &&
                     l0.w === b.w && l0.h === b.h && l0.src === buffersSrcRef.current &&
                     l0.brightness === pRender.brightness && l0.exposure === pRender.exposure &&
                     l0.contrast === pRender.contrast && l0.highlights === pRender.highlights &&
@@ -4378,7 +4406,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                     l0.detail === b.sharpenDetail;
                 if (!canReuseLut0) {
                     processPixels(b.source, b.lut0!, b.w, b.h, pRender, null, 0, baseCorrectionLutRef.current, b.sharpenDetail, false, getCurveLuts(pRender.curves));
-                    lut0StateRef.current = {
+                    lut0StateRef.current[b.w] = {
+                        buf: b.lut0,
                         w: b.w, h: b.h, src: buffersSrcRef.current,
                         brightness: pRender.brightness, exposure: pRender.exposure, contrast: pRender.contrast,
                         highlights: pRender.highlights, shadows: pRender.shadows, temp: pRender.temp,
@@ -4562,7 +4591,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     setFinalImage(null);
     setShowOriginal(false);
     lastRenderedShowOriginalRef.current = false;
-    filterPixelCacheRef.current = {};
+    filterPixelCacheRef.current = {}; cacheOrderRef.current = [];
     extremeBuffersRef.current = {
       activeToolId: '',
       base: null,
@@ -4768,11 +4797,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       // 這件事一定要在這裡做，不能只在載入的 effect 裡做 —— 圖片是非同步解碼的，
       // 中間可能已經用舊緩衝區畫過一輪，把舊照片的像素寫回那些快取裡。
       if (initial) {
-        filterPixelCacheRef.current = {};
+        filterPixelCacheRef.current = {}; cacheOrderRef.current = [];
         lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, curvesRef: null, hslRef: null, selectedLutIdx: -1 };
         extremeBuffersRef.current = { activeToolId: '', base: null, min: null, max: null };
         fastPreviewCacheRef.current.active = false;
-        lut0StateRef.current = { w: 0, h: 0, src: '' };
+        lut0StateRef.current = {};
         lut0CanvasRef.current = null;
         lut100CanvasRef.current = null;
       }
@@ -4823,11 +4852,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
         lastRenderTimeRef.current = 0;
       } else {
         // 幾何改變後所有快取都對不上舊尺寸，全部作廢再重畫一次
-        filterPixelCacheRef.current = {};
+        filterPixelCacheRef.current = {}; cacheOrderRef.current = [];
         lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, curvesRef: null, hslRef: null };
         extremeBuffersRef.current = { activeToolId: '', base: null, min: null, max: null };
         fastPreviewCacheRef.current.active = false;
-        lut0StateRef.current = { w: 0, h: 0, src: '' };
+        lut0StateRef.current = {};
         lut0CanvasRef.current = null;
         lut100CanvasRef.current = null;
         pixelBufferCanvasRef.current = null;
