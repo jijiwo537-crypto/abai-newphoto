@@ -177,9 +177,10 @@ float skinMask(vec3 rgb) {
     return mCb * mCr * mY;
 }
 
-/** 人臉框內是 1、往外柔和收掉。沒偵測到人臉時整張都給 1（只靠膚色判斷） */
+/** 人臉框內是 1、往外柔和收掉。沒偵測到人臉就整張都是 0 ——
+    磨皮只對臉有效果，找不到臉寧可完全不做，也不要把背景磨掉。 */
 float faceMask(vec2 uv) {
-    if (u_face.z <= 0.0) return 1.0;
+    if (u_face.z <= 0.0) return 0.0;
     vec2 c = u_face.xy + u_face.zw * 0.5;
     // 框稍微放大一點，下巴與脖子的交界才不會有硬邊
     vec2 r = u_face.zw * 0.72;
@@ -204,11 +205,14 @@ void main() {
         vec3 low = texture(u_low, tc).rgb;
         vec3 hi = base - low;
         float amp = abs(dot(hi, vec3(0.299, 0.587, 0.114)));
-        /* 0.05～0.18 這一段是「毛孔、細紋、痘痘」的振幅範圍，會被壓掉；
-           再大就是眼睛、睫毛、髮絲、輪廓，完整保留。 */
-        float isEdge = smoothstep(0.05, 0.18, amp);
+        /* 0.10 以下整段都算「毛孔、細紋、痘痘」，全部壓掉；
+           0.10～0.30 之間漸漸保留；再大就是眼睛、睫毛、髮絲、輪廓，完整保留。
+           （範圍比一開始寬一倍，磨皮力道才夠得上專業美顏相機） */
+        float isEdge = smoothstep(0.10, 0.30, amp);
         float m = skinMask(base) * faceMask(tc) * u_smooth;
-        float keep = 1.0 - m * (1.0 - isEdge);
+        /* 保留一點點原本的皮膚質感（下限 12%）。全部抹平的話會變成
+           塑膠臉 —— 專業美顏相機也是留一點細節，看起來才像真的皮膚。 */
+        float keep = max(0.12, 1.0 - m * (1.0 - isEdge));
         base = low + hi * keep;
     }
 
@@ -516,8 +520,8 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       }
       let lowTex: WebGLTexture = scene!.tex;
       if (smooth > 0) {
-        // 磨皮的低頻層：半徑要小，大概就是「毛孔看不見、五官還在」的程度
-        lowTex = chain(1.4, 2, -1, sw, sh, sPing!, sPong!, sPong!);
+        // 磨皮的低頻層。半徑加大一倍，連稍微大一點的斑塊也能抹平
+        lowTex = chain(2.8, 3, -1, sw, sh, sPing!, sPong!, sPong!);
       }
 
       // ---- 最後一趟：清晰 + 模糊 合成到畫面 ----
