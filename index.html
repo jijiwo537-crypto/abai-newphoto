@@ -7,26 +7,45 @@
     <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
     <link rel="icon" type="image/png" sizes="64x64" href="./favicon-64.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png" />
+    <!-- 字型要先載：它們的網址寫在打包後的 CSS 裡，瀏覽器要先下載並解析那支
+         CSS 才會發現它們，等於多繞一趟。先 preload 就會跟 CSS 同時開始下載，
+         開場那一下不會先用系統字型畫一次再換過來。 -->
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/Inter.woff2" crossorigin>
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/PlayfairDisplay.woff2" crossorigin>
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/MaterialSymbolsOutlined.woff2" crossorigin>
     <script>
-        // Smoothly handle critical font loading to prevent layout shifts and FOUT
-        if (document.fonts) {
-            document.documentElement.classList.add('fonts-loading');
-            Promise.all([
-                document.fonts.load('12px "Material Symbols Outlined"'),
-                document.fonts.load('12px "Inter"'),
-                document.fonts.load('12px "Playfair Display"')
-            ]).then(function() {
-                document.documentElement.classList.remove('fonts-loading');
-                document.documentElement.classList.add('fonts-loaded');
-            }).catch(function() {
-                document.documentElement.classList.remove('fonts-loading');
-                document.documentElement.classList.add('fonts-loaded');
-            });
-            setTimeout(function() {
-                document.documentElement.classList.remove('fonts-loading');
-                document.documentElement.classList.add('fonts-loaded');
-            }, 1000);
-        }
+        /* 字型還沒好之前先把畫面壓著，避免「先用系統字型畫一次、字型到了再跳一次」。
+
+           這一段以前是等 document.fonts.load('12px "..."')。改成自己放字型之後
+           那樣寫會失效 —— 這支腳本比 CSS 早執行，那時候 @font-face 還不存在，
+           document.fonts 裡查無此字型會「立刻成功」，等於完全沒擋到。
+           改成等 document.fonts.ready（所有字型載入動作結束才 resolve），
+           並且真的確認圖示字型可用了才放行。 */
+        (function () {
+            var root = document.documentElement;
+            if (!document.fonts) return;
+            root.classList.add('fonts-loading');
+            var done = false;
+            function reveal() {
+                if (done) return;
+                done = true;
+                root.classList.remove('fonts-loading');
+                root.classList.add('fonts-loaded');
+            }
+            /* 一定要等 document.fonts.ready，不能用 document.fonts.check 輪詢：
+               這支腳本比 CSS 早執行，那時候 @font-face 還不存在，
+               check() 查一個不存在的字型會直接回 true（它認為退回系統字型就算可用），
+               等於完全沒擋到 —— 這正是先前開場會閃一下系統字型的原因。 */
+            function waitReady() {
+                document.fonts.ready.then(function () {
+                    if (document.fonts.check('24px "Material Symbols Outlined"')) reveal();
+                    else setTimeout(waitReady, 60);
+                }).catch(reveal);
+            }
+            waitReady();
+            // 最多壓 1.2 秒，網路再慢也不能一直黑畫面
+            setTimeout(reveal, 1200);
+        })();
     </script>
     <style>
         *, *::before, *::after {
