@@ -56,7 +56,7 @@ const LIQUIFY_PRESETS: {
   id: LqPreset; label: string; mode: LiquifyMode; brush?: number; force?: number;
 }[] = [
   { id: 'slim',    label: '瘦身', mode: 'push',    brush: 100, force: 10 },
-  { id: 'chest',   label: '豐胸', mode: 'bloat',   brush: 80,  force: 40 },
+  { id: 'chest',   label: '豐胸', mode: 'bloat',   brush: 100, force: 40 },
   { id: 'eye',     label: '大眼', mode: 'bloat',   brush: 40,  force: 20 },
   { id: 'pucker',  label: '收縮', mode: 'pucker',  brush: 100, force: 40 },
   { id: 'restore', label: '還原', mode: 'restore', brush: 100, force: 40 },
@@ -912,7 +912,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
               onClick={() => setSaveState('idle')}
               className="flex-1 h-12 rounded-full border border-white/20 bg-white/5 text-white font-bold tracking-widest uppercase hover:bg-white/10 active:scale-95 transition-all text-xs"
             >
-              繼續美顏
+              繼續編輯
             </button>
             <button
               onClick={() => onImportNew()}
@@ -1001,9 +1001,10 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             style={(() => {
               const R = ringScreenR();
               const st = stageRef.current?.getBoundingClientRect();
-              const cv = viewRef.current?.getBoundingClientRect();
               let cx: number, cy: number;
-              if (sizingBrush && cv && st) { cx = cv.left + cv.width / 2 - st.left; cy = cv.top + cv.height / 2 - st.top; }
+              // 放大／平移之後圖片中心可能已經跑到畫面外，所以對齊的是
+              // 「看得到的預覽區」正中央，不管怎麼縮放都一定看得到。
+              if (sizingBrush && st) { cx = st.width / 2; cy = st.height / 2; }
               else if (ringPos && st) { cx = ringPos.x - st.left; cy = ringPos.y - st.top; }
               else { cx = -9999; cy = -9999; }
               return { left: cx - R, top: cy - R, width: R * 2, height: R * 2 };
@@ -1077,7 +1078,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                   className={`w-7 h-7 rounded-full shrink-0 transition-all active:scale-90 ${
                     makeupColor.toLowerCase() === c.hex.toLowerCase()
                       ? 'ring-2 ring-white'
-                      : 'ring-1 ring-white/25'
+                      : ''
                   }`}
                   style={{ backgroundColor: c.hex }}
                 />
