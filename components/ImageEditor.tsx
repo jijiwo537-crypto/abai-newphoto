@@ -2956,13 +2956,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
           if (lut.url && !data) return false;    // 濾鏡檔還沒下載完，等下一輪
           const key = thumbKey(forSrc, lut.id);
           const itemSig = baseSig + '|' + lut.id;
+          /* 縮圖要照這顆濾鏡「按下去之後真正套用的強度」畫。
+             以前一律用 100%，但有 13 顆的預設強度是 50／70／80，
+             縮圖看起來就比實際套上去的濃 —— 這就是「縮圖跟濾鏡對不上」。 */
+          const amount = lut.url ? (LUT_DEFAULT_AMOUNT[lut.id] ?? 100) : 100;
           // 背景預載每載好一顆就會再跑一輪，這裡跳過已經是最新的那些格子，
           // 才不會為了補一格把整排重算一次
           if (filterThumbStore.current[key]?.sig === itemSig) return false;
           const dst = new Uint8ClampedArray(thumbSrc.length);
           try {
             processPixels(thumbSrc, dst, W, H,
-              { ...flat, lutAmount: 100 }, data ? data.data : null, data ? data.size : 0,
+              { ...flat, lutAmount: amount }, data ? data.data : null, data ? data.size : 0,
               baseLut, null, false, curveLuts);
           } catch { return false; }
           cctx.putImageData(new ImageData(dst, W, H), 0, 0);

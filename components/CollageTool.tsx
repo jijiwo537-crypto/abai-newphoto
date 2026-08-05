@@ -341,6 +341,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const textInputWrapRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const maskFileInputRef = useRef<HTMLInputElement>(null);
   const dummyCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
@@ -366,7 +367,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const el = scrollContainerRef.current;
     if (!el) return;
     const id = requestAnimationFrame(() => {
-      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+      const target = textInputWrapRef.current;
+      if (!target) return;
+      // 只捲到「輸入框完整露出」為止，不是一路捲到底 ——
+      // 捲過頭的話上面那排形狀會整個跑掉，手指要再撥回來
+      const need = target.offsetTop + target.offsetHeight - el.clientHeight;
+      if (need > el.scrollTop) el.scrollTo({ top: need, behavior: 'smooth' });
     });
     return () => cancelAnimationFrame(id);
   }, [activeTab, holeType]);
@@ -1624,7 +1630,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         
         <div ref={scrollContainerRef} className={`flex-1 p-5 ${colorPickerTarget ? 'pb-5' : 'pb-20'} custom-scrollbar ${
           (activeTab === 'mask' && !colorPickerTarget && patternType !== 'none') ||
-          (activeTab === 'shape' && !colorPickerTarget && holeType === 'text')
+          (activeTab === 'shape' && !colorPickerTarget)
             ? 'overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]' 
             : 'overflow-hidden'
         }`}>
@@ -1707,7 +1713,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   ))}
                 </div>
                 {holeType === 'text' && (
-                  <div className="pb-1">
+                  <div ref={textInputWrapRef} className="pb-1">
                     <input 
                       type="text" 
                       maxLength={15} 
