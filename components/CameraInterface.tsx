@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Icon } from './Icon';
 import { CameraSettings } from '../types';
 import { GalleryOverlay } from './GalleryOverlay';
-import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
+import { Viewfinder, FX_ZERO, type ViewfinderFx, type FaceBox } from './Viewfinder';
 import { ImageEditor } from './ImageEditor';
 import { processImageFile } from '../utils/imageLoader';
 
@@ -26,6 +26,7 @@ type ActiveControl = 'none' | 'kelvin' | 'exposure' | 'filters' | 'effects';
 /* 跟編輯頁同款的兩個特效（編輯頁的「朦朧」就是這條模糊）。
    拍照時只要開關，不用調整 —— 強度固定用調好的這一組。 */
 const FX_ITEMS: { id: keyof ViewfinderFx; label: string; on: number }[] = [
+  { id: 'smooth', label: '磨皮', on: 70 },
   { id: 'soft', label: '柔光', on: 70 },
   { id: 'blur', label: '朦朧', on: 70 },
 ];
@@ -77,7 +78,63 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [activeControl, setActiveControl] = useState<ActiveControl>('none');
   const [selectedLutIdx, setSelectedLutIdx] = useState(0);
   const [fx, setFx] = useState<ViewfinderFx>(FX_ZERO);
-  const fxOn = fx.soft > 0 || fx.blur > 0;
+
+  /* ---------- 人臉偵測 ----------
+     磨皮本身靠膚色判斷就能運作（任何裝置、零下載）。
+     偵測得到人臉時再把範圍收斂到臉上，畫面裡跟膚色接近的木頭、沙灘、
+     米色牆就不會被磨到。
+     用瀏覽器內建的 FaceDetector（不需要下載模型）；沒有這個 API 的
+     瀏覽器就只靠膚色，功能一樣可用、只是範圍寬一點。
+     偵測跑在低解析度、每 200ms 一次，對畫面更新完全沒有影響。 */
+  const [face, setFace] = useState<FaceBox | null>(null);
+  const faceSmoothRef = useRef<FaceBox | null>(null);
+  useEffect(() => {
+    const FD = (window as any).FaceDetector;
+    if (!FD || !videoEl || !fx.smooth) { setFace(null); faceSmoothRef.current = null; return; }
+    let alive = true, busy = false;
+    let detector: any = null;
+    try { detector = new FD({ maxDetectedFaces: 1, fastMode: true }); } catch { return; }
+    const small = document.createElement('canvas');
+    small.width = 192; small.height = 192;
+    const sctx = small.getContext('2d');
+    let missed = 0;
+    const id = window.setInterval(async () => {
+      if (!alive || busy || !sctx || !videoEl.videoWidth) return;
+      busy = true;
+      try {
+        const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+        const k = 192 / Math.max(vw, vh);
+        small.width = Math.max(2, Math.round(vw * k));
+        small.height = Math.max(2, Math.round(vh * k));
+        sctx.drawImage(videoEl, 0, 0, small.width, small.height);
+        const found = await detector.detect(small);
+        if (!alive) return;
+        if (found && found.length) {
+          const b = found[0].boundingBox;
+          const raw = { x: b.x / small.width, y: b.y / small.height,
+                        w: b.width / small.width, h: b.height / small.height };
+          /* 偵測結果每一幀都會抖，直接用的話磨皮範圍會跳。
+             用指數平滑跟過去 —— 人臉移動是連續的，這樣看起來才穩。 */
+          const p0 = faceSmoothRef.current;
+          const a = p0 ? 0.35 : 1;
+          const next = p0 ? {
+            x: p0.x + (raw.x - p0.x) * a, y: p0.y + (raw.y - p0.y) * a,
+            w: p0.w + (raw.w - p0.w) * a, h: p0.h + (raw.h - p0.h) * a,
+          } : raw;
+          faceSmoothRef.current = next;
+          setFace(next);
+          missed = 0;
+        } else if (++missed > 5) {
+          // 連續幾次都沒偵測到才收掉，轉個頭不會一直閃
+          faceSmoothRef.current = null;
+          setFace(null);
+        }
+      } catch { /* 偵測失敗就當作沒偵測到 */ }
+      finally { busy = false; }
+    }, 200);
+    return () => { alive = false; window.clearInterval(id); };
+  }, [videoEl, fx.smooth]);
+  const fxOn = fx.soft > 0 || fx.blur > 0 || fx.smooth > 0;
   const [flashOn, setFlashOn] = useState(false);
   
   // Default Aspect Ratio changed to 3:2
@@ -87,6 +144,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [countdown, setCountdown] = useState<number | null>(null);
   const [showSettingsMenu, setShowSettingsMenu] = useState(false);
   const [showGrid, setShowGrid] = useState(false);
+  const [showLevel, setShowLevel] = useState(false);
+  const [showHisto, setShowHisto] = useState(false);
+  /** 手機的左右傾斜角（度）。沒有感應器或沒授權就是 null */
+  const [roll, setRoll] = useState<number | null>(null);
   
   const [focalLengthMm, setFocalLengthMm] = useState<string | null>(null);
   const focalLengthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -316,6 +377,55 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     }
   }, [canWide, settings.focalLength]);
 
+  /* 水平儀：用裝置方向感應器的 gamma（左右傾斜）。
+     iOS 13 以上要使用者授權才給，所以是打開的那一刻才要求。 */
+  useEffect(() => {
+    if (!showLevel) { setRoll(null); return; }
+    let alive = true;
+    const onOri = (e: DeviceOrientationEvent) => {
+      if (!alive || e.gamma == null) return;
+      setRoll(prev => {
+        const next = e.gamma as number;
+        // 感應器很跳，平滑一下才不會抖
+        return prev == null ? next : prev + (next - prev) * 0.25;
+      });
+    };
+    const start = () => window.addEventListener('deviceorientation', onOri);
+    const anyDO = (window as any).DeviceOrientationEvent;
+    if (anyDO && typeof anyDO.requestPermission === 'function') {
+      anyDO.requestPermission().then((r: string) => { if (alive && r === 'granted') start(); }).catch(() => {});
+    } else {
+      start();
+    }
+    return () => { alive = false; window.removeEventListener('deviceorientation', onOri); };
+  }, [showLevel]);
+
+  /* 直方圖：從觀景窗畫布抽樣統計亮度分布。
+     每 250ms 抓一次 96×96 的縮圖來算，對畫面完全沒有負擔。 */
+  const [histo, setHisto] = useState<number[] | null>(null);
+  useEffect(() => {
+    if (!showHisto) { setHisto(null); return; }
+    const small = document.createElement('canvas');
+    small.width = 96; small.height = 96;
+    const sctx = small.getContext('2d', { willReadFrequently: true });
+    const id = window.setInterval(() => {
+      const cv = viewfinderRef.current?.getCanvas();
+      if (!cv || !sctx || !cv.width) return;
+      try {
+        sctx.drawImage(cv, 0, 0, 96, 96);
+        const d = sctx.getImageData(0, 0, 96, 96).data;
+        const bins = new Array(48).fill(0);
+        for (let i = 0; i < d.length; i += 4) {
+          const y = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) / 255;
+          bins[Math.min(47, Math.max(0, Math.round(y * 47)))]++;
+        }
+        const max = Math.max(1, ...bins);
+        setHisto(bins.map(v => v / max));
+      } catch { /* 讀不到就跳過這一輪 */ }
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [showHisto]);
+
   const toggleCamera = () => {
     triggerHaptic();
     setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
@@ -334,6 +444,35 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     if (focalLengthTimerRef.current) clearTimeout(focalLengthTimerRef.current);
     focalLengthTimerRef.current = setTimeout(() => setFocalLengthMm(null), 1000);
   };
+
+  /* 對焦／曝光鎖定：長按畫面就把對焦與測光固定住（像 iOS 的 AE/AF LOCK），
+     再點一下解除。裝置沒開放 manual 模式時不顯示、也不會假裝鎖住。 */
+  const [aeafLock, setAeafLock] = useState(false);
+  const lockTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canLock = (() => {
+    const c = capabilities as any;
+    return !!c && ((Array.isArray(c.focusMode) && c.focusMode.includes('manual')) ||
+                   (Array.isArray(c.exposureMode) && c.exposureMode.includes('manual')));
+  })();
+
+  const applyLock = useCallback(async (on: boolean) => {
+    if (!videoTrack) return;
+    const c = capabilities as any;
+    const adv: any = {};
+    if (Array.isArray(c?.focusMode)) {
+      if (on && c.focusMode.includes('manual')) adv.focusMode = 'manual';
+      else if (!on && c.focusMode.includes('continuous')) adv.focusMode = 'continuous';
+    }
+    if (Array.isArray(c?.exposureMode)) {
+      if (on && c.exposureMode.includes('manual')) adv.exposureMode = 'manual';
+      else if (!on && c.exposureMode.includes('continuous')) adv.exposureMode = 'continuous';
+    }
+    if (!Object.keys(adv).length) return;
+    try { await videoTrack.applyConstraints({ advanced: [adv] }); setAeafLock(on); } catch { /* 不支援就算了 */ }
+  }, [videoTrack, capabilities]);
+
+  /* 換鏡頭之後鎖定狀態不成立了，要清掉 */
+  useEffect(() => { setAeafLock(false); }, [facingMode]);
 
   const handleFocus = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
     if (showSettingsMenu) {
@@ -733,9 +872,27 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               kelvin={settings.kelvin}
               isUserFacing={visualFacingMode === 'user'}
               fx={fx}
+              face={face}
               digitalZoom={digitalZoom}
               onClick={handleFocus}
+              onPointerDown={() => {
+                if (!canLock) return;
+                if (lockTimerRef.current) clearTimeout(lockTimerRef.current);
+                // 按住 550ms 就鎖定；已經鎖住的話長按是解除
+                lockTimerRef.current = setTimeout(() => { triggerHaptic(); applyLock(!aeafLock); }, 550);
+              }}
+              onPointerUp={() => { if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; } }}
+              onPointerCancel={() => { if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; } }}
             />
+
+            {/* 鎖定中的提示，位置與樣式照 iOS 相機 */}
+            {aeafLock && (
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-40 pointer-events-none">
+                <span className="px-2 py-[3px] rounded-[4px] bg-yellow-300/90 text-black text-[10px] font-black tracking-[0.14em]">
+                  AE/AF 鎖定
+                </span>
+              </div>
+            )}
 
             {showGrid && (
                 <div className="absolute inset-0 z-10 pointer-events-none w-full h-full">
@@ -746,6 +903,34 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 </div>
             )}
             
+            {/* 水平儀：中間一條會跟著手機傾斜轉的線，水平時變黃並鎖成一直線 */}
+            {showLevel && roll !== null && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+                {(() => {
+                  const level = Math.abs(roll) < 1.2;
+                  return (
+                    <div className="relative w-[120px] h-[120px] flex items-center justify-center">
+                      <div className="absolute w-[52px] h-[1.5px] bg-white/45" style={{ left: 0 }} />
+                      <div className="absolute w-[52px] h-[1.5px] bg-white/45" style={{ right: 0 }} />
+                      <div
+                        className={`absolute h-[1.5px] transition-colors duration-150 ${level ? 'bg-yellow-300 w-[120px]' : 'bg-white/85 w-[56px]'}`}
+                        style={{ transform: level ? 'none' : `rotate(${-roll}deg)` }}
+                      />
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* 直方圖：左下角，看有沒有過曝或死黑 */}
+            {showHisto && histo && (
+              <div className="absolute left-2 bottom-12 z-20 pointer-events-none w-[92px] h-[38px] rounded-md bg-black/35 backdrop-blur-md border border-white/10 p-1 flex items-end gap-[1px]">
+                {histo.map((v, i) => (
+                  <div key={i} className="flex-1 bg-white/80 rounded-[1px]" style={{ height: `${Math.max(2, v * 100)}%` }} />
+                ))}
+              </div>
+            )}
+
             {focalLengthMm && (
                 <div 
                     key={focalLengthMm} 
@@ -787,6 +972,30 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                         </div>
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2 text-xs font-bold text-white/90">
+                                <Icon name="straighten" className="text-lg text-white/70" />
+                                <span>水平儀</span>
+                            </div>
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); setShowLevel(!showLevel); triggerHaptic(); }}
+                                className={`w-11 h-6 rounded-full p-1 transition-all duration-300 backdrop-blur-md border border-white/10 ${showLevel ? 'bg-white/40' : 'bg-white/10'}`}
+                            >
+                                <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-300 ${showLevel ? 'translate-x-5' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-xs font-bold text-white/90">
+                                <Icon name="bar_chart" className="text-lg text-white/70" />
+                                <span>直方圖</span>
+                            </div>
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); setShowHisto(!showHisto); triggerHaptic(); }}
+                                className={`w-11 h-6 rounded-full p-1 transition-all duration-300 backdrop-blur-md border border-white/10 ${showHisto ? 'bg-white/40' : 'bg-white/10'}`}
+                            >
+                                <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-300 ${showHisto ? 'translate-x-5' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-xs font-bold text-white/90">
                                 <Icon name="timer" className="text-lg text-white/70" />
                                 <span>定時</span>
                             </div>
@@ -810,24 +1019,39 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     className="absolute z-40 pointer-events-none"
                     style={{ left: focusPoint.x, top: focusPoint.y, transform: 'translate(-50%, -50%)' }}
                 >
-                    <div className="w-14 h-14 animate-[focusSnap_0.3s_cubic-bezier(0.175,0.885,0.32,1.275)_forwards]">
-                         <svg width="100%" height="100%" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_1px_2px_rgba(0,0,0,0.5)]">
-                             <path d="M4 12V4H12" stroke="white" strokeWidth="1" strokeLinecap="square"/>
-                             <path d="M28 4H36V12" stroke="white" strokeWidth="1" strokeLinecap="square"/>
-                             <path d="M4 28V36H12" stroke="white" strokeWidth="1" strokeLinecap="square"/>
-                             <path d="M28 36H36V28" stroke="white" strokeWidth="1" strokeLinecap="square"/>
-                         </svg>
-                    </div>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="w-1 h-1 bg-white rounded-full animate-[focusFlash_0.4s_ease-out_forwards_0.1s] opacity-0"></div>
+                    {/* 對焦框：iOS 相機那種「先大一點縮進去、四角先亮再收斂、
+                        最後輕輕呼吸一下」的節奏。原本是直角折線硬切進來，
+                        感覺比較生硬。 */}
+                    <div className="w-[68px] h-[68px] animate-[focusIn_0.42s_cubic-bezier(0.16,1,0.3,1)_forwards]">
+                        <svg width="100%" height="100%" viewBox="0 0 68 68" fill="none" className="drop-shadow-[0_1px_3px_rgba(0,0,0,0.6)]">
+                            <rect x="9" y="9" width="50" height="50" rx="5"
+                                  stroke="white" strokeOpacity="0.95" strokeWidth="1.2" />
+                            {/* 四邊中點的小刻度，對焦鎖上時往內收 */}
+                            <g stroke="white" strokeOpacity="0.95" strokeWidth="1.2" strokeLinecap="round"
+                               className="animate-[focusTicks_0.42s_cubic-bezier(0.16,1,0.3,1)_forwards]"
+                               style={{ transformOrigin: '34px 34px' }}>
+                                <line x1="34" y1="9" x2="34" y2="15" />
+                                <line x1="34" y1="53" x2="34" y2="59" />
+                                <line x1="9" y1="34" x2="15" y2="34" />
+                                <line x1="53" y1="34" x2="59" y2="34" />
+                            </g>
+                        </svg>
                     </div>
                     <style>{`
-                        @keyframes focusSnap { 0% { transform: scale(1.3); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
-                        @keyframes focusFlash { 0% { opacity: 0; transform: scale(0.5); } 50% { opacity: 1; transform: scale(1.2); } 100% { opacity: 0; transform: scale(1); } }
+                        @keyframes focusIn {
+                            0%   { transform: scale(1.35); opacity: 0; }
+                            55%  { transform: scale(0.97); opacity: 1; }
+                            100% { transform: scale(1);    opacity: 1; }
+                        }
+                        @keyframes focusTicks {
+                            0%   { transform: scale(1.5); opacity: 0; }
+                            60%  { transform: scale(1);   opacity: 1; }
+                            100% { transform: scale(0.86); opacity: 0.9; }
+                        }
                     `}</style>
                 </div>
             )}
-            
+
             <video ref={setVideoEl} autoPlay playsInline muted className="hidden" />
             <canvas ref={canvasRef} className="hidden" />
 
