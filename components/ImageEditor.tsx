@@ -520,6 +520,22 @@ const masterLUT_R = new Float32Array(32768);
 const masterLUT_G = new Float32Array(32768);
 const masterLUT_B = new Float32Array(32768);
 
+/**
+ * 每一顆濾鏡點下去時的預設強度。
+ *
+ * 這件事本來是靠比對檔名決定的（url.includes('IMG_9026') 之類）。
+ * 濾鏡檔改名成 f1…f23 之後那些比對就通通對不上，所有濾鏡都變成 100 ——
+ * 看起來就是「每一顆都比以前濃」。改成直接用濾鏡 id 對照，
+ * 以後換檔名、換圖床都不會再影響到強度。
+ *
+ * 沒列在這裡的就是 100。
+ */
+const LUT_DEFAULT_AMOUNT: Record<string, number> = {
+  f12: 50, f13: 50, f14: 50, f20: 50, f22: 50,
+  f3: 70, f4: 70, f6: 70, f7: 70, f15: 70, f19: 70,
+  f17: 80, f23: 80,
+};
+
 export const processPixels = (
   sourceData: Uint8ClampedArray,
   destData: Uint8ClampedArray,
@@ -3032,16 +3048,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     }
     const lutId = lutList[idx].id;
 
-    let defaultAmount = 100;
-    const url = lutId === 'none' ? '' : lutList[idx].url;
-    
-    if (url.includes('IMG_3371') || url.includes('Untitled_grid') || url.includes('IMG_3328') || 
-        url.includes('IMG_3373') || url.includes('IMG_3374') || 
-        url.includes('IMG_9026') || url.includes('IMG_0214') || lutId === 'f4') defaultAmount = 70;
-    else if (url.includes('IMG_0285') || url.includes('IMG_0286') || url.includes('IMG_8998') || url.includes('IMG_7932')) defaultAmount = 50;
-    else if (url.includes('sample_colorscale') || url.includes('IMG_7936')) defaultAmount = 80;
-    else if (url.includes('IMG_30222')) defaultAmount = 50;
-    else if (url.includes('IMG_7938') || url.includes('IMG_7940') || url.includes('IMG_7211')) defaultAmount = 100;
+    const defaultAmount = LUT_DEFAULT_AMOUNT[lutId] ?? 100;
 
     let targetSoft = 0;
     let softThresholdVal = paramsRef.current.softThreshold;
