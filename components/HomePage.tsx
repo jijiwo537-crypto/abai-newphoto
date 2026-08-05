@@ -484,7 +484,11 @@ export const HomePage: React.FC<HomePageProps> = ({
       {/* --- 靈感 ---
            接在第一屏下面，往下滑才看得到。 */}
       {/* 捲動區現在頂到畫面最上面，所以這一段自己要留出瀏海／狀態列的高度 */}
-      <div ref={libRef} className="px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+14px)]">
+      {/* 廣告版位下緣到搜尋欄的間隔，對齊搜尋欄到第一排模板的 12px（mb-3）。
+           版位是絕對定位往下多長 50px 的，扣掉這一段自己的 pb-[21px]，
+           上緣留白 20px 時看到的空隙剛好就是 12px。
+           只動這一段的頂端留白，第一屏（含廣告版位）一個像素都不會移動。 */}
+      <div ref={libRef} className="px-6 pb-4 pt-5">
         {/* 搜尋欄 —— 還沒接真的模板資料，先做成純前端的字串過濾 */}
         <div className="flex items-center gap-2 h-11 px-3.5 mb-3 rounded-full bg-white/[0.06] border border-white/10">
           <Icon name="search" className="text-[18px] text-white/40 shrink-0" />
