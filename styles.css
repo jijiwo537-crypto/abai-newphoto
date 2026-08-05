@@ -40,18 +40,25 @@
   font-display: block;
   src: url('/fonts/MaterialSymbolsOutlined.woff2') format('woff2');
 }
-.material-symbols-outlined {
-  font-family: 'Material Symbols Outlined';
-  font-weight: normal;
-  font-style: normal;
-  font-size: 24px;
-  line-height: 1;
-  letter-spacing: normal;
-  text-transform: none;
-  display: inline-block;
-  white-space: nowrap;
-  word-wrap: normal;
-  direction: ltr;
-  -webkit-font-feature-settings: 'liga';
-  -webkit-font-smoothing: antialiased;
+/* 一定要包在 @layer base 裡。
+   直接寫在最外層的話，這條規則會排在 @tailwind utilities 後面，
+   font-size: 24px 就會蓋掉每個圖示自己的 text-[20px]／text-[13px] ——
+   結果是全部圖示都被撐成 24px，看起來就是「圖示變大了」。
+   放進 base 之後，utilities 永遠贏，圖示才會照各自指定的大小顯示。 */
+@layer base {
+  .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
+    font-weight: normal;
+    font-style: normal;
+    font-size: 24px;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    word-wrap: normal;
+    direction: ltr;
+    -webkit-font-feature-settings: 'liga';
+    -webkit-font-smoothing: antialiased;
+  }
 }
