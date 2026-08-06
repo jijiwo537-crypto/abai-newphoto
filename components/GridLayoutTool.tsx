@@ -1510,6 +1510,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   hideToolbar = false,
   hideChrome = false,
   lutRevision = 0,
+  viewZoom = 1,
   touchMode = 'none',
   dragShift = null,
   onSwapTouchStart,
@@ -1673,7 +1674,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      照片就明顯變糊。上限 1400 是為了不讓超大格子把一次重算拖太久。 */
   const fxFullMax = () => {
     const dpr = Math.min(2, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1);
-    return Math.min(1400, Math.max(720, Math.round(Math.max(boxW, boxH) * dpr)));
+    // 預覽被放大時要照放大後的大小算，不然放大就看到糊的
+    const z = Math.min(3, Math.max(1, viewZoom));
+    return Math.min(2200, Math.max(720, Math.round(Math.max(boxW, boxH) * dpr * z)));
   };
   const fxCacheRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
   const fxFastRef = useRef(false);
@@ -1704,7 +1707,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const img = getPreviewImg(image.src);
     const draw = () => {
       if (!img.naturalWidth) return;
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      /* 這張 canvas 是點陣圖，外層用 CSS scale 放大時不會自己重畫，
+         所以要先按照「放大之後真正佔多少像素」把 backing store 開大。
+         上限 3 倍是為了不讓 5 倍時一張圖大到把記憶體吃光。 */
+      const dpr = Math.min(2, window.devicePixelRatio || 1) * Math.min(3, Math.max(1, viewZoom));
       const W = Math.max(1, Math.round((boxW + glowPad * 2) * dpr));
       const H = Math.max(1, Math.round((boxH + glowPad * 2) * dpr));
       if (c.width !== W) c.width = W;
@@ -1822,7 +1828,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     needsShapeCanvas, image.src, image.feather, image.imgRadius,
     image.imgGlow, image.imgGlowColor, image.imgStrokeWidth, image.imgStrokeColor,
     image.scale, boxW, boxH, glowPad,
-    image.fx, lutRevision,
+    image.fx, lutRevision, viewZoom,
   ]);
 
   const handleBodyPointerDown = (e: React.PointerEvent) => {
@@ -5593,22 +5599,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const nothingSelected = () =>
     !selectedFloatingId && selectedIndex === null && !selectedLayoutId;
 
-  /* 一選中東西就把預覽縮放歸零 —— 縮放中操作物件很容易對不準，
-     而且使用者說「選中任意物件時都不能觸發」，歸零最單純也最不會出錯。 */
+  /* 選中東西時只是「不接手手勢」，不再把縮放歸零 ——
+     以前一選中就歸零，所以放大之後點一下畫面（＝選中了某個東西）
+     就整個彈回原大小。現在放大狀態會一直留著，要縮回去就自己捏回去。
+     手勢本身仍然只有「兩指 + 沒選中任何東西」才會啟動。 */
   useEffect(() => {
     if (selectedFloatingId || selectedIndex !== null || selectedLayoutId) {
       viewPinchRef.current = null; viewPanRef.current = null;
-      setViewT(v => (v.k === 1 && v.tx === 0 && v.ty === 0 ? v : { k: 1, tx: 0, ty: 0 }));
     }
   }, [selectedFloatingId, selectedIndex, selectedLayoutId]);
 
   const applyView = useCallback((k: number, tx: number, ty: number) => {
     const el = containerRef.current;
     const w = el ? el.clientWidth : 1, h = el ? el.clientHeight : 1;
-    const kk = Math.max(1, Math.min(5, k));
-    // 限制平移範圍，免得把畫面拖出去找不回來
+    // 可以縮到 0.4 倍（看整體版面用），最大 5 倍
+    const kk = Math.max(0.4, Math.min(5, k));
+    // 限制平移範圍，免得把畫面拖出去找不回來；縮小的時候不需要平移
     const mx = Math.max(0, (kk - 1) * w * 0.5), my = Math.max(0, (kk - 1) * h * 0.5);
-    setViewT(kk <= 1.001
+    // 非常接近 1 才吸附回 1，不然會縮不下去（以前是 <=1.001 就跳回 1）
+    setViewT(Math.abs(kk - 1) < 0.02
       ? { k: 1, tx: 0, ty: 0 }
       : { k: kk, tx: Math.max(-mx, Math.min(mx, tx)), ty: Math.max(-my, Math.min(my, ty)) });
   }, []);
@@ -5619,8 +5628,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     wsGestureRef.current = null;
     if (isLongPressedRef.current || touchDragState.current) return;
 
-    // ① 兩指 ② 沒選中任何東西 ③ 不在排頁面模式 —— 三個都成立才是縮放預覽
-    if (e.touches.length >= 2 && nothingSelected() && !pagesMode) {
+    /* 縮放預覽的條件：兩指、不在排頁面模式，而且下列任一成立
+       ① 什麼都沒選中（原本的規則）
+       ② 手指落在空白處
+       ③ 畫面「已經被縮放過」（倍率不是 1）
+       第三點是為了不讓人卡住：放大之後點一下畫面就會選中某個東西，
+       而放大到滿版時畫面上已經沒有空白處可以點，如果這時候兩指還是去縮放
+       物件，就再也回不到原本的大小了。倍率回到 1 之後規則就跟以前完全一樣，
+       兩指仍然是縮放選中的物件。 */
+    const viewScope = gestureScope(e.target as Element);
+    const zoomed = Math.abs(viewTRef.current.k - 1) > 0.001;
+    if (e.touches.length >= 2 && !pagesMode && (nothingSelected() || viewScope === 'none' || zoomed)) {
       viewPanRef.current = null;
       viewPinchRef.current = {
         d0: Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
@@ -5633,13 +5651,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       return;
     }
     // 已經放大了，單指就是平移（沒放大時單指維持原本的捲頁）
-    if (e.touches.length === 1 && viewTRef.current.k > 1 && nothingSelected() && !pagesMode) {
+    if (e.touches.length === 1 && viewTRef.current.k > 1.02
+        && (nothingSelected() || viewScope === 'none') && !pagesMode) {
+      // 單指平移仍然只在「沒選中東西／點在空白處」時接手，
+      // 不然放大狀態下就沒辦法拖動選中的物件了。
       viewPanRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY,
                              tx0: viewTRef.current.tx, ty0: viewTRef.current.ty };
       return;
     }
 
-    const scope = gestureScope(e.target as Element);
+    const scope = viewScope;
     if (scope === 'none') return;
     const gestureFloatingId = selectedFloatingId;
 
@@ -7097,9 +7118,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   opacity: containerMeasured ? 1 : 0,
                   /* 雙指縮放預覽：只是視覺上的放大，不動任何座標與捲動範圍。
                      倍率 1 的時候完全不加 transform，行為跟以前一模一樣。 */
-                  transform: viewT.k > 1 ? `translate(${viewT.tx}px, ${viewT.ty}px) scale(${viewT.k})` : undefined,
+                  transform: viewT.k !== 1 ? `translate(${viewT.tx}px, ${viewT.ty}px) scale(${viewT.k})` : undefined,
                   transformOrigin: 'center center',
-                  willChange: viewT.k > 1 ? 'transform' : undefined,
+                  /* 這裡刻意「不要」寫 will-change: transform。
+                     will-change 會把這一層先光柵化成一張固定解析度的貼圖，
+                     再整張放大 —— 放大之後看到的就是被拉大的貼圖，所以糊。
+                     不寫的話瀏覽器會在放大後的解析度重新畫一次，字跟照片才是清楚的。 */
                 }}
               >
                 {/* 只做縮放（以左上角為原點）—— 外層已經是縮放後的尺寸了 */}
@@ -7666,6 +7690,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}
                         lutRevision={lutRevision}
+                        viewZoom={viewT.k}
                         toolbarAbove={(() => {
                           // 旋轉之後外接框會變高，要用轉過的高度判斷下面還有沒有位置
                           const rad = (fImg.rotation * Math.PI) / 180;
