@@ -773,19 +773,28 @@ const TextEditorPanel: React.FC<{
     </div>
   );
 
-  const slider = (label: string, value: number, min: number, max: number, onVal: (v: number) => void, suffix = '') => (
-    <div className="space-y-1.5">
-      <div className="flex justify-between items-center">
-        <span className="text-[11px] font-bold text-white/70">{label}</span>
-        <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value}{suffix}</span>
+  /* step 可以是小數：給邊緣發光那種「格數要多、拖起來才不會一格一格跳」的滑桿用。
+     小數的時候要用 parseFloat（parseInt 會把 0.1 讀成 0），顯示也要跟著補到
+     對應的小數位，不然 2.5 會顯示成 2.5000000000000004。 */
+  const slider = (
+    label: string, value: number, min: number, max: number,
+    onVal: (v: number) => void, suffix = '', step = 1,
+  ) => {
+    const digits = step < 1 ? String(step).split('.')[1].length : 0;
+    return (
+      <div className="space-y-1.5">
+        <div className="flex justify-between items-center">
+          <span className="text-[11px] font-bold text-white/70">{label}</span>
+          <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value.toFixed(digits)}{suffix}</span>
+        </div>
+        <input
+          type="range" min={min} max={max} step={step} value={value}
+          onChange={e => onVal(digits ? parseFloat(e.target.value) : parseInt(e.target.value))}
+          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+        />
       </div>
-      <input
-        type="range" min={min} max={max} step="1" value={value}
-        onChange={e => onVal(parseInt(e.target.value))}
-        className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
-      />
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
@@ -845,11 +854,11 @@ const TextEditorPanel: React.FC<{
         {sub === 'style' && (
           <div className="space-y-3.5 pt-1 pb-2">
             {/* 文字內容直接在畫布上打（選中後再點一次），這裡不再放輸入框 */}
-            {slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
             <div>
               <p className="text-[11px] font-bold text-white/70 mb-1.5">文字顏色</p>
               {swatchRow(layer.color, c => onChange({ color: c }))}
             </div>
+            {slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
             <button
               onClick={() => onChange({ bold: !layer.bold })}
               className={`w-full h-9 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
@@ -866,7 +875,10 @@ const TextEditorPanel: React.FC<{
                 {swatchRow(layer.strokeColor, c => onChange({ strokeColor: c }))}
               </div>
             )}
-            {slider('邊緣發光', layer.glow || 0, 0, 20, v => onChange({ glow: v }))}
+            {/* 顯示成 0～5、分 50 格（每格 0.1），拖起來才不會一格一格跳。
+                存進去的還是原本的 0～20 —— 舊的拼圖草稿裡已經存了 0～20 的值，
+                換算成新刻度存回去會讓舊作品的光突然變強，所以只換顯示。 */}
+            {slider('邊緣發光', (layer.glow || 0) / 4, 0, 5, v => onChange({ glow: v * 4 }), '', 0.1)}
             <div>
               <p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>
               {swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}
@@ -8391,9 +8403,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     onClick={() => handleAddTextLayer()}
                     className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    {/* 用襯線的大寫 A 當圖示：跟品牌字同一套字體，
+                    {/* 用襯線的大寫 T 當圖示：跟品牌字同一套字體，
                         比線條圖示乾淨，也不會有筆畫交疊發白的問題 */}
-                    <span className="font-serif text-[26px] leading-[24px] h-[24px] flex items-center text-white/80">A</span>
+                    <span className="font-serif text-[26px] leading-[24px] h-[24px] flex items-center text-white/80">T</span>
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                   </button>
                 </div>
