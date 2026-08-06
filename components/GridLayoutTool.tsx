@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
-import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Copy, GalleryHorizontal, ChevronRight, Heart, MessageCircle, Bookmark, Volume2, VolumeX } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, MessageCircle, Bookmark, Volume2, VolumeX } from 'lucide-react';
 import { Icon } from './Icon';
-import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, waitForFont, fontStack } from '../utils/fonts';
+import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
@@ -755,6 +755,23 @@ const TextEditorPanel: React.FC<{
 
   const list = FONTS.filter(f => f.category === cat);
 
+  /* 這個字體有沒有真正的斜體？沒有的話就不給斜體鈕（瀏覽器會自己歪一個
+     假斜體出來，那個不好看也不是這個字體本來的樣子）。答案問到之前先當成
+     沒有，才不會閃一下又消失。換字體時如果新的字體沒有斜體，順手把已經
+     打開的斜體關掉，不然會留下一個看不到開關的假斜體。 */
+  const family = layer.fontFamily || DEFAULT_FONT;
+  const [hasItalic, setHasItalic] = useState(() => knownItalic(family) === true);
+  useEffect(() => {
+    let alive = true;
+    setHasItalic(knownItalic(family) === true);
+    ensureItalic(family).then(ok => {
+      if (!alive) return;
+      setHasItalic(ok);
+      if (!ok && layer.italic) onChange({ italic: false });
+    });
+    return () => { alive = false; };
+  }, [family]);
+
   const swatchRow = (value: string | undefined, onPick: (c: string) => void, colors = TEXT_COLORS) => (
     <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-0.5 py-0.5">
       {/* 第一顆固定是自訂顏色 */}
@@ -859,26 +876,43 @@ const TextEditorPanel: React.FC<{
               {swatchRow(layer.color, c => onChange({ color: c }))}
             </div>
             {slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
-            <button
-              onClick={() => onChange({ bold: !layer.bold })}
-              className={`w-full h-9 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
-                layer.bold ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
-              }`}
-            >
-              <Bold size={14} />粗體
-            </button>
+            {/* 粗體與斜體同一排。這個字體沒有真斜體時只留粗體，
+                粗體就自己撐滿整排 —— 跟沒有斜體鈕之前長得一樣。 */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => onChange({ bold: !layer.bold })}
+                className={`flex-1 h-9 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
+                  layer.bold ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
+                }`}
+              >
+                <Bold size={14} />粗體
+              </button>
+              {hasItalic && (
+                <button
+                  onClick={() => onChange({ italic: !layer.italic })}
+                  className={`flex-1 h-9 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
+                    layer.italic ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
+                  }`}
+                >
+                  <Italic size={14} />斜體
+                </button>
+              )}
+            </div>
             {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
-            {slider('描邊', layer.strokeWidth || 0, 0, 12, v => onChange({ strokeWidth: v }), 'px')}
+            {/* 描邊 0～2px，一樣分 50 格（每格 0.04px）：最小那一格只有 0.04px，
+                從 0 拉出來時是慢慢浮現，不會一下就跳出一圈明顯的邊。 */}
+            {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
             {!!layer.strokeWidth && (
               <div>
                 <p className="text-[11px] font-bold text-white/70 mb-1.5">描邊顏色</p>
                 {swatchRow(layer.strokeColor, c => onChange({ strokeColor: c }))}
               </div>
             )}
-            {/* 顯示成 0～5、分 50 格（每格 0.1），拖起來才不會一格一格跳。
+            {/* 顯示成 0～0.5、分 50 格（每格 0.01），拖起來才不會一格一格跳；
+                最小那一格的模糊只有 0.28px，是從 0 慢慢亮起來、不會有斷層。
                 存進去的還是原本的 0～20 —— 舊的拼圖草稿裡已經存了 0～20 的值，
                 換算成新刻度存回去會讓舊作品的光突然變強，所以只換顯示。 */}
-            {slider('邊緣發光', (layer.glow || 0) / 4, 0, 5, v => onChange({ glow: v * 4 }), '', 0.1)}
+            {slider('邊緣發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
             <div>
               <p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>
               {swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}
@@ -1350,6 +1384,8 @@ interface FloatingImage {
   fontSize?: number;
   color?: string;
   bold?: boolean;
+  /** 斜體。只有該字體真的有斜體字身時才會被打開 */
+  italic?: boolean;
   /** 字距（px，未縮放） */
   letterSpacing?: number;
   /** 邊緣發光強度 0~20，0 = 關閉 */
@@ -1555,7 +1591,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     measure();
     const t = setTimeout(measure, 150);   // 等字體換好再量一次
     return () => clearTimeout(t);
-  }, [image.text, image.fontFamily, image.fontSize, image.bold, image.letterSpacing, maxTextWidth]);
+  }, [image.text, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, maxTextWidth]);
 
   /* 圓角／羽化／發光都自己畫在 canvas 上，預覽與匯出走同一套邏輯 */
   const shapeCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -2044,6 +2080,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             fontSize: `${(image.fontSize || 40) * image.scale}px`,
             lineHeight: 1.12,
             fontWeight: image.bold ? 700 : 400,
+            fontStyle: image.italic ? 'italic' : 'normal',
             letterSpacing: `${(image.letterSpacing || 0) * image.scale}px`,
             color: image.color || '#FFFFFF',
             // 只有使用者自己按的換行才換行，不自動斷行
@@ -2135,6 +2172,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               fontFamily: fontStack(image.fontFamily),
               fontSize: `${image.fontSize || 40}px`,
               fontWeight: image.bold ? 700 : 400,
+              fontStyle: image.italic ? 'italic' : 'normal',
               letterSpacing: `${image.letterSpacing || 0}px`,
               lineHeight: 1.12,
             }}
@@ -3016,6 +3054,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       // 頁面底色預設是白的，文字也用白色的話新增完會看不到
       color: '#1C1C1C',
       bold: false,
+      italic: false,
       letterSpacing: 0,
       glow: 0,
       glowColor: '#FFFFFF',
@@ -5855,7 +5894,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     scaleFactor: number
   ) => {
     const family = fImg.fontFamily || DEFAULT_FONT;
-    await waitForFont(family, fImg.bold ? 700 : 400);
+    await waitForFont(family, fImg.bold ? 700 : 400, !!fImg.italic);
 
     const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
     const fw = fImg.width * scaleFactor;
@@ -5867,7 +5906,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate((fImg.rotation * Math.PI) / 180);
-    ctx.font = `${fImg.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
+    ctx.font = `${fImg.italic ? 'italic ' : ''}${fImg.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     (ctx as any).letterSpacing = `${spacing}px`;
@@ -6188,6 +6227,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   fontFamily: fontStack(f.fontFamily),
                   fontSize: `${Math.max(2, (f.fontSize || 40) * f.scale * k)}px`,
                   fontWeight: f.bold ? 700 : 400,
+                  fontStyle: f.italic ? 'italic' : 'normal',
                   letterSpacing: `${(f.letterSpacing || 0) * f.scale * k}px`,
                   color: f.color || '#1C1C1C',
                   lineHeight: 1.12,
