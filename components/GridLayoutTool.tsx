@@ -7263,8 +7263,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                   const topPx = inset + rect.y * areaH;
                                   const bottomPx = inset + (rect.y + rect.h) * areaH;
 
-                                  const cellWidth = rightPx - leftPx;
-                                  const cellHeight = bottomPx - topPx;
+                                  /* 空格子（沒放照片）的邊界改成取整。
+                                     縮放佈局時每一格會落在非整數的像素位置，空格子那圈
+                                     1px 虛線外框就會被反覆重新光柵化，相鄰兩格的外框疊在
+                                     一起閃成一條白線。取整之後外框剛好壓在像素格線上，
+                                     相鄰兩格也還是同一條邊，白線就不見了。
+                                     只有空格子這樣做 —— 有照片的格子取整會讓格內的照片
+                                     跟著跳 1px（原本刻意不取整就是為了這個）。 */
+                                  const emptyCell = !cell || !cell.url;
+                                  const snap = (v: number) => (emptyCell ? Math.round(v) : v);
+                                  const l0 = snap(leftPx), t0 = snap(topPx);
+                                  const cellWidth = snap(rightPx) - l0;
+                                  const cellHeight = snap(bottomPx) - t0;
 
                                   if (!cell) {
                                     return (
@@ -7272,8 +7282,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                         key={`slot-${idx}`}
                                         className="absolute bg-neutral-900 border border-neutral-800 flex items-center justify-center text-neutral-600"
                                         style={{
-                                          left: `${leftPx}px`,
-                                          top: `${topPx}px`,
+                                          left: `${l0}px`,
+                                          top: `${t0}px`,
                                           width: `${cellWidth}px`,
                                           height: `${cellHeight}px`,
                                           padding: `${gap / 2}px`,
@@ -7347,8 +7357,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                         onTouchCancel={(e) => handleCellTouchEnd(e, idx, layout.id)}
                                         className="absolute cursor-pointer group"
                                         style={{
-                                          left: `${leftPx}px`,
-                                          top: `${topPx}px`,
+                                          left: `${l0}px`,
+                                          top: `${t0}px`,
                                           width: `${cellWidth}px`,
                                           height: `${cellHeight}px`,
                                           padding: `${gap / 2}px`,
@@ -7452,8 +7462,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                       onTouchCancel={(e) => handleCellTouchEnd(e, idx, layout.id)}
                                       className="absolute cursor-grab active:cursor-grabbing select-none group"
                                       style={{
-                                        left: `${leftPx}px`,
-                                        top: `${topPx}px`,
+                                        left: `${l0}px`,
+                                        top: `${t0}px`,
                                         width: `${cellWidth}px`,
                                         height: `${cellHeight}px`,
                                         padding: `${gap / 2}px`,
