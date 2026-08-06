@@ -1120,15 +1120,22 @@ const makeShapeMask = (w: number, h: number, radiusPct: number, featherPct: numb
   const g = c.getContext('2d')!;
   const fp = Math.max(0, Math.min(50, featherPct));
   const rp = Math.max(0, Math.min(50, radiusPct));
-  // 淡出的總寬度；先往內縮一半，淡出才會完整落在框內而不是被切掉一半
+  /* 淡出的總寬度。
+     模糊是「三次盒狀模糊」，半徑 r 的三次疊起來，一條硬邊會被抹開到
+     ±3r 這麼寬。所以形狀要先往內縮「剛好 3r」，淡出才會在畫布邊界
+     收斂到完全透明。
+     以前 r 取 fade/4、卻只內縮 fade/2 —— 模糊往外散 0.75×fade、內縮只有
+     0.5×fade，等於還沒淡完就撞到畫布邊界被切掉，邊緣的 alpha 停在某個
+     不是 0 的值：看起來就是「有羽化，但照片還是有一條生硬的邊」。
+     改成 r = fade/6、內縮 3r，兩邊剛好對上，邊界一定是 0。 */
   const fade = (fp / 100) * Math.min(c.width, c.height);
-  const inset = fade / 2;
+  const r = fp > 0 ? Math.max(1, Math.round(fade / 6)) : 0;
+  const inset = r > 0 ? r * 3 + 1 : 0;   // +1：離散的盒狀模糊在邊界還會留一點點，多讓 1px
   g.fillStyle = '#fff';
   const R = Math.max(0, cornerR(rp, c.width, c.height) - inset);
   roundRectPath(g, inset, inset, c.width - inset * 2, c.height - inset * 2, R, R);
   g.fill();
 
-  const r = Math.round(fade / 4);
   if (r >= 1) {
     const px = g.getImageData(0, 0, c.width, c.height);
     const n = c.width * c.height;
@@ -2608,6 +2615,45 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     });
   };
 
+  /** 同一條線只留一份（吸附挑到的那條可能跟下面重新掃出來的重複） */
+  const dedupeGuidelines = (list: AlignmentGuideline[]) => {
+    const seen = new Set<string>();
+    return list.filter(g => {
+      const k = `${g.type}|${Math.round(g.coord * 10)}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  };
+
+  /**
+   * 在指定位置上，列出「現在真的對齊到」的畫布輔助線：
+   * 垂直中線、水平中線、以及畫布的四個邊界。
+   * 吸附時邊界會刻意外溢 1px 防止次像素縫，所以邊界的容許值放寬一點。
+   */
+  const pageGuidelinesAt = (
+    x: number, y: number, imgWidth: number, imgHeight: number, scale: number, edgeOnly = false,
+  ): AlignmentGuideline[] => {
+    const out: AlignmentGuideline[] = [];
+    const scaledW = imgWidth * scale;
+    const scaledH = imgHeight * scale;
+    const cx = x + imgWidth / 2;
+    const cy = y + imgHeight / 2;
+    const left = cx - scaledW / 2, right = cx + scaledW / 2;
+    const top = cy - scaledH / 2, bottom = cy + scaledH / 2;
+    const EPS_C = 0.75;   // 中線是精準吸附
+    const EPS_E = 1.75;   // 邊界有 1px 外溢
+    getAllPageRects().forEach(pr => {
+      if (!edgeOnly && Math.abs(cx - pr.centerX) < EPS_C) out.push({ type: 'vertical', coord: pr.centerX });
+      if (Math.abs(left - pr.left) < EPS_E) out.push({ type: 'vertical', coord: pr.left });
+      if (Math.abs(right - pr.right) < EPS_E) out.push({ type: 'vertical', coord: pr.right });
+      if (!edgeOnly && Math.abs(cy - pr.centerY) < EPS_C) out.push({ type: 'horizontal', coord: pr.centerY });
+      if (Math.abs(top - pr.top) < EPS_E) out.push({ type: 'horizontal', coord: pr.top });
+      if (Math.abs(bottom - pr.bottom) < EPS_E) out.push({ type: 'horizontal', coord: pr.bottom });
+    });
+    return out;
+  };
+
   const applySnapping = (
     imgId: string,
     rawX: number,
@@ -2823,7 +2869,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       guidelines.push({ type: 'horizontal', coord: bestGuidelineY });
     }
 
-    return { snappedX, snappedY, guidelines };
+    /* 貼齊只會挑「最近的那一條」來吸附，但畫面上該顯示的是「現在同時對齊的每一條」：
+       例如剛好卡在畫布正中央時，垂直中線與水平中線要一起亮起來；貼齊左邊界時，
+       如果高度也剛好跟畫布同高，上下兩條邊界線也要一起顯示。
+       這裡在「已經吸附完的位置」上把畫布的中線與四個邊界重新對一次，全部符合的
+       都加進去。跟其他物件的對齊線不列入（那是另一回事，維持原本只顯示吸附到的那一條）。 */
+    guidelines.push(...pageGuidelinesAt(snappedX, snappedY, imgWidth, imgHeight, imgScale, edgeOnly));
+
+    return { snappedX, snappedY, guidelines: dedupeGuidelines(guidelines) };
   };
 
   const [draggedFloatingIndex, setDraggedFloatingIndex] = useState<number | null>(null);
@@ -5735,18 +5788,49 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             straight = Math.abs(rot - nearest) <= 6;
             if (straight) rot = nearest % 360;
           }
+          /* 雙指縮放時也要吸附畫布邊界並顯示輔助線 —— 以前只有拖曳和拉四角
+             才有，捏合完全沒有，很難把圖縮到剛好貼齊畫布。
+             中心點在捏合時不動，所以只有「四個邊界」會隨倍率移動：把倍率解成
+             「這條邊剛好落在畫布邊界上」的值，最近的那一個在門檻內就吸附過去。 */
+          let ns = Math.max(0.1, g.baseScale * k);
+          if (target && enableSnapping) {
+            const SNAP = 4;
+            const cx = target.x + target.width / 2;
+            const cy = target.y + target.height / 2;
+            let best = Infinity, bestScale = ns;
+            getAllPageRects().forEach(pr => {
+              const cands: number[] = [];
+              if (target.width > 1) {
+                cands.push((2 * (cx - pr.left)) / target.width);    // 左邊貼齊
+                cands.push((2 * (pr.right - cx)) / target.width);   // 右邊貼齊
+              }
+              if (target.height > 1) {
+                cands.push((2 * (cy - pr.top)) / target.height);    // 上邊貼齊
+                cands.push((2 * (pr.bottom - cy)) / target.height); // 下邊貼齊
+              }
+              cands.forEach(cand => {
+                if (!(cand > 0.1)) return;
+                // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
+                const px = Math.abs(cand - ns) * Math.max(target.width, target.height) / 2;
+                if (px < SNAP && px < best) { best = px; bestScale = cand; }
+              });
+            });
+            if (best < SNAP) ns = bestScale;
+          }
           setFloatingImages(prev => prev.map(img =>
             img.id === g.floatingId
-              ? { ...img, scale: Math.max(0.1, g.baseScale * k), ...(canRotate ? { rotation: rot } : {}) }
+              ? { ...img, scale: ns, ...(canRotate ? { rotation: rot } : {}) }
               : img
           ));
           if (target) {
-            setActiveGuidelines(straight
+            const pageLines = pageGuidelinesAt(target.x, target.y, target.width, target.height, ns);
+            setActiveGuidelines(dedupeGuidelines(straight
               ? [
                   { type: 'vertical', coord: target.x + target.width / 2 },
                   { type: 'horizontal', coord: target.y + target.height / 2 },
+                  ...pageLines,
                 ]
-              : []);
+              : pageLines));
           }
         } else if (g.kind === 'layout') {
           scaleLayout(g.baseScale * k, wsGestureLayoutIdRef.current);
