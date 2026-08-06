@@ -8494,8 +8494,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     onClick={() => handleAddTextLayer()}
                     className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    {/* 跟文字編輯面板裡「字體」那一顆同一個圖示 */}
-                    <Type size={24} className="text-white/80" />
+                    {/* 跟文字編輯面板裡「字體」那一顆同一個圖示。
+                        線寬調細對齊旁邊兩顆 Material 圖標；透明度改成掛在整個
+                        圖示上（opacity-80）而不是筆畫顏色上（text-white/80）——
+                        半透明的筆畫在交疊處會疊出更亮的一塊，看起來就是發白。 */}
+                    <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                   </button>
                 </div>
