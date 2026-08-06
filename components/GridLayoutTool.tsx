@@ -1606,7 +1606,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const fontsApi = typeof document !== 'undefined' ? document.fonts : undefined;
     // CSS 還沒到的時候 @font-face 還不存在，check 會拿到「可以」的假答案，
     // 所以要先確認 CSS 真的下載完了才信它。
-    const ready = !fontsApi || (fontCssLoaded(fam) && fontsApi.check(spec));
+    /* 斜體還要多確認一件事：斜體的 CSS 也回來了沒。CSS 還沒到的時候
+       斜體的 @font-face 根本不存在，check 會配到系統的假斜體然後回「可以」，
+       量到的就是假斜體的寬高。 */
+    const italicSettled = !image.italic || knownItalic(fam) !== undefined;
+    const ready = !fontsApi || (fontCssLoaded(fam) && italicSettled && fontsApi.check(spec));
     if (ready) { measure(); return; }
 
     let alive = true;
