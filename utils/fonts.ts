@@ -204,12 +204,51 @@ export function ensureFont(family: string) {
   document.head.appendChild(link);
 }
 
+/** 家族名 → 有沒有真正的斜體字身。沒有這個 key 代表還沒問過。 */
+const italicSupport = new Map<string, boolean>();
+const italicPending = new Map<string, Promise<boolean>>();
+
+/**
+ * 載入某個字體的斜體字身，順便問出「這個家族到底有沒有斜體」。
+ *
+ * Google Fonts 對沒有斜體的家族會直接回 400，所以用 <link> 的 load / error
+ * 就能得到答案。斜體刻意用「另一個」<link>：就算失敗也只是這一份沒載到，
+ * 正體那一份不受影響。沒有斜體字身時瀏覽器會自己歪一個假斜體出來，那不是
+ * 真的斜體，所以問不到的家族就不該給使用者這個選項。
+ */
+export function ensureItalic(family: string): Promise<boolean> {
+  if (typeof document === 'undefined') return Promise.resolve(false);
+  const known = italicSupport.get(family);
+  if (known !== undefined) return Promise.resolve(known);
+  const pending = italicPending.get(family);
+  if (pending) return pending;
+  const p = new Promise<boolean>(resolve => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href =
+      'https://fonts.googleapis.com/css2?family=' +
+      encodeURIComponent(family).replace(/%20/g, '+') +
+      ':ital,wght@1,400;1,700&display=swap';
+    link.onload = () => { italicSupport.set(family, true); resolve(true); };
+    link.onerror = () => { italicSupport.set(family, false); link.remove(); resolve(false); };
+    document.head.appendChild(link);
+  });
+  italicPending.set(family, p);
+  return p;
+}
+
+/** 已經問到的答案；還沒問過回 undefined（給 UI 判斷要不要先藏起來）。 */
+export function knownItalic(family: string) {
+  return italicSupport.get(family);
+}
+
 /** 匯出前要確定字體真的下載完了，否則 canvas 會用退回字體畫出去。 */
-export async function waitForFont(family: string, weight = 400) {
+export async function waitForFont(family: string, weight = 400, italic = false) {
   ensureFont(family);
+  if (italic) await ensureItalic(family);
   if (typeof document === 'undefined' || !document.fonts) return;
   try {
-    await document.fonts.load(`${weight} 64px "${family}"`);
+    await document.fonts.load(`${italic ? 'italic ' : ''}${weight} 64px "${family}"`);
     await document.fonts.ready;
   } catch {
     /* 載不到就讓瀏覽器自己退回預設字體 */
