@@ -2055,26 +2055,34 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             boxSizing: 'border-box',
           }}
         >
-          {/* 發光層：跟主層一模一樣的排版，但完全不描邊 ——
-              光只會從字身本來的輪廓散出去，加不加描邊都一樣大。
-              疊三層陰影才夠明顯，跟匯出的三層對齊。 */}
-          {!!image.glow && (
+          {/* 發光層：疊在主層底下，只負責發光，三層疊出原本那三段式的光。
+              這裡用 filter: drop-shadow 而不是 text-shadow —— text-shadow 的
+              輪廓只算「填色」，不算 -webkit-text-stroke，所以一加描邊，描邊就會
+              往外長、把光的內圈整個蓋掉，光看起來就變薄，而描邊外緣緊貼著剩下的
+              光，看起來又像描邊變得很粗。drop-shadow 是對「畫完的整層」取影，
+              描邊也算在內，所以：
+              ① 光永遠從最外緣（填色＋描邊）散出去，厚度只由發光決定，
+                 加不加描邊都一樣厚；
+              ② 光完全不影響描邊的粗細，描邊寬度只由描邊自己決定。
+              匯出那邊本來就是 strokeText 帶著 shadow 畫，兩邊這樣才會一致。
+              半徑要除以 2：drop-shadow 收的是標準差，text-shadow／canvas
+              shadowBlur 收的是模糊直徑（＝2 倍標準差）。 */}
+          {!!image.glow && [1, 2, 3].map(k => (
             <span
+              key={k}
               aria-hidden
               style={{
                 position: 'absolute', left: 0, top: 0, right: 0, bottom: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 pointerEvents: 'none', whiteSpace: 'pre', textAlign: 'center',
                 color: image.color || '#FFFFFF',
-                textShadow: [1, 2, 3]
-                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k * image.scale}px ${image.glowColor || '#FFFFFF'}`)
-                  .join(', '),
+                filter: `drop-shadow(0 0 ${(image.glow! / 20) * 14 * k * image.scale / 2}px ${image.glowColor || '#FFFFFF'})`,
                 visibility: isTextEditing ? 'hidden' : undefined,
               }}
             >
               {image.text}
             </span>
-          )}
+          ))}
 
           <span
             ref={textInnerRef}
@@ -5458,11 +5466,67 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     setSelectedFloatingId(null);
   };
 
+  /* ---- 預覽的雙指縮放 ----------------------------------------------------
+     跟創意拼圖／美顏同一套自己實作的雙指縮放。
+     規則寫死得很嚴，才不會跟原本的手勢打架：
+       ① 一定要「兩根手指同時在畫面上」才會啟動，單指永遠不會觸發；
+       ② 只要有任何東西被選中（自由圖層／格子／版面），雙指仍然是縮放那個
+          物件 —— 這裡完全不接手；
+       ③ 排頁面模式下不啟動。
+     放大之後單指拖曳＝平移，鬆手就結束；倍率回到 1 時平移也一起歸零。 */
+  const [viewT, setViewT] = useState({ k: 1, tx: 0, ty: 0 });
+  const viewTRef = useRef(viewT); viewTRef.current = viewT;
+  const viewPinchRef = useRef<{ d0: number; k0: number; cx: number; cy: number; tx0: number; ty0: number } | null>(null);
+  const viewPanRef = useRef<{ x: number; y: number; tx0: number; ty0: number } | null>(null);
+
+  const nothingSelected = () =>
+    !selectedFloatingId && selectedIndex === null && !selectedLayoutId;
+
+  /* 一選中東西就把預覽縮放歸零 —— 縮放中操作物件很容易對不準，
+     而且使用者說「選中任意物件時都不能觸發」，歸零最單純也最不會出錯。 */
+  useEffect(() => {
+    if (selectedFloatingId || selectedIndex !== null || selectedLayoutId) {
+      viewPinchRef.current = null; viewPanRef.current = null;
+      setViewT(v => (v.k === 1 && v.tx === 0 && v.ty === 0 ? v : { k: 1, tx: 0, ty: 0 }));
+    }
+  }, [selectedFloatingId, selectedIndex, selectedLayoutId]);
+
+  const applyView = useCallback((k: number, tx: number, ty: number) => {
+    const el = containerRef.current;
+    const w = el ? el.clientWidth : 1, h = el ? el.clientHeight : 1;
+    const kk = Math.max(1, Math.min(5, k));
+    // 限制平移範圍，免得把畫面拖出去找不回來
+    const mx = Math.max(0, (kk - 1) * w * 0.5), my = Math.max(0, (kk - 1) * h * 0.5);
+    setViewT(kk <= 1.001
+      ? { k: 1, tx: 0, ty: 0 }
+      : { k: kk, tx: Math.max(-mx, Math.min(mx, tx)), ty: Math.max(-my, Math.min(my, ty)) });
+  }, []);
+
   const handleWorkspaceTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     stopInertia();
     panRef.current = null;
     wsGestureRef.current = null;
     if (isLongPressedRef.current || touchDragState.current) return;
+
+    // ① 兩指 ② 沒選中任何東西 ③ 不在排頁面模式 —— 三個都成立才是縮放預覽
+    if (e.touches.length >= 2 && nothingSelected() && !pagesMode) {
+      viewPanRef.current = null;
+      viewPinchRef.current = {
+        d0: Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                       e.touches[0].clientY - e.touches[1].clientY) || 1,
+        k0: viewTRef.current.k,
+        cx: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+        cy: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+        tx0: viewTRef.current.tx, ty0: viewTRef.current.ty,
+      };
+      return;
+    }
+    // 已經放大了，單指就是平移（沒放大時單指維持原本的捲頁）
+    if (e.touches.length === 1 && viewTRef.current.k > 1 && nothingSelected() && !pagesMode) {
+      viewPanRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY,
+                             tx0: viewTRef.current.tx, ty0: viewTRef.current.ty };
+      return;
+    }
 
     const scope = gestureScope(e.target as Element);
     if (scope === 'none') return;
@@ -5533,6 +5597,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   };
 
   const handleWorkspaceTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    // 預覽縮放優先處理，處理過就不再往下走（不會碰到捲頁與物件）
+    const vp = viewPinchRef.current;
+    if (vp && e.touches.length >= 2) {
+      const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                           e.touches[0].clientY - e.touches[1].clientY) || 1;
+      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      applyView(vp.k0 * (d / vp.d0), vp.tx0 + (cx - vp.cx), vp.ty0 + (cy - vp.cy));
+      return;
+    }
+    const vpan = viewPanRef.current;
+    if (vpan && e.touches.length === 1) {
+      applyView(viewTRef.current.k,
+                vpan.tx0 + (e.touches[0].clientX - vpan.x),
+                vpan.ty0 + (e.touches[0].clientY - vpan.y));
+      return;
+    }
+
     // 長按拖曳圖片時，任何捲頁 / 物件位移都不該發生
     if (isLongPressedRef.current || touchDragState.current || floatSwapRef.current?.dragging) {
       panRef.current = null;
@@ -5632,6 +5714,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   };
 
   const handleWorkspaceTouchEnd = () => {
+    viewPinchRef.current = null;
+    viewPanRef.current = null;
     setPinchFloatingId(null);
     if (wsGestureRef.current) {
       wsGestureRef.current = null;
@@ -5780,9 +5864,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (fImg.glow) {
       ctx.shadowColor = fImg.glowColor || '#FFFFFF';
       ctx.fillStyle = fImg.color || '#FFFFFF';
+      /* 光要從「描邊＋填色」的最外緣散出去 —— 跟預覽的發光層一樣先描一次。
+         不這樣做的話光是從字身邊緣散開，等一下畫的描邊會蓋掉光的內圈，
+         看起來就是「加了描邊光就變薄」。 */
+      if (fImg.strokeWidth) {
+        ctx.lineWidth = fImg.strokeWidth * 2 * scaleFactor * fImg.scale;
+        ctx.lineJoin = 'round';
+        ctx.miterLimit = 2;
+        ctx.strokeStyle = fImg.strokeColor || '#FFFFFF';
+      }
       // 疊三層，跟預覽的三層 text-shadow 對齊
       for (const k of [1, 2, 3]) {
         ctx.shadowBlur = (fImg.glow / 20) * 14 * k * scaleFactor * fImg.scale;
+        if (fImg.strokeWidth) lines.forEach((ln, i) => ctx.strokeText(ln, 0, startY + i * lineH));
         drawLines();
       }
       ctx.shadowBlur = 0;
@@ -6900,6 +6994,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   width: 'max-content',
                   minWidth: '100%',
                   opacity: containerMeasured ? 1 : 0,
+                  /* 雙指縮放預覽：只是視覺上的放大，不動任何座標與捲動範圍。
+                     倍率 1 的時候完全不加 transform，行為跟以前一模一樣。 */
+                  transform: viewT.k > 1 ? `translate(${viewT.tx}px, ${viewT.ty}px) scale(${viewT.k})` : undefined,
+                  transformOrigin: 'center center',
+                  willChange: viewT.k > 1 ? 'transform' : undefined,
                 }}
               >
                 {/* 只做縮放（以左上角為原點）—— 外層已經是縮放後的尺寸了 */}
@@ -8294,7 +8393,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     onClick={() => handleAddTextLayer()}
                     className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    <Icon name="text_fields" className="text-[24px] text-white/80" />
+                    {/* 用襯線的大寫 A 當圖示：跟品牌字同一套字體，
+                        比線條圖示乾淨，也不會有筆畫交疊發白的問題 */}
+                    <span className="font-serif text-[26px] leading-[24px] h-[24px] flex items-center text-white/80">A</span>
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                   </button>
                 </div>
