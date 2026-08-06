@@ -189,19 +189,39 @@ export const FONTS: FontDef[] = [
 
 export const DEFAULT_FONT = 'Noto Sans TC';
 
-const requested = new Set<string>();
+const requested = new Map<string, Promise<void>>();
+/** CSS 已經下載完的家族。要「同步」知道能不能直接量字寬時用。 */
+const cssDone = new Set<string>();
 
-/** 需要時才把某個字體的 <link> 塞進 head。重複呼叫不會重複載入。 */
-export function ensureFont(family: string) {
-  if (typeof document === 'undefined' || requested.has(family)) return;
-  requested.add(family);
-  const link = document.createElement('link');
-  link.rel = 'stylesheet';
-  link.href =
-    'https://fonts.googleapis.com/css2?family=' +
-    encodeURIComponent(family).replace(/%20/g, '+') +
-    ':wght@400;700&display=swap';
-  document.head.appendChild(link);
+/**
+ * 需要時才把某個字體的 <link> 塞進 head。重複呼叫不會重複載入。
+ * 回傳的 Promise 在那份 CSS 真的下載完（或失敗）之後才 resolve ——
+ * CSS 還沒到的時候 @font-face 根本還不存在，這時候去問 document.fonts.check
+ * 會拿到「可以」的假答案（其實是配到系統的退回字體）。
+ */
+export function ensureFont(family: string): Promise<void> {
+  if (typeof document === 'undefined') return Promise.resolve();
+  const hit = requested.get(family);
+  if (hit) return hit;
+  const p = new Promise<void>(resolve => {
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href =
+      'https://fonts.googleapis.com/css2?family=' +
+      encodeURIComponent(family).replace(/%20/g, '+') +
+      ':wght@400;700&display=swap';
+    const done = () => { cssDone.add(family); resolve(); };
+    link.onload = done;
+    link.onerror = done;
+    document.head.appendChild(link);
+  });
+  requested.set(family, p);
+  return p;
+}
+
+/** 這個家族的 CSS 下載完了沒（同步版）。 */
+export function fontCssLoaded(family: string) {
+  return cssDone.has(family);
 }
 
 /** 家族名 → 有沒有真正的斜體字身。沒有這個 key 代表還沒問過。 */
