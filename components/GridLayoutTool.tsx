@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMe
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, MessageCircle, Bookmark, Volume2, VolumeX } from 'lucide-react';
 import { Icon } from './Icon';
-import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, waitForFont, fontStack } from '../utils/fonts';
+import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
@@ -1049,7 +1049,17 @@ interface AlignmentGuideline {
    淡出就會沿著形狀輪廓等距展開，圓角也一起變柔。
    預覽與匯出共用同一支，兩邊才會長得一模一樣。                          */
 
-/** 橢圓角矩形路徑。CSS 的 border-radius: N% 是水平吃寬、垂直吃高的橢圓角。 */
+/**
+ * 圓角半徑：百分比一律吃「短邊」，四個角都是正圓弧。
+ *
+ * 以前是水平吃寬、垂直吃高（＝CSS 的 border-radius: N%），角變成橢圓：
+ * 直立的格子 rx 很小、ry 很大，上下那條邊才走一點點就急轉彎，看起來
+ * 就是「邊上突然多一個角」。正圓角走的是四分之一圓，接到直邊的曲率
+ * 變化平順，也才是修圖軟體的做法。
+ */
+const cornerR = (pct: number, w: number, h: number) => (pct / 100) * Math.min(w, h);
+
+/** 圓角矩形路徑（rx/ry 可不同，但呼叫端一律傳同一個值 → 正圓角）。 */
 const roundRectPath = (
   g: CanvasRenderingContext2D,
   x: number, y: number, w: number, h: number, rx: number, ry: number,
@@ -1110,10 +1120,8 @@ const makeShapeMask = (w: number, h: number, radiusPct: number, featherPct: numb
   const fade = (fp / 100) * Math.min(c.width, c.height);
   const inset = fade / 2;
   g.fillStyle = '#fff';
-  roundRectPath(
-    g, inset, inset, c.width - inset * 2, c.height - inset * 2,
-    (rp / 100) * c.width - inset, (rp / 100) * c.height - inset,
-  );
+  const R = Math.max(0, cornerR(rp, c.width, c.height) - inset);
+  roundRectPath(g, inset, inset, c.width - inset * 2, c.height - inset * 2, R, R);
   g.fill();
 
   const r = Math.round(fade / 4);
@@ -1588,9 +1596,27 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       if (Math.abs(h - dimsRef.current.h) > 1) patch.height = Math.round(h);
       if (patch.width !== undefined || patch.height !== undefined) onChangeRef.current(patch);
     };
-    measure();
-    const t = setTimeout(measure, 150);   // 等字體換好再量一次
-    return () => clearTimeout(t);
+    /* 換字體／換斜體會抖一下，是因為新的字身還沒下載完。這時候量到的是
+       退回字體的寬高，先把框改成那個尺寸、等字身到了再改回來 —— 使用者看到
+       的就是「跳一次又跳回來」。
+       所以：字身已經在手上才立刻量；還沒在的話這一輪先不動框，等真的載好
+       再量一次，框就只會變一次。 */
+    const fam = image.fontFamily || DEFAULT_FONT;
+    const spec = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${(image.fontSize || 40)}px "${fam}"`;
+    const fontsApi = typeof document !== 'undefined' ? document.fonts : undefined;
+    // CSS 還沒到的時候 @font-face 還不存在，check 會拿到「可以」的假答案，
+    // 所以要先確認 CSS 真的下載完了才信它。
+    const ready = !fontsApi || (fontCssLoaded(fam) && fontsApi.check(spec));
+    if (ready) { measure(); return; }
+
+    let alive = true;
+    const done = () => { if (alive) measure(); };
+    Promise.all([ensureFont(fam), image.italic ? ensureItalic(fam) : Promise.resolve()])
+      .then(() => fontsApi!.load(spec))
+      .then(done, done);
+    // 真的載不到（離線、家族名打錯）就別讓框永遠停在舊尺寸
+    const t = setTimeout(done, 3000);
+    return () => { alive = false; clearTimeout(t); };
   }, [image.text, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, maxTextWidth]);
 
   /* 圓角／羽化／發光都自己畫在 canvas 上，預覽與匯出走同一套邏輯 */
@@ -1638,16 +1664,24 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   // 這個尺寸看起來一模一樣，但工作量只有 720 的三分之一，滑桿才不會一頓一頓），
   // 手停下來之後再補算 720 的那一張。
   const FX_MAX_FAST = 380;
-  const FX_MAX_FULL = 720;
+  /* 正式那一張要算到「畫面上真的有幾個實體像素」。
+     以前固定 720，比實際顯示的像素少一大截，所以一套上濾鏡或特效，
+     照片就明顯變糊。上限 1400 是為了不讓超大格子把一次重算拖太久。 */
+  const fxFullMax = () => {
+    const dpr = Math.min(2, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1);
+    return Math.min(1400, Math.max(720, Math.round(Math.max(boxW, boxH) * dpr)));
+  };
   const fxCacheRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
   const fxFastRef = useRef(false);
+  /** 上一次 fx 變動的時間，用來分辨「點一下」與「拖滑桿」 */
+  const fxLastChangeRef = useRef(0);
   const fxIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fxKeyRef = useRef<string | null>(null);
   const drawRef = useRef<(() => void) | null>(null);
   useEffect(() => () => { if (fxIdleRef.current) clearTimeout(fxIdleRef.current); }, []);
   const fxSourceFor = (img: HTMLImageElement) => {
     if (!hasPhotoFx(image.fx)) return img as CanvasImageSource;
-    const MAX = fxFastRef.current ? FX_MAX_FAST : FX_MAX_FULL;
+    const MAX = fxFastRef.current ? FX_MAX_FAST : fxFullMax();
     const key = `${image.src}|${JSON.stringify(image.fx)}|${lutRevision}|${MAX}`;
     const hit = fxCacheRef.current;
     if (hit && hit.key === key) return hit.canvas;
@@ -1697,19 +1731,27 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         oc.drawImage(base, lw, lw, iw, ih);
         if (image.feather || image.imgRadius) {
           oc.globalCompositeOperation = 'destination-in';
-          const m = previewMask(boxW / boxH, image.imgRadius || 0, image.feather || 0);
-          oc.drawImage(m, lw, lw, iw, ih);
+          if (image.feather) {
+            // 有羽化才需要那張模糊過的遮罩；邊本來就是糊的，縮放貼回來看不出差別
+            const m = previewMask(boxW / boxH, image.imgRadius || 0, image.feather);
+            oc.drawImage(m, lw, lw, iw, ih);
+          } else {
+            /* 只有圓角、沒有羽化：以前也走那張 400px 的遮罩再拉大，
+               硬邊被放大就變成階梯狀的鋸齒。改成直接在這張畫布上填路徑 ——
+               原生解析度、瀏覽器自己抗鋸齒，邊緣才會乾淨。 */
+            const R = cornerR(image.imgRadius || 0, iw, ih);
+            roundRectPath(oc, lw, lw, iw, ih, R, R);
+            oc.fillStyle = '#fff';
+            oc.fill();
+          }
           oc.globalCompositeOperation = 'source-over';
         }
         // 描邊（相框線）：整條線都長在圖片外面，內緣剛好貼著圖片的邊。
         // 圖片沒有圓角就描成直角（miter），不要自己多加一個圓角出來。
         if (lw > 0) {
           const rp = image.imgRadius || 0;
-          roundRectPath(
-            oc, lw / 2, lw / 2, iw + lw, ih + lw,
-            rp ? (rp / 100) * iw + lw / 2 : 0,
-            rp ? (rp / 100) * ih + lw / 2 : 0,
-          );
+          const sr = rp ? cornerR(rp, iw, ih) + lw / 2 : 0;
+          roundRectPath(oc, lw / 2, lw / 2, iw + lw, ih + lw, sr, sr);
           oc.lineWidth = lw;
           oc.lineJoin = 'miter';
           oc.miterLimit = 4;
@@ -1735,17 +1777,25 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       g.drawImage(shaped, drawX, drawY, drawW, drawH);
     };
     drawRef.current = draw;
-    // 濾鏡／調節／特效的值一變，就先用低解析度那張（快），
-    // 停手 220ms 之後再補算 720 的那張。
+    /* 低解析度那張只給「連續在動」的情況用（拖滑桿）。
+       以前只要 fx 值一變就先畫 380 的、220ms 後再換成正式的 ——
+       所以「點一下濾鏡」也會先出現一張糊的、再跳成清楚的，看起來就是閃一下。
+       改成看距離上一次變動多久：點一下（單一次變動）直接畫正式的，不閃；
+       拖滑桿（連續變動）才走快的那條，維持原本的流暢度。 */
     const fxKey = `${JSON.stringify(image.fx)}|${lutRevision}`;
     if (fxKeyRef.current !== null && fxKeyRef.current !== fxKey && hasPhotoFx(image.fx)) {
-      fxFastRef.current = true;
-      if (fxIdleRef.current) clearTimeout(fxIdleRef.current);
-      fxIdleRef.current = setTimeout(() => {
-        fxIdleRef.current = null;
-        fxFastRef.current = false;
-        drawRef.current?.();
-      }, 220);
+      const now = Date.now();
+      const streaming = now - fxLastChangeRef.current < 260;
+      fxLastChangeRef.current = now;
+      if (streaming) {
+        fxFastRef.current = true;
+        if (fxIdleRef.current) clearTimeout(fxIdleRef.current);
+        fxIdleRef.current = setTimeout(() => {
+          fxIdleRef.current = null;
+          fxFastRef.current = false;
+          drawRef.current?.();
+        }, 220);
+      }
     }
     fxKeyRef.current = fxKey;
 
@@ -3065,7 +3115,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     setSelectedIndex(null);
     setSelectedLayoutId(null);
     setEditingTextId(id);
-    // 新增文字就只是新增文字：要調樣式請按圖層工具列上的「編輯文字」
+    // 新增完直接進文字編輯頁，省掉「再按一次工具列的編輯」那一步
+    setActiveTab('adjust');
   };
 
   /** 複製一份圖片／文字圖層，稍微錯開一點放在原件上面，並直接選中新的那一份。 */
@@ -6018,10 +6069,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             sc.drawImage(mask, 0, 0, iw, ih);
           } else {
             sc.fillStyle = '#000';
-            roundRectPath(
-              sc, 0, 0, iw, ih,
-              (fImg.imgRadius! / 100) * iw, (fImg.imgRadius! / 100) * ih,
-            );
+            const R = cornerR(fImg.imgRadius!, iw, ih);
+            roundRectPath(sc, 0, 0, iw, ih, R, R);
             sc.fill();
           }
           sc.globalCompositeOperation = 'source-over';
@@ -6030,11 +6079,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         }
         if (lw > 0) {
           const rp = fImg.imgRadius || 0;
-          roundRectPath(
-            oc, lw / 2, lw / 2, iw + lw, ih + lw,
-            rp ? (rp / 100) * iw + lw / 2 : 0,
-            rp ? (rp / 100) * ih + lw / 2 : 0,
-          );
+          const sr = rp ? cornerR(rp, iw, ih) + lw / 2 : 0;
+          roundRectPath(oc, lw / 2, lw / 2, iw + lw, ih + lw, sr, sr);
           oc.lineWidth = lw;
           oc.lineJoin = 'miter';
           oc.miterLimit = 4;
@@ -6251,7 +6297,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               style={{
                 ...common,
                 objectFit: 'contain',
-                borderRadius: f.imgRadius ? `${(f.imgRadius / 100) * f.width * f.scale * k}px` : undefined,
+                // 縮圖也要跟預覽／匯出一樣吃短邊，才不會這裡是橢圓角、那裡是正圓角
+                borderRadius: f.imgRadius ? `${(f.imgRadius / 100) * Math.min(f.width, f.height) * f.scale * k}px` : undefined,
               }}
             />
           );
@@ -8443,9 +8490,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     onClick={() => handleAddTextLayer()}
                     className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    {/* 用襯線的大寫 T 當圖示：跟品牌字同一套字體，
-                        比線條圖示乾淨，也不會有筆畫交疊發白的問題 */}
-                    <span className="font-serif text-[26px] leading-[24px] h-[24px] flex items-center text-white/80">T</span>
+                    {/* 跟文字編輯面板裡「字體」那一顆同一個圖示 */}
+                    <Type size={24} className="text-white/80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                   </button>
                 </div>
