@@ -249,7 +249,18 @@ export function ensureItalic(family: string): Promise<boolean> {
       'https://fonts.googleapis.com/css2?family=' +
       encodeURIComponent(family).replace(/%20/g, '+') +
       ':ital,wght@1,400;1,700&display=swap';
-    link.onload = () => { italicSupport.set(family, true); resolve(true); };
+    link.onload = () => {
+      italicSupport.set(family, true);
+      resolve(true);
+      /* 順手把斜體字身「真的下載下來」。只插 <link> 的話 @font-face 只是宣告，
+         woff2 要等第一次用到才下載 —— 使用者按下斜體那一刻瀏覽器手上沒有斜體
+         字身，會先自己把正體歪一個假斜體頂著，字身到了再換掉，那個換掉就是
+         看到的抖一下。先在背景載好，按下去就是直接換成真的斜體。 */
+      if (document.fonts) {
+        document.fonts.load(`italic 400 40px "${family}"`).catch(() => {});
+        document.fonts.load(`italic 700 40px "${family}"`).catch(() => {});
+      }
+    };
     link.onerror = () => { italicSupport.set(family, false); link.remove(); resolve(false); };
     document.head.appendChild(link);
   });
