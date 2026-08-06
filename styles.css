@@ -23,13 +23,6 @@
   font-display: swap;
   src: url('/fonts/PlayfairDisplay.woff2') format('woff2');
 }
-@font-face {
-  font-family: 'Playfair Display';
-  font-style: italic;
-  font-weight: 400 900;
-  font-display: swap;
-  src: url('/fonts/PlayfairDisplay-Italic.woff2') format('woff2');
-}
 
 /* 圖示字型只留 app 真的用到的那 73 顆圖示：
    完整的 Material Symbols 可變字型是 3.96MB，子集之後只有 62KB。 */
