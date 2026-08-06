@@ -1524,7 +1524,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const dimsRef = useRef({ w: image.width, h: image.height });
   dimsRef.current = { w: image.width, h: image.height };
 
-  useEffect(() => {
+  /* 這裡一定要用 useLayoutEffect，不能用 useEffect。
+     useEffect 是「畫完才跑」：改字級那一幀會先用『新字級 + 舊寬高』畫出來，
+     下一幀量到新寬高才修正 —— 拉滑桿時每一格都閃一下，就是這個一幀落差。
+     useLayoutEffect 在瀏覽器畫之前就量完並改好，錯的那一幀根本不會上畫面。 */
+  useLayoutEffect(() => {
     if (image.text === undefined) return;
     const el = textMeasureRef.current;
     if (!el) return;
@@ -2041,22 +2045,43 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             // 剩下的就是純外描邊。
             WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2 * image.scale}px` : undefined,
             WebkitTextStrokeColor: image.strokeWidth ? (image.strokeColor || '#FFFFFF') : undefined,
-            // 沒有描邊時不要留著 paint-order。沒描邊的字本來就只有填色一個階段，
-            // 這個屬性不會改變任何東西 —— 但 Safari 走的是另一條繪製路徑，
-            // 陰影是跟著「描邊」那個階段畫的，描邊寬度 0 就整個陰影都不見，
-            // 發光因此只有加了描邊才看得到。
+            // 沒有描邊時不要留著 paint-order。
             paintOrder: image.strokeWidth ? 'stroke fill' : undefined,
-            // 邊緣發光：疊三層陰影才夠明顯，強度 0 就整個關掉
-            textShadow: image.glow
-              ? [1, 2, 3].map(k => `0 0 ${(image.glow! / 20) * 14 * k * image.scale}px ${image.glowColor || '#FFFFFF'}`).join(', ')
-              : 'none',
+            /* 發光不畫在這一層。text-shadow 的輪廓是「填色＋描邊」合起來的形狀，
+               所以一旦加了描邊，光就沿著描邊的外緣散開 —— 看起來就是描邊突然
+               變粗一大圈。匯出那邊是「先用填色的形狀畫光、再畫描邊、最後填色」，
+               兩邊對不起來。改成下面另外疊一層只有光的文字，跟匯出同一套順序。 */
+            textShadow: 'none',
             boxSizing: 'border-box',
           }}
         >
+          {/* 發光層：跟主層一模一樣的排版，但完全不描邊 ——
+              光只會從字身本來的輪廓散出去，加不加描邊都一樣大。
+              疊三層陰影才夠明顯，跟匯出的三層對齊。 */}
+          {!!image.glow && (
+            <span
+              aria-hidden
+              style={{
+                position: 'absolute', left: 0, top: 0, right: 0, bottom: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                pointerEvents: 'none', whiteSpace: 'pre', textAlign: 'center',
+                color: image.color || '#FFFFFF',
+                textShadow: [1, 2, 3]
+                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k * image.scale}px ${image.glowColor || '#FFFFFF'}`)
+                  .join(', '),
+                visibility: isTextEditing ? 'hidden' : undefined,
+              }}
+            >
+              {image.text}
+            </span>
+          )}
+
           <span
             ref={textInnerRef}
             style={{
               display: 'inline-block',
+              // 主層要蓋在發光層上面
+              position: 'relative', zIndex: 1,
               // width: max-content 才能不受外框寬度限制地量到真正需要的寬度，
               // 否則框被縮到上一次的寬度之後，文字就會一直卡在那個寬度換行
               width: 'max-content',
@@ -8255,21 +8280,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     }}
                     className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    <LayoutGrid size={24} className="text-white/80" />
+                    <Icon name="grid_view" className="text-[24px] text-white/80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增佈局</span>
                   </button>
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    <ImageIcon size={24} className="text-white/80" />
+                    <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">匯入照片</span>
                   </button>
                   <button
                     onClick={() => handleAddTextLayer()}
                     className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    <Type size={24} className="text-white/80" />
+                    <Icon name="text_fields" className="text-[24px] text-white/80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                   </button>
                 </div>
