@@ -2055,34 +2055,39 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             boxSizing: 'border-box',
           }}
         >
-          {/* 發光層：疊在主層底下，只負責發光，三層疊出原本那三段式的光。
-              這裡用 filter: drop-shadow 而不是 text-shadow —— text-shadow 的
-              輪廓只算「填色」，不算 -webkit-text-stroke，所以一加描邊，描邊就會
-              往外長、把光的內圈整個蓋掉，光看起來就變薄，而描邊外緣緊貼著剩下的
-              光，看起來又像描邊變得很粗。drop-shadow 是對「畫完的整層」取影，
-              描邊也算在內，所以：
-              ① 光永遠從最外緣（填色＋描邊）散出去，厚度只由發光決定，
-                 加不加描邊都一樣厚；
-              ② 光完全不影響描邊的粗細，描邊寬度只由描邊自己決定。
-              匯出那邊本來就是 strokeText 帶著 shadow 畫，兩邊這樣才會一致。
-              半徑要除以 2：drop-shadow 收的是標準差，text-shadow／canvas
-              shadowBlur 收的是模糊直徑（＝2 倍標準差）。 */}
-          {!!image.glow && [1, 2, 3].map(k => (
+          {/* 發光層：疊在主層底下，只負責發光。發光跟描邊是兩件獨立的事 ——
+              這一層把描邊明確歸零（-webkit-text-stroke 會從外層繼承下來，
+              不歸零的話這一層也會被描到），所以光永遠只從「字身本來的輪廓」
+              散出去，描邊粗細完全不參與計算：只調發光跟同時開描邊，看到的
+              光一模一樣。
+
+              用 text-shadow、而且只用「一層」，是刻意的：
+              ① text-shadow 是文字墨跡的一部分，不會建立合成層、不會有
+                 filter 的濾鏡區域，所以不會在光暈外圍被裁出一條硬邊；
+              ② 疊多層會讓字緣的抗鋸齒像素重複合成（0.5 疊三次變 0.875），
+                 在柔和的光暈上就浮出一圈明顯的分割線。
+              三段模糊半徑寫在同一個 text-shadow 裡，濃度跟原本一樣，
+              但整層只畫一次，邊緣乾淨。 */}
+          {!!image.glow && (
             <span
-              key={k}
               aria-hidden
               style={{
                 position: 'absolute', left: 0, top: 0, right: 0, bottom: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 pointerEvents: 'none', whiteSpace: 'pre', textAlign: 'center',
                 color: image.color || '#FFFFFF',
-                filter: `drop-shadow(0 0 ${(image.glow! / 20) * 14 * k * image.scale / 2}px ${image.glowColor || '#FFFFFF'})`,
+                // 這一層絕對不描邊，光才不會算到描邊的部分
+                WebkitTextStrokeWidth: 0,
+                paintOrder: 'normal',
+                textShadow: [1, 2, 3]
+                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k * image.scale}px ${image.glowColor || '#FFFFFF'}`)
+                  .join(', '),
                 visibility: isTextEditing ? 'hidden' : undefined,
               }}
             >
               {image.text}
             </span>
-          ))}
+          )}
 
           <span
             ref={textInnerRef}
@@ -5864,19 +5869,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (fImg.glow) {
       ctx.shadowColor = fImg.glowColor || '#FFFFFF';
       ctx.fillStyle = fImg.color || '#FFFFFF';
-      /* 光要從「描邊＋填色」的最外緣散出去 —— 跟預覽的發光層一樣先描一次。
-         不這樣做的話光是從字身邊緣散開，等一下畫的描邊會蓋掉光的內圈，
-         看起來就是「加了描邊光就變薄」。 */
-      if (fImg.strokeWidth) {
-        ctx.lineWidth = fImg.strokeWidth * 2 * scaleFactor * fImg.scale;
-        ctx.lineJoin = 'round';
-        ctx.miterLimit = 2;
-        ctx.strokeStyle = fImg.strokeColor || '#FFFFFF';
-      }
-      // 疊三層，跟預覽的三層 text-shadow 對齊
+      /* 只用填色的字形投影，完全不碰描邊 —— 跟預覽的發光層一樣。
+         這裡如果先 strokeText，光就會從描邊的外緣散出去，等於把描邊
+         算進發光裡；發光與描邊要各自獨立，所以這一段不描邊。 */
+      // 疊三層，跟預覽那一層的三段 text-shadow 對齊
       for (const k of [1, 2, 3]) {
         ctx.shadowBlur = (fImg.glow / 20) * 14 * k * scaleFactor * fImg.scale;
-        if (fImg.strokeWidth) lines.forEach((ln, i) => ctx.strokeText(ln, 0, startY + i * lineH));
         drawLines();
       }
       ctx.shadowBlur = 0;
