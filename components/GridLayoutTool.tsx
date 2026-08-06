@@ -28,6 +28,10 @@ export interface ImageCell {
   rotation: number;
   naturalWidth?: number;
   naturalHeight?: number;
+  /** 濾鏡／調節／特效。跟浮動圖片用同一組資料與同一支算圖 */
+  fx?: PhotoFx;
+  /** 這一格自己的圓角（%）。有設的話就蓋掉佈局那根共用的圓角滑桿 */
+  imgRadius?: number;
 }
 
 /** 是不是影片檔（用 MIME 或副檔名判斷都可以） */
@@ -1365,6 +1369,47 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
 
 /** 預覽重畫時要馬上有圖可以畫，所以原圖載過一次就留著。 */
 const previewImgCache = new Map<string, HTMLImageElement>();
+/**
+ * 佈局格子的照片。沒有套濾鏡就是原本那張 <img>（完全不變）；
+ * 套了就換成 canvas，用跟浮動圖片同一支 applyPhotoFx 算，
+ * 外層的裁切、縮放、位移邏輯都不動。
+ */
+const CellFxImage: React.FC<{
+  url: string;
+  fx: PhotoFx;
+  style: React.CSSProperties;
+  lutRevision: number;
+  boxW: number;
+  boxH: number;
+}> = ({ url, fx, style, lutRevision, boxW, boxH }) => {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useLayoutEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const img = getPreviewImg(url);
+    const draw = () => {
+      if (!img.naturalWidth) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      // 算到「畫面上真的有幾個實體像素」，套了濾鏡才不會變糊
+      const MAX = Math.min(1600, Math.max(640, Math.round(Math.max(boxW, boxH) * dpr)));
+      const ar = img.naturalWidth / img.naturalHeight;
+      const w = ar >= 1 ? MAX : Math.max(16, Math.round(MAX * ar));
+      const h = ar >= 1 ? Math.max(16, Math.round(MAX / ar)) : MAX;
+      const out = applyPhotoFx(img, w, h, fx);
+      if (c.width !== w) c.width = w;
+      if (c.height !== h) c.height = h;
+      const g = c.getContext('2d');
+      if (!g) return;
+      g.clearRect(0, 0, w, h);
+      g.drawImage(out, 0, 0, w, h);
+    };
+    if (img.complete && img.naturalWidth) { draw(); return; }
+    img.addEventListener('load', draw);
+    return () => img.removeEventListener('load', draw);
+  }, [url, fx, lutRevision, boxW, boxH]);
+  return <canvas ref={ref} style={style} />;
+};
+
 const getPreviewImg = (src: string) => {
   let el = previewImgCache.get(src);
   if (!el) {
@@ -5525,6 +5570,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    *  'pan'   —— 屬於畫布，左右捲頁
    * 規則就是「拖到被選中的物件身上＝操作它，拖別的地方＝捲頁」。
    */
+  /** 手指是不是就放在「目前選中的那個物件」身上（兩指要縮放它，而不是縮放預覽）。 */
+  const touchOnSelection = (target: Element | null) => {
+    if (!target) return false;
+    if (selectedFloatingId) return !!target.closest(`[data-floating-id="${selectedFloatingId}"]`);
+    if (selectedIndex !== null && selectedLayoutId) {
+      const cellEl = target.closest('[data-cell-id]');
+      return !!cellEl
+        && Number(cellEl.getAttribute('data-cell-id')) === selectedIndex
+        && !!cellEl.closest(`[data-layout-id="${selectedLayoutId}"]`);
+    }
+    if (selectedLayoutId) return !!target.closest(`[data-layout-id="${selectedLayoutId}"]`);
+    return false;
+  };
+
   const gestureScope = (target: Element | null): 'none' | 'floating' | 'layout' | 'pan' => {
     if (!target) return 'pan';
     if (target.closest('button')) return 'none';
@@ -5616,10 +5675,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     const kk = Math.max(0.4, Math.min(5, k));
     // 限制平移範圍，免得把畫面拖出去找不回來；縮小的時候不需要平移
     const mx = Math.max(0, (kk - 1) * w * 0.5), my = Math.max(0, (kk - 1) * h * 0.5);
-    // 非常接近 1 才吸附回 1，不然會縮不下去（以前是 <=1.001 就跳回 1）
-    setViewT(Math.abs(kk - 1) < 0.02
-      ? { k: 1, tx: 0, ty: 0 }
-      : { k: kk, tx: Math.max(-mx, Math.min(mx, tx)), ty: Math.max(-my, Math.min(my, ty)) });
+    /* 縮放進行中「絕對不要」吸附回 1。
+       以前只要倍率靠近 1 就直接設成 { k:1, tx:0, ty:0 }，捏到接近原大小時
+       會在「吸附」與「不吸附」之間來回跳，而且 tx/ty 被歸零還會位移一下 ——
+       那就是接近初始大小時的抖動。吸附改到放手的時候做一次就好。 */
+    setViewT({ k: kk, tx: Math.max(-mx, Math.min(mx, tx)), ty: Math.max(-my, Math.min(my, ty)) });
   }, []);
 
   const handleWorkspaceTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
@@ -5628,17 +5688,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     wsGestureRef.current = null;
     if (isLongPressedRef.current || touchDragState.current) return;
 
-    /* 縮放預覽的條件：兩指、不在排頁面模式，而且下列任一成立
-       ① 什麼都沒選中（原本的規則）
-       ② 手指落在空白處
-       ③ 畫面「已經被縮放過」（倍率不是 1）
-       第三點是為了不讓人卡住：放大之後點一下畫面就會選中某個東西，
-       而放大到滿版時畫面上已經沒有空白處可以點，如果這時候兩指還是去縮放
-       物件，就再也回不到原本的大小了。倍率回到 1 之後規則就跟以前完全一樣，
-       兩指仍然是縮放選中的物件。 */
+    /* 兩指＝縮放預覽，唯一的例外是「手指就放在目前選中的那個物件身上」，
+       那種情況才是縮放那個物件。以前是「只要有東西被選中就完全不給縮放預覽」，
+       但點一下畫面就會選中東西，等於選了之後預覽再也縮放不了。 */
     const viewScope = gestureScope(e.target as Element);
-    const zoomed = Math.abs(viewTRef.current.k - 1) > 0.001;
-    if (e.touches.length >= 2 && !pagesMode && (nothingSelected() || viewScope === 'none' || zoomed)) {
+    if (e.touches.length >= 2 && !pagesMode && !touchOnSelection(e.target as Element)) {
       viewPanRef.current = null;
       viewPinchRef.current = {
         d0: Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
@@ -5652,8 +5706,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     }
     // 已經放大了，單指就是平移（沒放大時單指維持原本的捲頁）
     if (e.touches.length === 1 && viewTRef.current.k > 1.02
-        && (nothingSelected() || viewScope === 'none') && !pagesMode) {
-      // 單指平移仍然只在「沒選中東西／點在空白處」時接手，
+        && nothingSelected() && !pagesMode) {
+      // 單指平移只在「什麼都沒選中」時接手，
       // 不然放大狀態下就沒辦法拖動選中的物件了。
       viewPanRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY,
                              tx0: viewTRef.current.tx, ty0: viewTRef.current.ty };
@@ -5846,8 +5900,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   };
 
   const handleWorkspaceTouchEnd = () => {
+    const wasPinching = !!viewPinchRef.current;
     viewPinchRef.current = null;
     viewPanRef.current = null;
+    // 放手之後才吸附：夠接近原大小就乾脆回正，省得停在 0.98 這種尷尬的倍率
+    if (wasPinching) {
+      setViewT(v => (Math.abs(v.k - 1) < 0.06 ? { k: 1, tx: 0, ty: 0 } : v));
+    }
     setPinchFloatingId(null);
     if (wsGestureRef.current) {
       wsGestureRef.current = null;
@@ -6443,11 +6502,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
             if (iw <= 0 || ih <= 0) return;
 
+            /* 這一格自己設了圓角就蓋掉佈局那根共用滑桿（跟預覽同一套） */
+            const cellRadius = cell?.imgRadius
+              ? cornerR(cell.imgRadius, iw, ih)
+              : canvasRadius;
+
             // Draw solid background for the cell slot
             ctx.save();
             ctx.beginPath();
             if (ctx.roundRect) {
-              ctx.roundRect(ix, iy, iw, ih, canvasRadius);
+              ctx.roundRect(ix, iy, iw, ih, cellRadius);
             } else {
               ctx.rect(ix, iy, iw, ih);
             }
@@ -6461,11 +6525,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             ctx.save();
             ctx.beginPath();
             if (ctx.roundRect) {
-              ctx.roundRect(ix, iy, iw, ih, canvasRadius);
+              ctx.roundRect(ix, iy, iw, ih, cellRadius);
             } else {
               ctx.rect(ix, iy, iw, ih);
             }
             ctx.clip();
+
+            /* 套了濾鏡／調節／特效就先算出處理過的那一張，再照原本的
+               裁切與縮放畫上去 —— 跟預覽用的是同一支 applyPhotoFx。 */
+            const src: CanvasImageSource = hasPhotoFx(cell.fx)
+              ? applyPhotoFx(
+                  img,
+                  Math.max(1, Math.round((img.naturalWidth || img.width))),
+                  Math.max(1, Math.round((img.naturalHeight || img.height))),
+                  cell.fx!,
+                )
+              : img;
 
             const imgW = img.naturalWidth || img.width;
             const imgH = img.naturalHeight || img.height;
@@ -6492,7 +6567,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
             // Scale and draw（整組佈局是一個群組，格內照片跟著一起縮放）
             ctx.scale(finalScale, finalScale);
-            ctx.drawImage(img, -imgW / 2, -imgH / 2, imgW, imgH);
+            ctx.drawImage(src, -imgW / 2, -imgH / 2, imgW, imgH);
             ctx.restore();
           });
           ctx.restore();
@@ -7515,15 +7590,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                         }`}
                                         style={{
                                           backgroundColor: '#121212',
-                                          borderRadius: `${radius}px`,
+                                          // 這一格自己設了圓角就蓋掉佈局那根共用滑桿
+                                          borderRadius: cell.imgRadius
+                                            ? `${cornerR(cell.imgRadius, cellWidth, cellHeight)}px`
+                                            : `${radius}px`,
                                           touchAction: 'none',
                                         }}
                                       >
-                                        <img
-                                          src={cell.url}
-                                          alt="cell"
-                                          className="absolute pointer-events-none"
-                                          style={{
+                                        {(() => {
+                                          const photoStyle: React.CSSProperties = {
+                                            position: 'absolute',
                                             left: '50%',
                                             top: '50%',
                                             width: `${layoutW}px`,
@@ -7534,8 +7610,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                             transform: `translate(-50%, -50%) translate(${cell.offsetX * cellWidth}px, ${cell.offsetY * cellHeight}px) rotate(${cell.rotation}deg) scale(${cssScale})`,
                                             transition: imageTransition,
                                             opacity: 1,
-                                          }}
-                                        />
+                                            pointerEvents: 'none',
+                                          };
+                                          return hasPhotoFx(cell.fx)
+                                            ? (
+                                              <CellFxImage
+                                                url={cell.url}
+                                                fx={cell.fx!}
+                                                style={photoStyle}
+                                                lutRevision={lutRevision}
+                                                boxW={cellWidth}
+                                                boxH={cellHeight}
+                                              />
+                                            )
+                                            : <img src={cell.url} alt="cell" style={photoStyle} />;
+                                        })()}
 
                                         {/* Thin solid outline on top of the image */}
                                         {isSelected && draggedIndex === null && touchDraggedIndex === null && (
@@ -7588,6 +7677,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                             className="text-black hover:text-neutral-400 p-1.5 rounded-full transition-colors flex items-center justify-center"
                                           >
                                             <RefreshCw size={14} />
+                                          </button>
+                                          {/* 跟浮動圖片同一顆「圖片調整」，進的是同一個編輯面板 */}
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); setActiveTab('adjust'); }}
+                                            title="圖片調整"
+                                            className="text-black hover:text-neutral-400 p-1.5 rounded-full transition-colors flex items-center justify-center"
+                                          >
+                                            <Sliders size={14} />
                                           </button>
                                         </div>
                                       )}
@@ -8134,7 +8231,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'add', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto'}`}>
 
             {activeTab === 'adjust' && (() => {
-              const layer = floatingImages.find(f => f.id === selectedFloatingId);
+              /* 佈局裡的格子也走同一套面板：把格子包成跟浮動圖片一樣的形狀，
+                 面板本身完全不用改，寫回去的時候再導到格子上。 */
+              const selCell = selectedFloatingId ? null
+                : (selectedIndex !== null && selectedLayoutId
+                    ? (activePage.layouts.find(l => l.id === selectedLayoutId)?.images[selectedIndex] || null)
+                    : null);
+              const layer = floatingImages.find(f => f.id === selectedFloatingId)
+                || (selCell && selCell.url
+                    ? ({ id: selCell.id, src: selCell.url, fx: selCell.fx, imgRadius: selCell.imgRadius } as unknown as FloatingImage)
+                    : undefined);
               // 什麼都沒選：只給提示
               if (!layer) return (
                 // 置中之後再稍微往上一點（pb 讓可用高度變矮，等於整段往上挪 12px）
@@ -8156,8 +8262,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               /* ── 選到圖片：跟「編輯」完全一樣的三段式操作欄 ───────────────
                  上：一根滑桿（5rem）／中：工具列（6rem）／下：分類列（h-16＋底部空隙） */
               const img = layer;
-              const set = (patch: Partial<FloatingImage>) =>
+              const set = (patch: Partial<FloatingImage>) => {
+                if (selCell) {
+                  // 只有格子真的有的欄位才寫回去，其餘忽略
+                  const cellPatch: Partial<ImageCell> = {};
+                  if ('fx' in patch) cellPatch.fx = (patch as any).fx;
+                  if ('imgRadius' in patch) cellPatch.imgRadius = (patch as any).imgRadius;
+                  if (!Object.keys(cellPatch).length) return;
+                  setImages(prev => prev.map((c, i) => (i === selectedIndex ? { ...c, ...cellPatch } : c)));
+                  return;
+                }
                 setFloatingImages(prev => prev.map(f => (f.id === img.id ? { ...f, ...patch } : f)));
+              };
+              /* 格子目前只支援濾鏡／調節／特效與圓角 —— 羽化／發光／描邊會長到
+                 格子外面，而格子是被裁切的（overflow hidden），畫出來會被切掉，
+                 所以那幾顆先不給格子用，免得拉了沒反應。 */
+              const shapeToolsForTarget = selCell
+                ? SHAPE_TOOLS.filter(t => t[0] === 'imgRadius')
+                : SHAPE_TOOLS;
               const fx = img.fx || {};
               const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
               const fxVal = (key: string, dflt: number) => (fx as any)[key] ?? dflt;
@@ -8442,7 +8564,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     })}
 
                     {adjustSub === 'shape' && (shapeMenu === 'root'
-                      ? SHAPE_TOOLS.map(([id, label, icon, , , dflt]) => {
+                      ? shapeToolsForTarget.map(([id, label, icon, , , dflt]) => {
                           const isSub = !!SHAPE_SUB_TOOLS[id];
                           // 只看粗細／強度，顏色不算：值是 0 的時候畫面上根本沒有效果，
                           // 按鈕下方就不該有白點
