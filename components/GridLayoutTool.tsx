@@ -6366,6 +6366,99 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      以前 IG 預覽是另外用 DOM 重畫一次，兩份程式碼永遠會有對不上的地方
      （比例、裁切、跨頁、次像素…），改成共用同一條管線就不可能不一樣。 */
   const [igShots, setIgShots] = useState<string[]>([]);
+
+  /* ── IG 預覽的選音樂 ─────────────────────────────────────────────
+     用 iTunes Search API：免金鑰、免登入，回傳 30 秒試聽、封面、歌名歌手。
+     那個 API 沒有 CORS 標頭，直接 fetch 會被瀏覽器擋掉，所以走 JSONP。 */
+  type Track = { id: number; name: string; artist: string; art: string; preview: string; secs: number };
+  const [musicOpen, setMusicOpen] = useState(false);
+  const [musicShown, setMusicShown] = useState(false);   // 控制滑入／滑出的動畫
+  const [musicQuery, setMusicQuery] = useState('');
+  const [musicTab, setMusicTab] = useState('為你推薦');
+  const [musicList, setMusicList] = useState<Track[]>([]);
+  const [musicLoading, setMusicLoading] = useState(false);
+  const [picked, setPicked] = useState<Track | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const MUSIC_TABS = ['為你推薦', '超夯', '原始音訊', '已儲存'];
+  /** 沒有搜尋字時每個分頁預設找什麼 */
+  const TAB_TERMS: Record<string, string> = {
+    '為你推薦': '華語 抒情',
+    '超夯': 'top hits',
+    '原始音訊': 'lo-fi',
+    '已儲存': 'acoustic',
+  };
+
+  const jsonp = (url: string) => new Promise<any>((resolve, reject) => {
+    const cb = `itcb_${Math.random().toString(36).slice(2)}`;
+    const sc = document.createElement('script');
+    const done = (v: any) => { delete (window as any)[cb]; sc.remove(); resolve(v); };
+    (window as any)[cb] = done;
+    sc.src = `${url}&callback=${cb}`;
+    sc.onerror = () => { delete (window as any)[cb]; sc.remove(); reject(new Error('jsonp failed')); };
+    document.head.appendChild(sc);
+  });
+
+  const searchMusic = useCallback(async (term: string) => {
+    setMusicLoading(true);
+    try {
+      const d = await jsonp(
+        'https://itunes.apple.com/search?media=music&entity=song&limit=40&term='
+        + encodeURIComponent(term),
+      );
+      setMusicList((d?.results || [])
+        .filter((r: any) => r.previewUrl)
+        .map((r: any) => ({
+          id: r.trackId,
+          name: r.trackName,
+          artist: r.artistName,
+          // 100px 的封面換成 200px，視網膜螢幕才不會糊
+          art: (r.artworkUrl100 || '').replace('100x100', '200x200'),
+          preview: r.previewUrl,
+          secs: Math.round((r.trackTimeMillis || 0) / 1000),
+        })));
+    } catch {
+      setMusicList([]);
+    } finally {
+      setMusicLoading(false);
+    }
+  }, []);
+
+  // 開啟時滑入；分頁或搜尋字改變就重新找
+  useEffect(() => {
+    if (!musicOpen) return;
+    const t = setTimeout(() => setMusicShown(true), 16);
+    return () => clearTimeout(t);
+  }, [musicOpen]);
+  useEffect(() => {
+    if (!musicOpen) return;
+    const term = musicQuery.trim() || TAB_TERMS[musicTab] || 'pop';
+    const t = setTimeout(() => searchMusic(term), musicQuery ? 350 : 0);
+    return () => clearTimeout(t);
+  }, [musicOpen, musicQuery, musicTab, searchMusic]);
+  // 關掉 IG 預覽時把音樂一起停掉
+  useEffect(() => {
+    if (igPreview) return;
+    audioRef.current?.pause();
+    setMusicOpen(false);
+    setMusicShown(false);
+  }, [igPreview]);
+
+  /** 滑出去之後才真的卸載，動畫才跑得完 */
+  const closeMusic = () => {
+    setMusicShown(false);
+    setTimeout(() => setMusicOpen(false), 300);
+  };
+
+  const pickTrack = (t: Track) => {
+    setPicked(t);
+    if (!audioRef.current) audioRef.current = new Audio();
+    audioRef.current.src = t.preview;
+    audioRef.current.loop = true;
+    audioRef.current.play().catch(() => {});
+    closeMusic();
+  };
+  // 元件整個被卸載時（例如離開經典拼圖）也要把音樂停掉，不然會一直播下去
+  useEffect(() => () => { audioRef.current?.pause(); audioRef.current = null; }, []);
   const igShotsRef = useRef<string[]>([]);
   useEffect(() => {
     if (!igPreview) return;
@@ -9286,9 +9379,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-[14px] font-semibold text-white leading-[19px] truncate">{IG_ACCOUNT}</p>
-                <p className="text-[13px] text-white leading-[17px] truncate">
-                  <span className="text-[12px] mr-[3px]">♫</span>原創音訊 · {IG_ACCOUNT}
-                </p>
+                {/* 點這一行選音樂；選過之後整行換成「歌名 · 歌手」 */}
+                <button
+                  onClick={() => setMusicOpen(true)}
+                  className="text-[13px] text-white leading-[17px] truncate block w-full text-left active:opacity-60"
+                >
+                  <span className="text-[12px] mr-[3px]">♫</span>
+                  {picked ? `${picked.name} · ${picked.artist}` : `原創音訊 · ${IG_ACCOUNT}`}
+                </button>
               </div>
               {/* IG 現在的版本右上角是兩條橫線；這裡順便當關閉鍵 */}
               <button
@@ -9434,6 +9532,92 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             <p className="shrink-0 text-center text-[11px] text-white/30 pb-4 px-6 leading-relaxed">
               目前的頁面比例 IG 不支援，預覽照 IG 的做法裁成直式 3:4
             </p>
+          )}
+
+          {/* ── 選音樂的底部面板 ───────────────────────────────────────
+              從下往上滑進來、往下滑出去。用 translate-y + transition，
+              關閉時先播完動畫再卸載（closeMusic 裡的 setTimeout）。 */}
+          {musicOpen && (
+            <>
+              <div
+                onClick={closeMusic}
+                className={`absolute inset-0 z-[130] bg-black/50 transition-opacity duration-300 ${musicShown ? 'opacity-100' : 'opacity-0'}`}
+              />
+              <div
+                className={`absolute left-0 right-0 bottom-0 z-[131] bg-[#161616] rounded-t-2xl flex flex-col transition-transform duration-300 ease-out ${musicShown ? 'translate-y-0' : 'translate-y-full'}`}
+                style={{ height: '86%', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+              >
+                {/* 上緣的小握把 */}
+                <div className="shrink-0 pt-2 pb-1 flex justify-center">
+                  <div className="w-9 h-1 rounded-full bg-white/30" />
+                </div>
+
+                {/* 搜尋列 */}
+                <div className="shrink-0 px-4 pt-2 pb-3">
+                  <div className="h-11 rounded-full bg-[#2a2a2a] flex items-center gap-2 px-4">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="2.2" strokeLinecap="round">
+                      <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.2-3.2" />
+                    </svg>
+                    <input
+                      value={musicQuery}
+                      onChange={e => setMusicQuery(e.target.value)}
+                      placeholder="搜尋......"
+                      className="flex-1 bg-transparent outline-none text-[15px] text-white placeholder-white/45"
+                    />
+                    {!!musicQuery && (
+                      <button onClick={() => setMusicQuery('')} className="text-white/45 text-[15px] px-1">✕</button>
+                    )}
+                  </div>
+                </div>
+
+                {/* 分類膠囊 */}
+                <div className="shrink-0 flex gap-2 px-4 pb-3 overflow-x-auto no-scrollbar">
+                  {MUSIC_TABS.map(t => (
+                    <button
+                      key={t}
+                      onClick={() => { setMusicTab(t); setMusicQuery(''); }}
+                      className={`shrink-0 h-9 px-4 rounded-full text-[14px] font-semibold transition-colors ${
+                        musicTab === t ? 'bg-white text-black' : 'bg-[#2a2a2a] text-white'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+
+                {/* 歌曲清單 */}
+                <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 pb-4">
+                  {musicLoading && (
+                    <div className="py-10 flex justify-center">
+                      <div className="w-6 h-6 rounded-full border-2 border-white/25 border-t-white animate-spin" />
+                    </div>
+                  )}
+                  {!musicLoading && musicList.length === 0 && (
+                    <p className="py-10 text-center text-[13px] text-white/40">找不到歌曲</p>
+                  )}
+                  {musicList.map(t => (
+                    <button
+                      key={t.id}
+                      onClick={() => pickTrack(t)}
+                      className="w-full flex items-center gap-3 py-2.5 text-left active:opacity-60"
+                    >
+                      <img src={t.art} alt="" className="w-14 h-14 rounded-[6px] shrink-0 bg-white/10 object-cover" />
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-[16px] leading-[21px] truncate ${picked?.id === t.id ? 'text-white font-semibold' : 'text-white'}`}>{t.name}</p>
+                        <p className="text-[14px] leading-[19px] text-white/50 truncate">
+                          {t.artist} · {Math.floor(t.secs / 60)}:{String(t.secs % 60).padStart(2, '0')}
+                        </p>
+                      </div>
+                      {/* 右邊的收藏書籤：選到的那首填滿 */}
+                      <svg width="22" height="22" viewBox="0 0 24 24"
+                           fill={picked?.id === t.id ? '#fff' : 'none'} stroke="#fff" strokeWidth="1.8" strokeLinejoin="round">
+                        <path d="M6 3h12a1 1 0 011 1v17l-7-4-7 4V4a1 1 0 011-1z" />
+                      </svg>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </>
           )}
         </div>
       )}
