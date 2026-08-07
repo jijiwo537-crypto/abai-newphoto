@@ -9286,7 +9286,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 onTouchStart={(e) => { igTouchXRef.current = e.touches[0]?.clientX ?? 0; }}
 
                 className="flex w-full overflow-x-auto overflow-y-hidden no-scrollbar snap-x snap-mandatory"
-                style={{ aspectRatio: `${igFrame.w} / ${igFrame.h}`, touchAction: 'pan-x', overscrollBehavior: 'contain' }}
+                style={{
+                  aspectRatio: `${igFrame.w} / ${igFrame.h}`,
+                  /* 圖片區的高度上限：整個畫面扣掉上面帳號那列與下面點點／愛心／
+                     說讚那幾列（約 210px）。不設上限的話，直式的貼文會比可用高度
+                     還高，下面那幾列就疊到圖的下緣上 —— 看起來就是圖被遮住。
+                     有了上限，整篇貼文一定塞得進一個畫面，圖也一定完整。 */
+                  maxHeight: 'calc(100dvh - 210px)',
+                  touchAction: 'pan-x',
+                  overscrollBehavior: 'contain',
+                }}
               >
                 {pages.map((page, idx) => (
                   <div
