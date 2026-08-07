@@ -2788,13 +2788,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     edgeOnly?: boolean
   ) => {
     if (!enableSnapping) {
-      return { snappedX: rawX, snappedY: rawY, guidelines: [] };
+      return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
     }
     // 只跟自己所在的那一頁對齊：隔壁頁的邊界只差 1px，兩個都留著會讓同一條邊
     // 出現兩個吸附位置（拖過去亮一次、再往前 1px 又亮一次）
     const pageRects = pageRectsNear(getAllPageRects(), rawX + imgWidth / 2);
     if (pageRects.length === 0) {
-      return { snappedX: rawX, snappedY: rawY, guidelines: [] };
+      return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
     }
 
     const SNAP_THRESHOLD = 4; // Snapping threshold reduced to 4px
@@ -2915,6 +2915,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         snappedX = pr.centerX - imgWidth / 2;
       }
     });
+    /* 圖層已經「幾乎剛好等於整頁」時，光把位置對準還不夠 —— 只要比頁面窄零點幾
+       px，置中之後兩側各留 0.25px，抗鋸齒就會把那條縫顯示出來。這裡順便回報一個
+       「確實覆蓋整頁再多半個像素」的倍率，讓拖曳也能把最後那一點補起來。
+       頁面本來就會裁掉超出的部分，所以多蓋的完全看不到。 */
+    let fitScale: number | undefined;
+    ownPageRectsForFit.forEach(pr => {
+      const pw = pr.right - pr.left, ph = pr.bottom - pr.top;
+      if (Math.abs(scaledW - pw) < 3 && Math.abs(scaledH - ph) < 3) {
+        const cover = Math.max(pw / imgWidth, ph / imgHeight);
+        const longSide = Math.max(imgWidth, imgHeight) * cover;
+        fitScale = longSide > 1 ? cover * (1 + 0.6 / longSide) : cover;
+        snappedX = pr.centerX - imgWidth / 2;
+        snappedY = pr.centerY - imgHeight / 2;
+      }
+    });
 
     // 2. Horizontal snapping (determines snappedY)
     let minDiffY = Infinity;
@@ -3019,7 +3034,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
        都加進去。跟其他物件的對齊線不列入（那是另一回事，維持原本只顯示吸附到的那一條）。 */
     guidelines.push(...pageGuidelinesAt(snappedX, snappedY, imgWidth, imgHeight, imgScale, edgeOnly));
 
-    return { snappedX, snappedY, guidelines: dedupeGuidelines(guidelines) };
+    return { snappedX, snappedY, fitScale, guidelines: dedupeGuidelines(guidelines) };
   };
 
   const [draggedFloatingIndex, setDraggedFloatingIndex] = useState<number | null>(null);
@@ -5959,6 +5974,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               });
             });
             if (best < SNAP) ns = bestScale;
+            /* 縮到「幾乎剛好填滿整頁」時，改成確實覆蓋並多蓋半個像素。
+               只差零點幾 px 的話，邊緣落在非整數像素上會被抗鋸齒混掉，
+               看起來就是跟頁面邊界之間有一條白縫；頁面本來就會裁掉超出的
+               部分，所以多蓋的那一點完全看不到。 */
+            getAllPageRects().forEach(pr => {
+              const pw = pr.right - pr.left, ph = pr.bottom - pr.top;
+              const w = target.width * ns, h = target.height * ns;
+              if (Math.abs(w - pw) < 3 && Math.abs(h - ph) < 3) {
+                const cover = Math.max(pw / target.width, ph / target.height);
+                const longSide = Math.max(target.width, target.height) * cover;
+                ns = longSide > 1 ? cover * (1 + 0.6 / longSide) : cover;
+              }
+            });
           }
           setFloatingImages(prev => prev.map(img =>
             img.id === g.floatingId
@@ -6347,10 +6375,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   }, [igPreview]);
   /** 貼文版位的比例：頁面本身的比例 IG 支援就照它，不支援就用直式 3:4 */
   const igFrame = (() => {
+    /* IG 現在支援的貼文比例是 3:4（最高）到 1.91:1（最寬）之間的「任何」比例，
+       不是只有那幾個固定值 —— 以前用一張清單去比對，4:3 這種橫式就對不到，
+       只好退回 3:4 的直式框，畫面自然被切掉一塊。
+       改成只要落在支援範圍內就照頁面原本的比例做框，完全不裁；
+       超出範圍才夾到最接近的邊界（跟 IG 自己的行為一致）。 */
+    const IG_MIN = 3 / 4;      // 最高（直式）
+    const IG_MAX = 1.91;       // 最寬（橫式）
     const r = previewW / previewH;
-    const hit = IG_RATIOS.find(x => Math.abs(x - r) < 0.02);
-    if (hit) return { w: previewW, h: previewH };
-    return { w: 3, h: 4 };
+    if (r >= IG_MIN - 1e-3 && r <= IG_MAX + 1e-3) return { w: previewW, h: previewH };
+    return r < IG_MIN ? { w: 3, h: 4 } : { w: 191, h: 100 };
   })();
   /** 預覽裡的帳號 */
   const IG_ACCOUNT = 'abai_is.perfect';
@@ -7995,7 +8029,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                         pagesContainerRef={pagesContainerRef}
                         onDragStart={() => {}}
                         onDragMove={(rawX, rawY) => {
-                          const { snappedX, snappedY, guidelines } = applySnapping(
+                          const { snappedX, snappedY, fitScale, guidelines } = applySnapping(
                             fImg.id,
                             rawX,
                             rawY,
@@ -8004,7 +8038,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                             fImg.scale
                           );
                           setActiveGuidelines(guidelines);
-                          setFloatingImages(prev => prev.map(item => item.id === fImg.id ? { ...item, x: snappedX, y: snappedY } : item));
+                          setFloatingImages(prev => prev.map(item => item.id === fImg.id
+                            ? { ...item, x: snappedX, y: snappedY, ...(fitScale ? { scale: fitScale } : {}) }
+                            : item));
                         }}
                         onDragEnd={() => {
                           setActiveGuidelines([]);
