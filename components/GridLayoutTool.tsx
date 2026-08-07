@@ -6816,10 +6816,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
              但匯出是把所有頁面畫在同一張長畫布上、沒有任何裁切 ——
              多出來的那半個像素就跑到隔壁那一頁去了。 */
           run: async (c) => {
-            const pi = Math.floor(fImg.x / (previewW + 1));
+            /* 裁切範圍是「這個圖層真正橫跨到的每一頁」，不是只有一頁 ——
+               只裁一頁的話，刻意跨在兩頁上的物件會被切掉一半。
+               判斷跨頁時留 1.5px 的容差：貼齊邊緣時圖層會往外多蓋半個像素
+               （不然預覽會露出抗鋸齒的白縫），那半個像素不能被當成「跨頁」。 */
+            const TOL = 1.5 * scaleFactor;
+            const lx = adjustedX * scaleFactor;
+            const rx = lx + fImg.width * fImg.scale * scaleFactor;
+            const last = Math.max(0, pages.length - 1);
+            const p0 = Math.min(last, Math.max(0, Math.floor((lx + TOL) / targetW)));
+            const p1 = Math.min(last, Math.max(p0, Math.floor((rx - TOL) / targetW)));
             c.save();
             c.beginPath();
-            c.rect(pi * targetW, 0, targetW, targetH);
+            c.rect(p0 * targetW, 0, (p1 - p0 + 1) * targetW, targetH);
             c.clip();
             try {
               await drawFloatingLayers(c, [fImg], scaleFactor);
@@ -7112,7 +7121,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 ref={resultStripRef}
                 // overflow-anchor: none 才不會被瀏覽器的捲動錨定拉到別頁
                 style={{ overflowAnchor: 'none' }}
-                className="w-full flex flex-row gap-4 overflow-x-auto no-scrollbar snap-x snap-mandatory px-[max(0px,calc(50%-40vw))] md:flex-wrap md:justify-center md:overflow-visible md:px-0"
+                className="w-full flex flex-row gap-2 overflow-x-auto no-scrollbar snap-x snap-mandatory px-[max(0px,calc(50%-40vw))] md:flex-wrap md:justify-center md:overflow-visible md:px-0"
               >
                 {finalImages.map((src, i) => (
                   <div key={src} className="shrink-0 snap-center flex flex-col items-center">
