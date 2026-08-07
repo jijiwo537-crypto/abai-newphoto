@@ -9251,7 +9251,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                  上方空白比下方少一截，看起來就像下面被吃掉了。
                  這裡補一段 padding-top，把差額補回來：auto margin 會把剩餘空間
                  上下均分，所以補多少、圖就往下移一半，最後圖的上下空白剛好相等。 */
-              paddingTop: `${Math.max(0, (44 + 46 + (pages.length > 1 ? 35 : 0)) - 52 - 16)}px`,
+              paddingTop: `${Math.max(0, (44 + 46 + (pages.length > 1 ? 35 : 0)) - 52)}px`,
             }}
           >
             {/* 帳號那一列：限動漸層圈的頭像、粗體帳號，第二行是音訊 */}
@@ -9300,7 +9300,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                      說讚那幾列（約 210px）。不設上限的話，直式的貼文會比可用高度
                      還高，下面那幾列就疊到圖的下緣上 —— 看起來就是圖被遮住。
                      有了上限，整篇貼文一定塞得進一個畫面，圖也一定完整。 */
-                  maxHeight: 'calc(100dvh - 210px)',
+                  /* 高度上限再壓低一截。210px 是「剛好」扣掉上下那幾列的高度，
+                     沒有留任何餘裕 —— 真機上只要有一點誤差（安全區、指示條、
+                     系統字級放大），圖的下緣就會貼到甚至被下面那排壓到。
+                     留到 280px，寧可圖小一點，也保證下方一定有空間。 */
+                  maxHeight: 'calc(100dvh - 280px)',
                   touchAction: 'pan-x',
                   overscrollBehavior: 'contain',
                 }}
