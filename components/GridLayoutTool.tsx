@@ -6352,6 +6352,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const igTouchXRef = useRef(0);
   const [igPage, setIgPage] = useState(0);
   const [igBox, setIgBox] = useState({ w: 360, h: 450 });
+  /* 是不是「加到主畫面」的全螢幕模式（PWA）。
+     這個模式下 100dvh 等於整個螢幕，包含瀏海與主畫面指示條佔掉的區域，
+     但那兩塊實際上不能拿來排版 —— 沒扣掉的話 IG 預覽的圖會長太高，
+     下緣就被愛心那一排壓到（在 Safari 或電腦上不會，因為那裡的 100dvh
+     本來就不含那兩塊）。env() 要 viewport-fit=cover 才會回報數值，
+     這裡不動全域設定，改成偵測到全螢幕模式就自己扣一個保守值。 */
+  const isStandalone = typeof window !== 'undefined'
+    && (window.matchMedia?.('(display-mode: standalone)').matches
+        || (window.navigator as any).standalone === true);
   /* IG 預覽顯示的就是「匯出的成品」本人 —— 打開時用同一支 handleExport
      算一次（壓低解析度、不動任何畫面狀態），顯示回傳的那幾張圖。
      以前 IG 預覽是另外用 DOM 重畫一次，兩份程式碼永遠會有對不上的地方
@@ -9242,16 +9251,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               而不是 justify-center：內容比容器高的時候 justify-center 會把上下
               都切掉而且捲不到，auto margin 則會自動退讓、完整可捲。 */}
           <div
-            className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col [&>*:first-child]:mt-auto [&>*:last-child]:mb-auto"
+            className="flex-1 min-h-0 overflow-hidden flex flex-col"
             style={{
               overscrollBehavior: 'contain',
-              /* 要置中的是「圖片」，不是「整篇貼文」。
-                 圖片上面只有帳號那一列（52px），下面卻有點點、愛心那列、說讚那列
-                 （約 84～119px）—— 整篇置中的話，圖就會被上下不對稱的部分推上去，
-                 上方空白比下方少一截，看起來就像下面被吃掉了。
-                 這裡補一段 padding-top，把差額補回來：auto margin 會把剩餘空間
-                 上下均分，所以補多少、圖就往下移一半，最後圖的上下空白剛好相等。 */
-              paddingTop: `${Math.max(0, (44 + 46 + (pages.length > 1 ? 35 : 0)) - 52)}px`,
             }}
           >
             {/* 帳號那一列：限動漸層圈的頭像、粗體帳號，第二行是音訊 */}
@@ -9293,21 +9295,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 // 第一張再往左滑就擋掉（IG 的第一張也是滑不動的，不會有回彈）
                 onTouchStart={(e) => { igTouchXRef.current = e.touches[0]?.clientX ?? 0; }}
 
-                className="flex w-full overflow-x-auto overflow-y-hidden no-scrollbar snap-x snap-mandatory"
-                style={{
-                  aspectRatio: `${igFrame.w} / ${igFrame.h}`,
-                  /* 圖片區的高度上限：整個畫面扣掉上面帳號那列與下面點點／愛心／
-                     說讚那幾列（約 210px）。不設上限的話，直式的貼文會比可用高度
-                     還高，下面那幾列就疊到圖的下緣上 —— 看起來就是圖被遮住。
-                     有了上限，整篇貼文一定塞得進一個畫面，圖也一定完整。 */
-                  /* 高度上限再壓低一截。210px 是「剛好」扣掉上下那幾列的高度，
-                     沒有留任何餘裕 —— 真機上只要有一點誤差（安全區、指示條、
-                     系統字級放大），圖的下緣就會貼到甚至被下面那排壓到。
-                     留到 280px，寧可圖小一點，也保證下方一定有空間。 */
-                  maxHeight: 'calc(100dvh - 280px)',
-                  touchAction: 'pan-x',
-                  overscrollBehavior: 'contain',
-                }}
+                /* flex-1 + min-h-0：圖片區「拿剩下的空間」，不再用 aspect-ratio
+                   撐出一個固定高度。用 aspect-ratio 的話，直式的頁面算出來的高度
+                   會超過畫面能給的空間，多出來的部分就被裁掉 —— 那就是截圖裡
+                   下半截不見、上面空一塊的原因。高度改成自動適應之後，
+                   裡面那張圖用 object-contain 一定完整顯示。 */
+                className="flex-1 min-h-0 flex w-full overflow-x-auto overflow-y-hidden no-scrollbar snap-x snap-mandatory"
+                style={{ touchAction: 'pan-x', overscrollBehavior: 'contain' }}
               >
                 {pages.map((page, idx) => (
                   <div
