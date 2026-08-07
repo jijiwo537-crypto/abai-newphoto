@@ -2629,7 +2629,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   /**
    * 在指定位置上，列出「現在真的對齊到」的畫布輔助線：
    * 垂直中線、水平中線、以及畫布的四個邊界。
-   * 吸附時邊界會刻意外溢 1px 防止次像素縫，所以邊界的容許值放寬一點。
+   *
+   * 邊界的判定刻意做成「不對稱」：只接受「剛好貼齊」或「往外多出去一點點」，
+   * 往內縮一律不算。吸附時會故意往外溢 1px 來蓋掉次像素縫，那是沒有縫的；
+   * 但只要往內縮，中間就是真的有一條縫 —— 那種情況就不該畫線，不然會出現
+   * 「線亮了、圖卻沒真的貼上去」的落差。
    */
   const pageGuidelinesAt = (
     x: number, y: number, imgWidth: number, imgHeight: number, scale: number, edgeOnly = false,
@@ -2642,14 +2646,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     const left = cx - scaledW / 2, right = cx + scaledW / 2;
     const top = cy - scaledH / 2, bottom = cy + scaledH / 2;
     const EPS_C = 0.75;   // 中線是精準吸附
-    const EPS_E = 1.75;   // 邊界有 1px 外溢
+    const BLEED = 1.35;   // 往外最多容許的外溢量（吸附會刻意外溢 1px）
+    const TOUCH = 0.35;   // 剛好貼齊的容許誤差
+    // 上／左：值要 <= 邊界（貼齊或超出去），不能大於（那就是有縫）
+    const flushMin = (v: number, edge: number) => v <= edge + TOUCH && v >= edge - BLEED;
+    // 下／右：值要 >= 邊界
+    const flushMax = (v: number, edge: number) => v >= edge - TOUCH && v <= edge + BLEED;
     getAllPageRects().forEach(pr => {
       if (!edgeOnly && Math.abs(cx - pr.centerX) < EPS_C) out.push({ type: 'vertical', coord: pr.centerX });
-      if (Math.abs(left - pr.left) < EPS_E) out.push({ type: 'vertical', coord: pr.left });
-      if (Math.abs(right - pr.right) < EPS_E) out.push({ type: 'vertical', coord: pr.right });
+      if (flushMin(left, pr.left)) out.push({ type: 'vertical', coord: pr.left });
+      if (flushMax(right, pr.right)) out.push({ type: 'vertical', coord: pr.right });
       if (!edgeOnly && Math.abs(cy - pr.centerY) < EPS_C) out.push({ type: 'horizontal', coord: pr.centerY });
-      if (Math.abs(top - pr.top) < EPS_E) out.push({ type: 'horizontal', coord: pr.top });
-      if (Math.abs(bottom - pr.bottom) < EPS_E) out.push({ type: 'horizontal', coord: pr.bottom });
+      if (flushMin(top, pr.top)) out.push({ type: 'horizontal', coord: pr.top });
+      if (flushMax(bottom, pr.bottom)) out.push({ type: 'horizontal', coord: pr.bottom });
     });
     return out;
   };
@@ -5801,12 +5810,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             getAllPageRects().forEach(pr => {
               const cands: number[] = [];
               if (target.width > 1) {
-                cands.push((2 * (cx - pr.left)) / target.width);    // 左邊貼齊
-                cands.push((2 * (pr.right - cx)) / target.width);   // 右邊貼齊
+                // 都往外多 1px：次像素捨入時才不會留一條髮絲縫（跟拖曳／拉四角一致）
+                cands.push((2 * (cx - (pr.left - 1))) / target.width);
+                cands.push((2 * ((pr.right + 1) - cx)) / target.width);
               }
               if (target.height > 1) {
-                cands.push((2 * (cy - pr.top)) / target.height);    // 上邊貼齊
-                cands.push((2 * (pr.bottom - cy)) / target.height); // 下邊貼齊
+                cands.push((2 * (cy - (pr.top - 1))) / target.height);
+                cands.push((2 * ((pr.bottom + 1) - cy)) / target.height);
               }
               cands.forEach(cand => {
                 if (!(cand > 0.1)) return;
@@ -8040,7 +8050,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                             const finalX = newCx - fImg.width / 2;
                             const finalY = newCy - fImg.height / 2;
 
-                            setActiveGuidelines(finalGuidelines);
+                            /* 拉四角時原本只顯示「這一次吸附到的那一條」。
+                               但先把左上角對齊、再拉右下角放大到貼齊右下時，
+                               四個邊其實都已經對齊了 —— 應該四條線一起顯示。
+                               這裡用跟拖曳同一支，把最終位置上真的對齊到的畫布線
+                               全部列出來（跟其他物件的對齊維持原本只顯示吸附到的那條）。 */
+                            setActiveGuidelines(dedupeGuidelines([
+                              ...finalGuidelines,
+                              ...pageGuidelinesAt(finalX, finalY, fImg.width, fImg.height, finalScale),
+                            ]));
                             setFloatingImages(prev => prev.map(item => item.id === fImg.id ? { ...item, x: finalX, y: finalY, scale: finalScale } : item));
                           } else {
                             setFloatingImages(prev => prev.map(item => item.id === fImg.id ? { ...item, x: newX, y: newY, scale: newScale } : item));
