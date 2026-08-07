@@ -6672,10 +6672,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         targetH = Math.round(isLandscape ? targetW * (4 / 5) : targetW * (5 / 4));
       }
 
+      const scaleFactor = targetW / previewW;
+      /* 高度一定要是「預覽高度 × 同一個縮放倍率」，不能用比例公式另外算。
+         previewH 是量出來的實際像素（含小數），跟公式算出來的值會差幾個 px；
+         而所有物件的座標都是乘 scaleFactor 換算過去的 —— 兩邊對不上的話，
+         擺在頁面正中央的圖，匯出後就會偏離中心（差多少就偏多少的一半）。
+         這也是 IG 預覽看起來「圖比較靠近下面」的原因，因為它顯示的就是匯出圖。 */
+      targetH = Math.round(previewH * scaleFactor);
+
       canvas.width = targetW;
       canvas.height = targetH;
-
-      const scaleFactor = targetW / previewW;
 
       // 每個物件仍然用「整條頁面帶」的座標計算，畫的時候再把畫布平移到該頁，
       // 所以被拖到隔壁頁的東西一樣會正確接續過去。
