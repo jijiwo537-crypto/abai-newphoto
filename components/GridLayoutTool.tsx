@@ -6372,9 +6372,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (!igPreview) return;
     let alive = true;
     (async () => {
-      const r = await handleExport({ silent: true, previewWidth: 900 });
-      const urls = (r && 'urls' in r) ? r.urls : [];
+      let r = await handleExport({ silent: true, previewWidth: 900 });
+      let urls = (r && 'urls' in r) ? r.urls : [];
+      // 偶爾第一次會算不出來（圖還沒解碼完之類），隔一下再試一次
+      if (!urls.length && alive) {
+        await new Promise(res => setTimeout(res, 400));
+        r = await handleExport({ silent: true, previewWidth: 900 });
+        urls = (r && 'urls' in r) ? r.urls : [];
+      }
       if (!alive) { urls.forEach(u => URL.revokeObjectURL(u)); return; }
+      if (!urls.length) return;   // 還是失敗就留著 renderMiniPage 當備援，不要清成空白
       igShotsRef.current.forEach(u => URL.revokeObjectURL(u));
       igShotsRef.current = urls;
       setIgShots(urls);
@@ -7488,7 +7495,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   <div
                     ref={pagesContainerRef}
                     // 排頁面時不裁切也不打陰影：被拖到最邊邊的那一頁才不會被黑色蓋掉
-                    className={`flex flex-row flex-nowrap rounded-sm relative ${
+                    className={`flex flex-row flex-nowrap relative ${
                       pagesMode || pagesVisual ? '' : 'shadow-[0_25px_60px_rgba(0,0,0,0.8)] overflow-hidden'
                     }`}
                   >
@@ -9227,7 +9234,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         >
           <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar" style={{ overscrollBehavior: 'contain' }}>
             {/* 往下墊：讓貼文的圖正好對齊畫面的水平中線 */}
-            <div style={{ height: `max(0px, calc(50vh - 88px - ${(50 * igFrame.h / igFrame.w).toFixed(2)}vw))` }} />
+            {/* 往下墊：讓貼文的圖正好對齊畫面的水平中線。
+                再多墊 44px，圖的下緣才不會被下方那排愛心／留言的列蓋到。 */}
+            <div style={{ height: `max(0px, calc(50vh - 44px - ${(50 * igFrame.h / igFrame.w).toFixed(2)}vw))` }} />
             {/* 帳號那一列：限動漸層圈的頭像、粗體帳號，第二行是音訊 */}
             <div className="h-[52px] flex items-center gap-[9px] pl-[10px] pr-1">
               <div
