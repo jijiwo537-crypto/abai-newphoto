@@ -2905,6 +2905,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (bestGuidelineX !== null) {
       snappedX = bestSnapX;
       guidelines.push({ type: 'vertical', coord: bestGuidelineX });
+      /* 貼齊之後再把「視覺邊緣」對到實體像素格線上。邊緣落在非整數的實體像素時，
+         瀏覽器會把最外面那一列跟底下的頁面白色混在一起，看起來就是一條髮絲白線
+         （只有預覽會，匯出是畫在 canvas 上）。往外捨入，最多只多蓋一個實體像素 ——
+         3 倍螢幕上是 0.33 CSS px，看不出凸出去。 */
+      const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+      const leftEdge = snappedX + imgWidth / 2 - scaledW / 2;
+      const rightEdge = leftEdge + scaledW;
+      if (Math.abs(leftEdge - bestGuidelineX) < 0.51) {
+        snappedX += (Math.floor(leftEdge * dpr) / dpr) - leftEdge;
+      } else if (Math.abs(rightEdge - bestGuidelineX) < 0.51) {
+        snappedX += (Math.ceil(rightEdge * dpr) / dpr) - rightEdge;
+      }
     }
     /* 圖層比頁面「幾乎一樣寬」時，左緣貼齊與右緣貼齊是兩個相差零點幾 px 的位置，
        從哪一邊靠過去就吸到哪一個 —— 那就是「由外而內沒縫、由內而外有縫」。
@@ -3007,6 +3019,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (bestGuidelineY !== null) {
       snappedY = bestSnapY;
       guidelines.push({ type: 'horizontal', coord: bestGuidelineY });
+      const dprY = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+      const topEdge = snappedY + imgHeight / 2 - scaledH / 2;
+      const bottomEdge = topEdge + scaledH;
+      if (Math.abs(topEdge - bestGuidelineY) < 0.51) {
+        snappedY += (Math.floor(topEdge * dprY) / dprY) - topEdge;
+      } else if (Math.abs(bottomEdge - bestGuidelineY) < 0.51) {
+        snappedY += (Math.ceil(bottomEdge * dprY) / dprY) - bottomEdge;
+      }
     }
     ownPageRectsForFit.forEach(pr => {
       const h = pr.bottom - pr.top;
@@ -7145,7 +7165,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               >
                 {finalImages.map((src, i) => (
                   <div key={src} className="shrink-0 snap-center flex flex-col items-center">
-                    <div className="relative shadow-2xl rounded-lg overflow-hidden">
+                    <div className="relative shadow-2xl overflow-hidden">
                       {finalKinds[i] === 'video' ? (
                         // 這一頁有影片，所以輸出的是影片
                         <video
@@ -7164,7 +7184,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                           className="max-w-[80vw] max-h-[52vh] md:max-w-[38vh] object-contain allow-callout relative z-10"
                         />
                       )}
-                      <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded-lg"></div>
+                      <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10"></div>
                     </div>
                   </div>
                 ))}
@@ -9200,7 +9220,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       {igPreview && (
         <div
           className="fixed inset-0 z-[120] bg-black flex flex-col animate-in fade-in duration-200"
-          style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Noto Sans TC", "PingFang TC", sans-serif' }}
+          style={{
+            fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Noto Sans TC", "PingFang TC", sans-serif',
+            /* inset-0 用的是「版面視窗」，但 iOS Safari 的底部工具列是蓋在網頁上面、
+               不佔版面高度，所以畫面最下面那一段會躲在工具列後面 —— 圖的下緣看起來
+               就是被切掉。100dvh 是會扣掉瀏覽器 UI 的動態視窗高度，再加安全區內距，
+               內容就一定落在看得見的範圍裡。 */
+            height: '100dvh',
+            maxHeight: '100dvh',
+            /* 底部一定要留白。加到主畫面的 PWA 在全螢幕下，畫面最下緣是 iPhone 的
+               主畫面指示條（那條小橫線）所在的位置，內容擺到那裡就會被壓住。
+               env() 只有在 viewport-fit=cover 時才會回報真實數值，所以再給一個
+               24px 的保底，兩者取大的。 */
+            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 24px)',
+            boxSizing: 'border-box',
+          }}
         >
           {/* 整篇貼文置中，不再用 vh 硬算要墊多高 ——
               手機瀏覽器的 vh 含網址列高度，真機上算出來會偏，貼文被推下去、

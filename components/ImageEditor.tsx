@@ -5845,13 +5845,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                   <div className={`w-full flex flex-row items-center gap-4 ${finalImages.length > 1 ? 'overflow-x-auto no-scrollbar snap-x snap-mandatory px-[max(0px,calc(50%-40vw))]' : 'justify-center'}`}>
                     {(finalImages.length ? finalImages : [finalImage!]).map((src, i) => (
                       <div key={src} className="shrink-0 snap-center flex flex-col items-center gap-2">
-                        <div className="relative shadow-2xl rounded-lg overflow-hidden max-h-[60vh]">
+                        <div className="relative shadow-2xl overflow-hidden max-h-[60vh]">
                           <img
                               src={src}
                               alt={`Final Result ${i + 1}`}
                               className="max-w-[80vw] max-h-[60vh] object-contain allow-callout relative z-10"
                           />
-                          <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded-lg"></div>
+                          <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10"></div>
                         </div>
                       </div>
                     ))}
