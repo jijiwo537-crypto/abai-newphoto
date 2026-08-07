@@ -2721,6 +2721,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     });
   };
 
+  /**
+   * 只回傳「物件目前所在的那一頁」的邊界。
+   *
+   * 相鄰兩頁中間留了 1px 的分隔（stride = previewW + 1），所以上一頁的右緣和
+   * 下一頁的左緣是兩個相差 1px 的獨立吸附點 —— 拖過去時會亮一次、再往前 1px
+   * 又亮一次，看起來就像同一條邊觸發了兩次。改成只跟自己這一頁對齊之後，
+   * 一條邊就只有一個吸附位置。
+   * 中心點不在任何一頁上（例如拖到頁面外的空白處）時退回全部，行為跟以前一樣。
+   */
+  const pageRectsNear = (rects: ReturnType<typeof getAllPageRects>, centerX: number) => {
+    const own = rects.filter(r => centerX >= r.left - 0.5 && centerX <= r.right + 0.5);
+    return own.length ? own : rects;
+  };
+
   /** 同一條線只留一份（吸附挑到的那條可能跟下面重新掃出來的重複） */
   const dedupeGuidelines = (list: AlignmentGuideline[]) => {
     const seen = new Set<string>();
@@ -2752,7 +2766,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
        超過就代表真的有縫（或真的超出去），那就不該畫線 —— 不然會出現
        「線亮了、圖卻沒真的貼上去」的落差。 */
     const EPS_E = 0.6;
-    getAllPageRects().forEach(pr => {
+    pageRectsNear(getAllPageRects(), cx).forEach(pr => {
       if (!edgeOnly && Math.abs(cx - pr.centerX) < EPS_C) out.push({ type: 'vertical', coord: pr.centerX });
       if (Math.abs(left - pr.left) < EPS_E) out.push({ type: 'vertical', coord: pr.left });
       if (Math.abs(right - pr.right) < EPS_E) out.push({ type: 'vertical', coord: pr.right });
@@ -2775,7 +2789,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (!enableSnapping) {
       return { snappedX: rawX, snappedY: rawY, guidelines: [] };
     }
-    const pageRects = getAllPageRects();
+    // 只跟自己所在的那一頁對齊：隔壁頁的邊界只差 1px，兩個都留著會讓同一條邊
+    // 出現兩個吸附位置（拖過去亮一次、再往前 1px 又亮一次）
+    const pageRects = pageRectsNear(getAllPageRects(), rawX + imgWidth / 2);
     if (pageRects.length === 0) {
       return { snappedX: rawX, snappedY: rawY, guidelines: [] };
     }
@@ -5906,7 +5922,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             const cx = target.x + target.width / 2;
             const cy = target.y + target.height / 2;
             let best = Infinity, bestScale = ns;
-            getAllPageRects().forEach(pr => {
+            pageRectsNear(getAllPageRects(), cx).forEach(pr => {
               const cands: number[] = [];
               if (target.width > 1) {
                 cands.push((2 * (cx - pr.left)) / target.width);
@@ -7993,7 +8009,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                             oppositeLocalX !== undefined &&
                             oppositeLocalY !== undefined
                           ) {
-                            const pageRects = getAllPageRects();
+                            const pageRects = pageRectsNear(
+                              getAllPageRects(),
+                              fImg.x + fImg.width / 2,
+                            );
                             const SNAP_THRESHOLD = 4; // Snapping threshold reduced to 4px
                             
                             // Unsnapped position of the dragged corner
