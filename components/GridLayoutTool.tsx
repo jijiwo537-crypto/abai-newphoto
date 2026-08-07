@@ -1417,6 +1417,104 @@ const CellFxImage: React.FC<{
   return <canvas ref={ref} style={style} />;
 };
 
+/**
+ * 頁面縮圖／IG 預覽用的浮動圖片。
+ * 跟主預覽走同一組演算法（濾鏡 → 圓角＋羽化遮罩 → 描邊 → 發光），
+ * 只是畫在比較小的畫布上 —— 這樣三個地方看到的才會是同一張圖。
+ */
+const MiniShapeImage: React.FC<{
+  img: FloatingImage;
+  boxW: number;
+  boxH: number;
+  glowPad: number;
+  style: React.CSSProperties;
+  lutRevision: number;
+}> = ({ img, boxW, boxH, glowPad, style, lutRevision }) => {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useLayoutEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const el = getPreviewImg(img.src);
+    const draw = () => {
+      if (!el.naturalWidth) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const W = Math.max(1, Math.round((boxW + glowPad * 2) * dpr));
+      const H = Math.max(1, Math.round((boxH + glowPad * 2) * dpr));
+      if (c.width !== W) c.width = W;
+      if (c.height !== H) c.height = H;
+      const g = c.getContext('2d');
+      if (!g) return;
+      g.clearRect(0, 0, W, H);
+
+      const iw = Math.max(1, Math.round(boxW * dpr));
+      const ih = Math.max(1, Math.round(boxH * dpr));
+      const lw = (img.imgStrokeWidth || 0) * img.scale * dpr;
+      const sw = iw + lw * 2, sh = ih + lw * 2;
+      const ox = (W - sw) / 2, oy = (H - sh) / 2;
+
+      let base: CanvasImageSource = el;
+      if (hasPhotoFx(img.fx)) {
+        const ar = el.naturalWidth / el.naturalHeight;
+        const MAX = Math.min(1200, Math.max(120, Math.round(Math.max(boxW, boxH) * dpr)));
+        const fw = ar >= 1 ? MAX : Math.max(16, Math.round(MAX * ar));
+        const fh = ar >= 1 ? Math.max(16, Math.round(MAX / ar)) : MAX;
+        base = applyPhotoFx(el, fw, fh, img.fx!);
+      }
+
+      let shaped: CanvasImageSource = base;
+      let drawW = iw, drawH = ih, drawX = (W - iw) / 2, drawY = (H - ih) / 2;
+      if (img.feather || img.imgRadius || img.imgStrokeWidth) {
+        const off = document.createElement('canvas');
+        off.width = Math.max(1, Math.round(sw));
+        off.height = Math.max(1, Math.round(sh));
+        const oc = off.getContext('2d');
+        if (!oc) return;
+        oc.drawImage(base, lw, lw, iw, ih);
+        if (img.feather || img.imgRadius) {
+          oc.globalCompositeOperation = 'destination-in';
+          if (img.feather) {
+            oc.drawImage(previewMask(boxW / boxH, img.imgRadius || 0, img.feather), lw, lw, iw, ih);
+          } else {
+            const R = cornerR(img.imgRadius || 0, iw, ih);
+            roundRectPath(oc, lw, lw, iw, ih, R, R);
+            oc.fillStyle = '#fff';
+            oc.fill();
+          }
+          oc.globalCompositeOperation = 'source-over';
+        }
+        if (lw > 0) {
+          const rp = img.imgRadius || 0;
+          const sr = rp ? cornerR(rp, iw, ih) + lw / 2 : 0;
+          roundRectPath(oc, lw / 2, lw / 2, iw + lw, ih + lw, sr, sr);
+          oc.lineWidth = lw;
+          oc.lineJoin = 'miter';
+          oc.miterLimit = 4;
+          oc.strokeStyle = img.imgStrokeColor || '#FFFFFF';
+          oc.stroke();
+        }
+        shaped = off;
+        drawW = off.width; drawH = off.height; drawX = ox; drawY = oy;
+      }
+
+      if (img.imgGlow) {
+        const gk = Math.min(1, 420 / Math.max(W, H));
+        const glow = makeGlowCanvas(
+          shaped, W * gk, H * gk, drawX * gk, drawY * gk, drawW * gk, drawH * gk,
+          (img.imgGlow / 20) * GLOW_BLUR_UNIT * img.scale * dpr * gk,
+          img.imgGlowColor || '#FFFFFF',
+        );
+        g.drawImage(glow, 0, 0, W, H);
+      }
+      g.drawImage(shaped, drawX, drawY, drawW, drawH);
+    };
+    if (el.complete && el.naturalWidth) { draw(); return; }
+    el.addEventListener('load', draw);
+    return () => el.removeEventListener('load', draw);
+  }, [img.src, img.fx, img.feather, img.imgRadius, img.imgGlow, img.imgGlowColor,
+      img.imgStrokeWidth, img.imgStrokeColor, img.scale, boxW, boxH, glowPad, lutRevision]);
+  return <canvas ref={ref} style={style} />;
+};
+
 const getPreviewImg = (src: string) => {
   let el = previewImgCache.get(src);
   if (!el) {
@@ -2163,7 +2261,15 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         height: `${image.height * image.scale}px`,
         transformOrigin: 'center center',
         // 排頁面拖曳中要跟著自己那一頁一起走（平移＋群組縮放），最後才是自己的旋轉
-        transform: `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`,
+        /* 沒有旋轉、也沒有拖曳位移時就「完全不要」寫 transform。
+           Chrome 只要看到 transform（連 rotate(0deg) 都算）就會把這一層提升成
+           合成層，而合成層的繪製位置會被吸附到整數像素 —— 圖層的 left 是小數
+           （例如 117.536px），吸附之後畫面上就往旁邊挪了將近半個 px，貼齊畫布
+           邊緣時會露出一條白縫。DOM 的座標是準的（差 0），所以只看數字量不到，
+           要看實際畫出來的像素才會發現。 */
+        transform: (dragShift || image.rotation)
+          ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`
+          : undefined,
         transition: dragShift ? (dragShift.live ? 'none' : 'transform 200ms ease-out') : undefined,
         // 要疊在選取時出現的透明拖曳層（z-40）之上，直接碰圖片才拖得動
         // 一般圖片用偶數層，佈局用奇數層，兩者才能互相穿插
@@ -2642,7 +2748,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     const left = cx - scaledW / 2, right = cx + scaledW / 2;
     const top = cy - scaledH / 2, bottom = cy + scaledH / 2;
     const EPS_C = 0.75;   // 中線是精準吸附
-    const EPS_E = 1.75;   // 邊界有 1px 外溢
+    /* 貼齊是「剛好對齊、不外溢」，容差只留給次像素捨入。
+       超過就代表真的有縫（或真的超出去），那就不該畫線 —— 不然會出現
+       「線亮了、圖卻沒真的貼上去」的落差。 */
+    const EPS_E = 0.6;
     getAllPageRects().forEach(pr => {
       if (!edgeOnly && Math.abs(cx - pr.centerX) < EPS_C) out.push({ type: 'vertical', coord: pr.centerX });
       if (Math.abs(left - pr.left) < EPS_E) out.push({ type: 'vertical', coord: pr.left });
@@ -2710,8 +2819,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const diffLeft = rawLeft - pageRect.left;
       if (Math.abs(diffLeft) < SNAP_THRESHOLD && Math.abs(diffLeft) < Math.abs(minDiffX)) {
         minDiffX = diffLeft;
-        // Bleed 1px outwards (left) to prevent subpixel edge gap in browser preview
-        bestSnapX = pageRect.left - imgWidth / 2 + scaledW / 2 - 1;
+        // 剛好貼齊，不外溢：外溢會讓圖片突出到隔壁那一頁上
+        bestSnapX = pageRect.left - imgWidth / 2 + scaledW / 2;
         bestGuidelineX = pageRect.left;
       }
 
@@ -2719,8 +2828,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const diffRight = rawRight - pageRect.right;
       if (Math.abs(diffRight) < SNAP_THRESHOLD && Math.abs(diffRight) < Math.abs(minDiffX)) {
         minDiffX = diffRight;
-        // Bleed 1px outwards (right) to prevent subpixel edge gap in browser preview
-        bestSnapX = pageRect.right - imgWidth / 2 - scaledW / 2 + 1;
+        bestSnapX = pageRect.right - imgWidth / 2 - scaledW / 2;
         bestGuidelineX = pageRect.right;
       }
     });
@@ -2801,7 +2909,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       if (Math.abs(diffTop) < SNAP_THRESHOLD && Math.abs(diffTop) < Math.abs(minDiffY)) {
         minDiffY = diffTop;
         // Bleed 1px outwards (top) to prevent subpixel edge gap in browser preview
-        bestSnapY = pageRect.top - imgHeight / 2 + scaledH / 2 - 1;
+        bestSnapY = pageRect.top - imgHeight / 2 + scaledH / 2;
         bestGuidelineY = pageRect.top;
       }
 
@@ -2810,7 +2918,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       if (Math.abs(diffBottom) < SNAP_THRESHOLD && Math.abs(diffBottom) < Math.abs(minDiffY)) {
         minDiffY = diffBottom;
         // Bleed 1px outwards (bottom) to prevent subpixel edge gap in browser preview
-        bestSnapY = pageRect.bottom - imgHeight / 2 - scaledH / 2 + 1;
+        bestSnapY = pageRect.bottom - imgHeight / 2 - scaledH / 2;
         bestGuidelineY = pageRect.bottom;
       }
     });
@@ -5801,8 +5909,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             getAllPageRects().forEach(pr => {
               const cands: number[] = [];
               if (target.width > 1) {
-                cands.push((2 * (cx - pr.left)) / target.width);    // 左邊貼齊
-                cands.push((2 * (pr.right - cx)) / target.width);   // 右邊貼齊
+                cands.push((2 * (cx - pr.left)) / target.width);
+                cands.push((2 * (pr.right - cx)) / target.width);
               }
               if (target.height > 1) {
                 cands.push((2 * (cy - pr.top)) / target.height);    // 上邊貼齊
@@ -6254,8 +6362,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const renderMiniPage = (pageIdx: number, maxW: number, maxH: number, mode: 'contain' | 'cover' = 'contain') => {
     const page = pages[pageIdx];
     if (!page) return null;
-    // cover：填滿整個框、超出的部分裁掉（IG 就是這樣處理比例不合的貼文，
-    // 用 contain 的話兩側會留黑邊，看起來就像頁面中間多了一條線）
+    /* contain：整頁完整顯示，絕不裁切。
+       以前用 cover 去填滿那個 4:5 的框，1:1 的頁面上下就被切掉一截 ——
+       IG 預覽的重點是「跟預覽／匯出看到的是同一張」，寧可留黑邊也不能裁。 */
     const k = mode === 'cover'
       ? Math.max(maxW / previewW, maxH / previewH)
       : Math.min(maxW / previewW, maxH / previewH);
@@ -6338,28 +6447,66 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   letterSpacing: `${(f.letterSpacing || 0) * f.scale * k}px`,
                   color: f.color || '#1C1C1C',
                   lineHeight: 1.12,
-                  overflow: 'hidden',
+                  overflow: 'visible',
                   whiteSpace: 'pre',
                   textAlign: 'center',
+                  WebkitTextStrokeWidth: f.strokeWidth ? `${f.strokeWidth * 2 * f.scale * k}px` : undefined,
+                  WebkitTextStrokeColor: f.strokeWidth ? (f.strokeColor || '#FFFFFF') : undefined,
+                  paintOrder: f.strokeWidth ? 'stroke fill' : undefined,
+                  textShadow: 'none',
                 }}
               >
-                {f.text}
+                {!!f.glow && (
+                  <span
+                    aria-hidden
+                    style={{
+                      position: 'absolute', left: 0, top: 0, right: 0, bottom: 0,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      pointerEvents: 'none', whiteSpace: 'pre', textAlign: 'center',
+                      color: f.color || '#1C1C1C',
+                      WebkitTextStrokeWidth: 0,
+                      paintOrder: 'normal',
+                      textShadow: [1, 2, 3]
+                        .map(kk => `0 0 ${(f.glow! / 20) * 14 * kk * f.scale * k}px ${f.glowColor || '#FFFFFF'}`)
+                        .join(', '),
+                    }}
+                  >
+                    {f.text}
+                  </span>
+                )}
+                <span style={{ position: 'relative', zIndex: 1 }}>{f.text}</span>
               </span>
             );
           }
           if (f.isVideo) {
             return <video key={f.id} src={f.src} autoPlay loop muted playsInline style={{ ...common, objectFit: 'contain' }} />;
           }
+          /* 濾鏡、圓角、羽化、發光、描邊全部交給跟主預覽同一支演算法去畫，
+             IG 預覽／頁面縮圖／畫布上看到的才會是同一張。 */
+          const bw = f.width * f.scale * k;
+          const bh = f.height * f.scale * k;
+          const needsCanvas = !!(f.feather || f.imgRadius || f.imgGlow || f.imgStrokeWidth || hasPhotoFx(f.fx));
+          if (!needsCanvas) {
+            return <img key={f.id} src={f.src} alt="" style={{ ...common, objectFit: 'contain' }} />;
+          }
+          const gp = Math.round(
+            ((f.imgGlow ? Math.ceil(GLOW_BLUR_UNIT * GLOW_EXTENT) : 0)
+              + (f.imgStrokeWidth ? 20 : 0)) * f.scale * k,
+          );
           return (
-            <img
+            <MiniShapeImage
               key={f.id}
-              src={f.src}
-              alt=""
+              img={f}
+              boxW={bw}
+              boxH={bh}
+              glowPad={gp}
+              lutRevision={lutRevision}
               style={{
                 ...common,
-                objectFit: 'contain',
-                // 縮圖也要跟預覽／匯出一樣吃短邊，才不會這裡是橢圓角、那裡是正圓角
-                borderRadius: f.imgRadius ? `${(f.imgRadius / 100) * Math.min(f.width, f.height) * f.scale * k}px` : undefined,
+                left: `${(f.x - pageIdx * stride + (f.width - f.width * f.scale) / 2) * k - gp}px`,
+                top: `${(f.y + (f.height - f.height * f.scale) / 2) * k - gp}px`,
+                width: `${bw + gp * 2}px`,
+                height: `${bh + gp * 2}px`,
               }}
             />
           );
@@ -7867,10 +8014,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                               pageRects.forEach(pageRect => {
                                 // Vertical guidelines (left, right)
                               // Left edge
-                              const diffLeft = rawCornerX - (pageRect.left - 1);
+                              const diffLeft = rawCornerX - pageRect.left;
                               if (Math.abs(diffLeft) < SNAP_THRESHOLD && Math.abs(diffLeft) < Math.abs(minDiffX)) {
                                 if (Math.abs(K_x) > 1e-5) {
-                                  const s = ((pageRect.left - 1) - pivotContainerX) / K_x;
+                                  const s = (pageRect.left - pivotContainerX) / K_x;
                                   if (s > 0) {
                                     minDiffX = diffLeft;
                                     bestScaleX = s;
@@ -7881,10 +8028,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                               }
 
                               // Right edge
-                              const diffRight = rawCornerX - (pageRect.right + 1);
+                              const diffRight = rawCornerX - pageRect.right;
                               if (Math.abs(diffRight) < SNAP_THRESHOLD && Math.abs(diffRight) < Math.abs(minDiffX)) {
                                 if (Math.abs(K_x) > 1e-5) {
-                                  const s = ((pageRect.right + 1) - pivotContainerX) / K_x;
+                                  const s = (pageRect.right - pivotContainerX) / K_x;
                                   if (s > 0) {
                                     minDiffX = diffRight;
                                     bestScaleX = s;
@@ -7896,10 +8043,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
                               // Horizontal guidelines (top, bottom)
                               // Top edge
-                              const diffTop = rawCornerY - (pageRect.top - 1);
+                              const diffTop = rawCornerY - pageRect.top;
                               if (Math.abs(diffTop) < SNAP_THRESHOLD && Math.abs(diffTop) < Math.abs(minDiffY)) {
                                 if (Math.abs(K_y) > 1e-5) {
-                                  const s = ((pageRect.top - 1) - pivotContainerY) / K_y;
+                                  const s = (pageRect.top - pivotContainerY) / K_y;
                                   if (s > 0) {
                                     minDiffY = diffTop;
                                     bestScaleY = s;
@@ -7910,10 +8057,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                               }
 
                               // Bottom edge
-                              const diffBottom = rawCornerY - (pageRect.bottom + 1);
+                              const diffBottom = rawCornerY - pageRect.bottom;
                               if (Math.abs(diffBottom) < SNAP_THRESHOLD && Math.abs(diffBottom) < Math.abs(minDiffY)) {
                                 if (Math.abs(K_y) > 1e-5) {
-                                  const s = ((pageRect.bottom + 1) - pivotContainerY) / K_y;
+                                  const s = (pageRect.bottom - pivotContainerY) / K_y;
                                   if (s > 0) {
                                     minDiffY = diffBottom;
                                     bestScaleY = s;
@@ -8971,7 +9118,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     className="h-full shrink-0 snap-center snap-always flex items-center justify-center bg-black overflow-hidden"
                     style={{ width: `${igBox.w}px` }}
                   >
-                    {renderMiniPage(idx, igBox.w, igBox.h, 'cover')}
+                    {renderMiniPage(idx, igBox.w, igBox.h, 'contain')}
                   </div>
                 ))}
               </div>
