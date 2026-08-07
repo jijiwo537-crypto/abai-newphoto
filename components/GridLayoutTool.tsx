@@ -2766,7 +2766,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     /* 貼齊是「剛好對齊、不外溢」，容差只留給次像素捨入。
        超過就代表真的有縫（或真的超出去），那就不該畫線 —— 不然會出現
        「線亮了、圖卻沒真的貼上去」的落差。 */
-    const EPS_E = 1.1;   // 含上面那半個像素的外溢
+    const EPS_E = 0.6;
     pageRectsNear(getAllPageRects(), cx).forEach(pr => {
       if (!edgeOnly && Math.abs(cx - pr.centerX) < EPS_C) out.push({ type: 'vertical', coord: pr.centerX });
       if (Math.abs(left - pr.left) < EPS_E) out.push({ type: 'vertical', coord: pr.left });
@@ -2840,7 +2840,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         /* 往外多半個像素：剛好貼齊時邊緣落在非整數像素上，抗鋸齒會讓最外面
            那一列露出底下的頁面白色，看起來就是一條髮絲白縫。半個像素肉眼看不
            出來，也不會像原本的 1px 那樣溢到隔壁頁。 */
-        bestSnapX = pageRect.left - imgWidth / 2 + scaledW / 2 - 0.5;
+        bestSnapX = pageRect.left - imgWidth / 2 + scaledW / 2;
         bestGuidelineX = pageRect.left;
       }
 
@@ -2848,7 +2848,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const diffRight = rawRight - pageRect.right;
       if (Math.abs(diffRight) < SNAP_THRESHOLD && Math.abs(diffRight) < Math.abs(minDiffX)) {
         minDiffX = diffRight;
-        bestSnapX = pageRect.right - imgWidth / 2 - scaledW / 2 + 0.5;
+        bestSnapX = pageRect.right - imgWidth / 2 - scaledW / 2;
         bestGuidelineX = pageRect.right;
       }
     });
@@ -2941,7 +2941,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       if (Math.abs(diffTop) < SNAP_THRESHOLD && Math.abs(diffTop) < Math.abs(minDiffY)) {
         minDiffY = diffTop;
         // Bleed 1px outwards (top) to prevent subpixel edge gap in browser preview
-        bestSnapY = pageRect.top - imgHeight / 2 + scaledH / 2 - 0.5;
+        bestSnapY = pageRect.top - imgHeight / 2 + scaledH / 2;
         bestGuidelineY = pageRect.top;
       }
 
@@ -2950,7 +2950,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       if (Math.abs(diffBottom) < SNAP_THRESHOLD && Math.abs(diffBottom) < Math.abs(minDiffY)) {
         minDiffY = diffBottom;
         // Bleed 1px outwards (bottom) to prevent subpixel edge gap in browser preview
-        bestSnapY = pageRect.bottom - imgHeight / 2 - scaledH / 2 + 0.5;
+        bestSnapY = pageRect.bottom - imgHeight / 2 - scaledH / 2;
         bestGuidelineY = pageRect.bottom;
       }
     });
@@ -3015,23 +3015,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       }
     });
 
-    /* 圖層已經幾乎剛好等於整頁、而且「已經對到位」時，才把最後那零點幾 px 補滿。
-       一定要同時檢查位置：只看大小的話，只要圖層跟頁面差不多大，在頁面上隨便拖到
-       哪裡都會被瞬間吸到滿版 —— 那就是拖曳時的瞬移。 */
-    let fitScale: number | undefined;
-    ownPageRectsForFit.forEach(pr => {
-      const pw = pr.right - pr.left, ph = pr.bottom - pr.top;
-      const nearW = Math.abs(scaledW - pw) < 3, nearH = Math.abs(scaledH - ph) < 3;
-      const atX = Math.abs((snappedX + imgWidth / 2) - pr.centerX) < 6;
-      const atY = Math.abs((snappedY + imgHeight / 2) - pr.centerY) < 6;
-      if (nearW && nearH && atX && atY) {
-        const cover = Math.max(pw / imgWidth, ph / imgHeight);
-        const longSide = Math.max(imgWidth, imgHeight) * cover;
-        fitScale = longSide > 1 ? cover * (1 + 0.6 / longSide) : cover;
-        snappedX = pr.centerX - imgWidth / 2;
-        snappedY = pr.centerY - imgHeight / 2;
-      }
-    });
 
     /* 貼齊只會挑「最近的那一條」來吸附，但畫面上該顯示的是「現在同時對齊的每一條」：
        例如剛好卡在畫布正中央時，垂直中線與水平中線要一起亮起來；貼齊左邊界時，
@@ -3040,7 +3023,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
        都加進去。跟其他物件的對齊線不列入（那是另一回事，維持原本只顯示吸附到的那一條）。 */
     guidelines.push(...pageGuidelinesAt(snappedX, snappedY, imgWidth, imgHeight, imgScale, edgeOnly));
 
-    return { snappedX, snappedY, fitScale, guidelines: dedupeGuidelines(guidelines) };
+    return { snappedX, snappedY, fitScale: undefined, guidelines: dedupeGuidelines(guidelines) };
   };
 
   const [draggedFloatingIndex, setDraggedFloatingIndex] = useState<number | null>(null);
@@ -5980,19 +5963,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               });
             });
             if (best < SNAP) ns = bestScale;
-            /* 縮到「幾乎剛好填滿整頁」時，改成確實覆蓋並多蓋半個像素。
-               只差零點幾 px 的話，邊緣落在非整數像素上會被抗鋸齒混掉，
-               看起來就是跟頁面邊界之間有一條白縫；頁面本來就會裁掉超出的
-               部分，所以多蓋的那一點完全看不到。 */
-            getAllPageRects().forEach(pr => {
-              const pw = pr.right - pr.left, ph = pr.bottom - pr.top;
-              const w = target.width * ns, h = target.height * ns;
-              if (Math.abs(w - pw) < 3 && Math.abs(h - ph) < 3) {
-                const cover = Math.max(pw / target.width, ph / target.height);
-                const longSide = Math.max(target.width, target.height) * cover;
-                ns = longSide > 1 ? cover * (1 + 0.6 / longSide) : cover;
-              }
-            });
           }
           setFloatingImages(prev => prev.map(img =>
             img.id === g.floatingId
@@ -8332,8 +8302,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                  抗鋸齒會把最外面那一列混成半透明，看起來就是一條髮絲白邊。
                                  頁面本身會裁掉超出的部分，所以多這半個像素完全看不到，
                                  卻能保證四邊都不露白。 */
-                              const longSide = Math.max(fImg.width, fImg.height) * finalScale;
-                              if (longSide > 1) finalScale *= 1 + 0.6 / longSide;
+                              /* 不再多蓋出去：使用者要的是「剛好貼齊」，
+                                 多蓋的那一點在右邊／下面會看得出來凸出去。 */
                             } else if (snapX) {
                               finalScale = bestScaleX;
                               finalGuidelines = [{ type: 'vertical', coord: bestGuidelineX! }];
@@ -9232,11 +9202,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           className="fixed inset-0 z-[120] bg-black flex flex-col animate-in fade-in duration-200"
           style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Noto Sans TC", "PingFang TC", sans-serif' }}
         >
-          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar" style={{ overscrollBehavior: 'contain' }}>
-            {/* 往下墊：讓貼文的圖正好對齊畫面的水平中線 */}
-            {/* 往下墊：讓貼文的圖正好對齊畫面的水平中線。
-                再多墊 44px，圖的下緣才不會被下方那排愛心／留言的列蓋到。 */}
-            <div style={{ height: `max(0px, calc(50vh - 44px - ${(50 * igFrame.h / igFrame.w).toFixed(2)}vw))` }} />
+          {/* 整篇貼文置中，不再用 vh 硬算要墊多高 ——
+              手機瀏覽器的 vh 含網址列高度，真機上算出來會偏，貼文被推下去、
+              圖的下緣就被下面那排愛心／留言蓋住。
+              置中用「第一個小孩 margin-top:auto、最後一個 margin-bottom:auto」，
+              而不是 justify-center：內容比容器高的時候 justify-center 會把上下
+              都切掉而且捲不到，auto margin 則會自動退讓、完整可捲。 */}
+          <div
+            className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col [&>*:first-child]:mt-auto [&>*:last-child]:mb-auto"
+            style={{ overscrollBehavior: 'contain' }}
+          >
             {/* 帳號那一列：限動漸層圈的頭像、粗體帳號，第二行是音訊 */}
             <div className="h-[52px] flex items-center gap-[9px] pl-[10px] pr-1">
               <div
