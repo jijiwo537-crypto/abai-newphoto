@@ -3016,10 +3016,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     });
 
     /* 圖層已經幾乎剛好等於整頁、而且「已經對到位」時，才把最後那零點幾 px 補滿。
-       —— 一定要同時檢查「位置也對到了」：只看大小的話，只要圖層跟頁面差不多大，
-       在頁面上隨便拖到哪裡都會被瞬間吸到滿版，那就是拖曳時的瞬移。
-       這裡要求中心點已經落在頁面中心 6px 內（也就是使用者確實是在對齊），
-       才回報一個「確實覆蓋整頁再多半個像素」的倍率讓拖曳套用。 */
+       一定要同時檢查位置：只看大小的話，只要圖層跟頁面差不多大，在頁面上隨便拖到
+       哪裡都會被瞬間吸到滿版 —— 那就是拖曳時的瞬移。 */
     let fitScale: number | undefined;
     ownPageRectsForFit.forEach(pr => {
       const pw = pr.right - pr.left, ph = pr.bottom - pr.top;
@@ -6364,6 +6362,30 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const igTouchXRef = useRef(0);
   const [igPage, setIgPage] = useState(0);
   const [igBox, setIgBox] = useState({ w: 360, h: 450 });
+  /* IG 預覽顯示的就是「匯出的成品」本人 —— 打開時用同一支 handleExport
+     算一次（壓低解析度、不動任何畫面狀態），顯示回傳的那幾張圖。
+     以前 IG 預覽是另外用 DOM 重畫一次，兩份程式碼永遠會有對不上的地方
+     （比例、裁切、跨頁、次像素…），改成共用同一條管線就不可能不一樣。 */
+  const [igShots, setIgShots] = useState<string[]>([]);
+  const igShotsRef = useRef<string[]>([]);
+  useEffect(() => {
+    if (!igPreview) return;
+    let alive = true;
+    (async () => {
+      const r = await handleExport({ silent: true, previewWidth: 900 });
+      const urls = (r && 'urls' in r) ? r.urls : [];
+      if (!alive) { urls.forEach(u => URL.revokeObjectURL(u)); return; }
+      igShotsRef.current.forEach(u => URL.revokeObjectURL(u));
+      igShotsRef.current = urls;
+      setIgShots(urls);
+    })();
+    return () => {
+      alive = false;
+      igShotsRef.current.forEach(u => URL.revokeObjectURL(u));
+      igShotsRef.current = [];
+      setIgShots([]);
+    };
+  }, [igPreview]);
   // 直接量那個 4:5 的框：算的話會跟實際差幾個像素，頁面就會凸出去一點
   useEffect(() => {
     if (!igPreview) return;
@@ -6599,9 +6621,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   };
 
   // Export to Canvas
-  const handleExport = async () => {
+  /**
+   * 匯出。
+   * silent = true 時不動任何畫面狀態，直接把每一頁的圖回傳 ——
+   * IG 預覽就是靠這個顯示「跟匯出一模一樣」的畫面（同一支程式碼、同一條管線，
+   * 定義上不可能不一樣）。previewWidth 用來壓低解析度，預覽不需要 4096。
+   */
+  const handleExport = async (
+    opts?: { silent?: boolean; previewWidth?: number },
+  ): Promise<{ urls: string[]; kinds: ('image' | 'video')[] } | void> => {
     if (pages.length === 0) return;
-    setExportState('processing');
+    const silent = !!opts?.silent;
+    if (!silent) setExportState('processing');
 
     try {
       const canvas = document.createElement('canvas');
@@ -6634,7 +6665,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       }
       const wanted = sourceWidths.length ? Math.max(...sourceWidths) : 1800;
       // 每一頁各自輸出一張畫布，所以上限不再被頁數瓜分
-      const targetW = Math.max(1800, Math.min(4096, Math.round(wanted)));
+      const targetW = opts?.previewWidth
+        ? Math.max(320, Math.round(opts.previewWidth))
+        : Math.max(1800, Math.min(4096, Math.round(wanted)));
       let targetH = targetW;
 
       if (selectedRatio === '1:1') {
@@ -7012,6 +7045,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       }
 
       if (urls.length === 0) throw new Error('Blob creation failed');
+      if (silent) return { urls, kinds };
       finalImagesRef.current.forEach(u => URL.revokeObjectURL(u));
       finalImagesRef.current = urls;
       setFinalImages(urls);
@@ -7019,6 +7053,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       setExportState('success');
     } catch (err) {
       console.error(err);
+      if (silent) return;
       alert('存檔失敗，請重試');
       setExportState('idle');
     }
@@ -7283,7 +7318,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             </div>
             {(pages.some(p => p.layouts.some(l => l.images.some(img => img.url !== ''))) || floatingImages.length > 0) && (
               <button
-                onClick={handleExport}
+                onClick={() => handleExport()}
                 disabled={exportState === 'processing'}
                 className="bg-white text-black px-6 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap"
               >
@@ -9242,7 +9277,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     className="h-full shrink-0 snap-center snap-always flex items-center justify-center bg-black overflow-hidden"
                     style={{ width: `${igBox.w}px` }}
                   >
-                    {renderMiniPage(idx, igBox.w, igBox.h, 'contain')}
+                    {/* 直接顯示匯出的那一張。object-contain 保證完整顯示、絕不裁切 */}
+                    {igShots[idx]
+                      ? <img src={igShots[idx]} alt="" className="max-w-full max-h-full object-contain" />
+                      : renderMiniPage(idx, igBox.w, igBox.h, 'contain')}
                   </div>
                 ))}
               </div>
