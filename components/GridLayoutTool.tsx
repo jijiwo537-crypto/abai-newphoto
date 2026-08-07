@@ -6401,18 +6401,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     return () => ro?.disconnect();
   }, [igPreview]);
   /** 貼文版位的比例：頁面本身的比例 IG 支援就照它，不支援就用直式 3:4 */
-  const igFrame = (() => {
-    /* IG 現在支援的貼文比例是 3:4（最高）到 1.91:1（最寬）之間的「任何」比例，
-       不是只有那幾個固定值 —— 以前用一張清單去比對，4:3 這種橫式就對不到，
-       只好退回 3:4 的直式框，畫面自然被切掉一塊。
-       改成只要落在支援範圍內就照頁面原本的比例做框，完全不裁；
-       超出範圍才夾到最接近的邊界（跟 IG 自己的行為一致）。 */
-    const IG_MIN = 3 / 4;      // 最高（直式）
-    const IG_MAX = 1.91;       // 最寬（橫式）
-    const r = previewW / previewH;
-    if (r >= IG_MIN - 1e-3 && r <= IG_MAX + 1e-3) return { w: previewW, h: previewH };
-    return r < IG_MIN ? { w: 3, h: 4 } : { w: 191, h: 100 };
-  })();
+  /* 框永遠等於頁面本身的比例，不再夾到 IG 的支援範圍。
+     夾比例等於在預覽裡自作主張改變構圖 —— 使用者要的是「匯出長怎樣就顯示怎樣」，
+     每一頁都一樣、完整、不壓縮、不裁切。真的超出 IG 支援範圍時，IG 自己會怎麼處理
+     是發文當下的事，預覽不該先幫他決定。 */
+  const igFrame = { w: previewW, h: previewH };
   /** 預覽裡的帳號 */
   const IG_ACCOUNT = 'abai_is.perfect';
   /** 頭像與「說讚」那排的小頭像：直接拿拼圖裡的照片來用，看起來才像真的貼文 */
@@ -7165,7 +7158,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               >
                 {finalImages.map((src, i) => (
                   <div key={src} className="shrink-0 snap-center flex flex-col items-center">
-                    <div className="relative shadow-2xl overflow-hidden">
+                    <div className="relative shadow-2xl rounded overflow-hidden">
                       {finalKinds[i] === 'video' ? (
                         // 這一頁有影片，所以輸出的是影片
                         <video
@@ -7184,7 +7177,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                           className="max-w-[80vw] max-h-[52vh] md:max-w-[38vh] object-contain allow-callout relative z-10"
                         />
                       )}
-                      <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10"></div>
+                      <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded"></div>
                     </div>
                   </div>
                 ))}

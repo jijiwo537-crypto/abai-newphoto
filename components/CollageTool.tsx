@@ -1402,13 +1402,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             </button>
           </header>
           <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
-            <div className="relative shadow-2xl overflow-hidden max-h-[60vh] max-w-full mb-4">
+            <div className="relative shadow-2xl rounded overflow-hidden max-h-[60vh] max-w-full mb-4">
               <img 
                 src={finalImage} 
                 alt="Final Result" 
                 className="max-w-full max-h-[60vh] object-contain allow-callout relative z-10" 
               />
-              <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10"></div>
+              <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded"></div>
             </div>
           </div>
           <div className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
