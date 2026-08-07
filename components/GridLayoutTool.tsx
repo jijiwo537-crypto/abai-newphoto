@@ -6392,16 +6392,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const [picked, setPicked] = useState<Track | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const musicReqRef = useRef(0);       // 只讓最後一次搜尋的結果進畫面
+  const [kbInset, setKbInset] = useState(0);   // 手機鍵盤佔掉的高度
   const MUSIC_TABS = ['為你推薦', '超夯', '原始音訊', '已儲存'];
-  /* 沒有搜尋字時每個分頁預設找什麼。
-     這裡一律用「單一個詞」：iTunes 的 term 是用空白切開後全部都要命中（AND），
-     「華語 抒情」那種兩個詞的組合很容易一首都對不到，清單就空了。 */
-  const TAB_TERMS: Record<string, string> = {
-    '為你推薦': '周杰倫',
-    '超夯': 'pop',
-    '原始音訊': 'lofi',
-    '已儲存': 'acoustic',
+  /* 沒打字時每個分頁預設拿什麼。
+     推薦與超夯直接抓 Apple 的排行榜（不寫死任何一個歌手），排行榜那支網址
+     萬一失效，才退回一個搜尋字。搜尋字一律用「單一個詞」：iTunes 的 term
+     是用空白切開後全部都要命中（AND），兩個詞的組合很容易一首都對不到。 */
+  const TAB_SOURCE: Record<string, { chart?: string; term: string }> = {
+    '為你推薦': { chart: 'tw', term: '華語' },
+    '超夯': { chart: 'us', term: 'pop' },
+    '原始音訊': { term: 'lofi' },
+    '已儲存': { term: '' },      // 這一頁不連網，讀本機收藏
   };
+
+  /** 收藏：存在本機，「已儲存」那一頁就是這一份 */
+  const [savedTracks, setSavedTracks] = useState<Track[]>(() => {
+    try { return JSON.parse(localStorage.getItem('abai_music_saved') || '[]'); } catch { return []; }
+  });
+  const toggleSave = (t: Track) => setSavedTracks(prev => {
+    const next = prev.some(x => x.id === t.id) ? prev.filter(x => x.id !== t.id) : [t, ...prev];
+    try { localStorage.setItem('abai_music_saved', JSON.stringify(next)); } catch { /* 無痕模式寫不進去就算了 */ }
+    return next;
+  });
 
   /** 送出一次 JSONP，附逾時；cbParam 是對方要求的回呼參數名 */
   const jsonp = (url: string, cbParam = 'callback', ms = 9000) => new Promise<any>((resolve, reject) => {
@@ -6453,46 +6465,121 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       secs: r.duration || 30,
     }));
 
-  const searchMusic = useCallback(async (term: string) => {
+  /** Apple 排行榜的 JSON：試聽檔藏在 link 陣列裡 rel="enclosure" 那一筆 */
+  const fromChart = (d: any): Track[] => (d?.feed?.entry || [])
+    .map((e: any) => {
+      const enc = (e.link || []).find((l: any) => l?.attributes?.rel === 'enclosure');
+      const art = ((e['im:image'] || []).slice(-1)[0]?.label || '');
+      return {
+        id: `c${e.id?.attributes?.['im:id'] || e['im:name']?.label || ''}`,
+        name: e['im:name']?.label || '',
+        artist: e['im:artist']?.label || '',
+        art: art.replace(/\/\d+x\d+bb\./, '/200x200bb.'),
+        preview: enc?.attributes?.href || '',
+        secs: Number(enc?.['im:duration']?.label || 0),
+      };
+    })
+    .filter((t: Track) => t.preview && t.name);
+
+  /**
+   * 取一份歌單。src.chart 有值就先抓排行榜，抓不到再用 src.term 去搜尋。
+   * 每一種來源都排了「直接 fetch → 同網址走 JSONP」兩條，最後還有 Deezer 兜底，
+   * 因為在真機上失敗的方式不只一種，而且每一種都會讓清單變空：
+   *   · 對方沒給 CORS 標頭 → fetch 直接被瀏覽器擋掉，只能走 JSONP。
+   *   · 整個網域連不上（被擋、被牆）→ 兩條都不通，只能換一家。
+   * 兩種傳輸都有逾時。JSONP 特別危險的是「腳本載進來了但根本沒呼叫 callback」
+   * （API 不支援 callback 參數時就會這樣）—— 那時 onerror 不會觸發，
+   * 沒有逾時的話畫面會永遠停在轉圈。
+   * 全部失敗時把每一條的死法記下來寫在畫面上，才有辦法判斷是誰的問題。
+   */
+  const loadMusic = useCallback(async (src: { chart?: string; term: string }) => {
     const my = ++musicReqRef.current;
     setMusicLoading(true);
     setMusicError('');
     /* country=TW：不指定的話 Apple 一律當成美國商店，中文歌名幾乎搜不到東西，
        清單看起來就像壞掉。lang 只影響回傳的類別名稱，順便帶上。 */
     const itUrl = 'https://itunes.apple.com/search?media=music&entity=song&limit=40'
-      + '&country=TW&lang=zh_tw&term=' + encodeURIComponent(term);
-    const dzUrl = 'https://api.deezer.com/search?output=jsonp&limit=40&q=' + encodeURIComponent(term);
-    const routes: Array<() => Promise<Track[]>> = [
-      async () => fromItunes(await getJSON(itUrl)),
-      async () => fromItunes(await jsonp(itUrl)),
-      async () => fromDeezer(await jsonp(dzUrl)),
-    ];
-    let sawResponse = false;
-    for (const go of routes) {
+      + '&country=TW&lang=zh_tw&term=' + encodeURIComponent(src.term);
+    const dzUrl = 'https://api.deezer.com/search?output=jsonp&limit=40&q=' + encodeURIComponent(src.term);
+    const chartUrl = src.chart
+      ? `https://itunes.apple.com/${src.chart}/rss/topsongs/limit=50/json`
+      : '';
+    const routes: Array<[string, () => Promise<Track[]>]> = [];
+    if (chartUrl) {
+      routes.push(['榜單', async () => fromChart(await getJSON(chartUrl))]);
+      routes.push(['榜單J', async () => fromChart(await jsonp(chartUrl))]);
+    }
+    if (src.term) {
+      routes.push(['搜尋', async () => fromItunes(await getJSON(itUrl))]);
+      routes.push(['搜尋J', async () => fromItunes(await jsonp(itUrl))]);
+      routes.push(['DZ', async () => fromDeezer(await jsonp(dzUrl))]);
+    }
+    const why: string[] = [];
+    for (const [tag, go] of routes) {
       let list: Track[] | null = null;
-      try { list = await go(); sawResponse = true; } catch { /* 換下一條 */ }
+      try {
+        list = await go();
+        if (!list.length) why.push(`${tag}:0筆`);
+      } catch (e: any) {
+        why.push(`${tag}:${String(e?.message || e).slice(0, 16)}`);
+      }
       if (my !== musicReqRef.current) return;    // 已經有更新的搜尋了，這份丟掉
       if (list && list.length) { setMusicList(list); setMusicLoading(false); return; }
     }
     if (my !== musicReqRef.current) return;
     setMusicList([]);
-    // 分清楚「連得上但沒這首歌」跟「根本連不上」，不然沒辦法判斷是誰的問題
-    setMusicError(sawResponse ? `找不到「${term}」` : '連不上音樂服務，請確認網路後再試一次');
+    setMusicError(`拿不到歌單，請確認網路後重試\n（${why.join('、') || '沒有可用的來源'}）`);
     setMusicLoading(false);
   }, []);
 
-  // 開啟時滑入；分頁或搜尋字改變就重新找
+  /** 現在這個分頁／搜尋字該拿什麼 */
+  const currentSource = (): { chart?: string; term: string } => {
+    const q = musicQuery.trim();
+    return q ? { term: q } : (TAB_SOURCE[musicTab] || { term: 'pop' });
+  };
+
+  // 開啟時滑入
   useEffect(() => {
     if (!musicOpen) return;
     const t = setTimeout(() => setMusicShown(true), 16);
     return () => clearTimeout(t);
   }, [musicOpen]);
+
+  // 分頁或搜尋字改變就重新拿一份
   useEffect(() => {
     if (!musicOpen) return;
-    const term = musicQuery.trim() || TAB_TERMS[musicTab] || 'pop';
-    const t = setTimeout(() => searchMusic(term), musicQuery ? 350 : 0);
+    const q = musicQuery.trim();
+    // 「已儲存」不連網，直接顯示本機收藏
+    if (!q && musicTab === '已儲存') {
+      musicReqRef.current++;                       // 取消還在跑的那一次
+      setMusicList(savedTracks);
+      setMusicLoading(false);
+      setMusicError(savedTracks.length ? '' : '還沒有收藏的音樂，點歌曲右邊的書籤就會收進來');
+      return;
+    }
+    const t = setTimeout(() => loadMusic(currentSource()), q ? 350 : 0);
     return () => clearTimeout(t);
-  }, [musicOpen, musicQuery, musicTab, searchMusic]);
+  }, [musicOpen, musicQuery, musicTab, savedTracks, loadMusic]);
+
+  /* 手機鍵盤一跳出來，整個面板還是貼在螢幕最下面 —— 搜尋欄和歌單都被鍵盤蓋住，
+     看起來就像「不能搜」。visualViewport 是唯一能問到鍵盤高度的東西，
+     問到多高就把面板往上頂多高，並且撐到鍵盤上緣（IG 也是這樣）。 */
+  useEffect(() => {
+    const vv = (window as any).visualViewport;
+    if (!musicOpen || !vv) return;
+    const on = () => {
+      const h = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      setKbInset(h > 80 ? Math.round(h) : 0);   // 80 以下當成瀏覽器工具列在變，不是鍵盤
+    };
+    on();
+    vv.addEventListener('resize', on);
+    vv.addEventListener('scroll', on);
+    return () => {
+      vv.removeEventListener('resize', on);
+      vv.removeEventListener('scroll', on);
+      setKbInset(0);
+    };
+  }, [musicOpen]);
   // 關掉 IG 預覽時把音樂一起停掉
   useEffect(() => {
     if (igPreview) return;
@@ -9602,8 +9689,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 className={`absolute inset-0 z-[130] bg-black/50 transition-opacity duration-300 ${musicShown ? 'opacity-100' : 'opacity-0'}`}
               />
               <div
-                className={`absolute left-0 right-0 bottom-0 z-[131] bg-[#161616] rounded-t-2xl flex flex-col transition-transform duration-300 ease-out ${musicShown ? 'translate-y-0' : 'translate-y-full'}`}
-                style={{ height: '86%', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}
+                className={`absolute left-0 right-0 z-[131] bg-[#161616] rounded-t-2xl flex flex-col transition-transform duration-300 ease-out ${musicShown ? 'translate-y-0' : 'translate-y-full'}`}
+                style={{
+                  /* 鍵盤跳出來時整個面板往上頂到鍵盤上緣，並撐高補回被吃掉的高度，
+                     不然搜尋欄跟歌單都躲在鍵盤後面，看起來就像不能搜。 */
+                  bottom: kbInset,
+                  height: kbInset ? `calc(100% - ${kbInset}px)` : '86%',
+                  paddingBottom: kbInset ? 0 : 'env(safe-area-inset-bottom, 0px)',
+                }}
               >
                 {/* 上緣的小握把 */}
                 <div className="shrink-0 pt-2 pb-1 flex justify-center">
@@ -9618,11 +9711,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     </svg>
                     {/* 這個專案有裝 @tailwindcss/forms，它會給所有 input 一圈
                         1px 的框和內距，聚焦時還會多一圈 ring —— 就是搜尋欄外面
-                        那個細方框。用行內樣式蓋掉，優先權最高，一次清乾淨。 */}
+                        那個細方框。用行內樣式蓋掉，優先權最高，一次清乾淨。
+                        enterKeyHint 讓手機鍵盤右下角直接是「搜尋」，按下去立刻查、
+                        收鍵盤，不用等 350ms 的防抖。 */}
                     <input
                       value={musicQuery}
                       onChange={e => setMusicQuery(e.target.value)}
                       placeholder="搜尋......"
+                      type="text"
+                      inputMode="search"
+                      enterKeyHint="search"
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      spellCheck={false}
+                      onKeyDown={e => {
+                        if (e.key !== 'Enter') return;
+                        e.preventDefault();
+                        (e.currentTarget as HTMLInputElement).blur();
+                        loadMusic(currentSource());
+                      }}
                       className="flex-1 min-w-0 text-[15px] text-white placeholder-white/45"
                       style={{
                         border: 0, outline: 'none', boxShadow: 'none',
@@ -9660,20 +9767,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   )}
                   {!musicLoading && musicList.length === 0 && (
                     <div className="py-10 flex flex-col items-center gap-3">
-                      <p className="text-center text-[13px] text-white/40 px-6">
+                      <p className="text-center text-[13px] text-white/40 px-6 whitespace-pre-line leading-relaxed">
                         {musicError || '找不到歌曲'}
                       </p>
-                      <button
-                        onClick={() => searchMusic(musicQuery.trim() || TAB_TERMS[musicTab] || 'pop')}
-                        className="h-9 px-5 rounded-full bg-[#2a2a2a] text-[14px] font-semibold text-white active:opacity-60"
-                      >
-                        重試
-                      </button>
+                      {musicTab !== '已儲存' && (
+                        <button
+                          onClick={() => loadMusic(currentSource())}
+                          className="h-9 px-5 rounded-full bg-[#2a2a2a] text-[14px] font-semibold text-white active:opacity-60"
+                        >
+                          重試
+                        </button>
+                      )}
                     </div>
                   )}
+                  {/* 一列本身能點（選這首），右邊的書籤是獨立的按鈕（收藏／取消收藏）。
+                      所以外層不能是 <button> —— button 裡面不能再包 button。 */}
                   {musicList.map(t => (
-                    <button
+                    <div
                       key={t.id}
+                      role="button"
                       onClick={() => pickTrack(t)}
                       className="w-full flex items-center gap-3 py-2.5 text-left active:opacity-60"
                     >
@@ -9685,17 +9797,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                         className="w-14 h-14 rounded-[6px] shrink-0 bg-white/10 object-cover"
                       />
                       <div className="flex-1 min-w-0">
-                        <p className={`text-[16px] leading-[21px] truncate ${picked?.id === t.id ? 'text-white font-semibold' : 'text-white'}`}>{t.name}</p>
+                        <p className={`text-[16px] leading-[21px] truncate text-white ${picked?.id === t.id ? 'font-semibold' : ''}`}>{t.name}</p>
                         <p className="text-[14px] leading-[19px] text-white/50 truncate">
-                          {t.artist} · {Math.floor(t.secs / 60)}:{String(t.secs % 60).padStart(2, '0')}
+                          {t.artist}{t.secs > 0 && ` · ${Math.floor(t.secs / 60)}:${String(t.secs % 60).padStart(2, '0')}`}
                         </p>
                       </div>
-                      {/* 右邊的收藏書籤：選到的那首填滿 */}
-                      <svg width="22" height="22" viewBox="0 0 24 24"
-                           fill={picked?.id === t.id ? '#fff' : 'none'} stroke="#fff" strokeWidth="1.8" strokeLinejoin="round">
-                        <path d="M6 3h12a1 1 0 011 1v17l-7-4-7 4V4a1 1 0 011-1z" />
-                      </svg>
-                    </button>
+                      {/* 收藏書籤：收藏過的填滿，「已儲存」那一頁讀的就是這一份 */}
+                      <button
+                        onClick={e => { e.stopPropagation(); toggleSave(t); }}
+                        aria-label="收藏"
+                        className="w-9 h-9 shrink-0 flex items-center justify-center active:opacity-60"
+                      >
+                        <svg width="22" height="22" viewBox="0 0 24 24"
+                             fill={savedTracks.some(x => x.id === t.id) ? '#fff' : 'none'}
+                             stroke="#fff" strokeWidth="1.8" strokeLinejoin="round">
+                          <path d="M6 3h12a1 1 0 011 1v17l-7-4-7 4V4a1 1 0 011-1z" />
+                        </svg>
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>
