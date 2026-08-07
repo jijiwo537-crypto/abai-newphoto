@@ -9251,7 +9251,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                  上方空白比下方少一截，看起來就像下面被吃掉了。
                  這裡補一段 padding-top，把差額補回來：auto margin 會把剩餘空間
                  上下均分，所以補多少、圖就往下移一半，最後圖的上下空白剛好相等。 */
-              paddingTop: `${Math.max(0, (44 + 46 + (pages.length > 1 ? 35 : 0)) - 52)}px`,
+              paddingTop: `${Math.max(0, (44 + 46 + (pages.length > 1 ? 35 : 0)) - 52 - 16)}px`,
             }}
           >
             {/* 帳號那一列：限動漸層圈的頭像、粗體帳號，第二行是音訊 */}
