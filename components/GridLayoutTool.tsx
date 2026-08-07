@@ -3767,24 +3767,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     return () => document.removeEventListener('touchmove', block);
   }, []);
 
-  /** IG 預覽第一張：再往左滑就擋掉（同樣要非 passive 才擋得住） */
-  useEffect(() => {
-    if (!igPreview) return;
-    let raf = 0;
-    const attach = () => {
-      const el = igStripRef.current;
-      if (!el) { raf = requestAnimationFrame(attach); return; }
-      const onMove = (e: TouchEvent) => {
-        const dx = (e.touches[0]?.clientX ?? 0) - igTouchXRef.current;
-        if (el.scrollLeft <= 0 && dx > 0 && e.cancelable) e.preventDefault();
-      };
-      el.addEventListener('touchmove', onMove, { passive: false });
-      cleanup = () => el.removeEventListener('touchmove', onMove);
-    };
-    let cleanup = () => {};
-    attach();
-    return () => { cancelAnimationFrame(raf); cleanup(); };
-  }, [igPreview]);
+  /* IG 預覽的翻頁已經改成自己搬位置（見 igMoveTrack），容器完全不捲動，
+     所以「第一張再往左滑就擋掉」那個非 passive 的 touchmove 監聽器不用了 ——
+     頭尾拖不出去的判斷直接寫在 onIgPointerMove 裡。 */
 
   /**
    * 換頁面順序：頁面裡的佈局本來就跟著頁面走，頁面上的自由圖層要自己搬過去。
@@ -6348,8 +6333,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    */
   const IG_RATIOS = [1, 4 / 5, 3 / 4, 1.91];
   const igStripRef = useRef<HTMLDivElement>(null);
-  /** IG 預覽：手指按下時的 x，用來判斷第一張還要不要繼續往左滑 */
-  const igTouchXRef = useRef(0);
+  const igTrackRef = useRef<HTMLDivElement>(null);
+  const igDragRef = useRef<{ x0: number; y0: number; t0: number; dx: number; id: number; lock: '' | 'x' | 'y' } | null>(null);
   const [igPage, setIgPage] = useState(0);
   const [igBox, setIgBox] = useState({ w: 360, h: 450 });
   /* 是不是「加到主畫面」的全螢幕模式（PWA）。
@@ -6392,18 +6377,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const [picked, setPicked] = useState<Track | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const musicReqRef = useRef(0);       // 只讓最後一次搜尋的結果進畫面
-  const [kbInset, setKbInset] = useState(0);   // 手機鍵盤佔掉的高度
-  const MUSIC_TABS = ['為你推薦', '超夯', '原始音訊', '已儲存'];
-  /* 沒打字時每個分頁預設拿什麼。
-     推薦與超夯直接抓 Apple 的排行榜（不寫死任何一個歌手），排行榜那支網址
-     萬一失效，才退回一個搜尋字。搜尋字一律用「單一個詞」：iTunes 的 term
-     是用空白切開後全部都要命中（AND），兩個詞的組合很容易一首都對不到。 */
-  const TAB_SOURCE: Record<string, { chart?: string; term: string }> = {
-    '為你推薦': { chart: 'tw', term: '華語' },
-    '超夯': { chart: 'us', term: 'pop' },
-    '原始音訊': { term: 'lofi' },
-    '已儲存': { term: '' },      // 這一頁不連網，讀本機收藏
-  };
+  /* 分頁：語言分頁抓該地區的近期熱門榜，為你推薦是四地混合、超夯是四地齊平輪。
+     「已儲存」不連網，讀本機收藏。 */
+  const MUSIC_TABS = ['為你推薦', '超夯', '華語', '日語', '韓語', '英語', '已儲存'];
+  const TAB_STORE: Record<string, string> = { '華語': 'tw', '日語': 'jp', '韓語': 'kr', '英語': 'us' };
+  /* 每個地區榜單抓不到時，退回這個搜尋字。搜尋字一律用「單一個詞」：
+     iTunes 的 term 是用空白切開後全部都要命中（AND），兩個詞很容易一首都對不到。 */
+  const STORE_FALLBACK: Record<string, string> = { tw: '華語', jp: 'J-POP', kr: 'K-POP', us: 'pop' };
+  const ALL_STORES = ['tw', 'jp', 'kr', 'us'];
 
   /** 收藏：存在本機，「已儲存」那一頁就是這一份 */
   const [savedTracks, setSavedTracks] = useState<Track[]>(() => {
@@ -6415,8 +6396,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     return next;
   });
 
-  /** 送出一次 JSONP，附逾時；cbParam 是對方要求的回呼參數名 */
-  const jsonp = (url: string, cbParam = 'callback', ms = 9000) => new Promise<any>((resolve, reject) => {
+  /** 送出一次 JSONP，附逾時。網址由呼叫端組（回呼參數的位置每家不一樣） */
+  const jsonp = (makeUrl: (cb: string) => string, ms = 6000) => new Promise<any>((resolve, reject) => {
     const cb = `itcb_${Math.random().toString(36).slice(2)}`;
     const sc = document.createElement('script');
     let settled = false;
@@ -6427,12 +6408,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     }, ms);
     (window as any)[cb] = (v: any) => { if (settled) return; settled = true; cleanup(); resolve(v); };
     sc.onerror = () => { if (settled) return; settled = true; cleanup(); reject(new Error('blocked')); };
-    sc.src = `${url}${url.includes('?') ? '&' : '?'}${cbParam}=${cb}`;
+    sc.src = makeUrl(cb);
     document.head.appendChild(sc);
   });
 
   /** 一般 fetch，附逾時 */
-  const getJSON = async (url: string, ms = 9000) => {
+  const getJSON = async (url: string, ms = 6000) => {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), ms);
     try {
@@ -6465,7 +6446,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       secs: r.duration || 30,
     }));
 
-  /** Apple 排行榜的 JSON：試聽檔藏在 link 陣列裡 rel="enclosure" 那一筆 */
+  /** Apple 排行榜的 JSON：試聽檔藏在 link 陣列裡 rel="enclosure" 那一筆。
+      那裡的 im:duration 是「試聽長度」不是歌曲長度，寫上去會每一首都顯示
+      0:30，所以榜單這邊乾脆不顯示時間（secs 給 0）。 */
   const fromChart = (d: any): Track[] => (d?.feed?.entry || [])
     .map((e: any) => {
       const enc = (e.link || []).find((l: any) => l?.attributes?.rel === 'enclosure');
@@ -6476,67 +6459,145 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         artist: e['im:artist']?.label || '',
         art: art.replace(/\/\d+x\d+bb\./, '/200x200bb.'),
         preview: enc?.attributes?.href || '',
-        secs: Number(enc?.['im:duration']?.label || 0),
+        secs: 0,
       };
     })
     .filter((t: Track) => t.preview && t.name);
 
+  /* 同一份資料先試 fetch、再試 JSONP —— 真機上失敗的方式不只一種，
+     而且每一種都會讓清單變空：
+       · 對方沒給 CORS 標頭 → fetch 直接被瀏覽器擋掉，只能走 JSONP。
+       · 整個網域連不上（被擋、被牆）→ 兩條都不通，只能換一家。
+     兩種傳輸都有逾時。JSONP 特別危險的是「腳本載進來了但根本沒呼叫 callback」
+     （API 不支援 callback 參數時就會這樣）—— 那時 onerror 不會觸發，
+     沒有逾時的話畫面會永遠停在轉圈。 */
+  const failLog = useRef<string[]>([]);
+  const tryBoth = async (
+    tag: string,
+    url: string,
+    makeJsonpUrl: (cb: string) => string,
+    parse: (d: any) => Track[],
+  ): Promise<Track[]> => {
+    try {
+      const list = parse(await getJSON(url));
+      if (list.length) return list;
+      failLog.current.push(`${tag}:0筆`);
+    } catch (e: any) {
+      failLog.current.push(`${tag}:${String(e?.message || e).slice(0, 16)}`);
+    }
+    try {
+      const list = parse(await jsonp(makeJsonpUrl));
+      if (list.length) return list;
+      failLog.current.push(`${tag}J:0筆`);
+    } catch (e: any) {
+      failLog.current.push(`${tag}J:${String(e?.message || e).slice(0, 16)}`);
+    }
+    return [];
+  };
+
+  /** 某個地區的近期熱門榜；榜單失效就退回該地區的搜尋 */
+  const loadChart = async (store: string): Promise<Track[]> => {
+    const list = await tryBoth(
+      `${store}榜`,
+      `https://itunes.apple.com/${store}/rss/topsongs/limit=50/json`,
+      cb => `https://itunes.apple.com/${store}/rss/topsongs/limit=50/callback=${cb}/json`,
+      fromChart,
+    );
+    return list.length ? list : loadSearch(STORE_FALLBACK[store] || 'pop', store);
+  };
+
+  /** 在某個地區的商店裡搜尋。
+      country 一定要指定：不指定的話 Apple 一律當成美國商店，中文歌名幾乎搜不到。 */
+  const loadSearch = async (term: string, store: string): Promise<Track[]> => {
+    const url = 'https://itunes.apple.com/search?media=music&entity=song&limit=25'
+      + `&country=${store}&term=` + encodeURIComponent(term);
+    return tryBoth(`${store}搜`, url, cb => `${url}&callback=${cb}`, fromItunes);
+  };
+
   /**
-   * 取一份歌單。src.chart 有值就先抓排行榜，抓不到再用 src.term 去搜尋。
-   * 每一種來源都排了「直接 fetch → 同網址走 JSONP」兩條，最後還有 Deezer 兜底，
-   * 因為在真機上失敗的方式不只一種，而且每一種都會讓清單變空：
-   *   · 對方沒給 CORS 標頭 → fetch 直接被瀏覽器擋掉，只能走 JSONP。
-   *   · 整個網域連不上（被擋、被牆）→ 兩條都不通，只能換一家。
-   * 兩種傳輸都有逾時。JSONP 特別危險的是「腳本載進來了但根本沒呼叫 callback」
-   * （API 不支援 callback 參數時就會這樣）—— 那時 onerror 不會觸發，
-   * 沒有逾時的話畫面會永遠停在轉圈。
-   * 全部失敗時把每一條的死法記下來寫在畫面上，才有辦法判斷是誰的問題。
+   * 把幾份歌單依 pattern 輪流交錯成一份，同名同歌手只留一次。
+   * lead 是「開頭先固定拿幾首」，為你推薦就靠這個讓前幾首一定是中文。
    */
-  const loadMusic = useCallback(async (src: { chart?: string; term: string }) => {
+  const weave = (
+    lists: Record<string, Track[]>,
+    pattern: string[],
+    lead?: { store: string; count: number },
+  ): Track[] => {
+    const q: Record<string, Track[]> = {};
+    pattern.forEach(k => { q[k] = [...(lists[k] || [])]; });
+    const out: Track[] = [];
+    const seen = new Set<string>();
+    const push = (t?: Track) => {
+      if (!t) return;
+      const key = `${t.name}|${t.artist}`.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(t);
+    };
+    if (lead) for (let i = 0; i < lead.count; i++) push(q[lead.store]?.shift());
+    let i = 0;
+    for (let guard = 0; guard < 600; guard++) {
+      if (!pattern.some(k => q[k]?.length)) break;
+      const k = pattern[i++ % pattern.length];
+      if (q[k]?.length) push(q[k]!.shift());
+    }
+    return out;
+  };
+
+  type Src =
+    | { kind: 'search'; term: string }
+    | { kind: 'chart'; stores: string[]; pattern: string[]; lead?: { store: string; count: number } };
+
+  /** 現在這個分頁／搜尋字該拿什麼 */
+  const currentSource = (): Src => {
+    const q = musicQuery.trim();
+    if (q) return { kind: 'search', term: q };
+    if (musicTab === '為你推薦') {
+      // 四地混合，中日韓的比重比英文高，而且開頭四首固定是台灣榜
+      return {
+        kind: 'chart', stores: ALL_STORES,
+        pattern: ['tw', 'jp', 'kr', 'tw', 'jp', 'kr', 'us'],
+        lead: { store: 'tw', count: 4 },
+      };
+    }
+    if (musicTab === '超夯') return { kind: 'chart', stores: ALL_STORES, pattern: ['us', 'tw', 'jp', 'kr'] };
+    const s = TAB_STORE[musicTab];
+    if (s) return { kind: 'chart', stores: [s], pattern: [s] };
+    return { kind: 'search', term: 'pop' };
+  };
+
+  const loadMusic = useCallback(async (src: Src) => {
     const my = ++musicReqRef.current;
     setMusicLoading(true);
     setMusicError('');
-    /* country=TW：不指定的話 Apple 一律當成美國商店，中文歌名幾乎搜不到東西，
-       清單看起來就像壞掉。lang 只影響回傳的類別名稱，順便帶上。 */
-    const itUrl = 'https://itunes.apple.com/search?media=music&entity=song&limit=40'
-      + '&country=TW&lang=zh_tw&term=' + encodeURIComponent(src.term);
-    const dzUrl = 'https://api.deezer.com/search?output=jsonp&limit=40&q=' + encodeURIComponent(src.term);
-    const chartUrl = src.chart
-      ? `https://itunes.apple.com/${src.chart}/rss/topsongs/limit=50/json`
-      : '';
-    const routes: Array<[string, () => Promise<Track[]>]> = [];
-    if (chartUrl) {
-      routes.push(['榜單', async () => fromChart(await getJSON(chartUrl))]);
-      routes.push(['榜單J', async () => fromChart(await jsonp(chartUrl))]);
-    }
-    if (src.term) {
-      routes.push(['搜尋', async () => fromItunes(await getJSON(itUrl))]);
-      routes.push(['搜尋J', async () => fromItunes(await jsonp(itUrl))]);
-      routes.push(['DZ', async () => fromDeezer(await jsonp(dzUrl))]);
-    }
-    const why: string[] = [];
-    for (const [tag, go] of routes) {
-      let list: Track[] | null = null;
-      try {
-        list = await go();
-        if (!list.length) why.push(`${tag}:0筆`);
-      } catch (e: any) {
-        why.push(`${tag}:${String(e?.message || e).slice(0, 16)}`);
+    failLog.current = [];
+    let list: Track[] = [];
+    if (src.kind === 'chart') {
+      const got = await Promise.all(src.stores.map(s => loadChart(s).catch(() => [] as Track[])));
+      const byStore: Record<string, Track[]> = {};
+      src.stores.forEach((s, i) => { byStore[s] = got[i]; });
+      list = weave(byStore, src.pattern, src.lead);
+    } else {
+      /* 搜尋要「包含所有歌曲」：同一個字四個地區的商店各查一次再合併。
+         單查一個地區會漏掉大量他國曲目（日韓歌在台灣商店常常沒有）。 */
+      const got = await Promise.all(ALL_STORES.map(s => loadSearch(src.term, s).catch(() => [] as Track[])));
+      const byStore: Record<string, Track[]> = {};
+      ALL_STORES.forEach((s, i) => { byStore[s] = got[i]; });
+      list = weave(byStore, ['tw', 'us', 'jp', 'kr']);
+      // 四個商店都空的話，最後再問一次 Deezer
+      if (!list.length) {
+        const dz = 'https://api.deezer.com/search?output=jsonp&limit=40&q=' + encodeURIComponent(src.term);
+        try { list = fromDeezer(await jsonp(cb => `${dz}&callback=${cb}`)); }
+        catch (e: any) { failLog.current.push(`DZ:${String(e?.message || e).slice(0, 16)}`); }
       }
-      if (my !== musicReqRef.current) return;    // 已經有更新的搜尋了，這份丟掉
-      if (list && list.length) { setMusicList(list); setMusicLoading(false); return; }
     }
-    if (my !== musicReqRef.current) return;
-    setMusicList([]);
-    setMusicError(`拿不到歌單，請確認網路後重試\n（${why.join('、') || '沒有可用的來源'}）`);
+    if (my !== musicReqRef.current) return;   // 已經有更新的搜尋了，這份丟掉
+    setMusicList(list);
+    setMusicError(list.length
+      ? ''
+      : `拿不到歌單，請確認網路後重試\n（${failLog.current.slice(0, 6).join('、') || '沒有可用的來源'}）`);
     setMusicLoading(false);
   }, []);
-
-  /** 現在這個分頁／搜尋字該拿什麼 */
-  const currentSource = (): { chart?: string; term: string } => {
-    const q = musicQuery.trim();
-    return q ? { term: q } : (TAB_SOURCE[musicTab] || { term: 'pop' });
-  };
 
   // 開啟時滑入
   useEffect(() => {
@@ -6545,41 +6606,45 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     return () => clearTimeout(t);
   }, [musicOpen]);
 
-  // 分頁或搜尋字改變就重新拿一份
+  /* 分頁或搜尋字改變就重新拿一份。
+     這裡刻意「不」把 savedTracks 放進相依陣列 —— 放進去的話，按一下收藏書籤
+     就會整份重抓，清單先變成轉圈再重畫，看起來就是閃一下、抖一下。 */
   useEffect(() => {
-    if (!musicOpen) return;
-    const q = musicQuery.trim();
-    // 「已儲存」不連網，直接顯示本機收藏
-    if (!q && musicTab === '已儲存') {
-      musicReqRef.current++;                       // 取消還在跑的那一次
-      setMusicList(savedTracks);
-      setMusicLoading(false);
-      setMusicError(savedTracks.length ? '' : '還沒有收藏的音樂，點歌曲右邊的書籤就會收進來');
-      return;
-    }
-    const t = setTimeout(() => loadMusic(currentSource()), q ? 350 : 0);
+    if (!musicOpen || musicTab === '已儲存') return;
+    const t = setTimeout(() => loadMusic(currentSource()), musicQuery.trim() ? 350 : 0);
     return () => clearTimeout(t);
-  }, [musicOpen, musicQuery, musicTab, savedTracks, loadMusic]);
+  }, [musicOpen, musicQuery, musicTab, loadMusic]);
 
-  /* 手機鍵盤一跳出來，整個面板還是貼在螢幕最下面 —— 搜尋欄和歌單都被鍵盤蓋住，
-     看起來就像「不能搜」。visualViewport 是唯一能問到鍵盤高度的東西，
-     問到多高就把面板往上頂多高，並且撐到鍵盤上緣（IG 也是這樣）。 */
+  // 「已儲存」不連網，直接把本機收藏放上去（收藏變動時才跟著更新）
   useEffect(() => {
+    if (!musicOpen || musicTab !== '已儲存') return;
+    musicReqRef.current++;                       // 取消還在跑的那一次
+    setMusicList(savedTracks);
+    setMusicLoading(false);
+    setMusicError(savedTracks.length ? '' : '還沒有收藏的音樂，點歌曲右邊的書籤就會收進來');
+  }, [musicOpen, musicTab, savedTracks]);
+
+  /* 點輸入框時 iOS 會把整頁往上捲，好讓輸入框露出鍵盤 —— 但 IG 預覽整層是
+     position:fixed，被捲上去只會整個歪掉。捲多少就捲回來，畫面完全不動；
+     面板本身維持原本的高度，不因為鍵盤而縮，鍵盤後面的部分照樣在那裡。
+     選音樂的搜尋欄和改帳號名字都會叫出鍵盤，所以整個 IG 預覽期間都盯著。 */
+  useEffect(() => {
+    if (!igPreview) return;
     const vv = (window as any).visualViewport;
-    if (!musicOpen || !vv) return;
-    const on = () => {
-      const h = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-      setKbInset(h > 80 ? Math.round(h) : 0);   // 80 以下當成瀏覽器工具列在變，不是鍵盤
+    const hold = () => {
+      if (window.scrollY !== 0 || window.pageYOffset !== 0) window.scrollTo(0, 0);
+      if (document.documentElement.scrollTop) document.documentElement.scrollTop = 0;
+      if (document.body.scrollTop) document.body.scrollTop = 0;
     };
-    on();
-    vv.addEventListener('resize', on);
-    vv.addEventListener('scroll', on);
+    window.addEventListener('scroll', hold, { passive: true });
+    vv?.addEventListener('scroll', hold);
+    vv?.addEventListener('resize', hold);
     return () => {
-      vv.removeEventListener('resize', on);
-      vv.removeEventListener('scroll', on);
-      setKbInset(0);
+      window.removeEventListener('scroll', hold);
+      vv?.removeEventListener('scroll', hold);
+      vv?.removeEventListener('resize', hold);
     };
-  }, [musicOpen]);
+  }, [igPreview]);
   // 關掉 IG 預覽時把音樂一起停掉
   useEffect(() => {
     if (igPreview) return;
@@ -6657,14 +6722,109 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     attach();
     return () => ro?.disconnect();
   }, [igPreview]);
+
+  /* ── IG 貼文的翻頁 ────────────────────────────────────────────────
+     不用瀏覽器的捲動＋scroll-snap：那個放手之後還會自己滑一段再吸過去，
+     就是那股「緩衝感」，而且滑太快還會一次跳過好幾頁。IG 不是這樣 ——
+     手指拖到哪就到哪，放手當下立刻決定翻或不翻，一次只翻一頁，
+     220ms 直接就位，中途不再飄。所以這裡自己接指標事件、自己搬位置。 */
+  /** 把軌道移到某個位置；animate=false 是跟著手指走，不能有過場 */
+  const igMoveTrack = (px: number, animate: boolean) => {
+    const el = igTrackRef.current;
+    if (!el) return;
+    el.style.transition = animate ? 'transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1)' : 'none';
+    el.style.transform = `translate3d(${px}px, 0, 0)`;
+  };
+  // 頁數或框寬改變時（換頁、旋轉、重新量框）把軌道對回正確的位置
+  useEffect(() => {
+    if (!igPreview) return;
+    igMoveTrack(-igPage * igBox.w, !igDragRef.current);
+  }, [igPreview, igPage, igBox.w, pages.length]);
+
+  const onIgPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (pages.length < 2) return;
+    igDragRef.current = { x0: e.clientX, y0: e.clientY, t0: e.timeStamp, dx: 0, id: e.pointerId, lock: '' };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    igMoveTrack(-igPage * igBox.w, false);
+  };
+  const onIgPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = igDragRef.current;
+    if (!d || d.id !== e.pointerId) return;
+    let dx = e.clientX - d.x0;
+    // 先判斷這一下是橫的還是直的，直的就整個不管（避免斜著滑時圖亂晃）
+    if (!d.lock) {
+      const dy = e.clientY - d.y0;
+      if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+      d.lock = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+    }
+    if (d.lock !== 'x') return;
+    // 頭尾不給拖出去（IG 第一張往右滑是完全不動的，沒有回彈）
+    if (igPage === 0 && dx > 0) dx = 0;
+    if (igPage === pages.length - 1 && dx < 0) dx = 0;
+    d.dx = dx;
+    igMoveTrack(-igPage * igBox.w + dx, false);
+  };
+  const onIgPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    const d = igDragRef.current;
+    if (!d || d.id !== e.pointerId) return;
+    igDragRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* 已經放開了 */ }
+    const w = igBox.w || 1;
+    const dt = Math.max(1, e.timeStamp - d.t0);
+    const v = d.dx / dt;                       // px/ms，甩一下也要能翻
+    let next = igPage;
+    if (d.dx < -w * 0.18 || v < -0.35) next = Math.min(pages.length - 1, igPage + 1);
+    else if (d.dx > w * 0.18 || v > 0.35) next = Math.max(0, igPage - 1);
+    igMoveTrack(-next * w, true);              // 先動，再更新狀態，才不會等一拍
+    if (next !== igPage) setIgPage(next);
+  };
+
   /** 貼文版位的比例：頁面本身的比例 IG 支援就照它，不支援就用直式 3:4 */
   /* 框永遠等於頁面本身的比例，不再夾到 IG 的支援範圍。
      夾比例等於在預覽裡自作主張改變構圖 —— 使用者要的是「匯出長怎樣就顯示怎樣」，
      每一頁都一樣、完整、不壓縮、不裁切。真的超出 IG 支援範圍時，IG 自己會怎麼處理
      是發文當下的事，預覽不該先幫他決定。 */
   const igFrame = { w: previewW, h: previewH };
-  /** 預覽裡的帳號 */
-  const IG_ACCOUNT = 'abai_is.perfect';
+  /* 預覽裡的帳號與頭像：兩個都能改，存在本機，下次開還在。 */
+  const [igAccount, setIgAccount] = useState(() => {
+    try { return localStorage.getItem('abai_ig_account') || 'abai_is.perfect'; } catch { return 'abai_is.perfect'; }
+  });
+  const [igAvatar, setIgAvatar] = useState(() => {
+    try { return localStorage.getItem('abai_ig_avatar') || ''; } catch { return ''; }
+  });
+  const [igNameEditing, setIgNameEditing] = useState(false);
+  const igAvatarInputRef = useRef<HTMLInputElement>(null);
+
+  const commitIgName = (v: string) => {
+    const name = v.trim().slice(0, 30);
+    if (name) {
+      setIgAccount(name);
+      try { localStorage.setItem('abai_ig_account', name); } catch { /* 無痕模式寫不進去就算了 */ }
+    }
+    setIgNameEditing(false);
+  };
+
+  /** 上傳的頭像先置中裁成正方形、縮到 240px 再存 —— 原圖直接塞會撐爆本機空間 */
+  const setIgAvatarFrom = (file: File) => {
+    const url = URL.createObjectURL(file);
+    const im = new Image();
+    im.onload = () => {
+      const S = 240;
+      const c = document.createElement('canvas');
+      c.width = S; c.height = S;
+      const g = c.getContext('2d');
+      if (g) {
+        const s = Math.min(im.naturalWidth, im.naturalHeight);
+        g.drawImage(im, (im.naturalWidth - s) / 2, (im.naturalHeight - s) / 2, s, s, 0, 0, S, S);
+        const data = c.toDataURL('image/png');
+        setIgAvatar(data);
+        try { localStorage.setItem('abai_ig_avatar', data); } catch { /* 存不下就只用這一次 */ }
+      }
+      URL.revokeObjectURL(url);
+    };
+    im.onerror = () => URL.revokeObjectURL(url);
+    im.src = url;
+  };
   /** 頭像與「說讚」那排的小頭像：直接拿拼圖裡的照片來用，看起來才像真的貼文 */
   const igFaces = (() => {
     const out: string[] = [];
@@ -6697,7 +6857,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   useEffect(() => {
     document.querySelectorAll('video').forEach(v => { v.muted = true; });
     if (!igPreview || igMuted) return;
-    const slide = igStripRef.current?.children[igPage] as HTMLElement | undefined;
+    const slide = igTrackRef.current?.children[igPage] as HTMLElement | undefined;
     slide?.querySelectorAll('video').forEach(v => { v.muted = false; v.play().catch(() => { }); });
   }, [igPreview, igPage, igMuted, pages.length]);
 
@@ -9514,23 +9674,72 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           >
             {/* 帳號那一列：限動漸層圈的頭像、粗體帳號，第二行是音訊 */}
             <div className="h-[52px] flex items-center gap-[9px] pl-[10px] pr-1">
-              <div
-                className="w-[38px] h-[38px] rounded-full shrink-0 p-[2px]"
+              {/* 點頭像換頭貼：置中裁成正方形存在本機；沒換過就沿用拼圖裡的第一張照片 */}
+              <button
+                onClick={() => igAvatarInputRef.current?.click()}
+                className="relative w-[38px] h-[38px] rounded-full shrink-0 p-[2px] active:opacity-70"
                 style={{ background: 'conic-gradient(from 200deg, #f9ce34, #ee2a7b, #6228d7, #ee2a7b, #f9ce34)' }}
+                title="更換頭貼"
               >
                 <div className="w-full h-full rounded-full overflow-hidden bg-[#262626] border-2 border-black">
-                  {igFaces[0] && <img src={igFaces[0]} alt="" draggable={false} className="w-full h-full object-cover" />}
+                  {(igAvatar || igFaces[0]) && (
+                    <img src={igAvatar || igFaces[0]} alt="" draggable={false} className="w-full h-full object-cover" />
+                  )}
                 </div>
-              </div>
+                {/* 右下角的小加號：不然沒人知道頭像可以點 */}
+                <span className="absolute -right-[1px] -bottom-[1px] w-[15px] h-[15px] rounded-full bg-[#0095f6] border-2 border-black flex items-center justify-center">
+                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.4" strokeLinecap="round">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </span>
+              </button>
+              <input
+                ref={igAvatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={e => {
+                  const f = e.target.files?.[0];
+                  if (f) setIgAvatarFrom(f);
+                  e.target.value = '';       // 選同一張也要能再觸發
+                }}
+              />
               <div className="flex-1 min-w-0">
-                <p className="text-[14px] font-semibold text-white leading-[19px] truncate">{IG_ACCOUNT}</p>
+                {/* 點帳號名字就能改，Enter 或點別的地方存檔 */}
+                {igNameEditing ? (
+                  <input
+                    autoFocus
+                    defaultValue={igAccount}
+                    maxLength={30}
+                    onBlur={e => commitIgName(e.currentTarget.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+                    enterKeyHint="done"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    className="w-full text-[14px] font-semibold text-white leading-[19px]"
+                    style={{
+                      border: 0, outline: 'none', boxShadow: 'none',
+                      padding: 0, background: 'transparent',
+                      WebkitAppearance: 'none', appearance: 'none',
+                    }}
+                  />
+                ) : (
+                  <button
+                    onClick={() => setIgNameEditing(true)}
+                    className="block w-full text-left text-[14px] font-semibold text-white leading-[19px] truncate active:opacity-60"
+                    title="修改帳號名稱"
+                  >
+                    {igAccount}
+                  </button>
+                )}
                 {/* 點這一行選音樂；選過之後整行換成「歌名 · 歌手」 */}
                 <button
                   onClick={() => setMusicOpen(true)}
                   className="text-[13px] text-white leading-[17px] truncate block w-full text-left active:opacity-60"
                 >
                   <span className="text-[12px] mr-[3px]">♫</span>
-                  {picked ? `${picked.name} · ${picked.artist}` : `原創音訊 · ${IG_ACCOUNT}`}
+                  {picked ? `${picked.name} · ${picked.artist}` : `原創音訊 · ${igAccount}`}
                 </button>
               </div>
               {/* IG 現在的版本右上角是兩條橫線；這裡順便當關閉鍵 */}
@@ -9545,43 +9754,45 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               </button>
             </div>
 
-            {/* 貼文的圖：只能左右滑（touch-action: pan-x），一頁一屏 */}
+            {/* 貼文的圖：一頁一屏，左右滑 */}
             <div className="relative w-full bg-black select-none">
+              {/*
+                翻頁不用瀏覽器的捲動＋scroll-snap —— 那個放開手之後還會自己滑一段
+                再吸過去，就是那股「緩衝感」。IG 是手指拖到哪就到哪，放手立刻決定
+                翻不翻，220ms 直接就位，中途不會再飄。
+                所以這裡自己接指標事件、自己算位移，容器本身完全不捲動。
+              */}
               <div
                 ref={igStripRef}
-                onScroll={(e) => {
-                  const el = e.currentTarget;
-                  setIgPage(Math.round(el.scrollLeft / Math.max(1, el.clientWidth)));
-                }}
-                // 第一張再往左滑就擋掉（IG 的第一張也是滑不動的，不會有回彈）
-                onTouchStart={(e) => { igTouchXRef.current = e.touches[0]?.clientX ?? 0; }}
-
-                /* flex-1 + min-h-0：圖片區「拿剩下的空間」，不再用 aspect-ratio
-                   撐出一個固定高度。用 aspect-ratio 的話，直式的頁面算出來的高度
-                   會超過畫面能給的空間，多出來的部分就被裁掉 —— 那就是截圖裡
-                   下半截不見、上面空一塊的原因。高度改成自動適應之後，
-                   裡面那張圖用 object-contain 一定完整顯示。 */
-                className="flex-1 min-h-0 flex w-full overflow-x-auto overflow-y-hidden no-scrollbar snap-x snap-mandatory"
-                style={{ touchAction: 'pan-x', overscrollBehavior: 'contain' }}
+                className="flex-1 min-h-0 w-full overflow-hidden"
+                style={{ touchAction: 'none' }}
+                onPointerDown={onIgPointerDown}
+                onPointerMove={onIgPointerMove}
+                onPointerUp={onIgPointerUp}
+                onPointerCancel={onIgPointerUp}
               >
-                {pages.map((page, idx) => (
-                  <div
-                    key={`ig-${page.id}`}
-                    // 寬度用整數的 px（不是 100%）：小數寬度會讓隔壁那一頁露出一條白線
-                    className="h-full shrink-0 snap-center snap-always flex items-center justify-center bg-black overflow-hidden"
-                    style={{ width: `${igBox.w}px` }}
-                  >
-                    {/* 直接顯示匯出的那一張。object-contain 保證完整顯示、絕不裁切 */}
-                    {igShots[idx]
-                      ? <img src={igShots[idx]} alt="" className="max-w-full max-h-full object-contain" />
-                      : (
-                        /* 還在算圖：給一個轉圈，不要放空白的頁面 —— 整片白會讓人以為壞掉 */
-                        <div className="w-full h-full flex items-center justify-center">
-                          <div className="w-7 h-7 rounded-full border-2 border-white/25 border-t-white animate-spin" />
-                        </div>
-                      )}
-                  </div>
-                ))}
+                {/* flex-1 + min-h-0（在外層）：圖片區「拿剩下的空間」，不用 aspect-ratio
+                    撐固定高度 —— 那樣直式頁面算出來會超過畫面，多的部分被裁掉。 */}
+                <div ref={igTrackRef} className="h-full flex will-change-transform">
+                  {pages.map((page, idx) => (
+                    <div
+                      key={`ig-${page.id}`}
+                      // 寬度用整數的 px（不是 100%）：小數寬度會讓隔壁那一頁露出一條白線
+                      className="h-full shrink-0 flex items-center justify-center bg-black overflow-hidden"
+                      style={{ width: `${igBox.w}px` }}
+                    >
+                      {/* 直接顯示匯出的那一張。object-contain 保證完整顯示、絕不裁切 */}
+                      {igShots[idx]
+                        ? <img src={igShots[idx]} alt="" draggable={false} className="max-w-full max-h-full object-contain" />
+                        : (
+                          /* 還在算圖：給一個轉圈，不要放空白的頁面 —— 整片白會讓人以為壞掉 */
+                          <div className="w-full h-full flex items-center justify-center">
+                            <div className="w-7 h-7 rounded-full border-2 border-white/25 border-t-white animate-spin" />
+                          </div>
+                        )}
+                    </div>
+                  ))}
+                </div>
               </div>
               {/* 多圖貼文右上角的頁碼膠囊：上緣與右緣留一樣的空隙 */}
               {pages.length > 1 && (
@@ -9668,7 +9879,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 ))}
               </span>
               <p className="text-[14px] text-white leading-[18px] truncate">
-                <span className="font-semibold">{IG_ACCOUNT}</span>和其他人都說讚
+                <span className="font-semibold">{igAccount}</span>和其他人都說讚
               </p>
             </div>
           </div>
@@ -9691,11 +9902,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               <div
                 className={`absolute left-0 right-0 z-[131] bg-[#161616] rounded-t-2xl flex flex-col transition-transform duration-300 ease-out ${musicShown ? 'translate-y-0' : 'translate-y-full'}`}
                 style={{
-                  /* 鍵盤跳出來時整個面板往上頂到鍵盤上緣，並撐高補回被吃掉的高度，
-                     不然搜尋欄跟歌單都躲在鍵盤後面，看起來就像不能搜。 */
-                  bottom: kbInset,
-                  height: kbInset ? `calc(100% - ${kbInset}px)` : '86%',
-                  paddingBottom: kbInset ? 0 : 'env(safe-area-inset-bottom, 0px)',
+                  /* 高度固定，鍵盤跳出來也不縮 —— 縮的話等於把鍵盤後面那段
+                     介面裁掉。鍵盤只是蓋在上面，底下的東西照樣在。 */
+                  bottom: 0,
+                  height: '93%',
+                  paddingBottom: 'env(safe-area-inset-bottom, 0px)',
                 }}
               >
                 {/* 上緣的小握把 */}
@@ -9783,30 +9994,33 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   {/* 一列本身能點（選這首），右邊的書籤是獨立的按鈕（收藏／取消收藏）。
                       所以外層不能是 <button> —— button 裡面不能再包 button。 */}
                   {musicList.map(t => (
-                    <div
-                      key={t.id}
-                      role="button"
-                      onClick={() => pickTrack(t)}
-                      className="w-full flex items-center gap-3 py-2.5 text-left active:opacity-60"
-                    >
-                      {/* 封面載不到就換成全透明的 1×1，只留底色 ——
-                          直接放著不管的話會出現瀏覽器的破圖圖示和一圈框。 */}
-                      <img
-                        src={t.art || TRANSPARENT_PX} alt="" loading="lazy"
-                        onError={e => { (e.currentTarget as HTMLImageElement).src = TRANSPARENT_PX; }}
-                        className="w-14 h-14 rounded-[6px] shrink-0 bg-white/10 object-cover"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-[16px] leading-[21px] truncate text-white ${picked?.id === t.id ? 'font-semibold' : ''}`}>{t.name}</p>
-                        <p className="text-[14px] leading-[19px] text-white/50 truncate">
-                          {t.artist}{t.secs > 0 && ` · ${Math.floor(t.secs / 60)}:${String(t.secs % 60).padStart(2, '0')}`}
-                        </p>
+                    <div key={t.id} className="w-full flex items-center py-2.5">
+                      {/* 按下去的變暗只掛在這一塊，不掛在整列 ——
+                          掛在整列的話，按右邊的書籤會連帶讓整列閃一下。 */}
+                      <div
+                        role="button"
+                        onClick={() => pickTrack(t)}
+                        className="flex-1 min-w-0 flex items-center gap-3 text-left active:opacity-60"
+                      >
+                        {/* 封面載不到就換成全透明的 1×1，只留底色 ——
+                            直接放著不管的話會出現瀏覽器的破圖圖示和一圈框。 */}
+                        <img
+                          src={t.art || TRANSPARENT_PX} alt="" loading="lazy"
+                          onError={e => { (e.currentTarget as HTMLImageElement).src = TRANSPARENT_PX; }}
+                          className="w-14 h-14 rounded-[6px] shrink-0 bg-white/10 object-cover"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-[16px] leading-[21px] truncate text-white ${picked?.id === t.id ? 'font-semibold' : ''}`}>{t.name}</p>
+                          <p className="text-[14px] leading-[19px] text-white/50 truncate">
+                            {t.artist}{t.secs > 0 && ` · ${Math.floor(t.secs / 60)}:${String(t.secs % 60).padStart(2, '0')}`}
+                          </p>
+                        </div>
                       </div>
                       {/* 收藏書籤：收藏過的填滿，「已儲存」那一頁讀的就是這一份 */}
                       <button
                         onClick={e => { e.stopPropagation(); toggleSave(t); }}
                         aria-label="收藏"
-                        className="w-9 h-9 shrink-0 flex items-center justify-center active:opacity-60"
+                        className="w-9 h-9 ml-1 shrink-0 flex items-center justify-center active:opacity-60"
                       >
                         <svg width="22" height="22" viewBox="0 0 24 24"
                              fill={savedTracks.some(x => x.id === t.id) ? '#fff' : 'none'}
