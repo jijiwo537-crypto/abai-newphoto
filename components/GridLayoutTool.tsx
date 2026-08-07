@@ -6687,7 +6687,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
          而所有物件的座標都是乘 scaleFactor 換算過去的 —— 兩邊對不上的話，
          擺在頁面正中央的圖，匯出後就會偏離中心（差多少就偏多少的一半）。
          這也是 IG 預覽看起來「圖比較靠近下面」的原因，因為它顯示的就是匯出圖。 */
-      targetH = Math.round(previewH * scaleFactor);
+      /* 這裡要用 floor 不能用 round：round 有一半機率往上進位，畫布就比
+         內容高了不到 1px —— 那一列沒有任何東西蓋到，露出來的就是畫布底色，
+         在 IG 預覽（顯示的就是這張匯出圖）下緣看到的那條白線就是它。
+         往下取整之後畫布永遠不會比內容高，白線不可能出現。 */
+      targetH = Math.floor(previewH * scaleFactor);
 
       canvas.width = targetW;
       canvas.height = targetH;
@@ -9257,7 +9261,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               /* 整篇貼文往下挪：內容原本從最上面開始排，下面會空一大塊。
                  補 padding-top 讓整組（帳號列＋圖＋愛心那幾列）一起往下，
                  圖就落在畫面中心略偏上 —— 同步移動，不是只動圖片。 */
-              paddingTop: '86px',
+              paddingTop: '58px',
             }}
           >
             {/* 帳號那一列：限動漸層圈的頭像、粗體帳號，第二行是音訊 */}
