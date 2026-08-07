@@ -6440,9 +6440,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     const arBox = maxW / maxH, arPage = previewW / previewH;
     const sameAR = Math.abs(arBox - arPage) / arPage < 0.01;
     const kx = maxW / previewW, ky = maxH / previewH;
-    const k = sameAR
-      ? Math.max(kx, ky)
-      : (mode === 'cover' ? Math.max(kx, ky) : Math.min(kx, ky));
+    /* 同比例時仍然用「取小」：取大等於覆蓋，比例差那零點幾 % 就會把下緣切掉
+       ——「絕不裁切」比「絕不留邊」重要，何況差距 < 1%，留的邊不到 1px。 */
+    const k = (sameAR || mode !== 'cover') ? Math.min(kx, ky) : Math.max(kx, ky);
     const stride = previewW + 1;
     const onThisPage = floatingImages.filter(f => pageOfFloating(f, stride, pages.length) === pageIdx);
     return (
@@ -6811,7 +6811,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           maxX: cx + half,
           isVideo: !!fImg.isVideo,
           src: fImg.src,
-          run: (c) => drawFloatingLayers(c, [fImg], scaleFactor),
+          /* 裁在自己那一頁裡面。貼齊畫布邊緣時圖層會刻意往外多蓋半個像素
+             （不然預覽會露出一條抗鋸齒的白縫），預覽有 overflow:hidden 擋著，
+             但匯出是把所有頁面畫在同一張長畫布上、沒有任何裁切 ——
+             多出來的那半個像素就跑到隔壁那一頁去了。 */
+          run: async (c) => {
+            const pi = Math.floor(fImg.x / (previewW + 1));
+            c.save();
+            c.beginPath();
+            c.rect(pi * targetW, 0, targetW, targetH);
+            c.clip();
+            try {
+              await drawFloatingLayers(c, [fImg], scaleFactor);
+            } finally {
+              c.restore();
+            }
+          },
         });
       });
       drawJobs.sort((x, y) => x.z - y.z);
