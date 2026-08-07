@@ -9254,6 +9254,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             className="flex-1 min-h-0 overflow-hidden flex flex-col"
             style={{
               overscrollBehavior: 'contain',
+              /* 整篇貼文往下挪：內容原本從最上面開始排，下面會空一大塊。
+                 補 padding-top 讓整組（帳號列＋圖＋愛心那幾列）一起往下，
+                 圖就落在畫面中心略偏上 —— 同步移動，不是只動圖片。 */
+              paddingTop: '86px',
             }}
           >
             {/* 帳號那一列：限動漸層圈的頭像、粗體帳號，第二行是音訊 */}
