@@ -6380,7 +6380,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         urls = (r && 'urls' in r) ? r.urls : [];
       }
       if (!alive) { urls.forEach(u => URL.revokeObjectURL(u)); return; }
-      if (!urls.length) return;   // 還是失敗就留著 renderMiniPage 當備援，不要清成空白
+      if (!urls.length) return;   // 還是失敗就留著備援，不要清成空白
+      /* 先把每一張都解碼完再交給畫面。
+         以前是拿到網址就立刻 setState，<img> 還在解碼的那幾百毫秒畫面上是空的，
+         看起來就是「進 IG 預覽時整片白」。等解碼完再換就沒有那段空窗。 */
+      await Promise.all(urls.map(u => new Promise<void>(res => {
+        const im = new Image();
+        im.onload = () => res();
+        im.onerror = () => res();
+        im.src = u;
+      })));
+      if (!alive) { urls.forEach(u => URL.revokeObjectURL(u)); return; }
       igShotsRef.current.forEach(u => URL.revokeObjectURL(u));
       igShotsRef.current = urls;
       setIgShots(urls);
@@ -9321,7 +9331,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     {/* 直接顯示匯出的那一張。object-contain 保證完整顯示、絕不裁切 */}
                     {igShots[idx]
                       ? <img src={igShots[idx]} alt="" className="max-w-full max-h-full object-contain" />
-                      : renderMiniPage(idx, igBox.w, igBox.h, 'contain')}
+                      : (
+                        /* 還在算圖：給一個轉圈，不要放空白的頁面 —— 整片白會讓人以為壞掉 */
+                        <div className="w-full h-full flex items-center justify-center">
+                          <div className="w-7 h-7 rounded-full border-2 border-white/25 border-t-white animate-spin" />
+                        </div>
+                      )}
                   </div>
                 ))}
               </div>
