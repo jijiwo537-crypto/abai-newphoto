@@ -2261,15 +2261,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         height: `${image.height * image.scale}px`,
         transformOrigin: 'center center',
         // 排頁面拖曳中要跟著自己那一頁一起走（平移＋群組縮放），最後才是自己的旋轉
-        /* 沒有旋轉、也沒有拖曳位移時就「完全不要」寫 transform。
-           Chrome 只要看到 transform（連 rotate(0deg) 都算）就會把這一層提升成
-           合成層，而合成層的繪製位置會被吸附到整數像素 —— 圖層的 left 是小數
-           （例如 117.536px），吸附之後畫面上就往旁邊挪了將近半個 px，貼齊畫布
-           邊緣時會露出一條白縫。DOM 的座標是準的（差 0），所以只看數字量不到，
-           要看實際畫出來的像素才會發現。 */
-        transform: (dragShift || image.rotation)
-          ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`
-          : undefined,
+        /* 這裡「一定要」保留 transform（即使旋轉是 0）。
+           有 transform 時 Chrome 會把這一層提升成合成層，繪製位置吸附到整數
+           像素，邊緣是實心的；拿掉之後改成次像素繪製，貼齊畫布邊緣時邊緣會被
+           抗鋸齒抹成半透明的一條，看起來就像沒對齊 —— 而匯出是直接用座標畫在
+           canvas 上、不受影響，於是變成「匯出是對的、預覽有誤差」。 */
+        transform: `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`,
         transition: dragShift ? (dragShift.live ? 'none' : 'transform 200ms ease-out') : undefined,
         // 要疊在選取時出現的透明拖曳層（z-40）之上，直接碰圖片才拖得動
         // 一般圖片用偶數層，佈局用奇數層，兩者才能互相穿插
