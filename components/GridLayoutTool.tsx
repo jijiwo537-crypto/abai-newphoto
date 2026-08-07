@@ -2444,13 +2444,17 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           muted
           playsInline
           preload="auto"
-          style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
+          /* 這裡是 fill 不是 contain：匯出是 drawImage(src, x, y, w, h)，直接把圖填滿
+             整個框、不留信箱邊。預覽如果用 contain，只要圖層框的長寬比跟原圖差一點點
+             （匯入時取整就會差），四周就會多出零點幾 px 的空白 —— 貼齊畫布邊緣時那就
+             是一條白縫，而匯出沒有。用 fill 才跟匯出一致。 */
+          style={{ width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' }}
         />
       ) : (
         <img
           src={image.src}
           alt="floating-item"
-          style={{ width: '100%', height: '100%', objectFit: 'contain', pointerEvents: 'none' }}
+          style={{ width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' }}
         />
       )}
 
@@ -2762,7 +2766,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     /* 貼齊是「剛好對齊、不外溢」，容差只留給次像素捨入。
        超過就代表真的有縫（或真的超出去），那就不該畫線 —— 不然會出現
        「線亮了、圖卻沒真的貼上去」的落差。 */
-    const EPS_E = 0.6;
+    const EPS_E = 1.1;   // 含上面那半個像素的外溢
     pageRectsNear(getAllPageRects(), cx).forEach(pr => {
       if (!edgeOnly && Math.abs(cx - pr.centerX) < EPS_C) out.push({ type: 'vertical', coord: pr.centerX });
       if (Math.abs(left - pr.left) < EPS_E) out.push({ type: 'vertical', coord: pr.left });
@@ -2794,6 +2798,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     }
 
     const SNAP_THRESHOLD = 4; // Snapping threshold reduced to 4px
+    const ownPageRectsForFit = pageRects;
     const scaledW = imgWidth * imgScale;
     const scaledH = imgHeight * imgScale;
 
@@ -2832,8 +2837,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const diffLeft = rawLeft - pageRect.left;
       if (Math.abs(diffLeft) < SNAP_THRESHOLD && Math.abs(diffLeft) < Math.abs(minDiffX)) {
         minDiffX = diffLeft;
-        // 剛好貼齊，不外溢：外溢會讓圖片突出到隔壁那一頁上
-        bestSnapX = pageRect.left - imgWidth / 2 + scaledW / 2;
+        /* 往外多半個像素：剛好貼齊時邊緣落在非整數像素上，抗鋸齒會讓最外面
+           那一列露出底下的頁面白色，看起來就是一條髮絲白縫。半個像素肉眼看不
+           出來，也不會像原本的 1px 那樣溢到隔壁頁。 */
+        bestSnapX = pageRect.left - imgWidth / 2 + scaledW / 2 - 0.5;
         bestGuidelineX = pageRect.left;
       }
 
@@ -2841,7 +2848,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const diffRight = rawRight - pageRect.right;
       if (Math.abs(diffRight) < SNAP_THRESHOLD && Math.abs(diffRight) < Math.abs(minDiffX)) {
         minDiffX = diffRight;
-        bestSnapX = pageRect.right - imgWidth / 2 - scaledW / 2;
+        bestSnapX = pageRect.right - imgWidth / 2 - scaledW / 2 + 0.5;
         bestGuidelineX = pageRect.right;
       }
     });
@@ -2899,6 +2906,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       snappedX = bestSnapX;
       guidelines.push({ type: 'vertical', coord: bestGuidelineX });
     }
+    /* 圖層比頁面「幾乎一樣寬」時，左緣貼齊與右緣貼齊是兩個相差零點幾 px 的位置，
+       從哪一邊靠過去就吸到哪一個 —— 那就是「由外而內沒縫、由內而外有縫」。
+       這種情況直接把圖擺成「兩邊都不露白」：以較寬的那一側為準置中對齊。 */
+    ownPageRectsForFit.forEach(pr => {
+      const w = pr.right - pr.left;
+      if (Math.abs(scaledW - w) < 2 && Math.abs((snappedX + imgWidth / 2) - pr.centerX) < 4) {
+        snappedX = pr.centerX - imgWidth / 2;
+      }
+    });
 
     // 2. Horizontal snapping (determines snappedY)
     let minDiffY = Infinity;
@@ -2922,7 +2938,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       if (Math.abs(diffTop) < SNAP_THRESHOLD && Math.abs(diffTop) < Math.abs(minDiffY)) {
         minDiffY = diffTop;
         // Bleed 1px outwards (top) to prevent subpixel edge gap in browser preview
-        bestSnapY = pageRect.top - imgHeight / 2 + scaledH / 2;
+        bestSnapY = pageRect.top - imgHeight / 2 + scaledH / 2 - 0.5;
         bestGuidelineY = pageRect.top;
       }
 
@@ -2931,7 +2947,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       if (Math.abs(diffBottom) < SNAP_THRESHOLD && Math.abs(diffBottom) < Math.abs(minDiffY)) {
         minDiffY = diffBottom;
         // Bleed 1px outwards (bottom) to prevent subpixel edge gap in browser preview
-        bestSnapY = pageRect.bottom - imgHeight / 2 - scaledH / 2;
+        bestSnapY = pageRect.bottom - imgHeight / 2 - scaledH / 2 + 0.5;
         bestGuidelineY = pageRect.bottom;
       }
     });
@@ -2989,6 +3005,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       snappedY = bestSnapY;
       guidelines.push({ type: 'horizontal', coord: bestGuidelineY });
     }
+    ownPageRectsForFit.forEach(pr => {
+      const h = pr.bottom - pr.top;
+      if (Math.abs(scaledH - h) < 2 && Math.abs((snappedY + imgHeight / 2) - pr.centerY) < 4) {
+        snappedY = pr.centerY - imgHeight / 2;
+      }
+    });
 
     /* 貼齊只會挑「最近的那一條」來吸附，但畫面上該顯示的是「現在同時對齊的每一條」：
        例如剛好卡在畫布正中央時，垂直中線與水平中線要一起亮起來；貼齊左邊界時，
@@ -6378,9 +6400,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     /* contain：整頁完整顯示，絕不裁切。
        以前用 cover 去填滿那個 4:5 的框，1:1 的頁面上下就被切掉一截 ——
        IG 預覽的重點是「跟預覽／匯出看到的是同一張」，寧可留黑邊也不能裁。 */
-    const k = mode === 'cover'
-      ? Math.max(maxW / previewW, maxH / previewH)
-      : Math.min(maxW / previewW, maxH / previewH);
+    /* 框的尺寸是整數 px（量出來再取整），長寬比會跟頁面差零點幾 % ——
+       用 contain 就會多出一條零點幾 px 的黑邊（IG 預覽上方那條就是這樣來的）。
+       差距小於 1% 時視為同比例，直接兩軸都拉滿：不留邊也不裁切。 */
+    const arBox = maxW / maxH, arPage = previewW / previewH;
+    const sameAR = Math.abs(arBox - arPage) / arPage < 0.01;
+    const kx = maxW / previewW, ky = maxH / previewH;
+    const k = sameAR
+      ? Math.max(kx, ky)
+      : (mode === 'cover' ? Math.max(kx, ky) : Math.min(kx, ky));
     const stride = previewW + 1;
     const onThisPage = floatingImages.filter(f => pageOfFloating(f, stride, pages.length) === pageIdx);
     return (
@@ -6492,7 +6520,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             );
           }
           if (f.isVideo) {
-            return <video key={f.id} src={f.src} autoPlay loop muted playsInline style={{ ...common, objectFit: 'contain' }} />;
+            return <video key={f.id} src={f.src} autoPlay loop muted playsInline style={{ ...common, objectFit: 'fill' }} />;
           }
           /* 濾鏡、圓角、羽化、發光、描邊全部交給跟主預覽同一支演算法去畫，
              IG 預覽／頁面縮圖／畫布上看到的才會是同一張。 */
@@ -6500,7 +6528,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           const bh = f.height * f.scale * k;
           const needsCanvas = !!(f.feather || f.imgRadius || f.imgGlow || f.imgStrokeWidth || hasPhotoFx(f.fx));
           if (!needsCanvas) {
-            return <img key={f.id} src={f.src} alt="" style={{ ...common, objectFit: 'contain' }} />;
+            return <img key={f.id} src={f.src} alt="" style={{ ...common, objectFit: 'fill' }} />;
           }
           const gp = Math.round(
             ((f.imgGlow ? Math.ceil(GLOW_BLUR_UNIT * GLOW_EXTENT) : 0)
@@ -8177,13 +8205,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                             const snapY = bestGuidelineY !== null;
 
                             if (snapX && snapY) {
-                              if (Math.abs(minDiffX) < Math.abs(minDiffY)) {
+                              /* 兩個軸都吸附得到時取「比較大」的倍率（＝覆蓋，而不是縮進去）。
+                                 圖層框的長寬比跟頁面通常會差零點幾 px（匯入時取整造成），
+                                 取小的那個等於留一條白縫在另一邊；取大的只是多蓋出去
+                                 零點幾 px，而頁面本來就會裁掉超出的部分，所以四邊都不露白。
+                                 這也是「由外而內沒縫、由內而外有縫」的成因 —— 以前是看
+                                 哪一軸比較近就聽誰的，方向不同結果就不同。 */
+                              if (bestScaleX >= bestScaleY) {
                                 finalScale = bestScaleX;
                                 finalGuidelines = [{ type: 'vertical', coord: bestGuidelineX! }];
                               } else {
                                 finalScale = bestScaleY;
                                 finalGuidelines = [{ type: 'horizontal', coord: bestGuidelineY! }];
                               }
+                              /* 再多蓋出去半個像素。剛好貼齊時邊緣會落在非整數的像素上，
+                                 抗鋸齒會把最外面那一列混成半透明，看起來就是一條髮絲白邊。
+                                 頁面本身會裁掉超出的部分，所以多這半個像素完全看不到，
+                                 卻能保證四邊都不露白。 */
+                              const longSide = Math.max(fImg.width, fImg.height) * finalScale;
+                              if (longSide > 1) finalScale *= 1 + 0.6 / longSide;
                             } else if (snapX) {
                               finalScale = bestScaleX;
                               finalGuidelines = [{ type: 'vertical', coord: bestGuidelineX! }];
