@@ -9237,7 +9237,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               都切掉而且捲不到，auto margin 則會自動退讓、完整可捲。 */}
           <div
             className="flex-1 min-h-0 overflow-y-auto no-scrollbar flex flex-col [&>*:first-child]:mt-auto [&>*:last-child]:mb-auto"
-            style={{ overscrollBehavior: 'contain' }}
+            style={{
+              overscrollBehavior: 'contain',
+              /* 要置中的是「圖片」，不是「整篇貼文」。
+                 圖片上面只有帳號那一列（52px），下面卻有點點、愛心那列、說讚那列
+                 （約 84～119px）—— 整篇置中的話，圖就會被上下不對稱的部分推上去，
+                 上方空白比下方少一截，看起來就像下面被吃掉了。
+                 這裡補一段 padding-top，把差額補回來：auto margin 會把剩餘空間
+                 上下均分，所以補多少、圖就往下移一半，最後圖的上下空白剛好相等。 */
+              paddingTop: `${Math.max(0, (44 + 46 + (pages.length > 1 ? 35 : 0)) - 52)}px`,
+            }}
           >
             {/* 帳號那一列：限動漸層圈的頭像、粗體帳號，第二行是音訊 */}
             <div className="h-[52px] flex items-center gap-[9px] pl-[10px] pr-1">
