@@ -2919,18 +2919,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
        px，置中之後兩側各留 0.25px，抗鋸齒就會把那條縫顯示出來。這裡順便回報一個
        「確實覆蓋整頁再多半個像素」的倍率，讓拖曳也能把最後那一點補起來。
        頁面本來就會裁掉超出的部分，所以多蓋的完全看不到。 */
-    let fitScale: number | undefined;
-    ownPageRectsForFit.forEach(pr => {
-      const pw = pr.right - pr.left, ph = pr.bottom - pr.top;
-      if (Math.abs(scaledW - pw) < 3 && Math.abs(scaledH - ph) < 3) {
-        const cover = Math.max(pw / imgWidth, ph / imgHeight);
-        const longSide = Math.max(imgWidth, imgHeight) * cover;
-        fitScale = longSide > 1 ? cover * (1 + 0.6 / longSide) : cover;
-        snappedX = pr.centerX - imgWidth / 2;
-        snappedY = pr.centerY - imgHeight / 2;
-      }
-    });
-
     // 2. Horizontal snapping (determines snappedY)
     let minDiffY = Infinity;
     let bestSnapY = rawY;
@@ -3023,6 +3011,26 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     ownPageRectsForFit.forEach(pr => {
       const h = pr.bottom - pr.top;
       if (Math.abs(scaledH - h) < 2 && Math.abs((snappedY + imgHeight / 2) - pr.centerY) < 4) {
+        snappedY = pr.centerY - imgHeight / 2;
+      }
+    });
+
+    /* 圖層已經幾乎剛好等於整頁、而且「已經對到位」時，才把最後那零點幾 px 補滿。
+       —— 一定要同時檢查「位置也對到了」：只看大小的話，只要圖層跟頁面差不多大，
+       在頁面上隨便拖到哪裡都會被瞬間吸到滿版，那就是拖曳時的瞬移。
+       這裡要求中心點已經落在頁面中心 6px 內（也就是使用者確實是在對齊），
+       才回報一個「確實覆蓋整頁再多半個像素」的倍率讓拖曳套用。 */
+    let fitScale: number | undefined;
+    ownPageRectsForFit.forEach(pr => {
+      const pw = pr.right - pr.left, ph = pr.bottom - pr.top;
+      const nearW = Math.abs(scaledW - pw) < 3, nearH = Math.abs(scaledH - ph) < 3;
+      const atX = Math.abs((snappedX + imgWidth / 2) - pr.centerX) < 6;
+      const atY = Math.abs((snappedY + imgHeight / 2) - pr.centerY) < 6;
+      if (nearW && nearH && atX && atY) {
+        const cover = Math.max(pw / imgWidth, ph / imgHeight);
+        const longSide = Math.max(imgWidth, imgHeight) * cover;
+        fitScale = longSide > 1 ? cover * (1 + 0.6 / longSide) : cover;
+        snappedX = pr.centerX - imgWidth / 2;
         snappedY = pr.centerY - imgHeight / 2;
       }
     });
