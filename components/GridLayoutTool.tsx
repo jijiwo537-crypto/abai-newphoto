@@ -6368,59 +6368,117 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const [igShots, setIgShots] = useState<string[]>([]);
 
   /* ── IG 預覽的選音樂 ─────────────────────────────────────────────
-     用 iTunes Search API：免金鑰、免登入，回傳 30 秒試聽、封面、歌名歌手。
-     那個 API 沒有 CORS 標頭，直接 fetch 會被瀏覽器擋掉，所以走 JSONP。 */
-  type Track = { id: number; name: string; artist: string; art: string; preview: string; secs: number };
+     曲庫用 iTunes Search API：免金鑰、免登入，回傳 30 秒試聽、封面、歌名歌手。
+     （Apple Music 官方那套要付費開發者帳號＋使用者本人有訂閱，不能用。）
+
+     拿資料的路徑刻意排了三條，前一條失敗才走下一條 —— 因為在真機上失敗的
+     方式不只一種，而且每一種都會讓清單變空：
+       1. 直接 fetch：Apple 有給 CORS 標頭時這條最快、也最不容易出事。
+       2. 同一個網址走 JSONP：沒有 CORS 標頭時只能這樣繞。
+       3. 換 Deezer：整個 itunes.apple.com 連不上（被擋、被牆）時的備援，
+          一樣是免金鑰、一樣有 30 秒試聽。
+     兩種傳輸都有逾時。JSONP 特別危險的是「腳本載進來了但根本沒呼叫
+     callback」（API 不支援 callback 參數時就會這樣）—— 那時 onerror 不會觸發，
+     沒有逾時的話畫面會永遠停在轉圈。 */
+  type Track = { id: string; name: string; artist: string; art: string; preview: string; secs: number };
+  const TRANSPARENT_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
   const [musicOpen, setMusicOpen] = useState(false);
   const [musicShown, setMusicShown] = useState(false);   // 控制滑入／滑出的動畫
   const [musicQuery, setMusicQuery] = useState('');
   const [musicTab, setMusicTab] = useState('為你推薦');
   const [musicList, setMusicList] = useState<Track[]>([]);
   const [musicLoading, setMusicLoading] = useState(false);
+  const [musicError, setMusicError] = useState('');
   const [picked, setPicked] = useState<Track | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const musicReqRef = useRef(0);       // 只讓最後一次搜尋的結果進畫面
   const MUSIC_TABS = ['為你推薦', '超夯', '原始音訊', '已儲存'];
-  /** 沒有搜尋字時每個分頁預設找什麼 */
+  /* 沒有搜尋字時每個分頁預設找什麼。
+     這裡一律用「單一個詞」：iTunes 的 term 是用空白切開後全部都要命中（AND），
+     「華語 抒情」那種兩個詞的組合很容易一首都對不到，清單就空了。 */
   const TAB_TERMS: Record<string, string> = {
-    '為你推薦': '華語 抒情',
-    '超夯': 'top hits',
-    '原始音訊': 'lo-fi',
+    '為你推薦': '周杰倫',
+    '超夯': 'pop',
+    '原始音訊': 'lofi',
     '已儲存': 'acoustic',
   };
 
-  const jsonp = (url: string) => new Promise<any>((resolve, reject) => {
+  /** 送出一次 JSONP，附逾時；cbParam 是對方要求的回呼參數名 */
+  const jsonp = (url: string, cbParam = 'callback', ms = 9000) => new Promise<any>((resolve, reject) => {
     const cb = `itcb_${Math.random().toString(36).slice(2)}`;
     const sc = document.createElement('script');
-    const done = (v: any) => { delete (window as any)[cb]; sc.remove(); resolve(v); };
-    (window as any)[cb] = done;
-    sc.src = `${url}&callback=${cb}`;
-    sc.onerror = () => { delete (window as any)[cb]; sc.remove(); reject(new Error('jsonp failed')); };
+    let settled = false;
+    let timer = 0 as any;
+    const cleanup = () => { clearTimeout(timer); delete (window as any)[cb]; sc.remove(); };
+    timer = setTimeout(() => {
+      if (settled) return; settled = true; cleanup(); reject(new Error('timeout'));
+    }, ms);
+    (window as any)[cb] = (v: any) => { if (settled) return; settled = true; cleanup(); resolve(v); };
+    sc.onerror = () => { if (settled) return; settled = true; cleanup(); reject(new Error('blocked')); };
+    sc.src = `${url}${url.includes('?') ? '&' : '?'}${cbParam}=${cb}`;
     document.head.appendChild(sc);
   });
 
-  const searchMusic = useCallback(async (term: string) => {
-    setMusicLoading(true);
+  /** 一般 fetch，附逾時 */
+  const getJSON = async (url: string, ms = 9000) => {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), ms);
     try {
-      const d = await jsonp(
-        'https://itunes.apple.com/search?media=music&entity=song&limit=40&term='
-        + encodeURIComponent(term),
-      );
-      setMusicList((d?.results || [])
-        .filter((r: any) => r.previewUrl)
-        .map((r: any) => ({
-          id: r.trackId,
-          name: r.trackName,
-          artist: r.artistName,
-          // 100px 的封面換成 200px，視網膜螢幕才不會糊
-          art: (r.artworkUrl100 || '').replace('100x100', '200x200'),
-          preview: r.previewUrl,
-          secs: Math.round((r.trackTimeMillis || 0) / 1000),
-        })));
-    } catch {
-      setMusicList([]);
-    } finally {
-      setMusicLoading(false);
+      const r = await fetch(url, { signal: ac.signal, mode: 'cors', credentials: 'omit' });
+      if (!r.ok) throw new Error(String(r.status));
+      return await r.json();
+    } finally { clearTimeout(t); }
+  };
+
+  const fromItunes = (d: any): Track[] => (d?.results || [])
+    .filter((r: any) => r.previewUrl && r.trackName)
+    .map((r: any) => ({
+      id: `i${r.trackId}`,
+      name: r.trackName,
+      artist: r.artistName || '',
+      // 100px 的封面換成 200px，視網膜螢幕才不會糊
+      art: (r.artworkUrl100 || '').replace('100x100', '200x200'),
+      preview: r.previewUrl,
+      secs: Math.round((r.trackTimeMillis || 0) / 1000),
+    }));
+
+  const fromDeezer = (d: any): Track[] => (d?.data || [])
+    .filter((r: any) => r.preview && r.title)
+    .map((r: any) => ({
+      id: `d${r.id}`,
+      name: r.title,
+      artist: r.artist?.name || '',
+      art: r.album?.cover_medium || r.artist?.picture_medium || '',
+      preview: r.preview,
+      secs: r.duration || 30,
+    }));
+
+  const searchMusic = useCallback(async (term: string) => {
+    const my = ++musicReqRef.current;
+    setMusicLoading(true);
+    setMusicError('');
+    /* country=TW：不指定的話 Apple 一律當成美國商店，中文歌名幾乎搜不到東西，
+       清單看起來就像壞掉。lang 只影響回傳的類別名稱，順便帶上。 */
+    const itUrl = 'https://itunes.apple.com/search?media=music&entity=song&limit=40'
+      + '&country=TW&lang=zh_tw&term=' + encodeURIComponent(term);
+    const dzUrl = 'https://api.deezer.com/search?output=jsonp&limit=40&q=' + encodeURIComponent(term);
+    const routes: Array<() => Promise<Track[]>> = [
+      async () => fromItunes(await getJSON(itUrl)),
+      async () => fromItunes(await jsonp(itUrl)),
+      async () => fromDeezer(await jsonp(dzUrl)),
+    ];
+    let sawResponse = false;
+    for (const go of routes) {
+      let list: Track[] | null = null;
+      try { list = await go(); sawResponse = true; } catch { /* 換下一條 */ }
+      if (my !== musicReqRef.current) return;    // 已經有更新的搜尋了，這份丟掉
+      if (list && list.length) { setMusicList(list); setMusicLoading(false); return; }
     }
+    if (my !== musicReqRef.current) return;
+    setMusicList([]);
+    // 分清楚「連得上但沒這首歌」跟「根本連不上」，不然沒辦法判斷是誰的問題
+    setMusicError(sawResponse ? `找不到「${term}」` : '連不上音樂服務，請確認網路後再試一次');
+    setMusicLoading(false);
   }, []);
 
   // 開啟時滑入；分頁或搜尋字改變就重新找
@@ -9558,11 +9616,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.55)" strokeWidth="2.2" strokeLinecap="round">
                       <circle cx="11" cy="11" r="7" /><path d="M20 20l-3.2-3.2" />
                     </svg>
+                    {/* 這個專案有裝 @tailwindcss/forms，它會給所有 input 一圈
+                        1px 的框和內距，聚焦時還會多一圈 ring —— 就是搜尋欄外面
+                        那個細方框。用行內樣式蓋掉，優先權最高，一次清乾淨。 */}
                     <input
                       value={musicQuery}
                       onChange={e => setMusicQuery(e.target.value)}
                       placeholder="搜尋......"
-                      className="flex-1 bg-transparent outline-none text-[15px] text-white placeholder-white/45"
+                      className="flex-1 min-w-0 text-[15px] text-white placeholder-white/45"
+                      style={{
+                        border: 0, outline: 'none', boxShadow: 'none',
+                        padding: 0, background: 'transparent',
+                        WebkitAppearance: 'none', appearance: 'none',
+                      }}
                     />
                     {!!musicQuery && (
                       <button onClick={() => setMusicQuery('')} className="text-white/45 text-[15px] px-1">✕</button>
@@ -9593,7 +9659,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     </div>
                   )}
                   {!musicLoading && musicList.length === 0 && (
-                    <p className="py-10 text-center text-[13px] text-white/40">找不到歌曲</p>
+                    <div className="py-10 flex flex-col items-center gap-3">
+                      <p className="text-center text-[13px] text-white/40 px-6">
+                        {musicError || '找不到歌曲'}
+                      </p>
+                      <button
+                        onClick={() => searchMusic(musicQuery.trim() || TAB_TERMS[musicTab] || 'pop')}
+                        className="h-9 px-5 rounded-full bg-[#2a2a2a] text-[14px] font-semibold text-white active:opacity-60"
+                      >
+                        重試
+                      </button>
+                    </div>
                   )}
                   {musicList.map(t => (
                     <button
@@ -9601,7 +9677,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                       onClick={() => pickTrack(t)}
                       className="w-full flex items-center gap-3 py-2.5 text-left active:opacity-60"
                     >
-                      <img src={t.art} alt="" className="w-14 h-14 rounded-[6px] shrink-0 bg-white/10 object-cover" />
+                      {/* 封面載不到就換成全透明的 1×1，只留底色 ——
+                          直接放著不管的話會出現瀏覽器的破圖圖示和一圈框。 */}
+                      <img
+                        src={t.art || TRANSPARENT_PX} alt="" loading="lazy"
+                        onError={e => { (e.currentTarget as HTMLImageElement).src = TRANSPARENT_PX; }}
+                        className="w-14 h-14 rounded-[6px] shrink-0 bg-white/10 object-cover"
+                      />
                       <div className="flex-1 min-w-0">
                         <p className={`text-[16px] leading-[21px] truncate ${picked?.id === t.id ? 'text-white font-semibold' : 'text-white'}`}>{t.name}</p>
                         <p className="text-[14px] leading-[19px] text-white/50 truncate">
