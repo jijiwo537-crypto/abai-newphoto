@@ -61,3 +61,31 @@
   0%, 100% { transform: scaleY(0.25); }
   50%      { transform: scaleY(1); }
 }
+
+/* ── 輸入框不要那圈藍色 ──────────────────────────────────────────────
+   這個專案裝了 @tailwindcss/forms。它會在「聚焦」時給每一個輸入框一圈
+   1px 的藍色 ring（用 box-shadow 畫的）跟一條藍色框線 —— 那就是點進去
+   打字時，輸入框周圍浮出來的那個藍色方框。
+
+   選音樂那個搜尋欄本來就是用行內樣式把它整個關掉的（border/outline/
+   box-shadow 都寫死），這裡把同一件事變成全站通用。
+
+   刻意「只拿掉藍色」，其他一律不動：
+   · 背景、內距、圓角、字體大小 —— 完全不碰
+   · 每個輸入框自己設的 focus:border-xxx 也不碰（那些是 .focus\:border-x:focus，
+     特異性 (0,2,0)，比外掛那條 input:where(...):focus 的 (0,1,1) 高，本來就贏）
+   · --tw-shadow 保留下來，有掛 shadow-xxx 的輸入框聚焦時陰影不會消失
+
+   選擇器的特異性剛好也是 (0,1,1)，跟外掛那條一樣；因為這一段排在
+   @tailwind base 後面，同分後到者贏。 */
+input:focus, input:focus-visible,
+textarea:focus, textarea:focus-visible,
+select:focus, select:focus-visible {
+  --tw-ring-color: transparent;
+  --tw-ring-offset-color: transparent;
+  --tw-ring-shadow: 0 0 #0000;
+  --tw-ring-offset-shadow: 0 0 #0000;
+  box-shadow: var(--tw-shadow, 0 0 #0000);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
