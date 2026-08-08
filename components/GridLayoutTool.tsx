@@ -6421,8 +6421,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      方式不只一種，而且每一種都會讓清單變空：
        1. 直接 fetch：Apple 有給 CORS 標頭時這條最快、也最不容易出事。
        2. 同一個網址走 JSONP：沒有 CORS 標頭時只能這樣繞。
-       3. 換 Deezer：整個 itunes.apple.com 連不上（被擋、被牆）時的備援，
-          一樣是免金鑰、一樣有 30 秒試聽。
+       3. 換一條轉送線再打同一支：Apple 是照 IP 限流的，換出口 IP 就繞得開。
      兩種傳輸都有逾時。JSONP 特別危險的是「腳本載進來了但根本沒呼叫
      callback」（API 不支援 callback 參數時就會這樣）—— 那時 onerror 不會觸發，
      沒有逾時的話畫面會永遠停在轉圈。 */
@@ -6473,14 +6472,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   }, []);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const musicReqRef = useRef(0);       // 只讓最後一次搜尋的結果進畫面
-  /* 分頁：語言分頁抓該地區的近期熱門榜，為你推薦是四地混合、超夯是四地齊平輪。
+  /* 分頁：語言分頁＝該地區的熱門榜，再照 Apple 自己標的曲風篩出那個語言；
+     為你推薦＝華日韓三份篩過的交錯；超夯＝各地合併，不分語言。
      「已儲存」不連網，讀本機收藏。 */
   const MUSIC_TABS = ['為你推薦', '超夯', '華語', '日語', '韓語', '英語', '已儲存'];
-  const TAB_STORE: Record<string, string> = { '華語': 'tw', '日語': 'jp', '韓語': 'kr', '英語': 'us' };
-  /* 每個地區榜單抓不到時，退回這個搜尋字。搜尋字一律用「單一個詞」：
-     iTunes 的 term 是用空白切開後全部都要命中（AND），兩個詞很容易一首都對不到。 */
-  const STORE_FALLBACK: Record<string, string> = { tw: '華語', jp: 'J-POP', kr: 'K-POP', us: 'pop' };
-  const ALL_STORES = ['tw', 'jp', 'kr', 'us'];
   /** 全球熱門要看的地區：東亞三地＋英美，涵蓋面夠廣又不會打太多請求 */
   const GLOBAL_STORES = ['us', 'gb', 'jp', 'kr', 'tw'];
 
@@ -6531,17 +6526,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       art: (r.artworkUrl100 || '').replace('100x100', '200x200'),
       preview: r.previewUrl,
       secs: Math.round((r.trackTimeMillis || 0) / 1000),
-    }));
-
-  const fromDeezer = (d: any): Track[] => (d?.data || [])
-    .filter((r: any) => r.preview && r.title)
-    .map((r: any) => ({
-      id: `d${r.id}`,
-      name: r.title,
-      artist: r.artist?.name || '',
-      art: r.album?.cover_medium || r.artist?.picture_medium || '',
-      preview: r.preview,
-      secs: r.duration || 30,
     }));
 
   /** Apple 排行榜的 JSON：試聽檔藏在 link 陣列裡 rel="enclosure" 那一筆。
@@ -6624,7 +6608,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       preview: '',
       secs: 0,
       appleId: String(r.id || ''),
-      genreId: String(gs[0]?.genreId || ''),
+      // 全部的曲風編號都留著（不是只留第一個）—— 語言分類就是照這個篩的
+      genreId: gs.map((g: any) => String(g?.genreId || '')).filter(Boolean).join(','),
       genre: gs.map((g: any) => g?.name).filter(Boolean).join(' '),
     } as Track;
   }).filter((t: Track) => t.name && t.appleId);
@@ -6674,134 +6659,93 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     return viaRelay(tag, url, fromChart);
   };
 
-  /** 在某個地區的商店裡搜尋。
-      country 一定要指定：不指定的話 Apple 一律當成美國商店，中文歌名幾乎搜不到。 */
-  const loadSearch = async (term: string, store: string): Promise<Track[]> => {
-    const url = 'https://itunes.apple.com/search?media=music&entity=song&limit=25'
-      + `&country=${store}&term=` + encodeURIComponent(term);
-    return raceBoth(`${store}搜`, url, cb => `${url}&callback=${cb}`, fromItunes);
+  /* ── 語言分類：用 Apple 自己標的曲風編號，不做任何猜測 ────────────────
+     主人要的是「每個分類 100% 是那個語言」。
+     Apple 的排行榜每一筆本身就帶著曲風編號（genres），那是 Apple 官方的標籤，
+     不是我從歌名猜的 —— 照它篩就不可能錯。編號取自 Apple 的曲風總表：
+       51 / 1686  K-Pop      1243〜1247  韓國（含傳統）
+       27 / 1627  J-Pop      28 演歌  29 動漫  1186 日本流行  1201 日本
+       1253 Mandopop  1251 Cantopop/HK-Pop  1250 C-Pop  1232 / 1637 中文
+       1233〜1240 中文古典、戲曲、台灣民謠等
+     寧可少幾首也不放進不確定的 —— 精準優先，這是主人指定的。 */
+  const LANG_GENRES: Record<string, string[]> = {
+    kr: ['51', '1686', '1243', '1244', '1245', '1246', '1247'],
+    jp: ['27', '1627', '28', '29', '1186', '1201'],
+    tw: ['1253', '1251', '1250', '1232', '1637',
+         '1233', '1234', '1235', '1236', '1237', '1238', '1239', '1240'],
+  };
+  /** 亞洲三語的所有編號，「英語」那一頁用來排除掉它們 */
+  const ASIAN_GENRES = new Set([...LANG_GENRES.kr, ...LANG_GENRES.jp, ...LANG_GENRES.tw]);
+
+  /** 這一筆的曲風編號（新版榜單放在 genres，舊版放在 category） */
+  const genreIdsOf = (t: Track): string[] =>
+    String(t.genreId || '').split(/[^0-9]+/).filter(Boolean);
+
+  /**
+   * 照分類把榜篩過。lang 是 'kr' | 'jp' | 'tw' 就只留那個語言，
+   * 'en' 就只留「不是亞洲三語」的，'' 就整份不篩（超夯用）。
+   */
+  const keepLang = (list: Track[], lang: string): Track[] => {
+    if (!lang) return list;
+    if (lang === 'en') return list.filter(t => {
+      const ids = genreIdsOf(t);
+      return ids.length > 0 && !ids.some(g => ASIAN_GENRES.has(g));
+    });
+    const want = new Set(LANG_GENRES[lang] || []);
+    return list.filter(t => genreIdsOf(t).some(g => want.has(g)));
   };
 
-  /* ── Deezer ───────────────────────────────────────────────────────────
-     這一段是選音樂的骨幹，不是備援。
-
-     Apple 的 /search 與 /lookup 是「照 IP」限流的（大約每分鐘二十次就開始回
-     403，而且會短暫封鎖整支手機）。一邊搜歌一邊切分頁很容易就撞上，
-     那正是「搜出來很少」和「韓語一首都沒有」的同一個原因 ——
-     韓語榜其實有抓到，是因為配不到試聽網址才被整份丟掉。
-
-     Deezer 的公開 API 免金鑰、額度是每五秒五十次，寬鬆非常多，
-     每一筆自己就帶著 30 秒試聽網址，而且搜尋可以翻頁，
-     歌手、專輯、曲目也都查得到 —— 整套流程不靠 Apple 也能跑完。 */
-
-  /* Deezer 的額度是每五秒五十次。為你推薦一次要三個地區的榜，每個榜又要
-     替好幾首歌配試聽網址 —— 不節流的話很容易一瞬間送出幾十個請求，
-     撞上額度後對方回的是 error code 4，解析出來是空的，看起來就跟「壞了」
-     一模一樣。這裡壓成每秒最多八個，換算下來是每五秒四十個，穩穩在線內。 */
-  const dzGate = useRef<number[]>([]);
-  const dzHold = async () => {
-    for (;;) {
-      const now = Date.now();
-      const q = (dzGate.current = dzGate.current.filter(t => now - t < 1000));
-      if (q.length < 8) { q.push(now); return; }
-      await new Promise(r => setTimeout(r, Math.max(20, 1000 - (now - q[0]) + 10)));
-    }
-  };
-  /* 整個 Deezer 連不上時（被牆、離線）不要一直去撞：連續失敗幾次就先歇一分鐘。
-     不然「配試聽」那幾十個請求會各自等到逾時，背景吵一整分鐘。 */
-  const dzMiss = useRef(0);
-  const dzDownUntil = useRef(0);
-
-  /** Deezer 沒有 CORS 標頭，fetch 一定被瀏覽器擋掉，所以只走 JSONP（不浪費第二個請求） */
-  const dzJson = async <T,>(tag: string, url: string, parse: (d: any) => T[], ms = 5000): Promise<T[]> => {
-    if (Date.now() < dzDownUntil.current) return [];
-    await dzHold();
+  /* ── 試聽網址的長期快取 ───────────────────────────────────────────────
+     Apple 的 /lookup 是照 IP 限流的那一支（大約每分鐘二十次就開始回 403）。
+     試聽網址本身不會變，所以查過一次就寫進 localStorage 永久留著 ——
+     同一首歌一輩子只查一次，額度幾乎不會再被用掉。
+     榜單本身另外存三小時，換分頁、關掉再打開都不必重新連網。 */
+  const PV_KEY = 'abai_music_pv';
+  const previewCache = useRef<Record<string, { u: string; s: number }>>((() => {
+    try { return JSON.parse(localStorage.getItem(PV_KEY) || '{}'); } catch { return {}; }
+  })());
+  const savePreviewCache = () => {
     try {
-      const v = parse(await jsonp(cb => `${url}${url.includes('?') ? '&' : '?'}output=jsonp&callback=${cb}`, ms));
-      dzMiss.current = 0;
-      return v;
-    } catch (e: any) {
-      failLog.current.push(`${tag}:${String(e?.message || e).slice(0, 14)}`);
-      if (++dzMiss.current >= 5) { dzDownUntil.current = Date.now() + 60 * 1000; dzMiss.current = 0; }
-      return [];
-    }
+      const all = previewCache.current;
+      const keys = Object.keys(all);
+      // 只留最後五千筆，免得無上限地長大
+      if (keys.length > 5000) keys.slice(0, keys.length - 5000).forEach(k => { delete all[k]; });
+      localStorage.setItem(PV_KEY, JSON.stringify(all));
+    } catch { /* 無痕模式寫不進去就算了 */ }
+  };
+  const rememberPreview = (appleId: string, u: string, s: number) => {
+    if (!appleId || !u) return;
+    previewCache.current[appleId] = { u, s };
+  };
+  /** 把快取裡有的先貼上去，回傳「還缺哪些編號」 */
+  const applyCachedPreviews = (list: Track[]): { list: Track[]; missing: string[] } => {
+    const missing: string[] = [];
+    const out = list.map(t => {
+      if (t.preview || !t.appleId) return t;
+      const hit = previewCache.current[t.appleId];
+      if (hit) return { ...t, preview: hit.u, secs: hit.s || t.secs };
+      missing.push(t.appleId);
+      return t;
+    });
+    return { list: out, missing };
   };
 
-  const loadDeezer = (term: string): Promise<Track[]> =>
-    dzJson('DZ', `https://api.deezer.com/search?limit=100&q=${encodeURIComponent(term)}`, fromDeezer);
-
-  /** 關鍵字要「所有相關的歌」：Deezer 一頁一百，三頁同時發，最多三百首 */
-  const loadDeezerPaged = async (term: string, pages = 3): Promise<Track[]> => {
-    const got = await Promise.all(Array.from({ length: pages }, (_, i) =>
-      dzJson(`DZ${i + 1}`,
-        `https://api.deezer.com/search?limit=100&index=${i * 100}&q=${encodeURIComponent(term)}`,
-        fromDeezer)));
-    return got.flat();
-  };
-
-  /* Deezer 把各地熱門榜做成播放清單。台灣目前沒有開服所以沒有台灣榜，
-     華語那一頁靠 Apple 的榜，再用 Deezer 把試聽網址配回去。 */
-  const DZ_CHART: Record<string, string> = {
-    kr: '1362510315',   // Top South Korea
-    jp: '1362508955',   // Top Japan
-    us: '1313621735',   // Top USA
-    gb: '1111142221',   // Top UK
-  };
-  const loadDeezerChart = (store: string): Promise<Track[]> => {
-    const id = DZ_CHART[store];
-    if (!id) return Promise.resolve([] as Track[]);
-    return dzJson(`DZ${store}榜`,
-      `https://api.deezer.com/playlist/${id}/tracks?limit=100`, fromDeezer);
-  };
-
-  /* 用歌名＋歌手到 Deezer 把試聽網址配回來。
-     Apple 的新版榜單只給歌名、歌手、封面，沒有試聽網址；原本是用
-     itunes.apple.com/lookup 補，可是那支正好是會被鎖的那一支 ——
-     一被鎖，整份榜就因為「沒有試聽」被丟光，韓語才會一首都沒有。
-     現在榜一定先端出來，試聽再補；補不到的那幾首等點下去時再單獨查。 */
-  const dzPreview = useRef(new Map<string, { preview: string; secs: number } | null>());
-  const findPreview = async (t: Track): Promise<{ preview: string; secs: number } | null> => {
-    const k = `${t.name}|${t.artist}`.toLowerCase();
-    if (dzPreview.current.has(k)) return dzPreview.current.get(k) || null;
-    // 引號查詢比較準；括號裡的「(Live)」「(feat. …)」會讓精準比對落空，先拿掉
-    const clean = (s: string) => s.replace(/"/g, ' ')
-      .replace(/\s*[（(［\[][^）)］\]]*[）)］\]]/g, '').trim();
-    const tries = [
-      `artist:"${clean(t.artist)}" track:"${clean(t.name)}"`,
-      `${clean(t.name)} ${clean(t.artist)}`,
-    ];
-    for (const q of tries) {
-      if (!q.trim()) continue;
-      const got = await dzJson('DZ配',
-        `https://api.deezer.com/search?limit=1&q=${encodeURIComponent(q)}`, fromDeezer, 4000);
-      if (got.length) {
-        const v = { preview: got[0].preview, secs: got[0].secs };
-        dzPreview.current.set(k, v);
-        return v;
-      }
-    }
-    dzPreview.current.set(k, null);   // 記下來，同一首不要一直重查
+  const CHART_KEY = 'abai_music_chart';
+  const CHART_TTL = 3 * 60 * 60 * 1000;
+  const readChartCache = (store: string): Track[] | null => {
+    try {
+      const all = JSON.parse(localStorage.getItem(CHART_KEY) || '{}');
+      const row = all[store];
+      if (row && Date.now() - row.t < CHART_TTL && Array.isArray(row.v) && row.v.length) return row.v;
+    } catch { /* 壞掉就當作沒有 */ }
     return null;
   };
-
-  /** 把一份清單前面幾首補上試聽網址；最多六條同時查，不去撞 Deezer 的額度 */
-  const fillPreviews = async (list: Track[], upTo: number): Promise<Track[]> => {
-    const idx: number[] = [];
-    for (let i = 0; i < list.length && idx.length < upTo; i++) if (!list[i].preview) idx.push(i);
-    if (!idx.length) return list;
-    const out = [...list];
-    let cur = 0;
-    const worker = async () => {
-      for (;;) {
-        const i = cur++;
-        if (i >= idx.length) return;
-        const at = idx[i];
-        const hit = await findPreview(out[at]);
-        if (hit) out[at] = { ...out[at], preview: hit.preview, secs: hit.secs || out[at].secs };
-      }
-    };
-    await Promise.all(Array.from({ length: 4 }, worker));
-    return out;
+  const writeChartCache = (store: string, v: Track[]) => {
+    try {
+      const all = JSON.parse(localStorage.getItem(CHART_KEY) || '{}');
+      all[store] = { t: Date.now(), v };
+      localStorage.setItem(CHART_KEY, JSON.stringify(all));
+    } catch { /* 空間不夠就算了 */ }
   };
 
   /** 打 Apple：直連與轉送「同時」發，誰先拿到有東西的就用誰（不再等直連失敗才換） */
@@ -6826,31 +6770,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    * 再用 lookup 把他名下的歌一次撈回來（一個請求最多 200 首）。
    */
   /** src：這位歌手／這張專輯是從哪一家查到的，往下鑽時要打對應的那一家 */
-  type Artist = { id: string; name: string; genre?: string; art?: string; src: 'i' | 'd' };
-  type Album = { id: string; name: string; art: string; year: string; count: number; src: 'i' | 'd' };
+  type Artist = { id: string; name: string; genre?: string };
+  type Album = { id: string; name: string; art: string; year: string; count: number };
 
   const fromArtists = (d: any): Artist[] => (d?.results || [])
     .filter((r: any) => r.artistId && r.artistName)
     .map((r: any) => ({
       id: String(r.artistId), name: String(r.artistName),
-      genre: r.primaryGenreName || '', src: 'i' as const,
-    }));
-
-  /** Deezer 的歌手有大頭照，Apple 那支沒有 —— 所以這一份排在前面 */
-  const fromDzArtists = (d: any): Artist[] => (d?.data || [])
-    .filter((r: any) => r.id && r.name)
-    .map((r: any) => ({
-      id: String(r.id), name: String(r.name),
-      art: r.picture_medium || r.picture || '', src: 'd' as const,
-    }));
-
-  const fromDzAlbums = (d: any): Album[] => (d?.data || [])
-    .filter((r: any) => r.id && r.title)
-    .map((r: any) => ({
-      id: String(r.id), name: String(r.title),
-      art: r.cover_medium || r.cover || '',
-      year: String(r.release_date || '').slice(0, 4),
-      count: Number(r.nb_tracks || 0), src: 'd' as const,
+      genre: r.primaryGenreName || '',
     }));
 
   const fromAlbums = (d: any): Album[] => (d?.results || [])
@@ -6860,60 +6787,35 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       name: String(r.collectionName || ''),
       art: String(r.artworkUrl100 || '').replace(/\/\d+x\d+bb\./, '/300x300bb.'),
       year: String(r.releaseDate || '').slice(0, 4),
-      count: Number(r.trackCount || 0), src: 'i' as const,
+      count: Number(r.trackCount || 0),
     }));
 
-  /** 找同名的歌手（搜尋結果上方那一排）。兩家一起問，重名的只留一位。 */
-  const findArtists = async (term: string, store: string): Promise<Artist[]> => {
-    const [dz, ap] = await Promise.all([
-      dzJson<Artist>('DZ歌手',
-        `https://api.deezer.com/search/artist?limit=12&q=${encodeURIComponent(term)}`, fromDzArtists),
-      appleJson<Artist>(`${store}歌手`,
-        `https://itunes.apple.com/search?media=music&entity=musicArtist&limit=12`
-          + `&country=${store}&term=${encodeURIComponent(term)}`, fromArtists),
-    ]);
-    const seen = new Set<string>();
-    const out: Artist[] = [];
-    [...dz, ...ap].forEach(a => {                       // Deezer 的有大頭照，排前面
-      const k = a.name.toLowerCase().replace(/\s+/g, '');
-      if (!k || seen.has(k)) return;
-      seen.add(k);
-      out.push(a);
-    });
-    return out;
-  };
+  /** 找同名的歌手（搜尋結果上方那一排） */
+  const findArtists = (term: string, store: string): Promise<Artist[]> => appleJson<Artist>(
+    `${store}歌手`,
+    `https://itunes.apple.com/search?media=music&entity=musicArtist&limit=12`
+      + `&country=${store}&term=${encodeURIComponent(term)}`,
+    fromArtists);
 
   /** 某位歌手的全部專輯（新到舊） */
   const loadArtistAlbums = async (a: Artist, store: string): Promise<Album[]> => {
-    const list = a.src === 'd'
-      ? await dzJson<Album>('DZ專輯',
-          `https://api.deezer.com/artist/${a.id}/albums?limit=100`, fromDzAlbums)
-      : await appleJson<Album>(`${store}專輯`,
-          `https://itunes.apple.com/lookup?entity=album&limit=200&country=${store}&id=${a.id}`,
-          fromAlbums);
+    const list = await appleJson<Album>(`${store}專輯`,
+      `https://itunes.apple.com/lookup?entity=album&limit=200&country=${store}&id=${a.id}`,
+      fromAlbums);
     return [...list].sort((x, y) => (y.year || '').localeCompare(x.year || ''));
   };
 
   /** 某張專輯裡的每一首歌（照曲目順序） */
-  const loadAlbumTracks = async (al: Album, store: string): Promise<Track[]> => {
-    const list = al.src === 'd'
-      ? await dzJson<Track>('DZ曲目',
-          `https://api.deezer.com/album/${al.id}/tracks?limit=100`, fromDeezer)
-      : await appleJson<Track>(`${store}曲目`,
-          `https://itunes.apple.com/lookup?entity=song&limit=200&country=${store}&id=${al.id}`,
-          fromItunes);
-    /* Deezer 的專輯曲目自己不帶專輯資料，fromDeezer 只好退而用歌手的大頭照 ——
-       在專輯頁那是錯的，整排應該都是這張專輯的封面。 */
-    return al.src === 'd' && al.art ? list.map(t => ({ ...t, art: al.art })) : list;
-  };
+  const loadAlbumTracks = (al: Album, store: string): Promise<Track[]> => appleJson<Track>(
+    `${store}曲目`,
+    `https://itunes.apple.com/lookup?entity=song&limit=200&country=${store}&id=${al.id}`,
+    fromItunes);
 
   /** 某位歌手名下的全部歌曲 */
-  const loadSongsOfArtist = (a: Artist, store: string): Promise<Track[]> =>
-    a.src === 'd'
-      ? dzJson<Track>('DZ全曲', `https://api.deezer.com/artist/${a.id}/top?limit=100`, fromDeezer)
-      : appleJson<Track>(`${store}全曲`,
-          `https://itunes.apple.com/lookup?entity=song&limit=200&country=${store}&id=${a.id}`,
-          fromItunes);
+  const loadSongsOfArtist = (a: Artist, store: string): Promise<Track[]> => appleJson<Track>(
+    `${store}全曲`,
+    `https://itunes.apple.com/lookup?entity=song&limit=200&country=${store}&id=${a.id}`,
+    fromItunes);
 
   /** 名字要真的對得上才算「就是在找這位歌手」 */
   const bestArtist = (artists: Artist[], term: string): Artist | undefined => {
@@ -7075,86 +6977,88 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
   type Src =
     | { kind: 'search'; term: string }
-    | { kind: 'chart'; stores: string[]; pattern: string[]; lead?: { store: string; count: number } }
+    | { kind: 'chart'; stores: string[]; pattern: string[]; lang: string;
+        lead?: { store: string; count: number } }
     | { kind: 'global'; stores: string[] };
 
-  /** 現在這個分頁／搜尋字該拿什麼 */
+  /** 現在這個分頁／搜尋字該拿什麼。lang 就是「只留這個語言」，'' 表示不篩。 */
   const currentSource = (): Src => {
     const q = musicQuery.trim();
     if (q) return { kind: 'search', term: q };
-    /* 為你推薦＝華語、日語、韓語三地的本週熱門交錯（不含西洋），
-       開頭四首固定是台灣榜。 */
+    /* 為你推薦＝華語、日語、韓語三份「已經照曲風篩過」的榜交錯，
+       開頭四首固定是華語。三份各自都是純的，混起來當然也是純的。 */
     if (musicTab === '為你推薦') {
       return {
-        kind: 'chart', stores: ['tw', 'jp', 'kr'],
-        pattern: ['tw', 'jp', 'kr'],
-        lead: { store: 'tw', count: 4 },
+        kind: 'chart', stores: ['tw', 'jp', 'kr'], pattern: ['tw', 'jp', 'kr'],
+        lang: 'mix', lead: { store: 'tw', count: 4 },
       };
     }
-    // 超夯＝全球本週熱門：多個主要地區的榜合併，照「在幾個國家上榜」排
+    // 超夯＝全球本週熱門，本來就不分語言，所以不篩
     if (musicTab === '超夯') return { kind: 'global', stores: GLOBAL_STORES };
-    /* 語言分頁＝直接端那一國的本週最多播放榜。
-       韓國榜就是韓語歌的排行榜，不需要（也不可以）再用歌名去篩。 */
-    const s = TAB_STORE[musicTab];
-    if (s) return { kind: 'chart', stores: [s], pattern: [s] };
+    /* 語言分頁：抓那個地區的榜，再用 Apple 自己標的曲風編號篩出該語言。
+       華語同時看台灣與香港榜（國語＋粵語），篩完再交錯。 */
+    if (musicTab === '華語') return { kind: 'chart', stores: ['tw', 'hk'], pattern: ['tw', 'hk'], lang: 'tw' };
+    if (musicTab === '日語') return { kind: 'chart', stores: ['jp'], pattern: ['jp'], lang: 'jp' };
+    if (musicTab === '韓語') return { kind: 'chart', stores: ['kr'], pattern: ['kr'], lang: 'kr' };
+    if (musicTab === '英語') return { kind: 'chart', stores: ['us', 'gb'], pattern: ['us', 'gb'], lang: 'en' };
     return { kind: 'search', term: 'pop' };
   };
 
+  /** 這個地區的榜要用哪一組語言編號篩（為你推薦是三地各自篩自己的） */
+  const langForStore = (src: Src, store: string): string => {
+    if (src.kind !== 'chart') return '';
+    if (src.lang !== 'mix') return src.lang;
+    return store === 'tw' || store === 'hk' ? 'tw' : store;
+  };
+
   /**
-   * 拿一個地區的榜單。
+   * 拿一個地區的榜單。全部走 Apple，沒有別家。
    *
-   * 這裡有一條鐵律：**榜單絕對不因為「配不到試聽網址」就被丟掉**。
-   * 以前是「Apple 榜 → 用 itunes lookup 補試聽 → 補不到就整份丟光」，
-   * 而 lookup 正是會被 Apple 照 IP 鎖住的那一支 —— 一被鎖，
-   * 韓語那一頁就變成一首都沒有，即使韓國榜其實好好地抓回來了。
+   * 兩條鐵律：
+   *   1. 榜單絕不因為「配不到試聽網址」被丟掉 —— 那正是韓語會整份消失的原因。
+   *   2. 語言只照 Apple 自己標的曲風編號篩，不用歌名、不用地區去猜。
    *
-   * 現在改成：Apple 榜與 Deezer 榜同時抓（Deezer 的自己帶試聽），
-   * 缺試聽的用 Deezer 依歌名＋歌手配回來，還缺的等點下去再單獨查。
+   * 試聽網址查過一次就寫進 localStorage 永久留著，榜單本身也存三小時；
+   * Apple 那支限流的 /lookup 因此幾乎不會再被打到。
    */
   const oneStore = async (store: string): Promise<{ list: Track[]; how: string }> => {
-    const cached = chartPool.current.get(store);
-    if (cached && cached.length) return { list: cached, how: '快取' };
-    const [modern, dzChart] = await Promise.all([
-      loadModernChart(store).catch(() => [] as Track[]),
-      loadDeezerChart(store).catch(() => [] as Track[]),
-    ]);
-    let list: Track[] = [];
-    const hows: string[] = [];
-    if (modern.length) {
-      hows.push('新榜');
-      // 沒被鎖的話這一步最快也最準：一個請求換回整批試聽網址
-      const m = await lookupPreviews(modern.map(t => t.appleId || ''), store);
-      list = modern.map(t => {
-        const hit = m.get(t.appleId || '');
-        return hit ? { ...t, preview: hit.preview, secs: hit.secs, art: hit.art || t.art } : t;
-      });
-      const had = list.filter(t => t.preview).length;
-      if (had < list.length) {
-        failLog.current.push(`${store}查:${had}/${list.length}首有試聽`);
-        /* 前十二首先補好，面板一打開最上面就能直接按下去播。
-           iOS 只認「使用者按下去的那一拍」，先補好才不會第一次點沒聲音。 */
-        list = await fillPreviews(list, 12);
-        if (list.filter(t => t.preview).length > had) hows.push('試聽補配');
-      }
+    const inMem = chartPool.current.get(store);
+    if (inMem && inMem.length) return { list: inMem, how: '快取' };
+    const onDisk = readChartCache(store);
+    if (onDisk && onDisk.length) {
+      chartPool.current.set(store, onDisk);
+      return { list: onDisk, how: '快取' };
     }
-    if (dzChart.length) {
-      hows.push('DZ榜');
-      /* Apple 榜排前面（它連台灣都有，名次也比較貼近本地），
-         Deezer 榜補在後面，兩邊重複的只留一份。
-         韓語這一頁等於有兩個獨立來源，其中一個掛掉還是有歌。 */
-      const seen = new Set(list.map(trackKey));
-      dzChart.forEach(t => {
-        const k = trackKey(t);
-        if (seen.has(k)) return;
-        seen.add(k);
-        list.push(t);
-      });
+    const modern = await loadModernChart(store).catch(() => [] as Track[]);
+    const hows: string[] = [];
+    let list: Track[] = [];
+    if (modern.length) {
+      hows.push('榜');
+      // 先貼上本機記得的試聽網址，剩下的才需要真的連網去查
+      const step1 = applyCachedPreviews(modern);
+      list = step1.list;
+      if (step1.missing.length) {
+        const m = await lookupPreviews(step1.missing, store);
+        if (m.size) {
+          hows.push('試聽');
+          list = list.map(t => {
+            const hit = t.preview ? null : m.get(t.appleId || '');
+            if (!hit) return t;
+            rememberPreview(t.appleId || '', hit.preview, hit.secs);
+            return { ...t, preview: hit.preview, secs: hit.secs, art: hit.art || t.art };
+          });
+          savePreviewCache();
+        } else {
+          failLog.current.push(`${store}試聽:0筆`);
+        }
+      } else if (list.some(t => t.preview)) hows.push('試聽快取');
     }
     if (list.length) {
       chartPool.current.set(store, list);
+      writeChartCache(store, list);
       return { list, how: hows.join('+') };
     }
-    // 兩份榜都是空的才回頭問已經停更的舊榜
+    // 新榜整個拿不到才回頭問已經停更的舊榜
     const legacy = await loadChart(store).catch(() => [] as Track[]);
     if (legacy.length) chartPool.current.set(store, legacy);
     return { list: legacy, how: legacy.length ? '舊榜' : '無' };
@@ -7176,9 +7080,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const got = await Promise.all(stores.map(s => oneStore(s)));
       const byStore: Record<string, Track[]> = {};
       const hows = new Set<string>();
-      stores.forEach((s, i) => { hows.add(got[i].how); byStore[s] = got[i].list; });
-      /* 榜就是答案，這裡完全不再做語言判斷 ——
-         用歌名的文字或曲風標籤去篩，兩種都會把整批 K-Pop 弄不見。 */
+      /* 每一份榜各自照「那一頁指定的語言」篩過再交錯。
+         篩的依據是 Apple 自己標在每一筆上的曲風編號，不是我從歌名猜的。 */
+      stores.forEach((s, i) => {
+        hows.add(got[i].how);
+        byStore[s] = keepLang(got[i].list, langForStore(src, s));
+      });
       list = src.kind === 'global'
         ? globalMerge(byStore)
         : weave(byStore, src.pattern, src.lead);
@@ -7192,7 +7099,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         return;
       }
       /* 所有來源「同時」發，而且誰先回來就先顯示誰。
-         以前是一段一段接力（直連失敗才轉送、轉送失敗才換 Deezer），
+         以前是一段一段接力（直連失敗才轉送、台灣查不到才問美國），
          每一段都要等上一段逾時，加起來就是主人說的「要等很久」。
          現在全部並行，畫面在第一份結果回來的那一刻就有東西，
          其餘的回來再補進去，不必等最慢的那一條。 */
@@ -7208,10 +7115,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         if (`${t.name} ${t.artist}`.toLowerCase().includes(q)) local.push(t);
       }));
 
-      const bucket: Record<string, Track[]> = { ar: [], ap: [], dz: [], lo: local };
+      const bucket: Record<string, Track[]> = { ar: [], ap: [], us: [], lo: local };
       /* ar 放最前面而且一次全部倒出來：搜歌手時要看到「他的所有歌」，
          不是跟其他結果一首一首交錯。 */
-      const render = () => weave(bucket, ['ap', 'dz', 'lo'], { store: 'ar', count: 400, keepOrder: true });
+      const render = () => weave(bucket, ['ap', 'us', 'lo'], { store: 'ar', count: 400, keepOrder: true });
       if (local.length) { list = render(); setMusicList(list); setMusicLoading(false); }
 
       const feed = (key: string, got: Track[]) => {
@@ -7232,36 +7139,27 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           const best = bestArtist(a, term);
           if (best) feed('ar', await loadSongsOfArtist(best, 'tw').catch(() => [] as Track[]));
         }).catch(() => {}),
-        appleJson('搜', appleUrl, fromItunes).then(r => feed('ap', r)).catch(() => {}),
-        // Deezer 一頁一百、三頁一起發：關鍵字相關的歌最多一次拿三百首
-        loadDeezerPaged(term).then(r => feed('dz', r)).catch(() => {}),
+        /* 台灣商店與美國商店「一起」問，不是查不到才問第二個。
+           兩邊各兩百首、合起來去重，中文歌與西洋歌都不會漏掉，
+           而且只多一個請求。搜尋結果本來就帶試聽網址，不必再查。 */
+        appleJson('搜tw', appleUrl, fromItunes).then(r => feed('ap', r)).catch(() => {}),
+        appleJson('搜us', usUrl, fromItunes).then(r => feed('us', r)).catch(() => {}),
       ]);
-      // 台灣商店真的查不到（例如冷門西洋歌）才多問一次美國商店
-      if (!bucket.ap.length && !bucket.ar.length) {
-        const us = await appleJson('搜us', usUrl, fromItunes).catch(() => [] as Track[]);
-        feed('ap', us);
-        if (!us.length) {
-          const usArtist = await loadArtistSongs(term, 'us').catch(() => [] as Track[]);
-          feed('ar', usArtist);
-        }
+      // 兩個商店都空手才試「用歌手名整份撈」的那條路
+      if (!bucket.ap.length && !bucket.us.length && !bucket.ar.length) {
+        feed('ar', await loadArtistSongs(term, 'us').catch(() => [] as Track[]));
       }
       if (Date.now() < appleBlockedUntil.current === false
-        && !bucket.ap.length && !bucket.ar.length
+        && !bucket.ap.length && !bucket.us.length && !bucket.ar.length
         && failLog.current.some(x => x.includes('403'))) {
         appleBlockedUntil.current = Date.now() + 10 * 60 * 1000;   // 先冷靜十分鐘
       }
       list = render();
-      how = [bucket.ar.length && '歌手全曲', bucket.ap.length && 'Apple',
-             bucket.dz.length && 'Deezer', !bucket.ar.length && !bucket.ap.length && !bucket.dz.length
+      how = [bucket.ar.length && '歌手全曲', bucket.ap.length && '台灣商店',
+             bucket.us.length && '美國商店',
+             !bucket.ar.length && !bucket.ap.length && !bucket.us.length
                && local.length && '榜單內'].filter(Boolean).join('+');
       if (list.length) searchCache.current.set(q, list);
-    }
-    /* 榜單整個拿不到時的最後一道：改問 Deezer。
-       這裡刻意不去打 Apple 的搜尋端點 —— 那支才是會被鎖成 403 的那一支。 */
-    if (!list.length && src.kind !== 'search') {
-      const term = STORE_FALLBACK[(src as any).stores?.[0]] || 'pop';
-      list = await loadDeezer(term).catch(() => [] as Track[]);
-      if (list.length) how = 'Deezer 備援';
     }
     if (my !== musicReqRef.current) return;   // 已經有更新的搜尋了，這份丟掉
     setMusicList(list);
@@ -7269,15 +7167,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       ? ''
       : `拿不到歌單，請確認網路後重試\n（${failLog.current.join('、') || '沒有可用的來源'}）`);
     setMusicLoading(false);
-    /* 榜先端出來了，剩下沒配到試聽的在背景慢慢補（前十二首已經補過）。
-       補好才換掉畫面上的清單，所以捲動中不會有東西跳動。 */
-    const shown = list;
-    if (shown.some(t => !t.preview)) {
-      fillPreviews(shown, 48).then(done => {
-        if (my !== musicReqRef.current) return;
-        if (done.some((t, i) => t.preview !== shown[i].preview)) setMusicList(done);
-      }).catch(() => {});
-    }
   }, []);
 
   // 開啟時滑入
@@ -7380,8 +7269,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     ]);
     if (my !== drillReqRef.current) return;
     let al = albums, sg = songs;
-    // Apple 的台灣商店查不到就換美國（日韓西洋歌比較齊）。Deezer 不分地區，不必再問一次。
-    if (a.src === 'i' && !al.length && !sg.length) {
+    // 台灣商店查不到就換美國（日韓西洋歌比較齊）
+    if (!al.length && !sg.length) {
       const [al2, sg2] = await Promise.all([
         loadArtistAlbums(a, 'us').catch(() => [] as Album[]),
         loadSongsOfArtist(a, 'us').catch(() => [] as Track[]),
@@ -7409,7 +7298,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     setAlbumView(al); setDrillTracks([]); setDrillLoading(true);
     let tracks = await loadAlbumTracks(al, 'tw').catch(() => [] as Track[]);
     if (my !== drillReqRef.current) return;
-    if (al.src === 'i' && !tracks.length) {
+    if (!tracks.length) {
       tracks = await loadAlbumTracks(al, 'us').catch(() => [] as Track[]);
       if (my !== drillReqRef.current) return;
     }
@@ -7439,14 +7328,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (picked?.id === t.id && !a.paused) { a.pause(); return; }
     let use = t;
     if (!use.preview) {
-      /* 這一首還沒配到試聽網址（Apple 的榜本來就不給，背景補到後面還沒輪到）。
-         先在這一拍裡碰一下音訊元件把它解鎖 —— iOS 只認「使用者按下去的那一拍」，
+      /* 這一首還沒配到試聽網址（整批查的時候被 Apple 擋掉了）。
+         就替這一首單獨查一次 —— 一個請求換一首，額度上非常便宜。
+         先在這一拍裡碰一下音訊元件把它解鎖：iOS 只認「使用者按下去的那一拍」，
          等查完網址才第一次呼叫 play 會被系統擋掉。 */
       try { a.play().then(() => a.pause()).catch(() => {}); } catch { /* 還沒有 src，忽略 */ }
       setResolvingId(t.id);
-      const hit = await findPreview(t);
+      const got = t.appleId ? await lookupPreviews([t.appleId], 'tw') : new Map<string, Track>();
+      const hit = got.get(t.appleId || '');
       setResolvingId('');
-      if (!hit) return;                       // 真的配不到就當作沒這回事，不要跳錯誤訊息
+      if (!hit) return;                       // 真的查不到就當作沒這回事，不要跳錯誤訊息
+      rememberPreview(t.appleId || '', hit.preview, hit.secs);
+      savePreviewCache();
       use = { ...t, preview: hit.preview, secs: hit.secs || t.secs };
       const patch = (arr: Track[]) => arr.map(x => (x.id === t.id ? use : x));
       setMusicList(patch);
@@ -10786,17 +10679,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                       <div className="flex gap-3 overflow-x-auto no-scrollbar pb-3 -mx-1 px-1">
                         {musicArtists.map(a => (
                           <button
-                            key={`${a.src}${a.id}`}
+                            key={a.id}
                             onClick={() => openArtist(a)}
                             className="shrink-0 w-[72px] flex flex-col items-center gap-1.5 active:opacity-60"
                           >
-                            {/* Deezer 查到的有大頭照，Apple 那支沒有 —— 沒照片就用名字第一個字 */}
-                            <span className="relative w-[62px] h-[62px] rounded-full bg-[#2a2a2a] flex items-center justify-center overflow-hidden text-[22px] font-bold text-white/70">
-                              {a.art
-                                ? <img src={a.art} alt="" loading="lazy"
-                                       onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
-                                       className="absolute inset-0 w-full h-full object-cover" />
-                                : a.name.trim().slice(0, 1).toUpperCase()}
+                            <span className="w-[62px] h-[62px] rounded-full bg-[#2a2a2a] flex items-center justify-center text-[22px] font-bold text-white/70">
+                              {a.name.trim().slice(0, 1).toUpperCase()}
                             </span>
                             <span className="w-full text-[11px] text-white/85 leading-[14px] text-center line-clamp-2">{a.name}</span>
                           </button>
