@@ -6565,6 +6565,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      （API 不支援 callback 參數時就會這樣）—— 那時 onerror 不會觸發，
      沒有逾時的話畫面會永遠停在轉圈。 */
   const failLog = useRef<string[]>([]);
+  /* 同一支端點，直接 fetch 與 JSONP 只會有一種通得了（要看對方給不給 CORS）。
+     第一次兩種都試，之後就只用當時通的那一種 —— 每一次搜尋的請求數直接砍半。
+     Apple 是照 IP 限流的，主人一路打字時這一半差很多。 */
+  const goodWay = useRef<'' | 'f' | 'j'>('');
   /**
    * 同一份資料，fetch 與 JSONP「同時」發出去，誰先拿到有東西的就用誰。
    *
@@ -6591,8 +6595,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         failLog.current.push(`${tag}${suffix}:${String(e?.message || e).slice(0, 16)}`);
       })
       .finally(() => { if (--left === 0) finish([]); });
-    one(getJSON(url), '');
-    one(jsonp(makeJsonpUrl), 'J');
+    if (goodWay.current === 'f') { left = 1; one(getJSON(url).then(d => { return d; }), ''); return; }
+    if (goodWay.current === 'j') { left = 1; one(jsonp(makeJsonpUrl), 'J'); return; }
+    one(getJSON(url).then(d => { goodWay.current = 'f'; return d; }), '');
+    one(jsonp(makeJsonpUrl).then(d => { if (!goodWay.current) goodWay.current = 'j'; return d; }), 'J');
   });
 
   /**
@@ -7045,6 +7051,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      打字時先在這裡面找，完全同步、零延遲，畫面在按鍵的當下就有東西。 */
   const seenPool = useRef<Map<string, Track>>(new Map());
   const instantRef = useRef('');
+  /* 畫面上現在到底有沒有東西。搜尋時的規則很簡單：
+     **已經有內容就絕不蓋轉圈上去**，不然打字打到一半會一直閃。 */
+  const shownRef = useRef(0);
+  /** 上一次真的把查詢送出去的時間，用來壓住「一路打字一路打 Apple」 */
+  const lastFireRef = useRef(0);
   const remember = (list: Track[]) => list.forEach(t => {
     if (t.id && !seenPool.current.has(t.id)) seenPool.current.set(t.id, t);
   });
@@ -7143,7 +7154,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   };
 
   type Src =
-    | { kind: 'search'; term: string }
+    | { kind: 'search'; term: string; broad?: boolean }
     | { kind: 'chart'; stores: string[]; pattern: string[];
         lead?: { store: string; count: number } }
     | { kind: 'global'; stores: string[] };
@@ -7151,19 +7162,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   /**
    * 每個分頁就是 Apple 的一份榜，原封不動照名次端出來。
    *   為你推薦 → 每日台灣 Top 100
-   *   華語 → 排行榜・華語流行樂（Apple 曲風榜，台灣商店）
-   *   日語 → 排行榜・日本流行樂（日本商店）
-   *   韓語 → 排行榜・韓國流行樂（韓國商店）
+   *   華語 → 排行榜・華語流行樂
+   *   日語 → 排行榜・日本流行樂
+   *   韓語 → 排行榜・韓國流行樂
    *   英語 → 英文熱門 Top 100（美國每日榜）
    *   超夯 → 每日全球 Top 100（七地每日榜合併）
    *
-   * 曲風榜用的是 Apple 官方的曲風編號：1253 華語流行、27 日本流行、51 韓國流行。
+   * 三個曲風榜一律讀**台灣商店**的那一份 —— 主人打開 Apple Music 看到的
+   * 「排行榜・韓國流行樂」就是台灣商店裡的那一份，不是韓國人自己在聽的那份。
+   * 之前韓語讀韓國商店、日語讀日本商店，端出來的當然跟主人畫面上看到的不一樣。
+   * 曲風編號是 Apple 官方的：1253 華語流行、27 日本流行、51 韓國流行。
+   * alt 是備援商店：台灣商店那份真的拿不到時，再去該國自己的商店拿同一個曲風榜。
    */
-  const TAB_CHART: Record<string, { store: string; genre?: string }> = {
+  const TAB_CHART: Record<string, { store: string; genre?: string; alt?: string }> = {
     '為你推薦': { store: 'tw' },
-    '華語': { store: 'tw', genre: '1253' },
-    '日語': { store: 'jp', genre: '27' },
-    '韓語': { store: 'kr', genre: '51' },
+    '華語': { store: 'tw', genre: '1253', alt: 'hk' },
+    '日語': { store: 'tw', genre: '27', alt: 'jp' },
+    '韓語': { store: 'tw', genre: '51', alt: 'kr' },
     '英語': { store: 'us' },
   };
   const currentSource = (): Src => {
@@ -7172,25 +7187,63 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (musicTab === '超夯') return { kind: 'global', stores: GLOBAL_STORES };
     const c = TAB_CHART[musicTab];
     if (c) {
-      const key = c.genre ? `${c.store}#${c.genre}` : c.store;
+      const key = c.genre ? `${c.store}#${c.genre}#${c.alt || ''}` : c.store;
       return { kind: 'chart', stores: [key], pattern: [key] };
     }
     return { kind: 'search', term: 'pop' };
   };
 
   /**
-   * 拿一份榜。key 是 'tw'（每日榜）或 'tw#1253'（曲風榜）。全部走 Apple，沒有別家。
-   *
-   * 曲風榜（排行榜・華語流行樂那種）走的是 Apple 的曲風排行榜端點，
-   * 那一支自己就帶著試聽網址，不必再查一次 —— 也就完全不會碰到限流。
-   * 那支若沒東西（Apple 近年逐步收掉舊的 RSS），才退回「該地區每日榜 ＋
-   * 只留 Apple 標成那個曲風的歌」，再不行就整份每日榜。
+   * 一個地區的每日榜（含試聽網址）。曲風榜與每日榜都會用到。
    *
    * 一條鐵律：榜單絕不因為「配不到試聽網址」被丟掉 ——
    * 那正是韓語那次會整份消失的原因。
    */
+  const dailyChart = async (store: string): Promise<{ list: Track[]; how: string[] }> => {
+    const modern = await loadModernChart(store).catch(() => [] as Track[]);
+    const hows: string[] = [];
+    if (!modern.length) return { list: [], how: hows };
+    hows.push('榜');
+    // 先貼上本機記得的試聽網址，剩下的才需要真的連網去查
+    const step1 = applyCachedPreviews(modern);
+    let list = step1.list;
+    if (step1.missing.length) {
+      const m = await lookupPreviews(step1.missing, store);
+      if (m.size) {
+        hows.push('試聽');
+        list = list.map(t => {
+          const hit = t.preview ? null : m.get(t.appleId || '');
+          if (!hit) return t;
+          rememberPreview(t.appleId || '', hit.preview, hit.secs);
+          return { ...t, preview: hit.preview, secs: hit.secs, art: hit.art || t.art };
+        });
+        savePreviewCache();
+      } else {
+        failLog.current.push(`${store}試聽:0筆`);
+      }
+    } else if (list.some(t => t.preview)) hows.push('試聽快取');
+    return { list, how: hows };
+  };
+
+  const hasGenre = (t: Track, genre: string) =>
+    String(t.genreId || '').split(/[^0-9]+/).includes(genre);
+
+  /**
+   * 拿一份榜。key 是 'tw'（每日榜）或 'tw#51#kr'（曲風榜＋備援商店）。
+   * 全部走 Apple，沒有別家。
+   *
+   * 曲風榜要的就是「照抄 Apple Music 上的那一份」，所以這裡**一路都待在同一個
+   * 曲風裡**，四條路依序試，沒有一條會換成別的東西：
+   *   1. 台灣商店的曲風排行榜（主人在 Apple Music 看到的就是這一份）
+   *   2. 該國自己商店的同一個曲風排行榜
+   *   3. 台灣每日榜裡，Apple 標成這個曲風的歌
+   *   4. 該國每日榜裡，Apple 標成這個曲風的歌
+   * 四條都拿不到就回空的。
+   * 以前最後會退回「整份每日榜」—— 韓語那一頁因此變成韓國每日榜（什麼語言都有），
+   * 那就是主人說的「根本不是韓國流行樂」。寧可說拿不到，也不端別的東西上來。
+   */
   const oneStore = async (key: string): Promise<{ list: Track[]; how: string }> => {
-    const [store, genre] = key.split('#');
+    const [store, genre, alt] = key.split('#');
     const inMem = chartPool.current.get(key);
     if (inMem && inMem.length) return { list: inMem, how: '快取' };
     const onDisk = readChartCache(key);
@@ -7198,55 +7251,35 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       chartPool.current.set(key, onDisk);
       return { list: onDisk, how: '快取' };
     }
-    if (genre) {
-      // Apple 官方的曲風排行榜，本身就附試聽網址
-      const g = await loadChart(store, genre).catch(() => [] as Track[]);
-      if (g.length >= 10) {
-        chartPool.current.set(key, g);
-        writeChartCache(key, g);
-        return { list: g, how: '曲風榜' };
-      }
-      failLog.current.push(`${store}曲風榜:${g.length}筆`);
-    }
-    const modern = await loadModernChart(store).catch(() => [] as Track[]);
-    const hows: string[] = [];
-    let list: Track[] = [];
-    if (modern.length) {
-      hows.push('榜');
-      // 先貼上本機記得的試聽網址，剩下的才需要真的連網去查
-      const step1 = applyCachedPreviews(modern);
-      list = step1.list;
-      if (step1.missing.length) {
-        const m = await lookupPreviews(step1.missing, store);
-        if (m.size) {
-          hows.push('試聽');
-          list = list.map(t => {
-            const hit = t.preview ? null : m.get(t.appleId || '');
-            if (!hit) return t;
-            rememberPreview(t.appleId || '', hit.preview, hit.secs);
-            return { ...t, preview: hit.preview, secs: hit.secs, art: hit.art || t.art };
-          });
-          savePreviewCache();
-        } else {
-          failLog.current.push(`${store}試聽:0筆`);
-        }
-      } else if (list.some(t => t.preview)) hows.push('試聽快取');
-    }
-    if (genre && list.length) {
-      /* 曲風榜那一支沒東西時的第二條路：每日榜裡只留 Apple 標成這個曲風的歌。
-         篩完太少就整份端出來 —— 讓主人看到「拿不到歌單」是最糟的結果。 */
-      const only = list.filter(t => String(t.genreId || '').split(/[^0-9]+/).includes(genre));
-      if (only.length >= 10) {
-        chartPool.current.set(key, only);
-        writeChartCache(key, only);
-        return { list: only, how: `${hows.join('+')}+曲風` };
-      }
-    }
-    if (list.length) {
+    const done = (list: Track[], how: string) => {
       chartPool.current.set(key, list);
       writeChartCache(key, list);
-      return { list, how: hows.join('+') };
+      return { list, how };
+    };
+
+    if (genre) {
+      // ① 台灣商店的曲風排行榜（這一支自己就帶試聽網址，碰不到 /lookup 的限流）
+      const g = await loadChart(store, genre).catch(() => [] as Track[]);
+      if (g.length >= 10) return done(g, '曲風榜');
+      failLog.current.push(`${store}曲風榜:${g.length}筆`);
+      // ② 該國自己商店的同一個曲風排行榜
+      if (alt) {
+        const g2 = await loadChart(alt, genre).catch(() => [] as Track[]);
+        if (g2.length >= 10) return done(g2, `${alt}曲風榜`);
+        failLog.current.push(`${alt}曲風榜:${g2.length}筆`);
+      }
+      // ③④ 每日榜裡只留 Apple 標成這個曲風的歌（先台灣、再該國）
+      for (const st of [store, ...(alt ? [alt] : [])]) {
+        const d = await dailyChart(st);
+        const only = d.list.filter(t => hasGenre(t, genre));
+        if (only.length >= 10) return done(only, `${st}每日+曲風`);
+      }
+      failLog.current.push(`曲風${genre}:都拿不到`);
+      return { list: [], how: '無' };
     }
+
+    const d = await dailyChart(store);
+    if (d.list.length) return done(d.list, d.how.join('+'));
     // 新榜整個拿不到才回頭問已經停更的舊榜
     const legacy = await loadChart(store).catch(() => [] as Track[]);
     if (legacy.length) chartPool.current.set(key, legacy);
@@ -7255,12 +7288,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
   const loadMusic = useCallback(async (src: Src) => {
     const my = ++musicReqRef.current;
-    setMusicLoading(true);
     setMusicError('');
-    /* 一開始就把舊的清掉。留著的話，換分頁時新的還沒回來、畫面上還是上一個
-       分類的歌 —— 來回切幾次就會覺得「怎麼一直是重複的歌」。 */
-    setMusicList([]);
-    setMusicArtists([]);
+    /* 換分頁時要把舊的清掉、轉圈等新的 —— 不然畫面上還是上一個分類的歌，
+       來回切幾次就會覺得「怎麼一直是重複的歌」。
+
+       但**打字搜尋時絕對不能清**。清了的話，每按一個鍵畫面就閃成空白，
+       等這一次連線回來才又有東西；主人打字比連線快，於是每個鍵都把畫面清掉，
+       看起來就是「要打完整個字才會出現」。
+       打字那一層（上面那個同步的 effect）已經先把結果放上去了，
+       這裡只要安靜地把線上結果補上去就好。 */
+    if (src.kind !== 'search') {
+      setMusicLoading(true);
+      shownRef.current = 0;
+      setMusicList([]);
+      setMusicArtists([]);
+    }
     failLog.current = [];
     let list: Track[] = [];
     let how = '';
@@ -7276,9 +7318,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         : weave(byStore, src.pattern, src.lead);
       how = [...hows].filter(Boolean).join('/');
     } else {
+      // 畫面上一片空白時才需要轉圈；已經有東西就讓它留著，等新的回來再換掉
+      if (!shownRef.current) setMusicLoading(true);
+      /* broad＝主人已經停手了，這次才把三個商店都問一遍（完整結果）。
+         打字途中送出的是「窄」的那一種，只問台灣一個商店 ——
+         夠讓畫面馬上有東西，又不會一路把 Apple 的額度打光。 */
+      const broad = !!src.broad;
       const cached = searchCache.current.get(src.term.toLowerCase());
       if (cached) {
         if (my !== musicReqRef.current) return;
+        shownRef.current = cached.length;
         setMusicList(cached);
         setMusicLoading(false);
         /* 這裡以前直接 return，上面剛剛才被清空的「歌手那一排」就再也沒被填回去 ——
@@ -7325,7 +7374,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         online() ? ['ap', 'us', 'jp', 'bk'] : ['lo'],
         { store: 'ar', count: 400, keepOrder: true },
       );
-      if (local.length) { list = render(); setMusicList(list); setMusicLoading(false); }
+      if (local.length) { list = render(); shownRef.current = list.length; setMusicList(list); setMusicLoading(false); }
 
       /** 每次結果進來，上面那一排歌手也跟著重算（一定有圖片） */
       const refreshArtists = (found: Artist[]) => {
@@ -7341,6 +7390,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         remember(got);
         bucket[key] = got;
         list = render();
+        shownRef.current = list.length;
         setMusicList(list);
         setMusicLoading(false);
         refreshArtists(artistsFound);
@@ -7369,8 +7419,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
            搜的是整個 Apple Music 音樂庫，各兩百首合起來去重 ——
            中文歌、西洋歌、日文歌都不會漏。搜尋結果本身就帶試聽網址，不必再查。 */
         appleJson('搜tw', appleUrl, fromItunes).then(r => feed('ap', r)).catch(() => {}),
-        appleJson('搜us', usUrl, fromItunes).then(r => feed('us', r)).catch(() => {}),
-        appleJson('搜jp', jpUrl, fromItunes).then(r => feed('jp', r)).catch(() => {}),
+        /* 還在打字（或只打了一兩個字）時只問台灣就好。
+           一路問三個商店等於每按一個鍵就送好幾個請求出去，額度幾下就沒了。 */
+        ...(!broad || term.trim().length <= 2 ? [] : [
+          appleJson('搜us', usUrl, fromItunes).then(r => feed('us', r)).catch(() => {}),
+          appleJson('搜jp', jpUrl, fromItunes).then(r => feed('jp', r)).catch(() => {}),
+        ]),
       ]);
       // 兩個商店都空手才試「用歌手名整份撈」的那條路
       const gotApple = () => !!(bucket.ap.length || bucket.us.length || bucket.jp.length || bucket.ar.length);
@@ -7400,16 +7454,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       /* 只有真的從線上拿到東西才存快取。
          單靠榜單池湊出來的那兩三首不能存 —— 存下去之後，同一個字再搜幾次
          都直接回那兩三首，永遠不會再連網重試，就變成「怎麼搜都只有兩首」。 */
-      if (list.length && (gotApple() || bucket.bk.length)) searchCache.current.set(q, list);
+      // 只有「問完三個商店」的完整結果才存快取；打字途中那份窄的不存，
+      // 不然停手之後的完整查詢會直接吃到窄的快取，結果永遠少一截
+      if (broad && list.length && (gotApple() || bucket.bk.length)) searchCache.current.set(q, list);
     }
     if (my !== musicReqRef.current) return;   // 已經有更新的搜尋了，這份丟掉
     remember(list);
     /* 連線結果是空的、但打字那一層已經放了東西上去，就別把畫面清空 ——
        主人會看到「本來有、忽然變沒有」。 */
-    if (!list.length && src.kind === 'search' && instantRef.current === src.term.trim().toLowerCase()) {
+    if (!list.length && src.kind === 'search' && shownRef.current) {
       setMusicLoading(false);
       return;
     }
+    shownRef.current = list.length;
     setMusicList(list);
     setMusicError(list.length
       ? ''
@@ -7454,6 +7511,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     });
     if (!hit.length) return;
     instantRef.current = q;
+    shownRef.current = Math.min(hit.length, 200);
     setMusicList(hit.slice(0, 200));
     setMusicLoading(false);
     setMusicError('');
@@ -7468,13 +7526,33 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   useEffect(() => {
     // 在「已儲存」也要能打字搜尋，只有沒打字的時候那一頁才是純本機清單
     if (!musicOpen || (musicTab === '已儲存' && !musicQuery.trim())) return;
-    /* 防抖只留 150ms。
-       以前是 400ms，加上要等 Apple 回來，主人的感受就是「打完很久才出來」。
-       現在上面那一層已經在打字當下就把畫面填好了，這裡只負責把線上結果補進來，
-       所以可以壓到接近打字速度；連續敲鍵盤時舊的那一次會被 clearTimeout 取消，
-       不會每個字都真的送一次請求出去。 */
-    const t = setTimeout(() => loadMusic(currentSource()), musicQuery.trim() ? 150 : 0);
-    return () => clearTimeout(t);
+    /* 打字時的送出時機：一般的防抖再加一個「最久等這麼久」的上限。
+         · 停手 350ms → 送出（一般的防抖）
+         · 但不管有沒有停手，距離上一次送出超過 700ms 就一定送一次
+
+       只有防抖的話，主人一路打「yoasobi」中間都沒停超過 350ms，
+       就會變成「打完整個字才出現」；只看每個鍵的話又會一路狂打 Apple，
+       額度幾下就沒了、然後什麼都搜不到。兩個合起來剛好：
+       打到 yo 就出結果，整串打完也只送三次左右。
+
+       單獨一個英數字（例如剛打下 y）不查 —— 那個階段查了也沒意義。 */
+    const q = musicQuery.trim();
+    if (q.length === 1 && /^[a-z0-9]$/i.test(q)) return;
+    const since = Date.now() - lastFireRef.current;
+    const wait = q ? Math.max(0, Math.min(350, 700 - since)) : 0;
+    const narrow = setTimeout(() => {
+      lastFireRef.current = Date.now();
+      loadMusic(currentSource());
+    }, wait);
+    /* 停手之後再補一次「完整」的：三個商店都問。
+       只要主人又按了下一個鍵，這個計時器就會被下面的 cleanup 取消，
+       所以真正跑到的只有最後那一次。 */
+    const full = setTimeout(() => {
+      lastFireRef.current = Date.now();
+      const src = currentSource();
+      if (src.kind === 'search') loadMusic({ ...src, broad: true });
+    }, wait + 550);
+    return () => { clearTimeout(narrow); clearTimeout(full); };
   }, [musicOpen, musicQuery, musicTab, loadMusic]);
 
   // 「已儲存」而且沒在搜尋時不連網，直接把本機收藏放上去（收藏變動時才跟著更新）
