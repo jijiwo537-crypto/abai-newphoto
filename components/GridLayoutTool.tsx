@@ -2291,8 +2291,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      只有物件本身還留在會被裁切的那一層。 */
   const chrome = (
     <>
-    {/* 工具列不跟著對齊線／拖曳淡出，碰到對齊線時按鈕仍然要在 */}
-    {isSelected && onLayerAction && !hideToolbar && !hideChrome && !isScaling && (() => {
+    {/* 對齊線亮起來的時候，工具列先收起來 —— 那一刻使用者在看的是「有沒有對齊」，
+        白色的按鈕壓在白色的對齊線上會看不清楚。放開手（線消失）就自己回來。 */}
+    {isSelected && onLayerAction && !hideToolbar && !hideChrome && !isScaling && !hasActiveGuidelines && (() => {
       // 轉過角度之後要擺在「畫面上最靠下」的那一側：先算旋轉後外接框的半高，
       // 再把工具列沿著畫面的 Y 軸推出去（用區域座標表示，因為這層跟著框一起轉）。
       const rad = (image.rotation * Math.PI) / 180;
@@ -2351,7 +2352,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         卸載時瀏覽器偶爾不會重繪那一層（尤其是有 transform 的圖層），
         畫面上就會留下已經取消選取的框與圓球。 */}
     {(() => {
-      const showChrome = isSelected && !hideChrome;
+      // 對齊線亮起來時，選取框與四角圓球也一起讓位（跟工具列同一個理由）
+      const showChrome = isSelected && !hideChrome && !hasActiveGuidelines;
       return (
       <div
         className="absolute inset-0 pointer-events-none"
@@ -5040,9 +5042,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     };
   }, []);
 
+  /** 這批匯入的圖只放一次（等版面量好之後才放，見下面） */
+  const initialPlacedRef = useRef(false);
+
   // Initialize with initialFiles if provided
   useEffect(() => {
+    /* 一定要等畫布量好才放。
+       這支以前只掛在 [initialFiles] 上，第一次執行時 containerSize 還是 0 ——
+       previewW/previewH 那時候是保底的 150×200，而不是真正的頁面大小。
+       於是「置中」是照 150×200 算的，換算到真的頁面上就變成偏左上一大塊。
+       改成等 containerMeasured 之後才放，第一張才會真的在正中央。 */
+    if (!containerMeasured) return;
+    if (initialPlacedRef.current) return;
     if (initialFiles && initialFiles.length > 0) {
+      initialPlacedRef.current = true;
       const filesToLoad = initialFiles.slice(0, 25);
       const loadInitial = async () => {
         const fImgs: FloatingImage[] = [];
@@ -5051,13 +5064,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           const url = URL.createObjectURL(f);
           const video = isVideoFile(f);
           const dims = video ? await getVideoDimensions(url) : await getImageDimensions(url);
-          
+
           const aspect = dims.width / dims.height;
-          
+
+          /* 讀圖是非同步的，中途畫面可能又量了一次（旋轉、鍵盤收起來…），
+             所以每一張都當場拿最新的頁面尺寸，不要用閉包裡那份。 */
+          const previewW = previewWRef.current;
+          const previewH = previewHRef.current;
+
           const margin = 12; // comfortable margin from boundaries
           const maxAllowedW = Math.max(10, previewW - 2 * margin);
           const maxAllowedH = Math.max(10, previewH - 2 * margin);
-          
+
           let initialWidth = 160;
           let initialHeight = 160;
           
@@ -5094,13 +5112,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             offsetStep = Math.min(16, maxNeededStepX, maxNeededStepY);
           }
           
+          /* 第一張永遠是正中央（idx 0 ⇒ 位移 0），其餘依序往右下錯開。
+             夾邊界時特別讓第一張免夾 —— 圖再大也不會超出（上面已經先縮到
+             maxAllowedW/H 了），夾了反而會在極端比例下把它推離中心。 */
           let x = baseX + (idx * offsetStep);
           let y = baseY + (idx * offsetStep);
-          
-          // Clamp to stay strictly inside the margin
-          x = Math.max(minX, Math.min(x, maxX));
-          y = Math.max(minY, Math.min(y, maxY));
-          
+
+          if (idx > 0) {
+            // Clamp to stay strictly inside the margin
+            x = Math.max(minX, Math.min(x, maxX));
+            y = Math.max(minY, Math.min(y, maxY));
+          }
+
           fImgs.push({
             id: Math.random().toString(36).substring(2, 9),
             src: url,
@@ -5117,7 +5140,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       };
       loadInitial();
     }
-    
+  }, [initialFiles, containerMeasured]);
+
+  /* 收尾單獨一支：上面那支現在會因為 containerMeasured 變動而重跑，
+     清空的動作要是還留在裡面，量好尺寸的那一刻就會把剛放好的圖全部清掉。 */
+  useEffect(() => {
     return () => {
       // Cleanup URLs on unmount
       setImages(prev => {
@@ -5133,7 +5160,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         return [];
       });
     };
-  }, [initialFiles]);
+  }, []);
 
   /* ── 自動存檔 ────────────────────────────────────────────────────
      照片放 IndexedDB、版面放 JSON。帶著新照片進來就是全新的一份，
@@ -5207,7 +5234,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const dims = video ? await getVideoDimensions(url) : await getImageDimensions(url);
       
       const aspect = dims.width / dims.height;
-      
+
+      // 讀圖是非同步的，中途畫面可能又量過一次，所以當場拿最新的頁面尺寸
+      const previewW = previewWRef.current;
+      const previewH = previewHRef.current;
+
       const margin = 12; // comfortable margin from boundaries
       const maxAllowedW = Math.max(10, previewW - 2 * margin);
       const maxAllowedH = Math.max(10, previewH - 2 * margin);

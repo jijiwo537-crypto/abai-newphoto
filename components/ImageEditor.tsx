@@ -11,7 +11,7 @@ import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { canvasToUrl, revokeUrls } from '../utils/blobUrl';
 import { motion, AnimatePresence } from 'motion/react';
-import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { ChevronLeft } from 'lucide-react';
 import ExifReader from 'exifreader';
 import { Icon } from './Icon';
@@ -259,17 +259,32 @@ const EFFECT_OWN_KEYS: Record<string, string[]> = {
   ...Object.fromEntries(FX_DEFS.map(d => [d.id, [d.id]])),
 };
 
-/** 把「不是這一顆」的特效全部歸零。已經合併進圖層的不受影響 —— 它們早就歸零了，
-    效果烤在點陣圖裡，這裡再歸零一次也動不到。 */
-const clearOtherEffects = (base: any, keepId: string) => {
-  const keep = new Set(EFFECT_OWN_KEYS[keepId] || [keepId]);
-  const out = { ...base };
-  for (const k of Object.keys(NO_EFFECT_PARAMS)) if (!keep.has(k)) out[k] = 0;
-  return out;
-};
-
 /** 現在畫面上還有沒有「還沒合併」的特效（合併過的參數是 0，所以自然不算） */
 const hasLiveEffect = (p: any) => Object.keys(NO_EFFECT_PARAMS).some(k => (p?.[k] || 0) !== 0);
+
+/**
+ * 特效牽涉到的「所有」參數鍵 —— 強度之外，連細項也算進來
+ * （柔光的門檻／半徑／色調、光暈的色相／大小／羽化、漏光的角度／色相，
+ *  以及每一個新特效自己那幾根）。
+ *
+ * 點一張特效卡片＝從頭來過：整組回到預設值，而不是只把強度歸位 ——
+ * 以前只重設強度，上一次在細項面板裡調過的東西會留著，
+ * 於是「同一顆特效點兩次」得到的結果不一樣。
+ */
+const EFFECT_ALL_KEYS: string[] = Array.from(new Set([
+  ...Object.keys(NO_EFFECT_PARAMS),
+  'softThreshold', 'softRadius', 'softColor',
+  'leakAngle', 'leakHue',
+  'fringeHue', 'fringeSize', 'fringeFeather',
+  ...FX_DEFS.flatMap(d => d.params.map(p => p.id)),
+]));
+
+/** 把所有特效參數（含細項）整組打回預設值 */
+const resetAllEffectParams = (base: any) => {
+  const out = { ...base };
+  for (const k of EFFECT_ALL_KEYS) out[k] = (DEFAULT_PARAMS as any)[k] ?? 0;
+  return out;
+};
 
 /** 卡片 → 它的細項面板是哪一個分頁（沒有的就是沒有細項可調） */
 const EFFECT_DETAIL_CAT: Record<string, 'soft' | 'leak' | 'halation' | 'fx'> = {
@@ -3335,8 +3350,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
      四顆開關與特效清單的卡片共用同一份規則 —— 兩個入口分頭寫的話，
      同一個特效從清單點開跟從開關打開會得到不一樣的預設值。
      patch 是要疊上去的參數，manual 是「使用者自己調過」那個旗標的新值。 */
-  const softOnPatch = () => {
-    if (softManuallyAdjusted && userSoftRef.current !== 0) {
+  /* fresh = true 代表「從頭來過」：不理會使用者上次調過的值，一律給預設。
+     特效卡片走這條（點下去就是整組重置），四顆開關維持原本的記憶行為。 */
+  const softOnPatch = (fresh = false) => {
+    if (!fresh && softManuallyAdjusted && userSoftRef.current !== 0) {
       return { patch: { soft: userSoftRef.current }, manual: softManuallyAdjusted };
     }
     const lutId = lutList[selectedLutIdx]?.id || 'none';
@@ -3344,8 +3361,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     userSoftRef.current = 100;
     return { patch: { soft: 100, softThreshold: softThresholdVal }, manual: false };
   };
-  const blurOnPatch = () => {
-    if (blurManuallyAdjusted && userBlurRef.current !== 0) {
+  const blurOnPatch = (fresh = false) => {
+    if (!fresh && blurManuallyAdjusted && userBlurRef.current !== 0) {
       return { patch: { blur: userBlurRef.current }, manual: blurManuallyAdjusted };
     }
     const lutId = lutList[selectedLutIdx]?.id || 'none';
@@ -3353,16 +3370,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     userBlurRef.current = targetBlur;
     return { patch: { blur: targetBlur }, manual: false };
   };
-  const grainOnPatch = () => {
+  const grainOnPatch = (fresh = false) => {
     const g = userGrainRef.current;
-    if (grainManuallyAdjusted && !(g.grain === 0 && g.colorNoise === 0 && g.colorNoise2 === 0)) {
+    if (!fresh && grainManuallyAdjusted && !(g.grain === 0 && g.colorNoise === 0 && g.colorNoise2 === 0)) {
       return { patch: { grain: g.grain, colorNoise: g.colorNoise, colorNoise2: g.colorNoise2 }, manual: grainManuallyAdjusted };
     }
     userGrainRef.current = { grain: 0, colorNoise: 40, colorNoise2: 0 };
     return { patch: { colorNoise: 40, grain: 0, colorNoise2: 0 }, manual: false };
   };
-  const halationOnPatch = () => {
-    if (halationManuallyAdjusted && userHalationRef.current !== 0) {
+  const halationOnPatch = (fresh = false) => {
+    if (!fresh && halationManuallyAdjusted && userHalationRef.current !== 0) {
       return { patch: { fringeIntensity: userHalationRef.current }, manual: halationManuallyAdjusted };
     }
     userHalationRef.current = 100;
@@ -3517,6 +3534,23 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   /** 現在一個特效都沒開嗎（「原始」那張卡片要不要亮白框） */
   const noEffectOn = !hasLiveEffect(params);
 
+  /**
+   * 進「特效」分頁。
+   *
+   * 現在真的有開著的特效 → 選中它，上面那根強度滑桿跟著出現；
+   * 一個都沒開（＝停在「原始」）→ 誰都不選，上面就不該有滑桿。
+   * 以前是一律選第一顆（柔光）的強度鍵，所以明明停在「原始」，
+   * 上面卻掛著一根調不到東西的柔光滑桿 —— 那根拖了也看不出變化，
+   * 因為柔光根本沒開。
+   */
+  const enterEffects = () => {
+    setActiveCategory('effects');
+    const on = EFFECT_TOOLS.find(t => isEffectOn(t.id));
+    setActiveFxId(on ? on.id : EFFECT_TOOLS[0].id);
+    // 'softLight' 這個值本身就代表「特效頁但不顯示滑桿」（見滑桿那一段的排除清單）
+    setActiveToolId(on ? effectAmountId(on.id) : 'softLight');
+  };
+
   /** 「原始」：把所有特效關掉 */
   const clearAllEffects = () => {
     const next = { ...paramsRef.current, ...NO_EFFECT_PARAMS } as EditorParams;
@@ -3535,25 +3569,26 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     const amountId = effectAmountId(toolId);
     setActiveToolId(amountId);
 
-    /* 一次只能套一個特效：先把其他特效整組歸零，再把這一顆打開。
+    /* 一次只能套一個特效，而且點下去就是「從頭來過」：
+       所有特效的參數（含每一顆的細項）先全部打回預設，再把這一顆打開。
+       以前只把別顆的強度歸零、而且這一顆已經開著就整個不動 ——
+       於是上一次在細項面板調過的門檻／半徑／色相會留著，
+       同一顆特效點兩次得到的結果不一樣。現在點一下就是乾淨的預設狀態。
        四顆開關（柔光／朦朧／噪點／光暈）的狀態也要跟著關掉，
        不然參數是 0 但按鈕還亮著。
        想疊第二個特效就要先按「合併」把現在這個烤進圖層。 */
-    const next = clearOtherEffects(paramsRef.current, toolId) as EditorParams;
-    const wasOn = ((paramsRef.current as any)[amountId] || 0) !== 0;
+    const next = resetAllEffectParams(paramsRef.current) as EditorParams;
 
-    // 這一顆本來就開著就不動它的值（只是把別的關掉）；沒開才套預設強度
+    // 一律套這一顆的預設值（fresh = true：不理會上次調過的記憶）
     let manSoft = softManuallyAdjusted, manBlur = blurManuallyAdjusted;
     let manGrain = grainManuallyAdjusted, manHalation = halationManuallyAdjusted;
-    if (!wasOn) {
-      if (toolId === 'softLight') { const on = softOnPatch(); Object.assign(next, on.patch); manSoft = on.manual; }
-      else if (toolId === 'blur') { const on = blurOnPatch(); Object.assign(next, on.patch); manBlur = on.manual; }
-      else if (toolId === 'colorNoise') { const on = grainOnPatch(); Object.assign(next, on.patch); manGrain = on.manual; }
-      else if (toolId === 'halation') { const on = halationOnPatch(); Object.assign(next, on.patch); manHalation = on.manual; }
-      else {
-        const on = EFFECT_ON_AMOUNT[toolId];
-        if (on) (next as any)[amountId] = on;
-      }
+    if (toolId === 'softLight') { const on = softOnPatch(true); Object.assign(next, on.patch); manSoft = on.manual; }
+    else if (toolId === 'blur') { const on = blurOnPatch(true); Object.assign(next, on.patch); manBlur = on.manual; }
+    else if (toolId === 'colorNoise') { const on = grainOnPatch(true); Object.assign(next, on.patch); manGrain = on.manual; }
+    else if (toolId === 'halation') { const on = halationOnPatch(true); Object.assign(next, on.patch); manHalation = on.manual; }
+    else {
+      const on = EFFECT_ON_AMOUNT[toolId];
+      if (on) (next as any)[amountId] = on;
     }
 
     const sOn = toolId === 'softLight', bOn = toolId === 'blur';
@@ -5777,6 +5812,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
      那塊區域」置中，跟圖多高無關。用 useLayoutEffect 是為了在同一次繪製前
      就把值算好，不會先閃一下原尺寸。ResizeObserver 負責轉向／視窗變化。 */
   const previewBoxRef = useRef<HTMLDivElement>(null);
+
+  /* 預覽的縮放／平移（雙指放大、拖動）。
+     進遮色片時要把它「流暢地」推回原本的大小與位置：遮色片是畫在圖上的，
+     使用者放大過或推到一邊之後才進來的話，畫面對不上、也不好下筆。
+     resetTransform 自己會判斷「本來就在原位就不動」，所以沒縮放過的人
+     不會看到任何動畫。 */
+  const zoomRef = useRef<ReactZoomPanPinchRef | null>(null);
+  useEffect(() => {
+    if (activeCategory !== 'mask') return;
+    // 這一頁的縮放是關掉的（disabled），但這支 API 不看那個開關，照樣推得回去
+    zoomRef.current?.resetTransform(320, 'easeOut');
+  }, [activeCategory]);
+
   const [hslFit, setHslFit] = useState<{ mb: number; mh: number } | null>(null);
   const measureHslFit = useCallback(() => {
     const box = previewBoxRef.current;
@@ -6300,8 +6348,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
         ref={previewBoxRef}
         className={`flex-1 relative flex bg-[#080808]`}
       >
-        <TransformWrapper 
-          initialScale={1} 
+        <TransformWrapper
+          ref={zoomRef}
+          initialScale={1}
           minScale={0.5} 
           maxScale={5} 
           doubleClick={{ disabled: true }}
@@ -6761,20 +6810,29 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
         )}
 
         {/* 合併：把現在畫面上的樣子烤進圖層，烤完才能再疊下一個特效／濾鏡。
-             位置跟右下角的前後對比鍵左右對稱，線條粗細也跟它一致（1.2）。
-             只有「現在真的套著特效或濾鏡」時才出現 —— 合併過的參數已經歸零，不算。 */}
-        {(hasMergeable || mergedCount > 0) && (
+             位置跟右下角的前後對比鍵左右對稱。
+             只有「現在真的套著特效或濾鏡」時才出現 —— 合併過的參數已經歸零，不算。
+             遮色片與調節這兩頁不出現：那兩頁在調的東西跟「烤進圖層」是兩回事，
+             按鈕擺在那裡只會讓人以為是在合併遮色片。 */}
+        {(hasMergeable || mergedCount > 0)
+          && activeCategory !== 'mask' && activeCategory !== 'adjust' && (
           <button
             aria-label="合併特效"
             onClick={hasMergeable ? mergeEffects : undefined}
             disabled={!hasMergeable}
             className="absolute bottom-2 left-2 px-2 py-2 flex flex-col items-center justify-center gap-1 select-none touch-none z-20 text-white"
           >
-            {/* 疊在一起的兩層（沒有箭頭）：扁、細線，寬度比前後對比鍵窄一點 */}
+            {/* 疊在一起的兩層（沒有箭頭）：扁，寬度比前後對比鍵窄一點。
+                線條要跟前後對比鍵「畫在螢幕上一樣粗」，而不是屬性寫一樣的數字：
+                那一顆是 24 的 viewBox 畫成 24px（1:1），這一顆是 34 的 viewBox
+                畫成 28px（0.824 倍），所以 strokeWidth 要除回去 —— 1.5 / (28/34)
+                ≈ 1.82，畫出來才剛好是 1.5px。以前寫 1.2 的實際粗度只有 0.99px，
+                不滿一個像素就會被抗鋸齒攤成灰的，看起來就像半透明。
+                顏色也直接寫死白色，不吃 currentColor（按鈕停用時會被瀏覽器調淡）。 */}
             <svg width="28" height="18" viewBox="0 0 34 22" fill="none" xmlns="http://www.w3.org/2000/svg"
                  className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-              <path d="M17 2.5 30 8.5 17 14.5 4 8.5Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-              <path d="M4 13 17 19 30 13" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M17 2.5 30 8.5 17 14.5 4 8.5Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" />
+              <path d="M4 13 17 19 30 13" stroke="#fff" strokeWidth="1.82" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             <span className="text-[9px] leading-none font-medium tracking-wide whitespace-nowrap drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
               {hasMergeable
@@ -7412,7 +7470,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
           <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="tune" className="text-xl" fill={activeCategory === 'adjust'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">調節</span>
           </button>
-          <button onClick={() => { setActiveCategory('effects'); setActiveFxId(EFFECT_TOOLS[0].id); setActiveToolId(effectAmountId(EFFECT_TOOLS[0].id)); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
             <Icon name="magic_button" className="text-xl" fill={['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory)} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">特效</span>
           </button>
           <button onClick={() => {

@@ -203,30 +203,63 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       const right = d.id.includes('r');
       const top = d.id === 't' || d.id === 'tl' || d.id === 'tr';
       const bottom = d.id === 'b' || d.id === 'bl' || d.id === 'br';
+      const isCorner = d.id.length === 2;
 
-      if (left) { const nx = Math.max(0, Math.min(s.x + s.w - MIN_CROP, s.x + dx)); w = s.x + s.w - nx; x = nx; }
-      if (right) { w = Math.max(MIN_CROP, Math.min(1 - s.x, s.w + dx)); }
-      if (top) { const ny = Math.max(0, Math.min(s.y + s.h - MIN_CROP, s.y + dy)); h = s.y + s.h - ny; y = ny; }
-      if (bottom) { h = Math.max(MIN_CROP, Math.min(1 - s.y, s.h + dy)); }
+      if (activeRatio === null || stageSize.w === 0 || stageSize.h === 0) {
+        /* 不鎖比例：每一條邊各自跟著手指走，對面那條邊釘住不動。
+           夾的是「這條邊能走到哪」，所以撞到畫面邊緣就停在那裡，
+           再怎麼拖也不會把對面那條邊推出去。 */
+        if (left) { const nx = Math.max(0, Math.min(s.x + s.w - MIN_CROP, s.x + dx)); w = s.x + s.w - nx; x = nx; }
+        if (right) { w = Math.max(MIN_CROP, Math.min(1 - s.x, s.w + dx)); }
+        if (top) { const ny = Math.max(0, Math.min(s.y + s.h - MIN_CROP, s.y + dy)); h = s.y + s.h - ny; y = ny; }
+        if (bottom) { h = Math.max(MIN_CROP, Math.min(1 - s.y, s.h + dy)); }
+      } else {
+        /* 鎖比例。這裡以前有兩個毛病，都改掉了：
 
-      if (activeRatio !== null && stageSize.w > 0 && stageSize.h > 0) {
-        // 鎖比例：normalized 空間的 w/h 要換算過畫面比例才會等於使用者看到的比例
+           ① 頂到邊之後繼續拖，框會從「對角」長出去。
+              原因是算完新的寬高之後，收尾是把「位置」夾回畫面內
+              （x = clamp(x, 0, 1-w)）—— 一旦超出去，被推走的就是那個
+              本來該釘死不動的角。正確的做法是夾「大小」：先算出這個
+              錨點在畫面裡最多能長多大，再把寬高限制在那之內，
+              錨點就永遠不動。
+
+           ② 拖四個角時只認左右、不認上下。
+              原因是舊寫法看到 left||right 就只用寬度去推高度，dy 整個
+              沒用到 —— 手指往下拉沒反應、只有左右滑才會變大小，
+              角也就跟著跑掉、不在手指底下了。
+              現在改成把手指投影到那條對角線上（正交投影），
+              角會盡可能貼著手指走，斜著拉也順。 */
         const nRatio = activeRatio * (stageSize.h / stageSize.w);
-        if (left || right) {
-          const nh = w / nRatio;
-          if (top) y = s.y + s.h - nh;
-          else if (!bottom) y = s.y + s.h / 2 - nh / 2;
-          h = nh;
+
+        // 錨點：拖哪一邊／哪一角，對面那個就釘住（單邊則是另一軸維持置中）
+        const ax = right ? s.x : left ? s.x + s.w : s.x + s.w / 2;
+        const ay = bottom ? s.y : top ? s.y + s.h : s.y + s.h / 2;
+        // 被拖的那一邊／那一角現在被手指帶到哪裡（絕對位置，不是累積量）
+        const px = (right ? s.x + s.w : left ? s.x : s.x + s.w / 2) + dx;
+        const py = (bottom ? s.y + s.h : top ? s.y : s.y + s.h / 2) + dy;
+
+        let want: number;
+        if (isCorner) {
+          // 對角線方向是 (1, 1/nRatio)，把手指的位移投影上去
+          const tx = Math.abs(px - ax), ty = Math.abs(py - ay);
+          const k = 1 / nRatio;
+          want = (tx + ty * k) / (1 + k * k);
+        } else if (left || right) {
+          want = Math.abs(px - ax);
         } else {
-          const nw = h * nRatio;
-          if (left) x = s.x + s.w - nw;
-          else if (!right) x = s.x + s.w / 2 - nw / 2;
-          w = nw;
+          want = Math.abs(py - ay) * nRatio;
         }
-        if (h > 1) { h = 1; w = h * nRatio; }
-        if (w > 1) { w = 1; h = w / nRatio; }
-        x = Math.max(0, Math.min(1 - w, x));
-        y = Math.max(0, Math.min(1 - h, y));
+
+        // 這個錨點在畫面裡最多能長多大（橫豎各算一次，取小的）
+        const maxWx = right ? 1 - ax : left ? ax : 2 * Math.min(ax, 1 - ax);
+        const maxHy = bottom ? 1 - ay : top ? ay : 2 * Math.min(ay, 1 - ay);
+        const lo = Math.max(MIN_CROP, MIN_CROP * nRatio);
+        const hi = Math.max(lo, Math.min(maxWx, maxHy * nRatio));
+
+        w = Math.min(Math.max(want, lo), hi);
+        h = w / nRatio;
+        x = right ? ax : left ? ax - w : ax - w / 2;
+        y = bottom ? ay : top ? ay - h : ay - h / 2;
       }
     }
 
