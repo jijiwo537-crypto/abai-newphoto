@@ -16,62 +16,7 @@ import {
   type EditorParams,
 } from '../components/ImageEditor';
 import { applyGlEffects, hasActiveFx } from './glEffects';
-import { bakeColorLut, bakedToTexture } from './lutBake';
-import { LutGpu } from './lutGpu';
 import { loadCachedLut, saveCachedLut } from './lutStore';
-
-/* 拼圖這邊共用一個 GPU 實例。undefined＝還沒試過，null＝這台裝置沒有 WebGL2。 */
-let gpuInst: LutGpu | null | undefined;
-const getGpu = (): LutGpu | null => {
-  if (gpuInst === undefined) {
-    try { gpuInst = LutGpu.create(); } catch { gpuInst = null; }
-  }
-  return gpuInst && !gpuInst.lost ? gpuInst : null;
-};
-
-/**
- * 用 GPU 把顏色鏈畫到 ctx 上。成功回 true，失敗回 false 讓呼叫端走 CPU。
- * 濾鏡強度用畫布的 globalAlpha 疊 —— 跟 CPU 版的線性混合是同一件事。
- */
-const gpuColorChain = (
-  ctx: CanvasRenderingContext2D, src: Uint8ClampedArray, w: number, h: number,
-  p: EditorParams, lut: { data: Uint8ClampedArray; size: number } | null,
-  amount: number, baseLut: Uint8Array,
-): boolean => {
-  const g = getGpu();
-  if (!g || !g.fits(w, h)) return false;
-  try {
-    if (!g.setSource(src, w, h)) return false;
-    const paint = (film: Uint8ClampedArray | null, filmSize: number): HTMLCanvasElement | null => {
-      const baked = bakeColorLut(
-        (a, d, ww, hh) => processPixels(a, d, ww, hh, p, film, filmSize, baseLut, null, false, IDENTITY_CURVE_LUTS),
-        65,
-      );
-      if (!g.setLut(bakedToTexture(baked), 65)) return null;
-      const drawn = g.draw();
-      if (!drawn) return null;
-      // GPU 的畫布會被下一次 draw 蓋掉，所以先拓到自己的畫布上
-      const keep = document.createElement('canvas');
-      keep.width = w; keep.height = h;
-      keep.getContext('2d')!.drawImage(drawn, 0, 0);
-      return keep;
-    };
-    const needBlend = !!lut && amount < 1;
-    const plain = needBlend ? paint(null, 0) : null;
-    if (needBlend && !plain) return false;
-    const top = paint(lut ? lut.data : null, lut ? lut.size : 0);
-    if (!top) return false;
-    ctx.clearRect(0, 0, w, h);
-    if (plain) ctx.drawImage(plain, 0, 0);
-    ctx.save();
-    if (plain) ctx.globalAlpha = amount;
-    ctx.drawImage(top, 0, 0);
-    ctx.restore();
-    return true;
-  } catch {
-    return false;
-  }
-};
 
 /** 圖層上存的參數，全部都是可選的，沒動過就不存 */
 export interface PhotoFx {
@@ -255,20 +200,6 @@ export function applyPhotoFx(
 
   const baseLut = new Uint8Array(256);
   generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseLut);
-  const amount = (fx.lutAmount ?? 100) / 100;
-
-  /* ── 先試 GPU ─────────────────────────────────────────────────────
-     跟編輯功能同一套：整條顏色鏈是純粹的 RGB→RGB，先用**現有的 processPixels
-     本身**在 65³ 個格點上算一次烤成查色表，再讓 GPU 一個 draw call 查完整張圖。
-     顏色公式一行都沒重寫，兩邊仍然是同一套色彩邏輯。
-
-     這裡完全不需要把像素讀回來 —— 後面的噪點、模糊、柔光全部是在畫布上合成的，
-     沒有人要 dest 那份陣列。所以拼圖這條路比編輯還乾淨。
-
-     失敗（沒 WebGL2、上下文被收走、圖超過貼圖上限）就原封不動走下面的 CPU。 */
-  if (gpuColorChain(ctx, src, out.width, out.height, p, lut, amount, baseLut)) {
-    // GPU 已經把顏色畫上去了，下面的 CPU 路徑整段跳過
-  } else {
   processPixels(
     src, dest, out.width, out.height, p,
     lut ? lut.data : null, lut ? lut.size : 0,
@@ -276,6 +207,7 @@ export function applyPhotoFx(
   );
 
   // 濾鏡強度：跟原本沒上濾鏡的結果混合
+  const amount = (fx.lutAmount ?? 100) / 100;
   if (lut && amount < 1) {
     const plain = new Uint8ClampedArray(src.length);
     processPixels(
@@ -290,7 +222,6 @@ export function applyPhotoFx(
     }
   }
   ctx.putImageData(img, 0, 0);
-  }
 
   // 特效的半徑是以 1080 長邊為基準，換算到目前這張的大小
   const scale = Math.max(out.width, out.height) / 1080;
