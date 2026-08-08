@@ -6704,62 +6704,92 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     '韓語': s => HANGUL.test(s),
     '英語': s => !HAN.test(s) && !KANA.test(s) && !HANGUL.test(s),
   };
-  /* 每個語言分頁對應到 Apple 的哪些曲風。榜單的每一筆自己就帶著曲風，
-     比用文字猜可靠太多 —— 這是分辨韓語歌唯一靠得住的方法。 */
-  const LANG_GENRE: Record<string, { ids: string[]; re: RegExp }> = {
-    '韓語': { ids: ['51'], re: /k-?pop|케이팝/i },
-    '日語': { ids: ['27', '28', '29', '30'], re: /j-?pop|anime|enka|kayokyoku|アニメ/i },
-    '華語': { ids: ['1244', '1245', '1246', '1247'], re: /chinese|mandopop|cantopop|華語|國語|粵語/i },
-    '英語': { ids: [], re: /^$/ },
+  /* 每個語言對應到的曲風名稱。各地區商店回傳的曲風名是在地語言的
+     （韓國回「케이팝」、日本回「J-Pop」、台灣回「華語」），所以全部都要認。 */
+  const LANG_RE: Record<string, RegExp> = {
+    '韓語': /k-?pop|케이팝|韓國|韓語|韩语/i,
+    '日語': /j-?pop|anime|enka|kayokyoku|アニメ|演歌|歌謡|日本/i,
+    '華語': /mandopop|cantopop|chinese|華語|國語|国语|粵語|粤语|中文/i,
+  };
+  /** 只要沾到這些曲風就不算「英語歌」—— 美國榜上也有 K-Pop 與 J-Pop */
+  const ASIAN_RE = /k-?pop|j-?pop|anime|enka|kayokyoku|mandopop|cantopop|chinese|케이팝|アニメ|演歌|華語|國語|粵語|中文/i;
+
+  /**
+   * 曲風編號不用猜 —— 直接跟 Apple 要那個地區的曲風表，照名字對出編號。
+   * 端點：MZStoreServices 的 genres，id=34 是「音樂」那一支，底下是所有子曲風。
+   * 一個地區只問一次，之後放記憶體。直連被 IP 鎖住時一樣走轉送。
+   */
+  const genreTree = useRef<Map<string, { id: string; name: string }[]>>(new Map());
+  const loadGenres = async (store: string): Promise<{ id: string; name: string }[]> => {
+    const hit = genreTree.current.get(store);
+    if (hit) return hit;
+    const url = `https://itunes.apple.com/WebObjects/MZStoreServices.woa/ws/genres?id=34&cc=${store}`;
+    const flat: { id: string; name: string }[] = [];
+    const walk = (node: any) => {
+      if (!node || typeof node !== 'object') return;
+      if (node.id && node.name) flat.push({ id: String(node.id), name: String(node.name) });
+      if (node.subgenres) Object.values(node.subgenres).forEach(walk);
+    };
+    const grab = async (u: string, ms: number) => {
+      const d = await getJSON(u, ms);
+      Object.values(d || {}).forEach(walk);
+    };
+    try {
+      await grab(url, 8000);
+    } catch {
+      for (const relay of RELAYS) {
+        try { await grab(relay(url), 9000); break; } catch { /* 換下一條 */ }
+      }
+    }
+    if (!flat.length) failLog.current.push(`${store}曲風表:空`);
+    genreTree.current.set(store, flat);
+    return flat;
+  };
+  /** 這個地區裡，屬於這個語言的所有曲風編號 */
+  const genreIdsFor = async (store: string, lang: string): Promise<Set<string>> => {
+    const re = LANG_RE[lang];
+    if (!re) return new Set();
+    const flat = await loadGenres(store);
+    const ids = new Set(flat.filter(g => re.test(g.name)).map(g => g.id));
+    // 問不到曲風表時，至少還有一個已經確認過的：51 就是 K-Pop
+    if (!ids.size && lang === '韓語') ids.add('51');
+    return ids;
   };
   /**
-   * 從一份榜單挑出某個語言的歌。三種訊號取聯集，能撈多少是多少：
-   *   1. 榜單自己標的曲風（K-Pop / J-Pop / Mandopop…）—— 最準。
-   *   2. 歌名歌手用的文字（漢字／假名／諺文）—— 中日文很準，韓文不準。
-   *   3. 「只在這個地區的榜上、沒在美國榜上」—— 西洋熱門歌到哪都上榜，
-   *      只在本地上榜的幾乎一定是本地語言的歌。這一條完全不必猜編號，
-   *      而且剛好補上韓文那個「團名是拉丁字母」的缺口。
-   * 三種都撈不到就整份給，只把像的排前面，一首都不丟。
+   * 從一份榜單挑出某個語言的歌。
+   *
+   * 這裡只用「Apple 自己標在那首歌上的曲風」，而且是**過濾**不是聯集。
+   * 上一版拿三種訊號取聯集，其中「只在本地上榜就算本地歌」那一條會把
+   * 在台灣、日本榜上的 K-Pop 也一起算進去 —— 那就是「各語言都混進韓文歌」
+   * 的原因。曲風是 Apple 標的，K-Pop 就是 K-Pop，不會跑到華語那一頁去。
+   *
+   * 曲風對不上（極少數沒標曲風的）才退回看文字，而且一樣是過濾。
+   * 榜單本身就是「近期最多人聽」，所以過濾完的順序仍然是熱門排名。
    */
   const pickLang = (
-    list: Track[], lang?: string, globalRef?: Track[],
+    list: Track[], lang: string | undefined, ids: Set<string>,
   ): { list: Track[]; how: string } => {
     if (!lang || !list.length) return { list, how: '整份' };
-    if (lang === '英語') {
-      const t = LANG_TEST['英語'];
-      const hit = list.filter(x => t(`${x.name} ${x.artist}`));
-      return hit.length >= 5 ? { list: hit, how: '文字' } : { list, how: '整份' };
-    }
-    const g = LANG_GENRE[lang];
     const test = LANG_TEST[lang];
-    const globalArtists = new Set((globalRef || []).map(t => t.artist.toLowerCase()));
-    const how: string[] = [];
-    const keep = new Set<Track>();
-    if (g) {
-      const byGenre = list.filter(t =>
-        (t.genreId && g.ids.includes(t.genreId)) || (t.genre && g.re.test(t.genre)));
-      if (byGenre.length) { byGenre.forEach(t => keep.add(t)); how.push('曲風'); }
+    if (lang === '英語') {
+      // 美國榜上也有 K-Pop、J-Pop，靠曲風把它們拿掉，再要求歌名歌手是純拉丁字母
+      const hit = list.filter(t =>
+        !(t.genre && ASIAN_RE.test(t.genre)) && !ids.has(t.genreId || '')
+        && test(`${t.name} ${t.artist}`));
+      return hit.length >= 5 ? { list: hit, how: '曲風+文字' } : { list, how: '整份' };
     }
+    const re = LANG_RE[lang];
+    const byGenre = list.filter(t =>
+      (t.genreId && ids.has(t.genreId)) || (t.genre && re && re.test(t.genre)));
+    if (byGenre.length >= 5) return { list: byGenre, how: '曲風' };
     if (test) {
       const byText = list.filter(t => test(`${t.name} ${t.artist}`));
-      if (byText.length) { byText.forEach(t => keep.add(t)); how.push('文字'); }
+      // 曲風與文字取聯集（同一個語言的兩種證據），但絕不放進別語言的歌
+      const merged = list.filter(t =>
+        byGenre.includes(t) || byText.includes(t));
+      if (merged.length) return { list: merged, how: byGenre.length ? '曲風+文字' : '文字' };
     }
-    if (globalArtists.size) {
-      const localOnly = list.filter(t => !globalArtists.has(t.artist.toLowerCase()));
-      if (localOnly.length) { localOnly.forEach(t => keep.add(t)); how.push('在地'); }
-    }
-    if (keep.size >= 5) {
-      // 照原本的榜單順序輸出，不要因為用 Set 就把名次打亂
-      return { list: list.filter(t => keep.has(t)), how: how.join('+') };
-    }
-    if (test) {
-      return {
-        list: [...list.filter(t => test(`${t.name} ${t.artist}`)),
-               ...list.filter(t => !test(`${t.name} ${t.artist}`))],
-        how: '排序',
-      };
-    }
-    return { list, how: '整份' };
+    return { list: byGenre, how: '曲風' };
   };
 
   /**
@@ -6881,15 +6911,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const stores = src.kind === 'korean' ? ['kr'] : src.stores;
       const lang = src.kind === 'korean' ? '韓語' : src.lang;
       const got = await Promise.all(stores.map(s => oneStore(s)));
+      // 先跟 Apple 問出「這個地區裡屬於這個語言的曲風編號」，不要自己編
+      const idsByStore = lang
+        ? await Promise.all(stores.map(s => genreIdsFor(s, lang).catch(() => new Set<string>())))
+        : stores.map(() => new Set<string>());
       const byStore: Record<string, Track[]> = {};
       const hows = new Set<string>();
-      // 「在地」那個訊號要拿美國榜當對照組：西洋熱門歌到哪都上榜
-      const globalRef = lang && lang !== '英語'
-        ? (chartPool.current.get('us') || await oneStore('us').then(r => r.list))
-        : undefined;
       stores.forEach((s, i) => {
         hows.add(got[i].how);
-        const r = pickLang(got[i].list, lang, globalRef);
+        const r = pickLang(got[i].list, lang, idsByStore[i]);
         byStore[s] = r.list;
         if (lang) hows.add(r.how);
       });
