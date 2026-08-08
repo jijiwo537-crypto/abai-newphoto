@@ -6605,14 +6605,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     }
   };
 
-  /** 一次把一整批歌曲編號換成試聽網址（一個請求最多 200 首，不是一首一個請求） */
+  /** 一次把一整批歌曲編號換成試聽網址（一個請求最多 190 首，不是一首一個請求） */
   const lookupPreviews = async (ids: string[], store: string): Promise<Map<string, Track>> => {
     const m = new Map<string, Track>();
     if (!ids.length) return m;
     const url = 'https://itunes.apple.com/lookup?entity=song&limit=200'
       + `&country=${store}&id=${ids.slice(0, 190).join(',')}`;
-    const got = await raceBoth(`${store}查`, url, cb => `${url}&callback=${cb}`, fromItunes)
+    let got = await raceBoth(`${store}查`, url, cb => `${url}&callback=${cb}`, fromItunes)
       .catch(() => [] as Track[]);
+    // 直接打被 IP 鎖住（403）時換一條線 —— 這一步就是韓語能不能有歌的關鍵
+    if (!got.length) got = await viaRelay(`${store}查`, url, fromItunes);
     got.forEach(t => m.set(t.id.replace(/^i/, ''), t));
     return m;
   };
@@ -6649,12 +6651,40 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      記下來先別再打：既不會拖慢畫面，也不會把鎖定時間一直往後推。 */
   const appleBlockedUntil = useRef(0);
 
+  /**
+   * 換一條線再問一次 Apple。
+   *
+   * 重點不是繞過 CORS（Apple 那兩支本來就有給 CORS 標頭），而是**換一個出口 IP**。
+   * Apple 的搜尋／查詢服務是「照 IP」限流的，一旦被鎖，同一支手機怎麼重試都是
+   * 403 —— 那正是「搜不到歌」和「榜單查不到試聽網址（所以韓語只剩四首）」的
+   * 共同原因。透過公用轉送服務等於從別的 IP 出去，就繞開了那個鎖。
+   * 只在直接打失敗時才用，正常情況完全不會經過它。
+   */
+  const RELAYS = [
+    (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+    (u: string) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+  ];
+  const viaRelay = async (tag: string, url: string, parse: (d: any) => Track[]): Promise<Track[]> => {
+    for (let i = 0; i < RELAYS.length; i++) {
+      try {
+        const list = parse(await getJSON(RELAYS[i](url), 9000));
+        if (list.length) return list;
+        failLog.current.push(`${tag}轉${i + 1}:0筆`);
+      } catch (e: any) {
+        failLog.current.push(`${tag}轉${i + 1}:${String(e?.message || e).slice(0, 14)}`);
+      }
+    }
+    return [];
+  };
+
   /* 搜尋結果照關鍵字存起來：退格、改字、切回同一個字都不必再打一次網路。
      Apple 的搜尋端點有流量上限，超過之後那段時間會整片回 403 ——
      少送一次就少一次被鎖的機會。 */
   const searchCache = useRef<Map<string, Track[]>>(new Map());
   /** 這次開啟已經抓下來的榜單，搜尋全掛時就在這裡面找，完全不用網路 */
   const chartPool = useRef<Map<string, Track[]>>(new Map());
+  /** 每次重新打開就換一個起點，推薦才不會每次都是同樣的開頭 */
+  const rotateRef = useRef(0);
   /** 這份清單是從哪裡來的：暫時顯示在畫面上，好判斷是哪一條路在動 */
   const [musicSource, setMusicSource] = useState('');
 
@@ -6756,7 +6786,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     lead?: { store: string; count: number },
   ): Track[] => {
     const q: Record<string, Track[]> = {};
-    pattern.forEach(k => { if (!q[k]) q[k] = [...(lists[k] || [])]; });
+    /* rotate：每次重新打開面板換一個起點。榜單本身是排名順序，
+       不換起點的話每次進來看到的開頭永遠是同樣那幾首。 */
+    pattern.forEach(k => {
+      if (q[k]) return;
+      const src = lists[k] || [];
+      const r = src.length > 12 ? rotateRef.current % src.length : 0;
+      q[k] = [...src.slice(r), ...src.slice(0, r)];
+    });
     const out: Track[] = [];
     const seen = new Set<string>();
     const push = (t?: Track) => {
@@ -6892,11 +6929,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
          完全不用網路，所以一定會有反應 —— 榜上有的歌手（BTS、YOASOBI…）
          照樣搜得到，不會再出現「打了字什麼都沒有」。 */
       if (!list.length) {
-        // Deezer 再換一種寫法試一次（同一支 API 有兩種路徑寫法）
-        const alt = 'https://api.deezer.com/search/track?limit=50&q=' + encodeURIComponent(src.term);
-        const dz2 = await raceBoth('DZ2', alt, cb => `${alt}&output=jsonp&callback=${cb}`, fromDeezer)
-          .catch(() => [] as Track[]);
-        if (dz2.length) { list = weave({ dz: dz2 }, ['dz']); how = 'Deezer2'; }
+        /* 直接打 Apple 被 IP 鎖住時，換一條線再問一次。
+           iTunes 的搜尋涵蓋整個 Apple Music 曲庫，這一步就是「什麼歌都搜得到」
+           的關鍵；同時 Deezer 也換一種寫法再試一次。 */
+        const appleUrl = 'https://itunes.apple.com/search?media=music&entity=song&limit=50'
+          + `&country=tw&term=${encodeURIComponent(src.term)}`;
+        const usUrl = appleUrl.replace('country=tw', 'country=us');
+        const altDz = 'https://api.deezer.com/search/track?limit=50&q=' + encodeURIComponent(src.term);
+        const [ap2, dz2] = await Promise.all([
+          viaRelay('搜', appleUrl, fromItunes),
+          raceBoth('DZ2', altDz, cb => `${altDz}&output=jsonp&callback=${cb}`, fromDeezer)
+            .catch(() => [] as Track[]),
+        ]);
+        let ap3: Track[] = [];
+        if (!ap2.length && !dz2.length) ap3 = await viaRelay('搜us', usUrl, fromItunes);
+        const merged = weave({ ap: ap2.length ? ap2 : ap3, dz: dz2 }, ['ap', 'dz']);
+        if (merged.length) {
+          list = merged;
+          how = (ap2.length || ap3.length) ? 'Apple(轉送)' : 'Deezer2';
+        }
       }
       if (!list.length) {
         const q = src.term.toLowerCase();
@@ -6934,6 +6985,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (!musicOpen) return;
     const t = setTimeout(() => setMusicShown(true), 16);
     return () => clearTimeout(t);
+  }, [musicOpen]);
+
+  /* 每次重新打開都重抓一次榜、並換一個起點。
+     不清的話，同一次開著 app 的期間看到的永遠是同一批、同一個順序 ——
+     「每次進來都是固定那幾首」。榜單本身 Apple 每天更新，重抓就會拿到最新的；
+     起點再輪一格，推薦的開頭也不會每次都一樣。 */
+  useEffect(() => {
+    if (!musicOpen) return;
+    chartPool.current.clear();
+    searchCache.current.clear();
+    rotateRef.current = Math.floor(Math.random() * 12);
+    // 重開就回到推薦、清掉上次打的字，不然會停在上次的搜尋結果
+    setMusicQuery('');
+    setMusicTab('為你推薦');
   }, [musicOpen]);
 
   /* 分頁或搜尋字改變就重新拿一份。
