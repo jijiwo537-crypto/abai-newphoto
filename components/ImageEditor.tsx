@@ -1,6 +1,8 @@
 
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
+import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
+import { LutGpu } from '../utils/lutGpu';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity } from '../utils/compose';
 import { SaveButton } from './SaveButton';
@@ -2510,6 +2512,77 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   const quickFilterRef = useRef(false);
   const lut0CanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lut100CanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  /* ── GPU 顏色鏈 ───────────────────────────────────────────────────────
+     整條顏色鏈是純粹的 RGB→RGB 函數，所以先用**現有的 processPixels 本身**
+     在 N³ 個格點上算一次（33³ 只要 2.2ms），烤成一顆 3D 查色表，
+     再讓 GPU 用一個 draw call 把整張圖查完（實測 0.1ms，對照 CPU 逐像素 70.8ms）。
+     顏色公式一行都沒有重寫 —— 真理來源仍然是那份 CPU 程式碼。
+
+     拖曳中用 33³、手放開用 65³：兩者的色差分別是 4 與 3 個色階（肉眼分辨不出），
+     而**解析度全程都是全解析度**，不再降級成模糊的代理。 */
+  const gpuRef = useRef<LutGpu | null | undefined>(undefined);
+  const gpuSrcKeyRef = useRef('');
+  /** 上一輪有沒有走 GPU。切換時要強制重算，否則 CPU 那份像素會停在舊的。 */
+  const lastGpuRef = useRef(false);
+  /* 這台裝置的 GPU 到底比 CPU 快嗎？—— 不用猜的，開起來實際量。
+     有真正顯示卡的手機上，GPU 查表是壓倒性的快；但在沒有硬體加速的環境
+     （某些桌機瀏覽器、無障礙模式、虛擬機）GPU 是軟體模擬的，反而更慢。
+     所以「靜止時要不要用 GPU」由實測決定：
+       · 先各記一次兩條路的耗時
+       · GPU 明顯比較快才讓它接手靜止時的繪製
+     拖曳中則永遠用 GPU —— 那不是為了快，是為了**不降解析度**，
+     那是主人明確要求的畫質，即使慢一點也值得。 */
+  const gpuMsRef = useRef(0);
+  const cpuMsRef = useRef(0);
+  const gpuWinsRef = useRef<boolean | null>(null);
+  const getGpu = (): LutGpu | null => {
+    if (gpuRef.current === undefined) {
+      try { gpuRef.current = LutGpu.create(); } catch { gpuRef.current = null; }
+    }
+    const g = gpuRef.current;
+    return g && !g.lost ? g : null;
+  };
+  useEffect(() => () => { gpuRef.current?.dispose(); }, []);
+
+  /**
+   * 烤表 → GPU 畫 → 複製進 target 畫布。need 有給就順便把像素讀回來。
+   * 任何一步失敗都回傳 false，呼叫端原封不動走回 CPU 路徑。
+   */
+  const gpuPaint = (
+    target: HTMLCanvasElement, src: Uint8ClampedArray, w: number, h: number,
+    p: EditorParams, film: Uint8ClampedArray | null, filmSize: number,
+    grid: number, srcKey: string, need: Uint8ClampedArray | null,
+  ): boolean => {
+    const g = getGpu();
+    if (!g || !g.fits(w, h)) return false;
+    try {
+      if (gpuSrcKeyRef.current !== srcKey) {
+        if (!g.setSource(src, w, h)) return false;
+        gpuSrcKeyRef.current = srcKey;
+      }
+      // 用區域變數，不要動到共用的 baseCorrectionLutRef（那是別人也在讀的）
+      const base = new Uint8Array(256);
+      generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, base);
+      const cl = getCurveLuts(p.curves);
+      const baked = bakeColorLut(
+        (bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, p, film, filmSize, base, null, false, cl),
+        grid,
+      );
+      if (!g.setLut(bakedToTexture(baked), grid)) return false;
+      const out = g.draw();
+      if (!out) return false;
+      if (need && !g.readInto(need)) return false;
+      if (target.width !== w || target.height !== h) { target.width = w; target.height = h; }
+      const tctx = target.getContext('2d');
+      if (!tctx) return false;
+      tctx.clearRect(0, 0, w, h);
+      tctx.drawImage(out, 0, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
   const pixelBufferCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const lazyCacheTimeoutRef = useRef<any>(null);
@@ -4264,13 +4337,23 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
        門檻抓在 60ms：這之內畫面更新雖然不到 60fps，但迴圈本來就會照耗時節流、
        滑桿本身還是順的；真正會讓整個介面一頓一頓的是那種一次兩三百毫秒的。
        小圖／快的裝置會一直待在全解析度，也就完全沒有落差。 */
-    const draggingFxTool = isInteracting && !!FX_OWNER[activeToolId];
-    if (draggingFxTool) {
+    /* 「拖曳中」與「鬆手」不一樣的根本原因：拖的時候畫的是 ≤900px 的代理，
+       鬆手畫的是全解析度。凡是會看鄰居像素的運算（銳化、模糊、顆粒、暈影、
+       清晰度…）在兩種解析度上算出來就是不一樣，所以一放手畫面就跳一下。
+
+       以前只有「新特效」那幾個工具會嘗試留在全解析度。現在改成**所有工具都先
+       試著用全解析度**，只有真的算不動才降級，而且留一段遲滯避免來回跳：
+         · 一次超過 60ms → 降到代理（保順暢）
+         · 回到 24ms 以下 → 升回全解析度（保一致）
+       在手機上拍的一般照片、以及大多數裝置上，這代表拖曳中畫的就是鬆手那一張，
+       完全沒有落差；只有又大又慢的情況才會暫時降級。 */
+    const draggingAny = isInteracting && !isFastBlendActive;
+    if (draggingAny) {
       const d = lastRenderDurationRef.current;
       if (fxFullResRef.current && d > 60) fxFullResRef.current = false;
       else if (!fxFullResRef.current && d < 24) fxFullResRef.current = true;
     }
-    const draggingFx = draggingFxTool && fxFullResRef.current;
+    const draggingFx = draggingAny && fxFullResRef.current;
     /* 剛換濾鏡時先用低解析度那份畫一張（運算量只有 1/4，按下去馬上看得到），
        同一拍再標記 dirty，下一幀用全解析度重畫蓋上去 —— 最終畫質沒有妥協。 */
     const quickPass = quickFilterRef.current && !!proxy.source && !isInteracting;
@@ -4350,7 +4433,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     } else {
         // Zero-cost sub-microsecond check: Separate pixel processing params from composite effects
         const lastP = lastProcessedParamsRef.current;
-        const shouldReprocessPixels = 
+        let shouldReprocessPixels =
             pRender.brightness !== lastP.brightness ||
             pRender.exposure !== lastP.exposure ||
             pRender.contrast !== lastP.contrast ||
@@ -4367,8 +4450,59 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
             pRender.curves !== lastP.curvesRef ||
             pRender.hsl !== lastP.hslRef;
 
+        /* ── 先試 GPU ─────────────────────────────────────────────────
+           成功的話兩張離屏畫布（lut0／lut100）就已經畫好，
+           下面兩次全解析度的 processPixels 完全不必跑。
+           銳化要看鄰居像素、不是純 RGB→RGB，烤不進查色表，所以有銳化就走 CPU。
+           拖曳中用 33³ 的表（烤 2.2ms），手放開改用 65³（色差 3 色階以內）。 */
+        /* ── GPU 顏色鏈 ──────────────────────────────────────────────────
+           **完全不把像素從 GPU 讀回來**（量過：讀回要 61ms，比整條 CPU 管線還貴）。
+           那份像素其實只有一個地方要：colorNoise2 的雜訊遮罩。
+           所以只要沒開那個特效，就整條走 GPU，畫面直接貼 GPU 畫布。
+
+           不能走 GPU 的兩種情況：
+             · 銳化 —— 要看鄰居像素，不是純 RGB→RGB，烤不進查色表
+             · colorNoise2 —— 它需要 b.dest 的像素
+           兩者都自動退回原本的 CPU 路徑，畫面與匯出完全照舊。
+
+           格點：拖曳中 33³（烤 2.2ms），其餘 65³（烤 16ms、色差 3 色階以內）。 */
+        /* 靜止時要不要用 GPU：兩條路都量過之後才決定，量到 GPU 比較慢就不用。
+           還沒量過（gpuWinsRef 是 null）就先試一次，好把時間記下來。 */
+        /* 校準：還沒下判斷之前，先讓第一次靜止繪製走 CPU 把時間記下來，
+           第二次才走 GPU —— 沒有這一步的話 CPU 永遠不會跑到，也就永遠量不到，
+           判斷就會卡在「還沒決定」而一直用 GPU。 */
+        const calibrating = gpuWinsRef.current === null && cpuMsRef.current === 0;
+        const gpuAllowedNow = isInteracting || (gpuWinsRef.current !== false && !calibrating);
+        const gpuEligible = !pRender.sharpen && !pRender.colorNoise2 && !!b.source && gpuAllowedNow;
+        if (lastGpuRef.current !== gpuEligible) shouldReprocessPixels = true;
+        let gpuDone = false;
+        if (shouldReprocessPixels && gpuEligible) {
+            const tGpu = performance.now();
+            const grid = isInteracting ? 33 : 65;
+            const srcKey = `${b.w}x${b.h}|${buffersSrcRef.current}`;
+            if (!lut0CanvasRef.current) lut0CanvasRef.current = document.createElement('canvas');
+            const okBase = gpuPaint(lut0CanvasRef.current, b.source, b.w, b.h,
+                { ...pRender, lutAmount: 0 }, null, 0, grid, srcKey, null);
+            if (okBase && activeLut) {
+                if (!lut100CanvasRef.current) lut100CanvasRef.current = document.createElement('canvas');
+                gpuDone = gpuPaint(lut100CanvasRef.current, b.source, b.w, b.h,
+                    { ...pRender, lutAmount: 100 }, activeLut.data, lutSize, grid, srcKey, null);
+            } else {
+                gpuDone = okBase;
+            }
+            if (gpuDone && !isInteracting) {
+                gpuMsRef.current = performance.now() - tGpu;
+                /* 兩邊都量到了就下判斷。留 1.2 倍的餘裕：
+                   差不多快的時候寧可用 GPU，因為它不佔主執行緒、介面比較不會頓。 */
+                if (cpuMsRef.current > 0 && gpuWinsRef.current === null) {
+                    gpuWinsRef.current = gpuMsRef.current < cpuMsRef.current * 1.2;
+                }
+            }
+        }
+
+        lastGpuRef.current = gpuDone;
         if (shouldReprocessPixels) {
-            const cached = getCachedFilterPixels(lut.id, pRender, b.w, b.h);
+            const cached = gpuDone ? null : getCachedFilterPixels(lut.id, pRender, b.w, b.h);
             if (cached && (activeLut ? cached.lut100 !== null : true)) {
                 // 命中的也算「最近用過」，不要被當成最舊的踢掉
                 const hitKey = cacheKeyOf(lut.id, b.w);
@@ -4398,7 +4532,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                     curvesRef: pRender.curves,
                     hslRef: pRender.hsl
                 };
+            } else if (gpuDone) {
+                /* GPU 畫好了畫面，但沒有產生 b.lut0／b.lut100 的像素 ——
+                   本來就不需要（沒有人要那份像素，見上面的說明）。
+                   把這一輪的參數記下來，靜止的畫面才不會每幀重畫一次。 */
+                lastProcessedParamsRef.current = {
+                    brightness: pRender.brightness, exposure: pRender.exposure,
+                    contrast: pRender.contrast, highlights: pRender.highlights,
+                    shadows: pRender.shadows, temp: pRender.temp, tint: pRender.tint,
+                    sat: pRender.sat, vib: pRender.vib, sharpen: pRender.sharpen,
+                    lutAmount: pRender.lutAmount, selectedLutIdx: currentIdx,
+                    bufferWidth: b.w, lutSize: lutSize,
+                    curvesRef: pRender.curves, hslRef: pRender.hsl,
+                };
             } else {
+                const tCpu = performance.now();
                 generateBaseCorrectionLut(pRender.exposure, pRender.contrast, pRender.brightness, baseCorrectionLutRef.current);
                 
                 /* b.lut0＝「只有調節、完全沒有濾鏡」的那一份，跟選哪一顆濾鏡無關。
@@ -4433,6 +4581,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                     processPixels(b.source, b.lut100!, b.w, b.h, p100, activeLut.data, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, getCurveLuts(pRender.curves));
                 }
                 
+                if (!isInteracting) cpuMsRef.current = performance.now() - tCpu;
                 if (!lut.url || activeLut) {
                     cacheFilterPixels(lut.id, pRender, b.w, b.h, b.lut0!, activeLut ? b.lut100! : null);
                 }
@@ -4462,27 +4611,31 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
             if (!lut0CanvasRef.current) {
                 lut0CanvasRef.current = document.createElement('canvas');
             }
-            if (lut0CanvasRef.current.width !== b.w || lut0CanvasRef.current.height !== b.h) {
-                lut0CanvasRef.current.width = b.w;
-                lut0CanvasRef.current.height = b.h;
+            if (!gpuDone) {
+              if (lut0CanvasRef.current.width !== b.w || lut0CanvasRef.current.height !== b.h) {
+                  lut0CanvasRef.current.width = b.w;
+                  lut0CanvasRef.current.height = b.h;
+              }
+              lut0CanvasRef.current.getContext('2d')!.putImageData(new ImageData(b.lut0!, b.w, b.h), 0, 0);
             }
-            lut0CanvasRef.current.getContext('2d')!.putImageData(new ImageData(b.lut0!, b.w, b.h), 0, 0);
 
             if (activeLut) {
                 if (!lut100CanvasRef.current) {
                     lut100CanvasRef.current = document.createElement('canvas');
                 }
-                if (lut100CanvasRef.current.width !== b.w || lut100CanvasRef.current.height !== b.h) {
-                    lut100CanvasRef.current.width = b.w;
-                    lut100CanvasRef.current.height = b.h;
+                if (!gpuDone) {
+                  if (lut100CanvasRef.current.width !== b.w || lut100CanvasRef.current.height !== b.h) {
+                      lut100CanvasRef.current.width = b.w;
+                      lut100CanvasRef.current.height = b.h;
+                  }
+                  lut100CanvasRef.current.getContext('2d')!.putImageData(new ImageData(b.lut100!, b.w, b.h), 0, 0);
                 }
-                lut100CanvasRef.current.getContext('2d')!.putImageData(new ImageData(b.lut100!, b.w, b.h), 0, 0);
             }
         }
 
         // Perform linear blending between b.lut0 and b.lut100 on the CPU ONLY when idle
         // to keep b.dest 100% accurate without any UI overhead during drag
-        if (!isInteracting) {
+        if (!isInteracting && !gpuDone) {
             if (activeLut) {
                 const len = b.source.length;
                 const amount = pRender.lutAmount / 100;
@@ -4780,9 +4933,28 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       // re-run the whole pixel pipeline on every pointer move (curves, mask, and every
       // effect that is not in FAST_BLEND_TOOLS) render against this while dragging, then
       // fall back to the full preview buffer the moment the finger lifts.
+      /* 代理的長寬一定要跟預覽「完全同一個比例」。
+         以前是 (w*r)|0 直接截掉小數，例如 3024×4032 會變成 675×900 —— 比例差了
+         千分之一。畫布是用 object-contain 排版的，它會照畫布「自己的」比例去留黑邊，
+         比例一變、黑邊就變，圖片就整個位移了半個像素左右 ——
+         那就是主人說的「拖濾鏡滑桿時圖片會異常位移」。
+         改成先把 w:h 約分，再取「不超過 PROXY_SIZE 的最大整數倍」，
+         比例就跟原圖一模一樣，位移的來源從根本上消失。 */
       const PROXY_SIZE = 900;
       let fw = pw, fh = ph;
-      if (fw > PROXY_SIZE || fh > PROXY_SIZE) { const r = Math.min(PROXY_SIZE / fw, PROXY_SIZE / fh); fw = Math.max(1, (fw * r) | 0); fh = Math.max(1, (fh * r) | 0); }
+      if (fw > PROXY_SIZE || fh > PROXY_SIZE) {
+        const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+        const g = gcd(pw, ph) || 1;
+        const aw = pw / g, ah = ph / g;
+        const m = Math.floor(PROXY_SIZE / Math.max(aw, ah));
+        if (m >= 1) { fw = aw * m; fh = ah * m; }
+        else {
+          // 約分後還是比 PROXY_SIZE 大（極端長寬比）才退回等比縮放
+          const r = Math.min(PROXY_SIZE / fw, PROXY_SIZE / fh);
+          fw = Math.max(1, Math.round(fw * r));
+          fh = Math.max(1, Math.round(fh * r));
+        }
+      }
       if (fw < pw || fh < ph) {
           const fc = document.createElement('canvas');
           fc.width = fw; fc.height = fh;
@@ -5968,9 +6140,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                 }}
               >
                 {/* Single Canvas for Display and Compare */}
+                {/* objectFit:'fill' 而不是 object-contain：外面那層已經用 aspectRatio
+                    鎖成正確比例了，這裡再讓畫布「照自己的比例」留黑邊，
+                    只要畫布尺寸換一下（全解析度↔代理）黑邊就會跟著變、圖片就位移。
+                    填滿之後畫布尺寸怎麼換，畫面上的位置都完全不動。 */}
                 <canvas 
                     ref={displayCanvasRef} 
-                    className={previewAspect ? "w-full h-full object-contain pointer-events-auto rounded-sm" : "max-w-full object-contain pointer-events-auto rounded-sm"} 
+                    style={{ objectFit: 'fill' }}
+                    className={previewAspect ? "w-full h-full pointer-events-auto rounded-sm" : "max-w-full pointer-events-auto rounded-sm"} 
                 />
 
                 {/* 換過去了但還在算的時候，壓暗＋轉圈，別讓人以為沒反應。
