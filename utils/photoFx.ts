@@ -35,7 +35,13 @@ const getGpu = (): LutGpu | null => {
   if (gpuInst === undefined) {
     try { gpuInst = LutGpu.create(); } catch { gpuInst = null; }
   }
-  return gpuInst && !gpuInst.lost ? gpuInst : null;
+  /* 掉了就把它清掉，下一次呼叫會建一個新的 —— 不能一掉就永久退回 CPU */
+  if (gpuInst && gpuInst.lost) {
+    gpuInst = undefined;
+    gpuSrcKey = '';
+    return null;
+  }
+  return gpuInst || null;
 };
 let gpuSrcKey = '';
 let gpuC0: HTMLCanvasElement | null = null;
