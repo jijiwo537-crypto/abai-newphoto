@@ -6383,10 +6383,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
   /* ---- IG 貼文預覽 ---- */
   /**
-   * IG 動態支援的貼文比例：正方形 1:1、直式 4:5 與 3:4、橫式 1.91:1。
-   * 目前這一頁的比例不在裡面（例如 2:3、9:16）就照 IG 的做法塞進直式 3:4。
+   * 直式 2:3 與 9:16 比 IG 的極限（4:5）還要更長，IG 根本吃不下，
+   * 預覽出來也不是發文後的樣子 —— 這兩種比例直接不給預覽，
+   * 「更多」選單裡連那顆按鈕都不出現（不用跳任何提示）。
+   * 橫過來的 3:2、16:9 在 IG 的橫式範圍內，照常可以預覽。
    */
-  const IG_RATIOS = [1, 4 / 5, 3 / 4, 1.91];
+  const igPreviewSupported = (() => {
+    if (previewH <= previewW) return true;          // 正方形與橫式都沒問題
+    const r = previewW / previewH;
+    return !( Math.abs(r - 2 / 3) < 0.01 || Math.abs(r - 9 / 16) < 0.01 );
+  })();
   const igStripRef = useRef<HTMLDivElement>(null);
   const igTrackRef = useRef<HTMLDivElement>(null);
   const igDragRef = useRef<{ x0: number; y0: number; t0: number; dx: number; id: number; lock: '' | 'x' | 'y' } | null>(null);
@@ -6458,7 +6464,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   });
 
   /** 送出一次 JSONP，附逾時。網址由呼叫端組（回呼參數的位置每家不一樣） */
-  const jsonp = (makeUrl: (cb: string) => string, ms = 6000) => new Promise<any>((resolve, reject) => {
+  const jsonp = (makeUrl: (cb: string) => string, ms = 4500) => new Promise<any>((resolve, reject) => {
     const cb = `itcb_${Math.random().toString(36).slice(2)}`;
     const sc = document.createElement('script');
     let settled = false;
@@ -6474,7 +6480,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   });
 
   /** 一般 fetch，附逾時 */
-  const getJSON = async (url: string, ms = 6000) => {
+  const getJSON = async (url: string, ms = 4500) => {
     const ac = new AbortController();
     const t = setTimeout(() => ac.abort(), ms);
     try {
@@ -6620,16 +6626,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   };
 
   /** 某個地區的近期熱門榜；榜單失效就退回該地區的搜尋 */
+  /* 舊版榜單有給 CORS 標頭，直接 fetch 就好，不必再多送一個 JSONP：
+     多送的那一個不但白花一次流量額度，回來的內容若不是合法 JS
+     還會在主控台噴一排語法錯誤。直連不通時改走轉送。 */
   const loadChart = async (store: string, genre?: string): Promise<Track[]> => {
-    // 榜單的參數是寫在路徑裡的（不是問號後面），JSONP 的 callback 也一樣
     const seg = `limit=100${genre ? `/genre=${genre}` : ''}`;
     const tag = `${store}${genre ? `榜${genre}` : '榜'}`;
-    return raceBoth(
-      tag,
-      `https://itunes.apple.com/${store}/rss/topsongs/${seg}/json`,
-      cb => `https://itunes.apple.com/${store}/rss/topsongs/${seg}/callback=${cb}/json`,
-      fromChart,
-    );
+    const url = `https://itunes.apple.com/${store}/rss/topsongs/${seg}/json`;
+    try {
+      const list = fromChart(await getJSON(url));
+      if (list.length) return list;
+      failLog.current.push(`${tag}:0筆`);
+    } catch (e: any) {
+      failLog.current.push(`${tag}:${String(e?.message || e).slice(0, 14)}`);
+    }
+    return viaRelay(tag, url, fromChart);
   };
 
   /** 在某個地區的商店裡搜尋。
@@ -6645,6 +6656,44 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const loadDeezer = async (term: string): Promise<Track[]> => {
     const dz = 'https://api.deezer.com/search?limit=50&q=' + encodeURIComponent(term);
     return raceBoth('DZ', dz, cb => `${dz}&output=jsonp&callback=${cb}`, fromDeezer);
+  };
+
+  /** 打 Apple：直連與轉送「同時」發，誰先拿到有東西的就用誰（不再等直連失敗才換） */
+  const appleJson = <T,>(tag: string, url: string, parse: (d: any) => T[]): Promise<T[]> =>
+    new Promise<T[]>(resolve => {
+      let done = false;
+      let left = 2;
+      const finish = (v: T[]) => { if (!done) { done = true; resolve(v); } };
+      const arm = (job: Promise<T[]>) => job
+        .then(v => { if (v.length) finish(v); })
+        .catch(() => { /* 死法已經記在 failLog 裡 */ })
+        .finally(() => { if (--left === 0) finish([]); });
+      arm(Date.now() >= appleBlockedUntil.current
+        ? raceBoth(tag, url, cb => `${url}${url.includes('?') ? '&' : '?'}callback=${cb}`, parse as any) as any
+        : Promise.resolve([] as T[]));
+      arm(viaRelay(tag, url, parse as any) as any);
+    });
+
+  /**
+   * 搜歌手時要出現「那位歌手的所有歌」，而不是搜尋結果那幾首。
+   * 做法是 Apple 官方的兩步：先用 musicArtist 查出歌手編號，
+   * 再用 lookup 把他名下的歌一次撈回來（一個請求最多 200 首）。
+   */
+  const loadArtistSongs = async (term: string, store: string): Promise<Track[]> => {
+    const find = `https://itunes.apple.com/search?media=music&entity=musicArtist&limit=5`
+      + `&country=${store}&term=${encodeURIComponent(term)}`;
+    const artists = await appleJson<{ id: string; name: string }>(`${store}歌手`, find,
+      (d: any) => (d?.results || [])
+        .map((r: any) => ({ id: String(r.artistId || ''), name: String(r.artistName || '') }))
+        .filter((a: any) => a.id));
+    if (!artists.length) return [];
+    const q = term.trim().toLowerCase();
+    const best = artists.find(a => a.name.toLowerCase() === q)
+      || artists.find(a => a.name.toLowerCase().includes(q))
+      || artists[0];
+    const all = `https://itunes.apple.com/lookup?entity=song&limit=200`
+      + `&country=${store}&id=${best.id}`;
+    return appleJson(`${store}全曲`, all, fromItunes);
   };
 
   /* Apple 的搜尋端點一旦回 403（流量上限），那一段時間內怎麼打都是 403。
@@ -6667,7 +6716,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const viaRelay = async (tag: string, url: string, parse: (d: any) => Track[]): Promise<Track[]> => {
     for (let i = 0; i < RELAYS.length; i++) {
       try {
-        const list = parse(await getJSON(RELAYS[i](url), 9000));
+        const list = parse(await getJSON(RELAYS[i](url), 6500));
         if (list.length) return list;
         failLog.current.push(`${tag}轉${i + 1}:0筆`);
       } catch (e: any) {
@@ -6685,8 +6734,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const chartPool = useRef<Map<string, Track[]>>(new Map());
   /** 每次重新打開就換一個起點，推薦才不會每次都是同樣的開頭 */
   const rotateRef = useRef(0);
-  /** 這份清單是從哪裡來的：暫時顯示在畫面上，好判斷是哪一條路在動 */
-  const [musicSource, setMusicSource] = useState('');
 
   /* 判斷一首歌是不是某個語言的：直接看歌名與歌手用的是哪一種文字。
      各地區的熱門榜本來就混了一堆西洋歌（韓國榜上很大一部分是英文歌），
@@ -6735,10 +6782,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       Object.values(d || {}).forEach(walk);
     };
     try {
-      await grab(url, 8000);
+      await grab(url, 5000);
     } catch {
       for (const relay of RELAYS) {
-        try { await grab(relay(url), 9000); break; } catch { /* 換下一條 */ }
+        try { await grab(relay(url), 6500); break; } catch { /* 換下一條 */ }
       }
     }
     if (!flat.length) failLog.current.push(`${store}曲風表:空`);
@@ -6813,15 +6860,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const weave = (
     lists: Record<string, Track[]>,
     pattern: string[],
-    lead?: { store: string; count: number },
+    lead?: { store: string; count: number; keepOrder?: boolean },
   ): Track[] => {
     const q: Record<string, Track[]> = {};
     /* rotate：每次重新打開面板換一個起點。榜單本身是排名順序，
-       不換起點的話每次進來看到的開頭永遠是同樣那幾首。 */
-    pattern.forEach(k => {
+       不換起點的話每次進來看到的開頭永遠是同樣那幾首。
+
+       lead 指定的那一份也要在這裡備好 —— 它不一定出現在 pattern 裡
+       （搜歌手時「該歌手的全部歌曲」就只掛在 lead 上），漏掉的話
+       整份會被無聲丟掉。
+       keepOrder 的那一份不輪轉：搜歌手時要照專輯順序整份倒出來；
+       推薦榜的 lead 則要跟著輪轉，不然開頭那幾首每次都一樣。 */
+    const keys = lead ? [lead.store, ...pattern] : pattern;
+    keys.forEach(k => {
       if (q[k]) return;
       const src = lists[k] || [];
-      const r = src.length > 12 ? rotateRef.current % src.length : 0;
+      const noRotate = lead?.keepOrder && k === lead.store;
+      const r = (!noRotate && src.length > 12) ? rotateRef.current % src.length : 0;
       q[k] = [...src.slice(r), ...src.slice(0, r)];
     });
     const out: Track[] = [];
@@ -6933,65 +6988,61 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         setMusicLoading(false);
         return;
       }
-      /* Apple 的搜尋端點有流量上限，超過之後那一段時間會整片回 403 ——
-         主人截圖裡那串「kr搜:403、us搜:403、tw搜J:blocked」就是被鎖的樣子。
-         所以：被鎖過就先跳過 Apple（免得一直把鎖定時間往後推、也不用等它），
-         Deezer 一律問（免金鑰、沒有這種上限）。兩邊都有就合併，Apple 排前面。 */
-      const appleUsable = Date.now() >= appleBlockedUntil.current;
-      const [apple, deezer] = await Promise.all([
-        appleUsable ? loadSearch(src.term, 'tw').catch(() => [] as Track[]) : Promise.resolve([] as Track[]),
-        loadDeezer(src.term).catch(() => [] as Track[]),
+      /* 所有來源「同時」發，而且誰先回來就先顯示誰。
+         以前是一段一段接力（直連失敗才轉送、轉送失敗才換 Deezer），
+         每一段都要等上一段逾時，加起來就是主人說的「要等很久」。
+         現在全部並行，畫面在第一份結果回來的那一刻就有東西，
+         其餘的回來再補進去，不必等最慢的那一條。 */
+      const term = src.term;
+      const q = term.toLowerCase();
+      const appleUrl = 'https://itunes.apple.com/search?media=music&entity=song&limit=100'
+        + `&country=tw&term=${encodeURIComponent(term)}`;
+      const usUrl = appleUrl.replace('country=tw', 'country=us');
+
+      // 榜單池是現成的，先秒出，之後線上結果回來再蓋掉
+      const local: Track[] = [];
+      chartPool.current.forEach(arr => arr.forEach(t => {
+        if (`${t.name} ${t.artist}`.toLowerCase().includes(q)) local.push(t);
+      }));
+
+      const bucket: Record<string, Track[]> = { ar: [], ap: [], dz: [], lo: local };
+      /* ar 放最前面而且一次全部倒出來：搜歌手時要看到「他的所有歌」，
+         不是跟其他結果一首一首交錯。 */
+      const render = () => weave(bucket, ['ap', 'dz', 'lo'], { store: 'ar', count: 400, keepOrder: true });
+      if (local.length) { list = render(); setMusicList(list); setMusicLoading(false); }
+
+      const feed = (key: string, got: Track[]) => {
+        if (my !== musicReqRef.current || !got.length) return;
+        bucket[key] = got;
+        list = render();
+        setMusicList(list);
+        setMusicLoading(false);
+      };
+
+      await Promise.all([
+        loadArtistSongs(term, 'tw').then(r => feed('ar', r)).catch(() => {}),
+        appleJson('搜', appleUrl, fromItunes).then(r => feed('ap', r)).catch(() => {}),
+        loadDeezer(term).then(r => feed('dz', r)).catch(() => {}),
       ]);
-      const justBlocked = appleUsable && !apple.length
-        && failLog.current.some(x => x.includes('403'));
-      if (justBlocked) {
+      // 台灣商店真的查不到（例如冷門西洋歌）才多問一次美國商店
+      if (!bucket.ap.length && !bucket.ar.length) {
+        const us = await appleJson('搜us', usUrl, fromItunes).catch(() => [] as Track[]);
+        feed('ap', us);
+        if (!us.length) {
+          const usArtist = await loadArtistSongs(term, 'us').catch(() => [] as Track[]);
+          feed('ar', usArtist);
+        }
+      }
+      if (Date.now() < appleBlockedUntil.current === false
+        && !bucket.ap.length && !bucket.ar.length
+        && failLog.current.some(x => x.includes('403'))) {
         appleBlockedUntil.current = Date.now() + 10 * 60 * 1000;   // 先冷靜十分鐘
-        failLog.current.push('Apple被鎖:暫停10分鐘');
       }
-      list = weave({ ap: apple, dz: deezer }, ['ap', 'dz']);
-      how = apple.length && deezer.length ? 'Apple+Deezer' : apple.length ? 'Apple' : deezer.length ? 'Deezer' : '';
-      // Apple 沒被鎖、只是台灣商店查不到，再多問一次美國商店（日韓西洋歌比較齊）
-      if (appleUsable && !justBlocked && !apple.length) {
-        const us = await loadSearch(src.term, 'us').catch(() => [] as Track[]);
-        if (us.length) { list = weave({ ap: us, dz: deezer }, ['ap', 'dz']); how = 'Apple(us)'; }
-      }
-      /* 兩家都不通時的最後一道：就在「這次開啟已經抓下來的榜單」裡面找。
-         完全不用網路，所以一定會有反應 —— 榜上有的歌手（BTS、YOASOBI…）
-         照樣搜得到，不會再出現「打了字什麼都沒有」。 */
-      if (!list.length) {
-        /* 直接打 Apple 被 IP 鎖住時，換一條線再問一次。
-           iTunes 的搜尋涵蓋整個 Apple Music 曲庫，這一步就是「什麼歌都搜得到」
-           的關鍵；同時 Deezer 也換一種寫法再試一次。 */
-        const appleUrl = 'https://itunes.apple.com/search?media=music&entity=song&limit=50'
-          + `&country=tw&term=${encodeURIComponent(src.term)}`;
-        const usUrl = appleUrl.replace('country=tw', 'country=us');
-        const altDz = 'https://api.deezer.com/search/track?limit=50&q=' + encodeURIComponent(src.term);
-        const [ap2, dz2] = await Promise.all([
-          viaRelay('搜', appleUrl, fromItunes),
-          raceBoth('DZ2', altDz, cb => `${altDz}&output=jsonp&callback=${cb}`, fromDeezer)
-            .catch(() => [] as Track[]),
-        ]);
-        let ap3: Track[] = [];
-        if (!ap2.length && !dz2.length) ap3 = await viaRelay('搜us', usUrl, fromItunes);
-        const merged = weave({ ap: ap2.length ? ap2 : ap3, dz: dz2 }, ['ap', 'dz']);
-        if (merged.length) {
-          list = merged;
-          how = (ap2.length || ap3.length) ? 'Apple(轉送)' : 'Deezer2';
-        }
-      }
-      if (!list.length) {
-        const q = src.term.toLowerCase();
-        const local: Track[] = [];
-        chartPool.current.forEach(arr => arr.forEach(t => {
-          if (`${t.name} ${t.artist}`.toLowerCase().includes(q)) local.push(t);
-        }));
-        if (local.length) {
-          list = weave({ lo: local }, ['lo']);
-          // 走到這裡代表兩家線上服務都掛了，把死法一起寫在來源那行，才知道要修哪
-          how = `榜單內搜尋（${failLog.current.slice(0, 4).join('、')}）`;
-        }
-      }
-      if (list.length) searchCache.current.set(src.term.toLowerCase(), list);
+      list = render();
+      how = [bucket.ar.length && '歌手全曲', bucket.ap.length && 'Apple',
+             bucket.dz.length && 'Deezer', !bucket.ar.length && !bucket.ap.length && !bucket.dz.length
+               && local.length && '榜單內'].filter(Boolean).join('+');
+      if (list.length) searchCache.current.set(q, list);
     }
     /* 榜單整個拿不到時的最後一道：改問 Deezer。
        這裡刻意不去打 Apple 的搜尋端點 —— 那支才是會被鎖成 403 的那一支。 */
@@ -7003,7 +7054,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     }
     if (my !== musicReqRef.current) return;   // 已經有更新的搜尋了，這份丟掉
     setMusicList(list);
-    setMusicSource(list.length ? `${how}・${list.length} 首` : '');
     setMusicError(list.length
       ? ''
       : `拿不到歌單，請確認網路後重試\n（${failLog.current.join('、') || '沒有可用的來源'}）`);
@@ -7025,7 +7075,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (!musicOpen) return;
     chartPool.current.clear();
     searchCache.current.clear();
-    rotateRef.current = Math.floor(Math.random() * 12);
+    rotateRef.current = 1 + Math.floor(Math.random() * 60);
     // 重開就回到推薦、清掉上次打的字，不然會停在上次的搜尋結果
     setMusicQuery('');
     setMusicTab('為你推薦');
@@ -7039,7 +7089,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (!musicOpen || (musicTab === '已儲存' && !musicQuery.trim())) return;
     /* 打字的防抖拉到 600ms：Apple 的搜尋有流量上限，每敲一個字就送一次
        很快就會被鎖成 403。按鍵盤上的「搜尋」鍵可以立刻查，不用等這 600ms。 */
-    const t = setTimeout(() => loadMusic(currentSource()), musicQuery.trim() ? 600 : 0);
+    const t = setTimeout(() => loadMusic(currentSource()), musicQuery.trim() ? 400 : 0);
     return () => clearTimeout(t);
   }, [musicOpen, musicQuery, musicTab, loadMusic]);
 
@@ -7079,6 +7129,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       vv?.removeEventListener('resize', hold);
     };
   }, [igPreview]);
+  // 預覽開著的時候比例被改成 IG 吃不下的，就把預覽收掉（按鈕也已經不見了）
+  useEffect(() => {
+    if (igPreview && !igPreviewSupported) setIgPreview(false);
+  }, [igPreview, igPreviewSupported]);
+
   // 關掉 IG 預覽時把音樂一起停掉
   useEffect(() => {
     if (igPreview) return;
@@ -8132,13 +8187,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                       照片、佈局上面 */}
                   <div className="fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)} />
                   <div className="absolute right-0 top-11 z-[61] w-36 rounded-2xl bg-[#1b1b1b] border border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-                    <button
-                      onClick={() => { setMoreOpen(false); setIgPreview(true); }}
-                      className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90 hover:bg-white/10 transition-colors"
-                    >
-                      <span>預覽</span>
-                    </button>
-                    <div className="h-px bg-white/10" />
+                    {/* 直式 2:3、9:16 IG 吃不下，這一顆就整個不出現 */}
+                    {igPreviewSupported && (
+                      <>
+                        <button
+                          onClick={() => { setMoreOpen(false); setIgPreview(true); }}
+                          className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90 hover:bg-white/10 transition-colors"
+                        >
+                          <span>預覽</span>
+                        </button>
+                        <div className="h-px bg-white/10" />
+                      </>
+                    )}
                     {/* 這一列只是說明，不能點；能點的只有右邊那顆開關。
                         開關切完選單也不收起來（常常要連著開開關關比對效果）。 */}
                     <div className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90">
@@ -10308,12 +10368,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             </div>
           </div>
 
-          {!IG_RATIOS.some(r => Math.abs(r - previewW / previewH) < 0.02) && (
-            <p className="shrink-0 text-center text-[11px] text-white/30 pb-4 px-6 leading-relaxed">
-              目前的頁面比例 IG 不支援，預覽照 IG 的做法裁成直式 3:4
-            </p>
-          )}
-
           {/* ── 選音樂的底部面板 ───────────────────────────────────────
               從下往上滑進來、往下滑出去。用 translate-y + transition，
               關閉時先播完動畫再卸載（closeMusic 裡的 setTimeout）。 */}
@@ -10392,12 +10446,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     </button>
                   ))}
                 </div>
-
-                {/* 這份清單是從哪一條路拿到的。暫時放著，好判斷問題出在哪一段，
-                    確認一切正常之後就會拿掉。 */}
-                {!!musicSource && !musicLoading && (
-                  <p className="shrink-0 px-4 pb-2 text-[10px] text-white/25 leading-none">{musicSource}</p>
-                )}
 
                 {/* 歌曲清單 */}
                 <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 pb-4">
