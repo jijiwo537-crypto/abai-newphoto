@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, MessageCircle, Bookmark, Volume2, VolumeX } from 'lucide-react';
 import { Icon } from './Icon';
@@ -1629,6 +1630,14 @@ interface FloatingImageComponentProps {
   onSwapTouchStart?: (e: React.TouchEvent) => void;
   onSwapTouchMove?: (e: React.TouchEvent) => void;
   onSwapTouchEnd?: (e: React.TouchEvent) => void;
+  /**
+   * 選取框、四角圓球、工具列要改掛到這一層去畫。
+   * 這一層是「頁面容器的兄弟」，不在那個 overflow-hidden 底下，
+   * 所以物件被拖出畫布邊緣時，框跟按鈕不會被邊緣的黑色切掉 ——
+   * 但物件本身仍然留在原本會被裁切的那一層，超出畫布的部分照樣看不到。
+   * 拿不到這一層時就退回原本的畫法（掛在自己身上），行為完全不變。
+   */
+  chromeLayer?: HTMLElement | null;
 }
 
 let globalDragPointerId: number | null = null;
@@ -1665,6 +1674,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   onSwapTouchStart,
   onSwapTouchMove,
   onSwapTouchEnd,
+  chromeLayer = null,
 }) => {
   const imageRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -2248,33 +2258,161 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     }
   };
 
+  /* 外框的幾何：選取框那一組要搬到另一層去畫（見 chromeLayer），
+     搬過去之後必須落在完全一樣的位置，所以位置／大小／旋轉抽成同一份，
+     兩邊共用 —— 不是各算一次，才不會有任何一格的偏差。 */
+  const wrapGeo: React.CSSProperties = {
+    position: 'absolute',
+    // 大小直接寫進版面而不是靠 transform: scale()。用 scale 放大時瀏覽器會沿用
+    // 原尺寸的點陣快取再拉大，放大後就糊掉；改成實際尺寸才會用原圖重新取樣。
+    // 幾何完全等價：scale 以中心為原點，所以左上角是 x + (w - w*s)/2。
+    left: `${image.x + (image.width - image.width * image.scale) / 2}px`,
+    top: `${image.y + (image.height - image.height * image.scale) / 2}px`,
+    width: `${image.width * image.scale}px`,
+    height: `${image.height * image.scale}px`,
+    transformOrigin: 'center center',
+    // 排頁面拖曳中要跟著自己那一頁一起走（平移＋群組縮放），最後才是自己的旋轉
+    /* 這裡「一定要」保留 transform（即使旋轉是 0）。
+       有 transform 時 Chrome 會把這一層提升成合成層，繪製位置吸附到整數
+       像素，邊緣是實心的；拿掉之後改成次像素繪製，貼齊畫布邊緣時邊緣會被
+       抗鋸齒抹成半透明的一條，看起來就像沒對齊 —— 而匯出是直接用座標畫在
+       canvas 上、不受影響，於是變成「匯出是對的、預覽有誤差」。 */
+    transform: `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`,
+    /* 過場一定要跟頁面容器那邊「一模一樣」（220ms、同一條曲線）。
+       以前這裡是 200ms ease-out、那邊是 220ms cubic-bezier(0.2,0,0,1)：
+       兩者同時起跑卻走不同的速度、也不同時到，排頁面時就會看到圖層跟頁面
+       分家 —— 那就是「圖片跟頁面沒有完全同步」的另一半。 */
+    transition: dragShift ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
+  };
+
+  /* 選取框、四角圓球、工具列 —— 統稱「外框」。
+     這一整組會被搬到 chromeLayer 那一層去畫（那一層不在 overflow-hidden 底下），
+     所以物件被拖出畫布時，框跟按鈕不會被邊緣的黑色切掉。
+     只有物件本身還留在會被裁切的那一層。 */
+  const chrome = (
+    <>
+    {/* 工具列不跟著對齊線／拖曳淡出，碰到對齊線時按鈕仍然要在 */}
+    {isSelected && onLayerAction && !hideToolbar && !hideChrome && !isScaling && (() => {
+      // 轉過角度之後要擺在「畫面上最靠下」的那一側：先算旋轉後外接框的半高，
+      // 再把工具列沿著畫面的 Y 軸推出去（用區域座標表示，因為這層跟著框一起轉）。
+      const rad = (image.rotation * Math.PI) / 180;
+      const halfSpan =
+        (boxW * Math.abs(Math.sin(rad)) + boxH * Math.abs(Math.cos(rad))) / 2;
+      const dir = toolbarAbove ? -1 : 1;
+      const d = dir * (halfSpan + 26);
+      return (
+      <div
+        className="absolute left-1/2 top-1/2 flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto z-50"
+        style={{
+          transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-image.rotation}deg)`,
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onTouchStart={(e) => e.stopPropagation()}
+      >
+        <button
+          onClick={(e) => { e.stopPropagation(); if (canLayerDown) onLayerAction('down'); }}
+          disabled={!canLayerDown}
+          title="下移一層"
+          className={`w-7 h-7 rounded-full flex items-center justify-center ${canLayerDown ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
+        >
+          <MoveDown size={14} />
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); if (canLayerUp) onLayerAction('up'); }}
+          disabled={!canLayerUp}
+          title="上移一層"
+          className={`w-7 h-7 rounded-full flex items-center justify-center ${canLayerUp ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
+        >
+          <MoveUp size={14} />
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onLayerAction('copy'); }}
+          title="複製"
+          className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black"
+        >
+          <Copy size={14} />
+        </button>
+        {/* 編輯鍵：文字與圖片都用同一顆（跟佈局那顆同款） */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onLayerAction('edit'); }}
+          title={image.text !== undefined ? '編輯文字' : '圖片調整'}
+          className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black"
+        >
+          <Sliders size={14} />
+        </button>
+        <button onClick={(e) => { e.stopPropagation(); onLayerAction('delete'); }} title="刪除" className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black">
+          <Trash2 size={14} />
+        </button>
+      </div>
+      );
+    })()}
+
+    {/* 選取框與四角圓球：不用「掛載／卸載」切換，改成一直在、用 visibility 開關。
+        卸載時瀏覽器偶爾不會重繪那一層（尤其是有 transform 的圖層），
+        畫面上就會留下已經取消選取的框與圓球。 */}
+    {(() => {
+      const showChrome = isSelected && !hideChrome;
+      return (
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ visibility: showChrome ? 'visible' : 'hidden', opacity: showChrome ? 1 : 0 }}
+      >
+        {/* Active border matching layout style */}
+        <div className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" />
+
+        {/* Four Corner scale dots */}
+        <div
+          className="absolute top-0 left-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nwse-resize z-50 pointer-events-auto touch-none"
+          style={{ transform: 'translate(-50%, -50%)' }}
+          onPointerDown={(e) => handleScalePointerDown(e, 'tl')}
+          onPointerMove={handleScalePointerMove}
+          onPointerUp={handleScalePointerUp}
+          onPointerCancel={handleScalePointerUp}
+          title="縮放"
+        />
+        <div
+          className="absolute top-0 right-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nesw-resize z-50 pointer-events-auto touch-none"
+          style={{ transform: 'translate(50%, -50%)' }}
+          onPointerDown={(e) => handleScalePointerDown(e, 'tr')}
+          onPointerMove={handleScalePointerMove}
+          onPointerUp={handleScalePointerUp}
+          onPointerCancel={handleScalePointerUp}
+          title="縮放"
+        />
+        <div
+          className="absolute bottom-0 left-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nesw-resize z-50 pointer-events-auto touch-none"
+          style={{ transform: 'translate(-50%, 50%)' }}
+          onPointerDown={(e) => handleScalePointerDown(e, 'bl')}
+          onPointerMove={handleScalePointerMove}
+          onPointerUp={handleScalePointerUp}
+          onPointerCancel={handleScalePointerUp}
+          title="縮放"
+        />
+        <div
+          className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nwse-resize z-50 pointer-events-auto touch-none"
+          style={{ transform: 'translate(50%, 50%)' }}
+          onPointerDown={(e) => handleScalePointerDown(e, 'br')}
+          onPointerMove={handleScalePointerMove}
+          onPointerUp={handleScalePointerUp}
+          onPointerCancel={handleScalePointerUp}
+          title="縮放"
+        />
+
+      </div>
+      );
+    })()}
+    </>
+  );
+
+
   return (
+    <>
     <div
       ref={imageRef}
       data-floating-id={image.id}
       className="floating-image-wrapper group/floating"
       style={{
-        position: 'absolute',
-        // 大小直接寫進版面而不是靠 transform: scale()。用 scale 放大時瀏覽器會沿用
-        // 原尺寸的點陣快取再拉大，放大後就糊掉；改成實際尺寸才會用原圖重新取樣。
-        // 幾何完全等價：scale 以中心為原點，所以左上角是 x + (w - w*s)/2。
-        left: `${image.x + (image.width - image.width * image.scale) / 2}px`,
-        top: `${image.y + (image.height - image.height * image.scale) / 2}px`,
-        width: `${image.width * image.scale}px`,
-        height: `${image.height * image.scale}px`,
-        transformOrigin: 'center center',
-        // 排頁面拖曳中要跟著自己那一頁一起走（平移＋群組縮放），最後才是自己的旋轉
-        /* 這裡「一定要」保留 transform（即使旋轉是 0）。
-           有 transform 時 Chrome 會把這一層提升成合成層，繪製位置吸附到整數
-           像素，邊緣是實心的；拿掉之後改成次像素繪製，貼齊畫布邊緣時邊緣會被
-           抗鋸齒抹成半透明的一條，看起來就像沒對齊 —— 而匯出是直接用座標畫在
-           canvas 上、不受影響，於是變成「匯出是對的、預覽有誤差」。 */
-        transform: `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`,
-        /* 過場一定要跟頁面容器那邊「一模一樣」（220ms、同一條曲線）。
-           以前這裡是 200ms ease-out、那邊是 220ms cubic-bezier(0.2,0,0,1)：
-           兩者同時起跑卻走不同的速度、也不同時到，排頁面時就會看到圖層跟頁面
-           分家 —— 那就是「圖片跟頁面沒有完全同步」的另一半。 */
-        transition: dragShift ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
+        ...wrapGeo,
         // 要疊在選取時出現的透明拖曳層（z-40）之上，直接碰圖片才拖得動
         // 一般圖片用偶數層，佈局用奇數層，兩者才能互相穿插
         // 被拖的那一頁整組（頁面 900、上面的東西 1000+）要蓋過其他頁
@@ -2482,117 +2620,31 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         onPointerCancel={handleBodyPointerUp}
       />
 
-      {/* 工具列不跟著對齊線／拖曳淡出，碰到對齊線時按鈕仍然要在 */}
-      {isSelected && onLayerAction && !hideToolbar && !hideChrome && !isScaling && (() => {
-        // 轉過角度之後要擺在「畫面上最靠下」的那一側：先算旋轉後外接框的半高，
-        // 再把工具列沿著畫面的 Y 軸推出去（用區域座標表示，因為這層跟著框一起轉）。
-        const rad = (image.rotation * Math.PI) / 180;
-        const halfSpan =
-          (boxW * Math.abs(Math.sin(rad)) + boxH * Math.abs(Math.cos(rad))) / 2;
-        const dir = toolbarAbove ? -1 : 1;
-        const d = dir * (halfSpan + 26);
-        return (
-        <div
-          className="absolute left-1/2 top-1/2 flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto z-50"
-          style={{
-            transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-image.rotation}deg)`,
-          }}
-          onPointerDown={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
-        >
-          <button
-            onClick={(e) => { e.stopPropagation(); if (canLayerDown) onLayerAction('down'); }}
-            disabled={!canLayerDown}
-            title="下移一層"
-            className={`w-7 h-7 rounded-full flex items-center justify-center ${canLayerDown ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
-          >
-            <MoveDown size={14} />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); if (canLayerUp) onLayerAction('up'); }}
-            disabled={!canLayerUp}
-            title="上移一層"
-            className={`w-7 h-7 rounded-full flex items-center justify-center ${canLayerUp ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
-          >
-            <MoveUp size={14} />
-          </button>
-          <button
-            onClick={(e) => { e.stopPropagation(); onLayerAction('copy'); }}
-            title="複製"
-            className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black"
-          >
-            <Copy size={14} />
-          </button>
-          {/* 編輯鍵：文字與圖片都用同一顆（跟佈局那顆同款） */}
-          <button
-            onClick={(e) => { e.stopPropagation(); onLayerAction('edit'); }}
-            title={image.text !== undefined ? '編輯文字' : '圖片調整'}
-            className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black"
-          >
-            <Sliders size={14} />
-          </button>
-          <button onClick={(e) => { e.stopPropagation(); onLayerAction('delete'); }} title="刪除" className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black">
-            <Trash2 size={14} />
-          </button>
-        </div>
-        );
-      })()}
-
-      {/* 選取框與四角圓球：不用「掛載／卸載」切換，改成一直在、用 visibility 開關。
-          卸載時瀏覽器偶爾不會重繪那一層（尤其是有 transform 的圖層），
-          畫面上就會留下已經取消選取的框與圓球。 */}
-      {(() => {
-        const showChrome = isSelected && !hideChrome;
-        return (
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{ visibility: showChrome ? 'visible' : 'hidden', opacity: showChrome ? 1 : 0 }}
-        >
-          {/* Active border matching layout style */}
-          <div className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" />
-
-          {/* Four Corner scale dots */}
-          <div
-            className="absolute top-0 left-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nwse-resize z-50 pointer-events-auto touch-none"
-            style={{ transform: 'translate(-50%, -50%)' }}
-            onPointerDown={(e) => handleScalePointerDown(e, 'tl')}
-            onPointerMove={handleScalePointerMove}
-            onPointerUp={handleScalePointerUp}
-            onPointerCancel={handleScalePointerUp}
-            title="縮放"
-          />
-          <div
-            className="absolute top-0 right-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nesw-resize z-50 pointer-events-auto touch-none"
-            style={{ transform: 'translate(50%, -50%)' }}
-            onPointerDown={(e) => handleScalePointerDown(e, 'tr')}
-            onPointerMove={handleScalePointerMove}
-            onPointerUp={handleScalePointerUp}
-            onPointerCancel={handleScalePointerUp}
-            title="縮放"
-          />
-          <div
-            className="absolute bottom-0 left-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nesw-resize z-50 pointer-events-auto touch-none"
-            style={{ transform: 'translate(-50%, 50%)' }}
-            onPointerDown={(e) => handleScalePointerDown(e, 'bl')}
-            onPointerMove={handleScalePointerMove}
-            onPointerUp={handleScalePointerUp}
-            onPointerCancel={handleScalePointerUp}
-            title="縮放"
-          />
-          <div
-            className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nwse-resize z-50 pointer-events-auto touch-none"
-            style={{ transform: 'translate(50%, 50%)' }}
-            onPointerDown={(e) => handleScalePointerDown(e, 'br')}
-            onPointerMove={handleScalePointerMove}
-            onPointerUp={handleScalePointerUp}
-            onPointerCancel={handleScalePointerUp}
-            title="縮放"
-          />
-
-        </div>
-        );
-      })()}
+      {/* 拿不到外框層時就照原本的方式掛在自己身上，行為完全不變 */}
+      {!chromeLayer && chrome}
     </div>
+
+      {chromeLayer && createPortal(
+        <div
+          data-floating-id={image.id}
+          className="floating-image-chrome"
+          style={{
+            ...wrapGeo,
+            /* 這一層只是外框的容器，本身不接手勢：
+               只有圓球與工具列自己開 pointer-events，其餘一律穿透下去，
+               點在框裡面時仍然是打到底下那個物件（拖曳手感完全不變）。 */
+            pointerEvents: 'none',
+            /* 外框永遠畫在最上面。頁面容器沒有自成堆疊環境（position: relative、
+               z-index: auto），所以裡面那些 60～1000+ 的圖層是跟這一層平起平坐地
+               比大小的 —— 要壓過它們就得比最大的那個還高。 */
+            zIndex: 100000 + stackIndex * 2,
+          }}
+        >
+          {chrome}
+        </div>,
+        chromeLayer,
+      )}
+    </>
   );
 };
 
@@ -3067,6 +3119,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     });
   };
   const pagesContainerRef = useRef<HTMLDivElement>(null);
+  /**
+   * 「外框層」。
+   *
+   * 頁面容器（pagesContainerRef）是開 overflow-hidden 的 —— 那條裁切線就是使用者
+   * 看到的「畫布邊緣的黑」。物件被拖出去的部分本來就該被切掉，但選取框、四個角的
+   * 圓球、上面那排按鈕不該一起被切：東西一超出畫布就抓不到角，也按不到刪除。
+   *
+   * 所以外框改掛在這一層。它是頁面容器的「兄弟」（同一個父層、同樣的座標原點、
+   * 同樣的縮放與位移），只是不在那個 overflow-hidden 底下 ——
+   * 於是位置分毫不差，卻不會被裁切。
+   *
+   * 用 state 而不是 ref：要等這個 DOM 節點真的掛上去，子層才能 createPortal 過去。
+   * ref 不會觸發重新渲染，第一次渲染時子層拿到的還是 null。
+   */
+  const [chromeLayer, setChromeLayer] = useState<HTMLDivElement | null>(null);
 
   // Workspace-wide interaction for selected floating images
   const wsDragStart = useRef<{
@@ -9456,6 +9523,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
                               {isThisLayoutSelected && selectedIndex === null && (() => {
                                 const dot = 'absolute w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] z-[60] pointer-events-auto touch-none';
+                                /* 整組佈局放大到超出畫布時，四個角跟按鈕本來會被頁面容器的
+                                   overflow-hidden 切掉 —— 抓不到角、也按不到刪除。
+                                   跟一般圖片一樣：外框搬到不會被裁切的那一層去畫。 */
+                                const mvChrome = pageContentShift(pageIdx);
+                                const liftedChrome = !!mvChrome && mvChrome.s !== 1;
                                 const corner = (key: 'tl' | 'tr' | 'bl' | 'br', pos: string, cursor: string) => (
                                   <div
                                     key={key}
@@ -9467,7 +9539,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                     onPointerCancel={handleLayoutCornerUp}
                                   />
                                 );
-                                return (
+                                const layoutChrome = (
                                   <>
                                     {/* 選取框跟一般圖片同款：細白線 + 陰影 */}
                                     <div
@@ -9525,6 +9597,48 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                     </div>
                                   </>
                                 );
+
+                                // 拿不到外框層就照原本的方式畫在佈局身上，行為完全不變
+                                if (!chromeLayer) return layoutChrome;
+
+                                return createPortal(
+                                  /* 外面這層＝那一頁（含排頁面時整頁的位移與縮放，
+                                     直接呼叫同一支 pageContentShift，不會跟頁面走散） */
+                                  <div
+                                    className="absolute pointer-events-none"
+                                    style={{
+                                      left: `${pageIdx * (previewW + 1)}px`,
+                                      top: 0,
+                                      width: `${previewW}px`,
+                                      height: `${previewH}px`,
+                                      transform: mvChrome
+                                        ? `translateX(${mvChrome.dx}px)${liftedChrome ? ` scale(${mvChrome.s})` : ''}`
+                                        : undefined,
+                                      transformOrigin: 'center center',
+                                      transition: mvChrome ? (mvChrome.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
+                                      zIndex: 100000 + (layout.z ?? 0) * 2 + 1,
+                                    }}
+                                  >
+                                    {/* 裡面這層＝佈局自己的框。尺寸跟真正那個 wrapper 一模一樣，
+                                        而且同樣掛著 data-layout-wrapper／data-layout-id ——
+                                        拖角球是用 closest('[data-layout-wrapper]') 的中心當支點的，
+                                        少了這兩個屬性就會抓不到支點、縮放整組失效。 */}
+                                    <div
+                                      data-layout-wrapper={pageIdx}
+                                      data-layout-id={layout.id}
+                                      className="absolute pointer-events-none"
+                                      style={{
+                                        left: `${lLeft}px`,
+                                        top: `${lTop}px`,
+                                        width: `${lw}px`,
+                                        height: `${lh}px`,
+                                      }}
+                                    >
+                                      {layoutChrome}
+                                    </div>
+                                  </div>,
+                                  chromeLayer,
+                                );
                               })()}
                               </div>
                               );
@@ -9542,6 +9656,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                         isSelected={selectedFloatingId === fImg.id}
                         hasActiveGuidelines={activeGuidelines.length > 0}
                         stackIndex={fIdx}
+                        // 選取框那一組改畫在不會被裁切的那一層
+                        chromeLayer={chromeLayer}
                         touchMode="none"
                         hideToolbar={pinchFloatingId === fImg.id}
                         hideChrome={tuningEdge && selectedFloatingId === fImg.id}
@@ -9921,6 +10037,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                       });
                     })()}
                   </div>
+
+                  {/*
+                    外框層：選取框、四個角的圓球、那排按鈕都畫在這裡。
+
+                    它跟上面那個頁面容器是兄弟、共用同一個父層，位置與大小也一模一樣
+                    （父層的寬高就是整排頁面的寬高），所以座標完全不用換算 ——
+                    子層原本怎麼擺，搬過來就還是擺在同一個地方。
+                    差別只有一個：這一層不在 overflow-hidden 底下，
+                    所以物件被拖出畫布時，框跟按鈕不會被邊緣的黑色切掉。
+
+                    本身 pointer-events: none，只有圓球與按鈕自己開 —— 框裡面的空白處
+                    仍然是穿透下去打到底下那個物件，拖曳手感一點都沒變。
+                  */}
+                  <div
+                    ref={setChromeLayer}
+                    className="absolute left-0 top-0 w-full h-full pointer-events-none"
+                    style={{ zIndex: 100000 }}
+                  />
 
                 </div>
                 </div>
