@@ -6420,7 +6420,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      兩種傳輸都有逾時。JSONP 特別危險的是「腳本載進來了但根本沒呼叫
      callback」（API 不支援 callback 參數時就會這樣）—— 那時 onerror 不會觸發，
      沒有逾時的話畫面會永遠停在轉圈。 */
-  type Track = { id: string; name: string; artist: string; art: string; preview: string; secs: number };
+  type Track = {
+    id: string; name: string; artist: string; art: string; preview: string; secs: number;
+    /** 榜單來源才有：Apple 標的曲風（例如 51 / "K-Pop"） */
+    genreId?: string; genre?: string;
+  };
   const TRANSPARENT_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
   const [musicOpen, setMusicOpen] = useState(false);
   const [musicShown, setMusicShown] = useState(false);   // 控制滑入／滑出的動畫
@@ -6515,6 +6519,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         art: art.replace(/\/\d+x\d+bb\./, '/200x200bb.'),
         preview: enc?.attributes?.href || '',
         secs: 0,
+        /* 榜單的每一筆本來就自己帶著曲風（Apple 放在 category 裡，新版欄位叫
+           genres）。有這個就不必再用「歌名有沒有諺文」那種猜的方式分辨語言 ——
+           BTS、BLACKPINK、NewJeans 的團名都是拉丁字母，用猜的一定會漏掉。 */
+        genreId: String(e.category?.attributes?.['im:id'] ?? (e.genres || [])[0]?.genreId ?? ''),
+        genre: String(e.category?.attributes?.term ?? e.category?.attributes?.label
+          ?? (e.genres || [])[0]?.name ?? ''),
       };
     })
     .filter((t: Track) => t.preview && t.name);
@@ -6593,6 +6603,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      Apple 的搜尋端點有流量上限，超過之後那段時間會整片回 403 ——
      少送一次就少一次被鎖的機會。 */
   const searchCache = useRef<Map<string, Track[]>>(new Map());
+  /** 這次開啟已經抓下來的榜單，搜尋全掛時就在這裡面找，完全不用網路 */
+  const chartPool = useRef<Map<string, Track[]>>(new Map());
+  /** 這份清單是從哪裡來的：暫時顯示在畫面上，好判斷是哪一條路在動 */
+  const [musicSource, setMusicSource] = useState('');
 
   /* 判斷一首歌是不是某個語言的：直接看歌名與歌手用的是哪一種文字。
      各地區的熱門榜本來就混了一堆西洋歌（韓國榜上很大一部分是英文歌），
@@ -6607,20 +6621,44 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const LANG_TEST: Record<string, (s: string) => boolean> = {
     '華語': s => HAN.test(s) && !KANA.test(s) && !HANGUL.test(s),
     '日語': s => KANA.test(s) || (HAN.test(s) && !HANGUL.test(s)),
+    '韓語': s => HANGUL.test(s),
     '英語': s => !HAN.test(s) && !KANA.test(s) && !HANGUL.test(s),
   };
-  const filterLang = (list: Track[], lang?: string): Track[] => {
-    const test = lang ? LANG_TEST[lang] : undefined;
-    if (!test) return list;
-    const hit = list.filter(t => test(`${t.name} ${t.artist}`));
-    // 真的一首都篩不出來時就別硬篩，總比整頁空白好
-    return hit.length ? hit : list;
+  /* 每個語言分頁對應到 Apple 的哪些曲風。榜單的每一筆自己就帶著曲風，
+     比用文字猜可靠太多 —— 這是分辨韓語歌唯一靠得住的方法。 */
+  const LANG_GENRE: Record<string, { ids: string[]; re: RegExp }> = {
+    '韓語': { ids: ['51'], re: /k-?pop|케이팝/i },
+    '日語': { ids: ['27', '28', '29', '30'], re: /j-?pop|anime|enka|kayokyoku|アニメ/i },
+    '華語': { ids: ['1244', '1245', '1246', '1247'], re: /chinese|mandopop|cantopop|華語|國語|粵語/i },
+    '英語': { ids: [], re: /^$/ },
   };
-  /** 拿不到曲風榜時的備案：看得出是韓文的排前面，但一首都不丟掉 */
-  const hangulFirst = (list: Track[]): Track[] => [
-    ...list.filter(t => HANGUL.test(`${t.name} ${t.artist}`)),
-    ...list.filter(t => !HANGUL.test(`${t.name} ${t.artist}`)),
-  ];
+  /**
+   * 從一份榜單挑出某個語言的歌。三層，依可靠度由高到低：
+   *   1. 榜單自己標的曲風（K-Pop / J-Pop / Mandopop…）—— 最準。
+   *   2. 歌名歌手用的文字（漢字／假名／諺文）—— 中日文很準，韓文不準。
+   *   3. 都挑不出來就整份照原順序給，只是把「看起來像」的排前面，一首都不丟。
+   */
+  const pickLang = (list: Track[], lang?: string): { list: Track[]; how: string } => {
+    if (!lang || !list.length) return { list, how: '整份' };
+    const g = LANG_GENRE[lang];
+    if (g) {
+      const byGenre = list.filter(t =>
+        (t.genreId && g.ids.includes(t.genreId)) || (t.genre && g.re.test(t.genre)));
+      if (byGenre.length >= 5) return { list: byGenre, how: '曲風' };
+    }
+    const test = LANG_TEST[lang];
+    if (test) {
+      const byText = list.filter(t => test(`${t.name} ${t.artist}`));
+      if (byText.length >= 5) return { list: byText, how: '文字' };
+      // 挑不出足夠的就不硬篩，只把像的排前面
+      return {
+        list: [...list.filter(t => test(`${t.name} ${t.artist}`)),
+               ...list.filter(t => !test(`${t.name} ${t.artist}`))],
+        how: '排序',
+      };
+    }
+    return { list, how: '整份' };
+  };
 
   /**
    * 判斷兩筆是不是同一首歌。
@@ -6704,23 +6742,34 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     setMusicList([]);
     failLog.current = [];
     let list: Track[] = [];
+    let how = '';
     if (src.kind === 'korean') {
-      /* 韓語：先跟 Apple 要「K-Pop 曲風」的榜。這一份本來就整份都是 K-Pop
-         （BTS、BLACKPINK、NewJeans 這些），不需要再用文字去篩，也就不會把
-         團名寫成拉丁字母的那一大票丟掉。
-         真的拿不到才退回韓國國家榜，並且只是把看得出韓文的排前面、一首不丟。 */
+      /* 韓語走兩條，先曲風榜、拿不到再用國家榜自己標的曲風去挑。
+         兩條都是為了同一件事：不要用「歌名有沒有諺文」去猜 ——
+         BTS、BLACKPINK、NewJeans 的團名都是拉丁字母，用猜的一定漏掉。 */
       const kpop = await loadChart('kr', GENRE_KPOP).catch(() => [] as Track[]);
       if (kpop.length >= 10) {
         list = weave({ kr: kpop }, ['kr']);
+        how = 'K-Pop 榜';
       } else {
         const plain = await loadChart('kr').catch(() => [] as Track[]);
-        list = weave({ kr: hangulFirst(plain) }, ['kr']);
+        chartPool.current.set('kr', plain);
+        const picked2 = pickLang(plain, '韓語');
+        list = weave({ kr: picked2.list }, ['kr']);
+        how = `韓國榜/${picked2.how}`;
       }
     } else if (src.kind === 'chart') {
       const got = await Promise.all(src.stores.map(s => loadChart(s).catch(() => [] as Track[])));
       const byStore: Record<string, Track[]> = {};
-      src.stores.forEach((s, i) => { byStore[s] = filterLang(got[i], src.lang); });
+      const hows: string[] = [];
+      src.stores.forEach((s, i) => {
+        chartPool.current.set(s, got[i]);
+        const r = pickLang(got[i], src.lang);
+        byStore[s] = r.list;
+        if (src.lang) hows.push(r.how);
+      });
       list = weave(byStore, src.pattern, src.lead);
+      how = hows[0] || '榜單';
     } else {
       const cached = searchCache.current.get(src.term.toLowerCase());
       if (cached) {
@@ -6745,10 +6794,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         failLog.current.push('Apple被鎖:暫停10分鐘');
       }
       list = weave({ ap: apple, dz: deezer }, ['ap', 'dz']);
+      how = apple.length && deezer.length ? 'Apple+Deezer' : apple.length ? 'Apple' : deezer.length ? 'Deezer' : '';
       // Apple 沒被鎖、只是台灣商店查不到，再多問一次美國商店（日韓西洋歌比較齊）
       if (appleUsable && !justBlocked && !apple.length) {
         const us = await loadSearch(src.term, 'us').catch(() => [] as Track[]);
-        if (us.length) list = weave({ ap: us, dz: deezer }, ['ap', 'dz']);
+        if (us.length) { list = weave({ ap: us, dz: deezer }, ['ap', 'dz']); how = 'Apple(us)'; }
+      }
+      /* 兩家都不通時的最後一道：就在「這次開啟已經抓下來的榜單」裡面找。
+         完全不用網路，所以一定會有反應 —— 榜上有的歌手（BTS、YOASOBI…）
+         照樣搜得到，不會再出現「打了字什麼都沒有」。 */
+      if (!list.length) {
+        const q = src.term.toLowerCase();
+        const local: Track[] = [];
+        chartPool.current.forEach(arr => arr.forEach(t => {
+          if (`${t.name} ${t.artist}`.toLowerCase().includes(q)) local.push(t);
+        }));
+        if (local.length) { list = weave({ lo: local }, ['lo']); how = '榜單內搜尋'; }
       }
       if (list.length) searchCache.current.set(src.term.toLowerCase(), list);
     }
@@ -6758,12 +6819,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const term = src.kind === 'korean' ? 'K-POP'
         : (STORE_FALLBACK[(src as any).stores?.[0]] || 'pop');
       list = await loadDeezer(term).catch(() => [] as Track[]);
+      if (list.length) how = 'Deezer 備援';
     }
     if (my !== musicReqRef.current) return;   // 已經有更新的搜尋了，這份丟掉
     setMusicList(list);
+    setMusicSource(list.length ? `${how}・${list.length} 首` : '');
     setMusicError(list.length
       ? ''
-      : `拿不到歌單，請確認網路後重試\n（${failLog.current.slice(0, 8).join('、') || '沒有可用的來源'}）`);
+      : `拿不到歌單，請確認網路後重試\n（${failLog.current.join('、') || '沒有可用的來源'}）`);
     setMusicLoading(false);
   }, []);
 
@@ -6803,6 +6866,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (!igPreview) return;
     const vv = (window as any).visualViewport;
     const hold = () => {
+      /* 有輸入框正在打字時「不要」跟瀏覽器搶捲動位置。
+         iOS 聚焦輸入框時會自己捲一段，好讓游標露在鍵盤上方；這時候每一幀都把它
+         捲回 0 等於跟系統打架 —— 鍵盤忽開忽關、按鍵吃不進去，看起來就是
+         「搜尋欄根本不能用」。 */
+      const el = document.activeElement as HTMLElement | null;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
       if (window.scrollY !== 0 || window.pageYOffset !== 0) window.scrollTo(0, 0);
       if (document.documentElement.scrollTop) document.documentElement.scrollTop = 0;
       if (document.body.scrollTop) document.body.scrollTop = 0;
@@ -10129,6 +10198,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     </button>
                   ))}
                 </div>
+
+                {/* 這份清單是從哪一條路拿到的。暫時放著，好判斷問題出在哪一段，
+                    確認一切正常之後就會拿掉。 */}
+                {!!musicSource && !musicLoading && (
+                  <p className="shrink-0 px-4 pb-2 text-[10px] text-white/25 leading-none">{musicSource}</p>
+                )}
 
                 {/* 歌曲清單 */}
                 <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 pb-4">
