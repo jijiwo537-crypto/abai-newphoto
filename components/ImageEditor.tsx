@@ -2536,6 +2536,36 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   const gpuMsRef = useRef(0);
   const cpuMsRef = useRef(0);
   const gpuWinsRef = useRef<boolean | null>(null);
+  const gpuWarmKeyRef = useRef('');
+  const exportC0Ref = useRef<HTMLCanvasElement | null>(null);
+  const exportC100Ref = useRef<HTMLCanvasElement | null>(null);
+
+  /**
+   * 先把 GPU 暖起來：上傳整張圖的貼圖、建立 3D 查色表、跑一次空的 draw。
+   * 這些是一次性的成本（一張 148 萬像素的圖光上傳就要好幾毫秒），
+   * 不先做的話它們會全部落在「手指剛按上滑桿的那一幀」，
+   * 看起來就是主人說的「開始拖動時抖一下」。
+   * 在閒置時做掉，拖曳的第一幀就只剩烤表 2.2ms ＋ 畫 0.1ms。
+   */
+  const warmGpu = useCallback((src: Uint8ClampedArray, w: number, h: number, key: string) => {
+    if (gpuWarmKeyRef.current === key) return;
+    const g = getGpu();
+    if (!g || !g.fits(w, h)) return;
+    try {
+      if (!g.setSource(src, w, h)) return;
+      gpuSrcKeyRef.current = key;
+      // 用一顆「什麼都不改」的表做暖機，畫出來就是原圖，不會影響任何狀態
+      const n = 2;
+      const tex = new Uint8Array(n * n * n * 4);
+      for (let b2 = 0; b2 < n; b2++) for (let g2 = 0; g2 < n; g2++) for (let r2 = 0; r2 < n; r2++) {
+        const i = ((b2 * n + g2) * n + r2) * 4;
+        tex[i] = r2 * 255; tex[i + 1] = g2 * 255; tex[i + 2] = b2 * 255; tex[i + 3] = 255;
+      }
+      g.setLut(tex, n);
+      g.draw();
+      gpuWarmKeyRef.current = key;
+    } catch { /* 暖機失敗不影響任何功能，照常走原本的路 */ }
+  }, []);
   const getGpu = (): LutGpu | null => {
     if (gpuRef.current === undefined) {
       try { gpuRef.current = LutGpu.create(); } catch { gpuRef.current = null; }
@@ -4205,6 +4235,42 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     const tempLut0 = new Uint8ClampedArray(len);
     const tempLut100 = activeLut ? new Uint8ClampedArray(len) : null;
     
+    /* ── 先試 GPU ─────────────────────────────────────────────────────
+       跟預覽同一套：用現有的 processPixels 在 65³ 個格點上算一次烤成查色表，
+       GPU 一個 draw call 查完整張圖，然後直接把兩張畫布疊上去。
+       完全不把像素讀回來（那一步量過要 61ms）。
+
+       不能走 GPU 的情況跟預覽一致：
+         · 銳化 —— 要看鄰居像素，烤不進查色表
+         · colorNoise2 —— 它的雜訊遮罩要吃 tempDest 的像素
+       任何一步失敗都原封不動走回下面的 CPU 路徑。 */
+    if (!p.sharpen && !p.colorNoise2) {
+      const srcKey = `${b.w}x${b.h}|${buffersSrcRef.current}`;
+      if (!exportC0Ref.current) exportC0Ref.current = document.createElement('canvas');
+      const ok0 = gpuPaint(exportC0Ref.current, b.source, b.w, b.h,
+        { ...p, lutAmount: 0 }, null, 0, 65, srcKey, null);
+      let ok = ok0;
+      if (ok0 && activeLut) {
+        if (!exportC100Ref.current) exportC100Ref.current = document.createElement('canvas');
+        ok = gpuPaint(exportC100Ref.current, b.source, b.w, b.h,
+          { ...p, lutAmount: 100 }, activeLut.data, lutSize, 65, srcKey, null);
+      }
+      if (ok) {
+        ctx.clearRect(0, 0, b.w, b.h);
+        ctx.drawImage(exportC0Ref.current, 0, 0);
+        if (activeLut && exportC100Ref.current) {
+          ctx.save();
+          ctx.globalAlpha = p.lutAmount / 100;
+          ctx.drawImage(exportC100Ref.current, 0, 0);
+          ctx.restore();
+        }
+        const scaleG = Math.max(b.w, b.h) / 1080;
+        // 這條路沒有 tempDest 的像素，但 colorNoise2 已經被排除，用不到它
+        applyComplexEffects(ctx, b.w, b.h, p, scaleG, new Uint8ClampedArray(len), true, false, null);
+        return;
+      }
+    }
+
     const localBaseCorrectionLut = new Uint8Array(256);
     generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, localBaseCorrectionLut);
     
@@ -4474,7 +4540,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
         const calibrating = gpuWinsRef.current === null && cpuMsRef.current === 0;
         const gpuAllowedNow = isInteracting || (gpuWinsRef.current !== false && !calibrating);
         const gpuEligible = !pRender.sharpen && !pRender.colorNoise2 && !!b.source && gpuAllowedNow;
-        if (lastGpuRef.current !== gpuEligible) shouldReprocessPixels = true;
+        /* 只有「上一輪走 GPU、這一輪要走 CPU」時才強制重算 ——
+           因為 GPU 那輪沒有產生 b.dest 的像素，CPU 這輪得補上。
+           反過來（CPU→GPU，也就是手指剛按上滑桿的那一刻）畫布內容本來就是對的，
+           強制重畫一次只會在拖曳第一幀多壓一次全解析度運算，看起來就是抖一下。 */
+        if (lastGpuRef.current && !gpuEligible) shouldReprocessPixels = true;
         let gpuDone = false;
         if (shouldReprocessPixels && gpuEligible) {
             const tGpu = performance.now();
@@ -5126,6 +5196,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
         const b = buffers.current.preview;
         const cvs = displayCanvasRef.current;
+        /* 閒著的時候先把 GPU 暖起來（上傳貼圖、建表、跑一次空 draw）。
+           不先做的話這些一次性成本會落在手指按下滑桿的第一幀，就是「抖一下」。 */
+        if (!isDirtyRef.current && !isInteractingRef.current && b?.source && b.w && b.h) {
+            warmGpu(b.source, b.w, b.h, `${b.w}x${b.h}|${buffersSrcRef.current}`);
+        }
         // 換照片時，新圖還在解碼，緩衝區裡裝的還是上一張 —— 這時候畫出去就是舊照片。
         // 等緩衝區換成現在這一張再畫。
         const buffersReady = buffersSrcRef.current === activeSrcRef.current;
@@ -5299,10 +5374,36 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
     generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseCorrectionLutRef.current);
 
-    processPixels(sourceData, destData, w, h, p, activeLut ? activeLut.data : null, lutSize, baseCorrectionLutRef.current, sharpenDetail, false, getCurveLuts(p.curves));
-    ctx.putImageData(new ImageData(destData, w, h), 0, 0);
+    /* ── 匯出也走 GPU ──────────────────────────────────────────────
+       這裡是原始解析度（動輒一兩千萬像素），CPU 逐像素是整個存檔最慢的一步。
+       改成：用現有的 processPixels 在 65³ 個格點上算一次烤成查色表（16ms），
+       GPU 一個 draw call 查完整張圖，直接畫進畫布 —— 不需要把像素讀回來，
+       因為接下來就是編碼成 PNG，畫布本身就是要的東西。
+
+       不能走 GPU 的情況：
+         · 銳化 —— 要看鄰居像素（這裡有 sharpenDetail），烤不進查色表
+         · colorNoise2 —— 它的雜訊遮罩要吃 destData 的像素
+         · 圖片超過裝置的貼圖上限 —— gpuPaint 內部會擋掉
+       任何一步失敗都原封不動走下面原本的 CPU 路徑，成品完全一樣。 */
+    let gpuOk = false;
+    if (!p.sharpen && !p.colorNoise2) {
+      const gc = document.createElement('canvas');
+      gpuOk = gpuPaint(gc, sourceData, w, h, p,
+        activeLut ? activeLut.data : null, lutSize, 65, `export|${w}x${h}|${Math.random()}`, null);
+      if (gpuOk) {
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(gc, 0, 0);
+      }
+      // 貼圖已經被換成匯出那張了，讓預覽下次重新上傳自己的
+      gpuSrcKeyRef.current = '';
+      gpuWarmKeyRef.current = '';
+    }
+    if (!gpuOk) {
+      processPixels(sourceData, destData, w, h, p, activeLut ? activeLut.data : null, lutSize, baseCorrectionLutRef.current, sharpenDetail, false, getCurveLuts(p.curves));
+      ctx.putImageData(new ImageData(destData, w, h), 0, 0);
+    }
     const scale = Math.max(w, h) / 1080;
-    applyComplexEffects(ctx, w, h, p, scale, sharedData, false, true, destData);
+    applyComplexEffects(ctx, w, h, p, scale, sharedData, false, true, gpuOk ? null : destData);
     return canvas;
   };
 
