@@ -2620,7 +2620,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       try { gpuRef.current = LutGpu.create(); } catch { gpuRef.current = null; }
     }
     const g = gpuRef.current;
-    return g && !g.lost ? g : null;
+    /* 上下文被系統收走（iOS 記憶體吃緊、切到背景回來）之後要能**重建**。
+       原本這裡只是回 null，而 gpuRef 已經有值、不會再進上面那個建立分支 ——
+       等於一掉就永久退回 CPU，整個工作階段都回不去。 */
+    if (g && g.lost) {
+      gpuRef.current = undefined;
+      gpuSrcKeyRef.current = '';
+      gpuWarmKeyRef.current = '';
+      bakeCacheRef.current.clear();   // 表在舊上下文裡，重建後要重新上傳
+      return null;                    // 這一輪先走 CPU，下一輪就會建好新的
+    }
+    return g || null;
   };
   useEffect(() => () => { gpuRef.current?.dispose(); }, []);
 
