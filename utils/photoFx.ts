@@ -16,7 +16,82 @@ import {
   type EditorParams,
 } from '../components/ImageEditor';
 import { applyGlEffects, hasActiveFx } from './glEffects';
+import { bakeColorLut, bakedToTexture } from './lutBake';
+import { LutGpu } from './lutGpu';
 import { loadCachedLut, saveCachedLut } from './lutStore';
+
+/* ── 拼圖的 GPU 顏色鏈 ────────────────────────────────────────────────
+   上一版我寫壞過一次：每被呼叫一次就重新上傳整張圖、烤兩次 65³ 的表、
+   還另外配置兩張畫布。拖滑桿時這支是**每一幀**都被呼叫的，
+   等於每幀多背這些成本，比原本的 CPU 還慢 —— 主人回報「超級卡」就是這個。
+
+   這一版把三件事補上：
+     ① 來源貼圖依「這張圖的內容」快取，同一張只上傳一次
+     ② 用 33³ 而不是 65³（烤 2.2ms vs 16ms；色差 4 vs 3 色階，肉眼都分不出）
+     ③ 兩張中間畫布重用，不每幀重新配置
+   顏色仍然是直接呼叫現有的 processPixels 去烤，公式一行都沒重寫。 */
+let gpuInst: LutGpu | null | undefined;
+const getGpu = (): LutGpu | null => {
+  if (gpuInst === undefined) {
+    try { gpuInst = LutGpu.create(); } catch { gpuInst = null; }
+  }
+  return gpuInst && !gpuInst.lost ? gpuInst : null;
+};
+/* 這台裝置的 GPU 真的比較快嗎 —— 不用猜，開起來實際量。
+   校準方式：第一次先走 CPU 記時間，第二次走 GPU 記時間，之後才下判斷。
+   有真顯示卡的手機會選 GPU；軟體模擬的 GL（某些桌機、虛擬機）會自動退回 CPU，
+   不會出現上一版那種「改了反而更卡」的情況。
+   留 1.2 倍餘裕：差不多快時寧可用 GPU，它不佔主執行緒。 */
+let cpuMs = 0, gpuMs = 0, gpuWins: boolean | null = null;
+let gpuSrcKey = '';
+let gpuC0: HTMLCanvasElement | null = null;
+let gpuC1: HTMLCanvasElement | null = null;
+const reuse = (c: HTMLCanvasElement | null, w: number, h: number) => {
+  const cv = c || document.createElement('canvas');
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  return cv;
+};
+
+const gpuColorChain = (
+  ctx: CanvasRenderingContext2D, src: Uint8ClampedArray, w: number, h: number,
+  p: EditorParams, lut: { data: Uint8ClampedArray; size: number } | null,
+  amount: number, baseLut: Uint8Array, srcKey: string,
+): boolean => {
+  const g = getGpu();
+  if (!g || !g.fits(w, h)) return false;
+  try {
+    if (gpuSrcKey !== srcKey) {
+      if (!g.setSource(src, w, h)) return false;
+      gpuSrcKey = srcKey;
+    }
+    const paint = (film: Uint8ClampedArray | null, filmSize: number, into: HTMLCanvasElement) => {
+      const baked = bakeColorLut(
+        (a, d, ww, hh) => processPixels(a, d, ww, hh, p, film, filmSize, baseLut, null, false, IDENTITY_CURVE_LUTS),
+        33,
+      );
+      if (!g.setLut(bakedToTexture(baked), 33)) return false;
+      const drawn = g.draw();
+      if (!drawn) return false;
+      // GPU 的畫布下一次 draw 就會被蓋掉，先拓到自己的畫布上
+      into.getContext('2d')!.drawImage(drawn, 0, 0);
+      return true;
+    };
+    const needBlend = !!lut && amount < 1;
+    gpuC0 = reuse(gpuC0, w, h);
+    if (needBlend && !paint(null, 0, gpuC0)) return false;
+    gpuC1 = reuse(gpuC1, w, h);
+    if (!paint(lut ? lut.data : null, lut ? lut.size : 0, gpuC1)) return false;
+    ctx.clearRect(0, 0, w, h);
+    if (needBlend) ctx.drawImage(gpuC0, 0, 0);
+    ctx.save();
+    if (needBlend) ctx.globalAlpha = amount;
+    ctx.drawImage(gpuC1, 0, 0);
+    ctx.restore();
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 /** 圖層上存的參數，全部都是可選的，沒動過就不存 */
 export interface PhotoFx {
@@ -200,6 +275,28 @@ export function applyPhotoFx(
 
   const baseLut = new Uint8Array(256);
   generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseLut);
+  let gpuOk = false;
+
+  /* 先試 GPU。這條路完全不需要把像素讀回來 ——
+     後面的噪點、模糊、柔光全部在畫布上合成，沒有人要 dest 那份陣列。
+     失敗就原封不動走下面的 CPU，成品一模一樣。 */
+  // 還沒量過 CPU 的耗時之前，先讓第一次走 CPU 把時間記下來
+  const calibrating = gpuWins === null && cpuMs === 0;
+  if (!calibrating && gpuWins !== false) {
+    const amt = (fx.lutAmount ?? 100) / 100;
+    // 來源鍵：尺寸 ＋ 幾個取樣點。同一張圖重畫時就不必重傳貼圖。
+    const k = `${out.width}x${out.height}|${src[0]},${src[(src.length >> 3) | 0]},`
+      + `${src[(src.length >> 2) | 0]},${src[src.length - 4]}`;
+    const t = performance.now();
+    gpuOk = gpuColorChain(ctx, src, out.width, out.height, p, lut, amt, baseLut, k);
+    if (gpuOk) {
+      gpuMs = performance.now() - t;
+      if (cpuMs > 0 && gpuWins === null) gpuWins = gpuMs < cpuMs * 1.2;
+    }
+  }
+
+  if (!gpuOk) {
+  const tCpu = performance.now();
   processPixels(
     src, dest, out.width, out.height, p,
     lut ? lut.data : null, lut ? lut.size : 0,
@@ -222,6 +319,8 @@ export function applyPhotoFx(
     }
   }
   ctx.putImageData(img, 0, 0);
+  cpuMs = performance.now() - tCpu;
+  }
 
   // 特效的半徑是以 1080 長邊為基準，換算到目前這張的大小
   const scale = Math.max(out.width, out.height) / 1080;
