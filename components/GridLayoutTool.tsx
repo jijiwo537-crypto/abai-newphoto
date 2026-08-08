@@ -6576,6 +6576,42 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     return raceBoth(`${store}搜`, url, cb => `${url}&callback=${cb}`, fromItunes);
   };
 
+  /** Deezer 的搜尋：免金鑰、沒有 Apple 那種嚴格的流量上限，一樣有 30 秒試聽 */
+  const loadDeezer = async (term: string): Promise<Track[]> => {
+    const dz = 'https://api.deezer.com/search?output=jsonp&limit=40&q=' + encodeURIComponent(term);
+    try {
+      return fromDeezer(await jsonp(cb => `${dz}&callback=${cb}`));
+    } catch (e: any) {
+      failLog.current.push(`DZ:${String(e?.message || e).slice(0, 16)}`);
+      return [];
+    }
+  };
+
+  /* 搜尋結果照關鍵字存起來：退格、改字、切回同一個字都不必再打一次網路。
+     Apple 的搜尋端點有流量上限，超過之後那段時間會整片回 403 ——
+     少送一次就少一次被鎖的機會。 */
+  const searchCache = useRef<Map<string, Track[]>>(new Map());
+
+  /* 判斷一首歌是不是某個語言的：直接看歌名與歌手用的是哪一種文字。
+     各地區的熱門榜本來就混了一堆西洋歌（韓國榜上很大一部分是英文歌），
+     照榜原封不動端出來，「韓語」那一頁就不是韓語歌。 */
+  const HANGUL = /[가-힣ᄀ-ᇿ㄰-㆏]/;
+  const KANA = /[぀-ゟ゠-ヿｦ-ﾝ]/;
+  const HAN = /[㐀-䶿一-鿿豈-﫿]/;
+  const LANG_TEST: Record<string, (s: string) => boolean> = {
+    '華語': s => HAN.test(s) && !KANA.test(s) && !HANGUL.test(s),
+    '日語': s => KANA.test(s) || (HAN.test(s) && !HANGUL.test(s)),
+    '韓語': s => HANGUL.test(s),
+    '英語': s => !HAN.test(s) && !KANA.test(s) && !HANGUL.test(s),
+  };
+  const filterLang = (list: Track[], lang?: string): Track[] => {
+    const test = lang ? LANG_TEST[lang] : undefined;
+    if (!test) return list;
+    const hit = list.filter(t => test(`${t.name} ${t.artist}`));
+    // 真的一首都篩不出來時就別硬篩，總比整頁空白好
+    return hit.length ? hit : list;
+  };
+
   /**
    * 判斷兩筆是不是同一首歌。
    *
@@ -6622,7 +6658,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
   type Src =
     | { kind: 'search'; term: string }
-    | { kind: 'chart'; stores: string[]; pattern: string[]; lead?: { store: string; count: number } };
+    | { kind: 'chart'; stores: string[]; pattern: string[]; lang?: string; lead?: { store: string; count: number } };
 
   /** 現在這個分頁／搜尋字該拿什麼 */
   const currentSource = (): Src => {
@@ -6638,7 +6674,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     }
     if (musicTab === '超夯') return { kind: 'chart', stores: ALL_STORES, pattern: ['us', 'tw', 'jp', 'kr'] };
     const s = TAB_STORE[musicTab];
-    if (s) return { kind: 'chart', stores: [s], pattern: [s] };
+    // 語言分頁：抓該地區的榜，再照文字把非該語言的歌濾掉
+    if (s) return { kind: 'chart', stores: [s], pattern: [s], lang: musicTab };
     return { kind: 'search', term: 'pop' };
   };
 
@@ -6654,27 +6691,39 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (src.kind === 'chart') {
       const got = await Promise.all(src.stores.map(s => loadChart(s).catch(() => [] as Track[])));
       const byStore: Record<string, Track[]> = {};
-      src.stores.forEach((s, i) => { byStore[s] = got[i]; });
+      src.stores.forEach((s, i) => { byStore[s] = filterLang(got[i], src.lang); });
       list = weave(byStore, src.pattern, src.lead);
     } else {
-      /* 搜尋要「包含所有歌曲」：同一個字四個地區的商店各查一次再合併。
-         單查一個地區會漏掉大量他國曲目（日韓歌在台灣商店常常沒有）。 */
-      const got = await Promise.all(ALL_STORES.map(s => loadSearch(src.term, s).catch(() => [] as Track[])));
-      const byStore: Record<string, Track[]> = {};
-      ALL_STORES.forEach((s, i) => { byStore[s] = got[i]; });
-      list = weave(byStore, ['tw', 'us', 'jp', 'kr']);
-      // 四個商店都空的話，最後再問一次 Deezer
-      if (!list.length) {
-        const dz = 'https://api.deezer.com/search?output=jsonp&limit=40&q=' + encodeURIComponent(src.term);
-        try { list = fromDeezer(await jsonp(cb => `${dz}&callback=${cb}`)); }
-        catch (e: any) { failLog.current.push(`DZ:${String(e?.message || e).slice(0, 16)}`); }
+      const cached = searchCache.current.get(src.term.toLowerCase());
+      if (cached) {
+        if (my !== musicReqRef.current) return;
+        setMusicList(cached);
+        setMusicLoading(false);
+        return;
       }
+      /* 這裡刻意只問「一個」Apple 商店，而不是四個。
+         Apple 的搜尋端點有流量上限，超過之後那一段時間會整片回 403 ——
+         之前一次搜尋就送出四個商店 × 兩種傳輸＝八個請求，打字打兩下就被鎖，
+         畫面上那串「kr搜:403、us搜:403、tw搜J:blocked」就是被鎖的樣子。
+         同時另外問 Deezer（免金鑰、沒有這種上限），Apple 被鎖的時候
+         清單照樣有東西；兩邊都拿到就合併，Apple 的排前面。 */
+      const [apple, deezer] = await Promise.all([
+        loadSearch(src.term, 'tw').catch(() => [] as Track[]),
+        loadDeezer(src.term).catch(() => [] as Track[]),
+      ]);
+      list = weave({ ap: apple, dz: deezer }, ['ap', 'dz']);
+      // Apple 那邊完全沒東西時，再多問一個美國商店（日韓西洋歌比較齊）
+      if (!apple.length) {
+        const us = await loadSearch(src.term, 'us').catch(() => [] as Track[]);
+        if (us.length) list = weave({ ap: us, dz: deezer }, ['ap', 'dz']);
+      }
+      if (list.length) searchCache.current.set(src.term.toLowerCase(), list);
     }
     if (my !== musicReqRef.current) return;   // 已經有更新的搜尋了，這份丟掉
     setMusicList(list);
     setMusicError(list.length
       ? ''
-      : `拿不到歌單，請確認網路後重試\n（${failLog.current.slice(0, 6).join('、') || '沒有可用的來源'}）`);
+      : `拿不到歌單，請確認網路後重試\n（${failLog.current.slice(0, 8).join('、') || '沒有可用的來源'}）`);
     setMusicLoading(false);
   }, []);
 
@@ -6691,7 +6740,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   useEffect(() => {
     // 在「已儲存」也要能打字搜尋，只有沒打字的時候那一頁才是純本機清單
     if (!musicOpen || (musicTab === '已儲存' && !musicQuery.trim())) return;
-    const t = setTimeout(() => loadMusic(currentSource()), musicQuery.trim() ? 350 : 0);
+    /* 打字的防抖拉到 600ms：Apple 的搜尋有流量上限，每敲一個字就送一次
+       很快就會被鎖成 403。按鍵盤上的「搜尋」鍵可以立刻查，不用等這 600ms。 */
+    const t = setTimeout(() => loadMusic(currentSource()), musicQuery.trim() ? 600 : 0);
     return () => clearTimeout(t);
   }, [musicOpen, musicQuery, musicTab, loadMusic]);
 
