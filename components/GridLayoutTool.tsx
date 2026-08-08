@@ -6442,6 +6442,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const [musicLoading, setMusicLoading] = useState(false);
   const [musicError, setMusicError] = useState('');
   const [picked, setPicked] = useState<Track | null>(null);
+  /** 現在真的有聲音在放嗎（決定封面上要不要跳那排音量條） */
+  const [musicPlaying, setMusicPlaying] = useState(false);
+  useEffect(() => {
+    if (!audioRef.current) audioRef.current = new Audio();
+    const a = audioRef.current;
+    const on = () => setMusicPlaying(true);
+    const off = () => setMusicPlaying(false);
+    a.addEventListener('play', on);
+    a.addEventListener('playing', on);
+    a.addEventListener('pause', off);
+    a.addEventListener('ended', off);
+    return () => {
+      a.removeEventListener('play', on);
+      a.removeEventListener('playing', on);
+      a.removeEventListener('pause', off);
+      a.removeEventListener('ended', off);
+    };
+  }, []);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const musicReqRef = useRef(0);       // 只讓最後一次搜尋的結果進畫面
   /* 分頁：語言分頁抓該地區的近期熱門榜，為你推薦是四地混合、超夯是四地齊平輪。
@@ -6713,18 +6731,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     (u: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
     (u: string) => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
   ];
-  const viaRelay = async (tag: string, url: string, parse: (d: any) => Track[]): Promise<Track[]> => {
-    for (let i = 0; i < RELAYS.length; i++) {
-      try {
-        const list = parse(await getJSON(RELAYS[i](url), 6500));
-        if (list.length) return list;
-        failLog.current.push(`${tag}轉${i + 1}:0筆`);
-      } catch (e: any) {
-        failLog.current.push(`${tag}轉${i + 1}:${String(e?.message || e).slice(0, 14)}`);
-      }
-    }
-    return [];
-  };
+  /* 幾條轉送要「同時」發、誰先成功就用誰。
+     之前是一條一條試：第一條逾時 6.5 秒才輪到第二條，一次搜尋會呼叫這支
+     四次（找歌手、拿歌手全曲、搜歌、美國商店），最壞情況疊起來就是幾十秒 ——
+     那就是「搜尋反而變慢、甚至等不到結果」的原因。 */
+  const viaRelay = (tag: string, url: string, parse: (d: any) => Track[]): Promise<Track[]> =>
+    new Promise<Track[]>(resolve => {
+      let left = RELAYS.length;
+      let done = false;
+      const finish = (v: Track[]) => { if (!done) { done = true; resolve(v); } };
+      RELAYS.forEach((make, i) => {
+        getJSON(make(url), 5000)
+          .then(d => {
+            const list = parse(d);
+            if (list.length) finish(list);
+            else failLog.current.push(`${tag}轉${i + 1}:0筆`);
+          })
+          .catch((e: any) => {
+            failLog.current.push(`${tag}轉${i + 1}:${String(e?.message || e).slice(0, 14)}`);
+          })
+          .finally(() => { if (--left === 0) finish([]); });
+      });
+    });
 
   /* 搜尋結果照關鍵字存起來：退格、改字、切回同一個字都不必再打一次網路。
      Apple 的搜尋端點有流量上限，超過之後那段時間會整片回 403 ——
@@ -6829,14 +6857,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     const byGenre = list.filter(t =>
       (t.genreId && ids.has(t.genreId)) || (t.genre && re && re.test(t.genre)));
     if (byGenre.length >= 5) return { list: byGenre, how: '曲風' };
-    if (test) {
-      const byText = list.filter(t => test(`${t.name} ${t.artist}`));
-      // 曲風與文字取聯集（同一個語言的兩種證據），但絕不放進別語言的歌
-      const merged = list.filter(t =>
-        byGenre.includes(t) || byText.includes(t));
-      if (merged.length) return { list: merged, how: byGenre.length ? '曲風+文字' : '文字' };
-    }
-    return { list: byGenre, how: '曲風' };
+    const byText = test ? list.filter(t => test(`${t.name} ${t.artist}`)) : [];
+    const merged = list.filter(t => byGenre.includes(t) || byText.includes(t));
+    if (merged.length >= 3) return { list: merged, how: byGenre.length ? '曲風+文字' : '文字' };
+    /* 一定不能回空的。
+       曲風標籤有時候整份都對不上（拿不到曲風表、或那個地區標的是別的名字），
+       這時候寧可把整份榜端出來、只把「看起來像」的排前面，也不能讓使用者
+       看到「拿不到歌單」——榜明明就在手上。這就是韓語那頁一首都沒有的原因。 */
+    const like = new Set(merged);
+    return {
+      list: [...list.filter(t => like.has(t)), ...list.filter(t => !like.has(t))],
+      how: '排序',
+    };
   };
 
   /**
@@ -7148,13 +7180,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     setTimeout(() => setMusicOpen(false), 300);
   };
 
+  /* 點一首歌＝當場試聽，面板不關。
+     可以一首一首點著比較，決定好了再自己把面板關掉，才會回到 IG 預覽。
+     再點同一首就是停止播放。 */
   const pickTrack = (t: Track) => {
-    setPicked(t);
     if (!audioRef.current) audioRef.current = new Audio();
-    audioRef.current.src = t.preview;
-    audioRef.current.loop = true;
-    audioRef.current.play().catch(() => {});
-    closeMusic();
+    const a = audioRef.current;
+    if (picked?.id === t.id && !a.paused) { a.pause(); return; }
+    setPicked(t);
+    a.src = t.preview;
+    a.loop = true;
+    a.currentTime = 0;
+    a.play().catch(() => {});
   };
   // 元件整個被卸載時（例如離開經典拼圖）也要把音樂停掉，不然會一直播下去
   useEffect(() => () => { audioRef.current?.pause(); audioRef.current = null; }, []);
@@ -10484,12 +10521,30 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                         className="flex-1 min-w-0 flex items-center gap-3 text-left active:opacity-60"
                       >
                         {/* 封面載不到就換成全透明的 1×1，只留底色 ——
-                            直接放著不管的話會出現瀏覽器的破圖圖示和一圈框。 */}
-                        <img
-                          src={t.art || TRANSPARENT_PX} alt="" loading="lazy"
-                          onError={e => { (e.currentTarget as HTMLImageElement).src = TRANSPARENT_PX; }}
-                          className="w-14 h-14 rounded-[6px] shrink-0 bg-white/10 object-cover"
-                        />
+                            直接放著不管的話會出現瀏覽器的破圖圖示和一圈框。
+                            正在試聽的那一首：封面上壓一層會跳動的音量條。 */}
+                        <div className="relative w-14 h-14 shrink-0">
+                          <img
+                            src={t.art || TRANSPARENT_PX} alt="" loading="lazy"
+                            onError={e => { (e.currentTarget as HTMLImageElement).src = TRANSPARENT_PX; }}
+                            className="w-14 h-14 rounded-[6px] bg-white/10 object-cover"
+                          />
+                          {picked?.id === t.id && musicPlaying && (
+                            <div className="absolute inset-0 rounded-[6px] bg-black/45 flex items-end justify-center gap-[3px] pb-[18px]">
+                              {[0, 1, 2, 3].map(i => (
+                                <span
+                                  key={i}
+                                  className="w-[3px] rounded-full bg-white"
+                                  style={{
+                                    height: '18px',
+                                    transformOrigin: 'bottom',
+                                    animation: `abaiEq 900ms ease-in-out ${i * 130}ms infinite`,
+                                  }}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <p className={`text-[16px] leading-[21px] truncate text-white ${picked?.id === t.id ? 'font-semibold' : ''}`}>{t.name}</p>
                           <p className="text-[14px] leading-[19px] text-white/50 truncate">
