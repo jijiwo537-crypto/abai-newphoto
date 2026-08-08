@@ -6431,6 +6431,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     genreId?: string; genre?: string;
     /** 新版榜單只給歌曲編號，試聽網址要再查一次才有 */
     appleId?: string;
+    /** 這首歌的歌手編號：搜尋結果上方那一排歌手就是靠它認人、借封面當大頭照 */
+    artistId?: string;
   };
   const TRANSPARENT_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
   const [musicOpen, setMusicOpen] = useState(false);
@@ -6476,8 +6478,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      為你推薦＝華日韓三份篩過的交錯；超夯＝各地合併，不分語言。
      「已儲存」不連網，讀本機收藏。 */
   const MUSIC_TABS = ['為你推薦', '超夯', '華語', '日語', '韓語', '英語', '已儲存'];
-  /** 全球熱門要看的地區：東亞三地＋英美，涵蓋面夠廣又不會打太多請求 */
-  const GLOBAL_STORES = ['us', 'gb', 'jp', 'kr', 'tw'];
+  /* 「每日全球 Top 100」：Apple 的每日榜是照國家發布的，沒有一份叫「全球」的，
+     所以取幾個主要市場的每日榜合併，照「在幾個國家上榜」排名 ——
+     跨越最多國家的那首就是全球最紅的那首。 */
+  const GLOBAL_STORES = ['us', 'gb', 'jp', 'kr', 'tw', 'de', 'br'];
 
   /** 收藏：存在本機，「已儲存」那一頁就是這一份 */
   const [savedTracks, setSavedTracks] = useState<Track[]>(() => {
@@ -6526,6 +6530,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       art: (r.artworkUrl100 || '').replace('100x100', '200x200'),
       preview: r.previewUrl,
       secs: Math.round((r.trackTimeMillis || 0) / 1000),
+      artistId: String(r.artistId || ''),
     }));
 
   /** Apple 排行榜的 JSON：試聽檔藏在 link 陣列裡 rel="enclosure" 那一筆。
@@ -6618,7 +6623,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      它不支援 callback，那個 script 載回來會是純 JSON，瀏覽器當程式碼解析
      會噴一堆語法錯誤，白白多一個請求也多一堆雜訊。 */
   const loadModernChart = async (store: string): Promise<Track[]> => {
-    const url = `https://rss.applemarketingtools.com/api/v2/${store}/music/most-played/200/songs.json`;
+    const url = `https://rss.applemarketingtools.com/api/v2/${store}/music/most-played/100/songs.json`;
     try {
       return fromModernChart(await getJSON(url));
     } catch (e: any) {
@@ -6668,80 +6673,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
        1253 Mandopop  1251 Cantopop/HK-Pop  1250 C-Pop  1232 / 1637 中文
        1233〜1240 中文古典、戲曲、台灣民謠等
      寧可少幾首也不放進不確定的 —— 精準優先，這是主人指定的。 */
-  const LANG_GENRES: Record<string, string[]> = {
-    kr: ['51', '1686', '1243', '1244', '1245', '1246', '1247'],
-    jp: ['27', '1627', '28', '29', '1186', '1201'],
-    tw: ['1253', '1251', '1250', '1232', '1637',
-         '1233', '1234', '1235', '1236', '1237', '1238', '1239', '1240'],
-  };
-  /* 光靠編號不夠保險：Apple 在不同地區的商店會用不同的子曲風編號，
-     編號表只要對不上一個，整份榜就會被篩成空的（韓語那次就是這樣）。
-     所以編號之外再認曲風「名字」—— 名字是跟著商店在地化的，各語言都列進來。 */
-  const LANG_NAMES: Record<string, RegExp> = {
-    kr: /k-?pop|korean|가요|케이팝|한국|韓國|韓語|韩语/i,
-    jp: /j-?pop|japanese|anime|enka|アニメ|演歌|邦楽|日本|日語|日语/i,
-    tw: /mandopop|cantopop|c-?pop|chinese|hk-?pop|taiwan|華語|华语|國語|国语|粵語|粤语|中文|中國|中国|台語|台语/i,
-  };
-  const LANGS = ['kr', 'jp', 'tw'];
-
-  /** 這一筆的曲風編號（新版榜單放在 genres，舊版放在 category） */
-  const genreIdsOf = (t: Track): string[] =>
-    String(t.genreId || '').split(/[^0-9]+/).filter(Boolean);
-
-  /** 這一首是不是那個語言的：編號對得上，或曲風名字對得上，兩者有一就算 */
-  const isLang = (t: Track, lang: string): boolean => {
-    const want = LANG_GENRES[lang];
-    if (want && genreIdsOf(t).some(g => want.includes(g))) return true;
-    const re = LANG_NAMES[lang];
-    return !!re && re.test(t.genre || '');
-  };
-
-  /**
-   * 這一份榜裡「最常見的那個曲風」。
-   *
-   * 這一招是為了不再依賴我手寫的編號表 —— 那張表只要有一個編號跟 Apple 在那個
-   * 地區實際用的對不上，整頁就會被篩光（韓語出事就是這樣）。
-   * 韓國榜八九成是韓國本地的歌、日本榜是日本的歌、台灣榜是華語歌，
-   * 所以「榜上最多的那個曲風」本身就是那個地區的本地音樂，而且是 Apple 自己標的。
-   * 不用我猜、不用查表，換到哪個地區、Apple 改哪個編號都跟得上。
-   */
-  const mainGenres = (list: Track[]): Set<string> => {
-    const n = new Map<string, number>();
-    list.forEach(t => genreIdsOf(t).forEach(g => n.set(g, (n.get(g) || 0) + 1)));
-    const rank = [...n.entries()].sort((a, b) => b[1] - a[1]);
-    if (!rank.length) return new Set<string>();
-    const keep = new Set([rank[0][0]]);
-    // 第二名也很常見（有第一名的一半）就一起留：例如國語＋台語、K-Pop＋韓語民謠
-    if (rank[1] && rank[1][1] >= rank[0][1] * 0.5) keep.add(rank[1][0]);
-    return keep;
-  };
-
-  /**
-   * 照分類把榜篩過。全部用 Apple 自己標在每一筆上的曲風，我不做任何語言判斷。
-   *
-   * 順序是這樣：
-   *   1. 我那張編號／名稱表如果在這份榜上真的認得出夠多首（≥8），就用它 —— 最準。
-   *   2. 認不出來（Apple 換編號、或那個地區用別的在地曲風名）就改用
-   *      「這份榜上最常見的曲風」，那本來就是該地區的本地音樂。
-   *   3. 兩種都不成立就整份端出來。那一國的榜本身就是 Apple 的地區榜，
-   *      端整份也遠好過讓主人看到「拿不到歌單」。
-   */
-  const keepLang = (list: Track[], lang: string): Track[] => {
-    if (!lang || !list.length) return list;
-    if (lang === 'en') {
-      /* 英美商店的曲風名字本來就是英文（K-Pop / J-Pop / Mandopop），
-         照名字把亞洲三語排掉最準，不必猜編號。 */
-      const out = list.filter(t => !LANGS.some(l => LANG_NAMES[l].test(t.genre || '')));
-      return out.length >= 5 ? out : list;
-    }
-    const byTable = list.filter(t => isLang(t, lang));
-    if (byTable.length >= 8) return byTable;
-    const main = mainGenres(list);
-    if (!main.size) return list;
-    const byMain = list.filter(t => genreIdsOf(t).some(g => main.has(g)));
-    return byMain.length >= 8 ? byMain : list;
-  };
-
   /* ── 試聽網址的長期快取 ───────────────────────────────────────────────
      Apple 的 /lookup 是照 IP 限流的那一支（大約每分鐘二十次就開始回 403）。
      試聽網址本身不會變，所以查過一次就寫進 localStorage 永久留著 ——
@@ -6817,7 +6748,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    * 再用 lookup 把他名下的歌一次撈回來（一個請求最多 200 首）。
    */
   /** src：這位歌手／這張專輯是從哪一家查到的，往下鑽時要打對應的那一家 */
-  type Artist = { id: string; name: string; genre?: string };
+  type Artist = { id: string; name: string; genre?: string; art?: string };
   type Album = { id: string; name: string; art: string; year: string; count: number };
 
   const fromArtists = (d: any): Artist[] => (d?.results || [])
@@ -6908,6 +6839,71 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     };
     await Promise.all([worker(), worker(), worker()]);
     return out;
+  };
+
+  /**
+   * 搜尋結果上方那一排歌手。
+   *
+   * 以前只靠 entity=musicArtist 那一支，它打歌名時回空的，那一排就整個不見 ——
+   * 這就是主人說的「有時候有、有時候沒有」。
+   * 現在改成兩邊合起來：那一支查到的，加上「搜尋結果裡實際出現的每一位歌手」。
+   * 只要搜得到歌，就一定看得到歌手。
+   *
+   * 圖片：iTunes 的 musicArtist 那一支不給大頭照，但每一首歌都帶著專輯封面、
+   * 也帶著 artistId —— 直接拿他自己的歌的封面當大頭照，
+   * 不必為了圖片再多打任何一個請求。
+   */
+  const artistsInTracks = (tracks: Track[]) => {
+    const art = new Map<string, string>();
+    const hits = new Map<string, number>();
+    const list: Artist[] = [];
+    const seen = new Set<string>();
+    tracks.forEach(t => {
+      const id = t.artistId || '';
+      if (!id || !t.artist) return;
+      hits.set(id, (hits.get(id) || 0) + 1);
+      if (t.art && !art.has(id)) art.set(id, t.art);
+      if (seen.has(id)) return;
+      seen.add(id);
+      list.push({ id, name: t.artist });
+    });
+    return { list, art, hits };
+  };
+
+  /** 兩份歌手合起來、補上圖片、排序：名字對得上的排前面，其次是歌比較多的 */
+  const mergeArtists = (found: Artist[], tracks: Track[], term: string): Artist[] => {
+    const { list: fromSongs, art, hits } = artistsInTracks(tracks);
+    const out: Artist[] = [];
+    const seen = new Set<string>();
+    [...found, ...fromSongs].forEach(a => {
+      if (!a.id || seen.has(a.id)) return;
+      seen.add(a.id);
+      out.push({ ...a, art: a.art || art.get(a.id) || '' });
+    });
+    const nq = term.toLowerCase().replace(/\s+/g, '');
+    const match = (a: Artist) => (a.name.toLowerCase().replace(/\s+/g, '').includes(nq) ? 1 : 0);
+    return out
+      .sort((a, b) => (match(b) - match(a)) || ((hits.get(b.id) || 0) - (hits.get(a.id) || 0)))
+      .slice(0, 15);
+  };
+
+  /** 還是沒圖片的那幾位，去拿他最新一張專輯的封面（只補少數幾位，不亂打請求） */
+  const fillArtistArt = async (list: Artist[], store: string): Promise<Artist[]> => {
+    const need = list.filter(a => !a.art).slice(0, 6);
+    if (!need.length) return list;
+    const got = new Map<string, string>();
+    let cur = 0;
+    const worker = async () => {
+      for (;;) {
+        const i = cur++;
+        if (i >= need.length) return;
+        const al = await loadArtistAlbums(need[i], store).catch(() => [] as Album[]);
+        const art = al.find(x => x.art)?.art;
+        if (art) got.set(need[i].id, art);
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    return list.map(a => (a.art || !got.has(a.id) ? a : { ...a, art: got.get(a.id) }));
   };
 
   /** 名字要真的對得上才算「就是在找這位歌手」 */
@@ -7003,8 +6999,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const searchCache = useRef<Map<string, Track[]>>(new Map());
   /** 這次開啟已經抓下來的榜單，搜尋全掛時就在這裡面找，完全不用網路 */
   const chartPool = useRef<Map<string, Track[]>>(new Map());
-  /** 每次重新打開就換一個起點，推薦才不會每次都是同樣的開頭 */
-  const rotateRef = useRef(0);
 
   /* 判斷一首歌是不是某個語言的：直接看歌名與歌手用的是哪一種文字。
      各地區的熱門榜本來就混了一堆西洋歌（韓國榜上很大一部分是英文歌），
@@ -7035,8 +7029,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         if (cur) { cur.s += add; cur.n += 1; } else score.set(k, { t, s: add, n: 1 });
       });
     });
+    /* 只留一百首：這一頁講明了是「每日全球 Top 100」，
+       七個地區的榜合起來有好幾百首，不切的話就不是 Top 100 了。 */
     return [...score.values()]
       .sort((a, b) => (b.n - a.n) || (b.s - a.s))
+      .slice(0, 100)
       .map(x => x.t);
   };
 
@@ -7064,21 +7061,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     lead?: { store: string; count: number; keepOrder?: boolean },
   ): Track[] => {
     const q: Record<string, Track[]> = {};
-    /* rotate：每次重新打開面板換一個起點。榜單本身是排名順序，
-       不換起點的話每次進來看到的開頭永遠是同樣那幾首。
+    /* 一律照原本的順序，不再換起點。
+       以前每次打開面板會隨機換一個開頭，是為了讓畫面看起來不那麼一成不變；
+       但現在每個分頁講明了就是「每日 Top 100」，名次就是內容的一部分 ——
+       第一名要真的排第一。
 
        lead 指定的那一份也要在這裡備好 —— 它不一定出現在 pattern 裡
        （搜歌手時「該歌手的全部歌曲」就只掛在 lead 上），漏掉的話
-       整份會被無聲丟掉。
-       keepOrder 的那一份不輪轉：搜歌手時要照專輯順序整份倒出來；
-       推薦榜的 lead 則要跟著輪轉，不然開頭那幾首每次都一樣。 */
+       整份會被無聲丟掉。 */
     const keys = lead ? [lead.store, ...pattern] : pattern;
     keys.forEach(k => {
       if (q[k]) return;
-      const src = lists[k] || [];
-      const noRotate = lead?.keepOrder && k === lead.store;
-      const r = (!noRotate && src.length > 12) ? rotateRef.current % src.length : 0;
-      q[k] = [...src.slice(r), ...src.slice(0, r)];
+      q[k] = [...(lists[k] || [])];
     });
     const out: Track[] = [];
     const seen = new Set<string>();
@@ -7101,38 +7095,29 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
   type Src =
     | { kind: 'search'; term: string }
-    | { kind: 'chart'; stores: string[]; pattern: string[]; lang: string;
+    | { kind: 'chart'; stores: string[]; pattern: string[];
         lead?: { store: string; count: number } }
     | { kind: 'global'; stores: string[] };
 
-  /** 現在這個分頁／搜尋字該拿什麼。lang 就是「只留這個語言」，'' 表示不篩。 */
+  /**
+   * 每個分頁就是一份 Apple 的每日榜，原封不動照名次端出來。
+   * 這裡完全沒有我加的篩選 —— 分類是哪一國的榜，就是那一國的榜。
+   *   為你推薦／華語 → 每日台灣 Top 100
+   *   日語 → 每日日本 Top 100
+   *   韓語 → 每日韓國 Top 100
+   *   英語 → 每日美國 Top 100
+   *   超夯 → 每日全球 Top 100（幾個主要市場的每日榜合併）
+   */
+  const TAB_CHART: Record<string, string> = {
+    '為你推薦': 'tw', '華語': 'tw', '日語': 'jp', '韓語': 'kr', '英語': 'us',
+  };
   const currentSource = (): Src => {
     const q = musicQuery.trim();
     if (q) return { kind: 'search', term: q };
-    /* 為你推薦＝華語、日語、韓語三份「已經照曲風篩過」的榜交錯，
-       開頭四首固定是華語。三份各自都是純的，混起來當然也是純的。 */
-    if (musicTab === '為你推薦') {
-      return {
-        kind: 'chart', stores: ['tw', 'jp', 'kr'], pattern: ['tw', 'jp', 'kr'],
-        lang: 'mix', lead: { store: 'tw', count: 4 },
-      };
-    }
-    // 超夯＝全球本週熱門，本來就不分語言，所以不篩
     if (musicTab === '超夯') return { kind: 'global', stores: GLOBAL_STORES };
-    /* 語言分頁：抓那個地區的榜，再用 Apple 自己標的曲風編號篩出該語言。
-       華語同時看台灣與香港榜（國語＋粵語），篩完再交錯。 */
-    if (musicTab === '華語') return { kind: 'chart', stores: ['tw', 'hk'], pattern: ['tw', 'hk'], lang: 'tw' };
-    if (musicTab === '日語') return { kind: 'chart', stores: ['jp'], pattern: ['jp'], lang: 'jp' };
-    if (musicTab === '韓語') return { kind: 'chart', stores: ['kr'], pattern: ['kr'], lang: 'kr' };
-    if (musicTab === '英語') return { kind: 'chart', stores: ['us', 'gb'], pattern: ['us', 'gb'], lang: 'en' };
+    const store = TAB_CHART[musicTab];
+    if (store) return { kind: 'chart', stores: [store], pattern: [store] };
     return { kind: 'search', term: 'pop' };
-  };
-
-  /** 這個地區的榜要用哪一組語言編號篩（為你推薦是三地各自篩自己的） */
-  const langForStore = (src: Src, store: string): string => {
-    if (src.kind !== 'chart') return '';
-    if (src.lang !== 'mix') return src.lang;
-    return store === 'tw' || store === 'hk' ? 'tw' : store;
   };
 
   /**
@@ -7204,12 +7189,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const got = await Promise.all(stores.map(s => oneStore(s)));
       const byStore: Record<string, Track[]> = {};
       const hows = new Set<string>();
-      /* 每一份榜各自照「那一頁指定的語言」篩過再交錯。
-         篩的依據是 Apple 自己標在每一筆上的曲風編號，不是我從歌名猜的。 */
-      stores.forEach((s, i) => {
-        hows.add(got[i].how);
-        byStore[s] = keepLang(got[i].list, langForStore(src, s));
-      });
+      // 榜原封不動，照 Apple 給的名次
+      stores.forEach((s, i) => { hows.add(got[i].how); byStore[s] = got[i].list; });
       list = src.kind === 'global'
         ? globalMerge(byStore)
         : weave(byStore, src.pattern, src.lead);
@@ -7232,18 +7213,36 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const appleUrl = 'https://itunes.apple.com/search?media=music&entity=song&limit=200'
         + `&country=tw&term=${encodeURIComponent(term)}`;
       const usUrl = appleUrl.replace('country=tw', 'country=us');
+      const jpUrl = appleUrl.replace('country=tw', 'country=jp');
 
-      // 榜單池是現成的，先秒出，之後線上結果回來再蓋掉
+      /* 榜單池只是「還沒連上線之前先有東西看」的墊檔。
+         線上結果一回來就把它拿掉 —— 搜尋要搜的是整個 Apple Music 音樂庫，
+         不是這幾份榜裡面。 */
       const local: Track[] = [];
       chartPool.current.forEach(arr => arr.forEach(t => {
         if (`${t.name} ${t.artist}`.toLowerCase().includes(q)) local.push(t);
       }));
 
-      const bucket: Record<string, Track[]> = { ar: [], ap: [], us: [], bk: [], lo: local };
+      const bucket: Record<string, Track[]> = { ar: [], ap: [], us: [], jp: [], bk: [], lo: local };
+      const online = () => !!(bucket.ap.length || bucket.us.length || bucket.jp.length
+        || bucket.ar.length || bucket.bk.length);
       /* ar 放最前面而且一次全部倒出來：搜歌手時要看到「他的所有歌」，
          不是跟其他結果一首一首交錯。 */
-      const render = () => weave(bucket, ['ap', 'us', 'bk', 'lo'], { store: 'ar', count: 400, keepOrder: true });
+      const render = () => weave(
+        bucket,
+        online() ? ['ap', 'us', 'jp', 'bk'] : ['lo'],
+        { store: 'ar', count: 400, keepOrder: true },
+      );
       if (local.length) { list = render(); setMusicList(list); setMusicLoading(false); }
+
+      /** 每次結果進來，上面那一排歌手也跟著重算（一定有圖片） */
+      const refreshArtists = (found: Artist[]) => {
+        const all = [...bucket.ar, ...bucket.ap, ...bucket.us, ...bucket.jp, ...bucket.bk];
+        const merged = mergeArtists(found, all, term);
+        if (merged.length) setMusicArtists(merged);
+        return merged;
+      };
+      let artistsFound: Artist[] = [];
 
       const feed = (key: string, got: Track[]) => {
         if (my !== musicReqRef.current || !got.length) return;
@@ -7251,6 +7250,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         list = render();
         setMusicList(list);
         setMusicLoading(false);
+        refreshArtists(artistsFound);
       };
 
       await Promise.all([
@@ -7259,7 +7259,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
            以及名字對得上時把他的全部歌曲整份倒在最前面。 */
         findArtists(term, 'tw').then(async a => {
           if (my !== musicReqRef.current) return;
-          if (a.length) setMusicArtists(a.slice(0, 12));
+          artistsFound = a;
+          refreshArtists(a);
           const best = bestArtist(a, term);
           if (!best) return;
           /* 打的就是歌手名字（例如「yoasobi」）時，要的是「他的全部歌曲」，
@@ -7271,14 +7272,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           if (!wantWhole) { feed('ar', await loadSongsOfArtist(best, 'tw').catch(() => [] as Track[])); return; }
           await loadWholeArtist(best, 'tw', got => feed('ar', got)).catch(() => {});
         }).catch(() => {}),
-        /* 台灣商店與美國商店「一起」問，不是查不到才問第二個。
-           兩邊各兩百首、合起來去重，中文歌與西洋歌都不會漏掉，
-           而且只多一個請求。搜尋結果本來就帶試聽網址，不必再查。 */
+        /* 三個商店「一起」問，不是查不到才問下一個。
+           搜的是整個 Apple Music 音樂庫，各兩百首合起來去重 ——
+           中文歌、西洋歌、日文歌都不會漏。搜尋結果本身就帶試聽網址，不必再查。 */
         appleJson('搜tw', appleUrl, fromItunes).then(r => feed('ap', r)).catch(() => {}),
         appleJson('搜us', usUrl, fromItunes).then(r => feed('us', r)).catch(() => {}),
+        appleJson('搜jp', jpUrl, fromItunes).then(r => feed('jp', r)).catch(() => {}),
       ]);
       // 兩個商店都空手才試「用歌手名整份撈」的那條路
-      const gotApple = () => !!(bucket.ap.length || bucket.us.length || bucket.ar.length);
+      const gotApple = () => !!(bucket.ap.length || bucket.us.length || bucket.jp.length || bucket.ar.length);
       if (!gotApple()) feed('ar', await loadArtistSongs(term, 'us').catch(() => [] as Track[]));
       /* Apple 整個沒回東西（手機被限流、或連不上 itunes.apple.com）時的最後一道。
          主人在畫面上只看到兩三首、以為「搜尋壞了」，其實那兩三首是榜單快取裡
@@ -7289,10 +7291,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         feed('bk', await loadBackupSearch(term).catch(() => [] as Track[]));
       }
       list = render();
+      // 那一排歌手：還沒有圖片的幾位，拿他最新一張專輯的封面補上
+      {
+        const merged = refreshArtists(artistsFound);
+        if (merged.some(a => !a.art)) {
+          fillArtistArt(merged, 'tw').then(done => {
+            if (my === musicReqRef.current) setMusicArtists(done);
+          }).catch(() => {});
+        }
+      }
       how = [bucket.ar.length && '歌手全曲', bucket.ap.length && '台灣商店',
-             bucket.us.length && '美國商店', bucket.bk.length && '備援',
-             !bucket.ar.length && !bucket.ap.length && !bucket.us.length && !bucket.bk.length
-               && local.length && '榜單內'].filter(Boolean).join('+');
+             bucket.us.length && '美國商店', bucket.jp.length && '日本商店',
+             bucket.bk.length && '備援',
+             !online() && local.length && '榜單內'].filter(Boolean).join('+');
       /* 只有真的從線上拿到東西才存快取。
          單靠榜單池湊出來的那兩三首不能存 —— 存下去之後，同一個字再搜幾次
          都直接回那兩三首，永遠不會再連網重試，就變成「怎麼搜都只有兩首」。 */
@@ -7321,7 +7332,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (!musicOpen) return;
     chartPool.current.clear();
     searchCache.current.clear();
-    rotateRef.current = 1 + Math.floor(Math.random() * 60);
     // 重開就回到推薦、清掉上次打的字，不然會停在上次的搜尋結果
     setMusicQuery('');
     setMusicTab('為你推薦');
@@ -10811,8 +10821,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                             onClick={() => openArtist(a)}
                             className="shrink-0 w-[72px] flex flex-col items-center gap-1.5 active:opacity-60"
                           >
-                            <span className="w-[62px] h-[62px] rounded-full bg-[#2a2a2a] flex items-center justify-center text-[22px] font-bold text-white/70">
+                            {/* 大頭照用他自己的歌的封面（Apple 的歌手端點不給照片）。
+                                真的連一張都找不到才退回名字的第一個字。 */}
+                            <span className="relative w-[62px] h-[62px] rounded-full bg-[#2a2a2a] overflow-hidden flex items-center justify-center text-[22px] font-bold text-white/70">
                               {a.name.trim().slice(0, 1).toUpperCase()}
+                              {!!a.art && (
+                                <img
+                                  src={a.art} alt="" loading="lazy"
+                                  onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                                  className="absolute inset-0 w-full h-full object-cover"
+                                />
+                              )}
                             </span>
                             <span className="w-full text-[11px] text-white/85 leading-[14px] text-center line-clamp-2">{a.name}</span>
                           </button>
