@@ -6444,6 +6444,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const [picked, setPicked] = useState<Track | null>(null);
   /** 現在真的有聲音在放嗎（決定封面上要不要跳那排音量條） */
   const [musicPlaying, setMusicPlaying] = useState(false);
+  /* 搜尋結果上方的「歌手」那一排，以及點進去之後的專輯／曲目。
+     一層一層往下鑽：搜尋 → 歌手 → 專輯 → 那張專輯的每一首。 */
+  const [musicArtists, setMusicArtists] = useState<{ id: string; name: string; genre?: string }[]>([]);
+  const [artistView, setArtistView] = useState<{ id: string; name: string } | null>(null);
+  const [artistAlbums, setArtistAlbums] = useState<{ id: string; name: string; art: string; year: string; count: number }[]>([]);
+  const [albumView, setAlbumView] = useState<{ id: string; name: string; art: string } | null>(null);
+  const [drillTracks, setDrillTracks] = useState<Track[]>([]);
+  const [drillLoading, setDrillLoading] = useState(false);
+  const drillReqRef = useRef(0);
   useEffect(() => {
     if (!audioRef.current) audioRef.current = new Audio();
     const a = audioRef.current;
@@ -6699,21 +6708,65 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    * 做法是 Apple 官方的兩步：先用 musicArtist 查出歌手編號，
    * 再用 lookup 把他名下的歌一次撈回來（一個請求最多 200 首）。
    */
+  type Artist = { id: string; name: string; genre?: string };
+  type Album = { id: string; name: string; art: string; year: string; count: number };
+
+  const fromArtists = (d: any): Artist[] => (d?.results || [])
+    .filter((r: any) => r.artistId && r.artistName)
+    .map((r: any) => ({
+      id: String(r.artistId), name: String(r.artistName), genre: r.primaryGenreName || '',
+    }));
+
+  const fromAlbums = (d: any): Album[] => (d?.results || [])
+    .filter((r: any) => r.wrapperType === 'collection' && r.collectionId)
+    .map((r: any) => ({
+      id: String(r.collectionId),
+      name: String(r.collectionName || ''),
+      art: String(r.artworkUrl100 || '').replace(/\/\d+x\d+bb\./, '/300x300bb.'),
+      year: String(r.releaseDate || '').slice(0, 4),
+      count: Number(r.trackCount || 0),
+    }));
+
+  /** 找同名的歌手（搜尋結果上方那一排） */
+  const findArtists = (term: string, store: string): Promise<Artist[]> => appleJson<Artist>(
+    `${store}歌手`,
+    `https://itunes.apple.com/search?media=music&entity=musicArtist&limit=12`
+      + `&country=${store}&term=${encodeURIComponent(term)}`,
+    fromArtists);
+
+  /** 某位歌手的全部專輯（新到舊） */
+  const loadArtistAlbums = async (artistId: string, store: string): Promise<Album[]> => {
+    const list = await appleJson<Album>(`${store}專輯`,
+      `https://itunes.apple.com/lookup?entity=album&limit=200&country=${store}&id=${artistId}`,
+      fromAlbums);
+    return [...list].sort((a, b) => (b.year || '').localeCompare(a.year || ''));
+  };
+
+  /** 某張專輯裡的每一首歌（照曲目順序） */
+  const loadAlbumTracks = (albumId: string, store: string): Promise<Track[]> => appleJson<Track>(
+    `${store}曲目`,
+    `https://itunes.apple.com/lookup?entity=song&limit=200&country=${store}&id=${albumId}`,
+    fromItunes);
+
+  /** 某位歌手名下的全部歌曲 */
+  const loadSongsOfArtist = (artistId: string, store: string): Promise<Track[]> => appleJson<Track>(
+    `${store}全曲`,
+    `https://itunes.apple.com/lookup?entity=song&limit=200&country=${store}&id=${artistId}`,
+    fromItunes);
+
   const loadArtistSongs = async (term: string, store: string): Promise<Track[]> => {
-    const find = `https://itunes.apple.com/search?media=music&entity=musicArtist&limit=5`
-      + `&country=${store}&term=${encodeURIComponent(term)}`;
-    const artists = await appleJson<{ id: string; name: string }>(`${store}歌手`, find,
-      (d: any) => (d?.results || [])
-        .map((r: any) => ({ id: String(r.artistId || ''), name: String(r.artistName || '') }))
-        .filter((a: any) => a.id));
+    const artists = await findArtists(term, store);
     if (!artists.length) return [];
-    const q = term.trim().toLowerCase();
-    const best = artists.find(a => a.name.toLowerCase() === q)
-      || artists.find(a => a.name.toLowerCase().includes(q))
-      || artists[0];
-    const all = `https://itunes.apple.com/lookup?entity=song&limit=200`
-      + `&country=${store}&id=${best.id}`;
-    return appleJson(`${store}全曲`, all, fromItunes);
+    /* 名字要真的對得上才整份倒出來。以前只要有結果就拿第一位，
+       打歌名（例如「告白氣球」）時會被硬塞一位不相干歌手的兩百首歌，
+       把真正的關鍵字結果全部擠到後面去。 */
+    const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '');
+    const nq = norm(term);
+    if (!nq) return [];
+    const best = artists.find(a => norm(a.name) === nq)
+      || artists.find(a => norm(a.name).includes(nq) || nq.includes(norm(a.name)));
+    if (!best) return [];
+    return loadSongsOfArtist(best.id, store);
   };
 
   /* Apple 的搜尋端點一旦回 403（流量上限），那一段時間內怎麼打都是 403。
@@ -6939,6 +6992,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     /* 一開始就把舊的清掉。留著的話，換分頁時新的還沒回來、畫面上還是上一個
        分類的歌 —— 來回切幾次就會覺得「怎麼一直是重複的歌」。 */
     setMusicList([]);
+    setMusicArtists([]);
     failLog.current = [];
     let list: Track[] = [];
     let how = '';
@@ -6969,7 +7023,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
          其餘的回來再補進去，不必等最慢的那一條。 */
       const term = src.term;
       const q = term.toLowerCase();
-      const appleUrl = 'https://itunes.apple.com/search?media=music&entity=song&limit=100'
+      const appleUrl = 'https://itunes.apple.com/search?media=music&entity=song&limit=200'
         + `&country=tw&term=${encodeURIComponent(term)}`;
       const usUrl = appleUrl.replace('country=tw', 'country=us');
 
@@ -6995,6 +7049,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
       await Promise.all([
         loadArtistSongs(term, 'tw').then(r => feed('ar', r)).catch(() => {}),
+        // 同名歌手：放在搜尋結果最上面那一排，點進去可以挑專輯、挑單曲
+        findArtists(term, 'tw')
+          .then(a => { if (my === musicReqRef.current && a.length) setMusicArtists(a.slice(0, 12)); })
+          .catch(() => {}),
         appleJson('搜', appleUrl, fromItunes).then(r => feed('ap', r)).catch(() => {}),
         loadDeezer(term).then(r => feed('dz', r)).catch(() => {}),
       ]);
@@ -7120,6 +7178,68 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     setMusicShown(false);
     setTimeout(() => setMusicOpen(false), 300);
   };
+
+  /* ── 歌手 → 專輯 → 曲目 ────────────────────────────────────────
+     搜尋只給關鍵字相關的歌，想精準找到某一首時就從歌手鑽進去。 */
+  const openArtist = async (a: { id: string; name: string }) => {
+    const my = ++drillReqRef.current;
+    setArtistView(a); setAlbumView(null);
+    setArtistAlbums([]); setDrillTracks([]); setDrillLoading(true);
+    const [albums, songs] = await Promise.all([
+      loadArtistAlbums(a.id, 'tw').catch(() => [] as typeof artistAlbums),
+      loadSongsOfArtist(a.id, 'tw').catch(() => [] as Track[]),
+    ]);
+    if (my !== drillReqRef.current) return;
+    // 台灣商店查不到就換美國（日韓西洋歌比較齊）
+    let al = albums, sg = songs;
+    if (!al.length && !sg.length) {
+      const [al2, sg2] = await Promise.all([
+        loadArtistAlbums(a.id, 'us').catch(() => [] as typeof artistAlbums),
+        loadSongsOfArtist(a.id, 'us').catch(() => [] as Track[]),
+      ]);
+      if (my !== drillReqRef.current) return;
+      al = al2; sg = sg2;
+    }
+    setArtistAlbums(al);
+    /* 歌手頁照 Apple 給的順序整份倒出來，只把「同一首出現在好幾張精選輯」收掉。
+       這裡刻意不用榜單那把 trackKey —— 它會連括號一起抹掉，
+       「雙截棍」和「雙截棍（演唱會版）」會被當成同一首而少掉一個版本，
+       但主人要的是精準找到每一首。 */
+    const seen = new Set<string>();
+    setDrillTracks(sg.filter(t => {
+      const k = `${t.name}|${t.artist}`.toLowerCase().replace(/\s+/g, '');
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }));
+    setDrillLoading(false);
+  };
+
+  const openAlbum = async (al: { id: string; name: string; art: string }) => {
+    const my = ++drillReqRef.current;
+    setAlbumView(al); setDrillTracks([]); setDrillLoading(true);
+    let tracks = await loadAlbumTracks(al.id, 'tw').catch(() => [] as Track[]);
+    if (my !== drillReqRef.current) return;
+    if (!tracks.length) {
+      tracks = await loadAlbumTracks(al.id, 'us').catch(() => [] as Track[]);
+      if (my !== drillReqRef.current) return;
+    }
+    setDrillTracks(tracks);
+    setDrillLoading(false);
+  };
+
+  /** 回上一層：專輯 → 歌手 → 搜尋結果 */
+  const drillBack = () => {
+    drillReqRef.current++;
+    if (albumView) { setAlbumView(null); if (artistView) openArtist(artistView); return; }
+    setArtistView(null); setArtistAlbums([]); setDrillTracks([]); setDrillLoading(false);
+  };
+  // 換分頁、改搜尋字、關掉面板都要退回最外層
+  useEffect(() => {
+    drillReqRef.current++;
+    setArtistView(null); setAlbumView(null);
+    setArtistAlbums([]); setDrillTracks([]); setDrillLoading(false);
+  }, [musicTab, musicQuery, musicOpen]);
 
   /* 點一首歌＝當場試聽，面板不關。
      可以一首一首點著比較，決定好了再自己把面板關掉，才會回到 IG 預覽。
@@ -10410,34 +10530,107 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   </div>
                 </div>
 
-                {/* 分類膠囊 */}
-                <div className="shrink-0 flex gap-2 px-4 pb-3 overflow-x-auto no-scrollbar">
-                  {MUSIC_TABS.map(t => (
+                {/* 鑽進歌手／專輯時，膠囊那一排換成「← 返回 ＋ 現在在看誰」 */}
+                {(artistView || albumView) ? (
+                  <div className="shrink-0 flex items-center gap-2 px-4 pb-3">
                     <button
-                      key={t}
-                      onClick={() => { setMusicTab(t); setMusicQuery(''); }}
-                      className={`shrink-0 h-9 px-4 rounded-full text-[14px] font-semibold transition-colors ${
-                        musicTab === t ? 'bg-white text-black' : 'bg-[#2a2a2a] text-white'
-                      }`}
+                      onClick={drillBack}
+                      className="shrink-0 w-9 h-9 rounded-full bg-[#2a2a2a] flex items-center justify-center active:opacity-60"
+                      aria-label="返回"
                     >
-                      {t}
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M15 5l-7 7 7 7" />
+                      </svg>
                     </button>
-                  ))}
-                </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[15px] font-semibold text-white truncate">
+                        {albumView ? albumView.name : artistView!.name}
+                      </p>
+                      {albumView && artistView && (
+                        <p className="text-[12px] text-white/45 truncate">{artistView.name}</p>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="shrink-0 flex gap-2 px-4 pb-3 overflow-x-auto no-scrollbar">
+                    {MUSIC_TABS.map(t => (
+                      <button
+                        key={t}
+                        onClick={() => { setMusicTab(t); setMusicQuery(''); }}
+                        className={`shrink-0 h-9 px-4 rounded-full text-[14px] font-semibold transition-colors ${
+                          musicTab === t ? 'bg-white text-black' : 'bg-[#2a2a2a] text-white'
+                        }`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {/* 歌曲清單 */}
                 <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-4 pb-4">
-                  {musicLoading && (
+                  {(musicLoading || drillLoading) && (
                     <div className="py-10 flex justify-center">
                       <div className="w-6 h-6 rounded-full border-2 border-white/25 border-t-white animate-spin" />
                     </div>
                   )}
-                  {!musicLoading && musicList.length === 0 && (
+
+                  {/* 搜尋結果最上面：同名的歌手。點進去可以挑專輯、挑單曲 */}
+                  {!artistView && !musicLoading && !!musicQuery.trim() && musicArtists.length > 0 && (
+                    <>
+                      <p className="pt-1 pb-2 text-[12px] font-semibold text-white/40">歌手</p>
+                      <div className="flex gap-3 overflow-x-auto no-scrollbar pb-3 -mx-1 px-1">
+                        {musicArtists.map(a => (
+                          <button
+                            key={a.id}
+                            onClick={() => openArtist(a)}
+                            className="shrink-0 w-[72px] flex flex-col items-center gap-1.5 active:opacity-60"
+                          >
+                            <span className="w-[62px] h-[62px] rounded-full bg-[#2a2a2a] flex items-center justify-center text-[22px] font-bold text-white/70">
+                              {a.name.trim().slice(0, 1).toUpperCase()}
+                            </span>
+                            <span className="w-full text-[11px] text-white/85 leading-[14px] text-center line-clamp-2">{a.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <p className="pt-1 pb-2 text-[12px] font-semibold text-white/40">歌曲</p>
+                    </>
+                  )}
+
+                  {/* 歌手頁：先列專輯（點進去看那張的曲目），下面才是全部歌曲 */}
+                  {artistView && !albumView && !drillLoading && artistAlbums.length > 0 && (
+                    <>
+                      <p className="pt-1 pb-2 text-[12px] font-semibold text-white/40">專輯 · {artistAlbums.length}</p>
+                      <div className="flex gap-3 overflow-x-auto no-scrollbar pb-3 -mx-1 px-1">
+                        {artistAlbums.map(al => (
+                          <button
+                            key={al.id}
+                            onClick={() => openAlbum(al)}
+                            className="shrink-0 w-[104px] text-left active:opacity-60"
+                          >
+                            <img
+                              src={al.art || TRANSPARENT_PX} alt="" loading="lazy"
+                              onError={e => { (e.currentTarget as HTMLImageElement).src = TRANSPARENT_PX; }}
+                              className="w-[104px] h-[104px] rounded-[6px] bg-white/10 object-cover"
+                            />
+                            <p className="mt-1.5 text-[12px] text-white leading-[15px] line-clamp-2">{al.name}</p>
+                            <p className="text-[11px] text-white/40 leading-[14px]">
+                              {al.year}{al.count > 0 && ` · ${al.count} 首`}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                      <p className="pt-1 pb-2 text-[12px] font-semibold text-white/40">全部歌曲 · {drillTracks.length}</p>
+                    </>
+                  )}
+
+                  {!musicLoading && !drillLoading &&
+                   ((artistView || albumView) ? drillTracks.length === 0 : musicList.length === 0) && (
                     <div className="py-10 flex flex-col items-center gap-3">
                       <p className="text-center text-[13px] text-white/40 px-6 whitespace-pre-line leading-relaxed">
-                        {musicError || '找不到歌曲'}
+                        {(artistView || albumView) ? '找不到歌曲' : (musicError || '找不到歌曲')}
                       </p>
-                      {musicTab !== '已儲存' && (
+                      {musicTab !== '已儲存' && !artistView && !albumView && (
                         <button
                           onClick={() => loadMusic(currentSource())}
                           className="h-9 px-5 rounded-full bg-[#2a2a2a] text-[14px] font-semibold text-white active:opacity-60"
@@ -10452,7 +10645,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   {/* 讀取中不要留著上一批 —— 轉圈底下還墊著舊分類的歌，
                       來回切分頁就會看成「一直出現重複的歌」。
                       key 再補一個序號：不同商店的同一首歌 id 可能撞在一起。 */}
-                  {!musicLoading && musicList.map((t, ti) => (
+                  {/* 鑽進歌手／專輯時換成那一份曲目，其餘照舊放搜尋／榜單的結果 */}
+                  {!((artistView || albumView) ? drillLoading : musicLoading) &&
+                   ((artistView || albumView) ? drillTracks : musicList).map((t, ti) => (
                     <div key={`${t.id}#${ti}`} className="w-full flex items-center py-2.5">
                       {/* 按下去的變暗只掛在這一塊，不掛在整列 ——
                           掛在整列的話，按右邊的書籤會連帶讓整列閃一下。 */}
