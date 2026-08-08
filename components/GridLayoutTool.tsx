@@ -6697,19 +6697,49 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   };
 
   /**
-   * 照分類把榜篩過。lang 是 'kr' | 'jp' | 'tw' 就只留那個語言，
-   * 'en' 就只留「不是亞洲三語」的，'' 就整份不篩（超夯用）。
+   * 這一份榜裡「最常見的那個曲風」。
    *
-   * 最後那一道很重要：**篩完幾乎不剩就整份端出來**。
-   * 那一國的榜本來就是那個語言的榜，顯示整份也遠好過讓主人看到「拿不到歌單」——
-   * 韓語那次就是曲風標籤對不上，結果整頁被篩光。
+   * 這一招是為了不再依賴我手寫的編號表 —— 那張表只要有一個編號跟 Apple 在那個
+   * 地區實際用的對不上，整頁就會被篩光（韓語出事就是這樣）。
+   * 韓國榜八九成是韓國本地的歌、日本榜是日本的歌、台灣榜是華語歌，
+   * 所以「榜上最多的那個曲風」本身就是那個地區的本地音樂，而且是 Apple 自己標的。
+   * 不用我猜、不用查表，換到哪個地區、Apple 改哪個編號都跟得上。
+   */
+  const mainGenres = (list: Track[]): Set<string> => {
+    const n = new Map<string, number>();
+    list.forEach(t => genreIdsOf(t).forEach(g => n.set(g, (n.get(g) || 0) + 1)));
+    const rank = [...n.entries()].sort((a, b) => b[1] - a[1]);
+    if (!rank.length) return new Set<string>();
+    const keep = new Set([rank[0][0]]);
+    // 第二名也很常見（有第一名的一半）就一起留：例如國語＋台語、K-Pop＋韓語民謠
+    if (rank[1] && rank[1][1] >= rank[0][1] * 0.5) keep.add(rank[1][0]);
+    return keep;
+  };
+
+  /**
+   * 照分類把榜篩過。全部用 Apple 自己標在每一筆上的曲風，我不做任何語言判斷。
+   *
+   * 順序是這樣：
+   *   1. 我那張編號／名稱表如果在這份榜上真的認得出夠多首（≥8），就用它 —— 最準。
+   *   2. 認不出來（Apple 換編號、或那個地區用別的在地曲風名）就改用
+   *      「這份榜上最常見的曲風」，那本來就是該地區的本地音樂。
+   *   3. 兩種都不成立就整份端出來。那一國的榜本身就是 Apple 的地區榜，
+   *      端整份也遠好過讓主人看到「拿不到歌單」。
    */
   const keepLang = (list: Track[], lang: string): Track[] => {
     if (!lang || !list.length) return list;
-    const out = lang === 'en'
-      ? list.filter(t => !LANGS.some(l => isLang(t, l)))
-      : list.filter(t => isLang(t, lang));
-    return out.length >= 5 ? out : list;
+    if (lang === 'en') {
+      /* 英美商店的曲風名字本來就是英文（K-Pop / J-Pop / Mandopop），
+         照名字把亞洲三語排掉最準，不必猜編號。 */
+      const out = list.filter(t => !LANGS.some(l => LANG_NAMES[l].test(t.genre || '')));
+      return out.length >= 5 ? out : list;
+    }
+    const byTable = list.filter(t => isLang(t, lang));
+    if (byTable.length >= 8) return byTable;
+    const main = mainGenres(list);
+    if (!main.size) return list;
+    const byMain = list.filter(t => genreIdsOf(t).some(g => main.has(g)));
+    return byMain.length >= 8 ? byMain : list;
   };
 
   /* ── 試聽網址的長期快取 ───────────────────────────────────────────────
@@ -6894,6 +6924,37 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const loadArtistSongs = async (term: string, store: string): Promise<Track[]> => {
     const best = bestArtist(await findArtists(term, store), term);
     return best ? loadSongsOfArtist(best, store) : [];
+  };
+
+  /* ── 搜尋的備援曲庫 ───────────────────────────────────────────────────
+     只在 itunes.apple.com 一個字都沒回的時候才用，而且**只用在搜尋結果**。
+     排行榜、語言分頁、為你推薦、超夯完全不碰這裡 ——
+     上次把別家的地區榜混進語言分頁，就是分類變亂的原因，不會再犯。
+     這裡走 JSONP：對方沒有 CORS 標頭，fetch 一定被瀏覽器擋掉。 */
+  const fromBackup = (d: any): Track[] => (d?.data || [])
+    .filter((r: any) => r.preview && r.title)
+    .map((r: any) => ({
+      id: `b${r.id}`,
+      name: String(r.title),
+      artist: r.artist?.name || '',
+      art: r.album?.cover_medium || r.artist?.picture_medium || '',
+      preview: String(r.preview),
+      secs: Number(r.duration) || 30,
+    }));
+
+  const loadBackupSearch = async (term: string): Promise<Track[]> => {
+    const page = async (i: number): Promise<Track[]> => {
+      try {
+        const u = `https://api.deezer.com/search?limit=100&index=${i * 100}`
+          + `&q=${encodeURIComponent(term)}`;
+        return fromBackup(await jsonp(cb => `${u}&output=jsonp&callback=${cb}`, 5000));
+      } catch (e: any) {
+        failLog.current.push(`備援${i + 1}:${String(e?.message || e).slice(0, 12)}`);
+        return [];
+      }
+    };
+    // 一頁一百，三頁一起發：關鍵字相關的歌一次最多三百首
+    return (await Promise.all([page(0), page(1), page(2)])).flat();
   };
 
   /* Apple 的搜尋端點一旦回 403（流量上限），那一段時間內怎麼打都是 403。
@@ -7178,10 +7239,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         if (`${t.name} ${t.artist}`.toLowerCase().includes(q)) local.push(t);
       }));
 
-      const bucket: Record<string, Track[]> = { ar: [], ap: [], us: [], lo: local };
+      const bucket: Record<string, Track[]> = { ar: [], ap: [], us: [], bk: [], lo: local };
       /* ar 放最前面而且一次全部倒出來：搜歌手時要看到「他的所有歌」，
          不是跟其他結果一首一首交錯。 */
-      const render = () => weave(bucket, ['ap', 'us', 'lo'], { store: 'ar', count: 400, keepOrder: true });
+      const render = () => weave(bucket, ['ap', 'us', 'bk', 'lo'], { store: 'ar', count: 400, keepOrder: true });
       if (local.length) { list = render(); setMusicList(list); setMusicLoading(false); }
 
       const feed = (key: string, got: Track[]) => {
@@ -7204,8 +7265,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           /* 打的就是歌手名字（例如「yoasobi」）時，要的是「他的全部歌曲」，
              所以連專輯一起翻。打的是歌名時只拿代表作就好 ——
              不然每搜一個字都去翻十張專輯，Apple 的額度馬上就爆掉。 */
-          const exact = best.name.toLowerCase().replace(/\s+/g, '') === term.toLowerCase().replace(/\s+/g, '');
-          if (!exact) { feed('ar', await loadSongsOfArtist(best, 'tw').catch(() => [] as Track[])); return; }
+          const nb = best.name.toLowerCase().replace(/\s+/g, '');
+          const nq = term.toLowerCase().replace(/\s+/g, '');
+          const wantWhole = nb === nq || (nq.length >= 4 && nb.includes(nq));
+          if (!wantWhole) { feed('ar', await loadSongsOfArtist(best, 'tw').catch(() => [] as Track[])); return; }
           await loadWholeArtist(best, 'tw', got => feed('ar', got)).catch(() => {});
         }).catch(() => {}),
         /* 台灣商店與美國商店「一起」問，不是查不到才問第二個。
@@ -7215,20 +7278,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         appleJson('搜us', usUrl, fromItunes).then(r => feed('us', r)).catch(() => {}),
       ]);
       // 兩個商店都空手才試「用歌手名整份撈」的那條路
-      if (!bucket.ap.length && !bucket.us.length && !bucket.ar.length) {
-        feed('ar', await loadArtistSongs(term, 'us').catch(() => [] as Track[]));
-      }
-      if (Date.now() < appleBlockedUntil.current === false
-        && !bucket.ap.length && !bucket.us.length && !bucket.ar.length
-        && failLog.current.some(x => x.includes('403'))) {
-        appleBlockedUntil.current = Date.now() + 10 * 60 * 1000;   // 先冷靜十分鐘
+      const gotApple = () => !!(bucket.ap.length || bucket.us.length || bucket.ar.length);
+      if (!gotApple()) feed('ar', await loadArtistSongs(term, 'us').catch(() => [] as Track[]));
+      /* Apple 整個沒回東西（手機被限流、或連不上 itunes.apple.com）時的最後一道。
+         主人在畫面上只看到兩三首、以為「搜尋壞了」，其實那兩三首是榜單快取裡
+         剛好對到的 —— itunes.apple.com 一個字都沒回。
+         這條備援**只補搜尋結果**，語言分頁與排行榜完全不碰，
+         所以分類永遠還是 Apple 自己的，不會再被別家的榜弄亂。 */
+      if (!gotApple()) {
+        feed('bk', await loadBackupSearch(term).catch(() => [] as Track[]));
       }
       list = render();
       how = [bucket.ar.length && '歌手全曲', bucket.ap.length && '台灣商店',
-             bucket.us.length && '美國商店',
-             !bucket.ar.length && !bucket.ap.length && !bucket.us.length
+             bucket.us.length && '美國商店', bucket.bk.length && '備援',
+             !bucket.ar.length && !bucket.ap.length && !bucket.us.length && !bucket.bk.length
                && local.length && '榜單內'].filter(Boolean).join('+');
-      if (list.length) searchCache.current.set(q, list);
+      /* 只有真的從線上拿到東西才存快取。
+         單靠榜單池湊出來的那兩三首不能存 —— 存下去之後，同一個字再搜幾次
+         都直接回那兩三首，永遠不會再連網重試，就變成「怎麼搜都只有兩首」。 */
+      if (list.length && (gotApple() || bucket.bk.length)) searchCache.current.set(q, list);
     }
     if (my !== musicReqRef.current) return;   // 已經有更新的搜尋了，這份丟掉
     setMusicList(list);
