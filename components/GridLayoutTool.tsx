@@ -6674,25 +6674,42 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     tw: ['1253', '1251', '1250', '1232', '1637',
          '1233', '1234', '1235', '1236', '1237', '1238', '1239', '1240'],
   };
-  /** 亞洲三語的所有編號，「英語」那一頁用來排除掉它們 */
-  const ASIAN_GENRES = new Set([...LANG_GENRES.kr, ...LANG_GENRES.jp, ...LANG_GENRES.tw]);
+  /* 光靠編號不夠保險：Apple 在不同地區的商店會用不同的子曲風編號，
+     編號表只要對不上一個，整份榜就會被篩成空的（韓語那次就是這樣）。
+     所以編號之外再認曲風「名字」—— 名字是跟著商店在地化的，各語言都列進來。 */
+  const LANG_NAMES: Record<string, RegExp> = {
+    kr: /k-?pop|korean|가요|케이팝|한국|韓國|韓語|韩语/i,
+    jp: /j-?pop|japanese|anime|enka|アニメ|演歌|邦楽|日本|日語|日语/i,
+    tw: /mandopop|cantopop|c-?pop|chinese|hk-?pop|taiwan|華語|华语|國語|国语|粵語|粤语|中文|中國|中国|台語|台语/i,
+  };
+  const LANGS = ['kr', 'jp', 'tw'];
 
   /** 這一筆的曲風編號（新版榜單放在 genres，舊版放在 category） */
   const genreIdsOf = (t: Track): string[] =>
     String(t.genreId || '').split(/[^0-9]+/).filter(Boolean);
 
+  /** 這一首是不是那個語言的：編號對得上，或曲風名字對得上，兩者有一就算 */
+  const isLang = (t: Track, lang: string): boolean => {
+    const want = LANG_GENRES[lang];
+    if (want && genreIdsOf(t).some(g => want.includes(g))) return true;
+    const re = LANG_NAMES[lang];
+    return !!re && re.test(t.genre || '');
+  };
+
   /**
    * 照分類把榜篩過。lang 是 'kr' | 'jp' | 'tw' 就只留那個語言，
    * 'en' 就只留「不是亞洲三語」的，'' 就整份不篩（超夯用）。
+   *
+   * 最後那一道很重要：**篩完幾乎不剩就整份端出來**。
+   * 那一國的榜本來就是那個語言的榜，顯示整份也遠好過讓主人看到「拿不到歌單」——
+   * 韓語那次就是曲風標籤對不上，結果整頁被篩光。
    */
   const keepLang = (list: Track[], lang: string): Track[] => {
-    if (!lang) return list;
-    if (lang === 'en') return list.filter(t => {
-      const ids = genreIdsOf(t);
-      return ids.length > 0 && !ids.some(g => ASIAN_GENRES.has(g));
-    });
-    const want = new Set(LANG_GENRES[lang] || []);
-    return list.filter(t => genreIdsOf(t).some(g => want.has(g)));
+    if (!lang || !list.length) return list;
+    const out = lang === 'en'
+      ? list.filter(t => !LANGS.some(l => isLang(t, l)))
+      : list.filter(t => isLang(t, lang));
+    return out.length >= 5 ? out : list;
   };
 
   /* ── 試聽網址的長期快取 ───────────────────────────────────────────────
@@ -6811,11 +6828,57 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     `https://itunes.apple.com/lookup?entity=song&limit=200&country=${store}&id=${al.id}`,
     fromItunes);
 
-  /** 某位歌手名下的全部歌曲 */
+  /** 某位歌手的熱門曲。注意：這一支回的是「代表作」，不是全部。 */
   const loadSongsOfArtist = (a: Artist, store: string): Promise<Track[]> => appleJson<Track>(
     `${store}全曲`,
     `https://itunes.apple.com/lookup?entity=song&limit=200&country=${store}&id=${a.id}`,
     fromItunes);
+
+  const songKey = (t: Track) => `${t.name}|${t.artist}`.toLowerCase().replace(/\s+/g, '');
+
+  /**
+   * 某位歌手的「全部歌曲」。
+   *
+   * lookup?entity=song 回的只是代表作那幾首 —— 搜「yoasobi」只出現幾首就是這個
+   * 原因。真正的全部要一張專輯一張專輯去拿：先問他有哪些專輯，再把每一張的曲目
+   * 都撈回來，跟代表作合起來去重。
+   *
+   * onGot 是「拿到一批就先給一批」，畫面才不用等到全部專輯都問完。
+   * 專輯數有上限、同時只問三張：Apple 的 lookup 是照 IP 限流的，要省著用。
+   */
+  const loadWholeArtist = async (
+    a: Artist, store: string, onGot?: (list: Track[]) => void,
+    maxAlbums = 10, known?: Album[],
+  ): Promise<Track[]> => {
+    const [top, albums] = await Promise.all([
+      loadSongsOfArtist(a, store).catch(() => [] as Track[]),
+      // 歌手頁已經先問過專輯了，就別再問一次（Apple 的額度要省著用）
+      known ? Promise.resolve(known) : loadArtistAlbums(a, store).catch(() => [] as Album[]),
+    ]);
+    const out = [...top];
+    const seen = new Set(out.map(songKey));
+    if (out.length) onGot?.([...out]);
+    const pick = albums.slice(0, maxAlbums);
+    let cur = 0;
+    const worker = async () => {
+      for (;;) {
+        const i = cur++;
+        if (i >= pick.length) return;
+        const tracks = await loadAlbumTracks(pick[i], store).catch(() => [] as Track[]);
+        let added = false;
+        tracks.forEach(t => {
+          const k = songKey(t);
+          if (seen.has(k)) return;
+          seen.add(k);
+          out.push(t);
+          added = true;
+        });
+        if (added) onGot?.([...out]);
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    return out;
+  };
 
   /** 名字要真的對得上才算「就是在找這位歌手」 */
   const bestArtist = (artists: Artist[], term: string): Artist | undefined => {
@@ -7137,7 +7200,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           if (my !== musicReqRef.current) return;
           if (a.length) setMusicArtists(a.slice(0, 12));
           const best = bestArtist(a, term);
-          if (best) feed('ar', await loadSongsOfArtist(best, 'tw').catch(() => [] as Track[]));
+          if (!best) return;
+          /* 打的就是歌手名字（例如「yoasobi」）時，要的是「他的全部歌曲」，
+             所以連專輯一起翻。打的是歌名時只拿代表作就好 ——
+             不然每搜一個字都去翻十張專輯，Apple 的額度馬上就爆掉。 */
+          const exact = best.name.toLowerCase().replace(/\s+/g, '') === term.toLowerCase().replace(/\s+/g, '');
+          if (!exact) { feed('ar', await loadSongsOfArtist(best, 'tw').catch(() => [] as Track[])); return; }
+          await loadWholeArtist(best, 'tw', got => feed('ar', got)).catch(() => {});
         }).catch(() => {}),
         /* 台灣商店與美國商店「一起」問，不是查不到才問第二個。
            兩邊各兩百首、合起來去重，中文歌與西洋歌都不會漏掉，
@@ -7263,33 +7332,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     const my = ++drillReqRef.current;
     setArtistView(a); setAlbumView(null);
     setArtistAlbums([]); setDrillTracks([]); setDrillLoading(true);
-    const [albums, songs] = await Promise.all([
-      loadArtistAlbums(a, 'tw').catch(() => [] as Album[]),
-      loadSongsOfArtist(a, 'tw').catch(() => [] as Track[]),
-    ]);
+    /* 歌手頁要的就是「他的每一首」，所以直接走翻專輯那條路。
+       每翻完一張就先貼上畫面（onGot），主人不用等到全部問完才看得到東西。
+       去重刻意不用榜單那把 trackKey —— 它會連括號一起抹掉，
+       「雙截棍」和「雙截棍（演唱會版）」會被當成同一首而少掉一個版本。 */
+    let al = await loadArtistAlbums(a, 'tw').catch(() => [] as Album[]);
     if (my !== drillReqRef.current) return;
-    let al = albums, sg = songs;
-    // 台灣商店查不到就換美國（日韓西洋歌比較齊）
-    if (!al.length && !sg.length) {
-      const [al2, sg2] = await Promise.all([
-        loadArtistAlbums(a, 'us').catch(() => [] as Album[]),
-        loadSongsOfArtist(a, 'us').catch(() => [] as Track[]),
-      ]);
+    let store = 'tw';
+    if (!al.length) {                       // 台灣商店查不到就換美國（日韓西洋歌比較齊）
+      const al2 = await loadArtistAlbums(a, 'us').catch(() => [] as Album[]);
       if (my !== drillReqRef.current) return;
-      al = al2; sg = sg2;
+      if (al2.length) { al = al2; store = 'us'; }
     }
     setArtistAlbums(al);
-    /* 歌手頁照 Apple 給的順序整份倒出來，只把「同一首出現在好幾張精選輯」收掉。
-       這裡刻意不用榜單那把 trackKey —— 它會連括號一起抹掉，
-       「雙截棍」和「雙截棍（演唱會版）」會被當成同一首而少掉一個版本，
-       但主人要的是精準找到每一首。 */
-    const seen = new Set<string>();
-    setDrillTracks(sg.filter(t => {
-      const k = `${t.name}|${t.artist}`.toLowerCase().replace(/\s+/g, '');
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    }));
+    const sg = await loadWholeArtist(a, store, got => {
+      if (my === drillReqRef.current) { setDrillTracks(got); setDrillLoading(false); }
+    }, 20, al).catch(() => [] as Track[]);
+    if (my !== drillReqRef.current) return;
+    setDrillTracks(sg);
     setDrillLoading(false);
   };
 
