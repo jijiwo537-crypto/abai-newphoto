@@ -4413,17 +4413,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
          · 回到 24ms 以下 → 升回全解析度（保一致）
        在手機上拍的一般照片、以及大多數裝置上，這代表拖曳中畫的就是鬆手那一張，
        完全沒有落差；只有又大又慢的情況才會暫時降級。 */
-    const draggingAny = isInteracting && !isFastBlendActive;
-    if (draggingAny) {
-      const d = lastRenderDurationRef.current;
-      if (fxFullResRef.current && d > 60) fxFullResRef.current = false;
-      else if (!fxFullResRef.current && d < 24) fxFullResRef.current = true;
-    }
-    const draggingFx = draggingAny && fxFullResRef.current;
+    /* 拖曳中**一律用全解析度**，低解析度代理已經完全不用了。
+       以前這裡有一段「算太慢就降級成 ≤900px 的代理、快了再升回來」的自動調節，
+       但那正是主人說的「拖動滑桿時圖片會變低像素的感覺」——
+       只要有一幀超過 60ms 就會掉下去，掉下去的那段時間畫面就是糊的。
+       主人明確說過寧可慢一點也不要畫質降級，而且顏色鏈已經交給 GPU
+       （烤表 2.2ms ＋ 畫 0.1ms），全解析度本來就跑得動。 */
     /* 剛換濾鏡時先用低解析度那份畫一張（運算量只有 1/4，按下去馬上看得到），
        同一拍再標記 dirty，下一幀用全解析度重畫蓋上去 —— 最終畫質沒有妥協。 */
     const quickPass = quickFilterRef.current && !!proxy.source && !isInteracting;
-    const useProxy = (isInteracting && !isFastBlendActive && !!proxy.source && !draggingFx) || quickPass;
+    const useProxy = quickPass;
     const b = useProxy ? proxy : buffers.current.preview;
 
     const cvs = displayCanvasRef.current;
