@@ -97,6 +97,19 @@ export class LutGpu {
     }) as WebGL2RenderingContext | null;
     if (!gl) return null;
 
+    /* 軟體模擬的 GL 要擋掉。
+       某些桌機瀏覽器、虛擬機、無障礙模式底下拿到的 WebGL 其實是 CPU 在算的
+       （SwiftShader / llvmpipe / Mesa softpipe）。那種情況下「GPU 查表」不但沒有
+       比較快，還會因為多一次貼圖上傳而變慢 —— 實測慢了將近一倍。
+       這裡直接不給用，呼叫端會原封不動走回原本的 CPU 路徑。 */
+    try {
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      const name = String(
+        (dbg && gl.getParameter((dbg as any).UNMASKED_RENDERER_WEBGL)) || gl.getParameter(gl.RENDERER) || '',
+      ).toLowerCase();
+      if (/swiftshader|llvmpipe|softpipe|software|microsoft basic/.test(name)) return null;
+    } catch { /* 拿不到就當作是真的顯示卡 */ }
+
     const vs = compile(gl, gl.VERTEX_SHADER, VERT);
     const fs = compile(gl, gl.FRAGMENT_SHADER, FRAG);
     if (!vs || !fs) return null;
