@@ -1648,6 +1648,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   /* 成品是 blob 網址，換掉舊的之前要回收，不然按第二次儲存
      上一輪那幾張會一直留在記憶體裡。 */
   const finalImagesRef = useRef<string[]>([]);
+  /* 導出畫面那一排成品。
+     成品是照 srcList 的順序排的，所以第一張永遠在最左邊 ——
+     但這一排是原生捲動容器，捲動位置會被瀏覽器保留／被 scroll-snap 挑到
+     離目前位置最近的那一張，於是常常一進來就停在「剛剛在編輯的那一張」。
+     每次出現這個畫面都明確捲回最左邊，才會一定從第一張開始看。 */
+  const finalStripRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (saveState !== 'success') return;
+    const el = finalStripRef.current;
+    if (!el) return;
+    // 這一拍就歸零（不要 smooth，也不要等下一幀）—— 使用者不會看到它從中間滑回去
+    el.scrollLeft = 0;
+    // 圖片是非同步解碼的，寬度長出來之後瀏覽器可能再挑一次定位點，所以下一幀再壓一次
+    const id = requestAnimationFrame(() => { if (finalStripRef.current) finalStripRef.current.scrollLeft = 0; });
+    return () => cancelAnimationFrame(id);
+  }, [saveState, finalImages]);
   /* 離開時晚一點再回收：導出紀錄的縮圖與分享用的檔案都是非同步去讀這個
      網址的，按下儲存後馬上離開的話會來不及讀完。 */
   useEffect(() => () => { const keep = finalImagesRef.current; setTimeout(() => revokeUrls(keep as any), 15000); }, []);
@@ -1665,6 +1681,27 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   // 預覽緩衝的實際比例。構圖裁切之後畫面比例會變，版面必須跟著走，
   // 不能再從已經被舊比例撐開的 canvas 量回來。
   const [previewAspect, setPreviewAspect] = useState<{ w: number; h: number } | null>(null);
+  /**
+   * 外框（負責鎖住預覽比例的那一層）。
+   *
+   * 批量編輯換照片時，畫布的內部尺寸是「同一拍」直接改掉的（cvs.width = …），
+   * 但外框的比例走的是 React state —— 要等下一次繪製才生效。
+   * 中間那一兩幀，新照片就被塞進上一張的比例框裡（畫布是 objectFit: fill），
+   * 看起來就是「換照片時圖被拉了一下」。兩張尺寸差越多、拉得越明顯。
+   *
+   * 所以改照片尺寸的同一拍，就把比例直接寫進 DOM，兩者永遠同一幀。
+   * state 照樣更新（React 之後重繪會寫同一個值），其他地方的邏輯完全不用改。
+   */
+  const previewFitRef = useRef<HTMLDivElement>(null);
+  const applyPreviewAspect = useCallback((w: number, h: number) => {
+    if (!(w > 0 && h > 0)) return;
+    const el = previewFitRef.current;
+    if (el) {
+      el.style.aspectRatio = `${w}/${h}`;
+      el.style.width = '100%';
+    }
+    setPreviewAspect(prev => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
+  }, []);
   // 構圖參數。套用之後整個預覽緩衝會用新的幾何重建，色彩流程完全不用知道它的存在。
   const [geo, setGeo] = useState<GeoParams>(() => ({ ...DEFAULT_GEO, crop: { ...FULL_CROP } }));
   const [draftGeo, setDraftGeo] = useState<GeoParams | null>(null);
@@ -2496,7 +2533,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     ctx.putImageData(new ImageData(out, w, h), 0, 0);
     cvs.style.filter = 'none';
     warmPaintedSrcRef.current = src;
-    setPreviewAspect({ w, h });
+    // 比例跟畫布尺寸同一拍寫進去，換照片時才不會有一兩幀被拉伸
+    applyPreviewAspect(w, h);
     return true;
   };
   /** 已經用預熱的畫面補過的那一張 —— 待會就別再畫一次「還沒調整」的樣子 */
@@ -2712,6 +2750,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   const forceRecalculateEffectsRef = useRef<boolean>(false);
 
   const blurCacheStateRef = useRef<{
+    /** 這份快取是「哪一張照片」算出來的。
+        批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
+        少了這一欄就會命中別張的快取 —— 畫面上就會出現不屬於這張圖的
+        光暈／模糊／顆粒（位置完全對不上，因為那是另一張的亮部）。 */
+    src: string;
     w: number;
     h: number;
     blur: number;
@@ -2729,6 +2772,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   } | null>(null);
 
   const softCacheStateRef = useRef<{
+    /** 這份快取是「哪一張照片」算出來的。
+        批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
+        少了這一欄就會命中別張的快取 —— 畫面上就會出現不屬於這張圖的
+        光暈／模糊／顆粒（位置完全對不上，因為那是另一張的亮部）。 */
+    src: string;
     w: number;
     h: number;
     soft: number;
@@ -2749,6 +2797,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   } | null>(null);
 
   const noise2CacheStateRef = useRef<{
+    /** 這份快取是「哪一張照片」算出來的。
+        批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
+        少了這一欄就會命中別張的快取 —— 畫面上就會出現不屬於這張圖的
+        光暈／模糊／顆粒（位置完全對不上，因為那是另一張的亮部）。 */
+    src: string;
     w: number;
     h: number;
     colorNoise2: number;
@@ -2766,6 +2819,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   } | null>(null);
 
   const halationCacheStateRef = useRef<{
+    /** 這份快取是「哪一張照片」算出來的。
+        批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
+        少了這一欄就會命中別張的快取 —— 畫面上就會出現不屬於這張圖的
+        光暈／模糊／顆粒（位置完全對不上，因為那是另一張的亮部）。 */
+    src: string;
     w: number;
     h: number;
     fringeIntensity: number;
@@ -3676,7 +3734,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     let useNoise2Cache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedNoise2CanvasRef.current && noise2CacheStateRef.current) {
         const c = noise2CacheStateRef.current;
-        const sameSize = c.w === w && c.h === h;
+        // 一定要是「同一張照片」算出來的才敢用（見型別上的註解）
+        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
         const sameParams = c.colorNoise2 === p.colorNoise2;
         
         if (sameSize && sameParams) {
@@ -3747,7 +3806,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
             if (!baking) {
                 noise2CacheStateRef.current = {
-                    w, h, colorNoise2: p.colorNoise2, lutId,
+                    src: buffersSrcRef.current, w, h, colorNoise2: p.colorNoise2, lutId,
                     brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
                     highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
                     sat: p.sat, vib: p.vib, toneStr
@@ -3761,7 +3820,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     let useBlurCache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedBlurCanvasRef.current && blurCacheStateRef.current) {
         const c = blurCacheStateRef.current;
-        const sameSize = c.w === w && c.h === h;
+        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
         const sameParams = c.blur === p.blur;
         
         if (sameSize && sameParams) {
@@ -3818,7 +3877,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
             if (!baking) {
                 blurCacheStateRef.current = {
-                    w, h, blur: p.blur, lutId,
+                    src: buffersSrcRef.current, w, h, blur: p.blur, lutId,
                     brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
                     highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
                     sat: p.sat, vib: p.vib, toneStr
@@ -3832,7 +3891,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     let useSoftCache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedSoftCanvasRef.current && softCacheStateRef.current) {
         const c = softCacheStateRef.current;
-        const sameSize = c.w === w && c.h === h;
+        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
         const sameParams = c.soft === p.soft &&
             c.softThreshold === p.softThreshold &&
             c.softRadius === p.softRadius &&
@@ -3906,7 +3965,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
         if (!baking) {
             softCacheStateRef.current = {
-                w, h, soft: p.soft, softThreshold: p.softThreshold, softRadius: p.softRadius, softColor: p.softColor, lutId,
+                src: buffersSrcRef.current, w, h, soft: p.soft, softThreshold: p.softThreshold, softRadius: p.softRadius, softColor: p.softColor, lutId,
                 brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
                 highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
                 sat: p.sat, vib: p.vib, toneStr
@@ -3944,7 +4003,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     let useHalationCache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedHalationCanvasRef.current && halationCacheStateRef.current) {
         const c = halationCacheStateRef.current;
-        const sameSize = c.w === w && c.h === h;
+        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
         const sameParams = c.fringeIntensity === p.fringeIntensity &&
             c.fringeSize === p.fringeSize &&
             c.fringeFeather === p.fringeFeather &&
@@ -4046,7 +4105,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
             if (!baking) {
                 halationCacheStateRef.current = {
-                    w, h, fringeIntensity: p.fringeIntensity, fringeSize: p.fringeSize, fringeFeather: p.fringeFeather, fringeHue: p.fringeHue, lutId,
+                    src: buffersSrcRef.current, w, h, fringeIntensity: p.fringeIntensity, fringeSize: p.fringeSize, fringeFeather: p.fringeFeather, fringeHue: p.fringeHue, lutId,
                     brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
                     highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
                     sat: p.sat, vib: p.vib, toneStr
@@ -5086,7 +5145,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       const pctx = pc.getContext('2d', { willReadFrequently: true })!;
       pctx.imageSmoothingQuality = 'high';
       pctx.drawImage(source, 0, 0, pw, ph);
-      setPreviewAspect({ w: pw, h: ph });
+      // 同上：比例與畫布尺寸必須同一幀生效
+      applyPreviewAspect(pw, ph);
       const pData = pctx.getImageData(0, 0, pw, ph).data;
       const pLen = pData.length;
 
@@ -6249,9 +6309,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
               <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
                   {/* 一次存多張時排成可以左右滑的一排，每一張都能長按儲存 */}
                   {/* items-center：橫式的照片要跟直式的一樣停在中間，不然會黏在上緣 */}
-                  <div className={`w-full flex flex-row items-center gap-4 ${finalImages.length > 1 ? 'overflow-x-auto no-scrollbar snap-x snap-mandatory px-[max(0px,calc(50%-40vw))]' : 'justify-center'}`}>
+                  <div
+                    ref={finalStripRef}
+                    className={`w-full flex flex-row items-center gap-4 ${finalImages.length > 1 ? 'overflow-x-auto no-scrollbar snap-x snap-mandatory px-[max(0px,calc(50%-40vw))]' : 'justify-center'}`}
+                  >
                     {(finalImages.length ? finalImages : [finalImage!]).map((src, i) => (
-                      <div key={src} className="shrink-0 snap-center flex flex-col items-center gap-2">
+                      <div
+                        key={src}
+                        className="shrink-0 snap-center flex flex-col items-center gap-2"
+                        /* 一次只准滑一張。
+                           snap-mandatory 只保證「最後會停在某個定位點」，慣性滑動
+                           照樣會衝過好幾張再吸住 —— 那就是「明明只滑一次卻跳過不只一張」。
+                           scroll-snap-stop: always 就是專門管這件事的：
+                           每個定位點都必須停下來，再快的一下也只前進一張。 */
+                        style={{ scrollSnapStop: 'always' }}
+                      >
                         <div className="relative shadow-2xl rounded overflow-hidden max-h-[60vh]">
                           <img
                               src={src}
@@ -6363,7 +6435,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
           <TransformComponent wrapperClass="!w-full !h-full absolute inset-0" contentClass="!w-full !h-full flex items-center justify-center p-4">
             <div className="relative shadow-2xl transition-transform active:scale-[0.99] duration-300 w-full h-full flex items-center justify-center">
               {/* Sizing wrapper to ensure canvas and interactive overlay scale/move together perfectly */}
-              <div 
+              <div
+                ref={previewFitRef}
                 /* 進出 HSL 不做動畫，所以那一次切換把過場關掉 */
                 className={`relative flex items-center justify-center ease-[cubic-bezier(0.2,0,0,1)] max-w-[calc(100%-32px)] ${hslSwitch ? 'transition-none' : 'transition-[max-height] duration-500'}`}
                 style={{

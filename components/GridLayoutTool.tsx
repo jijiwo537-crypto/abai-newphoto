@@ -6513,6 +6513,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      以前 IG 預覽是另外用 DOM 重畫一次，兩份程式碼永遠會有對不上的地方
      （比例、裁切、跨頁、次像素…），改成共用同一條管線就不可能不一樣。 */
   const [igShots, setIgShots] = useState<string[]>([]);
+  /** 愛心／珍藏：真的按得動，狀態留在這一次預覽裡 */
+  const [igLiked, setIgLiked] = useState(false);
+  const [igSaved, setIgSaved] = useState(false);
+  /* 算圖算超過這個時間才給轉圈。
+     算得快的時候（大多數情況）根本不該看到轉圈 —— 轉圈閃一下再換成圖片，
+     那就是「進 IG 預覽會閃一下」的主因之一。 */
+  const [igShotsSlow, setIgShotsSlow] = useState(false);
 
   /* ── IG 預覽的選音樂 ─────────────────────────────────────────────
      曲庫用 iTunes Search API：免金鑰、免登入，回傳 30 秒試聽、封面、歌名歌手。
@@ -7884,10 +7891,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     };
   }, [igPreview]);
   // 直接量那個 4:5 的框：算的話會跟實際差幾個像素，頁面就會凸出去一點
+  /* 算圖超過 260ms 才讓轉圈出現（見 igShotsSlow） */
+  useEffect(() => {
+    if (!igPreview) { setIgShotsSlow(false); return; }
+    if (igShots.length) { setIgShotsSlow(false); return; }
+    const t = window.setTimeout(() => setIgShotsSlow(true), 260);
+    return () => window.clearTimeout(t);
+  }, [igPreview, igShots.length]);
+
   useEffect(() => {
     if (!igPreview) return;
     setIgPage(0);
     setIgMuted(true);
+    setIgLiked(false);
+    setIgSaved(false);
     let ro: ResizeObserver | null = null;
     const attach = () => {
       const el = igStripRef.current;
@@ -7906,16 +7923,29 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      就是那股「緩衝感」，而且滑太快還會一次跳過好幾頁。IG 不是這樣 ——
      手指拖到哪就到哪，放手當下立刻決定翻或不翻，一次只翻一頁，
      220ms 直接就位，中途不再飄。所以這裡自己接指標事件、自己搬位置。 */
+  /* 放手之後那一段收尾動畫要走多久。
+     以前是固定的（220 → 340 → 460ms），不管還剩多遠都一樣時間 ——
+     只滑一點點就放手（彈回原頁）走 460ms 很順，但整整一頁也走 460ms，
+     「速度」就是前者的好幾倍，看起來就像被射過去。主人說「滑回前一頁的速度
+     蠻正常的」，指的就是那種短距離的手感。
+     真的 IG 是 UIScrollView 的分頁：剩得越遠走得越久，速度大致固定。
+     所以這裡照剩下的距離內插 —— 短距離維持原本那個順的手感，整頁拉長到 620ms。 */
+  const IG_SNAP_MIN = 420;
+  const IG_SNAP_MAX = 620;
+  const igSnapMs = (dist: number, w: number) => {
+    if (!w) return IG_SNAP_MAX;
+    const k = Math.min(1, Math.abs(dist) / w);
+    return Math.round(IG_SNAP_MIN + (IG_SNAP_MAX - IG_SNAP_MIN) * k);
+  };
+
   /** 把軌道移到某個位置；animate=false 是跟著手指走，不能有過場 */
-  const igMoveTrack = (px: number, animate: boolean) => {
+  const igMoveTrack = (px: number, animate: boolean, ms: number = IG_SNAP_MAX) => {
     const el = igTrackRef.current;
     if (!el) return;
-    /* 460ms＋前段快後段緩的曲線。
-       220ms 那組太衝，放手幾乎是瞬移；340ms 還是比真的 IG 快一截。
-       IG 的輪播是 UIScrollView 的分頁，放手之後那一段減速看得很清楚 ——
-       起步有速度、越靠近定位越慢，最後幾十毫秒幾乎是貼著滑進去的。
-       曲線維持同一條（形狀就是那個減速感），只是把時間拉長。 */
-    el.style.transition = animate ? 'transform 460ms cubic-bezier(0.32, 0.72, 0, 1)' : 'none';
+    /* 曲線也放緩一階：原本 (0.32, 0.72, 0, 1) 在前 32% 的時間就走掉 72% 的距離，
+       起步那一下太猛 —— 那正是「子彈加速」的來源。
+       改成 (0.3, 0.55, 0.15, 1)：一樣放手就有速度、越靠近定位越慢，但開頭不暴衝。 */
+    el.style.transition = animate ? `transform ${ms}ms cubic-bezier(0.3, 0.55, 0.15, 1)` : 'none';
     el.style.transform = `translate3d(${px}px, 0, 0)`;
   };
   // 頁數或框寬改變時（換頁、旋轉、重新量框）把軌道對回正確的位置
@@ -7958,7 +7988,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     let next = igPage;
     if (d.dx < -w * 0.18 || v < -0.35) next = Math.min(pages.length - 1, igPage + 1);
     else if (d.dx > w * 0.18 || v > 0.35) next = Math.max(0, igPage - 1);
-    igMoveTrack(-next * w, true);              // 先動，再更新狀態，才不會等一拍
+    /* 還要走多遠 —— 手指停在哪、目標在哪，差多少就是多少。
+       時間照這個距離算，短距離跟長距離的「速度」才會一樣。 */
+    const remain = (-next * w) - (-igPage * w + d.dx);
+    igMoveTrack(-next * w, true, igSnapMs(remain, w));   // 先動，再更新狀態，才不會等一拍
     if (next !== igPage) setIgPage(next);
   };
 
@@ -10892,8 +10925,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
       {/* IG 貼文預覽：照著 IG 動態上的版位做一次（滿版、不圓角），看發出去長怎樣 */}
       {igPreview && (
+        /* 這裡刻意「不要」淡入。
+           fixed inset-0 的黑底淡入時，底下的拼圖工作區會透出來一段時間，
+           接著轉圈、接著才換成圖片 —— 三段畫面接連換過去，看起來就是閃一下。
+           改成直接蓋上全黑（跟圖片區的底色一樣），再等圖片就位，
+           整個過程只有「黑 → 圖片出現」一次變化。 */
         <div
-          className="fixed inset-0 z-[120] bg-black flex flex-col animate-in fade-in duration-200"
+          className="fixed inset-0 z-[120] bg-black flex flex-col"
           style={{
             fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Noto Sans TC", "PingFang TC", sans-serif',
             /* inset-0 用的是「版面視窗」，但 iOS Safari 的底部工具列是蓋在網頁上面、
@@ -11027,12 +11065,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                       {/* 直接顯示匯出的那一張。object-contain 保證完整顯示、絕不裁切 */}
                       {igShots[idx]
                         ? <img src={igShots[idx]} alt="" draggable={false} className="max-w-full max-h-full object-contain" />
-                        : (
-                          /* 還在算圖：給一個轉圈，不要放空白的頁面 —— 整片白會讓人以為壞掉 */
+                        : igShotsSlow ? (
+                          /* 真的算很久才給轉圈。算得快的時候留全黑就好 ——
+                             底下的容器本來就是黑的，跟圖片出現前後完全連續，
+                             不會有「轉圈閃一下再變成圖」的那一下。 */
                           <div className="w-full h-full flex items-center justify-center">
                             <div className="w-7 h-7 rounded-full border-2 border-white/25 border-t-white animate-spin" />
                           </div>
-                        )}
+                        ) : null}
                     </div>
                   ))}
                 </div>
@@ -11078,12 +11118,32 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             <div className="h-[44px] flex items-center px-3 text-white">
               <div className="flex items-center gap-[13px]">
                 <span className="flex items-center gap-[5px]">
-                  <Heart data-ig="heart" size={24} strokeWidth={1.8} />
-                  <span className="text-[14px] font-semibold tabular-nums">5,850</span>
+                  {/* 愛心真的可以按：按下去整顆變實心紅（IG 的紅是 #FF3040），再按一次取消。
+                      按鈕本身不佔額外版面（p-0、行高交給圖示），所以這一排的位置完全沒動。 */}
+                  <button
+                    type="button"
+                    aria-label={igLiked ? '取消喜歡' : '喜歡'}
+                    aria-pressed={igLiked}
+                    onClick={() => setIgLiked(v => !v)}
+                    className="flex items-center justify-center active:scale-90 transition-transform"
+                    style={{ padding: 0, background: 'none', border: 0, lineHeight: 0 }}
+                  >
+                    <Heart
+                      data-ig="heart"
+                      size={24}
+                      strokeWidth={1.8}
+                      color={igLiked ? '#FF3040' : 'currentColor'}
+                      fill={igLiked ? '#FF3040' : 'none'}
+                    />
+                  </button>
+                  <span className="text-[14px] font-semibold tabular-nums">{igLiked ? '5,851' : '5,850'}</span>
                 </span>
                 <span className="flex items-center gap-[5px]">
-                  {/* 依愛心的頭腳對齊；留言那顆照要求再小非常一點點 */}
-                  <MessageCircle data-ig="comment" size={24} strokeWidth={1.8} style={{ transform: 'scaleX(-1) translateY(0.45px) scale(0.83)' }} />
+                  {/* 依愛心的頭腳對齊；留言那顆照要求再小非常一點點。
+                      這顆被 scale(0.83) 縮過，線條會跟著一起縮 —— 屬性一樣寫 1.8，
+                      畫到螢幕上只有 1.8×0.83 ≈ 1.49，比愛心細一截。
+                      要「跟愛心一樣粗」就得把縮放除回去：1.8 / 0.83 ≈ 2.17。 */}
+                  <MessageCircle data-ig="comment" size={24} strokeWidth={2.169} style={{ transform: 'scaleX(-1) translateY(0.45px) scale(0.83)' }} />
                   <span className="text-[14px] font-semibold tabular-nums">6</span>
                 </span>
                 <span className="flex items-center gap-[5px]">
@@ -11105,7 +11165,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   <span className="text-[14px] font-semibold tabular-nums">342</span>
                 </span>
               </div>
-              <Bookmark data-ig="bookmark" size={24} strokeWidth={1.8} className="ml-auto" style={{ transform: 'translateY(0.48px) scale(0.944)' }} />
+              {/* 珍藏也真的可以按：按下去變實心白，再按一次取消 */}
+              <button
+                type="button"
+                aria-label={igSaved ? '取消珍藏' : '珍藏'}
+                aria-pressed={igSaved}
+                onClick={() => setIgSaved(v => !v)}
+                className="ml-auto flex items-center justify-center active:scale-90 transition-transform"
+                style={{ padding: 0, background: 'none', border: 0, lineHeight: 0 }}
+              >
+                <Bookmark
+                  data-ig="bookmark"
+                  size={24}
+                  strokeWidth={1.8}
+                  fill={igSaved ? '#fff' : 'none'}
+                  style={{ transform: 'translateY(0.48px) scale(0.944)' }}
+                />
+              </button>
             </div>
 
             {/* 說讚的人：三顆疊在一起的小頭像＋一行字 */}
