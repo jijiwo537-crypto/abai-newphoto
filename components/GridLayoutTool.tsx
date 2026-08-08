@@ -7910,9 +7910,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const igMoveTrack = (px: number, animate: boolean) => {
     const el = igTrackRef.current;
     if (!el) return;
-    /* 340ms＋前段快後段緩的曲線：220ms 那組太衝，放手幾乎是瞬移過去。
-       這一條起步就有速度、越靠近定位越慢，看得出「滑過去」的過程。 */
-    el.style.transition = animate ? 'transform 340ms cubic-bezier(0.32, 0.72, 0, 1)' : 'none';
+    /* 460ms＋前段快後段緩的曲線。
+       220ms 那組太衝，放手幾乎是瞬移；340ms 還是比真的 IG 快一截。
+       IG 的輪播是 UIScrollView 的分頁，放手之後那一段減速看得很清楚 ——
+       起步有速度、越靠近定位越慢，最後幾十毫秒幾乎是貼著滑進去的。
+       曲線維持同一條（形狀就是那個減速感），只是把時間拉長。 */
+    el.style.transition = animate ? 'transform 460ms cubic-bezier(0.32, 0.72, 0, 1)' : 'none';
     el.style.transform = `translate3d(${px}px, 0, 0)`;
   };
   // 頁數或框寬改變時（換頁、旋轉、重新量框）把軌道對回正確的位置

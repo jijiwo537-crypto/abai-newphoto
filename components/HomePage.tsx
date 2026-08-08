@@ -108,6 +108,11 @@ export const HomePage: React.FC<HomePageProps> = ({
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
   const scrollRef = useRef<HTMLDivElement>(null);
   const libRef = useRef<HTMLDivElement>(null);
+  /* 廣告版位。點「模板」捲下去的時候要以「它看得到的下緣」為準 ——
+     那一塊是絕對定位往下多長 50px 的，只捲到 libRef 的話，它多出來的
+     那一截（連同圓角的邊）還會留在畫面最上面。 */
+  const adBoxRef = useRef<HTMLDivElement>(null);
+  const adFillRef = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLDivElement>(null);
   /* 在「我」的時候捲軸那一頁是藏起來的，捲動事件不能反過來改分頁 */
   const navRef = useRef(nav);
@@ -171,6 +176,24 @@ export const HomePage: React.FC<HomePageProps> = ({
      看起來就是點一下閃一下。捲到目標（或使用者自己動了捲軸）就解鎖。 */
   const navLockRef = useRef<string | null>(null);
 
+  /**
+   * 點「模板」要捲到哪裡。
+   *
+   * 以前是捲到 libRef 的頂端，但廣告版位是「絕對定位往下多長 50px」的，
+   * 那多出來的一截（含圓角的邊線）會蓋在 libRef 上面 —— 捲到定位之後，
+   * 搜尋欄上方還看得到那一塊的下緣跟它的邊。
+   * 改成量那一塊「真正看得到的下緣」在哪，捲到它剛好出畫面為止，
+   * 再多 1px 保證連邊都不會留下（次像素繪製時邊線會佔到半個像素）。
+   */
+  const libScrollTop = (sc: HTMLDivElement) => {
+    const fallback = libRef.current?.offsetTop ?? sc.clientHeight;
+    const fill = adFillRef.current;
+    if (!fill) return fallback;
+    const scTop = sc.getBoundingClientRect().top;
+    const bottom = fill.getBoundingClientRect().bottom;
+    return Math.max(fallback, Math.round(sc.scrollTop + (bottom - scTop)) + 1);
+  };
+
   /** 分頁列：首頁／靈感是同一條捲軸的兩個位置，「我」才是換頁 */
   const goNav = useCallback((id: string) => {
     const fromMe = navRef.current === 'me';
@@ -186,7 +209,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     const sc = scrollRef.current;
     if (!sc) return;
     navLockRef.current = id;
-    sc.scrollTo({ top: id === 'lib' ? (libRef.current?.offsetTop ?? sc.clientHeight) : 0, behavior: 'smooth' });
+    sc.scrollTo({ top: id === 'lib' ? libScrollTop(sc) : 0, behavior: 'smooth' });
   }, []);
 
   /* 使用者自己碰捲軸就立刻解鎖 —— 平滑捲動被打斷時不能一直鎖著 */
@@ -199,7 +222,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     jumpRef.current = null;
     const sc = scrollRef.current;
     if (!sc) return;
-    sc.scrollTop = target === 'lib' ? (libRef.current?.offsetTop ?? sc.clientHeight) : 0;
+    sc.scrollTop = target === 'lib' ? libScrollTop(sc) : 0;
   }, [nav]);
 
   /** 捲到哪裡就亮哪一個分頁。
@@ -475,8 +498,13 @@ export const HomePage: React.FC<HomePageProps> = ({
              50px 是量出來的：版位下緣到分頁列上緣原本有 42px，多長 24px 之後
              還留 13px 的空隙，不會貼到分頁列。 */}
         <div className="relative z-10 -mt-1.5">
-          <div className="relative aspect-[342/147]">
-            <div className={`absolute inset-x-0 top-0 bottom-[-50px] rounded-[14px] overflow-hidden ${EMPTY_TILE}`} />
+          <div ref={adBoxRef} className="relative aspect-[342/147]">
+            {/* 左右各往外撐 8px，跟上面那幾排按鈕的 -mx-2 對齊。
+                 撐的是「看得到的那一塊」而不是外框 —— 外框一變寬，
+                 aspect-[342/147] 就會跟著變高，這一疊是靠 mt-auto 貼著下緣排的，
+                 上面每一排按鈕就會整個往上跑。用 -inset-x-2 只動視覺，
+                 版面佔的高度一個像素都沒變。 */}
+            <div ref={adFillRef} className={`absolute -inset-x-2 top-0 bottom-[-50px] rounded-[14px] overflow-hidden ${EMPTY_TILE}`} />
           </div>
         </div>
       </div>

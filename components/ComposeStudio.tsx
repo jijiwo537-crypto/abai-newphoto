@@ -384,9 +384,17 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
         {/* 高度用跟一般預覽同一條上限夾住，兩邊算出來的尺寸才會一模一樣
              （不夾的話 flex-1 的可用高會因為底部欄的小數而差 1px） */}
         <div ref={stageWrapRef} className="w-full h-full flex items-center justify-center" style={{ maxHeight: 'calc(100vh - 340px)' }}>
+        {/* 在框外面按下去也能搬裁切框。
+             以前只有框「裡面」接得到手勢，框拖小之後想再挪位置，
+             手指非得先戳進那一小塊才行。落在框上或角上時，那邊自己會
+             stopPropagation，所以走不到這裡 —— 兩種操作不會打架。 */}
         <div
           className="relative select-none"
-          style={{ width: stageSize.w || undefined, height: stageSize.h || undefined }}
+          style={{ width: stageSize.w || undefined, height: stageSize.h || undefined, touchAction: 'none' }}
+          onPointerDown={onHandleDown('move')}
+          onPointerMove={onHandleMove}
+          onPointerUp={onHandleUp}
+          onPointerCancel={onHandleUp}
         >
           <canvas ref={canvasRef} className="w-full h-full block" />
 
