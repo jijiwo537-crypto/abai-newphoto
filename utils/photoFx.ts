@@ -37,12 +37,6 @@ const getGpu = (): LutGpu | null => {
   }
   return gpuInst && !gpuInst.lost ? gpuInst : null;
 };
-/* 這台裝置的 GPU 真的比較快嗎 —— 不用猜，開起來實際量。
-   校準方式：第一次先走 CPU 記時間，第二次走 GPU 記時間，之後才下判斷。
-   有真顯示卡的手機會選 GPU；軟體模擬的 GL（某些桌機、虛擬機）會自動退回 CPU，
-   不會出現上一版那種「改了反而更卡」的情況。
-   留 1.2 倍餘裕：差不多快時寧可用 GPU，它不佔主執行緒。 */
-let cpuMs = 0, gpuMs = 0, gpuWins: boolean | null = null;
 let gpuSrcKey = '';
 let gpuC0: HTMLCanvasElement | null = null;
 let gpuC1: HTMLCanvasElement | null = null;
@@ -280,23 +274,19 @@ export function applyPhotoFx(
   /* 先試 GPU。這條路完全不需要把像素讀回來 ——
      後面的噪點、模糊、柔光全部在畫布上合成，沒有人要 dest 那份陣列。
      失敗就原封不動走下面的 CPU，成品一模一樣。 */
-  // 還沒量過 CPU 的耗時之前，先讓第一次走 CPU 把時間記下來
-  const calibrating = gpuWins === null && cpuMs === 0;
-  if (!calibrating && gpuWins !== false) {
+  /* 這裡本來也有一套校準（先各量一次 CPU 與 GPU、慢就退回）。拿掉了 ——
+     軟體模擬的 GL 已經在 LutGpu.create() 就被擋掉，這裡不需要再猜一次；
+     而只憑一次取樣下永久判斷，反而會在真手機上誤判成「不要用 GPU」。 */
+  {
     const amt = (fx.lutAmount ?? 100) / 100;
     // 來源鍵：尺寸 ＋ 幾個取樣點。同一張圖重畫時就不必重傳貼圖。
     const k = `${out.width}x${out.height}|${src[0]},${src[(src.length >> 3) | 0]},`
       + `${src[(src.length >> 2) | 0]},${src[src.length - 4]}`;
-    const t = performance.now();
     gpuOk = gpuColorChain(ctx, src, out.width, out.height, p, lut, amt, baseLut, k);
-    if (gpuOk) {
-      gpuMs = performance.now() - t;
-      if (cpuMs > 0 && gpuWins === null) gpuWins = gpuMs < cpuMs * 1.2;
-    }
   }
 
   if (!gpuOk) {
-  const tCpu = performance.now();
+
   processPixels(
     src, dest, out.width, out.height, p,
     lut ? lut.data : null, lut ? lut.size : 0,
@@ -319,7 +309,6 @@ export function applyPhotoFx(
     }
   }
   ctx.putImageData(img, 0, 0);
-  cpuMs = performance.now() - tCpu;
   }
 
   // 特效的半徑是以 1080 長邊為基準，換算到目前這張的大小
