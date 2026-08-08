@@ -6470,6 +6470,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      iTunes 的 term 是用空白切開後全部都要命中（AND），兩個詞很容易一首都對不到。 */
   const STORE_FALLBACK: Record<string, string> = { tw: '華語', jp: 'J-POP', kr: 'K-POP', us: 'pop' };
   const ALL_STORES = ['tw', 'jp', 'kr', 'us'];
+  /** 全球熱門要看的地區：東亞三地＋英美，涵蓋面夠廣又不會打太多請求 */
+  const GLOBAL_STORES = ['us', 'gb', 'jp', 'kr', 'tw'];
 
   /** 收藏：存在本機，「已儲存」那一頁就是這一份 */
   const [savedTracks, setSavedTracks] = useState<Track[]>(() => {
@@ -6766,109 +6768,35 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   /* 判斷一首歌是不是某個語言的：直接看歌名與歌手用的是哪一種文字。
      各地區的熱門榜本來就混了一堆西洋歌（韓國榜上很大一部分是英文歌），
      照榜原封不動端出來，「韓語」那一頁就不是韓語歌。 */
-  const HANGUL = /[가-힣ᄀ-ᇿ㄰-㆏]/;
-  const KANA = /[぀-ゟ゠-ヿｦ-ﾝ]/;
-  const HAN = /[㐀-䶿一-鿿豈-﫿]/;
-  /* 韓語刻意「不」在這裡：Apple 韓國商店的 BTS、BLACKPINK、NewJeans 這些
-     團名與很多歌名都是拉丁字母寫的，用「有沒有諺文」去篩會把整個 K-Pop 主力
-     全部丟掉 —— 那正是「韓語歌怎麼那麼少、而且不像韓文歌」的原因。
-     韓語改成直接跟 Apple 要 K-Pop 這個「曲風」的榜（見 currentSource）。 */
-  const LANG_TEST: Record<string, (s: string) => boolean> = {
-    '華語': s => HAN.test(s) && !KANA.test(s) && !HANGUL.test(s),
-    '日語': s => KANA.test(s) || (HAN.test(s) && !HANGUL.test(s)),
-    '韓語': s => HANGUL.test(s),
-    '英語': s => !HAN.test(s) && !KANA.test(s) && !HANGUL.test(s),
-  };
-  /* 每個語言對應到的曲風名稱。各地區商店回傳的曲風名是在地語言的
-     （韓國回「케이팝」、日本回「J-Pop」、台灣回「華語」），所以全部都要認。 */
-  const LANG_RE: Record<string, RegExp> = {
-    '韓語': /k-?pop|케이팝|韓國|韓語|韩语/i,
-    '日語': /j-?pop|anime|enka|kayokyoku|アニメ|演歌|歌謡|日本/i,
-    '華語': /mandopop|cantopop|chinese|華語|國語|国语|粵語|粤语|中文/i,
-  };
-  /** 只要沾到這些曲風就不算「英語歌」—— 美國榜上也有 K-Pop 與 J-Pop */
-  const ASIAN_RE = /k-?pop|j-?pop|anime|enka|kayokyoku|mandopop|cantopop|chinese|케이팝|アニメ|演歌|華語|國語|粵語|中文/i;
+  /**
+   * 「這一頁要哪一國的榜」就是全部了 —— 不再用歌名去猜語言。
+   *
+   * 之前用漢字／假名／諺文去篩，或用曲風標籤去挑，兩種都會出事：
+   * BTS、BLACKPINK、NewJeans 的團名是拉丁字母，用文字篩會整批丟掉；
+   * 曲風名稱各地區不一樣（韓國回「가요」不是「K-Pop」），對不上就變空的。
+   *
+   * 韓國商店的本週最多播放榜本來就是韓語歌的排行榜，台灣榜就是華語榜，
+   * 日本榜就是日語榜 —— 直接把那一國的榜端出來，不多做任何判斷，
+   * 這才是音樂平台真正的「本週熱門」。
+   */
 
   /**
-   * 曲風編號不用猜 —— 直接跟 Apple 要那個地區的曲風表，照名字對出編號。
-   * 端點：MZStoreServices 的 genres，id=34 是「音樂」那一支，底下是所有子曲風。
-   * 一個地區只問一次，之後放記憶體。直連被 IP 鎖住時一樣走轉送。
+   * 全球熱門：把幾個主要地區的榜合起來，照「在幾個國家上榜」排序，
+   * 同樣名次再比平均名次。一首歌在越多國家越前面，就越接近全球熱門。
    */
-  const genreTree = useRef<Map<string, { id: string; name: string }[]>>(new Map());
-  const loadGenres = async (store: string): Promise<{ id: string; name: string }[]> => {
-    const hit = genreTree.current.get(store);
-    if (hit) return hit;
-    const url = `https://itunes.apple.com/WebObjects/MZStoreServices.woa/ws/genres?id=34&cc=${store}`;
-    const flat: { id: string; name: string }[] = [];
-    const walk = (node: any) => {
-      if (!node || typeof node !== 'object') return;
-      if (node.id && node.name) flat.push({ id: String(node.id), name: String(node.name) });
-      if (node.subgenres) Object.values(node.subgenres).forEach(walk);
-    };
-    const grab = async (u: string, ms: number) => {
-      const d = await getJSON(u, ms);
-      Object.values(d || {}).forEach(walk);
-    };
-    try {
-      await grab(url, 5000);
-    } catch {
-      for (const relay of RELAYS) {
-        try { await grab(relay(url), 6500); break; } catch { /* 換下一條 */ }
-      }
-    }
-    if (!flat.length) failLog.current.push(`${store}曲風表:空`);
-    genreTree.current.set(store, flat);
-    return flat;
-  };
-  /** 這個地區裡，屬於這個語言的所有曲風編號 */
-  const genreIdsFor = async (store: string, lang: string): Promise<Set<string>> => {
-    const re = LANG_RE[lang];
-    if (!re) return new Set();
-    const flat = await loadGenres(store);
-    const ids = new Set(flat.filter(g => re.test(g.name)).map(g => g.id));
-    // 問不到曲風表時，至少還有一個已經確認過的：51 就是 K-Pop
-    if (!ids.size && lang === '韓語') ids.add('51');
-    return ids;
-  };
-  /**
-   * 從一份榜單挑出某個語言的歌。
-   *
-   * 這裡只用「Apple 自己標在那首歌上的曲風」，而且是**過濾**不是聯集。
-   * 上一版拿三種訊號取聯集，其中「只在本地上榜就算本地歌」那一條會把
-   * 在台灣、日本榜上的 K-Pop 也一起算進去 —— 那就是「各語言都混進韓文歌」
-   * 的原因。曲風是 Apple 標的，K-Pop 就是 K-Pop，不會跑到華語那一頁去。
-   *
-   * 曲風對不上（極少數沒標曲風的）才退回看文字，而且一樣是過濾。
-   * 榜單本身就是「近期最多人聽」，所以過濾完的順序仍然是熱門排名。
-   */
-  const pickLang = (
-    list: Track[], lang: string | undefined, ids: Set<string>,
-  ): { list: Track[]; how: string } => {
-    if (!lang || !list.length) return { list, how: '整份' };
-    const test = LANG_TEST[lang];
-    if (lang === '英語') {
-      // 美國榜上也有 K-Pop、J-Pop，靠曲風把它們拿掉，再要求歌名歌手是純拉丁字母
-      const hit = list.filter(t =>
-        !(t.genre && ASIAN_RE.test(t.genre)) && !ids.has(t.genreId || '')
-        && test(`${t.name} ${t.artist}`));
-      return hit.length >= 5 ? { list: hit, how: '曲風+文字' } : { list, how: '整份' };
-    }
-    const re = LANG_RE[lang];
-    const byGenre = list.filter(t =>
-      (t.genreId && ids.has(t.genreId)) || (t.genre && re && re.test(t.genre)));
-    if (byGenre.length >= 5) return { list: byGenre, how: '曲風' };
-    const byText = test ? list.filter(t => test(`${t.name} ${t.artist}`)) : [];
-    const merged = list.filter(t => byGenre.includes(t) || byText.includes(t));
-    if (merged.length >= 3) return { list: merged, how: byGenre.length ? '曲風+文字' : '文字' };
-    /* 一定不能回空的。
-       曲風標籤有時候整份都對不上（拿不到曲風表、或那個地區標的是別的名字），
-       這時候寧可把整份榜端出來、只把「看起來像」的排前面，也不能讓使用者
-       看到「拿不到歌單」——榜明明就在手上。這就是韓語那頁一首都沒有的原因。 */
-    const like = new Set(merged);
-    return {
-      list: [...list.filter(t => like.has(t)), ...list.filter(t => !like.has(t))],
-      how: '排序',
-    };
+  const globalMerge = (byStore: Record<string, Track[]>): Track[] => {
+    const score = new Map<string, { t: Track; s: number; n: number }>();
+    Object.values(byStore).forEach(list => {
+      (list || []).forEach((t, i) => {
+        const k = trackKey(t);
+        const add = 1 / (i + 1);
+        const cur = score.get(k);
+        if (cur) { cur.s += add; cur.n += 1; } else score.set(k, { t, s: add, n: 1 });
+      });
+    });
+    return [...score.values()]
+      .sort((a, b) => (b.n - a.n) || (b.s - a.s))
+      .map(x => x.t);
   };
 
   /**
@@ -6932,26 +6860,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
   type Src =
     | { kind: 'search'; term: string }
-    | { kind: 'korean' }
-    | { kind: 'chart'; stores: string[]; pattern: string[]; lang?: string; lead?: { store: string; count: number } };
+    | { kind: 'chart'; stores: string[]; pattern: string[]; lead?: { store: string; count: number } }
+    | { kind: 'global'; stores: string[] };
 
   /** 現在這個分頁／搜尋字該拿什麼 */
   const currentSource = (): Src => {
     const q = musicQuery.trim();
     if (q) return { kind: 'search', term: q };
+    /* 為你推薦＝華語、日語、韓語三地的本週熱門交錯（不含西洋），
+       開頭四首固定是台灣榜。 */
     if (musicTab === '為你推薦') {
-      // 四地混合，中日韓的比重比英文高，而且開頭四首固定是台灣榜
       return {
-        kind: 'chart', stores: ALL_STORES,
-        pattern: ['tw', 'jp', 'kr', 'tw', 'jp', 'kr', 'us'],
+        kind: 'chart', stores: ['tw', 'jp', 'kr'],
+        pattern: ['tw', 'jp', 'kr'],
         lead: { store: 'tw', count: 4 },
       };
     }
-    if (musicTab === '超夯') return { kind: 'chart', stores: ALL_STORES, pattern: ['us', 'tw', 'jp', 'kr'] };
-    if (musicTab === '韓語') return { kind: 'korean' };
+    // 超夯＝全球本週熱門：多個主要地區的榜合併，照「在幾個國家上榜」排
+    if (musicTab === '超夯') return { kind: 'global', stores: GLOBAL_STORES };
+    /* 語言分頁＝直接端那一國的本週最多播放榜。
+       韓國榜就是韓語歌的排行榜，不需要（也不可以）再用歌名去篩。 */
     const s = TAB_STORE[musicTab];
-    // 其他語言分頁：抓該地區的榜，再照文字把非該語言的歌濾掉
-    if (s) return { kind: 'chart', stores: [s], pattern: [s], lang: musicTab };
+    if (s) return { kind: 'chart', stores: [s], pattern: [s] };
     return { kind: 'search', term: 'pop' };
   };
 
@@ -6978,6 +6908,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         return { list: withPreview, how: '新榜' };
       }
       failLog.current.push(`${store}查:${withPreview.length}首有試聽`);
+      /* 一次查 190 首偶爾會被 Apple 打回（清單太長、或其中幾個編號在這個地區
+         查不到）。拆成兩半再問一次，通常就過了 —— 不然整頁就變空的。 */
+      const ids = modern.map(t => t.appleId || '');
+      const half = Math.ceil(ids.length / 2);
+      const [m1, m2] = await Promise.all([
+        lookupPreviews(ids.slice(0, half), store),
+        lookupPreviews(ids.slice(half), store),
+      ]);
+      const retry = modern
+        .map(t => {
+          const hit = m1.get(t.appleId || '') || m2.get(t.appleId || '');
+          return hit ? { ...t, preview: hit.preview, secs: hit.secs, art: hit.art || t.art } : t;
+        })
+        .filter(t => t.preview);
+      if (retry.length >= 5) {
+        chartPool.current.set(store, retry);
+        return { list: retry, how: '新榜(分批)' };
+      }
     }
     const legacy = await loadChart(store).catch(() => [] as Track[]);
     if (legacy.length) chartPool.current.set(store, legacy);
@@ -6994,23 +6942,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     failLog.current = [];
     let list: Track[] = [];
     let how = '';
-    if (src.kind === 'korean' || src.kind === 'chart') {
-      const stores = src.kind === 'korean' ? ['kr'] : src.stores;
-      const lang = src.kind === 'korean' ? '韓語' : src.lang;
+    if (src.kind === 'chart' || src.kind === 'global') {
+      const stores = src.stores;
       const got = await Promise.all(stores.map(s => oneStore(s)));
-      // 先跟 Apple 問出「這個地區裡屬於這個語言的曲風編號」，不要自己編
-      const idsByStore = lang
-        ? await Promise.all(stores.map(s => genreIdsFor(s, lang).catch(() => new Set<string>())))
-        : stores.map(() => new Set<string>());
       const byStore: Record<string, Track[]> = {};
       const hows = new Set<string>();
-      stores.forEach((s, i) => {
-        hows.add(got[i].how);
-        const r = pickLang(got[i].list, lang, idsByStore[i]);
-        byStore[s] = r.list;
-        if (lang) hows.add(r.how);
-      });
-      list = weave(byStore, src.kind === 'korean' ? ['kr'] : src.pattern, src.kind === 'korean' ? undefined : src.lead);
+      stores.forEach((s, i) => { hows.add(got[i].how); byStore[s] = got[i].list; });
+      /* 榜就是答案，這裡完全不再做語言判斷 ——
+         用歌名的文字或曲風標籤去篩，兩種都會把整批 K-Pop 弄不見。 */
+      list = src.kind === 'global'
+        ? globalMerge(byStore)
+        : weave(byStore, src.pattern, src.lead);
       how = [...hows].filter(Boolean).join('/');
     } else {
       const cached = searchCache.current.get(src.term.toLowerCase());
@@ -7079,8 +7021,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     /* 榜單整個拿不到時的最後一道：改問 Deezer。
        這裡刻意不去打 Apple 的搜尋端點 —— 那支才是會被鎖成 403 的那一支。 */
     if (!list.length && src.kind !== 'search') {
-      const term = src.kind === 'korean' ? 'K-POP'
-        : (STORE_FALLBACK[(src as any).stores?.[0]] || 'pop');
+      const term = STORE_FALLBACK[(src as any).stores?.[0]] || 'pop';
       list = await loadDeezer(term).catch(() => [] as Track[]);
       if (list.length) how = 'Deezer 備援';
     }
