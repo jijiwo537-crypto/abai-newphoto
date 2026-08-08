@@ -6813,10 +6813,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    * onGot 是「拿到一批就先給一批」，畫面才不用等到全部專輯都問完。
    * 專輯數有上限、同時只問三張：Apple 的 lookup 是照 IP 限流的，要省著用。
    */
+  /** 翻過的歌手全曲存起來：同一位歌手在同一次開著面板期間只翻一次專輯 */
+  const artistAll = useRef<Map<string, Track[]>>(new Map());
+
   const loadWholeArtist = async (
     a: Artist, store: string, onGot?: (list: Track[]) => void,
     maxAlbums = 10, known?: Album[],
   ): Promise<Track[]> => {
+    const memo = artistAll.current.get(a.id);
+    if (memo && memo.length) { onGot?.(memo); return memo; }
     const [top, albums] = await Promise.all([
       loadSongsOfArtist(a, store).catch(() => [] as Track[]),
       // 歌手頁已經先問過專輯了，就別再問一次（Apple 的額度要省著用）
@@ -6844,6 +6849,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       }
     };
     await Promise.all([worker(), worker(), worker()]);
+    if (out.length) artistAll.current.set(a.id, out);
     return out;
   };
 
@@ -7385,6 +7391,31 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       };
       let artistsFound: Artist[] = [];
 
+      /* 主人打「yoas」時要看到一大堆 YOASOBI 的歌。
+         光靠 entity=musicArtist 那一支不夠 —— 打不完整的名字時它常常回空的。
+         這裡改成「從搜尋結果本身認人」：結果裡哪位歌手的名字是以主人打的字
+         開頭（或包含），而且他的歌最多，那就是主人在找的人，
+         接著把他的全部歌曲整份倒到最前面。 */
+      let expanded = '';
+      const nq0 = term.toLowerCase().replace(/\s+/g, '');
+      const norm0 = (x: string) => x.toLowerCase().replace(/\s+/g, '');
+      const artistFromResults = (): Artist | undefined => {
+        if (nq0.length < 2) return undefined;
+        const { list, hits } = artistsInTracks([...bucket.ap, ...bucket.us, ...bucket.jp]);
+        const cand = list.filter(a => norm0(a.name).includes(nq0));
+        if (!cand.length) return undefined;
+        return cand.sort((x, y) => {
+          const sx = norm0(x.name).startsWith(nq0) ? 1 : 0;
+          const sy = norm0(y.name).startsWith(nq0) ? 1 : 0;
+          return (sy - sx) || ((hits.get(y.id) || 0) - (hits.get(x.id) || 0));
+        })[0];
+      };
+      const expandArtist = async (a?: Artist) => {
+        if (!a || !a.id || expanded === a.id) return;
+        expanded = a.id;
+        await loadWholeArtist(a, 'tw', got => feed('ar', got)).catch(() => {});
+      };
+
       const feed = (key: string, got: Track[]) => {
         if (my !== musicReqRef.current || !got.length) return;
         remember(got);
@@ -7394,6 +7425,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         setMusicList(list);
         setMusicLoading(false);
         refreshArtists(artistsFound);
+        /* 只在「主人停手之後的完整查詢」才去翻專輯 ——
+           翻一位歌手要問十幾次，打字途中每個鍵都翻的話額度馬上就沒了。
+           翻過的存在 artistAll 裡，之後同一位歌手完全不用再問。 */
+        if (broad && key !== 'ar') expandArtist(artistFromResults());
       };
 
       await Promise.all([
@@ -7409,11 +7444,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           /* 打的就是歌手名字（例如「yoasobi」）時，要的是「他的全部歌曲」，
              所以連專輯一起翻。打的是歌名時只拿代表作就好 ——
              不然每搜一個字都去翻十張專輯，Apple 的額度馬上就爆掉。 */
-          const nb = best.name.toLowerCase().replace(/\s+/g, '');
-          const nq = term.toLowerCase().replace(/\s+/g, '');
-          const wantWhole = nb === nq || (nq.length >= 4 && nb.includes(nq));
+          /* 名字以主人打的字開頭就算數（兩個字以上）——
+             打「yoas」時 nb='yoasobi' 就命中，不必等打完整個名字。 */
+          const nb = norm0(best.name);
+          const wantWhole = nb === nq0 || (nq0.length >= 2 && nb.startsWith(nq0))
+            || (nq0.length >= 4 && nb.includes(nq0));
           if (!wantWhole) { feed('ar', await loadSongsOfArtist(best, 'tw').catch(() => [] as Track[])); return; }
-          await loadWholeArtist(best, 'tw', got => feed('ar', got)).catch(() => {});
+          await expandArtist(best);
         }).catch(() => {}),
         /* 三個商店「一起」問，不是查不到才問下一個。
            搜的是整個 Apple Music 音樂庫，各兩百首合起來去重 ——
@@ -7490,6 +7527,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     chartPool.current.clear();
     searchCache.current.clear();
     seenPool.current.clear();
+    artistAll.current.clear();
     instantRef.current = '';
     // 重開就回到推薦、清掉上次打的字，不然會停在上次的搜尋結果
     setMusicQuery('');
