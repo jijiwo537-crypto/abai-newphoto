@@ -6424,6 +6424,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     id: string; name: string; artist: string; art: string; preview: string; secs: number;
     /** 榜單來源才有：Apple 標的曲風（例如 51 / "K-Pop"） */
     genreId?: string; genre?: string;
+    /** 新版榜單只給歌曲編號，試聽網址要再查一次才有 */
+    appleId?: string;
   };
   const TRANSPARENT_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
   const [musicOpen, setMusicOpen] = useState(false);
@@ -6567,6 +6569,54 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     one(jsonp(makeJsonpUrl), 'J');
   });
 
+  /**
+   * Apple 現在還在維護的排行榜（rss.applemarketingtools.com）。
+   *
+   * 舊的 itunes.apple.com/{cc}/rss/topsongs 那支已經幾乎沒東西了 —— 那就是
+   * 「韓語只有四首」的真正原因：不是篩掉的，是本來就只回那幾首。
+   * 新版這支有 CORS、資料是滿的，而且每一筆自己帶著曲風（K-Pop / J-Pop…）。
+   * 唯一的缺點是沒有試聽網址，要再用 lookup 補（見 lookupPreviews）。
+   */
+  const fromModernChart = (d: any): Track[] => (d?.feed?.results || []).map((r: any) => {
+    const gs = (r.genres || []).filter((g: any) => String(g?.genreId) !== '34');
+    return {
+      id: `m${r.id}`,
+      name: r.name || '',
+      artist: r.artistName || '',
+      art: String(r.artworkUrl100 || '').replace(/\/\d+x\d+bb\./, '/200x200bb.'),
+      preview: '',
+      secs: 0,
+      appleId: String(r.id || ''),
+      genreId: String(gs[0]?.genreId || ''),
+      genre: gs.map((g: any) => g?.name).filter(Boolean).join(' '),
+    } as Track;
+  }).filter((t: Track) => t.name && t.appleId);
+
+  /* 這支有 CORS，直接 fetch 就好，不要再多送一個 JSONP ——
+     它不支援 callback，那個 script 載回來會是純 JSON，瀏覽器當程式碼解析
+     會噴一堆語法錯誤，白白多一個請求也多一堆雜訊。 */
+  const loadModernChart = async (store: string): Promise<Track[]> => {
+    const url = `https://rss.applemarketingtools.com/api/v2/${store}/music/most-played/200/songs.json`;
+    try {
+      return fromModernChart(await getJSON(url));
+    } catch (e: any) {
+      failLog.current.push(`${store}新榜:${String(e?.message || e).slice(0, 16)}`);
+      return [];
+    }
+  };
+
+  /** 一次把一整批歌曲編號換成試聽網址（一個請求最多 200 首，不是一首一個請求） */
+  const lookupPreviews = async (ids: string[], store: string): Promise<Map<string, Track>> => {
+    const m = new Map<string, Track>();
+    if (!ids.length) return m;
+    const url = 'https://itunes.apple.com/lookup?entity=song&limit=200'
+      + `&country=${store}&id=${ids.slice(0, 190).join(',')}`;
+    const got = await raceBoth(`${store}查`, url, cb => `${url}&callback=${cb}`, fromItunes)
+      .catch(() => [] as Track[]);
+    got.forEach(t => m.set(t.id.replace(/^i/, ''), t));
+    return m;
+  };
+
   /** 某個地區的近期熱門榜；榜單失效就退回該地區的搜尋 */
   const loadChart = async (store: string, genre?: string): Promise<Track[]> => {
     // 榜單的參數是寫在路徑裡的（不是問號後面），JSONP 的 callback 也一樣
@@ -6633,24 +6683,46 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     '英語': { ids: [], re: /^$/ },
   };
   /**
-   * 從一份榜單挑出某個語言的歌。三層，依可靠度由高到低：
+   * 從一份榜單挑出某個語言的歌。三種訊號取聯集，能撈多少是多少：
    *   1. 榜單自己標的曲風（K-Pop / J-Pop / Mandopop…）—— 最準。
    *   2. 歌名歌手用的文字（漢字／假名／諺文）—— 中日文很準，韓文不準。
-   *   3. 都挑不出來就整份照原順序給，只是把「看起來像」的排前面，一首都不丟。
+   *   3. 「只在這個地區的榜上、沒在美國榜上」—— 西洋熱門歌到哪都上榜，
+   *      只在本地上榜的幾乎一定是本地語言的歌。這一條完全不必猜編號，
+   *      而且剛好補上韓文那個「團名是拉丁字母」的缺口。
+   * 三種都撈不到就整份給，只把像的排前面，一首都不丟。
    */
-  const pickLang = (list: Track[], lang?: string): { list: Track[]; how: string } => {
+  const pickLang = (
+    list: Track[], lang?: string, globalRef?: Track[],
+  ): { list: Track[]; how: string } => {
     if (!lang || !list.length) return { list, how: '整份' };
+    if (lang === '英語') {
+      const t = LANG_TEST['英語'];
+      const hit = list.filter(x => t(`${x.name} ${x.artist}`));
+      return hit.length >= 5 ? { list: hit, how: '文字' } : { list, how: '整份' };
+    }
     const g = LANG_GENRE[lang];
+    const test = LANG_TEST[lang];
+    const globalArtists = new Set((globalRef || []).map(t => t.artist.toLowerCase()));
+    const how: string[] = [];
+    const keep = new Set<Track>();
     if (g) {
       const byGenre = list.filter(t =>
         (t.genreId && g.ids.includes(t.genreId)) || (t.genre && g.re.test(t.genre)));
-      if (byGenre.length >= 5) return { list: byGenre, how: '曲風' };
+      if (byGenre.length) { byGenre.forEach(t => keep.add(t)); how.push('曲風'); }
     }
-    const test = LANG_TEST[lang];
     if (test) {
       const byText = list.filter(t => test(`${t.name} ${t.artist}`));
-      if (byText.length >= 5) return { list: byText, how: '文字' };
-      // 挑不出足夠的就不硬篩，只把像的排前面
+      if (byText.length) { byText.forEach(t => keep.add(t)); how.push('文字'); }
+    }
+    if (globalArtists.size) {
+      const localOnly = list.filter(t => !globalArtists.has(t.artist.toLowerCase()));
+      if (localOnly.length) { localOnly.forEach(t => keep.add(t)); how.push('在地'); }
+    }
+    if (keep.size >= 5) {
+      // 照原本的榜單順序輸出，不要因為用 Set 就把名次打亂
+      return { list: list.filter(t => keep.has(t)), how: how.join('+') };
+    }
+    if (test) {
       return {
         list: [...list.filter(t => test(`${t.name} ${t.artist}`)),
                ...list.filter(t => !test(`${t.name} ${t.artist}`))],
@@ -6729,9 +6801,34 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     return { kind: 'search', term: 'pop' };
   };
 
-  /* Apple 音樂曲風的編號。K-Pop 是 51、J-Pop 是 27。
-     拿不到（編號不對、那個地區沒有這個曲風）就退回國家榜，不會開天窗。 */
-  const GENRE_KPOP = '51';
+  /**
+   * 拿一個地區的榜單，附試聽網址。兩條路，取先成功的那一條：
+   *   1. 新版榜單（資料是滿的、有曲風）＋ 一次批次查出所有試聽網址。
+   *   2. 舊版榜單（本身就帶試聽網址，但現在資料很少）。
+   * 抓到的整份存進 chartPool，搜尋全掛時還能在裡面找。
+   */
+  const oneStore = async (store: string): Promise<{ list: Track[]; how: string }> => {
+    const cached = chartPool.current.get(store);
+    if (cached && cached.length) return { list: cached, how: '快取' };
+    const modern = await loadModernChart(store).catch(() => [] as Track[]);
+    if (modern.length >= 10) {
+      const m = await lookupPreviews(modern.map(t => t.appleId || ''), store);
+      const withPreview = modern
+        .map(t => {
+          const hit = m.get(t.appleId || '');
+          return hit ? { ...t, preview: hit.preview, secs: hit.secs, art: hit.art || t.art } : t;
+        })
+        .filter(t => t.preview);
+      if (withPreview.length >= 5) {
+        chartPool.current.set(store, withPreview);
+        return { list: withPreview, how: '新榜' };
+      }
+      failLog.current.push(`${store}查:${withPreview.length}首有試聽`);
+    }
+    const legacy = await loadChart(store).catch(() => [] as Track[]);
+    if (legacy.length) chartPool.current.set(store, legacy);
+    return { list: legacy, how: legacy.length ? '舊榜' : '無' };
+  };
 
   const loadMusic = useCallback(async (src: Src) => {
     const my = ++musicReqRef.current;
@@ -6743,33 +6840,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     failLog.current = [];
     let list: Track[] = [];
     let how = '';
-    if (src.kind === 'korean') {
-      /* 韓語走兩條，先曲風榜、拿不到再用國家榜自己標的曲風去挑。
-         兩條都是為了同一件事：不要用「歌名有沒有諺文」去猜 ——
-         BTS、BLACKPINK、NewJeans 的團名都是拉丁字母，用猜的一定漏掉。 */
-      const kpop = await loadChart('kr', GENRE_KPOP).catch(() => [] as Track[]);
-      if (kpop.length >= 10) {
-        list = weave({ kr: kpop }, ['kr']);
-        how = 'K-Pop 榜';
-      } else {
-        const plain = await loadChart('kr').catch(() => [] as Track[]);
-        chartPool.current.set('kr', plain);
-        const picked2 = pickLang(plain, '韓語');
-        list = weave({ kr: picked2.list }, ['kr']);
-        how = `韓國榜/${picked2.how}`;
-      }
-    } else if (src.kind === 'chart') {
-      const got = await Promise.all(src.stores.map(s => loadChart(s).catch(() => [] as Track[])));
+    if (src.kind === 'korean' || src.kind === 'chart') {
+      const stores = src.kind === 'korean' ? ['kr'] : src.stores;
+      const lang = src.kind === 'korean' ? '韓語' : src.lang;
+      const got = await Promise.all(stores.map(s => oneStore(s)));
       const byStore: Record<string, Track[]> = {};
-      const hows: string[] = [];
-      src.stores.forEach((s, i) => {
-        chartPool.current.set(s, got[i]);
-        const r = pickLang(got[i], src.lang);
+      const hows = new Set<string>();
+      // 「在地」那個訊號要拿美國榜當對照組：西洋熱門歌到哪都上榜
+      const globalRef = lang && lang !== '英語'
+        ? (chartPool.current.get('us') || await oneStore('us').then(r => r.list))
+        : undefined;
+      stores.forEach((s, i) => {
+        hows.add(got[i].how);
+        const r = pickLang(got[i].list, lang, globalRef);
         byStore[s] = r.list;
-        if (src.lang) hows.push(r.how);
+        if (lang) hows.add(r.how);
       });
-      list = weave(byStore, src.pattern, src.lead);
-      how = hows[0] || '榜單';
+      list = weave(byStore, src.kind === 'korean' ? ['kr'] : src.pattern, src.kind === 'korean' ? undefined : src.lead);
+      how = [...hows].filter(Boolean).join('/');
     } else {
       const cached = searchCache.current.get(src.term.toLowerCase());
       if (cached) {
@@ -6804,12 +6892,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
          完全不用網路，所以一定會有反應 —— 榜上有的歌手（BTS、YOASOBI…）
          照樣搜得到，不會再出現「打了字什麼都沒有」。 */
       if (!list.length) {
+        // Deezer 再換一種寫法試一次（同一支 API 有兩種路徑寫法）
+        const alt = 'https://api.deezer.com/search/track?limit=50&q=' + encodeURIComponent(src.term);
+        const dz2 = await raceBoth('DZ2', alt, cb => `${alt}&output=jsonp&callback=${cb}`, fromDeezer)
+          .catch(() => [] as Track[]);
+        if (dz2.length) { list = weave({ dz: dz2 }, ['dz']); how = 'Deezer2'; }
+      }
+      if (!list.length) {
         const q = src.term.toLowerCase();
         const local: Track[] = [];
         chartPool.current.forEach(arr => arr.forEach(t => {
           if (`${t.name} ${t.artist}`.toLowerCase().includes(q)) local.push(t);
         }));
-        if (local.length) { list = weave({ lo: local }, ['lo']); how = '榜單內搜尋'; }
+        if (local.length) {
+          list = weave({ lo: local }, ['lo']);
+          // 走到這裡代表兩家線上服務都掛了，把死法一起寫在來源那行，才知道要修哪
+          how = `榜單內搜尋（${failLog.current.slice(0, 4).join('、')}）`;
+        }
       }
       if (list.length) searchCache.current.set(src.term.toLowerCase(), list);
     }
