@@ -1812,12 +1812,15 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const needsShapeCanvas =
     image.text === undefined && !image.isVideo && shapeImgReady && usedCanvasRef.current;
 
-  // 濾鏡／調節算一次就留著。固定用長邊算，捏合時尺寸一直變也不會重算。
-  //
-  // 拖滑桿的時候先用 380 長邊算（照片在畫布上大約只有 320 個實體像素，
-  // 這個尺寸看起來一模一樣，但工作量只有 720 的三分之一，滑桿才不會一頓一頓），
-  // 手停下來之後再補算 720 的那一張。
-  const FX_MAX_FAST = 380;
+  /* 濾鏡／調節算一次就留著。固定用長邊算，捏合時尺寸一直變也不會重算。
+
+     以前拖滑桿時會先降到 380 長邊算一張「快的」，手停下來再補算全尺寸。
+     那正是主人說的「拖動滑桿時圖片會有像素感」—— 380 比畫面上真正的實體像素
+     少了一大截，拖的過程中看到的就是放大的糊圖。
+
+     現在顏色鏈可以交給 GPU（烤 33³ 的表 2.2ms ＋ 一個 draw call），
+     全尺寸本來就跑得動，所以拖曳中與靜止時**用同一個尺寸**：
+     畫面上有幾個實體像素就算幾個。拖曳中看到的就是最終那一張。 */
   /* 正式那一張要算到「畫面上真的有幾個實體像素」。
      以前固定 720，比實際顯示的像素少一大截，所以一套上濾鏡或特效，
      照片就明顯變糊。上限 1400 是為了不讓超大格子把一次重算拖太久。 */
@@ -1835,7 +1838,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   useEffect(() => () => { if (fxIdleRef.current) clearTimeout(fxIdleRef.current); }, []);
   const fxSourceFor = (img: HTMLImageElement) => {
     if (!hasPhotoFx(image.fx)) return img as CanvasImageSource;
-    const MAX = fxFastRef.current ? FX_MAX_FAST : fxFullMax();
+    const MAX = fxFullMax();
     const key = `${image.src}|${JSON.stringify(image.fx)}|${lutRevision}|${MAX}`;
     const hit = fxCacheRef.current;
     if (hit && hit.key === key) return hit.canvas;
