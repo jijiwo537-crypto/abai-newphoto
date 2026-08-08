@@ -55,3 +55,9 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+/* 選音樂面板：正在試聽的那一首，封面上跳動的音量條 */
+@keyframes abaiEq {
+  0%, 100% { transform: scaleY(0.25); }
+  50%      { transform: scaleY(1); }
+}
