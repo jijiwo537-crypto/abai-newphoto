@@ -2267,7 +2267,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
            抗鋸齒抹成半透明的一條，看起來就像沒對齊 —— 而匯出是直接用座標畫在
            canvas 上、不受影響，於是變成「匯出是對的、預覽有誤差」。 */
         transform: `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`,
-        transition: dragShift ? (dragShift.live ? 'none' : 'transform 200ms ease-out') : undefined,
+        /* 過場一定要跟頁面容器那邊「一模一樣」（220ms、同一條曲線）。
+           以前這裡是 200ms ease-out、那邊是 220ms cubic-bezier(0.2,0,0,1)：
+           兩者同時起跑卻走不同的速度、也不同時到，排頁面時就會看到圖層跟頁面
+           分家 —— 那就是「圖片跟頁面沒有完全同步」的另一半。 */
+        transition: dragShift ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
         // 要疊在選取時出現的透明拖曳層（z-40）之上，直接碰圖片才拖得動
         // 一般圖片用偶數層，佈局用奇數層，兩者才能互相穿插
         // 被拖的那一頁整組（頁面 900、上面的東西 1000+）要蓋過其他頁
@@ -3799,8 +3803,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       next.splice(to, 0, next.splice(from, 1)[0]);
       return next;
     });
+    /* 這裡一定要用 pageOfFloating（跟畫面上判斷「這個圖層屬於哪一頁」是同一支）。
+       以前是自己再算一次、而且只夾了下界沒夾上界：中心點落在最後一頁右緣外面的
+       圖層會算出 count（不存在的頁），remap 原封不動回傳，於是拖曳中它跟著最後
+       一頁走、放手卻留在原地 —— 那就是「圖片跟頁面沒有完全同步」。 */
     setFloatingImages(prev => prev.map(f => {
-      const p = Math.max(0, Math.floor((f.x + f.width / 2) / stride));
+      const p = pageOfFloating(f, stride, count);
       const np = remap(p);
       return np === p ? f : { ...f, x: f.x + (np - p) * stride };
     }));
@@ -5507,6 +5515,52 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   };
 
   /**
+   * 雙指縮放佈局：跟一般圖片的捏合完全一樣 —— 邊界會吸附頁緣，而且把「現在真的
+   * 對齊到」的線畫出來。捏合時中心不動，只有四個邊會隨倍率移動，所以把倍率解成
+   * 「這條邊剛好落在頁緣上」的值，最近的那一個在門檻內就吸附過去。
+   *
+   * 四角的縮放圓點刻意不套這一支（見 handleLayoutCornerMove 的註解）：佈局在
+   * scale 1 時剛好等於整頁，四個邊會同時對齊，拉角的時候會一直被拉回 1。
+   * 捏合是兩根手指、位移量大得多，4px 的黏著範圍推得過去，不會卡住。
+   */
+  const scaleLayoutSnapped = (next: number, targetId: string | null) => {
+    let ns = Math.max(MIN_LAYOUT_SCALE, Math.min(4, next));
+    const rect = getPageRect(selectedLayoutPageIdx >= 0 ? selectedLayoutPageIdx : activePageIndex);
+    const t = activeLayout?.t;
+    if (!rect || !t) { scaleLayout(ns, targetId); return; }
+    // 佈局沒變形時剛好等於整頁，所以它的「未縮放框」就是頁面本身
+    const x = rect.left + t.x, y = rect.top + t.y;
+    const cx = x + rect.width / 2, cy = y + rect.height / 2;
+    if (enableSnapping) {
+      const SNAP = 4;
+      let best = Infinity, bestScale = ns;
+      pageRectsNear(getAllPageRects(), cx).forEach(pr => {
+        const cands: number[] = [];
+        if (rect.width > 1) {
+          cands.push((2 * (cx - pr.left)) / rect.width);    // 左邊貼齊
+          cands.push((2 * (pr.right - cx)) / rect.width);   // 右邊貼齊
+        }
+        if (rect.height > 1) {
+          cands.push((2 * (cy - pr.top)) / rect.height);    // 上邊貼齊
+          cands.push((2 * (pr.bottom - cy)) / rect.height); // 下邊貼齊
+        }
+        cands.forEach(cand => {
+          if (!(cand > MIN_LAYOUT_SCALE) || cand > 4) return;
+          // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
+          const px = Math.abs(cand - ns) * Math.max(rect.width, rect.height) / 2;
+          if (px < SNAP && px < best) { best = px; bestScale = cand; }
+        });
+      });
+      if (best < SNAP) ns = bestScale;
+    }
+    patchLayoutT({ scale: ns }, targetId);
+    /* 只畫「邊」的線（edgeOnly）：捏合時中心點根本不會動，中線會從頭亮到尾 ——
+       佈局沒搬過的時候本來就正正對在頁面中心，那兩條線等於整趟手勢都掛在畫面上，
+       看起來像壞掉。會隨倍率移動的只有四個邊，那才是這個手勢真正的回饋。 */
+    setActiveGuidelines(dedupeGuidelines(pageGuidelinesAt(x, y, rect.width, rect.height, ns, true)));
+  };
+
+  /**
    * 改佈局的位置／大小。targetId 由手勢在「開始的時候」記下來 ——
    * 不要靠當下的 selectedLayoutId：手指放開的瞬間選取狀態可能已經被別的
    * handler 清掉，那樣這一筆就會寫不進去，看起來就是「縮放完自己彈回原大小」。
@@ -5661,7 +5715,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY
       );
-      scaleLayout(g.baseScale * (d / g.startDist), layoutGestureIdRef.current);
+      scaleLayoutSnapped(g.baseScale * (d / g.startDist), layoutGestureIdRef.current);
     } else if (g.mode === 'drag' && e.touches.length === 1) {
       moveLayoutTo(g.baseX + (e.touches[0].clientX - g.startX), g.baseY + (e.touches[0].clientY - g.startY));
     }
@@ -5975,7 +6029,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               : img
           ));
           if (target) {
-            const pageLines = pageGuidelinesAt(target.x, target.y, target.width, target.height, ns);
+            // 同樣只畫「邊」的線：捏合時中心不動，中線會整趟亮著（見 scaleLayoutSnapped）
+            const pageLines = pageGuidelinesAt(target.x, target.y, target.width, target.height, ns, true);
             setActiveGuidelines(dedupeGuidelines(straight
               ? [
                   { type: 'vertical', coord: target.x + target.width / 2 },
@@ -5985,7 +6040,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               : pageLines));
           }
         } else if (g.kind === 'layout') {
-          scaleLayout(g.baseScale * k, wsGestureLayoutIdRef.current);
+          scaleLayoutSnapped(g.baseScale * k, wsGestureLayoutIdRef.current);
         } else if (g.kind === 'cell' && g.cellIdx >= 0) {
           applyCellZoom(g.cellIdx, Math.max(1.0, Math.min(5.0, g.baseZoom * k)));
         }
@@ -6472,32 +6527,39 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      （API 不支援 callback 參數時就會這樣）—— 那時 onerror 不會觸發，
      沒有逾時的話畫面會永遠停在轉圈。 */
   const failLog = useRef<string[]>([]);
-  const tryBoth = async (
+  /**
+   * 同一份資料，fetch 與 JSONP「同時」發出去，誰先拿到有東西的就用誰。
+   *
+   * 以前是「先 fetch、失敗了才換 JSONP」—— 但 Apple 的搜尋端點沒有 CORS 標頭，
+   * fetch 那條註定要等到逾時才會倒下，四個商店一起排隊等下來就是十幾秒，
+   * 使用者早就認定「搜尋壞了」。同時發就只花其中快的那一條的時間。
+   */
+  const raceBoth = (
     tag: string,
     url: string,
     makeJsonpUrl: (cb: string) => string,
     parse: (d: any) => Track[],
-  ): Promise<Track[]> => {
-    try {
-      const list = parse(await getJSON(url));
-      if (list.length) return list;
-      failLog.current.push(`${tag}:0筆`);
-    } catch (e: any) {
-      failLog.current.push(`${tag}:${String(e?.message || e).slice(0, 16)}`);
-    }
-    try {
-      const list = parse(await jsonp(makeJsonpUrl));
-      if (list.length) return list;
-      failLog.current.push(`${tag}J:0筆`);
-    } catch (e: any) {
-      failLog.current.push(`${tag}J:${String(e?.message || e).slice(0, 16)}`);
-    }
-    return [];
-  };
+  ): Promise<Track[]> => new Promise<Track[]>(resolve => {
+    let done = false;
+    let left = 2;
+    const finish = (list: Track[]) => { if (!done) { done = true; resolve(list); } };
+    const one = (job: Promise<any>, suffix: string) => job
+      .then(d => {
+        const list = parse(d);
+        if (list.length) finish(list);
+        else failLog.current.push(`${tag}${suffix}:0筆`);
+      })
+      .catch((e: any) => {
+        failLog.current.push(`${tag}${suffix}:${String(e?.message || e).slice(0, 16)}`);
+      })
+      .finally(() => { if (--left === 0) finish([]); });
+    one(getJSON(url), '');
+    one(jsonp(makeJsonpUrl), 'J');
+  });
 
   /** 某個地區的近期熱門榜；榜單失效就退回該地區的搜尋 */
   const loadChart = async (store: string): Promise<Track[]> => {
-    const list = await tryBoth(
+    const list = await raceBoth(
       `${store}榜`,
       `https://itunes.apple.com/${store}/rss/topsongs/limit=50/json`,
       cb => `https://itunes.apple.com/${store}/rss/topsongs/limit=50/callback=${cb}/json`,
@@ -6511,11 +6573,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const loadSearch = async (term: string, store: string): Promise<Track[]> => {
     const url = 'https://itunes.apple.com/search?media=music&entity=song&limit=25'
       + `&country=${store}&term=` + encodeURIComponent(term);
-    return tryBoth(`${store}搜`, url, cb => `${url}&callback=${cb}`, fromItunes);
+    return raceBoth(`${store}搜`, url, cb => `${url}&callback=${cb}`, fromItunes);
   };
 
   /**
-   * 把幾份歌單依 pattern 輪流交錯成一份，同名同歌手只留一次。
+   * 判斷兩筆是不是同一首歌。
+   *
+   * 只比對「歌名｜歌手」的原字串是不夠的：同一首歌在不同地區的商店裡，
+   * 後綴常常不一樣（Idol / Idol (feat. …) / アイドル - Single、大小寫、全半形、
+   * 中間的空白與符號），四個榜合起來就會看到同一首出現好幾次。
+   * 這裡把括號內容、-Single/Remaster 這類尾巴、所有非文字數字的符號全部拿掉再比。
+   */
+  const trackKey = (t: Track) => `${t.name}|${t.artist}`
+    .toLowerCase()
+    .replace(/[（(［\[【][^）)］\]】]*[）)］\]】]/g, ' ')
+    .replace(/\s*[-–—]\s*(single|ep|remaster(ed)?[^|]*|deluxe[^|]*|explicit|feat\.?[^|]*)/g, ' ')
+    .replace(/[^\p{L}\p{N}|]+/gu, '');
+
+  /**
+   * 把幾份歌單依 pattern 輪流交錯成一份，同一首歌只留一次。
    * lead 是「開頭先固定拿幾首」，為你推薦就靠這個讓前幾首一定是中文。
    */
   const weave = (
@@ -6524,12 +6600,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     lead?: { store: string; count: number },
   ): Track[] => {
     const q: Record<string, Track[]> = {};
-    pattern.forEach(k => { q[k] = [...(lists[k] || [])]; });
+    pattern.forEach(k => { if (!q[k]) q[k] = [...(lists[k] || [])]; });
     const out: Track[] = [];
     const seen = new Set<string>();
     const push = (t?: Track) => {
       if (!t) return;
-      const key = `${t.name}|${t.artist}`.toLowerCase();
+      const key = trackKey(t);
       if (seen.has(key)) return;
       seen.add(key);
       out.push(t);
@@ -6570,6 +6646,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     const my = ++musicReqRef.current;
     setMusicLoading(true);
     setMusicError('');
+    /* 一開始就把舊的清掉。留著的話，換分頁時新的還沒回來、畫面上還是上一個
+       分類的歌 —— 來回切幾次就會覺得「怎麼一直是重複的歌」。 */
+    setMusicList([]);
     failLog.current = [];
     let list: Track[] = [];
     if (src.kind === 'chart') {
@@ -6610,19 +6689,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      這裡刻意「不」把 savedTracks 放進相依陣列 —— 放進去的話，按一下收藏書籤
      就會整份重抓，清單先變成轉圈再重畫，看起來就是閃一下、抖一下。 */
   useEffect(() => {
-    if (!musicOpen || musicTab === '已儲存') return;
+    // 在「已儲存」也要能打字搜尋，只有沒打字的時候那一頁才是純本機清單
+    if (!musicOpen || (musicTab === '已儲存' && !musicQuery.trim())) return;
     const t = setTimeout(() => loadMusic(currentSource()), musicQuery.trim() ? 350 : 0);
     return () => clearTimeout(t);
   }, [musicOpen, musicQuery, musicTab, loadMusic]);
 
-  // 「已儲存」不連網，直接把本機收藏放上去（收藏變動時才跟著更新）
+  // 「已儲存」而且沒在搜尋時不連網，直接把本機收藏放上去（收藏變動時才跟著更新）
   useEffect(() => {
-    if (!musicOpen || musicTab !== '已儲存') return;
+    if (!musicOpen || musicTab !== '已儲存' || musicQuery.trim()) return;
     musicReqRef.current++;                       // 取消還在跑的那一次
     setMusicList(savedTracks);
     setMusicLoading(false);
     setMusicError(savedTracks.length ? '' : '還沒有收藏的音樂，點歌曲右邊的書籤就會收進來');
-  }, [musicOpen, musicTab, savedTracks]);
+  }, [musicOpen, musicTab, musicQuery, savedTracks]);
 
   /* 點輸入框時 iOS 會把整頁往上捲，好讓輸入框露出鍵盤 —— 但 IG 預覽整層是
      position:fixed，被捲上去只會整個歪掉。捲多少就捲回來，畫面完全不動；
@@ -6732,7 +6812,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const igMoveTrack = (px: number, animate: boolean) => {
     const el = igTrackRef.current;
     if (!el) return;
-    el.style.transition = animate ? 'transform 220ms cubic-bezier(0.22, 0.61, 0.36, 1)' : 'none';
+    /* 340ms＋前段快後段緩的曲線：220ms 那組太衝，放手幾乎是瞬移過去。
+       這一條起步就有速度、越靠近定位越慢，看得出「滑過去」的過程。 */
+    el.style.transition = animate ? 'transform 340ms cubic-bezier(0.32, 0.72, 0, 1)' : 'none';
     el.style.transform = `translate3d(${px}px, 0, 0)`;
   };
   // 頁數或框寬改變時（換頁、旋轉、重新量框）把軌道對回正確的位置
@@ -6792,16 +6874,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const [igAvatar, setIgAvatar] = useState(() => {
     try { return localStorage.getItem('abai_ig_avatar') || ''; } catch { return ''; }
   });
-  const [igNameEditing, setIgNameEditing] = useState(false);
   const igAvatarInputRef = useRef<HTMLInputElement>(null);
+  /** 上一個「有效」的名字：清成空白再點別的地方時要還原成它 */
+  const lastIgNameRef = useRef(igAccount);
 
   const commitIgName = (v: string) => {
-    const name = v.trim().slice(0, 30);
-    if (name) {
-      setIgAccount(name);
-      try { localStorage.setItem('abai_ig_account', name); } catch { /* 無痕模式寫不進去就算了 */ }
-    }
-    setIgNameEditing(false);
+    const name = v.trim().slice(0, 30) || lastIgNameRef.current || 'abai_is.perfect';
+    lastIgNameRef.current = name;
+    setIgAccount(name);
+    try { localStorage.setItem('abai_ig_account', name); } catch { /* 無痕模式寫不進去就算了 */ }
   };
 
   /** 上傳的頭像先置中裁成正方形、縮到 240px 再存 —— 原圖直接塞會撐爆本機空間 */
@@ -9686,12 +9767,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     <img src={igAvatar || igFaces[0]} alt="" draggable={false} className="w-full h-full object-cover" />
                   )}
                 </div>
-                {/* 右下角的小加號：不然沒人知道頭像可以點 */}
-                <span className="absolute -right-[1px] -bottom-[1px] w-[15px] h-[15px] rounded-full bg-[#0095f6] border-2 border-black flex items-center justify-center">
-                  <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.4" strokeLinecap="round">
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                </span>
               </button>
               <input
                 ref={igAvatarInputRef}
@@ -9705,34 +9780,29 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 }}
               />
               <div className="flex-1 min-w-0">
-                {/* 點帳號名字就能改，Enter 或點別的地方存檔 */}
-                {igNameEditing ? (
-                  <input
-                    autoFocus
-                    defaultValue={igAccount}
-                    maxLength={30}
-                    onBlur={e => commitIgName(e.currentTarget.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
-                    enterKeyHint="done"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    className="w-full text-[14px] font-semibold text-white leading-[19px]"
-                    style={{
-                      border: 0, outline: 'none', boxShadow: 'none',
-                      padding: 0, background: 'transparent',
-                      WebkitAppearance: 'none', appearance: 'none',
-                    }}
-                  />
-                ) : (
-                  <button
-                    onClick={() => setIgNameEditing(true)}
-                    className="block w-full text-left text-[14px] font-semibold text-white leading-[19px] truncate active:opacity-60"
-                    title="修改帳號名稱"
-                  >
-                    {igAccount}
-                  </button>
-                )}
+                {/* 帳號名字：一直都是同一個 input，點下去就能改、Enter 或點別的地方存檔。
+                    以前是「平常顯示 <button>、點了才換成 <input>」—— 兩種元素的行高與
+                    內距差那麼一點點，換過去的瞬間名字與底下的音訊列就會抖一下。
+                    永遠是同一個元素就不會有那一下。高度也寫死，字數變動不會撐開。 */}
+                <input
+                  value={igAccount}
+                  title="修改帳號名稱"
+                  maxLength={30}
+                  onChange={e => setIgAccount(e.target.value.slice(0, 30))}
+                  onBlur={e => commitIgName(e.currentTarget.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+                  enterKeyHint="done"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  className="block w-full text-[14px] font-semibold text-white"
+                  style={{
+                    border: 0, outline: 'none', boxShadow: 'none',
+                    padding: 0, margin: 0, background: 'transparent',
+                    height: '19px', lineHeight: '19px',
+                    WebkitAppearance: 'none', appearance: 'none',
+                  }}
+                />
                 {/* 點這一行選音樂；選過之後整行換成「歌名 · 歌手」 */}
                 <button
                   onClick={() => setMusicOpen(true)}
@@ -9993,8 +10063,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   )}
                   {/* 一列本身能點（選這首），右邊的書籤是獨立的按鈕（收藏／取消收藏）。
                       所以外層不能是 <button> —— button 裡面不能再包 button。 */}
-                  {musicList.map(t => (
-                    <div key={t.id} className="w-full flex items-center py-2.5">
+                  {/* 讀取中不要留著上一批 —— 轉圈底下還墊著舊分類的歌，
+                      來回切分頁就會看成「一直出現重複的歌」。
+                      key 再補一個序號：不同商店的同一首歌 id 可能撞在一起。 */}
+                  {!musicLoading && musicList.map((t, ti) => (
+                    <div key={`${t.id}#${ti}`} className="w-full flex items-center py-2.5">
                       {/* 按下去的變暗只掛在這一塊，不掛在整列 ——
                           掛在整列的話，按右邊的書籤會連帶讓整列閃一下。 */}
                       <div
