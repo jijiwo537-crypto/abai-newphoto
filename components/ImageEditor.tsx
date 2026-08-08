@@ -2537,6 +2537,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   const cpuMsRef = useRef(0);
   const gpuWinsRef = useRef<boolean | null>(null);
   const gpuWarmKeyRef = useRef('');
+  /* 烤好的 3D 查色表快取。鍵＝格點數｜顏色參數｜哪一顆濾鏡。
+     跟圖片無關，所以換照片也不必清。 */
+  const bakeCacheRef = useRef<Map<string, Uint8Array>>(new Map());
+  /* getCurveLuts 宣告在這之後，這裡用 ref 間接取用，避免暫時死區 */
+  const curveLutsFnRef = useRef<(c: Curves) => { rgb: Uint8Array; r: Uint8Array; g: Uint8Array; b: Uint8Array }>(
+    () => ({ rgb: new Uint8Array(256), r: new Uint8Array(256), g: new Uint8Array(256), b: new Uint8Array(256) }));
+  /* 只把「會影響顏色鏈」的參數寫進鍵。銳化、顆粒、模糊那些不在裡面 ——
+     它們不是烤進表裡的東西，放進去只會讓快取白白失效。 */
+  const bakeSigRef = useRef((p: EditorParams) =>
+    `${p.brightness},${p.exposure},${p.contrast},${p.highlights},${p.shadows},`
+    + `${p.temp},${p.tint},${p.sat},${p.vib},${p.lutAmount},`
+    + `${JSON.stringify(p.curves)},${JSON.stringify(p.hsl)}`);
   const exportC0Ref = useRef<HTMLCanvasElement | null>(null);
   const exportC100Ref = useRef<HTMLCanvasElement | null>(null);
 
@@ -2547,6 +2559,43 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
    * 看起來就是主人說的「開始拖動時抖一下」。
    * 在閒置時做掉，拖曳的第一幀就只剩烤表 2.2ms ＋ 畫 0.1ms。
    */
+  /**
+   * 閒著的時候，把「還沒烤過的濾鏡查色表」先烤起來。
+   *
+   * 這是「點濾鏡零延遲」真正的關鍵：有快取只解決了「再點回去」，
+   * 第一次點還是要現烤（65³ 約 16ms）。趁使用者在看縮圖、還沒按下去的時候
+   * 先把表備好，按下去就只剩換綁一張貼圖 ＋ 一個 draw call。
+   *
+   * 一次只烤一顆，烤完就把主執行緒還回去 —— 不能為了預熱反而讓介面頓。
+   */
+  const warmBakes = useCallback((p: EditorParams) => {
+    if (!lutList.length) return false;
+    const sig = bakeSigRef.current(p);
+    for (const l of lutList) {
+      if (!l.url) continue;
+      const data = lutDataRef.current[l.id];
+      if (!data) continue;                       // 這顆還沒下載解碼，跳過
+      const key = `65|${sig}|${l.id}#${data.size}`;
+      if (bakeCacheRef.current.has(key)) continue;
+      const base = new Uint8Array(256);
+      generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, base);
+      const cl = curveLutsFnRef.current(p.curves);
+      const tex = bakedToTexture(bakeColorLut(
+        (bs, bd, bw, bh) => processPixels(bs, bd, bw, bh,
+          { ...p, lutAmount: 100 }, data.data, data.size, base, null, false, cl),
+        65,
+      ));
+      const cache = bakeCacheRef.current;
+      if (cache.size >= 40) {
+        const oldest = cache.keys().next().value;
+        if (oldest !== undefined) cache.delete(oldest);
+      }
+      cache.set(key, tex);
+      return true;                               // 這一輪只烤一顆
+    }
+    return false;
+  }, [lutList]);
+
   const warmGpu = useCallback((src: Uint8ClampedArray, w: number, h: number, key: string) => {
     if (gpuWarmKeyRef.current === key) return;
     const g = getGpu();
@@ -2583,6 +2632,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     target: HTMLCanvasElement, src: Uint8ClampedArray, w: number, h: number,
     p: EditorParams, film: Uint8ClampedArray | null, filmSize: number,
     grid: number, srcKey: string, need: Uint8ClampedArray | null,
+    filmKey = '',
   ): boolean => {
     const g = getGpu();
     if (!g || !g.fits(w, h)) return false;
@@ -2591,15 +2641,33 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
         if (!g.setSource(src, w, h)) return false;
         gpuSrcKeyRef.current = srcKey;
       }
-      // 用區域變數，不要動到共用的 baseCorrectionLutRef（那是別人也在讀的）
-      const base = new Uint8Array(256);
-      generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, base);
-      const cl = getCurveLuts(p.curves);
-      const baked = bakeColorLut(
-        (bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, p, film, filmSize, base, null, false, cl),
-        grid,
-      );
-      if (!g.setLut(bakedToTexture(baked), grid)) return false;
+      /* 烤好的查色表存起來 —— 這是「點濾鏡零延遲」的關鍵。
+         表只跟「顏色參數 ＋ 是哪一顆濾鏡 ＋ 格點數」有關，跟圖片一點關係都沒有。
+         所以：
+           · 調節那一份（沒有濾鏡）在切換濾鏡時**根本不會變**，第一次烤完就一直用
+           · 每顆濾鏡的那一份烤過一次就留著，再點回去是零成本
+         沒有這層快取的話，每點一次濾鏡都要重烤兩張表（65³ 各 16ms），
+         那就是主人感覺到的延遲。 */
+      const key = `${grid}|${bakeSigRef.current(p)}|${filmKey}`;
+      let tex = bakeCacheRef.current.get(key);
+      if (!tex) {
+        // 用區域變數，不要動到共用的 baseCorrectionLutRef（那是別人也在讀的）
+        const base = new Uint8Array(256);
+        generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, base);
+        const cl = getCurveLuts(p.curves);
+        tex = bakedToTexture(bakeColorLut(
+          (bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, p, film, filmSize, base, null, false, cl),
+          grid,
+        ));
+        const cache = bakeCacheRef.current;
+        /* 上限四十份：24 顆濾鏡 × 兩種格點還有餘裕。滿了就丟最早放進來的。 */
+        if (cache.size >= 40) {
+          const oldest = cache.keys().next().value;
+          if (oldest !== undefined) cache.delete(oldest);
+        }
+        cache.set(key, tex);
+      }
+      if (!g.setLut(tex, grid)) return false;
       const out = g.draw();
       if (!out) return false;
       if (need && !g.readInto(need)) return false;
@@ -2707,6 +2775,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       }
       return curveLutsCacheRef.current;
   };
+
+  curveLutsFnRef.current = getCurveLuts;
 
   // 合併期間介面的參數已經歸零，但畫面要維持原樣，所以這時候不要把它同步進繪圖用的 ref
   useEffect(() => {
@@ -4531,13 +4601,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
            兩者都自動退回原本的 CPU 路徑，畫面與匯出完全照舊。
 
            格點：拖曳中 33³（烤 2.2ms），其餘 65³（烤 16ms、色差 3 色階以內）。 */
-        /* 靜止時要不要用 GPU：兩條路都量過之後才決定，量到 GPU 比較慢就不用。
-           還沒量過（gpuWinsRef 是 null）就先試一次，好把時間記下來。 */
-        /* 校準：還沒下判斷之前，先讓第一次靜止繪製走 CPU 把時間記下來，
-           第二次才走 GPU —— 沒有這一步的話 CPU 永遠不會跑到，也就永遠量不到，
-           判斷就會卡在「還沒決定」而一直用 GPU。 */
-        const calibrating = gpuWinsRef.current === null && cpuMsRef.current === 0;
-        const gpuAllowedNow = isInteracting || (gpuWinsRef.current !== false && !calibrating);
+        /* 這裡本來還有一套「先各量一次 CPU 與 GPU、慢就不用 GPU」的校準。
+           拿掉了，因為它跟 LutGpu.create() 裡的「軟體模擬 GL 直接不給用」是
+           同一件事的兩種做法，而校準那套有兩個實際的壞處：
+             · 只憑一次取樣就下永久判斷，遇到剛好被別的工作卡住的那一幀就會誤判
+             · 一旦判成「不用 GPU」，整個工作階段都回不去，真手機也被關掉
+           軟體 GL 的情況已經在建立時就擋掉了，這裡不需要再猜一次。 */
+        const gpuAllowedNow = true;
         const gpuEligible = !pRender.sharpen && !pRender.colorNoise2 && !!b.source && gpuAllowedNow;
         /* 只有「上一輪走 GPU、這一輪要走 CPU」時才強制重算 ——
            因為 GPU 那輪沒有產生 b.dest 的像素，CPU 這輪得補上。
@@ -4550,12 +4620,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
             const grid = isInteracting ? 33 : 65;
             const srcKey = `${b.w}x${b.h}|${buffersSrcRef.current}`;
             if (!lut0CanvasRef.current) lut0CanvasRef.current = document.createElement('canvas');
+            /* 調節那一份完全不看濾鏡，所以濾鏡鍵固定是 'none' ——
+               換濾鏡時這張表就會直接命中快取，一次都不用重烤。 */
             const okBase = gpuPaint(lut0CanvasRef.current, b.source, b.w, b.h,
-                { ...pRender, lutAmount: 0 }, null, 0, grid, srcKey, null);
+                { ...pRender, lutAmount: 0 }, null, 0, grid, srcKey, null, 'none');
             if (okBase && activeLut) {
                 if (!lut100CanvasRef.current) lut100CanvasRef.current = document.createElement('canvas');
                 gpuDone = gpuPaint(lut100CanvasRef.current, b.source, b.w, b.h,
-                    { ...pRender, lutAmount: 100 }, activeLut.data, lutSize, grid, srcKey, null);
+                    { ...pRender, lutAmount: 100 }, activeLut.data, lutSize, grid, srcKey, null,
+                    `${lut.id}#${lutSize}`);
             } else {
                 gpuDone = okBase;
             }
@@ -5199,6 +5272,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
            不先做的話這些一次性成本會落在手指按下滑桿的第一幀，就是「抖一下」。 */
         if (!isDirtyRef.current && !isInteractingRef.current && b?.source && b.w && b.h) {
             warmGpu(b.source, b.w, b.h, `${b.w}x${b.h}|${buffersSrcRef.current}`);
+            /* 貼圖暖好之後，接著一顆一顆把濾鏡的查色表也烤起來。
+               每次閒置只烤一顆，主執行緒馬上還回去。 */
+            if (gpuWarmKeyRef.current) warmBakes(paramsRef.current);
         }
         // 換照片時，新圖還在解碼，緩衝區裡裝的還是上一張 —— 這時候畫出去就是舊照片。
         // 等緩衝區換成現在這一張再畫。
@@ -5388,7 +5464,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     if (!p.sharpen && !p.colorNoise2) {
       const gc = document.createElement('canvas');
       gpuOk = gpuPaint(gc, sourceData, w, h, p,
-        activeLut ? activeLut.data : null, lutSize, 65, `export|${w}x${h}|${Math.random()}`, null);
+        activeLut ? activeLut.data : null, lutSize, 65, `export|${w}x${h}|${Math.random()}`, null,
+        activeLut ? `${lut?.id}#${lutSize}` : 'none');
       if (gpuOk) {
         ctx.clearRect(0, 0, w, h);
         ctx.drawImage(gc, 0, 0);
