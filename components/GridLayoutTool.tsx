@@ -6477,7 +6477,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   /* 分頁：語言分頁＝該地區的熱門榜，再照 Apple 自己標的曲風篩出那個語言；
      為你推薦＝華日韓三份篩過的交錯；超夯＝各地合併，不分語言。
      「已儲存」不連網，讀本機收藏。 */
-  const MUSIC_TABS = ['為你推薦', '超夯', '華語', '日語', '韓語', '英語', '已儲存'];
+  const MUSIC_TABS = ['為你推薦', '超夯', '華語', '日語', '韓語', '已儲存'];
   /* 「每日全球 Top 100」：Apple 的每日榜是照國家發布的，沒有一份叫「全球」的，
      所以取幾個主要市場的每日榜合併，照「在幾個國家上榜」排名 ——
      跨越最多國家的那首就是全球最紅的那首。 */
@@ -6714,25 +6714,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     return { list: out, missing };
   };
 
-  /* 榜單是 Apple **每天**更新的，所以本機這份最多留三小時，而且跨過午夜就作廢 ——
-     不管哪一個先到，主人看到的一定是當天的榜，不會卡在昨天。
-     留三小時是為了省 Apple 的流量額度（同一天內反覆開面板不必一直重抓）。 */
   const CHART_KEY = 'abai_music_chart';
   const CHART_TTL = 3 * 60 * 60 * 1000;
-  const today = () => new Date().toDateString();
   const readChartCache = (store: string): Track[] | null => {
     try {
       const all = JSON.parse(localStorage.getItem(CHART_KEY) || '{}');
       const row = all[store];
-      if (row && row.d === today() && Date.now() - row.t < CHART_TTL
-        && Array.isArray(row.v) && row.v.length) return row.v;
+      if (row && Date.now() - row.t < CHART_TTL && Array.isArray(row.v) && row.v.length) return row.v;
     } catch { /* 壞掉就當作沒有 */ }
     return null;
   };
   const writeChartCache = (store: string, v: Track[]) => {
     try {
       const all = JSON.parse(localStorage.getItem(CHART_KEY) || '{}');
-      all[store] = { t: Date.now(), d: today(), v };
+      all[store] = { t: Date.now(), v };
       localStorage.setItem(CHART_KEY, JSON.stringify(all));
     } catch { /* 空間不夠就算了 */ }
   };
@@ -6871,28 +6866,32 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    */
   const artistsInTracks = (tracks: Track[]) => {
     const hits = new Map<string, number>();
+    const cover = new Map<string, string>();
     const list: Artist[] = [];
     const seen = new Set<string>();
     tracks.forEach(t => {
       const id = t.artistId || '';
       if (!id || !t.artist) return;
       hits.set(id, (hits.get(id) || 0) + 1);
+      if (t.art && !cover.has(id)) cover.set(id, t.art);
       if (seen.has(id)) return;
       seen.add(id);
       list.push({ id, name: t.artist });
     });
-    return { list, hits };
+    return { list, hits, cover };
   };
 
   /** 兩份歌手合起來、排序：名字對得上的排前面，其次是歌比較多的 */
   const mergeArtists = (found: Artist[], tracks: Track[], term: string): Artist[] => {
-    const { list: fromSongs, hits } = artistsInTracks(tracks);
+    const { list: fromSongs, hits, cover } = artistsInTracks(tracks);
     const out: Artist[] = [];
     const seen = new Set<string>();
     [...found, ...fromSongs].forEach(a => {
       if (!a.id || seen.has(a.id)) return;
       seen.add(a.id);
-      out.push({ ...a, art: a.art || artistPic.current[a.id] || '' });
+      /* 有官方照片就用官方照片；還沒抓到就先用他自己的歌的封面墊著 ——
+         那一排一定要有圖，不能只剩一個字母。抓到官方照片之後會自動換掉。 */
+      out.push({ ...a, art: a.art || artistPic.current[a.id] || cover.get(a.id) || '' });
     });
     const nq = term.toLowerCase().replace(/\s+/g, '');
     const match = (a: Artist) => (a.name.toLowerCase().replace(/\s+/g, '').includes(nq) ? 1 : 0);
@@ -6940,16 +6939,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         }
       } catch { /* 換下一條轉送 */ }
     }
-    artistPic.current[a.id] = '';    // 記下「這位沒有」，不要每次都重抓
+    /* 轉送不通、或那位真的沒有官方照片時，退而用他自己專輯的封面 ——
+       總比只剩一個字母好。記下來，不要每次都重抓。 */
+    const al = await loadArtistAlbums(a, store).catch(() => [] as Album[]);
+    const fallback = al.find(x => x.art)?.art || '';
+    artistPic.current[a.id] = fallback;
     savePics();
-    return '';
+    return fallback;
   };
   /** 把那一排歌手的照片補齊（一次最多八位、三條同時），抓到一張就即時貼上去 */
   const fillArtistArt = async (
     list: Artist[], store: string, onGot?: (l: Artist[]) => void,
   ): Promise<Artist[]> => {
     const out = [...list];
-    const need = out.map((a, i) => [a, i] as const).filter(([a]) => !a.art).slice(0, 8);
+    const need = out.map((a, i) => [a, i] as const)
+      .filter(([a]) => artistPic.current[a.id] === undefined).slice(0, 8);
     if (!need.length) return out;
     let cur = 0;
     const worker = async () => {
@@ -7174,29 +7178,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    * 每個分頁就是 Apple 的一份榜，原封不動照名次端出來。
    *   為你推薦 → 每日台灣 Top 100
    *   華語 → 排行榜・華語流行樂
-   *   日語 → 排行榜・日本流行樂
+   *   日語 → 排行榜・日本流行樂（日本商店）
    *   韓語 → 排行榜・韓國流行樂
-   *   英語 → 排行榜・西洋流行樂（美國商店的流行樂榜）
    *   超夯 → 每日全球 Top 100（七地每日榜合併）
    *
    * 三個曲風榜一律讀**台灣商店**的那一份 —— 主人打開 Apple Music 看到的
    * 「排行榜・韓國流行樂」就是台灣商店裡的那一份，不是韓國人自己在聽的那份。
    * 之前韓語讀韓國商店、日語讀日本商店，端出來的當然跟主人畫面上看到的不一樣。
-   * 曲風編號不寫死：先拿 home 那一國的每日榜，看 Apple 自己在那些歌上標的
-   * 曲風哪一個最常見 —— 日本榜上最常見的就是日本流行樂、韓國榜上就是韓國流行樂。
-   * 編號由 Apple 的資料本身決定，我猜錯也不會影響（下面那幾個數字只是備胎）。
+   * 曲風編號是 Apple 官方的：1253 華語流行、27 日本流行、51 韓國流行。
    * alt 是備援商店：台灣商店那份真的拿不到時，再去該國自己的商店拿同一個曲風榜。
    */
-  const TAB_CHART: Record<string,
-    { store: string; genre?: string; alt?: string; home?: string; soft?: boolean }> = {
+  const TAB_CHART: Record<string, { store: string; genre?: string; alt?: string }> = {
     '為你推薦': { store: 'tw' },
-    '華語': { store: 'tw', genre: '1253', alt: 'hk', home: 'tw' },
-    '日語': { store: 'tw', genre: '27', alt: 'jp', home: 'jp' },
-    '韓語': { store: 'tw', genre: '51', alt: 'kr', home: 'kr' },
-    /* 英語只有這一頁帶 soft：曲風榜全拿不到時退回美國每日榜是「對的」——
-       美國每日榜本來就是西洋流行。華語日語韓語不能這樣退，
-       韓國每日榜什麼語言都有，退了就變成主人說的「根本不是韓國流行樂」。 */
-    '英語': { store: 'us', genre: '14', alt: 'gb', home: 'us', soft: true },
+    '華語': { store: 'tw', genre: '1253', alt: 'hk' },
+    /* 日語讀**日本商店**的日本流行樂榜。
+       台灣商店的那一份會把「華語歌手唱的日文歌」（例如鄧麗君的日文專輯）
+       也算進日本流行樂 —— 對 Apple 的分類來說沒錯，但那不是主人要的日文歌。
+       日本自己的榜就是現在的日本流行樂，不會有這個問題。 */
+    '日語': { store: 'jp', genre: '27', alt: 'tw' },
+    '韓語': { store: 'tw', genre: '51', alt: 'kr' },
   };
   const currentSource = (): Src => {
     const q = musicQuery.trim();
@@ -7204,9 +7204,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (musicTab === '超夯') return { kind: 'global', stores: GLOBAL_STORES };
     const c = TAB_CHART[musicTab];
     if (c) {
-      const key = c.genre
-        ? `${c.store}#${c.genre}#${c.alt || ''}#${c.home || ''}#${c.soft ? 's' : ''}`
-        : c.store;
+      const key = c.genre ? `${c.store}#${c.genre}#${c.alt || ''}` : c.store;
       return { kind: 'chart', stores: [key], pattern: [key] };
     }
     return { kind: 'search', term: 'pop' };
@@ -7261,41 +7259,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    * 以前最後會退回「整份每日榜」—— 韓語那一頁因此變成韓國每日榜（什麼語言都有），
    * 那就是主人說的「根本不是韓國流行樂」。寧可說拿不到，也不端別的東西上來。
    */
-  /**
-   * 問出「這一國的流行樂」在 Apple 是哪一個曲風編號。
-   *
-   * 我不再把編號寫死 —— 之前 J-Pop 那個數字我就查不到確證，寫錯的話整頁會空掉。
-   * 改成看資料：把那一國的每日榜拿下來，數 Apple 自己標在每首歌上的曲風，
-   * 最常見的那一個就是那一國的流行樂（日本榜上最多的就是日本流行樂）。
-   * 一次開著面板期間只問一次。
-   */
-  const genreMemo = useRef<Record<string, string>>({});
-  const discoverGenre = async (home: string): Promise<string> => {
-    if (genreMemo.current[home] !== undefined) return genreMemo.current[home];
-    const d = await oneStore(home).catch(() => ({ list: [] as Track[], how: '' }));
-    const n = new Map<string, number>();
-    d.list.forEach(t => String(t.genreId || '').split(/[^0-9]+/).filter(Boolean)
-      .forEach(g => { if (g !== '34') n.set(g, (n.get(g) || 0) + 1); }));
-    const top = [...n.entries()].sort((a, b) => b[1] - a[1])[0];
-    const id = top ? top[0] : '';
-    genreMemo.current[home] = id;
-    return id;
-  };
-
-  /**
-   * 拿一份榜。key 是 'tw'（每日榜）或 'tw#51#kr#kr'（曲風榜＋備援商店＋參考國）。
-   * 全部走 Apple，沒有別家。
-   *
-   * 曲風榜要的就是「照抄 Apple Music 上的那一份」，所以這裡**一路都待在同一個
-   * 曲風裡**，依序試過所有組合，沒有一條會換成別的東西：
-   *   台灣商店的曲風榜 → 該國商店的曲風榜 → 台灣每日榜裡標成該曲風的歌
-   *   → 該國每日榜裡標成該曲風的歌
-   * 每一步都先用「問出來的編號」再用備胎編號。全部拿不到就回空的 ——
-   * 以前最後會退回整份每日榜，韓語那一頁因此變成韓國每日榜（什麼語言都有）。
-   * 寧可說拿不到，也不端別的東西上來。
-   */
   const oneStore = async (key: string): Promise<{ list: Track[]; how: string }> => {
-    const [store, genre, alt, home, soft] = key.split('#');
+    const [store, genre, alt] = key.split('#');
     const inMem = chartPool.current.get(key);
     if (inMem && inMem.length) return { list: inMem, how: '快取' };
     const onDisk = readChartCache(key);
@@ -7310,34 +7275,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     };
 
     if (genre) {
-      const ids: string[] = [];
-      if (home) {
-        const disc = await discoverGenre(home).catch(() => '');
-        if (disc) ids.push(disc);
+      // ① 台灣商店的曲風排行榜（這一支自己就帶試聽網址，碰不到 /lookup 的限流）
+      const g = await loadChart(store, genre).catch(() => [] as Track[]);
+      if (g.length >= 10) return done(g, '曲風榜');
+      failLog.current.push(`${store}曲風榜:${g.length}筆`);
+      // ② 該國自己商店的同一個曲風排行榜
+      if (alt) {
+        const g2 = await loadChart(alt, genre).catch(() => [] as Track[]);
+        if (g2.length >= 10) return done(g2, `${alt}曲風榜`);
+        failLog.current.push(`${alt}曲風榜:${g2.length}筆`);
       }
-      if (!ids.includes(genre)) ids.push(genre);
-      const stores = alt ? [store, alt] : [store];
-      // ①② Apple 官方的曲風排行榜（這一支自己就帶試聽網址，碰不到 /lookup 的限流）
-      for (const st of stores) {
-        for (const gid of ids) {
-          const g = await loadChart(st, gid).catch(() => [] as Track[]);
-          if (g.length >= 10) return done(g, `${st}曲風${gid}`);
-          failLog.current.push(`${st}曲風${gid}:${g.length}筆`);
-        }
-      }
-      // ③④ 每日榜裡只留 Apple 標成這個曲風的歌
-      for (const st of stores) {
+      // ③④ 每日榜裡只留 Apple 標成這個曲風的歌（先台灣、再該國）
+      for (const st of [store, ...(alt ? [alt] : [])]) {
         const d = await dailyChart(st);
-        for (const gid of ids) {
-          const only = d.list.filter(t => hasGenre(t, gid));
-          if (only.length >= 10) return done(only, `${st}每日+曲風${gid}`);
-        }
+        const only = d.list.filter(t => hasGenre(t, genre));
+        if (only.length >= 10) return done(only, `${st}每日+曲風`);
       }
-      failLog.current.push(`曲風${ids.join('/')}:都拿不到`);
-      if (soft) {                      // 只有英語那一頁可以退回每日榜（見 TAB_CHART 的說明）
-        const d = await dailyChart(home || store);
-        if (d.list.length) return done(d.list, `${home || store}每日`);
-      }
+      failLog.current.push(`曲風${genre}:都拿不到`);
       return { list: [], how: '無' };
     }
 
@@ -7399,7 +7353,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         const back = mergeArtists([], cached, src.term);
         if (back.length) {
           setMusicArtists(back);
-          if (back.some(a => !a.art)) {
+          if (back.some(a => artistPic.current[a.id] === undefined)) {
             fillArtistArt(back, 'tw', got => {
               if (my === musicReqRef.current) setMusicArtists(got);
             }).catch(() => {});
@@ -7535,7 +7489,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       // 那一排歌手：還沒有圖片的幾位，拿他最新一張專輯的封面補上
       {
         const merged = refreshArtists(artistsFound);
-        if (merged.some(a => !a.art)) {
+        if (merged.some(a => artistPic.current[a.id] === undefined)) {
           fillArtistArt(merged, 'tw', got => {
             if (my === musicReqRef.current) setMusicArtists(got);
           }).catch(() => {});
