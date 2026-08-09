@@ -1097,6 +1097,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   }, [imageState, layout, maskScale]);
   getLayoutOffsetsRef.current = getLayoutOffsets;
 
+  /* 換排版時畫布的形狀會整個換掉（例如遮罩從下面搬到上面、或變成四周包圍），
+     但浮動物件的座標還停在舊畫布上 —— 來回切幾次就會整個跑到畫面外面不見了。
+     這裡在畫布尺寸真的變了的時候，把每個物件的「中心」按比例搬到新畫布的
+     同一個相對位置，再夾在畫布範圍內。大小不動，手感才不會每切一次就縮一輪。 */
+  const prevCanvasRef = useRef<{ cw: number; ch: number } | null>(null);
+  useEffect(() => {
+    const o = getLayoutOffsets();
+    if (!o || !o.cw || !o.ch) return;
+    const prev = prevCanvasRef.current;
+    prevCanvasRef.current = { cw: o.cw, ch: o.ch };
+    if (!prev || (prev.cw === o.cw && prev.ch === o.ch)) return;
+    const kx = o.cw / prev.cw, ky = o.ch / prev.ch;
+    setObjects(list => {
+      if (!list.length) return list;
+      return list.map(ob => {
+        const cx = Math.min(Math.max((ob.x + ob.w / 2) * kx, 0), o.cw);
+        const cy = Math.min(Math.max((ob.y + ob.h / 2) * ky, 0), o.ch);
+        return { ...ob, x: cx - ob.w / 2, y: cy - ob.h / 2 };
+      });
+    });
+  }, [getLayoutOffsets]);
+
   /* 圖片與遮罩的交界：並排的四種各有一條，四周包圍是原圖那個框的四條邊。 */
   seamLinesRef.current = () => {
     const o = getLayoutOffsets();
@@ -2077,14 +2099,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       bd.height = Math.max(1, Math.round(offs.ch));
       const g = bd.getContext('2d');
       if (!g) return;
-      const kk = maskW / sw;
-      const ccx = offs.cw / 2, ccy = offs.ch / 2;
-      const x0 = offs.ix + t.x * s, y0 = offs.iy + t.y * s;
-      g.drawImage(img, ccx + (x0 - ccx) * kk, ccy + (y0 - ccy) * kk, t.w * s * kk, t.h * s * kk);
+      if (layout === AROUND) {
+        // 四周包圍：洞裡看到的是以畫布中心等比放大的同一個構圖
+        const kk = maskW / sw;
+        const ccx = offs.cw / 2, ccy = offs.ch / 2;
+        const x0 = offs.ix + t.x * s, y0 = offs.iy + t.y * s;
+        g.drawImage(img, ccx + (x0 - ccx) * kk, ccy + (y0 - ccy) * kk, t.w * s * kk, t.h * s * kk);
+      } else {
+        // 並排的四種：遮罩那一塊底下就是同一張圖，位置跟 drawBackdrop 一致
+        g.save();
+        g.beginPath(); g.rect(offs.mx, offs.my, maskW, maskH); g.clip();
+        g.drawImage(img, offs.mx + t.x * s, offs.my + t.y * s, t.w * s, t.h * s);
+        g.restore();
+      }
       const pat = ctx.createPattern(bd, 'no-repeat');
       holes.forEach(h => {
         const side = h.side || 'both';
         if (side !== 'both' && side !== 'mask') return;
+        // 並排的四種：只有完全落在遮罩裡的那些洞才會被挖穿（跟 drawMaskLayer 同一條規則）
+        if (layout !== AROUND && !isHoleFullyInsideMask(h, s, maskW, maskH)) return;
         const sz = getHoleSize(h) * s;
         const ang2 = h.angle !== undefined ? h.angle : holeAngle;
         const hx = h.x * s + offs.mx, hy = h.y * s + offs.my;
@@ -2115,11 +2148,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       drawHolesOverImage();
       drawImageSideHoles();
     } else {
+      /* below 的物件是「遮罩色塊之上、所有圖案之下」：
+         先鋪底圖與遮罩色塊 → 畫物件 → 再把兩側的圖案補回最上層。
+         以前物件是畫在 drawMaskLayer 之前，所以整個沉到遮罩色塊底下、
+         在遮罩那一半完全看不見 —— 那是不對的。 */
       drawCentreImage();
       drawBackdrop();
-      drawObjects(belowObjs);
-      drawImageSideHoles();
       drawMaskLayer();
+      drawObjects(belowObjs);
+      if (belowObjs.length) drawMaskHolesOnTop();
+      drawImageSideHoles();
     }
 
     // ctx.beginPath();

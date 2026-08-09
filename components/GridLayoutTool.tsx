@@ -2193,6 +2193,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 
   /* 圓角／羽化／發光都自己畫在 canvas 上，預覽與匯出走同一套邏輯 */
   const shapeCanvasRef = useRef<HTMLCanvasElement>(null);
+  /* 畫布的內部像素數與 CSS 尺寸要用同一個 dpr 去算，兩邊才會 1:1 對上 */
+  const shapeDpr = Math.min(2, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1);
   /** 重畫收斂成一幀一次用的 */
   const rafRef = useRef(0);
   const drawnSrcRef = useRef<string | null>(null);
@@ -2984,8 +2986,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             position: 'absolute',
             left: `${-glowPad}px`,
             top: `${-glowPad}px`,
-            width: `${boxW + glowPad * 2}px`,
-            height: `${boxH + glowPad * 2}px`,
+            /* 版面尺寸要對齊實體像素格線。
+               內部畫布是 round((boxW+2pad)×dpr) 個像素，但 CSS 這裡本來寫的是
+               沒有捨入的浮點寬高 —— 兩者對不上時瀏覽器會用非整數倍率重取樣，
+               最外面那一列就跟外面的透明混在一起，縮放的過程中沿路留下一條
+               忽隱忽現的細線。改成用「同一個捨入結果 ÷ dpr」，倍率剛好是 1:1。 */
+            width: `${Math.round((boxW + glowPad * 2) * shapeDpr) / shapeDpr}px`,
+            height: `${Math.round((boxH + glowPad * 2) * shapeDpr) / shapeDpr}px`,
             pointerEvents: 'none',
           }}
         />
