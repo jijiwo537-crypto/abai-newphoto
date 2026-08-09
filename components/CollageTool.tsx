@@ -34,16 +34,18 @@ const MAX_EXPORT_PIXELS = 20_000_000;
  * 一張畫布是 4 bytes/px，四張加起來就是 ×4 —— 8M 像素等於 128MB，
  * 手機瀏覽器到這個量級就開始被系統回收（就是主人遇到的閃退到主畫面）。
  */
-const MAX_PREVIEW_PIXELS = 24_000_000;
+const MAX_PREVIEW_PIXELS = 40_000_000;
 
 /**
  * 這張拼圖在某個「畫布倍率」下，主畫布加三張遮罩暫存畫布總共要幾個像素。
  * 記憶體是四張一起算的 —— 只看主畫布會低估三倍，那正是手機被回收的原因。
  */
-const previewPixelsAt = (layout: string, bw: number, bh: number, maskScale: number, ps: number) => {
+const previewPixelsAt = (
+  layout: string, bw: number, bh: number, maskScale: number, ps: number, maskCanvases: number,
+) => {
   const cs = collageSizeOf(layout, bw, bh, maskScale);
   const md = maskDims(layout, bw, bh, maskScale);
-  return (cs.w * cs.h + 3 * md.mw * md.mh) * ps * ps;
+  return (cs.w * cs.h + maskCanvases * md.mw * md.mh) * ps * ps;
 };
 
 /** 這個排版下遮罩相對原圖的尺寸；四周包圍時遮罩就是整張輸出畫布 */
@@ -383,7 +385,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [maskImageState, setMaskImageState] = useState<any>(null);
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [maskTransform, setMaskTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
-  const [activeTab, setActiveTab] = useState('shape');
+  const [activeTab, setActiveTab] = useState('setting');
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   const [maskColor, setMaskColor] = useState('#FFF2E6'); 
@@ -741,7 +743,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (clickedSide === 'image') {
         return checkInRectImg(offs.ix, offs.iy);
       } else if (clickedSide === 'mask') {
-        return isHoleFullyInsideMask(h, 1, mw, mh) && checkInRectMask(offs.mx, offs.my);
+        return (layout === AROUND || isHoleFullyInsideMask(h, 1, mw, mh)) && checkInRectMask(offs.mx, offs.my);
       }
 
       const hitImg = (side === 'both' || side === 'image') && checkInRectImg(offs.ix, offs.iy);
@@ -754,7 +756,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (clickedSide === 'image') {
         return checkInCircleImg(offs.ix, offs.iy);
       } else if (clickedSide === 'mask') {
-        return isHoleFullyInsideMask(h, 1, mw, mh) && checkInCircleMask(offs.mx, offs.my);
+        return (layout === AROUND || isHoleFullyInsideMask(h, 1, mw, mh)) && checkInCircleMask(offs.mx, offs.my);
       }
 
       const hitImg = (side === 'both' || side === 'image') && checkInCircleImg(offs.ix, offs.iy);
@@ -850,10 +852,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (offs) {
         const { baseW: bw, baseH: bh } = imageState;
         const md = maskDims(layout, bw, bh, maskScale);
-        /* 四周包圍時兩個框是重疊的（遮罩＝整張畫布），所以圖片框優先：
-           點在中間那張圖上算 image，其餘落在畫布內的都算 mask。 */
-        const inOriginal = x >= offs.ix && x <= offs.ix + bw && y >= offs.iy && y <= offs.iy + bh;
-        const inMask = !inOriginal
+        /* 四周包圍是特殊的：遮罩就是整張畫布，圖案可以自由跨進跨出圖片，
+           沒有「左邊那塊 / 右邊那塊」的對稱關係。所以整張畫布一律當成
+           同一個場（side 'mask'），命中判定與拖曳都用遮罩座標系 ——
+           不然點圖片上的圖案會抓不到，抓到遮罩上的又會瞬間跳到圖片座標去。 */
+        const around = layout === AROUND;
+        const inOriginal = !around && x >= offs.ix && x <= offs.ix + bw && y >= offs.iy && y <= offs.iy + bh;
+        const inMask = (around || !inOriginal)
           && x >= offs.mx && x <= offs.mx + md.mw && y >= offs.my && y <= offs.my + md.mh;
         if (inOriginal) clickedSide = 'image';
         else if (inMask) clickedSide = 'mask';
@@ -1009,9 +1014,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 這張拼圖在預算內能畫到的最大畫布倍率 */
   const maxPreviewScale = useCallback(() => {
     if (!imageState) return 1;
-    const one = previewPixelsAt(layout, imageState.baseW, imageState.baseH, maskScale, 1);
+    // 沒有紋理時暫存畫布只有兩張（底色、挖完洞的）
+    const one = previewPixelsAt(layout, imageState.baseW, imageState.baseH, maskScale, 1,
+      patternType === 'dot' ? 3 : 2);
     return Math.max(1, Math.sqrt(MAX_PREVIEW_PIXELS / Math.max(1, one)));
-  }, [imageState, layout, maskScale]);
+  }, [imageState, layout, maskScale, patternType]);
   /* 縮放停下來 160ms 後照倍率重畫。拖曳中刻意不重畫 —— 每一格都重烤一張
      幾百萬像素的圖會直接卡死，而且拖曳中本來就看不出銳利度差別。 */
   useEffect(() => {
@@ -1123,8 +1130,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     } else if (intr.type === 'move_hole') {
       const dx = x - intr.startX;
       const dy = y - intr.startY;
-      const nx = Math.max(0, Math.min(imageState.baseW, intr.initX + dx));
-      const ny = Math.max(0, Math.min(imageState.baseH, intr.initY + dy));
+      // 四周包圍時圖案活動範圍是整張畫布，用原圖尺寸夾會把它擠回左上角
+      const fld = maskDims(layout, imageState.baseW, imageState.baseH, maskScale);
+      const limX = layout === AROUND ? fld.mw : imageState.baseW;
+      const limY = layout === AROUND ? fld.mh : imageState.baseH;
+      const nx = Math.max(0, Math.min(limX, intr.initX + dx));
+      const ny = Math.max(0, Math.min(limY, intr.initY + dy));
       setHoles(prev => prev.map(h => h.id === intr.id ? { ...h, x: nx, y: ny } : h));
     } else if (intr.type === 'pinch_hole') {
       const pts: any[] = Array.from(activePointers.current.values());
@@ -1215,10 +1226,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       bCtx.drawImage(mImg, drawX, drawY, drawW, drawH);
     }
 
-    const fCanvas = isMain ? fullMaskCanvasRef.current : document.createElement('canvas');
-    fCanvas.width = maskW; fCanvas.height = maskH;
+    /* 沒有點點紋理的時候，「含紋理的遮罩」就等於「底色遮罩」本身 ——
+       不必再開一張同樣大的畫布。一張全尺寸畫布動輒幾十 MB，
+       省下來的預算直接換成更高的預覽解析度（圖案的鋸齒就是這樣來的）。 */
+    const needPattern = patternType === 'dot';
+    const fCanvas = !needPattern ? bCanvas
+      : (isMain ? fullMaskCanvasRef.current : document.createElement('canvas'));
+    if (needPattern) {
+      fCanvas.width = maskW; fCanvas.height = maskH;
+    }
     const fCtx = get2dWide(fCanvas)!;
-    fCtx.drawImage(bCanvas, 0, 0);
+    if (needPattern) fCtx.drawImage(bCanvas, 0, 0);
 
     if (patternType === 'dot') {
       fCtx.fillStyle = dotColor; 
@@ -1324,7 +1342,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const side = h.side || 'both';
       if (side !== 'both' && side !== 'mask') return; // Only show on mask side
 
-      if (!isHoleFullyInsideMask(h, s, maskW, maskH)) {
+      if (layout !== AROUND && !isHoleFullyInsideMask(h, s, maskW, maskH)) {
         return;
       }
       const sz = getHoleSize(h) * s;
@@ -1451,7 +1469,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
     
     if (!isMain) {
-      bCanvas.width = 0; fCanvas.width = 0; lmc.width = 0;
+      bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
   }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask]);
 
@@ -1812,7 +1830,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-all duration-500 flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} style={{ height: '34dvh' }}>
         {!colorPickerTarget && (
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a]">
-            {['shape', 'mask'].map(id => (
+            {['setting', 'shape'].map(id => (
               <button 
                 key={id} 
                 onClick={() => setActiveTab(id)} 
@@ -1820,7 +1838,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   activeTab === id ? 'text-white border-white' : 'text-[#555] border-transparent'
                 }`}
               >
-                {id === 'shape' ? <Star size={16} className="mx-auto" /> : <Palette size={16} className="mx-auto" />}
+                {id === 'setting' ? <Crop size={16} className="mx-auto" /> : <Star size={16} className="mx-auto" />}
               </button>
             ))}
           </div>
@@ -1829,7 +1847,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         {/* pb-20 本來是留給右下角那顆浮動按鈕的空間，但「圖案」頁是左右分欄、
             自己就會捲，那 80px 只會在下面留一條黑色空白、把工具欄擠得很小。 */}
         <div ref={scrollContainerRef} className={`flex-1 p-5 ${colorPickerTarget || activeTab === 'shape' ? 'pb-5' : 'pb-20'} custom-scrollbar ${
-          (activeTab === 'mask' && !colorPickerTarget && patternType !== 'none') ||
+          (activeTab === 'setting' && !colorPickerTarget) ||
           (activeTab === 'shape' && !colorPickerTarget)
             ? 'overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]' 
             : 'overflow-hidden'
@@ -1843,31 +1861,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             />
           ) : (
             <>
-              {activeTab === 'shape' && <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
-                {/* 左側細長分頁列：上面挑圖案、下面調參數 ——
-                    跟經典拼圖「新增佈局」裡面完全同一種版型（只有圖示、中間一條分隔線） */}
-                <div className="flex flex-col shrink-0 w-11 -mt-5 -mb-5 -ml-5 border-r border-white/10 select-none">
-                  <button
-                    onClick={() => setShapeSub('shape')}
-                    title="圖案" aria-label="圖案"
-                    className={`w-full flex-1 flex items-center justify-center transition-all ${shapeSub === 'shape' ? 'text-white' : 'text-[#5a5a5a]'}`}
-                  >
-                    <Star size={18} className={`transition-transform ${shapeSub === 'shape' ? 'scale-110' : ''}`} />
-                  </button>
-                  <div className="w-full h-[1px] bg-white/10 shrink-0" />
-                  <button
-                    onClick={() => setShapeSub('style')}
-                    title="參數" aria-label="參數"
-                    className={`w-full flex-1 flex items-center justify-center transition-all ${shapeSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}
-                  >
-                    <SlidersHorizontal size={18} className={`transition-transform ${shapeSub === 'style' ? 'scale-110' : ''}`} />
-                  </button>
-                </div>
-                <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
-                {/* 排版與比例原本自成一頁，但它們跟「要挖什麼圖案」是同一件事的兩半，
-                    分兩頁反而要一直來回切。併進來之後這一頁就是完整的「版面 + 圖案」。 */}
-                <div className="pb-3">
+              {activeTab === 'setting' && <div className="max-w-md mx-auto space-y-4 pb-4 animate-in fade-in duration-300">
+
 
                 <div className="flex gap-4 items-start">
                   <div className="flex flex-col">
@@ -1908,37 +1903,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     </div>
                   </div>
                 </div>
-                </div>
-                <div className="grid grid-cols-5 gap-2 mb-3">
-                  {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'love', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'text'].map(s => (
-                    <button key={s} onClick={() => handleShapeClick(s)} className={`py-3 flex items-center justify-center rounded-[8px] border transition-all ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
-                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'flower' ? <span className="text-lg font-bold font-sans leading-none">❋</span> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? <span className="text-lg font-bold font-sans leading-none">{GLYPH_HOLES[s]}</span> : <Type size={18} />}
-                    </button>
-                  ))}
-                </div>
-                {holeType === 'text' && (
-                  <div ref={textInputWrapRef} className="pb-1">
-                    <input 
-                      type="text" 
-                      maxLength={15} 
-                      value={customText} 
-                      onChange={e => setCustomText(e.target.value)} 
-                      placeholder="輸入文字..." 
-                      className="w-full p-2.5 bg-[#111] border border-transparent rounded-[8px] text-center text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#333]" 
-                    />
-                    <div className="h-2" />
-                  </div>
-                )}
-                </div>}
-                {shapeSub === 'style' && <div className="pt-1 pb-2 grid grid-cols-2 gap-4">
-                  <CompactSlider label="大小" value={holeSize} min={0} max={100} onChange={setHoleSize} />
-                  <CompactSlider label="數量" value={holeCount} min={0} max={50} onChange={setHoleCount} step={1} />
-                  <CompactSlider label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
-                  <CompactSlider label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
-                </div>}
-                </div>
-              </div>}
-              {activeTab === 'mask' && <div className="max-w-md mx-auto space-y-3 pb-4 animate-in fade-in duration-300">
+                {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
+                    它們講的都是「這張版面長什麼樣」，本來就該在同一頁。 */}
+                <div className="space-y-3 pt-1">
+
                 <div className="grid grid-cols-2 gap-3">
                   <div className="flex items-center justify-between bg-[#111] p-3 border border-[#222] rounded-[8px] h-[52px]">
                     <span className="text-[10px] font-bold text-[#888] shrink-0">自訂遮罩</span>
@@ -1981,6 +1949,58 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     </div>
                   </div>
                 )}
+                </div>
+              </div>}
+              {activeTab === 'shape' && <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
+                {/* 左側細長分頁列：上面挑圖案、下面調參數 ——
+                    跟經典拼圖「新增佈局」裡面完全同一種版型（只有圖示、中間一條分隔線） */}
+                <div className="flex flex-col shrink-0 w-11 -mt-5 -mb-5 -ml-5 border-r border-white/10 select-none">
+                  <button
+                    onClick={() => setShapeSub('shape')}
+                    title="圖案" aria-label="圖案"
+                    className={`w-full flex-1 flex items-center justify-center transition-all ${shapeSub === 'shape' ? 'text-white' : 'text-[#5a5a5a]'}`}
+                  >
+                    <Star size={18} className={`transition-transform ${shapeSub === 'shape' ? 'scale-110' : ''}`} />
+                  </button>
+                  <div className="w-full h-[1px] bg-white/10 shrink-0" />
+                  <button
+                    onClick={() => setShapeSub('style')}
+                    title="參數" aria-label="參數"
+                    className={`w-full flex-1 flex items-center justify-center transition-all ${shapeSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}
+                  >
+                    <SlidersHorizontal size={18} className={`transition-transform ${shapeSub === 'style' ? 'scale-110' : ''}`} />
+                  </button>
+                </div>
+                <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
+                <div className="grid grid-cols-5 gap-2 mb-3">
+                  {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'love', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'text'].map(s => (
+                    <button key={s} onClick={() => handleShapeClick(s)} className={`py-3 flex items-center justify-center rounded-[8px] border transition-all ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
+                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'flower' ? <span className="text-lg font-bold font-sans leading-none">❋</span> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? <span className="text-lg font-bold font-sans leading-none">{GLYPH_HOLES[s]}</span> : <Type size={18} />}
+                    </button>
+                  ))}
+                </div>
+                {holeType === 'text' && (
+                  <div ref={textInputWrapRef} className="pb-1">
+                    <input 
+                      type="text" 
+                      maxLength={15} 
+                      value={customText} 
+                      onChange={e => setCustomText(e.target.value)} 
+                      placeholder="輸入文字..." 
+                      className="w-full p-2.5 bg-[#111] border border-transparent rounded-[8px] text-center text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#333]" 
+                    />
+                    <div className="h-2" />
+                  </div>
+                )}
+                </div>}
+                {shapeSub === 'style' && <div className="pt-1 pb-2 grid grid-cols-2 gap-4">
+                  <CompactSlider label="大小" value={holeSize} min={0} max={100} onChange={setHoleSize} />
+                  <CompactSlider label="數量" value={holeCount} min={0} max={50} onChange={setHoleCount} step={1} />
+                  <CompactSlider label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
+                  <CompactSlider label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
+                </div>}
+                </div>
               </div>}
             </>
           )}
