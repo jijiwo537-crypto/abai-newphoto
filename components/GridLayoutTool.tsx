@@ -961,6 +961,10 @@ export type ImageAdjustPanelProps = {
   setTuneTool: (v: any) => void;
   setTuningEdge: (v: any) => void;
   openComposeFor: (id: string) => void;
+  /* 開著的時候：切到「調節」「形狀」不預先選好第一個工具 —— 滑桿要等
+     真的點下某顆工具鈕才出現，而且是帶動畫出現的。經典拼圖不傳這個，
+     維持原本「一切過去滑桿就在那」的手感。 */
+  deferSlider?: boolean;
   /** 佈局裡的格子沒有「形狀」那一組，傳 true 就把它藏起來 */
   hideShape?: boolean;
 };
@@ -969,7 +973,7 @@ export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   img, set, lutList, loadingLut, setLoadingLut, lutRevision, setLutRevision,
   adjustSub, setAdjustSub, effectCard, setEffectCard, effectDetail, setEffectDetail,
   shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
-  setTuningEdge, openComposeFor, hideShape,
+  setTuningEdge, openComposeFor, hideShape, deferSlider,
 }) => {
 const fx = img.fx || {};
 const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
@@ -1086,7 +1090,8 @@ const sliderArea = (() => {
     return editorSlider('強度', fx.lutAmount ?? 100, 0, 100, v => setFx({ lutAmount: v }));
   }
   if (adjustSub === 'tune') {
-    const t = TUNE_TOOLS.find(x => x[0] === tuneTool) || TUNE_TOOLS[0];
+    const t = TUNE_TOOLS.find(x => x[0] === tuneTool) || (deferSlider ? null : TUNE_TOOLS[0]);
+    if (!t) return null;
     return editorSlider(t[1], fxVal(t[0], t[5]), t[3], t[4], v => setFx({ [t[0]]: v }));
   }
   if (adjustSub === 'effect') {
@@ -1165,7 +1170,13 @@ return (
             ))}
           </div>
         </div>
-      ) : sliderArea}
+      ) : (deferSlider && sliderArea ? (
+        /* key 一變就重播一次：每點一顆工具鈕，滑桿都是「從下面浮上來」 */
+        <div key={`${adjustSub}|${tuneTool}|${shapeTool}|${effectCard}|${fx.lut || ''}`}
+             className="w-full animate-in fade-in slide-in-from-bottom-2 duration-200">
+          {sliderArea}
+        </div>
+      ) : sliderArea)}
     </div>
 
     {/* 2. 工具列（6rem、px-4、gap-2、深一階的底色） */}
@@ -1305,8 +1316,8 @@ return (
             if (id === 'compose') { openComposeFor(img.id); return; }
             setAdjustSub(id as any);
             // 跟編輯一樣：切分類就把該分類的第一個工具選起來
-            if (id === 'tune') setTuneTool(TUNE_TOOLS[0][0]);
-            if (id === 'shape') { setShapeMenu('root'); setShapeTool(SHAPE_TOOLS[0][0]); }
+            if (id === 'tune') setTuneTool(deferSlider ? '' : TUNE_TOOLS[0][0]);
+            if (id === 'shape') { setShapeMenu('root'); setShapeTool(deferSlider ? '' : SHAPE_TOOLS[0][0]); }
             if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
           }}
           className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${adjustSub === id ? 'text-white' : 'text-white/20'}`}
@@ -1453,10 +1464,10 @@ interface AlignmentGuideline {
  * 就是「邊上突然多一個角」。正圓角走的是四分之一圓，接到直邊的曲率
  * 變化平順，也才是修圖軟體的做法。
  */
-const cornerR = (pct: number, w: number, h: number) => (pct / 100) * Math.min(w, h);
+export const cornerR = (pct: number, w: number, h: number) => (pct / 100) * Math.min(w, h);
 
 /** 圓角矩形路徑（rx/ry 可不同，但呼叫端一律傳同一個值 → 正圓角）。 */
-const roundRectPath = (
+export const roundRectPath = (
   g: CanvasRenderingContext2D,
   x: number, y: number, w: number, h: number, rx: number, ry: number,
 ) => {
@@ -1505,7 +1516,7 @@ const boxBlurV = (src: Float32Array, dst: Float32Array, w: number, h: number, r:
  * 產生一張遮罩（白色、alpha 就是可見度）。
  * radiusPct / featherPct 都是佔短邊的百分比，0~50。
  */
-const makeShapeMask = (w: number, h: number, radiusPct: number, featherPct: number) => {
+export const makeShapeMask = (w: number, h: number, radiusPct: number, featherPct: number) => {
   const c = document.createElement('canvas');
   c.width = Math.max(4, Math.round(w));
   c.height = Math.max(4, Math.round(h));
@@ -1580,9 +1591,9 @@ const WORKSPACE_BG = '#070707';
 const PAGE_SEAM_INK = 0.15;
 
 /** 發光的單位模糊：跟文字一樣是 (強度/20) × 14，再疊 ×1、×2、×3 三層 */
-const GLOW_BLUR_UNIT = 14;
+export const GLOW_BLUR_UNIT = 14;
 /** 三層裡最寬的那層是 1.5 個單位，散到 3.2σ 就看不見了 → 單位的 4.8 倍 */
-const GLOW_EXTENT = 4.8;
+export const GLOW_EXTENT = 4.8;
 
 /** erfc 近似（Abramowitz & Stegun 7.1.26，誤差 < 1.5e-7），只用在 x ≥ 0 */
 const erfc = (x: number) => {
@@ -1603,7 +1614,7 @@ const erfc = (x: number) => {
  * 直邊上算出來的濃淡跟文字那三層一模一樣，而距離跟方向無關，
  * 四個角就自然跟邊一樣濃。
  */
-const makeGlowCanvas = (
+export const makeGlowCanvas = (
   shape: CanvasImageSource,
   w: number, h: number,
   sx: number, sy: number, sw: number, sh: number,

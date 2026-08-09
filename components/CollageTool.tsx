@@ -7,7 +7,12 @@ import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, 
 import { Icon } from './Icon';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
-import { TextEditorPanel, ImageAdjustPanel } from './GridLayoutTool';
+import {
+  TextEditorPanel, ImageAdjustPanel,
+  /* 圓角／羽化／描邊／發光全部改用經典拼圖那幾支：同一份程式碼，
+     連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
+  cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
+} from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
 import { ComposeStudio } from './ComposeStudio';
@@ -449,73 +454,78 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const base = applyPhotoFx(o.img, iw, ih, o.fx || {});
     if (!hasShape) { objFxCache.current.set(o.id, { key, cv: base }); return base; }
 
-    /* 圓角／羽化／描邊／發光都會長到原本的框外面，所以畫布要留邊。
-       留邊固定用「最大值」算，拖滑桿時邊界才不會每一格都變、圖看起來在抖。 */
-    const short = Math.min(iw, ih);
-    const rad = (shape.r / 100) * short * 0.5;
-    const fea = (shape.f / 100) * short * 0.25;
-    const sw = (shape.sw / 100) * short * 0.08;
-    const glowR = (shape.g / 100) * short * 0.35;
-    const pad = Math.ceil(sw + glowR + 4);
+    /* 這一段是經典拼圖 FloatingImageLayer 那條管線的逐段複製（同樣的函式、
+       同樣的順序）：先把圖畫進一張「比框大 lw 一圈」的離屏畫布，用
+       destination-in 套遮罩（有羽化才用 makeShapeMask 那張三次盒狀模糊的，
+       只有圓角就直接填路徑，邊才不會被放大成階梯），描邊沿著外緣描，
+       最後才用距離場算光暈墊在底下。
+
+       經典拼圖的描邊／發光是「工作區單位」的絕對粗細（滑桿 0–20，浮動圖片
+       的基準長邊是 160）。這裡沒有工作區單位，所以一律換算成「長邊的比例」：
+       ×(長邊/160)，剛好等於經典拼圖預設大小那一張的觀感。 */
+    const UNIT = Math.max(iw, ih) / 160;
+    const lw = shape.sw * UNIT;
+    const blurUnit = (shape.g / 20) * GLOW_BLUR_UNIT * UNIT;
+    // 留邊固定用「最大強度」算，拖滑桿時邊界才不會每一格都變、圖看起來在抖
+    const pad = Math.ceil(
+      (shape.g ? GLOW_BLUR_UNIT * GLOW_EXTENT * UNIT : 0) + (shape.sw ? 20 * UNIT : 0) + 2,
+    );
+    const W = iw + pad * 2, H = ih + pad * 2;
     const cv = document.createElement('canvas');
-    cv.width = iw + pad * 2; cv.height = ih + pad * 2;
+    cv.width = W; cv.height = H;
     const c = cv.getContext('2d')!;
 
-    const path = (ctx2: CanvasRenderingContext2D, x: number, y: number, ww: number, hh: number, rr: number) => {
-      const r2 = Math.max(0, Math.min(rr, Math.min(ww, hh) / 2));
-      ctx2.beginPath();
-      ctx2.moveTo(x + r2, y);
-      ctx2.arcTo(x + ww, y, x + ww, y + hh, r2);
-      ctx2.arcTo(x + ww, y + hh, x, y + hh, r2);
-      ctx2.arcTo(x, y + hh, x, y, r2);
-      ctx2.arcTo(x, y, x + ww, y, r2);
-      ctx2.closePath();
-    };
-
-    // 發光：先在底下用形狀本身畫一圈光
-    if (glowR > 0) {
-      c.save();
-      c.shadowColor = shape.gc;
-      c.fillStyle = shape.gc;
-      for (const m of [1, 2, 3]) {
-        c.shadowBlur = (glowR / 3) * m;
-        path(c, pad, pad, iw, ih, rad); c.fill();
+    // 描邊往外長，所以形狀那一張要比框大 lw 一圈
+    const swid = iw + lw * 2, shgt = ih + lw * 2;
+    let shaped: CanvasImageSource = base;
+    let drawW = iw, drawH = ih, drawX = (W - iw) / 2, drawY = (H - ih) / 2;
+    if (shape.f || shape.r || shape.sw) {
+      const off = document.createElement('canvas');
+      off.width = Math.max(1, Math.round(swid));
+      off.height = Math.max(1, Math.round(shgt));
+      const oc = off.getContext('2d')!;
+      oc.drawImage(base, lw, lw, iw, ih);
+      if (shape.f || shape.r) {
+        oc.globalCompositeOperation = 'destination-in';
+        if (shape.f) {
+          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f), lw, lw, iw, ih);
+        } else {
+          const R = cornerR(shape.r, iw, ih);
+          roundRectPath(oc, lw, lw, iw, ih, R, R);
+          oc.fillStyle = '#fff';
+          oc.fill();
+        }
+        oc.globalCompositeOperation = 'source-over';
       }
-      c.restore();
+      if (lw > 0) {
+        const sr = shape.r ? cornerR(shape.r, iw, ih) + lw / 2 : 0;
+        roundRectPath(oc, lw / 2, lw / 2, iw + lw, ih + lw, sr, sr);
+        oc.lineWidth = lw;
+        oc.lineJoin = 'miter';
+        oc.miterLimit = 4;
+        oc.strokeStyle = shape.sc;
+        oc.stroke();
+      }
+      shaped = off;
+      drawW = off.width; drawH = off.height;
+      drawX = (W - swid) / 2; drawY = (H - shgt) / 2;
     }
 
-    // 圖片本體：先裁成圓角，再用模糊過的遮罩做羽化
-    const inner = document.createElement('canvas');
-    inner.width = iw; inner.height = ih;
-    const ic = inner.getContext('2d')!;
-    ic.save(); path(ic, 0, 0, iw, ih, rad); ic.clip();
-    ic.drawImage(base, 0, 0, iw, ih);
-    ic.restore();
-    if (fea > 0) {
-      const mask = document.createElement('canvas');
-      mask.width = iw; mask.height = ih;
-      const mc = mask.getContext('2d')!;
-      mc.filter = `blur(${fea / 2}px)`;
-      mc.fillStyle = '#fff';
-      path(mc, fea / 2, fea / 2, iw - fea, ih - fea, Math.max(0, rad - fea / 2));
-      mc.fill();
-      ic.globalCompositeOperation = 'destination-in';
-      ic.filter = 'none';
-      ic.drawImage(mask, 0, 0);
-      ic.globalCompositeOperation = 'source-over';
+    if (shape.g) {
+      // 光暈本身很平滑，算在有上限的小張上再放大貼回來（跟經典拼圖同一招）
+      const gk = Math.min(1, 420 / Math.max(W, H));
+      const glow = makeGlowCanvas(
+        shaped, W * gk, H * gk, drawX * gk, drawY * gk, drawW * gk, drawH * gk,
+        blurUnit * gk, shape.gc,
+      );
+      c.drawImage(glow, 0, 0, W, H);
     }
-    c.drawImage(inner, pad, pad);
+    c.drawImage(shaped, drawX, drawY, drawW, drawH);
 
-    // 描邊畫在最上面
-    if (sw > 0) {
-      c.save();
-      c.strokeStyle = shape.sc;
-      c.lineWidth = sw;
-      path(c, pad + sw / 2, pad + sw / 2, iw - sw, ih - sw, Math.max(0, rad - sw / 2));
-      c.stroke();
-      c.restore();
-    }
-    (cv as any).__pad = pad / Math.max(iw, ih);
+    /* 留邊在兩個方向都是同樣的畫布像素，但換算成「佔框的比例」時
+       長邊與短邊不一樣 —— 兩軸要各自記一份，不然非正方形的圖會被拉扁。 */
+    (cv as any).__padX = pad / iw;
+    (cv as any).__padY = pad / ih;
     objFxCache.current.set(o.id, { key, cv });
     return cv;
   }, []);
@@ -610,9 +620,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [adjustSub, setAdjustSub] = useState<'shape' | 'tune' | 'filter' | 'effect'>('filter');
   const [effectCard, setEffectCard] = useState<string | null>(null);
   const [effectDetail, setEffectDetail] = useState(false);
-  const [shapeMenu, setShapeMenu] = useState('radius');
-  const [shapeTool, setShapeTool] = useState('imgRadius');
-  const [tuneTool, setTuneTool] = useState('brightness');
+  const [shapeMenu, setShapeMenu] = useState('root');
+  /* 一進編輯頁不預先選好任何工具：滑桿要點下工具鈕才浮出來 */
+  const [shapeTool, setShapeTool] = useState('');
+  const [tuneTool, setTuneTool] = useState('');
   const [loadingLut, setLoadingLut] = useState<string | null>(null);
   const [lutRevision, setLutRevision] = useState(0);
   const [maskColor, setMaskColor] = useState('#FFF2E6'); 
@@ -1220,6 +1231,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           d0: Math.max(1, Math.hypot(pts2[0].clientX - pts2[1].clientX, pts2[0].clientY - pts2[1].clientY)),
           a0: Math.atan2(pts2[1].clientY - pts2[0].clientY, pts2[1].clientX - pts2[0].clientX) * 180 / Math.PI,
           w0: oo.w, h0: oo.h, size0: oo.size || 0, rot0: oo.rot || 0,
+          rotOn: false, rotBias: 0,   // 旋轉的不動區：超過門檻才開始轉
           cx0: oo.x + oo.w / 2, cy0: oo.y + oo.h / 2,
         };
       }
@@ -1386,8 +1398,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const ang = Math.atan2(pts2[1].clientY - pts2[0].clientY, pts2[1].clientX - pts2[0].clientX) * 180 / Math.PI;
       const k = Math.max(0.15, Math.min(8, dist / pin.d0));
       const nw = pin.w0 * k, nh = pin.h0 * k;
-      let nrot = pin.rot0 + (ang - pin.a0);
-      nrot = ((nrot % 360) + 360) % 360;
+      /* 旋轉有一段「不動區」：兩指轉不到 ROT_START 度就當成純縮放。
+         超過之後把門檻扣掉再開始轉，所以不會在跨過門檻那一瞬間跳一下。
+         另外靠近 0/90/180/270 就吸過去 —— 想轉正只要大概轉回去就會自己歸位。 */
+      const ROT_START = 8;   // 度：低於這個角度完全不轉
+      const ROT_SNAP = 6;    // 度：離直角這麼近就吸正
+      const wrap180 = (v: number) => ((v + 180) % 360 + 360) % 360 - 180;
+      let dRot = wrap180(ang - pin.a0);
+      if (!pin.rotOn) {
+        if (Math.abs(dRot) < ROT_START) dRot = 0;
+        else { pin.rotOn = true; pin.rotBias = dRot > 0 ? ROT_START : -ROT_START; }
+      }
+      if (pin.rotOn) dRot -= pin.rotBias;
+      let nrot = ((pin.rot0 + dRot) % 360 + 360) % 360;
+      const upright = (Math.round(nrot / 90) * 90) % 360;
+      if (Math.abs(wrap180(nrot - upright)) < ROT_SNAP) nrot = upright;
       // 縮放中也吃對齊線：邊緣或中心一靠上去就吸附，跟拖曳時同一套
       const sres = snapToGuides(pin.cx0 - nw / 2, pin.cy0 - nh / 2, nw, nh);
       guidesRef.current = sres.guides;
@@ -1801,8 +1826,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const src2: any = fxCanvasOf(o) || o.img;
         /* 有形狀效果時畫布比原圖大一圈（留給發光與描邊），
            畫的時候要等比放大回去，圖片本體才會剛好落在原本的框上。 */
-        const padR = src2.__pad || 0;
-        const ew = o.w * s * (1 + padR * 2), eh = o.h * s * (1 + padR * 2);
+        const padX = (src2 as any).__padX || 0, padY = (src2 as any).__padY || 0;
+        const ew = o.w * s * (1 + padX * 2), eh = o.h * s * (1 + padY * 2);
         ctx.drawImage(src2, -ew / 2, -eh / 2, ew, eh);
       } else if (o.type === 'text') {
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
@@ -2377,7 +2402,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
         {/* 選中的圖片／文字下方浮出的工具列 —— 跟經典拼圖同一組動作。
             位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
-        {imageState && selectedObj && (() => {
+        {/* 構圖那一頁是全螢幕的，這排白色鍵不能浮在它上面 */}
+        {imageState && selectedObj && !composeState && (() => {
           const o = objects.find(z => z.id === selectedObj);
           const cvsEl = canvasRef.current;
           if (!o || !cvsEl) return null;
@@ -2475,7 +2501,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }}
       />
 
-      <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-all duration-500 flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} style={{ height: objEditImage ? 'max(34dvh, 300px)' : '34dvh' }}>
+      <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-transform duration-500 flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} style={{ height: objEditImage ? 'max(34dvh, 300px)' : '34dvh' }}>
         {!colorPickerTarget && (
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a]">
             {['setting', 'add', 'objedit', 'shape'].map(id => (
@@ -2706,6 +2732,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       tuneTool={tuneTool} setTuneTool={setTuneTool}
                       setTuningEdge={() => {}}
                       openComposeFor={openComposeFor}
+                      deferSlider
                     />
                   </div>
                   )
