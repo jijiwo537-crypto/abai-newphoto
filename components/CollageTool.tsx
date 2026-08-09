@@ -3,7 +3,7 @@ import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
-import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off } from 'lucide-react';
+import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal } from 'lucide-react';
 import { Icon } from './Icon';
 import { SaveButton } from './SaveButton';
 
@@ -26,6 +26,12 @@ const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
    'mask-around' 是「四周整圈包起來」，遮罩就是整張輸出畫布，
    每一邊的厚度是原圖那一軸的 maskScale 倍。 */
 const AROUND = 'mask-around';
+/** 單邊上限（Safari Mobile 的安全值） */
+const MAX_FINAL_DIM = 4096;
+/** 總像素上限 —— 真正會把手機分頁殺掉的是面積，不是邊長 */
+const MAX_CANVAS_PIXELS = 24_000_000;
+/** 預覽畫布的像素預算：放大時會重畫得更細，但不能超過這個數 */
+const MAX_PREVIEW_PIXELS = 12_000_000;
 const maskDims = (layout: string, bw: number, bh: number, maskScale: number) => {
   if (layout === AROUND) {
     return {
@@ -354,6 +360,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [maskTransform, setMaskTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [activeTab, setActiveTab] = useState('setting');
+  /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
+  const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   const [maskColor, setMaskColor] = useState('#FFF2E6'); 
   const [patternType, setPatternType] = useState('none'); 
   const [dotColor, setDotColor] = useState('#737373'); 
@@ -392,7 +400,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   // 選中「自訂文字」時，自動把下方的輸入框捲進視野，並在底下留一點空隙
   useEffect(() => {
-    if (activeTab !== 'shape' || holeType !== 'text') return;
+    if (activeTab !== 'shape' || shapeSub !== 'shape' || holeType !== 'text') return;
     const el = scrollContainerRef.current;
     if (!el) return;
     const id = requestAnimationFrame(() => {
@@ -404,7 +412,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (need > el.scrollTop) el.scrollTo({ top: need, behavior: 'smooth' });
     });
     return () => cancelAnimationFrame(id);
-  }, [activeTab, holeType]);
+  }, [activeTab, shapeSub, holeType]);
 
   const [historyState, setHistoryState] = useState<{
     history: any[][];
@@ -620,6 +628,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     generateRandomHoles(true); 
   }, [imageState, holeCount]);
 
+  /** 這個排版下，原圖 w×h 拼完之後的整張畫布有多大 */
+  const collageSize = useCallback((w: number, h: number) => {
+    const { mw, mh } = maskDims(layout, w, h, maskScale);
+    if (layout === 'mask-bottom' || layout === 'mask-top') return { w, h: h + mh };
+    if (layout === 'mask-right' || layout === 'mask-left') return { w: w + mw, h };
+    if (layout === AROUND) return { w: mw, h: mh };
+    return { w, h };
+  }, [layout, maskScale]);
+
   const getLayoutOffsets = useCallback(() => {
     if (!imageState) return null;
     let { baseW: bw, baseH: bh } = imageState;
@@ -788,7 +805,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const rect = canvasRef.current.getBoundingClientRect();
     if (!rect || !rect.width || !rect.height) return;
     
-    const sx = canvasRef.current.width / rect.width, sy = canvasRef.current.height / rect.height;
+    /* 除掉預覽倍率：畫布可能被畫得比基準解析度更細（放大時才不會糊），
+       但所有挖洞的座標一律是基準解析度，換算時要還原回去。 */
+    const ps = previewScaleRef.current;
+    const sx = canvasRef.current.width / rect.width / ps, sy = canvasRef.current.height / rect.height / ps;
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState.globalScale || 1, offs = getLayoutOffsets();
 
@@ -922,6 +942,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const viewTRef = useRef(viewT);
   viewTRef.current = viewT;
   const viewPinchRef = useRef<{ d0: number; k0: number; cx: number; cy: number } | null>(null);
+  /* 預覽畫布要畫多細。
+     基準解析度只有 1080（為了拖曳順），放大 6 倍就等於把 1080 拉成 6480，
+     當然糊。所以縮放停下來之後照倍率重畫一次，畫布本身變細，
+     螢幕上的位置與大小完全不動（canvas 是 max-w-full 等比縮放的）。
+     上限由像素預算決定 —— 四周包圍那種畫布本來就大，不能無限往上加。 */
+  const [previewScale, setPreviewScale] = useState(1);
+  const previewScaleRef = useRef(1);
+  previewScaleRef.current = previewScale;
+  const previewScaleTimer = useRef<number | null>(null);
   /** 第一根手指落下時的挖洞狀態 —— 第二根手指跟上時要把它畫的那一下收回去 */
   const strokeStartHolesRef = useRef<any[] | null>(null);
   const stageBox = () => {
@@ -938,6 +967,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const my = Math.max(0, (kk - 1) * c.h * 0.5);
     setViewT({ k: kk, tx: Math.max(-mx, Math.min(mx, tx)), ty: Math.max(-my, Math.min(my, ty)) });
   }, []);
+  /* 縮放停下來 180ms 後，照現在的倍率把畫布重畫細一點。
+     拖曳中刻意不做 —— 每一格都重畫一張幾百萬像素的圖會直接卡死。 */
+  useEffect(() => {
+    if (!imageState) return;
+    if (previewScaleTimer.current) window.clearTimeout(previewScaleTimer.current);
+    previewScaleTimer.current = window.setTimeout(() => {
+      const { baseW, baseH } = imageState;
+      const cs = collageSize(baseW, baseH);
+      const budget = Math.sqrt(MAX_PREVIEW_PIXELS / Math.max(1, cs.w * cs.h));
+      // 只取到 0.5 的倍數，避免每動一點點就重畫
+      const want = Math.max(1, Math.min(Math.min(3, budget), Math.round(viewT.k * 2) / 2));
+      setPreviewScale(prev => (Math.abs(prev - want) < 0.01 ? prev : want));
+    }, 180);
+    return () => { if (previewScaleTimer.current) window.clearTimeout(previewScaleTimer.current); };
+  }, [viewT.k, imageState, collageSize]);
+
   // 換一張圖就把縮放歸零
   const viewResetKeyRef = useRef('');
   useEffect(() => {
@@ -945,6 +990,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (key !== viewResetKeyRef.current) {
       viewResetKeyRef.current = key;
       setViewT({ k: 1, tx: 0, ty: 0 });
+      setPreviewScale(1);
     }
   }, [imageState]);
 
@@ -952,7 +998,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!activePointers.current.has(e.pointerId) || !canvasRef.current || !imageState) return;
     activePointers.current.set(e.pointerId, e);
     const rect = canvasRef.current.getBoundingClientRect();
-    const sx = canvasRef.current.width / rect.width, sy = canvasRef.current.height / rect.height;
+    const ps = previewScaleRef.current;
+    const sx = canvasRef.current.width / rect.width / ps, sy = canvasRef.current.height / rect.height / ps;
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState?.globalScale || 1;
     // 雙指縮放預覽時完全不碰筆刷與拖曳
@@ -1104,7 +1151,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     ctx.fillStyle = '#0A0A0A'; ctx.fillRect(0, 0, offs.cw, offs.ch);
     ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, sw, sh); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
 
-    const isMain = renderScale === 1 && targetCanvas === canvasRef.current;
+    const isMain = targetCanvas === canvasRef.current;
     const bCanvas = isMain ? baseMaskCanvasRef.current : document.createElement('canvas');
     bCanvas.width = maskW; bCanvas.height = maskH;
     const bCtx = get2dWide(bCanvas)!;
@@ -1276,11 +1323,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     // else { ctx.moveTo(sw, 0); ctx.lineTo(sw, sh); }
     // ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = sgs; ctx.stroke();
 
-    if (renderScale === 1 && selectedTarget && interactionRef.current) {
+    /* 選取框只畫在螢幕上那張（存檔那張不能有虛線）。
+       畫布可能被畫得比基準解析度更細，所以這裡也要跟著乘上 s，
+       不然放大重畫之後虛線框會停在原本的小尺寸、對不上那個洞。 */
+    if (isMain && selectedTarget && interactionRef.current) {
       const selectedHole = holes.find(hx => hx.id === selectedTarget);
       if (selectedHole) {
         const h = selectedHole;
-        const sz = getHoleSize(h);
+        const sz = getHoleSize(h) * s;
         const currentAngle = h.angle !== undefined ? h.angle : holeAngle;
         const hSide = h.side || 'both';
 
@@ -1292,7 +1342,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         // 左側選取框 (帶旋轉, 只有在 image 側時顯示)
         if (hSide === 'both' || hSide === 'image') {
           ctx.save();
-          ctx.translate(h.x + offs.ix, h.y + offs.iy);
+          ctx.translate(h.x * s + offs.ix, h.y * s + offs.iy);
           ctx.rotate(currentAngle * Math.PI / 180);
           if (isTextHole(holeType)) {
             const tctx = dummyCanvasRef.current.getContext('2d')!;
@@ -1310,7 +1360,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         // 右側選取框 (帶旋轉, 只有在 mask 側且完全在裡面時才顯示)
         if ((hSide === 'both' || hSide === 'mask') && isHoleFullyInsideMask(h, 1, maskW, maskH)) {
           ctx.save();
-          ctx.translate(h.x + offs.mx, h.y + offs.my);
+          ctx.translate(h.x * s + offs.mx, h.y * s + offs.my);
           ctx.rotate(currentAngle * Math.PI / 180);
           if (isTextHole(holeType)) {
             const tctx = dummyCanvasRef.current.getContext('2d')!;
@@ -1336,8 +1386,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   const renderCanvas = useCallback(() => {
     if (!canvasRef.current || !imageState) return;
-    renderToCanvas(canvasRef.current, 1);
-  }, [imageState, renderToCanvas]);
+    renderToCanvas(canvasRef.current, previewScaleRef.current);
+  }, [imageState, renderToCanvas, previewScale]);
 
   useEffect(() => { 
     if (saveState !== 'idle') return;
@@ -1355,27 +1405,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const { originalW, originalH, baseW, baseH } = imageState;
         
         // 1. Calculate the collage total size at original resolution
-        const getCollageSize = (w: number, h: number) => {
-          const mw = Math.round(w * (layout.includes('left') || layout.includes('right') ? maskScale : 1));
-          const mh = Math.round(h * (layout.includes('top') || layout.includes('bottom') ? maskScale : 1));
-          
-          if (layout === 'mask-bottom' || layout === 'mask-top') return { w, h: h + mh };
-          if (layout === 'mask-right' || layout === 'mask-left') return { w: w + mw, h };
-          return { w, h };
-        };
+        const rawSize = collageSize(originalW, originalH);
 
-        const rawSize = getCollageSize(originalW, originalH);
-        
-        // 2. Cap internal resolution to 4096px (Safari Mobile limit safe zone)
-        // This is why ImageEditor is stable - it doesn't push beyond hardware limits.
-        const MAX_FINAL_DIM = 4096;
+        /* 2. 兩道保險，缺一不可：
+              ① 最長邊不超過 4096（Safari Mobile 的單邊上限）
+              ② 總像素不超過 MAX_CANVAS_PIXELS（真正會爆掉的是「面積」不是「邊長」）
+           以前只有 ①，而且還是拿「原圖」而不是「拼好之後的畫布」去量 ——
+           四周包圍那種畫布是原圖的 3 倍寬 3 倍高，於是就去要了一張
+           12096×9072（1.1 億像素）的畫布，手機當場被系統收掉。 */
         let finalScale = 1.0;
         if (Math.max(rawSize.w, rawSize.h) > MAX_FINAL_DIM) {
           finalScale = MAX_FINAL_DIM / Math.max(rawSize.w, rawSize.h);
         }
+        const area = rawSize.w * finalScale * rawSize.h * finalScale;
+        if (area > MAX_CANVAS_PIXELS) finalScale *= Math.sqrt(MAX_CANVAS_PIXELS / area);
 
         const exportW = Math.round(originalW * finalScale);
-        const exportH = Math.round(originalH * finalScale);
         const exportScale = exportW / baseW;
 
         const exportCanvas = document.createElement('canvas');
@@ -1757,21 +1802,37 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 </div>
 
               </div>}
-              {activeTab === 'shape' && <div className="max-w-md mx-auto flex flex-col justify-start pt-1.5 pb-4 animate-in fade-in duration-300">
+              {activeTab === 'shape' && <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
+                {/* 左側細長分頁列：上面挑圖案、下面調參數 ——
+                    跟經典拼圖「新增佈局」裡面完全同一種版型 */}
+                <div className="flex flex-col shrink-0 w-11 -mt-5 -mb-5 -ml-5 border-r border-white/10 select-none">
+                  <button
+                    onClick={() => setShapeSub('shape')}
+                    title="圖案"
+                    aria-label="圖案"
+                    className={`w-full flex-1 flex items-center justify-center transition-all ${shapeSub === 'shape' ? 'text-white' : 'text-[#5a5a5a]'}`}
+                  >
+                    <Star size={18} className={`transition-transform ${shapeSub === 'shape' ? 'scale-110' : ''}`} />
+                  </button>
+                  <div className="w-full h-[1px] bg-white/10 shrink-0" />
+                  <button
+                    onClick={() => setShapeSub('style')}
+                    title="參數"
+                    aria-label="參數"
+                    className={`w-full flex-1 flex items-center justify-center transition-all ${shapeSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}
+                  >
+                    <SlidersHorizontal size={18} className={`transition-transform ${shapeSub === 'style' ? 'scale-110' : ''}`} />
+                  </button>
+                </div>
+
+                <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                {shapeSub === 'shape' && <div className="pt-0.5 pb-4">
                 <div className="grid grid-cols-5 gap-2 mb-3">
                   {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'love', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'text'].map(s => (
                     <button key={s} onClick={() => handleShapeClick(s)} className={`py-3 flex items-center justify-center rounded-[8px] border transition-all ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
                       {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'flower' ? <span className="text-lg font-bold font-sans leading-none">❋</span> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? <span className="text-lg font-bold font-sans leading-none">{GLYPH_HOLES[s]}</span> : <Type size={18} />}
                     </button>
                   ))}
-                </div>
-                {/* 大小／數量／變化／角度 跟形狀放在同一頁 ——
-                    形狀是「長什麼樣」，這四根是「長多大、有幾個」，本來就是同一件事。 */}
-                <div className="grid grid-cols-2 gap-4 pt-1 pb-1">
-                  <CompactSlider label="大小" value={holeSize} min={0} max={100} onChange={setHoleSize} />
-                  <CompactSlider label="數量" value={holeCount} min={0} max={50} onChange={setHoleCount} step={1} />
-                  <CompactSlider label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
-                  <CompactSlider label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
                 </div>
                 {holeType === 'text' && (
                   <div ref={textInputWrapRef} className="pb-1">
@@ -1787,6 +1848,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <div className="h-6" />
                   </div>
                 )}
+                </div>}
+                {shapeSub === 'style' && <div className="pt-1 pb-4 grid grid-cols-2 gap-4">
+                  <CompactSlider label="大小" value={holeSize} min={0} max={100} onChange={setHoleSize} />
+                  <CompactSlider label="數量" value={holeCount} min={0} max={50} onChange={setHoleCount} step={1} />
+                  <CompactSlider label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
+                  <CompactSlider label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
+                </div>}
+                </div>
               </div>}
               {activeTab === 'mask' && <div className="max-w-md mx-auto space-y-3 pb-4 animate-in fade-in duration-300">
                 <div className="grid grid-cols-2 gap-3">
