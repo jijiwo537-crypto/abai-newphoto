@@ -3,8 +3,12 @@ import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
-import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal } from 'lucide-react';
+import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2 } from 'lucide-react';
 import { Icon } from './Icon';
+/* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
+   才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
+import { TextEditorPanel } from './GridLayoutTool';
+import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { SaveButton } from './SaveButton';
 
 // --- 自製極簡單線十字星圖標 ---
@@ -1575,11 +1579,29 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (o.type === 'image' && o.img) {
         ctx.drawImage(o.img, -o.w * s / 2, -o.h * s / 2, o.w * s, o.h * s);
       } else if (o.type === 'text') {
-        ctx.fillStyle = o.color || '#ffffff';
-        ctx.font = `700 ${o.size * s}px "Inter", system-ui, sans-serif`;
+        /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
+           面板本身就是那邊那顆元件，所以這裡只要照著畫。 */
+        const fam = o.fontFamily || DEFAULT_FONT;
+        const weight = o.bold ? 800 : 400;
+        const style = o.italic ? 'italic ' : '';
+        ctx.font = `${style}${weight} ${o.size * s}px ${fontStack(fam)}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        (ctx as any).letterSpacing = `${(o.letterSpacing || 0) * s}px`;
+        if (o.glow) {
+          ctx.shadowColor = o.glowColor || o.color || '#ffffff';
+          ctx.shadowBlur = o.glow * s;
+        }
+        if (o.strokeWidth) {
+          ctx.lineJoin = 'round';
+          ctx.strokeStyle = o.strokeColor || '#000000';
+          ctx.lineWidth = o.strokeWidth * s * 2;
+          ctx.strokeText(o.text || '', 0, 0);
+        }
+        ctx.fillStyle = o.color || '#ffffff';
         ctx.fillText(o.text || '', 0, 0);
+        ctx.shadowBlur = 0;
+        (ctx as any).letterSpacing = '0px';
       }
       ctx.globalAlpha = 1;
       if (isMain && selectedObj === o.id) {
@@ -2057,19 +2079,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           };
           return (
             <div
-              className="absolute z-[70] flex items-center gap-1 rounded-full bg-black/70 backdrop-blur-md border border-white/10 px-1.5 py-1 shadow-[0_6px_20px_rgba(0,0,0,0.55)]"
+              className="absolute z-[70] flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto"
               style={{ left: cx, top: by, transform: 'translateX(-50%)', touchAction: 'none' }}
               onPointerDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
             >
               {[
-                { t: '下移一層', on: act(() => move(-1)), el: <ChevronLeft size={15} className="rotate-90" /> },
-                { t: '上移一層', on: act(() => move(1)), el: <ChevronLeft size={15} className="-rotate-90" /> },
-                { t: '複製', on: act(dup), el: <Plus size={15} /> },
-                { t: '編輯', on: act(() => setActiveTab('objedit')), el: <SlidersHorizontal size={15} /> },
-                { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <X size={15} /> },
+                { t: '下移一層', on: act(() => move(-1)), el: <MoveDown size={14} />, off: objects[0]?.id === o.id },
+                { t: '上移一層', on: act(() => move(1)), el: <MoveUp size={14} />, off: objects[objects.length - 1]?.id === o.id },
+                { t: '複製', on: act(dup), el: <Copy size={14} />, off: false },
+                { t: o.type === 'text' ? '編輯文字' : '圖片調整', on: act(() => setActiveTab('objedit')), el: <Sliders size={14} />, off: false },
+                { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
               ].map(b => (
-                <button key={b.t} title={b.t} onPointerDown={b.on}
-                  className="w-8 h-8 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/10 active:scale-90 transition-all">
+                <button key={b.t} title={b.t} disabled={b.off}
+                  onPointerDown={b.off ? undefined : b.on}
+                  className={`w-7 h-7 rounded-full flex items-center justify-center ${b.off ? 'text-black/25 cursor-default' : 'text-black hover:bg-black/10'}`}>
                   {b.el}
                 </button>
               ))}
@@ -2270,10 +2294,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   const w = size * 4, h = size * 1.3;
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: 'Abai', color: '#ffffff', size,
+                    fontFamily: DEFAULT_FONT, bold: false, italic: false,
+                    letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
+                    glow: 0, glowColor: '#ffffff',
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
+                  ensureFont(DEFAULT_FONT);
                   setActiveTab('objedit');   // 新增完直接進編輯頁，跟經典拼圖一樣
                 };
                 return (
@@ -2316,16 +2344,31 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   </div>
                 );
                 return (
+                  sel.type === 'text' ? (
+                    <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
+                      <TextEditorPanel
+                        layer={{
+                          text: sel.text, color: sel.color, fontFamily: sel.fontFamily,
+                          fontSize: sel.size, bold: sel.bold, italic: sel.italic,
+                          letterSpacing: sel.letterSpacing, strokeWidth: sel.strokeWidth,
+                          strokeColor: sel.strokeColor, glow: sel.glow, glowColor: sel.glowColor,
+                        } as any}
+                        onChange={(d: any) => {
+                          if (d.fontFamily) ensureFont(d.fontFamily);
+                          if (d.fontSize !== undefined) { patch({ ...d, size: d.fontSize }); return; }
+                          patch(d);
+                        }}
+                      />
+                    </div>
+                  ) : (
                   <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
-                    {/* 左側細長列，跟經典拼圖同一種版型 */}
                     <div className="flex flex-col shrink-0 w-11 -mt-5 -mb-5 -ml-5 border-r border-white/10 select-none">
                       <button
                         onClick={() => setObjSub('main')}
-                        title={sel.type === 'text' ? '文字' : '圖片'}
-                        aria-label={sel.type === 'text' ? '文字' : '圖片'}
+                        title="圖片" aria-label="圖片"
                         className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${objSub === 'main' ? 'text-white' : 'text-[#5a5a5a]'}`}
                       >
-                        <Type size={18} className={`transition-transform duration-150 ${objSub === 'main' ? 'scale-110' : 'scale-100'}`} />
+                        <Icon name="image" className={`text-[18px] transition-transform duration-150 ${objSub === 'main' ? 'scale-110' : 'scale-100'}`} />
                       </button>
                       <div className="w-full h-[1px] bg-white/10 shrink-0" />
                       <button
@@ -2336,32 +2379,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <SlidersHorizontal size={18} className={`transition-transform duration-150 ${objSub === 'style' ? 'scale-110' : 'scale-100'}`} />
                       </button>
                     </div>
-
                     <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                       {objSub === 'main' && (
                         <div className="space-y-3 pt-1 pb-2">
-                          {sel.type === 'text' ? (
-                            <>
-                              <input
-                                type="text" maxLength={30} value={sel.text}
-                                onChange={e => patch({ text: e.target.value })}
-                                placeholder="輸入文字..."
-                                className="w-full h-[47px] px-3 bg-[#111] border border-[#222] rounded-[6px] text-center text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#333]"
-                              />
-                              <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
-                                <span className="text-[10px] font-bold text-[#888]">文字顏色</span>
-                                <input type="color" value={sel.color}
-                                  onChange={e => patch({ color: e.target.value })}
-                                  className="w-9 h-6 bg-transparent border-0 p-0 cursor-pointer" />
-                              </div>
-                            </>
-                          ) : (
-                            <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
-                              <span className="text-[10px] font-bold text-[#888]">圖片</span>
-                              <button onClick={() => objFileInputRef.current?.click()}
-                                className="px-2 h-6 text-[10px] bg-white text-black font-bold rounded-[4px] uppercase tracking-widest">更換</button>
-                            </div>
-                          )}
+                          <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
+                            <span className="text-[10px] font-bold text-[#888]">圖片</span>
+                            <button onClick={() => objFileInputRef.current?.click()}
+                              className="px-2 h-6 text-[10px] bg-white text-black font-bold rounded-[4px] uppercase tracking-widest">更換</button>
+                          </div>
                           <div className="grid grid-cols-3 gap-2">
                             <button onClick={() => move(1)} className="h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold tracking-widest text-white/70 active:scale-[0.98] transition-transform">上移一層</button>
                             <button onClick={() => move(-1)} className="h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold tracking-widest text-white/70 active:scale-[0.98] transition-transform">下移一層</button>
@@ -2386,6 +2411,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       )}
                     </div>
                   </div>
+                  )
                 );
               })()}
               {activeTab === 'shape' && <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
