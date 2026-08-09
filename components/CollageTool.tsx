@@ -654,11 +654,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const { baseW, baseH, globalScale: gs } = imageState;
     const mappedHoleSize = 25 + (holeSize / 100) * 125;
     const s = mappedHoleSize * gs;
-    const p = s/2 + 25 * gs;
     /* 四周包圍時遮罩是整張畫布，圖案就單純隨機灑在整圈上 ——
        這種排版沒有「左右兩塊要對稱」的概念，所以一律 side: 'mask'。 */
     const lay = layoutOverride || layout;
     const around = lay === AROUND;
+    /* 邊界安全距離。四周包圍時圖案灑在整張畫布上，只留半個圖案的話
+       最外圈會有一半跑到畫面外，所以多留將近一個圖案的餘裕
+       —— 但使用者自己拖出去仍然可以（那是刻意的）。 */
+    /* 注意：四周包圍時 getHoleSize 會再乘上 (1 + 2×比例) 把圖案補回原本的視覺大小，
+       安全距離也必須用「補過之後」的尺寸算，不然邊緣還是會被切到。 */
+    const drawnS = around ? s * (1 + maskScale * 2) : s;
+    const p = around ? drawnS * 0.75 + 25 * gs : s / 2 + 25 * gs;
     const md = maskDims(lay, baseW, baseH, maskScale);
     const fieldW = around ? md.mw : baseW;
     const fieldH = around ? md.mh : baseH;
@@ -1055,7 +1061,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     previewTimer.current = window.setTimeout(() => {
       const cs = collageSizeOf(layout, imageState.baseW, imageState.baseH, maskScale);
       const dpr = Math.min(3, window.devicePixelRatio || 1);
-      const cssW = baseCssWRef.current;
+      const cssW = baseCss ? baseCss.w : baseCssWRef.current;
       if (!cssW || !cs.w) return;
       const budget = maxPreviewScale();
       // 要多少畫布像素才會「一個畫布像素對一個裝置像素」
@@ -1066,7 +1072,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       setPreviewScale(prev => (Math.abs(prev - snapped) < 0.01 ? prev : snapped));
     }, 90);
     return () => { if (previewTimer.current) window.clearTimeout(previewTimer.current); };
-  }, [viewT.k, imageState, layout, maskScale, maxPreviewScale]);
+    /* baseCss 一定要進依賴：第一次算出基準尺寸之前這個 effect 會直接 return，
+       而 viewT.k 不會再變 —— 少了它就會永遠停在 previewScale = 1，
+       也就是「只有放大過才變清楚」的原因。 */
+  }, [viewT.k, imageState, layout, maskScale, maxPreviewScale, baseCss]);
 
   /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了 ——
      要先放掉寫死的尺寸讓 max-w/max-h 重新貼合，否則會卡在舊尺寸。 */
