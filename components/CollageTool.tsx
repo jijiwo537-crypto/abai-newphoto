@@ -416,6 +416,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   selectedObjRef.current = selectedObj;
   const objDragRef = useRef<any>(null);
   const objPinchRef = useRef<any>(null);
+  /** 拖曳物件時亮起來的對齊線（畫布座標） */
+  const [guides, setGuides] = useState<any[]>([]);
+  const guidesRef = useRef<any[]>([]);
   const objFileInputRef = useRef<HTMLInputElement>(null);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null); 
   const [colorPickerTarget, setColorPickerTarget] = useState<string | null>(null); 
@@ -923,7 +926,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const cur = objectsRef.current.find(z => z.id === selectedObjRef.current);
         if (cur) {
           e.stopPropagation();
-          objDragRef.current = { id: cur.id, startX: x, startY: y, ox: cur.x, oy: cur.y };
+          // fromBlank：這一下沒點在物件身上。放開時若完全沒移動，就當成「點旁邊」取消選取。
+          objDragRef.current = { id: cur.id, startX: x, startY: y, ox: cur.x, oy: cur.y, fromBlank: true, moved: false };
           return;
         }
       }
@@ -1192,8 +1196,34 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (objDragRef.current && activePointers.current.size === 1) {
       e.stopPropagation();
       const d = objDragRef.current;
-      setObjects(prev => prev.map(o => o.id === d.id
-        ? { ...o, x: d.ox + (x - d.startX), y: d.oy + (y - d.startY) } : o));
+      if (Math.hypot(x - d.startX, y - d.startY) > 3) d.moved = true;
+      let nx = d.ox + (x - d.startX), ny = d.oy + (y - d.startY);
+      /* 對齊線：拖到接近畫布中線或邊界時吸附，並把那條線畫出來。
+         門檻用畫布短邊的 1.2%，不管圖多大手感都一樣。 */
+      const oNow = objectsRef.current.find(z => z.id === d.id);
+      const offsG = getLayoutOffsets();
+      const gl: any[] = [];
+      if (oNow && offsG) {
+        const snap = Math.max(4, Math.min(offsG.cw, offsG.ch) * 0.012);
+        const cxs = [{ v: offsG.cw / 2, k: 'vc' }, { v: 0, k: 'vl' }, { v: offsG.cw, k: 'vr' }];
+        const cys = [{ v: offsG.ch / 2, k: 'hc' }, { v: 0, k: 'ht' }, { v: offsG.ch, k: 'hb' }];
+        const myCx = nx + oNow.w / 2, myCy = ny + oNow.h / 2;
+        for (const c of cxs) {
+          const edges = [{ p: myCx, o: oNow.w / 2 }, { p: nx, o: 0 }, { p: nx + oNow.w, o: oNow.w }];
+          for (const e2 of edges) {
+            if (Math.abs(e2.p - c.v) < snap) { nx = c.v - e2.o; gl.push({ x: c.v }); break; }
+          }
+        }
+        for (const c of cys) {
+          const edges = [{ p: myCy, o: oNow.h / 2 }, { p: ny, o: 0 }, { p: ny + oNow.h, o: oNow.h }];
+          for (const e2 of edges) {
+            if (Math.abs(e2.p - c.v) < snap) { ny = c.v - e2.o; gl.push({ y: c.v }); break; }
+          }
+        }
+      }
+      guidesRef.current = gl;
+      setGuides(gl);
+      setObjects(prev => prev.map(o => o.id === d.id ? { ...o, x: nx, y: ny } : o));
       return;
     }
     if (viewPinchRef.current && activePointers.current.size >= 2) {
@@ -1288,7 +1318,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    // 點在物件以外的地方、而且完全沒有拖動 → 取消選取
+    if (objDragRef.current?.fromBlank && !objDragRef.current.moved) setSelectedObj(null);
     objDragRef.current = null;
+    if (guidesRef.current.length) { guidesRef.current = []; setGuides([]); }
     if (activePointers.current.size <= 2) objPinchRef.current = null;
     try {
       const target = e.target as HTMLElement;
@@ -1588,14 +1621,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         (ctx as any).letterSpacing = `${(o.letterSpacing || 0) * s}px`;
+        /* 順序跟經典拼圖一致：先只用「填色的形狀」畫光（三段模糊疊起來），
+           再畫描邊，最後才填色。
+           光如果跟描邊一起算，會沿著描邊外緣散開 —— 看起來就是描邊突然粗一圈，
+           那正是主人覺得怪的地方。強度也對齊那邊的 (glow/20)×14×k。 */
         if (o.glow) {
-          ctx.shadowColor = o.glowColor || o.color || '#ffffff';
-          ctx.shadowBlur = o.glow * s;
+          ctx.save();
+          ctx.fillStyle = o.color || '#ffffff';
+          ctx.shadowColor = o.glowColor || '#ffffff';
+          for (const k2 of [1, 2, 3]) {
+            ctx.shadowBlur = (o.glow / 20) * 14 * k2 * s;
+            ctx.fillText(o.text || '', 0, 0);
+          }
+          ctx.restore();
         }
         if (o.strokeWidth) {
           ctx.lineJoin = 'round';
-          ctx.strokeStyle = o.strokeColor || '#000000';
-          ctx.lineWidth = o.strokeWidth * s * 2;
+          ctx.miterLimit = 2;
+          ctx.strokeStyle = o.strokeColor || '#FFFFFF';
+          ctx.lineWidth = o.strokeWidth * 2 * s;
           ctx.strokeText(o.text || '', 0, 0);
         }
         ctx.fillStyle = o.color || '#ffffff';
@@ -1605,7 +1649,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
       ctx.globalAlpha = 1;
       if (isMain && selectedObj === o.id) {
-        ctx.strokeStyle = '#fff';
+        // 選中框維持虛線（跟挖洞那邊同一種語言）
+        ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 2 * sgs * s;
         ctx.setLineDash([8 * sgs * s, 8 * sgs * s]);
         ctx.strokeRect(-o.w * s / 2, -o.h * s / 2, o.w * s, o.h * s);
@@ -1613,6 +1658,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
       ctx.restore();
     });
+
+    if (isMain && guides.length) {
+      ctx.save();
+      ctx.strokeStyle = '#4DA3FF';
+      ctx.lineWidth = 1.5 * sgs * s;
+      guides.forEach(g => {
+        ctx.beginPath();
+        if (g.x !== undefined) { ctx.moveTo(g.x * s, 0); ctx.lineTo(g.x * s, offs.ch); }
+        else { ctx.moveTo(0, g.y * s); ctx.lineTo(offs.cw, g.y * s); }
+        ctx.stroke();
+      });
+      ctx.restore();
+    }
 
     /* 選取框只畫在螢幕上那張。畫布可能被畫得更細，所以尺寸與座標都要乘上 s，
        不然放大重畫之後虛線框會停在原本的小尺寸、對不上那個洞。 */
@@ -1672,7 +1730,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
-  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj]);
+  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides]);
 
   const renderCanvas = useCallback(() => {
     if (!canvasRef.current || !imageState) return;
