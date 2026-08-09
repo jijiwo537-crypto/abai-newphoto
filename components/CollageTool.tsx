@@ -411,6 +411,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const selectedObjRef = useRef<string | null>(null);
   selectedObjRef.current = selectedObj;
   const objDragRef = useRef<any>(null);
+  const objPinchRef = useRef<any>(null);
   const objFileInputRef = useRef<HTMLInputElement>(null);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null); 
   const [colorPickerTarget, setColorPickerTarget] = useState<string | null>(null); 
@@ -913,7 +914,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             return;
           }
         }
-        if (selectedObjRef.current) setSelectedObj(null);
+        /* 已經選中東西時，就算沒點在它身上，拖曳畫布任何地方也是在移動它
+           —— 選中之後整個畫布就是那個物件的操作區，跟經典拼圖一樣。 */
+        const cur = objectsRef.current.find(z => z.id === selectedObjRef.current);
+        if (cur) {
+          e.stopPropagation();
+          objDragRef.current = { id: cur.id, startX: x, startY: y, ox: cur.x, oy: cur.y };
+          return;
+        }
       }
       strokeStartHolesRef.current = holesRef.current;
       // Determine clickedSide
@@ -1004,6 +1012,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         } else {
           setSelectedTarget(null);
         }
+      }
+    } else if (activePointers.current.size === 2 && selectedObjRef.current) {
+      /* 選中物件時兩指是在縮放／旋轉那個物件 —— 不再縮放整個預覽。
+         沒選中任何東西時才會落到下面那條「雙指縮放預覽」。 */
+      e.stopPropagation();
+      objDragRef.current = null;
+      const pts2: any[] = Array.from(activePointers.current.values());
+      const oo = objectsRef.current.find(z => z.id === selectedObjRef.current);
+      if (oo) {
+        objPinchRef.current = {
+          id: oo.id,
+          d0: Math.max(1, Math.hypot(pts2[0].clientX - pts2[1].clientX, pts2[0].clientY - pts2[1].clientY)),
+          a0: Math.atan2(pts2[1].clientY - pts2[0].clientY, pts2[1].clientX - pts2[0].clientX) * 180 / Math.PI,
+          w0: oo.w, h0: oo.h, size0: oo.size || 0, rot0: oo.rot || 0,
+          cx0: oo.x + oo.w / 2, cy0: oo.y + oo.h / 2,
+        };
       }
     } else if (activePointers.current.size === 2 && selectedTarget) {
       e.stopPropagation();
@@ -1143,6 +1167,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState?.globalScale || 1;
     // 雙指縮放預覽時完全不碰筆刷與拖曳
+    // 兩指縮放／旋轉浮動物件
+    if (objPinchRef.current && activePointers.current.size >= 2) {
+      e.stopPropagation();
+      const pts2: any[] = Array.from(activePointers.current.values());
+      const pin = objPinchRef.current;
+      const dist = Math.max(1, Math.hypot(pts2[0].clientX - pts2[1].clientX, pts2[0].clientY - pts2[1].clientY));
+      const ang = Math.atan2(pts2[1].clientY - pts2[0].clientY, pts2[1].clientX - pts2[0].clientX) * 180 / Math.PI;
+      const k = Math.max(0.15, Math.min(8, dist / pin.d0));
+      const nw = pin.w0 * k, nh = pin.h0 * k;
+      let nrot = pin.rot0 + (ang - pin.a0);
+      nrot = ((nrot % 360) + 360) % 360;
+      setObjects(prev => prev.map(o => o.id === pin.id
+        ? { ...o, w: nw, h: nh, size: pin.size0 ? pin.size0 * k : o.size,
+            x: pin.cx0 - nw / 2, y: pin.cy0 - nh / 2, rot: nrot }
+        : o));
+      return;
+    }
     // 拖曳浮動物件
     if (objDragRef.current && activePointers.current.size === 1) {
       e.stopPropagation();
@@ -1244,6 +1285,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   const handlePointerUp = (e: React.PointerEvent) => {
     objDragRef.current = null;
+    if (activePointers.current.size <= 2) objPinchRef.current = null;
     try {
       const target = e.target as HTMLElement;
       if (target && target.hasPointerCapture(e.pointerId)) {
@@ -1987,6 +2029,53 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             </div>
           </div>
         )}
+
+        {/* 選中的圖片／文字下方浮出的工具列 —— 跟經典拼圖同一組動作。
+            位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
+        {imageState && selectedObj && (() => {
+          const o = objects.find(z => z.id === selectedObj);
+          const cvsEl = canvasRef.current;
+          if (!o || !cvsEl) return null;
+          const r = cvsEl.getBoundingClientRect();
+          const stEl = stageRef.current;
+          const sr = stEl ? stEl.getBoundingClientRect() : { left: 0, top: 0 };
+          const ps = previewScaleRef.current;
+          const k = r.width / Math.max(1, cvsEl.width / ps);   // 畫布內部單位 → CSS
+          const cx = r.left - sr.left + (o.x + o.w / 2) * k;
+          const by = r.top - sr.top + (o.y + o.h) * k + 10;
+          const act = (fn: () => void) => (ev: React.PointerEvent) => { ev.stopPropagation(); ev.preventDefault(); fn(); };
+          const move = (dir: number) => setObjects(prev => {
+            const i = prev.findIndex(z => z.id === o.id);
+            const j = i + dir;
+            if (i < 0 || j < 0 || j >= prev.length) return prev;
+            const n = prev.slice(); const [x0] = n.splice(i, 1); n.splice(j, 0, x0); return n;
+          });
+          const dup = () => {
+            const id = Math.random().toString(36).slice(2, 9);
+            setObjects(prev => [...prev, { ...o, id, x: o.x + o.w * 0.08, y: o.y + o.h * 0.08 }]);
+            setSelectedObj(id);
+          };
+          return (
+            <div
+              className="absolute z-[70] flex items-center gap-1 rounded-full bg-black/70 backdrop-blur-md border border-white/10 px-1.5 py-1 shadow-[0_6px_20px_rgba(0,0,0,0.55)]"
+              style={{ left: cx, top: by, transform: 'translateX(-50%)', touchAction: 'none' }}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              {[
+                { t: '下移一層', on: act(() => move(-1)), el: <ChevronLeft size={15} className="rotate-90" /> },
+                { t: '上移一層', on: act(() => move(1)), el: <ChevronLeft size={15} className="-rotate-90" /> },
+                { t: '複製', on: act(dup), el: <Plus size={15} /> },
+                { t: '編輯', on: act(() => setActiveTab('objedit')), el: <SlidersHorizontal size={15} /> },
+                { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <X size={15} /> },
+              ].map(b => (
+                <button key={b.t} title={b.t} onPointerDown={b.on}
+                  className="w-8 h-8 flex items-center justify-center rounded-full text-white/80 hover:text-white hover:bg-white/10 active:scale-90 transition-all">
+                  {b.el}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
 
         {imageState && (
           <div className="absolute bottom-6 right-6 z-[60]" onPointerDown={(e) => e.stopPropagation()}>
