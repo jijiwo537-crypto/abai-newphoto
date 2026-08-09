@@ -441,7 +441,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
            還沒選參考圖時就只有「導入參考圖片」一顆，佔滿整列（跟以前一樣）；
            選過之後右邊讓出位子給「替換原始圖片」—— 導入那顆縮短，
            空出來的地方剛好放第二顆，兩顆等寬。 */}
-      <div className="px-4 pb-3 shrink-0 flex items-stretch gap-2">
+      {/* pt-3 跟 pb-3 對稱：上面緊貼著預覽區看起來像黏住了 */}
+      <div className="px-4 pt-3 pb-3 shrink-0 flex items-stretch gap-2">
         <button
           onClick={onPickReference}
           data-cm-pickref

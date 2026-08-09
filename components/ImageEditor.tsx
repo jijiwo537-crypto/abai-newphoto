@@ -6447,6 +6447,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                   marginBottom: hslFitNow ? `${hslFitNow.mb}px` : undefined,
                   aspectRatio: previewAspect ? `${previewAspect.w}/${previewAspect.h}` : undefined,
                   width: previewAspect ? '100%' : 'auto',
+                  /* 高度的上限也要換算成寬度的上限，不然比例會被壓扁。
+                     aspect-ratio 只有在「另一邊自由」的時候才成立：這裡寬度被寫死
+                     100%，一遇到很長的圖，高度被 max-height 夾住、寬度卻不會跟著縮，
+                     框就從 720:1560 變成 358:504，而畫布是 objectFit:'fill'，
+                     整張圖就被橫向拉開（量到 53.9% 變形）。
+                     把同一條高度上限乘上原圖比例當成寬度上限，兩個方向就都守得住。 */
+                  maxWidth: previewAspect
+                    ? (hslFitNow
+                        ? `min(calc(100% - 32px), ${(hslFitNow.mh * previewAspect.w) / previewAspect.h}px)`
+                        : `min(calc(100% - 32px), calc((100vh - 340px) * ${previewAspect.w} / ${previewAspect.h}))`)
+                    : undefined,
                 }}
               >
                 {/* Single Canvas for Display and Compare */}
