@@ -76,6 +76,18 @@ const collageSizeOf = (layout: string, w: number, h: number, maskScale: number) 
 };
 
 /** 把 id 轉成一個穩定的數字，用來打散順序（同一顆圖案永遠拿同一格，不會閃） */
+/** 兩份圖案清單是不是完全一樣（id、位置、所屬側都沒變） */
+const sameHoles = (a: any[], b: any[]) => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id || a[i].x !== b[i].x || a[i].y !== b[i].y
+      || (a[i].side || 'both') !== (b[i].side || 'both')
+      || (a[i].angle ?? null) !== (b[i].angle ?? null)
+      || (a[i].localScale ?? 1) !== (b[i].localScale ?? 1)) return false;
+  }
+  return true;
+};
+
 const hashId = (id: string) => {
   let x = 0;
   for (let i = 0; i < (id || '').length; i++) x = (x * 31 + id.charCodeAt(i)) >>> 0;
@@ -1356,23 +1368,35 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const basePat = ctx.createPattern(bCanvas, 'repeat');
     if (basePat) {
       ctx.fillStyle = basePat;
+      /* 圖片側的圖案要顯示「遮罩上同一個相對位置」的那一塊。
+         遮罩跟圖片不一定一樣大（例如下方那條只有一半高），直接貼的話
+         pattern 會 repeat，圖案就會拿到繞回去的、對不上的那一段。
+         這裡把圖案的位置從圖片座標換算成遮罩座標，再把 pattern 平移過去。 */
+      const rx = sw > 0 ? maskW / sw : 1;
+      const ry = sh > 0 ? maskH / sh : 1;
       holes.forEach(h => {
         const side = h.side || 'both';
         if (side !== 'both' && side !== 'image') return; // Only show on image side
 
         const sz = getHoleSize(h) * s;
         const currentAngle = h.angle !== undefined ? h.angle : holeAngle;
+        const hx = h.x * s, hy = h.y * s;
+        const mxp = hx * rx, myp = hy * ry;     // 遮罩上的對應點
+        ctx.save();
+        // pattern 錨在目前的原點，所以先位移，讓遮罩上的 (mxp,myp) 正好落在圖案位置
+        ctx.translate(hx - mxp, hy - myp);
         if (isTextHole(holeType)) {
           const tText = holeGlyph(holeType, customText, h);
-          drawTextShape(ctx, holeType, tText, h.x * s, h.y * s, sz, basePat, false, currentAngle);
+          drawTextShape(ctx, holeType, tText, mxp, myp, sz, basePat, false, currentAngle);
         } else {
-          ctx.save();
-          ctx.translate(h.x * s, h.y * s);
+          // 以圖案自己的中心為軸旋轉，但不動到 pattern 的錨點
+          ctx.translate(mxp, myp);
           ctx.rotate(currentAngle * Math.PI / 180);
-          drawShapePath(ctx, holeType, 0, 0, sz);
+          ctx.translate(-mxp, -myp);
+          drawShapePath(ctx, holeType, mxp, myp, sz);
           ctx.fill();
-          ctx.restore();
         }
+        ctx.restore();
       });
     }
     ctx.restore();
@@ -1418,38 +1442,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const drawHolesOverImage = () => {
       const pat = ctx.createPattern(bCanvas, 'repeat');
       if (!pat) return;
-      const list = holes.filter(h => { const sd = h.side || 'both'; return sd === 'both' || sd === 'mask'; });
-      /* 有自訂遮罩圖的時候，每一個圖案各自去遮罩上「取一塊不一樣的」——
-         把遮罩切成 g×g 格，圖案依序認養一格（順序用 id 打散，
-         所以同一顆圖案每次重畫都拿同一格，不會閃）。格子互不重複，
-         所以圖案之間盡可能不會取到同一塊。
-         沒有自訂遮罩（純色）時就沒有取哪一塊的問題，維持原本的貼齊。 */
-      const useTiles = !!(maskImageState && maskImageState.img) && list.length > 0;
-      const g = Math.max(1, Math.ceil(Math.sqrt(list.length)));
-      const cellW = maskW / g, cellH = maskH / g;
-      const order = list.map((h, i) => ({ h, i }))
-        .sort((a, bb) => (hashId(a.h.id) - hashId(bb.h.id)));
-
       ctx.save();
       ctx.beginPath(); ctx.rect(offs.ix, offs.iy, sw, sh); ctx.clip();
       ctx.translate(offs.mx, offs.my);      // 洞的座標是遮罩座標系
       ctx.fillStyle = pat;
-      order.forEach(({ h }, slot) => {
+      holes.forEach(h => {
+        const sd = h.side || 'both';
+        if (sd !== 'both' && sd !== 'mask') return;
         const sz = getHoleSize(h) * s;
         const currentAngle = h.angle !== undefined ? h.angle : holeAngle;
         const hx = h.x * s, hy = h.y * s;
-        // 這個圖案要取遮罩上的哪一格（中心點）
-        const cx = useTiles ? ((slot % g) + 0.5) * cellW : hx;
-        const cy = useTiles ? (Math.floor(slot / g) + 0.5) * cellH : hy;
+        // 四周包圍的洞本來就是遮罩座標，對應點就是自己
         ctx.save();
-        // 把那一格搬到圖案所在的位置：圖案畫在 (cx, cy)，整個座標系再位移過去
-        ctx.translate(hx - cx, hy - cy);
         if (isTextHole(holeType)) {
-          drawTextShape(ctx, holeType, holeGlyph(holeType, customText, h), cx, cy, sz, pat, false, currentAngle);
+          drawTextShape(ctx, holeType, holeGlyph(holeType, customText, h), hx, hy, sz, pat, false, currentAngle);
         } else {
-          ctx.translate(cx, cy);
+          ctx.translate(hx, hy);
           ctx.rotate(currentAngle * Math.PI / 180);
-          drawShapePath(ctx, holeType, 0, 0, sz);
+          ctx.translate(-hx, -hy);
+          drawShapePath(ctx, holeType, hx, hy, sz);
           ctx.fill();
         }
         ctx.restore();
@@ -1724,10 +1735,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             {/* 對稱鎖定工具 */}
             {/* 四周包圍是一整片場、沒有「左右兩塊要對稱」的概念，
                 所以那個排版下這顆對稱鍵先收起來，免得按了不知道在做什麼 */}
-            {layout !== AROUND && (
+            {/* 四周包圍沒有對稱的概念，所以那個排版下這顆用「隱形」而不是「移除」——
+                移除的話旁邊的工具會整排往左跳一格。 */}
             <button 
+              aria-hidden={layout === AROUND}
+              tabIndex={layout === AROUND ? -1 : 0}
+              style={layout === AROUND ? { visibility: 'hidden', pointerEvents: 'none' } : undefined}
               onClick={(e) => {
                 e.stopPropagation();
+                if (layout === AROUND) return;
                 setSymmetryEnabled(prev => {
                   const next = !prev;
                   if (!next) {
@@ -1750,6 +1766,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         decoupled.push(h);
                       }
                     });
+                    /* 全部本來就已經是拆開的（沒有一顆 'both'），
+                       那這一下根本沒改到任何東西 —— 不該佔一格上一步。 */
+                    if (sameHoles(decoupled, holesRef.current)) return next;
                     setHoles(decoupled);
                     setTimeout(() => pushHistory(decoupled), 0);
                   } else {
@@ -1769,6 +1788,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       });
                       seenBaseIds.add(baseId);
                     });
+                    if (sameHoles(combined, holesRef.current)) return next;
                     setHoles(combined);
                     setTimeout(() => pushHistory(combined), 0);
                   }
@@ -1784,7 +1804,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             >
               {symmetryEnabled ? <Link size={18} /> : <Link2Off size={18} />}
             </button>
-            )}
 
             {/* 畫筆/橡皮擦工具 */}
             <button 
