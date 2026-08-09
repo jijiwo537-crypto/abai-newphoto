@@ -3,7 +3,7 @@ import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
-import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Settings2, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off } from 'lucide-react';
+import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off } from 'lucide-react';
 import { Icon } from './Icon';
 import { SaveButton } from './SaveButton';
 
@@ -20,6 +20,28 @@ const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
     <path d="M12 2.5a9.5 9.5 0 0 1 9.5 9.5 8.5 8.5 0 0 1-8.5 8.5 7.5 7.5 0 0 1-7.5-7.5 6.5 6.5 0 0 1 6.5-6.5 5.5 5.5 0 0 1 5.5 5.5 4.5 4.5 0 0 1-4.5 4.5 3.5 3.5 0 0 1-3.5-3.5 2.5 2.5 0 0 1 2.5-2.5 1.5 1.5 0 0 1 1.5 1.5" />
   </svg>
 );
+
+/* 遮罩相對於原圖要多大。
+   四邊那四種是「在某一側外接一條」，所以只有那一軸會乘上比例；
+   'mask-around' 是「四周整圈包起來」，遮罩就是整張輸出畫布，
+   每一邊的厚度是原圖那一軸的 maskScale 倍。 */
+const AROUND = 'mask-around';
+const maskDims = (layout: string, bw: number, bh: number, maskScale: number) => {
+  if (layout === AROUND) {
+    return {
+      mw: Math.round(bw * (1 + maskScale * 2)),
+      mh: Math.round(bh * (1 + maskScale * 2)),
+      padX: Math.round(bw * maskScale),
+      padY: Math.round(bh * maskScale),
+    };
+  }
+  return {
+    mw: Math.round(bw * (layout.includes('left') || layout.includes('right') ? maskScale : 1)),
+    mh: Math.round(bh * (layout.includes('top') || layout.includes('bottom') ? maskScale : 1)),
+    padX: 0,
+    padY: 0,
+  };
+};
 
 const getHoleNumber = (h: any) => {
   if (h && h.randomNumber !== undefined) return h.randomNumber;
@@ -601,13 +623,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const getLayoutOffsets = useCallback(() => {
     if (!imageState) return null;
     let { baseW: bw, baseH: bh } = imageState;
-    const mw = Math.round(bw * (layout.includes('left') || layout.includes('right') ? maskScale : 1));
-    const mh = Math.round(bh * (layout.includes('top') || layout.includes('bottom') ? maskScale : 1));
+    const { mw, mh, padX, padY } = maskDims(layout, bw, bh, maskScale);
 
     if (layout === 'mask-bottom') return { cw: bw, ch: bh + mh, ix: 0, iy: 0, mx: 0, my: bh };
     if (layout === 'mask-top') return { cw: bw, ch: bh + mh, ix: 0, iy: mh, mx: 0, my: 0 };
     if (layout === 'mask-right') return { cw: bw + mw, ch: bh, ix: 0, iy: 0, mx: bw, my: 0 };
     if (layout === 'mask-left') return { cw: bw + mw, ch: bh, ix: mw, iy: 0, mx: 0, my: 0 };
+    // 四周包圍：遮罩就是整張畫布，原圖擺在正中央
+    if (layout === AROUND) return { cw: mw, ch: mh, ix: padX, iy: padY, mx: 0, my: 0 };
     return { cw: bw, ch: bh, ix: 0, iy: 0, mx: 0, my: 0 };
   }, [imageState, layout, maskScale]);
 
@@ -648,8 +671,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   const checkHitHole = useCallback((hx: number, hy: number, h: any, gs: number, offs: any, clickedSide?: 'image' | 'mask') => {
     const s = getHoleSize(h);
-    const mw = Math.round(imageState.baseW * (layout.includes('left') || layout.includes('right') ? maskScale : 1));
-    const mh = Math.round(imageState.baseH * (layout.includes('top') || layout.includes('bottom') ? maskScale : 1));
+    const { mw, mh } = maskDims(layout, imageState.baseW, imageState.baseH, maskScale);
 
     const side = h.side || 'both';
     if (clickedSide) {
@@ -721,8 +743,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
       return false;
     } else {
-      const mw = Math.round(imageState.baseW * (layout.includes('left') || layout.includes('right') ? maskScale : 1));
-      const mh = Math.round(imageState.baseH * (layout.includes('top') || layout.includes('bottom') ? maskScale : 1));
+      const { mw, mh } = maskDims(layout, imageState.baseW, imageState.baseH, maskScale);
 
       if (clickedSide === 'image') {
         const dist1 = getDistToSegment(h.x + offs.ix, h.y + offs.iy);
@@ -777,10 +798,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       let clickedSide: 'image' | 'mask' | undefined = undefined;
       if (offs) {
         const { baseW: bw, baseH: bh } = imageState;
-        const scaleX = layout.includes('left') || layout.includes('right') ? maskScale : 1.0;
-        const scaleY = layout.includes('top') || layout.includes('bottom') ? maskScale : 1.0;
+        const md = maskDims(layout, bw, bh, maskScale);
         const inOriginal = x >= offs.ix && x <= offs.ix + bw && y >= offs.iy && y <= offs.iy + bh;
-        const inMask = x >= offs.mx && x <= offs.mx + bw * scaleX && y >= offs.my && y <= offs.my + bh * scaleY;
+        /* 四周包圍時兩個框是重疊的（遮罩＝整張畫布），所以圖片框優先：
+           點在中間那張圖上就是 image，其餘落在畫布內的都算 mask。 */
+        const inMask = !inOriginal
+          && x >= offs.mx && x <= offs.mx + md.mw && y >= offs.my && y <= offs.my + md.mh;
         if (inOriginal) clickedSide = 'image';
         else if (inMask) clickedSide = 'mask';
       }
@@ -1059,16 +1082,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const sh = baseH * s;
     const sgs = gs * s;
 
-    const scaleX = layout.includes('left') || layout.includes('right') ? maskScale : 1.0;
-    const scaleY = layout.includes('top') || layout.includes('bottom') ? maskScale : 1.0;
-    const maskW = Math.round(sw * scaleX);
-    const maskH = Math.round(sh * scaleY);
+    const mdS = maskDims(layout, sw, sh, maskScale);
+    const maskW = mdS.mw;
+    const maskH = mdS.mh;
 
     const getLayoutOffsetsS = () => {
       if (layout === 'mask-bottom') return { cw: sw, ch: sh + maskH, ix: 0, iy: 0, mx: 0, my: sh };
       if (layout === 'mask-top') return { cw: sw, ch: sh + maskH, ix: 0, iy: maskH, mx: 0, my: 0 };
       if (layout === 'mask-right') return { cw: sw + maskW, ch: sh, ix: 0, iy: 0, mx: sw, my: 0 };
       if (layout === 'mask-left') return { cw: sw + maskW, ch: sh, ix: maskW, iy: 0, mx: 0, my: 0 };
+      if (layout === AROUND) return { cw: maskW, ch: maskH, ix: mdS.padX, iy: mdS.padY, mx: 0, my: 0 };
       return { cw: sw, ch: sh, ix: 0, iy: 0, mx: 0, my: 0 };
     };
 
@@ -1151,10 +1174,31 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       ctx.restore();
     };
 
-    drawImg(imageState.img, imageTransform, offs.ix, offs.iy, sw, sh);
-    // Draw scaled image on the mask side too if it exists
-    drawImg(imageState.img, imageTransform, offs.mx, offs.my, maskW, maskH);
+    /* 四周包圍時「墊在遮罩底下的那張圖」要放大到跟整張畫布一樣大，
+       而且是以畫布中心等比放大 —— 這樣它跟中央那張原圖是同一個構圖，
+       只是被推到了鏡頭外面，從洞裡看出去才會對得起來。 */
+    const drawBackdropAround = () => {
+      const img = imageState.img, t = imageTransform;
+      if (!img || !t) return;
+      const k = maskW / sw;                       // 放大倍率（長寬同一個）
+      const cx = offs.cw / 2, cy = offs.ch / 2;
+      const x0 = offs.ix + t.x * s, y0 = offs.iy + t.y * s;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, offs.cw, offs.ch);
+      ctx.clip();
+      ctx.drawImage(img,
+        cx + (x0 - cx) * k, cy + (y0 - cy) * k,
+        t.w * s * k, t.h * s * k);
+      ctx.restore();
+    };
 
+    const drawCentreImage = () => drawImg(imageState.img, imageTransform, offs.ix, offs.iy, sw, sh);
+    const drawBackdrop = () => (layout === AROUND
+      ? drawBackdropAround()
+      : drawImg(imageState.img, imageTransform, offs.mx, offs.my, maskW, maskH));
+
+    const drawImageSideHoles = () => {
     ctx.save(); ctx.translate(offs.ix, offs.iy);
     const basePat = ctx.createPattern(bCanvas, 'repeat');
     if (basePat) {
@@ -1179,8 +1223,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       });
     }
     ctx.restore();
+    };
 
-    const lmc = isMain ? lowerMaskCanvasRef.current : document.createElement('canvas');
+    // 這一張暫存畫布最後要被回收，所以宣告在外面
+    let lmc: HTMLCanvasElement = isMain ? lowerMaskCanvasRef.current : document.createElement('canvas');
+    const drawMaskLayer = () => {
     lmc.width = maskW; lmc.height = maskH;
     const lmx = get2dWide(lmc)!;
     lmx.drawImage(fCanvas, 0, 0);
@@ -1207,6 +1254,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
     });
     ctx.drawImage(lmc, offs.mx, offs.my);
+    };
+
+    /* 疊法：一般四邊那四種是「圖跟遮罩並排」，誰先誰後都不會蓋到對方；
+       四周包圍是「遮罩鋪滿整張、原圖疊在正中央」，所以順序必須反過來 ——
+       先墊放大的底圖、再蓋上挖好洞的遮罩、最後才把中央那張原圖放上去。 */
+    if (layout === AROUND) {
+      drawBackdrop();
+      drawMaskLayer();
+      drawCentreImage();
+      drawImageSideHoles();
+    } else {
+      drawCentreImage();
+      drawBackdrop();
+      drawImageSideHoles();
+      drawMaskLayer();
+    }
 
     // ctx.beginPath();
     // if (layout.includes('bottom') || layout.includes('top')) { ctx.moveTo(0, sh); ctx.lineTo(sw, sh); }
@@ -1631,7 +1694,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   activeTab === id ? 'text-white border-white' : 'text-[#555] border-transparent'
                 }`}
               >
-                {id === 'setting' ? <Settings2 size={16} className="mx-auto" /> : id === 'shape' ? <Star size={16} className="mx-auto" /> : <Palette size={16} className="mx-auto" />}
+                {id === 'setting' ? <Crop size={16} className="mx-auto" /> : id === 'shape' ? <Star size={16} className="mx-auto" /> : <Palette size={16} className="mx-auto" />}
               </button>
             ))}
           </div>
@@ -1659,7 +1722,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       <span>排版</span>
                     </div>
                     <div className="flex gap-2 bg-[#111] border border-[#222] p-1.5 rounded-[6px] w-fit">
-                      {['mask-bottom', 'mask-top', 'mask-left', 'mask-right'].map(t => (
+                      {['mask-bottom', 'mask-top', 'mask-left', 'mask-right', AROUND].map(t => (
                         <button key={t} onClick={() => setLayout(t)} className="focus:outline-none">
                           <LayoutIcon type={t} active={layout === t} />
                         </button>
@@ -1693,25 +1756,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <CompactSlider 
-                    label="大小" 
-                    value={holeSize} 
-                    min={0} 
-                    max={100} 
-                    onChange={setHoleSize} 
-                  />
-                  <CompactSlider label="數量" value={holeCount} min={0} max={50} onChange={setHoleCount} step={1} />
-                  <CompactSlider label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
-                  <CompactSlider 
-                    label="角度" 
-                    value={displayAngle} 
-                    min={0} 
-                    max={360} 
-                    onChange={handleAngleChange} 
-                    step={1} 
-                  />
-                </div>
               </div>}
               {activeTab === 'shape' && <div className="max-w-md mx-auto flex flex-col justify-start pt-1.5 pb-4 animate-in fade-in duration-300">
                 <div className="grid grid-cols-5 gap-2 mb-3">
@@ -1720,6 +1764,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'flower' ? <span className="text-lg font-bold font-sans leading-none">❋</span> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? <span className="text-lg font-bold font-sans leading-none">{GLYPH_HOLES[s]}</span> : <Type size={18} />}
                     </button>
                   ))}
+                </div>
+                {/* 大小／數量／變化／角度 跟形狀放在同一頁 ——
+                    形狀是「長什麼樣」，這四根是「長多大、有幾個」，本來就是同一件事。 */}
+                <div className="grid grid-cols-2 gap-4 pt-1 pb-1">
+                  <CompactSlider label="大小" value={holeSize} min={0} max={100} onChange={setHoleSize} />
+                  <CompactSlider label="數量" value={holeCount} min={0} max={50} onChange={setHoleCount} step={1} />
+                  <CompactSlider label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
+                  <CompactSlider label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
                 </div>
                 {holeType === 'text' && (
                   <div ref={textInputWrapRef} className="pb-1">
@@ -1800,6 +1852,15 @@ const CompactSlider = ({ label, value, min, max, onChange, step = "any" }: any) 
 
 const LayoutIcon = ({ type, active }: any) => {
   const pos = type.split('-')[1];
+  // 四周包圍：畫成一個「框」，中間留白就是那張原圖
+  if (pos === 'around') {
+    return (
+      <div className={`w-5 h-5 rounded-[2px] border ${active ? 'border-white scale-110 shadow-lg' : 'border-[#333]'} relative overflow-hidden transition-all shrink-0`}>
+        <div className={`absolute inset-0 transition-colors ${active ? 'bg-white' : 'bg-[#333]'}`} />
+        <div className="absolute inset-[4px] bg-[#111] rounded-[1px]" />
+      </div>
+    );
+  }
   return (
     <div className={`w-5 h-5 rounded-[2px] border ${active ? 'border-white scale-110 shadow-lg' : 'border-[#333]'} relative overflow-hidden transition-all shrink-0`}>
       <div className={`absolute transition-colors ${active ? 'bg-white' : 'bg-[#333]'} ${pos === 'top' ? 'top-0 left-0 right-0 h-1/2' : pos === 'bottom' ? 'bottom-0 left-0 right-0 h-1/2' : pos === 'left' ? 'top-0 left-0 bottom-0 w-1/2' : 'top-0 right-0 bottom-0 w-1/2'}`} />
