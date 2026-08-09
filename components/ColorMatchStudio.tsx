@@ -56,7 +56,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<Method>('mkl');
   const [strength, setStrength] = useState(100);
-  const [skin, setSkin] = useState(80);
+  /* 膚色保護預設 90：仿色最容易出事的就是把人臉一起換掉，
+     保護開高一點，膚色留住、其他顏色照樣跟著參考圖走。 */
+  const [skin, setSkin] = useState(90);
   const [finalUrl, setFinalUrl] = useState<string | null>(null);
   /* 成品是 blob 網址：換新的之前先回收，離開時也要回收 */
   const finalUrlRef = useRef<string | null>(null);
@@ -310,8 +312,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
         .custom-range::-moz-range-thumb:active { transform: scale(1.15); }
       `}</style>
       <header className="h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-20">
-        <button onClick={onCancel} className="p-2 -ml-2 text-white/40 hover:text-white transition-colors">
-          <Icon name="close" className="text-2xl" />
+        {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
+        <button onClick={onCancel} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
+          <ChevronLeft size={22} />
         </button>
         <button
           onClick={handleSave}
@@ -385,27 +388,44 @@ export const ColorMatchStudio: React.FC<Props> = ({
         )}
       </div>
 
-      {/* 參考圖：從頭到尾就這一顆按鈕，選過了就把縮圖放進去 */}
-      <div className="px-4 pb-3 shrink-0">
+      {/* 參考圖那一列。
+           還沒選參考圖時就只有「導入參考圖片」一顆，佔滿整列（跟以前一樣）；
+           選過之後右邊讓出位子給「替換原始圖片」—— 導入那顆縮短，
+           空出來的地方剛好放第二顆，兩顆等寬。 */}
+      <div className="px-4 pb-3 shrink-0 flex items-stretch gap-2">
         <button
           onClick={onPickReference}
           data-cm-pickref
-          className="w-full h-14 rounded-2xl border border-white/10 bg-white/[0.04] flex items-center gap-3 px-3 active:scale-[0.99] transition-transform"
+          className={`${referenceSrc ? 'flex-1 min-w-0' : 'w-full'} h-14 rounded-2xl border border-white/10 bg-white/[0.04] flex items-center gap-3 px-3 active:scale-[0.99] transition-transform`}
         >
           <div className="w-10 h-10 rounded-xl overflow-hidden bg-[#1a1a1a] flex items-center justify-center shrink-0">
             {referenceSrc
               ? <img src={referenceSrc} alt="" className="w-full h-full object-cover" />
               : <Icon name="add_photo_alternate" className="text-xl text-white/40" />}
           </div>
-          <span className="flex-1 text-left text-[10px] font-black uppercase tracking-[0.2em] text-white/60">導入參考圖片</span>
-          <Icon name="chevron_right" className="text-xl text-white/30 shrink-0" />
+          <span className="flex-1 min-w-0 text-left text-[10px] font-black uppercase tracking-[0.2em] text-white/60 truncate">導入參考圖片</span>
+          {!referenceSrc && <Icon name="chevron_right" className="text-xl text-white/30 shrink-0" />}
         </button>
+        {referenceSrc && (
+          <button
+            onClick={onImportNew}
+            data-cm-replace-src
+            className="flex-1 min-w-0 h-14 rounded-2xl border border-white/10 bg-white/[0.04] flex items-center gap-3 px-3 active:scale-[0.99] transition-transform"
+          >
+            <div className="w-10 h-10 rounded-xl overflow-hidden bg-[#1a1a1a] flex items-center justify-center shrink-0">
+              <Icon name="swap_horiz" className="text-xl text-white/40" />
+            </div>
+            <span className="flex-1 min-w-0 text-left text-[10px] font-black uppercase tracking-[0.2em] text-white/60 truncate">替換原始圖片</span>
+          </button>
+        )}
       </div>
 
       {/* 滑桿：樣式與佈局比照編輯器。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}
       <div className={`px-8 shrink-0 border-t border-white/5 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
         <div>
-          {([['強度', strength, setStrength], ['膚色保護', skin, setSkin]] as const).map(([label, val, set]) => (
+          {/* 強度可以推到 200（100 以上＝比參考圖再更進一步），預設維持 100；
+              膚色保護維持 0～100。 */}
+          {([['強度', strength, setStrength, 200], ['膚色保護', skin, setSkin, 100]] as const).map(([label, val, set, max]) => (
             <div key={label} className="pt-2">
               <div className="flex justify-between items-center px-1">
                 <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">{label}</span>
@@ -413,7 +433,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
               </div>
               <div className="relative h-10 flex items-center justify-center touch-none">
                 <input
-                  type="range" min={0} max={100} value={val}
+                  type="range" min={0} max={max} value={val}
                   data-cm-slider={label}
                   onChange={(e) => set(Number(e.target.value))}
                   className="custom-range"

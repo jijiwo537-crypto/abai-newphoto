@@ -3,6 +3,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { Icon } from './Icon';
+import { ChevronLeft } from 'lucide-react';
 import { SaveButton } from './SaveButton';
 import {
   Rect, LiquifyMode, LiquifyField,
@@ -936,8 +937,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       {saveState !== 'success' && (
         <header className="h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-20">
           <div className="w-24">
-            <button onClick={onCancel} className="p-2 -ml-2 text-white/40 hover:text-white transition-colors">
-              <Icon name="close" className="text-2xl" />
+            {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
+            <button onClick={onCancel} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
+              <ChevronLeft size={22} />
             </button>
           </div>
           <div className="flex items-center gap-4">
