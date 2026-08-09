@@ -75,6 +75,13 @@ const collageSizeOf = (layout: string, w: number, h: number, maskScale: number) 
   return { w, h };
 };
 
+/** 把 id 轉成一個穩定的數字，用來打散順序（同一顆圖案永遠拿同一格，不會閃） */
+const hashId = (id: string) => {
+  let x = 0;
+  for (let i = 0; i < (id || '').length; i++) x = (x * 31 + id.charCodeAt(i)) >>> 0;
+  return x;
+};
+
 const getHoleNumber = (h: any) => {
   if (h && h.randomNumber !== undefined) return h.randomNumber;
   const hash = h && h.id ? h.id.split('').reduce((acc: number, char: string) => acc + char.charCodeAt(0), 0) : 0;
@@ -383,6 +390,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null); 
   const [colorPickerTarget, setColorPickerTarget] = useState<string | null>(null); 
   const [maskImageState, setMaskImageState] = useState<any>(null);
+  /** 自訂遮罩圖要露出哪一塊（-1 ~ 1，各軸佔「超出邊界那一段」的比例） */
+  const [maskOffset, setMaskOffset] = useState({ x: 0, y: 0 });
+  const maskOffsetRef = useRef({ x: 0, y: 0 });
+  maskOffsetRef.current = maskOffset;
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [maskTransform, setMaskTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [activeTab, setActiveTab] = useState('setting');
@@ -391,7 +402,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [maskColor, setMaskColor] = useState('#FFF2E6'); 
   const [patternType, setPatternType] = useState('none'); 
   const [dotColor, setDotColor] = useState('#737373'); 
-  const [dotSize, setDotSize] = useState(10); 
+  const [dotSize, setDotSize] = useState(20); 
   const [dotGap, setDotGap] = useState(20);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [finalImage, setFinalImage] = useState<string | null>(null);
@@ -625,7 +636,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setHoleType(id);
   };
 
-  const generateRandomHoles = useCallback((isInitial: boolean = false) => {
+  const generateRandomHoles = useCallback((isInitial: boolean = false, layoutOverride?: string) => {
     if (!imageState) return;
     const { baseW, baseH, globalScale: gs } = imageState;
     const mappedHoleSize = 25 + (holeSize / 100) * 125;
@@ -633,8 +644,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const p = s/2 + 25 * gs;
     /* 四周包圍時遮罩是整張畫布，圖案就單純隨機灑在整圈上 ——
        這種排版沒有「左右兩塊要對稱」的概念，所以一律 side: 'mask'。 */
-    const around = layout === AROUND;
-    const md = maskDims(layout, baseW, baseH, maskScale);
+    const lay = layoutOverride || layout;
+    const around = lay === AROUND;
+    const md = maskDims(lay, baseW, baseH, maskScale);
     const fieldW = around ? md.mw : baseW;
     const fieldH = around ? md.mh : baseH;
 
@@ -663,8 +675,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   useEffect(() => { 
     setSelectedTarget(null);
     generateRandomHoles(true); 
-    // layout 也要進來：四周包圍的圖案是灑在整圈遮罩上，座標系跟其他排版不同
-  }, [imageState, holeCount, layout]);
+    /* 這裡刻意「不」放 layout：換排版時是在按鈕裡跟 setLayout 同一批更新
+       一起重灑的，放進來反而會多跑一輪 —— 那多出來的一格畫面就是
+       「新版面配舊座標的圖案」，看起來就是閃一下。 */
+  }, [imageState, holeCount]);
 
   const getLayoutOffsets = useCallback(() => {
     if (!imageState) return null;
@@ -935,6 +949,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         } else {
           setSelectedTarget(null);
         }
+      } else if (maskImageState && maskImageState.img && clickedSide === 'mask' && brushMode === 'off') {
+        /* 沒抓到任何圖案、又點在遮罩上、又有自訂遮罩圖 →
+           拖曳決定那張圖要露出哪一塊（原本一律截中間，看不到的永遠看不到）。 */
+        e.stopPropagation();
+        setSelectedTarget(null);
+        maskDragRef.current = { sx: e.clientX, sy: e.clientY, ox: maskOffsetRef.current.x, oy: maskOffsetRef.current.y };
       }
     } else if (activePointers.current.size === 2 && selectedTarget) {
       e.stopPropagation();
@@ -978,6 +998,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const viewTRef = useRef(viewT);
   viewTRef.current = viewT;
   const viewPinchRef = useRef<{ d0: number; k0: number; cx: number; cy: number } | null>(null);
+  /** 正在拖曳自訂遮罩（決定露出哪一塊） */
+  const maskDragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
   /* 預覽畫布要畫多細。
      工作解析度只有 1080（為了拖曳順），螢幕上又是 CSS transform 放大 ——
      放到 6 倍等於把 1080 拉成 6480，當然糊。
@@ -1058,6 +1080,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState?.globalScale || 1;
     // 雙指縮放預覽時完全不碰筆刷與拖曳
+    // 拖曳自訂遮罩：決定那張圖要露出哪一塊
+    if (maskDragRef.current && activePointers.current.size === 1) {
+      e.stopPropagation();
+      const d = maskDragRef.current;
+      const el = canvasRef.current!;
+      const rr = el.getBoundingClientRect();
+      // 位移換算成「超出邊界那一段」的比例：拖到底剛好貼齊，不會露白
+      const md2 = maskDims(layout, imageState.baseW, imageState.baseH, maskScale);
+      const mi = maskImageState.img;
+      const cover = Math.max(md2.mw / mi.width, md2.mh / mi.height);
+      const slackX = Math.max(1, (mi.width * cover - md2.mw) / 2);
+      const slackY = Math.max(1, (mi.height * cover - md2.mh) / 2);
+      const pxPerUnit = rr.width / Math.max(1, md2.mw);
+      const nx = d.ox + (e.clientX - d.sx) / (slackX * pxPerUnit);
+      const ny = d.oy + (e.clientY - d.sy) / (slackY * pxPerUnit);
+      setMaskOffset({ x: Math.max(-1, Math.min(1, nx)), y: Math.max(-1, Math.min(1, ny)) });
+      return;
+    }
     if (viewPinchRef.current && activePointers.current.size >= 2) {
       e.stopPropagation();
       const pts: any[] = Array.from(activePointers.current.values());
@@ -1150,6 +1190,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    maskDragRef.current = null;
     try {
       const target = e.target as HTMLElement;
       if (target && target.hasPointerCapture(e.pointerId)) {
@@ -1221,8 +1262,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const scale = Math.max(maskW / mImg.width, maskH / mImg.height);
       const drawW = mImg.width * scale;
       const drawH = mImg.height * scale;
-      const drawX = (maskW - drawW) / 2;
-      const drawY = (maskH - drawH) / 2;
+      /* 原本一律置中截取，看不到的那一半就永遠看不到。
+         maskOffset 是使用者拖出來的位移（-1 ~ 1，佔「超出去的那一段」的比例），
+         所以拖到底剛好就是貼齊邊界，不會拖出空白。 */
+      const slackX = Math.max(0, drawW - maskW) / 2;
+      const slackY = Math.max(0, drawH - maskH) / 2;
+      const drawX = (maskW - drawW) / 2 + maskOffsetRef.current.x * slackX;
+      const drawY = (maskH - drawH) / 2 + maskOffsetRef.current.y * slackY;
       bCtx.drawImage(mImg, drawX, drawY, drawW, drawH);
     }
 
@@ -1372,25 +1418,41 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const drawHolesOverImage = () => {
       const pat = ctx.createPattern(bCanvas, 'repeat');
       if (!pat) return;
+      const list = holes.filter(h => { const sd = h.side || 'both'; return sd === 'both' || sd === 'mask'; });
+      /* 有自訂遮罩圖的時候，每一個圖案各自去遮罩上「取一塊不一樣的」——
+         把遮罩切成 g×g 格，圖案依序認養一格（順序用 id 打散，
+         所以同一顆圖案每次重畫都拿同一格，不會閃）。格子互不重複，
+         所以圖案之間盡可能不會取到同一塊。
+         沒有自訂遮罩（純色）時就沒有取哪一塊的問題，維持原本的貼齊。 */
+      const useTiles = !!(maskImageState && maskImageState.img) && list.length > 0;
+      const g = Math.max(1, Math.ceil(Math.sqrt(list.length)));
+      const cellW = maskW / g, cellH = maskH / g;
+      const order = list.map((h, i) => ({ h, i }))
+        .sort((a, bb) => (hashId(a.h.id) - hashId(bb.h.id)));
+
       ctx.save();
       ctx.beginPath(); ctx.rect(offs.ix, offs.iy, sw, sh); ctx.clip();
       ctx.translate(offs.mx, offs.my);      // 洞的座標是遮罩座標系
       ctx.fillStyle = pat;
-      holes.forEach(h => {
-        const side = h.side || 'both';
-        if (side !== 'both' && side !== 'mask') return;
+      order.forEach(({ h }, slot) => {
         const sz = getHoleSize(h) * s;
         const currentAngle = h.angle !== undefined ? h.angle : holeAngle;
+        const hx = h.x * s, hy = h.y * s;
+        // 這個圖案要取遮罩上的哪一格（中心點）
+        const cx = useTiles ? ((slot % g) + 0.5) * cellW : hx;
+        const cy = useTiles ? (Math.floor(slot / g) + 0.5) * cellH : hy;
+        ctx.save();
+        // 把那一格搬到圖案所在的位置：圖案畫在 (cx, cy)，整個座標系再位移過去
+        ctx.translate(hx - cx, hy - cy);
         if (isTextHole(holeType)) {
-          drawTextShape(ctx, holeType, holeGlyph(holeType, customText, h), h.x * s, h.y * s, sz, pat, false, currentAngle);
+          drawTextShape(ctx, holeType, holeGlyph(holeType, customText, h), cx, cy, sz, pat, false, currentAngle);
         } else {
-          ctx.save();
-          ctx.translate(h.x * s, h.y * s);
+          ctx.translate(cx, cy);
           ctx.rotate(currentAngle * Math.PI / 180);
           drawShapePath(ctx, holeType, 0, 0, sz);
           ctx.fill();
-          ctx.restore();
         }
+        ctx.restore();
       });
       ctx.restore();
     };
@@ -1660,6 +1722,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         {imageState && (
           <div className="flex items-center gap-2 md:gap-3">
             {/* 對稱鎖定工具 */}
+            {/* 四周包圍是一整片場、沒有「左右兩塊要對稱」的概念，
+                所以那個排版下這顆對稱鍵先收起來，免得按了不知道在做什麼 */}
+            {layout !== AROUND && (
             <button 
               onClick={(e) => {
                 e.stopPropagation();
@@ -1719,6 +1784,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             >
               {symmetryEnabled ? <Link size={18} /> : <Link2Off size={18} />}
             </button>
+            )}
 
             {/* 畫筆/橡皮擦工具 */}
             <button 
@@ -1871,7 +1937,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     </div>
                     <div className="flex gap-2 bg-[#111] border border-[#222] p-1.5 rounded-[6px] w-fit">
                       {['mask-bottom', 'mask-top', 'mask-left', 'mask-right', AROUND].map(t => (
-                        <button key={t} onClick={() => { setLayout(t); if (t === AROUND) setMaskScale(AROUND_SCALE); }} className="focus:outline-none">
+                        <button key={t} onClick={() => {
+                          // 排版、比例、圖案在同一批更新裡一起換，中間不會露出半舊半新的那一格
+                          setLayout(t);
+                          if (t === AROUND) setMaskScale(AROUND_SCALE);
+                          setSelectedTarget(null);
+                          generateRandomHoles(true, t);
+                        }} className="focus:outline-none">
                           <LayoutIcon type={t} active={layout === t} />
                         </button>
                       ))}
@@ -1912,7 +1984,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <span className="text-[10px] font-bold text-[#888] shrink-0">自訂遮罩</span>
                     <div className="flex gap-1.5 overflow-hidden">
                       {maskImageState && (
-                        <button onClick={(e) => { e.stopPropagation(); setMaskImageState(null); }} className="flex items-center justify-center p-1.5 text-[10px] bg-[#222] text-white font-bold rounded-[4px] border border-[#333] hover:bg-[#333] transition-all" title="還原素色">
+                        <button onClick={(e) => { e.stopPropagation(); setMaskImageState(null); setMaskOffset({ x: 0, y: 0 }); }} className="flex items-center justify-center p-1.5 text-[10px] bg-[#222] text-white font-bold rounded-[4px] border border-[#333] hover:bg-[#333] transition-all" title="還原素色">
                           <RotateCcw size={12} />
                         </button>
                       )}
