@@ -8,6 +8,7 @@ import {
   sampleRgb, bakeFor, applyLut, Lut3D,
 } from '../utils/colorTransfer';
 import { LutRenderer } from '../utils/lutGl';
+import { buildProtectMapsFrom, packProtectMaps, ProtectMaps } from '../utils/protectMask';
 
 interface Props {
   /** 要調色的照片 */
@@ -76,6 +77,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
   /* GPU 版：圖片與三顆 LUT 各上傳一次，之後換做法＝換綁貼圖、動滑桿＝改 uniform，
      每次更新就只有一個 draw call。沒有 WebGL2 就退回 CPU 版。 */
   const glRef = useRef<LutRenderer | null>(null);
+  /* 防斷層的保護遮罩：一張圖算一次就好。
+     它跟膚色保護滑桿無關 —— 補洞（閉運算）和羽化（導引濾波）都是正齊次的，
+     滑桿的倍率留到最後再乘，結果完全一樣，所以拉滑桿不用重算。 */
+  const maskRef = useRef<ProtectMaps | null>(null);
   const glReadyRef = useRef(false);
   /** 用 state 是為了讓備援畫布真的被藏起來（ref 改了不會重繪） */
   const [glReady, setGlReady] = useState(false);
@@ -166,7 +171,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     return () => { gl?.canvas.remove(); gl?.dispose(); glRef.current = null; };
   }, []);
 
-  useEffect(() => { loadImage(imageSrc).then(setSrcImg).catch(() => {}); }, [imageSrc]);
+  useEffect(() => { maskRef.current = null; loadImage(imageSrc).then(setSrcImg).catch(() => {}); }, [imageSrc]);
   useEffect(() => {
     if (!referenceSrc) { setRefImg(null); return; }
     loadImage(referenceSrc).then(setRefImg).catch(() => {});
@@ -179,6 +184,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
     setBusy(true);
     const t = window.setTimeout(() => {
       try {
+        maskRef.current = buildProtectMapsFrom(
+          srcImg, srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height,
+        );
         const sStat = sampleRgb(toImageData(srcImg, STAT_MAX).data, 50000);
         const rStat = sampleRgb(toImageData(refImg, STAT_MAX).data, 50000);
         const out: Record<string, Lut3D> = {};
@@ -203,6 +211,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (!gl || !preview || !luts) return;
     try {
       gl.setImage(preview as unknown as TexImageSource, preview.width, preview.height);
+      const pm = maskRef.current;
+      if (pm) gl.setProtectMap(packProtectMaps(pm), pm.w, pm.h); else gl.clearProtectMap();
       for (const m of METHODS) gl.setLut(m, luts[m]);
       glReadyRef.current = true;
     } catch { glReadyRef.current = false; }
@@ -227,7 +237,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const lut = luts?.[picked];
     if (!lut) { processedRef.current = null; ctx.putImageData(preview, 0, 0); return; }
     const copy = new ImageData(new Uint8ClampedArray(preview.data), preview.width, preview.height);
-    applyLut(copy.data, lut, { strength: st, skinProtect: skin / 100, preserveLuminance: true });
+    applyLut(copy.data, lut, {
+      strength: st, skinProtect: skin / 100, preserveLuminance: true,
+      protect: maskRef.current, width: preview.width,
+    });
     processedRef.current = copy;
     ctx.putImageData(copy, 0, 0);
   }, [preview, luts, picked, strength, skin]);
@@ -255,7 +268,11 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (!srcImg || !luts) return;
     const w = srcImg.naturalWidth || srcImg.width, h = srcImg.naturalHeight || srcImg.height;
     // GPU 一次畫完，全解析度也是瞬間 —— 按下去就直接進導出畫面，不用等
-    const gpu = LutRenderer.renderOnce(srcImg, w, h, luts[picked], strength / 100, skin / 100);
+    const pm = maskRef.current;
+    const gpu = LutRenderer.renderOnce(
+      srcImg, w, h, luts[picked], strength / 100, skin / 100,
+      pm ? { rgba: packProtectMaps(pm), w: pm.w, h: pm.h } : null,
+    );
     if (gpu) { canvasToUrl(gpu).then(putFinal); return; }   // 一樣無損，只是用 blob 網址
     // 沒有 WebGL2（或圖太大塞不進貼圖）才退回 CPU
     setSaving(true);
@@ -266,7 +283,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
         const x = c.getContext('2d', { willReadFrequently: true })!;
         x.drawImage(srcImg, 0, 0);
         const d = x.getImageData(0, 0, w, h);
-        applyLut(d.data, luts[picked], { strength: strength / 100, skinProtect: skin / 100, preserveLuminance: true });
+        applyLut(d.data, luts[picked], {
+          strength: strength / 100, skinProtect: skin / 100, preserveLuminance: true,
+          protect: maskRef.current, width: w,
+        });
         x.putImageData(d, 0, 0);
         canvasToUrl(c).then(putFinal);
       } finally { setSaving(false); }
@@ -412,8 +432,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
             data-cm-replace-src
             className="flex-1 min-w-0 h-14 rounded-2xl border border-white/10 bg-white/[0.04] flex items-center gap-3 px-3 active:scale-[0.99] transition-transform"
           >
+            {/* 方塊裡放的是「現在正在調色的那張原圖」，跟左邊那顆放參考圖是同一個道理 ——
+                一眼就看得出來這顆是換哪一張。 */}
             <div className="w-10 h-10 rounded-xl overflow-hidden bg-[#1a1a1a] flex items-center justify-center shrink-0">
-              <Icon name="swap_horiz" className="text-xl text-white/40" />
+              <img src={imageSrc} alt="" className="w-full h-full object-cover" />
             </div>
             <span className="flex-1 min-w-0 text-left text-[10px] font-black uppercase tracking-[0.2em] text-white/60 truncate">替換原始圖片</span>
           </button>
