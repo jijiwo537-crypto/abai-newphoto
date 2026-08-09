@@ -929,6 +929,397 @@ export const TextEditorPanel: React.FC<{
   );
 };
 
+/**
+ * 圖片調整面板。
+ *
+ * 這一段原本寫死在 GridLayoutTool 裡面，創意拼圖要用同一套介面就只能複製一份，
+ * 兩邊遲早會走鐘。所以整段原封不動搬出來變成共用元件 ——
+ * **裡面一行邏輯都沒有改**，經典拼圖只是改成把原本的區域變數當 props 傳進來。
+ *
+ * 為什麼 props 這麼多：那些 UI 狀態（現在停在哪個子分頁、選了哪張特效卡…）
+ * 本來就住在各自的工具裡，留在外面才不會影響經典拼圖現有的行為。
+ */
+export type ImageAdjustPanelProps = {
+  img: any;
+  set: (patch: any) => void;
+  lutList: { id: string; name: string; url: string }[];
+  loadingLut: string | null;
+  setLoadingLut: (v: any) => void;
+  lutRevision: number;
+  setLutRevision: (v: any) => void;
+  adjustSub: 'shape' | 'tune' | 'filter' | 'effect';
+  setAdjustSub: (v: any) => void;
+  effectCard: string | null;
+  setEffectCard: (v: any) => void;
+  effectDetail: boolean;
+  setEffectDetail: (v: any) => void;
+  shapeMenu: string;
+  setShapeMenu: (v: any) => void;
+  shapeTool: string;
+  setShapeTool: (v: any) => void;
+  tuneTool: string;
+  setTuneTool: (v: any) => void;
+  setTuningEdge: (v: any) => void;
+  openComposeFor: (id: string) => void;
+  /** 佈局裡的格子沒有「形狀」那一組，傳 true 就把它藏起來 */
+  hideShape?: boolean;
+};
+
+export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
+  img, set, lutList, loadingLut, setLoadingLut, lutRevision, setLutRevision,
+  adjustSub, setAdjustSub, effectCard, setEffectCard, effectDetail, setEffectDetail,
+  shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
+  setTuningEdge, openComposeFor, hideShape,
+}) => {
+const fx = img.fx || {};
+const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
+const fxVal = (key: string, dflt: number) => (fx as any)[key] ?? dflt;
+
+/* 點特效卡片＝只留這一顆（其他整組歸零）；
+   長按＝疊在現在這些上面，好幾個同時生效（再長按一次就關掉那一顆）。 */
+const pickEffect = (id: string) => {
+  if (FX_DETAIL[id]) warmFx(id);      // 先把著色器編好，第一次拖才不會卡
+  setEffectCard(id);
+  setEffectDetail(false);
+  const amountId = fxAmountId(id);
+  const on = fxVal(amountId, 0) !== 0;
+  const keep = new Set(FX_OWN_KEYS[id] || [id]);
+  const patch: any = {};
+  for (const k of FX_ALL_AMOUNTS) if (!keep.has(k)) patch[k] = 0;
+  if (!on) patch[amountId] = FX_ON_AMOUNT[id] ?? 100;
+  setFx(patch);
+};
+
+/* 長按 450ms＝疊加，並把接著那一次 click 吃掉 */
+
+/* 佈局裡的格子沒有「形狀」——羽化／發光／描邊都會長到格子外面，
+   而格子是被裁切的，畫出來會被切掉；圓角則已經有佈局那根共用滑桿。 */
+const CATS = ([
+  ['filter', 'palette', '濾鏡'],
+  ['tune', 'tune', '調節'],
+  ['effect', 'magic_button', '特效'],
+  ['shape', 'shapes', '形狀'],
+  ['compose', 'crop_rotate', '構圖'],
+] as const).filter(c => !(hideShape && c[0] === 'shape'));
+
+// 編輯同款的圓形工具鈕
+const toolBtn = (id: string, label: string, icon: string, active: boolean, adjusted: boolean, onClick: () => void) => (
+  <button key={id} onClick={onClick} className="flex flex-col items-center gap-1 shrink-0 group w-16">
+    <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}>
+      <Icon name={icon} className="text-lg" fill={active} />
+    </div>
+    <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${active ? 'text-white' : 'text-white/20'}`}>{label}</span>
+    <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${adjusted ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
+  </button>
+);
+
+// 編輯同款的滑桿（label 在左、數字在右、track 一樣是 custom-range）
+// 上面那一行（名稱＋數值）往下挪一點，不要貼著上面的細線。
+// hideChrome：拖這根滑桿的期間把圖片的選取框整組收起來（形狀分頁用）
+const editorSlider = (
+  label: string, value: number, min: number, max: number,
+  onVal: (v: number) => void,
+  swatches?: React.ReactNode,
+  hideChrome = false,
+) => (
+  <div className="w-full pt-1.5">
+    <div className="flex items-center justify-between gap-2 mb-0.5">
+      <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] pointer-events-none shrink-0">{label}</span>
+      {swatches}
+      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0">{value}</span>
+    </div>
+    <div className="relative h-11 flex items-center justify-center touch-none">
+      <input
+        type="range" min={min} max={max} step="1" value={value}
+        onChange={e => onVal(parseInt(e.target.value))}
+        onPointerDown={hideChrome ? () => setTuningEdge(true) : undefined}
+        onPointerUp={hideChrome ? () => setTuningEdge(false) : undefined}
+        onPointerCancel={hideChrome ? () => setTuningEdge(false) : undefined}
+        onLostPointerCapture={hideChrome ? () => setTuningEdge(false) : undefined}
+        className="custom-range"
+      />
+    </div>
+  </div>
+);
+
+// 色票：第一顆固定是自訂顏色（開系統調色盤），後面才是預設色
+const swatchStrip = (
+  value: string | undefined, colors: string[], onPick: (c: string) => void, big = false,
+) => (
+  <div className={`flex items-center overflow-x-auto no-scrollbar min-w-0 px-0.5 py-0.5 ${big ? 'gap-2 w-full' : 'gap-1.5'}`}>
+    <CustomColorButton value={value || '#FFFFFF'} onPick={onPick} size={big ? 32 : 24} />
+    {colors.map(c => (
+      <button
+        key={c}
+        onClick={() => onPick(c)}
+        title={c}
+        className={`shrink-0 rounded-[7px] transition-all active:scale-90 ${big ? 'w-8 h-8' : 'w-6 h-6'} ${
+          (value || '#FFFFFF').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
+        }`}
+        style={{ backgroundColor: c }}
+      />
+    ))}
+  </div>
+);
+
+/* 特效細項的排法跟「編輯」一致：剛好兩根上下各一行；
+   奇數根時「強度」自己站一行，其餘兩兩一排。 */
+const fxDetailOpen = adjustSub === 'effect' && effectDetail && !!effectCard;
+const fxRows = (() => {
+  const tools = (FX_DETAIL[effectCard] || (FX_SUB_TOOLS[effectCard] || []).map(
+    ([k, l, , mn, mx, d]) => [k, l, mn, mx, d] as [string, string, number, number, number]));
+  if (!tools.length) return [] as [string, string, number, number, number][][];
+  if (tools.length === 2) return [[tools[0]], [tools[1]]];
+  const out: [string, string, number, number, number][][] = [];
+  const solo = tools.length % 2 === 1;
+  if (solo) out.push([tools[0]]);
+  const rest = tools.slice(solo ? 1 : 0);
+  for (let i = 0; i < rest.length; i += 2) out.push(rest.slice(i, i + 2));
+  return out;
+})();
+const fxRowH = fxRows.length ? Math.min(52, Math.floor(172 / fxRows.length)) : 52;
+
+// 目前這一段要放什麼
+const sliderArea = (() => {
+  if (adjustSub === 'filter') {
+    if (!fx.lut || fx.lut === 'none') return null;
+    return editorSlider('強度', fx.lutAmount ?? 100, 0, 100, v => setFx({ lutAmount: v }));
+  }
+  if (adjustSub === 'tune') {
+    const t = TUNE_TOOLS.find(x => x[0] === tuneTool) || TUNE_TOOLS[0];
+    return editorSlider(t[1], fxVal(t[0], t[5]), t[3], t[4], v => setFx({ [t[0]]: v }));
+  }
+  if (adjustSub === 'effect') {
+    // 細項是另外一整區（並排滑桿），不走這一根
+    if (effectDetail) return null;
+    if (!effectCard) return null;
+    // 最外層一律只有一根「強度」，跟編輯一樣
+    const amountId = fxAmountId(effectCard);
+    return editorSlider('強度', fxVal(amountId, 0), 0, 100, v => setFx({ [amountId]: v }));
+  }
+  if (adjustSub === 'shape') {
+    const sub = SHAPE_SUB_TOOLS[shapeMenu];
+    const subTool = sub?.find(t => t[0] === shapeTool);
+    if (subTool) {
+      // 描邊色跟發光色用同一組色票
+      if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, GLOW_COLORS, c => set({ imgStrokeColor: c }), true);
+      if (subTool[0] === 'imgGlowColor') return swatchStrip(img.imgGlowColor, GLOW_COLORS, c => set({ imgGlowColor: c }), true);
+      const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow';
+      // 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來
+      return editorSlider(
+        subTool[1], (img[k] as number) || 0, subTool[3], subTool[4],
+        v => set({ [k]: v }), undefined, true,
+      );
+    }
+    const t = SHAPE_TOOLS.find(x => x[0] === shapeTool);
+    if (t && (t[0] === 'imgRadius' || t[0] === 'feather')) {
+      const key = t[0] as 'imgRadius' | 'feather';
+      return editorSlider(
+        t[1], (img[key] as number) || 0, t[3], t[4],
+        v => set({ [key]: v }), undefined, true,
+      );
+    }
+    return null;
+  }
+  return null;
+})();
+
+return (
+  <div className="h-full flex flex-col justify-end">
+    {/* 1. 滑桿（跟編輯一樣的 5rem、px-8、底下一條細線）。
+           特效細項時把下面工具列那 6rem 借過來（它同時收成 0），
+           兩段加起來還是 5rem + 6rem —— 預覽圖的大小完全不變。 */}
+    <div
+      className={`flex flex-col justify-center shrink-0 overflow-hidden bg-[#111] ${fxDetailOpen ? 'px-4' : 'px-8'}`}
+      style={{ height: fxDetailOpen ? '11rem' : '5rem', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+    >
+      {fxDetailOpen ? (
+        <div className="w-full h-full flex items-center gap-3">
+          <button
+            onClick={() => setEffectDetail(false)}
+            aria-label="返回特效"
+            className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-colors text-white"
+          >
+            <Icon name="arrow_back" className="text-xl" />
+          </button>
+          <div className="flex-1 min-w-0 flex flex-col justify-center">
+            {fxRows.map((row, ri) => (
+              <div key={ri} className="flex items-center gap-4" style={{ height: fxRowH }}>
+                {row.map(([key, label, mn, mx, dflt]) => (
+                  <div key={key} className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-1 mb-0.5">
+                      <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.12em] truncate pointer-events-none">{label}</span>
+                      <span className="text-[10px] leading-none font-sans tabular-nums font-bold bg-white/10 px-1.5 py-[4px] rounded shrink-0">{Math.round(fxVal(key, dflt))}</span>
+                    </div>
+                    <div className="relative h-[26px] flex items-center justify-center touch-none">
+                      <input
+                        type="range" min={mn} max={mx} step="1"
+                        value={fxVal(key, dflt)}
+                        onChange={e => setFx({ [key]: parseInt(e.target.value) })}
+                        className="custom-range dense"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : sliderArea}
+    </div>
+
+    {/* 2. 工具列（6rem、px-4、gap-2、深一階的底色） */}
+    <div className="flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808] shrink-0"
+         style={{ height: fxDetailOpen ? '0px' : '6rem', opacity: fxDetailOpen ? 0 : 1 }}>
+      {/* 濾鏡卡片：外觀跟「編輯」完全一樣 —— 縮圖是這張照片套上這顆濾鏡的樣子，
+          名稱壓在下緣，選中的那顆是內描邊的白框（不佔版面、不會位移）。 */}
+      {adjustSub === 'filter' && lutList.map((l, li) => {
+        const active = (fx.lut || 'none') === l.id;
+        return (
+          <button
+            key={l.id}
+            data-lut-card={l.id}
+            onClick={async () => {
+              if (active) return;
+              if (l.url) { setLoadingLut(l.id); await loadLut(l.id, l.url); setLoadingLut(null); }
+              setFx({ lut: l.id });
+              setLutRevision(n => n + 1);
+            }}
+            className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
+          >
+            <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
+              <div className="absolute inset-0 bg-[#1a1a1a]" />
+              <CardThumb src={img.src} delay={li * 24}
+                         cacheKey={`${img.src}|lut:${l.id}|${lutRevision}`}
+                         fx={{ lut: l.id, lutAmount: 100 }} />
+              {loadingLut === l.id && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                </div>
+              )}
+              <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
+                <span className={`text-[8px] font-black uppercase tracking-widest leading-none ${active ? 'text-white' : 'text-white/60'}`}>
+                  {l.url ? l.name : '原始'}
+                </span>
+              </div>
+              {active && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
+            </div>
+          </button>
+        );
+      })}
+
+      {adjustSub === 'tune' && TUNE_TOOLS.map(([id, label, icon, , , dflt]) =>
+        toolBtn(id, label, icon, tuneTool === id, fxVal(id, dflt) !== dflt, () => setTuneTool(id))
+      )}
+
+      {/* 特效卡片：跟「編輯」同一份清單、同一種卡片外觀。
+          縮圖是這個特效的預設效果，選中的那顆右上角會多一顆編輯鍵（有細項才有）。 */}
+      {adjustSub === 'effect' && FX_ROOT_TOOLS.map(([id, label], fi) => {
+        const amountId = fxAmountId(id);
+        const on = fxVal(amountId, 0) !== 0;
+        const detail = FX_DETAIL[id] || FX_SUB_TOOLS[id];
+        const hasDetail = !!detail && detail.length > 1;
+        return (
+          <button
+            key={id}
+            data-fx-card={id}
+            onClick={() => pickEffect(id)}
+            className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
+          >
+            <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
+              <div className="absolute inset-0 bg-[#1a1a1a]" />
+              <CardThumb src={img.src} delay={fi * 24}
+                         cacheKey={`${img.src}|fx:${id}`}
+                         fx={{ [fxAmountId(id)]: FX_ON_AMOUNT[id] ?? 100 } as PhotoFx} />
+              <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
+                <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${on ? 'text-white' : 'text-white/60'}`}>
+                  {label}
+                </span>
+              </div>
+              {/* 白框＝這個特效正在生效；只是選到但沒開的不畫 */}
+              {on && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
+              {on && hasDetail && (
+                // 卡片本身就是一顆 button，裡面不能再放 button，所以用 span
+                <span
+                  role="button"
+                  aria-label="調整細項"
+                  onClick={e => { e.stopPropagation(); setEffectDetail(true); }}
+                  onPointerDown={e => e.stopPropagation()}
+                  style={{ position: 'absolute', top: 3, right: 3, width: 22, height: 22 }}
+                  className="rounded-full flex items-center justify-center bg-black/55 border border-white/25 text-white active:scale-90 transition-transform"
+                >
+                  <Icon name="tune" className="text-[13px]" />
+                </span>
+              )}
+            </div>
+          </button>
+        );
+      })}
+
+      {adjustSub === 'shape' && (shapeMenu === 'root'
+        ? SHAPE_TOOLS.map(([id, label, icon, , , dflt]) => {
+            const isSub = !!SHAPE_SUB_TOOLS[id];
+            // 只看粗細／強度，顏色不算：值是 0 的時候畫面上根本沒有效果，
+            // 按鈕下方就不該有白點
+            const adjusted = isSub
+              ? SHAPE_SUB_TOOLS[id].some(([k, , , , , d]) =>
+                  !k.endsWith('Color') && (((img as any)[k]) || 0) !== d)
+              : (((img as any)[id]) || 0) !== dflt;
+            return toolBtn(id, label, icon, shapeTool === id, adjusted, () => {
+              if (isSub) {
+                setShapeMenu(id as any);
+                setShapeTool(SHAPE_SUB_TOOLS[id][0][0]);
+              } else {
+                setShapeTool(id);
+              }
+            });
+          })
+        : (
+          <div className="flex items-center gap-4 animate-in slide-in-from-right duration-300">
+            <button
+              onClick={() => { setShapeMenu('root'); setShapeTool(SHAPE_TOOLS[0][0]); }}
+              className="flex flex-col items-center justify-center gap-2 shrink-0 group w-12"
+            >
+              <div className="w-10 h-10 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-all text-white">
+                <Icon name="arrow_back" className="text-xl" />
+              </div>
+            </button>
+            <div className="w-[1px] h-8 bg-white/10 mx-2" />
+            {SHAPE_SUB_TOOLS[shapeMenu].map(([id, label, icon, , , dflt]) => {
+              const cur = (img as any)[id];
+              const adjusted = id.endsWith('Color')
+                ? !!cur && cur.toUpperCase() !== '#FFFFFF'
+                : (cur || 0) !== dflt;
+              return toolBtn(id, label, icon, shapeTool === id, adjusted, () => setShapeTool(id));
+            })}
+          </div>
+        ))}
+    </div>
+
+    {/* 3. 分類列：跟編輯一樣的 h-16、上方細線、黑底、底部安全區空隙 */}
+    <div className="flex h-16 border-t border-white/10 bg-black pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content shrink-0">
+      {CATS.map(([id, icon, label]) => (
+        <button
+          key={id}
+          onClick={() => {
+            if (id === 'compose') { openComposeFor(img.id); return; }
+            setAdjustSub(id as any);
+            // 跟編輯一樣：切分類就把該分類的第一個工具選起來
+            if (id === 'tune') setTuneTool(TUNE_TOOLS[0][0]);
+            if (id === 'shape') { setShapeMenu('root'); setShapeTool(SHAPE_TOOLS[0][0]); }
+            if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
+          }}
+          className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${adjustSub === id ? 'text-white' : 'text-white/20'}`}
+        >
+          <Icon name={icon} className="text-xl" fill={adjustSub === id} />
+          <span className="text-[9px] font-black uppercase tracking-[0.2em]">{label}</span>
+        </button>
+      ))}
+    </div>
+  </div>
+);
+};
+
 const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onClose }) => {
   const [hsv, setHsv] = useState(() => hexToHsv(color));
   const [hexInput, setHexInput] = useState(color);
@@ -10215,352 +10606,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 }
                 setFloatingImages(prev => prev.map(f => (f.id === img.id ? { ...f, ...patch } : f)));
               };
-              const fx = img.fx || {};
-              const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
-              const fxVal = (key: string, dflt: number) => (fx as any)[key] ?? dflt;
-
-              /* 點特效卡片＝只留這一顆（其他整組歸零）；
-                 長按＝疊在現在這些上面，好幾個同時生效（再長按一次就關掉那一顆）。 */
-              const pickEffect = (id: string) => {
-                if (FX_DETAIL[id]) warmFx(id);      // 先把著色器編好，第一次拖才不會卡
-                setEffectCard(id);
-                setEffectDetail(false);
-                const amountId = fxAmountId(id);
-                const on = fxVal(amountId, 0) !== 0;
-                const keep = new Set(FX_OWN_KEYS[id] || [id]);
-                const patch: any = {};
-                for (const k of FX_ALL_AMOUNTS) if (!keep.has(k)) patch[k] = 0;
-                if (!on) patch[amountId] = FX_ON_AMOUNT[id] ?? 100;
-                setFx(patch);
-              };
-
-              /* 長按 450ms＝疊加，並把接著那一次 click 吃掉 */
-
-              /* 佈局裡的格子沒有「形狀」——羽化／發光／描邊都會長到格子外面，
-                 而格子是被裁切的，畫出來會被切掉；圓角則已經有佈局那根共用滑桿。 */
-              const CATS = ([
-                ['filter', 'palette', '濾鏡'],
-                ['tune', 'tune', '調節'],
-                ['effect', 'magic_button', '特效'],
-                ['shape', 'shapes', '形狀'],
-                ['compose', 'crop_rotate', '構圖'],
-              ] as const).filter(c => !(selCell && c[0] === 'shape'));
-
-              // 編輯同款的圓形工具鈕
-              const toolBtn = (id: string, label: string, icon: string, active: boolean, adjusted: boolean, onClick: () => void) => (
-                <button key={id} onClick={onClick} className="flex flex-col items-center gap-1 shrink-0 group w-16">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}>
-                    <Icon name={icon} className="text-lg" fill={active} />
-                  </div>
-                  <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${active ? 'text-white' : 'text-white/20'}`}>{label}</span>
-                  <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${adjusted ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
-                </button>
-              );
-
-              // 編輯同款的滑桿（label 在左、數字在右、track 一樣是 custom-range）
-              // 上面那一行（名稱＋數值）往下挪一點，不要貼著上面的細線。
-              // hideChrome：拖這根滑桿的期間把圖片的選取框整組收起來（形狀分頁用）
-              const editorSlider = (
-                label: string, value: number, min: number, max: number,
-                onVal: (v: number) => void,
-                swatches?: React.ReactNode,
-                hideChrome = false,
-              ) => (
-                <div className="w-full pt-1.5">
-                  <div className="flex items-center justify-between gap-2 mb-0.5">
-                    <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] pointer-events-none shrink-0">{label}</span>
-                    {swatches}
-                    <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0">{value}</span>
-                  </div>
-                  <div className="relative h-11 flex items-center justify-center touch-none">
-                    <input
-                      type="range" min={min} max={max} step="1" value={value}
-                      onChange={e => onVal(parseInt(e.target.value))}
-                      onPointerDown={hideChrome ? () => setTuningEdge(true) : undefined}
-                      onPointerUp={hideChrome ? () => setTuningEdge(false) : undefined}
-                      onPointerCancel={hideChrome ? () => setTuningEdge(false) : undefined}
-                      onLostPointerCapture={hideChrome ? () => setTuningEdge(false) : undefined}
-                      className="custom-range"
-                    />
-                  </div>
-                </div>
-              );
-
-              // 色票：第一顆固定是自訂顏色（開系統調色盤），後面才是預設色
-              const swatchStrip = (
-                value: string | undefined, colors: string[], onPick: (c: string) => void, big = false,
-              ) => (
-                <div className={`flex items-center overflow-x-auto no-scrollbar min-w-0 px-0.5 py-0.5 ${big ? 'gap-2 w-full' : 'gap-1.5'}`}>
-                  <CustomColorButton value={value || '#FFFFFF'} onPick={onPick} size={big ? 32 : 24} />
-                  {colors.map(c => (
-                    <button
-                      key={c}
-                      onClick={() => onPick(c)}
-                      title={c}
-                      className={`shrink-0 rounded-[7px] transition-all active:scale-90 ${big ? 'w-8 h-8' : 'w-6 h-6'} ${
-                        (value || '#FFFFFF').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
-                      }`}
-                      style={{ backgroundColor: c }}
-                    />
-                  ))}
-                </div>
-              );
-
-              /* 特效細項的排法跟「編輯」一致：剛好兩根上下各一行；
-                 奇數根時「強度」自己站一行，其餘兩兩一排。 */
-              const fxDetailOpen = adjustSub === 'effect' && effectDetail && !!effectCard;
-              const fxRows = (() => {
-                const tools = (FX_DETAIL[effectCard] || (FX_SUB_TOOLS[effectCard] || []).map(
-                  ([k, l, , mn, mx, d]) => [k, l, mn, mx, d] as [string, string, number, number, number]));
-                if (!tools.length) return [] as [string, string, number, number, number][][];
-                if (tools.length === 2) return [[tools[0]], [tools[1]]];
-                const out: [string, string, number, number, number][][] = [];
-                const solo = tools.length % 2 === 1;
-                if (solo) out.push([tools[0]]);
-                const rest = tools.slice(solo ? 1 : 0);
-                for (let i = 0; i < rest.length; i += 2) out.push(rest.slice(i, i + 2));
-                return out;
-              })();
-              const fxRowH = fxRows.length ? Math.min(52, Math.floor(172 / fxRows.length)) : 52;
-
-              // 目前這一段要放什麼
-              const sliderArea = (() => {
-                if (adjustSub === 'filter') {
-                  if (!fx.lut || fx.lut === 'none') return null;
-                  return editorSlider('強度', fx.lutAmount ?? 100, 0, 100, v => setFx({ lutAmount: v }));
-                }
-                if (adjustSub === 'tune') {
-                  const t = TUNE_TOOLS.find(x => x[0] === tuneTool) || TUNE_TOOLS[0];
-                  return editorSlider(t[1], fxVal(t[0], t[5]), t[3], t[4], v => setFx({ [t[0]]: v }));
-                }
-                if (adjustSub === 'effect') {
-                  // 細項是另外一整區（並排滑桿），不走這一根
-                  if (effectDetail) return null;
-                  if (!effectCard) return null;
-                  // 最外層一律只有一根「強度」，跟編輯一樣
-                  const amountId = fxAmountId(effectCard);
-                  return editorSlider('強度', fxVal(amountId, 0), 0, 100, v => setFx({ [amountId]: v }));
-                }
-                if (adjustSub === 'shape') {
-                  const sub = SHAPE_SUB_TOOLS[shapeMenu];
-                  const subTool = sub?.find(t => t[0] === shapeTool);
-                  if (subTool) {
-                    // 描邊色跟發光色用同一組色票
-                    if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, GLOW_COLORS, c => set({ imgStrokeColor: c }), true);
-                    if (subTool[0] === 'imgGlowColor') return swatchStrip(img.imgGlowColor, GLOW_COLORS, c => set({ imgGlowColor: c }), true);
-                    const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow';
-                    // 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來
-                    return editorSlider(
-                      subTool[1], (img[k] as number) || 0, subTool[3], subTool[4],
-                      v => set({ [k]: v }), undefined, true,
-                    );
-                  }
-                  const t = SHAPE_TOOLS.find(x => x[0] === shapeTool);
-                  if (t && (t[0] === 'imgRadius' || t[0] === 'feather')) {
-                    const key = t[0] as 'imgRadius' | 'feather';
-                    return editorSlider(
-                      t[1], (img[key] as number) || 0, t[3], t[4],
-                      v => set({ [key]: v }), undefined, true,
-                    );
-                  }
-                  return null;
-                }
-                return null;
-              })();
-
               return (
-                <div className="h-full flex flex-col justify-end">
-                  {/* 1. 滑桿（跟編輯一樣的 5rem、px-8、底下一條細線）。
-                         特效細項時把下面工具列那 6rem 借過來（它同時收成 0），
-                         兩段加起來還是 5rem + 6rem —— 預覽圖的大小完全不變。 */}
-                  <div
-                    className={`flex flex-col justify-center shrink-0 overflow-hidden bg-[#111] ${fxDetailOpen ? 'px-4' : 'px-8'}`}
-                    style={{ height: fxDetailOpen ? '11rem' : '5rem', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
-                  >
-                    {fxDetailOpen ? (
-                      <div className="w-full h-full flex items-center gap-3">
-                        <button
-                          onClick={() => setEffectDetail(false)}
-                          aria-label="返回特效"
-                          className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-colors text-white"
-                        >
-                          <Icon name="arrow_back" className="text-xl" />
-                        </button>
-                        <div className="flex-1 min-w-0 flex flex-col justify-center">
-                          {fxRows.map((row, ri) => (
-                            <div key={ri} className="flex items-center gap-4" style={{ height: fxRowH }}>
-                              {row.map(([key, label, mn, mx, dflt]) => (
-                                <div key={key} className="flex-1 min-w-0">
-                                  <div className="flex items-center justify-between gap-1 mb-0.5">
-                                    <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.12em] truncate pointer-events-none">{label}</span>
-                                    <span className="text-[10px] leading-none font-sans tabular-nums font-bold bg-white/10 px-1.5 py-[4px] rounded shrink-0">{Math.round(fxVal(key, dflt))}</span>
-                                  </div>
-                                  <div className="relative h-[26px] flex items-center justify-center touch-none">
-                                    <input
-                                      type="range" min={mn} max={mx} step="1"
-                                      value={fxVal(key, dflt)}
-                                      onChange={e => setFx({ [key]: parseInt(e.target.value) })}
-                                      className="custom-range dense"
-                                    />
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : sliderArea}
-                  </div>
-
-                  {/* 2. 工具列（6rem、px-4、gap-2、深一階的底色） */}
-                  <div className="flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808] shrink-0"
-                       style={{ height: fxDetailOpen ? '0px' : '6rem', opacity: fxDetailOpen ? 0 : 1 }}>
-                    {/* 濾鏡卡片：外觀跟「編輯」完全一樣 —— 縮圖是這張照片套上這顆濾鏡的樣子，
-                        名稱壓在下緣，選中的那顆是內描邊的白框（不佔版面、不會位移）。 */}
-                    {adjustSub === 'filter' && lutList.map((l, li) => {
-                      const active = (fx.lut || 'none') === l.id;
-                      return (
-                        <button
-                          key={l.id}
-                          data-lut-card={l.id}
-                          onClick={async () => {
-                            if (active) return;
-                            if (l.url) { setLoadingLut(l.id); await loadLut(l.id, l.url); setLoadingLut(null); }
-                            setFx({ lut: l.id });
-                            setLutRevision(n => n + 1);
-                          }}
-                          className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
-                        >
-                          <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
-                            <div className="absolute inset-0 bg-[#1a1a1a]" />
-                            <CardThumb src={img.src} delay={li * 24}
-                                       cacheKey={`${img.src}|lut:${l.id}|${lutRevision}`}
-                                       fx={{ lut: l.id, lutAmount: 100 }} />
-                            {loadingLut === l.id && (
-                              <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                              </div>
-                            )}
-                            <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
-                              <span className={`text-[8px] font-black uppercase tracking-widest leading-none ${active ? 'text-white' : 'text-white/60'}`}>
-                                {l.url ? l.name : '原始'}
-                              </span>
-                            </div>
-                            {active && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
-                          </div>
-                        </button>
-                      );
-                    })}
-
-                    {adjustSub === 'tune' && TUNE_TOOLS.map(([id, label, icon, , , dflt]) =>
-                      toolBtn(id, label, icon, tuneTool === id, fxVal(id, dflt) !== dflt, () => setTuneTool(id))
-                    )}
-
-                    {/* 特效卡片：跟「編輯」同一份清單、同一種卡片外觀。
-                        縮圖是這個特效的預設效果，選中的那顆右上角會多一顆編輯鍵（有細項才有）。 */}
-                    {adjustSub === 'effect' && FX_ROOT_TOOLS.map(([id, label], fi) => {
-                      const amountId = fxAmountId(id);
-                      const on = fxVal(amountId, 0) !== 0;
-                      const detail = FX_DETAIL[id] || FX_SUB_TOOLS[id];
-                      const hasDetail = !!detail && detail.length > 1;
-                      return (
-                        <button
-                          key={id}
-                          data-fx-card={id}
-                          onClick={() => pickEffect(id)}
-                          className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
-                        >
-                          <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
-                            <div className="absolute inset-0 bg-[#1a1a1a]" />
-                            <CardThumb src={img.src} delay={fi * 24}
-                                       cacheKey={`${img.src}|fx:${id}`}
-                                       fx={{ [fxAmountId(id)]: FX_ON_AMOUNT[id] ?? 100 } as PhotoFx} />
-                            <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
-                              <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${on ? 'text-white' : 'text-white/60'}`}>
-                                {label}
-                              </span>
-                            </div>
-                            {/* 白框＝這個特效正在生效；只是選到但沒開的不畫 */}
-                            {on && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
-                            {on && hasDetail && (
-                              // 卡片本身就是一顆 button，裡面不能再放 button，所以用 span
-                              <span
-                                role="button"
-                                aria-label="調整細項"
-                                onClick={e => { e.stopPropagation(); setEffectDetail(true); }}
-                                onPointerDown={e => e.stopPropagation()}
-                                style={{ position: 'absolute', top: 3, right: 3, width: 22, height: 22 }}
-                                className="rounded-full flex items-center justify-center bg-black/55 border border-white/25 text-white active:scale-90 transition-transform"
-                              >
-                                <Icon name="tune" className="text-[13px]" />
-                              </span>
-                            )}
-                          </div>
-                        </button>
-                      );
-                    })}
-
-                    {adjustSub === 'shape' && (shapeMenu === 'root'
-                      ? SHAPE_TOOLS.map(([id, label, icon, , , dflt]) => {
-                          const isSub = !!SHAPE_SUB_TOOLS[id];
-                          // 只看粗細／強度，顏色不算：值是 0 的時候畫面上根本沒有效果，
-                          // 按鈕下方就不該有白點
-                          const adjusted = isSub
-                            ? SHAPE_SUB_TOOLS[id].some(([k, , , , , d]) =>
-                                !k.endsWith('Color') && (((img as any)[k]) || 0) !== d)
-                            : (((img as any)[id]) || 0) !== dflt;
-                          return toolBtn(id, label, icon, shapeTool === id, adjusted, () => {
-                            if (isSub) {
-                              setShapeMenu(id as any);
-                              setShapeTool(SHAPE_SUB_TOOLS[id][0][0]);
-                            } else {
-                              setShapeTool(id);
-                            }
-                          });
-                        })
-                      : (
-                        <div className="flex items-center gap-4 animate-in slide-in-from-right duration-300">
-                          <button
-                            onClick={() => { setShapeMenu('root'); setShapeTool(SHAPE_TOOLS[0][0]); }}
-                            className="flex flex-col items-center justify-center gap-2 shrink-0 group w-12"
-                          >
-                            <div className="w-10 h-10 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-all text-white">
-                              <Icon name="arrow_back" className="text-xl" />
-                            </div>
-                          </button>
-                          <div className="w-[1px] h-8 bg-white/10 mx-2" />
-                          {SHAPE_SUB_TOOLS[shapeMenu].map(([id, label, icon, , , dflt]) => {
-                            const cur = (img as any)[id];
-                            const adjusted = id.endsWith('Color')
-                              ? !!cur && cur.toUpperCase() !== '#FFFFFF'
-                              : (cur || 0) !== dflt;
-                            return toolBtn(id, label, icon, shapeTool === id, adjusted, () => setShapeTool(id));
-                          })}
-                        </div>
-                      ))}
-                  </div>
-
-                  {/* 3. 分類列：跟編輯一樣的 h-16、上方細線、黑底、底部安全區空隙 */}
-                  <div className="flex h-16 border-t border-white/10 bg-black pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content shrink-0">
-                    {CATS.map(([id, icon, label]) => (
-                      <button
-                        key={id}
-                        onClick={() => {
-                          if (id === 'compose') { openComposeFor(img.id); return; }
-                          setAdjustSub(id as any);
-                          // 跟編輯一樣：切分類就把該分類的第一個工具選起來
-                          if (id === 'tune') setTuneTool(TUNE_TOOLS[0][0]);
-                          if (id === 'shape') { setShapeMenu('root'); setShapeTool(SHAPE_TOOLS[0][0]); }
-                          if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
-                        }}
-                        className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${adjustSub === id ? 'text-white' : 'text-white/20'}`}
-                      >
-                        <Icon name={icon} className="text-xl" fill={adjustSub === id} />
-                        <span className="text-[9px] font-black uppercase tracking-[0.2em]">{label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                <ImageAdjustPanel
+                  img={img} set={set} lutList={lutList}
+                  loadingLut={loadingLut} setLoadingLut={setLoadingLut}
+                  lutRevision={lutRevision} setLutRevision={setLutRevision}
+                  adjustSub={adjustSub} setAdjustSub={setAdjustSub}
+                  effectCard={effectCard} setEffectCard={setEffectCard}
+                  effectDetail={effectDetail} setEffectDetail={setEffectDetail}
+                  shapeMenu={shapeMenu} setShapeMenu={setShapeMenu}
+                  shapeTool={shapeTool} setShapeTool={setShapeTool}
+                  tuneTool={tuneTool} setTuneTool={setTuneTool}
+                  setTuningEdge={setTuningEdge} openComposeFor={openComposeFor}
+                  hideShape={!!selCell}
+                />
               );
             })()}
 

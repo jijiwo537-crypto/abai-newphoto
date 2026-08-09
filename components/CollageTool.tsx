@@ -7,7 +7,7 @@ import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, 
 import { Icon } from './Icon';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
-import { TextEditorPanel } from './GridLayoutTool';
+import { TextEditorPanel, ImageAdjustPanel } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
@@ -453,6 +453,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   /** 編輯頁的左側子分頁 */
   const [objSub, setObjSub] = useState<'main' | 'style'>('main');
+  /* 圖片調整面板的 UI 狀態 —— 跟經典拼圖同一組，只是各自持有，
+     這樣兩邊的「停在哪個子分頁」互不干擾。 */
+  const [adjustSub, setAdjustSub] = useState<'shape' | 'tune' | 'filter' | 'effect'>('filter');
+  const [effectCard, setEffectCard] = useState<string | null>(null);
+  const [effectDetail, setEffectDetail] = useState(false);
+  const [shapeMenu, setShapeMenu] = useState('radius');
+  const [shapeTool, setShapeTool] = useState('imgRadius');
+  const [tuneTool, setTuneTool] = useState('brightness');
+  const [loadingLut, setLoadingLut] = useState<string | null>(null);
+  const [lutRevision, setLutRevision] = useState(0);
   const [maskColor, setMaskColor] = useState('#FFF2E6'); 
   const [patternType, setPatternType] = useState('none'); 
   const [dotColor, setDotColor] = useState('#595959'); 
@@ -1167,6 +1177,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        而 viewT.k 不會再變 —— 少了它就會永遠停在 previewScale = 1，
        也就是「只有放大過才變清楚」的原因。 */
   }, [viewT.k, imageState, layout, maskScale, maxPreviewScale, baseCss]);
+
+  useEffect(() => {
+    if (activeTab !== 'objedit' || adjustSub !== 'filter') return;
+    let alive = true;
+    (async () => {
+      for (const l of lutList) {
+        if (!alive) return;
+        if (!l.url || getLoadedLut(l.id)) continue;
+        await loadLut(l.id, l.url);
+        if (!alive) return;
+        setLutRevision(n => n + 1);
+        setFxTick(t => t + 1);
+      }
+    })();
+    return () => { alive = false; };
+  }, [activeTab, adjustSub, lutList]);
 
   /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了 ——
      要先放掉寫死的尺寸讓 max-w/max-h 重新貼合，否則會卡在舊尺寸。 */
@@ -2453,82 +2479,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       />
                     </div>
                   ) : (
-                  <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
-                    <div className="flex flex-col shrink-0 w-11 -mt-5 -mb-5 -ml-5 border-r border-white/10 select-none">
-                      <button
-                        onClick={() => setObjSub('main')}
-                        title="圖片" aria-label="圖片"
-                        className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${objSub === 'main' ? 'text-white' : 'text-[#5a5a5a]'}`}
-                      >
-                        <Icon name="image" className={`text-[18px] transition-transform duration-150 ${objSub === 'main' ? 'scale-110' : 'scale-100'}`} />
-                      </button>
-                      <div className="w-full h-[1px] bg-white/10 shrink-0" />
-                      <button
-                        onClick={() => setObjSub('style')}
-                        title="樣式" aria-label="樣式"
-                        className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${objSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}
-                      >
-                        <SlidersHorizontal size={18} className={`transition-transform duration-150 ${objSub === 'style' ? 'scale-110' : 'scale-100'}`} />
-                      </button>
-                    </div>
-                    <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                      {objSub === 'main' && (
-                        <div className="space-y-3 pt-1 pb-2">
-                          {/* 濾鏡：跟「編輯」「經典拼圖」同一份清單、同一條管線 */}
-                          <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
-                            {[{ id: '', name: '原始', url: '' }, ...lutList].map(l => {
-                              const on = (sel.fx?.lut || '') === l.id;
-                              return (
-                                <button key={l.id || 'none'}
-                                  onClick={() => {
-                                    if (l.url) loadLut(l.id, l.url).then(() => setFxTick(t => t + 1));
-                                    patch({ fx: { ...(sel.fx || {}), lut: l.id || undefined, lutAmount: 100 } });
-                                  }}
-                                  className={`shrink-0 w-14 flex flex-col items-center gap-1 ${on ? 'opacity-100' : 'opacity-60'}`}>
-                                  <span className={`w-14 h-14 rounded-lg border ${on ? 'border-white' : 'border-white/15'} bg-white/[0.04] flex items-center justify-center text-[10px] text-white/70`}>
-                                    {l.name.slice(0, 3)}
-                                  </span>
-                                  <span className="text-[9px] tracking-wider text-white/60 truncate max-w-full">{l.name}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                          <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
-                            <span className="text-[10px] font-bold text-[#888]">圖片</span>
-                            <button onClick={() => objFileInputRef.current?.click()}
-                              className="px-2 h-6 text-[10px] bg-white text-black font-bold rounded-[4px] uppercase tracking-widest">更換</button>
-                          </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <button onClick={() => move(1)} className="h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold tracking-widest text-white/70 active:scale-[0.98] transition-transform">上移一層</button>
-                            <button onClick={() => move(-1)} className="h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold tracking-widest text-white/70 active:scale-[0.98] transition-transform">下移一層</button>
-                            <button onClick={() => { setObjects(prev => prev.filter(o => o.id !== sel.id)); setSelectedObj(null); }}
-                              className="h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold tracking-widest text-white/70 active:scale-[0.98] transition-transform">刪除</button>
-                          </div>
-                          {/* 調節：ADJUST_KEYS 就是「編輯」那一組（亮度～自然飽和度） */}
-                          <div className="grid grid-cols-2 gap-4 pt-1">
-                            {ADJUST_KEYS.map(([k, label]) => (
-                              <CompactSlider key={k} label={label} min={-100} max={100} step={1}
-                                value={(sel.fx as any)?.[k] ?? 0}
-                                onChange={(v: number) => patch({ fx: { ...(sel.fx || {}), [k]: v } })} />
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {objSub === 'style' && (
-                        <div className="grid grid-cols-2 gap-4 pt-1 pb-2">
-                          <CompactSlider label="大小" value={Math.round(sel.w)} min={30}
-                            max={Math.round(getLayoutOffsets()?.cw || 1000)}
-                            onChange={(v: number) => {
-                              const k = v / Math.max(1, sel.w);
-                              patch({ w: v, h: sel.h * k, size: sel.type === 'text' ? sel.size * k : sel.size });
-                            }} />
-                          <CompactSlider label="角度" value={sel.rot || 0} min={0} max={360} step={1}
-                            onChange={(v: number) => patch({ rot: v })} />
-                          <CompactSlider label="透明度" value={Math.round((sel.alpha ?? 1) * 100)} min={0} max={100} step={1}
-                            onChange={(v: number) => patch({ alpha: v / 100 })} />
-                        </div>
-                      )}
-                    </div>
+                  <div className="h-full">
+                    {/* 圖片調整直接用經典拼圖那顆元件 —— 同一份程式碼，
+                        所以按鈕佈局、樣式、外觀都是逐像素相同。
+                        形狀那一組（圓角／羽化／描邊／發光）先關掉：
+                        創意拼圖的畫布還沒有畫這些，開著會是按了沒反應的鈕。 */}
+                    <ImageAdjustPanel
+                      img={sel} set={(d: any) => patch(d)} lutList={lutList}
+                      loadingLut={loadingLut} setLoadingLut={setLoadingLut}
+                      lutRevision={lutRevision} setLutRevision={setLutRevision}
+                      adjustSub={adjustSub} setAdjustSub={setAdjustSub}
+                      effectCard={effectCard} setEffectCard={setEffectCard}
+                      effectDetail={effectDetail} setEffectDetail={setEffectDetail}
+                      shapeMenu={shapeMenu} setShapeMenu={setShapeMenu}
+                      shapeTool={shapeTool} setShapeTool={setShapeTool}
+                      tuneTool={tuneTool} setTuneTool={setTuneTool}
+                      setTuningEdge={() => {}}
+                      openComposeFor={() => {}}
+                      hideShape
+                    />
                   </div>
                   )
                 );
