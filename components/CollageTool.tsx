@@ -402,10 +402,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null); 
   const [colorPickerTarget, setColorPickerTarget] = useState<string | null>(null); 
   const [maskImageState, setMaskImageState] = useState<any>(null);
-  /** 自訂遮罩圖要露出哪一塊（-1 ~ 1，各軸佔「超出邊界那一段」的比例） */
-  const [maskOffset, setMaskOffset] = useState({ x: 0, y: 0 });
-  const maskOffsetRef = useRef({ x: 0, y: 0 });
-  maskOffsetRef.current = maskOffset;
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [maskTransform, setMaskTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [activeTab, setActiveTab] = useState('setting');
@@ -961,12 +957,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         } else {
           setSelectedTarget(null);
         }
-      } else if (maskImageState && maskImageState.img && clickedSide === 'mask' && brushMode === 'off') {
-        /* 沒抓到任何圖案、又點在遮罩上、又有自訂遮罩圖 →
-           拖曳決定那張圖要露出哪一塊（原本一律截中間，看不到的永遠看不到）。 */
-        e.stopPropagation();
-        setSelectedTarget(null);
-        maskDragRef.current = { sx: e.clientX, sy: e.clientY, ox: maskOffsetRef.current.x, oy: maskOffsetRef.current.y };
       }
     } else if (activePointers.current.size === 2 && selectedTarget) {
       e.stopPropagation();
@@ -1010,8 +1000,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const viewTRef = useRef(viewT);
   viewTRef.current = viewT;
   const viewPinchRef = useRef<{ d0: number; k0: number; cx: number; cy: number } | null>(null);
-  /** 正在拖曳自訂遮罩（決定露出哪一塊） */
-  const maskDragRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
   /* 預覽畫布要畫多細。
      工作解析度只有 1080（為了拖曳順），螢幕上又是 CSS transform 放大 ——
      放到 6 倍等於把 1080 拉成 6480，當然糊。
@@ -1092,24 +1080,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState?.globalScale || 1;
     // 雙指縮放預覽時完全不碰筆刷與拖曳
-    // 拖曳自訂遮罩：決定那張圖要露出哪一塊
-    if (maskDragRef.current && activePointers.current.size === 1) {
-      e.stopPropagation();
-      const d = maskDragRef.current;
-      const el = canvasRef.current!;
-      const rr = el.getBoundingClientRect();
-      // 位移換算成「超出邊界那一段」的比例：拖到底剛好貼齊，不會露白
-      const md2 = maskDims(layout, imageState.baseW, imageState.baseH, maskScale);
-      const mi = maskImageState.img;
-      const cover = Math.max(md2.mw / mi.width, md2.mh / mi.height);
-      const slackX = Math.max(1, (mi.width * cover - md2.mw) / 2);
-      const slackY = Math.max(1, (mi.height * cover - md2.mh) / 2);
-      const pxPerUnit = rr.width / Math.max(1, md2.mw);
-      const nx = d.ox + (e.clientX - d.sx) / (slackX * pxPerUnit);
-      const ny = d.oy + (e.clientY - d.sy) / (slackY * pxPerUnit);
-      setMaskOffset({ x: Math.max(-1, Math.min(1, nx)), y: Math.max(-1, Math.min(1, ny)) });
-      return;
-    }
     if (viewPinchRef.current && activePointers.current.size >= 2) {
       e.stopPropagation();
       const pts: any[] = Array.from(activePointers.current.values());
@@ -1202,7 +1172,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
-    maskDragRef.current = null;
     try {
       const target = e.target as HTMLElement;
       if (target && target.hasPointerCapture(e.pointerId)) {
@@ -1274,13 +1243,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const scale = Math.max(maskW / mImg.width, maskH / mImg.height);
       const drawW = mImg.width * scale;
       const drawH = mImg.height * scale;
-      /* 原本一律置中截取，看不到的那一半就永遠看不到。
-         maskOffset 是使用者拖出來的位移（-1 ~ 1，佔「超出去的那一段」的比例），
-         所以拖到底剛好就是貼齊邊界，不會拖出空白。 */
-      const slackX = Math.max(0, drawW - maskW) / 2;
-      const slackY = Math.max(0, drawH - maskH) / 2;
-      const drawX = (maskW - drawW) / 2 + maskOffsetRef.current.x * slackX;
-      const drawY = (maskH - drawH) / 2 + maskOffsetRef.current.y * slackY;
+      /* 置中截取（cover）。
+         這裡一律置中截取（cover）。 */
+      const drawX = (maskW - drawW) / 2;
+      const drawY = (maskH - drawH) / 2;
       bCtx.drawImage(mImg, drawX, drawY, drawW, drawH);
     }
 
@@ -1740,7 +1706,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             <button 
               aria-hidden={layout === AROUND}
               tabIndex={layout === AROUND ? -1 : 0}
-              style={layout === AROUND ? { visibility: 'hidden', pointerEvents: 'none' } : undefined}
+              /* transition-all 會把 visibility 也納入過場，切換時看起來慢半拍；
+                 隱藏的那一刻把過場關掉，就是「馬上」不見。 */
+              style={layout === AROUND
+                ? { visibility: 'hidden', pointerEvents: 'none', transition: 'none' }
+                : undefined}
               onClick={(e) => {
                 e.stopPropagation();
                 if (layout === AROUND) return;
@@ -1954,7 +1924,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
                       <span>排版</span>
                     </div>
-                    <div className="flex gap-2 bg-[#111] border border-[#222] p-1.5 rounded-[6px] w-fit">
+                    <div className="h-9 flex items-center gap-2 bg-[#111] border border-[#222] px-1.5 rounded-[6px] w-fit">
                       {['mask-bottom', 'mask-top', 'mask-left', 'mask-right', AROUND].map(t => (
                         <button key={t} onClick={() => {
                           // 排版、比例、圖案在同一批更新裡一起換，中間不會露出半舊半新的那一格
@@ -1973,7 +1943,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest pl-2">
                       <span>比例</span>
                     </div>
-                    <div className="flex gap-1 bg-[#111] border border-[#222] p-1 rounded-[6px] w-full">
+                    <div className="h-9 flex items-center gap-1 bg-[#111] border border-[#222] px-1 rounded-[6px] w-full">
                       {[
                         { label: '1/1', val: 1.0 },
                         { label: '1/2', val: 0.5 },
@@ -1982,7 +1952,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <button
                           key={s.label}
                           onClick={() => setMaskScale(s.val)}
-                          className={`flex-1 py-1.5 rounded-[4px] text-[10px] font-bold transition-all border ${
+                          className={`flex-1 h-6 rounded-[4px] text-[10px] font-bold transition-all border ${
                             Math.abs(maskScale - s.val) < 0.05
                               ? 'border-white text-white bg-transparent'
                               : 'border-transparent text-[#888] hover:text-white bg-transparent'
@@ -1999,11 +1969,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 <div className="space-y-3 pt-1">
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="flex items-center justify-between bg-[#111] p-3 border border-[#222] rounded-[8px] h-[52px]">
+                  <div className="h-9 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
                     <span className="text-[10px] font-bold text-[#888] shrink-0">自訂遮罩</span>
                     <div className="flex gap-1.5 overflow-hidden">
                       {maskImageState && (
-                        <button onClick={(e) => { e.stopPropagation(); setMaskImageState(null); setMaskOffset({ x: 0, y: 0 }); }} className="flex items-center justify-center p-1.5 text-[10px] bg-[#222] text-white font-bold rounded-[4px] border border-[#333] hover:bg-[#333] transition-all" title="還原素色">
+                        <button onClick={(e) => { e.stopPropagation(); setMaskImageState(null); }} className="flex items-center justify-center p-1.5 text-[10px] bg-[#222] text-white font-bold rounded-[4px] border border-[#333] hover:bg-[#333] transition-all" title="還原素色">
                           <RotateCcw size={12} />
                         </button>
                       )}
@@ -2012,7 +1982,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       </button>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between bg-[#111] p-3 border border-[#222] rounded-[8px] cursor-pointer hover:bg-[#151515] transition-colors h-[52px]" onClick={() => setColorPickerTarget('mask')}>
+                  <div className="h-9 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors" onClick={() => setColorPickerTarget('mask')}>
                     <span className="text-[10px] font-bold text-[#888]">顏色</span>
                     <div className="flex items-center gap-2">
                       <span className="text-[9px] font-mono text-white/40">{maskColor}</span>
@@ -2020,11 +1990,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center justify-between bg-[#111] p-3 border border-[#222] rounded-[8px]">
+                <div className="h-9 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
                   <span className="text-[10px] font-bold text-[#888]">紋理</span>
                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
                     {['none', 'dot'].map(t => (
-                      <button key={t} onClick={() => setPatternType(t)} className={`px-4 py-1 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{t === 'none' ? '無' : '點點'}</button>
+                      <button key={t} onClick={() => setPatternType(t)} className={`px-4 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{t === 'none' ? '無' : '點點'}</button>
                     ))}
                   </div>
                 </div>
