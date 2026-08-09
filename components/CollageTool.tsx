@@ -34,7 +34,7 @@ const MAX_EXPORT_PIXELS = 20_000_000;
  * 一張畫布是 4 bytes/px，四張加起來就是 ×4 —— 8M 像素等於 128MB，
  * 手機瀏覽器到這個量級就開始被系統回收（就是主人遇到的閃退到主畫面）。
  */
-const MAX_PREVIEW_PIXELS = 40_000_000;
+const MAX_PREVIEW_PIXELS = 56_000_000;
 
 /**
  * 這張拼圖在某個「畫布倍率」下，主畫布加三張遮罩暫存畫布總共要幾個像素。
@@ -409,7 +409,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   const [maskColor, setMaskColor] = useState('#FFF2E6'); 
   const [patternType, setPatternType] = useState('none'); 
-  const [dotColor, setDotColor] = useState('#737373'); 
+  const [dotColor, setDotColor] = useState('#404040'); 
   const [dotSize, setDotSize] = useState(20); 
   const [dotGap, setDotGap] = useState(20);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
@@ -1053,10 +1053,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (!cssW || !cs.w) return;
       const budget = maxPreviewScale();
       // 要多少畫布像素才會「一個畫布像素對一個裝置像素」
-      const want = Math.min(budget, Math.max(1, (cssW * viewT.k * dpr) / cs.w));
+      /* ×1.15 的餘裕：剛好 1:1 時圖案邊緣的抗鋸齒沒有取樣空間，
+         多一點點就會明顯銳利，而且成本只有 32%。 */
+      const want = Math.min(budget, Math.max(1, (cssW * viewT.k * dpr * 1.15) / cs.w));
       const snapped = Math.max(1, Math.round(want * 4) / 4);   // 取到 0.25，避免一直重畫
       setPreviewScale(prev => (Math.abs(prev - snapped) < 0.01 ? prev : snapped));
-    }, 160);
+    }, 90);
     return () => { if (previewTimer.current) window.clearTimeout(previewTimer.current); };
   }, [viewT.k, imageState, layout, maskScale, maxPreviewScale]);
 
@@ -1524,7 +1526,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const dpr = Math.min(3, window.devicePixelRatio || 1);
       // 上限＝「畫得到的最細畫布」對應到螢幕上的倍率
       const z = (cs.w * maxPreviewScale()) / Math.max(1, cssW * dpr);
-      maxZoomRef.current = Math.max(1.5, Math.min(6, Math.floor(z * 10) / 10));
+      /* 以前這裡硬給 1.5 的下限：畫布明明畫不到那麼細，卻還讓你放大到 1.5 倍 ——
+         那段就是一定會糊的區間。改成「畫得到多少就只給多少」，
+         任何倍率下都保證 1 個畫布像素 ≥ 1 個裝置像素。 */
+      maxZoomRef.current = Math.max(1, Math.min(6, Math.floor(z * 20) / 20));
     }
   }, [imageState, renderToCanvas, previewScale, layout, maskScale, maxPreviewScale]);
 
@@ -1965,11 +1970,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   </div>
                 </div>
                 {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
-                    它們講的都是「這張版面長什麼樣」，本來就該在同一頁。 */}
-                <div className="space-y-3 pt-1">
+                    它們講的都是「這張版面長什麼樣」，本來就該在同一頁。
+                    -mt-1 是為了讓它跟上面那排的間距，跟這三項彼此之間一樣。 */}
+                <div className="space-y-3 !mt-3">
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="h-9 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
+                  <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
                     <span className="text-[10px] font-bold text-[#888] shrink-0">自訂遮罩</span>
                     <div className="flex gap-1.5 overflow-hidden">
                       {maskImageState && (
@@ -1982,7 +1988,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       </button>
                     </div>
                   </div>
-                  <div className="h-9 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors" onClick={() => setColorPickerTarget('mask')}>
+                  <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors" onClick={() => setColorPickerTarget('mask')}>
                     <span className="text-[10px] font-bold text-[#888]">顏色</span>
                     <div className="flex items-center gap-2">
                       <span className="text-[9px] font-mono text-white/40">{maskColor}</span>
@@ -1990,7 +1996,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     </div>
                   </div>
                 </div>
-                <div className="h-9 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
+                <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
                   <span className="text-[10px] font-bold text-[#888]">紋理</span>
                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
                     {['none', 'dot'].map(t => (
