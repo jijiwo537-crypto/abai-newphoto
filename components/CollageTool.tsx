@@ -16,6 +16,8 @@ import {
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
 import { ComposeStudio } from './ComposeStudio';
+/* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
+import { IgPreview } from './IgPreview';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity } from '../utils/compose';
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
@@ -2290,6 +2292,50 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     return () => cancelAnimationFrame(id); 
   }, [renderCanvas, saveState]);
 
+  /* ── IG 預覽 ────────────────────────────────────────────────────
+     跟經典拼圖一樣：打開時用同一條算圖管線算一張「壓低解析度的成品」，
+     顯示的就是匯出會長的樣子，不另外用 DOM 重畫一次。
+     創意拼圖只有一張輸出，所以頁數固定是 1。 */
+  const [igPreview, setIgPreview] = useState(false);
+  const [igShots, setIgShots] = useState<string[]>([]);
+  const igShotUrlRef = useRef<string[]>([]);
+  useEffect(() => {
+    if (!igPreview || !imageState) return;
+    let alive = true;
+    (async () => {
+      try {
+        const off = getLayoutOffsets();
+        if (!off) return;
+        // 長邊 900：夠清楚又算得快，跟經典拼圖的預覽解析度一致
+        const scale = 900 / Math.max(off.cw, off.ch);
+        const cv = document.createElement('canvas');
+        renderToCanvas(cv, scale);
+        const url = await canvasToUrl(cv);
+        cv.width = 0; cv.height = 0;
+        if (!alive) { revokeUrl(url); return; }
+        // 等解碼完再換，才不會有一段空白
+        await new Promise<void>(res => { const im = new Image(); im.onload = () => res(); im.onerror = () => res(); im.src = url; });
+        if (!alive) { revokeUrl(url); return; }
+        igShotUrlRef.current.forEach(u => revokeUrl(u));
+        igShotUrlRef.current = [url];
+        setIgShots([url]);
+      } catch { /* 算不出來就讓它顯示轉圈 */ }
+    })();
+    return () => {
+      alive = false;
+      igShotUrlRef.current.forEach(u => revokeUrl(u));
+      igShotUrlRef.current = [];
+      setIgShots([]);
+    };
+  }, [igPreview, imageState]);
+  /* 直式 2:3、9:16 比 IG 的極限（4:5）還長，IG 吃不下 —— 跟經典拼圖同一條規則 */
+  const igSupported = (() => {
+    const o = getLayoutOffsets();
+    if (!o || o.ch <= o.cw) return true;
+    const r = o.cw / o.ch;
+    return !(Math.abs(r - 2 / 3) < 0.01 || Math.abs(r - 9 / 16) < 0.01);
+  })();
+
   const handleSave = () => {
     if (!imageState) return;
     setSelectedTarget(null);
@@ -2445,6 +2491,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
       `}</style>
 
+      {/* IG 貼文預覽：跟經典拼圖共用 components/IgPreview.tsx */}
+      {igPreview && (
+        <IgPreview
+          shots={igShots}
+          frame={(() => { const o = getLayoutOffsets(); return o ? { w: o.cw, h: o.ch } : { w: 1, h: 1 }; })()}
+          pageCount={1}
+          /* 頭像與「說讚」那排的小頭像：用剛算好的成品那張，一定拿得到、
+             也一定是這張拼圖裡的畫面（原始照片那顆 Image 的 blob 網址
+             在某些流程下已經被回收，直接拿會變成破圖） */
+          faces={igShots}
+          supported={igSupported}
+          onClose={() => setIgPreview(false)}
+        />
+      )}
+
       {/* 構圖：跟「編輯」同一個介面，套用後 bake 回這個物件 */}
       {composeState && (
         <ComposeStudio
@@ -2572,6 +2633,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 <>
                   <div className="fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)} />
                   <div className="absolute right-0 top-11 z-[61] w-36 rounded-2xl bg-[#1b1b1b] border border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                    {/* 最上面是 IG 預覽，跟經典拼圖同一顆（比例 IG 吃不下時整個不出現） */}
+                    {igSupported && (
+                      <>
+                        <button
+                          onClick={() => { setMoreOpen(false); setIgPreview(true); }}
+                          className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90 hover:bg-white/10 transition-colors"
+                        >
+                          <span>預覽</span>
+                        </button>
+                        <div className="h-px bg-white/10" />
+                      </>
+                    )}
                     {/* 四周包圍是一整片場、沒有「左右兩塊要對稱」的概念，那個排版下就不出現 */}
                     {layout !== AROUND && (
                       <>
