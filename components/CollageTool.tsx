@@ -420,6 +420,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [activeTab, setActiveTab] = useState('setting');
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
+  /** 編輯頁的左側子分頁 */
+  const [objSub, setObjSub] = useState<'main' | 'style'>('main');
   const [maskColor, setMaskColor] = useState('#FFF2E6'); 
   const [patternType, setPatternType] = useState('none'); 
   const [dotColor, setDotColor] = useState('#595959'); 
@@ -904,6 +906,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           if (Math.abs(lx) <= o.w / 2 && Math.abs(ly) <= o.h / 2) {
             e.stopPropagation();
             setSelectedTarget(null);
+            // 已經選中的再點一次 → 進編輯頁（跟經典拼圖同樣的手感）
+            if (selectedObjRef.current === o.id) setActiveTab('objedit');
             setSelectedObj(o.id);
             objDragRef.current = { id: o.id, startX: x, startY: y, ox: o.x, oy: o.y };
             return;
@@ -1525,6 +1529,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       ctx.save();
       ctx.translate((o.x + o.w / 2) * s, (o.y + o.h / 2) * s);
       ctx.rotate((o.rot || 0) * Math.PI / 180);
+      ctx.globalAlpha = o.alpha ?? 1;
       if (o.type === 'image' && o.img) {
         ctx.drawImage(o.img, -o.w * s / 2, -o.h * s / 2, o.w * s, o.h * s);
       } else if (o.type === 'text') {
@@ -1534,6 +1539,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         ctx.textBaseline = 'middle';
         ctx.fillText(o.text || '', 0, 0);
       }
+      ctx.globalAlpha = 1;
       if (isMain && selectedObj === o.id) {
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 2 * sgs * s;
@@ -2034,7 +2040,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-all duration-500 flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} style={{ height: '34dvh' }}>
         {!colorPickerTarget && (
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a]">
-            {['setting', 'add', 'shape'].map(id => (
+            {['setting', 'add', 'objedit', 'shape'].map(id => (
               <button 
                 key={id} 
                 onClick={() => setActiveTab(id)} 
@@ -2042,7 +2048,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   activeTab === id ? 'text-white border-white' : 'text-[#555] border-transparent'
                 }`}
               >
-                {id === 'setting' ? <Crop size={16} className="mx-auto" /> : id === 'add' ? <Plus size={16} className="mx-auto" /> : <Star size={16} className="mx-auto" />}
+                {id === 'setting' ? <Crop size={16} className="mx-auto" /> : id === 'add' ? <Plus size={16} className="mx-auto" /> : id === 'objedit' ? <SlidersHorizontal size={16} className="mx-auto" /> : <Star size={16} className="mx-auto" />}
               </button>
             ))}
           </div>
@@ -2050,9 +2056,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         
         {/* pb-20 本來是留給右下角那顆浮動按鈕的空間，但「圖案」頁是左右分欄、
             自己就會捲，那 80px 只會在下面留一條黑色空白、把工具欄擠得很小。 */}
-        <div ref={scrollContainerRef} className={`flex-1 p-5 ${colorPickerTarget || activeTab === 'shape' ? 'pb-5' : 'pb-20'} custom-scrollbar ${
+        <div ref={scrollContainerRef} className={`flex-1 p-5 ${colorPickerTarget || activeTab === 'shape' || activeTab === 'objedit' ? 'pb-5' : 'pb-20'} custom-scrollbar ${
           (activeTab === 'setting' && !colorPickerTarget) ||
           (activeTab === 'add' && !colorPickerTarget) ||
+          (activeTab === 'objedit' && !colorPickerTarget) ||
           (activeTab === 'shape' && !colorPickerTarget)
             ? 'overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]' 
             : 'overflow-hidden'
@@ -2178,73 +2185,117 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
+                  setActiveTab('objedit');   // 新增完直接進編輯頁，跟經典拼圖一樣
                 };
                 return (
-                  <div className="max-w-md mx-auto space-y-3 pb-4 animate-in fade-in duration-300">
-                    {/* 只有「圖片」與「文字」——佈局是經典拼圖才有的東西，
-                        創意拼圖的版面是靠排版與遮罩決定的，這裡刻意不提供。 */}
-                    <div className="grid grid-cols-2 gap-3">
+                  <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300">
+                    {/* 按鈕與圖標尺寸跟經典拼圖的加號頁完全一致；
+                        只差沒有「新增佈局」——創意拼圖的版面是排版＋遮罩決定的。 */}
+                    <div className="flex justify-center gap-4 mt-6">
                       <button
                         onClick={() => objFileInputRef.current?.click()}
-                        className="h-[47px] flex items-center justify-center gap-2 bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold uppercase tracking-[0.2em] text-white/70 active:scale-[0.99] transition-transform"
+                        className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
-                        <Plus size={14} /> 圖片
+                        <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
+                        <span className="text-[11px] font-bold tracking-widest text-white/90">匯入照片</span>
                       </button>
                       <button
                         onClick={addText}
-                        className="h-[47px] flex items-center justify-center gap-2 bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold uppercase tracking-[0.2em] text-white/70 active:scale-[0.99] transition-transform"
+                        className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
-                        <Type size={14} /> 文字
+                        <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                        <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+              {activeTab === 'objedit' && (() => {
+                const sel = objects.find(o => o.id === selectedObj) || null;
+                const patch = (d: any) => setObjects(prev => prev.map(o => o.id === sel.id ? { ...o, ...d } : o));
+                const move = (dir: number) => setObjects(prev => {
+                  const i = prev.findIndex(o => o.id === sel.id);
+                  const j = i + dir;
+                  if (i < 0 || j < 0 || j >= prev.length) return prev;
+                  const n = prev.slice(); const [x] = n.splice(i, 1); n.splice(j, 0, x); return n;
+                });
+                if (!sel) return (
+                  <div className="max-w-md mx-auto pt-8 text-center animate-in fade-in duration-300">
+                    <p className="text-[11px] text-[#666] leading-relaxed">
+                      先在預覽上點一下要編輯的圖片或文字
+                    </p>
+                  </div>
+                );
+                return (
+                  <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
+                    {/* 左側細長列，跟經典拼圖同一種版型 */}
+                    <div className="flex flex-col shrink-0 w-11 -mt-5 -mb-5 -ml-5 border-r border-white/10 select-none">
+                      <button
+                        onClick={() => setObjSub('main')}
+                        title={sel.type === 'text' ? '文字' : '圖片'}
+                        aria-label={sel.type === 'text' ? '文字' : '圖片'}
+                        className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${objSub === 'main' ? 'text-white' : 'text-[#5a5a5a]'}`}
+                      >
+                        <Type size={18} className={`transition-transform duration-150 ${objSub === 'main' ? 'scale-110' : 'scale-100'}`} />
+                      </button>
+                      <div className="w-full h-[1px] bg-white/10 shrink-0" />
+                      <button
+                        onClick={() => setObjSub('style')}
+                        title="樣式" aria-label="樣式"
+                        className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${objSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}
+                      >
+                        <SlidersHorizontal size={18} className={`transition-transform duration-150 ${objSub === 'style' ? 'scale-110' : 'scale-100'}`} />
                       </button>
                     </div>
 
-                    {!sel && (
-                      <p className="text-[10.5px] text-[#666] leading-relaxed pt-1">
-                        加進來的圖片與文字會疊在最上層，直接在預覽上拖曳就能移動。
-                        點一下選中它，這裡就會出現可以調整的項目。
-                      </p>
-                    )}
-
-                    {sel && (
-                      <div className="space-y-3 animate-in fade-in duration-200">
-                        {sel.type === 'text' && (
-                          <input
-                            type="text"
-                            maxLength={30}
-                            value={sel.text}
-                            onChange={e => patch({ text: e.target.value })}
-                            placeholder="輸入文字..."
-                            className="w-full h-[47px] px-3 bg-[#111] border border-[#222] rounded-[6px] text-center text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#333]"
-                          />
-                        )}
-                        <div className="grid grid-cols-2 gap-4">
+                    <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                      {objSub === 'main' && (
+                        <div className="space-y-3 pt-1 pb-2">
+                          {sel.type === 'text' ? (
+                            <>
+                              <input
+                                type="text" maxLength={30} value={sel.text}
+                                onChange={e => patch({ text: e.target.value })}
+                                placeholder="輸入文字..."
+                                className="w-full h-[47px] px-3 bg-[#111] border border-[#222] rounded-[6px] text-center text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#333]"
+                              />
+                              <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
+                                <span className="text-[10px] font-bold text-[#888]">文字顏色</span>
+                                <input type="color" value={sel.color}
+                                  onChange={e => patch({ color: e.target.value })}
+                                  className="w-9 h-6 bg-transparent border-0 p-0 cursor-pointer" />
+                              </div>
+                            </>
+                          ) : (
+                            <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
+                              <span className="text-[10px] font-bold text-[#888]">圖片</span>
+                              <button onClick={() => objFileInputRef.current?.click()}
+                                className="px-2 h-6 text-[10px] bg-white text-black font-bold rounded-[4px] uppercase tracking-widest">更換</button>
+                            </div>
+                          )}
+                          <div className="grid grid-cols-3 gap-2">
+                            <button onClick={() => move(1)} className="h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold tracking-widest text-white/70 active:scale-[0.98] transition-transform">上移一層</button>
+                            <button onClick={() => move(-1)} className="h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold tracking-widest text-white/70 active:scale-[0.98] transition-transform">下移一層</button>
+                            <button onClick={() => { setObjects(prev => prev.filter(o => o.id !== sel.id)); setSelectedObj(null); }}
+                              className="h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold tracking-widest text-white/70 active:scale-[0.98] transition-transform">刪除</button>
+                          </div>
+                        </div>
+                      )}
+                      {objSub === 'style' && (
+                        <div className="grid grid-cols-2 gap-4 pt-1 pb-2">
                           <CompactSlider label="大小" value={Math.round(sel.w)} min={30}
-                            max={Math.round((getLayoutOffsets()?.cw || 1000))}
+                            max={Math.round(getLayoutOffsets()?.cw || 1000)}
                             onChange={(v: number) => {
                               const k = v / Math.max(1, sel.w);
                               patch({ w: v, h: sel.h * k, size: sel.type === 'text' ? sel.size * k : sel.size });
                             }} />
                           <CompactSlider label="角度" value={sel.rot || 0} min={0} max={360} step={1}
                             onChange={(v: number) => patch({ rot: v })} />
+                          <CompactSlider label="透明度" value={Math.round((sel.alpha ?? 1) * 100)} min={0} max={100} step={1}
+                            onChange={(v: number) => patch({ alpha: v / 100 })} />
                         </div>
-                        <div className="flex gap-2">
-                          {sel.type === 'text' && (
-                            <div className="flex-1 h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
-                              <span className="text-[10px] font-bold text-[#888]">顏色</span>
-                              <input type="color" value={sel.color}
-                                onChange={e => patch({ color: e.target.value })}
-                                className="w-8 h-6 bg-transparent border-0 p-0 cursor-pointer" />
-                            </div>
-                          )}
-                          <button
-                            onClick={() => { setObjects(prev => prev.filter(o => o.id !== sel.id)); setSelectedObj(null); }}
-                            className="flex-1 h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold uppercase tracking-[0.2em] text-white/60 active:scale-[0.99] transition-transform"
-                          >
-                            刪除
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 );
               })()}
