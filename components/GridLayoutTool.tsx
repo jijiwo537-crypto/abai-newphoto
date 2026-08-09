@@ -965,6 +965,8 @@ export type ImageAdjustPanelProps = {
      真的點下某顆工具鈕才出現，而且是帶動畫出現的。經典拼圖不傳這個，
      維持原本「一切過去滑桿就在那」的手感。 */
   deferSlider?: boolean;
+  /** 回報「這一格有沒有滑桿在上面那一段」——創意拼圖用它決定工具欄要不要長高 */
+  onSliderOpenChange?: (open: boolean) => void;
   /** 佈局裡的格子沒有「形狀」那一組，傳 true 就把它藏起來 */
   hideShape?: boolean;
 };
@@ -973,7 +975,7 @@ export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   img, set, lutList, loadingLut, setLoadingLut, lutRevision, setLutRevision,
   adjustSub, setAdjustSub, effectCard, setEffectCard, effectDetail, setEffectDetail,
   shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
-  setTuningEdge, openComposeFor, hideShape, deferSlider,
+  setTuningEdge, openComposeFor, hideShape, deferSlider, onSliderOpenChange,
 }) => {
 const fx = img.fx || {};
 const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
@@ -1129,6 +1131,9 @@ const sliderArea = (() => {
   }
   return null;
 })();
+
+const sliderShown = fxDetailOpen || !!sliderArea;
+useEffect(() => { onSliderOpenChange?.(sliderShown); }, [sliderShown, onSliderOpenChange]);
 
 return (
   <div className="h-full flex flex-col justify-end">
@@ -3216,12 +3221,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    * 垂直中線、水平中線、以及畫布的四個邊界。
    * 吸附時邊界會刻意外溢 1px 防止次像素縫，所以邊界的容許值放寬一點。
    */
+  /** 旋轉之後真正佔的框（外接矩形）。0/180 度就是原本的寬高，90 度會對調。 */
+  const rotExtent = (w: number, h: number, rot: number) => {
+    const r = ((rot || 0) * Math.PI) / 180;
+    const c = Math.abs(Math.cos(r)), sn = Math.abs(Math.sin(r));
+    return { bw: w * c + h * sn, bh: w * sn + h * c };
+  };
+
   const pageGuidelinesAt = (
-    x: number, y: number, imgWidth: number, imgHeight: number, scale: number, edgeOnly = false,
+    x: number, y: number, imgWidth: number, imgHeight: number, scale: number, edgeOnly = false, rot = 0,
   ): AlignmentGuideline[] => {
     const out: AlignmentGuideline[] = [];
-    const scaledW = imgWidth * scale;
-    const scaledH = imgHeight * scale;
+    // 轉過的圖要用外接矩形去比，不然線會亮在離邊緣半個身子的地方
+    const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * scale, imgHeight * scale, rot);
     const cx = x + imgWidth / 2;
     const cy = y + imgHeight / 2;
     const left = cx - scaledW / 2, right = cx + scaledW / 2;
@@ -3249,7 +3261,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     imgWidth: number,
     imgHeight: number,
     imgScale: number,
-    edgeOnly?: boolean
+    edgeOnly?: boolean,
+    rot = 0
   ) => {
     if (!enableSnapping) {
       return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
@@ -3263,8 +3276,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
     const SNAP_THRESHOLD = 4; // Snapping threshold reduced to 4px
     const ownPageRectsForFit = pageRects;
-    const scaledW = imgWidth * imgScale;
-    const scaledH = imgHeight * imgScale;
+    // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
+    const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
 
     // Center coordinates for raw input
     const rawCenterX = rawX + imgWidth / 2;
@@ -3321,7 +3334,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     floatingImages.forEach(other => {
       if (other.id === imgId) return;
 
-      const otherW = other.width * other.scale;
+      const otherW = rotExtent(other.width * other.scale, other.height * other.scale, other.rotation || 0).bw;
       const otherCenterX = other.x + other.width / 2;
       const otherLeft = otherCenterX - otherW / 2;
       const otherRight = otherCenterX + otherW / 2;
@@ -3435,7 +3448,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     floatingImages.forEach(other => {
       if (other.id === imgId) return;
 
-      const otherH = other.height * other.scale;
+      const otherH = rotExtent(other.width * other.scale, other.height * other.scale, other.rotation || 0).bh;
       const otherCenterY = other.y + other.height / 2;
       const otherTop = otherCenterY - otherH / 2;
       const otherBottom = otherCenterY + otherH / 2;
@@ -3505,7 +3518,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
        如果高度也剛好跟畫布同高，上下兩條邊界線也要一起顯示。
        這裡在「已經吸附完的位置」上把畫布的中線與四個邊界重新對一次，全部符合的
        都加進去。跟其他物件的對齊線不列入（那是另一回事，維持原本只顯示吸附到的那一條）。 */
-    guidelines.push(...pageGuidelinesAt(snappedX, snappedY, imgWidth, imgHeight, imgScale, edgeOnly));
+    guidelines.push(...pageGuidelinesAt(snappedX, snappedY, imgWidth, imgHeight, imgScale, edgeOnly, rot));
 
     return { snappedX, snappedY, fitScale: undefined, guidelines: dedupeGuidelines(guidelines) };
   };
@@ -3602,7 +3615,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       rawY,
       selectedImg.width,
       selectedImg.height,
-      selectedImg.scale
+      selectedImg.scale,
+      undefined,
+      selectedImg.rotation || 0,
     );
 
     setActiveGuidelines(guidelines);
@@ -6521,20 +6536,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             const cx = target.x + target.width / 2;
             const cy = target.y + target.height / 2;
             let best = Infinity, bestScale = ns;
+            // 倍率吸附也要用轉過的外框，不然轉 90 度之後貼齊的位置會差半個身子
+            const ext = rotExtent(target.width, target.height, rot);
             pageRectsNear(getAllPageRects(), cx).forEach(pr => {
               const cands: number[] = [];
-              if (target.width > 1) {
-                cands.push((2 * (cx - pr.left)) / target.width);
-                cands.push((2 * (pr.right - cx)) / target.width);
+              if (ext.bw > 1) {
+                cands.push((2 * (cx - pr.left)) / ext.bw);
+                cands.push((2 * (pr.right - cx)) / ext.bw);
               }
-              if (target.height > 1) {
-                cands.push((2 * (cy - pr.top)) / target.height);    // 上邊貼齊
-                cands.push((2 * (pr.bottom - cy)) / target.height); // 下邊貼齊
+              if (ext.bh > 1) {
+                cands.push((2 * (cy - pr.top)) / ext.bh);    // 上邊貼齊
+                cands.push((2 * (pr.bottom - cy)) / ext.bh); // 下邊貼齊
               }
               cands.forEach(cand => {
                 if (!(cand > 0.1)) return;
                 // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
-                const px = Math.abs(cand - ns) * Math.max(target.width, target.height) / 2;
+                const px = Math.abs(cand - ns) * Math.max(ext.bw, ext.bh) / 2;
                 if (px < SNAP && px < best) { best = px; bestScale = cand; }
               });
             });
@@ -6547,7 +6564,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           ));
           if (target) {
             // 同樣只畫「邊」的線：捏合時中心不動，中線會整趟亮著（見 scaleLayoutSnapped）
-            const pageLines = pageGuidelinesAt(target.x, target.y, target.width, target.height, ns, true);
+            const pageLines = pageGuidelinesAt(target.x, target.y, target.width, target.height, ns, true, rot);
             setActiveGuidelines(dedupeGuidelines(straight
               ? [
                   { type: 'vertical', coord: target.x + target.width / 2 },
@@ -6569,7 +6586,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           if (selectedImg) {
             const { snappedX, snappedY, guidelines } = applySnapping(
               selectedImg.id, g.baseX + dx, g.baseY + dy,
-              selectedImg.width, selectedImg.height, selectedImg.scale
+              selectedImg.width, selectedImg.height, selectedImg.scale,
+              undefined, selectedImg.rotation || 0,
             );
             setActiveGuidelines(guidelines);
             setFloatingImages(prev => prev.map(img =>
@@ -10168,7 +10186,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                             rawY,
                             fImg.width,
                             fImg.height,
-                            fImg.scale
+                            fImg.scale,
+                            undefined,
+                            fImg.rotation || 0,
                           );
                           setActiveGuidelines(guidelines);
                           setFloatingImages(prev => prev.map(item => item.id === fImg.id

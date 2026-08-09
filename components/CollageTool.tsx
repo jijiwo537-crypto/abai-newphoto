@@ -92,16 +92,23 @@ const collageSizeOf = (layout: string, w: number, h: number, maskScale: number) 
 
 /** 把 id 轉成一個穩定的數字，用來打散順序（同一顆圖案永遠拿同一格，不會閃） */
 /** 兩份圖案清單是不是完全一樣（id、位置、所屬側都沒變） */
-const sameHoles = (a: any[], b: any[]) => {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i].id !== b[i].id || a[i].x !== b[i].x || a[i].y !== b[i].y
-      || (a[i].side || 'both') !== (b[i].side || 'both')
-      || (a[i].angle ?? null) !== (b[i].angle ?? null)
-      || (a[i].localScale ?? 1) !== (b[i].localScale ?? 1)) return false;
+/* 「畫出來長什麼樣」的指紋：一顆 side:'both' 的圖案跟拆開後的
+   image + mask 兩顆畫出來一模一樣，所以要先展開再比。
+   對稱鍵按下去只是把同一批圖案換一種存法、畫面完全沒變 ——
+   那就不該佔掉一格上一步。 */
+const renderKeyOf = (list: any[]) => {
+  const out: string[] = [];
+  for (const h of list || []) {
+    const sides = (h.side || 'both') === 'both' ? ['image', 'mask'] : [h.side];
+    for (const sd of sides) out.push(`${sd}|${h.x}|${h.y}|${h.angle ?? ''}|${h.localScale ?? 1}`);
   }
-  return true;
+  return out.sort().join(';');
 };
+const sameHoles = (a: any[], b: any[]) => renderKeyOf(a) === renderKeyOf(b);
+
+/** 物件的指紋。img 是 DOM 元素，不能 JSON —— 用 src 代表它。 */
+const objKeyOf = (list: any[]) =>
+  (list || []).map(o => JSON.stringify({ ...o, img: undefined, src: o.src || '' })).join(';');
 
 const hashId = (id: string) => {
   let x = 0;
@@ -692,6 +699,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /* 兩指縮放物件的期間把那排白色鍵收起來 —— 它掛在物件下緣，
      物件一邊變大它就一邊亂跳（經典拼圖也是這樣處理的）。 */
   const [objPinching, setObjPinching] = useState(false);
+  /* 圖片編輯頁：一進去工具欄維持原高度（不要往上跳），
+     等真的點出滑桿才長高，而且是帶過場動畫地長。 */
+  const [objSliderOpen, setObjSliderOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const [enableSnapping, setEnableSnapping] = useState(true);
   const enableSnappingRef = useRef(true);
@@ -775,59 +785,82 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     return () => cancelAnimationFrame(id);
   }, [activeTab, shapeSub, holeType]);
 
-  const [historyState, setHistoryState] = useState<{
-    history: any[][];
-    index: number;
-  }>({
-    history: [[]],
-    index: 0
+  /* 一格上一步 = 圖案 + 浮動物件的整組快照。
+     物件的 img 是 DOM 元素，不能走 JSON —— 淺拷貝、img 維持同一個參考。 */
+  type Snap = { holes: any[]; objects: any[] };
+  const cloneSnap = (sn: Snap): Snap => ({
+    holes: (sn.holes || []).map(h => ({ ...h })),
+    objects: (sn.objects || []).map(o => ({ ...o, fx: o.fx ? { ...o.fx } : o.fx })),
   });
+  const sameSnap = (a: Snap, b: Snap) =>
+    !!a && !!b && sameHoles(a.holes, b.holes) && objKeyOf(a.objects) === objKeyOf(b.objects);
 
-  const pushHistory = useCallback((newHoles: any[]) => {
+  const [historyState, setHistoryState] = useState<{ history: Snap[]; index: number }>({
+    history: [{ holes: [], objects: [] }],
+    index: 0,
+  });
+  /** undo/redo 自己造成的狀態變動不能再被記一次 */
+  const restoringRef = useRef(false);
+
+  const pushHistory = useCallback((newHoles: any[], newObjects?: any[]) => {
+    const snap = cloneSnap({ holes: newHoles, objects: newObjects ?? objectsRef.current });
     setHistoryState(prev => {
       const sliced = prev.history.slice(0, prev.index + 1);
-      const cloned = JSON.parse(JSON.stringify(newHoles));
       const current = sliced[sliced.length - 1];
-      if (current && JSON.stringify(current) === JSON.stringify(cloned)) {
-        return prev;
-      }
-      const nextHistory = [...sliced, cloned].slice(-100);
-      return {
-        history: nextHistory,
-        index: nextHistory.length - 1
-      };
+      if (current && sameSnap(current, snap)) return prev;      // 畫面沒變就不記
+      const nextHistory = [...sliced, snap].slice(-100);
+      return { history: nextHistory, index: nextHistory.length - 1 };
     });
   }, []);
 
-  const resetHistory = useCallback((initialHoles: any[]) => {
-    const cloned = JSON.parse(JSON.stringify(initialHoles));
+  const resetHistory = useCallback((initialHoles: any[], initialObjects?: any[]) => {
     setHistoryState({
-      history: [cloned],
-      index: 0
+      history: [cloneSnap({ holes: initialHoles, objects: initialObjects ?? objectsRef.current })],
+      index: 0,
     });
   }, []);
+
+  const applySnap = (sn: Snap) => {
+    restoringRef.current = true;
+    setHoles(sn.holes.map(h => ({ ...h })));
+    setObjects(sn.objects.map(o => ({ ...o, fx: o.fx ? { ...o.fx } : o.fx })));
+    setSelectedTarget(null);
+    setSelectedObj(prev => (sn.objects.some(o => o.id === prev) ? prev : null));
+    // 下一輪 render 之後才解鎖，中間那幾次 setState 不會被記進歷史
+    setTimeout(() => { restoringRef.current = false; }, 0);
+  };
 
   const undo = useCallback(() => {
     if (historyState.index > 0) {
       const prevIndex = historyState.index - 1;
-      const prevHoles = historyState.history[prevIndex];
-      setHoles(JSON.parse(JSON.stringify(prevHoles)));
+      applySnap(historyState.history[prevIndex]);
       setHistoryState(prev => ({ ...prev, index: prevIndex }));
-      setSelectedTarget(null);
     }
   }, [historyState]);
 
   const redo = useCallback(() => {
     if (historyState.index < historyState.history.length - 1) {
       const nextIndex = historyState.index + 1;
-      const nextHoles = historyState.history[nextIndex];
-      setHoles(JSON.parse(JSON.stringify(nextHoles)));
+      applySnap(historyState.history[nextIndex]);
       setHistoryState(prev => ({ ...prev, index: nextIndex }));
-      setSelectedTarget(null);
     }
   }, [historyState]);
 
   useEffect(() => { holesRef.current = holes; }, [holes]);
+
+  /* 物件的新增／刪除／編輯／移動／縮放都要能上一步。
+     拖曳與滑桿是連續變動，所以等「停下來 400ms」再記一格 ——
+     結果就是只記到鬆手時的那一組參數，中間的過程不會塞滿歷史。 */
+  const objHistoryReadyRef = useRef(false);
+  useEffect(() => {
+    if (!imageState) return;
+    if (!objHistoryReadyRef.current) { objHistoryReadyRef.current = true; return; }
+    if (restoringRef.current) return;
+    const t = setTimeout(() => {
+      if (!restoringRef.current) pushHistory(holesRef.current, objectsRef.current);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [objects, imageState, pushHistory]);
 
   // ---- 跳出應用再回來還在：參數自動存檔 ----
   // 照片本身由 App 那邊存進 IndexedDB（跟其他工具共用一份草稿），
@@ -2031,11 +2064,54 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        兩種排版的插入點不同，但相對於圖案的層級是一致的。 */
     const belowObjs = objects.filter(o => o.below);
     const aboveObjs = objects.filter(o => !o.below);
+    /* 四周包圍時，遮罩側的圖案是「在遮罩上挖穿、看到墊在底下那張放大的圖」，
+       而遮罩是在物件之前就畫好的 —— 所以那些洞會被 below 的物件蓋住，
+       跟圖片側的圖案不同層。這裡在物件之上再把「洞裡看到的那張圖」補畫一次，
+       兩側的圖案就都在物件上面了。只有真的有 below 物件時才做（省一張畫布）。 */
+    const drawMaskHolesOnTop = () => {
+      const img = imageState.img, t = imageTransform;
+      if (!img || !t) return;
+      // 洞裡看到的就是墊在遮罩底下那張放大的圖：先畫成一張，再一個洞一個洞貼回去
+      const bd = document.createElement('canvas');
+      bd.width = Math.max(1, Math.round(offs.cw));
+      bd.height = Math.max(1, Math.round(offs.ch));
+      const g = bd.getContext('2d');
+      if (!g) return;
+      const kk = maskW / sw;
+      const ccx = offs.cw / 2, ccy = offs.ch / 2;
+      const x0 = offs.ix + t.x * s, y0 = offs.iy + t.y * s;
+      g.drawImage(img, ccx + (x0 - ccx) * kk, ccy + (y0 - ccy) * kk, t.w * s * kk, t.h * s * kk);
+      const pat = ctx.createPattern(bd, 'no-repeat');
+      holes.forEach(h => {
+        const side = h.side || 'both';
+        if (side !== 'both' && side !== 'mask') return;
+        const sz = getHoleSize(h) * s;
+        const ang2 = h.angle !== undefined ? h.angle : holeAngle;
+        const hx = h.x * s + offs.mx, hy = h.y * s + offs.my;
+        if (isTextHole(holeType)) {
+          if (pat) drawTextShape(ctx, holeType, holeGlyph(holeType, customText, h), hx, hy, sz, pat, false, ang2);
+          return;
+        }
+        ctx.save();
+        ctx.translate(hx, hy);
+        ctx.rotate(ang2 * Math.PI / 180);
+        ctx.translate(-hx, -hy);
+        drawShapePath(ctx, holeType, hx, hy, sz);
+        ctx.clip();
+        // 形狀可以轉，但貼進去的圖不能跟著轉 —— 先把座標系還原再貼
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(bd, 0, 0);
+        ctx.restore();
+      });
+      bd.width = 0;
+    };
+
     if (layout === AROUND) {
       drawBackdrop();
       drawMaskLayer();
       drawCentreImage();
       drawObjects(belowObjs);
+      if (belowObjs.length) drawMaskHolesOnTop();
       drawHolesOverImage();
       drawImageSideHoles();
     } else {
@@ -2529,6 +2605,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             ref={stageRef}
             className="absolute inset-0 overflow-hidden"
             style={{ touchAction: 'none' }}
+            /* 手勢掛在整個工作區上，不是只有畫布：選中物件之後，
+               畫布外面那片黑底也能拖、也能兩指縮放。挖洞／筆刷本來就會
+               檢查座標落在哪一塊，落在黑底上就自然什麼都不做。 */
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerCancel={handlePointerUp}
             onWheel={(e) => {
               const c = stageBox();
               const v = viewTRef.current;
@@ -2550,9 +2633,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             >
               <canvas 
                 ref={canvasRef} 
-                onPointerDown={handlePointerDown} 
-                onPointerMove={handlePointerMove} 
-                onPointerUp={handlePointerUp}
                 className={`block drop-shadow-[0_20px_50px_rgba(255,255,255,0.05)] pointer-events-auto ${baseCss ? '' : 'max-w-full max-h-full'}`}
                 style={{ 
                   touchAction: 'none',
@@ -2684,10 +2764,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }}
       />
 
-      <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-transform duration-500 flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} style={{ height: objEditImage ? 'max(34dvh, 300px)' : '34dvh' }}>
+      <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-[transform,height] duration-300 ease-out flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} style={{ height: objEditImage && objSliderOpen ? 'max(34dvh, 300px)' : '34dvh' }}>
         {!colorPickerTarget && (
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a]">
-            {['setting', 'add', 'objedit', 'shape'].map(id => (
+            {['setting', 'shape', 'add', 'objedit'].map(id => (
               <button 
                 key={id} 
                 onClick={() => setActiveTab(id)} 
@@ -2874,10 +2954,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   const n = prev.slice(); const [x] = n.splice(i, 1); n.splice(j, 0, x); return n;
                 });
                 if (!sel) return (
-                  <div className="max-w-md mx-auto pt-8 text-center animate-in fade-in duration-300">
-                    <p className="text-[11px] text-[#666] leading-relaxed">
-                      先在預覽上點一下要編輯的圖片或文字
-                    </p>
+                  // 位置與字樣跟經典拼圖同一份
+                  <div className="h-full flex items-center justify-center pb-6">
+                    <p className="text-[11px] text-white/40 text-center">請先選中圖片或文字</p>
                   </div>
                 );
                 return (
@@ -2916,6 +2995,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       setTuningEdge={setTuningEdge}
                       openComposeFor={openComposeFor}
                       deferSlider
+                      onSliderOpenChange={setObjSliderOpen}
                     />
                   </div>
                   )
