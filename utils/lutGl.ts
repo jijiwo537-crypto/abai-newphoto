@@ -18,7 +18,7 @@
 
 import {
   MAX_SAT_RATIO, MIN_SAT_ROOM, MAX_SAT_FRACTION, GAMUT_C,
-  RED_HUE, RED_CORE, RED_SPAN, RED_MIN_SAT, RED_HUE_DAMP, HUE_GATE_C,
+  PROTECT_BANDS, BAND_SPAN, RED_MIN_SAT, RED_HUE_DAMP, HUE_GATE_C,
   HUE_SOFT, SOFT_MAX_K,
 } from './colorTransfer';
 
@@ -59,20 +59,32 @@ const float GAMUT[36] = float[36](${GAMUT_C.map((v) => v.toFixed(1)).join(', ')}
 float toLinear(float c) { return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4); }
 float toSrgb(float c) { return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055; }
 
-/* 這顆像素有多「紅」（0～1）。升餘弦，邊緣斜率也是 0，所以接得上不會有斷層；
-   彩度低的時候淡出，因為灰色的色相是雜訊。 */
-float redWeight(vec2 ab) {
+/* 這顆像素「因為它的色相」該被保護多少（0～1）。
+   八個色相帶各有自己的強度，帶與帶之間用升餘弦接 —— 每個角度都連續、
+   斜率也連續，色相環上不會有接縫。彩度低的時候淡出，因為灰色的色相是雜訊。
+   常數直接從 CPU 版的 PROTECT_BANDS 注入，兩邊不可能走鐘。 */
+const int BAND_N = ${PROTECT_BANDS.filter((x) => x.w > 0).length || 1};
+const vec2 BANDS[BAND_N] = vec2[BAND_N](${
+  (PROTECT_BANDS.filter((x) => x.w > 0).length
+    ? PROTECT_BANDS.filter((x) => x.w > 0)
+    : [{ h: 0, w: 0 }]
+  ).map((x) => `vec2(${x.h.toFixed(1)}, ${x.w.toFixed(4)})`).join(', ')
+});
+float hueProtect(vec2 ab) {
   float c = length(ab);
   if (c <= 0.0) return 0.0;
-  float d = degrees(atan(ab.y, ab.x)) - ${RED_HUE.toFixed(1)};
-  if (d > 180.0) d -= 360.0;
-  if (d < -180.0) d += 360.0;
-  d = abs(d);
-  if (d >= ${RED_SPAN.toFixed(1)}) return 0.0;
-  float w = d <= ${RED_CORE.toFixed(1)} ? 1.0
-    : 0.5 * (1.0 + cos(PI * (d - ${RED_CORE.toFixed(1)}) / ${(RED_SPAN - RED_CORE).toFixed(1)}));
+  float hDeg = degrees(atan(ab.y, ab.x));
+  if (hDeg < 0.0) hDeg += 360.0;
+  float w = 0.0;
+  for (int i = 0; i < BAND_N; i++) {
+    float d = abs(hDeg - BANDS[i].x);
+    if (d > 180.0) d = 360.0 - d;
+    if (d >= ${BAND_SPAN.toFixed(1)}) continue;
+    w = max(w, BANDS[i].y * 0.5 * (1.0 + cos(PI * d / ${BAND_SPAN.toFixed(1)})));
+  }
+  if (w <= 0.0) return 0.0;
   float t = min(1.0, c / ${HUE_GATE_C.toFixed(1)});
-  return w * t * t * (3.0 - 2.0 * t);
+  return min(1.0, w * t * t * (3.0 - 2.0 * t));
 }
 
 /* 這個色相在 sRGB 裡最濃能到多濃。表跟 CPU 版是同一份（從 GAMUT_C 注入進來的） */
@@ -189,16 +201,18 @@ void main() {
   vec3 mapped = texture(uLut, src * uLutScale + uLutOffset).rgb;
   vec3 labIn = rgb2lab(src);
   vec3 labOut = rgb2lab(mapped);
+  /* 這顆像素該被保護多少：膚色保護與色相保護取大的那一個。
+     跟 CPU 版、跟調校台的預覽區都是同一條 w —— 它同時決定顏色被換掉多少、
+     色相打幾折、彩度托多高。三件事共用一個權重，效果才會完全一樣。
+     有遮罩的話兩個成分都是「已經防過斷層」的版本（補洞 ＋ 導引濾波）。 */
   vec2 pm = texture(uProtectMap, vUv).rg;
   float skinW = uHasMask > 0.5 ? pm.r : protectProb(src);
-  float w = 1.0 - uProtect * skinW;
+  float hueW  = uHasMask > 0.5 ? pm.g : hueProtect(labIn.yz);
+  float rw = min(1.0, max(uProtect * skinW, hueW));
   // 亮度一律用原圖的（只換顏色不動明暗），色度依保護程度混合
-  vec2 ab = mix(labIn.yz, labOut.yz, w);
+  vec2 ab = mix(labIn.yz, labOut.yz, 1.0 - rw);
   float cIn = length(labIn.yz);
 
-  /* 紅色的兩道限制，跟 CPU 版一模一樣。權重用原圖的色相算，
-     這樣它在畫面上是連續變化的，紅橘漸層才不會出現接縫。 */
-  float rw = uHasMask > 0.5 ? pm.g : redWeight(labIn.yz);
   if (rw > 0.0) {
     float cNow = length(ab);
     if (cNow > 1e-6 && cIn > 1e-6) {

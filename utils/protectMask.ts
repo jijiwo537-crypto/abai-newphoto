@@ -28,7 +28,7 @@
  * 導出從「秒級」變成「一次性的幾十毫秒」。這就是 Fast Guided Filter
  * （He & Sun 2015）在做的事。
  */
-import { skinProbability, redWeight } from './colorTransfer';
+import { skinProbability, hueProtect } from './colorTransfer';
 
 /* sRGB → 線性只有 256 種可能的輸入（來源是 8-bit），先建表就不用逐像素跑 pow()。
    數值跟 colorTransfer 裡那條完全一樣，只是查表。一張 1024×768 的圖
@@ -60,8 +60,8 @@ export type ProtectMaps = {
   h: number;
   /** 膚色保護（還沒乘上滑桿的倍率） */
   skin: Float32Array;
-  /** 紅色權重 */
-  red: Float32Array;
+  /** 色相保護權重（八個色相帶），已防斷層 */
+  hue: Float32Array;
 };
 
 /* ── 一維滑動極值：單調佇列，攤提 O(1)，跟半徑多大無關 ────────────── */
@@ -186,7 +186,7 @@ function deband(m: Float32Array, luma: Float32Array, w: number, h: number): Floa
 export function buildProtectMaps(data: Uint8ClampedArray, w: number, h: number): ProtectMaps {
   const n = w * h;
   const skin = new Float32Array(n);
-  const red = new Float32Array(n);
+  const hue = new Float32Array(n);
   const luma = new Float32Array(n);
   for (let p = 0, k = 0; k < n; p += 4, k++) {
     const r8 = data[p], g8 = data[p + 1], b8 = data[p + 2];
@@ -198,9 +198,9 @@ export function buildProtectMaps(data: Uint8ClampedArray, w: number, h: number):
     const fx = labF((0.4124564 * R + 0.3575761 * G + 0.1804375 * B) / WHITE_X);
     const fy = labF(0.2126729 * R + 0.7151522 * G + 0.0721750 * B);
     const fz = labF((0.0193339 * R + 0.1191920 * G + 0.9503041 * B) / WHITE_Z);
-    red[k] = redWeight(500 * (fx - fy), 200 * (fy - fz));
+    hue[k] = hueProtect(500 * (fx - fy), 200 * (fy - fz));
   }
-  return { w, h, skin: deband(skin, luma, w, h), red: deband(red, luma, w, h) };
+  return { w, h, skin: deband(skin, luma, w, h), hue: deband(hue, luma, w, h) };
 }
 
 /** 遮罩用的縮圖尺寸（保持長寬比，長邊最多 MASK_MAX_EDGE） */
@@ -223,13 +223,13 @@ export function buildProtectMapsFrom(
   return buildProtectMaps(g.getImageData(0, 0, size.w, size.h).data, size.w, size.h);
 }
 
-/** 打包成 GPU 的 RGBA8 貼圖：R ＝ 膚色保護、G ＝ 紅色權重 */
+/** 打包成 GPU 的 RGBA8 貼圖：R ＝ 膚色機率、G ＝ 色相保護權重 */
 export function packProtectMaps(m: ProtectMaps): Uint8Array {
   const n = m.w * m.h;
   const out = new Uint8Array(n * 4);
   for (let i = 0; i < n; i++) {
     out[i * 4] = Math.round(m.skin[i] * 255);
-    out[i * 4 + 1] = Math.round(m.red[i] * 255);
+    out[i * 4 + 1] = Math.round(m.hue[i] * 255);
     out[i * 4 + 3] = 255;
   }
   return out;

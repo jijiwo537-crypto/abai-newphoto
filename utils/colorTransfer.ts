@@ -114,7 +114,7 @@ export function labToRgbSoft(L: number, a: number, b: number, out: number[]): vo
   if (inNow) {
     // 已經在色域裡：往外找邊界（最多找到 4 倍，夠遠了）
     lo = 1; hi = 4;
-    for (let k = 0; k < 7; k++) {
+    for (let k = 0; k < 8; k++) {
       const m = (lo + hi) / 2;
       if (labInGamut(Lc, a * m, b * m)) lo = m; else hi = m;
     }
@@ -603,8 +603,10 @@ export type ApplyOptions = {
 export type ProtectLike = {
   w: number;
   h: number;
+  /** 膚色機率（還沒乘上滑桿的倍率），已防斷層 */
   skin: Float32Array;
-  red: Float32Array;
+  /** 色相保護權重，已防斷層 */
+  hue: Float32Array;
 };
 
 /**
@@ -670,32 +672,45 @@ export function satCeiling(chromaIn: number, a: number, b: number): number {
 }
 
 /* ---------------------------------------------------------------------------
-   紅色的兩道額外限制
+   顏色保護
 
-   紅色是最容易出事的顏色：稍微降一點彩度就整個變濁，稍微往洋紅偏一點就
-   從「紅」變成「桃紅」，兩者都很顯眼。所以另外給它兩條規矩：
+   有些顏色特別容易出事 —— 紅色是最典型的：稍微降一點彩度就整個變濁，
+   稍微往洋紅偏一點就從「紅」變成「桃紅」，兩者都很顯眼。所以受保護的顏色
+   除了「少換一點」之外，另外還有兩條規矩：
 
      一、要降彩度可以，但最多只能降到原本的 RED_MIN_SAT。
      二、色相要往洋紅偏可以，但偏的程度打 (1 - RED_HUE_DAMP) 折。
 
-   關鍵在於這兩條**不能只套在「是紅色」的像素上**。用一個硬邊界去分
-   「紅／不紅」，邊界兩側的像素會被完全不同地處理，紅橘漸層上就會出現
-   一條看得見的接縫。所以改用一個連續的權重：離純紅越遠影響越小，
-   在 RED_SPAN 度之外剛好歸零，而且是用升餘弦 —— 邊緣的斜率也是 0，
+   關鍵在於這些規矩**不能只套在「是不是那個顏色」的像素上**。用一個硬邊界
+   去分「是／不是」，邊界兩側的像素會被完全不同地處理，紅橘漸層上就會出現
+   一條看得見的接縫。所以改用一個連續的權重：離帶中心越遠影響越小，
+   在 BAND_SPAN 度之外剛好歸零，而且是用升餘弦 —— 邊緣的斜率也是 0，
    接得上就不會有斷層。
 
    另外灰色的色相是雜訊（彩度接近 0 時 atan2 會亂跳），所以彩度低的時候
-   權重也要淡出，不然一片灰牆上會冒出隨機的紅色斑點。                    */
+   權重也要淡出，不然一片灰牆上會冒出隨機的色斑。                        */
 
-/** Lab 裡 sRGB 純紅的色相角 */
-export const RED_HUE = 40;
-/** 離純紅這麼多度之內算「完全是紅」，這一段拿滿保護 */
-export const RED_CORE = 15;
-/** 再往外到這裡權重才歸零，中間用升餘弦接 —— 兩個接點的斜率都是 0，不會有接縫 */
-export const RED_SPAN = 38;
-/** 紅色的彩度最多只能被降到原本的幾成 */
+/**
+ * 八個色相帶，各自有自己的保護強度（調校台上一個顏色一根滑桿）。
+ * 帶與帶之間用升餘弦混合，所以色相環上每一個角度的權重都是連續的、
+ * 斜率也是連續的 —— 不會有接縫。
+ * 目前只有紅色有保護，其餘都是 0（＝主人在調校台上決定的那一組）。
+ */
+export const PROTECT_BANDS: ReadonlyArray<{ h: number; w: number }> = [
+  { h: 40, w: 0.75 },    // 紅
+  { h: 85, w: 0 },       // 橙黃
+  { h: 130, w: 0 },      // 黃綠
+  { h: 155, w: 0 },      // 綠
+  { h: 200, w: 0 },      // 青
+  { h: 270, w: 0 },      // 藍
+  { h: 310, w: 0 },      // 紫
+  { h: 350, w: 0 },      // 洋紅
+];
+/** 每一帶往左右各延伸這麼多度才歸零 */
+export const BAND_SPAN = 38;
+/** 受保護的顏色，彩度最多只能被降到原本的幾成 */
 export const RED_MIN_SAT = 0.90;
-/** 紅色往洋紅偏的程度要打幾折 */
+/** 受保護的顏色往洋紅偏的程度要打幾折 */
 export const RED_HUE_DAMP = 0.30;
 /** 彩度低到這個以下就當作沒有可信的色相 */
 export const HUE_GATE_C = 10;
@@ -722,18 +737,45 @@ export function softMax(a: number, b: number, k: number): number {
   return 0.5 * (a + b + Math.sqrt(d * d + k * k)) - k / 2;
 }
 
-/** 這顆像素有多「紅」（0～1，連續、邊緣平滑） */
-export function redWeight(a: number, b: number): number {
+/**
+ * 這顆像素「因為它的色相」該被保護多少（0～1，連續、邊緣平滑）。
+ * 跟調校台上的 hueProtect() 是同一條式子、同一組常數。
+ */
+export function hueProtect(a: number, b: number): number {
   const c = Math.hypot(a, b);
   if (c <= 0) return 0;
-  let d = Math.atan2(b, a) * (180 / Math.PI) - RED_HUE;
-  if (d > 180) d -= 360;
-  if (d < -180) d += 360;
-  d = Math.abs(d);
-  if (d >= RED_SPAN) return 0;
-  const w = d <= RED_CORE ? 1 : 0.5 * (1 + Math.cos(Math.PI * (d - RED_CORE) / (RED_SPAN - RED_CORE)));
+  let h = Math.atan2(b, a) * (180 / Math.PI);
+  if (h < 0) h += 360;
+  let w = 0;
+  for (let i = 0; i < PROTECT_BANDS.length; i++) {
+    const band = PROTECT_BANDS[i];
+    if (band.w <= 0) continue;
+    let d = Math.abs(h - band.h);
+    if (d > 180) d = 360 - d;
+    if (d >= BAND_SPAN) continue;
+    const f = 0.5 * (1 + Math.cos((Math.PI * d) / BAND_SPAN));
+    const v = band.w * f;
+    if (v > w) w = v;
+  }
+  if (w <= 0) return 0;
   const t = Math.min(1, c / HUE_GATE_C);
-  return w * t * t * (3 - 2 * t);
+  return Math.min(1, w * t * t * (3 - 2 * t));
+}
+
+/**
+ * 這顆像素總共該被保護多少：膚色保護與色相保護取大的那一個。
+ * 這就是調校台上那一條 w —— 它同時決定
+ *   ① 顏色被換掉多少（1 - w）
+ *   ② 色相往洋紅偏要打多少折
+ *   ③ 彩度托底托多高
+ * 三件事共用同一個權重，是「效果跟預覽區完全一樣」的關鍵。
+ */
+export function protectWeight(
+  a: number, b: number, skinProb: number, skinProtect: number,
+): number {
+  const skin = skinProtect * skinProb;
+  const hue = hueProtect(a, b);
+  return Math.min(1, skin > hue ? skin : hue);
 }
 
 /** 雙線性取樣，讓縮圖尺寸的保護遮罩對得回任何解析度 */
@@ -753,8 +795,19 @@ export function sampleMaskAt(
 }
 
 /**
- * 膚色保護刻意只鎖「顏色」不鎖「亮度」：
- * 臉還是要跟著整體的明暗走，不然人會像貼上去的。
+ * 把 LUT 套到整張圖上，並且套用「保護」。
+ *
+ * 這一段跟保護範圍調校台的 pipeline() 是同一條式子、同一組常數 ——
+ * 主人在網站上看到的新版預覽是什麼樣，App 就是什麼樣。
+ *
+ * 關鍵是只有「一條」保護權重 w：膚色保護與色相保護取大的那一個，
+ * 然後同一個 w 同時決定三件事 —— 顏色被換掉多少（1 - w）、色相往洋紅偏
+ * 打幾折、彩度托多高。
+ * （之前是兩條各管各的：膚色保護一條、紅色一條，而且紅色那條不參與
+ *   「顏色被換掉多少」。所以膚色保護拉到 0 的時候顏色就整片裸奔 ——
+ *   那正是主人量到的差異。）
+ *
+ * 亮度一律用原圖的：臉還是要跟著整體明暗走，不然人會像貼上去的。
  */
 export function applyLut(
   data: Uint8ClampedArray,
@@ -772,91 +825,83 @@ export function applyLut(
   const sp = Math.min(1, Math.max(0, opt.skinProtect));
   /* 防斷層遮罩：算的時候用的是縮圖（遮罩本來就很平滑），這裡雙線性取樣回來。
      遮罩裡的權重已經做過補洞與羽化，所以臉上那塊偏青的皮膚也一起受保護，
-     交界不再是一條硬邊。沒有遮罩的話下面兩行就退回原本的逐像素判斷。 */
+     交界不再是一條硬邊。沒有遮罩就退回逐像素算 —— 兩條路的式子完全一樣，
+     差別只在「看不看鄰居」。 */
   const pm = opt.protect || null;
   const iw = opt.width || 0;
   const useMask = !!pm && iw > 0 && pm.w > 0 && pm.h > 0;
   const ih = useMask ? Math.max(1, Math.round(data.length / 4 / iw)) : 0;
+
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i] / 255, g = data[i + 1] / 255, b = data[i + 2] / 255;
-    let mSkin = 0, mRed = -1;
+    sampleLut(lut, r, g, b, out);
+    rgbToLab(r, g, b, labIn);
+    rgbToLab(out[0], out[1], out[2], labOut);
+
+    // ── 這顆像素該被保護多少 ────────────────────────────────────
+    let w: number;
     if (useMask) {
       const k = i >> 2;
       const u = ((k % iw) + 0.5) / iw, v = (((k / iw) | 0) + 0.5) / ih;
-      mSkin = sampleMaskAt(pm!.skin, pm!.w, pm!.h, u, v);
-      mRed = sampleMaskAt(pm!.red, pm!.w, pm!.h, u, v);
+      const skin = sp * sampleMaskAt(pm!.skin, pm!.w, pm!.h, u, v);
+      const hue = sampleMaskAt(pm!.hue, pm!.w, pm!.h, u, v);
+      w = Math.min(1, skin > hue ? skin : hue);
+    } else {
+      w = protectWeight(labIn[1], labIn[2], skinProbability(r, g, b), sp);
     }
-    sampleLut(lut, r, g, b, out);
-    let R = out[0], G = out[1], B = out[2];
-    // 天花板一定要在 Lab 算，所以這一段不再是可選的
-    {
-      rgbToLab(r, g, b, labIn);
-      rgbToLab(R, G, B, labOut);
-      let L = labOut[0], A = labOut[1], BB = labOut[2];
-      if (opt.preserveLuminance) L = labIn[0];
-      if (sp > 0) {
-        const w = 1 - sp * (useMask ? mSkin : skinProbability(r, g, b));
-        A = labIn[1] + (A - labIn[1]) * w;
-        BB = labIn[2] + (BB - labIn[2]) * w;
-      }
-      // 紅色的兩道限制。權重用「原圖」的色相算 —— 原圖的色相在畫面上是
-      // 連續變化的，這樣權重才會跟著連續變化，不會有接縫
-      const cIn = Math.hypot(labIn[1], labIn[2]);
-      const rw = mRed >= 0 ? mRed : redWeight(labIn[1], labIn[2]);
-      if (rw > 0) {
-        // 一、往洋紅偏的部分打折（洋紅在紅的「下面」，所以差值是負的那一邊）
-        const cNow = Math.hypot(A, BB);
-        if (cNow > 1e-6 && cIn > 1e-6) {
-          const hIn = Math.atan2(labIn[2], labIn[1]);
-          let d = Math.atan2(BB, A) - hIn;
-          if (d > Math.PI) d -= 2 * Math.PI;
-          if (d < -Math.PI) d += 2 * Math.PI;
-          /* 以前是 if (d < 0) 才打折 —— 那是一刀切：d 從 +0.001 變成 -0.001，
-             處理方式整個換一套。值本身雖然接得上，但斜率是斷的，
-             強度拉到 200 會把這個轉折放大兩倍，畫面上就看得到一條硬邊。
-             改成用一小段角度平滑地把「要不要打折」接起來（d 在 0 到 -HUE_SOFT
-             之間慢慢生效），處處連續、斜率也連續。 */
-          const gate = smoothstep01(-d / HUE_SOFT);
-          const h2 = hIn + d * (1 - RED_HUE_DAMP * rw * gate);
-          A = Math.cos(h2) * cNow; BB = Math.sin(h2) * cNow;
-        }
-        /* 二、彩度最多只能降到原本的 RED_MIN_SAT。
-           要注意這裡是把「有擋」與「沒擋」兩個結果依權重混合，不是去調門檻本身 ——
-           拿權重去乘門檻的話，權重再小門檻都還是接近原本的彩度，於是權重 0.001 的
-           像素也會被整個拉回去，紅色範圍的邊界上就會出現一條很明顯的接縫
-           （量到過 27 個 Lab 單位的跳動）。 */
-        const want = Math.hypot(A, BB);
-        /* 以前這裡是 Math.max —— 值連續但轉折處斜率是斷的，強度放大之後
-           在「剛好開始被托住」的那條線上會看到一道硬邊。
-           改用平滑版的 max（雙曲線接角），差別只在轉折附近幾個 Lab 單位，
-           其餘完全一樣。 */
-        const held = softMax(want, cIn * RED_MIN_SAT, SOFT_MAX_K);
-        const cFinal = want + (held - want) * rw;
-        if (cFinal > want) {
-          if (want > 1e-3) { const k = cFinal / want; A *= k; BB *= k; }
-          else if (cIn > 1e-6) { const k = cFinal / cIn; A = labIn[1] * k; BB = labIn[2] * k; }
-        }
-      }
-      // 飽和度天花板：超過上限的才拉回來，沒超過的不動。
-      // 放在最後，所以上面拉高的部分也一樣受它管
-      const cOut = Math.hypot(A, BB);
-      const lim = satCeiling(cIn, A, BB);
-      if (cOut > lim && cOut > 1e-6) { const k = lim / cOut; A *= k; BB *= k; }
 
-      /* 強度改成「在 Lab 裡混合」，而不是算完 RGB 再混。
-         以前是先把結果夾進 sRGB、再用 RGB 做 src + (res - src) * s，
-         強度超過 1 時等於把「已經被夾過的值」再往外拉，最後又被
-         Uint8ClampedArray 夾一次 —— 兩次硬夾疊在一起，紅色那種本來就貼著
-         色域邊緣的顏色會整片壓平，邊界就出現硬變。
-         現在整條路上只在最後做一次「收彩度」的柔性壓縮。 */
-      const Lf = labIn[0] + (L - labIn[0]) * s;
-      const Af = labIn[1] + (A - labIn[1]) * s;
-      const Bf = labIn[2] + (BB - labIn[2]) * s;
-      labToRgbSoft(Lf, Af, Bf, rgb);
-      R = rgb[0]; G = rgb[1]; B = rgb[2];
+    const L = opt.preserveLuminance ? labIn[0] : labOut[0];
+    let A = labIn[1] + (labOut[1] - labIn[1]) * (1 - w);
+    let BB = labIn[2] + (labOut[2] - labIn[2]) * (1 - w);
+    const cIn = Math.hypot(labIn[1], labIn[2]);
+
+    if (w > 0) {
+      /* 一、往洋紅偏的部分打折（洋紅在紅的「下面」，所以差值是負的那一邊）。
+         以前是 if (d < 0) 一刀切 —— 值接得上但斜率是斷的，強度拉到 200
+         會把那個轉折放大兩倍，畫面上就看得到一條硬邊。改成在一小段角度內
+         平滑接起來，處處連續、斜率也連續。 */
+      const cNow = Math.hypot(A, BB);
+      if (cNow > 1e-6 && cIn > 1e-6) {
+        const hIn = Math.atan2(labIn[2], labIn[1]);
+        let d = Math.atan2(BB, A) - hIn;
+        if (d > Math.PI) d -= 2 * Math.PI;
+        if (d < -Math.PI) d += 2 * Math.PI;
+        const gate = smoothstep01(-d / HUE_SOFT);
+        const h2 = hIn + d * (1 - RED_HUE_DAMP * w * gate);
+        A = Math.cos(h2) * cNow; BB = Math.sin(h2) * cNow;
+      }
+      /* 二、彩度最多只能降到原本的 RED_MIN_SAT。
+         這裡是把「有擋」與「沒擋」兩個結果依權重混合，不是去調門檻本身 ——
+         拿權重去乘門檻的話，權重再小門檻都還是接近原本的彩度，於是權重 0.001 的
+         像素也會被整個拉回去，保護範圍的邊界上就會出現一條很明顯的接縫。
+         max 用的是平滑版（雙曲線接角），轉折處的斜率才不會斷。 */
+      const want = Math.hypot(A, BB);
+      const held = softMax(want, cIn * RED_MIN_SAT, SOFT_MAX_K);
+      const cFinal = want + (held - want) * w;
+      if (cFinal > want) {
+        if (want > 1e-3) { const k = cFinal / want; A *= k; BB *= k; }
+        else if (cIn > 1e-6) { const k = cFinal / cIn; A = labIn[1] * k; BB = labIn[2] * k; }
+      }
     }
-    data[i] = R * 255;
-    data[i + 1] = G * 255;
-    data[i + 2] = B * 255;
+
+    // 飽和度天花板：超過上限的才拉回來，沒超過的不動。放在最後，
+    // 所以上面托高的部分也一樣受它管
+    const cOut = Math.hypot(A, BB);
+    const lim = satCeiling(cIn, A, BB);
+    if (cOut > lim && cOut > 1e-6) { const k = lim / cOut; A *= k; BB *= k; }
+
+    /* 強度在 Lab 裡混合，而不是算完 RGB 再混：以前是先把結果夾進 sRGB、
+       再用 RGB 做 src + (res - src) * s，強度超過 1 時等於把「已經被夾過的值」
+       再往外拉，最後又被 Uint8ClampedArray 夾一次 —— 兩次硬夾疊在一起，
+       紅色那種本來就貼著色域邊緣的顏色會整片壓平。
+       現在整條路上只在最後做一次「收彩度」的柔性壓縮。 */
+    const Lf = labIn[0] + (L - labIn[0]) * s;
+    const Af = labIn[1] + (A - labIn[1]) * s;
+    const Bf = labIn[2] + (BB - labIn[2]) * s;
+    labToRgbSoft(Lf, Af, Bf, rgb);
+
+    data[i] = rgb[0] * 255;
+    data[i + 1] = rgb[1] * 255;
+    data[i + 2] = rgb[2] * 255;
   }
 }
