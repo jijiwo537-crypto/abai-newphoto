@@ -8,7 +8,7 @@ import {
   sampleRgb, bakeFor, applyLut, Lut3D,
 } from '../utils/colorTransfer';
 import { LutRenderer } from '../utils/lutGl';
-import { buildProtectMapsFrom, packProtectMaps, ProtectMaps } from '../utils/protectMask';
+import { buildProtectMapsFrom, resolveWeight, packWeight, ProtectMaps } from '../utils/protectMask';
 
 interface Props {
   /** 要調色的照片 */
@@ -59,7 +59,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const [strength, setStrength] = useState(100);
   /* 膚色保護預設 90：仿色最容易出事的就是把人臉一起換掉，
      保護開高一點，膚色留住、其他顏色照樣跟著參考圖走。 */
-  const [skin, setSkin] = useState(90);
+  const [skin, setSkin] = useState(0);
   const [finalUrl, setFinalUrl] = useState<string | null>(null);
   /* 成品是 blob 網址：換新的之前先回收，離開時也要回收 */
   const finalUrlRef = useRef<string | null>(null);
@@ -77,10 +77,24 @@ export const ColorMatchStudio: React.FC<Props> = ({
   /* GPU 版：圖片與三顆 LUT 各上傳一次，之後換做法＝換綁貼圖、動滑桿＝改 uniform，
      每次更新就只有一個 draw call。沒有 WebGL2 就退回 CPU 版。 */
   const glRef = useRef<LutRenderer | null>(null);
-  /* 防斷層的保護遮罩：一張圖算一次就好。
-     它跟膚色保護滑桿無關 —— 補洞（閉運算）和羽化（導引濾波）都是正齊次的，
-     滑桿的倍率留到最後再乘，結果完全一樣，所以拉滑桿不用重算。 */
+  const glWeightRef = useRef<unknown>(null);
+  /* 防斷層的保護遮罩。
+     合併（膚色 ∪ 色相）必須發生在補洞與羽化「之前」—— 順序跟調校台一致。
+     可是這樣遮罩就跟膚色保護滑桿綁在一起了，所以一張圖烤好 SKIN_LAYERS 層，
+     拉滑桿時只在相鄰兩層之間內插（整張圖幾毫秒），零延遲又不失準。 */
   const maskRef = useRef<ProtectMaps | null>(null);
+  const weightRef = useRef<{ w: number; h: number; weight: Float32Array } | null>(null);
+  const weightForRef = useRef(-1);
+  /** 解出這個膚色保護值下的權重（沒變就沿用，不重算） */
+  const useWeight = useCallback((sp: number) => {
+    const m = maskRef.current;
+    if (!m) { weightRef.current = null; return null; }
+    if (weightForRef.current !== sp || !weightRef.current) {
+      weightRef.current = { w: m.w, h: m.h, weight: resolveWeight(m, sp) };
+      weightForRef.current = sp;
+    }
+    return weightRef.current;
+  }, []);
   const glReadyRef = useRef(false);
   /** 用 state 是為了讓備援畫布真的被藏起來（ref 改了不會重繪） */
   const [glReady, setGlReady] = useState(false);
@@ -171,7 +185,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     return () => { gl?.canvas.remove(); gl?.dispose(); glRef.current = null; };
   }, []);
 
-  useEffect(() => { maskRef.current = null; loadImage(imageSrc).then(setSrcImg).catch(() => {}); }, [imageSrc]);
+  useEffect(() => { maskRef.current = null; weightRef.current = null; weightForRef.current = -1; loadImage(imageSrc).then(setSrcImg).catch(() => {}); }, [imageSrc]);
   useEffect(() => {
     if (!referenceSrc) { setRefImg(null); return; }
     loadImage(referenceSrc).then(setRefImg).catch(() => {});
@@ -187,10 +201,15 @@ export const ColorMatchStudio: React.FC<Props> = ({
         maskRef.current = buildProtectMapsFrom(
           srcImg, srcImg.naturalWidth || srcImg.width, srcImg.naturalHeight || srcImg.height,
         );
-        const sStat = sampleRgb(toImageData(srcImg, STAT_MAX).data, 50000);
-        const rStat = sampleRgb(toImageData(refImg, STAT_MAX).data, 50000);
+        weightRef.current = null; weightForRef.current = -1;
+        /* 統計用縮圖的每一顆像素都算進去（STAT_MAX 之下最多 900×675 ≈ 60 萬顆，
+           算 3×3 共變異數只要十幾毫秒）。抽樣再怎麼聰明都不如全部都看 ——
+           而且這樣才跟調校台的預覽區用同一份統計。 */
+        const sStat = sampleRgb(toImageData(srcImg, STAT_MAX).data, Infinity);
+        const rStat = sampleRgb(toImageData(refImg, STAT_MAX).data, Infinity);
         const out: Record<string, Lut3D> = {};
-        for (const m of METHODS) out[m] = bakeFor(m, sStat, rStat, 25);
+        // 33³ 跟調校台同一個尺寸；比 25³ 多 2.3 倍格點，漸層更平順，也才對得起來
+        for (const m of METHODS) out[m] = bakeFor(m, sStat, rStat, 33);
         if (cancelled) return;
         setPreview(toImageData(srcImg, PREVIEW_MAX));
         setLuts(out);
@@ -206,13 +225,12 @@ export const ColorMatchStudio: React.FC<Props> = ({
   useEffect(() => {
     const gl = glRef.current;
     glReadyRef.current = false;
+    glWeightRef.current = null;
     setGlReady(false);
     if (gl) gl.canvas.classList.add('hidden');
     if (!gl || !preview || !luts) return;
     try {
       gl.setImage(preview as unknown as TexImageSource, preview.width, preview.height);
-      const pm = maskRef.current;
-      if (pm) gl.setProtectMap(packProtectMaps(pm), pm.w, pm.h); else gl.clearProtectMap();
       for (const m of METHODS) gl.setLut(m, luts[m]);
       glReadyRef.current = true;
     } catch { glReadyRef.current = false; }
@@ -224,8 +242,19 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const paint = useCallback((strengthOverride?: number) => {
     if (!preview) return;
     const st = (strengthOverride ?? strength) / 100;
+    const pw = useWeight(skin / 100);
     const gl = glRef.current;
-    if (gl && glReadyRef.current && luts?.[picked] && gl.draw(picked, st, skin / 100)) return;
+    if (gl && glReadyRef.current && luts?.[picked]) {
+      // 權重換了才重傳貼圖（拉滑桿時整張圖只有一次乘加 + 一次上傳，幾毫秒）
+      if (pw && glWeightRef.current !== weightRef.current) {
+        gl.setProtectMap(packWeight(pw.weight), pw.w, pw.h);
+        glWeightRef.current = weightRef.current;
+      } else if (!pw) {
+        gl.clearProtectMap();
+        glWeightRef.current = null;
+      }
+      if (gl.draw(picked, st, skin / 100)) return;
+    }
     // 退回 CPU
     const cvs = canvasRef.current;
     if (!cvs) return;
@@ -239,11 +268,11 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const copy = new ImageData(new Uint8ClampedArray(preview.data), preview.width, preview.height);
     applyLut(copy.data, lut, {
       strength: st, skinProtect: skin / 100, preserveLuminance: true,
-      protect: maskRef.current, width: preview.width,
+      protect: pw, width: preview.width,
     });
     processedRef.current = copy;
     ctx.putImageData(copy, 0, 0);
-  }, [preview, luts, picked, strength, skin]);
+  }, [preview, luts, picked, strength, skin, useWeight]);
 
   /* 前後對比：GPU 版就是把強度當 0 再畫一次（一樣只有一個 draw call）；
      CPU 版把事先算好的兩份直接貼上去。兩條路都不經過 React 狀態，按下去才不會慢半拍。 */
@@ -268,10 +297,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (!srcImg || !luts) return;
     const w = srcImg.naturalWidth || srcImg.width, h = srcImg.naturalHeight || srcImg.height;
     // GPU 一次畫完，全解析度也是瞬間 —— 按下去就直接進導出畫面，不用等
-    const pm = maskRef.current;
+    const pw = useWeight(skin / 100);
     const gpu = LutRenderer.renderOnce(
       srcImg, w, h, luts[picked], strength / 100, skin / 100,
-      pm ? { rgba: packProtectMaps(pm), w: pm.w, h: pm.h } : null,
+      pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null,
     );
     if (gpu) { canvasToUrl(gpu).then(putFinal); return; }   // 一樣無損，只是用 blob 網址
     // 沒有 WebGL2（或圖太大塞不進貼圖）才退回 CPU
@@ -285,7 +314,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         const d = x.getImageData(0, 0, w, h);
         applyLut(d.data, luts[picked], {
           strength: strength / 100, skinProtect: skin / 100, preserveLuminance: true,
-          protect: maskRef.current, width: w,
+          protect: useWeight(skin / 100), width: w,
         });
         x.putImageData(d, 0, 0);
         canvasToUrl(c).then(putFinal);
