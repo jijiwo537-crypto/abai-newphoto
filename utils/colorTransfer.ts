@@ -202,13 +202,35 @@ function symPow(a: M3, f: (v: number) => number): M3 {
 // ---------------------------------------------------------------------------
 export type Samples = { r: Float64Array; g: Float64Array; b: Float64Array; n: number };
 
+/**
+ * 取樣給統計用。
+ *
+ * 原本是「每隔 step 顆取一顆」。問題是影像是一列一列排的：只要 step 整除
+ * 每列的寬度，取到的就永遠是同幾條直行。實測 900×675 的圖 step 會是 12，
+ * 而 900 剛好被 12 整除 —— 全張圖只有 75 條直行（8%）被看到，其餘 92% 完全
+ * 沒進統計。畫面左右兩半顏色不同的照片，平均值與共變異數就整個偏掉，
+ * 仿色的結果跟著偏（量到過 22 階）。
+ *
+ * 改用黃金比例的低差異序列（Kronecker sequence）：k·φ 取小數部分再乘上總數。
+ * 它跟任何列寬都不會共振，覆蓋率永遠接近 100%，而且成本一樣是一次乘法。
+ */
+const GOLDEN = 0.6180339887498949;
 export function sampleRgb(data: Uint8ClampedArray, maxSamples = 60000): Samples {
   const total = data.length / 4;
-  const step = Math.max(1, Math.floor(total / maxSamples));
-  const n = Math.floor(total / step);
+  const n = Math.max(1, Math.min(total, Math.floor(maxSamples)));
   const r = new Float64Array(n), g = new Float64Array(n), b = new Float64Array(n);
-  for (let i = 0, k = 0; k < n; k++, i += step) {
-    const p = i * 4;
+  if (n === total) {
+    // 全部都要：照順序掃，最準也最快
+    for (let k = 0, p = 0; k < n; k++, p += 4) {
+      r[k] = data[p] / 255; g[k] = data[p + 1] / 255; b[k] = data[p + 2] / 255;
+    }
+    return { r, g, b, n };
+  }
+  let f = 0;
+  for (let k = 0; k < n; k++) {
+    f += GOLDEN;
+    if (f >= 1) f -= 1;
+    const p = Math.min(total - 1, (f * total) | 0) * 4;
     r[k] = data[p] / 255; g[k] = data[p + 1] / 255; b[k] = data[p + 2] / 255;
   }
   return { r, g, b, n };
@@ -603,10 +625,8 @@ export type ApplyOptions = {
 export type ProtectLike = {
   w: number;
   h: number;
-  /** 膚色機率（還沒乘上滑桿的倍率），已防斷層 */
-  skin: Float32Array;
-  /** 色相保護權重，已防斷層 */
-  hue: Float32Array;
+  /** 已經合併（膚色 ∪ 色相）並且做完防斷層的最終保護權重 */
+  weight: Float32Array;
 };
 
 /**
@@ -843,9 +863,7 @@ export function applyLut(
     if (useMask) {
       const k = i >> 2;
       const u = ((k % iw) + 0.5) / iw, v = (((k / iw) | 0) + 0.5) / ih;
-      const skin = sp * sampleMaskAt(pm!.skin, pm!.w, pm!.h, u, v);
-      const hue = sampleMaskAt(pm!.hue, pm!.w, pm!.h, u, v);
-      w = Math.min(1, skin > hue ? skin : hue);
+      w = sampleMaskAt(pm!.weight, pm!.w, pm!.h, u, v);
     } else {
       w = protectWeight(labIn[1], labIn[2], skinProbability(r, g, b), sp);
     }

@@ -52,16 +52,26 @@ export const DEBAND_AMOUNT = 1.0;
 export const DEBAND_RADIUS = 0.04;
 /** 導引濾波的正規化項：越大越平滑，越小越貼著亮度邊緣 */
 const DEBAND_EPS = 0.0025;
-/** 遮罩就算長邊只有這麼多像素也綽綽有餘 */
-export const MASK_MAX_EDGE = 1024;
+/** 遮罩用的解析度上限。跟調校台的預覽同一個尺寸，兩邊的濾波才看到同樣的細節 */
+export const MASK_MAX_EDGE = 640;
+/**
+ * 膚色保護滑桿要烤幾層。
+ *
+ * 合併必須發生在防斷層「之前」（調校台就是這樣做的）：
+ *   w = min(1, max(膚色滑桿 × 膚色機率, 色相保護))，然後才補洞、才羽化。
+ * 可是這樣一來遮罩就跟滑桿綁在一起了，拉滑桿得整張重算 —— 太慢。
+ *
+ * 所以沿用調校台對付保護權重的同一招：把滑桿 0 → 1 平均烤成幾層，
+ * 每次拉滑桿只在相鄰兩層之間做一次線性內插（整張圖幾毫秒）。
+ * 一次性成本換來滑桿零延遲，而且順序是對的。
+ */
+export const SKIN_LAYERS = 9;
 
 export type ProtectMaps = {
   w: number;
   h: number;
-  /** 膚色保護（還沒乘上滑桿的倍率） */
-  skin: Float32Array;
-  /** 色相保護權重（八個色相帶），已防斷層 */
-  hue: Float32Array;
+  /** 膚色保護 0 → 1 各一層，每一層都是「合併後才防斷層」的最終權重 */
+  layers: Float32Array[];
 };
 
 /* ── 一維滑動極值：單調佇列，攤提 O(1)，跟半徑多大無關 ────────────── */
@@ -180,8 +190,11 @@ function deband(m: Float32Array, luma: Float32Array, w: number, h: number): Floa
 }
 
 /**
- * 從一張圖算出兩張保護遮罩，並且已經做完防斷層。
+ * 從一張圖算出保護權重。
  * 傳進來的可以是縮圖 —— 遮罩很平滑，用縮圖算的結果取樣回全解析度看不出差別。
+ *
+ * 順序很重要：**先合併、再防斷層**。反過來（各自防斷層再合併）在膚色與色相
+ * 兩塊互相接壤的地方會偏掉（量到最大 84 階），因為 close/guided 都不跟 max 交換。
  */
 export function buildProtectMaps(data: Uint8ClampedArray, w: number, h: number): ProtectMaps {
   const n = w * h;
@@ -200,7 +213,33 @@ export function buildProtectMaps(data: Uint8ClampedArray, w: number, h: number):
     const fz = labF((0.0193339 * R + 0.1191920 * G + 0.9503041 * B) / WHITE_Z);
     hue[k] = hueProtect(500 * (fx - fy), 200 * (fy - fz));
   }
-  return { w, h, skin: deband(skin, luma, w, h), hue: deband(hue, luma, w, h) };
+  const layers: Float32Array[] = [];
+  for (let i = 0; i < SKIN_LAYERS; i++) {
+    const sp = i / (SKIN_LAYERS - 1);
+    const merged = new Float32Array(n);
+    for (let k = 0; k < n; k++) {
+      const a = sp * skin[k], b = hue[k];
+      merged[k] = Math.min(1, a > b ? a : b);
+    }
+    layers.push(deband(merged, luma, w, h));
+  }
+  return { w, h, layers };
+}
+
+/**
+ * 把某個膚色保護值下的權重解出來（在相鄰兩層之間線性內插）。
+ * 整張圖只有一次乘加，拉滑桿幾毫秒就好。
+ */
+export function resolveWeight(m: ProtectMaps, skinProtect: number): Float32Array {
+  const n = m.w * m.h;
+  const sp = Math.min(1, Math.max(0, skinProtect));
+  const seg = sp * (m.layers.length - 1);
+  const li = Math.min(m.layers.length - 2, seg | 0);
+  const f = seg - li;
+  const A = m.layers[li], B = m.layers[li + 1];
+  const out = new Float32Array(n);
+  for (let k = 0; k < n; k++) out[k] = A[k] + (B[k] - A[k]) * f;
+  return out;
 }
 
 /** 遮罩用的縮圖尺寸（保持長寬比，長邊最多 MASK_MAX_EDGE） */
@@ -223,14 +262,14 @@ export function buildProtectMapsFrom(
   return buildProtectMaps(g.getImageData(0, 0, size.w, size.h).data, size.w, size.h);
 }
 
-/** 打包成 GPU 的 RGBA8 貼圖：R ＝ 膚色機率、G ＝ 色相保護權重 */
-export function packProtectMaps(m: ProtectMaps): Uint8Array {
-  const n = m.w * m.h;
+/** 打包成 GPU 的 RGBA8 貼圖：R ＝ 已經解好的保護權重 */
+export function packWeight(weight: Float32Array): Uint8Array {
+  const n = weight.length;
   const out = new Uint8Array(n * 4);
   for (let i = 0; i < n; i++) {
-    out[i * 4] = Math.round(m.skin[i] * 255);
-    out[i * 4 + 1] = Math.round(m.hue[i] * 255);
+    out[i * 4] = Math.round(weight[i] * 255);
     out[i * 4 + 3] = 255;
   }
   return out;
 }
+

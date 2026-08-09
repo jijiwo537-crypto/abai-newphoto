@@ -204,11 +204,12 @@ void main() {
   /* 這顆像素該被保護多少：膚色保護與色相保護取大的那一個。
      跟 CPU 版、跟調校台的預覽區都是同一條 w —— 它同時決定顏色被換掉多少、
      色相打幾折、彩度托多高。三件事共用一個權重，效果才會完全一樣。
-     有遮罩的話兩個成分都是「已經防過斷層」的版本（補洞 ＋ 導引濾波）。 */
-  vec2 pm = texture(uProtectMap, vUv).rg;
-  float skinW = uHasMask > 0.5 ? pm.r : protectProb(src);
-  float hueW  = uHasMask > 0.5 ? pm.g : hueProtect(labIn.yz);
-  float rw = min(1.0, max(uProtect * skinW, hueW));
+     有遮罩時直接讀遮罩：那一份是「先合併、再補洞、再羽化」算好的，
+     順序跟調校台一致（先防斷層再合併會在兩塊接壤處偏掉）。 */
+  float mw = texture(uProtectMap, vUv).r;
+  float rw = uHasMask > 0.5
+    ? mw
+    : min(1.0, max(uProtect * protectProb(src), hueProtect(labIn.yz)));
   // 亮度一律用原圖的（只換顏色不動明暗），色度依保護程度混合
   vec2 ab = mix(labIn.yz, labOut.yz, 1.0 - rw);
   float cIn = length(labIn.yz);
