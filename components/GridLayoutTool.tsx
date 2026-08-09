@@ -2194,10 +2194,15 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 
   /* 圓角／羽化／發光都自己畫在 canvas 上，預覽與匯出走同一套邏輯 */
   const shapeCanvasRef = useRef<HTMLCanvasElement>(null);
-  /* 畫布的內部像素數與 CSS 尺寸要用同一個 dpr 去算，兩邊才會 1:1 對上 */
-  const shapeDpr = Math.min(2, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1);
+  /* 兩個 dpr 是不同的東西，之前混用是錯的：
+       geoDpr —— 螢幕「真正」的實體像素密度。版面盒要吸到它的格線上才叫對齊；
+                 iPhone 常見是 3，之前拿被上限砍到 2 的那個去吸等於吸到半格，
+                 在 3 倍螢幕上根本沒對齊，縮放時照樣沿路留殘影。
+       shapeDpr —— 只決定 canvas 內部要開幾個像素（上限 2 是記憶體考量）。 */
+  const geoDpr = Math.min(4, Math.max(1, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1));
+  const shapeDpr = Math.min(2, geoDpr);
   /** 把長度吸到整數個實體像素（見 wrapGeo 的說明） */
-  const snapPx = (v: number) => Math.round(v * shapeDpr) / shapeDpr;
+  const snapPx = (v: number) => Math.round(v * geoDpr) / geoDpr;
   /** 重畫收斂成一幀一次用的 */
   const rafRef = useRef(0);
   const drawnSrcRef = useRef<string | null>(null);
@@ -2280,9 +2285,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const img = getPreviewImg(image.src);
     const draw = () => {
       if (!img.naturalWidth) return;
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const W = Math.max(1, Math.round((boxW + glowPad * 2) * dpr));
-      const H = Math.max(1, Math.round((boxH + glowPad * 2) * dpr));
+      const dpr = shapeDpr;
+      // 用「版面盒吸過之後」的尺寸去推內部像素，兩邊才會剛好整數倍
+      const W = Math.max(1, Math.round(snapPx(boxW + glowPad * 2) * dpr));
+      const H = Math.max(1, Math.round(snapPx(boxH + glowPad * 2) * dpr));
       if (c.width !== W) c.width = W;
       if (c.height !== H) c.height = H;
       const g = c.getContext('2d');
@@ -2696,7 +2702,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
        像素，邊緣是實心的；拿掉之後改成次像素繪製，貼齊畫布邊緣時邊緣會被
        抗鋸齒抹成半透明的一條，看起來就像沒對齊 —— 而匯出是直接用座標畫在
        canvas 上、不受影響，於是變成「匯出是對的、預覽有誤差」。 */
-    transform: `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`,
+    /* 只有「真的需要」才給 transform。
+       有 transform 這一層就會被提升成合成層；合成層的框在縮放時每一格都在變，
+       它讓出來的那一條舊區域瀏覽器常常不會重畫 —— 那就是縮小圖片時邊緣沿路
+       留下一根根線的成因。沒有旋轉、也沒有排頁面的群組位移時就不留 transform，
+       改走一般繪製，讓出來的區域一定會被重畫。
+       （原本留著它是為了讓邊緣吸到整數像素，那件事現在由 snapPx 用「真正的」
+       實體像素密度做掉了，不必再靠合成層。） */
+    transform: (dragShift || (image.rotation % 360) !== 0)
+      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`
+      : undefined,
     /* 過場一定要跟頁面容器那邊「一模一樣」（220ms、同一條曲線）。
        以前這裡是 200ms ease-out、那邊是 220ms cubic-bezier(0.2,0,0,1)：
        兩者同時起跑卻走不同的速度、也不同時到，排頁面時就會看到圖層跟頁面
@@ -3000,8 +3015,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                沒有捨入的浮點寬高 —— 兩者對不上時瀏覽器會用非整數倍率重取樣，
                最外面那一列就跟外面的透明混在一起，縮放的過程中沿路留下一條
                忽隱忽現的細線。改成用「同一個捨入結果 ÷ dpr」，倍率剛好是 1:1。 */
-            width: `${Math.round((boxW + glowPad * 2) * shapeDpr) / shapeDpr}px`,
-            height: `${Math.round((boxH + glowPad * 2) * shapeDpr) / shapeDpr}px`,
+            width: `${snapPx(boxW + glowPad * 2)}px`,
+            height: `${snapPx(boxH + glowPad * 2)}px`,
             pointerEvents: 'none',
           }}
         />

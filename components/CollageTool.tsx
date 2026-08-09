@@ -2328,12 +2328,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       setIgShots([]);
     };
   }, [igPreview, imageState]);
-  /* 直式 2:3、9:16 比 IG 的極限（4:5）還長，IG 吃不下 —— 跟經典拼圖同一條規則 */
+  /* IG 直式最長只吃到 4:5（0.8）。比它更長的畫布發出去一定會被裁，
+     預覽也就不是發文後的樣子 —— 那顆按鈕直接不出現。
+     直式照片配「遮罩在下」或「遮罩在上」時畫布會被拉得更長（照片高＋遮罩高），
+     幾乎一定會落在這條線外面，這是刻意的。 */
   const igSupported = (() => {
     const o = getLayoutOffsets();
-    if (!o || o.ch <= o.cw) return true;
-    const r = o.cw / o.ch;
-    return !(Math.abs(r - 2 / 3) < 0.01 || Math.abs(r - 9 / 16) < 0.01);
+    if (!o || !o.cw || !o.ch) return false;
+    if (o.ch <= o.cw) return true;              // 正方形與橫式都沒問題
+    return o.cw / o.ch >= 4 / 5 - 0.001;
   })();
 
   const handleSave = () => {

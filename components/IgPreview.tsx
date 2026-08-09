@@ -28,7 +28,7 @@ export type IgPreviewProps = {
 };
 
 export const IgPreview: React.FC<IgPreviewProps> = ({
-  shots, frame, pageCount, faces, hasVideo = () => false, supported = true, onClose,
+  shots, frame, pageCount, faces, hasVideo = (_pageIdx: number) => false, supported = true, onClose,
 }) => {
   const igStripRef = useRef<HTMLDivElement>(null);
   const igTrackRef = useRef<HTMLDivElement>(null);
@@ -1509,6 +1509,50 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     if (end < n && i === end - 2) return 5;
     return 6;
   };
+  /* ── 下面那幾個數字與愛心／儲存 ────────────────────────────────
+     IG 的貼文下面本來就是可以互動的，預覽也要能改：四個數字點下去直接打字，
+     愛心與書籤點一下就切換（愛心亮著時讚數 +1，跟 IG 一樣）。
+     全部存在本機，下次開還在。 */
+  const readStat = (k: string, dflt: string) => {
+    try { return localStorage.getItem(`abai_ig_${k}`) ?? dflt; } catch { return dflt; }
+  };
+  const [igLikes, setIgLikes] = useState(() => readStat('likes', '5,850'));
+  const [igComments, setIgComments] = useState(() => readStat('comments', '6'));
+  const [igReposts, setIgReposts] = useState(() => readStat('reposts', '20'));
+  const [igShares, setIgShares] = useState(() => readStat('shares', '342'));
+  const [igCaption, setIgCaption] = useState(() => readStat('caption', '和其他人都說讚'));
+  const [igLiked, setIgLiked] = useState(() => readStat('liked', '0') === '1');
+  const [igSaved, setIgSaved] = useState(() => readStat('saved', '0') === '1');
+  const saveStat = (k: string, v: string) => {
+    try { localStorage.setItem(`abai_ig_${k}`, v); } catch { /* 無痕模式寫不進去就算了 */ }
+  };
+  /** 讚數加一：只認數字，逗號原樣留著（5,850 → 5,851） */
+  const bumpLikes = (n: number) => setIgLikes(prev => {
+    const digits = prev.replace(/[^\d]/g, '');
+    if (!digits) return prev;
+    const next = Math.max(0, parseInt(digits, 10) + n);
+    const out = prev.includes(',') ? next.toLocaleString('en-US') : String(next);
+    saveStat('likes', out);
+    return out;
+  });
+  /** 下面那幾個數字共用的樣式：看起來就是一般文字，點下去才知道能改 */
+  const statInput = (
+    value: string, onChange: (v: string) => void, commit: (v: string) => void, w: string, title: string,
+  ) => (
+    <input
+      value={value}
+      title={title}
+      maxLength={12}
+      onChange={e => onChange(e.target.value.slice(0, 12))}
+      onBlur={e => commit(e.currentTarget.value)}
+      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+      enterKeyHint="done"
+      inputMode="numeric"
+      className="text-[14px] font-semibold tabular-nums text-white bg-transparent"
+      style={{ width: w, border: 0, outline: 'none', boxShadow: 'none', padding: 0, margin: 0 }}
+    />
+  );
+
   /** 聲音鍵：只有預覽裡「目前這一頁」的影片會出聲，其他一律靜音 */
   const [igMuted, setIgMuted] = useState(true);
   useEffect(() => {
@@ -1705,13 +1749,22 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
             <div className="h-[44px] flex items-center px-3 text-white">
               <div className="flex items-center gap-[13px]">
                 <span className="flex items-center gap-[5px]">
-                  <Heart data-ig="heart" size={24} strokeWidth={1.8} />
-                  <span className="text-[14px] font-semibold tabular-nums">5,850</span>
+                  <button
+                    onClick={() => { const n = !igLiked; setIgLiked(n); saveStat('liked', n ? '1' : '0'); bumpLikes(n ? 1 : -1); }}
+                    title={igLiked ? '收回讚' : '按讚'}
+                    className="active:scale-90 transition-transform"
+                    style={{ lineHeight: 0 }}
+                  >
+                    <Heart data-ig="heart" size={24} strokeWidth={1.8}
+                      fill={igLiked ? '#ff3040' : 'none'}
+                      color={igLiked ? '#ff3040' : 'currentColor'} />
+                  </button>
+                  {statInput(igLikes, setIgLikes, v => { setIgLikes(v); saveStat('likes', v); }, `${Math.max(2, igLikes.length)}ch`, '改讚數')}
                 </span>
                 <span className="flex items-center gap-[5px]">
                   {/* 依愛心的頭腳對齊；留言那顆照要求再小非常一點點 */}
                   <MessageCircle data-ig="comment" size={24} strokeWidth={1.8} style={{ transform: 'scaleX(-1) translateY(0.45px) scale(0.83)' }} />
-                  <span className="text-[14px] font-semibold tabular-nums">6</span>
+                  {statInput(igComments, setIgComments, v => { setIgComments(v); saveStat('comments', v); }, `${Math.max(1, igComments.length)}ch`, '改留言數')}
                 </span>
                 <span className="flex items-center gap-[5px]">
                   {/* IG 的轉發：兩支對向的循環箭頭（拉高，不能扁扁的） */}
@@ -1721,7 +1774,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                     <path d="M9.4 21 6 17.6l3.4-3.4" />
                     <path d="M6 17.6h9.4a4.6 4.6 0 0 0 4.6-4.6V10.4" />
                   </svg>
-                  <span className="text-[14px] font-semibold tabular-nums">20</span>
+                  {statInput(igReposts, setIgReposts, v => { setIgReposts(v); saveStat('reposts', v); }, `${Math.max(1, igReposts.length)}ch`, '改轉發數')}
                 </span>
                 <span className="flex items-center gap-[5px]">
                   {/* IG 的分享：斜著飛的紙飛機，三個角都帶一點圓角 */}
@@ -1729,10 +1782,19 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                     <path d="M20.5 3.5 9.9 13.5" />
                     <path d="M20.29 2.98 Q21.5 2.5 21.01 3.7 L14.39 19.8 Q13.9 21 13.29 19.85 L9.9 13.5 4.15 10.41 Q3 9.8 4.21 9.32 Z" />
                   </svg>
-                  <span className="text-[14px] font-semibold tabular-nums">342</span>
+                  {statInput(igShares, setIgShares, v => { setIgShares(v); saveStat('shares', v); }, `${Math.max(1, igShares.length)}ch`, '改分享數')}
                 </span>
               </div>
-              <Bookmark data-ig="bookmark" size={24} strokeWidth={1.8} className="ml-auto" style={{ transform: 'translateY(0.48px) scale(0.944)' }} />
+              <button
+                onClick={() => { const n = !igSaved; setIgSaved(n); saveStat('saved', n ? '1' : '0'); }}
+                title={igSaved ? '取消儲存' : '儲存'}
+                className="ml-auto active:scale-90 transition-transform"
+                style={{ lineHeight: 0 }}
+              >
+                <Bookmark data-ig="bookmark" size={24} strokeWidth={1.8}
+                  fill={igSaved ? '#ffffff' : 'none'}
+                  style={{ transform: 'translateY(0.48px) scale(0.944)' }} />
+              </button>
             </div>
 
             {/* 說讚的人：三顆疊在一起的小頭像＋一行字 */}
@@ -1748,8 +1810,19 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                   </span>
                 ))}
               </span>
-              <p className="text-[14px] text-white leading-[18px] truncate">
-                <span className="font-semibold">{igAccount}</span>和其他人都說讚
+              <p className="text-[14px] text-white leading-[18px] truncate flex items-baseline min-w-0">
+                <span className="font-semibold shrink-0">{igAccount}</span>
+                <input
+                  value={igCaption}
+                  title="改這一行字"
+                  maxLength={60}
+                  onChange={e => setIgCaption(e.target.value.slice(0, 60))}
+                  onBlur={e => { const v = e.currentTarget.value; setIgCaption(v); saveStat('caption', v); }}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
+                  enterKeyHint="done"
+                  className="flex-1 min-w-0 text-[14px] text-white bg-transparent"
+                  style={{ border: 0, outline: 'none', boxShadow: 'none', padding: 0, margin: 0, lineHeight: '18px' }}
+                />
               </p>
             </div>
           </div>
