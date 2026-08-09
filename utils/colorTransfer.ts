@@ -633,7 +633,12 @@ export function applyLut(
 ): void {
   const out: Rgb = [0, 0, 0];
   const labIn: number[] = [0, 0, 0], labOut: number[] = [0, 0, 0], rgb: number[] = [0, 0, 0];
-  const s = Math.min(1, Math.max(0, opt.strength));
+  /* 強度上限放到 2（介面上的 200）。
+     最後那一步是線性內插 src + (res - src) * s —— s 超過 1 就是「往參考圖的
+     方向再多走一段」，也就是外插。原本夾在 1，滑桿推過 100 完全沒反應。
+     寫進 Uint8ClampedArray 時本來就會夾回 0～255；GPU 那條走的是同一個 mix，
+     兩邊結果一致。 */
+  const s = Math.min(2, Math.max(0, opt.strength));
   const sp = Math.min(1, Math.max(0, opt.skinProtect));
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i] / 255, g = data[i + 1] / 255, b = data[i + 2] / 255;
