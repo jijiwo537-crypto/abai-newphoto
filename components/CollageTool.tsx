@@ -9,6 +9,9 @@ import { Icon } from './Icon';
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
 import { TextEditorPanel } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
+/* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
+   所以濾鏡與調節的效果不可能有差。 */
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
 import { SaveButton } from './SaveButton';
 
 // --- 自製極簡單線十字星圖標 ---
@@ -388,13 +391,15 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
 
 interface CollageToolProps {
   onHome: () => void;
+  /** 濾鏡清單，跟「編輯」「經典拼圖」同一份 */
+  lutList?: { id: string; name: string; url: string }[];
   initialFile?: File | null;
   onImportNew: () => void;
   /** 接續上次時把存下來的參數餵回來 */
   initialState?: any;
 }
 
-export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, onImportNew, initialState }) => {
+export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, onImportNew, initialState, lutList = [] }) => {
   const [imageState, setImageState] = useState<any>(null);
   const [layout, setLayout] = useState('mask-bottom');
   const [maskScale, setMaskScale] = useState(0.5);
@@ -416,6 +421,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   selectedObjRef.current = selectedObj;
   const objDragRef = useRef<any>(null);
   const objPinchRef = useRef<any>(null);
+  /* 每個圖片物件跑完管線之後的成品，快取起來 —— 參數沒變就不重跑。
+     key 是「物件 id + 參數指紋」，所以只有動到的那一張會重算。 */
+  const objFxCache = useRef<Map<string, { key: string; cv: HTMLCanvasElement }>>(new Map());
+  const [fxTick, setFxTick] = useState(0);
+  const fxCanvasOf = useCallback((o: any): CanvasImageSource | null => {
+    if (!o.img) return null;
+    if (!o.fx || !hasPhotoFx(o.fx)) return o.img;
+    const key = JSON.stringify(o.fx);
+    const hit = objFxCache.current.get(o.id);
+    if (hit && hit.key === key) return hit.cv;
+    const w = o.img.naturalWidth || o.img.width;
+    const h = o.img.naturalHeight || o.img.height;
+    // 上限 1600：物件在畫面上不會比這更大，再高只是白燒記憶體
+    const k = Math.min(1, 1600 / Math.max(w, h));
+    const cv = applyPhotoFx(o.img, w * k, h * k, o.fx);
+    objFxCache.current.set(o.id, { key, cv });
+    return cv;
+  }, []);
   /** 拖曳物件時亮起來的對齊線（畫布座標） */
   const [guides, setGuides] = useState<any[]>([]);
   const guidesRef = useRef<any[]>([]);
@@ -1610,7 +1633,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       ctx.rotate((o.rot || 0) * Math.PI / 180);
       ctx.globalAlpha = o.alpha ?? 1;
       if (o.type === 'image' && o.img) {
-        ctx.drawImage(o.img, -o.w * s / 2, -o.h * s / 2, o.w * s, o.h * s);
+        const src2 = fxCanvasOf(o) || o.img;
+        ctx.drawImage(src2, -o.w * s / 2, -o.h * s / 2, o.w * s, o.h * s);
       } else if (o.type === 'text') {
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
            面板本身就是那邊那顆元件，所以這裡只要照著畫。 */
@@ -1625,12 +1649,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            再畫描邊，最後才填色。
            光如果跟描邊一起算，會沿著描邊外緣散開 —— 看起來就是描邊突然粗一圈，
            那正是主人覺得怪的地方。強度也對齊那邊的 (glow/20)×14×k。 */
+        /* 描邊與發光都要跟著字級等比。
+           經典拼圖那邊的滑桿是配著「字級 40px」在調的（描邊 0～2px、發光 0～20），
+           我們的文字通常被放大好幾倍，用原值畫就會細得像沒有 —— 這就是主人說
+           「太細了」的原因。以 40px 為基準等比放大，兩邊看起來才一樣。 */
+        const tk = (o.size / 40) * s;
         if (o.glow) {
           ctx.save();
           ctx.fillStyle = o.color || '#ffffff';
           ctx.shadowColor = o.glowColor || '#ffffff';
           for (const k2 of [1, 2, 3]) {
-            ctx.shadowBlur = (o.glow / 20) * 14 * k2 * s;
+            ctx.shadowBlur = (o.glow / 20) * 14 * k2 * tk;
             ctx.fillText(o.text || '', 0, 0);
           }
           ctx.restore();
@@ -1639,7 +1668,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           ctx.lineJoin = 'round';
           ctx.miterLimit = 2;
           ctx.strokeStyle = o.strokeColor || '#FFFFFF';
-          ctx.lineWidth = o.strokeWidth * 2 * s;
+          ctx.lineWidth = o.strokeWidth * 2 * tk;
           ctx.strokeText(o.text || '', 0, 0);
         }
         ctx.fillStyle = o.color || '#ffffff';
@@ -1661,8 +1690,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
     if (isMain && guides.length) {
       ctx.save();
-      ctx.strokeStyle = '#4DA3FF';
-      ctx.lineWidth = 1.5 * sgs * s;
+      /* 經典拼圖那邊是 2 CSS px 的 bg-blue-500。這裡畫在畫布上，
+         所以要把 2 CSS px 換算成畫布單位（畫布可能比螢幕細很多倍）。 */
+      const cssW0 = baseCssWRef.current || 1;
+      const shown = cssW0 * Math.max(1, viewTRef.current.k);
+      ctx.strokeStyle = '#3B82F6';
+      ctx.lineWidth = Math.max(1, 2 * (offs.cw * s) / shown);
       guides.forEach(g => {
         ctx.beginPath();
         if (g.x !== undefined) { ctx.moveTo(g.x * s, 0); ctx.lineTo(g.x * s, offs.ch); }
@@ -1730,7 +1763,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
-  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides]);
+  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, fxCanvasOf, fxTick]);
 
   const renderCanvas = useCallback(() => {
     if (!canvasRef.current || !imageState) return;
@@ -2200,6 +2233,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               }]);
               setSelectedObj(id);
               setSelectedTarget(null);
+              setActiveTab('objedit');   // 匯入完直接進編輯頁，跟新增文字一致
             }
             URL.revokeObjectURL(url);
           };
@@ -2440,6 +2474,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                       {objSub === 'main' && (
                         <div className="space-y-3 pt-1 pb-2">
+                          {/* 濾鏡：跟「編輯」「經典拼圖」同一份清單、同一條管線 */}
+                          <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
+                            {[{ id: '', name: '原始', url: '' }, ...lutList].map(l => {
+                              const on = (sel.fx?.lut || '') === l.id;
+                              return (
+                                <button key={l.id || 'none'}
+                                  onClick={() => {
+                                    if (l.url) loadLut(l.id, l.url).then(() => setFxTick(t => t + 1));
+                                    patch({ fx: { ...(sel.fx || {}), lut: l.id || undefined, lutAmount: 100 } });
+                                  }}
+                                  className={`shrink-0 w-14 flex flex-col items-center gap-1 ${on ? 'opacity-100' : 'opacity-60'}`}>
+                                  <span className={`w-14 h-14 rounded-lg border ${on ? 'border-white' : 'border-white/15'} bg-white/[0.04] flex items-center justify-center text-[10px] text-white/70`}>
+                                    {l.name.slice(0, 3)}
+                                  </span>
+                                  <span className="text-[9px] tracking-wider text-white/60 truncate max-w-full">{l.name}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
                           <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
                             <span className="text-[10px] font-bold text-[#888]">圖片</span>
                             <button onClick={() => objFileInputRef.current?.click()}
@@ -2450,6 +2503,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             <button onClick={() => move(-1)} className="h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold tracking-widest text-white/70 active:scale-[0.98] transition-transform">下移一層</button>
                             <button onClick={() => { setObjects(prev => prev.filter(o => o.id !== sel.id)); setSelectedObj(null); }}
                               className="h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold tracking-widest text-white/70 active:scale-[0.98] transition-transform">刪除</button>
+                          </div>
+                          {/* 調節：ADJUST_KEYS 就是「編輯」那一組（亮度～自然飽和度） */}
+                          <div className="grid grid-cols-2 gap-4 pt-1">
+                            {ADJUST_KEYS.map(([k, label]) => (
+                              <CompactSlider key={k} label={label} min={-100} max={100} step={1}
+                                value={(sel.fx as any)?.[k] ?? 0}
+                                onChange={(v: number) => patch({ fx: { ...(sel.fx || {}), [k]: v } })} />
+                            ))}
                           </div>
                         </div>
                       )}
