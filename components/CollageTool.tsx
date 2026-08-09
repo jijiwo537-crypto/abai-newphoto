@@ -115,12 +115,13 @@ const GLYPH_HOLES: Record<string, string> = {
 };
 
 /** 這個洞是用文字畫的（而不是用路徑畫的）嗎 */
-const isTextHole = (t: string) => t === 'text' || t === 'love' || t === 'random-num' || t in GLYPH_HOLES;
+const isTextHole = (t: string) => t === 'text' || t === 'love' || t === 'love3' || t === 'random-num' || t in GLYPH_HOLES;
 
 /** 這個洞實際上要畫出來的字串 */
 const holeGlyph = (holeType: string, customText: string, h?: any) =>
   GLYPH_HOLES[holeType]
   ?? (holeType === 'love' ? '<3'
+    : holeType === 'love3' ? '<333'
     : holeType === 'random-num' ? `(${getHoleNumber(h)})`
     : customText);
 
@@ -178,11 +179,12 @@ const drawTextShape = (
   tempCtx.save();
   tempCtx.translate(pad, pad);
   tempCtx.rotate(holeAngle * Math.PI / 180);
-  if (holeType === 'love') {
+  if (holeType === 'love' || holeType === 'love3') {
+    // 跟 <3 同一套字體與比例，只是字串長一點
     tempCtx.font = `bold ${sz * 1.05}px "Inter", "Segoe UI", sans-serif`;
     tempCtx.textAlign = 'center';
     tempCtx.textBaseline = 'middle';
-    tempCtx.fillText('<3', 0, 0);
+    tempCtx.fillText(holeType === 'love3' ? '<333' : '<3', 0, 0);
   } else {
     const renderStr = GLYPH_HOLES[holeType] ?? text;
     tempCtx.font = `500 ${sz}px "Inter", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
@@ -622,6 +624,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       nextSize = 30;
     } else if (id === 'love') {
       nextSize = 25;
+    } else if (id === 'love3') {
+      // 字更長，同樣的「大小」值看起來會比較大，所以預設調小一點
+      nextSize = 18;
     } else if (id === 'circle') {
       nextSize = 20;
     } else if (id === 'square') {
@@ -2041,9 +2046,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
-                  {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'love', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'text'].map(s => (
+                  {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'love', 'love3', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'text'].map(s => (
                     <button key={s} onClick={() => handleShapeClick(s)} className={`py-3 flex items-center justify-center rounded-[8px] border transition-all ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
-                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'flower' ? <span className="text-lg font-bold font-sans leading-none">❋</span> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? <span className="text-lg font-bold font-sans leading-none">{GLYPH_HOLES[s]}</span> : <Type size={18} />}
+                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'flower' ? <span className="text-lg font-bold font-sans leading-none">❋</span> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? <span className="text-lg font-bold font-sans leading-none">{GLYPH_HOLES[s]}</span> : <Type size={18} />}
                     </button>
                   ))}
                 </div>
