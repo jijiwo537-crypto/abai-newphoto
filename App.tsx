@@ -187,7 +187,7 @@ const App: React.FC = () => {
       try {
         const objectUrl = await processImageFile(file, (u) => setImportPreviewUrl(u));
         setMatchImage(objectUrl);
-        // 參考圖刻意留著：換一張要調色的照片時，通常還是想套同一個參考風格
+        setMatchRef(null);
         setCurrentView('match');
       } catch (err) {
         console.error('Failed to process image:', err);
@@ -519,6 +519,7 @@ const App: React.FC = () => {
           }}
           initialFile={collageInitialFile}
           initialState={toolDraftState}
+          lutList={LUT_LIST}
           onImportNew={handleCollageImportClick}
         />
       )}
