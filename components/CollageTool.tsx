@@ -532,52 +532,108 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 圖片與遮罩的交界線（畫布座標）。四周包圍是原圖那個框的四條邊。 */
   const seamLinesRef = useRef<() => { xs: number[]; ys: number[] }>(() => ({ xs: [], ys: [] }));
 
-  /** 把位置吸附到畫布中線／邊界／遮罩交界，並回報要亮哪幾條線 */
-  const snapToGuides = useCallback((x0: number, y0: number, w0: number, h0: number) => {
-    const offsG = getLayoutOffsetsRef.current?.();
-    const gl: any[] = [];
-    let nx = x0, ny = y0;
-    if (offsG && w0 && h0) {
-      const snap = Math.max(4, Math.min(offsG.cw, offsG.ch) * 0.012);
-      const seams = seamLinesRef.current();
-      /**
-       * 單軸吸附。candidate 是「這條線」＋「要位移多少才貼上去」。
-       * 規則：
-       *  1. 中心線只跟「物件中心」配對 —— 邊緣碰到中心線不算對齊。
-       *  2. 取最近的那一條，不是第一條符合的。
-       *  3. 兩條一樣近但要往相反方向拉（例如置中放大到上下同時快貼邊），
-       *     就兩條都亮著、位置完全不動 —— 以前是這一格黏上面、下一格黏下面，
-       *     看起來就是在抖。
-       */
-      const axis = (pos: number, size: number, centre: number, edges: number[], seamList: number[]) => {
-        const cands: { v: number; d: number }[] = [{ v: centre, d: centre - (pos + size / 2) }];
-        for (const v of edges) {
-          cands.push({ v, d: v - pos });
-          cands.push({ v, d: v - (pos + size) });
-        }
-        for (const v of seamList) {
-          cands.push({ v, d: v - pos });
-          cands.push({ v, d: v - (pos + size) });
-          cands.push({ v, d: v - (pos + size / 2) });
-        }
-        const near = cands.filter(c => Math.abs(c.d) < snap);
-        if (!near.length) return { off: 0, lines: [] as number[] };
-        near.sort((a, b) => Math.abs(a.d) - Math.abs(b.d));
-        const best = near[0];
-        const TIE = Math.max(0.75, snap * 0.06);
-        const rivals = near.filter(c => Math.abs(Math.abs(c.d) - Math.abs(best.d)) < TIE
-                                     && Math.abs(c.d - best.d) > TIE);
-        if (rivals.length) {
-          return { off: 0, lines: Array.from(new Set([best.v, ...rivals.map(r => r.v)])) };
-        }
-        return { off: best.d, lines: [best.v] };
-      };
-      const rx = axis(nx, w0, offsG.cw / 2, [0, offsG.cw], seams.xs);
-      nx += rx.off; rx.lines.forEach(v => gl.push({ x: v }));
-      const ry = axis(ny, h0, offsG.ch / 2, [0, offsG.ch], seams.ys);
-      ny += ry.off; ry.lines.forEach(v => gl.push({ y: v }));
+  /** 旋轉之後真正佔的框（外接矩形）。0/180 度就是原本的寬高，90 度會對調。 */
+  const aabbOf = (w: number, h: number, rot: number) => {
+    const r = ((rot || 0) * Math.PI) / 180;
+    const c = Math.abs(Math.cos(r)), s2 = Math.abs(Math.sin(r));
+    return { bw: w * c + h * s2, bh: w * s2 + h * c };
+  };
+
+  /**
+   * 這個位置上「現在剛好對齊」的每一條線。
+   * 跟經典拼圖的 pageGuidelinesAt 同一套：吸附只挑最近的一條，
+   * 但畫面上要把「當下同時對齊的每一條」都亮出來 —— 置中放大到剛好滿版時，
+   * 左右（或上下）兩條會一起亮，而不是只亮一條。
+   * edgeOnly：兩指縮放時中心點根本不會動，中線會整趟掛著，所以只畫邊。
+   */
+  const linesAt = useCallback((cx: number, cy: number, bw: number, bh: number, edgeOnly = false) => {
+    const o = getLayoutOffsetsRef.current?.();
+    if (!o) return [] as any[];
+    const seams = seamLinesRef.current();
+    const out: any[] = [];
+    const EPS_C = 0.75;   // 中線是精準吸附
+    const EPS_E = 0.6;    // 邊只留給次像素捨入；有縫就不該畫線
+    const L = cx - bw / 2, R = cx + bw / 2, T = cy - bh / 2, B = cy + bh / 2;
+    const xs = [0, o.cw, ...seams.xs];
+    const ys = [0, o.ch, ...seams.ys];
+    if (!edgeOnly && Math.abs(cx - o.cw / 2) < EPS_C) out.push({ x: o.cw / 2 });
+    if (!edgeOnly && Math.abs(cy - o.ch / 2) < EPS_C) out.push({ y: o.ch / 2 });
+    for (const v of xs) {
+      if (Math.abs(L - v) < EPS_E || Math.abs(R - v) < EPS_E) out.push({ x: v });
+      else if (!edgeOnly && seams.xs.includes(v) && Math.abs(cx - v) < EPS_C) out.push({ x: v });
     }
-    return { x: nx, y: ny, guides: gl };
+    for (const v of ys) {
+      if (Math.abs(T - v) < EPS_E || Math.abs(B - v) < EPS_E) out.push({ y: v });
+      else if (!edgeOnly && seams.ys.includes(v) && Math.abs(cy - v) < EPS_C) out.push({ y: v });
+    }
+    // 同一條線可能被多個來源推進來（例如畫布邊界剛好也是交界）
+    const seen = new Set<string>();
+    return out.filter(g => {
+      const k = (g.x !== undefined ? 'x' : 'y') + Math.round((g.x !== undefined ? g.x : g.y) * 10);
+      if (seen.has(k)) return false; seen.add(k); return true;
+    });
+  }, []);
+
+  /** 把位置吸附到畫布中線／邊界／遮罩交界，並回報要亮哪幾條線 */
+  const snapToGuides = useCallback((x0: number, y0: number, w0: number, h0: number, rot = 0, edgeOnly = false) => {
+    const offsG = getLayoutOffsetsRef.current?.();
+    if (!offsG || !w0 || !h0 || !enableSnappingRef.current) return { x: x0, y: y0, guides: [] as any[] };
+    /* 判定一律用「旋轉之後的外接框」—— 轉了 90 度還拿原本的寬高去比，
+       線就會亮在離邊緣半個身子的地方。 */
+    const { bw, bh } = aabbOf(w0, h0, rot);
+    let cx = x0 + w0 / 2, cy = y0 + h0 / 2;
+    const snap = Math.max(4, Math.min(offsG.cw, offsG.ch) * 0.012);
+    const seams = seamLinesRef.current();
+    /**
+     * 單軸吸附：候選是「這條線」＋「中心要位移多少才貼上去」。
+     *  1. 中心線只跟「物件中心」配對 —— 邊緣碰到中心線不算對齊。
+     *  2. 取最近的那一條，不是第一條符合的。
+     *  3. 兩條一樣近但要往相反方向拉，就不要動 —— 以前是這一格黏一邊、
+     *     下一格黏另一邊，看起來就是在抖。
+     */
+    const axis = (c0: number, half: number, centre: number, edges: number[], seamList: number[]) => {
+      const cands: { d: number }[] = [];
+      if (!edgeOnly) cands.push({ d: centre - c0 });
+      for (const v of [...edges, ...seamList]) {
+        cands.push({ d: v - (c0 - half) });
+        cands.push({ d: v - (c0 + half) });
+      }
+      if (!edgeOnly) for (const v of seamList) cands.push({ d: v - c0 });
+      const near = cands.filter(z => Math.abs(z.d) < snap).sort((a, b) => Math.abs(a.d) - Math.abs(b.d));
+      if (!near.length) return 0;
+      const best = near[0];
+      const TIE = Math.max(0.75, snap * 0.06);
+      if (near.some(z => Math.abs(Math.abs(z.d) - Math.abs(best.d)) < TIE && Math.abs(z.d - best.d) > TIE)) return 0;
+      return best.d;
+    };
+    cx += axis(cx, bw / 2, offsG.cw / 2, [0, offsG.cw], seams.xs);
+    cy += axis(cy, bh / 2, offsG.ch / 2, [0, offsG.ch], seams.ys);
+    return { x: cx - w0 / 2, y: cy - h0 / 2, guides: linesAt(cx, cy, bw, bh, edgeOnly) };
+  }, [linesAt]);
+
+  /**
+   * 兩指縮放時把「倍率」也吸一下：找一個倍率讓外接框的某一邊剛好落在
+   * 畫布邊界／遮罩交界上。置中放大時左右（或上下）算出來的倍率是同一個，
+   * 所以兩條邊會同時貼上去、兩條線一起亮 —— 這就是經典拼圖捏合時的手感。
+   */
+  const snapPinchScale = useCallback((k: number, w0: number, h0: number, cx: number, cy: number, rot: number) => {
+    const o = getLayoutOffsetsRef.current?.();
+    if (!o || !enableSnappingRef.current) return k;
+    const seams = seamLinesRef.current();
+    const { bw, bh } = aabbOf(w0, h0, rot);
+    if (bw < 1 || bh < 1) return k;
+    const SNAP = Math.max(4, Math.min(o.cw, o.ch) * 0.012);
+    const cands: number[] = [];
+    for (const v of [0, o.cw, ...seams.xs]) { cands.push((2 * (cx - v)) / bw); cands.push((2 * (v - cx)) / bw); }
+    for (const v of [0, o.ch, ...seams.ys]) { cands.push((2 * (cy - v)) / bh); cands.push((2 * (v - cy)) / bh); }
+    let best = Infinity, bestK = k;
+    for (const cand of cands) {
+      if (!(cand > 0.05) || cand > 8) continue;
+      // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
+      const px = Math.abs(cand - k) * Math.max(bw, bh) / 2;
+      if (px < SNAP && px < best) { best = px; bestK = cand; }
+    }
+    return best < SNAP ? bestK : k;
   }, []);
 
   /* ── 構圖：跟「編輯」「經典拼圖」共用同一個 ComposeStudio ──────────────
@@ -632,6 +688,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /* 拖形狀滑桿的期間把選取框與工具列收起來 —— 不然圓角／羽化／描邊／發光
      的邊緣變化整個被白框壓住，根本看不出來調到哪。 */
   const [tuningEdge, setTuningEdge] = useState(false);
+  /* header 的三個點：對稱與對齊都收在裡面（跟經典拼圖同一套） */
+  /* 兩指縮放物件的期間把那排白色鍵收起來 —— 它掛在物件下緣，
+     物件一邊變大它就一邊亂跳（經典拼圖也是這樣處理的）。 */
+  const [objPinching, setObjPinching] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [enableSnapping, setEnableSnapping] = useState(true);
+  const enableSnappingRef = useRef(true);
+  enableSnappingRef.current = enableSnapping;
   const guidesRef = useRef<any[]>([]);
   const objFileInputRef = useRef<HTMLInputElement>(null);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null); 
@@ -940,6 +1004,42 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       pushHistory(newHoles);
     }
   }, [imageState, holeCount, holeSize, sizeJitter, pushHistory, resetHistory, symmetryEnabled, layout, maskScale]);
+
+  /* 對稱鎖定：本來是 header 上的一顆按鈕，現在收進三個點的選單裡。
+     邏輯完全沒動 —— 關掉就把 side:'both' 的圖案拆成 image/mask 兩顆，
+     開回來就合併；沒改到東西就不佔一格上一步。 */
+  const toggleSymmetry = useCallback(() => {
+    if (layout === AROUND) return;
+    setSymmetryEnabled(prev => {
+      const next = !prev;
+      if (!next) {
+        const decoupled: any[] = [];
+        holesRef.current.forEach(h => {
+          const side = h.side || 'both';
+          if (side === 'both') {
+            decoupled.push({ ...h, id: h.id + '_img', side: 'image' });
+            decoupled.push({ ...h, id: h.id + '_msk', side: 'mask' });
+          } else decoupled.push(h);
+        });
+        if (sameHoles(decoupled, holesRef.current)) return next;
+        setHoles(decoupled);
+        setTimeout(() => pushHistory(decoupled), 0);
+      } else {
+        const combined: any[] = [];
+        const seenBaseIds = new Set<string>();
+        holesRef.current.forEach(h => {
+          const baseId = h.id.replace(/_img$|_msk$/, '');
+          if (seenBaseIds.has(baseId)) return;
+          combined.push({ ...h, id: baseId, side: 'both' });
+          seenBaseIds.add(baseId);
+        });
+        if (sameHoles(combined, holesRef.current)) return next;
+        setHoles(combined);
+        setTimeout(() => pushHistory(combined), 0);
+      }
+      return next;
+    });
+  }, [layout, pushHistory]);
 
   useEffect(() => { 
     setSelectedTarget(null);
@@ -1285,6 +1385,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           rotOn: false, rotBias: 0,   // 旋轉的不動區：超過門檻才開始轉
           cx0: oo.x + oo.w / 2, cy0: oo.y + oo.h / 2,
         };
+        setObjPinching(true);
       }
     } else if (activePointers.current.size === 2 && selectedTarget) {
       e.stopPropagation();
@@ -1447,8 +1548,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const pin = objPinchRef.current;
       const dist = Math.max(1, Math.hypot(pts2[0].clientX - pts2[1].clientX, pts2[0].clientY - pts2[1].clientY));
       const ang = Math.atan2(pts2[1].clientY - pts2[0].clientY, pts2[1].clientX - pts2[0].clientX) * 180 / Math.PI;
-      const k = Math.max(0.15, Math.min(8, dist / pin.d0));
-      const nw = pin.w0 * k, nh = pin.h0 * k;
+      let k = Math.max(0.15, Math.min(8, dist / pin.d0));
       /* 旋轉有一段「不動區」：兩指轉不到 ROT_START 度就當成純縮放。
          超過之後把門檻扣掉再開始轉，所以不會在跨過門檻那一瞬間跳一下。
          另外靠近 0/90/180/270 就吸過去 —— 想轉正只要大概轉回去就會自己歸位。 */
@@ -1464,8 +1564,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       let nrot = ((pin.rot0 + dRot) % 360 + 360) % 360;
       const upright = (Math.round(nrot / 90) * 90) % 360;
       if (Math.abs(wrap180(nrot - upright)) < ROT_SNAP) nrot = upright;
-      // 縮放中也吃對齊線：邊緣或中心一靠上去就吸附，跟拖曳時同一套
-      const sres = snapToGuides(pin.cx0 - nw / 2, pin.cy0 - nh / 2, nw, nh);
+      /* 倍率也吸一下：讓外接框的某一邊剛好落在畫布邊界／遮罩交界上。
+         置中放大時左右算出來的倍率一樣，所以兩條邊會同時貼上、兩條線一起亮。 */
+      k = snapPinchScale(k, pin.w0, pin.h0, pin.cx0, pin.cy0, nrot);
+      const nw = pin.w0 * k, nh = pin.h0 * k;
+      // 縮放中的對齊線只畫「邊」：中心點整趟都沒動，中線會從頭亮到尾
+      const sres = snapToGuides(pin.cx0 - nw / 2, pin.cy0 - nh / 2, nw, nh, nrot, true);
       guidesRef.current = sres.guides;
       setGuides(sres.guides);
       setObjects(prev => prev.map(o => o.id === pin.id
@@ -1484,7 +1588,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       /* 對齊線：拖到接近畫布中線或邊界時吸附，並把那條線畫出來。
          門檻用畫布短邊的 1.2%，不管圖多大手感都一樣。 */
       const oNow = objectsRef.current.find(z => z.id === d.id);
-      const r2 = snapToGuides(nx, ny, oNow?.w || 0, oNow?.h || 0);
+      const r2 = snapToGuides(nx, ny, oNow?.w || 0, oNow?.h || 0, oNow?.rot || 0);
       nx = r2.x; ny = r2.y;
       guidesRef.current = r2.guides;
       setGuides(r2.guides);
@@ -1592,7 +1696,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
     objDragRef.current = null;
     if (guidesRef.current.length) { guidesRef.current = []; setGuides([]); }
-    if (activePointers.current.size <= 2) objPinchRef.current = null;
+    if (activePointers.current.size <= 2) { objPinchRef.current = null; setObjPinching(false); }
     try {
       const target = e.target as HTMLElement;
       if (target && target.hasPointerCapture(e.pointerId)) {
@@ -2286,98 +2390,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         </div>
       )}
 
+      {/* 這一列的排法整個照抄經典拼圖：返回｜筆刷｜分隔線｜復原｜重做｜分隔線｜三個點｜儲存。
+          只有筆刷是創意拼圖自己的，留在外面；對稱收進三個點裡面。 */}
       {saveState !== 'success' && (
-      <header className="h-14 flex items-center justify-between px-5 z-[100] bg-black/40 backdrop-blur-xl">
-        <div className="w-20 flex items-center shrink-0">
-          <button 
-            onClick={(e) => { e.stopPropagation(); onHome(); }}
-            className="p-2 -ml-2 text-[#888] hover:text-white transition-colors active:scale-90"
-            title="繼續編輯"
-          >
-            <ChevronLeft size={22} />
-          </button>
-        </div>
-        {imageState && (
-          <div className="flex items-center gap-2 md:gap-3">
-            {/* 對稱鎖定工具 */}
-            {/* 四周包圍是一整片場、沒有「左右兩塊要對稱」的概念，
-                所以那個排版下這顆對稱鍵先收起來，免得按了不知道在做什麼 */}
-            {/* 四周包圍沒有對稱的概念，所以那個排版下這顆用「隱形」而不是「移除」——
-                移除的話旁邊的工具會整排往左跳一格。 */}
-            <button 
-              aria-hidden={layout === AROUND}
-              tabIndex={layout === AROUND ? -1 : 0}
-              /* transition-all 會把 visibility 也納入過場，切換時看起來慢半拍；
-                 隱藏的那一刻把過場關掉，就是「馬上」不見。 */
-              style={layout === AROUND
-                ? { visibility: 'hidden', pointerEvents: 'none', transition: 'none' }
-                : undefined}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (layout === AROUND) return;
-                setSymmetryEnabled(prev => {
-                  const next = !prev;
-                  if (!next) {
-                    // Decouple existing holes: split any hole of side: 'both' into 'image' and 'mask' sides
-                    const decoupled: any[] = [];
-                    holesRef.current.forEach(h => {
-                      const side = h.side || 'both';
-                      if (side === 'both') {
-                        decoupled.push({
-                          ...h,
-                          id: h.id + '_img',
-                          side: 'image'
-                        });
-                        decoupled.push({
-                          ...h,
-                          id: h.id + '_msk',
-                          side: 'mask'
-                        });
-                      } else {
-                        decoupled.push(h);
-                      }
-                    });
-                    /* 全部本來就已經是拆開的（沒有一顆 'both'），
-                       那這一下根本沒改到任何東西 —— 不該佔一格上一步。 */
-                    if (sameHoles(decoupled, holesRef.current)) return next;
-                    setHoles(decoupled);
-                    setTimeout(() => pushHistory(decoupled), 0);
-                  } else {
-                    // Convert back to both but merge ones that were split or are in the same spot
-                    const combined: any[] = [];
-                    const seenBaseIds = new Set<string>();
-                    
-                    holesRef.current.forEach(h => {
-                      // Extract base ID if it was decoupled
-                      const baseId = h.id.replace(/_img$|_msk$/, '');
-                      if (seenBaseIds.has(baseId)) return;
-                      
-                      combined.push({
-                        ...h,
-                        id: baseId,
-                        side: 'both'
-                      });
-                      seenBaseIds.add(baseId);
-                    });
-                    if (sameHoles(combined, holesRef.current)) return next;
-                    setHoles(combined);
-                    setTimeout(() => pushHistory(combined), 0);
-                  }
-                  return next;
-                });
-              }}
-              className={`p-1.5 rounded-md border transition-all active:scale-90 flex items-center justify-center ${
-                symmetryEnabled 
-                  ? 'bg-transparent border-transparent text-[#888] hover:text-white'
-                  : 'bg-white/10 border-white text-white font-bold shadow-[0_0_8px_rgba(255,255,255,0.2)]'
-              }`}
-              title={symmetryEnabled ? '對稱鎖定：開啟中（點擊解除對稱，獨立調整兩邊）' : '對稱鎖定：已解除（可單獨建立、調整、刪除，點擊還原對稱）'}
-            >
-              {symmetryEnabled ? <Link size={18} /> : <Link2Off size={18} />}
-            </button>
+      <header className="h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-[100] bg-black/90 backdrop-blur-md">
+        <button
+          onClick={(e) => { e.stopPropagation(); onHome(); }}
+          className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"
+          title="繼續編輯"
+        >
+          <ChevronLeft size={22} />
+        </button>
 
-            {/* 畫筆/橡皮擦工具 */}
-            <button 
+        {imageState && (
+          <div className="flex items-center gap-2">
+            {/* 畫筆／橡皮擦：創意拼圖獨有，留在外面 */}
+            <button
               onClick={(e) => {
                 e.stopPropagation();
                 setBrushMode(prev => {
@@ -2388,7 +2416,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               }}
               className={`p-1.5 rounded-md border transition-all active:scale-90 flex items-center justify-center ${
                 brushMode === 'pen' || brushMode === 'eraser'
-                  ? 'bg-white/10 border-white text-white font-bold shadow-[0_0_8px_rgba(255,255,255,0.2)]' 
+                  ? 'bg-white/10 border-white text-white font-bold shadow-[0_0_8px_rgba(255,255,255,0.2)]'
                   : 'bg-transparent border-transparent text-[#888] hover:text-white'
               }`}
               title={brushMode === 'pen' ? '畫筆模式（再按切換為橡皮擦）' : brushMode === 'eraser' ? '橡皮擦模式（再按關閉）' : '開啟畫筆'}
@@ -2396,32 +2424,97 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               {brushMode === 'eraser' ? <Eraser size={18} /> : brushMode === 'pen' ? <Paintbrush size={18} /> : <MousePointer size={18} />}
             </button>
 
-            {/* 分割線 */}
             <div className="w-px h-4 bg-white/10 mx-1 shrink-0" />
 
-            <button 
-              onClick={(e) => { e.stopPropagation(); undo(); }} 
-              disabled={historyState.index <= 0} 
+            <button
+              onClick={(e) => { e.stopPropagation(); undo(); }}
+              disabled={historyState.index <= 0}
               className={`p-2 text-white transition-all ${historyState.index <= 0 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
               title="復原"
             >
               <Icon name="undo" className="text-xl" />
             </button>
-            <button 
-              onClick={(e) => { e.stopPropagation(); redo(); }} 
-              disabled={historyState.index >= historyState.history.length - 1} 
+            <button
+              onClick={(e) => { e.stopPropagation(); redo(); }}
+              disabled={historyState.index >= historyState.history.length - 1}
               className={`p-2 text-white transition-all ${historyState.index >= historyState.history.length - 1 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
               title="重做"
             >
               <Icon name="redo" className="text-xl" />
             </button>
+
+            <div className="w-px h-4 bg-white/10 mx-1 shrink-0" />
+
+            {/* 三個點：對稱與對齊都收在這裡（樣式跟經典拼圖同一份） */}
+            <div className="relative">
+              <button
+                onClick={() => setMoreOpen(o => !o)}
+                className={`w-9 h-9 flex items-center justify-center transition-colors active:scale-90 ${moreOpen ? 'text-white' : 'text-white/70'}`}
+                title="更多"
+              >
+                <Icon name="more_horiz" className="text-xl" />
+              </button>
+              {moreOpen && (
+                <>
+                  <div className="fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)} />
+                  <div className="absolute right-0 top-11 z-[61] w-36 rounded-2xl bg-[#1b1b1b] border border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                    {/* 四周包圍是一整片場、沒有「左右兩塊要對稱」的概念，那個排版下就不出現 */}
+                    {layout !== AROUND && (
+                      <>
+                        <div className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90">
+                          <span>對稱</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); toggleSymmetry(); }}
+                            role="switch"
+                            aria-checked={symmetryEnabled}
+                            title={symmetryEnabled ? '對稱鎖定：開啟中' : '對稱鎖定：已解除'}
+                            className={`ml-auto relative shrink-0 w-[38px] h-[22px] rounded-full transition-colors duration-200 ${
+                              symmetryEnabled ? 'bg-white' : 'bg-white/[0.14]'
+                            }`}
+                          >
+                            <span className={`absolute top-[3px] left-[3px] w-4 h-4 rounded-full transition-transform duration-200 ease-out ${
+                              symmetryEnabled ? 'translate-x-4 bg-black' : 'translate-x-0 bg-white/45'
+                            }`} />
+                          </button>
+                        </div>
+                        <div className="h-px bg-white/10" />
+                      </>
+                    )}
+                    <div className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90">
+                      <span>對齊</span>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEnableSnapping(v => {
+                            if (v) { guidesRef.current = []; setGuides([]); }
+                            return !v;
+                          });
+                        }}
+                        role="switch"
+                        aria-checked={enableSnapping}
+                        title={enableSnapping ? '關閉對齊' : '開啟對齊'}
+                        className={`ml-auto relative shrink-0 w-[38px] h-[22px] rounded-full transition-colors duration-200 ${
+                          enableSnapping ? 'bg-white' : 'bg-white/[0.14]'
+                        }`}
+                      >
+                        <span className={`absolute top-[3px] left-[3px] w-4 h-4 rounded-full transition-transform duration-200 ease-out ${
+                          enableSnapping ? 'translate-x-4 bg-black' : 'translate-x-0 bg-white/45'
+                        }`} />
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <button
+              onClick={(e) => { e.stopPropagation(); handleSave(); }}
+              className="bg-white text-black px-6 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap"
+            >
+              儲存
+            </button>
           </div>
         )}
-        <div className="w-20 flex justify-end shrink-0">
-          {imageState && (
-            <button onClick={(e) => { e.stopPropagation(); handleSave(); }} className="bg-white text-black px-6 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap">儲存</button>
-          )}
-        </div>
         <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
         <input type="file" accept="image/*" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
       </header>
@@ -2480,7 +2573,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
         {/* 構圖那一頁是全螢幕的，這排白色鍵不能浮在它上面 */}
         {/* 對齊線亮著、或正在拖形狀滑桿時，這排鍵也要一起讓開 */}
-        {imageState && selectedObj && !composeState && !guides.length && !tuningEdge && (() => {
+        {imageState && selectedObj && !composeState && !guides.length && !tuningEdge && !objPinching && (() => {
           const o = objects.find(z => z.id === selectedObj);
           const cvsEl = canvasRef.current;
           if (!o || !cvsEl) return null;

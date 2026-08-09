@@ -6305,6 +6305,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     startX: number; startY: number; startDist: number;
     /** 兩指連線的起始角度與物件當下的角度，雙指旋轉用 */
     startAngle: number; baseRotation: number;
+    /** 旋轉的不動區：轉超過門檻才開始轉，rotBias 是要扣掉的那一段 */
+    rotOn?: boolean; rotBias?: number;
     baseX: number; baseY: number; baseScale: number;
     cellIdx: number; baseOffsetX: number; baseOffsetY: number; baseZoom: number;
   } | null>(null);
@@ -6439,6 +6441,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         startX: cx, startY: cy, startDist: dist,
         startAngle: ang,
         baseRotation: fImg?.rotation ?? 0,
+        rotOn: false, rotBias: 0,   // 旋轉的不動區：超過門檻才開始轉
         baseX: kind === 'floating' ? (fImg?.x ?? 0) : lt.x,
         baseY: kind === 'floating' ? (fImg?.y ?? 0) : lt.y,
         baseScale: kind === 'floating' ? (fImg?.scale ?? 1) : lt.scale,
@@ -6482,21 +6485,31 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         const k = d / g.startDist;
         if (g.kind === 'floating') {
           const target = floatingImages.find(img => img.id === g.floatingId);
-          // 只有文字可以旋轉；照片一律維持原本的角度
-          const canRotate = target?.text !== undefined;
+          // 圖片跟文字都可以轉，邏輯跟創意拼圖同一套
+          const canRotate = true;
           let rot = target?.rotation ?? 0;
           let straight = false;
-          if (canRotate) {
-            // 轉到接近正的角度（0/90/180/270）就吸附過去，
-            // 並在物件中心打兩條臨時對齊線，讓人知道現在是正的。
+          {
+            /* 旋轉有一段「不動區」：兩指轉不到 ROT_START 度就當成純縮放，
+               不然只是想放大也會不小心轉到。超過之後把門檻扣掉再開始轉，
+               所以不會在跨過門檻那一瞬間跳一下。
+               靠近 0/90/180/270 就吸正，並在物件中心打兩條臨時線，讓人知道是正的。 */
+            const ROT_START = 8, ROT_SNAP = 6;
+            const wrap180 = (v: number) => ((v + 180) % 360 + 360) % 360 - 180;
             const ang = Math.atan2(
               e.touches[1].clientY - e.touches[0].clientY,
               e.touches[1].clientX - e.touches[0].clientX
             ) * 180 / Math.PI;
-            rot = ((g.baseRotation + (ang - g.startAngle)) % 360 + 360) % 360;
-            const nearest = Math.round(rot / 90) * 90;
-            straight = Math.abs(rot - nearest) <= 6;
-            if (straight) rot = nearest % 360;
+            let dRot = wrap180(ang - g.startAngle);
+            if (!g.rotOn) {
+              if (Math.abs(dRot) < ROT_START) dRot = 0;
+              else { g.rotOn = true; g.rotBias = dRot > 0 ? ROT_START : -ROT_START; }
+            }
+            if (g.rotOn) dRot -= (g.rotBias || 0);
+            rot = ((g.baseRotation + dRot) % 360 + 360) % 360;
+            const nearest = (Math.round(rot / 90) * 90) % 360;
+            straight = Math.abs(wrap180(rot - nearest)) <= ROT_SNAP;
+            if (straight) rot = nearest;
           }
           /* 雙指縮放時也要吸附畫布邊界並顯示輔助線 —— 以前只有拖曳和拉四角
              才有，捏合完全沒有，很難把圖縮到剛好貼齊畫布。
