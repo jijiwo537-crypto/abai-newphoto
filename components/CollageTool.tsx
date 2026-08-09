@@ -411,7 +411,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   const [maskColor, setMaskColor] = useState('#FFF2E6'); 
   const [patternType, setPatternType] = useState('none'); 
-  const [dotColor, setDotColor] = useState('#404040'); 
+  const [dotColor, setDotColor] = useState('#595959'); 
   const [dotSize, setDotSize] = useState(20); 
   const [dotGap, setDotGap] = useState(20);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
@@ -1015,8 +1015,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const previewScaleRef = useRef(1);
   previewScaleRef.current = previewScale;
   const previewTimer = useRef<number | null>(null);
-  /** 記住畫布在 1 倍時佔多少 CSS 寬度，用來換算需要多少畫布像素 */
+  /** 畫布在 1 倍時的 CSS 尺寸（放大時直接用它 × 倍率當版面尺寸） */
   const baseCssWRef = useRef(0);
+  const [baseCss, setBaseCss] = useState<{ w: number; h: number } | null>(null);
   /** 第一根手指落下時的挖洞狀態 —— 第二根手指跟上時要把它畫的那一下收回去 */
   const strokeStartHolesRef = useRef<any[] | null>(null);
   const stageBox = () => {
@@ -1067,6 +1068,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     return () => { if (previewTimer.current) window.clearTimeout(previewTimer.current); };
   }, [viewT.k, imageState, layout, maskScale, maxPreviewScale]);
 
+  /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了 ——
+     要先放掉寫死的尺寸讓 max-w/max-h 重新貼合，否則會卡在舊尺寸。 */
+  useEffect(() => {
+    setBaseCss(null);
+    // 縮放也一起歸零：新的形狀要先用 max-w/max-h 量一次基準尺寸才量得準
+    setViewT({ k: 1, tx: 0, ty: 0 });
+    setPreviewScale(1);
+  }, [layout, maskScale]);
+
   // 換一張圖就把縮放歸零
   const viewResetKeyRef = useRef('');
   useEffect(() => {
@@ -1075,6 +1085,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       viewResetKeyRef.current = key;
       setViewT({ k: 1, tx: 0, ty: 0 });
       setPreviewScale(1);
+      setBaseCss(null);
     }
   }, [imageState]);
 
@@ -1525,12 +1536,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     // 記住 1 倍時的 CSS 寬度（畫布是 max-w-full 等比縮放，換算全靠它）
     const r = canvasRef.current.getBoundingClientRect();
     if (r.width > 0 && imageState) {
-      const cssW = r.width / Math.max(1, viewTRef.current.k);
-      baseCssWRef.current = cssW;
+      /* 基準尺寸用「舞台大小 ＋ 拼圖長寬比」直接算（contain 貼合），
+         不去量畫布 —— 畫布的尺寸是我們自己寫死的，量它會跟自己打架。 */
+      const stEl = stageRef.current;
+      const cs0 = collageSizeOf(layout, imageState.baseW, imageState.baseH, maskScale);
+      let cssW = 0, cssH = 0;
+      if (stEl && cs0.w > 0 && cs0.h > 0) {
+        const sb = stEl.getBoundingClientRect();
+        const availW = Math.max(1, sb.width - 32), availH = Math.max(1, sb.height - 32);
+        const f = Math.min(availW / cs0.w, availH / cs0.h);
+        cssW = cs0.w * f; cssH = cs0.h * f;
+        setBaseCss(prev => (prev && Math.abs(prev.w - cssW) < 0.5 && Math.abs(prev.h - cssH) < 0.5)
+          ? prev : { w: cssW, h: cssH });
+      }
+      baseCssWRef.current = cssW || r.width;
       const cs = collageSizeOf(layout, imageState.baseW, imageState.baseH, maskScale);
       const dpr = Math.min(3, window.devicePixelRatio || 1);
       // 上限＝「畫得到的最細畫布」對應到螢幕上的倍率
-      const z = (cs.w * maxPreviewScale()) / Math.max(1, cssW * dpr);
+      const z = (cs.w * maxPreviewScale()) / Math.max(1, (cssW || r.width) * dpr);
       /* 以前這裡硬給 1.5 的下限：畫布明明畫不到那麼細，卻還讓你放大到 1.5 倍 ——
          那段就是一定會糊的區間。改成「畫得到多少就只給多少」，
          任何倍率下都保證 1 個畫布像素 ≥ 1 個裝置像素。 */
@@ -1855,8 +1878,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           >
             <div
               className="w-full h-full flex items-center justify-center p-4"
+              /* 只平移，不縮放。
+                 縮放交給畫布自己的 CSS 尺寸 —— transform: scale() 會讓瀏覽器
+                 先把畫布用「版面尺寸」光柵化成一張貼圖再拉大，畫布內部畫得再細
+                 也救不回來，那就是圖案與遮罩邊緣一直有鋸齒的根本原因。 */
               style={{
-                transform: `translate(${viewT.tx}px, ${viewT.ty}px) scale(${viewT.k})`,
+                transform: `translate(${viewT.tx}px, ${viewT.ty}px)`,
                 transition: viewPinchRef.current ? 'none' : 'transform 90ms linear',
               }}
             >
@@ -1865,9 +1892,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 onPointerDown={handlePointerDown} 
                 onPointerMove={handlePointerMove} 
                 onPointerUp={handlePointerUp}
-                className="max-w-full max-h-full block drop-shadow-[0_20px_50px_rgba(255,255,255,0.05)] pointer-events-auto" 
+                className={`block drop-shadow-[0_20px_50px_rgba(255,255,255,0.05)] pointer-events-auto ${baseCss ? '' : 'max-w-full max-h-full'}`}
                 style={{ 
                   touchAction: 'none',
+                  // 1 倍時交給 max-w/max-h 自己貼合；放大之後直接寫死尺寸，
+                  // 畫布就是實打實地被排版成那麼大，不經過任何貼圖拉伸
+                  ...(baseCss ? { width: baseCss.w * viewT.k, height: baseCss.h * viewT.k } : null),
+                  transition: viewPinchRef.current ? 'none' : 'width 90ms linear, height 90ms linear',
                   cursor: brushMode === 'pen' ? 'crosshair' : brushMode === 'eraser' ? 'pointer' : 'default' 
                 }}
               />
@@ -2030,17 +2061,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   <button
                     onClick={() => setShapeSub('shape')}
                     title="圖案" aria-label="圖案"
-                    className={`w-full flex-1 flex items-center justify-center transition-all ${shapeSub === 'shape' ? 'text-white' : 'text-[#5a5a5a]'}`}
+                    /* 只做「發亮 + 圖標微放大」。原本是整顆 transition-all，
+                       連 outline / 邊框那些也一起過場，點下去跟移開時看起來會抖。 */
+                    className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${shapeSub === 'shape' ? 'text-white' : 'text-[#5a5a5a]'}`}
                   >
-                    <Star size={18} className={`transition-transform ${shapeSub === 'shape' ? 'scale-110' : ''}`} />
+                    <Star size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'shape' ? 'scale-110' : 'scale-100'}`} />
                   </button>
                   <div className="w-full h-[1px] bg-white/10 shrink-0" />
                   <button
                     onClick={() => setShapeSub('style')}
                     title="參數" aria-label="參數"
-                    className={`w-full flex-1 flex items-center justify-center transition-all ${shapeSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}
+                    className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${shapeSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}
                   >
-                    <SlidersHorizontal size={18} className={`transition-transform ${shapeSub === 'style' ? 'scale-110' : ''}`} />
+                    <SlidersHorizontal size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'style' ? 'scale-110' : 'scale-100'}`} />
                   </button>
                 </div>
                 <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
