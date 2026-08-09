@@ -2195,6 +2195,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const shapeCanvasRef = useRef<HTMLCanvasElement>(null);
   /* 畫布的內部像素數與 CSS 尺寸要用同一個 dpr 去算，兩邊才會 1:1 對上 */
   const shapeDpr = Math.min(2, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1);
+  /** 把長度吸到整數個實體像素（見 wrapGeo 的說明） */
+  const snapPx = (v: number) => Math.round(v * shapeDpr) / shapeDpr;
   /** 重畫收斂成一幀一次用的 */
   const rafRef = useRef(0);
   const drawnSrcRef = useRef<string | null>(null);
@@ -2676,10 +2678,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     // 大小直接寫進版面而不是靠 transform: scale()。用 scale 放大時瀏覽器會沿用
     // 原尺寸的點陣快取再拉大，放大後就糊掉；改成實際尺寸才會用原圖重新取樣。
     // 幾何完全等價：scale 以中心為原點，所以左上角是 x + (w - w*s)/2。
-    left: `${image.x + (image.width - image.width * image.scale) / 2}px`,
-    top: `${image.y + (image.height - image.height * image.scale) / 2}px`,
-    width: `${image.width * image.scale}px`,
-    height: `${image.height * image.scale}px`,
+    /* 版面盒一律吸到「整數個實體像素」。
+       這一層因為有 transform 而被提升成合成層，合成層的框每一格都在變、而且
+       落在小數位置時，瀏覽器算「要重畫哪一塊」是往內取整、實際畫出來的範圍
+       卻是往外取整 —— 中間差的那一列永遠不會被重畫，縮放時就沿路留下一條
+       一像素的殘影（照片是深色、頁面是白的，看起來就是一根根黑線）。
+       吸到整數之後兩邊對齊，殘影就沒有可以躲的地方。 */
+    left: `${snapPx(image.x + (image.width - image.width * image.scale) / 2)}px`,
+    top: `${snapPx(image.y + (image.height - image.height * image.scale) / 2)}px`,
+    width: `${snapPx(image.width * image.scale)}px`,
+    height: `${snapPx(image.height * image.scale)}px`,
     transformOrigin: 'center center',
     // 排頁面拖曳中要跟著自己那一頁一起走（平移＋群組縮放），最後才是自己的旋轉
     /* 這裡「一定要」保留 transform（即使旋轉是 0）。
