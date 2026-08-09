@@ -529,23 +529,53 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     objFxCache.current.set(o.id, { key, cv });
     return cv;
   }, []);
-  /** 把位置吸附到畫布中線／邊界，並回報要亮哪幾條線 */
+  /** 圖片與遮罩的交界線（畫布座標）。四周包圍是原圖那個框的四條邊。 */
+  const seamLinesRef = useRef<() => { xs: number[]; ys: number[] }>(() => ({ xs: [], ys: [] }));
+
+  /** 把位置吸附到畫布中線／邊界／遮罩交界，並回報要亮哪幾條線 */
   const snapToGuides = useCallback((x0: number, y0: number, w0: number, h0: number) => {
     const offsG = getLayoutOffsetsRef.current?.();
     const gl: any[] = [];
     let nx = x0, ny = y0;
     if (offsG && w0 && h0) {
       const snap = Math.max(4, Math.min(offsG.cw, offsG.ch) * 0.012);
-      const cxs = [offsG.cw / 2, 0, offsG.cw];
-      const cys = [offsG.ch / 2, 0, offsG.ch];
-      for (const cv of cxs) {
-        const edges = [{ p: nx + w0 / 2, o: w0 / 2 }, { p: nx, o: 0 }, { p: nx + w0, o: w0 }];
-        for (const e2 of edges) if (Math.abs(e2.p - cv) < snap) { nx = cv - e2.o; gl.push({ x: cv }); break; }
-      }
-      for (const cv of cys) {
-        const edges = [{ p: ny + h0 / 2, o: h0 / 2 }, { p: ny, o: 0 }, { p: ny + h0, o: h0 }];
-        for (const e2 of edges) if (Math.abs(e2.p - cv) < snap) { ny = cv - e2.o; gl.push({ y: cv }); break; }
-      }
+      const seams = seamLinesRef.current();
+      /**
+       * 單軸吸附。candidate 是「這條線」＋「要位移多少才貼上去」。
+       * 規則：
+       *  1. 中心線只跟「物件中心」配對 —— 邊緣碰到中心線不算對齊。
+       *  2. 取最近的那一條，不是第一條符合的。
+       *  3. 兩條一樣近但要往相反方向拉（例如置中放大到上下同時快貼邊），
+       *     就兩條都亮著、位置完全不動 —— 以前是這一格黏上面、下一格黏下面，
+       *     看起來就是在抖。
+       */
+      const axis = (pos: number, size: number, centre: number, edges: number[], seamList: number[]) => {
+        const cands: { v: number; d: number }[] = [{ v: centre, d: centre - (pos + size / 2) }];
+        for (const v of edges) {
+          cands.push({ v, d: v - pos });
+          cands.push({ v, d: v - (pos + size) });
+        }
+        for (const v of seamList) {
+          cands.push({ v, d: v - pos });
+          cands.push({ v, d: v - (pos + size) });
+          cands.push({ v, d: v - (pos + size / 2) });
+        }
+        const near = cands.filter(c => Math.abs(c.d) < snap);
+        if (!near.length) return { off: 0, lines: [] as number[] };
+        near.sort((a, b) => Math.abs(a.d) - Math.abs(b.d));
+        const best = near[0];
+        const TIE = Math.max(0.75, snap * 0.06);
+        const rivals = near.filter(c => Math.abs(Math.abs(c.d) - Math.abs(best.d)) < TIE
+                                     && Math.abs(c.d - best.d) > TIE);
+        if (rivals.length) {
+          return { off: 0, lines: Array.from(new Set([best.v, ...rivals.map(r => r.v)])) };
+        }
+        return { off: best.d, lines: [best.v] };
+      };
+      const rx = axis(nx, w0, offsG.cw / 2, [0, offsG.cw], seams.xs);
+      nx += rx.off; rx.lines.forEach(v => gl.push({ x: v }));
+      const ry = axis(ny, h0, offsG.ch / 2, [0, offsG.ch], seams.ys);
+      ny += ry.off; ry.lines.forEach(v => gl.push({ y: v }));
     }
     return { x: nx, y: ny, guides: gl };
   }, []);
@@ -599,6 +629,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 拖曳物件時亮起來的對齊線（畫布座標） */
   const getLayoutOffsetsRef = useRef<any>(null);
   const [guides, setGuides] = useState<any[]>([]);
+  /* 拖形狀滑桿的期間把選取框與工具列收起來 —— 不然圓角／羽化／描邊／發光
+     的邊緣變化整個被白框壓住，根本看不出來調到哪。 */
+  const [tuningEdge, setTuningEdge] = useState(false);
   const guidesRef = useRef<any[]>([]);
   const objFileInputRef = useRef<HTMLInputElement>(null);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null); 
@@ -931,6 +964,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   }, [imageState, layout, maskScale]);
   getLayoutOffsetsRef.current = getLayoutOffsets;
 
+  /* 圖片與遮罩的交界：並排的四種各有一條，四周包圍是原圖那個框的四條邊。 */
+  seamLinesRef.current = () => {
+    const o = getLayoutOffsets();
+    if (!o || !imageState) return { xs: [] as number[], ys: [] as number[] };
+    const { baseW: bw, baseH: bh } = imageState;
+    if (layout === 'mask-bottom') return { xs: [], ys: [bh] };
+    if (layout === 'mask-top') return { xs: [], ys: [o.iy] };
+    if (layout === 'mask-right') return { xs: [bw], ys: [] };
+    if (layout === 'mask-left') return { xs: [o.ix], ys: [] };
+    if (layout === AROUND) return { xs: [o.ix, o.ix + bw], ys: [o.iy, o.iy + bh] };
+    return { xs: [], ys: [] };
+  };
+
   const getHoleSize = useCallback((h: any) => {
     const gs = imageState?.globalScale || 1;
     const mappedHoleSize = 25 + (holeSize / 100) * 125;
@@ -1111,10 +1157,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           if (Math.abs(lx) <= o.w / 2 && Math.abs(ly) <= o.h / 2) {
             e.stopPropagation();
             setSelectedTarget(null);
-            // 已經選中的再點一次 → 進編輯頁（跟經典拼圖同樣的手感）
-            if (selectedObjRef.current === o.id) setActiveTab('objedit');
-            setSelectedObj(o.id);
-            objDragRef.current = { id: o.id, startX: x, startY: y, ox: o.x, oy: o.y };
+            if (selectedObjRef.current === o.id) {
+              // 已經選中的再點一次 → 進編輯頁（跟經典拼圖同樣的手感）；這一下也可以拖
+              setActiveTab('objedit');
+              objDragRef.current = { id: o.id, startX: x, startY: y, ox: o.x, oy: o.y };
+            } else {
+              /* 還沒選中的物件：這一下只能「點選」，不能順手拖走。
+                 放開時沒移動才算選中，移動了就什麼都不做。 */
+              objDragRef.current = { id: o.id, startX: x, startY: y, ox: o.x, oy: o.y, selectOnly: true, moved: false };
+            }
             return;
           }
         }
@@ -1428,6 +1479,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       e.stopPropagation();
       const d = objDragRef.current;
       if (Math.hypot(x - d.startX, y - d.startY) > 3) d.moved = true;
+      if (d.selectOnly) return;   // 還沒選中：這一下不搬東西
       let nx = d.ox + (x - d.startX), ny = d.oy + (y - d.startY);
       /* 對齊線：拖到接近畫布中線或邊界時吸附，並把那條線畫出來。
          門檻用畫布短邊的 1.2%，不管圖多大手感都一樣。 */
@@ -1533,6 +1585,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const handlePointerUp = (e: React.PointerEvent) => {
     // 點在物件以外的地方、而且完全沒有拖動 → 取消選取
     if (objDragRef.current?.fromBlank && !objDragRef.current.moved) setSelectedObj(null);
+    // 還沒選中的物件：只有「點下去沒移動」才算選中，拖了就當作沒發生
+    if (objDragRef.current?.selectOnly && !objDragRef.current.moved) {
+      setSelectedObj(objDragRef.current.id);
+      setSelectedTarget(null);
+    }
     objDragRef.current = null;
     if (guidesRef.current.length) { guidesRef.current = []; setGuides([]); }
     if (activePointers.current.size <= 2) objPinchRef.current = null;
@@ -1798,26 +1855,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       ctx.restore();
     };
 
-    if (layout === AROUND) {
-      drawBackdrop();
-      drawMaskLayer();
-      drawCentreImage();
-      drawHolesOverImage();
-      drawImageSideHoles();
-    } else {
-      drawCentreImage();
-      drawBackdrop();
-      drawImageSideHoles();
-      drawMaskLayer();
-    }
-
-    // ctx.beginPath();
-    // if (layout.includes('bottom') || layout.includes('top')) { ctx.moveTo(0, sh); ctx.lineTo(sw, sh); }
-    // else { ctx.moveTo(sw, 0); ctx.lineTo(sw, sh); }
-    // ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = sgs; ctx.stroke();
-
-    /* 浮動物件（圖片／文字）畫在最上層，順序就是陣列順序（後面的蓋前面的）。 */
-    objects.forEach(o => {
+    /* 浮動物件（圖片／文字）。順序就是陣列順序（後面的蓋前面的）；
+       標了 below 的那些會被畫在「所有圖案之下」，見下面兩次呼叫。 */
+    const drawObjects = (list: any[]) => list.forEach(o => {
       ctx.save();
       ctx.translate((o.x + o.w / 2) * s, (o.y + o.h / 2) * s);
       ctx.rotate((o.rot || 0) * Math.PI / 180);
@@ -1871,7 +1911,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         (ctx as any).letterSpacing = '0px';
       }
       ctx.globalAlpha = 1;
-      if (isMain && selectedObj === o.id) {
+      if (isMain && selectedObj === o.id && !guides.length && !tuningEdge) {
         // 選中框維持虛線（跟挖洞那邊同一種語言）
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 2 * sgs * s;
@@ -1882,6 +1922,33 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       ctx.restore();
     });
 
+    /* 標了 below 的物件插在「底圖鋪好之後、所有圖案之前」——
+       所以圖片側的圖案會蓋在它上面，遮罩側則是被遮罩蓋住、只從洞裡透出來。
+       兩種排版的插入點不同，但相對於圖案的層級是一致的。 */
+    const belowObjs = objects.filter(o => o.below);
+    const aboveObjs = objects.filter(o => !o.below);
+    if (layout === AROUND) {
+      drawBackdrop();
+      drawMaskLayer();
+      drawCentreImage();
+      drawObjects(belowObjs);
+      drawHolesOverImage();
+      drawImageSideHoles();
+    } else {
+      drawCentreImage();
+      drawBackdrop();
+      drawObjects(belowObjs);
+      drawImageSideHoles();
+      drawMaskLayer();
+    }
+
+    // ctx.beginPath();
+    // if (layout.includes('bottom') || layout.includes('top')) { ctx.moveTo(0, sh); ctx.lineTo(sw, sh); }
+    // else { ctx.moveTo(sw, 0); ctx.lineTo(sw, sh); }
+    // ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = sgs; ctx.stroke();
+
+    drawObjects(aboveObjs);
+
     if (isMain && guides.length) {
       ctx.save();
       /* 經典拼圖那邊是 2 CSS px 的 bg-blue-500。這裡畫在畫布上，
@@ -1889,11 +1956,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const cssW0 = baseCssWRef.current || 1;
       const shown = cssW0 * Math.max(1, viewTRef.current.k);
       ctx.strokeStyle = '#3B82F6';
-      ctx.lineWidth = Math.max(1, 2 * (offs.cw * s) / shown);
+      const glw = Math.max(1, 2 * (offs.cw * s) / shown);
+      ctx.lineWidth = glw;
+      /* 畫布最外圈那兩條線本來剛好壓在邊界上，一半會被畫布外的黑底吃掉，
+         看起來就比中間那幾條細一半。往內縮半個線寬，整條都留在畫布裡。 */
+      const clamp = (v: number, max: number) => Math.min(Math.max(v, glw / 2), max - glw / 2);
       guides.forEach(g => {
         ctx.beginPath();
-        if (g.x !== undefined) { ctx.moveTo(g.x * s, 0); ctx.lineTo(g.x * s, offs.ch); }
-        else { ctx.moveTo(0, g.y * s); ctx.lineTo(offs.cw, g.y * s); }
+        if (g.x !== undefined) {
+          const gx = clamp(g.x * s, offs.cw);
+          ctx.moveTo(gx, 0); ctx.lineTo(gx, offs.ch);
+        } else {
+          const gy = clamp(g.y * s, offs.ch);
+          ctx.moveTo(0, gy); ctx.lineTo(offs.cw, gy);
+        }
         ctx.stroke();
       });
       ctx.restore();
@@ -1957,7 +2033,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
-  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, fxCanvasOf, fxTick]);
+  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick]);
 
   const renderCanvas = useCallback(() => {
     if (!canvasRef.current || !imageState) return;
@@ -2403,7 +2479,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         {/* 選中的圖片／文字下方浮出的工具列 —— 跟經典拼圖同一組動作。
             位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
         {/* 構圖那一頁是全螢幕的，這排白色鍵不能浮在它上面 */}
-        {imageState && selectedObj && !composeState && (() => {
+        {/* 對齊線亮著、或正在拖形狀滑桿時，這排鍵也要一起讓開 */}
+        {imageState && selectedObj && !composeState && !guides.length && !tuningEdge && (() => {
           const o = objects.find(z => z.id === selectedObj);
           const cvsEl = canvasRef.current;
           if (!o || !cvsEl) return null;
@@ -2415,11 +2492,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           const cx = r.left - sr.left + (o.x + o.w / 2) * k;
           const by = r.top - sr.top + (o.y + o.h) * k + 10;
           const act = (fn: () => void) => (ev: React.PointerEvent) => { ev.stopPropagation(); ev.preventDefault(); fn(); };
+          /* 比原本多一層：陣列最底下再往下按一次，就整個掉到「所有圖案之下」（below）。
+             從 below 往上按就先回到圖案之上的最底層，再往上才是換順序。
+             圖片與文字走的是同一套，沒有差別。 */
           const move = (dir: number) => setObjects(prev => {
             const i = prev.findIndex(z => z.id === o.id);
-            const j = i + dir;
-            if (i < 0 || j < 0 || j >= prev.length) return prev;
-            const n = prev.slice(); const [x0] = n.splice(i, 1); n.splice(j, 0, x0); return n;
+            if (i < 0) return prev;
+            const cur = prev[i];
+            const n = prev.slice();
+            if (dir < 0) {
+              if (i === 0) {
+                if (cur.below) return prev;               // 已經是最底層了
+                n[0] = { ...cur, below: true }; return n;
+              }
+              const [x0] = n.splice(i, 1); n.splice(i - 1, 0, x0); return n;
+            }
+            if (cur.below) { n[i] = { ...cur, below: false }; return n; }
+            if (i >= prev.length - 1) return prev;
+            const [x1] = n.splice(i, 1); n.splice(i + 1, 0, x1); return n;
           });
           const dup = () => {
             const id = Math.random().toString(36).slice(2, 9);
@@ -2434,8 +2524,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               onTouchStart={(e) => e.stopPropagation()}
             >
               {[
-                { t: '下移一層', on: act(() => move(-1)), el: <MoveDown size={14} />, off: objects[0]?.id === o.id },
-                { t: '上移一層', on: act(() => move(1)), el: <MoveUp size={14} />, off: objects[objects.length - 1]?.id === o.id },
+                { t: '下移一層', on: act(() => move(-1)), el: <MoveDown size={14} />, off: objects[0]?.id === o.id && !!o.below },
+                { t: '上移一層', on: act(() => move(1)), el: <MoveUp size={14} />, off: objects[objects.length - 1]?.id === o.id && !o.below },
                 { t: '複製', on: act(dup), el: <Copy size={14} />, off: false },
                 { t: o.type === 'text' ? '編輯文字' : '圖片調整', on: act(() => setActiveTab('objedit')), el: <Sliders size={14} />, off: false },
                 { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
@@ -2730,7 +2820,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       shapeMenu={shapeMenu} setShapeMenu={setShapeMenu}
                       shapeTool={shapeTool} setShapeTool={setShapeTool}
                       tuneTool={tuneTool} setTuneTool={setTuneTool}
-                      setTuningEdge={() => {}}
+                      setTuningEdge={setTuningEdge}
                       openComposeFor={openComposeFor}
                       deferSlider
                     />

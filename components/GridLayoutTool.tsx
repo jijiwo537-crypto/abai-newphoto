@@ -1003,7 +1003,8 @@ const CATS = ([
   ['tune', 'tune', '調節'],
   ['effect', 'magic_button', '特效'],
   ['shape', 'shapes', '形狀'],
-  ['compose', 'crop_rotate', '構圖'],
+  // 構圖圖標跟「編輯」那邊用同一顆（crop）
+  ['compose', 'crop', '構圖'],
 ] as const).filter(c => !(hideShape && c[0] === 'shape'));
 
 // 編輯同款的圓形工具鈕
