@@ -341,7 +341,7 @@ export const FX_DEFS: FxDef[] = [
     id: 'fxMist', label: '亮角', icon: 'filter_drama',
     onAmount: 100,
     params: [
-      { id: 'fxMistRange', label: '範圍', icon: 'adjust', min: 0, max: 100, def: 35, scale: 0.01 },
+      { id: 'fxMistRange', label: '範圍', icon: 'adjust', min: 0, max: 100, def: 50, scale: 0.01 },
       { id: 'fxMistFeather', label: '柔和度', icon: 'blur_short', min: 0, max: 100, def: 55, scale: 0.01 , hidden: true },
       { id: 'fxMistWarm', label: '暖度', icon: 'wb_twilight', min: -100, max: 100, def: 0, scale: 0.01 , hidden: true },
     ],
@@ -364,7 +364,7 @@ export const FX_DEFS: FxDef[] = [
     id: 'fxVignette', label: '暗角', icon: 'vignette',
     onAmount: 100,
     params: [
-      { id: 'fxVigRange', label: '範圍', icon: 'adjust', min: 0, max: 100, def: 30, scale: 0.01 },
+      { id: 'fxVigRange', label: '範圍', icon: 'adjust', min: 0, max: 100, def: 50, scale: 0.01 },
       { id: 'fxVigFeather', label: '柔和度', icon: 'blur_short', min: 0, max: 100, def: 60, scale: 0.01 , hidden: true },
       { id: 'fxVigShape', label: '形狀', icon: 'category', min: 0, max: 100, def: 0, scale: 0.01 },
     ],
