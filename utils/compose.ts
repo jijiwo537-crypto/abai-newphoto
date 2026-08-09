@@ -41,7 +41,8 @@ export const DEFAULT_GEO: GeoParams = {
   keyH: 0,
   zoom: 1,
   offset: { x: 0, y: 0 },
-  aspect: 'free',
+  // 預設鎖原圖比例：一進構圖就是「原始」，要自由裁切再自己點「自由」
+  aspect: 'orig',
   crop: { ...FULL_CROP },
 };
 
