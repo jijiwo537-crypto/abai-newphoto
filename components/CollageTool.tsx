@@ -401,6 +401,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [holeAngle, setHoleAngle] = useState(0);
   const [holeCount, setHoleCount] = useState(11);
   const [holes, setHoles] = useState<any[]>([]); 
+  /* 浮動物件：疊在拼圖最上層的圖片與文字。
+     跟「挖洞」完全分開 —— 洞是把遮罩打穿，這些是貼上去的圖層。
+     座標一律用「輸出畫布」的座標系（跟遮罩同一套），縮放時再乘上倍率。 */
+  const [objects, setObjects] = useState<any[]>([]);
+  const objectsRef = useRef<any[]>([]);
+  objectsRef.current = objects;
+  const [selectedObj, setSelectedObj] = useState<string | null>(null);
+  const selectedObjRef = useRef<string | null>(null);
+  selectedObjRef.current = selectedObj;
+  const objDragRef = useRef<any>(null);
+  const objFileInputRef = useRef<HTMLInputElement>(null);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null); 
   const [colorPickerTarget, setColorPickerTarget] = useState<string | null>(null); 
   const [maskImageState, setMaskImageState] = useState<any>(null);
@@ -879,6 +890,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const gs = imageState.globalScale || 1, offs = getLayoutOffsets();
 
     if (activePointers.current.size === 1) {
+      /* 浮動物件優先：它是疊在最上層的圖層，點到它就不該再往下傳給挖洞或筆刷。
+         由上往下找（陣列後面的疊在上面）。 */
+      if (brushMode === 'off') {
+        const list = objectsRef.current;
+        for (let i = list.length - 1; i >= 0; i--) {
+          const o = list[i];
+          const cxo = o.x + o.w / 2, cyo = o.y + o.h / 2;
+          const rad = -(o.rot || 0) * Math.PI / 180;
+          const dx0 = x - cxo, dy0 = y - cyo;
+          const lx = dx0 * Math.cos(rad) - dy0 * Math.sin(rad);
+          const ly = dx0 * Math.sin(rad) + dy0 * Math.cos(rad);
+          if (Math.abs(lx) <= o.w / 2 && Math.abs(ly) <= o.h / 2) {
+            e.stopPropagation();
+            setSelectedTarget(null);
+            setSelectedObj(o.id);
+            objDragRef.current = { id: o.id, startX: x, startY: y, ox: o.x, oy: o.y };
+            return;
+          }
+        }
+        if (selectedObjRef.current) setSelectedObj(null);
+      }
       strokeStartHolesRef.current = holesRef.current;
       // Determine clickedSide
       let clickedSide: 'image' | 'mask' | undefined = undefined;
@@ -1107,6 +1139,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState?.globalScale || 1;
     // 雙指縮放預覽時完全不碰筆刷與拖曳
+    // 拖曳浮動物件
+    if (objDragRef.current && activePointers.current.size === 1) {
+      e.stopPropagation();
+      const d = objDragRef.current;
+      setObjects(prev => prev.map(o => o.id === d.id
+        ? { ...o, x: d.ox + (x - d.startX), y: d.oy + (y - d.startY) } : o));
+      return;
+    }
     if (viewPinchRef.current && activePointers.current.size >= 2) {
       e.stopPropagation();
       const pts: any[] = Array.from(activePointers.current.values());
@@ -1199,6 +1239,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    objDragRef.current = null;
     try {
       const target = e.target as HTMLElement;
       if (target && target.hasPointerCapture(e.pointerId)) {
@@ -1479,6 +1520,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     // else { ctx.moveTo(sw, 0); ctx.lineTo(sw, sh); }
     // ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = sgs; ctx.stroke();
 
+    /* 浮動物件（圖片／文字）畫在最上層，順序就是陣列順序（後面的蓋前面的）。 */
+    objects.forEach(o => {
+      ctx.save();
+      ctx.translate((o.x + o.w / 2) * s, (o.y + o.h / 2) * s);
+      ctx.rotate((o.rot || 0) * Math.PI / 180);
+      if (o.type === 'image' && o.img) {
+        ctx.drawImage(o.img, -o.w * s / 2, -o.h * s / 2, o.w * s, o.h * s);
+      } else if (o.type === 'text') {
+        ctx.fillStyle = o.color || '#ffffff';
+        ctx.font = `700 ${o.size * s}px "Inter", system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(o.text || '', 0, 0);
+      }
+      if (isMain && selectedObj === o.id) {
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2 * sgs * s;
+        ctx.setLineDash([8 * sgs * s, 8 * sgs * s]);
+        ctx.strokeRect(-o.w * s / 2, -o.h * s / 2, o.w * s, o.h * s);
+        ctx.setLineDash([]);
+      }
+      ctx.restore();
+    });
+
     /* 選取框只畫在螢幕上那張。畫布可能被畫得更細，所以尺寸與座標都要乘上 s，
        不然放大重畫之後虛線框會停在原本的小尺寸、對不上那個洞。 */
     if (isMain && selectedTarget && interactionRef.current) {
@@ -1537,7 +1602,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
-  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask]);
+  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj]);
 
   const renderCanvas = useCallback(() => {
     if (!canvasRef.current || !imageState) return;
@@ -1907,7 +1972,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   // 1 倍時交給 max-w/max-h 自己貼合；放大之後直接寫死尺寸，
                   // 畫布就是實打實地被排版成那麼大，不經過任何貼圖拉伸
                   ...(baseCss ? { width: baseCss.w * viewT.k, height: baseCss.h * viewT.k } : null),
-                  transition: viewPinchRef.current ? 'none' : 'width 90ms linear, height 90ms linear',
+                  /* 尺寸過場只在「正在縮放」時才有意義。換排版時畫布形狀會整個換掉，
+                     這時候讓寬高做動畫就會看到那種果凍般的伸縮（桌機用滾輪縮放特別明顯）。 */
+                  transition: (viewPinchRef.current || viewT.k === 1) ? 'none' : 'width 90ms linear, height 90ms linear',
                   cursor: brushMode === 'pen' ? 'crosshair' : brushMode === 'eraser' ? 'pointer' : 'default' 
                 }}
               />
@@ -1932,10 +1999,42 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
       </main>
 
+      <input
+        type="file"
+        ref={objFileInputRef}
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (!f) return;
+          const url = URL.createObjectURL(f);
+          const im = new Image();
+          im.onload = () => {
+            const offs2 = getLayoutOffsets();
+            if (offs2) {
+              const id = Math.random().toString(36).slice(2, 9);
+              // 新增進來預設佔畫布短邊的四成，置中擺放
+              const target = Math.min(offs2.cw, offs2.ch) * 0.4;
+              const k = target / Math.max(im.width, im.height);
+              const w = im.width * k, h = im.height * k;
+              setObjects(prev => [...prev, {
+                id, type: 'image', img: im,
+                x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
+              }]);
+              setSelectedObj(id);
+              setSelectedTarget(null);
+            }
+            URL.revokeObjectURL(url);
+          };
+          im.src = url;
+          e.target.value = '';
+        }}
+      />
+
       <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-all duration-500 flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} style={{ height: '34dvh' }}>
         {!colorPickerTarget && (
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a]">
-            {['setting', 'shape'].map(id => (
+            {['setting', 'add', 'shape'].map(id => (
               <button 
                 key={id} 
                 onClick={() => setActiveTab(id)} 
@@ -1943,7 +2042,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   activeTab === id ? 'text-white border-white' : 'text-[#555] border-transparent'
                 }`}
               >
-                {id === 'setting' ? <Crop size={16} className="mx-auto" /> : <Star size={16} className="mx-auto" />}
+                {id === 'setting' ? <Crop size={16} className="mx-auto" /> : id === 'add' ? <Plus size={16} className="mx-auto" /> : <Star size={16} className="mx-auto" />}
               </button>
             ))}
           </div>
@@ -1953,6 +2052,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             自己就會捲，那 80px 只會在下面留一條黑色空白、把工具欄擠得很小。 */}
         <div ref={scrollContainerRef} className={`flex-1 p-5 ${colorPickerTarget || activeTab === 'shape' ? 'pb-5' : 'pb-20'} custom-scrollbar ${
           (activeTab === 'setting' && !colorPickerTarget) ||
+          (activeTab === 'add' && !colorPickerTarget) ||
           (activeTab === 'shape' && !colorPickerTarget)
             ? 'overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]' 
             : 'overflow-hidden'
@@ -2063,6 +2163,91 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 )}
                 </div>
               </div>}
+              {activeTab === 'add' && (() => {
+                const sel = objects.find(o => o.id === selectedObj) || null;
+                const patch = (d: any) => setObjects(prev => prev.map(o => o.id === sel.id ? { ...o, ...d } : o));
+                const addText = () => {
+                  const offs2 = getLayoutOffsets();
+                  if (!offs2) return;
+                  const id = Math.random().toString(36).slice(2, 9);
+                  const size = Math.round(Math.min(offs2.cw, offs2.ch) * 0.09);
+                  const w = size * 4, h = size * 1.3;
+                  setObjects(prev => [...prev, {
+                    id, type: 'text', text: 'Abai', color: '#ffffff', size,
+                    x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
+                  }]);
+                  setSelectedObj(id);
+                  setSelectedTarget(null);
+                };
+                return (
+                  <div className="max-w-md mx-auto space-y-3 pb-4 animate-in fade-in duration-300">
+                    {/* 只有「圖片」與「文字」——佈局是經典拼圖才有的東西，
+                        創意拼圖的版面是靠排版與遮罩決定的，這裡刻意不提供。 */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={() => objFileInputRef.current?.click()}
+                        className="h-[47px] flex items-center justify-center gap-2 bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold uppercase tracking-[0.2em] text-white/70 active:scale-[0.99] transition-transform"
+                      >
+                        <Plus size={14} /> 圖片
+                      </button>
+                      <button
+                        onClick={addText}
+                        className="h-[47px] flex items-center justify-center gap-2 bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold uppercase tracking-[0.2em] text-white/70 active:scale-[0.99] transition-transform"
+                      >
+                        <Type size={14} /> 文字
+                      </button>
+                    </div>
+
+                    {!sel && (
+                      <p className="text-[10.5px] text-[#666] leading-relaxed pt-1">
+                        加進來的圖片與文字會疊在最上層，直接在預覽上拖曳就能移動。
+                        點一下選中它，這裡就會出現可以調整的項目。
+                      </p>
+                    )}
+
+                    {sel && (
+                      <div className="space-y-3 animate-in fade-in duration-200">
+                        {sel.type === 'text' && (
+                          <input
+                            type="text"
+                            maxLength={30}
+                            value={sel.text}
+                            onChange={e => patch({ text: e.target.value })}
+                            placeholder="輸入文字..."
+                            className="w-full h-[47px] px-3 bg-[#111] border border-[#222] rounded-[6px] text-center text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#333]"
+                          />
+                        )}
+                        <div className="grid grid-cols-2 gap-4">
+                          <CompactSlider label="大小" value={Math.round(sel.w)} min={30}
+                            max={Math.round((getLayoutOffsets()?.cw || 1000))}
+                            onChange={(v: number) => {
+                              const k = v / Math.max(1, sel.w);
+                              patch({ w: v, h: sel.h * k, size: sel.type === 'text' ? sel.size * k : sel.size });
+                            }} />
+                          <CompactSlider label="角度" value={sel.rot || 0} min={0} max={360} step={1}
+                            onChange={(v: number) => patch({ rot: v })} />
+                        </div>
+                        <div className="flex gap-2">
+                          {sel.type === 'text' && (
+                            <div className="flex-1 h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
+                              <span className="text-[10px] font-bold text-[#888]">顏色</span>
+                              <input type="color" value={sel.color}
+                                onChange={e => patch({ color: e.target.value })}
+                                className="w-8 h-6 bg-transparent border-0 p-0 cursor-pointer" />
+                            </div>
+                          )}
+                          <button
+                            onClick={() => { setObjects(prev => prev.filter(o => o.id !== sel.id)); setSelectedObj(null); }}
+                            className="flex-1 h-[47px] bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold uppercase tracking-[0.2em] text-white/60 active:scale-[0.99] transition-transform"
+                          >
+                            刪除
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
               {activeTab === 'shape' && <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
                 {/* 左側細長分頁列：上面挑圖案、下面調參數 ——
                     跟經典拼圖「新增佈局」裡面完全同一種版型（只有圖示、中間一條分隔線） */}
