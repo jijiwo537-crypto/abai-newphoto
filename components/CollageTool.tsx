@@ -9,6 +9,9 @@ import { Icon } from './Icon';
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
 import { TextEditorPanel, ImageAdjustPanel } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
+/* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
+import { ComposeStudio } from './ComposeStudio';
+import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity } from '../utils/compose';
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
@@ -427,19 +430,164 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [fxTick, setFxTick] = useState(0);
   const fxCanvasOf = useCallback((o: any): CanvasImageSource | null => {
     if (!o.img) return null;
-    if (!o.fx || !hasPhotoFx(o.fx)) return o.img;
-    const key = JSON.stringify(o.fx);
+    const shape = {
+      r: o.imgRadius || 0, f: o.feather || 0,
+      sw: o.imgStrokeWidth || 0, sc: o.imgStrokeColor || '#FFFFFF',
+      g: o.imgGlow || 0, gc: o.imgGlowColor || '#FFFFFF',
+    };
+    const hasShape = shape.r || shape.f || shape.sw || shape.g;
+    if ((!o.fx || !hasPhotoFx(o.fx)) && !hasShape) return o.img;
+    const key = JSON.stringify([o.fx, shape]);
     const hit = objFxCache.current.get(o.id);
     if (hit && hit.key === key) return hit.cv;
-    const w = o.img.naturalWidth || o.img.width;
-    const h = o.img.naturalHeight || o.img.height;
+
+    const w0 = o.img.naturalWidth || o.img.width;
+    const h0 = o.img.naturalHeight || o.img.height;
     // 上限 1600：物件在畫面上不會比這更大，再高只是白燒記憶體
-    const k = Math.min(1, 1600 / Math.max(w, h));
-    const cv = applyPhotoFx(o.img, w * k, h * k, o.fx);
+    const k = Math.min(1, 1600 / Math.max(w0, h0));
+    const iw = Math.max(1, Math.round(w0 * k)), ih = Math.max(1, Math.round(h0 * k));
+    const base = applyPhotoFx(o.img, iw, ih, o.fx || {});
+    if (!hasShape) { objFxCache.current.set(o.id, { key, cv: base }); return base; }
+
+    /* 圓角／羽化／描邊／發光都會長到原本的框外面，所以畫布要留邊。
+       留邊固定用「最大值」算，拖滑桿時邊界才不會每一格都變、圖看起來在抖。 */
+    const short = Math.min(iw, ih);
+    const rad = (shape.r / 100) * short * 0.5;
+    const fea = (shape.f / 100) * short * 0.25;
+    const sw = (shape.sw / 100) * short * 0.08;
+    const glowR = (shape.g / 100) * short * 0.35;
+    const pad = Math.ceil(sw + glowR + 4);
+    const cv = document.createElement('canvas');
+    cv.width = iw + pad * 2; cv.height = ih + pad * 2;
+    const c = cv.getContext('2d')!;
+
+    const path = (ctx2: CanvasRenderingContext2D, x: number, y: number, ww: number, hh: number, rr: number) => {
+      const r2 = Math.max(0, Math.min(rr, Math.min(ww, hh) / 2));
+      ctx2.beginPath();
+      ctx2.moveTo(x + r2, y);
+      ctx2.arcTo(x + ww, y, x + ww, y + hh, r2);
+      ctx2.arcTo(x + ww, y + hh, x, y + hh, r2);
+      ctx2.arcTo(x, y + hh, x, y, r2);
+      ctx2.arcTo(x, y, x + ww, y, r2);
+      ctx2.closePath();
+    };
+
+    // 發光：先在底下用形狀本身畫一圈光
+    if (glowR > 0) {
+      c.save();
+      c.shadowColor = shape.gc;
+      c.fillStyle = shape.gc;
+      for (const m of [1, 2, 3]) {
+        c.shadowBlur = (glowR / 3) * m;
+        path(c, pad, pad, iw, ih, rad); c.fill();
+      }
+      c.restore();
+    }
+
+    // 圖片本體：先裁成圓角，再用模糊過的遮罩做羽化
+    const inner = document.createElement('canvas');
+    inner.width = iw; inner.height = ih;
+    const ic = inner.getContext('2d')!;
+    ic.save(); path(ic, 0, 0, iw, ih, rad); ic.clip();
+    ic.drawImage(base, 0, 0, iw, ih);
+    ic.restore();
+    if (fea > 0) {
+      const mask = document.createElement('canvas');
+      mask.width = iw; mask.height = ih;
+      const mc = mask.getContext('2d')!;
+      mc.filter = `blur(${fea / 2}px)`;
+      mc.fillStyle = '#fff';
+      path(mc, fea / 2, fea / 2, iw - fea, ih - fea, Math.max(0, rad - fea / 2));
+      mc.fill();
+      ic.globalCompositeOperation = 'destination-in';
+      ic.filter = 'none';
+      ic.drawImage(mask, 0, 0);
+      ic.globalCompositeOperation = 'source-over';
+    }
+    c.drawImage(inner, pad, pad);
+
+    // 描邊畫在最上面
+    if (sw > 0) {
+      c.save();
+      c.strokeStyle = shape.sc;
+      c.lineWidth = sw;
+      path(c, pad + sw / 2, pad + sw / 2, iw - sw, ih - sw, Math.max(0, rad - sw / 2));
+      c.stroke();
+      c.restore();
+    }
+    (cv as any).__pad = pad / Math.max(iw, ih);
     objFxCache.current.set(o.id, { key, cv });
     return cv;
   }, []);
+  /** 把位置吸附到畫布中線／邊界，並回報要亮哪幾條線 */
+  const snapToGuides = useCallback((x0: number, y0: number, w0: number, h0: number) => {
+    const offsG = getLayoutOffsetsRef.current?.();
+    const gl: any[] = [];
+    let nx = x0, ny = y0;
+    if (offsG && w0 && h0) {
+      const snap = Math.max(4, Math.min(offsG.cw, offsG.ch) * 0.012);
+      const cxs = [offsG.cw / 2, 0, offsG.cw];
+      const cys = [offsG.ch / 2, 0, offsG.ch];
+      for (const cv of cxs) {
+        const edges = [{ p: nx + w0 / 2, o: w0 / 2 }, { p: nx, o: 0 }, { p: nx + w0, o: w0 }];
+        for (const e2 of edges) if (Math.abs(e2.p - cv) < snap) { nx = cv - e2.o; gl.push({ x: cv }); break; }
+      }
+      for (const cv of cys) {
+        const edges = [{ p: ny + h0 / 2, o: h0 / 2 }, { p: ny, o: 0 }, { p: ny + h0, o: h0 }];
+        for (const e2 of edges) if (Math.abs(e2.p - cv) < snap) { ny = cv - e2.o; gl.push({ y: cv }); break; }
+      }
+    }
+    return { x: nx, y: ny, guides: gl };
+  }, []);
+
+  /* ── 構圖：跟「編輯」「經典拼圖」共用同一個 ComposeStudio ──────────────
+     套用完把裁切結果 bake 成新的一張圖塞回這個物件，寬度不變、
+     高度依新的長寬比重算，並讓中心留在原地。 */
+  const [composeState, setComposeState] = useState<{ id: string; img: HTMLImageElement; geo: GeoParams } | null>(null);
+
+  const openComposeFor = useCallback((id: string) => {
+    const o = objectsRef.current.find(z => z.id === id);
+    if (!o || !o.src) return;
+    const el = new Image();
+    el.onload = () => setComposeState({ id, img: el, geo: o.geo || DEFAULT_GEO });
+    // baked 過就從原圖接續，參數還原成上次的樣子
+    el.src = o.origSrc || o.src;
+  }, []);
+
+  const applyComposeToObj = useCallback(() => {
+    setComposeState(st => {
+      if (!st) return null;
+      const o = objectsRef.current.find(z => z.id === st.id);
+      if (!o) return null;
+      const srcUrl = o.origSrc || o.src;
+      const finish = (newSrc: string, aspect: number) => {
+        const el = new Image();
+        el.onload = () => {
+          setObjects(prev => prev.map(f => {
+            if (f.id !== st.id) return f;
+            const nh = Math.max(8, f.w / aspect);
+            return { ...f, img: el, src: newSrc, origSrc: srcUrl, geo: st.geo, y: f.y + (f.h - nh) / 2, h: nh };
+          }));
+          objFxCache.current.delete(st.id);
+          setFxTick(n => n + 1);
+          setComposeState(null);
+        };
+        el.src = newSrc;
+      };
+      const sw = st.img.naturalWidth || st.img.width;
+      const sh = st.img.naturalHeight || st.img.height;
+      if (isGeoIdentity(st.geo)) { finish(srcUrl, sw / sh); return st; }
+      const baked = composeCanvas(st.img, sw, sh, st.geo, 2400);
+      baked.toBlob(blob => {
+        if (!blob) { setComposeState(null); return; }
+        finish(URL.createObjectURL(blob), baked.width / baked.height);
+      }, 'image/png');
+      return st;
+    });
+  }, []);
+
   /** 拖曳物件時亮起來的對齊線（畫布座標） */
+  const getLayoutOffsetsRef = useRef<any>(null);
   const [guides, setGuides] = useState<any[]>([]);
   const guidesRef = useRef<any[]>([]);
   const objFileInputRef = useRef<HTMLInputElement>(null);
@@ -449,6 +597,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [maskTransform, setMaskTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [activeTab, setActiveTab] = useState('setting');
+  /* 圖片編輯頁是自己排好三段式高度的整頁面板：外面不能再包內距，
+     footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-16 分類列 ＋ 分頁列）。 */
+  const objEditImage = activeTab === 'objedit' && !colorPickerTarget
+    && !!objects.find(o => o.id === selectedObj && o.type === 'image');
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   /** 編輯頁的左側子分頁 */
@@ -766,6 +918,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (layout === AROUND) return { cw: mw, ch: mh, ix: padX, iy: padY, mx: 0, my: 0 };
     return { cw: bw, ch: bh, ix: 0, iy: 0, mx: 0, my: 0 };
   }, [imageState, layout, maskScale]);
+  getLayoutOffsetsRef.current = getLayoutOffsets;
 
   const getHoleSize = useCallback((h: any) => {
     const gs = imageState?.globalScale || 1;
@@ -1235,9 +1388,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const nw = pin.w0 * k, nh = pin.h0 * k;
       let nrot = pin.rot0 + (ang - pin.a0);
       nrot = ((nrot % 360) + 360) % 360;
+      // 縮放中也吃對齊線：邊緣或中心一靠上去就吸附，跟拖曳時同一套
+      const sres = snapToGuides(pin.cx0 - nw / 2, pin.cy0 - nh / 2, nw, nh);
+      guidesRef.current = sres.guides;
+      setGuides(sres.guides);
       setObjects(prev => prev.map(o => o.id === pin.id
         ? { ...o, w: nw, h: nh, size: pin.size0 ? pin.size0 * k : o.size,
-            x: pin.cx0 - nw / 2, y: pin.cy0 - nh / 2, rot: nrot }
+            x: sres.x, y: sres.y, rot: nrot }
         : o));
       return;
     }
@@ -1250,28 +1407,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       /* 對齊線：拖到接近畫布中線或邊界時吸附，並把那條線畫出來。
          門檻用畫布短邊的 1.2%，不管圖多大手感都一樣。 */
       const oNow = objectsRef.current.find(z => z.id === d.id);
-      const offsG = getLayoutOffsets();
-      const gl: any[] = [];
-      if (oNow && offsG) {
-        const snap = Math.max(4, Math.min(offsG.cw, offsG.ch) * 0.012);
-        const cxs = [{ v: offsG.cw / 2, k: 'vc' }, { v: 0, k: 'vl' }, { v: offsG.cw, k: 'vr' }];
-        const cys = [{ v: offsG.ch / 2, k: 'hc' }, { v: 0, k: 'ht' }, { v: offsG.ch, k: 'hb' }];
-        const myCx = nx + oNow.w / 2, myCy = ny + oNow.h / 2;
-        for (const c of cxs) {
-          const edges = [{ p: myCx, o: oNow.w / 2 }, { p: nx, o: 0 }, { p: nx + oNow.w, o: oNow.w }];
-          for (const e2 of edges) {
-            if (Math.abs(e2.p - c.v) < snap) { nx = c.v - e2.o; gl.push({ x: c.v }); break; }
-          }
-        }
-        for (const c of cys) {
-          const edges = [{ p: myCy, o: oNow.h / 2 }, { p: ny, o: 0 }, { p: ny + oNow.h, o: oNow.h }];
-          for (const e2 of edges) {
-            if (Math.abs(e2.p - c.v) < snap) { ny = c.v - e2.o; gl.push({ y: c.v }); break; }
-          }
-        }
-      }
-      guidesRef.current = gl;
-      setGuides(gl);
+      const r2 = snapToGuides(nx, ny, oNow?.w || 0, oNow?.h || 0);
+      nx = r2.x; ny = r2.y;
+      guidesRef.current = r2.guides;
+      setGuides(r2.guides);
       setObjects(prev => prev.map(o => o.id === d.id ? { ...o, x: nx, y: ny } : o));
       return;
     }
@@ -1659,8 +1798,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       ctx.rotate((o.rot || 0) * Math.PI / 180);
       ctx.globalAlpha = o.alpha ?? 1;
       if (o.type === 'image' && o.img) {
-        const src2 = fxCanvasOf(o) || o.img;
-        ctx.drawImage(src2, -o.w * s / 2, -o.h * s / 2, o.w * s, o.h * s);
+        const src2: any = fxCanvasOf(o) || o.img;
+        /* 有形狀效果時畫布比原圖大一圈（留給發光與描邊），
+           畫的時候要等比放大回去，圖片本體才會剛好落在原本的框上。 */
+        const padR = src2.__pad || 0;
+        const ew = o.w * s * (1 + padR * 2), eh = o.h * s * (1 + padR * 2);
+        ctx.drawImage(src2, -ew / 2, -eh / 2, ew, eh);
       } else if (o.type === 'text') {
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
            面板本身就是那邊那顆元件，所以這裡只要照著畫。 */
@@ -1925,12 +2068,75 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             align-items: center;
             justify-content: center;
         }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        /* 圖片編輯那一頁的滑桿：跟「編輯」「經典拼圖」用同一組樣式，連軌道與圓點都一樣。
+           這一份是從 GridLayoutTool 逐字複製過來的 —— 那顆面板是共用元件，
+           樣式卻寫在各自的 <style> 裡，少這一份就會退回瀏覽器原生滑桿。 */
+        .custom-range {
+          -webkit-appearance: none;
+          width: calc(100% + 64px);
+          height: 40px;
+          background: rgba(0,0,0,0);
+          outline: none;
+          margin: 0 -32px;
+          padding: 0;
+          touch-action: none;
+          -webkit-tap-highlight-color: rgba(0,0,0,0);
+        }
+        .custom-range:focus { outline: none; }
+        .custom-range.dense { height: 26px; width: 100%; margin: 0; }
+        .custom-range.dense::-webkit-slider-runnable-track {
+          background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
+        }
+        .custom-range.dense::-moz-range-track {
+          background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
+        }
+        .custom-range.dense::-webkit-slider-thumb { height: 26px; width: 18px; margin-top: -12px; }
+        .custom-range.dense::-moz-range-thumb { height: 26px; width: 18px; }
+        .custom-range::-webkit-slider-runnable-track {
+          width: 100%;
+          height: 2px;
+          background: linear-gradient(to right, rgba(0,0,0,0) 32px, #333 32px, #333 calc(100% - 32px), rgba(0,0,0,0) calc(100% - 32px));
+          border-radius: 2px;
+          cursor: pointer;
+        }
+        .custom-range::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          height: 64px;
+          width: 64px;
+          background-color: rgba(0,0,0,0);
+          background-image: radial-gradient(circle at center, #ffffff 0, #ffffff 7.5px, rgba(255,255,255,0) 8px, rgba(255,255,255,0) 100%);
+          border: none;
+          outline: none;
+          cursor: pointer;
+          margin-top: -31px;
+          transition: transform 0.1s;
+          box-shadow: none;
+        }
+        .custom-range::-webkit-slider-thumb:active { transform: scale(1.15); }
+        .custom-range::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
+        .custom-range::-moz-range-thumb {
+          height: 15px; width: 15px; border-radius: 50%;
+          background: #fff; border: none; cursor: pointer;
+        }
         .premium-slider { -webkit-appearance: none; width: 100%; height: 2px; background: #222; border-radius: 2px; outline: none; touch-action: none; }
         .premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; cursor: pointer; }
         /* 圓球跟經典拼圖的顏色滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
         .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
       `}</style>
-      
+
+      {/* 構圖：跟「編輯」同一個介面，套用後 bake 回這個物件 */}
+      {composeState && (
+        <ComposeStudio
+          image={composeState.img}
+          geo={composeState.geo}
+          onChange={g => setComposeState(st => (st ? { ...st, geo: g } : st))}
+          onCancel={() => setComposeState(null)}
+          onApply={applyComposeToObj}
+        />
+      )}
+
       {saveState === 'success' && finalImage && (
         <div className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
           <header className="h-14 flex items-center px-5 shrink-0 z-20 bg-black/40 backdrop-blur-xl">
@@ -2254,21 +2460,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               const k = target / Math.max(im.width, im.height);
               const w = im.width * k, h = im.height * k;
               setObjects(prev => [...prev, {
-                id, type: 'image', img: im,
+                /* src 一定要留著：濾鏡／特效卡片的縮圖是拿它去重畫的，
+                   構圖也要從它重新載一張原圖。所以這條 objectURL 不能 revoke。 */
+                id, type: 'image', img: im, src: url,
                 x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
               }]);
               setSelectedObj(id);
               setSelectedTarget(null);
               setActiveTab('objedit');   // 匯入完直接進編輯頁，跟新增文字一致
             }
-            URL.revokeObjectURL(url);
           };
           im.src = url;
           e.target.value = '';
         }}
       />
 
-      <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-all duration-500 flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} style={{ height: '34dvh' }}>
+      <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-all duration-500 flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} style={{ height: objEditImage ? 'max(34dvh, 300px)' : '34dvh' }}>
         {!colorPickerTarget && (
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a]">
             {['setting', 'add', 'objedit', 'shape'].map(id => (
@@ -2287,14 +2494,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         
         {/* pb-20 本來是留給右下角那顆浮動按鈕的空間，但「圖案」頁是左右分欄、
             自己就會捲，那 80px 只會在下面留一條黑色空白、把工具欄擠得很小。 */}
-        <div ref={scrollContainerRef} className={`flex-1 p-5 ${colorPickerTarget || activeTab === 'shape' || activeTab === 'objedit' ? 'pb-5' : 'pb-20'} custom-scrollbar ${
+        {/* 圖片編輯那一頁是「滑桿 5rem ＋ 工具列 6rem ＋ 分類列 h-16」的三段式，
+            自己就把整個高度切好了。再包一層 p-5 會整個縮一圈、上面那根滑桿
+            還會被擠出可視範圍 —— 所以這一頁完全不加內距，跟經典拼圖一樣。 */}
+        <div ref={scrollContainerRef} className={`flex-1 ${objEditImage ? 'overflow-hidden' : `p-5 ${colorPickerTarget || activeTab === 'shape' || activeTab === 'objedit' ? 'pb-5' : 'pb-20'} custom-scrollbar ${
           (activeTab === 'setting' && !colorPickerTarget) ||
           (activeTab === 'add' && !colorPickerTarget) ||
           (activeTab === 'objedit' && !colorPickerTarget) ||
           (activeTab === 'shape' && !colorPickerTarget)
             ? 'overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]' 
             : 'overflow-hidden'
-        }`}>
+        }`}`}>
           {colorPickerTarget ? (
             <ColorPickerEmbedded 
               color={colorPickerTarget === 'mask' ? maskColor : dotColor} 
@@ -2482,8 +2692,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   <div className="h-full">
                     {/* 圖片調整直接用經典拼圖那顆元件 —— 同一份程式碼，
                         所以按鈕佈局、樣式、外觀都是逐像素相同。
-                        形狀那一組（圓角／羽化／描邊／發光）先關掉：
-                        創意拼圖的畫布還沒有畫這些，開著會是按了沒反應的鈕。 */}
+                        形狀那一組（圓角／羽化／描邊／發光）也接上了，
+                        畫布端會把它們畫進每個圖片物件的快取裡。 */}
                     <ImageAdjustPanel
                       img={sel} set={(d: any) => patch(d)} lutList={lutList}
                       loadingLut={loadingLut} setLoadingLut={setLoadingLut}
@@ -2495,8 +2705,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       shapeTool={shapeTool} setShapeTool={setShapeTool}
                       tuneTool={tuneTool} setTuneTool={setTuneTool}
                       setTuningEdge={() => {}}
-                      openComposeFor={() => {}}
-                      hideShape
+                      openComposeFor={openComposeFor}
                     />
                   </div>
                   )
