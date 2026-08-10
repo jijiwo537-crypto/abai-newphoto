@@ -550,9 +550,15 @@ interface ColorPickerProps {
  * 白與墨黑先打底（照片上最好讀），接著奶油／奶茶這類米色系，
  * 再來三個粉（淺粉、甜粉、莓紅）與焦糖棕，最後薰衣草、霧藍、抹茶、蜜黃各一。
  */
+/** 長按多久才算「要拖去交換」。150ms 太容易誤觸，拉長到 250ms。 */
+const LONG_PRESS_MS = 250;
+
 const TEXT_COLORS = [
-  // 白／墨黑／暖灰（中性）
-  '#FFFFFF', '#2B2B2B', '#EAE6DF',
+  /* 前兩顆固定是純黑與墨黑：寫字與描邊最常用的就是這兩個，
+     擺在最前面才不用每次都往右滑。接著才是白與暖灰那些中性色。 */
+  '#000000', '#2B2B2B',
+  // 白／暖灰（中性）
+  '#FFFFFF', '#EAE6DF',
   // 奶油 → 奶茶（暖色系挨在一起）
   '#FFF7EC', '#E8D3BC',
   // 粉 → 莓紅
@@ -5279,7 +5285,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
       cellSwipeRef.current = { lastX: touch.clientX, active: false };
 
-      // Set a long press timeout (reduced to 150ms for faster trigger)
+      /* 長按門檻。原本 150ms 太短，手指稍微停一下就被判定成「要拖去交換」，
+         滑動與點選都很容易誤觸。250ms 是拖曳排序常見的手感：還是立即，
+         但已經過了「手指剛放上去那一瞬間」。 */
       longPressTimeoutRef.current = setTimeout(() => {
         isLongPressedRef.current = true;
 
@@ -5307,7 +5315,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         };
 
         setTouchDraggedIndex(idx);
-      }, 150);
+      }, LONG_PRESS_MS);
     }
   };
 
@@ -6025,7 +6033,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       setActiveGuidelines([]);
       if (navigator.vibrate) navigator.vibrate(40);
       setFloatDragSrc(s.src);
-    }, 150);
+    }, LONG_PRESS_MS);
   };
 
   const handleFloatSwapTouchMove = (e: React.TouchEvent) => {
