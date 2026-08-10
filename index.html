@@ -7,6 +7,17 @@
     <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
     <link rel="icon" type="image/png" sizes="64x64" href="./favicon-64.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png" />
+    <!-- 「加到主畫面」之後就是一支獨立的 App：全螢幕、黑底、而且鎖直向。
+         manifest 裡的 orientation 只有 Android 的安裝檔會真的照做，iOS 完全不理，
+         所以底下還有一層自己畫的橫置擋板，兩邊才都擋得住。 -->
+    <link rel="manifest" href="./manifest.json" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- 用 black 不用 black-translucent：translucent 會讓內容鑽到瀏海底下，
+         整頁等於往上位移一截，現有的排版會跟著跑掉。 -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="ABAI" />
     <!-- 字型要先載：它們的網址寫在打包後的 CSS 裡，瀏覽器要先下載並解析那支
          CSS 才會發現它們，等於多繞一趟。先 preload 就會跟 CSS 同時開始下載，
          開場那一下不會先用系統字型畫一次再換過來。 -->
@@ -120,6 +131,71 @@
                 box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
             }
         }
+        /* ─────────────────────────────────────────────
+           禁止橫置
+           ─────────────────────────────────────────────
+           每一頁都是照直向手機的比例排的。橫過來寬高互換，工具列會擠成一條、
+           預覽區被壓扁 —— 就是「介面跑掉」。這裡不替橫向另外排一套版，
+           直接整片蓋掉並請使用者轉回來。
+
+           是「蓋住」不是把 #root 藏起來：藏起來的話裡面每一塊會自己量尺寸的
+           畫布（編輯、拼圖那些）在橫向時都會量到 0，轉回直向還得重算一輪才正常。
+           蓋一層就只是看不到，底下的排版照樣跟著螢幕走，轉回來就是原樣。
+
+           條件用 pointer: coarse（主要輸入是手指）而不是看寬高比：
+           電腦視窗拉扁也算 landscape，但電腦上本來就是用上面那個 390px 的
+           框在看，不該被擋。 */
+        #orientation-guard {
+            display: none;
+        }
+        @media (orientation: landscape) and (pointer: coarse) {
+            #orientation-guard {
+                position: fixed;
+                inset: 0;
+                z-index: 2147483647;
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 20px;
+                padding: 24px;
+                background: #000;
+                color: #fff;
+                text-align: center;
+                touch-action: none;
+                overscroll-behavior: none;
+            }
+        }
+        #orientation-guard p {
+            margin: 0;
+        }
+        #orientation-guard .og-phone {
+            color: rgba(255, 255, 255, 0.9);
+            animation: og-turn 2.8s ease-in-out infinite;
+        }
+        @keyframes og-turn {
+            0%, 20%  { transform: rotate(-90deg); }
+            45%, 80% { transform: rotate(0deg); }
+            100%     { transform: rotate(-90deg); }
+        }
+        #orientation-guard .og-title {
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+        }
+        #orientation-guard .og-sub {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.38);
+        }
+        @media (prefers-reduced-motion: reduce) {
+            #orientation-guard .og-phone {
+                animation: none;
+                transform: none;
+            }
+        }
         .shutter-btn-outer {
             box-shadow: 0 0 0 4px #000, 0 0 0 6px #fff;
         }
@@ -136,6 +212,35 @@
 </head>
 <body class="bg-black text-white antialiased">
     <div id="root"></div>
+    <!-- 橫置擋板。故意寫在 HTML 裡而不是做成 React 元件：
+         它要能蓋住每一頁（首頁、編輯、拼圖…），而且不管 App 當下是什麼狀態
+         都得出得來，跟 React 的畫面完全脫鉤最保險。顯示與否純粹交給 CSS 判斷，
+         沒有任何 JS 參與，所以轉的當下就到位，不會晚一拍。 -->
+    <div id="orientation-guard" aria-hidden="true">
+        <svg class="og-phone" width="62" height="92" viewBox="0 0 62 92" fill="none" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="57" height="87" rx="12" stroke="currentColor" stroke-width="3"/>
+            <rect x="23" y="9" width="16" height="3" rx="1.5" fill="currentColor" opacity="0.75"/>
+            <rect x="22" y="79" width="18" height="3" rx="1.5" fill="currentColor" opacity="0.45"/>
+        </svg>
+        <p class="og-title">請把裝置轉回直向</p>
+        <p class="og-sub">Portrait only</p>
+    </div>
+    <script>
+        /* Android 上安裝成 App 之後，這一行才是真的把螢幕鎖住（連轉都轉不動）；
+           manifest 的 orientation 只是宣告，鎖起來要靠它。
+           在 Safari／iOS 沒有這支 API，在一般瀏覽器分頁裡也會被拒絕 ——
+           兩種都會丟例外或回傳被拒的 Promise，這裡全部吞掉，
+           擋板照樣會蓋，功能不受影響。 */
+        (function () {
+            try {
+                var o = window.screen && window.screen.orientation;
+                if (o && typeof o.lock === 'function') {
+                    var r = o.lock('portrait');
+                    if (r && typeof r.catch === 'function') r.catch(function () {});
+                }
+            } catch (e) {}
+        })();
+    </script>
     <script type="module" src="/index.tsx"></script>
 </body>
 </html>
