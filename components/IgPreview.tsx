@@ -1432,7 +1432,9 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   const onIgPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (pageCount < 2) return;
     igDragRef.current = { x0: e.clientX, y0: e.clientY, t0: e.timeStamp, dx: 0, id: e.pointerId, lock: '' };
-    e.currentTarget.setPointerCapture(e.pointerId);
+    /* 這裡刻意「先不」setPointerCapture ——
+       一按下去就捕捉的話，瀏覽器會把這一串當成我們的手勢，
+       直向的捲動就永遠不會發生。等確定是橫向再捕捉。 */
     igMoveTrack(-igPage * igBox.w, false);
   };
   const onIgPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1444,6 +1446,8 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
       const dy = e.clientY - d.y0;
       if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
       d.lock = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
+      // 確定是橫向翻頁了，這時候才把指標抓過來
+      if (d.lock === 'x') { try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* 抓不到就算了 */ } }
     }
     if (d.lock !== 'x') return;
     // 頭尾不給拖出去（IG 第一張往右滑是完全不動的，沒有回彈）
@@ -1611,7 +1615,11 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
           <div
             className="flex-1 min-h-0 overflow-hidden flex flex-col"
             style={{
-              overscrollBehavior: 'contain',
+              /* overflow:hidden 的元素在瀏覽器眼中仍然是一個捲動容器，
+                 配上 overscroll-behavior:contain 就會「把手勢吃掉」——
+                 內嵌成兩篇時，手指落在貼文上往上滑就傳不到外面那層捲動容器，
+                 那正是「有時候滑不動」的原因。內嵌時交還給外層。 */
+              overscrollBehavior: embedded ? 'auto' : 'contain',
               /* 整篇貼文往下挪：內容原本從最上面開始排，下面會空一大塊。
                  補 padding-top 讓整組（帳號列＋圖＋愛心那幾列）一起往下，
                  圖就落在畫面中心略偏上 —— 同步移動，不是只動圖片。 */
@@ -1703,7 +1711,11 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
               <div
                 ref={igStripRef}
                 className="flex-1 min-h-0 w-full overflow-hidden"
-                style={{ touchAction: 'none' }}
+                /* pan-y：橫的交給我們自己接（翻頁），直的還給瀏覽器（外層上下捲）。
+                   以前寫 none 等於連直的也一起擋掉 —— 手指落在圖片上時
+                   整頁就滑不動了，那正是「有時候滑不到下一篇」的原因。
+                   單頁貼文根本不需要接手勢，直接 auto。 */
+                style={{ touchAction: pageCount > 1 ? 'pan-y' : 'auto' }}
                 onPointerDown={onIgPointerDown}
                 onPointerMove={onIgPointerMove}
                 onPointerUp={onIgPointerUp}

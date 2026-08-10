@@ -2793,7 +2793,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
      常駐維持上下飄（圖片與文字才是預設靜止）。 */
   const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: 3, idle: 'float' });
   /** 連線：起始、畫完要多久、以及線往前長的曲線 */
-  const [moLink, setMoLink] = useState({ delay: 0, dur: 3, ease: 'linear' });
+  const [moLink, setMoLink] = useState({ delay: 0, dur: 9, ease: 'linear' });
   /** 動畫頁上正在調哪一個元素：'shape' | 'link' | 物件 id */
   const [moTarget, setMoTarget] = useState<string>('shape');
   /** 匯出成影片時的進度（0～1）；null = 沒在匯出 */
@@ -2923,6 +2923,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (canvasRef.current && imageState) renderToCanvas(canvasRef.current, previewScaleRef.current);
     setForceRender(p => p + 1);
   }, [motionOn, videoProg, imageState, renderToCanvas]);
+
+  /* 播放列的自動淡出。播放中閒置 2.4 秒就淡掉，點畫面（或碰到播放列本身）
+     就再亮 2.4 秒；一暫停就一直留著 —— 那時候使用者本來就在找按鈕。 */
+  const [barShown, setBarShown] = useState(true);
+  const barTimerRef = useRef<number | null>(null);
+  const pokeBar = useCallback(() => {
+    setBarShown(true);
+    if (barTimerRef.current) window.clearTimeout(barTimerRef.current);
+    barTimerRef.current = window.setTimeout(() => setBarShown(false), 2400);
+  }, []);
+  useEffect(() => {
+    if (barTimerRef.current) { window.clearTimeout(barTimerRef.current); barTimerRef.current = null; }
+    if (activeTab !== 'motion' || !motionPlaying) { setBarShown(true); return; }
+    barTimerRef.current = window.setTimeout(() => setBarShown(false), 2400);
+    return () => { if (barTimerRef.current) window.clearTimeout(barTimerRef.current); };
+  }, [activeTab, motionPlaying]);
 
   /** 從頭播一次。換動畫種類時自動叫它 —— 不然改完要自己等一圈才看得到。 */
   const replayMotion = useCallback(() => {
@@ -3470,7 +3486,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       
       <main 
         className="flex-1 flex items-center justify-center relative p-4 interactive-area overflow-hidden no-callout no-select"
-        onPointerDown={() => { setSelectedTarget(null); setExportAsk(false); }}
+        onPointerDown={() => {
+          setSelectedTarget(null); setExportAsk(false);
+          if (activeTab === 'motion') pokeBar();
+        }}
       >
         {imageState && (
           <div
@@ -3585,7 +3604,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           );
         })()}
 
-        {imageState && (
+        {imageState && activeTab !== 'motion' && (
           <div className="absolute bottom-6 right-6 z-[60]" onPointerDown={(e) => e.stopPropagation()}>
             <button 
               onClick={(e) => {
@@ -3601,9 +3620,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         )}
 
         {/* 動畫頁的播放列：浮在預覽畫布下緣（工具欄上方），
-            把工具欄的空間整條讓出來給參數。 */}
+            把工具欄的空間整條讓出來給參數。
+            播放中會自己淡掉（跟影片播放器一樣），才不會一直壓在圖上；
+            點一下畫面就回來，暫停時則一直留著。 */}
         {activeTab === 'motion' && imageState && !colorPickerTarget && (
-          <div className="absolute left-3 right-3 bottom-3 z-30 flex items-center gap-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/10 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.5)]">
+          <div
+            className="absolute left-3 right-3 bottom-3 z-30 flex items-center gap-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/10 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-[opacity,transform] duration-300 ease-out"
+            style={{
+              opacity: barShown ? 1 : 0,
+              transform: barShown ? 'translateY(0)' : 'translateY(10px)',
+              pointerEvents: barShown ? 'auto' : 'none',
+            }}
+            onPointerDown={e => { e.stopPropagation(); pokeBar(); }}
+          >
             <button
               onClick={() => setMotionPlaying(v => !v)}
               title={motionPlaying ? '暫停' : '播放'}
@@ -3689,7 +3718,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         {/* 圖片編輯那一頁是「滑桿 5rem ＋ 工具列 6rem ＋ 分類列 h-16」的三段式，
             自己就把整個高度切好了。再包一層 p-5 會整個縮一圈、上面那根滑桿
             還會被擠出可視範圍 —— 所以這一頁完全不加內距，跟經典拼圖一樣。 */}
-        <div ref={scrollContainerRef} style={{ overscrollBehavior: 'contain' }} className={`flex-1 ${objEditImage ? 'overflow-hidden' : `p-5 ${colorPickerTarget || activeTab === 'shape' || activeTab === 'objedit' || activeTab === 'motion' ? 'pb-5' : 'pb-20'} custom-scrollbar ${
+        {/* overscrollBehavior 用 none 而不是 contain：contain 只擋住「把捲動傳給外層」，
+            自己還是會橡皮筋 —— 已經到頂了再往上拉，畫面不該有任何位移。
+            動畫頁底部另外留 pb-12，最後一根滑桿才不會貼在最下緣。 */}
+        <div ref={scrollContainerRef} style={{ overscrollBehavior: 'none' }} className={`flex-1 ${objEditImage ? 'overflow-hidden' : `p-5 ${activeTab === 'motion' && !colorPickerTarget ? 'pb-12' : (colorPickerTarget || activeTab === 'shape' || activeTab === 'objedit' ? 'pb-5' : 'pb-20')} custom-scrollbar ${
           (activeTab === 'setting' && !colorPickerTarget) ||
           (activeTab === 'add' && !colorPickerTarget) ||
           (activeTab === 'objedit' && !colorPickerTarget) ||
@@ -3953,8 +3985,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <div className="grid grid-cols-2 gap-4 mt-4">
                           <CompactSlider label="起始" value={Math.round(moLink.delay * 10)} min={0} max={80} step={1}
                             onChange={(v: number) => setMoLink(m => ({ ...m, delay: v / 10 }))} />
-                          {/* 線畫太久會讓整圈拖很長，所以上限只到 10 秒 */}
-                          <CompactSlider label="進場耗時" value={Math.round(moLink.dur * 10)} min={2} max={100} step={1}
+                          {/* 刻度是 0.1 秒：200 就是 20 秒 */}
+                          <CompactSlider label="進場耗時" value={Math.round(moLink.dur * 10)} min={2} max={200} step={1}
                             onChange={(v: number) => setMoLink(m => ({ ...m, dur: v / 10 }))} />
                         </div>
                         <div className="grid grid-cols-2 gap-2 mt-3">
@@ -4065,7 +4097,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   {/* 連線：每個圖案拉一條極細的線到最近的鄰居。
                       版型跟上面那幾根滑桿一致 —— 左上是名稱，下面才是選項。
                       只有前六種有明確中心的圖案支援，其餘一律不給按。 */}
-                  <div className="flex flex-col mt-3">
+                  <div className="flex flex-col mt-6">
                     <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
                       <span>連線</span>
                     </div>
