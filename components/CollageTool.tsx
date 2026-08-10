@@ -317,7 +317,7 @@ export type MoCfg = {
   idle: string; amp: number; speed: number;
 };
 export const MO_DEFAULT: MoCfg = {
-  delay: 0, dur: 0.5, in: 'pop',
+  delay: 0, dur: 1, in: 'pop',
   idle: 'none', amp: 50, speed: 0.9,
 };
 export const moOf = (o: any): MoCfg => ({ ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) });
@@ -2793,7 +2793,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
      常駐維持上下飄（圖片與文字才是預設靜止）。 */
   const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: 3, idle: 'float' });
   /** 連線：起始、畫完要多久、以及線往前長的曲線 */
-  const [moLink, setMoLink] = useState({ delay: 0, dur: 9, ease: 'linear' });
+  const [moLink, setMoLink] = useState({ delay: 0, dur: 3, ease: 'linear' });
   /** 動畫頁上正在調哪一個元素：'shape' | 'link' | 物件 id */
   const [moTarget, setMoTarget] = useState<string>('shape');
   /** 匯出成影片時的進度（0～1）；null = 沒在匯出 */
@@ -3654,8 +3654,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               <RotateCcw size={15} />
             </button>
             <div className="flex-1 min-w-0">
-              <CompactSlider label="循環間隔" value={Math.round(motionHold * 10)} min={0} max={80} step={1}
-                onChange={(v: number) => setMotionHold(v / 10)} />
+              <CompactSlider label="循環間隔" value={Math.round(motionHold)} min={0} max={20} step={1}
+                onChange={(v: number) => setMotionHold(v)} />
             </div>
           </div>
         )}
@@ -3983,11 +3983,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     {moTarget === 'link' ? (
                       <>
                         <div className="grid grid-cols-2 gap-4 mt-4">
-                          <CompactSlider label="起始" value={Math.round(moLink.delay * 10)} min={0} max={80} step={1}
-                            onChange={(v: number) => setMoLink(m => ({ ...m, delay: v / 10 }))} />
-                          {/* 刻度是 0.1 秒：200 就是 20 秒 */}
-                          <CompactSlider label="進場耗時" value={Math.round(moLink.dur * 10)} min={2} max={200} step={1}
-                            onChange={(v: number) => setMoLink(m => ({ ...m, dur: v / 10 }))} />
+                          <CompactSlider label="起始" value={Math.round(moLink.delay)} min={0} max={20} step={1}
+                            onChange={(v: number) => setMoLink(m => ({ ...m, delay: v }))} />
+                          <CompactSlider label="進場耗時" value={Math.round(moLink.dur)} min={1} max={20} step={1}
+                            onChange={(v: number) => setMoLink(m => ({ ...m, dur: v }))} />
                         </div>
                         <div className="grid grid-cols-2 gap-2 mt-3">
                           {LINK_EASES.map(e => (
@@ -4012,10 +4011,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           ))}
                         </div>
                         <div className="grid grid-cols-2 gap-4 mt-3">
-                          <CompactSlider label="起始" value={Math.round(cur.delay * 10)} min={0} max={80} step={1}
-                            onChange={(v: number) => setCur({ delay: v / 10 })} />
-                          <CompactSlider label="進場耗時" value={Math.round(cur.dur * 10)} min={2} max={80} step={1}
-                            onChange={(v: number) => setCur({ dur: v / 10 })} />
+                          <CompactSlider label="起始" value={Math.round(cur.delay)} min={0} max={20} step={1}
+                            onChange={(v: number) => setCur({ delay: v })} />
+                          <CompactSlider label="進場耗時" value={Math.round(cur.dur)} min={1} max={20} step={1}
+                            onChange={(v: number) => setCur({ dur: v })} />
                         </div>
 
                         {label('常駐動畫')}
