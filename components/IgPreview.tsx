@@ -33,6 +33,12 @@ export type IgPreviewProps = {
   embedded?: boolean;
   /** 有值的話這一篇是影片版：媒體區放 <video> 而不是 <img> */
   video?: string;
+  /**
+   * 直接指定媒體區要放什麼（例如一張正在跑動畫的 canvas）。
+   * 有它就不走 img／video —— 這樣動畫可以「當場播」，
+   * 不必先錄成影片再放（錄影是即時錄的，一圈幾秒就要等幾秒）。
+   */
+  mediaNode?: React.ReactNode;
   /** 音樂改成由外面保管（兩篇要共用同一首）。沒傳就用自己的狀態 */
   music?: any;
   onMusicChange?: (t: any) => void;
@@ -41,7 +47,7 @@ export type IgPreviewProps = {
 
 export const IgPreview: React.FC<IgPreviewProps> = ({
   shots, frame, pageCount, faces, hasVideo = (_pageIdx: number) => false, supported = true,
-  slot = '', embedded = false, video, music, onMusicChange, onClose,
+  slot = '', embedded = false, video, mediaNode, music, onMusicChange, onClose,
 }) => {
   /** 這一篇貼文自己的存檔前綴。沒有 slot 就完全等於以前的鍵名。 */
   const KEY = (k: string) => `abai_ig_${slot ? slot + '_' : ''}${k}`;
@@ -1732,7 +1738,9 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                       style={{ width: `${igBox.w}px` }}
                     >
                       {/* 直接顯示匯出的那一張。object-contain 保證完整顯示、絕不裁切 */}
-                      {video
+                      {mediaNode
+                        ? mediaNode
+                        : video
                         ? <video src={video} autoPlay loop playsInline muted={igMuted}
                             className="max-w-full max-h-full object-contain" />
                         : shots[idx]

@@ -1754,6 +1754,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 畫布在 1 倍時的 CSS 尺寸（放大時直接用它 × 倍率當版面尺寸） */
   const baseCssWRef = useRef(0);
   const [baseCss, setBaseCss] = useState<{ w: number; h: number } | null>(null);
+  /** 舞台（工作區）的 CSS 尺寸。動畫頁要靠它算「圖要往上讓多少給播放列」 */
+  const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   /** 第一根手指落下時的挖洞狀態 —— 第二根手指跟上時要把它畫的那一下收回去 */
   const strokeStartHolesRef = useRef<any[] | null>(null);
   const stageBox = () => {
@@ -2634,6 +2636,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const availW = Math.max(1, sb.width - 32), availH = Math.max(1, sb.height - 32);
         const f = Math.min(availW / cs0.w, availH / cs0.h);
         cssW = cs0.w * f; cssH = cs0.h * f;
+        setStageSize(prev => (Math.abs(prev.w - sb.width) < 0.5 && Math.abs(prev.h - sb.height) < 0.5)
+          ? prev : { w: sb.width, h: sb.height });
         setBaseCss(prev => (prev && Math.abs(prev.w - cssW) < 0.5 && Math.abs(prev.h - cssH) < 0.5)
           ? prev : { w: cssW, h: cssH });
       }
@@ -2662,9 +2666,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [igPreview, setIgPreview] = useState(false);
   const [igShots, setIgShots] = useState<string[]>([]);
   const igShotUrlRef = useRef<string[]>([]);
-  /** 預覽用的動畫影片（第二篇貼文）。開預覽時才算，解析度壓低、只跑一圈 */
-  const [igVideo, setIgVideo] = useState<string | null>(null);
-  const igVideoUrlRef = useRef<string | null>(null);
   /** 兩篇貼文共用的那一首歌 */
   const [igMusic, setIgMusic] = useState<any>(null);
   useEffect(() => {
@@ -2701,63 +2702,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     };
   }, [igPreview, imageState]);
 
-  /* 第二篇貼文的影片。走跟匯出完全一樣的那條路，只是解析度壓到 720、
-     只錄一圈 —— 預覽而已，不需要 1440 也不需要跑兩圈。 */
-  useEffect(() => {
-    if (!igPreview || !imageState) return;
-    let alive = true;
-    let stopped = false;
-    const cv = document.createElement('canvas');
-    (async () => {
-      try {
-        const off = getLayoutOffsets();
-        if (!off) return;
-        // renderScale 乘上工作區大小就是像素數，所以長邊要 720 就是這個倍率
-        const use = Math.max(0.4, 720 / Math.max(off.cw, off.ch));
-        const keep = animRef.current;
-        animRef.current = buildAnim(0);
-        renderToCanvas(cv, use);
-        const mime = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm']
-          .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || '';
-        const stream = (cv as any).captureStream(30);
-        const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 12_000_000 } : undefined);
-        const chunks: Blob[] = [];
-        rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
-        const done = new Promise<Blob>(res => { rec.onstop = () => res(new Blob(chunks, { type: mime || 'video/webm' })); });
-        rec.start();
-        await new Promise<void>(resolve => {
-          const t0 = performance.now();
-          const frame = () => {
-            if (stopped) return resolve();
-            const el = (performance.now() - t0) / 1000;
-            animRef.current = buildAnim(el % motionTotal);
-            renderToCanvas(cv, use);
-            if (el >= motionTotal) return resolve();
-            requestAnimationFrame(frame);
-          };
-          requestAnimationFrame(frame);
-        });
-        rec.stop();
-        const blob = await done;
-        animRef.current = keep;
-        if (!alive) return;
-        if (igVideoUrlRef.current) revokeUrl(igVideoUrlRef.current);
-        const url = URL.createObjectURL(blob);
-        igVideoUrlRef.current = url;
-        setIgVideo(url);
-      } catch (e) {
-        console.error('預覽用的動畫影片做不出來', e);
-      } finally {
-        cv.width = 0; cv.height = 0;
-      }
-    })();
-    return () => {
-      alive = false; stopped = true;
-      animRef.current = null;
-      if (igVideoUrlRef.current) { revokeUrl(igVideoUrlRef.current); igVideoUrlRef.current = null; }
-      setIgVideo(null);
-    };
-  }, [igPreview, imageState]);
+
   /* IG 直式最長只吃到 4:5（0.8）。比它更長的畫布發出去一定會被裁，
      預覽也就不是發文後的樣子 —— 那顆按鈕直接不出現。
      直式照片配「遮罩在下」或「遮罩在上」時畫布會被拉得更長（照片高＋遮罩高），
@@ -2812,18 +2757,29 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
      所以圖案還在一顆一顆冒的時候，已經成形的那幾條就可以先連起來，
      而還沒出現的圖案身上不會憑空多出一條線。 */
   const shapeEnd = moEnd(moShape);
-  const linkStart = shapeEnd + Math.max(0, moLink.delay);
+  /* 圖案那一群的排程：每顆自己冒出來要 POP 秒，整群在 moShape.dur 之內錯開跑完。
+     連線的時間軸要靠它算「第一條線最早什麼時候能開始」。 */
+  const shapeTiming = useMemo(() => {
+    const n = Math.max(1, holes.length);
+    const POP = Math.min(0.5, moShape.dur * 0.45);
+    const step = n > 1 ? Math.max(0, (moShape.dur - POP) / (n - 1)) : 0;
+    return { n, POP, step, upAt: (i: number) => moShape.delay + i * step + POP };
+  }, [holes.length, moShape.delay, moShape.dur]);
+  /* 連線的「進場耗時」＝從第一條線能開始畫算起，這麼多秒之內全部畫完。
+     第一條線最早要等到第二顆圖案冒出來（一條線要有兩端）。 */
+  const linkStart = shapeTiming.upAt(Math.min(1, shapeTiming.n - 1)) + Math.max(0, moLink.delay);
   const motionTotal = useMemo(() => {
     let end = moEnd(moShape);
-    if (hasLink) end = Math.max(end, linkStart + moLink.dur);
+    // 最後一條線最晚也要等最後一顆圖案，所以再留一點點畫線的時間
+    if (hasLink) end = Math.max(end, linkStart + moLink.dur, shapeEnd + Math.max(0, moLink.delay) + 0.15);
     objects.forEach(o => { end = Math.max(end, moEnd(moOf(o))); });
     return Math.max(1.2, end) + Math.max(0, motionHold);
-  }, [moShape, moLink, hasLink, linkStart, objects, motionHold]);
+  }, [moShape, moLink, hasLink, linkStart, shapeEnd, objects, motionHold]);
 
   /** 給一個時間 t，算出這一格每個元素長什麼樣 */
   const buildAnim = useCallback((t: number) => {
     const nHole = Math.max(1, holesRef.current.length);
-    // 圖案是一群，進場要在 moShape.dur 之內一顆一顆錯開；離場也照同樣的順序錯開
+    // 圖案是一群，進場要在 moShape.dur 之內一顆一顆錯開
     const POP = Math.min(0.5, moShape.dur * 0.45);
     const stepH = nHole > 1 ? Math.max(0, (moShape.dur - POP) / (nHole - 1)) : 0;
     const shapeCfg = (i: number): MoCfg => ({ ...moShape, delay: moShape.delay + i * stepH, dur: POP });
@@ -2832,12 +2788,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const ez = linkEase(moLink.ease);
     return {
       hole: (h: any, i: number) => composeMo(shapeCfg(i), t, hashId(h.id) % 628 / 100),
+      /* 連線的「進場耗時」＝從第一條線可以開始畫算起，這麼多秒之內全部畫完。
+         每條線各自等自己的兩端冒出來才開始，但一律在同一個時間點收工 ——
+         所以早就可以連的那幾條會慢慢畫，晚出現的則畫得快一點。 */
       link: (ia: number, ib: number) => {
         if (!hasLink) return 1;
-        // 兩端裡比較晚出現的那一顆冒完，這條線才開始畫
+        const deadline = linkStart + Math.max(0.1, moLink.dur);
         const st = Math.max(holeUpAt(ia), holeUpAt(ib)) + Math.max(0, moLink.delay);
-        if (moLink.dur <= 0) return t >= st ? 1 : 0;
-        return ez(Math.max(0, Math.min(1, (t - st) / moLink.dur)));
+        const span = Math.max(0.15, deadline - st);
+        return ez(Math.max(0, Math.min(1, (t - st) / span)));
       },
       obj: (o: any, i: number) => composeMo(moOf(o), t, (hashId(o.id) % 628) / 100 + i * 0.7),
     };
@@ -2927,6 +2886,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /* 播放列的自動淡出。播放中閒置 2.4 秒就淡掉，點畫面（或碰到播放列本身）
      就再亮 2.4 秒；一暫停就一直留著 —— 那時候使用者本來就在找按鈕。 */
   const [barShown, setBarShown] = useState(true);
+  /* 播放列進場／離場是滑進滑出的，所以離開動畫頁之後要再留 360ms 才卸載，
+     不然它會直接消失、看不到滑出去那一段。 */
+  const [barMounted, setBarMounted] = useState(false);
+  useEffect(() => {
+    if (activeTab === 'motion') { setBarMounted(true); return; }
+    const t = window.setTimeout(() => setBarMounted(false), 380);
+    return () => window.clearTimeout(t);
+  }, [activeTab]);
   const barTimerRef = useRef<number | null>(null);
   const pokeBar = useCallback(() => {
     setBarShown(true);
@@ -2957,6 +2924,38 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setMotionPlaying(true);
     setMotionSeq(n => n + 1);
   }, [activeTab]);
+
+  /* 第二篇貼文的動畫：直接在一張 canvas 上「當場播」。
+     以前是先用 MediaRecorder 錄成影片再放 —— 錄影是即時的，一圈幾秒就要等幾秒，
+     所以會停在那邊很久、然後突然閃一下才開始播。現在開啟預覽就立刻在動。 */
+  const igCanvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (!igPreview || !imageState) return;
+    const off = getLayoutOffsets();
+    if (!off) return;
+    // 預覽框最寬也就手機那點大小，長邊 720 已經綽綽有餘
+    const scale = Math.max(0.35, 720 / Math.max(off.cw, off.ch));
+    let raf = 0, last = -1;
+    const FRAME = 1000 / 30;
+    const t0 = performance.now();
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const now = performance.now();
+      if (last >= 0 && now - last < FRAME) return;
+      last = now;
+      const cv = igCanvasRef.current;
+      if (!cv) return;
+      try {
+        animRef.current = buildAnim(((now - t0) / 1000) % motionTotal);
+        renderToCanvasRef.current(cv, scale);
+      } catch (e) {
+        console.error('預覽的動畫畫不出來', e);
+        cancelAnimationFrame(raf);
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => { cancelAnimationFrame(raf); animRef.current = null; };
+  }, [igPreview, imageState, getLayoutOffsets, buildAnim, motionTotal]);
 
   /** 改某個物件的動態設定 */
   const patchMo = useCallback((id: string, d: Partial<MoCfg>) => {
@@ -3078,6 +3077,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
     }, 150);
   };
+
+  /* ── 動畫頁的讓位 ────────────────────────────────────────────
+     播放列浮在畫面下緣，會壓到預覽圖。進動畫頁時把圖往上讓開：
+       ① 上方還有空白 → 純粹往上移（圖不變小，最自然）
+       ② 空白不夠 → 剩下的差額用「從頂部往內縮」補（頂部位置不動）
+     兩段都是 CSS transform，所以是流暢的過場，不會重新排版也不會重畫。 */
+  const MOTION_CLEAR = 92;                             // 播放列高度 ＋ 上下留白
+  const motionUiOn = activeTab === 'motion' && !!imageState;
+  const { mLift, mScale } = (() => {
+    if (!motionUiOn || !baseCss || !stageSize.h) return { mLift: 0, mScale: 1 };
+    const Hc = baseCss.h * viewT.k;                    // 圖在畫面上的高度
+    const usable = stageSize.h - 32;                   // 舞台扣掉 p-4
+    const overlap = Hc / 2 - usable / 2 + MOTION_CLEAR; // 圖的下緣超過播放列上緣多少
+    if (overlap <= 0) return { mLift: 0, mScale: 1 };
+    const free = Math.max(0, (usable - Hc) / 2);       // 圖上方還剩多少空白
+    const lift = Math.min(overlap, free);
+    const remain = overlap - lift;
+    return { mLift: lift, mScale: remain > 0 ? Math.max(0.5, (Hc - remain) / Hc) : 1 };
+  })();
+  const MOTION_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
 
   const selectedHole = holes.find(hx => hx.id === selectedTarget);
   const displayAngle = selectedHole ? (selectedHole.angle ?? holeAngle) : holeAngle;
@@ -3225,7 +3244,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 supported={igSupported}
                 slot={kind}
                 embedded
-                video={kind === 'vid' ? (igVideo || undefined) : undefined}
+                /* 影片版直接放一張正在跑動畫的畫布 —— 開啟當下就在動 */
+                mediaNode={kind === 'vid'
+                  ? <canvas ref={igCanvasRef} className="max-w-full max-h-full object-contain block" />
+                  : undefined}
                 /* 影片那篇也不給音量鍵：預覽本來就沒有聲音，多一顆只會擋到畫面 */
                 hasVideo={(_i: number) => false}
                 music={igMusic}
@@ -3530,9 +3552,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   // 1 倍時交給 max-w/max-h 自己貼合；放大之後直接寫死尺寸，
                   // 畫布就是實打實地被排版成那麼大，不經過任何貼圖拉伸
                   ...(baseCss ? { width: baseCss.w * viewT.k, height: baseCss.h * viewT.k } : null),
+                  /* 動畫頁的讓位：從頂部往上收，所以頂部位置不動。
+                     用 transform 而不是改版面尺寸 —— 改尺寸會重新算圖、會頓，
+                     transform 是純合成，整段都很順。 */
+                  transformOrigin: 'top center',
+                  transform: (mLift || mScale !== 1) ? `translateY(${-mLift}px) scale(${mScale})` : 'none',
                   /* 尺寸過場只在「正在縮放」時才有意義。換排版時畫布形狀會整個換掉，
                      這時候讓寬高做動畫就會看到那種果凍般的伸縮（桌機用滾輪縮放特別明顯）。 */
-                  transition: (viewPinchRef.current || viewT.k === 1) ? 'none' : 'width 90ms linear, height 90ms linear',
+                  transition: [
+                    (viewPinchRef.current || viewT.k === 1) ? '' : 'width 90ms linear, height 90ms linear',
+                    `transform 380ms ${MOTION_EASE}`,
+                  ].filter(Boolean).join(', '),
                   cursor: brushMode === 'pen' ? 'crosshair' : brushMode === 'eraser' ? 'pointer' : 'default' 
                 }}
               />
@@ -3623,13 +3653,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             把工具欄的空間整條讓出來給參數。
             播放中會自己淡掉（跟影片播放器一樣），才不會一直壓在圖上；
             點一下畫面就回來，暫停時則一直留著。 */}
-        {activeTab === 'motion' && imageState && !colorPickerTarget && (
+        {barMounted && imageState && !colorPickerTarget && (
           <div
-            className="absolute left-3 right-3 bottom-3 z-30 flex items-center gap-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/10 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.5)] transition-[opacity,transform] duration-300 ease-out"
+            className="absolute left-3 right-3 bottom-3 z-30 flex items-center gap-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/10 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
             style={{
-              opacity: barShown ? 1 : 0,
-              transform: barShown ? 'translateY(0)' : 'translateY(10px)',
-              pointerEvents: barShown ? 'auto' : 'none',
+              /* 進出場跟預覽圖同一段時間、同一條曲線，兩個東西看起來就是一起動的。
+                 自動淡出則是另一回事（只有 8px 的位移），兩者共用同一個 transform。 */
+              opacity: motionUiOn ? (barShown ? 1 : 0) : 0,
+              transform: motionUiOn ? `translateY(${barShown ? 0 : 8}px)` : 'translateY(120px)',
+              transition: `transform 380ms ${MOTION_EASE}, opacity 300ms ease-out`,
+              pointerEvents: motionUiOn && barShown ? 'auto' : 'none',
             }}
             onPointerDown={e => { e.stopPropagation(); pokeBar(); }}
           >
@@ -3985,7 +4018,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <div className="grid grid-cols-2 gap-4 mt-4">
                           <CompactSlider label="起始" value={Math.round(moLink.delay)} min={0} max={20} step={1}
                             onChange={(v: number) => setMoLink(m => ({ ...m, delay: v }))} />
-                          <CompactSlider label="進場耗時" value={Math.round(moLink.dur)} min={1} max={20} step={1}
+                          <CompactSlider label="進場耗時" value={Math.round(moLink.dur)} min={1} max={10} step={1}
                             onChange={(v: number) => setMoLink(m => ({ ...m, dur: v }))} />
                         </div>
                         <div className="grid grid-cols-2 gap-2 mt-3">
@@ -4013,7 +4046,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <div className="grid grid-cols-2 gap-4 mt-3">
                           <CompactSlider label="起始" value={Math.round(cur.delay)} min={0} max={20} step={1}
                             onChange={(v: number) => setCur({ delay: v })} />
-                          <CompactSlider label="進場耗時" value={Math.round(cur.dur)} min={1} max={20} step={1}
+                          <CompactSlider label="進場耗時" value={Math.round(cur.dur)} min={1} max={10} step={1}
                             onChange={(v: number) => setCur({ dur: v })} />
                         </div>
 
