@@ -383,7 +383,22 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       <div className="flex-1 min-h-0 px-5 md:px-10" style={{ paddingTop: 15 }}>
         {/* 高度用跟一般預覽同一條上限夾住，兩邊算出來的尺寸才會一模一樣
              （不夾的話 flex-1 的可用高會因為底部欄的小數而差 1px） */}
-        <div ref={stageWrapRef} className="w-full h-full flex items-center justify-center" style={{ maxHeight: 'calc(100vh - 340px)' }}>
+        {/* 兩指縮放掛在最外面這一層，不是掛在裁切框上。
+             以前只有裁切框自己接得到，所以框拖小之後，兩指放在框外面
+             （壓暗的那一圈、甚至照片旁邊的黑邊）捏了完全沒反應 ——
+             但那正是框小的時候手指最自然會放的位置。
+             現在整個預覽區都算數：觸控事件會從裁切框、從角上的把手一路冒泡
+             到這裡，所以框裡框外走的是同一套處理，不會重複也不會打架。
+             touchAction 要一起搬上來，不然瀏覽器會先把兩指當成自己的縮放收走。 */}
+        <div
+          ref={stageWrapRef}
+          className="w-full h-full flex items-center justify-center"
+          style={{ maxHeight: 'calc(100vh - 340px)', touchAction: 'none' }}
+          onTouchStart={onStageTouchStart}
+          onTouchMove={onStageTouchMove}
+          onTouchEnd={onStageTouchEnd}
+          onTouchCancel={onStageTouchEnd}
+        >
         {/* 在框外面按下去也能搬裁切框。
              以前只有框「裡面」接得到手勢，框拖小之後想再挪位置，
              手指非得先戳進那一小塊才行。落在框上或角上時，那邊自己會
@@ -419,10 +434,6 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
             onPointerMove={onHandleMove}
             onPointerUp={onHandleUp}
             onPointerCancel={onHandleUp}
-            onTouchStart={onStageTouchStart}
-            onTouchMove={onStageTouchMove}
-            onTouchEnd={onStageTouchEnd}
-            onTouchCancel={onStageTouchEnd}
           >
             {/* 三分格線 */}
             <div className="absolute inset-0 pointer-events-none">
@@ -593,7 +604,24 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
               onClick={() => setTab(id)}
               className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors duration-200 ${tab === id ? 'text-white' : 'text-white/20'}`}
             >
-              <Icon name={icon} className="text-xl" fill={tab === id} />
+              {/* 梯形那顆自己畫。Material Symbols 的 transform 是四支箭頭，
+                   跟「梯形校正」對不太起來。改成真的畫一個上窄下寬的梯形，
+                   就是由下往上拍建築物會看到的那個形狀。
+                   20px 是為了對齊旁邊三顆的 text-xl（字型圖示是 1em）；
+                   選到的時候填滿、沒選到的時候只有外框，跟 Icon 的 fill 一致。 */}
+              {id === 'keystone' ? (
+                <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" className="shrink-0">
+                  <path
+                    d="M8 5.5H16L20 18.5H4Z"
+                    fill={tab === id ? 'currentColor' : 'none'}
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ) : (
+                <Icon name={icon} className="text-xl" fill={tab === id} />
+              )}
               <span className="text-[9px] font-black uppercase tracking-[0.2em]">{label}</span>
             </button>
           ))}

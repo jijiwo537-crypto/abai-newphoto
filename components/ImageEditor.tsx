@@ -2000,7 +2000,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     if (type === 'create') {
       setIsInitialCreatingMask(true);
     }
-    
+
+    // 新的一次拖曳：離屏那張重算一次，不要沿用上一次拖曳留下來的
+    maskAdjKeyRef.current = '';
+
     setIsInteracting(true);
   };
 
@@ -2566,6 +2569,26 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   const lut0CanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lut100CanvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  /* ── 遮色片用的兩張離屏畫布 ────────────────────────────────────────────
+     以前這兩張是每一幀 document.createElement 出來的，1800×1350 兩張，
+     拖一次遮色片就是幾百張畫布的配置與回收。改成整個編輯階段共用同兩張。
+     maskTemp：整張套上遮色片調整後的樣子（沒有去背，所以可以留著重複用）
+     maskOut ：把 maskTemp 用漸層去背之後、真正要疊回畫面的那張
+     maskAdjKey：maskTemp 目前裝的是照什麼參數算的；空字串代表不可沿用 */
+  const maskTempCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const maskOutCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const maskAdjKeyRef = useRef<string>('');
+
+  /* ── 前後對比：按下去之前那張先留一份 ──────────────────────────────────
+     放開按鈕時，畫面要回到的就是按下去之前的那一張，一個像素都不會不一樣。
+     所以與其整條管線再跑一次（有遮色片效果時量到 95ms，按起來就是「頓一下
+     才回來」），不如按下去的時候先把畫布複製一份，放開直接貼回去 —— 一次
+     GPU 搬移，跟照片多大、開了多少特效都無關。
+     只有「按著的期間畫面沒有任何其他變化」才敢貼（isDirtyRef 沒被舉起來），
+     否則照樣走完整重畫。 */
+  const compareSnapRef = useRef<HTMLCanvasElement | null>(null);
+  const compareSnapKeyRef = useRef<string>('');
+
   /* ── GPU 顏色鏈 ───────────────────────────────────────────────────────
      整條顏色鏈是純粹的 RGB→RGB 函數，所以先用**現有的 processPixels 本身**
      在 N³ 個格點上算一次（33³ 只要 2.2ms），烤成一顆 3D 查色表，
@@ -2867,7 +2890,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     paramsRef.current = params;
     isDirtyRef.current = true;
   }, [params]);
-  useEffect(() => { showOriginalRef.current = showOriginal; isDirtyRef.current = true; }, [showOriginal]);
+  /* 這裡以前還會順手把 isDirtyRef 設成 true。拿掉了 ——
+     繪圖迴圈本來就會單獨比對「這一幀要顯示原圖嗎」跟上一幀不同就重畫，
+     不需要靠髒旗標。而且掛著髒旗標會讓迴圈分不出「使用者按了前後對比」
+     跟「畫面真的有東西變了」，放開按鈕時就沒辦法直接把按下去之前那張貼回來
+     （見下面 compareSnapRef 那一段）。 */
+  useEffect(() => { showOriginalRef.current = showOriginal; }, [showOriginal]);
 
   // Auto-scroll to selected filter when switching back to filter category
   // 用 useLayoutEffect：在畫出來之前就把捲動位置設好，才不會先閃一下最前面
@@ -4165,9 +4193,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       p.maskSat !== 0 || 
       p.maskVib !== 0;
 
-    if (p.maskCreated && (hasMaskAdjustments || p.maskShowOverlay)) {
-      ctx.save();
-      
+    // 紅色遮罩只是編輯時看得到遮色片範圍用的輔助顯示，
+    // 烘焙（導出、縮圖）出來的圖片絕對不能有它。
+    const showOverlay = !baking && p.maskShowOverlay && activeCategory === 'mask' && !(isInteracting && !activeDragRef.current);
+
+    /* 什麼都不用做就直接跳過。
+       以前只要 maskShowOverlay 是開的就會整段跑一遍 —— 即使沒有任何調整、
+       紅色輔助也不該畫（例如導出時）。那一趟會白白開兩張整張大小的畫布、
+       把像素讀回來再寫回去，等於每一幀都付一次全解析度的來回。 */
+    if (p.maskCreated && (hasMaskAdjustments || showOverlay)) {
       const cos = Math.cos(p.maskAngle);
       const sin = Math.sin(p.maskAngle);
 
@@ -4180,23 +4214,98 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       const x2 = cx + d * cos;
       const y2 = cy + d * sin;
 
-      // Create offscreen canvas for applying exposure and/or red overlay to the whole image
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = w;
-      tempCanvas.height = h;
-      const tempCtx = tempCanvas.getContext('2d')!;
+      const redR = 220, redG = 38, redB = 38, redAlpha = 0.5;
 
+      if (!hasMaskAdjustments) {
+        /* ── 只有紅色輔助遮罩：一次漸層填色就到位 ───────────────────────
+           這正是「拖曳生成遮色片」那段時間的情況（遮色片剛畫出來，
+           九個參數都還是 0），也是卡頓最嚴重的地方。
+
+           舊寫法是把整張圖複製到離屏畫布、getImageData 讀回來、
+           用 JS 迴圈逐像素混紅色、putImageData 寫回去、再用第二張畫布
+           做漸層去背 —— 1800×1350 就是每一幀 240 萬次迴圈加兩趟
+           9.7MB 的來回搬運，量到單一長任務 334ms。
+
+           但那串運算的結果其實可以直接寫成公式：
+             舊：主 =主×(1-g) + (主×0.5 + 紅×0.5)×g = 主×(1-0.5g) + 紅×0.5g
+             新：主 =主×(1-a) + 紅×a          其中 a = 0.5g
+           兩者完全相同，所以改成「用紅色、透明度從 0.5 漸層到 0」直接填一次。
+           畫布漸層是照預乘 alpha 內插的，兩個端點的 RGB 一樣（都是那個紅），
+           內插出來的顏色就是常數，跟原本逐像素算的分毫不差。
+           零配置、零像素讀取，整段變成一次 GPU 填色。 */
+        ctx.save();
+        const grad = ctx.createLinearGradient(x1, y1, x2, y2);
+        grad.addColorStop(0, `rgba(${redR},${redG},${redB},${redAlpha})`);
+        grad.addColorStop(1, `rgba(${redR},${redG},${redB},0)`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+        ctx.restore();
+        maskAdjKeyRef.current = '';
+      } else {
+      ctx.save();
+
+      /* 離屏畫布改成重複使用，不要每一幀 document.createElement 兩張整張大小的
+         畫布 —— 那是純粹的配置與回收成本，量到的長任務有一半來自這裡。 */
+      if (!maskTempCanvasRef.current) maskTempCanvasRef.current = document.createElement('canvas');
+      const tempCanvas = maskTempCanvasRef.current;
+      if (tempCanvas.width !== w || tempCanvas.height !== h) { tempCanvas.width = w; tempCanvas.height = h; }
+      const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true })!;
+
+      /* 拖遮色片（建立／移動／縮放／旋轉）時，「整張套上遮色片調整後的樣子」
+         跟遮色片的形狀完全無關 —— 形狀只影響最後那道漸層。
+         所以一次拖曳裡這段像素運算只要算第一幀，後面每一幀都沿用。
+         只在真的拖曳中才敢沿用：那段時間滑桿不可能同時在動。 */
+      const adjKey = `${w}x${h}|${showOverlay ? 1 : 0}|${p.maskExposure},${p.maskBrightness},${p.maskContrast},${p.maskHighlights},${p.maskShadows},${p.maskTemp},${p.maskTint},${p.maskSat},${p.maskVib}`;
+      const dragging = !!activeDragRef.current && !baking;
+      /* forceRecalculateEffects 那一幀代表底下的模糊／柔光／顆粒剛重算成精細版，
+         底圖跟上一幀不一樣了 —— 這一幀一定要重算，不能沿用。 */
+      const reuseAdj = dragging && !forceRecalculateEffectsRef.current && maskAdjKeyRef.current === adjKey;
+
+      /* ── 只算真的看得到的那一塊 ────────────────────────────────────────
+         漸層從「起始線」的 1 掉到「結束線」的 0，結束線之外全是 0 ——
+         那一大片像素就算逐一算過，等一下 destination-in 也會整片清掉，
+         等於白算。所以先把「還有一點不透明」的範圍框出來，
+         連 getImageData／putImageData 都只搬那一塊。
+
+         範圍是一個半平面：(x-x1)·軸x + (y-y1)·軸y < 軸長²。
+         半平面在畫布上的外接矩形只要看邊界線在四個邊上的落點就夠了
+         （邊界是直線，極值一定發生在畫布的邊上）。
+         兩邊各留 2px 餘裕，寧可多算幾個像素也不要少算而露出接縫。 */
+      const axDx = x2 - x1, axDy = y2 - y1;
+      const axL2 = axDx * axDx + axDy * axDy;
+      let bx0 = 0, by0 = 0, bx1 = w, by1 = h;
+      /* 拖曳中要留著重複用的那張，就得整張都是算好的 —— 形狀一直在動，
+         這一幀框出來的範圍下一幀就不夠用了。反正拖曳中整段本來就只算一次，
+         省這塊沒有意義，所以只有「不沿用」的時候才收範圍。 */
+      if (axL2 > 1e-6 && !dragging) {
+        const M = 2;
+        if (axDx !== 0) {
+          const l0 = x1 + (axL2 - (0 - y1) * axDy) / axDx;
+          const l1 = x1 + (axL2 - (h - y1) * axDy) / axDx;
+          if (axDx > 0) bx1 = Math.min(w, Math.ceil(Math.max(l0, l1)) + M);
+          else bx0 = Math.max(0, Math.floor(Math.min(l0, l1)) - M);
+        }
+        if (axDy !== 0) {
+          const m0 = y1 + (axL2 - (0 - x1) * axDx) / axDy;
+          const m1 = y1 + (axL2 - (w - x1) * axDx) / axDy;
+          if (axDy > 0) by1 = Math.min(h, Math.ceil(Math.max(m0, m1)) + M);
+          else by0 = Math.max(0, Math.floor(Math.min(m0, m1)) - M);
+        }
+      }
+      // 整片都是透明的話這裡會收成空的；留 1px 免得 getImageData 拿到 0 尺寸
+      const bw = Math.max(1, Math.min(w - bx0, bx1 - bx0));
+      const bh = Math.max(1, Math.min(h - by0, by1 - by0));
+
+      if (!reuseAdj) {
       // Draw the current state of main canvas onto temp canvas
+      tempCtx.globalCompositeOperation = 'copy';
       tempCtx.drawImage(ctx.canvas, 0, 0);
+      tempCtx.globalCompositeOperation = 'source-over';
 
       // Apply exposure and/or red overlay to the pixels in tempCanvas
-      const imgData = tempCtx.getImageData(0, 0, w, h);
+      const imgData = tempCtx.getImageData(bx0, by0, bw, bh);
       const data = imgData.data;
       const len = data.length;
-
-      // 紅色遮罩只是編輯時看得到遮色片範圍用的輔助顯示，
-      // 烘焙（導出、縮圖）出來的圖片絕對不能有它。
-      const showOverlay = !baking && p.maskShowOverlay && activeCategory === 'mask' && !(isInteracting && !activeDragRef.current);
 
       // Pre-calculate mask adjustment constants (effects intensity increased by 150%, i.e. 2.5x multiplier)
       const exp = Math.pow(2, (p.maskExposure * 0.175 * 2.5) / 100);
@@ -4242,14 +4351,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       const vibVal = (p.maskVib * 0.5 * 2.5) / 100;
       const hasVib = vibVal !== 0;
 
-      if (hasMaskAdjustments || showOverlay) {
-          const redR = 220, redG = 38, redB = 38, redAlpha = 0.5;
+      {
           for (let i = 0; i < len; i += 4) {
               let r = data[i];
               let g = data[i+1];
               let b = data[i+2];
 
-              if (hasMaskAdjustments) {
+              {
                   // 1. Exposure
                   if (p.maskExposure !== 0) {
                       r *= exp;
@@ -4321,42 +4429,46 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                   b = b < 0 ? 0 : b > 255 ? 255 : b;
               }
 
-              // Apply red overlay
-              if (showOverlay) {
-                  r = r * (1.0 - redAlpha) + redR * redAlpha;
-                  g = g * (1.0 - redAlpha) + redG * redAlpha;
-                  b = b * (1.0 - redAlpha) + redB * redAlpha;
-              }
-
               data[i] = r;
               data[i+1] = g;
               data[i+2] = b;
           }
-          tempCtx.putImageData(imgData, 0, 0);
+          tempCtx.putImageData(imgData, bx0, by0);
       }
 
-      // Create the linear gradient on an offscreen mask canvas
-      const maskCanvas = document.createElement('canvas');
-      maskCanvas.width = w;
-      maskCanvas.height = h;
-      const maskCtx = maskCanvas.getContext('2d')!;
+      /* 紅色輔助遮罩不必擠進上面那個迴圈：整片鋪一層 alpha 0.5 的紅，
+         算出來就是 r×0.5 + 220×0.5，跟逐像素混色分毫不差，但只要一次填色。 */
+      if (showOverlay) {
+          tempCtx.fillStyle = `rgba(${redR},${redG},${redB},${redAlpha})`;
+          tempCtx.fillRect(0, 0, w, h);
+      }
 
-      const grad = maskCtx.createLinearGradient(x1, y1, x2, y2);
+      maskAdjKeyRef.current = dragging ? adjKey : '';
+      }
+
+      /* 漸層去背要畫在另一張畫布上，不能直接挖 tempCanvas —— 那張是要留著
+         重複用的（見上面的 adjKey），被挖過一次就不能再沿用了。
+         這裡也不再另外開一張「裝漸層用」的畫布：直接拿漸層當填色、
+         配 destination-in 就是同一件事，整整少一張全解析度的畫布。 */
+      if (!maskOutCanvasRef.current) maskOutCanvasRef.current = document.createElement('canvas');
+      const outCanvas = maskOutCanvasRef.current;
+      if (outCanvas.width !== w || outCanvas.height !== h) { outCanvas.width = w; outCanvas.height = h; }
+      const outCtx = outCanvas.getContext('2d')!;
+      outCtx.globalCompositeOperation = 'copy';
+      outCtx.drawImage(tempCanvas, 0, 0);
+
+      const grad = outCtx.createLinearGradient(x1, y1, x2, y2);
       grad.addColorStop(0, 'rgba(255,255,255,1.0)');
       grad.addColorStop(1, 'rgba(255,255,255,0.0)');
-
-      maskCtx.fillStyle = grad;
-      maskCtx.fillRect(0, 0, w, h);
-
-      // Mask the tempCanvas using 'destination-in' composite operation
-      tempCtx.save();
-      tempCtx.globalCompositeOperation = 'destination-in';
-      tempCtx.drawImage(maskCanvas, 0, 0);
-      tempCtx.restore();
+      outCtx.globalCompositeOperation = 'destination-in';
+      outCtx.fillStyle = grad;
+      outCtx.fillRect(0, 0, w, h);
+      outCtx.globalCompositeOperation = 'source-over';
 
       // Draw the masked temp canvas onto the main canvas
-      ctx.drawImage(tempCanvas, 0, 0);
+      ctx.drawImage(outCanvas, 0, 0);
       ctx.restore();
+      }
     }
 
     const needsRefinement = blurNeedsLazyRefine || softNeedsLazyRefine || noise2NeedsLazyRefine || halationNeedsLazyRefine;
@@ -5390,9 +5502,38 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
             const interacting = isInteractingRef.current;
             const now = performance.now();
             
-            if (isDirtyRef.current || currentShowOriginal !== lastRenderedShowOriginalRef.current) {
+            const flipped = currentShowOriginal !== lastRenderedShowOriginalRef.current;
+            /* ── 前後對比：按下／放開都不要再跑一次整條管線 ─────────────
+               按下去：先把現在畫布上那張（＝編輯後）複製一份留著。
+               放開  ：按著的期間如果什麼都沒變（isDirtyRef 是乾淨的），
+                       直接把那份貼回來就好，一次搬移，不必重算。 */
+            if (flipped) {
+                const snapKey = `${b.w}x${b.h}|${buffersSrcRef.current}`;
+                if (currentShowOriginal) {
+                    if (!compareSnapRef.current) compareSnapRef.current = document.createElement('canvas');
+                    const snap = compareSnapRef.current;
+                    if (snap.width !== b.w || snap.height !== b.h) { snap.width = b.w; snap.height = b.h; }
+                    const sctx = snap.getContext('2d')!;
+                    sctx.globalCompositeOperation = 'copy';
+                    sctx.drawImage(cvs, 0, 0);
+                    sctx.globalCompositeOperation = 'source-over';
+                    compareSnapKeyRef.current = isDirtyRef.current ? '' : snapKey;
+                } else if (!isDirtyRef.current && compareSnapRef.current && compareSnapKeyRef.current === snapKey) {
+                    const dctx = cvs.getContext('2d')!;
+                    dctx.globalCompositeOperation = 'copy';
+                    dctx.drawImage(compareSnapRef.current, 0, 0);
+                    dctx.globalCompositeOperation = 'source-over';
+                    cvs.style.filter = 'none';
+                    lastRenderedShowOriginalRef.current = false;
+                    lastRenderTimeRef.current = now;
+                    rafId = requestAnimationFrame(tick);
+                    return;
+                }
+            }
+
+            if (isDirtyRef.current || flipped) {
                 const elapsed = now - lastRenderTimeRef.current;
-                
+
                 // Adaptive Throttle: If user is interacting, we decouple the slider visual UI from canvas renders
                 // by enforcing a healthy throttling rate during dragging. This leaves the main thread completely free
                 // to process mouse/touch events and paint the slider handle at a perfect, fluid, lag-free 120 FPS.
