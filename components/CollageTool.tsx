@@ -330,8 +330,7 @@ export type MoCfg = {
   idle: string; amp: number; speed: number;
 };
 export const MO_DEFAULT: MoCfg = {
-  // 0.605 秒＝舊刻度的速度 80
-  delay: 0, dur: 0.605, in: 'pop',
+  delay: 0, dur: durFromSpeed(70), in: 'pop',
   idle: 'none', amp: 50, speed: 0.9,
 };
 export const moOf = (o: any): MoCfg => ({ ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) });
@@ -2750,11 +2749,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 圖案這一群的動畫設定；每顆圖案再依序錯開 */
   /* 圖案是一整群：「進場耗時」給 3 秒才看得出一顆一顆冒出來，
      常駐維持上下飄（圖片與文字才是預設靜止）。 */
-  // 1.732 秒＝舊刻度的速度 50
-  const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: 1.732, idle: 'float' });
+  const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: durFromSpeed(30), idle: 'float' });
   /** 連線：起始、畫完要多久、以及線往前長的曲線 */
-  // 0.3 秒＝舊刻度的速度 100（最快）
-  const [moLink, setMoLink] = useState({ delay: 0, dur: 0.3, ease: 'linear' });
+  const [moLink, setMoLink] = useState({ delay: 0, dur: durFromSpeed(80), ease: 'linear' });
   /** 動畫頁上正在調哪一個元素：'shape' | 'link' | 物件 id */
   const [moTarget, setMoTarget] = useState<string>('shape');
   /** 匯出成影片時的進度（0～1）；null = 沒在匯出 */
@@ -3684,11 +3681,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             <button
               onClick={() => setMotionPlaying(v => !v)}
               title={motionPlaying ? '暫停' : '播放'}
-              /* 按鈕顯示的是「現在的狀態」：播放中＝實心，暫停中＝空心白框 */
+              /* 實心／空心跟著「按鈕上的圖標」走：
+                 顯示播放圖標（＝現在是暫停中）時是實心，顯示暫停圖標時是空心白框。 */
               className={`h-9 w-11 shrink-0 rounded-[8px] border flex items-center justify-center transition-all active:scale-90 ${
                 motionPlaying
-                  ? 'bg-white text-black border-white'
-                  : 'bg-transparent text-white border-white'}`}
+                  ? 'bg-transparent text-white border-white'
+                  : 'bg-white text-black border-white'}`}
             >
               {/* 播放中顯示暫停圖標（按下去＝暫停），暫停中顯示播放圖標 */}
               {motionPlaying
