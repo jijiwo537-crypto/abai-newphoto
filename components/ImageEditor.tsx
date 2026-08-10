@@ -1462,6 +1462,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   /** 目前展開的是哪一個新特效（activeCategory === 'fx' 時才有意義） */
   const [activeFxId, setActiveFxId] = useState<string>(FX_DEFS[0].id);
   const [activeToolId, setActiveToolId] = useState<string>('filter_select');
+  /* 繪圖迴圈是掛在 ref 上的（不隨每次 render 重建），所以它要知道「現在選的是
+     哪一根滑桿」只能透過 ref。每次 render 直接指派，永遠是最新的。 */
+  const activeToolIdRef = useRef(activeToolId);
+  activeToolIdRef.current = activeToolId;
   const [selectedLutIdx, setSelectedLutIdx] = useState(0);
   const [isSoftActive, setIsSoftActive] = useState(false);
   const [isBlurActive, setIsBlurActive] = useState(false);
@@ -4659,74 +4663,106 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     applyComplexEffects(ctx, b.w, b.h, p, scale, tempShared, true, false, tempDest);
   }, [selectedLutIdx, lutList, applyComplexEffects, getCurveLuts]);
 
+  /* ── 拖曳中的極速預覽：三份全解析度的畫面 ─────────────────────────────
+     亮度那一類滑桿拖起來之所以是滿格的，是因為事先把「這根滑桿轉到 0／−100／
+     ＋100」三張畫面各算一份，拖曳中就只是在三張之間做 GPU 混合。
+
+     問題是那三份以前是**手指按下去的那一瞬間**才同步算的：全解析度跑三趟
+     processPixels，量到手一碰滑桿主執行緒就被佔住 270～303ms（亮度 303、
+     曝光 289、對比 270），而且每按一次就來一次。
+
+     改成趁閒置先算好：使用者是先點工具、再去碰滑桿的，中間那段時間畫面
+     完全閒著。繪圖迴圈的閒置分支每一輪只算三份裡的一份（約 95ms），
+     分三輪做完，按下去的時候通常一步都不用做。
+     沒先算完也不會壞 —— setupFastPreview 會把缺的補上，行為跟以前一樣。 */
+  const FAST_BLEND_TOOLS = ['brightness', 'exposure', 'contrast', 'highlights', 'shadows', 'temp', 'tint', 'sat', 'vib'];
+
+  /** 已經先算好的那份是「給誰、照什麼參數」算的；stage 是三份裡算到第幾份 */
+  const fastWarmRef = useRef<{ sig: string; stage: number }>({ sig: '', stage: 0 });
+
+  /* 那三份是把這根滑桿固定在 0／±100 算出來的，所以「這根滑桿現在是多少」
+     完全不影響結果 —— 簽章一律用把它歸零之後的參數，拖曳中才不會一直失效。 */
+  const fastSig = useCallback((toolId: string) => {
+    const b = buffers.current.preview;
+    const pBase = { ...paramsRef.current, [toolId]: 0 } as EditorParams;
+    const lut = lutList[selectedLutIdx];
+    return `${toolId}|${b.w}x${b.h}|${buffersSrcRef.current}|${lut?.id || 'none'}|${pBase.sharpen}|${bakeSigRef.current(pBase)}`;
+  }, [lutList, selectedLutIdx]);
+
+  /** 算三份裡的下一份。回傳 true 代表這一次真的有做事（沒事做就回 false）。 */
+  const buildFastStage = useCallback((toolId: string): boolean => {
+    const b = buffers.current.preview;
+    if (!b.source || !b.dest) return false;
+    const sig = fastSig(toolId);
+    if (fastWarmRef.current.sig !== sig) fastWarmRef.current = { sig, stage: 0 };
+    const st = fastWarmRef.current.stage;
+    if (st >= 3) return false;
+
+    const len = b.source.length;
+    const eb = extremeBuffersRef.current;
+    if (!eb.base || eb.base.length !== len) {
+      eb.base = new Uint8ClampedArray(len);
+      eb.min = new Uint8ClampedArray(len);
+      eb.max = new Uint8ClampedArray(len);
+    }
+    const lut = lutList[selectedLutIdx];
+    const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
+    const lutSize = activeLut ? activeLut.size : 0;
+    const activeLutData = activeLut ? activeLut.data : null;
+    const curveLuts = getCurveLuts(paramsRef.current.curves);
+
+    const val = st === 0 ? 0 : st === 1 ? -100 : 100;
+    const target = st === 0 ? eb.base! : st === 1 ? eb.min! : eb.max!;
+    const pS = { ...paramsRef.current, [toolId]: val } as EditorParams;
+    generateBaseCorrectionLut(pS.exposure, pS.contrast, pS.brightness, baseCorrectionLutRef.current);
+    processPixels(b.source, target, b.w, b.h, pS, activeLutData, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, curveLuts);
+
+    // 同步到對應的離屏畫布（拖曳中是靠它們做 GPU 混合的）
+    const cache = fastPreviewCacheRef.current;
+    const key = st === 0 ? 'baseCanvas' : st === 1 ? 'minCanvas' : 'maxCanvas';
+    if (!cache[key]) cache[key] = document.createElement('canvas');
+    const cv = cache[key]!;
+    if (cv.width !== b.w || cv.height !== b.h) { cv.width = b.w; cv.height = b.h; }
+    cv.getContext('2d')!.putImageData(new ImageData(target, b.w, b.h), 0, 0);
+
+    fastWarmRef.current = { sig, stage: st + 1 };
+    if (fastWarmRef.current.stage >= 3) eb.activeToolId = toolId;
+    return true;
+  }, [fastSig, lutList, selectedLutIdx, getCurveLuts]);
+
+  /** 閒置時呼叫：目前選的工具如果吃這套，就往下算一份 */
+  const warmFastPreview = useCallback(() => {
+    const t = activeToolIdRef.current;
+    if (!FAST_BLEND_TOOLS.includes(t)) return false;
+    return buildFastStage(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildFastStage]);
+  const warmFastPreviewRef = useRef(warmFastPreview);
+  warmFastPreviewRef.current = warmFastPreview;
+
   const setupFastPreview = useCallback((toolId: string) => {
     setIsInteracting(true);
     fastPreviewCacheRef.current.active = false;
     isDirtyRef.current = true;
     lastRenderDurationRef.current = 12; // Reset interaction timing to avoid carry-over throttles
 
-    const FAST_BLEND_TOOLS = ['brightness', 'exposure', 'contrast', 'highlights', 'shadows', 'temp', 'tint', 'sat', 'vib'];
+    if (!FAST_BLEND_TOOLS.includes(toolId)) return;
 
-    if (FAST_BLEND_TOOLS.includes(toolId)) {
-        const b = buffers.current.preview;
-        if (b.source && b.dest) {
-            const len = b.source.length;
-            if (!extremeBuffersRef.current.base || extremeBuffersRef.current.base.length !== len) {
-                extremeBuffersRef.current.base = new Uint8ClampedArray(len);
-                extremeBuffersRef.current.min = new Uint8ClampedArray(len);
-                extremeBuffersRef.current.max = new Uint8ClampedArray(len);
-            }
-            extremeBuffersRef.current.activeToolId = toolId;
+    // 閒置時沒算完的補上（通常已經算完了，這裡一步都不用做）
+    let guard = 4;
+    while (guard-- > 0 && buildFastStage(toolId)) { /* 一次一份 */ }
 
-            const lut = lutList[selectedLutIdx];
-            const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
-            const lutSize = activeLut ? activeLut.size : 0;
-            const activeLutData = activeLut ? activeLut.data : null;
-            const curveLuts = getCurveLuts(paramsRef.current.curves);
-
-            // 1. Base state (current parameter with toolId = 0)
-            const pBase = { ...paramsRef.current, [toolId]: 0 };
-            generateBaseCorrectionLut(pBase.exposure, pBase.contrast, pBase.brightness, baseCorrectionLutRef.current);
-            processPixels(b.source, extremeBuffersRef.current.base, b.w, b.h, pBase, activeLutData, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, curveLuts);
-
-            // 2. Min state (current parameter with toolId = -100)
-            const pMin = { ...paramsRef.current, [toolId]: -100 };
-            generateBaseCorrectionLut(pMin.exposure, pMin.contrast, pMin.brightness, baseCorrectionLutRef.current);
-            processPixels(b.source, extremeBuffersRef.current.min, b.w, b.h, pMin, activeLutData, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, curveLuts);
-
-            // 3. Max state (current parameter with toolId = +100)
-            const pMax = { ...paramsRef.current, [toolId]: 100 };
-            generateBaseCorrectionLut(pMax.exposure, pMax.contrast, pMax.brightness, baseCorrectionLutRef.current);
-            processPixels(b.source, extremeBuffersRef.current.max, b.w, b.h, pMax, activeLutData, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, curveLuts);
-
-            // Sync with fastPreviewCacheRef.current canvases for high-performance GPU blending
-            const cache = fastPreviewCacheRef.current;
-            cache.active = true;
-            cache.toolId = toolId;
-
-            if (!cache.baseCanvas) cache.baseCanvas = document.createElement('canvas');
-            if (cache.baseCanvas.width !== b.w || cache.baseCanvas.height !== b.h) {
-                cache.baseCanvas.width = b.w;
-                cache.baseCanvas.height = b.h;
-            }
-            cache.baseCanvas.getContext('2d')!.putImageData(new ImageData(extremeBuffersRef.current.base, b.w, b.h), 0, 0);
-
-            if (!cache.minCanvas) cache.minCanvas = document.createElement('canvas');
-            if (cache.minCanvas.width !== b.w || cache.minCanvas.height !== b.h) {
-                cache.minCanvas.width = b.w;
-                cache.minCanvas.height = b.h;
-            }
-            cache.minCanvas.getContext('2d')!.putImageData(new ImageData(extremeBuffersRef.current.min, b.w, b.h), 0, 0);
-
-            if (!cache.maxCanvas) cache.maxCanvas = document.createElement('canvas');
-            if (cache.maxCanvas.width !== b.w || cache.maxCanvas.height !== b.h) {
-                cache.maxCanvas.width = b.w;
-                cache.maxCanvas.height = b.h;
-            }
-            cache.maxCanvas.getContext('2d')!.putImageData(new ImageData(extremeBuffersRef.current.max, b.w, b.h), 0, 0);
-        }
+    const b = buffers.current.preview;
+    if (b.source && b.dest && fastWarmRef.current.stage >= 3) {
+      extremeBuffersRef.current.activeToolId = toolId;
+      const cache = fastPreviewCacheRef.current;
+      if (cache.baseCanvas && cache.minCanvas && cache.maxCanvas) {
+        cache.active = true;
+        cache.toolId = toolId;
+      }
     }
-  }, [selectedLutIdx, lutList, getCurveLuts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildFastStage]);
 
   const render = useCallback((p: EditorParams, overrideLutIdx?: number) => {
     const cache = fastPreviewCacheRef.current;
@@ -5560,7 +5596,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
             warmGpu(b.source, b.w, b.h, `${b.w}x${b.h}|${buffersSrcRef.current}`);
             /* 貼圖暖好之後，接著一顆一顆把濾鏡的查色表也烤起來。
                每次閒置只烤一顆，主執行緒馬上還回去。 */
-            if (gpuWarmKeyRef.current) warmBakes(paramsRef.current);
+            const baked = gpuWarmKeyRef.current ? warmBakes(paramsRef.current) : false;
+            /* 查色表都烤完了才輪到這個：把「拖曳中要用的那三張全解析度畫面」
+               先算好，手指碰到滑桿那一下就不用停下來算（原本會卡 270～303ms）。
+               一樣一次只算一份（量到約 85～115ms），不會一口氣佔住主執行緒。
+
+               而且要等畫面「真的停下來 250ms 以上」才開始 —— 剛點完工具、
+               或正在捲工具列的那一小段時間別去搶主執行緒，不然預熱本身
+               會變成新的頓點。 */
+            if (!baked && performance.now() - lastRenderTimeRef.current > 250) warmFastPreviewRef.current();
         }
         // 換照片時，新圖還在解碼，緩衝區裡裝的還是上一張 —— 這時候畫出去就是舊照片。
         // 等緩衝區換成現在這一張再畫。
