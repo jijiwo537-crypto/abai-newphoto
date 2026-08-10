@@ -1,7 +1,7 @@
 
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { get2dWide } from '../utils/colorSpace';
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
@@ -1854,28 +1854,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     return () => { alive = false; };
   }, [activeTab, adjustSub, lutList]);
 
-  /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了。
-     以前的作法是先把尺寸設成 null、讓 max-w/max-h 自己貼合一次，
-     下一格再換成算好的尺寸 —— 中間那一格是「舊比例硬塞進新框」，
-     看起來就是被壓一下再彈回來的果凍。
-     現在直接照新的排版算出最終尺寸，一步到位，中間沒有過渡狀態。 */
-  const sizeSnapRef = useRef(false);
-  useEffect(() => {
-    setViewT({ k: 1, tx: 0, ty: 0 });
-    setPreviewScale(1);
-    // 這一次的尺寸變化不要做過場動畫（放大狀態下換排版才不會拉一下）
-    sizeSnapRef.current = true;
-    const st = stageRef.current;
-    if (!st || !imageState) { setBaseCss(null); return; }
-    const cs = collageSizeOf(layout, imageState.baseW, imageState.baseH, maskScale);
-    const sb = st.getBoundingClientRect();
-    const availW = Math.max(1, sb.width - 32), availH = Math.max(1, sb.height - 32);
-    if (!(cs.w > 0 && cs.h > 0) || !(availW > 1 && availH > 1)) { setBaseCss(null); return; }
-    const f = Math.min(availW / cs.w, availH / cs.h);
-    setBaseCss({ w: cs.w * f, h: cs.h * f });
-    const t = window.setTimeout(() => { sizeSnapRef.current = false; }, 260);
-    return () => window.clearTimeout(t);
-  }, [layout, maskScale, imageState]);
+
 
   // 換一張圖就把縮放歸零
   const viewResetKeyRef = useRef('');
@@ -2707,6 +2686,37 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     return () => cancelAnimationFrame(id); 
   }, [renderCanvas, saveState]);
 
+  /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了。
+     這裡要做兩件事，而且都必須在「瀏覽器畫下一格之前」完成：
+       ① 直接算出新的版面尺寸（以前是先設成 null 讓 max-w/max-h 自己貼合一次，
+          下一格再換成算好的 —— 中間那一格是舊比例硬塞進新框）。
+       ② 立刻把畫布重畫一次。畫布的 CSS 尺寸換成新比例、但裡面還是舊那張圖時，
+          那一格會被拉伸成不同的長寬比 —— 那就是換排版時看到的果凍。
+     用 useLayoutEffect 而不是 useEffect：後者是畫完才跑，一定會露出那一格。 */
+  const sizeSnapRef = useRef(false);
+  useLayoutEffect(() => {
+    setViewT({ k: 1, tx: 0, ty: 0 });
+    setPreviewScale(1);
+    // 這一次的尺寸變化不要做過場動畫（放大狀態下換排版才不會拉一下）
+    sizeSnapRef.current = true;
+    const st = stageRef.current;
+    const cv = canvasRef.current;
+    if (st && imageState) {
+      const cs = collageSizeOf(layout, imageState.baseW, imageState.baseH, maskScale);
+      const sb = st.getBoundingClientRect();
+      const availW = Math.max(1, sb.width - 32), availH = Math.max(1, sb.height - 32);
+      if (cs.w > 0 && cs.h > 0 && availW > 1 && availH > 1) {
+        const f = Math.min(availW / cs.w, availH / cs.h);
+        setBaseCss({ w: cs.w * f, h: cs.h * f });
+      } else setBaseCss(null);
+      // 同一格就把新比例的內容畫上去，不留任何「舊圖被拉伸」的空窗
+      if (cv) { try { renderToCanvas(cv, 1); } catch { /* 這一格畫不出來就等下一格 */ } }
+    } else setBaseCss(null);
+    const t = window.setTimeout(() => { sizeSnapRef.current = false; }, 260);
+    return () => window.clearTimeout(t);
+  }, [layout, maskScale, imageState, renderToCanvas]);
+
+
   /* ── IG 預覽 ────────────────────────────────────────────────────
      跟經典拼圖一樣：打開時用同一條算圖管線算一張「壓低解析度的成品」，
      顯示的就是匯出會長的樣子，不另外用 DOM 重畫一次。
@@ -2716,8 +2726,39 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const igShotUrlRef = useRef<string[]>([]);
   /** 兩篇貼文共用的那一首歌 */
   const [igMusic, setIgMusic] = useState<any>(null);
+  /* 開預覽之前先把成品算好、而且等圖解碼完才打開 ——
+     不然一進去會先看到轉圈、圖片再「跳」進來，就是那一下閃爍。 */
+  const openIgPreview = useCallback(async () => {
+    if (!imageState) return;
+    try {
+      const off = getLayoutOffsets();
+      if (off) {
+        const dpr = Math.min(3, window.devicePixelRatio || 1);
+        const shown = Math.min(window.innerWidth, 520);
+        const scale = Math.min(1600, Math.max(900, shown * dpr * 1.15)) / Math.max(off.cw, off.ch);
+        const cv = document.createElement('canvas');
+        const keep = animRef.current;
+        animRef.current = null;
+        renderToCanvas(cv, scale);
+        animRef.current = keep;
+        const url = await canvasToUrl(cv);
+        cv.width = 0; cv.height = 0;
+        await new Promise<void>(res => {
+          const im = new Image();
+          im.onload = () => res(); im.onerror = () => res();
+          im.src = url;
+        });
+        igShotUrlRef.current.forEach(u => revokeUrl(u));
+        igShotUrlRef.current = [url];
+        setIgShots([url]);
+      }
+    } catch { /* 算不出來就照舊開，裡面那條 effect 會再算一次 */ }
+    setIgPreview(true);
+  }, [imageState, getLayoutOffsets, renderToCanvas]);
   useEffect(() => {
     if (!igPreview || !imageState) return;
+    // openIgPreview 已經先算好一張了就不用再算 —— 重算會換掉網址，畫面會再閃一下
+    if (igShotUrlRef.current.length) return;
     let alive = true;
     (async () => {
       try {
@@ -3316,7 +3357,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 flow
                 /* 影片版直接放一張正在跑動畫的畫布 —— 開啟當下就在動 */
                 mediaNode={kind === 'vid'
-                  ? <canvas ref={igCanvasRef} className="max-w-full max-h-full object-contain block" />
+                  ? (
+                    <canvas
+                      /* 掛上去的當下就先畫第一格，畫布才不會有一瞬間是空白的 */
+                      ref={el => {
+                        igCanvasRef.current = el;
+                        if (!el || !imageState) return;
+                        try {
+                          const o2 = getLayoutOffsets();
+                          if (!o2) return;
+                          animRef.current = buildAnim(0);
+                          renderToCanvas(el, Math.max(0.35, 720 / Math.max(o2.cw, o2.ch)));
+                          animRef.current = null;
+                        } catch { /* 等 rAF 那一格再畫 */ }
+                      }}
+                      className="max-w-full max-h-full object-contain block"
+                    />
+                  )
                   : undefined}
                 /* 影片那篇也不給音量鍵：預覽本來就沒有聲音，多一顆只會擋到畫面 */
                 hasVideo={(_i: number) => false}
@@ -3469,7 +3526,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     {igSupported && (
                       <>
                         <button
-                          onClick={() => { setMoreOpen(false); setIgPreview(true); }}
+                          onClick={() => { setMoreOpen(false); openIgPreview(); }}
                           className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90 hover:bg-white/10 transition-colors"
                         >
                           <span>預覽</span>
