@@ -1054,13 +1054,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   /* 一格上一步 = 圖案 + 浮動物件的整組快照。
      物件的 img 是 DOM 元素，不能走 JSON —— 淺拷貝、img 維持同一個參考。 */
-  type Snap = { holes: any[]; objects: any[] };
+  type Snap = { holes: any[]; objects: any[]; env?: any };
+  /* env＝除了圖案與物件以外「所有會改變畫面的設定」：排版、比例、遮罩顏色與紋理、
+     自訂遮罩、圖案的各項參數、連線、動畫的種類與參數…
+     這一段在元件前段，但像 moShape 那些狀態是後面才宣告的，
+     所以「怎麼取 env」與「怎麼套回 env」都放在後面才填進這兩個 ref。 */
+  const envSrcRef = useRef<any>({});
+  const applyEnvRef = useRef<(e: any) => void>(() => {});
+  const envKey = (e: any) => {
+    try {
+      return JSON.stringify(e, (k, v) => (v instanceof HTMLImageElement ? v.src.slice(0, 96) : v));
+    } catch { return ''; }
+  };
   const cloneSnap = (sn: Snap): Snap => ({
     holes: (sn.holes || []).map(h => ({ ...h })),
     objects: (sn.objects || []).map(o => ({ ...o, fx: o.fx ? { ...o.fx } : o.fx })),
+    env: sn.env ? { ...sn.env } : { ...envSrcRef.current },
   });
   const sameSnap = (a: Snap, b: Snap) =>
-    !!a && !!b && sameHoles(a.holes, b.holes) && objKeyOf(a.objects) === objKeyOf(b.objects);
+    !!a && !!b && sameHoles(a.holes, b.holes) && objKeyOf(a.objects) === objKeyOf(b.objects)
+    && envKey(a.env) === envKey(b.env);
 
   const [historyState, setHistoryState] = useState<{ history: Snap[]; index: number }>({
     history: [{ holes: [], objects: [] }],
@@ -1089,12 +1102,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   const applySnap = (sn: Snap) => {
     restoringRef.current = true;
+    if (sn.env) applyEnvRef.current(sn.env);
     setHoles(sn.holes.map(h => ({ ...h })));
     setObjects(sn.objects.map(o => ({ ...o, fx: o.fx ? { ...o.fx } : o.fx })));
-    setSelectedTarget(null);
-    setSelectedObj(prev => (sn.objects.some(o => o.id === prev) ? prev : null));
-    // 下一輪 render 之後才解鎖，中間那幾次 setState 不會被記進歷史
-    setTimeout(() => { restoringRef.current = false; }, 0);
+    if (!sn.env) { setSelectedTarget(null); setSelectedObj(null); }
+    /* 套用 env 會連帶觸發「換排版就重灑圖案」那類 effect，
+       所以要多等幾格再解鎖，中間的連鎖變動都不記進歷史。 */
+    setTimeout(() => { restoringRef.current = false; }, 260);
   };
 
   const undo = useCallback(() => {
@@ -1263,7 +1277,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setHoleType(id);
   };
 
-  const generateRandomHoles = useCallback((isInitial: boolean = false, layoutOverride?: string) => {
+  /* record='reset' 清空歷史（換照片）｜'push' 自己記一格｜'none' 不記
+     （換排版走 'none'：排版與圖案是同一個動作，交給下面那個防抖的
+       env 監看器一起記成「一格」，不然一次操作會佔掉兩格上一步） */
+  const generateRandomHoles = useCallback((isInitial: boolean = false, layoutOverride?: string,
+                                           record: 'reset' | 'push' | 'none' = isInitial ? 'reset' : 'push') => {
     if (!imageState) return;
     const { baseW, baseH, globalScale: gs } = imageState;
     const mappedHoleSize = 25 + (holeSize / 100) * 125;
@@ -1298,11 +1316,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       });
     }
     setHoles(newHoles);
-    if (isInitial) {
-      resetHistory(newHoles);
-    } else {
-      pushHistory(newHoles);
-    }
+    if (record === 'reset') resetHistory(newHoles);
+    else if (record === 'push') pushHistory(newHoles);
   }, [imageState, holeCount, holeSize, sizeJitter, pushHistory, resetHistory, symmetryEnabled, layout, maskScale]);
 
   /* 對稱鎖定：本來是 header 上的一顆按鈕，現在收進三個點的選單裡。
@@ -1341,9 +1356,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     });
   }, [layout, pushHistory]);
 
+  /* 只有「換一張照片」才把歷史清掉。改「數量」也會重灑圖案，
+     但那是一次可以上一步的操作，不該把之前做過的事一起抹掉。 */
+  const histImageRef = useRef<any>(null);
   useEffect(() => { 
     setSelectedTarget(null);
-    generateRandomHoles(true); 
+    const fresh = histImageRef.current !== imageState;
+    histImageRef.current = imageState;
+    /* 還原上一步時「數量」也會跟著回到舊值，但圖案本身已經從快照拿回來了 ——
+       這時候再重灑一次就會變成一組全新的隨機圖案，上一步就等於回不去。 */
+    if (restoringRef.current && !fresh) return;
+    generateRandomHoles(fresh); 
     /* 這裡刻意「不」放 layout：換排版時是在按鈕裡跟 setLayout 同一批更新
        一起重灑的，放進來反而會多跑一輪 —— 那多出來的一格畫面就是
        「新版面配舊座標的圖案」，看起來就是閃一下。 */
@@ -1375,6 +1398,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const prev = prevCanvasRef.current;
     prevCanvasRef.current = { cw: o.cw, ch: o.ch };
     if (!prev || (prev.cw === o.cw && prev.ch === o.ch)) return;
+    /* 正在還原上一步：快照裡的座標本來就是「那個排版下的正確座標」，
+       再映射一次等於算兩次，回不到原本的位置。 */
+    if (restoringRef.current) return;
     const kx = o.cw / prev.cw, ky = o.ch / prev.ch;
     setObjects(list => {
       if (!list.length) return list;
@@ -2995,6 +3021,58 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     return () => window.clearTimeout(t);
   }, [activeTab]);
 
+  /* ── 上一步／下一步：把「其他所有會改變畫面的設定」接上 ──────────
+     這裡才有辦法一次拿到全部狀態（動畫那幾個是上面才宣告的）。
+     取快照與套回快照都寫在這，前段的歷史邏輯只透過 ref 呼叫。 */
+  envSrcRef.current = {
+    layout, maskScale,
+    maskColor, patternType, dotColor, dotSize, dotGap,
+    maskImageState, maskTransform, imageTransform,
+    holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
+    linkMode,
+    moShape, moLink, motionHold,
+    // 選取框也是畫面的一部分，一起記起來才會「回到一模一樣」
+    selectedObj, selectedTarget,
+  };
+  applyEnvRef.current = (e: any) => {
+    if (!e) return;
+    setLayout(e.layout); setMaskScale(e.maskScale);
+    setMaskColor(e.maskColor); setPatternType(e.patternType);
+    setDotColor(e.dotColor); setDotSize(e.dotSize); setDotGap(e.dotGap);
+    setMaskImageState(e.maskImageState ?? null);
+    setMaskTransform(e.maskTransform); setImageTransform(e.imageTransform);
+    setHoleType(e.holeType); setCustomText(e.customText);
+    setHoleSize(e.holeSize); setSizeJitter(e.sizeJitter);
+    setHoleAngle(e.holeAngle); setHoleCount(e.holeCount);
+    setSymmetryEnabled(e.symmetryEnabled);
+    setLinkMode(e.linkMode);
+    setMoShape(e.moShape); setMoLink(e.moLink); setMotionHold(e.motionHold);
+    setSelectedObj(e.selectedObj ?? null); setSelectedTarget(e.selectedTarget ?? null);
+  };
+
+  /* 只要上面那組設定有變就記一格。等停下來 400ms 才記 ——
+     滑桿拖動時是連續變化，這樣就只會記到「鬆手時」的那一個值。 */
+  const envHistoryReadyRef = useRef(false);
+  const envSigRef = useRef('');
+  useEffect(() => {
+    if (!imageState) return;
+    const sig = envKey(envSrcRef.current);
+    if (sig === envSigRef.current) return;
+    envSigRef.current = sig;
+    if (!envHistoryReadyRef.current) { envHistoryReadyRef.current = true; return; }
+    if (restoringRef.current) return;
+    const t = window.setTimeout(() => {
+      if (!restoringRef.current) pushHistory(holesRef.current, objectsRef.current);
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [
+    imageState, pushHistory,
+    layout, maskScale, maskColor, patternType, dotColor, dotSize, dotGap,
+    maskImageState, maskTransform, imageTransform,
+    holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
+    linkMode, moShape, moLink, motionHold,
+  ]);
+
   /** 從頭播一次。換動畫種類時自動叫它 —— 不然改完要自己等一圈才看得到。 */
   const replayMotion = useCallback(() => {
     motionClockRef.current = 0;
@@ -3908,7 +3986,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           setLayout(t);
                           if (t === AROUND) setMaskScale(AROUND_SCALE);
                           setSelectedTarget(null);
-                          generateRandomHoles(true, t);
+                          generateRandomHoles(true, t, 'none');
                         }} className="focus:outline-none">
                           <LayoutIcon type={t} active={layout === t} />
                         </button>
