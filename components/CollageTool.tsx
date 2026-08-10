@@ -2336,7 +2336,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const o = getLayoutOffsets();
     if (!o || !o.cw || !o.ch) return false;
     if (o.ch <= o.cw) return true;              // 正方形與橫式都沒問題
-    return o.cw / o.ch >= 4 / 5 - 0.001;
+    /* 四周包圍寬鬆一點：照片四周本來就有一圈遮罩，IG 就算裁也是裁到那圈邊，
+       照片本身不會被切到 —— 所以只要原圖不比 2:3 更長就給預覽。
+       （這個排版的畫布跟原圖同比例，所以直接看畫布就等於看原圖。）
+       其餘四種是照片直接貼邊，超過 IG 的直式上限 4:5 就會裁到照片。 */
+    const limit = layout === AROUND ? 2 / 3 : 4 / 5;
+    return o.cw / o.ch >= limit - 0.001;
   })();
 
   const handleSave = () => {

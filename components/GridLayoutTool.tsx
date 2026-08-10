@@ -2788,13 +2788,33 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     {(() => {
       // 對齊線亮起來時，選取框與四角圓球也一起讓位（跟工具列同一個理由）
       const showChrome = isSelected && !hideChrome && !hasActiveGuidelines;
+      /* 正在改大小的那段期間，把這一層畫到框外面的東西全部裁掉。
+         白色選取框自己帶一圈 4px 的深色陰影，四顆圓球也各帶一圈 ——
+         那些都畫在「框的外面」。框每一格都在縮，瀏覽器算重畫範圍時只看框、
+         不看陰影多出去的那一圈，所以框讓出來的那條舊陰影就沒有被擦掉，
+         一格留一條，看起來就是白紙上一根根的細線（放開手整層重畫才不見）。
+         裁掉之後這一層在框外面完全不畫東西，就沒有任何可以留下的殘影。
+         只在縮放中裁：那段期間工具列本來就收起來了，看起來完全一樣。 */
       return (
       <div
         className="absolute inset-0 pointer-events-none"
-        style={{ visibility: showChrome ? 'visible' : 'hidden', opacity: showChrome ? 1 : 0 }}
+        style={{
+          visibility: showChrome ? 'visible' : 'hidden',
+          opacity: showChrome ? 1 : 0,
+          /* 這一層畫的東西一律不准超出框。
+             白色選取框本來帶一圈 4px 的深色外陰影、四顆圓球也各帶一圈，
+             那些都畫在「框的外面」。框在縮放時每一格都在縮，瀏覽器算要重畫
+             哪一塊時只看框、不看陰影多出去的那一圈，所以框讓出來的那條舊陰影
+             不會被擦掉 —— 一格留一條，就是白紙上那一根根細線（放開手整層
+             重畫才消失）。裁掉之後這一層在框外面完全不畫東西，殘影就沒有
+             地方可以留。工具列是這一層的兄弟、不在裡面，不會被裁到。 */
+          overflow: 'hidden',
+        }}
       >
         {/* Active border matching layout style */}
-        <div className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" />
+        {/* 深色那一圈改成往內畫（inset）：外面被裁掉了，往內畫才看得到，
+            白框壓在白紙上一樣分得出來，而且不會有任何東西畫到框外面。 */}
+        <div className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[inset_0_0_4px_rgba(0,0,0,0.3)]" />
 
         {/* Four Corner scale dots */}
         <div
