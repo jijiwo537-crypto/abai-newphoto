@@ -2696,8 +2696,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
 
     /* 選取框只畫在螢幕上那張。畫布可能被畫得更細，所以尺寸與座標都要乘上 s，
-       不然放大重畫之後虛線框會停在原本的小尺寸、對不上那個洞。 */
-    if (isMain && selectedTarget && interactionRef.current) {
+       不然放大重畫之後虛線框會停在原本的小尺寸、對不上那個洞。
+
+       條件以前還多一個 interactionRef.current，也就是「手指還按著」才畫。
+       圖案改成要先點選才能操作之後，選中這件事是發生在**放開**的那一刻 ——
+       那時候 interactionRef 已經清掉了，於是框子一放手就不見，
+       等於根本看不到自己選了哪一顆。選取是一個會留著的狀態，框就該一直在。
+
+       改用 animRef 擋掉動畫頁：那邊本來就鎖住所有互動，
+       虛線框留在畫面上只會被錄進預覽裡。 */
+    if (isMain && selectedTarget && !animRef.current) {
       const selectedHole = holes.find(hx => hx.id === selectedTarget);
       if (selectedHole) {
         const h = selectedHole;
