@@ -24,12 +24,27 @@ export type IgPreviewProps = {
   hasVideo?: (pageIdx: number) => boolean;
   /** 比例 IG 吃不下時（直式 2:3、9:16）傳 false，會自己關掉 */
   supported?: boolean;
+  /**
+   * 這一篇貼文的「身分」。帳號、頭貼、按讚數這些都會照 slot 分開存，
+   * 所以同一頁疊兩篇時彼此不會互相影響。不傳就是舊的單篇行為。
+   */
+  slot?: string;
+  /** 內嵌模式：不自己占滿整個畫面、也不畫關閉鍵（由外面那層負責） */
+  embedded?: boolean;
+  /** 有值的話這一篇是影片版：媒體區放 <video> 而不是 <img> */
+  video?: string;
+  /** 音樂改成由外面保管（兩篇要共用同一首）。沒傳就用自己的狀態 */
+  music?: any;
+  onMusicChange?: (t: any) => void;
   onClose: () => void;
 };
 
 export const IgPreview: React.FC<IgPreviewProps> = ({
-  shots, frame, pageCount, faces, hasVideo = (_pageIdx: number) => false, supported = true, onClose,
+  shots, frame, pageCount, faces, hasVideo = (_pageIdx: number) => false, supported = true,
+  slot = '', embedded = false, video, music, onMusicChange, onClose,
 }) => {
+  /** 這一篇貼文自己的存檔前綴。沒有 slot 就完全等於以前的鍵名。 */
+  const KEY = (k: string) => `abai_ig_${slot ? slot + '_' : ''}${k}`;
   const igStripRef = useRef<HTMLDivElement>(null);
   const igTrackRef = useRef<HTMLDivElement>(null);
   const igDragRef = useRef<{ x0: number; y0: number; t0: number; dx: number; id: number; lock: '' | 'x' | 'y' } | null>(null);
@@ -74,7 +89,11 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   const [musicList, setMusicList] = useState<Track[]>([]);
   const [musicLoading, setMusicLoading] = useState(false);
   const [musicError, setMusicError] = useState('');
-  const [picked, setPicked] = useState<Track | null>(null);
+  const [pickedOwn, setPickedOwn] = useState<Track | null>(null);
+  /* 兩篇貼文要共用同一首歌，所以音樂可以交給外面保管。
+     沒傳 onMusicChange 就退回自己管，經典拼圖那邊完全不受影響。 */
+  const picked: Track | null = onMusicChange ? (music ?? null) : pickedOwn;
+  const setPicked = (t: Track | null) => { if (onMusicChange) onMusicChange(t); else setPickedOwn(t); };
   /** 現在真的有聲音在放嗎（決定封面上要不要跳那排音量條） */
   const [musicPlaying, setMusicPlaying] = useState(false);
   /* 搜尋結果上方的「歌手」那一排，以及點進去之後的專輯／曲目。
@@ -1456,10 +1475,10 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   const igFrame = frame;
   /* 預覽裡的帳號與頭像：兩個都能改，存在本機，下次開還在。 */
   const [igAccount, setIgAccount] = useState(() => {
-    try { return localStorage.getItem('abai_ig_account') || 'abai_is.perfect'; } catch { return 'abai_is.perfect'; }
+    try { return localStorage.getItem(KEY('account')) || 'abai_is.perfect'; } catch { return 'abai_is.perfect'; }
   });
   const [igAvatar, setIgAvatar] = useState(() => {
-    try { return localStorage.getItem('abai_ig_avatar') || ''; } catch { return ''; }
+    try { return localStorage.getItem(KEY('avatar')) || ''; } catch { return ''; }
   });
   const igAvatarInputRef = useRef<HTMLInputElement>(null);
   /** 上一個「有效」的名字：清成空白再點別的地方時要還原成它 */
@@ -1469,7 +1488,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     const name = v.trim().slice(0, 30) || lastIgNameRef.current || 'abai_is.perfect';
     lastIgNameRef.current = name;
     setIgAccount(name);
-    try { localStorage.setItem('abai_ig_account', name); } catch { /* 無痕模式寫不進去就算了 */ }
+    try { localStorage.setItem(KEY('account'), name); } catch { /* 無痕模式寫不進去就算了 */ }
   };
 
   /** 上傳的頭像先置中裁成正方形、縮到 240px 再存 —— 原圖直接塞會撐爆本機空間 */
@@ -1486,7 +1505,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
         g.drawImage(im, (im.naturalWidth - s) / 2, (im.naturalHeight - s) / 2, s, s, 0, 0, S, S);
         const data = c.toDataURL('image/png');
         setIgAvatar(data);
-        try { localStorage.setItem('abai_ig_avatar', data); } catch { /* 存不下就只用這一次 */ }
+        try { localStorage.setItem(KEY('avatar'), data); } catch { /* 存不下就只用這一次 */ }
       }
       URL.revokeObjectURL(url);
     };
@@ -1514,7 +1533,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
      愛心與書籤點一下就切換（愛心亮著時讚數 +1，跟 IG 一樣）。
      全部存在本機，下次開還在。 */
   const readStat = (k: string, dflt: string) => {
-    try { return localStorage.getItem(`abai_ig_${k}`) ?? dflt; } catch { return dflt; }
+    try { return localStorage.getItem(KEY(k)) ?? dflt; } catch { return dflt; }
   };
   const [igLikes, setIgLikes] = useState(() => readStat('likes', '5,850'));
   const [igComments, setIgComments] = useState(() => readStat('comments', '6'));
@@ -1524,7 +1543,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   const [igLiked, setIgLiked] = useState(() => readStat('liked', '0') === '1');
   const [igSaved, setIgSaved] = useState(() => readStat('saved', '0') === '1');
   const saveStat = (k: string, v: string) => {
-    try { localStorage.setItem(`abai_ig_${k}`, v); } catch { /* 無痕模式寫不進去就算了 */ }
+    try { localStorage.setItem(KEY(k), v); } catch { /* 無痕模式寫不進去就算了 */ }
   };
   /** 讚數加一：只認數字，逗號原樣留著（5,850 → 5,851） */
   const bumpLikes = (n: number) => setIgLikes(prev => {
@@ -1564,20 +1583,22 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
 
   return (
         <div
-          className="fixed inset-0 z-[120] bg-black flex flex-col animate-in fade-in duration-200"
+          className={embedded
+            ? 'relative w-full h-full bg-black flex flex-col'
+            : 'fixed inset-0 z-[120] bg-black flex flex-col animate-in fade-in duration-200'}
           style={{
             fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Noto Sans TC", "PingFang TC", sans-serif',
             /* inset-0 用的是「版面視窗」，但 iOS Safari 的底部工具列是蓋在網頁上面、
                不佔版面高度，所以畫面最下面那一段會躲在工具列後面 —— 圖的下緣看起來
                就是被切掉。100dvh 是會扣掉瀏覽器 UI 的動態視窗高度，再加安全區內距，
                內容就一定落在看得見的範圍裡。 */
-            height: '100dvh',
-            maxHeight: '100dvh',
+            height: embedded ? '100%' : '100dvh',
+            maxHeight: embedded ? '100%' : '100dvh',
             /* 底部一定要留白。加到主畫面的 PWA 在全螢幕下，畫面最下緣是 iPhone 的
                主畫面指示條（那條小橫線）所在的位置，內容擺到那裡就會被壓住。
                env() 只有在 viewport-fit=cover 時才會回報真實數值，所以再給一個
                24px 的保底，兩者取大的。 */
-            paddingBottom: 'max(env(safe-area-inset-bottom, 0px), 24px)',
+            paddingBottom: embedded ? 0 : 'max(env(safe-area-inset-bottom, 0px), 24px)',
             boxSizing: 'border-box',
           }}
         >
@@ -1656,16 +1677,19 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                   {picked ? `${picked.name} · ${picked.artist}` : `原創音訊 · ${igAccount}`}
                 </button>
               </div>
-              {/* IG 現在的版本右上角是兩條橫線；這裡順便當關閉鍵 */}
-              <button
-                onClick={() => onClose()}
-                className="w-10 h-10 shrink-0 flex items-center justify-center text-white active:opacity-60"
-                title="關閉"
-              >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
-                  <path d="M5 9.5h14M5 15h14" />
-                </svg>
-              </button>
+              {/* IG 現在的版本右上角是兩條橫線；這裡順便當關閉鍵。
+                  內嵌時每一篇都畫一顆會很吵，交給外面那層畫一顆就好。 */}
+              {!embedded && (
+                <button
+                  onClick={() => onClose()}
+                  className="w-10 h-10 shrink-0 flex items-center justify-center text-white active:opacity-60"
+                  title="關閉"
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+                    <path d="M5 9.5h14M5 15h14" />
+                  </svg>
+                </button>
+              )}
             </div>
 
             {/* 貼文的圖：一頁一屏，左右滑 */}
@@ -1696,7 +1720,10 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                       style={{ width: `${igBox.w}px` }}
                     >
                       {/* 直接顯示匯出的那一張。object-contain 保證完整顯示、絕不裁切 */}
-                      {shots[idx]
+                      {video
+                        ? <video src={video} autoPlay loop playsInline muted={igMuted}
+                            className="max-w-full max-h-full object-contain" />
+                        : shots[idx]
                         ? <img src={shots[idx]} alt="" draggable={false} className="max-w-full max-h-full object-contain" />
                         : (
                           /* 還在算圖：給一個轉圈，不要放空白的頁面 —— 整片白會讓人以為壞掉 */
