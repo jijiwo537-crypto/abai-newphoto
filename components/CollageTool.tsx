@@ -3,7 +3,7 @@ import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
-import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2 } from 'lucide-react';
+import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
@@ -48,6 +48,14 @@ const MAX_FINAL_DIM = 4096;
 const MAX_EXPORT_PIXELS = 20_000_000;
 /** 動態影片的長邊上限。1440 已經比手機螢幕還細，再高只是白燒編碼時間 */
 const MOTION_MAX_DIM = 1440;
+/**
+ * 播動畫時「一格」能用掉的像素上限。
+ * 靜態時可以放到 56M（反正只烤一次），但動畫一秒要烤 30 次 ——
+ * 照那個量級跑，手機的畫布記憶體幾秒內就會被系統回收（閃退回主畫面）。
+ * 6M 對應到手機螢幕大約是 2 倍超取樣，正常倍率下完全用得到，
+ * 只有「放到很大又同時在播」才會被壓下來。
+ */
+const MAX_MOTION_PIXELS = 6_000_000;
 /**
  * 預覽時「主畫布 + 三張遮罩暫存畫布」加起來的像素預算。
  * 一張畫布是 4 bytes/px，四張加起來就是 ×4 —— 8M 像素等於 128MB，
@@ -155,9 +163,10 @@ const hashId = (id: string) => {
    縮放、位移、旋轉、透明度。畫布只負責照著畫，所以預覽跟輸出
    一定長得一模一樣，也不需要先錄成影片才看得到。 */
 
-/** 出場動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
+/** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
+const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
 const easeOutBack = (p: number) => {
   const c1 = 1.70158, c3 = c1 + 1, q = p - 1;
@@ -169,6 +178,14 @@ const easeOutElastic = (p: number) => {
   if (p <= 0 || p >= 1) return p <= 0 ? 0 : 1;
   const c4 = (2 * Math.PI) / 3;
   return Math.pow(2, -10 * p) * Math.sin((p * 10 - 0.75) * c4) + 1;
+};
+/** 彈跳落地：標準的四段拋物線 */
+const easeOutBounce = (p: number) => {
+  const n1 = 7.5625, d1 = 2.75;
+  if (p < 1 / d1) return n1 * p * p;
+  if (p < 2 / d1) return n1 * (p -= 1.5 / d1) * p + 0.75;
+  if (p < 2.5 / d1) return n1 * (p -= 2.25 / d1) * p + 0.9375;
+  return n1 * (p -= 2.625 / d1) * p + 0.984375;
 };
 
 /** 連線的「曲線變速」：同一段時間，線往前長的快慢曲線不一樣 */
@@ -182,19 +199,24 @@ export const LINK_EASES: { id: string; name: string; fn: (p: number) => number }
 ];
 export const linkEase = (id: string) => (LINK_EASES.find(e => e.id === id) || LINK_EASES[1]).fn;
 
-/** 出場動畫：從無到有的那一下 */
+/**
+ * 進場／離場動畫。第一個是最普通的「淡入」——大部分時候就是要它，
+ * 所以放在第一顆，不用每次都往後找。離場用的是同一份清單，只是倒著跑。
+ */
 export const IN_KINDS: { id: string; name: string }[] = [
-  { id: 'pop', name: '果凍' },
   { id: 'fade', name: '淡入' },
+  { id: 'pop', name: '果凍' },
   { id: 'rise', name: '由下升起' },
   { id: 'drop', name: '由上落下' },
-  { id: 'zoom', name: '由大縮進' },
   { id: 'spin', name: '轉著出現' },
   { id: 'flip', name: '翻轉' },
+  // 這兩個是特別做的：一個會落地彈兩下，一個是繞著螺旋飛進來
+  { id: 'bounce', name: '彈跳落地' },
+  { id: 'spiral', name: '螺旋飛入' },
   { id: 'none', name: '直接出現' },
 ];
 
-/** 常駐動畫：出場之後一直在動的那一層 */
+/** 常駐動畫：進場之後、離場之前一直在動的那一層 */
 export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
   { id: 'float', name: '上下飄' },
@@ -203,21 +225,28 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'spin', name: '旋轉' },
   { id: 'wobble', name: '搖擺' },
   { id: 'orbit', name: '繞小圈' },
+  // 特別做的：高頻又不規則的細微抖動，像手持鏡頭
+  { id: 'jitter', name: '抖動' },
 ];
 
-/** 出場動畫在進度 p（0～1）時的樣子 */
+/** 進場動畫在進度 p（0～1）時的樣子 */
 const inFrame = (kind: string, p: number): MoFrame => {
-  if (p <= 0) return { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
+  if (p <= 0) return GONE;
   if (p >= 1) return FLAT;
   const fade = Math.max(0, Math.min(1, p * 1.6));
+  const e = easeOutCubic(p);
   switch (kind) {
     case 'fade':   return { k: 1, dx: 0, dy: 0, rot: 0, a: p };
-    case 'rise':   return { k: 1, dx: 0, dy: (1 - easeOutCubic(p)) * 0.9, rot: 0, a: fade };
-    case 'drop':   return { k: 1, dx: 0, dy: -(1 - easeOutCubic(p)) * 0.9, rot: 0, a: fade };
-    case 'zoom':   return { k: 1 + (1 - easeOutCubic(p)) * 1.2, dx: 0, dy: 0, rot: 0, a: p };
-    case 'spin':   return { k: easeOutCubic(p), dx: 0, dy: 0, rot: -(1 - easeOutCubic(p)) * 200, a: fade };
+    case 'rise':   return { k: 1, dx: 0, dy: (1 - e) * 0.9, rot: 0, a: fade };
+    case 'drop':   return { k: 1, dx: 0, dy: -(1 - e) * 0.9, rot: 0, a: fade };
+    case 'spin':   return { k: e, dx: 0, dy: 0, rot: -(1 - e) * 200, a: fade };
     // 翻轉用「橫向壓扁」模擬（見下面的 inFlipX），不需要真的 3D
     case 'flip':   return { k: 1, dx: 0, dy: 0, rot: 0, a: fade };
+    case 'bounce': return { k: 1, dx: 0, dy: -(1 - easeOutBounce(p)) * 1.1, rot: 0, a: Math.min(1, p * 4) };
+    case 'spiral': {
+      const q = 1 - e;
+      return { k: 0.25 + 0.75 * e, dx: Math.cos(q * Math.PI * 3) * q * 0.9, dy: Math.sin(q * Math.PI * 3) * q * 0.9, rot: -q * 540, a: fade };
+    }
     case 'none':   return FLAT;
     default:       return { k: easeOutBack(p), dx: 0, dy: 0, rot: 0, a: fade };   // pop
   }
@@ -240,17 +269,47 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
     case 'spin':    return { k: 1, dx: 0, dy: 0, rot: w * A * 90, a: 1 };
     case 'wobble':  return { k: 1, dx: 0, dy: 0, rot: Math.sin(w * 2.4) * A * 22, a: 1 };
     case 'orbit':   return { k: 1, dx: Math.cos(w * 1.6) * A * 0.2, dy: Math.sin(w * 1.6) * A * 0.2, rot: 0, a: 1 };
+    /* 抖動：三個互為無理數比的高頻正弦疊起來，永遠不會回到同一個位置，
+       所以看起來是真的在抖，不是在打拍子。 */
+    case 'jitter':  return {
+      k: 1,
+      dx: (Math.sin(w * 7.3) + Math.sin(w * 11.72)) * A * 0.05,
+      dy: (Math.sin(w * 9.13 + 2.1) + Math.sin(w * 13.31)) * A * 0.05,
+      rot: (Math.sin(w * 8.7 + 1.3) + Math.sin(w * 15.1)) * A * 2.4,
+      a: 1,
+    };
     default:        return FLAT;
   }
 };
 
 /** 一個元素的動態設定 */
-export type MoCfg = { delay: number; dur: number; in: string; idle: string; amp: number; speed: number };
-export const MO_DEFAULT: MoCfg = { delay: 0, dur: 1.4, in: 'pop', idle: 'none', amp: 40, speed: 1 };
+export type MoCfg = {
+  /** 進場 */
+  delay: number; dur: number; in: string;
+  /** 常駐 */
+  idle: string; amp: number; speed: number;
+  /** 離場（out = 'none' 就是不離場，一直留到最後） */
+  out: string; outDelay: number; outDur: number;
+};
+export const MO_DEFAULT: MoCfg = {
+  delay: 0, dur: 1.4, in: 'fade',
+  idle: 'none', amp: 40, speed: 1,
+  out: 'none', outDelay: 5, outDur: 1.2,
+};
 export const moOf = (o: any): MoCfg => ({ ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) });
 
-/** 把出場與常駐疊起來：出場做完才接常駐，交棒處用 0.35 秒淡入避免跳一下 */
+/**
+ * 把進場 → 常駐 → 離場疊起來。
+ * 交棒處用 0.35 秒淡入接上常駐，不然從進場切到常駐會跳一下。
+ */
 const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number } => {
+  // 離場最優先：時間到了就照著倒帶走，走完就完全消失
+  if (cfg.out && cfg.out !== 'none' && t >= cfg.outDelay) {
+    const q = cfg.outDur > 0 ? (t - cfg.outDelay) / cfg.outDur : 1;
+    if (q >= 1) return { ...GONE, fx: 1 };
+    const f = inFrame(cfg.out, 1 - q);
+    return { ...f, fx: inFlipX(cfg.out, 1 - q) };
+  }
   const p = cfg.dur > 0 ? (t - cfg.delay) / cfg.dur : (t >= cfg.delay ? 1 : 0);
   const f = inFrame(cfg.in, Math.max(0, Math.min(1, p)));
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
@@ -264,6 +323,12 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
     a: 1, fx: 1,
   };
 };
+
+/** 這個元素整段動畫在什麼時候結束（排時間軸用） */
+const moEnd = (cfg: MoCfg) =>
+  (cfg.out && cfg.out !== 'none')
+    ? Math.max(cfg.delay + cfg.dur, cfg.outDelay + cfg.outDur)
+    : cfg.delay + cfg.dur;
 
 const getHoleNumber = (h: any) => {
   if (h && h.randomNumber !== undefined) return h.randomNumber;
@@ -574,7 +639,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [holeAngle, setHoleAngle] = useState(0);
   /* 連線：每個圖案拉一條極細的線到最近的鄰居。只有前六種圖案支援。
      線跟圖案走同一條路 —— 在遮罩上是挖穿的，在圖片上是遮罩色的實心線。 */
-  const [linkShapes, setLinkShapes] = useState(false);
+  /** 'none' 沒有線｜'solid' 連線｜'dash' 虛線。兩種線本來就是同一件事，
+      只差線型，所以做成一個三態 —— 也就不可能同時打開。 */
+  const [linkMode, setLinkMode] = useState<'none' | 'solid' | 'dash'>('none');
   const linkSupported = LINK_TYPES.includes(holeType);
   /* 動態播放中的那一格。不是 state —— 每一格都在動，走 ref 讓 renderToCanvas
      直接讀，才不會每一格都觸發一次 React 重繪。null 代表「不在播動態」。 */
@@ -918,6 +985,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const baseMaskCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas')); 
   const fullMaskCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas')); 
   const lowerMaskCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
+  /** 挖穿的洞裡看到的那張底圖。跟上面幾張一樣重複使用，播動畫時才不會一直配置記憶體 */
+  const holeBackdropCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
   const activePointers = useRef<Map<number, any>>(new Map());
   const interactionRef = useRef<any>(null);
   const holesRef = useRef<any[]>([]);
@@ -1657,6 +1726,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [previewScale, setPreviewScale] = useState(1);
   const previewScaleRef = useRef(1);
   previewScaleRef.current = previewScale;
+  /** 播動畫時實際用的倍率（見 MAX_MOTION_PIXELS） */
+  const motionScaleRef = useRef(1);
   const previewTimer = useRef<number | null>(null);
   /** 畫布在 1 倍時的 CSS 尺寸（放大時直接用它 × 倍率當版面尺寸） */
   const baseCssWRef = useRef(0);
@@ -1702,11 +1773,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (!cssW || !cs.w) return;
       const budget = maxPreviewScale();
       // 要多少畫布像素才會「一個畫布像素對一個裝置像素」
-      /* ×1.15 的餘裕：剛好 1:1 時圖案邊緣的抗鋸齒沒有取樣空間，
-         多一點點就會明顯銳利，而且成本只有 32%。 */
-      const want = Math.min(budget, Math.max(1, (cssW * viewT.k * dpr * 1.15) / cs.w));
-      const snapped = Math.max(1, Math.round(want * 4) / 4);   // 取到 0.25，避免一直重畫
+      /* ×1.35 的超取樣：剛好 1:1 時圖案邊緣的抗鋸齒沒有取樣空間，多給一點
+         才是「一載入就已經最清楚」，不用先放大一次才變利。
+         而且無條件進位到 0.25，不會被四捨五入往下砍掉那 0.1。 */
+      const want = Math.min(budget, Math.max(1, (cssW * viewT.k * dpr * 1.35) / cs.w));
+      const snapped = Math.max(1, Math.ceil(want * 4) / 4);   // 取到 0.25，避免一直重畫
       setPreviewScale(prev => (Math.abs(prev - snapped) < 0.01 ? prev : snapped));
+      /* 播動畫時另外壓一個上限：一秒烤 30 次，照靜態那個倍率跑會把
+         手機的畫布記憶體吃光。正常倍率下這一行不會生效。 */
+      const one = previewPixelsAt(layout, imageState.baseW, imageState.baseH, maskScale, 1,
+        patternType === 'dot' ? 3 : 2);
+      const mCap = Math.max(1, Math.sqrt(MAX_MOTION_PIXELS / Math.max(1, one)));
+      motionScaleRef.current = Math.min(snapped, Math.max(1, Math.round(mCap * 4) / 4));
     }, 90);
     return () => { if (previewTimer.current) window.clearTimeout(previewTimer.current); };
     /* baseCss 一定要進依賴：第一次算出基準尺寸之前這個 effect 會直接 return，
@@ -2093,7 +2171,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       return { k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base, rot: f.rot, a: f.a, fx: f.fx, on: f.k > 0.002 && f.a > 0.004 };
     };
     const linksFor = (side: 'image' | 'mask') => {
-      if (!linkShapes || !LINK_TYPES.includes(holeType)) return [] as [any, any][];
+      if (linkMode === 'none' || !LINK_TYPES.includes(holeType)) return [] as [any, any][];
       const list = holes.filter(h => { const sd = h.side || 'both'; return sd === 'both' || sd === side; });
       return linkEdges(list);
     };
@@ -2104,6 +2182,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       g.save();
       g.lineWidth = LINK_W;
       g.lineCap = 'round';
+      if (linkMode === 'dash') {
+        // 虛線：一段一段的點，長度跟著線寬走才不會在大圖上變成實線
+        g.setLineDash([LINK_W * 3, LINK_W * 4]);
+        g.lineCap = 'butt';
+      }
       const seg = 1 / pairs.length;
       pairs.forEach(([a, b], i) => {
         // 一條一條依序長出去（動態時才看得出「連過去」的過程）
@@ -2330,10 +2413,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const drawMaskHolesOnTop = () => {
       const img = imageState.img, t = imageTransform;
       if (!img || !t) return;
-      // 洞裡看到的就是墊在遮罩底下那張放大的圖：先畫成一張，再一個洞一個洞貼回去
-      const bd = document.createElement('canvas');
-      bd.width = Math.max(1, Math.round(offs.cw));
-      bd.height = Math.max(1, Math.round(offs.ch));
+      /* 洞裡看到的就是墊在遮罩底下那張放大的圖：先畫成一張，再一個洞一個洞貼回去。
+         這張要重複使用 —— 播動畫時一秒會走 30 次，每次 new 一張幾百萬像素的
+         畫布，記憶體會被灌爆（就是「播一播閃退回主畫面」）。 */
+      const bd = isMain ? holeBackdropCanvasRef.current : document.createElement('canvas');
+      const bdW = Math.max(1, Math.round(offs.cw)), bdH = Math.max(1, Math.round(offs.ch));
+      if (bd.width !== bdW || bd.height !== bdH) { bd.width = bdW; bd.height = bdH; }
+      else bd.getContext('2d')?.clearRect(0, 0, bdW, bdH);
       const g = bd.getContext('2d');
       if (!g) return;
       if (layout === AROUND) {
@@ -2383,7 +2469,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         strokeLinks(ctx, linksFor('mask'), linkT);
         ctx.restore();
       }
-      bd.width = 0;
+      if (!isMain) bd.width = 0;
     };
 
     if (layout === AROUND) {
@@ -2499,7 +2585,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
-  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick, linkShapes]);
+  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick, linkMode]);
 
   const renderCanvas = useCallback(() => {
     if (!canvasRef.current || !imageState) return;
@@ -2594,45 +2680,56 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     return o.cw / o.ch >= limit - 0.001;
   })();
 
-  /* ── 動態 ──────────────────────────────────────────────────────
+  /* ── 動畫 ──────────────────────────────────────────────────────
      整套動畫是即時算出來的，不是先錄成影片再播：
-       ① 開著「動態」時，一個 rAF 迴圈用目前的參數重畫主畫布本人 ——
+       ① 進到「動畫」頁就自動從頭播，rAF 迴圈用目前的參數重畫主畫布本人 ——
           所以看到的畫質就是編輯畫面的畫質，也不會有壓縮痕跡。
        ② 任何改動（加物件、拖位置、換參數）下一格就反映出來。
        ③ 匯出時走同一條 renderToCanvas，影片的每一格就是預覽本人。
-     時間軸由每個元素自己的「起始時間 ＋ 出場時長」決定，
+     時間軸由每個元素自己的「進場 → 常駐 → 離場」決定，
      連線則多一個「曲線變速」。 */
-  const [motionOn, setMotionOn] = useState(false);
-  /** 全部出場完之後多停幾秒再從頭跑（循環才不會像在抽搐） */
+  /** 播放中／暫停中。離開動畫頁就整個停掉、畫面收回靜態。 */
+  const [motionPlaying, setMotionPlaying] = useState(true);
+  /** 重播用的流水號：改動畫種類時 +1，讓播放迴圈從頭跑一次 */
+  const [motionSeq, setMotionSeq] = useState(0);
+  /** 全部跑完之後多停幾秒再從頭（循環才不會像在抽搐） */
   const [motionHold, setMotionHold] = useState(1.6);
-  /** 圖案這一群的動態設定；每顆圖案再依序錯開 */
-  const [moShape, setMoShape] = useState<MoCfg>({ delay: 0, dur: 1.6, in: 'pop', idle: 'none', amp: 40, speed: 1 });
+  /** 圖案這一群的動畫設定；每顆圖案再依序錯開 */
+  const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: 1.6 });
   /** 連線：起始、畫完要多久、以及線往前長的曲線 */
   const [moLink, setMoLink] = useState({ delay: 1.6, dur: 2.2, ease: 'ease' });
-  /** 動態頁面上正在調哪一個元素：'shape' | 'link' | 物件 id */
+  /** 動畫頁上正在調哪一個元素：'shape' | 'link' | 物件 id */
   const [moTarget, setMoTarget] = useState<string>('shape');
   /** 匯出成影片時的進度（0～1）；null = 沒在匯出 */
   const [videoProg, setVideoProg] = useState<number | null>(null);
-  /** 按下儲存後先問「影片還是圖片」 */
+  /** 按下儲存後從下方延伸出來的兩顆按鈕 */
   const [exportAsk, setExportAsk] = useState(false);
 
-  const hasLink = linkShapes && LINK_TYPES.includes(holeType);
+  const hasLink = linkMode !== 'none' && LINK_TYPES.includes(holeType);
+  /** 畫布現在要不要照動畫來畫（暫停時也算：停在那一格） */
+  const motionOn = activeTab === 'motion' && saveState === 'idle';
 
   /** 一圈跑多久。最晚結束的那個元素跑完，再加上停留時間。 */
   const motionTotal = useMemo(() => {
-    let end = moShape.delay + moShape.dur;
+    let end = moEnd(moShape);
     if (hasLink) end = Math.max(end, moLink.delay + moLink.dur);
-    objects.forEach(o => { const m = moOf(o); end = Math.max(end, m.delay + m.dur); });
+    objects.forEach(o => { end = Math.max(end, moEnd(moOf(o))); });
     return Math.max(1.2, end) + Math.max(0, motionHold);
   }, [moShape, moLink, hasLink, objects, motionHold]);
 
   /** 給一個時間 t，算出這一格每個元素長什麼樣 */
   const buildAnim = useCallback((t: number) => {
     const nHole = Math.max(1, holesRef.current.length);
-    // 圖案是一群，出場時間要在 moShape.dur 之內一顆一顆錯開
+    // 圖案是一群，進場要在 moShape.dur 之內一顆一顆錯開；離場也照同樣的順序錯開
     const POP = Math.min(0.5, moShape.dur * 0.45);
     const stepH = nHole > 1 ? Math.max(0, (moShape.dur - POP) / (nHole - 1)) : 0;
-    const shapeCfg = (i: number): MoCfg => ({ ...moShape, delay: moShape.delay + i * stepH, dur: POP });
+    const OUT = Math.min(0.5, moShape.outDur * 0.45);
+    const stepO = nHole > 1 ? Math.max(0, (moShape.outDur - OUT) / (nHole - 1)) : 0;
+    const shapeCfg = (i: number): MoCfg => ({
+      ...moShape,
+      delay: moShape.delay + i * stepH, dur: POP,
+      outDelay: moShape.outDelay + i * stepO, outDur: OUT,
+    });
     const lp = moLink.dur > 0 ? (t - moLink.delay) / moLink.dur : (t >= moLink.delay ? 1 : 0);
     return {
       hole: (h: any, i: number) => composeMo(shapeCfg(i), t, hashId(h.id) % 628 / 100),
@@ -2642,39 +2739,70 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   }, [moShape, moLink, hasLink]);
 
   /* 播放迴圈。時鐘存在 ref 裡，所以「換個參數 / 拖一下物件」讓這個 effect
-     重跑時，動畫是接著走的，不會每動一下就跳回第一格。 */
+     重跑時，動畫是接著走的，不會每動一下就跳回第一格。
+     動畫每一格都要重烤整張圖，60Hz 跑滿的話手機的畫布記憶體會被系統回收
+     （就是「播一播突然回到主畫面」），所以這裡壓到 30fps 就好 ——
+     肉眼看起來一樣順，但每秒少烤一半的圖。 */
   const motionClockRef = useRef(0);
+  /* 拖滑桿時 holes 每一格都是新陣列 → renderToCanvas 的身分跟著換 →
+     播放迴圈會被拆掉重建幾十次。走 ref 就不會，rAF 從頭到尾只有一個。 */
+  const renderToCanvasRef = useRef(renderToCanvas);
+  renderToCanvasRef.current = renderToCanvas;
   useEffect(() => {
-    if (!motionOn || !imageState || saveState !== 'idle' || videoProg !== null) {
-      animRef.current = null;
-      return;
-    }
+    if (!motionOn || !motionPlaying || !imageState || videoProg !== null) return;
     let raf = 0;
+    let last = -1;
+    const FRAME = 1000 / 30;
     const t0 = performance.now() - motionClockRef.current * 1000;
     const tick = () => {
-      const el = (performance.now() - t0) / 1000;
-      motionClockRef.current = el % motionTotal;
-      animRef.current = buildAnim(motionClockRef.current);
-      if (canvasRef.current) renderToCanvas(canvasRef.current, previewScaleRef.current);
       raf = requestAnimationFrame(tick);
+      const now = performance.now();
+      if (last >= 0 && now - last < FRAME) return;
+      last = now;
+      motionClockRef.current = ((now - t0) / 1000) % motionTotal;
+      animRef.current = buildAnim(motionClockRef.current);
+      if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, motionScaleRef.current);
     };
     raf = requestAnimationFrame(tick);
-    return () => { cancelAnimationFrame(raf); animRef.current = null; };
-  }, [motionOn, imageState, saveState, videoProg, buildAnim, motionTotal, renderToCanvas]);
+    return () => cancelAnimationFrame(raf);
+  }, [motionOn, motionPlaying, motionSeq, imageState, videoProg, buildAnim, motionTotal]);
 
-  /* 關掉動態要把畫面收回靜態，不然會停在動畫的某一格。
+  /* 暫停時要把「停住的那一格」留在畫布上：animRef 還是那一格，
+     但因為迴圈停了，任何 React 重繪都得自己重畫一次才對得上。 */
+  useEffect(() => {
+    if (!motionOn || motionPlaying || !imageState || !canvasRef.current || videoProg !== null) return;
+    animRef.current = buildAnim(motionClockRef.current);
+    renderToCanvas(canvasRef.current, motionScaleRef.current);
+  }, [motionOn, motionPlaying, imageState, videoProg, buildAnim, renderToCanvas]);
+
+  /* 離開動畫頁要把畫面收回靜態，不然會停在動畫的某一格。
      這裡一定要「自己重畫一次」——setForceRender 只是讓元件重新 render，
      負責畫布的那個 effect 相依的是 renderCanvas 的身分，不會因此重跑，
      所以畫面會原封不動停在最後那一格。 */
   useEffect(() => {
-    if (motionOn) return;
+    if (motionOn || videoProg !== null) return;
     motionClockRef.current = 0;
     animRef.current = null;
     if (canvasRef.current && imageState) renderToCanvas(canvasRef.current, previewScaleRef.current);
     setForceRender(p => p + 1);
-  }, [motionOn, imageState, renderToCanvas]);
+  }, [motionOn, videoProg, imageState, renderToCanvas]);
 
-  /* 在動態頁直接點畫布上的物件，下面的參數就跟著切過去 */
+  /** 從頭播一次。換動畫種類時自動叫它 —— 不然改完要自己等一圈才看得到。 */
+  const replayMotion = useCallback(() => {
+    motionClockRef.current = 0;
+    setMotionPlaying(true);
+    setMotionSeq(n => n + 1);
+  }, []);
+
+  /* 一進動畫頁就從頭播 */
+  useEffect(() => {
+    if (activeTab !== 'motion') return;
+    motionClockRef.current = 0;
+    setMotionPlaying(true);
+    setMotionSeq(n => n + 1);
+  }, [activeTab]);
+
+  /* 在動畫頁直接點畫布上的物件，下面的參數就跟著切過去 */
   useEffect(() => {
     if (activeTab === 'motion' && selectedObj) setMoTarget(selectedObj);
   }, [activeTab, selectedObj]);
@@ -2905,36 +3033,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
       `}</style>
 
-      {/* 匯出前先問：這一張要存成會動的影片，還是靜態的圖片？
-          只有開著「動態」時才會問；沒開就直接存圖，跟以前一樣。 */}
-      {exportAsk && (
-        <div className="fixed inset-0 z-[115] bg-black/80 backdrop-blur-md flex items-end justify-center animate-in fade-in duration-150"
-          onClick={() => setExportAsk(false)}>
-          <div className="w-full max-w-md p-5 pb-[calc(env(safe-area-inset-bottom,0px)+20px)] animate-in slide-in-from-bottom duration-200"
-            onClick={e => e.stopPropagation()}>
-            <p className="text-[10px] font-black uppercase tracking-[0.3em] text-white/40 text-center mb-3">要存成什麼</p>
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={() => { setExportAsk(false); exportVideo(); }}
-                className="h-24 rounded-2xl border border-white/15 bg-white/5 hover:bg-white/10 active:scale-95 transition-all flex flex-col items-center justify-center gap-2"
-              >
-                <Icon name="movie" className="text-[26px] text-white/85" />
-                <span className="text-[11px] font-bold tracking-widest text-white/90">影片</span>
-                <span className="text-[9px] text-white/35">會動的，跑兩圈</span>
-              </button>
-              <button
-                onClick={() => { setExportAsk(false); handleSave(); }}
-                className="h-24 rounded-2xl border border-white/15 bg-white/5 hover:bg-white/10 active:scale-95 transition-all flex flex-col items-center justify-center gap-2"
-              >
-                <Icon name="image" className="text-[26px] text-white/85" />
-                <span className="text-[11px] font-bold tracking-widest text-white/90">圖片</span>
-                <span className="text-[9px] text-white/35">原尺寸 PNG</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 匯出影片的進度。用同一條算圖管線一格一格畫，所以會花一點時間。 */}
       {videoProg !== null && (
         <div className="fixed inset-0 z-[116] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center gap-4">
@@ -3155,12 +3253,40 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               )}
             </div>
 
-            <button
-              onClick={(e) => { e.stopPropagation(); if (motionOn) setExportAsk(true); else handleSave(); }}
-              className="bg-white text-black px-6 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap"
-            >
-              儲存
-            </button>
+            {/* 儲存：點一下，兩顆選項從它正下方延伸出來（不論有沒有設動畫都有影片） */}
+            <div className="relative shrink-0">
+              <button
+                onClick={(e) => { e.stopPropagation(); setExportAsk(v => !v); }}
+                className={`px-6 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-all whitespace-nowrap ${
+                  exportAsk ? 'bg-white/15 text-white' : 'bg-white text-black'
+                }`}
+              >
+                儲存
+              </button>
+              {/* 展開／收合都走同一組 transition，所以兩個方向都是順的 */}
+              <div
+                className="absolute right-0 top-full mt-2 z-[60] flex flex-col gap-2 origin-top-right transition-all duration-200 ease-out"
+                style={{
+                  opacity: exportAsk ? 1 : 0,
+                  transform: exportAsk ? 'translateY(0) scale(1)' : 'translateY(-6px) scale(0.94)',
+                  pointerEvents: exportAsk ? 'auto' : 'none',
+                }}
+              >
+                {([
+                  ['圖片', <ImageIcon key="i" size={13} />, () => handleSave()],
+                  ['影片', <Film key="v" size={13} />, () => exportVideo()],
+                ] as const).map(([name, icon, run], i) => (
+                  <button
+                    key={name}
+                    onClick={(e) => { e.stopPropagation(); setExportAsk(false); (run as () => void)(); }}
+                    style={{ transitionDelay: exportAsk ? `${i * 45}ms` : '0ms' }}
+                    className="pl-3 pr-4 h-9 rounded-full bg-[#141414] border border-white/15 text-white text-[11px] font-bold tracking-widest whitespace-nowrap shadow-[0_6px_20px_rgba(0,0,0,0.6)] active:scale-95 hover:bg-[#1d1d1d] transition-all duration-200 flex items-center gap-2"
+                  >
+                    {icon}儲存{name}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
         <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
@@ -3170,7 +3296,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       
       <main 
         className="flex-1 flex items-center justify-center relative p-4 interactive-area overflow-hidden no-callout no-select"
-        onPointerDown={() => setSelectedTarget(null)}
+        onPointerDown={() => { setSelectedTarget(null); setExportAsk(false); }}
       >
         {imageState && (
           <div
@@ -3347,7 +3473,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   activeTab === id ? 'text-white border-white' : 'text-[#555] border-transparent'
                 }`}
               >
-                {id === 'setting' ? <Crop size={16} className="mx-auto" /> : id === 'add' ? <Plus size={16} className="mx-auto" /> : id === 'objedit' ? <SlidersHorizontal size={16} className="mx-auto" /> : id === 'motion' ? <Icon name="animation" className="text-[17px] leading-none mx-auto block" /> : <Star size={16} className="mx-auto" />}
+                {id === 'setting' ? <Crop size={16} className="mx-auto" /> : id === 'add' ? <Plus size={16} className="mx-auto" /> : id === 'objedit' ? <SlidersHorizontal size={16} className="mx-auto" /> : id === 'motion' ? <Film size={16} className="mx-auto" /> : <Star size={16} className="mx-auto" />}
               </button>
             ))}
           </div>
@@ -3575,48 +3701,68 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 );
               })()}
               {activeTab === 'motion' && (() => {
-                /* 動態頁。上面挑要調哪個元素（圖案／連線／每一個物件），
-                   下面就是那個元素的參數。所有改動都是即時的 ——
-                   預覽就在上面那張畫布上，不需要「重新產生」。 */
+                /* 動畫頁。最上面是常駐的播放列（往下捲也不會跑掉），
+                   下面挑要調哪個元素，再下面就是那個元素的參數。
+                   所有改動都是即時的，換動畫種類還會自動重播一次。 */
                 const selObj = objects.find(o => o.id === moTarget) || null;
                 const cur: MoCfg = moTarget === 'shape' ? moShape : selObj ? moOf(selObj) : MO_DEFAULT;
                 const setCur = (d: Partial<MoCfg>) => {
                   if (moTarget === 'shape') setMoShape(m => ({ ...m, ...d }));
                   else if (selObj) patchMo(selObj.id, d);
                 };
+                // 換動畫種類 → 從頭播一次，不用自己等一圈
+                const pickKind = (d: Partial<MoCfg>) => { setCur(d); replayMotion(); };
                 const chip = (on: boolean) =>
                   `px-3 h-8 shrink-0 rounded-[8px] border text-[11px] font-bold tracking-wider transition-all ${
                     on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
                        : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
+                const cell = (on: boolean) =>
+                  `h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${
+                    on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                       : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
                 const label = (t: string) =>
-                  <p className="text-[10px] font-bold text-[#666] uppercase tracking-widest mb-2 mt-3">{t}</p>;
-                // 圖案是一整群、共用一個路徑，翻轉那種單體效果套上去只會亂
-                const inList = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : IN_KINDS;
+                  <p className="text-[10px] font-bold text-[#666] uppercase tracking-widest mb-2 mt-4">{t}</p>;
+                // 圖案是一整群、共用一條路徑，翻轉那種單體效果套上去只會亂
+                const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : IN_KINDS;
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
-                    {/* 總開關 ＋ 循環間隔 */}
-                    <div className="flex items-center gap-3 mb-1">
+                    {/* 常駐的播放列：黏在最上面，捲多遠都按得到 */}
+                    <div className="sticky -top-5 z-20 -mx-1 px-1 pt-5 pb-2 -mt-5 bg-[#0a0a0a] flex items-center gap-2">
                       <button
-                        onClick={() => setMotionOn(v => !v)}
-                        className={`h-9 px-4 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
-                          motionOn ? 'bg-white text-black border-white' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}
+                        onClick={() => (motionPlaying ? replayMotion() : setMotionPlaying(true))}
+                        title="播放"
+                        className={`h-9 w-11 rounded-[8px] border flex items-center justify-center transition-all ${
+                          motionPlaying ? 'bg-white text-black border-white' : 'border-[#1a1a1a] text-[#666] hover:bg-[#111] hover:text-white'}`}
                       >
-                        {motionOn ? '播放中' : '開始播放'}
+                        <Play size={15} fill="currentColor" strokeWidth={0} />
+                      </button>
+                      <button
+                        onClick={() => setMotionPlaying(false)}
+                        title="暫停"
+                        className={`h-9 w-11 rounded-[8px] border flex items-center justify-center transition-all ${
+                          !motionPlaying ? 'bg-white text-black border-white' : 'border-[#1a1a1a] text-[#666] hover:bg-[#111] hover:text-white'}`}
+                      >
+                        <Pause size={15} fill="currentColor" strokeWidth={0} />
+                      </button>
+                      <button
+                        onClick={replayMotion}
+                        title="從頭播"
+                        className="h-9 w-11 rounded-[8px] border border-[#1a1a1a] text-[#666] hover:bg-[#111] hover:text-white flex items-center justify-center transition-all"
+                      >
+                        <RotateCcw size={15} />
                       </button>
                       <div className="flex-1 min-w-0">
                         <CompactSlider label="循環間隔" value={motionHold} min={0} max={5} step={0.1}
                           onChange={(v: number) => setMotionHold(v)} />
                       </div>
                     </div>
-                    <p className="text-[9px] text-white/25 leading-relaxed">
-                      一圈 {motionTotal.toFixed(1)} 秒。上面的預覽就是最後輸出的樣子，改哪裡都馬上看得到。
-                    </p>
 
                     {/* 要調哪一個元素 */}
-                    {label('調整對象')}
-                    <div className="flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
+                    <div className="flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1 mt-1">
                       <button onClick={() => setMoTarget('shape')} className={chip(moTarget === 'shape')}>圖案</button>
-                      {hasLink && <button onClick={() => setMoTarget('link')} className={chip(moTarget === 'link')}>連線</button>}
+                      {hasLink && <button onClick={() => setMoTarget('link')} className={chip(moTarget === 'link')}>
+                        {linkMode === 'dash' ? '虛線' : '連線'}
+                      </button>}
                       {objects.map((o, i) => (
                         <button key={o.id}
                           onClick={() => { setMoTarget(o.id); setSelectedObj(o.id); }}
@@ -3630,7 +3776,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       <>
                         {label('時間')}
                         <div className="grid grid-cols-2 gap-4">
-                          <CompactSlider label="起始時間" value={moLink.delay} min={0} max={8} step={0.1}
+                          <CompactSlider label="起始" value={moLink.delay} min={0} max={8} step={0.1}
                             onChange={(v: number) => setMoLink(m => ({ ...m, delay: v }))} />
                           <CompactSlider label="畫完要多久" value={moLink.dur} min={0.2} max={8} step={0.1}
                             onChange={(v: number) => setMoLink(m => ({ ...m, dur: v }))} />
@@ -3638,11 +3784,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         {label('曲線變速')}
                         <div className="grid grid-cols-3 gap-2">
                           {LINK_EASES.map(e => (
-                            <button key={e.id} onClick={() => setMoLink(m => ({ ...m, ease: e.id }))}
-                              className={`h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${
-                                moLink.ease === e.id
-                                  ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                                  : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
+                            <button key={e.id}
+                              onClick={() => { setMoLink(m => ({ ...m, ease: e.id })); replayMotion(); }}
+                              className={cell(moLink.ease === e.id)}>
                               {e.name}
                             </button>
                           ))}
@@ -3652,36 +3796,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       <p className="text-[11px] text-white/40 text-center py-8">這個物件已經不在了，請重新選一個</p>
                     ) : (
                       <>
-                        {label('時間')}
-                        <div className="grid grid-cols-2 gap-4">
-                          <CompactSlider label="起始時間" value={cur.delay} min={0} max={8} step={0.1}
-                            onChange={(v: number) => setCur({ delay: v })} />
-                          <CompactSlider label={moTarget === 'shape' ? '全部冒完要多久' : '出場要多久'}
-                            value={cur.dur} min={0.2} max={8} step={0.1}
-                            onChange={(v: number) => setCur({ dur: v })} />
-                        </div>
-
-                        {label('出場動畫')}
-                        <div className="grid grid-cols-4 gap-2">
-                          {inList.map(k => (
-                            <button key={k.id} onClick={() => setCur({ in: k.id })}
-                              className={`h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${
-                                cur.in === k.id
-                                  ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                                  : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
+                        {label('進場動畫')}
+                        <div className="grid grid-cols-3 gap-2">
+                          {kinds.map(k => (
+                            <button key={k.id} onClick={() => pickKind({ in: k.id })} className={cell(cur.in === k.id)}>
                               {k.name}
                             </button>
                           ))}
+                        </div>
+                        <div className="grid grid-cols-2 gap-4 mt-3">
+                          <CompactSlider label="起始" value={cur.delay} min={0} max={8} step={0.1}
+                            onChange={(v: number) => setCur({ delay: v })} />
+                          <CompactSlider label={moTarget === 'shape' ? '全部進完' : '進場時長'}
+                            value={cur.dur} min={0.2} max={8} step={0.1}
+                            onChange={(v: number) => setCur({ dur: v })} />
                         </div>
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
                           {IDLE_KINDS.map(k => (
-                            <button key={k.id} onClick={() => setCur({ idle: k.id })}
-                              className={`h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${
-                                cur.idle === k.id
-                                  ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                                  : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
+                            <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>
                           ))}
@@ -3692,6 +3826,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               onChange={(v: number) => setCur({ amp: v })} />
                             <CompactSlider label="快慢" value={Math.round(cur.speed * 100)} min={20} max={300} step={1}
                               onChange={(v: number) => setCur({ speed: v / 100 })} />
+                          </div>
+                        )}
+
+                        {label('離場動畫')}
+                        <div className="grid grid-cols-3 gap-2">
+                          <button onClick={() => pickKind({ out: 'none' })} className={cell(cur.out === 'none')}>不離場</button>
+                          {kinds.filter(k => k.id !== 'none').map(k => (
+                            <button key={k.id} onClick={() => pickKind({ out: k.id })} className={cell(cur.out === k.id)}>
+                              {k.name}
+                            </button>
+                          ))}
+                        </div>
+                        {cur.out !== 'none' && (
+                          <div className="grid grid-cols-2 gap-4 mt-3">
+                            <CompactSlider label="起始" value={cur.outDelay} min={0} max={14} step={0.1}
+                              onChange={(v: number) => setCur({ outDelay: v })} />
+                            <CompactSlider label={moTarget === 'shape' ? '全部離完' : '離場時長'}
+                              value={cur.outDur} min={0.2} max={8} step={0.1}
+                              onChange={(v: number) => setCur({ outDur: v })} />
                           </div>
                         )}
                       </>
@@ -3751,34 +3904,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <CompactSlider label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
                     <CompactSlider label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
                   </div>
-                  {/* 連線：每個圖案拉一條極細的線到最近的鄰居。
+                  {/* 連線／虛線：每個圖案拉一條極細的線到最近的鄰居。
+                      兩者只差線型，所以是同一組三態，按下另一個就會換過去。
                       只有前六種有明確中心的圖案支援，其餘一律不給按。 */}
                   <div className="flex gap-2 mt-3">
-                    <button
-                      onClick={() => linkSupported && setLinkShapes(v => !v)}
-                      disabled={!linkSupported}
-                      title={linkSupported ? '把每個圖案連到最近的鄰居' : '這個圖案不支援連線'}
-                      className={`flex-1 h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
-                        !linkSupported
-                          ? 'border-[#1a1a1a] text-[#333] cursor-default'
-                          : linkShapes
-                            ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                            : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
-                      }`}
-                    >
-                      連線
-                    </button>
-                    <button
-                      onClick={() => { setMotionOn(v => !v); setActiveTab('motion'); }}
-                      title="讓畫面動起來，直接在上面的預覽區看"
-                      className={`flex-1 h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
-                        motionOn
-                          ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                          : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
-                      }`}
-                    >
-                      動態
-                    </button>
+                    {([['solid', '連線'], ['dash', '虛線']] as const).map(([mode, name]) => (
+                      <button
+                        key={mode}
+                        onClick={() => linkSupported && setLinkMode(v => (v === mode ? 'none' : mode))}
+                        disabled={!linkSupported}
+                        title={linkSupported ? `把每個圖案用${name}連到最近的鄰居` : `這個圖案不支援${name}`}
+                        className={`flex-1 h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
+                          !linkSupported
+                            ? 'border-[#1a1a1a] text-[#333] cursor-default'
+                            : linkMode === mode
+                              ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                              : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
+                        }`}
+                      >
+                        {name}
+                      </button>
+                    ))}
                   </div>
                 </div>}
                 </div>
