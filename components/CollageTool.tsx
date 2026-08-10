@@ -48,6 +48,8 @@ const MAX_FINAL_DIM = 4096;
 const MAX_EXPORT_PIXELS = 20_000_000;
 /** IG 預覽裡「貼文與貼文之間」的間距。頭、尾、中間統一都用這個值 */
 const IG_GAP = 14;
+/** 動態牆最上面與最下面多留的空間：多一點才滑得舒服 */
+const IG_EDGE = 48;
 /** 動態影片的長邊上限。1440 已經比手機螢幕還細，再高只是白燒編碼時間 */
 const MOTION_MAX_DIM = 1440;
 /**
@@ -1852,14 +1854,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     return () => { alive = false; };
   }, [activeTab, adjustSub, lutList]);
 
-  /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了 ——
-     要先放掉寫死的尺寸讓 max-w/max-h 重新貼合，否則會卡在舊尺寸。 */
+  /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了。
+     以前的作法是先把尺寸設成 null、讓 max-w/max-h 自己貼合一次，
+     下一格再換成算好的尺寸 —— 中間那一格是「舊比例硬塞進新框」，
+     看起來就是被壓一下再彈回來的果凍。
+     現在直接照新的排版算出最終尺寸，一步到位，中間沒有過渡狀態。 */
+  const sizeSnapRef = useRef(false);
   useEffect(() => {
-    setBaseCss(null);
-    // 縮放也一起歸零：新的形狀要先用 max-w/max-h 量一次基準尺寸才量得準
     setViewT({ k: 1, tx: 0, ty: 0 });
     setPreviewScale(1);
-  }, [layout, maskScale]);
+    // 這一次的尺寸變化不要做過場動畫（放大狀態下換排版才不會拉一下）
+    sizeSnapRef.current = true;
+    const st = stageRef.current;
+    if (!st || !imageState) { setBaseCss(null); return; }
+    const cs = collageSizeOf(layout, imageState.baseW, imageState.baseH, maskScale);
+    const sb = st.getBoundingClientRect();
+    const availW = Math.max(1, sb.width - 32), availH = Math.max(1, sb.height - 32);
+    if (!(cs.w > 0 && cs.h > 0) || !(availW > 1 && availH > 1)) { setBaseCss(null); return; }
+    const f = Math.min(availW / cs.w, availH / cs.h);
+    setBaseCss({ w: cs.w * f, h: cs.h * f });
+    const t = window.setTimeout(() => { sizeSnapRef.current = false; }, 260);
+    return () => window.clearTimeout(t);
+  }, [layout, maskScale, imageState]);
 
   // 換一張圖就把縮放歸零
   const viewResetKeyRef = useRef('');
@@ -3281,7 +3297,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           className="fixed inset-0 z-[120] bg-black overflow-y-auto animate-in fade-in duration-200"
           /* none 而不是 contain：contain 只擋住「傳給外層」，自己還是會橡皮筋。
              已經在第一篇的最上面時再往上拉，畫面不該有任何位移。 */
-          style={{ overscrollBehavior: 'none', scrollbarWidth: 'none', paddingTop: IG_GAP, paddingBottom: IG_GAP }}
+          style={{ overscrollBehavior: 'none', scrollbarWidth: 'none', paddingTop: IG_EDGE, paddingBottom: IG_EDGE }}
         >
           {(['pic', 'vid'] as const).map((kind, i) => (
             /* 貼文與貼文之間、以及頭尾，統一都是同一個間距 */
@@ -3310,16 +3326,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               />
             </div>
           ))}
-          {/* 關閉鍵只畫一顆，蓋在整疊的右上角 */}
-          <button
-            onClick={() => setIgPreview(false)}
-            title="關閉"
-            className="fixed top-3 right-3 z-[121] w-10 h-10 flex items-center justify-center text-white active:opacity-60"
-          >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
-              <path d="M5 9.5h14M5 15h14" />
-            </svg>
-          </button>
+
         </div>
       )}
 
@@ -3611,7 +3618,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   /* 尺寸過場只在「正在縮放」時才有意義。換排版時畫布形狀會整個換掉，
                      這時候讓寬高做動畫就會看到那種果凍般的伸縮（桌機用滾輪縮放特別明顯）。 */
                   transition: [
-                    (viewPinchRef.current || viewT.k === 1) ? '' : 'width 90ms linear, height 90ms linear',
+                    (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? '' : 'width 90ms linear, height 90ms linear',
                     `transform 420ms ${MOTION_EASE}`,
                   ].filter(Boolean).join(', '),
                   cursor: brushMode === 'pen' ? 'crosshair' : brushMode === 'eraser' ? 'pointer' : 'default' 

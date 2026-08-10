@@ -1490,10 +1490,12 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   const igFrame = frame;
   /* 預覽裡的帳號與頭像：兩個都能改，存在本機，下次開還在。 */
   const [igAccount, setIgAccount] = useState(() => {
-    try { return localStorage.getItem(KEY('account')) || 'abai_is.perfect'; } catch { return 'abai_is.perfect'; }
+    /* 預覽裡改的東西都不留檔 —— 關掉再開就回到預設。
+       帳號、頭貼、數字、愛心、珍藏全部都是這個規則。 */
+    return 'abai_is.perfect';
   });
   const [igAvatar, setIgAvatar] = useState(() => {
-    try { return localStorage.getItem(KEY('avatar')) || ''; } catch { return ''; }
+    return '';
   });
   const igAvatarInputRef = useRef<HTMLInputElement>(null);
   /** 上一個「有效」的名字：清成空白再點別的地方時要還原成它 */
@@ -1503,7 +1505,6 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     const name = v.trim().slice(0, 30) || lastIgNameRef.current || 'abai_is.perfect';
     lastIgNameRef.current = name;
     setIgAccount(name);
-    try { localStorage.setItem(KEY('account'), name); } catch { /* 無痕模式寫不進去就算了 */ }
   };
 
   /** 上傳的頭像先置中裁成正方形、縮到 240px 再存 —— 原圖直接塞會撐爆本機空間 */
@@ -1520,7 +1521,6 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
         g.drawImage(im, (im.naturalWidth - s) / 2, (im.naturalHeight - s) / 2, s, s, 0, 0, S, S);
         const data = c.toDataURL('image/png');
         setIgAvatar(data);
-        try { localStorage.setItem(KEY('avatar'), data); } catch { /* 存不下就只用這一次 */ }
       }
       URL.revokeObjectURL(url);
     };
@@ -1547,8 +1547,8 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
      IG 的貼文下面本來就是可以互動的，預覽也要能改：四個數字點下去直接打字，
      愛心與書籤點一下就切換（愛心亮著時讚數 +1，跟 IG 一樣）。
      全部存在本機，下次開還在。 */
-  const readStat = (k: string, dflt: string) => {
-    try { return localStorage.getItem(KEY(k)) ?? dflt; } catch { return dflt; }
+  const readStat = (_k: string, dflt: string) => {
+    return dflt;
   };
   const [igLikes, setIgLikes] = useState(() => readStat('likes', '5,850'));
   const [igComments, setIgComments] = useState(() => readStat('comments', '6'));
@@ -1557,8 +1557,8 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   const [igCaption, setIgCaption] = useState(() => readStat('caption', '和其他人都說讚'));
   const [igLiked, setIgLiked] = useState(() => readStat('liked', '0') === '1');
   const [igSaved, setIgSaved] = useState(() => readStat('saved', '0') === '1');
-  const saveStat = (k: string, v: string) => {
-    try { localStorage.setItem(KEY(k), v); } catch { /* 無痕模式寫不進去就算了 */ }
+  const saveStat = (_k: string, _v: string) => {
+    /* 刻意不寫檔：預覽裡的自訂內容只活在這一次開啟期間 */
   };
   /** 讚數加一：只認數字，逗號原樣留著（5,850 → 5,851） */
   const bumpLikes = (n: number) => setIgLikes(prev => {
@@ -1699,19 +1699,16 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                   {picked ? `${picked.name} · ${picked.artist}` : `原創音訊 · ${igAccount}`}
                 </button>
               </div>
-              {/* IG 現在的版本右上角是兩條橫線；這裡順便當關閉鍵。
-                  內嵌時每一篇都畫一顆會很吵，交給外面那層畫一顆就好。 */}
-              {!embedded && (
-                <button
-                  onClick={() => onClose()}
-                  className="w-10 h-10 shrink-0 flex items-center justify-center text-white active:opacity-60"
-                  title="關閉"
-                >
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
-                    <path d="M5 9.5h14M5 15h14" />
-                  </svg>
-                </button>
-              )}
+              {/* IG 現在的版本右上角是兩條橫線；這裡順便當關閉鍵。每一篇都有一顆。 */}
+              <button
+                onClick={() => onClose()}
+                className="w-10 h-10 shrink-0 flex items-center justify-center text-white active:opacity-60"
+                title="關閉"
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+                  <path d="M5 9.5h14M5 15h14" />
+                </svg>
+              </button>
             </div>
 
             {/* 貼文的圖：一頁一屏，左右滑 */}
@@ -1873,17 +1870,8 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
               </span>
               <p className="text-[14px] text-white leading-[18px] truncate flex items-baseline min-w-0">
                 <span className="font-semibold shrink-0">{igAccount}</span>
-                <input
-                  value={igCaption}
-                  title="改這一行字"
-                  maxLength={60}
-                  onChange={e => setIgCaption(e.target.value.slice(0, 60))}
-                  onBlur={e => { const v = e.currentTarget.value; setIgCaption(v); saveStat('caption', v); }}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
-                  enterKeyHint="done"
-                  className="flex-1 min-w-0 text-[14px] text-white bg-transparent"
-                  style={{ border: 0, outline: 'none', boxShadow: 'none', padding: 0, margin: 0, lineHeight: '18px' }}
-                />
+                {/* 這一行是固定的說明文字，不給改 */}
+                <span className="flex-1 min-w-0 truncate" style={{ lineHeight: '18px' }}>{igCaption}</span>
               </p>
             </div>
           </div>
