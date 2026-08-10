@@ -132,6 +132,15 @@ const LINK_TYPES = ['circle', 'square', 'cross-star', 'heart', 'star', 'flower']
  * 例如離 B 最近的是 A，但 A 已經連過 B 了，B 就往下找第二近的 ——
  * 所以同一對不會被連兩次，線也不會疊在一起。
  */
+/** 點到線段的最短距離。用來判斷一條連線有沒有壓到別的圖案 */
+const segDist = (px: number, py: number, x1: number, y1: number, x2: number, y2: number) => {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return Math.hypot(px - x1, py - y1);
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+};
+
 const linkEdges = (list: any[]): [any, any][] => {
   const used = new Set<string>();
   const out: [any, any][] = [];
@@ -2187,7 +2196,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const linksFor = (side: 'image' | 'mask') => {
       if (linkMode === 'none' || !LINK_TYPES.includes(holeType)) return [] as [any, any][];
       const list = holes.filter(h => { const sd = h.side || 'both'; return sd === 'both' || sd === side; });
-      return linkEdges(list);
+      /* 會穿過別的圖案的線就整條不畫 —— 線從圖案身上壓過去很醜。
+         判斷用的是圖案「靜止時」的位置與大小，所以結果是穩定的：
+         把圖案挪到不擋路的地方，線自己就回來了。 */
+      return linkEdges(list).filter(([a, b]) => list.every(h => {
+        if (h.id === a.id || h.id === b.id) return true;
+        return segDist(h.x, h.y, a.x, a.y, b.x, b.y) > getHoleSize(h) / 2;
+      }));
     };
     /** 把連線描在目前的座標系上（呼叫端已經 translate 到正確的原點）。
         端點跟著圖案的動態走，所以圖案在飄的時候線也黏著它們。 */
@@ -2778,7 +2793,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
      常駐維持上下飄（圖片與文字才是預設靜止）。 */
   const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: 3, idle: 'float' });
   /** 連線：起始、畫完要多久、以及線往前長的曲線 */
-  const [moLink, setMoLink] = useState({ delay: 0, dur: 2.2, ease: 'linear' });
+  const [moLink, setMoLink] = useState({ delay: 0, dur: 3, ease: 'linear' });
   /** 動畫頁上正在調哪一個元素：'shape' | 'link' | 物件 id */
   const [moTarget, setMoTarget] = useState<string>('shape');
   /** 匯出成影片時的進度（0～1）；null = 沒在匯出 */
@@ -3177,7 +3192,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       {igPreview && (
         <div
           className="fixed inset-0 z-[120] bg-black overflow-y-auto snap-y snap-mandatory animate-in fade-in duration-200"
-          style={{ overscrollBehavior: 'contain', scrollbarWidth: 'none' }}
+          /* none 而不是 contain：contain 只擋住「傳給外層」，自己還是會橡皮筋。
+             已經在第一篇的最上面時再往上拉，畫面不該有任何位移。 */
+          style={{ overscrollBehavior: 'none', scrollbarWidth: 'none' }}
         >
           {(['pic', 'vid'] as const).map(kind => (
             <div key={kind} className="w-full snap-start" style={{ height: '100dvh' }}>
@@ -3193,7 +3210,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 slot={kind}
                 embedded
                 video={kind === 'vid' ? (igVideo || undefined) : undefined}
-                hasVideo={(_i: number) => kind === 'vid'}
+                /* 影片那篇也不給音量鍵：預覽本來就沒有聲音，多一顆只會擋到畫面 */
+                hasVideo={(_i: number) => false}
                 music={igMusic}
                 onMusicChange={setIgMusic}
                 onClose={() => setIgPreview(false)}
@@ -3582,6 +3600,37 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           </div>
         )}
 
+        {/* 動畫頁的播放列：浮在預覽畫布下緣（工具欄上方），
+            把工具欄的空間整條讓出來給參數。 */}
+        {activeTab === 'motion' && imageState && !colorPickerTarget && (
+          <div className="absolute left-3 right-3 bottom-3 z-30 flex items-center gap-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/10 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.5)]">
+            <button
+              onClick={() => setMotionPlaying(v => !v)}
+              title={motionPlaying ? '暫停' : '播放'}
+              /* 按鈕顯示的是「現在的狀態」：播放中＝實心，暫停中＝空心白框 */
+              className={`h-9 w-11 shrink-0 rounded-[8px] border flex items-center justify-center transition-all active:scale-90 ${
+                motionPlaying
+                  ? 'bg-white text-black border-white'
+                  : 'bg-transparent text-white border-white'}`}
+            >
+              {motionPlaying
+                ? <Play size={15} fill="currentColor" strokeWidth={0} />
+                : <Pause size={15} fill="currentColor" strokeWidth={0} />}
+            </button>
+            <button
+              onClick={replayMotion}
+              title="從頭播"
+              className="h-9 w-11 shrink-0 rounded-[8px] border border-white/15 text-white/70 hover:bg-white/10 hover:text-white flex items-center justify-center transition-all active:scale-90"
+            >
+              <RotateCcw size={15} />
+            </button>
+            <div className="flex-1 min-w-0">
+              <CompactSlider label="循環間隔" value={Math.round(motionHold * 10)} min={0} max={80} step={1}
+                onChange={(v: number) => setMotionHold(v / 10)} />
+            </div>
+          </div>
+        )}
+
       </main>
 
       <input
@@ -3635,42 +3684,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           </div>
         )}
         
-        {/* 動畫頁的播放列。放在捲動區「外面」，所以跟上面那排分類鍵一樣
-            是真的固定在原地，捲到最底也不會被推走。 */}
-        {activeTab === 'motion' && !colorPickerTarget && (
-          <div className="shrink-0 px-5 pt-3 pb-2 border-b border-[#141414] flex items-center gap-2">
-            <button
-              onClick={() => setMotionPlaying(v => !v)}
-              title={motionPlaying ? '暫停' : '播放'}
-              className={`h-9 w-11 rounded-[8px] border flex items-center justify-center transition-all ${
-                motionPlaying
-                  ? 'bg-white text-black border-white'
-                  : 'bg-transparent text-white border-white'}`}
-            >
-              {motionPlaying
-                ? <Pause size={15} fill="currentColor" strokeWidth={0} />
-                : <Play size={15} fill="currentColor" strokeWidth={0} />}
-            </button>
-            <button
-              onClick={replayMotion}
-              title="從頭播"
-              className="h-9 w-11 rounded-[8px] border border-[#1a1a1a] text-[#666] hover:bg-[#111] hover:text-white flex items-center justify-center transition-all"
-            >
-              <RotateCcw size={15} />
-            </button>
-            <div className="flex-1 min-w-0">
-              <CompactSlider label="循環間隔" value={Math.round(motionHold * 10)} min={0} max={80} step={1}
-                onChange={(v: number) => setMotionHold(v / 10)} />
-            </div>
-          </div>
-        )}
-
         {/* pb-20 本來是留給右下角那顆浮動按鈕的空間，但「圖案」頁是左右分欄、
             自己就會捲，那 80px 只會在下面留一條黑色空白、把工具欄擠得很小。 */}
         {/* 圖片編輯那一頁是「滑桿 5rem ＋ 工具列 6rem ＋ 分類列 h-16」的三段式，
             自己就把整個高度切好了。再包一層 p-5 會整個縮一圈、上面那根滑桿
             還會被擠出可視範圍 —— 所以這一頁完全不加內距，跟經典拼圖一樣。 */}
-        <div ref={scrollContainerRef} className={`flex-1 ${objEditImage ? 'overflow-hidden' : `p-5 ${colorPickerTarget || activeTab === 'shape' || activeTab === 'objedit' ? 'pb-5' : 'pb-20'} custom-scrollbar ${
+        <div ref={scrollContainerRef} style={{ overscrollBehavior: 'contain' }} className={`flex-1 ${objEditImage ? 'overflow-hidden' : `p-5 ${colorPickerTarget || activeTab === 'shape' || activeTab === 'objedit' || activeTab === 'motion' ? 'pb-5' : 'pb-20'} custom-scrollbar ${
           (activeTab === 'setting' && !colorPickerTarget) ||
           (activeTab === 'add' && !colorPickerTarget) ||
           (activeTab === 'objedit' && !colorPickerTarget) ||
@@ -3934,7 +3953,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <div className="grid grid-cols-2 gap-4 mt-4">
                           <CompactSlider label="起始" value={Math.round(moLink.delay * 10)} min={0} max={80} step={1}
                             onChange={(v: number) => setMoLink(m => ({ ...m, delay: v / 10 }))} />
-                          <CompactSlider label="進場耗時" value={Math.round(moLink.dur * 10)} min={2} max={80} step={1}
+                          {/* 線畫太久會讓整圈拖很長，所以上限只到 10 秒 */}
+                          <CompactSlider label="進場耗時" value={Math.round(moLink.dur * 10)} min={2} max={100} step={1}
                             onChange={(v: number) => setMoLink(m => ({ ...m, dur: v / 10 }))} />
                         </div>
                         <div className="grid grid-cols-2 gap-2 mt-3">
@@ -4042,27 +4062,32 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <CompactSlider label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
                     <CompactSlider label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
                   </div>
-                  {/* 連線／虛線：每個圖案拉一條極細的線到最近的鄰居。
-                      兩者只差線型，所以是同一組三態，按下另一個就會換過去。
+                  {/* 連線：每個圖案拉一條極細的線到最近的鄰居。
+                      版型跟上面那幾根滑桿一致 —— 左上是名稱，下面才是選項。
                       只有前六種有明確中心的圖案支援，其餘一律不給按。 */}
-                  <div className="flex gap-2 mt-3">
-                    {([['solid', '連線'], ['dash', '虛線']] as const).map(([mode, name]) => (
-                      <button
-                        key={mode}
-                        onClick={() => linkSupported && setLinkMode(v => (v === mode ? 'none' : mode))}
-                        disabled={!linkSupported}
-                        title={linkSupported ? `把每個圖案用${name}連到最近的鄰居` : `這個圖案不支援${name}`}
-                        className={`flex-1 h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
-                          !linkSupported
-                            ? 'border-[#1a1a1a] text-[#333] cursor-default'
-                            : linkMode === mode
-                              ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                              : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
-                        }`}
-                      >
-                        {name}
-                      </button>
-                    ))}
+                  <div className="flex flex-col mt-3">
+                    <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
+                      <span>連線</span>
+                    </div>
+                    <div className="flex gap-2">
+                      {([['none', '關閉'], ['solid', '實線'], ['dash', '虛線']] as const).map(([mode, name]) => (
+                        <button
+                          key={mode}
+                          onClick={() => linkSupported && setLinkMode(mode)}
+                          disabled={!linkSupported}
+                          title={linkSupported ? `圖案之間的連線：${name}` : '這個圖案不支援連線'}
+                          className={`flex-1 h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
+                            !linkSupported
+                              ? 'border-[#1a1a1a] text-[#333] cursor-default'
+                              : linkMode === mode
+                                ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                                : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
+                          }`}
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>}
                 </div>
