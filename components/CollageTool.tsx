@@ -309,6 +309,16 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
   }
 };
 
+/* ── 速度 ──────────────────────────────────────────────────────
+   面板上調的是「速度 0～100」，內部存的還是秒數。
+   用指數對應而不是線性：線性的話中段幾乎感覺不到差別，
+   而兩端又變化太劇烈。0 → 10 秒、50 → 1.7 秒、100 → 0.3 秒。 */
+const SPEED_SLOW = 10, SPEED_FAST = 0.3;
+export const durFromSpeed = (sp: number) =>
+  SPEED_SLOW * Math.pow(SPEED_FAST / SPEED_SLOW, Math.max(0, Math.min(100, sp)) / 100);
+export const speedFromDur = (d: number) =>
+  Math.max(0, Math.min(100, Math.round(100 * Math.log(Math.max(1e-4, d) / SPEED_SLOW) / Math.log(SPEED_FAST / SPEED_SLOW))));
+
 /** 一個元素的動態設定 */
 export type MoCfg = {
   /** 進場 */
@@ -317,7 +327,7 @@ export type MoCfg = {
   idle: string; amp: number; speed: number;
 };
 export const MO_DEFAULT: MoCfg = {
-  delay: 0, dur: 1, in: 'pop',
+  delay: 0, dur: durFromSpeed(60), in: 'pop',
   idle: 'none', amp: 50, speed: 0.9,
 };
 export const moOf = (o: any): MoCfg => ({ ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) });
@@ -2736,9 +2746,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 圖案這一群的動畫設定；每顆圖案再依序錯開 */
   /* 圖案是一整群：「進場耗時」給 3 秒才看得出一顆一顆冒出來，
      常駐維持上下飄（圖片與文字才是預設靜止）。 */
-  const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: 3, idle: 'float' });
+  const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: durFromSpeed(40), idle: 'float' });
   /** 連線：起始、畫完要多久、以及線往前長的曲線 */
-  const [moLink, setMoLink] = useState({ delay: 0, dur: 3, ease: 'linear' });
+  const [moLink, setMoLink] = useState({ delay: 0, dur: durFromSpeed(40), ease: 'linear' });
   /** 動畫頁上正在調哪一個元素：'shape' | 'link' | 物件 id */
   const [moTarget, setMoTarget] = useState<string>('shape');
   /** 匯出成影片時的進度（0～1）；null = 沒在匯出 */
@@ -2770,8 +2780,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const linkStart = shapeTiming.upAt(Math.min(1, shapeTiming.n - 1)) + Math.max(0, moLink.delay);
   const motionTotal = useMemo(() => {
     let end = moEnd(moShape);
-    // 最後一條線最晚也要等最後一顆圖案，所以再留一點點畫線的時間
-    if (hasLink) end = Math.max(end, linkStart + moLink.dur, shapeEnd + Math.max(0, moLink.delay) + 0.15);
+    // 最後一條線要等最後一顆圖案冒完才開始，然後同樣畫滿一整段
+    if (hasLink) end = Math.max(end, shapeEnd + Math.max(0, moLink.delay) + moLink.dur);
     objects.forEach(o => { end = Math.max(end, moEnd(moOf(o))); });
     return Math.max(1.2, end) + Math.max(0, motionHold);
   }, [moShape, moLink, hasLink, linkStart, shapeEnd, objects, motionHold]);
@@ -2788,14 +2798,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const ez = linkEase(moLink.ease);
     return {
       hole: (h: any, i: number) => composeMo(shapeCfg(i), t, hashId(h.id) % 628 / 100),
-      /* 連線的「進場耗時」＝從第一條線可以開始畫算起，這麼多秒之內全部畫完。
-         每條線各自等自己的兩端冒出來才開始，但一律在同一個時間點收工 ——
-         所以早就可以連的那幾條會慢慢畫，晚出現的則畫得快一點。 */
+      /* 每條線各自等自己的兩端冒出來才開始畫，而且「每條線畫的時間都一樣長」。
+         以前是讓所有線在同一個時間點收工，晚開始的那幾條就被壓縮成很短的時間，
+         看起來就是「畫到後面突然變快」。現在速度從頭到尾一致。 */
       link: (ia: number, ib: number) => {
         if (!hasLink) return 1;
-        const deadline = linkStart + Math.max(0.1, moLink.dur);
         const st = Math.max(holeUpAt(ia), holeUpAt(ib)) + Math.max(0, moLink.delay);
-        const span = Math.max(0.15, deadline - st);
+        const span = Math.max(0.1, moLink.dur);
         return ez(Math.max(0, Math.min(1, (t - st) / span)));
       },
       obj: (o: any, i: number) => composeMo(moOf(o), t, (hashId(o.id) % 628) / 100 + i * 0.7),
@@ -2883,29 +2892,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setForceRender(p => p + 1);
   }, [motionOn, videoProg, imageState, renderToCanvas]);
 
-  /* 播放列的自動淡出。播放中閒置 2.4 秒就淡掉，點畫面（或碰到播放列本身）
-     就再亮 2.4 秒；一暫停就一直留著 —— 那時候使用者本來就在找按鈕。 */
-  const [barShown, setBarShown] = useState(true);
-  /* 播放列進場／離場是滑進滑出的，所以離開動畫頁之後要再留 360ms 才卸載，
-     不然它會直接消失、看不到滑出去那一段。 */
+  /* 播放列的進場／離場。
+     barMounted：離開動畫頁之後還要多留一拍才卸載，不然看不到滑出去那一段。
+     barIn：掛上去的第一格必須還是「在下面」的狀態，下一格才翻成「上來」——
+            一掛上去就是最終狀態的話，瀏覽器沒有起點可以補間，
+            看起來就是「啪」一聲直接出現。 */
   const [barMounted, setBarMounted] = useState(false);
+  const [barIn, setBarIn] = useState(false);
   useEffect(() => {
-    if (activeTab === 'motion') { setBarMounted(true); return; }
-    const t = window.setTimeout(() => setBarMounted(false), 380);
+    if (activeTab === 'motion') {
+      setBarMounted(true);
+      const r = requestAnimationFrame(() => requestAnimationFrame(() => setBarIn(true)));
+      return () => cancelAnimationFrame(r);
+    }
+    setBarIn(false);
+    const t = window.setTimeout(() => setBarMounted(false), 460);
     return () => window.clearTimeout(t);
   }, [activeTab]);
-  const barTimerRef = useRef<number | null>(null);
-  const pokeBar = useCallback(() => {
-    setBarShown(true);
-    if (barTimerRef.current) window.clearTimeout(barTimerRef.current);
-    barTimerRef.current = window.setTimeout(() => setBarShown(false), 2400);
-  }, []);
-  useEffect(() => {
-    if (barTimerRef.current) { window.clearTimeout(barTimerRef.current); barTimerRef.current = null; }
-    if (activeTab !== 'motion' || !motionPlaying) { setBarShown(true); return; }
-    barTimerRef.current = window.setTimeout(() => setBarShown(false), 2400);
-    return () => { if (barTimerRef.current) window.clearTimeout(barTimerRef.current); };
-  }, [activeTab, motionPlaying]);
 
   /** 從頭播一次。換動畫種類時自動叫它 —— 不然改完要自己等一圈才看得到。 */
   const replayMotion = useCallback(() => {
@@ -3083,15 +3086,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        ① 上方還有空白 → 純粹往上移（圖不變小，最自然）
        ② 空白不夠 → 剩下的差額用「從頂部往內縮」補（頂部位置不動）
      兩段都是 CSS transform，所以是流暢的過場，不會重新排版也不會重畫。 */
-  const MOTION_CLEAR = 92;                             // 播放列高度 ＋ 上下留白
+  /* 播放列自己離工具欄頂部 12px（bottom-3）。圖片離播放列也要一樣是 12px，
+     所以要讓開的高度 ＝ 12（下） ＋ 播放列高度 ＋ 12（上）。 */
+  const MOTION_CLEAR = 12 + 54 + 12;
   const motionUiOn = activeTab === 'motion' && !!imageState;
   const { mLift, mScale } = (() => {
     if (!motionUiOn || !baseCss || !stageSize.h) return { mLift: 0, mScale: 1 };
     const Hc = baseCss.h * viewT.k;                    // 圖在畫面上的高度
-    const usable = stageSize.h - 32;                   // 舞台扣掉 p-4
-    const overlap = Hc / 2 - usable / 2 + MOTION_CLEAR; // 圖的下緣超過播放列上緣多少
+    /* 圖是以「舞台中心」為準置中的（外面那層有 p-4，但上下對稱所以中心不變），
+       所以圖的下緣＝舞台中心 ＋ Hc/2，而播放列的上緣＝舞台底部 − MOTION_CLEAR。 */
+    const overlap = Hc / 2 - stageSize.h / 2 + MOTION_CLEAR;
     if (overlap <= 0) return { mLift: 0, mScale: 1 };
-    const free = Math.max(0, (usable - Hc) / 2);       // 圖上方還剩多少空白
+    const free = Math.max(0, (stageSize.h - 32 - Hc) / 2);   // 圖上方還剩多少空白（扣掉 p-4）
     const lift = Math.min(overlap, free);
     const remain = overlap - lift;
     return { mLift: lift, mScale: remain > 0 ? Math.max(0.5, (Hc - remain) / Hc) : 1 };
@@ -3508,10 +3514,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       
       <main 
         className="flex-1 flex items-center justify-center relative p-4 interactive-area overflow-hidden no-callout no-select"
-        onPointerDown={() => {
-          setSelectedTarget(null); setExportAsk(false);
-          if (activeTab === 'motion') pokeBar();
-        }}
+        onPointerDown={() => { setSelectedTarget(null); setExportAsk(false); }}
       >
         {imageState && (
           <div
@@ -3561,7 +3564,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                      這時候讓寬高做動畫就會看到那種果凍般的伸縮（桌機用滾輪縮放特別明顯）。 */
                   transition: [
                     (viewPinchRef.current || viewT.k === 1) ? '' : 'width 90ms linear, height 90ms linear',
-                    `transform 380ms ${MOTION_EASE}`,
+                    `transform 420ms ${MOTION_EASE}`,
                   ].filter(Boolean).join(', '),
                   cursor: brushMode === 'pen' ? 'crosshair' : brushMode === 'eraser' ? 'pointer' : 'default' 
                 }}
@@ -3634,8 +3637,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           );
         })()}
 
-        {imageState && activeTab !== 'motion' && (
-          <div className="absolute bottom-6 right-6 z-[60]" onPointerDown={(e) => e.stopPropagation()}>
+        {imageState && (
+          <div
+            className="absolute right-6 z-[60]"
+            /* 動畫頁時往上讓開播放列，並跟著圖片一起平滑移動 */
+            style={{ bottom: motionUiOn ? 86 : 24, transition: `bottom 420ms ${MOTION_EASE}` }}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
             <button 
               onClick={(e) => {
                 e.stopPropagation();
@@ -3657,14 +3665,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           <div
             className="absolute left-3 right-3 bottom-3 z-30 flex items-center gap-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/10 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
             style={{
-              /* 進出場跟預覽圖同一段時間、同一條曲線，兩個東西看起來就是一起動的。
-                 自動淡出則是另一回事（只有 8px 的位移），兩者共用同一個 transform。 */
-              opacity: motionUiOn ? (barShown ? 1 : 0) : 0,
-              transform: motionUiOn ? `translateY(${barShown ? 0 : 8}px)` : 'translateY(120px)',
-              transition: `transform 380ms ${MOTION_EASE}, opacity 300ms ease-out`,
-              pointerEvents: motionUiOn && barShown ? 'auto' : 'none',
+              /* 進出場跟預覽圖同一段時間、同一條曲線，兩個看起來就是一起動的 */
+              opacity: barIn ? 1 : 0,
+              transform: barIn ? 'translateY(0)' : 'translateY(130px)',
+              transition: `transform 420ms ${MOTION_EASE}, opacity 420ms ${MOTION_EASE}`,
+              pointerEvents: barIn ? 'auto' : 'none',
             }}
-            onPointerDown={e => { e.stopPropagation(); pokeBar(); }}
+            onPointerDown={e => e.stopPropagation()}
           >
             <button
               onClick={() => setMotionPlaying(v => !v)}
@@ -4018,8 +4025,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <div className="grid grid-cols-2 gap-4 mt-4">
                           <CompactSlider label="起始" value={Math.round(moLink.delay)} min={0} max={20} step={1}
                             onChange={(v: number) => setMoLink(m => ({ ...m, delay: v }))} />
-                          <CompactSlider label="進場耗時" value={Math.round(moLink.dur)} min={1} max={10} step={1}
-                            onChange={(v: number) => setMoLink(m => ({ ...m, dur: v }))} />
+                          {/* 面板上調速度（越大越快），內部照樣存秒數 */}
+                          <CompactSlider label="速度" value={speedFromDur(moLink.dur)} min={0} max={100} step={1}
+                            onChange={(v: number) => setMoLink(m => ({ ...m, dur: durFromSpeed(v) }))} />
                         </div>
                         <div className="grid grid-cols-2 gap-2 mt-3">
                           {LINK_EASES.map(e => (
@@ -4046,8 +4054,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <div className="grid grid-cols-2 gap-4 mt-3">
                           <CompactSlider label="起始" value={Math.round(cur.delay)} min={0} max={20} step={1}
                             onChange={(v: number) => setCur({ delay: v })} />
-                          <CompactSlider label="進場耗時" value={Math.round(cur.dur)} min={1} max={10} step={1}
-                            onChange={(v: number) => setCur({ dur: v })} />
+                          <CompactSlider label="速度" value={speedFromDur(cur.dur)} min={0} max={100} step={1}
+                            onChange={(v: number) => setCur({ dur: durFromSpeed(v) })} />
                         </div>
 
                         {label('常駐動畫')}
