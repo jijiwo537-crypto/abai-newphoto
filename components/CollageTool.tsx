@@ -1075,30 +1075,62 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     !!a && !!b && sameHoles(a.holes, b.holes) && objKeyOf(a.objects) === objKeyOf(b.objects)
     && envKey(a.env) === envKey(b.env);
 
-  const [historyState, setHistoryState] = useState<{ history: Snap[]; index: number }>({
+  /* 歷史本身放在 ref 裡、用一個版本號觸發重繪。
+     這樣「補記一格 → 馬上退回去」可以在同一個事件裡同步完成，
+     不必等 setState 生效 —— 按鈕的亮暗與實際能不能退才不會對不上。 */
+  const histRef = useRef<{ history: Snap[]; index: number }>({
     history: [{ holes: [], objects: [] }],
     index: 0,
   });
+  const [, bumpHist] = useState(0);
+  const syncHist = useCallback(() => bumpHist(n => n + 1), []);
   /** undo/redo 自己造成的狀態變動不能再被記一次 */
   const restoringRef = useRef(false);
+  /* 「已經動了、但還沒記進歷史」。滑桿是拖完 400ms 才記，
+     可是按鈕必須在動作發生的當下就亮起來，所以另外用這個旗標。 */
+  const dirtyRef = useRef(false);
+  const [dirty, setDirty] = useState(false);
+  const markDirty = useCallback(() => {
+    if (dirtyRef.current) return;
+    dirtyRef.current = true;
+    setDirty(true);
+  }, []);
+
+  /** 真的把一格寫進歷史（同步改 histRef，之後才通知重繪） */
+  const commitSnap = useCallback((snap: Snap) => {
+    const st = histRef.current;
+    const sliced = st.history.slice(0, st.index + 1);
+    const current = sliced[sliced.length - 1];
+    if (current && sameSnap(current, snap)) {
+      histRef.current = { history: sliced, index: sliced.length - 1 };
+    } else {
+      const nextHistory = [...sliced, snap].slice(-100);
+      histRef.current = { history: nextHistory, index: nextHistory.length - 1 };
+    }
+    dirtyRef.current = false;
+    setDirty(false);
+  }, []);
 
   const pushHistory = useCallback((newHoles: any[], newObjects?: any[]) => {
-    const snap = cloneSnap({ holes: newHoles, objects: newObjects ?? objectsRef.current });
-    setHistoryState(prev => {
-      const sliced = prev.history.slice(0, prev.index + 1);
-      const current = sliced[sliced.length - 1];
-      if (current && sameSnap(current, snap)) return prev;      // 畫面沒變就不記
-      const nextHistory = [...sliced, snap].slice(-100);
-      return { history: nextHistory, index: nextHistory.length - 1 };
-    });
-  }, []);
+    commitSnap(cloneSnap({ holes: newHoles, objects: newObjects ?? objectsRef.current }));
+    syncHist();
+  }, [commitSnap, syncHist]);
 
   const resetHistory = useCallback((initialHoles: any[], initialObjects?: any[]) => {
-    setHistoryState({
+    histRef.current = {
       history: [cloneSnap({ holes: initialHoles, objects: initialObjects ?? objectsRef.current })],
       index: 0,
-    });
-  }, []);
+    };
+    dirtyRef.current = false;
+    setDirty(false);
+    syncHist();
+  }, [syncHist]);
+
+  /** 還有一格沒記進去的話先補上（按上一步之前一定要做，不然會退過頭） */
+  const flushPending = useCallback(() => {
+    if (!dirtyRef.current) return;
+    commitSnap(cloneSnap({ holes: holesRef.current, objects: objectsRef.current }));
+  }, [commitSnap]);
 
   const applySnap = (sn: Snap) => {
     restoringRef.current = true;
@@ -1108,24 +1140,32 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!sn.env) { setSelectedTarget(null); setSelectedObj(null); }
     /* 套用 env 會連帶觸發「換排版就重灑圖案」那類 effect，
        所以要多等幾格再解鎖，中間的連鎖變動都不記進歷史。 */
-    setTimeout(() => { restoringRef.current = false; }, 260);
+    setTimeout(() => { restoringRef.current = false; dirtyRef.current = false; setDirty(false); }, 260);
   };
 
   const undo = useCallback(() => {
-    if (historyState.index > 0) {
-      const prevIndex = historyState.index - 1;
-      applySnap(historyState.history[prevIndex]);
-      setHistoryState(prev => ({ ...prev, index: prevIndex }));
-    }
-  }, [historyState]);
+    flushPending();                       // 先把剛做的那一步補進歷史
+    const st = histRef.current;
+    if (st.index <= 0) { syncHist(); return; }
+    const to = st.index - 1;
+    applySnap(st.history[to]);
+    histRef.current = { ...st, index: to };
+    syncHist();
+  }, [flushPending, syncHist]);
 
   const redo = useCallback(() => {
-    if (historyState.index < historyState.history.length - 1) {
-      const nextIndex = historyState.index + 1;
-      applySnap(historyState.history[nextIndex]);
-      setHistoryState(prev => ({ ...prev, index: nextIndex }));
-    }
-  }, [historyState]);
+    const st = histRef.current;
+    if (st.index >= st.history.length - 1) return;
+    const to = st.index + 1;
+    applySnap(st.history[to]);
+    histRef.current = { ...st, index: to };
+    syncHist();
+  }, [syncHist]);
+
+  /* 按鈕的亮暗：只要「已經動了但還沒記」也算可以上一步，
+     所以動作一發生按鈕就亮，不用等那 400ms。 */
+  const canUndo = histRef.current.index > 0 || dirty;
+  const canRedo = !dirty && histRef.current.index < histRef.current.history.length - 1;
 
   useEffect(() => { holesRef.current = holes; }, [holes]);
 
@@ -1137,11 +1177,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!imageState) return;
     if (!objHistoryReadyRef.current) { objHistoryReadyRef.current = true; return; }
     if (restoringRef.current) return;
+    markDirty();                                   // 按鈕當下就要亮
     const t = setTimeout(() => {
       if (!restoringRef.current) pushHistory(holesRef.current, objectsRef.current);
     }, 400);
     return () => clearTimeout(t);
-  }, [objects, imageState, pushHistory]);
+  }, [objects, imageState, pushHistory, markDirty]);
 
   // ---- 跳出應用再回來還在：參數自動存檔 ----
   // 照片本身由 App 那邊存進 IndexedDB（跟其他工具共用一份草稿），
@@ -3061,12 +3102,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     envSigRef.current = sig;
     if (!envHistoryReadyRef.current) { envHistoryReadyRef.current = true; return; }
     if (restoringRef.current) return;
+    markDirty();                                   // 按鈕當下就要亮
     const t = window.setTimeout(() => {
       if (!restoringRef.current) pushHistory(holesRef.current, objectsRef.current);
     }, 400);
     return () => window.clearTimeout(t);
   }, [
-    imageState, pushHistory,
+    imageState, pushHistory, markDirty,
     layout, maskScale, maskColor, patternType, dotColor, dotSize, dotGap,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
@@ -3570,16 +3612,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
             <button
               onClick={(e) => { e.stopPropagation(); undo(); }}
-              disabled={historyState.index <= 0}
-              className={`p-2 text-white transition-all ${historyState.index <= 0 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
+              disabled={!canUndo}
+              className={`p-2 text-white transition-all ${!canUndo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
               title="復原"
             >
               <Icon name="undo" className="text-xl" />
             </button>
             <button
               onClick={(e) => { e.stopPropagation(); redo(); }}
-              disabled={historyState.index >= historyState.history.length - 1}
-              className={`p-2 text-white transition-all ${historyState.index >= historyState.history.length - 1 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
+              disabled={!canRedo}
+              className={`p-2 text-white transition-all ${!canRedo ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
               title="重做"
             >
               <Icon name="redo" className="text-xl" />
