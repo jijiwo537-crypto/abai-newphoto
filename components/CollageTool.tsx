@@ -1021,6 +1021,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const holeBackdropCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
   /** 遮罩底稿的快取鑰匙：參數沒變就不重畫那兩張全尺寸畫布 */
   const maskCacheKeyRef = useRef('');
+  /** 拿遮罩底稿做的 pattern（圖片側的圖案填色用）。底稿沒變就沿用同一顆 */
+  const basePatRef = useRef<{ key: string; pat: CanvasPattern | null }>({ key: '', pat: null });
   const activePointers = useRef<Map<number, any>>(new Map());
   /** 動畫頁期間鎖住畫布上的所有互動（handlePointerDown 開頭就會擋掉） */
   const motionLockRef = useRef(false);
@@ -1752,8 +1754,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
       if (hitHole) {
         e.stopPropagation();
-        setSelectedTarget(hitHole.id);
-        interactionRef.current = { type: 'move_hole', id: hitHole.id, startX: x, startY: y, initX: hitHole.x, initY: hitHole.y, isClick: true, hitItself: true, clickedSide };
+        if (selectedTarget === hitHole.id) {
+          // 已經選中的圖案：這一下就可以直接拖
+          interactionRef.current = { type: 'move_hole', id: hitHole.id, startX: x, startY: y, initX: hitHole.x, initY: hitHole.y, isClick: true, hitItself: true, clickedSide };
+        } else {
+          /* 還沒選中的圖案：這一下只能「點選」，不能順手拖走。
+             放開時沒移動才算選中，移動了就什麼都不做 ——
+             跟浮動物件（照片、文字）本來就是同一套手感，圖案以前漏掉了。
+             要縮放（兩指）本來就已經要先選中，所以三種操作現在一致：
+             都得先點一下選起來。 */
+          interactionRef.current = { type: 'select_hole', id: hitHole.id, startX: x, startY: y, isClick: true, hitItself: true, clickedSide };
+        }
       } else if (selectedTarget) {
         const currentHole = holesRef.current.find(h => h.id === selectedTarget);
         if (currentHole) {
@@ -2110,6 +2121,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const intr = interactionRef.current;
     if (intr) {
       e.stopPropagation();
+      /* 還沒選中的圖案：沒移動才算選中；拖了就當作沒發生（不選、也不動任何圖案） */
+      if (intr.type === 'select_hole' && intr.isClick) setSelectedTarget(intr.id);
       if (intr.isClick && !intr.hitItself) setSelectedTarget(null);
       if (intr.type === 'brush_draw' || intr.type === 'brush_erase' || intr.type === 'move_hole' || intr.type === 'pinch_hole') {
         if (!(intr.type === 'move_hole' && intr.isClick)) {
@@ -2329,9 +2342,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       g.restore();
     };
 
+    /* 圖案在圖片那一側是「填上遮罩的花色」，靠的是拿遮罩底稿做的 pattern。
+       createPattern 會對來源畫布拍一份快照（等於再複製一整片遮罩），
+       播動畫時一秒 30 次同樣是白白的記憶體來回。
+       遮罩底稿沒變就沿用同一顆 pattern —— 條件跟底稿本身的快取完全一致，
+       所以只要底稿重畫過，這顆一定跟著重做，畫面不可能對不上。 */
+    let basePatCached: CanvasPattern | null = null;
+    if (isMain) {
+      if (maskHit && basePatRef.current.key === maskKey && basePatRef.current.pat) {
+        basePatCached = basePatRef.current.pat;
+      } else {
+        basePatCached = ctx.createPattern(bCanvas, 'repeat');
+        basePatRef.current = { key: maskKey, pat: basePatCached };
+      }
+    }
+
     const drawImageSideHoles = () => {
     ctx.save(); ctx.translate(offs.ix, offs.iy);
-    const basePat = ctx.createPattern(bCanvas, 'repeat');
+    const basePat = basePatCached || ctx.createPattern(bCanvas, 'repeat');
     if (basePat) {
       ctx.fillStyle = basePat;
       /* 圖片側的圖案要顯示「遮罩上同一個相對位置」的那一塊。
@@ -2376,8 +2404,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
     let lmc: HTMLCanvasElement = isMain ? lowerMaskCanvasRef.current : document.createElement('canvas');
     const drawMaskLayer = () => {
-    lmc.width = maskW; lmc.height = maskH;
+    /* ── 這裡以前是動畫閃退的主因 ───────────────────────────────────────
+       原本每一格都寫一次 lmc.width / lmc.height。指派 canvas.width 就算值
+       完全一樣，瀏覽器也會把整塊點陣**重新配置**一次。播動畫時一秒 30 格、
+       這張又是整片遮罩那麼大，實測是每秒 77.9MB 的畫布記憶體丟掉重開 ——
+       iOS 的畫布記憶體一碰到上限就把整頁收掉，那就是「播一播回到主畫面」。
+
+       尺寸沒變就沿用同一塊：用 copy 把底稿蓋上去，一次就等於「清空＋畫好」，
+       畫出來的每一個像素跟原本完全一樣，一點畫質都沒動到。
+       （設寬高會順便把 context 狀態全部重置，所以改成沿用之後，
+         transform／alpha／合成模式要自己歸位。） */
+    const lmW = maskW | 0, lmH = maskH | 0;
+    if (lmc.width !== lmW || lmc.height !== lmH) { lmc.width = maskW; lmc.height = maskH; }
     const lmx = get2dWide(lmc)!;
+    lmx.setTransform(1, 0, 0, 1, 0, 0);
+    lmx.globalAlpha = 1;
+    lmx.globalCompositeOperation = 'copy';
     lmx.drawImage(fCanvas, 0, 0);
     lmx.globalCompositeOperation = 'destination-out';
     holes.forEach(h => {
@@ -2421,7 +2463,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        於是同一個圖案跨在交界上時：框那一段是挖穿的（看到放大的底圖），
        圖片那一段是遮罩顏色的實心圖案，兩種樣式同時成立。 */
     const drawHolesOverImage = () => {
-      const pat = ctx.createPattern(bCanvas, 'repeat');
+      const pat = basePatCached || ctx.createPattern(bCanvas, 'repeat');
       if (!pat) return;
       ctx.save();
       ctx.beginPath(); ctx.rect(offs.ix, offs.iy, sw, sh); ctx.clip();
@@ -2714,9 +2756,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
   }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick, linkMode]);
 
+  /** 下面那個 useLayoutEffect 已經同步畫過的那一版 renderToCanvas（畫在 1 倍） */
+  const syncDrawnRef = useRef<any>(null);
+
   const renderCanvas = useCallback(() => {
     if (!canvasRef.current || !imageState) return;
-    renderToCanvas(canvasRef.current, previewScaleRef.current);
+    /* 換排版／拉比例時，底下那個 useLayoutEffect 為了不露出「果凍」的那一格，
+       已經在同一次 commit 裡用完全一樣的參數同步畫過一次了。
+       這裡再畫一次畫出來的是同一張 —— 拉比例滑桿時等於每一格都白畫一次
+       整張全解析度（量到滑桿只有 28.7fps）。
+       比對的是「那一版 renderToCanvas 的身分」：只要圖案、物件、任何一個
+       設定變過，它就是新的一份，這個判斷自然不成立，該畫的一定會畫。 */
+    const alreadyDrawn = syncDrawnRef.current === renderToCanvas && previewScaleRef.current === 1;
+    syncDrawnRef.current = null;
+    if (!alreadyDrawn) renderToCanvas(canvasRef.current, previewScaleRef.current);
     // 記住 1 倍時的 CSS 寬度（畫布是 max-w-full 等比縮放，換算全靠它）
     const r = canvasRef.current.getBoundingClientRect();
     if (r.width > 0 && imageState) {
@@ -2762,8 +2815,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
      用 useLayoutEffect 而不是 useEffect：後者是畫完才跑，一定會露出那一格。 */
   const sizeSnapRef = useRef(false);
   useLayoutEffect(() => {
-    setViewT({ k: 1, tx: 0, ty: 0 });
-    setPreviewScale(1);
+    /* 本來就已經在原位／1 倍的話就別再設一次 —— 值一樣但物件是新的，
+       React 照樣會重跑一輪。比例改成滑桿之後這一段一秒會跑幾十次，
+       那兩輪白跑的 render 就是拖起來頓的一部分。 */
+    setViewT(prev => (prev.k === 1 && prev.tx === 0 && prev.ty === 0) ? prev : { k: 1, tx: 0, ty: 0 });
+    setPreviewScale(prev => (prev === 1 ? prev : 1));
     // 這一次的尺寸變化不要做過場動畫（放大狀態下換排版才不會拉一下）
     sizeSnapRef.current = true;
     const st = stageRef.current;
@@ -2777,7 +2833,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         setBaseCss({ w: cs.w * f, h: cs.h * f });
       } else setBaseCss(null);
       // 同一格就把新比例的內容畫上去，不留任何「舊圖被拉伸」的空窗
-      if (cv) { try { renderToCanvas(cv, 1); } catch { /* 這一格畫不出來就等下一格 */ } }
+      if (cv) { try { renderToCanvas(cv, 1); syncDrawnRef.current = renderToCanvas; } catch { /* 這一格畫不出來就等下一格 */ } }
     } else setBaseCss(null);
     const t = window.setTimeout(() => { sizeSnapRef.current = false; }, 260);
     return () => window.clearTimeout(t);
@@ -4036,28 +4092,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     </div>
                   </div>
 
+                  {/* 比例改成滑桿：以前只有 1/1、1/2、1/3 三顆固定的。
+                      滑桿 0 = 1/1（遮罩跟原圖一樣大）、100 = 1/5（最細的一條），
+                      中間連續可調 —— 分母 = 1 + 值×0.04，所以 50 就是 1/3。 */}
                   <div className="flex flex-col flex-1">
-                    <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest pl-2">
+                    <div className="flex items-baseline justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest pl-2">
                       <span>比例</span>
+                      <span className="text-white font-sans tabular-nums tracking-normal normal-case">
+                        1/{(1 / maskScale).toFixed(1).replace(/\.0$/, '')}
+                      </span>
                     </div>
-                    <div className="h-9 flex items-center gap-1 bg-[#111] border border-[#222] px-1 rounded-[6px] w-full">
-                      {[
-                        { label: '1/1', val: 1.0 },
-                        { label: '1/2', val: 0.5 },
-                        { label: '1/3', val: 1.0 / 3.0 }
-                      ].map(s => (
-                        <button
-                          key={s.label}
-                          onClick={() => setMaskScale(s.val)}
-                          className={`flex-1 h-6 rounded-[4px] text-[10px] font-bold transition-all border ${
-                            Math.abs(maskScale - s.val) < 0.05
-                              ? 'border-white text-white bg-transparent'
-                              : 'border-transparent text-[#888] hover:text-white bg-transparent'
-                          }`}
-                        >
-                          {s.label}
-                        </button>
-                      ))}
+                    <div className="h-9 flex items-center bg-[#111] border border-[#222] px-3 rounded-[6px] w-full">
+                      <input
+                        type="range" min={0} max={100} step={1}
+                        value={Math.round(Math.max(0, Math.min(100, (1 / maskScale - 1) * 25)))}
+                        onChange={e => setMaskScale(1 / (1 + Number(e.target.value) * 0.04))}
+                        onPointerDown={e => e.stopPropagation()}
+                        className="premium-slider w-full"
+                      />
                     </div>
                   </div>
                 </div>
