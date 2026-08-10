@@ -31,6 +31,11 @@ export type IgPreviewProps = {
   slot?: string;
   /** 內嵌模式：不自己占滿整個畫面、也不畫關閉鍵（由外面那層負責） */
   embedded?: boolean;
+  /**
+   * 連續動態牆：高度照內容長，圖片區用貼文本身的比例撐開。
+   * 跟 IG 一樣「一篇接一篇往下捲」，而不是一頁一頁地翻。
+   */
+  flow?: boolean;
   /** 有值的話這一篇是影片版：媒體區放 <video> 而不是 <img> */
   video?: string;
   /**
@@ -47,7 +52,7 @@ export type IgPreviewProps = {
 
 export const IgPreview: React.FC<IgPreviewProps> = ({
   shots, frame, pageCount, faces, hasVideo = (_pageIdx: number) => false, supported = true,
-  slot = '', embedded = false, video, mediaNode, music, onMusicChange, onClose,
+  slot = '', embedded = false, flow = false, video, mediaNode, music, onMusicChange, onClose,
 }) => {
   /** 這一篇貼文自己的存檔前綴。沒有 slot 就完全等於以前的鍵名。 */
   const KEY = (k: string) => `abai_ig_${slot ? slot + '_' : ''}${k}`;
@@ -1593,7 +1598,9 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
 
   return (
         <div
-          className={embedded
+          className={flow
+            ? 'relative w-full bg-black flex flex-col'
+            : embedded
             ? 'relative w-full h-full bg-black flex flex-col'
             : 'fixed inset-0 z-[120] bg-black flex flex-col animate-in fade-in duration-200'}
           style={{
@@ -1602,13 +1609,13 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                不佔版面高度，所以畫面最下面那一段會躲在工具列後面 —— 圖的下緣看起來
                就是被切掉。100dvh 是會扣掉瀏覽器 UI 的動態視窗高度，再加安全區內距，
                內容就一定落在看得見的範圍裡。 */
-            height: embedded ? '100%' : '100dvh',
-            maxHeight: embedded ? '100%' : '100dvh',
+            height: flow ? 'auto' : embedded ? '100%' : '100dvh',
+            maxHeight: flow ? 'none' : embedded ? '100%' : '100dvh',
             /* 底部一定要留白。加到主畫面的 PWA 在全螢幕下，畫面最下緣是 iPhone 的
                主畫面指示條（那條小橫線）所在的位置，內容擺到那裡就會被壓住。
                env() 只有在 viewport-fit=cover 時才會回報真實數值，所以再給一個
                24px 的保底，兩者取大的。 */
-            paddingBottom: embedded ? 0 : 'max(env(safe-area-inset-bottom, 0px), 24px)',
+            paddingBottom: (embedded || flow) ? 0 : 'max(env(safe-area-inset-bottom, 0px), 24px)',
             boxSizing: 'border-box',
           }}
         >
@@ -1619,7 +1626,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
               而不是 justify-center：內容比容器高的時候 justify-center 會把上下
               都切掉而且捲不到，auto margin 則會自動退讓、完整可捲。 */}
           <div
-            className="flex-1 min-h-0 overflow-hidden flex flex-col"
+            className={flow ? 'w-full flex flex-col' : 'flex-1 min-h-0 overflow-hidden flex flex-col'}
             style={{
               /* overflow:hidden 的元素在瀏覽器眼中仍然是一個捲動容器，
                  配上 overscroll-behavior:contain 就會「把手勢吃掉」——
@@ -1629,7 +1636,8 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
               /* 整篇貼文往下挪：內容原本從最上面開始排，下面會空一大塊。
                  補 padding-top 讓整組（帳號列＋圖＋愛心那幾列）一起往下，
                  圖就落在畫面中心略偏上 —— 同步移動，不是只動圖片。 */
-              paddingTop: '58px',
+              /* 連續動態牆時不需要往下推 —— 一篇接一篇，靠貼文之間的間距就好 */
+              paddingTop: flow ? 0 : '58px',
             }}
           >
             {/* 帳號那一列：限動漸層圈的頭像、粗體帳號，第二行是音訊 */}
@@ -1716,12 +1724,18 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
               */}
               <div
                 ref={igStripRef}
-                className="flex-1 min-h-0 w-full overflow-hidden"
+                className={flow ? 'w-full overflow-hidden' : 'flex-1 min-h-0 w-full overflow-hidden'}
+
                 /* pan-y：橫的交給我們自己接（翻頁），直的還給瀏覽器（外層上下捲）。
                    以前寫 none 等於連直的也一起擋掉 —— 手指落在圖片上時
                    整頁就滑不動了，那正是「有時候滑不到下一篇」的原因。
                    單頁貼文根本不需要接手勢，直接 auto。 */
-                style={{ touchAction: pageCount > 1 ? 'pan-y' : 'auto' }}
+                style={{
+                  touchAction: pageCount > 1 ? 'pan-y' : 'auto',
+                  /* 連續動態牆：高度靠貼文本身的比例撐開（flex-1 在自動高度下會塌成 0），
+                     但不超過畫面的八成高 —— 直式貼文才不會一篇就把整個螢幕吃滿。 */
+                  ...(flow ? { aspectRatio: `${igFrame.w} / ${igFrame.h}`, maxHeight: '80dvh' } : null),
+                }}
                 onPointerDown={onIgPointerDown}
                 onPointerMove={onIgPointerMove}
                 onPointerUp={onIgPointerUp}

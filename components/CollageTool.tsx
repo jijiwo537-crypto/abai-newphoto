@@ -46,6 +46,8 @@ const AROUND_SCALE = 1 / 3;
 const MAX_FINAL_DIM = 4096;
 /** 導出畫布的總像素上限。真正把分頁殺掉的是「面積」不是「邊長」 */
 const MAX_EXPORT_PIXELS = 20_000_000;
+/** IG 預覽裡「貼文與貼文之間」的間距。頭、尾、中間統一都用這個值 */
+const IG_GAP = 14;
 /** 動態影片的長邊上限。1440 已經比手機螢幕還細，再高只是白燒編碼時間 */
 const MOTION_MAX_DIM = 1440;
 /**
@@ -1015,6 +1017,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const lowerMaskCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
   /** 挖穿的洞裡看到的那張底圖。跟上面幾張一樣重複使用，播動畫時才不會一直配置記憶體 */
   const holeBackdropCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
+  /** 遮罩底稿的快取鑰匙：參數沒變就不重畫那兩張全尺寸畫布 */
+  const maskCacheKeyRef = useRef('');
   const activePointers = useRef<Map<number, any>>(new Map());
   /** 動畫頁期間鎖住畫布上的所有互動（handlePointerDown 開頭就會擋掉） */
   const motionLockRef = useRef(false);
@@ -1820,9 +1824,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          手機的畫布記憶體吃光。正常倍率下這一行不會生效。 */
       const one = previewPixelsAt(layout, imageState.baseW, imageState.baseH, maskScale, 1,
         patternType === 'dot' ? 3 : 2);
-      const mCap = Math.max(1, Math.sqrt(MAX_MOTION_PIXELS / Math.max(1, one)));
-      motionScaleCapRef.current = Math.min(snapped, Math.max(1, Math.round(mCap * 4) / 4));
-      motionScaleRef.current = motionScaleCapRef.current;
+      /* 播動畫時用的倍率＝靜態時的倍率，一模一樣 ——
+         畫質不因為「正在播」而有任何降級。跟不上的時候改成降格數（見播放迴圈），
+         不是降解析度。 */
+      motionScaleCapRef.current = snapped;
+      motionScaleRef.current = snapped;
     }, 90);
     return () => { if (previewTimer.current) window.clearTimeout(previewTimer.current); };
     /* baseCss 一定要進依賴：第一次算出基準尺寸之前這個 effect 會直接 return，
@@ -2094,8 +2100,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
     const isMain = targetCanvas === canvasRef.current;
     const bCanvas = isMain ? baseMaskCanvasRef.current : document.createElement('canvas');
-    bCanvas.width = maskW; bCanvas.height = maskH;
+    /* 遮罩底稿（底色＋遮罩圖＋點點）只跟這幾個參數有關，圖案與動畫都不會動到它。
+       播動畫時一秒要走 30 次，每次都重填兩張全尺寸畫布是純粹的浪費 ——
+       這裡用一把鑰匙擋掉：參數沒變就直接沿用上一格畫好的那張。
+       這是省成本，不是降畫質：畫出來的內容一模一樣。 */
+    const maskKey = isMain ? JSON.stringify([
+      maskW, maskH, maskColor, patternType, dotColor, dotGap, dotSize, sgs,
+      maskImageState && maskImageState.img ? (maskImageState.img.src || '1') : '',
+    ]) : '';
+    const maskHit = isMain && maskKey === maskCacheKeyRef.current
+      && bCanvas.width === maskW && bCanvas.height === maskH;
+    if (!maskHit) { bCanvas.width = maskW; bCanvas.height = maskH; }
     const bCtx = get2dWide(bCanvas)!;
+    if (!maskHit) {
     bCtx.fillStyle = maskColor;
     bCtx.fillRect(0, 0, maskW, maskH);
     if (maskImageState && maskImageState.img) {
@@ -2109,6 +2126,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const drawY = (maskH - drawH) / 2;
       bCtx.drawImage(mImg, drawX, drawY, drawW, drawH);
     }
+    }
 
     /* 沒有點點紋理的時候，「含紋理的遮罩」就等於「底色遮罩」本身 ——
        不必再開一張同樣大的畫布。一張全尺寸畫布動輒幾十 MB，
@@ -2116,13 +2134,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const needPattern = patternType === 'dot';
     const fCanvas = !needPattern ? bCanvas
       : (isMain ? fullMaskCanvasRef.current : document.createElement('canvas'));
-    if (needPattern) {
+    if (needPattern && !maskHit) {
       fCanvas.width = maskW; fCanvas.height = maskH;
     }
     const fCtx = get2dWide(fCanvas)!;
-    if (needPattern) fCtx.drawImage(bCanvas, 0, 0);
+    if (needPattern && !maskHit) fCtx.drawImage(bCanvas, 0, 0);
 
-    if (patternType === 'dot') {
+    if (patternType === 'dot' && !maskHit) {
       fCtx.fillStyle = dotColor; 
       // 根據 UI 值 (0~100) 映射到實際大小 (5~20) 與實際間距 (40~140)
       const actualDotSize = (5 + (dotSize / 100) * 15) * sgs;
@@ -2160,6 +2178,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }
       }
     }
+    if (isMain) maskCacheKeyRef.current = maskKey;
 
     const drawImg = (img: any, t: any, ox: number, oy: number, w: number, h: number) => {
       if (!img || !t) return;
@@ -2688,8 +2707,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       try {
         const off = getLayoutOffsets();
         if (!off) return;
-        // 長邊 900：夠清楚又算得快，跟經典拼圖的預覽解析度一致
-        const scale = 900 / Math.max(off.cw, off.ch);
+        /* 長邊照螢幕實際能顯示的裝置像素給（再乘 1.15 超取樣），上限 1600。
+           以前固定 900，在 3 倍螢幕上等於被拉大 1.3 倍，看起來就是糊的。 */
+        const dpr = Math.min(3, window.devicePixelRatio || 1);
+        const shown = Math.min(window.innerWidth, 520);
+        const scale = Math.min(1600, Math.max(900, shown * dpr * 1.15)) / Math.max(off.cw, off.ch);
         const cv = document.createElement('canvas');
         // 動態正在播的話要先把它拿掉，不然預覽會抓到動畫的半途那一格
         const keep = animRef.current;
@@ -2832,15 +2854,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     let last = -1;
     const FRAME = 1000 / 30;
     const t0 = performance.now() - motionClockRef.current * 1000;
-    /* 自適應保險絲。閃退的成因永遠是同一件事：一格畫不完就已經要畫下一格，
-       記憶體與 GC 一路堆到被系統回收。與其事先把畫質壓死，不如量「這一格
-       實際畫了多久」——連續慢下來就降一級解析度，恢復了再升回去。
-       所以平常維持最好的畫質，只有真的跟不上的機器才會被降。 */
+    /* 自適應保險絲。閃退的成因永遠是同一件事：一格還沒畫完就又排下一格，
+       工作愈積愈多、記憶體與 GC 一路堆到被系統回收。
+       這裡只調「每秒畫幾格」，完全不動解析度 —— 畫面該多細就是多細，
+       只是在跟不上的機器上改成 20fps／12fps，把每一格之間的空檔讓出來。 */
     let slow = 0, fast = 0;
+    let interval = FRAME;
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const now = performance.now();
-      if (last >= 0 && now - last < FRAME) return;
+      if (last >= 0 && now - last < interval) return;
       last = now;
       try {
         motionClockRef.current = ((now - t0) / 1000) % motionTotal;
@@ -2848,13 +2871,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const t1 = performance.now();
         if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, motionScaleRef.current);
         const cost = performance.now() - t1;
-        if (cost > 26) { slow++; fast = 0; } else if (cost < 12) { fast++; slow = 0; }
-        if (slow >= 6 && motionScaleRef.current > 1) {
-          motionScaleRef.current = Math.max(1, Math.round((motionScaleRef.current - 0.25) * 4) / 4);
+        // 一格畫超過「一格的時間」就是追不上了，連續幾次就把格數降一階
+        if (cost > interval * 0.9) { slow++; fast = 0; } else if (cost < interval * 0.45) { fast++; slow = 0; }
+        if (slow >= 5 && interval < 1000 / 12) {
+          interval = interval < 1000 / 20 ? 1000 / 20 : 1000 / 12;
           slow = 0;
-        } else if (fast >= 90 && motionScaleRef.current < motionScaleCapRef.current) {
-          motionScaleRef.current = Math.min(motionScaleCapRef.current,
-            Math.round((motionScaleRef.current + 0.25) * 4) / 4);
+        } else if (fast >= 90 && interval > FRAME) {
+          interval = interval > 1000 / 20 ? 1000 / 20 : FRAME;
           fast = 0;
         }
       } catch (err) {
@@ -2941,9 +2964,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!igPreview || !imageState) return;
     const off = getLayoutOffsets();
     if (!off) return;
-    // 預覽框最寬也就手機那點大小，長邊 720 已經綽綽有餘
-    const scale = Math.max(0.35, 720 / Math.max(off.cw, off.ch));
-    let raf = 0, last = -1;
+    /* 算圖倍率照「這張畫布在螢幕上實際佔幾個裝置像素」來給，而不是寫死 720 ——
+       寫死的話在 3 倍螢幕上等於把 720 拉成 1170，當然糊。
+       另外多 1.15 倍的超取樣，邊緣才不會有鋸齒。 */
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const longSide = Math.max(off.cw, off.ch);
+    let scale = Math.max(0.35, 720 / longSide);
+    const fitScale = () => {
+      const cv = igCanvasRef.current;
+      if (!cv) return;
+      const r = cv.getBoundingClientRect();
+      const shownLong = Math.max(r.width, r.height);
+      if (shownLong < 8) return;
+      const want = Math.min(1600, shownLong * dpr * 1.15) / longSide;
+      const next = Math.max(0.35, Math.round(want * 20) / 20);
+      if (Math.abs(next - scale) > 0.02) scale = next;
+    };
+    let raf = 0, last = -1, fitTick = 0;
     const FRAME = 1000 / 30;
     const t0 = performance.now();
     const tick = () => {
@@ -2954,6 +2991,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const cv = igCanvasRef.current;
       if (!cv) return;
       try {
+        // 版面可能還在安頓（比例、字型），前兩秒每 10 格重新對一次尺寸
+        if (fitTick++ % 10 === 0 && fitTick < 60) fitScale();
         animRef.current = buildAnim(((now - t0) / 1000) % motionTotal);
         renderToCanvasRef.current(cv, scale);
       } catch (e) {
@@ -3233,17 +3272,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       )}
 
       {/* IG 貼文預覽：跟經典拼圖共用 components/IgPreview.tsx。
-          創意拼圖是兩篇 —— 上面圖片版、下面影片版，往下滑就換一篇。
+          創意拼圖是兩篇 —— 上面圖片版、下面影片版。
+          跟真的 IG 動態牆一樣「一篇接一篇往下捲」，滑多少算多少，
+          不是一頁一頁地吸過去（所以沒有 scroll-snap）。
           歌是共用的（走 igMusic），帳號、數字、按讚各自獨立（走 slot）。 */}
       {igPreview && (
         <div
-          className="fixed inset-0 z-[120] bg-black overflow-y-auto snap-y snap-mandatory animate-in fade-in duration-200"
+          className="fixed inset-0 z-[120] bg-black overflow-y-auto animate-in fade-in duration-200"
           /* none 而不是 contain：contain 只擋住「傳給外層」，自己還是會橡皮筋。
              已經在第一篇的最上面時再往上拉，畫面不該有任何位移。 */
-          style={{ overscrollBehavior: 'none', scrollbarWidth: 'none' }}
+          style={{ overscrollBehavior: 'none', scrollbarWidth: 'none', paddingTop: IG_GAP, paddingBottom: IG_GAP }}
         >
-          {(['pic', 'vid'] as const).map(kind => (
-            <div key={kind} className="w-full snap-start" style={{ height: '100dvh' }}>
+          {(['pic', 'vid'] as const).map((kind, i) => (
+            /* 貼文與貼文之間、以及頭尾，統一都是同一個間距 */
+            <div key={kind} className="w-full" style={{ marginTop: i === 0 ? 0 : IG_GAP }}>
               <IgPreview
                 shots={igShots}
                 frame={(() => { const o = getLayoutOffsets(); return o ? { w: o.cw, h: o.ch } : { w: 1, h: 1 }; })()}
@@ -3255,6 +3297,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 supported={igSupported}
                 slot={kind}
                 embedded
+                flow
                 /* 影片版直接放一張正在跑動畫的畫布 —— 開啟當下就在動 */
                 mediaNode={kind === 'vid'
                   ? <canvas ref={igCanvasRef} className="max-w-full max-h-full object-contain block" />
