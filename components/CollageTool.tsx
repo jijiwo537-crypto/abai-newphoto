@@ -313,7 +313,10 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
    面板上調的是「速度 0～100」，內部存的還是秒數。
    用指數對應而不是線性：線性的話中段幾乎感覺不到差別，
    而兩端又變化太劇烈。0 → 10 秒、50 → 1.7 秒、100 → 0.3 秒。 */
-const SPEED_SLOW = 10, SPEED_FAST = 0.3;
+/* 滑桿還是 0～100，只是最慢端整個往上收：
+   以前 0 對應 10 秒，慢到幾乎看不出在動；現在 0 對應 3.49 秒
+   （＝舊刻度的 30 那一格），整條滑桿都落在真的有用的區間裡。 */
+const SPEED_SLOW = 3.49, SPEED_FAST = 0.3;
 export const durFromSpeed = (sp: number) =>
   SPEED_SLOW * Math.pow(SPEED_FAST / SPEED_SLOW, Math.max(0, Math.min(100, sp)) / 100);
 export const speedFromDur = (d: number) =>
@@ -327,7 +330,8 @@ export type MoCfg = {
   idle: string; amp: number; speed: number;
 };
 export const MO_DEFAULT: MoCfg = {
-  delay: 0, dur: durFromSpeed(60), in: 'pop',
+  // 0.605 秒＝舊刻度的速度 80
+  delay: 0, dur: 0.605, in: 'pop',
   idle: 'none', amp: 50, speed: 0.9,
 };
 export const moOf = (o: any): MoCfg => ({ ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) });
@@ -2746,9 +2750,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 圖案這一群的動畫設定；每顆圖案再依序錯開 */
   /* 圖案是一整群：「進場耗時」給 3 秒才看得出一顆一顆冒出來，
      常駐維持上下飄（圖片與文字才是預設靜止）。 */
-  const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: durFromSpeed(40), idle: 'float' });
+  // 1.732 秒＝舊刻度的速度 50
+  const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: 1.732, idle: 'float' });
   /** 連線：起始、畫完要多久、以及線往前長的曲線 */
-  const [moLink, setMoLink] = useState({ delay: 0, dur: durFromSpeed(40), ease: 'linear' });
+  // 0.3 秒＝舊刻度的速度 100（最快）
+  const [moLink, setMoLink] = useState({ delay: 0, dur: 0.3, ease: 'linear' });
   /** 動畫頁上正在調哪一個元素：'shape' | 'link' | 物件 id */
   const [moTarget, setMoTarget] = useState<string>('shape');
   /** 匯出成影片時的進度（0～1）；null = 沒在匯出 */
@@ -2773,7 +2779,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const n = Math.max(1, holes.length);
     const POP = Math.min(0.5, moShape.dur * 0.45);
     const step = n > 1 ? Math.max(0, (moShape.dur - POP) / (n - 1)) : 0;
-    return { n, POP, step, upAt: (i: number) => moShape.delay + i * step + POP };
+    /* 連線用的門檻：圖案「已經看得出來」就可以開始連，不必等它完全長好。
+       用 POP 的兩成當門檻 —— 幾乎跟圖案同時，但仍然是「先有圖案才有線」。 */
+    return { n, POP, step, upAt: (i: number) => moShape.delay + i * step + POP * 0.2 };
   }, [holes.length, moShape.delay, moShape.dur]);
   /* 連線的「進場耗時」＝從第一條線能開始畫算起，這麼多秒之內全部畫完。
      第一條線最早要等到第二顆圖案冒出來（一條線要有兩端）。 */
@@ -2793,8 +2801,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const POP = Math.min(0.5, moShape.dur * 0.45);
     const stepH = nHole > 1 ? Math.max(0, (moShape.dur - POP) / (nHole - 1)) : 0;
     const shapeCfg = (i: number): MoCfg => ({ ...moShape, delay: moShape.delay + i * stepH, dur: POP });
-    /** 第 i 顆圖案「完全冒出來」的時間 */
-    const holeUpAt = (i: number) => moShape.delay + i * stepH + POP;
+    /** 第 i 顆圖案「已經看得出來」的時間（POP 的兩成）——線從這一刻就能接上去 */
+    const holeUpAt = (i: number) => moShape.delay + i * stepH + POP * 0.2;
     const ez = linkEase(moLink.ease);
     return {
       hole: (h: any, i: number) => composeMo(shapeCfg(i), t, hashId(h.id) % 628 / 100),
@@ -3682,9 +3690,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   ? 'bg-white text-black border-white'
                   : 'bg-transparent text-white border-white'}`}
             >
+              {/* 播放中顯示暫停圖標（按下去＝暫停），暫停中顯示播放圖標 */}
               {motionPlaying
-                ? <Play size={15} fill="currentColor" strokeWidth={0} />
-                : <Pause size={15} fill="currentColor" strokeWidth={0} />}
+                ? <Pause size={15} fill="currentColor" strokeWidth={0} />
+                : <Play size={15} fill="currentColor" strokeWidth={0} />}
             </button>
             <button
               onClick={replayMotion}
@@ -4024,9 +4033,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       <>
                         <div className="grid grid-cols-2 gap-4 mt-4">
                           <CompactSlider label="起始" value={Math.round(moLink.delay)} min={0} max={20} step={1}
+                            onCommit={replayMotion}
                             onChange={(v: number) => setMoLink(m => ({ ...m, delay: v }))} />
                           {/* 面板上調速度（越大越快），內部照樣存秒數 */}
                           <CompactSlider label="速度" value={speedFromDur(moLink.dur)} min={0} max={100} step={1}
+                            onCommit={replayMotion}
                             onChange={(v: number) => setMoLink(m => ({ ...m, dur: durFromSpeed(v) }))} />
                         </div>
                         <div className="grid grid-cols-2 gap-2 mt-3">
@@ -4053,8 +4064,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         </div>
                         <div className="grid grid-cols-2 gap-4 mt-3">
                           <CompactSlider label="起始" value={Math.round(cur.delay)} min={0} max={20} step={1}
+                            onCommit={replayMotion}
                             onChange={(v: number) => setCur({ delay: v })} />
                           <CompactSlider label="速度" value={speedFromDur(cur.dur)} min={0} max={100} step={1}
+                            onCommit={replayMotion}
                             onChange={(v: number) => setCur({ dur: durFromSpeed(v) })} />
                         </div>
 
@@ -4172,7 +4185,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   );
 }
 
-const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0 }: any) => (
+const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, onCommit }: any) => (
   <div className="flex flex-col">
     <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
       <span>{label}</span>
@@ -4181,7 +4194,13 @@ const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimal
         {decimals > 0 ? Number(value).toFixed(decimals).replace(/\.?0+$/, '') || '0' : Math.round(value)}
       </span>
     </div>
-    <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(Number(e.target.value))} className="premium-slider" onPointerDown={e => e.stopPropagation()} />
+    {/* onCommit：手指／滑鼠放開時才觸發（動畫頁拿它來自動重播） */}
+    <input type="range" min={min} max={max} step={step} value={value}
+      onChange={e => onChange(Number(e.target.value))}
+      onPointerUp={() => onCommit && onCommit()}
+      onTouchEnd={() => onCommit && onCommit()}
+      onKeyUp={() => onCommit && onCommit()}
+      className="premium-slider" onPointerDown={e => e.stopPropagation()} />
   </div>
 );
 
