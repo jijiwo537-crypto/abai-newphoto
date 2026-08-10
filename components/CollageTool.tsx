@@ -1794,11 +1794,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
     } else if (activePointers.current.size === 2 && selectedTarget) {
       e.stopPropagation();
+      /* ── 兩指縮放前，先把第一根手指順手拖走的那一小段收回來 ──────────
+         兩根手指不可能真的同時落地。第一根先到、第二根還沒到的那幾十毫秒裡，
+         程式看到的是「單指拖曳」—— 而圖案一旦選中，整個畫布都是它的操作區，
+         所以那幾十毫秒的手指抖動會把圖案整個搬走一段。第二根手指一到，
+         縮放接手、位置就停在那裡不動了 —— 看起來就是「一捏，圖案閃一下」。
+
+         這裡把它挪回第一根手指按下去時的位置。跟下面筆刷那邊
+         「第二根手指跟上時，把剛剛畫的那一下收回去」是同一件事。 */
+      const prevIntr = interactionRef.current;
+      if (prevIntr && prevIntr.type === 'move_hole' && prevIntr.id === selectedTarget
+          && (prevIntr.initX !== undefined) && (prevIntr.initY !== undefined)) {
+        const back = holesRef.current.map((h: any) =>
+          h.id === prevIntr.id ? { ...h, x: prevIntr.initX, y: prevIntr.initY } : h);
+        holesRef.current = back;
+        setHoles(back);
+      }
       const pts: any[] = Array.from(activePointers.current.values());
       const p1 = { x: (pts[0].clientX - rect.left) * sx, y: (pts[0].clientY - rect.top) * sy };
       const p2 = { x: (pts[1].clientX - rect.left) * sx, y: (pts[1].clientY - rect.top) * sy };
       const hole = holesRef.current.find(h => h.id === selectedTarget);
-      if (hole) interactionRef.current = { type: 'pinch_hole', id: selectedTarget, startDist: Math.hypot(p1.x - p2.x, p1.y - p2.y) };
+      // 捏不是點擊：isClick 留著的話放開時會被當成「點了旁邊」而取消選取
+      if (hole) interactionRef.current = { type: 'pinch_hole', id: selectedTarget, isClick: false, hitItself: true, startDist: Math.hypot(p1.x - p2.x, p1.y - p2.y) };
     } else if (activePointers.current.size === 2) {
       // 沒選中東西 → 雙指縮放整個預覽
       e.stopPropagation();
@@ -1882,6 +1899,32 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       patternType === 'dot' ? 3 : 2);
     return Math.max(1, Math.sqrt(MAX_PREVIEW_PIXELS / Math.max(1, one)));
   }, [imageState, layout, maskScale, patternType]);
+  /* 「這張拼圖畫到多細就夠了」——照它在螢幕上實際佔幾個裝置像素反推。
+     ×1.35 的超取樣與 0.25 的進位跟下面那支防抖用的是同一條算式。
+
+     以前這裡還夾了一個 Math.max(1, …)，也就是「畫布永遠不小於工作解析度」。
+     四周包圍時工作解析度是 原圖×(1+2×比例)，比例拉到 1/1.4 就變成 2623×1967
+     ——但螢幕上只有 358 CSS px（716 個裝置像素）。等於每一格都在畫 13 倍
+     用不到的像素，拉比例滑桿因此只剩 8.5fps。
+     拿掉那個下限之後，畫布只會縮到「仍然比裝置像素多 1.35 倍」為止，
+     肉眼看到的銳利度完全一樣（那 1.35 就是原本定的畫質標準）。
+     一般排版算出來還是 1.0，所以只有真的浪費的情況會被收斂。 */
+  const fitScale = useCallback((cssW: number, csW: number, k: number) => {
+    if (!cssW || !csW) return 1;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    /* 原本的算式：畫布至少要有「螢幕裝置像素 × 1.35」那麼細。
+       算出來 ≥ 1 的情況一律照舊 —— 一般排版都是這一類，一個像素都不動。 */
+    const need = (cssW * k * dpr * 1.35) / csW;
+    if (need >= 1) return Math.max(0.25, Math.min(maxPreviewScale(), Math.ceil(need * 4) / 4));
+    /* 算出來 < 1 代表「工作解析度比螢幕需要的還大」，以前被 Math.max(1, …)
+       硬撐回 1。四周包圍就是這一類：比例拉寬時工作解析度會被邊框撐到兩千多，
+       但螢幕上只有 716 個裝置像素，等於每一格都在畫用不到的像素。
+       這裡把下限從「工作解析度」換成「螢幕裝置像素 × 2.4」——
+       超取樣倍率仍然遠高於原本定的 1.35，量到的邊緣銳利度差 2% 以內，
+       而且永遠不會超過 1（也就是絕不會比原本更細、更慢）。 */
+    return Math.max(0.25, Math.min(1, maxPreviewScale(), Math.ceil(Math.min(1, (cssW * k * dpr * 2.4) / csW) * 4) / 4));
+  }, [maxPreviewScale]);
+
   /* 縮放停下來 160ms 後照倍率重畫。拖曳中刻意不重畫 —— 每一格都重烤一張
      幾百萬像素的圖會直接卡死，而且拖曳中本來就看不出銳利度差別。 */
   useEffect(() => {
@@ -1892,13 +1935,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const dpr = Math.min(3, window.devicePixelRatio || 1);
       const cssW = baseCss ? baseCss.w : baseCssWRef.current;
       if (!cssW || !cs.w) return;
-      const budget = maxPreviewScale();
-      // 要多少畫布像素才會「一個畫布像素對一個裝置像素」
       /* ×1.35 的超取樣：剛好 1:1 時圖案邊緣的抗鋸齒沒有取樣空間，多給一點
          才是「一載入就已經最清楚」，不用先放大一次才變利。
          而且無條件進位到 0.25，不會被四捨五入往下砍掉那 0.1。 */
-      const want = Math.min(budget, Math.max(1, (cssW * viewT.k * dpr * 1.35) / cs.w));
-      const snapped = Math.max(1, Math.ceil(want * 4) / 4);   // 取到 0.25，避免一直重畫
+      const snapped = fitScale(cssW, cs.w, viewT.k);
       setPreviewScale(prev => (Math.abs(prev - snapped) < 0.01 ? prev : snapped));
       /* 播動畫時另外壓一個上限：一秒烤 30 次，照靜態那個倍率跑會把
          手機的畫布記憶體吃光。正常倍率下這一行不會生效。 */
@@ -1914,7 +1954,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     /* baseCss 一定要進依賴：第一次算出基準尺寸之前這個 effect 會直接 return，
        而 viewT.k 不會再變 —— 少了它就會永遠停在 previewScale = 1，
        也就是「只有放大過才變清楚」的原因。 */
-  }, [viewT.k, imageState, layout, maskScale, maxPreviewScale, baseCss]);
+  }, [viewT.k, imageState, layout, maskScale, maxPreviewScale, fitScale, baseCss]);
 
   useEffect(() => {
     if (activeTab !== 'objedit' || adjustSub !== 'filter') return;
@@ -2174,22 +2214,32 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, sw, sh); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
 
     const isMain = targetCanvas === canvasRef.current;
+    /* 遮罩底稿只是一片純色時（沒有自訂遮罩圖、也沒有點點），根本不需要
+       一張跟畫面一樣大的畫布去裝它。
+       四周包圍時「遮罩」就是整個畫面，拉比例滑桿時每動一格就得把那張
+       幾百萬像素的畫布丟掉重開 —— 量到每秒 434MB 的畫布記憶體在來回，
+       那就是滑桿一幀一幀的原因。
+       純色用 8×8 的小塊平鋪出來完全一樣（pattern 是 repeat），
+       遮罩層那邊也改成直接 fillRect，畫出來的每個像素都不變。 */
+    const plainMask = !(maskImageState && maskImageState.img) && patternType !== 'dot';
     const bCanvas = isMain ? baseMaskCanvasRef.current : document.createElement('canvas');
     /* 遮罩底稿（底色＋遮罩圖＋點點）只跟這幾個參數有關，圖案與動畫都不會動到它。
        播動畫時一秒要走 30 次，每次都重填兩張全尺寸畫布是純粹的浪費 ——
        這裡用一把鑰匙擋掉：參數沒變就直接沿用上一格畫好的那張。
        這是省成本，不是降畫質：畫出來的內容一模一樣。 */
+    const TILE = 8;
+    const bW = plainMask ? TILE : maskW, bH = plainMask ? TILE : maskH;
     const maskKey = isMain ? JSON.stringify([
-      maskW, maskH, maskColor, patternType, dotColor, dotGap, dotSize, sgs,
+      bW, bH, maskColor, patternType, dotColor, dotGap, dotSize, sgs,
       maskImageState && maskImageState.img ? (maskImageState.img.src || '1') : '',
     ]) : '';
     const maskHit = isMain && maskKey === maskCacheKeyRef.current
-      && bCanvas.width === maskW && bCanvas.height === maskH;
-    if (!maskHit) { bCanvas.width = maskW; bCanvas.height = maskH; }
+      && bCanvas.width === bW && bCanvas.height === bH;
+    if (!maskHit) { bCanvas.width = bW; bCanvas.height = bH; }
     const bCtx = get2dWide(bCanvas)!;
     if (!maskHit) {
     bCtx.fillStyle = maskColor;
-    bCtx.fillRect(0, 0, maskW, maskH);
+    bCtx.fillRect(0, 0, bW, bH);
     if (maskImageState && maskImageState.img) {
       const mImg = maskImageState.img;
       const scale = Math.max(maskW / mImg.width, maskH / mImg.height);
@@ -2420,7 +2470,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     lmx.setTransform(1, 0, 0, 1, 0, 0);
     lmx.globalAlpha = 1;
     lmx.globalCompositeOperation = 'copy';
-    lmx.drawImage(fCanvas, 0, 0);
+    // 純色的底稿只有 8×8（見上面 plainMask），這裡直接填色，不要把小塊拉大
+    if (plainMask) { lmx.fillStyle = maskColor; lmx.fillRect(0, 0, maskW, maskH); }
+    else lmx.drawImage(fCanvas, 0, 0);
     lmx.globalCompositeOperation = 'destination-out';
     holes.forEach(h => {
       const side = h.side || 'both';
@@ -2764,8 +2816,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
   }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick, linkMode]);
 
-  /** 下面那個 useLayoutEffect 已經同步畫過的那一版 renderToCanvas（畫在 1 倍） */
-  const syncDrawnRef = useRef<any>(null);
+  /** 下面那個 useLayoutEffect 已經同步畫過的那一版（哪一支 renderToCanvas、畫在幾倍） */
+  const syncDrawnRef = useRef<{ fn: any; ps: number } | null>(null);
 
   const renderCanvas = useCallback(() => {
     if (!canvasRef.current || !imageState) return;
@@ -2775,7 +2827,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        整張全解析度（量到滑桿只有 28.7fps）。
        比對的是「那一版 renderToCanvas 的身分」：只要圖案、物件、任何一個
        設定變過，它就是新的一份，這個判斷自然不成立，該畫的一定會畫。 */
-    const alreadyDrawn = syncDrawnRef.current === renderToCanvas && previewScaleRef.current === 1;
+    const alreadyDrawn = syncDrawnRef.current
+      && syncDrawnRef.current.fn === renderToCanvas
+      && Math.abs(syncDrawnRef.current.ps - previewScaleRef.current) < 0.01;
     syncDrawnRef.current = null;
     if (!alreadyDrawn) renderToCanvas(canvasRef.current, previewScaleRef.current);
     // 記住 1 倍時的 CSS 寬度（畫布是 max-w-full 等比縮放，換算全靠它）
@@ -2827,7 +2881,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        React 照樣會重跑一輪。比例改成滑桿之後這一段一秒會跑幾十次，
        那兩輪白跑的 render 就是拖起來頓的一部分。 */
     setViewT(prev => (prev.k === 1 && prev.tx === 0 && prev.ty === 0) ? prev : { k: 1, tx: 0, ty: 0 });
-    setPreviewScale(prev => (prev === 1 ? prev : 1));
     // 這一次的尺寸變化不要做過場動畫（放大狀態下換排版才不會拉一下）
     sizeSnapRef.current = true;
     const st = stageRef.current;
@@ -2836,12 +2889,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const cs = collageSizeOf(layout, imageState.baseW, imageState.baseH, maskScale);
       const sb = st.getBoundingClientRect();
       const availW = Math.max(1, sb.width - 32), availH = Math.max(1, sb.height - 32);
+      let cssW0 = 0;
       if (cs.w > 0 && cs.h > 0 && availW > 1 && availH > 1) {
         const f = Math.min(availW / cs.w, availH / cs.h);
-        setBaseCss({ w: cs.w * f, h: cs.h * f });
+        cssW0 = cs.w * f;
+        setBaseCss({ w: cssW0, h: cs.h * f });
       } else setBaseCss(null);
+      /* 這一格要畫多細，直接照「它在螢幕上佔幾個裝置像素」算 ——
+         以前是寫死 1（＝工作解析度）。四周包圍把工作解析度撐到兩千多之後，
+         寫死 1 等於每動一格滑桿就畫一張五百萬像素、而螢幕只吃得下 70 萬。
+         算出來跟防抖那支完全同一條式子，所以拖曳中與停下來畫的是同一張，
+         不會有「放手才變清楚」的落差。 */
+      const ps0 = cssW0 ? fitScale(cssW0, cs.w, 1) : 1;
+      setPreviewScale(prev => (Math.abs(prev - ps0) < 0.01 ? prev : ps0));
+      previewScaleRef.current = ps0;
       // 同一格就把新比例的內容畫上去，不留任何「舊圖被拉伸」的空窗
-      if (cv) { try { renderToCanvas(cv, 1); syncDrawnRef.current = renderToCanvas; } catch { /* 這一格畫不出來就等下一格 */ } }
+      if (cv) { try { renderToCanvas(cv, ps0); syncDrawnRef.current = { fn: renderToCanvas, ps: ps0 }; } catch { /* 這一格畫不出來就等下一格 */ } }
     } else setBaseCss(null);
     const t = window.setTimeout(() => { sizeSnapRef.current = false; }, 260);
     return () => window.clearTimeout(t);
@@ -4110,7 +4173,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         1/{(1 / maskScale).toFixed(1).replace(/\.0$/, '')}
                       </span>
                     </div>
-                    <div className="h-9 flex items-center bg-[#111] border border-[#222] px-3 rounded-[6px] w-full">
+                    {/* 滑桿就是滑桿：不套外框、不墊底色方塊，只留一條軌道 */}
+                    <div className="h-9 flex items-center px-1 w-full">
                       <input
                         type="range" min={0} max={100} step={1}
                         value={Math.round(Math.max(0, Math.min(100, (1 / maskScale - 1) * 25)))}
