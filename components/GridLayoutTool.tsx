@@ -9463,51 +9463,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     </div>
                   ) : (
                     /* Adjustment sliders - top aligned, smooth and stable without layout jitter */
-                    <div className="space-y-4 pt-2.5 px-1 max-w-xs">
-                      {/* Gap slider */}
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between text-[11px] font-bold text-white/70">
-                          <span>間距</span>
-                          <span className="font-mono text-white">{gap}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="25"
-                          step="1"
-                          value={gap}
-                          onChange={(e) => {
-                            if (selectedIndex !== null) setSelectedIndex(null);
-                            setGap(parseInt(e.target.value));
-                          }}
-                          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
-                        />
-                      </div>
-
-                      {/* Radius slider */}
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between text-[11px] font-bold text-white/70">
-                          <span>圓角</span>
-                          <span className="font-mono text-white">{radius}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="30"
-                          step="1"
-                          value={radius}
-                          onChange={(e) => {
-                            if (selectedIndex !== null) setSelectedIndex(null);
-                            setRadius(parseInt(e.target.value));
-                          }}
-                          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
-                        />
-                      </div>
-
+                    <div className="space-y-4 pt-2.5 pb-16 px-1 max-w-xs">
                       {/* 這個佈局自己的比例（跟最左邊那一頁的「版型比例」是兩回事：
                           那邊調的是整張頁面，這裡調的是選中的這一個佈局）。
                           再按一次同一顆就取消，回到「跟頁面一樣」。 */}
-                      <div className="space-y-1.5 pt-1">
+                      <div className="space-y-1.5">
                         <div className="flex justify-between text-[11px] font-bold text-white/70">
                           <span>比例</span>
                           <span className="font-mono text-white">
@@ -9569,6 +9529,47 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                           </button>
                         </div>
                       </div>
+
+                      {/* Gap slider */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[11px] font-bold text-white/70">
+                          <span>間距</span>
+                          <span className="font-mono text-white">{gap}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="25"
+                          step="1"
+                          value={gap}
+                          onChange={(e) => {
+                            if (selectedIndex !== null) setSelectedIndex(null);
+                            setGap(parseInt(e.target.value));
+                          }}
+                          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+                        />
+                      </div>
+
+                      {/* Radius slider */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[11px] font-bold text-white/70">
+                          <span>圓角</span>
+                          <span className="font-mono text-white">{radius}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="30"
+                          step="1"
+                          value={radius}
+                          onChange={(e) => {
+                            if (selectedIndex !== null) setSelectedIndex(null);
+                            setRadius(parseInt(e.target.value));
+                          }}
+                          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+                        />
+                      </div>
+
                     </div>
                   )}
                 </div>
