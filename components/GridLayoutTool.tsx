@@ -2947,23 +2947,35 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         <div
           ref={textRef}
           style={{
-            /* 字要「掛在框的中心上」，不能靠 minHeight 從框的上緣往下長。
-               字級是連續變化的（fontSize × 倍率），外框的高度卻要吸到實體像素；
-               字身一旦比框高（大字級時很常見），這一層就會從「吸過的上緣」開始
-               往下長 —— 上緣一格一格跳、字身連續長，兩者一相減就是縮放時看到的
-               上下抖動（實測一個實體像素上下來回）。
-               改成絕對定位掛在框的中心（框心本身在縮放時是不動的），
-               字身怎麼長都以中心往兩邊對稱撐開，位置就不再跟吸附有關。 */
-            position: 'absolute', left: 0, top: '50%',
-            transform: 'translateY(-50%)',
-            width: '100%', pointerEvents: 'none',
+            /* ── 縮放時的上下抖動：跟創意拼圖用同一套做法 ──────────────────
+               創意拼圖的文字是畫在 canvas 上的：字級直接乘上倍率
+               （ctx.font = size × s）、textBaseline = 'middle'、畫在 (0,0)。
+               關鍵是 canvas 的字形度量是「連續的浮點數」，字就永遠對稱掛在
+               中心點上，倍率再怎麼變都不會跳。
+
+               DOM 這邊做不到同一件事：字級一變，瀏覽器就要重排一次行盒，而
+               ascent／descent 是「每個字級各自取整」出來的，行盒高度卻是
+               字級 × 1.12 連續變化 —— 兩者相減出來的半行距（half-leading）
+               就是一條鋸齒，字因此一路往下爬、然後彈回去。上一版把這一層改掛
+               在框心，只解掉了「框」那一半，字形度量取整這一半還在。
+
+               所以改成跟 canvas 完全同構的做法：這一層永遠用「一倍大」的字級
+               排版（度量從頭到尾只算一次、不會重新取整），縮放交給 transform
+               的 scale 去做 —— 等同 canvas 連續縮放字形輪廓。
+               字級、字距、描邊、發光在這裡一律用原值，倍率統一由 scale 帶。 */
+            position: 'absolute', left: '50%', top: '50%',
+            transform: `translate(-50%, -50%) scale(${image.scale})`,
+            transformOrigin: 'center center',
+            width: `${image.width}px`, height: `${image.height}px`,
+            pointerEvents: 'none',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontFamily: fontStack(image.fontFamily),
-            fontSize: `${(image.fontSize || 40) * image.scale}px`,
+            fontSize: `${image.fontSize || 40}px`,
             lineHeight: 1.12,
             fontWeight: image.bold ? 700 : 400,
             fontStyle: image.italic ? 'italic' : 'normal',
-            letterSpacing: `${(image.letterSpacing || 0) * image.scale}px`,
+            // 倍率由外層的 scale 帶，這裡一律用原值（見上面的說明）
+            letterSpacing: `${image.letterSpacing || 0}px`,
             color: image.color || '#FFFFFF',
             // 只有使用者自己按的換行才換行，不自動斷行
             whiteSpace: 'pre',
@@ -2974,7 +2986,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             // 一半會吃進字身，看起來像每一筆都被描了一圈。改成 paint-order
             // 把描邊畫在填色「下面」、寬度加倍 —— 字身蓋住內半邊，
             // 剩下的就是純外描邊。
-            WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2 * image.scale}px` : undefined,
+            WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2}px` : undefined,
             WebkitTextStrokeColor: image.strokeWidth ? (image.strokeColor || '#FFFFFF') : undefined,
             // 沒有描邊時不要留著 paint-order。
             paintOrder: image.strokeWidth ? 'stroke fill' : undefined,
@@ -3011,7 +3023,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 WebkitTextStrokeWidth: 0,
                 paintOrder: 'normal',
                 textShadow: [1, 2, 3]
-                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k * image.scale}px ${image.glowColor || '#FFFFFF'}`)
+                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k}px ${image.glowColor || '#FFFFFF'}`)
                   .join(', '),
                 visibility: isTextEditing ? 'hidden' : undefined,
               }}
@@ -6730,7 +6742,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           if (target) {
             // 同樣只畫「邊」的線：捏合時中心不動，中線會整趟亮著（見 scaleLayoutSnapped）
             const pageLines = pageGuidelinesAt(target.x, target.y, target.width, target.height, ns, true, rot);
-            setActiveGuidelines(dedupeGuidelines(straight
+            /* 中心的那兩條線是「轉正了」的回饋，只有真的在轉的時候才該出現。
+               原本只看 straight —— 沒轉過的物件角度本來就是 0，等於一整趟
+               純縮放都掛著那兩條線，看起來莫名其妙。加上 g.rotOn：
+               手指真的轉超過不動區才算在轉。 */
+            setActiveGuidelines(dedupeGuidelines(straight && g.rotOn
               ? [
                   { type: 'vertical', coord: target.x + target.width / 2 },
                   { type: 'horizontal', coord: target.y + target.height / 2 },
@@ -8742,7 +8758,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                   />
                                 );
                                 const layoutChrome = (
-                                  <>
+                                  /* 對齊線亮起來時，整組外框（選取框、四顆圓球、按鈕列）一起讓位
+                                     —— 跟一般圖片、文字同一個規則（見 showChrome）。
+                                     用 visibility 而不是拆掉：拆掉的話有 transform 的圖層
+                                     偶爾不會重繪，畫面上會留下已經該消失的框。 */
+                                  <div
+                                    className="absolute inset-0 pointer-events-none"
+                                    style={{ visibility: activeGuidelines.length > 0 ? 'hidden' : 'visible' }}
+                                  >
                                     {/* 選取框跟一般圖片同款：細白線 + 陰影 */}
                                     <div
                                       className="absolute inset-0 pointer-events-none z-[55] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]"
@@ -8797,7 +8820,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                         <Trash2 size={14} />
                                       </button>
                                     </div>
-                                  </>
+                                  </div>
                                 );
 
                                 // 拿不到外框層就照原本的方式畫在佈局身上，行為完全不變
