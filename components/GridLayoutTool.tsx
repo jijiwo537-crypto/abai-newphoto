@@ -2947,7 +2947,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         <div
           ref={textRef}
           style={{
-            width: '100%', minHeight: '100%', pointerEvents: 'none',
+            /* 字要「掛在框的中心上」，不能靠 minHeight 從框的上緣往下長。
+               字級是連續變化的（fontSize × 倍率），外框的高度卻要吸到實體像素；
+               字身一旦比框高（大字級時很常見），這一層就會從「吸過的上緣」開始
+               往下長 —— 上緣一格一格跳、字身連續長，兩者一相減就是縮放時看到的
+               上下抖動（實測一個實體像素上下來回）。
+               改成絕對定位掛在框的中心（框心本身在縮放時是不動的），
+               字身怎麼長都以中心往兩邊對稱撐開，位置就不再跟吸附有關。 */
+            position: 'absolute', left: 0, top: '50%',
+            transform: 'translateY(-50%)',
+            width: '100%', pointerEvents: 'none',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontFamily: fontStack(image.fontFamily),
             fontSize: `${(image.fontSize || 40) * image.scale}px`,
@@ -6186,23 +6195,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     const x = rect.left + (rect.width - box.w) / 2 + t.x;
     const y = rect.top + (rect.height - box.h) / 2 + t.y;
     const cx = x + box.w / 2, cy = y + box.h / 2;
+    /* 佈局轉過角度之後，貼齊要看的是「轉完真正佔的那個外框」，
+       跟一般圖片、文字同一套（見 rotExtent）—— 不然轉 90 度時線會亮在
+       離邊緣半個身子的地方。倍率對外框是線性的，所以拿「一倍」的外框去解就好。 */
+    const lRot = t.rot || 0;
+    const ext1 = rotExtent(box.w, box.h, lRot);
     if (enableSnapping) {
       const SNAP = 4;
       let best = Infinity, bestScale = ns;
       pageRectsNear(getAllPageRects(), cx).forEach(pr => {
         const cands: number[] = [];
-        if (box.w > 1) {
-          cands.push((2 * (cx - pr.left)) / box.w);    // 左邊貼齊
-          cands.push((2 * (pr.right - cx)) / box.w);   // 右邊貼齊
+        if (ext1.bw > 1) {
+          cands.push((2 * (cx - pr.left)) / ext1.bw);    // 左邊貼齊
+          cands.push((2 * (pr.right - cx)) / ext1.bw);   // 右邊貼齊
         }
-        if (box.h > 1) {
-          cands.push((2 * (cy - pr.top)) / box.h);     // 上邊貼齊
-          cands.push((2 * (pr.bottom - cy)) / box.h);  // 下邊貼齊
+        if (ext1.bh > 1) {
+          cands.push((2 * (cy - pr.top)) / ext1.bh);     // 上邊貼齊
+          cands.push((2 * (pr.bottom - cy)) / ext1.bh);  // 下邊貼齊
         }
         cands.forEach(cand => {
           if (!(cand > MIN_LAYOUT_SCALE) || cand > 4) return;
           // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
-          const px = Math.abs(cand - ns) * Math.max(box.w, box.h) / 2;
+          const px = Math.abs(cand - ns) * Math.max(ext1.bw, ext1.bh) / 2;
           if (px < SNAP && px < best) { best = px; bestScale = cand; }
         });
       });
@@ -6212,7 +6226,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     /* 只畫「邊」的線（edgeOnly）：捏合時中心點根本不會動，中線會從頭亮到尾 ——
        佈局沒搬過的時候本來就正正對在頁面中心，那兩條線等於整趟手勢都掛在畫面上，
        看起來像壞掉。會隨倍率移動的只有四個邊，那才是這個手勢真正的回饋。 */
-    setActiveGuidelines(dedupeGuidelines(pageGuidelinesAt(x, y, rect.width, rect.height, ns, true)));
+    /* 這裡一定要傳佈局自己的框（box）跟角度：
+       傳整頁的寬高會讓中心點算錯（設過比例的佈局比整頁小、而且是置中的），
+       少傳角度則是轉過之後線會亮錯位置。 */
+    setActiveGuidelines(dedupeGuidelines(pageGuidelinesAt(x, y, box.w, box.h, ns, true, lRot)));
   };
 
   /**
@@ -6394,7 +6411,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       rect.top + (rect.height - box.h) / 2 + ny,
       box.w,
       box.h,
-      scale
+      scale,
+      undefined,
+      // 轉過角度的佈局，一樣用轉完的外框去比（跟一般圖片、文字同一套）
+      activeLayout?.t?.rot || 0,
     );
     setActiveGuidelines(guidelines);
     // 吸附回來的是「框的左上角」，扣掉置中的那一段才是佈局的位移量
