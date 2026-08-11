@@ -3170,7 +3170,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     templateIndex: number;
     images: ImageCell[];
     /** 佈局在頁面上的位移與縮放。新增時預設佔頁面七分滿。 */
-    t: { x: number; y: number; scale: number };
+    t: { x: number; y: number; scale: number; rot?: number };
     /** 圖層堆疊位置：0 = 在所有一般圖片下方，N = 在全部上方。 */
     z: number;
     /** 這個佈局自己的長寬比（'3:4' 之類）。沒設就跟整頁一樣。 */
@@ -6203,7 +6203,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    * 不要靠當下的 selectedLayoutId：手指放開的瞬間選取狀態可能已經被別的
    * handler 清掉，那樣這一筆就會寫不進去，看起來就是「縮放完自己彈回原大小」。
    */
-  const patchLayoutT = (patch: Partial<{ x: number; y: number; scale: number }>, targetId?: string | null) => {
+  const patchLayoutT = (patch: Partial<{ x: number; y: number; scale: number; rot: number }>, targetId?: string | null) => {
     const id = targetId ?? selectedLayoutId;
     if (!id) return;
     setPages(prev => prev.map(p => p.layouts.some(l => l.id === id) ? ({
@@ -6448,6 +6448,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     /** 旋轉的不動區：轉超過門檻才開始轉，rotBias 是要扣掉的那一段 */
     rotOn?: boolean; rotBias?: number;
     baseX: number; baseY: number; baseScale: number;
+    /** 整組佈局當下的角度（佈局的雙指旋轉用） */
+    baseLayoutRot: number;
     cellIdx: number; baseOffsetX: number; baseOffsetY: number; baseZoom: number;
   } | null>(null);
 
@@ -6585,6 +6587,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         baseX: kind === 'floating' ? (fImg?.x ?? 0) : lt.x,
         baseY: kind === 'floating' ? (fImg?.y ?? 0) : lt.y,
         baseScale: kind === 'floating' ? (fImg?.scale ?? 1) : lt.scale,
+        baseLayoutRot: lt.rot || 0,
         cellIdx: selectedIndex ?? -1,
         baseOffsetX: cell?.offsetX ?? 0,
         baseOffsetY: cell?.offsetY ?? 0,
@@ -6700,6 +6703,31 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           }
         } else if (g.kind === 'layout') {
           scaleLayoutSnapped(g.baseScale * k, wsGestureLayoutIdRef.current);
+          /* 整組佈局的兩指旋轉，手感跟一般圖片、文字同一套：
+             ① 先有一段「不動區」——轉不到 ROT_START 度就當成純縮放，
+                免得只是想放大卻不小心歪掉；
+             ② 超過門檻之後把門檻那一段扣掉再開始轉，跨過去的瞬間不會跳一下；
+             ③ 靠近 0/90/180/270 就吸正。 */
+          {
+            const ROT_START = 8, ROT_SNAP = 6;
+            const wrap180 = (v: number) => ((v + 180) % 360 + 360) % 360 - 180;
+            const ang2 = Math.atan2(
+              e.touches[1].clientY - e.touches[0].clientY,
+              e.touches[1].clientX - e.touches[0].clientX
+            ) * 180 / Math.PI;
+            let dRot = wrap180(ang2 - g.startAngle);
+            if (!g.rotOn) {
+              if (Math.abs(dRot) < ROT_START) dRot = 0;
+              else { g.rotOn = true; g.rotBias = dRot > 0 ? ROT_START : -ROT_START; }
+            }
+            if (g.rotOn) {
+              dRot -= (g.rotBias || 0);
+              let rot = ((g.baseLayoutRot + dRot) % 360 + 360) % 360;
+              const nearest = (Math.round(rot / 90) * 90) % 360;
+              if (Math.abs(wrap180(rot - nearest)) <= ROT_SNAP) rot = nearest;
+              patchLayoutT({ rot }, wsGestureLayoutIdRef.current);
+            }
+          }
         } else if (g.kind === 'cell' && g.cellIdx >= 0) {
           applyCellZoom(g.cellIdx, Math.max(1.0, Math.min(5.0, g.baseZoom * k)));
         }
@@ -7149,6 +7177,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 top: `${((previewH - lh) / 2 + (layout.t?.y || 0)) * k}px`,
                 width: `${lw * k}px`,
                 height: `${lh * k}px`,
+                ...((layout.t?.rot || 0) !== 0
+                  ? { transform: `rotate(${layout.t!.rot}deg)`, transformOrigin: 'center center' }
+                  : null),
               }}
             >
               {tpl.rects.map((rect, ci) => {
@@ -7362,9 +7393,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           // 整組佈局可能被移動或縮放過，匯出時套用同一個變形
           const lt = layout.t || { x: 0, y: 0, scale: 1 };
           const ltScale = lt.scale || 1;
+          const ltRot = lt.rot || 0;
           ctx.save();
-          if (lt.x !== 0 || lt.y !== 0 || ltScale !== 1) {
+          if (lt.x !== 0 || lt.y !== 0 || ltScale !== 1 || ltRot !== 0) {
             ctx.translate(pageOffsetX + targetW / 2 + lt.x * scaleFactor, targetH / 2 + lt.y * scaleFactor);
+            // 旋轉與縮放都以佈局中心為軸，跟預覽的 transform-origin: center 一致
+            if (ltRot !== 0) ctx.rotate((ltRot * Math.PI) / 180);
             ctx.scale(ltScale, ltScale);
             ctx.translate(-(pageOffsetX + targetW / 2), -targetH / 2);
           }
@@ -7493,7 +7527,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         page.layouts.forEach(lay => {
           const ls = lay.t?.scale ?? 1;
           // 佈局有自己的比例時佔的橫向範圍會比整頁窄，要照它自己的框算
-          const lbw = layoutBox(lay, targetW, targetH).w * ls;
+          const lb0 = layoutBox(lay, targetW, targetH);
+          // 轉過角度之後佔的橫向範圍會變寬，要用「轉過的外接框」
+          const lbw = rotExtent(lb0.w * ls, lb0.h * ls, lay.t?.rot || 0).bw;
           const left = pageIdx * targetW + (targetW - lbw) / 2 + (lay.t?.x || 0) * scaleFactor;
           drawJobs.push({
             z: 59 + (lay.z ?? 0) * 2,
@@ -8263,6 +8299,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                   height: `${lh}px`,
                                   transition: 'none',
                                   zIndex: 59 + (layout.z ?? 0) * 2,
+                                  /* 兩指旋轉：直接轉整個外框，裡面的格子、照片、
+                                     選取框、四個角、那排按鈕全部跟著轉，
+                                     連點擊命中判定都是瀏覽器自己算的。 */
+                                  ...((layout.t?.rot || 0) !== 0
+                                    ? { transform: `rotate(${layout.t!.rot}deg)`, transformOrigin: 'center center' }
+                                    : null),
                                 }}
                                 onTouchStart={isThisLayoutSelected ? handleLayoutTouchStart : undefined}
                                 onTouchMove={isThisLayoutSelected ? handleLayoutTouchMove : undefined}
