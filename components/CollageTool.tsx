@@ -1260,6 +1260,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const holesRef = useRef<any[]>([]);
   const [brushMode, setBrushMode] = useState<'off' | 'pen' | 'eraser'>('off');
   const [symmetryEnabled, setSymmetryEnabled] = useState(true);
+  /* 圖案發光：預設關閉。開啟後每個圖案周圍散出一圈光，
+     跟圖片、文字的發光同一種感覺（同一套「三段模糊疊起來」的做法）。 */
+  const [holeGlow, setHoleGlow] = useState(false);
+  const [holeGlowColor, setHoleGlowColor] = useState('#FFFFFF');
   const lastDrawPosRef = useRef<{ x: number, y: number } | null>(null);
 
   useEffect(() => {
@@ -1439,6 +1443,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (st.dotSize !== undefined) setDotSize(st.dotSize);
     if (st.dotGap !== undefined) setDotGap(st.dotGap);
     if (st.symmetryEnabled !== undefined) setSymmetryEnabled(st.symmetryEnabled);
+    if (st.holeGlow !== undefined) setHoleGlow(st.holeGlow);
+    if (st.holeGlowColor !== undefined) setHoleGlowColor(st.holeGlowColor);
   }, [initialState]);
 
   useEffect(() => {
@@ -1447,12 +1453,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       saveToolDraft('collage', null, {
         layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
+        holeGlow, holeGlowColor,
       });
     }, 1200);
     return () => clearTimeout(t);
   }, [
     imageState, layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
     holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
+    holeGlow, holeGlowColor,
   ]);
 
   useEffect(() => {
@@ -1602,12 +1610,40 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setSymmetryEnabled(prev => {
       const next = !prev;
       if (!next) {
+        /* 解除對稱：把 side:'both' 拆成 image／mask 兩顆，
+           而且遮罩那一份要「重新編排」—— 不然拆完兩邊還是疊在同一個位置，
+           看起來跟沒解除一樣。重灑的規則跟一開始隨機灑圖案完全一致
+           （同一套間距與留邊），只是範圍改成遮罩自己那一塊。 */
+        const bw = imageState?.baseW || 0;
+        const bh = imageState?.baseH || 0;
+        const gs = imageState?.globalScale || 1;
+        const mapped = 25 + (holeSize / 100) * 125;
+        const sSize = mapped * gs;
+        const pad = sSize / 2 + 25 * gs;
+        const md = maskDims(layout, bw, bh, maskScale);
+        const placed: { x: number; y: number }[] = [];
+        const scatter = () => {
+          const fw = md.mw, fh = md.mh;
+          if (fw <= pad * 2 || fh <= pad * 2) return null;
+          let att = 0;
+          while (att < 500) {
+            const x = pad + Math.random() * (fw - pad * 2);
+            const y = pad + Math.random() * (fh - pad * 2);
+            if (placed.every(q => Math.hypot(q.x - x, q.y - y) >= sSize * 1.2)) {
+              placed.push({ x, y });
+              return { x, y };
+            }
+            att++;
+          }
+          return null;
+        };
         const decoupled: any[] = [];
         holesRef.current.forEach(h => {
           const side = h.side || 'both';
           if (side === 'both') {
             decoupled.push({ ...h, id: h.id + '_img', side: 'image' });
-            decoupled.push({ ...h, id: h.id + '_msk', side: 'mask' });
+            const spot = scatter();
+            decoupled.push({ ...h, id: h.id + '_msk', side: 'mask', ...(spot || {}) });
           } else decoupled.push(h);
         });
         if (sameHoles(decoupled, holesRef.current)) return next;
@@ -1628,7 +1664,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
       return next;
     });
-  }, [layout, pushHistory]);
+  }, [layout, pushHistory, imageState, holeSize, maskScale]);
+
+  /** 給圖案編輯頁那兩顆「開啟／關閉」用：已經是那個狀態就什麼都不做。 */
+  const setSymmetryTo = useCallback((on: boolean) => {
+    if (layout === AROUND) return;
+    if (symmetryEnabled === on) return;
+    toggleSymmetry();
+  }, [layout, symmetryEnabled, toggleSymmetry]);
 
   /* 只有「換一張照片」才把歷史清掉。改「數量」也會重灑圖案，
      但那是一次可以上一步的操作，不該把之前做過的事一起抹掉。 */
@@ -2629,9 +2672,43 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const base = getHoleSize(h);
       return { k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base, rot: f.rot, a: f.a, fx: f.fx, on: f.k > 0.002 && f.a > 0.004 };
     };
+    /* 圖案發光：跟圖片、文字的發光同一套 —— 同一個形狀疊三段模糊，
+       濃度由 shadow 疊出來。永遠畫在圖案「本體之前」，本體再蓋上去，
+       所以光只從輪廓往外散，不會把圖案自己染成光的顏色。 */
+    const paintHoleGlow = (
+      g: CanvasRenderingContext2D, h: any, alpha: number,
+      sz: number, angle: number, gx: number, gy: number,
+    ) => {
+      if (!holeGlow || sz <= 0) return;
+      g.save();
+      g.globalAlpha = alpha;
+      g.fillStyle = holeGlowColor;
+      g.shadowColor = holeGlowColor;
+      for (const kk of [1, 2, 3]) {
+        g.shadowBlur = sz * 0.1 * kk;
+        if (isTextHole(holeType)) {
+          drawTextShape(g, holeType, holeGlyph(holeType, customText, h), gx, gy, sz, holeGlowColor, false, angle);
+        } else {
+          g.save();
+          g.translate(gx, gy);
+          g.rotate((angle * Math.PI) / 180);
+          drawShapePath(g, holeType, 0, 0, sz);
+          g.fill();
+          g.restore();
+        }
+      }
+      g.restore();
+    };
+
     const linksFor = (side: 'image' | 'mask') => {
       if (linkMode === 'none' || !linkableType(holeType)) return [] as [any, any][];
-      const list = holes.filter(h => { const sd = h.side || 'both'; return sd === 'both' || sd === side; });
+      /* 解除對稱之後兩邊是各自獨立的圖案，這時候連線就不再分邊 ——
+         遮罩上的圖案可以連到圖片上的圖案（線在各自那一層畫出來、
+         在交界處接起來，看起來就是一條跨過去的線）。 */
+      const crossSides = !symmetryEnabled && layout !== AROUND;
+      const list = crossSides
+        ? holes.slice()
+        : holes.filter(h => { const sd = h.side || 'both'; return sd === 'both' || sd === side; });
       /* 會穿過別的圖案的線就整條不畫 —— 線從圖案身上壓過去很醜。
          判斷用的是圖案「靜止時」的位置與大小，所以結果是穩定的：
          把圖案挪到不擋路的地方，線自己就回來了。 */
@@ -2709,6 +2786,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         ctx.globalAlpha = A.a;
         // pattern 錨在目前的原點，所以先位移，讓遮罩上的 (mxp,myp) 正好落在圖案位置
         ctx.translate(hx - mxp, hy - myp);
+        paintHoleGlow(ctx, h, A.a, sz, currentAngle, mxp, myp);
         if (isTextHole(holeType)) {
           const tText = holeGlyph(holeType, customText, h);
           drawTextShape(ctx, holeType, tText, mxp, myp, sz, basePat, false, currentAngle);
@@ -2750,6 +2828,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     // 純色的底稿只有 8×8（見上面 plainMask），這裡直接填色，不要把小塊拉大
     if (plainMask) { lmx.fillStyle = maskColor; lmx.fillRect(0, 0, maskW, maskH); }
     else lmx.drawImage(fCanvas, 0, 0);
+    /* 遮罩上的圖案是「挖穿」的，所以光要在挖之前、用一般的疊加畫在遮罩上 ——
+       挖掉中間之後，留在遮罩上的就是沿著洞口散出來的一圈光。 */
+    if (holeGlow) {
+      /* 上面那段底稿是用 'copy' 畫的（一次把整張換掉）。
+         這裡一定要先切回一般疊加，不然每畫一顆光就會把整張遮罩洗掉一次，
+         最後只剩最後那顆光 —— 畫面上看起來就是「遮罩整個不見了」。 */
+      lmx.globalCompositeOperation = 'source-over';
+      holes.forEach(h => {
+        const side = h.side || 'both';
+        if (side !== 'both' && side !== 'mask') return;
+        if (layout !== AROUND && !isHoleFullyInsideMask(h, s, maskW, maskH)) return;
+        const A = hA(h);
+        if (!A.on) return;
+        const sz = getHoleSize(h) * A.k * s;
+        const ang = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
+        paintHoleGlow(lmx, h, A.a, sz, ang, A.x * s, A.y * s);
+      });
+    }
     lmx.globalCompositeOperation = 'destination-out';
     holes.forEach(h => {
       const side = h.side || 'both';
@@ -2779,6 +2875,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     lmx.strokeStyle = '#000';
     strokeLinks(lmx, linksFor('mask').filter(([a, b]) =>
       layout === AROUND
+      // 解除對稱時線本來就會跨過交界，這裡不能再要求兩端都在遮罩裡（見 linksFor）
+      || !symmetryEnabled
       || (isHoleFullyInsideMask(a, s, maskW, maskH) && isHoleFullyInsideMask(b, s, maskW, maskH))));
     lmx.globalCompositeOperation = 'source-over';
     ctx.drawImage(lmc, offs.mx, offs.my);
@@ -2809,6 +2907,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         // 四周包圍的洞本來就是遮罩座標，對應點就是自己
         ctx.save();
         ctx.globalAlpha = A.a;
+        paintHoleGlow(ctx, h, A.a, sz, currentAngle, hx, hy);
         if (isTextHole(holeType)) {
           drawTextShape(ctx, holeType, holeGlyph(holeType, customText, h), hx, hy, sz, pat, false, currentAngle);
         } else {
@@ -3102,7 +3201,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
-  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick, linkMode]);
+  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, holeGlow, holeGlowColor]);
 
   /** 下面那個 useLayoutEffect 已經同步畫過的那一版（哪一支 renderToCanvas、畫在幾倍） */
   const syncDrawnRef = useRef<{ fn: any; ps: number } | null>(null);
@@ -3497,6 +3596,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     maskColor, patternType, dotColor, dotSize, dotGap,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
+    holeGlow, holeGlowColor,
     linkMode,
     moShape, moLink, motionHold,
     // 選取框也是畫面的一部分，一起記起來才會「回到一模一樣」
@@ -3513,6 +3613,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setHoleSize(e.holeSize); setSizeJitter(e.sizeJitter);
     setHoleAngle(e.holeAngle); setHoleCount(e.holeCount);
     setSymmetryEnabled(e.symmetryEnabled);
+    setHoleGlow(!!e.holeGlow); setHoleGlowColor(e.holeGlowColor || '#FFFFFF');
     setLinkMode(e.linkMode);
     setMoShape(e.moShape); setMoLink(e.moLink); setMotionHold(e.motionHold);
     setSelectedObj(e.selectedObj ?? null); setSelectedTarget(e.selectedTarget ?? null);
@@ -3539,6 +3640,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     layout, maskScale, maskColor, patternType, dotColor, dotSize, dotGap,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
+    holeGlow, holeGlowColor,
     linkMode, moShape, moLink, motionHold,
   ]);
 
@@ -4443,10 +4545,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }`}`}>
           {colorPickerTarget ? (
             <ColorPickerEmbedded 
-              color={colorPickerTarget === 'mask' ? maskColor : dotColor} 
-              onChange={c => { if(colorPickerTarget==='mask') setMaskColor(c); else setDotColor(c); }}
+              color={colorPickerTarget === 'mask' ? maskColor : colorPickerTarget === 'holeGlow' ? holeGlowColor : dotColor} 
+              onChange={c => { if(colorPickerTarget==='mask') setMaskColor(c); else if(colorPickerTarget==='holeGlow') setHoleGlowColor(c); else setDotColor(c); }}
               onClose={() => setColorPickerTarget(null)}
-              title={colorPickerTarget === 'mask' ? '遮罩顏色' : '點點'}
+              title={colorPickerTarget === 'mask' ? '遮罩顏色' : colorPickerTarget === 'holeGlow' ? '發光顏色' : '點點'}
             />
           ) : (
             <>
@@ -4830,6 +4932,69 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <CompactSlider label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
                     <CompactSlider label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
                   </div>
+                  {/* 對稱：四周包圍是一整片場、沒有「左右兩塊要對稱」的概念，
+                      所以那個排版下不出現（跟三個點選單裡那顆同一個狀態）。
+                      關閉＝解除圖片與遮罩的對稱、遮罩上的圖案重新編排，
+                      而且連線可以跨過交界（見 linksFor）。 */}
+                  {layout !== AROUND && (
+                    <div className="flex flex-col mt-6">
+                      <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
+                        <span>對稱</span>
+                      </div>
+                      <div className="flex gap-2">
+                        {([[true, '開啟'], [false, '關閉']] as const).map(([on, name]) => (
+                          <button
+                            key={name}
+                            onClick={() => setSymmetryTo(on)}
+                            title={on ? '圖片與遮罩上的圖案成對連動' : '解除對稱：遮罩上的圖案重新編排，可單獨調整'}
+                            className={`flex-1 h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
+                              symmetryEnabled === on
+                                ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                                : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
+                            }`}
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 發光：預設關閉。開啟之後多一列可以挑光的顏色。 */}
+                  <div className="flex flex-col mt-6">
+                    <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
+                      <span>發光</span>
+                    </div>
+                    <div className="flex gap-2">
+                      {([[true, '開啟'], [false, '關閉']] as const).map(([on, name]) => (
+                        <button
+                          key={name}
+                          onClick={() => setHoleGlow(on)}
+                          title={on ? '圖案周圍散出一圈光' : '不發光'}
+                          className={`flex-1 h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
+                            holeGlow === on
+                              ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                              : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
+                          }`}
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                    {holeGlow && (
+                      <div
+                        className="h-[47px] mt-2 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
+                        onClick={() => setColorPickerTarget('holeGlow')}
+                      >
+                        <span className="text-[10px] font-bold text-[#888]">顏色</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-mono text-white/40">{holeGlowColor}</span>
+                          <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: holeGlowColor }} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
                   {/* 連線：每個圖案拉一條極細的線到最近的鄰居。
                       版型跟上面那幾根滑桿一致 —— 左上是名稱，下面才是選項。
                       每一種圖案都支援（見上面 LINK_TYPES 的說明）。 */}
