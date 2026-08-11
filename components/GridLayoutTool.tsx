@@ -2248,6 +2248,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const shapeDpr = Math.min(2, geoDpr);
   /** 把長度吸到整數個實體像素（見 wrapGeo 的說明） */
   const snapPx = (v: number) => Math.round(v * geoDpr) / geoDpr;
+  /** 吸到「偶數個」實體像素 —— 這樣一半也還落在格線上（見 wrapGeo） */
+  const snapPx2 = (v: number) => (Math.round((v * geoDpr) / 2) * 2) / geoDpr;
   /** 重畫收斂成一幀一次用的 */
   const rafRef = useRef(0);
   const drawnSrcRef = useRef<string | null>(null);
@@ -2736,10 +2738,25 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
        卻是往外取整 —— 中間差的那一列永遠不會被重畫，縮放時就沿路留下一條
        一像素的殘影（照片是深色、頁面是白的，看起來就是一根根黑線）。
        吸到整數之後兩邊對齊，殘影就沒有可以躲的地方。 */
-    left: `${snapPx(image.x + (image.width - image.width * image.scale) / 2)}px`,
-    top: `${snapPx(image.y + (image.height - image.height * image.scale) / 2)}px`,
-    width: `${snapPx(image.width * image.scale)}px`,
-    height: `${snapPx(image.height * image.scale)}px`,
+    /* 位置要用「中心」推回來，不能位置與大小各吸各的。
+       縮放時中心點其實是不動的（x + (w - w·s)/2 + w·s/2 恆等於 x + w/2），
+       但左上角與寬高分別吸到格線之後，兩個誤差不同步 —— 中心就會一路上下、
+       左右來回抖（模擬一趟 1→3 倍：垂直來回 341 次）。
+       改成：寬高先吸到「偶數個」實體像素（一半也還在格線上），再由固定的
+       中心點推出左上角。這樣中心不再隨縮放跳動（來回 0 次），四個邊也仍然
+       都落在整數實體像素上，殘影的防治沒有變。 */
+    ...(() => {
+      const cx = image.x + image.width / 2;
+      const cy = image.y + image.height / 2;
+      const w = snapPx2(image.width * image.scale);
+      const h = snapPx2(image.height * image.scale);
+      return {
+        left: `${snapPx(cx - w / 2)}px`,
+        top: `${snapPx(cy - h / 2)}px`,
+        width: `${w}px`,
+        height: `${h}px`,
+      };
+    })(),
     transformOrigin: 'center center',
     // 排頁面拖曳中要跟著自己那一頁一起走（平移＋群組縮放），最後才是自己的旋轉
     /* 這裡「一定要」保留 transform（即使旋轉是 0）。
@@ -8797,6 +8814,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                         top: `${lTop}px`,
                                         width: `${lw}px`,
                                         height: `${lh}px`,
+                                        // 佈局轉了角度時，這層也要一起轉，
+                                        // 不然選取框、角球、按鈕列會留在原地不跟著轉。
+                                        ...((layout.t?.rot || 0) !== 0
+                                          ? {
+                                              transform: `rotate(${layout.t!.rot}deg)`,
+                                              transformOrigin: 'center center',
+                                            }
+                                          : null),
                                       }}
                                     >
                                       {layoutChrome}
