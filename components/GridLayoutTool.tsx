@@ -9398,7 +9398,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 </div>
 
                 {/* Right side content */}
-                <div className="flex-1 overflow-y-auto no-scrollbar pl-3 pr-1 h-full">
+                <div
+                  className="flex-1 overflow-y-auto no-scrollbar pl-3 pr-1 h-full"
+                  /* 到頂了再往上拉、到底了再往下拉都不要有那一下橡皮筋
+                     （contain 只擋「把捲動傳給外層」，自己還是會彈，所以用 none） */
+                  style={{ overscrollBehavior: 'none' }}
+                >
                   {layoutSubTab === 'layout' ? (
                     allTemplatesFlattened.length > 0 ? (
                       <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 pb-10">
@@ -9474,66 +9479,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     </div>
                   ) : (
                     /* Adjustment sliders - top aligned, smooth and stable without layout jitter */
-                    <div className="space-y-4 pt-2.5 px-1 max-w-xs">
-                      {/* Gap slider */}
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between text-[11px] font-bold text-white/70">
-                          <span>間距</span>
-                          <span className="font-mono text-white">{gap}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="25"
-                          step="1"
-                          value={gap}
-                          onChange={(e) => {
-                            if (selectedIndex !== null) setSelectedIndex(null);
-                            setGap(parseInt(e.target.value));
-                          }}
-                          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
-                        />
-                      </div>
-
-                      {/* Radius slider */}
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between text-[11px] font-bold text-white/70">
-                          <span>圓角</span>
-                          <span className="font-mono text-white">{radius}px</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="0"
-                          max="30"
-                          step="1"
-                          value={radius}
-                          onChange={(e) => {
-                            if (selectedIndex !== null) setSelectedIndex(null);
-                            setRadius(parseInt(e.target.value));
-                          }}
-                          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
-                        />
-                      </div>
-
+                    <div className="space-y-4 pt-2.5 pb-24 px-1 max-w-xs">
                       {/* 這個佈局自己的比例。跟最左邊那一頁的「版型比例」是兩回事：
                           那邊調的是整張頁面，這裡只調選中的這一個佈局。
                           按鍵樣式跟那一頁同一套；直式／橫式不再包一層底色格子，
                           改成跟上面同一種 grid（同樣的 gap），
                           所以兩顆的左右外緣剛好對齊上面那排比例鍵。
                           再按一次同一顆比例就取消，回到「跟頁面一樣」。 */}
-                      <div className="space-y-1.5 pt-0.5">
-                        <div className="flex justify-between text-[11px] font-bold text-white/70">
-                          <span>比例</span>
-                          <span className="font-mono text-white">
-                            {layoutRatio
-                              ? (layoutRatio === '1:1'
-                                  ? '1:1'
-                                  : layoutLandscape
-                                    ? `${layoutRatio.split(':')[1]}:${layoutRatio.split(':')[0]}`
-                                    : layoutRatio)
-                              : '跟頁面一樣'}
-                          </span>
-                        </div>
+                      <div className="space-y-1.5">
+                        {/* 這一排只放名稱。右邊本來會再寫一次目前的比例，
+                            但下面那五顆按鈕自己就會反白標示，寫兩次是重複的。 */}
+                        <div className="text-[11px] font-bold text-white/70">比例</div>
                         <div className="grid grid-cols-5 gap-1.5">
                           {RATIOS.map((item) => (
                             <button
@@ -9583,6 +9539,47 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                           </button>
                         </div>
                       </div>
+
+                      {/* Gap slider */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[11px] font-bold text-white/70">
+                          <span>間距</span>
+                          <span className="font-mono text-white">{gap}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="25"
+                          step="1"
+                          value={gap}
+                          onChange={(e) => {
+                            if (selectedIndex !== null) setSelectedIndex(null);
+                            setGap(parseInt(e.target.value));
+                          }}
+                          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+                        />
+                      </div>
+
+                      {/* Radius slider */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[11px] font-bold text-white/70">
+                          <span>圓角</span>
+                          <span className="font-mono text-white">{radius}px</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="30"
+                          step="1"
+                          value={radius}
+                          onChange={(e) => {
+                            if (selectedIndex !== null) setSelectedIndex(null);
+                            setRadius(parseInt(e.target.value));
+                          }}
+                          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+                        />
+                      </div>
+
                     </div>
                   )}
                 </div>
