@@ -8775,11 +8775,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                     {corner('tr', 'top-0 left-full', 'cursor-nesw-resize')}
                                     {corner('bl', 'top-full left-0', 'cursor-nesw-resize')}
                                     {corner('br', 'top-full left-full', 'cursor-nwse-resize')}
+                                    {/* 按鈕列跟一般圖片、文字同一套：掛在中心、沿「畫面的」Y 軸
+                                        推到轉完外接框的外面，再反向轉回來 —— 佈局轉了，
+                                        按鈕仍然是正的（只有選取框跟角球跟著轉）。 */}
                                     <div
-                                      className="absolute left-1/2 flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto z-[60]"
-                                      style={(previewH - lh) / 2 + (layout.t?.y || 0) + lh + 52 > previewH
-                                        ? { bottom: '100%', marginBottom: 10, transform: 'translate(-50%, 0)', transformOrigin: 'bottom center' }
-                                        : { top: '100%', marginTop: 10, transform: 'translate(-50%, 0)', transformOrigin: 'top center' }}
+                                      className="absolute left-1/2 top-1/2 flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto z-[60]"
+                                      style={(() => {
+                                        const lrot = layout.t?.rot || 0;
+                                        const rad = (lrot * Math.PI) / 180;
+                                        const halfSpan =
+                                          (lw * Math.abs(Math.sin(rad)) + lh * Math.abs(Math.cos(rad))) / 2;
+                                        const cy = (previewH - lh) / 2 + (layout.t?.y || 0) + lh / 2;
+                                        const dir = cy + halfSpan + 52 > previewH ? -1 : 1;
+                                        const d = dir * (halfSpan + 26);
+                                        return {
+                                          transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-lrot}deg)`,
+                                        };
+                                      })()}
                                       onPointerDown={(e) => e.stopPropagation()}
                                       onTouchStart={(e) => e.stopPropagation()}
                                     >
@@ -8836,12 +8848,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                       top: 0,
                                       width: `${previewW}px`,
                                       height: `${previewH}px`,
-                                      transform: mvChrome
-                                        ? `translateX(${mvChrome.dx}px)${liftedChrome ? ` scale(${mvChrome.s})` : ''}`
-                                        : undefined,
                                       transformOrigin: 'center center',
                                       transition: mvChrome ? (mvChrome.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
                                       zIndex: 100000 + (layout.z ?? 0) * 2 + 1,
+                                      /* 取消選取時這一整層是被拆掉的，而被 transform 提升過的相鄰圖層
+                                         有時候不會把它讓出來的那塊重畫 —— 畫面上就留著一個已經不存在的
+                                         選取框。讓這一層自己就是一個合成層（跟圖片那邊同一招），
+                                         拆掉時整層一起消失，不會有殘影留在別人的圖層上。 */
+                                      transform: [
+                                        mvChrome ? `translateX(${mvChrome.dx}px)${liftedChrome ? ` scale(${mvChrome.s})` : ''}` : '',
+                                        'translateZ(0)',
+                                      ].filter(Boolean).join(' '),
+                                      willChange: 'transform',
+                                      backfaceVisibility: 'hidden',
                                     }}
                                   >
                                     {/* 裡面這層＝佈局自己的框。尺寸跟真正那個 wrapper 一模一樣，

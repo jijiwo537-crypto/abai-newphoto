@@ -1568,7 +1568,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        —— 但使用者自己拖出去仍然可以（那是刻意的）。 */
     /* 四周包圍的圖案會跟著中間那張照片一起縮（見 getHoleSize），
        所以「灑得多開、離邊多遠」也要照縮過的大小算。 */
-    const drawnS = around ? s * Math.max(0.05, Math.min(1, maskScale)) : s;
+    // 跟 getHoleSize 用同一個固定倍率（不再跟著比例滑桿變）
+    const drawnS = around ? s * AROUND_SCALE : s;
     const p = around ? drawnS * 0.75 + 25 * gs : s / 2 + 25 * gs;
     const md = maskDims(lay, baseW, baseH, maskScale);
     const fieldW = around ? md.mw : baseW;
@@ -1711,9 +1712,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        比例 1/3 時照片只有畫布的 0.6 倍，圖案卻照原尺寸畫，
        壓在照片上就是 1.67 倍大（主人說的「圖案異常變大」）。
        滑到滿版時這個倍率剛好是 1，跟其他排版完全一致。 */
-    const k = layout === AROUND ? Math.max(0.05, Math.min(1, maskScale)) : 1;
+    /* 但這個倍率要「固定」，不能跟著比例滑桿跑。
+       跟著跑的話，調比例等於同時在調圖案大小 —— 滑桿一動整片圖案就一起
+       脹縮，那不是這根滑桿該做的事。改成鎖在進入包圍排版時的預設比例
+       （AROUND_SCALE），大小就只由「大小」滑桿決定，跟其他排版一樣。 */
+    const k = layout === AROUND ? AROUND_SCALE : 1;
     return baseSize * gs * k * (h.localScale || 1);
-  }, [holeSize, sizeJitter, imageState?.globalScale, layout, maskScale]);
+  }, [holeSize, sizeJitter, imageState?.globalScale, layout]);
 
   const isHoleFullyInsideMask = useCallback((h: any, s: number, maskW: number, maskH: number) => {
     const sz = getHoleSize(h) * s;
@@ -4459,6 +4464,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           // 排版、比例、圖案在同一批更新裡一起換，中間不會露出半舊半新的那一格
                           setLayout(t);
                           if (t === AROUND) setMaskScale(AROUND_SCALE);
+                          /* 包圍排版的圖案本來就會再乘一個固定倍率縮小，
+                             同一個「大小」值看起來會比別的排版小一點點，
+                             所以進來時把大小補 +10、離開時原封退回去 ——
+                             來回切換不會愈疊愈大。 */
+                          if (t === AROUND && layout !== AROUND) setHoleSize(v => Math.min(100, v + 10));
+                          else if (t !== AROUND && layout === AROUND) setHoleSize(v => Math.max(0, v - 10));
                           setSelectedTarget(null);
                           generateRandomHoles(true, t, 'none');
                         }} className="focus:outline-none">
