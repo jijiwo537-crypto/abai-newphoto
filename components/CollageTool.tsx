@@ -41,7 +41,9 @@ const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
 /** 四周包圍：遮罩把原圖整圈包起來 */
 const AROUND = 'mask-around';
 /** 四周包圍的預設比例（可以再改，只是一進去先給這個） */
-const AROUND_SCALE = 1 / 3;
+/* 四周包圍的預設比例。新語意是「中間那張照片佔畫布多少」——
+   0.6 畫出來跟以前「邊框 1/3」那個外觀一樣。 */
+const AROUND_SCALE = 0.6;
 /** 單邊上限（Safari Mobile 安全值） */
 const MAX_FINAL_DIM = 4096;
 /** 導出畫布的總像素上限。真正把分頁殺掉的是「面積」不是「邊長」 */
@@ -82,11 +84,19 @@ const previewPixelsAt = (
 /** 這個排版下遮罩相對原圖的尺寸；四周包圍時遮罩就是整張輸出畫布 */
 const maskDims = (layout: string, bw: number, bh: number, maskScale: number) => {
   if (layout === AROUND) {
+    /* 四周包圍：遮罩就是整張畫布，而且大小固定＝原圖大小。
+       「比例」只縮中間那張照片，完全不動遮罩。
+
+       以前是反過來的 —— 比例愈大就把畫布往外撐（原圖×(1+2×比例)），
+       於是拉比例時整張畫布的尺寸每一格都在變：圖案的座標系跟著變（圖案會跑掉）、
+       主畫布與遮罩層每一格都要重新配置（滑桿因此只剩 8.5fps）。
+       畫布固定之後，這三件事一次解決。 */
+    const k = Math.max(0.05, Math.min(1, maskScale));
     return {
-      mw: Math.round(bw * (1 + maskScale * 2)),
-      mh: Math.round(bh * (1 + maskScale * 2)),
-      padX: Math.round(bw * maskScale),
-      padY: Math.round(bh * maskScale),
+      mw: Math.round(bw),
+      mh: Math.round(bh),
+      padX: Math.round(bw * (1 - k) / 2),
+      padY: Math.round(bh * (1 - k) / 2),
     };
   }
   return {
@@ -127,9 +137,13 @@ const objKeyOf = (list: any[]) =>
   (list || []).map(o => JSON.stringify({ ...o, img: undefined, src: o.src || '' })).join(';');
 
 /* ── 連線 ──────────────────────────────────────────────────────────
-   只有前六種「單一封閉形狀」的圖案支援：這幾種有明確的中心點，線接上去
-   才看得懂。後面那些字符、數字、漩渦連起來只會像亂畫。 */
-const LINK_TYPES = ['circle', 'square', 'cross-star', 'heart', 'star', 'flower'];
+   每一種圖案都能連線。以前只開放前六種「單一封閉形狀」，理由是字符類的
+   中心點不明確、連起來會像亂畫 —— 但那個中心點的問題已經在 drawTextShape
+   裡修掉了（改成對齊字真正的墨水中心），所以字符、數字、漩渦現在也都
+   接得準，沒有理由再擋。 */
+const LINK_TYPES: string[] = [];
+/** 這種圖案支援連線嗎（空陣列＝全部都支援） */
+const linkableType = (t: string) => LINK_TYPES.length === 0 || LINK_TYPES.includes(t);
 
 /**
  * 每個圖案連到「離它最近、而且這一對還沒被連過」的那一個。
@@ -392,6 +406,102 @@ const holeGlyph = (holeType: string, customText: string, h?: any) =>
     : holeType === 'random-num' ? `(${getHoleNumber(h)})`
     : customText);
 
+/** 字符圖案要用的字型 —— 畫、量、選取框、命中判定全部共用這一支，
+ *  不然「畫的是這支字型、量的是另一支」，框跟圖案就對不起來。 */
+const glyphFont = (holeType: string, sz: number) =>
+  (holeType === 'love' || holeType === 'love3')
+    ? `bold ${sz * 1.05}px "Inter", "Segoe UI", sans-serif`
+    : `500 ${sz}px "Inter", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+
+/* ── 字符圖案「看得見的那一塊」 ───────────────────────────────────────
+   textAlign:'center' 對的是**前進寬度**、textBaseline:'middle' 對的是
+   **em 方框**，兩個都不是墨水。一般的字差不多，但像 ᯽、𓇼、𖤐 這些冷門的
+   Unicode 字，退回系統字型之後左右留白常常差很多 —— 畫出來就整個偏到一邊，
+   而選取框與命中判定都是以中心點、以前進寬度算的，於是框框不到它、
+   也很難點到（主人說的「倒數第二個圖案嚴重偏右」）。
+
+   measureText 的 actualBoundingBox* 給的正是墨水相對於對齊點的四個邊。
+   這裡量一次「字級 100」就好 —— 墨水大小跟字級成正比，其他尺寸乘回去即可，
+   所以每一格畫面不會有幾十次 measureText。 */
+const GLYPH_INK_REF = 100;
+const glyphInkCache = new Map<string, { w: number; h: number; ox: number; oy: number; ok: boolean }>();
+/** 量字專用的小畫布（只量不畫，不會被任何人看到） */
+let glyphMeasCtx: CanvasRenderingContext2D | null = null;
+const measureCtx = () => {
+  if (!glyphMeasCtx) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 8;
+    glyphMeasCtx = c.getContext('2d');
+  }
+  return glyphMeasCtx!;
+};
+const glyphInk = (ctx: CanvasRenderingContext2D, holeType: string, str: string, sz: number) => {
+  const key = holeType + '|' + str;
+  let m0 = glyphInkCache.get(key);
+  if (!m0) {
+    m0 = { w: GLYPH_INK_REF, h: GLYPH_INK_REF, ox: 0, oy: 0, ok: false };
+    try {
+      ctx.font = glyphFont(holeType, GLYPH_INK_REF);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const m = ctx.measureText(str);
+      const L = m.actualBoundingBoxLeft, R = m.actualBoundingBoxRight;
+      const A = m.actualBoundingBoxAscent, D = m.actualBoundingBoxDescent;
+      const w = L + R, h = A + D;
+      /* 墨水量到 0 代表這個字在這台裝置上根本沒有字型可畫（畫出來是空的）。
+         那就照舊用前進寬度，不要拿一組沒有意義的數字去平移。 */
+      if ([L, R, A, D].every(v => typeof v === 'number' && isFinite(v)) && w > 0.5 && h > 0.5) {
+        m0 = { w, h, ox: -(R - L) / 2, oy: -(D - A) / 2, ok: true };
+      } else {
+        m0 = { w: m.width || GLYPH_INK_REF, h: GLYPH_INK_REF, ox: 0, oy: 0, ok: false };
+      }
+    } catch { /* 舊瀏覽器量不到就照原本畫，不會比現在差 */ }
+    glyphInkCache.set(key, m0);
+  }
+  const k = sz / GLYPH_INK_REF;
+  return { w: m0.w * k, h: m0.h * k, ox: m0.ox * k, oy: m0.oy * k, ok: m0.ok };
+};
+
+/* ── 這個字實際上畫出來離中心最遠有多少 ────────────────────────────────
+   measureText 給的墨水框是「理論上的」：emoji 那種點陣／彩色字、以及字型
+   自己溢出的部分都不算在裡面，照著它裁暫存畫布會削掉一點點邊
+   （實測 🌀 與 (7) 會差幾百個色階）。
+   所以這裡老老實實畫一次、掃一次 alpha，量出真正的最大半徑，量完存起來。
+   一種字只做一次，成本可以忽略；換來的是暫存畫布可以縮到剛好夠用。 */
+const glyphRadiusCache = new Map<string, number>();
+const glyphRadius = (holeType: string, str: string) => {
+  const key = holeType + '|' + str;
+  const hit = glyphRadiusCache.get(key);
+  if (hit !== undefined) return hit;
+  let r = 0;
+  try {
+    const R = Math.ceil(GLYPH_INK_REF * 1.5);   // 跟舊的暫存畫布一樣大
+    const c = document.createElement('canvas');
+    c.width = c.height = R * 2;
+    const g = c.getContext('2d', { willReadFrequently: true })!;
+    const o = glyphInk(g, holeType, str, GLYPH_INK_REF);
+    g.fillStyle = '#000000';
+    g.font = glyphFont(holeType, GLYPH_INK_REF);
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(str, R + o.ox, R + o.oy);
+    const d = g.getImageData(0, 0, R * 2, R * 2).data;
+    let m = 0;
+    for (let y = 0; y < R * 2; y++) {
+      for (let x = 0; x < R * 2; x++) {
+        if (d[(y * R * 2 + x) * 4 + 3] !== 0) {
+          const dx = x - R + 0.5, dy = y - R + 0.5;
+          const q = dx * dx + dy * dy;
+          if (q > m) m = q;
+        }
+      }
+    }
+    r = Math.sqrt(m);
+  } catch { r = 0; }
+  glyphRadiusCache.set(key, r);
+  return r;
+};
+
 // --- 工具：HSV to HEX 轉換 ---
 const hsvToHex = (h: number, s: number, v: number) => {
   s /= 100; v /= 100;
@@ -424,6 +534,16 @@ const hexToHsv = (hex: string) => {
   return { h: Math.round(h * 360), s: Math.round(s * 100), v: Math.round(v * 100) };
 };
 
+/* 字符圖案的暫存畫布池。以前每畫一顆就開一張新的 —— 一格畫面裡幾十顆、
+   左右兩側都要畫，實測拖一顆字符圖案時每秒開 398 張畫布。
+   同一顆圖案每一格用的尺寸都一樣，所以照「邊長」收在池子裡就幾乎都命中。
+   刻意做成「尺寸剛好」而不是共用一張大的：大小一樣、drawImage 也用原本
+   那個三參數的寫法，畫出來才跟以前一個位元都不差。
+   匯出那種特別大的尺寸不入池，免得一直佔著幾十 MB。 */
+const TEXT_TMP_MAX = 1024;
+const TEXT_TMP_KEEP = 48;
+const textTmpPool = new Map<number, HTMLCanvasElement>();
+
 const drawTextShape = (
   targetCtx: CanvasRenderingContext2D,
   holeType: string,
@@ -435,30 +555,61 @@ const drawTextShape = (
   isDestinationOut: boolean = false,
   holeAngle: number = 0
 ) => {
-  const tempCanvas = document.createElement('canvas');
-  const pad = Math.ceil(sz * 1.5);
-  tempCanvas.width = pad * 2;
-  tempCanvas.height = pad * 2;
+  const str = holeType === 'love' ? '<3'
+    : holeType === 'love3' ? '<333'
+    : (GLYPH_HOLES[holeType] ?? text);
+  const ink = glyphInk(measureCtx(), holeType, str, sz);
+  /* 暫存畫布只要「這個字轉一圈都還在裡面」就夠了。以前一律開 sz×3 見方，
+     像 ᯽ 這種字有九成面積是空的，卻每一顆、每一格都要被 drawImage 合成一次
+     （實測合成佔掉拖曳字符圖案時將近三成的時間）。
+     半徑用 glyphRadius 實際量出來的，而且只縮不放（跟舊的取小的那個）——
+     所以畫出來跟以前一個像素都不差，連原本會被裁掉的長文字也照樣裁在同一個地方。 */
+  const oldPad = Math.ceil(sz * 1.5);
+  const rad = glyphRadius(holeType, str);
+  const pad = rad > 0.5
+    ? Math.max(2, Math.min(oldPad, Math.ceil(rad * sz / GLYPH_INK_REF) + 2))
+    : oldPad;
+  const side = Math.max(2, pad * 2);
+  let tempCanvas: HTMLCanvasElement | undefined;
+  let reused = false;
+  if (side <= TEXT_TMP_MAX) {
+    tempCanvas = textTmpPool.get(side);
+    if (tempCanvas) reused = true;
+    else {
+      tempCanvas = document.createElement('canvas');
+      tempCanvas.width = side; tempCanvas.height = side;
+      textTmpPool.set(side, tempCanvas);
+      while (textTmpPool.size > TEXT_TMP_KEEP) {
+        const oldest = textTmpPool.keys().next().value as number | undefined;
+        if (oldest === undefined) break;
+        textTmpPool.delete(oldest);
+      }
+    }
+  } else {
+    tempCanvas = document.createElement('canvas');
+    tempCanvas.width = side; tempCanvas.height = side;
+  }
   const tempCtx = tempCanvas.getContext('2d')!;
+  if (reused) {
+    /* 剛開的畫布狀態本來就是乾淨的；重複用的就得自己收乾淨。 */
+    tempCtx.setTransform(1, 0, 0, 1, 0, 0);
+    tempCtx.globalAlpha = 1;
+    tempCtx.globalCompositeOperation = 'source-over';
+    tempCtx.clearRect(0, 0, side, side);
+  }
 
   // 1. 在 tempCanvas 上畫純黑色的文字形狀
   tempCtx.fillStyle = '#000000';
   tempCtx.save();
   tempCtx.translate(pad, pad);
   tempCtx.rotate(holeAngle * Math.PI / 180);
-  if (holeType === 'love' || holeType === 'love3') {
-    // 跟 <3 同一套字體與比例，只是字串長一點
-    tempCtx.font = `bold ${sz * 1.05}px "Inter", "Segoe UI", sans-serif`;
-    tempCtx.textAlign = 'center';
-    tempCtx.textBaseline = 'middle';
-    tempCtx.fillText(holeType === 'love3' ? '<333' : '<3', 0, 0);
-  } else {
-    const renderStr = GLYPH_HOLES[holeType] ?? text;
-    tempCtx.font = `500 ${sz}px "Inter", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
-    tempCtx.textAlign = 'center';
-    tempCtx.textBaseline = 'middle';
-    tempCtx.fillText(renderStr, 0, 0);
-  }
+  /* 把字真正的「墨水」對到中心 —— 說明見上面 glyphInk。
+     選取框與命中判定用的是同一支 glyphInk，所以框一定框得到它。 */
+  const o = ink;
+  tempCtx.font = glyphFont(holeType, sz);
+  tempCtx.textAlign = 'center';
+  tempCtx.textBaseline = 'middle';
+  tempCtx.fillText(str, o.ox, o.oy);
   tempCtx.restore();
 
   // 2. 如果是填充照片或顏色
@@ -467,7 +618,7 @@ const drawTextShape = (
     tempCtx.globalCompositeOperation = 'source-in';
     tempCtx.fillStyle = fillStyle;
     tempCtx.translate(pad - cx, pad - cy);
-    tempCtx.fillRect(cx - pad, cy - pad, tempCanvas.width, tempCanvas.height);
+    tempCtx.fillRect(cx - pad, cy - pad, side, side);
     tempCtx.restore();
   }
 
@@ -673,7 +824,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 'none' 沒有線｜'solid' 連線｜'dash' 虛線。兩種線本來就是同一件事，
       只差線型，所以做成一個三態 —— 也就不可能同時打開。 */
   const [linkMode, setLinkMode] = useState<'none' | 'solid' | 'dash'>('none');
-  const linkSupported = LINK_TYPES.includes(holeType);
+  const linkSupported = linkableType(holeType);
   /* 動態播放中的那一格。不是 state —— 每一格都在動，走 ref 讓 renderToCanvas
      直接讀，才不會每一格都觸發一次 React 重繪。null 代表「不在播動態」。 */
   const animRef = useRef<{
@@ -698,8 +849,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /* 每個圖片物件跑完管線之後的成品，快取起來 —— 參數沒變就不重跑。
      key 是「物件 id + 參數指紋」，所以只有動到的那一張會重算。 */
   const objFxCache = useRef<Map<string, { key: string; cv: HTMLCanvasElement }>>(new Map());
+  /** 每顆物件上一次的「效果參數指紋 / 算完的時間 / 花了多久」——
+      用來判斷「這顆的參數是不是正在被連續改動」（也就是手指還在滑桿上）。 */
+  const fxLiveRef = useRef<Map<string, { key: string; at: number; liveUntil: number }>>(new Map());
+  /** 手一停就補一張完整尺寸的 */
+  const fxSettleRef = useRef<number | null>(null);
   const [fxTick, setFxTick] = useState(0);
-  const fxCanvasOf = useCallback((o: any): CanvasImageSource | null => {
+  const fxCanvasOf = useCallback((o: any, isMain = false): CanvasImageSource | null => {
     if (!o.img) return null;
     const shape = {
       r: o.imgRadius || 0, f: o.feather || 0,
@@ -708,17 +864,59 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     };
     const hasShape = shape.r || shape.f || shape.sw || shape.g;
     if ((!o.fx || !hasPhotoFx(o.fx)) && !hasShape) return o.img;
-    const key = JSON.stringify([o.fx, shape]);
+
+    /* ── 拖圖片調整的滑桿時先用小一號的工作尺寸 ─────────────────────────
+       每動一格都要把整張圖重新套一次調整。1600px 的工作尺寸在沒有 GPU 的
+       裝置上實測一格 145ms —— 等於六幀才動一次，那就是主人說的「編輯圖片
+       特別卡」。
+
+       這裡只在「上一次算得很慢、而且就是剛剛」的時候才降一級：那必然是
+       手指還按在滑桿上。手一停（220ms 沒有新的變化）就自動用完整尺寸重算，
+       所以**停下來看到的、以及匯出的，跟以前一模一樣**，只有拖曳過程中的
+       那幾格是小一號的。匯出走的是另一張畫布（isMain 為 false），
+       永遠不會落到這條路上。 */
+    const now = performance.now();
+    const baseKey = JSON.stringify([o.fx, shape]);
+    let lv = fxLiveRef.current.get(o.id);
+    if (!lv) { lv = { key: '', at: 0, liveUntil: 0 }; fxLiveRef.current.set(o.id, lv); }
+    /* 「正在連續改動」的判斷有兩個重點：
+       ① 一定要看**參數本身有沒有變** —— 只看時間的話，拖物件、取消選取那些
+          根本沒改到效果的動作也會被誤判成拖滑桿。
+       ② 一旦判定為「拖曳中」，就用一個到期時間撐著，不要每次呼叫重新判斷 ——
+          同一格畫面裡 fxCanvasOf 可能被呼叫不只一次，第二次的參數已經跟
+          第一次一樣了，逐次判斷會在 640 與 1600 之間來回重算（實測 640 與
+          1600 各算了 30 次，等於完全沒省到）。 */
+    if (isMain && lv.key && lv.key !== baseKey) lv.liveUntil = now + 300;
+    const live = isMain && lv.liveUntil > now;
+    const cap = live ? 640 : 1600;
+    const key = baseKey + '|' + cap;
     const hit = objFxCache.current.get(o.id);
     if (hit && hit.key === key) return hit.cv;
 
     const w0 = o.img.naturalWidth || o.img.width;
     const h0 = o.img.naturalHeight || o.img.height;
     // 上限 1600：物件在畫面上不會比這更大，再高只是白燒記憶體
-    const k = Math.min(1, 1600 / Math.max(w0, h0));
+    const k = Math.min(1, cap / Math.max(w0, h0));
     const iw = Math.max(1, Math.round(w0 * k)), ih = Math.max(1, Math.round(h0 * k));
-    const base = applyPhotoFx(o.img, iw, ih, o.fx || {});
-    if (!hasShape) { objFxCache.current.set(o.id, { key, cv: base }); return base; }
+    /* cacheSource：o.img 是載進來就不再變的一張 <img>，同一個尺寸的來源像素
+       讀一次就夠。拖滑桿時每一格省掉一次 drawImage ＋ 一次 getImageData。 */
+    const base = applyPhotoFx(o.img, iw, ih, o.fx || {}, { cacheSource: true, fast: live });
+    const finish = () => {
+      if (!isMain) return;
+      lv!.key = baseKey;
+      lv!.at = performance.now();
+      if (live) {
+        // 手一停就補一張完整尺寸的
+        if (fxSettleRef.current) window.clearTimeout(fxSettleRef.current);
+        fxSettleRef.current = window.setTimeout(() => {
+          const cur = fxLiveRef.current.get(o.id);
+          if (cur) cur.liveUntil = 0;
+          objFxCache.current.delete(o.id);
+          setFxTick(t => t + 1);
+        }, 240);
+      }
+    };
+    if (!hasShape) { objFxCache.current.set(o.id, { key, cv: base }); finish(); return base; }
 
     /* 這一段是經典拼圖 FloatingImageLayer 那條管線的逐段複製（同樣的函式、
        同樣的順序）：先把圖畫進一張「比框大 lw 一圈」的離屏畫布，用
@@ -793,6 +991,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     (cv as any).__padX = pad / iw;
     (cv as any).__padY = pad / ih;
     objFxCache.current.set(o.id, { key, cv });
+    finish();
     return cv;
   }, []);
   /** 圖片與遮罩的交界線（畫布座標）。四周包圍是原圖那個框的四條邊。 */
@@ -1336,9 +1535,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     /* 邊界安全距離。四周包圍時圖案灑在整張畫布上，只留半個圖案的話
        最外圈會有一半跑到畫面外，所以多留將近一個圖案的餘裕
        —— 但使用者自己拖出去仍然可以（那是刻意的）。 */
-    /* 注意：四周包圍時 getHoleSize 會再乘上 (1 + 2×比例) 把圖案補回原本的視覺大小，
-       安全距離也必須用「補過之後」的尺寸算，不然邊緣還是會被切到。 */
-    const drawnS = around ? s * (1 + maskScale * 2) : s;
+    const drawnS = s;
     const p = around ? drawnS * 0.75 + 25 * gs : s / 2 + 25 * gs;
     const md = maskDims(lay, baseW, baseH, maskScale);
     const fieldW = around ? md.mw : baseW;
@@ -1464,7 +1661,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (layout === 'mask-top') return { xs: [], ys: [o.iy] };
     if (layout === 'mask-right') return { xs: [bw], ys: [] };
     if (layout === 'mask-left') return { xs: [o.ix], ys: [] };
-    if (layout === AROUND) return { xs: [o.ix, o.ix + bw], ys: [o.iy, o.iy + bh] };
+    if (layout === AROUND) {
+      // 中間那張照片是縮過的，對齊線要貼在它真正的邊上
+      const k = Math.max(0.05, Math.min(1, maskScale));
+      return { xs: [o.ix, o.ix + bw * k], ys: [o.iy, o.iy + bh * k] };
+    }
     return { xs: [], ys: [] };
   };
 
@@ -1472,12 +1673,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const gs = imageState?.globalScale || 1;
     const mappedHoleSize = 25 + (holeSize / 100) * 125;
     const baseSize = Math.max(25, mappedHoleSize + (h.randomFactor || 0) * sizeJitter);
-    /* 四周包圍的畫布比原圖大 (1 + 2×比例) 倍，但在螢幕上是縮到同樣大小顯示的，
-       所以同一個「大小」值畫出來會看起來變小。這裡把那個倍率補回去，
-       切過去的瞬間圖案在眼睛裡的大小不會變。 */
-    const layoutK = layout === AROUND ? 1 + maskScale * 2 : 1;
-    return baseSize * gs * layoutK * (h.localScale || 1);
-  }, [holeSize, sizeJitter, imageState?.globalScale, layout, maskScale]);
+    /* 四周包圍的畫布現在跟原圖一樣大（比例只縮中間那張照片），
+       所以不再需要以前那個「畫布被撐大、圖案要補回去」的倍率 ——
+       同一個「大小」值在每種排版畫出來都一樣大。 */
+    return baseSize * gs * (h.localScale || 1);
+  }, [holeSize, sizeJitter, imageState?.globalScale]);
 
   const isHoleFullyInsideMask = useCallback((h: any, s: number, maskW: number, maskH: number) => {
     const sz = getHoleSize(h) * s;
@@ -1486,10 +1686,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
     if (isTextHole(holeType)) {
       const tctx = dummyCanvasRef.current.getContext('2d')!;
-      tctx.font = `500 ${sz}px system-ui`;
       const renderStr = holeGlyph(holeType, customText, h);
-      const tw = tctx.measureText(renderStr).width;
-      const th = sz;
+      // 量的是「看得見的那一塊」，跟畫出來的完全一致（以前量的是另一支字型的前進寬度）
+      const ink = glyphInk(tctx, holeType, renderStr, sz);
+      const tw = ink.w, th = ink.h;
       return (
         hx - tw / 2 >= 0 &&
         hx + tw / 2 <= maskW &&
@@ -1520,10 +1720,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
     if (isTextHole(holeType)) {
       const tctx = dummyCanvasRef.current.getContext('2d')!;
-      tctx.font = `500 ${s}px system-ui`;
       const renderStr = holeGlyph(holeType, customText, h);
-      const tw = tctx.measureText(renderStr).width;
-      const th = s;
+      /* 命中範圍跟著「看得見的那一塊」走，跟選取框畫的是同一個方框。
+         墨水比字級小很多的字（例如 ⊹）不要縮到很難點，所以給個下限。 */
+      const ink = glyphInk(tctx, holeType, renderStr, s);
+      const tw = Math.max(ink.w, s * 0.55);
+      const th = Math.max(ink.h, s * 0.55);
 
       const checkInRectImg = (ox: number, oy: number) => (hx >= ox + h.x - tw/2 && hx <= ox + h.x + tw/2 && hy >= oy + h.y - th/2 && hy <= oy + h.y + th/2);
       const checkInRectMask = (ox: number, oy: number) => (hx >= ox + h.x - tw/2 && hx <= ox + h.x + tw/2 && hy >= oy + h.y - th/2 && hy <= oy + h.y + th/2);
@@ -1912,17 +2114,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const fitScale = useCallback((cssW: number, csW: number, k: number) => {
     if (!cssW || !csW) return 1;
     const dpr = Math.min(3, window.devicePixelRatio || 1);
-    /* 原本的算式：畫布至少要有「螢幕裝置像素 × 1.35」那麼細。
-       算出來 ≥ 1 的情況一律照舊 —— 一般排版都是這一類，一個像素都不動。 */
-    const need = (cssW * k * dpr * 1.35) / csW;
-    if (need >= 1) return Math.max(0.25, Math.min(maxPreviewScale(), Math.ceil(need * 4) / 4));
-    /* 算出來 < 1 代表「工作解析度比螢幕需要的還大」，以前被 Math.max(1, …)
-       硬撐回 1。四周包圍就是這一類：比例拉寬時工作解析度會被邊框撐到兩千多，
-       但螢幕上只有 716 個裝置像素，等於每一格都在畫用不到的像素。
-       這裡把下限從「工作解析度」換成「螢幕裝置像素 × 2.4」——
-       超取樣倍率仍然遠高於原本定的 1.35，量到的邊緣銳利度差 2% 以內，
-       而且永遠不會超過 1（也就是絕不會比原本更細、更慢）。 */
-    return Math.max(0.25, Math.min(1, maxPreviewScale(), Math.ceil(Math.min(1, (cssW * k * dpr * 2.4) / csW) * 4) / 4));
+    /* 畫布至少要有「螢幕裝置像素 × 1.35」那麼細，而且不低於工作解析度。
+       （四周包圍以前會把工作解析度撐到兩千多、遠超過螢幕需要的，
+         那個浪費現在從源頭解掉了 —— 它的畫布跟原圖一樣大，
+         所以這裡不必再為它破例。） */
+    const want = Math.min(maxPreviewScale(), Math.max(1, (cssW * k * dpr * 1.35) / csW));
+    return Math.max(1, Math.ceil(want * 4) / 4);
   }, [maxPreviewScale]);
 
   /* 縮放停下來 160ms 後照倍率重畫。拖曳中刻意不重畫 —— 每一格都重烤一張
@@ -2194,6 +2391,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const mdS = maskDims(layout, sw, sh, maskScale);
     const maskW = mdS.mw;
     const maskH = mdS.mh;
+    /* 中間那張照片實際畫多大。四周包圍時是「畫布扣掉兩邊的邊框」——
+       直接用 padX 反推，左右上下才會剛好對稱，不會因為四捨五入差一個像素。
+       其餘排版就是照片本人的大小。 */
+    const iw = layout === AROUND ? Math.max(1, maskW - mdS.padX * 2) : sw;
+    const ih = layout === AROUND ? Math.max(1, maskH - mdS.padY * 2) : sh;
 
     const getLayoutOffsetsS = () => {
       if (layout === 'mask-bottom') return { cw: sw, ch: sh + maskH, ix: 0, iy: 0, mx: 0, my: sh };
@@ -2211,7 +2413,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
 
     ctx.fillStyle = '#0A0A0A'; ctx.fillRect(0, 0, offs.cw, offs.ch);
-    ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, sw, sh); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
+    ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, iw, ih); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
 
     const isMain = targetCanvas === canvasRef.current;
     /* 遮罩底稿只是一片純色時（沒有自訂遮罩圖、也沒有點點），根本不需要
@@ -2320,7 +2522,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const drawBackdropAround = () => {
       const img = imageState.img, t = imageTransform;
       if (!img || !t) return;
-      const k = maskW / sw;
+      const k = maskW / iw;
       const cx = offs.cw / 2, cy = offs.ch / 2;
       const x0 = offs.ix + t.x * s, y0 = offs.iy + t.y * s;
       ctx.save();
@@ -2328,7 +2530,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       ctx.drawImage(img, cx + (x0 - cx) * k, cy + (y0 - cy) * k, t.w * s * k, t.h * s * k);
       ctx.restore();
     };
-    const drawCentreImage = () => drawImg(imageState.img, imageTransform, offs.ix, offs.iy, sw, sh);
+    const drawCentreImage = () => drawImg(imageState.img, imageTransform, offs.ix, offs.iy, iw, ih);
     const drawBackdrop = () => (layout === AROUND
       ? drawBackdropAround()
       : drawImg(imageState.img, imageTransform, offs.mx, offs.my, maskW, maskH));
@@ -2353,7 +2555,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       return { k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base, rot: f.rot, a: f.a, fx: f.fx, on: f.k > 0.002 && f.a > 0.004 };
     };
     const linksFor = (side: 'image' | 'mask') => {
-      if (linkMode === 'none' || !LINK_TYPES.includes(holeType)) return [] as [any, any][];
+      if (linkMode === 'none' || !linkableType(holeType)) return [] as [any, any][];
       const list = holes.filter(h => { const sd = h.side || 'both'; return sd === 'both' || sd === side; });
       /* 會穿過別的圖案的線就整條不畫 —— 線從圖案身上壓過去很醜。
          判斷用的是圖案「靜止時」的位置與大小，所以結果是穩定的：
@@ -2416,8 +2618,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          遮罩跟圖片不一定一樣大（例如下方那條只有一半高），直接貼的話
          pattern 會 repeat，圖案就會拿到繞回去的、對不上的那一段。
          這裡把圖案的位置從圖片座標換算成遮罩座標，再把 pattern 平移過去。 */
-      const rx = sw > 0 ? maskW / sw : 1;
-      const ry = sh > 0 ? maskH / sh : 1;
+      const rx = iw > 0 ? maskW / iw : 1;
+      const ry = ih > 0 ? maskH / ih : 1;
       holes.forEach(h => {
         const side = h.side || 'both';
         if (side !== 'both' && side !== 'image') return; // Only show on image side
@@ -2518,7 +2720,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const pat = basePatCached || ctx.createPattern(bCanvas, 'repeat');
       if (!pat) return;
       ctx.save();
-      ctx.beginPath(); ctx.rect(offs.ix, offs.iy, sw, sh); ctx.clip();
+      ctx.beginPath(); ctx.rect(offs.ix, offs.iy, iw, ih); ctx.clip();
       ctx.translate(offs.mx, offs.my);      // 洞的座標是遮罩座標系
       ctx.fillStyle = pat;
       holes.forEach(h => {
@@ -2563,7 +2765,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (f && (f.k !== 1 || f.fx !== 1)) ctx.scale(f.k * f.fx, f.k);
       ctx.globalAlpha = (o.alpha ?? 1) * (f ? f.a : 1);
       if (o.type === 'image' && o.img) {
-        const src2: any = fxCanvasOf(o) || o.img;
+        const src2: any = fxCanvasOf(o, isMain) || o.img;
         /* 有形狀效果時畫布比原圖大一圈（留給發光與描邊），
            畫的時候要等比放大回去，圖片本體才會剛好落在原本的框上。 */
         const padX = (src2 as any).__padX || 0, padY = (src2 as any).__padY || 0;
@@ -2645,7 +2847,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (!g) return;
       if (layout === AROUND) {
         // 四周包圍：洞裡看到的是以畫布中心等比放大的同一個構圖
-        const kk = maskW / sw;
+        const kk = maskW / iw;
         const ccx = offs.cw / 2, ccy = offs.ch / 2;
         const x0 = offs.ix + t.x * s, y0 = offs.iy + t.y * s;
         g.drawImage(img, ccx + (x0 - ccx) * kk, ccy + (y0 - ccy) * kk, t.w * s * kk, t.h * s * kk);
@@ -2779,8 +2981,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           if (isTextHole(holeType)) {
             const tctx = dummyCanvasRef.current.getContext('2d')!;
             const renderStr = holeGlyph(holeType, customText, h);
-            tctx.font = `500 ${sz}px sans-serif`;
-            const tw = tctx.measureText(renderStr).width + 16 * sgs, th = sz + 16 * sgs;
+            /* 框的大小跟著「看得見的那一塊」走。以前量的是 sans-serif 的
+               前進寬度、高度直接拿字級 —— 跟真正畫出來的字對不起來，
+               所以有些圖案框不到。 */
+            const ink = glyphInk(tctx, holeType, renderStr, sz);
+            const tw = ink.w + 16 * sgs, th = ink.h + 16 * sgs;
             ctx.strokeRect(-tw / 2, -th / 2, tw, th);
           } else {
             const szz = sz + 16 * sgs;
@@ -2797,8 +3002,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           if (isTextHole(holeType)) {
             const tctx = dummyCanvasRef.current.getContext('2d')!;
             const renderStr = holeGlyph(holeType, customText, h);
-            tctx.font = `500 ${sz}px sans-serif`;
-            const tw = tctx.measureText(renderStr).width + 16 * sgs, th = sz + 16 * sgs;
+            /* 框的大小跟著「看得見的那一塊」走。以前量的是 sans-serif 的
+               前進寬度、高度直接拿字級 —— 跟真正畫出來的字對不起來，
+               所以有些圖案框不到。 */
+            const ink = glyphInk(tctx, holeType, renderStr, sz);
+            const tw = ink.w + 16 * sgs, th = ink.h + 16 * sgs;
             ctx.strokeRect(-tw / 2, -th / 2, tw, th);
           } else {
             const szz = sz + 16 * sgs;
@@ -2904,11 +3112,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       setPreviewScale(prev => (Math.abs(prev - ps0) < 0.01 ? prev : ps0));
       previewScaleRef.current = ps0;
       // 同一格就把新比例的內容畫上去，不留任何「舊圖被拉伸」的空窗
-      if (cv) { try { renderToCanvas(cv, ps0); syncDrawnRef.current = { fn: renderToCanvas, ps: ps0 }; } catch { /* 這一格畫不出來就等下一格 */ } }
+      if (cv) { try { renderToCanvasRef.current(cv, ps0); syncDrawnRef.current = { fn: renderToCanvasRef.current, ps: ps0 }; } catch { /* 這一格畫不出來就等下一格 */ } }
     } else setBaseCss(null);
     const t = window.setTimeout(() => { sizeSnapRef.current = false; }, 260);
     return () => window.clearTimeout(t);
-  }, [layout, maskScale, imageState, renderToCanvas]);
+    /* 相依刻意不放 renderToCanvas：它的身分只要圖案／物件／任何一個設定變了
+       就會換一份，放進來等於「每動一格滑桿都同步重畫一次」，
+       而那一格 rAF 那邊本來就會畫 —— 等於整張圖每格畫兩次。
+       這個 effect 要處理的只有「版面形狀變了」，所以只留那幾個。 */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [layout, maskScale, imageState]);
 
 
   /* ── IG 預覽 ────────────────────────────────────────────────────
@@ -3034,7 +3247,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 按下儲存後從下方延伸出來的兩顆按鈕 */
   const [exportAsk, setExportAsk] = useState(false);
 
-  const hasLink = linkMode !== 'none' && LINK_TYPES.includes(holeType);
+  const hasLink = linkMode !== 'none' && linkableType(holeType);
   /** 畫布現在要不要照動畫來畫（暫停時也算：停在那一格） */
   const motionOn = activeTab === 'motion' && saveState === 'idle' && !igPreview;
 
@@ -3156,20 +3369,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   useEffect(() => {
     if (!motionOn || motionPlaying || !imageState || !canvasRef.current || videoProg !== null) return;
     animRef.current = buildAnim(motionClockRef.current);
-    renderToCanvas(canvasRef.current, motionScaleRef.current);
-  }, [motionOn, motionPlaying, imageState, videoProg, buildAnim, renderToCanvas]);
+    renderToCanvasRef.current(canvasRef.current, motionScaleRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [motionOn, motionPlaying, imageState, videoProg, buildAnim]);
 
   /* 離開動畫頁要把畫面收回靜態，不然會停在動畫的某一格。
      這裡一定要「自己重畫一次」——setForceRender 只是讓元件重新 render，
      負責畫布的那個 effect 相依的是 renderCanvas 的身分，不會因此重跑，
-     所以畫面會原封不動停在最後那一格。 */
+     所以畫面會原封不動停在最後那一格。
+
+     相依裡**不能**放 renderToCanvas：它的身分只要圖案／物件／任何一個設定
+     變過就是新的一份，等於「每動一格滑桿都跑一次這個 effect」——實測拖圖片
+     編輯的滑桿時，整張拼圖每一格被畫兩次（量到 31 格畫了 60 次）。
+     這裡要的是「離開動畫頁的那一下」，用 ref 拿當下最新的那一支就好。 */
   useEffect(() => {
     if (motionOn || videoProg !== null) return;
     motionClockRef.current = 0;
     animRef.current = null;
-    if (canvasRef.current && imageState) renderToCanvas(canvasRef.current, previewScaleRef.current);
+    if (canvasRef.current && imageState) renderToCanvasRef.current(canvasRef.current, previewScaleRef.current);
     setForceRender(p => p + 1);
-  }, [motionOn, videoProg, imageState, renderToCanvas]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [motionOn, videoProg, imageState]);
 
   /* 播放列的進場／離場。
      barMounted：離開動畫頁之後還要多留一拍才卸載，不然看不到滑出去那一段。
@@ -4498,7 +4718,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   </div>
                   {/* 連線：每個圖案拉一條極細的線到最近的鄰居。
                       版型跟上面那幾根滑桿一致 —— 左上是名稱，下面才是選項。
-                      只有前六種有明確中心的圖案支援，其餘一律不給按。 */}
+                      每一種圖案都支援（見上面 LINK_TYPES 的說明）。 */}
                   <div className="flex flex-col mt-6">
                     <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
                       <span>連線</span>
