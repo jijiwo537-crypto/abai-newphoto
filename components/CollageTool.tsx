@@ -248,7 +248,7 @@ export const IN_KINDS: { id: string; name: string }[] = [
   { id: 'flip', name: '翻轉' },
   // 這兩個是特別做的：一個會落地彈兩下，一個是從側邊甩進來再晃回正
   { id: 'bounce', name: '彈跳落地' },
-  { id: 'spring', name: '綻放' },
+  { id: 'spring', name: '泡泡' },
 ];
 
 /* 發光用的色票：第一顆是純白，其餘 14 顆是把預設色 #9BD4C3 只轉色相
@@ -296,19 +296,25 @@ export const GLOW_IDLES: { id: string; name: string }[] = [
  *   blink  ：相位一律歸零 → 全部同時閃
  *   glitch ：平常全亮，每隔幾秒來一小段高頻閃爍
  */
-const glowIdleAmp = (kind: string, t: number, phase: number): number => {
+const glowIdleAmp = (
+  kind: string, t: number, phase: number, amp: number = 100, speed: number = 1,
+): number => {
+  // 幅度＝「最暗會暗到哪裡」。0 就是完全不閃（維持全亮），100 才會暗到快全滅。
+  const A = Math.max(0, Math.min(1, amp / 100));
+  const sp = Math.max(0.05, speed);
+  if (A <= 0.001) return 1;
   if (kind === 'blink' || kind === 'twinkle') {
-    const w = t * 3.2 + (kind === 'twinkle' ? phase : 0);
+    const w = t * 3.2 * sp + (kind === 'twinkle' ? phase : 0);
     // 平方一下讓亮暗更分明，不然只是很溫和的呼吸
     const v = (Math.sin(w) + 1) / 2;
-    return 0.12 + 0.88 * v * v;
+    return 1 - A * (1 - v * v);
   }
   if (kind === 'glitch') {
-    const CYCLE = 3.4, BURST = 0.45;
+    const CYCLE = 3.4 / sp, BURST = 0.45 / sp;
     const q = ((t % CYCLE) + CYCLE) % CYCLE;
     if (q > BURST) return 1;
     // 一段裡面閃四下，收尾回到全亮
-    return Math.sin(q / BURST * Math.PI * 4) > 0 ? 1 : 0.08;
+    return Math.sin(q / BURST * Math.PI * 4) > 0 ? 1 : 1 - A * 0.95;
   }
   return 1;
 };
@@ -340,30 +346,27 @@ const inFrame = (kind: string, p: number): MoFrame => {
     // 翻轉用「橫向壓扁」模擬（見下面的 inFlipX），不需要真的 3D
     case 'flip':   return { k: 1, dx: 0, dy: 0, rot: 0, a: fade };
     case 'bounce': return { k: 1, dx: 0, dy: -(1 - easeOutBounce(p)) * 1.1, rot: 0, a: Math.min(1, p * 4) };
-    /* 綻放：三段接在一起的一支進場，刻意做得比其他款細緻。
-         ① 0～28%   「聚焦」：從一個很小、被壓成細細一橫的形狀開始，
-                     一邊放大一邊把高度長回來，同時逆時針轉進來（-140°→0）。
-                     透明度用 easeOutCubic，所以是「先快後慢」地浮現。
-         ② 28～62%  「過衝」：越過原尺寸一點點（最多 1.12 倍）再收回來，
-                     像有重量的東西剛好停住。
-         ③ 62～100% 「安定」：用衰減很快的振盪收尾（縱向 ±3% 以內），
-                     肉眼看到的是「輕輕呼吸一下就定住」，不會有明顯的彈跳。
-       橫向那一半在 inScaleX 裡：第一段刻意跟縱向反著來（所以是一橫），
-       第二段之後才收斂回 1，於是整支看起來是「橫著撐開 → 立起來 → 定住」。 */
+    /* 泡泡：一顆泡泡先鼓起來，啵一聲破掉，圖案從裡面彈出來。
+         ① 0～38%「鼓起來」：一個比本體大一圈（最大 1.45 倍）的空泡泡，
+            透明度只有兩成上下 —— 看得見、但很淡，像肥皂膜。
+            它一邊長大一邊變更淡，最後一瞬間膨到最大。
+         ② 38%「破掉」：泡泡整個消失（膜的透明度歸零），
+            圖案在同一格從 0.35 倍冒出來，是「換人」不是「變形」，
+            所以看起來就是啵一聲跳出來的。
+         ③ 38～100%「Q 彈」：用衰減振盪彈回原尺寸，前兩下明顯、後面收乾淨。
+       橫向那一半在 inScaleX：破掉那一瞬間橫向先胖一點點再收，
+       泡泡破掉後的果凍感就是從這裡來的。 */
     case 'spring': {
-      const q1 = easeOutCubic(Math.min(1, p / 0.28));                 // 0→1：聚焦
-      const q2 = Math.max(0, Math.min(1, (p - 0.28) / 0.34));         // 過衝那一段
-      const q3 = Math.max(0, (p - 0.62) / 0.38);                      // 安定那一段
-      const grow = 0.18 + 0.82 * q1;                                  // 從 0.18 倍長回 1
-      const over = Math.sin(q2 * Math.PI) * 0.12;                     // 越過再收回
-      const settle = p < 0.62 ? 0 : Math.exp(-q3 * 6.5) * Math.sin(q3 * Math.PI * 2.6) * 0.03;
-      return {
-        k: grow + over + settle,
-        dx: 0,
-        dy: (1 - q1) * -0.12 + settle * 0.4,                          // 一點點由上而下的落定
-        rot: -(1 - q1) * 140,                                         // 轉進來
-        a: easeOutCubic(Math.min(1, p / 0.35)),
-      };
+      const POP = 0.38;
+      if (p < POP) {
+        // 泡泡：只有膜，所以透明度很低；越接近破掉越淡、越大
+        const q = p / POP;
+        const e2 = easeOutCubic(q);
+        return { k: 0.55 + e2 * 0.9, dx: 0, dy: 0, rot: 0, a: 0.26 * (1 - q * q) };
+      }
+      const r = (p - POP) / (1 - POP);
+      const osc = Math.exp(-r * 5.2) * Math.sin(r * Math.PI * 3.1);
+      return { k: 0.35 + 0.65 * easeOutCubic(Math.min(1, r * 1.6)) + osc * 0.22, dx: 0, dy: -osc * 0.05, rot: 0, a: Math.min(1, r * 5) };
     }
     case 'none':   return FLAT;
     default:       return { k: easeOutBack(p), dx: 0, dy: 0, rot: 0, a: fade };   // pop
@@ -374,13 +377,13 @@ const inFlipX = (kind: string, p: number) => {
   if (p <= 0 || p >= 1) return 1;
   if (kind === 'flip') return Math.max(0.02, Math.abs(Math.cos((1 - easeOutCubic(p)) * Math.PI)));
   if (kind === 'spring') {
-    /* 第一段橫向撐得比縱向開（看起來是細細一橫），第二段之後收斂回 1。
-       數字跟上面那支必須是同一組，不然橫縱會對不起來。 */
-    const q1 = easeOutCubic(Math.min(1, p / 0.28));
-    const q3 = Math.max(0, (p - 0.62) / 0.38);
-    const wide = 1 + (1 - q1) * 1.6;                       // 1 倍 → 最寬 2.6 倍
-    const settle = p < 0.62 ? 0 : Math.exp(-q3 * 6.5) * Math.sin(q3 * Math.PI * 2.6) * 0.03;
-    return Math.max(0.2, wide - settle);                   // 縱向縮的時候橫向撐開
+    /* 泡泡階段是圓的（橫縱一樣）；破掉之後橫向跟縱向反著彈，
+       那個「先扁後圓」的來回就是果凍感。數字跟上面那支必須同一組。 */
+    const POP = 0.38;
+    if (p < POP) return 1;
+    const r = (p - POP) / (1 - POP);
+    const osc = Math.exp(-r * 5.2) * Math.sin(r * Math.PI * 3.1);
+    return Math.max(0.3, 1 - osc * 0.34);
   }
   return 1;
 };
@@ -1348,6 +1351,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [holeGlowColor, setHoleGlowColor] = useState(GLOW_BASE);
   /** 發光自己的常駐動畫（'none' | 'twinkle' | 'blink' | 'glitch'） */
   const [glowIdle, setGlowIdle] = useState('none');
+  /** 發光常駐動畫的幅度（0～100）與速度（20～180，100＝原速） */
+  const [glowAmp, setGlowAmp] = useState(100);
+  const [glowSpeed, setGlowSpeed] = useState(100);
   const lastDrawPosRef = useRef<{ x: number, y: number } | null>(null);
 
   useEffect(() => {
@@ -1527,9 +1533,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (st.dotSize !== undefined) setDotSize(st.dotSize);
     if (st.dotGap !== undefined) setDotGap(st.dotGap);
     if (st.symmetryEnabled !== undefined) setSymmetryEnabled(st.symmetryEnabled);
-    if (st.glowMode !== undefined) setGlowMode(st.glowMode);
+    // 'mask' 是舊版才有的選項，讀到就當「開啟」
+    if (st.glowMode !== undefined) setGlowMode(st.glowMode === 'mask' ? 'both' : st.glowMode);
     if (st.holeGlowColor !== undefined) setHoleGlowColor(st.holeGlowColor);
     if (st.glowIdle !== undefined) setGlowIdle(st.glowIdle);
+    if (st.glowAmp !== undefined) setGlowAmp(st.glowAmp);
+    if (st.glowSpeed !== undefined) setGlowSpeed(st.glowSpeed);
   }, [initialState]);
 
   useEffect(() => {
@@ -1538,14 +1547,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       saveToolDraft('collage', null, {
         layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-        glowMode, holeGlowColor, glowIdle,
+        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
       });
     }, 1200);
     return () => clearTimeout(t);
   }, [
     imageState, layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
     holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-    glowMode, holeGlowColor, glowIdle,
+    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
   ]);
 
   useEffect(() => {
@@ -3082,7 +3091,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         });
       });
       const ovPairs = linksFor('mask');
-      glowPass(ctx, 'mask', ovItems, ovPairs);
+      /* 這一份是「畫在圖片上的那一段」（上面已經 clip 在圖片框裡），
+         所以它算圖片側 —— 選「僅圖片」時，跨在交界上的圖案就會
+         只有圖片那一半發光、外面那一半沒有。 */
+      glowPass(ctx, 'image', ovItems, ovPairs);
       ctx.strokeStyle = pat;
       strokeLinks(ctx, ovPairs);
       ctx.fillStyle = pat;
@@ -3666,9 +3678,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       },
       obj: (o: any, i: number) => composeMo(moOf(o), t, (hashId(o.id) % 628) / 100 + i * 0.7),
       /* 發光的常駐動畫跟圖案那組是分開的：圖案可以完全靜止，光自己在閃。 */
-      glow: (h: any) => glowIdleAmp(glowIdle, t, (hashId(h.id) % 628) / 100),
+      glow: (h: any) => glowIdleAmp(glowIdle, t, (hashId(h.id) % 628) / 100, glowAmp, glowSpeed / 100),
     };
-  }, [moShape, moLink, hasLink, linkStart, glowIdle]);
+  }, [moShape, moLink, hasLink, linkStart, glowIdle, glowAmp, glowSpeed]);
 
   /* 播放迴圈。時鐘存在 ref 裡，所以「換個參數 / 拖一下物件」讓這個 effect
      重跑時，動畫是接著走的，不會每動一下就跳回第一格。
@@ -3785,7 +3797,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     maskColor, patternType, dotColor, dotSize, dotGap,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
-    glowMode, holeGlowColor, glowIdle,
+    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
     linkMode,
     moShape, moLink, motionHold,
     // 選取框也是畫面的一部分，一起記起來才會「回到一模一樣」
@@ -3802,8 +3814,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setHoleSize(e.holeSize); setSizeJitter(e.sizeJitter);
     setHoleAngle(e.holeAngle); setHoleCount(e.holeCount);
     setSymmetryEnabled(e.symmetryEnabled);
-    setGlowMode(e.glowMode || 'off'); setHoleGlowColor(e.holeGlowColor || GLOW_BASE);
+    setGlowMode(e.glowMode === 'mask' ? 'both' : (e.glowMode || 'off')); setHoleGlowColor(e.holeGlowColor || GLOW_BASE);
     setGlowIdle(e.glowIdle || 'none');
+    setGlowAmp(e.glowAmp ?? 100); setGlowSpeed(e.glowSpeed ?? 100);
     setLinkMode(e.linkMode);
     setMoShape(e.moShape); setMoLink(e.moLink); setMotionHold(e.motionHold);
     setSelectedObj(e.selectedObj ?? null); setSelectedTarget(e.selectedTarget ?? null);
@@ -3830,7 +3843,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     layout, maskScale, maskColor, patternType, dotColor, dotSize, dotGap,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
-    glowMode, holeGlowColor, glowIdle,
+    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
     linkMode, moShape, moLink, motionHold,
   ]);
 
@@ -5013,7 +5026,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     {moTarget === 'glow' ? (
                       <>
                         <div className="flex justify-between text-[10px] font-bold text-[#888] mt-4 mb-2 uppercase tracking-widest">
-                          <span>常駐</span>
+                          <span>常駐動畫</span>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
                           {GLOW_IDLES.map(g => (
@@ -5024,9 +5037,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             </button>
                           ))}
                         </div>
-                        <div className="text-[10px] text-[#666] mt-3 leading-relaxed">
-                          發光只有常駐動畫。進場與離場一律跟著圖案本身走，所以圖案還沒出現時光也不會先亮。
-                        </div>
+                        {/* 靜止沒有東西可以調，所以只有其他三種才出現 */}
+                        {glowIdle !== 'none' && (
+                          <div className="grid grid-cols-2 gap-4 mt-4">
+                            <CompactSlider label="幅度" value={glowAmp} min={0} max={100} step={1}
+                              onCommit={replayMotion}
+                              onChange={(v: number) => setGlowAmp(v)} />
+                            <CompactSlider label="速度" value={glowSpeed} min={20} max={180} step={1}
+                              onCommit={replayMotion}
+                              onChange={(v: number) => setGlowSpeed(v)} />
+                          </div>
+                        )}
                       </>
                     ) : moTarget === 'link' ? (
                       <>
@@ -5084,7 +5105,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               onChange={(v: number) => setCur({ amp: v })} />
                             {/* 範圍 20～180 配 step 1：滑桿只有 167px 寬，範圍再寬一點
                                 一個螢幕像素就會跳 2 —— 那正是主人說「動一下就 +2」的原因 */}
-                            <CompactSlider label="快慢" value={Math.round(cur.speed * 100)} min={20} max={180} step={1}
+                            <CompactSlider label="速度" value={Math.round(cur.speed * 100)} min={20} max={180} step={1}
                               onChange={(v: number) => setCur({ speed: v / 100 })} />
                           </div>
                         )}
@@ -5179,14 +5200,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
                       <span>發光</span>
                     </div>
-                    <div className="grid grid-cols-4 gap-2">
-                      {([['both', '開啟'], ['image', '僅圖片'], ['mask', '僅遮罩'], ['off', '關閉']] as const).map(([mode, name]) => (
+                    <div className="grid grid-cols-3 gap-2">
+                      {([['both', '開啟'], ['image', '僅圖片'], ['off', '關閉']] as const).map(([mode, name]) => (
                         <button
                           key={mode}
                           onClick={() => setGlowMode(mode)}
                           title={mode === 'both' ? '兩側的圖案都發光'
-                            : mode === 'mask' ? '只有遮罩上的圖案發光'
-                            : mode === 'image' ? '只有圖片上的圖案發光' : '不發光'}
+                            : mode === 'image' ? '只有落在圖片上的那一段發光' : '不發光'}
                           className={`h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${
                             glowMode === mode
                               ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'

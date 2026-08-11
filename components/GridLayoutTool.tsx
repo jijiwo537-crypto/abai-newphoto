@@ -722,21 +722,37 @@ const FX_DIRECT_RANGE: Record<string, [number, number]> = {
   blur: [0, 100], colorNoise: [0, 100], vignette: [0, 200],
 };
 
-/** 發光專用色票：韓系那種奶油、櫻花粉、奶茶⋯⋯淡色系，第一顆固定是白色 */
-const GLOW_COLORS = [
-  // 第一顆固定是白
-  '#FFFFFF',
-  // 暖灰 → 奶油 → 米 → 玫瑰棕
-  '#EAE6DF', '#FFF4E6', '#E8D5C4', '#C9A9A6',
-  // 粉 → 藕粉 → 珊瑚
-  '#FFE0E9', '#FFC2D1', '#F4C2C2', '#FFB3A7',
-  // 杏 → 黃（原本的 #FFF1A8 跟指定的 #FFF1A5 肉眼一樣，直接用指定的那個）
-  '#FFD8A8', '#FFF1A5',
-  // 薄荷 → 淺青
-  '#D9F2E6', '#CBEAD6', '#9BD4C3', '#B8E3D8', '#D2E8E1',
-  // 藍 → 紫
-  '#CFE3F7', '#E3D7F7',
-];
+/* 發光專用色票：跟創意拼圖的圖案發光同一組（那邊是本體，這裡照抄同一套算法）。
+   基準色 #9BD4C3 轉成 HSL 之後「只改色相」（飽和度與亮度完全不動），
+   每 360/14 度取一顆、照色相排成一圈漸層；第一顆固定是純白。 */
+const GLOW_BASE = '#9BD4C3';
+const glowHslToHex = (h: number, sat: number, l: number) => {
+  const c = (1 - Math.abs(2 * l - 1)) * sat;
+  const hp = ((((h % 360) + 360) % 360)) / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  const [r1, g1, b1] = hp < 1 ? [c, x, 0] : hp < 2 ? [x, c, 0] : hp < 3 ? [0, c, x]
+    : hp < 4 ? [0, x, c] : hp < 5 ? [x, 0, c] : [c, 0, x];
+  const m = l - c / 2;
+  const to = (v: number) => Math.round(Math.max(0, Math.min(1, v + m)) * 255).toString(16).padStart(2, '0');
+  return `#${to(r1)}${to(g1)}${to(b1)}`.toUpperCase();
+};
+const GLOW_COLORS = (() => {
+  const r = parseInt(GLOW_BASE.slice(1, 3), 16) / 255;
+  const g = parseInt(GLOW_BASE.slice(3, 5), 16) / 255;
+  const b = parseInt(GLOW_BASE.slice(5, 7), 16) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  const l = (mx + mn) / 2;
+  const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  let h0 = 0;
+  if (d !== 0) {
+    h0 = mx === r ? 60 * (((g - b) / d) % 6) : mx === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
+  }
+  const step = 360 / 14;
+  const hues: number[] = [];
+  for (let i = 0; i < 14; i++) hues.push((((h0 + i * step) % 360) + 360) % 360);
+  hues.sort((a, b2) => a - b2);
+  return ['#FFFFFF', ...hues.map(h => glowHslToHex(h, sat, l))];
+})();
 
 const FontCard: React.FC<{
   font: { name: string; label: string; category: FontCategory };
