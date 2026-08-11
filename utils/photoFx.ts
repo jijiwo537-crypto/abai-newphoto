@@ -44,6 +44,38 @@ const getGpu = (): LutGpu | null => {
   return gpuInst || null;
 };
 let gpuSrcKey = '';
+/* 每個來源物件的固定編號。用 WeakMap，圖片被回收時這裡也跟著消失。 */
+let srcSeq = 0;
+const srcIds = new WeakMap<object, string>();
+const srcToken = (o: any): string => {
+  if (!o || typeof o !== 'object') return 'x';
+  let id = srcIds.get(o);
+  if (!id) { id = 's' + (++srcSeq); srcIds.set(o, id); }
+  return id;
+};
+/* ── 來源像素快取 ────────────────────────────────────────────────────
+   拖調整滑桿時，每動一格都要把同一張圖重新跑一次管線。變的只有「參數」，
+   來源那張圖從頭到尾一模一樣 —— 但以前每一格都要重做
+   drawImage → getImageData → 複製一份，實測光這三步就佔掉整段拖曳
+   將近四成的時間，而且每格丟掉一兩 MB 給垃圾回收。
+
+   這裡把「畫下去、讀回來」的結果留著，同一張圖同一個尺寸就直接重用。
+   processPixels 只讀來源、不改來源，算出來的像素一個位元都沒變。
+
+   只有呼叫端明講 cacheSource 才會走這條 —— 來源如果是每次重畫的畫布，
+   內容會變，那就不能快取。 */
+type SrcPx = { px: Uint8ClampedArray; scratch: ImageData | null; plain: Uint8ClampedArray | null };
+const srcPxCache = new Map<string, SrcPx>();
+const SRC_PX_KEEP = 3;
+const putSrcPx = (k: string, v: SrcPx) => {
+  srcPxCache.delete(k);
+  srcPxCache.set(k, v);
+  while (srcPxCache.size > SRC_PX_KEEP) {
+    const oldest = srcPxCache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    srcPxCache.delete(oldest);
+  }
+};
 let gpuC0: HTMLCanvasElement | null = null;
 let gpuC1: HTMLCanvasElement | null = null;
 const reuse = (c: HTMLCanvasElement | null, w: number, h: number) => {
@@ -53,15 +85,20 @@ const reuse = (c: HTMLCanvasElement | null, w: number, h: number) => {
 };
 
 const gpuColorChain = (
-  ctx: CanvasRenderingContext2D, src: Uint8ClampedArray, w: number, h: number,
+  ctx: CanvasRenderingContext2D, getSrc: () => Uint8ClampedArray | null, w: number, h: number,
   p: EditorParams, lut: { data: Uint8ClampedArray; size: number } | null,
   amount: number, baseLut: Uint8Array, srcKey: string,
 ): boolean => {
   const g = getGpu();
   if (!g || !g.fits(w, h)) return false;
   try {
+    /* 只有「換了一張圖」才需要把像素讀出來上傳貼圖。
+       拖滑桿時圖沒換，貼圖早就在 GPU 上了 —— 以前照樣每一格
+       getImageData 一次再複製一份（1600×1200 就是兩趟 7.7MB），
+       那是白花的，而且是連 GPU 這條快路都躲不掉的固定成本。 */
     if (gpuSrcKey !== srcKey) {
-      if (!g.setSource(src, w, h)) return false;
+      const src = getSrc();
+      if (!src || !g.setSource(src, w, h)) return false;
       gpuSrcKey = srcKey;
     }
     const paint = (film: Uint8ClampedArray | null, filmSize: number, into: HTMLCanvasElement) => {
@@ -259,19 +296,37 @@ export function applyPhotoFx(
   w: number,
   h: number,
   fx: PhotoFx,
+  /** cacheSource：來源是固定不變的圖，像素可以留著重用。
+   *  fast：手指還在滑桿上的那幾格，顏色鏈用最近鄰取樣（跟編輯頁互動時同一招）。
+   *        手一停呼叫端會用 fast=false 重算一張，停下來看到的、匯出的都是完整版。 */
+  opts?: { cacheSource?: boolean; fast?: boolean },
 ): HTMLCanvasElement {
   const out = document.createElement('canvas');
   out.width = Math.max(1, Math.round(w));
   out.height = Math.max(1, Math.round(h));
   const ctx = out.getContext('2d', { willReadFrequently: true })!;
-  ctx.drawImage(source, 0, 0, out.width, out.height);
-  if (!hasPhotoFx(fx)) return out;
+  const px = hasPhotoFx(fx);
+  const ck = opts?.cacheSource ? `${srcToken(source)}|${out.width}x${out.height}` : '';
+  const hit = ck ? srcPxCache.get(ck) : undefined;
+  /* 有快取而且等一下整張都會被 putImageData 蓋掉，就連這一次 drawImage
+     都可以省。沒有要跑管線時當然還是得把原圖畫上去。 */
+  if (!hit || !px) ctx.drawImage(source, 0, 0, out.width, out.height);
+  if (!px) return out;
 
   const p = toParams(fx);
   const lut = getLoadedLut(fx.lut);
-  const img = ctx.getImageData(0, 0, out.width, out.height);
-  const src = new Uint8ClampedArray(img.data);
-  const dest = img.data;
+  /* 像素改成「真的要用才讀」。走 GPU 而且貼圖已經在上面時，
+     這兩行完全不會執行 —— 省掉每一格一次 getImageData ＋ 一次整份複製。 */
+  let img: ImageData | null = null;
+  let src: Uint8ClampedArray | null = null;
+  const readPixels = () => {
+    if (src) return src;
+    if (hit) { src = hit.px; return src; }
+    img = ctx.getImageData(0, 0, out.width, out.height);
+    src = new Uint8ClampedArray(img.data);
+    if (ck) putSrcPx(ck, { px: src, scratch: null, plain: null });
+    return src;
+  };
 
   const baseLut = new Uint8Array(256);
   generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseLut);
@@ -285,27 +340,43 @@ export function applyPhotoFx(
      而只憑一次取樣下永久判斷，反而會在真手機上誤判成「不要用 GPU」。 */
   {
     const amt = (fx.lutAmount ?? 100) / 100;
-    // 來源鍵：尺寸 ＋ 幾個取樣點。同一張圖重畫時就不必重傳貼圖。
-    const k = `${out.width}x${out.height}|${src[0]},${src[(src.length >> 3) | 0]},`
-      + `${src[(src.length >> 2) | 0]},${src[src.length - 4]}`;
-    gpuOk = gpuColorChain(ctx, src, out.width, out.height, p, lut, amt, baseLut, k);
+    /* 來源鍵：來源物件的身分 ＋ 尺寸。以前是「尺寸＋四個取樣點」，
+       但取樣點得先把整張像素讀出來 —— 為了算一把鑰匙付一次全圖回讀，
+       正是上面要省掉的那一步。改成給每個來源物件一個固定編號（WeakMap），
+       同一張圖重畫時鑰匙一樣，貼圖就不必重傳。 */
+    const k = `${srcToken(source)}|${out.width}x${out.height}`;
+    gpuOk = gpuColorChain(ctx, readPixels, out.width, out.height, p, lut, amt, baseLut, k);
   }
 
   if (!gpuOk) {
 
+  readPixels();
+  /* processPixels 每一顆像素的四個位元組都會寫（含 alpha 固定 255），
+     所以拿一張暫存的 ImageData 來寫，跟拿剛讀回來的那張寫，結果一樣。
+     有來源快取時就借那張暫存的，省掉每一格一次一兩 MB 的配置。 */
+  const rec = ck ? srcPxCache.get(ck) : undefined;
+  if (!img) {
+    const sc = rec?.scratch;
+    if (sc && sc.width === out.width && sc.height === out.height) img = sc;
+    else { img = ctx.createImageData(out.width, out.height); if (rec) rec.scratch = img; }
+  } else if (rec && !rec.scratch) rec.scratch = img;
+  const dest = img!.data;
+
+  const nearest = !!opts?.fast;
   processPixels(
-    src, dest, out.width, out.height, p,
+    src!, dest, out.width, out.height, p,
     lut ? lut.data : null, lut ? lut.size : 0,
-    baseLut, null, false, IDENTITY_CURVE_LUTS,
+    baseLut, null, nearest, IDENTITY_CURVE_LUTS,
   );
 
   // 濾鏡強度：跟原本沒上濾鏡的結果混合
   const amount = (fx.lutAmount ?? 100) / 100;
   if (lut && amount < 1) {
-    const plain = new Uint8ClampedArray(src.length);
+    let plain = rec?.plain && rec.plain.length === src!.length ? rec.plain : null;
+    if (!plain) { plain = new Uint8ClampedArray(src!.length); if (rec) rec.plain = plain; }
     processPixels(
-      src, plain, out.width, out.height, p,
-      null, 0, baseLut, null, false, IDENTITY_CURVE_LUTS,
+      src!, plain, out.width, out.height, p,
+      null, 0, baseLut, null, nearest, IDENTITY_CURVE_LUTS,
     );
     const inv = 1 - amount;
     for (let i = 0; i < dest.length; i += 4) {
@@ -314,7 +385,7 @@ export function applyPhotoFx(
       dest[i + 2] = plain[i + 2] * inv + dest[i + 2] * amount;
     }
   }
-  ctx.putImageData(img, 0, 0);
+  ctx.putImageData(img!, 0, 0);
   }
 
   // 特效的半徑是以 1080 長邊為基準，換算到目前這張的大小
