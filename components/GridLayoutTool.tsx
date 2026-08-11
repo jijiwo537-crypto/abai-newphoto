@@ -118,25 +118,6 @@ const RATIOS = [
   { id: '4:5', name: '4:5' },
 ];
 
-/* ── 佈局自己的比例 ──────────────────────────────────────────────────
-   每個佈局可以有自己的長寬比（跟整頁的比例分開）。沒設就跟頁面一樣，
-   所以舊的檔案讀進來完全不變。
-   設了就把那個比例「contain」進頁面裡，再乘上佈局自己的縮放 —— 預覽、
-   IG 預覽、匯出三條路都呼叫這一支，三邊的幾何必然一致。 */
-const layoutBox = (
-  lay: { ratio?: string; landscape?: boolean } | null | undefined,
-  pageW: number, pageH: number,
-) => {
-  const id = lay?.ratio;
-  if (!id) return { w: pageW, h: pageH };
-  const parts = String(id).split(':').map(Number);
-  let rw = parts[0], rh = parts[1];
-  if (!(rw > 0 && rh > 0)) return { w: pageW, h: pageH };
-  if (lay?.landscape) { const t = rw; rw = rh; rh = t; }
-  const fit = Math.min(pageW / rw, pageH / rh);
-  return { w: rw * fit, h: rh * fit };
-};
-
 const TEMPLATE_MAP: Record<number, { name: string; rects: CellRect[] }[]> = {
   1: [
     {
@@ -3172,10 +3153,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     t: { x: number; y: number; scale: number };
     /** 圖層堆疊位置：0 = 在所有一般圖片下方，N = 在全部上方。 */
     z: number;
-    /** 這個佈局自己的長寬比（'3:4' 之類）。沒設就跟整頁一樣。 */
-    ratio?: string;
-    /** 這個佈局自己的比例是不是橫過來 */
-    landscape?: boolean;
     /** 間距與圓角都是各佈局自己的設定，調整不會影響之後新增的佈局。 */
     gap: number;
     radius: number;
@@ -3884,18 +3861,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const templateIndex = activeLayout?.templateIndex ?? 0;
   const gap = activeLayout?.gap ?? 0;
   const radius = activeLayout?.radius ?? 0;
-  /** 目前選中的佈局自己的長寬比（沒設就跟整頁一樣） */
-  const layoutRatio = activeLayout?.ratio ?? '';
-  const layoutLandscape = !!activeLayout?.landscape;
-  /** 改「這個佈局」的比例；不影響整頁，也不影響其他佈局 */
-  const patchLayoutShape = (patch: { ratio?: string; landscape?: boolean }) => {
-    const id = selectedLayoutId;
-    if (!id) return;
-    setPages(prev => prev.map(p => p.layouts.some(l => l.id === id) ? ({
-      ...p,
-      layouts: p.layouts.map(l => l.id === id ? { ...l, ...patch } : l),
-    }) : p));
-  };
   const bgColor = activePage.bgColor;
   const layoutSelected = selectedLayoutId !== null;
 
@@ -7125,8 +7090,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           const tpls = TEMPLATE_MAP[layout.images.length] || [];
           const tpl = tpls[layout.templateIndex] || tpls[0] || { name: '', rects: [] };
           const ls = layout.t?.scale ?? 1;
-          const lbox = layoutBox(layout, previewW, previewH);
-          const lw = lbox.w * ls, lh = lbox.h * ls;
+          const lw = previewW * ls, lh = previewH * ls;
           const gap = layout.gap * ls, inset = gap / 2;
           const areaW = Math.max(1, lw - inset * 2), areaH = Math.max(1, lh - inset * 2);
           return (
@@ -7374,17 +7338,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             // Base cell coordinates with pixel snapping to prevent gaps (shifted by pageOffsetX)
             // 與預覽同一套幾何：整體內縮半個間距，格子再各留半個 padding
             const inset = canvasGap / 2;
-            /* 佈局可以有自己的長寬比，框不一定等於整頁 —— 跟預覽呼叫同一支
-               layoutBox，而且一樣置中，所以匯出跟畫面上長得一模一樣。 */
-            const lbox = layoutBox(layout, targetW, targetH);
-            const boxX = pageOffsetX + (targetW - lbox.w) / 2;
-            const boxY = (targetH - lbox.h) / 2;
-            const areaW = Math.max(1, lbox.w - inset * 2);
-            const areaH = Math.max(1, lbox.h - inset * 2);
-            const leftPx = boxX + inset + Math.round(rect.x * areaW);
-            const rightPx = boxX + inset + Math.round((rect.x + rect.w) * areaW);
-            const topPx = boxY + inset + Math.round(rect.y * areaH);
-            const bottomPx = boxY + inset + Math.round((rect.y + rect.h) * areaH);
+            const areaW = Math.max(1, targetW - inset * 2);
+            const areaH = Math.max(1, targetH - inset * 2);
+            const leftPx = pageOffsetX + inset + Math.round(rect.x * areaW);
+            const rightPx = pageOffsetX + inset + Math.round((rect.x + rect.w) * areaW);
+            const topPx = inset + Math.round(rect.y * areaH);
+            const bottomPx = inset + Math.round((rect.y + rect.h) * areaH);
 
             const bw = rightPx - leftPx;
             const bh = bottomPx - topPx;
@@ -7481,13 +7440,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       pages.forEach((page, pageIdx) => {
         page.layouts.forEach(lay => {
           const ls = lay.t?.scale ?? 1;
-          // 佈局有自己的比例時佔的橫向範圍會比整頁窄，要照它自己的框算
-          const lbw = layoutBox(lay, targetW, targetH).w * ls;
-          const left = pageIdx * targetW + (targetW - lbw) / 2 + (lay.t?.x || 0) * scaleFactor;
+          const left = pageIdx * targetW + (targetW - targetW * ls) / 2 + (lay.t?.x || 0) * scaleFactor;
           drawJobs.push({
             z: 59 + (lay.z ?? 0) * 2,
             minX: left,
-            maxX: left + lbw,
+            maxX: left + targetW * ls,
             run: (c) => drawPageLayout(c, pageIdx, lay),
           });
         });
@@ -8231,9 +8188,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                               // 格內照片）等比例一起變，看起來完全一樣。
                               // 而且是用真實尺寸而不是 transform: scale()，放大才不會糊。
                               const ls = layout.t?.scale ?? 1;
-                              const lbox = layoutBox(layout, previewW, previewH);
-                              const lw = lbox.w * ls;
-                              const lh = lbox.h * ls;
+                              const lw = previewW * ls;
+                              const lh = previewH * ls;
                               const gap = layout.gap * ls;
                               const radius = layout.radius * ls;
                               const lLeft = (previewW - lw) / 2 + (layout.t?.x || 0);
@@ -9463,73 +9419,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     </div>
                   ) : (
                     /* Adjustment sliders - top aligned, smooth and stable without layout jitter */
-                    <div className="space-y-4 pt-2.5 pb-16 px-1 max-w-xs">
-                      {/* 這個佈局自己的比例（跟最左邊那一頁的「版型比例」是兩回事：
-                          那邊調的是整張頁面，這裡調的是選中的這一個佈局）。
-                          再按一次同一顆就取消，回到「跟頁面一樣」。 */}
-                      <div className="space-y-1.5">
-                        <div className="flex justify-between text-[11px] font-bold text-white/70">
-                          <span>比例</span>
-                          <span className="font-mono text-white">
-                            {layoutRatio
-                              ? (layoutRatio === '1:1'
-                                  ? '1:1'
-                                  : layoutLandscape
-                                    ? `${layoutRatio.split(':')[1]}:${layoutRatio.split(':')[0]}`
-                                    : layoutRatio)
-                              : '跟頁面一樣'}
-                          </span>
-                        </div>
-                        <div className="grid grid-cols-5 gap-1">
-                          {RATIOS.map((item) => (
-                            <button
-                              key={item.id}
-                              onClick={() => {
-                                if (selectedIndex !== null) setSelectedIndex(null);
-                                patchLayoutShape({ ratio: layoutRatio === item.id ? undefined : item.id });
-                              }}
-                              className={`py-2 rounded-lg border text-center transition-all flex items-center justify-center ${
-                                layoutRatio === item.id
-                                  ? 'bg-white border-white text-black font-extrabold shadow-[0_4px_16px_rgba(255,255,255,0.15)]'
-                                  : 'bg-white/[0.02] border-white/5 hover:border-white/15 text-white/70 hover:text-white'
-                              }`}
-                            >
-                              <div className="text-[10px] font-mono tracking-wider">
-                                {item.id === '1:1'
-                                  ? '1:1'
-                                  : layoutLandscape
-                                    ? `${item.id.split(':')[1]}:${item.id.split(':')[0]}`
-                                    : item.name}
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                        <div className="flex items-center justify-between bg-white/[0.02] border border-white/5 p-1 rounded-xl gap-1">
-                          <button
-                            onClick={() => { if (selectedIndex !== null) setSelectedIndex(null); patchLayoutShape({ landscape: false }); }}
-                            className={`flex-1 py-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
-                              !layoutLandscape
-                                ? 'bg-white text-black font-extrabold shadow-[0_2px_8px_rgba(255,255,255,0.1)]'
-                                : 'text-white/50 hover:text-white'
-                            }`}
-                          >
-                            <Smartphone size={13} className="rotate-0 shrink-0" />
-                            <span>直式</span>
-                          </button>
-                          <button
-                            onClick={() => { if (selectedIndex !== null) setSelectedIndex(null); patchLayoutShape({ landscape: true }); }}
-                            className={`flex-1 py-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
-                              layoutLandscape
-                                ? 'bg-white text-black font-extrabold shadow-[0_2px_8px_rgba(255,255,255,0.1)]'
-                                : 'text-white/50 hover:text-white'
-                            }`}
-                          >
-                            <Smartphone size={13} className="rotate-90 shrink-0" />
-                            <span>橫式</span>
-                          </button>
-                        </div>
-                      </div>
-
+                    <div className="space-y-4 pt-2.5 px-1 max-w-xs">
                       {/* Gap slider */}
                       <div className="space-y-1.5">
                         <div className="flex justify-between text-[11px] font-bold text-white/70">
@@ -9569,7 +9459,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                           className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
                         />
                       </div>
-
                     </div>
                   )}
                 </div>
