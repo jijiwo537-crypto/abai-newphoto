@@ -3149,8 +3149,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     id: string;
     templateIndex: number;
     images: ImageCell[];
-    /** 佈局在頁面上的位移與縮放。新增時預設佔頁面七分滿。 */
-    t: { x: number; y: number; scale: number };
+    /** 佈局在頁面上的位移與縮放。新增時預設佔頁面七分滿。
+        rot：整組佈局的旋轉角（度），跟一般圖片同一套兩指旋轉。 */
+    t: { x: number; y: number; scale: number; rot?: number };
     /** 圖層堆疊位置：0 = 在所有一般圖片下方，N = 在全部上方。 */
     z: number;
     /** 間距與圓角都是各佈局自己的設定，調整不會影響之後新增的佈局。 */
@@ -3861,6 +3862,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const templateIndex = activeLayout?.templateIndex ?? 0;
   const gap = activeLayout?.gap ?? 0;
   const radius = activeLayout?.radius ?? 0;
+  /** 目前選中的佈局轉了幾度（滑桿與左右轉 90° 都讀它） */
+  const layoutRot = activeLayout?.t?.rot ?? 0;
   const bgColor = activePage.bgColor;
   const layoutSelected = selectedLayoutId !== null;
 
@@ -6163,7 +6166,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    * 不要靠當下的 selectedLayoutId：手指放開的瞬間選取狀態可能已經被別的
    * handler 清掉，那樣這一筆就會寫不進去，看起來就是「縮放完自己彈回原大小」。
    */
-  const patchLayoutT = (patch: Partial<{ x: number; y: number; scale: number }>, targetId?: string | null) => {
+  const patchLayoutT = (patch: Partial<{ x: number; y: number; scale: number; rot: number }>, targetId?: string | null) => {
     const id = targetId ?? selectedLayoutId;
     if (!id) return;
     setPages(prev => prev.map(p => p.layouts.some(l => l.id === id) ? ({
@@ -6402,6 +6405,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     /** 旋轉的不動區：轉超過門檻才開始轉，rotBias 是要扣掉的那一段 */
     rotOn?: boolean; rotBias?: number;
     baseX: number; baseY: number; baseScale: number;
+    /** 整組佈局當下的角度（佈局的雙指旋轉用） */
+    baseLayoutRot: number;
     cellIdx: number; baseOffsetX: number; baseOffsetY: number; baseZoom: number;
   } | null>(null);
 
@@ -6534,11 +6539,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         mode: twoFinger ? 'pinch' : 'drag',
         startX: cx, startY: cy, startDist: dist,
         startAngle: ang,
-        baseRotation: fImg?.rotation ?? 0,
+        baseRotation: kind === 'layout' ? (lt.rot || 0) : (fImg?.rotation ?? 0),
         rotOn: false, rotBias: 0,   // 旋轉的不動區：超過門檻才開始轉
         baseX: kind === 'floating' ? (fImg?.x ?? 0) : lt.x,
         baseY: kind === 'floating' ? (fImg?.y ?? 0) : lt.y,
         baseScale: kind === 'floating' ? (fImg?.scale ?? 1) : lt.scale,
+        baseLayoutRot: lt.rot || 0,
         cellIdx: selectedIndex ?? -1,
         baseOffsetX: cell?.offsetX ?? 0,
         baseOffsetY: cell?.offsetY ?? 0,
@@ -6654,6 +6660,30 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           }
         } else if (g.kind === 'layout') {
           scaleLayoutSnapped(g.baseScale * k, wsGestureLayoutIdRef.current);
+          /* 整組佈局的旋轉：跟一般圖片同一套手感 —— 先有一段「不動區」
+             （轉不到 ROT_START 度就當成純縮放，免得只是想放大卻歪掉），
+             超過之後把門檻扣掉再開始轉，所以跨過門檻時不會跳一下；
+             靠近 0/90/180/270 就吸正。 */
+          {
+            const ROT_START = 8, ROT_SNAP = 6;
+            const wrap180 = (v: number) => ((v + 180) % 360 + 360) % 360 - 180;
+            const ang2 = Math.atan2(
+              e.touches[1].clientY - e.touches[0].clientY,
+              e.touches[1].clientX - e.touches[0].clientX
+            ) * 180 / Math.PI;
+            let dRot = wrap180(ang2 - g.startAngle);
+            if (!g.rotOn) {
+              if (Math.abs(dRot) < ROT_START) dRot = 0;
+              else { g.rotOn = true; g.rotBias = dRot > 0 ? ROT_START : -ROT_START; }
+            }
+            if (g.rotOn) {
+              dRot -= (g.rotBias || 0);
+              let rot = ((g.baseLayoutRot + dRot) % 360 + 360) % 360;
+              const nearest = (Math.round(rot / 90) * 90) % 360;
+              if (Math.abs(wrap180(rot - nearest)) <= ROT_SNAP) rot = nearest;
+              patchLayoutT({ rot }, wsGestureLayoutIdRef.current);
+            }
+          }
         } else if (g.kind === 'cell' && g.cellIdx >= 0) {
           applyCellZoom(g.cellIdx, Math.max(1.0, Math.min(5.0, g.baseZoom * k)));
         }
@@ -7102,6 +7132,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 top: `${((previewH - lh) / 2 + (layout.t?.y || 0)) * k}px`,
                 width: `${lw * k}px`,
                 height: `${lh * k}px`,
+                ...((layout.t?.rot || 0) !== 0
+                  ? { transform: `rotate(${layout.t!.rot}deg)`, transformOrigin: 'center center' }
+                  : null),
               }}
             >
               {tpl.rects.map((rect, ci) => {
@@ -7315,9 +7348,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           // 整組佈局可能被移動或縮放過，匯出時套用同一個變形
           const lt = layout.t || { x: 0, y: 0, scale: 1 };
           const ltScale = lt.scale || 1;
+          const ltRot = lt.rot || 0;
           ctx.save();
-          if (lt.x !== 0 || lt.y !== 0 || ltScale !== 1) {
+          if (lt.x !== 0 || lt.y !== 0 || ltScale !== 1 || ltRot !== 0) {
             ctx.translate(pageOffsetX + targetW / 2 + lt.x * scaleFactor, targetH / 2 + lt.y * scaleFactor);
+            // 旋轉與縮放都以佈局中心為軸，跟預覽那邊的 transform-origin: center 一致
+            if (ltRot !== 0) ctx.rotate((ltRot * Math.PI) / 180);
             ctx.scale(ltScale, ltScale);
             ctx.translate(-(pageOffsetX + targetW / 2), -targetH / 2);
           }
@@ -7440,11 +7476,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       pages.forEach((page, pageIdx) => {
         page.layouts.forEach(lay => {
           const ls = lay.t?.scale ?? 1;
-          const left = pageIdx * targetW + (targetW - targetW * ls) / 2 + (lay.t?.x || 0) * scaleFactor;
+          /* 轉過角度之後佔的橫向範圍會變寬，這裡要用「轉過的外接框」，
+             不然這一頁跟隔壁頁的先後順序會判斷錯。 */
+          const ext = rotExtent(targetW * ls, targetH * ls, lay.t?.rot || 0);
+          const cxJob = pageIdx * targetW + targetW / 2 + (lay.t?.x || 0) * scaleFactor;
+          const left = cxJob - ext.bw / 2;
           drawJobs.push({
             z: 59 + (lay.z ?? 0) * 2,
             minX: left,
-            maxX: left + targetW * ls,
+            maxX: left + ext.bw,
             run: (c) => drawPageLayout(c, pageIdx, lay),
           });
         });
@@ -8208,6 +8248,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                   height: `${lh}px`,
                                   transition: 'none',
                                   zIndex: 59 + (layout.z ?? 0) * 2,
+                                  /* 整組佈局的旋轉：直接轉整個外框，裡面的格子、
+                                     照片、選取框、四個角、那排按鈕全部跟著轉，
+                                     連命中判定都是瀏覽器自己算的，不必另外處理。 */
+                                  ...((layout.t?.rot || 0) !== 0
+                                    ? { transform: `rotate(${layout.t!.rot}deg)`, transformOrigin: 'center center' }
+                                    : null),
                                 }}
                                 onTouchStart={isThisLayoutSelected ? handleLayoutTouchStart : undefined}
                                 onTouchMove={isThisLayoutSelected ? handleLayoutTouchMove : undefined}
@@ -8241,18 +8287,26 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                   const topPx = inset + rect.y * areaH;
                                   const bottomPx = inset + (rect.y + rect.h) * areaH;
 
-                                  /* 空格子（沒放照片）的邊界改成取整。
-                                     縮放佈局時每一格會落在非整數的像素位置，空格子那圈
-                                     1px 虛線外框就會被反覆重新光柵化，相鄰兩格的外框疊在
-                                     一起閃成一條白線。取整之後外框剛好壓在像素格線上，
-                                     相鄰兩格也還是同一條邊，白線就不見了。
-                                     只有空格子這樣做 —— 有照片的格子取整會讓格內的照片
-                                     跟著跳 1px（原本刻意不取整就是為了這個）。 */
-                                  const emptyCell = !cell || !cell.url;
-                                  const snap = (v: number) => (emptyCell ? Math.round(v) : v);
-                                  const l0 = snap(leftPx), t0 = snap(topPx);
-                                  const cellWidth = snap(rightPx) - l0;
-                                  const cellHeight = snap(bottomPx) - t0;
+                                  /* ── 格子邊界一律取整 ────────────────────────────────
+                                     每一條格線都取整，相鄰兩格自然共用同一條整數邊，
+                                     縮放過程中也永遠不會出現「一格取整、隔壁沒取整」而
+                                     露出來的那條縫（就是主人說的白線閃爍：以前只有空格子
+                                     取整，所以只要有格子沒放照片，它跟旁邊有照片的那格
+                                     邊界就對不上，中間那條頁面底色就閃出來）。
+
+                                     以前不敢對有照片的格子取整，是怕格內照片跟著跳 1px。
+                                     這裡把兩件事拆開：**框**用取整後的值，**格內照片**
+                                     用沒取整的真實幾何（rawW/rawH），再把「取整後的中心」
+                                     與「真實中心」的差補回去（fixX/fixY）。
+                                     於是框永遠對齊像素、照片永遠連續，兩邊都拿到。 */
+                                  const l0 = Math.round(leftPx), t0 = Math.round(topPx);
+                                  const cellWidth = Math.round(rightPx) - l0;
+                                  const cellHeight = Math.round(bottomPx) - t0;
+                                  /** 沒取整的真實格子大小與中心補正（只給格內照片用） */
+                                  const rawW = Math.max(1, rightPx - leftPx);
+                                  const rawH = Math.max(1, bottomPx - topPx);
+                                  const fixX = (leftPx + rightPx) / 2 - (l0 + cellWidth / 2);
+                                  const fixY = (topPx + bottomPx) / 2 - (t0 + cellHeight / 2);
 
                                   if (!cell) {
                                     return (
@@ -8376,8 +8430,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                   const drawW = is90or270 ? h_img : w_img;
                                   const drawH = is90or270 ? w_img : h_img;
 
-                                  const scaleX = cellWidth / drawW;
-                                  const scaleY = cellHeight / drawH;
+                                  /* 用「沒取整」的格子大小算，照片的縮放才不會跟著
+                                     格線取整一起跳（框取整、照片連續，見上面的說明）。 */
+                                  const scaleX = rawW / drawW;
+                                  const scaleY = rawH / drawH;
                                   // 防止格子邊緣露出細縫的「咬邊」。純粹用乘的，不能再加常數 ——
                                   // 加常數的話縮放時每張照片相對格子的比例會跟著變，就不是等比例了。
                                   const coverScale = Math.max(scaleX, scaleY) * 1.02;
@@ -8486,7 +8542,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                             maxWidth: 'none',
                                             maxHeight: 'none',
                                             transformOrigin: 'center center',
-                                            transform: `translate(-50%, -50%) translate(${cell.offsetX * cellWidth}px, ${cell.offsetY * cellHeight}px) rotate(${cell.rotation}deg) scale(${cssScale})`,
+                                            transform: `translate(-50%, -50%) translate(${cell.offsetX * rawW + fixX}px, ${cell.offsetY * rawH + fixY}px) rotate(${cell.rotation}deg) scale(${cssScale})`,
                                             transition: imageTransition,
                                             opacity: 1,
                                             pointerEvents: 'none',
@@ -8534,8 +8590,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                         })()}
                                       </div>
                                       {isSelected && draggedIndex === null && touchDraggedIndex === null && (
-                                        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 z-[60] bg-white backdrop-blur-md rounded-full p-1 shadow-xl pointer-events-auto"
+                                        /* 這排鍵本來壓在格子裡面（bottom-2），正好蓋住剛選中的那張照片。
+                                           改成掛在格子**外面的下方** —— 跟整組佈局被選中時那排鍵同一種做法。
+                                           貼著頁面下緣的那一列格子放不下，就翻到格子上方，不會被裁掉。 */
+                                        <div className="absolute left-1/2 flex items-center gap-1 z-[60] bg-white backdrop-blur-md rounded-full p-1 shadow-xl pointer-events-auto"
+                                             style={lTop + t0 + cellHeight + 46 > previewH
+                                               ? { bottom: '100%', marginBottom: 8, transform: 'translate(-50%, 0)' }
+                                               : { top: '100%', marginTop: 8, transform: 'translate(-50%, 0)' }}
                                              onPointerDown={(e) => e.stopPropagation()}
+                                             onTouchStart={(e) => e.stopPropagation()}
                                         >
                                           <button
                                             onClick={(e) => {
@@ -9441,6 +9504,96 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                           }}
                           className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
                         />
+                      </div>
+
+                      {/* 旋轉：兩指轉整組佈局之外，這裡也給一根滑桿，
+                          單手也轉得動、而且可以轉到精確的角度。 */}
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between text-[11px] font-bold text-white/70">
+                          <span>旋轉</span>
+                          <span className="font-mono text-white">{Math.round(layoutRot)}°</span>
+                        </div>
+                        <input
+                          type="range"
+                          min="0"
+                          max="360"
+                          step="1"
+                          value={Math.round(layoutRot)}
+                          onChange={(e) => {
+                            if (selectedIndex !== null) setSelectedIndex(null);
+                            patchLayoutT({ rot: parseInt(e.target.value) % 360 });
+                          }}
+                          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+                        />
+                        <div className="flex gap-1 pt-0.5">
+                          {[-90, 90].map(d => (
+                            <button
+                              key={d}
+                              onClick={() => patchLayoutT({ rot: ((layoutRot + d) % 360 + 360) % 360 })}
+                              className="flex-1 py-1.5 rounded-lg border border-white/5 bg-white/[0.02] text-[11px] font-bold text-white/70 hover:text-white hover:border-white/15 transition-all"
+                            >
+                              {d > 0 ? '右轉 90°' : '左轉 90°'}
+                            </button>
+                          ))}
+                          <button
+                            onClick={() => patchLayoutT({ rot: 0 })}
+                            className="flex-1 py-1.5 rounded-lg border border-white/5 bg-white/[0.02] text-[11px] font-bold text-white/70 hover:text-white hover:border-white/15 transition-all"
+                          >
+                            歸零
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* 版型比例：跟最左邊那一頁同一組（同一個 state、同樣五個比例、
+                          同樣的直式／橫式切換），只是也放一份在這裡 ——
+                          排佈局的時候想換整張的比例，不用再切回最左邊那一頁。 */}
+                      <div className="space-y-1.5 pt-1">
+                        <div className="text-[11px] font-bold text-white/70">比例</div>
+                        <div className="grid grid-cols-5 gap-1">
+                          {RATIOS.map((item) => (
+                            <button
+                              key={item.id}
+                              onClick={() => setSelectedRatio(item.id)}
+                              className={`py-2 rounded-lg border text-center transition-all flex items-center justify-center ${
+                                selectedRatio === item.id
+                                  ? 'bg-white border-white text-black font-extrabold shadow-[0_4px_16px_rgba(255,255,255,0.15)]'
+                                  : 'bg-white/[0.02] border-white/5 hover:border-white/15 text-white/70 hover:text-white'
+                              }`}
+                            >
+                              <div className="text-[10px] font-mono tracking-wider">
+                                {item.id === '1:1'
+                                  ? '1:1'
+                                  : isLandscape
+                                    ? `${item.id.split(':')[1]}:${item.id.split(':')[0]}`
+                                    : item.name}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex items-center justify-between bg-white/[0.02] border border-white/5 p-1 rounded-xl gap-1">
+                          <button
+                            onClick={() => setIsLandscape(false)}
+                            className={`flex-1 py-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
+                              !isLandscape
+                                ? 'bg-white text-black font-extrabold shadow-[0_2px_8px_rgba(255,255,255,0.1)]'
+                                : 'text-white/50 hover:text-white'
+                            }`}
+                          >
+                            <Smartphone size={13} className="rotate-0 shrink-0" />
+                            <span>直式</span>
+                          </button>
+                          <button
+                            onClick={() => setIsLandscape(true)}
+                            className={`flex-1 py-2 rounded-lg text-[11px] font-bold transition-all flex items-center justify-center gap-1.5 ${
+                              isLandscape
+                                ? 'bg-white text-black font-extrabold shadow-[0_2px_8px_rgba(255,255,255,0.1)]'
+                                : 'text-white/50 hover:text-white'
+                            }`}
+                          >
+                            <Smartphone size={13} className="rotate-90 shrink-0" />
+                            <span>橫式</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}

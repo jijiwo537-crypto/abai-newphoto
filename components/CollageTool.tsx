@@ -1566,7 +1566,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     /* 邊界安全距離。四周包圍時圖案灑在整張畫布上，只留半個圖案的話
        最外圈會有一半跑到畫面外，所以多留將近一個圖案的餘裕
        —— 但使用者自己拖出去仍然可以（那是刻意的）。 */
-    const drawnS = s;
+    /* 四周包圍的圖案會跟著中間那張照片一起縮（見 getHoleSize），
+       所以「灑得多開、離邊多遠」也要照縮過的大小算。 */
+    const drawnS = around ? s * Math.max(0.05, Math.min(1, maskScale)) : s;
     const p = around ? drawnS * 0.75 + 25 * gs : s / 2 + 25 * gs;
     const md = maskDims(lay, baseW, baseH, maskScale);
     const fieldW = around ? md.mw : baseW;
@@ -1577,7 +1579,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       let att = 0, valid = false, hx = 0, hy = 0;
       while (!valid && att < 500) {
         hx = p + Math.random() * (fieldW - p * 2); hy = p + Math.random() * (fieldH - p * 2); valid = true;
-        for (let ex of newHoles) if (Math.hypot(ex.x - hx, ex.y - hy) < s * 1.2) { valid = false; break; }
+        for (let ex of newHoles) if (Math.hypot(ex.x - hx, ex.y - hy) < drawnS * 1.2) { valid = false; break; }
         att++;
       }
       newHoles.push({
@@ -1704,11 +1706,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const gs = imageState?.globalScale || 1;
     const mappedHoleSize = 25 + (holeSize / 100) * 125;
     const baseSize = Math.max(25, mappedHoleSize + (h.randomFactor || 0) * sizeJitter);
-    /* 四周包圍的畫布現在跟原圖一樣大（比例只縮中間那張照片），
-       所以不再需要以前那個「畫布被撐大、圖案要補回去」的倍率 ——
-       同一個「大小」值在每種排版畫出來都一樣大。 */
-    return baseSize * gs * (h.localScale || 1);
-  }, [holeSize, sizeJitter, imageState?.globalScale]);
+    /* 四周包圍：中間那張照片是「等比例縮小」塞進畫布中間的，圖案要跟著一起縮。
+       不跟著縮的話，同一個「大小」值在這裡會比別的排版大一大截 ——
+       比例 1/3 時照片只有畫布的 0.6 倍，圖案卻照原尺寸畫，
+       壓在照片上就是 1.67 倍大（主人說的「圖案異常變大」）。
+       滑到滿版時這個倍率剛好是 1，跟其他排版完全一致。 */
+    const k = layout === AROUND ? Math.max(0.05, Math.min(1, maskScale)) : 1;
+    return baseSize * gs * k * (h.localScale || 1);
+  }, [holeSize, sizeJitter, imageState?.globalScale, layout, maskScale]);
 
   const isHoleFullyInsideMask = useCallback((h: any, s: number, maskW: number, maskH: number) => {
     const sz = getHoleSize(h) * s;
@@ -2564,7 +2569,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const img = imageState.img, t = imageTransform;
       if (!img || !t) return null;
       const W = Math.max(1, Math.round(offs.cw)), H = Math.max(1, Math.round(offs.ch));
-      const key = `${W}|${H}|${s}|${kIn}|${maskW}|${iw}|${offs.ix}|${offs.iy}|${t.x}|${t.y}|${t.w}|${t.h}`;
+      /* 這張其實**跟比例無關**。原式是「把中央那張縮好的照片，以畫布中心
+         再放大 maskW/iw 倍」，把 kIn = iw/sw 代進去之後，兩個倍率剛好互相抵掉：
+           位置 = t.x·s·(maskW/sw)   大小 = t.w·s·(maskW/sw)
+         也就是「原本那張構圖照原尺寸鋪在畫布上」，跟比例一點關係都沒有。
+         所以鑰匙裡不能放 kIn / iw / offs.ix —— 放了就變成每動一格滑桿都要
+         把 2400×1800 的原圖重新縮一次（拖比例時因此每一格多背一次全畫布縮圖）。 */
+      const m = maskW / Math.max(1, sw);
+      const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}`;
       const hit = isMain ? aroundBdRef.current : null;
       if (hit && hit.key === key && hit.img === img) return hit.cv;
       const cv = isMain ? holeBackdropCanvasRef.current : document.createElement('canvas');
@@ -2575,11 +2587,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       g.globalAlpha = 1;
       // copy：畫的同時把其餘部分清掉，省一次 clearRect
       g.globalCompositeOperation = 'copy';
-      const k = maskW / iw;
-      const cx = W / 2, cy = H / 2;
-      // 以「中央那張縮好的照片」為準再放大回整張畫布，兩張才會是同一個構圖
-      const x0 = offs.ix + t.x * s * kIn, y0 = offs.iy + t.y * s * kIn;
-      g.drawImage(img, cx + (x0 - cx) * k, cy + (y0 - cy) * k, t.w * s * kIn * k, t.h * s * kIn * k);
+      g.drawImage(img, t.x * s * m, t.y * s * m, t.w * s * m, t.h * s * m);
       g.globalCompositeOperation = 'source-over';
       if (isMain) aroundBdRef.current = { key, img, cv };
       return cv;
@@ -2989,11 +2997,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (isMain && guides.length) {
       ctx.save();
       /* 經典拼圖那邊是 2 CSS px 的 bg-blue-500。這裡畫在畫布上，
-         所以要把 2 CSS px 換算成畫布單位（畫布可能比螢幕細很多倍）。 */
+         所以要把 2 CSS px 換算成畫布單位（畫布可能比螢幕細很多倍）。
+
+         offs.cw 已經是「畫布像素」了（它是 baseW×s 算出來的），
+         以前這裡又多乘了一次 s —— 於是工作倍率愈高線就愈粗：
+         倍率 1 時剛好 2 CSS px（看起來正常），倍率 1.5 時變成 2.9 CSS px。
+         四周包圍的畫布沒有多出來的那條遮罩，總像素比較少，倍率上限給得比
+         別的排版高，所以最先被看出來變粗的就是它。 */
       const cssW0 = baseCssWRef.current || 1;
       const shown = cssW0 * Math.max(1, viewTRef.current.k);
       ctx.strokeStyle = '#3B82F6';
-      const glw = Math.max(1, 2 * (offs.cw * s) / shown);
+      const glw = Math.max(1, 2 * offs.cw / shown);
       ctx.lineWidth = glw;
       /* 畫布最外圈那兩條線本來剛好壓在邊界上，一半會被畫布外的黑底吃掉，
          看起來就比中間那幾條細一半。往內縮半個線寬，整條都留在畫布裡。 */
@@ -4228,7 +4242,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           const k = r.width / Math.max(1, cvsEl.width / ps);   // 畫布內部單位 → CSS
           const cx = r.left - sr.left + (o.x + o.w / 2) * k;
           const by = r.top - sr.top + (o.y + o.h) * k + 10;
-          const act = (fn: () => void) => (ev: React.PointerEvent) => { ev.stopPropagation(); ev.preventDefault(); fn(); };
+          const act = (fn: () => void) => (ev: React.SyntheticEvent) => { ev.stopPropagation(); ev.preventDefault(); fn(); };
           /* 比原本多一層：陣列最底下再往下按一次，就整個掉到「所有圖案之下」（below）。
              從 below 往上按就先回到圖案之上的最底層，再往上才是換順序。
              圖片與文字走的是同一套，沒有差別。 */
@@ -4267,8 +4281,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 { t: o.type === 'text' ? '編輯文字' : '圖片調整', on: act(() => setActiveTab('objedit')), el: <Sliders size={14} />, off: false },
                 { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
               ].map(b => (
+                /* 鬆手才觸發。以前綁在 onPointerDown，手指一碰到就動作 ——
+                   碰錯了也來不及滑開取消，而且複製／刪除這種不好還原的動作
+                   按下去就發生了。改成 onClick：一定要「在同一顆按鈕上按下並放開」
+                   才算數，中途滑走就取消，跟系統按鈕的手感一致。
+                   外層那個 div 已經擋掉 pointerdown 的冒泡，所以按下去不會被
+                   畫布當成拖曳。 */
                 <button key={b.t} title={b.t} disabled={b.off}
-                  onPointerDown={b.off ? undefined : b.on}
+                  onClick={b.off ? undefined : b.on}
                   className={`w-7 h-7 rounded-full flex items-center justify-center ${b.off ? 'text-black/25 cursor-default' : 'text-black hover:bg-black/10'}`}>
                   {b.el}
                 </button>
