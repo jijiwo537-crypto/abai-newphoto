@@ -248,7 +248,7 @@ export const IN_KINDS: { id: string; name: string }[] = [
   { id: 'flip', name: '翻轉' },
   // 這兩個是特別做的：一個會落地彈兩下，一個是從側邊甩進來再晃回正
   { id: 'bounce', name: '彈跳落地' },
-  { id: 'spring', name: '擠壓' },
+  { id: 'spring', name: '綻放' },
 ];
 
 /* 發光用的色票：第一顆是純白，其餘 14 顆是把預設色 #9BD4C3 只轉色相
@@ -340,16 +340,30 @@ const inFrame = (kind: string, p: number): MoFrame => {
     // 翻轉用「橫向壓扁」模擬（見下面的 inFlipX），不需要真的 3D
     case 'flip':   return { k: 1, dx: 0, dy: 0, rot: 0, a: fade };
     case 'bounce': return { k: 1, dx: 0, dy: -(1 - easeOutBounce(p)) * 1.1, rot: 0, a: Math.min(1, p * 4) };
-    /* 擠壓：從左右兩側被夾扁著冒出來（所以一開始是又高又窄的一條），
-       前 40% 把寬度放回去、同時縱向被擠得比較高；放開之後用衰減的振盪
-       上下 Q 彈一下再回到原形。
-       橫向那一半在 inScaleX 裡（跟縱向反著來，體積才守恆）。 */
+    /* 綻放：三段接在一起的一支進場，刻意做得比其他款細緻。
+         ① 0～28%   「聚焦」：從一個很小、被壓成細細一橫的形狀開始，
+                     一邊放大一邊把高度長回來，同時逆時針轉進來（-140°→0）。
+                     透明度用 easeOutCubic，所以是「先快後慢」地浮現。
+         ② 28～62%  「過衝」：越過原尺寸一點點（最多 1.12 倍）再收回來，
+                     像有重量的東西剛好停住。
+         ③ 62～100% 「安定」：用衰減很快的振盪收尾（縱向 ±3% 以內），
+                     肉眼看到的是「輕輕呼吸一下就定住」，不會有明顯的彈跳。
+       橫向那一半在 inScaleX 裡：第一段刻意跟縱向反著來（所以是一橫），
+       第二段之後才收斂回 1，於是整支看起來是「橫著撐開 → 立起來 → 定住」。 */
     case 'spring': {
-      const sq = 1 - easeOutCubic(Math.min(1, p / 0.4));       // 1 → 0：夾得多緊
-      const rel = Math.max(0, (p - 0.4) / 0.6);                // 放開之後的進度
-      const osc = p < 0.4 ? 0 : Math.exp(-rel * 4.6) * Math.sin(rel * Math.PI * 3.2);
-      const kY = 1 + sq * 0.55 + osc * 0.3;                    // 夾扁時變高、放開後上下彈
-      return { k: kY, dx: 0, dy: osc * 0.12, rot: 0, a: Math.min(1, p * 3) };
+      const q1 = easeOutCubic(Math.min(1, p / 0.28));                 // 0→1：聚焦
+      const q2 = Math.max(0, Math.min(1, (p - 0.28) / 0.34));         // 過衝那一段
+      const q3 = Math.max(0, (p - 0.62) / 0.38);                      // 安定那一段
+      const grow = 0.18 + 0.82 * q1;                                  // 從 0.18 倍長回 1
+      const over = Math.sin(q2 * Math.PI) * 0.12;                     // 越過再收回
+      const settle = p < 0.62 ? 0 : Math.exp(-q3 * 6.5) * Math.sin(q3 * Math.PI * 2.6) * 0.03;
+      return {
+        k: grow + over + settle,
+        dx: 0,
+        dy: (1 - q1) * -0.12 + settle * 0.4,                          // 一點點由上而下的落定
+        rot: -(1 - q1) * 140,                                         // 轉進來
+        a: easeOutCubic(Math.min(1, p / 0.35)),
+      };
     }
     case 'none':   return FLAT;
     default:       return { k: easeOutBack(p), dx: 0, dy: 0, rot: 0, a: fade };   // pop
@@ -360,11 +374,13 @@ const inFlipX = (kind: string, p: number) => {
   if (p <= 0 || p >= 1) return 1;
   if (kind === 'flip') return Math.max(0.02, Math.abs(Math.cos((1 - easeOutCubic(p)) * Math.PI)));
   if (kind === 'spring') {
-    const sq = 1 - easeOutCubic(Math.min(1, p / 0.4));
-    const rel = Math.max(0, (p - 0.4) / 0.6);
-    const osc = p < 0.4 ? 0 : Math.exp(-rel * 4.6) * Math.sin(rel * Math.PI * 3.2);
-    const kY = 1 + sq * 0.55 + osc * 0.3;
-    return 1 / Math.max(0.3, kY);            // 縱向被擠高時橫向就窄，反之亦然
+    /* 第一段橫向撐得比縱向開（看起來是細細一橫），第二段之後收斂回 1。
+       數字跟上面那支必須是同一組，不然橫縱會對不起來。 */
+    const q1 = easeOutCubic(Math.min(1, p / 0.28));
+    const q3 = Math.max(0, (p - 0.62) / 0.38);
+    const wide = 1 + (1 - q1) * 1.6;                       // 1 倍 → 最寬 2.6 倍
+    const settle = p < 0.62 ? 0 : Math.exp(-q3 * 6.5) * Math.sin(q3 * Math.PI * 2.6) * 0.03;
+    return Math.max(0.2, wide - settle);                   // 縱向縮的時候橫向撐開
   }
   return 1;
 };
@@ -764,6 +780,8 @@ interface ColorPickerProps {
   onChange: (color: string) => void;
   onClose: () => void;
   title: string;
+  /** 下方那排色票。不給就用預設的韓系色（發光那邊給的是自己那組） */
+  swatches?: string[];
 }
 
 // --- 下方內嵌選色器元件 (支援手動輸入色號) ---
@@ -778,7 +796,7 @@ const KOREAN_PRESETS = [
   '#D7E3EF', '#E2DCEC',
 ];
 
-const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onClose, title }) => {
+const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onClose, title, swatches }) => {
   const [hsv, setHsv] = useState(() => hexToHsv(color));
   const [hexInput, setHexInput] = useState(color);
 
@@ -866,9 +884,9 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
               <input type="range" min="0" max="100" value={hsv.v} onInput={e => handleHsvChange('v', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ background: `linear-gradient(to right, #000, ${hsvToHex(hsv.h, hsv.s, 100)})` }} />
             </div>
           </div>
-          {/* 韓系拼貼常用色，與經典拼圖同一組 */}
+          {/* 預設是韓系拼貼常用色（與經典拼圖同一組）；呼叫端可以換掉 */}
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-0.5 py-0.5 mt-2">
-            {KOREAN_PRESETS.map(c => {
+            {(swatches || KOREAN_PRESETS).map(c => {
               const active = c.toUpperCase() === (color || '').toUpperCase();
               return (
                 <button
@@ -2704,44 +2722,92 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const base = getHoleSize(h);
       return { k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base, rot: f.rot, a: f.a, fx: f.fx, on: f.k > 0.002 && f.a > 0.004 };
     };
-    /* 圖案發光：跟圖片、文字的發光同一套 —— 同一個形狀疊三段模糊，
-       濃度由 shadow 疊出來。永遠畫在圖案「本體之前」，本體再蓋上去，
-       所以光只從輪廓往外散，不會把圖案自己染成光的顏色。 */
     const glowOn = (side: 'image' | 'mask') =>
       glowMode === 'both' || (glowMode === 'mask' && side === 'mask') || (glowMode === 'image' && side === 'image');
-    /* 三層疊起來的濃度不等於一層的濃度：同樣是 0.2 疊三次會變成 0.49，
-       所以進場淡入時「光已經很亮、圖案還沒出現」—— 那正是主人看到的
-       「一開始特效就跑出來了」。這裡把每一層的透明度開根號回去，
-       疊完剛好等於本來要的那個值，光就跟著圖案一起從無到有。 */
+    /* 三層疊起來的濃度不等於一層的濃度：0.2 疊三次會變成 0.49。
+       把每一層開三次方根回去，疊完剛好等於本來要的那個值。 */
     const layerAlpha = (a: number) => (a >= 1 ? 1 : 1 - Math.pow(1 - Math.max(0, a), 1 / 3));
     /** 發光自己的常駐動畫（每顆圖案用自己的相位，'blink' 則一律同步） */
     const glowBeat = (h: any) => { const an = animRef.current; return an?.glow ? an.glow(h) : 1; };
-    const paintHoleGlow = (
-      g: CanvasRenderingContext2D, h: any, alpha: number,
-      sz: number, angle: number, gx: number, gy: number,
-      side: 'image' | 'mask',
+
+    /* ── 發光為什麼一定要另外開一層畫 ────────────────────────────────
+       canvas 的 shadow 是「本體＋影子」一起畫出來的，沒辦法只要影子。
+       上一版直接畫在目標上，本體被後面的填色蓋掉才看不出來 —— 但那是
+       「不透明的時候」才成立。進場淡入時圖案只有兩三成透明度，蓋不住，
+       於是那個發光顏色的本體就直接露出來了：看起來就是「圖案還沒出現，
+       下面的光已經在了」。
+
+       改成畫在一張暫存層上：先疊三段模糊，再用 destination-out 把本體
+       「整個挖掉」（挖的時候用滿透明度，跟圖案自己的進場無關），
+       剩下的就是純粹的一圈光暈；最後整層貼回去。
+       每一顆的透明度在畫進暫存層時就各自帶好了，所以錯開進場也對。 */
+    const glowScratch = { c: null as HTMLCanvasElement | null };
+    const withGlowLayer = (
+      g: CanvasRenderingContext2D, w: number, h: number,
+      paint: (gg: CanvasRenderingContext2D) => void,
+      knock: (gg: CanvasRenderingContext2D) => void,
     ) => {
-      if (!glowOn(side) || sz <= 0) return;
-      const amp = glowBeat(h);
-      if (amp <= 0.001) return;
+      const W = Math.max(1, Math.ceil(w)), H = Math.max(1, Math.ceil(h));
+      let lay = glowScratch.c;
+      if (!lay) { lay = document.createElement('canvas'); glowScratch.c = lay; }
+      if (lay.width !== W || lay.height !== H) { lay.width = W; lay.height = H; }
+      const gg = lay.getContext('2d');
+      if (!gg) return;
+      gg.setTransform(1, 0, 0, 1, 0, 0);
+      gg.globalAlpha = 1;
+      gg.globalCompositeOperation = 'source-over';
+      gg.clearRect(0, 0, W, H);
+      // 用目標當下的座標系去畫，位置才會一模一樣
+      const tf = (g as any).getTransform ? (g as any).getTransform() : null;
+      if (tf) gg.setTransform(tf);
+      paint(gg);
+      gg.globalCompositeOperation = 'destination-out';
+      gg.globalAlpha = 1;
+      gg.shadowBlur = 0;
+      knock(gg);
+      gg.globalCompositeOperation = 'source-over';
+      gg.setTransform(1, 0, 0, 1, 0, 0);
       g.save();
-      g.globalAlpha = layerAlpha(alpha * amp);
-      g.fillStyle = holeGlowColor;
-      g.shadowColor = holeGlowColor;
-      for (const kk of [1, 2, 3]) {
-        g.shadowBlur = sz * 0.1 * kk;
-        if (isTextHole(holeType)) {
-          drawTextShape(g, holeType, holeGlyph(holeType, customText, h), gx, gy, sz, holeGlowColor, false, angle);
-        } else {
-          g.save();
-          g.translate(gx, gy);
-          g.rotate((angle * Math.PI) / 180);
-          drawShapePath(g, holeType, 0, 0, sz);
-          g.fill();
-          g.restore();
-        }
-      }
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.globalAlpha = 1;
+      g.shadowBlur = 0;
+      g.drawImage(lay, 0, 0);
       g.restore();
+    };
+
+    /** 一顆圖案的形狀（發光的三段模糊與挖本體都走這支，形狀一定一致） */
+    const strokeHoleShape = (
+      g: CanvasRenderingContext2D, h: any, sz: number, angle: number, gx: number, gy: number, fill: string | null,
+    ) => {
+      if (isTextHole(holeType)) {
+        drawTextShape(g, holeType, holeGlyph(holeType, customText, h), gx, gy, sz, fill, false, angle);
+      } else {
+        g.save();
+        g.translate(gx, gy);
+        g.rotate((angle * Math.PI) / 180);
+        if (fill) g.fillStyle = fill;
+        drawShapePath(g, holeType, 0, 0, sz);
+        g.fill();
+        g.restore();
+      }
+    };
+
+    /** 把一顆圖案的光疊進暫存層（透明度已經帶進去了） */
+    const glowInto = (
+      gg: CanvasRenderingContext2D, h: any, alpha: number,
+      sz: number, angle: number, gx: number, gy: number,
+    ) => {
+      const amp = glowBeat(h);
+      const a = alpha * amp;
+      if (sz <= 0 || a <= 0.004) return;
+      gg.save();
+      gg.globalAlpha = layerAlpha(a);
+      gg.shadowColor = holeGlowColor;
+      for (const kk of [1, 2, 3]) {
+        gg.shadowBlur = sz * 0.1 * kk;
+        strokeHoleShape(gg, h, sz, angle, gx, gy, holeGlowColor);
+      }
+      gg.restore();
     };
 
     const linksFor = (side: 'image' | 'mask') => {
@@ -2757,56 +2823,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     };
     /** 把連線描在目前的座標系上（呼叫端已經 translate 到正確的原點）。
         端點跟著圖案的動態走，所以圖案在飄的時候線也黏著它們。 */
-    /* 圖案在發光時，線也一起發光 —— 但範圍比圖案小一成，
-       線本來就細，光跟圖案一樣散開會糊成一片。
-       抽成獨立一支是因為遮罩那一層的線是「挖穿」的：光必須在挖之前
-       用一般疊加畫上去，不能混在挖的那一輪裡。 */
-    const strokeLinkGlow = (g: CanvasRenderingContext2D, pairs: [any, any][], side: 'image' | 'mask') => {
-      if (!pairs.length || !glowOn(side)) return;
+    /** 把線畫一遍（發光、挖本體、真正描線都共用這支，形狀一定一致） */
+    const linkPath = (g: CanvasRenderingContext2D, pairs: [any, any][]) => {
       const a0 = animRef.current;
-      const base = LINK_W * 3;
-      for (const kk of [1, 2, 3]) {
-        g.save();
-        g.lineWidth = LINK_W;
-        g.lineCap = linkMode === 'dash' ? 'butt' : 'round';
-        if (linkMode === 'dash') g.setLineDash([LINK_W * 3, LINK_W * 4]);
-        g.strokeStyle = holeGlowColor;
-        g.shadowColor = holeGlowColor;
-        g.shadowBlur = base * kk * 0.9;
-        pairs.forEach(([a, b]) => {
-          const pa = hA(a), pb = hA(b);
-          if (!pa.on || !pb.on) return;
-          const local = a0 ? a0.link(holeOrder.get(a.id) ?? 0, holeOrder.get(b.id) ?? 0) : 1;
-          if (local <= 0) return;
-          const av = Math.min(pa.a, pb.a) * Math.min(glowBeat(a), glowBeat(b));
-          if (av <= 0.004) return;
-          g.globalAlpha = layerAlpha(av);
-          g.beginPath();
-          g.moveTo(pa.x * s, pa.y * s);
-          g.lineTo(pa.x * s + (pb.x - pa.x) * s * local, pa.y * s + (pb.y - pa.y) * s * local);
-          g.stroke();
-        });
-        g.restore();
-      }
-    };
-
-    const strokeLinks = (g: CanvasRenderingContext2D, pairs: [any, any][], side?: 'image' | 'mask') => {
-      if (!pairs.length) return;
-      const a0 = animRef.current;
-      if (side) strokeLinkGlow(g, pairs, side);
-      g.save();
-      g.lineWidth = LINK_W;
-      g.lineCap = 'round';
-      if (linkMode === 'dash') {
-        g.setLineDash([LINK_W * 3, LINK_W * 4]);
-        g.lineCap = 'butt';
-      }
       pairs.forEach(([a, b]) => {
         const pa = hA(a), pb = hA(b);
-        // 任一端還沒冒出來，這條線就整條不畫 —— 線不會憑空出現在還不存在的圖案上
         if (!pa.on || !pb.on) return;
-        /* 每一對有自己的進度：兩端都冒完才開始長。
-           以前是全部圖案冒完才一起開始，中間那段會看到線憑空出現。 */
         const local = a0 ? a0.link(holeOrder.get(a.id) ?? 0, holeOrder.get(b.id) ?? 0) : 1;
         if (local <= 0) return;
         g.beginPath();
@@ -2814,6 +2836,70 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         g.lineTo(pa.x * s + (pb.x - pa.x) * s * local, pa.y * s + (pb.y - pa.y) * s * local);
         g.stroke();
       });
+    };
+    const linkStyle = (g: CanvasRenderingContext2D) => {
+      g.lineWidth = LINK_W;
+      g.lineCap = linkMode === 'dash' ? 'butt' : 'round';
+      if (linkMode === 'dash') g.setLineDash([LINK_W * 3, LINK_W * 4]);
+      else g.setLineDash([]);
+    };
+
+    /**
+     * 一整側的發光（圖案＋連線）畫成一層再貼上去。
+     * items 是這一側要發光的圖案（位置與大小都算好了），pairs 是這一側的線。
+     * 線的光半徑比圖案小一成 —— 線本來就細，散得跟圖案一樣會糊成一片。
+     */
+    const glowPass = (
+      g: CanvasRenderingContext2D,
+      side: 'image' | 'mask',
+      items: { h: any; a: number; sz: number; ang: number; x: number; y: number }[],
+      pairs: [any, any][],
+    ) => {
+      if (!glowOn(side) || (!items.length && !pairs.length)) return;
+      const a0 = animRef.current;
+      const linkAlpha = ([a, b]: [any, any]) =>
+        Math.min(hA(a).a, hA(b).a) * Math.min(glowBeat(a), glowBeat(b));
+      withGlowLayer(g, g.canvas.width, g.canvas.height,
+        gg => {
+          items.forEach(it => glowInto(gg, it.h, it.a, it.sz, it.ang, it.x, it.y));
+          if (pairs.length) {
+            const base = LINK_W * 3;
+            for (const kk of [1, 2, 3]) {
+              gg.save();
+              linkStyle(gg);
+              gg.strokeStyle = holeGlowColor;
+              gg.shadowColor = holeGlowColor;
+              gg.shadowBlur = base * kk * 0.9;
+              pairs.forEach(pr => {
+                const av = linkAlpha(pr);
+                if (av <= 0.004) return;
+                gg.globalAlpha = layerAlpha(av);
+                linkPath(gg, [pr]);
+              });
+              gg.restore();
+            }
+          }
+        },
+        gg => {
+          // 本體一律用滿透明度挖掉，剩下的才是純粹的光暈
+          items.forEach(it => strokeHoleShape(gg, it.h, it.sz, it.ang, it.x, it.y, '#000'));
+          if (pairs.length) {
+            gg.save();
+            linkStyle(gg);
+            gg.strokeStyle = '#000';
+            linkPath(gg, pairs);
+            gg.restore();
+          }
+        });
+    };
+
+    /* 線只負責描線；光是另外一層（見 glowPass）。
+       線一定畫在圖案「之前」，圖層才會比圖案低、不會蓋過圖案。 */
+    const strokeLinks = (g: CanvasRenderingContext2D, pairs: [any, any][]) => {
+      if (!pairs.length) return;
+      g.save();
+      linkStyle(g);
+      linkPath(g, pairs);
       g.restore();
     };
 
@@ -2843,6 +2929,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          這裡把圖案的位置從圖片座標換算成遮罩座標，再把 pattern 平移過去。 */
       const rx = iw > 0 ? maskW / iw : 1;
       const ry = ih > 0 ? maskH / ih : 1;
+      const imgItems: { h: any; a: number; sz: number; ang: number; x: number; y: number }[] = [];
+      holes.forEach(h => {
+        const sd0 = h.side || 'both';
+        if (sd0 !== 'both' && sd0 !== 'image') return;
+        const A0 = hA(h);
+        if (!A0.on) return;
+        imgItems.push({
+          h, a: A0.a, sz: getHoleSize(h) * A0.k * s,
+          ang: (h.angle !== undefined ? h.angle : holeAngle) + A0.rot,
+          x: A0.x * s, y: A0.y * s,
+        });
+      });
+      const imgPairs = linksFor('image');
+      // 光在最底下（自成一層，本體已經挖掉），接著是線，最後才是圖案本體
+      glowPass(ctx, 'image', imgItems, imgPairs);
+      ctx.strokeStyle = basePat;
+      strokeLinks(ctx, imgPairs);
       holes.forEach(h => {
         const side = h.side || 'both';
         if (side !== 'both' && side !== 'image') return; // Only show on image side
@@ -2857,7 +2960,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         ctx.globalAlpha = A.a;
         // pattern 錨在目前的原點，所以先位移，讓遮罩上的 (mxp,myp) 正好落在圖案位置
         ctx.translate(hx - mxp, hy - myp);
-        paintHoleGlow(ctx, h, A.a, sz, currentAngle, mxp, myp, 'image');
         if (isTextHole(holeType)) {
           const tText = holeGlyph(holeType, customText, h);
           drawTextShape(ctx, holeType, tText, mxp, myp, sz, basePat, false, currentAngle);
@@ -2871,9 +2973,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }
         ctx.restore();
       });
-      // 連線在圖片上也是「遮罩色的實心線」，跟這一側的圖案同一套
-      ctx.strokeStyle = basePat;
-      strokeLinks(ctx, linksFor('image'), 'image');
     }
     ctx.restore();
     };
@@ -2899,6 +2998,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     // 純色的底稿只有 8×8（見上面 plainMask），這裡直接填色，不要把小塊拉大
     if (plainMask) { lmx.fillStyle = maskColor; lmx.fillRect(0, 0, maskW, maskH); }
     else lmx.drawImage(fCanvas, 0, 0);
+    const maskPairs = linksFor('mask').filter(([a, b]) =>
+      layout === AROUND
+      || (isHoleFullyInsideMask(a, s, maskW, maskH) && isHoleFullyInsideMask(b, s, maskW, maskH)));
     /* 遮罩上的圖案是「挖穿」的，所以光要在挖之前、用一般的疊加畫在遮罩上 ——
        挖掉中間之後，留在遮罩上的就是沿著洞口散出來的一圈光。 */
     if (glowOn('mask')) {
@@ -2906,21 +3008,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          這裡一定要先切回一般疊加，不然每畫一顆光就會把整張遮罩洗掉一次，
          最後只剩最後那顆光 —— 畫面上看起來就是「遮罩整個不見了」。 */
       lmx.globalCompositeOperation = 'source-over';
+      const mskItems: { h: any; a: number; sz: number; ang: number; x: number; y: number }[] = [];
       holes.forEach(h => {
         const side = h.side || 'both';
         if (side !== 'both' && side !== 'mask') return;
         if (layout !== AROUND && !isHoleFullyInsideMask(h, s, maskW, maskH)) return;
         const A = hA(h);
         if (!A.on) return;
-        const sz = getHoleSize(h) * A.k * s;
-        const ang = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
-        paintHoleGlow(lmx, h, A.a, sz, ang, A.x * s, A.y * s, 'mask');
+        mskItems.push({
+          h, a: A.a, sz: getHoleSize(h) * A.k * s,
+          ang: (h.angle !== undefined ? h.angle : holeAngle) + A.rot,
+          x: A.x * s, y: A.y * s,
+        });
       });
-      strokeLinkGlow(lmx, linksFor('mask').filter(([a, b]) =>
-        layout === AROUND
-        || (isHoleFullyInsideMask(a, s, maskW, maskH) && isHoleFullyInsideMask(b, s, maskW, maskH))), 'mask');
+      glowPass(lmx, 'mask', mskItems, maskPairs);
     }
     lmx.globalCompositeOperation = 'destination-out';
+    // 線先挖 —— 圖層比圖案低
+    lmx.strokeStyle = '#000';
+    strokeLinks(lmx, maskPairs);
     holes.forEach(h => {
       const side = h.side || 'both';
       if (side !== 'both' && side !== 'mask') return; // Only show on mask side
@@ -2945,11 +3051,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
       lmx.restore();
     });
-    // 連線在遮罩上是挖穿的，跟這一側的圖案同一套
-    lmx.strokeStyle = '#000';
-    strokeLinks(lmx, linksFor('mask').filter(([a, b]) =>
-      layout === AROUND
-      || (isHoleFullyInsideMask(a, s, maskW, maskH) && isHoleFullyInsideMask(b, s, maskW, maskH))));
     lmx.globalCompositeOperation = 'source-over';
     ctx.drawImage(lmc, offs.mx, offs.my);
     };
@@ -2968,6 +3069,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       ctx.beginPath(); ctx.rect(offs.ix, offs.iy, iw, ih); ctx.clip();
       ctx.translate(offs.mx, offs.my);      // 洞的座標是遮罩座標系
       ctx.fillStyle = pat;
+      const ovItems: { h: any; a: number; sz: number; ang: number; x: number; y: number }[] = [];
+      holes.forEach(h => {
+        const sd0 = h.side || 'both';
+        if (sd0 !== 'both' && sd0 !== 'mask') return;
+        const A0 = hA(h);
+        if (!A0.on) return;
+        ovItems.push({
+          h, a: A0.a, sz: getHoleSize(h) * A0.k * s,
+          ang: (h.angle !== undefined ? h.angle : holeAngle) + A0.rot,
+          x: A0.x * s, y: A0.y * s,
+        });
+      });
+      const ovPairs = linksFor('mask');
+      glowPass(ctx, 'mask', ovItems, ovPairs);
+      ctx.strokeStyle = pat;
+      strokeLinks(ctx, ovPairs);
+      ctx.fillStyle = pat;
       holes.forEach(h => {
         const sd = h.side || 'both';
         if (sd !== 'both' && sd !== 'mask') return;
@@ -2979,7 +3097,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         // 四周包圍的洞本來就是遮罩座標，對應點就是自己
         ctx.save();
         ctx.globalAlpha = A.a;
-        paintHoleGlow(ctx, h, A.a, sz, currentAngle, hx, hy, 'mask');
         if (isTextHole(holeType)) {
           drawTextShape(ctx, holeType, holeGlyph(holeType, customText, h), hx, hy, sz, pat, false, currentAngle);
         } else {
@@ -2991,8 +3108,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }
         ctx.restore();
       });
-      ctx.strokeStyle = pat;
-      strokeLinks(ctx, linksFor('mask'), 'mask');
       ctx.restore();
     };
 
@@ -3136,7 +3251,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         ctx.save();
         ctx.translate(offs.mx, offs.my);
         ctx.strokeStyle = pat;
-        strokeLinks(ctx, linksFor('mask'), 'mask');
+        strokeLinks(ctx, linksFor('mask'));
         ctx.restore();
       }
       if (!isMain) bd.width = 0;
@@ -4620,10 +4735,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }`}`}>
           {colorPickerTarget ? (
             <ColorPickerEmbedded 
-              color={colorPickerTarget === 'mask' ? maskColor : dotColor} 
-              onChange={c => { if(colorPickerTarget==='mask') setMaskColor(c); else setDotColor(c); }}
+              color={colorPickerTarget === 'mask' ? maskColor : colorPickerTarget === 'holeGlow' ? holeGlowColor : dotColor} 
+              onChange={c => { if(colorPickerTarget==='mask') setMaskColor(c); else if(colorPickerTarget==='holeGlow') setHoleGlowColor(c); else setDotColor(c); }}
+              swatches={colorPickerTarget === 'holeGlow' ? GLOW_SWATCHES : undefined}
               onClose={() => setColorPickerTarget(null)}
-              title={colorPickerTarget === 'mask' ? '遮罩顏色' : '點點'}
+              title={colorPickerTarget === 'mask' ? '遮罩顏色' : colorPickerTarget === 'holeGlow' ? '發光顏色' : '點點'}
             />
           ) : (
             <>
@@ -4850,6 +4966,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 /* 動畫頁。最上面是常駐的播放列（往下捲也不會跑掉），
                    下面挑要調哪個元素，再下面就是那個元素的參數。
                    所有改動都是即時的，換動畫種類還會自動重播一次。 */
+                if (moTarget === 'glow' && glowMode === 'off') setTimeout(() => setMoTarget('shape'), 0);
                 const selObj = objects.find(o => o.id === moTarget) || null;
                 const cur: MoCfg = moTarget === 'shape' ? moShape : selObj ? moOf(selObj) : MO_DEFAULT;
                 const setCur = (d: Partial<MoCfg>) => {
@@ -4880,6 +4997,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       {hasLink && <button onClick={() => setMoTarget('link')} className={chip(moTarget === 'link')}>
                         {linkMode === 'dash' ? '虛線' : '連線'}
                       </button>}
+                      {/* 發光有自己的一組動畫（只有常駐），跟圖案那組各走各的 */}
+                      {glowMode !== 'off' && (
+                        <button onClick={() => setMoTarget('glow')} className={chip(moTarget === 'glow')}>發光</button>
+                      )}
                       {objects.map((o, i) => (
                         <button key={o.id}
                           onClick={() => setMoTarget(o.id)}
@@ -4889,7 +5010,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       ))}
                     </div>
 
-                    {moTarget === 'link' ? (
+                    {moTarget === 'glow' ? (
+                      <>
+                        <div className="flex justify-between text-[10px] font-bold text-[#888] mt-4 mb-2 uppercase tracking-widest">
+                          <span>常駐</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {GLOW_IDLES.map(g => (
+                            <button key={g.id}
+                              onClick={() => { setGlowIdle(g.id); replayMotion(); }}
+                              className={cell(glowIdle === g.id)}>
+                              {g.name}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="text-[10px] text-[#666] mt-3 leading-relaxed">
+                          發光只有常駐動畫。進場與離場一律跟著圖案本身走，所以圖案還沒出現時光也不會先亮。
+                        </div>
+                      </>
+                    ) : moTarget === 'link' ? (
                       <>
                         <div className="grid grid-cols-2 gap-4 mt-4">
                           <CompactSlider label="起始" value={Math.round(moLink.delay)} min={0} max={20} step={1}
@@ -5041,7 +5180,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       <span>發光</span>
                     </div>
                     <div className="grid grid-cols-4 gap-2">
-                      {([['both', '開啟'], ['mask', '僅遮罩'], ['image', '僅圖片'], ['off', '關閉']] as const).map(([mode, name]) => (
+                      {([['both', '開啟'], ['image', '僅圖片'], ['mask', '僅遮罩'], ['off', '關閉']] as const).map(([mode, name]) => (
                         <button
                           key={mode}
                           onClick={() => setGlowMode(mode)}
@@ -5059,44 +5198,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       ))}
                     </div>
                     {glowMode !== 'off' && (
-                      <>
-                        {/* 色票：第一顆純白，其餘是預設色只轉色相排成的一圈漸層 */}
-                        <div className="grid grid-cols-8 gap-1.5 mt-3">
-                          {GLOW_SWATCHES.map(c => (
-                            <button
-                              key={c}
-                              onClick={() => setHoleGlowColor(c)}
-                              title={c}
-                              className={`h-6 rounded-[5px] border transition-all ${
-                                holeGlowColor.toUpperCase() === c.toUpperCase()
-                                  ? 'border-white shadow-[0_0_10px_rgba(255,255,255,0.25)] scale-105'
-                                  : 'border-white/10 hover:border-white/40'
-                              }`}
-                              style={{ backgroundColor: c }}
-                            />
-                          ))}
+                      <div
+                        className="h-[47px] mt-2 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
+                        onClick={() => setColorPickerTarget('holeGlow')}
+                      >
+                        <span className="text-[10px] font-bold text-[#888]">顏色</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-mono text-white/40">{holeGlowColor}</span>
+                          <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: holeGlowColor }} />
                         </div>
-                        {/* 發光自己的常駐動畫（沒有進場／離場） */}
-                        <div className="flex justify-between text-[10px] font-bold text-[#888] mt-5 mb-2 uppercase tracking-widest">
-                          <span>發光動畫</span>
-                        </div>
-                        <div className="grid grid-cols-4 gap-2">
-                          {GLOW_IDLES.map(g => (
-                            <button
-                              key={g.id}
-                              onClick={() => setGlowIdle(g.id)}
-                              title={g.name}
-                              className={`h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${
-                                glowIdle === g.id
-                                  ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                                  : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
-                              }`}
-                            >
-                              {g.name}
-                            </button>
-                          ))}
-                        </div>
-                      </>
+                      </div>
                     )}
                   </div>
                 </div>}
