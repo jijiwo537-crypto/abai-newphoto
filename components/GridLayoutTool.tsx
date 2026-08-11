@@ -8241,18 +8241,26 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                   const topPx = inset + rect.y * areaH;
                                   const bottomPx = inset + (rect.y + rect.h) * areaH;
 
-                                  /* 空格子（沒放照片）的邊界改成取整。
-                                     縮放佈局時每一格會落在非整數的像素位置，空格子那圈
-                                     1px 虛線外框就會被反覆重新光柵化，相鄰兩格的外框疊在
-                                     一起閃成一條白線。取整之後外框剛好壓在像素格線上，
-                                     相鄰兩格也還是同一條邊，白線就不見了。
-                                     只有空格子這樣做 —— 有照片的格子取整會讓格內的照片
-                                     跟著跳 1px（原本刻意不取整就是為了這個）。 */
-                                  const emptyCell = !cell || !cell.url;
-                                  const snap = (v: number) => (emptyCell ? Math.round(v) : v);
-                                  const l0 = snap(leftPx), t0 = snap(topPx);
-                                  const cellWidth = snap(rightPx) - l0;
-                                  const cellHeight = snap(bottomPx) - t0;
+                                  /* ── 格子邊界一律取整 ────────────────────────────────
+                                     每一條格線都取整，相鄰兩格自然算出同一條整數邊，必然重合。
+
+                                     以前只有「空格子」取整、有照片的不取整。於是只要有格子
+                                     沒放照片，它跟旁邊那格有照片的邊界就對不上，中間那條
+                                     頁面底色會在縮放過程中一格閃一格 —— 就是主人說的白線。
+
+                                     當初不敢對有照片的格子取整，是怕格內照片跟著跳 1px。
+                                     這裡把兩件事拆開：**框**用取整後的值，**格內照片**用
+                                     沒取整的真實幾何（rawW/rawH），再把「取整後的中心」與
+                                     「真實中心」的差補回去（fixX/fixY）。
+                                     於是框永遠貼齊像素、照片永遠連續，兩邊都拿到。 */
+                                  const l0 = Math.round(leftPx), t0 = Math.round(topPx);
+                                  const cellWidth = Math.round(rightPx) - l0;
+                                  const cellHeight = Math.round(bottomPx) - t0;
+                                  /** 沒取整的真實格子大小與中心補正（只給格內照片用） */
+                                  const rawW = Math.max(1, rightPx - leftPx);
+                                  const rawH = Math.max(1, bottomPx - topPx);
+                                  const fixX = (leftPx + rightPx) / 2 - (l0 + cellWidth / 2);
+                                  const fixY = (topPx + bottomPx) / 2 - (t0 + cellHeight / 2);
 
                                   if (!cell) {
                                     return (
@@ -8376,8 +8384,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                   const drawW = is90or270 ? h_img : w_img;
                                   const drawH = is90or270 ? w_img : h_img;
 
-                                  const scaleX = cellWidth / drawW;
-                                  const scaleY = cellHeight / drawH;
+                                  /* 用「沒取整」的格子大小算，照片的縮放才不會跟著
+                                     格線取整一起跳（框取整、照片連續，見上面的說明）。 */
+                                  const scaleX = rawW / drawW;
+                                  const scaleY = rawH / drawH;
                                   // 防止格子邊緣露出細縫的「咬邊」。純粹用乘的，不能再加常數 ——
                                   // 加常數的話縮放時每張照片相對格子的比例會跟著變，就不是等比例了。
                                   const coverScale = Math.max(scaleX, scaleY) * 1.02;
@@ -8486,7 +8496,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                             maxWidth: 'none',
                                             maxHeight: 'none',
                                             transformOrigin: 'center center',
-                                            transform: `translate(-50%, -50%) translate(${cell.offsetX * cellWidth}px, ${cell.offsetY * cellHeight}px) rotate(${cell.rotation}deg) scale(${cssScale})`,
+                                            transform: `translate(-50%, -50%) translate(${cell.offsetX * rawW + fixX}px, ${cell.offsetY * rawH + fixY}px) rotate(${cell.rotation}deg) scale(${cssScale})`,
                                             transition: imageTransition,
                                             opacity: 1,
                                             pointerEvents: 'none',
@@ -8534,8 +8544,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                                         })()}
                                       </div>
                                       {isSelected && draggedIndex === null && touchDraggedIndex === null && (
-                                        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1 z-[60] bg-white backdrop-blur-md rounded-full p-1 shadow-xl pointer-events-auto"
+                                        /* 這排鍵本來壓在格子裡面（bottom-2），正好蓋住剛選中的那張照片。
+                                           改成掛在格子**外面的下方** —— 跟整組佈局被選中時那排鍵同一種做法。
+                                           貼著頁面下緣的那一列格子放不下，就翻到格子上方，不會被裁掉。 */
+                                        <div className="absolute left-1/2 flex items-center gap-1 z-[60] bg-white backdrop-blur-md rounded-full p-1 shadow-xl pointer-events-auto"
+                                             style={lTop + t0 + cellHeight + 46 > previewH
+                                               ? { bottom: '100%', marginBottom: 8, transform: 'translate(-50%, 0)' }
+                                               : { top: '100%', marginTop: 8, transform: 'translate(-50%, 0)' }}
                                              onPointerDown={(e) => e.stopPropagation()}
+                                             onTouchStart={(e) => e.stopPropagation()}
                                         >
                                           <button
                                             onClick={(e) => {
