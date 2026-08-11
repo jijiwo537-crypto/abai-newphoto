@@ -55,6 +55,8 @@ const aroundK = (b: number) => 1 / (1 + 2 * Math.max(0, b));
 const aroundB = (k: number) => Math.max(0, (1 / Math.max(0.01, k) - 1) / 2);
 /** 四周包圍的預設：邊框是圖片的 1/3（跟以前預設看起來一樣） */
 const AROUND_SCALE = aroundK(1 / 3);
+/** 四邊那四種排版的預設比例：遮罩佔一半（1/2） */
+const DEFAULT_MASK_SCALE = 0.5;
 /** 單邊上限（Safari Mobile 安全值） */
 const MAX_FINAL_DIM = 4096;
 /** 導出畫布的總像素上限。真正把分頁殺掉的是「面積」不是「邊長」 */
@@ -284,11 +286,17 @@ export const GLOW_SWATCHES: string[] = (() => {
 })();
 
 /** 發光自己的常駐動畫（只有常駐，沒有進場／離場） */
+/* 排列順序＝畫面上的順序。面板是兩欄，所以每兩個一列：
+     靜止 ｜ 閃爍
+     呼吸I ｜ 呼吸II      ← 兩顆呼吸並排
+     故障I ｜ 故障II      ← 兩顆故障並排 */
 export const GLOW_IDLES: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
-  { id: 'twinkle', name: '呼吸' },
   { id: 'blink', name: '閃爍' },
-  { id: 'glitch', name: '故障' },
+  { id: 'breath', name: '呼吸I' },
+  { id: 'breath2', name: '呼吸II' },
+  { id: 'twinkle', name: '故障I' },
+  { id: 'glitch', name: '故障II' },
 ];
 
 /**
@@ -306,8 +314,20 @@ const glowIdleAmp = (
   const A = Math.max(0, Math.min(1, amp / 100));
   const sp = Math.max(0.05, speed);
   if (A <= 0.001) return 1;
+  if (kind === 'breath' || kind === 'breath2') {
+    /* 真正的呼吸：一條三角波（等速上去、等速下來）再套 easeInOut，
+       所以亮起來是曲線、暗下去也是曲線，兩頭都會緩下來 ——
+       不像正弦那樣一直在動，也不會有轉折點的突兀感。
+       呼吸I 全部同時；呼吸II 每顆用自己的相位，時機隨機錯開。 */
+    const CYCLE = 2.2 / sp;
+    const off = kind === 'breath2' ? (phase / (Math.PI * 2)) * CYCLE : 0;
+    const q = (((t + off) % CYCLE) + CYCLE) % CYCLE / CYCLE;   // 0～1
+    const tri = q < 0.5 ? q * 2 : (1 - q) * 2;                  // 0→1→0
+    const e = easeInOut(tri);
+    return 1 - A * (1 - e) * gain;
+  }
   if (kind === 'twinkle') {
-    // 漸強漸弱：純正弦，不做平方，亮暗之間是連續過渡
+    // 故障I：正弦，一直在動、不會停 —— 比較像訊號不穩，不是呼吸
     const v = (Math.sin(t * 2.4 * sp + phase) + 1) / 2;
     return 1 - A * (1 - v) * gain;
   }
@@ -928,7 +948,7 @@ interface CollageToolProps {
 export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, onImportNew, initialState, lutList = [] }) => {
   const [imageState, setImageState] = useState<any>(null);
   const [layout, setLayout] = useState('mask-bottom');
-  const [maskScale, setMaskScale] = useState(0.5);
+  const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
   const [holeType, setHoleType] = useState('star'); 
   const [customText, setCustomText] = useState('Abai'); 
   const [holeSize, setHoleSize] = useState(25); 
@@ -4869,6 +4889,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           // 排版、比例、圖案在同一批更新裡一起換，中間不會露出半舊半新的那一格
                           setLayout(t);
                           if (t === AROUND) setMaskScale(AROUND_SCALE);
+                          /* 從四周包圍切回四邊那幾種時，比例要回到預設的 1/2 ——
+                             包圍用的是自己那套刻度，數值直接留著的話會變成
+                             1/1.7 這種莫名其妙的值（四邊之間互相切換則不動，
+                             那是使用者自己調過的比例，不該被蓋掉）。 */
+                          else if (layout === AROUND) setMaskScale(DEFAULT_MASK_SCALE);
                           /* 包圍排版的圖案本來就會再乘一個固定倍率縮小，
                              同一個「大小」值看起來會比別的排版小一點點，
                              所以進來時把大小補 +10、離開時原封退回去 ——
