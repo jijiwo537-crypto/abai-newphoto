@@ -976,13 +976,15 @@ export type ImageAdjustPanelProps = {
   onSliderOpenChange?: (open: boolean) => void;
   /** 佈局裡的格子沒有「形狀」那一組，傳 true 就把它藏起來 */
   hideShape?: boolean;
+  /** 滑桿排成一排：名稱、軌道、數值全部同一列，上面不再有一排字 */
+  inlineSlider?: boolean;
 };
 
 export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   img, set, lutList, loadingLut, setLoadingLut, lutRevision, setLutRevision,
   adjustSub, setAdjustSub, effectCard, setEffectCard, effectDetail, setEffectDetail,
   shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
-  setTuningEdge, openComposeFor, hideShape, deferSlider, onSliderOpenChange,
+  setTuningEdge, openComposeFor, hideShape, deferSlider, onSliderOpenChange, inlineSlider,
 }) => {
 const fx = img.fx || {};
 const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
@@ -1035,26 +1037,44 @@ const editorSlider = (
   onVal: (v: number) => void,
   swatches?: React.ReactNode,
   hideChrome = false,
-) => (
-  <div className="w-full pt-1.5">
-    <div className="flex items-center justify-between gap-2 mb-0.5">
+) => {
+  const input = (cls: string) => (
+    <input
+      type="range" min={min} max={max} step="1" value={value}
+      onChange={e => onVal(parseInt(e.target.value))}
+      onPointerDown={hideChrome ? () => setTuningEdge(true) : undefined}
+      onPointerUp={hideChrome ? () => setTuningEdge(false) : undefined}
+      onPointerCancel={hideChrome ? () => setTuningEdge(false) : undefined}
+      onLostPointerCapture={hideChrome ? () => setTuningEdge(false) : undefined}
+      className={cls}
+    />
+  );
+  /* 排成一排：名稱在左、軌道在中間、數值在右，上面那一排字整個拿掉。
+     軌道用 dense 那一版 —— 原本那版刻意往左右各溢出 32px（讓圓點可以滑到
+     邊緣外），排成一排時會壓到兩邊的字。 */
+  if (inlineSlider) return (
+    <div className="w-full flex items-center gap-3">
       <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] pointer-events-none shrink-0">{label}</span>
       {swatches}
-      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0">{value}</span>
+      <div className="relative flex-1 min-w-0 h-11 flex items-center touch-none">
+        {input('custom-range dense')}
+      </div>
+      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0 text-center min-w-[2.6rem]">{value}</span>
     </div>
-    <div className="relative h-11 flex items-center justify-center touch-none">
-      <input
-        type="range" min={min} max={max} step="1" value={value}
-        onChange={e => onVal(parseInt(e.target.value))}
-        onPointerDown={hideChrome ? () => setTuningEdge(true) : undefined}
-        onPointerUp={hideChrome ? () => setTuningEdge(false) : undefined}
-        onPointerCancel={hideChrome ? () => setTuningEdge(false) : undefined}
-        onLostPointerCapture={hideChrome ? () => setTuningEdge(false) : undefined}
-        className="custom-range"
-      />
+  );
+  return (
+    <div className="w-full pt-1.5">
+      <div className="flex items-center justify-between gap-2 mb-0.5">
+        <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] pointer-events-none shrink-0">{label}</span>
+        {swatches}
+        <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0">{value}</span>
+      </div>
+      <div className="relative h-11 flex items-center justify-center touch-none">
+        {input('custom-range')}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // 色票：第一顆固定是自訂顏色（開系統調色盤），後面才是預設色
 const swatchStrip = (

@@ -40,10 +40,21 @@ const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
 
 /** 四周包圍：遮罩把原圖整圈包起來 */
 const AROUND = 'mask-around';
-/** 四周包圍的預設比例（可以再改，只是一進去先給這個） */
-/* 四周包圍的預設比例。新語意是「中間那張照片佔畫布多少」——
-   0.6 畫出來跟以前「邊框 1/3」那個外觀一樣。 */
-const AROUND_SCALE = 0.6;
+/* ── 四周包圍的「比例」 ────────────────────────────────────────────────
+   跟其他排版一致：滑桿上的 1/N 指的都是「遮罩那一塊相對於圖片」。
+   四周包圍的遮罩就是圖片周圍那一圈，所以 1/N ＝ 單邊的邊框寬度是圖片的 1/N。
+
+   內部仍然只存一個 maskScale ＝「中間那張照片佔畫布的比例 k」，
+   兩者的關係： k = 1 / (1 + 2b)   （b = 邊框 / 圖片）
+   b = 0 就是圖片剛好滿版，所以滑桿要比其他排版多一段尾巴走到 0 —— 也就是
+   AROUND_STEPS 比別人的 100 長一點。 */
+const AROUND_STEPS = 125;
+/** b（邊框佔圖片的比例）→ 中間照片佔畫布的比例 */
+const aroundK = (b: number) => 1 / (1 + 2 * Math.max(0, b));
+/** 中間照片佔畫布的比例 → b */
+const aroundB = (k: number) => Math.max(0, (1 / Math.max(0.01, k) - 1) / 2);
+/** 四周包圍的預設：邊框是圖片的 1/3（跟以前預設看起來一樣） */
+const AROUND_SCALE = aroundK(1 / 3);
 /** 單邊上限（Safari Mobile 安全值） */
 const MAX_FINAL_DIM = 4096;
 /** 導出畫布的總像素上限。真正把分頁殺掉的是「面積」不是「邊長」 */
@@ -420,11 +431,21 @@ const glyphFont = (holeType: string, sz: number) =>
    而選取框與命中判定都是以中心點、以前進寬度算的，於是框框不到它、
    也很難點到（主人說的「倒數第二個圖案嚴重偏右」）。
 
-   measureText 的 actualBoundingBox* 給的正是墨水相對於對齊點的四個邊。
-   這裡量一次「字級 100」就好 —— 墨水大小跟字級成正比，其他尺寸乘回去即可，
-   所以每一格畫面不會有幾十次 measureText。 */
+   上一版是用 measureText 的 actualBoundingBox* 來校正。那是「字型宣告的」
+   墨水框 —— 在有些系統字型（尤其是後備字型接手的冷門字、彩色 emoji）上
+   根本對不上真正畫出來的東西，所以主人的手機上還是偏。
+
+   這一版改成**直接畫一次、掃一次 alpha**：畫出來的像素不會騙人。
+   量出來的框拿來做三件事，三邊完全一致，框就一定框得到它：
+     ① 畫的時候把墨水中心平移到圖案的中心（＝框的中心，框本身不動）
+     ② 選取框的大小
+     ③ 點擊命中的範圍
+   一種字只量一次（字級 100，其他尺寸等比換算），成本可以忽略。 */
 const GLYPH_INK_REF = 100;
-const glyphInkCache = new Map<string, { w: number; h: number; ox: number; oy: number; ok: boolean }>();
+/** 探測畫布的半徑：字級 100 的字放進 400×400 綽綽有餘；不夠就換 1600×1600 */
+const GLYPH_PROBES = [200, 800];
+type GlyphBox = { ox: number; oy: number; w: number; h: number; r: number; ok: boolean };
+const glyphBoxCache = new Map<string, GlyphBox>();
 /** 量字專用的小畫布（只量不畫，不會被任何人看到） */
 let glyphMeasCtx: CanvasRenderingContext2D | null = null;
 const measureCtx = () => {
@@ -435,71 +456,78 @@ const measureCtx = () => {
   }
   return glyphMeasCtx!;
 };
-const glyphInk = (ctx: CanvasRenderingContext2D, holeType: string, str: string, sz: number) => {
+const glyphBox = (holeType: string, str: string): GlyphBox => {
   const key = holeType + '|' + str;
-  let m0 = glyphInkCache.get(key);
-  if (!m0) {
-    m0 = { w: GLYPH_INK_REF, h: GLYPH_INK_REF, ox: 0, oy: 0, ok: false };
-    try {
-      ctx.font = glyphFont(holeType, GLYPH_INK_REF);
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const m = ctx.measureText(str);
-      const L = m.actualBoundingBoxLeft, R = m.actualBoundingBoxRight;
-      const A = m.actualBoundingBoxAscent, D = m.actualBoundingBoxDescent;
-      const w = L + R, h = A + D;
-      /* 墨水量到 0 代表這個字在這台裝置上根本沒有字型可畫（畫出來是空的）。
-         那就照舊用前進寬度，不要拿一組沒有意義的數字去平移。 */
-      if ([L, R, A, D].every(v => typeof v === 'number' && isFinite(v)) && w > 0.5 && h > 0.5) {
-        m0 = { w, h, ox: -(R - L) / 2, oy: -(D - A) / 2, ok: true };
-      } else {
-        m0 = { w: m.width || GLYPH_INK_REF, h: GLYPH_INK_REF, ox: 0, oy: 0, ok: false };
-      }
-    } catch { /* 舊瀏覽器量不到就照原本畫，不會比現在差 */ }
-    glyphInkCache.set(key, m0);
-  }
-  const k = sz / GLYPH_INK_REF;
-  return { w: m0.w * k, h: m0.h * k, ox: m0.ox * k, oy: m0.oy * k, ok: m0.ok };
-};
+  const hit = glyphBoxCache.get(key);
+  if (hit) return hit;
 
-/* ── 這個字實際上畫出來離中心最遠有多少 ────────────────────────────────
-   measureText 給的墨水框是「理論上的」：emoji 那種點陣／彩色字、以及字型
-   自己溢出的部分都不算在裡面，照著它裁暫存畫布會削掉一點點邊
-   （實測 🌀 與 (7) 會差幾百個色階）。
-   所以這裡老老實實畫一次、掃一次 alpha，量出真正的最大半徑，量完存起來。
-   一種字只做一次，成本可以忽略；換來的是暫存畫布可以縮到剛好夠用。 */
-const glyphRadiusCache = new Map<string, number>();
-const glyphRadius = (holeType: string, str: string) => {
-  const key = holeType + '|' + str;
-  const hit = glyphRadiusCache.get(key);
-  if (hit !== undefined) return hit;
-  let r = 0;
+  // ① 先用 measureText 粗抓一個偏移，讓待會兒畫下去的時候不會超出探測畫布
+  let ox = 0, oy = 0, w = GLYPH_INK_REF, h = GLYPH_INK_REF, ok = false;
   try {
-    const R = Math.ceil(GLYPH_INK_REF * 1.5);   // 跟舊的暫存畫布一樣大
-    const c = document.createElement('canvas');
-    c.width = c.height = R * 2;
-    const g = c.getContext('2d', { willReadFrequently: true })!;
-    const o = glyphInk(g, holeType, str, GLYPH_INK_REF);
-    g.fillStyle = '#000000';
-    g.font = glyphFont(holeType, GLYPH_INK_REF);
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText(str, R + o.ox, R + o.oy);
-    const d = g.getImageData(0, 0, R * 2, R * 2).data;
-    let m = 0;
-    for (let y = 0; y < R * 2; y++) {
-      for (let x = 0; x < R * 2; x++) {
-        if (d[(y * R * 2 + x) * 4 + 3] !== 0) {
-          const dx = x - R + 0.5, dy = y - R + 0.5;
-          const q = dx * dx + dy * dy;
-          if (q > m) m = q;
+    const g0 = measureCtx();
+    g0.font = glyphFont(holeType, GLYPH_INK_REF);
+    g0.textAlign = 'center';
+    g0.textBaseline = 'middle';
+    const m = g0.measureText(str);
+    const L = m.actualBoundingBoxLeft, R = m.actualBoundingBoxRight;
+    const A = m.actualBoundingBoxAscent, D = m.actualBoundingBoxDescent;
+    if ([L, R, A, D].every(v => typeof v === 'number' && isFinite(v)) && L + R > 0.5 && A + D > 0.5) {
+      ox = -(R - L) / 2; oy = -(D - A) / 2; w = L + R; h = A + D; ok = true;
+    } else if (m.width > 0.5) {
+      w = m.width;
+    }
+  } catch { /* 量不到就當作沒有偏移，下面那一步才是真正的準頭 */ }
+
+  /* ② 真的畫一次，用畫出來的像素把中心與大小訂死。
+     探測畫布先用小的；如果墨水碰到邊（代表字比畫布大，或者上面那個粗估
+     根本不準、整個字被推到邊上去了），就換一張大的再量一次。
+     兩次都碰到邊才放棄 —— 那通常是很長的自訂文字，維持原本的畫法。 */
+  let r = 0;
+  for (const P of GLYPH_PROBES) {
+    try {
+      const S = P * 2;
+      const c = document.createElement('canvas');
+      c.width = c.height = S;
+      const g = c.getContext('2d', { willReadFrequently: true })!;
+      g.fillStyle = '#000000';
+      g.font = glyphFont(holeType, GLYPH_INK_REF);
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(str, P + ox, P + oy);
+      const d = g.getImageData(0, 0, S, S).data;
+      let x0 = S, y0 = S, x1 = -1, y1 = -1;
+      for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+          if (d[(y * S + x) * 4 + 3] !== 0) {
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+          }
         }
       }
-    }
-    r = Math.sqrt(m);
-  } catch { r = 0; }
-  glyphRadiusCache.set(key, r);
-  return r;
+      if (x1 >= 0 && x0 > 0 && y0 > 0 && x1 < S - 1 && y1 < S - 1) {
+        ox += P - (x0 + x1 + 1) / 2;
+        oy += P - (y0 + y1 + 1) / 2;
+        w = x1 - x0 + 1;
+        h = y1 - y0 + 1;
+        r = Math.hypot(w, h) / 2;   // 置中之後，任何角度轉過去都還在這個半徑內
+        ok = true;
+        break;
+      }
+      if (x1 < 0) break;           // 整張都是空的：這個字在這台裝置上畫不出來
+    } catch { break; /* 讀不到像素（極少見）就用上面那組 */ }
+  }
+
+  const box: GlyphBox = { ox, oy, w, h, r, ok };
+  glyphBoxCache.set(key, box);
+  return box;
+};
+/** 換算到指定字級 */
+const glyphInk = (holeType: string, str: string, sz: number) => {
+  const b = glyphBox(holeType, str);
+  const k = sz / GLYPH_INK_REF;
+  return { w: b.w * k, h: b.h * k, ox: b.ox * k, oy: b.oy * k, r: b.r * k, ok: b.ok };
 };
 
 // --- 工具：HSV to HEX 轉換 ---
@@ -558,16 +586,15 @@ const drawTextShape = (
   const str = holeType === 'love' ? '<3'
     : holeType === 'love3' ? '<333'
     : (GLYPH_HOLES[holeType] ?? text);
-  const ink = glyphInk(measureCtx(), holeType, str, sz);
+  const ink = glyphInk(holeType, str, sz);
   /* 暫存畫布只要「這個字轉一圈都還在裡面」就夠了。以前一律開 sz×3 見方，
      像 ᯽ 這種字有九成面積是空的，卻每一顆、每一格都要被 drawImage 合成一次
      （實測合成佔掉拖曳字符圖案時將近三成的時間）。
      半徑用 glyphRadius 實際量出來的，而且只縮不放（跟舊的取小的那個）——
      所以畫出來跟以前一個像素都不差，連原本會被裁掉的長文字也照樣裁在同一個地方。 */
   const oldPad = Math.ceil(sz * 1.5);
-  const rad = glyphRadius(holeType, str);
-  const pad = rad > 0.5
-    ? Math.max(2, Math.min(oldPad, Math.ceil(rad * sz / GLYPH_INK_REF) + 2))
+  const pad = ink.r > 0.5
+    ? Math.max(2, Math.min(oldPad, Math.ceil(ink.r) + 2))
     : oldPad;
   const side = Math.max(2, pad * 2);
   let tempCanvas: HTMLCanvasElement | undefined;
@@ -1218,6 +1245,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const lowerMaskCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
   /** 挖穿的洞裡看到的那張底圖。跟上面幾張一樣重複使用，播動畫時才不會一直配置記憶體 */
   const holeBackdropCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
+  /* 四周包圍那張「墊在遮罩底下、放大到整張畫布」的底圖。
+     整個畫面就它跟畫布一樣大，而且只跟照片、構圖、比例有關 ——
+     拖圖案的時候它一格都沒變，卻每一格都要把原圖重新縮一次。存起來重用。 */
+  const aroundBdRef = useRef<{ key: string; img: any; cv: HTMLCanvasElement } | null>(null);
   /** 遮罩底稿的快取鑰匙：參數沒變就不重畫那兩張全尺寸畫布 */
   const maskCacheKeyRef = useRef('');
   /** 拿遮罩底稿做的 pattern（圖片側的圖案填色用）。底稿沒變就沿用同一顆 */
@@ -1685,10 +1716,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const hy = h.y * s;
 
     if (isTextHole(holeType)) {
-      const tctx = dummyCanvasRef.current.getContext('2d')!;
       const renderStr = holeGlyph(holeType, customText, h);
       // 量的是「看得見的那一塊」，跟畫出來的完全一致（以前量的是另一支字型的前進寬度）
-      const ink = glyphInk(tctx, holeType, renderStr, sz);
+      const ink = glyphInk(holeType, renderStr, sz);
       const tw = ink.w, th = ink.h;
       return (
         hx - tw / 2 >= 0 &&
@@ -1719,11 +1749,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
 
     if (isTextHole(holeType)) {
-      const tctx = dummyCanvasRef.current.getContext('2d')!;
       const renderStr = holeGlyph(holeType, customText, h);
       /* 命中範圍跟著「看得見的那一塊」走，跟選取框畫的是同一個方框。
          墨水比字級小很多的字（例如 ⊹）不要縮到很難點，所以給個下限。 */
-      const ink = glyphInk(tctx, holeType, renderStr, s);
+      const ink = glyphInk(holeType, renderStr, s);
       const tw = Math.max(ink.w, s * 0.55);
       const th = Math.max(ink.h, s * 0.55);
 
@@ -2396,6 +2425,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        其餘排版就是照片本人的大小。 */
     const iw = layout === AROUND ? Math.max(1, maskW - mdS.padX * 2) : sw;
     const ih = layout === AROUND ? Math.max(1, maskH - mdS.padY * 2) : sh;
+    /* 中間那一格比整張畫布小，照片要**等比例縮小**塞進去 ——
+       以前是拿原尺寸直接畫、再用小框裁掉，看到的就只有左上角那一塊
+       （主人說的「向左上裁切」）。這個倍率就是縮小的比例。 */
+    const kIn = layout === AROUND && sw > 0 ? iw / sw : 1;
 
     const getLayoutOffsetsS = () => {
       if (layout === 'mask-bottom') return { cw: sw, ch: sh + maskH, ix: 0, iy: 0, mx: 0, my: sh };
@@ -2507,30 +2540,59 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
     if (isMain) maskCacheKeyRef.current = maskKey;
 
-    const drawImg = (img: any, t: any, ox: number, oy: number, w: number, h: number) => {
+    const drawImg = (img: any, t: any, ox: number, oy: number, w: number, h: number, kk = 1) => {
       if (!img || !t) return;
       ctx.save();
       ctx.beginPath();
       ctx.rect(ox, oy, w, h);
       ctx.clip();
-      ctx.drawImage(img, ox + t.x * s, oy + t.y * s, t.w * s, t.h * s);
+      // kk：整個構圖等比例縮放（四周包圍縮中間那張照片時用）
+      ctx.drawImage(img, ox + t.x * s * kk, oy + t.y * s * kk, t.w * s * kk, t.h * s * kk);
       ctx.restore();
     };
 
     /* 四周包圍時「墊在遮罩底下那張圖」要以畫布中心等比放大到整張畫布 ——
        它跟中央那張是同一個構圖，只是被推到鏡頭外面，從洞裡看出去才對得起來。 */
-    const drawBackdropAround = () => {
+    /** 四周包圍的底圖，畫成一張跟畫布一樣大的畫布（同樣的內容底下挖洞也要用） */
+    let bdOnce: HTMLCanvasElement | null | undefined;
+    const aroundBackdrop = (): HTMLCanvasElement | null => {
+      if (bdOnce !== undefined) return bdOnce;   // 同一次繪製裡只算一次
+      bdOnce = aroundBackdropBuild();
+      return bdOnce;
+    };
+    const aroundBackdropBuild = (): HTMLCanvasElement | null => {
       const img = imageState.img, t = imageTransform;
-      if (!img || !t) return;
+      if (!img || !t) return null;
+      const W = Math.max(1, Math.round(offs.cw)), H = Math.max(1, Math.round(offs.ch));
+      const key = `${W}|${H}|${s}|${kIn}|${maskW}|${iw}|${offs.ix}|${offs.iy}|${t.x}|${t.y}|${t.w}|${t.h}`;
+      const hit = isMain ? aroundBdRef.current : null;
+      if (hit && hit.key === key && hit.img === img) return hit.cv;
+      const cv = isMain ? holeBackdropCanvasRef.current : document.createElement('canvas');
+      if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+      const g = cv.getContext('2d');
+      if (!g) return null;
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.globalAlpha = 1;
+      // copy：畫的同時把其餘部分清掉，省一次 clearRect
+      g.globalCompositeOperation = 'copy';
       const k = maskW / iw;
-      const cx = offs.cw / 2, cy = offs.ch / 2;
-      const x0 = offs.ix + t.x * s, y0 = offs.iy + t.y * s;
+      const cx = W / 2, cy = H / 2;
+      // 以「中央那張縮好的照片」為準再放大回整張畫布，兩張才會是同一個構圖
+      const x0 = offs.ix + t.x * s * kIn, y0 = offs.iy + t.y * s * kIn;
+      g.drawImage(img, cx + (x0 - cx) * k, cy + (y0 - cy) * k, t.w * s * kIn * k, t.h * s * kIn * k);
+      g.globalCompositeOperation = 'source-over';
+      if (isMain) aroundBdRef.current = { key, img, cv };
+      return cv;
+    };
+    const drawBackdropAround = () => {
+      const bd = aroundBackdrop();
+      if (!bd) return;
       ctx.save();
       ctx.beginPath(); ctx.rect(0, 0, offs.cw, offs.ch); ctx.clip();
-      ctx.drawImage(img, cx + (x0 - cx) * k, cy + (y0 - cy) * k, t.w * s * k, t.h * s * k);
+      ctx.drawImage(bd, 0, 0);
       ctx.restore();
     };
-    const drawCentreImage = () => drawImg(imageState.img, imageTransform, offs.ix, offs.iy, iw, ih);
+    const drawCentreImage = () => drawImg(imageState.img, imageTransform, offs.ix, offs.iy, iw, ih, kIn);
     const drawBackdrop = () => (layout === AROUND
       ? drawBackdropAround()
       : drawImg(imageState.img, imageTransform, offs.mx, offs.my, maskW, maskH));
@@ -2839,24 +2901,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       /* 洞裡看到的就是墊在遮罩底下那張放大的圖：先畫成一張，再一個洞一個洞貼回去。
          這張要重複使用 —— 播動畫時一秒會走 30 次，每次 new 一張幾百萬像素的
          畫布，記憶體會被灌爆（就是「播一播閃退回主畫面」）。 */
-      const bd = isMain ? holeBackdropCanvasRef.current : document.createElement('canvas');
-      const bdW = Math.max(1, Math.round(offs.cw)), bdH = Math.max(1, Math.round(offs.ch));
-      if (bd.width !== bdW || bd.height !== bdH) { bd.width = bdW; bd.height = bdH; }
-      else bd.getContext('2d')?.clearRect(0, 0, bdW, bdH);
-      const g = bd.getContext('2d');
-      if (!g) return;
+      /* 四周包圍：洞裡看到的就是上面那張底圖，跟 drawBackdropAround 同一份
+         （所以那邊算過就直接拿來用，不必再縮一次原圖）。 */
+      let bd: HTMLCanvasElement | null = null;
       if (layout === AROUND) {
-        // 四周包圍：洞裡看到的是以畫布中心等比放大的同一個構圖
-        const kk = maskW / iw;
-        const ccx = offs.cw / 2, ccy = offs.ch / 2;
-        const x0 = offs.ix + t.x * s, y0 = offs.iy + t.y * s;
-        g.drawImage(img, ccx + (x0 - ccx) * kk, ccy + (y0 - ccy) * kk, t.w * s * kk, t.h * s * kk);
+        bd = aroundBackdrop();
+        if (!bd) return;
       } else {
+        bd = isMain ? holeBackdropCanvasRef.current : document.createElement('canvas');
+        const bdW = Math.max(1, Math.round(offs.cw)), bdH = Math.max(1, Math.round(offs.ch));
+        if (bd.width !== bdW || bd.height !== bdH) { bd.width = bdW; bd.height = bdH; }
+        else bd.getContext('2d')?.clearRect(0, 0, bdW, bdH);
+        const g = bd.getContext('2d');
+        if (!g) return;
         // 並排的四種：遮罩那一塊底下就是同一張圖，位置跟 drawBackdrop 一致
         g.save();
         g.beginPath(); g.rect(offs.mx, offs.my, maskW, maskH); g.clip();
         g.drawImage(img, offs.mx + t.x * s, offs.my + t.y * s, t.w * s, t.h * s);
         g.restore();
+        if (isMain) aroundBdRef.current = null;   // 這張已經被別的內容蓋掉了
       }
       const pat = ctx.createPattern(bd, 'no-repeat');
       holes.forEach(h => {
@@ -2979,12 +3042,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           ctx.translate(A.x * s + offs.ix, A.y * s + offs.iy);
           ctx.rotate(currentAngle * Math.PI / 180);
           if (isTextHole(holeType)) {
-            const tctx = dummyCanvasRef.current.getContext('2d')!;
             const renderStr = holeGlyph(holeType, customText, h);
             /* 框的大小跟著「看得見的那一塊」走。以前量的是 sans-serif 的
                前進寬度、高度直接拿字級 —— 跟真正畫出來的字對不起來，
                所以有些圖案框不到。 */
-            const ink = glyphInk(tctx, holeType, renderStr, sz);
+            const ink = glyphInk(holeType, renderStr, sz);
             const tw = ink.w + 16 * sgs, th = ink.h + 16 * sgs;
             ctx.strokeRect(-tw / 2, -th / 2, tw, th);
           } else {
@@ -3000,12 +3062,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           ctx.translate(A.x * s + offs.mx, A.y * s + offs.my);
           ctx.rotate(currentAngle * Math.PI / 180);
           if (isTextHole(holeType)) {
-            const tctx = dummyCanvasRef.current.getContext('2d')!;
             const renderStr = holeGlyph(holeType, customText, h);
             /* 框的大小跟著「看得見的那一塊」走。以前量的是 sans-serif 的
                前進寬度、高度直接拿字級 —— 跟真正畫出來的字對不起來，
                所以有些圖案框不到。 */
-            const ink = glyphInk(tctx, holeType, renderStr, sz);
+            const ink = glyphInk(holeType, renderStr, sz);
             const tw = ink.w + 16 * sgs, th = ink.h + 16 * sgs;
             ctx.strokeRect(-tw / 2, -th / 2, tw, th);
           } else {
@@ -4317,7 +4378,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }}
       />
 
-      <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-[transform,height] duration-300 ease-out flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} style={{ height: objEditImage && objSliderOpen ? 'max(34dvh, 300px)' : '34dvh' }}>
+      <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-[transform,height] duration-300 ease-out flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} /* 高度是固定的：以前是「圖片編輯頁點出滑桿才長高」，
+                    工具欄一長高，上面的舞台就矮一截，預覽圖跟著往上跳一下
+                    （實測 287px → 300px，畫面位移 6.5px）。
+                    一律用最高的那個值，進哪一頁、開不開滑桿，預覽都不會動。 */
+                 style={{ height: 'max(34dvh, 300px)' }}>
         {!colorPickerTarget && (
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a]">
             {['setting', 'shape', 'add', 'objedit', 'motion'].map(id => (
@@ -4384,26 +4449,43 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   </div>
 
                   {/* 比例改成滑桿：以前只有 1/1、1/2、1/3 三顆固定的。
-                      滑桿 0 = 1/1（遮罩跟原圖一樣大）、100 = 1/5（最細的一條），
-                      中間連續可調 —— 分母 = 1 + 值×0.04，所以 50 就是 1/3。 */}
-                  <div className="flex flex-col flex-1">
-                    <div className="flex items-baseline justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest pl-2">
-                      <span>比例</span>
-                      <span className="text-white font-sans tabular-nums tracking-normal normal-case">
-                        1/{(1 / maskScale).toFixed(1).replace(/\.0$/, '')}
-                      </span>
-                    </div>
-                    {/* 滑桿就是滑桿：不套外框、不墊底色方塊，只留一條軌道 */}
-                    <div className="h-9 flex items-center px-1 w-full">
-                      <input
-                        type="range" min={0} max={100} step={1}
-                        value={Math.round(Math.max(0, Math.min(100, (1 / maskScale - 1) * 25)))}
-                        onChange={e => setMaskScale(1 / (1 + Number(e.target.value) * 0.04))}
-                        onPointerDown={e => e.stopPropagation()}
-                        className="premium-slider w-full"
-                      />
-                    </div>
-                  </div>
+                      並排的四種：滑桿 0 = 1/1（遮罩跟原圖一樣大）、100 = 1/5
+                      （最細的一條），分母 = 1 + 值×0.04，所以 50 就是 1/3。
+                      四周包圍：1/N 是「單邊邊框寬度佔圖片的比例」，滑到最後
+                      （比別人長的那一段尾巴）就是邊框 0 —— 圖片剛好滿版。 */}
+                  {(() => {
+                    const around = layout === AROUND;
+                    const b = around ? aroundB(maskScale) : 0;
+                    const num = (v: number) => v.toFixed(1).replace(/\.0$/, '');
+                    const label = around
+                      ? (b < 0.004 ? '滿版' : `1/${num(1 / b)}`)
+                      : `1/${num(1 / maskScale)}`;
+                    const max = around ? AROUND_STEPS : 100;
+                    const value = around
+                      ? Math.round(Math.max(0, Math.min(max, (1 - b) * AROUND_STEPS)))
+                      : Math.round(Math.max(0, Math.min(100, (1 / maskScale - 1) * 25)));
+                    const apply = (v: number) => setMaskScale(around
+                      ? aroundK((AROUND_STEPS - v) / AROUND_STEPS)
+                      : 1 / (1 + v * 0.04));
+                    return (
+                      <div className="flex flex-col flex-1">
+                        <div className="flex items-baseline justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest pl-2">
+                          <span>比例</span>
+                          <span className="text-white font-sans tabular-nums tracking-normal normal-case">{label}</span>
+                        </div>
+                        {/* 滑桿就是滑桿：不套外框、不墊底色方塊，只留一條軌道 */}
+                        <div className="h-9 flex items-center px-1 w-full">
+                          <input
+                            type="range" min={0} max={max} step={1}
+                            value={value}
+                            onChange={e => apply(Number(e.target.value))}
+                            onPointerDown={e => e.stopPropagation()}
+                            className="premium-slider w-full"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
                 {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
                     它們講的都是「這張版面長什麼樣」，本來就該在同一頁。
@@ -4549,6 +4631,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       setTuningEdge={setTuningEdge}
                       openComposeFor={openComposeFor}
                       deferSlider
+                      inlineSlider
                       onSliderOpenChange={setObjSliderOpen}
                     />
                   </div>
