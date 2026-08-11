@@ -202,7 +202,8 @@ const hashId = (id: string) => {
    一定長得一模一樣，也不需要先錄成影片才看得到。 */
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number };
+/** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -285,36 +286,44 @@ export const GLOW_SWATCHES: string[] = (() => {
 /** 發光自己的常駐動畫（只有常駐，沒有進場／離場） */
 export const GLOW_IDLES: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
-  { id: 'twinkle', name: '不規則閃爍' },
+  { id: 'twinkle', name: '呼吸' },
   { id: 'blink', name: '閃爍' },
   { id: 'glitch', name: '故障' },
 ];
 
 /**
  * 發光在時間 t 的亮度倍率（0～1）。
- *   twinkle：每顆用自己的相位 → 同一個速率、各閃各的
- *   blink  ：相位一律歸零 → 全部同時閃
- *   glitch ：平常全亮，每隔幾秒來一小段高頻閃爍
+ *   twinkle（呼吸）：平滑的漸強漸弱，每個元素用自己的相位，所以彼此錯開
+ *   blink （閃爍）  ：方波，亮與暗各佔一半；預設速度是「每 0.5 秒暗一次」
+ *   glitch（故障）  ：平常全亮，每隔幾秒來一小段高頻閃爍
+ * amp 是幅度（0～100，決定最暗會暗到哪裡）、speed 是速度倍率、
+ * gain 讓不同對象吃不同強度（圖案的故障比較兇、線比較收斂）。
  */
 const glowIdleAmp = (
-  kind: string, t: number, phase: number, amp: number = 100, speed: number = 1,
+  kind: string, t: number, phase: number,
+  amp: number = 100, speed: number = 1, gain: number = 1,
 ): number => {
-  // 幅度＝「最暗會暗到哪裡」。0 就是完全不閃（維持全亮），100 才會暗到快全滅。
   const A = Math.max(0, Math.min(1, amp / 100));
   const sp = Math.max(0.05, speed);
   if (A <= 0.001) return 1;
-  if (kind === 'blink' || kind === 'twinkle') {
-    const w = t * 3.2 * sp + (kind === 'twinkle' ? phase : 0);
-    // 平方一下讓亮暗更分明，不然只是很溫和的呼吸
-    const v = (Math.sin(w) + 1) / 2;
-    return 1 - A * (1 - v * v);
+  if (kind === 'twinkle') {
+    // 漸強漸弱：純正弦，不做平方，亮暗之間是連續過渡
+    const v = (Math.sin(t * 2.4 * sp + phase) + 1) / 2;
+    return 1 - A * (1 - v) * gain;
+  }
+  if (kind === 'blink') {
+    /* 方波：亮一半、暗一半。預設速度（sp=1）時週期 0.5 秒 ——
+       也就是每 0.5 秒暗一次，亮 0.25 秒、暗 0.25 秒，兩段一樣長。 */
+    const CYCLE = 0.5 / sp;
+    const q = ((t % CYCLE) + CYCLE) % CYCLE;
+    return q < CYCLE / 2 ? 1 : Math.max(0, 1 - A * gain);
   }
   if (kind === 'glitch') {
     const CYCLE = 3.4 / sp, BURST = 0.45 / sp;
     const q = ((t % CYCLE) + CYCLE) % CYCLE;
     if (q > BURST) return 1;
     // 一段裡面閃四下，收尾回到全亮
-    return Math.sin(q / BURST * Math.PI * 4) > 0 ? 1 : 1 - A * 0.95;
+    return Math.sin((q / BURST) * Math.PI * 4) > 0 ? 1 : Math.max(0, 1 - A * 0.95 * gain);
   }
   return 1;
 };
@@ -346,27 +355,29 @@ const inFrame = (kind: string, p: number): MoFrame => {
     // 翻轉用「橫向壓扁」模擬（見下面的 inFlipX），不需要真的 3D
     case 'flip':   return { k: 1, dx: 0, dy: 0, rot: 0, a: fade };
     case 'bounce': return { k: 1, dx: 0, dy: -(1 - easeOutBounce(p)) * 1.1, rot: 0, a: Math.min(1, p * 4) };
-    /* 泡泡：一顆泡泡先鼓起來，啵一聲破掉，圖案從裡面彈出來。
-         ① 0～38%「鼓起來」：一個比本體大一圈（最大 1.45 倍）的空泡泡，
-            透明度只有兩成上下 —— 看得見、但很淡，像肥皂膜。
-            它一邊長大一邊變更淡，最後一瞬間膨到最大。
-         ② 38%「破掉」：泡泡整個消失（膜的透明度歸零），
-            圖案在同一格從 0.35 倍冒出來，是「換人」不是「變形」，
-            所以看起來就是啵一聲跳出來的。
-         ③ 38～100%「Q 彈」：用衰減振盪彈回原尺寸，前兩下明顯、後面收乾淨。
-       橫向那一半在 inScaleX：破掉那一瞬間橫向先胖一點點再收，
-       泡泡破掉後的果凍感就是從這裡來的。 */
+    /* 泡泡：一顆泡泡鼓起來 → 啵一聲破掉、四周甩出一圈放射線 → 圖案出現。
+         ① 0～40%「鼓起來」：一顆比本體大一圈（最大 1.5 倍）的空泡泡，
+            透明度只有兩成上下（肥皂膜），越接近破掉越大越淡。
+         ② 40%「破掉」：泡泡消失，改由 burst 那一圈放射線接手
+            （線怎麼畫見 drawBurst），圖案同時出現。
+         ③ 40～100%：圖案本身很單純 —— 從 0.86 倍用 easeOutBack 長到 1，
+            不再又轉又彈，主角是那一圈線。 */
     case 'spring': {
-      const POP = 0.38;
+      const POP = 0.4;
       if (p < POP) {
-        // 泡泡：只有膜，所以透明度很低；越接近破掉越淡、越大
         const q = p / POP;
         const e2 = easeOutCubic(q);
-        return { k: 0.55 + e2 * 0.9, dx: 0, dy: 0, rot: 0, a: 0.26 * (1 - q * q) };
+        return { k: 0.6 + e2 * 0.9, dx: 0, dy: 0, rot: 0, a: 0.24 * (1 - q * q), burst: 0 };
       }
       const r = (p - POP) / (1 - POP);
-      const osc = Math.exp(-r * 5.2) * Math.sin(r * Math.PI * 3.1);
-      return { k: 0.35 + 0.65 * easeOutCubic(Math.min(1, r * 1.6)) + osc * 0.22, dx: 0, dy: -osc * 0.05, rot: 0, a: Math.min(1, r * 5) };
+      // 放射線只存在於破掉之後的前三成，很快就散掉
+      const burst = r < 0.34 ? 1 - r / 0.34 : 0;
+      return {
+        k: 0.86 + 0.14 * easeOutBack(Math.min(1, r * 2.2)),
+        dx: 0, dy: 0, rot: 0,
+        a: Math.min(1, r * 6),
+        burst,
+      };
     }
     case 'none':   return FLAT;
     default:       return { k: easeOutBack(p), dx: 0, dy: 0, rot: 0, a: fade };   // pop
@@ -376,15 +387,8 @@ const inFrame = (kind: string, p: number): MoFrame => {
 const inFlipX = (kind: string, p: number) => {
   if (p <= 0 || p >= 1) return 1;
   if (kind === 'flip') return Math.max(0.02, Math.abs(Math.cos((1 - easeOutCubic(p)) * Math.PI)));
-  if (kind === 'spring') {
-    /* 泡泡階段是圓的（橫縱一樣）；破掉之後橫向跟縱向反著彈，
-       那個「先扁後圓」的來回就是果凍感。數字跟上面那支必須同一組。 */
-    const POP = 0.38;
-    if (p < POP) return 1;
-    const r = (p - POP) / (1 - POP);
-    const osc = Math.exp(-r * 5.2) * Math.sin(r * Math.PI * 3.1);
-    return Math.max(0.3, 1 - osc * 0.34);
-  }
+  // 泡泡整支都是等比的（橫縱一樣），變化都交給那一圈放射線
+  if (kind === 'spring') return 1;
   return 1;
 };
 
@@ -399,7 +403,8 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
     case 'float':   return { k: 1, dx: 0, dy: Math.sin(w * 2.0) * A * 0.28, rot: 0, a: 1 };
     case 'sway':    return { k: 1, dx: Math.sin(w * 1.7) * A * 0.28, dy: 0, rot: 0, a: 1 };
     // 兩個不同週期的正弦疊起來 → 縮放看起來不規則、不像節拍器
-    case 'breathe': return { k: 1 + (Math.sin(w * 1.9) * 0.62 + Math.sin(w * 3.1 + 1.3) * 0.38) * A * 0.22, dx: 0, dy: 0, rot: 0, a: 1 };
+    // 幅度加倍（滑桿還是 0～100，只是同一格數字的效果變兩倍）
+    case 'breathe': return { k: 1 + (Math.sin(w * 1.9) * 0.62 + Math.sin(w * 3.1 + 1.3) * 0.38) * A * 0.44, dx: 0, dy: 0, rot: 0, a: 1 };
     /* 旋轉是「累積量」不是「來回擺」，所以不能吃 phase ——
        phase 最大 6.28，乘上去等於一開場就先轉掉大半圈，
        那正是主人看到的「開頭莫名其妙轉很多圈」。這裡一律從 0 開始轉。 */
@@ -453,14 +458,14 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
   const p = cfg.dur > 0 ? (t - cfg.delay) / cfg.dur : (t >= cfg.delay ? 1 : 0);
   const f = inFrame(cfg.in, Math.max(0, Math.min(1, p)));
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
-  if (p < 1) return { ...f, fx };
+  if (p < 1) return { ...f, fx, burst: f.burst || 0 };
   const after = t - (cfg.delay + cfg.dur);
   const blend = Math.max(0, Math.min(1, after / 0.35));
   const g = idleFrame(cfg.idle, after, cfg.amp, cfg.speed, phase);
   return {
     k: 1 + (g.k - 1) * blend,
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
-    a: 1, fx: 1,
+    a: 1, fx: 1, burst: 0,
   };
 };
 
@@ -943,6 +948,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     link: (ia: number, ib: number) => number;
     /** 發光在這一格的亮度倍率（0～1），只受發光自己那組常駐動畫影響 */
     glow: (h: any) => number;
+    /** 同上，但這是「線」用的（故障那款線比較收斂） */
+    glowLink: (h: any) => number;
+    /** 圖片／文字物件的發光亮度 */
+    glowObj: (o: any) => number;
     obj: (o: any, i: number) => MoFrame & { fx: number };
   } | null>(null);
   const [holeCount, setHoleCount] = useState(11);
@@ -1354,6 +1363,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 發光常駐動畫的幅度（0～100）與速度（20～180，100＝原速） */
   const [glowAmp, setGlowAmp] = useState(100);
   const [glowSpeed, setGlowSpeed] = useState(100);
+  /* 圖片物件與文字物件的發光，各自也有一組一樣的常駐動畫設定。
+     三組完全獨立 —— 同時開著的時候，動畫頁上就會出現三顆分開的按鈕。 */
+  const [glowMoImg, setGlowMoImg] = useState({ idle: 'none', amp: 100, speed: 100 });
+  const [glowMoText, setGlowMoText] = useState({ idle: 'none', amp: 100, speed: 100 });
   const lastDrawPosRef = useRef<{ x: number, y: number } | null>(null);
 
   useEffect(() => {
@@ -1539,6 +1552,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (st.glowIdle !== undefined) setGlowIdle(st.glowIdle);
     if (st.glowAmp !== undefined) setGlowAmp(st.glowAmp);
     if (st.glowSpeed !== undefined) setGlowSpeed(st.glowSpeed);
+    if (st.glowMoImg) setGlowMoImg(st.glowMoImg);
+    if (st.glowMoText) setGlowMoText(st.glowMoText);
   }, [initialState]);
 
   useEffect(() => {
@@ -1547,14 +1562,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       saveToolDraft('collage', null, {
         layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
+        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
       });
     }, 1200);
     return () => clearTimeout(t);
   }, [
     imageState, layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
     holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
+    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
   ]);
 
   useEffect(() => {
@@ -2723,13 +2738,50 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        位移的單位是圖案自己的大小，所以大圖案飄得多、小圖案飄得少。 */
     const holeOrder = new Map<string, number>();
     [...holes].sort((a, b) => (a.x - b.x) || (a.y - b.y)).forEach((h, i) => holeOrder.set(h.id, i));
-    type HA = { k: number; x: number; y: number; rot: number; a: number; fx: number; on: boolean };
+    type HA = { k: number; x: number; y: number; rot: number; a: number; fx: number; on: boolean; burst: number };
     const hA = (h: any): HA => {
       const a = animRef.current;
-      if (!a) return { k: 1, x: h.x, y: h.y, rot: 0, a: 1, fx: 1, on: true };
+      if (!a) return { k: 1, x: h.x, y: h.y, rot: 0, a: 1, fx: 1, on: true, burst: 0 };
       const f = a.hole(h, holeOrder.get(h.id) ?? 0);
       const base = getHoleSize(h);
-      return { k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base, rot: f.rot, a: f.a, fx: f.fx, on: f.k > 0.002 && f.a > 0.004 };
+      return {
+        k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base, rot: f.rot, a: f.a, fx: f.fx,
+        burst: f.burst || 0,
+        // 放射線還在的時候，就算圖案本身還沒亮起來也要留著這一格
+        on: (f.k > 0.002 && f.a > 0.004) || (f.burst || 0) > 0.01,
+      };
+    };
+
+    /* 泡泡破掉的那一圈放射線。以圖案中心為原點往外甩 12 條短線，
+       破掉那一瞬間最長最實，接著一邊往外飛一邊變細變淡。
+       每顆圖案的起始角度用 id 決定，所以不會整片一模一樣。 */
+    const drawBurst = (
+      g: CanvasRenderingContext2D, h: any, sz: number, gx: number, gy: number,
+      amount: number, stroke: string | CanvasPattern | null,
+    ) => {
+      if (amount <= 0.01 || sz <= 0 || !stroke) return;
+      const N = 12;
+      const base = (hashId(h.id) % 360) * Math.PI / 180;
+      const grow = 1 - amount;                       // 0（剛破）→ 1（散掉）
+      const r0 = sz * (0.55 + grow * 0.75);          // 內端：一路往外飛
+      const len = sz * 0.42 * amount;                // 線長：越飛越短
+      g.save();
+      g.strokeStyle = stroke as any;
+      g.globalAlpha = Math.min(1, amount * 1.1);
+      g.lineWidth = Math.max(1, sz * 0.06 * amount);
+      g.lineCap = 'round';
+      g.setLineDash([]);
+      g.beginPath();
+      for (let i = 0; i < N; i++) {
+        // 長短交錯，看起來比較有爆開的感覺
+        const ang = base + (i / N) * Math.PI * 2;
+        const l = len * (i % 2 === 0 ? 1 : 0.62);
+        const c = Math.cos(ang), sn = Math.sin(ang);
+        g.moveTo(gx + c * r0, gy + sn * r0);
+        g.lineTo(gx + c * (r0 + l), gy + sn * (r0 + l));
+      }
+      g.stroke();
+      g.restore();
     };
     const glowOn = (side: 'image' | 'mask') =>
       glowMode === 'both' || (glowMode === 'mask' && side === 'mask') || (glowMode === 'image' && side === 'image');
@@ -2738,6 +2790,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const layerAlpha = (a: number) => (a >= 1 ? 1 : 1 - Math.pow(1 - Math.max(0, a), 1 / 3));
     /** 發光自己的常駐動畫（每顆圖案用自己的相位，'blink' 則一律同步） */
     const glowBeat = (h: any) => { const an = animRef.current; return an?.glow ? an.glow(h) : 1; };
+    const glowBeatLink = (h: any) => { const an = animRef.current; return an?.glowLink ? an.glowLink(h) : 1; };
 
     /* ── 發光為什麼一定要另外開一層畫 ────────────────────────────────
        canvas 的 shadow 是「本體＋影子」一起畫出來的，沒辦法只要影子。
@@ -2867,7 +2920,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (!glowOn(side) || (!items.length && !pairs.length)) return;
       const a0 = animRef.current;
       const linkAlpha = ([a, b]: [any, any]) =>
-        Math.min(hA(a).a, hA(b).a) * Math.min(glowBeat(a), glowBeat(b));
+        Math.min(hA(a).a, hA(b).a) * Math.min(glowBeatLink(a), glowBeatLink(b));
       withGlowLayer(g, g.canvas.width, g.canvas.height,
         gg => {
           items.forEach(it => glowInto(gg, it.h, it.a, it.sz, it.ang, it.x, it.y));
@@ -2980,6 +3033,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           drawShapePath(ctx, holeType, mxp, myp, sz);
           ctx.fill();
         }
+        drawBurst(ctx, h, sz, mxp, myp, A.burst, basePat);
         ctx.restore();
       });
     }
@@ -3059,6 +3113,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         lmx.fill();
       }
       lmx.restore();
+      if (A.burst > 0.01) {
+        lmx.save();
+        lmx.globalAlpha = 1;
+        drawBurst(lmx, h, sz, A.x * s, A.y * s, A.burst, '#000');
+        lmx.restore();
+      }
     });
     lmx.globalCompositeOperation = 'source-over';
     ctx.drawImage(lmc, offs.mx, offs.my);
@@ -3118,6 +3178,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           drawShapePath(ctx, holeType, hx, hy, sz);
           ctx.fill();
         }
+        drawBurst(ctx, h, sz, hx, hy, A.burst, pat);
         ctx.restore();
       });
       ctx.restore();
@@ -3143,6 +3204,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            畫的時候要等比放大回去，圖片本體才會剛好落在原本的框上。 */
         const padX = (src2 as any).__padX || 0, padY = (src2 as any).__padY || 0;
         const ew = o.w * s * (1 + padX * 2), eh = o.h * s * (1 + padY * 2);
+        /* 圖片的發光是「烤」在成品畫布裡的，沒辦法只調光的濃度。
+           要讓光會閃，就再備一張「完全沒有光」的同款成品：
+           先用目前的亮度畫含光那張，再把沒有光那張蓋回本體上 ——
+           本體維持原樣，只有溢出去的那一圈光在動。
+           兩張各有自己的快取（id 後面加了記號），所以不會互相洗掉。 */
+        const gb = o.imgGlow && animRef.current?.glowObj ? animRef.current.glowObj(o) : 1;
+        if (o.imgGlow && gb < 0.999) {
+          const plain: any = fxCanvasOf({ ...o, id: `${o.id}@nog`, imgGlow: 0 }, isMain);
+          if (plain) {
+            const alpha0 = ctx.globalAlpha;
+            ctx.globalAlpha = alpha0 * Math.max(0, Math.min(1, gb));
+            ctx.drawImage(src2, -ew / 2, -eh / 2, ew, eh);
+            ctx.globalAlpha = alpha0;
+            const pX = plain.__padX || 0, pY = plain.__padY || 0;
+            const pw = o.w * s * (1 + pX * 2), ph = o.h * s * (1 + pY * 2);
+            ctx.drawImage(plain, -pw / 2, -ph / 2, pw, ph);
+          } else {
+            ctx.drawImage(src2, -ew / 2, -eh / 2, ew, eh);
+          }
+        } else
         ctx.drawImage(src2, -ew / 2, -eh / 2, ew, eh);
       } else if (o.type === 'text') {
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
@@ -3163,8 +3244,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            我們的文字通常被放大好幾倍，用原值畫就會細得像沒有 —— 這就是主人說
            「太細了」的原因。以 40px 為基準等比放大，兩邊看起來才一樣。 */
         const tk = (o.size / 40) * s;
-        if (o.glow) {
+        // 文字的光是當場畫的，乘上這一格的亮度就會跟著閃
+        const tb = animRef.current?.glowObj ? animRef.current.glowObj(o) : 1;
+        if (o.glow && tb > 0.004) {
           ctx.save();
+          ctx.globalAlpha = ctx.globalAlpha * Math.max(0, Math.min(1, tb));
           ctx.fillStyle = o.color || '#ffffff';
           ctx.shadowColor = o.glowColor || '#ffffff';
           for (const k2 of [1, 2, 3]) {
@@ -3678,9 +3762,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       },
       obj: (o: any, i: number) => composeMo(moOf(o), t, (hashId(o.id) % 628) / 100 + i * 0.7),
       /* 發光的常駐動畫跟圖案那組是分開的：圖案可以完全靜止，光自己在閃。 */
-      glow: (h: any) => glowIdleAmp(glowIdle, t, (hashId(h.id) % 628) / 100, glowAmp, glowSpeed / 100),
+      /* gain：故障那一款，圖案要更兇（+50%）、線要收斂一點（−10%）。
+         其他款不受影響（gain 只在 twinkle/blink/glitch 的暗度上相乘，
+         而 twinkle/blink 的 gain 一律傳 1）。 */
+      glow: (h: any) => glowIdleAmp(glowIdle, t, (hashId(h.id) % 628) / 100, glowAmp, glowSpeed / 100,
+        glowIdle === 'glitch' ? 1.5 : 1),
+      glowLink: (h: any) => glowIdleAmp(glowIdle, t, (hashId(h.id) % 628) / 100, glowAmp, glowSpeed / 100,
+        glowIdle === 'glitch' ? 0.9 : 1),
+      /** 圖片／文字物件的發光亮度（各自一組設定） */
+      glowObj: (o: any) => {
+        const cfg = o.type === 'text' ? glowMoText : glowMoImg;
+        if (cfg.idle === 'none') return 1;
+        return glowIdleAmp(cfg.idle, t, (hashId(o.id) % 628) / 100, cfg.amp, cfg.speed / 100,
+          cfg.idle === 'glitch' ? 1.5 : 1);
+      },
     };
-  }, [moShape, moLink, hasLink, linkStart, glowIdle, glowAmp, glowSpeed]);
+  }, [moShape, moLink, hasLink, linkStart, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText]);
 
   /* 播放迴圈。時鐘存在 ref 裡，所以「換個參數 / 拖一下物件」讓這個 effect
      重跑時，動畫是接著走的，不會每動一下就跳回第一格。
@@ -3797,7 +3894,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     maskColor, patternType, dotColor, dotSize, dotGap,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
-    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
+    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
     linkMode,
     moShape, moLink, motionHold,
     // 選取框也是畫面的一部分，一起記起來才會「回到一模一樣」
@@ -3817,6 +3914,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setGlowMode(e.glowMode === 'mask' ? 'both' : (e.glowMode || 'off')); setHoleGlowColor(e.holeGlowColor || GLOW_BASE);
     setGlowIdle(e.glowIdle || 'none');
     setGlowAmp(e.glowAmp ?? 100); setGlowSpeed(e.glowSpeed ?? 100);
+    setGlowMoImg(e.glowMoImg || { idle: 'none', amp: 100, speed: 100 });
+    setGlowMoText(e.glowMoText || { idle: 'none', amp: 100, speed: 100 });
     setLinkMode(e.linkMode);
     setMoShape(e.moShape); setMoLink(e.moLink); setMotionHold(e.motionHold);
     setSelectedObj(e.selectedObj ?? null); setSelectedTarget(e.selectedTarget ?? null);
@@ -3843,7 +3942,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     layout, maskScale, maskColor, patternType, dotColor, dotSize, dotGap,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
-    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
+    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
     linkMode, moShape, moLink, motionHold,
   ]);
 
@@ -4979,7 +5078,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 /* 動畫頁。最上面是常駐的播放列（往下捲也不會跑掉），
                    下面挑要調哪個元素，再下面就是那個元素的參數。
                    所有改動都是即時的，換動畫種類還會自動重播一次。 */
-                if (moTarget === 'glow' && glowMode === 'off') setTimeout(() => setMoTarget('shape'), 0);
+                /* 現在畫面上「真的有發光」的是哪幾種。只有一種時就叫「發光」，
+                   超過一種才需要標明是圖案／圖片／文字。 */
+                const glowKinds: { id: string; name: string }[] = [];
+                if (glowMode !== 'off' && holes.length) glowKinds.push({ id: 'glow', name: '圖案發光' });
+                if (objects.some(o => o.type === 'image' && o.imgGlow)) glowKinds.push({ id: 'glowImg', name: '圖片發光' });
+                if (objects.some(o => o.type === 'text' && o.glow)) glowKinds.push({ id: 'glowText', name: '文字發光' });
+                if (glowKinds.length === 1) glowKinds[0] = { ...glowKinds[0], name: '發光' };
+                if (moTarget.startsWith('glow') && !glowKinds.some(g => g.id === moTarget)) {
+                  setTimeout(() => setMoTarget('shape'), 0);
+                }
                 const selObj = objects.find(o => o.id === moTarget) || null;
                 const cur: MoCfg = moTarget === 'shape' ? moShape : selObj ? moOf(selObj) : MO_DEFAULT;
                 const setCur = (d: Partial<MoCfg>) => {
@@ -5010,10 +5118,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       {hasLink && <button onClick={() => setMoTarget('link')} className={chip(moTarget === 'link')}>
                         {linkMode === 'dash' ? '虛線' : '連線'}
                       </button>}
-                      {/* 發光有自己的一組動畫（只有常駐），跟圖案那組各走各的 */}
-                      {glowMode !== 'off' && (
-                        <button onClick={() => setMoTarget('glow')} className={chip(moTarget === 'glow')}>發光</button>
-                      )}
+                      {/* 發光有自己的一組動畫（只有常駐），跟圖案那組各走各的。
+                          同時存在超過一種發光時，按鈕就要標明是哪一種。 */}
+                      {glowKinds.map(g => (
+                        <button key={g.id} onClick={() => setMoTarget(g.id)} className={chip(moTarget === g.id)}>
+                          {g.name}
+                        </button>
+                      ))}
                       {objects.map((o, i) => (
                         <button key={o.id}
                           onClick={() => setMoTarget(o.id)}
@@ -5023,7 +5134,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       ))}
                     </div>
 
-                    {moTarget === 'glow' ? (
+                    {moTarget.startsWith('glow') ? (() => {
+                      // 三種發光共用同一組介面，只是讀寫的設定不一樣
+                      const gv = moTarget === 'glowImg' ? glowMoImg
+                        : moTarget === 'glowText' ? glowMoText
+                        : { idle: glowIdle, amp: glowAmp, speed: glowSpeed };
+                      const gset = (d: Partial<{ idle: string; amp: number; speed: number }>) => {
+                        if (moTarget === 'glowImg') setGlowMoImg(v => ({ ...v, ...d }));
+                        else if (moTarget === 'glowText') setGlowMoText(v => ({ ...v, ...d }));
+                        else {
+                          if (d.idle !== undefined) setGlowIdle(d.idle);
+                          if (d.amp !== undefined) setGlowAmp(d.amp);
+                          if (d.speed !== undefined) setGlowSpeed(d.speed);
+                        }
+                      };
+                      return (
                       <>
                         <div className="flex justify-between text-[10px] font-bold text-[#888] mt-4 mb-2 uppercase tracking-widest">
                           <span>常駐動畫</span>
@@ -5031,25 +5156,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <div className="grid grid-cols-2 gap-2">
                           {GLOW_IDLES.map(g => (
                             <button key={g.id}
-                              onClick={() => { setGlowIdle(g.id); replayMotion(); }}
-                              className={cell(glowIdle === g.id)}>
+                              onClick={() => { gset({ idle: g.id }); replayMotion(); }}
+                              className={cell(gv.idle === g.id)}>
                               {g.name}
                             </button>
                           ))}
                         </div>
                         {/* 靜止沒有東西可以調，所以只有其他三種才出現 */}
-                        {glowIdle !== 'none' && (
+                        {gv.idle !== 'none' && (
                           <div className="grid grid-cols-2 gap-4 mt-4">
-                            <CompactSlider label="幅度" value={glowAmp} min={0} max={100} step={1}
+                            <CompactSlider label="幅度" value={gv.amp} min={0} max={100} step={1}
                               onCommit={replayMotion}
-                              onChange={(v: number) => setGlowAmp(v)} />
-                            <CompactSlider label="速度" value={glowSpeed} min={20} max={180} step={1}
+                              onChange={(v: number) => gset({ amp: v })} />
+                            <CompactSlider label="速度" value={gv.speed} min={20} max={180} step={1}
                               onCommit={replayMotion}
-                              onChange={(v: number) => setGlowSpeed(v)} />
+                              onChange={(v: number) => gset({ speed: v })} />
                           </div>
                         )}
                       </>
-                    ) : moTarget === 'link' ? (
+                      );
+                    })() : moTarget === 'link' ? (
                       <>
                         <div className="grid grid-cols-2 gap-4 mt-4">
                           <CompactSlider label="起始" value={Math.round(moLink.delay)} min={0} max={20} step={1}
