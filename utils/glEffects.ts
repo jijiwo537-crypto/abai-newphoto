@@ -123,6 +123,15 @@ export interface FxDef {
   onAmount?: number;
   /** 除了強度以外的參數 */
   params: FxParamDef[];
+  /**
+   * 最外層那根滑桿改調這個參數，而不是「強度」。
+   *
+   * 用在「強度沒有意義」的特效上 —— 例如馬賽克：把馬賽克調到 50% 強度
+   * 只是把原圖疊回來一半，看起來像沒對焦，真正有意義的只有格數。
+   * 設了這個之後，卡片點下去強度一律是 100，使用者只會看到那一根滑桿；
+   * 要關掉就點特效列最前面的「無」。
+   */
+  rootParam?: string;
   passes: FxPass[];
 }
 
@@ -385,7 +394,7 @@ export const FX_DEFS: FxDef[] = [
       { id: 'fxBlocksSize', label: '密度', icon: 'apps', min: 4, max: 80, def: 15 },
       { id: 'fxBlocksDensity', label: '比例', icon: 'broken_image', min: 0, max: 100, def: 22, scale: 0.01 },
       { id: 'fxBlocksAmount', label: '位移', icon: 'straighten', min: 0, max: 50, def: 9, scale: 0.01 },
-      { id: 'fxBlocksColor', label: '錯位', icon: 'format_paint', min: 0, max: 100, def: 40, scale: 0.01 },
+      { id: 'fxBlocksColor', label: '錯誤', icon: 'format_paint', min: 0, max: 100, def: 40, scale: 0.01 },
       { id: 'fxBlocksSeed', label: '變化', icon: 'casino', min: 0, max: 100, def: 30 },
     ],
     passes: [{
@@ -490,8 +499,12 @@ export const FX_DEFS: FxDef[] = [
   {
     id: 'fxMosaic', label: '馬賽克', icon: 'grid_view',
     onAmount: 100,
+    /* 馬賽克只留「格數」一根，而且放在最外層 —— 點卡片不再進細項頁。
+       hidden 是給細項頁看的：三根都藏起來，細項頁就沒東西可放、不會被打開；
+       格數改由 rootParam 直接放到最外層那根滑桿上。 */
+    rootParam: 'fxMosaicBlocks',
     params: [
-      { id: 'fxMosaicBlocks', label: '格數', icon: 'apps', min: 5, max: 200, def: 100 },
+      { id: 'fxMosaicBlocks', label: '格數', icon: 'apps', min: 5, max: 200, def: 70, hidden: true },
       { id: 'fxMosaicShape', label: '形狀', icon: 'category', min: 0, max: 100, def: 0, scale: 0.01 , hidden: true },
       { id: 'fxMosaicGap', label: '間隙', icon: 'space_bar', min: 0, max: 100, def: 0, scale: 0.01 , hidden: true },
     ],
