@@ -285,7 +285,33 @@ export const GLOW_SWATCHES: string[] = (() => {
   return ['#FFFFFF', ...hues.map(h => hslToHex(h, sat, l))];
 })();
 
-/** 發光自己的常駐動畫（只有常駐，沒有進場／離場） */
+/* 把任意顏色換成「發光色票裡同色系的那一顆」。
+   比的是色相：飽和度與亮度一律用色票自己的（那正是發光看起來乾淨的原因），
+   幾乎沒有顏色的（灰、白、黑）就配第一顆純白。 */
+export const nearestGlowSwatch = (hex: string): string => {
+  if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return GLOW_SWATCHES[0];
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  if (d < 0.06) return GLOW_SWATCHES[0];                 // 幾乎無彩度 → 白
+  const hueOf = (rr: number, gg2: number, bb: number, mx2: number, d2: number) =>
+    (((mx2 === rr ? 60 * (((gg2 - bb) / d2) % 6) : mx2 === gg2 ? 60 * ((bb - rr) / d2 + 2) : 60 * ((rr - gg2) / d2 + 4)) % 360) + 360) % 360;
+  const h0 = hueOf(r, g, b, mx, d);
+  let best = GLOW_SWATCHES[1], bestD = 1e9;
+  for (let i = 1; i < GLOW_SWATCHES.length; i++) {
+    const c = GLOW_SWATCHES[i];
+    const r2 = parseInt(c.slice(1, 3), 16) / 255, g2 = parseInt(c.slice(3, 5), 16) / 255, b2 = parseInt(c.slice(5, 7), 16) / 255;
+    const m2 = Math.max(r2, g2, b2), n2 = Math.min(r2, g2, b2), d2 = m2 - n2;
+    if (d2 < 1e-6) continue;
+    const h2 = hueOf(r2, g2, b2, m2, d2);
+    const dh = Math.min(Math.abs(h0 - h2), 360 - Math.abs(h0 - h2));
+    if (dh < bestD) { bestD = dh; best = c; }
+  }
+  return best;
+};
+
+/** 發光自己的常駐動畫（只有常駐，沒有離場） */
 /* 排列順序＝畫面上的順序。面板是兩欄，所以每兩個一列：
      靜止 ｜ 閃爍
      呼吸I ｜ 呼吸II      ← 兩顆呼吸並排
@@ -2987,6 +3013,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     ) => {
       if (!glowOn(side) || (!items.length && !pairs.length)) return;
       const a0 = animRef.current;
+      const linkGlowColor = linkColor ? nearestGlowSwatch(linkColor) : holeGlowColor;
       const linkAlpha = ([a, b]: [any, any]) =>
         Math.min(hA(a).a, hA(b).a) * Math.min(glowBeatLink(a), glowBeatLink(b));
       withGlowLayer(g, g.canvas.width, g.canvas.height,
@@ -3019,8 +3046,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   lg.clearRect(0, 0, W2, H2);
                   if (tf2) lg.setTransform(tf2);
                   linkStyle(lg);
-                  lg.strokeStyle = holeGlowColor;
-                  lg.shadowColor = holeGlowColor;
+                  /* 線的光跟著線自己的顏色走（換算成發光色票裡同色系的那一顆）；
+                     沒有指定連線顏色時就沿用圖案發光的顏色。 */
+                  lg.strokeStyle = linkGlowColor;
+                  lg.shadowColor = linkGlowColor;
                   for (const kk of [1, 2, 3]) {
                     lg.shadowBlur = base * kk * 0.9;
                     linkPath(lg, arr);
@@ -4963,7 +4992,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             <ColorPickerEmbedded 
               color={colorPickerTarget === 'mask' ? maskColor
                 : colorPickerTarget === 'holeGlow' ? holeGlowColor
-                : colorPickerTarget === 'linkColor' ? (linkColor || GLOW_SWATCHES[0])
+                : colorPickerTarget === 'linkColor' ? (linkColor || maskColor)
                 : dotColor} 
               onChange={c => { if(colorPickerTarget==='mask') setMaskColor(c);
                 else if(colorPickerTarget==='holeGlow') setHoleGlowColor(c);
@@ -5454,13 +5483,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       >
                         <span className="text-[10px] font-bold text-[#888]">顏色</span>
                         <div className="flex items-center gap-2">
-                          {/* 還沒挑過顏色時是「預設」＝跟遮罩同色／在遮罩上挖穿 */}
-                          <span className="text-[9px] font-mono text-white/40">{linkColor || '預設'}</span>
+                          {/* 還沒挑過顏色時就顯示遮罩的色號 —— 線在圖片上本來就是那個顏色 */}
+                          <span className="text-[9px] font-mono text-white/40">{linkColor || maskColor}</span>
                           <div
                             className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10"
-                            style={linkColor
-                              ? { backgroundColor: linkColor }
-                              : { background: 'repeating-linear-gradient(45deg,#333,#333 3px,#555 3px,#555 6px)' }}
+                            style={{ backgroundColor: linkColor || maskColor }}
                           />
                         </div>
                       </div>
