@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@imagemagick/magick-wasm": "^0.0.38",
+    "@supabase/supabase-js": "^2.112.3",
     "exifreader": "^4.41.0",
     "heic2any": "^0.0.4",
     "lucide-react": "^1.12.0",
