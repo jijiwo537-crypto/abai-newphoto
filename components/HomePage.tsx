@@ -167,11 +167,6 @@ export const HomePage: React.FC<HomePageProps> = ({
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
   const scrollRef = useRef<HTMLDivElement>(null);
   const libRef = useRef<HTMLDivElement>(null);
-  /* 廣告版位。點「模板」捲下去的時候要以「它看得到的下緣」為準 ——
-     那一塊是絕對定位往下多長 50px 的，只捲到 libRef 的話，它多出來的
-     那一截（連同圓角的邊）還會留在畫面最上面。 */
-  const adBoxRef = useRef<HTMLDivElement>(null);
-  const adFillRef = useRef<HTMLDivElement>(null);
   const heroRef = useRef<HTMLDivElement>(null);
   /* 在「我」的時候捲軸那一頁是藏起來的，捲動事件不能反過來改分頁 */
   const navRef = useRef(nav);
@@ -340,22 +335,13 @@ export const HomePage: React.FC<HomePageProps> = ({
   const navLockRef = useRef<string | null>(null);
 
   /**
-   * 點「模板」要捲到哪裡。
+   * 點「模板」要捲到哪裡 —— 靈感區的頂端。
    *
-   * 以前是捲到 libRef 的頂端，但廣告版位是「絕對定位往下多長 50px」的，
-   * 那多出來的一截（含圓角的邊線）會蓋在 libRef 上面 —— 捲到定位之後，
-   * 搜尋欄上方還看得到那一塊的下緣跟它的邊。
-   * 改成量那一塊「真正看得到的下緣」在哪，捲到它剛好出畫面為止，
-   * 再多 1px 保證連邊都不會留下（次像素繪製時邊線會佔到半個像素）。
+   * 以前這裡要多算一段：廣告版位是「絕對定位往下多長 50px」的，那一截
+   * 會蓋在 libRef 上面，捲到定位之後搜尋欄上方還看得到它的下緣。
+   * 版位拿掉之後沒有東西會蓋過來了，直接捲到 libRef 的頂端就對。
    */
-  const libScrollTop = (sc: HTMLDivElement) => {
-    const fallback = libRef.current?.offsetTop ?? sc.clientHeight;
-    const fill = adFillRef.current;
-    if (!fill) return fallback;
-    const scTop = sc.getBoundingClientRect().top;
-    const bottom = fill.getBoundingClientRect().bottom;
-    return Math.max(fallback, Math.round(sc.scrollTop + (bottom - scTop)) + 1);
-  };
+  const libScrollTop = (sc: HTMLDivElement) => libRef.current?.offsetTop ?? sc.clientHeight;
 
   /** 分頁列：首頁／靈感是同一條捲軸的兩個位置，「我」才是換頁 */
   const goNav = useCallback((id: string) => {
@@ -650,23 +636,9 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
         </div>
 
-        {/* 廣告版位 —— 原本兩格預設模板併成一整塊，之後放廣告圖。
-             外框（佔版面的那個）維持 342/147：這一疊是靠 mt-auto 貼著下緣排的，
-             外框一長高，上面每一排就會跟著往上跑。所以真正的版位用絕對定位往下
-             多長 —— 看得到的格子變長了，版面上佔的高度卻沒變，
-             上面幾排按鈕一個像素都不會動。
-             50px 是量出來的：版位下緣到分頁列上緣原本有 42px，多長 24px 之後
-             還留 13px 的空隙，不會貼到分頁列。 */}
-        <div className="relative z-10 -mt-1.5">
-          <div ref={adBoxRef} className="relative aspect-[342/147]">
-            {/* 左右各往外撐 8px，跟上面那幾排按鈕的 -mx-2 對齊。
-                 撐的是「看得到的那一塊」而不是外框 —— 外框一變寬，
-                 aspect-[342/147] 就會跟著變高，這一疊是靠 mt-auto 貼著下緣排的，
-                 上面每一排按鈕就會整個往上跑。用 -inset-x-2 只動視覺，
-                 版面佔的高度一個像素都沒變。 */}
-            <div ref={adFillRef} className={`absolute -inset-x-2 top-0 bottom-[-50px] rounded-[14px] overflow-hidden ${EMPTY_TILE}`} />
-          </div>
-        </div>
+        {/* 歷史紀錄下面原本還有一塊廣告版位，拿掉了。
+             它是「絕對定位往下多長 50px」的，所以移掉之後，
+             下面 libScrollTop 那條也跟著簡化回單純捲到靈感區的頂端。 */}
       </div>
 
       {/* --- 靈感 ---
