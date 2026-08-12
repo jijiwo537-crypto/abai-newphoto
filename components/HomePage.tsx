@@ -8,6 +8,7 @@ import {
   signUpWithPassword, signInWithPassword, sendPasswordReset,
   sendEmailOtp, verifyEmailOtp, signInWithProvider, signOut, deleteAccount,
 } from '../utils/auth';
+import { loadAvatar, saveAvatarFromFile, removeAvatar } from '../utils/avatar';
 
 const CONTACT_EMAIL = 'chi888969930522@gmail.com';
 const CONTACT_IG = 'abai_is.perfect';
@@ -66,17 +67,20 @@ const LIB_TEMPLATES: { name: string; ratio: string }[] = Array.from({ length: 12
   ratio: TILE_RATIO,
 }));
 
+/* 驗證碼長度。
+   OTP_LEN ＝ Supabase 後台設定的位數（預設 6）。打滿這個數字就自動送出，
+             使用者不用再按一次「登入」。
+   OTP_MAX ＝ 輸入框最多收幾位。後台的 OTP Length 可以調到 10，萬一哪天改了
+             設定，多出來的位數也不會被輸入框吃掉，手動按登入照樣過得去。
+   正不正確一律交給伺服器判斷，前端只管長度。 */
+const OTP_LEN = 6;
+const OTP_MAX = 10;
+
 interface Account { kind: 'phone' | 'email'; id: string; at: number }
 
-/** 顯示用：手機留頭尾、信箱只留第一個字 */
-const maskId = (a: Account): string => {
-  if (a.kind === 'phone') {
-    const d = a.id.replace(/\D/g, '');
-    return d.length <= 5 ? d : `${d.slice(0, 4)}***${d.slice(-3)}`;
-  }
-  const [u, host = ''] = a.id.split('@');
-  return `${u.slice(0, 1)}${'*'.repeat(Math.max(2, u.length - 1))}@${host}`;
-};
+/** 顯示用的名字：信箱就取 @ 前面那一段，手機號就整串 */
+const displayName = (a: Account): string =>
+  a.kind === 'email' ? (a.id.split('@')[0] || a.id) : a.id;
 
 /** 把登入中的使用者換成畫面用的格式 */
 const toAccount = (u: AuthUser | null): Account | null =>
@@ -131,6 +135,35 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [emailOpen, setEmailOpen] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
   const [delBusy, setDelBusy] = useState(false);
+  /** 帳號設定那一頁（點頭像列右邊的箭頭進去），登出與刪除帳號都收在裡面 */
+  const [acctOpen, setAcctOpen] = useState(false);
+  /** 登出前再問一次 */
+  const [outOpen, setOutOpen] = useState(false);
+
+  /* --- 頭貼 ---
+     只存在這台裝置（localStorage），不會上傳雲端。換帳號就換一張。 */
+  const [avatar, setAvatar] = useState<string | null>(null);
+  const [avatarErr, setAvatarErr] = useState('');
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setAvatar(account ? loadAvatar(account.id) : null);
+    setAvatarErr('');
+  }, [account?.id]);
+
+  const pickAvatar = async (f?: File | null) => {
+    if (!f || !account) return;
+    setAvatarErr('');
+    try { setAvatar(await saveAvatarFromFile(account.id, f)); }
+    catch (e: any) { setAvatarErr(e?.message || '這張圖片讀不進來'); }
+  };
+
+  const clearAvatar = () => {
+    if (!account) return;
+    removeAvatar(account.id);
+    setAvatar(null);
+    setAvatarErr('');
+  };
 
   /* 開 App 先問一次「現在誰登入著」，之後靠 onAuthChange 跟著變 ——
      第三方登入導回來、token 自動換新、在別的分頁登出，都會走到這裡。 */
@@ -173,14 +206,27 @@ export const HomePage: React.FC<HomePageProps> = ({
     } catch (e) { fail(e); }
   };
 
-  const submitCode = async () => {
-    if (code.length !== 6) { setLoginErr('請輸入 6 位數驗證碼'); return; }
+  const submitCode = async (value = code) => {
+    if (value.length < OTP_LEN) { setLoginErr(`請輸入信裡的 ${OTP_LEN} 位數驗證碼`); return; }
     setLoginErr(''); setStep('busy');
     try {
-      await verifyEmailOtp(idInput, code);
+      await verifyEmailOtp(idInput, value);
       setLoginOpen(false);
     } catch (e) { fail(e, 'code'); }
   };
+
+  /* 打滿位數就自動送出，不用再按「登入」。
+     autoTried 記住「這一組數字已經自動試過了」——不然驗證失敗回到 code
+     這一頁時，長度還是滿的，會無限重試。使用者改動任何一位就會變成新的
+     組合，那時候才允許再自動送一次。 */
+  const autoTried = useRef('');
+  useEffect(() => {
+    if (step !== 'code') return;
+    if (code.length !== OTP_LEN) return;
+    if (autoTried.current === code) return;
+    autoTried.current = code;
+    submitCode(code);
+  }, [code, step]);
 
   /** 密碼那條路：先試登入，沒有這個帳號就註冊 */
   const submitPassword = async (intent: 'in' | 'up') => {
@@ -210,12 +256,23 @@ export const HomePage: React.FC<HomePageProps> = ({
     catch (e) { fail(e); }
   };
 
-  const logout = () => { signOut().catch(() => {}); setAccount(null); };
+  const logout = () => {
+    signOut().catch(() => {});
+    setAccount(null);
+    setOutOpen(false);
+    setAcctOpen(false);
+  };
 
   /** 刪除帳號（App Store 規定一定要能在 App 裡刪） */
   const removeAccount = async () => {
     setDelBusy(true);
-    try { await deleteAccount(); setAccount(null); setDelOpen(false); }
+    const id = account?.id;
+    try {
+      await deleteAccount();
+      /* 帳號都刪了，本機這張頭貼也不用留 */
+      if (id) removeAvatar(id);
+      setAccount(null); setAvatar(null); setDelOpen(false); setAcctOpen(false);
+    }
     catch (e) { alert(authErrText(e)); }
     finally { setDelBusy(false); }
   };
@@ -335,23 +392,33 @@ export const HomePage: React.FC<HomePageProps> = ({
         /* 上面那條標題列拿掉了，這裡自己補回它原本的高度（safe-area + 62px），
            這一頁的東西才會留在原來的位置，不會整組往上跑。 */
         <div className="no-scrollbar relative z-[5] flex-1 min-h-0 overflow-y-auto px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+62px)] box-border">
-          {/* 登入入口。已登入就換成帳號本身 */}
+          {/* 登入入口。已登入就換成帳號本身，點右邊的箭頭進帳號設定 */}
           <button
-            onClick={() => { if (!account) openLogin(); }}
+            onClick={() => { account ? setAcctOpen(true) : openLogin(); }}
             className="w-full flex items-center gap-4 pt-3 pb-5 text-left active:opacity-70 transition-opacity duration-200"
           >
-            <span className="w-[68px] h-[68px] shrink-0 rounded-full bg-white/[0.05] border border-white/[0.14] flex items-center justify-center text-white/30">
-              <Icon name="person" className="text-[34px]" />
+            <span className="w-[68px] h-[68px] shrink-0 rounded-full overflow-hidden bg-white/[0.05] border border-white/[0.14] flex items-center justify-center text-white/30">
+              {avatar
+                ? <img src={avatar} alt="" className="w-full h-full object-cover" draggable={false} />
+                : <Icon name="person" className="text-[34px]" />}
             </span>
+            {/* 登入後只剩一行名字，讓它自己跟頭貼上下置中（外層已經 items-center）。
+                名字那一行不要用 leading-none —— 行高等於字級的話，g、y、p 這種
+                有下伸部的字母會超出行框，再被 truncate 的 overflow:hidden 切掉半截。
+                leading-[1.34] 剛好把上伸部與下伸部都框進來。 */}
             <span className="flex-1 min-w-0 flex flex-col gap-1">
-              <span className="text-[24px] font-bold tracking-[0.02em] leading-none truncate">
-                {account ? maskId(account) : '立即登入'}
+              <span className="text-[24px] font-bold tracking-[0.02em] leading-[1.34] truncate">
+                {account ? displayName(account) : '立即登入'}
               </span>
-              <span className="text-[11px] text-white/35">
-                {account ? '已登入' : '登入後可同步你的作品與偏好'}
-              </span>
+              {!account && (
+                <span className="text-[11px] text-white/35">登入後可同步你的作品與偏好</span>
+              )}
             </span>
-            {!account && (
+            {account ? (
+              <span className="shrink-0 w-8 h-8 flex items-center justify-center">
+                <Icon name="chevron_right" className="text-[20px] text-white/35" />
+              </span>
+            ) : (
               <span className="shrink-0 flex items-center gap-1 h-8 pl-3 pr-2 rounded-full bg-white/[0.06] border border-white/10">
                 <span className="text-[12px] font-bold tabular-nums text-white/80">0</span>
                 <Icon name="chevron_right" className="text-[16px] text-white/35" />
@@ -378,23 +445,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             </span>
           </div>
 
-          {account && (
-            <>
-              <button
-                onClick={logout}
-                className="mt-6 w-full h-[46px] rounded-[12px] bg-white/[0.05] border border-white/10 text-[12px] font-bold tracking-[0.1em] text-white/60 hover:bg-white/[0.1] active:scale-[0.98] transition-[background-color,transform] duration-300"
-              >
-                登出
-              </button>
-              {/* App Store 審核指南 5.1.1(v)：App 內能註冊，就必須能在 App 內刪除帳號 */}
-              <button
-                onClick={() => setDelOpen(true)}
-                className="mt-3 w-full h-[46px] rounded-[12px] border border-white/10 text-[12px] font-bold tracking-[0.1em] text-white/35 hover:text-white/60 active:scale-[0.98] transition-[color,transform] duration-300"
-              >
-                刪除帳號
-              </button>
-            </>
-          )}
+          {/* 登出與刪除帳號都收進帳號設定那一頁了（點上面那列右邊的箭頭） */}
         </div>
       )}
 
@@ -784,12 +835,13 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <>
                   <input
                     value={code}
-                    onChange={e => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setLoginErr(''); }}
+                    onChange={e => { setCode(e.target.value.replace(/\D/g, '').slice(0, OTP_MAX)); setLoginErr(''); }}
                     inputMode="numeric"
                     autoComplete="one-time-code"
-                    placeholder="••••••"
+                    placeholder={'•'.repeat(OTP_LEN)}
                     disabled={step === 'busy'}
-                    className="w-full h-[52px] px-4 rounded-[12px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/30 text-center text-[22px] font-bold tabular-nums tracking-[0.5em] text-white placeholder:text-white/20 transition-colors"
+                    /* 字距從 0.5em 收到 0.32em：8～10 位的時候 0.5em 會擠到框外面 */
+                    className="w-full h-[52px] px-4 rounded-[12px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/30 text-center text-[22px] font-bold tabular-nums tracking-[0.32em] indent-[0.32em] text-white placeholder:text-white/20 transition-colors"
                   />
                   <div className="mt-3 flex justify-center">
                     <button
@@ -801,8 +853,8 @@ export const HomePage: React.FC<HomePageProps> = ({
                     </button>
                   </div>
                   <button
-                    onClick={submitCode}
-                    disabled={code.length !== 6 || step === 'busy'}
+                    onClick={() => submitCode()}
+                    disabled={code.length < OTP_LEN || step === 'busy'}
                     className="mt-4 w-full h-[52px] rounded-[12px] bg-white text-black text-[13px] font-black tracking-[0.1em] disabled:opacity-25 active:scale-[0.98] transition-[opacity,transform] duration-200 flex items-center justify-center gap-2"
                   >
                     {step === 'busy' ? (
@@ -819,6 +871,144 @@ export const HomePage: React.FC<HomePageProps> = ({
               {loginErr &&<p className="mt-3 text-center text-[11px] text-white/50">{loginErr}</p>}
               {!loginErr && loginNote && <p className="mt-3 text-center text-[11px] text-white/45">{loginNote}</p>}
 
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- 帳號設定 ---
+           點頭像那一列右邊的箭頭進來，整頁從右邊滑進來（跟 iOS 的次頁一樣）。
+           登出與刪除帳號都收在這裡，不要擺在「我的」首頁上。 */}
+      <AnimatePresence>
+        {acctOpen && account && (
+          <motion.div
+            key="acct"
+            initial={{ x: '100%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '100%' }}
+            transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+            className="absolute inset-0 z-[65] bg-black flex flex-col"
+          >
+            {/* 標題列：返回鍵跟「我的」那一頁的內距對齊 */}
+            <div className="shrink-0 flex items-center gap-2 px-4 pt-[calc(env(safe-area-inset-top,0px)+14px)] pb-3">
+              <button
+                onClick={() => setAcctOpen(false)}
+                aria-label="返回"
+                className="w-9 h-9 -ml-1 rounded-full flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
+              >
+                <Icon name="arrow_back" className="text-[20px]" />
+              </button>
+              <p className="text-[17px] font-bold tracking-[0.02em]">帳號</p>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-6 pb-10">
+              {/* --- 頭貼 ---
+                  只存在這台裝置，不會上傳雲端，所以下面那行小字要講清楚。 */}
+              <div className="mt-2 flex flex-col items-center">
+                <button
+                  onClick={() => avatarInputRef.current?.click()}
+                  className="relative w-[96px] h-[96px] active:scale-[0.97] transition-transform"
+                >
+                  {/* 圓形裁切放在裡面這一層 —— 掛在外層的話，右下角那顆相機
+                      也會被 overflow:hidden 沿著圓周切掉一半。 */}
+                  <span className="w-full h-full rounded-full overflow-hidden bg-white/[0.05] border border-white/[0.14] flex items-center justify-center text-white/30">
+                    {avatar
+                      ? <img src={avatar} alt="" className="w-full h-full object-cover" draggable={false} />
+                      : <Icon name="person" className="text-[46px]" />}
+                  </span>
+                  {/* 右下角那顆相機，讓人一眼看出這裡可以換。
+                      往內縮 2px，圓心才會落在圓周上（正角落是在圓外面）。 */}
+                  <span className="absolute right-[2px] bottom-[2px] w-[30px] h-[30px] rounded-full bg-white text-black border-[3px] border-black flex items-center justify-center">
+                    <Icon name="photo_camera" className="text-[14px]" />
+                  </span>
+                </button>
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={e => { pickAvatar(e.target.files?.[0]); e.target.value = ''; }}
+                />
+                <div className="mt-3 flex items-center gap-2">
+                  <button
+                    onClick={() => avatarInputRef.current?.click()}
+                    className="h-8 px-4 rounded-full bg-white/[0.07] border border-white/10 text-[12px] font-bold text-white/80 active:scale-[0.97] transition-transform"
+                  >
+                    {avatar ? '更換頭貼' : '上傳頭貼'}
+                  </button>
+                  {avatar && (
+                    <button
+                      onClick={clearAvatar}
+                      className="h-8 px-4 rounded-full border border-white/10 text-[12px] font-bold text-white/35 active:scale-[0.97] transition-transform"
+                    >
+                      移除
+                    </button>
+                  )}
+                </div>
+                <p className="mt-2.5 text-[11px] text-white/30">頭貼只存在這台裝置，不會上傳</p>
+                {avatarErr && <p className="mt-1.5 text-[11px] text-white/50">{avatarErr}</p>}
+              </div>
+
+              {/* 這一頁才把完整信箱寫出來（外面那一列只放名字） */}
+              <div className="mt-6 rounded-[16px] bg-white/[0.05] border border-white/10 px-5 py-4">
+                <p className="text-[11px] tracking-[0.1em] text-white/35">電子郵件</p>
+                <p className="mt-1.5 text-[15px] font-bold leading-[1.34] break-all">{account.id}</p>
+              </div>
+
+              <button
+                onClick={() => setOutOpen(true)}
+                className="mt-6 w-full h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-[14px] font-bold tracking-[0.04em] text-white active:scale-[0.985] transition-transform"
+              >
+                登出
+              </button>
+
+              {/* App Store 審核指南 5.1.1(v)：App 內能註冊，就必須能在 App 內刪除帳號 */}
+              <button
+                onClick={() => setDelOpen(true)}
+                className="mt-2.5 w-full h-[50px] rounded-[14px] border border-white/10 text-[14px] font-bold tracking-[0.04em] text-white/40 active:scale-[0.985] transition-transform"
+              >
+                刪除帳號
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- 登出：按錯很煩，所以再問一次 --- */}
+      <AnimatePresence>
+        {outOpen && (
+          <motion.div
+            key="out"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setOutOpen(false)}
+            className="absolute inset-0 z-[70] flex items-center justify-center px-8 bg-black/80 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.94, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.94, opacity: 0 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-[320px] rounded-[20px] bg-[#141414] border border-white/10 p-6"
+            >
+              <p className="text-[15px] font-black tracking-[0.04em] text-white">確定要登出？</p>
+              <div className="mt-5 flex gap-3">
+                <button
+                  onClick={() => setOutOpen(false)}
+                  className="flex-1 h-[46px] rounded-[12px] bg-white/[0.06] border border-white/10 text-[13px] font-bold text-white/70 active:scale-[0.98] transition-transform"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={logout}
+                  className="flex-1 h-[46px] rounded-[12px] bg-white text-black text-[13px] font-black active:scale-[0.98] transition-transform"
+                >
+                  登出
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}
@@ -844,22 +1034,20 @@ export const HomePage: React.FC<HomePageProps> = ({
               onClick={e => e.stopPropagation()}
               className="w-full max-w-[320px] rounded-[20px] bg-[#141414] border border-white/10 p-6"
             >
-              <p className="text-[14px] font-black tracking-[0.06em] text-white">確定要刪除帳號？</p>
-              <p className="mt-2 text-[12px] leading-relaxed text-white/45">
-                帳號與雲端資料會被永久刪除，無法復原。手機裡已經存好的照片不受影響。
-              </p>
+              <p className="text-[15px] font-black tracking-[0.04em] text-white">確定要刪除帳號？</p>
+              <p className="mt-2 text-[12px] leading-relaxed text-white/45">刪除後無法復原。</p>
               <div className="mt-5 flex gap-3">
                 <button
                   onClick={() => setDelOpen(false)}
                   disabled={delBusy}
-                  className="flex-1 h-[46px] rounded-[12px] bg-white/[0.06] border border-white/10 text-[12px] font-bold tracking-[0.08em] text-white/70 active:scale-[0.98] transition-transform disabled:opacity-30"
+                  className="flex-1 h-[46px] rounded-[12px] bg-white/[0.06] border border-white/10 text-[13px] font-bold text-white/70 active:scale-[0.98] transition-transform disabled:opacity-30"
                 >
                   取消
                 </button>
                 <button
                   onClick={removeAccount}
                   disabled={delBusy}
-                  className="flex-1 h-[46px] rounded-[12px] bg-white text-black text-[12px] font-black tracking-[0.08em] active:scale-[0.98] transition-transform disabled:opacity-40 flex items-center justify-center gap-2"
+                  className="flex-1 h-[46px] rounded-[12px] bg-white text-black text-[13px] font-black active:scale-[0.98] transition-transform disabled:opacity-40 flex items-center justify-center gap-2"
                 >
                   {delBusy
                     ? <><span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />刪除中</>
