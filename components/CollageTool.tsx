@@ -290,13 +290,19 @@ export const GLOW_SWATCHES: string[] = (() => {
      靜止 ｜ 閃爍
      呼吸I ｜ 呼吸II      ← 兩顆呼吸並排
      故障I ｜ 故障II      ← 兩顆故障並排 */
-/* 發光速度：滑桿上顯示 0～100，實際用的倍率是 20～180（除以 100 才是倍率）。
-   兩者線性對應，所以滑桿看起來就是「0 最慢、100 最快」。 */
-export const glowSpeedToUi = (v: number) => Math.round((v - 20) / 1.6);
-export const glowSpeedFromUi = (u: number) => Math.round(20 + u * 1.6);
-/** 每一種發光動畫自己的預設速度（內部值） */
+/* 發光速度：滑桿上一律顯示 0～100，內部用的是 20～340 的倍率（÷100 才是倍率）。
+   刻度是這樣配的：滑桿 50 剛好等於內部 180 —— 也就是呼吸與故障那四款的
+   預設效果一點都沒變，只是數字從 100 變成 50，上面還留了一半可以再加快。 */
+export const glowSpeedToUi = (v: number) => Math.round((v - 20) / 3.2);
+export const glowSpeedFromUi = (u: number) => Math.round(20 + u * 3.2);
+/** 每一種發光動畫自己的預設速度（內部值；括號是滑桿上看到的數字） */
 export const GLOW_SPEED_DEFAULT: Record<string, number> = {
-  none: 100, blink: 70, breath: 180, breath2: 180, twinkle: 180, glitch: 180,
+  none: 180,          // (50)
+  blink: 84,          // (20)
+  breath: 180,        // (50) 效果跟之前完全一樣
+  breath2: 180,       // (50)
+  twinkle: 180,       // (50)
+  glitch: 180,        // (50)
 };
 
 export const GLOW_IDLES: { id: string; name: string }[] = [
@@ -976,6 +982,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 'none' 沒有線｜'solid' 連線｜'dash' 虛線。兩種線本來就是同一件事，
       只差線型，所以做成一個三態 —— 也就不可能同時打開。 */
   const [linkMode, setLinkMode] = useState<'none' | 'solid' | 'dash'>('none');
+  /* 連線的顏色。null＝維持原本的樣子（在圖片上是遮罩色的實心線、
+     在遮罩上是挖穿的）；指定顏色之後兩側都用那個顏色畫。 */
+  const [linkColor, setLinkColor] = useState<string | null>(null);
   const linkSupported = linkableType(holeType);
   /* 動態播放中的那一格。不是 state —— 每一格都在動，走 ref 讓 renderToCanvas
      直接讀，才不會每一格都觸發一次 React 重繪。null 代表「不在播動態」。 */
@@ -1591,6 +1600,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (st.glowSpeed !== undefined) setGlowSpeed(st.glowSpeed);
     if (st.glowMoImg) setGlowMoImg(st.glowMoImg);
     if (st.glowMoText) setGlowMoText(st.glowMoText);
+    if (st.linkColor !== undefined) setLinkColor(st.linkColor);
   }, [initialState]);
 
   useEffect(() => {
@@ -1599,14 +1609,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       saveToolDraft('collage', null, {
         layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
+        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
       });
     }, 1200);
     return () => clearTimeout(t);
   }, [
     imageState, layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
     holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
+    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
   ]);
 
   useEffect(() => {
@@ -3089,7 +3099,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const imgPairs = linksFor('image');
       // 光在最底下（自成一層，本體已經挖掉），接著是線，最後才是圖案本體
       glowPass(ctx, 'image', imgItems, imgPairs);
-      ctx.strokeStyle = basePat;
+      ctx.strokeStyle = linkColor || basePat;
       strokeLinks(ctx, imgPairs);
       holes.forEach(h => {
         const side = h.side || 'both';
@@ -3182,9 +3192,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       glowPass(lmx, 'mask', mskItems, maskPairs);
     }
     lmx.globalCompositeOperation = 'destination-out';
-    // 線先挖 —— 圖層比圖案低
-    lmx.strokeStyle = '#000';
-    strokeLinks(lmx, maskPairs);
+    // 線先挖 —— 圖層比圖案低。（有指定顏色時不挖，改成下面用顏色畫）
+    if (!linkColor) {
+      lmx.strokeStyle = '#000';
+      strokeLinks(lmx, maskPairs);
+    }
     holes.forEach(h => {
       const side = h.side || 'both';
       if (side !== 'both' && side !== 'mask') return; // Only show on mask side
@@ -3216,6 +3228,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
     });
     lmx.globalCompositeOperation = 'source-over';
+    /* 指定了顏色的線：在遮罩上是「畫上去」而不是挖穿，
+       而且要畫在圖案挖完之後 —— 圖層一樣比圖案低（圖案是洞，本來就在上面）。 */
+    if (linkColor) {
+      lmx.strokeStyle = linkColor;
+      strokeLinks(lmx, maskPairs);
+    }
     // 只貼「這一格真正用到」的那一塊（畫布可能比它大，見上面的說明）
     ctx.drawImage(lmc, 0, 0, lmW, lmH, offs.mx, offs.my, lmW, lmH);
     };
@@ -3251,7 +3269,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          所以它算圖片側 —— 選「僅圖片」時，跨在交界上的圖案就會
          只有圖片那一半發光、外面那一半沒有。 */
       glowPass(ctx, 'image', ovItems, ovPairs);
-      ctx.strokeStyle = pat;
+      ctx.strokeStyle = linkColor || pat;
       strokeLinks(ctx, ovPairs);
       ctx.fillStyle = pat;
       holes.forEach(h => {
@@ -3442,7 +3460,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         // 連線也要一起補畫，不然 below 的物件會壓在線上面
         ctx.save();
         ctx.translate(offs.mx, offs.my);
-        ctx.strokeStyle = pat;
+        ctx.strokeStyle = linkColor || pat;
         strokeLinks(ctx, linksFor('mask'));
         ctx.restore();
       }
@@ -3580,7 +3598,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
-  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, glowMode, holeGlowColor, glowIdle]);
+  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
 
   /** 下面那個 useLayoutEffect 已經同步畫過的那一版（哪一支 renderToCanvas、畫在幾倍） */
   const syncDrawnRef = useRef<{ fn: any; ps: number } | null>(null);
@@ -3991,7 +4009,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
     glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
-    linkMode,
+    linkMode, linkColor,
     moShape, moLink, motionHold,
     // 選取框也是畫面的一部分，一起記起來才會「回到一模一樣」
     selectedObj, selectedTarget,
@@ -4012,7 +4030,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setGlowAmp(e.glowAmp ?? 100); setGlowSpeed(e.glowSpeed ?? 100);
     setGlowMoImg(e.glowMoImg || { idle: 'none', amp: 100, speed: 100 });
     setGlowMoText(e.glowMoText || { idle: 'none', amp: 100, speed: 100 });
-    setLinkMode(e.linkMode);
+    setLinkMode(e.linkMode); setLinkColor(e.linkColor ?? null);
     setMoShape(e.moShape); setMoLink(e.moLink); setMotionHold(e.motionHold);
     setSelectedObj(e.selectedObj ?? null); setSelectedTarget(e.selectedTarget ?? null);
   };
@@ -4039,7 +4057,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
     glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
-    linkMode, moShape, moLink, motionHold,
+    linkMode, linkColor, moShape, moLink, motionHold,
   ]);
 
   /** 從頭播一次。換動畫種類時自動叫它 —— 不然改完要自己等一圈才看得到。 */
@@ -4943,11 +4961,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }`}`}>
           {colorPickerTarget ? (
             <ColorPickerEmbedded 
-              color={colorPickerTarget === 'mask' ? maskColor : colorPickerTarget === 'holeGlow' ? holeGlowColor : dotColor} 
-              onChange={c => { if(colorPickerTarget==='mask') setMaskColor(c); else if(colorPickerTarget==='holeGlow') setHoleGlowColor(c); else setDotColor(c); }}
-              swatches={colorPickerTarget === 'holeGlow' ? GLOW_SWATCHES : undefined}
+              color={colorPickerTarget === 'mask' ? maskColor
+                : colorPickerTarget === 'holeGlow' ? holeGlowColor
+                : colorPickerTarget === 'linkColor' ? (linkColor || GLOW_SWATCHES[0])
+                : dotColor} 
+              onChange={c => { if(colorPickerTarget==='mask') setMaskColor(c);
+                else if(colorPickerTarget==='holeGlow') setHoleGlowColor(c);
+                else if(colorPickerTarget==='linkColor') setLinkColor(c);
+                else setDotColor(c); }}
+              swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor' ? GLOW_SWATCHES : undefined}
               onClose={() => setColorPickerTarget(null)}
-              title={colorPickerTarget === 'mask' ? '遮罩顏色' : colorPickerTarget === 'holeGlow' ? '發光顏色' : '點點'}
+              title={colorPickerTarget === 'mask' ? '遮罩顏色'
+                : colorPickerTarget === 'holeGlow' ? '發光顏色'
+                : colorPickerTarget === 'linkColor' ? '連線顏色' : '點點'}
             />
           ) : (
             <>
@@ -5409,7 +5435,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       <span>連線</span>
                     </div>
                     <div className="flex gap-1.5">
-                      {([['none', '關閉'], ['solid', '實線'], ['dash', '虛線']] as const).map(([mode, name]) => (
+                      {([['solid', '實線'], ['dash', '虛線'], ['none', '關閉']] as const).map(([mode, name]) => (
                         <button
                           key={mode}
                           onClick={() => linkSupported && setLinkMode(mode)}
@@ -5427,6 +5453,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         </button>
                       ))}
                     </div>
+                    {linkMode !== 'none' && (
+                      <div
+                        className="h-[47px] mt-2 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
+                        onClick={() => setColorPickerTarget('linkColor')}
+                      >
+                        <span className="text-[10px] font-bold text-[#888]">顏色</span>
+                        <div className="flex items-center gap-2">
+                          {/* 還沒挑過顏色時是「預設」＝跟遮罩同色／在遮罩上挖穿 */}
+                          <span className="text-[9px] font-mono text-white/40">{linkColor || '預設'}</span>
+                          <div
+                            className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10"
+                            style={linkColor
+                              ? { backgroundColor: linkColor }
+                              : { background: 'repeating-linear-gradient(45deg,#333,#333 3px,#555 3px,#555 6px)' }}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* 發光：預設關閉。可以只讓其中一側發光。 */}
