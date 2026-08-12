@@ -76,7 +76,7 @@ const LIB_TEMPLATES: { name: string; ratio: string }[] = Array.from({ length: 12
 const OTP_LEN = 6;
 const OTP_MAX = 10;
 
-interface Account { kind: 'phone' | 'email'; id: string; at: number }
+interface Account { kind: 'phone' | 'email'; id: string; at: number; photo: string | null }
 
 /** 顯示用的名字：信箱就取 @ 前面那一段，手機號就整串 */
 const displayName = (a: Account): string =>
@@ -84,7 +84,68 @@ const displayName = (a: Account): string =>
 
 /** 把登入中的使用者換成畫面用的格式 */
 const toAccount = (u: AuthUser | null): Account | null =>
-  u ? { kind: 'email', id: u.email || u.id, at: u.createdAt } : null;
+  u ? { kind: 'email', id: u.email || u.id, at: u.createdAt, photo: u.photo } : null;
+
+/**
+ * 頭貼。優先序：
+ *   ① 自己上傳的（存在這台裝置）—— 使用者親手挑的，最優先
+ *   ② 第三方帶過來的（Google 有；Apple 與 Email 不給）
+ *   ③ 名字第一個字做的字母頭貼 —— 讓沒有照片的帳號也長得像個帳號，
+ *      而不是一律灰色人形。底色由名字算出來，同一個帳號永遠同一個顏色。
+ *
+ * ② 是外部網址，載不出來（沒網路、被擋掉）就自動退回 ③。
+ */
+const LETTER_HUES = [212, 340, 24, 152, 268, 46, 190, 320];
+
+const AvatarView: React.FC<{
+  local: string | null;
+  account: Account | null;
+  size: number;
+}> = ({ local, account, size }) => {
+  const [remoteBad, setRemoteBad] = useState(false);
+  const remote = account?.photo || null;
+  useEffect(() => { setRemoteBad(false); }, [remote]);
+
+  const src = local || (!remoteBad ? remote : null);
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt=""
+        referrerPolicy="no-referrer"
+        onError={() => setRemoteBad(true)}
+        className="w-full h-full object-cover"
+        draggable={false}
+      />
+    );
+  }
+
+  if (account) {
+    const name = displayName(account).trim();
+    const ch = (name[0] || '?').toUpperCase();
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+    const hue = LETTER_HUES[h % LETTER_HUES.length];
+    return (
+      <span
+        className="w-full h-full flex items-center justify-center font-bold text-white select-none"
+        style={{
+          fontSize: Math.round(size * 0.42),
+          background: `linear-gradient(140deg, hsl(${hue} 46% 42%), hsl(${(hue + 26) % 360} 44% 30%))`,
+        }}
+      >
+        {ch}
+      </span>
+    );
+  }
+
+  /* Material Symbols 的大小就是 font-size，所以用外面這層帶進去（Icon 會繼承） */
+  return (
+    <span className="leading-none" style={{ fontSize: Math.round(size * 0.5) }}>
+      <Icon name="person" />
+    </span>
+  );
+};
 
 /* 分頁列只有文字、沒有圖示 —— 三個字並排本來就分得出來，
    少一排圖示這條列也矮一點，畫面看起來更乾淨。 */
@@ -390,9 +451,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               點頭貼或名字都不會誤觸（登入前後都是同一顆，長相也一樣）。 */}
           <div className="w-full flex items-center gap-4 pt-3 pb-5 text-left">
             <span className="w-[68px] h-[68px] shrink-0 rounded-full overflow-hidden bg-white/[0.05] border border-white/[0.14] flex items-center justify-center text-white/30">
-              {avatar
-                ? <img src={avatar} alt="" className="w-full h-full object-cover" draggable={false} />
-                : <Icon name="person" className="text-[34px]" />}
+              <AvatarView local={avatar} account={account} size={68} />
             </span>
             {/* 登入後只剩一行名字，讓它自己跟頭貼上下置中（外層已經 items-center）。
                 名字那一行不要用 leading-none —— 行高等於字級的話，g、y、p 這種
@@ -901,15 +960,13 @@ export const HomePage: React.FC<HomePageProps> = ({
                   {/* 圓形裁切放在裡面這一層 —— 掛在外層的話，右下角那顆相機
                       也會被 overflow:hidden 沿著圓周切掉一半。 */}
                   <span className="w-full h-full rounded-full overflow-hidden bg-white/[0.05] border border-white/[0.14] flex items-center justify-center text-white/30">
-                    {avatar
-                      ? <img src={avatar} alt="" className="w-full h-full object-cover" draggable={false} />
-                      : <Icon name="person" className="text-[46px]" />}
+                    <AvatarView local={avatar} account={account} size={96} />
                   </span>
                   {/* 還沒上傳才掛那顆加號，當作「這裡可以放東西」的提示。
                       上傳之後就拿掉 —— 頭貼本身已經是最好的說明，不用再壓一顆按鈕在上面。
                       （不管有沒有加號，點頭貼都能重選一張。）
                       往內縮 2px，圓心才會落在圓周上（正角落是在圓外面）。 */}
-                  {!avatar && (
+                  {!avatar && !account.photo && (
                     <span className="absolute right-[2px] bottom-[2px] w-[30px] h-[30px] rounded-full bg-white text-black border-[3px] border-black flex items-center justify-center">
                       <Icon name="add" className="text-[16px]" />
                     </span>
