@@ -696,47 +696,55 @@ export const HomePage: React.FC<HomePageProps> = ({
                       iOS 上架規定：只要有 Google，就一定要有 Sign in with Apple。 */}
                   {!emailOpen && (
                   <>
+                  {/* 三顆按鈕的排版方式完全一樣：
+                      圖示用 absolute 釘在左邊固定位置（不佔文字的版面），
+                      文字則是唯一的 in-flow 子元素，被 justify-center 置中。
+                      這樣三行字的中心線一定在同一個 x 上，字級／字重／字距
+                      也是同一組 class，Apple 那行就跟 Google 那行完全一致。 */}
                   <button
                     onClick={() => oauth('apple')}
                     disabled={step === 'busy'}
-                    className="w-full h-[50px] rounded-[14px] bg-white text-black text-[15px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center gap-2.5"
+                    className="relative w-full h-[50px] rounded-[14px] bg-white text-black text-[15px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center"
                   >
                     {/* Apple 官方標誌。viewBox 是 384×512，標誌本身只佔其中 364×448，
                         所以方框 B 畫出來只有 0.711B 寬、0.875B 高；
                         Google 的 48×48 幾乎填滿，17px 方框就實打實畫出 15.3×15.6。
-
-                        之前對齊「高度」還是看起來小，是因為一排橫向排列的東西，
-                        眼睛主要比的是**寬度**；而且深色圖形放在白底上會顯得更小
-                        （輻照效應）。所以這次直接對齊寬度再往上加一點：
-                        方框 24px → 畫出 17.1×21.0，兩個方向都不小於 Google 那顆。 */}
-                    <svg viewBox="0 0 384 512" className="w-[24px] h-[24px]" fill="currentColor" aria-hidden>
-                      <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
-                    </svg>
-                    使用 Apple 帳號登入
+                        方框 24px → 畫出 17.1×21.0，兩個方向都不小於 Google 那顆。
+                        兩顆的外框都是 24px、都釘在 left-[18px]，所以圖示中心也對齊。 */}
+                    <span className="absolute left-[18px] top-0 h-full w-[24px] flex items-center justify-center" aria-hidden>
+                      <svg viewBox="0 0 384 512" className="w-[24px] h-[24px]" fill="currentColor">
+                        <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+                      </svg>
+                    </span>
+                    <span>使用 Apple 帳號登入</span>
                   </button>
                   <button
                     onClick={() => oauth('google')}
                     disabled={step === 'busy'}
-                    className="mt-2.5 w-full h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[15px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center gap-2.5"
+                    className="relative mt-2.5 w-full h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[15px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center"
                   >
                     {/* Google 官方四色標誌 */}
-                    <svg viewBox="0 0 48 48" className="w-[17px] h-[17px]" aria-hidden>
-                      <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-3.9H24v7.1h12.1c-.2 1.9-1.6 4.7-4.5 6.6l-.04.3 6.5 5 .5.05c4.1-3.8 6.5-9.4 6.5-15.1z"/>
-                      <path fill="#34A853" d="M24 46c5.9 0 10.9-1.9 14.5-5.3l-6.9-5.3c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.7-3.8-12.5-9.1l-.3 0-6.7 5.2-.1.3C8 41.1 15.4 46 24 46z"/>
-                      <path fill="#FBBC05" d="M11.5 28.5c-.5-1.4-.7-2.9-.7-4.5s.3-3.1.7-4.5l0-.3-6.8-5.3-.2.1C2.9 17.1 2 20.4 2 24s.9 6.9 2.5 9.9l7-5.4z"/>
-                      <path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.500 29.9 2 24 2 15.4 2 8 6.9 4.5 14.1l7 5.4C13.3 14.3 18.2 10.6 24 10.6z"/>
-                    </svg>
-                    使用 Google 帳號登入
+                    <span className="absolute left-[18px] top-0 h-full w-[24px] flex items-center justify-center" aria-hidden>
+                      <svg viewBox="0 0 48 48" className="w-[17px] h-[17px]">
+                        <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-3.9H24v7.1h12.1c-.2 1.9-1.6 4.7-4.5 6.6l-.04.3 6.5 5 .5.05c4.1-3.8 6.5-9.4 6.5-15.1z"/>
+                        <path fill="#34A853" d="M24 46c5.9 0 10.9-1.9 14.5-5.3l-6.9-5.3c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.7-3.8-12.5-9.1l-.3 0-6.7 5.2-.1.3C8 41.1 15.4 46 24 46z"/>
+                        <path fill="#FBBC05" d="M11.5 28.5c-.5-1.4-.7-2.9-.7-4.5s.3-3.1.7-4.5l0-.3-6.8-5.3-.2.1C2.9 17.1 2 20.4 2 24s.9 6.9 2.5 9.9l7-5.4z"/>
+                        <path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.500 29.9 2 24 2 15.4 2 8 6.9 4.5 14.1l7 5.4C13.3 14.3 18.2 10.6 24 10.6z"/>
+                      </svg>
+                    </span>
+                    <span>使用 Google 帳號登入</span>
                   </button>
 
                   {/* 點下去之後整片換成信箱登入的畫面（上面三顆會收起來） */}
                   <button
                     onClick={() => { setEmailOpen(true); setLoginErr(''); setLoginNote(''); }}
                     disabled={step === 'busy'}
-                    className="mt-2.5 w-full h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[15px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center gap-2.5"
+                    className="relative mt-2.5 w-full h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[15px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center"
                   >
-                    <Icon name="mail" className="text-[17px] leading-none" />
-                    使用電子郵件登入
+                    <span className="absolute left-[18px] top-0 h-full w-[24px] flex items-center justify-center" aria-hidden>
+                      <Icon name="mail" className="text-[19px] leading-none" />
+                    </span>
+                    <span>使用電子郵件登入</span>
                   </button>
                   </>
                   )}
