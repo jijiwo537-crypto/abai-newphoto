@@ -134,7 +134,16 @@ export const signInWithProvider = async (provider: 'google' | 'apple') => {
   if (!supabase) throw new Error('尚未設定後端');
   const { error } = await supabase.auth.signInWithOAuth({
     provider,
-    options: { redirectTo: `${location.origin}${location.pathname}` },
+    options: {
+      redirectTo: `${location.origin}${location.pathname}`,
+      /* 每次都跳出「選擇帳號」。
+         不加這個的話，瀏覽器裡只登著一個 Google 帳號時，Google 會判斷
+         「反正只有一個」就直接放行，使用者完全沒有機會換帳號，也沒辦法
+         用別的帳號登入。prompt=select_account 是 Google 官方的參數，
+         強制它每次都把帳號清單顯示出來。
+         Apple 沒有這個參數（它自己就會問），所以只加在 Google 上。 */
+      ...(provider === 'google' ? { queryParams: { prompt: 'select_account' } } : {}),
+    },
   });
   if (error) throw error;
 };
