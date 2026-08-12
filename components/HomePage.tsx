@@ -3,6 +3,11 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Icon } from './Icon';
 import { ThreeBackground } from './ThreeBackground';
 import type { ExportMeta } from '../utils/exportHistory';
+import {
+  type AuthUser, isAuthReady, authErrText, getUser, onAuthChange,
+  signUpWithPassword, signInWithPassword, sendPasswordReset,
+  sendEmailOtp, verifyEmailOtp, signInWithProvider, signOut, deleteAccount,
+} from '../utils/auth';
 
 const CONTACT_EMAIL = 'chi888969930522@gmail.com';
 const CONTACT_IG = 'abai_is.perfect';
@@ -61,8 +66,6 @@ const LIB_TEMPLATES: { name: string; ratio: string }[] = Array.from({ length: 12
   ratio: TILE_RATIO,
 }));
 
-const ACCOUNT_KEY = 'abai:account';
-
 interface Account { kind: 'phone' | 'email'; id: string; at: number }
 
 /** 顯示用：手機留頭尾、信箱只留第一個字 */
@@ -75,14 +78,9 @@ const maskId = (a: Account): string => {
   return `${u.slice(0, 1)}${'*'.repeat(Math.max(2, u.length - 1))}@${host}`;
 };
 
-const readAccount = (): Account | null => {
-  try {
-    const raw = localStorage.getItem(ACCOUNT_KEY);
-    if (!raw) return null;
-    const a = JSON.parse(raw);
-    return a && a.id ? a : null;
-  } catch { return null; }
-};
+/** 把登入中的使用者換成畫面用的格式 */
+const toAccount = (u: AuthUser | null): Account | null =>
+  u ? { kind: 'email', id: u.email || u.id, at: u.createdAt } : null;
 
 /* 分頁列只有文字、沒有圖示 —— 三個字並排本來就分得出來，
    少一排圖示這條列也矮一點，畫面看起來更乾淨。 */
@@ -115,17 +113,31 @@ export const HomePage: React.FC<HomePageProps> = ({
   useEffect(() => { navRef.current = nav; }, [nav]);
 
   /* --- 登入 ---
-     沒有後端，帳號就存在這台裝置上（localStorage）。流程與畫面照真的做：
-     輸入手機／信箱 → 驗證碼 → 登入中 → 登入完成，之後可以登出。
-     只收識別碼與驗證碼，不收密碼。 */
-  const [account, setAccount] = useState<Account | null>(readAccount);
+     真的帳號系統（Supabase）。四條路：Email 驗證碼、Email＋密碼、
+     Google、Apple。登入狀態由 SDK 保管，重開 App 還在。 */
+  const [account, setAccount] = useState<Account | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
+  /** id＝輸入信箱那一頁｜code＝輸入驗證碼｜busy＝正在等伺服器 */
   const [step, setStep] = useState<'id' | 'code' | 'busy'>('id');
-  const [kind, setKind] = useState<'phone' | 'email'>('phone');
+  /** 用驗證碼還是用密碼 */
+  const [mode, setMode] = useState<'otp' | 'password'>('otp');
   const [idInput, setIdInput] = useState('');
+  const [pw, setPw] = useState('');
   const [code, setCode] = useState('');
   const [loginErr, setLoginErr] = useState('');
+  const [loginNote, setLoginNote] = useState('');
   const [cooldown, setCooldown] = useState(0);
+  const [delOpen, setDelOpen] = useState(false);
+  const [delBusy, setDelBusy] = useState(false);
+
+  /* 開 App 先問一次「現在誰登入著」，之後靠 onAuthChange 跟著變 ——
+     第三方登入導回來、token 自動換新、在別的分頁登出，都會走到這裡。 */
+  useEffect(() => {
+    let alive = true;
+    getUser().then(u => { if (alive) setAccount(toAccount(u)); }).catch(() => {});
+    const off = onAuthChange(u => setAccount(toAccount(u)));
+    return () => { alive = false; off(); };
+  }, []);
 
   useEffect(() => {
     if (cooldown <= 0) return;
@@ -133,35 +145,77 @@ export const HomePage: React.FC<HomePageProps> = ({
     return () => clearTimeout(t);
   }, [cooldown]);
 
-  const idOk = kind === 'phone'
-    ? /^09\d{8}$/.test(idInput.replace(/\D/g, ''))
-    : /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(idInput.trim());
+  const idOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(idInput.trim());
+  const pwOk = pw.length >= 6;
 
   const openLogin = () => {
-    setStep('id'); setIdInput(''); setCode(''); setLoginErr(''); setCooldown(0);
+    setStep('id'); setIdInput(''); setPw(''); setCode('');
+    setLoginErr(''); setLoginNote(''); setCooldown(0); setMode('otp');
     setLoginOpen(true);
   };
 
-  const sendCode = () => {
-    if (!idOk) { setLoginErr(kind === 'phone' ? '請輸入 10 碼手機號碼' : '請輸入正確的電子郵件'); return; }
-    setLoginErr(''); setStep('code'); setCooldown(60);
+  /** 統一的錯誤處理：把英文訊息換成中文，並把畫面收回可操作的狀態 */
+  const fail = (e: any, back: 'id' | 'code' = 'id') => {
+    setLoginErr(authErrText(e));
+    setStep(back);
   };
 
-  const submitCode = () => {
+  /** 驗證碼那條路：寄六位數到信箱（沒帳號就順便建一個） */
+  const sendCode = async () => {
+    if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
+    if (!idOk) { setLoginErr('請輸入正確的電子郵件'); return; }
+    setLoginErr(''); setLoginNote(''); setStep('busy');
+    try {
+      await sendEmailOtp(idInput);
+      setStep('code'); setCooldown(60);
+    } catch (e) { fail(e); }
+  };
+
+  const submitCode = async () => {
     if (code.length !== 6) { setLoginErr('請輸入 6 位數驗證碼'); return; }
     setLoginErr(''); setStep('busy');
-    // 沒有後端可以驗，這裡就是等一下再讓它成功
-    setTimeout(() => {
-      const a: Account = { kind, id: kind === 'phone' ? idInput.replace(/\D/g, '') : idInput.trim(), at: Date.now() };
-      try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify(a)); } catch { /* 私密瀏覽會擋 */ }
-      setAccount(a);
+    try {
+      await verifyEmailOtp(idInput, code);
       setLoginOpen(false);
-    }, 900);
+    } catch (e) { fail(e, 'code'); }
   };
 
-  const logout = () => {
-    try { localStorage.removeItem(ACCOUNT_KEY); } catch { /* ignore */ }
-    setAccount(null);
+  /** 密碼那條路：先試登入，沒有這個帳號就註冊 */
+  const submitPassword = async (intent: 'in' | 'up') => {
+    if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
+    if (!idOk) { setLoginErr('請輸入正確的電子郵件'); return; }
+    if (!pwOk) { setLoginErr('密碼至少要 6 個字'); return; }
+    setLoginErr(''); setLoginNote(''); setStep('busy');
+    try {
+      if (intent === 'in') { await signInWithPassword(idInput, pw); setLoginOpen(false); return; }
+      const r = await signUpWithPassword(idInput, pw);
+      if (r.needVerify) { setStep('id'); setLoginNote('驗證信寄出去了，去信箱點一下就完成註冊'); }
+      else setLoginOpen(false);
+    } catch (e) { fail(e); }
+  };
+
+  const forgotPw = async () => {
+    if (!idOk) { setLoginErr('請先輸入你的電子郵件'); return; }
+    setLoginErr(''); setStep('busy');
+    try { await sendPasswordReset(idInput); setStep('id'); setLoginNote('重設密碼的信寄出去了'); }
+    catch (e) { fail(e); }
+  };
+
+  const oauth = async (p: 'google' | 'apple') => {
+    if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
+    setLoginErr(''); setStep('busy');
+    try { await signInWithProvider(p); }   // 會跳走，回來時 onAuthChange 接手
+    catch (e) { fail(e); }
+  };
+
+  const logout = () => { signOut().catch(() => {}); setAccount(null); };
+
+  /** 刪除帳號（App Store 規定一定要能在 App 裡刪） */
+  const removeAccount = async () => {
+    setDelBusy(true);
+    try { await deleteAccount(); setAccount(null); setDelOpen(false); }
+    catch (e) { alert(authErrText(e)); }
+    finally { setDelBusy(false); }
   };
 
   /** 從「我」切回來時要定位到哪裡（直接跳，不能用捲動動畫） */
@@ -323,12 +377,21 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
 
           {account && (
-            <button
-              onClick={logout}
-              className="mt-6 w-full h-[46px] rounded-[12px] bg-white/[0.05] border border-white/10 text-[12px] font-bold tracking-[0.1em] text-white/60 hover:bg-white/[0.1] active:scale-[0.98] transition-[background-color,transform] duration-300"
-            >
-              登出
-            </button>
+            <>
+              <button
+                onClick={logout}
+                className="mt-6 w-full h-[46px] rounded-[12px] bg-white/[0.05] border border-white/10 text-[12px] font-bold tracking-[0.1em] text-white/60 hover:bg-white/[0.1] active:scale-[0.98] transition-[background-color,transform] duration-300"
+              >
+                登出
+              </button>
+              {/* App Store 審核指南 5.1.1(v)：App 內能註冊，就必須能在 App 內刪除帳號 */}
+              <button
+                onClick={() => setDelOpen(true)}
+                className="mt-3 w-full h-[46px] rounded-[12px] border border-white/10 text-[12px] font-bold tracking-[0.1em] text-white/35 hover:text-white/60 active:scale-[0.98] transition-[color,transform] duration-300"
+              >
+                刪除帳號
+              </button>
+            </>
           )}
         </div>
       )}
@@ -611,16 +674,16 @@ export const HomePage: React.FC<HomePageProps> = ({
                 </button>
               </div>
 
-              {step === 'id' ? (
+              {step === 'id' || step === 'busy' ? (
                 <>
-                  {/* 手機 / 電子郵件 */}
+                  {/* 驗證碼 / 密碼：兩條路，同一個信箱欄位 */}
                   <div className="flex p-1 mb-4 rounded-full bg-white/[0.06] border border-white/10">
-                    {([['phone', '手機號碼'], ['email', '電子郵件']] as const).map(([k, label]) => (
+                    {([['otp', '驗證碼'], ['password', '密碼']] as const).map(([k, label]) => (
                       <button
                         key={k}
-                        onClick={() => { setKind(k); setIdInput(''); setLoginErr(''); }}
+                        onClick={() => { setMode(k); setLoginErr(''); setLoginNote(''); }}
                         className={`flex-1 h-9 rounded-full text-[12px] font-bold tracking-[0.06em] transition-[background-color,color] duration-200 ${
-                          kind === k ? 'bg-white text-black' : 'text-white/50'
+                          mode === k ? 'bg-white text-black' : 'text-white/50'
                         }`}
                       >
                         {label}
@@ -629,24 +692,91 @@ export const HomePage: React.FC<HomePageProps> = ({
                   </div>
                   <input
                     value={idInput}
-                    onChange={e => { setIdInput(e.target.value); setLoginErr(''); }}
-                    inputMode={kind === 'phone' ? 'numeric' : 'email'}
-                    autoComplete={kind === 'phone' ? 'tel' : 'email'}
-                    placeholder={kind === 'phone' ? '09xx xxx xxx' : 'abaiiiii@gmail.com'}
+                    onChange={e => { setIdInput(e.target.value); setLoginErr(''); setLoginNote(''); }}
+                    inputMode="email"
+                    autoComplete="email"
+                    autoCapitalize="none"
+                    placeholder="abaiiiii@gmail.com"
                     className="w-full h-[52px] px-4 rounded-[12px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/30 text-[15px] text-white placeholder:text-white/25 transition-colors"
                   />
-                  <button
-                    onClick={sendCode}
-                    disabled={!idOk}
-                    className="mt-4 w-full h-[52px] rounded-[12px] bg-white text-black text-[13px] font-black tracking-[0.1em] disabled:opacity-25 active:scale-[0.98] transition-[opacity,transform] duration-200"
-                  >
-                    取得驗證碼
-                  </button>
+                  {mode === 'password' && (
+                    <input
+                      value={pw}
+                      onChange={e => { setPw(e.target.value); setLoginErr(''); setLoginNote(''); }}
+                      type="password"
+                      autoComplete="current-password"
+                      placeholder="密碼（至少 6 個字）"
+                      className="mt-3 w-full h-[52px] px-4 rounded-[12px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/30 text-[15px] text-white placeholder:text-white/25 transition-colors"
+                    />
+                  )}
+
+                  {mode === 'otp' ? (
+                    <button
+                      onClick={sendCode}
+                      disabled={!idOk || step === 'busy'}
+                      className="mt-4 w-full h-[52px] rounded-[12px] bg-white text-black text-[13px] font-black tracking-[0.1em] disabled:opacity-25 active:scale-[0.98] transition-[opacity,transform] duration-200 flex items-center justify-center gap-2"
+                    >
+                      {step === 'busy'
+                        ? <><span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />請稍候</>
+                        : '取得驗證碼'}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => submitPassword('in')}
+                        disabled={!idOk || !pwOk || step === 'busy'}
+                        className="mt-4 w-full h-[52px] rounded-[12px] bg-white text-black text-[13px] font-black tracking-[0.1em] disabled:opacity-25 active:scale-[0.98] transition-[opacity,transform] duration-200 flex items-center justify-center gap-2"
+                      >
+                        {step === 'busy'
+                          ? <><span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />請稍候</>
+                          : '登入'}
+                      </button>
+                      <div className="mt-3 flex items-center justify-between">
+                        <button
+                          onClick={() => submitPassword('up')}
+                          disabled={!idOk || !pwOk || step === 'busy'}
+                          className="text-[11px] text-white/60 disabled:text-white/20 tracking-[0.06em]"
+                        >
+                          用這組建立新帳號
+                        </button>
+                        <button
+                          onClick={forgotPw}
+                          disabled={step === 'busy'}
+                          className="text-[11px] text-white/45 disabled:text-white/20 tracking-[0.06em]"
+                        >
+                          忘記密碼
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {/* 第三方登入。iOS 上架規定：只要有 Google，就一定要有 Apple。 */}
+                  <div className="mt-5 flex items-center gap-3">
+                    <span className="flex-1 h-px bg-white/10" />
+                    <span className="text-[10px] tracking-[0.2em] text-white/25">或</span>
+                    <span className="flex-1 h-px bg-white/10" />
+                  </div>
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => oauth('apple')}
+                      disabled={step === 'busy'}
+                      className="h-[50px] rounded-[12px] bg-white text-black text-[12px] font-black tracking-[0.08em] active:scale-[0.98] transition-transform disabled:opacity-30 flex items-center justify-center gap-1.5"
+                    >
+                      <span className="text-[16px] leading-none"></span> Apple
+                    </button>
+                    <button
+                      onClick={() => oauth('google')}
+                      disabled={step === 'busy'}
+                      className="h-[50px] rounded-[12px] bg-white/[0.06] border border-white/15 text-white text-[12px] font-black tracking-[0.08em] active:scale-[0.98] transition-transform disabled:opacity-30 flex items-center justify-center gap-2"
+                    >
+                      <span className="w-4 h-4 rounded-full bg-white text-black text-[11px] font-black leading-4">G</span> Google
+                    </button>
+                  </div>
                 </>
               ) : (
                 <>
                   <p className="mb-4 text-[12px] text-white/40">
-                    帳號 <span className="text-white/70">{kind === 'phone' ? idInput.replace(/\D/g, '') : idInput.trim()}</span>
+                    驗證碼寄到 <span className="text-white/70">{idInput.trim()}</span>
                   </p>
                   <input
                     value={code}
@@ -659,7 +789,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   />
                   <div className="mt-3 flex justify-center">
                     <button
-                      onClick={() => setCooldown(60)}
+                      onClick={() => { setCooldown(60); sendEmailOtp(idInput).catch(e => setLoginErr(authErrText(e))); }}
                       disabled={cooldown > 0 || step === 'busy'}
                       className="text-[11px] text-white/45 disabled:text-white/20 tracking-[0.06em]"
                     >
@@ -682,6 +812,59 @@ export const HomePage: React.FC<HomePageProps> = ({
               )}
 
               {loginErr && <p className="mt-3 text-center text-[11px] text-white/50">{loginErr}</p>}
+              {!loginErr && loginNote && <p className="mt-3 text-center text-[11px] text-white/45">{loginNote}</p>}
+              {!isAuthReady && (
+                <p className="mt-3 text-center text-[10px] text-white/30 leading-relaxed">
+                  尚未設定後端（VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY）
+                </p>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* --- 刪除帳號：不可逆，所以一定要再問一次 --- */}
+      <AnimatePresence>
+        {delOpen && (
+          <motion.div
+            key="del"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => !delBusy && setDelOpen(false)}
+            className="absolute inset-0 z-[70] flex items-center justify-center px-8 bg-black/80 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.94, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.94, opacity: 0 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-[320px] rounded-[20px] bg-[#141414] border border-white/10 p-6"
+            >
+              <p className="text-[14px] font-black tracking-[0.06em] text-white">確定要刪除帳號？</p>
+              <p className="mt-2 text-[12px] leading-relaxed text-white/45">
+                帳號與雲端資料會被永久刪除，無法復原。手機裡已經存好的照片不受影響。
+              </p>
+              <div className="mt-5 flex gap-3">
+                <button
+                  onClick={() => setDelOpen(false)}
+                  disabled={delBusy}
+                  className="flex-1 h-[46px] rounded-[12px] bg-white/[0.06] border border-white/10 text-[12px] font-bold tracking-[0.08em] text-white/70 active:scale-[0.98] transition-transform disabled:opacity-30"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={removeAccount}
+                  disabled={delBusy}
+                  className="flex-1 h-[46px] rounded-[12px] bg-white text-black text-[12px] font-black tracking-[0.08em] active:scale-[0.98] transition-transform disabled:opacity-40 flex items-center justify-center gap-2"
+                >
+                  {delBusy
+                    ? <><span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />刪除中</>
+                    : '刪除'}
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}
