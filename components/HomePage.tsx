@@ -158,13 +158,6 @@ export const HomePage: React.FC<HomePageProps> = ({
     catch (e: any) { setAvatarErr(e?.message || '這張圖片讀不進來'); }
   };
 
-  const clearAvatar = () => {
-    if (!account) return;
-    removeAvatar(account.id);
-    setAvatar(null);
-    setAvatarErr('');
-  };
-
   /* 開 App 先問一次「現在誰登入著」，之後靠 onAuthChange 跟著變 ——
      第三方登入導回來、token 自動換新、在別的分頁登出，都會走到這裡。 */
   useEffect(() => {
@@ -392,11 +385,10 @@ export const HomePage: React.FC<HomePageProps> = ({
         /* 上面那條標題列拿掉了，這裡自己補回它原本的高度（safe-area + 62px），
            這一頁的東西才會留在原來的位置，不會整組往上跑。 */
         <div className="no-scrollbar relative z-[5] flex-1 min-h-0 overflow-y-auto px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+62px)] box-border">
-          {/* 登入入口。已登入就換成帳號本身，點右邊的箭頭進帳號設定 */}
-          <button
-            onClick={() => { account ? setAcctOpen(true) : openLogin(); }}
-            className="w-full flex items-center gap-4 pt-3 pb-5 text-left active:opacity-70 transition-opacity duration-200"
-          >
+          {/* 登入入口。
+              整列不再是一顆大按鈕 —— 只有右邊那顆箭頭會有反應，
+              點頭貼或名字都不會誤觸（登入前後都是同一顆，長相也一樣）。 */}
+          <div className="w-full flex items-center gap-4 pt-3 pb-5 text-left">
             <span className="w-[68px] h-[68px] shrink-0 rounded-full overflow-hidden bg-white/[0.05] border border-white/[0.14] flex items-center justify-center text-white/30">
               {avatar
                 ? <img src={avatar} alt="" className="w-full h-full object-cover" draggable={false} />
@@ -414,17 +406,14 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <span className="text-[11px] text-white/35">登入後可同步你的作品與偏好</span>
               )}
             </span>
-            {account ? (
-              <span className="shrink-0 w-8 h-8 flex items-center justify-center">
-                <Icon name="chevron_right" className="text-[20px] text-white/35" />
-              </span>
-            ) : (
-              <span className="shrink-0 flex items-center gap-1 h-8 pl-3 pr-2 rounded-full bg-white/[0.06] border border-white/10">
-                <span className="text-[12px] font-bold tabular-nums text-white/80">0</span>
-                <Icon name="chevron_right" className="text-[16px] text-white/35" />
-              </span>
-            )}
-          </button>
+            <button
+              onClick={() => { account ? setAcctOpen(true) : openLogin(); }}
+              aria-label={account ? '帳號設定' : '登入'}
+              className="shrink-0 w-11 h-11 -mr-2.5 rounded-full flex items-center justify-center text-white/35 active:text-white active:scale-90 transition-[color,transform]"
+            >
+              <Icon name="chevron_right" className="text-[20px]" />
+            </button>
+          </div>
 
           {/* 會員方案。沒有接金流，按鈕先不做事 */}
           <div
@@ -916,11 +905,15 @@ export const HomePage: React.FC<HomePageProps> = ({
                       ? <img src={avatar} alt="" className="w-full h-full object-cover" draggable={false} />
                       : <Icon name="person" className="text-[46px]" />}
                   </span>
-                  {/* 右下角那顆相機，讓人一眼看出這裡可以換。
+                  {/* 還沒上傳才掛那顆加號，當作「這裡可以放東西」的提示。
+                      上傳之後就拿掉 —— 頭貼本身已經是最好的說明，不用再壓一顆按鈕在上面。
+                      （不管有沒有加號，點頭貼都能重選一張。）
                       往內縮 2px，圓心才會落在圓周上（正角落是在圓外面）。 */}
-                  <span className="absolute right-[2px] bottom-[2px] w-[30px] h-[30px] rounded-full bg-white text-black border-[3px] border-black flex items-center justify-center">
-                    <Icon name="photo_camera" className="text-[14px]" />
-                  </span>
+                  {!avatar && (
+                    <span className="absolute right-[2px] bottom-[2px] w-[30px] h-[30px] rounded-full bg-white text-black border-[3px] border-black flex items-center justify-center">
+                      <Icon name="add" className="text-[16px]" />
+                    </span>
+                  )}
                 </button>
                 <input
                   ref={avatarInputRef}
@@ -929,28 +922,11 @@ export const HomePage: React.FC<HomePageProps> = ({
                   className="hidden"
                   onChange={e => { pickAvatar(e.target.files?.[0]); e.target.value = ''; }}
                 />
-                <div className="mt-3 flex items-center gap-2">
-                  <button
-                    onClick={() => avatarInputRef.current?.click()}
-                    className="h-8 px-4 rounded-full bg-white/[0.07] border border-white/10 text-[12px] font-bold text-white/80 active:scale-[0.97] transition-transform"
-                  >
-                    {avatar ? '更換頭貼' : '上傳頭貼'}
-                  </button>
-                  {avatar && (
-                    <button
-                      onClick={clearAvatar}
-                      className="h-8 px-4 rounded-full border border-white/10 text-[12px] font-bold text-white/35 active:scale-[0.97] transition-transform"
-                    >
-                      移除
-                    </button>
-                  )}
-                </div>
-                <p className="mt-2.5 text-[11px] text-white/30">頭貼只存在這台裝置，不會上傳</p>
-                {avatarErr && <p className="mt-1.5 text-[11px] text-white/50">{avatarErr}</p>}
+                {avatarErr && <p className="mt-3 text-[11px] text-white/50">{avatarErr}</p>}
               </div>
 
               {/* 這一頁才把完整信箱寫出來（外面那一列只放名字） */}
-              <div className="mt-6 rounded-[16px] bg-white/[0.05] border border-white/10 px-5 py-4">
+              <div className="mt-7 rounded-[16px] bg-white/[0.05] border border-white/10 px-5 py-4">
                 <p className="text-[11px] tracking-[0.1em] text-white/35">電子郵件</p>
                 <p className="mt-1.5 text-[15px] font-bold leading-[1.34] break-all">{account.id}</p>
               </div>
@@ -994,7 +970,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               onClick={e => e.stopPropagation()}
               className="w-full max-w-[320px] rounded-[20px] bg-[#141414] border border-white/10 p-6"
             >
-              <p className="text-[15px] font-black tracking-[0.04em] text-white">確定要登出？</p>
+              <p className="text-[15px] font-black tracking-[0.04em] text-white">確認登出帳號</p>
               <div className="mt-5 flex gap-3">
                 <button
                   onClick={() => setOutOpen(false)}
@@ -1034,8 +1010,8 @@ export const HomePage: React.FC<HomePageProps> = ({
               onClick={e => e.stopPropagation()}
               className="w-full max-w-[320px] rounded-[20px] bg-[#141414] border border-white/10 p-6"
             >
-              <p className="text-[15px] font-black tracking-[0.04em] text-white">確定要刪除帳號？</p>
-              <p className="mt-2 text-[12px] leading-relaxed text-white/45">刪除後無法復原。</p>
+              <p className="text-[15px] font-black tracking-[0.04em] text-white">確認刪除帳號</p>
+              <p className="mt-2 text-[12px] leading-relaxed text-white/45">刪除後會員資料無法復原</p>
               <div className="mt-5 flex gap-3">
                 <button
                   onClick={() => setDelOpen(false)}
