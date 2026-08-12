@@ -21,7 +21,20 @@ export interface AuthUser {
   /** 這個帳號是用什麼方式建立的（顯示用） */
   provider: 'email' | 'google' | 'apple' | string;
   createdAt: number;
-}
+  /**
+   * 第三方帳號自己帶過來的大頭照網址。
+   * Google 一定有；Apple 與 Email 驗證碼**不會給**（Apple 從來不提供照片，
+   * Email 那條路更是連問都沒問過），所以那兩種會是 null，畫面上要有備案。
+   */
+  photo: string | null;
+};
+
+/** 不同供應商放大頭照的欄位名不一樣，全部試一遍 */
+const photoOf = (u: any): string | null => {
+  const m = u?.user_metadata || {};
+  const v = m.avatar_url || m.picture || m.photoURL || null;
+  return typeof v === 'string' && /^https?:\/\//.test(v) ? v : null;
+};
 
 const toUser = (u: any): AuthUser | null => {
   if (!u) return null;
@@ -30,6 +43,7 @@ const toUser = (u: any): AuthUser | null => {
     email: u.email || u.user_metadata?.email || '',
     provider: u.app_metadata?.provider || 'email',
     createdAt: u.created_at ? Date.parse(u.created_at) : Date.now(),
+    photo: photoOf(u),
   };
 };
 
