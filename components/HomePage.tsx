@@ -127,6 +127,8 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [loginErr, setLoginErr] = useState('');
   const [loginNote, setLoginNote] = useState('');
   const [cooldown, setCooldown] = useState(0);
+  /** 用信箱登入的那一區要不要展開（預設收起來，畫面才乾淨） */
+  const [emailOpen, setEmailOpen] = useState(false);
   const [delOpen, setDelOpen] = useState(false);
   const [delBusy, setDelBusy] = useState(false);
 
@@ -150,7 +152,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   const openLogin = () => {
     setStep('id'); setIdInput(''); setPw(''); setCode('');
-    setLoginErr(''); setLoginNote(''); setCooldown(0); setMode('otp');
+    setLoginErr(''); setLoginNote(''); setCooldown(0); setMode('otp'); setEmailOpen(false);
     setLoginOpen(true);
   };
 
@@ -664,13 +666,13 @@ export const HomePage: React.FC<HomePageProps> = ({
               <div className="flex items-start justify-between mb-6">
                 <div>
                   <p className="text-[19px] font-black tracking-[0.02em] text-white leading-tight">
-                    {step === 'code' ? '輸入驗證碼' : '登入 abai'}
+                    {step === 'code' ? '輸入驗證碼' : '登入'}
                   </p>
-                  <p className="mt-1.5 text-[12px] text-white/35 leading-relaxed">
-                    {step === 'code'
-                      ? <>驗證碼寄到 <span className="text-white/60">{idInput.trim()}</span></>
-                      : '第一次來也沒關係，登入就會自動幫你建立帳號'}
-                  </p>
+                  {step === 'code' && (
+                    <p className="mt-1.5 text-[12px] text-white/35 leading-relaxed">
+                      驗證碼寄到 <span className="text-white/60">{idInput.trim()}</span>
+                    </p>
+                  )}
                 </div>
                 <button
                   onClick={() => step === 'code' ? setStep('id') : setLoginOpen(false)}
@@ -690,10 +692,11 @@ export const HomePage: React.FC<HomePageProps> = ({
                   <button
                     onClick={() => oauth('apple')}
                     disabled={step === 'busy'}
-                    className="w-full h-[50px] rounded-[14px] bg-white text-black text-[14px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center gap-2"
+                    className="w-full h-[50px] rounded-[14px] bg-white text-black text-[14px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center gap-2.5"
                   >
-                    {/* Apple 官方標誌的外形（不是 emoji，也不是字元） */}
-                    <svg viewBox="0 0 384 512" className="w-[15px] h-[15px] -mt-0.5" fill="currentColor" aria-hidden>
+                    {/* Apple 官方標誌的外形（不是字元，也不是 emoji）。
+                        方框大小跟 Google 那顆一樣是 17px，兩顆看起來才等重。 */}
+                    <svg viewBox="0 0 384 512" className="w-[17px] h-[17px] -mt-0.5" fill="currentColor" aria-hidden>
                       <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
                     </svg>
                     使用 Apple 帳號登入
@@ -713,72 +716,78 @@ export const HomePage: React.FC<HomePageProps> = ({
                     使用 Google 帳號登入
                   </button>
 
-                  <div className="my-5 flex items-center gap-3">
-                    <span className="flex-1 h-px bg-white/[0.08]" />
-                    <span className="text-[10px] tracking-[0.18em] text-white/20">或用電子郵件</span>
-                    <span className="flex-1 h-px bg-white/[0.08]" />
-                  </div>
-
-                  <input
-                    value={idInput}
-                    onChange={e => { setIdInput(e.target.value); setLoginErr(''); setLoginNote(''); }}
-                    inputMode="email"
-                    autoComplete="email"
-                    autoCapitalize="none"
-                    placeholder="電子郵件"
-                    className="w-full h-[50px] px-4 rounded-[14px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/25 text-[15px] text-white placeholder:text-white/20 transition-colors"
-                  />
-                  {mode === 'password' && (
-                    <input
-                      value={pw}
-                      onChange={e => { setPw(e.target.value); setLoginErr(''); setLoginNote(''); }}
-                      type="password"
-                      autoComplete="current-password"
-                      placeholder="密碼"
-                      className="mt-2.5 w-full h-[50px] px-4 rounded-[14px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/25 text-[15px] text-white placeholder:text-white/20 transition-colors"
-                    />
-                  )}
-
-                  <button
-                    onClick={() => mode === 'otp' ? sendCode() : submitPassword('in')}
-                    disabled={!idOk || (mode === 'password' && !pwOk) || step === 'busy'}
-                    className="mt-3 w-full h-[50px] rounded-[14px] bg-white text-black text-[14px] font-bold tracking-[0.02em] disabled:opacity-20 active:scale-[0.985] transition-[opacity,transform] duration-200 flex items-center justify-center gap-2"
-                  >
-                    {step === 'busy'
-                      ? <><span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />請稍候</>
-                      : mode === 'otp' ? '寄送驗證碼' : '登入'}
-                  </button>
-
-                  {/* 兩條路的切換：做成一句不起眼的小字，不要搶版面 */}
-                  <div className="mt-3.5 flex items-center justify-center gap-4">
+                  {/* 信箱登入：跟上面兩顆同一款按鈕，點下去才展開輸入欄 */}
+                  {!emailOpen ? (
                     <button
-                      onClick={() => { setMode(m => m === 'otp' ? 'password' : 'otp'); setLoginErr(''); setLoginNote(''); }}
+                      onClick={() => { setEmailOpen(true); setLoginErr(''); setLoginNote(''); }}
                       disabled={step === 'busy'}
-                      className="text-[11px] text-white/30 hover:text-white/60 transition-colors disabled:opacity-30"
+                      className="mt-2.5 w-full h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[14px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center gap-2.5"
                     >
-                      {mode === 'otp' ? '改用密碼登入' : '改用驗證碼登入'}
+                      <Icon name="mail" className="text-[17px] leading-none" />
+                      使用電子郵件登入
                     </button>
-                    {mode === 'password' && (
-                      <>
-                        <span className="w-px h-3 bg-white/10" />
+                  ) : (
+                    <div className="mt-2.5">
+                      <input
+                        value={idInput}
+                        onChange={e => { setIdInput(e.target.value); setLoginErr(''); setLoginNote(''); }}
+                        inputMode="email"
+                        autoComplete="email"
+                        autoCapitalize="none"
+                        autoFocus
+                        placeholder="電子郵件"
+                        className="w-full h-[50px] px-4 rounded-[14px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/25 text-[15px] text-white placeholder:text-white/20 transition-colors"
+                      />
+                      {mode === 'password' && (
+                        <input
+                          value={pw}
+                          onChange={e => { setPw(e.target.value); setLoginErr(''); setLoginNote(''); }}
+                          type="password"
+                          autoComplete="current-password"
+                          placeholder="密碼"
+                          className="mt-2.5 w-full h-[50px] px-4 rounded-[14px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/25 text-[15px] text-white placeholder:text-white/20 transition-colors"
+                        />
+                      )}
+                      <button
+                        onClick={() => mode === 'otp' ? sendCode() : submitPassword('in')}
+                        disabled={!idOk || (mode === 'password' && !pwOk) || step === 'busy'}
+                        className="mt-2.5 w-full h-[50px] rounded-[14px] bg-white text-black text-[14px] font-bold tracking-[0.02em] disabled:opacity-20 active:scale-[0.985] transition-[opacity,transform] duration-200 flex items-center justify-center gap-2"
+                      >
+                        {step === 'busy'
+                          ? <><span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />請稍候</>
+                          : mode === 'otp' ? '寄送驗證碼' : '登入'}
+                      </button>
+                      <div className="mt-3.5 flex items-center justify-center gap-4">
                         <button
-                          onClick={() => submitPassword('up')}
-                          disabled={!idOk || !pwOk || step === 'busy'}
-                          className="text-[11px] text-white/30 hover:text-white/60 transition-colors disabled:opacity-20"
-                        >
-                          註冊新帳號
-                        </button>
-                        <span className="w-px h-3 bg-white/10" />
-                        <button
-                          onClick={forgotPw}
+                          onClick={() => { setMode(m => m === 'otp' ? 'password' : 'otp'); setLoginErr(''); setLoginNote(''); }}
                           disabled={step === 'busy'}
                           className="text-[11px] text-white/30 hover:text-white/60 transition-colors disabled:opacity-30"
                         >
-                          忘記密碼
+                          {mode === 'otp' ? '改用密碼登入' : '改用驗證碼登入'}
                         </button>
-                      </>
-                    )}
-                  </div>
+                        {mode === 'password' && (
+                          <>
+                            <span className="w-px h-3 bg-white/10" />
+                            <button
+                              onClick={() => submitPassword('up')}
+                              disabled={!idOk || !pwOk || step === 'busy'}
+                              className="text-[11px] text-white/30 hover:text-white/60 transition-colors disabled:opacity-20"
+                            >
+                              註冊新帳號
+                            </button>
+                            <span className="w-px h-3 bg-white/10" />
+                            <button
+                              onClick={forgotPw}
+                              disabled={step === 'busy'}
+                              className="text-[11px] text-white/30 hover:text-white/60 transition-colors disabled:opacity-30"
+                            >
+                              忘記密碼
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
