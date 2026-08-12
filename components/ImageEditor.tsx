@@ -1462,6 +1462,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   /** 目前展開的是哪一個新特效（activeCategory === 'fx' 時才有意義） */
   const [activeFxId, setActiveFxId] = useState<string>(FX_DEFS[0].id);
   const [activeToolId, setActiveToolId] = useState<string>('filter_select');
+  /* 繪圖迴圈是掛在 ref 上的（不隨每次 render 重建），所以它要知道「現在選的是
+     哪一根滑桿」只能透過 ref。每次 render 直接指派，永遠是最新的。 */
+  const activeToolIdRef = useRef(activeToolId);
+  activeToolIdRef.current = activeToolId;
   const [selectedLutIdx, setSelectedLutIdx] = useState(0);
   const [isSoftActive, setIsSoftActive] = useState(false);
   const [isBlurActive, setIsBlurActive] = useState(false);
@@ -1648,6 +1652,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   /* 成品是 blob 網址，換掉舊的之前要回收，不然按第二次儲存
      上一輪那幾張會一直留在記憶體裡。 */
   const finalImagesRef = useRef<string[]>([]);
+  /* 導出畫面那一排成品。
+     成品是照 srcList 的順序排的，所以第一張永遠在最左邊 ——
+     但這一排是原生捲動容器，捲動位置會被瀏覽器保留／被 scroll-snap 挑到
+     離目前位置最近的那一張，於是常常一進來就停在「剛剛在編輯的那一張」。
+     每次出現這個畫面都明確捲回最左邊，才會一定從第一張開始看。 */
+  const finalStripRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (saveState !== 'success') return;
+    const el = finalStripRef.current;
+    if (!el) return;
+    // 這一拍就歸零（不要 smooth，也不要等下一幀）—— 使用者不會看到它從中間滑回去
+    el.scrollLeft = 0;
+    // 圖片是非同步解碼的，寬度長出來之後瀏覽器可能再挑一次定位點，所以下一幀再壓一次
+    const id = requestAnimationFrame(() => { if (finalStripRef.current) finalStripRef.current.scrollLeft = 0; });
+    return () => cancelAnimationFrame(id);
+  }, [saveState, finalImages]);
   /* 離開時晚一點再回收：導出紀錄的縮圖與分享用的檔案都是非同步去讀這個
      網址的，按下儲存後馬上離開的話會來不及讀完。 */
   useEffect(() => () => { const keep = finalImagesRef.current; setTimeout(() => revokeUrls(keep as any), 15000); }, []);
@@ -1665,6 +1685,27 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   // 預覽緩衝的實際比例。構圖裁切之後畫面比例會變，版面必須跟著走，
   // 不能再從已經被舊比例撐開的 canvas 量回來。
   const [previewAspect, setPreviewAspect] = useState<{ w: number; h: number } | null>(null);
+  /**
+   * 外框（負責鎖住預覽比例的那一層）。
+   *
+   * 批量編輯換照片時，畫布的內部尺寸是「同一拍」直接改掉的（cvs.width = …），
+   * 但外框的比例走的是 React state —— 要等下一次繪製才生效。
+   * 中間那一兩幀，新照片就被塞進上一張的比例框裡（畫布是 objectFit: fill），
+   * 看起來就是「換照片時圖被拉了一下」。兩張尺寸差越多、拉得越明顯。
+   *
+   * 所以改照片尺寸的同一拍，就把比例直接寫進 DOM，兩者永遠同一幀。
+   * state 照樣更新（React 之後重繪會寫同一個值），其他地方的邏輯完全不用改。
+   */
+  const previewFitRef = useRef<HTMLDivElement>(null);
+  const applyPreviewAspect = useCallback((w: number, h: number) => {
+    if (!(w > 0 && h > 0)) return;
+    const el = previewFitRef.current;
+    if (el) {
+      el.style.aspectRatio = `${w}/${h}`;
+      el.style.width = '100%';
+    }
+    setPreviewAspect(prev => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
+  }, []);
   // 構圖參數。套用之後整個預覽緩衝會用新的幾何重建，色彩流程完全不用知道它的存在。
   const [geo, setGeo] = useState<GeoParams>(() => ({ ...DEFAULT_GEO, crop: { ...FULL_CROP } }));
   const [draftGeo, setDraftGeo] = useState<GeoParams | null>(null);
@@ -1963,7 +2004,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     if (type === 'create') {
       setIsInitialCreatingMask(true);
     }
-    
+
+    // 新的一次拖曳：離屏那兩份都重算一次，不要沿用上一次留下來的
+    maskAdjKeyRef.current = '';
+    maskBaseKeyRef.current = '';
+
     setIsInteracting(true);
   };
 
@@ -2496,7 +2541,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     ctx.putImageData(new ImageData(out, w, h), 0, 0);
     cvs.style.filter = 'none';
     warmPaintedSrcRef.current = src;
-    setPreviewAspect({ w, h });
+    // 比例跟畫布尺寸同一拍寫進去，換照片時才不會有一兩幀被拉伸
+    applyPreviewAspect(w, h);
     return true;
   };
   /** 已經用預熱的畫面補過的那一張 —— 待會就別再畫一次「還沒調整」的樣子 */
@@ -2527,6 +2573,38 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   const quickFilterRef = useRef(false);
   const lut0CanvasRef = useRef<HTMLCanvasElement | null>(null);
   const lut100CanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  /* ── 遮色片用的兩張離屏畫布 ────────────────────────────────────────────
+     以前這兩張是每一幀 document.createElement 出來的，1800×1350 兩張，
+     拖一次遮色片就是幾百張畫布的配置與回收。改成整個編輯階段共用同兩張。
+     maskTemp：整張套上遮色片調整後的樣子（沒有去背，所以可以留著重複用）
+     maskOut ：把 maskTemp 用漸層去背之後、真正要疊回畫面的那張
+     maskAdjKey：maskTemp 目前裝的是照什麼參數算的；空字串代表不可沿用 */
+  const maskTempCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const maskOutCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const maskAdjKeyRef = useRef<string>('');
+  /* 拖遮色片滑桿時留下來的底圖（顏色鏈與特效都跑完、還沒上遮色片的樣子）。
+     那一整段時間它完全不會變，所以只從主畫布回讀一次。
+     maskBaseData：留下來的那一份；maskScratch：每一幀拿來算的工作區；
+     maskBaseKey：留的是哪一塊（空字串代表不可沿用）。 */
+  const maskBaseDataRef = useRef<ImageData | null>(null);
+  const maskScratchRef = useRef<ImageData | null>(null);
+  const maskBaseKeyRef = useRef<string>('');
+  /** 曝光＋亮度＋對比合成的一維查色表（見遮色片那段的說明）。
+      浮點那張給「後面還有其他步驟」時用（精度不能先掉）；
+      整數那張給「只有色調」的快速路徑用。 */
+  const maskToneLutRef = useRef<Float32Array>(new Float32Array(256));
+  const maskTone8Ref = useRef<Uint8ClampedArray>(new Uint8ClampedArray(256));
+
+  /* ── 前後對比：按下去之前那張先留一份 ──────────────────────────────────
+     放開按鈕時，畫面要回到的就是按下去之前的那一張，一個像素都不會不一樣。
+     所以與其整條管線再跑一次（有遮色片效果時量到 95ms，按起來就是「頓一下
+     才回來」），不如按下去的時候先把畫布複製一份，放開直接貼回去 —— 一次
+     GPU 搬移，跟照片多大、開了多少特效都無關。
+     只有「按著的期間畫面沒有任何其他變化」才敢貼（isDirtyRef 沒被舉起來），
+     否則照樣走完整重畫。 */
+  const compareSnapRef = useRef<HTMLCanvasElement | null>(null);
+  const compareSnapKeyRef = useRef<string>('');
 
   /* ── GPU 顏色鏈 ───────────────────────────────────────────────────────
      整條顏色鏈是純粹的 RGB→RGB 函數，所以先用**現有的 processPixels 本身**
@@ -2712,6 +2790,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   const forceRecalculateEffectsRef = useRef<boolean>(false);
 
   const blurCacheStateRef = useRef<{
+    /** 這份快取是「哪一張照片」算出來的。
+        批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
+        少了這一欄就會命中別張的快取 —— 畫面上就會出現不屬於這張圖的
+        光暈／模糊／顆粒（位置完全對不上，因為那是另一張的亮部）。 */
+    src: string;
     w: number;
     h: number;
     blur: number;
@@ -2729,6 +2812,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   } | null>(null);
 
   const softCacheStateRef = useRef<{
+    /** 這份快取是「哪一張照片」算出來的。
+        批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
+        少了這一欄就會命中別張的快取 —— 畫面上就會出現不屬於這張圖的
+        光暈／模糊／顆粒（位置完全對不上，因為那是另一張的亮部）。 */
+    src: string;
     w: number;
     h: number;
     soft: number;
@@ -2749,6 +2837,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   } | null>(null);
 
   const noise2CacheStateRef = useRef<{
+    /** 這份快取是「哪一張照片」算出來的。
+        批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
+        少了這一欄就會命中別張的快取 —— 畫面上就會出現不屬於這張圖的
+        光暈／模糊／顆粒（位置完全對不上，因為那是另一張的亮部）。 */
+    src: string;
     w: number;
     h: number;
     colorNoise2: number;
@@ -2766,6 +2859,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
   } | null>(null);
 
   const halationCacheStateRef = useRef<{
+    /** 這份快取是「哪一張照片」算出來的。
+        批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
+        少了這一欄就會命中別張的快取 —— 畫面上就會出現不屬於這張圖的
+        光暈／模糊／顆粒（位置完全對不上，因為那是另一張的亮部）。 */
+    src: string;
     w: number;
     h: number;
     fringeIntensity: number;
@@ -2809,7 +2907,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     paramsRef.current = params;
     isDirtyRef.current = true;
   }, [params]);
-  useEffect(() => { showOriginalRef.current = showOriginal; isDirtyRef.current = true; }, [showOriginal]);
+  /* 這裡以前還會順手把 isDirtyRef 設成 true。拿掉了 ——
+     繪圖迴圈本來就會單獨比對「這一幀要顯示原圖嗎」跟上一幀不同就重畫，
+     不需要靠髒旗標。而且掛著髒旗標會讓迴圈分不出「使用者按了前後對比」
+     跟「畫面真的有東西變了」，放開按鈕時就沒辦法直接把按下去之前那張貼回來
+     （見下面 compareSnapRef 那一段）。 */
+  useEffect(() => { showOriginalRef.current = showOriginal; }, [showOriginal]);
 
   // Auto-scroll to selected filter when switching back to filter category
   // 用 useLayoutEffect：在畫出來之前就把捲動位置設好，才不會先閃一下最前面
@@ -3676,7 +3779,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     let useNoise2Cache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedNoise2CanvasRef.current && noise2CacheStateRef.current) {
         const c = noise2CacheStateRef.current;
-        const sameSize = c.w === w && c.h === h;
+        // 一定要是「同一張照片」算出來的才敢用（見型別上的註解）
+        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
         const sameParams = c.colorNoise2 === p.colorNoise2;
         
         if (sameSize && sameParams) {
@@ -3747,7 +3851,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
             if (!baking) {
                 noise2CacheStateRef.current = {
-                    w, h, colorNoise2: p.colorNoise2, lutId,
+                    src: buffersSrcRef.current, w, h, colorNoise2: p.colorNoise2, lutId,
                     brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
                     highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
                     sat: p.sat, vib: p.vib, toneStr
@@ -3761,7 +3865,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     let useBlurCache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedBlurCanvasRef.current && blurCacheStateRef.current) {
         const c = blurCacheStateRef.current;
-        const sameSize = c.w === w && c.h === h;
+        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
         const sameParams = c.blur === p.blur;
         
         if (sameSize && sameParams) {
@@ -3818,7 +3922,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
             if (!baking) {
                 blurCacheStateRef.current = {
-                    w, h, blur: p.blur, lutId,
+                    src: buffersSrcRef.current, w, h, blur: p.blur, lutId,
                     brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
                     highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
                     sat: p.sat, vib: p.vib, toneStr
@@ -3832,7 +3936,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     let useSoftCache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedSoftCanvasRef.current && softCacheStateRef.current) {
         const c = softCacheStateRef.current;
-        const sameSize = c.w === w && c.h === h;
+        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
         const sameParams = c.soft === p.soft &&
             c.softThreshold === p.softThreshold &&
             c.softRadius === p.softRadius &&
@@ -3906,7 +4010,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
         if (!baking) {
             softCacheStateRef.current = {
-                w, h, soft: p.soft, softThreshold: p.softThreshold, softRadius: p.softRadius, softColor: p.softColor, lutId,
+                src: buffersSrcRef.current, w, h, soft: p.soft, softThreshold: p.softThreshold, softRadius: p.softRadius, softColor: p.softColor, lutId,
                 brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
                 highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
                 sat: p.sat, vib: p.vib, toneStr
@@ -3944,7 +4048,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     let useHalationCache = false;
     if (!baking && !forceRecalculateEffectsRef.current && cachedHalationCanvasRef.current && halationCacheStateRef.current) {
         const c = halationCacheStateRef.current;
-        const sameSize = c.w === w && c.h === h;
+        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
         const sameParams = c.fringeIntensity === p.fringeIntensity &&
             c.fringeSize === p.fringeSize &&
             c.fringeFeather === p.fringeFeather &&
@@ -4046,7 +4150,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
             if (!baking) {
                 halationCacheStateRef.current = {
-                    w, h, fringeIntensity: p.fringeIntensity, fringeSize: p.fringeSize, fringeFeather: p.fringeFeather, fringeHue: p.fringeHue, lutId,
+                    src: buffersSrcRef.current, w, h, fringeIntensity: p.fringeIntensity, fringeSize: p.fringeSize, fringeFeather: p.fringeFeather, fringeHue: p.fringeHue, lutId,
                     brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
                     highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
                     sat: p.sat, vib: p.vib, toneStr
@@ -4106,9 +4210,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       p.maskSat !== 0 || 
       p.maskVib !== 0;
 
-    if (p.maskCreated && (hasMaskAdjustments || p.maskShowOverlay)) {
-      ctx.save();
-      
+    // 紅色遮罩只是編輯時看得到遮色片範圍用的輔助顯示，
+    // 烘焙（導出、縮圖）出來的圖片絕對不能有它。
+    const showOverlay = !baking && p.maskShowOverlay && activeCategory === 'mask' && !(isInteracting && !activeDragRef.current);
+
+    /* 什麼都不用做就直接跳過。
+       以前只要 maskShowOverlay 是開的就會整段跑一遍 —— 即使沒有任何調整、
+       紅色輔助也不該畫（例如導出時）。那一趟會白白開兩張整張大小的畫布、
+       把像素讀回來再寫回去，等於每一幀都付一次全解析度的來回。 */
+    if (p.maskCreated && (hasMaskAdjustments || showOverlay)) {
       const cos = Math.cos(p.maskAngle);
       const sin = Math.sin(p.maskAngle);
 
@@ -4121,23 +4231,128 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       const x2 = cx + d * cos;
       const y2 = cy + d * sin;
 
-      // Create offscreen canvas for applying exposure and/or red overlay to the whole image
-      const tempCanvas = document.createElement('canvas');
-      tempCanvas.width = w;
-      tempCanvas.height = h;
-      const tempCtx = tempCanvas.getContext('2d')!;
+      const redR = 220, redG = 38, redB = 38, redAlpha = 0.5;
 
-      // Draw the current state of main canvas onto temp canvas
-      tempCtx.drawImage(ctx.canvas, 0, 0);
+      if (!hasMaskAdjustments) {
+        /* ── 只有紅色輔助遮罩：一次漸層填色就到位 ───────────────────────
+           這正是「拖曳生成遮色片」那段時間的情況（遮色片剛畫出來，
+           九個參數都還是 0），也是卡頓最嚴重的地方。
 
-      // Apply exposure and/or red overlay to the pixels in tempCanvas
-      const imgData = tempCtx.getImageData(0, 0, w, h);
+           舊寫法是把整張圖複製到離屏畫布、getImageData 讀回來、
+           用 JS 迴圈逐像素混紅色、putImageData 寫回去、再用第二張畫布
+           做漸層去背 —— 1800×1350 就是每一幀 240 萬次迴圈加兩趟
+           9.7MB 的來回搬運，量到單一長任務 334ms。
+
+           但那串運算的結果其實可以直接寫成公式：
+             舊：主 =主×(1-g) + (主×0.5 + 紅×0.5)×g = 主×(1-0.5g) + 紅×0.5g
+             新：主 =主×(1-a) + 紅×a          其中 a = 0.5g
+           兩者完全相同，所以改成「用紅色、透明度從 0.5 漸層到 0」直接填一次。
+           畫布漸層是照預乘 alpha 內插的，兩個端點的 RGB 一樣（都是那個紅），
+           內插出來的顏色就是常數，跟原本逐像素算的分毫不差。
+           零配置、零像素讀取，整段變成一次 GPU 填色。 */
+        ctx.save();
+        const grad = ctx.createLinearGradient(x1, y1, x2, y2);
+        grad.addColorStop(0, `rgba(${redR},${redG},${redB},${redAlpha})`);
+        grad.addColorStop(1, `rgba(${redR},${redG},${redB},0)`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+        ctx.restore();
+        maskAdjKeyRef.current = '';
+      } else {
+      ctx.save();
+
+      /* 離屏畫布改成重複使用，不要每一幀 document.createElement 兩張整張大小的
+         畫布 —— 那是純粹的配置與回收成本，量到的長任務有一半來自這裡。 */
+      if (!maskTempCanvasRef.current) maskTempCanvasRef.current = document.createElement('canvas');
+      const tempCanvas = maskTempCanvasRef.current;
+      if (tempCanvas.width !== w || tempCanvas.height !== h) { tempCanvas.width = w; tempCanvas.height = h; }
+      const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true })!;
+
+      /* 拖遮色片（建立／移動／縮放／旋轉）時，「整張套上遮色片調整後的樣子」
+         跟遮色片的形狀完全無關 —— 形狀只影響最後那道漸層。
+         所以一次拖曳裡這段像素運算只要算第一幀，後面每一幀都沿用。
+         只在真的拖曳中才敢沿用：那段時間滑桿不可能同時在動。 */
+      const adjKey = `${w}x${h}|${showOverlay ? 1 : 0}|${p.maskExposure},${p.maskBrightness},${p.maskContrast},${p.maskHighlights},${p.maskShadows},${p.maskTemp},${p.maskTint},${p.maskSat},${p.maskVib}`;
+      const dragging = !!activeDragRef.current && !baking;
+      /* forceRecalculateEffects 那一幀代表底下的模糊／柔光／顆粒剛重算成精細版，
+         底圖跟上一幀不一樣了 —— 這一幀一定要重算，不能沿用。 */
+      const reuseAdj = dragging && !forceRecalculateEffectsRef.current && maskAdjKeyRef.current === adjKey;
+
+      /* ── 只算真的看得到的那一塊 ────────────────────────────────────────
+         漸層從「起始線」的 1 掉到「結束線」的 0，結束線之外全是 0 ——
+         那一大片像素就算逐一算過，等一下 destination-in 也會整片清掉，
+         等於白算。所以先把「還有一點不透明」的範圍框出來，
+         連 getImageData／putImageData 都只搬那一塊。
+
+         範圍是一個半平面：(x-x1)·軸x + (y-y1)·軸y < 軸長²。
+         半平面在畫布上的外接矩形只要看邊界線在四個邊上的落點就夠了
+         （邊界是直線，極值一定發生在畫布的邊上）。
+         兩邊各留 2px 餘裕，寧可多算幾個像素也不要少算而露出接縫。 */
+      const axDx = x2 - x1, axDy = y2 - y1;
+      const axL2 = axDx * axDx + axDy * axDy;
+      let bx0 = 0, by0 = 0, bx1 = w, by1 = h;
+      /* 拖曳中要留著重複用的那張，就得整張都是算好的 —— 形狀一直在動，
+         這一幀框出來的範圍下一幀就不夠用了。反正拖曳中整段本來就只算一次，
+         省這塊沒有意義，所以只有「不沿用」的時候才收範圍。 */
+      if (axL2 > 1e-6 && !dragging) {
+        const M = 2;
+        if (axDx !== 0) {
+          const l0 = x1 + (axL2 - (0 - y1) * axDy) / axDx;
+          const l1 = x1 + (axL2 - (h - y1) * axDy) / axDx;
+          if (axDx > 0) bx1 = Math.min(w, Math.ceil(Math.max(l0, l1)) + M);
+          else bx0 = Math.max(0, Math.floor(Math.min(l0, l1)) - M);
+        }
+        if (axDy !== 0) {
+          const m0 = y1 + (axL2 - (0 - x1) * axDx) / axDy;
+          const m1 = y1 + (axL2 - (w - x1) * axDx) / axDy;
+          if (axDy > 0) by1 = Math.min(h, Math.ceil(Math.max(m0, m1)) + M);
+          else by0 = Math.max(0, Math.floor(Math.min(m0, m1)) - M);
+        }
+      }
+      // 整片都是透明的話這裡會收成空的；留 1px 免得 getImageData 拿到 0 尺寸
+      const bw = Math.max(1, Math.min(w - bx0, bx1 - bx0));
+      const bh = Math.max(1, Math.min(h - by0, by1 - by0));
+
+      if (!reuseAdj) {
+      /* ── 拖遮色片滑桿時，底圖只讀一次 ────────────────────────────────
+         底下那張圖（顏色鏈跑完、特效也上完的結果）在整段拖曳裡完全不會變，
+         會變的只有遮色片自己那九個參數。
+         但 drawImage(主畫布 → 離屏) 是一次 GPU→CPU 的回讀，1800×1350
+         一趟就要幾十毫秒 —— 每一幀都做一次，就是滑桿卡頓的主因。
+         這裡在整段拖曳的第一幀把它讀下來留一份，之後每一幀只要
+         把那份複製進工作區（一次記憶體搬移）就好。
+
+         只在「遮色片分頁 ＋ 正在互動 ＋ 不是在拖形狀」時才敢留：
+         那個狀態下唯一動得了的就是遮色片的滑桿。
+         模糊／柔光那些剛重算成精細版的那一幀（forceRecalculateEffects）
+         底圖真的變了，所以那一幀要重讀。 */
+      const adjSession = isInteracting && !baking && activeCategory === 'mask'
+        && !activeDragRef.current && !forceRecalculateEffectsRef.current;
+      const baseKey = `${bx0},${by0},${bw},${bh}`;
+      let imgData: ImageData;
+      const cachedBase = maskBaseDataRef.current;
+      if (adjSession && maskBaseKeyRef.current === baseKey && cachedBase && maskScratchRef.current) {
+        imgData = maskScratchRef.current;
+        imgData.data.set(cachedBase.data);
+      } else {
+        // Draw the current state of main canvas onto temp canvas
+        tempCtx.globalCompositeOperation = 'copy';
+        tempCtx.drawImage(ctx.canvas, 0, 0);
+        tempCtx.globalCompositeOperation = 'source-over';
+        imgData = tempCtx.getImageData(bx0, by0, bw, bh);
+        if (adjSession) {
+          maskBaseDataRef.current = new ImageData(new Uint8ClampedArray(imgData.data), bw, bh);
+          maskScratchRef.current = imgData;
+          maskBaseKeyRef.current = baseKey;
+        } else {
+          maskBaseDataRef.current = null;
+          maskScratchRef.current = null;
+          maskBaseKeyRef.current = '';
+        }
+      }
+
       const data = imgData.data;
       const len = data.length;
-
-      // 紅色遮罩只是編輯時看得到遮色片範圍用的輔助顯示，
-      // 烘焙（導出、縮圖）出來的圖片絕對不能有它。
-      const showOverlay = !baking && p.maskShowOverlay && activeCategory === 'mask' && !(isInteracting && !activeDragRef.current);
 
       // Pre-calculate mask adjustment constants (effects intensity increased by 150%, i.e. 2.5x multiplier)
       const exp = Math.pow(2, (p.maskExposure * 0.175 * 2.5) / 100);
@@ -4183,41 +4398,57 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       const vibVal = (p.maskVib * 0.5 * 2.5) / 100;
       const hasVib = vibVal !== 0;
 
-      if (hasMaskAdjustments || showOverlay) {
-          const redR = 220, redG = 38, redB = 38, redAlpha = 0.5;
+      /* 曝光 → 亮度 → 對比這三步，對 R、G、B 做的是同一條式子，跟通道是誰無關，
+         而且輸入一定是 0–255 的整數 —— 所以先在 256 個輸入值上算好，
+         迴圈裡就只剩一次查表，每個像素少掉三組乘、三組加、三次夾取。
+         表用 Float32 存的是「夾取後的浮點值」，不是先四捨五入成整數，
+         所以後面飽和度／自然飽和度接到的數字跟原本逐像素算的一模一樣。 */
+      const hasTone = p.maskExposure !== 0 || p.maskBrightness !== 0 || p.maskContrast !== 0;
+      const toneLut = maskToneLutRef.current;
+      if (hasTone) {
+          for (let i = 0; i < 256; i++) {
+              let v = i;
+              if (p.maskExposure !== 0) v *= exp;
+              if (p.maskBrightness !== 0) v += brightVal;
+              if (p.maskContrast !== 0) v = conFactor * (v - 128) + 128;
+              toneLut[i] = v < 0 ? 0 : v > 255 ? 255 : v;
+          }
+      }
+      const hasShHl = p.maskShadows !== 0 || p.maskHighlights !== 0;
+
+      /* ── 只動了曝光／亮度／對比的話，整條鏈就是一張 256 格的表 ──────────
+         這是最常見的情況（大多數人只拉一兩根）。後面那幾步（高光陰影、
+         色溫色調、飽和度、自然飽和度）全都沒開的時候，「輸入 0–255 → 輸出」
+         之間沒有任何跨通道的運算，所以可以先把表四捨五入成整數，
+         迴圈裡就只剩三次查表、完全沒有浮點數。
+         量到 243 萬像素從 13.2ms 降到 8.1ms，而且輸出**逐位元組完全相同**
+         （寫進 Uint8ClampedArray 本來就會做同一個四捨五入）。 */
+      const toneOnly = hasTone && !hasShHl && !hasTempTint && satMult === 1 && !hasVib;
+      if (toneOnly) {
+          const t8 = maskTone8Ref.current;
+          for (let i = 0; i < 256; i++) t8[i] = toneLut[i];
+          for (let i = 0; i < len; i += 4) {
+              data[i] = t8[data[i]];
+              data[i + 1] = t8[data[i + 1]];
+              data[i + 2] = t8[data[i + 2]];
+          }
+          tempCtx.putImageData(imgData, bx0, by0);
+      } else {
           for (let i = 0; i < len; i += 4) {
               let r = data[i];
               let g = data[i+1];
               let b = data[i+2];
 
-              if (hasMaskAdjustments) {
-                  // 1. Exposure
-                  if (p.maskExposure !== 0) {
-                      r *= exp;
-                      g *= exp;
-                      b *= exp;
+              {
+                  // 1~3. Exposure / Brightness / Contrast（查表，見上面的說明）
+                  if (hasTone) {
+                      r = toneLut[r];
+                      g = toneLut[g];
+                      b = toneLut[b];
                   }
-
-                  // 2. Brightness
-                  if (p.maskBrightness !== 0) {
-                      r += brightVal;
-                      g += brightVal;
-                      b += brightVal;
-                  }
-
-                  // 3. Contrast
-                  if (p.maskContrast !== 0) {
-                      r = conFactor * (r - 128) + 128;
-                      g = conFactor * (g - 128) + 128;
-                      b = conFactor * (b - 128) + 128;
-                  }
-
-                  r = r < 0 ? 0 : r > 255 ? 255 : r;
-                  g = g < 0 ? 0 : g > 255 ? 255 : g;
-                  b = b < 0 ? 0 : b > 255 ? 255 : b;
 
                   // 4. Shadows & Highlights (Logarithmic roll-off)
-                  if (p.maskShadows !== 0 || p.maskHighlights !== 0) {
+                  if (hasShHl) {
                       const lumaKey = (r * 77 + g * 150 + b * 29) >> 8;
                       const shOffset = shLut[lumaKey];
                       r += shOffset; g += shOffset; b += shOffset;
@@ -4262,42 +4493,55 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                   b = b < 0 ? 0 : b > 255 ? 255 : b;
               }
 
-              // Apply red overlay
-              if (showOverlay) {
-                  r = r * (1.0 - redAlpha) + redR * redAlpha;
-                  g = g * (1.0 - redAlpha) + redG * redAlpha;
-                  b = b * (1.0 - redAlpha) + redB * redAlpha;
-              }
-
               data[i] = r;
               data[i+1] = g;
               data[i+2] = b;
           }
-          tempCtx.putImageData(imgData, 0, 0);
+          tempCtx.putImageData(imgData, bx0, by0);
       }
 
-      // Create the linear gradient on an offscreen mask canvas
-      const maskCanvas = document.createElement('canvas');
-      maskCanvas.width = w;
-      maskCanvas.height = h;
-      const maskCtx = maskCanvas.getContext('2d')!;
+      /* 紅色輔助遮罩不必擠進上面那個迴圈：整片鋪一層 alpha 0.5 的紅，
+         算出來就是 r×0.5 + 220×0.5，跟逐像素混色分毫不差，但只要一次填色。 */
+      if (showOverlay) {
+          tempCtx.fillStyle = `rgba(${redR},${redG},${redB},${redAlpha})`;
+          tempCtx.fillRect(0, 0, w, h);
+      }
 
-      const grad = maskCtx.createLinearGradient(x1, y1, x2, y2);
+      maskAdjKeyRef.current = dragging ? adjKey : '';
+      }
+
+      /* 漸層去背。
+         拖形狀的時候 tempCanvas 要留著給下一幀用（見上面的 adjKey），
+         被漸層挖過就不能再沿用，所以那種情況得先複製到第二張再挖。
+         其餘情況（例如拖滑桿）tempCanvas 本來每一幀就重畫，直接就地挖就好 ——
+         省下一整張全解析度的畫布搬移。
+         另外這裡不再開「裝漸層用」的第三張畫布：拿漸層當填色配
+         destination-in 是同一件事。 */
+      let masked = tempCanvas;
+      let maskedCtx = tempCtx;
+      if (dragging) {
+        if (!maskOutCanvasRef.current) maskOutCanvasRef.current = document.createElement('canvas');
+        const outCanvas = maskOutCanvasRef.current;
+        if (outCanvas.width !== w || outCanvas.height !== h) { outCanvas.width = w; outCanvas.height = h; }
+        const outCtx = outCanvas.getContext('2d')!;
+        outCtx.globalCompositeOperation = 'copy';
+        outCtx.drawImage(tempCanvas, 0, 0);
+        masked = outCanvas;
+        maskedCtx = outCtx;
+      }
+
+      const grad = maskedCtx.createLinearGradient(x1, y1, x2, y2);
       grad.addColorStop(0, 'rgba(255,255,255,1.0)');
       grad.addColorStop(1, 'rgba(255,255,255,0.0)');
-
-      maskCtx.fillStyle = grad;
-      maskCtx.fillRect(0, 0, w, h);
-
-      // Mask the tempCanvas using 'destination-in' composite operation
-      tempCtx.save();
-      tempCtx.globalCompositeOperation = 'destination-in';
-      tempCtx.drawImage(maskCanvas, 0, 0);
-      tempCtx.restore();
+      maskedCtx.globalCompositeOperation = 'destination-in';
+      maskedCtx.fillStyle = grad;
+      maskedCtx.fillRect(0, 0, w, h);
+      maskedCtx.globalCompositeOperation = 'source-over';
 
       // Draw the masked temp canvas onto the main canvas
-      ctx.drawImage(tempCanvas, 0, 0);
+      ctx.drawImage(masked, 0, 0);
       ctx.restore();
+      }
     }
 
     const needsRefinement = blurNeedsLazyRefine || softNeedsLazyRefine || noise2NeedsLazyRefine || halationNeedsLazyRefine;
@@ -4419,74 +4663,106 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     applyComplexEffects(ctx, b.w, b.h, p, scale, tempShared, true, false, tempDest);
   }, [selectedLutIdx, lutList, applyComplexEffects, getCurveLuts]);
 
+  /* ── 拖曳中的極速預覽：三份全解析度的畫面 ─────────────────────────────
+     亮度那一類滑桿拖起來之所以是滿格的，是因為事先把「這根滑桿轉到 0／−100／
+     ＋100」三張畫面各算一份，拖曳中就只是在三張之間做 GPU 混合。
+
+     問題是那三份以前是**手指按下去的那一瞬間**才同步算的：全解析度跑三趟
+     processPixels，量到手一碰滑桿主執行緒就被佔住 270～303ms（亮度 303、
+     曝光 289、對比 270），而且每按一次就來一次。
+
+     改成趁閒置先算好：使用者是先點工具、再去碰滑桿的，中間那段時間畫面
+     完全閒著。繪圖迴圈的閒置分支每一輪只算三份裡的一份（約 95ms），
+     分三輪做完，按下去的時候通常一步都不用做。
+     沒先算完也不會壞 —— setupFastPreview 會把缺的補上，行為跟以前一樣。 */
+  const FAST_BLEND_TOOLS = ['brightness', 'exposure', 'contrast', 'highlights', 'shadows', 'temp', 'tint', 'sat', 'vib'];
+
+  /** 已經先算好的那份是「給誰、照什麼參數」算的；stage 是三份裡算到第幾份 */
+  const fastWarmRef = useRef<{ sig: string; stage: number }>({ sig: '', stage: 0 });
+
+  /* 那三份是把這根滑桿固定在 0／±100 算出來的，所以「這根滑桿現在是多少」
+     完全不影響結果 —— 簽章一律用把它歸零之後的參數，拖曳中才不會一直失效。 */
+  const fastSig = useCallback((toolId: string) => {
+    const b = buffers.current.preview;
+    const pBase = { ...paramsRef.current, [toolId]: 0 } as EditorParams;
+    const lut = lutList[selectedLutIdx];
+    return `${toolId}|${b.w}x${b.h}|${buffersSrcRef.current}|${lut?.id || 'none'}|${pBase.sharpen}|${bakeSigRef.current(pBase)}`;
+  }, [lutList, selectedLutIdx]);
+
+  /** 算三份裡的下一份。回傳 true 代表這一次真的有做事（沒事做就回 false）。 */
+  const buildFastStage = useCallback((toolId: string): boolean => {
+    const b = buffers.current.preview;
+    if (!b.source || !b.dest) return false;
+    const sig = fastSig(toolId);
+    if (fastWarmRef.current.sig !== sig) fastWarmRef.current = { sig, stage: 0 };
+    const st = fastWarmRef.current.stage;
+    if (st >= 3) return false;
+
+    const len = b.source.length;
+    const eb = extremeBuffersRef.current;
+    if (!eb.base || eb.base.length !== len) {
+      eb.base = new Uint8ClampedArray(len);
+      eb.min = new Uint8ClampedArray(len);
+      eb.max = new Uint8ClampedArray(len);
+    }
+    const lut = lutList[selectedLutIdx];
+    const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
+    const lutSize = activeLut ? activeLut.size : 0;
+    const activeLutData = activeLut ? activeLut.data : null;
+    const curveLuts = getCurveLuts(paramsRef.current.curves);
+
+    const val = st === 0 ? 0 : st === 1 ? -100 : 100;
+    const target = st === 0 ? eb.base! : st === 1 ? eb.min! : eb.max!;
+    const pS = { ...paramsRef.current, [toolId]: val } as EditorParams;
+    generateBaseCorrectionLut(pS.exposure, pS.contrast, pS.brightness, baseCorrectionLutRef.current);
+    processPixels(b.source, target, b.w, b.h, pS, activeLutData, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, curveLuts);
+
+    // 同步到對應的離屏畫布（拖曳中是靠它們做 GPU 混合的）
+    const cache = fastPreviewCacheRef.current;
+    const key = st === 0 ? 'baseCanvas' : st === 1 ? 'minCanvas' : 'maxCanvas';
+    if (!cache[key]) cache[key] = document.createElement('canvas');
+    const cv = cache[key]!;
+    if (cv.width !== b.w || cv.height !== b.h) { cv.width = b.w; cv.height = b.h; }
+    cv.getContext('2d')!.putImageData(new ImageData(target, b.w, b.h), 0, 0);
+
+    fastWarmRef.current = { sig, stage: st + 1 };
+    if (fastWarmRef.current.stage >= 3) eb.activeToolId = toolId;
+    return true;
+  }, [fastSig, lutList, selectedLutIdx, getCurveLuts]);
+
+  /** 閒置時呼叫：目前選的工具如果吃這套，就往下算一份 */
+  const warmFastPreview = useCallback(() => {
+    const t = activeToolIdRef.current;
+    if (!FAST_BLEND_TOOLS.includes(t)) return false;
+    return buildFastStage(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildFastStage]);
+  const warmFastPreviewRef = useRef(warmFastPreview);
+  warmFastPreviewRef.current = warmFastPreview;
+
   const setupFastPreview = useCallback((toolId: string) => {
     setIsInteracting(true);
     fastPreviewCacheRef.current.active = false;
     isDirtyRef.current = true;
     lastRenderDurationRef.current = 12; // Reset interaction timing to avoid carry-over throttles
 
-    const FAST_BLEND_TOOLS = ['brightness', 'exposure', 'contrast', 'highlights', 'shadows', 'temp', 'tint', 'sat', 'vib'];
+    if (!FAST_BLEND_TOOLS.includes(toolId)) return;
 
-    if (FAST_BLEND_TOOLS.includes(toolId)) {
-        const b = buffers.current.preview;
-        if (b.source && b.dest) {
-            const len = b.source.length;
-            if (!extremeBuffersRef.current.base || extremeBuffersRef.current.base.length !== len) {
-                extremeBuffersRef.current.base = new Uint8ClampedArray(len);
-                extremeBuffersRef.current.min = new Uint8ClampedArray(len);
-                extremeBuffersRef.current.max = new Uint8ClampedArray(len);
-            }
-            extremeBuffersRef.current.activeToolId = toolId;
+    // 閒置時沒算完的補上（通常已經算完了，這裡一步都不用做）
+    let guard = 4;
+    while (guard-- > 0 && buildFastStage(toolId)) { /* 一次一份 */ }
 
-            const lut = lutList[selectedLutIdx];
-            const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
-            const lutSize = activeLut ? activeLut.size : 0;
-            const activeLutData = activeLut ? activeLut.data : null;
-            const curveLuts = getCurveLuts(paramsRef.current.curves);
-
-            // 1. Base state (current parameter with toolId = 0)
-            const pBase = { ...paramsRef.current, [toolId]: 0 };
-            generateBaseCorrectionLut(pBase.exposure, pBase.contrast, pBase.brightness, baseCorrectionLutRef.current);
-            processPixels(b.source, extremeBuffersRef.current.base, b.w, b.h, pBase, activeLutData, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, curveLuts);
-
-            // 2. Min state (current parameter with toolId = -100)
-            const pMin = { ...paramsRef.current, [toolId]: -100 };
-            generateBaseCorrectionLut(pMin.exposure, pMin.contrast, pMin.brightness, baseCorrectionLutRef.current);
-            processPixels(b.source, extremeBuffersRef.current.min, b.w, b.h, pMin, activeLutData, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, curveLuts);
-
-            // 3. Max state (current parameter with toolId = +100)
-            const pMax = { ...paramsRef.current, [toolId]: 100 };
-            generateBaseCorrectionLut(pMax.exposure, pMax.contrast, pMax.brightness, baseCorrectionLutRef.current);
-            processPixels(b.source, extremeBuffersRef.current.max, b.w, b.h, pMax, activeLutData, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, curveLuts);
-
-            // Sync with fastPreviewCacheRef.current canvases for high-performance GPU blending
-            const cache = fastPreviewCacheRef.current;
-            cache.active = true;
-            cache.toolId = toolId;
-
-            if (!cache.baseCanvas) cache.baseCanvas = document.createElement('canvas');
-            if (cache.baseCanvas.width !== b.w || cache.baseCanvas.height !== b.h) {
-                cache.baseCanvas.width = b.w;
-                cache.baseCanvas.height = b.h;
-            }
-            cache.baseCanvas.getContext('2d')!.putImageData(new ImageData(extremeBuffersRef.current.base, b.w, b.h), 0, 0);
-
-            if (!cache.minCanvas) cache.minCanvas = document.createElement('canvas');
-            if (cache.minCanvas.width !== b.w || cache.minCanvas.height !== b.h) {
-                cache.minCanvas.width = b.w;
-                cache.minCanvas.height = b.h;
-            }
-            cache.minCanvas.getContext('2d')!.putImageData(new ImageData(extremeBuffersRef.current.min, b.w, b.h), 0, 0);
-
-            if (!cache.maxCanvas) cache.maxCanvas = document.createElement('canvas');
-            if (cache.maxCanvas.width !== b.w || cache.maxCanvas.height !== b.h) {
-                cache.maxCanvas.width = b.w;
-                cache.maxCanvas.height = b.h;
-            }
-            cache.maxCanvas.getContext('2d')!.putImageData(new ImageData(extremeBuffersRef.current.max, b.w, b.h), 0, 0);
-        }
+    const b = buffers.current.preview;
+    if (b.source && b.dest && fastWarmRef.current.stage >= 3) {
+      extremeBuffersRef.current.activeToolId = toolId;
+      const cache = fastPreviewCacheRef.current;
+      if (cache.baseCanvas && cache.minCanvas && cache.maxCanvas) {
+        cache.active = true;
+        cache.toolId = toolId;
+      }
     }
-  }, [selectedLutIdx, lutList, getCurveLuts]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buildFastStage]);
 
   const render = useCallback((p: EditorParams, overrideLutIdx?: number) => {
     const cache = fastPreviewCacheRef.current;
@@ -5086,7 +5362,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       const pctx = pc.getContext('2d', { willReadFrequently: true })!;
       pctx.imageSmoothingQuality = 'high';
       pctx.drawImage(source, 0, 0, pw, ph);
-      setPreviewAspect({ w: pw, h: ph });
+      // 同上：比例與畫布尺寸必須同一幀生效
+      applyPreviewAspect(pw, ph);
       const pData = pctx.getImageData(0, 0, pw, ph).data;
       const pLen = pData.length;
 
@@ -5319,7 +5596,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
             warmGpu(b.source, b.w, b.h, `${b.w}x${b.h}|${buffersSrcRef.current}`);
             /* 貼圖暖好之後，接著一顆一顆把濾鏡的查色表也烤起來。
                每次閒置只烤一顆，主執行緒馬上還回去。 */
-            if (gpuWarmKeyRef.current) warmBakes(paramsRef.current);
+            const baked = gpuWarmKeyRef.current ? warmBakes(paramsRef.current) : false;
+            /* 查色表都烤完了才輪到這個：把「拖曳中要用的那三張全解析度畫面」
+               先算好，手指碰到滑桿那一下就不用停下來算（原本會卡 270～303ms）。
+               一樣一次只算一份（量到約 85～115ms），不會一口氣佔住主執行緒。
+
+               而且要等畫面「真的停下來 250ms 以上」才開始 —— 剛點完工具、
+               或正在捲工具列的那一小段時間別去搶主執行緒，不然預熱本身
+               會變成新的頓點。 */
+            if (!baked && performance.now() - lastRenderTimeRef.current > 250) warmFastPreviewRef.current();
         }
         // 換照片時，新圖還在解碼，緩衝區裡裝的還是上一張 —— 這時候畫出去就是舊照片。
         // 等緩衝區換成現在這一張再畫。
@@ -5330,9 +5615,38 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
             const interacting = isInteractingRef.current;
             const now = performance.now();
             
-            if (isDirtyRef.current || currentShowOriginal !== lastRenderedShowOriginalRef.current) {
+            const flipped = currentShowOriginal !== lastRenderedShowOriginalRef.current;
+            /* ── 前後對比：按下／放開都不要再跑一次整條管線 ─────────────
+               按下去：先把現在畫布上那張（＝編輯後）複製一份留著。
+               放開  ：按著的期間如果什麼都沒變（isDirtyRef 是乾淨的），
+                       直接把那份貼回來就好，一次搬移，不必重算。 */
+            if (flipped) {
+                const snapKey = `${b.w}x${b.h}|${buffersSrcRef.current}`;
+                if (currentShowOriginal) {
+                    if (!compareSnapRef.current) compareSnapRef.current = document.createElement('canvas');
+                    const snap = compareSnapRef.current;
+                    if (snap.width !== b.w || snap.height !== b.h) { snap.width = b.w; snap.height = b.h; }
+                    const sctx = snap.getContext('2d')!;
+                    sctx.globalCompositeOperation = 'copy';
+                    sctx.drawImage(cvs, 0, 0);
+                    sctx.globalCompositeOperation = 'source-over';
+                    compareSnapKeyRef.current = isDirtyRef.current ? '' : snapKey;
+                } else if (!isDirtyRef.current && compareSnapRef.current && compareSnapKeyRef.current === snapKey) {
+                    const dctx = cvs.getContext('2d')!;
+                    dctx.globalCompositeOperation = 'copy';
+                    dctx.drawImage(compareSnapRef.current, 0, 0);
+                    dctx.globalCompositeOperation = 'source-over';
+                    cvs.style.filter = 'none';
+                    lastRenderedShowOriginalRef.current = false;
+                    lastRenderTimeRef.current = now;
+                    rafId = requestAnimationFrame(tick);
+                    return;
+                }
+            }
+
+            if (isDirtyRef.current || flipped) {
                 const elapsed = now - lastRenderTimeRef.current;
-                
+
                 // Adaptive Throttle: If user is interacting, we decouple the slider visual UI from canvas renders
                 // by enforcing a healthy throttling rate during dragging. This leaves the main thread completely free
                 // to process mouse/touch events and paint the slider handle at a perfect, fluid, lag-free 120 FPS.
@@ -6249,9 +6563,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
               <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
                   {/* 一次存多張時排成可以左右滑的一排，每一張都能長按儲存 */}
                   {/* items-center：橫式的照片要跟直式的一樣停在中間，不然會黏在上緣 */}
-                  <div className={`w-full flex flex-row items-center gap-4 ${finalImages.length > 1 ? 'overflow-x-auto no-scrollbar snap-x snap-mandatory px-[max(0px,calc(50%-40vw))]' : 'justify-center'}`}>
+                  <div
+                    ref={finalStripRef}
+                    className={`w-full flex flex-row items-center gap-4 ${finalImages.length > 1 ? 'overflow-x-auto no-scrollbar snap-x snap-mandatory px-[max(0px,calc(50%-40vw))]' : 'justify-center'}`}
+                  >
                     {(finalImages.length ? finalImages : [finalImage!]).map((src, i) => (
-                      <div key={src} className="shrink-0 snap-center flex flex-col items-center gap-2">
+                      <div
+                        key={src}
+                        className="shrink-0 snap-center flex flex-col items-center gap-2"
+                        /* 一次只准滑一張。
+                           snap-mandatory 只保證「最後會停在某個定位點」，慣性滑動
+                           照樣會衝過好幾張再吸住 —— 那就是「明明只滑一次卻跳過不只一張」。
+                           scroll-snap-stop: always 就是專門管這件事的：
+                           每個定位點都必須停下來，再快的一下也只前進一張。 */
+                        style={{ scrollSnapStop: 'always' }}
+                      >
                         <div className="relative shadow-2xl rounded overflow-hidden max-h-[60vh]">
                           <img
                               src={src}
@@ -6287,7 +6613,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       {saveState !== 'success' && (
       <header className="h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-20">
         <div className="w-24">
-            <button onClick={() => { recordProgress(); onCancel(); }} className="p-2 -ml-2 text-white/40 hover:text-white transition-colors"><Icon name="close" className="text-2xl" /></button>
+            {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
+            <button onClick={() => { recordProgress(); onCancel(); }} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"><ChevronLeft size={22} /></button>
         </div>
         <div className="flex items-center gap-4">
            <button onClick={undo} disabled={historyIndex <= 0} className={`p-2 transition-all ${historyIndex <= 0 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="undo" className="text-xl" /></button>
@@ -6363,7 +6690,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
           <TransformComponent wrapperClass="!w-full !h-full absolute inset-0" contentClass="!w-full !h-full flex items-center justify-center p-4">
             <div className="relative shadow-2xl transition-transform active:scale-[0.99] duration-300 w-full h-full flex items-center justify-center">
               {/* Sizing wrapper to ensure canvas and interactive overlay scale/move together perfectly */}
-              <div 
+              <div
+                ref={previewFitRef}
                 /* 進出 HSL 不做動畫，所以那一次切換把過場關掉 */
                 className={`relative flex items-center justify-center ease-[cubic-bezier(0.2,0,0,1)] max-w-[calc(100%-32px)] ${hslSwitch ? 'transition-none' : 'transition-[max-height] duration-500'}`}
                 style={{
@@ -6373,6 +6701,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                   marginBottom: hslFitNow ? `${hslFitNow.mb}px` : undefined,
                   aspectRatio: previewAspect ? `${previewAspect.w}/${previewAspect.h}` : undefined,
                   width: previewAspect ? '100%' : 'auto',
+                  /* 高度的上限也要換算成寬度的上限，不然比例會被壓扁。
+                     aspect-ratio 只有在「另一邊自由」的時候才成立：這裡寬度被寫死
+                     100%，一遇到很長的圖，高度被 max-height 夾住、寬度卻不會跟著縮，
+                     框就從 720:1560 變成 358:504，而畫布是 objectFit:'fill'，
+                     整張圖就被橫向拉開（量到 53.9% 變形）。
+                     把同一條高度上限乘上原圖比例當成寬度上限，兩個方向就都守得住。 */
+                  maxWidth: previewAspect
+                    ? (hslFitNow
+                        ? `min(calc(100% - 32px), ${(hslFitNow.mh * previewAspect.w) / previewAspect.h}px)`
+                        : `min(calc(100% - 32px), calc((100vh - 340px) * ${previewAspect.w} / ${previewAspect.h}))`)
+                    : undefined,
                 }}
               >
                 {/* Single Canvas for Display and Compare */}
@@ -6402,7 +6741,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                 <>
                   <svg
                     id="mask-svg-overlay"
-                    className="absolute inset-0 w-full h-full select-none pointer-events-auto overflow-visible z-30"
+                    /* 一定要 overflow-hidden：那兩條「無限長」的邊界線是 y=±10000 畫的，
+                       overflow-visible 會讓它們一路畫到整個螢幕上（照片外面、
+                       連工具列那一帶都是線），而且線上的 18px 觸控帶也跟著跑出去。
+                       SVG 預設就是裁切到自己的框，這裡把它拿回來。 */
+                    className="absolute inset-0 w-full h-full select-none pointer-events-auto overflow-hidden z-30"
                     style={{
                       touchAction: 'none',
                     }}
@@ -6637,7 +6980,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
                 transition={{ duration: 0.4, ease: [0.215, 0.61, 0.355, 1] }}
                 className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20 select-none"
               >
-                <div className="flex flex-col items-center gap-4 bg-[#111111] px-8 py-6 rounded-3xl border border-white/10 shadow-[0_24px_50px_-12px_rgba(0,0,0,0.8)] max-w-xs text-center pointer-events-auto">
+                {/* 卡片本身不能吃手勢：它就蓋在照片正中央，吃掉的話
+                    「請在圖片上拖曳」這句話等於騙人 —— 拖過去根本畫不出來。
+                    只有下面那顆「我知道了」需要點得到。 */}
+                <div className="flex flex-col items-center gap-4 bg-[#111111] px-8 py-6 rounded-3xl border border-white/10 shadow-[0_24px_50px_-12px_rgba(0,0,0,0.8)] max-w-xs text-center pointer-events-none">
                   {/* Animated Drawing Gesture Visual */}
                   <div className="relative w-20 h-16 flex items-center justify-center mb-1">
                     {/* Breathing circle 1 */}
@@ -6698,7 +7044,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
                   <button
                     onClick={() => setDismissedMaskHint(true)}
-                    className="w-full mt-2 py-2 px-4 bg-white/10 hover:bg-white/20 active:scale-95 text-white text-[11px] font-bold rounded-xl transition-all uppercase tracking-[0.1em]"
+                    className="pointer-events-auto w-full mt-2 py-2 px-4 bg-white/10 hover:bg-white/20 active:scale-95 text-white text-[11px] font-bold rounded-xl transition-all uppercase tracking-[0.1em]"
                   >
                     我知道了
                   </button>
