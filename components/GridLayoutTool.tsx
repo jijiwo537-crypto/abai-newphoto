@@ -4480,9 +4480,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   /** 有東西被選取時，畫布就進入編輯狀態：手勢全部給選取物，不再左右滑動 */
   const anySelected = selectedIndex !== null || selectedFloatingId !== null || layoutSelected;
   const [exportState, setExportState] = useState<'idle' | 'processing' | 'success'>('idle');
-  /* 這一頁有影片時，匯出是一格一格錄下來的 —— 會花一點時間，
-     所以跟創意拼圖一樣顯示百分比（同一種版型與文案）。 */
+  /* 匯出時的進度。整批共用一個畫面（不是每頁各跑一次）：
+       videoProg  —— 0～1；只有「這批裡有影片」才會有值，純圖片是 null
+       videoLabel —— 每頁都是影片就是「正在匯出影片」，混到圖片就是「正在匯出成品」 */
   const [videoProg, setVideoProg] = useState<number | null>(null);
+  const [videoLabel, setVideoLabel] = useState('正在匯出成品');
   // One exported file per page. The object URLs are mirrored into a ref so they can be
   // revoked without making every consumer depend on the state value.
   const [finalImages, setFinalImages] = useState<string[]>([]);
@@ -7667,6 +7669,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
        * 各畫成一張靜態底圖（影片下面一張、上面一張），每一帧只要貼兩張圖
        * ＋畫影片，才跟得上即時錄影。
        */
+      /* 這一批一共要錄幾頁影片、現在錄完第幾頁 —— 進度是整批一起算的，
+         三頁影片就是 0→100 跑一次，不是每頁各跑一次。 */
+      let vidTotal = 0, vidDone = 0;
       const recordPageVideo = async (pageIdx: number, pageLeft: number): Promise<string> => {
         // 跟 pageHasVideo 用同一條判斷，兩邊才不會一個說有、一個挑不到
         const videoJobs = drawJobs.filter(j =>
@@ -7770,8 +7775,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           const frame = async () => {
             await composite();
             const el = performance.now() - t0;
-            // 進度＝錄到第幾秒／總長，跟創意拼圖同一種算法
-            setVideoProg(Math.max(0, Math.min(1, el / (dur * 1000))));
+            // 整批的進度＝(已錄完的頁數 + 這一頁錄到幾成) ÷ 總共要錄的頁數
+            const local = Math.max(0, Math.min(1, el / (dur * 1000)));
+            setVideoProg(Math.max(0, Math.min(1, (vidDone + local) / Math.max(1, vidTotal))));
             if (el >= dur * 1000) return resolve();
             requestAnimationFrame(frame);
           };
@@ -7779,11 +7785,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         });
         rec.stop();
         const blob = await done;
+        vidDone++;
         return URL.createObjectURL(blob);
       };
 
       // 每頁各自輸出一張畫布：解析度不再被頁數瓜分，跨頁的東西靠平移座標接續。
       setVideoProg(null);
+      setVideoLabel('正在匯出成品');
       const urls: string[] = [];
       const kinds: ('image' | 'video')[] = [];
       /**
@@ -7797,6 +7805,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         return drawJobs.some(j =>
           j.isVideo && j.maxX > left + VIDEO_EDGE_EPS && j.minX < left + targetW - VIDEO_EDGE_EPS);
       };
+      /* 先數過一遍：有幾頁是影片。
+         一頁都沒有 → 不顯示百分比（純圖片本來就很快，只留轉圈）；
+         每一頁都是影片 → 文案「正在匯出影片」；
+         有影片也有圖片 → 文案「正在匯出成品」。 */
+      const videoPages = pages.reduce(
+        (n, _p, i) => n + (pageHasVideo(i) && typeof MediaRecorder !== 'undefined' ? 1 : 0), 0);
+      vidTotal = videoPages;
+      if (videoPages > 0) {
+        setVideoLabel(videoPages === pages.length ? '正在匯出影片' : '正在匯出成品');
+        setVideoProg(0);
+      }
+
       // 有影片的那一頁輸出影片、沒有影片的那一頁照舊輸出無損 PNG，各出各的
       for (let pageIdx = 0; pageIdx < pages.length; pageIdx++) {
         const pageLeft = pageIdx * targetW;
@@ -8011,19 +8031,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         </div>
       )}
 
-      {exportState === 'processing' && videoProg === null && (
-        <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
-          <div className="w-16 h-16 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
-          <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">正在存檔</p>
-        </div>
-      )}
-
-      {/* 這一批裡有影片時的進度。版型、文案、數字樣式跟創意拼圖那邊同一份。 */}
-      {videoProg !== null && (
-        <div className="fixed inset-0 z-[121] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center gap-4">
+      {/* 匯出中的畫面。整批共用這一個（不是每頁各跳一次）：
+          轉圈用影片那一款；有影片才顯示百分比，純圖片就只有轉圈。 */}
+      {exportState === 'processing' && (
+        <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center gap-4 animate-in fade-in duration-300">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
-          <span className="text-[11px] tracking-[0.3em] text-white/60 tabular-nums">{Math.round(videoProg * 100)}%</span>
-          <span className="text-[11px] text-white/50 tracking-widest">正在匯出影片</span>
+          {videoProg !== null && (
+            <span className="text-[11px] tracking-[0.3em] text-white/60 tabular-nums">{Math.round(videoProg * 100)}%</span>
+          )}
+          <span className="text-[11px] text-white/50 tracking-widest">{videoLabel}</span>
         </div>
       )}
 
