@@ -730,7 +730,9 @@ export const HomePage: React.FC<HomePageProps> = ({
                   >
                     {/* Google 官方四色標誌 */}
                     <span className="w-[17px] h-[17px] flex items-center justify-center shrink-0" aria-hidden>
-                      <svg viewBox="0 0 48 48" className="w-[17px] h-[17px] shrink-0">
+                      {/* 往上 0.5px：跟 Apple 那顆一樣，用 relative top 微調，
+                          不佔版面所以水平位置不會被牽動。 */}
+                      <svg viewBox="0 0 48 48" className="w-[17px] h-[17px] shrink-0 relative top-[-0.5px]">
                         <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-3.9H24v7.1h12.1c-.2 1.9-1.6 4.7-4.5 6.6l-.04.3 6.5 5 .5.05c4.1-3.8 6.5-9.4 6.5-15.1z"/>
                         <path fill="#34A853" d="M24 46c5.9 0 10.9-1.9 14.5-5.3l-6.9-5.3c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.7-3.8-12.5-9.1l-.3 0-6.7 5.2-.1.3C8 41.1 15.4 46 24 46z"/>
                         <path fill="#FBBC05" d="M11.5 28.5c-.5-1.4-.7-2.9-.7-4.5s.3-3.1.7-4.5l0-.3-6.8-5.3-.2.1C2.9 17.1 2 20.4 2 24s.9 6.9 2.5 9.9l7-5.4z"/>
