@@ -701,11 +701,14 @@ export const HomePage: React.FC<HomePageProps> = ({
                     disabled={step === 'busy'}
                     className="w-full h-[50px] rounded-[14px] bg-white text-black text-[15px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center gap-2.5"
                   >
-                    {/* Apple 官方標誌的外形（不是字元，也不是 emoji）。
-                        它的 viewBox 是 384×512（不是正方形），塞進 17px 的方框只會畫成
-                        12.75px 寬 —— 那就是它看起來比 Google 小的原因。
-                        方框開到 21px，實際畫出來約 15.75×21，視覺份量才跟 Google 那顆一致。 */}
-                    <svg viewBox="0 0 384 512" className="w-[21px] h-[21px] -mt-0.5" fill="currentColor" aria-hidden>
+                    {/* Apple 官方標誌。它的 viewBox 是 384×512（不是正方形），
+                        而且標誌本身只佔其中 364×448 —— 所以同樣是 17px 的方框，
+                        Google（48×48 幾乎填滿）畫出來是 15.3×15.6，
+                        Apple 只會畫成 12.1×14.9，看起來就小一截。
+                        方框開到 20px 之後，Apple 實際畫出來是 14.2×17.5 ——
+                        高度跟 Google 對齊（略高一點點，補償它比較瘦的視覺份量）。
+                        另外拿掉了原本的 -mt-0.5，兩顆圖示的垂直位置才會完全一致。 */}
+                    <svg viewBox="0 0 384 512" className="w-[20px] h-[20px]" fill="currentColor" aria-hidden>
                       <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
                     </svg>
                     使用 Apple 帳號登入
