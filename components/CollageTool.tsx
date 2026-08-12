@@ -4507,8 +4507,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               {finalIsVideo ? (
                 <video
                   src={finalImage}
-                  autoPlay loop muted playsInline controls
-                  className="max-w-full max-h-[60vh] object-contain relative z-10"
+                  autoPlay loop muted playsInline
+                  /* 匯出結果只是「看成品」，不該有播放器那一套控制項
+                     （暫停、快轉、進度條、AirPlay…）。拿掉 controls＝單純自動輪播；
+                     再擋掉子母畫面與長按跳出的原生選單。 */
+                  controlsList="nodownload noplaybackrate noremoteplayback"
+                  disablePictureInPicture
+                  onContextMenu={e => e.preventDefault()}
+                  className="max-w-full max-h-[60vh] object-contain relative z-10 pointer-events-none"
                 />
               ) : (
                 <img 

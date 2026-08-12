@@ -95,6 +95,29 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   const TRANSPARENT_PX = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
   const [musicOpen, setMusicOpen] = useState(false);
   const [musicShown, setMusicShown] = useState(false);   // 控制滑入／滑出的動畫
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  /* 選音樂的面板開著的時候，底下那一頁不能再上下滑。
+     創意拼圖是把兩篇貼文放在一個會捲動的容器裡（flow 模式），
+     不鎖的話面板浮在上面、後面那一長條還在捲，很怪。
+     鎖的是「離自己最近的那個捲動容器」，所以不管被放在哪都有效，
+     也不會去動到整個網頁的 body。 */
+  useEffect(() => {
+    if (!musicOpen) return;
+    const scroller = (() => {
+      let el: HTMLElement | null = rootRef.current;
+      while (el) {
+        const st = getComputedStyle(el);
+        if (/(auto|scroll)/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 1) return el;
+        el = el.parentElement;
+      }
+      return null;
+    })();
+    if (!scroller) return;
+    const prev = scroller.style.overflowY;
+    scroller.style.overflowY = 'hidden';
+    return () => { scroller.style.overflowY = prev; };
+  }, [musicOpen]);
   const [musicQuery, setMusicQuery] = useState('');
   const [musicTab, setMusicTab] = useState('為你推薦');
   const [musicList, setMusicList] = useState<Track[]>([]);
@@ -1598,6 +1621,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
 
   return (
         <div
+          ref={rootRef}
           className={flow
             ? 'relative w-full bg-black flex flex-col'
             : embedded
@@ -1883,15 +1907,22 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
             <>
               <div
                 onClick={closeMusic}
-                className={`absolute inset-0 z-[130] bg-black/50 transition-opacity duration-300 ${musicShown ? 'opacity-100' : 'opacity-0'}`}
+                className={`${flow ? 'fixed' : 'absolute'} inset-0 z-[130] bg-black/50 transition-opacity duration-300 ${musicShown ? 'opacity-100' : 'opacity-0'}`}
               />
               <div
-                className={`absolute left-0 right-0 z-[131] bg-[#161616] rounded-t-2xl flex flex-col transition-transform duration-300 ease-out ${musicShown ? 'translate-y-0' : 'translate-y-full'}`}
+                className={`${flow ? 'fixed' : 'absolute'} left-0 right-0 z-[131] bg-[#161616] rounded-t-2xl flex flex-col transition-transform duration-300 ease-out ${musicShown ? 'translate-y-0' : 'translate-y-full'}`}
                 style={{
                   /* 高度固定，鍵盤跳出來也不縮 —— 縮的話等於把鍵盤後面那段
-                     介面裁掉。鍵盤只是蓋在上面，底下的東西照樣在。 */
+                     介面裁掉。鍵盤只是蓋在上面，底下的東西照樣在。
+
+                     用 93dvh 而不是 93%：flow 模式（創意拼圖把兩篇貼文放在
+                     一個會捲動的長容器裡）底下，父層的高度是「內容有多長」，
+                     93% 就會跟著內容長度跑 —— 那正是「面板高度看點擊位置變來變去」
+                     的原因。改成看「畫面高度」，兩個工具就一模一樣了。
+                     同理，flow 模式要用 fixed 貼在畫面底部，
+                     absolute 會貼到那條長容器的最底下。 */
                   bottom: 0,
-                  height: '93%',
+                  height: '93dvh',
                   paddingBottom: 'env(safe-area-inset-bottom, 0px)',
                 }}
               >
