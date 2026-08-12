@@ -5038,12 +5038,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         </div>
                         {/* 滑桿就是滑桿：不套外框、不墊底色方塊，只留一條軌道 */}
                         <div className="h-9 flex items-center px-1 w-full">
-                          <input
-                            type="range" min={0} max={max} step={1}
+                          {/* 比例是最重的一根滑桿（每動一格整張拼圖要重畫），
+                              所以也走「一格畫面最多送一次」（見 useRafOnChange）。 */}
+                          <RafRange
+                            min={0} max={max} step={1}
                             value={value}
-                            onChange={e => apply(Number(e.target.value))}
-                            onPointerDown={e => e.stopPropagation()}
-                            className="premium-slider w-full"
+                            onChange={apply}
                           />
                         </div>
                       </div>
@@ -5207,14 +5207,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                    所有改動都是即時的，換動畫種類還會自動重播一次。 */
                 /* 現在畫面上「真的有發光」的是哪幾種。只有一種時就叫「發光」，
                    超過一種才需要標明是圖案／圖片／文字。 */
-                const glowKinds: { id: string; name: string }[] = [];
-                if (glowMode !== 'off' && holes.length) glowKinds.push({ id: 'glow', name: '圖案發光' });
-                if (objects.some(o => o.type === 'image' && o.imgGlow)) glowKinds.push({ id: 'glowImg', name: '圖片發光' });
-                if (objects.some(o => o.type === 'text' && o.glow)) glowKinds.push({ id: 'glowText', name: '文字發光' });
-                if (glowKinds.length === 1) glowKinds[0] = { ...glowKinds[0], name: '發光' };
-                if (moTarget.startsWith('glow') && !glowKinds.some(g => g.id === moTarget)) {
-                  setTimeout(() => setMoTarget('shape'), 0);
-                }
+                // 舊版把發光獨立成一頁，現在併回本體那一頁；殘留的舊選取要導回去
+                if (moTarget.startsWith('glow')) setTimeout(() => setMoTarget('shape'), 0);
                 const selObj = objects.find(o => o.id === moTarget) || null;
                 const cur: MoCfg = moTarget === 'shape' ? moShape : selObj ? moOf(selObj) : MO_DEFAULT;
                 const setCur = (d: Partial<MoCfg>) => {
@@ -5223,6 +5217,57 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 };
                 // 換動畫種類 → 從頭播一次，不用自己等一圈
                 const pickKind = (d: Partial<MoCfg>) => { setCur(d); replayMotion(); };
+                /* 發光的常駐動畫不再自成一頁 —— 直接接在「本體」那一頁的最下面：
+                   圖案的接在圖案頁、圖片／文字的接在那個物件自己的頁。 */
+                const glowPanel = (which: 'hole' | 'img' | 'text') => {
+                  const gv = which === 'img' ? glowMoImg
+                    : which === 'text' ? glowMoText
+                    : { idle: glowIdle, amp: glowAmp, speed: glowSpeed };
+                  const gset = (d: Partial<{ idle: string; amp: number; speed: number }>) => {
+                    if (which === 'img') setGlowMoImg(v => ({ ...v, ...d }));
+                    else if (which === 'text') setGlowMoText(v => ({ ...v, ...d }));
+                    else {
+                      if (d.idle !== undefined) setGlowIdle(d.idle);
+                      if (d.amp !== undefined) setGlowAmp(d.amp);
+                      if (d.speed !== undefined) setGlowSpeed(d.speed);
+                    }
+                  };
+                  return (
+                    <>
+                      <div className="flex justify-between text-[10px] font-bold text-[#888] mt-6 mb-2 uppercase tracking-widest">
+                        <span>發光動畫</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {GLOW_IDLES.map(g => (
+                          <button key={g.id}
+                            onClick={() => { gset({ idle: g.id, speed: GLOW_SPEED_DEFAULT[g.id] ?? 180 }); replayMotion(); }}
+                            className={cell(gv.idle === g.id)}>
+                            {g.name}
+                          </button>
+                        ))}
+                      </div>
+                      {gv.idle !== 'none' && (
+                        <div className="grid grid-cols-2 gap-4 mt-4">
+                          <CompactSlider label="幅度" value={gv.amp} min={0} max={100} step={1}
+                            onCommit={replayMotion}
+                            onChange={(v: number) => gset({ amp: v })} />
+                          {/* 滑桿一律顯示 0～100，內部再換算成倍率 */}
+                          <CompactSlider label="速度" value={glowSpeedToUi(gv.speed)} min={0} max={100} step={1}
+                            onCommit={replayMotion}
+                            onChange={(v: number) => gset({ speed: glowSpeedFromUi(v) })} />
+                        </div>
+                      )}
+                    </>
+                  );
+                };
+                /** 這一頁的本體有沒有在發光？沒有就不顯示發光那一段 */
+                const glowHere = moTarget === 'shape'
+                  ? (glowMode !== 'off' && holes.length > 0)
+                  : selObj ? (selObj.type === 'text' ? !!selObj.glow : !!selObj.imgGlow)
+                  : false;
+                const glowWhich: 'hole' | 'img' | 'text' = moTarget === 'shape' ? 'hole'
+                  : selObj?.type === 'text' ? 'text' : 'img';
+
                 const chip = (on: boolean) =>
                   `px-3 h-8 shrink-0 rounded-[8px] border text-[11px] font-bold tracking-wider transition-all ${
                     on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
@@ -5245,13 +5290,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       {hasLink && <button onClick={() => setMoTarget('link')} className={chip(moTarget === 'link')}>
                         {linkMode === 'dash' ? '虛線' : '連線'}
                       </button>}
-                      {/* 發光有自己的一組動畫（只有常駐），跟圖案那組各走各的。
-                          同時存在超過一種發光時，按鈕就要標明是哪一種。 */}
-                      {glowKinds.map(g => (
-                        <button key={g.id} onClick={() => setMoTarget(g.id)} className={chip(moTarget === g.id)}>
-                          {g.name}
-                        </button>
-                      ))}
                       {objects.map((o, i) => (
                         <button key={o.id}
                           onClick={() => setMoTarget(o.id)}
@@ -5261,53 +5299,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       ))}
                     </div>
 
-                    {moTarget.startsWith('glow') ? (() => {
-                      // 三種發光共用同一組介面，只是讀寫的設定不一樣
-                      const gv = moTarget === 'glowImg' ? glowMoImg
-                        : moTarget === 'glowText' ? glowMoText
-                        : { idle: glowIdle, amp: glowAmp, speed: glowSpeed };
-                      const gset = (d: Partial<{ idle: string; amp: number; speed: number }>) => {
-                        if (moTarget === 'glowImg') setGlowMoImg(v => ({ ...v, ...d }));
-                        else if (moTarget === 'glowText') setGlowMoText(v => ({ ...v, ...d }));
-                        else {
-                          if (d.idle !== undefined) setGlowIdle(d.idle);
-                          if (d.amp !== undefined) setGlowAmp(d.amp);
-                          if (d.speed !== undefined) setGlowSpeed(d.speed);
-                        }
-                      };
-                      return (
-                      <>
-                        <div className="flex justify-between text-[10px] font-bold text-[#888] mt-4 mb-2 uppercase tracking-widest">
-                          <span>常駐動畫</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          {GLOW_IDLES.map(g => (
-                            <button key={g.id}
-                              onClick={() => {
-                                // 換種類時速度回到那一款自己的預設（閃爍 70、其餘 180）
-                                gset({ idle: g.id, speed: GLOW_SPEED_DEFAULT[g.id] ?? 100 });
-                                replayMotion();
-                              }}
-                              className={cell(gv.idle === g.id)}>
-                              {g.name}
-                            </button>
-                          ))}
-                        </div>
-                        {/* 靜止沒有東西可以調，所以只有其他三種才出現 */}
-                        {gv.idle !== 'none' && (
-                          <div className="grid grid-cols-2 gap-4 mt-4">
-                            <CompactSlider label="幅度" value={gv.amp} min={0} max={100} step={1}
-                              onCommit={replayMotion}
-                              onChange={(v: number) => gset({ amp: v })} />
-                            {/* 滑桿一律顯示 0～100，內部再換算回 20～180 的倍率 */}
-                            <CompactSlider label="速度" value={glowSpeedToUi(gv.speed)} min={0} max={100} step={1}
-                              onCommit={replayMotion}
-                              onChange={(v: number) => gset({ speed: glowSpeedFromUi(v) })} />
-                          </div>
-                        )}
-                      </>
-                      );
-                    })() : moTarget === 'link' ? (
+                    {moTarget === 'link' ? (
                       <>
                         <div className="grid grid-cols-2 gap-4 mt-4">
                           <CompactSlider label="起始" value={Math.round(moLink.delay)} min={0} max={20} step={1}
@@ -5368,6 +5360,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           </div>
                         )}
 
+                        {/* 這個本體正在發光的話，發光的常駐動畫就接在這一頁最下面 */}
+                        {glowHere && glowPanel(glowWhich)}
                       </>
                     )}
                   </div>
@@ -5520,7 +5514,63 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   );
 }
 
-const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, onCommit }: any) => (
+/* ── 滑桿為什麼會頓、這裡怎麼解 ────────────────────────────────────────
+   iOS 的觸控事件是 120Hz 在送的（ProMotion），而我們每收到一次 input
+   就要重畫一整張全解析度的拼圖。畫一張要十幾到幾十毫秒的話，
+   一秒 120 次的請求等於「還沒畫完就又被要求重畫」——
+   畫面看起來卡、CPU／GPU 全程滿載，手機就開始發燙。
+
+   解法是把輸入「收斂到每一幀最多一次」（rAF coalescing，瀏覽器自己的
+   pointerrawupdate／getCoalescedEvents 也是同一個思路）：
+   手指滑動時把最新的值記下來，一格畫面只送出一次。
+   中間被跳過的那些值本來就畫不出來（螢幕一格只能顯示一張），
+   所以**畫質、效果、成品完全不受影響**，只是不再做白工。
+   放開手指時一定會補送最後一個值，所以最終停在哪就是哪。 */
+const useRafOnChange = (onChange: (v: number) => void) => {
+  const pending = React.useRef<number | null>(null);
+  const raf = React.useRef(0);
+  const cb = React.useRef(onChange);
+  cb.current = onChange;
+  React.useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
+  const push = React.useCallback((v: number) => {
+    pending.current = v;
+    if (raf.current) return;
+    raf.current = requestAnimationFrame(() => {
+      raf.current = 0;
+      const q = pending.current;
+      pending.current = null;
+      if (q !== null) cb.current(q);
+    });
+  }, []);
+  const flush = React.useCallback(() => {
+    if (raf.current) { cancelAnimationFrame(raf.current); raf.current = 0; }
+    const q = pending.current;
+    pending.current = null;
+    if (q !== null) cb.current(q);
+  }, []);
+  return { push, flush };
+};
+
+/** 只有一根軌道的滑桿，同樣把輸入收斂到每一幀一次 */
+const RafRange = ({ min, max, step, value, onChange }: any) => {
+  const { push, flush } = useRafOnChange(onChange);
+  return (
+    <input
+      type="range" min={min} max={max} step={step} value={value}
+      onChange={e => push(Number(e.target.value))}
+      onPointerUp={flush}
+      onTouchEnd={flush}
+      onKeyUp={flush}
+      onPointerDown={e => e.stopPropagation()}
+      className="premium-slider w-full"
+    />
+  );
+};
+
+const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, onCommit }: any) => {
+  const { push, flush } = useRafOnChange(onChange);
+  const done = () => { flush(); onCommit && onCommit(); };
+  return (
   <div className="flex flex-col">
     <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
       <span>{label}</span>
@@ -5531,13 +5581,14 @@ const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimal
     </div>
     {/* onCommit：手指／滑鼠放開時才觸發（動畫頁拿它來自動重播） */}
     <input type="range" min={min} max={max} step={step} value={value}
-      onChange={e => onChange(Number(e.target.value))}
-      onPointerUp={() => onCommit && onCommit()}
-      onTouchEnd={() => onCommit && onCommit()}
-      onKeyUp={() => onCommit && onCommit()}
+      onChange={e => push(Number(e.target.value))}
+      onPointerUp={done}
+      onTouchEnd={done}
+      onKeyUp={done}
       className="premium-slider" onPointerDown={e => e.stopPropagation()} />
   </div>
-);
+  );
+};
 
 const LayoutIcon = ({ type, active }: any) => {
   const pos = type.split('-')[1];
