@@ -419,6 +419,35 @@ export const HomePage: React.FC<HomePageProps> = ({
     match: onOpenMatch,
   };
 
+  /* 歷史紀錄 —— 點一張就回到它導出當下的編輯狀態，沒導出過的位子留空格。
+     本來在首頁第一屏，現在搬到「我的」；抽成一個變數，之後想放回去或
+     兩邊都放都只要引用它。 */
+  const historySection = (
+    <div>
+      <div className="flex items-baseline mb-2.5">
+        <span className="text-[10px] font-bold tracking-[0.24em] text-white/40 ml-1">歷史紀錄</span>
+      </div>
+      <div className="grid grid-cols-5 gap-2">
+        {[0, 1, 2, 3, 4].map(i => {
+          const item = recent[i];
+          if (!item) {
+            return <div key={`slot-${i}`} className={`aspect-square rounded-lg ${EMPTY_TILE}`} />;
+          }
+          return (
+            <button
+              key={item.id}
+              onClick={() => onOpenRecent?.(item.id)}
+              title={`${timeAgo(item.at)}導出`}
+              className="relative aspect-square rounded-lg overflow-hidden border border-white/10 p-0 active:scale-[0.97] transition-transform duration-300"
+            >
+              <img src={item.thumb} alt="" className="w-full h-full object-cover" draggable={false} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   return (
     <div className="w-full h-screen bg-black text-white font-sans flex flex-col overflow-hidden relative">
       {/* 主視覺搬到捲動區裡面去了（見下面）。標題列整個拿掉了 ——
@@ -478,6 +507,9 @@ export const HomePage: React.FC<HomePageProps> = ({
               立即訂閱
             </span>
           </div>
+
+          {/* 歷史紀錄從首頁搬到這裡，接在會員方案卡片下面 */}
+          <div className="mt-7">{historySection}</div>
 
           {/* 登出與刪除帳號都收進帳號設定那一頁了（點上面那列右邊的箭頭） */}
         </div>
@@ -610,41 +642,19 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
         </div>
 
-        {/* 歷史紀錄 —— 點一張就回到它導出當下的編輯狀態。
-             還沒導出過的位子留斜線底。 */}
-        <div className="relative z-10 -mt-3">
-          <div className="flex items-baseline mb-2.5">
-            <span className="text-[10px] font-bold tracking-[0.24em] text-white/40 ml-1">歷史紀錄</span>
-          </div>
-          <div className="grid grid-cols-5 gap-2">
-            {[0, 1, 2, 3, 4].map(i => {
-              const item = recent[i];
-              if (!item) {
-                return <div key={`slot-${i}`} className={`aspect-square rounded-lg ${EMPTY_TILE}`} />;
-              }
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => onOpenRecent?.(item.id)}
-                  title={`${timeAgo(item.at)}導出`}
-                  className="relative aspect-square rounded-lg overflow-hidden border border-white/10 p-0 active:scale-[0.97] transition-transform duration-300"
-                >
-                  <img src={item.thumb} alt="" className="w-full h-full object-cover" draggable={false} />
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        {/* 歷史紀錄搬到「我的」那一頁了（會員方案卡片下面），
+             原本這裡的廣告版位也已經拿掉。
 
-        {/* 歷史紀錄下面原本有一塊廣告版位，看得到的那一塊拿掉了。
-             但外框要留著 —— 這一疊是靠 mt-auto 貼著下緣排的，少了它上面
-             每一排都會往下掉 163px。所以保留同樣的版面高度（-mt-1.5 +
-             aspect-[342/147]），只是裡面不畫東西：格子消失，其他一個像素都不動。
-             （原本那塊是絕對定位往下多長 50px 的，現在沒有東西會蓋到靈感區，
-              所以 libScrollTop 也跟著簡化成直接捲到靈感區頂端。） */}
-        <div className="relative z-10 -mt-1.5" aria-hidden>
-          <div className="relative aspect-[342/147]" />
-        </div>
+             但下面這塊留白要留著，而且要比原來更高 —— 第一屏這一疊是靠
+             mt-auto「貼著下緣」往上排的，所以下面的留白每多 1px，
+             上面每一排就往上移 1px。這塊就是那個調節閥：
+               原本廣告版位            147px
+             ＋ 歷史紀錄那一區          87px（搬走了，不補就整疊往下掉）
+             ＋ 再往上提一點            36px
+             ＝                        270px
+             結果：格子與歷史紀錄都不在首頁了，上面那幾排不但沒往下掉，
+             還比原本高了 26px。右上角的聯絡鈕是絕對定位在最上面的，不受影響。 */}
+        <div className="relative z-10 -mt-1.5 h-[270px] shrink-0" aria-hidden />
       </div>
 
       {/* --- 靈感 ---
