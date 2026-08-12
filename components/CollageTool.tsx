@@ -315,15 +315,18 @@ const glowIdleAmp = (
   const sp = Math.max(0.05, speed);
   if (A <= 0.001) return 1;
   if (kind === 'breath' || kind === 'breath2') {
-    /* 真正的呼吸：一條三角波（等速上去、等速下來）再套 easeInOut，
-       所以亮起來是曲線、暗下去也是曲線，兩頭都會緩下來 ——
-       不像正弦那樣一直在動，也不會有轉折點的突兀感。
+    /* 呼吸燈的標準做法：exp(sin)。
+       為什麼不是三角波、也不是純正弦 —— 眼睛對亮度不是線性的，
+       用線性的量去掃，看起來就是「亮很久，然後啪一下掉下去」。
+       exp(sin) 在暗的那一端變化很慢、亮的那一端也收得住，
+       整條曲線沒有轉折點（無限可微），所以是真的「慢慢亮、慢慢暗」。
+       正規化成 0～1：sin 從 -1 走到 1，對應 e^-1 → e^1。
        呼吸I 全部同時；呼吸II 每顆用自己的相位，時機隨機錯開。 */
-    const CYCLE = 2.2 / sp;
+    const CYCLE = 3.2 / sp;                                  // 一次完整的吸吐
     const off = kind === 'breath2' ? (phase / (Math.PI * 2)) * CYCLE : 0;
-    const q = (((t + off) % CYCLE) + CYCLE) % CYCLE / CYCLE;   // 0～1
-    const tri = q < 0.5 ? q * 2 : (1 - q) * 2;                  // 0→1→0
-    const e = easeInOut(tri);
+    const w = ((((t + off) % CYCLE) + CYCLE) % CYCLE) / CYCLE * Math.PI * 2;
+    const E = Math.E, IE = 1 / Math.E;
+    const e = (Math.exp(Math.sin(w - Math.PI / 2)) - IE) / (E - IE);   // 0 → 1 → 0
     return 1 - A * (1 - e) * gain;
   }
   if (kind === 'twinkle') {
@@ -2874,7 +2877,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
     };
 
-    /** 把一顆圖案的光疊進暫存層（透明度已經帶進去了） */
+    /* ── 為什麼要先畫在小畫布上、再整張按透明度貼過去 ──────────────
+       光是「同一個形狀疊三段不同模糊」，三段的濃度不是單純相加：
+       每一段直接用 alpha 畫的話，透明度低的時候三段幾乎是相加（≈3α），
+       透明度高的時候會互相飽和（<3α）。結果就是進場淡入到一半時，
+       光的相對亮度比圖案本身高一截 —— 那正是「發光沒有跟圖案同步」。
+
+       改成：先在一張只夠裝這顆圖案的小畫布上，用「滿透明度」把三段疊好
+       （形狀固定，濃度也就固定），再整張用這一格該有的透明度貼上去。
+       這樣光的亮度對透明度是**嚴格線性**的，跟圖案本體完全同一條曲線。 */
+    const glowTmp = { c: null as HTMLCanvasElement | null };
     const glowInto = (
       gg: CanvasRenderingContext2D, h: any, alpha: number,
       sz: number, angle: number, gx: number, gy: number,
@@ -2882,13 +2894,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const amp = glowBeat(h);
       const a = alpha * amp;
       if (sz <= 0 || a <= 0.004) return;
-      gg.save();
-      gg.globalAlpha = layerAlpha(a);
-      gg.shadowColor = holeGlowColor;
+      // 邊長要裝得下「圖案本體 + 最大那一段模糊」，模糊最大是 0.3×sz
+      const side = Math.ceil(sz * 1.2 + sz * 0.3 * 4) + 8;
+      let tmp = glowTmp.c;
+      if (!tmp) { tmp = document.createElement('canvas'); glowTmp.c = tmp; }
+      if (tmp.width !== side || tmp.height !== side) { tmp.width = side; tmp.height = side; }
+      const tg = tmp.getContext('2d');
+      if (!tg) return;
+      tg.setTransform(1, 0, 0, 1, 0, 0);
+      tg.globalCompositeOperation = 'source-over';
+      tg.globalAlpha = 1;
+      tg.clearRect(0, 0, side, side);
+      tg.shadowColor = holeGlowColor;
       for (const kk of [1, 2, 3]) {
-        gg.shadowBlur = sz * 0.1 * kk;
-        strokeHoleShape(gg, h, sz, angle, gx, gy, holeGlowColor);
+        tg.shadowBlur = sz * 0.1 * kk;
+        strokeHoleShape(tg, h, sz, angle, side / 2, side / 2, holeGlowColor);
       }
+      gg.save();
+      gg.globalAlpha = Math.max(0, Math.min(1, a));
+      gg.drawImage(tmp, gx - side / 2, gy - side / 2);
       gg.restore();
     };
 
@@ -2945,20 +2969,45 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         gg => {
           items.forEach(it => glowInto(gg, it.h, it.a, it.sz, it.ang, it.x, it.y));
           if (pairs.length) {
-            const base = LINK_W * 3;
-            for (const kk of [1, 2, 3]) {
-              gg.save();
-              linkStyle(gg);
-              gg.strokeStyle = holeGlowColor;
-              gg.shadowColor = holeGlowColor;
-              gg.shadowBlur = base * kk * 0.9;
-              pairs.forEach(pr => {
-                const av = linkAlpha(pr);
-                if (av <= 0.004) return;
-                gg.globalAlpha = layerAlpha(av);
-                linkPath(gg, [pr]);
-              });
-              gg.restore();
+            /* 線也是同一個道理（見 glowInto）：先用滿透明度把三段疊好，
+               再整張按透明度貼。透明度相同的線可以一起畫，
+               所以進場全部亮完之後（大多數時候）只要做一輪。 */
+            const buckets = new Map<number, [any, any][]>();
+            pairs.forEach(pr => {
+              const av = linkAlpha(pr);
+              if (av <= 0.004) return;
+              const key = Math.round(Math.max(0, Math.min(1, av)) * 20) / 20;
+              const arr = buckets.get(key);
+              if (arr) arr.push(pr); else buckets.set(key, [pr]);
+            });
+            if (buckets.size) {
+              const W2 = gg.canvas.width, H2 = gg.canvas.height;
+              const lt = document.createElement('canvas');
+              lt.width = W2; lt.height = H2;
+              const lg = lt.getContext('2d');
+              if (lg) {
+                const tf2 = (gg as any).getTransform ? (gg as any).getTransform() : null;
+                const base = LINK_W * 3;
+                buckets.forEach((arr, av) => {
+                  lg.setTransform(1, 0, 0, 1, 0, 0);
+                  lg.globalAlpha = 1;
+                  lg.globalCompositeOperation = 'source-over';
+                  lg.clearRect(0, 0, W2, H2);
+                  if (tf2) lg.setTransform(tf2);
+                  linkStyle(lg);
+                  lg.strokeStyle = holeGlowColor;
+                  lg.shadowColor = holeGlowColor;
+                  for (const kk of [1, 2, 3]) {
+                    lg.shadowBlur = base * kk * 0.9;
+                    linkPath(lg, arr);
+                  }
+                  gg.save();
+                  gg.setTransform(1, 0, 0, 1, 0, 0);
+                  gg.globalAlpha = av;
+                  gg.drawImage(lt, 0, 0);
+                  gg.restore();
+                });
+              }
             }
           }
         },
