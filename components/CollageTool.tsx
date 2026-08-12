@@ -251,7 +251,7 @@ export const IN_KINDS: { id: string; name: string }[] = [
   { id: 'flip', name: '翻轉' },
   // 這兩個是特別做的：一個會落地彈兩下，一個是從側邊甩進來再晃回正
   { id: 'bounce', name: '彈跳落地' },
-  { id: 'spring', name: '泡泡' },
+  { id: 'spring', name: '流星' },
 ];
 
 /* 發光用的色票：第一顆是純白，其餘 14 顆是把預設色 #9BD4C3 只轉色相
@@ -290,6 +290,15 @@ export const GLOW_SWATCHES: string[] = (() => {
      靜止 ｜ 閃爍
      呼吸I ｜ 呼吸II      ← 兩顆呼吸並排
      故障I ｜ 故障II      ← 兩顆故障並排 */
+/* 發光速度：滑桿上顯示 0～100，實際用的倍率是 20～180（除以 100 才是倍率）。
+   兩者線性對應，所以滑桿看起來就是「0 最慢、100 最快」。 */
+export const glowSpeedToUi = (v: number) => Math.round((v - 20) / 1.6);
+export const glowSpeedFromUi = (u: number) => Math.round(20 + u * 1.6);
+/** 每一種發光動畫自己的預設速度（內部值） */
+export const GLOW_SPEED_DEFAULT: Record<string, number> = {
+  none: 100, blink: 70, breath: 180, breath2: 180, twinkle: 180, glitch: 180,
+};
+
 export const GLOW_IDLES: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
   { id: 'blink', name: '閃爍' },
@@ -378,28 +387,27 @@ const inFrame = (kind: string, p: number): MoFrame => {
     // 翻轉用「橫向壓扁」模擬（見下面的 inFlipX），不需要真的 3D
     case 'flip':   return { k: 1, dx: 0, dy: 0, rot: 0, a: fade };
     case 'bounce': return { k: 1, dx: 0, dy: -(1 - easeOutBounce(p)) * 1.1, rot: 0, a: Math.min(1, p * 4) };
-    /* 泡泡：一顆泡泡鼓起來 → 啵一聲破掉、四周甩出一圈放射線 → 圖案出現。
-         ① 0～40%「鼓起來」：一顆比本體大一圈（最大 1.5 倍）的空泡泡，
-            透明度只有兩成上下（肥皂膜），越接近破掉越大越淡。
-         ② 40%「破掉」：泡泡消失，改由 burst 那一圈放射線接手
-            （線怎麼畫見 drawBurst），圖案同時出現。
-         ③ 40～100%：圖案本身很單純 —— 從 0.86 倍用 easeOutBack 長到 1，
-            不再又轉又彈，主角是那一圈線。 */
+    /* 流星：從左上角外面斜著衝進來，帶著一條被拉長的尾巴，
+       到定位時尾巴收掉、身體微微一頓。
+         ① 0～62%「衝進來」：沿 45° 斜線飛進來（距離 1.15 個身位），
+            用 easeOutCubic 所以是「快進、慢收」；飛行途中整個被拉長
+            （fx 撐開、k 壓扁，見 inFlipX），就是速度線的感覺。
+         ② 62～100%「煞住」：拉長收回原形，帶一次很小的過衝（+6%），
+            像真的被慣性帶了一下。
+       轉角度是跟著飛行方向的：一開始 -28°，到定位轉回 0。 */
     case 'spring': {
-      const POP = 0.4;
-      if (p < POP) {
-        const q = p / POP;
-        const e2 = easeOutCubic(q);
-        return { k: 0.6 + e2 * 0.9, dx: 0, dy: 0, rot: 0, a: 0.24 * (1 - q * q), burst: 0 };
-      }
-      const r = (p - POP) / (1 - POP);
-      // 放射線只存在於破掉之後的前三成，很快就散掉
-      const burst = r < 0.34 ? 1 - r / 0.34 : 0;
+      const q = easeOutCubic(Math.min(1, p / 0.62));        // 0→1：飛進來
+      const r = Math.max(0, (p - 0.62) / 0.38);             // 煞住那一段
+      const over = r > 0 ? Math.sin(r * Math.PI) * 0.06 : 0;
+      const d = (1 - q) * 1.15;                             // 還差幾個身位
+      const stretch = (1 - q) * 0.55;                       // 飛行中被拉長的量
       return {
-        k: 0.86 + 0.14 * easeOutBack(Math.min(1, r * 2.2)),
-        dx: 0, dy: 0, rot: 0,
-        a: Math.min(1, r * 6),
-        burst,
+        // 橫向撐開多少，縱向就壓扁多少（體積守恆）＝ 流線型
+        k: (1 + over) / (1 + stretch),
+        dx: -d, dy: -d * 0.72,                              // 從左上角外面來
+        rot: -(1 - q) * 28,
+        a: Math.min(1, p * 4),
+        burst: 0,
       };
     }
     case 'none':   return FLAT;
@@ -410,8 +418,14 @@ const inFrame = (kind: string, p: number): MoFrame => {
 const inFlipX = (kind: string, p: number) => {
   if (p <= 0 || p >= 1) return 1;
   if (kind === 'flip') return Math.max(0.02, Math.abs(Math.cos((1 - easeOutCubic(p)) * Math.PI)));
-  // 泡泡整支都是等比的（橫縱一樣），變化都交給那一圈放射線
-  if (kind === 'spring') return 1;
+  if (kind === 'spring') {
+    /* 飛行途中把身體拉長：橫向撐開、縱向就被壓扁（見上面的 k），
+       兩者相乘保持體積，看起來就是一顆被速度拉成流線型的東西。
+       數字跟上面那支必須是同一組。 */
+    const q = easeOutCubic(Math.min(1, p / 0.62));
+    const stretch = (1 - q) * 0.55;
+    return 1 + stretch;
+  }
   return 1;
 };
 
@@ -1385,11 +1399,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [glowIdle, setGlowIdle] = useState('none');
   /** 發光常駐動畫的幅度（0～100）與速度（20～180，100＝原速） */
   const [glowAmp, setGlowAmp] = useState(100);
-  const [glowSpeed, setGlowSpeed] = useState(100);
+  const [glowSpeed, setGlowSpeed] = useState(GLOW_SPEED_DEFAULT.none);
   /* 圖片物件與文字物件的發光，各自也有一組一樣的常駐動畫設定。
      三組完全獨立 —— 同時開著的時候，動畫頁上就會出現三顆分開的按鈕。 */
-  const [glowMoImg, setGlowMoImg] = useState({ idle: 'none', amp: 100, speed: 100 });
-  const [glowMoText, setGlowMoText] = useState({ idle: 'none', amp: 100, speed: 100 });
+  const [glowMoImg, setGlowMoImg] = useState({ idle: 'none', amp: 100, speed: GLOW_SPEED_DEFAULT.none });
+  const [glowMoText, setGlowMoText] = useState({ idle: 'none', amp: 100, speed: GLOW_SPEED_DEFAULT.none });
   const lastDrawPosRef = useRef<{ x: number, y: number } | null>(null);
 
   useEffect(() => {
@@ -3121,8 +3135,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        畫出來的每一個像素跟原本完全一樣，一點畫質都沒動到。
        （設寬高會順便把 context 狀態全部重置，所以改成沿用之後，
          transform／alpha／合成模式要自己歸位。） */
+    /* ── 拖「比例」滑桿為什麼會頓 ────────────────────────────────────
+       四邊那幾種排版的遮罩大小是跟著比例走的，所以滑桿每動一格，
+       這張畫布的寬高就變一次 —— 而指派 canvas.width／height 會讓瀏覽器
+       把整塊點陣**重新配置**（上面那段註解講的就是這件事，動畫那邊也是
+       栽在同一個坑）。滑桿一秒可以動幾十格，等於一秒重開幾十張大畫布。
+
+       改成「只長不縮」：畫布保持在看過的最大尺寸，每一格只用左上角
+       maskW×maskH 那一塊，貼回去時也只貼那一塊。
+       尺寸不再每格重配，畫出來的像素完全一樣。 */
     const lmW = maskW | 0, lmH = maskH | 0;
-    if (lmc.width !== lmW || lmc.height !== lmH) { lmc.width = maskW; lmc.height = maskH; }
+    if (lmc.width < lmW || lmc.height < lmH) {
+      lmc.width = Math.max(lmc.width, lmW);
+      lmc.height = Math.max(lmc.height, lmH);
+    }
     const lmx = get2dWide(lmc)!;
     lmx.setTransform(1, 0, 0, 1, 0, 0);
     lmx.globalAlpha = 1;
@@ -3190,7 +3216,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
     });
     lmx.globalCompositeOperation = 'source-over';
-    ctx.drawImage(lmc, offs.mx, offs.my);
+    // 只貼「這一格真正用到」的那一塊（畫布可能比它大，見上面的說明）
+    ctx.drawImage(lmc, 0, 0, lmW, lmH, offs.mx, offs.my, lmW, lmH);
     };
 
     /* 一般四邊那四種是「圖跟遮罩並排」，誰先誰後都蓋不到對方；
@@ -5230,7 +5257,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <div className="grid grid-cols-2 gap-2">
                           {GLOW_IDLES.map(g => (
                             <button key={g.id}
-                              onClick={() => { gset({ idle: g.id }); replayMotion(); }}
+                              onClick={() => {
+                                // 換種類時速度回到那一款自己的預設（閃爍 70、其餘 180）
+                                gset({ idle: g.id, speed: GLOW_SPEED_DEFAULT[g.id] ?? 100 });
+                                replayMotion();
+                              }}
                               className={cell(gv.idle === g.id)}>
                               {g.name}
                             </button>
@@ -5242,9 +5273,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             <CompactSlider label="幅度" value={gv.amp} min={0} max={100} step={1}
                               onCommit={replayMotion}
                               onChange={(v: number) => gset({ amp: v })} />
-                            <CompactSlider label="速度" value={gv.speed} min={20} max={180} step={1}
+                            {/* 滑桿一律顯示 0～100，內部再換算回 20～180 的倍率 */}
+                            <CompactSlider label="速度" value={glowSpeedToUi(gv.speed)} min={0} max={100} step={1}
                               onCommit={replayMotion}
-                              onChange={(v: number) => gset({ speed: v })} />
+                              onChange={(v: number) => gset({ speed: glowSpeedFromUi(v) })} />
                           </div>
                         )}
                       </>
@@ -5370,11 +5402,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   {/* 連線：每個圖案拉一條極細的線到最近的鄰居。
                       版型跟上面那幾根滑桿一致 —— 左上是名稱，下面才是選項。
                       每一種圖案都支援（見上面 LINK_TYPES 的說明）。 */}
-                  <div className="flex flex-col mt-6">
+                  {/* 連線與發光併成同一排：左邊連線、右邊發光 */}
+                  <div className="grid grid-cols-2 gap-3 mt-6">
+                  <div className="flex flex-col">
                     <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
                       <span>連線</span>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex gap-1.5">
                       {([['none', '關閉'], ['solid', '實線'], ['dash', '虛線']] as const).map(([mode, name]) => (
                         <button
                           key={mode}
@@ -5396,11 +5430,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   </div>
 
                   {/* 發光：預設關閉。可以只讓其中一側發光。 */}
-                  <div className="flex flex-col mt-6">
+                  <div className="flex flex-col">
                     <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
                       <span>發光</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-3 gap-1.5">
                       {([['both', '開啟'], ['image', '僅圖片'], ['off', '關閉']] as const).map(([mode, name]) => (
                         <button
                           key={mode}
@@ -5429,6 +5463,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         </div>
                       </div>
                     )}
+                  </div>
                   </div>
                 </div>}
                 </div>
