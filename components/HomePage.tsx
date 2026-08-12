@@ -660,7 +660,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               exit={{ y: '100%' }}
               transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
               onClick={e => e.stopPropagation()}
-              className="w-full max-w-[430px] rounded-t-[24px] bg-[#141414] border-t border-x border-white/10 px-6 pt-5 pb-[calc(env(safe-area-inset-bottom,0px)+24px)]"
+              className="w-full max-w-[430px] rounded-t-[24px] bg-[#141414] border-t border-x border-white/10 px-6 pt-5 pb-[calc(env(safe-area-inset-bottom,0px)+44px)]"
             >
               {/* 標題列：只有一顆關閉／返回，標題留白讓版面乾淨 */}
               <div className="flex items-start justify-between mb-6">
@@ -745,55 +745,19 @@ export const HomePage: React.FC<HomePageProps> = ({
                         inputMode="email"
                         autoComplete="email"
                         autoCapitalize="none"
-                        autoFocus
                         placeholder="電子郵件"
                         className="w-full h-[50px] px-4 rounded-[14px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/25 text-[15px] text-white placeholder:text-white/20 transition-colors"
                       />
-                      {mode === 'password' && (
-                        <input
-                          value={pw}
-                          onChange={e => { setPw(e.target.value); setLoginErr(''); setLoginNote(''); }}
-                          type="password"
-                          autoComplete="current-password"
-                          placeholder="密碼"
-                          className="mt-2.5 w-full h-[50px] px-4 rounded-[14px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/25 text-[15px] text-white placeholder:text-white/20 transition-colors"
-                        />
-                      )}
+                      {/* 只留驗證碼這一條路：不用記密碼，也不會有忘記密碼那些分支 */}
                       <button
-                        onClick={() => mode === 'otp' ? sendCode() : submitPassword('in')}
-                        disabled={!idOk || (mode === 'password' && !pwOk) || step === 'busy'}
-                        className="mt-2.5 w-full h-[50px] rounded-[14px] bg-white text-black text-[14px] font-bold tracking-[0.02em] disabled:opacity-20 active:scale-[0.985] transition-[opacity,transform] duration-200 flex items-center justify-center gap-2"
+                        onClick={sendCode}
+                        disabled={!idOk || step === 'busy'}
+                        className="mt-2.5 w-full h-[50px] rounded-[14px] bg-white text-black text-[15px] font-bold tracking-[0.02em] disabled:opacity-20 active:scale-[0.985] transition-[opacity,transform] duration-200 flex items-center justify-center gap-2"
                       >
                         {step === 'busy'
                           ? <><span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />請稍候</>
-                          : mode === 'otp' ? '寄送驗證碼' : '登入'}
+                          : '寄送驗證碼'}
                       </button>
-                      {/* 底下不放任何小字：全部做成跟上面同一款的次要按鈕 */}
-                      <button
-                        onClick={() => { setMode(m => m === 'otp' ? 'password' : 'otp'); setLoginErr(''); setLoginNote(''); }}
-                        disabled={step === 'busy'}
-                        className="mt-2.5 w-full h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[15px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center"
-                      >
-                        {mode === 'otp' ? '改用密碼登入' : '改用驗證碼登入'}
-                      </button>
-                      {mode === 'password' && (
-                        <div className="mt-2.5 grid grid-cols-2 gap-2.5">
-                          <button
-                            onClick={() => submitPassword('up')}
-                            disabled={!idOk || !pwOk || step === 'busy'}
-                            className="h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[15px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-25 flex items-center justify-center"
-                          >
-                            註冊新帳號
-                          </button>
-                          <button
-                            onClick={forgotPw}
-                            disabled={step === 'busy'}
-                            className="h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[15px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center"
-                          >
-                            忘記密碼
-                          </button>
-                        </div>
-                      )}
                     </div>
                   )}
                 </>
