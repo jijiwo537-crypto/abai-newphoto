@@ -664,8 +664,8 @@ export const HomePage: React.FC<HomePageProps> = ({
             >
               {/* 標題列：只有一顆關閉／返回，標題留白讓版面乾淨 */}
               <div className="flex items-start justify-between mb-6">
-                <div>
-                  <p className="text-[19px] font-black tracking-[0.02em] text-white leading-tight">
+                <div className="pl-1.5 pt-1.5">
+                  <p className="text-[22px] font-black tracking-[0.02em] text-white leading-tight">
                     {step === 'code' ? '輸入驗證碼' : '登入'}
                   </p>
                   {step === 'code' && (
@@ -675,12 +675,17 @@ export const HomePage: React.FC<HomePageProps> = ({
                   )}
                 </div>
                 <button
-                  onClick={() => step === 'code' ? setStep('id') : setLoginOpen(false)}
+                  onClick={() => {
+                    // 驗證碼 → 回信箱畫面；信箱畫面 → 回三顆按鈕；再按才是關閉
+                    if (step === 'code') { setStep('id'); return; }
+                    if (emailOpen) { setEmailOpen(false); setLoginErr(''); setLoginNote(''); return; }
+                    setLoginOpen(false);
+                  }}
                   disabled={step === 'busy'}
-                  aria-label={step === 'code' ? '上一步' : '關閉'}
+                  aria-label={(step === 'code' || emailOpen) ? '上一步' : '關閉'}
                   className="shrink-0 w-8 h-8 -mr-1 -mt-0.5 rounded-full flex items-center justify-center text-white/35 hover:text-white hover:bg-white/[0.06] active:scale-90 transition-[color,background-color,transform] disabled:opacity-30"
                 >
-                  <Icon name={step === 'code' ? 'arrow_back' : 'close'} className="text-[18px]" />
+                  <Icon name={(step === 'code' || emailOpen) ? 'arrow_back' : 'close'} className="text-[18px]" />
                 </button>
               </div>
 
@@ -689,6 +694,8 @@ export const HomePage: React.FC<HomePageProps> = ({
                   {/* ── 主要入口：Apple 與 Google ──────────────────────
                       一鍵登入放最上面（大多數人會用這個），Email 放下面。
                       iOS 上架規定：只要有 Google，就一定要有 Sign in with Apple。 */}
+                  {!emailOpen && (
+                  <>
                   <button
                     onClick={() => oauth('apple')}
                     disabled={step === 'busy'}
@@ -716,18 +723,20 @@ export const HomePage: React.FC<HomePageProps> = ({
                     使用 Google 帳號登入
                   </button>
 
-                  {/* 信箱登入：跟上面兩顆同一款按鈕，點下去才展開輸入欄 */}
-                  {!emailOpen ? (
-                    <button
-                      onClick={() => { setEmailOpen(true); setLoginErr(''); setLoginNote(''); }}
-                      disabled={step === 'busy'}
-                      className="mt-2.5 w-full h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[14px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center gap-2.5"
-                    >
-                      <Icon name="mail" className="text-[17px] leading-none" />
-                      使用電子郵件登入
-                    </button>
-                  ) : (
-                    <div className="mt-2.5">
+                  {/* 點下去之後整片換成信箱登入的畫面（上面三顆會收起來） */}
+                  <button
+                    onClick={() => { setEmailOpen(true); setLoginErr(''); setLoginNote(''); }}
+                    disabled={step === 'busy'}
+                    className="mt-2.5 w-full h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[14px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center gap-2.5"
+                  >
+                    <Icon name="mail" className="text-[17px] leading-none" />
+                    使用電子郵件登入
+                  </button>
+                  </>
+                  )}
+
+                  {emailOpen && (
+                    <div>
                       <input
                         value={idInput}
                         onChange={e => { setIdInput(e.target.value); setLoginErr(''); setLoginNote(''); }}
@@ -757,35 +766,32 @@ export const HomePage: React.FC<HomePageProps> = ({
                           ? <><span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />請稍候</>
                           : mode === 'otp' ? '寄送驗證碼' : '登入'}
                       </button>
-                      <div className="mt-3.5 flex items-center justify-center gap-4">
-                        <button
-                          onClick={() => { setMode(m => m === 'otp' ? 'password' : 'otp'); setLoginErr(''); setLoginNote(''); }}
-                          disabled={step === 'busy'}
-                          className="text-[11px] text-white/30 hover:text-white/60 transition-colors disabled:opacity-30"
-                        >
-                          {mode === 'otp' ? '改用密碼登入' : '改用驗證碼登入'}
-                        </button>
-                        {mode === 'password' && (
-                          <>
-                            <span className="w-px h-3 bg-white/10" />
-                            <button
-                              onClick={() => submitPassword('up')}
-                              disabled={!idOk || !pwOk || step === 'busy'}
-                              className="text-[11px] text-white/30 hover:text-white/60 transition-colors disabled:opacity-20"
-                            >
-                              註冊新帳號
-                            </button>
-                            <span className="w-px h-3 bg-white/10" />
-                            <button
-                              onClick={forgotPw}
-                              disabled={step === 'busy'}
-                              className="text-[11px] text-white/30 hover:text-white/60 transition-colors disabled:opacity-30"
-                            >
-                              忘記密碼
-                            </button>
-                          </>
-                        )}
-                      </div>
+                      {/* 底下不放任何小字：全部做成跟上面同一款的次要按鈕 */}
+                      <button
+                        onClick={() => { setMode(m => m === 'otp' ? 'password' : 'otp'); setLoginErr(''); setLoginNote(''); }}
+                        disabled={step === 'busy'}
+                        className="mt-2.5 w-full h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[14px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center"
+                      >
+                        {mode === 'otp' ? '改用密碼登入' : '改用驗證碼登入'}
+                      </button>
+                      {mode === 'password' && (
+                        <div className="mt-2.5 grid grid-cols-2 gap-2.5">
+                          <button
+                            onClick={() => submitPassword('up')}
+                            disabled={!idOk || !pwOk || step === 'busy'}
+                            className="h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[14px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-25 flex items-center justify-center"
+                          >
+                            註冊新帳號
+                          </button>
+                          <button
+                            onClick={forgotPw}
+                            disabled={step === 'busy'}
+                            className="h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[14px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center"
+                          >
+                            忘記密碼
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </>
@@ -826,11 +832,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
               {loginErr && <p className="mt-3 text-center text-[11px] text-white/50">{loginErr}</p>}
               {!loginErr && loginNote && <p className="mt-3 text-center text-[11px] text-white/45">{loginNote}</p>}
-              {!isAuthReady && (
-                <p className="mt-3 text-center text-[10px] text-white/30 leading-relaxed">
-                  尚未設定後端（VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY）
-                </p>
-              )}
+
             </motion.div>
           </motion.div>
         )}
