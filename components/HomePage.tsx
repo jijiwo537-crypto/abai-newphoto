@@ -52,17 +52,13 @@ const TOOL_TILES = [
 
 /**
  * 模板庫先放空版位看效果。
- * 比例故意排得很不規則（直式、方形、橫式混著），版面才不會像一格一格的表格。
- *
- * 排列是「左、右、左、右…」，所以偶數格在左欄、奇數格在右欄。
- * 左欄用到的六個比例與右欄完全相同（只是順序不一樣），
- * 兩欄的總高度因此一模一樣 —— 第一格頂端齊、最後一格底部也齊，不會有一欄凸出來。
+ * 每一格都是 3:4 直式 —— 兩欄的格子一樣高、逐排對齊，
+ * 第一格頂端齊、最後一格底部也齊，不會有一欄凸出來。
  */
-const RATIOS = ['9 / 16', '4 / 3', '1 / 1', '3 / 4', '16 / 9', '5 / 4'];
+const TILE_RATIO = '3 / 4';
 const LIB_TEMPLATES: { name: string; ratio: string }[] = Array.from({ length: 12 }, (_, i) => ({
   name: `模板 ${String(i + 1).padStart(2, '0')}`,
-  // 右欄從第 4 個比例開始輪，兩欄拿到的是同一組六個、順序不同
-  ratio: RATIOS[(Math.floor(i / 2) + (i % 2 ? 3 : 0)) % RATIOS.length],
+  ratio: TILE_RATIO,
 }));
 
 const ACCOUNT_KEY = 'abai:account';
