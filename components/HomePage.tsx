@@ -660,15 +660,23 @@ export const HomePage: React.FC<HomePageProps> = ({
               onClick={e => e.stopPropagation()}
               className="w-full max-w-[430px] rounded-t-[24px] bg-[#141414] border-t border-x border-white/10 px-6 pt-5 pb-[calc(env(safe-area-inset-bottom,0px)+24px)]"
             >
-              <div className="flex items-center justify-between mb-5">
-                <span className="text-[10px] font-bold tracking-[0.24em] text-white/40 ml-0.5">
-                  {step === 'id' ? '' : '輸入驗證碼'}
-                </span>
+              {/* 標題列：只有一顆關閉／返回，標題留白讓版面乾淨 */}
+              <div className="flex items-start justify-between mb-6">
+                <div>
+                  <p className="text-[19px] font-black tracking-[0.02em] text-white leading-tight">
+                    {step === 'code' ? '輸入驗證碼' : '登入 abai'}
+                  </p>
+                  <p className="mt-1.5 text-[12px] text-white/35 leading-relaxed">
+                    {step === 'code'
+                      ? <>驗證碼寄到 <span className="text-white/60">{idInput.trim()}</span></>
+                      : '第一次來也沒關係，登入就會自動幫你建立帳號'}
+                  </p>
+                </div>
                 <button
                   onClick={() => step === 'code' ? setStep('id') : setLoginOpen(false)}
                   disabled={step === 'busy'}
                   aria-label={step === 'code' ? '上一步' : '關閉'}
-                  className="w-7 h-7 -mr-1 rounded-full flex items-center justify-center text-white/40 hover:text-white active:scale-90 transition-transform disabled:opacity-30"
+                  className="shrink-0 w-8 h-8 -mr-1 -mt-0.5 rounded-full flex items-center justify-center text-white/35 hover:text-white hover:bg-white/[0.06] active:scale-90 transition-[color,background-color,transform] disabled:opacity-30"
                 >
                   <Icon name={step === 'code' ? 'arrow_back' : 'close'} className="text-[18px]" />
                 </button>
@@ -676,28 +684,49 @@ export const HomePage: React.FC<HomePageProps> = ({
 
               {step === 'id' || step === 'busy' ? (
                 <>
-                  {/* 驗證碼 / 密碼：兩條路，同一個信箱欄位 */}
-                  <div className="flex p-1 mb-4 rounded-full bg-white/[0.06] border border-white/10">
-                    {([['otp', '驗證碼'], ['password', '密碼']] as const).map(([k, label]) => (
-                      <button
-                        key={k}
-                        onClick={() => { setMode(k); setLoginErr(''); setLoginNote(''); }}
-                        className={`flex-1 h-9 rounded-full text-[12px] font-bold tracking-[0.06em] transition-[background-color,color] duration-200 ${
-                          mode === k ? 'bg-white text-black' : 'text-white/50'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    ))}
+                  {/* ── 主要入口：Apple 與 Google ──────────────────────
+                      一鍵登入放最上面（大多數人會用這個），Email 放下面。
+                      iOS 上架規定：只要有 Google，就一定要有 Sign in with Apple。 */}
+                  <button
+                    onClick={() => oauth('apple')}
+                    disabled={step === 'busy'}
+                    className="w-full h-[50px] rounded-[14px] bg-white text-black text-[14px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center gap-2"
+                  >
+                    {/* Apple 官方標誌的外形（不是 emoji，也不是字元） */}
+                    <svg viewBox="0 0 384 512" className="w-[15px] h-[15px] -mt-0.5" fill="currentColor" aria-hidden>
+                      <path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+                    </svg>
+                    使用 Apple 帳號登入
+                  </button>
+                  <button
+                    onClick={() => oauth('google')}
+                    disabled={step === 'busy'}
+                    className="mt-2.5 w-full h-[50px] rounded-[14px] bg-white/[0.07] border border-white/10 text-white text-[14px] font-bold tracking-[0.01em] active:scale-[0.985] transition-transform disabled:opacity-30 flex items-center justify-center gap-2.5"
+                  >
+                    {/* Google 官方四色標誌 */}
+                    <svg viewBox="0 0 48 48" className="w-[17px] h-[17px]" aria-hidden>
+                      <path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-2.7-.4-3.9H24v7.1h12.1c-.2 1.9-1.6 4.7-4.5 6.6l-.04.3 6.5 5 .5.05c4.1-3.8 6.5-9.4 6.5-15.1z"/>
+                      <path fill="#34A853" d="M24 46c5.9 0 10.9-1.9 14.5-5.3l-6.9-5.3c-1.8 1.3-4.3 2.2-7.6 2.2-5.8 0-10.7-3.8-12.5-9.1l-.3 0-6.7 5.2-.1.3C8 41.1 15.4 46 24 46z"/>
+                      <path fill="#FBBC05" d="M11.5 28.5c-.5-1.4-.7-2.9-.7-4.5s.3-3.1.7-4.5l0-.3-6.8-5.3-.2.1C2.9 17.1 2 20.4 2 24s.9 6.9 2.5 9.9l7-5.4z"/>
+                      <path fill="#EA4335" d="M24 10.6c4.1 0 6.9 1.8 8.5 3.3l6.2-6C34.9 4.500 29.9 2 24 2 15.4 2 8 6.9 4.5 14.1l7 5.4C13.3 14.3 18.2 10.6 24 10.6z"/>
+                    </svg>
+                    使用 Google 帳號登入
+                  </button>
+
+                  <div className="my-5 flex items-center gap-3">
+                    <span className="flex-1 h-px bg-white/[0.08]" />
+                    <span className="text-[10px] tracking-[0.18em] text-white/20">或用電子郵件</span>
+                    <span className="flex-1 h-px bg-white/[0.08]" />
                   </div>
+
                   <input
                     value={idInput}
                     onChange={e => { setIdInput(e.target.value); setLoginErr(''); setLoginNote(''); }}
                     inputMode="email"
                     autoComplete="email"
                     autoCapitalize="none"
-                    placeholder="abaiiiii@gmail.com"
-                    className="w-full h-[52px] px-4 rounded-[12px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/30 text-[15px] text-white placeholder:text-white/25 transition-colors"
+                    placeholder="電子郵件"
+                    className="w-full h-[50px] px-4 rounded-[14px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/25 text-[15px] text-white placeholder:text-white/20 transition-colors"
                   />
                   {mode === 'password' && (
                     <input
@@ -705,79 +734,54 @@ export const HomePage: React.FC<HomePageProps> = ({
                       onChange={e => { setPw(e.target.value); setLoginErr(''); setLoginNote(''); }}
                       type="password"
                       autoComplete="current-password"
-                      placeholder="密碼（至少 6 個字）"
-                      className="mt-3 w-full h-[52px] px-4 rounded-[12px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/30 text-[15px] text-white placeholder:text-white/25 transition-colors"
+                      placeholder="密碼"
+                      className="mt-2.5 w-full h-[50px] px-4 rounded-[14px] bg-white/[0.05] border border-white/10 outline-none focus:border-white/25 text-[15px] text-white placeholder:text-white/20 transition-colors"
                     />
                   )}
 
-                  {mode === 'otp' ? (
+                  <button
+                    onClick={() => mode === 'otp' ? sendCode() : submitPassword('in')}
+                    disabled={!idOk || (mode === 'password' && !pwOk) || step === 'busy'}
+                    className="mt-3 w-full h-[50px] rounded-[14px] bg-white text-black text-[14px] font-bold tracking-[0.02em] disabled:opacity-20 active:scale-[0.985] transition-[opacity,transform] duration-200 flex items-center justify-center gap-2"
+                  >
+                    {step === 'busy'
+                      ? <><span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />請稍候</>
+                      : mode === 'otp' ? '寄送驗證碼' : '登入'}
+                  </button>
+
+                  {/* 兩條路的切換：做成一句不起眼的小字，不要搶版面 */}
+                  <div className="mt-3.5 flex items-center justify-center gap-4">
                     <button
-                      onClick={sendCode}
-                      disabled={!idOk || step === 'busy'}
-                      className="mt-4 w-full h-[52px] rounded-[12px] bg-white text-black text-[13px] font-black tracking-[0.1em] disabled:opacity-25 active:scale-[0.98] transition-[opacity,transform] duration-200 flex items-center justify-center gap-2"
+                      onClick={() => { setMode(m => m === 'otp' ? 'password' : 'otp'); setLoginErr(''); setLoginNote(''); }}
+                      disabled={step === 'busy'}
+                      className="text-[11px] text-white/30 hover:text-white/60 transition-colors disabled:opacity-30"
                     >
-                      {step === 'busy'
-                        ? <><span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />請稍候</>
-                        : '取得驗證碼'}
+                      {mode === 'otp' ? '改用密碼登入' : '改用驗證碼登入'}
                     </button>
-                  ) : (
-                    <>
-                      <button
-                        onClick={() => submitPassword('in')}
-                        disabled={!idOk || !pwOk || step === 'busy'}
-                        className="mt-4 w-full h-[52px] rounded-[12px] bg-white text-black text-[13px] font-black tracking-[0.1em] disabled:opacity-25 active:scale-[0.98] transition-[opacity,transform] duration-200 flex items-center justify-center gap-2"
-                      >
-                        {step === 'busy'
-                          ? <><span className="w-4 h-4 rounded-full border-2 border-black/25 border-t-black animate-spin" />請稍候</>
-                          : '登入'}
-                      </button>
-                      <div className="mt-3 flex items-center justify-between">
+                    {mode === 'password' && (
+                      <>
+                        <span className="w-px h-3 bg-white/10" />
                         <button
                           onClick={() => submitPassword('up')}
                           disabled={!idOk || !pwOk || step === 'busy'}
-                          className="text-[11px] text-white/60 disabled:text-white/20 tracking-[0.06em]"
+                          className="text-[11px] text-white/30 hover:text-white/60 transition-colors disabled:opacity-20"
                         >
-                          用這組建立新帳號
+                          註冊新帳號
                         </button>
+                        <span className="w-px h-3 bg-white/10" />
                         <button
                           onClick={forgotPw}
                           disabled={step === 'busy'}
-                          className="text-[11px] text-white/45 disabled:text-white/20 tracking-[0.06em]"
+                          className="text-[11px] text-white/30 hover:text-white/60 transition-colors disabled:opacity-30"
                         >
                           忘記密碼
                         </button>
-                      </div>
-                    </>
-                  )}
-
-                  {/* 第三方登入。iOS 上架規定：只要有 Google，就一定要有 Apple。 */}
-                  <div className="mt-5 flex items-center gap-3">
-                    <span className="flex-1 h-px bg-white/10" />
-                    <span className="text-[10px] tracking-[0.2em] text-white/25">或</span>
-                    <span className="flex-1 h-px bg-white/10" />
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-3">
-                    <button
-                      onClick={() => oauth('apple')}
-                      disabled={step === 'busy'}
-                      className="h-[50px] rounded-[12px] bg-white text-black text-[12px] font-black tracking-[0.08em] active:scale-[0.98] transition-transform disabled:opacity-30 flex items-center justify-center gap-1.5"
-                    >
-                      <span className="text-[16px] leading-none"></span> Apple
-                    </button>
-                    <button
-                      onClick={() => oauth('google')}
-                      disabled={step === 'busy'}
-                      className="h-[50px] rounded-[12px] bg-white/[0.06] border border-white/15 text-white text-[12px] font-black tracking-[0.08em] active:scale-[0.98] transition-transform disabled:opacity-30 flex items-center justify-center gap-2"
-                    >
-                      <span className="w-4 h-4 rounded-full bg-white text-black text-[11px] font-black leading-4">G</span> Google
-                    </button>
+                      </>
+                    )}
                   </div>
                 </>
               ) : (
                 <>
-                  <p className="mb-4 text-[12px] text-white/40">
-                    驗證碼寄到 <span className="text-white/70">{idInput.trim()}</span>
-                  </p>
                   <input
                     value={code}
                     onChange={e => { setCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setLoginErr(''); }}

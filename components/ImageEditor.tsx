@@ -1388,8 +1388,18 @@ const ThumbCanvas: React.FC<{
     const key = `${own ? id : fallbackId}#${e.v}`;
     if (drawn.current === key) return;      // 沒換內容就不要重畫
     drawn.current = key;
+    const cx = el.getContext('2d')!;
+    /* 畫之前一定要先清空。
+       drawImage 是「疊上去」不是「換掉」：新的縮圖只要有任何一塊不是完全
+       不透明（像素管線算出來的 alpha 不見得每一格都剛好 255），上一張留在
+       這塊畫布上的內容就會從那些地方透出來，跟新的混在一起 —— 看起來就是
+       「縮圖有一部分怪怪的」，而且離開分頁再回來（畫布重建、內容是空的）
+       就恢復正常。這正是主人描述的那個現象。
+       重設 width／height 本來就會順便清空，但尺寸沒變時不會走那條路，
+       所以這裡明確清一次。 */
     if (el.width !== e.cvs.width || el.height !== e.cvs.height) { el.width = e.cvs.width; el.height = e.cvs.height; }
-    el.getContext('2d')!.drawImage(e.cvs, 0, 0);
+    else cx.clearRect(0, 0, el.width, el.height);
+    cx.drawImage(e.cvs, 0, 0);
     el.dataset.thumbReady = own ? '1' : '0';
   }, [store, id, fallbackId]);
   /* useLayoutEffect：卡片是每次進頁才掛上來的，排在 useEffect 的話
