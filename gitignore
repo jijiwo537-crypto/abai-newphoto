@@ -1,4 +1,19 @@
+# 相依套件
+node_modules/
 
-# 本機的密鑰設定
-.env.local
+# 打包產物
+dist/
+dist-ssr/
+*.local
+
+# 本機的密鑰設定 —— 這幾個檔案裡有金鑰，絕對不要進版控
 .env
+.env.local
+.env.*.local
+
+# 編輯器 / 系統
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.log
