@@ -89,3 +89,71 @@ select:focus, select:focus-visible {
   outline: 2px solid transparent;
   outline-offset: 2px;
 }
+
+/* ── 滑桿樣式：一定要放在全域 ────────────────────────────────────────
+   這幾組樣式原本只寫在各個工具元件自己的 <style> 裡。問題是那些 <style>
+   是元件樹的一部分：元件還沒掛上去、或者滑桿所在的共用面板被用在別的工具裡
+   的時候，樣式就還不存在 —— 滑桿會先用瀏覽器原生的樣子畫出來（iOS 上是
+   藍色那根），等那個 <style> 掛上去才變回來。那就是「滑桿突然變簡陋、
+   過一會兒又好了」的成因。
+
+   styles.css 是在 index.tsx 最上面就 import 的，永遠比任何元件早生效，
+   放這裡就不會有那個空窗期。各元件裡原本那幾份完全一樣的規則保留著
+   （同樣的宣告、同樣的值），所以外觀一個像素都不會變。 */
+
+/* 一般滑桿（創意拼圖的參數、發光、動畫…） */
+.premium-slider { -webkit-appearance: none; width: 100%; height: 2px; background: #222; border-radius: 2px; outline: none; touch-action: none; }
+.premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; cursor: pointer; }
+
+/* 顏色滑桿：沿用原生 thumb + accent-color，不自己畫 */
+.designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
+
+/* 圖片編輯那一頁的滑桿（編輯／經典拼圖／創意拼圖共用同一組） */
+.custom-range {
+  -webkit-appearance: none;
+  width: calc(100% + 64px);
+  height: 40px;
+  background: rgba(0,0,0,0);
+  outline: none;
+  margin: 0 -32px;
+  padding: 0;
+  touch-action: none;
+  -webkit-tap-highlight-color: rgba(0,0,0,0);
+}
+.custom-range:focus { outline: none; }
+/* 特效細項的並排滑桿：盒子收到 26px，軌道只畫 9px..寬-9px，圓點才走得到頭尾 */
+.custom-range.dense { height: 26px; width: 100%; margin: 0; }
+.custom-range.dense::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
+}
+.custom-range.dense::-moz-range-track {
+  background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
+}
+.custom-range.dense::-webkit-slider-thumb { height: 26px; width: 18px; margin-top: -12px; }
+.custom-range.dense::-moz-range-thumb { height: 26px; width: 18px; }
+.custom-range::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(to right, rgba(0,0,0,0) 32px, #333 32px, #333 calc(100% - 32px), rgba(0,0,0,0) calc(100% - 32px));
+  border-radius: 2px;
+  cursor: pointer;
+}
+.custom-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 64px;
+  width: 64px;
+  background-color: rgba(0,0,0,0);
+  background-image: radial-gradient(circle at center, #ffffff 0, #ffffff 7.5px, rgba(255,255,255,0) 8px, rgba(255,255,255,0) 100%);
+  border: none;
+  outline: none;
+  cursor: pointer;
+  margin-top: -31px;
+  transition: transform 0.1s;
+  box-shadow: none;
+}
+.custom-range::-webkit-slider-thumb:active { transform: scale(1.15); }
+.custom-range::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
+.custom-range::-moz-range-thumb {
+  height: 15px; width: 15px; border-radius: 50%;
+  background: #fff; border: none; cursor: pointer;
+}
