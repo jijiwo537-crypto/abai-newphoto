@@ -315,6 +315,15 @@ const FX_TOOLS: Record<string, ToolDef[]> = Object.fromEntries(
   ] as ToolDef[]]),
 );
 
+/** 最外層那根滑桿要改調哪一個參數（沒設就是調「強度」）。
+    來源是 FX_DEFS 的 rootParam，跟拼圖那邊讀同一份定義。 */
+const FX_ROOT_PARAM: Record<string, ToolDef> = Object.fromEntries(
+  FX_DEFS.filter(d => d.rootParam).map(d => {
+    const p = d.params.find(x => x.id === d.rootParam)!;
+    return [d.id, { id: p.id, label: p.label, icon: p.icon, min: p.min, max: p.max, step: p.step } as ToolDef];
+  }),
+);
+
 const LEAK_TOOLS: ToolDef[] = [
   { id: 'leakOpacity', label: '強度', icon: 'opacity', min: 0, max: 100 },
   { id: 'leakAngle', label: '角度', icon: 'rotate_right', min: 0, max: 360 },
@@ -6104,6 +6113,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       const card = EFFECT_TOOLS.find(t => effectAmountId(t.id) === activeToolId);
       const src = [...SOFT_LIGHT_TOOLS, ...HALATION_TOOLS, ...LEAK_TOOLS].find(t => t.id === activeToolId);
       if (card && src) tool = { ...src };
+    }
+    /* 有些特效的「強度」沒有意義（馬賽克調到一半只是把原圖疊回來一半），
+       那種在 FX_DEFS 裡設了 rootParam：最外層這根直接改調它指定的參數。
+       擺在改標籤之前 —— 這一根的名字要是「格數」，不是「強度」。 */
+    if (activeCategory === 'effects') {
+      const rootP = FX_ROOT_PARAM[activeToolId];
+      if (rootP) return rootP;
     }
     /* 特效最外層那根滑桿一律叫「強度」——
        選中哪一顆卡片，卡片自己已經有白框跟名字了，滑桿上再寫一次特效名字沒有意義。 */

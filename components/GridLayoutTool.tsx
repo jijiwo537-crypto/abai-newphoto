@@ -669,6 +669,16 @@ const FX_OWN_KEYS: Record<string, string[]> = {
 const FX_ALL_AMOUNTS = ['soft', 'fringeIntensity', 'leakOpacity', 'colorNoise', 'blur', 'vignette',
   ...FX_DEFS.map(d => d.id)];
 
+/** 最外層那根滑桿要改調哪一個參數（沒設就是調「強度」）。
+    來源是 FX_DEFS 裡的 rootParam —— 兩個工具讀同一份，不會各自走味。 */
+const FX_ROOT_PARAM: Record<string, { id: string; label: string; min: number; max: number; def: number }> =
+  Object.fromEntries(
+    FX_DEFS.filter(d => d.rootParam).map(d => {
+      const p = d.params.find(x => x.id === d.rootParam)!;
+      return [d.id, { id: p.id, label: p.label, min: p.min, max: p.max, def: p.def }];
+    }),
+  );
+
 /** 這一顆卡片的細項滑桿（第一根是強度，hidden 的不出現），跟編輯同一套 */
 const FX_DETAIL: Record<string, [string, string, number, number, number][]> = {
   ...Object.fromEntries(FX_DEFS.map(d => [d.id, [
@@ -1049,7 +1059,7 @@ const CATS = ([
   ['filter', 'palette', '濾鏡'],
   ['tune', 'tune', '調節'],
   ['effect', 'magic_button', '特效'],
-  ['shape', 'shapes', '形狀'],
+  ['shape', 'shapes', '造型'],
   // 構圖圖標跟「編輯」那邊用同一顆（crop）
   ['compose', 'crop', '構圖'],
 ] as const).filter(c => !(hideShape && c[0] === 'shape'));
@@ -1073,11 +1083,13 @@ const editorSlider = (
   onVal: (v: number) => void,
   swatches?: React.ReactNode,
   hideChrome = false,
+  /* 一格多大。預設 1；羽化這種「低段位差一點就差很多」的用 0.5 才調得準。 */
+  step = 1,
 ) => {
   const input = (cls: string) => (
     <input
-      type="range" min={min} max={max} step="1" value={value}
-      onChange={e => onVal(parseInt(e.target.value))}
+      type="range" min={min} max={max} step={step} value={value}
+      onChange={e => onVal(step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value))}
       onPointerDown={hideChrome ? () => setTuningEdge(true) : undefined}
       onPointerUp={hideChrome ? () => setTuningEdge(false) : undefined}
       onPointerCancel={hideChrome ? () => setTuningEdge(false) : undefined}
@@ -1095,7 +1107,7 @@ const editorSlider = (
       <div className="relative flex-1 min-w-0 h-11 flex items-center touch-none">
         {input('custom-range dense')}
       </div>
-      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0 text-center min-w-[2.6rem]">{value}</span>
+      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0 text-center min-w-[2.6rem]">{step < 1 ? value.toFixed(1) : value}</span>
     </div>
   );
   return (
@@ -1164,7 +1176,16 @@ const sliderArea = (() => {
     // 細項是另外一整區（並排滑桿），不走這一根
     if (effectDetail) return null;
     if (!effectCard) return null;
-    // 最外層一律只有一根「強度」，跟編輯一樣
+    /* 有些特效的「強度」沒有意義（馬賽克調到一半只是把原圖疊回來），
+       那種就在 FX_DEFS 裡設了 rootParam：最外層這根直接調它指定的參數。 */
+    const rootP = FX_ROOT_PARAM[effectCard];
+    if (rootP) {
+      return editorSlider(
+        rootP.label, fxVal(rootP.id, rootP.def), rootP.min, rootP.max,
+        v => setFx({ [rootP.id]: v }),
+      );
+    }
+    // 其餘一律只有一根「強度」，跟編輯一樣
     const amountId = fxAmountId(effectCard);
     return editorSlider('強度', fxVal(amountId, 0), 0, 100, v => setFx({ [amountId]: v }));
   }
@@ -1185,9 +1206,11 @@ const sliderArea = (() => {
     const t = SHAPE_TOOLS.find(x => x[0] === shapeTool);
     if (t && (t[0] === 'imgRadius' || t[0] === 'feather')) {
       const key = t[0] as 'imgRadius' | 'feather';
+      /* 羽化一格 0.5：它是「佔短邊的百分比」，0→1 那一步在畫面上就是一大截，
+         整數只有 50 段，低段位根本調不準。0.5 一格＝100 段，細得多。 */
       return editorSlider(
         t[1], (img[key] as number) || 0, t[3], t[4],
-        v => set({ [key]: v }), undefined, true,
+        v => set({ [key]: v }), undefined, true, key === 'feather' ? 0.5 : 1,
       );
     }
     return null;
@@ -4422,7 +4445,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     const block = (e: TouchEvent) => {
       const busy = wsGestureRef.current || layoutGestureRef.current
         || layoutCornerRef.current || pointerState.current.isDraggingContent
-        || floatSwapRef.current?.dragging || touchDragState.current;
+        || floatSwapRef.current?.dragging || touchDragState.current
+        // 雙指縮放畫布時也要擋掉原生捲動，不然會邊縮放邊被瀏覽器捲走
+        || canvasZoomRef.current;
       if (busy && e.cancelable) e.preventDefault();
     };
     document.addEventListener('touchmove', block, { passive: false });
@@ -4547,7 +4572,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const pagesModeRef = useRef(false);
   pagesModeRef.current = pagesMode;
   /** 排頁面時整排頁面縮成一半（用 transform，不動 previewW/H） */
-  const pagesScale = pagesMode ? PAGES_MODE_SCALE : 1;
+  /* --- 雙指縮放預覽 ---
+     整排頁面本來就有一套縮放機制（排頁面模式用的 k），這裡沿用同一套：
+     使用者的倍率就是「沒有在排頁面時的 k」。這樣捲動幾何、頁面置中、
+     底下那排按鈕的定位全部自動跟著對，不必再開一條平行的邏輯。 */
+  const [userZoom, setUserZoom] = useState(1);
+  /* 手勢期間倍率是直接寫進 DOM 的（不經過 state，才不會每一帧重繪整棵樹），
+     所以這個 ref 是「現在真正的倍率」。千萬不要在 render 裡把它蓋回 state ——
+     捏合中如果剛好有別的原因重繪一次，就會把手勢的值抹掉。 */
+  const userZoomRef = useRef(1);
+  useEffect(() => { userZoomRef.current = userZoom; }, [userZoom]);
+  const ZOOM_MIN = 0.4, ZOOM_MAX = 3;
+  /** 正在雙指縮放畫布。有值的時候不准任何其他手勢介入 */
+  const canvasZoomRef = useRef<{ startDist: number; baseZoom: number; anchor: number } | null>(null);
+  const pagesScale = pagesMode ? PAGES_MODE_SCALE : userZoom;
   /** 整排頁面左邊要留的空白（讓第一頁置中） */
   const stripOffset = (w: number, k: number) => Math.max(16, (w - previewW * k) / 2);
   /** 第 i 頁置中時的捲動位置 */
@@ -4715,7 +4753,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       // 跟內容用同一次 render 寫出來，兩邊永遠同一帧、速度不可能不一樣。
       positionPageCtls();
       // 離開這個模式後還要再跑到動畫結束，位移才有東西補
-      if (!pagesMode && !kAnimRef.current && k === 1) return;
+      /* 原本是寫死的 k === 1；有了使用者縮放之後，目標值不一定是 1，
+         改成「沒有動畫、而且已經到達目標倍率」就收工，不會一直空轉。 */
+      if (!pagesMode && !kAnimRef.current && Math.abs(k - pagesScale) < 0.0001) return;
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
@@ -5034,6 +5074,37 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   };
 
   const { width: previewW, height: previewH } = getRatioDimensions();
+
+  /* --- 換比例時，浮動物件要跟著頁面一起縮放 ---
+     圖片／文字這些浮動物件的 x/y 是「從頁面左上角算起的絕對像素」，
+     而佈局（格子）是以頁面中心為基準的偏移量。所以換頁面比例的時候，
+     格子會自己待在中間，浮動物件卻原地不動 —— 頁面一變窄或變矮，
+     原本靠邊的物件就跑到頁面外面、被裁掉（上方的物件最常中招）。
+
+     這裡在頁面尺寸真的變了的那一刻，把每個浮動物件按比例重新擺一次：
+       · 中心點：依 x、y 兩個方向各自的縮放比例移動 → 相對位置不變
+       · 大小：乘上兩個比例中「較小」的那個 → 等比縮放，圖不會被壓扁，
+               而且原本在框內的一定還在框內
+     結果就是整組構圖跟著頁面一起縮放，換什麼比例都不會有東西被裁掉。 */
+  const pageFrameRef = useRef<{ w: number; h: number } | null>(null);
+  useLayoutEffect(() => {
+    const prev = pageFrameRef.current;
+    pageFrameRef.current = { w: previewW, h: previewH };
+    if (!prev || prev.w <= 0 || prev.h <= 0 || previewW <= 0 || previewH <= 0) return;
+    // 只有真的變了才動（0.5px 以內當作沒變，避免量測誤差一直觸發）
+    if (Math.abs(prev.w - previewW) < 0.5 && Math.abs(prev.h - previewH) < 0.5) return;
+    const sx = previewW / prev.w;
+    const sy = previewH / prev.h;
+    const s = Math.min(sx, sy);
+    setFloatingImages(list => list.length === 0 ? list : list.map(f => {
+      /* 版面盒的中心就是 x + width/2（scale 是以中心為原點放大的，
+         見 wrapGeo），所以搬中心、再把左上角推回去就對了。 */
+      const cx = (f.x + f.width / 2) * sx;
+      const cy = (f.y + f.height / 2) * sy;
+      return { ...f, scale: f.scale * s, x: cx - f.width / 2, y: cy - f.height / 2 };
+    }));
+  }, [previewW, previewH]);
+
   /** 頁面順序模式縮小的倍率：騰出下面那兩顆按鈕的高度 */
   /** rAF 迴圈裡要用到的頁寬（不想讓迴圈跟著每次 render 重掛） */
   const previewWRef = useRef(previewW);
@@ -5047,6 +5118,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    */
   useLayoutEffect(() => {
     if (kAnimRef.current) return;
+    // 手指還在畫布上捏合時，倍率由手勢每一帧直接寫，這裡不要插手
+    if (canvasZoomRef.current) return;
     kRef.current = pagesScale;
     applyStripGeometry(pagesScale);
   }, [pagesScale, pages.length, previewW, previewH, containerSize.width, applyStripGeometry]);
@@ -6665,6 +6738,41 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       return;
     }
 
+    /* --- 雙指縮放整個預覽 ---
+       條件很嚴格，因為這個手勢絕對不能跟別的動作打架：
+         · 一定要兩根手指（單指永遠是左右捲頁，不受影響）
+         · 什麼都沒選中（選中東西時兩指是縮放那個物件，上面已經接走了）
+         · 不在排頁面模式（那個模式有自己的倍率）
+         · 手指沒有落在按鈕或角球上（gestureScope 早就回 'none' 擋掉了）
+       開始之前先把捲頁狀態清乾淨：第二根手指落下時 handleWorkspaceTouchStart
+       會重跑一次，開頭已經 panRef = null，所以不可能同時在捲頁。 */
+    if (
+      e.touches.length >= 2 && !pagesMode
+      && !selectedFloatingId && selectedIndex === null && !layoutSelected
+    ) {
+      const cont = containerRef.current;
+      const w = containerSize.width;
+      panRef.current = null;
+      wsGestureRef.current = null;
+      const d = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY,
+      ) || 1;
+      // 縮放要繞著「現在停在畫面正中間的那一頁」，不然會一邊縮一邊漂走
+      let anchor = 0;
+      if (cont && w > 0) {
+        const k0 = kRef.current || 1;
+        anchor = Math.round(
+          (cont.scrollLeft + w / 2 - stripOffset(w, k0)) / Math.max(1, k0 * (previewW + 1)) - 0.5,
+        );
+        anchor = Math.max(0, Math.min(pages.length - 1, anchor));
+      }
+      /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
+         連續捏兩次時，第二次一定要從第一次的結果接著算。 */
+      canvasZoomRef.current = { startDist: d, baseZoom: kRef.current || 1, anchor };
+      return;
+    }
+
     // 沒有接管物件手勢 → 準備手動捲頁。
     // （手勢沒有落在「已選中的那個物件」身上時就屬於畫布，可以左右滑動。）
     const el = containerRef.current;
@@ -6683,6 +6791,38 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     if (isLongPressedRef.current || touchDragState.current || floatSwapRef.current?.dragging) {
       panRef.current = null;
       wsGestureRef.current = null;
+      return;
+    }
+
+    /* 畫布縮放放在最前面：它在跑的時候，捲頁與物件手勢一律不處理 */
+    const cz = canvasZoomRef.current;
+    if (cz) {
+      panRef.current = null;
+      /* 放開任何一根手指就結束這次縮放並提交 —— 留著等 touchend 的話，
+         剩下那根手指接著滑會變成「一邊縮放一邊捲頁」，正是要避免的情況。 */
+      if (e.touches.length < 2) {
+        canvasZoomRef.current = null;
+        setUserZoom(userZoomRef.current);
+        return;
+      }
+      const d = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY,
+      ) || 1;
+      const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cz.baseZoom * (d / cz.startDist)));
+      userZoomRef.current = z;
+      kRef.current = z;
+      // 尺寸先寫（scrollWidth 才是對的），再把錨定頁擺回正中間
+      applyStripGeometry(z);
+      const cont = containerRef.current;
+      const w = containerSize.width;
+      if (cont && w > 0) {
+        cont.scrollLeft = Math.max(
+          0,
+          stripOffset(w, z) + z * (cz.anchor * (previewW + 1) + previewW / 2) - w / 2,
+        );
+      }
+      positionPageCtls();
       return;
     }
 
@@ -6853,6 +6993,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
   const handleWorkspaceTouchEnd = () => {
     setPinchFloatingId(null);
+    /* 畫布縮放收尾：把手勢期間直接寫進 DOM 的倍率同步回 state。
+       此時 kRef 已經等於目標值，所以上面那支縮放動畫的 layout effect
+       會判定「沒有變化」直接跳過，不會再補一段動畫。 */
+    if (canvasZoomRef.current) {
+      canvasZoomRef.current = null;
+      panRef.current = null;
+      setUserZoom(userZoomRef.current);
+      return;
+    }
     if (wsGestureRef.current) {
       wsGestureRef.current = null;
       setActiveGuidelines([]);
