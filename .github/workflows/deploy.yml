@@ -30,7 +30,18 @@ jobs:
       - run: npm ci
 
       # vite.config.ts 已經設成相對路徑，所以放在使用者名稱底下的子路徑也能正常載入
+      #
+      # 登入用的 Supabase 設定從 GitHub 的 Secrets 帶進來。
+      # 在 repo 的 Settings → Secrets and variables → Actions 新增這兩筆：
+      #   SUPABASE_URL              https://xxxx.supabase.co
+      #   SUPABASE_PUBLISHABLE_KEY  sb_publishable_...
+      #
+      # 沒設也不會讓打包失敗 —— 只是 App 裡按登入會顯示「後端尚未設定」，
+      # 其他功能照常。
       - run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
 
       - uses: actions/configure-pages@v5
 
