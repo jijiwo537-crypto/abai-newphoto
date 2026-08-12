@@ -24,6 +24,7 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity } from '../utils/c
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
 import { SaveButton } from './SaveButton';
 
+import { pushHistory as pushHistoryEntry } from '../utils/history';
 // --- 自製極簡單線十字星圖標 ---
 const CrossStarIcon = ({ size = 20, strokeWidth = 1.5 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
@@ -1515,8 +1516,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (current && sameSnap(current, snap)) {
       histRef.current = { history: sliced, index: sliced.length - 1 };
     } else {
-      const nextHistory = [...sliced, snap].slice(-100);
-      histRef.current = { history: nextHistory, index: nextHistory.length - 1 };
+      /* 上限交給 pushHistoryEntry 管：留到 500 格，而且第 0 格（最初的樣子）
+         永遠不會被丟掉，所以一路按上一步一定回得到原始狀態。 */
+      histRef.current = pushHistoryEntry(sliced, sliced.length - 1, snap);
     }
     dirtyRef.current = false;
     setDirty(false);

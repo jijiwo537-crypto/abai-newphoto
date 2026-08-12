@@ -636,15 +636,9 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
         </div>
 
-        {/* 歷史紀錄下面原本有一塊廣告版位，看得到的那一塊拿掉了。
-             但外框要留著 —— 這一疊是靠 mt-auto 貼著下緣排的，少了它上面
-             每一排都會往下掉 163px。所以保留同樣的版面高度（-mt-1.5 +
-             aspect-[342/147]），只是裡面不畫東西：格子消失，其他一個像素都不動。
-             （原本那塊是絕對定位往下多長 50px 的，現在沒有東西會蓋到靈感區，
-              所以 libScrollTop 也跟著簡化成直接捲到靈感區頂端。） */}
-        <div className="relative z-10 -mt-1.5" aria-hidden>
-          <div className="relative aspect-[342/147]" />
-        </div>
+        {/* 歷史紀錄下面原本還有一塊廣告版位，拿掉了。
+             它是「絕對定位往下多長 50px」的，所以移掉之後，
+             下面 libScrollTop 那條也跟著簡化回單純捲到靈感區的頂端。 */}
       </div>
 
       {/* --- 靈感 ---

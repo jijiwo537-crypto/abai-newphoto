@@ -13,6 +13,7 @@ import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity } from '../utils/compose';
 
+import { pushHistory as pushHistoryEntry } from '../utils/history';
 interface CellRect {
   x: number;
   y: number;
@@ -4775,12 +4776,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           return prev;
         }
 
-        const sliced = prev.history.slice(0, prev.index + 1);
-        const nextHistory = [...sliced, stateToSave].slice(-30);
-        return {
-          history: nextHistory,
-          index: nextHistory.length - 1
-        };
+        /* 以前只留 30 格，編久一點就退不回最初的樣子了。
+           改用共用的 pushHistoryEntry：留到 500 格，而且第 0 格永遠留著。
+           一格只是參數的淺拷貝（圖片是共用參照），所以放寬不會吃記憶體。 */
+        return pushHistoryEntry(prev.history, prev.index, stateToSave);
       });
     }, 300);
 

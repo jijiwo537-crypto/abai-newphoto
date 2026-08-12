@@ -16,6 +16,7 @@ import { ChevronLeft } from 'lucide-react';
 import ExifReader from 'exifreader';
 import { Icon } from './Icon';
 
+import { pushHistory as pushHistoryEntry } from '../utils/history';
 interface Point { x: number; y: number; }
 
 interface Curves {
@@ -3010,8 +3011,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
         return;
     }
     {
-      const kept = historyRef.current.slice(0, historyIdxRef.current + 1);
-      const arr = [...kept, {
+      const pushed = pushHistoryEntry(historyRef.current, historyIdxRef.current, {
         params: JSON.parse(JSON.stringify(p)),
         selectedLutIdx: idx,
         geo: JSON.parse(JSON.stringify(geoRef.current)),
@@ -3024,8 +3024,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
         grainManuallyAdjusted: gMan,
         halationManuallyAdjusted: hMan,
         srcs: [...srcListRef.current]
-      }].slice(-100);
-      writeHistory(arr, arr.length - 1);
+      });
+      /* 上限交給 pushHistoryEntry 管：留到 500 格，第 0 格（原圖的樣子）永遠留著。
+         srcs 是字串陣列的淺拷貝，字串本身共用同一份，所以一格很便宜。 */
+      writeHistory(pushed.history, pushed.index);
     }
   }, [historyIndex, history, isSoftActive, isBlurActive, isGrainActive, isHalationActive, softManuallyAdjusted, blurManuallyAdjusted, grainManuallyAdjusted, halationManuallyAdjusted]);
 
