@@ -870,6 +870,98 @@ const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: number, 
   ctx.closePath();
 };
 
+/**
+ * 「新增圖形」用的路徑。跟遮罩圖案那支不同的地方：
+ * 這支是照外框 w×h 直接畫（不是正方形再拉伸），所以描邊的粗細不會被拉扁。
+ * 一律以 (0,0) 為中心，呼叫端負責 translate／rotate。
+ */
+export const shapePathBox = (ctx: CanvasRenderingContext2D, kind: string, w: number, h: number) => {
+  const a = w / 2, b = h / 2;
+  ctx.beginPath();
+  const poly = (n: number, start: number) => {
+    for (let i = 0; i < n; i++) {
+      const t = start + (i / n) * Math.PI * 2;
+      const x = Math.cos(t) * a, y = Math.sin(t) * b;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.closePath();
+  };
+  switch (kind) {
+    case 'circle':
+      ctx.ellipse(0, 0, a, b, 0, 0, Math.PI * 2);
+      break;
+    case 'square':
+      ctx.rect(-a, -b, w, h);
+      break;
+    case 'rounded':
+      roundRectPath(ctx, -a, -b, w, h, Math.min(a, b) * 0.28, Math.min(a, b) * 0.28);
+      break;
+    case 'triangle':
+      ctx.moveTo(0, -b); ctx.lineTo(a, b); ctx.lineTo(-a, b); ctx.closePath();
+      break;
+    case 'diamond':
+      ctx.moveTo(0, -b); ctx.lineTo(a, 0); ctx.lineTo(0, b); ctx.lineTo(-a, 0); ctx.closePath();
+      break;
+    case 'pentagon': poly(5, -Math.PI / 2); break;
+    case 'hexagon': poly(6, -Math.PI / 2); break;
+    case 'star': {
+      const n = 5, inner = 0.42;
+      for (let i = 0; i < n * 2; i++) {
+        const t = -Math.PI / 2 + (i / (n * 2)) * Math.PI * 2;
+        const k = i % 2 ? inner : 1;
+        const x = Math.cos(t) * a * k, y = Math.sin(t) * b * k;
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.closePath();
+      break;
+    }
+    case 'heart': {
+      // 以 (0,0) 為中心、寬 w 高 h 的心形（跟遮罩那顆同一條曲線，換成外框比例）
+      ctx.moveTo(0, -b * 0.25);
+      ctx.bezierCurveTo(a * 0.6, -b * 1.0, a * 1.3, -b * 0.1, 0, b * 0.9);
+      ctx.bezierCurveTo(-a * 1.3, -b * 0.1, -a * 0.6, -b * 1.0, 0, -b * 0.25);
+      ctx.closePath();
+      break;
+    }
+    case 'line':
+      ctx.moveTo(-a, 0); ctx.lineTo(a, 0);
+      break;
+    default:
+      ctx.rect(-a, -b, w, h);
+  }
+};
+
+/** 「新增圖形」清單。icon 是 Material Symbols 的名字，rot 是按鈕與圖形都要轉的角度 */
+export const SHAPE_ITEMS: {
+  id: string; kind: string; icon: string; filled: boolean; rot?: number; ratio?: number;
+}[] = [
+  // 實心
+  { id: 'circle-f', kind: 'circle', icon: 'circle', filled: true },
+  { id: 'square-f', kind: 'square', icon: 'square', filled: true },
+  { id: 'rounded-f', kind: 'rounded', icon: 'rounded_corner', filled: true },
+  { id: 'triangle-f', kind: 'triangle', icon: 'change_history', filled: true },
+  { id: 'diamond-f', kind: 'diamond', icon: 'diamond', filled: true },
+  { id: 'pentagon-f', kind: 'pentagon', icon: 'pentagon', filled: true },
+  { id: 'hexagon-f', kind: 'hexagon', icon: 'hexagon', filled: true },
+  { id: 'star-f', kind: 'star', icon: 'star', filled: true },
+  { id: 'heart-f', kind: 'heart', icon: 'favorite', filled: true },
+  // 細框
+  { id: 'circle-o', kind: 'circle', icon: 'circle', filled: false },
+  { id: 'square-o', kind: 'square', icon: 'square', filled: false },
+  { id: 'rounded-o', kind: 'rounded', icon: 'rounded_corner', filled: false },
+  { id: 'triangle-o', kind: 'triangle', icon: 'change_history', filled: false },
+  { id: 'diamond-o', kind: 'diamond', icon: 'diamond', filled: false },
+  { id: 'pentagon-o', kind: 'pentagon', icon: 'pentagon', filled: false },
+  { id: 'hexagon-o', kind: 'hexagon', icon: 'hexagon', filled: false },
+  { id: 'star-o', kind: 'star', icon: 'star', filled: false },
+  { id: 'heart-o', kind: 'heart', icon: 'favorite', filled: false },
+  // 線條
+  { id: 'line-h', kind: 'line', icon: 'horizontal_rule', filled: false, rot: 0, ratio: 0.08 },
+  { id: 'line-v', kind: 'line', icon: 'horizontal_rule', filled: false, rot: 90, ratio: 0.08 },
+  { id: 'line-d1', kind: 'line', icon: 'horizontal_rule', filled: false, rot: -45, ratio: 0.08 },
+  { id: 'line-d2', kind: 'line', icon: 'horizontal_rule', filled: false, rot: 45, ratio: 0.08 },
+];
+
 interface ColorPickerProps {
   color: string;
   onChange: (color: string) => void;
@@ -3373,12 +3465,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         /* 虛線描邊有常駐動畫時，描邊不能烤進快取那張（快取是靠參數當 key 的，
            每一帧都變等於每一帧重算整張圖）。改成：快取那張不畫描邊，
            描邊在這裡即時畫一圈 —— 只是一條路徑，成本幾乎是零。 */
-        /* 沒有虛線的描邊也可以有動畫，只是只有「呼吸」有意義
-           （跑馬燈／描繪要有虛線才看得出來），所以那兩種在沒虛線時當靜止。 */
-        const dashRaw = o.dashAnim || 'none';
-        const dashAnim = (o.imgStrokeDash || 0) > 0
-          ? dashRaw
-          : (dashRaw === 'breath' ? 'breath' : 'none');
+        const dashAnim = (o.imgStrokeDash || 0) > 0 ? (o.dashAnim || 'none') : 'none';
         const liveStroke = dashAnim !== 'none' && (o.imgStrokeWidth || 0) > 0;
         const src2: any = liveStroke
           ? (fxCanvasOf({ ...o, id: `${o.id}@nodash`, imgStrokeWidth: 0 }, isMain) || o.img)
@@ -3433,7 +3520,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           ctx.miterLimit = 4;
           ctx.lineCap = 'butt';
           ctx.strokeStyle = o.imgStrokeColor || '#FFFFFF';
-          const hasDash = (o.imgStrokeDash || 0) > 0;
           if (dashAnim === 'march') {
             // 跑馬燈：整組虛線沿著路徑跑（一秒跑一組虛線＋空隙的長度 ×3）
             ctx.setLineDash([seg, gap]);
@@ -3458,23 +3544,44 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             ctx.setLineDash(arr);
             ctx.lineDashOffset = 0;
           } else if (dashAnim === 'breath') {
-            /* 呼吸：跟發光的「呼吸I（breath2）」同一條 exp(sin) 曲線。
-               沒有虛線時就是整條實線一起呼吸。
-
-               ×1.7：滑桿上的 100 要做出「原本 170」的力道 ——
-               所以顯示還是 100，實際跑起來快一截。
-               最暗那一刻直接乘到 0（不是 0.12），完全看不到才算真的暗下去。 */
-            if (hasDash) ctx.setLineDash([seg, gap]);
-            else ctx.setLineDash([]);
-            const CYCLE = 3.2 / (sp * 1.7);
+            // 呼吸：跟發光的「呼吸I（breath2）」同一條 exp(sin) 曲線與週期
+            ctx.setLineDash([seg, gap]);
+            const CYCLE = 3.2 / sp;
             const w = ((((tt) % CYCLE) + CYCLE) % CYCLE) / CYCLE * Math.PI * 2;
             const E = Math.E, IE = 1 / Math.E;
             const e = (Math.exp(Math.sin(w - Math.PI / 2)) - IE) / (E - IE);
-            ctx.globalAlpha = ctx.globalAlpha * e;
+            ctx.globalAlpha = ctx.globalAlpha * (0.12 + 0.88 * e);
           }
           ctx.stroke();
           ctx.restore();
         }
+      } else if (o.type === 'shape') {
+        /* 圖形（新增圖形加進來的那些）。
+           粗細的單位跟描邊同一條（長邊 / 160），所以物件放大縮小時
+           框線的觀感一致；虛線的節奏也照描邊那條式子。 */
+        const bw = o.w * s, bh = o.h * s;
+        const unit = Math.max(bw, bh) / 160;
+        const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
+        ctx.save();
+        ctx.lineJoin = o.kind === 'line' ? 'round' : 'miter';
+        ctx.lineCap = o.kind === 'line' ? 'round' : 'butt';
+        ctx.miterLimit = 4;
+        if ((o.dash || 0) > 0) {
+          const seg = lw * (0.6 + ((o.dash || 0) / 100) * 4);
+          ctx.setLineDash([seg, seg * 0.85]);
+          ctx.lineCap = 'butt';
+        } else ctx.setLineDash([]);
+        shapePathBox(ctx, o.kind, bw, bh);
+        if (o.filled && o.kind !== 'line') {
+          ctx.fillStyle = o.color || '#FFFFFF';
+          ctx.fill();
+        } else {
+          ctx.strokeStyle = o.color || '#FFFFFF';
+          ctx.lineWidth = lw;
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.restore();
       } else if (o.type === 'text') {
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
            面板本身就是那邊那顆元件，所以這裡只要照著畫。 */
@@ -4948,7 +5055,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 { t: '下移一層', on: act(() => move(-1)), el: <MoveDown size={14} />, off: objects[0]?.id === o.id && !!o.below },
                 { t: '上移一層', on: act(() => move(1)), el: <MoveUp size={14} />, off: objects[objects.length - 1]?.id === o.id && !o.below },
                 { t: '複製', on: act(dup), el: <Copy size={14} />, off: false },
-                { t: o.type === 'text' ? '編輯文字' : '圖片調整', on: act(() => setActiveTab('objedit')), el: <Sliders size={14} />, off: false },
+                { t: o.type === 'text' ? '編輯文字' : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => setActiveTab('objedit')), el: <Sliders size={14} />, off: false },
                 { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
               ].map(b => (
                 /* 鬆手才觸發。以前綁在 onPointerDown，手指一碰到就動作 ——
@@ -5111,15 +5218,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               color={colorPickerTarget === 'mask' ? maskColor
                 : colorPickerTarget === 'holeGlow' ? holeGlowColor
                 : colorPickerTarget === 'linkColor' ? (linkColor || maskColor)
+                : colorPickerTarget === 'shapeColor'
+                  ? ((objects.find(o => o.id === selectedObj)?.color) || '#FFFFFF')
                 : dotColor} 
               onChange={c => { if(colorPickerTarget==='mask') setMaskColor(c);
                 else if(colorPickerTarget==='holeGlow') setHoleGlowColor(c);
                 else if(colorPickerTarget==='linkColor') setLinkColor(c);
+                else if(colorPickerTarget==='shapeColor')
+                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, color: c } : o));
                 else setDotColor(c); }}
-              swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor' ? GLOW_SWATCHES : undefined}
+              swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor'
+                || colorPickerTarget === 'shapeColor' ? GLOW_SWATCHES : undefined}
               onClose={() => setColorPickerTarget(null)}
               title={colorPickerTarget === 'mask' ? '遮罩顏色'
                 : colorPickerTarget === 'holeGlow' ? '發光顏色'
+                : colorPickerTarget === 'shapeColor' ? '圖形顏色'
                 : colorPickerTarget === 'linkColor' ? '連線顏色' : '點點'}
             />
           ) : (
@@ -5267,6 +5380,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   ensureFont(DEFAULT_FONT);
                   setActiveTab('objedit');   // 新增完直接進編輯頁，跟經典拼圖一樣
                 };
+                /* 新增圖形。大小預設佔畫布短邊的三成；線條類壓成細長條。
+                   顏色預設白色 —— 頁面底通常是白的話再自己改，跟文字一樣。 */
+                const addShape = (it: typeof SHAPE_ITEMS[number]) => {
+                  const offs2 = getLayoutOffsets();
+                  if (!offs2) return;
+                  const id = Math.random().toString(36).slice(2, 9);
+                  const base = Math.round(Math.min(offs2.cw, offs2.ch) * 0.3);
+                  const w = base;
+                  const h = it.ratio ? Math.max(4, Math.round(base * it.ratio)) : base;
+                  setObjects(prev => [...prev, {
+                    id, type: 'shape', kind: it.kind, filled: it.filled,
+                    color: '#FFFFFF', lineW: 6, dash: 0,
+                    x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2,
+                    w, h, rot: it.rot || 0,
+                  }]);
+                  setSelectedObj(id);
+                  setSelectedTarget(null);
+                  setActiveTab('objedit');
+                };
                 return (
                   <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300">
                     {/* 按鈕與圖標尺寸跟經典拼圖的加號頁完全一致；
@@ -5287,6 +5419,43 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                       </button>
                     </div>
+
+                    {/* 新增圖形。三排：實心、細框、線條 —— 全部用圖標表示，
+                        點下去就加到畫面正中間並直接進編輯頁。 */}
+                    <div className="pt-2">
+                      <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">新增圖形</div>
+                      {([
+                        ['實心', SHAPE_ITEMS.filter(i => i.filled)],
+                        ['細框', SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line')],
+                        ['線條', SHAPE_ITEMS.filter(i => i.kind === 'line')],
+                      ] as const).map(([label, list]) => (
+                        <div key={label} className="mb-3">
+                          <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
+                          <div className="grid grid-cols-6 gap-2">
+                            {list.map(it => (
+                              <button
+                                key={it.id}
+                                onClick={() => addShape(it)}
+                                aria-label={it.id}
+                                className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center"
+                              >
+                                {/* Icon 本身不吃 style，轉角度包一層 span */}
+                                <span
+                                  className="leading-none flex items-center justify-center"
+                                  style={it.rot ? { transform: `rotate(${it.rot}deg)` } : undefined}
+                                >
+                                  <Icon
+                                    name={it.icon}
+                                    fill={it.filled && it.kind !== 'line'}
+                                    className="text-[20px] text-white/85"
+                                  />
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 );
               })()}
@@ -5302,9 +5471,53 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 if (!sel) return (
                   // 位置與字樣跟經典拼圖同一份
                   <div className="h-full flex items-center justify-center pb-6">
-                    <p className="text-[11px] text-white/40 text-center">請先選中圖片或文字</p>
+                    <p className="text-[11px] text-white/40 text-center">請先選中圖片、文字或圖形</p>
                   </div>
                 );
+                if (sel.type === 'shape') {
+                  /* 圖形的參數面板：顏色、粗細、虛線。
+                     實心的圖形沒有框，所以粗細與虛線只在細框／線條時出現。 */
+                  const isLine = sel.kind === 'line';
+                  const hasOutline = !sel.filled || isLine;
+                  return (
+                    <div className="max-w-md mx-auto animate-in fade-in duration-300">
+                      <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">顏色</div>
+                      <div className="flex flex-wrap gap-2">
+                        {GLOW_SWATCHES.map(c => (
+                          <button key={c} onClick={() => patch({ color: c })}
+                            aria-label={c}
+                            className={`w-7 h-7 rounded-full border transition-all ${
+                              (sel.color || '#FFFFFF').toUpperCase() === c.toUpperCase()
+                                ? 'border-white scale-110' : 'border-white/20'}`}
+                            style={{ background: c }} />
+                        ))}
+                        {/* 最後一顆是自訂色，開內嵌選色器 */}
+                        <button
+                          onClick={() => setColorPickerTarget('shapeColor')}
+                          aria-label="自訂顏色"
+                          className="w-7 h-7 rounded-full border border-white/20 flex items-center justify-center"
+                          style={{ background: sel.color || '#FFFFFF' }}
+                        >
+                          <Icon name="colorize" className="text-[13px] text-black/60" />
+                        </button>
+                      </div>
+
+                      {hasOutline && (
+                        <div className="grid grid-cols-2 gap-4 mt-5">
+                          <CompactSlider label="粗細" value={Math.round((sel.lineW ?? 6) * 10)} min={1} max={100} step={1}
+                            onChange={(v: number) => patch({ lineW: v / 10 })} />
+                          <CompactSlider label="虛線" value={sel.dash || 0} min={0} max={100} step={1}
+                            onChange={(v: number) => patch({ dash: v })} />
+                        </div>
+                      )}
+
+                      <div className="flex gap-2 mt-6">
+                        <button onClick={() => move(-1)} className="flex-1 h-10 rounded-[10px] bg-white/5 border border-white/10 text-[11px] font-bold text-white/80 active:scale-95 transition-all">往下一層</button>
+                        <button onClick={() => move(1)} className="flex-1 h-10 rounded-[10px] bg-white/5 border border-white/10 text-[11px] font-bold text-white/80 active:scale-95 transition-all">往上一層</button>
+                      </div>
+                    </div>
+                  );
+                }
                 return (
                   sel.type === 'text' ? (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
@@ -5441,7 +5654,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <button key={o.id}
                           onClick={() => setMoTarget(o.id)}
                           className={chip(moTarget === o.id)}>
-                          {o.type === 'text' ? (o.text || '文字').slice(0, 6) : `圖片 ${i + 1}`}
+                          {o.type === 'text' ? (o.text || '文字').slice(0, 6) : o.type === 'shape' ? `圖形 ${i + 1}` : `圖片 ${i + 1}`}
                         </button>
                       ))}
                     </div>
@@ -5513,15 +5726,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         {/* 這張圖片有虛線描邊的話，虛線自己的常駐動畫再接在下面。
                             沒有虛線（或沒有描邊）就整段不出現，不佔版面。 */}
                         {selObj && selObj.type === 'image'
-                          && (selObj.imgStrokeWidth || 0) > 0 && (() => {
-                          /* 有虛線 → 四種都給；只有實線描邊 → 只有「靜止」和「呼吸」
-                             （跑馬燈與描繪要有虛線才看得出來）。 */
-                          const hasDash = (selObj.imgStrokeDash || 0) > 0;
-                          const list = hasDash
-                            ? DASH_ANIMS
-                            : DASH_ANIMS.filter(d => d.id === 'none' || d.id === 'breath');
-                          const raw = selObj.dashAnim || 'none';
-                          const dk = list.some(d => d.id === raw) ? raw : 'none';
+                          && (selObj.imgStrokeWidth || 0) > 0 && (selObj.imgStrokeDash || 0) > 0 && (() => {
+                          const dk = selObj.dashAnim || 'none';
                           const dsp = selObj.dashSpeed ?? 100;
                           const setDash = (d: any) => {
                             setObjects(prev => prev.map(o => o.id === selObj.id ? { ...o, ...d } : o));
@@ -5529,10 +5735,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           return (
                             <>
                               <div className="flex justify-between text-[10px] font-bold text-[#888] mt-6 mb-2 uppercase tracking-widest">
-                                <span>{hasDash ? '虛線動畫' : '描邊動畫'}</span>
+                                <span>虛線動畫</span>
                               </div>
                               <div className="grid grid-cols-2 gap-2">
-                                {list.map(d => (
+                                {DASH_ANIMS.map(d => (
                                   <button key={d.id}
                                     onClick={() => { setDash({ dashAnim: d.id }); replayMotion(); }}
                                     className={cell(dk === d.id)}>
