@@ -729,7 +729,13 @@ const glowHslToHex = (h: number, sat: number, l: number) => {
   const to = (v: number) => Math.round(Math.max(0, Math.min(1, v + m)) * 255).toString(16).padStart(2, '0');
   return `#${to(r1)}${to(g1)}${to(b1)}`.toUpperCase();
 };
-export const GLOW_COLORS = (() => {
+/**
+ * 色票的骨架：以 #9BD4C3 為基準，只轉色相（飽和度不動），
+ * 每 360/14 度取一顆。**不排序** —— 直接從基準色的色相往前繞一圈，
+ * 所以第一顆就是 #9BD4C3 本人，後面照色相順著滑過去、繞回原點，
+ * 看起來還是一條連續的漸層。
+ */
+const GLOW_RAMP = (() => {
   const r = parseInt(GLOW_BASE.slice(1, 3), 16) / 255;
   const g = parseInt(GLOW_BASE.slice(3, 5), 16) / 255;
   const b = parseInt(GLOW_BASE.slice(5, 7), 16) / 255;
@@ -743,19 +749,24 @@ export const GLOW_COLORS = (() => {
   const step = 360 / 14;
   const hues: number[] = [];
   for (let i = 0; i < 14; i++) hues.push((((h0 + i * step) % 360) + 360) % 360);
-  hues.sort((a, b2) => a - b2);
-  return ['#FFFFFF', ...hues.map(h => glowHslToHex(h, sat, l))];
+  return { hues, sat, l };
 })();
 
+/** 名稱裡有「發光」的功能用這一組：亮度就是基準色本身的亮度 */
+export const GLOW_COLORS = ['#FFFFFF', ...GLOW_RAMP.hues.map(h => glowHslToHex(h, GLOW_RAMP.sat, GLOW_RAMP.l))];
+
+/**
+ * 其他借用同一組色票的功能（文字、描邊、圖形、遮罩、底色…）用這一組：
+ * 色相與飽和度完全一樣，只把明度提到 90% —— 同一條漸層，但更淡。
+ */
+export const SOFT_COLORS = ['#FFFFFF', ...GLOW_RAMP.hues.map(h => glowHslToHex(h, GLOW_RAMP.sat, 0.9))];
 
 /**
  * 文字顏色／文字描邊用的色票。
- *
- * 內容就是發光那一組（同一套色相環，飽和度與亮度完全一致），
- * 只在最前面多墊兩顆：純白與純黑 —— 寫字跟描邊最常用的就是這兩個，
- * 擺在最前面才不用每次都往右滑。
+ * 就是上面那組淡的，只在最前面多墊一顆純黑 ——
+ * 有黑色的色票，黑色一律排在純白前面。
  */
-const TEXT_COLORS = ['#FFFFFF', '#000000', ...GLOW_COLORS.filter(c => c !== '#FFFFFF')];
+const TEXT_COLORS = ['#000000', ...SOFT_COLORS];
 
 /**
  * 色票列：第一顆固定是自訂顏色（開系統調色盤），後面才是預設色。
@@ -1209,7 +1220,7 @@ export const TextEditorPanel: React.FC<{
 /**
  * 圖形圖層的參數面板（顏色／粗細／虛線）。
  *
- * 顏色用的是 swatchStrip ＋ GLOW_COLORS —— 跟「發光顏色」「描邊顏色」
+ * 顏色用的是 swatchStrip ＋ SOFT_COLORS —— 跟「文字顏色」「描邊顏色」
  * 同一個元件、同一組色，不是另外設計一套。
  * 實心的圖形沒有框，所以粗細與虛線只在細框／線條的時候才出現。
  */
@@ -1240,7 +1251,7 @@ export const ShapeEditorPanel: React.FC<{
         <div className="space-y-3.5 pt-1 pb-2">
           <div>
             <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-            {swatchStrip(layer.color, GLOW_COLORS, c => onChange({ color: c }), true)}
+            {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c }), true)}
           </div>
           {hasOutline && (
             <>
@@ -1478,7 +1489,7 @@ const sliderArea = (() => {
     const subTool = sub?.find(t => t[0] === shapeTool);
     if (subTool) {
       // 描邊色跟發光色用同一組色票
-      if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, GLOW_COLORS, c => set({ imgStrokeColor: c }), true);
+      if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, SOFT_COLORS, c => set({ imgStrokeColor: c }), true);
       if (subTool[0] === 'imgGlowColor') return swatchStrip(img.imgGlowColor, GLOW_COLORS, c => set({ imgGlowColor: c }), true);
       const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow' | 'imgStrokeDash';
       // 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來。
@@ -1740,8 +1751,8 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
     }
   };
 
-  // 色票跟發光那一組完全一樣；第一顆是純白
-  const PRESETS = GLOW_COLORS;
+  // 跟發光同一條漸層，明度提到 90%；第一顆是純白
+  const PRESETS = SOFT_COLORS;
 
   return (
     <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -3399,7 +3410,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             // 把描邊畫在填色「下面」、寬度加倍 —— 字身蓋住內半邊，
             // 剩下的就是純外描邊。
             WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2}px` : undefined,
-            WebkitTextStrokeColor: image.strokeWidth ? (image.strokeColor || '#FFFFFF') : undefined,
+            WebkitTextStrokeColor: image.strokeWidth ? (image.strokeColor || '#000000') : undefined,
             // 沒有描邊時不要留著 paint-order。
             paintOrder: image.strokeWidth ? 'stroke fill' : undefined,
             /* 發光不畫在這一層。text-shadow 的輪廓是「填色＋描邊」合起來的形狀，
@@ -4432,6 +4443,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       bold: false,
       italic: false,
       letterSpacing: 0,
+      // 描邊沒設過就是黑的 —— 第一次把描邊拉出來就該看得到
+      strokeColor: '#000000',
       glow: 0,
       glowColor: '#FFFFFF',
       ...init,
@@ -7587,7 +7600,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       ctx.lineWidth = fImg.strokeWidth * 2 * scaleFactor * fImg.scale;
       ctx.lineJoin = 'round';
       ctx.miterLimit = 2;
-      ctx.strokeStyle = fImg.strokeColor || '#FFFFFF';
+      ctx.strokeStyle = fImg.strokeColor || '#000000';
       lines.forEach((ln, i) => ctx.strokeText(ln, 0, startY + i * lineH));
     }
     ctx.fillStyle = fImg.color || '#FFFFFF';
@@ -7958,7 +7971,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   whiteSpace: 'pre',
                   textAlign: 'center',
                   WebkitTextStrokeWidth: f.strokeWidth ? `${f.strokeWidth * 2 * f.scale * k}px` : undefined,
-                  WebkitTextStrokeColor: f.strokeWidth ? (f.strokeColor || '#FFFFFF') : undefined,
+                  WebkitTextStrokeColor: f.strokeWidth ? (f.strokeColor || '#000000') : undefined,
                   paintOrder: f.strokeWidth ? 'stroke fill' : undefined,
                   textShadow: 'none',
                 }}

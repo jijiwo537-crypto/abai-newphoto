@@ -14,7 +14,7 @@ import {
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, ShapeGlyph, swatchStrip, GLOW_COLORS,
+  ADD_SHAPE_ITEMS, ShapeGlyph, swatchStrip, GLOW_COLORS, SOFT_COLORS,
   shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
@@ -273,7 +273,7 @@ const hslToHex = (h: number, sat: number, l: number) => {
   const to = (v: number) => Math.round(Math.max(0, Math.min(1, v + m)) * 255).toString(16).padStart(2, '0');
   return `#${to(r1)}${to(g1)}${to(b1)}`.toUpperCase();
 };
-export const GLOW_SWATCHES: string[] = (() => {
+const GLOW_RAMP = (() => {
   const r = parseInt(GLOW_BASE.slice(1, 3), 16) / 255;
   const g = parseInt(GLOW_BASE.slice(3, 5), 16) / 255;
   const b = parseInt(GLOW_BASE.slice(5, 7), 16) / 255;
@@ -286,10 +286,19 @@ export const GLOW_SWATCHES: string[] = (() => {
   }
   const step = 360 / 14;
   const hues: number[] = [];
+  /* 不排序：直接從基準色的色相往前繞一圈，所以第一顆就是 #9BD4C3 本人，
+     後面照色相順著滑過去、繞回原點 —— 還是一條連續的漸層。 */
   for (let i = 0; i < 14; i++) hues.push((((h0 + i * step) % 360) + 360) % 360);
-  hues.sort((a, b2) => a - b2);                    // 照色相排 → 看起來就是一圈漸層
-  return ['#FFFFFF', ...hues.map(h => hslToHex(h, sat, l))];
+  return { hues, sat, l };
 })();
+
+/** 名稱裡有「發光」的功能用這一組 */
+export const GLOW_SWATCHES: string[] =
+  ['#FFFFFF', ...GLOW_RAMP.hues.map(h => hslToHex(h, GLOW_RAMP.sat, GLOW_RAMP.l))];
+
+/** 其他借用同一組色票的功能（遮罩、連線…）用這一組：同一條漸層，明度提到 90% */
+export const SOFT_SWATCHES: string[] =
+  ['#FFFFFF', ...GLOW_RAMP.hues.map(h => hslToHex(h, GLOW_RAMP.sat, 0.9))];
 
 /* 把任意顏色換成「發光色票裡同色系的那一顆」。
    比的是色相：飽和度與亮度一律用色票自己的（那正是發光看起來乾淨的原因），
@@ -3702,7 +3711,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         if (o.strokeWidth) {
           ctx.lineJoin = 'round';
           ctx.miterLimit = 2;
-          ctx.strokeStyle = o.strokeColor || '#FFFFFF';
+          ctx.strokeStyle = o.strokeColor || '#000000';
           ctx.lineWidth = o.strokeWidth * 2 * tk;
           ctx.strokeText(o.text || '', 0, 0);
         }
@@ -5322,7 +5331,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 else setDotColor(c); }}
               /* 遮罩顏色的色票跟發光那一組完全一樣（第一顆是純白）；
                  「點點」維持原本那組韓系柔和色，沒有動到。 */
-              swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor' || colorPickerTarget === 'mask' ? GLOW_SWATCHES : undefined}
+              swatches={colorPickerTarget === 'holeGlow' ? GLOW_SWATCHES
+                : colorPickerTarget === 'linkColor' || colorPickerTarget === 'mask' ? SOFT_SWATCHES : undefined}
               onClose={() => setColorPickerTarget(null)}
               title={colorPickerTarget === 'mask' ? '遮罩顏色'
                 : colorPickerTarget === 'holeGlow' ? '發光顏色'
@@ -5591,7 +5601,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <div className="space-y-3.5 pt-1 pb-2">
                           <div>
                             <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                            {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, GLOW_COLORS, (c: string) => patch({ color: c }), true)}
+                            {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c }), true)}
                           </div>
                           {(!sel.filled || sel.kind === 'line') && (
                             <>
