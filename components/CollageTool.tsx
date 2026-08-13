@@ -582,21 +582,20 @@ const GLYPH_HOLES: Record<string, string> = {
 };
 
 /** 這個洞是用文字畫的（而不是用路徑畫的）嗎 */
-const isTextHole = (t: string) => t === 'text' || t === 'love' || t === 'love3' || t === 'love3star' || t === 'random-num' || t in GLYPH_HOLES;
+const isTextHole = (t: string) => t === 'text' || t === 'love' || t === 'love3' || t === 'random-num' || t in GLYPH_HOLES;
 
 /** 這個洞實際上要畫出來的字串 */
 const holeGlyph = (holeType: string, customText: string, h?: any) =>
   GLYPH_HOLES[holeType]
   ?? (holeType === 'love' ? '<3'
     : holeType === 'love3' ? '<333'
-    : holeType === 'love3star' ? '<333*'
     : holeType === 'random-num' ? `(${getHoleNumber(h)})`
     : customText);
 
 /** 字符圖案要用的字型 —— 畫、量、選取框、命中判定全部共用這一支，
  *  不然「畫的是這支字型、量的是另一支」，框跟圖案就對不起來。 */
 const glyphFont = (holeType: string, sz: number) =>
-  (holeType === 'love' || holeType === 'love3' || holeType === 'love3star')
+  (holeType === 'love' || holeType === 'love3')
     ? `bold ${sz * 1.05}px "Inter", "Segoe UI", sans-serif`
     : `500 ${sz}px "Inter", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
 
@@ -761,7 +760,6 @@ const drawTextShape = (
 ) => {
   const str = holeType === 'love' ? '<3'
     : holeType === 'love3' ? '<333'
-    : holeType === 'love3star' ? '<333*'
     : (GLYPH_HOLES[holeType] ?? text);
   const ink = glyphInk(holeType, str, sz);
   /* 暫存畫布只要「這個字轉一圈都還在裡面」就夠了。以前一律開 sz×3 見方，
@@ -769,10 +767,12 @@ const drawTextShape = (
      （實測合成佔掉拖曳字符圖案時將近三成的時間）。
      半徑用 glyphRadius 實際量出來的，而且只縮不放（跟舊的取小的那個）——
      所以畫出來跟以前一個像素都不差，連原本會被裁掉的長文字也照樣裁在同一個地方。 */
-  const oldPad = Math.ceil(sz * 1.5);
-  const pad = ink.r > 0.5
-    ? Math.max(2, Math.min(oldPad, Math.ceil(ink.r) + 2))
-    : oldPad;
+  /* 留邊要蓋得住「這個字轉一圈都還在裡面」，也就是墨水的外接半徑。
+     以前這裡多包了一層 min(sz × 1.5, …)：字比較長的時候（例如 <333*，
+     墨水寬度是字級的 3.17 倍）那個上限比實際需要的還小，
+     兩側就被切掉 —— 主人看到的就是星號右邊被裁掉。
+     改成只看外接半徑：短的字算出來跟以前一模一樣，長的字才會多留一點。 */
+  const pad = ink.r > 0.5 ? Math.max(2, Math.ceil(ink.r) + 2) : Math.ceil(sz * 1.5);
   const side = Math.max(2, pad * 2);
   let tempCanvas: HTMLCanvasElement | undefined;
   let reused = false;
@@ -1771,9 +1771,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     } else if (id === 'love3') {
       // 字更長，同樣的「大小」值看起來會比較大，所以預設調小一點
       nextSize = 18;
-    } else if (id === 'love3star') {
-      // 比 <333 又多一個字，再小一點才跟旁邊那幾種看起來差不多大
-      nextSize = 15;
     } else if (id === 'circle') {
       nextSize = 20;
     } else if (id === 'square') {
@@ -3840,6 +3837,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     return () => cancelAnimationFrame(id); 
   }, [renderCanvas, saveState]);
 
+
   /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了。
      這裡要做兩件事，而且都必須在「瀏覽器畫下一格之前」完成：
        ① 直接算出新的版面尺寸（以前是先設成 null 讓 max-w/max-h 自己貼合一次，
@@ -5754,9 +5752,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
-                  {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'love', 'love3', 'love3star', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'text'].map(s => (
+                  {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'love', 'love3', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'text'].map(s => (
                     <button key={s} onClick={() => handleShapeClick(s)} className={`py-3 flex items-center justify-center rounded-[8px] border transition-all ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
-                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'flower' ? <span className="text-lg font-bold font-sans leading-none">❋</span> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'love3star' ? <span className="text-[9px] font-black font-mono tracking-tighter leading-none">&lt;333*</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? <span className="text-lg font-bold font-sans leading-none">{GLYPH_HOLES[s]}</span> : <Type size={18} />}
+                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'flower' ? <span className="text-lg font-bold font-sans leading-none">❋</span> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? <span className="text-lg font-bold font-sans leading-none">{GLYPH_HOLES[s]}</span> : <Type size={18} />}
                     </button>
                   ))}
                 </div>

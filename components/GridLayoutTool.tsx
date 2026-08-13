@@ -1025,8 +1025,12 @@ const FontCard: React.FC<{
         active ? 'bg-white/10 border-white' : 'bg-white/[0.03] border-white/10 hover:border-white/25'
       }`}
     >
+      {/* 行高不能用 leading-none：那樣行盒只有 19px，可是不少字體（尤其是中日韓）
+          的字身高度超過 1 個 em —— truncate 帶著 overflow:hidden，超出去的部分
+          就被切掉了，看起來就是範例字上面被蓋住一截。
+          放到 1.6 em 讓任何字體都放得下；卡片是 62px 高、內容加起來 48px，還有餘裕。 */}
       <span
-        className="text-[19px] leading-none text-white truncate max-w-full"
+        className="text-[19px] leading-[1.6] text-white truncate max-w-full"
         style={{ fontFamily: visible ? fontStack(font.name) : undefined }}
       >
         {FONT_SAMPLE[font.category]}
