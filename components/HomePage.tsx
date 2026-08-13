@@ -233,13 +233,39 @@ export const HomePage: React.FC<HomePageProps> = ({
   const pwOk = pw.length >= 6;
 
   const openLogin = () => {
+    busyRef.current = null;
+    autoTried.current = '';
     setStep('id'); setIdInput(''); setPw(''); setCode('');
     setLoginErr(''); setLoginNote(''); setCooldown(0); setMode('otp'); setEmailOpen(false);
     setLoginOpen(true);
   };
 
+  /* ── 卡在「處理中」的收拾 ──────────────────────────────────────────
+     step === 'busy' 的時候整片登入欄的按鈕都是灰的，所以只要有任何一條路
+     沒把它收回來，人就會被鎖在那一頁、什麼都按不動。會發生的情況有三種：
+       ① 第三方登入跳走之後又回來（在 Google 那邊按取消、或按瀏覽器上一頁）
+          —— 回來時整份 React 狀態還在（bfcache），step 仍然停在 busy；
+       ② 網路卡住，請求既不成功也不失敗，永遠不會回來；
+       ③ 任何我們沒想到的例外。
+     下面三道保險各收一種：回到前景就解除、等太久就自己解除、
+     關閉鍵與背景永遠可以按（見標題列與遮罩）。 */
+  /** 這一次的「處理中」是哪條路來的、結束後要回到哪一頁 */
+  const busyRef = useRef<{ kind: 'oauth' | 'email'; back: 'id' | 'code' } | null>(null);
+  const beginBusy = (kind: 'oauth' | 'email', back: 'id' | 'code' = 'id') => {
+    busyRef.current = { kind, back };
+    setStep('busy');
+  };
+  /** 把畫面收回可以操作的狀態。msg 有給才顯示訊息（取消登入不用囉嗦）。 */
+  const endBusy = (msg?: string) => {
+    const b = busyRef.current;
+    busyRef.current = null;
+    setStep(b ? b.back : 'id');
+    if (msg) setLoginErr(msg);
+  };
+
   /** 統一的錯誤處理：把英文訊息換成中文，並把畫面收回可操作的狀態 */
   const fail = (e: any, back: 'id' | 'code' = 'id') => {
+    busyRef.current = null;
     setLoginErr(authErrText(e));
     setStep(back);
   };
@@ -248,18 +274,20 @@ export const HomePage: React.FC<HomePageProps> = ({
   const sendCode = async () => {
     if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
     if (!idOk) { setLoginErr('請輸入正確的電子郵件'); return; }
-    setLoginErr(''); setLoginNote(''); setStep('busy');
+    setLoginErr(''); setLoginNote(''); beginBusy('email');
     try {
       await sendEmailOtp(idInput);
+      busyRef.current = null;
       setStep('code'); setCooldown(60);
     } catch (e) { fail(e); }
   };
 
   const submitCode = async (value = code) => {
     if (value.length < OTP_LEN) { setLoginErr(`請輸入信裡的 ${OTP_LEN} 位數驗證碼`); return; }
-    setLoginErr(''); setStep('busy');
+    setLoginErr(''); beginBusy('email', 'code');
     try {
       await verifyEmailOtp(idInput, value);
+      busyRef.current = null;
       setLoginOpen(false);
     } catch (e) { fail(e, 'code'); }
   };
@@ -282,10 +310,11 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
     if (!idOk) { setLoginErr('請輸入正確的電子郵件'); return; }
     if (!pwOk) { setLoginErr('密碼至少要 6 個字'); return; }
-    setLoginErr(''); setLoginNote(''); setStep('busy');
+    setLoginErr(''); setLoginNote(''); beginBusy('email');
     try {
-      if (intent === 'in') { await signInWithPassword(idInput, pw); setLoginOpen(false); return; }
+      if (intent === 'in') { await signInWithPassword(idInput, pw); busyRef.current = null; setLoginOpen(false); return; }
       const r = await signUpWithPassword(idInput, pw);
+      busyRef.current = null;
       if (r.needVerify) { setStep('id'); setLoginNote('驗證信寄出去了，去信箱點一下就完成註冊'); }
       else setLoginOpen(false);
     } catch (e) { fail(e); }
@@ -293,17 +322,43 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   const forgotPw = async () => {
     if (!idOk) { setLoginErr('請先輸入你的電子郵件'); return; }
-    setLoginErr(''); setStep('busy');
-    try { await sendPasswordReset(idInput); setStep('id'); setLoginNote('重設密碼的信寄出去了'); }
+    setLoginErr(''); beginBusy('email');
+    try { await sendPasswordReset(idInput); busyRef.current = null; setStep('id'); setLoginNote('重設密碼的信寄出去了'); }
     catch (e) { fail(e); }
   };
 
   const oauth = async (p: 'google' | 'apple') => {
     if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
-    setLoginErr(''); setStep('busy');
+    setLoginErr(''); beginBusy('oauth');
     try { await signInWithProvider(p); }   // 會跳走，回來時 onAuthChange 接手
     catch (e) { fail(e); }
   };
+
+  /* 保險①：第三方登入跳走之後又回到前景，卻還停在「處理中」——
+     那就是中途取消（或根本沒跳成功）。安靜地把按鈕解開就好，不用跳訊息；
+     真的登入成功的話 onAuthChange 會把整片登入欄收起來。 */
+  useEffect(() => {
+    const wake = () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (busyRef.current?.kind !== 'oauth') return;
+      endBusy();
+    };
+    const onShow = (e: any) => { if (e?.persisted) wake(); };
+    document.addEventListener('visibilitychange', wake);
+    window.addEventListener('pageshow', onShow);
+    return () => {
+      document.removeEventListener('visibilitychange', wake);
+      window.removeEventListener('pageshow', onShow);
+    };
+  }, []);
+
+  /* 保險②：請求卡住（既不成功也不失敗）。等太久就自己收回來，
+     不能讓整片登入欄一直是灰的。 */
+  useEffect(() => {
+    if (step !== 'busy') return;
+    const t = setTimeout(() => endBusy('連線超時了，請再試一次'), 25000);
+    return () => clearTimeout(t);
+  }, [step]);
 
   const logout = () => {
     signOut().catch(() => {});
@@ -741,7 +796,8 @@ export const HomePage: React.FC<HomePageProps> = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            onClick={() => step !== 'busy' && setLoginOpen(false)}
+            /* 就算還在「處理中」也要能關 —— 卡住的時候這是唯一的出口 */
+            onClick={() => { busyRef.current = null; setLoginOpen(false); }}
             className="absolute inset-0 z-[60] flex items-end justify-center bg-black/75 backdrop-blur-sm"
           >
             <motion.div
@@ -766,12 +822,13 @@ export const HomePage: React.FC<HomePageProps> = ({
                 </div>
                 <button
                   onClick={() => {
+                    // 還在「處理中」：這一顆一定要能按，直接放棄這次嘗試並關掉
+                    if (step === 'busy') { busyRef.current = null; setStep('id'); setLoginOpen(false); return; }
                     // 驗證碼 → 回信箱畫面；信箱畫面 → 回三顆按鈕；再按才是關閉
                     if (step === 'code') { setStep('id'); return; }
                     if (emailOpen) { setEmailOpen(false); setLoginErr(''); setLoginNote(''); return; }
                     setLoginOpen(false);
                   }}
-                  disabled={step === 'busy'}
                   aria-label={(step === 'code' || emailOpen) ? '上一步' : '關閉'}
                   className="shrink-0 w-8 h-8 -mr-1 -mt-0.5 rounded-full flex items-center justify-center text-white/35 hover:text-white hover:bg-white/[0.06] active:scale-90 transition-[color,background-color,transform] disabled:opacity-30"
                 >
