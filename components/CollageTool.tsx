@@ -1052,7 +1052,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const fxCanvasOf = useCallback((o: any, isMain = false): CanvasImageSource | null => {
     if (!o.img) return null;
     const shape = {
-      r: o.imgRadius || 0, f: o.feather || 0, fi: o.featherInset || 0,
+      r: o.imgRadius || 0, f: o.feather || 0, fi: o.featherInset ?? 100,
       sw: o.imgStrokeWidth || 0, sc: o.imgStrokeColor || '#FFFFFF',
       g: o.imgGlow || 0, gc: o.imgGlowColor || '#FFFFFF',
     };
@@ -4486,6 +4486,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       {/* 構圖：跟「編輯」同一個介面，套用後 bake 回這個物件 */}
       {composeState && (
         <ComposeStudio
+          /* 這個工具的標題列是 z-100，構圖必須疊在它上面 ——
+             不然照片上緣會被那條列擋掉（正是「進構圖時上面被裁到」）。
+             105 剛好在標題列之上、又在導出／成品那幾層（110 以上）之下。 */
+          zIndex={105}
           image={composeState.img}
           geo={composeState.geo}
           onChange={g => setComposeState(st => (st ? { ...st, geo: g } : st))}

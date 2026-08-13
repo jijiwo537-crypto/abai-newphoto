@@ -723,7 +723,7 @@ const SHAPE_TOOLS: [string, string, string, number, number, number][] = [
 const SHAPE_SUB_TOOLS: Record<string, [string, string, string, number, number, number][]> = {
   feather: [
     ['feather', '範圍', 'gradient', 0, 50, 0],
-    ['featherInset', '內縮', 'crop_free', 0, 100, 0],
+    ['featherInset', '內縮', 'crop_free', 0, 100, 100],
   ],
   stroke: [
     ['imgStrokeWidth', '粗細', 'line_weight', 0, 20, 0],
@@ -1621,63 +1621,50 @@ const boxBlurV = (src: Float32Array, dst: Float32Array, w: number, h: number, r:
  * 預設 0：主人不想要「羽化一調高圖片就變小」。
  */
 export const makeShapeMask = (
-  w: number, h: number, radiusPct: number, featherPct: number, insetPct = 0,
+  w: number, h: number, radiusPct: number, featherPct: number, insetPct = 100,
 ) => {
-  const W = Math.max(4, Math.round(w));
-  const H = Math.max(4, Math.round(h));
+  const c = document.createElement('canvas');
+  c.width = Math.max(4, Math.round(w));
+  c.height = Math.max(4, Math.round(h));
+  const g = c.getContext('2d')!;
   const fp = Math.max(0, Math.min(50, featherPct));
   const rp = Math.max(0, Math.min(50, radiusPct));
   /* 淡出的總寬度。
-     模糊是「三次盒狀模糊」，半徑 r 的三次疊起來，一條硬邊會被抹開到 ±3r。
-     所以「讓淡出完整收斂到 0」需要 3r 的空間（+1 是因為離散的盒狀模糊在
-     邊界還會留一點點）。 */
-  const fade = (fp / 100) * Math.min(W, H);
+     模糊是「三次盒狀模糊」，半徑 r 的三次疊起來，一條硬邊會被抹開到
+     ±3r 這麼寬。所以形狀要先往內縮「剛好 3r」，淡出才會在畫布邊界
+     收斂到完全透明。
+     以前 r 取 fade/4、卻只內縮 fade/2 —— 模糊往外散 0.75×fade、內縮只有
+     0.5×fade，等於還沒淡完就撞到畫布邊界被切掉，邊緣的 alpha 停在某個
+     不是 0 的值：看起來就是「有羽化，但照片還是有一條生硬的邊」。
+     改成 r = fade/6、內縮 3r，兩邊剛好對上，邊界一定是 0。 */
+  const fade = (fp / 100) * Math.min(c.width, c.height);
   const r = fp > 0 ? Math.max(1, Math.round(fade / 6)) : 0;
+  /* 完全內縮要讓出 3r（+1 是因為離散的盒狀模糊在邊界還會留一點點）。
+     實際內縮多少由 insetPct 決定：0 就是不縮，圖片大小完全不變。 */
   const full = r > 0 ? r * 3 + 1 : 0;
-  /* 那 3r 的空間要從哪裡來，就是「內縮」在決定的：
-       內縮 100%：全部從圖片裡面讓 —— 邊界乾淨收斂到 0，但完全不透明的
-                  區域小了一圈，看起來就是「羽化一調高圖片就變小」。
-       內縮 0%（預設）：一點都不從圖片裡讓，改成把畫布往外撐 3r，
-                  淡出散到圖片外面去（那裡本來就沒有畫面，看不到）。
-                  圖片維持原本的大小，只有邊緣柔化。
-     pad 就是往外撐多少，inset 是往內讓多少，兩個加起來永遠是 full。 */
   const inset = Math.round(full * (Math.max(0, Math.min(100, insetPct)) / 100));
-  const pad = full - inset;
-
-  // 先在「往外撐過」的工作畫布上畫形狀＋模糊
-  const wk = document.createElement('canvas');
-  wk.width = W + pad * 2;
-  wk.height = H + pad * 2;
-  const wg = wk.getContext('2d')!;
-  wg.fillStyle = '#fff';
-  const R = Math.max(0, cornerR(rp, W, H) - inset);
-  roundRectPath(wg, pad + inset, pad + inset, W - inset * 2, H - inset * 2, R, R);
-  wg.fill();
+  g.fillStyle = '#fff';
+  const R = Math.max(0, cornerR(rp, c.width, c.height) - inset);
+  roundRectPath(g, inset, inset, c.width - inset * 2, c.height - inset * 2, R, R);
+  g.fill();
 
   if (r >= 1) {
-    const px = wg.getImageData(0, 0, wk.width, wk.height);
-    const n = wk.width * wk.height;
+    const px = g.getImageData(0, 0, c.width, c.height);
+    const n = c.width * c.height;
     let a = new Float32Array(n);
     let b = new Float32Array(n);
     for (let i = 0; i < n; i++) a[i] = px.data[i * 4 + 3];
     for (let pass = 0; pass < 3; pass++) {
-      boxBlurH(a, b, wk.width, wk.height, r); [a, b] = [b, a];
-      boxBlurV(a, b, wk.width, wk.height, r); [a, b] = [b, a];
+      boxBlurH(a, b, c.width, c.height, r); [a, b] = [b, a];
+      boxBlurV(a, b, c.width, c.height, r); [a, b] = [b, a];
     }
     for (let i = 0; i < n; i++) {
       // RGB 全部填白，這樣不管遮罩被當成 alpha 還是亮度都成立
       px.data[i * 4] = 255; px.data[i * 4 + 1] = 255; px.data[i * 4 + 2] = 255;
       px.data[i * 4 + 3] = a[i];
     }
-    wg.putImageData(px, 0, 0);
+    g.putImageData(px, 0, 0);
   }
-
-  // 再把中間那一塊（正好是圖片的大小）取出來當遮罩
-  if (pad === 0) return wk;
-  const c = document.createElement('canvas');
-  c.width = W;
-  c.height = H;
-  c.getContext('2d')!.drawImage(wk, pad, pad, W, H, 0, 0, W, H);
   return c;
 };
 
@@ -1835,7 +1822,7 @@ export const makeGlowCanvas = (
  * 遮罩本來就是平滑的，拉伸貼上看不出差別。
  */
 const maskCanvasCache = new Map<string, HTMLCanvasElement>();
-const previewMask = (aspect: number, radiusPct: number, featherPct: number, insetPct = 0) => {
+const previewMask = (aspect: number, radiusPct: number, featherPct: number, insetPct = 100) => {
   const key = `${aspect.toFixed(2)}|${radiusPct}|${featherPct}|${insetPct}`;
   const hit = maskCanvasCache.get(key);
   if (hit) return hit;
@@ -1998,7 +1985,7 @@ const MiniShapeImage: React.FC<{
         if (img.feather || img.imgRadius) {
           oc.globalCompositeOperation = 'destination-in';
           if (img.feather) {
-            oc.drawImage(previewMask(boxW / boxH, img.imgRadius || 0, img.feather, img.featherInset || 0), lw, lw, iw, ih);
+            oc.drawImage(previewMask(boxW / boxH, img.imgRadius || 0, img.feather, img.featherInset ?? 100), lw, lw, iw, ih);
           } else {
             const R = cornerR(img.imgRadius || 0, iw, ih);
             roundRectPath(oc, lw, lw, iw, ih, R, R);
@@ -2035,7 +2022,7 @@ const MiniShapeImage: React.FC<{
     if (el.complete && el.naturalWidth) { draw(); return; }
     el.addEventListener('load', draw);
     return () => el.removeEventListener('load', draw);
-  }, [img.src, img.fx, img.feather, img.featherInset, img.imgRadius, img.imgGlow, img.imgGlowColor,
+  }, [img.src, img.fx, img.feather, img.imgRadius, img.imgGlow, img.imgGlowColor,
       img.imgStrokeWidth, img.imgStrokeColor, img.scale, boxW, boxH, glowPad, lutRevision]);
   return <canvas ref={ref} style={style} />;
 };
@@ -2438,7 +2425,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           oc.globalCompositeOperation = 'destination-in';
           if (image.feather) {
             // 有羽化才需要那張模糊過的遮罩；邊本來就是糊的，縮放貼回來看不出差別
-            const m = previewMask(boxW / boxH, image.imgRadius || 0, image.feather, image.featherInset || 0);
+            const m = previewMask(boxW / boxH, image.imgRadius || 0, image.feather, image.featherInset ?? 100);
             oc.drawImage(m, lw, lw, iw, ih);
           } else {
             /* 只有圓角、沒有羽化：以前也走那張 400px 的遮罩再拉大，
@@ -2520,7 +2507,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     img.addEventListener('load', draw);
     return () => img.removeEventListener('load', draw);
   }, [
-    needsShapeCanvas, image.src, image.feather, image.featherInset, image.imgRadius,
+    needsShapeCanvas, image.src, image.feather, image.imgRadius,
     image.imgGlow, image.imgGlowColor, image.imgStrokeWidth, image.imgStrokeColor,
     image.scale, boxW, boxH, glowPad,
     image.fx, lutRevision,
@@ -7286,7 +7273,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             // 遮罩本來就是平滑的，放大看不出差別
             const cap = 1200;
             const k = Math.min(1, cap / Math.max(iw, ih));
-            const mask = makeShapeMask(iw * k, ih * k, fImg.imgRadius || 0, fImg.feather, fImg.featherInset || 0);
+            const mask = makeShapeMask(iw * k, ih * k, fImg.imgRadius || 0, fImg.feather, fImg.featherInset ?? 100);
             sc.drawImage(mask, 0, 0, iw, ih);
           } else {
             sc.fillStyle = '#000';

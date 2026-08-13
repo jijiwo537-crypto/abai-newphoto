@@ -37,6 +37,14 @@ interface ComposeStudioProps {
   onChange: (geo: GeoParams) => void;
   onApply: () => void;
   onCancel: () => void;
+  /**
+   * 疊在第幾層。預設 70。
+   *
+   * 這一層必須蓋過「所在工具自己的標題列」，不然照片上緣會被那條列擋住。
+   * 經典拼圖的標題列比 70 低，所以用預設值就好；
+   * 創意拼圖的標題列是 z-100，要傳一個比它大的值進來。
+   */
+  zIndex?: number;
 }
 
 const HANDLES = [
@@ -82,7 +90,7 @@ export const COMPOSE_WARMUP_CLASSES =
   'transition-[background-color,color,border-color] transition-colors uppercase w-12 w-14 ' +
   'w-full w-px';
 
-export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel }) => {
+export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70 }) => {
   const [tab, setTab] = useState<Tab>('crop');
   const stageWrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -368,7 +376,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
        所以只有第一次進來會抖：量到照片先是 60,56,295,639（大一圈、高 15px），
        下一幀才變成正確的 79,71,257,556 —— 看起來就是「從上往下掉」。
        inline style 不經過樣式表，第一幀就是對的。 */
-    <div className="absolute inset-0 bg-black flex flex-col" style={{ zIndex: 70 }}>
+    <div className="absolute inset-0 bg-black flex flex-col" style={{ zIndex }}>
       <style>{`
         .compose-slider { -webkit-appearance: none; appearance: none; height: 2px; border-radius: 2px; background: rgba(255,255,255,0.18); outline: none; touch-action: none; }
         .compose-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.5); cursor: pointer; }
