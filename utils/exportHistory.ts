@@ -18,7 +18,7 @@ const MAX_ITEMS = 12;
 /** 縮圖的長邊 */
 const THUMB_MAX = 320;
 
-export type ExportTool = 'editor' | 'beauty';
+export type ExportTool = 'editor' | 'beauty' | 'collage' | 'layout' | 'match';
 
 export interface ExportMeta {
   id: string;
@@ -37,6 +37,67 @@ export interface ExportMeta {
 interface ExportRecord extends ExportMeta {
   /** 導出當下用的那張原圖 */
   photo: Blob | null;
+  /**
+   * state 裡面引用到的其他圖檔。
+   *
+   * 拼圖一頁上可能有十幾張照片、仿色還有一張參考圖 —— 這些都不是「那一張原圖」，
+   * 但少了它們就還原不回去。存的時候把 state 裡的圖片網址換成 `hist:<n>`，
+   * 圖檔本身放這裡；讀回來再換回可用的網址。
+   * 跟著整筆紀錄一起被刪掉，所以不會有孤兒檔案。
+   */
+  assets?: Record<string, Blob>;
+}
+
+/** state 裡哪些欄位放的是圖片網址 */
+const SRC_KEYS = new Set(['src', 'url', 'origSrc', 'referenceSrc', 'imageSrc', 'thumb']);
+
+/** 把 state 裡的圖片網址抽出來變成 hist: 參考，圖檔另外收在 assets */
+async function externalize(value: any, assets: Record<string, Blob>, seen: Map<string, string>): Promise<any> {
+  if (Array.isArray(value)) return Promise.all(value.map(v => externalize(v, assets, seen)));
+  if (value && typeof value === 'object') {
+    const out: any = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (SRC_KEYS.has(k) && typeof v === 'string' && v && !v.startsWith('hist:')) {
+        let ref = seen.get(v);
+        if (!ref) {
+          try {
+            const blob = await (await fetch(v)).blob();
+            ref = `hist:${Object.keys(assets).length}`;
+            assets[ref.slice(5)] = blob;
+            seen.set(v, ref);
+          } catch { ref = ''; }
+        }
+        out[k] = ref;
+      } else {
+        out[k] = await externalize(v, assets, seen);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
+/** 反過來：hist: 參考換回可以直接用的網址 */
+function internalize(value: any, assets: Record<string, Blob>, urls: Map<string, string>): any {
+  if (Array.isArray(value)) return value.map(v => internalize(v, assets, urls));
+  if (value && typeof value === 'object') {
+    const out: any = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (SRC_KEYS.has(k) && typeof v === 'string' && v.startsWith('hist:')) {
+        const key = v.slice(5);
+        let url = urls.get(key);
+        if (!url) {
+          const blob = assets[key];
+          if (blob) { url = URL.createObjectURL(blob); urls.set(key, url); }
+        }
+        out[k] = url || '';
+      } else {
+        out[k] = internalize(v, assets, urls);
+      }
+    }
+    return out;
+  }
+  return value;
 }
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
@@ -250,6 +311,12 @@ export async function addExport(
   outUrl: string,
   srcUrl: string | null,
   state: any,
+  /**
+   * 「這是同一件作品」的判斷依據。預設是原圖的內容雜湊（一張照片一筆），
+   * 但拼圖是好幾張照片拼起來的，沒有「那一張原圖」——
+   * 那邊改用一個開工具時產生的 id，同一次拼圖不管存幾次都只留最新的一筆。
+   */
+  key?: string,
 ): Promise<void> {
   try {
     const thumb = await makeThumb(outUrl);
@@ -267,7 +334,7 @@ export async function addExport(
       try { photo = await (await fetch(outUrl)).blob(); bakedIn = !!photo; } catch { photo = null; }
     }
     if (!photo) return;   // 兩條路都拿不到就整筆不要記，不要留死磚
-    const photoKey = await hashBlob(photo);
+    const photoKey = key || await hashBlob(photo);
     // 同一張照片只留最新的那一次導出 —— 舊的先刪掉
     if (photoKey) {
       const all = await tx<ExportRecord[]>('readonly', s => s.getAll() as IDBRequest<ExportRecord[]>);
@@ -275,15 +342,21 @@ export async function addExport(
         if (old.photoKey === photoKey) await tx('readwrite', s => s.delete(old.id));
       }
     }
+    const assets: Record<string, Blob> = {};
+    let saveState: any = null;
+    if (state && !bakedIn) {
+      saveState = await externalize(JSON.parse(JSON.stringify(state)), assets, new Map());
+    }
     const rec: ExportRecord = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       tool,
       at: Date.now(),
       thumb,
-      state: (state && !bakedIn) ? JSON.parse(JSON.stringify(state)) : null,
+      state: saveState,
       photoKey,
       hasPhoto: true,
       photo,
+      assets,
     };
     await tx('readwrite', s => s.put(rec));
     stamp();
@@ -300,7 +373,8 @@ export async function listExports(): Promise<ExportMeta[]> {
     .sort((a, b) => (b.at || 0) - (a.at || 0))
     // 舊版本可能留下沒有原圖的紀錄 —— 那種點開來是沒有反應的，直接不要列出來
     .filter(r => !!r.photo)
-    .map(({ id, tool, at, thumb, state, photoKey }) => ({ id, tool, at, thumb, state, photoKey, hasPhoto: true }));
+    // state 裡還是 hist: 參考 —— 首頁只用得到縮圖，真的要還原時才走 loadExport
+    .map(({ id, tool, at, thumb, photoKey }) => ({ id, tool, at, thumb, state: null, photoKey, hasPhoto: true }));
 }
 
 /** 還原用：連原圖一起拿出來 */
@@ -311,7 +385,9 @@ export async function loadExport(id: string): Promise<{ meta: ExportMeta; src: s
     if (rec) { await tx('readwrite', s => s.delete(id)); emitChanged(); }
     return null;
   }
-  const { photo, ...meta } = rec;
+  const { photo, assets, ...meta } = rec;
+  // state 裡的 hist: 參考換回可以直接用的網址（拼圖的每一張、仿色的參考圖…）
+  meta.state = assets ? internalize(meta.state, assets, new Map()) : meta.state;
   return { meta, src: URL.createObjectURL(photo) };
 }
 
