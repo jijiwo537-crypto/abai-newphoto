@@ -14,6 +14,7 @@ import {
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
+import { SHAPE_IMAGES } from '../utils/shapeImages';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
 import { ComposeStudio } from './ComposeStudio';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
@@ -602,8 +603,35 @@ const GLYPH_BTN: Record<string, { size?: number; dx?: number; dy?: number }> = {
   zzz:      { size: 13, dx: 0.3 },
 };
 
-/** 這個洞是用文字畫的（而不是用路徑畫的）嗎 */
-const isTextHole = (t: string) => t === 'text' || t === 'love' || t === 'love3' || t === 'random-num' || t in GLYPH_HOLES;
+/* ── 用圖片當形狀的圖案 ─────────────────────────────────────────────
+   有些圖案打不出來（字型裡根本沒有那個字），所以改成用去背的 PNG。
+   圖裡**只有形狀**（RGB 全塗黑、只留 alpha）—— 真正畫出來的顏色跟其他圖案
+   一樣，是由拼圖的遮罩／顏色決定的，跟原圖是什麼顏色完全無關。
+   它走的是跟文字圖案完全同一條管線（量墨水 → 畫進暫存畫布 → source-in 上色），
+   所以選取框、命中判定、發光、匯出全部自動比照辦理。 */
+const holeImgCache = new Map<string, HTMLImageElement>();
+const getHoleImg = (t: string): HTMLImageElement | null => {
+  const src = SHAPE_IMAGES[t];
+  if (!src) return null;
+  let im = holeImgCache.get(t);
+  if (!im) {
+    im = new Image();
+    im.decoding = 'async';
+    im.src = src;
+    holeImgCache.set(t, im);
+  }
+  return im;
+};
+const isImageHole = (t: string) => !!SHAPE_IMAGES[t];
+/** 圖片形狀的長寬比（寬 / 高）。還沒解碼完先給個合理值，解碼完自然會校正。 */
+const holeImgRatio = (t: string) => {
+  const im = getHoleImg(t);
+  return im && im.naturalWidth && im.naturalHeight ? im.naturalWidth / im.naturalHeight : 1.476;
+};
+
+/** 這個洞是用文字或圖片畫的（而不是用路徑畫的）嗎 */
+const isTextHole = (t: string) => t === 'text' || t === 'love' || t === 'love3' || t === 'random-num'
+  || t in GLYPH_HOLES || isImageHole(t);
 
 /** 這個洞實際上要畫出來的字串 */
 const holeGlyph = (holeType: string, customText: string, h?: any) =>
@@ -653,6 +681,14 @@ const measureCtx = () => {
   return glyphMeasCtx!;
 };
 const glyphBox = (holeType: string, str: string): GlyphBox => {
+  /* 圖片形狀不用探測：圖本身已經裁到墨水的外框了。
+     長邊當成「大小」、短邊照長寬比換算 —— 跟圓形／方形的 size 定義一致。 */
+  if (isImageHole(holeType)) {
+    const ar = holeImgRatio(holeType);
+    const w = ar >= 1 ? GLYPH_INK_REF : GLYPH_INK_REF * ar;
+    const h = ar >= 1 ? GLYPH_INK_REF / ar : GLYPH_INK_REF;
+    return { ox: 0, oy: 0, w, h, r: Math.hypot(w, h) / 2, ok: true };
+  }
   const key = holeType + '|' + str;
   const hit = glyphBoxCache.get(key);
   if (hit) return hit;
@@ -788,10 +824,11 @@ const drawTextShape = (
      （實測合成佔掉拖曳字符圖案時將近三成的時間）。
      半徑用 glyphRadius 實際量出來的，而且只縮不放（跟舊的取小的那個）——
      所以畫出來跟以前一個像素都不差，連原本會被裁掉的長文字也照樣裁在同一個地方。 */
-  const oldPad = Math.ceil(sz * 1.5);
-  const pad = ink.r > 0.5
-    ? Math.max(2, Math.min(oldPad, Math.ceil(ink.r) + 2))
-    : oldPad;
+  /* 留邊要蓋得住「這個圖案轉一圈都還在裡面」，也就是墨水的外接半徑。
+     以前這裡多包了一層 min(sz × 1.5, …)：比較長的圖案（墨水寬度超過字級的
+     三倍）那個上限比實際需要的還小，兩側就會被切掉。
+     改成只看外接半徑：短的算出來跟以前一模一樣，長的才會多留一點。 */
+  const pad = ink.r > 0.5 ? Math.max(2, Math.ceil(ink.r) + 2) : Math.ceil(sz * 1.5);
   const side = Math.max(2, pad * 2);
   let tempCanvas: HTMLCanvasElement | undefined;
   let reused = false;
@@ -832,7 +869,16 @@ const drawTextShape = (
   tempCtx.font = glyphFont(holeType, sz);
   tempCtx.textAlign = 'center';
   tempCtx.textBaseline = 'middle';
-  tempCtx.fillText(str, o.ox, o.oy);
+  if (isImageHole(holeType)) {
+    /* 圖片形狀：把去背的圖貼上去。貼的是**形狀**，
+       顏色下一步才由 source-in 決定，所以原圖是什麼顏色都無所謂。 */
+    const im = getHoleImg(holeType);
+    if (im && im.complete && im.naturalWidth) {
+      tempCtx.drawImage(im, -ink.w / 2, -ink.h / 2, ink.w, ink.h);
+    }
+  } else {
+    tempCtx.fillText(str, o.ox, o.oy);
+  }
   tempCtx.restore();
 
   // 2. 如果是填充照片或顏色
@@ -1469,6 +1515,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const maskCacheKeyRef = useRef('');
   /** 拿遮罩底稿做的 pattern（圖片側的圖案填色用）。底稿沒變就沿用同一顆 */
   const basePatRef = useRef<{ key: string; pat: CanvasPattern | null }>({ key: '', pat: null });
+  /* ── 發光為什麼會拖到卡 ────────────────────────────────────────────
+     下面這幾樣東西以前都是「在 renderToCanvas 裡面 new 出來的」，
+     也就是**每畫一格就重來一次**：
+       ① 跟畫布一樣大的合成層（1257×1080 ≈ 5MB）——每一格配一張再丟掉；
+       ② 每顆圖案的小暫存畫布；
+       ③ 每顆圖案的光暈：一格要疊三段 shadowBlur、畫三次。
+     拖曳時一秒要畫幾十格，等於一秒配置幾十張 5MB 的畫布，再乘上圖案數量
+     的模糊運算 —— 手機上就是明顯的頓。
+
+     改成掛在 ref 上：畫布重複使用（只配置一次），光暈則照
+     「形狀＋大小＋角度＋顏色」快取起來。拖曳只有位置在變、這些通通沒變，
+     所以那些模糊運算一次都不用重跑。 */
+  const glowScratchRef = useRef<HTMLCanvasElement | null>(null);
+  const glowTmpRef = useRef<HTMLCanvasElement | null>(null);
+  const glowBmpRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const activePointers = useRef<Map<number, any>>(new Map());
   /** 動畫頁期間鎖住畫布上的所有互動（handlePointerDown 開頭就會擋掉） */
   const motionLockRef = useRef(false);
@@ -1786,6 +1847,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       nextSize = 40;
     } else if (id === 'snow') {
       nextSize = 50;
+    } else if (id === 'pic333') {
+      // 橫的一長條，長邊當大小，所以要給大一點才看得清楚
+      nextSize = 60;
     } else if (id === 'theta') {
       nextSize = 30;
     } else if (id === 'yaya' || id === 'zzz') {
@@ -2934,15 +2998,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        「整個挖掉」（挖的時候用滿透明度，跟圖案自己的進場無關），
        剩下的就是純粹的一圈光暈；最後整層貼回去。
        每一顆的透明度在畫進暫存層時就各自帶好了，所以錯開進場也對。 */
-    const glowScratch = { c: null as HTMLCanvasElement | null };
     const withGlowLayer = (
       g: CanvasRenderingContext2D, w: number, h: number,
       paint: (gg: CanvasRenderingContext2D) => void,
       knock: (gg: CanvasRenderingContext2D) => void,
     ) => {
       const W = Math.max(1, Math.ceil(w)), H = Math.max(1, Math.ceil(h));
-      let lay = glowScratch.c;
-      if (!lay) { lay = document.createElement('canvas'); glowScratch.c = lay; }
+      let lay = glowScratchRef.current;
+      if (!lay) { lay = document.createElement('canvas'); glowScratchRef.current = lay; }
       if (lay.width !== W || lay.height !== H) { lay.width = W; lay.height = H; }
       const gg = lay.getContext('2d');
       if (!gg) return;
@@ -2994,7 +3057,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        改成：先在一張只夠裝這顆圖案的小畫布上，用「滿透明度」把三段疊好
        （形狀固定，濃度也就固定），再整張用這一格該有的透明度貼上去。
        這樣光的亮度對透明度是**嚴格線性**的，跟圖案本體完全同一條曲線。 */
-    const glowTmp = { c: null as HTMLCanvasElement | null };
+    /* 光暈的點陣快取。一顆光暈長什麼樣只跟「形狀＋大小＋角度＋顏色」有關 ——
+       拖曳時只有位置在變，所以第一格畫完就一直重用，那三段 shadowBlur 不用再跑。
+       每一格最多新做 GLOW_NEW_PER_FRAME 張：拉大小滑桿時每顆圖案的尺寸都在變，
+       不設上限反而會變成每一格配置幾十張畫布。 */
+    const GLOW_CACHE_MAX = 24;
+    const GLOW_NEW_PER_FRAME = 4;
+    let glowNewThisFrame = 0;
     const glowInto = (
       gg: CanvasRenderingContext2D, h: any, alpha: number,
       sz: number, angle: number, gx: number, gy: number,
@@ -3004,23 +3073,51 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (sz <= 0 || a <= 0.004) return;
       // 邊長要裝得下「圖案本體 + 最大那一段模糊」，模糊最大是 0.3×sz
       const side = Math.ceil(sz * 1.2 + sz * 0.3 * 4) + 8;
-      let tmp = glowTmp.c;
-      if (!tmp) { tmp = document.createElement('canvas'); glowTmp.c = tmp; }
-      if (tmp.width !== side || tmp.height !== side) { tmp.width = side; tmp.height = side; }
-      const tg = tmp.getContext('2d');
-      if (!tg) return;
-      tg.setTransform(1, 0, 0, 1, 0, 0);
-      tg.globalCompositeOperation = 'source-over';
-      tg.globalAlpha = 1;
-      tg.clearRect(0, 0, side, side);
-      tg.shadowColor = holeGlowColor;
-      for (const kk of [1, 2, 3]) {
-        tg.shadowBlur = sz * 0.1 * kk;
-        strokeHoleShape(tg, h, sz, angle, side / 2, side / 2, holeGlowColor);
+
+      const cache = glowBmpRef.current;
+      const key = `${holeType}|${isTextHole(holeType) ? holeGlyph(holeType, customText, h) : ''}`
+        + `|${Math.round(sz * 10)}|${Math.round((((angle % 360) + 360) % 360) * 10)}|${holeGlowColor}`;
+      let bmp = cache.get(key);
+      if (bmp) {
+        // 用過的移到最後面，淘汰時丟的就一定是最久沒用到的那張
+        cache.delete(key); cache.set(key, bmp);
+      } else {
+        const keep = glowNewThisFrame < GLOW_NEW_PER_FRAME;
+        if (keep) {
+          bmp = document.createElement('canvas');
+          bmp.width = side; bmp.height = side;
+        } else {
+          // 這一格不收進快取：借用共用的暫存畫布，至少不會多配置記憶體
+          let tmp = glowTmpRef.current;
+          if (!tmp) { tmp = document.createElement('canvas'); glowTmpRef.current = tmp; }
+          if (tmp.width !== side || tmp.height !== side) { tmp.width = side; tmp.height = side; }
+          bmp = tmp;
+        }
+        const tg = bmp.getContext('2d');
+        if (!tg) return;
+        tg.setTransform(1, 0, 0, 1, 0, 0);
+        tg.globalCompositeOperation = 'source-over';
+        tg.globalAlpha = 1;
+        tg.clearRect(0, 0, side, side);
+        tg.shadowColor = holeGlowColor;
+        for (const kk of [1, 2, 3]) {
+          tg.shadowBlur = sz * 0.1 * kk;
+          strokeHoleShape(tg, h, sz, angle, side / 2, side / 2, holeGlowColor);
+        }
+        if (keep) {
+          cache.set(key, bmp);
+          glowNewThisFrame++;
+          while (cache.size > GLOW_CACHE_MAX) {
+            const oldest = cache.keys().next().value as string | undefined;
+            if (oldest === undefined) break;
+            cache.delete(oldest);
+          }
+        }
       }
+
       gg.save();
       gg.globalAlpha = Math.max(0, Math.min(1, a));
-      gg.drawImage(tmp, gx - side / 2, gy - side / 2);
+      gg.drawImage(bmp, gx - side / 2, gy - side / 2);
       gg.restore();
     };
 
@@ -3813,6 +3910,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     let id = requestAnimationFrame(() => renderCanvas()); 
     return () => cancelAnimationFrame(id); 
   }, [renderCanvas, saveState]);
+
+  /* 圖片形狀的圖要先解碼好。雖然是內嵌的（不用連網），解碼還是非同步的 ——
+     解完再重畫一次，第一次選到它才不會是空的。 */
+  useEffect(() => {
+    let alive = true;
+    Object.keys(SHAPE_IMAGES).forEach(k => {
+      const im = getHoleImg(k);
+      if (!im || (im.complete && im.naturalWidth)) return;
+      im.addEventListener('load', () => { if (alive) renderCanvas(); }, { once: true });
+    });
+    return () => { alive = false; };
+  }, [renderCanvas]);
 
   /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了。
      這裡要做兩件事，而且都必須在「瀏覽器畫下一格之前」完成：
@@ -5598,9 +5707,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
-                  {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'snow', 'love', 'love3', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'yaya', 'zzz', 'text'].map(s => (
+                  {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'snow', 'love', 'love3', 'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'yaya', 'zzz', 'text'].map(s => (
                     <button key={s} onClick={() => handleShapeClick(s)} className={`py-3 flex items-center justify-center rounded-[8px] border transition-all ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
-                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? (
+                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+                        /* 去背的圖：用 filter 把它染成純白，才跟旁邊那些圖示一致 */
+                        <img
+                          src={SHAPE_IMAGES[s]}
+                          alt=""
+                          draggable={false}
+                          style={{ width: 26, height: 'auto', filter: 'brightness(0) invert(1)', opacity: 0.9 }}
+                        />
+                      ) : GLYPH_HOLES[s] ? (
                         <span
                           className="font-bold font-sans leading-none inline-block whitespace-nowrap"
                           style={{
