@@ -296,9 +296,42 @@ const GLOW_RAMP = (() => {
 export const GLOW_SWATCHES: string[] =
   ['#FFFFFF', ...GLOW_RAMP.hues.map(h => hslToHex(h, GLOW_RAMP.sat, GLOW_RAMP.l))];
 
-/** 其他借用同一組色票的功能（遮罩、連線…）用這一組：同一條漸層，明度提到 90% */
-export const SOFT_SWATCHES: string[] =
-  ['#FFFFFF', ...GLOW_RAMP.hues.map(h => hslToHex(h, GLOW_RAMP.sat, 0.9))];
+/* HSV → hex。下面兩組色票要用「明度（HSV 的 V）」來調，
+   跟 hslToHex 不是同一件事，所以另外寫一支。 */
+const hsv2hex = (h: number, s: number, v: number) => {
+  const f = (n: number, k = (n + h / 60) % 6) => v - v * s * Math.max(Math.min(k, 4 - k, 1), 0);
+  const to = (x: number) => Math.round(x * 255).toString(16).padStart(2, '0');
+  return `#${to(f(5))}${to(f(3))}${to(f(1))}`.toUpperCase();
+};
+/** 把一個色碼拆成 HSV（不四捨五入，第一顆色票才會跟基準色一模一樣） */
+const toHsv = (hex: string) => {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d !== 0) {
+    h = mx === r ? 60 * (((g - b) / d) % 6) : mx === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
+  }
+  return { h: ((h % 360) + 360) % 360, s: mx === 0 ? 0 : d / mx, v: mx };
+};
+/** 以某個顏色為基準：色相繞一圈 14 顆，飽和度與明度照給的值 */
+const ramp = (base: string, v?: number) => {
+  const hsv = toHsv(base);
+  const step = 360 / 14;
+  const out = ['#FFFFFF'];
+  for (let i = 0; i < 14; i++) out.push(hsv2hex(((hsv.h + i * step) % 360 + 360) % 360, hsv.s, v ?? hsv.v));
+  return out;
+};
+
+/** 其他借用同一組色票的功能（連線…）用這一組：
+    色相與飽和度照舊，明度（HSV 的 V）從基準色的 83 提到 90 —— 只亮一點點。 */
+export const SOFT_SWATCHES: string[] = ramp(GLOW_BASE, 0.9);
+
+/** 遮罩顏色的預設色，以及照它做出來的色票：
+    明度與飽和度跟它完全一樣，只換色相 —— 第一顆就是預設色本人。 */
+export const MASK_DEFAULT_COLOR = '#DCE7DB';
+export const MASK_SWATCHES: string[] = ramp(MASK_DEFAULT_COLOR);
 
 /* 把任意顏色換成「發光色票裡同色系的那一顆」。
    比的是色相：飽和度與亮度一律用色票自己的（那正是發光看起來乾淨的原因），
@@ -1522,7 +1555,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [tuneTool, setTuneTool] = useState('');
   const [loadingLut, setLoadingLut] = useState<string | null>(null);
   const [lutRevision, setLutRevision] = useState(0);
-  const [maskColor, setMaskColor] = useState('#DCE7DB'); 
+  const [maskColor, setMaskColor] = useState(MASK_DEFAULT_COLOR); 
   const [patternType, setPatternType] = useState('none'); 
   const [dotColor, setDotColor] = useState('#595959'); 
   const [dotSize, setDotSize] = useState(20); 
@@ -5332,7 +5365,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               /* 遮罩顏色的色票跟發光那一組完全一樣（第一顆是純白）；
                  「點點」維持原本那組韓系柔和色，沒有動到。 */
               swatches={colorPickerTarget === 'holeGlow' ? GLOW_SWATCHES
-                : colorPickerTarget === 'linkColor' || colorPickerTarget === 'mask' ? SOFT_SWATCHES : undefined}
+                : colorPickerTarget === 'mask' ? MASK_SWATCHES
+                : colorPickerTarget === 'linkColor' ? SOFT_SWATCHES : undefined}
               onClose={() => setColorPickerTarget(null)}
               title={colorPickerTarget === 'mask' ? '遮罩顏色'
                 : colorPickerTarget === 'holeGlow' ? '發光顏色'

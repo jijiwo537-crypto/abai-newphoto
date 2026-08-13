@@ -756,10 +756,13 @@ const GLOW_RAMP = (() => {
 export const GLOW_COLORS = ['#FFFFFF', ...GLOW_RAMP.hues.map(h => glowHslToHex(h, GLOW_RAMP.sat, GLOW_RAMP.l))];
 
 /**
- * 其他借用同一組色票的功能（文字、描邊、圖形、遮罩、底色…）用這一組：
- * 色相與飽和度完全一樣，只把明度提到 90% —— 同一條漸層，但更淡。
+ * 其他借用同一組色票的功能（文字、描邊、圖形、底色…）用這一組：
+ * 色相與飽和度完全照舊，只把**明度**（HSV 的 V）從基準色的 83 提到 90 ——
+ * 只亮一點點，還是同一條漸層。
  */
-export const SOFT_COLORS = ['#FFFFFF', ...GLOW_RAMP.hues.map(h => glowHslToHex(h, GLOW_RAMP.sat, 0.9))];
+const GLOW_BASE_HSV = hexToHsv(GLOW_BASE);
+export const SOFT_COLORS =
+  ['#FFFFFF', ...GLOW_RAMP.hues.map(h => hsvToHex(h, GLOW_BASE_HSV.s, 90))];
 
 /**
  * 文字顏色／文字描邊用的色票。
