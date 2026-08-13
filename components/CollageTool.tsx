@@ -337,8 +337,25 @@ export const GLOW_IDLES: { id: string; name: string }[] = [
   { id: 'blink', name: '閃爍' },
   { id: 'breath', name: '呼吸I' },
   { id: 'breath2', name: '呼吸II' },
-  { id: 'twinkle', name: '故障I' },
-  { id: 'glitch', name: '故障II' },
+  { id: 'twinkle', name: '呼吸III' },
+  { id: 'glitch', name: '故障' },
+];
+
+/** 圖片與文字只給這四個 —— 呼吸I／呼吸III 是圖案專用的，
+    這一組裡原本的「呼吸II」就直接叫「呼吸I」（id 沒變，舊作品照樣讀得到）。 */
+export const GLOW_IDLES_OBJ: { id: string; name: string }[] = [
+  { id: 'none', name: '靜止' },
+  { id: 'blink', name: '閃爍' },
+  { id: 'breath2', name: '呼吸I' },
+  { id: 'glitch', name: '故障' },
+];
+
+/** 虛線描邊的常駐動畫 */
+export const DASH_ANIMS: { id: string; name: string }[] = [
+  { id: 'none', name: '靜止' },
+  { id: 'march', name: '跑馬燈' },
+  { id: 'draw', name: '描繪' },
+  { id: 'breath', name: '呼吸' },
 ];
 
 /**
@@ -3353,7 +3370,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (f && (f.k !== 1 || f.fx !== 1)) ctx.scale(f.k * f.fx, f.k);
       ctx.globalAlpha = (o.alpha ?? 1) * (f ? f.a : 1);
       if (o.type === 'image' && o.img) {
-        const src2: any = fxCanvasOf(o, isMain) || o.img;
+        /* 虛線描邊有常駐動畫時，描邊不能烤進快取那張（快取是靠參數當 key 的，
+           每一帧都變等於每一帧重算整張圖）。改成：快取那張不畫描邊，
+           描邊在這裡即時畫一圈 —— 只是一條路徑，成本幾乎是零。 */
+        const dashAnim = (o.imgStrokeDash || 0) > 0 ? (o.dashAnim || 'none') : 'none';
+        const liveStroke = dashAnim !== 'none' && (o.imgStrokeWidth || 0) > 0;
+        const src2: any = liveStroke
+          ? (fxCanvasOf({ ...o, id: `${o.id}@nodash`, imgStrokeWidth: 0 }, isMain) || o.img)
+          : (fxCanvasOf(o, isMain) || o.img);
         /* 有形狀效果時畫布比原圖大一圈（留給發光與描邊），
            畫的時候要等比放大回去，圖片本體才會剛好落在原本的框上。 */
         const padX = (src2 as any).__padX || 0, padY = (src2 as any).__padY || 0;
@@ -3379,6 +3403,66 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           }
         } else
         ctx.drawImage(src2, -ew / 2, -eh / 2, ew, eh);
+
+        /* 即時畫的虛線描邊。幾何跟烤進快取那條完全一樣：
+           以圖片外緣往外讓半個線寬，圓角再加半個線寬。
+           粗細的單位也照 fxCanvasOf 那條（長邊 / 160）。 */
+        if (liveStroke) {
+          const bw = o.w * s, bh = o.h * s;
+          const unit = Math.max(bw, bh) / 160;
+          const lw2 = (o.imgStrokeWidth || 0) * unit;
+          const sr = o.imgRadius ? cornerR(o.imgRadius, bw, bh) + lw2 / 2 : 0;
+          const seg = lw2 * (0.6 + ((o.imgStrokeDash || 0) / 100) * 4);
+          const gap = seg * 0.85;
+          /* 路徑總長（圓角矩形）：四條直邊 ＋ 四個角的圓弧 */
+          const rw = bw + lw2, rh = bh + lw2;
+          const rr = Math.min(sr, Math.min(rw, rh) / 2);
+          const P = 2 * (rw - 2 * rr) + 2 * (rh - 2 * rr) + 2 * Math.PI * rr;
+          const tt = animRef.current ? animRef.current.t : 0;
+          const sp = Math.max(0.05, (o.dashSpeed ?? 100) / 100);
+          ctx.save();
+          ctx.beginPath();
+          roundRectPath(ctx as any, -rw / 2, -rh / 2, rw, rh, rr, rr);
+          ctx.lineWidth = lw2;
+          ctx.lineJoin = 'miter';
+          ctx.miterLimit = 4;
+          ctx.lineCap = 'butt';
+          ctx.strokeStyle = o.imgStrokeColor || '#FFFFFF';
+          if (dashAnim === 'march') {
+            // 跑馬燈：整組虛線沿著路徑跑（一秒跑一組虛線＋空隙的長度 ×3）
+            ctx.setLineDash([seg, gap]);
+            ctx.lineDashOffset = -((tt * sp * (seg + gap) * 3) % (seg + gap));
+          } else if (dashAnim === 'draw') {
+            /* 描繪：從路徑起點（左上角）順時針一段一段長出來，繞滿一圈。
+               要「一邊是虛線、一邊只長到某個進度」，單一個 [實,虛] 做不到 ——
+               所以直接把已經長出來的那一段拆成一組一組的虛線寫進 dash 陣列，
+               後面再補一個「跟整圈一樣長的空白」把還沒畫到的部分蓋掉。
+               ×1.25 再夾住＝畫滿之後停一小段，不會一到底就立刻重來。 */
+            const CYCLE = 2.6 / sp;
+            const prog = Math.min(1, (((tt % CYCLE) + CYCLE) % CYCLE) / CYCLE * 1.25);
+            const shown = P * prog;
+            const arr: number[] = [];
+            let acc = 0;
+            // 上限 400 段：虛線再細也不會讓這個陣列爆掉
+            while (acc < shown && arr.length < 800) {
+              arr.push(Math.min(seg, shown - acc), gap);
+              acc += seg + gap;
+            }
+            arr.push(0, P + seg);   // 剩下的整圈都是空白
+            ctx.setLineDash(arr);
+            ctx.lineDashOffset = 0;
+          } else if (dashAnim === 'breath') {
+            // 呼吸：跟發光的「呼吸I（breath2）」同一條 exp(sin) 曲線與週期
+            ctx.setLineDash([seg, gap]);
+            const CYCLE = 3.2 / sp;
+            const w = ((((tt) % CYCLE) + CYCLE) % CYCLE) / CYCLE * Math.PI * 2;
+            const E = Math.E, IE = 1 / Math.E;
+            const e = (Math.exp(Math.sin(w - Math.PI / 2)) - IE) / (E - IE);
+            ctx.globalAlpha = ctx.globalAlpha * (0.12 + 0.88 * e);
+          }
+          ctx.stroke();
+          ctx.restore();
+        }
       } else if (o.type === 'text') {
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
            面板本身就是那邊那顆元件，所以這裡只要照著畫。 */
@@ -3923,6 +4007,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         glowIdle === 'glitch' ? 1.5 : 1),
       glowLink: (h: any) => glowIdleAmp(glowIdle, t, (hashId(h.id) % 628) / 100, glowAmp, glowSpeed / 100,
         glowIdle === 'glitch' ? 0.9 : 1),
+      /** 這一格的時間，畫布端要拿它算虛線描邊的動畫 */
+      t,
       /** 圖片／文字物件的發光亮度（各自一組設定） */
       glowObj: (o: any) => {
         const cfg = o.type === 'text' ? glowMoText : glowMoImg;
@@ -5287,7 +5373,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <span>發光動畫</span>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
-                        {GLOW_IDLES.map(g => (
+                        {(which === 'hole' ? GLOW_IDLES : GLOW_IDLES_OBJ).map(g => (
                           <button key={g.id}
                             onClick={() => { gset({ idle: g.id, speed: GLOW_SPEED_DEFAULT[g.id] ?? 180 }); replayMotion(); }}
                             className={cell(gv.idle === g.id)}>
@@ -5411,6 +5497,39 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
                         {/* 這個本體正在發光的話，發光的常駐動畫就接在這一頁最下面 */}
                         {glowHere && glowPanel(glowWhich)}
+
+                        {/* 這張圖片有虛線描邊的話，虛線自己的常駐動畫再接在下面。
+                            沒有虛線（或沒有描邊）就整段不出現，不佔版面。 */}
+                        {selObj && selObj.type === 'image'
+                          && (selObj.imgStrokeWidth || 0) > 0 && (selObj.imgStrokeDash || 0) > 0 && (() => {
+                          const dk = selObj.dashAnim || 'none';
+                          const dsp = selObj.dashSpeed ?? 100;
+                          const setDash = (d: any) => {
+                            setObjects(prev => prev.map(o => o.id === selObj.id ? { ...o, ...d } : o));
+                          };
+                          return (
+                            <>
+                              <div className="flex justify-between text-[10px] font-bold text-[#888] mt-6 mb-2 uppercase tracking-widest">
+                                <span>虛線動畫</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2">
+                                {DASH_ANIMS.map(d => (
+                                  <button key={d.id}
+                                    onClick={() => { setDash({ dashAnim: d.id }); replayMotion(); }}
+                                    className={cell(dk === d.id)}>
+                                    {d.name}
+                                  </button>
+                                ))}
+                              </div>
+                              {dk !== 'none' && (
+                                <div className="grid grid-cols-2 gap-4 mt-4">
+                                  <CompactSlider label="速度" value={dsp} min={20} max={180} step={1}
+                                    onChange={(v: number) => setDash({ dashSpeed: v })} />
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
                       </>
                     )}
                   </div>
