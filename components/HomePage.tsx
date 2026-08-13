@@ -524,6 +524,9 @@ export const HomePage: React.FC<HomePageProps> = ({
         onPointerDown={releaseNavLock}
         onWheel={releaseNavLock}
         onTouchStart={releaseNavLock}
+        /* 已經到頂了再往上拉，畫面不該有任何位移 —— 關掉這一層自己的橡皮筋，
+           也不要把捲動往外層傳。跟創意拼圖那條操作欄用的是同一招。 */
+        style={{ overscrollBehaviorY: 'none' }}
         /* 這個內距是拿來抵銷分頁列高度變化的：分頁列一矮，這一格就多長，
            貼著下緣排的那一疊東西就會跟著移動。內距補回同樣的量，可用高度不變，
            主頁上面所有東西就都待在原位。
