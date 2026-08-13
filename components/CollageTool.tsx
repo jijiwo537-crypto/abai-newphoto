@@ -3373,7 +3373,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         /* 虛線描邊有常駐動畫時，描邊不能烤進快取那張（快取是靠參數當 key 的，
            每一帧都變等於每一帧重算整張圖）。改成：快取那張不畫描邊，
            描邊在這裡即時畫一圈 —— 只是一條路徑，成本幾乎是零。 */
-        const dashAnim = (o.imgStrokeDash || 0) > 0 ? (o.dashAnim || 'none') : 'none';
+        /* 沒有虛線的描邊也可以有動畫，只是只有「呼吸」有意義
+           （跑馬燈／描繪要有虛線才看得出來），所以那兩種在沒虛線時當靜止。 */
+        const dashRaw = o.dashAnim || 'none';
+        const dashAnim = (o.imgStrokeDash || 0) > 0
+          ? dashRaw
+          : (dashRaw === 'breath' ? 'breath' : 'none');
         const liveStroke = dashAnim !== 'none' && (o.imgStrokeWidth || 0) > 0;
         const src2: any = liveStroke
           ? (fxCanvasOf({ ...o, id: `${o.id}@nodash`, imgStrokeWidth: 0 }, isMain) || o.img)
@@ -3428,6 +3433,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           ctx.miterLimit = 4;
           ctx.lineCap = 'butt';
           ctx.strokeStyle = o.imgStrokeColor || '#FFFFFF';
+          const hasDash = (o.imgStrokeDash || 0) > 0;
           if (dashAnim === 'march') {
             // 跑馬燈：整組虛線沿著路徑跑（一秒跑一組虛線＋空隙的長度 ×3）
             ctx.setLineDash([seg, gap]);
@@ -3452,13 +3458,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             ctx.setLineDash(arr);
             ctx.lineDashOffset = 0;
           } else if (dashAnim === 'breath') {
-            // 呼吸：跟發光的「呼吸I（breath2）」同一條 exp(sin) 曲線與週期
-            ctx.setLineDash([seg, gap]);
-            const CYCLE = 3.2 / sp;
+            /* 呼吸：跟發光的「呼吸I（breath2）」同一條 exp(sin) 曲線。
+               沒有虛線時就是整條實線一起呼吸。
+
+               ×1.7：滑桿上的 100 要做出「原本 170」的力道 ——
+               所以顯示還是 100，實際跑起來快一截。
+               最暗那一刻直接乘到 0（不是 0.12），完全看不到才算真的暗下去。 */
+            if (hasDash) ctx.setLineDash([seg, gap]);
+            else ctx.setLineDash([]);
+            const CYCLE = 3.2 / (sp * 1.7);
             const w = ((((tt) % CYCLE) + CYCLE) % CYCLE) / CYCLE * Math.PI * 2;
             const E = Math.E, IE = 1 / Math.E;
             const e = (Math.exp(Math.sin(w - Math.PI / 2)) - IE) / (E - IE);
-            ctx.globalAlpha = ctx.globalAlpha * (0.12 + 0.88 * e);
+            ctx.globalAlpha = ctx.globalAlpha * e;
           }
           ctx.stroke();
           ctx.restore();
@@ -5501,8 +5513,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         {/* 這張圖片有虛線描邊的話，虛線自己的常駐動畫再接在下面。
                             沒有虛線（或沒有描邊）就整段不出現，不佔版面。 */}
                         {selObj && selObj.type === 'image'
-                          && (selObj.imgStrokeWidth || 0) > 0 && (selObj.imgStrokeDash || 0) > 0 && (() => {
-                          const dk = selObj.dashAnim || 'none';
+                          && (selObj.imgStrokeWidth || 0) > 0 && (() => {
+                          /* 有虛線 → 四種都給；只有實線描邊 → 只有「靜止」和「呼吸」
+                             （跑馬燈與描繪要有虛線才看得出來）。 */
+                          const hasDash = (selObj.imgStrokeDash || 0) > 0;
+                          const list = hasDash
+                            ? DASH_ANIMS
+                            : DASH_ANIMS.filter(d => d.id === 'none' || d.id === 'breath');
+                          const raw = selObj.dashAnim || 'none';
+                          const dk = list.some(d => d.id === raw) ? raw : 'none';
                           const dsp = selObj.dashSpeed ?? 100;
                           const setDash = (d: any) => {
                             setObjects(prev => prev.map(o => o.id === selObj.id ? { ...o, ...d } : o));
@@ -5510,10 +5529,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           return (
                             <>
                               <div className="flex justify-between text-[10px] font-bold text-[#888] mt-6 mb-2 uppercase tracking-widest">
-                                <span>虛線動畫</span>
+                                <span>{hasDash ? '虛線動畫' : '描邊動畫'}</span>
                               </div>
                               <div className="grid grid-cols-2 gap-2">
-                                {DASH_ANIMS.map(d => (
+                                {list.map(d => (
                                   <button key={d.id}
                                     onClick={() => { setDash({ dashAnim: d.id }); replayMotion(); }}
                                     className={cell(dk === d.id)}>
