@@ -13,6 +13,7 @@ import {
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
   ADD_SHAPE_ITEMS, ShapeGlyph, swatchStrip, GLOW_COLORS,
+  shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
@@ -872,65 +873,14 @@ const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: number, 
 };
 
 /**
- * 「新增圖形」用的路徑。跟遮罩圖案那支不同的地方：
- * 這支是照外框 w×h 直接畫（不是正方形再拉伸），所以描邊的粗細不會被拉扁。
- * 一律以 (0,0) 為中心，呼叫端負責 translate／rotate。
+ * 「新增圖形」用的路徑。
+ * 形狀本體是經典拼圖那支 shapePathD（回傳 SVG 的 d 字串）——
+ * 這裡只是把它包成 Path2D 畫在 canvas 上，所以兩個工具的圖形
+ * **一定**是同一個形狀，不可能各自走鐘。
+ * 路徑的座標是「左上角 (0,0) 到 (w,h)」，呼叫端負責搬到框心。
  */
-export const shapePathBox = (ctx: CanvasRenderingContext2D, kind: string, w: number, h: number) => {
-  const a = w / 2, b = h / 2;
-  ctx.beginPath();
-  const poly = (n: number, start: number) => {
-    for (let i = 0; i < n; i++) {
-      const t = start + (i / n) * Math.PI * 2;
-      const x = Math.cos(t) * a, y = Math.sin(t) * b;
-      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-    }
-    ctx.closePath();
-  };
-  switch (kind) {
-    case 'circle':
-      ctx.ellipse(0, 0, a, b, 0, 0, Math.PI * 2);
-      break;
-    case 'square':
-      ctx.rect(-a, -b, w, h);
-      break;
-    case 'rounded':
-      roundRectPath(ctx, -a, -b, w, h, Math.min(a, b) * 0.28, Math.min(a, b) * 0.28);
-      break;
-    case 'triangle':
-      ctx.moveTo(0, -b); ctx.lineTo(a, b); ctx.lineTo(-a, b); ctx.closePath();
-      break;
-    case 'diamond':
-      ctx.moveTo(0, -b); ctx.lineTo(a, 0); ctx.lineTo(0, b); ctx.lineTo(-a, 0); ctx.closePath();
-      break;
-    case 'pentagon': poly(5, -Math.PI / 2); break;
-    case 'hexagon': poly(6, -Math.PI / 2); break;
-    case 'star': {
-      const n = 5, inner = 0.42;
-      for (let i = 0; i < n * 2; i++) {
-        const t = -Math.PI / 2 + (i / (n * 2)) * Math.PI * 2;
-        const k = i % 2 ? inner : 1;
-        const x = Math.cos(t) * a * k, y = Math.sin(t) * b * k;
-        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-      }
-      ctx.closePath();
-      break;
-    }
-    case 'heart': {
-      // 以 (0,0) 為中心、寬 w 高 h 的心形（跟遮罩那顆同一條曲線，換成外框比例）
-      ctx.moveTo(0, -b * 0.25);
-      ctx.bezierCurveTo(a * 0.6, -b * 1.0, a * 1.3, -b * 0.1, 0, b * 0.9);
-      ctx.bezierCurveTo(-a * 1.3, -b * 0.1, -a * 0.6, -b * 1.0, 0, -b * 0.25);
-      ctx.closePath();
-      break;
-    }
-    case 'line':
-      ctx.moveTo(-a, 0); ctx.lineTo(a, 0);
-      break;
-    default:
-      ctx.rect(-a, -b, w, h);
-  }
-};
+export const shapePathBox = (kind: string, w: number, h: number) =>
+  new Path2D(shapePathD(kind, w, h));
 
 /* 「新增圖形」的清單與按鈕上的小圖都改用經典拼圖那一份 ——
    同一份資料、同一支畫法，兩邊的按鈕不可能長得不一樣。
@@ -3543,24 +3493,33 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const bw = o.w * s, bh = o.h * s;
         const unit = Math.max(bw, bh) / 160;
         const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
+        const col = o.color || '#FFFFFF';
+        const solid = o.filled && o.kind !== 'line';
         ctx.save();
+        // 路徑是左上角起算的，所以先把原點從框心搬到左上角
+        ctx.translate(-bw / 2, -bh / 2);
         ctx.lineJoin = o.kind === 'line' ? 'round' : 'miter';
-        ctx.lineCap = o.kind === 'line' ? 'round' : 'butt';
+        // 一律平頭：線條的兩端要切齊，不要圓角
+        ctx.lineCap = 'butt';
         ctx.miterLimit = 4;
         if ((o.dash || 0) > 0) {
           const seg = lw * (0.6 + ((o.dash || 0) / 100) * 4);
           ctx.setLineDash([seg, seg * 0.85]);
-          ctx.lineCap = 'butt';
         } else ctx.setLineDash([]);
-        shapePathBox(ctx, o.kind, bw, bh);
-        if (o.filled && o.kind !== 'line') {
-          ctx.fillStyle = o.color || '#FFFFFF';
-          ctx.fill();
-        } else {
-          ctx.strokeStyle = o.color || '#FFFFFF';
-          ctx.lineWidth = lw;
-          ctx.stroke();
+        const shapeP = shapePathBox(o.kind, bw, bh);
+        if (solid) ctx.fillStyle = col;
+        else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
+        // 發光：三段模糊疊起來，跟經典拼圖那邊同一組半徑
+        if (o.glow) {
+          ctx.save();
+          ctx.shadowColor = col;
+          for (const r of shapeGlowBlurs(bw, bh)) {
+            ctx.shadowBlur = r;
+            if (solid) ctx.fill(shapeP); else ctx.stroke(shapeP);
+          }
+          ctx.restore();
         }
+        if (solid) ctx.fill(shapeP); else ctx.stroke(shapeP);
         ctx.setLineDash([]);
         ctx.restore();
       } else if (o.type === 'text') {
@@ -5367,12 +5326,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   const offs2 = getLayoutOffsets();
                   if (!offs2) return;
                   const id = Math.random().toString(36).slice(2, 9);
-                  const base = Math.round(Math.min(offs2.cw, offs2.ch) * 0.3);
-                  const w = base;
-                  const h = it.ratio ? Math.max(4, Math.round(base * it.ratio)) : base;
+                  const short = Math.min(offs2.cw, offs2.ch);
+                  const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+                  const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
                   setObjects(prev => [...prev, {
                     id, type: 'shape', kind: it.kind, filled: it.filled,
-                    color: '#FFFFFF', lineW: 6, dash: 0,
+                    color: '#FFFFFF', lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0, glow: 0,
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
                   }]);
@@ -5487,9 +5446,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         </div>
                       )}
 
-                      <div className="flex gap-2 mt-6">
-                        <button onClick={() => move(-1)} className="flex-1 h-10 rounded-[10px] bg-white/5 border border-white/10 text-[11px] font-bold text-white/80 active:scale-95 transition-all">往下一層</button>
-                        <button onClick={() => move(1)} className="flex-1 h-10 rounded-[10px] bg-white/5 border border-white/10 text-[11px] font-bold text-white/80 active:scale-95 transition-all">往上一層</button>
+                      {/* 發光只有開／關，顏色就用圖形自己的顏色。
+                          圖層上下不放在這裡 —— 選中時畫面上那排工具列本來就有。 */}
+                      <div className="text-[10px] font-bold text-[#888] mt-6 mb-2 uppercase tracking-widest">發光</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {([['關閉', 0], ['開啟', 1]] as const).map(([label, v]) => (
+                          <button
+                            key={label}
+                            onClick={() => patch({ glow: v })}
+                            className={`h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${
+                              (sel.glow ? 1 : 0) === v
+                                ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                                : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
                       </div>
                     </div>
                   );

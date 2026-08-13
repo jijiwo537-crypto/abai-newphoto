@@ -835,8 +835,14 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
         + `L ${P(r, h)} Q ${P(0, h)} ${P(0, h - r)} `
         + `L ${P(0, r)} Q ${P(0, 0)} ${P(r, 0)} Z`;
     }
-    case 'triangle':
-      return poly([[cx, 0], [w, h], [0, h]]);
+    case 'triangle': {
+      /* 正三角形（三邊等長）。邊長取「這個框裝得下的最大值」再置中 ——
+         框是方的時候就填滿寬度，高度自然是邊長的 √3/2。 */
+      const side = Math.min(w, h * 2 / Math.sqrt(3));
+      const th = side * Math.sqrt(3) / 2;
+      const x0 = (w - side) / 2, y0 = (h - th) / 2;
+      return poly([[x0 + side / 2, y0], [x0 + side, y0 + th], [x0, y0 + th]]);
+    }
     case 'diamond':
       return poly([[cx, 0], [w, cy], [cx, h], [0, cy]]);
     case 'pentagon': return reg(5, -Math.PI / 2);
@@ -851,11 +857,21 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
       }
       return poly(pts);
     }
-    case 'heart':
-      // 跟創意拼圖那顆同一條曲線，換成外框比例
-      return `M ${P(cx, cy - b * 0.25)} `
-        + `C ${P(cx + a * 0.6, cy - b)} ${P(cx + a * 1.3, cy - b * 0.1)} ${P(cx, cy + b * 0.9)} `
-        + `C ${P(cx - a * 1.3, cy - b * 0.1)} ${P(cx - a * 0.6, cy - b)} ${P(cx, cy - b * 0.25)} Z`;
+    case 'heart': {
+      /* 「♥」那一顆：兩個圓潤的耳朵＋中間的凹口，而且正好塞滿整個框。
+         下面每一列是一段貝茲曲線（兩個控制點＋終點），數字都是 0~1 的比例。 */
+      const HEART = [
+        [0.50, 1.00, 0.00, 0.62, 0.00, 0.31],
+        [0.00, 0.13, 0.14, 0.00, 0.29, 0.00],
+        [0.40, 0.00, 0.47, 0.07, 0.50, 0.13],
+        [0.53, 0.07, 0.60, 0.00, 0.71, 0.00],
+        [0.86, 0.00, 1.00, 0.13, 1.00, 0.31],
+        [1.00, 0.62, 0.50, 1.00, 0.50, 1.00],
+      ];
+      return `M ${P(cx, h)} `
+        + HEART.map(c => `C ${P(c[0] * w, c[1] * h)} ${P(c[2] * w, c[3] * h)} ${P(c[4] * w, c[5] * h)}`).join(' ')
+        + ' Z';
+    }
     case 'line':
       return `M ${P(0, cy)} L ${P(w, cy)}`;
     default:
@@ -869,6 +885,18 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
  */
 export const shapeLineWidth = (lineW: number | undefined, w: number, h: number) =>
   Math.max(0.4, (lineW ?? 6) * (Math.max(w, h) / 160));
+
+/**
+ * 圖形的發光：三段模糊疊起來（跟文字、圖片的發光同一套做法），
+ * 顏色就用圖形自己的顏色。半徑跟著圖形大小走，放大縮小時觀感一致。
+ */
+export const shapeGlowBlurs = (w: number, h: number) =>
+  [1, 2, 3].map(k => Math.max(w, h) * 0.045 * k);
+
+/** 新增圖形時的預設值。線條比較細長，所以粗細與大小另外給。 */
+export const SHAPE_DEFAULT_LINEW = (kind: string) => (kind === 'line' ? 4 : 6);
+/** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
+export const SHAPE_DEFAULT_RATIO = (kind: string) => (kind === 'line' ? 0.3 : 0.15);
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
 export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number };
@@ -924,7 +952,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
         fill={solid ? 'currentColor' : 'none'}
         stroke={solid ? 'none' : 'currentColor'}
         strokeWidth={isLine ? 1.9 : 1.6}
-        strokeLinecap={isLine ? 'round' : 'butt'}
+        strokeLinecap="butt"
         strokeLinejoin={isLine ? 'round' : 'miter'}
       />
     </svg>
@@ -1194,6 +1222,26 @@ export const ShapeEditorPanel: React.FC<{
               {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
             </>
           )}
+          {/* 發光只有開／關，顏色就用圖形自己的顏色。
+              圖層上下不放在這裡 —— 選中時畫面上那排工具列本來就有。 */}
+          <div>
+            <p className="text-[11px] font-bold text-white/70 mb-1.5">發光</p>
+            <div className="flex items-center gap-2">
+              {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
+                <button
+                  key={label}
+                  onClick={() => onChange({ shapeGlow: on })}
+                  className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
+                    !!layer.shapeGlow === on
+                      ? 'bg-white text-black border-white'
+                      : 'bg-white/[0.04] text-white/70 border-white/15'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -2301,6 +2349,8 @@ interface FloatingImage {
   shapeLineW?: number;
   /** 描邊的虛線長度（0＝實線，1~100 是「一段有幾倍線寬」的比例，跟圖片描邊同一套） */
   shapeDash?: number;
+  /** 圖形發光（只有開／關，顏色就用圖形自己的顏色） */
+  shapeGlow?: boolean;
 }
 
 type SwapSource = { kind: 'cell'; idx: number; src: string } | { kind: 'floating'; id: string; src: string };
@@ -3222,8 +3272,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     return {
       lw,
       dashArray: dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined,
-      // 線條類用圓頭圓角比較好看；虛線一律用平頭，不然每一段都會被撐長
-      cap: (dash > 0 ? 'butt' : image.shape === 'line' ? 'round' : 'butt') as 'butt' | 'round',
+      // 一律平頭：線條的兩端要是切齊的，不要圓角
+      cap: 'butt' as const,
       join: (image.shape === 'line' ? 'round' : 'miter') as 'round' | 'miter',
     };
   })();
@@ -3258,6 +3308,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           style={{
             position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
             overflow: 'visible', pointerEvents: 'none',
+            /* 發光：三段 drop-shadow 疊起來，跟文字／圖片的光同一套濃淡。
+               半徑寫在「沒有縮放前」的座標系上，外框放大時光會跟著一起放大。 */
+            filter: image.shapeGlow
+              ? shapeGlowBlurs(image.width, image.height)
+                  .map(r => `drop-shadow(0 0 ${r3(r * image.scale)}px ${image.color || '#1C1C1C'})`)
+                  .join(' ')
+              : undefined,
           }}
         >
           <path
@@ -4367,9 +4424,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    */
   const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number]) => {
     const rect = getActivePageRect();
-    const base = Math.round(Math.min(rect?.width ?? previewW, rect?.height ?? previewH) * 0.3);
-    const w = base;
-    const h = it.ratio ? Math.max(4, Math.round(base * it.ratio)) : base;
+    const short = Math.min(rect?.width ?? previewW, rect?.height ?? previewH);
+    const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+    const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
     const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
     const item: FloatingImage = {
       id, src: '',
@@ -4378,8 +4435,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       width: w, height: h, scale: 1, rotation: it.rot || 0,
       shape: it.kind,
       shapeFilled: it.filled,
-      shapeLineW: 6,
+      shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
       shapeDash: 0,
+      shapeGlow: false,
       color: '#1C1C1C',
     };
     setFloatingImages(prev => [...prev, item]);
@@ -7533,26 +7591,38 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     ctx.translate(-fw / 2, -fh / 2);
 
     const path = new Path2D(shapePathD(fImg.shape!, fw, fh));
-    if (fImg.shapeFilled && fImg.shape !== 'line') {
-      ctx.fillStyle = fImg.color || '#1C1C1C';
-      ctx.fill(path);
-    } else {
+    const color = fImg.color || '#1C1C1C';
+    const solid = fImg.shapeFilled && fImg.shape !== 'line';
+    if (!solid) {
       const lw = shapeLineWidth(fImg.shapeLineW, fw, fh);
       const dash = fImg.shapeDash || 0;
       ctx.lineWidth = lw;
       ctx.lineJoin = fImg.shape === 'line' ? 'round' : 'miter';
       ctx.miterLimit = 4;
-      ctx.lineCap = dash > 0 ? 'butt' : fImg.shape === 'line' ? 'round' : 'butt';
+      // 一律平頭：線條的兩端要切齊
+      ctx.lineCap = 'butt';
       if (dash > 0) {
         const seg = lw * (0.6 + (dash / 100) * 4);
         ctx.setLineDash([seg, seg * 0.85]);
       } else {
         ctx.setLineDash([]);
       }
-      ctx.strokeStyle = fImg.color || '#1C1C1C';
-      ctx.stroke(path);
-      ctx.setLineDash([]);
+      ctx.strokeStyle = color;
+    } else {
+      ctx.fillStyle = color;
     }
+    // 發光：三段模糊疊起來，跟預覽的三層 drop-shadow 同一組半徑
+    if (fImg.shapeGlow) {
+      ctx.save();
+      ctx.shadowColor = color;
+      for (const r of shapeGlowBlurs(fw, fh)) {
+        ctx.shadowBlur = r;
+        if (solid) ctx.fill(path); else ctx.stroke(path);
+      }
+      ctx.restore();
+    }
+    if (solid) ctx.fill(path); else ctx.stroke(path);
+    ctx.setLineDash([]);
     ctx.restore();
   };
 
@@ -7899,7 +7969,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 key={f.id}
                 viewBox={`0 0 ${f.width} ${f.height}`}
                 preserveAspectRatio="none"
-                style={{ ...common, overflow: 'visible' }}
+                style={{
+                  ...common, overflow: 'visible',
+                  filter: f.shapeGlow
+                    ? shapeGlowBlurs(f.width, f.height)
+                        .map(r => `drop-shadow(0 0 ${r3(r * f.scale * k)}px ${f.color || '#1C1C1C'})`)
+                        .join(' ')
+                    : undefined,
+                }}
               >
                 <path
                   d={shapePathD(f.shape, f.width, f.height)}
@@ -7907,7 +7984,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   stroke={solid ? 'none' : (f.color || '#1C1C1C')}
                   strokeWidth={lw}
                   strokeDasharray={dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined}
-                  strokeLinecap={dash > 0 ? 'butt' : isLine ? 'round' : 'butt'}
+                  strokeLinecap="butt"
                   strokeLinejoin={isLine ? 'round' : 'miter'}
                 />
               </svg>
