@@ -11,7 +11,7 @@ import {
   TextEditorPanel, ImageAdjustPanel,
   /* 圓角／羽化／描邊／發光全部改用經典拼圖那幾支：同一份程式碼，
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
-  cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
+  cornerR, roundRectPath, makeShapeMask, featherZoom, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
@@ -1052,7 +1052,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const fxCanvasOf = useCallback((o: any, isMain = false): CanvasImageSource | null => {
     if (!o.img) return null;
     const shape = {
-      r: o.imgRadius || 0, f: o.feather || 0, fi: o.featherInset ?? 100,
+      r: o.imgRadius || 0, f: o.feather || 0, fi: o.featherFill ?? 100,
       sw: o.imgStrokeWidth || 0, sc: o.imgStrokeColor || '#FFFFFF',
       g: o.imgGlow || 0, gc: o.imgGlowColor || '#FFFFFF',
     };
@@ -1142,11 +1142,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       off.width = Math.max(1, Math.round(swid));
       off.height = Math.max(1, Math.round(shgt));
       const oc = off.getContext('2d')!;
-      oc.drawImage(base, lw, lw, iw, ih);
+      /* 羽化會吃掉最外面一圈，先把圖片放大剛好那一圈再畫 ——
+         被吃掉的補回來，實心的部分維持原本大小，不會看起來變小。 */
+      const fz = featherZoom(iw, ih, shape.f, shape.fi);
+      const zw = iw * fz, zh = ih * fz;
+      oc.drawImage(base, lw + (iw - zw) / 2, lw + (ih - zh) / 2, zw, zh);
       if (shape.f || shape.r) {
         oc.globalCompositeOperation = 'destination-in';
         if (shape.f) {
-          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f, shape.fi), lw, lw, iw, ih);
+          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f), lw, lw, iw, ih);
         } else {
           const R = cornerR(shape.r, iw, ih);
           roundRectPath(oc, lw, lw, iw, ih, R, R);
