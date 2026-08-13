@@ -380,7 +380,15 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
            maxHeight: calc(100vh - 340px) 完全一樣（下面三列合計 191px 就是為了湊這個）。
            上下不留內距，高度才會剛好相等；再往下推 15px，中心就跟一般預覽對齊
            —— 那 15px 是一般預覽在它自己的預覽區裡置中所產生的固定偏移，跟螢幕高度無關。 */}
-      <div className="flex-1 min-h-0 px-5 md:px-10" style={{ paddingTop: 15 }}>
+      {/* 上方要留出瀏海／狀態列的高度。
+           這一層是 absolute inset-0 的全螢幕覆蓋層（z-70），會蓋掉工具本身的
+           標題列，所以安全區得自己留 —— 沒留的話，照片比較高的時候，
+           上緣就會伸進瀏海底下被擋住（正是「進構圖時上面被裁到」）。
+           那 15px 是原本讓中心跟一般預覽對齊的固定偏移，照舊加在後面。 */}
+      <div
+        className="flex-1 min-h-0 px-5 md:px-10"
+        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 15px)' }}
+      >
         {/* 高度用跟一般預覽同一條上限夾住，兩邊算出來的尺寸才會一模一樣
              （不夾的話 flex-1 的可用高會因為底部欄的小數而差 1px） */}
         {/* 兩指縮放掛在最外面這一層，不是掛在裁切框上。
@@ -393,7 +401,14 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
         <div
           ref={stageWrapRef}
           className="w-full h-full flex items-center justify-center"
-          style={{ maxHeight: 'calc(100vh - 340px)', touchAction: 'none' }}
+          /* 高度上限也要扣掉剛剛讓出去的安全區，不然舞台會比實際可用空間高，
+             多出來的部分一樣會頂到瀏海。
+             另外 100vh 在手機瀏覽器是「網址列收起來時」的高度（偏大），
+             改用 100dvh 才是當下真正看得到的高度。 */
+          style={{
+            maxHeight: 'calc(100dvh - 340px - env(safe-area-inset-top, 0px))',
+            touchAction: 'none',
+          }}
           onTouchStart={onStageTouchStart}
           onTouchMove={onStageTouchMove}
           onTouchEnd={onStageTouchEnd}
