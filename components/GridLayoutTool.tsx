@@ -769,6 +769,142 @@ const GLOW_COLORS = (() => {
   return ['#FFFFFF', ...hues.map(h => glowHslToHex(h, sat, l))];
 })();
 
+/* ── 新增圖形 ────────────────────────────────────────────────────────────
+   圖形圖層跟照片、文字一樣都是 floatingImages 裡的一員（位置、縮放、旋轉、
+   圖層順序、複製、刪除全部沿用同一套），只是內容換成一條路徑。
+
+   路徑只寫一份、回傳 SVG 的 d 字串：
+     預覽 →  <svg><path d={...} />
+     匯出 →  new Path2D(同一條 d)
+   兩邊吃的是同一條字串，所以畫布上看到的跟存下來的不可能長得不一樣。
+
+   而且是「照外框 w×h 直接畫」，不是先畫正方形再拉伸 ——
+   拉成長方形時描邊的粗細才不會跟著被拉扁。 */
+const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+export const shapePathD = (kind: string, w: number, h: number): string => {
+  const a = w / 2, b = h / 2, cx = a, cy = b;
+  const P = (x: number, y: number) => `${r3(x)} ${r3(y)}`;
+  const poly = (pts: [number, number][]) =>
+    `M ${P(pts[0][0], pts[0][1])} ${pts.slice(1).map(p => `L ${P(p[0], p[1])}`).join(' ')} Z`;
+  /** 正 n 邊形，start 是第一個頂點的角度 */
+  const reg = (n: number, start: number) => {
+    const pts: [number, number][] = [];
+    for (let i = 0; i < n; i++) {
+      const t = start + (i / n) * Math.PI * 2;
+      pts.push([cx + Math.cos(t) * a, cy + Math.sin(t) * b]);
+    }
+    return poly(pts);
+  };
+  switch (kind) {
+    case 'circle':
+      // 兩段半橢圓弧接成一圈（單一 A 指令畫不了整圈）
+      return `M ${P(0, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(w, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(0, cy)} Z`;
+    case 'square':
+      return poly([[0, 0], [w, 0], [w, h], [0, h]]);
+    case 'rounded': {
+      const r = Math.min(a, b) * 0.28;
+      return `M ${P(r, 0)} L ${P(w - r, 0)} Q ${P(w, 0)} ${P(w, r)} `
+        + `L ${P(w, h - r)} Q ${P(w, h)} ${P(w - r, h)} `
+        + `L ${P(r, h)} Q ${P(0, h)} ${P(0, h - r)} `
+        + `L ${P(0, r)} Q ${P(0, 0)} ${P(r, 0)} Z`;
+    }
+    case 'triangle':
+      return poly([[cx, 0], [w, h], [0, h]]);
+    case 'diamond':
+      return poly([[cx, 0], [w, cy], [cx, h], [0, cy]]);
+    case 'pentagon': return reg(5, -Math.PI / 2);
+    case 'hexagon': return reg(6, -Math.PI / 2);
+    case 'star': {
+      const n = 5, inner = 0.42;
+      const pts: [number, number][] = [];
+      for (let i = 0; i < n * 2; i++) {
+        const t = -Math.PI / 2 + (i / (n * 2)) * Math.PI * 2;
+        const k = i % 2 ? inner : 1;
+        pts.push([cx + Math.cos(t) * a * k, cy + Math.sin(t) * b * k]);
+      }
+      return poly(pts);
+    }
+    case 'heart':
+      // 跟創意拼圖那顆同一條曲線，換成外框比例
+      return `M ${P(cx, cy - b * 0.25)} `
+        + `C ${P(cx + a * 0.6, cy - b)} ${P(cx + a * 1.3, cy - b * 0.1)} ${P(cx, cy + b * 0.9)} `
+        + `C ${P(cx - a * 1.3, cy - b * 0.1)} ${P(cx - a * 0.6, cy - b)} ${P(cx, cy - b * 0.25)} Z`;
+    case 'line':
+      return `M ${P(0, cy)} L ${P(w, cy)}`;
+    default:
+      return poly([[0, 0], [w, 0], [w, h], [0, h]]);
+  }
+};
+
+/**
+ * 圖形的線寬。基準是「外框長邊的 1/160」，所以同一個粗細值在大圖形與
+ * 小圖形上看起來一樣粗，縮放時也跟著等比例走。
+ */
+export const shapeLineWidth = (lineW: number | undefined, w: number, h: number) =>
+  Math.max(0.4, (lineW ?? 6) * (Math.max(w, h) / 160));
+
+/** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
+export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number };
+export const ADD_SHAPE_ITEMS: ShapeItem[] = [
+  // 實心
+  { id: 'circle-f', kind: 'circle', filled: true },
+  { id: 'square-f', kind: 'square', filled: true },
+  { id: 'rounded-f', kind: 'rounded', filled: true },
+  { id: 'triangle-f', kind: 'triangle', filled: true },
+  { id: 'diamond-f', kind: 'diamond', filled: true },
+  { id: 'pentagon-f', kind: 'pentagon', filled: true },
+  { id: 'hexagon-f', kind: 'hexagon', filled: true },
+  { id: 'star-f', kind: 'star', filled: true },
+  { id: 'heart-f', kind: 'heart', filled: true },
+  // 細框
+  { id: 'circle-o', kind: 'circle', filled: false },
+  { id: 'square-o', kind: 'square', filled: false },
+  { id: 'rounded-o', kind: 'rounded', filled: false },
+  { id: 'triangle-o', kind: 'triangle', filled: false },
+  { id: 'diamond-o', kind: 'diamond', filled: false },
+  { id: 'pentagon-o', kind: 'pentagon', filled: false },
+  { id: 'hexagon-o', kind: 'hexagon', filled: false },
+  { id: 'star-o', kind: 'star', filled: false },
+  { id: 'heart-o', kind: 'heart', filled: false },
+  // 線條
+  { id: 'line-h', kind: 'line', filled: false, rot: 0, ratio: 0.08 },
+  { id: 'line-v', kind: 'line', filled: false, rot: 90, ratio: 0.08 },
+  { id: 'line-d1', kind: 'line', filled: false, rot: -45, ratio: 0.08 },
+  { id: 'line-d2', kind: 'line', filled: false, rot: 45, ratio: 0.08 },
+];
+
+/**
+ * 「新增圖形」按鈕上的小圖。
+ *
+ * 刻意不用圖示字型：專案裡的 Material Symbols 是**子集**（只打包了有用到的字），
+ * pentagon、hexagon、favorite、horizontal_rule 這幾個根本不在裡面 ——
+ * 用了就會直接把英文字印在按鈕上，還會撐爆格子蓋到隔壁那顆。
+ * 改成用 shapePathD 自己畫：按鈕上看到的形狀、實心／細框、角度，
+ * 就是按下去之後真的會加進畫面的那一個，一模一樣。
+ */
+export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
+  const isLine = item.kind === 'line';
+  const B = 20;                       // 圖形在 24×24 的框裡佔 20
+  const d = shapePathD(item.kind, B, isLine ? 0 : B);
+  const solid = item.filled && !isLine;
+  // 線條要繞自己的中點轉；其他形狀只要置中
+  const tf = `translate(2 ${isLine ? 12 : 2})${item.rot ? ` rotate(${item.rot} ${B / 2} 0)` : ''}`;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" style={{ overflow: 'visible' }} aria-hidden>
+      <path
+        d={d}
+        transform={tf}
+        fill={solid ? 'currentColor' : 'none'}
+        stroke={solid ? 'none' : 'currentColor'}
+        strokeWidth={isLine ? 1.9 : 1.6}
+        strokeLinecap={isLine ? 'round' : 'butt'}
+        strokeLinejoin={isLine ? 'round' : 'miter'}
+      />
+    </svg>
+  );
+};
+
 const FontCard: React.FC<{
   font: { name: string; label: string; category: FontCategory };
   active: boolean;
@@ -981,6 +1117,75 @@ export const TextEditorPanel: React.FC<{
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * 圖形圖層的參數面板（顏色／粗細／虛線）。
+ *
+ * 版型、色票、滑桿都跟文字面板同一份寫法 —— 兩種圖層切著用的時候，
+ * 介面不會突然換一種長相。實心的圖形沒有框，所以粗細與虛線只在
+ * 細框／線條的時候才出現。
+ */
+export const ShapeEditorPanel: React.FC<{
+  layer: FloatingImage;
+  onChange: (patch: Partial<FloatingImage>) => void;
+}> = ({ layer, onChange }) => {
+  const isLine = layer.shape === 'line';
+  const hasOutline = !layer.shapeFilled || isLine;
+
+  const swatchRow = (value: string | undefined, onPick: (c: string) => void) => (
+    <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-0.5 py-0.5">
+      <CustomColorButton value={value || '#1C1C1C'} onPick={onPick} />
+      {TEXT_COLORS.map(c => (
+        <button
+          key={c}
+          onClick={() => onPick(c)}
+          title={c}
+          className={`shrink-0 w-8 h-8 rounded-[7px] transition-all active:scale-90 ${
+            (value || '').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
+          }`}
+          style={{ backgroundColor: c }}
+        />
+      ))}
+    </div>
+  );
+
+  const slider = (label: string, value: number, min: number, max: number, onVal: (v: number) => void) => (
+    <div className="space-y-1.5">
+      <div className="flex justify-between items-center">
+        <span className="text-[11px] font-bold text-white/70">{label}</span>
+        <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value}</span>
+      </div>
+      <input
+        type="range" min={min} max={max} step={1} value={value}
+        onChange={e => onVal(parseInt(e.target.value))}
+        className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+      />
+    </div>
+  );
+
+  return (
+    <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
+      <div className="h-full overflow-y-auto no-scrollbar pr-1">
+        <div className="space-y-3.5 pt-1 pb-2">
+          <div>
+            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+            {swatchRow(layer.color, c => onChange({ color: c }))}
+          </div>
+          {hasOutline && (
+            <>
+              {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
+              {slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
+                v => onChange({ shapeLineW: v / 10 }))}
+              {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
+                  所以線越粗、虛線的節奏就跟著等比例放大 */}
+              {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -2096,6 +2301,16 @@ interface FloatingImage {
   /** 構圖（裁切／旋轉／翻轉）：baked 之前的原圖與參數，重開構圖時從這裡接續 */
   origSrc?: string;
   geo?: GeoParams;
+  /* ── 圖形圖層（新增圖形）─────────────────────────────────────────
+     有 shape 就是圖形層：沒有照片、沒有文字，內容就是一條路徑。
+     顏色沿用上面的 color（跟文字同一個欄位，色票也是同一組）。 */
+  shape?: string;
+  /** 實心（填色）還是細框（只描邊） */
+  shapeFilled?: boolean;
+  /** 線寬，1 個單位 = 外框長邊的 1/160（滑桿顯示成 1~100，存進來是 ÷10） */
+  shapeLineW?: number;
+  /** 描邊的虛線長度（0＝實線，1~100 是「一段有幾倍線寬」的比例，跟圖片描邊同一套） */
+  shapeDash?: number;
 }
 
 type SwapSource = { kind: 'cell'; idx: number; src: string } | { kind: 'floating'; id: string; src: string };
@@ -2914,7 +3129,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         {/* 編輯鍵：文字與圖片都用同一顆（跟佈局那顆同款） */}
         <button
           onClick={(e) => { e.stopPropagation(); onLayerAction('edit'); }}
-          title={image.text !== undefined ? '編輯文字' : '圖片調整'}
+          title={image.text !== undefined ? '編輯文字' : image.shape ? '圖形調整' : '圖片調整'}
           className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black"
         >
           <Sliders size={14} />
@@ -3006,6 +3221,23 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   );
 
 
+  /* 圖形圖層的描邊參數。全部用「沒有縮放前」的尺寸算 ——
+     SVG 的 viewBox 也是那個尺寸，縮放交給外框，兩軸倍率一樣，
+     所以線寬與虛線的節奏會跟著圖形一起等比例放大。 */
+  const shapeStroke = (() => {
+    if (!image.shape) return null;
+    const lw = shapeLineWidth(image.shapeLineW, image.width, image.height);
+    const dash = image.shapeDash || 0;
+    const seg = lw * (0.6 + (dash / 100) * 4);
+    return {
+      lw,
+      dashArray: dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined,
+      // 線條類用圓頭圓角比較好看；虛線一律用平頭，不然每一段都會被撐長
+      cap: (dash > 0 ? 'butt' : image.shape === 'line' ? 'round' : 'butt') as 'butt' | 'round',
+      join: (image.shape === 'line' ? 'round' : 'miter') as 'round' | 'miter',
+    };
+  })();
+
   return (
     <>
     <div
@@ -3025,7 +3257,30 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       onTouchEnd={onSwapTouchEnd}
       onTouchCancel={onSwapTouchEnd}
     >
-      {image.text !== undefined ? (
+      {image.shape ? (
+        /* 圖形圖層。預覽是 SVG、匯出是 Path2D，吃的是同一條 d 字串。
+           viewBox 用「沒有縮放前」的尺寸，外框是 width×scale ——
+           兩軸的倍率一樣，所以描邊是等比例放大、不會被拉扁。
+           overflow: visible 是因為描邊有一半長在框外面，不放行就會被切掉。 */
+        <svg
+          viewBox={`0 0 ${image.width} ${image.height}`}
+          preserveAspectRatio="none"
+          style={{
+            position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
+            overflow: 'visible', pointerEvents: 'none',
+          }}
+        >
+          <path
+            d={shapePathD(image.shape, image.width, image.height)}
+            fill={image.shapeFilled && image.shape !== 'line' ? (image.color || '#1C1C1C') : 'none'}
+            stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || '#1C1C1C')}
+            strokeWidth={shapeStroke?.lw}
+            strokeDasharray={shapeStroke?.dashArray}
+            strokeLinecap={shapeStroke?.cap}
+            strokeLinejoin={shapeStroke?.join}
+          />
+        </svg>
+      ) : image.text !== undefined ? (
         <div
           ref={textRef}
           style={{
@@ -4115,13 +4370,44 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     setActiveTab('adjust');
   };
 
+  /**
+   * 新增一個圖形圖層。
+   * 大小預設佔頁面短邊的三成；線條類壓成細長條（高度只有寬度的 8%）。
+   * 顏色跟文字一樣預設墨黑 —— 頁面底色預設是白的，白色圖形會看不到。
+   */
+  const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number]) => {
+    const rect = getActivePageRect();
+    const base = Math.round(Math.min(rect?.width ?? previewW, rect?.height ?? previewH) * 0.3);
+    const w = base;
+    const h = it.ratio ? Math.max(4, Math.round(base * it.ratio)) : base;
+    const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
+    const item: FloatingImage = {
+      id, src: '',
+      x: (rect ? rect.centerX : previewW / 2) - w / 2,
+      y: (rect ? rect.centerY : previewH / 2) - h / 2,
+      width: w, height: h, scale: 1, rotation: it.rot || 0,
+      shape: it.kind,
+      shapeFilled: it.filled,
+      shapeLineW: 6,
+      shapeDash: 0,
+      color: '#1C1C1C',
+    };
+    setFloatingImages(prev => [...prev, item]);
+    setSelectedFloatingId(id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+    // 新增完直接進編輯頁，跟新增文字一樣
+    setActiveTab('adjust');
+  };
+
   /** 複製一份圖片／文字圖層，稍微錯開一點放在原件上面，並直接選中新的那一份。 */
   const handleDuplicateFloating = (id: string) => {
     const src = floatingImages.find(f => f.id === id);
     if (!src) return;
     const copy: FloatingImage = {
       ...src,
-      id: `${src.text !== undefined ? 'text' : 'img'}-${Math.random().toString(36).substring(2, 9)}`,
+      id: `${src.text !== undefined ? 'text' : src.shape ? 'shape' : 'img'}-${Math.random().toString(36).substring(2, 9)}`,
       x: src.x + 16,
       y: src.y + 16,
     };
@@ -4832,7 +5118,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
      多包一層 padding 就會整個縮一圈、位置也跟著偏 —— 佈局裡的格子走的是同一套
      介面，所以也要算進來，不然只有格子那邊會縮小跑位。 */
   const imageEditMode = activeTab === 'adjust'
-    && (!!floatingImages.find(f => f.id === selectedFloatingId && f.text === undefined)
+    && (!!floatingImages.find(f => f.id === selectedFloatingId && f.text === undefined && !f.shape)
         || (!selectedFloatingId && selectedIndex !== null && selectedLayoutId !== null));
 
   const [historyState, setHistoryState] = useState<{
@@ -6241,7 +6527,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   };
 
   const handleFloatSwapTouchStart = (fImg: FloatingImage) => (e: React.TouchEvent) => {
-    if (fImg.text !== undefined) return;   // 文字圖層不參與長按交換
+    // 文字與圖形圖層沒有照片，不參與長按交換
+    if (fImg.text !== undefined || fImg.shape) return;
     if (e.touches.length !== 1) {
       if (floatSwapTimerRef.current) { clearTimeout(floatSwapTimerRef.current); floatSwapTimerRef.current = null; }
       floatSwapRef.current = null;
@@ -7227,6 +7514,54 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     ctx.restore();
   };
 
+  /**
+   * 匯出時把圖形圖層畫上去。
+   * 路徑跟預覽是同一支 shapePathD、同一條 d 字串，線寬也是同一支 shapeLineWidth ——
+   * 畫布上看到的跟存下來的不可能長得不一樣。
+   */
+  const drawShapeLayer = (
+    ctx: CanvasRenderingContext2D,
+    fImg: FloatingImage,
+    scaleFactor: number,
+  ) => {
+    // 扣掉預覽裡每頁之間那 1px 的間隔（跟圖片同一套）
+    const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
+    const fx = adjustedX * scaleFactor;
+    const fy = fImg.y * scaleFactor;
+    const fw = fImg.width * scaleFactor;
+    const fh = fImg.height * scaleFactor;
+
+    ctx.save();
+    // CSS 的 scale 以未縮放框的中心為原點，所以先搬到中心再縮放，最後推回左上角
+    ctx.translate(fx + fw / 2, fy + fh / 2);
+    ctx.rotate((fImg.rotation * Math.PI) / 180);
+    ctx.scale(fImg.scale, fImg.scale);
+    ctx.translate(-fw / 2, -fh / 2);
+
+    const path = new Path2D(shapePathD(fImg.shape!, fw, fh));
+    if (fImg.shapeFilled && fImg.shape !== 'line') {
+      ctx.fillStyle = fImg.color || '#1C1C1C';
+      ctx.fill(path);
+    } else {
+      const lw = shapeLineWidth(fImg.shapeLineW, fw, fh);
+      const dash = fImg.shapeDash || 0;
+      ctx.lineWidth = lw;
+      ctx.lineJoin = fImg.shape === 'line' ? 'round' : 'miter';
+      ctx.miterLimit = 4;
+      ctx.lineCap = dash > 0 ? 'butt' : fImg.shape === 'line' ? 'round' : 'butt';
+      if (dash > 0) {
+        const seg = lw * (0.6 + (dash / 100) * 4);
+        ctx.setLineDash([seg, seg * 0.85]);
+      } else {
+        ctx.setLineDash([]);
+      }
+      ctx.strokeStyle = fImg.color || '#1C1C1C';
+      ctx.stroke(path);
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  };
+
   /** 匯出時把自由圖層畫到頁面座標系上，順序就是陣列順序。 */
   const drawFloatingLayers = async (
     ctx: CanvasRenderingContext2D,
@@ -7236,6 +7571,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     for (const fImg of layers) {
       if (fImg.text !== undefined) {
         await drawTextLayer(ctx, fImg, scaleFactor);
+        continue;
+      }
+      if (fImg.shape) {
+        drawShapeLayer(ctx, fImg, scaleFactor);
         continue;
       }
       const img = fImg.isVideo ? await loadExportVideo(fImg.src) : await loadExportImage(fImg.src);
@@ -7551,6 +7890,33 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 )}
                 <span style={{ position: 'relative', zIndex: 1 }}>{f.text}</span>
               </span>
+            );
+          }
+          if (f.shape) {
+            /* 圖形：跟畫布上同一支 shapePathD、同一支 shapeLineWidth，
+               只是外框換成縮圖的尺寸。 */
+            const isLine = f.shape === 'line';
+            const solid = !!f.shapeFilled && !isLine;
+            const lw = shapeLineWidth(f.shapeLineW, f.width, f.height);
+            const dash = f.shapeDash || 0;
+            const seg = lw * (0.6 + (dash / 100) * 4);
+            return (
+              <svg
+                key={f.id}
+                viewBox={`0 0 ${f.width} ${f.height}`}
+                preserveAspectRatio="none"
+                style={{ ...common, overflow: 'visible' }}
+              >
+                <path
+                  d={shapePathD(f.shape, f.width, f.height)}
+                  fill={solid ? (f.color || '#1C1C1C') : 'none'}
+                  stroke={solid ? 'none' : (f.color || '#1C1C1C')}
+                  strokeWidth={lw}
+                  strokeDasharray={dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined}
+                  strokeLinecap={dash > 0 ? 'butt' : isLine ? 'round' : 'butt'}
+                  strokeLinejoin={isLine ? 'round' : 'miter'}
+                />
+              </svg>
             );
           }
           if (f.isVideo) {
@@ -9659,7 +10025,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           </div>
 
           {/* Tabs Content */}
-          <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'add', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+          <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto'}`}>
 
             {activeTab === 'adjust' && (() => {
               /* 佈局裡的格子也走同一套面板：把格子包成跟浮動圖片一樣的形狀，
@@ -9676,7 +10042,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               if (!layer) return (
                 // 置中之後再稍微往上一點（pb 讓可用高度變矮，等於整段往上挪 12px）
                 <div className="h-full flex items-center justify-center pb-6">
-                  <p className="text-[11px] text-white/40 text-center">請先選中圖片或文字</p>
+                  <p className="text-[11px] text-white/40 text-center">請先選中圖片、文字或圖形</p>
                 </div>
               );
 
@@ -9684,6 +10050,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
               if (layer.text !== undefined) {
                 return (
                   <TextEditorPanel
+                    layer={layer}
+                    onChange={patch => patchTextLayer(layer.id, patch)}
+                  />
+                );
+              }
+
+              // 選到圖形：顏色／粗細／虛線
+              if (layer.shape) {
+                return (
+                  <ShapeEditorPanel
                     layer={layer}
                     onChange={patch => patchTextLayer(layer.id, patch)}
                   />
@@ -9752,6 +10128,34 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                   </button>
+                </div>
+
+                {/* 新增圖形。三排：實心、細框、線條 —— 全部用圖標表示，
+                    點下去就加到這一頁的正中間並直接進編輯頁。
+                    版面跟創意拼圖的加號頁是同一份，兩邊看起來一模一樣。 */}
+                <div className="pt-2">
+                  <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">新增圖形</div>
+                  {([
+                    ['實心', ADD_SHAPE_ITEMS.filter(i => i.filled)],
+                    ['細框', ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line')],
+                    ['線條', ADD_SHAPE_ITEMS.filter(i => i.kind === 'line')],
+                  ] as const).map(([label, list]) => (
+                    <div key={label} className="mb-3">
+                      <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
+                      <div className="grid grid-cols-6 gap-2">
+                        {list.map(it => (
+                          <button
+                            key={it.id}
+                            onClick={() => handleAddShapeLayer(it)}
+                            aria-label={it.id}
+                            className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
+                          >
+                            <ShapeGlyph item={it} />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

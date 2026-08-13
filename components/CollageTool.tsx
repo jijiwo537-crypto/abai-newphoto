@@ -12,6 +12,7 @@ import {
   /* 圓角／羽化／描邊／發光全部改用經典拼圖那幾支：同一份程式碼，
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
+  ADD_SHAPE_ITEMS, ShapeGlyph,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
@@ -931,36 +932,12 @@ export const shapePathBox = (ctx: CanvasRenderingContext2D, kind: string, w: num
   }
 };
 
-/** 「新增圖形」清單。icon 是 Material Symbols 的名字，rot 是按鈕與圖形都要轉的角度 */
-export const SHAPE_ITEMS: {
-  id: string; kind: string; icon: string; filled: boolean; rot?: number; ratio?: number;
-}[] = [
-  // 實心
-  { id: 'circle-f', kind: 'circle', icon: 'circle', filled: true },
-  { id: 'square-f', kind: 'square', icon: 'square', filled: true },
-  { id: 'rounded-f', kind: 'rounded', icon: 'rounded_corner', filled: true },
-  { id: 'triangle-f', kind: 'triangle', icon: 'change_history', filled: true },
-  { id: 'diamond-f', kind: 'diamond', icon: 'diamond', filled: true },
-  { id: 'pentagon-f', kind: 'pentagon', icon: 'pentagon', filled: true },
-  { id: 'hexagon-f', kind: 'hexagon', icon: 'hexagon', filled: true },
-  { id: 'star-f', kind: 'star', icon: 'star', filled: true },
-  { id: 'heart-f', kind: 'heart', icon: 'favorite', filled: true },
-  // 細框
-  { id: 'circle-o', kind: 'circle', icon: 'circle', filled: false },
-  { id: 'square-o', kind: 'square', icon: 'square', filled: false },
-  { id: 'rounded-o', kind: 'rounded', icon: 'rounded_corner', filled: false },
-  { id: 'triangle-o', kind: 'triangle', icon: 'change_history', filled: false },
-  { id: 'diamond-o', kind: 'diamond', icon: 'diamond', filled: false },
-  { id: 'pentagon-o', kind: 'pentagon', icon: 'pentagon', filled: false },
-  { id: 'hexagon-o', kind: 'hexagon', icon: 'hexagon', filled: false },
-  { id: 'star-o', kind: 'star', icon: 'star', filled: false },
-  { id: 'heart-o', kind: 'heart', icon: 'favorite', filled: false },
-  // 線條
-  { id: 'line-h', kind: 'line', icon: 'horizontal_rule', filled: false, rot: 0, ratio: 0.08 },
-  { id: 'line-v', kind: 'line', icon: 'horizontal_rule', filled: false, rot: 90, ratio: 0.08 },
-  { id: 'line-d1', kind: 'line', icon: 'horizontal_rule', filled: false, rot: -45, ratio: 0.08 },
-  { id: 'line-d2', kind: 'line', icon: 'horizontal_rule', filled: false, rot: 45, ratio: 0.08 },
-];
+/* 「新增圖形」的清單與按鈕上的小圖都改用經典拼圖那一份 ——
+   同一份資料、同一支畫法，兩邊的按鈕不可能長得不一樣。
+   （之前這裡用圖示字型，但專案打包的是 Material Symbols 的**子集**，
+     pentagon／hexagon／favorite／horizontal_rule 都不在裡面，
+     按鈕上會直接印出英文字並蓋到隔壁那顆。） */
+const SHAPE_ITEMS = ADD_SHAPE_ITEMS;
 
 interface ColorPickerProps {
   color: string;
@@ -5437,19 +5414,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                                 key={it.id}
                                 onClick={() => addShape(it)}
                                 aria-label={it.id}
-                                className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center"
+                                className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
                               >
-                                {/* Icon 本身不吃 style，轉角度包一層 span */}
-                                <span
-                                  className="leading-none flex items-center justify-center"
-                                  style={it.rot ? { transform: `rotate(${it.rot}deg)` } : undefined}
-                                >
-                                  <Icon
-                                    name={it.icon}
-                                    fill={it.filled && it.kind !== 'line'}
-                                    className="text-[20px] text-white/85"
-                                  />
-                                </span>
+                                <ShapeGlyph item={it} />
                               </button>
                             ))}
                           </div>
