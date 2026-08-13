@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Icon } from './Icon';
-import { ThreeBackground } from './ThreeBackground';
 import type { ExportMeta } from '../utils/exportHistory';
 import {
   type AuthUser, isAuthReady, authErrText, getUser, onAuthChange,
@@ -167,7 +166,6 @@ export const HomePage: React.FC<HomePageProps> = ({
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
   const scrollRef = useRef<HTMLDivElement>(null);
   const libRef = useRef<HTMLDivElement>(null);
-  const heroRef = useRef<HTMLDivElement>(null);
   /* 在「我」的時候捲軸那一頁是藏起來的，捲動事件不能反過來改分頁 */
   const navRef = useRef(nav);
   useEffect(() => { navRef.current = nav; }, [nav]);
@@ -233,39 +231,13 @@ export const HomePage: React.FC<HomePageProps> = ({
   const pwOk = pw.length >= 6;
 
   const openLogin = () => {
-    busyRef.current = null;
-    autoTried.current = '';
     setStep('id'); setIdInput(''); setPw(''); setCode('');
     setLoginErr(''); setLoginNote(''); setCooldown(0); setMode('otp'); setEmailOpen(false);
     setLoginOpen(true);
   };
 
-  /* ── 卡在「處理中」的收拾 ──────────────────────────────────────────
-     step === 'busy' 的時候整片登入欄的按鈕都是灰的，所以只要有任何一條路
-     沒把它收回來，人就會被鎖在那一頁、什麼都按不動。會發生的情況有三種：
-       ① 第三方登入跳走之後又回來（在 Google 那邊按取消、或按瀏覽器上一頁）
-          —— 回來時整份 React 狀態還在（bfcache），step 仍然停在 busy；
-       ② 網路卡住，請求既不成功也不失敗，永遠不會回來；
-       ③ 任何我們沒想到的例外。
-     下面三道保險各收一種：回到前景就解除、等太久就自己解除、
-     關閉鍵與背景永遠可以按（見標題列與遮罩）。 */
-  /** 這一次的「處理中」是哪條路來的、結束後要回到哪一頁 */
-  const busyRef = useRef<{ kind: 'oauth' | 'email'; back: 'id' | 'code' } | null>(null);
-  const beginBusy = (kind: 'oauth' | 'email', back: 'id' | 'code' = 'id') => {
-    busyRef.current = { kind, back };
-    setStep('busy');
-  };
-  /** 把畫面收回可以操作的狀態。msg 有給才顯示訊息（取消登入不用囉嗦）。 */
-  const endBusy = (msg?: string) => {
-    const b = busyRef.current;
-    busyRef.current = null;
-    setStep(b ? b.back : 'id');
-    if (msg) setLoginErr(msg);
-  };
-
   /** 統一的錯誤處理：把英文訊息換成中文，並把畫面收回可操作的狀態 */
   const fail = (e: any, back: 'id' | 'code' = 'id') => {
-    busyRef.current = null;
     setLoginErr(authErrText(e));
     setStep(back);
   };
@@ -274,20 +246,18 @@ export const HomePage: React.FC<HomePageProps> = ({
   const sendCode = async () => {
     if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
     if (!idOk) { setLoginErr('請輸入正確的電子郵件'); return; }
-    setLoginErr(''); setLoginNote(''); beginBusy('email');
+    setLoginErr(''); setLoginNote(''); setStep('busy');
     try {
       await sendEmailOtp(idInput);
-      busyRef.current = null;
       setStep('code'); setCooldown(60);
     } catch (e) { fail(e); }
   };
 
   const submitCode = async (value = code) => {
     if (value.length < OTP_LEN) { setLoginErr(`請輸入信裡的 ${OTP_LEN} 位數驗證碼`); return; }
-    setLoginErr(''); beginBusy('email', 'code');
+    setLoginErr(''); setStep('busy');
     try {
       await verifyEmailOtp(idInput, value);
-      busyRef.current = null;
       setLoginOpen(false);
     } catch (e) { fail(e, 'code'); }
   };
@@ -310,11 +280,10 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
     if (!idOk) { setLoginErr('請輸入正確的電子郵件'); return; }
     if (!pwOk) { setLoginErr('密碼至少要 6 個字'); return; }
-    setLoginErr(''); setLoginNote(''); beginBusy('email');
+    setLoginErr(''); setLoginNote(''); setStep('busy');
     try {
-      if (intent === 'in') { await signInWithPassword(idInput, pw); busyRef.current = null; setLoginOpen(false); return; }
+      if (intent === 'in') { await signInWithPassword(idInput, pw); setLoginOpen(false); return; }
       const r = await signUpWithPassword(idInput, pw);
-      busyRef.current = null;
       if (r.needVerify) { setStep('id'); setLoginNote('驗證信寄出去了，去信箱點一下就完成註冊'); }
       else setLoginOpen(false);
     } catch (e) { fail(e); }
@@ -322,43 +291,17 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   const forgotPw = async () => {
     if (!idOk) { setLoginErr('請先輸入你的電子郵件'); return; }
-    setLoginErr(''); beginBusy('email');
-    try { await sendPasswordReset(idInput); busyRef.current = null; setStep('id'); setLoginNote('重設密碼的信寄出去了'); }
+    setLoginErr(''); setStep('busy');
+    try { await sendPasswordReset(idInput); setStep('id'); setLoginNote('重設密碼的信寄出去了'); }
     catch (e) { fail(e); }
   };
 
   const oauth = async (p: 'google' | 'apple') => {
     if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
-    setLoginErr(''); beginBusy('oauth');
+    setLoginErr(''); setStep('busy');
     try { await signInWithProvider(p); }   // 會跳走，回來時 onAuthChange 接手
     catch (e) { fail(e); }
   };
-
-  /* 保險①：第三方登入跳走之後又回到前景，卻還停在「處理中」——
-     那就是中途取消（或根本沒跳成功）。安靜地把按鈕解開就好，不用跳訊息；
-     真的登入成功的話 onAuthChange 會把整片登入欄收起來。 */
-  useEffect(() => {
-    const wake = () => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      if (busyRef.current?.kind !== 'oauth') return;
-      endBusy();
-    };
-    const onShow = (e: any) => { if (e?.persisted) wake(); };
-    document.addEventListener('visibilitychange', wake);
-    window.addEventListener('pageshow', onShow);
-    return () => {
-      document.removeEventListener('visibilitychange', wake);
-      window.removeEventListener('pageshow', onShow);
-    };
-  }, []);
-
-  /* 保險②：請求卡住（既不成功也不失敗）。等太久就自己收回來，
-     不能讓整片登入欄一直是灰的。 */
-  useEffect(() => {
-    if (step !== 'busy') return;
-    const t = setTimeout(() => endBusy('連線超時了，請再試一次'), 25000);
-    return () => clearTimeout(t);
-  }, [step]);
 
   const logout = () => {
     signOut().catch(() => {});
@@ -563,9 +506,6 @@ export const HomePage: React.FC<HomePageProps> = ({
             </span>
           </div>
 
-          {/* 歷史紀錄從首頁搬到這裡，接在會員方案卡片下面 */}
-          <div className="mt-7">{historySection}</div>
-
           {/* 登出與刪除帳號都收進帳號設定那一頁了（點上面那列右邊的箭頭） */}
         </div>
       )}
@@ -579,9 +519,6 @@ export const HomePage: React.FC<HomePageProps> = ({
         onPointerDown={releaseNavLock}
         onWheel={releaseNavLock}
         onTouchStart={releaseNavLock}
-        /* 已經到頂了再往上拉，畫面不該有任何位移 —— 關掉這一層自己的橡皮筋，
-           也不要把捲動往外層傳。跟創意拼圖那條操作欄用的是同一招。 */
-        style={{ overscrollBehaviorY: 'none' }}
         /* 這個內距是拿來抵銷分頁列高度變化的：分頁列一矮，這一格就多長，
            貼著下緣排的那一疊東西就會跟著移動。內距補回同樣的量，可用高度不變，
            主頁上面所有東西就都待在原位。
@@ -596,35 +533,9 @@ export const HomePage: React.FC<HomePageProps> = ({
            所以整疊往下挪 8px。這一疊是貼著下緣排的，pb 少 8 就等於整組下移 8。
            主視覺與品牌字不在這個流裡（絕對定位），所以它們各自也加了同樣的 8px。 */}
       <div className="relative min-h-full px-6 pb-[42px] flex flex-col gap-[22px] box-border">
-        {/* --- 主視覺 ---
-             設計稿這裡是一個等著放圖的插槽，App 本來就有的 3D 背景剛好是它的主視覺，
-             就讓它填這一格。下緣那道漸層負責把圖收進純黑，跟下面的內容接起來。
-             高度用 vh 收斂：設計稿是 390×844 的固定框，小螢幕照抄 328px 會吃掉太多。
-
-             它跟品牌字放在同一個容器裡（都是這一頁的絕對定位子節點），
-             所以往下滑時是瀏覽器自己在捲，跟品牌字、跟所有東西完全同步。
-             以前它掛在捲動區外面、靠 onScroll 去改 transform，捲動事件永遠慢一拍，
-             看起來就是「3D 物件的移動方式跟別的東西不一樣」。
-             絕對定位的容器塊是父層的 padding box，所以 left/right 0 就是整個寬度，
-             不會被 px-6 縮進去。
-
-             層次：這一塊放 z-0，下面幾排按鈕各自加 relative z-10 壓在它上面。
-             不能用 z-index -1 —— 手機（尤其 iOS）的捲動區會自己合成一層，
-             負的 z-index 會被畫到那一層後面，整顆 3D 球就看不見了。 */}
-        <div
-          ref={heroRef}
-          className="absolute top-[8px] left-0 right-0 h-[38vh] min-h-[200px] max-h-[328px] bg-black z-0"
-        >
-          {/* 「我」那一頁不要 3D 物件 */}
-          {nav !== 'me' && <ThreeBackground />}
-          <div
-            className="absolute inset-x-0 bottom-[-2px] h-10 pointer-events-none"
-            style={{
-              background:
-                'linear-gradient(to top,#000 0%,rgba(0,0,0,.94) 16%,rgba(0,0,0,.82) 32%,rgba(0,0,0,.6) 48%,rgba(0,0,0,.38) 63%,rgba(0,0,0,.18) 78%,rgba(0,0,0,.05) 90%,rgba(0,0,0,0) 100%)',
-            }}
-          />
-        </div>
+        {/* 主視覺那一塊（3D 物件）整個拿掉了。
+             它本來是絕對定位、只鋪在最底層的，不佔版面 —— 所以拿掉之後，
+             品牌字、聯絡鈕、下面那幾排按鈕的位置一個像素都不會變。 */}
 
         {/* 品牌字：這一屏的主標題，壓在 3D 球的正中心。
              用絕對定位所以不佔版面（下面幾排按鈕的位置完全不受影響），
@@ -700,19 +611,17 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
         </div>
 
-        {/* 歷史紀錄搬到「我的」那一頁了（會員方案卡片下面），
-             原本這裡的廣告版位也已經拿掉。
+        {/* 歷史紀錄 —— 搬回首頁最下面這一排。
+             點一張就回到它導出當下的編輯狀態，還沒導出過的位子留斜線底。 */}
+        <div className="relative z-10 -mt-3">{historySection}</div>
 
-             但下面這塊留白要留著，而且要比原來更高 —— 第一屏這一疊是靠
-             mt-auto「貼著下緣」往上排的，所以下面的留白每多 1px，
-             上面每一排就往上移 1px。這塊就是那個調節閥：
-               原本廣告版位            147px
-             ＋ 歷史紀錄那一區          87px（搬走了，不補就整疊往下掉）
-             ＋ 再往上提一點            36px
-             ＝                        270px
-             結果：格子與歷史紀錄都不在首頁了，上面那幾排不但沒往下掉，
-             還比原本高了 26px。右上角的聯絡鈕是絕對定位在最上面的，不受影響。 */}
-        <div className="relative z-10 -mt-1.5 h-[270px] shrink-0" aria-hidden />
+        {/* 原本這裡的廣告版位已經拿掉了，但這塊留白要留著。
+             第一屏這一疊是靠 mt-auto「貼著下緣」往上排的，所以下面的留白
+             每多 1px，上面每一排就往上移 1px —— 這塊就是那個調節閥。
+             歷史紀錄搬回來會多佔 97px（自己 87px、上緣 -mt-3 吃掉 12px、
+             再加上這一疊每個成員之間的 gap-[22px]），所以這裡同步從 270
+             減成 173，上面那幾排才會待在原來的位置。 */}
+        <div className="relative z-10 -mt-1.5 h-[173px] shrink-0" aria-hidden />
       </div>
 
       {/* --- 靈感 ---
@@ -796,8 +705,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            /* 就算還在「處理中」也要能關 —— 卡住的時候這是唯一的出口 */
-            onClick={() => { busyRef.current = null; setLoginOpen(false); }}
+            onClick={() => step !== 'busy' && setLoginOpen(false)}
             className="absolute inset-0 z-[60] flex items-end justify-center bg-black/75 backdrop-blur-sm"
           >
             <motion.div
@@ -822,13 +730,12 @@ export const HomePage: React.FC<HomePageProps> = ({
                 </div>
                 <button
                   onClick={() => {
-                    // 還在「處理中」：這一顆一定要能按，直接放棄這次嘗試並關掉
-                    if (step === 'busy') { busyRef.current = null; setStep('id'); setLoginOpen(false); return; }
                     // 驗證碼 → 回信箱畫面；信箱畫面 → 回三顆按鈕；再按才是關閉
                     if (step === 'code') { setStep('id'); return; }
                     if (emailOpen) { setEmailOpen(false); setLoginErr(''); setLoginNote(''); return; }
                     setLoginOpen(false);
                   }}
+                  disabled={step === 'busy'}
                   aria-label={(step === 'code' || emailOpen) ? '上一步' : '關閉'}
                   className="shrink-0 w-8 h-8 -mr-1 -mt-0.5 rounded-full flex items-center justify-center text-white/35 hover:text-white hover:bg-white/[0.06] active:scale-90 transition-[color,background-color,transform] disabled:opacity-30"
                 >
