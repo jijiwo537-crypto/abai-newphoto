@@ -721,7 +721,9 @@ const SHAPE_TOOLS: [string, string, string, number, number, number][] = [
 /** 描邊／發光點進去之後的子工具：粗細用滑桿、顏色用色票 */
 const SHAPE_SUB_TOOLS: Record<string, [string, string, string, number, number, number][]> = {
   stroke: [
-    ['imgStrokeWidth', '粗細', 'line_weight', 0, 20, 0],
+    /* 粗細：實際的值是 0～10，但滑桿刻度給 0～100（顯示值＝實際值 ×10）。
+       一格就只有 0.1，拖起來非常平順，不會「動一格就跳一大截」。 */
+    ['imgStrokeWidth', '粗細', 'line_weight', 0, 100, 0],
     /* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
        所以線越粗、虛線的節奏就跟著等比例放大，不會粗線配細碎的點。 */
     ['imgStrokeDash', '虛線', 'more_horiz', 0, 100, 0],
@@ -1201,11 +1203,14 @@ const sliderArea = (() => {
       if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, GLOW_COLORS, c => set({ imgStrokeColor: c }), true);
       if (subTool[0] === 'imgGlowColor') return swatchStrip(img.imgGlowColor, GLOW_COLORS, c => set({ imgGlowColor: c }), true);
       const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow' | 'imgStrokeDash';
-      // 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來。
-      // 羽化的「範圍」是佔短邊的百分比，只有 50 段太粗，改成 0.5 一格。
+      /* 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來。
+         粗細是唯一「顯示值 ≠ 實際值」的一根：滑桿走 0～100，
+         存進去的是它的十分之一（0～10）。 */
+      const UI10 = k === 'imgStrokeWidth';
+      const raw = (img[k] as number) || 0;
       return editorSlider(
-        subTool[1], (img[k] as number) || 0, subTool[3], subTool[4],
-        v => set({ [k]: v }), undefined, true,
+        subTool[1], UI10 ? Math.round(raw * 10) : raw, subTool[3], subTool[4],
+        v => set({ [k]: UI10 ? v / 10 : v }), undefined, true,
       );
     }
     const t = SHAPE_TOOLS.find(x => x[0] === shapeTool);
