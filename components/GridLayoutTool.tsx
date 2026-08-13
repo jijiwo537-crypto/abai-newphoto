@@ -885,7 +885,7 @@ export const shapeGlowBlurs = (w: number, h: number) =>
 /** 新增圖形時的預設值。線條比較細長，所以粗細與大小另外給。 */
 export const SHAPE_DEFAULT_LINEW = (kind: string) => (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
-export const SHAPE_DEFAULT_RATIO = (kind: string) => (kind === 'line' ? 0.3 : 0.15);
+export const SHAPE_DEFAULT_RATIO = (kind: string) => (kind === 'line' ? 0.24 : 0.15);
 /** 新圖形的預設顏色。取自發光色票裡的那顆薄荷綠，深色底與白底上都看得到。 */
 export const SHAPE_DEFAULT_COLOR = '#9BD4C3';
 
@@ -940,8 +940,9 @@ const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   line: [0, 0.5, 1, 0],
 };
 
-/** 按鈕上的小圖要放多大（1 ＝ 塞滿）。星形本來就比較「瘦」，放大一點才看得清楚。 */
-const GLYPH_ZOOM: Record<string, number> = { star: 1.5 };
+/** 個別圖案的加大倍率。星形是實心面積最少的一個，稍微放大一點才看得清楚。
+    1.1 ＝ 長邊從 20px 變成 22px。 */
+const GLYPH_ZOOM: Record<string, number> = { star: 1.1 };
 
 /**
  * 「新增圖形」按鈕上的小圖。
@@ -957,16 +958,18 @@ const GLYPH_ZOOM: Record<string, number> = { star: 1.5 };
  */
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
   const isLine = item.kind === 'line';
-  const VB = 24;                       // viewBox 的邊長
-  const BOX = 20;                      // 圖案最多佔多大
+  /* viewBox 與圖案的框一樣大 —— 每一顆圖案的長邊都剛好等於 size（預設 20px），
+     所以不管哪一種形狀，看起來都一樣大。 */
+  const VB = 24;
+  const BOX = VB;
   const src = shapePathD(item.kind, BOX, isLine ? 0 : BOX);
   const solid = item.filled && !isLine;
 
   const fit = SHAPE_FIT[item.kind] || [0, 0, 1, 1];
-  const zoom = GLYPH_ZOOM[item.kind] || 1;
   // 內容的實際大小（線條的高度是 0，縮放只看寬度）
   const cw = fit[2] * BOX, ch = fit[3] * BOX;
-  const k = zoom * Math.min(cw > 0 ? BOX / cw : Infinity, ch > 0 ? BOX / ch : Infinity);
+  const k = (GLYPH_ZOOM[item.kind] || 1)
+    * Math.min(cw > 0 ? BOX / cw : Infinity, ch > 0 ? BOX / ch : Infinity);
   // 先把內容的中心搬到原點、放大、再搬到 viewBox 的正中央
   const ccx = (fit[0] + fit[2] / 2) * BOX;
   // 線條的路徑高度是 0（畫在 y=0 那一條），所以它的內容中心 y 就是 0
@@ -10261,13 +10264,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                      不會跳去編輯頁，所以可以連著加好幾個。 */
                   <div className="pt-1">
                     <div className="flex items-center gap-2 mb-3">
+                      {/* 跟登入／帳號頁那顆同款：只有一個箭頭，沒有底下的圓 */}
                       <button
                         onClick={() => setAddSub('root')}
                         aria-label="返回"
                         title="返回"
-                        className="w-8 h-8 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 flex items-center justify-center active:scale-95 transition-all shrink-0"
+                        className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
                       >
-                        <ChevronLeft size={16} className="text-white/80" />
+                        <Icon name="arrow_back" className="text-[20px]" />
                       </button>
                       <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
                     </div>

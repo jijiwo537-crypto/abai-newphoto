@@ -4958,7 +4958,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           const ps = previewScaleRef.current;
           const k = r.width / Math.max(1, cvsEl.width / ps);   // 畫布內部單位 → CSS
           const cx = r.left - sr.left + (o.x + o.w / 2) * k;
-          const by = r.top - sr.top + (o.y + o.h) * k + 10;
+          /* 擺在物件的**下方**、而且絕對不能壓到物件。
+             轉過角度之後外接框會比原本的框高（直線轉 90° 最明顯：
+             原本只有一點點高，轉完卻跟原本的寬一樣長），所以要用
+             「旋轉後外接框的半高」來算，不能直接拿 o.y + o.h。 */
+          const rad = ((o.rot || 0) * Math.PI) / 180;
+          const halfSpan = (o.w * Math.abs(Math.sin(rad)) + o.h * Math.abs(Math.cos(rad))) / 2;
+          const by = r.top - sr.top + (o.y + o.h / 2 + halfSpan) * k + 10;
           const act = (fn: () => void) => (ev: React.SyntheticEvent) => { ev.stopPropagation(); ev.preventDefault(); fn(); };
           /* 比原本多一層：陣列最底下再往下按一次，就整個掉到「所有圖案之下」（below）。
              從 below 往上按就先回到圖案之上的最底層，再往上才是換順序。
@@ -5375,13 +5381,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                        不會跳去編輯頁，所以可以連著加好幾個。 */
                     <div className="pt-1">
                       <div className="flex items-center gap-2 mb-3">
+                        {/* 跟登入／帳號頁那顆同款：只有一個箭頭，沒有底下的圓 */}
                         <button
                           onClick={() => setAddSub('root')}
                           aria-label="返回"
                           title="返回"
-                          className="w-8 h-8 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 flex items-center justify-center active:scale-95 transition-all shrink-0"
+                          className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
                         >
-                          <Icon name="arrow_back" className="text-[16px] text-white/80" />
+                          <Icon name="arrow_back" className="text-[20px]" />
                         </button>
                         <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
                       </div>
