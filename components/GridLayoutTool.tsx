@@ -712,14 +712,19 @@ const FX_SUB_TOOLS: Record<string, [string, string, string, number, number, numb
     描邊與發光跟柔光一樣是兩段式：點進去才有粗細／顏色。 */
 const SHAPE_TOOLS: [string, string, string, number, number, number][] = [
   ['imgRadius', '圓角', 'rounded_corner', 0, 50, 0],
-  /* 羽化一根滑桿就夠：0＝硬邊，100＝從邊緣一路羽化到圖片中心。 */
-  ['feather', '羽化', 'gradient', 0, 100, 0],
+  /* 羽化是兩段式（min=max=0 就是「點進去才有滑桿」）：
+     裡面兩根 —— 強度＝淡到多透明，範圍＝往圖片內擴散多遠。 */
+  ['feather', '羽化', 'gradient', 0, 0, 0],
   ['stroke', '描邊', 'border_style', 0, 0, 0],
   ['glow', '發光', 'light_mode', 0, 0, 0],
 ];
 
 /** 描邊／發光點進去之後的子工具：粗細用滑桿、顏色用色票 */
 const SHAPE_SUB_TOOLS: Record<string, [string, string, string, number, number, number][]> = {
+  feather: [
+    ['featherStrength', '強度', 'opacity', 0, 100, 100],
+    ['feather', '範圍', 'gradient', 0, 100, 0],
+  ],
   stroke: [
     ['imgStrokeWidth', '粗細', 'line_weight', 0, 20, 0],
     ['imgStrokeColor', '顏色', 'palette', 0, 0, 0],
@@ -1197,20 +1202,20 @@ const sliderArea = (() => {
       // 描邊色跟發光色用同一組色票
       if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, GLOW_COLORS, c => set({ imgStrokeColor: c }), true);
       if (subTool[0] === 'imgGlowColor') return swatchStrip(img.imgGlowColor, GLOW_COLORS, c => set({ imgGlowColor: c }), true);
-      const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow';
-      // 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來。
-      // 羽化的「範圍」是佔短邊的百分比，只有 50 段太粗，改成 0.5 一格。
+      const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow' | 'feather' | 'featherStrength';
+      /* 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來。
+         「強度」的預設是 100，沒設過的時候要顯示預設值而不是 0。 */
+      const cur = img[k] as number | undefined;
       return editorSlider(
-        subTool[1], (img[k] as number) || 0, subTool[3], subTool[4],
+        subTool[1], cur === undefined ? subTool[5] : cur, subTool[3], subTool[4],
         v => set({ [k]: v }), undefined, true,
       );
     }
     const t = SHAPE_TOOLS.find(x => x[0] === shapeTool);
-    if (t && (t[0] === 'imgRadius' || t[0] === 'feather')) {
-      const key = t[0] as 'imgRadius' | 'feather';
+    if (t && t[0] === 'imgRadius') {
       return editorSlider(
-        t[1], (img[key] as number) || 0, t[3], t[4],
-        v => set({ [key]: v }), undefined, true,
+        t[1], (img.imgRadius as number) || 0, t[3], t[4],
+        v => set({ imgRadius: v }), undefined, true,
       );
     }
     return null;
@@ -1608,6 +1613,8 @@ const boxBlurV = (src: Float32Array, dst: Float32Array, w: number, h: number, r:
  * 產生一張遮罩（白色、alpha 就是可見度）。
  * radiusPct 是圓角，佔短邊的百分比 0~50。
  *
+ * strengthPct（0~100）＝ 羽化的強度，也就是最外緣要淡到多透明。
+ *
  * featherPct（0~100）＝ 羽化要從圖片邊緣往中心走多遠：
  *    0 ＝ 不羽化，邊緣是硬的
  *   50 ＝ 淡出帶佔短邊的四分之一（邊緣走到「邊緣與中心的正中間」）
@@ -1615,7 +1622,7 @@ const boxBlurV = (src: Float32Array, dst: Float32Array, w: number, h: number, r:
  * 不管調多少，最外緣一定是完全透明、帶子的內側一定是完全不透明。
  */
 export const makeShapeMask = (
-  w: number, h: number, radiusPct: number, featherPct: number,
+  w: number, h: number, radiusPct: number, featherPct: number, strengthPct = 100,
 ) => {
   const c = document.createElement('canvas');
   c.width = Math.max(4, Math.round(w));
@@ -1655,22 +1662,24 @@ export const makeShapeMask = (
       boxBlurH(a, b, c.width, c.height, r); [a, b] = [b, a];
       boxBlurV(a, b, c.width, c.height, r); [a, b] = [b, a];
     }
-    /* 淡出的曲線。兩個要求要同時滿足：
-         ① 最外緣不能有清晰的硬邊 —— 曲線在 0 那一端的斜率必須是 0，
-            透明度要「慢慢離開 0」。之前用 gamma（次方）就是壞在這裡：
-            次方小於 1 的話，斜率在 0 那端是無限大，透明度一離開邊緣就
-            猛然往上衝，看起來就是一條清晰的邊。
-         ② 中間的實色要多 —— 不能像單純的 S 形那樣走到一半才五成。
+    /* 淡出的濃淡分佈。
+       盒狀模糊本身給的是接近對稱的 S 形：走到淡出帶的一半就只剩五成不透明，
+       羽化一拉大，靠近中心的地方很快就整片洗白。
+       套一次 gamma（0.45）把中段從 0.50 拉到 0.73，透明的部分往外緣集中，
+       中間該實的地方就撐得住。
 
-       解法：先把位置壓縮到 KNEE（提早抵達完全不透明，實色就變多），
-       再走 smoothstep（t²(3−2t)）—— 這條曲線在頭尾兩端的斜率都是 0，
-       所以外緣是慢慢浮現的、內側也是平順地貼到完全不透明，兩端都不會有邊。
-       KNEE 越小實色越多；越大越柔。 */
-    const KNEE = 0.62;
+       強度（sp）＝ 這一整段淡出要做到多透明：
+         100 → 最外緣完全透明（完整的羽化）
+          50 → 最外緣只淡到一半，整張圖都還看得到
+           0 → 等於沒有羽化
+       做法是把「透明的那一份」整體打折，所以曲線的形狀不變，
+       只有深度變淺，不會因此冒出硬邊。 */
+    const GAMMA = 0.45;
+    const depth = Math.max(0, Math.min(100, strengthPct)) / 100;
     const lut = new Uint8Array(256);
     for (let v = 0; v < 256; v++) {
-      const t = Math.min(1, (v / 255) / KNEE);
-      lut[v] = Math.round(255 * t * t * (3 - 2 * t));
+      const g = Math.pow(v / 255, GAMMA);
+      lut[v] = Math.round(255 * (1 - (1 - g) * depth));
     }
     for (let i = 0; i < n; i++) {
       // RGB 全部填白，這樣不管遮罩被當成 alpha 還是亮度都成立
@@ -1836,14 +1845,14 @@ export const makeGlowCanvas = (
  * 遮罩本來就是平滑的，拉伸貼上看不出差別。
  */
 const maskCanvasCache = new Map<string, HTMLCanvasElement>();
-const previewMask = (aspect: number, radiusPct: number, featherPct: number) => {
-  const key = `${aspect.toFixed(2)}|${radiusPct}|${featherPct}`;
+const previewMask = (aspect: number, radiusPct: number, featherPct: number, strengthPct = 100) => {
+  const key = `${aspect.toFixed(2)}|${radiusPct}|${featherPct}|${strengthPct}`;
   const hit = maskCanvasCache.get(key);
   if (hit) return hit;
   const MAX = 400;
   const w = aspect >= 1 ? MAX : Math.max(16, Math.round(MAX * aspect));
   const h = aspect >= 1 ? Math.max(16, Math.round(MAX / aspect)) : MAX;
-  const c = makeShapeMask(w, h, radiusPct, featherPct);
+  const c = makeShapeMask(w, h, radiusPct, featherPct, strengthPct);
   if (maskCanvasCache.size > 60) maskCanvasCache.clear();
   maskCanvasCache.set(key, c);
   return c;
@@ -1999,7 +2008,7 @@ const MiniShapeImage: React.FC<{
         if (img.feather || img.imgRadius) {
           oc.globalCompositeOperation = 'destination-in';
           if (img.feather) {
-            oc.drawImage(previewMask(boxW / boxH, img.imgRadius || 0, img.feather), lw, lw, iw, ih);
+            oc.drawImage(previewMask(boxW / boxH, img.imgRadius || 0, img.feather, img.featherStrength ?? 100), lw, lw, iw, ih);
           } else {
             const R = cornerR(img.imgRadius || 0, iw, ih);
             roundRectPath(oc, lw, lw, iw, ih, R, R);
@@ -2036,7 +2045,7 @@ const MiniShapeImage: React.FC<{
     if (el.complete && el.naturalWidth) { draw(); return; }
     el.addEventListener('load', draw);
     return () => el.removeEventListener('load', draw);
-  }, [img.src, img.fx, img.feather, img.imgRadius, img.imgGlow, img.imgGlowColor,
+  }, [img.src, img.fx, img.feather, img.featherStrength, img.imgRadius, img.imgGlow, img.imgGlowColor,
       img.imgStrokeWidth, img.imgStrokeColor, img.scale, boxW, boxH, glowPad, lutRevision]);
   return <canvas ref={ref} style={style} />;
 };
@@ -2081,6 +2090,8 @@ interface FloatingImage {
   /** 以下是「圖片調整」分頁的參數，只有圖片圖層會用到 */
   /** 圓角，佔短邊的百分比 0~50（50 = 橢圓） */
   imgRadius?: number;
+  /** 羽化的強度：最外緣要淡到多透明（0~100，預設 100） */
+  featherStrength?: number;
   /** 邊緣羽化，佔短邊的百分比 0~50 */
   feather?: number;
   /** 圖片邊緣發光強度 0~20 */
@@ -2437,7 +2448,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           oc.globalCompositeOperation = 'destination-in';
           if (image.feather) {
             // 有羽化才需要那張模糊過的遮罩；邊本來就是糊的，縮放貼回來看不出差別
-            const m = previewMask(boxW / boxH, image.imgRadius || 0, image.feather);
+            const m = previewMask(boxW / boxH, image.imgRadius || 0, image.feather, image.featherStrength ?? 100);
             oc.drawImage(m, lw, lw, iw, ih);
           } else {
             /* 只有圓角、沒有羽化：以前也走那張 400px 的遮罩再拉大，
@@ -2519,7 +2530,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     img.addEventListener('load', draw);
     return () => img.removeEventListener('load', draw);
   }, [
-    needsShapeCanvas, image.src, image.feather, image.imgRadius,
+    needsShapeCanvas, image.src, image.feather, image.featherStrength, image.imgRadius,
     image.imgGlow, image.imgGlowColor, image.imgStrokeWidth, image.imgStrokeColor,
     image.scale, boxW, boxH, glowPad,
     image.fx, lutRevision,
@@ -7285,7 +7296,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             // 遮罩本來就是平滑的，放大看不出差別
             const cap = 1200;
             const k = Math.min(1, cap / Math.max(iw, ih));
-            const mask = makeShapeMask(iw * k, ih * k, fImg.imgRadius || 0, fImg.feather);
+            const mask = makeShapeMask(iw * k, ih * k, fImg.imgRadius || 0, fImg.feather, fImg.featherStrength ?? 100);
             sc.drawImage(mask, 0, 0, iw, ih);
           } else {
             sc.fillStyle = '#000';

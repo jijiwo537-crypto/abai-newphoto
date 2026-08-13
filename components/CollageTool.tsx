@@ -1052,7 +1052,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const fxCanvasOf = useCallback((o: any, isMain = false): CanvasImageSource | null => {
     if (!o.img) return null;
     const shape = {
-      r: o.imgRadius || 0, f: o.feather || 0,
+      r: o.imgRadius || 0, f: o.feather || 0, fs: o.featherStrength ?? 100,
       sw: o.imgStrokeWidth || 0, sc: o.imgStrokeColor || '#FFFFFF',
       g: o.imgGlow || 0, gc: o.imgGlowColor || '#FFFFFF',
     };
@@ -1146,7 +1146,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (shape.f || shape.r) {
         oc.globalCompositeOperation = 'destination-in';
         if (shape.f) {
-          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f), lw, lw, iw, ih);
+          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f, shape.fs), lw, lw, iw, ih);
         } else {
           const R = cornerR(shape.r, iw, ih);
           roundRectPath(oc, lw, lw, iw, ih, R, R);
