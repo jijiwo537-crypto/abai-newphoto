@@ -712,19 +712,14 @@ const FX_SUB_TOOLS: Record<string, [string, string, string, number, number, numb
     描邊與發光跟柔光一樣是兩段式：點進去才有粗細／顏色。 */
 const SHAPE_TOOLS: [string, string, string, number, number, number][] = [
   ['imgRadius', '圓角', 'rounded_corner', 0, 50, 0],
-  /* 羽化跟描邊／發光一樣改成兩段式（min=max=0 就是「點進去才有滑桿」），
-     裡面兩根：範圍＝糊多寬、內縮＝淡出要不要往圖片裡面吃。 */
-  ['feather', '羽化', 'gradient', 0, 0, 0],
+  /* 羽化一根滑桿就夠：0＝硬邊，100＝從邊緣一路羽化到圖片中心。 */
+  ['feather', '羽化', 'gradient', 0, 100, 0],
   ['stroke', '描邊', 'border_style', 0, 0, 0],
   ['glow', '發光', 'light_mode', 0, 0, 0],
 ];
 
 /** 描邊／發光點進去之後的子工具：粗細用滑桿、顏色用色票 */
 const SHAPE_SUB_TOOLS: Record<string, [string, string, string, number, number, number][]> = {
-  feather: [
-    ['feather', '範圍', 'gradient', 0, 50, 0],
-    ['featherFill', '補償', 'zoom_out_map', 0, 100, 100],
-  ],
   stroke: [
     ['imgStrokeWidth', '粗細', 'line_weight', 0, 20, 0],
     ['imgStrokeColor', '顏色', 'palette', 0, 0, 0],
@@ -1202,21 +1197,21 @@ const sliderArea = (() => {
       // 描邊色跟發光色用同一組色票
       if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, GLOW_COLORS, c => set({ imgStrokeColor: c }), true);
       if (subTool[0] === 'imgGlowColor') return swatchStrip(img.imgGlowColor, GLOW_COLORS, c => set({ imgGlowColor: c }), true);
-      const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow' | 'feather' | 'featherFill';
+      const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow';
       // 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來。
       // 羽化的「範圍」是佔短邊的百分比，只有 50 段太粗，改成 0.5 一格。
-      // 「補償」的預設是 100，沒設過的時候要顯示預設值而不是 0
-      const cur = img[k] as number | undefined;
       return editorSlider(
-        subTool[1], cur === undefined ? subTool[5] : cur, subTool[3], subTool[4],
-        v => set({ [k]: v }), undefined, true, k === 'feather' ? 0.5 : 1,
+        subTool[1], (img[k] as number) || 0, subTool[3], subTool[4],
+        v => set({ [k]: v }), undefined, true,
       );
     }
     const t = SHAPE_TOOLS.find(x => x[0] === shapeTool);
-    if (t && t[0] === 'imgRadius') {
+    if (t && (t[0] === 'imgRadius' || t[0] === 'feather')) {
+      const key = t[0] as 'imgRadius' | 'feather';
+      // 羽化一格 0.5，低段位才調得準
       return editorSlider(
-        t[1], (img.imgRadius as number) || 0, t[3], t[4],
-        v => set({ imgRadius: v }), undefined, true,
+        t[1], (img[key] as number) || 0, t[3], t[4],
+        v => set({ [key]: v }), undefined, true, key === 'feather' ? 0.5 : 1,
       );
     }
     return null;
@@ -1612,10 +1607,13 @@ const boxBlurV = (src: Float32Array, dst: Float32Array, w: number, h: number, r:
 
 /**
  * 產生一張遮罩（白色、alpha 就是可見度）。
- * radiusPct / featherPct 都是佔短邊的百分比，0~50。
+ * radiusPct 是圓角，佔短邊的百分比 0~50。
  *
- * 淡出一律完整收斂到 0（最外面那一圈 3r+1 會被吃掉）——
- * 被吃掉那一圈由 featherZoom() 先把圖片放大補回來，所以看起來不會變小。
+ * featherPct（0~100）＝ 羽化要從圖片邊緣往中心走多遠：
+ *    0 ＝ 不羽化，邊緣是硬的
+ *   50 ＝ 淡出帶佔短邊的四分之一（邊緣走到「邊緣與中心的正中間」）
+ *  100 ＝ 淡出帶一路走到圖片中心，整張圖都在漸層裡
+ * 不管調多少，最外緣一定是完全透明、帶子的內側一定是完全不透明。
  */
 export const makeShapeMask = (
   w: number, h: number, radiusPct: number, featherPct: number,
@@ -1624,18 +1622,18 @@ export const makeShapeMask = (
   c.width = Math.max(4, Math.round(w));
   c.height = Math.max(4, Math.round(h));
   const g = c.getContext('2d')!;
-  const fp = Math.max(0, Math.min(50, featherPct));
+  const fp = Math.max(0, Math.min(100, featherPct));
   const rp = Math.max(0, Math.min(50, radiusPct));
-  /* 淡出的總寬度。
-     模糊是「三次盒狀模糊」，半徑 r 的三次疊起來，一條硬邊會被抹開到
-     ±3r 這麼寬。所以形狀要先往內縮「剛好 3r」，淡出才會在畫布邊界
-     收斂到完全透明。
-     以前 r 取 fade/4、卻只內縮 fade/2 —— 模糊往外散 0.75×fade、內縮只有
-     0.5×fade，等於還沒淡完就撞到畫布邊界被切掉，邊緣的 alpha 停在某個
-     不是 0 的值：看起來就是「有羽化，但照片還是有一條生硬的邊」。
-     改成 r = fade/6、內縮 3r，兩邊剛好對上，邊界一定是 0。 */
-  const fade = (fp / 100) * Math.min(c.width, c.height);
-  const r = fp > 0 ? Math.max(1, Math.round(fade / 6)) : 0;
+  /* 淡出帶要多寬。
+     以「短邊的一半」當滿分：fp = 100 時帶寬就是短邊的一半，
+     也就是從邊緣一路淡到圖片中心。
+
+     模糊是三次盒狀模糊：半徑 r 疊三次會把一條硬邊抹開到 ±3r，
+     所以帶寬 = 2 × 3r；形狀再往內縮 3r，最外緣才會剛好收斂到 0。
+     反推就是 r = 帶寬 / 6。 */
+  const half = Math.min(c.width, c.height) / 2;
+  const bandW = (fp / 100) * half;
+  const r = fp > 0 ? Math.max(1, Math.round(bandW / 6)) : 0;
   // 讓出 3r（+1 是因為離散的盒狀模糊在邊界還會留一點點）
   const inset = r > 0 ? r * 3 + 1 : 0;
   g.fillStyle = '#fff';
@@ -1661,26 +1659,6 @@ export const makeShapeMask = (
     g.putImageData(px, 0, 0);
   }
   return c;
-};
-
-/**
- * 羽化的「補償放大」倍率。
- *
- * 羽化會把最外面一圈（3r+1）從完全不透明淡到完全透明，那一圈等於被吃掉了，
- * 所以照片會小一圈 —— 主人不要那樣。
- * 解法：畫圖片之前先照這個倍率放大，被吃掉的剛好補回來，
- * 結果就是「實心的部分維持原本大小，只有邊緣在淡」。
- *
- * fillPct 0~100＝補多少：100（預設）完全補償；0 就是沒有這個功能之前的樣子。
- */
-export const featherZoom = (w: number, h: number, featherPct: number, fillPct = 100) => {
-  const fp = Math.max(0, Math.min(50, featherPct));
-  if (fp <= 0) return 1;
-  const m = Math.min(Math.max(4, Math.round(w)), Math.max(4, Math.round(h)));
-  const fade = (fp / 100) * m;
-  const r = Math.max(1, Math.round(fade / 6));
-  const band = (r * 3 + 1) * (Math.max(0, Math.min(100, fillPct)) / 100);
-  return (m + band * 2) / m;
 };
 
 /** 新增文字時的預設內容；點進去打字會自動清掉，沒打東西再放回來 */
@@ -1996,11 +1974,7 @@ const MiniShapeImage: React.FC<{
         off.height = Math.max(1, Math.round(sh));
         const oc = off.getContext('2d');
         if (!oc) return;
-        /* 羽化會吃掉最外面一圈，先把圖片放大剛好那一圈再畫，
-           被吃掉的就補回來了 —— 實心的部分維持原本大小，不會看起來變小。 */
-        const fz = featherZoom(iw, ih, img.feather || 0, img.featherFill ?? 100);
-        const zw = iw * fz, zh = ih * fz;
-        oc.drawImage(base, lw + (iw - zw) / 2, lw + (ih - zh) / 2, zw, zh);
+        oc.drawImage(base, lw, lw, iw, ih);
         if (img.feather || img.imgRadius) {
           oc.globalCompositeOperation = 'destination-in';
           if (img.feather) {
@@ -2086,8 +2060,6 @@ interface FloatingImage {
   /** 以下是「圖片調整」分頁的參數，只有圖片圖層會用到 */
   /** 圓角，佔短邊的百分比 0~50（50 = 橢圓） */
   imgRadius?: number;
-  /** 羽化被吃掉的那一圈要補回多少（0~100%）。100＝完全補償，圖片不會變小 */
-  featherFill?: number;
   /** 邊緣羽化，佔短邊的百分比 0~50 */
   feather?: number;
   /** 圖片邊緣發光強度 0~20 */
@@ -2439,10 +2411,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         const oc = off.getContext('2d');
         if (!oc) return;
         // 圖片畫在中間，四周留給描邊
-        // 同上：羽化吃掉的那一圈先用放大補回來
-        const fz = featherZoom(iw, ih, image.feather || 0, image.featherFill ?? 100);
-        const zw = iw * fz, zh = ih * fz;
-        oc.drawImage(base, lw + (iw - zw) / 2, lw + (ih - zh) / 2, zw, zh);
+        oc.drawImage(base, lw, lw, iw, ih);
         if (image.feather || image.imgRadius) {
           oc.globalCompositeOperation = 'destination-in';
           if (image.feather) {
@@ -7282,10 +7251,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         off.width = Math.max(1, Math.round(iw + lw * 2));
         off.height = Math.max(1, Math.round(ih + lw * 2));
         const oc = get2dWide(off)!;
-        // 同上：羽化吃掉的那一圈先用放大補回來（預覽與匯出走同一條式子）
-        const fz = featherZoom(iw, ih, fImg.feather || 0, fImg.featherFill ?? 100);
-        const zw = iw * fz, zh = ih * fz;
-        oc.drawImage(src, lw + (iw - zw) / 2, lw + (ih - zh) / 2, zw, zh);
+        oc.drawImage(src, lw, lw, iw, ih);
         if (fImg.imgRadius || fImg.feather) {
           // 只把「圖片那一塊」裁形狀，描邊的區域不能被裁掉
           const shapeOnly = document.createElement('canvas');
