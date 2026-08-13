@@ -583,16 +583,23 @@ const GLYPH_HOLES: Record<string, string> = {
   zzz:      '☡zᶻ',  // ☡zᶻ
 };
 
-/** 圖案選單上那顆小圖要多大（px）、往上挪多少（px）。沒列到的就用預設 18px。 */
-const GLYPH_BTN: Record<string, { size?: number; dy?: number }> = {
+/**
+ * 圖案選單上那顆小圖要多大（px）、往右往下各挪多少（px）。
+ * 沒列到的就是預設 18px、不位移。
+ * 每一種字的字身在字框裡的位置都不一樣（尤其是那些冷門的 Unicode），
+ * 所以只能一顆一顆對出來 —— 這些數字都是照著畫面調的。
+ */
+const GLYPH_BTN: Record<string, { size?: number; dx?: number; dy?: number }> = {
+  flower:   { size: 19.8 },                     // 18 × 1.1
+  snow:     { size: 21.6 },                     // 18 × 1.2
+  seagrass: { dx: 0.3, dy: -0.7 },
+  darkstar: { size: 19.8, dx: 0.1 },            // 18 × 1.1
   // ⊹ 的字身在字框裡本來就偏小，放大 1.5 倍（18 → 27）才看得清楚
   sparkle:  { size: 27 },
-  // 𓇼 看起來偏低一點點，往上挪半格
-  seagrass: { dy: -0.5 },
   // 下面這幾顆是多個字組成的，照 18px 畫會撐出格子
-  theta:    { size: 15 },
-  yaya:     { size: 13 },
-  zzz:      { size: 13 },
+  theta:    { size: 15, dx: 0.2, dy: -0.3 },
+  yaya:     { size: 13, dx: 0.5, dy: -1 },
+  zzz:      { size: 13, dx: 0.3 },
 };
 
 /** 這個洞是用文字畫的（而不是用路徑畫的）嗎 */
@@ -1778,7 +1785,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     } else if (id === 'aster') {
       nextSize = 40;
     } else if (id === 'snow') {
-      nextSize = 40;
+      nextSize = 50;
     } else if (id === 'theta') {
       nextSize = 30;
     } else if (id === 'yaya' || id === 'zzz') {
@@ -5593,12 +5600,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 <div className="grid grid-cols-5 gap-2 mb-3">
                   {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'snow', 'love', 'love3', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'yaya', 'zzz', 'text'].map(s => (
                     <button key={s} onClick={() => handleShapeClick(s)} className={`py-3 flex items-center justify-center rounded-[8px] border transition-all ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
-                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'flower' ? <span className="text-lg font-bold font-sans leading-none">❋</span> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? (
+                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? (
                         <span
                           className="font-bold font-sans leading-none inline-block whitespace-nowrap"
                           style={{
                             fontSize: `${GLYPH_BTN[s]?.size ?? 18}px`,
-                            transform: GLYPH_BTN[s]?.dy ? `translateY(${GLYPH_BTN[s]!.dy}px)` : undefined,
+                            transform: (GLYPH_BTN[s]?.dx || GLYPH_BTN[s]?.dy)
+                              ? `translate(${GLYPH_BTN[s]?.dx ?? 0}px, ${GLYPH_BTN[s]?.dy ?? 0}px)`
+                              : undefined,
                           }}
                         >
                           {GLYPH_HOLES[s]}
