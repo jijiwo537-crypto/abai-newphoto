@@ -8,6 +8,7 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut }
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
+import { addExport } from '../utils/exportHistory';
 import { ComposeStudio } from './ComposeStudio';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
@@ -3623,11 +3624,13 @@ interface GridLayoutToolProps {
   onHome: () => void;
   onImportNew?: () => void;
   initialFiles?: File[];
+  /** 從首頁的歷史紀錄點回來時，把那一份版面餵回來（優先於自動存檔的草稿） */
+  initialState?: any;
   /** 濾鏡清單，跟「編輯」用的是同一份 */
   lutList?: { id: string; name: string; url: string }[];
 }
 
-export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImportNew, initialFiles, lutList = [] }) => {
+export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImportNew, initialFiles, initialState, lutList = [] }) => {
   /** 一頁上可以放多個佈局，每個佈局都是一個獨立物件（跟一般圖片一樣）。 */
   interface LayoutItem {
     id: string;
@@ -6265,6 +6268,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   useEffect(() => {
     let alive = true;
     (async () => {
+      /* 從首頁的歷史紀錄點回來：直接套那一份，不要理自動存檔的草稿。 */
+      if (initialState && Array.isArray(initialState.pages)) {
+        await clearDraft();
+        if (!alive) return;
+        setPages(initialState.pages);
+        setFloatingImages(initialState.floatingImages || []);
+        if (initialState.selectedRatio) setSelectedRatio(initialState.selectedRatio);
+        if (initialState.isLandscape !== undefined) setIsLandscape(initialState.isLandscape);
+        setActivePageIndex(0);
+        setDraftReady(true);
+        return;
+      }
       if (initialFiles && initialFiles.length > 0) {
         await clearDraft();
         if (alive) setDraftReady(true);
@@ -6283,12 +6298,42 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       setDraftReady(true);
     })();
     return () => { alive = false; };
-  }, [initialFiles]);
+  }, [initialFiles, initialState]);
 
   /** 離開拼圖＝這一份結束了：先關掉自動存檔再把草稿收掉，
       不然剛排隊的那次存檔會在清掉之後又寫回去。 */
   const leftRef = useRef(false);
-  const handleLeave = () => {
+
+  /* ── 歷史紀錄 ────────────────────────────────────────────────────
+     一份拼圖是好幾張照片拼起來的，沒有「那一張原圖」——
+     所以用一個開工具時產生的 id 當識別，同一份不管記幾次都只留最新的一筆。 */
+  const histKeyRef = useRef(`layout-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+  const recordedRef = useRef('');
+  const recordProgress = async () => {
+    const empty = floatingImages.length === 0 && pages.every(p => p.layouts.length === 0);
+    if (empty) return;
+    const state = { pages, floatingImages, selectedRatio, isLandscape };
+    const sig = JSON.stringify(state);
+    if (recordedRef.current === sig) return;
+    recordedRef.current = sig;
+    try {
+      // 版面是 DOM 畫的，沒有現成的畫布可以截 —— 用導出那一支靜靜地烤一張小的
+      const r = await handleExport({ silent: true, previewWidth: 900 });
+      const url = r && 'urls' in r ? r.urls[0] : null;
+      if (!url) return;
+      /* 原圖那一格放的是「拼好的成品」：真正還原用的是 state（裡面每一張照片
+         都會被 exportHistory 收成附件）。 */
+      await addExport('layout', url, url, state, histKeyRef.current);
+      URL.revokeObjectURL(url);
+    } catch { /* 記錄失敗不能影響離開 */ }
+  };
+
+  /** 離開拼圖＝這一份結束了。先把成品記進歷史紀錄，再收草稿。 */
+  const leavingRef = useRef(false);
+  const handleLeave = async () => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    try { await recordProgress(); } catch { /* 記錄失敗不能影響離開 */ }
     leftRef.current = true;
     clearDraft();
     onHome();

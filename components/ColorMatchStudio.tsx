@@ -1,4 +1,5 @@
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
+import { addExport } from '../utils/exportHistory';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft } from 'lucide-react';
 import { Icon } from './Icon';
@@ -21,6 +22,8 @@ interface Props {
   onPickReference: () => void;
   /** 外面選好的參考圖 */
   referenceSrc: string | null;
+  /** 從首頁的歷史紀錄點回來時，把當時的參數餵回來 */
+  initialState?: any;
   onSendToEditor?: (dataUrl: string) => void;
 }
 
@@ -49,6 +52,7 @@ const toImageData = (img: HTMLImageElement, max: number): ImageData => {
 
 export const ColorMatchStudio: React.FC<Props> = ({
   imageSrc, onCancel, onHome, onImportNew, onPickReference, referenceSrc, onSendToEditor,
+  initialState,
 }) => {
   const [srcImg, setSrcImg] = useState<HTMLImageElement | null>(null);
   const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
@@ -293,6 +297,64 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (gl) gl.canvas.classList.toggle('hidden', !!finalUrl || !glReadyRef.current);
   }, [finalUrl, glReady]);
 
+  /* ── 歷史紀錄 ────────────────────────────────────────────────────
+     跟其他工具同一套：儲存時記一筆，沒儲存直接離開也記一筆。 */
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || !initialState) return;
+    restoredRef.current = true;
+    const st = initialState;
+    if (st.picked) setPicked(st.picked);
+    if (st.strength !== undefined) setStrength(st.strength);
+    if (st.skin !== undefined) setSkin(st.skin);
+  }, [initialState]);
+
+  /** 現在這一組設定。參考圖也一起存 —— 少了它就重算不出同一組顏色。 */
+  const matchState = () => ({ picked, strength, skin, referenceSrc });
+
+  /** 全解析度跑一張出來（儲存與記錄用的是同一條路） */
+  const renderResult = useCallback(async (): Promise<string | null> => {
+    if (!srcImg || !luts) return null;
+    const w = srcImg.naturalWidth || srcImg.width, h = srcImg.naturalHeight || srcImg.height;
+    const pw = useWeight(skin / 100);
+    const gpu = LutRenderer.renderOnce(
+      srcImg, w, h, luts[picked], strength / 100, skin / 100,
+      pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null,
+    );
+    if (gpu) return canvasToUrl(gpu);
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const x = c.getContext('2d', { willReadFrequently: true })!;
+    x.drawImage(srcImg, 0, 0);
+    const d = x.getImageData(0, 0, w, h);
+    applyLut(d.data, luts[picked], {
+      strength: strength / 100, skinProtect: skin / 100, preserveLuminance: true,
+      protect: useWeight(skin / 100), width: w,
+    });
+    x.putImageData(d, 0, 0);
+    return canvasToUrl(c);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcImg, luts, picked, strength, skin]);
+
+  const recordedRef = useRef('');
+  const record = useCallback(async (outUrl?: string) => {
+    if (!srcImg || !luts || !referenceSrc) return;   // 還沒挑參考圖＝什麼都還沒做
+    const sig = JSON.stringify({ picked, strength, skin, referenceSrc });
+    if (recordedRef.current === sig) return;
+    recordedRef.current = sig;
+    let url = outUrl || null;
+    const mine = !outUrl;
+    try {
+      if (!url) url = await renderResult();
+      if (!url) return;
+      await addExport('match', url, imageSrc, { picked, strength, skin, referenceSrc });
+    } catch { /* 記錄失敗不能影響離開 */ }
+    finally { if (mine && url) revokeUrl(url); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [srcImg, luts, referenceSrc, picked, strength, skin, imageSrc, renderResult]);
+
+  const leave = () => { record(); onCancel(); };
+
   const handleSave = () => {
     if (!srcImg || !luts) return;
     const w = srcImg.naturalWidth || srcImg.width, h = srcImg.naturalHeight || srcImg.height;
@@ -302,7 +364,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       srcImg, w, h, luts[picked], strength / 100, skin / 100,
       pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null,
     );
-    if (gpu) { canvasToUrl(gpu).then(putFinal); return; }   // 一樣無損，只是用 blob 網址
+    if (gpu) { canvasToUrl(gpu).then(u => { putFinal(u); record(u); }); return; }   // 一樣無損，只是用 blob 網址
     // 沒有 WebGL2（或圖太大塞不進貼圖）才退回 CPU
     setSaving(true);
     window.setTimeout(() => {
@@ -317,7 +379,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           protect: useWeight(skin / 100), width: w,
         });
         x.putImageData(d, 0, 0);
-        canvasToUrl(c).then(putFinal);
+        canvasToUrl(c).then(u => { putFinal(u); record(u); });
       } finally { setSaving(false); }
     }, 30);
   };
@@ -362,7 +424,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       `}</style>
       <header className="h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-20">
         {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
-        <button onClick={onCancel} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
+        <button onClick={leave} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
           <ChevronLeft size={22} />
         </button>
         <button

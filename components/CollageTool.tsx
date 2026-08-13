@@ -3,6 +3,7 @@ import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
+import { addExport } from '../utils/exportHistory';
 import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film, Shapes } from 'lucide-react';
 import { Icon } from './Icon';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
@@ -1814,6 +1815,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (st.glowMoImg) setGlowMoImg(st.glowMoImg);
     if (st.glowMoText) setGlowMoText(st.glowMoText);
     if (st.linkColor !== undefined) setLinkColor(st.linkColor);
+    /* 物件：先照 state 擺回去（圖片那些這時候還沒有 img，畫布會先跳過它們），
+       再一張一張把圖載回來、載好一張就補一張 —— 不會卡著等全部載完。 */
+    if (Array.isArray(st.objects) && st.objects.length) {
+      setObjects(st.objects.map((o: any) => ({ ...o })));
+      st.objects.forEach((o: any) => {
+        if (o.type !== 'image' || !o.src) return;
+        const im = new Image();
+        im.onload = () => setObjects(prev => prev.map(x => x.id === o.id ? { ...x, img: im } : x));
+        im.src = o.src;
+      });
+    }
   }, [initialState]);
 
   useEffect(() => {
@@ -4581,6 +4593,54 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       setVideoProg(null);
     }
   }, [getLayoutOffsets, imageState, videoProg, buildAnim, motionTotal, renderToCanvas]);
+  /* ── 歷史紀錄 ────────────────────────────────────────────────────
+     跟「修圖」「美顏」同一套：儲存時記一筆，沒儲存直接離開也記一筆。 */
+
+  /** 這一份拼圖現在的全部設定。跟自動存檔存的是同一包，多帶上畫布上的物件。 */
+  const collageState = () => ({
+    layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
+    holeCount, holes: holesRef.current, maskColor, patternType, dotColor, dotSize, dotGap,
+    symmetryEnabled, glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
+    glowMoImg, glowMoText, linkColor,
+    /* 物件（匯入的照片、文字、圖形）：img 是 <img> 元素，存不進去也不用存 ——
+       還原時照 src 重新載一張回來就好。 */
+    objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
+  });
+
+  /** 歷史紀錄要存的「那一張原圖」。
+      載入時那條 object URL 早就收掉了，所以從還在記憶體裡的那張 Image 重編一份。 */
+  const photoForHistory = async (): Promise<string | null> => {
+    const st = imageState;
+    if (!st?.img) return null;
+    try {
+      const cv = document.createElement('canvas');
+      cv.width = st.originalW; cv.height = st.originalH;
+      cv.getContext('2d')!.drawImage(st.img, 0, 0, st.originalW, st.originalH);
+      const url = await canvasToUrl(cv);
+      cv.width = 0; cv.height = 0;
+      return url;
+    } catch { return null; }
+  };
+
+  /** 已經記過的那一步（按了儲存之後直接離開，不要再用預覽蓋一次） */
+  const recordedRef = useRef('');
+  const recordProgress = () => {
+    if (!imageState) return;
+    const cv = canvasRef.current;
+    if (!cv || !cv.width || !cv.height) return;
+    const sig = JSON.stringify(collageState());
+    if (recordedRef.current === sig) return;
+    recordedRef.current = sig;
+    (async () => {
+      try {
+        const photo = await photoForHistory();
+        if (!photo) return;
+        await addExport('collage', cv.toDataURL('image/png'), photo, collageState());
+        revokeUrl(photo);
+      } catch { /* 記錄失敗不能影響離開 */ }
+    })();
+  };
+
   const handleSave = () => {
     if (!imageState) return;
     setSelectedTarget(null);
@@ -4621,7 +4681,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         finalUrlRef.current = url;
         setFinalImage(url);
         setSaveState('success');
-        
+
+        // 首頁的歷史紀錄：縮圖用剛烤好的成品，還原用的是原圖＋這一份設定
+        try {
+          recordedRef.current = JSON.stringify(collageState());
+          const photo = await photoForHistory();
+          if (photo) { await addExport('collage', url, photo, collageState()); revokeUrl(photo); }
+        } catch { /* 記錄失敗不影響導出 */ }
+
         // Explicit cleanup
         exportCanvas.width = 0; exportCanvas.height = 0;
       } catch (e) {
@@ -4855,7 +4922,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         <div className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
           <header className="h-14 flex items-center px-5 shrink-0 z-20 bg-black/40 backdrop-blur-xl">
             <button 
-              onClick={(e) => { e.stopPropagation(); onHome(); }}
+              onClick={(e) => { e.stopPropagation(); recordProgress(); onHome(); }}
               className="p-2 -ml-2 text-[#888] hover:text-white transition-colors active:scale-90"
             >
               <ChevronLeft size={22} />
@@ -4917,7 +4984,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       {saveState !== 'success' && (
       <header className="h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-[100] bg-black/90 backdrop-blur-md">
         <button
-          onClick={(e) => { e.stopPropagation(); onHome(); }}
+          onClick={(e) => { e.stopPropagation(); recordProgress(); onHome(); }}
           className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"
           title="繼續編輯"
         >
