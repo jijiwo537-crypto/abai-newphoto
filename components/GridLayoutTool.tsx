@@ -1208,10 +1208,9 @@ const sliderArea = (() => {
     const t = SHAPE_TOOLS.find(x => x[0] === shapeTool);
     if (t && (t[0] === 'imgRadius' || t[0] === 'feather')) {
       const key = t[0] as 'imgRadius' | 'feather';
-      // 羽化一格 0.5，低段位才調得準
       return editorSlider(
         t[1], (img[key] as number) || 0, t[3], t[4],
-        v => set({ [key]: v }), undefined, true, key === 'feather' ? 0.5 : 1,
+        v => set({ [key]: v }), undefined, true,
       );
     }
     return null;
@@ -1656,10 +1655,19 @@ export const makeShapeMask = (
       boxBlurH(a, b, c.width, c.height, r); [a, b] = [b, a];
       boxBlurV(a, b, c.width, c.height, r); [a, b] = [b, a];
     }
+    /* 淡出的曲線要「外面淡得快、裡面撐得久」。
+       盒狀模糊本身給的是接近對稱的 S 形：走到帶子的一半就只剩五成不透明，
+       所以羽化一拉大，靠近中心的地方很快就整片洗白了。
+       這裡對 alpha 再套一次 gamma：中段從 0.50 拉到 0.85，
+       透明的部分集中在最外緣那一小段，中間該實的地方就撐得住。
+       數字越小實色越多、白得越晚；越大越柔。 */
+    const GAMMA = 0.24;
+    const lut = new Uint8Array(256);
+    for (let v = 0; v < 256; v++) lut[v] = Math.round(255 * Math.pow(v / 255, GAMMA));
     for (let i = 0; i < n; i++) {
       // RGB 全部填白，這樣不管遮罩被當成 alpha 還是亮度都成立
       px.data[i * 4] = 255; px.data[i * 4 + 1] = 255; px.data[i * 4 + 2] = 255;
-      px.data[i * 4 + 3] = a[i];
+      px.data[i * 4 + 3] = lut[Math.max(0, Math.min(255, Math.round(a[i])))];
     }
     g.putImageData(px, 0, 0);
   }
