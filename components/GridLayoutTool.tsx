@@ -1632,6 +1632,11 @@ export const makeShapeMask = (
      所以帶寬 = 2 × 3r；形狀再往內縮 3r，最外緣才會剛好收斂到 0。
      反推就是 r = 帶寬 / 6。 */
   const half = Math.min(c.width, c.height) / 2;
+  /* 滑桿的數字＝「淡出帶從邊緣往內走多少」，直接對應、不加任何曲線：
+       10  → 走到「邊緣到中心」的 10%
+       50  → 走一半
+       100 → 一路走到中心
+     這樣滑桿上看到的數字就是實際的效果，調起來心裡有底。 */
   const bandW = (fp / 100) * half;
   const r = fp > 0 ? Math.max(1, Math.round(bandW / 6)) : 0;
   // 讓出 3r（+1 是因為離散的盒狀模糊在邊界還會留一點點）
