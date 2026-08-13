@@ -857,21 +857,10 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
       }
       return poly(pts);
     }
-    case 'heart': {
-      /* 「♥」那一顆：兩個圓潤的耳朵＋中間的凹口，而且正好塞滿整個框。
-         下面每一列是一段貝茲曲線（兩個控制點＋終點），數字都是 0~1 的比例。 */
-      const HEART = [
-        [0.50, 1.00, 0.00, 0.62, 0.00, 0.31],
-        [0.00, 0.13, 0.14, 0.00, 0.29, 0.00],
-        [0.40, 0.00, 0.47, 0.07, 0.50, 0.13],
-        [0.53, 0.07, 0.60, 0.00, 0.71, 0.00],
-        [0.86, 0.00, 1.00, 0.13, 1.00, 0.31],
-        [1.00, 0.62, 0.50, 1.00, 0.50, 1.00],
-      ];
-      return `M ${P(cx, h)} `
-        + HEART.map(c => `C ${P(c[0] * w, c[1] * h)} ${P(c[2] * w, c[3] * h)} ${P(c[4] * w, c[5] * h)}`).join(' ')
-        + ' Z';
-    }
+    case 'heart':
+      return `M ${P(cx, cy - b * 0.25)} `
+        + `C ${P(cx + a * 0.6, cy - b)} ${P(cx + a * 1.3, cy - b * 0.1)} ${P(cx, cy + b * 0.9)} `
+        + `C ${P(cx - a * 1.3, cy - b * 0.1)} ${P(cx - a * 0.6, cy - b)} ${P(cx, cy - b * 0.25)} Z`;
     case 'line':
       return `M ${P(0, cy)} L ${P(w, cy)}`;
     default:
@@ -897,6 +886,8 @@ export const shapeGlowBlurs = (w: number, h: number) =>
 export const SHAPE_DEFAULT_LINEW = (kind: string) => (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
 export const SHAPE_DEFAULT_RATIO = (kind: string) => (kind === 'line' ? 0.3 : 0.15);
+/** 新圖形的預設顏色。取自發光色票裡的那顆薄荷綠，深色底與白底上都看得到。 */
+export const SHAPE_DEFAULT_COLOR = '#9BD4C3';
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
 export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number };
@@ -929,6 +920,30 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
 ];
 
 /**
+ * 每一種圖形「實際畫出來的內容」在 0~1 的框裡佔哪一塊 [x, y, w, h]。
+ *
+ * 有些圖形本來就不會塞滿整個外框（五邊形與星形下面空一截、六邊形左右空、
+ * 愛心四周都空），所以按鈕上的小圖如果直接照外框畫，看起來就是偏一邊。
+ * 這張表是拿真正的路徑量出來的（路徑是固定的常數，量一次就好），
+ * 按鈕靠它把圖案縮到剛好、擺到正中間。
+ */
+const SHAPE_FIT: Record<string, [number, number, number, number]> = {
+  circle: [0, 0, 1, 1],
+  square: [0, 0, 1, 1],
+  rounded: [0, 0, 1, 1],
+  triangle: [0, 0.067, 1, 0.866],
+  diamond: [0, 0, 1, 1],
+  pentagon: [0.0245, 0, 0.9511, 0.9045],
+  hexagon: [0.067, 0, 0.866, 1],
+  star: [0.0245, 0, 0.9511, 0.9045],
+  heart: [0.1324, 0.2362, 0.7352, 0.7138],
+  line: [0, 0.5, 1, 0],
+};
+
+/** 按鈕上的小圖要放多大（1 ＝ 塞滿）。星形本來就比較「瘦」，放大一點才看得清楚。 */
+const GLYPH_ZOOM: Record<string, number> = { star: 1.5 };
+
+/**
  * 「新增圖形」按鈕上的小圖。
  *
  * 刻意不用圖示字型：專案裡的 Material Symbols 是**子集**（只打包了有用到的字），
@@ -936,25 +951,45 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
  * 用了就會直接把英文字印在按鈕上，還會撐爆格子蓋到隔壁那顆。
  * 改成用 shapePathD 自己畫：按鈕上看到的形狀、實心／細框、角度，
  * 就是按下去之後真的會加進畫面的那一個，一模一樣。
+ *
+ * 畫法：先照外框畫一次，再用 SHAPE_FIT 把「真正有畫到的那一塊」
+ * 縮放並平移到 24×24 的正中央 —— 所以每一顆按鈕的圖案都在正中心。
  */
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
   const isLine = item.kind === 'line';
-  const B = 20;                       // 圖形在 24×24 的框裡佔 20
-  const d = shapePathD(item.kind, B, isLine ? 0 : B);
+  const VB = 24;                       // viewBox 的邊長
+  const BOX = 20;                      // 圖案最多佔多大
+  const src = shapePathD(item.kind, BOX, isLine ? 0 : BOX);
   const solid = item.filled && !isLine;
-  // 線條要繞自己的中點轉；其他形狀只要置中
-  const tf = `translate(2 ${isLine ? 12 : 2})${item.rot ? ` rotate(${item.rot} ${B / 2} 0)` : ''}`;
+
+  const fit = SHAPE_FIT[item.kind] || [0, 0, 1, 1];
+  const zoom = GLYPH_ZOOM[item.kind] || 1;
+  // 內容的實際大小（線條的高度是 0，縮放只看寬度）
+  const cw = fit[2] * BOX, ch = fit[3] * BOX;
+  const k = zoom * Math.min(cw > 0 ? BOX / cw : Infinity, ch > 0 ? BOX / ch : Infinity);
+  // 先把內容的中心搬到原點、放大、再搬到 viewBox 的正中央
+  const ccx = (fit[0] + fit[2] / 2) * BOX;
+  // 線條的路徑高度是 0（畫在 y=0 那一條），所以它的內容中心 y 就是 0
+  const ccy = isLine ? 0 : (fit[1] + fit[3] / 2) * BOX;
+  /* 順序有講究：先把內容中心搬到原點 → 轉角度 → 縮放 → 搬到 viewBox 正中央。
+     （SVG 的 transform 是由左往右套用到座標系上，所以寫起來剛好是反過來的。）
+     轉角度要在「搬到原點之後」，不然斜線會繞著自己的端點轉，就歪掉了。 */
+  const tf = `translate(${r3(VB / 2)} ${r3(VB / 2)}) scale(${r3(k)})`
+    + (item.rot ? ` rotate(${item.rot})` : '')
+    + ` translate(${r3(-ccx)} ${r3(-ccy)})`;
+
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" style={{ overflow: 'visible' }} aria-hidden>
-      <path
-        d={d}
-        transform={tf}
-        fill={solid ? 'currentColor' : 'none'}
-        stroke={solid ? 'none' : 'currentColor'}
-        strokeWidth={isLine ? 1.9 : 1.6}
-        strokeLinecap="butt"
-        strokeLinejoin={isLine ? 'round' : 'miter'}
-      />
+    <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
+      <g transform={tf}>
+        <path
+          d={src}
+          fill={solid ? 'currentColor' : 'none'}
+          stroke={solid ? 'none' : 'currentColor'}
+          strokeWidth={(isLine ? 1.9 : 1.6) / k}
+          strokeLinecap="butt"
+          strokeLinejoin={isLine ? 'round' : 'miter'}
+        />
+      </g>
     </svg>
   );
 };
@@ -1242,6 +1277,13 @@ export const ShapeEditorPanel: React.FC<{
               ))}
             </div>
           </div>
+          {!!layer.shapeGlow && (
+            <div>
+              <p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>
+              {swatchStrip(layer.shapeGlowColor || layer.color, GLOW_COLORS,
+                c => onChange({ shapeGlowColor: c }), true)}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -2349,8 +2391,10 @@ interface FloatingImage {
   shapeLineW?: number;
   /** 描邊的虛線長度（0＝實線，1~100 是「一段有幾倍線寬」的比例，跟圖片描邊同一套） */
   shapeDash?: number;
-  /** 圖形發光（只有開／關，顏色就用圖形自己的顏色） */
+  /** 圖形發光（只有開／關） */
   shapeGlow?: boolean;
+  /** 圖形發光的顏色。沒設就用圖形自己的顏色 */
+  shapeGlowColor?: string;
 }
 
 type SwapSource = { kind: 'cell'; idx: number; src: string } | { kind: 'floating'; id: string; src: string };
@@ -3312,15 +3356,15 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                半徑寫在「沒有縮放前」的座標系上，外框放大時光會跟著一起放大。 */
             filter: image.shapeGlow
               ? shapeGlowBlurs(image.width, image.height)
-                  .map(r => `drop-shadow(0 0 ${r3(r * image.scale)}px ${image.color || '#1C1C1C'})`)
+                  .map(r => `drop-shadow(0 0 ${r3(r * image.scale)}px ${image.shapeGlowColor || image.color || SHAPE_DEFAULT_COLOR})`)
                   .join(' ')
               : undefined,
           }}
         >
           <path
             d={shapePathD(image.shape, image.width, image.height)}
-            fill={image.shapeFilled && image.shape !== 'line' ? (image.color || '#1C1C1C') : 'none'}
-            stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || '#1C1C1C')}
+            fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
+            stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || SHAPE_DEFAULT_COLOR)}
             strokeWidth={shapeStroke?.lw}
             strokeDasharray={shapeStroke?.dashArray}
             strokeLinecap={shapeStroke?.cap}
@@ -4438,7 +4482,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
       shapeDash: 0,
       shapeGlow: false,
-      color: '#1C1C1C',
+      shapeGlowColor: SHAPE_DEFAULT_COLOR,
+      color: SHAPE_DEFAULT_COLOR,
     };
     setFloatingImages(prev => [...prev, item]);
     setSelectedFloatingId(id);
@@ -7591,7 +7636,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     ctx.translate(-fw / 2, -fh / 2);
 
     const path = new Path2D(shapePathD(fImg.shape!, fw, fh));
-    const color = fImg.color || '#1C1C1C';
+    const color = fImg.color || SHAPE_DEFAULT_COLOR;
     const solid = fImg.shapeFilled && fImg.shape !== 'line';
     if (!solid) {
       const lw = shapeLineWidth(fImg.shapeLineW, fw, fh);
@@ -7614,7 +7659,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     // 發光：三段模糊疊起來，跟預覽的三層 drop-shadow 同一組半徑
     if (fImg.shapeGlow) {
       ctx.save();
-      ctx.shadowColor = color;
+      ctx.shadowColor = fImg.shapeGlowColor || color;
       for (const r of shapeGlowBlurs(fw, fh)) {
         ctx.shadowBlur = r;
         if (solid) ctx.fill(path); else ctx.stroke(path);
@@ -7973,15 +8018,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   ...common, overflow: 'visible',
                   filter: f.shapeGlow
                     ? shapeGlowBlurs(f.width, f.height)
-                        .map(r => `drop-shadow(0 0 ${r3(r * f.scale * k)}px ${f.color || '#1C1C1C'})`)
+                        .map(r => `drop-shadow(0 0 ${r3(r * f.scale * k)}px ${f.shapeGlowColor || f.color || SHAPE_DEFAULT_COLOR})`)
                         .join(' ')
                     : undefined,
                 }}
               >
                 <path
                   d={shapePathD(f.shape, f.width, f.height)}
-                  fill={solid ? (f.color || '#1C1C1C') : 'none'}
-                  stroke={solid ? 'none' : (f.color || '#1C1C1C')}
+                  fill={solid ? (f.color || SHAPE_DEFAULT_COLOR) : 'none'}
+                  stroke={solid ? 'none' : (f.color || SHAPE_DEFAULT_COLOR)}
                   strokeWidth={lw}
                   strokeDasharray={dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined}
                   strokeLinecap="butt"
@@ -10228,7 +10273,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     </div>
                     {([
                       ['實心', ADD_SHAPE_ITEMS.filter(i => i.filled)],
-                      ['細框', ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line')],
+                      ['邊框', ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line')],
                       ['線條', ADD_SHAPE_ITEMS.filter(i => i.kind === 'line')],
                     ] as const).map(([label, list]) => (
                       <div key={label} className="mb-3">

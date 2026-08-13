@@ -13,7 +13,7 @@ import {
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
   ADD_SHAPE_ITEMS, ShapeGlyph, swatchStrip, GLOW_COLORS,
-  shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO,
+  shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
@@ -3493,7 +3493,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const bw = o.w * s, bh = o.h * s;
         const unit = Math.max(bw, bh) / 160;
         const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
-        const col = o.color || '#FFFFFF';
+        const col = o.color || SHAPE_DEFAULT_COLOR;
         const solid = o.filled && o.kind !== 'line';
         ctx.save();
         // 路徑是左上角起算的，所以先把原點從框心搬到左上角
@@ -3512,7 +3512,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         // 發光：三段模糊疊起來，跟經典拼圖那邊同一組半徑
         if (o.glow) {
           ctx.save();
-          ctx.shadowColor = col;
+          ctx.shadowColor = o.glowColor || col;
           for (const r of shapeGlowBlurs(bw, bh)) {
             ctx.shadowBlur = r;
             if (solid) ctx.fill(shapeP); else ctx.stroke(shapeP);
@@ -5331,7 +5331,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
                   setObjects(prev => [...prev, {
                     id, type: 'shape', kind: it.kind, filled: it.filled,
-                    color: '#FFFFFF', lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0, glow: 0,
+                    color: SHAPE_DEFAULT_COLOR, glowColor: SHAPE_DEFAULT_COLOR,
+                    lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0, glow: 0,
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
                   }]);
@@ -5386,7 +5387,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       </div>
                       {([
                         ['實心', SHAPE_ITEMS.filter(i => i.filled)],
-                        ['細框', SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line')],
+                        ['邊框', SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line')],
                         ['線條', SHAPE_ITEMS.filter(i => i.kind === 'line')],
                       ] as const).map(([label, list]) => (
                         <div key={label} className="mb-3">
@@ -5464,6 +5465,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           </button>
                         ))}
                       </div>
+                      {!!sel.glow && (
+                        <>
+                          <div className="text-[10px] font-bold text-[#888] mt-5 mb-2 uppercase tracking-widest">發光顏色</div>
+                          {swatchStrip(sel.glowColor || sel.color, GLOW_COLORS,
+                            (c: string) => patch({ glowColor: c }), true)}
+                        </>
+                      )}
                     </div>
                   );
                 }
