@@ -565,31 +565,9 @@ interface ColorPickerProps {
 }
 
 /** 文字圖層的編輯面板：內容、字體、顏色、字距、粗體、邊緣發光。 */
-/**
- * 文字用的色票：亞洲女生拼貼時最常拿來寫字的顏色。
- * 白與墨黑先打底（照片上最好讀），接著奶油／奶茶這類米色系，
- * 再來三個粉（淺粉、甜粉、莓紅）與焦糖棕，最後薰衣草、霧藍、抹茶、蜜黃各一。
- */
 /** 長按多久才算「要拖去交換」。150ms 太容易誤觸，拉長到 250ms。 */
 const LONG_PRESS_MS = 250;
 
-const TEXT_COLORS = [
-  /* 前兩顆固定是純黑與墨黑：寫字與描邊最常用的就是這兩個，
-     擺在最前面才不用每次都往右滑。接著才是白與暖灰那些中性色。 */
-  '#000000', '#2B2B2B',
-  // 白／暖灰（中性）
-  '#FFFFFF', '#EAE6DF',
-  // 奶油 → 奶茶（暖色系挨在一起）
-  '#FFF7EC', '#E8D3BC',
-  // 粉 → 莓紅
-  '#FFD6E0', '#F4C2C2', '#FFA8BE', '#D4667E',
-  // 黃
-  '#FFE49B', '#FFF1A5',
-  // 綠 → 薄荷 → 淺青
-  '#A9C2A0', '#CBEAD6', '#9BD4C3', '#B8E3D8', '#D2E8E1',
-  // 藍 → 紫
-  '#A7C4DC', '#C7B5E8',
-];
 
 /**
  * 色票最前面那顆「自訂顏色」。外觀跟美顏那顆一致：
@@ -769,6 +747,16 @@ export const GLOW_COLORS = (() => {
   return ['#FFFFFF', ...hues.map(h => glowHslToHex(h, sat, l))];
 })();
 
+
+/**
+ * 文字顏色／文字描邊用的色票。
+ *
+ * 內容就是發光那一組（同一套色相環，飽和度與亮度完全一致），
+ * 只在最前面多墊兩顆：純白與純黑 —— 寫字跟描邊最常用的就是這兩個，
+ * 擺在最前面才不用每次都往右滑。
+ */
+const TEXT_COLORS = ['#FFFFFF', '#000000', ...GLOW_COLORS.filter(c => c !== '#FFFFFF')];
+
 /**
  * 色票列：第一顆固定是自訂顏色（開系統調色盤），後面才是預設色。
  *
@@ -886,8 +874,8 @@ export const shapeGlowBlurs = (w: number, h: number) =>
 export const SHAPE_DEFAULT_LINEW = (kind: string) => (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
 export const SHAPE_DEFAULT_RATIO = (kind: string) => (kind === 'line' ? 0.24 : 0.15);
-/** 新圖形的預設顏色。取自發光色票裡的那顆薄荷綠，深色底與白底上都看得到。 */
-export const SHAPE_DEFAULT_COLOR = '#9BD4C3';
+/** 新圖形的預設顏色。 */
+export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
 export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number };
@@ -1752,19 +1740,8 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
     }
   };
 
-  // 韓系拼貼常見的柔和底色
-  const PRESETS = [
-    // 白 → 暖白 → 暖灰 → 奶油 → 米
-    '#FFFFFF', '#FAF6F0', '#EAE6DF', '#F1E7DB', '#E7DACB',
-    // 粉
-    '#F6DCD8', '#F4C2C2',
-    // 黃
-    '#F7E9C8', '#FFF1A5',
-    // 綠 → 薄荷 → 淺青
-    '#DCE7DB', '#CBEAD6', '#9BD4C3', '#B8E3D8', '#D2E8E1',
-    // 藍 → 紫
-    '#D7E3EF', '#E2DCEC',
-  ];
+  // 色票跟發光那一組完全一樣；第一顆是純白
+  const PRESETS = GLOW_COLORS;
 
   return (
     <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-300">

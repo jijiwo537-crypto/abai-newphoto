@@ -1513,7 +1513,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [tuneTool, setTuneTool] = useState('');
   const [loadingLut, setLoadingLut] = useState<string | null>(null);
   const [lutRevision, setLutRevision] = useState(0);
-  const [maskColor, setMaskColor] = useState('#FFF2E6'); 
+  const [maskColor, setMaskColor] = useState('#DCE7DB'); 
   const [patternType, setPatternType] = useState('none'); 
   const [dotColor, setDotColor] = useState('#595959'); 
   const [dotSize, setDotSize] = useState(20); 
@@ -5320,7 +5320,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 else if(colorPickerTarget==='holeGlow') setHoleGlowColor(c);
                 else if(colorPickerTarget==='linkColor') setLinkColor(c);
                 else setDotColor(c); }}
-              swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor' ? GLOW_SWATCHES : undefined}
+              /* 遮罩顏色的色票跟發光那一組完全一樣（第一顆是純白）；
+                 「點點」維持原本那組韓系柔和色，沒有動到。 */
+              swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor' || colorPickerTarget === 'mask' ? GLOW_SWATCHES : undefined}
               onClose={() => setColorPickerTarget(null)}
               title={colorPickerTarget === 'mask' ? '遮罩顏色'
                 : colorPickerTarget === 'holeGlow' ? '發光顏色'
