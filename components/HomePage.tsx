@@ -230,14 +230,68 @@ export const HomePage: React.FC<HomePageProps> = ({
   const idOk = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(idInput.trim());
   const pwOk = pw.length >= 6;
 
+  /* --- 「等伺服器」的狀態，一定要有辦法自己走出來 ---
+     原本只要進了 busy，畫面上每一顆按鈕都跟著鎖住；只要那個請求沒有回來
+     （網路斷了、第三方登入視窗被關掉、伺服器卡住），就再也沒有東西會把
+     step 換回去 —— 使用者看到的就是「所有按鈕都按不動」。
+     現在每次進 busy 都會記下「失敗要退回哪一頁」並上一個 25 秒的鬧鐘，
+     時間到就自己退回去、留一句話說明；成功／失敗都會把鬧鐘關掉。 */
+  const busyRef = useRef<{ back: 'id' | 'code'; oauth: boolean } | null>(null);
+  const busyTimer = useRef<any>(null);
+
+  const endBusy = () => {
+    busyRef.current = null;
+    if (busyTimer.current) { clearTimeout(busyTimer.current); busyTimer.current = null; }
+  };
+
+  const beginBusy = (back: 'id' | 'code' = 'id', oauth = false) => {
+    endBusy();
+    busyRef.current = { back, oauth };
+    setStep('busy');
+    busyTimer.current = setTimeout(() => {
+      const b = busyRef.current;
+      if (!b) return;
+      endBusy();
+      setStep(b.back);
+      setLoginErr(b.oauth ? '這次登入沒有完成，再試一次看看' : '連線好像卡住了，再試一次看看');
+    }, 25000);
+  };
+
+  /* 第三方登入會把整個瀏覽器帶去別的網站。使用者中途按返回／關掉那個分頁時，
+     回到這裡不會有任何事件通知我們「它失敗了」—— 所以自己在畫面重新被看到的
+     那一刻檢查：還停在 busy 而且還沒登入，就把畫面放回去。 */
+  useEffect(() => {
+    const back = () => {
+      const b = busyRef.current;
+      if (!b || !b.oauth) return;
+      if (document.visibilityState !== 'visible') return;
+      endBusy();
+      setStep('id');
+      setLoginErr('這次登入沒有完成，再試一次看看');
+    };
+    document.addEventListener('visibilitychange', back);
+    window.addEventListener('pageshow', back);
+    return () => {
+      document.removeEventListener('visibilitychange', back);
+      window.removeEventListener('pageshow', back);
+      if (busyTimer.current) clearTimeout(busyTimer.current);
+    };
+  }, []);
+
+  /* 登入成功（不管走哪條路）就把鬧鐘關掉，免得等一下才響、又跳出一句錯誤 */
+  useEffect(() => { if (account) endBusy(); }, [account]);
+
   const openLogin = () => {
+    endBusy();
     setStep('id'); setIdInput(''); setPw(''); setCode('');
     setLoginErr(''); setLoginNote(''); setCooldown(0); setMode('otp'); setEmailOpen(false);
+    autoTried.current = '';   // 重開登入頁＝全新的一次，之前試過的驗證碼不算數
     setLoginOpen(true);
   };
 
   /** 統一的錯誤處理：把英文訊息換成中文，並把畫面收回可操作的狀態 */
   const fail = (e: any, back: 'id' | 'code' = 'id') => {
+    endBusy();
     setLoginErr(authErrText(e));
     setStep(back);
   };
@@ -246,18 +300,20 @@ export const HomePage: React.FC<HomePageProps> = ({
   const sendCode = async () => {
     if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
     if (!idOk) { setLoginErr('請輸入正確的電子郵件'); return; }
-    setLoginErr(''); setLoginNote(''); setStep('busy');
+    setLoginErr(''); setLoginNote(''); beginBusy('id');
     try {
       await sendEmailOtp(idInput);
+      endBusy();
       setStep('code'); setCooldown(60);
     } catch (e) { fail(e); }
   };
 
   const submitCode = async (value = code) => {
     if (value.length < OTP_LEN) { setLoginErr(`請輸入信裡的 ${OTP_LEN} 位數驗證碼`); return; }
-    setLoginErr(''); setStep('busy');
+    setLoginErr(''); beginBusy('code');
     try {
       await verifyEmailOtp(idInput, value);
+      endBusy();
       setLoginOpen(false);
     } catch (e) { fail(e, 'code'); }
   };
@@ -280,10 +336,11 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
     if (!idOk) { setLoginErr('請輸入正確的電子郵件'); return; }
     if (!pwOk) { setLoginErr('密碼至少要 6 個字'); return; }
-    setLoginErr(''); setLoginNote(''); setStep('busy');
+    setLoginErr(''); setLoginNote(''); beginBusy('id');
     try {
-      if (intent === 'in') { await signInWithPassword(idInput, pw); setLoginOpen(false); return; }
+      if (intent === 'in') { await signInWithPassword(idInput, pw); endBusy(); setLoginOpen(false); return; }
       const r = await signUpWithPassword(idInput, pw);
+      endBusy();
       if (r.needVerify) { setStep('id'); setLoginNote('驗證信寄出去了，去信箱點一下就完成註冊'); }
       else setLoginOpen(false);
     } catch (e) { fail(e); }
@@ -291,14 +348,14 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   const forgotPw = async () => {
     if (!idOk) { setLoginErr('請先輸入你的電子郵件'); return; }
-    setLoginErr(''); setStep('busy');
-    try { await sendPasswordReset(idInput); setStep('id'); setLoginNote('重設密碼的信寄出去了'); }
+    setLoginErr(''); beginBusy('id');
+    try { await sendPasswordReset(idInput); endBusy(); setStep('id'); setLoginNote('重設密碼的信寄出去了'); }
     catch (e) { fail(e); }
   };
 
   const oauth = async (p: 'google' | 'apple') => {
     if (!isAuthReady) { setLoginErr('後端尚未設定'); return; }
-    setLoginErr(''); setStep('busy');
+    setLoginErr(''); beginBusy('id', true);
     try { await signInWithProvider(p); }   // 會跳走，回來時 onAuthChange 接手
     catch (e) { fail(e); }
   };
@@ -421,9 +478,12 @@ export const HomePage: React.FC<HomePageProps> = ({
      本來在首頁第一屏，現在搬到「我的」；抽成一個變數，之後想放回去或
      兩邊都放都只要引用它。 */
   const historySection = (
-    <div>
+    /* -mx-2 把這一區往左右各撐出 8px，讓最外側兩格的邊剛好對齊上面那排功能鈕
+       （功能鈕那一排本來就比這裡寬）。格子是 grid 平分的，所以每一格會等比
+       放大一點點；標題跟著補回 8px（ml-1 → ml-3）才不會跟著往外跑。 */
+    <div className="-mx-2">
       <div className="flex items-baseline mb-2.5">
-        <span className="text-[10px] font-bold tracking-[0.24em] text-white/40 ml-1">歷史紀錄</span>
+        <span className="text-[10px] font-bold tracking-[0.24em] text-white/40 ml-3">歷史紀錄</span>
       </div>
       <div className="grid grid-cols-5 gap-2">
         {[0, 1, 2, 3, 4].map(i => {
@@ -621,7 +681,7 @@ export const HomePage: React.FC<HomePageProps> = ({
              歷史紀錄搬回來會多佔 97px（自己 87px、上緣 -mt-3 吃掉 12px、
              再加上這一疊每個成員之間的 gap-[22px]），所以這裡同步從 270
              減成 173，上面那幾排才會待在原來的位置。 */}
-        <div className="relative z-10 -mt-1.5 h-[173px] shrink-0" aria-hidden />
+        <div className="relative z-10 -mt-1.5 h-[169.8px] shrink-0" aria-hidden />
       </div>
 
       {/* --- 靈感 ---
@@ -705,7 +765,9 @@ export const HomePage: React.FC<HomePageProps> = ({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            onClick={() => step !== 'busy' && setLoginOpen(false)}
+            /* 背景一律可以點掉。原本 busy 時連這裡也不給關，請求一卡住就真的
+               出不去了；離開本來就代表「這次不登了」，順手把等待狀態一起收掉。 */
+            onClick={() => { endBusy(); setStep('id'); setLoginOpen(false); }}
             className="absolute inset-0 z-[60] flex items-end justify-center bg-black/75 backdrop-blur-sm"
           >
             <motion.div
@@ -731,11 +793,12 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <button
                   onClick={() => {
                     // 驗證碼 → 回信箱畫面；信箱畫面 → 回三顆按鈕；再按才是關閉
+                    // 卡在等待時按這顆＝「不等了」，把畫面放回信箱那一頁
+                    if (step === 'busy') { endBusy(); setStep('id'); setLoginErr(''); return; }
                     if (step === 'code') { setStep('id'); return; }
                     if (emailOpen) { setEmailOpen(false); setLoginErr(''); setLoginNote(''); return; }
                     setLoginOpen(false);
                   }}
-                  disabled={step === 'busy'}
                   aria-label={(step === 'code' || emailOpen) ? '上一步' : '關閉'}
                   className="shrink-0 w-8 h-8 -mr-1 -mt-0.5 rounded-full flex items-center justify-center text-white/35 hover:text-white hover:bg-white/[0.06] active:scale-90 transition-[color,background-color,transform] disabled:opacity-30"
                 >
