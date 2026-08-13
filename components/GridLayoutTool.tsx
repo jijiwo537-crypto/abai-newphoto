@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
-import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, MessageCircle, Bookmark, Volume2, VolumeX } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, MessageCircle, Bookmark, Volume2, VolumeX, Shapes } from 'lucide-react';
 import { Icon } from './Icon';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
@@ -751,7 +751,7 @@ const glowHslToHex = (h: number, sat: number, l: number) => {
   const to = (v: number) => Math.round(Math.max(0, Math.min(1, v + m)) * 255).toString(16).padStart(2, '0');
   return `#${to(r1)}${to(g1)}${to(b1)}`.toUpperCase();
 };
-const GLOW_COLORS = (() => {
+export const GLOW_COLORS = (() => {
   const r = parseInt(GLOW_BASE.slice(1, 3), 16) / 255;
   const g = parseInt(GLOW_BASE.slice(3, 5), 16) / 255;
   const b = parseInt(GLOW_BASE.slice(5, 7), 16) / 255;
@@ -768,6 +768,32 @@ const GLOW_COLORS = (() => {
   hues.sort((a, b2) => a - b2);
   return ['#FFFFFF', ...hues.map(h => glowHslToHex(h, sat, l))];
 })();
+
+/**
+ * 色票列：第一顆固定是自訂顏色（開系統調色盤），後面才是預設色。
+ *
+ * 這一段本來寫在 ImageAdjustPanel 裡面。圖形圖層的顏色要「跟發光的完全一樣」，
+ * 所以整段原封不動搬到模組層共用 —— **一行邏輯都沒有改**，
+ * 發光、描邊、圖形三個地方看到的就是同一個東西。
+ */
+export const swatchStrip = (
+  value: string | undefined, colors: string[], onPick: (c: string) => void, big = false,
+) => (
+  <div className={`flex items-center overflow-x-auto no-scrollbar min-w-0 px-0.5 py-0.5 ${big ? 'gap-2 w-full' : 'gap-1.5'}`}>
+    <CustomColorButton value={value || '#FFFFFF'} onPick={onPick} size={big ? 32 : 24} />
+    {colors.map(c => (
+      <button
+        key={c}
+        onClick={() => onPick(c)}
+        title={c}
+        className={`shrink-0 rounded-[7px] transition-all active:scale-90 ${big ? 'w-8 h-8' : 'w-6 h-6'} ${
+          (value || '#FFFFFF').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
+        }`}
+        style={{ backgroundColor: c }}
+      />
+    ))}
+  </div>
+);
 
 /* ── 新增圖形 ────────────────────────────────────────────────────────────
    圖形圖層跟照片、文字一樣都是 floatingImages 裡的一員（位置、縮放、旋轉、
@@ -1125,9 +1151,9 @@ export const TextEditorPanel: React.FC<{
 /**
  * 圖形圖層的參數面板（顏色／粗細／虛線）。
  *
- * 版型、色票、滑桿都跟文字面板同一份寫法 —— 兩種圖層切著用的時候，
- * 介面不會突然換一種長相。實心的圖形沒有框，所以粗細與虛線只在
- * 細框／線條的時候才出現。
+ * 顏色用的是 swatchStrip ＋ GLOW_COLORS —— 跟「發光顏色」「描邊顏色」
+ * 同一個元件、同一組色，不是另外設計一套。
+ * 實心的圖形沒有框，所以粗細與虛線只在細框／線條的時候才出現。
  */
 export const ShapeEditorPanel: React.FC<{
   layer: FloatingImage;
@@ -1135,23 +1161,6 @@ export const ShapeEditorPanel: React.FC<{
 }> = ({ layer, onChange }) => {
   const isLine = layer.shape === 'line';
   const hasOutline = !layer.shapeFilled || isLine;
-
-  const swatchRow = (value: string | undefined, onPick: (c: string) => void) => (
-    <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-0.5 py-0.5">
-      <CustomColorButton value={value || '#1C1C1C'} onPick={onPick} />
-      {TEXT_COLORS.map(c => (
-        <button
-          key={c}
-          onClick={() => onPick(c)}
-          title={c}
-          className={`shrink-0 w-8 h-8 rounded-[7px] transition-all active:scale-90 ${
-            (value || '').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
-          }`}
-          style={{ backgroundColor: c }}
-        />
-      ))}
-    </div>
-  );
 
   const slider = (label: string, value: number, min: number, max: number, onVal: (v: number) => void) => (
     <div className="space-y-1.5">
@@ -1173,7 +1182,7 @@ export const ShapeEditorPanel: React.FC<{
         <div className="space-y-3.5 pt-1 pb-2">
           <div>
             <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-            {swatchRow(layer.color, c => onChange({ color: c }))}
+            {swatchStrip(layer.color, GLOW_COLORS, c => onChange({ color: c }), true)}
           </div>
           {hasOutline && (
             <>
@@ -1333,25 +1342,6 @@ const editorSlider = (
   );
 };
 
-// 色票：第一顆固定是自訂顏色（開系統調色盤），後面才是預設色
-const swatchStrip = (
-  value: string | undefined, colors: string[], onPick: (c: string) => void, big = false,
-) => (
-  <div className={`flex items-center overflow-x-auto no-scrollbar min-w-0 px-0.5 py-0.5 ${big ? 'gap-2 w-full' : 'gap-1.5'}`}>
-    <CustomColorButton value={value || '#FFFFFF'} onPick={onPick} size={big ? 32 : 24} />
-    {colors.map(c => (
-      <button
-        key={c}
-        onClick={() => onPick(c)}
-        title={c}
-        className={`shrink-0 rounded-[7px] transition-all active:scale-90 ${big ? 'w-8 h-8' : 'w-6 h-6'} ${
-          (value || '#FFFFFF').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
-        }`}
-        style={{ backgroundColor: c }}
-      />
-    ))}
-  </div>
-);
 
 /* 特效細項的排法跟「編輯」一致：剛好兩根上下各一行；
    奇數根時「強度」自己站一行，其餘兩兩一排。 */
@@ -4397,8 +4387,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     setSelectedIndex(null);
     setSelectedLayoutId(null);
     setInlineEditId(null);
-    // 新增完直接進編輯頁，跟新增文字一樣
-    setActiveTab('adjust');
+    /* 刻意留在這一頁、不跳去編輯 —— 常常是要連著加好幾個，
+       每加一個就被丟去編輯頁的話還得自己按回來。 */
   };
 
   /** 複製一份圖片／文字圖層，稍微錯開一點放在原件上面，並直接選中新的那一份。 */
@@ -5112,6 +5102,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   }, [activeTab, adjustSub, lutList]);
 
   const [layoutSubTab, setLayoutSubTab] = useState<'layout' | 'adjust'>('layout');
+  /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
+  const [addSub, setAddSub] = useState<'root' | 'shape'>('root');
+  // 離開「新增」分頁就退回大按鈕那一層，下次進來不會停在圖案清單
+  useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
   const [colorPickerActive, setColorPickerActive] = useState(false);
   /** 編輯頁選到的是圖片（不是文字）—— 這時整個工具欄要換成跟「編輯」一樣的三段式 */
   /* 這個旗標控制外框要不要再包一層 p-4。編輯圖片的那套介面自己就把邊界算好了，
@@ -10099,27 +10093,30 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
             {activeTab === 'add' && (
               <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300">
-                <div className="flex justify-center gap-4 mt-6">
+                {addSub === 'root' ? (
+                  /* 間距與左右內距比原本窄一些 —— 多了「新增圖形」這一顆，
+                     四顆要並排在同一列上才塞得下。高度與字級完全沒動。 */
+                  <div className="flex justify-center gap-2.5 mt-6">
                   <button
                     onClick={() => {
                       setLayoutSubTab('layout');
                       setActiveTab('layout');
                     }}
-                    className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-2 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Icon name="grid_view" className="text-[24px] text-white/80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增佈局</span>
                   </button>
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-2 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">匯入照片</span>
                   </button>
                   <button
                     onClick={() => handleAddTextLayer()}
-                    className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-2 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     {/* 跟文字編輯面板裡「字體」那一顆同一個圖示。
                         線寬調細對齊旁邊兩顆 Material 圖標；透明度改成掛在整個
@@ -10128,35 +10125,53 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                   </button>
-                </div>
-
-                {/* 新增圖形。三排：實心、細框、線條 —— 全部用圖標表示，
-                    點下去就加到這一頁的正中間並直接進編輯頁。
-                    版面跟創意拼圖的加號頁是同一份，兩邊看起來一模一樣。 */}
-                <div className="pt-2">
-                  <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">新增圖形</div>
-                  {([
-                    ['實心', ADD_SHAPE_ITEMS.filter(i => i.filled)],
-                    ['細框', ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line')],
-                    ['線條', ADD_SHAPE_ITEMS.filter(i => i.kind === 'line')],
-                  ] as const).map(([label, list]) => (
-                    <div key={label} className="mb-3">
-                      <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
-                      <div className="grid grid-cols-6 gap-2">
-                        {list.map(it => (
-                          <button
-                            key={it.id}
-                            onClick={() => handleAddShapeLayer(it)}
-                            aria-label={it.id}
-                            className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
-                          >
-                            <ShapeGlyph item={it} />
-                          </button>
-                        ))}
-                      </div>
+                  <button
+                    onClick={() => setAddSub('shape')}
+                    className="flex flex-col items-center justify-center py-4 px-2 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                  >
+                    <Shapes size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                    <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
+                  </button>
+                  </div>
+                ) : (
+                  /* 點進「新增圖形」才看得到的圖案清單。
+                     三排：實心、細框、線條，點一下就加到這一頁的正中間 ——
+                     不會跳去編輯頁，所以可以連著加好幾個。 */
+                  <div className="pt-1">
+                    <div className="flex items-center gap-2 mb-3">
+                      <button
+                        onClick={() => setAddSub('root')}
+                        aria-label="返回"
+                        title="返回"
+                        className="w-8 h-8 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 flex items-center justify-center active:scale-95 transition-all shrink-0"
+                      >
+                        <ChevronLeft size={16} className="text-white/80" />
+                      </button>
+                      <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
                     </div>
-                  ))}
-                </div>
+                    {([
+                      ['實心', ADD_SHAPE_ITEMS.filter(i => i.filled)],
+                      ['細框', ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line')],
+                      ['線條', ADD_SHAPE_ITEMS.filter(i => i.kind === 'line')],
+                    ] as const).map(([label, list]) => (
+                      <div key={label} className="mb-3">
+                        <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
+                        <div className="grid grid-cols-6 gap-2">
+                          {list.map(it => (
+                            <button
+                              key={it.id}
+                              onClick={() => handleAddShapeLayer(it)}
+                              aria-label={it.id}
+                              className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
+                            >
+                              <ShapeGlyph item={it} />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

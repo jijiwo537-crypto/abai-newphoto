@@ -3,7 +3,7 @@ import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
-import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
+import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film, Shapes } from 'lucide-react';
 import { Icon } from './Icon';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
@@ -12,7 +12,7 @@ import {
   /* 圓角／羽化／描邊／發光全部改用經典拼圖那幾支：同一份程式碼，
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
-  ADD_SHAPE_ITEMS, ShapeGlyph,
+  ADD_SHAPE_ITEMS, ShapeGlyph, swatchStrip, GLOW_COLORS,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
@@ -1461,6 +1461,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [maskTransform, setMaskTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [activeTab, setActiveTab] = useState('setting');
+  /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
+  const [addSub, setAddSub] = useState<'root' | 'shape'>('root');
+  // 離開「新增」分頁就退回大按鈕那一層，下次進來不會停在圖案清單
+  useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
   /* 圖片編輯頁是自己排好三段式高度的整頁面板：外面不能再包內距，
      footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-16 分類列 ＋ 分頁列）。 */
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
@@ -5374,33 +5378,53 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
-                  setActiveTab('objedit');
+                  /* 刻意留在這一頁、不跳去編輯 —— 常常是要連著加好幾個，
+                     每加一個就被丟去編輯頁的話還得自己按回來。 */
                 };
                 return (
                   <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300">
                     {/* 按鈕與圖標尺寸跟經典拼圖的加號頁完全一致；
                         只差沒有「新增佈局」——創意拼圖的版面是排版＋遮罩決定的。 */}
+                    {addSub === 'root' ? (
                     <div className="flex justify-center gap-4 mt-6">
                       <button
                         onClick={() => objFileInputRef.current?.click()}
-                        className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                        className="flex flex-col items-center justify-center py-4 px-4 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
                         <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90">匯入照片</span>
                       </button>
                       <button
                         onClick={addText}
-                        className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                        className="flex flex-col items-center justify-center py-4 px-4 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
                         <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                       </button>
+                      <button
+                        onClick={() => setAddSub('shape')}
+                        className="flex flex-col items-center justify-center py-4 px-4 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                      >
+                        <Shapes size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                        <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
+                      </button>
                     </div>
-
-                    {/* 新增圖形。三排：實心、細框、線條 —— 全部用圖標表示，
-                        點下去就加到畫面正中間並直接進編輯頁。 */}
-                    <div className="pt-2">
-                      <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">新增圖形</div>
+                    ) : (
+                    /* 點進「新增圖形」才看得到的圖案清單。
+                       三排：實心、細框、線條，點一下就加到畫面正中間 ——
+                       不會跳去編輯頁，所以可以連著加好幾個。 */
+                    <div className="pt-1">
+                      <div className="flex items-center gap-2 mb-3">
+                        <button
+                          onClick={() => setAddSub('root')}
+                          aria-label="返回"
+                          title="返回"
+                          className="w-8 h-8 rounded-full bg-white/5 border border-white/10 hover:bg-white/10 flex items-center justify-center active:scale-95 transition-all shrink-0"
+                        >
+                          <Icon name="arrow_back" className="text-[16px] text-white/80" />
+                        </button>
+                        <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
+                      </div>
                       {([
                         ['實心', SHAPE_ITEMS.filter(i => i.filled)],
                         ['細框', SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line')],
@@ -5423,6 +5447,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         </div>
                       ))}
                     </div>
+                    )}
                   </div>
                 );
               })()}
@@ -5448,26 +5473,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   const hasOutline = !sel.filled || isLine;
                   return (
                     <div className="max-w-md mx-auto animate-in fade-in duration-300">
+                      {/* 顏色：跟「發光顏色」「描邊顏色」同一個元件、同一組色。
+                          標題字樣沿用這個工具原本的寫法，不跟隔壁那頁長不一樣。 */}
                       <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">顏色</div>
-                      <div className="flex flex-wrap gap-2">
-                        {GLOW_SWATCHES.map(c => (
-                          <button key={c} onClick={() => patch({ color: c })}
-                            aria-label={c}
-                            className={`w-7 h-7 rounded-full border transition-all ${
-                              (sel.color || '#FFFFFF').toUpperCase() === c.toUpperCase()
-                                ? 'border-white scale-110' : 'border-white/20'}`}
-                            style={{ background: c }} />
-                        ))}
-                        {/* 最後一顆是自訂色，開內嵌選色器 */}
-                        <button
-                          onClick={() => setColorPickerTarget('shapeColor')}
-                          aria-label="自訂顏色"
-                          className="w-7 h-7 rounded-full border border-white/20 flex items-center justify-center"
-                          style={{ background: sel.color || '#FFFFFF' }}
-                        >
-                          <Icon name="colorize" className="text-[13px] text-black/60" />
-                        </button>
-                      </div>
+                      {swatchStrip(sel.color, GLOW_COLORS, (c: string) => patch({ color: c }), true)}
 
                       {hasOutline && (
                         <div className="grid grid-cols-2 gap-4 mt-5">
