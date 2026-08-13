@@ -1052,8 +1052,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const fxCanvasOf = useCallback((o: any, isMain = false): CanvasImageSource | null => {
     if (!o.img) return null;
     const shape = {
-      r: o.imgRadius || 0, f: o.feather || 0, fs: o.featherStrength ?? 100,
-      sw: o.imgStrokeWidth || 0, sc: o.imgStrokeColor || '#FFFFFF',
+      r: o.imgRadius || 0, f: o.feather || 0,
+      sw: o.imgStrokeWidth || 0, sc: o.imgStrokeColor || '#FFFFFF', sd: o.imgStrokeDash || 0,
       g: o.imgGlow || 0, gc: o.imgGlowColor || '#FFFFFF',
     };
     const hasShape = shape.r || shape.f || shape.sw || shape.g;
@@ -1146,7 +1146,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (shape.f || shape.r) {
         oc.globalCompositeOperation = 'destination-in';
         if (shape.f) {
-          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f, shape.fs), lw, lw, iw, ih);
+          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f), lw, lw, iw, ih);
         } else {
           const R = cornerR(shape.r, iw, ih);
           roundRectPath(oc, lw, lw, iw, ih, R, R);
@@ -1161,8 +1161,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         oc.lineWidth = lw;
         oc.lineJoin = 'miter';
         oc.miterLimit = 4;
+        /* 虛線：一段的長度用線寬當單位，跟經典拼圖同一條式子 */
+        if (shape.sd > 0) {
+          const seg = lw * (0.6 + (shape.sd / 100) * 4);
+          oc.setLineDash([seg, seg * 0.85]);
+          oc.lineCap = 'butt';
+        } else {
+          oc.setLineDash([]);
+        }
         oc.strokeStyle = shape.sc;
         oc.stroke();
+        oc.setLineDash([]);
       }
       shaped = off;
       drawW = off.width; drawH = off.height;

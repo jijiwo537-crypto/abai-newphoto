@@ -722,6 +722,9 @@ const SHAPE_TOOLS: [string, string, string, number, number, number][] = [
 const SHAPE_SUB_TOOLS: Record<string, [string, string, string, number, number, number][]> = {
   stroke: [
     ['imgStrokeWidth', '粗細', 'line_weight', 0, 20, 0],
+    /* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
+       所以線越粗、虛線的節奏就跟著等比例放大，不會粗線配細碎的點。 */
+    ['imgStrokeDash', '虛線', 'more_horiz', 0, 100, 0],
     ['imgStrokeColor', '顏色', 'palette', 0, 0, 0],
   ],
   glow: [
@@ -1197,7 +1200,7 @@ const sliderArea = (() => {
       // 描邊色跟發光色用同一組色票
       if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, GLOW_COLORS, c => set({ imgStrokeColor: c }), true);
       if (subTool[0] === 'imgGlowColor') return swatchStrip(img.imgGlowColor, GLOW_COLORS, c => set({ imgGlowColor: c }), true);
-      const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow';
+      const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow' | 'imgStrokeDash';
       // 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來。
       // 羽化的「範圍」是佔短邊的百分比，只有 50 段太粗，改成 0.5 一格。
       return editorSlider(
@@ -1999,8 +2002,19 @@ const MiniShapeImage: React.FC<{
           oc.lineWidth = lw;
           oc.lineJoin = 'miter';
           oc.miterLimit = 4;
+          /* 虛線。一段的長度用線寬當單位（0.6~4.6 倍），空隙是它的 0.85 倍，
+             所以不管預覽、縮圖還是匯出，看到的節奏都一樣。 */
+          const dashV = img.imgStrokeDash || 0;
+          if (dashV > 0) {
+            const seg = lw * (0.6 + (dashV / 100) * 4);
+            oc.setLineDash([seg, seg * 0.85]);
+            oc.lineCap = 'butt';
+          } else {
+            oc.setLineDash([]);
+          }
           oc.strokeStyle = img.imgStrokeColor || '#FFFFFF';
           oc.stroke();
+          oc.setLineDash([]);
         }
         shaped = off;
         drawW = off.width; drawH = off.height; drawX = ox; drawY = oy;
@@ -2021,7 +2035,7 @@ const MiniShapeImage: React.FC<{
     el.addEventListener('load', draw);
     return () => el.removeEventListener('load', draw);
   }, [img.src, img.fx, img.feather, img.imgRadius, img.imgGlow, img.imgGlowColor,
-      img.imgStrokeWidth, img.imgStrokeColor, img.scale, boxW, boxH, glowPad, lutRevision]);
+      img.imgStrokeWidth, img.imgStrokeColor, img.imgStrokeDash, img.scale, boxW, boxH, glowPad, lutRevision]);
   return <canvas ref={ref} style={style} />;
 };
 
@@ -2077,6 +2091,8 @@ interface FloatingImage {
   /** 圖片描邊（相框線）寬度 px（未縮放）與顏色 */
   imgStrokeWidth?: number;
   imgStrokeColor?: string;
+  /** 描邊的虛線長度（0＝實線，1~100 是「一段有幾倍線寬」的比例） */
+  imgStrokeDash?: number;
   /** 構圖（裁切／旋轉／翻轉）：baked 之前的原圖與參數，重開構圖時從這裡接續 */
   origSrc?: string;
   geo?: GeoParams;
@@ -2443,8 +2459,19 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           oc.lineWidth = lw;
           oc.lineJoin = 'miter';
           oc.miterLimit = 4;
+          /* 虛線。一段的長度用線寬當單位（0.6~4.6 倍），空隙是它的 0.85 倍，
+             所以不管預覽、縮圖還是匯出，看到的節奏都一樣。 */
+          const dashV = image.imgStrokeDash || 0;
+          if (dashV > 0) {
+            const seg = lw * (0.6 + (dashV / 100) * 4);
+            oc.setLineDash([seg, seg * 0.85]);
+            oc.lineCap = 'butt';
+          } else {
+            oc.setLineDash([]);
+          }
           oc.strokeStyle = image.imgStrokeColor || '#FFFFFF';
           oc.stroke();
+          oc.setLineDash([]);
         }
         shaped = off;
         drawW = off.width; drawH = off.height; drawX = ox; drawY = oy;
@@ -2504,7 +2531,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     return () => img.removeEventListener('load', draw);
   }, [
     needsShapeCanvas, image.src, image.feather, image.imgRadius,
-    image.imgGlow, image.imgGlowColor, image.imgStrokeWidth, image.imgStrokeColor,
+    image.imgGlow, image.imgGlowColor, image.imgStrokeWidth, image.imgStrokeColor, image.imgStrokeDash,
     image.scale, boxW, boxH, glowPad,
     image.fx, lutRevision,
   ]);
@@ -7288,8 +7315,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           oc.lineWidth = lw;
           oc.lineJoin = 'miter';
           oc.miterLimit = 4;
+          /* 虛線。一段的長度用線寬當單位（0.6~4.6 倍），空隙是它的 0.85 倍，
+             所以不管預覽、縮圖還是匯出，看到的節奏都一樣。 */
+          const dashV = fImg.imgStrokeDash || 0;
+          if (dashV > 0) {
+            const seg = lw * (0.6 + (dashV / 100) * 4);
+            oc.setLineDash([seg, seg * 0.85]);
+            oc.lineCap = 'butt';
+          } else {
+            oc.setLineDash([]);
+          }
           oc.strokeStyle = fImg.imgStrokeColor || '#FFFFFF';
           oc.stroke();
+          oc.setLineDash([]);
         }
         src = off;
         drawW = fw + strokeLw * 2;
