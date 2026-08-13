@@ -77,6 +77,8 @@ const App: React.FC = () => {
 
   /* 首頁的「最近輸出」。每次回到首頁重讀一次，剛導出的那張才會馬上出現 */
   const [recentExports, setRecentExports] = useState<ExportMeta[]>([]);
+  /** 從歷史紀錄點回經典拼圖時要餵回去的那一份版面 */
+  const [layoutRecentState, setLayoutRecentState] = useState<any>(null);
   const [toolDraftState, setToolDraftState] = useState<any>(null);
   const [currentView, setCurrentView] = useState<AppView>('home');
   const [editorImage, setEditorImage] = useState<string | null>(null);
@@ -337,6 +339,23 @@ const App: React.FC = () => {
       setBeautyImage(rec.src);
       setBeautyKey(prev => prev + 1);
       setCurrentView('beauty');
+    } else if (rec.meta.tool === 'collage') {
+      // 創意拼圖原本就是吃 File，把存起來的原圖轉回 File 就能走同一條載入路徑
+      const blob = await (await fetch(rec.src)).blob();
+      setCollageInitialFile(new File([blob], 'recent', { type: blob.type || 'image/png' }));
+      setCollageKey(prev => prev + 1);
+      setCurrentView('collage');
+    } else if (rec.meta.tool === 'layout') {
+      /* 經典拼圖是好幾張照片拼起來的，沒有「那一張原圖」——
+         版面（連同裡面每一張照片）都在 state 裡，直接餵回去。 */
+      setLayoutInitialFiles([]);
+      setLayoutRecentState(rec.meta.state ?? null);
+      setLayoutKey(prev => prev + 1);
+      setCurrentView('layout');
+    } else if (rec.meta.tool === 'match') {
+      setMatchImage(rec.src);
+      setMatchRef(rec.meta.state?.referenceSrc || null);
+      setCurrentView('match');
     } else {
       setEditorImage(rec.src);
       setEditorImages([rec.src]);
@@ -470,8 +489,9 @@ const App: React.FC = () => {
           imageSrc={matchImage}
           referenceSrc={matchRef}
           onPickReference={handleMatchRefClick}
-          onCancel={() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); }}
-          onHome={() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); }}
+          initialState={toolDraftState}
+          onCancel={() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); setToolDraftState(null); }}
+          onHome={() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); setToolDraftState(null); }}
           onImportNew={handleMatchImportClick}
           onSendToEditor={handleBeautyToEditor}
         />
@@ -501,8 +521,10 @@ const App: React.FC = () => {
           onHome={() => {
             setCurrentView('home');
             setLayoutInitialFiles([]);
+            setLayoutRecentState(null);
           }}
           initialFiles={layoutInitialFiles}
+          initialState={layoutRecentState}
           lutList={LUT_LIST}
           onImportNew={() => {
             layoutFileInputRef.current?.click();
