@@ -766,6 +766,27 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     else render();
   }, [showOriginal, isLoading, render]);
 
+  /* 上一次「存進歷史紀錄」時做到第幾步。
+     按過儲存之後直接離開，不該又用預覽再蓋一筆一模一樣的。 */
+  const recordedOpsRef = useRef(-1);
+
+  /** 離開美顏時，如果動過但沒有儲存，也記一筆到歷史紀錄。
+      縮圖直接用畫面上的預覽（已經是顯示解析度，很小很安全）——
+      跟「修圖」那邊的做法完全一樣。 */
+  const recordProgress = useCallback(() => {
+    const s = sessionRef.current;
+    if (!s || s.opsApplied <= 0) return;                 // 一筆都沒動過
+    if (recordedOpsRef.current === s.opsApplied) return; // 這個狀態剛剛已經記過了
+    const cv = viewRef.current;
+    if (!cv || !cv.width || !cv.height) return;
+    try {
+      // 畫面上可能正按著「看原圖」，那張是原圖不是成品 —— 先用同一支 render 重畫回來
+      if (showOriginal) render();
+      recordedOpsRef.current = s.opsApplied;
+      addExport('beauty', cv.toDataURL('image/png'), imageSrc, { ops: s.ops.slice(0, s.opsApplied) });
+    } catch { /* 記錄失敗不能影響離開 */ }
+  }, [imageSrc, showOriginal, render]);
+
   // ---------------------------------------------------------------
   // 全解析度輸出：把記錄下來的每一筆操作，在原圖解析度重跑一次
   // ---------------------------------------------------------------
@@ -823,6 +844,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         setSaveState('success');
         // 首頁的「最近輸出」：記下成品縮圖＋這張圖導出當下的原圖與筆觸
         const cur = sessionRef.current;
+        if (cur) recordedOpsRef.current = cur.opsApplied;
         addExport('beauty', url, imageSrc, cur ? { ops: cur.ops.slice(0, cur.opsApplied) } : null);
       }
       else setSaveState('idle');
@@ -896,7 +918,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         <div className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
           <header className="h-14 flex items-center px-5 shrink-0 z-20 bg-black/40 backdrop-blur-xl">
             <button
-              onClick={() => onHome()}
+              onClick={() => { recordProgress(); onHome(); }}
               className="p-2 -ml-2 text-[#888] hover:text-white transition-colors active:scale-90"
             >
               <Icon name="chevron_left" className="text-2xl" />
@@ -938,7 +960,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         <header className="h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-20">
           <div className="w-24">
             {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
-            <button onClick={onCancel} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
+            <button onClick={() => { recordProgress(); onCancel(); }} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
               <ChevronLeft size={22} />
             </button>
           </div>
