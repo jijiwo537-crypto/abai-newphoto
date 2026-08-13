@@ -433,7 +433,61 @@ export const HomePage: React.FC<HomePageProps> = ({
       主視覺不用在這裡動 —— 它現在就在捲動內容裡，瀏覽器自己會捲，
       跟品牌字與其他東西完全同一拍。捲過第一屏它就自然離開畫面了，
       所以也不需要再淡出。 */
+  /* ── 往下滑的視差 ────────────────────────────────────────────────
+     模板那一段照捲軸原速往上，修圖這一屏只走 45% 的速度 ——
+     捲了 y，它自己往下補 0.55y，看起來就是「慢半拍地被留在後面」。
+     同時整片慢慢淡掉，捲到大約三分之二屏就完全不見，
+     所以兩段內容不會在畫面上打架。
+
+     ‧ 直接寫 DOM 的 style，不走 state：每一格捲動都重繪整棵首頁太貴了。
+     ‧ 用 rAF 收斂：一格只算一次，捲很快也不會排隊。
+     ‧ transform 與 opacity 都不會觸發重新排版，模板那一段一個像素都不動。
+     ‧ 系統開了「減少動態效果」就整個跳過。 */
+  const heroRef = useRef<HTMLDivElement>(null);
+  const paraRaf = useRef<number | null>(null);
+  const reduceMotion = useRef(false);
+  useEffect(() => {
+    try { reduceMotion.current = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* 舊瀏覽器 */ }
+  }, []);
+
+  const applyParallax = useCallback(() => {
+    paraRaf.current = null;
+    const sc = scrollRef.current, el = heroRef.current;
+    if (!sc || !el) return;
+    if (reduceMotion.current) { el.style.transform = ''; el.style.opacity = ''; return; }
+    const h = sc.clientHeight || 1;
+    const y = Math.max(0, sc.scrollTop);
+    el.style.transform = `translate3d(0, ${(y * 0.55).toFixed(2)}px, 0)`;
+    /* 淡出的節奏：前 12% 完全不動（手指才剛碰到就整片變淡會很躁），
+       之後到 68% 之間淡完。用 smoothstep 收頭尾，不是直線 ——
+       直線的淡出在開始與結束那兩下看得出「開關感」。 */
+    const t = Math.min(1, Math.max(0, (y / h - 0.12) / 0.56));
+    const fade = t * t * (3 - 2 * t);
+    const o = 1 - fade;
+    el.style.opacity = o.toFixed(3);
+    // 淡到快看不見時就不該再吃得到點擊，完全不見了連畫都不用畫
+    el.style.pointerEvents = o < 0.35 ? 'none' : '';
+    el.style.visibility = o <= 0.002 ? 'hidden' : '';
+  }, []);
+
+  const queueParallax = useCallback(() => {
+    if (paraRaf.current != null) return;
+    paraRaf.current = requestAnimationFrame(applyParallax);
+  }, [applyParallax]);
+
+  // 進頁面、換分頁、轉向都重算一次（從「我的」切回來時捲軸還停在原位）
+  useLayoutEffect(() => { applyParallax(); }, [applyParallax, nav]);
+  useEffect(() => {
+    const on = () => queueParallax();
+    window.addEventListener('resize', on);
+    return () => {
+      window.removeEventListener('resize', on);
+      if (paraRaf.current != null) cancelAnimationFrame(paraRaf.current);
+    };
+  }, [queueParallax]);
+
   const onScroll = useCallback(() => {
+    queueParallax();
     const sc = scrollRef.current;
     if (!sc) return;
     const h = sc.clientHeight || 1;
@@ -445,7 +499,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       return;
     }
     if (next !== navRef.current) setNav(next);
-  }, []);
+  }, [queueParallax]);
 
   const copyEmail = async () => {
     try {
@@ -592,7 +646,14 @@ export const HomePage: React.FC<HomePageProps> = ({
            廣告版位看得到的下緣與分頁列上緣原本差 24px，減三分之一就是 16px，
            所以整疊往下挪 8px。這一疊是貼著下緣排的，pb 少 8 就等於整組下移 8。
            主視覺與品牌字不在這個流裡（絕對定位），所以它們各自也加了同樣的 8px。 */}
-      <div className="relative min-h-full px-6 pb-[42px] flex flex-col gap-[22px] box-border">
+      <div
+        ref={heroRef}
+        /* z-0：模板那一段是 z-[1]，往上滑的時候會蓋過這一屏（這一屏正在淡出）。
+           這裡有 transform／opacity，本來就是自己的堆疊環境，
+           所以裡面那些 z-10 完全不受影響，排版也一個像素都沒動。 */
+        style={{ willChange: 'transform, opacity' }}
+        className="relative z-0 min-h-full px-6 pb-[42px] flex flex-col gap-[22px] box-border"
+      >
         {/* 主視覺那一塊（3D 物件）整個拿掉了。
              它本來是絕對定位、只鋪在最底層的，不佔版面 —— 所以拿掉之後，
              品牌字、聯絡鈕、下面那幾排按鈕的位置一個像素都不會變。 */}
@@ -691,7 +752,7 @@ export const HomePage: React.FC<HomePageProps> = ({
            版位是絕對定位往下多長 50px 的，扣掉這一段自己的 pb-[21px]，
            上緣留白 20px 是 12px、26px 就是 18px（12px 再多 0.5 倍）。
            只動這一段的頂端留白，第一屏（含廣告版位）一個像素都不會移動。 */}
-      <div ref={libRef} className="px-6 pb-4 pt-[26px]">
+      <div ref={libRef} className="relative z-[1] px-6 pb-4 pt-[26px]">
         {/* 搜尋欄 —— 還沒接真的模板資料，先做成純前端的字串過濾 */}
         <div className="flex items-center gap-2 h-11 px-3.5 mb-3 rounded-full bg-white/[0.06] border border-white/10">
           <Icon name="search" className="text-[18px] text-white/40 shrink-0" />
