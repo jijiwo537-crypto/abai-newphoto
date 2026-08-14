@@ -1290,12 +1290,14 @@ export const TextEditorPanel: React.FC<{
                  （那些是靠系統字型畫出來的，加粗、加斜、拆字距都只會歪掉），
                  所以只留一根發光跟發光顏色。 */
               <>
-                {slider('邊緣發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
-                {!!layer.glow && (
-                  onPickColor
-                    ? colorRow('顏色', layer.glowColor || '#FFFFFF', () => onPickColor('glow'))
-                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>{swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}</div>
-                )}
+                {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+                {/* 色票一直都在，不等滑桿拉了才出現 ——
+                    這樣既不會有「拉到 1 的瞬間欄位冒出來閃一下」，
+                    也可以先挑好顏色再決定要不要發光。 */}
+                <div>
+                  <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+                  {swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}
+                </div>
               </>
             ) : (
             <>
@@ -1329,7 +1331,7 @@ export const TextEditorPanel: React.FC<{
                 從 0 拉出來時是慢慢浮現，不會一下就跳出一圈明顯的邊。 */}
             <div className="grid grid-cols-2 gap-3">
               {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
-              {slider('邊緣發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+              {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
             </div>
             {/* 顏色不直接攤開色票，改成點一下才打開調色盤 —— 跟連線顏色同一種做法。
                 沒有給 onPickColor 的地方（例如經典拼圖）維持原本的色票列。
@@ -1410,7 +1412,7 @@ export const ShapeEditorPanel: React.FC<{
             <div>
               <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
               <div className="flex items-center gap-2">
-                {([['無', false], ['點點', true]] as const).map(([label, on]) => (
+                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
                   <button
                     key={label}
                     onClick={() => onChange({ shapeDots: on })}
@@ -1444,11 +1446,13 @@ export const ShapeEditorPanel: React.FC<{
               </div>
             </div>
           </div>
+          {/* 點點的兩根滑桿各佔一整排：擺成兩欄的話「間距」會排在
+              右邊「發光」那一欄的正下方，看起來像是發光的滑桿。 */}
           {!!layer.shapeDots && (
-            <div className="grid grid-cols-2 gap-3">
+            <>
               {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
               {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
-            </div>
+            </>
           )}
           {/* 兩排顏色都排在自己那一組的正下方（左＝點點、右＝發光），
               位置本身就講清楚是誰的顏色，所以標題只寫「顏色」。 */}

@@ -6738,13 +6738,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
             flow
             onClose={() => setIgOpen(false)}
           />
-          <button
-            onClick={() => setIgOpen(false)}
-            className="fixed top-4 right-4 z-[121] w-10 h-10 rounded-full bg-black/60 border border-white/15 text-white/80 hover:text-white flex items-center justify-center active:scale-90 transition-all"
-            title="關閉"
-          >
-            <Icon name="close" className="text-xl" />
-          </button>
+          {/* 關閉鍵不另外加：IgPreview 自己那一顆就夠了（onClose 已經接上去），
+              多一顆只是右上角多一個重複的按鈕。 */}
         </div>
       )}
 

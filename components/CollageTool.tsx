@@ -261,13 +261,82 @@ const drawShapeDots = (
   }
 };
 
+/* ── 符號「真正畫出來的那一塊」 ─────────────────────────────────────
+   跟圖案那邊是同一個問題、同一種解法：textAlign:'center' 對的是**前進寬度**、
+   textBaseline:'middle' 對的是 **em 方框**，兩個都不是墨水。符號大量用到組合
+   附加符號（疊在前一個字上面的小點、小星星）與冷門的 Unicode 區塊，退回系統
+   字型之後左右上下的留白常常差很多 —— 框就框不到它、也很難點到。
+   字型宣告的度量（actualBoundingBox*）在這些字上一樣不可靠，所以照圖案那邊
+   的做法：**直接畫一次、掃一次 alpha**，畫出來的像素不會騙人。
+   一種符號只量一次（字級 100），其他尺寸等比換算，量出來的東西拿去做三件事：
+     ① 新增時的框大小 ② 畫的時候把墨水中心移到框心 ③ 選取框與命中範圍
+   三邊同一份數字，框就一定框得到它。 */
+const SYM_INK_REF = 100;
+const symInkCache = new Map<string, { w: number; h: number; cx: number; cy: number }>();
+/** 回傳值都以「字級 1」為單位：w/h＝墨水大小，cx/cy＝墨水中心相對於下筆點的位移 */
+const symInk = (str: string, fam: string) => {
+  const key = `${fam}|${str}`;
+  const hit = symInkCache.get(key);
+  if (hit) return hit;
+  const S = SYM_INK_REF;
+  const pad = Math.ceil(S * 1.8);
+  const side = pad * 2;
+  let out = { w: Math.max(0.3, str.length * 0.5), h: 1.2, cx: 0, cy: 0 };
+  try {
+    const c = document.createElement('canvas');
+    c.width = side; c.height = side;
+    const g = c.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
+    if (g) {
+      g.font = `400 ${S}px ${fontStack(fam)}`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillStyle = '#fff';
+      g.fillText(str, pad, pad);
+      const d = g.getImageData(0, 0, side, side).data;
+      let minx = side, miny = side, maxx = -1, maxy = -1;
+      for (let y = 0; y < side; y++) {
+        for (let x = 0; x < side; x++) {
+          if (d[(y * side + x) * 4 + 3] > 8) {
+            if (x < minx) minx = x;
+            if (x > maxx) maxx = x;
+            if (y < miny) miny = y;
+            if (y > maxy) maxy = y;
+          }
+        }
+      }
+      if (maxx >= minx && maxy >= miny) {
+        out = {
+          w: (maxx - minx + 1) / S,
+          h: (maxy - miny + 1) / S,
+          cx: ((minx + maxx + 1) / 2 - pad) / S,
+          cy: ((miny + maxy + 1) / 2 - pad) / S,
+        };
+      }
+    }
+  } catch {}
+  symInkCache.set(key, out);
+  return out;
+};
+
+/** 依符號的內容與字級算出「剛好包住它」的框（含一點點留白，才好按） */
+const symBox = (str: string, fam: string, size: number) => {
+  const ink = symInk(str, fam);
+  return {
+    w: Math.max(6, ink.w * size * 1.06),
+    h: Math.max(6, ink.h * size * 1.16),
+  };
+};
+
 /**
  * 圖形調整面板裡「點一下打開調色盤」的那一列。
  * 樣式跟連線顏色、文字的描邊／發光顏色逐項相同。
  */
+/* 這裡刻意不放 key：兩顆顏色（點點、發光）是同一個父層的兩個相鄰子節點、
+   標題又都叫「顏色」，拿 label 當 key 就變成**同一個父層裡兩個一樣的 key** ——
+   React 的比對會亂掉：開開關關會愈疊愈多顆，切換的瞬間也會閃一下。
+   它們的位置是固定的（左、右），本來就不需要 key。 */
 const shapeColorRow = (label: string, value: string, onOpen: () => void) => (
   <div
-    key={label}
     className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
     onClick={onOpen}
   >
@@ -4142,6 +4211,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         (ctx as any).letterSpacing = `${(o.letterSpacing || 0) * s}px`;
+        /* 符號：把「真正畫出來的那一塊」的中心搬到框心。
+           不校正的話，前進寬度／em 方框跟墨水差多少，符號就偏出框多少 ——
+           那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
+        let tdx = 0, tdy = 0;
+        if (o.sym) {
+          const ink2 = symInk(o.text || '', fam);
+          tdx = -ink2.cx * o.size * s;
+          tdy = -ink2.cy * o.size * s;
+        }
         /* 順序跟經典拼圖一致：先只用「填色的形狀」畫光（三段模糊疊起來），
            再畫描邊，最後才填色。
            光如果跟描邊一起算，會沿著描邊外緣散開 —— 看起來就是描邊突然粗一圈，
@@ -4160,7 +4238,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           ctx.shadowColor = o.glowColor || '#ffffff';
           for (const k2 of [1, 2, 3]) {
             ctx.shadowBlur = (o.glow / 20) * 14 * k2 * tk;
-            ctx.fillText(o.text || '', 0, 0);
+            ctx.fillText(o.text || '', tdx, tdy);
           }
           ctx.restore();
         }
@@ -4169,10 +4247,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           ctx.miterLimit = 2;
           ctx.strokeStyle = o.strokeColor || '#FFFFFF';
           ctx.lineWidth = o.strokeWidth * 2 * tk;
-          ctx.strokeText(o.text || '', 0, 0);
+          ctx.strokeText(o.text || '', tdx, tdy);
         }
         ctx.fillStyle = o.color || '#ffffff';
-        ctx.fillText(o.text || '', 0, 0);
+        ctx.fillText(o.text || '', tdx, tdy);
         ctx.shadowBlur = 0;
         (ctx as any).letterSpacing = '0px';
       }
@@ -4512,7 +4590,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
-  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
+    /* editingTextId 一定要在這裡：正在畫布上打字的那一段字是「不畫」的
+       （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
+       編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
+       結束時畫布上那一份還是被跳過的，字就整個不見了。 */
+  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, editingTextId, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
 
   /** 下面那個 useLayoutEffect 已經同步畫過的那一版（哪一支 renderToCanvas、畫在幾倍） */
   const syncDrawnRef = useRef<{ fn: any; ps: number } | null>(null);
@@ -5600,12 +5682,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               >
                 儲存
               </button>
-              {/* 展開／收合都走同一組 transition，所以兩個方向都是順的 */}
+              {/* 展開／收合都走同一組 transition，所以兩個方向都是順的。
+                  刻意不用 scale：這兩顆裡面是線條圖示（SVG），整塊被縮放時
+                  每一格的線寬都要重新取樣，看起來就是圖示在抖。
+                  只用淡入＋往下滑，圖示從頭到尾都是 1:1，不會抖。 */}
               <div
-                className="absolute right-0 top-full mt-2 z-[60] flex flex-col gap-2 origin-top-right transition-all duration-200 ease-out"
+                className="absolute right-0 top-full mt-2 z-[60] flex flex-col gap-2 origin-top-right transition-[opacity,transform] duration-200 ease-out"
                 style={{
                   opacity: exportAsk ? 1 : 0,
-                  transform: exportAsk ? 'translateY(0) scale(1)' : 'translateY(-6px) scale(0.94)',
+                  transform: exportAsk ? 'translateY(0)' : 'translateY(-6px)',
                   pointerEvents: exportAsk ? 'auto' : 'none',
                 }}
               >
@@ -5616,8 +5701,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   <button
                     key={name}
                     onClick={(e) => { e.stopPropagation(); setExportAsk(false); (run as () => void)(); }}
-                    style={{ transitionDelay: exportAsk ? `${i * 45}ms` : '0ms' }}
-                    className="pl-3 pr-4 h-9 rounded-full bg-[#141414] border border-white/15 text-white text-[11px] font-bold tracking-widest whitespace-nowrap shadow-[0_6px_20px_rgba(0,0,0,0.6)] active:scale-95 hover:bg-[#1d1d1d] transition-all duration-200 flex items-center gap-2"
+                    /* 只讓底色與按下去的縮放有過場：transition-all ＋ 延遲會連
+                       「按下去」的回饋都被拖慢，看起來也像卡了一下 */
+                    className="pl-3 pr-4 h-9 rounded-full bg-[#141414] border border-white/15 text-white text-[11px] font-bold tracking-widest whitespace-nowrap shadow-[0_6px_20px_rgba(0,0,0,0.6)] active:scale-95 hover:bg-[#1d1d1d] transition-colors duration-200 flex items-center gap-2"
                   >
                     {icon}儲存{name}
                   </button>
@@ -5712,15 +5798,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           const sr = stEl ? stEl.getBoundingClientRect() : { left: 0, top: 0 } as DOMRect;
           const ps = previewScaleRef.current;
           const k = r.width / Math.max(1, cvsEl.width / ps);   // 畫布內部單位 → CSS
-          const left = r.left - sr.left + o.x * k;
-          const top = r.top - sr.top + o.y * k;
+          /* 符號的框是「剛好包住墨水」的，常常比 em 方框小一大截 ——
+             輸入框照那個框開的話字會被裁掉。所以符號的輸入框至少要有
+             一個字級的高度與寬度，並且以框心為中心攤開。一般文字不變。 */
+          const boxW = o.sym ? Math.max(o.w, (o.size || 40) * 1.2) : o.w;
+          const boxH = o.sym ? Math.max(o.h, (o.size || 40) * 1.6) : o.h;
+          const left = r.left - sr.left + (o.x + o.w / 2 - boxW / 2) * k;
+          const top = r.top - sr.top + (o.y + o.h / 2 - boxH / 2) * k;
           /* 收工時如果整段被刪光了就把東西放回去，不然會留下一個看不見的空框：
              一般文字放回預設的「輸入文字」，符號放回它自己那一顆。 */
           const done = () => {
-            if (!o.text) {
-              const back = o.sym || TEXT_PLACEHOLDER;
-              setObjects(prev => prev.map(z => z.id === o.id ? { ...z, text: back } : z));
-            }
+            const back = !o.text ? (o.sym || TEXT_PLACEHOLDER) : o.text;
+            setObjects(prev => prev.map(z => {
+              if (z.id !== o.id) return z;
+              const n = { ...z, text: back };
+              /* 符號改過內容之後要重新量框：框是照「真正畫出來的那一塊」定的，
+                 內容變了還沿用舊的框，選取框就會對不上（框心固定不動）。 */
+              if (z.sym) {
+                const nb = symBox(back, z.fontFamily || DEFAULT_FONT, z.size || 40);
+                n.x = z.x + z.w / 2 - nb.w / 2;
+                n.y = z.y + z.h / 2 - nb.h / 2;
+                n.w = nb.w; n.h = nb.h;
+              }
+              return n;
+            }));
             setEditingTextId(null);
           };
           return (
@@ -5753,7 +5854,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               style={{
                 position: 'absolute',
                 left, top,
-                width: o.w * k, height: o.h * k,
+                width: boxW * k, height: boxH * k,
                 transform: `rotate(${o.rot || 0}deg)`,
                 transformOrigin: '50% 50%',
                 margin: 0, padding: 0, border: 'none', outline: 'none', resize: 'none',
@@ -5763,7 +5864,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 fontStyle: o.italic ? 'italic' : 'normal',
                 fontSize: (o.size || 40) * k,
                 letterSpacing: `${(o.letterSpacing || 0) * k}px`,
-                lineHeight: `${o.h * k}px`,
+                lineHeight: `${boxH * k}px`,
                 color: o.color || '#FFFFFF',
                 caretColor: o.color || '#FFFFFF',
                 textAlign: 'center',
@@ -6201,17 +6302,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   if (!offs2) return;
                   const id = Math.random().toString(36).slice(2, 9);
                   ensureFont(DEFAULT_FONT);
-                  const M = 100;
-                  const mc = document.createElement('canvas').getContext('2d');
-                  let w100 = M * Math.max(1, txt.length) * 0.5;
-                  if (mc) { mc.font = `400 ${M}px ${fontStack(DEFAULT_FONT)}`; w100 = Math.max(1, mc.measureText(txt).width); }
+                  /* 框照「真正畫出來的那一塊」量（見 symInk 的說明），
+                     不是照前進寬度 —— 這樣選取框才會貼著符號本身。 */
+                  const ink = symInk(txt, DEFAULT_FONT);
                   const short = Math.min(offs2.cw, offs2.ch);
                   /* 短的符號照寬度回推會算出很大的字級，所以再壓一次上限：
                      跟一段新文字差不多大（短邊的一成二），而且不超過編輯頁
                      那根「大小」滑桿的最大值 —— 不然一加進來就頂在滑桿外面。 */
-                  const size = Math.max(12, Math.min(160, Math.round(short * 0.12), Math.round((offs2.cw * 0.7) * M / w100)));
-                  const w = Math.max(8, Math.round((w100 / M) * size));
-                  const h = Math.max(8, Math.round(size * 1.4));
+                  const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
+                    Math.round((offs2.cw * 0.7) / Math.max(0.05, ink.w))));
+                  const box = symBox(txt, DEFAULT_FONT, size);
+                  const w = Math.round(box.w), h = Math.round(box.h);
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
                     fontFamily: DEFAULT_FONT, bold: false, italic: false,
@@ -6382,7 +6483,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             <div>
                               <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
                               <div className="flex items-center gap-2">
-                                {([['無', false], ['點點', true]] as const).map(([label, on]) => (
+                                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
                                   <button
                                     key={label}
                                     onClick={() => patch({ dots: on })}
@@ -6416,13 +6517,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               </div>
                             </div>
                           </div>
+                          {/* 點點的兩根滑桿各佔一整排：擺成兩欄的話「間距」會排在
+                              右邊「發光」那一欄的正下方，看起來像是發光的滑桿。 */}
                           {!!sel.dots && (
-                            <div className="grid grid-cols-2 gap-3">
+                            <>
                               <CompactSlider label="大小" value={sel.dotSize ?? 50} min={0} max={100}
                                 onChange={(v: number) => patch({ dotSize: v })} />
                               <CompactSlider label="間距" value={sel.dotGap ?? 20} min={0} max={100}
                                 onChange={(v: number) => patch({ dotGap: v })} />
-                            </div>
+                            </>
                           )}
                           {/* 兩顆顏色都排在自己那一組的正下方（左＝點點、右＝發光），
                               位置本身就講清楚是誰的顏色了，所以標題只寫「顏色」。
