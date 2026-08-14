@@ -401,16 +401,10 @@ export const HomePage: React.FC<HomePageProps> = ({
    * 版位拿掉之後沒有東西會蓋過來了，直接捲到 libRef 的頂端就對。
    */
   const libScrollTop = (sc: HTMLDivElement) => {
-    // 量的是排版盒（外層，不會被動畫位移），所以拿到的一定是排版上的位置
-    const top = libBoxRef.current?.offsetTop ?? sc.clientHeight;
-    /* 模板那一段在排版上已經往上挪了 lift，畫面上再由動畫補回 lift×(1 − y/range)。
-       所以它貼齊上緣的時候：
-         top − y + lift × (1 − y / range) = 0
-         → y = (top + lift) ÷ (1 + lift / range)
-       沒有視差（不支援／關了動態效果）時 lift 是 0，算出來就是原本的值。 */
-    const range = sc.clientHeight || 1;
-    const lift = liftPx(sc);
-    return Math.max(0, Math.round((top + lift) / (1 + lift / range)));
+    /* 模板那一段沒有任何 transform 了（位移全部交給瀏覽器捲動），
+       所以它排版上的位置就是「捲到這裡它剛好貼齊上緣」。 */
+    const el = libBoxRef.current;
+    return el ? Math.max(0, el.offsetTop) : sc.clientHeight;
   };
 
   /** 讀 --lib-lift 的實際像素。它寫成 calc()，要用一個暫時的元素讓瀏覽器算完再讀。 */
@@ -557,28 +551,18 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (!sc || !el) return;
     if (cssTimeline.current) return;          // 交給 CSS，JS 一個字都不用寫
     if (reduceMotion.current) {
-      el.style.transform = ''; el.style.opacity = '';
-      if (libRef.current) libRef.current.style.transform = '';
+      el.style.opacity = ''; el.style.pointerEvents = ''; el.style.visibility = '';
       return;
     }
+    /* **只改透明度，位置一律不碰。**
+       位移交給瀏覽器（修圖屏是 sticky、模板是原速捲動），JS 算的東西
+       永遠會比捲動晚一格 —— 位移晚一格就是「被拉太下來又彈回去」，
+       但透明度晚一格看不出來（它沒有位置可以對照）。 */
     const h = sc.clientHeight || 1;
-    // 夾在 0～可捲上限之間：iOS 橡皮筋期間讀到的值可能超出範圍，
-    // 直接拿去算會讓圖案往回彈一下 —— 那正是「到頂時往下抖一下」的樣子。
     const y = Math.min(Math.max(0, sc.scrollTop), Math.max(0, sc.scrollHeight - h));
-    /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。
-       不封頂的話捲得越深、圖案被推得越下面（實測 y=1204 時多跑了 295px），
-       兩條路的行為會不一樣，而且那一截往下的位移還會去撐可捲的長度。 */
-    el.style.transform = `translate3d(0, ${(Math.min(y, h) * 0.70).toFixed(2)}px, 0)`;
-    // 模板那一段自己再往上多走一截（進度封頂在一屏），所以會提早到頂
-    const lib = libRef.current;
-    if (lib) {
-      const lift = liftPx(sc);
-      lib.style.transform = `translate3d(0, ${((1 - Math.min(1, y / h)) * lift).toFixed(2)}px, 0)`;
-    }
     /* 淡出的節奏：前 8% 完全不動（手指才剛碰到就整片變淡會很躁），
-       之後到 56% 之間淡完 —— 模板提早到頂了，這一屏也要提早退場。
-       用 smoothstep 收頭尾，不是直線：直線的淡出在開始與結束那兩下
-       看得出「開關感」。 */
+       之後到 56% 之間淡完。用 smoothstep 收頭尾，不是直線：
+       直線的淡出在開始與結束那兩下看得出「開關感」。 */
     const t = Math.min(1, Math.max(0, (y / h - 0.08) / 0.48));
     const fade = t * t * (3 - 2 * t);
     const o = 1 - fade;
@@ -806,11 +790,13 @@ export const HomePage: React.FC<HomePageProps> = ({
            主視覺與品牌字不在這個流裡（絕對定位），所以它們各自也加了同樣的 8px。 */}
       <div
         ref={heroRef}
-        /* z-0：模板那一段是 z-[1]，往上滑的時候會蓋過這一屏（這一屏正在淡出）。
-           這裡有 transform／opacity，本來就是自己的堆疊環境，
-           所以裡面那些 z-10 完全不受影響，排版也一個像素都沒動。 */
-        style={{ willChange: 'transform, opacity' }}
-        className="home-hero relative z-0 min-h-full px-6 pb-[42px] flex flex-col gap-[22px] box-border"
+        /* z-[2]：這一屏現在是不透明的黑底、而且釘在最上面，要完整蓋住下面的模板；
+           等它淡掉，模板才浮現出來。
+           它是 sticky（有定位）＋ 有 opacity，本來就是自己的堆疊環境，
+           所以裡面那些 z-10 完全不受影響，排版也一個像素都沒動。
+           home-hero：sticky 與淡出的動畫都掛在這個名字上（styles.css）。 */
+        style={{ willChange: 'opacity' }}
+        className="home-hero z-[2] min-h-full px-6 pb-[42px] flex flex-col gap-[22px] box-border"
       >
         {/* 主視覺那一塊（3D 物件）整個拿掉了。
              它本來是絕對定位、只鋪在最底層的，不佔版面 —— 所以拿掉之後，
@@ -910,20 +896,14 @@ export const HomePage: React.FC<HomePageProps> = ({
            版位是絕對定位往下多長 50px 的，扣掉這一段自己的 pb-[21px]，
            上緣留白 20px 是 12px、26px 就是 18px（12px 再多 0.5 倍）。
            只動這一段的頂端留白，第一屏（含廣告版位）一個像素都不會移動。 */}
-      {/* 外面這一層是「排版盒」，裡面那一層才會動。
-          ‧ 負的上外距：排版上先把這一段往上挪 --lib-lift，可捲的長度就短掉同樣的量。
-          ‧ overflow: clip：裡面那層一開始是往下位移 +lift 的，**不加這個的話那一截
-            會把可捲的長度撐長**（實測 1987 會變成 2240），捲到底時瀏覽器再把你夾
-            回去 —— 那正是「滑到底會回朔、會抖」的原因。夾掉之後可捲長度從頭到尾
-            都是同一個數字。被夾掉的是模板最下面那一截，而那時候它離畫面還很遠；
-            等你真的捲到下面，位移早就收回 0 了，什麼都不會少。 */}
-      <div ref={libBoxRef} style={{ marginTop: 'calc(var(--lib-lift, 0px) * -1)', overflow: 'clip' }}>
-      <div
-        ref={libRef}
-        /* 畫面上的位置由 CSS 動畫補回來（一開始 translateY(+lift)，捲動時收回 0），
-           所以「靜止時看起來完全沒變、捲起來卻快 0.35 屏」。 */
-        className="home-lib relative z-[1] px-6 pb-4 pt-[26px]"
-      >
+      {/* 負的上外距：排版上把這一段往上挪 --lib-lift，所以它比原本更早到頂
+          （這就是「下面上來得比較快」）。可捲的長度也同步短掉一樣的量，
+          捲到底時下緣照樣貼齊，不會多出空白。
+          這裡**完全沒有 transform** —— 位移全部交給瀏覽器自己捲，
+          所以不可能出現「JS 晚一格、圖被拉走又彈回去」。
+          靜止時它被上面那層不透明的修圖屏完整蓋住，看起來跟以前一樣。 */}
+      <div ref={libBoxRef} style={{ marginTop: 'calc(var(--lib-lift, 0px) * -1)' }}>
+      <div ref={libRef} className="home-lib relative z-0 px-6 pb-4 pt-[26px]">
         {/* 搜尋欄 —— 還沒接真的模板資料，先做成純前端的字串過濾 */}
         <div className="flex items-center gap-2 h-11 px-3.5 mb-3 rounded-full bg-white/[0.06] border border-white/10">
           <Icon name="search" className="text-[18px] text-white/40 shrink-0" />
