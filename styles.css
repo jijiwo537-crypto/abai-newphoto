@@ -160,64 +160,65 @@ select:focus, select:focus-visible {
 
 
 /* ── 主頁往下滑的視差 ──────────────────────────────────────────────
-   「修圖」那一屏只走 30% 的速度、同時淡出；「模板」那一段比捲軸還快 ——
-   除了本來就跟著捲的一屏，再自己往上多走 0.35 屏，所以它會提早到頂。
-   兩邊加起來的落差是 1.35 − 0.30 = 1.05 屏。
+   **這一版的原則：畫面上不會有任何一個東西是「靠 JS 每格改位置」在動的。**
 
-   為什麼要寫成 CSS 動畫：用 JS 監聽捲動、每一格改 transform 的話，
-   捲動是在合成執行緒上跑的、JS 是在主執行緒上算的 —— 兩邊差一格就是
-   「圖片跟著手指抖一下」。改用捲動時間軸之後，整段動畫交給合成執行緒
-   自己照捲動位置算，主執行緒完全不參與，所以不可能再跟捲動不同步。
+   為什麼要這樣改：iOS Safari 還不支援 CSS 的捲動時間軸，所以手機上跑的是
+   JS 那條路；而捲動本身是在合成執行緒上跑的，JS 算出來的位移永遠會晚一格。
+   快速往上滑時，圖案就會被畫在「上一格的位置」——看起來就是被拉太下來、
+   然後又彈回去。只要位移是 JS 在算，這個問題就消不掉。
 
-   不支援的瀏覽器會落回 JS 版（HomePage.tsx 裡面那一段）。
+   所以位移全部交給瀏覽器自己：
+     ‧ 修圖那一屏用 position: sticky 釘在最上面（0 倍速）——
+       sticky 是瀏覽器自己在合成執行緒上定位的，跟捲動永遠同一格，不可能晚。
+     ‧ 模板那一段就照捲軸原速上來（1 倍速），完全沒有 transform。
+     ‧ 兩者的落差還是一整屏，而且模板在排版上先往上挪了 --lib-lift，
+       所以它比原本更早到頂（一樣是「下面上來得比較快」的感覺）。
+     ‧ 唯一還跟著捲動變的只有「透明度」。透明度晚一格看不出來 ——
+       它沒有位置可以對照，不會有被拉走又彈回去的感覺。
 
-   --hero-range 是「一屏的高度」，由 HomePage 量好之後寫上來。
-   --lib-lift 是「模板那一段額外往上多走多少」；最底下有一塊同高的墊片
-   把這一段補回去，所以捲到最後一樣是剛剛好貼齊，不會多出一截空白。 */
+   修圖那一屏是不透明的黑底，所以它釘在上面時會完整蓋住下面的模板；
+   等它淡掉，模板就自然浮現出來。 */
 .home-scroll {
-  --lib-lift: calc(var(--hero-range, 100vh) * 0.35);
+  /* 模板那一段在排版上往上挪多少。挪越多，它就越早到頂。 */
+  --lib-lift: calc(var(--hero-range, 100vh) * 0.233);
 }
 @media (prefers-reduced-motion: reduce) {
-  /* 不做動畫的話，模板那一段不會被往上拉，墊片也要跟著歸零 */
   .home-scroll { --lib-lift: 0px; }
 }
 
+.home-hero {
+  /* 釘在捲動區最上面。位置由瀏覽器自己算，不經過 JS。 */
+  position: sticky;
+  top: 0;
+  /* 不透明的底：釘住的時候要完整蓋住下面的模板，淡掉之後才讓它出來。
+     頁面本來就是純黑，所以靜止時看起來跟以前一模一樣。 */
+  background: #000;
+  /* 這一屏的高度是「捲動區的內容高」，比可視高度少了底部那 21px 的內距，
+     所以最下面會露出模板的一小條。用陰影往下多鋪一段純黑補起來 ——
+     陰影不佔版面，下面所有東西的位置一個像素都不會動。 */
+  box-shadow: 0 32px 0 #000;
+}
+
 @supports (animation-timeline: scroll()) {
+  /* 支援的瀏覽器（桌機 Chrome / Edge）連透明度也交給合成執行緒。
+     不支援的（iOS Safari）由 HomePage.tsx 那邊每格更新透明度。 */
   .home-hero {
-    animation: home-hero-para linear both;
+    animation: home-hero-fade linear both;
     animation-timeline: scroll(nearest block);
     animation-range: 0 var(--hero-range, 100vh);
   }
-  .home-lib {
-    animation: home-lib-para linear both;
-    animation-timeline: scroll(nearest block);
-    animation-range: 0 var(--hero-range, 100vh);
-    /* 沒有這一行的話，模板那一整排卡片每一格都要重畫一次（它一直在位移）。
-       提升成自己的合成圖層之後，位移就只是搬圖層，不再重畫內容。 */
-    will-change: transform;
-    backface-visibility: hidden;
-  }
-  /* 位移是線性的：進度 p 就是 range × 0.70 × p。
-     透明度用 smoothstep（前 8% 不動、到 56% 淡完），所以中間多切幾格 ——
-     模板提早到頂了，修圖這一屏也要提早退場，兩段才不會疊在一起。 */
-  @keyframes home-hero-para {
-    0%   { transform: translate3d(0, 0, 0);                                      opacity: 1;     visibility: visible; }
-    8%   { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.056), 0); opacity: 1; }
-    20%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.140), 0); opacity: 0.844; }
-    32%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.224), 0); opacity: 0.5;   pointer-events: none; }
-    44%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.308), 0); opacity: 0.156; }
-    56%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.392), 0); opacity: 0;     visibility: hidden; }
-    100% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.700), 0); opacity: 0;     visibility: hidden; }
-  }
-  /* 模板那一段在排版上先往上挪了 --lib-lift（負的上外距），
-     這裡再用 transform 把它「放回原位」，然後隨著捲動收回去 ——
-     所以看起來就是它比捲軸快了 0.35 屏，但可捲的長度剛好短掉同樣的量，
-     捲到底時它的下緣還是貼齊畫面，底下不會空出一截。 */
-  @keyframes home-lib-para {
-    0%   { transform: translate3d(0, var(--lib-lift), 0); }
-    100% { transform: translate3d(0, 0, 0); }
+  /* 前 8% 不動（手指才剛碰到就整片變淡會很躁），到 56% 淡完。
+     用 smoothstep 收頭尾，不是直線 —— 直線在開始與結束那兩下會有開關感。 */
+  @keyframes home-hero-fade {
+    0%   { opacity: 1;     visibility: visible; }
+    8%   { opacity: 1; }
+    20%  { opacity: 0.844; }
+    32%  { opacity: 0.5;   pointer-events: none; }
+    44%  { opacity: 0.156; }
+    56%  { opacity: 0;     visibility: hidden; }
+    100% { opacity: 0;     visibility: hidden; }
   }
   @media (prefers-reduced-motion: reduce) {
-    .home-hero, .home-lib { animation: none; }
+    .home-hero { animation: none; }
   }
 }
