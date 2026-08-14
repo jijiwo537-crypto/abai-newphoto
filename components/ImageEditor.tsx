@@ -947,6 +947,8 @@ export const processPixels = (
 
 // ... (ImageEditorProps and BufferSet interfaces remain same)
 interface ImageEditorProps {
+  /** 從歷史紀錄點開來的那一筆的 key。再記一次的時候沿用它＝更新同一筆 */
+  histKey?: string | null;
   imageSrc: string;
   /** 批量編輯：這次匯入的所有照片。沒給或只有一張時，介面跟以前完全一樣。 */
   batchSrcs?: string[];
@@ -1456,7 +1458,7 @@ function runThumbChunks<T>(
   step();
 }
 
-export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onImportNew, originalFile, initialState }) => {
+export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onImportNew, originalFile, initialState }) => {
   /* ── 批量編輯 ───────────────────────────────────────────────────────────
      一次匯入多張時，編輯器本身完全不變 —— 畫面上永遠只有「目前這一張」，
      其他張的參數各自收在旁邊。連結中的照片共用同一份參數（改一張＝全部一起改），
@@ -5919,7 +5921,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       }
       addExport('editor', cv.toDataURL('image/png'), srcList[safeIdx] || imageSrc, {
         params: p, geo, selectedLutIdx,
-      });
+      }, histKey || undefined);
     } catch { /* 記錄失敗不能影響離開 */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyIndex, srcList, safeIdx, imageSrc, geo, selectedLutIdx, activeCategory, render]);
@@ -6142,7 +6144,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
             // 首頁的「最近輸出」：記下成品縮圖＋這張圖導出當下的原圖與參數
             addExport('editor', out[safeIdx] || out[0], srcList[safeIdx] || imageSrc, {
               params: paramsRef.current, geo, selectedLutIdx,
-            });
+            }, histKey || undefined);
         } catch (e) { console.error("Save failed", e); setSaveState('idle'); }
     }, 100);
   };

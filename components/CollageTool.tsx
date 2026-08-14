@@ -3,6 +3,7 @@ import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
+import { addExport } from '../utils/exportHistory';
 import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Sparkles, Asterisk, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
@@ -27,7 +28,7 @@ import { SHAPE_IMAGES } from '../utils/shapeImages';
 import {
   getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio,
   isTextHole, holeGlyph, glyphFont, glyphInk, drawTextShape, drawShapePath,
-  drawHoleShape, paintDots,
+  drawHoleShape, paintDots, glowAmount,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
@@ -887,9 +888,11 @@ interface CollageToolProps {
   onImportNew: () => void;
   /** 接續上次時把存下來的參數餵回來 */
   initialState?: any;
+  /** 從歷史紀錄點開來的那一筆的 key。再記一次的時候沿用它＝更新同一筆 */
+  histKey?: string | null;
 }
 
-export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, onImportNew, initialState, lutList = [] }) => {
+export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, onImportNew, initialState, histKey, lutList = [] }) => {
   const [imageState, setImageState] = useState<any>(null);
   const [layout, setLayout] = useState('mask-bottom');
   const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
@@ -3710,9 +3713,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            還原座標系全部共用同一段。 */
         if (o.kind === 'hole') {
           /* 整段畫法在共用模組裡（經典拼圖也吃同一支），
-             這裡只負責把原點搬到框心再交出去。 */
+             這裡只負責把原點搬到框心再交出去。
+             發光的半徑先乘上強度（面板那根 0～100 的滑桿）。 */
+          const ga = glowAmount(o.glow);
           ctx.translate(bw / 2, bh / 2);
-          drawHoleShape(ctx, o, bw, bh, shapeGlowBlurs(bw, bh));
+          drawHoleShape(ctx, o, bw, bh, shapeGlowBlurs(bw, bh).map(r => r * ga));
           ctx.setLineDash([]);
           ctx.restore();
         } else {
@@ -3720,11 +3725,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
         // 發光：三段模糊疊起來，跟經典拼圖那邊同一組半徑
-        if (o.glow) {
+        const gAmt = glowAmount(o.glow);
+        if (gAmt > 0) {
           ctx.save();
           ctx.shadowColor = o.glowColor || col;
+          // 半徑乘上強度（面板那根 0～100 的滑桿）
           for (const r of shapeGlowBlurs(bw, bh)) {
-            ctx.shadowBlur = r;
+            ctx.shadowBlur = r * gAmt;
             if (solid) ctx.fill(shapeP); else ctx.stroke(shapeP);
           }
           ctx.restore();
@@ -4153,6 +4160,44 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
   }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, editingTextId, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
+
+  /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
+     離開創意拼圖時記一筆。key 用「這一次拼圖」的 id（從歷史紀錄點進來的話
+     就沿用那一筆的），所以同一件作品不管進出幾次都只會留最新的一筆，
+     不會每點進去看一次就多一張一模一樣的。 */
+  const histIdRef = useRef(histKey || `collage-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+  const recordHistory = useCallback(async () => {
+    if (!imageState) return;
+    try {
+      const off = getLayoutOffsets();
+      if (!off) return;
+      // 縮圖用的成品：小一張就夠，首頁只拿它當格子
+      const cv = document.createElement('canvas');
+      renderToCanvas(cv, Math.max(0.25, 720 / Math.max(off.cw, off.ch)));
+      const out = cv.toDataURL('image/jpeg', 0.86);
+      cv.width = cv.height = 0;
+      /* 原圖：當初那個 object URL 載完就收掉了，所以直接把記憶體裡那張
+         重新編一次 —— 點回來的時候才有東西可以接續。 */
+      let srcUrl = out;
+      const sc = document.createElement('canvas');
+      sc.width = imageState.originalW || imageState.baseW;
+      sc.height = imageState.originalH || imageState.baseH;
+      const sx = sc.getContext('2d');
+      if (sx) {
+        sx.drawImage(imageState.img, 0, 0, sc.width, sc.height);
+        srcUrl = sc.toDataURL('image/jpeg', 0.92);
+      }
+      sc.width = sc.height = 0;
+      await addExport('collage', out, srcUrl, {
+        layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
+        holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
+        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
+      }, histIdRef.current);
+    } catch { /* 記錄失敗不能影響離開 */ }
+  }, [imageState, getLayoutOffsets, renderToCanvas, layout, maskScale, holeType, customText,
+      holeSize, sizeJitter, holeAngle, holeCount, holes, maskColor, patternType, dotColor,
+      dotSize, dotGap, symmetryEnabled, glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
+      glowMoImg, glowMoText, linkColor]);
 
   /** 下面那個 useLayoutEffect 已經同步畫過的那一版（哪一支 renderToCanvas、畫在幾倍） */
   const syncDrawnRef = useRef<{ fn: any; ps: number } | null>(null);
@@ -5044,7 +5089,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         <div className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
           <header className="h-14 flex items-center px-5 shrink-0 z-20 bg-black/40 backdrop-blur-xl">
             <button 
-              onClick={(e) => { e.stopPropagation(); onHome(); }}
+              onClick={(e) => { e.stopPropagation(); recordHistory(); onHome(); }}
               className="p-2 -ml-2 text-[#888] hover:text-white transition-colors active:scale-90"
             >
               <ChevronLeft size={22} />
@@ -5106,7 +5151,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       {saveState !== 'success' && (
       <header className="h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-[100] bg-black/90 backdrop-blur-md">
         <button
-          onClick={(e) => { e.stopPropagation(); onHome(); }}
+          onClick={(e) => { e.stopPropagation(); recordHistory(); onHome(); }}
           className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"
           title="繼續編輯"
         >
@@ -6043,55 +6088,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
                             {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c }), true)}
                           </div>
-                          {(!sel.filled || sel.kind === 'line') && (
-                            <>
-                              {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
-                              {shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }))}
-                              {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位） */}
-                              {shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
-                            </>
-                          )}
-                          {/* 描邊與發光併成同一排（描邊是粗細、發光是開關），
-                              兩顆顏色再排在各自的正下方、左右欄一一對齊 ——
-                              位置本身就講清楚是誰的顏色，所以標題只寫「顏色」。 */}
-                          <div className="grid grid-cols-2 gap-3">
-                            {/* 存的是 0～10，滑桿顯示成 0～100（跟粗細同一種刻度） */}
-                            <CompactSlider label="描邊" value={Math.round((sel.strokeW ?? 0) * 10)} min={0} max={100}
-                              onChange={(v: number) => patch({ strokeW: v / 10 })} />
-                            <div>
-                              <p className="text-[11px] font-bold text-white/70 mb-1.5">發光</p>
-                              <div className="flex items-center gap-2">
-                                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
-                                  <button
-                                    key={label}
-                                    onClick={() => patch(on && !sel.glowInit
-                                      /* 第一次打開發光：預設就用這個圖形自己的顏色，
-                                         之後不管再怎麼開開關關都不會再蓋掉手動選的顏色。 */
-                                      ? { glow: 1, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
-                                      : { glow: on ? 1 : 0 })}
-                                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                                      !!sel.glow === on
-                                        ? 'bg-white text-black border-white'
-                                        : 'bg-white/[0.04] text-white/70 border-white/15'
-                                    }`}
-                                  >
-                                    {label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                          {(!!sel.strokeW || !!sel.glow) && (
-                            <div className="grid grid-cols-2 gap-3">
-                              {sel.strokeW
-                                ? shapeColorRow('顏色', sel.strokeColor || '#000000', () => setColorPickerTarget('shapeStroke'))
-                                : <div />}
-                              {sel.glow
-                                ? shapeColorRow('顏色', sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR, () => setColorPickerTarget('shapeGlow'))
-                                : <div />}
-                            </div>
-                          )}
-                          {/* 點點自己一排 */}
+                          {/* 第二排：點點 */}
                           <div>
                             <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
                             <div className="flex items-center gap-2">
@@ -6110,9 +6107,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               ))}
                             </div>
                           </div>
-                          {/* 點點的兩根滑桿同一排；顏色直接攤開色票 */}
                           {!!sel.dots && (
                             <>
+                              {/* 兩根滑桿同一排 */}
                               <div className="grid grid-cols-2 gap-3">
                                 <CompactSlider label="大小" value={sel.dotSize ?? 50} min={0} max={100}
                                   onChange={(v: number) => patch({ dotSize: v })} />
@@ -6123,6 +6120,34 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                                 <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
                                 {swatchStrip(sel.dotColor || '#FFFFFF', SOFT_COLORS, (c: string) => patch({ dotColor: c }), true)}
                               </div>
+                            </>
+                          )}
+                          {/* 第三排：發光 —— 一根滑桿＋一排色票（沒有開關鍵） */}
+                          <CompactSlider label="發光" value={Math.round(glowAmount(sel.glow) * 100)} min={0} max={100}
+                            onChange={(v: number) => patch(v > 0 && !sel.glowInit
+                              /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色，
+                                 之後不管怎麼調都不會再蓋掉手動選的顏色。 */
+                              ? { glow: v, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
+                              : { glow: v })} />
+                          <div>
+                            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+                            {swatchStrip(sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR, GLOW_SWATCH_COLORS,
+                              (c: string) => patch({ glowColor: c }), true)}
+                          </div>
+                          {/* 第四排：描邊 —— 一樣是上面滑桿、下面色票 */}
+                          <CompactSlider label="描邊" value={Math.round((sel.strokeW ?? 0) * 10)} min={0} max={100}
+                            onChange={(v: number) => patch({ strokeW: v / 10 })} />
+                          <div>
+                            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+                            {swatchStrip(sel.strokeColor || '#000000', SOFT_COLORS, (c: string) => patch({ strokeColor: c }), true)}
+                          </div>
+                          {/* 粗細與虛線只有空心／線條才有，放在最後面 */}
+                          {(!sel.filled || sel.kind === 'line') && (
+                            <>
+                              {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
+                              {shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }))}
+                              {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位） */}
+                              {shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
                             </>
                           )}
                         </div>

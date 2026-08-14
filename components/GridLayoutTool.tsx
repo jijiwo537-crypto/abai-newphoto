@@ -12,7 +12,7 @@ import { addExport } from '../utils/exportHistory';
 import { SYMBOLS } from '../utils/symbols';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
-  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape,
+  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape, glowAmount,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -1343,13 +1343,13 @@ export const TextEditorPanel: React.FC<{
           <div className="space-y-3.5 pt-1 pb-24">
             {/* 文字內容一律直接在畫布上打（選中之後再點一次那段字），
                 所以這裡不放輸入框。符號也是一樣的改法。 */}
+            {slider(symbol ? '大小' : '字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
             <div>
-              {/* 標題只寫「顏色」：這一欄本來就在文字（符號）那一頁的最上面，
+              {/* 標題只寫「顏色」：這一欄本來就是這一頁的第一組，
                   再寫一次「文字」「符號」是多的。 */}
               <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
               {swatchRow(layer.color, c => onChange({ color: c }))}
             </div>
-            {slider(symbol ? '大小' : '字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
             {symbol ? (
               /* 符號到這裡就結束了：粗體／斜體／字距／描邊對符號沒有意義
                  （那些是靠系統字型畫出來的，加粗、加斜、拆字距都只會歪掉），
@@ -1460,62 +1460,7 @@ export const ShapeEditorPanel: React.FC<{
             <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
             {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c }), true)}
           </div>
-          {hasOutline && (
-            <>
-              {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
-              {slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
-                v => onChange({ shapeLineW: v / 10 }))}
-              {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
-                  所以線越粗、虛線的節奏就跟著等比例放大 */}
-              {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
-            </>
-          )}
-          {/* 描邊與發光併成同一排（描邊是粗細、發光是開關），跟創意拼圖那一頁
-              逐項相同。圖層上下不放在這裡 —— 選中時畫面上那排工具列本來就有。 */}
-          <div className="grid grid-cols-2 gap-3">
-            {/* 存的是 0~10，滑桿顯示成 0~100（跟粗細同一種刻度） */}
-            {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
-              v => onChange({ shapeStrokeW: v / 10 }))}
-            <div>
-              <p className="text-[11px] font-bold text-white/70 mb-1.5">發光</p>
-              <div className="flex items-center gap-2">
-                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
-                  <button
-                    key={label}
-                    onClick={() => onChange({ shapeGlow: on })}
-                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                      !!layer.shapeGlow === on
-                        ? 'bg-white text-black border-white'
-                        : 'bg-white/[0.04] text-white/70 border-white/15'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-          {/* 兩排顏色排在自己那一組的正下方（左＝描邊、右＝發光），
-              位置本身就講清楚是誰的顏色，所以標題只寫「顏色」。 */}
-          {(!!layer.shapeStrokeW || !!layer.shapeGlow) && (
-            <div className="grid grid-cols-2 gap-3">
-              {layer.shapeStrokeW ? (
-                <div>
-                  <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                  {swatchStrip(layer.shapeStrokeColor || '#000000', SOFT_COLORS,
-                    c => onChange({ shapeStrokeColor: c }), true)}
-                </div>
-              ) : <div />}
-              {layer.shapeGlow ? (
-                <div>
-                  <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                  {swatchStrip(layer.shapeGlowColor || layer.color, GLOW_COLORS,
-                    c => onChange({ shapeGlowColor: c }), true)}
-                </div>
-              ) : <div />}
-            </div>
-          )}
-          {/* 點點自己一排 */}
+          {/* 第二排：點點 */}
           <div>
             <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
             <div className="flex items-center gap-2">
@@ -1534,9 +1479,9 @@ export const ShapeEditorPanel: React.FC<{
               ))}
             </div>
           </div>
-          {/* 點點的兩根滑桿同一排；顏色直接攤開色票 */}
           {!!layer.shapeDots && (
             <>
+              {/* 兩根滑桿同一排 */}
               <div className="grid grid-cols-2 gap-3">
                 {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
                 {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
@@ -1546,6 +1491,33 @@ export const ShapeEditorPanel: React.FC<{
                 {swatchStrip(layer.shapeDotColor || '#FFFFFF', SOFT_COLORS,
                   c => onChange({ shapeDotColor: c }), true)}
               </div>
+            </>
+          )}
+          {/* 第三排：發光 —— 一根滑桿＋一排色票（沒有開關鍵） */}
+          {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
+            v => onChange({ shapeGlow: v } as any))}
+          <div>
+            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+            {swatchStrip(layer.shapeGlowColor || layer.color, GLOW_COLORS,
+              c => onChange({ shapeGlowColor: c }), true)}
+          </div>
+          {/* 第四排：描邊 —— 一樣是上面滑桿、下面色票 */}
+          {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
+            v => onChange({ shapeStrokeW: v / 10 }))}
+          <div>
+            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+            {swatchStrip(layer.shapeStrokeColor || '#000000', SOFT_COLORS,
+              c => onChange({ shapeStrokeColor: c }), true)}
+          </div>
+          {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
+          {hasOutline && (
+            <>
+              {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
+              {slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
+                v => onChange({ shapeLineW: v / 10 }))}
+              {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
+                  所以線越粗、虛線的節奏就跟著等比例放大 */}
+              {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
             </>
           )}
         </div>
@@ -2653,8 +2625,8 @@ interface FloatingImage {
   shapeLineW?: number;
   /** 描邊的虛線長度（0＝實線，1~100 是「一段有幾倍線寬」的比例，跟圖片描邊同一套） */
   shapeDash?: number;
-  /** 圖形發光（只有開／關） */
-  shapeGlow?: boolean;
+  /** 圖形發光強度 0~100（0＝關）。舊資料存的是 true／false，glowAmount 會相容 */
+  shapeGlow?: number | boolean;
   /** 圖形發光的顏色。沒設就用圖形自己的顏色 */
   shapeGlowColor?: string;
   /** 發光顏色是不是已經給過預設值了（只在第一次打開發光時帶入圖層自己的顏色） */
@@ -3682,7 +3654,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               {
                 hole: image.holeType || 'circle', filled: image.shapeFilled,
                 color: image.color || SHAPE_DEFAULT_COLOR,
-                lineW: image.shapeLineW, glow: image.shapeGlow ? 1 : 0,
+                lineW: image.shapeLineW, glow: image.shapeGlow as any,
                 glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW,
                 strokeColor: image.shapeStrokeColor,
                 dots: image.shapeDots, dotSize: image.shapeDotSize,
@@ -3711,9 +3683,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             overflow: 'visible', pointerEvents: 'none',
             /* 發光：三段 drop-shadow 疊起來，跟文字／圖片的光同一套濃淡。
                半徑寫在「沒有縮放前」的座標系上，外框放大時光會跟著一起放大。 */
-            filter: image.shapeGlow
+            filter: glowAmount(image.shapeGlow as any) > 0
               ? shapeGlowBlurs(image.width, image.height)
-                  .map(r => `drop-shadow(0 0 ${r3(r * image.scale)}px ${image.shapeGlowColor || image.color || SHAPE_DEFAULT_COLOR})`)
+                  .map(r => `drop-shadow(0 0 ${r3(r * image.scale * glowAmount(image.shapeGlow as any))}px ${image.shapeGlowColor || image.color || SHAPE_DEFAULT_COLOR})`)
                   .join(' ')
               : undefined,
           }}
@@ -4039,6 +4011,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 };
 
 interface GridLayoutToolProps {
+  /** 從歷史紀錄點開來的那一筆的 key。再記一次的時候沿用它＝更新同一筆 */
+  histKey?: string | null;
   onHome: () => void;
   onImportNew?: () => void;
   initialFiles?: File[];
@@ -4048,7 +4022,7 @@ interface GridLayoutToolProps {
   lutList?: { id: string; name: string; url: string }[];
 }
 
-export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImportNew, initialFiles, initialState, lutList = [] }) => {
+export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome, onImportNew, initialFiles, initialState, lutList = [] }) => {
   /** 一頁上可以放多個佈局，每個佈局都是一個獨立物件（跟一般圖片一樣）。 */
   interface LayoutItem {
     id: string;
@@ -6803,7 +6777,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       if (!url) return;
       /* 原圖那一格放的是「拼好的成品」：真正還原用的是 state（裡面每一張照片
          都會被 exportHistory 收成附件）。 */
-      await addExport('layout', url, url, state, histKeyRef.current);
+      await addExport('layout', url, url, state, histKey || histKeyRef.current);
       URL.revokeObjectURL(url);
     } catch { /* 記錄失敗不能影響離開 */ }
   };
@@ -8188,14 +8162,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         {
           hole: fImg.holeType || 'circle', filled: fImg.shapeFilled,
           color: fImg.color || SHAPE_DEFAULT_COLOR,
-          lineW: fImg.shapeLineW, glow: fImg.shapeGlow ? 1 : 0,
+          lineW: fImg.shapeLineW, glow: fImg.shapeGlow as any,
           glowColor: fImg.shapeGlowColor, strokeW: fImg.shapeStrokeW,
           strokeColor: fImg.shapeStrokeColor,
           dots: fImg.shapeDots, dotSize: fImg.shapeDotSize,
           dotGap: fImg.shapeDotGap, dotColor: fImg.shapeDotColor,
           id: fImg.id,
         },
-        fw, fh, shapeGlowBlurs(fw, fh),
+        fw, fh, shapeGlowBlurs(fw, fh).map(r => r * glowAmount(fImg.shapeGlow as any)),
       );
       ctx.restore();
       ctx.restore();
@@ -8223,11 +8197,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       ctx.fillStyle = color;
     }
     // 發光：三段模糊疊起來，跟預覽的三層 drop-shadow 同一組半徑
-    if (fImg.shapeGlow) {
+    const gAmt = glowAmount(fImg.shapeGlow as any);
+    if (gAmt > 0) {
       ctx.save();
       ctx.shadowColor = fImg.shapeGlowColor || color;
       for (const r of shapeGlowBlurs(fw, fh)) {
-        ctx.shadowBlur = r;
+        ctx.shadowBlur = r * gAmt;
         if (solid) ctx.fill(path); else ctx.stroke(path);
       }
       ctx.restore();
@@ -8614,11 +8589,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   drawHoleShape(c, {
                     hole: f.holeType || 'circle', filled: f.shapeFilled,
                     color: f.color || SHAPE_DEFAULT_COLOR, lineW: f.shapeLineW,
-                    glow: f.shapeGlow ? 1 : 0, glowColor: f.shapeGlowColor,
+                    glow: f.shapeGlow as any, glowColor: f.shapeGlowColor,
                     strokeW: f.shapeStrokeW, strokeColor: f.shapeStrokeColor,
                     dots: f.shapeDots, dotSize: f.shapeDotSize,
                     dotGap: f.shapeDotGap, dotColor: f.shapeDotColor, id: f.id,
-                  }, w, h, shapeGlowBlurs(w, h));
+                  }, w, h, shapeGlowBlurs(w, h).map(r => r * glowAmount(f.shapeGlow as any)));
                 }}
                 style={{ ...common }}
               />
@@ -8630,9 +8605,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 preserveAspectRatio="none"
                 style={{
                   ...common, overflow: 'visible',
-                  filter: f.shapeGlow
+                  filter: glowAmount(f.shapeGlow as any) > 0
                     ? shapeGlowBlurs(f.width, f.height)
-                        .map(r => `drop-shadow(0 0 ${r3(r * f.scale * k)}px ${f.shapeGlowColor || f.color || SHAPE_DEFAULT_COLOR})`)
+                        .map(r => `drop-shadow(0 0 ${r3(r * f.scale * k * glowAmount(f.shapeGlow as any))}px ${f.shapeGlowColor || f.color || SHAPE_DEFAULT_COLOR})`)
                         .join(' ')
                     : undefined,
                 }}
