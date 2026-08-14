@@ -1048,7 +1048,9 @@ export const TextEditorPanel: React.FC<{
   onChange: (patch: Partial<FloatingImage>) => void;
   /** 外面把這個數字加一，就把游標放進文字框（點畫布上的字要能直接改） */
   focusSignal?: number;
-}> = ({ layer, onChange, focusSignal }) => {
+  /** 有給的話，描邊／發光的顏色就改成「點一下開調色盤」那種一列（跟連線顏色一樣） */
+  onPickColor?: (which: 'stroke' | 'glow') => void;
+}> = ({ layer, onChange, focusSignal, onPickColor }) => {
   const taRef = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     if (!focusSignal) return;
@@ -1079,6 +1081,20 @@ export const TextEditorPanel: React.FC<{
     });
     return () => { alive = false; };
   }, [family]);
+
+  /** 可以點開調色盤的那一列（樣式跟創意拼圖的「連線顏色」逐項相同） */
+  const colorRow = (label: string, value: string, onOpen: () => void) => (
+    <div
+      className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
+      onClick={onOpen}
+    >
+      <span className="text-[10px] font-bold text-[#888]">{label}</span>
+      <div className="flex items-center gap-2">
+        <span className="text-[9px] font-mono text-white/40">{value}</span>
+        <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
+      </div>
+    </div>
+  );
 
   const swatchRow = (value: string | undefined, onPick: (c: string) => void, colors = TEXT_COLORS) => (
     <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-0.5 py-0.5">
@@ -1222,27 +1238,28 @@ export const TextEditorPanel: React.FC<{
               )}
             </div>
             {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
-            {/* 描邊 0～2px，一樣分 50 格（每格 0.04px）：最小那一格只有 0.04px，
+            {/* 描邊與邊緣發光併成同一排。
+                描邊 0～2px，一樣分 50 格（每格 0.04px）：最小那一格只有 0.04px，
                 從 0 拉出來時是慢慢浮現，不會一下就跳出一圈明顯的邊。 */}
-            {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
-            {!!layer.strokeWidth && (
-              <div>
-                <p className="text-[11px] font-bold text-white/70 mb-1.5">描邊顏色</p>
-                {swatchRow(layer.strokeColor, c => onChange({ strokeColor: c }))}
+            <div className="grid grid-cols-2 gap-3">
+              {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
+              {slider('邊緣發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+            </div>
+            {/* 顏色不直接攤開色票，改成點一下才打開調色盤 —— 跟連線顏色同一種做法。
+                沒有給 onPickColor 的地方（例如經典拼圖）維持原本的色票列。 */}
+            {(!!layer.strokeWidth || !!layer.glow) && (
+              <div className="grid grid-cols-2 gap-3">
+                {!!layer.strokeWidth ? (
+                  onPickColor ? colorRow('描邊顏色', layer.strokeColor || '#000000', () => onPickColor('stroke'))
+                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">描邊顏色</p>{swatchRow(layer.strokeColor, c => onChange({ strokeColor: c }))}</div>
+                ) : <div />}
+                {!!layer.glow ? (
+                  onPickColor ? colorRow('發光顏色', layer.glowColor || '#FFFFFF', () => onPickColor('glow'))
+                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>{swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}</div>
+                ) : <div />}
               </div>
             )}
-            {/* 顯示成 0～0.5、分 50 格（每格 0.01），拖起來才不會一格一格跳；
-                最小那一格的模糊只有 0.28px，是從 0 慢慢亮起來、不會有斷層。
-                存進去的還是原本的 0～20 —— 舊的拼圖草稿裡已經存了 0～20 的值，
-                換算成新刻度存回去會讓舊作品的光突然變強，所以只換顯示。 */}
-            {slider('邊緣發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
-            {/* 發光顏色只有在真的有發光時才出現，跟描邊顏色同一條規則 */}
-            {!!layer.glow && (
-              <div>
-                <p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>
-                {swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}
-              </div>
-            )}
+
           </div>
         )}
       </div>
@@ -5238,7 +5255,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
   const [layoutSubTab, setLayoutSubTab] = useState<'layout' | 'adjust'>('layout');
   /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
-  const [addSub, setAddSub] = useState<'root' | 'shape'>('root');
+  const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
   // 離開「新增」分頁就退回大按鈕那一層，下次進來不會停在圖案清單
   useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
   const [colorPickerActive, setColorPickerActive] = useState(false);
@@ -10289,30 +10306,46 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
 
             {activeTab === 'add' && (
               <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300">
-                {addSub === 'root' ? (
+                {addSub === 'symbol' ? (
+                  /* 新增符號：內容之後補，先把外框與返回做好 */
+                  <div className="pt-1">
+                    <div className="flex items-center gap-2 mb-3">
+                      <button
+                        onClick={() => setAddSub('root')}
+                        aria-label="返回"
+                        title="返回"
+                        className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
+                      >
+                        <Icon name="arrow_back" className="text-[20px]" />
+                      </button>
+                      <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
+                    </div>
+                    <p className="text-[11px] text-white/40 text-center py-10">尚未加入符號</p>
+                  </div>
+                ) : addSub === 'root' ? (
                   /* 間距與左右內距比原本窄一些 —— 多了「新增圖形」這一顆，
                      四顆要並排在同一列上才塞得下。高度與字級完全沒動。 */
-                  <div className="flex justify-center gap-2.5 mt-6">
+                  <div className="flex justify-center gap-1.5 mt-6">
                   <button
                     onClick={() => {
                       setLayoutSubTab('layout');
                       setActiveTab('layout');
                     }}
-                    className="flex flex-col items-center justify-center py-4 px-2 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Icon name="grid_view" className="text-[24px] text-white/80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增佈局</span>
                   </button>
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex flex-col items-center justify-center py-4 px-2 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">匯入照片</span>
                   </button>
                   <button
                     onClick={() => handleAddTextLayer()}
-                    className="flex flex-col items-center justify-center py-4 px-2 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     {/* 跟文字編輯面板裡「字體」那一顆同一個圖示。
                         線寬調細對齊旁邊兩顆 Material 圖標；透明度改成掛在整個
@@ -10321,9 +10354,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                   </button>
+                  {/* 新增符號：內容之後再補，先把位置與外觀定下來 */}
+                  <button
+                    onClick={() => setAddSub('symbol')}
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                  >
+                    <Icon name="emoji_symbols" className="text-[24px] text-white/80" />
+                    <span className="text-[11px] font-bold tracking-widest text-white/90">新增符號</span>
+                  </button>
                   <button
                     onClick={() => setAddSub('shape')}
-                    className="flex flex-col items-center justify-center py-4 px-2 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Shapes size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
