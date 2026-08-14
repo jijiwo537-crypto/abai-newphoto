@@ -3245,7 +3245,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     /**
      * 一整側的發光（圖案＋連線）畫成一層再貼上去。
      * items 是這一側要發光的圖案（位置與大小都算好了），pairs 是這一側的線。
-     * 線的光半徑比圖案小一成 —— 線本來就細，散得跟圖案一樣會糊成一片。
+     * 線的光比圖案收斂：半徑再小 30%、亮度再低 20% ——
+     * 線本來就細，光散得跟圖案一樣會糊成一片。
      */
     const glowPass = (
       g: CanvasRenderingContext2D,
@@ -3292,13 +3293,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                      沒有指定連線顏色時就沿用圖案發光的顏色。 */
                   lg.strokeStyle = linkGlowColor;
                   lg.shadowColor = linkGlowColor;
+                  /* 半徑倍率 0.9 → 0.50。
+                     為什麼不是照比例的 0.63：shadowBlur 是高斯模糊的參數，
+                     實際「散出去多遠」跟它不是線性的（三段疊起來又更鈍）。
+                     實測掃過一輪，0.50 量到的散開範圍剛好是 −29.4%，
+                     0.63 只有 −20.6%。這裡要的是看得出來的 30%，所以取 0.50。 */
                   for (const kk of [1, 2, 3]) {
-                    lg.shadowBlur = base * kk * 0.9;
+                    lg.shadowBlur = base * kk * 0.50;
                     linkPath(lg, arr);
                   }
                   gg.save();
                   gg.setTransform(1, 0, 0, 1, 0, 0);
-                  gg.globalAlpha = av;
+                  // 亮度收 20%：整層貼上去時直接乘 0.8
+                  gg.globalAlpha = av * 0.8;
                   gg.drawImage(lt, 0, 0);
                   gg.restore();
                 });

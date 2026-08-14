@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { Heart, MessageCircle, Bookmark, Volume2, VolumeX } from 'lucide-react';
 
 /**
@@ -1427,20 +1427,35 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   };
   // 元件整個被卸載時（例如離開經典拼圖）也要把音樂停掉，不然會一直播下去
   useEffect(() => () => { audioRef.current?.pause(); audioRef.current = null; }, []);
-  // 直接量那個 4:5 的框：算的話會跟實際差幾個像素，頁面就會凸出去一點
-  useEffect(() => {
+  /* 直接量那個 4:5 的框：算的話會跟實際差幾個像素，頁面就會凸出去一點。
+
+     用 useLayoutEffect 而不是 useEffect —— 這是「進來時圖會抖一下」的關鍵：
+     igBox 的初始值是寫死的 360×450（還沒量之前只能先猜一個），
+     用 useEffect 的話瀏覽器會**先照那個猜測畫一次**、量完再改成真正的寬度
+     （例如 390），畫面上就是圖先出現在錯的大小、下一格再跳到定位。
+     useLayoutEffect 在瀏覽器繪製之前就跑完，所以第一次畫出來就是就定位的。 */
+  useLayoutEffect(() => {
     setIgPage(0);
     setIgMuted(true);
     let ro: ResizeObserver | null = null;
-    const attach = () => {
-      const el = igStripRef.current;
-      if (!el) { requestAnimationFrame(attach); return; }
-      const measure = () => setIgBox({ w: Math.round(el.clientWidth), h: Math.round(el.clientHeight) });
-      measure();
-      ro = new ResizeObserver(measure);
-      ro.observe(el);
-    };
-    attach();
+    const el0 = igStripRef.current;
+    const measure = (el: HTMLElement) =>
+      setIgBox({ w: Math.round(el.clientWidth), h: Math.round(el.clientHeight) });
+    if (el0) {
+      measure(el0);
+      ro = new ResizeObserver(() => measure(el0));
+      ro.observe(el0);
+    } else {
+      // 理論上 layout effect 跑的時候節點已經在了；萬一沒有就退回原本的等法
+      const attach = () => {
+        const el = igStripRef.current;
+        if (!el) { requestAnimationFrame(attach); return; }
+        measure(el);
+        ro = new ResizeObserver(() => measure(el));
+        ro.observe(el);
+      };
+      attach();
+    }
     return () => ro?.disconnect();
   }, []);
 
