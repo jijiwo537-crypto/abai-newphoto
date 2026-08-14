@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
-import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, MessageCircle, Bookmark, Volume2, VolumeX, Shapes } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes } from 'lucide-react';
 import { Icon } from './Icon';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
@@ -1384,8 +1384,7 @@ export const TextEditorPanel: React.FC<{
             {/* 最上面就是這個物件自己的顏色，色票直接攤開 ——
                 上面不再放「顏色」那行標題（它就在最頂端，不用再標一次）。 */}
             {swatchRow(layer.color, c => onChange({ color: c }))}
-            {/* 字級排在顏色與粗體中間。符號沒有這一根 —— 它的大小直接在畫布上捏。 */}
-            {!symbol && slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
+
             {symbol ? (
               /* 符號到這裡就結束了：粗體／斜體／字距／描邊對符號沒有意義
                  （那些是靠系統字型畫出來的，加粗、加斜、拆字距都只會歪掉），
@@ -1425,7 +1424,12 @@ export const TextEditorPanel: React.FC<{
                 </button>
               )}
             </div>
-            {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
+            {/* 字級與字距同一排（粗體／斜體排在它們上面）。
+                符號沒有這兩根 —— 它的大小直接在畫布上捏。 */}
+            <div className="grid grid-cols-2 gap-3">
+              {slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
+              {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
+            </div>
             {/* 描邊、發光各自跟自己的顏色並排（顏色是兩段式的，點一下才攤開色票）。
                 描邊 0～2px，一樣分 50 格（每格 0.04px）：最小那一格只有 0.04px，
                 從 0 拉出來時是慢慢浮現，不會一下就跳出一圈明顯的邊。
@@ -10882,14 +10886,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         用了會直接把「emoji_symbols」這串英文字印在按鈕上、
                         還會撐爆格子蓋到隔壁兩顆。改用跟旁邊「新增文字」「新增圖形」
                         同一套的 lucide 線條圖示。 */}
-                    <Asterisk size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                    {/* 圖標直接用清單裡的第五顆符號，一看就知道這一頁是什麼 */}
+                    <span className="text-white opacity-80 text-[15px] leading-none whitespace-nowrap h-6 flex items-center">{SYMBOLS[4]}</span>
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增符號</span>
                   </button>
                   <button
                     onClick={() => setAddSub('shape')}
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    <Hexagon size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                    <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
                   </button>
                   </div>

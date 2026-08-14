@@ -4,8 +4,9 @@ import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
-import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Hexagon, Sparkles, Asterisk, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
+import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Hexagon, Blocks, Sparkles, Asterisk, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
+import { SYMBOLS } from '../utils/symbols';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
 import {
@@ -5995,14 +5996,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             用了會直接把「emoji_symbols」這串英文字印在按鈕上、
                             還會撐爆格子蓋到隔壁兩顆。改用跟旁邊「新增文字」「新增圖形」
                             同一套的 lucide 線條圖示。 */}
-                        <Asterisk size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                        {/* 圖標直接用清單裡的第五顆符號，一看就知道這一頁是什麼 */}
+                        <span className="text-white opacity-80 text-[15px] leading-none whitespace-nowrap h-6 flex items-center">{SYMBOLS[4]}</span>
                         <span className="text-[11px] font-bold tracking-widest text-white/90">新增符號</span>
                       </button>
                       <button
                         onClick={() => setAddSub('shape')}
                         className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
-                        <Hexagon size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                        <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
                       </button>
                     </div>
