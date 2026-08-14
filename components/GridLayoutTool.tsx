@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
-import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, MessageCircle, Bookmark, Volume2, VolumeX, Shapes } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, MessageCircle, Bookmark, Volume2, VolumeX, Shapes } from 'lucide-react';
 import { Icon } from './Icon';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
@@ -1460,7 +1460,23 @@ export const ShapeEditorPanel: React.FC<{
             <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
             {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c }), true)}
           </div>
-          {/* 第二排：點點 */}
+          {/* 第三排：發光 —— 一根滑桿＋一排色票（沒有開關鍵） */}
+          {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
+            v => onChange({ shapeGlow: v } as any))}
+          <div>
+            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+            {swatchStrip(layer.shapeGlowColor || layer.color, GLOW_COLORS,
+              c => onChange({ shapeGlowColor: c }), true)}
+          </div>
+          {/* 第四排：描邊 —— 一樣是上面滑桿、下面色票 */}
+          {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
+            v => onChange({ shapeStrokeW: v / 10 }))}
+          <div>
+            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+            {swatchStrip(layer.shapeStrokeColor || '#000000', SOFT_COLORS,
+              c => onChange({ shapeStrokeColor: c }), true)}
+          </div>
+          {/* 點點放在最下面 */}
           <div>
             <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
             <div className="flex items-center gap-2">
@@ -1493,22 +1509,6 @@ export const ShapeEditorPanel: React.FC<{
               </div>
             </>
           )}
-          {/* 第三排：發光 —— 一根滑桿＋一排色票（沒有開關鍵） */}
-          {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
-            v => onChange({ shapeGlow: v } as any))}
-          <div>
-            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-            {swatchStrip(layer.shapeGlowColor || layer.color, GLOW_COLORS,
-              c => onChange({ shapeGlowColor: c }), true)}
-          </div>
-          {/* 第四排：描邊 —— 一樣是上面滑桿、下面色票 */}
-          {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
-            v => onChange({ shapeStrokeW: v / 10 }))}
-          <div>
-            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-            {swatchStrip(layer.shapeStrokeColor || '#000000', SOFT_COLORS,
-              c => onChange({ shapeStrokeColor: c }), true)}
-          </div>
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
           {hasOutline && (
             <>
@@ -3773,6 +3773,15 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             position: 'absolute', left: '50%', top: '50%',
             transform: `translate(-50%, -50%) scale(${image.scale})`,
             transformOrigin: 'center center',
+            /* 縮放時的殘影：這一層只有 transform 在變，可是它裡面是**文字**
+               （還可能帶 text-shadow 的發光），瀏覽器把它當一般內容重畫時，
+               上一格畫過的地方不一定會被清乾淨 —— 在手機上看起來就是一路
+               留下一串愈來愈小的殘影。把它升成自己的合成層（translateZ ＋
+               will-change），縮放就只是「把同一張貼圖拉大縮小」，
+               不會再有沒清掉的舊像素。 */
+            willChange: 'transform',
+            backfaceVisibility: 'hidden',
+            WebkitBackfaceVisibility: 'hidden',
             width: `${image.width}px`, height: `${image.height}px`,
             pointerEvents: 'none',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -10861,7 +10870,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     onClick={() => setAddSub('shape')}
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    <Shapes size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                    <Hexagon size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
                   </button>
                   </div>

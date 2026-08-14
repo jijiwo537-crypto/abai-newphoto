@@ -4,7 +4,7 @@ import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
-import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Sparkles, Asterisk, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
+import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Hexagon, Sparkles, Asterisk, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
@@ -4990,7 +4990,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           height: 15px; width: 15px; border-radius: 50%;
           background: #fff; border: none; cursor: pointer;
         }
-        .premium-slider { -webkit-appearance: none; width: 100%; height: 2px; background: #222; border-radius: 2px; outline: none; touch-action: none; }
+        /* 跟 styles.css 那一份保持一致：軌道 6px、圓角到底（比較寬的那種） */
+        .premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; background: rgba(255,255,255,0.10); border-radius: 999px; outline: none; touch-action: none; cursor: pointer; }
         .premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; cursor: pointer; }
         /* 圓球跟經典拼圖的顏色滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
         .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
@@ -5995,7 +5996,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         onClick={() => setAddSub('shape')}
                         className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
-                        <Shapes size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                        <Hexagon size={24} strokeWidth={1.5} className="text-white opacity-80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
                       </button>
                     </div>
@@ -6088,7 +6089,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
                             {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c }), true)}
                           </div>
-                          {/* 第二排：點點 */}
+                          {/* 第三排：發光 —— 一根滑桿＋一排色票（沒有開關鍵） */}
+                          <CompactSlider label="發光" value={Math.round(glowAmount(sel.glow) * 100)} min={0} max={100}
+                            onChange={(v: number) => patch(v > 0 && !sel.glowInit
+                              /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色，
+                                 之後不管怎麼調都不會再蓋掉手動選的顏色。 */
+                              ? { glow: v, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
+                              : { glow: v })} />
+                          <div>
+                            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+                            {swatchStrip(sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR, GLOW_SWATCH_COLORS,
+                              (c: string) => patch({ glowColor: c }), true)}
+                          </div>
+                          {/* 第四排：描邊 —— 一樣是上面滑桿、下面色票 */}
+                          <CompactSlider label="描邊" value={Math.round((sel.strokeW ?? 0) * 10)} min={0} max={100}
+                            onChange={(v: number) => patch({ strokeW: v / 10 })} />
+                          <div>
+                            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+                            {swatchStrip(sel.strokeColor || '#000000', SOFT_COLORS, (c: string) => patch({ strokeColor: c }), true)}
+                          </div>
+                          {/* 點點放在最下面 */}
                           <div>
                             <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
                             <div className="flex items-center gap-2">
@@ -6122,25 +6142,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               </div>
                             </>
                           )}
-                          {/* 第三排：發光 —— 一根滑桿＋一排色票（沒有開關鍵） */}
-                          <CompactSlider label="發光" value={Math.round(glowAmount(sel.glow) * 100)} min={0} max={100}
-                            onChange={(v: number) => patch(v > 0 && !sel.glowInit
-                              /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色，
-                                 之後不管怎麼調都不會再蓋掉手動選的顏色。 */
-                              ? { glow: v, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
-                              : { glow: v })} />
-                          <div>
-                            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                            {swatchStrip(sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR, GLOW_SWATCH_COLORS,
-                              (c: string) => patch({ glowColor: c }), true)}
-                          </div>
-                          {/* 第四排：描邊 —— 一樣是上面滑桿、下面色票 */}
-                          <CompactSlider label="描邊" value={Math.round((sel.strokeW ?? 0) * 10)} min={0} max={100}
-                            onChange={(v: number) => patch({ strokeW: v / 10 })} />
-                          <div>
-                            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                            {swatchStrip(sel.strokeColor || '#000000', SOFT_COLORS, (c: string) => patch({ strokeColor: c }), true)}
-                          </div>
                           {/* 粗細與虛線只有空心／線條才有，放在最後面 */}
                           {(!sel.filled || sel.kind === 'line') && (
                             <>
