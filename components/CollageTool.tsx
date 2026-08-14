@@ -6095,10 +6095,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
                       <div className="h-full overflow-y-auto no-scrollbar pr-1">
                         <div className="space-y-3.5 pt-1 pb-2">
-                          <div>
-                            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                            {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c }), true)}
-                          </div>
+                          {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
+                          {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c }), true)}
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
                               不會有欄位突然冒出來閃一下。 */}
@@ -6117,36 +6115,34 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             <ColorPick label="顏色" value={sel.strokeColor || '#000000'}
                               onPick={(c: string) => patch({ strokeColor: c })} />
                           </div>
-                          {/* 點點放在最下面 */}
-                          <div>
-                            <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
-                            <div className="flex items-center gap-2">
-                              {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
-                                <button
-                                  key={label}
-                                  onClick={() => patch({ dots: on })}
-                                  className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                                    !!sel.dots === on
-                                      ? 'bg-white text-black border-white'
-                                      : 'bg-white/[0.04] text-white/70 border-white/15'
-                                  }`}
-                                >
-                                  {label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                          {!!sel.dots && (
-                            <>
-                              {/* 兩根滑桿同一排 */}
-                              <div className="grid grid-cols-2 gap-3">
-                                {shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
-                                {shapeSlider('間距', sel.dotGap ?? 20, 0, 100, (v: number) => patch({ dotGap: v }))}
+                          {/* 點點放在最下面：兩顆按鈕與顏色同一排，全部常駐
+                              （關著也看得到顏色，可以先挑好再打開）。 */}
+                          <div className="grid grid-cols-2 gap-3 items-end">
+                            <div>
+                              <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
+                              <div className="flex items-center gap-2">
+                                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
+                                  <button
+                                    key={label}
+                                    onClick={() => patch({ dots: on })}
+                                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
+                                      !!sel.dots === on
+                                        ? 'bg-white text-black border-white'
+                                        : 'bg-white/[0.04] text-white/70 border-white/15'
+                                    }`}
+                                  >
+                                    {label}
+                                  </button>
+                                ))}
                               </div>
-                              <ColorPick label="顏色" value={sel.dotColor || '#FFFFFF'}
-                                onPick={(c: string) => patch({ dotColor: c })} />
-                            </>
-                          )}
+                            </div>
+                            <ColorPick label="顏色" value={sel.dotColor || '#FFFFFF'}
+                              onPick={(c: string) => patch({ dotColor: c })} />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            {shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
+                            {shapeSlider('間距', sel.dotGap ?? 20, 0, 100, (v: number) => patch({ dotGap: v }))}
+                          </div>
                           {/* 粗細與虛線只有空心／線條才有，放在最後面 */}
                           {(!sel.filled || sel.kind === 'line') && (
                             <>
@@ -6509,84 +6505,81 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   {/* 連線：每個圖案拉一條極細的線到最近的鄰居。
                       版型跟上面那幾根滑桿一致 —— 左上是名稱，下面才是選項。
                       每一種圖案都支援（見上面 LINK_TYPES 的說明）。 */}
-                  {/* 連線與發光併成同一排：左邊連線、右邊發光 */}
-                  <div className="grid grid-cols-2 gap-3 mt-6">
-                  <div className="flex flex-col">
-                    <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
-                      <span>連線</span>
-                    </div>
-                    <div className="flex gap-1.5">
-                      {([['solid', '實線'], ['dash', '虛線'], ['none', '關閉']] as const).map(([mode, name]) => (
-                        <button
-                          key={mode}
-                          onClick={() => linkSupported && setLinkMode(mode)}
-                          disabled={!linkSupported}
-                          title={linkSupported ? `圖案之間的連線：${name}` : '這個圖案不支援連線'}
-                          className={`flex-1 h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
-                            !linkSupported
-                              ? 'border-[#1a1a1a] text-[#333] cursor-default'
-                              : linkMode === mode
-                                ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                                : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
-                          }`}
-                        >
-                          {name}
-                        </button>
-                      ))}
-                    </div>
-                    {linkMode !== 'none' && (
-                      <div
-                        className="h-[47px] mt-2 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
-                        onClick={() => setColorPickerTarget('linkColor')}
-                      >
-                        <span className="text-[10px] font-bold text-[#888]">顏色</span>
-                        <div className="flex items-center gap-2">
-                          {/* 還沒挑過顏色時就顯示遮罩的色號 —— 線在圖片上本來就是那個顏色 */}
-                          <span className="text-[9px] font-mono text-white/40">{linkColor || maskColor}</span>
-                          <div
-                            className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10"
-                            style={{ backgroundColor: linkColor || maskColor }}
-                          />
-                        </div>
+                  {/* 連線：按鈕與顏色並排成一列；顏色常駐（關閉時也看得到，
+                      可以先挑好顏色再打開）。發光同一種排法，各佔一列。 */}
+                  <div className="grid grid-cols-2 gap-3 items-end mt-6">
+                    <div className="flex flex-col">
+                      <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
+                        <span>連線</span>
                       </div>
-                    )}
+                      <div className="flex gap-1.5">
+                        {([['solid', '實線'], ['dash', '虛線'], ['none', '關閉']] as const).map(([mode, name]) => (
+                          <button
+                            key={mode}
+                            onClick={() => linkSupported && setLinkMode(mode)}
+                            disabled={!linkSupported}
+                            title={linkSupported ? `圖案之間的連線：${name}` : '這個圖案不支援連線'}
+                            className={`flex-1 h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
+                              !linkSupported
+                                ? 'border-[#1a1a1a] text-[#333] cursor-default'
+                                : linkMode === mode
+                                  ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                                  : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
+                            }`}
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div
+                      className="h-9 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[8px] cursor-pointer hover:bg-[#151515] transition-colors"
+                      onClick={() => setColorPickerTarget('linkColor')}
+                    >
+                      <span className="text-[10px] font-bold text-[#888]">顏色</span>
+                      <div className="flex items-center gap-2">
+                        {/* 還沒挑過顏色時就顯示遮罩的色號 —— 線在圖片上本來就是那個顏色 */}
+                        <span className="text-[9px] font-mono text-white/40">{linkColor || maskColor}</span>
+                        <div className="w-5 h-4 rounded-[4px] shadow-inner border border-white/10"
+                          style={{ backgroundColor: linkColor || maskColor }} />
+                      </div>
+                    </div>
                   </div>
 
-                  {/* 發光：預設關閉。可以只讓其中一側發光。 */}
-                  <div className="flex flex-col">
-                    <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
-                      <span>發光</span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {([['both', '開啟'], ['image', '僅圖片'], ['off', '關閉']] as const).map(([mode, name]) => (
-                        <button
-                          key={mode}
-                          onClick={() => setGlowMode(mode)}
-                          title={mode === 'both' ? '兩側的圖案都發光'
-                            : mode === 'image' ? '只有落在圖片上的那一段發光' : '不發光'}
-                          className={`h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${
-                            glowMode === mode
-                              ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                              : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
-                          }`}
-                        >
-                          {name}
-                        </button>
-                      ))}
-                    </div>
-                    {glowMode !== 'off' && (
-                      <div
-                        className="h-[47px] mt-2 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
-                        onClick={() => setColorPickerTarget('holeGlow')}
-                      >
-                        <span className="text-[10px] font-bold text-[#888]">顏色</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-mono text-white/40">{holeGlowColor}</span>
-                          <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: holeGlowColor }} />
-                        </div>
+                  <div className="grid grid-cols-2 gap-3 items-end mt-4">
+                    <div className="flex flex-col">
+                      <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
+                        <span>發光</span>
                       </div>
-                    )}
-                  </div>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {([['both', '開啟'], ['image', '僅圖片'], ['off', '關閉']] as const).map(([mode, name]) => (
+                          <button
+                            key={mode}
+                            onClick={() => setGlowMode(mode)}
+                            title={mode === 'both' ? '兩側的圖案都發光'
+                              : mode === 'image' ? '只有落在圖片上的那一段發光' : '不發光'}
+                            className={`h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${
+                              glowMode === mode
+                                ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                                : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
+                            }`}
+                          >
+                            {name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div
+                      className="h-9 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[8px] cursor-pointer hover:bg-[#151515] transition-colors"
+                      onClick={() => setColorPickerTarget('holeGlow')}
+                    >
+                      <span className="text-[10px] font-bold text-[#888]">顏色</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-mono text-white/40">{holeGlowColor}</span>
+                        <div className="w-5 h-4 rounded-[4px] shadow-inner border border-white/10"
+                          style={{ backgroundColor: holeGlowColor }} />
+                      </div>
+                    </div>
                   </div>
                 </div>}
                 </div>

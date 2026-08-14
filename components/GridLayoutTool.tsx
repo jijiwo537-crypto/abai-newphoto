@@ -1381,12 +1381,9 @@ export const TextEditorPanel: React.FC<{
           <div className="space-y-3.5 pt-1 pb-24">
             {/* 文字內容一律直接在畫布上打（選中之後再點一次那段字），
                 所以這裡不放輸入框。符號也是一樣的改法。 */}
-            <div>
-              {/* 標題只寫「顏色」：這一欄本來就是這一頁的第一組，
-                  再寫一次「文字」「符號」是多的。 */}
-              <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-              {swatchRow(layer.color, c => onChange({ color: c }))}
-            </div>
+            {/* 最上面就是這個物件自己的顏色，色票直接攤開 ——
+                上面不再放「顏色」那行標題（它就在最頂端，不用再標一次）。 */}
+            {swatchRow(layer.color, c => onChange({ color: c }))}
             {/* 字級排在顏色與粗體中間。符號沒有這一根 —— 它的大小直接在畫布上捏。 */}
             {!symbol && slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
             {symbol ? (
@@ -1485,10 +1482,8 @@ export const ShapeEditorPanel: React.FC<{
     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
       <div className="h-full overflow-y-auto no-scrollbar pr-1">
         <div className="space-y-3.5 pt-1 pb-2">
-          <div>
-            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-            {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c }), true)}
-          </div>
+          {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
+          {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c }), true)}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
           <div className="grid grid-cols-2 gap-3 items-end">
             {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
@@ -1502,37 +1497,34 @@ export const ShapeEditorPanel: React.FC<{
             <ColorPick label="顏色" value={layer.shapeStrokeColor || '#000000'}
               onPick={c => onChange({ shapeStrokeColor: c })} />
           </div>
-          {/* 點點放在最下面 */}
-          <div>
-            <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
-            <div className="flex items-center gap-2">
-              {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
-                <button
-                  key={label}
-                  onClick={() => onChange({ shapeDots: on })}
-                  className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                    !!layer.shapeDots === on
-                      ? 'bg-white text-black border-white'
-                      : 'bg-white/[0.04] text-white/70 border-white/15'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          {!!layer.shapeDots && (
-            <>
-              {/* 兩根滑桿同一排 */}
-              <div className="grid grid-cols-2 gap-3">
-                {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
-                {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
+          {/* 點點放在最下面：兩顆按鈕與顏色同一排，全部常駐
+              （關著也看得到顏色，可以先挑好再打開）。 */}
+          <div className="grid grid-cols-2 gap-3 items-end">
+            <div>
+              <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
+              <div className="flex items-center gap-2">
+                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
+                  <button
+                    key={label}
+                    onClick={() => onChange({ shapeDots: on })}
+                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
+                      !!layer.shapeDots === on
+                        ? 'bg-white text-black border-white'
+                        : 'bg-white/[0.04] text-white/70 border-white/15'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
-              <ColorPick label="顏色" value={layer.shapeDotColor || '#FFFFFF'}
-                onPick={c => onChange({ shapeDotColor: c })} />
-
-            </>
-          )}
+            </div>
+            <ColorPick label="顏色" value={layer.shapeDotColor || '#FFFFFF'}
+              onPick={c => onChange({ shapeDotColor: c })} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
+            {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
+          </div>
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
           {hasOutline && (
             <>
