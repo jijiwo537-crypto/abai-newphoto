@@ -1223,10 +1223,13 @@ export const TextEditorPanel: React.FC<{
                 存進去的還是原本的 0～20 —— 舊的拼圖草稿裡已經存了 0～20 的值，
                 換算成新刻度存回去會讓舊作品的光突然變強，所以只換顯示。 */}
             {slider('邊緣發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
-            <div>
-              <p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>
-              {swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}
-            </div>
+            {/* 發光顏色只有在真的有發光時才出現，跟描邊顏色同一條規則 */}
+            {!!layer.glow && (
+              <div>
+                <p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>
+                {swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}
+              </div>
+            )}
           </div>
         )}
       </div>

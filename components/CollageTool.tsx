@@ -1559,8 +1559,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const glowLayerRef = useRef<HTMLCanvasElement | null>(null);
   /** 「洞裡看到的那張圖」上次是用什麼參數畫的（見 drawMaskHolesOnTop） */
   const holeBdKeyRef = useRef('');
-  /** 「洞裡看到的那一層」畫好的成品（見 drawMaskHolesOnTop） */
-  const holeTopCacheRef = useRef<{ key: string; c: HTMLCanvasElement } | null>(null);
+  /** 「洞裡看到的那一層」畫好的成品（見 drawMaskHolesOnTop）。
+      畫布是常駐的 —— 每次重畫都重新配置一張跟預覽一樣大的畫布，
+      放大之後那是三千多萬像素（一百多 MB），手機會直接把畫布內容丟掉，
+      畫面上就是「遮罩突然整片變黑」。 */
+  const holeTopCacheRef = useRef<{
+    key: string; c: HTMLCanvasElement; rx: number; ry: number; rw: number; rh: number;
+  } | null>(null);
   /** 兩側各自「畫好的那一層光」。只要決定它長相的東西沒變就直接貼（見 glowPass） */
   const glowLayerCacheRef = useRef<Record<string, {
     key: string; c: HTMLCanvasElement; rx: number; ry: number; rw: number; rh: number;
@@ -2375,9 +2380,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
       if (hitHole) {
         e.stopPropagation();
+        const curSel = selectedTarget ? holesRef.current.find(h => h.id === selectedTarget) : null;
         if (selectedTarget === hitHole.id) {
           // 已經選中的圖案：這一下就可以直接拖
           interactionRef.current = { type: 'move_hole', id: hitHole.id, startX: x, startY: y, initX: hitHole.x, initY: hitHole.y, isClick: true, hitItself: true, clickedSide };
+        } else if (curSel) {
+          /* 已經選中一顆圖案，而手指剛好按在**別顆**圖案上：
+             拖 → 搬的仍然是已選中的那顆（選中之後整個畫布都是它的操作區，
+             重疊到別顆就拖不動很不合理）；沒拖 → 才把選取換到剛按到的那顆。
+             跟浮動物件那邊是同一套規則。 */
+          interactionRef.current = {
+            type: 'move_hole', id: curSel.id, startX: x, startY: y,
+            initX: curSel.x, initY: curSel.y, isClick: true, hitItself: true,
+            pickId: hitHole.id, clickedSide,
+          };
         } else {
           /* 還沒選中的圖案：這一下只能「點選」，不能順手拖走。
              放開時沒移動才算選中，移動了就什麼都不做 ——
@@ -2791,6 +2807,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       e.stopPropagation();
       /* 還沒選中的圖案：沒移動才算選中；拖了就當作沒發生（不選、也不動任何圖案） */
       if (intr.type === 'select_hole' && intr.isClick) setSelectedTarget(intr.id);
+      // 按在別顆圖案上但沒拖動 → 把選取換到那一顆
+      if (intr.type === 'move_hole' && intr.isClick && intr.pickId) setSelectedTarget(intr.pickId);
       if (intr.isClick && !intr.hitItself) setSelectedTarget(null);
       if (intr.type === 'brush_draw' || intr.type === 'brush_erase' || intr.type === 'move_hole' || intr.type === 'pinch_hole') {
         if (!(intr.type === 'move_hole' && intr.isClick)) {
@@ -3446,7 +3464,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }, box);
       /* 畫好的那一層留一份下來，下一格如果簽名一樣就直接貼。
          暫存層本身是共用的，會被下一趟蓋掉，所以要複製到自己的畫布上。 */
-      if (isMain && done && done.rw > 0 && done.rh > 0) {
+      if (isMain && done && done.rw > 0 && done.rh > 0 && done.rw * done.rh <= 12_000_000) {
         const keep = document.createElement('canvas');
         keep.width = done.rw; keep.height = done.rh;
         const kg = keep.getContext('2d');
@@ -3943,11 +3961,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           return `${pa.x.toFixed(1)},${pa.y.toFixed(1)},${pb.x.toFixed(1)},${pb.y.toFixed(1)},${local.toFixed(3)}`;
         }).join(';');
       const hit = isMain ? holeTopCacheRef.current : null;
-      if (hit && hit.key === sigTop && hit.c.width === Math.round(offs.cw) && hit.c.height === Math.round(offs.ch)) {
+      if (hit && hit.key === sigTop) {
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalAlpha = 1;
-        ctx.drawImage(hit.c, 0, 0);
+        ctx.drawImage(hit.c, 0, 0, hit.rw, hit.rh, hit.rx, hit.ry, hit.rw, hit.rh);
         ctx.restore();
         return;
       }
@@ -3986,13 +4004,59 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
       /* 畫在自己的一層上，畫完再整層貼回去 —— 這樣才能把成品留下來重複用。
          尺寸跟目標畫布一樣，位置就完全對得上。 */
-      const topW = Math.max(1, Math.round(offs.cw)), topH = Math.max(1, Math.round(offs.ch));
-      const topCv = document.createElement('canvas');
-      topCv.width = topW; topCv.height = topH;
-      const tctx = topCv.getContext('2d');
-      if (!tctx) return;
+      /* 只開「真的畫得到東西的那一塊」那麼大：遮罩側那些洞 ＋ 遮罩側的連線，
+         各自往外留一點餘裕。放大之後整張畫布有三千多萬像素，
+         但真正有洞的那一塊通常只有其中一小部分。 */
+      let tx0 = Infinity, ty0 = Infinity, tx1 = -Infinity, ty1 = -Infinity;
+      holes.forEach(h => {
+        const sd = h.side || 'both';
+        if (sd !== 'both' && sd !== 'mask') return;
+        if (layout !== AROUND && !isHoleFullyInsideMask(h, s, maskW, maskH)) return;
+        const A = hA(h);
+        if (!A.on) return;
+        const sz = getHoleSize(h) * A.k * s;
+        const hx = A.x * s + offs.mx, hy = A.y * s + offs.my;
+        tx0 = Math.min(tx0, hx - sz); ty0 = Math.min(ty0, hy - sz);
+        tx1 = Math.max(tx1, hx + sz); ty1 = Math.max(ty1, hy + sz);
+      });
+      maskLinksSig.forEach(pr => {
+        const pa = hA(pr[0]), pb = hA(pr[1]);
+        const pad = LINK_W * 4;
+        [pa, pb].forEach(q => {
+          tx0 = Math.min(tx0, q.x * s + offs.mx - pad); ty0 = Math.min(ty0, q.y * s + offs.my - pad);
+          tx1 = Math.max(tx1, q.x * s + offs.mx + pad); ty1 = Math.max(ty1, q.y * s + offs.my + pad);
+        });
+      });
+      if (!Number.isFinite(tx0)) return;      // 這一側完全沒有洞，什麼都不用畫
+      const rx0 = Math.max(0, Math.floor(tx0)), ry0 = Math.max(0, Math.floor(ty0));
+      const rw0 = Math.min(Math.round(offs.cw), Math.ceil(tx1)) - rx0;
+      const rh0 = Math.min(Math.round(offs.ch), Math.ceil(ty1)) - ry0;
+      if (rw0 <= 0 || rh0 <= 0) return;
+      /* 這一塊真的太大時就不開暫存層、直接畫在目標上（跟以前一樣）。
+         寧可慢一點，也不要為了快取去配置上百 MB 的畫布。 */
+      const TOP_CAP = 12_000_000;
+      const useLayer = isMain && rw0 * rh0 <= TOP_CAP;
+      let topCv: HTMLCanvasElement | null = null;
+      let ctx2 = ctx;
       const ctx0 = ctx;
-      const ctx2 = tctx as CanvasRenderingContext2D;
+      if (useLayer) {
+        const prev = holeTopCacheRef.current;
+        topCv = prev ? prev.c : document.createElement('canvas');
+        const need = (v: number) => Math.max(64, Math.ceil(v / 64) * 64);
+        if (topCv.width < rw0 || topCv.height < rh0
+            || topCv.width > need(rw0) + 256 || topCv.height > need(rh0) + 256) {
+          topCv.width = need(rw0); topCv.height = need(rh0);
+        }
+        const tctx = topCv.getContext('2d');
+        if (!tctx) return;
+        ctx2 = tctx as CanvasRenderingContext2D;
+        ctx2.setTransform(1, 0, 0, 1, 0, 0);
+        ctx2.globalAlpha = 1;
+        ctx2.globalCompositeOperation = 'source-over';
+        ctx2.clearRect(0, 0, rw0, rh0);
+        // 整個座標系往回平移，畫出來的位置才會落在這張小畫布上
+        ctx2.setTransform(1, 0, 0, 1, -rx0, -ry0);
+      }
       /* createPattern 會把來源畫布整張複製一份 —— 幾百萬像素，每格一次很傷。
          只有「文字類的圖案」與「補畫連線」才用得到它，沒有就不要做。 */
       const maskLinks = maskLinksSig;
@@ -4040,12 +4104,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         ctx2.restore();
       }
       // 整層貼回目標，並留一份給下一格用
-      ctx0.save();
-      ctx0.setTransform(1, 0, 0, 1, 0, 0);
-      ctx0.globalAlpha = 1;
-      ctx0.drawImage(topCv, 0, 0);
-      ctx0.restore();
-      if (isMain) holeTopCacheRef.current = { key: sigTop, c: topCv };
+      if (useLayer && topCv) {
+        ctx2.setTransform(1, 0, 0, 1, 0, 0);
+        ctx0.save();
+        ctx0.setTransform(1, 0, 0, 1, 0, 0);
+        ctx0.globalAlpha = 1;
+        ctx0.drawImage(topCv, 0, 0, rw0, rh0, rx0, ry0, rw0, rh0);
+        ctx0.restore();
+        holeTopCacheRef.current = { key: sigTop, c: topCv, rx: rx0, ry: ry0, rw: rw0, rh: rh0 };
+      } else if (isMain) {
+        holeTopCacheRef.current = null;   // 這一趟沒留成品，下一格要重畫
+      }
       if (!isMain) bd.width = 0;
     };
 
