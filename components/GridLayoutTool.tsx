@@ -939,9 +939,9 @@ export const TextEditorPanel: React.FC<{
               <textarea
                 value={layer.text || ''}
                 onChange={e => onChange({ text: e.target.value })}
-                rows={2}
+                rows={1}
                 placeholder="輸入文字..."
-                className="w-full p-2.5 bg-[#111] border border-transparent rounded-[8px] text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#333] resize-none"
+                className="w-full h-9 px-2.5 py-1.5 leading-6 bg-[#111] border border-transparent rounded-[8px] text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#333] resize-none overflow-hidden"
               />
             </div>
             <div>
@@ -950,7 +950,9 @@ export const TextEditorPanel: React.FC<{
             </div>
             {slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
             {/* 粗體與斜體同一排。這個字體沒有真斜體時只留粗體，
-                粗體就自己撐滿整排 —— 跟沒有斜體鈕之前長得一樣。 */}
+                粗體就自己撐滿整排 —— 跟沒有斜體鈕之前長得一樣。
+                但**現在這段字已經是斜體**的話一定要把鈕留著，
+                不然換到沒有真斜體的字體時，那個斜體就變成關不掉的了。 */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => onChange({ bold: !layer.bold })}
@@ -960,7 +962,7 @@ export const TextEditorPanel: React.FC<{
               >
                 <Bold size={14} />粗體
               </button>
-              {hasItalic && (
+              {(hasItalic || layer.italic) && (
                 <button
                   onClick={() => onChange({ italic: !layer.italic })}
                   className={`flex-1 h-9 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${

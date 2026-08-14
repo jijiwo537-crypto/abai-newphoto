@@ -154,6 +154,53 @@ const sameHoles = (a: any[], b: any[]) => renderKeyOf(a) === renderKeyOf(b);
 const objKeyOf = (list: any[]) =>
   (list || []).map(o => JSON.stringify({ ...o, img: undefined, src: o.src || '' })).join(';');
 
+/* ── 新增圖形 ──────────────────────────────────────────────────────
+   物件的第三種型別（另外兩種是 image 與 text）。畫的是純向量的形狀，
+   所以放多大都不會糊；粗細的單位跟圖片描邊同一條（長邊 / 160），
+   物件縮放時線的觀感才會一致。 */
+export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
+/** 可以新增哪些圖形（id、面板上的名稱） */
+export const SHAPE_OBJ_KINDS: [string, string][] = [
+  ['line', '直線'], ['rect', '矩形'], ['circle', '圓形'],
+  ['triangle', '三角形'], ['star', '星形'], ['heart', '愛心'], ['arrow', '箭頭'],
+];
+/** 把圖形的路徑描在 (x,y)-(x+w,y+h) 這個框裡 */
+export const shapeObjPath = (g: CanvasRenderingContext2D, kind: string, x: number, y: number, w: number, h: number) => {
+  const cx = x + w / 2, cy = y + h / 2;
+  g.beginPath();
+  if (kind === 'line') { g.moveTo(x, cy); g.lineTo(x + w, cy); return; }
+  if (kind === 'arrow') {
+    const head = Math.min(w * 0.32, h * 0.5);
+    g.moveTo(x, cy); g.lineTo(x + w - head * 0.6, cy);
+    g.moveTo(x + w, cy); g.lineTo(x + w - head, cy - head * 0.62);
+    g.moveTo(x + w, cy); g.lineTo(x + w - head, cy + head * 0.62);
+    return;
+  }
+  if (kind === 'rect') { g.rect(x, y, w, h); g.closePath(); return; }
+  if (kind === 'circle') { g.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2); g.closePath(); return; }
+  if (kind === 'triangle') {
+    g.moveTo(cx, y); g.lineTo(x + w, y + h); g.lineTo(x, y + h); g.closePath(); return;
+  }
+  if (kind === 'star') {
+    const R = Math.min(w, h) / 2, r = R * 0.42;
+    for (let i = 0; i < 10; i++) {
+      const ang = -Math.PI / 2 + (i * Math.PI) / 5;
+      const rr = i % 2 === 0 ? R : r;
+      const px = cx + Math.cos(ang) * rr * (w / Math.min(w, h));
+      const py = cy + Math.sin(ang) * rr * (h / Math.min(w, h));
+      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.closePath(); return;
+  }
+  // heart
+  const k = Math.min(w, h) / 2;
+  const sx = w / (k * 2), sy = h / (k * 2);
+  g.moveTo(cx, cy + k * 0.85 * sy);
+  g.bezierCurveTo(cx - 1.6 * k * sx, cy + 0.1 * k * sy, cx - 0.9 * k * sx, cy - 1.05 * k * sy, cx, cy - 0.35 * k * sy);
+  g.bezierCurveTo(cx + 0.9 * k * sx, cy - 1.05 * k * sy, cx + 1.6 * k * sx, cy + 0.1 * k * sy, cx, cy + k * 0.85 * sy);
+  g.closePath();
+};
+
 /* ── 連線 ──────────────────────────────────────────────────────────
    每一種圖案都能連線。以前只開放前六種「單一封閉形狀」，理由是字符類的
    中心點不明確、連起來會像亂畫 —— 但那個中心點的問題已經在 drawTextShape
@@ -1463,6 +1510,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const glowLayerRef = useRef<HTMLCanvasElement | null>(null);
   /** 「洞裡看到的那張圖」上次是用什麼參數畫的（見 drawMaskHolesOnTop） */
   const holeBdKeyRef = useRef('');
+  /** 「洞裡看到的那一層」畫好的成品（見 drawMaskHolesOnTop） */
+  const holeTopCacheRef = useRef<{ key: string; c: HTMLCanvasElement } | null>(null);
   /** 兩側各自「畫好的那一層光」。只要決定它長相的東西沒變就直接貼（見 glowPass） */
   const glowLayerCacheRef = useRef<Record<string, {
     key: string; c: HTMLCanvasElement; rx: number; ry: number; rw: number; rh: number;
@@ -2973,11 +3022,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
       let lay = glowLayerRef.current;
       if (!lay) { lay = document.createElement('canvas'); glowLayerRef.current = lay; }
-      const need = (v: number) => Math.min(4096, Math.ceil(v / 64) * 64);
+      /* 往上取到 64 的倍數，滑桿在拖的時候才不會每一格都重新配置。
+         **不能再夾 4096** —— 放大之後畫布會到六千多，這一層的範圍也跟著超過 4096，
+         夾住的話貼回去時就會讀到畫布外面，畫面上出現一條直的或橫的條紋。
+         （這就是「圖案上方有時候出現豎條線或橫條線」的原因。） */
+      const need = (v: number) => Math.max(64, Math.ceil(v / 64) * 64);
       if (lay.width < rw || lay.height < rh
           || lay.width > need(rw) + 256 || lay.height > need(rh) + 256) {
         lay.width = need(rw); lay.height = need(rh);
       }
+      // 保險：萬一還是配置不到那麼大，就把範圍縮到畫布裝得下的大小
+      rw = Math.min(rw, lay.width); rh = Math.min(rh, lay.height);
       const gg = lay.getContext('2d');
       if (!gg) return;
       gg.setTransform(1, 0, 0, 1, 0, 0);
@@ -3660,6 +3715,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           ctx.stroke();
           ctx.restore();
         }
+      } else if (o.type === 'shape') {
+        /* 圖形（新增圖形加進來的那些）。
+           粗細的單位跟描邊同一條（長邊 / 160），所以物件放大縮小時
+           框線的觀感一致。直線與箭頭永遠只描線、不填色。 */
+        const bw = o.w * s, bh = o.h * s;
+        const unit = Math.max(bw, bh) / 160;
+        const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
+        const col = o.color || SHAPE_DEFAULT_COLOR;
+        const solid = o.filled && o.kind !== 'line' && o.kind !== 'arrow';
+        ctx.save();
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.lineWidth = lw;
+        /* 呼叫端已經把座標系移到物件的**正中央**了，所以框是 −w/2 ～ +w/2。
+           填滿時線要往內縮半條，形狀的外緣才會剛好落在框上。 */
+        const inset = solid ? 0 : lw / 2;
+        shapeObjPath(ctx, o.kind || 'rect',
+          -bw / 2 + inset, -bh / 2 + inset,
+          Math.max(1, bw - inset * 2), Math.max(1, bh - inset * 2));
+        if (solid) { ctx.fillStyle = col; ctx.fill(); }
+        else { ctx.strokeStyle = col; ctx.stroke(); }
+        ctx.restore();
       } else if (o.type === 'text') {
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
            面板本身就是那邊那顆元件，所以這裡只要照著畫。 */
@@ -3728,6 +3805,38 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const drawMaskHolesOnTop = () => {
       const img = imageState.img, t = imageTransform;
       if (!img || !t) return;
+      /* ── 這一層跟物件在哪裡完全無關 ──────────────────────────────────
+         它畫的是「遮罩上那些洞裡看得到的圖」＋ 遮罩側的連線。
+         只由：照片與它的位移縮放、版面、遮罩大小、哪幾顆圖案在哪裡多大多斜、
+         連線與顏色 決定。拖物件時這些一項都沒變，卻每一格都重畫一次 ——
+         而且每個洞都要 clip 一次再貼一次圖，這正是「物件移到圖案底下之後
+         拖起來超卡」的原因。
+         現在先算簽名，一樣就把上一次畫好的整層直接貼回去。 */
+      const maskLinksSig = linksFor('mask');
+      const a0h = animRef.current;
+      const sigTop = `${layout}|${maskScale}|${s.toFixed(4)}|${offs.cw}x${offs.ch}|${offs.mx},${offs.my}`
+        + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}`
+        + `|${holeType}|${isTextHole(holeType) ? customText : ''}|${holeAngle}|${linkMode}|${linkColor || ''}`
+        + `|${LINK_W.toFixed(3)}`
+        + '|H' + holes.map(h => {
+          const A = hA(h);
+          return `${h.id},${A.on ? 1 : 0},${(A.x * s).toFixed(1)},${(A.y * s).toFixed(1)},`
+            + `${(getHoleSize(h) * A.k * s).toFixed(1)},${((h.angle !== undefined ? h.angle : holeAngle) + A.rot).toFixed(1)},${h.side || 'both'}`;
+        }).join(';')
+        + '|L' + maskLinksSig.map(pr => {
+          const pa = hA(pr[0]), pb = hA(pr[1]);
+          const local = a0h ? a0h.link(holeOrder.get(pr[0].id) ?? 0, holeOrder.get(pr[1].id) ?? 0) : 1;
+          return `${pa.x.toFixed(1)},${pa.y.toFixed(1)},${pb.x.toFixed(1)},${pb.y.toFixed(1)},${local.toFixed(3)}`;
+        }).join(';');
+      const hit = isMain ? holeTopCacheRef.current : null;
+      if (hit && hit.key === sigTop && hit.c.width === Math.round(offs.cw) && hit.c.height === Math.round(offs.ch)) {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.drawImage(hit.c, 0, 0);
+        ctx.restore();
+        return;
+      }
       /* 洞裡看到的就是墊在遮罩底下那張放大的圖：先畫成一張，再一個洞一個洞貼回去。
          這張要重複使用 —— 播動畫時一秒會走 30 次，每次 new 一張幾百萬像素的
          畫布，記憶體會被灌爆（就是「播一播閃退回主畫面」）。 */
@@ -3761,11 +3870,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           if (isMain) { aroundBdRef.current = null; holeBdKeyRef.current = bdKey; }
         }
       }
+      /* 畫在自己的一層上，畫完再整層貼回去 —— 這樣才能把成品留下來重複用。
+         尺寸跟目標畫布一樣，位置就完全對得上。 */
+      const topW = Math.max(1, Math.round(offs.cw)), topH = Math.max(1, Math.round(offs.ch));
+      const topCv = document.createElement('canvas');
+      topCv.width = topW; topCv.height = topH;
+      const tctx = topCv.getContext('2d');
+      if (!tctx) return;
+      const ctx0 = ctx;
+      const ctx2 = tctx as CanvasRenderingContext2D;
       /* createPattern 會把來源畫布整張複製一份 —— 幾百萬像素，每格一次很傷。
          只有「文字類的圖案」與「補畫連線」才用得到它，沒有就不要做。 */
-      const maskLinks = linksFor('mask');
+      const maskLinks = maskLinksSig;
       const needPat = isTextHole(holeType) || maskLinks.length > 0;
-      const pat = needPat ? ctx.createPattern(bd, 'no-repeat') : null;
+      const pat = needPat ? ctx2.createPattern(bd, 'no-repeat') : null;
       holes.forEach(h => {
         const side = h.side || 'both';
         if (side !== 'both' && side !== 'mask') return;
@@ -3777,17 +3895,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const ang2 = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
         const hx = A.x * s + offs.mx, hy = A.y * s + offs.my;
         if (isTextHole(holeType)) {
-          if (pat) drawTextShape(ctx, holeType, holeGlyph(holeType, customText, h), hx, hy, sz, pat, false, ang2);
+          if (pat) drawTextShape(ctx2, holeType, holeGlyph(holeType, customText, h), hx, hy, sz, pat, false, ang2);
           return;
         }
-        ctx.save();
-        ctx.translate(hx, hy);
-        ctx.rotate(ang2 * Math.PI / 180);
-        ctx.translate(-hx, -hy);
-        drawShapePath(ctx, holeType, hx, hy, sz);
-        ctx.clip();
+        ctx2.save();
+        ctx2.translate(hx, hy);
+        ctx2.rotate(ang2 * Math.PI / 180);
+        ctx2.translate(-hx, -hy);
+        drawShapePath(ctx2, holeType, hx, hy, sz);
+        ctx2.clip();
         // 形狀可以轉，但貼進去的圖不能跟著轉 —— 先把座標系還原再貼
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx2.setTransform(1, 0, 0, 1, 0, 0);
         /* 只貼這個洞蓋得到的那一小塊。以前是整張貼（幾百萬像素）再靠 clip 蓋掉，
            一個洞一次、十幾個洞就是十幾次。剪裁範圍本來就把外面擋掉了，
            所以貼出來的像素完全一樣。 */
@@ -3795,18 +3913,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const sx0 = Math.max(0, Math.floor(hx - r0)), sy0 = Math.max(0, Math.floor(hy - r0));
         const sx1 = Math.min(bd.width, Math.ceil(hx + r0)), sy1 = Math.min(bd.height, Math.ceil(hy + r0));
         if (sx1 > sx0 && sy1 > sy0) {
-          ctx.drawImage(bd, sx0, sy0, sx1 - sx0, sy1 - sy0, sx0, sy0, sx1 - sx0, sy1 - sy0);
+          ctx2.drawImage(bd, sx0, sy0, sx1 - sx0, sy1 - sy0, sx0, sy0, sx1 - sx0, sy1 - sy0);
         }
-        ctx.restore();
+        ctx2.restore();
       });
       if (pat) {
         // 連線也要一起補畫，不然 below 的物件會壓在線上面
-        ctx.save();
-        ctx.translate(offs.mx, offs.my);
-        ctx.strokeStyle = linkColor || pat;
-        strokeLinks(ctx, maskLinks);
-        ctx.restore();
+        ctx2.save();
+        ctx2.translate(offs.mx, offs.my);
+        ctx2.strokeStyle = linkColor || pat;
+        strokeLinks(ctx2, maskLinks);
+        ctx2.restore();
       }
+      // 整層貼回目標，並留一份給下一格用
+      ctx0.save();
+      ctx0.setTransform(1, 0, 0, 1, 0, 0);
+      ctx0.globalAlpha = 1;
+      ctx0.drawImage(topCv, 0, 0);
+      ctx0.restore();
+      if (isMain) holeTopCacheRef.current = { key: sigTop, c: topCv };
       if (!isMain) bd.width = 0;
     };
 
@@ -5160,7 +5285,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 { t: '下移一層', on: act(() => move(-1)), el: <MoveDown size={14} />, off: objects[0]?.id === o.id && !!o.below },
                 { t: '上移一層', on: act(() => move(1)), el: <MoveUp size={14} />, off: objects[objects.length - 1]?.id === o.id && !o.below },
                 { t: '複製', on: act(dup), el: <Copy size={14} />, off: false },
-                { t: o.type === 'text' ? '編輯文字' : '圖片調整', on: act(() => setActiveTab('objedit')), el: <Sliders size={14} />, off: false },
+                { t: o.type === 'text' ? '編輯文字' : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => setActiveTab('objedit')), el: <Sliders size={14} />, off: false },
                 { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
               ].map(b => (
                 /* 鬆手才觸發。以前綁在 onPointerDown，手指一碰到就動作 ——
@@ -5323,16 +5448,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               color={colorPickerTarget === 'mask' ? maskColor
                 : colorPickerTarget === 'holeGlow' ? holeGlowColor
                 : colorPickerTarget === 'linkColor' ? (linkColor || maskColor)
+                : colorPickerTarget === 'shapeObj'
+                  ? ((objects.find(o => o.id === selectedObj)?.color) || SHAPE_DEFAULT_COLOR)
                 : dotColor} 
               onChange={c => { if(colorPickerTarget==='mask') setMaskColor(c);
                 else if(colorPickerTarget==='holeGlow') setHoleGlowColor(c);
                 else if(colorPickerTarget==='linkColor') setLinkColor(c);
+                else if(colorPickerTarget==='shapeObj')
+                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, color: c } : o));
                 else setDotColor(c); }}
-              swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor' ? GLOW_SWATCHES : undefined}
+              swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor' ? GLOW_SWATCHES
+                : undefined}
               onClose={() => setColorPickerTarget(null)}
               title={colorPickerTarget === 'mask' ? '遮罩顏色'
                 : colorPickerTarget === 'holeGlow' ? '發光顏色'
-                : colorPickerTarget === 'linkColor' ? '連線顏色' : '點點'}
+                : colorPickerTarget === 'linkColor' ? '連線顏色'
+                : colorPickerTarget === 'shapeObj' ? '圖形顏色' : '點點'}
             />
           ) : (
             <>
@@ -5479,6 +5610,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   ensureFont(DEFAULT_FONT);
                   setActiveTab('objedit');   // 新增完直接進編輯頁，跟經典拼圖一樣
                 };
+                const addShape = () => {
+                  const offs2 = getLayoutOffsets();
+                  if (!offs2) return;
+                  const id = Math.random().toString(36).slice(2, 9);
+                  const w = Math.round(Math.min(offs2.cw, offs2.ch) * 0.32);
+                  const h = w;
+                  setObjects(prev => [...prev, {
+                    id, type: 'shape', kind: 'rect', color: SHAPE_DEFAULT_COLOR,
+                    lineW: 6, filled: false,
+                    x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
+                  }]);
+                  setSelectedObj(id);
+                  setSelectedTarget(null);
+                  setActiveTab('objedit');
+                };
                 return (
                   <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300">
                     {/* 按鈕與圖標尺寸跟經典拼圖的加號頁完全一致；
@@ -5497,6 +5643,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       >
                         <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
+                      </button>
+                      <button
+                        onClick={addShape}
+                        className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                      >
+                        <Square size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                        <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
                       </button>
                     </div>
                   </div>
@@ -5517,6 +5670,51 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <p className="text-[11px] text-white/40 text-center">請先選中圖片或文字</p>
                   </div>
                 );
+                if (sel.type === 'shape') {
+                  const kindBtn = (id: string, name: string) => (
+                    <button
+                      key={id}
+                      onClick={() => patch({ kind: id })}
+                      className={`h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
+                        (sel.kind || 'rect') === id
+                          ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                          : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
+                      }`}
+                    >{name}</button>
+                  );
+                  const lineOnly = (sel.kind || 'rect') === 'line' || (sel.kind || 'rect') === 'arrow';
+                  return (
+                    <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300 pt-1">
+                      <div>
+                        <p className="text-[11px] font-bold text-white/70 mb-1.5">圖形</p>
+                        <div className="grid grid-cols-4 gap-1.5">
+                          {SHAPE_OBJ_KINDS.map(([id, name]) => kindBtn(id, name))}
+                        </div>
+                      </div>
+                      <div
+                        className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
+                        onClick={() => setColorPickerTarget('shapeObj')}
+                      >
+                        <span className="text-[10px] font-bold text-[#888]">顏色</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9px] font-mono text-white/40">{sel.color || SHAPE_DEFAULT_COLOR}</span>
+                          <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10"
+                            style={{ backgroundColor: sel.color || SHAPE_DEFAULT_COLOR }} />
+                        </div>
+                      </div>
+                      <CompactSlider label="粗細" value={sel.lineW ?? 6} min={1} max={30}
+                        onChange={(v: number) => patch({ lineW: v })} step={1} />
+                      {!lineOnly && (
+                        <button
+                          onClick={() => patch({ filled: !sel.filled })}
+                          className={`w-full h-9 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
+                            sel.filled ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
+                          }`}
+                        >填滿</button>
+                      )}
+                    </div>
+                  );
+                }
                 return (
                   sel.type === 'text' ? (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
@@ -5653,7 +5851,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <button key={o.id}
                           onClick={() => setMoTarget(o.id)}
                           className={chip(moTarget === o.id)}>
-                          {o.type === 'text' ? (o.text || '文字').slice(0, 6) : `圖片 ${i + 1}`}
+                          {o.type === 'text' ? (o.text || '文字').slice(0, 6)
+                            : o.type === 'shape' ? (SHAPE_OBJ_KINDS.find(k => k[0] === (o.kind || 'rect'))?.[1] || '圖形')
+                            : `圖片 ${i + 1}`}
                         </button>
                       ))}
                     </div>
