@@ -82,6 +82,10 @@ const MAX_MOTION_PIXELS = 6_000_000;
  * 手機瀏覽器到這個量級就開始被系統回收（就是主人遇到的閃退到主畫面）。
  */
 const MAX_PREVIEW_PIXELS = 56_000_000;
+/* 超取樣：畫布要比螢幕上的裝置像素細幾倍。
+   這是「畫質」唯一的旋鈕，而且從頭到尾只有這一個數字 ——
+   下面所有跟倍率有關的計算都引用它，所以任何縮放倍率下的銳利度都一致。 */
+const SUPERSAMPLE = 1.8;
 
 /**
  * 這張拼圖在某個「畫布倍率」下，主畫布加三張遮罩暫存畫布總共要幾個像素。
@@ -2388,8 +2392,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        （四周包圍以前會把工作解析度撐到兩千多、遠超過螢幕需要的，
          那個浪費現在從源頭解掉了 —— 它的畫布跟原圖一樣大，
          所以這裡不必再為它破例。） */
-    const want = Math.min(maxPreviewScale(), Math.max(1, (cssW * k * dpr * 1.35) / csW));
-    return Math.max(1, Math.ceil(want * 4) / 4);
+    const want = Math.min(maxPreviewScale(), Math.max(1, (cssW * k * dpr * SUPERSAMPLE) / csW));
+    /* 進位改成「等比」而不是固定 0.25。
+       固定 0.25 在倍率小的時候會多給一大截、倍率大的時候幾乎沒多給，
+       實際達成的細緻度就會隨著縮放上下晃（實測 1.46／1.37／1.43／1.39）。
+       改成往上取到 3% 的等比階梯之後，每一個縮放倍率拿到的細緻度
+       都落在 SUPERSAMPLE ～ SUPERSAMPLE×1.03 之間，肉眼上等於不變。 */
+    const STEP = 1.03;
+    const snapped = Math.pow(STEP, Math.ceil(Math.log(want) / Math.log(STEP)));
+    return Math.max(1, Math.min(maxPreviewScale(), snapped));
   }, [maxPreviewScale]);
 
   /* 縮放停下來 160ms 後照倍率重畫。拖曳中刻意不重畫 —— 每一格都重烤一張
@@ -3878,7 +3889,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const cs = collageSizeOf(layout, imageState.baseW, imageState.baseH, maskScale);
       const dpr = Math.min(3, window.devicePixelRatio || 1);
       // 上限＝「畫得到的最細畫布」對應到螢幕上的倍率
-      const z = (cs.w * maxPreviewScale()) / Math.max(1, (cssW || r.width) * dpr);
+      /* 除以 SUPERSAMPLE：以前只保證「1 個畫布像素 ≥ 1 個裝置像素」，
+         所以放到最大時細緻度會從 1.4 一路掉到 1.01 —— 那就是「放大之後
+         畫質變了」的來源（實測 1.46→1.37→1.43→1.39→1.16→1.01）。
+         現在改成「放到最大時也還要有 SUPERSAMPLE 倍」，
+         也就是任何倍率下的細緻度都一樣，代價是最大倍率會變小。 */
+      const z = (cs.w * maxPreviewScale()) / Math.max(1, (cssW || r.width) * dpr * SUPERSAMPLE);
       /* 以前這裡硬給 1.5 的下限：畫布明明畫不到那麼細，卻還讓你放大到 1.5 倍 ——
          那段就是一定會糊的區間。改成「畫得到多少就只給多少」，
          任何倍率下都保證 1 個畫布像素 ≥ 1 個裝置像素。 */
