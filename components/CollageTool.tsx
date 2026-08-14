@@ -3,7 +3,7 @@ import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
-import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
+import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
@@ -12,8 +12,13 @@ import {
   /* 圓角／羽化／描邊／發光全部改用經典拼圖那幾支：同一份程式碼，
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
+  /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
+     兩邊的圖形不可能長得不一樣。 */
+  ADD_SHAPE_ITEMS, ShapeGlyph, swatchStrip, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
+import { SHAPE_IMAGES } from '../utils/shapeImages';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
 import { ComposeStudio } from './ComposeStudio';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
@@ -154,52 +159,31 @@ const sameHoles = (a: any[], b: any[]) => renderKeyOf(a) === renderKeyOf(b);
 const objKeyOf = (list: any[]) =>
   (list || []).map(o => JSON.stringify({ ...o, img: undefined, src: o.src || '' })).join(';');
 
-/* ── 新增圖形 ──────────────────────────────────────────────────────
-   物件的第三種型別（另外兩種是 image 與 text）。畫的是純向量的形狀，
-   所以放多大都不會糊；粗細的單位跟圖片描邊同一條（長邊 / 160），
-   物件縮放時線的觀感才會一致。 */
-export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
-/** 可以新增哪些圖形（id、面板上的名稱） */
-export const SHAPE_OBJ_KINDS: [string, string][] = [
-  ['line', '直線'], ['rect', '矩形'], ['circle', '圓形'],
-  ['triangle', '三角形'], ['star', '星形'], ['heart', '愛心'], ['arrow', '箭頭'],
-];
-/** 把圖形的路徑描在 (x,y)-(x+w,y+h) 這個框裡 */
-export const shapeObjPath = (g: CanvasRenderingContext2D, kind: string, x: number, y: number, w: number, h: number) => {
-  const cx = x + w / 2, cy = y + h / 2;
-  g.beginPath();
-  if (kind === 'line') { g.moveTo(x, cy); g.lineTo(x + w, cy); return; }
-  if (kind === 'arrow') {
-    const head = Math.min(w * 0.32, h * 0.5);
-    g.moveTo(x, cy); g.lineTo(x + w - head * 0.6, cy);
-    g.moveTo(x + w, cy); g.lineTo(x + w - head, cy - head * 0.62);
-    g.moveTo(x + w, cy); g.lineTo(x + w - head, cy + head * 0.62);
-    return;
-  }
-  if (kind === 'rect') { g.rect(x, y, w, h); g.closePath(); return; }
-  if (kind === 'circle') { g.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2); g.closePath(); return; }
-  if (kind === 'triangle') {
-    g.moveTo(cx, y); g.lineTo(x + w, y + h); g.lineTo(x, y + h); g.closePath(); return;
-  }
-  if (kind === 'star') {
-    const R = Math.min(w, h) / 2, r = R * 0.42;
-    for (let i = 0; i < 10; i++) {
-      const ang = -Math.PI / 2 + (i * Math.PI) / 5;
-      const rr = i % 2 === 0 ? R : r;
-      const px = cx + Math.cos(ang) * rr * (w / Math.min(w, h));
-      const py = cy + Math.sin(ang) * rr * (h / Math.min(w, h));
-      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
-    }
-    g.closePath(); return;
-  }
-  // heart
-  const k = Math.min(w, h) / 2;
-  const sx = w / (k * 2), sy = h / (k * 2);
-  g.moveTo(cx, cy + k * 0.85 * sy);
-  g.bezierCurveTo(cx - 1.6 * k * sx, cy + 0.1 * k * sy, cx - 0.9 * k * sx, cy - 1.05 * k * sy, cx, cy - 0.35 * k * sy);
-  g.bezierCurveTo(cx + 0.9 * k * sx, cy - 1.05 * k * sy, cx + 1.6 * k * sx, cy + 0.1 * k * sy, cx, cy + k * 0.85 * sy);
-  g.closePath();
-};
+/* ── 新增圖形 ────────────────────────────────────────────────────── */
+/**
+ * 「新增圖形」用的路徑。
+ * 形狀本體是經典拼圖那支 shapePathD（回傳 SVG 的 d 字串）——
+ * 這裡只是把它包成 Path2D 畫在 canvas 上，所以兩個工具的圖形
+ * **一定**是同一個形狀，不可能各自走鐘。
+ * 路徑的座標是「左上角 (0,0) 到 (w,h)」，呼叫端負責搬到框心。
+ */
+export const shapePathBox = (kind: string, w: number, h: number) =>
+  new Path2D(shapePathD(kind, w, h));
+
+/** 圖形調整面板用的滑桿，樣式跟經典拼圖那顆 ShapeEditorPanel 逐項相同 */
+const shapeSlider = (label: string, value: number, min: number, max: number, onVal: (v: number) => void) => (
+  <div className="space-y-1.5" key={label}>
+    <div className="flex justify-between items-center">
+      <span className="text-[11px] font-bold text-white/70">{label}</span>
+      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value}</span>
+    </div>
+    <input
+      type="range" min={min} max={max} step={1} value={value}
+      onChange={e => onVal(Number(e.target.value))}
+      className="premium-slider"
+    />
+  </div>
+);
 
 /* ── 連線 ──────────────────────────────────────────────────────────
    每一種圖案都能連線。以前只開放前六種「單一封閉形狀」，理由是字符類的
@@ -623,15 +607,61 @@ const getHoleNumber = (h: any) => {
  */
 const GLYPH_HOLES: Record<string, string> = {
   flower:   '❋',   // ❋ 原本就有
+  snow:     '\u2744\uFE0E',   // ❄︎ 雪花（後面那個字是「用文字樣式畫」，不要變成彩色 emoji）
   vortex:   '🌀',   // 🌀 原本就有
   seagrass: '𓇼',   // 𓇼 海草
   darkstar: '𖤐',   // 𖤐 暗星
   sparkle:  '⊹',   // ⊹ 小閃
   aster:    '᯽',   // ᯽ 星花
+  theta:    '𝝑𝝔',  // 𝝑𝝔
+  yaya:     'ॽ͙ॽ͙ॽ͙',  // ॽ͙ॽ͙ॽ͙
+  zzz:      '☡zᶻ',  // ☡zᶻ
 };
 
 /** 這個洞是用文字畫的（而不是用路徑畫的）嗎 */
-const isTextHole = (t: string) => t === 'text' || t === 'love' || t === 'love3' || t === 'random-num' || t in GLYPH_HOLES;
+
+const GLYPH_BTN: Record<string, { size?: number; dx?: number; dy?: number }> = {
+  flower:   { size: 19.8 },                     // 18 × 1.1
+  snow:     { size: 21.6 },                     // 18 × 1.2
+  seagrass: { dx: 0.3, dy: -0.7 },
+  darkstar: { size: 19.8, dx: 0.1 },            // 18 × 1.1
+  // ⊹ 的字身在字框裡本來就偏小，放大 1.5 倍（18 → 27）才看得清楚
+  sparkle:  { size: 27 },
+  // 下面這幾顆是多個字組成的，照 18px 畫會撐出格子
+  theta:    { size: 15, dx: 0.2, dy: -0.3 },
+  yaya:     { size: 13, dx: 0.5, dy: -1 },
+  zzz:      { size: 13, dx: 0.3 },
+};
+
+/* ── 用圖片當形狀的圖案 ─────────────────────────────────────────────
+   有些圖案打不出來（字型裡根本沒有那個字），所以改成用去背的 PNG。
+   圖裡**只有形狀**（RGB 全塗黑、只留 alpha）—— 真正畫出來的顏色跟其他圖案
+   一樣，是由拼圖的遮罩／顏色決定的，跟原圖是什麼顏色完全無關。
+   它走的是跟文字圖案完全同一條管線（量墨水 → 畫進暫存畫布 → source-in 上色），
+   所以選取框、命中判定、發光、匯出全部自動比照辦理。 */
+const holeImgCache = new Map<string, HTMLImageElement>();
+const getHoleImg = (t: string): HTMLImageElement | null => {
+  const src = SHAPE_IMAGES[t];
+  if (!src) return null;
+  let im = holeImgCache.get(t);
+  if (!im) {
+    im = new Image();
+    im.decoding = 'async';
+    im.src = src;
+    holeImgCache.set(t, im);
+  }
+  return im;
+};
+const isImageHole = (t: string) => !!SHAPE_IMAGES[t];
+/** 圖片形狀的長寬比（寬 / 高）。還沒解碼完先給個合理值，解碼完自然會校正。 */
+const holeImgRatio = (t: string) => {
+  const im = getHoleImg(t);
+  return im && im.naturalWidth && im.naturalHeight ? im.naturalWidth / im.naturalHeight : 1.476;
+};
+
+/** 這個洞是用文字或圖片畫的（而不是用路徑畫的）嗎 */
+const isTextHole = (t: string) => t === 'text' || t === 'love' || t === 'love3' || t === 'random-num'
+  || t in GLYPH_HOLES || isImageHole(t);
 
 /** 這個洞實際上要畫出來的字串 */
 const holeGlyph = (holeType: string, customText: string, h?: any) =>
@@ -681,6 +711,14 @@ const measureCtx = () => {
   return glyphMeasCtx!;
 };
 const glyphBox = (holeType: string, str: string): GlyphBox => {
+  /* 圖片形狀不用探測：圖本身已經裁到墨水的外框了。
+     長邊當成「大小」、短邊照長寬比換算 —— 跟圓形／方形的 size 定義一致。 */
+  if (isImageHole(holeType)) {
+    const ar = holeImgRatio(holeType);
+    const w = ar >= 1 ? GLYPH_INK_REF : GLYPH_INK_REF * ar;
+    const h = ar >= 1 ? GLYPH_INK_REF / ar : GLYPH_INK_REF;
+    return { ox: 0, oy: 0, w, h, r: Math.hypot(w, h) / 2, ok: true };
+  }
   const key = holeType + '|' + str;
   const hit = glyphBoxCache.get(key);
   if (hit) return hit;
@@ -860,7 +898,16 @@ const drawTextShape = (
   tempCtx.font = glyphFont(holeType, sz);
   tempCtx.textAlign = 'center';
   tempCtx.textBaseline = 'middle';
-  tempCtx.fillText(str, o.ox, o.oy);
+  if (isImageHole(holeType)) {
+    /* 圖片形狀：把去背的圖貼上去。貼的是**形狀**，
+       顏色下一步才由 source-in 決定，所以原圖是什麼顏色都無所謂。 */
+    const im = getHoleImg(holeType);
+    if (im && im.complete && im.naturalWidth) {
+      tempCtx.drawImage(im, -ink.w / 2, -ink.h / 2, ink.w, ink.h);
+    }
+  } else {
+    tempCtx.fillText(str, o.ox, o.oy);
+  }
   tempCtx.restore();
 
   // 2. 如果是填充照片或顏色
@@ -1449,6 +1496,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     && !!objects.find(o => o.id === selectedObj && o.type === 'image');
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
+  /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
+  const [addSub, setAddSub] = useState<'root' | 'shape'>('root');
   /** 編輯頁的左側子分頁 */
   const [objSub, setObjSub] = useState<'main' | 'style'>('main');
   /* 圖片調整面板的 UI 狀態 —— 跟經典拼圖同一組，只是各自持有，
@@ -1828,6 +1877,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       nextSize = 70;
     } else if (id === 'aster') {
       nextSize = 40;
+    } else if (id === 'snow') {
+      nextSize = 50;
+    } else if (id === 'pic333') {
+      // 橫的一長條，長邊當大小，所以要給大一點才看得清楚
+      nextSize = 60;
+    } else if (id === 'theta') {
+      nextSize = 30;
+    } else if (id === 'yaya' || id === 'zzz') {
+      // 一顆是三個字連在一起，同樣的「大小」值看起來會比較大
+      nextSize = 22;
     } else if (id === 'text') {
       nextSize = 15;
     }
@@ -2163,46 +2222,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const gs = imageState.globalScale || 1, offs = getLayoutOffsets();
 
     if (activePointers.current.size === 1) {
-      /* 浮動物件優先：它是疊在最上層的圖層，點到它就不該再往下傳給挖洞或筆刷。
-         由上往下找（陣列後面的疊在上面）。 */
-      if (brushMode === 'off') {
-        const list = objectsRef.current;
-        for (let i = list.length - 1; i >= 0; i--) {
-          const o = list[i];
-          const cxo = o.x + o.w / 2, cyo = o.y + o.h / 2;
-          const rad = -(o.rot || 0) * Math.PI / 180;
-          const dx0 = x - cxo, dy0 = y - cyo;
-          const lx = dx0 * Math.cos(rad) - dy0 * Math.sin(rad);
-          const ly = dx0 * Math.sin(rad) + dy0 * Math.cos(rad);
-          if (Math.abs(lx) <= o.w / 2 && Math.abs(ly) <= o.h / 2) {
-            e.stopPropagation();
-            setSelectedTarget(null);
-            if (selectedObjRef.current === o.id) {
-              /* 已經選中的再點一次 → 進編輯頁（跟經典拼圖同樣的手感）；這一下也可以拖。
-                 但正在調動態時不換頁 —— 那邊本來就是「一邊看預覽一邊調」，
-                 被踢去編輯頁反而要一直切回來。 */
-              setActiveTab(t => (t === 'motion' ? t : 'objedit'));
-              objDragRef.current = { id: o.id, startX: x, startY: y, ox: o.x, oy: o.y };
-            } else {
-              /* 還沒選中的物件：這一下只能「點選」，不能順手拖走。
-                 放開時沒移動才算選中，移動了就什麼都不做。 */
-              objDragRef.current = { id: o.id, startX: x, startY: y, ox: o.x, oy: o.y, selectOnly: true, moved: false };
-            }
-            return;
-          }
-        }
-        /* 已經選中東西時，就算沒點在它身上，拖曳畫布任何地方也是在移動它
-           —— 選中之後整個畫布就是那個物件的操作區，跟經典拼圖一樣。 */
-        const cur = objectsRef.current.find(z => z.id === selectedObjRef.current);
-        if (cur) {
-          e.stopPropagation();
-          // fromBlank：這一下沒點在物件身上。放開時若完全沒移動，就當成「點旁邊」取消選取。
-          objDragRef.current = { id: cur.id, startX: x, startY: y, ox: cur.x, oy: cur.y, fromBlank: true, moved: false };
-          return;
-        }
-      }
-      strokeStartHolesRef.current = holesRef.current;
-      // Determine clickedSide
+      // Determine clickedSide（物件與圖案誰在上面的判斷會用到，所以先算）
       let clickedSide: 'image' | 'mask' | undefined = undefined;
       if (offs) {
         const { baseW: bw, baseH: bh } = imageState;
@@ -2218,6 +2238,81 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         if (inOriginal) clickedSide = 'image';
         else if (inMask) clickedSide = 'mask';
       }
+
+      /* ── 誰在上面就先選誰 ──────────────────────────────────────────
+         物件分兩種：沒有標 below 的疊在圖案「之上」，標了 below 的在「之下」。
+         以前不管哪一種都比圖案優先，所以物件明明被圖案蓋住，點下去選到的
+         還是物件。現在照真正的疊放順序判斷：
+           ① 先找在圖案之上的物件
+           ② 再看有沒有點到圖案
+           ③ 都沒有，才找在圖案之下的物件 */
+      if (brushMode === 'off') {
+        const list = objectsRef.current;
+        const hitObj = (wantBelow: boolean) => {
+          for (let i = list.length - 1; i >= 0; i--) {
+            const o = list[i];
+            if (!!o.below !== wantBelow) continue;
+            const cxo = o.x + o.w / 2, cyo = o.y + o.h / 2;
+            const rad = -(o.rot || 0) * Math.PI / 180;
+            const dx0 = x - cxo, dy0 = y - cyo;
+            const lx = dx0 * Math.cos(rad) - dy0 * Math.sin(rad);
+            const ly = dx0 * Math.sin(rad) + dy0 * Math.cos(rad);
+            if (Math.abs(lx) <= o.w / 2 && Math.abs(ly) <= o.h / 2) return o;
+          }
+          return null;
+        };
+        const takeObj = (o: any) => {
+          e.stopPropagation();
+          setSelectedTarget(null);
+          const selId = selectedObjRef.current;
+          if (selId === o.id) {
+            /* 已經選中的再點一次 → 進編輯頁（跟經典拼圖同樣的手感）；這一下也可以拖。
+               但正在調動態時不換頁 —— 那邊本來就是「一邊看預覽一邊調」，
+               被踢去編輯頁反而要一直切回來。 */
+            setActiveTab(t => (t === 'motion' ? t : 'objedit'));
+            objDragRef.current = { id: o.id, startX: x, startY: y, ox: o.x, oy: o.y };
+            return;
+          }
+          const cur0 = selId ? list.find(z => z.id === selId) : null;
+          if (cur0) {
+            /* 已經有選中的東西，而這一下按在「別的物件」身上：
+               拖 → 移動的仍然是**已選中的那個**（選中之後整個畫布都是它的操作區，
+               手指剛好落在別的物件上不該就拖不動）；
+               沒拖 → 才把選取換到剛剛按到的這個。 */
+            objDragRef.current = {
+              id: cur0.id, startX: x, startY: y, ox: cur0.x, oy: cur0.y,
+              selectOnly: true, pickId: o.id, moved: false,
+            };
+            return;
+          }
+          /* 什麼都還沒選：這一下只能「點選」，不能順手拖走。
+             放開時沒移動才算選中，移動了就什麼都不做。 */
+          objDragRef.current = { id: o.id, startX: x, startY: y, ox: o.x, oy: o.y, selectOnly: true, moved: false };
+        };
+
+        const above = hitObj(false);
+        if (above) { takeObj(above); return; }
+
+        // 有沒有點到圖案（圖案疊在 below 物件之上）
+        let holeUnder = false;
+        for (let i = holesRef.current.length - 1; i >= 0; i--) {
+          if (checkHitHole(x, y, holesRef.current[i], gs, offs, clickedSide)) { holeUnder = true; break; }
+        }
+        if (!holeUnder) {
+          const below = hitObj(true);
+          if (below) { takeObj(below); return; }
+        }
+        /* 已經選中東西時，就算沒點在它身上，拖曳畫布任何地方也是在移動它
+           —— 選中之後整個畫布就是那個物件的操作區，跟經典拼圖一樣。 */
+        const cur = objectsRef.current.find(z => z.id === selectedObjRef.current);
+        if (cur) {
+          e.stopPropagation();
+          // fromBlank：這一下沒點在物件身上。放開時若完全沒移動，就當成「點旁邊」取消選取。
+          objDragRef.current = { id: cur.id, startX: x, startY: y, ox: cur.x, oy: cur.y, fromBlank: true, moved: false };
+          return;
+        }
+      }
+      strokeStartHolesRef.current = holesRef.current;
 
       if (brushMode === 'pen') {
         e.stopPropagation();
@@ -2565,7 +2660,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       e.stopPropagation();
       const d = objDragRef.current;
       if (Math.hypot(x - d.startX, y - d.startY) > 3) d.moved = true;
-      if (d.selectOnly) return;   // 還沒選中：這一下不搬東西
+      /* selectOnly 有兩種：
+         · pickId 不存在＝什麼都還沒選，這一下只能點選，不搬東西
+         · pickId 存在＝已經有選中的物件，只是手指剛好按在別的物件上；
+           拖的話搬的是「已選中的那個」（d.id），沒拖才把選取換過去 */
+      if (d.selectOnly && !d.pickId) return;
       let nx = d.ox + (x - d.startX), ny = d.oy + (y - d.startY);
       /* 對齊線：拖到接近畫布中線或邊界時吸附，並把那條線畫出來。
          門檻用畫布短邊的 1.2%，不管圖多大手感都一樣。 */
@@ -2673,7 +2772,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (objDragRef.current?.fromBlank && !objDragRef.current.moved) setSelectedObj(null);
     // 還沒選中的物件：只有「點下去沒移動」才算選中，拖了就當作沒發生
     if (objDragRef.current?.selectOnly && !objDragRef.current.moved) {
-      setSelectedObj(objDragRef.current.id);
+      // pickId＝這一下真正按到的那個物件（拖動的可能是另一個「已選中的」）
+      setSelectedObj(objDragRef.current.pickId ?? objDragRef.current.id);
       setSelectedTarget(null);
     }
     objDragRef.current = null;
@@ -3718,24 +3818,38 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       } else if (o.type === 'shape') {
         /* 圖形（新增圖形加進來的那些）。
            粗細的單位跟描邊同一條（長邊 / 160），所以物件放大縮小時
-           框線的觀感一致。直線與箭頭永遠只描線、不填色。 */
+           框線的觀感一致；虛線的節奏也照描邊那條式子。 */
         const bw = o.w * s, bh = o.h * s;
         const unit = Math.max(bw, bh) / 160;
         const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
         const col = o.color || SHAPE_DEFAULT_COLOR;
-        const solid = o.filled && o.kind !== 'line' && o.kind !== 'arrow';
+        const solid = o.filled && o.kind !== 'line';
         ctx.save();
-        ctx.lineJoin = 'round';
-        ctx.lineCap = 'round';
-        ctx.lineWidth = lw;
-        /* 呼叫端已經把座標系移到物件的**正中央**了，所以框是 −w/2 ～ +w/2。
-           填滿時線要往內縮半條，形狀的外緣才會剛好落在框上。 */
-        const inset = solid ? 0 : lw / 2;
-        shapeObjPath(ctx, o.kind || 'rect',
-          -bw / 2 + inset, -bh / 2 + inset,
-          Math.max(1, bw - inset * 2), Math.max(1, bh - inset * 2));
-        if (solid) { ctx.fillStyle = col; ctx.fill(); }
-        else { ctx.strokeStyle = col; ctx.stroke(); }
+        // 路徑是左上角起算的，所以先把原點從框心搬到左上角
+        ctx.translate(-bw / 2, -bh / 2);
+        ctx.lineJoin = o.kind === 'line' ? 'round' : 'miter';
+        // 一律平頭：線條的兩端要切齊，不要圓角
+        ctx.lineCap = 'butt';
+        ctx.miterLimit = 4;
+        if ((o.dash || 0) > 0) {
+          const seg = lw * (0.6 + ((o.dash || 0) / 100) * 4);
+          ctx.setLineDash([seg, seg * 0.85]);
+        } else ctx.setLineDash([]);
+        const shapeP = shapePathBox(o.kind, bw, bh);
+        if (solid) ctx.fillStyle = col;
+        else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
+        // 發光：三段模糊疊起來，跟經典拼圖那邊同一組半徑
+        if (o.glow) {
+          ctx.save();
+          ctx.shadowColor = o.glowColor || col;
+          for (const r of shapeGlowBlurs(bw, bh)) {
+            ctx.shadowBlur = r;
+            if (solid) ctx.fill(shapeP); else ctx.stroke(shapeP);
+          }
+          ctx.restore();
+        }
+        if (solid) ctx.fill(shapeP); else ctx.stroke(shapeP);
+        ctx.setLineDash([]);
         ctx.restore();
       } else if (o.type === 'text') {
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
@@ -4124,6 +4238,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     let id = requestAnimationFrame(() => renderCanvas()); 
     return () => cancelAnimationFrame(id); 
   }, [renderCanvas, saveState]);
+
+  /* 圖片形狀的圖要先解碼好。雖然是內嵌的（不用連網），解碼還是非同步的 ——
+     解完再重畫一次，第一次選到它才不會是空的。 */
+  useEffect(() => {
+    let alive = true;
+    Object.keys(SHAPE_IMAGES).forEach(k => {
+      const im = getHoleImg(k);
+      if (!im || (im.complete && im.naturalWidth)) return;
+      im.addEventListener('load', () => { if (alive) renderCanvas(); }, { once: true });
+    });
+    return () => { alive = false; };
+  }, [renderCanvas]);
 
   /* 拼圖的形狀一變（換排版、換比例），1 倍時的版面尺寸就不一樣了。
      這裡要做兩件事，而且都必須在「瀏覽器畫下一格之前」完成：
@@ -5610,48 +5736,96 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   ensureFont(DEFAULT_FONT);
                   setActiveTab('objedit');   // 新增完直接進編輯頁，跟經典拼圖一樣
                 };
-                const addShape = () => {
+                /**
+                 * 新增一個圖形。大小、粗細、顏色都用經典拼圖那邊同一組預設值，
+                 * 所以兩個工具加出來的圖形長得一模一樣。
+                 * 刻意留在這一頁、不跳去編輯頁 —— 常常是要連著加好幾個。
+                 */
+                const addShape = (it: typeof ADD_SHAPE_ITEMS[number]) => {
                   const offs2 = getLayoutOffsets();
                   if (!offs2) return;
+                  const short = Math.min(offs2.cw, offs2.ch);
+                  const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+                  const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
                   const id = Math.random().toString(36).slice(2, 9);
-                  const w = Math.round(Math.min(offs2.cw, offs2.ch) * 0.32);
-                  const h = w;
                   setObjects(prev => [...prev, {
-                    id, type: 'shape', kind: 'rect', color: SHAPE_DEFAULT_COLOR,
-                    lineW: 6, filled: false,
-                    x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
+                    id, type: 'shape',
+                    kind: it.kind, filled: it.filled,
+                    lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
+                    color: SHAPE_DEFAULT_COLOR,
+                    glow: 0, glowColor: SHAPE_DEFAULT_COLOR,
+                    x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2,
+                    w, h, rot: it.rot || 0,
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
-                  setActiveTab('objedit');
                 };
                 return (
                   <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300">
                     {/* 按鈕與圖標尺寸跟經典拼圖的加號頁完全一致；
                         只差沒有「新增佈局」——創意拼圖的版面是排版＋遮罩決定的。 */}
-                    <div className="flex justify-center gap-4 mt-6">
+                    {addSub === 'root' ? (
+                    <div className="flex justify-center gap-2.5 mt-6">
                       <button
                         onClick={() => objFileInputRef.current?.click()}
-                        className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                        className="flex flex-col items-center justify-center py-4 px-2 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
                         <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90">匯入照片</span>
                       </button>
                       <button
                         onClick={addText}
-                        className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                        className="flex flex-col items-center justify-center py-4 px-2 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
                         <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                       </button>
                       <button
-                        onClick={addShape}
-                        className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                        onClick={() => setAddSub('shape')}
+                        className="flex flex-col items-center justify-center py-4 px-2 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
-                        <Square size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                        <Shapes size={24} strokeWidth={1.5} className="text-white opacity-80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
                       </button>
                     </div>
+                    ) : (
+                      /* 點進「新增圖形」才看得到的圖案清單，跟經典拼圖同一份：
+                         三排（實心／邊框／線條），點一下就加到版面正中間。 */
+                      <div className="pt-1">
+                        <div className="flex items-center gap-2 mb-3">
+                          <button
+                            onClick={() => setAddSub('root')}
+                            aria-label="返回"
+                            title="返回"
+                            className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
+                          >
+                            <Icon name="arrow_back" className="text-[20px]" />
+                          </button>
+                          <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
+                        </div>
+                        {([
+                          ['實心', ADD_SHAPE_ITEMS.filter(i2 => i2.filled)],
+                          ['邊框', ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && i2.kind !== 'line')],
+                          ['線條', ADD_SHAPE_ITEMS.filter(i2 => i2.kind === 'line')],
+                        ] as const).map(([label, list]) => (
+                          <div key={label} className="mb-3">
+                            <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
+                            <div className="grid grid-cols-6 gap-2">
+                              {list.map(it => (
+                                <button
+                                  key={it.id}
+                                  onClick={() => addShape(it)}
+                                  aria-label={it.id}
+                                  className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
+                                >
+                                  <ShapeGlyph item={it} />
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -5671,47 +5845,50 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   </div>
                 );
                 if (sel.type === 'shape') {
-                  const kindBtn = (id: string, name: string) => (
-                    <button
-                      key={id}
-                      onClick={() => patch({ kind: id })}
-                      className={`h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
-                        (sel.kind || 'rect') === id
-                          ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                          : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
-                      }`}
-                    >{name}</button>
-                  );
-                  const lineOnly = (sel.kind || 'rect') === 'line' || (sel.kind || 'rect') === 'arrow';
+                  /* 圖形調整：欄位與經典拼圖那顆 ShapeEditorPanel 一致。
+                     圖層上下不放這裡 —— 選中時畫面上那排工具列本來就有。 */
                   return (
-                    <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300 pt-1">
-                      <div>
-                        <p className="text-[11px] font-bold text-white/70 mb-1.5">圖形</p>
-                        <div className="grid grid-cols-4 gap-1.5">
-                          {SHAPE_OBJ_KINDS.map(([id, name]) => kindBtn(id, name))}
+                    <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
+                      <div className="h-full overflow-y-auto no-scrollbar pr-1">
+                        <div className="space-y-3.5 pt-1 pb-2">
+                          <div>
+                            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+                            {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c }), true)}
+                          </div>
+                          {(!sel.filled || sel.kind === 'line') && (
+                            <>
+                              {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
+                              {shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }))}
+                              {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位） */}
+                              {shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
+                            </>
+                          )}
+                          <div>
+                            <p className="text-[11px] font-bold text-white/70 mb-1.5">發光</p>
+                            <div className="flex items-center gap-2">
+                              {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
+                                <button
+                                  key={label}
+                                  onClick={() => patch({ glow: on ? 1 : 0 })}
+                                  className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
+                                    !!sel.glow === on
+                                      ? 'bg-white text-black border-white'
+                                      : 'bg-white/[0.04] text-white/70 border-white/15'
+                                  }`}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          {!!sel.glow && (
+                            <div>
+                              <p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>
+                              {swatchStrip(sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR, GLOW_SWATCH_COLORS, (c: string) => patch({ glowColor: c }), true)}
+                            </div>
+                          )}
                         </div>
                       </div>
-                      <div
-                        className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
-                        onClick={() => setColorPickerTarget('shapeObj')}
-                      >
-                        <span className="text-[10px] font-bold text-[#888]">顏色</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-mono text-white/40">{sel.color || SHAPE_DEFAULT_COLOR}</span>
-                          <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10"
-                            style={{ backgroundColor: sel.color || SHAPE_DEFAULT_COLOR }} />
-                        </div>
-                      </div>
-                      <CompactSlider label="粗細" value={sel.lineW ?? 6} min={1} max={30}
-                        onChange={(v: number) => patch({ lineW: v })} step={1} />
-                      {!lineOnly && (
-                        <button
-                          onClick={() => patch({ filled: !sel.filled })}
-                          className={`w-full h-9 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
-                            sel.filled ? 'bg-white text-black border-white' : 'bg-white/[0.04] text-white/70 border-white/15'
-                          }`}
-                        >填滿</button>
-                      )}
                     </div>
                   );
                 }
@@ -5852,7 +6029,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           onClick={() => setMoTarget(o.id)}
                           className={chip(moTarget === o.id)}>
                           {o.type === 'text' ? (o.text || '文字').slice(0, 6)
-                            : o.type === 'shape' ? (SHAPE_OBJ_KINDS.find(k => k[0] === (o.kind || 'rect'))?.[1] || '圖形')
+                            : o.type === 'shape' ? '圖形'
                             : `圖片 ${i + 1}`}
                         </button>
                       ))}
@@ -5984,9 +6161,43 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
-                  {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'love', 'love3', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'text'].map(s => (
+                  {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'snow', 'love', 'love3', 'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'yaya', 'zzz', 'text'].map(s => (
                     <button key={s} onClick={() => handleShapeClick(s)} className={`py-3 flex items-center justify-center rounded-[8px] border transition-all ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
-                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'flower' ? <span className="text-lg font-bold font-sans leading-none">❋</span> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : GLYPH_HOLES[s] ? <span className="text-lg font-bold font-sans leading-none">{GLYPH_HOLES[s]}</span> : <Type size={18} />}
+                      {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+                        /* 去背的圖：拿它當遮罩、底色用 currentColor，
+                           顏色就跟旁邊那些圖示走同一條規則 ——
+                           沒選中時是暗的（#555），選中才變白。
+                           （原本是用 filter 硬染成白色，所以永遠亮著。） */
+                        <span
+                          aria-hidden
+                          style={{
+                            display: 'block',
+                            width: 26,
+                            height: 26 / holeImgRatio(s),
+                            backgroundColor: 'currentColor',
+                            WebkitMaskImage: `url(${SHAPE_IMAGES[s]})`,
+                            maskImage: `url(${SHAPE_IMAGES[s]})`,
+                            WebkitMaskSize: 'contain',
+                            maskSize: 'contain',
+                            WebkitMaskRepeat: 'no-repeat',
+                            maskRepeat: 'no-repeat',
+                            WebkitMaskPosition: 'center',
+                            maskPosition: 'center',
+                          }}
+                        />
+                      ) : GLYPH_HOLES[s] ? (
+                        <span
+                          className="font-bold font-sans leading-none inline-block whitespace-nowrap"
+                          style={{
+                            fontSize: `${GLYPH_BTN[s]?.size ?? 18}px`,
+                            transform: (GLYPH_BTN[s]?.dx || GLYPH_BTN[s]?.dy)
+                              ? `translate(${GLYPH_BTN[s]?.dx ?? 0}px, ${GLYPH_BTN[s]?.dy ?? 0}px)`
+                              : undefined,
+                          }}
+                        >
+                          {GLYPH_HOLES[s]}
+                        </span>
+                      ) : <Type size={18} />}
                     </button>
                   ))}
                 </div>
