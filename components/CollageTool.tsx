@@ -3358,47 +3358,55 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                        但那疊出來的是**一圈一圈同心的邊**，衰減接近直線，所以看起來就是
                        「描邊＋羽化」，不像光。
 
-                       現在的做法：先把純虛線畫在一張素材層上，再用 ctx.filter 的
-                       **真高斯模糊**疊三個半徑貼回來（小的給亮核心、大的給外圍的暈）。
-                       高斯的衰減是指數的，中心亮、外圍無限趨近 0，沒有任何邊；
-                       虛線陣列從頭到尾沒變，所以每一段的位置天生就對齊。
-                         半徑 0.8w / 1.6w / 3.0w，透明度 0.5 / 0.4 / 0.3
-                       （最大 3w 仍小於一個週期 7w，所以每一段還是各自成形。）
-                       ctx.filter 是 Safari 16.4 以後才有，沒有的話退回疊層描邊。 */
+                       用 ctx.filter 的真高斯模糊也不對：虛線只有 3w 長 × 1w 寬，
+                       模糊半徑一到 3w，短線就被糊成一顆圓球，形狀跟虛線對不上。
+                       再上一版改用 lineCap: round 的疊層，形狀就變成橢圓膠囊 ——
+                       短線明明是長方形，光卻是橢圓的。
+
+                       現在的做法，形狀／濃度／柔邊三件事分開調：
+                         · 形狀：每一層都描同一條虛線路徑，**lineCap 用 square** ——
+                           線寬加粗時兩端也等量外擴，所以每一層都是「把那個小長方形
+                           等距放大」的長方形，光的形狀跟短線一致。
+                         · 濃度：每層的透明度照高斯的導數給，累積剖面就是真高斯
+                             a(f) = A0 · (2f/σ²) · exp(−(f/σ)²) / N
+                           → T(d) = A0 · exp(−(d/σ)²)。A0 從 1.0 降到 0.46，
+                           貼著短線那一圈就不會濃成一塊白。
+                         · 柔邊：疊完之後整層再過一次很小的高斯（0.6w）。
+                           長方形被小半徑模糊之後還是長方形（只是角變圓一點點），
+                           但四邊的硬邊會完全化掉。半徑刻意留小，
+                           不然相鄰短線的光會連成一條帶子。
+                       （最後那次柔化需要 ctx.filter，Safari 16.4 以後才有；
+                         沒有的話就直接畫，形狀與濃度不受影響。） */
                     lg.shadowBlur = 0;
+                    const R = LINK_W * 3.2, N = 44, A0 = 0.46, SIG = 0.45;
                     const canFilter = typeof (lg as any).filter === 'string';
+                    // 有柔化這一步時，光暈先畫在自己的一層上，才好整層過模糊
+                    let halo: HTMLCanvasElement | null = null;
+                    let hg: CanvasRenderingContext2D | null = lg;
                     if (canFilter) {
-                      // 素材層：只有虛線本身，不模糊
-                      const ls = document.createElement('canvas');
-                      ls.width = W2; ls.height = H2;
-                      const lsg = ls.getContext('2d');
-                      if (lsg) {
-                        if (tf2) lsg.setTransform(tf2);
-                        linkStyle(lsg);
-                        lsg.strokeStyle = linkGlowColor;
-                        linkPath(lsg, arr);
-                      }
-                      lg.setTransform(1, 0, 0, 1, 0, 0);
-                      const RS = [0.8, 1.6, 3.0], AS = [0.5, 0.4, 0.3];
-                      for (let i = 0; i < RS.length; i++) {
-                        (lg as any).filter = `blur(${(LINK_W * RS[i]).toFixed(2)}px)`;
-                        lg.globalAlpha = AS[i];
-                        lg.drawImage(ls, 0, 0);
-                      }
-                      (lg as any).filter = 'none';
-                      lg.globalAlpha = 1;
-                      if (tf2) lg.setTransform(tf2);
-                    } else {
-                      // 退路：疊層描邊（外層淡到 0，邊緣一樣不會有硬邊）
-                      const R = LINK_W * 1.4, N = 20, A = 0.22, POW = 2.2;
-                      lg.lineCap = 'round';
+                      halo = document.createElement('canvas');
+                      halo.width = W2; halo.height = H2;
+                      hg = halo.getContext('2d');
+                      if (hg && tf2) hg.setTransform(tf2);
+                      if (hg) { linkStyle(hg); hg.strokeStyle = linkGlowColor; }
+                    }
+                    if (hg) {
+                      hg.lineCap = 'square';
                       for (let i = N; i >= 1; i--) {
                         const f = i / N;
-                        lg.lineWidth = LINK_W + 2 * R * f;
-                        lg.globalAlpha = A * Math.pow(1 - f, POW);
-                        linkPath(lg, arr);
+                        hg.lineWidth = LINK_W + 2 * R * f;
+                        hg.globalAlpha = Math.min(1,
+                          A0 * (2 * f / (SIG * SIG)) * Math.exp(-(f * f) / (SIG * SIG)) / N);
+                        linkPath(hg, arr);
                       }
-                      lg.globalAlpha = 1;
+                      hg.globalAlpha = 1;
+                    }
+                    if (halo) {
+                      lg.setTransform(1, 0, 0, 1, 0, 0);
+                      (lg as any).filter = `blur(${(LINK_W * 0.6).toFixed(2)}px)`;
+                      lg.drawImage(halo, 0, 0);
+                      (lg as any).filter = 'none';
+                      if (tf2) lg.setTransform(tf2);
                     }
                   } else {
                     /* 實線：三段模糊、倍率 0.50。shadowBlur 是高斯模糊的參數，
