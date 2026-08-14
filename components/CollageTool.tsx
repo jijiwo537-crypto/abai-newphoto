@@ -2032,7 +2032,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
     setHoles(newHoles);
     if (record === 'reset') resetHistory(newHoles);
-    else if (record === 'push') pushHistory(newHoles);
+    else if (record === 'push') {
+      /* 「數量」滑桿一拖，每一個中間值都會跑進這裡重灑一次圖案。
+         以前這裡是**當場**記一格，所以拖一次滑桿就留下十幾格上一步。
+         改成跟其他滑桿同一套規矩：手指還按著就只立「待記」旗標，
+         鬆手時（pointerup／touchend）才真的記一格 —— 見 sliderDownRef 那一段。
+         那時候 holesRef 已經是最後一次重灑的結果，所以記到的就是放手當下的樣子。 */
+      if (sliderDownRef.current) pendingPushRef.current = true;
+      else pushHistory(newHoles);
+    }
   }, [imageState, holeCount, holeSize, sizeJitter, pushHistory, resetHistory, symmetryEnabled, layout, maskScale]);
 
   /* 對稱鎖定：本來是 header 上的一顆按鈕，現在收進三個點的選單裡。
@@ -3287,6 +3295,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         g.stroke();
       });
     };
+    /** 跟 linkPath 一樣的幾何，但**全部的線併成同一條路徑、只描一次**。
+        發光那一層一定要用這支：一段一段分開描的話，兩條線共用的那個端點附近
+        會被畫到兩次，透明度疊起來就變亮 —— 那就是「轉折處比較亮」的來源。
+        併成一條之後，同一層不管重疊幾次都只上一次色。
+        （虛線的節奏不受影響：canvas 的 dash 是每個 subpath 各自從頭算的，
+          每一段線都用 moveTo 起頭，所以跟分開描的結果一模一樣。） */
+    const linkPathAll = (g: CanvasRenderingContext2D, pairs: [any, any][]) => {
+      const a0 = animRef.current;
+      g.beginPath();
+      pairs.forEach(([a, b]) => {
+        const pa = hA(a), pb = hA(b);
+        if (!pa.on || !pb.on) return;
+        const local = a0 ? a0.link(holeOrder.get(a.id) ?? 0, holeOrder.get(b.id) ?? 0) : 1;
+        if (local <= 0) return;
+        g.moveTo(pa.x * s, pa.y * s);
+        g.lineTo(pa.x * s + (pb.x - pa.x) * s * local, pa.y * s + (pb.y - pa.y) * s * local);
+      });
+      g.stroke();
+    };
     const linkStyle = (g: CanvasRenderingContext2D) => {
       g.lineWidth = LINK_W;
       g.lineCap = linkMode === 'dash' ? 'butt' : 'round';
@@ -3378,7 +3405,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                        （最後那次柔化需要 ctx.filter，Safari 16.4 以後才有；
                          沒有的話就直接畫，形狀與濃度不受影響。） */
                     lg.shadowBlur = 0;
-                    const R = LINK_W * 3.2, N = 44, A0 = 0.46, SIG = 0.45;
+                    // R 從 3.2w 砍半到 1.6w：光罩的大小整個縮一半
+                    const R = LINK_W * 1.6, N = 44, A0 = 0.46, SIG = 0.45;
                     const canFilter = typeof (lg as any).filter === 'string';
                     // 有柔化這一步時，光暈先畫在自己的一層上，才好整層過模糊
                     let halo: HTMLCanvasElement | null = null;
@@ -3397,7 +3425,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         hg.lineWidth = LINK_W + 2 * R * f;
                         hg.globalAlpha = Math.min(1,
                           A0 * (2 * f / (SIG * SIG)) * Math.exp(-(f * f) / (SIG * SIG)) / N);
-                        linkPath(hg, arr);
+                        // 併成一條路徑描一次，交會處才不會疊兩次（見 linkPathAll）
+                        linkPathAll(hg, arr);
                       }
                       hg.globalAlpha = 1;
                     }
