@@ -15,7 +15,7 @@ import {
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker,
   shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR,
@@ -297,10 +297,13 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
       <span className="text-[11px] font-bold text-white/70">{label}</span>
       <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value}</span>
     </div>
+    {/* 跟文字頁那一種同款：軌道 6px、圓點是瀏覽器原生的（accent 白），
+        不是自己畫的小白點 —— 兩頁看起來才是同一套滑桿。 */}
     <input
       type="range" min={min} max={max} step={1} value={value}
       onChange={e => onVal(Number(e.target.value))}
-      className="premium-slider"
+      className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+      style={{ touchAction: 'none' }}
     />
   </div>
 );
@@ -1330,6 +1333,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const footerRef = useRef<HTMLElement>(null);
   /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
   const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
+  /* 離開「新增」分頁就回到最外層：下次再進來看到的是三顆大按鈕，
+     而不是上次停在的圖形／符號清單。 */
+  useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
   /** 編輯頁的左側子分頁 */
   const [objSub, setObjSub] = useState<'main' | 'style'>('main');
   /* 圖片調整面板的 UI 狀態 —— 跟經典拼圖同一組，只是各自持有，
@@ -6023,16 +6029,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             return n;
                           };
                           /** 把第 n 顆搬到第 m 個位置（都是從 1 算起） */
-                          const moveTo = (arr: any[], n: number, m: number) => {
-                            if (arr.length < n) return arr;
+                          /** 把 id 是這個的那一顆搬到第 m 個位置（從 1 算起）。
+                              用 id 找而不是用位置找 —— 清單中間再插新圖形時，
+                              這條規則才不會跟著位移到別顆身上。 */
+                          const moveTo = (arr: any[], id: string, m: number) => {
+                            const i = arr.findIndex(z => z.id === id);
+                            if (i < 0) return arr;
                             const a = arr.slice();
-                            const [x] = a.splice(n - 1, 1);
-                            a.splice(m - 1, 0, x);
+                            const [x] = a.splice(i, 1);
+                            a.splice(Math.max(0, m - 1), 0, x);
                             return a;
                           };
                           const solidList = moveTo(
                             [...ins(ADD_SHAPE_ITEMS.filter(i2 => i2.filled), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
-                            10, 8);
+                            'heart-f', 8);
                           const lineList = ins(ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && i2.kind !== 'line'), HOLE_ITEM_CROSS_O);
                           return ([
                             ['實心', solidList],
@@ -6089,24 +6099,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
                             {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c }), true)}
                           </div>
-                          {/* 第三排：發光 —— 一根滑桿＋一排色票（沒有開關鍵） */}
-                          <CompactSlider label="發光" value={Math.round(glowAmount(sel.glow) * 100)} min={0} max={100}
-                            onChange={(v: number) => patch(v > 0 && !sel.glowInit
-                              /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色，
-                                 之後不管怎麼調都不會再蓋掉手動選的顏色。 */
-                              ? { glow: v, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
-                              : { glow: v })} />
-                          <div>
-                            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                            {swatchStrip(sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR, GLOW_SWATCH_COLORS,
-                              (c: string) => patch({ glowColor: c }), true)}
+                          {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
+                              （點一下才攤開色票），所以從 0 拉到 1 的瞬間
+                              不會有欄位突然冒出來閃一下。 */}
+                          <div className="grid grid-cols-2 gap-3 items-end">
+                            {shapeSlider('發光', Math.round(glowAmount(sel.glow) * 100), 0, 100,
+                              (v: number) => patch(v > 0 && !sel.glowInit
+                                /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色 */
+                                ? { glow: v, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
+                                : { glow: v }))}
+                            <ColorPick label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
+                              colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })} />
                           </div>
-                          {/* 第四排：描邊 —— 一樣是上面滑桿、下面色票 */}
-                          <CompactSlider label="描邊" value={Math.round((sel.strokeW ?? 0) * 10)} min={0} max={100}
-                            onChange={(v: number) => patch({ strokeW: v / 10 })} />
-                          <div>
-                            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                            {swatchStrip(sel.strokeColor || '#000000', SOFT_COLORS, (c: string) => patch({ strokeColor: c }), true)}
+                          <div className="grid grid-cols-2 gap-3 items-end">
+                            {shapeSlider('描邊', Math.round((sel.strokeW ?? 0) * 10), 0, 100,
+                              (v: number) => patch({ strokeW: v / 10 }))}
+                            <ColorPick label="顏色" value={sel.strokeColor || '#000000'}
+                              onPick={(c: string) => patch({ strokeColor: c })} />
                           </div>
                           {/* 點點放在最下面 */}
                           <div>
@@ -6131,15 +6140,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             <>
                               {/* 兩根滑桿同一排 */}
                               <div className="grid grid-cols-2 gap-3">
-                                <CompactSlider label="大小" value={sel.dotSize ?? 50} min={0} max={100}
-                                  onChange={(v: number) => patch({ dotSize: v })} />
-                                <CompactSlider label="間距" value={sel.dotGap ?? 20} min={0} max={100}
-                                  onChange={(v: number) => patch({ dotGap: v })} />
+                                {shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
+                                {shapeSlider('間距', sel.dotGap ?? 20, 0, 100, (v: number) => patch({ dotGap: v }))}
                               </div>
-                              <div>
-                                <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                                {swatchStrip(sel.dotColor || '#FFFFFF', SOFT_COLORS, (c: string) => patch({ dotColor: c }), true)}
-                              </div>
+                              <ColorPick label="顏色" value={sel.dotColor || '#FFFFFF'}
+                                onPick={(c: string) => patch({ dotColor: c })} />
                             </>
                           )}
                           {/* 粗細與虛線只有空心／線條才有，放在最後面 */}
@@ -6160,7 +6165,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   sel.type === 'text' ? (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
                       <TextEditorPanel
-                        onPickColor={(which) => setColorPickerTarget(which === 'stroke' ? 'textStroke' : 'textGlow')}
                         symbol={!!sel.sym}
                         layer={{
                           text: sel.text, sym: sel.sym, color: sel.color, fontFamily: sel.fontFamily,

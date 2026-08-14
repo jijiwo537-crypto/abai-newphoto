@@ -855,6 +855,9 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
     }
     case 'diamond':
       return poly([[cx, 0], [w, cy], [cx, h], [0, cy]]);
+    /* 窄菱形：一樣的四個角，只是左右往內收 —— 直立、細長的那種 */
+    case 'diamond-n':
+      return poly([[cx, 0], [cx + w * 0.28, cy], [cx, h], [cx - w * 0.28, cy]]);
     case 'pentagon': return reg(5, -Math.PI / 2);
     case 'hexagon': return reg(6, -Math.PI / 2);
     case 'star': {
@@ -908,6 +911,7 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'rounded-f', kind: 'rounded', filled: true },
   { id: 'triangle-f', kind: 'triangle', filled: true },
   { id: 'diamond-f', kind: 'diamond', filled: true },
+  { id: 'diamond-n-f', kind: 'diamond-n', filled: true },
   { id: 'pentagon-f', kind: 'pentagon', filled: true },
   { id: 'hexagon-f', kind: 'hexagon', filled: true },
   { id: 'star-f', kind: 'star', filled: true },
@@ -943,6 +947,7 @@ const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   rounded: [0, 0, 1, 1],
   triangle: [0, 0.067, 1, 0.866],
   diamond: [0, 0, 1, 1],
+  'diamond-n': [0.22, 0, 0.56, 1],
   pentagon: [0.0245, 0, 0.9511, 0.9045],
   hexagon: [0.067, 0, 0.866, 1],
   star: [0.0245, 0, 0.9511, 0.9045],
@@ -1196,6 +1201,39 @@ export const SymbolPicker: React.FC<{
   </div>
 );
 
+/**
+ * 兩段式的顏色欄：平常只是一列（標題＋色號＋一小塊顏色），
+ * 點一下才把色票攤開來 —— 這樣它可以跟滑桿並排，不會把版面撐開。
+ * 兩個拼圖工具的描邊／發光／點點顏色都用這一顆，長相與操作完全一致。
+ */
+export const ColorPick: React.FC<{
+  label: string;
+  value: string;
+  colors?: string[];
+  onPick: (c: string) => void;
+}> = ({ label, value, colors, onPick }) => {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="space-y-1.5">
+      <div
+        className="h-[38px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[8px] cursor-pointer hover:bg-[#151515] transition-colors"
+        onClick={() => setOpen(o => !o)}
+      >
+        <span className="text-[10px] font-bold text-[#888] shrink-0">{label}</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[9px] font-mono text-white/40">{(value || '').toUpperCase()}</span>
+          <div className="w-5 h-4 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
+        </div>
+      </div>
+      {open && (
+        <div className="animate-in fade-in duration-150">
+          {swatchStrip(value, colors || SOFT_COLORS, c => onPick(c), true)}
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const TextEditorPanel: React.FC<{
   layer: FloatingImage;
   onChange: (patch: Partial<FloatingImage>) => void;
@@ -1343,25 +1381,25 @@ export const TextEditorPanel: React.FC<{
           <div className="space-y-3.5 pt-1 pb-24">
             {/* 文字內容一律直接在畫布上打（選中之後再點一次那段字），
                 所以這裡不放輸入框。符號也是一樣的改法。 */}
-            {slider(symbol ? '大小' : '字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
             <div>
               {/* 標題只寫「顏色」：這一欄本來就是這一頁的第一組，
                   再寫一次「文字」「符號」是多的。 */}
               <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
               {swatchRow(layer.color, c => onChange({ color: c }))}
             </div>
+            {/* 字級排在顏色與粗體中間。符號沒有這一根 —— 它的大小直接在畫布上捏。 */}
+            {!symbol && slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
             {symbol ? (
               /* 符號到這裡就結束了：粗體／斜體／字距／描邊對符號沒有意義
                  （那些是靠系統字型畫出來的，加粗、加斜、拆字距都只會歪掉），
                  所以只留一根發光跟發光顏色。 */
               <>
-                {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
-                {/* 色票一直都在，不等滑桿拉了才出現 ——
-                    這樣既不會有「拉到 1 的瞬間欄位冒出來閃一下」，
-                    也可以先挑好顏色再決定要不要發光。 */}
-                <div>
-                  <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                  {swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}
+                {/* 滑桿與顏色並排；顏色是兩段式的（點一下才攤開色票），
+                    所以不會有「拉到 1 的瞬間欄位冒出來閃一下」。 */}
+                <div className="grid grid-cols-2 gap-3 items-end">
+                  {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+                  <ColorPick label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
+                    onPick={c => onChange({ glowColor: c })} />
                 </div>
               </>
             ) : (
@@ -1391,29 +1429,20 @@ export const TextEditorPanel: React.FC<{
               )}
             </div>
             {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
-            {/* 描邊與邊緣發光併成同一排。
+            {/* 描邊、發光各自跟自己的顏色並排（顏色是兩段式的，點一下才攤開色票）。
                 描邊 0～2px，一樣分 50 格（每格 0.04px）：最小那一格只有 0.04px，
-                從 0 拉出來時是慢慢浮現，不會一下就跳出一圈明顯的邊。 */}
-            <div className="grid grid-cols-2 gap-3">
+                從 0 拉出來時是慢慢浮現，不會一下就跳出一圈明顯的邊。
+                顏色欄一直都在，所以不會有「從 0 拉到 1 的瞬間欄位冒出來閃一下」。 */}
+            <div className="grid grid-cols-2 gap-3 items-end">
               {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
-              {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+              <ColorPick label="顏色" value={layer.strokeColor || '#000000'}
+                onPick={c => onChange({ strokeColor: c })} />
             </div>
-            {/* 顏色不直接攤開色票，改成點一下才打開調色盤 —— 跟連線顏色同一種做法。
-                沒有給 onPickColor 的地方（例如經典拼圖）維持原本的色票列。
-                兩顆顏色分別排在上面「描邊」「邊緣發光」那兩根滑桿的正下方、
-                左右欄一一對齊，位置本身就講清楚是誰的顏色，所以標題只寫「顏色」。 */}
-            {(!!layer.strokeWidth || !!layer.glow) && (
-              <div className="grid grid-cols-2 gap-3">
-                {!!layer.strokeWidth ? (
-                  onPickColor ? colorRow('顏色', layer.strokeColor || '#000000', () => onPickColor('stroke'))
-                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>{swatchRow(layer.strokeColor, c => onChange({ strokeColor: c }))}</div>
-                ) : <div />}
-                {!!layer.glow ? (
-                  onPickColor ? colorRow('顏色', layer.glowColor || '#FFFFFF', () => onPickColor('glow'))
-                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>{swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}</div>
-                ) : <div />}
-              </div>
-            )}
+            <div className="grid grid-cols-2 gap-3 items-end">
+              {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+              <ColorPick label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
+                onPick={c => onChange({ glowColor: c })} />
+            </div>
             </>
             )}
 
@@ -1460,21 +1489,18 @@ export const ShapeEditorPanel: React.FC<{
             <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
             {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c }), true)}
           </div>
-          {/* 第三排：發光 —— 一根滑桿＋一排色票（沒有開關鍵） */}
-          {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
-            v => onChange({ shapeGlow: v } as any))}
-          <div>
-            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-            {swatchStrip(layer.shapeGlowColor || layer.color, GLOW_COLORS,
-              c => onChange({ shapeGlowColor: c }), true)}
+          {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
+          <div className="grid grid-cols-2 gap-3 items-end">
+            {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
+              v => onChange({ shapeGlow: v } as any))}
+            <ColorPick label="顏色" value={layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR}
+              colors={GLOW_COLORS} onPick={c => onChange({ shapeGlowColor: c })} />
           </div>
-          {/* 第四排：描邊 —— 一樣是上面滑桿、下面色票 */}
-          {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
-            v => onChange({ shapeStrokeW: v / 10 }))}
-          <div>
-            <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-            {swatchStrip(layer.shapeStrokeColor || '#000000', SOFT_COLORS,
-              c => onChange({ shapeStrokeColor: c }), true)}
+          <div className="grid grid-cols-2 gap-3 items-end">
+            {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
+              v => onChange({ shapeStrokeW: v / 10 }))}
+            <ColorPick label="顏色" value={layer.shapeStrokeColor || '#000000'}
+              onPick={c => onChange({ shapeStrokeColor: c })} />
           </div>
           {/* 點點放在最下面 */}
           <div>
@@ -1502,11 +1528,9 @@ export const ShapeEditorPanel: React.FC<{
                 {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
                 {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
               </div>
-              <div>
-                <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                {swatchStrip(layer.shapeDotColor || '#FFFFFF', SOFT_COLORS,
-                  c => onChange({ shapeDotColor: c }), true)}
-              </div>
+              <ColorPick label="顏色" value={layer.shapeDotColor || '#FFFFFF'}
+                onPick={c => onChange({ shapeDotColor: c })} />
+
             </>
           )}
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
@@ -5673,6 +5697,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [layoutSubTab, setLayoutSubTab] = useState<'layout' | 'adjust'>('layout');
   /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
   const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
+  /* 離開「新增」分頁就回到最外層：下次再進來看到的是那幾顆大按鈕，
+     而不是上次停在的圖形／符號清單。 */
+  useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
   // 離開「新增」分頁就退回大按鈕那一層，下次進來不會停在圖案清單
   useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
   const [colorPickerActive, setColorPickerActive] = useState(false);
@@ -10901,16 +10928,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         n.splice(Math.max(0, n.length - 1), 0, item);
                         return n;
                       };
-                      const moveTo = (arr: any[], a: number, b2: number) => {
-                        if (arr.length < a) return arr;
+                      /** 把 id 是這個的那一顆搬到第 m 個位置（從 1 算起）。用 id 找而不是用
+                          位置找 —— 清單中間再插新圖形時才不會位移到別顆身上。 */
+                      const moveTo = (arr: any[], id: string, m: number) => {
+                        const i = arr.findIndex(z => z.id === id);
+                        if (i < 0) return arr;
                         const n = arr.slice();
-                        const [x] = n.splice(a - 1, 1);
-                        n.splice(b2 - 1, 0, x);
+                        const [x] = n.splice(i, 1);
+                        n.splice(Math.max(0, m - 1), 0, x);
                         return n;
                       };
                       const solidList = moveTo(
                         [...ins(ADD_SHAPE_ITEMS.filter(i => i.filled), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
-                        10, 8);
+                        'heart-f', 8);
                       const lineList = ins(ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line'), HOLE_ITEM_CROSS_O);
                       return ([
                         ['實心', solidList],
