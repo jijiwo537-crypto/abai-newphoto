@@ -192,6 +192,10 @@ select:focus, select:focus-visible {
     animation: home-lib-para linear both;
     animation-timeline: scroll(nearest block);
     animation-range: 0 var(--hero-range, 100vh);
+    /* 沒有這一行的話，模板那一整排卡片每一格都要重畫一次（它一直在位移）。
+       提升成自己的合成圖層之後，位移就只是搬圖層，不再重畫內容。 */
+    will-change: transform;
+    backface-visibility: hidden;
   }
   /* 位移是線性的：進度 p 就是 range × 0.70 × p。
      透明度用 smoothstep（前 8% 不動、到 56% 淡完），所以中間多切幾格 ——

@@ -308,6 +308,10 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            /* 標誌放在「視覺中心」而不是幾何正中間 —— 幾何正中間看起來會偏低。
+               底下墊掉 14% 的高度，標誌的中心就落在整個畫面的 43% 左右，
+               跟一般 App 的開場畫面同一個位置。 */
+            padding-bottom: 14vh;
             opacity: 1;
             transition: opacity 0.45s ease;
             pointer-events: none;
