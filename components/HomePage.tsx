@@ -790,13 +790,13 @@ export const HomePage: React.FC<HomePageProps> = ({
            主視覺與品牌字不在這個流裡（絕對定位），所以它們各自也加了同樣的 8px。 */}
       <div
         ref={heroRef}
-        /* z-[2]：這一屏現在是不透明的黑底、而且釘在最上面，要完整蓋住下面的模板；
-           等它淡掉，模板才浮現出來。
+        /* z-0：模板那一段是 z-[1]，往上滑的時候會蓋過這一屏（這一屏正在淡出）。
+           這一層背景是透明的，不會反過來遮住模板。
            它是 sticky（有定位）＋ 有 opacity，本來就是自己的堆疊環境，
            所以裡面那些 z-10 完全不受影響，排版也一個像素都沒動。
            home-hero：sticky 與淡出的動畫都掛在這個名字上（styles.css）。 */
         style={{ willChange: 'opacity' }}
-        className="home-hero z-[2] min-h-full px-6 pb-[42px] flex flex-col gap-[22px] box-border"
+        className="home-hero z-0 min-h-full px-6 pb-[42px] flex flex-col gap-[22px] box-border"
       >
         {/* 主視覺那一塊（3D 物件）整個拿掉了。
              它本來是絕對定位、只鋪在最底層的，不佔版面 —— 所以拿掉之後，
@@ -896,14 +896,11 @@ export const HomePage: React.FC<HomePageProps> = ({
            版位是絕對定位往下多長 50px 的，扣掉這一段自己的 pb-[21px]，
            上緣留白 20px 是 12px、26px 就是 18px（12px 再多 0.5 倍）。
            只動這一段的頂端留白，第一屏（含廣告版位）一個像素都不會移動。 */}
-      {/* 負的上外距：排版上把這一段往上挪 --lib-lift，所以它比原本更早到頂
-          （這就是「下面上來得比較快」）。可捲的長度也同步短掉一樣的量，
-          捲到底時下緣照樣貼齊，不會多出空白。
-          這裡**完全沒有 transform** —— 位移全部交給瀏覽器自己捲，
+      {/* 模板這一段完全沒有 transform，就是瀏覽器原本的捲動 ——
           所以不可能出現「JS 晚一格、圖被拉走又彈回去」。
-          靜止時它被上面那層不透明的修圖屏完整蓋住，看起來跟以前一樣。 */}
-      <div ref={libBoxRef} style={{ marginTop: 'calc(var(--lib-lift, 0px) * -1)' }}>
-      <div ref={libRef} className="home-lib relative z-0 px-6 pb-4 pt-[26px]">
+          z-[1] 讓它蓋在修圖那一屏上面（那一屏正在淡出）。 */}
+      <div ref={libBoxRef}>
+      <div ref={libRef} className="home-lib relative z-[1] px-6 pb-4 pt-[26px]">
         {/* 搜尋欄 —— 還沒接真的模板資料，先做成純前端的字串過濾 */}
         <div className="flex items-center gap-2 h-11 px-3.5 mb-3 rounded-full bg-white/[0.06] border border-white/10">
           <Icon name="search" className="text-[18px] text-white/40 shrink-0" />
