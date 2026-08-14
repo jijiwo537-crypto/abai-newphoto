@@ -1768,6 +1768,47 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   useEffect(() => { holesRef.current = holes; }, [holes]);
 
+  /* ── 滑桿：手指還按著就一格都不記，鬆手才記 ────────────────────────
+     原本是「停下來 400ms 記一格」。拖到一半停手想一下（超過 400ms）
+     就會被記成一格，同一次拖動於是留下好幾格，上一步要按很多次才回得去。
+     改成看手指：滑桿被按住期間只把「待記」旗標立起來，鬆手（pointerup／
+     pointercancel／touchend）才真的記一格。沒有按著滑桿的變動
+     （按鈕、色票那些一次到位的操作）維持原本的 400ms 防抖，行為不變。 */
+  const sliderDownRef = useRef(false);
+  const pendingPushRef = useRef(false);
+  const flushPush = useCallback(() => {
+    if (!pendingPushRef.current) return;
+    pendingPushRef.current = false;
+    if (!restoringRef.current) pushHistory(holesRef.current, objectsRef.current);
+  }, [pushHistory]);
+  useEffect(() => {
+    const isSlider = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      return !!(el && typeof el.closest === 'function' && el.closest('input[type="range"]'));
+    };
+    const down = (e: Event) => { if (isSlider(e.target)) sliderDownRef.current = true; };
+    const up = () => {
+      if (!sliderDownRef.current) return;
+      sliderDownRef.current = false;
+      flushPush();
+    };
+    // 用捕獲階段，元件自己有沒有 stopPropagation 都攔得到
+    window.addEventListener('pointerdown', down, true);
+    window.addEventListener('touchstart', down, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
+    window.addEventListener('touchend', up, true);
+    window.addEventListener('touchcancel', up, true);
+    return () => {
+      window.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('touchstart', down, true);
+      window.removeEventListener('pointerup', up, true);
+      window.removeEventListener('pointercancel', up, true);
+      window.removeEventListener('touchend', up, true);
+      window.removeEventListener('touchcancel', up, true);
+    };
+  }, [flushPush]);
+
   /* 物件的新增／刪除／編輯／移動／縮放都要能上一步。
      拖曳與滑桿是連續變動，所以等「停下來 400ms」再記一格 ——
      結果就是只記到鬆手時的那一組參數，中間的過程不會塞滿歷史。 */
@@ -1777,6 +1818,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!objHistoryReadyRef.current) { objHistoryReadyRef.current = true; return; }
     if (restoringRef.current) return;
     markDirty();                                   // 按鈕當下就要亮
+    if (sliderDownRef.current) { pendingPushRef.current = true; return; }
     const t = setTimeout(() => {
       if (!restoringRef.current) pushHistory(holesRef.current, objectsRef.current);
     }, 400);
@@ -3303,33 +3345,48 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                      沒有指定連線顏色時就沿用圖案發光的顏色。 */
                   lg.strokeStyle = linkGlowColor;
                   lg.shadowColor = linkGlowColor;
-                  /* 實線：三段模糊、倍率 0.50。shadowBlur 是高斯模糊的參數，
-                     實際「散出去多遠」跟它不是線性的（三段疊起來又更鈍）；
-                     掃過一輪，0.50 量到的散開範圍剛好是 −29.4%
-                     （照比例算的 0.63 只有 −20.6%）。
-
-                     虛線：**光的半徑一定要收在半個週期以內**，這是之前對不齊的真正原因。
-                     虛線的一個週期（短線 3w ＋ 空隙 4w）＝ 7w；原本三段模糊的最大半徑
-                     是 3w × 3 × 0.55 ≈ 4.95w —— 比整個空隙（4w）還遠，
-                     隔壁短線的光在空隙裡疊起來，整條線就變成一片霧、上面浮著幾條白槓，
-                     眼睛讀不出光屬於哪一條短線，看起來就是「沒對齊」。
-                     改成兩段、倍率 0.42：最大半徑 3w × 1.2 × 0.42 ≈ 1.51w，
-                     只有半個空隙，每一條短線各自有一圈光、空隙是乾淨的。
-                     實測（用 app 真實參數）短線兩側 ÷ 空隙兩側的亮度比 1.15 → 1.18，
-                     而且第三段那層大霧不見了，肉眼差別比數字大得多。
-                     少一段模糊也順便省一次描繪。 */
                   const isDash = linkMode === 'dash';
-                  const glowK = isDash ? 0.42 : 0.50;
-                  for (const kk of (isDash ? [0.6, 1.2] : [1, 2, 3])) {
-                    lg.shadowBlur = base * kk * glowK;
-                    linkPath(lg, arr);
+                  if (isDash) {
+                    /* 虛線：**每一條短線各自一圈光**，用疊層描邊做。
+
+                       為什麼不用 shadowBlur：虛線一個週期是短線 3w ＋ 空隙 4w＝7w，
+                       而三段模糊的最大半徑到 3w×3×0.55≈4.95w —— 比整個空隙還遠，
+                       隔壁短線的光在空隙裡疊起來，整條線就變成一片霧、上面浮著幾條
+                       白槓，眼睛讀不出光屬於哪一條短線，看起來就是「沒對齊」。
+
+                       疊層描邊：同一條虛線路徑描 N 次，線寬一層比一層粗、
+                       透明度一層比一層淡，**最外層淡到 0**，所以邊緣是羽化的、
+                       沒有硬邊。虛線陣列從頭到尾沒變，每一段的位置天生就對齊；
+                       lineCap 用 round，光才會包住短線的兩端而不是被切平。
+                          R  = 光往外散的距離（線寬的 1.9 倍）
+                          N  = 疊 14 層（層數就是羽化的細緻度）
+                          A  = 每層的基準透明度
+                          pow= 外圈衰減得多快（越大＝中心越集中） */
+                    const R = LINK_W * 1.9, N = 14, A = 0.20, POW = 1.2;
+                    lg.shadowBlur = 0;
+                    lg.lineCap = 'round';
+                    for (let i = N; i >= 1; i--) {
+                      const f = i / N;
+                      lg.lineWidth = LINK_W + 2 * R * f;
+                      lg.globalAlpha = A * Math.pow(1 - f, POW);
+                      linkPath(lg, arr);
+                    }
+                    lg.globalAlpha = 1;
+                  } else {
+                    /* 實線：三段模糊、倍率 0.50。shadowBlur 是高斯模糊的參數，
+                       實際「散出去多遠」跟它不是線性的（三段疊起來又更鈍）；
+                       掃過一輪，0.50 量到的散開範圍剛好是 −29.4%
+                       （照比例算的 0.63 只有 −20.6%）。 */
+                    for (const kk of [1, 2, 3]) {
+                      lg.shadowBlur = base * kk * 0.50;
+                      linkPath(lg, arr);
+                    }
                   }
                   gg.save();
                   gg.setTransform(1, 0, 0, 1, 0, 0);
-                  /* 亮度：實線收 20%（維持原樣）。
-                     虛線少了一段模糊、半徑也小，整體光量本來就掉很多，
-                     所以貼上去時幾乎不再打折（0.95），才不會反而變得看不見。 */
-                  gg.globalAlpha = av * (isDash ? 0.95 : 0.8);
+                  /* 亮度：實線收 20%（維持原樣）；虛線的濃淡已經由 A／pow 調過，
+                     這裡就不再打折。 */
+                  gg.globalAlpha = av * (isDash ? 1 : 0.8);
                   gg.drawImage(lt, 0, 0);
                   gg.restore();
                 });
@@ -4467,8 +4524,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setSelectedObj(e.selectedObj ?? null); setSelectedTarget(e.selectedTarget ?? null);
   };
 
-  /* 只要上面那組設定有變就記一格。等停下來 400ms 才記 ——
-     滑桿拖動時是連續變化，這樣就只會記到「鬆手時」的那一個值。 */
+  /* 只要上面那組設定有變就記一格。
+     手指還按著滑桿就先不記，鬆手才記（見上面 sliderDownRef 那一段）；
+     其他一次到位的操作維持「停下來 400ms」的防抖。 */
   const envHistoryReadyRef = useRef(false);
   const envSigRef = useRef('');
   useEffect(() => {
@@ -4479,6 +4537,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!envHistoryReadyRef.current) { envHistoryReadyRef.current = true; return; }
     if (restoringRef.current) return;
     markDirty();                                   // 按鈕當下就要亮
+    if (sliderDownRef.current) { pendingPushRef.current = true; return; }
     const t = window.setTimeout(() => {
       if (!restoringRef.current) pushHistory(holesRef.current, objectsRef.current);
     }, 400);
