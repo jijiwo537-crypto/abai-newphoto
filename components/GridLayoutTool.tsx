@@ -10699,7 +10699,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
-                    <span className="text-[11px] font-bold tracking-widest text-white/90">匯入照片</span>
+                    <span className="text-[11px] font-bold tracking-widest text-white/90">匯入圖片</span>
                   </button>
                   <button
                     onClick={() => handleAddTextLayer()}
