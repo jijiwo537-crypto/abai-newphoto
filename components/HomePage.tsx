@@ -396,7 +396,31 @@ export const HomePage: React.FC<HomePageProps> = ({
    * 會蓋在 libRef 上面，捲到定位之後搜尋欄上方還看得到它的下緣。
    * 版位拿掉之後沒有東西會蓋過來了，直接捲到 libRef 的頂端就對。
    */
-  const libScrollTop = (sc: HTMLDivElement) => libRef.current?.offsetTop ?? sc.clientHeight;
+  const libScrollTop = (sc: HTMLDivElement) => {
+    const top = libRef.current?.offsetTop ?? sc.clientHeight;
+    /* 模板那一段在排版上已經往上挪了 lift，畫面上再由動畫補回 lift×(1 − y/range)。
+       所以它貼齊上緣的時候：
+         top − y + lift × (1 − y / range) = 0
+         → y = (top + lift) ÷ (1 + lift / range)
+       沒有視差（不支援／關了動態效果）時 lift 是 0，算出來就是原本的值。 */
+    const range = sc.clientHeight || 1;
+    const lift = liftPx(sc);
+    return Math.max(0, Math.round((top + lift) / (1 + lift / range)));
+  };
+
+  /** 讀 --lib-lift 的實際像素。它寫成 calc()，要用一個暫時的元素讓瀏覽器算完再讀。 */
+  const liftPx = (sc: HTMLElement) => {
+    const v = getComputedStyle(sc).getPropertyValue('--lib-lift').trim();
+    if (!v) return 0;
+    const n = parseFloat(v);
+    if (!Number.isNaN(n) && /^[\d.]+px$/.test(v)) return n;
+    const probe = document.createElement('div');
+    probe.style.cssText = `position:absolute;visibility:hidden;height:${v}`;
+    sc.appendChild(probe);
+    const h2 = probe.getBoundingClientRect().height;
+    probe.remove();
+    return h2 || 0;
+  };
 
   /** 分頁列：首頁／靈感是同一條捲軸的兩個位置，「我」才是換頁 */
   const goNav = useCallback((id: string) => {
@@ -464,32 +488,56 @@ export const HomePage: React.FC<HomePageProps> = ({
   /* ── 往下滑的視差 ────────────────────────────────────────────────
      模板那一段照捲軸原速往上，修圖這一屏只走 45% 的速度 ——
      捲了 y，它自己往下補 0.55y，看起來就是「慢半拍地被留在後面」。
-     同時整片慢慢淡掉，捲到大約三分之二屏就完全不見，
-     所以兩段內容不會在畫面上打架。
+     同時整片慢慢淡掉，捲到大約三分之二屏就完全不見。
 
-     ‧ 直接寫 DOM 的 style，不走 state：每一格捲動都重繪整棵首頁太貴了。
-     ‧ 用 rAF 收斂：一格只算一次，捲很快也不會排隊。
-     ‧ transform 與 opacity 都不會觸發重新排版，模板那一段一個像素都不動。
-     ‧ 系統開了「減少動態效果」就整個跳過。 */
+     **優先交給 CSS 的捲動時間軸**（styles.css 裡的 .home-hero）：
+     整段動畫由合成執行緒照捲動位置自己算，主執行緒完全不參與 ——
+     這正是抖動的解法。原本是 JS 監聽捲動、再排進 requestAnimationFrame 改
+     transform：捲動跑在合成執行緒、算式跑在主執行緒，中間又壓了一格 rAF，
+     兩邊只要差一格，畫面上就是「圖跟著手指抖一下」。
+
+     這裡只剩兩件事：把「一屏有多高」量好寫成 --hero-range 給 CSS 用；
+     以及在不支援的瀏覽器上落回 JS 版 —— 那時候刻意**同步**寫 style，
+     不進 rAF（排進下一格＝固定慢捲動一格，就是會看到抖的那一格）。 */
   const heroRef = useRef<HTMLDivElement>(null);
-  const paraRaf = useRef<number | null>(null);
+  const cssTimeline = useRef(false);
   const reduceMotion = useRef(false);
   useEffect(() => {
-    try { reduceMotion.current = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { /* 舊瀏覽器 */ }
+    try {
+      cssTimeline.current = typeof CSS !== 'undefined' && CSS.supports('animation-timeline: scroll()');
+      reduceMotion.current = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    } catch { /* 舊瀏覽器 */ }
+  }, []);
+
+  /** 把「一屏有多高」寫給 CSS 動畫用。只有尺寸變了才需要重寫。 */
+  const syncRange = useCallback(() => {
+    const sc = scrollRef.current;
+    if (sc) sc.style.setProperty('--hero-range', `${sc.clientHeight}px`);
   }, []);
 
   const applyParallax = useCallback(() => {
-    paraRaf.current = null;
     const sc = scrollRef.current, el = heroRef.current;
     if (!sc || !el) return;
-    if (reduceMotion.current) { el.style.transform = ''; el.style.opacity = ''; return; }
+    if (cssTimeline.current) return;          // 交給 CSS，JS 一個字都不用寫
+    if (reduceMotion.current) {
+      el.style.transform = ''; el.style.opacity = '';
+      if (libRef.current) libRef.current.style.transform = '';
+      return;
+    }
     const h = sc.clientHeight || 1;
     const y = Math.max(0, sc.scrollTop);
-    el.style.transform = `translate3d(0, ${(y * 0.55).toFixed(2)}px, 0)`;
-    /* 淡出的節奏：前 12% 完全不動（手指才剛碰到就整片變淡會很躁），
-       之後到 68% 之間淡完。用 smoothstep 收頭尾，不是直線 ——
-       直線的淡出在開始與結束那兩下看得出「開關感」。 */
-    const t = Math.min(1, Math.max(0, (y / h - 0.12) / 0.56));
+    el.style.transform = `translate3d(0, ${(y * 0.70).toFixed(2)}px, 0)`;
+    // 模板那一段自己再往上多走一截（進度封頂在一屏），所以會提早到頂
+    const lib = libRef.current;
+    if (lib) {
+      const lift = liftPx(sc);
+      lib.style.transform = `translate3d(0, ${((1 - Math.min(1, y / h)) * lift).toFixed(2)}px, 0)`;
+    }
+    /* 淡出的節奏：前 8% 完全不動（手指才剛碰到就整片變淡會很躁），
+       之後到 56% 之間淡完 —— 模板提早到頂了，這一屏也要提早退場。
+       用 smoothstep 收頭尾，不是直線：直線的淡出在開始與結束那兩下
+       看得出「開關感」。 */
+    const t = Math.min(1, Math.max(0, (y / h - 0.08) / 0.48));
     const fade = t * t * (3 - 2 * t);
     const o = 1 - fade;
     el.style.opacity = o.toFixed(3);
@@ -498,24 +546,16 @@ export const HomePage: React.FC<HomePageProps> = ({
     el.style.visibility = o <= 0.002 ? 'hidden' : '';
   }, []);
 
-  const queueParallax = useCallback(() => {
-    if (paraRaf.current != null) return;
-    paraRaf.current = requestAnimationFrame(applyParallax);
-  }, [applyParallax]);
-
   // 進頁面、換分頁、轉向都重算一次（從「我的」切回來時捲軸還停在原位）
-  useLayoutEffect(() => { applyParallax(); }, [applyParallax, nav]);
+  useLayoutEffect(() => { syncRange(); applyParallax(); }, [syncRange, applyParallax, nav]);
   useEffect(() => {
-    const on = () => queueParallax();
+    const on = () => { syncRange(); applyParallax(); };
     window.addEventListener('resize', on);
-    return () => {
-      window.removeEventListener('resize', on);
-      if (paraRaf.current != null) cancelAnimationFrame(paraRaf.current);
-    };
-  }, [queueParallax]);
+    return () => window.removeEventListener('resize', on);
+  }, [syncRange, applyParallax]);
 
   const onScroll = useCallback(() => {
-    queueParallax();
+    applyParallax();
     const sc = scrollRef.current;
     if (!sc) return;
     const h = sc.clientHeight || 1;
@@ -527,7 +567,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       return;
     }
     if (next !== navRef.current) setNav(next);
-  }, [queueParallax]);
+  }, [applyParallax]);
 
   const copyEmail = async () => {
     try {
@@ -666,7 +706,7 @@ export const HomePage: React.FC<HomePageProps> = ({
            主頁上面所有東西就都待在原位。
            拿掉圖示時分頁列矮了 26px；字級 9→12px 之後又高回 5px，所以是 26-5=21。 */
         style={{ overscrollBehavior: 'none' }}
-        className={`no-scrollbar relative z-[5] flex-1 min-h-0 overflow-y-auto box-border pb-[21px] ${nav === 'me' ? 'hidden' : 'block'}`}
+        className={`home-scroll no-scrollbar relative z-[5] flex-1 min-h-0 overflow-y-auto box-border pb-[21px] ${nav === 'me' ? 'hidden' : 'block'}`}
       >
       {/* 這一疊是靠 mt-auto 貼著下緣排的，底部留白加大就等於整組一起往上。
            用 min-h-full 而不是 h-full：矮的機型內容會比一屏高，寫死高度會被切掉；
@@ -681,7 +721,7 @@ export const HomePage: React.FC<HomePageProps> = ({
            這裡有 transform／opacity，本來就是自己的堆疊環境，
            所以裡面那些 z-10 完全不受影響，排版也一個像素都沒動。 */
         style={{ willChange: 'transform, opacity' }}
-        className="relative z-0 min-h-full px-6 pb-[42px] flex flex-col gap-[22px] box-border"
+        className="home-hero relative z-0 min-h-full px-6 pb-[42px] flex flex-col gap-[22px] box-border"
       >
         {/* 主視覺那一塊（3D 物件）整個拿掉了。
              它本來是絕對定位、只鋪在最底層的，不佔版面 —— 所以拿掉之後，
@@ -781,7 +821,14 @@ export const HomePage: React.FC<HomePageProps> = ({
            版位是絕對定位往下多長 50px 的，扣掉這一段自己的 pb-[21px]，
            上緣留白 20px 是 12px、26px 就是 18px（12px 再多 0.5 倍）。
            只動這一段的頂端留白，第一屏（含廣告版位）一個像素都不會移動。 */}
-      <div ref={libRef} className="relative z-[1] px-6 pb-4 pt-[26px]">
+      <div
+        ref={libRef}
+        /* 負的上外距：排版上先把這一段往上挪 --lib-lift，可捲的長度就短掉同樣的量。
+           畫面上的位置由 CSS 動畫補回來（一開始 translateY(+lift)，捲動時收回 0），
+           所以「靜止時看起來完全沒變、捲起來卻快 0.35 屏」。 */
+        style={{ marginTop: 'calc(var(--lib-lift, 0px) * -1)' }}
+        className="home-lib relative z-[1] px-6 pb-4 pt-[26px]"
+      >
         {/* 搜尋欄 —— 還沒接真的模板資料，先做成純前端的字串過濾 */}
         <div className="flex items-center gap-2 h-11 px-3.5 mb-3 rounded-full bg-white/[0.06] border border-white/10">
           <Icon name="search" className="text-[18px] text-white/40 shrink-0" />
@@ -820,6 +867,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           ))}
         </div>
       </div>
+
       </div>
 
       {/* --- 底部分頁 ---
