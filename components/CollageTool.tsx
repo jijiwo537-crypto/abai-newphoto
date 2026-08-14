@@ -3347,32 +3347,59 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   lg.shadowColor = linkGlowColor;
                   const isDash = linkMode === 'dash';
                   if (isDash) {
-                    /* 虛線：**每一條短線各自一圈光**，用疊層描邊做。
+                    /* 虛線：**每一條短線各自一圈光**，而且要是真的光、不是描邊。
 
                        為什麼不用 shadowBlur：虛線一個週期是短線 3w ＋ 空隙 4w＝7w，
-                       而三段模糊的最大半徑到 3w×3×0.55≈4.95w —— 比整個空隙還遠，
-                       隔壁短線的光在空隙裡疊起來，整條線就變成一片霧、上面浮著幾條
-                       白槓，眼睛讀不出光屬於哪一條短線，看起來就是「沒對齊」。
+                       而三段 shadowBlur 的最大半徑到 3w×3×0.55≈4.95w —— 比整個空隙
+                       還遠，隔壁短線的光在空隙裡疊起來，整條線就變成一片霧、上面浮著
+                       幾條白槓，眼睛讀不出光屬於哪一條短線，看起來就是「沒對齊」。
 
-                       疊層描邊：同一條虛線路徑描 N 次，線寬一層比一層粗、
-                       透明度一層比一層淡，**最外層淡到 0**，所以邊緣是羽化的、
-                       沒有硬邊。虛線陣列從頭到尾沒變，每一段的位置天生就對齊；
-                       lineCap 用 round，光才會包住短線的兩端而不是被切平。
-                          R  = 光往外散的距離（線寬的 1.4 倍）
-                          N  = 疊 20 層（層數就是羽化的細緻度，層數越多階梯越看不出來）
-                          A  = 每層的基準透明度
-                          pow= 外圈衰減得多快（越大＝邊緣越柔、中心越集中）
-                       （1.9／14／1.2 → 1.4／20／2.2：範圍收 26%，羽化再更柔） */
-                    const R = LINK_W * 1.4, N = 20, A = 0.22, POW = 2.2;
+                       上一版用「疊層描邊」（同一條路徑描 20 次、線寬遞增）。位置是對了，
+                       但那疊出來的是**一圈一圈同心的邊**，衰減接近直線，所以看起來就是
+                       「描邊＋羽化」，不像光。
+
+                       現在的做法：先把純虛線畫在一張素材層上，再用 ctx.filter 的
+                       **真高斯模糊**疊三個半徑貼回來（小的給亮核心、大的給外圍的暈）。
+                       高斯的衰減是指數的，中心亮、外圍無限趨近 0，沒有任何邊；
+                       虛線陣列從頭到尾沒變，所以每一段的位置天生就對齊。
+                         半徑 0.8w / 1.6w / 3.0w，透明度 0.5 / 0.4 / 0.3
+                       （最大 3w 仍小於一個週期 7w，所以每一段還是各自成形。）
+                       ctx.filter 是 Safari 16.4 以後才有，沒有的話退回疊層描邊。 */
                     lg.shadowBlur = 0;
-                    lg.lineCap = 'round';
-                    for (let i = N; i >= 1; i--) {
-                      const f = i / N;
-                      lg.lineWidth = LINK_W + 2 * R * f;
-                      lg.globalAlpha = A * Math.pow(1 - f, POW);
-                      linkPath(lg, arr);
+                    const canFilter = typeof (lg as any).filter === 'string';
+                    if (canFilter) {
+                      // 素材層：只有虛線本身，不模糊
+                      const ls = document.createElement('canvas');
+                      ls.width = W2; ls.height = H2;
+                      const lsg = ls.getContext('2d');
+                      if (lsg) {
+                        if (tf2) lsg.setTransform(tf2);
+                        linkStyle(lsg);
+                        lsg.strokeStyle = linkGlowColor;
+                        linkPath(lsg, arr);
+                      }
+                      lg.setTransform(1, 0, 0, 1, 0, 0);
+                      const RS = [0.8, 1.6, 3.0], AS = [0.5, 0.4, 0.3];
+                      for (let i = 0; i < RS.length; i++) {
+                        (lg as any).filter = `blur(${(LINK_W * RS[i]).toFixed(2)}px)`;
+                        lg.globalAlpha = AS[i];
+                        lg.drawImage(ls, 0, 0);
+                      }
+                      (lg as any).filter = 'none';
+                      lg.globalAlpha = 1;
+                      if (tf2) lg.setTransform(tf2);
+                    } else {
+                      // 退路：疊層描邊（外層淡到 0，邊緣一樣不會有硬邊）
+                      const R = LINK_W * 1.4, N = 20, A = 0.22, POW = 2.2;
+                      lg.lineCap = 'round';
+                      for (let i = N; i >= 1; i--) {
+                        const f = i / N;
+                        lg.lineWidth = LINK_W + 2 * R * f;
+                        lg.globalAlpha = A * Math.pow(1 - f, POW);
+                        linkPath(lg, arr);
+                      }
+                      lg.globalAlpha = 1;
                     }
-                    lg.globalAlpha = 1;
                   } else {
                     /* 實線：三段模糊、倍率 0.50。shadowBlur 是高斯模糊的參數，
                        實際「散出去多遠」跟它不是線性的（三段疊起來又更鈍）；
