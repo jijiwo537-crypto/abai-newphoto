@@ -574,11 +574,11 @@ export const HomePage: React.FC<HomePageProps> = ({
       lib.style.transform = `translate3d(0, ${((1 - Math.min(1, y / h)) * lift).toFixed(2)}px, 0)`;
     }
     /* 淡出的節奏：前 6% 完全不動（手指才剛碰到就整片變淡會很躁），
-       之後到 48.53% 才淡完 —— 全透明的位置訂在 y = 380px（一屏 783 的 48.53%），
-       比「模板上緣碰到『編輯／相機』那一排上緣」的 450px 再提早 70px。
+       之後到 45.98% 才淡完 —— 全透明的位置訂在 y = 360px（一屏 783 的 45.98%），
+       比「模板上緣碰到『編輯／相機』那一排上緣」的 450px 再提早 90px。
        用 smoothstep 收頭尾，不是直線：直線的淡出在開始與結束那兩下
        看得出「開關感」。 */
-    const t = Math.min(1, Math.max(0, (y / h - 0.06) / 0.4253));
+    const t = Math.min(1, Math.max(0, (y / h - 0.06) / 0.3998));
     const fade = t * t * (3 - 2 * t);
     const o = 1 - fade;
     el.style.opacity = o.toFixed(3);
