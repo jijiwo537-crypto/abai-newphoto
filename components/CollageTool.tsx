@@ -229,6 +229,56 @@ const HOLE_ITEMS_EXTRA: HoleShapeItem[] =
 export const shapePathBox = (kind: string, w: number, h: number) =>
   new Path2D(shapePathD(kind, w, h));
 
+/**
+ * 圖形上的「點點」。跟遮罩那邊完全同一套（同樣的 5~20 大小、40~140 間距、
+ * 同樣的交錯三角網格），呼叫端負責把它剪裁在圖形裡面。
+ *
+ * 原點在**圖形的中心**（不是左上角），所以路徑類與字符類可以共用同一支。
+ * unitW/unitH 決定點點的大小與間距（＝圖形本身的框），covW/covH 決定要鋪多大
+ * 一塊 —— 字符類會畫在比框更大的暫存畫布上，兩個才要分開給。
+ */
+const drawShapeDots = (
+  c: CanvasRenderingContext2D,
+  unitW: number, unitH: number, covW: number, covH: number, o: any,
+) => {
+  c.fillStyle = o.dotColor || '#FFFFFF';
+  /* 換算單位：讓「大小 50／間距 20」在圖形上看起來的密度，
+     跟遮罩用同樣的值時差不多（大約一排十顆）。 */
+  const unit2 = Math.max(unitW, unitH) / 600;
+  const dsz = (5 + ((o.dotSize ?? 50) / 100) * 15) * unit2;
+  const dgap = (40 + (o.dotGap ?? 20)) * unit2;
+  const rr = dsz / 2;
+  const dx2 = dgap, dy2 = dgap * Math.sqrt(3) / 2;
+  const rx2 = Math.ceil(covW / dx2) + 2, ry2 = Math.ceil(covH / dy2) + 2;
+  for (let j2 = -ry2; j2 <= ry2; j2++) {
+    const py = j2 * dy2;
+    const shiftX = Math.abs(j2) % 2 === 1 ? dx2 / 2 : 0;
+    for (let i2 = -rx2; i2 <= rx2; i2++) {
+      c.beginPath();
+      c.arc(i2 * dx2 + shiftX, py, rr, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+};
+
+/**
+ * 圖形調整面板裡「點一下打開調色盤」的那一列。
+ * 樣式跟連線顏色、文字的描邊／發光顏色逐項相同。
+ */
+const shapeColorRow = (label: string, value: string, onOpen: () => void) => (
+  <div
+    key={label}
+    className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
+    onClick={onOpen}
+  >
+    <span className="text-[10px] font-bold text-[#888]">{label}</span>
+    <div className="flex items-center gap-2">
+      <span className="text-[9px] font-mono text-white/40">{value}</span>
+      <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
+    </div>
+  </div>
+);
+
 /** 圖形調整面板用的滑桿，樣式跟經典拼圖那顆 ShapeEditorPanel 逐項相同 */
 const shapeSlider = (label: string, value: number, min: number, max: number, onVal: (v: number) => void) => (
   <div className="space-y-1.5" key={label}>
@@ -3979,21 +4029,80 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           ctx.setLineDash([seg, seg * 0.85]);
         } else ctx.setLineDash([]);
         /* 從圖案借過來的那幾種：直接走圖案本來那條管線畫。
-           文字／圖片類的圖案只有實心（沒有空心版），跟清單一致。 */
+           文字／圖片類的圖案只有實心（沒有空心版），跟清單一致。
+
+           這一段以前畫完就 return，那是三個災情的同一個源頭：
+             ① 只 restore 了自己那一層，最外面那一層（把原點搬到框心的那個
+                translate）沒有還原 —— 後面每一個物件、遮罩、連線都疊在上一個
+                的座標系上畫，所以整批往右下角愈跑愈遠；
+             ② return 直接跳過了後面共用的「選取虛線框」，所以選中沒有框；
+             ③ 也跳過了發光與點點，兩個都沒反應。
+           改成跟其他圖形走同一條路：畫完就往下接，發光、點點、選取框、
+           還原座標系全部共用同一段。 */
         if (o.kind === 'hole') {
           const size = Math.min(bw, bh);
           ctx.translate(bw / 2, bh / 2);      // 圖案的管線是以中心為原點
+          const gcol = o.glowColor || col;
           if (isTextHole(o.hole)) {
-            drawTextShape(ctx, o.hole, holeGlyph(o.hole, o.text || '', o), 0, 0, size, col, false, 0);
+            const gly = holeGlyph(o.hole, o.text || '', o);
+            /* 發光：drawTextShape 最後是一次 drawImage，所以直接開 canvas 的
+               陰影，光就會沿著字（或去背圖）真正的輪廓散出去 ——
+               半徑跟其他圖形同一組。 */
+            if (o.glow) {
+              ctx.save();
+              ctx.shadowColor = gcol;
+              for (const r of shapeGlowBlurs(bw, bh)) {
+                ctx.shadowBlur = r;
+                drawTextShape(ctx, o.hole, gly, 0, 0, size, col, false, 0);
+              }
+              ctx.restore();
+            }
+            if (o.dots) {
+              /* 點點要剪在「字的形狀」裡面，可是字沒有路徑可以 clip。
+                 先把字畫到一張暫存畫布上，再用 source-atop 把點點蓋上去：
+                 只有原本有墨水的地方會留下點點，結果跟路徑 clip 一模一樣。
+                 暫存畫布開大一點（長邊 ×1.6），字的墨水比框大時也不會被切掉。 */
+              const side = Math.max(2, Math.ceil(Math.max(bw, bh) * 1.6));
+              const tmp = document.createElement('canvas');
+              tmp.width = side; tmp.height = side;
+              const tc = get2dWide(tmp, { alpha: true });
+              if (tc) {
+                tc.translate(side / 2, side / 2);
+                drawTextShape(tc, o.hole, gly, 0, 0, size, col, false, 0);
+                tc.globalCompositeOperation = 'source-atop';
+                drawShapeDots(tc, bw, bh, side, side, o);
+                ctx.drawImage(tmp, -side / 2, -side / 2);
+              } else {
+                drawTextShape(ctx, o.hole, gly, 0, 0, size, col, false, 0);
+              }
+            } else {
+              drawTextShape(ctx, o.hole, gly, 0, 0, size, col, false, 0);
+            }
           } else {
             drawShapePath(ctx, o.hole, 0, 0, size);
+            if (o.glow) {
+              ctx.save();
+              ctx.shadowColor = gcol;
+              ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineWidth = lw;
+              for (const r of shapeGlowBlurs(bw, bh)) {
+                ctx.shadowBlur = r;
+                if (solid) ctx.fill(); else ctx.stroke();
+              }
+              ctx.restore();
+            }
             if (solid) { ctx.fillStyle = col; ctx.fill(); }
             else { ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.stroke(); }
+            if (o.dots) {
+              // 路徑還在，直接拿來當剪裁範圍（跟一般圖形同一種做法）
+              ctx.save();
+              ctx.clip();
+              drawShapeDots(ctx, bw, bh, bw, bh, o);
+              ctx.restore();
+            }
           }
           ctx.setLineDash([]);
           ctx.restore();
-          return;
-        }
+        } else {
         const shapeP = shapePathBox(o.kind, bw, bh);
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
@@ -4013,29 +4122,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         if (o.dots) {
           ctx.save();
           ctx.clip(shapeP);
-          ctx.fillStyle = o.dotColor || '#FFFFFF';
-          /* 換算單位：讓「大小 50／間距 20」在圖形上看起來的密度，
-             跟遮罩用同樣的值時差不多（大約一排十顆）。 */
-          const unit2 = Math.max(bw, bh) / 600;
-          const dsz = (5 + ((o.dotSize ?? 50) / 100) * 15) * unit2;
-          const dgap = (40 + (o.dotGap ?? 20)) * unit2;
-          const rr = dsz / 2;
-          const dx2 = dgap, dy2 = dgap * Math.sqrt(3) / 2;
-          const rx2 = Math.ceil(bw / dx2) + 2, ry2 = Math.ceil(bh / dy2) + 2;
-          for (let j2 = -ry2; j2 <= ry2; j2++) {
-            const py = bh / 2 + j2 * dy2;
-            const shiftX = Math.abs(j2) % 2 === 1 ? dx2 / 2 : 0;
-            for (let i2 = -rx2; i2 <= rx2; i2++) {
-              const px = bw / 2 + i2 * dx2 + shiftX;
-              ctx.beginPath();
-              ctx.arc(px, py, rr, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          }
+          // 現在原點在框的左上角，點點那支是以中心為原點，先搬過去
+          ctx.translate(bw / 2, bh / 2);
+          drawShapeDots(ctx, bw, bh, bw, bh, o);
           ctx.restore();
         }
         ctx.setLineDash([]);
         ctx.restore();
+        }
       } else if (o.type === 'text') {
         // 正在畫布上直接編輯時，字交給疊在上面的 textarea 顯示
         if (isMain && editingTextRef.current === o.id) { ctx.restore(); return; }
@@ -5911,6 +6005,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   ? ((objects.find(o => o.id === selectedObj)?.color) || SHAPE_DEFAULT_COLOR)
                 : colorPickerTarget === 'shapeDot'
                   ? ((objects.find(o => o.id === selectedObj)?.dotColor) || '#FFFFFF')
+                : colorPickerTarget === 'shapeGlow'
+                  ? ((objects.find(o => o.id === selectedObj)?.glowColor)
+                    || (objects.find(o => o.id === selectedObj)?.color) || SHAPE_DEFAULT_COLOR)
                 : colorPickerTarget === 'textStroke'
                   ? ((objects.find(o => o.id === selectedObj)?.strokeColor) || '#000000')
                 : colorPickerTarget === 'textGlow'
@@ -5923,12 +6020,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, color: c } : o));
                 else if(colorPickerTarget==='shapeDot')
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, dotColor: c } : o));
+                else if(colorPickerTarget==='shapeGlow')
+                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, glowColor: c } : o));
                 else if(colorPickerTarget==='textStroke')
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, strokeColor: c } : o));
                 else if(colorPickerTarget==='textGlow')
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, glowColor: c } : o));
                 else setDotColor(c); }}
-              swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor' ? GLOW_SWATCHES
+              swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor'
+                || colorPickerTarget === 'shapeGlow' ? GLOW_SWATCHES
                 : undefined}
               onClose={() => setColorPickerTarget(null)}
               title={colorPickerTarget === 'mask' ? '遮罩顏色'
@@ -5936,6 +6036,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 : colorPickerTarget === 'linkColor' ? '連線顏色'
                 : colorPickerTarget === 'shapeObj' ? '圖形顏色'
                 : colorPickerTarget === 'shapeDot' ? '點點顏色'
+                : colorPickerTarget === 'shapeGlow' ? '發光顏色'
                 : colorPickerTarget === 'textStroke' ? '描邊顏色'
                 : colorPickerTarget === 'textGlow' ? '發光顏色' : '點點'}
             />
@@ -6275,68 +6376,65 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               {shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
                             </>
                           )}
-                          {/* 點點：按鈕與操作跟遮罩那一組完全一樣 */}
-                          <div>
-                            <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
-                            <div className="flex items-center gap-2">
-                              {([['無', false], ['點點', true]] as const).map(([label, on]) => (
-                                <button
-                                  key={label}
-                                  onClick={() => patch({ dots: on })}
-                                  className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                                    !!sel.dots === on
-                                      ? 'bg-white text-black border-white'
-                                      : 'bg-white/[0.04] text-white/70 border-white/15'
-                                  }`}
-                                >
-                                  {label}
-                                </button>
-                              ))}
+                          {/* 點點與發光併成同一排：兩邊都是「關／開」兩顆，
+                              各佔一半（按鈕與操作跟遮罩那一組完全一樣）。 */}
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
+                              <div className="flex items-center gap-2">
+                                {([['無', false], ['點點', true]] as const).map(([label, on]) => (
+                                  <button
+                                    key={label}
+                                    onClick={() => patch({ dots: on })}
+                                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
+                                      !!sel.dots === on
+                                        ? 'bg-white text-black border-white'
+                                        : 'bg-white/[0.04] text-white/70 border-white/15'
+                                    }`}
+                                  >
+                                    {label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <div>
+                              <p className="text-[11px] font-bold text-white/70 mb-1.5">發光</p>
+                              <div className="flex items-center gap-2">
+                                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
+                                  <button
+                                    key={label}
+                                    onClick={() => patch({ glow: on ? 1 : 0 })}
+                                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
+                                      !!sel.glow === on
+                                        ? 'bg-white text-black border-white'
+                                        : 'bg-white/[0.04] text-white/70 border-white/15'
+                                    }`}
+                                  >
+                                    {label}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                           </div>
                           {!!sel.dots && (
-                            <>
-                              <div className="grid grid-cols-2 gap-3">
-                                <CompactSlider label="大小" value={sel.dotSize ?? 50} min={0} max={100}
-                                  onChange={(v: number) => patch({ dotSize: v })} />
-                                <CompactSlider label="間距" value={sel.dotGap ?? 20} min={0} max={100}
-                                  onChange={(v: number) => patch({ dotGap: v })} />
-                              </div>
-                              <div
-                                className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
-                                onClick={() => setColorPickerTarget('shapeDot')}
-                              >
-                                <span className="text-[10px] font-bold text-[#888]">點點顏色</span>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[9px] font-mono text-white/40">{sel.dotColor || '#FFFFFF'}</span>
-                                  <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10"
-                                    style={{ backgroundColor: sel.dotColor || '#FFFFFF' }} />
-                                </div>
-                              </div>
-                            </>
-                          )}
-                          <div>
-                            <p className="text-[11px] font-bold text-white/70 mb-1.5">發光</p>
-                            <div className="flex items-center gap-2">
-                              {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
-                                <button
-                                  key={label}
-                                  onClick={() => patch({ glow: on ? 1 : 0 })}
-                                  className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                                    !!sel.glow === on
-                                      ? 'bg-white text-black border-white'
-                                      : 'bg-white/[0.04] text-white/70 border-white/15'
-                                  }`}
-                                >
-                                  {label}
-                                </button>
-                              ))}
+                            <div className="grid grid-cols-2 gap-3">
+                              <CompactSlider label="大小" value={sel.dotSize ?? 50} min={0} max={100}
+                                onChange={(v: number) => patch({ dotSize: v })} />
+                              <CompactSlider label="間距" value={sel.dotGap ?? 20} min={0} max={100}
+                                onChange={(v: number) => patch({ dotGap: v })} />
                             </div>
-                          </div>
-                          {!!sel.glow && (
-                            <div>
-                              <p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>
-                              {swatchStrip(sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR, GLOW_SWATCH_COLORS, (c: string) => patch({ glowColor: c }), true)}
+                          )}
+                          {/* 兩顆顏色都排在自己那一組的正下方（左＝點點、右＝發光），
+                              位置本身就講清楚是誰的顏色了，所以標題只寫「顏色」。
+                              發光顏色也跟著改成「點一下才打開調色盤」，跟連線顏色同一種做法。 */}
+                          {(!!sel.dots || !!sel.glow) && (
+                            <div className="grid grid-cols-2 gap-3">
+                              {sel.dots
+                                ? shapeColorRow('顏色', sel.dotColor || '#FFFFFF', () => setColorPickerTarget('shapeDot'))
+                                : <div />}
+                              {sel.glow
+                                ? shapeColorRow('顏色', sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR, () => setColorPickerTarget('shapeGlow'))
+                                : <div />}
                             </div>
                           )}
                         </div>

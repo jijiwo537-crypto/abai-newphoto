@@ -1279,7 +1279,9 @@ export const TextEditorPanel: React.FC<{
             {/* 文字內容一律直接在畫布上打（選中之後再點一次那段字），
                 所以這裡不放輸入框。符號也是一樣的改法。 */}
             <div>
-              <p className="text-[11px] font-bold text-white/70 mb-1.5">{symbol ? '符號顏色' : '文字顏色'}</p>
+              {/* 標題只寫「顏色」：這一欄本來就在文字（符號）那一頁的最上面，
+                  再寫一次「文字」「符號」是多的。 */}
+              <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
               {swatchRow(layer.color, c => onChange({ color: c }))}
             </div>
             {slider(symbol ? '大小' : '字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
@@ -1291,8 +1293,8 @@ export const TextEditorPanel: React.FC<{
                 {slider('邊緣發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
                 {!!layer.glow && (
                   onPickColor
-                    ? colorRow('發光顏色', layer.glowColor || '#FFFFFF', () => onPickColor('glow'))
-                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>{swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}</div>
+                    ? colorRow('顏色', layer.glowColor || '#FFFFFF', () => onPickColor('glow'))
+                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>{swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}</div>
                 )}
               </>
             ) : (
@@ -1330,16 +1332,18 @@ export const TextEditorPanel: React.FC<{
               {slider('邊緣發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
             </div>
             {/* 顏色不直接攤開色票，改成點一下才打開調色盤 —— 跟連線顏色同一種做法。
-                沒有給 onPickColor 的地方（例如經典拼圖）維持原本的色票列。 */}
+                沒有給 onPickColor 的地方（例如經典拼圖）維持原本的色票列。
+                兩顆顏色分別排在上面「描邊」「邊緣發光」那兩根滑桿的正下方、
+                左右欄一一對齊，位置本身就講清楚是誰的顏色，所以標題只寫「顏色」。 */}
             {(!!layer.strokeWidth || !!layer.glow) && (
               <div className="grid grid-cols-2 gap-3">
                 {!!layer.strokeWidth ? (
-                  onPickColor ? colorRow('描邊顏色', layer.strokeColor || '#000000', () => onPickColor('stroke'))
-                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">描邊顏色</p>{swatchRow(layer.strokeColor, c => onChange({ strokeColor: c }))}</div>
+                  onPickColor ? colorRow('顏色', layer.strokeColor || '#000000', () => onPickColor('stroke'))
+                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>{swatchRow(layer.strokeColor, c => onChange({ strokeColor: c }))}</div>
                 ) : <div />}
                 {!!layer.glow ? (
-                  onPickColor ? colorRow('發光顏色', layer.glowColor || '#FFFFFF', () => onPickColor('glow'))
-                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>{swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}</div>
+                  onPickColor ? colorRow('顏色', layer.glowColor || '#FFFFFF', () => onPickColor('glow'))
+                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>{swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}</div>
                 ) : <div />}
               </div>
             )}
@@ -1399,31 +1403,71 @@ export const ShapeEditorPanel: React.FC<{
               {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
             </>
           )}
-          {/* 發光只有開／關，顏色就用圖形自己的顏色。
+          {/* 點點與發光併成同一排，跟創意拼圖那一頁逐項相同（同一組按鈕、
+              同一組參數、同一套網格）。發光只有開／關。
               圖層上下不放在這裡 —— 選中時畫面上那排工具列本來就有。 */}
-          <div>
-            <p className="text-[11px] font-bold text-white/70 mb-1.5">發光</p>
-            <div className="flex items-center gap-2">
-              {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
-                <button
-                  key={label}
-                  onClick={() => onChange({ shapeGlow: on })}
-                  className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                    !!layer.shapeGlow === on
-                      ? 'bg-white text-black border-white'
-                      : 'bg-white/[0.04] text-white/70 border-white/15'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
+              <div className="flex items-center gap-2">
+                {([['無', false], ['點點', true]] as const).map(([label, on]) => (
+                  <button
+                    key={label}
+                    onClick={() => onChange({ shapeDots: on })}
+                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
+                      !!layer.shapeDots === on
+                        ? 'bg-white text-black border-white'
+                        : 'bg-white/[0.04] text-white/70 border-white/15'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-[11px] font-bold text-white/70 mb-1.5">發光</p>
+              <div className="flex items-center gap-2">
+                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
+                  <button
+                    key={label}
+                    onClick={() => onChange({ shapeGlow: on })}
+                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
+                      !!layer.shapeGlow === on
+                        ? 'bg-white text-black border-white'
+                        : 'bg-white/[0.04] text-white/70 border-white/15'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-          {!!layer.shapeGlow && (
-            <div>
-              <p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>
-              {swatchStrip(layer.shapeGlowColor || layer.color, GLOW_COLORS,
-                c => onChange({ shapeGlowColor: c }), true)}
+          {!!layer.shapeDots && (
+            <div className="grid grid-cols-2 gap-3">
+              {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
+              {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
+            </div>
+          )}
+          {/* 兩排顏色都排在自己那一組的正下方（左＝點點、右＝發光），
+              位置本身就講清楚是誰的顏色，所以標題只寫「顏色」。 */}
+          {(!!layer.shapeDots || !!layer.shapeGlow) && (
+            <div className="grid grid-cols-2 gap-3">
+              {layer.shapeDots ? (
+                <div>
+                  <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+                  {swatchStrip(layer.shapeDotColor || '#FFFFFF', SOFT_COLORS,
+                    c => onChange({ shapeDotColor: c }), true)}
+                </div>
+              ) : <div />}
+              {layer.shapeGlow ? (
+                <div>
+                  <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+                  {swatchStrip(layer.shapeGlowColor || layer.color, GLOW_COLORS,
+                    c => onChange({ shapeGlowColor: c }), true)}
+                </div>
+              ) : <div />}
             </div>
           )}
         </div>
@@ -2533,7 +2577,49 @@ interface FloatingImage {
   shapeGlow?: boolean;
   /** 圖形發光的顏色。沒設就用圖形自己的顏色 */
   shapeGlowColor?: string;
+  /* 圖形上的「點點」。跟創意拼圖那邊同一組參數、同一套網格，
+     所以兩個工具調同樣的值，看到的密度與大小是一樣的。 */
+  shapeDots?: boolean;
+  /** 點點大小 0~100（預設 50） */
+  shapeDotSize?: number;
+  /** 點點間距 0~100（預設 20） */
+  shapeDotGap?: number;
+  /** 點點顏色（預設白） */
+  shapeDotColor?: string;
 }
+
+/**
+ * 圖形上「點點」的網格參數。預覽（SVG pattern）與匯出（canvas）吃同一支，
+ * 兩邊才不可能對不起來；創意拼圖那邊也是同一組式子。
+ *   dsz  = (5 + 大小/100 × 15) × 單位
+ *   dgap = (40 + 間距) × 單位          單位 = 長邊 / 600
+ * 網格是交錯的三角格：偶數列不位移、奇數列往右半格，列距 = 間距 × √3/2。
+ */
+export const shapeDotGrid = (w: number, h: number, l: {
+  shapeDotSize?: number; shapeDotGap?: number; shapeDotColor?: string;
+}) => {
+  const unit = Math.max(w, h) / 600;
+  const dsz = (5 + ((l.shapeDotSize ?? 50) / 100) * 15) * unit;
+  const dgap = (40 + (l.shapeDotGap ?? 20)) * unit;
+  return { r: dsz / 2, dx: dgap, dy: dgap * Math.sqrt(3) / 2, color: l.shapeDotColor || '#FFFFFF' };
+};
+
+/** 匯出時把點點畫上去（原點在圖形中心）。呼叫端負責先剪裁在圖形裡面。 */
+export const drawShapeDotsCanvas = (
+  c: CanvasRenderingContext2D, w: number, h: number, l: any,
+) => {
+  const { r, dx, dy, color } = shapeDotGrid(w, h, l);
+  c.fillStyle = color;
+  const rx = Math.ceil(w / dx) + 2, ry = Math.ceil(h / dy) + 2;
+  for (let j = -ry; j <= ry; j++) {
+    const shiftX = Math.abs(j) % 2 === 1 ? dx / 2 : 0;
+    for (let i = -rx; i <= rx; i++) {
+      c.beginPath();
+      c.arc(i * dx + shiftX, j * dy, r, 0, Math.PI * 2);
+      c.fill();
+    }
+  }
+};
 
 type SwapSource = { kind: 'cell'; idx: number; src: string } | { kind: 'floating'; id: string; src: string };
 type SwapTarget = { kind: 'cell'; idx: number; layoutId?: string } | { kind: 'floating'; id: string };
@@ -3507,6 +3593,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               : undefined,
           }}
         >
+          {/* 點點：用一塊 pattern 疊在圖形上，範圍就是圖形的填色區域 ——
+              跟匯出那邊「剪裁在圖形裡面再鋪點點」是同一塊區域。
+              tile 是交錯三角格的一個週期（寬 dx、高 2dy，裡面兩顆），
+              patternTransform 把 tile 的原點移到圖形正中心，所以正中央
+              一定有一顆點 —— 這樣才跟 canvas 那邊逐顆對得起來。
+              四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
           <path
             d={shapePathD(image.shape, image.width, image.height)}
             fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
@@ -3516,6 +3608,36 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             strokeLinecap={shapeStroke?.cap}
             strokeLinejoin={shapeStroke?.join}
           />
+          {/* 點點：疊在圖形上面的一塊 pattern，範圍就是圖形的填色區域 ——
+              跟匯出那邊「剪裁在圖形裡面再鋪點點」是同一塊區域。
+              tile 是交錯三角格的一個週期（寬 dx、高 2dy，裡面兩顆），
+              patternTransform 把 tile 的原點移到圖形正中心，所以正中央
+              一定有一顆點 —— 這樣才跟 canvas 那邊逐顆對得起來。
+              四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
+          {!!image.shapeDots && (() => {
+            const { r, dx, dy, color } = shapeDotGrid(image.width, image.height, image);
+            const id = `sdots-${image.id}`;
+            return (
+              <>
+                <defs>
+                  <pattern
+                    id={id} patternUnits="userSpaceOnUse"
+                    width={r3(dx)} height={r3(dy * 2)}
+                    patternTransform={`translate(${r3(image.width / 2)} ${r3(image.height / 2)})`}
+                  >
+                    {[[0, 0], [dx, 0], [0, dy * 2], [dx, dy * 2], [dx / 2, dy]].map(([cx, cy], i) => (
+                      <circle key={i} cx={r3(cx)} cy={r3(cy)} r={r3(r)} fill={color} />
+                    ))}
+                  </pattern>
+                </defs>
+                <path
+                  d={shapePathD(image.shape, image.width, image.height)}
+                  fill={`url(#${id})`}
+                  stroke="none"
+                />
+              </>
+            );
+          })()}
         </svg>
       ) : image.text !== undefined ? (
         <div
@@ -7929,6 +8051,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       ctx.restore();
     }
     if (solid) ctx.fill(path); else ctx.stroke(path);
+    /* 點點：剪裁在圖形裡面再鋪一層，跟預覽那塊 pattern 是同一塊區域、
+       同一組網格參數（shapeDotGrid），所以預覽跟匯出對得起來。 */
+    if (fImg.shapeDots) {
+      ctx.save();
+      ctx.clip(path);
+      ctx.translate(fw / 2, fh / 2);   // 點點那支是以圖形中心為原點
+      drawShapeDotsCanvas(ctx, fw, fh, fImg);
+      ctx.restore();
+    }
     ctx.setLineDash([]);
     ctx.restore();
   };
