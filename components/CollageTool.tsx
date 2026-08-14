@@ -3293,13 +3293,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                      沒有指定連線顏色時就沿用圖案發光的顏色。 */
                   lg.strokeStyle = linkGlowColor;
                   lg.shadowColor = linkGlowColor;
-                  /* 半徑倍率 0.9 → 0.50。
-                     為什麼不是照比例的 0.63：shadowBlur 是高斯模糊的參數，
-                     實際「散出去多遠」跟它不是線性的（三段疊起來又更鈍）。
-                     實測掃過一輪，0.50 量到的散開範圍剛好是 −29.4%，
-                     0.63 只有 −20.6%。這裡要的是看得出來的 30%，所以取 0.50。 */
+                  /* 半徑倍率：實線 0.50、**虛線 0.20**。
+
+                     實線用 0.50 —— shadowBlur 是高斯模糊的參數，實際「散出去多遠」
+                     跟它不是線性的（三段疊起來又更鈍）。掃過一輪，0.50 量到的
+                     散開範圍剛好是 −29.4%（照比例的 0.63 只有 −20.6%）。
+
+                     虛線一定要更小：空隙只有 LINK_W×4，而 0.50 的最大半徑是
+                     LINK_W×4.5 —— 每一段的光會直接蓋滿隔壁的空隙，整條線的光
+                     連成一片，看起來就是「光跟虛線對不起來」。
+                     實測（LINK_W≈3.8，跟實際畫布同量級）空隙正中央的亮度：
+                       0.50 → 16　0.30 → 6.4　0.25 → 3.7　**0.20 → 0**
+                     而虛線本身的光只從 51.3 掉到 46.4（差一成）。
+                     所以虛線取 0.20：每一段的光就乖乖跟著那一段。 */
+                  const glowK = linkMode === 'dash' ? 0.20 : 0.50;
                   for (const kk of [1, 2, 3]) {
-                    lg.shadowBlur = base * kk * 0.50;
+                    lg.shadowBlur = base * kk * glowK;
                     linkPath(lg, arr);
                   }
                   gg.save();
