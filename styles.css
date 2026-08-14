@@ -199,24 +199,32 @@ select:focus, select:focus-visible {
     backface-visibility: hidden;
   }
   /* 位移是線性的：進度 p 就是 range × 0.60 × p。
-     透明度用 smoothstep（前 6% 不動、到 44.70% 才淡完），所以中間多切幾格。
+     透明度用 smoothstep（前 6% 不動、到 45.98% 才淡完），所以中間多切幾格。
 
      為什麼收在這裡：原本是要在「模板的上緣正好碰到『編輯／相機』那一排的上緣」
      那一刻剛好全透明。兩邊都在動 ——
        模板上緣 = 762 − 1.35y、那一排的上緣 = 315 − 0.30y
        解 762 − 1.35y = 290 − 0.30y → y ≈ 450px。
-     主人現在訂在 **350px**（一屏 783 的 44.70%）—— 也就是在兩邊真的碰到之前
-     100px 就已經全透明了。
-     （調整過程：450 → 410 → 380 → 360 → 370 → 350。更早之前是拿那一排的「下緣」
-       算的，收在 40%＝326px，那樣太早。） */
+     主人現在訂在 **360px**（一屏 783 的 45.98%）—— 也就是在兩邊真的碰到之前
+     90px 就已經全透明了。
+     （調整過程：450 → 410 → 380 → 360 → 370 → 350 → 360。更早之前是拿那一排的
+       「下緣」算的，收在 40%＝326px，那樣太早。）
+
+     **這裡刻意不用 visibility: hidden**（原本收尾那兩格有寫）。
+     visibility 一翻回 visible，這一整層就要重新光柵化一次；
+     從模板很快滑回修圖的那一下正好撞上這個切換，那一格來不及畫好，
+     畫面上就是用上一格的位置先貼出來 —— 看起來就是「修圖的東西
+     先掉到下面一點，然後又自己歸位」。改成整段都留著（透明度 0），
+     合成層一直在，就沒有那一格。透明度 0 的層不需要畫內容，成本可以忽略；
+     擋點擊改由 pointer-events 負責。 */
   @keyframes home-hero-para {
-    0%     { transform: translate3d(0, 0, 0);                                        opacity: 1;     visibility: visible; }
+    0%     { transform: translate3d(0, 0, 0);                                        opacity: 1; }
     6%     { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.036), 0);   opacity: 1; }
-    15.68% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.0941), 0);  opacity: 0.844; }
-    25.35% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.1521), 0);  opacity: 0.5;   pointer-events: none; }
-    35.03% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2102), 0);  opacity: 0.156; }
-    44.70% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2682), 0);  opacity: 0;     visibility: hidden; }
-    100%   { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.600), 0);   opacity: 0;     visibility: hidden; }
+    15.99% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.0959), 0);  opacity: 0.844; }
+    25.99% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.1559), 0);  opacity: 0.5;   pointer-events: none; }
+    35.98% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2159), 0);  opacity: 0.156; }
+    45.98% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2759), 0);  opacity: 0; }
+    100%   { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.600), 0);   opacity: 0; }
   }
   @keyframes home-lib-para {
     0%   { transform: translate3d(0, var(--lib-lift), 0); }
