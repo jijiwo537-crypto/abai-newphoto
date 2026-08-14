@@ -436,9 +436,14 @@ export const HomePage: React.FC<HomePageProps> = ({
     }
     const sc = scrollRef.current;
     if (!sc) return;
+    if (navSettle.current) { clearTimeout(navSettle.current); navSettle.current = null; }
     navLockRef.current = id;
     sc.scrollTo({ top: id === 'lib' ? libScrollTop(sc) : 0, behavior: 'smooth' });
   }, []);
+
+  /** 分頁高亮的延遲切換計時器（捲動停下來才換，途中不重繪） */
+  const navSettle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (navSettle.current) clearTimeout(navSettle.current); }, []);
 
   /* 使用者自己碰捲軸就立刻解鎖 —— 平滑捲動被打斷時不能一直鎖著 */
   const releaseNavLock = useCallback(() => { navLockRef.current = null; }, []);
@@ -468,20 +473,39 @@ export const HomePage: React.FC<HomePageProps> = ({
   useEffect(() => {
     const sc = scrollRef.current;
     if (!sc) return;
-    let y0 = 0;
-    const down = (e: TouchEvent) => { y0 = e.touches[0]?.clientY ?? 0; };
-    const move = (e: TouchEvent) => {
+    let y0 = 0, atTop = false, atBottom = false, armed = false;
+
+    const block = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;      // 雙指縮放之類的不要碰
       const dy = (e.touches[0]?.clientY ?? 0) - y0;
-      const top = sc.scrollTop <= 0;
-      const bottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
-      if ((top && dy > 0) || (bottom && dy < 0)) e.preventDefault();
+      if ((atTop && dy > 0) || (atBottom && dy < 0)) e.preventDefault();
+    };
+    const disarm = () => {
+      if (!armed) return;
+      armed = false;
+      sc.removeEventListener('touchmove', block as any);
+    };
+    const down = (e: TouchEvent) => {
+      y0 = e.touches[0]?.clientY ?? 0;
+      atTop = sc.scrollTop <= 0;
+      atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
+      /* 關鍵：**只有這一下真的從最上／最下開始**，才掛那個非被動的監聽器。
+         非被動的 touchmove 會讓瀏覽器每一格都要先等 JS 回話，捲動就從
+         合成執行緒被拉回主執行緒 —— 快速滑動時的頓挫多半是這樣來的。
+         中間任何位置起手都不掛，捲動就走原本最快的那條路。 */
+      if (atTop || atBottom) {
+        armed = true;
+        sc.addEventListener('touchmove', block, { passive: false });
+      }
     };
     sc.addEventListener('touchstart', down, { passive: true });
-    sc.addEventListener('touchmove', move, { passive: false });
+    sc.addEventListener('touchend', disarm, { passive: true });
+    sc.addEventListener('touchcancel', disarm, { passive: true });
     return () => {
+      disarm();
       sc.removeEventListener('touchstart', down);
-      sc.removeEventListener('touchmove', move as any);
+      sc.removeEventListener('touchend', disarm);
+      sc.removeEventListener('touchcancel', disarm);
     };
   }, []);
 
@@ -566,7 +590,16 @@ export const HomePage: React.FC<HomePageProps> = ({
       if (next === navLockRef.current) navLockRef.current = null;
       return;
     }
-    if (next !== navRef.current) setNav(next);
+    /* 分頁高亮延到「停下來」再換。
+       原本是一過半屏就 setNav，那會在滑到一半時整棵首頁重繪一次 ——
+       正好落在從模板快速滑回修圖的那一刻，看起來就是卡一下。
+       捲動途中完全不碰 React，停 120ms 才換，手感上察覺不到延遲。 */
+    if (next === navRef.current) {
+      if (navSettle.current) { clearTimeout(navSettle.current); navSettle.current = null; }
+      return;
+    }
+    if (navSettle.current) clearTimeout(navSettle.current);
+    navSettle.current = setTimeout(() => { navSettle.current = null; setNav(next); }, 120);
   }, [applyParallax]);
 
   const copyEmail = async () => {
