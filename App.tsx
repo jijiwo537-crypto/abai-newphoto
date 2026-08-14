@@ -77,8 +77,6 @@ const App: React.FC = () => {
 
   /* 首頁的「最近輸出」。每次回到首頁重讀一次，剛導出的那張才會馬上出現 */
   const [recentExports, setRecentExports] = useState<ExportMeta[]>([]);
-  /** 從歷史紀錄點回經典拼圖時要餵回去的那一份版面 */
-  const [layoutRecentState, setLayoutRecentState] = useState<any>(null);
   const [toolDraftState, setToolDraftState] = useState<any>(null);
   const [currentView, setCurrentView] = useState<AppView>('home');
   const [editorImage, setEditorImage] = useState<string | null>(null);
@@ -93,15 +91,20 @@ const App: React.FC = () => {
   const [matchImage, setMatchImage] = useState<string | null>(null);
   const [matchRef, setMatchRef] = useState<string | null>(null);
   const [beautyKey, setBeautyKey] = useState(0);
+  /* 從歷史紀錄點開來的那一筆是誰。工具再存一次的時候要沿用同一個 key，
+     這樣才會「蓋掉同一筆」而不是又多一筆一模一樣的。開新的照片就清掉。 */
+  const [histKey, setHistKey] = useState<string | null>(null);
 
   const handleImportToCollage = (file: File) => {
     setToolDraftState(null);
+    setHistKey(null);
     setCollageInitialFile(file);
     setCollageKey(prev => prev + 1);
     setCurrentView('collage');
   };
 
   const handleImportToLayout = (files: File[]) => {
+    setHistKey(null);
     setLayoutInitialFiles(files);
     setLayoutKey(prev => prev + 1);
     setCurrentView('layout');
@@ -335,27 +338,23 @@ const App: React.FC = () => {
     const rec = await loadExport(id);
     if (!rec) return;
     setToolDraftState(rec.meta.state ?? null);
+    // 沿用這一筆的 key：等一下工具再記一次的時候是「更新這一筆」，不是多一筆
+    setHistKey(rec.meta.photoKey ?? null);
+    if (rec.meta.tool === 'collage') {
+      /* 創意拼圖的紀錄要回到創意拼圖 —— 丟去編輯器的話開起來是另一個工具。
+         存的是圖片內容，轉成 File 再餵回去（工具本來就吃 File）。 */
+      try {
+        const blob = await (await fetch(rec.src)).blob();
+        setCollageInitialFile(new File([blob], 'abai.jpg', { type: blob.type || 'image/jpeg' }));
+        setCollageKey(prev => prev + 1);
+        setCurrentView('collage');
+        return;
+      } catch { /* 拿不到就照舊丟去編輯器 */ }
+    }
     if (rec.meta.tool === 'beauty') {
       setBeautyImage(rec.src);
       setBeautyKey(prev => prev + 1);
       setCurrentView('beauty');
-    } else if (rec.meta.tool === 'collage') {
-      // 創意拼圖原本就是吃 File，把存起來的原圖轉回 File 就能走同一條載入路徑
-      const blob = await (await fetch(rec.src)).blob();
-      setCollageInitialFile(new File([blob], 'recent', { type: blob.type || 'image/png' }));
-      setCollageKey(prev => prev + 1);
-      setCurrentView('collage');
-    } else if (rec.meta.tool === 'layout') {
-      /* 經典拼圖是好幾張照片拼起來的，沒有「那一張原圖」——
-         版面（連同裡面每一張照片）都在 state 裡，直接餵回去。 */
-      setLayoutInitialFiles([]);
-      setLayoutRecentState(rec.meta.state ?? null);
-      setLayoutKey(prev => prev + 1);
-      setCurrentView('layout');
-    } else if (rec.meta.tool === 'match') {
-      setMatchImage(rec.src);
-      setMatchRef(rec.meta.state?.referenceSrc || null);
-      setCurrentView('match');
     } else {
       setEditorImage(rec.src);
       setEditorImages([rec.src]);
@@ -489,9 +488,8 @@ const App: React.FC = () => {
           imageSrc={matchImage}
           referenceSrc={matchRef}
           onPickReference={handleMatchRefClick}
-          initialState={toolDraftState}
-          onCancel={() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); setToolDraftState(null); }}
-          onHome={() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); setToolDraftState(null); }}
+          onCancel={() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); }}
+          onHome={() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); }}
           onImportNew={handleMatchImportClick}
           onSendToEditor={handleBeautyToEditor}
         />
@@ -521,10 +519,9 @@ const App: React.FC = () => {
           onHome={() => {
             setCurrentView('home');
             setLayoutInitialFiles([]);
-            setLayoutRecentState(null);
           }}
           initialFiles={layoutInitialFiles}
-          initialState={layoutRecentState}
+          histKey={histKey}
           lutList={LUT_LIST}
           onImportNew={() => {
             layoutFileInputRef.current?.click();
@@ -541,6 +538,7 @@ const App: React.FC = () => {
           }}
           initialFile={collageInitialFile}
           initialState={toolDraftState}
+          histKey={histKey}
           lutList={LUT_LIST}
           onImportNew={handleCollageImportClick}
         />
@@ -561,6 +559,7 @@ const App: React.FC = () => {
           batchSrcs={editorImages}
           onAddPhotos={handleAddPhotosClick}
           initialState={toolDraftState}
+          histKey={histKey}
           lutList={LUT_LIST}
           onSave={handleEditorSave}
           onCancel={handleEditorCancel}
