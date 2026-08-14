@@ -59,9 +59,17 @@
             // 最多壓 1.2 秒，網路再慢也不能一直黑畫面
             setTimeout(reveal, 1200);
 
-            /* 開場畫面什麼時候收：字型好了、而且 React 真的畫出東西了。
-               只等字型的話會在 App 還沒畫出來時就掀開，中間閃一格空白。
-               收掉之前先讓瀏覽器畫兩格，確定首頁那一屏已經在畫面上了。 */
+            /* ── 開場畫面 ────────────────────────────────────────────────
+               ① 一點開就在（它是寫死在 HTML 裡的，第一次繪製就有）。
+               ② **至少停 3 秒**，就算什麼都秒載完也一樣 —— 不然快取熱的時候
+                  會閃一下就消失，比沒有還怪。
+               ③ 3 秒到了還沒就緒就繼續等，等到字型好、而且 React 真的畫出
+                  東西了才掀開（只等字型會在 App 還沒畫出來時掀開，中間閃一格空白）。
+               ④ 這 3 秒不是白等的：底下的 warmUp() 會趁機把後面才要用到的
+                  東西先弄好，之後進工具時就不會卡在那裡。 */
+            var BOOT_MIN_MS = 3000;
+            var bootT0 = Date.now();
+
             function hideBoot() {
                 var el = document.getElementById('boot');
                 if (!el || el.dataset.going) return;
@@ -69,17 +77,86 @@
                 el.style.opacity = '0';
                 setTimeout(function () { el.remove(); }, 500);
             }
+            function tryHide() {
+                var wait = BOOT_MIN_MS - (Date.now() - bootT0);
+                if (wait > 0) { setTimeout(tryHide, wait); return; }   // 3 秒還沒到就再等
+                // 收掉之前先讓瀏覽器畫兩格，確定首頁那一屏已經在畫面上了
+                requestAnimationFrame(function () { requestAnimationFrame(hideBoot); });
+            }
             function whenReady() {
                 var r = document.getElementById('root');
-                if (root.classList.contains('fonts-loaded') && r && r.childElementCount > 0) {
-                    requestAnimationFrame(function () { requestAnimationFrame(hideBoot); });
-                    return;
-                }
+                if (root.classList.contains('fonts-loaded') && r && r.childElementCount > 0) { tryHide(); return; }
                 setTimeout(whenReady, 50);
             }
             whenReady();
-            // 最後一道保險：不管發生什麼事，6 秒一定掀開，不會把人卡在開場畫面
-            setTimeout(hideBoot, 6000);
+            // 最後一道保險：不管發生什麼事，8 秒一定掀開，不會把人卡在開場畫面
+            setTimeout(hideBoot, 8000);
+
+            /* ── 趁開場那幾秒先暖機 ──────────────────────────────────────
+               這幾樣都是「第一次用的時候特別慢，之後就順了」的東西。
+               先在這裡踩一遍，使用者實際點下去的時候就已經是熱的。
+
+               每一項都包在 try 裡、也都不影響畫面 —— 失敗就算了，
+               開場畫面照樣會收掉，App 照樣能用。 */
+            function warmUp() {
+                /* ① WebGL：第一次建立繪圖環境＋編譯著色器是實打實的一段時間
+                      （濾鏡、美顏、仿色都靠它）。先建一個小的、編一支最簡單的
+                      著色器，把驅動叫醒之後立刻丟掉。 */
+                try {
+                    var cv = document.createElement('canvas');
+                    cv.width = cv.height = 2;
+                    var gl = cv.getContext('webgl2') || cv.getContext('webgl');
+                    if (gl) {
+                        var vs = gl.createShader(gl.VERTEX_SHADER);
+                        gl.shaderSource(vs, 'attribute vec2 p;void main(){gl_Position=vec4(p,0.,1.);}');
+                        gl.compileShader(vs);
+                        var fs = gl.createShader(gl.FRAGMENT_SHADER);
+                        gl.shaderSource(fs, 'precision mediump float;void main(){gl_FragColor=vec4(1.);}');
+                        gl.compileShader(fs);
+                        var pr = gl.createProgram();
+                        gl.attachShader(pr, vs); gl.attachShader(pr, fs); gl.linkProgram(pr);
+                        gl.clear(gl.COLOR_BUFFER_BIT);
+                        var lose = gl.getExtension('WEBGL_lose_context');
+                        if (lose) lose.loseContext();
+                    }
+                    cv.width = cv.height = 0;
+                } catch (e) { /* 沒有 WebGL 也不影響，那些功能自己有 CPU 的退路 */ }
+
+                /* ② 2D 畫布與圖片解碼：createImageBitmap 第一次呼叫要起一條解碼執行緒，
+                      幾乎每個工具載照片時都會走到。 */
+                try {
+                    var c2 = document.createElement('canvas');
+                    c2.width = c2.height = 8;
+                    var x2 = c2.getContext('2d', { willReadFrequently: true });
+                    if (x2) { x2.fillRect(0, 0, 8, 8); x2.getImageData(0, 0, 8, 8); }
+                    if (typeof createImageBitmap === 'function' && c2.toBlob) {
+                        c2.toBlob(function (b) {
+                            if (!b) return;
+                            createImageBitmap(b).then(function (bm) { bm.close && bm.close(); }).catch(function () {});
+                        });
+                    }
+                } catch (e) { /* ignore */ }
+
+                /* ③ IndexedDB：草稿與歷史紀錄都放這裡，第一次開資料庫要建結構。 */
+                try { indexedDB.open('abai-exports'); indexedDB.open('abai-tools'); } catch (e) { /* ignore */ }
+
+                /* ④ 濾鏡檔（LUT）：一支 300KB 左右，第一次點濾鏡時要現載，
+                      那一下就是明顯的卡頓。先抓前三支放進瀏覽器快取。
+                      行動網路上使用者若開了「節省數據」或訊號很差就不抓 ——
+                      這是體驗的加分項，不該替人決定花流量。 */
+                try {
+                    var conn = navigator.connection || {};
+                    var slow = conn.saveData === true || /(^|-)2g$/.test(conn.effectiveType || '');
+                    if (!slow) {
+                        ['./luts/f1.webp', './luts/f2.webp', './luts/f3.webp'].forEach(function (u) {
+                            fetch(u, { cache: 'force-cache', priority: 'low' }).catch(function () {});
+                        });
+                    }
+                } catch (e) { /* ignore */ }
+            }
+            /* 晚一點才開始暖機：讓主程式先下載、先畫出首頁，
+               不要跟它搶同一段時間 —— 暖機是拿來填剩下那幾秒的。 */
+            setTimeout(warmUp, 700);
         })();
     </script>
     <style>

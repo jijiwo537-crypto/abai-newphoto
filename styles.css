@@ -157,3 +157,63 @@ select:focus, select:focus-visible {
   height: 15px; width: 15px; border-radius: 50%;
   background: #fff; border: none; cursor: pointer;
 }
+
+
+/* ── 主頁往下滑的視差 ──────────────────────────────────────────────
+   「修圖」那一屏只走 30% 的速度、同時淡出；「模板」那一段比捲軸還快 ——
+   除了本來就跟著捲的一屏，再自己往上多走 0.35 屏，所以它會提早到頂。
+   兩邊加起來的落差是 1.35 − 0.30 = 1.05 屏。
+
+   為什麼要寫成 CSS 動畫：用 JS 監聽捲動、每一格改 transform 的話，
+   捲動是在合成執行緒上跑的、JS 是在主執行緒上算的 —— 兩邊差一格就是
+   「圖片跟著手指抖一下」。改用捲動時間軸之後，整段動畫交給合成執行緒
+   自己照捲動位置算，主執行緒完全不參與，所以不可能再跟捲動不同步。
+
+   不支援的瀏覽器會落回 JS 版（HomePage.tsx 裡面那一段）。
+
+   --hero-range 是「一屏的高度」，由 HomePage 量好之後寫上來。
+   --lib-lift 是「模板那一段額外往上多走多少」；最底下有一塊同高的墊片
+   把這一段補回去，所以捲到最後一樣是剛剛好貼齊，不會多出一截空白。 */
+.home-scroll {
+  --lib-lift: calc(var(--hero-range, 100vh) * 0.35);
+}
+@media (prefers-reduced-motion: reduce) {
+  /* 不做動畫的話，模板那一段不會被往上拉，墊片也要跟著歸零 */
+  .home-scroll { --lib-lift: 0px; }
+}
+
+@supports (animation-timeline: scroll()) {
+  .home-hero {
+    animation: home-hero-para linear both;
+    animation-timeline: scroll(nearest block);
+    animation-range: 0 var(--hero-range, 100vh);
+  }
+  .home-lib {
+    animation: home-lib-para linear both;
+    animation-timeline: scroll(nearest block);
+    animation-range: 0 var(--hero-range, 100vh);
+  }
+  /* 位移是線性的：進度 p 就是 range × 0.70 × p。
+     透明度用 smoothstep（前 8% 不動、到 56% 淡完），所以中間多切幾格 ——
+     模板提早到頂了，修圖這一屏也要提早退場，兩段才不會疊在一起。 */
+  @keyframes home-hero-para {
+    0%   { transform: translate3d(0, 0, 0);                                      opacity: 1;     visibility: visible; }
+    8%   { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.056), 0); opacity: 1; }
+    20%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.140), 0); opacity: 0.844; }
+    32%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.224), 0); opacity: 0.5;   pointer-events: none; }
+    44%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.308), 0); opacity: 0.156; }
+    56%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.392), 0); opacity: 0;     visibility: hidden; }
+    100% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.700), 0); opacity: 0;     visibility: hidden; }
+  }
+  /* 模板那一段在排版上先往上挪了 --lib-lift（負的上外距），
+     這裡再用 transform 把它「放回原位」，然後隨著捲動收回去 ——
+     所以看起來就是它比捲軸快了 0.35 屏，但可捲的長度剛好短掉同樣的量，
+     捲到底時它的下緣還是貼齊畫面，底下不會空出一截。 */
+  @keyframes home-lib-para {
+    0%   { transform: translate3d(0, var(--lib-lift), 0); }
+    100% { transform: translate3d(0, 0, 0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .home-hero, .home-lib { animation: none; }
+  }
+}
