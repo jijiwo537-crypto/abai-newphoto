@@ -1046,7 +1046,18 @@ const FontCard: React.FC<{
 export const TextEditorPanel: React.FC<{
   layer: FloatingImage;
   onChange: (patch: Partial<FloatingImage>) => void;
-}> = ({ layer, onChange }) => {
+  /** 外面把這個數字加一，就把游標放進文字框（點畫布上的字要能直接改） */
+  focusSignal?: number;
+}> = ({ layer, onChange, focusSignal }) => {
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (!focusSignal) return;
+    const el = taRef.current;
+    if (!el) return;
+    el.focus();
+    // 游標放到最後面，不要整段選起來
+    try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* 舊瀏覽器 */ }
+  }, [focusSignal]);
   const [sub, setSub] = useState<'style' | 'font'>('style');
   const [cat, setCat] = useState<FontCategory>('zh');
 
@@ -1166,19 +1177,21 @@ export const TextEditorPanel: React.FC<{
         )}
 
         {sub === 'style' && (
-          <div className="space-y-3.5 pt-1 pb-2">
-            {/* 文字內容：畫布上點兩下也能打，這裡放一個一樣的入口，
-                位置固定在「文字顏色」上面，兩個工具共用同一份。 */}
-            <div>
-              <p className="text-[11px] font-bold text-white/70 mb-1.5">文字內容</p>
-              <textarea
-                value={layer.text || ''}
-                onChange={e => onChange({ text: e.target.value })}
-                rows={1}
-                placeholder="輸入文字..."
-                className="w-full h-9 px-2.5 py-1.5 leading-6 bg-[#111] border border-transparent rounded-[8px] text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#333] resize-none overflow-hidden"
-              />
-            </div>
+          /* 底部多留一段：捲到底時最後一根滑桿不要貼著邊 */
+          <div className="space-y-3.5 pt-1 pb-24">
+            {/* 文字內容。沒有標題 —— 一個輸入框看得出來是幹嘛的，
+                省下那一行整個面板就能往上一點。
+                還是預設的「輸入文字」時，框裡顯示空的（只留提示字），
+                使用者不用先把預設文字一個一個刪掉。 */}
+            <textarea
+              ref={taRef}
+              data-text-input
+              value={layer.text === TEXT_PLACEHOLDER ? '' : (layer.text || '')}
+              onChange={e => onChange({ text: e.target.value === '' ? TEXT_PLACEHOLDER : e.target.value })}
+              rows={1}
+              placeholder={TEXT_PLACEHOLDER}
+              className="w-full h-9 px-2.5 py-1.5 leading-6 bg-[#111] border border-transparent rounded-[8px] text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#3a3a3a] resize-none overflow-hidden"
+            />
             <div>
               <p className="text-[11px] font-bold text-white/70 mb-1.5">文字顏色</p>
               {swatchRow(layer.color, c => onChange({ color: c }))}

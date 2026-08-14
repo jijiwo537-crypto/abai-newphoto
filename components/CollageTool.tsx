@@ -605,6 +605,9 @@ const getHoleNumber = (h: any) => {
  * 'love'（<3）、'text'（使用者自己打的字）、'random-num'（編號）不是固定的字，
  * 所以不放在這張表裡，由 holeGlyph() 另外處理。
  */
+/** 新增文字時預設放的字。跟經典拼圖同一個字串。 */
+const TEXT_PLACEHOLDER = '輸入文字';
+
 const GLYPH_HOLES: Record<string, string> = {
   flower:   '❋',   // ❋ 原本就有
   snow:     '\u2744\uFE0E',   // ❄︎ 雪花（後面那個字是「用文字樣式畫」，不要變成彩色 emoji）
@@ -1496,6 +1499,50 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     && !!objects.find(o => o.id === selectedObj && o.type === 'image');
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
+  /** 點畫布上的文字時 +1，面板收到就把游標放進輸入框 */
+  const [textFocusSignal, setTextFocusSignal] = useState(0);
+  /* ── 鍵盤叫出來時的版面 ────────────────────────────────────────────
+     visualViewport 的高度會在鍵盤升起時縮短，差額就是鍵盤佔掉的高度。
+     只有下方工具欄往上讓（最上面那一列固定不動），
+     預覽則視情況縮一點，確保整張圖還看得完整。 */
+  const [kbInset, setKbInset] = useState(0);
+  useEffect(() => {
+    const vv: any = (window as any).visualViewport;
+    if (!vv) return;
+    const on = () => {
+      const gap = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+      // 80px 以下多半是網址列之類的，不是鍵盤
+      setKbInset(gap > 80 ? gap : 0);
+    };
+    vv.addEventListener('resize', on);
+    vv.addEventListener('scroll', on);
+    on();
+    return () => { vv.removeEventListener('resize', on); vv.removeEventListener('scroll', on); };
+  }, []);
+  /** 工具欄要往上移多少：讓輸入框的下緣剛好貼著鍵盤上緣 */
+  const footerRef = useRef<HTMLElement>(null);
+  const [kbShift, setKbShift] = useState(0);
+  useLayoutEffect(() => {
+    if (!kbInset) { setKbShift(0); return; }
+    const f = footerRef.current;
+    if (!f) { setKbShift(0); return; }
+    const ta = f.querySelector('[data-text-input]') as HTMLElement | null;
+    const bottom = ta ? ta.getBoundingClientRect().bottom + 10 : f.getBoundingClientRect().bottom;
+    const kbTop = window.innerHeight - kbInset;
+    setKbShift(Math.max(0, Math.round(bottom - kbTop)));
+  }, [kbInset, activeTab, selectedObj]);
+  /** 預覽要縮多少才不會被工具欄擋到（本來就不會擋到就不動） */
+  const [kbFit, setKbFit] = useState(1);
+  useLayoutEffect(() => {
+    const st = stageRef.current, cv = canvasRef.current;
+    if (!kbShift || !st || !cv) { setKbFit(1); return; }
+    const sh = st.getBoundingClientRect().height;
+    const ch = cv.getBoundingClientRect().height;
+    if (!sh || !ch) { setKbFit(1); return; }
+    // 上下各留 10px
+    const avail = sh - kbShift - 20;
+    setKbFit(ch > avail ? Math.max(0.35, +(avail / ch).toFixed(3)) : 1);
+  }, [kbShift, layout, maskScale]);
   /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
   const [addSub, setAddSub] = useState<'root' | 'shape'>('root');
   /** 編輯頁的左側子分頁 */
@@ -2275,6 +2322,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                但正在調動態時不換頁 —— 那邊本來就是「一邊看預覽一邊調」，
                被踢去編輯頁反而要一直切回來。 */
             setActiveTab(t => (t === 'motion' ? t : 'objedit'));
+            // 文字：再點一次就直接開始改字（游標進輸入框、鍵盤跟著上來）
+            if (o.type === 'text') setTextFocusSignal(n => n + 1);
             objDragRef.current = { id: o.id, startX: x, startY: y, ox: o.x, oy: o.y };
             return;
           }
@@ -5376,7 +5425,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           <div
             ref={stageRef}
             className="absolute inset-0 overflow-hidden"
-            style={{ touchAction: 'none' }}
+            style={{
+              touchAction: 'none',
+              /* 工具欄讓上來之後，圖片如果會被擋到就整個縮一點、並往上移半個讓位量
+                 （縮放的原點在正中央，所以中心往上移一半就剛好置中在剩下的空間裡）。
+                 本來就擋不到的話 kbFit 會是 1、位移也是 0，完全不動。 */
+              transform: kbShift ? `translateY(-${Math.round(kbShift / 2)}px) scale(${kbFit})` : undefined,
+              transformOrigin: '50% 50%',
+              transition: 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1)',
+            }}
             /* 手勢掛在整個工作區上，不是只有畫布：選中物件之後，
                畫布外面那片黑底也能拖、也能兩指縮放。挖洞／筆刷本來就會
                檢查座標落在哪一塊，落在黑底上就自然什麼都不做。 */
@@ -5502,8 +5559,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         {imageState && (
           <div
             className="absolute right-6 z-[60]"
-            /* 動畫頁時往上讓開播放列，並跟著圖片一起平滑移動 */
-            style={{ bottom: motionUiOn ? 86 : 24, transition: `bottom 420ms ${MOTION_EASE}` }}
+            /* 動畫頁時往上讓開播放列，並跟著圖片一起平滑移動。
+               鍵盤叫出來時整顆淡掉（打字時不需要它，而且會擋到）。 */
+            style={{
+              bottom: motionUiOn ? 86 : 24,
+              opacity: kbShift ? 0 : 1,
+              pointerEvents: kbShift ? 'none' : undefined,
+              transition: `bottom 420ms ${MOTION_EASE}, opacity 220ms ease-out`,
+            }}
             onPointerDown={(e) => e.stopPropagation()}
           >
             <button 
@@ -5600,11 +5663,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }}
       />
 
-      <footer className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-[transform,height] duration-300 ease-out flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} /* 高度是固定的：以前是「圖片編輯頁點出滑桿才長高」，
+      <footer ref={footerRef} className={`bg-[#0a0a0a] border-t border-[#1a1a1a] transition-[transform,height] duration-300 ease-out flex flex-col z-[50] no-select ${imageState ? 'translate-y-0' : 'translate-y-full absolute bottom-0 w-full'}`} /* 高度是固定的：以前是「圖片編輯頁點出滑桿才長高」，
                     工具欄一長高，上面的舞台就矮一截，預覽圖跟著往上跳一下
                     （實測 287px → 300px，畫面位移 6.5px）。
                     一律用最高的那個值，進哪一頁、開不開滑桿，預覽都不會動。 */
-                 style={{ height: 'max(34dvh, 300px)' }}>
+                 style={{
+          height: 'max(34dvh, 300px)',
+          /* 鍵盤升起時整條往上移，剛好讓輸入框的下緣貼著鍵盤上緣。
+             用 transform 而不是改高度：transform 走合成執行緒，
+             升起與收回都是滑順的動畫，不會硬切。 */
+          transform: kbShift ? `translateY(-${kbShift}px)` : undefined,
+          transition: 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1), height 300ms ease-out',
+        }}>
         {!colorPickerTarget && (
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a]">
             {['setting', 'shape', 'add', 'objedit', 'motion'].map(id => (
@@ -5794,7 +5864,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   const size = Math.round(Math.min(offs2.cw, offs2.ch) * 0.09);
                   const w = size * 4, h = size * 1.3;
                   setObjects(prev => [...prev, {
-                    id, type: 'text', text: 'Abai', color: '#ffffff', size,
+                    id, type: 'text', text: TEXT_PLACEHOLDER, color: '#ffffff', size,
                     fontFamily: DEFAULT_FONT, bold: false, italic: false,
                     letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
                     glow: 0, glowColor: '#ffffff',
@@ -5965,6 +6035,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   sel.type === 'text' ? (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
                       <TextEditorPanel
+                        focusSignal={textFocusSignal}
                         layer={{
                           text: sel.text, color: sel.color, fontFamily: sel.fontFamily,
                           fontSize: sel.size, bold: sel.bold, italic: sel.italic,
