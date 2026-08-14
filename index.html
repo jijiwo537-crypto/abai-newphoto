@@ -21,6 +21,8 @@
     <!-- 字型要先載：它們的網址寫在打包後的 CSS 裡，瀏覽器要先下載並解析那支
          CSS 才會發現它們，等於多繞一趟。先 preload 就會跟 CSS 同時開始下載，
          開場那一下不會先用系統字型畫一次再換過來。 -->
+    <!-- 開場畫面那張圖：先下載，不然它自己也要等一趟 -->
+    <link rel="preload" as="image" href="./icon-512.png">
     <link rel="preload" as="font" type="font/woff2" href="/fonts/Inter.woff2" crossorigin>
     <link rel="preload" as="font" type="font/woff2" href="/fonts/PlayfairDisplay.woff2" crossorigin>
     <link rel="preload" as="font" type="font/woff2" href="/fonts/MaterialSymbolsOutlined.woff2" crossorigin>
@@ -56,6 +58,28 @@
             waitReady();
             // 最多壓 1.2 秒，網路再慢也不能一直黑畫面
             setTimeout(reveal, 1200);
+
+            /* 開場畫面什麼時候收：字型好了、而且 React 真的畫出東西了。
+               只等字型的話會在 App 還沒畫出來時就掀開，中間閃一格空白。
+               收掉之前先讓瀏覽器畫兩格，確定首頁那一屏已經在畫面上了。 */
+            function hideBoot() {
+                var el = document.getElementById('boot');
+                if (!el || el.dataset.going) return;
+                el.dataset.going = '1';
+                el.style.opacity = '0';
+                setTimeout(function () { el.remove(); }, 500);
+            }
+            function whenReady() {
+                var r = document.getElementById('root');
+                if (root.classList.contains('fonts-loaded') && r && r.childElementCount > 0) {
+                    requestAnimationFrame(function () { requestAnimationFrame(hideBoot); });
+                    return;
+                }
+                setTimeout(whenReady, 50);
+            }
+            whenReady();
+            // 最後一道保險：不管發生什麼事，6 秒一定掀開，不會把人卡在開場畫面
+            setTimeout(hideBoot, 6000);
         })();
     </script>
     <style>
@@ -90,10 +114,12 @@
             display: inline-block !important;
             white-space: nowrap !important;
         }
-        html.fonts-loading body {
+        /* 字型還沒好之前壓著的是 App 本體（#root），不是整個 body ——
+           開場那張 logo 要照樣看得見，它就是拿來填這一段空白的。 */
+        html.fonts-loading #root {
             opacity: 0 !important;
         }
-        html.fonts-loaded body {
+        html.fonts-loaded #root {
             opacity: 1 !important;
             transition: opacity 0.25s ease-in-out;
         }
@@ -189,6 +215,39 @@
                 transform: none;
             }
         }
+        /* ─────────────────────────────────────────────
+           開場畫面
+           ─────────────────────────────────────────────
+           字型要等（最多 1.2 秒）、打包好的程式也要下載＋解析，這一段本來就是
+           一片全黑 —— 這裡只是把那片黑換成有 logo 的黑，沒有多拖任何時間。
+
+           寫死在 HTML 裡而不是做成 React 元件：它要在「React 都還沒開始跑」的
+           時候就看得到，做成元件就一定會晚一步。 */
+        #boot {
+            position: fixed;
+            inset: 0;
+            z-index: 9998;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 1;
+            transition: opacity 0.45s ease;
+            pointer-events: none;
+        }
+        #boot img {
+            /* 圖本身就是黑底，跟背景接得剛剛好，看不出邊 */
+            width: 168px;
+            height: 168px;
+            animation: boot-breathe 2.4s ease-in-out infinite;
+        }
+        @keyframes boot-breathe {
+            0%, 100% { opacity: 0.82; transform: scale(1); }
+            50%      { opacity: 1;    transform: scale(1.045); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            #boot img { animation: none; opacity: 1; }
+        }
         .shutter-btn-outer {
             box-shadow: 0 0 0 4px #000, 0 0 0 6px #fff;
         }
@@ -204,6 +263,8 @@
     </style>
 </head>
 <body class="bg-black text-white antialiased">
+    <!-- 開場畫面：字型與程式都就緒之前先擋著，就不會是一片沒有東西的黑 -->
+    <div id="boot" aria-hidden="true"><img src="./icon-512.png" alt="" draggable="false" /></div>
     <div id="root"></div>
     <!-- 橫置擋板。故意寫在 HTML 裡而不是做成 React 元件：
          它要能蓋住每一頁（首頁、編輯、拼圖…），而且不管 App 當下是什麼狀態
