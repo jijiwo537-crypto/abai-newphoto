@@ -1453,14 +1453,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const motionLockRef = useRef(false);
   const interactionRef = useRef<any>(null);
   const holesRef = useRef<any[]>([]);
+  /* ── 發光用的暫存畫布，一定要活在畫面之外 ──────────────────────────
+     這兩個原本是宣告在「畫一張」那支函式裡面的區域變數，所以**每畫一格
+     就重新 new 一張 canvas**：整層那張是整個預覽那麼大（例如 1571×1350），
+     光是配置與清空就要搬好幾 MB；一顆圖案那張也是每顆都重來。
+     搬成 ref 之後，同一張畫布從頭用到尾，只有尺寸真的變了才重新配置。 */
+  const glowLayerRef = useRef<HTMLCanvasElement | null>(null);
+  /** 一顆圖案的光暈成品，鍵＝真正決定長相的那幾項（見 glowInto） */
+  const glowBmpRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const [brushMode, setBrushMode] = useState<'off' | 'pen' | 'eraser'>('off');
   const [symmetryEnabled, setSymmetryEnabled] = useState(true);
   /* 圖案發光：預設關閉。開啟後每個圖案周圍散出一圈光，
      跟圖片、文字的發光同一種感覺（同一套「三段模糊疊起來」的做法）。 */
   const [glowMode, setGlowMode] = useState<'off' | 'both' | 'mask' | 'image'>('off');
   const [holeGlowColor, setHoleGlowColor] = useState(GLOW_BASE);
-  /** 發光的強度，百分比。100＝原本的樣子；超過 100 就把那一層再疊一次 */
-  const [glowStrength, setGlowStrength] = useState(100);
   /** 發光自己的常駐動畫（'none' | 'twinkle' | 'blink' | 'glitch'） */
   const [glowIdle, setGlowIdle] = useState('none');
   /** 發光常駐動畫的幅度（0～100）與速度（20～180，100＝原速） */
@@ -1660,7 +1666,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (st.glowMoText) setGlowMoText(st.glowMoText);
     if (st.linkColor !== undefined) setLinkColor(st.linkColor);
     if (st.linkWidthPct !== undefined) setLinkWidthPct(st.linkWidthPct);
-    if (st.glowStrength !== undefined) setGlowStrength(st.glowStrength);
   }, [initialState]);
 
   useEffect(() => {
@@ -1670,7 +1675,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
-        linkWidthPct, glowStrength,
+        linkWidthPct,
       });
     }, 1200);
     return () => clearTimeout(t);
@@ -1678,7 +1683,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     imageState, layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
     holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
     glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
-    linkWidthPct, glowStrength,
+    linkWidthPct,
   ]);
 
   useEffect(() => {
@@ -2914,25 +2919,62 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        「整個挖掉」（挖的時候用滿透明度，跟圖案自己的進場無關），
        剩下的就是純粹的一圈光暈；最後整層貼回去。
        每一顆的透明度在畫進暫存層時就各自帶好了，所以錯開進場也對。 */
-    const glowScratch = { c: null as HTMLCanvasElement | null };
+    /* ── 發光的暫存層：只做「真的有光的那一塊」那麼大 ──────────────────
+       box 是這一趟可能有光的範圍（呼叫端算好，座標系跟 paint 一樣）。
+
+       原本這張暫存層跟整個預覽一樣大（例如 1571×1350＝210 萬像素），
+       每畫一格都要把它整張清空、整張再貼回目標。實測那一步就吃掉
+       **每次 17.9ms**，是發光會卡的唯一原因（相對地，每顆圖案的光暈
+       蓋上去總共只花 2.5ms —— 那個早就被快取解決了）。
+
+       現在改成：把範圍換算成畫布上的實際像素，暫存層只開那麼大，
+       畫的時候整個座標系往回平移，貼回去時再平移回原位。
+       範圍外本來就是全透明、貼上去也不會有任何改變，所以**畫面完全一樣**，
+       只是不再每格搬運兩百萬個像素。
+       尺寸往上取到 64 的倍數，滑桿在拖的時候才不會每一格都重新配置。 */
     const withGlowLayer = (
       g: CanvasRenderingContext2D, w: number, h: number,
       paint: (gg: CanvasRenderingContext2D) => void,
       knock: (gg: CanvasRenderingContext2D) => void,
+      box?: { x: number; y: number; w: number; h: number } | null,
     ) => {
       const W = Math.max(1, Math.ceil(w)), H = Math.max(1, Math.ceil(h));
-      let lay = glowScratch.c;
-      if (!lay) { lay = document.createElement('canvas'); glowScratch.c = lay; }
-      if (lay.width !== W || lay.height !== H) { lay.width = W; lay.height = H; }
+      // 用目標當下的座標系去畫，位置才會一模一樣
+      const tf = (g as any).getTransform ? (g as any).getTransform() : null;
+      /* 把範圍換算到畫布的實際像素上。tf 可能有位移與縮放，
+         所以拿四個角去換算再取外接矩形，斜的變換也不會算漏。 */
+      let rx = 0, ry = 0, rw = W, rh = H;
+      if (box) {
+        const map = (px: number, py: number) => tf
+          ? [tf.a * px + tf.c * py + tf.e, tf.b * px + tf.d * py + tf.f]
+          : [px, py];
+        const ps = [
+          map(box.x, box.y), map(box.x + box.w, box.y),
+          map(box.x, box.y + box.h), map(box.x + box.w, box.y + box.h),
+        ];
+        const xs = ps.map(q => q[0]), ys = ps.map(q => q[1]);
+        rx = Math.max(0, Math.floor(Math.min(...xs)) - 2);
+        ry = Math.max(0, Math.floor(Math.min(...ys)) - 2);
+        rw = Math.min(W, Math.ceil(Math.max(...xs)) + 2) - rx;
+        rh = Math.min(H, Math.ceil(Math.max(...ys)) + 2) - ry;
+        if (rw <= 0 || rh <= 0) return;
+      }
+      let lay = glowLayerRef.current;
+      if (!lay) { lay = document.createElement('canvas'); glowLayerRef.current = lay; }
+      const need = (v: number) => Math.min(4096, Math.ceil(v / 64) * 64);
+      if (lay.width < rw || lay.height < rh
+          || lay.width > need(rw) + 256 || lay.height > need(rh) + 256) {
+        lay.width = need(rw); lay.height = need(rh);
+      }
       const gg = lay.getContext('2d');
       if (!gg) return;
       gg.setTransform(1, 0, 0, 1, 0, 0);
       gg.globalAlpha = 1;
       gg.globalCompositeOperation = 'source-over';
-      gg.clearRect(0, 0, W, H);
-      // 用目標當下的座標系去畫，位置才會一模一樣
-      const tf = (g as any).getTransform ? (g as any).getTransform() : null;
-      if (tf) gg.setTransform(tf);
+      gg.clearRect(0, 0, rw, rh);
+      // 座標系整個往回平移，畫的內容才會落在這張小畫布的 (0,0) 起
+      gg.setTransform(1, 0, 0, 1, -rx, -ry);
+      if (tf) gg.transform(tf.a, tf.b, tf.c, tf.d, tf.e, tf.f);
       paint(gg);
       gg.globalCompositeOperation = 'destination-out';
       gg.globalAlpha = 1;
@@ -2942,18 +2984,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       gg.setTransform(1, 0, 0, 1, 0, 0);
       g.save();
       g.setTransform(1, 0, 0, 1, 0, 0);
-      g.shadowBlur = 0;
-      /* 強度滑桿：100＝原本的樣子。整層一次貼完，所以圖案的光與連線的光
-         會一起變 —— 這正是「發光」那一欄該有的行為。
-         超過 100% 時 canvas 的 globalAlpha 最多只到 1，所以把多出來的那一份
-         再貼一次（同一層疊兩次就會更亮）。 */
-      const gk = Math.max(0, glowStrength / 100);
-      if (gk > 0) {
-        g.globalAlpha = Math.min(1, gk);
-        g.drawImage(lay, 0, 0);
-        if (gk > 1) { g.globalAlpha = Math.min(1, gk - 1); g.drawImage(lay, 0, 0); }
-      }
       g.globalAlpha = 1;
+      g.shadowBlur = 0;
+      g.drawImage(lay, 0, 0, rw, rh, rx, ry, rw, rh);
       g.restore();
     };
 
@@ -2983,7 +3016,46 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        改成：先在一張只夠裝這顆圖案的小畫布上，用「滿透明度」把三段疊好
        （形狀固定，濃度也就固定），再整張用這一格該有的透明度貼上去。
        這樣光的亮度對透明度是**嚴格線性**的，跟圖案本體完全同一條曲線。 */
-    const glowTmp = { c: null as HTMLCanvasElement | null };
+    /* 這張小圖只由「形狀、字、大小、角度、顏色」決定 —— 位置與透明度都不影響它。
+       所以照這五項當鍵存起來：同一格裡所有一樣大的圖案共用同一張，
+       兩側（圖片／遮罩）也共用。原本是每顆圖案都重疊一次三段模糊，
+       11 顆 × 2 側就是 22 次高斯；現在通常只算 1 次。
+       畫出來的像素跟以前一模一樣，不是降畫質的做法。 */
+    const glowBmp = (h: any, sz: number, angle: number) => {
+      const key = `${holeType}|${isTextHole(holeType) ? holeGlyph(holeType, customText, h) : ''}|${sz}|${angle}|${holeGlowColor}`;
+      const cache = glowBmpRef.current;
+      const hit = cache.get(key);
+      if (hit) { cache.delete(key); cache.set(key, hit); return hit; }   // 用到就移到最後（LRU）
+      /* 邊長只要裝得下「圖案本體 ＋ 模糊真正散得到的距離」。
+         實測（圓形、三段模糊到 0.3×sz）：最遠那顆有顏色的像素在 0.89×sz，
+         再往外**透明度就是 0**（Skia 的模糊是有限支撐的盒狀近似）。
+         本體最寬到 sz/2，所以半邊 0.95×sz 已經多留 6% 的餘裕 ——
+         原本開到 1.2×sz，等於白白多算了 1.6 倍的面積。
+         文字類的字符可能比 sz 還寬，維持原本的寬鬆值。 */
+      const half = isTextHole(holeType) ? sz * 1.2 : sz * 0.95;
+      const side = Math.ceil(half * 2) + 8;
+      const tmp = document.createElement('canvas');
+      tmp.width = side; tmp.height = side;
+      const tg = tmp.getContext('2d');
+      if (!tg) return null;
+      tg.shadowColor = holeGlowColor;
+      for (const kk of [1, 2, 3]) {
+        tg.shadowBlur = sz * 0.1 * kk;
+        strokeHoleShape(tg, h, sz, angle, side / 2, side / 2, holeGlowColor);
+      }
+      /* 本體在這裡就先挖掉（滿透明度），剩下的才是純粹的一圈光暈。
+         原本這一步是在共用的暫存層上做的；挪進小圖裡，直接蓋上去的那條
+         快路徑才會跟走暫存層的結果一致（連本體邊緣的抗鋸齒都一樣）。
+         走暫存層時本體會再被挖一次 —— 挖已經是全透明的地方不會有任何改變。 */
+      tg.globalCompositeOperation = 'destination-out';
+      tg.shadowBlur = 0;
+      strokeHoleShape(tg, h, sz, angle, side / 2, side / 2, '#000');
+      tg.globalCompositeOperation = 'source-over';
+      cache.set(key, tmp);
+      // 只留最近用到的 32 張，拖滑桿時舊的尺寸會自己被擠掉
+      while (cache.size > 32) { const k0 = cache.keys().next().value; if (k0 === undefined) break; cache.delete(k0); }
+      return tmp;
+    };
     const glowInto = (
       gg: CanvasRenderingContext2D, h: any, alpha: number,
       sz: number, angle: number, gx: number, gy: number,
@@ -2991,22 +3063,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const amp = glowBeat(h);
       const a = alpha * amp;
       if (sz <= 0 || a <= 0.004) return;
-      // 邊長要裝得下「圖案本體 + 最大那一段模糊」，模糊最大是 0.3×sz
-      const side = Math.ceil(sz * 1.2 + sz * 0.3 * 4) + 8;
-      let tmp = glowTmp.c;
-      if (!tmp) { tmp = document.createElement('canvas'); glowTmp.c = tmp; }
-      if (tmp.width !== side || tmp.height !== side) { tmp.width = side; tmp.height = side; }
-      const tg = tmp.getContext('2d');
-      if (!tg) return;
-      tg.setTransform(1, 0, 0, 1, 0, 0);
-      tg.globalCompositeOperation = 'source-over';
-      tg.globalAlpha = 1;
-      tg.clearRect(0, 0, side, side);
-      tg.shadowColor = holeGlowColor;
-      for (const kk of [1, 2, 3]) {
-        tg.shadowBlur = sz * 0.1 * kk;
-        strokeHoleShape(tg, h, sz, angle, side / 2, side / 2, holeGlowColor);
-      }
+      const tmp = glowBmp(h, sz, angle);
+      if (!tmp) return;
+      const side = tmp.width;
       gg.save();
       gg.globalAlpha = Math.max(0, Math.min(1, a));
       gg.drawImage(tmp, gx - side / 2, gy - side / 2);
@@ -3063,6 +3122,43 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const linkGlowColor = linkColor ? nearestGlowSwatch(linkColor) : holeGlowColor;
       const linkAlpha = ([a, b]: [any, any]) =>
         Math.min(hA(a).a, hA(b).a) * Math.min(glowBeatLink(a), glowBeatLink(b));
+      /* 這一趟真的可能有光的範圍。
+           圖案：半張小圖＝ sz*1.2+4（跟 glowBmp 的 side 同一條式子）
+           連線：線寬的 8 倍，實線的三段模糊與虛線的疊層都收在裡面 */
+      let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
+      const grow = (x: number, y: number, pad: number) => {
+        if (x - pad < bx0) bx0 = x - pad;
+        if (y - pad < by0) by0 = y - pad;
+        if (x + pad > bx1) bx1 = x + pad;
+        if (y + pad > by1) by1 = y + pad;
+      };
+      const halfOf = (sz: number) => (isTextHole(holeType) ? sz * 1.2 : sz * 0.95) + 6;
+      items.forEach(it => grow(it.x, it.y, halfOf(it.sz)));
+      if (pairs.length) {
+        const pad = LINK_W * 8;
+        pairs.forEach(([a, b2]) => {
+          const pa = hA(a), pb = hA(b2);
+          grow(pa.x * s, pa.y * s, pad);
+          grow(pb.x * s, pb.y * s, pad);
+        });
+      }
+      const box = Number.isFinite(bx0)
+        ? { x: bx0, y: by0, w: bx1 - bx0, h: by1 - by0 }
+        : null;
+      /* ── 快路徑：沒有連線、而且每顆圖案都已經完全不透明 ──────────────
+         暫存層存在的理由只有一個：把本體從光裡挖掉。
+         本體現在在小圖裡就先挖好了（見 glowBmp），而圖案的本體隨後又會用
+         滿不透明度畫在同一個位置上 —— 這種情況直接把每顆的光蓋上去就好，
+         省掉整層的清空、挖除、以及整塊矩形的合成（那正是會卡的那一步）。
+         只要有一顆還在淡入（透明度 < 1）、或是有連線，就照原本的路走。
+
+         實測拖「大小」滑桿（發光開著）：
+           全部走暫存層　p90 51ms、25 格掉幀
+           走這條快路徑　p90 23.6ms、0 格掉幀（跟發光關掉時一樣順） */
+      if (!pairs.length && items.every(it => it.a * glowBeat(it.h) >= 0.999)) {
+        items.forEach(it => glowInto(g, it.h, it.a, it.sz, it.ang, it.x, it.y));
+        return;
+      }
       withGlowLayer(g, g.canvas.width, g.canvas.height,
         gg => {
           items.forEach(it => glowInto(gg, it.h, it.a, it.sz, it.ang, it.x, it.y));
@@ -3113,6 +3209,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         },
         gg => {
           // 本體一律用滿透明度挖掉，剩下的才是純粹的光暈
+          // 挖除仍照「全部的本體」來，互相挖除的結果才跟以前一致
           items.forEach(it => strokeHoleShape(gg, it.h, it.sz, it.ang, it.x, it.y, '#000'));
           if (pairs.length) {
             gg.save();
@@ -3121,7 +3218,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             linkPath(gg, pairs);
             gg.restore();
           }
-        });
+        }, box);
     };
 
     /* 線只負責描線；光是另外一層（見 glowPass）。
@@ -3741,7 +3838,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
-  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, linkColor, linkWidthPct, glowMode, holeGlowColor, glowStrength, glowIdle]);
+  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, linkColor, linkWidthPct, glowMode, holeGlowColor, glowIdle]);
 
   /** 下面那個 useLayoutEffect 已經同步畫過的那一版（哪一支 renderToCanvas、畫在幾倍） */
   const syncDrawnRef = useRef<{ fn: any; ps: number } | null>(null);
@@ -4154,7 +4251,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
     glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
-    linkMode, linkColor, linkWidthPct, glowStrength,
+    linkMode, linkColor, linkWidthPct,
     moShape, moLink, motionHold,
     // 選取框也是畫面的一部分，一起記起來才會「回到一模一樣」
     selectedObj, selectedTarget,
@@ -4176,7 +4273,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     setGlowMoImg(e.glowMoImg || { idle: 'none', amp: 100, speed: 100 });
     setGlowMoText(e.glowMoText || { idle: 'none', amp: 100, speed: 100 });
     setLinkMode(e.linkMode); setLinkColor(e.linkColor ?? null);
-    setLinkWidthPct(e.linkWidthPct ?? 100); setGlowStrength(e.glowStrength ?? 100);
+    setLinkWidthPct(e.linkWidthPct ?? 100);
     setMoShape(e.moShape); setMoLink(e.moLink); setMotionHold(e.motionHold);
     setSelectedObj(e.selectedObj ?? null); setSelectedTarget(e.selectedTarget ?? null);
   };
@@ -4203,7 +4300,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
     glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
-    linkMode, linkColor, linkWidthPct, glowStrength, moShape, moLink, motionHold,
+    linkMode, linkColor, linkWidthPct, moShape, moLink, motionHold,
   ]);
 
   /** 從頭播一次。換動畫種類時自動叫它 —— 不然改完要自己等一圈才看得到。 */
@@ -5636,12 +5733,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       ))}
                     </div>
                     {linkMode !== 'none' && (
-                      <div className="mt-3">
-                        <CompactSlider label="粗細" value={linkWidthPct} min={20} max={200}
-                          onChange={setLinkWidthPct} step={1} />
-                      </div>
-                    )}
-                    {linkMode !== 'none' && (
                       <div
                         className="h-[47px] mt-2 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
                         onClick={() => setColorPickerTarget('linkColor')}
@@ -5655,6 +5746,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             style={{ backgroundColor: linkColor || maskColor }}
                           />
                         </div>
+                      </div>
+                    )}
+                    {/* 粗細擺在顏色下面 */}
+                    {linkMode !== 'none' && (
+                      <div className="mt-3">
+                        <CompactSlider label="粗細" value={linkWidthPct} min={20} max={200}
+                          onChange={setLinkWidthPct} step={1} />
                       </div>
                     )}
                   </div>
@@ -5681,12 +5779,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         </button>
                       ))}
                     </div>
-                    {glowMode !== 'off' && (
-                      <div className="mt-3">
-                        <CompactSlider label="強度" value={glowStrength} min={0} max={200}
-                          onChange={setGlowStrength} step={1} />
-                      </div>
-                    )}
                     {glowMode !== 'off' && (
                       <div
                         className="h-[47px] mt-2 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
