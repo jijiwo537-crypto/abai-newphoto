@@ -198,19 +198,21 @@ select:focus, select:focus-visible {
     backface-visibility: hidden;
   }
   /* 位移是線性的：進度 p 就是 range × 0.70 × p。
-     透明度用 smoothstep（前 6% 不動、到 40% 就淡完），所以中間多切幾格。
+     透明度用 smoothstep（前 6% 不動、到 54% 才淡完），所以中間多切幾格。
 
-     為什麼收在 40%：模板的物件會在捲了大約 43% 屏的時候開始跟修圖的按鈕重疊
-     （模板頂端 762 − 1.35y 掉到按鈕下緣 408 − 0.30y 的位置，解出來 y ≈ 0.43 屏）。
-     淡出提早在 40% 收工，兩邊真的疊到一起時修圖那一屏已經看不見了。 */
+     為什麼收在 54%：要在「模板的上緣正好碰到『編輯／相機』那一排的上緣」
+     那一刻剛好全透明。兩邊都在動 ——
+       模板上緣 = 762 − 1.35y、那一排的上緣 = 315 − 0.30y
+       解 762 − 1.35y = 290 − 0.30y → y ≈ 450px ≈ 0.575 屏（實測就是 450）。
+     （先前是拿那一排的「下緣」算的，所以收在 40%，看起來就太早沒了。） */
   @keyframes home-hero-para {
-    0%     { transform: translate3d(0, 0, 0);                                       opacity: 1;     visibility: visible; }
-    6%     { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.042), 0);  opacity: 1; }
-    14.5%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.1015), 0); opacity: 0.844; }
-    23%    { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.161), 0);  opacity: 0.5;   pointer-events: none; }
-    31.5%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2205), 0); opacity: 0.156; }
-    40%    { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.280), 0);  opacity: 0;     visibility: hidden; }
-    100%   { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.700), 0);  opacity: 0;     visibility: hidden; }
+    0%     { transform: translate3d(0, 0, 0);                                        opacity: 1;     visibility: visible; }
+    6%     { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.042), 0);   opacity: 1; }
+    18.9%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.1323), 0);  opacity: 0.844; }
+    31.75% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2223), 0);  opacity: 0.5;   pointer-events: none; }
+    44.6%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.3122), 0);  opacity: 0.156; }
+    57.5%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.4025), 0);  opacity: 0;     visibility: hidden; }
+    100%   { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.700), 0);   opacity: 0;     visibility: hidden; }
   }
   @keyframes home-lib-para {
     0%   { transform: translate3d(0, var(--lib-lift), 0); }
