@@ -3358,11 +3358,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                        透明度一層比一層淡，**最外層淡到 0**，所以邊緣是羽化的、
                        沒有硬邊。虛線陣列從頭到尾沒變，每一段的位置天生就對齊；
                        lineCap 用 round，光才會包住短線的兩端而不是被切平。
-                          R  = 光往外散的距離（線寬的 1.9 倍）
-                          N  = 疊 14 層（層數就是羽化的細緻度）
+                          R  = 光往外散的距離（線寬的 1.4 倍）
+                          N  = 疊 20 層（層數就是羽化的細緻度，層數越多階梯越看不出來）
                           A  = 每層的基準透明度
-                          pow= 外圈衰減得多快（越大＝中心越集中） */
-                    const R = LINK_W * 1.9, N = 14, A = 0.20, POW = 1.2;
+                          pow= 外圈衰減得多快（越大＝邊緣越柔、中心越集中）
+                       （1.9／14／1.2 → 1.4／20／2.2：範圍收 26%，羽化再更柔） */
+                    const R = LINK_W * 1.4, N = 20, A = 0.22, POW = 2.2;
                     lg.shadowBlur = 0;
                     lg.lineCap = 'round';
                     for (let i = N; i >= 1; i--) {
