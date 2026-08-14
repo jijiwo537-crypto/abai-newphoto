@@ -542,11 +542,24 @@ export const HomePage: React.FC<HomePageProps> = ({
   /** 把「一屏有多高」寫給 CSS 動畫用。值沒變就不要寫 ——
       改動這個變數會讓兩支捲動動畫重新計算範圍，能省就省。 */
   const rangeWritten = useRef(-1);
-  const syncRange = useCallback(() => {
+  /** 捲動中不改 --hero-range，把這件事押後到停下來再做（見下面的說明） */
+  const scrollingUntil = useRef(0);
+  const rangePending = useRef(false);
+  const syncRange = useCallback((force = false) => {
     const sc = scrollRef.current;
     if (!sc) return;
     const h = sc.clientHeight;
-    if (h === rangeWritten.current) return;
+    if (h === rangeWritten.current) { rangePending.current = false; return; }
+    /* 捲動途中先不要寫。
+       iOS 在快速滑動時會收起／展開網址列，那一下 clientHeight 會變 ——
+       --hero-range 一改，兩支捲動動畫的範圍、每一格的位移、還有模板那個
+       負的 margin-top 全部同時改一次，畫面上就是「東西跳一下又回來」。
+       押後到停下來（260ms 沒有新的捲動事件）再寫，滑動途中的幾何完全不動。 */
+    if (!force && performance.now() < scrollingUntil.current) {
+      rangePending.current = true;
+      return;
+    }
+    rangePending.current = false;
     rangeWritten.current = h;
     sc.style.setProperty('--hero-range', `${h}px`);
   }, []);
@@ -575,17 +588,23 @@ export const HomePage: React.FC<HomePageProps> = ({
       lib.style.transform = `translate3d(0, ${((1 - Math.min(1, y / h)) * lift).toFixed(2)}px, 0)`;
     }
     /* 淡出的節奏：前 6% 完全不動（手指才剛碰到就整片變淡會很躁），
-       之後到 44.70% 才淡完 —— 全透明的位置訂在 y = 350px（一屏 783 的 44.70%），
-       比「模板上緣碰到『編輯／相機』那一排上緣」的 450px 再提早 100px。
+       之後到 45.98% 才淡完 —— 全透明的位置訂在 y = 360px（一屏 783 的 45.98%），
+       比「模板上緣碰到『編輯／相機』那一排上緣」的 450px 再提早 90px。
        用 smoothstep 收頭尾，不是直線：直線的淡出在開始與結束那兩下
        看得出「開關感」。 */
-    const t = Math.min(1, Math.max(0, (y / h - 0.06) / 0.3870));
+    const t = Math.min(1, Math.max(0, (y / h - 0.06) / 0.3998));
     const fade = t * t * (3 - 2 * t);
     const o = 1 - fade;
     el.style.opacity = o.toFixed(3);
-    // 淡到快看不見時就不該再吃得到點擊，完全不見了連畫都不用畫
+    // 淡到快看不見時就不該再吃得到點擊
     el.style.pointerEvents = o < 0.35 ? 'none' : '';
-    el.style.visibility = o <= 0.002 ? 'hidden' : '';
+    /* 這裡刻意**不**設 visibility: hidden（原本全透明時會設）。
+       visibility 一翻回 visible，這一整層要重新光柵化；從模板很快滑回修圖
+       的那一下正好撞上這個切換，那一格來不及畫好，就會先用上一格的位置貼出來
+       —— 畫面上就是「修圖的東西先掉到下面一點，然後又自己歸位」。
+       整段都留著（透明度 0）合成層就一直在，沒有那一格。
+       透明度 0 的層不必畫內容，成本可以忽略；擋點擊已經由 pointer-events 做了。 */
+    if (el.style.visibility) el.style.visibility = '';
   }, []);
   applyRef.current = applyParallax;
 
@@ -634,7 +653,18 @@ export const HomePage: React.FC<HomePageProps> = ({
     };
   }, [syncRange, applyParallax]);
 
+  /** 捲動停下來之後才做的事（目前只有補寫 --hero-range） */
+  const scrollIdle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (scrollIdle.current) clearTimeout(scrollIdle.current); }, []);
+
   const onScroll = useCallback(() => {
+    // 標記「現在正在捲」，這段時間內不准改動任何會影響幾何的 CSS 變數
+    scrollingUntil.current = performance.now() + 260;
+    if (scrollIdle.current) clearTimeout(scrollIdle.current);
+    scrollIdle.current = setTimeout(() => {
+      scrollIdle.current = null;
+      if (rangePending.current) { syncRange(true); applyParallax(); }
+    }, 280);
     /* 先同步畫一次再啟動每格的迴圈：只靠迴圈的話，這一次捲動要等到
        下一個畫面更新才會反映，等於固定慢一格。 */
     applyParallax();
@@ -659,7 +689,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     }
     if (navSettle.current) clearTimeout(navSettle.current);
     navSettle.current = setTimeout(() => { navSettle.current = null; setNav(next); }, 120);
-  }, [kickPump, applyParallax]);
+  }, [kickPump, applyParallax, syncRange]);
 
   const copyEmail = async () => {
     try {
