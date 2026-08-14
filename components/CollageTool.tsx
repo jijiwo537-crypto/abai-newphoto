@@ -3293,20 +3293,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                      沒有指定連線顏色時就沿用圖案發光的顏色。 */
                   lg.strokeStyle = linkGlowColor;
                   lg.shadowColor = linkGlowColor;
-                  /* 半徑倍率：實線 0.50、**虛線 0.20**。
+                  /* 半徑倍率：實線 0.50、虛線 0.30。
 
                      實線用 0.50 —— shadowBlur 是高斯模糊的參數，實際「散出去多遠」
                      跟它不是線性的（三段疊起來又更鈍）。掃過一輪，0.50 量到的
                      散開範圍剛好是 −29.4%（照比例的 0.63 只有 −20.6%）。
 
-                     虛線一定要更小：空隙只有 LINK_W×4，而 0.50 的最大半徑是
-                     LINK_W×4.5 —— 每一段的光會直接蓋滿隔壁的空隙，整條線的光
-                     連成一片，看起來就是「光跟虛線對不起來」。
-                     實測（LINK_W≈3.8，跟實際畫布同量級）空隙正中央的亮度：
-                       0.50 → 16　0.30 → 6.4　0.25 → 3.7　**0.20 → 0**
-                     而虛線本身的光只從 51.3 掉到 46.4（差一成）。
-                     所以虛線取 0.20：每一段的光就乖乖跟著那一段。 */
-                  const glowK = linkMode === 'dash' ? 0.20 : 0.50;
+                     虛線要小一點：空隙只有 LINK_W×4，0.50 的最大半徑是 LINK_W×4.5，
+                     每一段的光會蓋滿隔壁的空隙、整條連成一片。0.30 之後
+                     空隙的亮度只剩虛線的四成出頭，看起來就是一段一段各自發光。
+                     （更小的 0.20 雖然空隙更乾淨，但半徑只剩 LINK_W×1.8，
+                       預覽放大時那圈光細到幾乎看不見 —— 所以不取。） */
+                  const glowK = linkMode === 'dash' ? 0.30 : 0.50;
                   for (const kk of [1, 2, 3]) {
                     lg.shadowBlur = base * kk * glowK;
                     linkPath(lg, arr);
@@ -3325,7 +3323,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         gg => {
           // 本體一律用滿透明度挖掉，剩下的才是純粹的光暈
           items.forEach(it => strokeHoleShape(gg, it.h, it.sz, it.ang, it.x, it.y, '#000'));
-          if (pairs.length) {
+          /* 線的本體只有實線要挖。
+             虛線不挖 —— 每一小段本來就很短，挖掉之後光跟那一段之間會出現
+             一圈暗縫，看起來就變成「光是浮在旁邊、跟線分開的」。
+             不挖的話光是從線本身連續散出去的，才像那一段自己在發光。
+             （線的本體隨後會用滿不透明度描在上面，所以不會變亮兩次。） */
+          if (pairs.length && linkMode !== 'dash') {
             gg.save();
             linkStyle(gg);
             gg.strokeStyle = '#000';
