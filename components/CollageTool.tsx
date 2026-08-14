@@ -1463,6 +1463,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const glowLayerRef = useRef<HTMLCanvasElement | null>(null);
   /** 「洞裡看到的那張圖」上次是用什麼參數畫的（見 drawMaskHolesOnTop） */
   const holeBdKeyRef = useRef('');
+  /** 兩側各自「畫好的那一層光」。只要決定它長相的東西沒變就直接貼（見 glowPass） */
+  const glowLayerCacheRef = useRef<Record<string, {
+    key: string; c: HTMLCanvasElement; rx: number; ry: number; rw: number; rh: number;
+  } | null>>({ image: null, mask: null });
   /** 一顆圖案的光暈成品，鍵＝真正決定長相的那幾項（見 glowInto） */
   const glowBmpRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const [brushMode, setBrushMode] = useState<'off' | 'pen' | 'eraser'>('off');
@@ -2996,6 +3000,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       g.shadowBlur = 0;
       g.drawImage(lay, 0, 0, rw, rh, rx, ry, rw, rh);
       g.restore();
+      return { rx, ry, rw, rh, lay };
     };
 
     /** 一顆圖案的形狀（發光的三段模糊與挖本體都走這支，形狀一定一致） */
@@ -3174,6 +3179,42 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const box = Number.isFinite(bx0)
         ? { x: bx0, y: by0, w: bx1 - bx0, h: by1 - by0 }
         : null;
+
+      /* ── 這一層光「長什麼樣」的簽名 ──────────────────────────────────
+         光只由：哪幾顆圖案在哪裡多大多斜多透明、哪幾條線連到哪裡、
+         以及顏色／線型／線寬 決定。跟物件在哪裡、字級多大、遮罩什麼顏色
+         通通無關。
+
+         這正是「發光一開，連不相干的滑桿都變超卡」的原因 ——
+         每一格都把整層光從頭算一次：虛線的光要疊 44 層描邊、再過一次高斯，
+         實線要疊三段模糊，圖案還要一顆一顆蓋。明明畫出來跟上一格一模一樣。
+
+         現在先算一個簽名，一樣就直接把上一次畫好的那一層貼回去（一次 drawImage）。
+         圖案真的動了（大小／數量／角度）簽名才會變，那時候本來就該重算。 */
+      const sig = `${side}|${glowMode}|${holeGlowColor}|${linkMode}|${linkColor || ''}|${linkGlowColor}`
+        + `|${LINK_W.toFixed(3)}|${holeType}|${isTextHole(holeType) ? customText : ''}|${s.toFixed(4)}`
+        + `|${g.canvas.width}x${g.canvas.height}`
+        + '|I' + items.map(it => `${it.x.toFixed(1)},${it.y.toFixed(1)},${it.sz.toFixed(1)},${it.ang.toFixed(1)},${(it.a * glowBeat(it.h)).toFixed(3)}`).join(';')
+        + '|P' + pairs.map(pr => {
+          const pa = hA(pr[0]), pb = hA(pr[1]);
+          // local＝進場時線「長到哪裡」，播動畫時每一格都不同，一定要進簽名
+          const local = a0 ? a0.link(holeOrder.get(pr[0].id) ?? 0, holeOrder.get(pr[1].id) ?? 0) : 1;
+          return `${pa.x.toFixed(1)},${pa.y.toFixed(1)},${pb.x.toFixed(1)},${pb.y.toFixed(1)},`
+            + `${linkAlpha(pr).toFixed(3)},${local.toFixed(3)}`;
+        }).join(';');
+      const cacheSlot = glowLayerCacheRef.current;
+      const cached = isMain ? cacheSlot[side] : null;
+      if (cached && cached.key === sig) {
+        g.save();
+        g.setTransform(1, 0, 0, 1, 0, 0);
+        g.globalAlpha = 1;
+        g.shadowBlur = 0;
+        g.drawImage(cached.c, 0, 0, cached.rw, cached.rh, cached.rx, cached.ry, cached.rw, cached.rh);
+        g.restore();
+        return;
+      }
+      if (isMain) cacheSlot[side] = null;
+
       /* ── 快路徑：沒有連線、而且每顆圖案都已經完全不透明 ──────────────
          暫存層存在的理由只有一個：把本體從光裡挖掉。
          本體現在在小圖裡就先挖好了（見 glowBmp），而圖案的本體隨後又會用
@@ -3188,7 +3229,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         items.forEach(it => glowInto(g, it.h, it.a, it.sz, it.ang, it.x, it.y));
         return;
       }
-      withGlowLayer(g, g.canvas.width, g.canvas.height,
+      const done = withGlowLayer(g, g.canvas.width, g.canvas.height,
         gg => {
           items.forEach(it => glowInto(gg, it.h, it.a, it.sz, it.ang, it.x, it.y));
           if (pairs.length) {
@@ -3248,6 +3289,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             gg.restore();
           }
         }, box);
+      /* 畫好的那一層留一份下來，下一格如果簽名一樣就直接貼。
+         暫存層本身是共用的，會被下一趟蓋掉，所以要複製到自己的畫布上。 */
+      if (isMain && done && done.rw > 0 && done.rh > 0) {
+        const keep = document.createElement('canvas');
+        keep.width = done.rw; keep.height = done.rh;
+        const kg = keep.getContext('2d');
+        if (kg) {
+          kg.drawImage(done.lay, 0, 0, done.rw, done.rh, 0, 0, done.rw, done.rh);
+          cacheSlot[side] = { key: sig, c: keep, rx: done.rx, ry: done.ry, rw: done.rw, rh: done.rh };
+        }
+      }
     };
 
     /* 線只負責描線；光是另外一層（見 glowPass）。
@@ -5468,19 +5520,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 return (
                   sel.type === 'text' ? (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
-                      {/* 文字內容：經典拼圖是點畫布上的字直接打，
-                          這裡把同一件事放在面板最上面（多行、可換行）。
-                          每打一個字就更新選中的那個文字物件。 */}
-                      <div className="mb-3">
-                        <p className="text-[11px] font-bold text-white/70 mb-1.5">文字內容</p>
-                        <textarea
-                          value={sel.text || ''}
-                          onChange={e => patch({ text: e.target.value })}
-                          rows={2}
-                          placeholder="輸入文字..."
-                          className="w-full p-2.5 bg-[#111] border border-transparent rounded-[8px] text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#333] resize-none"
-                        />
-                      </div>
                       <TextEditorPanel
                         layer={{
                           text: sel.text, color: sel.color, fontFamily: sel.fontFamily,
