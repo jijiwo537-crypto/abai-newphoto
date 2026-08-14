@@ -204,16 +204,17 @@ select:focus, select:focus-visible {
      那一刻剛好全透明。兩邊都在動 ——
        模板上緣 = 762 − 1.35y、那一排的上緣 = 315 − 0.30y
        解 762 − 1.35y = 290 − 0.30y → y ≈ 450px。
-     主人要再提早一點，改成 **410px**（一屏 783 的 52.36%）—— 也就是在兩邊
-     真的碰到之前 40px 就已經全透明了。
-     （更早之前是拿那一排的「下緣」算的，收在 40%＝326px，那樣太早。） */
+     主人要再提早，現在訂在 **380px**（一屏 783 的 48.53%）—— 也就是在兩邊
+     真的碰到之前 70px 就已經全透明了。
+     （調整過程：450 → 410 → 380。更早之前是拿那一排的「下緣」算的，
+       收在 40%＝326px，那樣太早。） */
   @keyframes home-hero-para {
     0%     { transform: translate3d(0, 0, 0);                                        opacity: 1;     visibility: visible; }
     6%     { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.042), 0);   opacity: 1; }
-    17.6%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.1231), 0);  opacity: 0.844; }
-    29.2%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2043), 0);  opacity: 0.5;   pointer-events: none; }
-    40.8%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2854), 0);  opacity: 0.156; }
-    52.36% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.3665), 0);  opacity: 0;     visibility: hidden; }
+    16.6%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.1164), 0);  opacity: 0.844; }
+    27.3%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.1909), 0);  opacity: 0.5;   pointer-events: none; }
+    37.9%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2653), 0);  opacity: 0.156; }
+    48.53% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.3397), 0);  opacity: 0;     visibility: hidden; }
     100%   { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.700), 0);   opacity: 0;     visibility: hidden; }
   }
   @keyframes home-lib-para {
