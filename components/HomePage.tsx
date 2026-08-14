@@ -433,6 +433,34 @@ export const HomePage: React.FC<HomePageProps> = ({
       主視覺不用在這裡動 —— 它現在就在捲動內容裡，瀏覽器自己會捲，
       跟品牌字與其他東西完全同一拍。捲過第一屏它就自然離開畫面了，
       所以也不需要再淡出。 */
+  /* ── 到頂／到底就不要再拖 ────────────────────────────────────────
+     iOS 的橡皮筋是 Safari 自己在做的，`overscroll-behavior: none` 只擋得住
+     「把捲動傳給外層」，擋不了這一格自己彈 —— 所以只能自己攔：
+     已經在最上面還想往下拉、或已經在最下面還想往上推，就不讓那一下生效。
+     中間任何位置都不管，正常捲動的手感一個字都沒動到。
+
+     必須用原生的 addEventListener 並指定 passive: false ——
+     React 掛的 touchmove 是被動的，被動的 listener 呼叫 preventDefault 沒有用。 */
+  useEffect(() => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    let y0 = 0;
+    const down = (e: TouchEvent) => { y0 = e.touches[0]?.clientY ?? 0; };
+    const move = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;      // 雙指縮放之類的不要碰
+      const dy = (e.touches[0]?.clientY ?? 0) - y0;
+      const top = sc.scrollTop <= 0;
+      const bottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
+      if ((top && dy > 0) || (bottom && dy < 0)) e.preventDefault();
+    };
+    sc.addEventListener('touchstart', down, { passive: true });
+    sc.addEventListener('touchmove', move, { passive: false });
+    return () => {
+      sc.removeEventListener('touchstart', down);
+      sc.removeEventListener('touchmove', move as any);
+    };
+  }, []);
+
   /* ── 往下滑的視差 ────────────────────────────────────────────────
      模板那一段照捲軸原速往上，修圖這一屏只走 45% 的速度 ——
      捲了 y，它自己往下補 0.55y，看起來就是「慢半拍地被留在後面」。
@@ -637,6 +665,7 @@ export const HomePage: React.FC<HomePageProps> = ({
            貼著下緣排的那一疊東西就會跟著移動。內距補回同樣的量，可用高度不變，
            主頁上面所有東西就都待在原位。
            拿掉圖示時分頁列矮了 26px；字級 9→12px 之後又高回 5px，所以是 26-5=21。 */
+        style={{ overscrollBehavior: 'none' }}
         className={`no-scrollbar relative z-[5] flex-1 min-h-0 overflow-y-auto box-border pb-[21px] ${nav === 'me' ? 'hidden' : 'block'}`}
       >
       {/* 這一疊是靠 mt-auto 貼著下緣排的，底部留白加大就等於整組一起往上。
