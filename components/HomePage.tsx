@@ -573,10 +573,11 @@ export const HomePage: React.FC<HomePageProps> = ({
       const lift = liftPx(sc);
       lib.style.transform = `translate3d(0, ${((1 - Math.min(1, y / h)) * lift).toFixed(2)}px, 0)`;
     }
-    /* 淡出的節奏：前 8% 完全不動（手指才剛碰到就整片變淡會很躁），
-       之後到 56% 之間淡完。用 smoothstep 收頭尾，不是直線：
+    /* 淡出的節奏：前 6% 完全不動（手指才剛碰到就整片變淡會很躁），
+       之後到 40% 之間淡完 —— 模板的物件大約在 43% 屏開始跟這裡的按鈕重疊，
+       所以要在那之前就淡光。用 smoothstep 收頭尾，不是直線：
        直線的淡出在開始與結束那兩下看得出「開關感」。 */
-    const t = Math.min(1, Math.max(0, (y / h - 0.08) / 0.48));
+    const t = Math.min(1, Math.max(0, (y / h - 0.06) / 0.34));
     const fade = t * t * (3 - 2 * t);
     const o = 1 - fade;
     el.style.opacity = o.toFixed(3);
@@ -632,6 +633,9 @@ export const HomePage: React.FC<HomePageProps> = ({
   }, [syncRange, applyParallax]);
 
   const onScroll = useCallback(() => {
+    /* 先同步畫一次再啟動每格的迴圈：只靠迴圈的話，這一次捲動要等到
+       下一個畫面更新才會反映，等於固定慢一格。 */
+    applyParallax();
     kickPump();
     const sc = scrollRef.current;
     if (!sc) return;
@@ -653,7 +657,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     }
     if (navSettle.current) clearTimeout(navSettle.current);
     navSettle.current = setTimeout(() => { navSettle.current = null; setNav(next); }, 120);
-  }, [kickPump]);
+  }, [kickPump, applyParallax]);
 
   const copyEmail = async () => {
     try {
