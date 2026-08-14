@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
-import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, MessageCircle, Bookmark, Volume2, VolumeX, Shapes } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, MessageCircle, Bookmark, Volume2, VolumeX, Shapes } from 'lucide-react';
 import { Icon } from './Icon';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
@@ -10,6 +10,12 @@ import { FX_DEFS, warmFx } from '../utils/glEffects';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
 import { addExport } from '../utils/exportHistory';
 import { SYMBOLS } from '../utils/symbols';
+/* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
+import {
+  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape,
+  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
+} from '../utils/holeShapes';
+import { SHAPE_IMAGES } from '../utils/shapeImages';
 import { ComposeStudio } from './ComposeStudio';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
@@ -1000,6 +1006,63 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
     </svg>
   );
 };
+
+/* 「圖案」那幾顆借過來的圖形，按鈕上的小圖跟創意拼圖用同一份 —— 
+   兩個工具的清單長得一樣，點下去加出來的也是同一顆。 */
+// --- 自製極簡單線十字星圖標 ---
+export const CrossStarIcon = ({ size = 20, strokeWidth = 1.5 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+    <path d="M12 2 Q12 12 2 12 Q12 12 12 22 Q12 12 22 12 Q12 12 12 2" />
+  </svg>
+);
+
+// --- 自製單線旋渦圖標 ---
+export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round">
+    <path d="M12 2.5a9.5 9.5 0 0 1 9.5 9.5 8.5 8.5 0 0 1-8.5 8.5 7.5 7.5 0 0 1-7.5-7.5 6.5 6.5 0 0 1 6.5-6.5 5.5 5.5 0 0 1 5.5 5.5 4.5 4.5 0 0 1-4.5 4.5 3.5 3.5 0 0 1-3.5-3.5 2.5 2.5 0 0 1 2.5-2.5 1.5 1.5 0 0 1 1.5 1.5" />
+  </svg>
+);
+
+/** 一顆「圖案」的小圖（形狀分頁的選單與『新增圖形』清單共用同一份）。 */
+export const HoleGlyph: React.FC<{ s: string }> = ({ s }) => (
+  <>
+    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+                        /* 去背的圖：拿它當遮罩、底色用 currentColor，
+                           顏色就跟旁邊那些圖示走同一條規則 ——
+                           沒選中時是暗的（#555），選中才變白。
+                           （原本是用 filter 硬染成白色，所以永遠亮著。） */
+                        <span
+                          aria-hidden
+                          style={{
+                            display: 'block',
+                            width: 26,
+                            height: 26 / holeImgRatio(s),
+                            backgroundColor: 'currentColor',
+                            WebkitMaskImage: `url(${SHAPE_IMAGES[s]})`,
+                            maskImage: `url(${SHAPE_IMAGES[s]})`,
+                            WebkitMaskSize: 'contain',
+                            maskSize: 'contain',
+                            WebkitMaskRepeat: 'no-repeat',
+                            maskRepeat: 'no-repeat',
+                            WebkitMaskPosition: 'center',
+                            maskPosition: 'center',
+                          }}
+                        />
+                      ) : GLYPH_HOLES[s] ? (
+                        <span
+                          className="font-bold font-sans leading-none inline-block whitespace-nowrap"
+                          style={{
+                            fontSize: `${GLYPH_BTN[s]?.size ?? 18}px`,
+                            transform: (GLYPH_BTN[s]?.dx || GLYPH_BTN[s]?.dy)
+                              ? `translate(${GLYPH_BTN[s]?.dx ?? 0}px, ${GLYPH_BTN[s]?.dy ?? 0}px)`
+                              : undefined,
+                          }}
+                        >
+                          {GLYPH_HOLES[s]}
+                        </span>
+                      ) : <Type size={18} />}
+  </>
+);
 
 const FontCard: React.FC<{
   font: { name: string; label: string; category: FontCategory };
@@ -2584,6 +2647,8 @@ interface FloatingImage {
   shape?: string;
   /** 實心（填色）還是細框（只描邊） */
   shapeFilled?: boolean;
+  /** shape === 'hole' 時，真正要畫哪一顆圖案（跟創意拼圖同一份清單） */
+  holeType?: string;
   /** 線寬，1 個單位 = 外框長邊的 1/160（滑桿顯示成 1~100，存進來是 ÷10） */
   shapeLineW?: number;
   /** 描邊的虛線長度（0＝實線，1~100 是「一段有幾倍線寬」的比例，跟圖片描邊同一套） */
@@ -3594,7 +3659,46 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       onTouchEnd={onSwapTouchEnd}
       onTouchCancel={onSwapTouchEnd}
     >
-      {image.shape ? (
+      {image.shape === 'hole' ? (
+        /* 從「圖案」借過來的那幾顆：它們不是 SVG 路徑（有的是系統字型的字、
+           有的是去背 PNG），所以預覽直接畫在 canvas 上、用的就是匯出那一支
+           drawHoleShape —— 預覽跟成品是同一段程式碼畫的，不可能對不起來。
+           畫布開 dpr 倍再用 CSS 縮回去，放大時邊緣才不會糊。 */
+        <canvas
+          ref={el => {
+            if (!el) return;
+            const dpr = Math.min(3, window.devicePixelRatio || 1);
+            const w = Math.max(1, Math.round(image.width * image.scale * dpr));
+            const h = Math.max(1, Math.round(image.height * image.scale * dpr));
+            if (el.width !== w) el.width = w;
+            if (el.height !== h) el.height = h;
+            const c = el.getContext('2d');
+            if (!c) return;
+            c.setTransform(1, 0, 0, 1, 0, 0);
+            c.clearRect(0, 0, w, h);
+            c.translate(w / 2, h / 2);
+            drawHoleShape(
+              c,
+              {
+                hole: image.holeType || 'circle', filled: image.shapeFilled,
+                color: image.color || SHAPE_DEFAULT_COLOR,
+                lineW: image.shapeLineW, glow: image.shapeGlow ? 1 : 0,
+                glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW,
+                strokeColor: image.shapeStrokeColor,
+                dots: image.shapeDots, dotSize: image.shapeDotSize,
+                dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
+                id: image.id,
+              },
+              w, h, shapeGlowBlurs(w, h),
+            );
+          }}
+          key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${Math.round(image.width * image.scale)}|${Math.round(image.height * image.scale)}`}
+          style={{
+            position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
+            pointerEvents: 'none',
+          }}
+        />
+      ) : image.shape ? (
         /* 圖形圖層。預覽是 SVG、匯出是 Path2D，吃的是同一條 d 字串。
            viewBox 用「沒有縮放前」的尺寸，外框是 width×scale ——
            兩軸的倍率一樣，所以描邊是等比例放大、不會被拉扁。
@@ -4843,18 +4947,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    * 大小預設佔頁面短邊的三成；線條類壓成細長條（高度只有寬度的 8%）。
    * 顏色跟文字一樣預設墨黑 —— 頁面底色預設是白的，白色圖形會看不到。
    */
-  const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number]) => {
+  const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem) => {
     const rect = getActivePageRect();
     const short = Math.min(rect?.width ?? previewW, rect?.height ?? previewH);
     const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
-    const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
+    const h = (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
     const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
     const item: FloatingImage = {
       id, src: '',
       x: (rect ? rect.centerX : previewW / 2) - w / 2,
       y: (rect ? rect.centerY : previewH / 2) - h / 2,
-      width: w, height: h, scale: 1, rotation: it.rot || 0,
+      width: w, height: h, scale: 1, rotation: (it as any).rot || 0,
       shape: it.kind,
+      // 借來的圖案：kind 一律是 'hole'，真正畫哪一顆看 holeType
+      holeType: (it as HoleShapeItem).hole,
       shapeFilled: it.filled,
       shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
       shapeDash: 0,
@@ -8073,6 +8179,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     ctx.scale(fImg.scale, fImg.scale);
     ctx.translate(-fw / 2, -fh / 2);
 
+    if (fImg.shape === 'hole') {
+      /* 借來的圖案：跟預覽同一支 drawHoleShape，原點在中心 */
+      ctx.save();
+      ctx.translate(fw / 2, fh / 2);
+      drawHoleShape(
+        ctx,
+        {
+          hole: fImg.holeType || 'circle', filled: fImg.shapeFilled,
+          color: fImg.color || SHAPE_DEFAULT_COLOR,
+          lineW: fImg.shapeLineW, glow: fImg.shapeGlow ? 1 : 0,
+          glowColor: fImg.shapeGlowColor, strokeW: fImg.shapeStrokeW,
+          strokeColor: fImg.shapeStrokeColor,
+          dots: fImg.shapeDots, dotSize: fImg.shapeDotSize,
+          dotGap: fImg.shapeDotGap, dotColor: fImg.shapeDotColor,
+          id: fImg.id,
+        },
+        fw, fh, shapeGlowBlurs(fw, fh),
+      );
+      ctx.restore();
+      ctx.restore();
+      return;
+    }
     const path = new Path2D(shapePathD(fImg.shape!, fw, fh));
     const color = fImg.color || SHAPE_DEFAULT_COLOR;
     const solid = fImg.shapeFilled && fImg.shape !== 'line';
@@ -8468,6 +8596,33 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             const lw = shapeLineWidth(f.shapeLineW, f.width, f.height);
             const dash = f.shapeDash || 0;
             const seg = lw * (0.6 + (dash / 100) * 4);
+            /* 借來的圖案不是 SVG 路徑，縮圖也走 canvas（跟預覽、匯出同一支） */
+            if (f.shape === 'hole') return (
+              <canvas
+                key={f.id}
+                ref={el => {
+                  if (!el) return;
+                  const w = Math.max(1, Math.round(f.width * f.scale * k * 2));
+                  const h = Math.max(1, Math.round(f.height * f.scale * k * 2));
+                  if (el.width !== w) el.width = w;
+                  if (el.height !== h) el.height = h;
+                  const c = el.getContext('2d');
+                  if (!c) return;
+                  c.setTransform(1, 0, 0, 1, 0, 0);
+                  c.clearRect(0, 0, w, h);
+                  c.translate(w / 2, h / 2);
+                  drawHoleShape(c, {
+                    hole: f.holeType || 'circle', filled: f.shapeFilled,
+                    color: f.color || SHAPE_DEFAULT_COLOR, lineW: f.shapeLineW,
+                    glow: f.shapeGlow ? 1 : 0, glowColor: f.shapeGlowColor,
+                    strokeW: f.shapeStrokeW, strokeColor: f.shapeStrokeColor,
+                    dots: f.shapeDots, dotSize: f.shapeDotSize,
+                    dotGap: f.shapeDotGap, dotColor: f.shapeDotColor, id: f.id,
+                  }, w, h, shapeGlowBlurs(w, h));
+                }}
+                style={{ ...common }}
+              />
+            );
             return (
               <svg
                 key={f.id}
@@ -10753,11 +10908,32 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                       </button>
                       <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
                     </div>
-                    {([
-                      ['實心', ADD_SHAPE_ITEMS.filter(i => i.filled)],
-                      ['邊框', ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line')],
-                      ['線條', ADD_SHAPE_ITEMS.filter(i => i.kind === 'line')],
-                    ] as const).map(([label, list]) => (
+                    {(() => {
+                      /* 清單跟創意拼圖同一份：實心那排把十字星插在倒數第二，
+                         後面接上從圖案借過來的那 14 顆；邊框那排插空心版的十字星。
+                         最後再把第 10 顆搬到第 8 個，兩邊的順序完全一致。 */
+                      const ins = (arr: any[], item: any) => {
+                        const n = arr.slice();
+                        n.splice(Math.max(0, n.length - 1), 0, item);
+                        return n;
+                      };
+                      const moveTo = (arr: any[], a: number, b2: number) => {
+                        if (arr.length < a) return arr;
+                        const n = arr.slice();
+                        const [x] = n.splice(a - 1, 1);
+                        n.splice(b2 - 1, 0, x);
+                        return n;
+                      };
+                      const solidList = moveTo(
+                        [...ins(ADD_SHAPE_ITEMS.filter(i => i.filled), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
+                        10, 8);
+                      const lineList = ins(ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line'), HOLE_ITEM_CROSS_O);
+                      return ([
+                        ['實心', solidList],
+                        ['邊框', lineList],
+                        ['線條', ADD_SHAPE_ITEMS.filter(i => i.kind === 'line')],
+                      ] as const);
+                    })().map(([label, list]) => (
                       <div key={label} className="mb-3">
                         <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
                         <div className="grid grid-cols-6 gap-2">
@@ -10768,7 +10944,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                               aria-label={it.id}
                               className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
                             >
-                              <ShapeGlyph item={it} />
+                              {(it as any).hole
+                                ? <HoleGlyph s={(it as any).hole} />
+                                : <ShapeGlyph item={it as any} />}
                             </button>
                           ))}
                         </div>

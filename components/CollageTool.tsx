@@ -14,13 +14,22 @@ import {
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, ShapeGlyph, swatchStrip, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker,
   shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
+/* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
+   經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
+   這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
+import {
+  getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio,
+  isTextHole, holeGlyph, glyphFont, glyphInk, drawTextShape, drawShapePath,
+  drawHoleShape, paintDots,
+  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
+} from '../utils/holeShapes';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
 import { ComposeStudio } from './ComposeStudio';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
@@ -32,19 +41,6 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut }
 import { SaveButton } from './SaveButton';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
-// --- 自製極簡單線十字星圖標 ---
-const CrossStarIcon = ({ size = 20, strokeWidth = 1.5 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2 Q12 12 2 12 Q12 12 12 22 Q12 12 22 12 Q12 12 12 2" />
-  </svg>
-);
-
-// --- 自製單線旋渦圖標 ---
-const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round">
-    <path d="M12 2.5a9.5 9.5 0 0 1 9.5 9.5 8.5 8.5 0 0 1-8.5 8.5 7.5 7.5 0 0 1-7.5-7.5 6.5 6.5 0 0 1 6.5-6.5 5.5 5.5 0 0 1 5.5 5.5 4.5 4.5 0 0 1-4.5 4.5 3.5 3.5 0 0 1-3.5-3.5 2.5 2.5 0 0 1 2.5-2.5 1.5 1.5 0 0 1 1.5 1.5" />
-  </svg>
-);
 
 /** 四周包圍：遮罩把原圖整圈包起來 */
 const AROUND = 'mask-around';
@@ -161,63 +157,8 @@ const sameHoles = (a: any[], b: any[]) => renderKeyOf(a) === renderKeyOf(b);
 const objKeyOf = (list: any[]) =>
   (list || []).map(o => JSON.stringify({ ...o, img: undefined, src: o.src || '' })).join(';');
 
-/** 一顆「圖案」的小圖（形狀分頁的選單與『新增圖形』清單共用同一份）。 */
-const HoleGlyph: React.FC<{ s: string }> = ({ s }) => (
-  <>
-    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
-                        /* 去背的圖：拿它當遮罩、底色用 currentColor，
-                           顏色就跟旁邊那些圖示走同一條規則 ——
-                           沒選中時是暗的（#555），選中才變白。
-                           （原本是用 filter 硬染成白色，所以永遠亮著。） */
-                        <span
-                          aria-hidden
-                          style={{
-                            display: 'block',
-                            width: 26,
-                            height: 26 / holeImgRatio(s),
-                            backgroundColor: 'currentColor',
-                            WebkitMaskImage: `url(${SHAPE_IMAGES[s]})`,
-                            maskImage: `url(${SHAPE_IMAGES[s]})`,
-                            WebkitMaskSize: 'contain',
-                            maskSize: 'contain',
-                            WebkitMaskRepeat: 'no-repeat',
-                            maskRepeat: 'no-repeat',
-                            WebkitMaskPosition: 'center',
-                            maskPosition: 'center',
-                          }}
-                        />
-                      ) : GLYPH_HOLES[s] ? (
-                        <span
-                          className="font-bold font-sans leading-none inline-block whitespace-nowrap"
-                          style={{
-                            fontSize: `${GLYPH_BTN[s]?.size ?? 18}px`,
-                            transform: (GLYPH_BTN[s]?.dx || GLYPH_BTN[s]?.dy)
-                              ? `translate(${GLYPH_BTN[s]?.dx ?? 0}px, ${GLYPH_BTN[s]?.dy ?? 0}px)`
-                              : undefined,
-                          }}
-                        >
-                          {GLYPH_HOLES[s]}
-                        </span>
-                      ) : <Type size={18} />}
-  </>
-);
 
 /* ── 新增圖形 ────────────────────────────────────────────────────── */
-
-/* 從「圖案」借過來的那幾種圖形（創意拼圖限定）。
-   kind 一律是 'hole'，真正畫哪一種看 hole 欄位；
-   畫的時候直接走圖案本來那條管線（drawShapePath／drawTextShape），
-   所以形狀、抗鋸齒、上色方式跟圖案完全一致。 */
-export type HoleShapeItem = { id: string; kind: 'hole'; hole: string; filled: boolean };
-/** 實心那一排要插在倒數第二的那一顆（第三個圖案） */
-const HOLE_ITEM_CROSS: HoleShapeItem = { id: 'hole-cross-star-f', kind: 'hole', hole: 'cross-star', filled: true };
-/** 邊框那一排倒數第二的那一顆（同一個形狀的空心版） */
-const HOLE_ITEM_CROSS_O: HoleShapeItem = { id: 'hole-cross-star-o', kind: 'hole', hole: 'cross-star', filled: false };
-/** 第六個圖案到倒數第二個，照原本的順序接在實心那一排後面（不做空心版） */
-const HOLE_ITEMS_EXTRA: HoleShapeItem[] =
-  ['flower', 'snow', 'love', 'love3', 'pic333', 'vortex', 'random-num',
-   'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'yaya', 'zzz']
-    .map(h => ({ id: `hole-${h}`, kind: 'hole' as const, hole: h, filled: true }));
 
 /**
  * 「新增圖形」用的路徑。
@@ -772,207 +713,8 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
 /** 這個元素整段動畫在什麼時候結束（排時間軸用） */
 const moEnd = (cfg: MoCfg) => cfg.delay + cfg.dur;
 
-const getHoleNumber = (h: any) => {
-  if (h && h.randomNumber !== undefined) return h.randomNumber;
-  const hash = h && h.id ? h.id.split('').reduce((acc: number, char: string) => acc + char.charCodeAt(0), 0) : 0;
-  return hash % 10;
-};
-
-/**
- * 用文字畫出來的洞：id → 實際要畫的那個字。
- * 'love'（<3）、'text'（使用者自己打的字）、'random-num'（編號）不是固定的字，
- * 所以不放在這張表裡，由 holeGlyph() 另外處理。
- */
 /** 新增文字時預設放的字。跟經典拼圖同一個字串。 */
 const TEXT_PLACEHOLDER = '輸入文字';
-
-const GLYPH_HOLES: Record<string, string> = {
-  flower:   '❋',   // ❋ 原本就有
-  snow:     '\u2744\uFE0E',   // ❄︎ 雪花（後面那個字是「用文字樣式畫」，不要變成彩色 emoji）
-  vortex:   '🌀',   // 🌀 原本就有
-  seagrass: '𓇼',   // 𓇼 海草
-  darkstar: '𖤐',   // 𖤐 暗星
-  sparkle:  '⊹',   // ⊹ 小閃
-  aster:    '᯽',   // ᯽ 星花
-  theta:    '𝝑𝝔',  // 𝝑𝝔
-  yaya:     'ॽ͙ॽ͙ॽ͙',  // ॽ͙ॽ͙ॽ͙
-  zzz:      '☡zᶻ',  // ☡zᶻ
-};
-
-/** 這個洞是用文字畫的（而不是用路徑畫的）嗎 */
-
-const GLYPH_BTN: Record<string, { size?: number; dx?: number; dy?: number }> = {
-  flower:   { size: 19.8 },                     // 18 × 1.1
-  snow:     { size: 21.6 },                     // 18 × 1.2
-  seagrass: { dx: 0.3, dy: -0.7 },
-  darkstar: { size: 19.8, dx: 0.1 },            // 18 × 1.1
-  // ⊹ 的字身在字框裡本來就偏小，放大 1.5 倍（18 → 27）才看得清楚
-  sparkle:  { size: 27 },
-  // 下面這幾顆是多個字組成的，照 18px 畫會撐出格子
-  theta:    { size: 15, dx: 0.2, dy: -0.3 },
-  yaya:     { size: 13, dx: 0.5, dy: -1 },
-  zzz:      { size: 13, dx: 0.3 },
-};
-
-/* ── 用圖片當形狀的圖案 ─────────────────────────────────────────────
-   有些圖案打不出來（字型裡根本沒有那個字），所以改成用去背的 PNG。
-   圖裡**只有形狀**（RGB 全塗黑、只留 alpha）—— 真正畫出來的顏色跟其他圖案
-   一樣，是由拼圖的遮罩／顏色決定的，跟原圖是什麼顏色完全無關。
-   它走的是跟文字圖案完全同一條管線（量墨水 → 畫進暫存畫布 → source-in 上色），
-   所以選取框、命中判定、發光、匯出全部自動比照辦理。 */
-const holeImgCache = new Map<string, HTMLImageElement>();
-const getHoleImg = (t: string): HTMLImageElement | null => {
-  const src = SHAPE_IMAGES[t];
-  if (!src) return null;
-  let im = holeImgCache.get(t);
-  if (!im) {
-    im = new Image();
-    im.decoding = 'async';
-    im.src = src;
-    holeImgCache.set(t, im);
-  }
-  return im;
-};
-const isImageHole = (t: string) => !!SHAPE_IMAGES[t];
-/** 圖片形狀的長寬比（寬 / 高）。還沒解碼完先給個合理值，解碼完自然會校正。 */
-const holeImgRatio = (t: string) => {
-  const im = getHoleImg(t);
-  return im && im.naturalWidth && im.naturalHeight ? im.naturalWidth / im.naturalHeight : 1.476;
-};
-
-/** 這個洞是用文字或圖片畫的（而不是用路徑畫的）嗎 */
-const isTextHole = (t: string) => t === 'text' || t === 'love' || t === 'love3' || t === 'random-num'
-  || t in GLYPH_HOLES || isImageHole(t);
-
-/** 這個洞實際上要畫出來的字串 */
-const holeGlyph = (holeType: string, customText: string, h?: any) =>
-  GLYPH_HOLES[holeType]
-  ?? (holeType === 'love' ? '<3'
-    : holeType === 'love3' ? '<333'
-    : holeType === 'random-num' ? `(${getHoleNumber(h)})`
-    : customText);
-
-/** 字符圖案要用的字型 —— 畫、量、選取框、命中判定全部共用這一支，
- *  不然「畫的是這支字型、量的是另一支」，框跟圖案就對不起來。 */
-const glyphFont = (holeType: string, sz: number) =>
-  (holeType === 'love' || holeType === 'love3')
-    ? `bold ${sz * 1.05}px "Inter", "Segoe UI", sans-serif`
-    : `500 ${sz}px "Inter", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
-
-/* ── 字符圖案「看得見的那一塊」 ───────────────────────────────────────
-   textAlign:'center' 對的是**前進寬度**、textBaseline:'middle' 對的是
-   **em 方框**，兩個都不是墨水。一般的字差不多，但像 ᯽、𓇼、𖤐 這些冷門的
-   Unicode 字，退回系統字型之後左右留白常常差很多 —— 畫出來就整個偏到一邊，
-   而選取框與命中判定都是以中心點、以前進寬度算的，於是框框不到它、
-   也很難點到（主人說的「倒數第二個圖案嚴重偏右」）。
-
-   上一版是用 measureText 的 actualBoundingBox* 來校正。那是「字型宣告的」
-   墨水框 —— 在有些系統字型（尤其是後備字型接手的冷門字、彩色 emoji）上
-   根本對不上真正畫出來的東西，所以主人的手機上還是偏。
-
-   這一版改成**直接畫一次、掃一次 alpha**：畫出來的像素不會騙人。
-   量出來的框拿來做三件事，三邊完全一致，框就一定框得到它：
-     ① 畫的時候把墨水中心平移到圖案的中心（＝框的中心，框本身不動）
-     ② 選取框的大小
-     ③ 點擊命中的範圍
-   一種字只量一次（字級 100，其他尺寸等比換算），成本可以忽略。 */
-const GLYPH_INK_REF = 100;
-/** 探測畫布的半徑：字級 100 的字放進 400×400 綽綽有餘；不夠就換 1600×1600 */
-const GLYPH_PROBES = [200, 800];
-type GlyphBox = { ox: number; oy: number; w: number; h: number; r: number; ok: boolean };
-const glyphBoxCache = new Map<string, GlyphBox>();
-/** 量字專用的小畫布（只量不畫，不會被任何人看到） */
-let glyphMeasCtx: CanvasRenderingContext2D | null = null;
-const measureCtx = () => {
-  if (!glyphMeasCtx) {
-    const c = document.createElement('canvas');
-    c.width = c.height = 8;
-    glyphMeasCtx = c.getContext('2d');
-  }
-  return glyphMeasCtx!;
-};
-const glyphBox = (holeType: string, str: string): GlyphBox => {
-  /* 圖片形狀不用探測：圖本身已經裁到墨水的外框了。
-     長邊當成「大小」、短邊照長寬比換算 —— 跟圓形／方形的 size 定義一致。 */
-  if (isImageHole(holeType)) {
-    const ar = holeImgRatio(holeType);
-    const w = ar >= 1 ? GLYPH_INK_REF : GLYPH_INK_REF * ar;
-    const h = ar >= 1 ? GLYPH_INK_REF / ar : GLYPH_INK_REF;
-    return { ox: 0, oy: 0, w, h, r: Math.hypot(w, h) / 2, ok: true };
-  }
-  const key = holeType + '|' + str;
-  const hit = glyphBoxCache.get(key);
-  if (hit) return hit;
-
-  // ① 先用 measureText 粗抓一個偏移，讓待會兒畫下去的時候不會超出探測畫布
-  let ox = 0, oy = 0, w = GLYPH_INK_REF, h = GLYPH_INK_REF, ok = false;
-  try {
-    const g0 = measureCtx();
-    g0.font = glyphFont(holeType, GLYPH_INK_REF);
-    g0.textAlign = 'center';
-    g0.textBaseline = 'middle';
-    const m = g0.measureText(str);
-    const L = m.actualBoundingBoxLeft, R = m.actualBoundingBoxRight;
-    const A = m.actualBoundingBoxAscent, D = m.actualBoundingBoxDescent;
-    if ([L, R, A, D].every(v => typeof v === 'number' && isFinite(v)) && L + R > 0.5 && A + D > 0.5) {
-      ox = -(R - L) / 2; oy = -(D - A) / 2; w = L + R; h = A + D; ok = true;
-    } else if (m.width > 0.5) {
-      w = m.width;
-    }
-  } catch { /* 量不到就當作沒有偏移，下面那一步才是真正的準頭 */ }
-
-  /* ② 真的畫一次，用畫出來的像素把中心與大小訂死。
-     探測畫布先用小的；如果墨水碰到邊（代表字比畫布大，或者上面那個粗估
-     根本不準、整個字被推到邊上去了），就換一張大的再量一次。
-     兩次都碰到邊才放棄 —— 那通常是很長的自訂文字，維持原本的畫法。 */
-  let r = 0;
-  for (const P of GLYPH_PROBES) {
-    try {
-      const S = P * 2;
-      const c = document.createElement('canvas');
-      c.width = c.height = S;
-      const g = c.getContext('2d', { willReadFrequently: true })!;
-      g.fillStyle = '#000000';
-      g.font = glyphFont(holeType, GLYPH_INK_REF);
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText(str, P + ox, P + oy);
-      const d = g.getImageData(0, 0, S, S).data;
-      let x0 = S, y0 = S, x1 = -1, y1 = -1;
-      for (let y = 0; y < S; y++) {
-        for (let x = 0; x < S; x++) {
-          if (d[(y * S + x) * 4 + 3] !== 0) {
-            if (x < x0) x0 = x;
-            if (x > x1) x1 = x;
-            if (y < y0) y0 = y;
-            if (y > y1) y1 = y;
-          }
-        }
-      }
-      if (x1 >= 0 && x0 > 0 && y0 > 0 && x1 < S - 1 && y1 < S - 1) {
-        ox += P - (x0 + x1 + 1) / 2;
-        oy += P - (y0 + y1 + 1) / 2;
-        w = x1 - x0 + 1;
-        h = y1 - y0 + 1;
-        r = Math.hypot(w, h) / 2;   // 置中之後，任何角度轉過去都還在這個半徑內
-        ok = true;
-        break;
-      }
-      if (x1 < 0) break;           // 整張都是空的：這個字在這台裝置上畫不出來
-    } catch { break; /* 讀不到像素（極少見）就用上面那組 */ }
-  }
-
-  const box: GlyphBox = { ox, oy, w, h, r, ok };
-  glyphBoxCache.set(key, box);
-  return box;
-};
-/** 換算到指定字級 */
-const glyphInk = (holeType: string, str: string, sz: number) => {
-  const b = glyphBox(holeType, str);
-  const k = sz / GLYPH_INK_REF;
-  return { w: b.w * k, h: b.h * k, ox: b.ox * k, oy: b.oy * k, r: b.r * k, ok: b.ok };
-};
-
 // --- 工具：HSV to HEX 轉換 ---
 const hsvToHex = (h: number, s: number, v: number) => {
   s /= 100; v /= 100;
@@ -1003,150 +745,6 @@ const hexToHsv = (hex: string) => {
     h /= 6;
   }
   return { h: Math.round(h * 360), s: Math.round(s * 100), v: Math.round(v * 100) };
-};
-
-/* 字符圖案的暫存畫布池。以前每畫一顆就開一張新的 —— 一格畫面裡幾十顆、
-   左右兩側都要畫，實測拖一顆字符圖案時每秒開 398 張畫布。
-   同一顆圖案每一格用的尺寸都一樣，所以照「邊長」收在池子裡就幾乎都命中。
-   刻意做成「尺寸剛好」而不是共用一張大的：大小一樣、drawImage 也用原本
-   那個三參數的寫法，畫出來才跟以前一個位元都不差。
-   匯出那種特別大的尺寸不入池，免得一直佔著幾十 MB。 */
-const TEXT_TMP_MAX = 1024;
-const TEXT_TMP_KEEP = 48;
-const textTmpPool = new Map<number, HTMLCanvasElement>();
-
-const drawTextShape = (
-  targetCtx: CanvasRenderingContext2D,
-  holeType: string,
-  text: string,
-  cx: number,
-  cy: number,
-  sz: number,
-  fillStyle: any,
-  isDestinationOut: boolean = false,
-  holeAngle: number = 0
-) => {
-  const str = holeType === 'love' ? '<3'
-    : holeType === 'love3' ? '<333'
-    : (GLYPH_HOLES[holeType] ?? text);
-  const ink = glyphInk(holeType, str, sz);
-  /* 暫存畫布只要「這個字轉一圈都還在裡面」就夠了。以前一律開 sz×3 見方，
-     像 ᯽ 這種字有九成面積是空的，卻每一顆、每一格都要被 drawImage 合成一次
-     （實測合成佔掉拖曳字符圖案時將近三成的時間）。
-     半徑用 glyphRadius 實際量出來的，而且只縮不放（跟舊的取小的那個）——
-     所以畫出來跟以前一個像素都不差，連原本會被裁掉的長文字也照樣裁在同一個地方。 */
-  const oldPad = Math.ceil(sz * 1.5);
-  const pad = ink.r > 0.5
-    ? Math.max(2, Math.min(oldPad, Math.ceil(ink.r) + 2))
-    : oldPad;
-  const side = Math.max(2, pad * 2);
-  let tempCanvas: HTMLCanvasElement | undefined;
-  let reused = false;
-  if (side <= TEXT_TMP_MAX) {
-    tempCanvas = textTmpPool.get(side);
-    if (tempCanvas) reused = true;
-    else {
-      tempCanvas = document.createElement('canvas');
-      tempCanvas.width = side; tempCanvas.height = side;
-      textTmpPool.set(side, tempCanvas);
-      while (textTmpPool.size > TEXT_TMP_KEEP) {
-        const oldest = textTmpPool.keys().next().value as number | undefined;
-        if (oldest === undefined) break;
-        textTmpPool.delete(oldest);
-      }
-    }
-  } else {
-    tempCanvas = document.createElement('canvas');
-    tempCanvas.width = side; tempCanvas.height = side;
-  }
-  const tempCtx = tempCanvas.getContext('2d')!;
-  if (reused) {
-    /* 剛開的畫布狀態本來就是乾淨的；重複用的就得自己收乾淨。 */
-    tempCtx.setTransform(1, 0, 0, 1, 0, 0);
-    tempCtx.globalAlpha = 1;
-    tempCtx.globalCompositeOperation = 'source-over';
-    tempCtx.clearRect(0, 0, side, side);
-  }
-
-  // 1. 在 tempCanvas 上畫純黑色的文字形狀
-  tempCtx.fillStyle = '#000000';
-  tempCtx.save();
-  tempCtx.translate(pad, pad);
-  tempCtx.rotate(holeAngle * Math.PI / 180);
-  /* 把字真正的「墨水」對到中心 —— 說明見上面 glyphInk。
-     選取框與命中判定用的是同一支 glyphInk，所以框一定框得到它。 */
-  const o = ink;
-  tempCtx.font = glyphFont(holeType, sz);
-  tempCtx.textAlign = 'center';
-  tempCtx.textBaseline = 'middle';
-  if (isImageHole(holeType)) {
-    /* 圖片形狀：把去背的圖貼上去。貼的是**形狀**，
-       顏色下一步才由 source-in 決定，所以原圖是什麼顏色都無所謂。 */
-    const im = getHoleImg(holeType);
-    if (im && im.complete && im.naturalWidth) {
-      tempCtx.drawImage(im, -ink.w / 2, -ink.h / 2, ink.w, ink.h);
-    }
-  } else {
-    tempCtx.fillText(str, o.ox, o.oy);
-  }
-  tempCtx.restore();
-
-  // 2. 如果是填充照片或顏色
-  if (!isDestinationOut && fillStyle) {
-    tempCtx.save();
-    tempCtx.globalCompositeOperation = 'source-in';
-    tempCtx.fillStyle = fillStyle;
-    tempCtx.translate(pad - cx, pad - cy);
-    tempCtx.fillRect(cx - pad, cy - pad, side, side);
-    tempCtx.restore();
-  }
-
-  // 3. 繪製到 targetCtx
-  targetCtx.save();
-  if (isDestinationOut) {
-    targetCtx.globalCompositeOperation = 'destination-out';
-  }
-  targetCtx.drawImage(tempCanvas, cx - pad, cy - pad);
-  targetCtx.restore();
-};
-
-const drawShapePath = (ctx: CanvasRenderingContext2D, type: string, cx: number, cy: number, size: number) => {
-  ctx.beginPath();
-  const r = size / 2;
-  switch (type) {
-    case 'circle': ctx.arc(cx, cy, r, 0, Math.PI * 2); break;
-    case 'square': ctx.rect(cx - r, cy - r, size, size); break;
-    case 'heart':
-      ctx.moveTo(cx, cy - r * 0.25);
-      ctx.bezierCurveTo(cx + r * 0.6, cy - r * 1.0, cx + r * 1.3, cy - r * 0.1, cx, cy + r * 0.9);
-      ctx.bezierCurveTo(cx - r * 1.3, cy - r * 0.1, cx - r * 0.6, cy - r * 1.0, cx, cy - r * 0.25);
-      break;
-    case 'star':
-      const spikes = 5;
-      const step = Math.PI / spikes;
-      let rot = (Math.PI / 2) * 3;
-      ctx.moveTo(cx, cy - r);
-      for (let i = 0; i < spikes; i++) {
-        ctx.lineTo(cx + Math.cos(rot) * r, cy + Math.sin(rot) * r); 
-        rot += step;
-        ctx.lineTo(cx + Math.cos(rot) * (r / 2.2), cy + Math.sin(rot) * (r / 2.2)); 
-        rot += step;
-      }
-      break;
-    case 'cross-star':
-      const stepCross = Math.PI / 4;
-      let rotCross = (Math.PI / 2) * 3;
-      ctx.moveTo(cx, cy - r);
-      for (let i = 0; i < 4; i++) {
-        ctx.lineTo(cx + Math.cos(rotCross) * r, cy + Math.sin(rotCross) * r); 
-        rotCross += stepCross;
-        ctx.lineTo(cx + Math.cos(rotCross) * (r * 0.25), cy + Math.sin(rotCross) * (r * 0.25)); 
-        rotCross += stepCross;
-      }
-      break;
-    default: ctx.rect(cx - r, cy - r, size, size);
-  }
-  ctx.closePath();
 };
 
 interface ColorPickerProps {
@@ -4111,66 +3709,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            改成跟其他圖形走同一條路：畫完就往下接，發光、點點、選取框、
            還原座標系全部共用同一段。 */
         if (o.kind === 'hole') {
-          const size = Math.min(bw, bh);
-          ctx.translate(bw / 2, bh / 2);      // 圖案的管線是以中心為原點
-          const gcol = o.glowColor || col;
-          if (isTextHole(o.hole)) {
-            const gly = holeGlyph(o.hole, o.text || '', o);
-            /* 發光：drawTextShape 最後是一次 drawImage，所以直接開 canvas 的
-               陰影，光就會沿著字（或去背圖）真正的輪廓散出去 ——
-               半徑跟其他圖形同一組。 */
-            if (o.glow) {
-              ctx.save();
-              ctx.shadowColor = gcol;
-              for (const r of shapeGlowBlurs(bw, bh)) {
-                ctx.shadowBlur = r;
-                drawTextShape(ctx, o.hole, gly, 0, 0, size, col, false, 0);
-              }
-              ctx.restore();
-            }
-            if (o.dots) {
-              /* 點點要剪在「字的形狀」裡面，可是字沒有路徑可以 clip。
-                 先把字畫到一張暫存畫布上，再用 source-atop 把點點蓋上去：
-                 只有原本有墨水的地方會留下點點，結果跟路徑 clip 一模一樣。
-                 暫存畫布開大一點（長邊 ×1.6），字的墨水比框大時也不會被切掉。 */
-              const side = Math.max(2, Math.ceil(Math.max(bw, bh) * 1.6));
-              const tmp = document.createElement('canvas');
-              tmp.width = side; tmp.height = side;
-              const tc = get2dWide(tmp, { alpha: true });
-              if (tc) {
-                tc.translate(side / 2, side / 2);
-                drawTextShape(tc, o.hole, gly, 0, 0, size, col, false, 0);
-                tc.globalCompositeOperation = 'source-atop';
-                drawShapeDots(tc, bw, bh, side, side, o);
-                ctx.drawImage(tmp, -side / 2, -side / 2);
-              } else {
-                drawTextShape(ctx, o.hole, gly, 0, 0, size, col, false, 0);
-              }
-            } else {
-              drawTextShape(ctx, o.hole, gly, 0, 0, size, col, false, 0);
-            }
-          } else {
-            drawShapePath(ctx, o.hole, 0, 0, size);
-            if (o.glow) {
-              ctx.save();
-              ctx.shadowColor = gcol;
-              ctx.fillStyle = col; ctx.strokeStyle = col; ctx.lineWidth = lw;
-              for (const r of shapeGlowBlurs(bw, bh)) {
-                ctx.shadowBlur = r;
-                if (solid) ctx.fill(); else ctx.stroke();
-              }
-              ctx.restore();
-            }
-            if (solid) { ctx.fillStyle = col; ctx.fill(); }
-            else { ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.stroke(); }
-            if (o.dots) {
-              // 路徑還在，直接拿來當剪裁範圍（跟一般圖形同一種做法）
-              ctx.save();
-              ctx.clip();
-              drawShapeDots(ctx, bw, bh, bw, bh, o);
-              ctx.restore();
-            }
-          }
+          /* 整段畫法在共用模組裡（經典拼圖也吃同一支），
+             這裡只負責把原點搬到框心再交出去。 */
+          ctx.translate(bw / 2, bh / 2);
+          drawHoleShape(ctx, o, bw, bh, shapeGlowBlurs(bw, bh));
           ctx.setLineDash([]);
           ctx.restore();
         } else {
