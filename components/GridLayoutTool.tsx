@@ -9,6 +9,7 @@ import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
 import { addExport } from '../utils/exportHistory';
+import { SYMBOLS } from '../utils/symbols';
 import { ComposeStudio } from './ComposeStudio';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
@@ -1043,23 +1044,101 @@ const FontCard: React.FC<{
   );
 };
 
+/* ── 新增符號 ──────────────────────────────────────────────────────────
+   符號說到底就是一段文字，所以加進畫面之後就是一個文字圖層：一樣可以拖、
+   可以縮放旋轉、可以點兩下直接在畫布上改字。差別只在可以調的東西比較少
+   （顏色、大小、發光），那是 TextEditorPanel 的 symbol 模式在管。 */
+
+/**
+ * 一顆符號按鈕上的圖。
+ *
+ * 有些符號特別長（最長的接近一百個字），照原本的字級畫一定會戳出按鈕，
+ * 所以量完真正需要的寬度之後，整串等比縮小塞進去。縮的是「畫出來的大小」
+ * （transform），不是字級 —— 排版、組合附加符號（疊在前一個字上面的小點、
+ * 小星星）的位置都不會跑掉，而且看到的一定是完整的一整串，不會被裁掉、
+ * 也不會變成「…」。字型晚一點才載好時寬度會變，所以 fonts.ready 之後
+ * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
+ */
+export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const inkRef = useRef<HTMLSpanElement>(null);
+  const [k, setK] = useState(1);
+  useLayoutEffect(() => {
+    const box = boxRef.current, ink = inkRef.current;
+    if (!box || !ink) return;
+    let alive = true;
+    const fit = () => {
+      if (!alive) return;
+      const bw = box.clientWidth;
+      const tw = ink.scrollWidth;
+      if (bw > 0 && tw > 0) setK(Math.min(1, bw / tw));
+    };
+    fit();
+    (document as any).fonts?.ready?.then(fit).catch(() => {});
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
+    ro?.observe(box);
+    return () => { alive = false; ro?.disconnect(); };
+  }, [text, base]);
+  return (
+    <div ref={boxRef} className="w-full overflow-hidden flex items-center justify-center">
+      <span
+        ref={inkRef}
+        style={{
+          display: 'inline-block', whiteSpace: 'pre', flexShrink: 0,
+          fontSize: base, lineHeight: 1.4,
+          transform: `scale(${k})`, transformOrigin: 'center center',
+        }}
+      >
+        {text}
+      </span>
+    </div>
+  );
+};
+
+/**
+ * 「新增符號」那一頁：上面一顆返回，下面一長串符號，點一下就加到版面正中間。
+ * 一排只放一顆 —— 長的符號要一整排的寬度才擺得完整。
+ * 跟「新增圖形」一樣，點完留在這一頁、不跳去編輯，可以連著加好幾顆。
+ */
+export const SymbolPicker: React.FC<{
+  onBack: () => void;
+  onPick: (s: string) => void;
+}> = ({ onBack, onPick }) => (
+  <div className="pt-1">
+    <div className="flex items-center gap-2 mb-3">
+      <button
+        onClick={onBack}
+        aria-label="返回"
+        title="返回"
+        className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
+      >
+        <Icon name="arrow_back" className="text-[20px]" />
+      </button>
+      <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
+    </div>
+    <div className="space-y-1.5 pb-4">
+      {SYMBOLS.map((s, i) => (
+        <button
+          key={i}
+          onClick={() => onPick(s)}
+          aria-label={s}
+          className="w-full h-10 px-2 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-all flex items-center justify-center text-white/85"
+        >
+          <SymbolGlyph text={s} />
+        </button>
+      ))}
+    </div>
+  </div>
+);
+
 export const TextEditorPanel: React.FC<{
   layer: FloatingImage;
   onChange: (patch: Partial<FloatingImage>) => void;
-  /** 外面把這個數字加一，就把游標放進文字框（點畫布上的字要能直接改） */
-  focusSignal?: number;
   /** 有給的話，描邊／發光的顏色就改成「點一下開調色盤」那種一列（跟連線顏色一樣） */
   onPickColor?: (which: 'stroke' | 'glow') => void;
-}> = ({ layer, onChange, focusSignal, onPickColor }) => {
-  const taRef = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => {
-    if (!focusSignal) return;
-    const el = taRef.current;
-    if (!el) return;
-    el.focus();
-    // 游標放到最後面，不要整段選起來
-    try { el.setSelectionRange(el.value.length, el.value.length); } catch { /* 舊瀏覽器 */ }
-  }, [focusSignal]);
+  /** 這一層是「符號」：可以調的東西比一般文字少，只留顏色、大小、發光 */
+  symbol?: boolean;
+}> = ({ layer, onChange, onPickColor, symbol }) => {
   const [sub, setSub] = useState<'style' | 'font'>('style');
   const [cat, setCat] = useState<FontCategory>('zh');
 
@@ -1140,8 +1219,10 @@ export const TextEditorPanel: React.FC<{
   return (
     <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
       {/* 左側細長分頁列，跟「新增佈局」同一種版型：只有圖示、
-          沒有中間那條分隔線，選中也不畫指示條 */}
-      <div className="flex flex-col shrink-0 w-11 -mt-4 -mb-4 -ml-4 border-r border-white/10 select-none">
+          沒有中間那條分隔線，選中也不畫指示條。
+          符號沒有「換字體」這件事（字體換了那些符號也還是靠系統字型畫的），
+          所以符號模式整條分頁列都不出現，只留樣式那一頁。 */}
+      {!symbol && <div className="flex flex-col shrink-0 w-11 -mt-4 -mb-4 -ml-4 border-r border-white/10 select-none">
         {/* 跟「新增佈局」完全同款：上面挑內容（字體）、下面調參數（樣式），
             圖標同一組、中間同一條分隔線 */}
         <button
@@ -1161,10 +1242,10 @@ export const TextEditorPanel: React.FC<{
         >
           <Sliders size={18} className={`transition-transform ${sub === 'style' ? 'scale-110' : ''}`} />
         </button>
-      </div>
+      </div>}
 
-      <div className="flex-1 no-scrollbar pl-3 pr-1 h-full overflow-y-auto">
-        {sub === 'font' && (
+      <div className={`flex-1 no-scrollbar h-full overflow-y-auto pr-1 ${symbol ? '' : 'pl-3'}`}>
+        {sub === 'font' && !symbol && (
           <div className="space-y-2.5 pt-1 pb-1">
             <div className="flex items-center gap-1 bg-white/[0.06] rounded-full p-0.5">
               {FONT_CATEGORIES.map(c => (
@@ -1192,27 +1273,30 @@ export const TextEditorPanel: React.FC<{
           </div>
         )}
 
-        {sub === 'style' && (
+        {(sub === 'style' || symbol) && (
           /* 底部多留一段：捲到底時最後一根滑桿不要貼著邊 */
           <div className="space-y-3.5 pt-1 pb-24">
-            {/* 文字內容。沒有標題 —— 一個輸入框看得出來是幹嘛的，
-                省下那一行整個面板就能往上一點。
-                還是預設的「輸入文字」時，框裡顯示空的（只留提示字），
-                使用者不用先把預設文字一個一個刪掉。 */}
-            <textarea
-              ref={taRef}
-              data-text-input
-              value={layer.text === TEXT_PLACEHOLDER ? '' : (layer.text || '')}
-              onChange={e => onChange({ text: e.target.value === '' ? TEXT_PLACEHOLDER : e.target.value })}
-              rows={1}
-              placeholder={TEXT_PLACEHOLDER}
-              className="w-full h-9 px-2.5 py-1.5 leading-6 bg-[#111] border border-transparent rounded-[8px] text-sm font-bold focus:outline-none focus:border-white transition-colors text-white placeholder:text-[#3a3a3a] resize-none overflow-hidden"
-            />
+            {/* 文字內容一律直接在畫布上打（選中之後再點一次那段字），
+                所以這裡不放輸入框。符號也是一樣的改法。 */}
             <div>
-              <p className="text-[11px] font-bold text-white/70 mb-1.5">文字顏色</p>
+              <p className="text-[11px] font-bold text-white/70 mb-1.5">{symbol ? '符號顏色' : '文字顏色'}</p>
               {swatchRow(layer.color, c => onChange({ color: c }))}
             </div>
-            {slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
+            {slider(symbol ? '大小' : '字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
+            {symbol ? (
+              /* 符號到這裡就結束了：粗體／斜體／字距／描邊對符號沒有意義
+                 （那些是靠系統字型畫出來的，加粗、加斜、拆字距都只會歪掉），
+                 所以只留一根發光跟發光顏色。 */
+              <>
+                {slider('邊緣發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+                {!!layer.glow && (
+                  onPickColor
+                    ? colorRow('發光顏色', layer.glowColor || '#FFFFFF', () => onPickColor('glow'))
+                    : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>{swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}</div>
+                )}
+              </>
+            ) : (
+            <>
             {/* 粗體與斜體同一排。這個字體沒有真斜體時只留粗體，
                 粗體就自己撐滿整排 —— 跟沒有斜體鈕之前長得一樣。
                 但**現在這段字已經是斜體**的話一定要把鈕留著，
@@ -1258,6 +1342,8 @@ export const TextEditorPanel: React.FC<{
                     : <div><p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>{swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}</div>
                 ) : <div />}
               </div>
+            )}
+            </>
             )}
 
           </div>
@@ -2391,6 +2477,13 @@ interface FloatingImage {
   rotation: number;
   /** 有 text 就是文字圖層。位置、縮放、旋轉、圖層順序全部沿用圖片那一套。 */
   text?: string;
+  /**
+   * 有值就代表這一層是「符號」而不是一般文字，內容是加進來時挑的那一顆。
+   * 兩個用途：① 面板要換成符號那一組（顏色、大小、發光）；
+   * ② 在畫布上把字全部刪光時，放回去的是這顆符號本身，
+   *    而不是文字用的「輸入文字」。
+   */
+  sym?: string;
   fontFamily?: string;
   /** 未縮放狀態下的字級（px），實際大小再乘上 scale */
   fontSize?: number;
@@ -2579,10 +2672,17 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const textMeasureRef = useRef<HTMLSpanElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
+  /* 輸入框是「手指放開」那一刻才打開的，而瀏覽器在 touchend 之後還會補送
+     一輪滑鼠事件（mousedown/click）到畫布上 —— 那一下會把焦點從剛冒出來的
+     輸入框搶走，看起來就是鍵盤閃一下又收掉、字也打不進去。
+     記下打開的時間，同一下手勢造成的失焦就不算數（見下面 textarea 的 onBlur）。 */
+  const textOpenAt = useRef(0);
+
   // 進入畫布上打字時把游標移到最後面，並叫出原生鍵盤。
   // 內容還是預設的「輸入文字」就先清空 —— 使用者不用自己一個字一個字刪。
   useEffect(() => {
     if (!isTextEditing) return;
+    textOpenAt.current = performance.now();
     if (image.text === TEXT_PLACEHOLDER) onChange({ text: '' });
     const el = textAreaRef.current;
     if (!el) return;
@@ -2591,11 +2691,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     try { el.setSelectionRange(n, n); } catch {}
   }, [isTextEditing]);
 
-  // 打完什麼都沒留就把預設字放回去，圖層才不會變成看不見的空框
+  // 打完什麼都沒留就把預設字放回去，圖層才不會變成看不見的空框。
+  // 符號放回去的是那顆符號本身 —— 刪過頭了也還救得回來。
   const prevTextEditing = useRef(isTextEditing);
   useEffect(() => {
     if (prevTextEditing.current && !isTextEditing && image.text === '') {
-      onChange({ text: TEXT_PLACEHOLDER });
+      onChange({ text: image.sym || TEXT_PLACEHOLDER });
     }
     prevTextEditing.current = isTextEditing;
   }, [isTextEditing, image.text]);
@@ -3545,8 +3646,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             }}
           >
             {/* 內容是空的（剛點進去打字、預設字被清掉）就拿預設那四個字來量，
-                框才會維持原本的大小，等真的打了字再照打的內容量 */}
-            {image.text === '' ? TEXT_PLACEHOLDER : image.text}
+                框才會維持原本的大小，等真的打了字再照打的內容量。
+                符號則是拿自己那顆來量。 */}
+            {image.text === '' ? (image.sym || TEXT_PLACEHOLDER) : image.text}
           </span>
 
           {/* 直接在畫布上打字：疊一層一模一樣排版的 textarea，
@@ -3558,7 +3660,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               // 關掉軟換行，打字時看到的斷行才跟收工後一樣
               wrap="off"
               onChange={e => onChange({ text: e.target.value })}
-              onBlur={() => onTextEditEnd?.()}
+              onBlur={e => {
+                /* 剛打開的那一瞬間被搶走焦點的，是同一下手勢補送的滑鼠事件，
+                   不是使用者真的點去別的地方 —— 把焦點搶回來就好。 */
+                if (performance.now() - textOpenAt.current < 500) {
+                  const el = e.currentTarget;
+                  requestAnimationFrame(() => { try { el.focus({ preventScroll: true }); } catch {} });
+                  return;
+                }
+                onTextEditEnd?.();
+              }}
               onPointerDown={e => e.stopPropagation()}
               // 單指是在編輯文字，不要被畫布搶走；兩指則讓畫布接手，
               // 這樣打字中也還能直接縮放／旋轉
@@ -3711,6 +3822,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   const [enableSnapping, setEnableSnapping] = useState(true);
   /** 上方那顆三個點的選單 */
   const [moreOpen, setMoreOpen] = useState(false);
+  /* 三個點的選單：點畫面上任何其他地方都要收起來。
+     選單自己那塊 fixed inset-0 的遮罩不夠用 —— 它被關在頂欄裡面，而頂欄有
+     backdrop-blur，帶 backdrop-filter 的祖先會變成 fixed 的「包含塊」，
+     所以那片遮罩其實只蓋住頂欄那一條，點畫布是點不到它的。
+     改成開著的時候在 document 上聽一次按下：只要不是按在選單自己身上就關掉
+     （用捕獲階段，中途有人擋掉冒泡也照樣收得起來）。 */
+  const moreWrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDown = (ev: Event) => {
+      const el = moreWrapRef.current;
+      if (el && ev.target instanceof Node && el.contains(ev.target)) return;
+      setMoreOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [moreOpen]);
   /** IG 貼文預覽 */
   const [igPreview, setIgPreview] = useState(false);
 
@@ -4508,6 +4636,49 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     setEditingTextId(id);
     // 新增完直接進文字編輯頁，省掉「再按一次工具列的編輯」那一步
     setActiveTab('adjust');
+  };
+
+  /**
+   * 新增一顆符號。
+   *
+   * 符號就是文字圖層，所以位置、縮放、旋轉、圖層順序、直接在畫布上改字
+   * 全部跟文字共用同一套；差別只在 sym 有值，面板會換成符號那一組。
+   * 字級照長度回推：符號長短差很多（最長的接近一百個字），字級寫死的話
+   * 長的會直接戳出頁面 —— 用「大約佔頁寬七成」回推，挑哪一顆加進來的
+   * 份量都差不多。刻意留在這一頁、也不進入打字狀態，可以連著加好幾顆。
+   */
+  const handleAddSymbolLayer = (txt: string) => {
+    const rect = getActivePageRect();
+    const pw = rect?.width ?? previewW;
+    const ph = rect?.height ?? previewH;
+    ensureFont(DEFAULT_FONT);
+    const M = 100;
+    const c = document.createElement('canvas').getContext('2d');
+    let w100 = M * Math.max(1, txt.length) * 0.5;
+    if (c) { c.font = `400 ${M}px ${fontStack(DEFAULT_FONT)}`; w100 = Math.max(1, c.measureText(txt).width); }
+    const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
+    const w = Math.max(8, Math.round((w100 / M) * fontSize));
+    const h = Math.max(8, Math.round(fontSize * 1.4));
+    const id = `text-${Math.random().toString(36).substring(2, 9)}`;
+    const item: FloatingImage = {
+      id, src: '',
+      x: (rect ? rect.centerX : previewW / 2) - w / 2,
+      y: (rect ? rect.centerY : previewH / 2) - h / 2,
+      width: w, height: h, scale: 1, rotation: 0,
+      text: txt, sym: txt,
+      fontFamily: DEFAULT_FONT,
+      fontSize,
+      // 頁面底色預設是白的，符號也用白色的話加完會看不到
+      color: '#1C1C1C',
+      bold: false, italic: false, letterSpacing: 0,
+      strokeColor: '#000000',
+      glow: 0, glowColor: '#FFFFFF',
+    };
+    setFloatingImages(prev => [...prev, item]);
+    setSelectedFloatingId(id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
   };
 
   /**
@@ -8859,7 +9030,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             <div className="w-px h-4 bg-white/10 mx-1 shrink-0" />
 
             {/* 三個點：點開才有「預覽」與「對齊」 */}
-            <div className="relative">
+            <div className="relative" ref={moreWrapRef}>
               <button
                 onClick={() => setMoreOpen(o => !o)}
                 // 打開時只有圖標變亮，不畫圓形底
@@ -10253,11 +10424,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 </div>
               );
 
-              // 選到文字：走文字那一套面板（同一個分頁、不同介面）
+              // 選到文字：走文字那一套面板（同一個分頁、不同介面）。
+              // 符號走同一顆面板的精簡模式（顏色、大小、發光）。
               if (layer.text !== undefined) {
                 return (
                   <TextEditorPanel
                     layer={layer}
+                    symbol={!!layer.sym}
                     onChange={patch => patchTextLayer(layer.id, patch)}
                   />
                 );
@@ -10307,21 +10480,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
             {activeTab === 'add' && (
               <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300">
                 {addSub === 'symbol' ? (
-                  /* 新增符號：內容之後補，先把外框與返回做好 */
-                  <div className="pt-1">
-                    <div className="flex items-center gap-2 mb-3">
-                      <button
-                        onClick={() => setAddSub('root')}
-                        aria-label="返回"
-                        title="返回"
-                        className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
-                      >
-                        <Icon name="arrow_back" className="text-[20px]" />
-                      </button>
-                      <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
-                    </div>
-                    <p className="text-[11px] text-white/40 text-center py-10">尚未加入符號</p>
-                  </div>
+                  <SymbolPicker onBack={() => setAddSub('root')} onPick={handleAddSymbolLayer} />
                 ) : addSub === 'root' ? (
                   /* 間距與左右內距比原本窄一些 —— 多了「新增圖形」這一顆，
                      四顆要並排在同一列上才塞得下。高度與字級完全沒動。 */
@@ -10359,7 +10518,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     onClick={() => setAddSub('symbol')}
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    <Icon name="emoji_symbols" className="text-[24px] text-white/80" />
+                    {/* 圖示不能用 Material 的 emoji_symbols：專案裡那份是**子集**，
+                        只打包了真的有用到的 73 顆，emoji_symbols 不在裡面 ——
+                        用了會直接把「emoji_symbols」這串英文字印在按鈕上、
+                        還會撐爆格子蓋到隔壁兩顆。改用跟旁邊「新增文字」「新增圖形」
+                        同一套的 lucide 線條圖示。 */}
+                    <Sparkles size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增符號</span>
                   </button>
                   <button

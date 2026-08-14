@@ -6,6 +6,8 @@ import { LutGpu } from '../utils/lutGpu';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity } from '../utils/compose';
 import { SaveButton } from './SaveButton';
+/* IG 貼文預覽跟拼圖那兩個工具共用同一顆元件 */
+import { IgPreview } from './IgPreview';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
@@ -1513,6 +1515,30 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
   // EXIF Metadata State
   const [showExifPanel, setShowExifPanel] = useState(false);
+  /* 點面板以外的任何地方就收起來。
+     光靠那片 fixed inset-0 的遮罩不保險 —— 只要祖先有 backdrop-filter／
+     transform，fixed 就會被關進那個祖先裡、蓋不滿整個畫面。
+     開著的時候在 document 上聽一次按下（捕獲階段），不是按在面板或那顆
+     資訊鍵上就關掉。 */
+  const exifPanelRef = useRef<HTMLDivElement>(null);
+  const exifBtnRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!showExifPanel) return;
+    const onDown = (ev: Event) => {
+      const t = ev.target;
+      if (!(t instanceof Node)) return;
+      if (exifPanelRef.current?.contains(t) || exifBtnRef.current?.contains(t)) return;
+      setShowExifPanel(false);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [showExifPanel]);
+  /* ── IG 預覽 ──────────────────────────────────────────────────────
+     用「現在這一份參數」實際輸出一張，再交給共用的 IgPreview 元件顯示，
+     所以看到的就是按下儲存會拿到的那一張。 */
+  const [igOpen, setIgOpen] = useState(false);
+  const [igShot, setIgShot] = useState<string>('');
+  const [igBusy, setIgBusy] = useState(false);
   const [imageDimensions, setImageDimensions] = useState<string>('-');
   const [exifData, setExifData] = useState<{
     fileName: string;
@@ -6057,6 +6083,28 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
     })();
   };
 
+  /** 眼睛：用現在的參數輸出一張，然後打開 IG 預覽 */
+  const openIgPreview = async () => {
+    if (!originalImgRef.current || igBusy) return;
+    setIgBusy(true);
+    try {
+      stashCurrent();
+      const live = liveRef.current!;
+      const snap: BatchSnap = {
+        ...cloneSnap(live),
+        params: { ...cloneSnap(live).params, ...(ownMaskRef.current[safeIdx] || pickMask(DEFAULT_PARAMS)) } as EditorParams,
+        geo: ownGeoRef.current[safeIdx]
+          ? JSON.parse(JSON.stringify(ownGeoRef.current[safeIdx]))
+          : cloneSnap(live).geo,
+      };
+      const url = await renderOne(originalImgRef.current, snap);
+      revokeUrls(igShot && igShot !== url ? [igShot] : []);
+      setIgShot(url);
+      setIgOpen(true);
+    } catch (e) { console.error('IG preview failed', e); }
+    setIgBusy(false);
+  };
+
   const handleSave = () => {
     if (!originalImgRef.current) return;
     if (isInteracting) setIsInteracting(false);
@@ -6640,7 +6688,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
 
       {saveState !== 'success' && (
       <header className="h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-20">
-        <div className="w-24">
+        <div className="w-20">
             {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
             <button onClick={() => { recordProgress(); onCancel(); }} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"><ChevronLeft size={22} /></button>
         </div>
@@ -6648,9 +6696,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
            <button onClick={undo} disabled={historyIndex <= 0} className={`p-2 transition-all ${historyIndex <= 0 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="undo" className="text-xl" /></button>
            <button onClick={redo} disabled={historyIndex >= history.length - 1} className={`p-2 transition-all ${historyIndex >= history.length - 1 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="redo" className="text-xl" /></button>
         </div>
-        <div className="w-24 flex justify-end items-center gap-1">
-            <button 
-                onClick={() => setShowExifPanel(prev => !prev)} 
+        <div className="w-28 flex justify-end items-center gap-1">
+            {/* 眼睛：進 IG 貼文預覽（跟拼圖那兩個工具同一顆元件） */}
+            <button
+                onClick={openIgPreview}
+                className={`p-2 rounded-full transition-colors ${igBusy ? 'text-white/20 pointer-events-none' : 'text-white/40 hover:text-white'}`}
+                title="IG 預覽"
+            >
+                <Icon name="visibility" className="text-xl" />
+            </button>
+            <button
+                ref={exifBtnRef}
+                onClick={() => setShowExifPanel(prev => !prev)}
                 className={`p-2 rounded-full transition-colors ${showExifPanel ? 'text-white' : 'text-white/40 hover:text-white'}`}
                 title="照片資訊"
             >
@@ -6661,9 +6718,42 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ imageSrc, batchSrcs, o
       </header>
       )}
 
-      {/* EXIF panel overlay */}
+      {/* IG 貼文預覽：跟兩個拼圖工具共用同一顆元件 */}
+      {igOpen && igShot && (
+        <div
+          className="fixed inset-0 z-[120] bg-black overflow-y-auto animate-in fade-in duration-200"
+          style={{ overscrollBehavior: 'none', scrollbarWidth: 'none', paddingTop: 48, paddingBottom: 48 }}
+        >
+          <IgPreview
+            shots={[igShot]}
+            frame={(() => {
+              const im = originalImgRef.current;
+              return im ? { w: im.naturalWidth, h: im.naturalHeight } : { w: 1, h: 1 };
+            })()}
+            pageCount={1}
+            faces={[igShot]}
+            supported
+            slot="editor"
+            embedded
+            flow
+            onClose={() => setIgOpen(false)}
+          />
+          <button
+            onClick={() => setIgOpen(false)}
+            className="fixed top-4 right-4 z-[121] w-10 h-10 rounded-full bg-black/60 border border-white/15 text-white/80 hover:text-white flex items-center justify-center active:scale-90 transition-all"
+            title="關閉"
+          >
+            <Icon name="close" className="text-xl" />
+          </button>
+        </div>
+      )}
+
+      {/* EXIF panel overlay。點面板以外的任何地方就收起來 */}
       {showExifPanel && (
-        <div className="absolute top-16 right-4 left-4 md:left-auto md:right-4 mx-auto md:mx-0 bg-black/90 border border-white/10 rounded-2xl p-5 shadow-2xl backdrop-blur-xl z-[70] w-[320px] max-w-[calc(100vw-2rem)] text-white/90 text-xs flex flex-col gap-3">
+        <div className="fixed inset-0 z-[59]" onClick={() => setShowExifPanel(false)} />
+      )}
+      {showExifPanel && (
+        <div ref={exifPanelRef} className="absolute top-16 right-4 left-4 md:left-auto md:right-4 mx-auto md:mx-0 bg-black/90 border border-white/10 rounded-2xl p-5 shadow-2xl backdrop-blur-xl z-[70] w-[320px] max-w-[calc(100vw-2rem)] text-white/90 text-xs flex flex-col gap-3">
           <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-1">
             <span className="font-bold tracking-wider text-[11px] text-white/40 uppercase">EXIF資訊</span>
           </div>

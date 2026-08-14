@@ -3,7 +3,7 @@ import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
-import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
+import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Sparkles, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
@@ -15,6 +15,8 @@ import {
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
   ADD_SHAPE_ITEMS, ShapeGlyph, swatchStrip, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
+  SymbolPicker,
   shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
@@ -1539,6 +1541,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
      等真的點出滑桿才長高，而且是帶過場動畫地長。 */
   const [objSliderOpen, setObjSliderOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  /* 三個點的選單：點畫面上任何其他地方都要收起來。
+     選單自己那塊 fixed inset-0 的遮罩不夠用 —— 它被關在頂欄裡面，而頂欄有
+     backdrop-blur，帶 backdrop-filter 的祖先會變成 fixed 的「包含塊」，
+     所以那片遮罩其實只蓋住頂欄那 55px，點畫布是點不到它的。
+     改成開著的時候在 document 上聽一次按下：只要不是按在選單自己身上就關掉
+     （用捕獲階段，中途有人擋掉冒泡也照樣收得起來）。 */
+  const moreWrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDown = (ev: Event) => {
+      const el = moreWrapRef.current;
+      if (el && ev.target instanceof Node && el.contains(ev.target)) return;
+      setMoreOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [moreOpen]);
   const [enableSnapping, setEnableSnapping] = useState(true);
   const enableSnappingRef = useRef(true);
   enableSnappingRef.current = enableSnapping;
@@ -1556,8 +1575,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     && !!objects.find(o => o.id === selectedObj && o.type === 'image');
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
-  /** 點畫布上的文字時 +1，面板收到就把游標放進輸入框 */
-  const [textFocusSignal, setTextFocusSignal] = useState(0);
+  /** 正在畫布上直接編輯的那一段文字（null＝沒有在編輯）。
+      跟經典拼圖同一種做法：疊一個排版一模一樣的 textarea 在字上面，
+      原生鍵盤與游標交給它，打的內容即時寫回物件。 */
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  const editingTextRef = useRef<string | null>(null);
+  editingTextRef.current = editingTextId;
+  /* 輸入框是「手指放開」那一刻才打開的，而瀏覽器在 touchend 之後還會補送
+     一輪滑鼠事件（mousedown/click）到畫布上 —— 那一下會把焦點從剛冒出來的
+     輸入框搶走，看起來就是鍵盤閃一下又收掉、字也打不進去。
+     記下打開的時間，同一下手勢造成的失焦就不算數（見下面的 onBlur）。 */
+  const textOpenAtRef = useRef(0);
   /* ── 鍵盤叫出來時的版面 ────────────────────────────────────────────
      visualViewport 的高度會在鍵盤升起時縮短，差額就是鍵盤佔掉的高度。
      只有下方工具欄往上讓（最上面那一列固定不動），
@@ -1576,30 +1604,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     on();
     return () => { vv.removeEventListener('resize', on); vv.removeEventListener('scroll', on); };
   }, []);
-  /** 工具欄要往上移多少：讓輸入框的下緣剛好貼著鍵盤上緣 */
+  /* 文字改成直接在畫布上編輯之後，工具欄裡就沒有輸入框了，
+     所以鍵盤升起時**整個介面都不需要讓位**（主人指定）。
+     kbInset 只留著給「打字時把隨機鈕收起來」用。 */
   const footerRef = useRef<HTMLElement>(null);
-  const [kbShift, setKbShift] = useState(0);
-  useLayoutEffect(() => {
-    if (!kbInset) { setKbShift(0); return; }
-    const f = footerRef.current;
-    if (!f) { setKbShift(0); return; }
-    const ta = f.querySelector('[data-text-input]') as HTMLElement | null;
-    const bottom = ta ? ta.getBoundingClientRect().bottom + 10 : f.getBoundingClientRect().bottom;
-    const kbTop = window.innerHeight - kbInset;
-    setKbShift(Math.max(0, Math.round(bottom - kbTop)));
-  }, [kbInset, activeTab, selectedObj]);
-  /** 預覽要縮多少才不會被工具欄擋到（本來就不會擋到就不動） */
-  const [kbFit, setKbFit] = useState(1);
-  useLayoutEffect(() => {
-    const st = stageRef.current, cv = canvasRef.current;
-    if (!kbShift || !st || !cv) { setKbFit(1); return; }
-    const sh = st.getBoundingClientRect().height;
-    const ch = cv.getBoundingClientRect().height;
-    if (!sh || !ch) { setKbFit(1); return; }
-    // 上下各留 10px
-    const avail = sh - kbShift - 20;
-    setKbFit(ch > avail ? Math.max(0.35, +(avail / ch).toFixed(3)) : 1);
-  }, [kbShift, layout, maskScale]);
   /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
   const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
   /** 編輯頁的左側子分頁 */
@@ -2379,9 +2387,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                但正在調動態時不換頁 —— 那邊本來就是「一邊看預覽一邊調」，
                被踢去編輯頁反而要一直切回來。 */
             setActiveTab(t => (t === 'motion' ? t : 'objedit'));
-            // 文字：再點一次就直接開始改字（游標進輸入框、鍵盤跟著上來）
-            if (o.type === 'text') setTextFocusSignal(n => n + 1);
-            objDragRef.current = { id: o.id, startX: x, startY: y, ox: o.x, oy: o.y };
+            /* 文字／符號：再點一次就直接在畫布上改字。
+               但要等到「放開」才真的打開輸入框 —— 在按下去的當下就開的話，
+               輸入框一冒出來就自動聚焦，接著同一下的放開又落在畫布上，
+               焦點馬上被搶走、輸入框就自己關掉了（經典拼圖那邊也是等放開）。
+               而且只有「沒有拖動」才算點一下，拖著搬位置不該跳出鍵盤。 */
+            objDragRef.current = {
+              id: o.id, startX: x, startY: y, ox: o.x, oy: o.y,
+              moved: false, editIfTap: o.type === 'text',
+            };
             return;
           }
           const cur0 = selId ? list.find(z => z.id === selId) : null;
@@ -2890,6 +2904,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    // 已選中的文字／符號，點一下（沒有拖動）→ 直接在畫布上改字
+    if (objDragRef.current?.editIfTap && !objDragRef.current.moved) {
+      textOpenAtRef.current = performance.now();
+      setEditingTextId(objDragRef.current.id);
+    }
     // 點在物件以外的地方、而且完全沒有拖動 → 取消選取
     if (objDragRef.current?.fromBlank && !objDragRef.current.moved) setSelectedObj(null);
     // 還沒選中的物件：只有「點下去沒移動」才算選中，拖了就當作沒發生
@@ -4018,6 +4037,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         ctx.setLineDash([]);
         ctx.restore();
       } else if (o.type === 'text') {
+        // 正在畫布上直接編輯時，字交給疊在上面的 textarea 顯示
+        if (isMain && editingTextRef.current === o.id) { ctx.restore(); return; }
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
            面板本身就是那邊那顆元件，所以這裡只要照著畫。 */
         const fam = o.fontFamily || DEFAULT_FONT;
@@ -5402,7 +5423,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             <div className="w-px h-4 bg-white/10 mx-1 shrink-0" />
 
             {/* 三個點：對稱與對齊都收在這裡（樣式跟經典拼圖同一份） */}
-            <div className="relative">
+            <div className="relative" ref={moreWrapRef}>
               <button
                 onClick={() => setMoreOpen(o => !o)}
                 className={`w-9 h-9 flex items-center justify-center transition-colors active:scale-90 ${moreOpen ? 'text-white' : 'text-white/70'}`}
@@ -5529,7 +5550,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               /* 工具欄讓上來之後，圖片如果會被擋到就整個縮一點、並往上移半個讓位量
                  （縮放的原點在正中央，所以中心往上移一半就剛好置中在剩下的空間裡）。
                  本來就擋不到的話 kbFit 會是 1、位移也是 0，完全不動。 */
-              transform: kbShift ? `translateY(-${Math.round(kbShift / 2)}px) scale(${kbFit})` : undefined,
+              transform: undefined,
               transformOrigin: '50% 50%',
               transition: 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1)',
             }}
@@ -5585,6 +5606,80 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           </div>
         )}
 
+        {/* 直接在畫布上打字：疊一個排版一模一樣的 textarea 在那段字上面。
+            位置與大小是用畫布的螢幕矩形換算的（跟下面那排工具列同一套算法），
+            角度、字體、字級、字距、顏色全部照抄，所以打字時看到的就是成品。 */}
+        {imageState && editingTextId && !composeState && (() => {
+          const o = objects.find(z => z.id === editingTextId);
+          const cvsEl = canvasRef.current;
+          if (!o || o.type !== 'text' || !cvsEl) return null;
+          const r = cvsEl.getBoundingClientRect();
+          const stEl = stageRef.current;
+          const sr = stEl ? stEl.getBoundingClientRect() : { left: 0, top: 0 } as DOMRect;
+          const ps = previewScaleRef.current;
+          const k = r.width / Math.max(1, cvsEl.width / ps);   // 畫布內部單位 → CSS
+          const left = r.left - sr.left + o.x * k;
+          const top = r.top - sr.top + o.y * k;
+          /* 收工時如果整段被刪光了就把東西放回去，不然會留下一個看不見的空框：
+             一般文字放回預設的「輸入文字」，符號放回它自己那一顆。 */
+          const done = () => {
+            if (!o.text) {
+              const back = o.sym || TEXT_PLACEHOLDER;
+              setObjects(prev => prev.map(z => z.id === o.id ? { ...z, text: back } : z));
+            }
+            setEditingTextId(null);
+          };
+          return (
+            <textarea
+              autoFocus
+              /* 預設那四個字只是佔位，點進來打字時不該真的要自己刪掉；
+                 符號則是實際內容，要原封不動讓人改。 */
+              value={(!o.sym && o.text === TEXT_PLACEHOLDER) ? '' : (o.text || '')}
+              wrap="off"
+              placeholder={o.sym || TEXT_PLACEHOLDER}
+              onChange={e => {
+                const v = e.target.value;
+                const nt = (!o.sym && v === '') ? TEXT_PLACEHOLDER : v;
+                setObjects(prev => prev.map(z => z.id === o.id ? { ...z, text: nt } : z));
+              }}
+              onBlur={e => {
+                /* 剛打開的那一瞬間被搶走焦點的，是同一下手勢補送的滑鼠事件，
+                   不是使用者真的點去別的地方 —— 把焦點搶回來就好。 */
+                if (performance.now() - textOpenAtRef.current < 500) {
+                  const el = e.currentTarget;
+                  requestAnimationFrame(() => { try { el.focus({ preventScroll: true }); } catch {} });
+                  return;
+                }
+                done();
+              }}
+              onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); done(); } }}
+              onPointerDown={e => e.stopPropagation()}
+              onTouchStart={e => { if (e.touches.length < 2) e.stopPropagation(); }}
+              onTouchMove={e => { if (e.touches.length < 2) e.stopPropagation(); }}
+              style={{
+                position: 'absolute',
+                left, top,
+                width: o.w * k, height: o.h * k,
+                transform: `rotate(${o.rot || 0}deg)`,
+                transformOrigin: '50% 50%',
+                margin: 0, padding: 0, border: 'none', outline: 'none', resize: 'none',
+                background: 'transparent', overflow: 'hidden',
+                fontFamily: fontStack(o.fontFamily || DEFAULT_FONT),
+                fontWeight: o.bold ? 800 : 400,
+                fontStyle: o.italic ? 'italic' : 'normal',
+                fontSize: (o.size || 40) * k,
+                letterSpacing: `${(o.letterSpacing || 0) * k}px`,
+                lineHeight: `${o.h * k}px`,
+                color: o.color || '#FFFFFF',
+                caretColor: o.color || '#FFFFFF',
+                textAlign: 'center',
+                whiteSpace: 'pre',
+                zIndex: 55,
+              }}
+            />
+          );
+        })()}
+
         {/* 選中的圖片／文字下方浮出的工具列 —— 跟經典拼圖同一組動作。
             位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
         {/* 構圖那一頁是全螢幕的，這排白色鍵不能浮在它上面 */}
@@ -5636,7 +5731,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 { t: '下移一層', on: act(() => move(-1)), el: <MoveDown size={14} />, off: objects[0]?.id === o.id && !!o.below },
                 { t: '上移一層', on: act(() => move(1)), el: <MoveUp size={14} />, off: objects[objects.length - 1]?.id === o.id && !o.below },
                 { t: '複製', on: act(dup), el: <Copy size={14} />, off: false },
-                { t: o.type === 'text' ? '編輯文字' : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => setActiveTab('objedit')), el: <Sliders size={14} />, off: false },
+                { t: o.type === 'text' ? (o.sym ? '編輯符號' : '編輯文字') : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => setActiveTab('objedit')), el: <Sliders size={14} />, off: false },
                 { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
               ].map(b => (
                 /* 鬆手才觸發。以前綁在 onPointerDown，手指一碰到就動作 ——
@@ -5662,8 +5757,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                鍵盤叫出來時整顆淡掉（打字時不需要它，而且會擋到）。 */
             style={{
               bottom: motionUiOn ? 86 : 24,
-              opacity: kbShift ? 0 : 1,
-              pointerEvents: kbShift ? 'none' : undefined,
+              opacity: kbInset ? 0 : 1,
+              pointerEvents: kbInset ? 'none' : undefined,
               transition: `bottom 420ms ${MOTION_EASE}, opacity 220ms ease-out`,
             }}
             onPointerDown={(e) => e.stopPropagation()}
@@ -5771,7 +5866,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           /* 鍵盤升起時整條往上移，剛好讓輸入框的下緣貼著鍵盤上緣。
              用 transform 而不是改高度：transform 走合成執行緒，
              升起與收回都是滑順的動畫，不會硬切。 */
-          transform: kbShift ? `translateY(-${kbShift}px)` : undefined,
+          transform: undefined,
           transition: 'transform 280ms cubic-bezier(0.22, 1, 0.36, 1), height 300ms ease-out',
         }}>
         {!colorPickerTarget && (
@@ -5990,6 +6085,43 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   setActiveTab('objedit');   // 新增完直接進編輯頁，跟經典拼圖一樣
                 };
                 /**
+                 * 新增一顆符號。
+                 *
+                 * 符號就是文字物件，所以拖曳、縮放旋轉、圖層順序、選中之後再點
+                 * 一次直接改字，全部跟文字共用同一套；差別只在 sym 有值，編輯頁
+                 * 會換成符號那一組（顏色、大小、發光）。
+                 * 字級照長度回推：符號長短差很多（最長的接近一百個字），字級寫死
+                 * 的話長的會直接戳出畫面 —— 用「大約佔畫面七成寬」回推，挑哪一顆
+                 * 加進來的份量都差不多。
+                 * 刻意不跳去編輯頁、也不進入打字狀態，可以連著加好幾顆。
+                 */
+                const addSymbol = (txt: string) => {
+                  const offs2 = getLayoutOffsets();
+                  if (!offs2) return;
+                  const id = Math.random().toString(36).slice(2, 9);
+                  ensureFont(DEFAULT_FONT);
+                  const M = 100;
+                  const mc = document.createElement('canvas').getContext('2d');
+                  let w100 = M * Math.max(1, txt.length) * 0.5;
+                  if (mc) { mc.font = `400 ${M}px ${fontStack(DEFAULT_FONT)}`; w100 = Math.max(1, mc.measureText(txt).width); }
+                  const short = Math.min(offs2.cw, offs2.ch);
+                  /* 短的符號照寬度回推會算出很大的字級，所以再壓一次上限：
+                     跟一段新文字差不多大（短邊的一成二），而且不超過編輯頁
+                     那根「大小」滑桿的最大值 —— 不然一加進來就頂在滑桿外面。 */
+                  const size = Math.max(12, Math.min(160, Math.round(short * 0.12), Math.round((offs2.cw * 0.7) * M / w100)));
+                  const w = Math.max(8, Math.round((w100 / M) * size));
+                  const h = Math.max(8, Math.round(size * 1.4));
+                  setObjects(prev => [...prev, {
+                    id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
+                    fontFamily: DEFAULT_FONT, bold: false, italic: false,
+                    letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
+                    glow: 0, glowColor: '#ffffff',
+                    x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
+                  }]);
+                  setSelectedObj(id);
+                  setSelectedTarget(null);
+                };
+                /**
                  * 新增一個圖形。大小、粗細、顏色都用經典拼圖那邊同一組預設值，
                  * 所以兩個工具加出來的圖形長得一模一樣。
                  * 刻意留在這一頁、不跳去編輯頁 —— 常常是要連著加好幾個。
@@ -6018,21 +6150,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     {/* 按鈕與圖標尺寸跟經典拼圖的加號頁完全一致；
                         只差沒有「新增佈局」——創意拼圖的版面是排版＋遮罩決定的。 */}
                     {addSub === 'symbol' ? (
-                      /* 新增符號：內容之後補，先把外框與返回做好 */
-                      <div className="pt-1">
-                        <div className="flex items-center gap-2 mb-3">
-                          <button
-                            onClick={() => setAddSub('root')}
-                            aria-label="返回"
-                            title="返回"
-                            className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
-                          >
-                            <Icon name="arrow_back" className="text-[20px]" />
-                          </button>
-                          <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
-                        </div>
-                        <p className="text-[11px] text-white/40 text-center py-10">尚未加入符號</p>
-                      </div>
+                      <SymbolPicker onBack={() => setAddSub('root')} onPick={addSymbol} />
                     ) : addSub === 'root' ? (
                     <div className="flex justify-center gap-1.5 mt-6">
                       <button
@@ -6054,7 +6172,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         onClick={() => setAddSub('symbol')}
                         className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
-                        <Icon name="emoji_symbols" className="text-[24px] text-white/80" />
+                        {/* 圖示不能用 Material 的 emoji_symbols：專案裡那份是**子集**，
+                            只打包了真的有用到的 73 顆，emoji_symbols 不在裡面 ——
+                            用了會直接把「emoji_symbols」這串英文字印在按鈕上、
+                            還會撐爆格子蓋到隔壁兩顆。改用跟旁邊「新增文字」「新增圖形」
+                            同一套的 lucide 線條圖示。 */}
+                        <Sparkles size={24} strokeWidth={1.5} className="text-white opacity-80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90">新增符號</span>
                       </button>
                       <button
@@ -6225,10 +6348,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   sel.type === 'text' ? (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
                       <TextEditorPanel
-                        focusSignal={textFocusSignal}
                         onPickColor={(which) => setColorPickerTarget(which === 'stroke' ? 'textStroke' : 'textGlow')}
+                        symbol={!!sel.sym}
                         layer={{
-                          text: sel.text, color: sel.color, fontFamily: sel.fontFamily,
+                          text: sel.text, sym: sel.sym, color: sel.color, fontFamily: sel.fontFamily,
                           fontSize: sel.size, bold: sel.bold, italic: sel.italic,
                           letterSpacing: sel.letterSpacing, strokeWidth: sel.strokeWidth,
                           strokeColor: sel.strokeColor, glow: sel.glow, glowColor: sel.glowColor,
