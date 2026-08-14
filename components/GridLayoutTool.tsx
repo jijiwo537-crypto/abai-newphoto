@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
-import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, MessageCircle, Bookmark, Volume2, VolumeX, Shapes } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, MessageCircle, Bookmark, Volume2, VolumeX, Shapes } from 'lucide-react';
 import { Icon } from './Icon';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
@@ -1080,7 +1080,7 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
     return () => { alive = false; ro?.disconnect(); };
   }, [text, base]);
   return (
-    <div ref={boxRef} className="w-full overflow-hidden flex items-center justify-center">
+    <div ref={boxRef} className="max-w-full overflow-hidden flex items-center justify-center">
       <span
         ref={inkRef}
         style={{
@@ -1116,13 +1116,15 @@ export const SymbolPicker: React.FC<{
       </button>
       <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
     </div>
-    <div className="space-y-1.5 pb-4">
+    {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行 ——
+        短的符號一排可以擺好幾顆，長的才自己佔一整排（而且照樣完整顯示）。 */}
+    <div className="flex flex-wrap gap-1.5 pb-4">
       {SYMBOLS.map((s, i) => (
         <button
           key={i}
           onClick={() => onPick(s)}
           aria-label={s}
-          className="w-full h-10 px-2 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-all flex items-center justify-center text-white/85"
+          className="h-10 px-3 max-w-full rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-all inline-flex items-center justify-center text-white/85"
         >
           <SymbolGlyph text={s} />
         </button>
@@ -1405,28 +1407,12 @@ export const ShapeEditorPanel: React.FC<{
               {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
             </>
           )}
-          {/* 點點與發光併成同一排，跟創意拼圖那一頁逐項相同（同一組按鈕、
-              同一組參數、同一套網格）。發光只有開／關。
-              圖層上下不放在這裡 —— 選中時畫面上那排工具列本來就有。 */}
+          {/* 描邊與發光併成同一排（描邊是粗細、發光是開關），跟創意拼圖那一頁
+              逐項相同。圖層上下不放在這裡 —— 選中時畫面上那排工具列本來就有。 */}
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
-              <div className="flex items-center gap-2">
-                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
-                  <button
-                    key={label}
-                    onClick={() => onChange({ shapeDots: on })}
-                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                      !!layer.shapeDots === on
-                        ? 'bg-white text-black border-white'
-                        : 'bg-white/[0.04] text-white/70 border-white/15'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* 存的是 0~10，滑桿顯示成 0~100（跟粗細同一種刻度） */}
+            {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
+              v => onChange({ shapeStrokeW: v / 10 }))}
             <div>
               <p className="text-[11px] font-bold text-white/70 mb-1.5">發光</p>
               <div className="flex items-center gap-2">
@@ -1446,23 +1432,15 @@ export const ShapeEditorPanel: React.FC<{
               </div>
             </div>
           </div>
-          {/* 點點的兩根滑桿各佔一整排：擺成兩欄的話「間距」會排在
-              右邊「發光」那一欄的正下方，看起來像是發光的滑桿。 */}
-          {!!layer.shapeDots && (
-            <>
-              {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
-              {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
-            </>
-          )}
-          {/* 兩排顏色都排在自己那一組的正下方（左＝點點、右＝發光），
+          {/* 兩排顏色排在自己那一組的正下方（左＝描邊、右＝發光），
               位置本身就講清楚是誰的顏色，所以標題只寫「顏色」。 */}
-          {(!!layer.shapeDots || !!layer.shapeGlow) && (
+          {(!!layer.shapeStrokeW || !!layer.shapeGlow) && (
             <div className="grid grid-cols-2 gap-3">
-              {layer.shapeDots ? (
+              {layer.shapeStrokeW ? (
                 <div>
                   <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
-                  {swatchStrip(layer.shapeDotColor || '#FFFFFF', SOFT_COLORS,
-                    c => onChange({ shapeDotColor: c }), true)}
+                  {swatchStrip(layer.shapeStrokeColor || '#000000', SOFT_COLORS,
+                    c => onChange({ shapeStrokeColor: c }), true)}
                 </div>
               ) : <div />}
               {layer.shapeGlow ? (
@@ -1473,6 +1451,39 @@ export const ShapeEditorPanel: React.FC<{
                 </div>
               ) : <div />}
             </div>
+          )}
+          {/* 點點自己一排 */}
+          <div>
+            <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
+            <div className="flex items-center gap-2">
+              {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
+                <button
+                  key={label}
+                  onClick={() => onChange({ shapeDots: on })}
+                  className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
+                    !!layer.shapeDots === on
+                      ? 'bg-white text-black border-white'
+                      : 'bg-white/[0.04] text-white/70 border-white/15'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {/* 點點的兩根滑桿同一排；顏色直接攤開色票 */}
+          {!!layer.shapeDots && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
+                {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
+              </div>
+              <div>
+                <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+                {swatchStrip(layer.shapeDotColor || '#FFFFFF', SOFT_COLORS,
+                  c => onChange({ shapeDotColor: c }), true)}
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -2581,6 +2592,12 @@ interface FloatingImage {
   shapeGlow?: boolean;
   /** 圖形發光的顏色。沒設就用圖形自己的顏色 */
   shapeGlowColor?: string;
+  /** 發光顏色是不是已經給過預設值了（只在第一次打開發光時帶入圖層自己的顏色） */
+  glowInit?: boolean;
+  /** 圖形的外描邊寬度（跟粗細同一種刻度：存 0~10，滑桿顯示 0~100），0＝不描邊 */
+  shapeStrokeW?: number;
+  /** 外描邊的顏色，預設黑 */
+  shapeStrokeColor?: string;
   /* 圖形上的「點點」。跟創意拼圖那邊同一組參數、同一套網格，
      所以兩個工具調同樣的值，看到的密度與大小是一樣的。 */
   shapeDots?: boolean;
@@ -3603,6 +3620,20 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               patternTransform 把 tile 的原點移到圖形正中心，所以正中央
               一定有一顆點 —— 這樣才跟 canvas 那邊逐顆對得起來。
               四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
+          {/* 外描邊：畫在本體「底下」、寬度加倍 —— 本體會蓋住內半邊，
+              留在外面的就是乾淨的一圈外描邊（跟文字的描邊同一種做法）。
+              虛線只屬於本體，描邊那一圈一律是實線。 */}
+          {!!image.shapeStrokeW && (
+            <path
+              d={shapePathD(image.shape, image.width, image.height)}
+              fill="none"
+              stroke={image.shapeStrokeColor || '#000000'}
+              strokeWidth={((image.shapeFilled && image.shape !== 'line') ? 0 : (shapeStroke?.lw || 0))
+                + (image.shapeStrokeW || 0) * (Math.max(image.width, image.height) / 160) * 2}
+              strokeLinejoin="round"
+              strokeLinecap="butt"
+            />
+          )}
           <path
             d={shapePathD(image.shape, image.width, image.height)}
             fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
@@ -7465,13 +7496,32 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
    * 點一下的選取一律走這裡：選取目標只有一個，其餘全部清掉。
    * （之前圖片自己也會選取，兩邊搶著設 state，偶爾會出現上一張的圓球沒消失。）
    */
+  /**
+   * 第一次把發光打開時，預設就用這個圖層自己的顏色。
+   * 一個圖層只做這一次（glowInit），之後手動挑過的發光顏色不會再被蓋掉。
+   * 圖片不算在內 —— 它的發光是另一組參數（imgGlow）。
+   */
+  const withGlowInit = (layer: FloatingImage, patch: Partial<FloatingImage>): Partial<FloatingImage> => {
+    if (layer.glowInit) return patch;
+    if (layer.text !== undefined && (patch as any).glow !== undefined && ((patch as any).glow || 0) > 0) {
+      return { ...patch, glowColor: layer.color || '#FFFFFF', glowInit: true } as any;
+    }
+    if (layer.shape && (patch as any).shapeGlow) {
+      return { ...patch, shapeGlowColor: layer.color || SHAPE_DEFAULT_COLOR, glowInit: true } as any;
+    }
+    return patch;
+  };
+
   const applyTapSelection = (target: Element) => {
     const fEl = target.closest('[data-floating-id]');
     if (fEl) {
       const id = fEl.getAttribute('data-floating-id');
       if (id) {
         // 已經選取的文字圖層再點一次＝直接在畫布上打字（不會自己跳到編輯頁）
-        if (id === selectedFloatingId && floatingImages.find(f => f.id === id)?.text !== undefined) {
+        /* 只有一般文字可以點進去改字；符號的內容是固定的，
+           再點一次不進入編輯（所以也不會有剪下／複製／貼上）。 */
+        const fl = floatingImages.find(f => f.id === id);
+        if (id === selectedFloatingId && fl?.text !== undefined && !fl?.sym) {
           setEditingTextId(id);
           setInlineEditId(id);
         } else if (id !== inlineEditId) {
@@ -8052,6 +8102,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         ctx.shadowBlur = r;
         if (solid) ctx.fill(path); else ctx.stroke(path);
       }
+      ctx.restore();
+    }
+    /* 外描邊：畫在本體底下、寬度加倍，跟預覽那一條 path 同一套 */
+    const strokeW = (fImg.shapeStrokeW || 0) * (Math.max(fw, fh) / 160);
+    if (strokeW > 0) {
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.lineJoin = 'round';
+      ctx.miterLimit = 2;
+      ctx.strokeStyle = fImg.shapeStrokeColor || '#000000';
+      ctx.lineWidth = (solid ? 0 : shapeLineWidth(fImg.shapeLineW, fw, fh)) + strokeW * 2;
+      ctx.stroke(path);
       ctx.restore();
     }
     if (solid) ctx.fill(path); else ctx.stroke(path);
@@ -10566,7 +10628,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                   <TextEditorPanel
                     layer={layer}
                     symbol={!!layer.sym}
-                    onChange={patch => patchTextLayer(layer.id, patch)}
+                    onChange={patch => patchTextLayer(layer.id, withGlowInit(layer, patch))}
                   />
                 );
               }
@@ -10576,7 +10638,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 return (
                   <ShapeEditorPanel
                     layer={layer}
-                    onChange={patch => patchTextLayer(layer.id, patch)}
+                    onChange={patch => patchTextLayer(layer.id, withGlowInit(layer, patch))}
                   />
                 );
               }
@@ -10617,9 +10679,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                 {addSub === 'symbol' ? (
                   <SymbolPicker onBack={() => setAddSub('root')} onPick={handleAddSymbolLayer} />
                 ) : addSub === 'root' ? (
-                  /* 間距與左右內距比原本窄一些 —— 多了「新增圖形」這一顆，
-                     四顆要並排在同一列上才塞得下。高度與字級完全沒動。 */
-                  <div className="flex justify-center gap-1.5 mt-6">
+                  /* 五顆分兩排：第一排三顆、第二排兩顆。
+                     全部擠在同一排的話每顆只剩七十幾寬，字都快貼到邊了。
+                     兩排都用同一個 max-w，所以每顆按鈕一樣大。 */
+                  <div className="flex flex-col gap-1.5 mt-6">
+                  <div className="flex justify-center gap-1.5">
                   <button
                     onClick={() => {
                       setLayoutSubTab('layout');
@@ -10648,6 +10712,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                   </button>
+                  </div>
+                  <div className="flex justify-center gap-1.5">
                   {/* 新增符號：內容之後再補，先把位置與外觀定下來 */}
                   <button
                     onClick={() => setAddSub('symbol')}
@@ -10658,7 +10724,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                         用了會直接把「emoji_symbols」這串英文字印在按鈕上、
                         還會撐爆格子蓋到隔壁兩顆。改用跟旁邊「新增文字」「新增圖形」
                         同一套的 lucide 線條圖示。 */}
-                    <Sparkles size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                    <Asterisk size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增符號</span>
                   </button>
                   <button
@@ -10668,6 +10734,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
                     <Shapes size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
                   </button>
+                  </div>
                   </div>
                 ) : (
                   /* 點進「新增圖形」才看得到的圖案清單。

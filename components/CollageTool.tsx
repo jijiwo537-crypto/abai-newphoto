@@ -3,7 +3,7 @@ import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
-import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Sparkles, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
+import { Download, RefreshCw, Type, Circle, Heart, Star, Square, Shapes, Sparkles, Asterisk, Crop, Palette, X, Plus, ChevronLeft, ArrowLeft, RotateCcw, Paintbrush, Eraser, MousePointer, Link, Link2Off, SlidersHorizontal, MoveUp, MoveDown, Copy, Sliders, Trash2, Play, Pause, ImageIcon, Film } from 'lucide-react';
 import { Icon } from './Icon';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
@@ -2513,7 +2513,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                而且只有「沒有拖動」才算點一下，拖著搬位置不該跳出鍵盤。 */
             objDragRef.current = {
               id: o.id, startX: x, startY: y, ox: o.x, oy: o.y,
-              moved: false, editIfTap: o.type === 'text',
+              /* 只有一般文字可以點進去改字；符號的內容是固定的，
+                 再點一次不進入編輯（所以也不會有剪下／複製／貼上）。 */
+              moved: false, editIfTap: o.type === 'text' && !o.sym,
             };
             return;
           }
@@ -4185,6 +4187,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           }
           ctx.restore();
         }
+        /* 描邊：畫在本體「底下」、寬度加倍 —— 本體會蓋住內半邊，
+           留在外面的就是乾淨的一圈外描邊（跟文字的描邊同一種做法）。
+           虛線只屬於本體，描邊那一圈一律是實線。 */
+        const sw = (o.strokeW || 0) * unit;
+        if (sw > 0) {
+          ctx.save();
+          ctx.setLineDash([]);
+          ctx.lineJoin = 'round';
+          ctx.miterLimit = 2;
+          ctx.strokeStyle = o.strokeColor || '#000000';
+          ctx.lineWidth = solid ? sw * 2 : lw + sw * 2;
+          ctx.stroke(shapeP);
+          ctx.restore();
+        }
         if (solid) ctx.fill(shapeP); else ctx.stroke(shapeP);
         /* 點點：跟遮罩那邊完全同一套（同樣的 5~20 大小、40~140 間距、
            同樣的交錯三角網格），只是剪裁在這個圖形裡面。 */
@@ -5831,7 +5847,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                  符號則是實際內容，要原封不動讓人改。 */
               value={(!o.sym && o.text === TEXT_PLACEHOLDER) ? '' : (o.text || '')}
               wrap="off"
-              placeholder={o.sym || TEXT_PLACEHOLDER}
+              /* 不放 placeholder：空的時候會浮一行灰字出來，
+                 在畫布上看起來就像那段文字自己變成灰的 */
               onChange={e => {
                 const v = e.target.value;
                 const nt = (!o.sym && v === '') ? TEXT_PLACEHOLDER : v;
@@ -6106,6 +6123,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   ? ((objects.find(o => o.id === selectedObj)?.color) || SHAPE_DEFAULT_COLOR)
                 : colorPickerTarget === 'shapeDot'
                   ? ((objects.find(o => o.id === selectedObj)?.dotColor) || '#FFFFFF')
+                : colorPickerTarget === 'shapeStroke'
+                  ? ((objects.find(o => o.id === selectedObj)?.strokeColor) || '#000000')
                 : colorPickerTarget === 'shapeGlow'
                   ? ((objects.find(o => o.id === selectedObj)?.glowColor)
                     || (objects.find(o => o.id === selectedObj)?.color) || SHAPE_DEFAULT_COLOR)
@@ -6121,6 +6140,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, color: c } : o));
                 else if(colorPickerTarget==='shapeDot')
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, dotColor: c } : o));
+                else if(colorPickerTarget==='shapeStroke')
+                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, strokeColor: c } : o));
                 else if(colorPickerTarget==='shapeGlow')
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, glowColor: c } : o));
                 else if(colorPickerTarget==='textStroke')
@@ -6137,6 +6158,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 : colorPickerTarget === 'linkColor' ? '連線顏色'
                 : colorPickerTarget === 'shapeObj' ? '圖形顏色'
                 : colorPickerTarget === 'shapeDot' ? '點點顏色'
+                : colorPickerTarget === 'shapeStroke' ? '描邊顏色'
                 : colorPickerTarget === 'shapeGlow' ? '發光顏色'
                 : colorPickerTarget === 'textStroke' ? '描邊顏色'
                 : colorPickerTarget === 'textGlow' ? '發光顏色' : '點點'}
@@ -6379,7 +6401,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             用了會直接把「emoji_symbols」這串英文字印在按鈕上、
                             還會撐爆格子蓋到隔壁兩顆。改用跟旁邊「新增文字」「新增圖形」
                             同一套的 lucide 線條圖示。 */}
-                        <Sparkles size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                        <Asterisk size={24} strokeWidth={1.5} className="text-white opacity-80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90">新增符號</span>
                       </button>
                       <button
@@ -6412,7 +6434,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             n.splice(Math.max(0, n.length - 1), 0, item);
                             return n;
                           };
-                          const solidList = [...ins(ADD_SHAPE_ITEMS.filter(i2 => i2.filled), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA];
+                          /** 把第 n 顆搬到第 m 個位置（都是從 1 算起） */
+                          const moveTo = (arr: any[], n: number, m: number) => {
+                            if (arr.length < n) return arr;
+                            const a = arr.slice();
+                            const [x] = a.splice(n - 1, 1);
+                            a.splice(m - 1, 0, x);
+                            return a;
+                          };
+                          const solidList = moveTo(
+                            [...ins(ADD_SHAPE_ITEMS.filter(i2 => i2.filled), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
+                            10, 8);
                           const lineList = ins(ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && i2.kind !== 'line'), HOLE_ITEM_CROSS_O);
                           return ([
                             ['實心', solidList],
@@ -6477,34 +6509,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               {shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
                             </>
                           )}
-                          {/* 點點與發光併成同一排：兩邊都是「關／開」兩顆，
-                              各佔一半（按鈕與操作跟遮罩那一組完全一樣）。 */}
+                          {/* 描邊與發光併成同一排（描邊是粗細、發光是開關），
+                              兩顆顏色再排在各自的正下方、左右欄一一對齊 ——
+                              位置本身就講清楚是誰的顏色，所以標題只寫「顏色」。 */}
                           <div className="grid grid-cols-2 gap-3">
-                            <div>
-                              <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
-                              <div className="flex items-center gap-2">
-                                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
-                                  <button
-                                    key={label}
-                                    onClick={() => patch({ dots: on })}
-                                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                                      !!sel.dots === on
-                                        ? 'bg-white text-black border-white'
-                                        : 'bg-white/[0.04] text-white/70 border-white/15'
-                                    }`}
-                                  >
-                                    {label}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
+                            {/* 存的是 0～10，滑桿顯示成 0～100（跟粗細同一種刻度） */}
+                            <CompactSlider label="描邊" value={Math.round((sel.strokeW ?? 0) * 10)} min={0} max={100}
+                              onChange={(v: number) => patch({ strokeW: v / 10 })} />
                             <div>
                               <p className="text-[11px] font-bold text-white/70 mb-1.5">發光</p>
                               <div className="flex items-center gap-2">
                                 {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
                                   <button
                                     key={label}
-                                    onClick={() => patch({ glow: on ? 1 : 0 })}
+                                    onClick={() => patch(on && !sel.glowInit
+                                      /* 第一次打開發光：預設就用這個圖形自己的顏色，
+                                         之後不管再怎麼開開關關都不會再蓋掉手動選的顏色。 */
+                                      ? { glow: 1, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
+                                      : { glow: on ? 1 : 0 })}
                                     className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
                                       !!sel.glow === on
                                         ? 'bg-white text-black border-white'
@@ -6517,28 +6539,49 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               </div>
                             </div>
                           </div>
-                          {/* 點點的兩根滑桿各佔一整排：擺成兩欄的話「間距」會排在
-                              右邊「發光」那一欄的正下方，看起來像是發光的滑桿。 */}
-                          {!!sel.dots && (
-                            <>
-                              <CompactSlider label="大小" value={sel.dotSize ?? 50} min={0} max={100}
-                                onChange={(v: number) => patch({ dotSize: v })} />
-                              <CompactSlider label="間距" value={sel.dotGap ?? 20} min={0} max={100}
-                                onChange={(v: number) => patch({ dotGap: v })} />
-                            </>
-                          )}
-                          {/* 兩顆顏色都排在自己那一組的正下方（左＝點點、右＝發光），
-                              位置本身就講清楚是誰的顏色了，所以標題只寫「顏色」。
-                              發光顏色也跟著改成「點一下才打開調色盤」，跟連線顏色同一種做法。 */}
-                          {(!!sel.dots || !!sel.glow) && (
+                          {(!!sel.strokeW || !!sel.glow) && (
                             <div className="grid grid-cols-2 gap-3">
-                              {sel.dots
-                                ? shapeColorRow('顏色', sel.dotColor || '#FFFFFF', () => setColorPickerTarget('shapeDot'))
+                              {sel.strokeW
+                                ? shapeColorRow('顏色', sel.strokeColor || '#000000', () => setColorPickerTarget('shapeStroke'))
                                 : <div />}
                               {sel.glow
                                 ? shapeColorRow('顏色', sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR, () => setColorPickerTarget('shapeGlow'))
                                 : <div />}
                             </div>
+                          )}
+                          {/* 點點自己一排 */}
+                          <div>
+                            <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
+                            <div className="flex items-center gap-2">
+                              {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
+                                <button
+                                  key={label}
+                                  onClick={() => patch({ dots: on })}
+                                  className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
+                                    !!sel.dots === on
+                                      ? 'bg-white text-black border-white'
+                                      : 'bg-white/[0.04] text-white/70 border-white/15'
+                                  }`}
+                                >
+                                  {label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          {/* 點點的兩根滑桿同一排；顏色直接攤開色票 */}
+                          {!!sel.dots && (
+                            <>
+                              <div className="grid grid-cols-2 gap-3">
+                                <CompactSlider label="大小" value={sel.dotSize ?? 50} min={0} max={100}
+                                  onChange={(v: number) => patch({ dotSize: v })} />
+                                <CompactSlider label="間距" value={sel.dotGap ?? 20} min={0} max={100}
+                                  onChange={(v: number) => patch({ dotGap: v })} />
+                              </div>
+                              <div>
+                                <p className="text-[11px] font-bold text-white/70 mb-1.5">顏色</p>
+                                {swatchStrip(sel.dotColor || '#FFFFFF', SOFT_COLORS, (c: string) => patch({ dotColor: c }), true)}
+                              </div>
+                            </>
                           )}
                         </div>
                       </div>
@@ -6559,6 +6602,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         } as any}
                         onChange={(d: any) => {
                           if (d.fontFamily) ensureFont(d.fontFamily);
+                          /* 第一次把發光拉起來：預設用這段文字（符號）自己的顏色，
+                             一個物件只做這一次，之後手動挑過的顏色不會被蓋掉。 */
+                          if (d.glow !== undefined && d.glow > 0 && !sel.glowInit) {
+                            d = { ...d, glowColor: sel.color || '#ffffff', glowInit: true };
+                          }
                           if (d.fontSize !== undefined) { patch({ ...d, size: d.fontSize }); return; }
                           patch(d);
                         }}
@@ -6679,15 +6727,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       {hasLink && <button onClick={() => setMoTarget('link')} className={chip(moTarget === 'link')}>
                         {linkMode === 'dash' ? '虛線' : '連線'}
                       </button>}
-                      {objects.map((o, i) => (
+                      {(() => {
+                        /* 圖形有兩顆以上就編號（圖形1、圖形2…），只有一顆就單純叫「圖形」 */
+                        const shapeIds = objects.filter(z => z.type === 'shape').map(z => z.id);
+                        const shapeNo = (id: string) =>
+                          shapeIds.length > 1 ? `圖形${shapeIds.indexOf(id) + 1}` : '圖形';
+                        return objects.map((o, i) => (
                         <button key={o.id}
                           onClick={() => setMoTarget(o.id)}
                           className={chip(moTarget === o.id)}>
-                          {o.type === 'text' ? (o.text || '文字').slice(0, 6)
-                            : o.type === 'shape' ? '圖形'
+                          {/* 符號直接標「符號」：它的內容常常是組合附加符號或冷門字，
+                              切前六個字很容易剛好切在一半、或整顆在這裡根本畫不出來 ——
+                              那樣這顆鈕看起來就是空的，等於選不到，也就沒辦法給它動畫。 */}
+                          {o.type === 'text' ? (o.sym ? '符號' : (o.text || '文字').slice(0, 6))
+                            : o.type === 'shape' ? shapeNo(o.id)
                             : `圖片 ${i + 1}`}
                         </button>
-                      ))}
+                      ));
+                      })()}
                     </div>
 
                     {moTarget === 'link' ? (
