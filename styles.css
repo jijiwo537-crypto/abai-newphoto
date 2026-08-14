@@ -199,23 +199,23 @@ select:focus, select:focus-visible {
     backface-visibility: hidden;
   }
   /* 位移是線性的：進度 p 就是 range × 0.60 × p。
-     透明度用 smoothstep（前 6% 不動、到 54% 才淡完），所以中間多切幾格。
+     透明度用 smoothstep（前 6% 不動、到 44.70% 才淡完），所以中間多切幾格。
 
-     為什麼收在 54%：要在「模板的上緣正好碰到『編輯／相機』那一排的上緣」
+     為什麼收在這裡：原本是要在「模板的上緣正好碰到『編輯／相機』那一排的上緣」
      那一刻剛好全透明。兩邊都在動 ——
        模板上緣 = 762 − 1.35y、那一排的上緣 = 315 − 0.30y
        解 762 − 1.35y = 290 − 0.30y → y ≈ 450px。
-     主人現在訂在 **370px**（一屏 783 的 47.25%）—— 也就是在兩邊真的碰到之前
-     80px 就已經全透明了。
-     （調整過程：450 → 410 → 380 → 360 → 370。更早之前是拿那一排的「下緣」
+     主人現在訂在 **350px**（一屏 783 的 44.70%）—— 也就是在兩邊真的碰到之前
+     100px 就已經全透明了。
+     （調整過程：450 → 410 → 380 → 360 → 370 → 350。更早之前是拿那一排的「下緣」
        算的，收在 40%＝326px，那樣太早。） */
   @keyframes home-hero-para {
     0%     { transform: translate3d(0, 0, 0);                                        opacity: 1;     visibility: visible; }
     6%     { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.036), 0);   opacity: 1; }
-    16.3%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.0978), 0);  opacity: 0.844; }
-    26.6%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.1596), 0);  opacity: 0.5;   pointer-events: none; }
-    37.0%  { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2220), 0);  opacity: 0.156; }
-    47.25% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2835), 0);  opacity: 0;     visibility: hidden; }
+    15.68% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.0941), 0);  opacity: 0.844; }
+    25.35% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.1521), 0);  opacity: 0.5;   pointer-events: none; }
+    35.03% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2102), 0);  opacity: 0.156; }
+    44.70% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2682), 0);  opacity: 0;     visibility: hidden; }
     100%   { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.600), 0);   opacity: 0;     visibility: hidden; }
   }
   @keyframes home-lib-para {
