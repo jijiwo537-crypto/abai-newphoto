@@ -102,7 +102,9 @@ select:focus, select:focus-visible {
    （同樣的宣告、同樣的值），所以外觀一個像素都不會變。 */
 
 /* 一般滑桿（創意拼圖的參數、發光、動畫…） */
-.premium-slider { -webkit-appearance: none; width: 100%; height: 2px; background: #222; border-radius: 2px; outline: none; touch-action: none; }
+/* 滑桿全部統一成「比較寬」的那一種：軌道 6px、圓角到底、底色跟面板上
+   其他滑桿一致（原本是 2px 的細線，同一頁裡兩種粗細看起來很雜）。 */
+.premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; background: rgba(255,255,255,0.10); border-radius: 999px; outline: none; touch-action: none; cursor: pointer; }
 .premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; cursor: pointer; }
 
 /* 顏色滑桿：沿用原生 thumb + accent-color，不自己畫 */
@@ -156,81 +158,4 @@ select:focus, select:focus-visible {
 .custom-range::-moz-range-thumb {
   height: 15px; width: 15px; border-radius: 50%;
   background: #fff; border: none; cursor: pointer;
-}
-
-
-/* ── 主頁往下滑的視差 ──────────────────────────────────────────────
-   疊法：模板那一段在**上層**，往上滑時整片蓋過修圖那一屏；
-         修圖那一屏在**下層**、背景透明，一邊被蓋住一邊淡出。
-
-   動法（從頭到尾連續，不會滑到一半停住）：
-     ‧ 修圖那一屏走 40% 的速度 —— 捲了 y，它自己往下補 0.60y
-       （原本是 30%／補 0.70y，主人要它往上跑得多一點，所以幅度加了三分之一）
-     ‧ 模板那一段走 135% —— 除了跟著捲的一屏，再自己往上多走 0.35 屏
-     ‧ 兩邊的落差是 0.95 屏
-
-   --hero-range 是「一屏的高度」，由 HomePage 量好之後寫上來。
-   --lib-lift 是「模板額外往上多走多少」；模板在排版上先往上挪同樣的量，
-   再用動畫把它放回原位、隨捲動收回去 —— 所以靜止時位置完全沒變，
-   可捲的長度也短掉同一截，捲到底時下緣照樣貼齊。 */
-.home-scroll {
-  --lib-lift: calc(var(--hero-range, 100vh) * 0.35);
-}
-@media (prefers-reduced-motion: reduce) {
-  .home-scroll { --lib-lift: 0px; }
-}
-
-@supports (animation-timeline: scroll()) {
-  /* 支援的瀏覽器（新版 Chrome / Edge / Safari）整段動畫都由合成執行緒
-     照捲動位置自己算，主執行緒完全不參與，所以不可能跟捲動不同步。
-     不支援的由 HomePage.tsx 那邊每一格自己讀捲動位置來畫。 */
-  .home-hero {
-    animation: home-hero-para linear both;
-    animation-timeline: scroll(nearest block);
-    animation-range: 0 var(--hero-range, 100vh);
-  }
-  .home-lib {
-    animation: home-lib-para linear both;
-    animation-timeline: scroll(nearest block);
-    animation-range: 0 var(--hero-range, 100vh);
-    /* 沒有這一行的話，模板那一整排卡片每一格都要重畫一次（它一直在位移）。
-       提升成自己的合成圖層之後，位移就只是搬圖層，不再重畫內容。 */
-    will-change: transform;
-    backface-visibility: hidden;
-  }
-  /* 位移是線性的：進度 p 就是 range × 0.60 × p。
-     透明度用 smoothstep（前 6% 不動、到 45.98% 才淡完），所以中間多切幾格。
-
-     為什麼收在這裡：原本是要在「模板的上緣正好碰到『編輯／相機』那一排的上緣」
-     那一刻剛好全透明。兩邊都在動 ——
-       模板上緣 = 762 − 1.35y、那一排的上緣 = 315 − 0.30y
-       解 762 − 1.35y = 290 − 0.30y → y ≈ 450px。
-     主人現在訂在 **360px**（一屏 783 的 45.98%）—— 也就是在兩邊真的碰到之前
-     90px 就已經全透明了。
-     （調整過程：450 → 410 → 380 → 360 → 370 → 350 → 360。更早之前是拿那一排的
-       「下緣」算的，收在 40%＝326px，那樣太早。）
-
-     **這裡刻意不用 visibility: hidden**（原本收尾那兩格有寫）。
-     visibility 一翻回 visible，這一整層就要重新光柵化一次；
-     從模板很快滑回修圖的那一下正好撞上這個切換，那一格來不及畫好，
-     畫面上就是用上一格的位置先貼出來 —— 看起來就是「修圖的東西
-     先掉到下面一點，然後又自己歸位」。改成整段都留著（透明度 0），
-     合成層一直在，就沒有那一格。透明度 0 的層不需要畫內容，成本可以忽略；
-     擋點擊改由 pointer-events 負責。 */
-  @keyframes home-hero-para {
-    0%     { transform: translate3d(0, 0, 0);                                        opacity: 1; }
-    6%     { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.036), 0);   opacity: 1; }
-    15.99% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.0959), 0);  opacity: 0.844; }
-    25.99% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.1559), 0);  opacity: 0.5;   pointer-events: none; }
-    35.98% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2159), 0);  opacity: 0.156; }
-    45.98% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.2759), 0);  opacity: 0; }
-    100%   { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.600), 0);   opacity: 0; }
-  }
-  @keyframes home-lib-para {
-    0%   { transform: translate3d(0, var(--lib-lift), 0); }
-    100% { transform: translate3d(0, 0, 0); }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .home-hero, .home-lib { animation: none; }
-  }
 }

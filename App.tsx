@@ -340,6 +340,15 @@ const App: React.FC = () => {
     setToolDraftState(rec.meta.state ?? null);
     // 沿用這一筆的 key：等一下工具再記一次的時候是「更新這一筆」，不是多一筆
     setHistKey(rec.meta.photoKey ?? null);
+    if (rec.meta.tool === 'layout') {
+      /* 經典拼圖的紀錄要回到經典拼圖：state 裡有每一頁與每一個圖層
+         （照片是當附件存的），所以回來之後每個物件都還能拖、還能改，
+         不是一張已經拼死的圖。 */
+      setLayoutInitialFiles([]);
+      setLayoutKey(prev => prev + 1);
+      setCurrentView('layout');
+      return;
+    }
     if (rec.meta.tool === 'collage') {
       /* 創意拼圖的紀錄要回到創意拼圖 —— 丟去編輯器的話開起來是另一個工具。
          存的是圖片內容，轉成 File 再餵回去（工具本來就吃 File）。 */
@@ -521,6 +530,7 @@ const App: React.FC = () => {
             setLayoutInitialFiles([]);
           }}
           initialFiles={layoutInitialFiles}
+          initialState={toolDraftState}
           histKey={histKey}
           lutList={LUT_LIST}
           onImportNew={() => {
