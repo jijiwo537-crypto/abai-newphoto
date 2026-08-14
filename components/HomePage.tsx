@@ -168,6 +168,8 @@ export const HomePage: React.FC<HomePageProps> = ({
   const libRef = useRef<HTMLDivElement>(null);
   /** 模板那一段的「排版盒」（外層，不會動）—— 量位置要看它，不能看會位移的那層 */
   const libBoxRef = useRef<HTMLDivElement>(null);
+  /** 視差的重算函式（放 ref 是為了讓上面的 effect 也叫得到） */
+  const applyRef = useRef<() => void>(() => {});
   /* 在「我」的時候捲軸那一頁是藏起來的，捲動事件不能反過來改分頁 */
   const navRef = useRef(nav);
   useEffect(() => { navRef.current = nav; }, [nav]);
@@ -459,6 +461,8 @@ export const HomePage: React.FC<HomePageProps> = ({
     const sc = scrollRef.current;
     if (!sc) return;
     sc.scrollTop = target === 'lib' ? libScrollTop(sc) : 0;
+    // 直接改了捲動位置，視差要立刻跟上（用 ref 取用，因為它在下面才定義）
+    applyRef.current();
   }, [nav]);
 
   /** 捲到哪裡就亮哪一個分頁。
@@ -536,10 +540,16 @@ export const HomePage: React.FC<HomePageProps> = ({
     } catch { /* 舊瀏覽器 */ }
   }, []);
 
-  /** 把「一屏有多高」寫給 CSS 動畫用。只有尺寸變了才需要重寫。 */
+  /** 把「一屏有多高」寫給 CSS 動畫用。值沒變就不要寫 ——
+      改動這個變數會讓兩支捲動動畫重新計算範圍，能省就省。 */
+  const rangeWritten = useRef(-1);
   const syncRange = useCallback(() => {
     const sc = scrollRef.current;
-    if (sc) sc.style.setProperty('--hero-range', `${sc.clientHeight}px`);
+    if (!sc) return;
+    const h = sc.clientHeight;
+    if (h === rangeWritten.current) return;
+    rangeWritten.current = h;
+    sc.style.setProperty('--hero-range', `${h}px`);
   }, []);
 
   const applyParallax = useCallback(() => {
@@ -552,8 +562,13 @@ export const HomePage: React.FC<HomePageProps> = ({
       return;
     }
     const h = sc.clientHeight || 1;
-    const y = Math.max(0, sc.scrollTop);
-    el.style.transform = `translate3d(0, ${(y * 0.70).toFixed(2)}px, 0)`;
+    // 夾在 0～可捲上限之間：iOS 橡皮筋期間讀到的值可能超出範圍，
+    // 直接拿去算會讓圖案往回彈一下 —— 那正是「到頂時往下抖一下」的樣子。
+    const y = Math.min(Math.max(0, sc.scrollTop), Math.max(0, sc.scrollHeight - h));
+    /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。
+       不封頂的話捲得越深、圖案被推得越下面（實測 y=1204 時多跑了 295px），
+       兩條路的行為會不一樣，而且那一截往下的位移還會去撐可捲的長度。 */
+    el.style.transform = `translate3d(0, ${(Math.min(y, h) * 0.70).toFixed(2)}px, 0)`;
     // 模板那一段自己再往上多走一截（進度封頂在一屏），所以會提早到頂
     const lib = libRef.current;
     if (lib) {
@@ -572,17 +587,55 @@ export const HomePage: React.FC<HomePageProps> = ({
     el.style.pointerEvents = o < 0.35 ? 'none' : '';
     el.style.visibility = o <= 0.002 ? 'hidden' : '';
   }, []);
+  applyRef.current = applyParallax;
 
-  // 進頁面、換分頁、轉向都重算一次（從「我的」切回來時捲軸還停在原位）
-  useLayoutEffect(() => { syncRange(); applyParallax(); }, [syncRange, applyParallax, nav]);
+  /* ── JS 版專用：捲動期間改用每一格自己去讀捲動位置 ──────────────────
+     iOS（Safari）目前還不支援 CSS 的捲動時間軸，所以手機上跑的是這條路。
+     而 iOS 在慣性滑動期間，**scroll 事件的頻率遠低於畫面更新的頻率**：
+     只在收到事件時才改 transform，圖案就會一格一格地追捲動，
+     慣性快結束、最後一個事件進來時再一次補到位 —— 看起來就是
+     「到頂前後往下頓一下、像要回彈」。
+
+     改成：捲動一開始就啟動一個每格都跑的迴圈，直接讀當下的捲動位置來畫；
+     停下來 220ms 之後再收掉。這樣圖案跟捲動永遠是同一格的資料。
+     支援 CSS 捲動時間軸的瀏覽器完全不會進到這裡。 */
+  const pumpRaf = useRef<number | null>(null);
+  const pumpIdle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pump = useCallback(() => {
+    applyParallax();
+    pumpRaf.current = requestAnimationFrame(pump);
+  }, [applyParallax]);
+  const kickPump = useCallback(() => {
+    if (cssTimeline.current || reduceMotion.current) return;
+    if (pumpRaf.current == null) pumpRaf.current = requestAnimationFrame(pump);
+    if (pumpIdle.current) clearTimeout(pumpIdle.current);
+    pumpIdle.current = setTimeout(() => {
+      pumpIdle.current = null;
+      if (pumpRaf.current != null) { cancelAnimationFrame(pumpRaf.current); pumpRaf.current = null; }
+      applyParallax();               // 收工前再對一次，確保停在正確的位置
+    }, 220);
+  }, [pump, applyParallax]);
+  useEffect(() => () => {
+    if (pumpRaf.current != null) cancelAnimationFrame(pumpRaf.current);
+    if (pumpIdle.current) clearTimeout(pumpIdle.current);
+  }, []);
+
+  /* 只在「第一次畫出來」與「尺寸變了」時重算。
+     原本連分頁切換也重算 —— 那會在剛滑到頂的那一刻多寫一次 CSS 變數，
+     等於在最不該打擾的時間點去動兩支捲動動畫的範圍。 */
+  useLayoutEffect(() => { syncRange(); applyParallax(); }, [syncRange, applyParallax]);
   useEffect(() => {
     const on = () => { syncRange(); applyParallax(); };
     window.addEventListener('resize', on);
-    return () => window.removeEventListener('resize', on);
+    window.addEventListener('orientationchange', on);
+    return () => {
+      window.removeEventListener('resize', on);
+      window.removeEventListener('orientationchange', on);
+    };
   }, [syncRange, applyParallax]);
 
   const onScroll = useCallback(() => {
-    applyParallax();
+    kickPump();
     const sc = scrollRef.current;
     if (!sc) return;
     const h = sc.clientHeight || 1;
@@ -603,7 +656,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     }
     if (navSettle.current) clearTimeout(navSettle.current);
     navSettle.current = setTimeout(() => { navSettle.current = null; setNav(next); }, 120);
-  }, [applyParallax]);
+  }, [kickPump]);
 
   const copyEmail = async () => {
     try {
