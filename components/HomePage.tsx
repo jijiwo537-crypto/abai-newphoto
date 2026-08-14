@@ -565,8 +565,9 @@ export const HomePage: React.FC<HomePageProps> = ({
     // 夾在 0～可捲上限之間：iOS 橡皮筋期間讀到的值可能超出範圍，
     // 直接拿去算會讓圖案往回彈一下。
     const y = Math.min(Math.max(0, sc.scrollTop), Math.max(0, sc.scrollHeight - h));
-    /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。 */
-    el.style.transform = `translate3d(0, ${(Math.min(y, h) * 0.70).toFixed(2)}px, 0)`;
+    /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。
+       0.60＝修圖那一屏走 40% 的速度（原本 0.70／30%，幅度加了三分之一）。 */
+    el.style.transform = `translate3d(0, ${(Math.min(y, h) * 0.60).toFixed(2)}px, 0)`;
     // 模板那一段：一開始往下位移 +lift，隨捲動收回 0（等於比捲軸快 0.35 屏）
     const lib = libRef.current;
     if (lib) {

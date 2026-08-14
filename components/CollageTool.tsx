@@ -2552,11 +2552,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const fitScale = useCallback((cssW: number, csW: number, k: number) => {
     if (!cssW || !csW) return 1;
     const dpr = Math.min(3, window.devicePixelRatio || 1);
-    /* 畫布至少要有「螢幕裝置像素 × 1.35」那麼細，而且不低於工作解析度。
-       （四周包圍以前會把工作解析度撐到兩千多、遠超過螢幕需要的，
-         那個浪費現在從源頭解掉了 —— 它的畫布跟原圖一樣大，
-         所以這裡不必再為它破例。） */
-    const want = Math.min(maxPreviewScale(), Math.max(1, (cssW * k * dpr * 1.35) / csW));
+    /* 畫布至少要有「螢幕裝置像素 × SUPERSAMPLE」那麼細。
+
+       1.35 → 1.8：圖案調小的時候，一顆星星在螢幕上只佔幾個裝置像素，
+       1.35 倍的取樣空間不夠，邊緣與那圈光就看得出鋸齒 —— 只有把圖案放很大
+       才會覺得乾淨。提到 1.8 之後同一顆小圖案多拿到約 78% 的取樣點
+       （1.8² / 1.35²），邊緣才平順。
+
+       代價：畫布像素多 78%，拖滑桿時每一格都要重畫。在沒有 GPU 的環境量到
+       掉格從 7 格變 21 格；有硬體加速的手機上代價會小很多。
+       要退回原本的手感，把這個數字改回 1.35 就好，其他都不用動。
+
+       上限一樣被 maxPreviewScale() 的像素預算夾住，所以放到最大倍率時
+       畫布不會再往上長（那一段本來就吃滿預算了）。 */
+    const SUPERSAMPLE = 1.8;
+    const want = Math.min(maxPreviewScale(), Math.max(1, (cssW * k * dpr * SUPERSAMPLE) / csW));
     return Math.max(1, Math.ceil(want * 4) / 4);
   }, [maxPreviewScale]);
 
@@ -2570,8 +2580,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const dpr = Math.min(3, window.devicePixelRatio || 1);
       const cssW = baseCss ? baseCss.w : baseCssWRef.current;
       if (!cssW || !cs.w) return;
-      /* ×1.35 的超取樣：剛好 1:1 時圖案邊緣的抗鋸齒沒有取樣空間，多給一點
-         才是「一載入就已經最清楚」，不用先放大一次才變利。
+      /* 超取樣倍率寫在 fitScale 裡（目前 1.8）：剛好 1:1 時圖案邊緣的抗鋸齒
+         沒有取樣空間，多給一點才是「一載入就已經最清楚」，不用先放大一次才變利。
          而且無條件進位到 0.25，不會被四捨五入往下砍掉那 0.1。 */
       const snapped = fitScale(cssW, cs.w, viewT.k);
       setPreviewScale(prev => (Math.abs(prev - snapped) < 0.01 ? prev : snapped));
