@@ -166,6 +166,8 @@ export const HomePage: React.FC<HomePageProps> = ({
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
   const scrollRef = useRef<HTMLDivElement>(null);
   const libRef = useRef<HTMLDivElement>(null);
+  /** 模板那一段的「排版盒」（外層，不會動）—— 量位置要看它，不能看會位移的那層 */
+  const libBoxRef = useRef<HTMLDivElement>(null);
   /* 在「我」的時候捲軸那一頁是藏起來的，捲動事件不能反過來改分頁 */
   const navRef = useRef(nav);
   useEffect(() => { navRef.current = nav; }, [nav]);
@@ -397,7 +399,8 @@ export const HomePage: React.FC<HomePageProps> = ({
    * 版位拿掉之後沒有東西會蓋過來了，直接捲到 libRef 的頂端就對。
    */
   const libScrollTop = (sc: HTMLDivElement) => {
-    const top = libRef.current?.offsetTop ?? sc.clientHeight;
+    // 量的是排版盒（外層，不會被動畫位移），所以拿到的一定是排版上的位置
+    const top = libBoxRef.current?.offsetTop ?? sc.clientHeight;
     /* 模板那一段在排版上已經往上挪了 lift，畫面上再由動畫補回 lift×(1 − y/range)。
        所以它貼齊上緣的時候：
          top − y + lift × (1 − y / range) = 0
@@ -854,12 +857,18 @@ export const HomePage: React.FC<HomePageProps> = ({
            版位是絕對定位往下多長 50px 的，扣掉這一段自己的 pb-[21px]，
            上緣留白 20px 是 12px、26px 就是 18px（12px 再多 0.5 倍）。
            只動這一段的頂端留白，第一屏（含廣告版位）一個像素都不會移動。 */}
+      {/* 外面這一層是「排版盒」，裡面那一層才會動。
+          ‧ 負的上外距：排版上先把這一段往上挪 --lib-lift，可捲的長度就短掉同樣的量。
+          ‧ overflow: clip：裡面那層一開始是往下位移 +lift 的，**不加這個的話那一截
+            會把可捲的長度撐長**（實測 1987 會變成 2240），捲到底時瀏覽器再把你夾
+            回去 —— 那正是「滑到底會回朔、會抖」的原因。夾掉之後可捲長度從頭到尾
+            都是同一個數字。被夾掉的是模板最下面那一截，而那時候它離畫面還很遠；
+            等你真的捲到下面，位移早就收回 0 了，什麼都不會少。 */}
+      <div ref={libBoxRef} style={{ marginTop: 'calc(var(--lib-lift, 0px) * -1)', overflow: 'clip' }}>
       <div
         ref={libRef}
-        /* 負的上外距：排版上先把這一段往上挪 --lib-lift，可捲的長度就短掉同樣的量。
-           畫面上的位置由 CSS 動畫補回來（一開始 translateY(+lift)，捲動時收回 0），
+        /* 畫面上的位置由 CSS 動畫補回來（一開始 translateY(+lift)，捲動時收回 0），
            所以「靜止時看起來完全沒變、捲起來卻快 0.35 屏」。 */
-        style={{ marginTop: 'calc(var(--lib-lift, 0px) * -1)' }}
         className="home-lib relative z-[1] px-6 pb-4 pt-[26px]"
       >
         {/* 搜尋欄 —— 還沒接真的模板資料，先做成純前端的字串過濾 */}
@@ -899,6 +908,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
           ))}
         </div>
+      </div>
       </div>
 
       </div>
