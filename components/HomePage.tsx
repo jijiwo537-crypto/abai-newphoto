@@ -733,12 +733,14 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   const historySection = (
     <div>
-      {/* 標題那一排：照參考圖放大字級，右邊多一顆「查看全部」 */}
+      {/* 標題那一排：右邊多一顆「查看全部」。
+           標題本身收斂一點 —— 它只是一行分區標籤，主角是下面那排縮圖，
+           字級 14→12、字重 black→bold、白色降到 55%，不要壓過作品。 */}
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[14px] font-black tracking-[0.1em] text-white">歷史紀錄</span>
+        <span className="text-[12px] font-bold tracking-[0.14em] text-white/55">歷史紀錄</span>
         <button
           onClick={() => goNav('me')}
-          className="flex items-center gap-0.5 text-[11px] tracking-[0.08em] text-white/45 active:scale-95 transition-transform"
+          className="flex items-center gap-0.5 text-[11px] tracking-[0.08em] text-white/35 active:scale-95 transition-transform"
         >
           查看全部
           {pillArrow}
@@ -871,7 +873,10 @@ export const HomePage: React.FC<HomePageProps> = ({
            所以裡面那些 z-10 完全不受影響，排版也一個像素都沒動。
            home-hero：位移與淡出的動畫都掛在這個名字上（styles.css）。 */
         style={{ willChange: 'transform, opacity' }}
-        className="home-hero relative z-0 min-h-full px-5 pb-[10px] flex flex-col box-border"
+        /* 下面的內距就是「整疊往上移多少」的調節閥：上半屏是 flex-1 吃剩餘高度的，
+           這裡每多 1px，上半屏就矮 1px、下面那一疊連同品牌字就整組往上 1px。
+           10 → 28：整組往上 18px。右上角的聯絡鈕是貼著上半屏頂端的，所以不會跟著動。 */
+        className="home-hero relative z-0 min-h-full px-5 pb-[28px] flex flex-col box-border"
       >
         {/* --- 上半屏 ---
              參考圖上半是一整塊主視覺，品牌字壓在它的左下角。
@@ -902,42 +907,24 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
           )}
 
-          {/* 新增：頂部的分頁字。跟底部那條是同一組文字、同一個樣式，
-               照參考圖在上面再擺一份；它在捲動區裡面，往下滑會跟著滑走，
-               底部那條才是常駐的。兩邊點下去做的事情完全一樣。 */}
-          <div
-            className="absolute left-0 right-0 z-20 flex px-5"
-            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 12px)' }}
-          >
-            {NAV_ITEMS.map(n => {
-              const on = nav === n.id;
-              return (
-                <button
-                  key={n.id}
-                  onClick={() => goNav(n.id)}
-                  className="flex-1 bg-transparent border-none flex items-center justify-center py-1.5"
-                >
-                  <span className={`text-[12px] tracking-[0.16em] ${on ? 'font-black text-white' : 'font-bold text-white/35'}`}>
-                    {n.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
+          {/* 上面那排分頁字拿掉了 —— 分頁只留螢幕最下面那一條。
+               它本來是絕對定位的，拿掉之後主視覺與品牌字的位置一個像素都沒動，
+               只有聯絡鈕跟著往上補回原來的高度（本來是讓給那排字才往下的）。 */}
 
-          {/* 聯絡鈕：圖示沒換，照參考圖改成細框的小圓，並讓到分頁字下面一排。 */}
+          {/* 聯絡鈕：圖示沒換，只是照參考圖改成細框的小圓。 */}
           <button
             onClick={() => setContactOpen(true)}
             aria-label="聯絡方式"
             className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
-            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 46px)' }}
+            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 14px)' }}
           >
             <Icon name="mail" className="text-[16px]" />
           </button>
 
-          {/* 品牌字 ＋ 副標 ＋「立即使用」：照參考圖靠左、貼在主視覺左下角，
+          {/* 品牌字 ＋「立即使用」：照參考圖靠左、貼在主視覺左下角，
                字級與間距也照參考圖的比例縮到位（以前置中、而且大了快一倍）。
-               字型、顏色、字重、文字內容都沒動。 */}
+               字型、顏色、字重、文字內容都沒動。
+               中間那行副標拿掉了，所以按鈕的上緣間距補回它原本佔的位置。 */}
           <div className="absolute left-5 right-5 bottom-[26px] flex flex-col items-start select-none">
             <motion.h1
               initial={{ opacity: 0, y: 12 }}
@@ -948,10 +935,9 @@ export const HomePage: React.FC<HomePageProps> = ({
             >
               ABAI
             </motion.h1>
-            <p className="mt-2 text-[10px] tracking-[0.02em] text-white/45">內文內文內文內文</p>
             <button
               onClick={onImportPhoto}
-              className="mt-3 h-[27px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
+              className="mt-[18px] h-[27px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
             >
               立即使用
               {pillArrow}
