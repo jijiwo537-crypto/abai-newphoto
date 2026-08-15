@@ -1068,69 +1068,11 @@ const FastSlider = React.memo(({
             <div className={`flex justify-between items-center cursor-pointer select-none ${compact ? 'leading-none' : 'mb-1 translate-y-2'}`} onDoubleClick={(e) => onReset(e, toolId)} title="雙擊重置">
                 {isLutAmount ? (
                     <>
-                        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-[calc(100%-3.5rem)] py-1">
-                            <button 
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (onToggleSoft) onToggleSoft();
-                                    e.currentTarget.blur();
-                                }}
-                                className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase transition-colors border shrink-0 ${
-                                    softActive 
-                                        ? 'bg-white text-black border-white shadow-lg' 
-                                        : 'bg-white/5 text-white/40 border-white/10 hover:text-white/60 hover:border-white/25'
-                                }`}
-                            >
-                                <Icon name="blur_on" className="text-[10px] shrink-0" fill={softActive} />
-                                <span>柔光</span>
-                            </button>
-                            <button 
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (onToggleBlur) onToggleBlur();
-                                    e.currentTarget.blur();
-                                }}
-                                className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase transition-colors border shrink-0 ${
-                                    blurActive 
-                                        ? 'bg-white text-black border-white shadow-lg' 
-                                        : 'bg-white/5 text-white/40 border-white/10 hover:text-white/60 hover:border-white/25'
-                                }`}
-                            >
-                                {/* 跟特效那一排同一個參數，名字要一致 */}
-                                <Icon name="blur_linear" className="text-[10px] shrink-0" fill={blurActive} />
-                                <span>朦朧</span>
-                            </button>
-                            <button 
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (onToggleHalation) onToggleHalation();
-                                    e.currentTarget.blur();
-                                }}
-                                className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase transition-colors border shrink-0 ${
-                                    halationActive 
-                                        ? 'bg-white text-black border-white shadow-lg' 
-                                        : 'bg-white/5 text-white/40 border-white/10 hover:text-white/60 hover:border-white/25'
-                                }`}
-                            >
-                                <Icon name="flare" className="text-[10px] shrink-0" fill={halationActive} />
-                                <span>光暈</span>
-                            </button>
-                            <button 
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (onToggleGrain) onToggleGrain();
-                                    e.currentTarget.blur();
-                                }}
-                                className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase transition-colors border shrink-0 ${
-                                    grainActive 
-                                        ? 'bg-white text-black border-white shadow-lg' 
-                                        : 'bg-white/5 text-white/40 border-white/10 hover:text-white/60 hover:border-white/25'
-                                }`}
-                            >
-                                <Icon name="grain" className="text-[10px] shrink-0" fill={grainActive} />
-                                <span>噪點</span>
-                            </button>
-                        </div>
+                        {/* 這裡本來是柔光／朦朧／光暈／噪點四顆特效鈕。
+                            它們動到的是跟「特效」分頁同一組參數，兩邊互相牽動很容易搞混，
+                            所以整組拿掉了 —— 特效一律從特效分頁開。
+                            左上角改成跟其他滑桿一致的標題文字。 */}
+                        <span className="font-black text-white/40 uppercase pointer-events-none text-[10px] tracking-[0.2em]">強度</span>
                         <span 
                             ref={valueTextRef}
                             className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2.5 py-0.5 rounded active:bg-white/20 transition-colors cursor-pointer select-none"
@@ -3682,6 +3624,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const lutCardOn = (idx: number) => selectedLutIdx === idx;
   const isEffectOn = (toolId: string) =>
     (EFFECT_OWN_KEYS[toolId] || [toolId]).some(k => ((params as any)[k] || 0) !== 0);
+
+
 
   /** 現在一個特效都沒開嗎（「原始」那張卡片要不要亮白框） */
   const noEffectOn = !hasLiveEffect(params);
