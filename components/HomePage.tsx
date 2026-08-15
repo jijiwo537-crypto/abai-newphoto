@@ -920,7 +920,15 @@ export const HomePage: React.FC<HomePageProps> = ({
                    下緣的漸層留在外面不跟著動：它是把畫面收進黑色的遮罩，
                    一起動的話那個交界就會跟著飄。 */}
               <div ref={artRef} className="home-hero-art absolute -inset-y-[10%] inset-x-0 will-change-transform">
-                <img src={recent[0].thumb} alt="" className="w-full h-full object-cover" draggable={false} />
+                {/* 用大張的那一版（長邊 1080）。首頁那一排 5 格用的是 320px 的小圖，
+                     拿它來鋪滿整個螢幕寬會糊掉 —— 那正是「上面的縮圖不夠清楚」的原因。
+                     舊的紀錄還沒有大圖，就退回小圖（只是會糊一點），重新導出一次就會換成大的。 */}
+                <img
+                  src={recent[0].hero || recent[0].thumb}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  draggable={false}
+                />
               </div>
               <div
                 className="absolute inset-x-0 bottom-0 h-[52%]"
@@ -1040,23 +1048,23 @@ export const HomePage: React.FC<HomePageProps> = ({
       <div ref={libRef} className="home-lib relative z-[1] px-6 pb-4 pt-[26px]">
         {/* 模板這一段的底：一整片黑，往下滑的時候修圖那一屏就不會透過來重疊。
              上緣要羽化，不然會看到一條直直的橫邊。
-             羽化總長 58px ＝ 往上多長的 32px ＋ 這一段自己的 pt-[26px]，
+             羽化總長 60px ＝ 往上多長的 34px ＋ 這一段自己的 pt-[26px]，
              所以「完全變成黑色」的那一點剛好落在搜尋欄的上緣，
              羽化區裡不會有任何內容被壓到。
 
              往上多長的那 32px 會不會被外層的 overflow:clip 夾掉？
-             這一段一開始是往下位移 274px 的，位移大於 32px 時完全在夾框裡面；
-             等位移掉到 32px 以下（捲過 690px）的時候，這一段的上緣早就離開畫面了
+             這一段一開始是往下位移 274px 的，位移大於 34px 時完全在夾框裡面；
+             等位移掉到 34px 以下（捲過 686px）的時候，這一段的上緣早就離開畫面了
              （捲到 564px 它就貼齊畫面上緣），所以看得到的時候永遠不會被夾到。
 
              zIndex -1：排在這一段自己的內容後面，但因為外層是 z-[1]、
              修圖那一屏是 z-0，所以它還是穩穩蓋在修圖上面。 */}
         <div
-          className="absolute inset-x-0 -top-[32px] bottom-0 pointer-events-none"
+          className="absolute inset-x-0 -top-[34px] bottom-0 pointer-events-none"
           style={{
             zIndex: -1,
             background:
-              'linear-gradient(to bottom,rgba(0,0,0,0) 0,rgba(0,0,0,.18) 12px,rgba(0,0,0,.52) 30px,rgba(0,0,0,.86) 46px,#000 58px)',
+              'linear-gradient(to bottom,rgba(0,0,0,0) 0,rgba(0,0,0,.18) 13px,rgba(0,0,0,.52) 31px,rgba(0,0,0,.86) 48px,#000 60px)',
           }}
         />
         {/* 搜尋欄 —— 還沒接真的模板資料，先做成純前端的字串過濾 */}
