@@ -48,8 +48,17 @@ const timeAgo = (at: number): string => {
 /** 還沒有內容的格子：跟上面那排功能按鈕同一個底色，不要另外畫斜線 */
 const EMPTY_TILE = 'bg-white/[0.06] border border-white/10';
 
-/** 暫時的：橫幅底圖存在這台裝置的哪一格（接上真的活動資料後就可以刪掉） */
+/* ── 暫時的：拿來看效果用的示意圖 ──────────────────────────────
+   主視覺、橫幅、模板格子都可以自己挑一張圖看看排起來長什麼樣。
+   圖縮小後存在這台裝置的 localStorage，不會上傳任何地方。
+   之後接上真的資料時，把 preview 這一整組（常數、狀態、那顆 input、
+   以及各處的 onClick）拿掉就行，版面完全不用動。 */
+const PREVIEW_KEY = (k: string) => `abai:preview:${k}`;
+/** 橫幅本來自己一格，換成統一的鍵之後把舊的搬過來，已經挑過的圖不會不見 */
 const PROMO_BG_KEY = 'abai:promoBg';
+/** 各處示意圖縮到多大（長邊）。模板格子小、又有 12 格，就存小一點 */
+const PREVIEW_MAX: Record<string, number> = { hero: 1080, promo: 1080 };
+const previewMaxOf = (k: string) => PREVIEW_MAX[k] ?? 720;
 
 const TOOL_TILES = [
   { icon: 'layers', label: '創意拼圖', key: 'collage' },
@@ -734,21 +743,37 @@ export const HomePage: React.FC<HomePageProps> = ({
   /* 歷史紀錄 —— 點一張就回到它導出當下的編輯狀態，沒導出過的位子留空格。
      本來在首頁第一屏，現在搬到「我的」；抽成一個變數，之後想放回去或
      兩邊都放都只要引用它。 */
-  /* ── 暫時的：橫幅底圖 ────────────────────────────────────────────
-     只是拿來看效果用的。挑一張圖 → 縮到長邊 1080 → 存在這台裝置的
-     localStorage，重開 App 還在，不會上傳任何地方。
-     之後接上真的活動資料時，這一整組連同橫幅上那兩顆小鈕一起刪掉就好。 */
-  const promoInputRef = useRef<HTMLInputElement>(null);
-  const [promoBg, setPromoBg] = useState<string | null>(null);
+  /* ── 暫時的：示意圖（主視覺／橫幅／模板格子共用一套）──────────── */
+  const previewInputRef = useRef<HTMLInputElement>(null);
+  const previewKeyRef = useRef<string>('');
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+
   useEffect(() => {
-    try { setPromoBg(localStorage.getItem(PROMO_BG_KEY)); } catch { /* 私密瀏覽會擋 */ }
+    try {
+      const next: Record<string, string> = {};
+      const keys = ['hero', 'promo', ...Array.from({ length: LIB_TEMPLATES.length }, (_, i) => `lib${i}`)];
+      for (const k of keys) {
+        const v = localStorage.getItem(PREVIEW_KEY(k));
+        if (v) next[k] = v;
+      }
+      // 橫幅以前存在自己那一格，搬過來（只搬一次，新的那格沒東西才搬）
+      if (!next.promo) {
+        const old = localStorage.getItem(PROMO_BG_KEY);
+        if (old) { next.promo = old; try { localStorage.setItem(PREVIEW_KEY('promo'), old); } catch {} }
+      }
+      setPreviews(next);
+    } catch { /* 私密瀏覽會擋 */ }
   }, []);
-  const savePromoBg = (v: string | null) => {
-    try { v ? localStorage.setItem(PROMO_BG_KEY, v) : localStorage.removeItem(PROMO_BG_KEY); }
-    catch { /* 空間不夠或被擋就算了，畫面上還是看得到這一次的結果 */ }
+
+  /** 點某一格 → 記住是哪一格，再叫出檔案選擇器（整頁共用同一顆 input） */
+  const pickPreview = (key: string) => {
+    previewKeyRef.current = key;
+    previewInputRef.current?.click();
   };
-  const pickPromoBg = async (f?: File | null) => {
-    if (!f) return;
+
+  const takePreview = async (f?: File | null) => {
+    const key = previewKeyRef.current;
+    if (!f || !key) return;
     const url = URL.createObjectURL(f);
     try {
       const img = await new Promise<HTMLImageElement>((res, rej) => {
@@ -758,18 +783,34 @@ export const HomePage: React.FC<HomePageProps> = ({
         i.src = url;
       });
       const sw = img.naturalWidth || 1, sh = img.naturalHeight || 1;
-      // 縮到長邊 1080 —— 原圖直接塞 localStorage 會爆掉（上限大約 5MB）
-      const s = Math.min(1, 1080 / Math.max(sw, sh));
+      // 縮小再存 —— 原圖直接塞 localStorage 會爆掉（上限大約 5MB）
+      const s = Math.min(1, previewMaxOf(key) / Math.max(sw, sh));
       const cv = document.createElement('canvas');
       cv.width = Math.max(1, Math.round(sw * s));
       cv.height = Math.max(1, Math.round(sh * s));
       cv.getContext('2d')!.drawImage(img, 0, 0, cv.width, cv.height);
       const data = cv.toDataURL('image/jpeg', 0.86);
-      setPromoBg(data);
-      savePromoBg(data);
+      setPreviews(prev => ({ ...prev, [key]: data }));
+      try { localStorage.setItem(PREVIEW_KEY(key), data); }
+      catch { /* 空間不夠或被擋就算了，畫面上還是看得到這一次的結果 */ }
     } catch { /* 這張讀不進來就維持原狀 */ }
     finally { URL.revokeObjectURL(url); }
   };
+
+  /** 主視覺要畫哪一張：自己挑的最優先，沒挑就用最近一張作品（大圖優先） */
+  const heroSrc = previews.hero || recent[0]?.hero || recent[0]?.thumb || null;
+
+  /** 整頁共用的那顆檔案選擇器（掛在最外層，見 return 最下面） */
+  const previewInput = (
+    <input
+      ref={previewInputRef}
+      type="file"
+      accept="image/*"
+      data-preview-pick=""
+      className="hidden"
+      onChange={e => { takePreview(e.target.files?.[0]); e.target.value = ''; }}
+    />
+  );
 
   /* 「立即訂閱」還沒接金流，按下去淡入一行「敬請期待」再淡出。
      用一個遞增的 key 讓連按也會重新播一次動畫，不會卡在原地。 */
@@ -792,6 +833,43 @@ export const HomePage: React.FC<HomePageProps> = ({
     </span>
   );
 
+  /**
+   * 歷史紀錄的格子。首頁那一排放 5 格，「我的」那一頁放 10 格（每排五個、兩排）。
+   * 兩邊是同一顆元件、同一份資料，只有格數不一樣。
+   * 空的位子畫虛線框加一個加號，點下去就直接去挑照片 ——
+   * 本來只是灰底，看不出來可以做什麼。
+   */
+  const historyGrid = (slots: number) => (
+    <div className="grid grid-cols-5 gap-2">
+      {Array.from({ length: slots }, (_, i) => {
+        const item = recent[i];
+        if (!item) {
+          return (
+            <button
+              key={`slot-${i}`}
+              onClick={onImportPhoto}
+              aria-label="匯入照片"
+              className="aspect-[4/5] rounded-[10px] border border-dashed border-white/15 flex items-center justify-center text-white/25 active:scale-[0.97] transition-transform duration-300"
+            >
+              <Icon name="add" className="text-[20px]" />
+            </button>
+          );
+        }
+        return (
+          <button
+            key={item.id}
+            onClick={() => onOpenRecent?.(item.id)}
+            title={`${timeAgo(item.at)}導出`}
+            className="relative aspect-[4/5] rounded-[10px] overflow-hidden border border-white/10 p-0 active:scale-[0.97] transition-transform duration-300"
+          >
+            <img src={item.thumb} alt="" className="w-full h-full object-cover" draggable={false} />
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  /** 首頁那一排：標題 ＋「查看全部」＋ 5 格 */
   const historySection = (
     <div>
       {/* 標題那一排：右邊多一顆「查看全部」。
@@ -807,35 +885,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           {pillArrow}
         </button>
       </div>
-      {/* 格子改成參考圖的直式（4:5）。還沒導出過的位子改成虛線框加一個加號，
-           點下去就直接去挑照片 —— 空格本來只是灰底，看不出來可以做什麼。 */}
-      <div className="grid grid-cols-5 gap-2">
-        {[0, 1, 2, 3, 4].map(i => {
-          const item = recent[i];
-          if (!item) {
-            return (
-              <button
-                key={`slot-${i}`}
-                onClick={onImportPhoto}
-                aria-label="匯入照片"
-                className="aspect-[4/5] rounded-[10px] border border-dashed border-white/15 flex items-center justify-center text-white/25 active:scale-[0.97] transition-transform duration-300"
-              >
-                <Icon name="add" className="text-[20px]" />
-              </button>
-            );
-          }
-          return (
-            <button
-              key={item.id}
-              onClick={() => onOpenRecent?.(item.id)}
-              title={`${timeAgo(item.at)}導出`}
-              className="relative aspect-[4/5] rounded-[10px] overflow-hidden border border-white/10 p-0 active:scale-[0.97] transition-transform duration-300"
-            >
-              <img src={item.thumb} alt="" className="w-full h-full object-cover" draggable={false} />
-            </button>
-          );
-        })}
-      </div>
+      {historyGrid(5)}
     </div>
   );
 
@@ -922,6 +972,15 @@ export const HomePage: React.FC<HomePageProps> = ({
           </AnimatePresence>
           </div>
 
+          {/* 歷史紀錄（完整版）——首頁那一排的「查看全部」就是跳到這裡。
+               10 格、每排五個；還沒導出過的位子留空格，點下去直接去挑照片。 */}
+          <div className="mt-8">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[12px] font-bold tracking-[0.14em] text-white/55">歷史紀錄</span>
+            </div>
+            {historyGrid(10)}
+          </div>
+
           {/* 登出與刪除帳號都收進帳號設定那一頁了（點上面那列右邊的箭頭） */}
         </div>
       )}
@@ -976,33 +1035,26 @@ export const HomePage: React.FC<HomePageProps> = ({
         {/* 上下限放寬到「正常手機都碰不到」：碰到上限的話，多出來的高度就會掉到
              最下面變成一塊死留白，縮圖到分頁列的間距就不等於歷史紀錄的上緣間距了。
              52vh 只是防止極端視窗把主視覺撐得太誇張。 */}
-        <div className="relative shrink-0 flex-1 min-h-[130px] max-h-[52vh] -mx-5 overflow-hidden">
+        <div
+          role="button"
+          aria-label="換一張主視覺"
+          onClick={() => pickPreview('hero')}
+          className="relative shrink-0 flex-1 min-h-[130px] max-h-[52vh] -mx-5 overflow-hidden"
+        >
 
-          {/* 新增：主視覺用「最近一張作品」。參考圖上面那張照片就是歷史紀錄
-               第一格的同一張，所以這裡直接接同一份資料 —— 還沒有作品的時候
-               就維持純黑，什麼都不會少。
-               左邊那道把照片壓黑的漸層拿掉了，照片改成整個滿版 ——
-               只留 70% 寬又沒有漸層的話，左邊會出現一條直的硬邊。
-               下緣那道還留著：它負責把照片收進黑色、跟下面那一排按鈕接起來，
-               順便讓壓在上面的品牌字讀得到（品牌字剛好落在這一段裡）。 */}
-          {recent[0] && (
+          {/* 主視覺：預設用「最近一張作品」（參考圖上面那張照片就是歷史紀錄
+               第一格的同一張）。點一下可以自己挑一張示意圖蓋過去，看排版效果。
+               左邊那道壓黑的漸層已經拿掉了，照片整個滿版；
+               下緣那道還留著 —— 它負責把照片收進黑色、跟下面那一排按鈕接起來，
+               順便讓壓在上面的品牌字讀得到（品牌字剛好落在那一段裡）。 */}
+          {heroSrc && (
             <div className="absolute inset-0 overflow-hidden pointer-events-none select-none">
               {/* 照片自己再慢一層（見 styles.css 的 .home-hero-art）：
                    上面那一屏已經只走 40% 的速度，照片在它裡面再往下補一點，
                    整體只走 30%，同時輕輕推近 —— 兩層速度差就是深度的來源。
-                   上下各多留 10% 的餘裕，位移與推近時邊緣才不會露出空白。
-                   下緣的漸層留在外面不跟著動：它是把畫面收進黑色的遮罩，
-                   一起動的話那個交界就會跟著飄。 */}
+                   上下各多留 10% 的餘裕，位移與推近時邊緣才不會露出空白。 */}
               <div ref={artRef} className="home-hero-art absolute -inset-y-[10%] inset-x-0 will-change-transform">
-                {/* 用大張的那一版（長邊 1080）。首頁那一排 5 格用的是 320px 的小圖，
-                     拿它來鋪滿整個螢幕寬會糊掉 —— 那正是「上面的縮圖不夠清楚」的原因。
-                     舊的紀錄還沒有大圖，就退回小圖（只是會糊一點），重新導出一次就會換成大的。 */}
-                <img
-                  src={recent[0].hero || recent[0].thumb}
-                  alt=""
-                  className="w-full h-full object-cover"
-                  draggable={false}
-                />
+                <img src={heroSrc} alt="" className="w-full h-full object-cover" draggable={false} />
               </div>
               <div
                 className="absolute inset-x-0 bottom-0 h-[52%]"
@@ -1017,7 +1069,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
           {/* 聯絡鈕：圖示沒換，只是照參考圖改成細框的小圓。 */}
           <button
-            onClick={() => setContactOpen(true)}
+            onClick={e => { e.stopPropagation(); setContactOpen(true); }}
             aria-label="聯絡方式"
             className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
             style={{ top: 'calc(env(safe-area-inset-top, 0px) + 14px)' }}
@@ -1029,7 +1081,10 @@ export const HomePage: React.FC<HomePageProps> = ({
                字級與間距也照參考圖的比例縮到位（以前置中、而且大了快一倍）。
                字型、顏色、字重、文字內容都沒動。
                中間那行副標拿掉了，所以按鈕的上緣間距補回它原本佔的位置。 */}
-          <div className="absolute left-5 right-5 bottom-[14px] flex flex-col items-start select-none">
+          <div
+            onClick={e => e.stopPropagation()}
+            className="absolute left-5 right-5 bottom-[14px] flex flex-col items-start select-none"
+          >
             <motion.h1
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
@@ -1093,17 +1148,26 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div
           role="button"
           aria-label="換一張橫幅底圖"
-          onClick={() => promoInputRef.current?.click()}
+          onClick={() => pickPreview('promo')}
           className="relative z-10 mt-[14px] shrink-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
-          style={{ background: promoBg ? undefined : 'rgba(255,255,255,.03)' }}
+          style={{ background: previews.promo ? undefined : 'rgba(255,255,255,.03)' }}
         >
-          {promoBg && (
+          {previews.promo && (
             <>
-              <img src={promoBg} alt="" className="absolute inset-0 w-full h-full object-cover" draggable={false} />
-              {/* 由左往右收黑：字壓在左邊，右邊才看得到圖 */}
+              <img src={previews.promo} alt="" className="absolute inset-0 w-full h-full object-cover" draggable={false} />
+              {/* 由左往右收黑：字壓在左邊，右邊完全乾淨。
+                   右端一定要收到「全透明」，不能停在 rgba(0,0,0,.12) ——
+                   那 12% 會像一層灰紗蓋在整張圖右半邊上。
+                   中間照 smoothstep 取樣，透明度曲線沒有折角，看不到帶狀邊。 */}
               <div
                 className="absolute inset-0"
-                style={{ background: 'linear-gradient(to right,rgba(0,0,0,.86) 0%,rgba(0,0,0,.66) 42%,rgba(0,0,0,.28) 78%,rgba(0,0,0,.12) 100%)' }}
+                style={{
+                  background:
+                    'linear-gradient(to right,'
+                    + 'rgba(0,0,0,.88) 0%,rgba(0,0,0,.855) 8%,rgba(0,0,0,.789) 16%,rgba(0,0,0,.69) 24%,'
+                    + 'rgba(0,0,0,.57) 32%,rgba(0,0,0,.44) 40%,rgba(0,0,0,.31) 48%,rgba(0,0,0,.19) 56%,'
+                    + 'rgba(0,0,0,.092) 64%,rgba(0,0,0,.025) 72%,rgba(0,0,0,0) 80%,rgba(0,0,0,0) 100%)',
+                }}
               />
             </>
           )}
@@ -1119,14 +1183,6 @@ export const HomePage: React.FC<HomePageProps> = ({
               {pillArrow}
             </button>
           </div>
-          <input
-            ref={promoInputRef}
-            type="file"
-            accept="image/*"
-            data-promo-bg=""
-            className="hidden"
-            onChange={e => { pickPromoBg(e.target.files?.[0]); e.target.value = ''; }}
-          />
         </div>
 
         {/* 歷史紀錄 —— 點一張就回到它導出當下的編輯狀態。
@@ -1205,20 +1261,31 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div className="flex gap-3">
           {[0, 1].map(col => (
             <div key={col} className="flex-1 min-w-0 flex flex-col gap-3">
-              {libList.filter((_, i) => i % 2 === col).map(t => (
-                <div
-                  key={t.name}
-                  className={`relative rounded-[14px] overflow-hidden flex items-end ${EMPTY_TILE}`}
-                  style={{ aspectRatio: t.ratio }}
-                >
-                  <span
-                    className="w-full text-left px-3 py-2.5 text-[11px] font-black tracking-[0.08em] text-white/70"
-                    style={{ background: 'linear-gradient(to top,rgba(0,0,0,.8),rgba(0,0,0,0))' }}
+              {libList.filter((_, i) => i % 2 === col).map(t => {
+                const key = `lib${LIB_TEMPLATES.indexOf(t)}`;
+                const img = previews[key];
+                return (
+                  /* 還沒接真的模板資料，所以每一格都可以自己放一張示意圖看效果。
+                     之後接上真的資料時，把 onClick 與 previews 這一段拿掉就好。 */
+                  <button
+                    key={t.name}
+                    onClick={() => pickPreview(key)}
+                    aria-label={`${t.name}：換一張示意圖`}
+                    className={`relative rounded-[14px] overflow-hidden flex items-end text-left active:scale-[0.99] transition-transform duration-300 ${img ? 'border border-white/10' : EMPTY_TILE}`}
+                    style={{ aspectRatio: t.ratio }}
                   >
-                    {t.name}
-                  </span>
-                </div>
-              ))}
+                    {img && (
+                      <img src={img} alt="" className="absolute inset-0 w-full h-full object-cover" draggable={false} />
+                    )}
+                    <span
+                      className="relative w-full text-left px-3 py-2.5 text-[11px] font-black tracking-[0.08em] text-white/70"
+                      style={{ background: 'linear-gradient(to top,rgba(0,0,0,.8),rgba(0,0,0,0))' }}
+                    >
+                      {t.name}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           ))}
         </div>
@@ -1248,6 +1315,8 @@ export const HomePage: React.FC<HomePageProps> = ({
           );
         })}
       </div>
+
+      {previewInput}
 
       {/* --- 登入 ---
            沒有後端可以驗，所以驗證碼收到就算過，帳號存在這台裝置上。
