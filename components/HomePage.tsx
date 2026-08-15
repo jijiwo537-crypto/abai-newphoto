@@ -1085,12 +1085,16 @@ export const HomePage: React.FC<HomePageProps> = ({
 
         {/* 新增：橫幅。按鈕沿用「立即使用」那一顆，沒有新的設計語言。
 
-             ⚠️ 暫時的：右上角那顆相片鈕可以自己上傳一張底圖，純粹拿來看效果。
-             圖只存在這台裝置的 localStorage，不會上傳任何地方；
-             之後接上真的活動資料時，把 promoBg 這一組（狀態、input、那顆鈕）
-             整個拿掉，換成後端給的圖就行，其他部分完全不用動。 */}
+             ⚠️ 暫時的：點這張卡片就可以換一張底圖，純粹拿來看效果。
+             沒有上傳／替換／刪除那幾顆小鈕了 —— 卡片本身就是那顆鈕，
+             而且只能換、不能清空。圖只存在這台裝置的 localStorage，
+             不會上傳任何地方。之後接上真的活動資料時，把 promoBg 這一組
+             （狀態、input、卡片上的 onClick）拿掉就行，其他部分不用動。 */}
         <div
-          className="relative z-10 mt-[14px] shrink-0 rounded-[14px] border border-white/[0.08] overflow-hidden"
+          role="button"
+          aria-label="換一張橫幅底圖"
+          onClick={() => promoInputRef.current?.click()}
+          className="relative z-10 mt-[14px] shrink-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
           style={{ background: promoBg ? undefined : 'rgba(255,255,255,.03)' }}
         >
           {promoBg && (
@@ -1107,35 +1111,14 @@ export const HomePage: React.FC<HomePageProps> = ({
             <p className="text-[16px] font-black tracking-[0.04em] text-white">全新濾鏡上線</p>
             <p className="mt-1.5 text-[11px] tracking-[0.14em] text-white/45">一鍵調出質感氛圍</p>
             <button
-              onClick={onImportPhoto}
+              /* 這顆在卡片裡面，要擋住冒泡 —— 不然按它會順便叫出換圖 */
+              onClick={e => { e.stopPropagation(); onImportPhoto(); }}
               className="mt-3 h-[26px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
             >
               立即使用
               {pillArrow}
             </button>
           </div>
-
-          {/* 上傳／換掉底圖。長按（或再按一次已經有圖的狀態）可以清掉 */}
-          <button
-            onClick={() => promoInputRef.current?.click()}
-            onContextMenu={e => { e.preventDefault(); setPromoBg(null); savePromoBg(null); }}
-            aria-label={promoBg ? '換一張底圖' : '上傳底圖'}
-            className="absolute top-2.5 right-2.5 w-[30px] h-[30px] rounded-full bg-black/45 border border-white/20 flex items-center justify-center text-white/70 active:scale-90 transition-transform"
-          >
-            {/* 圖示只能用字型子集裡有的那些 —— 沒有的會把名字當成文字直接印出來。
-                 refresh／sync／upload 都不在子集裡（量到 168／96／144px，正常是 24px），
-                 autorenew 有，長得也是換一張的意思。 */}
-            <Icon name={promoBg ? 'autorenew' : 'add_photo_alternate'} className="text-[15px]" />
-          </button>
-          {promoBg && (
-            <button
-              onClick={() => { setPromoBg(null); savePromoBg(null); }}
-              aria-label="移除底圖"
-              className="absolute top-2.5 right-[46px] w-[30px] h-[30px] rounded-full bg-black/45 border border-white/20 flex items-center justify-center text-white/70 active:scale-90 transition-transform"
-            >
-              <Icon name="close" className="text-[15px]" />
-            </button>
-          )}
           <input
             ref={promoInputRef}
             type="file"
@@ -1172,10 +1155,16 @@ export const HomePage: React.FC<HomePageProps> = ({
       <div ref={libRef} className="home-lib relative z-[1] px-6 pb-4 pt-[26px]">
         {/* 模板這一段的底：一整片黑，往下滑的時候修圖那一屏就不會透過來重疊。
              上緣要羽化，不然會看到一條直直的橫邊。
-             羽化長度 36px（原本 60px，收掉 40%）。遮罩的上緣位置沒動，
-             還是從這一段上方 34px 開始 —— 只是黑得比較快。
-             純黑那一點落在這一段內 2px 處，離搜尋欄上緣（pt-[26px]）還有 24px，
+             羽化長度 43px（原本 36px，再加 20%）。遮罩的上緣位置沒動，
+             還是從這一段上方 34px 開始。
+             純黑那一點落在這一段內 9px 處，離搜尋欄上緣（pt-[26px]）還有 17px，
              所以羽化區裡一樣不會有任何內容被壓到。
+
+             硬邊是怎麼來的：原本只有四個轉折點、每兩點之間是直線，
+             透明度的曲線在每個點都會折一下，眼睛對這種折角特別敏感
+             （馬赫帶），看起來就是一條一條的邊。
+             這裡改成照 smoothstep（t²(3−2t)）每 3px 取一個點、共 16 站：
+             曲線在頭尾兩端的斜率都是 0，中間也沒有折角，所以完全看不到邊。
 
              往上多長的那 34px 會不會被外層的 overflow:clip 夾掉？
              這一段一開始是往下位移 274px 的，位移大於 34px 時完全在夾框裡面；
@@ -1189,7 +1178,11 @@ export const HomePage: React.FC<HomePageProps> = ({
           style={{
             zIndex: -1,
             background:
-              'linear-gradient(to bottom,rgba(0,0,0,0) 0,rgba(0,0,0,.18) 8px,rgba(0,0,0,.52) 19px,rgba(0,0,0,.86) 29px,#000 36px)',
+              'linear-gradient(to bottom,'
+              + 'rgba(0,0,0,0) 0px,rgba(0,0,0,.014) 3px,rgba(0,0,0,.053) 6px,rgba(0,0,0,.113) 9px,'
+              + 'rgba(0,0,0,.19) 12px,rgba(0,0,0,.28) 15px,rgba(0,0,0,.379) 18px,rgba(0,0,0,.483) 21px,'
+              + 'rgba(0,0,0,.587) 24px,rgba(0,0,0,.688) 27px,rgba(0,0,0,.781) 30px,rgba(0,0,0,.863) 33px,'
+              + 'rgba(0,0,0,.929) 36px,rgba(0,0,0,.976) 39px,rgba(0,0,0,.994) 41px,#000 43px)',
           }}
         />
         {/* 搜尋欄 —— 還沒接真的模板資料，先做成純前端的字串過濾 */}
