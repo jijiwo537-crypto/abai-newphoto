@@ -159,3 +159,86 @@ select:focus, select:focus-visible {
   height: 15px; width: 15px; border-radius: 50%;
   background: #fff; border: none; cursor: pointer;
 }
+
+/* ── 首頁的視差捲動 ──────────────────────────────────────────────
+   HomePage.tsx 早就備好了兩條路：支援 CSS 捲動時間軸的瀏覽器走這一段，
+   不支援的落回它自己的 JS（每一格讀捲動位置）。但這一段 CSS 之前是缺的，
+   所以在支援的瀏覽器上等於整套視差都沒有作用 —— 這裡把它補回來。
+
+   兩層的速度差就是「精緻」的來源：
+     ‧ 修圖那一屏（.home-hero）只走 40% 的速度 —— 捲了 y 就自己往下補 0.6y，
+       看起來像被留在後面；同時用 smoothstep 慢慢淡掉，捲到約 46% 屏就不見。
+     ‧ 主視覺裡的照片（.home-hero-art）再慢一層（只走 30%），並且輕輕推近
+       （1 → 1.06）；三層不同速度疊起來才會有深度，而不是整片一起滑。
+     ‧ 模板那一段（.home-lib）反過來比捲軸快 0.35 屏，由下往上追上來。
+
+   所有位移都寫在 transform／opacity 上，整段動畫由合成執行緒照捲動位置自己算，
+   主執行緒完全不參與 —— 這是不抖的關鍵。
+   --hero-range 是「一屏有多高」，由 HomePage.tsx 量好寫進 .home-scroll；
+   還沒寫進來之前先用 100vh 頂著，畫面不會因為少了它而錯位。 */
+.home-scroll {
+  --hero-range: 100vh;
+  /* 模板那一段一開始往下藏多少。HomePage.tsx 會讀這個值：
+     排版上先用負的 margin-top 把它往上收同樣的量，可捲長度才不會被撐長
+     （撐長的話捲到底會被瀏覽器夾回來，就是「滑到底會回朔」）。 */
+  --lib-lift: calc(var(--hero-range, 100vh) * 0.35);
+  /* 具名的捲動時間軸。
+     不能用 scroll(nearest block)：主視覺裡的照片包在 overflow:hidden 裡面，
+     而 overflow:hidden 本身就算一個「可捲容器」，nearest 會停在那一層 ——
+     那一層根本捲不動，時間軸等於永遠停在起點，照片就完全不會動。
+     取名字之後是往上找同名的祖先，不管中間隔了幾層 overflow 都找得到。 */
+  scroll-timeline: --homeScroll block;
+}
+
+@keyframes home-hero-scroll {
+  /* opacity 的每一站是 JS 那條路的 smoothstep 取樣點（起點 6%、終點 46%），
+     兩條路的節奏才會完全一樣。直線淡出在頭尾會有「開關感」。 */
+  0%   { transform: translate3d(0, 0, 0); opacity: 1; }
+  6%   { opacity: 1; }
+  10%  { opacity: 0.972; }
+  15%  { opacity: 0.874; }
+  20%  { opacity: 0.692; }
+  25%  { opacity: 0.518; }
+  30%  { opacity: 0.352; }
+  35%  { opacity: 0.206; }
+  40%  { opacity: 0.091; }
+  46%  { opacity: 0; }
+  100% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.6), 0); opacity: 0; }
+}
+
+/* 主視覺裡的照片：在 .home-hero 已經慢下來的基礎上再慢一層，
+   等於整體只走 30% 的速度。scale 讓它同時輕輕推近，避免「只是往下掉」。
+   位移量刻意壓在 6% 屏以內：照片上下各只多留 10% 的餘裕，超過就會露出空白。 */
+@keyframes home-hero-art-scroll {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to   { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.06), 0) scale(1.05); }
+}
+
+/* 模板那一段：一開始往下藏 --lib-lift，隨捲動收回 0 */
+@keyframes home-lib-scroll {
+  from { transform: translate3d(0, var(--lib-lift, 0px), 0); }
+  to   { transform: translate3d(0, 0, 0); }
+}
+
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .home-hero,
+    .home-hero-art,
+    .home-lib {
+      animation-timeline: --homeScroll;
+      animation-range: 0 var(--hero-range, 100vh);
+      animation-timing-function: linear;
+      animation-fill-mode: both;
+      animation-duration: 1ms;   /* 用捲動時間軸時會被忽略，只是給不支援的情況一個安全值 */
+    }
+    .home-hero     { animation-name: home-hero-scroll; }
+    .home-hero-art { animation-name: home-hero-art-scroll; }
+    .home-lib      { animation-name: home-lib-scroll; }
+  }
+}
+
+/* 使用者要求減少動態時：整套關掉，模板那一段也不要預先往下藏
+   （不然負的 margin-top 會把它往上拉，跟修圖那一屏疊在一起）。 */
+@media (prefers-reduced-motion: reduce) {
+  .home-scroll { --lib-lift: 0px; }
+}
