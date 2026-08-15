@@ -48,6 +48,9 @@ const timeAgo = (at: number): string => {
 /** 還沒有內容的格子：跟上面那排功能按鈕同一個底色，不要另外畫斜線 */
 const EMPTY_TILE = 'bg-white/[0.06] border border-white/10';
 
+/** 暫時的：橫幅底圖存在這台裝置的哪一格（接上真的活動資料後就可以刪掉） */
+const PROMO_BG_KEY = 'abai:promoBg';
+
 const TOOL_TILES = [
   { icon: 'layers', label: '創意拼圖', key: 'collage' },
   { icon: 'grid_view', label: '經典拼圖', key: 'layout' },
@@ -731,6 +734,54 @@ export const HomePage: React.FC<HomePageProps> = ({
   /* 歷史紀錄 —— 點一張就回到它導出當下的編輯狀態，沒導出過的位子留空格。
      本來在首頁第一屏，現在搬到「我的」；抽成一個變數，之後想放回去或
      兩邊都放都只要引用它。 */
+  /* ── 暫時的：橫幅底圖 ────────────────────────────────────────────
+     只是拿來看效果用的。挑一張圖 → 縮到長邊 1080 → 存在這台裝置的
+     localStorage，重開 App 還在，不會上傳任何地方。
+     之後接上真的活動資料時，這一整組連同橫幅上那兩顆小鈕一起刪掉就好。 */
+  const promoInputRef = useRef<HTMLInputElement>(null);
+  const [promoBg, setPromoBg] = useState<string | null>(null);
+  useEffect(() => {
+    try { setPromoBg(localStorage.getItem(PROMO_BG_KEY)); } catch { /* 私密瀏覽會擋 */ }
+  }, []);
+  const savePromoBg = (v: string | null) => {
+    try { v ? localStorage.setItem(PROMO_BG_KEY, v) : localStorage.removeItem(PROMO_BG_KEY); }
+    catch { /* 空間不夠或被擋就算了，畫面上還是看得到這一次的結果 */ }
+  };
+  const pickPromoBg = async (f?: File | null) => {
+    if (!f) return;
+    const url = URL.createObjectURL(f);
+    try {
+      const img = await new Promise<HTMLImageElement>((res, rej) => {
+        const i = new Image();
+        i.onload = () => res(i);
+        i.onerror = () => rej(new Error('decode failed'));
+        i.src = url;
+      });
+      const sw = img.naturalWidth || 1, sh = img.naturalHeight || 1;
+      // 縮到長邊 1080 —— 原圖直接塞 localStorage 會爆掉（上限大約 5MB）
+      const s = Math.min(1, 1080 / Math.max(sw, sh));
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(sw * s));
+      cv.height = Math.max(1, Math.round(sh * s));
+      cv.getContext('2d')!.drawImage(img, 0, 0, cv.width, cv.height);
+      const data = cv.toDataURL('image/jpeg', 0.86);
+      setPromoBg(data);
+      savePromoBg(data);
+    } catch { /* 這張讀不進來就維持原狀 */ }
+    finally { URL.revokeObjectURL(url); }
+  };
+
+  /* 「立即訂閱」還沒接金流，按下去淡入一行「敬請期待」再淡出。
+     用一個遞增的 key 讓連按也會重新播一次動畫，不會卡在原地。 */
+  const [soonKey, setSoonKey] = useState(0);
+  const soonTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (soonTimer.current) clearTimeout(soonTimer.current); }, []);
+  const showSoon = () => {
+    setSoonKey(k => k + 1);
+    if (soonTimer.current) clearTimeout(soonTimer.current);
+    soonTimer.current = setTimeout(() => { soonTimer.current = null; setSoonKey(0); }, 1500);
+  };
+
   /** 「立即使用」「查看全部」右邊那顆小箭頭，兩處共用 */
   const pillArrow = (
     <span
@@ -829,7 +880,10 @@ export const HomePage: React.FC<HomePageProps> = ({
             </button>
           </div>
 
-          {/* 會員方案。沒有接金流，按鈕先不做事 */}
+          {/* 會員方案。還沒接金流 —— 按下去淡入一行「敬請期待」再淡出。
+               外層加 relative，那行字用絕對定位掛在卡片下面：
+               走版面流的話它一出現就會把下面的東西往下頂一下。 */}
+          <div className="relative">
           <div
             className="rounded-[16px] overflow-hidden border border-white/[0.14] px-5 pt-[18px] pb-4 flex items-center gap-3"
             style={{ background: 'linear-gradient(120deg,#2b2b2b 0%,#1a1a1a 46%,#242424 100%)' }}
@@ -843,9 +897,29 @@ export const HomePage: React.FC<HomePageProps> = ({
                 {account ? '解鎖全部權益' : '登入即可解鎖全部權益'}
               </span>
             </span>
-            <span className="shrink-0 h-9 px-5 rounded-full bg-white text-black text-[12px] font-black tracking-[0.08em] flex items-center">
+            <button
+              onClick={showSoon}
+              className="shrink-0 h-9 px-5 rounded-full bg-white text-black text-[12px] font-black tracking-[0.08em] flex items-center active:scale-95 transition-transform duration-300"
+            >
               立即訂閱
-            </span>
+            </button>
+          </div>
+
+          {/* 淡入 → 停一下 → 淡出。key 每按一次就換，連按也會重新播 */}
+          <AnimatePresence>
+            {soonKey > 0 && (
+              <motion.p
+                key={soonKey}
+                initial={{ opacity: 0, y: -3 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -2 }}
+                transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
+                className="absolute top-full left-0 right-0 mt-3 text-center text-[12px] tracking-[0.22em] text-white/55 pointer-events-none"
+              >
+                敬請期待
+              </motion.p>
+            )}
+          </AnimatePresence>
           </div>
 
           {/* 登出與刪除帳號都收進帳號設定那一頁了（點上面那列右邊的箭頭） */}
@@ -1009,17 +1083,67 @@ export const HomePage: React.FC<HomePageProps> = ({
           ))}
         </div>
 
-        {/* 新增：橫幅。按鈕沿用「立即使用」那一顆，沒有新的設計語言。 */}
-        <div className="relative z-10 mt-[14px] shrink-0 rounded-[14px] border border-white/[0.08] bg-white/[0.03] px-[18px] py-4">
-          <p className="text-[16px] font-black tracking-[0.04em] text-white">全新濾鏡上線</p>
-          <p className="mt-1.5 text-[11px] tracking-[0.14em] text-white/45">一鍵調出質感氛圍</p>
+        {/* 新增：橫幅。按鈕沿用「立即使用」那一顆，沒有新的設計語言。
+
+             ⚠️ 暫時的：右上角那顆相片鈕可以自己上傳一張底圖，純粹拿來看效果。
+             圖只存在這台裝置的 localStorage，不會上傳任何地方；
+             之後接上真的活動資料時，把 promoBg 這一組（狀態、input、那顆鈕）
+             整個拿掉，換成後端給的圖就行，其他部分完全不用動。 */}
+        <div
+          className="relative z-10 mt-[14px] shrink-0 rounded-[14px] border border-white/[0.08] overflow-hidden"
+          style={{ background: promoBg ? undefined : 'rgba(255,255,255,.03)' }}
+        >
+          {promoBg && (
+            <>
+              <img src={promoBg} alt="" className="absolute inset-0 w-full h-full object-cover" draggable={false} />
+              {/* 由左往右收黑：字壓在左邊，右邊才看得到圖 */}
+              <div
+                className="absolute inset-0"
+                style={{ background: 'linear-gradient(to right,rgba(0,0,0,.86) 0%,rgba(0,0,0,.66) 42%,rgba(0,0,0,.28) 78%,rgba(0,0,0,.12) 100%)' }}
+              />
+            </>
+          )}
+          <div className="relative px-[18px] py-4">
+            <p className="text-[16px] font-black tracking-[0.04em] text-white">全新濾鏡上線</p>
+            <p className="mt-1.5 text-[11px] tracking-[0.14em] text-white/45">一鍵調出質感氛圍</p>
+            <button
+              onClick={onImportPhoto}
+              className="mt-3 h-[26px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
+            >
+              立即使用
+              {pillArrow}
+            </button>
+          </div>
+
+          {/* 上傳／換掉底圖。長按（或再按一次已經有圖的狀態）可以清掉 */}
           <button
-            onClick={onImportPhoto}
-            className="mt-3 h-[26px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
+            onClick={() => promoInputRef.current?.click()}
+            onContextMenu={e => { e.preventDefault(); setPromoBg(null); savePromoBg(null); }}
+            aria-label={promoBg ? '換一張底圖' : '上傳底圖'}
+            className="absolute top-2.5 right-2.5 w-[30px] h-[30px] rounded-full bg-black/45 border border-white/20 flex items-center justify-center text-white/70 active:scale-90 transition-transform"
           >
-            立即使用
-            {pillArrow}
+            {/* 圖示只能用字型子集裡有的那些 —— 沒有的會把名字當成文字直接印出來。
+                 refresh／sync／upload 都不在子集裡（量到 168／96／144px，正常是 24px），
+                 autorenew 有，長得也是換一張的意思。 */}
+            <Icon name={promoBg ? 'autorenew' : 'add_photo_alternate'} className="text-[15px]" />
           </button>
+          {promoBg && (
+            <button
+              onClick={() => { setPromoBg(null); savePromoBg(null); }}
+              aria-label="移除底圖"
+              className="absolute top-2.5 right-[46px] w-[30px] h-[30px] rounded-full bg-black/45 border border-white/20 flex items-center justify-center text-white/70 active:scale-90 transition-transform"
+            >
+              <Icon name="close" className="text-[15px]" />
+            </button>
+          )}
+          <input
+            ref={promoInputRef}
+            type="file"
+            accept="image/*"
+            data-promo-bg=""
+            className="hidden"
+            onChange={e => { pickPromoBg(e.target.files?.[0]); e.target.value = ''; }}
+          />
         </div>
 
         {/* 歷史紀錄 —— 點一張就回到它導出當下的編輯狀態。
@@ -1048,11 +1172,12 @@ export const HomePage: React.FC<HomePageProps> = ({
       <div ref={libRef} className="home-lib relative z-[1] px-6 pb-4 pt-[26px]">
         {/* 模板這一段的底：一整片黑，往下滑的時候修圖那一屏就不會透過來重疊。
              上緣要羽化，不然會看到一條直直的橫邊。
-             羽化總長 60px ＝ 往上多長的 34px ＋ 這一段自己的 pt-[26px]，
-             所以「完全變成黑色」的那一點剛好落在搜尋欄的上緣，
-             羽化區裡不會有任何內容被壓到。
+             羽化長度 36px（原本 60px，收掉 40%）。遮罩的上緣位置沒動，
+             還是從這一段上方 34px 開始 —— 只是黑得比較快。
+             純黑那一點落在這一段內 2px 處，離搜尋欄上緣（pt-[26px]）還有 24px，
+             所以羽化區裡一樣不會有任何內容被壓到。
 
-             往上多長的那 32px 會不會被外層的 overflow:clip 夾掉？
+             往上多長的那 34px 會不會被外層的 overflow:clip 夾掉？
              這一段一開始是往下位移 274px 的，位移大於 34px 時完全在夾框裡面；
              等位移掉到 34px 以下（捲過 686px）的時候，這一段的上緣早就離開畫面了
              （捲到 564px 它就貼齊畫面上緣），所以看得到的時候永遠不會被夾到。
@@ -1064,7 +1189,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           style={{
             zIndex: -1,
             background:
-              'linear-gradient(to bottom,rgba(0,0,0,0) 0,rgba(0,0,0,.18) 13px,rgba(0,0,0,.52) 31px,rgba(0,0,0,.86) 48px,#000 60px)',
+              'linear-gradient(to bottom,rgba(0,0,0,0) 0,rgba(0,0,0,.18) 8px,rgba(0,0,0,.52) 19px,rgba(0,0,0,.86) 29px,#000 36px)',
           }}
         />
         {/* 搜尋欄 —— 還沒接真的模板資料，先做成純前端的字串過濾 */}
