@@ -15,8 +15,15 @@ const STORE = 'items';
 const STAMP_KEY = 'abai:exports';
 /** 留最近幾筆就好，超過的連原圖一起丟掉 */
 const MAX_ITEMS = 12;
-/** 縮圖的長邊 */
+/** 縮圖的長邊（首頁那一排 5 格用的） */
 const THUMB_MAX = 320;
+/**
+ * 主視覺用的長邊。
+ * 首頁最上面那一塊是整個螢幕寬，320px 的縮圖放大上去會糊掉 ——
+ * 所以另外存一張大的，只有那一塊會用到。
+ * 小圖留著不動：那一排 5 格只有 62px 寬，用大圖去解碼很浪費記憶體。
+ */
+const HERO_MAX = 1080;
 
 export type ExportTool = 'editor' | 'beauty' | 'collage' | 'layout' | 'match';
 
@@ -24,8 +31,13 @@ export interface ExportMeta {
   id: string;
   tool: ExportTool;
   at: number;
-  /** 小張的預覽圖（data URL），首頁直接拿來顯示 */
+  /** 小張的預覽圖（data URL），首頁那一排 5 格直接拿來顯示 */
   thumb: string;
+  /**
+   * 大張的預覽圖（data URL），首頁最上面那一塊主視覺用。
+   * 舊的紀錄沒有這一欄，畫面那邊會自動退回用 thumb（只是會糊一點）。
+   */
+  hero?: string;
   /** 工具自己的參數，形狀由工具決定 */
   state: any;
   /** 原圖的內容雜湊。同一張照片重複導出時用它把舊的那筆換掉 */
@@ -165,9 +177,9 @@ function stamp() {
   try { localStorage.setItem(STAMP_KEY, String(Date.now())); } catch { /* 私密瀏覽會擋 */ }
 }
 
-/** 目標尺寸：長邊縮到 THUMB_MAX */
-function fitThumb(w: number, h: number) {
-  const s = Math.min(1, THUMB_MAX / Math.max(w || 1, h || 1));
+/** 目標尺寸：長邊縮到 max */
+function fitThumb(w: number, h: number, max = THUMB_MAX) {
+  const s = Math.min(1, max / Math.max(w || 1, h || 1));
   return { w: Math.max(1, Math.round((w || 1) * s)), h: Math.max(1, Math.round((h || 1) * s)) };
 }
 
@@ -188,18 +200,18 @@ function looksBlank(cv: HTMLCanvasElement): boolean {
   }
 }
 
-function encode(cv: HTMLCanvasElement): string {
-  return cv.toDataURL('image/jpeg', 0.72);
+function encode(cv: HTMLCanvasElement, q = 0.72): string {
+  return cv.toDataURL('image/jpeg', q);
 }
 
 /** 路線 A：createImageBitmap 直接解碼＋縮圖，不用先配一張原尺寸的點陣圖 */
-async function thumbViaBitmap(blob: Blob): Promise<string | null> {
+async function thumbViaBitmap(blob: Blob, max = THUMB_MAX, q = 0.72): Promise<string | null> {
   if (typeof createImageBitmap !== 'function') return null;
   let probe: ImageBitmap | null = null;
   let small: ImageBitmap | null = null;
   try {
     probe = await createImageBitmap(blob);
-    const { w, h } = fitThumb(probe.width, probe.height);
+    const { w, h } = fitThumb(probe.width, probe.height, max);
     probe.close?.();
     probe = null;
     // resizeWidth/Height 讓瀏覽器在解碼階段就縮，記憶體尖峰低很多
@@ -213,7 +225,7 @@ async function thumbViaBitmap(blob: Blob): Promise<string | null> {
     cv.getContext('2d')!.drawImage(small, 0, 0, w, h);
     small.close?.();
     small = null;
-    return looksBlank(cv) ? null : encode(cv);
+    return looksBlank(cv) ? null : encode(cv, q);
   } catch {
     return null;
   } finally {
@@ -223,7 +235,7 @@ async function thumbViaBitmap(blob: Blob): Promise<string | null> {
 }
 
 /** 路線 B：<img> 解碼，並且分段縮 —— 一次縮太多倍手機也容易畫失敗 */
-async function thumbViaImage(url: string): Promise<string | null> {
+async function thumbViaImage(url: string, max = THUMB_MAX, q = 0.72): Promise<string | null> {
   try {
     const img = await new Promise<HTMLImageElement>((res, rej) => {
       const i = new Image();
@@ -234,7 +246,7 @@ async function thumbViaImage(url: string): Promise<string | null> {
     if (img.decode) { try { await img.decode(); } catch { /* 有些瀏覽器會拒絕，onload 已經夠 */ } }
     let sw = img.naturalWidth || img.width;
     let sh = img.naturalHeight || img.height;
-    const target = fitThumb(sw, sh);
+    const target = fitThumb(sw, sh, max);
     let src: CanvasImageSource = img;
     // 每一步最多砍一半，直到接近目標大小
     while (sw > target.w * 2 && sh > target.h * 2) {
@@ -249,7 +261,7 @@ async function thumbViaImage(url: string): Promise<string | null> {
     const cv = document.createElement('canvas');
     cv.width = target.w; cv.height = target.h;
     cv.getContext('2d')!.drawImage(src, 0, 0, target.w, target.h);
-    return looksBlank(cv) ? null : encode(cv);
+    return looksBlank(cv) ? null : encode(cv, q);
   } catch {
     return null;
   }
@@ -261,22 +273,30 @@ async function thumbViaImage(url: string): Promise<string | null> {
  * 直接餵給 <img> 在手機上很容易爆掉（畫出來就是全黑）。
  * 兩條路線都試，兩條都拿不到就不要硬塞一張黑圖進紀錄。
  */
-async function makeThumb(outUrl: string): Promise<string | null> {
-  let blob: Blob | null = null;
-  try { blob = await (await fetch(outUrl)).blob(); } catch { blob = null; }
+async function makeThumb(
+  outUrl: string,
+  max = THUMB_MAX,
+  q = 0.72,
+  /** 已經抓好的 blob。同一張圖要出兩個尺寸時傳進來，就不用再 fetch 一次 */
+  ready?: Blob | null,
+): Promise<string | null> {
+  let blob: Blob | null = ready ?? null;
+  if (!blob) {
+    try { blob = await (await fetch(outUrl)).blob(); } catch { blob = null; }
+  }
 
   if (blob) {
-    const a = await thumbViaBitmap(blob);
+    const a = await thumbViaBitmap(blob, max, q);
     if (a) return a;
     const objUrl = URL.createObjectURL(blob);
     try {
-      const b = await thumbViaImage(objUrl);
+      const b = await thumbViaImage(objUrl, max, q);
       if (b) return b;
     } finally {
       URL.revokeObjectURL(objUrl);
     }
   }
-  return await thumbViaImage(outUrl);
+  return await thumbViaImage(outUrl, max, q);
 }
 
 /**
@@ -319,8 +339,14 @@ export async function addExport(
   key?: string,
 ): Promise<void> {
   try {
-    const thumb = await makeThumb(outUrl);
+    /* 成品只抓一次 blob，大小兩張共用 —— 導出的 data URL 動輒幾十 MB，
+       fetch 兩次是實打實的成本。 */
+    let outBlob: Blob | null = null;
+    try { outBlob = await (await fetch(outUrl)).blob(); } catch { outBlob = null; }
+    const thumb = await makeThumb(outUrl, THUMB_MAX, 0.72, outBlob);
     if (!thumb) return;   // 縮圖做不出來就不要記，免得首頁掛一張全黑的格子
+    /* 主視覺那張做不出來也沒關係，畫面會退回用小圖 */
+    const hero = await makeThumb(outUrl, HERO_MAX, 0.86, outBlob);
     let photo: Blob | null = null;
     if (srcUrl) {
       try { photo = await (await fetch(srcUrl)).blob(); } catch { photo = null; }
@@ -352,6 +378,9 @@ export async function addExport(
       tool,
       at: Date.now(),
       thumb,
+      /* 做不出來就不要寫進去（undefined 存進 IndexedDB 沒意義），
+         畫面那邊會自動退回用 thumb */
+      ...(hero ? { hero } : {}),
       state: saveState,
       photoKey,
       hasPhoto: true,
@@ -374,7 +403,7 @@ export async function listExports(): Promise<ExportMeta[]> {
     // 舊版本可能留下沒有原圖的紀錄 —— 那種點開來是沒有反應的，直接不要列出來
     .filter(r => !!r.photo)
     // state 裡還是 hist: 參考 —— 首頁只用得到縮圖，真的要還原時才走 loadExport
-    .map(({ id, tool, at, thumb, photoKey }) => ({ id, tool, at, thumb, state: null, photoKey, hasPhoto: true }));
+    .map(({ id, tool, at, thumb, hero, photoKey }) => ({ id, tool, at, thumb, hero, state: null, photoKey, hasPhoto: true }));
 }
 
 /** 還原用：連原圖一起拿出來 */
