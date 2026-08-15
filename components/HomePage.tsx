@@ -530,6 +530,8 @@ export const HomePage: React.FC<HomePageProps> = ({
      以及在不支援的瀏覽器上落回 JS 版 —— 那時候刻意**同步**寫 style，
      不進 rAF（排進下一格＝固定慢捲動一格，就是會看到抖的那一格）。 */
   const heroRef = useRef<HTMLDivElement>(null);
+  /** 主視覺裡的照片。它比整屏再慢一層，JS 那條路也要跟著畫 */
+  const artRef = useRef<HTMLDivElement>(null);
   const cssTimeline = useRef(false);
   const reduceMotion = useRef(false);
   useEffect(() => {
@@ -572,6 +574,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       el.style.transform = ''; el.style.opacity = '';
       el.style.pointerEvents = ''; el.style.visibility = '';
       if (libRef.current) libRef.current.style.transform = '';
+      if (artRef.current) artRef.current.style.transform = '';
       return;
     }
     const h = sc.clientHeight || 1;
@@ -581,6 +584,13 @@ export const HomePage: React.FC<HomePageProps> = ({
     /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。
        0.60＝修圖那一屏走 40% 的速度（原本 0.70／30%，幅度加了三分之一）。 */
     el.style.transform = `translate3d(0, ${(Math.min(y, h) * 0.60).toFixed(2)}px, 0)`;
+    /* 主視覺裡的照片再慢一層（整體只走 30%）＋輕輕推近。
+       數字跟 styles.css 的 .home-hero-art 完全一樣，兩條路長得一模一樣。 */
+    const art = artRef.current;
+    if (art) {
+      const p = Math.min(1, Math.min(y, h) / h);
+      art.style.transform = `translate3d(0, ${(p * h * 0.06).toFixed(2)}px, 0) scale(${(1 + p * 0.05).toFixed(4)})`;
+    }
     // 模板那一段：一開始往下位移 +lift，隨捲動收回 0（等於比捲軸快 0.35 屏）
     const lib = libRef.current;
     if (lib) {
@@ -873,9 +883,14 @@ export const HomePage: React.FC<HomePageProps> = ({
            所以裡面那些 z-10 完全不受影響，排版也一個像素都沒動。
            home-hero：位移與淡出的動畫都掛在這個名字上（styles.css）。 */
         style={{ willChange: 'transform, opacity' }}
-        /* 下面的內距就是「整疊往上移多少」的調節閥：上半屏是 flex-1 吃剩餘高度的，
+        /* 下面的內距是「整疊往上移多少」的調節閥：上半屏是 flex-1 吃剩餘高度的，
            這裡每多 1px，上半屏就矮 1px、下面那一疊連同品牌字就整組往上 1px。
-           10 → 28：整組往上 18px。右上角的聯絡鈕是貼著上半屏頂端的，所以不會跟著動。 */
+           右上角的聯絡鈕是貼著上半屏頂端的，所以不會跟著動。
+
+           它同時也是「縮圖下緣到分頁列那條線」的間距 ——
+             那段間距 ＝ 捲動區自己的 pb-[21px] ＋ 這裡的 28 ＝ 49px
+           要改歷史紀錄的高低，就動這個數字與它的 mt（下面那一行），
+           兩個加起來保持 48 不變，上半屏就不會被拉高壓扁，上面每一排都不會動。 */
         className="home-hero relative z-0 min-h-full px-5 pb-[28px] flex flex-col box-border"
       >
         {/* --- 上半屏 ---
@@ -884,7 +899,10 @@ export const HomePage: React.FC<HomePageProps> = ({
              不管機型多高多矮，第一屏永遠剛剛好一屏，下面那一疊不會被擠出去，
              也不會反過來壓到上面（以前是 mt-auto 貼著下緣排，長一點就會打架）。
              -mx-5 是把它撐回滿版：文字與按鈕有 20px 邊界，主視覺沒有。 */}
-        <div className="relative shrink-0 flex-1 min-h-[150px] max-h-[330px] -mx-5 overflow-hidden">
+        {/* 上下限放寬到「正常手機都碰不到」：碰到上限的話，多出來的高度就會掉到
+             最下面變成一塊死留白，縮圖到分頁列的間距就不等於歷史紀錄的上緣間距了。
+             52vh 只是防止極端視窗把主視覺撐得太誇張。 */}
+        <div className="relative shrink-0 flex-1 min-h-[130px] max-h-[52vh] -mx-5 overflow-hidden">
 
           {/* 新增：主視覺用「最近一張作品」。參考圖上面那張照片就是歷史紀錄
                第一格的同一張，所以這裡直接接同一份資料 —— 還沒有作品的時候
@@ -894,7 +912,15 @@ export const HomePage: React.FC<HomePageProps> = ({
           {recent[0] && (
             <div className="absolute inset-0 pointer-events-none select-none">
               <div className="absolute inset-y-0 right-0 w-[70%] overflow-hidden">
-                <img src={recent[0].thumb} alt="" className="w-full h-full object-cover" draggable={false} />
+                {/* 照片自己再慢一層（見 styles.css 的 .home-hero-art）：
+                     上面那一屏已經只走 40% 的速度，照片在它裡面再往下補一點，
+                     整體只走 30%，同時輕輕推近 —— 兩層速度差就是深度的來源。
+                     上下各多留 10% 的餘裕，位移與推近時邊緣才不會露出空白。
+                     兩層漸層留在外面不跟著動：它們是讓品牌字讀得到、
+                     以及把下緣收進黑色的遮罩，一起動的話交界就會跟著飄。 */}
+                <div ref={artRef} className="home-hero-art absolute -inset-y-[10%] inset-x-0 will-change-transform">
+                  <img src={recent[0].thumb} alt="" className="w-full h-full object-cover" draggable={false} />
+                </div>
                 <div
                   className="absolute inset-0"
                   style={{ background: 'linear-gradient(to right,#000 0%,rgba(0,0,0,.74) 30%,rgba(0,0,0,.34) 62%,rgba(0,0,0,.12) 100%)' }}
@@ -925,7 +951,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                字級與間距也照參考圖的比例縮到位（以前置中、而且大了快一倍）。
                字型、顏色、字重、文字內容都沒動。
                中間那行副標拿掉了，所以按鈕的上緣間距補回它原本佔的位置。 */}
-          <div className="absolute left-5 right-5 bottom-[26px] flex flex-col items-start select-none">
+          <div className="absolute left-5 right-5 bottom-[14px] flex flex-col items-start select-none">
             <motion.h1
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
@@ -995,6 +1021,9 @@ export const HomePage: React.FC<HomePageProps> = ({
         {/* 歷史紀錄 —— 點一張就回到它導出當下的編輯狀態。
              照參考圖：標題放大、右邊多一顆「查看全部」，格子改成直式，
              還沒導出過的位子改成虛線框加一個加號。 */}
+        {/* 這一格的 mt 與上面那個 pb 是一組的（加起來 48）：
+             mt 加多少，pb 就要減多少，歷史紀錄才會單純上下移動，
+             不會把上半屏連帶拉高或壓扁。 */}
         <div className="relative z-10 mt-[20px] shrink-0">{historySection}</div>
       </div>
 
