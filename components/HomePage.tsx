@@ -907,24 +907,20 @@ export const HomePage: React.FC<HomePageProps> = ({
           {/* 新增：主視覺用「最近一張作品」。參考圖上面那張照片就是歷史紀錄
                第一格的同一張，所以這裡直接接同一份資料 —— 還沒有作品的時候
                就維持純黑，什麼都不會少。
-               照片靠右、左邊用漸層收進黑色（參考圖也是這個構圖），品牌字才讀得到；
-               下緣再收一次黑，跟下面那一排按鈕接起來。 */}
+               左邊那道把照片壓黑的漸層拿掉了，照片改成整個滿版 ——
+               只留 70% 寬又沒有漸層的話，左邊會出現一條直的硬邊。
+               下緣那道還留著：它負責把照片收進黑色、跟下面那一排按鈕接起來，
+               順便讓壓在上面的品牌字讀得到（品牌字剛好落在這一段裡）。 */}
           {recent[0] && (
-            <div className="absolute inset-0 pointer-events-none select-none">
-              <div className="absolute inset-y-0 right-0 w-[70%] overflow-hidden">
-                {/* 照片自己再慢一層（見 styles.css 的 .home-hero-art）：
-                     上面那一屏已經只走 40% 的速度，照片在它裡面再往下補一點，
-                     整體只走 30%，同時輕輕推近 —— 兩層速度差就是深度的來源。
-                     上下各多留 10% 的餘裕，位移與推近時邊緣才不會露出空白。
-                     兩層漸層留在外面不跟著動：它們是讓品牌字讀得到、
-                     以及把下緣收進黑色的遮罩，一起動的話交界就會跟著飄。 */}
-                <div ref={artRef} className="home-hero-art absolute -inset-y-[10%] inset-x-0 will-change-transform">
-                  <img src={recent[0].thumb} alt="" className="w-full h-full object-cover" draggable={false} />
-                </div>
-                <div
-                  className="absolute inset-0"
-                  style={{ background: 'linear-gradient(to right,#000 0%,rgba(0,0,0,.74) 30%,rgba(0,0,0,.34) 62%,rgba(0,0,0,.12) 100%)' }}
-                />
+            <div className="absolute inset-0 overflow-hidden pointer-events-none select-none">
+              {/* 照片自己再慢一層（見 styles.css 的 .home-hero-art）：
+                   上面那一屏已經只走 40% 的速度，照片在它裡面再往下補一點，
+                   整體只走 30%，同時輕輕推近 —— 兩層速度差就是深度的來源。
+                   上下各多留 10% 的餘裕，位移與推近時邊緣才不會露出空白。
+                   下緣的漸層留在外面不跟著動：它是把畫面收進黑色的遮罩，
+                   一起動的話那個交界就會跟著飄。 */}
+              <div ref={artRef} className="home-hero-art absolute -inset-y-[10%] inset-x-0 will-change-transform">
+                <img src={recent[0].thumb} alt="" className="w-full h-full object-cover" draggable={false} />
               </div>
               <div
                 className="absolute inset-x-0 bottom-0 h-[52%]"
@@ -1042,6 +1038,27 @@ export const HomePage: React.FC<HomePageProps> = ({
             那時候它離畫面還很遠；等你真的捲到下面，位移早就收回 0 了，什麼都不會少。 */}
       <div ref={libBoxRef} style={{ marginTop: 'calc(var(--lib-lift, 0px) * -1)', overflow: 'clip' }}>
       <div ref={libRef} className="home-lib relative z-[1] px-6 pb-4 pt-[26px]">
+        {/* 模板這一段的底：一整片黑，往下滑的時候修圖那一屏就不會透過來重疊。
+             上緣要羽化，不然會看到一條直直的橫邊。
+             羽化總長 58px ＝ 往上多長的 32px ＋ 這一段自己的 pt-[26px]，
+             所以「完全變成黑色」的那一點剛好落在搜尋欄的上緣，
+             羽化區裡不會有任何內容被壓到。
+
+             往上多長的那 32px 會不會被外層的 overflow:clip 夾掉？
+             這一段一開始是往下位移 274px 的，位移大於 32px 時完全在夾框裡面；
+             等位移掉到 32px 以下（捲過 690px）的時候，這一段的上緣早就離開畫面了
+             （捲到 564px 它就貼齊畫面上緣），所以看得到的時候永遠不會被夾到。
+
+             zIndex -1：排在這一段自己的內容後面，但因為外層是 z-[1]、
+             修圖那一屏是 z-0，所以它還是穩穩蓋在修圖上面。 */}
+        <div
+          className="absolute inset-x-0 -top-[32px] bottom-0 pointer-events-none"
+          style={{
+            zIndex: -1,
+            background:
+              'linear-gradient(to bottom,rgba(0,0,0,0) 0,rgba(0,0,0,.18) 12px,rgba(0,0,0,.52) 30px,rgba(0,0,0,.86) 46px,#000 58px)',
+          }}
+        />
         {/* 搜尋欄 —— 還沒接真的模板資料，先做成純前端的字串過濾 */}
         <div className="flex items-center gap-2 h-11 px-3.5 mb-3 rounded-full bg-white/[0.06] border border-white/10">
           <Icon name="search" className="text-[18px] text-white/40 shrink-0" />
