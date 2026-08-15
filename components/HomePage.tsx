@@ -721,26 +721,52 @@ export const HomePage: React.FC<HomePageProps> = ({
   /* 歷史紀錄 —— 點一張就回到它導出當下的編輯狀態，沒導出過的位子留空格。
      本來在首頁第一屏，現在搬到「我的」；抽成一個變數，之後想放回去或
      兩邊都放都只要引用它。 */
+  /** 「立即使用」「查看全部」右邊那顆小箭頭，兩處共用 */
+  const pillArrow = (
+    <span
+      className="material-symbols-outlined text-[15px]"
+      style={{ fontVariationSettings: "'FILL' 0, 'wght' 500, 'opsz' 20" }}
+    >
+      chevron_right
+    </span>
+  );
+
   const historySection = (
-    /* -mx-2 把這一區往左右各撐出 8px，讓最外側兩格的邊剛好對齊上面那排功能鈕
-       （功能鈕那一排本來就比這裡寬）。格子是 grid 平分的，所以每一格會等比
-       放大一點點；標題跟著補回 8px（ml-1 → ml-3）才不會跟著往外跑。 */
-    <div className="-mx-2">
-      <div className="flex items-baseline mb-2.5">
-        <span className="text-[10px] font-bold tracking-[0.24em] text-white/40 ml-3">歷史紀錄</span>
+    <div>
+      {/* 標題那一排：照參考圖放大字級，右邊多一顆「查看全部」 */}
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[14px] font-black tracking-[0.1em] text-white">歷史紀錄</span>
+        <button
+          onClick={() => goNav('me')}
+          className="flex items-center gap-0.5 text-[11px] tracking-[0.08em] text-white/45 active:scale-95 transition-transform"
+        >
+          查看全部
+          {pillArrow}
+        </button>
       </div>
+      {/* 格子改成參考圖的直式（4:5）。還沒導出過的位子改成虛線框加一個加號，
+           點下去就直接去挑照片 —— 空格本來只是灰底，看不出來可以做什麼。 */}
       <div className="grid grid-cols-5 gap-2">
         {[0, 1, 2, 3, 4].map(i => {
           const item = recent[i];
           if (!item) {
-            return <div key={`slot-${i}`} className={`aspect-square rounded-lg ${EMPTY_TILE}`} />;
+            return (
+              <button
+                key={`slot-${i}`}
+                onClick={onImportPhoto}
+                aria-label="匯入照片"
+                className="aspect-[4/5] rounded-[10px] border border-dashed border-white/15 flex items-center justify-center text-white/25 active:scale-[0.97] transition-transform duration-300"
+              >
+                <Icon name="add" className="text-[20px]" />
+              </button>
+            );
           }
           return (
             <button
               key={item.id}
               onClick={() => onOpenRecent?.(item.id)}
               title={`${timeAgo(item.at)}導出`}
-              className="relative aspect-square rounded-lg overflow-hidden border border-white/10 p-0 active:scale-[0.97] transition-transform duration-300"
+              className="relative aspect-[4/5] rounded-[10px] overflow-hidden border border-white/10 p-0 active:scale-[0.97] transition-transform duration-300"
             >
               <img src={item.thumb} alt="" className="w-full h-full object-cover" draggable={false} />
             </button>
@@ -845,55 +871,99 @@ export const HomePage: React.FC<HomePageProps> = ({
            所以裡面那些 z-10 完全不受影響，排版也一個像素都沒動。
            home-hero：位移與淡出的動畫都掛在這個名字上（styles.css）。 */
         style={{ willChange: 'transform, opacity' }}
-        className="home-hero relative z-0 min-h-full px-6 pb-[42px] flex flex-col gap-[22px] box-border"
+        className="home-hero relative z-0 min-h-full px-5 pb-[10px] flex flex-col box-border"
       >
-        {/* 主視覺那一塊（3D 物件）整個拿掉了。
-             它本來是絕對定位、只鋪在最底層的，不佔版面 —— 所以拿掉之後，
-             品牌字、聯絡鈕、下面那幾排按鈕的位置一個像素都不會變。 */}
+        {/* --- 上半屏 ---
+             參考圖上半是一整塊主視覺，品牌字壓在它的左下角。
+             這一塊用 flex-1 把「一屏扣掉下面那一疊」剩下的高度全部吃掉 ——
+             不管機型多高多矮，第一屏永遠剛剛好一屏，下面那一疊不會被擠出去，
+             也不會反過來壓到上面（以前是 mt-auto 貼著下緣排，長一點就會打架）。
+             -mx-5 是把它撐回滿版：文字與按鈕有 20px 邊界，主視覺沒有。 */}
+        <div className="relative shrink-0 flex-1 min-h-[150px] max-h-[330px] -mx-5 overflow-hidden">
 
-        {/* 品牌字：這一屏的主標題，壓在 3D 球的正中心。
-             用絕對定位所以不佔版面（下面幾排按鈕的位置完全不受影響），
-             但它在捲動區裡面，所以往下滑會跟著滑走。
-             top 就是主視覺的中心：主視覺高 clamp(200px,38vh,328px)、從畫面最上面算起，
-             這裡是從捲動區上緣算，所以要扣掉標題列（safe-area + 62px）。 */}
-        {/* 聯絡鈕：跟品牌字一樣待在首頁這一頁裡，往下滑會跟著滑走。
-             絕對定位所以不佔版面，下面幾排按鈕的位置不受影響。 */}
-        <button
-          onClick={() => setContactOpen(true)}
-          aria-label="聯絡方式"
-          className="absolute right-6 w-[38px] h-[38px] rounded-full bg-white/[0.06] border border-white/10 flex items-center justify-center text-white/70 hover:bg-white/[0.12] hover:border-white/20 active:scale-95 transition-[background-color,border-color,transform] duration-300"
-          style={{ top: 'calc(env(safe-area-inset-top, 0px) + 10px)' }}
-        >
-          <Icon name="mail" className="text-[19px]" />
-        </button>
+          {/* 新增：主視覺用「最近一張作品」。參考圖上面那張照片就是歷史紀錄
+               第一格的同一張，所以這裡直接接同一份資料 —— 還沒有作品的時候
+               就維持純黑，什麼都不會少。
+               照片靠右、左邊用漸層收進黑色（參考圖也是這個構圖），品牌字才讀得到；
+               下緣再收一次黑，跟下面那一排按鈕接起來。 */}
+          {recent[0] && (
+            <div className="absolute inset-0 pointer-events-none select-none">
+              <div className="absolute inset-y-0 right-0 w-[70%] overflow-hidden">
+                <img src={recent[0].thumb} alt="" className="w-full h-full object-cover" draggable={false} />
+                <div
+                  className="absolute inset-0"
+                  style={{ background: 'linear-gradient(to right,#000 0%,rgba(0,0,0,.74) 30%,rgba(0,0,0,.34) 62%,rgba(0,0,0,.12) 100%)' }}
+                />
+              </div>
+              <div
+                className="absolute inset-x-0 bottom-0 h-[52%]"
+                style={{ background: 'linear-gradient(to top,#000 0%,rgba(0,0,0,.92) 20%,rgba(0,0,0,.66) 44%,rgba(0,0,0,.3) 70%,rgba(0,0,0,0) 100%)' }}
+              />
+            </div>
+          )}
 
-        {/* translateY(-50%) 要放在外層這個「不是 motion」的節點上 ——
-             motion 會自己寫 transform，放在它身上會被蓋掉（量到標題偏低 35px）。
-             捲動區現在從畫面最上面開始，所以 top 就是主視覺的中心，不用再扣標題列。 */}
-        <div
-          className="absolute left-0 right-0 flex justify-center pointer-events-none select-none"
-          style={{
-            // 主視覺的中心：它自己往下挪了 8px，這裡跟著加同樣的 8px
-            top: 'calc(clamp(200px, 38vh, 328px) / 2 + 8px)',
-            transform: 'translateY(-50%)',
-          }}
-        >
-          <motion.h1
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
-            className="font-serif leading-none tracking-tight font-medium"
-            style={{ fontSize: 'clamp(60px, 22vw, 94px)' }}
+          {/* 新增：頂部的分頁字。跟底部那條是同一組文字、同一個樣式，
+               照參考圖在上面再擺一份；它在捲動區裡面，往下滑會跟著滑走，
+               底部那條才是常駐的。兩邊點下去做的事情完全一樣。 */}
+          <div
+            className="absolute left-0 right-0 z-20 flex px-5"
+            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 12px)' }}
           >
-            ABAI
-          </motion.h1>
+            {NAV_ITEMS.map(n => {
+              const on = nav === n.id;
+              return (
+                <button
+                  key={n.id}
+                  onClick={() => goNav(n.id)}
+                  className="flex-1 bg-transparent border-none flex items-center justify-center py-1.5"
+                >
+                  <span className={`text-[12px] tracking-[0.16em] ${on ? 'font-black text-white' : 'font-bold text-white/35'}`}>
+                    {n.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* 聯絡鈕：圖示沒換，照參考圖改成細框的小圓，並讓到分頁字下面一排。 */}
+          <button
+            onClick={() => setContactOpen(true)}
+            aria-label="聯絡方式"
+            className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
+            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 46px)' }}
+          >
+            <Icon name="mail" className="text-[16px]" />
+          </button>
+
+          {/* 品牌字 ＋ 副標 ＋「立即使用」：照參考圖靠左、貼在主視覺左下角，
+               字級與間距也照參考圖的比例縮到位（以前置中、而且大了快一倍）。
+               字型、顏色、字重、文字內容都沒動。 */}
+          <div className="absolute left-5 right-5 bottom-[26px] flex flex-col items-start select-none">
+            <motion.h1
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
+              className="font-serif leading-none tracking-tight font-medium"
+              style={{ fontSize: 'clamp(46px, 14.6vw, 62px)' }}
+            >
+              ABAI
+            </motion.h1>
+            <p className="mt-2 text-[10px] tracking-[0.02em] text-white/45">內文內文內文內文</p>
+            <button
+              onClick={onImportPhoto}
+              className="mt-3 h-[27px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
+            >
+              立即使用
+              {pillArrow}
+            </button>
+          </div>
         </div>
 
-        {/* 編輯 / 相機 —— 用 -mx-2 往外撐，邊緣比其他區塊更靠近螢幕邊 */}
-        <div className="relative z-10 flex gap-2.5 -mx-2 mt-auto">
+        {/* 編輯 / 相機 —— 圖示與文字沒動，高度跟下面那排四個工具對齊（都是 75） */}
+        <div className="relative z-10 mt-[8px] shrink-0 flex gap-2">
           <button
             onClick={onImportPhoto}
-            className="flex-1 h-[70px] rounded-[12px] bg-white text-black border-none flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-transform duration-300"
+            className="flex-1 h-[75px] rounded-[13px] bg-white text-black border-none flex items-center justify-center gap-[9px] p-3.5 active:scale-[0.98] transition-transform duration-300"
           >
             <span className="material-symbols-outlined text-[24px]" style={{ fontVariationSettings: "'FILL' 0, 'wght' 400, 'opsz' 24" }}>
               add_photo_alternate
@@ -902,40 +972,44 @@ export const HomePage: React.FC<HomePageProps> = ({
           </button>
           <button
             onClick={onOpenCamera}
-            className="flex-1 h-[70px] rounded-[12px] bg-white/[0.06] border border-white/10 text-white flex items-center justify-center gap-[9px] p-3.5 hover:bg-white/[0.12] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
+            className="flex-1 h-[75px] rounded-[13px] bg-white/[0.06] border border-white/10 text-white flex items-center justify-center gap-[9px] p-3.5 hover:bg-white/[0.12] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
           >
             <Icon name="photo_camera" className="text-[24px] text-white/75" />
             <span className="text-sm font-black tracking-[0.06em]">相機</span>
           </button>
         </div>
 
-        {/* 四個工具 */}
-        <div className="relative z-10 -mt-3">
-          <div className="flex gap-2.5 -mx-2">
-            {TOOL_TILES.map(t => (
-              <button
-                key={t.key}
-                onClick={tileAction[t.key]}
-                className="flex-1 min-w-0 h-[64px] rounded-[11px] bg-white/[0.06] border border-white/10 text-white flex flex-col items-center justify-center gap-[7px] hover:bg-white/[0.12] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
-              >
-                <Icon name={t.icon} className="text-[20px] text-white/70" />
-                <span className="text-[9px] font-bold tracking-[0.08em] text-white/75 whitespace-nowrap">{t.label}</span>
-              </button>
-            ))}
-          </div>
+        {/* 四個工具 —— 一樣只有尺寸照參考圖放大（64→75），圖示與文字沒換 */}
+        <div className="relative z-10 mt-[11px] shrink-0 flex gap-2">
+          {TOOL_TILES.map(t => (
+            <button
+              key={t.key}
+              onClick={tileAction[t.key]}
+              className="flex-1 min-w-0 h-[75px] rounded-[13px] bg-white/[0.06] border border-white/10 text-white flex flex-col items-center justify-center gap-[9px] hover:bg-white/[0.12] hover:border-white/20 active:scale-[0.98] transition-[background-color,border-color,transform] duration-300"
+            >
+              <Icon name={t.icon} className="text-[22px] text-white/70" />
+              <span className="text-[10px] font-bold tracking-[0.06em] text-white/75 whitespace-nowrap">{t.label}</span>
+            </button>
+          ))}
         </div>
 
-        {/* 歷史紀錄 —— 搬回首頁最下面這一排。
-             點一張就回到它導出當下的編輯狀態，還沒導出過的位子留斜線底。 */}
-        <div className="relative z-10 -mt-3">{historySection}</div>
+        {/* 新增：橫幅。按鈕沿用「立即使用」那一顆，沒有新的設計語言。 */}
+        <div className="relative z-10 mt-[14px] shrink-0 rounded-[14px] border border-white/[0.08] bg-white/[0.03] px-[18px] py-4">
+          <p className="text-[16px] font-black tracking-[0.04em] text-white">全新濾鏡上線</p>
+          <p className="mt-1.5 text-[11px] tracking-[0.14em] text-white/45">一鍵調出質感氛圍</p>
+          <button
+            onClick={onImportPhoto}
+            className="mt-3 h-[26px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
+          >
+            立即使用
+            {pillArrow}
+          </button>
+        </div>
 
-        {/* 原本這裡的廣告版位已經拿掉了，但這塊留白要留著。
-             第一屏這一疊是靠 mt-auto「貼著下緣」往上排的，所以下面的留白
-             每多 1px，上面每一排就往上移 1px —— 這塊就是那個調節閥。
-             歷史紀錄搬回來會多佔 97px（自己 87px、上緣 -mt-3 吃掉 12px、
-             再加上這一疊每個成員之間的 gap-[22px]），所以這裡同步從 270
-             減成 173，上面那幾排才會待在原來的位置。 */}
-        <div className="relative z-10 -mt-1.5 h-[169.8px] shrink-0" aria-hidden />
+        {/* 歷史紀錄 —— 點一張就回到它導出當下的編輯狀態。
+             照參考圖：標題放大、右邊多一顆「查看全部」，格子改成直式，
+             還沒導出過的位子改成虛線框加一個加號。 */}
+        <div className="relative z-10 mt-[20px] shrink-0">{historySection}</div>
       </div>
 
       {/* --- 靈感 ---
