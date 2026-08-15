@@ -222,24 +222,35 @@ const symInk = (str: string, fam: string) => {
   const hit = symInkCache.get(key);
   if (hit) return hit;
   const S = SYM_INK_REF;
-  const pad = Math.ceil(S * 1.8);
-  const side = pad * 2;
   let out = { w: Math.max(0.3, str.length * 0.5), h: 1.2, cx: 0, cy: 0 };
   try {
     const c = document.createElement('canvas');
-    c.width = side; c.height = side;
     const g = c.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
     if (g) {
-      g.font = `400 ${S}px ${fontStack(fam)}`;
+      const font = `400 ${S}px ${fontStack(fam)}`;
+      /* 量測用的畫布要先照「這一串有多寬」開，不能開一個固定大小的方框：
+         符號有長有短（最長的接近一百個字），字級 100 畫出來可能好幾千像素寬 ——
+         畫布不夠大就會被裁掉，量到的墨水只有前面那幾個字，選取框自然也就
+         只框得到前面那一段。這就是主人看到的「框只框前面幾個字」。 */
+      g.font = font;
+      const adv = Math.max(S, g.measureText(str).width);
+      const padX = Math.ceil(S * 1.2);
+      const padY = Math.ceil(S * 1.8);
+      const w = Math.ceil(adv) + padX * 2;
+      const h = padY * 2;
+      c.width = w; c.height = h;
+      // 改過畫布尺寸之後所有設定都會重置，字型要再設一次
+      g.font = font;
       g.textAlign = 'center';
       g.textBaseline = 'middle';
       g.fillStyle = '#fff';
-      g.fillText(str, pad, pad);
-      const d = g.getImageData(0, 0, side, side).data;
-      let minx = side, miny = side, maxx = -1, maxy = -1;
-      for (let y = 0; y < side; y++) {
-        for (let x = 0; x < side; x++) {
-          if (d[(y * side + x) * 4 + 3] > 8) {
+      const ax = w / 2, ay = h / 2;
+      g.fillText(str, ax, ay);
+      const d = g.getImageData(0, 0, w, h).data;
+      let minx = w, miny = h, maxx = -1, maxy = -1;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          if (d[(y * w + x) * 4 + 3] > 8) {
             if (x < minx) minx = x;
             if (x > maxx) maxx = x;
             if (y < miny) miny = y;
@@ -251,10 +262,11 @@ const symInk = (str: string, fam: string) => {
         out = {
           w: (maxx - minx + 1) / S,
           h: (maxy - miny + 1) / S,
-          cx: ((minx + maxx + 1) / 2 - pad) / S,
-          cy: ((miny + maxy + 1) / 2 - pad) / S,
+          cx: ((minx + maxx + 1) / 2 - ax) / S,
+          cy: ((miny + maxy + 1) / 2 - ay) / S,
         };
       }
+      c.width = c.height = 0;
     }
   } catch {}
   symInkCache.set(key, out);
