@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Icon } from './Icon';
-import type { ExportMeta } from '../utils/exportHistory';
+import { exportsStatus, subscribeExports, type ExportMeta } from '../utils/exportHistory';
 import {
   type AuthUser, isAuthReady, authErrText, getUser, onAuthChange,
   signUpWithPassword, signInWithPassword, sendPasswordReset,
@@ -797,6 +797,17 @@ export const HomePage: React.FC<HomePageProps> = ({
     finally { URL.revokeObjectURL(url); }
   };
 
+  /* 歷史紀錄的狀態。「一筆都沒有」跟「資料庫開不起來」看起來一模一樣，
+     所以在「我的」那一頁寫一行出來 —— 出問題時看得出是哪一種。 */
+  const [histStat, setHistStat] = useState<{ ok: boolean; rows: number; usable: number } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const read = () => { exportsStatus().then(r => { if (alive) setHistStat(r); }).catch(() => {}); };
+    read();
+    const off = subscribeExports(read);
+    return () => { alive = false; off(); };
+  }, []);
+
   /** 主視覺要畫哪一張：自己挑的最優先，沒挑就用最近一張作品（大圖優先） */
   const heroSrc = previews.hero || recent[0]?.hero || recent[0]?.thumb || null;
 
@@ -994,8 +1005,16 @@ export const HomePage: React.FC<HomePageProps> = ({
           {/* 歷史紀錄（完整版）——首頁那一排的「查看全部」就是跳到這裡。
                10 格、每排五個（兩排）；還沒導出過的位子留空格，點下去直接去挑照片。 */}
           <div className="mt-8">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-baseline justify-between mb-2">
               <span className="text-[12px] font-bold tracking-[0.14em] text-white/55">歷史紀錄</span>
+              {/* 小小一行狀態。正常時就是「已存 N 筆」；
+                   資料庫開不起來時會直接說出來，不會再靜靜地什麼都不顯示。 */}
+              <span className="text-[10px] tracking-[0.1em] text-white/25">
+                {histStat == null ? ''
+                  : !histStat.ok ? '無法讀取紀錄'
+                  : histStat.rows === histStat.usable ? `已存 ${histStat.rows} 筆`
+                  : `已存 ${histStat.rows} 筆・${histStat.rows - histStat.usable} 筆缺原圖`}
+              </span>
             </div>
             {historyGrid(10)}
           </div>
