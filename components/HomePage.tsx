@@ -1013,9 +1013,9 @@ export const HomePage: React.FC<HomePageProps> = ({
            拿掉圖示時分頁列矮了 26px；字級 9→12px 之後又高回 5px，所以是 26-5=21。 */
         style={{
           overscrollBehavior: 'none',
-          /* 「我的」滑進來時這一頁往左退一小段（不是整頁跟著跑），
-             看起來就是新的一頁蓋上來，而不是兩頁一起平移。 */
-          transform: nav === 'me' ? 'translate3d(-22%,0,0)' : 'translate3d(0,0,0)',
+          /* 兩頁一起平移：「我的」從右邊進來多少，這一頁就往左讓開多少，
+             看起來是整條橫向的軌道在滑，而不是新的一頁蓋在舊的上面。 */
+          transform: nav === 'me' ? 'translate3d(-100%,0,0)' : 'translate3d(0,0,0)',
           transition: 'transform 420ms cubic-bezier(0.22,1,0.36,1)',
           willChange: 'transform',
         }}
