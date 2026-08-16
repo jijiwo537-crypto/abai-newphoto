@@ -346,13 +346,29 @@ export async function addExport(
        fetch 兩次是實打實的成本。 */
     let outBlob: Blob | null = null;
     try { outBlob = await (await fetch(outUrl)).blob(); } catch { outBlob = null; }
-    const thumb = await makeThumb(outUrl, THUMB_MAX, 0.72, outBlob);
-    if (!thumb) return;   // 縮圖做不出來就不要記，免得首頁掛一張全黑的格子
+    let thumb = await makeThumb(outUrl, THUMB_MAX, 0.72, outBlob);
     /* 主視覺那張做不出來也沒關係，畫面會退回用小圖 */
-    const hero = await makeThumb(outUrl, HERO_MAX, 0.86, outBlob);
+    let hero = thumb ? await makeThumb(outUrl, HERO_MAX, 0.86, outBlob) : null;
     let photo: Blob | null = null;
     if (srcUrl) {
       try { photo = await (await fetch(srcUrl)).blob(); } catch { photo = null; }
+    }
+
+    /* 縮圖做不出來時的兩層退路。
+       手機（尤其 iOS）把幾千萬像素的成品 drawImage 進 canvas 時會靜靜地失敗 ——
+       不丟錯，就是給你一張全黑的圖（所以上面有 looksBlank 在擋）。
+       以前遇到這種情況是「整筆不記」，結果就是使用者導出了、歷史紀錄卻永遠是空的，
+       而且完全沒有跡象。現在改成：
+         ① 改拿「原圖」去縮 —— 相簿來的 JPEG 通常比成品好解得多
+         ② 兩條都不行也照樣把這一筆記下來（thumb 留空），
+            首頁那一格會畫成一塊素色的磚，點下去照樣開得回作品。
+       少一張縮圖，總比整段歷史紀錄消失好。 */
+    if (!thumb && photo) {
+      const srcUrlObj = URL.createObjectURL(photo);
+      try {
+        thumb = await makeThumb(srcUrlObj, THUMB_MAX, 0.72, photo);
+        if (thumb) hero = await makeThumb(srcUrlObj, HERO_MAX, 0.86, photo);
+      } finally { URL.revokeObjectURL(srcUrlObj); }
     }
     /* 原圖拿不到（object URL 已經失效之類）就退而求其次，改存導出的成品。
        沒有原圖的紀錄在首頁會是一塊「看得到但點不開」的死磚 —— 那正是使用者
@@ -380,7 +396,7 @@ export async function addExport(
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       tool,
       at: Date.now(),
-      thumb,
+      thumb: thumb || '',
       /* 做不出來就不要寫進去（undefined 存進 IndexedDB 沒意義），
          畫面那邊會自動退回用 thumb */
       ...(hero ? { hero } : {}),
