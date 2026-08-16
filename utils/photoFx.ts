@@ -206,12 +206,47 @@ type LutData = { data: Uint8ClampedArray; size: number };
 const lutCache = new Map<string, LutData>();
 const lutPending = new Map<string, Promise<LutData | null>>();
 
+/* ── 重活的排程 ────────────────────────────────────────────────────
+   解一顆濾鏡＝一次 512×512 的 getImageData ＋ 一輪 64³ 的搬運迴圈，
+   量到大約 8ms 的同步運算。24 顆一起在背景解，就是 190ms 的主執行緒佔用。
+   這些工作本身沒有急迫性（解好會存進 IndexedDB，第二次開 App 就不用再解），
+   但只要有一顆卡在手指正在拖的那幾格，畫面就會掉一格 —— 那正是
+   「第一次新增符號之後拖起來很卡」的原因：那時候 24 顆正好在背景解。
+
+   所以動手之前先等兩件事：
+     ① 使用者的手指沒有在畫面上（工具會呼叫 deferHeavyWork 把時間往後推）
+     ② 瀏覽器這一格有空（requestIdleCallback）
+   使用者真的點下某一顆濾鏡時走 eager，不等，維持原本的反應速度。 */
+let heavyBusyUntil = 0;
+/** 「現在正在跟畫面互動，重活先等一下」。拖曳時每一格呼叫一次就好，成本是一次賦值。 */
+export function deferHeavyWork(ms = 350): void {
+  const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + ms;
+  if (t > heavyBusyUntil) heavyBusyUntil = t;
+}
+
+const nap = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+/** 等到「手指放開」而且「這一格有空」。最多等 waitMs，免得永遠等不到 */
+async function whenIdle(waitMs = 4000): Promise<void> {
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const deadline = now() + waitMs;
+  while (now() < heavyBusyUntil && now() < deadline) await nap(80);
+  const ric = (globalThis as any).requestIdleCallback;
+  if (typeof ric !== 'function') { await nap(0); return; }
+  await new Promise<void>(res => ric(() => res(), { timeout: Math.max(0, deadline - now()) }));
+}
+
 export function getLoadedLut(id?: string): LutData | null {
   if (!id || id === 'none') return null;
   return lutCache.get(id) || null;
 }
 
-export function loadLut(id: string, url: string): Promise<LutData | null> {
+export function loadLut(
+  id: string,
+  url: string,
+  /** true＝使用者正在等這一顆（點了濾鏡卡片），不排隊直接解 */
+  eager = false,
+): Promise<LutData | null> {
   if (!url || id === 'none') return Promise.resolve(null);
   const hit = lutCache.get(id);
   if (hit) return Promise.resolve(hit);
@@ -225,7 +260,9 @@ export function loadLut(id: string, url: string): Promise<LutData | null> {
     return new Promise<LutData | null>(resolve => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = () => {
+    img.onload = () => { (async () => {
+      // 背景預載：等手指放開、等這一格有空，才做這一塊同步運算
+      if (!eager) await whenIdle();
       try {
         const size = img.width === img.height ? img.width / 8 : 64;
         const size2 = size * size;
@@ -255,7 +292,7 @@ export function loadLut(id: string, url: string): Promise<LutData | null> {
       } catch {
         resolve(null);
       }
-    };
+    })(); };
     img.onerror = () => resolve(null);
     img.src = url;
     });
