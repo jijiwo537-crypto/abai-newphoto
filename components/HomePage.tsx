@@ -596,13 +596,10 @@ export const HomePage: React.FC<HomePageProps> = ({
     /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。
        0.26＝修圖那一屏走 74% 的速度。
 
-       這個數字被「歷史紀錄不能被模板的漸層遮罩吃掉」綁住了：
-       模板那一段永遠比捲軸快（至少 1 倍速），修圖這一屏慢多少，兩者就用
-       「修圖慢掉的量 ＋ 模板多出來的量」互相靠近。
-       原本 0.60＋0.35 ＝ 每捲 1px 就靠近 0.95px，歷史紀錄那兩排（135px 高）
-       捲不到 30px 第二排就被吃掉了。改成 0.26＋0.14 ＝ 0.40 之後，
-       要捲快 200px 才吃到第二排，那時整屏已經淡到剩一半，
-       看起來會是「跟著整頁一起淡掉」，而不是「被一條黑邊切斷」。 */
+       它跟模板那一段的 0.45 相加＝ 0.71，就是兩者互相靠近的速度：
+       靜止時歷史紀錄離模板的黑色遮罩還有 14px（靠下面那個 pb-[55px] 撐開），
+       捲 20px 才會碰到、捲 110px 第二排被蓋滿。
+       規格是「靜止時不擋到就好」，捲動中被追上是正常的。 */
     el.style.transform = `translate3d(0, ${(Math.min(y, h) * 0.26).toFixed(2)}px, 0)`;
     /* 主視覺裡的照片在上面那層之外再慢一層（整體走 68%）＋輕輕推近。
        數字跟 styles.css 的 .home-hero-art 完全一樣，兩條路長得一模一樣。 */
@@ -611,7 +608,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       const p = Math.min(1, Math.min(y, h) / h);
       art.style.transform = `translate3d(0, ${(p * h * 0.06).toFixed(2)}px, 0) scale(${(1 + p * 0.05).toFixed(4)})`;
     }
-    // 模板那一段：一開始往下位移 +lift，隨捲動收回 0（等於比捲軸快 0.14 屏）
+    // 模板那一段：一開始往下位移 +lift，隨捲動收回 0（等於比捲軸快 0.45 屏）
     const lib = libRef.current;
     if (lib) {
       const lift = liftPx(sc);
