@@ -834,7 +834,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   );
 
   /**
-   * 歷史紀錄的格子。首頁放 10 格（每排五個、兩排），「我的」那一頁放 20 格（四排）。
+   * 歷史紀錄的格子。首頁放 5 格（一排），「我的」那一頁放 10 格（每排五個、兩排）。
    * 格子是正方形。
    * 兩邊是同一顆元件、同一份資料，只有格數不一樣。
    * 空的位子畫虛線框加一個加號，點下去就直接去挑照片 ——
@@ -886,7 +886,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           {pillArrow}
         </button>
       </div>
-      {historyGrid(10)}
+      {historyGrid(5)}
     </div>
   );
 
@@ -987,12 +987,12 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
 
           {/* 歷史紀錄（完整版）——首頁那一排的「查看全部」就是跳到這裡。
-               20 格、每排五個（四排）；還沒導出過的位子留空格，點下去直接去挑照片。 */}
+               10 格、每排五個（兩排）；還沒導出過的位子留空格，點下去直接去挑照片。 */}
           <div className="mt-8">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[12px] font-bold tracking-[0.14em] text-white/55">歷史紀錄</span>
             </div>
-            {historyGrid(20)}
+            {historyGrid(10)}
           </div>
 
           {/* 登出與刪除帳號都收進帳號設定那一頁了（點上面那列右邊的箭頭） */}
@@ -1041,17 +1041,16 @@ export const HomePage: React.FC<HomePageProps> = ({
            這裡每多 1px，上半屏就矮 1px、下面那一疊連同品牌字就整組往上 1px。
            右上角的聯絡鈕是貼著上半屏頂端的，所以不會跟著動。
 
-           52 → 4：歷史紀錄從一排變兩排（而且格子從 4:5 變正方形）之後，
-           那一區自己長高了 48px。這一疊只要變高，上半屏就會被壓縮同樣的量，
-           上面每一排都會跟著往上跑 —— 所以這裡同步減掉 48，
-           品牌字、編輯／相機、四工具、橫幅就通通留在原來的位置，
-           只有歷史紀錄自己往下長、並且照要求往上收了 8px。
+           這個數字要跟著歷史紀錄那一區的高度一起調：那一區每長高 1px，
+           這裡就要減 1px，上面每一排才會留在原地（不然上半屏被壓縮，
+           品牌字、編輯／相機、四工具、橫幅會通通跟著往上跑）。
+           目前是「一排正方形格子」，所以是 76。
 
            它同時也是「縮圖下緣到分頁列那條線」的間距 ——
              那段間距 ＝ 捲動區自己的 pb-[21px] ＋ 這裡的 28 ＝ 49px
            要改歷史紀錄的高低，就動這個數字與它的 mt（下面那一行），
            兩個加起來保持 48 不變，上半屏就不會被拉高壓扁，上面每一排都不會動。 */
-        className="home-hero relative z-0 min-h-full px-5 pb-[4px] flex flex-col box-border"
+        className="home-hero relative z-0 min-h-full px-5 pb-[76px] flex flex-col box-border"
       >
         {/* --- 上半屏 ---
              參考圖上半是一整塊主視覺，品牌字壓在它的左下角。
@@ -1239,7 +1238,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             夾掉之後可捲長度從頭到尾都是同一個數字。被夾掉的是模板最下面那一截，
             那時候它離畫面還很遠；等你真的捲到下面，位移早就收回 0 了，什麼都不會少。 */}
       <div ref={libBoxRef} style={{ marginTop: 'calc(var(--lib-lift, 0px) * -1)', overflow: 'clip' }}>
-      <div ref={libRef} className="home-lib relative z-[1] px-6 pb-4 pt-[26px]">
+      <div ref={libRef} className="home-lib relative z-[1] px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+14px)]">
         {/* 模板這一段的底：一整片黑，往下滑的時候修圖那一屏就不會透過來重疊。
              上緣要羽化 43px（照 smoothstep 每 3px 取一站，曲線兩端都是平的、
              中間沒有折角，所以看不到帶狀邊）。往上多長 34px，
