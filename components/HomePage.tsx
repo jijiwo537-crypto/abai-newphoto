@@ -594,16 +594,24 @@ export const HomePage: React.FC<HomePageProps> = ({
     // 直接拿去算會讓圖案往回彈一下。
     const y = Math.min(Math.max(0, sc.scrollTop), Math.max(0, sc.scrollHeight - h));
     /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。
-       0.60＝修圖那一屏走 40% 的速度（原本 0.70／30%，幅度加了三分之一）。 */
-    el.style.transform = `translate3d(0, ${(Math.min(y, h) * 0.60).toFixed(2)}px, 0)`;
-    /* 主視覺裡的照片再慢一層（整體只走 30%）＋輕輕推近。
+       0.26＝修圖那一屏走 74% 的速度。
+
+       這個數字被「歷史紀錄不能被模板的漸層遮罩吃掉」綁住了：
+       模板那一段永遠比捲軸快（至少 1 倍速），修圖這一屏慢多少，兩者就用
+       「修圖慢掉的量 ＋ 模板多出來的量」互相靠近。
+       原本 0.60＋0.35 ＝ 每捲 1px 就靠近 0.95px，歷史紀錄那兩排（135px 高）
+       捲不到 30px 第二排就被吃掉了。改成 0.26＋0.14 ＝ 0.40 之後，
+       要捲快 200px 才吃到第二排，那時整屏已經淡到剩一半，
+       看起來會是「跟著整頁一起淡掉」，而不是「被一條黑邊切斷」。 */
+    el.style.transform = `translate3d(0, ${(Math.min(y, h) * 0.26).toFixed(2)}px, 0)`;
+    /* 主視覺裡的照片在上面那層之外再慢一層（整體走 68%）＋輕輕推近。
        數字跟 styles.css 的 .home-hero-art 完全一樣，兩條路長得一模一樣。 */
     const art = artRef.current;
     if (art) {
       const p = Math.min(1, Math.min(y, h) / h);
       art.style.transform = `translate3d(0, ${(p * h * 0.06).toFixed(2)}px, 0) scale(${(1 + p * 0.05).toFixed(4)})`;
     }
-    // 模板那一段：一開始往下位移 +lift，隨捲動收回 0（等於比捲軸快 0.35 屏）
+    // 模板那一段：一開始往下位移 +lift，隨捲動收回 0（等於比捲軸快 0.14 屏）
     const lib = libRef.current;
     if (lib) {
       const lift = liftPx(sc);
@@ -845,7 +853,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   );
 
   /**
-   * 歷史紀錄的格子。首頁放 5 格（一排），「我的」那一頁放 10 格（每排五個、兩排）。
+   * 歷史紀錄的格子。首頁放 10 格（每排五個、兩排），「我的」那一頁也是 10 格。
    * 格子是正方形。
    * 兩邊是同一顆元件、同一份資料，只有格數不一樣。
    * 空的位子畫虛線框加一個加號，點下去就直接去挑照片 ——
@@ -902,7 +910,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           {pillArrow}
         </button>
       </div>
-      {historyGrid(5)}
+      {historyGrid(10)}
     </div>
   );
 
@@ -1070,11 +1078,15 @@ export const HomePage: React.FC<HomePageProps> = ({
 
            這個數字也要跟著歷史紀錄那一區的高度一起調：那一區每長高 1px，
            這裡就要減 1px，上面每一排才會留在原地。
-           目前是「一排正方形格子」，76 是「整疊位置完全不變」的基準值，
-           現在寫 55 ＝ 比基準低 21px。
+           目前是「兩排正方形格子」（多的那一排讓上面每一排一起往上 72px）。
 
            它同時也是「縮圖下緣到分頁列那條線」的間距 ——
-             那段間距 ＝ 捲動區自己的 pb-[21px] ＋ 這裡的 55 ＝ 76px */
+             那段間距 ＝ 捲動區自己的 pb-[21px] ＋ 這裡的 55 ＝ 76px。
+
+           這個 55 還有第二個工作：模板那一段的黑色遮罩，上緣比模板自己的
+           頂端再高 41px。留白只要少於 41，靜止的時候最下面那一排縮圖就已經
+           踩在遮罩的羽化裡（寫 2 的時候第二排下緣直接被壓成黑的）。
+           55 － 41 ＝ 靜止時還有 14px 的餘裕。 */
         className="home-hero relative z-0 min-h-full px-5 pb-[55px] flex flex-col box-border"
       >
         {/* --- 上半屏 ---
@@ -1139,7 +1151,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                中間那行副標拿掉了，所以按鈕的上緣間距補回它原本佔的位置。 */}
           <div
             onClick={e => e.stopPropagation()}
-            className="absolute left-5 right-5 bottom-[14px] flex flex-col items-start select-none"
+            className="absolute left-5 right-5 bottom-[7px] flex flex-col items-start select-none"
           >
             <motion.h1
               initial={{ opacity: 0, y: 12 }}
@@ -1152,7 +1164,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             </motion.h1>
             <button
               onClick={onImportPhoto}
-              className="mt-[18px] h-[27px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
+              className="mt-[12px] h-[27px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
             >
               立即使用
               {pillArrow}
