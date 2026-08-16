@@ -897,11 +897,24 @@ export const HomePage: React.FC<HomePageProps> = ({
       {/* --- 內容 ---
            設計稿是 overflow:hidden，但那是在 844 高的框裡量的；矮一點的機型會被切掉，
            所以改成可捲動＋藏捲軸（設計稿本來就掛了 no-sb）。 */}
+      {/* --- 修圖／模板 與 我的 ---
+           兩頁疊在同一格裡，換頁時左右滑過去（以前是直接抽換，畫面會硬跳一下）。
+           外面這一層負責「有多大」，裡面兩頁各自 absolute inset-0 疊著；
+           分頁列不在這一層裡，所以它不會跟著滑。 */}
+      <div className="relative flex-1 min-h-0 overflow-hidden">
       {/* --- 個人檔案（我）--- */}
-      {nav === 'me' && (
+      {(
         /* 上面那條標題列拿掉了，這裡自己補回它原本的高度（safe-area + 62px），
-           這一頁的東西才會留在原來的位置，不會整組往上跑。 */
-        <div className="no-scrollbar relative z-[5] flex-1 min-h-0 overflow-y-auto px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+62px)] box-border">
+           這一頁的東西才會留在原來的位置，不會整組往上跑。
+           不在「我的」的時候整頁移到右邊等著，而且不吃點擊。 */
+        <div
+          style={{
+            transform: nav === 'me' ? 'translate3d(0,0,0)' : 'translate3d(100%,0,0)',
+            transition: 'transform 420ms cubic-bezier(0.22,1,0.36,1)',
+            willChange: 'transform',
+          }}
+          className={`no-scrollbar absolute inset-0 z-[6] overflow-y-auto px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+62px)] box-border bg-black ${nav === 'me' ? '' : 'pointer-events-none'}`}
+        >
           {/* 登入入口。
               整列不再是一顆大按鈕 —— 只有右邊那顆箭頭會有反應，
               點頭貼或名字都不會誤觸（登入前後都是同一顆，長相也一樣）。 */}
@@ -998,8 +1011,15 @@ export const HomePage: React.FC<HomePageProps> = ({
            貼著下緣排的那一疊東西就會跟著移動。內距補回同樣的量，可用高度不變，
            主頁上面所有東西就都待在原位。
            拿掉圖示時分頁列矮了 26px；字級 9→12px 之後又高回 5px，所以是 26-5=21。 */
-        style={{ overscrollBehavior: 'none' }}
-        className={`home-scroll no-scrollbar relative z-[5] flex-1 min-h-0 overflow-y-auto box-border pb-[21px] ${nav === 'me' ? 'hidden' : 'block'}`}
+        style={{
+          overscrollBehavior: 'none',
+          /* 「我的」滑進來時這一頁往左退一小段（不是整頁跟著跑），
+             看起來就是新的一頁蓋上來，而不是兩頁一起平移。 */
+          transform: nav === 'me' ? 'translate3d(-22%,0,0)' : 'translate3d(0,0,0)',
+          transition: 'transform 420ms cubic-bezier(0.22,1,0.36,1)',
+          willChange: 'transform',
+        }}
+        className={`home-scroll no-scrollbar absolute inset-0 z-[5] overflow-y-auto box-border pb-[21px] ${nav === 'me' ? 'pointer-events-none' : ''}`}
       >
       {/* 這一疊是靠 mt-auto 貼著下緣排的，底部留白加大就等於整組一起往上。
            用 min-h-full 而不是 h-full：矮的機型內容會比一屏高，寫死高度會被切掉；
@@ -1024,7 +1044,7 @@ export const HomePage: React.FC<HomePageProps> = ({
              那段間距 ＝ 捲動區自己的 pb-[21px] ＋ 這裡的 28 ＝ 49px
            要改歷史紀錄的高低，就動這個數字與它的 mt（下面那一行），
            兩個加起來保持 48 不變，上半屏就不會被拉高壓扁，上面每一排都不會動。 */
-        className="home-hero relative z-0 min-h-full px-5 pb-[28px] flex flex-col box-border"
+        className="home-hero relative z-0 min-h-full px-5 pb-[52px] flex flex-col box-border"
       >
         {/* --- 上半屏 ---
              參考圖上半是一整塊主視覺，品牌字壓在它的左下角。
@@ -1292,6 +1312,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       </div>
       </div>
 
+      </div>
       </div>
 
       {/* --- 底部分頁 ---

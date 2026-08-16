@@ -6435,7 +6435,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   return (
-    <div className="fixed inset-0 bg-[#080808] z-[60] flex flex-col animate-in slide-in-from-right duration-300 font-sans text-white overflow-hidden no-callout"
+    <div className="safe-top fixed inset-0 bg-[#080808] z-[60] flex flex-col animate-in slide-in-from-right duration-300 font-sans text-white overflow-hidden no-callout"
          onMouseMove={dragPointIdx !== -1 ? (e) => handleCurveMove(e) : undefined}
          onMouseUp={dragPointIdx !== -1 ? handleCurveEndDrag : undefined}
          onTouchMove={dragPointIdx !== -1 ? (e) => handleCurveMove(e) : undefined}

@@ -9180,7 +9180,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   return (
-    <div className="flex flex-col w-full h-screen bg-black text-white relative font-sans overflow-hidden">
+    <div className="safe-top flex flex-col w-full h-screen bg-black text-white relative font-sans overflow-hidden">
       <style>{`
         /* 圓球跟「佈局調整」的滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
         .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }

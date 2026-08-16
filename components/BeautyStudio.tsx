@@ -870,7 +870,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 bg-[#080808] z-[60] flex flex-col animate-in slide-in-from-right duration-300 font-sans text-white overflow-hidden beauty-root">
+    <div className="safe-top fixed inset-0 bg-[#080808] z-[60] flex flex-col animate-in slide-in-from-right duration-300 font-sans text-white overflow-hidden beauty-root">
       <style>{`
         .beauty-root {
             -webkit-touch-callout: none;

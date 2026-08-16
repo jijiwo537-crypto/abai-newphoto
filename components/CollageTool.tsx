@@ -2486,6 +2486,37 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
   }, [imageState]);
 
+  /* ── 拖曳時把 React 的更新收斂成「一格一次」 ───────────────────────
+     pointermove 在手機上一秒可以送 120 次以上（iOS 的高更新率螢幕更多），
+     而畫面一秒最多只畫得出 60～120 格。原本每收到一次事件就 setObjects ＋
+     setGuides 一次，等於把這個很大的元件整棵重畫一百多次 —— 多出來的那些
+     一格都畫不出來，純粹是白工，手感上就是「跟手但鈍鈍的」。
+
+     改成：事件先把結果放進 pendingRef，再排一次 requestAnimationFrame，
+     真正的 setState 在那一格裡只做一次。畫面結果完全一樣（畫布本來就是
+     一格畫一次），但 React 的重畫次數直接被壓到「最多一格一次」。
+     放手時要把還沒送出的那一筆補送掉，位置才不會停在上一格。 */
+  const moveRaf = useRef<number | null>(null);
+  const movePending = useRef<null | (() => void)>(null);
+  const flushMove = useCallback(() => {
+    moveRaf.current = null;
+    const job = movePending.current;
+    movePending.current = null;
+    if (job) job();
+  }, []);
+  const queueMove = useCallback((job: () => void) => {
+    movePending.current = job;
+    if (moveRaf.current == null) moveRaf.current = requestAnimationFrame(flushMove);
+  }, [flushMove]);
+  /** 放手／取消時立刻把最後一筆送出去，不要等下一格 */
+  const flushMoveNow = useCallback(() => {
+    if (moveRaf.current != null) { cancelAnimationFrame(moveRaf.current); moveRaf.current = null; }
+    const job = movePending.current;
+    movePending.current = null;
+    if (job) job();
+  }, []);
+  useEffect(() => () => { if (moveRaf.current != null) cancelAnimationFrame(moveRaf.current); }, []);
+
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!activePointers.current.has(e.pointerId) || !canvasRef.current || !imageState) return;
     /* 手指在動的時候不要讓背景那些重活（解濾鏡）插隊進來 ——
@@ -2529,11 +2560,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       // 縮放中的對齊線只畫「邊」：中心點整趟都沒動，中線會從頭亮到尾
       const sres = snapToGuides(pin.cx0 - nw / 2, pin.cy0 - nh / 2, nw, nh, nrot, true);
       guidesRef.current = sres.guides;
-      setGuides(sres.guides);
-      setObjects(prev => prev.map(o => o.id === pin.id
-        ? { ...o, w: nw, h: nh, size: pin.size0 ? pin.size0 * k : o.size,
-            x: sres.x, y: sres.y, rot: nrot }
-        : o));
+      queueMove(() => {
+        setGuides(sres.guides);
+        setObjects(prev => prev.map(o => o.id === pin.id
+          ? { ...o, w: nw, h: nh, size: pin.size0 ? pin.size0 * k : o.size,
+              x: sres.x, y: sres.y, rot: nrot }
+          : o));
+      });
       return;
     }
     // 拖曳浮動物件
@@ -2553,8 +2586,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const r2 = snapToGuides(nx, ny, oNow?.w || 0, oNow?.h || 0, oNow?.rot || 0);
       nx = r2.x; ny = r2.y;
       guidesRef.current = r2.guides;
-      setGuides(r2.guides);
-      setObjects(prev => prev.map(o => o.id === d.id ? { ...o, x: nx, y: ny } : o));
+      queueMove(() => {
+        setGuides(r2.guides);
+        setObjects(prev => prev.map(o => o.id === d.id ? { ...o, x: nx, y: ny } : o));
+      });
       return;
     }
     if (viewPinchRef.current && activePointers.current.size >= 2) {
@@ -2649,6 +2684,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    // 還沒送出的那一格先補上，物件才不會停在上一格的位置
+    flushMoveNow();
     // 已選中的文字／符號，點一下（沒有拖動）→ 直接在畫布上改字
     if (objDragRef.current?.editIfTap && !objDragRef.current.moved) {
       textOpenAtRef.current = performance.now();
@@ -4923,7 +4960,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   };
 
   return (
-    <div className="flex flex-col h-[100dvh] w-full bg-[#0A0A0A] text-white font-sans overflow-hidden animate-in fade-in duration-300">
+    <div className="safe-top flex flex-col h-[100dvh] w-full bg-[#0A0A0A] text-white font-sans overflow-hidden animate-in fade-in duration-300">
       <style>{`
         .no-select {
             -webkit-user-select: none !important;

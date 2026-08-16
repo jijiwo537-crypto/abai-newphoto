@@ -1641,7 +1641,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
             ? 'relative w-full bg-black flex flex-col'
             : embedded
             ? 'relative w-full h-full bg-black flex flex-col'
-            : 'fixed inset-0 z-[120] bg-black flex flex-col animate-in fade-in duration-200'}
+            : 'safe-top fixed inset-0 z-[120] bg-black flex flex-col animate-in fade-in duration-200'}
           style={{
             fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Noto Sans TC", "PingFang TC", sans-serif',
             /* inset-0 用的是「版面視窗」，但 iOS Safari 的底部工具列是蓋在網頁上面、
