@@ -144,23 +144,64 @@ function internalize(value: any, assets: Record<string, Blob>, urls: Map<string,
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 
+/** 真正去開資料庫。version 給 undefined＝「現在是第幾版就開第幾版」 */
+function rawOpen(version?: number): Promise<IDBDatabase | null> {
+  return new Promise(resolve => {
+    if (typeof indexedDB === 'undefined') return resolve(null);
+    let req: IDBOpenDBRequest;
+    try {
+      req = version == null ? indexedDB.open(DB_NAME) : indexedDB.open(DB_NAME, version);
+    } catch { return resolve(null); }
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null);
+    req.onblocked = () => resolve(null);
+  });
+}
+
+/**
+ * 開資料庫。
+ *
+ * 這裡有一個會「永久壞掉」的坑，以前沒有處理：
+ * 資料庫已經存在、但裡面**沒有** items 這個 store（上一次建到一半被中斷、
+ * App 在升級當下被系統收掉、或早期版本留下來的殘骸）。這種狀態下版本號沒變，
+ * onupgradeneeded 就永遠不會再跑一次 —— 於是每一次 db.transaction('items')
+ * 都會丟例外、被 tx() 吞成 null，寫也寫不進去、讀也讀不出來，而且完全沒有錯誤訊息。
+ * 使用者看到的就是「導出很正常，歷史紀錄永遠是空的」，重開 App 也不會好。
+ *
+ * 所以：先用「現在的版本」把它打開，發現沒有那個 store 就把版本加一、
+ * 逼它跑一次升級把 store 補上。另外也不再寫死 open(DB_NAME, 1) ——
+ * 萬一裝置上的版本比 1 高，指定 1 會直接失敗（VersionError）。
+ */
 function openDb(): Promise<IDBDatabase | null> {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise(resolve => {
-    if (typeof indexedDB === 'undefined') return resolve(null);
-    try {
-      const req = indexedDB.open(DB_NAME, DB_VERSION);
-      req.onupgradeneeded = () => {
-        const db = req.result;
-        if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE, { keyPath: 'id' });
-      };
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => resolve(null);
-    } catch {
-      resolve(null);
+  dbPromise = (async () => {
+    let db = await rawOpen();
+    if (db && !db.objectStoreNames.contains(STORE)) {
+      const next = db.version + 1;
+      db.close();
+      db = await rawOpen(next);
     }
-  });
+    if (db && !db.objectStoreNames.contains(STORE)) return null;
+    return db;
+  })();
   return dbPromise;
+}
+
+/**
+ * 給畫面用的狀態：資料庫通不通、裡面有幾筆。
+ * 「一筆都沒有」跟「資料庫根本開不起來」看起來一樣，但原因天差地遠，
+ * 分開回報才查得下去。
+ */
+export async function exportsStatus(): Promise<{ ok: boolean; rows: number; usable: number }> {
+  const db = await openDb();
+  if (!db) return { ok: false, rows: 0, usable: 0 };
+  const all = await tx<ExportRecord[]>('readonly', s => s.getAll() as IDBRequest<ExportRecord[]>);
+  if (!all) return { ok: false, rows: 0, usable: 0 };
+  return { ok: true, rows: all.length, usable: all.filter(r => !!(r.photoBytes?.buf || r.photo)).length };
 }
 
 function tx<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest<T>): Promise<T | null> {
