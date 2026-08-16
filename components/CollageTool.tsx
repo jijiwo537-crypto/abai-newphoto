@@ -39,7 +39,7 @@ import { IgPreview } from './IgPreview';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity } from '../utils/compose';
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
 import { SaveButton } from './SaveButton';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
@@ -2488,6 +2488,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!activePointers.current.has(e.pointerId) || !canvasRef.current || !imageState) return;
+    /* 手指在動的時候不要讓背景那些重活（解濾鏡）插隊進來 ——
+       解一顆濾鏡是 8ms 的同步運算，卡在拖曳中間就是掉一格。
+       見 utils/photoFx.ts 的 deferHeavyWork。 */
+    deferHeavyWork();
     activePointers.current.set(e.pointerId, e);
     const rect = canvasRef.current.getBoundingClientRect();
     const ps = previewScaleRef.current;

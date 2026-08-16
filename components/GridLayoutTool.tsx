@@ -1829,7 +1829,8 @@ return (
             data-lut-card={l.id}
             onClick={async () => {
               if (active) return;
-              if (l.url) { setLoadingLut(l.id); await loadLut(l.id, l.url); setLoadingLut(null); }
+              // eager：使用者正在等這一顆，不排隊（背景預載那一支才要等空檔）
+              if (l.url) { setLoadingLut(l.id); await loadLut(l.id, l.url, true); setLoadingLut(null); }
               setFx({ lut: l.id });
               setLutRevision(n => n + 1);
             }}
