@@ -14,10 +14,10 @@ const DB_VERSION = 1;
 const STORE = 'items';
 const STAMP_KEY = 'abai:exports';
 /** 留最近幾筆就好，超過的連原圖一起丟掉。
-    「我的」那一頁的歷史紀錄是 20 格，這裡就留 20 筆，剛好對得起來 ——
+    「我的」那一頁的歷史紀錄是 10 格，這裡就留 10 筆，剛好對得起來 ——
     留比格子多的話，多出來的那幾筆在畫面上根本點不到。
     每一筆存的是：原圖 ＋ 小縮圖 ＋ 主視覺用的大圖。 */
-const MAX_ITEMS = 20;
+const MAX_ITEMS = 10;
 /** 縮圖的長邊（首頁那一排 5 格用的） */
 const THUMB_MAX = 320;
 /**
@@ -390,7 +390,34 @@ export async function addExport(
       photo,
       assets,
     };
-    await tx('readwrite', s => s.put(rec));
+    /* 寫進去。這裡有一個一直存在的盲點：tx() 失敗時是**回傳 null**，不是丟例外，
+       所以 `await tx(...)` 包在 try/catch 裡完全攔不到 —— 空間不夠時這一筆就
+       靜靜地沒寫進去，使用者看到的是「導出了，但歷史紀錄那一格永遠是空的」，
+       而且沒有任何跡象。要看回傳值才知道成不成功（put 成功會回傳 key）。
+
+       確認失敗之後一步一步退：
+         ① 先丟掉最佔空間的那一欄（主視覺用的大圖，一張一百多 KB），
+            畫面會自動退回用小縮圖，只是主視覺糊一點
+         ② 還是不行就從最舊的一筆開始刪，騰出位子再試（最多騰五次）
+       全部都失敗才放棄，那時候是真的一點空間都沒有了。 */
+    const write = async () => (await tx('readwrite', st => st.put(rec))) != null;
+
+    let saved = await write();
+
+    if (!saved && rec.hero) {
+      delete (rec as any).hero;
+      saved = await write();
+    }
+
+    for (let i = 0; !saved && i < 5; i++) {
+      const all = await tx<ExportRecord[]>('readonly', st => st.getAll() as IDBRequest<ExportRecord[]>);
+      const oldest = (all || []).filter(r => r.id !== rec.id).sort((a, b) => (a.at || 0) - (b.at || 0))[0];
+      if (!oldest) break;
+      await tx('readwrite', st => st.delete(oldest.id));
+      saved = await write();
+    }
+
+    if (!saved) return;
     stamp();
     await prune();
     emitChanged();
