@@ -834,7 +834,8 @@ export const HomePage: React.FC<HomePageProps> = ({
   );
 
   /**
-   * 歷史紀錄的格子。首頁那一排放 5 格，「我的」那一頁放 10 格（每排五個、兩排）。
+   * 歷史紀錄的格子。首頁放 10 格（每排五個、兩排），「我的」那一頁放 20 格（四排）。
+   * 格子是正方形。
    * 兩邊是同一顆元件、同一份資料，只有格數不一樣。
    * 空的位子畫虛線框加一個加號，點下去就直接去挑照片 ——
    * 本來只是灰底，看不出來可以做什麼。
@@ -849,7 +850,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               key={`slot-${i}`}
               onClick={onImportPhoto}
               aria-label="匯入照片"
-              className="aspect-[4/5] rounded-[10px] border border-dashed border-white/15 flex items-center justify-center text-white/25 active:scale-[0.97] transition-transform duration-300"
+              className="aspect-square rounded-[10px] border border-dashed border-white/15 flex items-center justify-center text-white/25 active:scale-[0.97] transition-transform duration-300"
             >
               <Icon name="add" className="text-[20px]" />
             </button>
@@ -860,7 +861,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             key={item.id}
             onClick={() => onOpenRecent?.(item.id)}
             title={`${timeAgo(item.at)}導出`}
-            className="relative aspect-[4/5] rounded-[10px] overflow-hidden border border-white/10 p-0 active:scale-[0.97] transition-transform duration-300"
+            className="relative aspect-square rounded-[10px] overflow-hidden border border-white/10 p-0 active:scale-[0.97] transition-transform duration-300"
           >
             <img src={item.thumb} alt="" className="w-full h-full object-cover" draggable={false} />
           </button>
@@ -885,7 +886,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           {pillArrow}
         </button>
       </div>
-      {historyGrid(5)}
+      {historyGrid(10)}
     </div>
   );
 
@@ -986,12 +987,12 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
 
           {/* 歷史紀錄（完整版）——首頁那一排的「查看全部」就是跳到這裡。
-               10 格、每排五個；還沒導出過的位子留空格，點下去直接去挑照片。 */}
+               20 格、每排五個（四排）；還沒導出過的位子留空格，點下去直接去挑照片。 */}
           <div className="mt-8">
             <div className="flex items-center justify-between mb-2">
               <span className="text-[12px] font-bold tracking-[0.14em] text-white/55">歷史紀錄</span>
             </div>
-            {historyGrid(10)}
+            {historyGrid(20)}
           </div>
 
           {/* 登出與刪除帳號都收進帳號設定那一頁了（點上面那列右邊的箭頭） */}
@@ -1215,7 +1216,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         {/* 這一格的 mt 與上面那個 pb 是一組的（加起來 48）：
              mt 加多少，pb 就要減多少，歷史紀錄才會單純上下移動，
              不會把上半屏連帶拉高或壓扁。 */}
-        <div className="relative z-10 mt-[20px] shrink-0">{historySection}</div>
+        <div className="relative z-10 mt-[12px] shrink-0">{historySection}</div>
       </div>
 
       {/* --- 靈感 ---
