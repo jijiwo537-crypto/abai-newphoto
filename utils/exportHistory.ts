@@ -49,9 +49,24 @@ export interface ExportMeta {
   hasPhoto?: boolean;
 }
 
+/** 存進 IndexedDB 的圖檔：位元組 ＋ MIME。見下面 toBytes 的說明 */
+interface Bytes { buf: ArrayBuffer; type: string }
+
 interface ExportRecord extends ExportMeta {
-  /** 導出當下用的那張原圖 */
-  photo: Blob | null;
+  /**
+   * 導出當下用的那張原圖。
+   *
+   * ⚠️ 存的是「位元組」不是 Blob。
+   * Blob 可以直接丟進 IndexedDB，但 iOS 的 WebKit 對這件事一直有問題 ——
+   * 寫的時候不會報錯，關掉 App 再打開（或空間吃緊時）讀回來卻是空的。
+   * 而這一份程式對「讀不到原圖」的處理是：listExports 直接過濾掉那一筆、
+   * loadExport 甚至會把它刪掉 —— 所以使用者看到的就是「導出了，
+   * 歷史紀錄卻永遠是空的」，而且完全找不到原因。
+   * ArrayBuffer 是最基本的可複製型別，各家瀏覽器都存得住，讀回來再組回 Blob。
+   */
+  photoBytes?: Bytes;
+  /** 舊版存的是 Blob，讀得到就還是要能用（不再寫入新的） */
+  photo?: Blob | null;
   /**
    * state 裡面引用到的其他圖檔。
    *
@@ -61,7 +76,19 @@ interface ExportRecord extends ExportMeta {
    * 跟著整筆紀錄一起被刪掉，所以不會有孤兒檔案。
    */
   assets?: Record<string, Blob>;
+  /** 同上：新版存位元組，舊版的 assets（Blob）還是讀得回來 */
+  assetBytes?: Record<string, Bytes>;
 }
+
+/** Blob → 位元組。存進 IndexedDB 之前一律先過這一關 */
+async function toBytes(b: Blob): Promise<Bytes> {
+  return { buf: await b.arrayBuffer(), type: b.type || 'application/octet-stream' };
+}
+/** 位元組 → Blob。讀出來之後組回去，其他程式完全不用改 */
+const fromBytes = (x?: Bytes | null): Blob | null =>
+  x && x.buf ? new Blob([x.buf], { type: x.type || 'application/octet-stream' }) : null;
+/** 兩種格式都吃：新版的位元組優先，舊版的 Blob 當退路 */
+const recPhoto = (r: ExportRecord): Blob | null => fromBytes(r.photoBytes) || r.photo || null;
 
 /** state 裡哪些欄位放的是圖片網址 */
 const SRC_KEYS = new Set(['src', 'url', 'origSrc', 'referenceSrc', 'imageSrc', 'thumb']);
@@ -403,8 +430,11 @@ export async function addExport(
       state: saveState,
       photoKey,
       hasPhoto: true,
-      photo,
-      assets,
+      /* 存位元組，不存 Blob（見 ExportRecord.photoBytes 的說明） */
+      photoBytes: await toBytes(photo),
+      assetBytes: Object.fromEntries(
+        await Promise.all(Object.entries(assets).map(async ([k, v]) => [k, await toBytes(v)] as const)),
+      ),
     };
     /* 寫進去。這裡有一個一直存在的盲點：tx() 失敗時是**回傳 null**，不是丟例外，
        所以 `await tx(...)` 包在 try/catch 裡完全攔不到 —— 空間不夠時這一筆就
@@ -447,7 +477,7 @@ export async function listExports(): Promise<ExportMeta[]> {
   return all
     .sort((a, b) => (b.at || 0) - (a.at || 0))
     // 舊版本可能留下沒有原圖的紀錄 —— 那種點開來是沒有反應的，直接不要列出來
-    .filter(r => !!r.photo)
+    .filter(r => !!(r.photoBytes?.buf || r.photo))
     // state 裡還是 hist: 參考 —— 首頁只用得到縮圖，真的要還原時才走 loadExport
     .map(({ id, tool, at, thumb, hero, photoKey }) => ({ id, tool, at, thumb, hero, state: null, photoKey, hasPhoto: true }));
 }
@@ -455,14 +485,23 @@ export async function listExports(): Promise<ExportMeta[]> {
 /** 還原用：連原圖一起拿出來 */
 export async function loadExport(id: string): Promise<{ meta: ExportMeta; src: string } | null> {
   const rec = await tx<ExportRecord>('readonly', s => s.get(id) as IDBRequest<ExportRecord>);
-  if (!rec || !rec.photo) {
+  const photo = rec ? recPhoto(rec) : null;
+  if (!rec || !photo) {
     // 開不起來的紀錄就順手清掉，磚塊才不會一直留在首頁讓人白點
     if (rec) { await tx('readwrite', s => s.delete(id)); emitChanged(); }
     return null;
   }
-  const { photo, assets, ...meta } = rec;
-  // state 裡的 hist: 參考換回可以直接用的網址（拼圖的每一張、仿色的參考圖…）
-  meta.state = assets ? internalize(meta.state, assets, new Map()) : meta.state;
+  const { photo: _p, assets, assetBytes, ...meta } = rec as any;
+  /* state 裡的 hist: 參考換回可以直接用的網址（拼圖的每一張、仿色的參考圖…）。
+     新版存的是位元組，先組回 Blob；舊版的紀錄本來就是 Blob，直接用。 */
+  const assetMap: Record<string, Blob> = assets || {};
+  if (assetBytes) {
+    for (const [k, v] of Object.entries(assetBytes as Record<string, Bytes>)) {
+      const b = fromBytes(v);
+      if (b) assetMap[k] = b;
+    }
+  }
+  meta.state = Object.keys(assetMap).length ? internalize(meta.state, assetMap, new Map()) : meta.state;
   return { meta, src: URL.createObjectURL(photo) };
 }
 
