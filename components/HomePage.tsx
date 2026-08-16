@@ -856,16 +856,21 @@ export const HomePage: React.FC<HomePageProps> = ({
             </button>
           );
         }
-        return (
-          <button
-            key={item.id}
-            onClick={() => onOpenRecent?.(item.id)}
-            title={`${timeAgo(item.at)}導出`}
-            className="relative aspect-square rounded-[10px] overflow-hidden border border-white/10 p-0 active:scale-[0.97] transition-transform duration-300"
-          >
-            <img src={item.thumb} alt="" className="w-full h-full object-cover" draggable={false} />
-          </button>
-        );
+          /* 縮圖偶爾會做不出來（手機解不動那張成品）。那時候不要掛一張破圖，
+             畫成一塊素色的磚就好 —— 這一筆照樣點得開。 */
+          const src = item.thumb || item.hero || '';
+          return (
+            <button
+              key={item.id}
+              onClick={() => onOpenRecent?.(item.id)}
+              title={`${timeAgo(item.at)}導出`}
+              className={`relative aspect-square rounded-[10px] overflow-hidden border border-white/10 p-0 active:scale-[0.97] transition-transform duration-300 ${src ? '' : 'bg-white/[0.07] flex items-center justify-center text-white/25'}`}
+            >
+              {src
+                ? <img src={src} alt="" className="w-full h-full object-cover" draggable={false} />
+                : <Icon name="image" className="text-[18px]" />}
+            </button>
+          );
       })}
     </div>
   );
@@ -1044,13 +1049,15 @@ export const HomePage: React.FC<HomePageProps> = ({
            這個數字要跟著歷史紀錄那一區的高度一起調：那一區每長高 1px，
            這裡就要減 1px，上面每一排才會留在原地（不然上半屏被壓縮，
            品牌字、編輯／相機、四工具、橫幅會通通跟著往上跑）。
-           目前是「一排正方形格子」，所以是 76。
+           目前是「一排正方形格子」，76 是「整疊位置不變」的基準值；
+           這裡寫 52 是照要求再往下 24px（只影響修圖這一頁，
+           右上角的聯絡鈕貼著上半屏頂端所以不會跟著動）。
 
            它同時也是「縮圖下緣到分頁列那條線」的間距 ——
              那段間距 ＝ 捲動區自己的 pb-[21px] ＋ 這裡的 28 ＝ 49px
            要改歷史紀錄的高低，就動這個數字與它的 mt（下面那一行），
            兩個加起來保持 48 不變，上半屏就不會被拉高壓扁，上面每一排都不會動。 */
-        className="home-hero relative z-0 min-h-full px-5 pb-[76px] flex flex-col box-border"
+        className="home-hero relative z-0 min-h-full px-5 pb-[52px] flex flex-col box-border"
       >
         {/* --- 上半屏 ---
              參考圖上半是一整塊主視覺，品牌字壓在它的左下角。
