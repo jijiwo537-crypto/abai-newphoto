@@ -1044,20 +1044,19 @@ export const HomePage: React.FC<HomePageProps> = ({
         style={{ willChange: 'transform, opacity' }}
         /* 下面的內距是「整疊往上移多少」的調節閥：上半屏是 flex-1 吃剩餘高度的，
            這裡每多 1px，上半屏就矮 1px、下面那一疊連同品牌字就整組往上 1px。
-           右上角的聯絡鈕是貼著上半屏頂端的，所以不會跟著動。
 
-           這個數字要跟著歷史紀錄那一區的高度一起調：那一區每長高 1px，
-           這裡就要減 1px，上面每一排才會留在原地（不然上半屏被壓縮，
-           品牌字、編輯／相機、四工具、橫幅會通通跟著往上跑）。
-           目前是「一排正方形格子」，76 是「整疊位置不變」的基準值；
-           這裡寫 52 是照要求再往下 24px（只影響修圖這一頁，
-           右上角的聯絡鈕貼著上半屏頂端所以不會跟著動）。
+           兩個貼著上半屏「下緣」排的東西會跟著動：品牌字那一組，以及主視覺
+           下緣那道漸層。漸層不該跟著跑，所以它自己往下推了同樣的量補回來。
+           右上角的聯絡鈕貼著上半屏「頂端」，不受這個數字影響，要動它得自己挪。
+
+           這個數字也要跟著歷史紀錄那一區的高度一起調：那一區每長高 1px，
+           這裡就要減 1px，上面每一排才會留在原地。
+           目前是「一排正方形格子」，76 是「整疊位置完全不變」的基準值，
+           現在寫 55 ＝ 比基準低 21px。
 
            它同時也是「縮圖下緣到分頁列那條線」的間距 ——
-             那段間距 ＝ 捲動區自己的 pb-[21px] ＋ 這裡的 28 ＝ 49px
-           要改歷史紀錄的高低，就動這個數字與它的 mt（下面那一行），
-           兩個加起來保持 48 不變，上半屏就不會被拉高壓扁，上面每一排都不會動。 */
-        className="home-hero relative z-0 min-h-full px-5 pb-[52px] flex flex-col box-border"
+             那段間距 ＝ 捲動區自己的 pb-[21px] ＋ 這裡的 55 ＝ 76px */
+        className="home-hero relative z-0 min-h-full px-5 pb-[55px] flex flex-col box-border"
       >
         {/* --- 上半屏 ---
              參考圖上半是一整塊主視覺，品牌字壓在它的左下角。
@@ -1094,7 +1093,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                    兩條邊落在同一個位置就會在某些格子上抗鋸齒出一條淺色的縫。
                    讓漸層的邊超出裁切線，就永遠不會有那條縫。 */}
               <div
-                className="absolute -inset-x-px -bottom-px h-[calc(52%+1px)]"
+                className="absolute -inset-x-px -bottom-[4px] h-[calc(52%+4px)]"
                 style={{ background: 'linear-gradient(to top,#000 0%,rgba(0,0,0,.92) 20%,rgba(0,0,0,.66) 44%,rgba(0,0,0,.3) 70%,rgba(0,0,0,0) 100%)' }}
               />
             </div>
@@ -1109,7 +1108,8 @@ export const HomePage: React.FC<HomePageProps> = ({
             onClick={e => { e.stopPropagation(); setContactOpen(true); }}
             aria-label="聯絡方式"
             className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
-            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 14px)' }}
+            /* 14 → 11：整頁往上 3px，這一顆也跟著（見下面那一疊的說明） */
+            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 11px)' }}
           >
             <Icon name="mail" className="text-[16px]" />
           </button>
@@ -1141,7 +1141,8 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
         </div>
 
-        {/* 編輯 / 相機 —— 圖示與文字沒動，高度跟下面那排四個工具對齊（都是 75） */}
+        {/* 編輯 / 相機 —— 圖示與文字沒動，高度跟下面那排四個工具對齊（都是 75）。
+ */}
         <div className="relative z-10 mt-[8px] shrink-0 flex gap-2">
           <button
             onClick={onImportPhoto}
@@ -1257,8 +1258,15 @@ export const HomePage: React.FC<HomePageProps> = ({
              兩個都是 z-index auto，就照 DOM 順序畫，內容自然蓋在它上面，
              不用負值也就沒有那條縫。 */}
         <div
-          className="absolute -inset-x-px -top-[34px] bottom-0 pointer-events-none"
+          className="absolute -inset-x-px bottom-0 pointer-events-none"
           style={{
+            /* 上緣跟著瀏海走，不再是寫死的 -34。
+               搜尋欄在這一段的 (瀏海高 + 14) 處，羽化長 43px、從這一層的頂端算起，
+               所以頂端訂在 (瀏海高 + 2 − 43) —— 羽化結束的位置永遠落在
+               搜尋欄上方 12px，不管有沒有瀏海都一樣近。
+               以前寫死 -34，在有瀏海的手機上羽化會停在搜尋欄上面 50 幾 px，
+               中間隔著一大段純黑，那就是「遮罩離搜尋欄太遠」。 */
+            top: 'calc(env(safe-area-inset-top, 0px) - 41px)',
             background:
               'linear-gradient(to bottom,'
               + 'rgba(0,0,0,0) 0px,rgba(0,0,0,.014) 3px,rgba(0,0,0,.053) 6px,rgba(0,0,0,.113) 9px,'
