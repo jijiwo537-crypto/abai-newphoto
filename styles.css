@@ -242,3 +242,8 @@ select:focus, select:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .home-scroll { --lib-lift: 0px; }
 }
+
+/* 狀態列改成 black-translucent 之後，畫面會鋪到瀏海底下。
+   首頁刻意要這個效果（主視覺頂到最上面），但其他全螢幕工具的標題列不能被蓋住 ——
+   它們在最外層掛這個 class，補回瀏海的高度，排版就跟以前一模一樣。 */
+.safe-top { padding-top: env(safe-area-inset-top, 0px); }

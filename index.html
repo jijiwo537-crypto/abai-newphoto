@@ -2,7 +2,7 @@
 <html lang="zh-Hant" class="dark">
 <head>
     <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
     <title>ABAI</title>
     <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
     <link rel="icon" type="image/png" sizes="64x64" href="./favicon-64.png" />
@@ -14,9 +14,12 @@
     <meta name="theme-color" content="#000000" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <!-- 用 black 不用 black-translucent：translucent 會讓內容鑽到瀏海底下，
-         整頁等於往上位移一截，現有的排版會跟著跑掉。 -->
-    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <!-- black-translucent：狀態列那一條不再是實心黑，畫面直接鋪到螢幕最上面
+         （首頁的主視覺就能頂到瀏海）。配 viewport-fit=cover 才會生效，
+         env(safe-area-inset-top) 這時候才會是真正的瀏海高度。
+         其他每一個全螢幕工具都在最外層補了同樣高度的上內距（.safe-top），
+         所以它們的排版跟以前完全一樣，只有首頁刻意讓圖鑽上去。 -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="ABAI" />
     <!-- 字型要先載：它們的網址寫在打包後的 CSS 裡，瀏覽器要先下載並解析那支
          CSS 才會發現它們，等於多繞一趟。先 preload 就會跟 CSS 同時開始下載，
