@@ -910,7 +910,7 @@ export const HomePage: React.FC<HomePageProps> = ({
         <div
           style={{
             transform: nav === 'me' ? 'translate3d(0,0,0)' : 'translate3d(100%,0,0)',
-            transition: 'transform 420ms cubic-bezier(0.22,1,0.36,1)',
+            transition: 'transform 560ms cubic-bezier(0.22,1,0.36,1)',
             willChange: 'transform',
           }}
           className={`no-scrollbar absolute inset-0 z-[6] overflow-y-auto px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+62px)] box-border bg-black ${nav === 'me' ? '' : 'pointer-events-none'}`}
@@ -1016,7 +1016,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           /* 兩頁一起平移：「我的」從右邊進來多少，這一頁就往左讓開多少，
              看起來是整條橫向的軌道在滑，而不是新的一頁蓋在舊的上面。 */
           transform: nav === 'me' ? 'translate3d(-100%,0,0)' : 'translate3d(0,0,0)',
-          transition: 'transform 420ms cubic-bezier(0.22,1,0.36,1)',
+          transition: 'transform 560ms cubic-bezier(0.22,1,0.36,1)',
           willChange: 'transform',
         }}
         className={`home-scroll no-scrollbar absolute inset-0 z-[5] overflow-y-auto box-border pb-[21px] ${nav === 'me' ? 'pointer-events-none' : ''}`}
@@ -1076,8 +1076,12 @@ export const HomePage: React.FC<HomePageProps> = ({
               <div ref={artRef} className="home-hero-art absolute -inset-y-[10%] inset-x-0 will-change-transform">
                 <img src={heroSrc} alt="" className="w-full h-full object-cover" draggable={false} />
               </div>
+              {/* 下緣多長 1px、左右也各多 1px：這道漸層的邊本來剛好壓在
+                   overflow-hidden 的裁切線上，父層捲動時是連續（帶小數）的位移，
+                   兩條邊落在同一個位置就會在某些格子上抗鋸齒出一條淺色的縫。
+                   讓漸層的邊超出裁切線，就永遠不會有那條縫。 */}
               <div
-                className="absolute inset-x-0 bottom-0 h-[52%]"
+                className="absolute -inset-x-px -bottom-px h-[calc(52%+1px)]"
                 style={{ background: 'linear-gradient(to top,#000 0%,rgba(0,0,0,.92) 20%,rgba(0,0,0,.66) 44%,rgba(0,0,0,.3) 70%,rgba(0,0,0,0) 100%)' }}
               />
             </div>
@@ -1230,29 +1234,18 @@ export const HomePage: React.FC<HomePageProps> = ({
       <div ref={libBoxRef} style={{ marginTop: 'calc(var(--lib-lift, 0px) * -1)', overflow: 'clip' }}>
       <div ref={libRef} className="home-lib relative z-[1] px-6 pb-4 pt-[26px]">
         {/* 模板這一段的底：一整片黑，往下滑的時候修圖那一屏就不會透過來重疊。
-             上緣要羽化，不然會看到一條直直的橫邊。
-             羽化長度 43px（原本 36px，再加 20%）。遮罩的上緣位置沒動，
-             還是從這一段上方 34px 開始。
-             純黑那一點落在這一段內 9px 處，離搜尋欄上緣（pt-[26px]）還有 17px，
-             所以羽化區裡一樣不會有任何內容被壓到。
+             上緣要羽化 43px（照 smoothstep 每 3px 取一站，曲線兩端都是平的、
+             中間沒有折角，所以看不到帶狀邊）。往上多長 34px，
+             純黑那一點落在這一段內 9px 處，離搜尋欄上緣還有 17px。
 
-             硬邊是怎麼來的：原本只有四個轉折點、每兩點之間是直線，
-             透明度的曲線在每個點都會折一下，眼睛對這種折角特別敏感
-             （馬赫帶），看起來就是一條一條的邊。
-             這裡改成照 smoothstep（t²(3−2t)）每 3px 取一個點、共 16 站：
-             曲線在頭尾兩端的斜率都是 0，中間也沒有折角，所以完全看不到邊。
-
-             往上多長的那 34px 會不會被外層的 overflow:clip 夾掉？
-             這一段一開始是往下位移 274px 的，位移大於 34px 時完全在夾框裡面；
-             等位移掉到 34px 以下（捲過 686px）的時候，這一段的上緣早就離開畫面了
-             （捲到 564px 它就貼齊畫面上緣），所以看得到的時候永遠不會被夾到。
-
-             zIndex -1：排在這一段自己的內容後面，但因為外層是 z-[1]、
-             修圖那一屏是 z-0，所以它還是穩穩蓋在修圖上面。 */}
+             這一層以前掛 zIndex:-1 —— 負的 z-index 子層在「會動的父層」裡會自己
+             變成一個合成層，捲動時兩層的邊各自四捨五入，就會閃出一條線。
+             現在改成：這一層不指定 z-index，下面的內容包一層 relative；
+             兩個都是 z-index auto，就照 DOM 順序畫，內容自然蓋在它上面，
+             不用負值也就沒有那條縫。 */}
         <div
-          className="absolute inset-x-0 -top-[34px] bottom-0 pointer-events-none"
+          className="absolute -inset-x-px -top-[34px] bottom-0 pointer-events-none"
           style={{
-            zIndex: -1,
             background:
               'linear-gradient(to bottom,'
               + 'rgba(0,0,0,0) 0px,rgba(0,0,0,.014) 3px,rgba(0,0,0,.053) 6px,rgba(0,0,0,.113) 9px,'
@@ -1261,6 +1254,8 @@ export const HomePage: React.FC<HomePageProps> = ({
               + 'rgba(0,0,0,.929) 36px,rgba(0,0,0,.976) 39px,rgba(0,0,0,.994) 41px,#000 43px)',
           }}
         />
+        {/* 內容包一層 relative，才會畫在上面那一層黑底之上（兩邊都不用 z-index） */}
+        <div className="relative">
         {/* 搜尋欄 —— 還沒接真的模板資料，先做成純前端的字串過濾 */}
         <div className="flex items-center gap-2 h-11 px-3.5 mb-3 rounded-full bg-white/[0.06] border border-white/10">
           <Icon name="search" className="text-[18px] text-white/40 shrink-0" />
@@ -1308,6 +1303,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               })}
             </div>
           ))}
+        </div>
         </div>
       </div>
       </div>
