@@ -14,10 +14,10 @@ const DB_VERSION = 1;
 const STORE = 'items';
 const STAMP_KEY = 'abai:exports';
 /** 留最近幾筆就好，超過的連原圖一起丟掉。
-    「我的」那一頁的歷史紀錄是 10 格，這裡就留 10 筆，剛好對得起來 ——
+    「我的」那一頁的歷史紀錄是 20 格，這裡就留 20 筆，剛好對得起來 ——
     留比格子多的話，多出來的那幾筆在畫面上根本點不到。
     每一筆存的是：原圖 ＋ 小縮圖 ＋ 主視覺用的大圖。 */
-const MAX_ITEMS = 10;
+const MAX_ITEMS = 20;
 /** 縮圖的長邊（首頁那一排 5 格用的） */
 const THUMB_MAX = 320;
 /**
