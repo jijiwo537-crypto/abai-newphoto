@@ -710,7 +710,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   };
 
   return (
-    <div className="flex flex-col h-screen max-h-screen justify-end pb-4 overflow-hidden select-none bg-black font-sans text-white animate-in fade-in duration-300">
+    <div className="safe-top flex flex-col h-screen max-h-screen justify-end pb-4 overflow-hidden select-none bg-black font-sans text-white animate-in fade-in duration-300">
       
       {isImportingLocal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">

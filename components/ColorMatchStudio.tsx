@@ -387,7 +387,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
   const ready = !!(srcImg && refImg && luts);
 
   return (
-    <div className="absolute inset-0 bg-[#080808] flex flex-col text-white">
+    <div className="safe-top absolute inset-0 bg-[#080808] flex flex-col text-white">
       {/* 滑桿樣式跟編輯器一模一樣 —— 那邊是寫在自己的 style 區塊裡，
           只有編輯器掛著的時候才存在，所以這裡要自己帶一份。 */}
       <style>{`
