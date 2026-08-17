@@ -1,22 +1,13 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
-import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, MessageCircle, Bookmark, Volume2, VolumeX } from 'lucide-react';
 import { Icon } from './Icon';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
-import { addExport } from '../utils/exportHistory';
-import { SYMBOLS } from '../utils/symbols';
-/* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
-import {
-  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape, glowAmount,
-  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
-} from '../utils/holeShapes';
-import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { paintPattern, PatternOpts } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
@@ -574,9 +565,31 @@ interface ColorPickerProps {
 }
 
 /** 文字圖層的編輯面板：內容、字體、顏色、字距、粗體、邊緣發光。 */
+/**
+ * 文字用的色票：亞洲女生拼貼時最常拿來寫字的顏色。
+ * 白與墨黑先打底（照片上最好讀），接著奶油／奶茶這類米色系，
+ * 再來三個粉（淺粉、甜粉、莓紅）與焦糖棕，最後薰衣草、霧藍、抹茶、蜜黃各一。
+ */
 /** 長按多久才算「要拖去交換」。150ms 太容易誤觸，拉長到 250ms。 */
 const LONG_PRESS_MS = 250;
 
+const TEXT_COLORS = [
+  /* 前兩顆固定是純黑與墨黑：寫字與描邊最常用的就是這兩個，
+     擺在最前面才不用每次都往右滑。接著才是白與暖灰那些中性色。 */
+  '#000000', '#2B2B2B',
+  // 白／暖灰（中性）
+  '#FFFFFF', '#EAE6DF',
+  // 奶油 → 奶茶（暖色系挨在一起）
+  '#FFF7EC', '#E8D3BC',
+  // 粉 → 莓紅
+  '#FFD6E0', '#F4C2C2', '#FFA8BE', '#D4667E',
+  // 黃
+  '#FFE49B', '#FFF1A5',
+  // 綠 → 薄荷 → 淺青
+  '#A9C2A0', '#CBEAD6', '#9BD4C3', '#B8E3D8', '#D2E8E1',
+  // 藍 → 紫
+  '#A7C4DC', '#C7B5E8',
+];
 
 /**
  * 色票最前面那顆「自訂顏色」。外觀跟美顏那顆一致：
@@ -711,7 +724,7 @@ const SHAPE_SUB_TOOLS: Record<string, [string, string, string, number, number, n
     ['imgStrokeWidth', '粗細', 'line_weight', 0, 20, 0],
     /* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
        所以線越粗、虛線的節奏就跟著等比例放大，不會粗線配細碎的點。 */
-    ['imgStrokeDash', '虛線', 'line_style', 0, 100, 0],
+    ['imgStrokeDash', '虛線', 'more_horiz', 0, 100, 0],
     ['imgStrokeColor', '顏色', 'palette', 0, 0, 0],
   ],
   glow: [
@@ -738,13 +751,7 @@ const glowHslToHex = (h: number, sat: number, l: number) => {
   const to = (v: number) => Math.round(Math.max(0, Math.min(1, v + m)) * 255).toString(16).padStart(2, '0');
   return `#${to(r1)}${to(g1)}${to(b1)}`.toUpperCase();
 };
-/**
- * 色票的骨架：以 #9BD4C3 為基準，只轉色相（飽和度不動），
- * 每 360/14 度取一顆。**不排序** —— 直接從基準色的色相往前繞一圈，
- * 所以第一顆就是 #9BD4C3 本人，後面照色相順著滑過去、繞回原點，
- * 看起來還是一條連續的漸層。
- */
-const GLOW_RAMP = (() => {
+const GLOW_COLORS = (() => {
   const r = parseInt(GLOW_BASE.slice(1, 3), 16) / 255;
   const g = parseInt(GLOW_BASE.slice(3, 5), 16) / 255;
   const b = parseInt(GLOW_BASE.slice(5, 7), 16) / 255;
@@ -758,317 +765,9 @@ const GLOW_RAMP = (() => {
   const step = 360 / 14;
   const hues: number[] = [];
   for (let i = 0; i < 14; i++) hues.push((((h0 + i * step) % 360) + 360) % 360);
-  return { hues, sat, l };
+  hues.sort((a, b2) => a - b2);
+  return ['#FFFFFF', ...hues.map(h => glowHslToHex(h, sat, l))];
 })();
-
-/** 名稱裡有「發光」的功能用這一組：亮度就是基準色本身的亮度 */
-export const GLOW_COLORS = ['#FFFFFF', ...GLOW_RAMP.hues.map(h => glowHslToHex(h, GLOW_RAMP.sat, GLOW_RAMP.l))];
-
-/**
- * 其他借用同一組色票的功能（文字、描邊、圖形、底色…）用這一組：
- * 色相與飽和度完全照舊，只把**明度**（HSV 的 V）從基準色的 83 提到 90 ——
- * 只亮一點點，還是同一條漸層。
- */
-const GLOW_BASE_HSV = hexToHsv(GLOW_BASE);
-export const SOFT_COLORS =
-  ['#FFFFFF', ...GLOW_RAMP.hues.map(h => hsvToHex(h, GLOW_BASE_HSV.s, 90))];
-
-/**
- * 文字顏色／文字描邊用的色票。
- * 就是上面那組淡的，只在最前面多墊一顆純黑 ——
- * 有黑色的色票，黑色一律排在純白前面。
- */
-const TEXT_COLORS = ['#000000', ...SOFT_COLORS];
-
-/**
- * 色票列：第一顆固定是自訂顏色（開系統調色盤），後面才是預設色。
- *
- * 這一段本來寫在 ImageAdjustPanel 裡面。圖形圖層的顏色要「跟發光的完全一樣」，
- * 所以整段原封不動搬到模組層共用 —— **一行邏輯都沒有改**，
- * 發光、描邊、圖形三個地方看到的就是同一個東西。
- */
-export const swatchStrip = (
-  value: string | undefined, colors: string[], onPick: (c: string) => void, big = false,
-) => (
-  <div className={`flex items-center overflow-x-auto no-scrollbar min-w-0 px-0.5 py-0.5 ${big ? 'gap-2 w-full' : 'gap-1.5'}`}>
-    <CustomColorButton value={value || '#FFFFFF'} onPick={onPick} size={big ? 32 : 24} />
-    {colors.map(c => (
-      <button
-        key={c}
-        onClick={() => onPick(c)}
-        title={c}
-        className={`shrink-0 rounded-[7px] transition-all active:scale-90 ${big ? 'w-8 h-8' : 'w-6 h-6'} ${
-          (value || '#FFFFFF').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
-        }`}
-        style={{ backgroundColor: c }}
-      />
-    ))}
-  </div>
-);
-
-/* ── 新增圖形 ────────────────────────────────────────────────────────────
-   圖形圖層跟照片、文字一樣都是 floatingImages 裡的一員（位置、縮放、旋轉、
-   圖層順序、複製、刪除全部沿用同一套），只是內容換成一條路徑。
-
-   路徑只寫一份、回傳 SVG 的 d 字串：
-     預覽 →  <svg><path d={...} />
-     匯出 →  new Path2D(同一條 d)
-   兩邊吃的是同一條字串，所以畫布上看到的跟存下來的不可能長得不一樣。
-
-   而且是「照外框 w×h 直接畫」，不是先畫正方形再拉伸 ——
-   拉成長方形時描邊的粗細才不會跟著被拉扁。 */
-const r3 = (v: number) => Math.round(v * 1000) / 1000;
-
-export const shapePathD = (kind: string, w: number, h: number): string => {
-  const a = w / 2, b = h / 2, cx = a, cy = b;
-  const P = (x: number, y: number) => `${r3(x)} ${r3(y)}`;
-  const poly = (pts: [number, number][]) =>
-    `M ${P(pts[0][0], pts[0][1])} ${pts.slice(1).map(p => `L ${P(p[0], p[1])}`).join(' ')} Z`;
-  /** 正 n 邊形，start 是第一個頂點的角度 */
-  const reg = (n: number, start: number) => {
-    const pts: [number, number][] = [];
-    for (let i = 0; i < n; i++) {
-      const t = start + (i / n) * Math.PI * 2;
-      pts.push([cx + Math.cos(t) * a, cy + Math.sin(t) * b]);
-    }
-    return poly(pts);
-  };
-  switch (kind) {
-    case 'circle':
-      // 兩段半橢圓弧接成一圈（單一 A 指令畫不了整圈）
-      return `M ${P(0, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(w, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(0, cy)} Z`;
-    case 'square':
-      return poly([[0, 0], [w, 0], [w, h], [0, h]]);
-    case 'rounded': {
-      const r = Math.min(a, b) * 0.28;
-      return `M ${P(r, 0)} L ${P(w - r, 0)} Q ${P(w, 0)} ${P(w, r)} `
-        + `L ${P(w, h - r)} Q ${P(w, h)} ${P(w - r, h)} `
-        + `L ${P(r, h)} Q ${P(0, h)} ${P(0, h - r)} `
-        + `L ${P(0, r)} Q ${P(0, 0)} ${P(r, 0)} Z`;
-    }
-    case 'triangle': {
-      /* 正三角形（三邊等長）。邊長取「這個框裝得下的最大值」再置中 ——
-         框是方的時候就填滿寬度，高度自然是邊長的 √3/2。 */
-      const side = Math.min(w, h * 2 / Math.sqrt(3));
-      const th = side * Math.sqrt(3) / 2;
-      const x0 = (w - side) / 2, y0 = (h - th) / 2;
-      return poly([[x0 + side / 2, y0], [x0 + side, y0 + th], [x0, y0 + th]]);
-    }
-    case 'diamond':
-      return poly([[cx, 0], [w, cy], [cx, h], [0, cy]]);
-    /* 窄菱形：一樣的四個角，只是左右往內收 —— 直立、細長的那種 */
-    case 'diamond-n':
-      return poly([[cx, 0], [cx + w * 0.28, cy], [cx, h], [cx - w * 0.28, cy]]);
-    case 'pentagon': return reg(5, -Math.PI / 2);
-    case 'hexagon': return reg(6, -Math.PI / 2);
-    case 'star': {
-      const n = 5, inner = 0.42;
-      const pts: [number, number][] = [];
-      for (let i = 0; i < n * 2; i++) {
-        const t = -Math.PI / 2 + (i / (n * 2)) * Math.PI * 2;
-        const k = i % 2 ? inner : 1;
-        pts.push([cx + Math.cos(t) * a * k, cy + Math.sin(t) * b * k]);
-      }
-      return poly(pts);
-    }
-    case 'heart':
-      return `M ${P(cx, cy - b * 0.25)} `
-        + `C ${P(cx + a * 0.6, cy - b)} ${P(cx + a * 1.3, cy - b * 0.1)} ${P(cx, cy + b * 0.9)} `
-        + `C ${P(cx - a * 1.3, cy - b * 0.1)} ${P(cx - a * 0.6, cy - b)} ${P(cx, cy - b * 0.25)} Z`;
-    case 'line':
-      return `M ${P(0, cy)} L ${P(w, cy)}`;
-    default:
-      return poly([[0, 0], [w, 0], [w, h], [0, h]]);
-  }
-};
-
-/**
- * 圖形的線寬。基準是「外框長邊的 1/160」，所以同一個粗細值在大圖形與
- * 小圖形上看起來一樣粗，縮放時也跟著等比例走。
- */
-export const shapeLineWidth = (lineW: number | undefined, w: number, h: number) =>
-  Math.max(0.4, (lineW ?? 6) * (Math.max(w, h) / 160));
-
-/**
- * 圖形的發光：三段模糊疊起來（跟文字、圖片的發光同一套做法），
- * 顏色就用圖形自己的顏色。半徑跟著圖形大小走，放大縮小時觀感一致。
- */
-export const shapeGlowBlurs = (w: number, h: number) =>
-  [1, 2, 3].map(k => Math.max(w, h) * 0.045 * k);
-
-/** 新增圖形時的預設值。線條比較細長，所以粗細與大小另外給。 */
-export const SHAPE_DEFAULT_LINEW = (kind: string) => (kind === 'line' ? 4 : 6);
-/** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
-export const SHAPE_DEFAULT_RATIO = (kind: string) => (kind === 'line' ? 0.24 : 0.15);
-/** 新圖形的預設顏色。 */
-export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
-
-/** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
-export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number };
-export const ADD_SHAPE_ITEMS: ShapeItem[] = [
-  // 實心
-  { id: 'circle-f', kind: 'circle', filled: true },
-  { id: 'square-f', kind: 'square', filled: true },
-  { id: 'rounded-f', kind: 'rounded', filled: true },
-  { id: 'triangle-f', kind: 'triangle', filled: true },
-  { id: 'diamond-f', kind: 'diamond', filled: true },
-  { id: 'diamond-n-f', kind: 'diamond-n', filled: true },
-  { id: 'pentagon-f', kind: 'pentagon', filled: true },
-  { id: 'hexagon-f', kind: 'hexagon', filled: true },
-  { id: 'star-f', kind: 'star', filled: true },
-  { id: 'heart-f', kind: 'heart', filled: true },
-  // 細框
-  { id: 'circle-o', kind: 'circle', filled: false },
-  { id: 'square-o', kind: 'square', filled: false },
-  { id: 'rounded-o', kind: 'rounded', filled: false },
-  { id: 'triangle-o', kind: 'triangle', filled: false },
-  { id: 'diamond-o', kind: 'diamond', filled: false },
-  { id: 'pentagon-o', kind: 'pentagon', filled: false },
-  { id: 'hexagon-o', kind: 'hexagon', filled: false },
-  { id: 'star-o', kind: 'star', filled: false },
-  { id: 'heart-o', kind: 'heart', filled: false },
-  // 線條
-  { id: 'line-h', kind: 'line', filled: false, rot: 0, ratio: 0.08 },
-  { id: 'line-v', kind: 'line', filled: false, rot: 90, ratio: 0.08 },
-  { id: 'line-d1', kind: 'line', filled: false, rot: -45, ratio: 0.08 },
-  { id: 'line-d2', kind: 'line', filled: false, rot: 45, ratio: 0.08 },
-];
-
-/**
- * 每一種圖形「實際畫出來的內容」在 0~1 的框裡佔哪一塊 [x, y, w, h]。
- *
- * 有些圖形本來就不會塞滿整個外框（五邊形與星形下面空一截、六邊形左右空、
- * 愛心四周都空），所以按鈕上的小圖如果直接照外框畫，看起來就是偏一邊。
- * 這張表是拿真正的路徑量出來的（路徑是固定的常數，量一次就好），
- * 按鈕靠它把圖案縮到剛好、擺到正中間。
- */
-const SHAPE_FIT: Record<string, [number, number, number, number]> = {
-  circle: [0, 0, 1, 1],
-  square: [0, 0, 1, 1],
-  rounded: [0, 0, 1, 1],
-  triangle: [0, 0.067, 1, 0.866],
-  diamond: [0, 0, 1, 1],
-  'diamond-n': [0.22, 0, 0.56, 1],
-  pentagon: [0.0245, 0, 0.9511, 0.9045],
-  hexagon: [0.067, 0, 0.866, 1],
-  star: [0.0245, 0, 0.9511, 0.9045],
-  heart: [0.1324, 0.2362, 0.7352, 0.7138],
-  line: [0, 0.5, 1, 0],
-};
-
-/** 個別圖案的加大倍率。星形是實心面積最少的一個，稍微放大一點才看得清楚。
-    1.1 ＝ 長邊從 20px 變成 22px。 */
-const GLYPH_ZOOM: Record<string, number> = { star: 1.1 };
-
-/**
- * 「新增圖形」按鈕上的小圖。
- *
- * 刻意不用圖示字型：專案裡的 Material Symbols 是**子集**（只打包了有用到的字），
- * pentagon、hexagon、favorite、horizontal_rule 這幾個根本不在裡面 ——
- * 用了就會直接把英文字印在按鈕上，還會撐爆格子蓋到隔壁那顆。
- * 改成用 shapePathD 自己畫：按鈕上看到的形狀、實心／細框、角度，
- * 就是按下去之後真的會加進畫面的那一個，一模一樣。
- *
- * 畫法：先照外框畫一次，再用 SHAPE_FIT 把「真正有畫到的那一塊」
- * 縮放並平移到 24×24 的正中央 —— 所以每一顆按鈕的圖案都在正中心。
- */
-export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
-  const isLine = item.kind === 'line';
-  /* viewBox 與圖案的框一樣大 —— 每一顆圖案的長邊都剛好等於 size（預設 20px），
-     所以不管哪一種形狀，看起來都一樣大。 */
-  const VB = 24;
-  const BOX = VB;
-  const src = shapePathD(item.kind, BOX, isLine ? 0 : BOX);
-  const solid = item.filled && !isLine;
-
-  const fit = SHAPE_FIT[item.kind] || [0, 0, 1, 1];
-  // 內容的實際大小（線條的高度是 0，縮放只看寬度）
-  const cw = fit[2] * BOX, ch = fit[3] * BOX;
-  const k = (GLYPH_ZOOM[item.kind] || 1)
-    * Math.min(cw > 0 ? BOX / cw : Infinity, ch > 0 ? BOX / ch : Infinity);
-  // 先把內容的中心搬到原點、放大、再搬到 viewBox 的正中央
-  const ccx = (fit[0] + fit[2] / 2) * BOX;
-  // 線條的路徑高度是 0（畫在 y=0 那一條），所以它的內容中心 y 就是 0
-  const ccy = isLine ? 0 : (fit[1] + fit[3] / 2) * BOX;
-  /* 順序有講究：先把內容中心搬到原點 → 轉角度 → 縮放 → 搬到 viewBox 正中央。
-     （SVG 的 transform 是由左往右套用到座標系上，所以寫起來剛好是反過來的。）
-     轉角度要在「搬到原點之後」，不然斜線會繞著自己的端點轉，就歪掉了。 */
-  const tf = `translate(${r3(VB / 2)} ${r3(VB / 2)}) scale(${r3(k)})`
-    + (item.rot ? ` rotate(${item.rot})` : '')
-    + ` translate(${r3(-ccx)} ${r3(-ccy)})`;
-
-  return (
-    <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
-      <g transform={tf}>
-        <path
-          d={src}
-          fill={solid ? 'currentColor' : 'none'}
-          stroke={solid ? 'none' : 'currentColor'}
-          strokeWidth={(isLine ? 1.9 : 1.6) / k}
-          strokeLinecap="butt"
-          strokeLinejoin={isLine ? 'round' : 'miter'}
-        />
-      </g>
-    </svg>
-  );
-};
-
-/* 「圖案」那幾顆借過來的圖形，按鈕上的小圖跟創意拼圖用同一份 —— 
-   兩個工具的清單長得一樣，點下去加出來的也是同一顆。 */
-// --- 自製極簡單線十字星圖標 ---
-export const CrossStarIcon = ({ size = 20, strokeWidth = 1.5 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2 Q12 12 2 12 Q12 12 12 22 Q12 12 22 12 Q12 12 12 2" />
-  </svg>
-);
-
-// --- 自製單線旋渦圖標 ---
-export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round">
-    <path d="M12 2.5a9.5 9.5 0 0 1 9.5 9.5 8.5 8.5 0 0 1-8.5 8.5 7.5 7.5 0 0 1-7.5-7.5 6.5 6.5 0 0 1 6.5-6.5 5.5 5.5 0 0 1 5.5 5.5 4.5 4.5 0 0 1-4.5 4.5 3.5 3.5 0 0 1-3.5-3.5 2.5 2.5 0 0 1 2.5-2.5 1.5 1.5 0 0 1 1.5 1.5" />
-  </svg>
-);
-
-/** 一顆「圖案」的小圖（形狀分頁的選單與『新增圖形』清單共用同一份）。 */
-export const HoleGlyph: React.FC<{ s: string }> = ({ s }) => (
-  <>
-    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
-                        /* 去背的圖：拿它當遮罩、底色用 currentColor，
-                           顏色就跟旁邊那些圖示走同一條規則 ——
-                           沒選中時是暗的（#555），選中才變白。
-                           （原本是用 filter 硬染成白色，所以永遠亮著。） */
-                        <span
-                          aria-hidden
-                          style={{
-                            display: 'block',
-                            width: 26,
-                            height: 26 / holeImgRatio(s),
-                            backgroundColor: 'currentColor',
-                            WebkitMaskImage: `url(${SHAPE_IMAGES[s]})`,
-                            maskImage: `url(${SHAPE_IMAGES[s]})`,
-                            WebkitMaskSize: 'contain',
-                            maskSize: 'contain',
-                            WebkitMaskRepeat: 'no-repeat',
-                            maskRepeat: 'no-repeat',
-                            WebkitMaskPosition: 'center',
-                            maskPosition: 'center',
-                          }}
-                        />
-                      ) : GLYPH_HOLES[s] ? (
-                        <span
-                          className="font-bold font-sans leading-none inline-block whitespace-nowrap"
-                          style={{
-                            fontSize: `${GLYPH_BTN[s]?.size ?? 18}px`,
-                            transform: (GLYPH_BTN[s]?.dx || GLYPH_BTN[s]?.dy)
-                              ? `translate(${GLYPH_BTN[s]?.dx ?? 0}px, ${GLYPH_BTN[s]?.dy ?? 0}px)`
-                              : undefined,
-                          }}
-                        >
-                          {GLYPH_HOLES[s]}
-                        </span>
-                      ) : <Type size={18} />}
-  </>
-);
 
 const FontCard: React.FC<{
   font: { name: string; label: string; category: FontCategory };
@@ -1098,12 +797,8 @@ const FontCard: React.FC<{
         active ? 'bg-white/10 border-white' : 'bg-white/[0.03] border-white/10 hover:border-white/25'
       }`}
     >
-      {/* 行高不能用 leading-none：那樣行盒只有 19px，可是不少字體（尤其是中日韓）
-          的字身高度超過 1 個 em —— truncate 帶著 overflow:hidden，超出去的部分
-          就被切掉了，看起來就是範例字上面被蓋住一截。
-          放到 1.6 em 讓任何字體都放得下；卡片是 62px 高、內容加起來 48px，還有餘裕。 */}
       <span
-        className="text-[19px] leading-[1.6] text-white truncate max-w-full"
+        className="text-[19px] leading-none text-white truncate max-w-full"
         style={{ fontFamily: visible ? fontStack(font.name) : undefined }}
       >
         {FONT_SAMPLE[font.category]}
@@ -1113,136 +808,10 @@ const FontCard: React.FC<{
   );
 };
 
-/* ── 新增符號 ──────────────────────────────────────────────────────────
-   符號說到底就是一段文字，所以加進畫面之後就是一個文字圖層：一樣可以拖、
-   可以縮放旋轉、可以點兩下直接在畫布上改字。差別只在可以調的東西比較少
-   （顏色、大小、發光），那是 TextEditorPanel 的 symbol 模式在管。 */
-
-/**
- * 一顆符號按鈕上的圖。
- *
- * 有些符號特別長（最長的接近一百個字），照原本的字級畫一定會戳出按鈕，
- * 所以量完真正需要的寬度之後，整串等比縮小塞進去。縮的是「畫出來的大小」
- * （transform），不是字級 —— 排版、組合附加符號（疊在前一個字上面的小點、
- * 小星星）的位置都不會跑掉，而且看到的一定是完整的一整串，不會被裁掉、
- * 也不會變成「…」。字型晚一點才載好時寬度會變，所以 fonts.ready 之後
- * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
- */
-export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
-  const boxRef = useRef<HTMLDivElement>(null);
-  const inkRef = useRef<HTMLSpanElement>(null);
-  const [k, setK] = useState(1);
-  useLayoutEffect(() => {
-    const box = boxRef.current, ink = inkRef.current;
-    if (!box || !ink) return;
-    let alive = true;
-    const fit = () => {
-      if (!alive) return;
-      const bw = box.clientWidth;
-      const tw = ink.scrollWidth;
-      if (bw > 0 && tw > 0) setK(Math.min(1, bw / tw));
-    };
-    fit();
-    (document as any).fonts?.ready?.then(fit).catch(() => {});
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
-    ro?.observe(box);
-    return () => { alive = false; ro?.disconnect(); };
-  }, [text, base]);
-  return (
-    <div ref={boxRef} className="max-w-full overflow-hidden flex items-center justify-center">
-      <span
-        ref={inkRef}
-        style={{
-          display: 'inline-block', whiteSpace: 'pre', flexShrink: 0,
-          fontSize: base, lineHeight: 1.4,
-          transform: `scale(${k})`, transformOrigin: 'center center',
-        }}
-      >
-        {text}
-      </span>
-    </div>
-  );
-};
-
-/**
- * 「新增符號」那一頁：上面一顆返回，下面一長串符號，點一下就加到版面正中間。
- * 一排只放一顆 —— 長的符號要一整排的寬度才擺得完整。
- * 跟「新增圖形」一樣，點完留在這一頁、不跳去編輯，可以連著加好幾顆。
- */
-export const SymbolPicker: React.FC<{
-  onBack: () => void;
-  onPick: (s: string) => void;
-}> = ({ onBack, onPick }) => (
-  <div className="pt-1">
-    <div className="flex items-center gap-2 mb-3">
-      <button
-        onClick={onBack}
-        aria-label="返回"
-        title="返回"
-        className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
-      >
-        <Icon name="arrow_back" className="text-[20px]" />
-      </button>
-      <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
-    </div>
-    {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行 ——
-        短的符號一排可以擺好幾顆，長的才自己佔一整排（而且照樣完整顯示）。 */}
-    <div className="flex flex-wrap gap-1.5 pb-4">
-      {SYMBOLS.map((s, i) => (
-        <button
-          key={i}
-          onClick={() => onPick(s)}
-          aria-label={s}
-          className="h-10 px-3 max-w-full rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-all inline-flex items-center justify-center text-white/85"
-        >
-          <SymbolGlyph text={s} />
-        </button>
-      ))}
-    </div>
-  </div>
-);
-
-/**
- * 兩段式的顏色欄：平常只是一列（標題＋色號＋一小塊顏色），
- * 點一下才把色票攤開來 —— 這樣它可以跟滑桿並排，不會把版面撐開。
- * 兩個拼圖工具的描邊／發光／點點顏色都用這一顆，長相與操作完全一致。
- */
-export const ColorPick: React.FC<{
-  label: string;
-  value: string;
-  colors?: string[];
-  onPick: (c: string) => void;
-}> = ({ label, value, colors, onPick }) => {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="space-y-1.5">
-      <div
-        className="h-[38px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[8px] cursor-pointer hover:bg-[#151515] transition-colors"
-        onClick={() => setOpen(o => !o)}
-      >
-        <span className="text-[10px] font-bold text-[#888] shrink-0">{label}</span>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[9px] font-mono text-white/40">{(value || '').toUpperCase()}</span>
-          <div className="w-5 h-4 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
-        </div>
-      </div>
-      {open && (
-        <div className="animate-in fade-in duration-150">
-          {swatchStrip(value, colors || SOFT_COLORS, c => onPick(c), true)}
-        </div>
-      )}
-    </div>
-  );
-};
-
 export const TextEditorPanel: React.FC<{
   layer: FloatingImage;
   onChange: (patch: Partial<FloatingImage>) => void;
-  /** 有給的話，描邊／發光的顏色就改成「點一下開調色盤」那種一列（跟連線顏色一樣） */
-  onPickColor?: (which: 'stroke' | 'glow') => void;
-  /** 這一層是「符號」：可以調的東西比一般文字少，只留顏色、大小、發光 */
-  symbol?: boolean;
-}> = ({ layer, onChange, onPickColor, symbol }) => {
+}> = ({ layer, onChange }) => {
   const [sub, setSub] = useState<'style' | 'font'>('style');
   const [cat, setCat] = useState<FontCategory>('zh');
 
@@ -1264,20 +833,6 @@ export const TextEditorPanel: React.FC<{
     });
     return () => { alive = false; };
   }, [family]);
-
-  /** 可以點開調色盤的那一列（樣式跟創意拼圖的「連線顏色」逐項相同） */
-  const colorRow = (label: string, value: string, onOpen: () => void) => (
-    <div
-      className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors"
-      onClick={onOpen}
-    >
-      <span className="text-[10px] font-bold text-[#888]">{label}</span>
-      <div className="flex items-center gap-2">
-        <span className="text-[9px] font-mono text-white/40">{value}</span>
-        <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
-      </div>
-    </div>
-  );
 
   const swatchRow = (value: string | undefined, onPick: (c: string) => void, colors = TEXT_COLORS) => (
     <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-0.5 py-0.5">
@@ -1323,10 +878,8 @@ export const TextEditorPanel: React.FC<{
   return (
     <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
       {/* 左側細長分頁列，跟「新增佈局」同一種版型：只有圖示、
-          沒有中間那條分隔線，選中也不畫指示條。
-          符號沒有「換字體」這件事（字體換了那些符號也還是靠系統字型畫的），
-          所以符號模式整條分頁列都不出現，只留樣式那一頁。 */}
-      {!symbol && <div className="flex flex-col shrink-0 w-11 -mt-4 -mb-4 -ml-4 border-r border-white/10 select-none">
+          沒有中間那條分隔線，選中也不畫指示條 */}
+      <div className="flex flex-col shrink-0 w-11 -mt-4 -mb-4 -ml-4 border-r border-white/10 select-none">
         {/* 跟「新增佈局」完全同款：上面挑內容（字體）、下面調參數（樣式），
             圖標同一組、中間同一條分隔線 */}
         <button
@@ -1346,10 +899,10 @@ export const TextEditorPanel: React.FC<{
         >
           <Sliders size={18} className={`transition-transform ${sub === 'style' ? 'scale-110' : ''}`} />
         </button>
-      </div>}
+      </div>
 
-      <div className={`flex-1 no-scrollbar h-full overflow-y-auto pr-1 ${symbol ? '' : 'pl-3'}`}>
-        {sub === 'font' && !symbol && (
+      <div className="flex-1 no-scrollbar pl-3 pr-1 h-full overflow-y-auto">
+        {sub === 'font' && (
           <div className="space-y-2.5 pt-1 pb-1">
             <div className="flex items-center gap-1 bg-white/[0.06] rounded-full p-0.5">
               {FONT_CATEGORIES.map(c => (
@@ -1377,34 +930,16 @@ export const TextEditorPanel: React.FC<{
           </div>
         )}
 
-        {(sub === 'style' || symbol) && (
-          /* 底部多留一段：捲到底時最後一根滑桿不要貼著邊 */
-          <div className="space-y-3.5 pt-1 pb-24">
-            {/* 文字內容一律直接在畫布上打（選中之後再點一次那段字），
-                所以這裡不放輸入框。符號也是一樣的改法。 */}
-            {/* 最上面就是這個物件自己的顏色，色票直接攤開 ——
-                上面不再放「顏色」那行標題（它就在最頂端，不用再標一次）。 */}
-            {swatchRow(layer.color, c => onChange({ color: c }))}
-
-            {symbol ? (
-              /* 符號到這裡就結束了：粗體／斜體／字距／描邊對符號沒有意義
-                 （那些是靠系統字型畫出來的，加粗、加斜、拆字距都只會歪掉），
-                 所以只留一根發光跟發光顏色。 */
-              <>
-                {/* 滑桿與顏色並排；顏色是兩段式的（點一下才攤開色票），
-                    所以不會有「拉到 1 的瞬間欄位冒出來閃一下」。 */}
-                <div className="grid grid-cols-2 gap-3 items-end">
-                  {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
-                  <ColorPick label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
-                    onPick={c => onChange({ glowColor: c })} />
-                </div>
-              </>
-            ) : (
-            <>
+        {sub === 'style' && (
+          <div className="space-y-3.5 pt-1 pb-2">
+            {/* 文字內容直接在畫布上打（選中後再點一次），這裡不再放輸入框 */}
+            <div>
+              <p className="text-[11px] font-bold text-white/70 mb-1.5">文字顏色</p>
+              {swatchRow(layer.color, c => onChange({ color: c }))}
+            </div>
+            {slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
             {/* 粗體與斜體同一排。這個字體沒有真斜體時只留粗體，
-                粗體就自己撐滿整排 —— 跟沒有斜體鈕之前長得一樣。
-                但**現在這段字已經是斜體**的話一定要把鈕留著，
-                不然換到沒有真斜體的字體時，那個斜體就變成關不掉的了。 */}
+                粗體就自己撐滿整排 —— 跟沒有斜體鈕之前長得一樣。 */}
             <div className="flex items-center gap-2">
               <button
                 onClick={() => onChange({ bold: !layer.bold })}
@@ -1414,7 +949,7 @@ export const TextEditorPanel: React.FC<{
               >
                 <Bold size={14} />粗體
               </button>
-              {(hasItalic || layer.italic) && (
+              {hasItalic && (
                 <button
                   onClick={() => onChange({ italic: !layer.italic })}
                   className={`flex-1 h-9 rounded-xl border flex items-center justify-center gap-2 text-[12px] font-bold tracking-widest transition-all ${
@@ -1425,123 +960,27 @@ export const TextEditorPanel: React.FC<{
                 </button>
               )}
             </div>
-            {/* 字級與字距同一排（粗體／斜體排在它們上面）。
-                符號沒有這兩根 —— 它的大小直接在畫布上捏。 */}
-            <div className="grid grid-cols-2 gap-3">
-              {slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
-              {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
-            </div>
-            {/* 描邊、發光各自跟自己的顏色並排（顏色是兩段式的，點一下才攤開色票）。
-                描邊 0～2px，一樣分 50 格（每格 0.04px）：最小那一格只有 0.04px，
-                從 0 拉出來時是慢慢浮現，不會一下就跳出一圈明顯的邊。
-                顏色欄一直都在，所以不會有「從 0 拉到 1 的瞬間欄位冒出來閃一下」。 */}
-            <div className="grid grid-cols-2 gap-3 items-end">
-              {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
-              <ColorPick label="顏色" value={layer.strokeColor || '#000000'}
-                onPick={c => onChange({ strokeColor: c })} />
-            </div>
-            <div className="grid grid-cols-2 gap-3 items-end">
-              {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
-              <ColorPick label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
-                onPick={c => onChange({ glowColor: c })} />
-            </div>
-            </>
+            {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
+            {/* 描邊 0～2px，一樣分 50 格（每格 0.04px）：最小那一格只有 0.04px，
+                從 0 拉出來時是慢慢浮現，不會一下就跳出一圈明顯的邊。 */}
+            {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
+            {!!layer.strokeWidth && (
+              <div>
+                <p className="text-[11px] font-bold text-white/70 mb-1.5">描邊顏色</p>
+                {swatchRow(layer.strokeColor, c => onChange({ strokeColor: c }))}
+              </div>
             )}
-
+            {/* 顯示成 0～0.5、分 50 格（每格 0.01），拖起來才不會一格一格跳；
+                最小那一格的模糊只有 0.28px，是從 0 慢慢亮起來、不會有斷層。
+                存進去的還是原本的 0～20 —— 舊的拼圖草稿裡已經存了 0～20 的值，
+                換算成新刻度存回去會讓舊作品的光突然變強，所以只換顯示。 */}
+            {slider('邊緣發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+            <div>
+              <p className="text-[11px] font-bold text-white/70 mb-1.5">發光顏色</p>
+              {swatchRow(layer.glowColor, c => onChange({ glowColor: c }), GLOW_COLORS)}
+            </div>
           </div>
         )}
-      </div>
-    </div>
-  );
-};
-
-/**
- * 圖形圖層的參數面板（顏色／粗細／虛線）。
- *
- * 顏色用的是 swatchStrip ＋ SOFT_COLORS —— 跟「文字顏色」「描邊顏色」
- * 同一個元件、同一組色，不是另外設計一套。
- * 實心的圖形沒有框，所以粗細與虛線只在細框／線條的時候才出現。
- */
-export const ShapeEditorPanel: React.FC<{
-  layer: FloatingImage;
-  onChange: (patch: Partial<FloatingImage>) => void;
-}> = ({ layer, onChange }) => {
-  const isLine = layer.shape === 'line';
-  const hasOutline = !layer.shapeFilled || isLine;
-
-  const slider = (label: string, value: number, min: number, max: number, onVal: (v: number) => void) => (
-    <div className="space-y-1.5">
-      <div className="flex justify-between items-center">
-        <span className="text-[11px] font-bold text-white/70">{label}</span>
-        <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value}</span>
-      </div>
-      <input
-        type="range" min={min} max={max} step={1} value={value}
-        onChange={e => onVal(parseInt(e.target.value))}
-        className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
-      />
-    </div>
-  );
-
-  return (
-    <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
-      <div className="h-full overflow-y-auto no-scrollbar pr-1">
-        <div className="space-y-3.5 pt-1 pb-2">
-          {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
-          {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c }), true)}
-          {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
-          <div className="grid grid-cols-2 gap-3 items-end">
-            {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
-              v => onChange({ shapeGlow: v } as any))}
-            <ColorPick label="顏色" value={layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR}
-              colors={GLOW_COLORS} onPick={c => onChange({ shapeGlowColor: c })} />
-          </div>
-          <div className="grid grid-cols-2 gap-3 items-end">
-            {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
-              v => onChange({ shapeStrokeW: v / 10 }))}
-            <ColorPick label="顏色" value={layer.shapeStrokeColor || '#000000'}
-              onPick={c => onChange({ shapeStrokeColor: c })} />
-          </div>
-          {/* 點點放在最下面：兩顆按鈕與顏色同一排，全部常駐
-              （關著也看得到顏色，可以先挑好再打開）。 */}
-          <div className="grid grid-cols-2 gap-3 items-end">
-            <div>
-              <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
-              <div className="flex items-center gap-2">
-                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
-                  <button
-                    key={label}
-                    onClick={() => onChange({ shapeDots: on })}
-                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                      !!layer.shapeDots === on
-                        ? 'bg-white text-black border-white'
-                        : 'bg-white/[0.04] text-white/70 border-white/15'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <ColorPick label="顏色" value={layer.shapeDotColor || '#FFFFFF'}
-              onPick={c => onChange({ shapeDotColor: c })} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
-            {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
-          </div>
-          {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
-          {hasOutline && (
-            <>
-              {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
-              {slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
-                v => onChange({ shapeLineW: v / 10 }))}
-              {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
-                  所以線越粗、虛線的節奏就跟著等比例放大 */}
-              {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
-            </>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -1689,6 +1128,25 @@ const editorSlider = (
   );
 };
 
+// 色票：第一顆固定是自訂顏色（開系統調色盤），後面才是預設色
+const swatchStrip = (
+  value: string | undefined, colors: string[], onPick: (c: string) => void, big = false,
+) => (
+  <div className={`flex items-center overflow-x-auto no-scrollbar min-w-0 px-0.5 py-0.5 ${big ? 'gap-2 w-full' : 'gap-1.5'}`}>
+    <CustomColorButton value={value || '#FFFFFF'} onPick={onPick} size={big ? 32 : 24} />
+    {colors.map(c => (
+      <button
+        key={c}
+        onClick={() => onPick(c)}
+        title={c}
+        className={`shrink-0 rounded-[7px] transition-all active:scale-90 ${big ? 'w-8 h-8' : 'w-6 h-6'} ${
+          (value || '#FFFFFF').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
+        }`}
+        style={{ backgroundColor: c }}
+      />
+    ))}
+  </div>
+);
 
 /* 特效細項的排法跟「編輯」一致：剛好兩根上下各一行；
    奇數根時「強度」自己站一行，其餘兩兩一排。 */
@@ -1740,7 +1198,7 @@ const sliderArea = (() => {
     const subTool = sub?.find(t => t[0] === shapeTool);
     if (subTool) {
       // 描邊色跟發光色用同一組色票
-      if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, SOFT_COLORS, c => set({ imgStrokeColor: c }), true);
+      if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, GLOW_COLORS, c => set({ imgStrokeColor: c }), true);
       if (subTool[0] === 'imgGlowColor') return swatchStrip(img.imgGlowColor, GLOW_COLORS, c => set({ imgGlowColor: c }), true);
       const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow' | 'imgStrokeDash';
       // 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來。
@@ -1830,8 +1288,7 @@ return (
             data-lut-card={l.id}
             onClick={async () => {
               if (active) return;
-              // eager：使用者正在等這一顆，不排隊（背景預載那一支才要等空檔）
-              if (l.url) { setLoadingLut(l.id); await loadLut(l.id, l.url, true); setLoadingLut(null); }
+              if (l.url) { setLoadingLut(l.id); await loadLut(l.id, l.url); setLoadingLut(null); }
               setFx({ lut: l.id });
               setLutRevision(n => n + 1);
             }}
@@ -1970,28 +1427,6 @@ return (
 );
 };
 
-/** 預覽用的紋理層。跟匯出走同一支 paintPattern，看到什麼就是存出來什麼。 */
-const PatternLayer: React.FC<{ w: number; h: number; opts: PatternOpts }> = ({ w, h, opts }) => {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const cv = ref.current;
-    if (!cv) return;
-    const raw = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
-    const dpr = Math.min(raw, 2000 / Math.max(1, Math.max(w, h)));   // 長邊封頂，避免幾十 MB 的畫布
-    const pw = Math.max(1, Math.round(w * dpr));
-    const ph = Math.max(1, Math.round(h * dpr));
-    if (cv.width !== pw) cv.width = pw;
-    if (cv.height !== ph) cv.height = ph;
-    const g = cv.getContext('2d');
-    if (!g) return;
-    g.clearRect(0, 0, pw, ph);
-    if (opts.type === 'none') return;
-    g.save(); g.scale(dpr, dpr); paintPattern(g, w, h, opts); g.restore();
-  }, [w, h, opts.type, opts.color, opts.size, opts.gap]);
-  if (opts.type === 'none' || w <= 0 || h <= 0) return null;
-  return <canvas ref={ref} className="absolute inset-0 pointer-events-none" style={{ width: w, height: h }} />;
-};
-
 const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onClose }) => {
   const [hsv, setHsv] = useState(() => hexToHsv(color));
   const [hexInput, setHexInput] = useState(color);
@@ -2025,8 +1460,19 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
     }
   };
 
-  // 跟發光同一條漸層，明度提到 90%；第一顆是純白
-  const PRESETS = SOFT_COLORS;
+  // 韓系拼貼常見的柔和底色
+  const PRESETS = [
+    // 白 → 暖白 → 暖灰 → 奶油 → 米
+    '#FFFFFF', '#FAF6F0', '#EAE6DF', '#F1E7DB', '#E7DACB',
+    // 粉
+    '#F6DCD8', '#F4C2C2',
+    // 黃
+    '#F7E9C8', '#FFF1A5',
+    // 綠 → 薄荷 → 淺青
+    '#DCE7DB', '#CBEAD6', '#9BD4C3', '#B8E3D8', '#D2E8E1',
+    // 藍 → 紫
+    '#D7E3EF', '#E2DCEC',
+  ];
 
   return (
     <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -2615,13 +2061,6 @@ interface FloatingImage {
   rotation: number;
   /** 有 text 就是文字圖層。位置、縮放、旋轉、圖層順序全部沿用圖片那一套。 */
   text?: string;
-  /**
-   * 有值就代表這一層是「符號」而不是一般文字，內容是加進來時挑的那一顆。
-   * 兩個用途：① 面板要換成符號那一組（顏色、大小、發光）；
-   * ② 在畫布上把字全部刪光時，放回去的是這顆符號本身，
-   *    而不是文字用的「輸入文字」。
-   */
-  sym?: string;
   fontFamily?: string;
   /** 未縮放狀態下的字級（px），實際大小再乘上 scale */
   fontSize?: number;
@@ -2657,71 +2096,7 @@ interface FloatingImage {
   /** 構圖（裁切／旋轉／翻轉）：baked 之前的原圖與參數，重開構圖時從這裡接續 */
   origSrc?: string;
   geo?: GeoParams;
-  /* ── 圖形圖層（新增圖形）─────────────────────────────────────────
-     有 shape 就是圖形層：沒有照片、沒有文字，內容就是一條路徑。
-     顏色沿用上面的 color（跟文字同一個欄位，色票也是同一組）。 */
-  shape?: string;
-  /** 實心（填色）還是細框（只描邊） */
-  shapeFilled?: boolean;
-  /** shape === 'hole' 時，真正要畫哪一顆圖案（跟創意拼圖同一份清單） */
-  holeType?: string;
-  /** 線寬，1 個單位 = 外框長邊的 1/160（滑桿顯示成 1~100，存進來是 ÷10） */
-  shapeLineW?: number;
-  /** 描邊的虛線長度（0＝實線，1~100 是「一段有幾倍線寬」的比例，跟圖片描邊同一套） */
-  shapeDash?: number;
-  /** 圖形發光強度 0~100（0＝關）。舊資料存的是 true／false，glowAmount 會相容 */
-  shapeGlow?: number | boolean;
-  /** 圖形發光的顏色。沒設就用圖形自己的顏色 */
-  shapeGlowColor?: string;
-  /** 發光顏色是不是已經給過預設值了（只在第一次打開發光時帶入圖層自己的顏色） */
-  glowInit?: boolean;
-  /** 圖形的外描邊寬度（跟粗細同一種刻度：存 0~10，滑桿顯示 0~100），0＝不描邊 */
-  shapeStrokeW?: number;
-  /** 外描邊的顏色，預設黑 */
-  shapeStrokeColor?: string;
-  /* 圖形上的「點點」。跟創意拼圖那邊同一組參數、同一套網格，
-     所以兩個工具調同樣的值，看到的密度與大小是一樣的。 */
-  shapeDots?: boolean;
-  /** 點點大小 0~100（預設 50） */
-  shapeDotSize?: number;
-  /** 點點間距 0~100（預設 20） */
-  shapeDotGap?: number;
-  /** 點點顏色（預設白） */
-  shapeDotColor?: string;
 }
-
-/**
- * 圖形上「點點」的網格參數。預覽（SVG pattern）與匯出（canvas）吃同一支，
- * 兩邊才不可能對不起來；創意拼圖那邊也是同一組式子。
- *   dsz  = (5 + 大小/100 × 15) × 單位
- *   dgap = (40 + 間距) × 單位          單位 = 長邊 / 600
- * 網格是交錯的三角格：偶數列不位移、奇數列往右半格，列距 = 間距 × √3/2。
- */
-export const shapeDotGrid = (w: number, h: number, l: {
-  shapeDotSize?: number; shapeDotGap?: number; shapeDotColor?: string;
-}) => {
-  const unit = Math.max(w, h) / 600;
-  const dsz = (5 + ((l.shapeDotSize ?? 50) / 100) * 15) * unit;
-  const dgap = (40 + (l.shapeDotGap ?? 20)) * unit;
-  return { r: dsz / 2, dx: dgap, dy: dgap * Math.sqrt(3) / 2, color: l.shapeDotColor || '#FFFFFF' };
-};
-
-/** 匯出時把點點畫上去（原點在圖形中心）。呼叫端負責先剪裁在圖形裡面。 */
-export const drawShapeDotsCanvas = (
-  c: CanvasRenderingContext2D, w: number, h: number, l: any,
-) => {
-  const { r, dx, dy, color } = shapeDotGrid(w, h, l);
-  c.fillStyle = color;
-  const rx = Math.ceil(w / dx) + 2, ry = Math.ceil(h / dy) + 2;
-  for (let j = -ry; j <= ry; j++) {
-    const shiftX = Math.abs(j) % 2 === 1 ? dx / 2 : 0;
-    for (let i = -rx; i <= rx; i++) {
-      c.beginPath();
-      c.arc(i * dx + shiftX, j * dy, r, 0, Math.PI * 2);
-      c.fill();
-    }
-  }
-};
 
 type SwapSource = { kind: 'cell'; idx: number; src: string } | { kind: 'floating'; id: string; src: string };
 type SwapTarget = { kind: 'cell'; idx: number; layoutId?: string } | { kind: 'floating'; id: string };
@@ -2860,17 +2235,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const textMeasureRef = useRef<HTMLSpanElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
-  /* 輸入框是「手指放開」那一刻才打開的，而瀏覽器在 touchend 之後還會補送
-     一輪滑鼠事件（mousedown/click）到畫布上 —— 那一下會把焦點從剛冒出來的
-     輸入框搶走，看起來就是鍵盤閃一下又收掉、字也打不進去。
-     記下打開的時間，同一下手勢造成的失焦就不算數（見下面 textarea 的 onBlur）。 */
-  const textOpenAt = useRef(0);
-
   // 進入畫布上打字時把游標移到最後面，並叫出原生鍵盤。
   // 內容還是預設的「輸入文字」就先清空 —— 使用者不用自己一個字一個字刪。
   useEffect(() => {
     if (!isTextEditing) return;
-    textOpenAt.current = performance.now();
     if (image.text === TEXT_PLACEHOLDER) onChange({ text: '' });
     const el = textAreaRef.current;
     if (!el) return;
@@ -2879,12 +2247,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     try { el.setSelectionRange(n, n); } catch {}
   }, [isTextEditing]);
 
-  // 打完什麼都沒留就把預設字放回去，圖層才不會變成看不見的空框。
-  // 符號放回去的是那顆符號本身 —— 刪過頭了也還救得回來。
+  // 打完什麼都沒留就把預設字放回去，圖層才不會變成看不見的空框
   const prevTextEditing = useRef(isTextEditing);
   useEffect(() => {
     if (prevTextEditing.current && !isTextEditing && image.text === '') {
-      onChange({ text: image.sym || TEXT_PLACEHOLDER });
+      onChange({ text: TEXT_PLACEHOLDER });
     }
     prevTextEditing.current = isTextEditing;
   }, [isTextEditing, image.text]);
@@ -3547,7 +2914,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         {/* 編輯鍵：文字與圖片都用同一顆（跟佈局那顆同款） */}
         <button
           onClick={(e) => { e.stopPropagation(); onLayerAction('edit'); }}
-          title={image.text !== undefined ? '編輯文字' : image.shape ? '圖形調整' : '圖片調整'}
+          title={image.text !== undefined ? '編輯文字' : '圖片調整'}
           className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black"
         >
           <Sliders size={14} />
@@ -3639,23 +3006,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   );
 
 
-  /* 圖形圖層的描邊參數。全部用「沒有縮放前」的尺寸算 ——
-     SVG 的 viewBox 也是那個尺寸，縮放交給外框，兩軸倍率一樣，
-     所以線寬與虛線的節奏會跟著圖形一起等比例放大。 */
-  const shapeStroke = (() => {
-    if (!image.shape) return null;
-    const lw = shapeLineWidth(image.shapeLineW, image.width, image.height);
-    const dash = image.shapeDash || 0;
-    const seg = lw * (0.6 + (dash / 100) * 4);
-    return {
-      lw,
-      dashArray: dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined,
-      // 一律平頭：線條的兩端要是切齊的，不要圓角
-      cap: 'butt' as const,
-      join: (image.shape === 'line' ? 'round' : 'miter') as 'round' | 'miter',
-    };
-  })();
-
   return (
     <>
     <div
@@ -3675,126 +3025,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       onTouchEnd={onSwapTouchEnd}
       onTouchCancel={onSwapTouchEnd}
     >
-      {image.shape === 'hole' ? (
-        /* 從「圖案」借過來的那幾顆：它們不是 SVG 路徑（有的是系統字型的字、
-           有的是去背 PNG），所以預覽直接畫在 canvas 上、用的就是匯出那一支
-           drawHoleShape —— 預覽跟成品是同一段程式碼畫的，不可能對不起來。
-           畫布開 dpr 倍再用 CSS 縮回去，放大時邊緣才不會糊。 */
-        <canvas
-          ref={el => {
-            if (!el) return;
-            const dpr = Math.min(3, window.devicePixelRatio || 1);
-            const w = Math.max(1, Math.round(image.width * image.scale * dpr));
-            const h = Math.max(1, Math.round(image.height * image.scale * dpr));
-            if (el.width !== w) el.width = w;
-            if (el.height !== h) el.height = h;
-            const c = el.getContext('2d');
-            if (!c) return;
-            c.setTransform(1, 0, 0, 1, 0, 0);
-            c.clearRect(0, 0, w, h);
-            c.translate(w / 2, h / 2);
-            drawHoleShape(
-              c,
-              {
-                hole: image.holeType || 'circle', filled: image.shapeFilled,
-                color: image.color || SHAPE_DEFAULT_COLOR,
-                lineW: image.shapeLineW, glow: image.shapeGlow as any,
-                glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW,
-                strokeColor: image.shapeStrokeColor,
-                dots: image.shapeDots, dotSize: image.shapeDotSize,
-                dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
-                id: image.id,
-              },
-              w, h, shapeGlowBlurs(w, h),
-            );
-          }}
-          key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${Math.round(image.width * image.scale)}|${Math.round(image.height * image.scale)}`}
-          style={{
-            position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
-            pointerEvents: 'none',
-          }}
-        />
-      ) : image.shape ? (
-        /* 圖形圖層。預覽是 SVG、匯出是 Path2D，吃的是同一條 d 字串。
-           viewBox 用「沒有縮放前」的尺寸，外框是 width×scale ——
-           兩軸的倍率一樣，所以描邊是等比例放大、不會被拉扁。
-           overflow: visible 是因為描邊有一半長在框外面，不放行就會被切掉。 */
-        <svg
-          viewBox={`0 0 ${image.width} ${image.height}`}
-          preserveAspectRatio="none"
-          style={{
-            position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
-            overflow: 'visible', pointerEvents: 'none',
-            /* 發光：三段 drop-shadow 疊起來，跟文字／圖片的光同一套濃淡。
-               半徑寫在「沒有縮放前」的座標系上，外框放大時光會跟著一起放大。 */
-            filter: glowAmount(image.shapeGlow as any) > 0
-              ? shapeGlowBlurs(image.width, image.height)
-                  .map(r => `drop-shadow(0 0 ${r3(r * image.scale * glowAmount(image.shapeGlow as any))}px ${image.shapeGlowColor || image.color || SHAPE_DEFAULT_COLOR})`)
-                  .join(' ')
-              : undefined,
-          }}
-        >
-          {/* 點點：用一塊 pattern 疊在圖形上，範圍就是圖形的填色區域 ——
-              跟匯出那邊「剪裁在圖形裡面再鋪點點」是同一塊區域。
-              tile 是交錯三角格的一個週期（寬 dx、高 2dy，裡面兩顆），
-              patternTransform 把 tile 的原點移到圖形正中心，所以正中央
-              一定有一顆點 —— 這樣才跟 canvas 那邊逐顆對得起來。
-              四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
-          {/* 外描邊：畫在本體「底下」、寬度加倍 —— 本體會蓋住內半邊，
-              留在外面的就是乾淨的一圈外描邊（跟文字的描邊同一種做法）。
-              虛線只屬於本體，描邊那一圈一律是實線。 */}
-          {!!image.shapeStrokeW && (
-            <path
-              d={shapePathD(image.shape, image.width, image.height)}
-              fill="none"
-              stroke={image.shapeStrokeColor || '#000000'}
-              strokeWidth={((image.shapeFilled && image.shape !== 'line') ? 0 : (shapeStroke?.lw || 0))
-                + (image.shapeStrokeW || 0) * (Math.max(image.width, image.height) / 160) * 2}
-              strokeLinejoin="round"
-              strokeLinecap="butt"
-            />
-          )}
-          <path
-            d={shapePathD(image.shape, image.width, image.height)}
-            fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
-            stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || SHAPE_DEFAULT_COLOR)}
-            strokeWidth={shapeStroke?.lw}
-            strokeDasharray={shapeStroke?.dashArray}
-            strokeLinecap={shapeStroke?.cap}
-            strokeLinejoin={shapeStroke?.join}
-          />
-          {/* 點點：疊在圖形上面的一塊 pattern，範圍就是圖形的填色區域 ——
-              跟匯出那邊「剪裁在圖形裡面再鋪點點」是同一塊區域。
-              tile 是交錯三角格的一個週期（寬 dx、高 2dy，裡面兩顆），
-              patternTransform 把 tile 的原點移到圖形正中心，所以正中央
-              一定有一顆點 —— 這樣才跟 canvas 那邊逐顆對得起來。
-              四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
-          {!!image.shapeDots && (() => {
-            const { r, dx, dy, color } = shapeDotGrid(image.width, image.height, image);
-            const id = `sdots-${image.id}`;
-            return (
-              <>
-                <defs>
-                  <pattern
-                    id={id} patternUnits="userSpaceOnUse"
-                    width={r3(dx)} height={r3(dy * 2)}
-                    patternTransform={`translate(${r3(image.width / 2)} ${r3(image.height / 2)})`}
-                  >
-                    {[[0, 0], [dx, 0], [0, dy * 2], [dx, dy * 2], [dx / 2, dy]].map(([cx, cy], i) => (
-                      <circle key={i} cx={r3(cx)} cy={r3(cy)} r={r3(r)} fill={color} />
-                    ))}
-                  </pattern>
-                </defs>
-                <path
-                  d={shapePathD(image.shape, image.width, image.height)}
-                  fill={`url(#${id})`}
-                  stroke="none"
-                />
-              </>
-            );
-          })()}
-        </svg>
-      ) : image.text !== undefined ? (
+      {image.text !== undefined ? (
         <div
           ref={textRef}
           style={{
@@ -3817,15 +3048,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             position: 'absolute', left: '50%', top: '50%',
             transform: `translate(-50%, -50%) scale(${image.scale})`,
             transformOrigin: 'center center',
-            /* 縮放時的殘影：這一層只有 transform 在變，可是它裡面是**文字**
-               （還可能帶 text-shadow 的發光），瀏覽器把它當一般內容重畫時，
-               上一格畫過的地方不一定會被清乾淨 —— 在手機上看起來就是一路
-               留下一串愈來愈小的殘影。把它升成自己的合成層（translateZ ＋
-               will-change），縮放就只是「把同一張貼圖拉大縮小」，
-               不會再有沒清掉的舊像素。 */
-            willChange: 'transform',
-            backfaceVisibility: 'hidden',
-            WebkitBackfaceVisibility: 'hidden',
             width: `${image.width}px`, height: `${image.height}px`,
             pointerEvents: 'none',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -3847,7 +3069,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             // 把描邊畫在填色「下面」、寬度加倍 —— 字身蓋住內半邊，
             // 剩下的就是純外描邊。
             WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2}px` : undefined,
-            WebkitTextStrokeColor: image.strokeWidth ? (image.strokeColor || '#000000') : undefined,
+            WebkitTextStrokeColor: image.strokeWidth ? (image.strokeColor || '#FFFFFF') : undefined,
             // 沒有描邊時不要留著 paint-order。
             paintOrder: image.strokeWidth ? 'stroke fill' : undefined,
             /* 發光不畫在這一層。text-shadow 的輪廓是「填色＋描邊」合起來的形狀，
@@ -3932,9 +3154,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             }}
           >
             {/* 內容是空的（剛點進去打字、預設字被清掉）就拿預設那四個字來量，
-                框才會維持原本的大小，等真的打了字再照打的內容量。
-                符號則是拿自己那顆來量。 */}
-            {image.text === '' ? (image.sym || TEXT_PLACEHOLDER) : image.text}
+                框才會維持原本的大小，等真的打了字再照打的內容量 */}
+            {image.text === '' ? TEXT_PLACEHOLDER : image.text}
           </span>
 
           {/* 直接在畫布上打字：疊一層一模一樣排版的 textarea，
@@ -3946,16 +3167,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               // 關掉軟換行，打字時看到的斷行才跟收工後一樣
               wrap="off"
               onChange={e => onChange({ text: e.target.value })}
-              onBlur={e => {
-                /* 剛打開的那一瞬間被搶走焦點的，是同一下手勢補送的滑鼠事件，
-                   不是使用者真的點去別的地方 —— 把焦點搶回來就好。 */
-                if (performance.now() - textOpenAt.current < 500) {
-                  const el = e.currentTarget;
-                  requestAnimationFrame(() => { try { el.focus({ preventScroll: true }); } catch {} });
-                  return;
-                }
-                onTextEditEnd?.();
-              }}
+              onBlur={() => onTextEditEnd?.()}
               onPointerDown={e => e.stopPropagation()}
               // 單指是在編輯文字，不要被畫布搶走；兩指則讓畫布接手，
               // 這樣打字中也還能直接縮放／旋轉
@@ -4064,18 +3276,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 };
 
 interface GridLayoutToolProps {
-  /** 從歷史紀錄點開來的那一筆的 key。再記一次的時候沿用它＝更新同一筆 */
-  histKey?: string | null;
   onHome: () => void;
   onImportNew?: () => void;
   initialFiles?: File[];
-  /** 從首頁的歷史紀錄點回來時，把那一份版面餵回來（優先於自動存檔的草稿） */
-  initialState?: any;
   /** 濾鏡清單，跟「編輯」用的是同一份 */
   lutList?: { id: string; name: string; url: string }[];
 }
 
-export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome, onImportNew, initialFiles, initialState, lutList = [] }) => {
+export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImportNew, initialFiles, lutList = [] }) => {
   /** 一頁上可以放多個佈局，每個佈局都是一個獨立物件（跟一般圖片一樣）。 */
   interface LayoutItem {
     id: string;
@@ -4110,23 +3318,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [enableSnapping, setEnableSnapping] = useState(true);
   /** 上方那顆三個點的選單 */
   const [moreOpen, setMoreOpen] = useState(false);
-  /* 三個點的選單：點畫面上任何其他地方都要收起來。
-     選單自己那塊 fixed inset-0 的遮罩不夠用 —— 它被關在頂欄裡面，而頂欄有
-     backdrop-blur，帶 backdrop-filter 的祖先會變成 fixed 的「包含塊」，
-     所以那片遮罩其實只蓋住頂欄那一條，點畫布是點不到它的。
-     改成開著的時候在 document 上聽一次按下：只要不是按在選單自己身上就關掉
-     （用捕獲階段，中途有人擋掉冒泡也照樣收得起來）。 */
-  const moreWrapRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!moreOpen) return;
-    const onDown = (ev: Event) => {
-      const el = moreWrapRef.current;
-      if (el && ev.target instanceof Node && el.contains(ev.target)) return;
-      setMoreOpen(false);
-    };
-    document.addEventListener('pointerdown', onDown, true);
-    return () => document.removeEventListener('pointerdown', onDown, true);
-  }, [moreOpen]);
   /** IG 貼文預覽 */
   const [igPreview, setIgPreview] = useState(false);
 
@@ -4827,26 +4018,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }) : p));
   };
   const bgColor = activePage.bgColor;
-  /* 背景紋理。跟創意拼圖的遮罩紋理同一套參數，畫法共用 utils/pattern.ts。
-     整份作品共用一份，不像底色那樣每頁各存 —— 翻頁時紋理不該跟著換。 */
-  const [patternType, setPatternType] = useState('none');
-  const [patternColor, setPatternColor] = useState('#A8DDE6');
-  const [patternSize, setPatternSize] = useState(50);
-  const [patternGap, setPatternGap] = useState(20);
-  const patternOpts: PatternOpts = { type: patternType, color: patternColor, size: patternSize, gap: patternGap };
-
-  /* 紋理的兩根滑桿。其他面板那幾支同名 helper 都關在各自的元件裡，
-     主元件拿不到，所以就近寫一支。軌道用全域的 .premium-slider。 */
-  const patternSlider = (label: string, value: number, onVal: (v: number) => void) => (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex justify-between items-center text-[9px] font-bold text-[#666] tracking-tighter uppercase">
-        <span>{label}</span>
-        <span className="text-white/70 tabular-nums">{value}</span>
-      </div>
-      <input type="range" min={0} max={100} step={1} value={value}
-        onChange={e => onVal(parseInt(e.target.value))} className="premium-slider w-full" />
-    </div>
-  );
   const layoutSelected = selectedLayoutId !== null;
 
   /** 只改動「正在編輯的那個佈局」，不管它現在在哪一頁。 */
@@ -4931,8 +4102,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       bold: false,
       italic: false,
       letterSpacing: 0,
-      // 描邊沒設過就是黑的 —— 第一次把描邊拉出來就該看得到
-      strokeColor: '#000000',
       glow: 0,
       glowColor: '#FFFFFF',
       ...init,
@@ -4946,91 +4115,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     setActiveTab('adjust');
   };
 
-  /**
-   * 新增一顆符號。
-   *
-   * 符號就是文字圖層，所以位置、縮放、旋轉、圖層順序、直接在畫布上改字
-   * 全部跟文字共用同一套；差別只在 sym 有值，面板會換成符號那一組。
-   * 字級照長度回推：符號長短差很多（最長的接近一百個字），字級寫死的話
-   * 長的會直接戳出頁面 —— 用「大約佔頁寬七成」回推，挑哪一顆加進來的
-   * 份量都差不多。刻意留在這一頁、也不進入打字狀態，可以連著加好幾顆。
-   */
-  const handleAddSymbolLayer = (txt: string) => {
-    const rect = getActivePageRect();
-    const pw = rect?.width ?? previewW;
-    const ph = rect?.height ?? previewH;
-    ensureFont(DEFAULT_FONT);
-    const M = 100;
-    const c = document.createElement('canvas').getContext('2d');
-    let w100 = M * Math.max(1, txt.length) * 0.5;
-    if (c) { c.font = `400 ${M}px ${fontStack(DEFAULT_FONT)}`; w100 = Math.max(1, c.measureText(txt).width); }
-    const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
-    const w = Math.max(8, Math.round((w100 / M) * fontSize));
-    const h = Math.max(8, Math.round(fontSize * 1.4));
-    const id = `text-${Math.random().toString(36).substring(2, 9)}`;
-    const item: FloatingImage = {
-      id, src: '',
-      x: (rect ? rect.centerX : previewW / 2) - w / 2,
-      y: (rect ? rect.centerY : previewH / 2) - h / 2,
-      width: w, height: h, scale: 1, rotation: 0,
-      text: txt, sym: txt,
-      fontFamily: DEFAULT_FONT,
-      fontSize,
-      // 頁面底色預設是白的，符號也用白色的話加完會看不到
-      color: '#1C1C1C',
-      bold: false, italic: false, letterSpacing: 0,
-      strokeColor: '#000000',
-      glow: 0, glowColor: '#FFFFFF',
-    };
-    setFloatingImages(prev => [...prev, item]);
-    setSelectedFloatingId(id);
-    setSelectedIndex(null);
-    setSelectedLayoutId(null);
-    setInlineEditId(null);
-  };
-
-  /**
-   * 新增一個圖形圖層。
-   * 大小預設佔頁面短邊的三成；線條類壓成細長條（高度只有寬度的 8%）。
-   * 顏色跟文字一樣預設墨黑 —— 頁面底色預設是白的，白色圖形會看不到。
-   */
-  const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem) => {
-    const rect = getActivePageRect();
-    const short = Math.min(rect?.width ?? previewW, rect?.height ?? previewH);
-    const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
-    const h = (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
-    const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
-    const item: FloatingImage = {
-      id, src: '',
-      x: (rect ? rect.centerX : previewW / 2) - w / 2,
-      y: (rect ? rect.centerY : previewH / 2) - h / 2,
-      width: w, height: h, scale: 1, rotation: (it as any).rot || 0,
-      shape: it.kind,
-      // 借來的圖案：kind 一律是 'hole'，真正畫哪一顆看 holeType
-      holeType: (it as HoleShapeItem).hole,
-      shapeFilled: it.filled,
-      shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
-      shapeDash: 0,
-      shapeGlow: false,
-      shapeGlowColor: SHAPE_DEFAULT_COLOR,
-      color: SHAPE_DEFAULT_COLOR,
-    };
-    setFloatingImages(prev => [...prev, item]);
-    setSelectedFloatingId(id);
-    setSelectedIndex(null);
-    setSelectedLayoutId(null);
-    setInlineEditId(null);
-    /* 刻意留在這一頁、不跳去編輯 —— 常常是要連著加好幾個，
-       每加一個就被丟去編輯頁的話還得自己按回來。 */
-  };
-
   /** 複製一份圖片／文字圖層，稍微錯開一點放在原件上面，並直接選中新的那一份。 */
   const handleDuplicateFloating = (id: string) => {
     const src = floatingImages.find(f => f.id === id);
     if (!src) return;
     const copy: FloatingImage = {
       ...src,
-      id: `${src.text !== undefined ? 'text' : src.shape ? 'shape' : 'img'}-${Math.random().toString(36).substring(2, 9)}`,
+      id: `${src.text !== undefined ? 'text' : 'img'}-${Math.random().toString(36).substring(2, 9)}`,
       x: src.x + 16,
       y: src.y + 16,
     };
@@ -5618,13 +4709,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const prev = prevPagesScaleRef.current;
     prevPagesScaleRef.current = pagesScale;
     if (Math.abs(kRef.current - pagesScale) < 0.0001) return;
-    // 動畫開始時停在正中間的那一頁，整段縮放都繞著它 —— 捲動位置也由 k 算，
-    // 縮放與位移同一帧，看起來就是整排「以那一頁為中心」平順地縮小／放大
+    /* 縮放的錨點＝動畫開始時「正中間看到的那個位置」，整段縮放都繞著它，
+       捲動位置也由 k 算，縮放與位移同一帧，看起來就是以視線為中心平順地縮放。
+
+       這裡以前多做了一次 Math.round，把錨點吸到最接近的那一頁 ——
+       於是只要中心不是剛好落在某一頁的正中央，一開始縮放就會被硬拉過去，
+       畫面上就是「其中一頁被強制移到正中心」。
+       改成保留小數：中心在兩頁之間就維持在兩頁之間，縮放前後看的是同一點。
+       仍然夾在合法範圍內（0 ～ 最後一頁），避免捲到空白處。 */
     const el = containerRef.current;
     if (el && containerSize.width > 0) {
-      const i = Math.round((el.scrollLeft + containerSize.width / 2 - stripOffset(containerSize.width, prev))
-        / Math.max(1, prev * (previewW + 1)) - 0.5);
-      kAnchorRef.current = Math.max(0, Math.min(pagesCountRef.current - 1, i));
+      const a = (el.scrollLeft + containerSize.width / 2 - stripOffset(containerSize.width, prev))
+        / Math.max(1, prev * (previewW + 1)) - 0.5;
+      kAnchorRef.current = Math.max(0, Math.min(pagesCountRef.current - 1, a));
     } else {
       kAnchorRef.current = 0;
     }
@@ -5735,20 +4832,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   }, [activeTab, adjustSub, lutList]);
 
   const [layoutSubTab, setLayoutSubTab] = useState<'layout' | 'adjust'>('layout');
-  /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
-  const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
-  /* 離開「新增」分頁就回到最外層：下次再進來看到的是那幾顆大按鈕，
-     而不是上次停在的圖形／符號清單。 */
-  useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
-  // 離開「新增」分頁就退回大按鈕那一層，下次進來不會停在圖案清單
-  useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
   const [colorPickerActive, setColorPickerActive] = useState(false);
   /** 編輯頁選到的是圖片（不是文字）—— 這時整個工具欄要換成跟「編輯」一樣的三段式 */
   /* 這個旗標控制外框要不要再包一層 p-4。編輯圖片的那套介面自己就把邊界算好了，
      多包一層 padding 就會整個縮一圈、位置也跟著偏 —— 佈局裡的格子走的是同一套
      介面，所以也要算進來，不然只有格子那邊會縮小跑位。 */
   const imageEditMode = activeTab === 'adjust'
-    && (!!floatingImages.find(f => f.id === selectedFloatingId && f.text === undefined && !f.shape)
+    && (!!floatingImages.find(f => f.id === selectedFloatingId && f.text === undefined)
         || (!selectedFloatingId && selectedIndex !== null && selectedLayoutId !== null));
 
   const [historyState, setHistoryState] = useState<{
@@ -6798,18 +5888,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   useEffect(() => {
     let alive = true;
     (async () => {
-      /* 從首頁的歷史紀錄點回來：直接套那一份，不要理自動存檔的草稿。 */
-      if (initialState && Array.isArray(initialState.pages)) {
-        await clearDraft();
-        if (!alive) return;
-        setPages(initialState.pages);
-        setFloatingImages(initialState.floatingImages || []);
-        if (initialState.selectedRatio) setSelectedRatio(initialState.selectedRatio);
-        if (initialState.isLandscape !== undefined) setIsLandscape(initialState.isLandscape);
-        setActivePageIndex(0);
-        setDraftReady(true);
-        return;
-      }
       if (initialFiles && initialFiles.length > 0) {
         await clearDraft();
         if (alive) setDraftReady(true);
@@ -6828,42 +5906,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       setDraftReady(true);
     })();
     return () => { alive = false; };
-  }, [initialFiles, initialState]);
+  }, [initialFiles]);
 
   /** 離開拼圖＝這一份結束了：先關掉自動存檔再把草稿收掉，
       不然剛排隊的那次存檔會在清掉之後又寫回去。 */
   const leftRef = useRef(false);
-
-  /* ── 歷史紀錄 ────────────────────────────────────────────────────
-     一份拼圖是好幾張照片拼起來的，沒有「那一張原圖」——
-     所以用一個開工具時產生的 id 當識別，同一份不管記幾次都只留最新的一筆。 */
-  const histKeyRef = useRef(`layout-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
-  const recordedRef = useRef('');
-  const recordProgress = async () => {
-    const empty = floatingImages.length === 0 && pages.every(p => p.layouts.length === 0);
-    if (empty) return;
-    const state = { pages, floatingImages, selectedRatio, isLandscape };
-    const sig = JSON.stringify(state);
-    if (recordedRef.current === sig) return;
-    recordedRef.current = sig;
-    try {
-      // 版面是 DOM 畫的，沒有現成的畫布可以截 —— 用導出那一支靜靜地烤一張小的
-      const r = await handleExport({ silent: true, previewWidth: 900 });
-      const url = r && 'urls' in r ? r.urls[0] : null;
-      if (!url) return;
-      /* 原圖那一格放的是「拼好的成品」：真正還原用的是 state（裡面每一張照片
-         都會被 exportHistory 收成附件）。 */
-      await addExport('layout', url, url, state, histKey || histKeyRef.current);
-      URL.revokeObjectURL(url);
-    } catch { /* 記錄失敗不能影響離開 */ }
-  };
-
-  /** 離開拼圖＝這一份結束了。先把成品記進歷史紀錄，再收草稿。 */
-  const leavingRef = useRef(false);
-  const handleLeave = async () => {
-    if (leavingRef.current) return;
-    leavingRef.current = true;
-    try { await recordProgress(); } catch { /* 記錄失敗不能影響離開 */ }
+  const handleLeave = () => {
     leftRef.current = true;
     clearDraft();
     onHome();
@@ -7199,8 +6247,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const handleFloatSwapTouchStart = (fImg: FloatingImage) => (e: React.TouchEvent) => {
-    // 文字與圖形圖層沒有照片，不參與長按交換
-    if (fImg.text !== undefined || fImg.shape) return;
+    if (fImg.text !== undefined) return;   // 文字圖層不參與長按交換
     if (e.touches.length !== 1) {
       if (floatSwapTimerRef.current) { clearTimeout(floatSwapTimerRef.current); floatSwapTimerRef.current = null; }
       floatSwapRef.current = null;
@@ -7652,32 +6699,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 點一下的選取一律走這裡：選取目標只有一個，其餘全部清掉。
    * （之前圖片自己也會選取，兩邊搶著設 state，偶爾會出現上一張的圓球沒消失。）
    */
-  /**
-   * 第一次把發光打開時，預設就用這個圖層自己的顏色。
-   * 一個圖層只做這一次（glowInit），之後手動挑過的發光顏色不會再被蓋掉。
-   * 圖片不算在內 —— 它的發光是另一組參數（imgGlow）。
-   */
-  const withGlowInit = (layer: FloatingImage, patch: Partial<FloatingImage>): Partial<FloatingImage> => {
-    if (layer.glowInit) return patch;
-    if (layer.text !== undefined && (patch as any).glow !== undefined && ((patch as any).glow || 0) > 0) {
-      return { ...patch, glowColor: layer.color || '#FFFFFF', glowInit: true } as any;
-    }
-    if (layer.shape && (patch as any).shapeGlow) {
-      return { ...patch, shapeGlowColor: layer.color || SHAPE_DEFAULT_COLOR, glowInit: true } as any;
-    }
-    return patch;
-  };
-
   const applyTapSelection = (target: Element) => {
     const fEl = target.closest('[data-floating-id]');
     if (fEl) {
       const id = fEl.getAttribute('data-floating-id');
       if (id) {
         // 已經選取的文字圖層再點一次＝直接在畫布上打字（不會自己跳到編輯頁）
-        /* 只有一般文字可以點進去改字；符號的內容是固定的，
-           再點一次不進入編輯（所以也不會有剪下／複製／貼上）。 */
-        const fl = floatingImages.find(f => f.id === id);
-        if (id === selectedFloatingId && fl?.text !== undefined && !fl?.sym) {
+        if (id === selectedFloatingId && floatingImages.find(f => f.id === id)?.text !== undefined) {
           setEditingTextId(id);
           setInlineEditId(id);
         } else if (id !== inlineEditId) {
@@ -8197,115 +7225,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.lineWidth = fImg.strokeWidth * 2 * scaleFactor * fImg.scale;
       ctx.lineJoin = 'round';
       ctx.miterLimit = 2;
-      ctx.strokeStyle = fImg.strokeColor || '#000000';
+      ctx.strokeStyle = fImg.strokeColor || '#FFFFFF';
       lines.forEach((ln, i) => ctx.strokeText(ln, 0, startY + i * lineH));
     }
     ctx.fillStyle = fImg.color || '#FFFFFF';
     drawLines();
-    ctx.restore();
-  };
-
-  /**
-   * 匯出時把圖形圖層畫上去。
-   * 路徑跟預覽是同一支 shapePathD、同一條 d 字串，線寬也是同一支 shapeLineWidth ——
-   * 畫布上看到的跟存下來的不可能長得不一樣。
-   */
-  const drawShapeLayer = (
-    ctx: CanvasRenderingContext2D,
-    fImg: FloatingImage,
-    scaleFactor: number,
-  ) => {
-    // 扣掉預覽裡每頁之間那 1px 的間隔（跟圖片同一套）
-    const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
-    const fx = adjustedX * scaleFactor;
-    const fy = fImg.y * scaleFactor;
-    const fw = fImg.width * scaleFactor;
-    const fh = fImg.height * scaleFactor;
-
-    ctx.save();
-    // CSS 的 scale 以未縮放框的中心為原點，所以先搬到中心再縮放，最後推回左上角
-    ctx.translate(fx + fw / 2, fy + fh / 2);
-    ctx.rotate((fImg.rotation * Math.PI) / 180);
-    ctx.scale(fImg.scale, fImg.scale);
-    ctx.translate(-fw / 2, -fh / 2);
-
-    if (fImg.shape === 'hole') {
-      /* 借來的圖案：跟預覽同一支 drawHoleShape，原點在中心 */
-      ctx.save();
-      ctx.translate(fw / 2, fh / 2);
-      drawHoleShape(
-        ctx,
-        {
-          hole: fImg.holeType || 'circle', filled: fImg.shapeFilled,
-          color: fImg.color || SHAPE_DEFAULT_COLOR,
-          lineW: fImg.shapeLineW, glow: fImg.shapeGlow as any,
-          glowColor: fImg.shapeGlowColor, strokeW: fImg.shapeStrokeW,
-          strokeColor: fImg.shapeStrokeColor,
-          dots: fImg.shapeDots, dotSize: fImg.shapeDotSize,
-          dotGap: fImg.shapeDotGap, dotColor: fImg.shapeDotColor,
-          id: fImg.id,
-        },
-        fw, fh, shapeGlowBlurs(fw, fh).map(r => r * glowAmount(fImg.shapeGlow as any)),
-      );
-      ctx.restore();
-      ctx.restore();
-      return;
-    }
-    const path = new Path2D(shapePathD(fImg.shape!, fw, fh));
-    const color = fImg.color || SHAPE_DEFAULT_COLOR;
-    const solid = fImg.shapeFilled && fImg.shape !== 'line';
-    if (!solid) {
-      const lw = shapeLineWidth(fImg.shapeLineW, fw, fh);
-      const dash = fImg.shapeDash || 0;
-      ctx.lineWidth = lw;
-      ctx.lineJoin = fImg.shape === 'line' ? 'round' : 'miter';
-      ctx.miterLimit = 4;
-      // 一律平頭：線條的兩端要切齊
-      ctx.lineCap = 'butt';
-      if (dash > 0) {
-        const seg = lw * (0.6 + (dash / 100) * 4);
-        ctx.setLineDash([seg, seg * 0.85]);
-      } else {
-        ctx.setLineDash([]);
-      }
-      ctx.strokeStyle = color;
-    } else {
-      ctx.fillStyle = color;
-    }
-    // 發光：三段模糊疊起來，跟預覽的三層 drop-shadow 同一組半徑
-    const gAmt = glowAmount(fImg.shapeGlow as any);
-    if (gAmt > 0) {
-      ctx.save();
-      ctx.shadowColor = fImg.shapeGlowColor || color;
-      for (const r of shapeGlowBlurs(fw, fh)) {
-        ctx.shadowBlur = r * gAmt;
-        if (solid) ctx.fill(path); else ctx.stroke(path);
-      }
-      ctx.restore();
-    }
-    /* 外描邊：畫在本體底下、寬度加倍，跟預覽那一條 path 同一套 */
-    const strokeW = (fImg.shapeStrokeW || 0) * (Math.max(fw, fh) / 160);
-    if (strokeW > 0) {
-      ctx.save();
-      ctx.setLineDash([]);
-      ctx.lineJoin = 'round';
-      ctx.miterLimit = 2;
-      ctx.strokeStyle = fImg.shapeStrokeColor || '#000000';
-      ctx.lineWidth = (solid ? 0 : shapeLineWidth(fImg.shapeLineW, fw, fh)) + strokeW * 2;
-      ctx.stroke(path);
-      ctx.restore();
-    }
-    if (solid) ctx.fill(path); else ctx.stroke(path);
-    /* 點點：剪裁在圖形裡面再鋪一層，跟預覽那塊 pattern 是同一塊區域、
-       同一組網格參數（shapeDotGrid），所以預覽跟匯出對得起來。 */
-    if (fImg.shapeDots) {
-      ctx.save();
-      ctx.clip(path);
-      ctx.translate(fw / 2, fh / 2);   // 點點那支是以圖形中心為原點
-      drawShapeDotsCanvas(ctx, fw, fh, fImg);
-      ctx.restore();
-    }
-    ctx.setLineDash([]);
     ctx.restore();
   };
 
@@ -8318,10 +7242,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     for (const fImg of layers) {
       if (fImg.text !== undefined) {
         await drawTextLayer(ctx, fImg, scaleFactor);
-        continue;
-      }
-      if (fImg.shape) {
-        drawShapeLayer(ctx, fImg, scaleFactor);
         continue;
       }
       const img = fImg.isVideo ? await loadExportVideo(fImg.src) : await loadExportImage(fImg.src);
@@ -8612,7 +7532,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   whiteSpace: 'pre',
                   textAlign: 'center',
                   WebkitTextStrokeWidth: f.strokeWidth ? `${f.strokeWidth * 2 * f.scale * k}px` : undefined,
-                  WebkitTextStrokeColor: f.strokeWidth ? (f.strokeColor || '#000000') : undefined,
+                  WebkitTextStrokeColor: f.strokeWidth ? (f.strokeColor || '#FFFFFF') : undefined,
                   paintOrder: f.strokeWidth ? 'stroke fill' : undefined,
                   textShadow: 'none',
                 }}
@@ -8637,67 +7557,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 )}
                 <span style={{ position: 'relative', zIndex: 1 }}>{f.text}</span>
               </span>
-            );
-          }
-          if (f.shape) {
-            /* 圖形：跟畫布上同一支 shapePathD、同一支 shapeLineWidth，
-               只是外框換成縮圖的尺寸。 */
-            const isLine = f.shape === 'line';
-            const solid = !!f.shapeFilled && !isLine;
-            const lw = shapeLineWidth(f.shapeLineW, f.width, f.height);
-            const dash = f.shapeDash || 0;
-            const seg = lw * (0.6 + (dash / 100) * 4);
-            /* 借來的圖案不是 SVG 路徑，縮圖也走 canvas（跟預覽、匯出同一支） */
-            if (f.shape === 'hole') return (
-              <canvas
-                key={f.id}
-                ref={el => {
-                  if (!el) return;
-                  const w = Math.max(1, Math.round(f.width * f.scale * k * 2));
-                  const h = Math.max(1, Math.round(f.height * f.scale * k * 2));
-                  if (el.width !== w) el.width = w;
-                  if (el.height !== h) el.height = h;
-                  const c = el.getContext('2d');
-                  if (!c) return;
-                  c.setTransform(1, 0, 0, 1, 0, 0);
-                  c.clearRect(0, 0, w, h);
-                  c.translate(w / 2, h / 2);
-                  drawHoleShape(c, {
-                    hole: f.holeType || 'circle', filled: f.shapeFilled,
-                    color: f.color || SHAPE_DEFAULT_COLOR, lineW: f.shapeLineW,
-                    glow: f.shapeGlow as any, glowColor: f.shapeGlowColor,
-                    strokeW: f.shapeStrokeW, strokeColor: f.shapeStrokeColor,
-                    dots: f.shapeDots, dotSize: f.shapeDotSize,
-                    dotGap: f.shapeDotGap, dotColor: f.shapeDotColor, id: f.id,
-                  }, w, h, shapeGlowBlurs(w, h).map(r => r * glowAmount(f.shapeGlow as any)));
-                }}
-                style={{ ...common }}
-              />
-            );
-            return (
-              <svg
-                key={f.id}
-                viewBox={`0 0 ${f.width} ${f.height}`}
-                preserveAspectRatio="none"
-                style={{
-                  ...common, overflow: 'visible',
-                  filter: glowAmount(f.shapeGlow as any) > 0
-                    ? shapeGlowBlurs(f.width, f.height)
-                        .map(r => `drop-shadow(0 0 ${r3(r * f.scale * k * glowAmount(f.shapeGlow as any))}px ${f.shapeGlowColor || f.color || SHAPE_DEFAULT_COLOR})`)
-                        .join(' ')
-                    : undefined,
-                }}
-              >
-                <path
-                  d={shapePathD(f.shape, f.width, f.height)}
-                  fill={solid ? (f.color || SHAPE_DEFAULT_COLOR) : 'none'}
-                  stroke={solid ? 'none' : (f.color || SHAPE_DEFAULT_COLOR)}
-                  strokeWidth={lw}
-                  strokeDasharray={dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined}
-                  strokeLinecap="butt"
-                  strokeLinejoin={isLine ? 'round' : 'miter'}
-                />
-              </svg>
             );
           }
           if (f.isVideo) {
@@ -9048,7 +7907,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           if (withBg) {
             g.fillStyle = pages[pageIdx].bgColor || '#ffffff';
             g.fillRect(0, 0, VW, VH);
-            paintPattern(g, VW, VH, patternOpts);   // 紋理跟底色是一組的
           }
           g.save();
           g.scale(VW / targetW, VH / targetH);
@@ -9191,7 +8049,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         ctx.clearRect(0, 0, targetW, targetH);
         ctx.fillStyle = pages[pageIdx].bgColor || '#ffffff';
         ctx.fillRect(0, 0, targetW, targetH);
-        paintPattern(ctx, targetW, targetH, patternOpts);   // 紋理跟底色是一組的
 
         ctx.save();
         ctx.translate(-pageLeft, 0);
@@ -9225,7 +8082,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   return (
-    <div className="safe-top flex flex-col w-full h-screen bg-black text-white relative font-sans overflow-hidden">
+    <div className="flex flex-col w-full h-screen bg-black text-white relative font-sans overflow-hidden">
       <style>{`
         /* 圓球跟「佈局調整」的滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
         .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
@@ -9435,7 +8292,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             <div className="w-px h-4 bg-white/10 mx-1 shrink-0" />
 
             {/* 三個點：點開才有「預覽」與「對齊」 */}
-            <div className="relative" ref={moreWrapRef}>
+            <div className="relative">
               <button
                 onClick={() => setMoreOpen(o => !o)}
                 // 打開時只有圖標變亮，不畫圓形底
@@ -9678,7 +8535,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         <React.Fragment key={page.id}>
                           {pageIdx > 0 && (
                             <div
-                              className="w-[1px] flex-shrink-0 self-stretch pointer-events-none"
+                              className="w-[1px] bg-black/15 flex-shrink-0 self-stretch pointer-events-none"
                               /*
                                 排頁面時的分隔線：粗細跟著整排一起等比例縮小
                                 （不另外補回來），顏色則直接取一般模式那條線的顏色
@@ -9687,26 +8544,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 看那條縫落在像素格的哪，每條深淺就會不一樣。
                                 另外疊在頁面上面，不然右邊那一頁會把它蓋掉半條。
                               */
-                              style={{
-                                /* 一律用不透明的顏色（工作區底色再壓深 15%）。
-                                   原本一般模式走 class 的 bg-black/15 是半透明的，
-                                   相鄰兩頁各自做次像素抗鋸齒，底下透出來多少要看
-                                   那條縫落在像素格的哪，每條深淺就會不一樣；
-                                   照片疊上來時也會透出照片的顏色。
-                                   排頁面拖曳中仍然要隱形，那是原本就有的行為。 */
+                              style={(pagesMode || pagesVisual) ? {
                                 backgroundColor: (pageDragIdx !== null || dragSettle)
                                   ? 'transparent'
                                   : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
-                                /* 分割線疊在所有物件之上：照片拖到跨頁的位置時
-                                   不會把這條線蓋掉，兩頁的界線永遠看得見。
-                                   佈局是 59+、一般圖片是 60+，所以取 200
-                                   （仍低於拖曳浮起的 900 與各種浮層）。
-                                   這一段只存在於「一般預覽」——匯出是另外畫在
-                                   canvas 上的、IG 預覽也是另一支元件，
-                                   兩邊都不會受這裡影響。 */
                                 position: 'relative',
-                                zIndex: 200,
-                              }}
+                                // 只要比「頁面本身」高就夠了（頁面沒設 z-index），
+                                // 佈局是 59+、一般圖片是 60+，分割線一律在物件下面
+                                zIndex: 1,
+                              } : undefined}
                             />
                           )}
 
@@ -9748,8 +8594,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             })()}
                           >
                             <div className="absolute inset-0" style={{ backgroundColor: page.bgColor }} />
-                            {/* 背景紋理：疊在底色上、所有內容之下，不影響點選與拖曳 */}
-                            <PatternLayer w={previewW} h={previewH} opts={patternOpts} />
                             {page.layouts.map((layout) => {
                               const pageTemplates = TEMPLATE_MAP[layout.images.length] || [];
                               const pageActiveTemplate = pageTemplates[layout.templateIndex] || pageTemplates[0] || { name: '預設', rects: [] };
@@ -10821,7 +9665,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           </div>
 
           {/* Tabs Content */}
-          <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+          <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'add', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto'}`}>
 
             {activeTab === 'adjust' && (() => {
               /* 佈局裡的格子也走同一套面板：把格子包成跟浮動圖片一樣的形狀，
@@ -10838,28 +9682,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               if (!layer) return (
                 // 置中之後再稍微往上一點（pb 讓可用高度變矮，等於整段往上挪 12px）
                 <div className="h-full flex items-center justify-center pb-6">
-                  <p className="text-[11px] text-white/40 text-center">請先選中圖片、文字或圖形</p>
+                  <p className="text-[11px] text-white/40 text-center">請先選中圖片或文字</p>
                 </div>
               );
 
-              // 選到文字：走文字那一套面板（同一個分頁、不同介面）。
-              // 符號走同一顆面板的精簡模式（顏色、大小、發光）。
+              // 選到文字：走文字那一套面板（同一個分頁、不同介面）
               if (layer.text !== undefined) {
                 return (
                   <TextEditorPanel
                     layer={layer}
-                    symbol={!!layer.sym}
-                    onChange={patch => patchTextLayer(layer.id, withGlowInit(layer, patch))}
-                  />
-                );
-              }
-
-              // 選到圖形：顏色／粗細／虛線
-              if (layer.shape) {
-                return (
-                  <ShapeEditorPanel
-                    layer={layer}
-                    onChange={patch => patchTextLayer(layer.id, withGlowInit(layer, patch))}
+                    onChange={patch => patchTextLayer(layer.id, patch)}
                   />
                 );
               }
@@ -10897,34 +9729,27 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
             {activeTab === 'add' && (
               <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300">
-                {addSub === 'symbol' ? (
-                  <SymbolPicker onBack={() => setAddSub('root')} onPick={handleAddSymbolLayer} />
-                ) : addSub === 'root' ? (
-                  /* 五顆分兩排：第一排三顆、第二排兩顆。
-                     全部擠在同一排的話每顆只剩七十幾寬，字都快貼到邊了。
-                     兩排都用同一個 max-w，所以每顆按鈕一樣大。 */
-                  <div className="flex flex-col gap-1.5 mt-6">
-                  <div className="flex justify-center gap-1.5">
+                <div className="flex justify-center gap-4 mt-6">
                   <button
                     onClick={() => {
                       setLayoutSubTab('layout');
                       setActiveTab('layout');
                     }}
-                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Icon name="grid_view" className="text-[24px] text-white/80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增佈局</span>
                   </button>
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
-                    <span className="text-[11px] font-bold tracking-widest text-white/90">匯入圖片</span>
+                    <span className="text-[11px] font-bold tracking-widest text-white/90">匯入照片</span>
                   </button>
                   <button
                     onClick={() => handleAddTextLayer()}
-                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                    className="flex flex-col items-center justify-center py-4 px-6 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     {/* 跟文字編輯面板裡「字體」那一顆同一個圖示。
                         線寬調細對齊旁邊兩顆 Material 圖標；透明度改成掛在整個
@@ -10933,97 +9758,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
                   </button>
-                  </div>
-                  <div className="flex justify-center gap-1.5">
-                  {/* 新增符號：內容之後再補，先把位置與外觀定下來 */}
-                  <button
-                    onClick={() => setAddSub('symbol')}
-                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
-                  >
-                    {/* 圖示不能用 Material 的 emoji_symbols：專案裡那份是**子集**，
-                        只打包了真的有用到的 73 顆，emoji_symbols 不在裡面 ——
-                        用了會直接把「emoji_symbols」這串英文字印在按鈕上、
-                        還會撐爆格子蓋到隔壁兩顆。改用跟旁邊「新增文字」「新增圖形」
-                        同一套的 lucide 線條圖示。 */}
-                    {/* 圖標直接用清單裡的第五顆符號，一看就知道這一頁是什麼 */}
-                    <span className="text-white opacity-80 text-[15px] leading-none whitespace-nowrap h-6 flex items-center">{SYMBOLS[4]}</span>
-                    <span className="text-[11px] font-bold tracking-widest text-white/90">新增符號</span>
-                  </button>
-                  <button
-                    onClick={() => setAddSub('shape')}
-                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
-                  >
-                    <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80" />
-                    <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
-                  </button>
-                  </div>
-                  </div>
-                ) : (
-                  /* 點進「新增圖形」才看得到的圖案清單。
-                     三排：實心、細框、線條，點一下就加到這一頁的正中間 ——
-                     不會跳去編輯頁，所以可以連著加好幾個。 */
-                  <div className="pt-1">
-                    <div className="flex items-center gap-2 mb-3">
-                      {/* 跟登入／帳號頁那顆同款：只有一個箭頭，沒有底下的圓 */}
-                      <button
-                        onClick={() => setAddSub('root')}
-                        aria-label="返回"
-                        title="返回"
-                        className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
-                      >
-                        <Icon name="arrow_back" className="text-[20px]" />
-                      </button>
-                      <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增圖形</span>
-                    </div>
-                    {(() => {
-                      /* 清單跟創意拼圖同一份：實心那排把十字星插在倒數第二，
-                         後面接上從圖案借過來的那 14 顆；邊框那排插空心版的十字星。
-                         最後再把第 10 顆搬到第 8 個，兩邊的順序完全一致。 */
-                      const ins = (arr: any[], item: any) => {
-                        const n = arr.slice();
-                        n.splice(Math.max(0, n.length - 1), 0, item);
-                        return n;
-                      };
-                      /** 把 id 是這個的那一顆搬到第 m 個位置（從 1 算起）。用 id 找而不是用
-                          位置找 —— 清單中間再插新圖形時才不會位移到別顆身上。 */
-                      const moveTo = (arr: any[], id: string, m: number) => {
-                        const i = arr.findIndex(z => z.id === id);
-                        if (i < 0) return arr;
-                        const n = arr.slice();
-                        const [x] = n.splice(i, 1);
-                        n.splice(Math.max(0, m - 1), 0, x);
-                        return n;
-                      };
-                      const solidList = moveTo(
-                        [...ins(ADD_SHAPE_ITEMS.filter(i => i.filled), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
-                        'heart-f', 8);
-                      const lineList = ins(ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line'), HOLE_ITEM_CROSS_O);
-                      return ([
-                        ['實心', solidList],
-                        ['邊框', lineList],
-                        ['線條', ADD_SHAPE_ITEMS.filter(i => i.kind === 'line')],
-                      ] as const);
-                    })().map(([label, list]) => (
-                      <div key={label} className="mb-3">
-                        <div className="text-[9px] font-bold text-[#666] mb-1.5 tracking-widest">{label}</div>
-                        <div className="grid grid-cols-6 gap-2">
-                          {list.map(it => (
-                            <button
-                              key={it.id}
-                              onClick={() => handleAddShapeLayer(it)}
-                              aria-label={it.id}
-                              className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
-                            >
-                              {(it as any).hole
-                                ? <HoleGlyph s={(it as any).hole} />
-                                : <ShapeGlyph item={it as any} />}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                </div>
               </div>
             )}
 
@@ -11307,50 +10042,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             )}
 
             {activeTab === 'color' && (
-              /* 上面是原本的底色挑色器（一個字沒動），下面緊接著背景紋理。
-                 這一頁比原本高，所以自己捲 —— 外層那一格的 overflow 名單
-                 是所有分頁共用的，完全沒動，別的分頁不受影響。 */
-              <div className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-y-auto no-scrollbar">
-                {/* 外面包一層高度 auto 的盒子：ColorPickerEmbedded 的根是 h-full，
-                     直接放在這個「有固定高度」的捲動格裡會整個撐滿，把下面的紋理
-                     推到很遠。包一層之後 100% 會解析成 auto，它就只佔自己需要的高度。 */}
-                <div>
-                  <ColorPickerEmbedded
-                    color={bgColor}
-                    onChange={setBgColor}
-                    onClose={() => setActiveTab('layout')}
-                  />
-                </div>
-                <div className="mt-2 space-y-3">
-                  <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
-                    <span className="text-[10px] font-bold text-[#888]">紋理</span>
-                    <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                      {([['none', '無'], ['dot', '點點'], ['star', '星星'], ['heart', '愛心']] as const).map(([t, label]) => (
-                        <button key={t} onClick={() => setPatternType(t)}
-                          className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  {patternType !== 'none' && (
-                    <div className="space-y-3 animate-in fade-in zoom-in-95 duration-300">
-                      <div className="grid grid-cols-2 gap-4 bg-[#0f0f0f] border border-[#1a1a1a] rounded-[8px] p-4">
-                        {patternSlider('大小', patternSize, setPatternSize)}
-                        {patternSlider('間距', patternGap, setPatternGap)}
-                      </div>
-                      {/* 紋理顏色用跟上面底色完全同一顆挑色器（同樣包一層擋掉 h-full） */}
-                      <div>
-                        <ColorPickerEmbedded
-                          color={patternColor}
-                          onChange={setPatternColor}
-                          onClose={() => setActiveTab('layout')}
-                        />
-                      </div>
-                    </div>
-                  )}
-                  <div className="h-2" />
-                </div>
+              <div className="max-w-md mx-auto animate-in fade-in duration-300 h-full">
+                <ColorPickerEmbedded
+                  color={bgColor}
+                  onChange={setBgColor}
+                  onClose={() => setActiveTab('layout')}
+                />
               </div>
             )}
 
