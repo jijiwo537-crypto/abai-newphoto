@@ -6813,14 +6813,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY,
       ) || 1;
-      // 縮放要繞著「現在停在畫面正中間的那一頁」，不然會一邊縮一邊漂走
+      /* 縮放要繞著「現在畫面正中間看到的那個位置」，不然會一邊縮一邊漂走。
+
+         這裡以前多做了一次 Math.round，把錨點吸到最接近的那一頁 ——
+         手指才剛開始捏，畫面就先被拉到那一頁的正中央，也就是
+         「縮放時會強制把其中一頁移到正中心」。
+         改成保留小數：中心落在兩頁之間就留在兩頁之間，縮放前後看同一點。
+         仍然夾在 0 ～ 最後一頁，不會捲到空白處。 */
       let anchor = 0;
       if (cont && w > 0) {
         const k0 = kRef.current || 1;
-        anchor = Math.round(
-          (cont.scrollLeft + w / 2 - stripOffset(w, k0)) / Math.max(1, k0 * (previewW + 1)) - 0.5,
-        );
-        anchor = Math.max(0, Math.min(pages.length - 1, anchor));
+        const a = (cont.scrollLeft + w / 2 - stripOffset(w, k0)) / Math.max(1, k0 * (previewW + 1)) - 0.5;
+        anchor = Math.max(0, Math.min(pages.length - 1, a));
       }
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
          連續捏兩次時，第二次一定要從第一次的結果接著算。 */
