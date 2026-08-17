@@ -1586,37 +1586,40 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeStrokeColor: c }),
               })} />
           </div>
-          {/* 點點放在最下面：兩顆按鈕與顏色同一排，全部常駐
-              （關著也看得到顏色，可以先挑好再打開）。 */}
-          <div className="grid grid-cols-2 gap-3 items-end">
-            <div>
-              <p className="text-[11px] font-bold text-white/70 mb-1.5">點點</p>
+          {/* 點點整組收在同一格：開關、顏色、兩根滑桿全部在同一個框裡
+              （跟「紋理」那一格同一種排法）。顏色常駐，關著也能先挑好。 */}
+          <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden">
+            <div className="h-[47px] flex items-center justify-between px-3">
+              <span className="text-[10px] font-bold text-[#888]">點點</span>
               <div className="flex items-center gap-2">
-                {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
-                  <button
-                    key={label}
-                    onClick={() => onChange({ shapeDots: on })}
-                    className={`flex-1 h-9 rounded-xl border text-[12px] font-bold tracking-widest transition-all ${
-                      !!layer.shapeDots === on
-                        ? 'bg-white text-black border-white'
-                        : 'bg-white/[0.04] text-white/70 border-white/15'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
+                <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                  {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
+                    <button
+                      key={label}
+                      onClick={() => onChange({ shapeDots: on })}
+                      className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
+                        !!layer.shapeDots === on ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setColorPage({
+                    value: layer.shapeDotColor || '#FFFFFF',
+                    onPick: c => onChange({ shapeDotColor: c }),
+                  })}
+                  title="點點顏色"
+                  className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                  style={{ backgroundColor: layer.shapeDotColor || '#FFFFFF' }}
+                />
               </div>
             </div>
-            <ColorPick label="顏色" value={layer.shapeDotColor || '#FFFFFF'}
-              onPick={c => onChange({ shapeDotColor: c })}
-              onOpen={() => setColorPage({
-                value: layer.shapeDotColor || '#FFFFFF',
-                onPick: c => onChange({ shapeDotColor: c }),
-              })} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
-            {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
+            <div className="grid grid-cols-2 gap-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
+              {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
+              {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
+            </div>
           </div>
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
           {hasOutline && (
@@ -1668,6 +1671,10 @@ export type ImageAdjustPanelProps = {
   setTuneTool: (v: any) => void;
   setTuningEdge: (v: any) => void;
   openComposeFor: (id: string) => void;
+  /** 構圖介面正開著（圖標要亮起來） */
+  composeOpen?: boolean;
+  /** 在構圖介面時切到別的分類：先把當下的構圖套用掉再切 */
+  onLeaveCompose?: () => void;
   /* 開著的時候：切到「調節」「形狀」不預先選好第一個工具 —— 滑桿要等
      真的點下某顆工具鈕才出現，而且是帶動畫出現的。經典拼圖不傳這個，
      維持原本「一切過去滑桿就在那」的手感。 */
@@ -1684,7 +1691,7 @@ export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   img, set, lutList, loadingLut, setLoadingLut, lutRevision, setLutRevision,
   adjustSub, setAdjustSub, effectCard, setEffectCard, effectDetail, setEffectDetail,
   shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
-  setTuningEdge, openComposeFor, hideShape, deferSlider, onSliderOpenChange, inlineSlider,
+  setTuningEdge, openComposeFor, composeOpen, onLeaveCompose, hideShape, deferSlider, onSliderOpenChange, inlineSlider,
 }) => {
 const fx = img.fx || {};
 const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
@@ -2042,15 +2049,21 @@ return (
           key={id}
           onClick={() => {
             if (id === 'compose') { openComposeFor(img.id); return; }
+            /* 從構圖切到別的分類：先把當下裁切的結果確認掉再切過去 ——
+               不然構圖介面會一直蓋在上面，看起來就只是「圖標亮了但沒反應」。 */
+            if (composeOpen) onLeaveCompose?.();
             setAdjustSub(id as any);
             // 跟編輯一樣：切分類就把該分類的第一個工具選起來
             if (id === 'tune') setTuneTool(deferSlider ? '' : TUNE_TOOLS[0][0]);
             if (id === 'shape') { setShapeMenu('root'); setShapeTool(deferSlider ? '' : SHAPE_TOOLS[0][0]); }
             if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
           }}
-          className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${adjustSub === id ? 'text-white' : 'text-white/20'}`}
+          /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
+          className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${
+            (composeOpen ? id === 'compose' : adjustSub === id) ? 'text-white' : 'text-white/20'
+          }`}
         >
-          <Icon name={icon} className="text-xl" fill={adjustSub === id} />
+          <Icon name={icon} className="text-xl" fill={composeOpen ? id === 'compose' : adjustSub === id} />
           <span className="text-[9px] font-black uppercase tracking-[0.2em]">{label}</span>
         </button>
       ))}
@@ -2160,7 +2173,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
               <span>色相</span>
               <span className="text-white/40">{Math.round(hsv.h)}°</span>
             </div>
-            <input type="range" min="0" max="360" value={hsv.h} onInput={e => handleHsvChange('h', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ background: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }} />
+            <input type="range" min="0" max="360" value={hsv.h} onInput={e => handleHsvChange('h', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }} />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
@@ -2168,14 +2181,14 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
                 <span>飽和度</span>
                 <span className="text-white/40">{Math.round(hsv.s)}%</span>
               </div>
-              <input type="range" min="0" max="100" value={hsv.s} onInput={e => handleHsvChange('s', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ background: `linear-gradient(to right, #808080, ${hsvToHex(hsv.h, 100, 100)})` }} />
+              <input type="range" min="0" max="100" value={hsv.s} onInput={e => handleHsvChange('s', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: `linear-gradient(to right, #808080, ${hsvToHex(hsv.h, 100, 100)})` }} />
             </div>
             <div className="flex flex-col gap-1.5">
               <div className="flex justify-between items-center text-[9px] font-bold text-[#666] tracking-tighter uppercase">
                 <span>明度</span>
                 <span className="text-white/40">{Math.round(hsv.v)}%</span>
               </div>
-              <input type="range" min="0" max="100" value={hsv.v} onInput={e => handleHsvChange('v', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ background: `linear-gradient(to right, #000, ${hsvToHex(hsv.h, hsv.s, 100)})` }} />
+              <input type="range" min="0" max="100" value={hsv.v} onInput={e => handleHsvChange('v', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: `linear-gradient(to right, #000, ${hsvToHex(hsv.h, hsv.s, 100)})` }} />
             </div>
           </div>
         </div>
@@ -9401,16 +9414,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     <div className="safe-top flex flex-col w-full h-screen bg-black text-white relative font-sans overflow-hidden">
       <style>{`
         /* 圓球跟「佈局調整」的滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
-        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 2px; border-radius: 2px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; margin: 7px 0; }
+        /* 顏色滑桿：軌道改回原本的 6px（漸層畫在軌道上，不是畫在整個元件上），
+           圓點換成跟其他滑桿一樣的小白球（14px），
+           元件本身撐到 24px、上下各 -9px 外距 —— 版面高度維持 6px，觸控範圍變大。 */
+        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: -9px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
+        .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -4px; cursor: pointer; }
+        .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
+        .designer-color-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         /* 圖片編輯那一頁的滑桿：跟「編輯」用同一組樣式，連軌道與圓點都一樣 */
         .custom-range {
           -webkit-appearance: none;
           width: calc(100% + 64px);
-          height: 40px;
+          height: 60px;
           background: rgba(0,0,0,0);
           outline: none;
-          margin: 0 -32px;
+          margin: -10px -32px;
           padding: 0;
           touch-action: none;
           -webkit-tap-highlight-color: rgba(0,0,0,0);
@@ -9418,7 +9438,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         .custom-range:focus { outline: none; }
         /* 特效細項的並排滑桿：跟「編輯」同一份。盒子收到 18px（剛好包住 15px 的圓點），
            軌道也只畫 9px..寬-9px，圓點才走得到頭尾（並排的滑桿不能像一般滑桿那樣往外擴）。 */
-        .custom-range.dense { height: 26px; width: 100%; margin: 0; }
+        .custom-range.dense { height: 39px; width: 100%; margin: -6.5px 0; }
         .custom-range.dense::-webkit-slider-runnable-track {
           background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
         }
@@ -9448,7 +9468,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           box-shadow: none;
         }
         /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
-        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: -4px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
         .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
         .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; margin-top: -7px; cursor: pointer; }
         .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
@@ -11069,6 +11089,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   shapeTool={shapeTool} setShapeTool={setShapeTool}
                   tuneTool={tuneTool} setTuneTool={setTuneTool}
                   setTuningEdge={setTuningEdge} openComposeFor={openComposeFor}
+                  composeOpen={!!composeState} onLeaveCompose={applyComposeToLayer}
                   hideShape={!!selCell}
                 />
               );

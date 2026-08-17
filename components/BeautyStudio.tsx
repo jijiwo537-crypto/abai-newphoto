@@ -886,7 +886,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         .beauty-range {
             -webkit-appearance: none;
             appearance: none;
-            height: 22px;
+            /* 33px ＋ 上下各 -5.5px：看起來還是 22px 高，觸控範圍變 1.5 倍 */
+            height: 33px;
+            margin: -5.5px 0;
             background: transparent;
             cursor: pointer;
         }
