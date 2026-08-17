@@ -3869,6 +3869,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                   .map(r => `drop-shadow(0 0 ${r3(r * image.scale * glowAmount(image.shapeGlow as any))}px ${image.shapeGlowColor || image.color || SHAPE_DEFAULT_COLOR})`)
                   .join(' ')
               : undefined,
+            /* 有發光時把這一層推上自己的合成層。
+               drop-shadow 的光會長到圖形框外面，而 WebKit 在元素被拖動／縮放時
+               只會重畫「框以內」那一塊 —— 框外那圈光就留在原地變成殘影
+               （拖一次留一道，看起來像一路拉出來的影子）。
+               自己一層之後整層一起重畫，就不會有殘留。 */
+            willChange: glowAmount(image.shapeGlow as any) > 0 ? 'filter, transform' : undefined,
           }}
         >
           {/* 點點：用一塊 pattern 疊在圖形上，範圍就是圖形的填色區域 ——
@@ -4022,6 +4028,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 textShadow: [1, 2, 3]
                   .map(k => `0 0 ${(image.glow! / 20) * 14 * k}px ${image.glowColor || '#FFFFFF'}`)
                   .join(', '),
+                // 跟圖形的發光同一個理由：光長在框外面，不自己一層就會拖出殘影
+                willChange: 'transform',
                 visibility: isTextEditing ? 'hidden' : undefined,
               }}
             >
@@ -8896,6 +8904,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         .map(r => `drop-shadow(0 0 ${r3(r * f.scale * k * glowAmount(f.shapeGlow as any))}px ${f.shapeGlowColor || f.color || SHAPE_DEFAULT_COLOR})`)
                         .join(' ')
                     : undefined,
+                  willChange: glowAmount(f.shapeGlow as any) > 0 ? 'filter, transform' : undefined,
                 }}
               >
                 <path
@@ -9448,14 +9457,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         .slider-wrap { position: relative; }
         /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
            不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
-        .slider-wrap > input[type=range] { position: absolute; left: 0; width: 100%; top: 50%; }
-        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 96px; margin: -48px 0 0 0; }
-        .slider-wrap > input.designer-color-slider { height: 72px; margin: -36px 0 0 0; background: transparent !important; }
+        /* 左右各外擴 7px（軌道兩端已經留了同樣寬的透明，看到的線長度不變） */
+        .slider-wrap > input[type=range] { position: absolute; left: -7px; width: calc(100% + 14px); top: 50%; }
+        /* 高度一律是白點的兩倍（28px）。之前放到 96／72，滑桿的 touch-action: none
+           會把它周圍一大片的上下滑動全吃掉，面板就捲不動了。 */
+        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 28px; margin: -14px 0 0 0; }
+        .slider-wrap > input.designer-color-slider { height: 28px; margin: -14px 0 0 0; left: 0; width: 100%; background: transparent !important; }
 
         /* 顏色滑桿：6px 的漸層軌道 ＋ 自己畫的白圓球。
            圓球用 margin-top 對齊軌道正中央（(6-18)/2 = -6），
            不再用瀏覽器原生那顆 —— 原生的在自訂軌道高度下會偏下，拖動時也會閃。 */
-        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
         .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -4px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
         .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
@@ -9506,10 +9518,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           box-shadow: none;
         }
         /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
-        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
-        .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
-        /* 同上：框拉寬到 32px，白點還是畫在正中央的 16px */
-        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
+        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+        .slim-slider::-webkit-slider-runnable-track { height: 2px; border-radius: 2px;
+          background: linear-gradient(to right, rgba(0,0,0,0) 7px, #333 7px, #333 calc(100% - 7px), rgba(0,0,0,0) calc(100% - 7px)); }
+        /* 圓點的框＝白點的兩倍（28px），白點還是正中央那 14px，行程完全不變 */
+        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 14px; border: none; margin-top: -6px; cursor: pointer;
+          background: radial-gradient(circle at center, #fff 0, #fff 7px, rgba(255,255,255,0) 7.5px, rgba(255,255,255,0) 100%); }
         .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
         .slim-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         .custom-range::-webkit-slider-thumb:active { transform: scale(1.15); }
