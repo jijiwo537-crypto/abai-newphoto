@@ -5475,6 +5475,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   }, []);
   useEffect(() => () => { finalImagesRef.current.forEach(u => URL.revokeObjectURL(u)); }, []);
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages'>('ratio');
+  /* 分頁內容共用同一顆捲動容器，換分頁時要從最上面看起 ——
+     不歸零的話，上一頁停在哪裡下一頁就從哪裡開始。 */
+  const tabScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = tabScrollRef.current;
+    if (el) el.scrollTop = 0;
+  }, [activeTab]);
   /** 頁面順序模式：操作欄往下滑、畫布往下移到中央、每一頁下面出現握把與刪除鍵 */
   const pagesMode = activeTab === 'pages';
   const pagesModeRef = useRef(false);
@@ -10763,7 +10770,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           </div>
 
           {/* Tabs Content */}
-          <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+          <div ref={tabScrollRef} className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto'}`}>
 
             {activeTab === 'adjust' && (() => {
               /* 佈局裡的格子也走同一套面板：把格子包成跟浮動圖片一樣的形狀，

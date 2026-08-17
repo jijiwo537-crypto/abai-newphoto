@@ -393,8 +393,16 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
            標題列，所以安全區得自己留 —— 沒留的話，照片比較高的時候，
            上緣就會伸進瀏海底下被擋住（正是「進構圖時上面被裁到」）。
            那 15px 是原本讓中心跟一般預覽對齊的固定偏移，照舊加在後面。 */}
+      {/* flex flex-col justify-center：被上限夾住之後要「置中」，不能靠上對齊。
+           這一層在不同工具裡的可用高度不一樣 —— 在「編輯」裡構圖只蓋住預覽區
+           （上面還有編輯器自己的標題列），在兩個拼圖工具裡是整個螢幕。
+           舞台自己有一條 100dvh − 340px 的高度上限，可用空間比上限大的時候，
+           一個純 block 的子元素會停在最上面，多出來的空間全部堆在下面 ——
+           所以同一張照片在「編輯」裡落在 y=89.5，在「經典拼圖」裡卻落在 y=33.5，
+           差了 56px（正好是一條標題列）。改成置中之後，多出來的空間上下均分，
+           兩邊就對得起來了。 */}
       <div
-        className="flex-1 min-h-0 px-5 md:px-10"
+        className="flex-1 min-h-0 px-5 md:px-10 flex flex-col justify-center"
         style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 15px)' }}
       >
         {/* 高度用跟一般預覽同一條上限夾住，兩邊算出來的尺寸才會一模一樣

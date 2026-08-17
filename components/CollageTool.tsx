@@ -173,6 +173,45 @@ export const shapePathBox = (kind: string, w: number, h: number) =>
   new Path2D(shapePathD(kind, w, h));
 
 /**
+ * 一顆紋理圖案。遮罩的紋理有三種：點點、星星、愛心 —— 大小、間距、顏色、
+ * 交錯三角網格全部共用同一套邏輯，差別只有這裡畫出來的形狀。
+ *
+ * 三種都以 (cx, cy) 為中心、r 為外接半徑，所以呼叫端原本用來判斷
+ * 「這一顆有沒有超出邊界」的那幾行（px ± r、py ± r）完全不用改。
+ */
+const patternGlyph = (
+  c: CanvasRenderingContext2D,
+  kind: string,
+  cx: number, cy: number, r: number,
+) => {
+  c.beginPath();
+  if (kind === 'star') {
+    /* 正五角星：外角在 r、內角在 0.42r，第一個角朝正上方。
+       外接半徑就是 r，跟圓一樣，所以邊界判斷不用另外算。 */
+    for (let k = 0; k < 10; k++) {
+      const rad = k % 2 === 0 ? r : r * 0.42;
+      const a = -Math.PI / 2 + (k * Math.PI) / 5;
+      const x = cx + Math.cos(a) * rad;
+      const y = cy + Math.sin(a) * rad;
+      if (k === 0) c.moveTo(x, y); else c.lineTo(x, y);
+    }
+    c.closePath();
+  } else if (kind === 'heart') {
+    /* 愛心：從下面的尖端出發，左右各一條三次貝茲畫出兩個圓弧，
+       在正上方收成中間那個凹口。s 取 0.9r 是為了讓它看起來的份量
+       跟同樣 r 的圓差不多（心形比圓「胖」），同時仍然收在 r 以內。 */
+    const s = r * 0.9;
+    c.moveTo(cx, cy + s * 0.85);
+    c.bezierCurveTo(cx - s * 1.5, cy - s * 0.2, cx - s * 0.55, cy - s * 1.15, cx, cy - s * 0.4);
+    c.bezierCurveTo(cx + s * 0.55, cy - s * 1.15, cx + s * 1.5, cy - s * 0.2, cx, cy + s * 0.85);
+    c.closePath();
+  } else {
+    c.arc(cx, cy, r, 0, Math.PI * 2);
+  }
+  c.fill();
+};
+
+/**
  * 圖形上的「點點」。跟遮罩那邊完全同一套（同樣的 5~20 大小、40~140 間距、
  * 同樣的交錯三角網格），呼叫端負責把它剪裁在圖形裡面。
  *
@@ -1446,6 +1485,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
   }, [patternType]);
 
+  /* 換一個分頁就從那一頁的最上面看起。
+     這一顆捲動容器是所有分頁共用的，不換分頁時它會把上一頁停在哪裡原封不動
+     留著 —— 於是點進「設定」可能一進去就是中間某一段。
+     只在「分頁真的換了」時歸零，同一頁裡的捲動位置照舊不受影響。 */
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (el) el.scrollTop = 0;
+  }, [activeTab]);
+
   // 選中「自訂文字」時，自動把下方的輸入框捲進視野，並在底下留一點空隙
   useEffect(() => {
     if (activeTab !== 'shape' || shapeSub !== 'shape' || holeType !== 'text') return;
@@ -2394,7 +2442,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!imageState) return 1;
     // 沒有紋理時暫存畫布只有兩張（底色、挖完洞的）
     const one = previewPixelsAt(layout, imageState.baseW, imageState.baseH, maskScale, 1,
-      patternType === 'dot' ? 3 : 2);
+      patternType !== 'none' ? 3 : 2);
     return Math.max(1, Math.sqrt(MAX_PREVIEW_PIXELS / Math.max(1, one)));
   }, [imageState, layout, maskScale, patternType]);
   /* 「這張拼圖畫到多細就夠了」——照它在螢幕上實際佔幾個裝置像素反推。
@@ -2443,7 +2491,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       /* 播動畫時另外壓一個上限：一秒烤 30 次，照靜態那個倍率跑會把
          手機的畫布記憶體吃光。正常倍率下這一行不會生效。 */
       const one = previewPixelsAt(layout, imageState.baseW, imageState.baseH, maskScale, 1,
-        patternType === 'dot' ? 3 : 2);
+        patternType !== 'none' ? 3 : 2);
       /* 播動畫時用的倍率＝靜態時的倍率，一模一樣 ——
          畫質不因為「正在播」而有任何降級。跟不上的時候改成降格數（見播放迴圈），
          不是降解析度。 */
@@ -2783,7 +2831,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        那就是滑桿一幀一幀的原因。
        純色用 8×8 的小塊平鋪出來完全一樣（pattern 是 repeat），
        遮罩層那邊也改成直接 fillRect，畫出來的每個像素都不變。 */
-    const plainMask = !(maskImageState && maskImageState.img) && patternType !== 'dot';
+    const plainMask = !(maskImageState && maskImageState.img) && patternType === 'none';
     const bCanvas = isMain ? baseMaskCanvasRef.current : document.createElement('canvas');
     /* 遮罩底稿（底色＋遮罩圖＋點點）只跟這幾個參數有關，圖案與動畫都不會動到它。
        播動畫時一秒要走 30 次，每次都重填兩張全尺寸畫布是純粹的浪費 ——
@@ -2818,7 +2866,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     /* 沒有點點紋理的時候，「含紋理的遮罩」就等於「底色遮罩」本身 ——
        不必再開一張同樣大的畫布。一張全尺寸畫布動輒幾十 MB，
        省下來的預算直接換成更高的預覽解析度（圖案的鋸齒就是這樣來的）。 */
-    const needPattern = patternType === 'dot';
+    const needPattern = patternType !== 'none';
     const fCanvas = !needPattern ? bCanvas
       : (isMain ? fullMaskCanvasRef.current : document.createElement('canvas'));
     if (needPattern && !maskHit) {
@@ -2827,7 +2875,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const fCtx = get2dWide(fCanvas)!;
     if (needPattern && !maskHit) fCtx.drawImage(bCanvas, 0, 0);
 
-    if (patternType === 'dot' && !maskHit) {
+    if (patternType !== 'none' && !maskHit) {
       fCtx.fillStyle = dotColor; 
       // 根據 UI 值 (0~100) 映射到實際大小 (5~20) 與實際間距 (40~140)
       const actualDotSize = (5 + (dotSize / 100) * 15) * sgs;
@@ -2858,9 +2906,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             py - r >= pad &&
             py + r <= maskH - pad
           ) {
-            fCtx.beginPath();
-            fCtx.arc(px, py, r, 0, Math.PI * 2);
-            fCtx.fill();
+            patternGlyph(fCtx, patternType, px, py, r);
           }
         }
       }
@@ -5916,12 +5962,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
                   <span className="text-[10px] font-bold text-[#888]">紋理</span>
                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                    {['none', 'dot'].map(t => (
-                      <button key={t} onClick={() => setPatternType(t)} className={`px-4 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{t === 'none' ? '無' : '點點'}</button>
+                    {([['none', '無'], ['dot', '點點'], ['star', '星星'], ['heart', '愛心']] as const).map(([t, label]) => (
+                      <button key={t} onClick={() => setPatternType(t)} className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
                     ))}
                   </div>
                 </div>
-                {patternType === 'dot' && (
+                {patternType !== 'none' && (
                   <div className="bg-[#0f0f0f] border border-[#1a1a1a] rounded-[8px] p-4 space-y-3 animate-in fade-in zoom-in-95 duration-300">
                     <div className="grid grid-cols-2 gap-4">
                       <CompactSlider label="大小" value={dotSize} min={0} max={100} onChange={setDotSize} />
