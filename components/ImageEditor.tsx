@@ -6756,7 +6756,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 style={{
                   maxHeight: hslFitNow
                     ? `${hslFitNow.mh}px`
-                    : 'calc(100dvh - 340px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))',
+                    : 'calc(100dvh - 340px - env(safe-area-inset-top, 0px))',
                   marginBottom: hslFitNow ? `${hslFitNow.mb}px` : undefined,
                   aspectRatio: previewAspect ? `${previewAspect.w}/${previewAspect.h}` : undefined,
                   width: previewAspect ? '100%' : 'auto',
@@ -6769,7 +6769,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   maxWidth: previewAspect
                     ? (hslFitNow
                         ? `min(calc(100% - 32px), ${(hslFitNow.mh * previewAspect.w) / previewAspect.h}px)`
-                        : `min(calc(100% - 32px), calc((100dvh - 340px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)) * ${previewAspect.w} / ${previewAspect.h}))`)
+                        : `min(calc(100% - 32px), calc((100dvh - 340px - env(safe-area-inset-top, 0px)) * ${previewAspect.w} / ${previewAspect.h}))`)
                     : undefined,
                 }}
               >
