@@ -104,11 +104,22 @@ select:focus, select:focus-visible {
 /* 一般滑桿（創意拼圖的參數、發光、動畫…） */
 /* 滑桿全部統一成「比較寬」的那一種：軌道 6px、圓角到底、底色跟面板上
    其他滑桿一致（原本是 2px 的細線，同一頁裡兩種粗細看起來很雜）。 */
-.premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; background: rgba(255,255,255,0.10); border-radius: 999px; outline: none; touch-action: none; cursor: pointer; }
-.premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; cursor: pointer; }
+.premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+.premium-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
+.premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
+.premium-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
+.premium-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+/* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆
+   （跟色相／飽和度／明度那三根上面的圓點同尺寸）。 */
+.slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+.slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
+.slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; margin-top: -7px; cursor: pointer; }
+.slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
+.slim-slider::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+
 
 /* 顏色滑桿：沿用原生 thumb + accent-color，不自己畫 */
-.designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
+.designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 2px; border-radius: 2px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; margin: 7px 0; }
 
 /* 圖片編輯那一頁的滑桿（編輯／經典拼圖／創意拼圖共用同一組） */
 .custom-range {
