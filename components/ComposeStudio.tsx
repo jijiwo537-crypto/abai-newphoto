@@ -414,7 +414,9 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
              另外 100vh 在手機瀏覽器是「網址列收起來時」的高度（偏大），
              改用 100dvh 才是當下真正看得到的高度。 */
           style={{
-            maxHeight: 'calc(100dvh - 340px - env(safe-area-inset-top, 0px))',
+            /* 以前是寫死的 100dvh − 340px；改成吃父層剩下的高度，
+               安全區與各列的實際高度就自動算進去了。 */
+            maxHeight: '100%',
             touchAction: 'none',
           }}
           onTouchStart={onStageTouchStart}
