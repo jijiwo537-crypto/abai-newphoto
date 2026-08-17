@@ -2098,6 +2098,9 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
 interface AlignmentGuideline {
   type: 'vertical' | 'horizontal';
   coord: number;
+  /** 橫線只畫在這一頁的左右範圍內（內容座標）。沒填就畫滿整排（舊行為）。 */
+  x0?: number;
+  x1?: number;
 }
 
 /* ── 圓角 + 羽化遮罩 ────────────────────────────────────────────────
@@ -4258,15 +4261,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return own.length ? own : rects;
   };
 
-  /** 同一條線只留一份（吸附挑到的那條可能跟下面重新掃出來的重複） */
-  const dedupeGuidelines = (list: AlignmentGuideline[]) => {
+  /**
+   * 同一條線只留一份（吸附挑到的那條可能跟下面重新掃出來的重複）。
+   * 傳了 centerX 就順便把「橫線只畫在這一頁」的左右範圍補上 ——
+   * 水平的對齊線是對齊「這個物件所在的那一頁」，跨到隔壁頁去沒有意義。
+   * 直線不限制：它本來就只有一頁那麼寬。
+   */
+  const dedupeGuidelines = (list: AlignmentGuideline[], centerX?: number) => {
+    const pr = centerX == null ? null : (pageRectsNear(getAllPageRects(), centerX)[0] || null);
     const seen = new Set<string>();
     return list.filter(g => {
       const k = `${g.type}|${Math.round(g.coord * 10)}`;
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
-    });
+    }).map(g => (g.type === 'horizontal' && pr && g.x0 == null)
+      ? { ...g, x0: pr.left, x1: pr.right }
+      : g);
   };
 
   /**
@@ -4573,7 +4584,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        都加進去。跟其他物件的對齊線不列入（那是另一回事，維持原本只顯示吸附到的那一條）。 */
     guidelines.push(...pageGuidelinesAt(snappedX, snappedY, imgWidth, imgHeight, imgScale, edgeOnly, rot));
 
-    return { snappedX, snappedY, fitScale: undefined, guidelines: dedupeGuidelines(guidelines) };
+    return { snappedX, snappedY, fitScale: undefined, guidelines: dedupeGuidelines(guidelines, snappedX + imgWidth / 2) };
   };
 
   const [draggedFloatingIndex, setDraggedFloatingIndex] = useState<number | null>(null);
@@ -4854,6 +4865,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      整份作品共用一份，不像底色那樣每頁各存 —— 翻頁時紋理不該跟著換。 */
   const [patternType, setPatternType] = useState('none');
   const [patternColor, setPatternColor] = useState('#A8DDE6');
+  /* 顏色分頁的子頁面：'bg' 是原本的底色挑色器，'pattern' 是點了紋理旁邊那顆
+     色塊之後進去的紋理專屬調色頁（跟創意拼圖同一套操作）。 */
+  const [colorSub, setColorSub] = useState<'bg' | 'pattern'>('bg');
   const [patternSize, setPatternSize] = useState(50);
   const [patternGap, setPatternGap] = useState(20);
   const patternOpts: PatternOpts = { type: patternType, color: patternColor, size: patternSize, gap: patternGap };
@@ -5844,6 +5858,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   useEffect(() => {
     if (activeTab !== 'color') {
       setColorPickerActive(false);
+      // 離開顏色分頁就回到底色那一頁，下次進來不會停在紋理調色頁
+      setColorSub('bg');
     }
     
     if (activeTab === 'layout') {
@@ -7368,7 +7384,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /* 這裡一定要傳佈局自己的框（box）跟角度：
        傳整頁的寬高會讓中心點算錯（設過比例的佈局比整頁小、而且是置中的），
        少傳角度則是轉過之後線會亮錯位置。 */
-    setActiveGuidelines(dedupeGuidelines(pageGuidelinesAt(x, y, box.w, box.h, ns, true, lRot)));
+    setActiveGuidelines(dedupeGuidelines(pageGuidelinesAt(x, y, box.w, box.h, ns, true, lRot), x + box.w / 2));
   };
 
   /**
@@ -7818,18 +7834,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY,
       ) || 1;
-      /* 原地放大：記下「兩指中點壓住的那個內容座標」以及它此刻在容器裡的
-         位置，整個手勢都讓這個座標待在同一個位置上。
-         以前記的是「離中心最近的那一頁」再把那一頁擺到正中間 ——
-         手指一碰下去第一帧就會被拉過去，看起來就是「一縮放就跳到某一頁」。 */
+      /* 原地放大：錨點固定用「預覽畫面的正中央」，不是兩指的中點 ——
+         手指落在哪裡都一樣，畫面中央那個東西就待在中央不動。
+         記下正中央此刻對到的那個內容座標（未縮放單位），整段手勢都把它
+         擺回正中央。
+         （以前記的是「離中心最近的那一頁」再把那一頁擺到正中間 —— 只要
+         中心不在某頁正中央，手指一碰下去第一帧就會被拉過去。） */
       const k0 = kRef.current || 1;
-      let anchorPx = w / 2;
+      const anchorPx = w / 2;
       let anchorC = 0;
       if (cont && w > 0) {
-        const rc = cont.getBoundingClientRect();
-        anchorPx = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rc.left;
-        // 容器邊緣附近就退回用正中央，免得錨點落在留白上、放大時整排一直往外跑
-        if (anchorPx < 0 || anchorPx > w) anchorPx = w / 2;
         anchorC = (cont.scrollLeft + anchorPx - stripOffset(w, k0)) / k0;
       }
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
@@ -7976,7 +7990,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   { type: 'horizontal', coord: target.y + target.height / 2 },
                   ...pageLines,
                 ]
-              : pageLines));
+              : pageLines, target.x + target.width / 2));
           }
         } else if (g.kind === 'layout') {
           scaleLayoutSnapped(g.baseScale * k, wsGestureLayoutIdRef.current);
@@ -10688,7 +10702,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             const finalX = newCx - fImg.width / 2;
                             const finalY = newCy - fImg.height / 2;
 
-                            setActiveGuidelines(finalGuidelines);
+                            setActiveGuidelines(dedupeGuidelines(finalGuidelines, fImg.x + fImg.width / 2));
                             setFloatingImages(prev => prev.map(item => item.id === fImg.id ? { ...item, x: finalX, y: finalY, scale: finalScale } : item));
                           } else {
                             setFloatingImages(prev => prev.map(item => item.id === fImg.id ? { ...item, x: newX, y: newY, scale: newScale } : item));
@@ -10706,20 +10720,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
                     {/* Alignment Guidelines Overlay */}
                     {(() => {
-                      const rectsForLines = getAllPageRects();
                       const totalContainerWidth = pages.length * previewW + (pages.length - 1) * 1;
                       const totalContainerHeight = previewH;
 
                       return activeGuidelines.map((guideline, idx) => {
-                        const isBottom = guideline.type === 'horizontal' && rectsForLines.some(rect => Math.abs(guideline.coord - rect.bottom) < 1);
-                        const isRight = guideline.type === 'vertical' && rectsForLines.some(rect => Math.abs(guideline.coord - rect.right) < 1);
-                        
-                        // Check if the vertical guideline is on a left edge of a page next to a divider (i.e. pageIdx > 0)
-                        const isLeftNearDivider = guideline.type === 'vertical' && rectsForLines.some(rect => rect.pageIdx > 0 && Math.abs(guideline.coord - rect.left) < 1);
-                        
-                        // Check if the vertical guideline is on a right edge of a page next to a divider (i.e. pageIdx < rectsForLines.length - 1)
-                        const isRightNearDivider = guideline.type === 'vertical' && rectsForLines.some(rect => rect.pageIdx < rectsForLines.length - 1 && Math.abs(guideline.coord - rect.right) < 1);
-
                         let leftStyle = '0';
                         let topStyle = '0';
                         let widthStyle = '100%';
@@ -10743,12 +10747,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           } else {
                             topStyle = `${guideline.coord - 1}px`;
                           }
+                          /* 橫線只畫在物件自己那一頁：對齊的是這一頁的上下緣／中線，
+                             跨到隔壁頁去沒有意義（也會蓋到別頁的內容）。 */
+                          if (guideline.x0 != null && guideline.x1 != null) {
+                            leftStyle = `${guideline.x0}px`;
+                            widthStyle = `${Math.max(0, guideline.x1 - guideline.x0)}px`;
+                          }
                         }
 
                         return (
                           <div
                             key={idx}
-                            className="absolute pointer-events-none z-[90] bg-blue-500"
+                            /* z 要高過頁與頁之間那條分割線（200），
+                               不然對齊線壓在接縫上時會被分割線切掉一半、
+                               看起來比其他邊的線細。 */
+                            className="absolute pointer-events-none z-[300] bg-blue-500"
                             style={{
                               left: leftStyle,
                               top: topStyle,
@@ -11347,7 +11360,37 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               </div>
             )}
 
-            {activeTab === 'color' && (
+            {activeTab === 'color' && colorSub === 'pattern' && (
+              /* 紋理專屬的調色頁：從紋理那一排的色塊點進來，跟創意拼圖一樣。
+                 挑色器本身用的是跟底色完全同一顆元件。 */
+              <div className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto no-scrollbar">
+                <div className="h-[38px] flex items-center gap-1 px-0.5">
+                  <button
+                    onClick={() => setColorSub('bg')}
+                    className="flex items-center gap-1 px-2 h-7 rounded-[4px] text-[10px] font-bold text-[#888] hover:text-white hover:bg-[#1a1a1a] transition-colors"
+                  >
+                    <ChevronLeft size={14} />
+                    <span>返回</span>
+                  </button>
+                  <span className="text-[10px] font-bold text-white">紋理顏色</span>
+                  <div
+                    className="ml-auto w-6 h-5 rounded-[4px] shadow-inner border border-white/10"
+                    style={{ backgroundColor: patternColor }}
+                  />
+                </div>
+                {/* 一樣包一層高度 auto 的盒子擋掉 ColorPickerEmbedded 的 h-full */}
+                <div>
+                  <ColorPickerEmbedded
+                    color={patternColor}
+                    onChange={setPatternColor}
+                    onClose={() => setColorSub('bg')}
+                  />
+                </div>
+                <div className="h-2" />
+              </div>
+            )}
+
+            {activeTab === 'color' && colorSub === 'bg' && (
               /* 上面是原本的底色挑色器（一個字沒動），下面緊接著背景紋理。
                  這一頁比原本高，所以自己捲 —— 外層那一格的 overflow 名單
                  是所有分頁共用的，完全沒動，別的分頁不受影響。 */
@@ -11365,13 +11408,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 <div className="mt-2 space-y-3">
                   <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
                     <span className="text-[10px] font-bold text-[#888]">紋理</span>
-                    <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                      {([['none', '無'], ['dot', '點點'], ['star', '星星'], ['heart', '愛心']] as const).map(([t, label]) => (
-                        <button key={t} onClick={() => setPatternType(t)}
-                          className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
-                          {label}
-                        </button>
-                      ))}
+                    {/* 顏色跟紋理選項同一排：點色塊才進紋理專屬的調色頁 */}
+                    <div className="flex items-center gap-2">
+                      <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                        {([['none', '無'], ['dot', '點點'], ['star', '星星'], ['heart', '愛心']] as const).map(([t, label]) => (
+                          <button key={t} onClick={() => setPatternType(t)}
+                            className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      {patternType !== 'none' && (
+                        <button
+                          onClick={() => setColorSub('pattern')}
+                          title="紋理顏色"
+                          className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                          style={{ backgroundColor: patternColor }}
+                        />
+                      )}
                     </div>
                   </div>
                   {patternType !== 'none' && (
@@ -11379,14 +11433,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       <div className="grid grid-cols-2 gap-4 bg-[#0f0f0f] border border-[#1a1a1a] rounded-[8px] p-4">
                         {patternSlider('大小', patternSize, setPatternSize)}
                         {patternSlider('間距', patternGap, setPatternGap)}
-                      </div>
-                      {/* 紋理顏色用跟上面底色完全同一顆挑色器（同樣包一層擋掉 h-full） */}
-                      <div>
-                        <ColorPickerEmbedded
-                          color={patternColor}
-                          onChange={setPatternColor}
-                          onClose={() => setActiveTab('layout')}
-                        />
                       </div>
                     </div>
                   )}
