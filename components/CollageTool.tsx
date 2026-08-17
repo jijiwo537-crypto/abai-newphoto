@@ -5912,26 +5912,34 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     </div>
                   </div>
                 </div>
-                <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
-                  <span className="text-[10px] font-bold text-[#888]">紋理</span>
-                  <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                    {([['none', '無'], ['dot', '點點'], ['star', '星星'], ['heart', '愛心']] as const).map(([t, label]) => (
-                      <button key={t} onClick={() => setPatternType(t)} className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
-                    ))}
+                {/* 紋理整組收在同一格：選項、顏色、兩根滑桿全部在同一個框裡
+                    （跟經典拼圖那一頁排法一致）。 */}
+                <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden">
+                  <div className="h-[47px] flex items-center justify-between px-3">
+                    <span className="text-[10px] font-bold text-[#888]">紋理</span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                        {([['none', '無'], ['dot', '點點'], ['star', '星星'], ['heart', '愛心']] as const).map(([t, label]) => (
+                          <button key={t} onClick={() => setPatternType(t)} className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
+                        ))}
+                      </div>
+                      {patternType !== 'none' && (
+                        <button
+                          onClick={() => setColorPickerTarget('dot')}
+                          title="紋理顏色"
+                          className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                          style={{ backgroundColor: dotColor }}
+                        />
+                      )}
+                    </div>
                   </div>
+                  {patternType !== 'none' && (
+                    <div className="grid grid-cols-2 gap-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] animate-in fade-in duration-200">
+                      <CompactSlider wide label="大小" value={dotSize} min={0} max={100} onChange={setDotSize} />
+                      <CompactSlider wide label="間距" value={dotGap} min={0} max={100} onChange={setDotGap} />
+                    </div>
+                  )}
                 </div>
-                {patternType !== 'none' && (
-                  <div className="bg-[#0f0f0f] border border-[#1a1a1a] rounded-[8px] p-4 space-y-3 animate-in fade-in zoom-in-95 duration-300">
-                    <div className="grid grid-cols-2 gap-4">
-                      <CompactSlider label="大小" value={dotSize} min={0} max={100} onChange={setDotSize} />
-                      <CompactSlider label="間距" value={dotGap} min={0} max={100} onChange={setDotGap} />
-                    </div>
-                    <div className="flex items-center justify-between bg-[#111] p-2.5 border border-[#222] rounded-[6px] cursor-pointer hover:bg-[#151515] transition-colors" onClick={() => setColorPickerTarget('dot')}>
-                      <span className="text-[10px] font-bold text-[#888]">顏色</span>
-                      <div className="w-8 h-4 rounded-[3px] border border-white/5 shadow-inner" style={{ backgroundColor: dotColor }} />
-                    </div>
-                  </div>
-                )}
                 </div>
               </div>}
               {activeTab === 'add' && (() => {
@@ -6161,13 +6169,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                                 ? { glow: v, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
                                 : { glow: v }))}
                             <ColorPick label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
-                              colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })} />
+                              colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
+                              onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>
                           <div className="grid grid-cols-2 gap-3 items-end">
                             {shapeSlider('描邊', Math.round((sel.strokeW ?? 0) * 10), 0, 100,
                               (v: number) => patch({ strokeW: v / 10 }))}
                             <ColorPick label="顏色" value={sel.strokeColor || '#000000'}
-                              onPick={(c: string) => patch({ strokeColor: c })} />
+                              onPick={(c: string) => patch({ strokeColor: c })}
+                              onOpen={() => setColorPickerTarget('shapeStroke')} />
                           </div>
                           {/* 點點放在最下面：兩顆按鈕與顏色同一排，全部常駐
                               （關著也看得到顏色，可以先挑好再打開）。 */}
@@ -6191,7 +6201,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               </div>
                             </div>
                             <ColorPick label="顏色" value={sel.dotColor || '#FFFFFF'}
-                              onPick={(c: string) => patch({ dotColor: c })} />
+                              onPick={(c: string) => patch({ dotColor: c })}
+                              onOpen={() => setColorPickerTarget('shapeDot')} />
                           </div>
                           <div className="grid grid-cols-2 gap-3">
                             {shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
@@ -6216,6 +6227,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
                       <TextEditorPanel
                         symbol={!!sel.sym}
+                        /* 描邊／發光的顏色改成點進獨立的顏色頁（跟紋理顏色同一種操作） */
+                        onPickColor={(which: 'stroke' | 'glow') =>
+                          setColorPickerTarget(which === 'stroke' ? 'textStroke' : 'textGlow')}
                         layer={{
                           text: sel.text, sym: sel.sym, color: sel.color, fontFamily: sel.fontFamily,
                           fontSize: sel.size, bold: sel.bold, italic: sel.italic,
@@ -6551,88 +6565,79 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 </div>}
                 {shapeSub === 'style' && <div className="pt-1 pb-2">
                   <div className="grid grid-cols-2 gap-4">
-                    <CompactSlider label="大小" value={holeSize} min={0} max={100} onChange={setHoleSize} />
-                    <CompactSlider label="數量" value={holeCount} min={0} max={50} onChange={setHoleCount} step={1} />
-                    <CompactSlider label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
-                    <CompactSlider label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
+                    <CompactSlider wide label="大小" value={holeSize} min={0} max={100} onChange={setHoleSize} />
+                    <CompactSlider wide label="數量" value={holeCount} min={0} max={50} onChange={setHoleCount} step={1} />
+                    <CompactSlider wide label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
+                    <CompactSlider wide label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
                   </div>
                   {/* 連線：每個圖案拉一條極細的線到最近的鄰居。
                       版型跟上面那幾根滑桿一致 —— 左上是名稱，下面才是選項。
                       每一種圖案都支援（見上面 LINK_TYPES 的說明）。 */}
                   {/* 連線：按鈕與顏色並排成一列；顏色常駐（關閉時也看得到，
                       可以先挑好顏色再打開）。發光同一種排法，各佔一列。 */}
-                  <div className="grid grid-cols-2 gap-3 items-end mt-6">
-                    <div className="flex flex-col">
-                      <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
-                        <span>連線</span>
-                      </div>
-                      <div className="flex gap-1.5">
-                        {([['solid', '實線'], ['dash', '虛線'], ['none', '關閉']] as const).map(([mode, name]) => (
+                  {/* 連線與發光都改成跟「紋理」同一種排法：
+                      一格之內就把「名稱＋所有選項＋顏色」全部放完，
+                      顏色點下去一樣是進獨立的調色頁。 */}
+                  <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] mt-6">
+                    <span className="text-[10px] font-bold text-[#888]">連線</span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                        {([['none', '關閉'], ['solid', '實線'], ['dash', '虛線']] as const).map(([mode, name]) => (
                           <button
                             key={mode}
                             onClick={() => linkSupported && setLinkMode(mode)}
                             disabled={!linkSupported}
                             title={linkSupported ? `圖案之間的連線：${name}` : '這個圖案不支援連線'}
-                            className={`flex-1 h-9 rounded-[8px] border text-[11px] font-bold tracking-widest transition-all ${
+                            className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
                               !linkSupported
-                                ? 'border-[#1a1a1a] text-[#333] cursor-default'
+                                ? 'text-[#2c2c2c] cursor-default'
                                 : linkMode === mode
-                                  ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                                  : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
+                                  ? 'bg-[#333] text-white shadow-sm'
+                                  : 'text-[#555] hover:text-[#888]'
                             }`}
                           >
                             {name}
                           </button>
                         ))}
                       </div>
-                    </div>
-                    <div
-                      className="h-9 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[8px] cursor-pointer hover:bg-[#151515] transition-colors"
-                      onClick={() => setColorPickerTarget('linkColor')}
-                    >
-                      <span className="text-[10px] font-bold text-[#888]">顏色</span>
-                      <div className="flex items-center gap-2">
-                        {/* 還沒挑過顏色時就顯示遮罩的色號 —— 線在圖片上本來就是那個顏色 */}
-                        <span className="text-[9px] font-mono text-white/40">{linkColor || maskColor}</span>
-                        <div className="w-5 h-4 rounded-[4px] shadow-inner border border-white/10"
-                          style={{ backgroundColor: linkColor || maskColor }} />
-                      </div>
+                      {linkSupported && linkMode !== 'none' && (
+                        <button
+                          onClick={() => setColorPickerTarget('linkColor')}
+                          title="連線顏色"
+                          className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                          /* 還沒挑過顏色時就顯示遮罩色 —— 線在圖片上本來就是那個顏色 */
+                          style={{ backgroundColor: linkColor || maskColor }}
+                        />
+                      )}
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 items-end mt-4">
-                    <div className="flex flex-col">
-                      <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
-                        <span>發光</span>
-                      </div>
-                      <div className="grid grid-cols-3 gap-1.5">
-                        {([['both', '開啟'], ['image', '僅圖片'], ['off', '關閉']] as const).map(([mode, name]) => (
+                  <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] mt-3">
+                    <span className="text-[10px] font-bold text-[#888]">發光</span>
+                    <div className="flex items-center gap-2">
+                      <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                        {([['off', '關閉'], ['both', '開啟'], ['image', '僅圖片']] as const).map(([mode, name]) => (
                           <button
                             key={mode}
                             onClick={() => setGlowMode(mode)}
                             title={mode === 'both' ? '兩側的圖案都發光'
                               : mode === 'image' ? '只有落在圖片上的那一段發光' : '不發光'}
-                            className={`h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${
-                              glowMode === mode
-                                ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]'
-                                : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'
+                            className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
+                              glowMode === mode ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
                             }`}
                           >
                             {name}
                           </button>
                         ))}
                       </div>
-                    </div>
-                    <div
-                      className="h-9 flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[8px] cursor-pointer hover:bg-[#151515] transition-colors"
-                      onClick={() => setColorPickerTarget('holeGlow')}
-                    >
-                      <span className="text-[10px] font-bold text-[#888]">顏色</span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-[9px] font-mono text-white/40">{holeGlowColor}</span>
-                        <div className="w-5 h-4 rounded-[4px] shadow-inner border border-white/10"
-                          style={{ backgroundColor: holeGlowColor }} />
-                      </div>
+                      {glowMode !== 'off' && (
+                        <button
+                          onClick={() => setColorPickerTarget('holeGlow')}
+                          title="發光顏色"
+                          className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                          style={{ backgroundColor: holeGlowColor }}
+                        />
+                      )}
                     </div>
                   </div>
                 </div>}
@@ -6699,7 +6704,9 @@ const RafRange = ({ min, max, step, value, onChange }: any) => {
   );
 };
 
-const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, onCommit }: any) => {
+/* wide＝圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆）。
+   只有指定要換的那幾頁會傳，其他地方維持原樣。 */
+const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, onCommit, wide = false }: any) => {
   const { push, flush } = useRafOnChange(onChange);
   const done = () => { flush(); onCommit && onCommit(); };
   return (
@@ -6717,7 +6724,7 @@ const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimal
       onPointerUp={done}
       onTouchEnd={done}
       onKeyUp={done}
-      className="premium-slider" onPointerDown={e => e.stopPropagation()} />
+      className={wide ? 'custom-range dense w-full' : 'premium-slider'} onPointerDown={e => e.stopPropagation()} />
   </div>
   );
 };

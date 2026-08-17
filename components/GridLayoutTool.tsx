@@ -806,6 +806,50 @@ export const swatchStrip = (
   </div>
 );
 
+/**
+ * 顏色的「獨立調整頁」。
+ * 兩段式的顏色欄（點一下在下面攤開色票）改成：點下去整個面板換成這一頁，
+ * 上面一顆返回，下面是排好幾列的色票 —— 跟創意拼圖的紋理顏色同一種操作。
+ */
+export const ColorPickerPage: React.FC<{
+  value: string;
+  colors?: string[];
+  onPick: (c: string) => void;
+  onBack: () => void;
+}> = ({ value, colors, onPick, onBack }) => (
+  <div className="animate-in fade-in duration-200 pt-1 pb-24">
+    <div className="h-[38px] flex items-center gap-1">
+      <button
+        onClick={onBack}
+        aria-label="返回"
+        title="返回"
+        className="flex items-center gap-1 px-2 h-7 -ml-1 rounded-[4px] text-[10px] font-bold text-[#888] hover:text-white hover:bg-white/[0.06] transition-colors"
+      >
+        <ChevronLeft size={14} />
+        <span>返回</span>
+      </button>
+      <div className="ml-auto flex items-center gap-2">
+        <span className="text-[9px] font-mono text-white/40">{(value || '').toUpperCase()}</span>
+        <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
+      </div>
+    </div>
+    <div className="flex flex-wrap gap-2 pt-2">
+      <CustomColorButton value={value || '#FFFFFF'} onPick={onPick} size={32} />
+      {(colors || SOFT_COLORS).map(c => (
+        <button
+          key={c}
+          onClick={() => onPick(c)}
+          title={c}
+          className={`shrink-0 w-8 h-8 rounded-[7px] transition-all active:scale-90 ${
+            (value || '#FFFFFF').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
+          }`}
+          style={{ backgroundColor: c }}
+        />
+      ))}
+    </div>
+  </div>
+);
+
 /* ── 新增圖形 ────────────────────────────────────────────────────────────
    圖形圖層跟照片、文字一樣都是 floatingImages 裡的一員（位置、縮放、旋轉、
    圖層順序、複製、刪除全部沿用同一套），只是內容換成一條路徑。
@@ -1212,13 +1256,15 @@ export const ColorPick: React.FC<{
   value: string;
   colors?: string[];
   onPick: (c: string) => void;
-}> = ({ label, value, colors, onPick }) => {
+  /** 有給就不再原地攤開色票，改成叫呼叫端切到獨立的顏色頁 */
+  onOpen?: () => void;
+}> = ({ label, value, colors, onPick, onOpen }) => {
   const [open, setOpen] = useState(false);
   return (
     <div className="space-y-1.5">
       <div
         className="h-[38px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[8px] cursor-pointer hover:bg-[#151515] transition-colors"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => (onOpen ? onOpen() : setOpen(o => !o))}
       >
         <span className="text-[10px] font-bold text-[#888] shrink-0">{label}</span>
         <div className="flex items-center gap-2 shrink-0">
@@ -1226,7 +1272,7 @@ export const ColorPick: React.FC<{
           <div className="w-5 h-4 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
         </div>
       </div>
-      {open && (
+      {open && !onOpen && (
         <div className="animate-in fade-in duration-150">
           {swatchStrip(value, colors || SOFT_COLORS, c => onPick(c), true)}
         </div>
@@ -1244,6 +1290,10 @@ export const TextEditorPanel: React.FC<{
   symbol?: boolean;
 }> = ({ layer, onChange, onPickColor, symbol }) => {
   const [sub, setSub] = useState<'style' | 'font'>('style');
+  /* 顏色改成「點進去有一頁」：這裡存的是那一頁要調哪個顏色。 */
+  const [colorPage, setColorPage] = useState<
+    { value: string; colors?: string[]; onPick: (c: string) => void } | null
+  >(null);
   const [cat, setCat] = useState<FontCategory>('zh');
 
   const list = FONTS.filter(f => f.category === cat);
@@ -1349,7 +1399,15 @@ export const TextEditorPanel: React.FC<{
       </div>}
 
       <div className={`flex-1 no-scrollbar h-full overflow-y-auto pr-1 ${symbol ? '' : 'pl-3'}`}>
-        {sub === 'font' && !symbol && (
+        {colorPage && (
+          <ColorPickerPage
+            value={colorPage.value}
+            colors={colorPage.colors}
+            onPick={colorPage.onPick}
+            onBack={() => setColorPage(null)}
+          />
+        )}
+        {!colorPage && sub === 'font' && !symbol && (
           <div className="space-y-2.5 pt-1 pb-1">
             <div className="flex items-center gap-1 bg-white/[0.06] rounded-full p-0.5">
               {FONT_CATEGORIES.map(c => (
@@ -1377,9 +1435,9 @@ export const TextEditorPanel: React.FC<{
           </div>
         )}
 
-        {(sub === 'style' || symbol) && (
-          /* 底部多留一段：捲到底時最後一根滑桿不要貼著邊 */
-          <div className="space-y-3.5 pt-1 pb-24">
+        {!colorPage && (sub === 'style' || symbol) && (
+          /* 底部留一段：捲到底時最後一根滑桿不要貼著邊（原本 pb-24，減半） */
+          <div className="space-y-3.5 pt-1 pb-12">
             {/* 文字內容一律直接在畫布上打（選中之後再點一次那段字），
                 所以這裡不放輸入框。符號也是一樣的改法。 */}
             {/* 最上面就是這個物件自己的顏色，色票直接攤開 ——
@@ -1396,7 +1454,11 @@ export const TextEditorPanel: React.FC<{
                 <div className="grid grid-cols-2 gap-3 items-end">
                   {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
                   <ColorPick label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
-                    onPick={c => onChange({ glowColor: c })} />
+                    onPick={c => onChange({ glowColor: c })}
+                    onOpen={() => onPickColor ? onPickColor('glow') : setColorPage({
+                      value: layer.glowColor || '#FFFFFF', colors: GLOW_COLORS,
+                      onPick: c => onChange({ glowColor: c }),
+                    })} />
                 </div>
               </>
             ) : (
@@ -1427,8 +1489,8 @@ export const TextEditorPanel: React.FC<{
             </div>
             {/* 字級與字距同一排（粗體／斜體排在它們上面）。
                 符號沒有這兩根 —— 它的大小直接在畫布上捏。 */}
-            <div className="grid grid-cols-2 gap-3">
-              {slider('字級', layer.fontSize || 40, 12, 160, v => onChange({ fontSize: v }), 'px')}
+            {/* 字級的滑桿拿掉了：大小直接在畫布上捏，這裡只留字距 */}
+            <div className="grid grid-cols-1 gap-3">
               {slider('字距', layer.letterSpacing || 0, -10, 40, v => onChange({ letterSpacing: v }), 'px')}
             </div>
             {/* 描邊、發光各自跟自己的顏色並排（顏色是兩段式的，點一下才攤開色票）。
@@ -1438,12 +1500,20 @@ export const TextEditorPanel: React.FC<{
             <div className="grid grid-cols-2 gap-3 items-end">
               {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
               <ColorPick label="顏色" value={layer.strokeColor || '#000000'}
-                onPick={c => onChange({ strokeColor: c })} />
+                onPick={c => onChange({ strokeColor: c })}
+                onOpen={() => onPickColor ? onPickColor('stroke') : setColorPage({
+                  value: layer.strokeColor || '#000000',
+                  onPick: c => onChange({ strokeColor: c }),
+                })} />
             </div>
             <div className="grid grid-cols-2 gap-3 items-end">
               {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
               <ColorPick label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
-                onPick={c => onChange({ glowColor: c })} />
+                onPick={c => onChange({ glowColor: c })}
+                onOpen={() => onPickColor ? onPickColor('glow') : setColorPage({
+                  value: layer.glowColor || '#FFFFFF', colors: GLOW_COLORS,
+                  onPick: c => onChange({ glowColor: c }),
+                })} />
             </div>
             </>
             )}
@@ -1468,6 +1538,10 @@ export const ShapeEditorPanel: React.FC<{
 }> = ({ layer, onChange }) => {
   const isLine = layer.shape === 'line';
   const hasOutline = !layer.shapeFilled || isLine;
+  /* 顏色改成「點進去有一頁」（跟文字那一頁同一顆元件） */
+  const [colorPage, setColorPage] = useState<
+    { value: string; colors?: string[]; onPick: (c: string) => void } | null
+  >(null);
 
   const slider = (label: string, value: number, min: number, max: number, onVal: (v: number) => void) => (
     <div className="space-y-1.5">
@@ -1486,7 +1560,17 @@ export const ShapeEditorPanel: React.FC<{
   return (
     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
       <div className="h-full overflow-y-auto no-scrollbar pr-1">
-        <div className="space-y-3.5 pt-1 pb-2">
+        {colorPage && (
+          <ColorPickerPage
+            value={colorPage.value}
+            colors={colorPage.colors}
+            onPick={colorPage.onPick}
+            onBack={() => setColorPage(null)}
+          />
+        )}
+        {!colorPage && (
+        /* 底部留白拉大：捲到最底時最後一根滑桿不會貼著邊 */
+        <div className="space-y-3.5 pt-1 pb-28">
           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
           {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c }), true)}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
@@ -1494,13 +1578,21 @@ export const ShapeEditorPanel: React.FC<{
             {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
               v => onChange({ shapeGlow: v } as any))}
             <ColorPick label="顏色" value={layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR}
-              colors={GLOW_COLORS} onPick={c => onChange({ shapeGlowColor: c })} />
+              colors={GLOW_COLORS} onPick={c => onChange({ shapeGlowColor: c })}
+              onOpen={() => setColorPage({
+                value: layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR, colors: GLOW_COLORS,
+                onPick: c => onChange({ shapeGlowColor: c }),
+              })} />
           </div>
           <div className="grid grid-cols-2 gap-3 items-end">
             {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
               v => onChange({ shapeStrokeW: v / 10 }))}
             <ColorPick label="顏色" value={layer.shapeStrokeColor || '#000000'}
-              onPick={c => onChange({ shapeStrokeColor: c })} />
+              onPick={c => onChange({ shapeStrokeColor: c })}
+              onOpen={() => setColorPage({
+                value: layer.shapeStrokeColor || '#000000',
+                onPick: c => onChange({ shapeStrokeColor: c }),
+              })} />
           </div>
           {/* 點點放在最下面：兩顆按鈕與顏色同一排，全部常駐
               （關著也看得到顏色，可以先挑好再打開）。 */}
@@ -1524,7 +1616,11 @@ export const ShapeEditorPanel: React.FC<{
               </div>
             </div>
             <ColorPick label="顏色" value={layer.shapeDotColor || '#FFFFFF'}
-              onPick={c => onChange({ shapeDotColor: c })} />
+              onPick={c => onChange({ shapeDotColor: c })}
+              onOpen={() => setColorPage({
+                value: layer.shapeDotColor || '#FFFFFF',
+                onPick: c => onChange({ shapeDotColor: c }),
+              })} />
           </div>
           <div className="grid grid-cols-2 gap-3">
             {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
@@ -1542,6 +1638,7 @@ export const ShapeEditorPanel: React.FC<{
             </>
           )}
         </div>
+        )}
       </div>
     </div>
   );
@@ -4262,6 +4359,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   /**
+   * 頁與頁之間那條分割線的 x（內容座標）。
+   * 物件的「中心」可以對到它 —— 跨頁擺放時要的就是「正好騎在接縫上」。
+   */
+  const seamXs = () => {
+    const rs = getAllPageRects();
+    const out: number[] = [];
+    for (let i = 0; i < rs.length - 1; i++) out.push((rs[i].right + rs[i + 1].left) / 2);
+    return out;
+  };
+
+  /**
    * 同一條線只留一份（吸附挑到的那條可能跟下面重新掃出來的重複）。
    * 傳了 centerX 就順便把「橫線只畫在這一頁」的左右範圍補上 ——
    * 水平的對齊線是對齊「這個物件所在的那一頁」，跨到隔壁頁去沒有意義。
@@ -4314,6 +4422,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (!edgeOnly && Math.abs(cy - pr.centerY) < EPS_C) out.push({ type: 'horizontal', coord: pr.centerY });
       if (Math.abs(top - pr.top) < EPS_E) out.push({ type: 'horizontal', coord: pr.top });
       if (Math.abs(bottom - pr.bottom) < EPS_E) out.push({ type: 'horizontal', coord: pr.bottom });
+    });
+    // 中心騎在頁與頁的分割線上時，也亮一條線
+    if (!edgeOnly) seamXs().forEach(sx => {
+      if (Math.abs(cx - sx) < EPS_C) out.push({ type: 'vertical', coord: sx });
     });
     return out;
   };
@@ -4393,6 +4505,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         bestGuidelineX = pageRect.right;
       }
     });
+
+    /* 物件的中心也能吸到「頁與頁之間那條分割線」——
+       跨頁擺一個物件時，想要的就是正好騎在接縫上。
+       只在中心對齊模式下開放（edgeOnly 的手勢是在調大小，不該被拉走）。 */
+    if (!edgeOnly) {
+      seamXs().forEach(sx => {
+        const diffSeam = rawCenterX - sx;
+        if (Math.abs(diffSeam) < SNAP_THRESHOLD && Math.abs(diffSeam) < Math.abs(minDiffX)) {
+          minDiffX = diffSeam;
+          bestSnapX = sx - imgWidth / 2;
+          bestGuidelineX = sx;
+        }
+      });
+    }
 
     // Image-to-image vertical edge snapping
     floatingImages.forEach(other => {
@@ -4880,8 +5006,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         <span>{label}</span>
         <span className="text-white/70 tabular-nums">{value}</span>
       </div>
+      {/* 圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆） */}
       <input type="range" min={0} max={100} step={1} value={value}
-        onChange={e => onVal(parseInt(e.target.value))} className="premium-slider w-full" />
+        onChange={e => onVal(parseInt(e.target.value))} className="custom-range dense w-full" />
     </div>
   );
   const layoutSelected = selectedLayoutId !== null;
@@ -11372,7 +11499,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     <ChevronLeft size={14} />
                     <span>返回</span>
                   </button>
-                  <span className="text-[10px] font-bold text-white">紋理顏色</span>
                   <div
                     className="ml-auto w-6 h-5 rounded-[4px] shadow-inner border border-white/10"
                     style={{ backgroundColor: patternColor }}
@@ -11405,37 +11531,39 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     onClose={() => setActiveTab('layout')}
                   />
                 </div>
-                <div className="mt-2 space-y-3">
-                  <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
-                    <span className="text-[10px] font-bold text-[#888]">紋理</span>
-                    {/* 顏色跟紋理選項同一排：點色塊才進紋理專屬的調色頁 */}
-                    <div className="flex items-center gap-2">
-                      <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                        {([['none', '無'], ['dot', '點點'], ['star', '星星'], ['heart', '愛心']] as const).map(([t, label]) => (
-                          <button key={t} onClick={() => setPatternType(t)}
-                            className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
-                            {label}
-                          </button>
-                        ))}
+                {/* 紋理整組收在同一格裡：選項、顏色、兩根滑桿都在同一個框內。
+                    mt-5 是為了跟上面的底色挑色器拉開一點距離。 */}
+                <div className="mt-5">
+                  <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden">
+                    <div className="h-[47px] flex items-center justify-between px-3">
+                      <span className="text-[10px] font-bold text-[#888]">紋理</span>
+                      {/* 顏色跟紋理選項同一排：點色塊才進紋理專屬的調色頁 */}
+                      <div className="flex items-center gap-2">
+                        <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                          {([['none', '無'], ['dot', '點點'], ['star', '星星'], ['heart', '愛心']] as const).map(([t, label]) => (
+                            <button key={t} onClick={() => setPatternType(t)}
+                              className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
+                              {label}
+                            </button>
+                          ))}
+                        </div>
+                        {patternType !== 'none' && (
+                          <button
+                            onClick={() => setColorSub('pattern')}
+                            title="紋理顏色"
+                            className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                            style={{ backgroundColor: patternColor }}
+                          />
+                        )}
                       </div>
-                      {patternType !== 'none' && (
-                        <button
-                          onClick={() => setColorSub('pattern')}
-                          title="紋理顏色"
-                          className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                          style={{ backgroundColor: patternColor }}
-                        />
-                      )}
                     </div>
-                  </div>
-                  {patternType !== 'none' && (
-                    <div className="space-y-3 animate-in fade-in zoom-in-95 duration-300">
-                      <div className="grid grid-cols-2 gap-4 bg-[#0f0f0f] border border-[#1a1a1a] rounded-[8px] p-4">
+                    {patternType !== 'none' && (
+                      <div className="grid grid-cols-2 gap-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] animate-in fade-in duration-200">
                         {patternSlider('大小', patternSize, setPatternSize)}
                         {patternSlider('間距', patternGap, setPatternGap)}
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                   <div className="h-2" />
                 </div>
               </div>
