@@ -1365,11 +1365,13 @@ export const TextEditorPanel: React.FC<{
           <span className="text-[11px] font-bold text-white/70">{label}</span>
           <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value.toFixed(digits)}{suffix}</span>
         </div>
-        <input
-          type="range" min={min} max={max} step={step} value={value}
-          onChange={e => onVal(digits ? parseFloat(e.target.value) : parseInt(e.target.value))}
-          className="premium-slider w-full"
-        />
+        <div className="slider-wrap" style={{ height: 16 }}>
+          <input
+            type="range" min={min} max={max} step={step} value={value}
+            onChange={e => onVal(digits ? parseFloat(e.target.value) : parseInt(e.target.value))}
+            className="premium-slider w-full"
+          />
+        </div>
       </div>
     );
   };
@@ -1553,11 +1555,13 @@ export const ShapeEditorPanel: React.FC<{
         <span className="text-[11px] font-bold text-white/70">{label}</span>
         <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value}</span>
       </div>
-      <input
-        type="range" min={min} max={max} step={1} value={value}
-        onChange={e => onVal(parseInt(e.target.value))}
-        className="premium-slider w-full"
-      />
+      <div className="slider-wrap" style={{ height: 16 }}>
+        <input
+          type="range" min={min} max={max} step={1} value={value}
+          onChange={e => onVal(parseInt(e.target.value))}
+          className="premium-slider w-full"
+        />
+      </div>
     </div>
   );
 
@@ -2185,7 +2189,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
               <span>色相</span>
               <span className="text-white/40">{Math.round(hsv.h)}°</span>
             </div>
-            <input type="range" min="0" max="360" value={hsv.h} onInput={e => handleHsvChange('h', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }} />
+            <div className="slider-wrap" style={{ height: 6 }}><input type="range" min="0" max="360" value={hsv.h} onInput={e => handleHsvChange('h', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }} /></div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
@@ -2193,14 +2197,14 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
                 <span>飽和度</span>
                 <span className="text-white/40">{Math.round(hsv.s)}%</span>
               </div>
-              <input type="range" min="0" max="100" value={hsv.s} onInput={e => handleHsvChange('s', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: `linear-gradient(to right, #808080, ${hsvToHex(hsv.h, 100, 100)})` }} />
+              <div className="slider-wrap" style={{ height: 6 }}><input type="range" min="0" max="100" value={hsv.s} onInput={e => handleHsvChange('s', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: `linear-gradient(to right, #808080, ${hsvToHex(hsv.h, 100, 100)})` }} /></div>
             </div>
             <div className="flex flex-col gap-1.5">
               <div className="flex justify-between items-center text-[9px] font-bold text-[#666] tracking-tighter uppercase">
                 <span>明度</span>
                 <span className="text-white/40">{Math.round(hsv.v)}%</span>
               </div>
-              <input type="range" min="0" max="100" value={hsv.v} onInput={e => handleHsvChange('v', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: `linear-gradient(to right, #000, ${hsvToHex(hsv.h, hsv.s, 100)})` }} />
+              <div className="slider-wrap" style={{ height: 6 }}><input type="range" min="0" max="100" value={hsv.v} onInput={e => handleHsvChange('v', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: `linear-gradient(to right, #000, ${hsvToHex(hsv.h, hsv.s, 100)})` }} /></div>
             </div>
           </div>
         </div>
@@ -5027,8 +5031,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         <span className="text-white/70 tabular-nums">{value}</span>
       </div>
       {/* 圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆） */}
-      <input type="range" min={0} max={100} step={1} value={value}
-        onChange={e => onVal(parseInt(e.target.value))} className="slim-slider w-full" />
+      <div className="slider-wrap" style={{ height: 16 }}>
+        <input type="range" min={0} max={100} step={1} value={value}
+          onChange={e => onVal(parseInt(e.target.value))} className="slim-slider w-full" />
+      </div>
     </div>
   );
   const layoutSelected = selectedLayoutId !== null;
@@ -9429,23 +9435,31 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     <div className="safe-top flex flex-col w-full h-screen bg-black text-white relative font-sans overflow-hidden">
       <style>{`
         /* 圓球跟「佈局調整」的滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
-        /* 顏色滑桿：軌道改回原本的 6px（漸層畫在軌道上，不是畫在整個元件上），
-           圓點換成跟其他滑桿一樣的小白球（14px），
-           元件本身撐到 24px、上下各 -9px 外距 —— 版面高度維持 6px，觸控範圍變大。 */
-        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -21px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        /* 顏色滑桿：回到原本那一版 —— 漸層畫在元件上、圓點用瀏覽器原生的
+           （accent-color 白），也就是主人說的「橢圓的那個樣子」。 */
+        /* 觸控範圍的做法（唯一一種不會動到版面的）：
+           外面包一層「跟原本滑桿一樣高」的盒子，滑桿本人改成絕對定位、
+           上下置中、長高一點 —— 它不佔任何版面空間，所以間距、對齊完全不變，
+           但手指不必剛好壓在那條細線上也抓得到。 */
+        .slider-wrap { position: relative; }
+        .slider-wrap > input[type=range] { position: absolute; left: 0; width: 100%; top: 50%; transform: translateY(-50%); margin: 0; }
+        .slider-wrap > .premium-slider, .slider-wrap > .slim-slider { height: 28px; }
+        /* 顏色滑桿：元件本身透明、長到 24px（只為了好按），
+           看得見的那條 6px 漸層改畫在軌道上（--bar 由各自的 inline style 指定），
+           圓點維持瀏覽器原生的那顆（accent-color 白）——外觀跟前幾版一模一樣。 */
+        .slider-wrap > .designer-color-slider { height: 24px; background: transparent !important; }
         .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
         .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         /* 圖片編輯那一頁的滑桿：跟「編輯」用同一組樣式，連軌道與圓點都一樣 */
         .custom-range {
           -webkit-appearance: none;
           width: calc(100% + 64px);
-          height: 80px;
+          height: 40px;
           background: rgba(0,0,0,0);
           outline: none;
-          margin: -20px -32px;
+          margin: 0 -32px;
           padding: 0;
           touch-action: none;
           -webkit-tap-highlight-color: rgba(0,0,0,0);
@@ -9453,7 +9467,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         .custom-range:focus { outline: none; }
         /* 特效細項的並排滑桿：跟「編輯」同一份。盒子收到 18px（剛好包住 15px 的圓點），
            軌道也只畫 9px..寬-9px，圓點才走得到頭尾（並排的滑桿不能像一般滑桿那樣往外擴）。 */
-        .custom-range.dense { height: 52px; width: 100%; margin: -13px 0; }
+        .custom-range.dense { height: 26px; width: 100%; margin: 0; }
         .custom-range.dense::-webkit-slider-runnable-track {
           background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
         }
@@ -9483,9 +9497,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           box-shadow: none;
         }
         /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
-        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -16px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; }
         .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
-        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; margin-top: -7px; cursor: pointer; }
+        /* 同上：框拉寬到 32px，白點還是畫在正中央的 16px */
+        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 32px; height: 16px; border: none; margin-top: -7px; cursor: pointer;
+          background: radial-gradient(circle at center, #fff 0, #fff 8px, rgba(255,255,255,0) 8.5px, rgba(255,255,255,0) 100%); }
         .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
         .slim-slider::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         .custom-range::-webkit-slider-thumb:active { transform: scale(1.15); }

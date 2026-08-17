@@ -312,12 +312,14 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
       <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value}</span>
     </div>
     {/* 全 App 的滑桿軌道統一成同一種細度（跟「編輯」的濾鏡滑桿一樣） */}
-    <input
-      type="range" min={min} max={max} step={1} value={value}
-      onChange={e => onVal(Number(e.target.value))}
-      className="premium-slider w-full"
-      style={{ touchAction: 'none' }}
-    />
+    <div className="slider-wrap" style={{ height: 16 }}>
+      <input
+        type="range" min={min} max={max} step={1} value={value}
+        onChange={e => onVal(Number(e.target.value))}
+        className="premium-slider w-full"
+        style={{ touchAction: 'none' }}
+      />
+    </div>
   </div>
 );
 
@@ -855,7 +857,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
               <span>色相</span>
               <span className="text-white/40">{Math.round(hsv.h)}°</span>
             </div>
-            <input type="range" min="0" max="360" value={hsv.h} onInput={e => handleHsvChange('h', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }} />
+            <div className="slider-wrap" style={{ height: 6 }}><input type="range" min="0" max="360" value={hsv.h} onInput={e => handleHsvChange('h', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }} /></div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
@@ -863,14 +865,14 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
                 <span>飽和度</span>
                 <span className="text-white/40">{Math.round(hsv.s)}%</span>
               </div>
-              <input type="range" min="0" max="100" value={hsv.s} onInput={e => handleHsvChange('s', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: `linear-gradient(to right, #808080, ${hsvToHex(hsv.h, 100, 100)})` }} />
+              <div className="slider-wrap" style={{ height: 6 }}><input type="range" min="0" max="100" value={hsv.s} onInput={e => handleHsvChange('s', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: `linear-gradient(to right, #808080, ${hsvToHex(hsv.h, 100, 100)})` }} /></div>
             </div>
             <div className="flex flex-col gap-1.5">
               <div className="flex justify-between items-center text-[9px] font-bold text-[#666] tracking-tighter uppercase">
                 <span>明度</span>
                 <span className="text-white/40">{Math.round(hsv.v)}%</span>
               </div>
-              <input type="range" min="0" max="100" value={hsv.v} onInput={e => handleHsvChange('v', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: `linear-gradient(to right, #000, ${hsvToHex(hsv.h, hsv.s, 100)})` }} />
+              <div className="slider-wrap" style={{ height: 6 }}><input type="range" min="0" max="100" value={hsv.v} onInput={e => handleHsvChange('v', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: `linear-gradient(to right, #000, ${hsvToHex(hsv.h, hsv.s, 100)})` }} /></div>
             </div>
           </div>
           {/* 預設是韓系拼貼常用色（與經典拼圖同一組）；呼叫端可以換掉 */}
@@ -5023,16 +5025,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         .custom-range {
           -webkit-appearance: none;
           width: calc(100% + 64px);
-          height: 80px;
+          height: 40px;
           background: rgba(0,0,0,0);
           outline: none;
-          margin: -20px -32px;
+          margin: 0 -32px;
           padding: 0;
           touch-action: none;
           -webkit-tap-highlight-color: rgba(0,0,0,0);
         }
         .custom-range:focus { outline: none; }
-        .custom-range.dense { height: 52px; width: 100%; margin: -13px 0; }
+        .custom-range.dense { height: 26px; width: 100%; margin: 0; }
         .custom-range.dense::-webkit-slider-runnable-track {
           background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
         }
@@ -5068,29 +5070,42 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           background: #fff; border: none; cursor: pointer;
         }
         /* 跟 styles.css 那一份保持一致：軌道 6px、圓角到底（比較寬的那種） */
-        /* 高度 24px、上下各 -4px 外距：看起來還是 16px 高（版面完全沒變），
-           但真正吃得到手指的範圍變成 1.5 倍。下面每一種滑桿都用同一招。 */
-        .premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -16px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        /* 觸控範圍只靠「圓點本身變寬」來加大：圓點的框拉寬成兩倍，
+           但白點是用漸層畫在正中央的 14px —— 看起來一模一樣，
+           手指落在白點左右一段距離內都抓得到。元件的高度、外距一律不動，
+           所以版面（上下間距、跟旁邊按鈕的對齊）完全不受影響。 */
+        .premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; }
         .premium-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
-        .premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
+        .premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 16px; border: none; margin-top: -7px; cursor: pointer;
+          background: radial-gradient(circle at center, #fff 0, #fff 7px, rgba(255,255,255,0) 7.5px, rgba(255,255,255,0) 100%); }
         .premium-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
         .premium-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
-        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -16px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; }
         .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
-        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; margin-top: -7px; cursor: pointer; }
+        /* 同上：框拉寬到 32px，白點還是畫在正中央的 16px */
+        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 32px; height: 16px; border: none; margin-top: -7px; cursor: pointer;
+          background: radial-gradient(circle at center, #fff 0, #fff 8px, rgba(255,255,255,0) 8.5px, rgba(255,255,255,0) 100%); }
         .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
         .slim-slider::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
 
         /* 圓球跟經典拼圖的顏色滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
-        /* 顏色滑桿：軌道改回原本的 6px（漸層畫在軌道上，不是畫在整個元件上），
-           圓點換成跟其他滑桿一樣的小白球（14px），
-           元件本身撐到 24px、上下各 -9px 外距 —— 版面高度維持 6px，觸控範圍變大。 */
-        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -21px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        /* 顏色滑桿：回到原本那一版 —— 漸層畫在元件上、圓點用瀏覽器原生的
+           （accent-color 白），也就是主人說的「橢圓的那個樣子」。 */
+        /* 觸控範圍的做法（唯一一種不會動到版面的）：
+           外面包一層「跟原本滑桿一樣高」的盒子，滑桿本人改成絕對定位、
+           上下置中、長高一點 —— 它不佔任何版面空間，所以間距、對齊完全不變，
+           但手指不必剛好壓在那條細線上也抓得到。 */
+        .slider-wrap { position: relative; }
+        .slider-wrap > input[type=range] { position: absolute; left: 0; width: 100%; top: 50%; transform: translateY(-50%); margin: 0; }
+        .slider-wrap > .premium-slider, .slider-wrap > .slim-slider { height: 28px; }
+        /* 顏色滑桿：元件本身透明、長到 24px（只為了好按），
+           看得見的那條 6px 漸層改畫在軌道上（--bar 由各自的 inline style 指定），
+           圓點維持瀏覽器原生的那顆（accent-color 白）——外觀跟前幾版一模一樣。 */
+        .slider-wrap > .designer-color-slider { height: 24px; background: transparent !important; }
         .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
         .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
       `}</style>
 
       {/* 匯出影片的進度。用同一條算圖管線一格一格畫，所以會花一點時間。 */}
@@ -6757,12 +6772,14 @@ const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimal
       </span>
     </div>
     {/* onCommit：手指／滑鼠放開時才觸發（動畫頁拿它來自動重播） */}
-    <input type="range" min={min} max={max} step={step} value={value}
-      onChange={e => push(Number(e.target.value))}
-      onPointerUp={done}
-      onTouchEnd={done}
-      onKeyUp={done}
-      className={wide ? 'slim-slider w-full' : 'premium-slider'} onPointerDown={e => e.stopPropagation()} />
+    <div className="slider-wrap" style={{ height: 16 }}>
+      <input type="range" min={min} max={max} step={step} value={value}
+        onChange={e => push(Number(e.target.value))}
+        onPointerUp={done}
+        onTouchEnd={done}
+        onKeyUp={done}
+        className={wide ? 'slim-slider w-full' : 'premium-slider w-full'} onPointerDown={e => e.stopPropagation()} />
+    </div>
   </div>
   );
 };
