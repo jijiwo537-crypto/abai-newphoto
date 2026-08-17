@@ -273,4 +273,15 @@ select:focus, select:focus-visible {
 /* 狀態列改成 black-translucent 之後，畫面會鋪到瀏海底下。
    首頁刻意要這個效果（主視覺頂到最上面），但其他全螢幕工具的標題列不能被蓋住 ——
    它們在最外層掛這個 class，補回瀏海的高度，排版就跟以前一模一樣。 */
-.safe-top { padding-top: env(safe-area-inset-top, 0px); }
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+  /* 底部也要補。viewport-fit=cover 會讓畫面同時鋪到「瀏海底下」與
+     「底部指示條底下」——只補頂端的話，每個工具最下面那排的文字與圖標
+     就會被指示條蓋掉（那正是「下方文字圖標消失」）。
+     這些根元素都是 flex 直排 ＋ overflow-hidden ＋ border-box，
+     補內距等於把可用高度收短，最底下那排會整條往上讓出指示條的高度，
+     其他排的相對位置一個像素都不會變。
+     首頁不掛這個 class：它的主視覺要頂到最上面，而它自己的分頁列
+     本來就寫了 pb-[calc(env(safe-area-inset-bottom,0px)+20px)]。 */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
