@@ -6161,32 +6161,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     zoomRef.current?.resetTransform(320, 'easeOut');
   }, [activeCategory]);
 
-  /* 預覽區實際還剩多少高度。
-     以前這裡是寫死的 calc(100vh - 340px)——「一屏扣掉上下幾條列」。
-     那個算式有兩個前提：畫面不含瀏海／指示條，而且那幾條列的高度不會變。
-     一旦開啟 viewport-fit=cover，100vh 變成整片螢幕（含安全區），
-     算出來的上限就比真正能用的空間大，下面那排會被擠出畫面；
-     硬往算式裡塞 env() 又會多扣少扣，怎麼調都對不準。
-
-     改成直接量父層（previewBoxRef，就是 flex-1 的那一格）現在有多高，
-     扣掉 TransformComponent 自己的 p-4 內距即可。這個值天生就把
-     安全區、每一條列的實際高度都算進去了，不需要任何常數。 */
-  const [fitH, setFitH] = useState(0);
-  const measureFitH = useCallback(() => {
-    const box = previewBoxRef.current;
-    if (!box) return;
-    const h = box.getBoundingClientRect().height - 32;   // TransformComponent 的 p-4（上下各 16）
-    setFitH(prev => (Math.abs(prev - h) < 0.5 ? prev : Math.max(0, h)));
-  }, []);
-  useLayoutEffect(() => {
-    measureFitH();
-    const box = previewBoxRef.current;
-    if (!box || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(measureFitH);
-    ro.observe(box);
-    return () => ro.disconnect();
-  }, [measureFitH]);
-
   const [hslFit, setHslFit] = useState<{ mb: number; mh: number } | null>(null);
   const measureHslFit = useCallback(() => {
     const box = previewBoxRef.current;
@@ -6782,7 +6756,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 style={{
                   maxHeight: hslFitNow
                     ? `${hslFitNow.mh}px`
-                    : (fitH > 0 ? `${fitH}px` : undefined),
+                    : 'calc(100vh - 340px)',
                   marginBottom: hslFitNow ? `${hslFitNow.mb}px` : undefined,
                   aspectRatio: previewAspect ? `${previewAspect.w}/${previewAspect.h}` : undefined,
                   width: previewAspect ? '100%' : 'auto',
@@ -6795,7 +6769,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   maxWidth: previewAspect
                     ? (hslFitNow
                         ? `min(calc(100% - 32px), ${(hslFitNow.mh * previewAspect.w) / previewAspect.h}px)`
-                        : (fitH > 0 ? `min(calc(100% - 32px), ${(fitH * previewAspect.w) / previewAspect.h}px)` : 'calc(100% - 32px)'))
+                        : `min(calc(100% - 32px), calc((100vh - 340px) * ${previewAspect.w} / ${previewAspect.h}))`)
                     : undefined,
                 }}
               >
