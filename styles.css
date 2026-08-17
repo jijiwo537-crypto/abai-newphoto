@@ -104,47 +104,60 @@ select:focus, select:focus-visible {
 /* 一般滑桿（創意拼圖的參數、發光、動畫…） */
 /* 滑桿全部統一成「比較寬」的那一種：軌道 6px、圓角到底、底色跟面板上
    其他滑桿一致（原本是 2px 的細線，同一頁裡兩種粗細看起來很雜）。 */
-/* 高度 24px、上下各 -4px 外距：看起來還是 16px 高（版面完全沒變），
-   但真正吃得到手指的範圍變成 1.5 倍。下面每一種滑桿都用同一招。 */
-.premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -16px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+/* 觸控範圍只靠「圓點本身變寬」來加大：圓點的框拉寬成兩倍，
+   但白點是用漸層畫在正中央的 14px —— 看起來一模一樣，
+   手指落在白點左右一段距離內都抓得到。元件的高度、外距一律不動，
+   所以版面（上下間距、跟旁邊按鈕的對齊）完全不受影響。 */
+.premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; }
 .premium-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
-.premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
+.premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 16px; border: none; margin-top: -7px; cursor: pointer;
+  background: radial-gradient(circle at center, #fff 0, #fff 7px, rgba(255,255,255,0) 7.5px, rgba(255,255,255,0) 100%); }
 .premium-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
 .premium-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
 /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆
    （跟色相／飽和度／明度那三根上面的圓點同尺寸）。 */
-.slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -16px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+.slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; }
 .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
-.slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; margin-top: -7px; cursor: pointer; }
+/* 同上：框拉寬到 32px，白點還是畫在正中央的 16px */
+.slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 32px; height: 16px; border: none; margin-top: -7px; cursor: pointer;
+  background: radial-gradient(circle at center, #fff 0, #fff 8px, rgba(255,255,255,0) 8.5px, rgba(255,255,255,0) 100%); }
 .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
 .slim-slider::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
 
 
 /* 顏色滑桿：沿用原生 thumb + accent-color，不自己畫 */
-/* 顏色滑桿：軌道改回原本的 6px（漸層畫在軌道上，不是畫在整個元件上），
-   圓點換成跟其他滑桿一樣的小白球（14px），
-   元件本身撐到 24px、上下各 -9px 外距 —— 版面高度維持 6px，觸控範圍變大。 */
-.designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -21px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+/* 顏色滑桿：回到原本那一版 —— 漸層畫在元件上、圓點用瀏覽器原生的
+   （accent-color 白），也就是主人說的「橢圓的那個樣子」。 */
+/* 觸控範圍的做法（唯一一種不會動到版面的）：
+   外面包一層「跟原本滑桿一樣高」的盒子，滑桿本人改成絕對定位、
+   上下置中、長高一點 —— 它不佔任何版面空間，所以間距、對齊完全不變，
+   但手指不必剛好壓在那條細線上也抓得到。 */
+.slider-wrap { position: relative; }
+.slider-wrap > input[type=range] { position: absolute; left: 0; width: 100%; top: 50%; transform: translateY(-50%); margin: 0; }
+.slider-wrap > .premium-slider, .slider-wrap > .slim-slider { height: 28px; }
+/* 顏色滑桿：元件本身透明、長到 24px（只為了好按），
+   看得見的那條 6px 漸層改畫在軌道上（--bar 由各自的 inline style 指定），
+   圓點維持瀏覽器原生的那顆（accent-color 白）——外觀跟前幾版一模一樣。 */
+.slider-wrap > .designer-color-slider { height: 24px; background: transparent !important; }
 .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-.designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
 .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-.designer-color-slider::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+.designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
 
 /* 圖片編輯那一頁的滑桿（編輯／經典拼圖／創意拼圖共用同一組） */
 .custom-range {
   -webkit-appearance: none;
   width: calc(100% + 64px);
-  height: 80px;
+  height: 40px;
   background: rgba(0,0,0,0);
   outline: none;
-  margin: -20px -32px;
+  margin: 0 -32px;
   padding: 0;
   touch-action: none;
   -webkit-tap-highlight-color: rgba(0,0,0,0);
 }
 .custom-range:focus { outline: none; }
 /* 特效細項的並排滑桿：盒子收到 26px，軌道只畫 9px..寬-9px，圓點才走得到頭尾 */
-.custom-range.dense { height: 52px; width: 100%; margin: -13px 0; }
+.custom-range.dense { height: 26px; width: 100%; margin: 0; }
 .custom-range.dense::-webkit-slider-runnable-track {
   background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
 }
