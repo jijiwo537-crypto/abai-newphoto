@@ -16,6 +16,7 @@ import {
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
+import { paintPattern, PatternOpts } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
@@ -1967,6 +1968,28 @@ return (
     </div>
   </div>
 );
+};
+
+/** 預覽用的紋理層。跟匯出走同一支 paintPattern，看到什麼就是存出來什麼。 */
+const PatternLayer: React.FC<{ w: number; h: number; opts: PatternOpts }> = ({ w, h, opts }) => {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const cv = ref.current;
+    if (!cv) return;
+    const raw = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
+    const dpr = Math.min(raw, 2000 / Math.max(1, Math.max(w, h)));   // 長邊封頂，避免幾十 MB 的畫布
+    const pw = Math.max(1, Math.round(w * dpr));
+    const ph = Math.max(1, Math.round(h * dpr));
+    if (cv.width !== pw) cv.width = pw;
+    if (cv.height !== ph) cv.height = ph;
+    const g = cv.getContext('2d');
+    if (!g) return;
+    g.clearRect(0, 0, pw, ph);
+    if (opts.type === 'none') return;
+    g.save(); g.scale(dpr, dpr); paintPattern(g, w, h, opts); g.restore();
+  }, [w, h, opts.type, opts.color, opts.size, opts.gap]);
+  if (opts.type === 'none' || w <= 0 || h <= 0) return null;
+  return <canvas ref={ref} className="absolute inset-0 pointer-events-none" style={{ width: w, height: h }} />;
 };
 
 const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onClose }) => {
@@ -4804,6 +4827,26 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }) : p));
   };
   const bgColor = activePage.bgColor;
+  /* 背景紋理。跟創意拼圖的遮罩紋理同一套參數，畫法共用 utils/pattern.ts。
+     整份作品共用一份，不像底色那樣每頁各存 —— 翻頁時紋理不該跟著換。 */
+  const [patternType, setPatternType] = useState('none');
+  const [patternColor, setPatternColor] = useState('#A8DDE6');
+  const [patternSize, setPatternSize] = useState(50);
+  const [patternGap, setPatternGap] = useState(20);
+  const patternOpts: PatternOpts = { type: patternType, color: patternColor, size: patternSize, gap: patternGap };
+
+  /* 紋理的兩根滑桿。其他面板那幾支同名 helper 都關在各自的元件裡，
+     主元件拿不到，所以就近寫一支。軌道用全域的 .premium-slider。 */
+  const patternSlider = (label: string, value: number, onVal: (v: number) => void) => (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex justify-between items-center text-[9px] font-bold text-[#666] tracking-tighter uppercase">
+        <span>{label}</span>
+        <span className="text-white/70 tabular-nums">{value}</span>
+      </div>
+      <input type="range" min={0} max={100} step={1} value={value}
+        onChange={e => onVal(parseInt(e.target.value))} className="premium-slider w-full" />
+    </div>
+  );
   const layoutSelected = selectedLayoutId !== null;
 
   /** 只改動「正在編輯的那個佈局」，不管它現在在哪一頁。 */
@@ -9005,6 +9048,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           if (withBg) {
             g.fillStyle = pages[pageIdx].bgColor || '#ffffff';
             g.fillRect(0, 0, VW, VH);
+            paintPattern(g, VW, VH, patternOpts);   // 紋理跟底色是一組的
           }
           g.save();
           g.scale(VW / targetW, VH / targetH);
@@ -9147,6 +9191,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         ctx.clearRect(0, 0, targetW, targetH);
         ctx.fillStyle = pages[pageIdx].bgColor || '#ffffff';
         ctx.fillRect(0, 0, targetW, targetH);
+        paintPattern(ctx, targetW, targetH, patternOpts);   // 紋理跟底色是一組的
 
         ctx.save();
         ctx.translate(-pageLeft, 0);
@@ -9692,6 +9737,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             })()}
                           >
                             <div className="absolute inset-0" style={{ backgroundColor: page.bgColor }} />
+                            {/* 背景紋理：疊在底色上、所有內容之下，不影響點選與拖曳 */}
+                            <PatternLayer w={previewW} h={previewH} opts={patternOpts} />
                             {page.layouts.map((layout) => {
                               const pageTemplates = TEMPLATE_MAP[layout.images.length] || [];
                               const pageActiveTemplate = pageTemplates[layout.templateIndex] || pageTemplates[0] || { name: '預設', rects: [] };
@@ -11249,12 +11296,43 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             )}
 
             {activeTab === 'color' && (
-              <div className="max-w-md mx-auto animate-in fade-in duration-300 h-full">
+              /* 上面是原本的底色挑色器（一個字沒動），下面緊接著背景紋理。
+                 這一頁比原本高，所以自己捲 —— 外層那一格的 overflow 名單
+                 是所有分頁共用的，完全沒動，別的分頁不受影響。 */
+              <div className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-y-auto no-scrollbar">
                 <ColorPickerEmbedded
                   color={bgColor}
                   onChange={setBgColor}
                   onClose={() => setActiveTab('layout')}
                 />
+                <div className="mt-3 space-y-3">
+                  <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
+                    <span className="text-[10px] font-bold text-[#888]">紋理</span>
+                    <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                      {([['none', '無'], ['dot', '點點'], ['star', '星星'], ['heart', '愛心']] as const).map(([t, label]) => (
+                        <button key={t} onClick={() => setPatternType(t)}
+                          className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {patternType !== 'none' && (
+                    <div className="space-y-3 animate-in fade-in zoom-in-95 duration-300">
+                      <div className="grid grid-cols-2 gap-4 bg-[#0f0f0f] border border-[#1a1a1a] rounded-[8px] p-4">
+                        {patternSlider('大小', patternSize, setPatternSize)}
+                        {patternSlider('間距', patternGap, setPatternGap)}
+                      </div>
+                      {/* 紋理顏色用跟上面底色完全同一顆挑色器 */}
+                      <ColorPickerEmbedded
+                        color={patternColor}
+                        onChange={setPatternColor}
+                        onClose={() => setActiveTab('layout')}
+                      />
+                    </div>
+                  )}
+                  <div className="h-2" />
+                </div>
               </div>
             )}
 

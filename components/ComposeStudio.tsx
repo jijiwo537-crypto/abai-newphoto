@@ -31,6 +31,11 @@ const LIVE_MAX = 560;
 // 角度／翻轉兩排按鈕的位置：對齊裁切分頁的比例按鈕（86px 列高、按鈕 36px，置中即 25）
 const BUTTON_ROW_TOP = (86 - 36) / 2;
 
+/* 構圖這一層要對齊「編輯」的預覽區 —— 那一格上面是編輯器的標題列（h-14＝56），
+   下面是它的分頁列（77）。三個工具都用同一組數字，裁切框的位置與大小才會一致。 */
+const HEADER_H = 56;
+const FOOTER_H = 77;
+
 interface ComposeStudioProps {
   image: HTMLImageElement;
   geo: GeoParams;
@@ -376,7 +381,20 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
        所以只有第一次進來會抖：量到照片先是 60,56,295,639（大一圈、高 15px），
        下一幀才變成正確的 79,71,257,556 —— 看起來就是「從上往下掉」。
        inline style 不經過樣式表，第一幀就是對的。 */
-    <div className="absolute inset-0 bg-black flex flex-col" style={{ zIndex }}>
+    /* 用 fixed ＋ 固定的上下留白，而不是 absolute inset-0。
+       原因：inset-0 是「填滿呼叫端給的那個盒子」，而三個工具給的盒子不一樣 ——
+       「編輯」給的是預覽區（上面還有它自己 56px 高的標題列、下面是 77px 的分頁列），
+       兩個拼圖工具給的是整個螢幕。同一張照片因此在「編輯」落在 y≈90、
+       在「經典拼圖」卻落在 y≈33，差了一整條標題列。
+
+       改成固定 top:56 / bottom:77 之後，三個工具拿到的盒子完全一樣 ——
+       而那個盒子正好就是「編輯」原本的預覽區，所以編輯這一支一個像素都沒變，
+       另外兩支則對齊到它。上下讓出來的部分會露出各工具自己的標題列與分頁列，
+       跟「編輯」的行為一致。 */
+    <div
+      className="fixed left-0 right-0 bg-black flex flex-col"
+      style={{ zIndex, top: HEADER_H, bottom: FOOTER_H }}
+    >
       <style>{`
         .compose-slider { -webkit-appearance: none; appearance: none; height: 2px; border-radius: 2px; background: rgba(255,255,255,0.18); outline: none; touch-action: none; }
         .compose-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.5); cursor: pointer; }
