@@ -4709,19 +4709,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     const prev = prevPagesScaleRef.current;
     prevPagesScaleRef.current = pagesScale;
     if (Math.abs(kRef.current - pagesScale) < 0.0001) return;
-    /* 縮放的錨點＝動畫開始時「正中間看到的那個位置」，整段縮放都繞著它，
-       捲動位置也由 k 算，縮放與位移同一帧，看起來就是以視線為中心平順地縮放。
-
-       這裡以前多做了一次 Math.round，把錨點吸到最接近的那一頁 ——
-       於是只要中心不是剛好落在某一頁的正中央，一開始縮放就會被硬拉過去，
-       畫面上就是「其中一頁被強制移到正中心」。
-       改成保留小數：中心在兩頁之間就維持在兩頁之間，縮放前後看的是同一點。
-       仍然夾在合法範圍內（0 ～ 最後一頁），避免捲到空白處。 */
+    // 動畫開始時停在正中間的那一頁，整段縮放都繞著它 —— 捲動位置也由 k 算，
+    // 縮放與位移同一帧，看起來就是整排「以那一頁為中心」平順地縮小／放大
     const el = containerRef.current;
     if (el && containerSize.width > 0) {
-      const a = (el.scrollLeft + containerSize.width / 2 - stripOffset(containerSize.width, prev))
-        / Math.max(1, prev * (previewW + 1)) - 0.5;
-      kAnchorRef.current = Math.max(0, Math.min(pagesCountRef.current - 1, a));
+      const i = Math.round((el.scrollLeft + containerSize.width / 2 - stripOffset(containerSize.width, prev))
+        / Math.max(1, prev * (previewW + 1)) - 0.5);
+      kAnchorRef.current = Math.max(0, Math.min(pagesCountRef.current - 1, i));
     } else {
       kAnchorRef.current = 0;
     }
@@ -6813,18 +6807,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY,
       ) || 1;
-      /* 縮放要繞著「現在畫面正中間看到的那個位置」，不然會一邊縮一邊漂走。
-
-         這裡以前多做了一次 Math.round，把錨點吸到最接近的那一頁 ——
-         手指才剛開始捏，畫面就先被拉到那一頁的正中央，也就是
-         「縮放時會強制把其中一頁移到正中心」。
-         改成保留小數：中心落在兩頁之間就留在兩頁之間，縮放前後看同一點。
-         仍然夾在 0 ～ 最後一頁，不會捲到空白處。 */
+      // 縮放要繞著「現在停在畫面正中間的那一頁」，不然會一邊縮一邊漂走
       let anchor = 0;
       if (cont && w > 0) {
         const k0 = kRef.current || 1;
-        const a = (cont.scrollLeft + w / 2 - stripOffset(w, k0)) / Math.max(1, k0 * (previewW + 1)) - 0.5;
-        anchor = Math.max(0, Math.min(pages.length - 1, a));
+        anchor = Math.round(
+          (cont.scrollLeft + w / 2 - stripOffset(w, k0)) / Math.max(1, k0 * (previewW + 1)) - 0.5,
+        );
+        anchor = Math.max(0, Math.min(pages.length - 1, anchor));
       }
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
          連續捏兩次時，第二次一定要從第一次的結果接著算。 */
