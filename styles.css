@@ -104,14 +104,21 @@ select:focus, select:focus-visible {
 /* 一般滑桿（創意拼圖的參數、發光、動畫…）
    圓點就是圓點：框跟白點一樣大，所以拉到頭尾時視覺上真的碰得到兩端。
    觸控範圍完全靠外面那層 .slider-wrap（見下面），不靠把圓點撐寬。 */
-.premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
-.premium-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
-.premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
+.premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+.premium-slider::-webkit-slider-runnable-track { height: 2px; border-radius: 2px;
+  background: linear-gradient(to right, rgba(0,0,0,0) 7px, #333 7px, #333 calc(100% - 7px), rgba(0,0,0,0) calc(100% - 7px)); }
+/* 圓點的框＝白點的兩倍（28px），白點還是畫在正中央的 14px。
+   框寬 28 = 2×外擴(7) + 白點(14)，所以白點的行程一點都沒變：
+   拉到底時白點邊緣照樣貼齊軌道兩端，只是左右各多 7px 抓得到。 */
+.premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 14px; border: none; margin-top: -6px; cursor: pointer;
+  background: radial-gradient(circle at center, #fff 0, #fff 7px, rgba(255,255,255,0) 7.5px, rgba(255,255,255,0) 100%); }
 .premium-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
 .premium-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
-.slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
-.slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
-.slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
+.slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+.slim-slider::-webkit-slider-runnable-track { height: 2px; border-radius: 2px;
+  background: linear-gradient(to right, rgba(0,0,0,0) 7px, #333 7px, #333 calc(100% - 7px), rgba(0,0,0,0) calc(100% - 7px)); }
+.slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 14px; border: none; margin-top: -6px; cursor: pointer;
+  background: radial-gradient(circle at center, #fff 0, #fff 7px, rgba(255,255,255,0) 7.5px, rgba(255,255,255,0) 100%); }
 .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
 .slim-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
 
@@ -123,14 +130,17 @@ select:focus, select:focus-visible {
 .slider-wrap { position: relative; }
 /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
    不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
-.slider-wrap > input[type=range] { position: absolute; left: 0; width: 100%; top: 50%; }
-.slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 96px; margin: -48px 0 0 0; }
-.slider-wrap > input.designer-color-slider { height: 72px; margin: -36px 0 0 0; background: transparent !important; }
+/* 左右各外擴 7px（軌道兩端已經留了同樣寬的透明，看到的線長度不變） */
+.slider-wrap > input[type=range] { position: absolute; left: -7px; width: calc(100% + 14px); top: 50%; }
+/* 高度一律是白點的兩倍（28px）。之前放到 96／72，滑桿的 touch-action: none
+   會把它周圍一大片的上下滑動全吃掉，面板就捲不動了。 */
+.slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 28px; margin: -14px 0 0 0; }
+.slider-wrap > input.designer-color-slider { height: 28px; margin: -14px 0 0 0; left: 0; width: 100%; background: transparent !important; }
 
 /* 顏色滑桿：6px 的漸層軌道 ＋ 自己畫的白圓球。
    圓球用 margin-top 對齊軌道正中央（(6-18)/2 = -6），
    不再用瀏覽器原生那顆 —— 原生的在自訂軌道高度下會偏下，拖動時也會閃。 */
-.designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+.designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
 .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
 .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -4px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
 .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
