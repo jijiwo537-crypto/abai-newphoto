@@ -2733,6 +2733,9 @@ interface FloatingImageComponentProps {
   onChange: (updated: Partial<FloatingImage>) => void;
   onDelete: () => void;
   pagesContainerRef: React.RefObject<HTMLDivElement | null>;
+  /** 畫布目前真正套用的縮放倍率（使用者雙指縮放預覽用的那個）。
+      手指走的是螢幕像素、物件的座標是未縮放的內容單位，兩者要靠它換算。 */
+  canvasKRef?: React.RefObject<number>;
   hasActiveGuidelines?: boolean;
   onDragStart?: () => void;
   onDragMove?: (rawX: number, rawY: number) => void;
@@ -2799,6 +2802,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   onChange,
   onDelete,
   pagesContainerRef,
+  canvasKRef,
   hasActiveGuidelines = false,
   onDragStart,
   onDragMove,
@@ -2844,11 +2848,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     rotationRad: number;
   } | null>(null);
 
+  /** 畫布縮放倍率；沒傳就是 1（＝跟以前一模一樣） */
+  const canvasK = () => (canvasKRef?.current || 1);
+
   const getClientCenter = () => {
     if (!pagesContainerRef.current) return { x: 0, y: 0 };
     const containerRect = pagesContainerRef.current.getBoundingClientRect();
-    const cx = containerRect.left + image.x + (image.width * image.scale) / 2;
-    const cy = containerRect.top + image.y + (image.height * image.scale) / 2;
+    // 容器的 rect 是螢幕座標，物件的 x／y 是內容座標 —— 要先乘上倍率才對得起來
+    const k = canvasK();
+    const cx = containerRect.left + (image.x + (image.width * image.scale) / 2) * k;
+    const cy = containerRect.top + (image.y + (image.height * image.scale) / 2) * k;
     return { x: cx, y: cy };
   };
 
@@ -3209,8 +3218,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     }
     if (dragStart.current && dragStart.current.pointerId === e.pointerId) {
       e.stopPropagation();
-      const dx = e.clientX - dragStart.current.startX;
-      const dy = e.clientY - dragStart.current.startY;
+      // 手指走的是螢幕像素，物件的座標是內容單位：除以倍率，
+      // 手指移多少畫面上的物件就走多少（縮小時才不會覺得「拖起來很慢」）
+      const k = canvasK();
+      const dx = (e.clientX - dragStart.current.startX) / k;
+      const dy = (e.clientY - dragStart.current.startY) / k;
       const rawX = dragStart.current.imgX + dx;
       const rawY = dragStart.current.imgY + dy;
       if (onDragMove) {
@@ -3333,11 +3345,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const pivotX = currentCx + image.scale * (oppositeLocalX * Math.cos(R) - oppositeLocalY * Math.sin(R));
     const pivotY = currentCy + image.scale * (oppositeLocalX * Math.sin(R) + oppositeLocalY * Math.cos(R));
 
+    // pivot 是內容座標，要換算成螢幕座標才能跟 e.clientX 比
+    const kDown = canvasK();
     scaleStart.current = {
       pointerId: e.pointerId,
       corner,
-      pivotX: pivotX + containerRect.left,
-      pivotY: pivotY + containerRect.top,
+      pivotX: containerRect.left + pivotX * kDown,
+      pivotY: containerRect.top + pivotY * kDown,
       dragLocalX,
       dragLocalY,
       oppositeLocalX,
@@ -3368,8 +3382,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         rotationRad: R,
       } = scaleStart.current;
 
-      const v_px = e.clientX - pivotX;
-      const v_py = e.clientY - pivotY;
+      // 從 pivot 到手指的位移是螢幕像素，除回內容單位才能跟 L_local 相比
+      const kMove = canvasK();
+      const v_px = (e.clientX - pivotX) / kMove;
+      const v_py = (e.clientY - pivotY) / kMove;
 
       const dx_local = dragLocalX - oppositeLocalX;
       const dy_local = dragLocalY - oppositeLocalY;
@@ -3390,8 +3406,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const oppositeOffsetRotX = oppositeLocalX * Math.cos(R) - oppositeLocalY * Math.sin(R);
       const oppositeOffsetRotY = oppositeLocalX * Math.sin(R) + oppositeLocalY * Math.cos(R);
 
-      const pivotContainerX = pivotX - containerRect.left;
-      const pivotContainerY = pivotY - containerRect.top;
+      const pivotContainerX = (pivotX - containerRect.left) / kMove;
+      const pivotContainerY = (pivotY - containerRect.top) / kMove;
 
       const newCx = pivotContainerX - newScale * oppositeOffsetRotX;
       const newCy = pivotContainerY - newScale * oppositeOffsetRotY;
@@ -4162,11 +4178,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
     const containerRect = pagesContainerRef.current.getBoundingClientRect();
     const pageRect = activePageEl.getBoundingClientRect();
-    
-    const left = pageRect.left - containerRect.left;
-    const top = pageRect.top - containerRect.top;
-    const width = pageRect.width;
-    const height = pageRect.height;
+
+    /* getBoundingClientRect 量到的是「螢幕上的大小」，已經乘過畫布縮放倍率；
+       但圖片、文字的 x／y／寬高全都是「未縮放的內容座標」。
+       兩邊直接混在一起算，只要使用者縮放過畫布，對齊線就會落在錯的位置、
+       吸附也會吸到錯的地方 —— 所以這裡先除回內容座標。 */
+    const k = kRef.current || 1;
+    const left = (pageRect.left - containerRect.left) / k;
+    const top = (pageRect.top - containerRect.top) / k;
+    const width = pageRect.width / k;
+    const height = pageRect.height / k;
     
     return {
       left,
@@ -4185,7 +4206,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const getAllPageRects = () => {
     if (!pagesContainerRef.current) return [];
     const containerRect = pagesContainerRef.current.getBoundingClientRect();
-    
+    // 同 getPageRect：量到的是螢幕尺寸，要除回內容座標才能跟圖片的 x／y 比
+    const k = kRef.current || 1;
+
     return pages.map((page, pageIdx) => {
       const pageEl = document.getElementById(pageIdx === 0 ? "grid-preview-container" : `grid-preview-container-${pageIdx}`);
       if (!pageEl) {
@@ -4203,10 +4226,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         };
       }
       const pageRect = pageEl.getBoundingClientRect();
-      const left = pageRect.left - containerRect.left;
-      const top = pageRect.top - containerRect.top;
-      const width = pageRect.width;
-      const height = pageRect.height;
+      const left = (pageRect.left - containerRect.left) / k;
+      const top = (pageRect.top - containerRect.top) / k;
+      const width = pageRect.width / k;
+      const height = pageRect.height / k;
       return {
         left,
         top,
@@ -5537,17 +5560,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 正在雙指縮放畫布。有值的時候不准任何其他手勢介入 */
   /** 雙指縮放整個預覽：起手的兩指距離、起手倍率，以及「捏住的那個內容座標」與它在螢幕上的位置 */
   const canvasZoomRef = useRef<{ startDist: number; baseZoom: number; anchorC: number; anchorPx: number } | null>(null);
-  /* 【暫時的除錯浮層】只在雙指縮放的當下浮出來，手一放就消失。
-     用 ref 直接寫 textContent，不走 state —— 不然每一帧都重繪，
-     反而會干擾到要觀察的那件事。確認沒問題之後這一整段可以整個拿掉。 */
-  const zoomDbgRef = useRef<HTMLDivElement>(null);
-  const zoomDbg = (lines: string[] | null) => {
-    const el = zoomDbgRef.current;
-    if (!el) return;
-    if (!lines) { el.style.display = 'none'; return; }
-    el.style.display = 'block';
-    el.textContent = lines.join('\n');
-  };
   /* 手指已經開始把頁面拖著走了。
      第二根手指落下時 handleWorkspaceTouchStart 會重跑一次、把 panRef 清掉，
      所以光看 panRef 分不出「剛按下去」跟「拖到一半」——另外用這個旗標記著，
@@ -6159,8 +6171,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const { startX, startY, startOffsetX, startOffsetY, cellIdx } = pointerState.current;
     if (cellIdx === -1) return;
 
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
+    // 格子的寬高是內容單位（previewW／previewH），手指是螢幕像素 —— 先除回去
+    const kc = kRef.current || 1;
+    const dx = (e.clientX - startX) / kc;
+    const dy = (e.clientY - startY) / kc;
 
     const templates = TEMPLATE_MAP[images.length] || [];
     const activeTmpl = templates[templateIndex] || templates[0];
@@ -7514,7 +7528,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       );
       scaleLayoutSnapped(g.baseScale * (d / g.startDist), layoutGestureIdRef.current);
     } else if (g.mode === 'drag' && e.touches.length === 1) {
-      moveLayoutTo(g.baseX + (e.touches[0].clientX - g.startX), g.baseY + (e.touches[0].clientY - g.startY));
+      // 同上：螢幕位移要先換算回內容單位
+      const kd = kRef.current || 1;
+      moveLayoutTo(
+        g.baseX + (e.touches[0].clientX - g.startX) / kd,
+        g.baseY + (e.touches[0].clientY - g.startY) / kd,
+      );
     }
   };
 
@@ -7816,15 +7835,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
          連續捏兩次時，第二次一定要從第一次的結果接著算。 */
       canvasZoomRef.current = { startDist: d, baseZoom: k0, anchorC, anchorPx };
-      zoomDbg([
-        `容器寬 w=${w.toFixed(1)}`,
-        `倍率 ${k0.toFixed(3)} → ${k0.toFixed(3)}`,
-        `捏住的點 螢幕 ${anchorPx.toFixed(1)} ／ 內容 ${anchorC.toFixed(1)}`,
-        `留白 ${stripOffset(w, k0).toFixed(1)}`,
-        `算出 scrollLeft ${(cont ? cont.scrollLeft : 0).toFixed(1)}`,
-        `實際 scrollLeft ${(cont ? cont.scrollLeft : 0).toFixed(1)}`,
-        `差 0.0`,
-      ]);
       return;
     }
 
@@ -7857,7 +7867,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          剩下那根手指接著滑會變成「一邊縮放一邊捲頁」，正是要避免的情況。 */
       if (e.touches.length < 2) {
         canvasZoomRef.current = null;
-        zoomDbg(null);
         setUserZoom(userZoomRef.current);
         return;
       }
@@ -7875,18 +7884,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (cont && w > 0) {
         /* z 還等於 baseZoom 時算出來就是起手的 scrollLeft 本身，
            所以第一帧不會有任何位移 —— 純粹原地放大。 */
-        const want = Math.max(0, stripOffset(w, z) + cz.anchorC * z - cz.anchorPx);
-        cont.scrollLeft = want;
-        // 【暫時的除錯浮層】「算出」跟「實際」如果對不起來，就是瀏覽器把捲動位置夾住了
-        zoomDbg([
-          `容器寬 w=${w.toFixed(1)}`,
-          `倍率 ${cz.baseZoom.toFixed(3)} → ${z.toFixed(3)}`,
-          `捏住的點 螢幕 ${cz.anchorPx.toFixed(1)} ／ 內容 ${cz.anchorC.toFixed(1)}`,
-          `留白 ${stripOffset(w, z).toFixed(1)}`,
-          `算出 scrollLeft ${want.toFixed(1)}`,
-          `實際 scrollLeft ${cont.scrollLeft.toFixed(1)}`,
-          `差 ${(cont.scrollLeft - want).toFixed(1)}`,
-        ]);
+        cont.scrollLeft = Math.max(0, stripOffset(w, z) + cz.anchorC * z - cz.anchorPx);
       }
       positionPageCtls();
       return;
@@ -8011,8 +8009,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           applyCellZoom(g.cellIdx, Math.max(1.0, Math.min(5.0, g.baseZoom * k)));
         }
       } else if (g.mode === 'drag' && e.touches.length === 1) {
-        const dx = e.touches[0].clientX - g.startX;
-        const dy = e.touches[0].clientY - g.startY;
+        // 手指是螢幕像素、物件座標是內容單位：除以畫布倍率，
+        // 縮小預覽時拖東西才不會變得又慢又不跟手
+        const kd = kRef.current || 1;
+        const dx = (e.touches[0].clientX - g.startX) / kd;
+        const dy = (e.touches[0].clientY - g.startY) / kd;
         if (g.kind === 'floating') {
           const selectedImg = floatingImages.find(img => img.id === g.floatingId);
           if (selectedImg) {
@@ -8069,7 +8070,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (canvasZoomRef.current) {
       canvasZoomRef.current = null;
       panRef.current = null;
-      zoomDbg(null);
       setUserZoom(userZoomRef.current);
       return;
     }
@@ -9665,13 +9665,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             }
           }}
         >
-          {/* 【暫時的除錯浮層】只在雙指縮放的當下顯示，手一放就藏起來。
-              內容由 zoomDbg() 直接寫，不參與 React 重繪。確認完可整段刪除。 */}
-          <div
-            ref={zoomDbgRef}
-            className="fixed left-2 top-16 z-[9999] pointer-events-none rounded-md bg-black/75 px-2 py-1.5 font-mono text-[10px] leading-[1.45] text-[#7CFF9E] whitespace-pre"
-            style={{ display: 'none' }}
-          />
           {(() => {
             return (
               <div
@@ -10440,6 +10433,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           if (selectedFloatingId === fImg.id) setSelectedFloatingId(null);
                         }}
                         pagesContainerRef={pagesContainerRef}
+                        canvasKRef={kRef}
                         onDragStart={() => {}}
                         onDragMove={(rawX, rawY) => {
                           const { snappedX, snappedY, fitScale, guidelines } = applySnapping(
