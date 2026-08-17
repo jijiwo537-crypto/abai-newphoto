@@ -9678,7 +9678,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         <React.Fragment key={page.id}>
                           {pageIdx > 0 && (
                             <div
-                              className="w-[1px] bg-black/15 flex-shrink-0 self-stretch pointer-events-none"
+                              className="w-[1px] flex-shrink-0 self-stretch pointer-events-none"
                               /*
                                 排頁面時的分隔線：粗細跟著整排一起等比例縮小
                                 （不另外補回來），顏色則直接取一般模式那條線的顏色
@@ -9688,11 +9688,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 另外疊在頁面上面，不然右邊那一頁會把它蓋掉半條。
                               */
                               style={{
-                                ...((pagesMode || pagesVisual) ? {
-                                  backgroundColor: (pageDragIdx !== null || dragSettle)
-                                    ? 'transparent'
-                                    : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
-                                } : null),
+                                /* 一律用不透明的顏色（工作區底色再壓深 15%）。
+                                   原本一般模式走 class 的 bg-black/15 是半透明的，
+                                   相鄰兩頁各自做次像素抗鋸齒，底下透出來多少要看
+                                   那條縫落在像素格的哪，每條深淺就會不一樣；
+                                   照片疊上來時也會透出照片的顏色。
+                                   排頁面拖曳中仍然要隱形，那是原本就有的行為。 */
+                                backgroundColor: (pageDragIdx !== null || dragSettle)
+                                  ? 'transparent'
+                                  : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
                                 /* 分割線疊在所有物件之上：照片拖到跨頁的位置時
                                    不會把這條線蓋掉，兩頁的界線永遠看得見。
                                    佈局是 59+、一般圖片是 60+，所以取 200
