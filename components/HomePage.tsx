@@ -171,14 +171,6 @@ export const HomePage: React.FC<HomePageProps> = ({
   recent = [], onOpenRecent,
 }) => {
   const [nav, setNav] = useState<string>('home');
-  /* 「我的」那一頁是常駐在畫面外的（用平移進場），所以它會把上次看到哪裡
-     原封不動留著。每次切進來都從最上面看起，跟其他頁一致。 */
-  const meScrollRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (nav !== 'me') return;
-    const el = meScrollRef.current;
-    if (el) el.scrollTop = 0;
-  }, [nav]);
   const [libQuery, setLibQuery] = useState('');
   const [contactOpen, setContactOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -944,7 +936,6 @@ export const HomePage: React.FC<HomePageProps> = ({
             transition: 'transform 560ms cubic-bezier(0.22,1,0.36,1)',
             willChange: 'transform',
           }}
-          ref={meScrollRef}
           className={`no-scrollbar absolute inset-0 z-[6] overflow-y-auto px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+62px)] box-border bg-black ${nav === 'me' ? '' : 'pointer-events-none'}`}
         >
           {/* 登入入口。

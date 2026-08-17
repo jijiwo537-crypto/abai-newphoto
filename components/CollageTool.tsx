@@ -33,6 +33,7 @@ import {
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
+import { patternGlyph } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
 import { IgPreview } from './IgPreview';
@@ -171,45 +172,6 @@ const objKeyOf = (list: any[]) =>
  */
 export const shapePathBox = (kind: string, w: number, h: number) =>
   new Path2D(shapePathD(kind, w, h));
-
-/**
- * 一顆紋理圖案。遮罩的紋理有三種：點點、星星、愛心 —— 大小、間距、顏色、
- * 交錯三角網格全部共用同一套邏輯，差別只有這裡畫出來的形狀。
- *
- * 三種都以 (cx, cy) 為中心、r 為外接半徑，所以呼叫端原本用來判斷
- * 「這一顆有沒有超出邊界」的那幾行（px ± r、py ± r）完全不用改。
- */
-const patternGlyph = (
-  c: CanvasRenderingContext2D,
-  kind: string,
-  cx: number, cy: number, r: number,
-) => {
-  c.beginPath();
-  if (kind === 'star') {
-    /* 正五角星：外角在 r、內角在 0.42r，第一個角朝正上方。
-       外接半徑就是 r，跟圓一樣，所以邊界判斷不用另外算。 */
-    for (let k = 0; k < 10; k++) {
-      const rad = k % 2 === 0 ? r * 1.38 : r * 1.38 * 0.45;
-      const a = -Math.PI / 2 + (k * Math.PI) / 5;
-      const x = cx + Math.cos(a) * rad;
-      const y = cy + Math.sin(a) * rad;
-      if (k === 0) c.moveTo(x, y); else c.lineTo(x, y);
-    }
-    c.closePath();
-  } else if (kind === 'heart') {
-    /* 愛心：從下面的尖端出發，左右各一條三次貝茲畫出兩個圓弧，
-       在正上方收成中間那個凹口。s 取 0.9r 是為了讓它看起來的份量
-       跟同樣 r 的圓差不多（心形比圓「胖」），同時仍然收在 r 以內。 */
-    const s = r * 1.22;
-    c.moveTo(cx, cy + s * 0.85);
-    c.bezierCurveTo(cx - s * 1.5, cy - s * 0.2, cx - s * 0.55, cy - s * 1.15, cx, cy - s * 0.4);
-    c.bezierCurveTo(cx + s * 0.55, cy - s * 1.15, cx + s * 1.5, cy - s * 0.2, cx, cy + s * 0.85);
-    c.closePath();
-  } else {
-    c.arc(cx, cy, r, 0, Math.PI * 2);
-  }
-  c.fill();
-};
 
 /**
  * 圖形上的「點點」。跟遮罩那邊完全同一套（同樣的 5~20 大小、40~140 間距、
@@ -1484,15 +1446,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       scrollContainerRef.current.scrollTop = 0;
     }
   }, [patternType]);
-
-  /* 換一個分頁就從那一頁的最上面看起。
-     這一顆捲動容器是所有分頁共用的，不換分頁時它會把上一頁停在哪裡原封不動
-     留著 —— 於是點進「設定」可能一進去就是中間某一段。
-     只在「分頁真的換了」時歸零，同一頁裡的捲動位置照舊不受影響。 */
-  useEffect(() => {
-    const el = scrollContainerRef.current;
-    if (el) el.scrollTop = 0;
-  }, [activeTab]);
 
   // 選中「自訂文字」時，自動把下方的輸入框捲進視野，並在底下留一點空隙
   useEffect(() => {
