@@ -4716,13 +4716,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
     const prev = prevPagesScaleRef.current;
     prevPagesScaleRef.current = pagesScale;
     if (Math.abs(kRef.current - pagesScale) < 0.0001) return;
-    // 動畫開始時停在正中間的那一頁，整段縮放都繞著它 —— 捲動位置也由 k 算，
-    // 縮放與位移同一帧，看起來就是整排「以那一頁為中心」平順地縮小／放大
+    /* 縮放動畫也要「原地放大」：記下動畫開始時畫面正中央對到的那個
+       內容座標（未縮放單位），整段動畫都把它擺回正中央。
+       以前是記「最接近中央的那一頁」再把那一頁擺正中間 —— 只要中心不是
+       剛好在某頁正中央就會被拉過去，那就是「一開始就跳」。
+       跟即時捏合那條路用同一套算法，兩條路才不會互相打架。 */
     const el = containerRef.current;
     if (el && containerSize.width > 0) {
-      const i = Math.round((el.scrollLeft + containerSize.width / 2 - stripOffset(containerSize.width, prev))
-        / Math.max(1, prev * (previewW + 1)) - 0.5);
-      kAnchorRef.current = Math.max(0, Math.min(pagesCountRef.current - 1, i));
+      kAnchorRef.current =
+        (el.scrollLeft + containerSize.width / 2 - stripOffset(containerSize.width, prev)) / (prev || 1);
     } else {
       kAnchorRef.current = 0;
     }
@@ -4799,7 +4801,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
           // 同樣用 ref 版的頁寬（這個迴圈不跟著每次 render 重掛）
           const pw = previewWRef.current;
           const m = Math.max(16, (w - pw * k) / 2);
-          cont.scrollLeft = Math.max(0, m + k * (kAnchorRef.current * (pw + 1) + pw / 2) - w / 2);
+          // kAnchorRef 現在存的是「內容座標」，直接乘上當下倍率即可
+          cont.scrollLeft = Math.max(0, m + kAnchorRef.current * k - w / 2);
         }
       }
       // 外層（貼在頁框正下方）由這裡每一帧定位 —— 頁框在排頁面時是不動的，
