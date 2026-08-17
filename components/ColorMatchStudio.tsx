@@ -392,8 +392,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
           只有編輯器掛著的時候才存在，所以這裡要自己帶一份。 */}
       <style>{`
         .custom-range {
-          -webkit-appearance: none; width: calc(100% + 64px); height: 60px;
-          background: rgba(0,0,0,0); outline: none; margin: -10px -32px; padding: 0;
+          -webkit-appearance: none; width: calc(100% + 64px); height: 80px;
+          background: rgba(0,0,0,0); outline: none; margin: -20px -32px; padding: 0;
           touch-action: none; -webkit-tap-highlight-color: rgba(0,0,0,0);
         }
         .custom-range:focus { outline: none; }

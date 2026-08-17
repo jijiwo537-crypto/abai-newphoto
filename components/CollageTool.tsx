@@ -1380,6 +1380,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  /* 進到顏色調整頁時捲回最上面 —— 不然會沿用剛剛那一頁捲到哪就停在哪 */
+  useLayoutEffect(() => {
+    if (colorPickerTarget && scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+  }, [colorPickerTarget]);
   const textInputWrapRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const maskFileInputRef = useRef<HTMLInputElement>(null);
@@ -1786,7 +1790,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       newHoles.push({
         id: Math.random().toString(36).substr(2, 9), x: hx, y: hy,
         randomFactor: Math.random() * 2 - 1, randomNumber: Math.floor(Math.random() * 10),
-        side: around ? 'mask' : (symmetryEnabled ? 'both' : 'image'),
+        /* 對稱關閉時不再全部堆在圖片上 —— 兩邊隨機各半，遮罩上也會有圖案 */
+        side: around ? 'mask' : (symmetryEnabled ? 'both' : (Math.random() < 0.5 ? 'image' : 'mask')),
       });
     }
     setHoles(newHoles);
@@ -1810,21 +1815,29 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             decoupled.push({ ...h, id: h.id + '_msk', side: 'mask' });
           } else decoupled.push(h);
         });
-        if (sameHoles(decoupled, holesRef.current)) return next;
+        /* 一定要寫回去。以前這裡拿 sameHoles 擋著 —— 但它比的是「畫出來
+           長什麼樣」，而拆開前後畫面本來就一樣，所以永遠成立、狀態從來
+           沒被換掉，兩顆還是黏在同一筆資料上（那正是「關掉對稱還是會一起動」）。
+           畫面沒變的時候只是不佔一格上一步，資料照換。 */
+        const before = holesRef.current;
+        holesRef.current = decoupled;
         setHoles(decoupled);
-        setTimeout(() => pushHistory(decoupled), 0);
+        if (!sameHoles(decoupled, before)) setTimeout(() => pushHistory(decoupled), 0);
       } else {
         const combined: any[] = [];
         const seenBaseIds = new Set<string>();
-        holesRef.current.forEach(h => {
+        const before = holesRef.current;
+        before.forEach(h => {
+          const side = h.side || 'both';
+          if (side === 'mask') return;                   // 只在遮罩上、沒有對稱夥伴的：刪掉
           const baseId = h.id.replace(/_img$|_msk$/, '');
           if (seenBaseIds.has(baseId)) return;
           combined.push({ ...h, id: baseId, side: 'both' });
           seenBaseIds.add(baseId);
         });
-        if (sameHoles(combined, holesRef.current)) return next;
+        holesRef.current = combined;
         setHoles(combined);
-        setTimeout(() => pushHistory(combined), 0);
+        if (!sameHoles(combined, before)) setTimeout(() => pushHistory(combined), 0);
       }
       return next;
     });
@@ -2740,6 +2753,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!ctx) return;
 
     const s = renderScale;
+    /* 1 個 CSS 像素等於幾個畫布像素。
+       選取的虛線一律用它換算 —— 畫布是「預覽放多大就多畫多少像素」，
+       線寬若照畫布像素寫死，放大預覽時看起來就會跟著變粗。 */
+    const uiRect = targetCanvas.getBoundingClientRect();
+    const uiPx = uiRect.width > 0 ? targetCanvas.width / uiRect.width : 1;
     const sw = baseW * s;
     const sh = baseH * s;
     const sgs = gs * s;
@@ -3881,8 +3899,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (isMain && selectedObj === o.id && !guides.length && !tuningEdge) {
         // 選中框維持虛線（跟挖洞那邊同一種語言）
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2 * sgs * s;
-        ctx.setLineDash([8 * sgs * s, 8 * sgs * s]);
+        ctx.lineWidth = 1.6 * uiPx;
+        ctx.setLineDash([6.7 * uiPx, 6.7 * uiPx]);
         ctx.strokeRect(-o.w * s / 2, -o.h * s / 2, o.w * s, o.h * s);
         ctx.setLineDash([]);
       }
@@ -4163,8 +4181,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
         ctx.save(); 
         ctx.strokeStyle = '#FFFFFF'; 
-        ctx.lineWidth = 4 * sgs; 
-        ctx.setLineDash([10 * sgs, 10 * sgs]);
+        // 固定 1.9 CSS px：放大預覽時不會跟著變粗
+        ctx.lineWidth = 1.9 * uiPx; 
+        ctx.setLineDash([4.8 * uiPx, 4.8 * uiPx]);
 
         // 左側選取框 (帶旋轉, 只有在 image 側時顯示)
         if (hSide === 'both' || hSide === 'image') {
@@ -5004,16 +5023,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         .custom-range {
           -webkit-appearance: none;
           width: calc(100% + 64px);
-          height: 60px;
+          height: 80px;
           background: rgba(0,0,0,0);
           outline: none;
-          margin: -10px -32px;
+          margin: -20px -32px;
           padding: 0;
           touch-action: none;
           -webkit-tap-highlight-color: rgba(0,0,0,0);
         }
         .custom-range:focus { outline: none; }
-        .custom-range.dense { height: 39px; width: 100%; margin: -6.5px 0; }
+        .custom-range.dense { height: 52px; width: 100%; margin: -13px 0; }
         .custom-range.dense::-webkit-slider-runnable-track {
           background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
         }
@@ -5051,13 +5070,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         /* 跟 styles.css 那一份保持一致：軌道 6px、圓角到底（比較寬的那種） */
         /* 高度 24px、上下各 -4px 外距：看起來還是 16px 高（版面完全沒變），
            但真正吃得到手指的範圍變成 1.5 倍。下面每一種滑桿都用同一招。 */
-        .premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: -4px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -16px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
         .premium-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
         .premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
         .premium-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
         .premium-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
-        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: -4px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -16px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
         .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
         .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; margin-top: -7px; cursor: pointer; }
         .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
@@ -5067,11 +5086,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         /* 顏色滑桿：軌道改回原本的 6px（漸層畫在軌道上，不是畫在整個元件上），
            圓點換成跟其他滑桿一樣的小白球（14px），
            元件本身撐到 24px、上下各 -9px 外距 —— 版面高度維持 6px，觸控範圍變大。 */
-        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: -9px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -21px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
         .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -4px; cursor: pointer; }
+        .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
         .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+        .designer-color-slider::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
       `}</style>
 
       {/* 匯出影片的進度。用同一條算圖管線一格一格畫，所以會花一點時間。 */}

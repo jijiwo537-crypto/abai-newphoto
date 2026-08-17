@@ -816,8 +816,19 @@ export const ColorPickerPage: React.FC<{
   colors?: string[];
   onPick: (c: string) => void;
   onBack: () => void;
-}> = ({ value, colors, onPick, onBack }) => (
-  <div className="animate-in fade-in duration-200 pt-1 pb-24">
+}> = ({ value, colors, onPick, onBack }) => {
+  /* 進來時把外面那個捲動容器捲回最上面 ——
+     不然會沿用上一頁捲到哪就停在哪，一進顏色頁看到的是中間某一段。 */
+  const rootRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    let el = rootRef.current?.parentElement as HTMLElement | null;
+    while (el) {
+      if (el.scrollHeight > el.clientHeight + 1) { el.scrollTop = 0; break; }
+      el = el.parentElement;
+    }
+  }, []);
+  return (
+  <div ref={rootRef} className="animate-in fade-in duration-200 pt-1 pb-24">
     <div className="h-[38px] flex items-center gap-1">
       <button
         onClick={onBack}
@@ -840,7 +851,8 @@ export const ColorPickerPage: React.FC<{
       <ColorPickerEmbedded color={value || '#FFFFFF'} onChange={onPick} onClose={onBack} />
     </div>
   </div>
-);
+  );
+};
 
 /* ── 新增圖形 ────────────────────────────────────────────────────────────
    圖形圖層跟照片、文字一樣都是 floatingImages 裡的一員（位置、縮放、旋轉、
@@ -4999,6 +5011,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /* 顏色分頁的子頁面：'bg' 是原本的底色挑色器，'pattern' 是點了紋理旁邊那顆
      色塊之後進去的紋理專屬調色頁（跟創意拼圖同一套操作）。 */
   const [colorSub, setColorSub] = useState<'bg' | 'pattern'>('bg');
+  /** 顏色分頁的捲動容器：換子頁時要捲回最上面 */
+  const colorTabRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { if (colorTabRef.current) colorTabRef.current.scrollTop = 0; }, [colorSub]);
   const [patternSize, setPatternSize] = useState(50);
   const [patternGap, setPatternGap] = useState(20);
   const patternOpts: PatternOpts = { type: patternType, color: patternColor, size: patternSize, gap: patternGap };
@@ -9417,20 +9432,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         /* 顏色滑桿：軌道改回原本的 6px（漸層畫在軌道上，不是畫在整個元件上），
            圓點換成跟其他滑桿一樣的小白球（14px），
            元件本身撐到 24px、上下各 -9px 外距 —— 版面高度維持 6px，觸控範圍變大。 */
-        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: -9px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -21px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
         .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -4px; cursor: pointer; }
+        .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
         .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+        .designer-color-slider::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         /* 圖片編輯那一頁的滑桿：跟「編輯」用同一組樣式，連軌道與圓點都一樣 */
         .custom-range {
           -webkit-appearance: none;
           width: calc(100% + 64px);
-          height: 60px;
+          height: 80px;
           background: rgba(0,0,0,0);
           outline: none;
-          margin: -10px -32px;
+          margin: -20px -32px;
           padding: 0;
           touch-action: none;
           -webkit-tap-highlight-color: rgba(0,0,0,0);
@@ -9438,7 +9453,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         .custom-range:focus { outline: none; }
         /* 特效細項的並排滑桿：跟「編輯」同一份。盒子收到 18px（剛好包住 15px 的圓點），
            軌道也只畫 9px..寬-9px，圓點才走得到頭尾（並排的滑桿不能像一般滑桿那樣往外擴）。 */
-        .custom-range.dense { height: 39px; width: 100%; margin: -6.5px 0; }
+        .custom-range.dense { height: 52px; width: 100%; margin: -13px 0; }
         .custom-range.dense::-webkit-slider-runnable-track {
           background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
         }
@@ -9468,7 +9483,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           box-shadow: none;
         }
         /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
-        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: -4px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 48px; margin: -16px 0; background: transparent; outline: none; touch-action: none; cursor: pointer; }
         .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
         .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; margin-top: -7px; cursor: pointer; }
         .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
@@ -11509,7 +11524,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             {activeTab === 'color' && colorSub === 'pattern' && (
               /* 紋理專屬的調色頁：從紋理那一排的色塊點進來，跟創意拼圖一樣。
                  挑色器本身用的是跟底色完全同一顆元件。 */
-              <div className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto no-scrollbar">
+              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto no-scrollbar">
                 <div className="h-[38px] flex items-center gap-1 px-0.5">
                   <button
                     onClick={() => setColorSub('bg')}
@@ -11539,7 +11554,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               /* 上面是原本的底色挑色器（一個字沒動），下面緊接著背景紋理。
                  這一頁比原本高，所以自己捲 —— 外層那一格的 overflow 名單
                  是所有分頁共用的，完全沒動，別的分頁不受影響。 */
-              <div className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-y-auto no-scrollbar">
+              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-y-auto no-scrollbar">
                 {/* 外面包一層高度 auto 的盒子：ColorPickerEmbedded 的根是 h-full，
                      直接放在這個「有固定高度」的捲動格裡會整個撐滿，把下面的紋理
                      推到很遠。包一層之後 100% 會解析成 auto，它就只佔自己需要的高度。 */}

@@ -6462,7 +6462,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
            2) 軌道的漸層本來左右各留 32px 透明（用來蓋掉外擴的那一段），
               沒有外擴就不能留，不然 147px 的滑桿只剩 83px 看得到軌道
            3) 拇指外框從 64px 收到 40px，26px 高的滑桿才裝得下 */
-        .custom-range.dense { height: 39px; width: 100%; margin: -6.5px 0; }
+        .custom-range.dense { height: 52px; width: 100%; margin: -13px 0; }
         /* 拇指的「盒子」有多寬，圓點就走不到兩端多少 —— 瀏覽器讓拇指中心只能在
            盒寬/2 到 寬-盒寬/2 之間移動。一般滑桿是靠向外多長 32px（＝盒寬一半）
            把這件事藏起來的，並排的滑桿不能外擴，所以改成兩邊同時處理：
@@ -6480,10 +6480,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         .custom-range { 
           -webkit-appearance: none; 
           width: calc(100% + 64px); 
-          height: 60px; 
+          height: 80px; 
           background: rgba(0,0,0,0); 
           outline: none; 
-          margin: -10px -32px; 
+          margin: -20px -32px; 
           padding: 0;
           touch-action: none;
           -webkit-tap-highlight-color: rgba(0,0,0,0);
