@@ -33,7 +33,6 @@ import {
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
-import { patternGlyph } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
 import { IgPreview } from './IgPreview';
@@ -2395,7 +2394,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (!imageState) return 1;
     // 沒有紋理時暫存畫布只有兩張（底色、挖完洞的）
     const one = previewPixelsAt(layout, imageState.baseW, imageState.baseH, maskScale, 1,
-      patternType !== 'none' ? 3 : 2);
+      patternType === 'dot' ? 3 : 2);
     return Math.max(1, Math.sqrt(MAX_PREVIEW_PIXELS / Math.max(1, one)));
   }, [imageState, layout, maskScale, patternType]);
   /* 「這張拼圖畫到多細就夠了」——照它在螢幕上實際佔幾個裝置像素反推。
@@ -2444,7 +2443,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       /* 播動畫時另外壓一個上限：一秒烤 30 次，照靜態那個倍率跑會把
          手機的畫布記憶體吃光。正常倍率下這一行不會生效。 */
       const one = previewPixelsAt(layout, imageState.baseW, imageState.baseH, maskScale, 1,
-        patternType !== 'none' ? 3 : 2);
+        patternType === 'dot' ? 3 : 2);
       /* 播動畫時用的倍率＝靜態時的倍率，一模一樣 ——
          畫質不因為「正在播」而有任何降級。跟不上的時候改成降格數（見播放迴圈），
          不是降解析度。 */
@@ -2784,7 +2783,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        那就是滑桿一幀一幀的原因。
        純色用 8×8 的小塊平鋪出來完全一樣（pattern 是 repeat），
        遮罩層那邊也改成直接 fillRect，畫出來的每個像素都不變。 */
-    const plainMask = !(maskImageState && maskImageState.img) && patternType === 'none';
+    const plainMask = !(maskImageState && maskImageState.img) && patternType !== 'dot';
     const bCanvas = isMain ? baseMaskCanvasRef.current : document.createElement('canvas');
     /* 遮罩底稿（底色＋遮罩圖＋點點）只跟這幾個參數有關，圖案與動畫都不會動到它。
        播動畫時一秒要走 30 次，每次都重填兩張全尺寸畫布是純粹的浪費 ——
@@ -2819,7 +2818,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     /* 沒有點點紋理的時候，「含紋理的遮罩」就等於「底色遮罩」本身 ——
        不必再開一張同樣大的畫布。一張全尺寸畫布動輒幾十 MB，
        省下來的預算直接換成更高的預覽解析度（圖案的鋸齒就是這樣來的）。 */
-    const needPattern = patternType !== 'none';
+    const needPattern = patternType === 'dot';
     const fCanvas = !needPattern ? bCanvas
       : (isMain ? fullMaskCanvasRef.current : document.createElement('canvas'));
     if (needPattern && !maskHit) {
@@ -2828,7 +2827,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const fCtx = get2dWide(fCanvas)!;
     if (needPattern && !maskHit) fCtx.drawImage(bCanvas, 0, 0);
 
-    if (patternType !== 'none' && !maskHit) {
+    if (patternType === 'dot' && !maskHit) {
       fCtx.fillStyle = dotColor; 
       // 根據 UI 值 (0~100) 映射到實際大小 (5~20) 與實際間距 (40~140)
       const actualDotSize = (5 + (dotSize / 100) * 15) * sgs;
@@ -2859,7 +2858,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             py - r >= pad &&
             py + r <= maskH - pad
           ) {
-            patternGlyph(fCtx, patternType, px, py, r);
+            fCtx.beginPath();
+            fCtx.arc(px, py, r, 0, Math.PI * 2);
+            fCtx.fill();
           }
         }
       }
@@ -5915,12 +5916,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
                   <span className="text-[10px] font-bold text-[#888]">紋理</span>
                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                    {([['none', '無'], ['dot', '點點'], ['star', '星星'], ['heart', '愛心']] as const).map(([t, label]) => (
-                      <button key={t} onClick={() => setPatternType(t)} className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
+                    {['none', 'dot'].map(t => (
+                      <button key={t} onClick={() => setPatternType(t)} className={`px-4 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{t === 'none' ? '無' : '點點'}</button>
                     ))}
                   </div>
                 </div>
-                {patternType !== 'none' && (
+                {patternType === 'dot' && (
                   <div className="bg-[#0f0f0f] border border-[#1a1a1a] rounded-[8px] p-4 space-y-3 animate-in fade-in zoom-in-95 duration-300">
                     <div className="grid grid-cols-2 gap-4">
                       <CompactSlider label="大小" value={dotSize} min={0} max={100} onChange={setDotSize} />
