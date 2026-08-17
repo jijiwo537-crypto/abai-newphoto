@@ -186,10 +186,10 @@ const patternGlyph = (
 ) => {
   c.beginPath();
   if (kind === 'star') {
-    /* 正五角星：外角在 r、內角在 0.42r，第一個角朝正上方。
-       外接半徑就是 r，跟圓一樣，所以邊界判斷不用另外算。 */
+    /* 正五角星。外角放大到 1.38r：星星的面積只有同半徑圓的三分之一左右，
+       用一樣的 r 畫看起來會比點點小很多，放大之後份量才接近。 */
     for (let k = 0; k < 10; k++) {
-      const rad = k % 2 === 0 ? r : r * 0.42;
+      const rad = k % 2 === 0 ? r * 1.38 : r * 1.38 * 0.45;
       const a = -Math.PI / 2 + (k * Math.PI) / 5;
       const x = cx + Math.cos(a) * rad;
       const y = cy + Math.sin(a) * rad;
@@ -198,9 +198,9 @@ const patternGlyph = (
     c.closePath();
   } else if (kind === 'heart') {
     /* 愛心：從下面的尖端出發，左右各一條三次貝茲畫出兩個圓弧，
-       在正上方收成中間那個凹口。s 取 0.9r 是為了讓它看起來的份量
-       跟同樣 r 的圓差不多（心形比圓「胖」），同時仍然收在 r 以內。 */
-    const s = r * 0.9;
+       在正上方收成中間那個凹口。s 取 1.22r —— 原本的 0.9r 看起來
+       比點點小一截，放大之後份量才接近。 */
+    const s = r * 1.22;
     c.moveTo(cx, cy + s * 0.85);
     c.bezierCurveTo(cx - s * 1.5, cy - s * 0.2, cx - s * 0.55, cy - s * 1.15, cx, cy - s * 0.4);
     c.bezierCurveTo(cx + s * 0.55, cy - s * 1.15, cx + s * 1.5, cy - s * 0.2, cx, cy + s * 0.85);
