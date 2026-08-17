@@ -9687,15 +9687,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 看那條縫落在像素格的哪，每條深淺就會不一樣。
                                 另外疊在頁面上面，不然右邊那一頁會把它蓋掉半條。
                               */
-                              style={(pagesMode || pagesVisual) ? {
-                                backgroundColor: (pageDragIdx !== null || dragSettle)
-                                  ? 'transparent'
-                                  : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                              style={{
+                                ...((pagesMode || pagesVisual) ? {
+                                  backgroundColor: (pageDragIdx !== null || dragSettle)
+                                    ? 'transparent'
+                                    : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                                } : null),
+                                /* 分割線疊在所有物件之上：照片拖到跨頁的位置時
+                                   不會把這條線蓋掉，兩頁的界線永遠看得見。
+                                   佈局是 59+、一般圖片是 60+，所以取 200
+                                   （仍低於拖曳浮起的 900 與各種浮層）。
+                                   這一段只存在於「一般預覽」——匯出是另外畫在
+                                   canvas 上的、IG 預覽也是另一支元件，
+                                   兩邊都不會受這裡影響。 */
                                 position: 'relative',
-                                // 只要比「頁面本身」高就夠了（頁面沒設 z-index），
-                                // 佈局是 59+、一般圖片是 60+，分割線一律在物件下面
-                                zIndex: 1,
-                              } : undefined}
+                                zIndex: 200,
+                              }}
                             />
                           )}
 
