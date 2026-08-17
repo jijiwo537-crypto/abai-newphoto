@@ -311,12 +311,11 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
       <span className="text-[11px] font-bold text-white/70">{label}</span>
       <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value}</span>
     </div>
-    {/* 跟文字頁那一種同款：軌道 6px、圓點是瀏覽器原生的（accent 白），
-        不是自己畫的小白點 —— 兩頁看起來才是同一套滑桿。 */}
+    {/* 全 App 的滑桿軌道統一成同一種細度（跟「編輯」的濾鏡滑桿一樣） */}
     <input
       type="range" min={min} max={max} step={1} value={value}
       onChange={e => onVal(Number(e.target.value))}
-      className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+      className="premium-slider w-full"
       style={{ touchAction: 'none' }}
     />
   </div>
@@ -5050,10 +5049,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           background: #fff; border: none; cursor: pointer;
         }
         /* 跟 styles.css 那一份保持一致：軌道 6px、圓角到底（比較寬的那種） */
-        .premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; background: rgba(255,255,255,0.10); border-radius: 999px; outline: none; touch-action: none; cursor: pointer; }
-        .premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; cursor: pointer; }
+        .premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .premium-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
+        .premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
+        .premium-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
+        .premium-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+        /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
+        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
+        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; margin-top: -7px; cursor: pointer; }
+        .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
+        .slim-slider::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+
         /* 圓球跟經典拼圖的顏色滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
-        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
+        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 2px; border-radius: 2px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; margin: 7px 0; }
       `}</style>
 
       {/* 匯出影片的進度。用同一條算圖管線一格一格畫，所以會花一點時間。 */}
@@ -5923,18 +5932,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           <button key={t} onClick={() => setPatternType(t)} className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>{label}</button>
                         ))}
                       </div>
-                      {patternType !== 'none' && (
-                        <button
-                          onClick={() => setColorPickerTarget('dot')}
-                          title="紋理顏色"
-                          className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                          style={{ backgroundColor: dotColor }}
-                        />
-                      )}
+                      {/* 顏色格常駐：關閉時也看得到，切換時這一列的寬度不變、不會閃 */}
+                      <button
+                        onClick={() => setColorPickerTarget('dot')}
+                        title="紋理顏色"
+                        className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                        style={{ backgroundColor: dotColor }}
+                      />
                     </div>
                   </div>
                   {patternType !== 'none' && (
-                    <div className="grid grid-cols-2 gap-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] animate-in fade-in duration-200">
+                    <div className="grid grid-cols-2 gap-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                       <CompactSlider wide label="大小" value={dotSize} min={0} max={100} onChange={setDotSize} />
                       <CompactSlider wide label="間距" value={dotGap} min={0} max={100} onChange={setDotGap} />
                     </div>
@@ -6600,15 +6608,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           </button>
                         ))}
                       </div>
-                      {linkSupported && linkMode !== 'none' && (
-                        <button
-                          onClick={() => setColorPickerTarget('linkColor')}
-                          title="連線顏色"
-                          className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                          /* 還沒挑過顏色時就顯示遮罩色 —— 線在圖片上本來就是那個顏色 */
-                          style={{ backgroundColor: linkColor || maskColor }}
-                        />
-                      )}
+                      {/* 顏色格常駐（關閉時也在）：可以先挑好顏色再打開，
+                          而且切換時整列的寬度不會變，就不會閃一下 */}
+                      <button
+                        onClick={() => setColorPickerTarget('linkColor')}
+                        title="連線顏色"
+                        className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                        /* 還沒挑過顏色時就顯示遮罩色 —— 線在圖片上本來就是那個顏色 */
+                        style={{ backgroundColor: linkColor || maskColor }}
+                      />
                     </div>
                   </div>
 
@@ -6630,14 +6638,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           </button>
                         ))}
                       </div>
-                      {glowMode !== 'off' && (
-                        <button
-                          onClick={() => setColorPickerTarget('holeGlow')}
-                          title="發光顏色"
-                          className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                          style={{ backgroundColor: holeGlowColor }}
-                        />
-                      )}
+                      <button
+                        onClick={() => setColorPickerTarget('holeGlow')}
+                        title="發光顏色"
+                        className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                        style={{ backgroundColor: holeGlowColor }}
+                      />
                     </div>
                   </div>
                 </div>}
@@ -6724,7 +6730,7 @@ const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimal
       onPointerUp={done}
       onTouchEnd={done}
       onKeyUp={done}
-      className={wide ? 'custom-range dense w-full' : 'premium-slider'} onPointerDown={e => e.stopPropagation()} />
+      className={wide ? 'slim-slider w-full' : 'premium-slider'} onPointerDown={e => e.stopPropagation()} />
   </div>
   );
 };

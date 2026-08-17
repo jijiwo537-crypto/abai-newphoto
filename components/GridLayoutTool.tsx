@@ -833,19 +833,11 @@ export const ColorPickerPage: React.FC<{
         <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
       </div>
     </div>
-    <div className="flex flex-wrap gap-2 pt-2">
-      <CustomColorButton value={value || '#FFFFFF'} onPick={onPick} size={32} />
-      {(colors || SOFT_COLORS).map(c => (
-        <button
-          key={c}
-          onClick={() => onPick(c)}
-          title={c}
-          className={`shrink-0 w-8 h-8 rounded-[7px] transition-all active:scale-90 ${
-            (value || '#FFFFFF').toUpperCase() === c ? 'border-2 border-white' : 'border border-white/20'
-          }`}
-          style={{ backgroundColor: c }}
-        />
-      ))}
+    {/* 色票只排一排（排不下就橫向捲），下面接色相／飽和度／明度 ——
+        跟紋理顏色那一頁是同一顆元件、同一種操作。
+        外面包一層高度 auto 的盒子：挑色器的根是 h-full，直接放會撐滿整格。 */}
+    <div>
+      <ColorPickerEmbedded color={value || '#FFFFFF'} onChange={onPick} onClose={onBack} />
     </div>
   </div>
 );
@@ -1364,7 +1356,7 @@ export const TextEditorPanel: React.FC<{
         <input
           type="range" min={min} max={max} step={step} value={value}
           onChange={e => onVal(digits ? parseFloat(e.target.value) : parseInt(e.target.value))}
-          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+          className="premium-slider w-full"
         />
       </div>
     );
@@ -1552,7 +1544,7 @@ export const ShapeEditorPanel: React.FC<{
       <input
         type="range" min={min} max={max} step={1} value={value}
         onChange={e => onVal(parseInt(e.target.value))}
-        className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+        className="premium-slider w-full"
       />
     </div>
   );
@@ -1569,8 +1561,8 @@ export const ShapeEditorPanel: React.FC<{
           />
         )}
         {!colorPage && (
-        /* 底部留白拉大：捲到最底時最後一根滑桿不會貼著邊 */
-        <div className="space-y-3.5 pt-1 pb-28">
+        /* 底部留一段：捲到最底時最後一根滑桿不會貼著邊 */
+        <div className="space-y-3.5 pt-1 pb-14">
           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
           {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c }), true)}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
@@ -5008,7 +5000,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       </div>
       {/* 圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆） */}
       <input type="range" min={0} max={100} step={1} value={value}
-        onChange={e => onVal(parseInt(e.target.value))} className="custom-range dense w-full" />
+        onChange={e => onVal(parseInt(e.target.value))} className="slim-slider w-full" />
     </div>
   );
   const layoutSelected = selectedLayoutId !== null;
@@ -9409,7 +9401,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     <div className="safe-top flex flex-col w-full h-screen bg-black text-white relative font-sans overflow-hidden">
       <style>{`
         /* 圓球跟「佈局調整」的滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
-        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; }
+        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 2px; border-radius: 2px; outline: none; touch-action: none; accent-color: #ffffff; cursor: pointer; margin: 7px 0; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         /* 圖片編輯那一頁的滑桿：跟「編輯」用同一組樣式，連軌道與圓點都一樣 */
         .custom-range {
@@ -9455,6 +9447,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           transition: transform 0.1s;
           box-shadow: none;
         }
+        /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
+        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; }
+        .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
+        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; margin-top: -7px; cursor: pointer; }
+        .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
+        .slim-slider::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         .custom-range::-webkit-slider-thumb:active { transform: scale(1.15); }
         .custom-range::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
         .custom-range::-moz-range-thumb {
@@ -11403,7 +11401,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             if (selectedIndex !== null) setSelectedIndex(null);
                             setGap(parseInt(e.target.value));
                           }}
-                          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+                          className="premium-slider w-full"
                         />
                       </div>
 
@@ -11423,7 +11421,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             if (selectedIndex !== null) setSelectedIndex(null);
                             setRadius(parseInt(e.target.value));
                           }}
-                          className="w-full accent-white bg-white/10 h-1.5 rounded-full cursor-pointer appearance-none"
+                          className="premium-slider w-full"
                         />
                       </div>
 
@@ -11547,18 +11545,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             </button>
                           ))}
                         </div>
-                        {patternType !== 'none' && (
-                          <button
-                            onClick={() => setColorSub('pattern')}
-                            title="紋理顏色"
-                            className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                            style={{ backgroundColor: patternColor }}
-                          />
-                        )}
+                        {/* 顏色格常駐：關閉時也看得到（可以先挑好顏色再打開），
+                            而且切換時這一列的寬度不會變，就不會閃一下。 */}
+                        <button
+                          onClick={() => setColorSub('pattern')}
+                          title="紋理顏色"
+                          className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                          style={{ backgroundColor: patternColor }}
+                        />
                       </div>
                     </div>
                     {patternType !== 'none' && (
-                      <div className="grid grid-cols-2 gap-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] animate-in fade-in duration-200">
+                      <div className="grid grid-cols-2 gap-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                         {patternSlider('大小', patternSize, setPatternSize)}
                         {patternSlider('間距', patternGap, setPatternGap)}
                       </div>
