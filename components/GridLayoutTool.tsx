@@ -11300,12 +11300,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                  這一頁比原本高，所以自己捲 —— 外層那一格的 overflow 名單
                  是所有分頁共用的，完全沒動，別的分頁不受影響。 */
               <div className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-y-auto no-scrollbar">
-                <ColorPickerEmbedded
-                  color={bgColor}
-                  onChange={setBgColor}
-                  onClose={() => setActiveTab('layout')}
-                />
-                <div className="mt-3 space-y-3">
+                {/* 外面包一層高度 auto 的盒子：ColorPickerEmbedded 的根是 h-full，
+                     直接放在這個「有固定高度」的捲動格裡會整個撐滿，把下面的紋理
+                     推到很遠。包一層之後 100% 會解析成 auto，它就只佔自己需要的高度。 */}
+                <div>
+                  <ColorPickerEmbedded
+                    color={bgColor}
+                    onChange={setBgColor}
+                    onClose={() => setActiveTab('layout')}
+                  />
+                </div>
+                <div className="mt-2 space-y-3">
                   <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
                     <span className="text-[10px] font-bold text-[#888]">紋理</span>
                     <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
@@ -11323,12 +11328,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         {patternSlider('大小', patternSize, setPatternSize)}
                         {patternSlider('間距', patternGap, setPatternGap)}
                       </div>
-                      {/* 紋理顏色用跟上面底色完全同一顆挑色器 */}
-                      <ColorPickerEmbedded
-                        color={patternColor}
-                        onChange={setPatternColor}
-                        onClose={() => setActiveTab('layout')}
-                      />
+                      {/* 紋理顏色用跟上面底色完全同一顆挑色器（同樣包一層擋掉 h-full） */}
+                      <div>
+                        <ColorPickerEmbedded
+                          color={patternColor}
+                          onChange={setPatternColor}
+                          onClose={() => setActiveTab('layout')}
+                        />
+                      </div>
                     </div>
                   )}
                   <div className="h-2" />
