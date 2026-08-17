@@ -7855,14 +7855,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * （之前圖片自己也會選取，兩邊搶著設 state，偶爾會出現上一張的圓球沒消失。）
    */
   /**
-   * 第一次把發光打開時，預設就用這個圖層自己的顏色。
-   * 一個圖層只做這一次（glowInit），之後手動挑過的發光顏色不會再被蓋掉。
+   * 第一次把發光打開時的預設顏色。
+   * 文字（含符號）一律用純白 —— 白光在任何底色上都好看，
+   * 也不會因為字本身是深色而看起來「沒開」。
+   * 圖形仍然沿用圖形自己的顏色（那一種本來就是要同色的光暈）。
+   * 一個圖層只做這一次（glowInit），之後手動挑過的顏色不會再被蓋掉。
    * 圖片不算在內 —— 它的發光是另一組參數（imgGlow）。
    */
   const withGlowInit = (layer: FloatingImage, patch: Partial<FloatingImage>): Partial<FloatingImage> => {
     if (layer.glowInit) return patch;
     if (layer.text !== undefined && (patch as any).glow !== undefined && ((patch as any).glow || 0) > 0) {
-      return { ...patch, glowColor: layer.color || '#FFFFFF', glowInit: true } as any;
+      return { ...patch, glowColor: '#FFFFFF', glowInit: true } as any;
     }
     if (layer.shape && (patch as any).shapeGlow) {
       return { ...patch, shapeGlowColor: layer.color || SHAPE_DEFAULT_COLOR, glowInit: true } as any;
@@ -9446,17 +9449,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
            不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
         .slider-wrap > input[type=range] { position: absolute; left: 0; width: 100%; top: 50%; }
-        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 56px; margin: -28px 0 0 0; }
-        .slider-wrap > input.designer-color-slider { height: 44px; margin: -22px 0 0 0; background: transparent !important; }
+        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 96px; margin: -48px 0 0 0; }
+        .slider-wrap > input.designer-color-slider { height: 72px; margin: -36px 0 0 0; background: transparent !important; }
 
         /* 顏色滑桿：6px 的漸層軌道 ＋ 自己畫的白圓球。
            圓球用 margin-top 對齊軌道正中央（(6-18)/2 = -6），
            不再用瀏覽器原生那顆 —— 原生的在自訂軌道高度下會偏下，拖動時也會閃。 */
         .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
+        .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -4px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
         .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+        .designer-color-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         /* 圖片編輯那一頁的滑桿：跟「編輯」用同一組樣式，連軌道與圓點都一樣 */
         .custom-range {
@@ -9506,9 +9509,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
         /* 同上：框拉寬到 32px，白點還是畫在正中央的 16px */
-        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; margin-top: -7px; cursor: pointer; }
+        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
         .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
-        .slim-slider::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+        .slim-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         .custom-range::-webkit-slider-thumb:active { transform: scale(1.15); }
         .custom-range::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
         .custom-range::-moz-range-thumb {

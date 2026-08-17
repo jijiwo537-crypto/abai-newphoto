@@ -5083,9 +5083,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: none; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
         /* 同上：框拉寬到 32px，白點還是畫在正中央的 16px */
-        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: none; margin-top: -7px; cursor: pointer; }
+        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
         .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
-        .slim-slider::-moz-range-thumb { width: 16px; height: 16px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+        .slim-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
 
         /* 圓球跟經典拼圖的顏色滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
         /* 顏色滑桿：回到原本那一版 —— 漸層畫在元件上、圓點用瀏覽器原生的
@@ -5099,17 +5099,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
            不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
         .slider-wrap > input[type=range] { position: absolute; left: 0; width: 100%; top: 50%; }
-        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 56px; margin: -28px 0 0 0; }
-        .slider-wrap > input.designer-color-slider { height: 44px; margin: -22px 0 0 0; background: transparent !important; }
+        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 96px; margin: -48px 0 0 0; }
+        .slider-wrap > input.designer-color-slider { height: 72px; margin: -36px 0 0 0; background: transparent !important; }
 
         /* 顏色滑桿：6px 的漸層軌道 ＋ 自己畫的白圓球。
            圓球用 margin-top 對齊軌道正中央（(6-18)/2 = -6），
            不再用瀏覽器原生那顆 —— 原生的在自訂軌道高度下會偏下，拖動時也會閃。 */
         .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: none; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
+        .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -4px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
         .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
-        .designer-color-slider::-moz-range-thumb { width: 18px; height: 18px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
+        .designer-color-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
       `}</style>
 
       {/* 匯出影片的進度。用同一條算圖管線一格一格畫，所以會花一點時間。 */}
@@ -6299,7 +6299,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           /* 第一次把發光拉起來：預設用這段文字（符號）自己的顏色，
                              一個物件只做這一次，之後手動挑過的顏色不會被蓋掉。 */
                           if (d.glow !== undefined && d.glow > 0 && !sel.glowInit) {
-                            d = { ...d, glowColor: sel.color || '#ffffff', glowInit: true };
+                            // 文字（含符號）的發光預設就是純白
+                            d = { ...d, glowColor: '#ffffff', glowInit: true };
                           }
                           if (d.fontSize !== undefined) { patch({ ...d, size: d.fontSize }); return; }
                           patch(d);
