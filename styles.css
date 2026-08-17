@@ -274,3 +274,24 @@ select:focus, select:focus-visible {
    首頁刻意要這個效果（主視覺頂到最上面），但其他全螢幕工具的標題列不能被蓋住 ——
    它們在最外層掛這個 class，補回瀏海的高度，排版就跟以前一模一樣。 */
 .safe-top { padding-top: env(safe-area-inset-top, 0px); }
+
+/* ── 捲到頂／到底就停住 ────────────────────────────────────────────
+   要的行為：任何一頁滑到最上面之後再往上拉，畫面不會被拉開一段再彈回來，
+   也不會把這一下捲動交棒給外層（在面板裡滑到頂，整個工具跟著被拉走）。
+   這兩件事都是 overscroll-behavior 管的，none 同時關掉「橡皮筋」與「交棒」。
+
+   刻意只挑「真的會垂直捲動」的那幾個 Tailwind class，不寫成 * ——
+   CSS 規定 overflow-x 一旦不是 visible，overflow-y 就會被算成 auto，
+   所以那些「只捲橫向」的列（濾鏡條、比例鍵那一排，overflow-x-auto）
+   在瀏覽器眼裡也是垂直捲動容器。對它們設 none 的話，
+   手指落在那一排上垂直滑動就再也帶不動外層的面板了 —— 那是退步，不是修好。
+
+   html/body 這一條是關掉整頁的下拉更新與整頁橡皮筋，跟上面是同一件事。 */
+html, body {
+  overscroll-behavior: none;
+}
+.overflow-y-auto,
+.overflow-y-scroll,
+.overflow-auto {
+  overscroll-behavior-y: none;
+}
