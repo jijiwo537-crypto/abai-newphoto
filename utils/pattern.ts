@@ -1,24 +1,24 @@
 /**
  * 背景紋理：點點／星星／愛心。
  *
- * 這一套的參數與網格跟「創意拼圖」的遮罩紋理完全一樣（同樣的 5~20 大小、
- * 40~140 間距、同樣的交錯三角網格），差別只有兩點：
- *   ① 這裡是鋪在「一整張矩形的頁面背景」上，所以邊緣直接讓畫布裁掉就好，
+ * 參數與網格跟「創意拼圖」的遮罩紋理完全一樣（5~20 大小、40~140 間距、
+ * 交錯三角網格），只有兩點不同：
+ *   ① 這裡鋪在「一整張矩形的頁面背景」上，邊緣直接讓畫布裁掉就好，
  *      不像遮罩那邊要留 pad（遮罩是不規則形狀，貼邊會很難看）。
- *   ② 尺寸的基準改成「頁面寬 1000px」——經典拼圖的頁面尺寸跟預覽倍率
- *      每一頁都不一樣，用寬度去換算，預覽跟匯出看起來才會是同一張圖。
+ *   ② 尺寸基準改成「頁面寬 1000px」——經典拼圖每一頁的尺寸與預覽倍率
+ *      都不一樣，用寬度換算，預覽跟匯出看起來才會是同一張圖。
  *
- * 創意拼圖那邊有一份長得一樣的 patternGlyph（在 CollageTool.tsx 裡）。
- * 沒有把它改成 import 這一支，是因為那一頁已經驗過了，不想為了去重動它；
- * 兩邊的數學是逐行相同的，之後要合併隨時可以。
+ * 創意拼圖那邊有一份逐行相同的 patternGlyph（CollageTool.tsx）。
+ * 沒有把它改成 import 這一支，是不想為了去重動一個已經驗過的頁面。
  */
 
-/** 尺寸換算的基準寬度。頁面寬幾 px，就照這個比例縮放點點的大小與間距。 */
+/** 尺寸換算的基準寬度。頁面寬幾 px，就照這個比例縮放圖案的大小與間距。 */
 const REF_W = 1000;
 
 /**
- * 一顆紋理圖案。三種都以 (cx, cy) 為中心、r 為外接半徑，
- * 所以呼叫端要換形狀完全不用改座標。
+ * 一顆紋理圖案。三種都以 (cx, cy) 為中心、r 為「點點的半徑」。
+ * 星星與愛心會畫得比 r 大一些 —— 同樣半徑下它們的面積只有圓的三分之一
+ * 到一半，不放大的話看起來會比點點小很多。
  */
 export const patternGlyph = (
   c: CanvasRenderingContext2D,
@@ -27,9 +27,10 @@ export const patternGlyph = (
 ) => {
   c.beginPath();
   if (kind === 'star') {
-    /* 正五角星：外角在 r、內角在 0.42r，第一個角朝正上方。 */
+    /* 正五角星。外角放大到 1.38r，內角是外角的 0.45。 */
+    const R = r * 1.38;
     for (let k = 0; k < 10; k++) {
-      const rad = k % 2 === 0 ? r : r * 0.42;
+      const rad = k % 2 === 0 ? R : R * 0.45;
       const a = -Math.PI / 2 + (k * Math.PI) / 5;
       const x = cx + Math.cos(a) * rad;
       const y = cy + Math.sin(a) * rad;
@@ -38,9 +39,8 @@ export const patternGlyph = (
     c.closePath();
   } else if (kind === 'heart') {
     /* 愛心：從下面的尖端出發，左右各一條三次貝茲畫出兩個圓弧，
-       在正上方收成中間那個凹口。s 取 0.9r 是為了讓它看起來的份量
-       跟同樣 r 的圓差不多（心形比圓「胖」），同時仍然收在 r 以內。 */
-    const s = r * 0.9;
+       在正上方收成中間那個凹口。 */
+    const s = r * 1.22;
     c.moveTo(cx, cy + s * 0.85);
     c.bezierCurveTo(cx - s * 1.5, cy - s * 0.2, cx - s * 0.55, cy - s * 1.15, cx, cy - s * 0.4);
     c.bezierCurveTo(cx + s * 0.55, cy - s * 1.15, cx + s * 1.5, cy - s * 0.2, cx, cy + s * 0.85);
@@ -63,7 +63,7 @@ export interface PatternOpts {
 
 /**
  * 把紋理鋪滿 (0,0)~(w,h)。type 是 'none' 就什麼都不做。
- * 網格以中心點對齊，所以換頁面尺寸時圖案不會整片位移。
+ * 網格以中心點對齊，換頁面尺寸時圖案不會整片位移。
  */
 export const paintPattern = (
   ctx: CanvasRenderingContext2D,
@@ -81,16 +81,17 @@ export const paintPattern = (
   const dy = dgap * Math.sqrt(3) / 2;   // 交錯三角網格的列高
   const rangeX = Math.ceil(w / dx) + 2;
   const rangeY = Math.ceil(h / dy) + 2;
+  const pad = r * 1.5;                  // 星星／愛心畫得比 r 大，剔除範圍放寬一點
 
   ctx.save();
   ctx.fillStyle = o.color || '#FFFFFF';
   for (let j = -rangeY; j <= rangeY; j++) {
     const py = h / 2 + j * dy;
-    if (py + r < 0 || py - r > h) continue;
+    if (py + pad < 0 || py - pad > h) continue;
     const shiftX = Math.abs(j) % 2 === 1 ? dx / 2 : 0;
     for (let i = -rangeX; i <= rangeX; i++) {
       const px = w / 2 + i * dx + shiftX;
-      if (px + r < 0 || px - r > w) continue;
+      if (px + pad < 0 || px - pad > w) continue;
       patternGlyph(ctx, o.type, px, py, r);
     }
   }
