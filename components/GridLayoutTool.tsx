@@ -4626,7 +4626,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
   useEffect(() => { userZoomRef.current = userZoom; }, [userZoom]);
   const ZOOM_MIN = 0.4, ZOOM_MAX = 3;
   /** 正在雙指縮放畫布。有值的時候不准任何其他手勢介入 */
-  const canvasZoomRef = useRef<{ startDist: number; baseZoom: number; anchor: number } | null>(null);
+  /* 捏合縮放整片預覽時記下的起手狀態。
+     以前存的是「錨定頁的頁碼」，每一幀再用頁碼把那一頁擺回正中央 ——
+     問題是第一個 move 事件（此時倍率幾乎還沒變）就會執行那一行，
+     畫面立刻被拉到那一頁的中心，也就是「一開始就跳」。
+     改成記下起手時的捲動位置與當時的版面偏移，每一幀只做「把起手時
+     畫面正中央的那個點，維持在正中央」——倍率沒變時算出來就是原值，
+     第一幀不可能跳。 */
+  const canvasZoomRef = useRef<{ startDist: number; baseZoom: number; baseScroll: number; baseOff: number } | null>(null);
   /* 手指已經開始把頁面拖著走了。
      第二根手指落下時 handleWorkspaceTouchStart 會重跑一次、把 panRef 清掉，
      所以光看 panRef 分不出「剛按下去」跟「拖到一半」——另外用這個旗標記著，
@@ -6807,18 +6814,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY,
       ) || 1;
-      // 縮放要繞著「現在停在畫面正中間的那一頁」，不然會一邊縮一邊漂走
-      let anchor = 0;
-      if (cont && w > 0) {
-        const k0 = kRef.current || 1;
-        anchor = Math.round(
-          (cont.scrollLeft + w / 2 - stripOffset(w, k0)) / Math.max(1, k0 * (previewW + 1)) - 0.5,
-        );
-        anchor = Math.max(0, Math.min(pages.length - 1, anchor));
-      }
+      // 起手狀態：當下的捲動位置與版面偏移，縮放全程都以它為基準
+      const k0 = kRef.current || 1;
+      const baseScroll = cont ? cont.scrollLeft : 0;
+      const baseOff = w > 0 ? stripOffset(w, k0) : 0;
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
          連續捏兩次時，第二次一定要從第一次的結果接著算。 */
-      canvasZoomRef.current = { startDist: d, baseZoom: kRef.current || 1, anchor };
+      canvasZoomRef.current = { startDist: d, baseZoom: k0, baseScroll, baseOff };
       return;
     }
 
@@ -6866,10 +6868,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ onHome, onImport
       const cont = containerRef.current;
       const w = containerSize.width;
       if (cont && w > 0) {
-        cont.scrollLeft = Math.max(
-          0,
-          stripOffset(w, z) + z * (cz.anchor * (previewW + 1) + previewW / 2) - w / 2,
-        );
+        /* 起手時畫面正中央對到的那個「內容座標」（未縮放單位），
+           每一幀都把它擺回正中央。z 還等於 baseZoom 時，
+           算出來就是 baseScroll 本身 —— 第一幀不會有任何位移。 */
+        const c = (cz.baseScroll + w / 2 - cz.baseOff) / (cz.baseZoom || 1);
+        cont.scrollLeft = Math.max(0, stripOffset(w, z) + c * z - w / 2);
       }
       positionPageCtls();
       return;
