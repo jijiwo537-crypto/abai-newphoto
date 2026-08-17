@@ -504,7 +504,7 @@ export const FX_DEFS: FxDef[] = [
        格數改由 rootParam 直接放到最外層那根滑桿上。 */
     rootParam: 'fxMosaicBlocks',
     params: [
-      { id: 'fxMosaicBlocks', label: '格數', icon: 'apps', min: 5, max: 200, def: 70, hidden: true },
+      { id: 'fxMosaicBlocks', label: '格數', icon: 'apps', min: 5, max: 200, def: 50, hidden: true },
       { id: 'fxMosaicShape', label: '形狀', icon: 'category', min: 0, max: 100, def: 0, scale: 0.01 , hidden: true },
       { id: 'fxMosaicGap', label: '間隙', icon: 'space_bar', min: 0, max: 100, def: 0, scale: 0.01 , hidden: true },
     ],
@@ -523,9 +523,12 @@ export const FX_DEFS: FxDef[] = [
   {
     id: 'fxCrystal', label: '結晶化', icon: 'diamond',
     onAmount: 100,
+    /* 跟馬賽克同一種：只留「密度」一根，而且放在最外層 —— 點卡片不再進細項頁。
+       其餘三根都藏起來（值照舊，外觀完全不變），細項頁沒東西可放就不會打開。 */
+    rootParam: 'fxCrystalCells',
     params: [
-      { id: 'fxCrystalCells', label: '密度', icon: 'apps', min: 5, max: 150, def: 80 },
-      { id: 'fxCrystalJitter', label: '不規則', icon: 'shuffle', min: 0, max: 100, def: 90, scale: 0.01 },
+      { id: 'fxCrystalCells', label: '密度', icon: 'apps', min: 5, max: 150, def: 50, hidden: true },
+      { id: 'fxCrystalJitter', label: '不規則', icon: 'shuffle', min: 0, max: 100, def: 90, scale: 0.01, hidden: true },
       { id: 'fxCrystalEdge', label: '胞壁寬', icon: 'border_style', min: 0, max: 20, def: 0, scale: 0.01 , hidden: true },
       { id: 'fxCrystalDark', label: '胞壁深', icon: 'nights_stay', min: 0, max: 100, def: 0, scale: 0.01 , hidden: true },
     ],
