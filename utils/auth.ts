@@ -12,8 +12,22 @@
  *   · App 內能註冊就必須能在 App 內刪除帳號（5.1.1(v)）→ deleteAccount()
  */
 import { supabase, isAuthReady } from './supabase';
+import { isNative, APP_SCHEME } from './native';
 
 export { isAuthReady };
+
+/**
+ * 信件裡的連結要按得開。
+ *
+ * 包成 App 之後 location.origin 會變成 `capacitor://localhost` —— 把它寫進
+ * 驗證信裡，使用者在信箱點下去只會得到一個打不開的網址。所以原生環境改用
+ * 網頁版的正式網址（環境變數 VITE_SITE_URL，見 env.example）。
+ *
+ * 網頁版永遠走 else 那半邊，跟以前完全一樣。
+ */
+const WEB_ORIGIN = String((import.meta as any).env?.VITE_SITE_URL ?? '').replace(/\/+$/, '');
+const emailRedirect = (): string =>
+  isNative() && WEB_ORIGIN ? `${WEB_ORIGIN}/` : `${location.origin}${location.pathname}`;
 
 export interface AuthUser {
   id: string;
@@ -83,7 +97,7 @@ export const signUpWithPassword = async (email: string, password: string) => {
   const { data, error } = await supabase.auth.signUp({
     email: email.trim(),
     password,
-    options: { emailRedirectTo: `${location.origin}${location.pathname}` },
+    options: { emailRedirectTo: emailRedirect() },
   });
   if (error) throw error;
   // session 有值＝不需要驗證信、已經直接登入；null＝要去收信
@@ -101,7 +115,7 @@ export const signInWithPassword = async (email: string, password: string) => {
 export const sendPasswordReset = async (email: string) => {
   if (!supabase) throw new Error('尚未設定後端');
   const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-    redirectTo: `${location.origin}${location.pathname}`,
+    redirectTo: emailRedirect(),
   });
   if (error) throw error;
 };
@@ -134,18 +148,115 @@ export const verifyEmailOtp = async (email: string, code: string) => {
 
 /* ── ③④ 第三方登入 ─────────────────────────────────────────────── */
 
+/** 授權完成後，系統瀏覽器要把使用者送回這個網址 —— 就是回到 App 本身 */
+const NATIVE_REDIRECT = `${APP_SCHEME}://auth-callback`;
+
+/**
+ * 把系統瀏覽器帶回來的網址換成登入狀態。
+ *
+ * Supabase 預設走 PKCE，會在 query 帶一個 `code`；某些設定會走 implicit，
+ * 把 token 放在 `#` 後面。兩種都接，不然換個設定就登不進去。
+ *
+ * 這裡刻意不用 `new URL()` —— 自訂協定（com.abai.photo://）在不同引擎上
+ * 拆解的結果不完全一致，直接切字串反而最穩。
+ */
+const completeNativeSignIn = async (url: string) => {
+  const query = new URLSearchParams((url.split('?')[1] ?? '').split('#')[0]);
+  const hash = new URLSearchParams(url.split('#')[1] ?? '');
+
+  const failed = query.get('error_description') || hash.get('error_description')
+    || query.get('error') || hash.get('error');
+  if (failed) throw new Error(failed);
+
+  const code = query.get('code');
+  if (code) {
+    const { error } = await supabase!.auth.exchangeCodeForSession(code);
+    if (error) throw error;
+    return;
+  }
+
+  const access_token = hash.get('access_token');
+  const refresh_token = hash.get('refresh_token');
+  if (access_token && refresh_token) {
+    const { error } = await supabase!.auth.setSession({ access_token, refresh_token });
+    if (error) throw error;
+    return;
+  }
+  throw new Error('登入回傳的網址裡沒有授權資訊');
+};
+
+/**
+ * 包成 App 之後的第三方登入。
+ *
+ * 為什麼不能沿用網頁那條：Google 會直接擋掉「內嵌 WebView」發出的授權請求
+ * （回 disallowed_useragent），使用者按下去只會看到一頁英文錯誤。這是 Google
+ * 的政策，繞不過去，也不該繞。
+ *
+ * 正確的做法是把授權頁交給**系統瀏覽器**（iOS 上是 SFSafariViewController）：
+ *   ① 先跟 Supabase 要授權網址，但叫它不要自己跳轉（skipBrowserRedirect）
+ *   ② 用系統瀏覽器打開
+ *   ③ 使用者授權完，Supabase 導向 com.abai.photo://auth-callback
+ *   ④ iOS 認得這個協定，把 App 叫醒並送上網址 → 換成 session → 關掉瀏覽器
+ *
+ * 監聽器一定要在打開瀏覽器**之前**就掛好，不然授權秒過的時候會漏接。
+ */
+const nativeSignInWithProvider = async (provider: 'google' | 'apple') => {
+  const { data, error } = await supabase!.auth.signInWithOAuth({
+    provider,
+    options: {
+      redirectTo: NATIVE_REDIRECT,
+      skipBrowserRedirect: true,
+      ...(provider === 'google' ? { queryParams: { prompt: 'select_account' } } : {}),
+    },
+  });
+  if (error) throw error;
+  if (!data?.url) throw new Error('沒有取得授權網址');
+
+  const [{ Browser }, { App }] = await Promise.all([
+    import('@capacitor/browser'),
+    import('@capacitor/app'),
+  ]);
+
+  let done: (v: void) => void;
+  let fail: (e: any) => void;
+  const finished = new Promise<void>((res, rej) => { done = res; fail = rej; });
+
+  const urlSub = await App.addListener('appUrlOpen', async ({ url }) => {
+    // 別的深連結不要理它
+    if (!url || !url.startsWith(`${APP_SCHEME}://`)) return;
+    try {
+      await completeNativeSignIn(url);
+      done();
+    } catch (e) {
+      fail(e);
+    } finally {
+      try { await Browser.close(); } catch { }
+    }
+  });
+
+  // 使用者自己把瀏覽器收掉 ＝ 放棄登入。已經成功的話這個 resolve 不會有作用
+  //（Promise 只認第一次），所以順序上不必擔心。
+  const closeSub = await Browser.addListener('browserFinished', () => done());
+
+  try {
+    await Browser.open({ url: data.url, presentationStyle: 'popover' });
+    await finished;
+  } finally {
+    await urlSub.remove();
+    await closeSub.remove();
+  }
+};
+
 /**
  * Google／Apple。網頁版是「跳過去授權、再導回來」，
  * 導回來的網址由 Supabase 後台的 Redirect URLs 決定。
  *
- * 之後包成 App（Capacitor）時，這裡要改成原生流程：
- *   Apple → @capacitor-community/apple-sign-in 拿 identityToken，
- *           再呼叫 supabase.auth.signInWithIdToken({ provider:'apple', token })
- *   Google → @codetrix-studio/capacitor-google-auth 同理
- * 介面不用改，只有這一支的內容要換。
+ * 包成 App 時走上面那支 nativeSignInWithProvider（系統瀏覽器）。
+ * 呼叫這支的畫面不用改，兩邊的介面一樣。
  */
 export const signInWithProvider = async (provider: 'google' | 'apple') => {
   if (!supabase) throw new Error('尚未設定後端');
+  if (isNative()) return nativeSignInWithProvider(provider);
   const { error } = await supabase.auth.signInWithOAuth({
     provider,
     options: {
