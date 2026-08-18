@@ -1,6 +1,6 @@
 {
   "name": "ABAI",
-  "description": "A high-end, professional camera interface featuring real-time viewfinder, manual controls, and Gemini-powered scene analysis.",
+  "description": "在裝置上完成的照片編輯工具：濾鏡、調節、特效、美顏、仿色，以及創意拼圖與經典拼圖。照片全程不離開裝置。",
   "requestFramePermissions": [
     "camera"
   ]
