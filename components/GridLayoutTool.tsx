@@ -12,7 +12,7 @@ import { addExport } from '../utils/exportHistory';
 import { SYMBOLS } from '../utils/symbols';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
-  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape, glowAmount,
+  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape, holeOverflow, glowAmount,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -942,15 +942,21 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
         + `${C(0.913, 0.429, 1, 0.571, 1, 0.732)} `
         + `${C(1, 0.875, 0.924, 1, 0.826, 1)} Z`;
     }
-    /* 對話框：圓角矩形，左下角伸出一支尾巴 */
+    /* 對話框：橢圓本體，左下角伸出一支尾巴。
+       本體佔上面 80%，剩下的 20% 留給尾巴，所以整條路徑剛好塞滿外框。 */
     case 'bubble': {
-      const r = Math.min(w, h) * 0.20;
-      const bb = h * 0.80;                       // 本體的底線，下面留給尾巴
-      return `M ${P(r, 0)} L ${P(w - r, 0)} Q ${P(w, 0)} ${P(w, r)} `
-        + `L ${P(w, bb - r)} Q ${P(w, bb)} ${P(w - r, bb)} `
-        + `L ${P(w * 0.42, bb)} L ${P(w * 0.22, h)} L ${P(w * 0.30, bb)} `
-        + `L ${P(r, bb)} Q ${P(0, bb)} ${P(0, bb - r)} `
-        + `L ${P(0, r)} Q ${P(0, 0)} ${P(r, 0)} Z`;
+      const bb = h * 0.80;                        // 橢圓本體的高度
+      const bx = w / 2, by = bb / 2;              // 本體的中心
+      const ra = w / 2, rb = bb / 2;              // 本體的兩個半徑
+      /** 本體上角度 t（度，順時針、0 是最右邊）的那一點 */
+      const E = (t: number) => {
+        const rad = t * Math.PI / 180;
+        return P(bx + ra * Math.cos(rad), by + rb * Math.sin(rad));
+      };
+      /** 沿著本體從現在的位置畫到角度 t（large＝要不要走大的那一段弧） */
+      const A = (t: number, large: 0 | 1) => `A ${r3(ra)} ${r3(rb)} 0 ${large} 1 ${E(t)}`;
+      // 尾巴接在本體左下（108°～143°），尖端落在外框的底邊
+      return `M ${E(0)} ${A(108, 0)} L ${P(w * 0.14, h)} L ${E(143)} ${A(360, 1)} Z`;
     }
     case 'line':
       return `M ${P(0, cy)} L ${P(w, cy)}`;
@@ -1132,9 +1138,11 @@ export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
 );
 
 /** 一顆「圖案」的小圖（形狀分頁的選單與『新增圖形』清單共用同一份）。 */
+/* 實心版的十字星是「凹進去」的四角星，同樣 18px 畫出來的墨水比旁邊那些
+   圖示少很多、看起來小一號 —— 所以實心版單獨畫成兩倍大（36px）。 */
 export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled }) => (
   <>
-    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} filled={filled} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 36 : 18} filled={filled} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
                         /* 去背的圖：拿它當遮罩、底色用 currentColor，
                            顏色就跟旁邊那些圖示走同一條規則 ——
                            沒選中時是暗的（#555），選中才變白。
@@ -3859,6 +3867,26 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     };
   })();
 
+  /* 借來的圖案：畫的參數與「它會超出外框多少」。
+     兩個地方要用到（畫布的像素尺寸、畫布在版面上的位置），
+     所以算在這裡、兩邊吃同一份。 */
+  const holeOpts = image.shape === 'hole' ? {
+    hole: image.holeType || 'circle', filled: image.shapeFilled,
+    color: image.color || SHAPE_DEFAULT_COLOR,
+    lineW: image.shapeLineW, glow: image.shapeGlow as any,
+    glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW,
+    strokeColor: image.shapeStrokeColor,
+    dots: image.shapeDots, dotSize: image.shapeDotSize,
+    dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
+    id: image.id,
+  } : null;
+  /* 超出量跟尺寸成正比，所以用「沒有縮放前」的框算一次就好，
+     要換到畫布的像素只要再乘上 scale×dpr。
+     （框有一邊是 0 的話後面的百分比會變成 NaN，所以先擋掉。） */
+  const holeOv = (holeOpts && image.width > 0 && image.height > 0)
+    ? holeOverflow(holeOpts, image.width, image.height, shapeGlowBlurs(image.width, image.height))
+    : { x: 0, y: 0 };
+
   return (
     <>
     <div
@@ -3887,8 +3915,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ref={el => {
             if (!el) return;
             const dpr = Math.min(3, window.devicePixelRatio || 1);
-            const w = Math.max(1, Math.round(image.width * image.scale * dpr));
-            const h = Math.max(1, Math.round(image.height * image.scale * dpr));
+            const bw = Math.max(1, image.width * image.scale * dpr);
+            const bh = Math.max(1, image.height * image.scale * dpr);
+            const blurs = shapeGlowBlurs(bw, bh);
+            /* 畫布要比外框大一圈：好幾種圖案的墨水本來就比框大
+               （`<333` 有 2.9 倍寬），描邊與發光也長在框外面 ——
+               畫布只開外框那麼大的話，超出去的全部被切掉。
+               撐開的是畫布，畫的內容一個像素都沒動（原點還是框心、
+               交給 drawHoleShape 的還是原本的外框）。 */
+            const w = Math.max(1, Math.round(bw + holeOv.x * image.scale * dpr * 2));
+            const h = Math.max(1, Math.round(bh + holeOv.y * image.scale * dpr * 2));
             if (el.width !== w) el.width = w;
             if (el.height !== h) el.height = h;
             const c = el.getContext('2d');
@@ -3896,24 +3932,17 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             c.setTransform(1, 0, 0, 1, 0, 0);
             c.clearRect(0, 0, w, h);
             c.translate(w / 2, h / 2);
-            drawHoleShape(
-              c,
-              {
-                hole: image.holeType || 'circle', filled: image.shapeFilled,
-                color: image.color || SHAPE_DEFAULT_COLOR,
-                lineW: image.shapeLineW, glow: image.shapeGlow as any,
-                glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW,
-                strokeColor: image.shapeStrokeColor,
-                dots: image.shapeDots, dotSize: image.shapeDotSize,
-                dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
-                id: image.id,
-              },
-              w, h, shapeGlowBlurs(w, h),
-            );
+            drawHoleShape(c, holeOpts!, bw, bh, blurs);
           }}
           key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${Math.round(image.width * image.scale)}|${Math.round(image.height * image.scale)}`}
           style={{
-            position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
+            /* 用百分比而不是 px：外框的寬高會被吸到整數實體像素（見 wrapGeo），
+               百分比才會跟著一起吸，畫布的中心才不會跟外框的中心差半個像素。 */
+            position: 'absolute',
+            left: `${-holeOv.x / image.width * 100}%`,
+            top: `${-holeOv.y / image.height * 100}%`,
+            width: `${(1 + 2 * holeOv.x / image.width) * 100}%`,
+            height: `${(1 + 2 * holeOv.y / image.height) * 100}%`,
             pointerEvents: 'none',
           }}
         />
@@ -8947,13 +8976,27 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const dash = f.shapeDash || 0;
             const seg = lw * (0.6 + (dash / 100) * 4);
             /* 借來的圖案不是 SVG 路徑，縮圖也走 canvas（跟預覽、匯出同一支） */
-            if (f.shape === 'hole') return (
+            if (f.shape === 'hole') {
+              const ho = {
+                hole: f.holeType || 'circle', filled: f.shapeFilled,
+                color: f.color || SHAPE_DEFAULT_COLOR, lineW: f.shapeLineW,
+                glow: f.shapeGlow as any, glowColor: f.shapeGlowColor,
+                strokeW: f.shapeStrokeW, strokeColor: f.shapeStrokeColor,
+                dots: f.shapeDots, dotSize: f.shapeDotSize,
+                dotGap: f.shapeDotGap, dotColor: f.shapeDotColor, id: f.id,
+              };
+              /* 跟預覽同一個道理：畫布要比外框大一圈，墨水才不會被切掉 */
+              const ov = holeOverflow(ho, f.width, f.height,
+                shapeGlowBlurs(f.width, f.height).map(r => r * glowAmount(f.shapeGlow as any)));
+              return (
               <canvas
                 key={f.id}
                 ref={el => {
                   if (!el) return;
-                  const w = Math.max(1, Math.round(f.width * f.scale * k * 2));
-                  const h = Math.max(1, Math.round(f.height * f.scale * k * 2));
+                  const bw = Math.max(1, f.width * f.scale * k * 2);
+                  const bh = Math.max(1, f.height * f.scale * k * 2);
+                  const w = Math.max(1, Math.round(bw + ov.x * f.scale * k * 2 * 2));
+                  const h = Math.max(1, Math.round(bh + ov.y * f.scale * k * 2 * 2));
                   if (el.width !== w) el.width = w;
                   if (el.height !== h) el.height = h;
                   const c = el.getContext('2d');
@@ -8961,18 +9004,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   c.setTransform(1, 0, 0, 1, 0, 0);
                   c.clearRect(0, 0, w, h);
                   c.translate(w / 2, h / 2);
-                  drawHoleShape(c, {
-                    hole: f.holeType || 'circle', filled: f.shapeFilled,
-                    color: f.color || SHAPE_DEFAULT_COLOR, lineW: f.shapeLineW,
-                    glow: f.shapeGlow as any, glowColor: f.shapeGlowColor,
-                    strokeW: f.shapeStrokeW, strokeColor: f.shapeStrokeColor,
-                    dots: f.shapeDots, dotSize: f.shapeDotSize,
-                    dotGap: f.shapeDotGap, dotColor: f.shapeDotColor, id: f.id,
-                  }, w, h, shapeGlowBlurs(w, h).map(r => r * glowAmount(f.shapeGlow as any)));
+                  drawHoleShape(c, ho, bw, bh, shapeGlowBlurs(bw, bh).map(r => r * glowAmount(f.shapeGlow as any)));
                 }}
-                style={{ ...common }}
+                style={{
+                  ...common,
+                  left: `${(f.x - pageIdx * stride + (f.width - f.width * f.scale) / 2 - ov.x * f.scale) * k}px`,
+                  top: `${(f.y + (f.height - f.height * f.scale) / 2 - ov.y * f.scale) * k}px`,
+                  width: `${(f.width + ov.x * 2) * f.scale * k}px`,
+                  height: `${(f.height + ov.y * 2) * f.scale * k}px`,
+                }}
               />
-            );
+              );
+            }
             return (
               <svg
                 key={f.id}
@@ -9531,24 +9574,36 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         /* 顏色滑桿：回到原本那一版 —— 漸層畫在元件上、圓點用瀏覽器原生的
            （accent-color 白），也就是主人說的「橢圓的那個樣子」。 */
         /* 觸控範圍的做法（唯一一種不會動到版面的）：
-           外面包一層「跟原本滑桿一樣高」的盒子，滑桿本人改成絕對定位、上下置中、
-           長高一點 —— 它不佔任何版面空間，所以間距、對齊完全不變。
+           外面包一層「跟原本滑桿一樣高」的盒子，滑桿本人改成絕對定位、上下置中；
+           撐大的那一圈用 ::before 鋪在盒子上。兩者都不佔任何版面空間，
+           所以間距、對齊完全不變。
            置中用 top+負 margin，不用 transform：transform 會把滑桿丟到自己的
-           合成層上，拖動時白點會跟著閃。 */
-        .slider-wrap { position: relative; }
+           合成層上，拖動時白點會跟著閃。
+
+                   為什麼撐大的是 ::before、不是滑桿本人：滑桿一旦被撐高，那一整塊都會帶著
+           Chromium 原生的「按下去就跳到手指的位置」，而且攔不掉（preventDefault
+           對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
+           長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
+           判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
+        .slider-wrap { position: relative; touch-action: pan-y; }
+        /* touch-action 一定要寫在 .slider-wrap 上、不能只寫在 ::before：
+           偽元素被點到時，瀏覽器查的是「產生它的那個元素」的 touch-action ——
+           寫在 ::before 上等於沒寫，橫向拖曳會被當成捲動而中途被收走
+           （拖到一半就停在那裡）。 */
+        .slider-wrap::before { content: ''; position: absolute; left: -7px; right: -7px; top: 50%; height: 56px; margin-top: -28px; }
         /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
            不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
         /* 左右各外擴 7px（軌道兩端已經留了同樣寬的透明，看到的線長度不變） */
-        .slider-wrap > input[type=range] { position: absolute; left: -7px; width: calc(100% + 14px); top: 50%; }
-        /* 高度一律是白點的兩倍（28px）。之前放到 96／72，滑桿的 touch-action: none
-           會把它周圍一大片的上下滑動全吃掉，面板就捲不動了。 */
-        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 56px; margin: -28px 0 0 0; }
-        .slider-wrap > input.designer-color-slider { height: 56px; margin: -28px 0 0 0; left: 0; width: 100%; background: transparent !important; }
+        .slider-wrap > input[type=range] { position: absolute; left: -7px; width: calc(100% + 14px); top: 50%; pointer-events: none; }
+        /* 滑桿本人維持原本的高度：軌道與白點都是相對「盒子的中線」畫的，
+           所以高度不影響外觀，而它也就不會蓋到上下相鄰的按鈕。 */
+        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 16px; margin: -8px 0 0 0; }
+        .slider-wrap > input.designer-color-slider { height: 16px; margin: -8px 0 0 0; left: 0; width: 100%; background: transparent !important; }
 
         /* 顏色滑桿：6px 的漸層軌道 ＋ 自己畫的白圓球。
            圓球用 margin-top 對齊軌道正中央（(6-18)/2 = -6），
            不再用瀏覽器原生那顆 —— 原生的在自訂軌道高度下會偏下，拖動時也會閃。 */
-        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+        .designer-color-slider { --thumb-w: 14px; -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
         .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -4px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
         .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
@@ -9599,7 +9654,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           box-shadow: none;
         }
         /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
-        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+        .slim-slider { --thumb-w: 28px; -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .slim-slider::-webkit-slider-runnable-track { height: 2px; border-radius: 2px;
           background: linear-gradient(to right, rgba(0,0,0,0) 7px, #333 7px, #333 calc(100% - 7px), rgba(0,0,0,0) calc(100% - 7px)); }
         /* 圓點的框＝白點的兩倍（28px），白點還是正中央那 14px，行程完全不變 */

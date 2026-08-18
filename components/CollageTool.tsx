@@ -5106,7 +5106,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            但白點是用漸層畫在正中央的 14px —— 看起來一模一樣，
            手指落在白點左右一段距離內都抓得到。元件的高度、外距一律不動，
            所以版面（上下間距、跟旁邊按鈕的對齊）完全不受影響。 */
-        .premium-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+        .premium-slider { --thumb-w: 28px; -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .premium-slider::-webkit-slider-runnable-track { height: 2px; border-radius: 2px;
           background: linear-gradient(to right, rgba(0,0,0,0) 7px, #333 7px, #333 calc(100% - 7px), rgba(0,0,0,0) calc(100% - 7px)); }
         /* 圓點的框＝白點的兩倍（28px），白點還是畫在正中央的 14px。
@@ -5117,7 +5117,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         .premium-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
         .premium-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
-        .slim-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+        .slim-slider { --thumb-w: 28px; -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
         /* 同上：框拉寬到 32px，白點還是畫在正中央的 16px */
         .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }
@@ -5128,24 +5128,36 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         /* 顏色滑桿：回到原本那一版 —— 漸層畫在元件上、圓點用瀏覽器原生的
            （accent-color 白），也就是主人說的「橢圓的那個樣子」。 */
         /* 觸控範圍的做法（唯一一種不會動到版面的）：
-           外面包一層「跟原本滑桿一樣高」的盒子，滑桿本人改成絕對定位、上下置中、
-           長高一點 —— 它不佔任何版面空間，所以間距、對齊完全不變。
+           外面包一層「跟原本滑桿一樣高」的盒子，滑桿本人改成絕對定位、上下置中；
+           撐大的那一圈用 ::before 鋪在盒子上。兩者都不佔任何版面空間，
+           所以間距、對齊完全不變。
            置中用 top+負 margin，不用 transform：transform 會把滑桿丟到自己的
-           合成層上，拖動時白點會跟著閃。 */
-        .slider-wrap { position: relative; }
+           合成層上，拖動時白點會跟著閃。
+
+                   為什麼撐大的是 ::before、不是滑桿本人：滑桿一旦被撐高，那一整塊都會帶著
+           Chromium 原生的「按下去就跳到手指的位置」，而且攔不掉（preventDefault
+           對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
+           長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
+           判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
+        .slider-wrap { position: relative; touch-action: pan-y; }
+        /* touch-action 一定要寫在 .slider-wrap 上、不能只寫在 ::before：
+           偽元素被點到時，瀏覽器查的是「產生它的那個元素」的 touch-action ——
+           寫在 ::before 上等於沒寫，橫向拖曳會被當成捲動而中途被收走
+           （拖到一半就停在那裡）。 */
+        .slider-wrap::before { content: ''; position: absolute; left: -7px; right: -7px; top: 50%; height: 56px; margin-top: -28px; }
         /* 選擇器都寫成 input.xxx，特異度跟上面那條一樣、又排在後面 ——
            不然 margin 會被上面的通則洗掉，滑桿就會整條掉到軌道下面（白球偏下）。 */
         /* 左右各外擴 7px（軌道兩端已經留了同樣寬的透明，看到的線長度不變） */
-        .slider-wrap > input[type=range] { position: absolute; left: -7px; width: calc(100% + 14px); top: 50%; }
-        /* 高度一律是白點的兩倍（28px）。之前放到 96／72，滑桿的 touch-action: none
-           會把它周圍一大片的上下滑動全吃掉，面板就捲不動了。 */
-        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 56px; margin: -28px 0 0 0; }
-        .slider-wrap > input.designer-color-slider { height: 56px; margin: -28px 0 0 0; left: 0; width: 100%; background: transparent !important; }
+        .slider-wrap > input[type=range] { position: absolute; left: -7px; width: calc(100% + 14px); top: 50%; pointer-events: none; }
+        /* 滑桿本人維持原本的高度：軌道與白點都是相對「盒子的中線」畫的，
+           所以高度不影響外觀，而它也就不會蓋到上下相鄰的按鈕。 */
+        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 16px; margin: -8px 0 0 0; }
+        .slider-wrap > input.designer-color-slider { height: 16px; margin: -8px 0 0 0; left: 0; width: 100%; background: transparent !important; }
 
         /* 顏色滑桿：6px 的漸層軌道 ＋ 自己畫的白圓球。
            圓球用 margin-top 對齊軌道正中央（(6-18)/2 = -6），
            不再用瀏覽器原生那顆 —— 原生的在自訂軌道高度下會偏下，拖動時也會閃。 */
-        .designer-color-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+        .designer-color-slider { --thumb-w: 14px; -webkit-appearance: none; appearance: none; width: 100%; height: 6px; border-radius: 3px; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .designer-color-slider::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
         .designer-color-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -4px; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.45); }
         .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
