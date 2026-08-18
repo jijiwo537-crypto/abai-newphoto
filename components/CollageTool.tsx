@@ -1465,7 +1465,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /* 圖案發光：預設關閉。開啟後每個圖案周圍散出一圈光，
      跟圖片、文字的發光同一種感覺（同一套「三段模糊疊起來」的做法）。 */
   const [glowMode, setGlowMode] = useState<'off' | 'both' | 'mask' | 'image'>('off');
-  const [holeGlowColor, setHoleGlowColor] = useState(GLOW_BASE);
+  /* 預設就跟遮罩同色（遮罩的預設是 #D2E8E1）—— 一開就是同步的，
+     使用者不必先去動一次遮罩顏色才對得起來。 */
+  const [holeGlowColor, setHoleGlowColor] = useState(MASK_BASE_LIGHT);
   /** 發光自己的常駐動畫（'none' | 'twinkle' | 'blink' | 'glitch'） */
   const [glowIdle, setGlowIdle] = useState('none');
   /** 發光常駐動畫的幅度（0～100）與速度（20～180，100＝原速） */
@@ -5846,7 +5848,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             {['setting', 'shape', 'add', 'objedit', 'motion'].map(id => (
               <button 
                 key={id} 
-                onClick={() => setActiveTab(id)} 
+                onClick={() => {
+                  setActiveTab(id);
+                  /* 已經點進「新增符號／新增圖形」的時候再點一次加號，
+                     就回到新增的主頁 —— 不必特地去按左上角的返回鍵。 */
+                  if (id === 'add') setAddSub('root');
+                }} 
                 className={`flex-1 py-3 text-[11px] font-bold border-b-2 transition-[color] duration-150 ${
                   activeTab === id ? 'text-white border-white' : 'text-[#555] border-transparent'
                 }`}
@@ -5893,11 +5900,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 : colorPickerTarget === 'textGlow'
                   ? ((objects.find(o => o.id === selectedObj)?.glowColor) || '#FFFFFF')
                 : dotColor} 
-              onChange={c => { if(colorPickerTarget==='mask') setMaskColor(c);
+              onChange={c => { if(colorPickerTarget==='mask') {
+                  setMaskColor(c);
+                  /* 圖案的光就是遮罩的光暈 —— 換遮罩顏色時發光一起換成同一個色。
+                     反過來不成立：單獨挑發光顏色時，遮罩的顏色不會被動到。 */
+                  setHoleGlowColor(c);
+                }
                 else if(colorPickerTarget==='holeGlow') setHoleGlowColor(c);
                 else if(colorPickerTarget==='linkColor') setLinkColor(c);
                 else if(colorPickerTarget==='shapeObj')
-                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, color: c } : o));
+                  // 換圖形顏色時發光也跟著同色（單獨挑發光顏色則不會反向影響）
+                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, color: c, glowColor: c } : o));
                 else if(colorPickerTarget==='shapeDot')
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, dotColor: c } : o));
                 else if(colorPickerTarget==='shapeStroke')
@@ -6282,7 +6295,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar pr-1">
                         <div className="space-y-3.5 pt-1 pb-2">
                           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
-                          {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c }), true)}
+                          {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c, glowColor: c }), true)}
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
                               不會有欄位突然冒出來閃一下。 */}
