@@ -1404,7 +1404,7 @@ export const TextEditorPanel: React.FC<{
         </button>
       </div>}
 
-      <div className={`flex-1 no-scrollbar h-full overflow-y-auto pr-1 ${symbol ? '' : 'pl-3'}`}>
+      <div className={`flex-1 no-scrollbar h-full overflow-y-auto overflow-x-hidden pr-1 ${symbol ? '' : 'pl-3'}`}>
         {colorPage && (
           <ColorPickerPage
             value={colorPage.value}
@@ -1567,7 +1567,7 @@ export const ShapeEditorPanel: React.FC<{
 
   return (
     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
-      <div className="h-full overflow-y-auto no-scrollbar pr-1">
+      <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar pr-1">
         {colorPage && (
           <ColorPickerPage
             value={colorPage.value}
@@ -9461,8 +9461,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         .slider-wrap > input[type=range] { position: absolute; left: -7px; width: calc(100% + 14px); top: 50%; }
         /* 高度一律是白點的兩倍（28px）。之前放到 96／72，滑桿的 touch-action: none
            會把它周圍一大片的上下滑動全吃掉，面板就捲不動了。 */
-        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 28px; margin: -14px 0 0 0; }
-        .slider-wrap > input.designer-color-slider { height: 28px; margin: -14px 0 0 0; left: 0; width: 100%; background: transparent !important; }
+        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 56px; margin: -28px 0 0 0; }
+        .slider-wrap > input.designer-color-slider { height: 56px; margin: -28px 0 0 0; left: 0; width: 100%; background: transparent !important; }
 
         /* 顏色滑桿：6px 的漸層軌道 ＋ 自己畫的白圓球。
            圓球用 margin-top 對齊軌道正中央（(6-18)/2 = -6），
@@ -11073,7 +11073,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           </div>
 
           {/* Tabs Content */}
-          <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto'}`}>
+          <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
 
             {activeTab === 'adjust' && (() => {
               /* 佈局裡的格子也走同一套面板：把格子包成跟浮動圖片一樣的形狀，
@@ -11318,7 +11318,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
                 {/* Right side content */}
                 <div
-                  className="flex-1 overflow-y-auto no-scrollbar pl-3 pr-1 h-full"
+                  className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar pl-3 pr-1 h-full"
                   /* 到頂了再往上拉、到底了再往下拉都不要有那一下橡皮筋
                      （contain 只擋「把捲動傳給外層」，自己還是會彈，所以用 none） */
                   style={{ overscrollBehavior: 'none' }}
@@ -11562,7 +11562,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             {activeTab === 'color' && colorSub === 'pattern' && (
               /* 紋理專屬的調色頁：從紋理那一排的色塊點進來，跟創意拼圖一樣。
                  挑色器本身用的是跟底色完全同一顆元件。 */
-              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto no-scrollbar">
+              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto overflow-x-hidden no-scrollbar">
                 <div className="h-[38px] flex items-center gap-1 px-0.5">
                   <button
                     onClick={() => setColorSub('bg')}
@@ -11592,7 +11592,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               /* 上面是原本的底色挑色器（一個字沒動），下面緊接著背景紋理。
                  這一頁比原本高，所以自己捲 —— 外層那一格的 overflow 名單
                  是所有分頁共用的，完全沒動，別的分頁不受影響。 */
-              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-y-auto no-scrollbar">
+              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-y-auto overflow-x-hidden no-scrollbar">
                 {/* 外面包一層高度 auto 的盒子：ColorPickerEmbedded 的根是 h-full，
                      直接放在這個「有固定高度」的捲動格裡會整個撐滿，把下面的紋理
                      推到很遠。包一層之後 100% 會解析成 auto，它就只佔自己需要的高度。 */}

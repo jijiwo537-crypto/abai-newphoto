@@ -5107,8 +5107,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         .slider-wrap > input[type=range] { position: absolute; left: -7px; width: calc(100% + 14px); top: 50%; }
         /* 高度一律是白點的兩倍（28px）。之前放到 96／72，滑桿的 touch-action: none
            會把它周圍一大片的上下滑動全吃掉，面板就捲不動了。 */
-        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 28px; margin: -14px 0 0 0; }
-        .slider-wrap > input.designer-color-slider { height: 28px; margin: -14px 0 0 0; left: 0; width: 100%; background: transparent !important; }
+        .slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 56px; margin: -28px 0 0 0; }
+        .slider-wrap > input.designer-color-slider { height: 56px; margin: -28px 0 0 0; left: 0; width: 100%; background: transparent !important; }
 
         /* 顏色滑桿：6px 的漸層軌道 ＋ 自己畫的白圓球。
            圓球用 margin-top 對齊軌道正中央（(6-18)/2 = -6），
@@ -5822,7 +5822,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           (activeTab === 'objedit' && !colorPickerTarget) ||
           (activeTab === 'shape' && !colorPickerTarget) ||
           (activeTab === 'motion' && !colorPickerTarget)
-            ? 'overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]' 
+            ? 'overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]' 
             : 'overflow-hidden'
         }`}`}>
           {colorPickerTarget ? (
@@ -6218,7 +6218,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                      圖層上下不放這裡 —— 選中時畫面上那排工具列本來就有。 */
                   return (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
-                      <div className="h-full overflow-y-auto no-scrollbar pr-1">
+                      <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar pr-1">
                         <div className="space-y-3.5 pt-1 pb-2">
                           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
                           {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c }), true)}
@@ -6574,7 +6574,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <SlidersHorizontal size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'style' ? 'scale-110' : 'scale-100'}`} />
                   </button>
                 </div>
-                <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
                   {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'snow', 'love', 'love3', 'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'yaya', 'zzz', 'text'].map(s => (
