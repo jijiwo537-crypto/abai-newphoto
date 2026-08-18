@@ -700,12 +700,19 @@ const FX_SUB_TOOLS: Record<string, [string, string, string, number, number, numb
 /** 形狀分頁的工具（拼圖獨有，取代編輯裡的遮色片）。
     描邊與發光跟柔光一樣是兩段式：點進去才有粗細／顏色。 */
 const SHAPE_TOOLS: [string, string, string, number, number, number][] = [
+  /* 外形。點進去是一排形狀可以選（圓形／星型／愛心），不是滑桿。 */
+  ['imgShape', '形狀', 'interests', 0, 0, 0],
   ['imgRadius', '圓角', 'rounded_corner', 0, 50, 0],
   /* 羽化一根滑桿就夠：0＝硬邊，100＝從邊緣一路羽化到圖片中心。 */
   ['feather', '羽化', 'gradient', 0, 100, 0],
   ['stroke', '描邊', 'border_style', 0, 0, 0],
   ['glow', '發光', 'light_mode', 0, 0, 0],
 ];
+
+/* 「形狀」進來之後預設停在哪一顆工具上。
+   本來是抓 SHAPE_TOOLS 的第一顆，但第一顆現在換成「形狀」那個子選單了，
+   停在它身上不會有滑桿；所以固定指名圓角，手感跟以前一模一樣。 */
+const SHAPE_DEFAULT_TOOL = 'imgRadius';
 
 /** 描邊／發光點進去之後的子工具：粗細用滑桿、顏色用色票 */
 const SHAPE_SUB_TOOLS: Record<string, [string, string, string, number, number, number][]> = {
@@ -1926,6 +1933,14 @@ const sliderArea = (() => {
         v => set({ [k]: v }), undefined, true,
       );
     }
+    /* 形狀那一頁沒有滑桿，改放一句提示 —— 「可以拖」這件事不講沒人會發現 */
+    if (shapeMenu === 'imgShape') {
+      return (
+        <div className="w-full text-center text-[11px] tracking-wide text-white/35 select-none">
+          {isImgShaped(img.imgShape) ? '在圖片上拖曳可以調整位置' : '選一個形狀'}
+        </div>
+      );
+    }
     const t = SHAPE_TOOLS.find(x => x[0] === shapeTool);
     if (t && (t[0] === 'imgRadius' || t[0] === 'feather')) {
       const key = t[0] as 'imgRadius' | 'feather';
@@ -2084,15 +2099,22 @@ return (
 
       {adjustSub === 'shape' && (shapeMenu === 'root'
         ? SHAPE_TOOLS.map(([id, label, icon, , , dflt]) => {
-            const isSub = !!SHAPE_SUB_TOOLS[id];
+            // 「形狀」也是點進去一頁，只是那一頁放的是形狀不是滑桿
+            const isShapePick = id === 'imgShape';
+            const isSub = !!SHAPE_SUB_TOOLS[id] || isShapePick;
             // 只看粗細／強度，顏色不算：值是 0 的時候畫面上根本沒有效果，
             // 按鈕下方就不該有白點
-            const adjusted = isSub
-              ? SHAPE_SUB_TOOLS[id].some(([k, , , , , d]) =>
-                  !k.endsWith('Color') && (((img as any)[k]) || 0) !== d)
-              : (((img as any)[id]) || 0) !== dflt;
+            const adjusted = isShapePick
+              ? isImgShaped(img.imgShape)
+              : SHAPE_SUB_TOOLS[id]
+                ? SHAPE_SUB_TOOLS[id].some(([k, , , , , d]) =>
+                    !k.endsWith('Color') && (((img as any)[k]) || 0) !== d)
+                : (((img as any)[id]) || 0) !== dflt;
             return toolBtn(id, label, icon, shapeTool === id, adjusted, () => {
-              if (isSub) {
+              if (isShapePick) {
+                setShapeMenu('imgShape');
+                setShapeTool('imgShape');
+              } else if (isSub) {
                 setShapeMenu(id as any);
                 setShapeTool(SHAPE_SUB_TOOLS[id][0][0]);
               } else {
@@ -2103,7 +2125,7 @@ return (
         : (
           <div className="flex items-center gap-4 animate-in slide-in-from-right duration-300">
             <button
-              onClick={() => { setShapeMenu('root'); setShapeTool(SHAPE_TOOLS[0][0]); }}
+              onClick={() => { setShapeMenu('root'); setShapeTool(SHAPE_DEFAULT_TOOL); }}
               className="flex flex-col items-center justify-center gap-2 shrink-0 group w-12"
             >
               <div className="w-10 h-10 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-all text-white">
@@ -2111,13 +2133,25 @@ return (
               </div>
             </button>
             <div className="w-[1px] h-8 bg-white/10 mx-2" />
-            {SHAPE_SUB_TOOLS[shapeMenu].map(([id, label, icon, , , dflt]) => {
-              const cur = (img as any)[id];
-              const adjusted = id.endsWith('Color')
-                ? !!cur && cur.toUpperCase() !== '#FFFFFF'
-                : (cur || 0) !== dflt;
-              return toolBtn(id, label, icon, shapeTool === id, adjusted, () => setShapeTool(id));
-            })}
+            {shapeMenu === 'imgShape'
+              /* 形狀那一頁：按下去直接換外形。再按一次同一顆就回到方形，
+                 不然選了愛心就沒有路可以退回去了。 */
+              ? IMG_SHAPES.map(({ id, label, icon }) => {
+                  const cur = img.imgShape || 'rect';
+                  return toolBtn(id, label, icon, cur === id, false, () => {
+                    const next = cur === id ? 'rect' : id;
+                    /* 換形狀時把位移歸零 —— 上一個形狀拖到的位置換到新形狀上
+                       通常不是使用者要的，從正中間開始比較好調。 */
+                    set({ imgShape: next, imgShapeX: 0, imgShapeY: 0 });
+                  });
+                })
+              : SHAPE_SUB_TOOLS[shapeMenu].map(([id, label, icon, , , dflt]) => {
+                  const cur = (img as any)[id];
+                  const adjusted = id.endsWith('Color')
+                    ? !!cur && cur.toUpperCase() !== '#FFFFFF'
+                    : (cur || 0) !== dflt;
+                  return toolBtn(id, label, icon, shapeTool === id, adjusted, () => setShapeTool(id));
+                })}
           </div>
         ))}
     </div>
@@ -2135,7 +2169,7 @@ return (
             setAdjustSub(id as any);
             // 跟編輯一樣：切分類就把該分類的第一個工具選起來
             if (id === 'tune') setTuneTool(deferSlider ? '' : TUNE_TOOLS[0][0]);
-            if (id === 'shape') { setShapeMenu('root'); setShapeTool(deferSlider ? '' : SHAPE_TOOLS[0][0]); }
+            if (id === 'shape') { setShapeMenu('root'); setShapeTool(deferSlider ? '' : SHAPE_DEFAULT_TOOL); }
             if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
           }}
           /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
@@ -2333,6 +2367,80 @@ export const roundRectPath = (
   g.closePath();
 };
 
+/* ── 圖片的外形（形狀）───────────────────────────────────────────────
+ *
+ * 圖片本來只有「方形＋圓角」一種外形。這一組讓它可以換成圓形、星型、愛心。
+ *
+ * 路徑直接借用「新增圖形」那一份（shapePathD）—— 兩邊畫出來的圓形、星星、
+ * 愛心因此是同一顆，不會出現「圖形的星星跟圖片的星星長得不一樣」。
+ *
+ * 最要緊的一條規矩：**沒設形狀時，這幾支的行為要跟以前一模一樣。**
+ * 所有既有的圖片都沒有 imgShape，一律走 isImgShaped() 為 false 的那條路，
+ * 也就是原本的 roundRectPath／drawImage，一個像素都不會變。
+ */
+
+/** 圖片可以選的外形。'rect' ＝ 原本的方形（還是可以再套圓角）。 */
+export const IMG_SHAPES: { id: string; label: string; icon: string }[] = [
+  { id: 'rect', label: '方形', icon: 'crop_square' },
+  { id: 'circle', label: '圓形', icon: 'circle' },
+  { id: 'star', label: '星型', icon: 'star' },
+  { id: 'heart', label: '愛心', icon: 'favorite' },
+];
+
+export const isImgShaped = (kind?: string) => !!kind && kind !== 'rect';
+
+/**
+ * 鋪好圖片的外框路徑，然後跑 run()。
+ *
+ * 沒有形狀 → 照舊把圓角矩形鋪在畫布上，run() 收到 undefined，
+ *            呼叫端就跟以前一樣用 fill()／stroke()。
+ * 有形狀   → 把畫布原點搬到 (x,y)，run() 收到一個 Path2D，
+ *            呼叫端改用 fill(p)／stroke(p)。跑完會把畫布狀態還原。
+ *
+ * 之所以用「搬原點」而不是把路徑本身平移：Path2D 的矩陣參數在各家瀏覽器
+ * 的支援度沒有 translate() 那麼一致，而這個 App 是要進 WKWebView 的。
+ */
+export const withImgOutline = (
+  g: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number,
+  kind: string | undefined, rx: number, ry: number,
+  run: (p?: Path2D) => void,
+) => {
+  if (!isImgShaped(kind)) { roundRectPath(g, x, y, w, h, rx, ry); run(); return; }
+  g.save();
+  g.translate(x, y);
+  try { run(new Path2D(shapePathD(kind!, w, h))); } finally { g.restore(); }
+};
+
+/**
+ * 有形狀時圖片會放大一點，多出來的那一圈就是「可以拖的範圍」。
+ *
+ * 1.4 ＝ 上下左右各多出 20%，也就是最多可以把圖挪動框的 20%。
+ * 試過 1.18（±9%），手指才滑 40px 就到底了，等於沒得調；
+ * 再往上加的話預設看到的範圍會被裁掉太多。這個數字只影響「有選形狀」的圖片。
+ */
+export const IMG_SHAPE_FILL = 1.4;
+
+/**
+ * 把圖片畫進外框裡。
+ *
+ * 有形狀時圖片會放大到 1.18 倍再置中 —— 這多出來的一圈就是「可以拖的範圍」。
+ * imgShapeX／imgShapeY 是 -1~1 的比例（0 ＝ 置中），乘上那一圈的寬度就是位移。
+ * 因為圖永遠比框大，不管拖到哪一邊都不會露出空隙。
+ *
+ * 沒有形狀時倍率是 1、位移是 0，等同於原本那行 drawImage(base, x, y, w, h)。
+ */
+export const drawImgBase = (
+  g: CanvasRenderingContext2D, base: CanvasImageSource,
+  x: number, y: number, w: number, h: number, o: any,
+) => {
+  if (!isImgShaped(o?.imgShape)) { g.drawImage(base, x, y, w, h); return; }
+  const dw = w * IMG_SHAPE_FILL, dh = h * IMG_SHAPE_FILL;
+  const rx = (dw - w) / 2, ry = (dh - h) / 2;
+  const cl = (v: any) => Math.max(-1, Math.min(1, Number(v) || 0));
+  g.drawImage(base, x - rx + cl(o.imgShapeX) * rx, y - ry + cl(o.imgShapeY) * ry, dw, dh);
+};
+
 /** 單次盒狀模糊（滑動視窗，邊界夾住）。三次疊起來就很接近高斯。 */
 const boxBlurH = (src: Float32Array, dst: Float32Array, w: number, h: number, r: number) => {
   const norm = 1 / (r * 2 + 1);
@@ -2371,6 +2479,8 @@ const boxBlurV = (src: Float32Array, dst: Float32Array, w: number, h: number, r:
  */
 export const makeShapeMask = (
   w: number, h: number, radiusPct: number, featherPct: number,
+  /** 圖片的外形。沒給就是原本的圓角矩形 */
+  kind?: string,
 ) => {
   const c = document.createElement('canvas');
   c.width = Math.max(4, Math.round(w));
@@ -2397,8 +2507,10 @@ export const makeShapeMask = (
   const inset = r > 0 ? r * 3 + 1 : 0;
   g.fillStyle = '#fff';
   const R = Math.max(0, cornerR(rp, c.width, c.height) - inset);
-  roundRectPath(g, inset, inset, c.width - inset * 2, c.height - inset * 2, R, R);
-  g.fill();
+  withImgOutline(
+    g, inset, inset, c.width - inset * 2, c.height - inset * 2, kind, R, R,
+    p => { p ? g.fill(p) : g.fill(); },
+  );
 
   if (r >= 1) {
     const px = g.getImageData(0, 0, c.width, c.height);
@@ -2574,14 +2686,14 @@ export const makeGlowCanvas = (
  * 遮罩本來就是平滑的，拉伸貼上看不出差別。
  */
 const maskCanvasCache = new Map<string, HTMLCanvasElement>();
-const previewMask = (aspect: number, radiusPct: number, featherPct: number) => {
-  const key = `${aspect.toFixed(2)}|${radiusPct}|${featherPct}`;
+const previewMask = (aspect: number, radiusPct: number, featherPct: number, kind?: string) => {
+  const key = `${aspect.toFixed(2)}|${radiusPct}|${featherPct}|${kind || ''}`;
   const hit = maskCanvasCache.get(key);
   if (hit) return hit;
   const MAX = 400;
   const w = aspect >= 1 ? MAX : Math.max(16, Math.round(MAX * aspect));
   const h = aspect >= 1 ? Math.max(16, Math.round(MAX / aspect)) : MAX;
-  const c = makeShapeMask(w, h, radiusPct, featherPct);
+  const c = makeShapeMask(w, h, radiusPct, featherPct, kind);
   if (maskCanvasCache.size > 60) maskCanvasCache.clear();
   maskCanvasCache.set(key, c);
   return c;
@@ -2727,29 +2839,31 @@ const MiniShapeImage: React.FC<{
 
       let shaped: CanvasImageSource = base;
       let drawW = iw, drawH = ih, drawX = (W - iw) / 2, drawY = (H - ih) / 2;
-      if (img.feather || img.imgRadius || img.imgStrokeWidth) {
+      const kind = img.imgShape;
+      if (img.feather || img.imgRadius || img.imgStrokeWidth || isImgShaped(kind)) {
         const off = document.createElement('canvas');
         off.width = Math.max(1, Math.round(sw));
         off.height = Math.max(1, Math.round(sh));
         const oc = off.getContext('2d');
         if (!oc) return;
-        oc.drawImage(base, lw, lw, iw, ih);
-        if (img.feather || img.imgRadius) {
+        drawImgBase(oc, base, lw, lw, iw, ih, img);
+        if (img.feather || img.imgRadius || isImgShaped(kind)) {
           oc.globalCompositeOperation = 'destination-in';
           if (img.feather) {
-            oc.drawImage(previewMask(boxW / boxH, img.imgRadius || 0, img.feather), lw, lw, iw, ih);
+            oc.drawImage(previewMask(boxW / boxH, img.imgRadius || 0, img.feather, kind), lw, lw, iw, ih);
           } else {
             const R = cornerR(img.imgRadius || 0, iw, ih);
-            roundRectPath(oc, lw, lw, iw, ih, R, R);
-            oc.fillStyle = '#fff';
-            oc.fill();
+            withImgOutline(oc, lw, lw, iw, ih, kind, R, R, p => {
+              oc.fillStyle = '#fff';
+              p ? oc.fill(p) : oc.fill();
+            });
           }
           oc.globalCompositeOperation = 'source-over';
         }
         if (lw > 0) {
           const rp = img.imgRadius || 0;
           const sr = rp ? cornerR(rp, iw, ih) + lw / 2 : 0;
-          roundRectPath(oc, lw / 2, lw / 2, iw + lw, ih + lw, sr, sr);
+          withImgOutline(oc, lw / 2, lw / 2, iw + lw, ih + lw, kind, sr, sr, p => {
           oc.lineWidth = lw;
           oc.lineJoin = 'miter';
           oc.miterLimit = 4;
@@ -2764,8 +2878,9 @@ const MiniShapeImage: React.FC<{
             oc.setLineDash([]);
           }
           oc.strokeStyle = img.imgStrokeColor || '#FFFFFF';
-          oc.stroke();
+          p ? oc.stroke(p) : oc.stroke();
           oc.setLineDash([]);
+          });
         }
         shaped = off;
         drawW = off.width; drawH = off.height; drawX = ox; drawY = oy;
@@ -2786,7 +2901,8 @@ const MiniShapeImage: React.FC<{
     el.addEventListener('load', draw);
     return () => el.removeEventListener('load', draw);
   }, [img.src, img.fx, img.feather, img.imgRadius, img.imgGlow, img.imgGlowColor,
-      img.imgStrokeWidth, img.imgStrokeColor, img.imgStrokeDash, img.scale, boxW, boxH, glowPad, lutRevision]);
+      img.imgStrokeWidth, img.imgStrokeColor, img.imgStrokeDash, img.scale, boxW, boxH, glowPad, lutRevision,
+      img.imgShape, img.imgShapeX, img.imgShapeY]);
   return <canvas ref={ref} style={style} />;
 };
 
@@ -2837,6 +2953,14 @@ interface FloatingImage {
   /** 以下是「圖片調整」分頁的參數，只有圖片圖層會用到 */
   /** 圓角，佔短邊的百分比 0~50（50 = 橢圓） */
   imgRadius?: number;
+  /* ── 圖片外形（形狀）──────────────────────────────────────────
+     沒有這個欄位＝原本的方形（配上面那根圓角滑桿），行為完全不變。
+     設成 circle／star／heart 就改用「新增圖形」那份路徑去裁，
+     描邊與發光也會跟著同一條路徑走。 */
+  imgShape?: string;
+  /** 圖片在形狀裡的位移，-1~1（0＝置中）。只有選了形狀才用得到 */
+  imgShapeX?: number;
+  imgShapeY?: number;
   /** 邊緣羽化，佔短邊的百分比 0~50 */
   feather?: number;
   /** 圖片邊緣發光強度 0~20 */
@@ -3192,7 +3316,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const usedCanvasRef = useRef(false);
   const wantsShapeCanvas =
     image.text === undefined && !image.isVideo && shapeImgReady
-    && !!(image.feather || image.imgRadius || image.imgGlow || image.imgStrokeWidth || hasPhotoFx(image.fx));
+    && !!(image.feather || image.imgRadius || image.imgGlow || image.imgStrokeWidth
+      || isImgShaped(image.imgShape) || hasPhotoFx(image.fx));
   if (wantsShapeCanvas) usedCanvasRef.current = true;
   const needsShapeCanvas =
     image.text === undefined && !image.isVideo && shapeImgReady && usedCanvasRef.current;
@@ -3264,28 +3389,30 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const base = fxSourceFor(img);
       let shaped: CanvasImageSource = base;
       let drawW = iw, drawH = ih, drawX = (W - iw) / 2, drawY = (H - ih) / 2;
-      if (image.feather || image.imgRadius || image.imgStrokeWidth) {
+      const kind = image.imgShape;
+      if (image.feather || image.imgRadius || image.imgStrokeWidth || isImgShaped(kind)) {
         const off = document.createElement('canvas');
         off.width = Math.max(1, Math.round(sw));
         off.height = Math.max(1, Math.round(sh));
         const oc = off.getContext('2d');
         if (!oc) return;
         // 圖片畫在中間，四周留給描邊
-        oc.drawImage(base, lw, lw, iw, ih);
-        if (image.feather || image.imgRadius) {
+        drawImgBase(oc, base, lw, lw, iw, ih, image);
+        if (image.feather || image.imgRadius || isImgShaped(kind)) {
           oc.globalCompositeOperation = 'destination-in';
           if (image.feather) {
             // 有羽化才需要那張模糊過的遮罩；邊本來就是糊的，縮放貼回來看不出差別
-            const m = previewMask(boxW / boxH, image.imgRadius || 0, image.feather);
+            const m = previewMask(boxW / boxH, image.imgRadius || 0, image.feather, kind);
             oc.drawImage(m, lw, lw, iw, ih);
           } else {
             /* 只有圓角、沒有羽化：以前也走那張 400px 的遮罩再拉大，
                硬邊被放大就變成階梯狀的鋸齒。改成直接在這張畫布上填路徑 ——
                原生解析度、瀏覽器自己抗鋸齒，邊緣才會乾淨。 */
             const R = cornerR(image.imgRadius || 0, iw, ih);
-            roundRectPath(oc, lw, lw, iw, ih, R, R);
-            oc.fillStyle = '#fff';
-            oc.fill();
+            withImgOutline(oc, lw, lw, iw, ih, kind, R, R, p => {
+              oc.fillStyle = '#fff';
+              p ? oc.fill(p) : oc.fill();
+            });
           }
           oc.globalCompositeOperation = 'source-over';
         }
@@ -3294,7 +3421,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         if (lw > 0) {
           const rp = image.imgRadius || 0;
           const sr = rp ? cornerR(rp, iw, ih) + lw / 2 : 0;
-          roundRectPath(oc, lw / 2, lw / 2, iw + lw, ih + lw, sr, sr);
+          withImgOutline(oc, lw / 2, lw / 2, iw + lw, ih + lw, kind, sr, sr, p => {
           oc.lineWidth = lw;
           oc.lineJoin = 'miter';
           oc.miterLimit = 4;
@@ -3309,8 +3436,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             oc.setLineDash([]);
           }
           oc.strokeStyle = image.imgStrokeColor || '#FFFFFF';
-          oc.stroke();
+          p ? oc.stroke(p) : oc.stroke();
           oc.setLineDash([]);
+          });
         }
         shaped = off;
         drawW = off.width; drawH = off.height; drawX = ox; drawY = oy;
@@ -3373,6 +3501,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     image.imgGlow, image.imgGlowColor, image.imgStrokeWidth, image.imgStrokeColor, image.imgStrokeDash,
     image.scale, boxW, boxH, glowPad,
     image.fx, lutRevision,
+    image.imgShape, image.imgShapeX, image.imgShapeY,
   ]);
 
   const handleBodyPointerDown = (e: React.PointerEvent) => {
@@ -5082,8 +5211,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [tuneTool, setTuneTool] = useState('brightness');
   /** 形狀分頁目前選中的工具 */
   const [shapeTool, setShapeTool] = useState('imgRadius');
-  /** 形狀分頁：root 是總覽，其餘是描邊／發光的子選單 */
-  const [shapeMenu, setShapeMenu] = useState<'root' | 'stroke' | 'glow'>('root');
+  /** 形狀分頁：root 是總覽，其餘是形狀／描邊／發光的子選單 */
+  const [shapeMenu, setShapeMenu] = useState<'root' | 'stroke' | 'glow' | 'imgShape'>('root');
+  /* 「形狀」那一頁開著沒有？開著時在圖片上拖曳＝調整圖片在形狀裡的位置。
+     用 ref 是因為手勢那幾支不會跟著 state 重新綁定。 */
+  const shapePanRef = useRef(false);
+  useEffect(() => { shapePanRef.current = shapeMenu === 'imgShape'; }, [shapeMenu]);
   /** 正在拖形狀的滑桿：圖片的選取框先整組收起來 */
   const [tuningEdge, setTuningEdge] = useState(false);
   /** 特效分頁：選中哪一張卡片，以及細項有沒有展開（跟「編輯」同一種操作） */
@@ -8152,6 +8285,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         baseOffsetX: cell?.offsetX ?? 0,
         baseOffsetY: cell?.offsetY ?? 0,
         baseZoom: cell?.zoom ?? 1,
+        // 「形狀」那一頁開著時拖曳挪的是圖片在形狀裡的位置（見 handleWorkspaceTouchMove）
+        baseShapeX: (fImg as any)?.imgShapeX ?? 0,
+        baseShapeY: (fImg as any)?.imgShapeY ?? 0,
       };
       return;
     }
@@ -8374,6 +8510,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const dy = (e.touches[0].clientY - g.startY) / kd;
         if (g.kind === 'floating') {
           const selectedImg = floatingImages.find(img => img.id === g.floatingId);
+          /* 「形狀」那一頁開著、而且這張圖真的有形狀：拖曳是在挪動
+             「圖片在形狀裡的位置」，不是搬動圖片本身。頁面關掉就恢復原本的搬移。 */
+          if (selectedImg && shapePanRef.current && isImgShaped((selectedImg as any).imgShape)) {
+            /* 可以拖的範圍就是「圖比框大出來的那一圈」，除以它換算成 -1~1。
+               圖片轉過角度的話，手指的方向也要跟著轉回去，不然會歪著跑。 */
+            const rot = ((selectedImg.rotation || 0) * Math.PI) / 180;
+            const lx = dx * Math.cos(-rot) - dy * Math.sin(-rot);
+            const ly = dx * Math.sin(-rot) + dy * Math.cos(-rot);
+            const sc = selectedImg.scale || 1;
+            const rx = Math.max(1, (selectedImg.width * sc * (IMG_SHAPE_FILL - 1)) / 2);
+            const ry = Math.max(1, (selectedImg.height * sc * (IMG_SHAPE_FILL - 1)) / 2);
+            const cl = (v: number) => Math.max(-1, Math.min(1, v));
+            const px = cl((g.baseShapeX || 0) + lx / rx);
+            const py = cl((g.baseShapeY || 0) + ly / ry);
+            setFloatingImages(prev => prev.map(img =>
+              img.id === g.floatingId ? { ...img, imgShapeX: px, imgShapeY: py } : img));
+            return;
+          }
           if (selectedImg) {
             const { snappedX, snappedY, guidelines } = applySnapping(
               selectedImg.id, g.baseX + dx, g.baseY + dy,
@@ -8764,7 +8918,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 描邊往外長，所以離屏要比圖片本身大 lw 一圈；貼回去時也要跟著放大
       const strokeLw = (fImg.imgStrokeWidth || 0) * scaleFactor * fImg.scale;
       let drawW = fw, drawH = fh;
-      if (fImg.imgRadius || fImg.feather || fImg.imgStrokeWidth) {
+      const kind = fImg.imgShape;
+      if (fImg.imgRadius || fImg.feather || fImg.imgStrokeWidth || isImgShaped(kind)) {
         const iw = Math.max(1, Math.round(fw * fImg.scale));
         const ih = Math.max(1, Math.round(fh * fImg.scale));
         const lw = strokeLw * fImg.scale;
@@ -8772,26 +8927,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         off.width = Math.max(1, Math.round(iw + lw * 2));
         off.height = Math.max(1, Math.round(ih + lw * 2));
         const oc = get2dWide(off)!;
-        oc.drawImage(src, lw, lw, iw, ih);
-        if (fImg.imgRadius || fImg.feather) {
+        drawImgBase(oc, src, lw, lw, iw, ih, fImg);
+        if (fImg.imgRadius || fImg.feather || isImgShaped(kind)) {
           // 只把「圖片那一塊」裁形狀，描邊的區域不能被裁掉
           const shapeOnly = document.createElement('canvas');
           shapeOnly.width = iw; shapeOnly.height = ih;
           const sc = get2dWide(shapeOnly)!;
-          sc.drawImage(src, 0, 0, iw, ih);
+          drawImgBase(sc, src, 0, 0, iw, ih, fImg);
           sc.globalCompositeOperation = 'destination-in';
           if (fImg.feather) {
             // 遮罩的模糊很吃 CPU，超過這個邊長就先算小張再放大貼上；
             // 遮罩本來就是平滑的，放大看不出差別
             const cap = 1200;
             const k = Math.min(1, cap / Math.max(iw, ih));
-            const mask = makeShapeMask(iw * k, ih * k, fImg.imgRadius || 0, fImg.feather);
+            const mask = makeShapeMask(iw * k, ih * k, fImg.imgRadius || 0, fImg.feather, kind);
             sc.drawImage(mask, 0, 0, iw, ih);
           } else {
             sc.fillStyle = '#000';
-            const R = cornerR(fImg.imgRadius!, iw, ih);
-            roundRectPath(sc, 0, 0, iw, ih, R, R);
-            sc.fill();
+            const R = cornerR(fImg.imgRadius || 0, iw, ih);
+            withImgOutline(sc, 0, 0, iw, ih, kind, R, R, p => { p ? sc.fill(p) : sc.fill(); });
           }
           sc.globalCompositeOperation = 'source-over';
           oc.clearRect(0, 0, off.width, off.height);
@@ -8800,7 +8954,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         if (lw > 0) {
           const rp = fImg.imgRadius || 0;
           const sr = rp ? cornerR(rp, iw, ih) + lw / 2 : 0;
-          roundRectPath(oc, lw / 2, lw / 2, iw + lw, ih + lw, sr, sr);
+          withImgOutline(oc, lw / 2, lw / 2, iw + lw, ih + lw, kind, sr, sr, p => {
           oc.lineWidth = lw;
           oc.lineJoin = 'miter';
           oc.miterLimit = 4;
@@ -8815,8 +8969,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             oc.setLineDash([]);
           }
           oc.strokeStyle = fImg.imgStrokeColor || '#FFFFFF';
-          oc.stroke();
+          p ? oc.stroke(p) : oc.stroke();
           oc.setLineDash([]);
+          });
         }
         src = off;
         drawW = fw + strokeLw * 2;

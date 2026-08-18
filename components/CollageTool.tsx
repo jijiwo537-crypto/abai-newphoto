@@ -14,6 +14,8 @@ import {
   /* 圓角／羽化／描邊／發光全部改用經典拼圖那幾支：同一份程式碼，
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
+  /* 圖片外形（形狀）：圓形／星型／愛心也共用同一份路徑與同一支算圖 */
+  isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, IMG_SHAPE_FILL,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
@@ -985,6 +987,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const selectedObjRef = useRef<string | null>(null);
   selectedObjRef.current = selectedObj;
   const objDragRef = useRef<any>(null);
+  /* 「圖片調整 → 造型 → 形狀」那一頁開著沒有？
+     開著的時候在圖片上拖曳＝調整圖片在形狀裡的位置。
+     用 ref 是因為指標事件那幾支不會跟著 state 重新綁定。 */
+  const shapePanRef = useRef(false);
   const objPinchRef = useRef<any>(null);
   /* 每個圖片物件跑完管線之後的成品，快取起來 —— 參數沒變就不重跑。
      key 是「物件 id + 參數指紋」，所以只有動到的那一張會重算。 */
@@ -1001,8 +1007,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       r: o.imgRadius || 0, f: o.feather || 0,
       sw: o.imgStrokeWidth || 0, sc: o.imgStrokeColor || '#FFFFFF', sd: o.imgStrokeDash || 0,
       g: o.imgGlow || 0, gc: o.imgGlowColor || '#FFFFFF',
+      /* 外形（圓形／星型／愛心）與圖片在形狀裡的位移。
+         沒選形狀時 k 是 undefined，下面每一段都走原本那條路。 */
+      k: o.imgShape as string | undefined, px: o.imgShapeX || 0, py: o.imgShapeY || 0,
     };
-    const hasShape = shape.r || shape.f || shape.sw || shape.g;
+    const hasShape = shape.r || shape.f || shape.sw || shape.g || isImgShaped(shape.k);
     if ((!o.fx || !hasPhotoFx(o.fx)) && !hasShape) return o.img;
 
     /* ── 拖圖片調整的滑桿時先用小一號的工作尺寸 ─────────────────────────
@@ -1083,27 +1092,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const swid = iw + lw * 2, shgt = ih + lw * 2;
     let shaped: CanvasImageSource = base;
     let drawW = iw, drawH = ih, drawX = (W - iw) / 2, drawY = (H - ih) / 2;
-    if (shape.f || shape.r || shape.sw) {
+    if (shape.f || shape.r || shape.sw || isImgShaped(shape.k)) {
       const off = document.createElement('canvas');
       off.width = Math.max(1, Math.round(swid));
       off.height = Math.max(1, Math.round(shgt));
       const oc = off.getContext('2d')!;
-      oc.drawImage(base, lw, lw, iw, ih);
-      if (shape.f || shape.r) {
+      drawImgBase(oc, base, lw, lw, iw, ih, o);
+      if (shape.f || shape.r || isImgShaped(shape.k)) {
         oc.globalCompositeOperation = 'destination-in';
         if (shape.f) {
-          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f), lw, lw, iw, ih);
+          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f, shape.k), lw, lw, iw, ih);
         } else {
           const R = cornerR(shape.r, iw, ih);
-          roundRectPath(oc, lw, lw, iw, ih, R, R);
-          oc.fillStyle = '#fff';
-          oc.fill();
+          withImgOutline(oc, lw, lw, iw, ih, shape.k, R, R, p => {
+            oc.fillStyle = '#fff';
+            p ? oc.fill(p) : oc.fill();
+          });
         }
         oc.globalCompositeOperation = 'source-over';
       }
       if (lw > 0) {
         const sr = shape.r ? cornerR(shape.r, iw, ih) + lw / 2 : 0;
-        roundRectPath(oc, lw / 2, lw / 2, iw + lw, ih + lw, sr, sr);
+        withImgOutline(oc, lw / 2, lw / 2, iw + lw, ih + lw, shape.k, sr, sr, p => {
         oc.lineWidth = lw;
         oc.lineJoin = 'miter';
         oc.miterLimit = 4;
@@ -1116,8 +1126,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           oc.setLineDash([]);
         }
         oc.strokeStyle = shape.sc;
-        oc.stroke();
+        p ? oc.stroke(p) : oc.stroke();
         oc.setLineDash([]);
+        });
       }
       shaped = off;
       drawW = off.width; drawH = off.height;
@@ -1390,6 +1401,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [effectCard, setEffectCard] = useState<string | null>(null);
   const [effectDetail, setEffectDetail] = useState(false);
   const [shapeMenu, setShapeMenu] = useState('root');
+  useEffect(() => {
+    shapePanRef.current = activeTab === 'objedit' && adjustSub === 'shape' && shapeMenu === 'imgShape';
+  }, [activeTab, adjustSub, shapeMenu]);
   /* 一進編輯頁不預先選好任何工具：滑桿要點下工具鈕才浮出來 */
   const [shapeTool, setShapeTool] = useState('');
   const [tuneTool, setTuneTool] = useState('');
@@ -2646,6 +2660,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          · pickId 存在＝已經有選中的物件，只是手指剛好按在別的物件上；
            拖的話搬的是「已選中的那個」（d.id），沒拖才把選取換過去 */
       if (d.selectOnly && !d.pickId) return;
+      /* 「形狀」那一頁開著、而且這顆圖片真的有形狀時，拖曳是在挪動
+         「圖片在形狀裡的位置」，不是搬動物件本身 —— 概念跟佈局裡調整
+         格子內照片的位置一樣。頁面關掉就恢復成原本的搬移。 */
+      const oPan = shapePanRef.current ? objectsRef.current.find(z => z.id === d.id) : null;
+      if (oPan && oPan.img && isImgShaped(oPan.imgShape)) {
+        if (d.px0 === undefined) { d.px0 = oPan.imgShapeX || 0; d.py0 = oPan.imgShapeY || 0; }
+        /* 可以拖的範圍就是「圖比框大出來的那一圈」，除以它換算成 -1~1。
+           物件轉過角度的話，手指的方向也要跟著轉回去，不然會歪著跑。 */
+        const rot = ((oPan.rot || 0) * Math.PI) / 180;
+        const ddx = x - d.startX, ddy = y - d.startY;
+        const lx = ddx * Math.cos(-rot) - ddy * Math.sin(-rot);
+        const ly = ddx * Math.sin(-rot) + ddy * Math.cos(-rot);
+        const rx = Math.max(1, ((oPan.w || 1) * (IMG_SHAPE_FILL - 1)) / 2);
+        const ry = Math.max(1, ((oPan.h || 1) * (IMG_SHAPE_FILL - 1)) / 2);
+        const cl = (v: number) => Math.max(-1, Math.min(1, v));
+        const px = cl(d.px0 + lx / rx), py = cl(d.py0 + ly / ry);
+        queueMove(() => setObjects(prev => prev.map(o =>
+          o.id === d.id ? { ...o, imgShapeX: px, imgShapeY: py } : o)));
+        return;
+      }
       let nx = d.ox + (x - d.startX), ny = d.oy + (y - d.startY);
       /* 對齊線：拖到接近畫布中線或邊界時吸附，並把那條線畫出來。
          門檻用畫布短邊的 1.2%，不管圖多大手感都一樣。 */
@@ -3769,7 +3803,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           const sp = Math.max(0.05, (o.dashSpeed ?? 100) / 100);
           ctx.save();
           ctx.beginPath();
-          roundRectPath(ctx as any, -rw / 2, -rh / 2, rw, rh, rr, rr);
+          /* 有選形狀的話，這條會動的虛線也要沿著形狀跑，不然預覽是星星、
+             描邊卻是一個方框。dashPath 有值就代表要用它來 stroke。
+             P（路徑總長）沿用圓角矩形的估算 —— 它只決定虛線跑動的節奏，
+             差一點點看不出來，但真的去量每個形狀的周長並不划算。 */
+          let dashPath: Path2D | undefined;
+          withImgOutline(ctx as any, -rw / 2, -rh / 2, rw, rh, o.imgShape, rr, rr, pp => { dashPath = pp; });
           ctx.lineWidth = lw2;
           ctx.lineJoin = 'miter';
           ctx.miterLimit = 4;
@@ -3807,7 +3846,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             const e = (Math.exp(Math.sin(w - Math.PI / 2)) - IE) / (E - IE);
             ctx.globalAlpha = ctx.globalAlpha * (0.12 + 0.88 * e);
           }
-          ctx.stroke();
+          /* 形狀的路徑是以 (-rw/2, -rh/2) 為原點畫的，所以描的時候要把
+             原點搬過去 —— withImgOutline 那一次的 translate 已經還原掉了。 */
+          if (dashPath) { ctx.translate(-rw / 2, -rh / 2); ctx.stroke(dashPath); }
+          else ctx.stroke();
           ctx.restore();
         }
       } else if (o.type === 'shape') {
