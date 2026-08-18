@@ -140,8 +140,17 @@
                     }
                 } catch (e) { /* ignore */ }
 
-                /* ③ IndexedDB：草稿與歷史紀錄都放這裡，第一次開資料庫要建結構。 */
-                try { indexedDB.open('abai-exports'); indexedDB.open('abai-tools'); } catch (e) { /* ignore */ }
+                /* ③ IndexedDB：**刻意不預先打開**。
+                      這裡本來有一行 open('abai-exports') 與 open('abai-tools')。
+                      不帶版本號的 open 會把資料庫直接建成「第 1 版、
+                      裡面一個 store 都沒有」，而 toolDraft / exportHistory 是用
+                      open(名稱, 1) 打開的 —— 版本一樣，onupgradeneeded 就永遠不會跑，
+                      store 永遠不存在，於是每一次寫入都被靜靜吞掉：
+                      草稿存不進去、歷史紀錄永遠是空的。
+                      更糟的是這個連線開了之後沒有關，後來想升級版本補建 store
+                      也會被它擋住（onblocked），所以連修復都時好時壞。
+                      省下的那點時間遠不及代價，直接拿掉；兩個模組自己
+                      第一次用到時會用正確的方式建好。 */
 
                 /* ④ 濾鏡檔（LUT）：一支 300KB 左右，第一次點濾鏡時要現載，
                       那一下就是明顯的卡頓。先抓前三支放進瀏覽器快取。
