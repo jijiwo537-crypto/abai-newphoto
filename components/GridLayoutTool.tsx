@@ -9816,13 +9816,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           controlsList="nodownload noplaybackrate noremoteplayback"
                           disablePictureInPicture
                           onContextMenu={e => e.preventDefault()}
-                          className="max-w-[80vw] max-h-[calc(52*var(--app-vh)/100)] md:max-w-[calc(38*var(--app-vh)/100)] object-contain relative z-10 pointer-events-none"
+                          className="max-w-[80vw] max-h-[52vh] md:max-w-[38vh] object-contain relative z-10 pointer-events-none"
                         />
                       ) : (
                         <img
                           src={src}
                           alt={`Final Result ${i + 1}`}
-                          className="max-w-[80vw] max-h-[calc(52*var(--app-vh)/100)] md:max-w-[calc(38*var(--app-vh)/100)] object-contain allow-callout relative z-10"
+                          className="max-w-[80vw] max-h-[52vh] md:max-w-[38vh] object-contain allow-callout relative z-10"
                         />
                       )}
                       <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded"></div>
@@ -11243,7 +11243,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           螢幕夠高就用 36dvh。 */}
       <footer
         className="bg-[#0a0a0a] border-t border-[#1a1a1a] flex flex-col z-[50] no-select shrink-0 transition-transform duration-300 ease-out"
-        style={{ height: 'max(calc(36*var(--app-dvh)/100), 310px)' }}
+        style={{ height: 'max(36dvh, 310px)' }}
       >
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* Tabs list */}

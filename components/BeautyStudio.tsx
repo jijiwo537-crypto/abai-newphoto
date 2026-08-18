@@ -926,8 +926,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             </button>
           </header>
           <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
-            <div className="relative shadow-2xl rounded overflow-hidden max-h-[calc(52*var(--app-vh)/100)] max-w-full mb-4">
-              <img src={finalImage} alt="美顏結果" className="max-w-full max-h-[calc(52*var(--app-vh)/100)] object-contain allow-callout relative z-10" />
+            <div className="relative shadow-2xl rounded overflow-hidden max-h-[52vh] max-w-full mb-4">
+              <img src={finalImage} alt="美顏結果" className="max-w-full max-h-[52vh] object-contain allow-callout relative z-10" />
               <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded"></div>
             </div>
           </div>

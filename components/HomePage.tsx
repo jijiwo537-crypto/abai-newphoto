@@ -1104,7 +1104,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           role="button"
           aria-label="換一張主視覺"
           onClick={() => pickPreview('hero')}
-          className="relative shrink-0 flex-1 min-h-[130px] max-h-[calc(52*var(--app-vh)/100)] -mx-5 overflow-hidden"
+          className="relative shrink-0 flex-1 min-h-[130px] max-h-[52vh] -mx-5 overflow-hidden"
         >
 
           {/* 主視覺：預設用「最近一張作品」（參考圖上面那張照片就是歷史紀錄
