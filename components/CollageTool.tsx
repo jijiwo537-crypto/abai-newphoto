@@ -1695,7 +1695,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const file = e.target.files?.[0];
     if (!file) return;
     const url = URL.createObjectURL(file);
-    // 這張照片就是草稿要存的那張（回來才接得回去）
+    /* 這張照片就是草稿要存的那張（回來才接得回去）。
+       saveDraft 內部是 `fetch(url)` 把位元組讀進 IndexedDB —— 那是非同步的，
+       所以這個網址在讀完之前不能回收。以前是 img.onload 一觸發就 revoke，
+       小張的圖解碼比讀取還快，那個 fetch 就拿到 ERR_FILE_NOT_FOUND、
+       被 catch 吞掉，草稿於是存不到照片。
+       乾脆不回收：這個網址只是一個幾十位元組的參照，真正佔記憶體的是解碼後的
+       點陣圖，而它本來就要一直留著（畫布每一帧都要用）。
+       編輯與美顏兩個工具本來也就沒有回收，這樣三邊一致。 */
     saveToolDraft('collage', url, null);
     const img = new Image();
     img.onload = () => {
@@ -1714,7 +1721,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       setImageTransform({ x: 0, y: 0, w: bw, h: bh });
       setLayout(bh > bw * 1.1 ? 'mask-right' : 'mask-bottom');
       setSelectedTarget(null);
-      URL.revokeObjectURL(url);
     };
     img.src = url;
     e.target.value = '';
