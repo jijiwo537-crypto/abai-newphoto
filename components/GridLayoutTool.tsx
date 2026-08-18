@@ -3791,6 +3791,33 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
          改成正確的做法：把這一層**升成自己的合成層**（translateZ(0) ＋
          will-change）。整層自己重畫，陰影多出去的那一圈也在這一層裡，
          縮放時會整層一起更新，殘影同樣不會留 —— 而且什麼都不必裁。 */
+      /* 圖片以外的東西（圖形、文字）用另一種框：跟創意拼圖同款的白色虛線，
+         而且**不畫**四個角的圓球 —— 那兩種本來就是兩指縮放，圓球只是擋路。
+         圖片維持原本的實線框＋四顆圓球（要靠它們拉比例）。 */
+      const isPhoto = !image.shape && image.text === undefined;
+      const kNow = canvasK();
+      /** 一顆角球。看得見的白點比觸控範圍小 20%（14 → 11.2），
+       *  外面那層維持 14×14、而且事件還是掛在它身上，所以手感一點都沒變。 */
+      const cornerDot = (
+        corner: 'tl' | 'tr' | 'bl' | 'br',
+        pos: string, tx: string, cur: string,
+      ) => (
+        <div
+          key={corner}
+          className={`absolute ${pos} w-3.5 h-3.5 ${cur} z-50 pointer-events-auto touch-none`}
+          style={{ transform: tx }}
+          onPointerDown={(e) => handleScalePointerDown(e, corner)}
+          onPointerMove={handleScalePointerMove}
+          onPointerUp={handleScalePointerUp}
+          onPointerCancel={handleScalePointerUp}
+          title="縮放"
+        >
+          <div
+            className="absolute rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]"
+            style={{ left: 1.4, top: 1.4, right: 1.4, bottom: 1.4 }}
+          />
+        </div>
+      );
       return (
       <div
         className="absolute inset-0 pointer-events-none"
@@ -3802,46 +3829,32 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           backfaceVisibility: 'hidden',
         }}
       >
-        {/* Active border matching layout style（深色那一圈是往外畫的，跟原本一樣） */}
-        <div className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" />
+        {isPhoto ? (
+          /* Active border matching layout style（深色那一圈是往外畫的，跟原本一樣） */
+          <div className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" />
+        ) : (
+          /* 虛線框：數值跟創意拼圖那條 strokeRect 一模一樣（1.6px 寬、6.7/6.7 的節奏）。
+             除掉預覽的倍率 k —— 放大預覽時框不會跟著變粗，跟那邊的 uiPx 同一個道理。
+             線是畫在邊界上的（一半長在外面），所以要 overflow: visible。 */
+          <svg
+            className="absolute inset-0 w-full h-full pointer-events-none z-30"
+            style={{ overflow: 'visible' }}
+            aria-hidden
+          >
+            <rect
+              x="0" y="0" width="100%" height="100%"
+              fill="none" stroke="#ffffff"
+              strokeWidth={r3(1.6 / kNow)}
+              strokeDasharray={`${r3(6.7 / kNow)} ${r3(6.7 / kNow)}`}
+            />
+          </svg>
+        )}
 
-        {/* Four Corner scale dots */}
-        <div
-          className="absolute top-0 left-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nwse-resize z-50 pointer-events-auto touch-none"
-          style={{ transform: 'translate(-50%, -50%)' }}
-          onPointerDown={(e) => handleScalePointerDown(e, 'tl')}
-          onPointerMove={handleScalePointerMove}
-          onPointerUp={handleScalePointerUp}
-          onPointerCancel={handleScalePointerUp}
-          title="縮放"
-        />
-        <div
-          className="absolute top-0 right-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nesw-resize z-50 pointer-events-auto touch-none"
-          style={{ transform: 'translate(50%, -50%)' }}
-          onPointerDown={(e) => handleScalePointerDown(e, 'tr')}
-          onPointerMove={handleScalePointerMove}
-          onPointerUp={handleScalePointerUp}
-          onPointerCancel={handleScalePointerUp}
-          title="縮放"
-        />
-        <div
-          className="absolute bottom-0 left-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nesw-resize z-50 pointer-events-auto touch-none"
-          style={{ transform: 'translate(-50%, 50%)' }}
-          onPointerDown={(e) => handleScalePointerDown(e, 'bl')}
-          onPointerMove={handleScalePointerMove}
-          onPointerUp={handleScalePointerUp}
-          onPointerCancel={handleScalePointerUp}
-          title="縮放"
-        />
-        <div
-          className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] cursor-nwse-resize z-50 pointer-events-auto touch-none"
-          style={{ transform: 'translate(50%, 50%)' }}
-          onPointerDown={(e) => handleScalePointerDown(e, 'br')}
-          onPointerMove={handleScalePointerMove}
-          onPointerUp={handleScalePointerUp}
-          onPointerCancel={handleScalePointerUp}
-          title="縮放"
-        />
+        {/* Four Corner scale dots（只有圖片才有） */}
+        {isPhoto && cornerDot('tl', 'top-0 left-0', 'translate(-50%, -50%)', 'cursor-nwse-resize')}
+        {isPhoto && cornerDot('tr', 'top-0 right-0', 'translate(50%, -50%)', 'cursor-nesw-resize')}
+        {isPhoto && cornerDot('bl', 'bottom-0 left-0', 'translate(-50%, 50%)', 'cursor-nesw-resize')}
+        {isPhoto && cornerDot('br', 'bottom-0 right-0', 'translate(50%, 50%)', 'cursor-nwse-resize')}
 
       </div>
       );
@@ -3851,15 +3864,22 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 
 
   /* 圖形圖層的描邊參數。全部用「沒有縮放前」的尺寸算 ——
-     SVG 的 viewBox 也是那個尺寸，縮放交給外框，兩軸倍率一樣，
-     所以線寬與虛線的節奏會跟著圖形一起等比例放大。 */
+     SVG 的 viewBox 也是那個尺寸，縮放交給外框，兩軸倍率一樣。
+     ── 線一律再除以 scale ──────────────────────────────────────────
+     viewBox 裡的 1 單位畫在畫面上就是 scale，所以不除的話「把圖形拉大」
+     連框線也跟著變粗，拉到三倍就變成三倍粗的框。圖形的 width/height 是
+     新增時就定下來的、之後縮放只動 scale，除掉它之後不論拉多大多小，
+     框線、虛線的節奏、外描邊看起來都是同一個粗細。 */
   const shapeStroke = (() => {
     if (!image.shape) return null;
-    const lw = shapeLineWidth(image.shapeLineW, image.width, image.height);
+    const s = image.scale || 1;
+    const lw = shapeLineWidth(image.shapeLineW, image.width, image.height) / s;
     const dash = image.shapeDash || 0;
     const seg = lw * (0.6 + (dash / 100) * 4);
     return {
       lw,
+      /** 外描邊的寬度（單邊）。跟框線同一個道理，也要除掉 scale */
+      outer: (image.shapeStrokeW || 0) * (Math.max(image.width, image.height) / 160) / s,
       dashArray: dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined,
       // 一律平頭：線條的兩端要是切齊的，不要圓角
       cap: 'butt' as const,
@@ -3879,6 +3899,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     dots: image.shapeDots, dotSize: image.shapeDotSize,
     dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
     id: image.id,
+    /* 線寬的單位刻意不含 scale：不然「把圖案拉大」框線也跟著變粗。
+       跟 SVG 那些圖形除以 scale 是同一條規則。 */
+    lineUnit: Math.max(image.width, image.height) / 160 / (image.scale || 1),
   } : null;
   /* 超出量跟尺寸成正比，所以用「沒有縮放前」的框算一次就好，
      要換到畫布的像素只要再乘上 scale×dpr。
@@ -3918,6 +3941,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             const bw = Math.max(1, image.width * image.scale * dpr);
             const bh = Math.max(1, image.height * image.scale * dpr);
             const blurs = shapeGlowBlurs(bw, bh);
+            /* 交給 drawHoleShape 的是畫布像素，線寬的單位也要換到同一個座標系
+               （holeOpts 裡那個是內容單位，兩邊都是「長邊/160 再除掉 scale」）。 */
+            const opts = { ...holeOpts!, lineUnit: Math.max(bw, bh) / 160 / (image.scale || 1) };
             /* 畫布要比外框大一圈：好幾種圖案的墨水本來就比框大
                （`<333` 有 2.9 倍寬），描邊與發光也長在框外面 ——
                畫布只開外框那麼大的話，超出去的全部被切掉。
@@ -3932,7 +3958,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             c.setTransform(1, 0, 0, 1, 0, 0);
             c.clearRect(0, 0, w, h);
             c.translate(w / 2, h / 2);
-            drawHoleShape(c, holeOpts!, bw, bh, blurs);
+            drawHoleShape(c, opts, bw, bh, blurs);
           }}
           key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${Math.round(image.width * image.scale)}|${Math.round(image.height * image.scale)}`}
           style={{
@@ -3987,7 +4013,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               fill="none"
               stroke={image.shapeStrokeColor || '#000000'}
               strokeWidth={((image.shapeFilled && image.shape !== 'line') ? 0 : (shapeStroke?.lw || 0))
-                + (image.shapeStrokeW || 0) * (Math.max(image.width, image.height) / 160) * 2}
+                + (shapeStroke?.outer || 0) * 2}
               strokeLinejoin="round"
               strokeLinecap="butt"
             />
@@ -8572,6 +8598,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           dots: fImg.shapeDots, dotSize: fImg.shapeDotSize,
           dotGap: fImg.shapeDotGap, dotColor: fImg.shapeDotColor,
           id: fImg.id,
+          // 線寬的單位不含 scale（上面已經 ctx.scale 過了）—— 跟預覽同一條規則
+          lineUnit: Math.max(fw, fh) / 160 / (fImg.scale || 1),
         },
         fw, fh, shapeGlowBlurs(fw, fh).map(r => r * glowAmount(fImg.shapeGlow as any)),
       );
@@ -8582,8 +8610,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const path = new Path2D(shapePathD(fImg.shape!, fw, fh));
     const color = fImg.color || SHAPE_DEFAULT_COLOR;
     const solid = fImg.shapeFilled && fImg.shape !== 'line';
+    /* 線寬要除掉 scale：上面已經 ctx.scale(fImg.scale, ...) 過了，
+       不除的話「圖形拉大」連框線也跟著變粗 —— 跟預覽同一條規則。 */
+    const sScale = fImg.scale || 1;
+    const lw = shapeLineWidth(fImg.shapeLineW, fw, fh) / sScale;
     if (!solid) {
-      const lw = shapeLineWidth(fImg.shapeLineW, fw, fh);
       const dash = fImg.shapeDash || 0;
       ctx.lineWidth = lw;
       ctx.lineJoin = fImg.shape === 'line' ? 'round' : 'miter';
@@ -8612,14 +8643,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.restore();
     }
     /* 外描邊：畫在本體底下、寬度加倍，跟預覽那一條 path 同一套 */
-    const strokeW = (fImg.shapeStrokeW || 0) * (Math.max(fw, fh) / 160);
+    const strokeW = (fImg.shapeStrokeW || 0) * (Math.max(fw, fh) / 160) / sScale;
     if (strokeW > 0) {
       ctx.save();
       ctx.setLineDash([]);
       ctx.lineJoin = 'round';
       ctx.miterLimit = 2;
       ctx.strokeStyle = fImg.shapeStrokeColor || '#000000';
-      ctx.lineWidth = (solid ? 0 : shapeLineWidth(fImg.shapeLineW, fw, fh)) + strokeW * 2;
+      ctx.lineWidth = (solid ? 0 : lw) + strokeW * 2;
       ctx.stroke(path);
       ctx.restore();
     }
@@ -8972,7 +9003,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                只是外框換成縮圖的尺寸。 */
             const isLine = f.shape === 'line';
             const solid = !!f.shapeFilled && !isLine;
-            const lw = shapeLineWidth(f.shapeLineW, f.width, f.height);
+            // 除掉 scale：框線不隨圖形放大而變粗（跟預覽、匯出同一條規則）
+            const lw = shapeLineWidth(f.shapeLineW, f.width, f.height) / (f.scale || 1);
             const dash = f.shapeDash || 0;
             const seg = lw * (0.6 + (dash / 100) * 4);
             /* 借來的圖案不是 SVG 路徑，縮圖也走 canvas（跟預覽、匯出同一支） */
@@ -8984,6 +9016,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 strokeW: f.shapeStrokeW, strokeColor: f.shapeStrokeColor,
                 dots: f.shapeDots, dotSize: f.shapeDotSize,
                 dotGap: f.shapeDotGap, dotColor: f.shapeDotColor, id: f.id,
+                // 線寬的單位不含 scale —— 跟預覽、匯出同一條規則
+                lineUnit: Math.max(f.width, f.height) / 160 / (f.scale || 1),
               };
               /* 跟預覽同一個道理：畫布要比外框大一圈，墨水才不會被切掉 */
               const ov = holeOverflow(ho, f.width, f.height,
@@ -9004,7 +9038,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   c.setTransform(1, 0, 0, 1, 0, 0);
                   c.clearRect(0, 0, w, h);
                   c.translate(w / 2, h / 2);
-                  drawHoleShape(c, ho, bw, bh, shapeGlowBlurs(bw, bh).map(r => r * glowAmount(f.shapeGlow as any)));
+                  drawHoleShape(c, { ...ho, lineUnit: Math.max(bw, bh) / 160 / (f.scale || 1) },
+                    bw, bh, shapeGlowBlurs(bw, bh).map(r => r * glowAmount(f.shapeGlow as any)));
                 }}
                 style={{
                   ...common,
@@ -11292,8 +11327,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 ) : addSub === 'root' ? (
                   /* 五顆分兩排：第一排三顆、第二排兩顆。
                      全部擠在同一排的話每顆只剩七十幾寬，字都快貼到邊了。
-                     兩排都用同一個 max-w，所以每顆按鈕一樣大。 */
-                  <div className="flex flex-col gap-1.5 mt-6">
+                     兩排都用同一個 max-w，所以每顆按鈕一樣大。
+
+                     key 是必要的：兩個分頁的最外層都是 <div>，沒有 key 的話
+                     React 會把它們當成同一顆、只換 className —— 於是清單那邊的
+                     <button> 被留下來直接變成這一頁的按鈕，而按鈕上掛著
+                     transition-all，就從「返回鍵那個大小」一路補間到正常大小。
+                     那就是返回時看到的抖動。給了 key 就是整片換掉，不會補間。 */
+                  <div key="add-root" className="flex flex-col gap-1.5 mt-6">
                   <div className="flex justify-center gap-1.5">
                   <button
                     onClick={() => {
@@ -11351,8 +11392,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 ) : (
                   /* 點進「新增圖形」才看得到的圖案清單。
                      三排：實心、細框、線條，點一下就加到這一頁的正中間 ——
-                     不會跳去編輯頁，所以可以連著加好幾個。 */
-                  <div className="pt-1">
+                     不會跳去編輯頁，所以可以連著加好幾個。
+                     （key 的理由見上面那一頁） */
+                  <div key="add-shape" className="pt-1">
                     <div className="flex items-center gap-2 mb-3">
                       {/* 跟登入／帳號頁那顆同款：只有一個箭頭，沒有底下的圓 */}
                       <button

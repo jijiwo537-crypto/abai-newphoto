@@ -3794,7 +3794,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            粗細的單位跟描邊同一條（長邊 / 160），所以物件放大縮小時
            框線的觀感一致；虛線的節奏也照描邊那條式子。 */
         const bw = o.w * s, bh = o.h * s;
-        const unit = Math.max(bw, bh) / 160;
+        /* 線寬的單位用「新增時的大小」而不是現在的大小 —— 物件拉大拉小時
+           框線、虛線的節奏、外描邊看起來都是同一個粗細。
+           lineBase 是新增時記下來的長邊；舊草稿沒有這個欄位，就沿用原本
+           的算法（跟著現在的大小走），行為不會突然變。 */
+        const unit = ((o as any).lineBase || Math.max(o.w, o.h)) * s / 160;
         const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
         const col = o.color || SHAPE_DEFAULT_COLOR;
         const solid = o.filled && o.kind !== 'line';
@@ -3823,10 +3827,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         if (o.kind === 'hole') {
           /* 整段畫法在共用模組裡（經典拼圖也吃同一支），
              這裡只負責把原點搬到框心再交出去。
-             發光的半徑先乘上強度（面板那根 0～100 的滑桿）。 */
+             發光的半徑先乘上強度（面板那根 0～100 的滑桿）。
+             線寬的單位跟上面的圖形同一個 —— 拉大不會變粗。 */
           const ga = glowAmount(o.glow);
           ctx.translate(bw / 2, bh / 2);
-          drawHoleShape(ctx, o, bw, bh, shapeGlowBlurs(bw, bh).map(r => r * ga));
+          drawHoleShape(ctx, { ...o, lineUnit: unit }, bw, bh, shapeGlowBlurs(bw, bh).map(r => r * ga));
           ctx.setLineDash([]);
           ctx.restore();
         } else {
@@ -6123,6 +6128,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   setObjects(prev => [...prev, {
                     id, type: 'shape',
                     kind: it.kind, hole: it.hole, filled: it.filled,
+                    /* 框線的粗細以「新增時的長邊」為準，之後拉大拉小都不變 */
+                    lineBase: Math.max(w, h),
                     lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
                     color: SHAPE_DEFAULT_COLOR,
                     glow: 0, glowColor: SHAPE_DEFAULT_COLOR,
@@ -6139,7 +6146,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     {addSub === 'symbol' ? (
                       <SymbolPicker onBack={() => setAddSub('root')} onPick={addSymbol} />
                     ) : addSub === 'root' ? (
-                    <div className="flex justify-center gap-1.5 mt-6">
+                    /* key 是必要的：兩個分頁的最外層都是 <div>，沒有 key 的話
+                       React 會當成同一顆、只換 className —— 清單那邊的 <button>
+                       就被留下來直接變成這一頁的按鈕，而按鈕掛著 transition-all，
+                       於是從「返回鍵那個大小」一路補間過來，看起來就是抖一下。 */
+                    <div key="add-root" className="flex justify-center gap-1.5 mt-6">
                       <button
                         onClick={() => objFileInputRef.current?.click()}
                         className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
@@ -6178,8 +6189,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     </div>
                     ) : (
                       /* 點進「新增圖形」才看得到的圖案清單，跟經典拼圖同一份：
-                         三排（實心／邊框／線條），點一下就加到版面正中間。 */
-                      <div className="pt-1">
+                         三排（實心／邊框／線條），點一下就加到版面正中間。
+                         （key 的理由見上面那一頁） */
+                      <div key="add-shape" className="pt-1">
                         <div className="flex items-center gap-2 mb-3">
                           <button
                             onClick={() => setAddSub('root')}
