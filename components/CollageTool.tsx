@@ -459,6 +459,37 @@ export const GLOW_SWATCHES: string[] = (() => {
   return ['#FFFFFF', ...hues.map(h => hslToHex(h, sat, l))];
 })();
 
+/* 遮罩用的色票。做法跟發光那組一模一樣：只轉色相、飽和度與亮度完全不動，
+   照色相由小到大排成一圈漸層。這裡放兩圈 ——
+   淡的那一圈以 #D2E8E1 為基準（＝遮罩的預設色），
+   深一點的那一圈以 #B8E3D8 為基準，兩種濃淡都給得到。
+   第一顆固定純白。 */
+const MASK_BASE_LIGHT = '#D2E8E1';
+const MASK_BASE_DEEP = '#B8E3D8';
+/** 把一個顏色拆成 HSL，只換色相繞一圈，回傳 n 顆照色相排好的顏色 */
+const hueRing = (baseHex: string, n: number): string[] => {
+  const r = parseInt(baseHex.slice(1, 3), 16) / 255;
+  const g = parseInt(baseHex.slice(3, 5), 16) / 255;
+  const b = parseInt(baseHex.slice(5, 7), 16) / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  const l = (mx + mn) / 2;
+  const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  let h0 = 0;
+  if (d !== 0) {
+    h0 = mx === r ? 60 * (((g - b) / d) % 6) : mx === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
+  }
+  const step = 360 / n;
+  const hues: number[] = [];
+  for (let i = 0; i < n; i++) hues.push((((h0 + i * step) % 360) + 360) % 360);
+  hues.sort((a, b2) => a - b2);
+  return hues.map(h => hslToHex(h, sat, l));
+};
+export const MASK_SWATCHES: string[] = [
+  '#FFFFFF',
+  ...hueRing(MASK_BASE_LIGHT, 14),
+  ...hueRing(MASK_BASE_DEEP, 14),
+];
+
 /* 把任意顏色換成「發光色票裡同色系的那一顆」。
    比的是色相：飽和度與亮度一律用色票自己的（那正是發光看起來乾淨的原因），
    幾乎沒有顏色的（灰、白、黑）就配第一顆純白。 */
@@ -1364,7 +1395,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [tuneTool, setTuneTool] = useState('');
   const [loadingLut, setLoadingLut] = useState<string | null>(null);
   const [lutRevision, setLutRevision] = useState(0);
-  const [maskColor, setMaskColor] = useState('#FFF2E6'); 
+  const [maskColor, setMaskColor] = useState('#D2E8E1'); 
   const [patternType, setPatternType] = useState('none'); 
   const [dotColor, setDotColor] = useState('#595959'); 
   const [dotSize, setDotSize] = useState(20); 
@@ -5018,7 +5049,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             justify-content: center;
         }
         .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        /* 捲到頂／底就停住，不要再彈回來（iOS 橡皮筋） */
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; overscroll-behavior: none; }
         /* 圖片編輯那一頁的滑桿：跟「編輯」「經典拼圖」用同一組樣式，連軌道與圓點都一樣。
            這一份是從 GridLayoutTool 逐字複製過來的 —— 那顆面板是共用元件，
            樣式卻寫在各自的 <style> 裡，少這一份就會退回瀏覽器原生滑桿。 */
@@ -5862,6 +5894,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 else setDotColor(c); }}
               swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor'
                 || colorPickerTarget === 'shapeGlow' ? GLOW_SWATCHES
+                : colorPickerTarget === 'mask' ? MASK_SWATCHES
                 : undefined}
               onClose={() => setColorPickerTarget(null)}
               title={colorPickerTarget === 'mask' ? '遮罩顏色'

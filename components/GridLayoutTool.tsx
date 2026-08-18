@@ -4243,7 +4243,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     id: string;
     bgColor: string;
     layouts: LayoutItem[];
+    /** 這一頁的背景紋理。沒設過就是「無」，所以舊作品讀回來也不會有東西冒出來 */
+    pattern?: PatternOpts;
   }
+  /** 讀某一頁的紋理設定（沒設過就給預設值） */
+  const pagePattern = (p?: { pattern?: PatternOpts }): PatternOpts =>
+    p?.pattern || { type: 'none', color: '#A8DDE6', size: 50, gap: 20 };
 
   const [pages, setPages] = useState<PageConfig[]>(() => [
     { id: 'page-1', bgColor: '#ffffff', layouts: [] }
@@ -5017,18 +5022,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
   const bgColor = activePage.bgColor;
   /* 背景紋理。跟創意拼圖的遮罩紋理同一套參數，畫法共用 utils/pattern.ts。
-     整份作品共用一份，不像底色那樣每頁各存 —— 翻頁時紋理不該跟著換。 */
-  const [patternType, setPatternType] = useState('none');
-  const [patternColor, setPatternColor] = useState('#A8DDE6');
+     每一頁各存一份：改紋理時只會動到「現在停在畫面正中央的那一頁」
+     （activePageIndex 就是捲動時算出來、離中心最近的那一頁）。 */
+  const patternOpts: PatternOpts = pagePattern(activePage);
+  const patchPattern = (patch: Partial<PatternOpts>) => setPages(prev => prev.map((p, i) =>
+    i === activePageIndex ? { ...p, pattern: { ...pagePattern(p), ...patch } } : p));
+  const patternType = patternOpts.type;
+  const patternColor = patternOpts.color;
+  const setPatternType = (t: string) => patchPattern({ type: t });
+  const setPatternColor = (c: string) => patchPattern({ color: c });
   /* 顏色分頁的子頁面：'bg' 是原本的底色挑色器，'pattern' 是點了紋理旁邊那顆
      色塊之後進去的紋理專屬調色頁（跟創意拼圖同一套操作）。 */
   const [colorSub, setColorSub] = useState<'bg' | 'pattern'>('bg');
   /** 顏色分頁的捲動容器：換子頁時要捲回最上面 */
   const colorTabRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => { if (colorTabRef.current) colorTabRef.current.scrollTop = 0; }, [colorSub]);
-  const [patternSize, setPatternSize] = useState(50);
-  const [patternGap, setPatternGap] = useState(20);
-  const patternOpts: PatternOpts = { type: patternType, color: patternColor, size: patternSize, gap: patternGap };
+  const patternSize = patternOpts.size;
+  const patternGap = patternOpts.gap;
+  const setPatternSize = (v: number) => patchPattern({ size: v });
+  const setPatternGap = (v: number) => patchPattern({ gap: v });
 
   /* 紋理的兩根滑桿。其他面板那幾支同名 helper 都關在各自的元件裡，
      主元件拿不到，所以就近寫一支。軌道用全域的 .premium-slider。 */
@@ -9267,7 +9279,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           if (withBg) {
             g.fillStyle = pages[pageIdx].bgColor || '#ffffff';
             g.fillRect(0, 0, VW, VH);
-            paintPattern(g, VW, VH, patternOpts);   // 紋理跟底色是一組的
+            paintPattern(g, VW, VH, pagePattern(pages[pageIdx]));   // 紋理跟底色是一組的（每頁各自）
           }
           g.save();
           g.scale(VW / targetW, VH / targetH);
@@ -9410,7 +9422,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         ctx.clearRect(0, 0, targetW, targetH);
         ctx.fillStyle = pages[pageIdx].bgColor || '#ffffff';
         ctx.fillRect(0, 0, targetW, targetH);
-        paintPattern(ctx, targetW, targetH, patternOpts);   // 紋理跟底色是一組的
+        paintPattern(ctx, targetW, targetH, pagePattern(pages[pageIdx]));   // 紋理跟底色是一組的（每頁各自）
 
         ctx.save();
         ctx.translate(-pageLeft, 0);
@@ -9540,7 +9552,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           .group:hover .cell-hover-icon { opacity: .6; transform: scale(1.1); }
           .group:hover .cell-hover-text { color: rgba(255,255,255,0.5); }
         }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        /* 捲到頂／底就停住，不要再彈回來（iOS 橡皮筋） */
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; overscroll-behavior: none; }
         .allow-callout {
             -webkit-touch-callout: default !important;
             -webkit-user-select: auto !important;
@@ -10001,7 +10014,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           >
                             <div className="absolute inset-0" style={{ backgroundColor: page.bgColor }} />
                             {/* 背景紋理：疊在底色上、所有內容之下，不影響點選與拖曳 */}
-                            <PatternLayer w={previewW} h={previewH} opts={patternOpts} />
+                            <PatternLayer w={previewW} h={previewH} opts={pagePattern(page)} />
                             {page.layouts.map((layout) => {
                               const pageTemplates = TEMPLATE_MAP[layout.images.length] || [];
                               const pageActiveTemplate = pageTemplates[layout.templateIndex] || pageTemplates[0] || { name: '預設', rects: [] };
