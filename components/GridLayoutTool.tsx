@@ -955,8 +955,8 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
       };
       /** 沿著本體從現在的位置畫到角度 t（large＝要不要走大的那一段弧） */
       const A = (t: number, large: 0 | 1) => `A ${r3(ra)} ${r3(rb)} 0 ${large} 1 ${E(t)}`;
-      // 尾巴接在本體左下（108°～143°），尖端落在外框的底邊
-      return `M ${E(0)} ${A(108, 0)} L ${P(w * 0.14, h)} L ${E(143)} ${A(360, 1)} Z`;
+      // 尾巴接在本體左下（115°～137°）—— 接口窄、尖端更靠左，斜得比較明顯
+      return `M ${E(0)} ${A(115, 0)} L ${P(w * 0.04, h)} L ${E(137)} ${A(360, 1)} Z`;
     }
     case 'line':
       return `M ${P(0, cy)} L ${P(w, cy)}`;
@@ -1139,10 +1139,10 @@ export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
 
 /** 一顆「圖案」的小圖（形狀分頁的選單與『新增圖形』清單共用同一份）。 */
 /* 實心版的十字星是「凹進去」的四角星，同樣 18px 畫出來的墨水比旁邊那些
-   圖示少很多、看起來小一號 —— 所以實心版單獨畫成兩倍大（36px）。 */
+   圖示少很多、看起來小一號 —— 所以實心版單獨放大到 28px。 */
 export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled }) => (
   <>
-    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 36 : 18} filled={filled} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 28 : 18} filled={filled} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
                         /* 去背的圖：拿它當遮罩、底色用 currentColor，
                            顏色就跟旁邊那些圖示走同一條規則 ——
                            沒選中時是暗的（#555），選中才變白。
