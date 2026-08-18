@@ -56,6 +56,22 @@
   }
 }
 
+/* ── 可用高度：畫面高度扣掉瀏海與底部指示條 ─────────────────────────
+   加了 viewport-fit=cover 之後，畫面會鋪到瀏海與指示條底下，於是
+   100vh／100dvh 變成「整片螢幕」而不是「看得到的那一塊」。
+   各工具的根元素有 .safe-top 補回內距，內容區的大小沒變；但**裡面**那些
+   用 vh／dvh 定的尺寸（面板高度 36dvh、預覽圖 52vh…）會跟著整片螢幕變大，
+   面板一長高就把預覽擠扁、最底下那排被 overflow-hidden 裁掉 —— 那就是
+   「介面跑掉、缺字」。
+
+   所以那些尺寸一律改成看這兩個變數，而不是看 vh／dvh：
+   沒有安全區的時候（桌機、Android、Safari 分頁）兩個 env 都是 0，
+   算出來就等於 100vh／100dvh，跟以前一個像素都不差。 */
+:root {
+  --app-vh: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  --app-dvh: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+}
+
 /* 選音樂面板：正在試聽的那一首，封面上跳動的音量條 */
 @keyframes abaiEq {
   0%, 100% { transform: scaleY(0.25); }
