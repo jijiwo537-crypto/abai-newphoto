@@ -9,6 +9,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/browser": "^7.0.5",
+    "@capacitor/core": "^7.6.8",
+    "@capacitor/filesystem": "^7.1.8",
+    "@capacitor/share": "^7.0.4",
+    "@capacitor/status-bar": "^7.0.6",
     "@imagemagick/magick-wasm": "^0.0.38",
     "@supabase/supabase-js": "^2.112.3",
     "exifreader": "^4.41.0",
@@ -21,6 +27,8 @@
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "^7.6.8",
+    "@capacitor/ios": "^7.6.8",
     "@tailwindcss/container-queries": "^0.1.1",
     "@tailwindcss/forms": "^0.5.11",
     "@tailwindcss/typography": "^0.5.20",
