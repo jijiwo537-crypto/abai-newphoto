@@ -15,7 +15,7 @@ import {
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
   /* 圖片外形（形狀）：圓形／星型／愛心也共用同一份路徑與同一支算圖 */
-  isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, IMG_SHAPE_FILL,
+  isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, IMG_SHAPE_FILL, isPointInImgShape, imgShapeBox, imgShapeInk,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
@@ -2660,11 +2660,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          · pickId 存在＝已經有選中的物件，只是手指剛好按在別的物件上；
            拖的話搬的是「已選中的那個」（d.id），沒拖才把選取換過去 */
       if (d.selectOnly && !d.pickId) return;
-      /* 「形狀」那一頁開著、而且這顆圖片真的有形狀時，拖曳是在挪動
-         「圖片在形狀裡的位置」，不是搬動物件本身 —— 概念跟佈局裡調整
-         格子內照片的位置一樣。頁面關掉就恢復成原本的搬移。 */
+      /* 「形狀」那一頁開著、這顆圖片有形狀、而且**手指是從圖案裡面按下去的**：
+         拖曳是在挪動「圖片在形狀裡的位置」。從形狀外面（例如愛心旁邊那塊
+         空白角落）按下去拖，就還是搬動整個物件。
+         判斷只做一次、記在 d.inShape 上 —— 一路拖出去也不會中途換行為。 */
       const oPan = shapePanRef.current ? objectsRef.current.find(z => z.id === d.id) : null;
       if (oPan && oPan.img && isImgShaped(oPan.imgShape)) {
+        if (d.inShape === undefined) {
+          /* 把「按下去的那一點」換算成物件自己的座標（先移到中心、轉回沒旋轉的方向） */
+          const r0 = ((oPan.rot || 0) * Math.PI) / 180;
+          const ax = d.startX - (oPan.x + oPan.w / 2), ay = d.startY - (oPan.y + oPan.h / 2);
+          const ux = ax * Math.cos(-r0) - ay * Math.sin(-r0) + oPan.w / 2;
+          const uy = ax * Math.sin(-r0) + ay * Math.cos(-r0) + oPan.h / 2;
+          d.inShape = isPointInImgShape(oPan.imgShape, oPan.w, oPan.h, ux, uy);
+        }
+        if (!d.inShape) { /* 從形狀外面按下去 → 照原本的搬移走 */ }
+        else {
         if (d.px0 === undefined) { d.px0 = oPan.imgShapeX || 0; d.py0 = oPan.imgShapeY || 0; }
         /* 可以拖的範圍就是「圖比框大出來的那一圈」，除以它換算成 -1~1。
            物件轉過角度的話，手指的方向也要跟著轉回去，不然會歪著跑。 */
@@ -2679,6 +2690,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         queueMove(() => setObjects(prev => prev.map(o =>
           o.id === d.id ? { ...o, imgShapeX: px, imgShapeY: py } : o)));
         return;
+        }
       }
       let nx = d.ox + (x - d.startX), ny = d.oy + (y - d.startY);
       /* 對齊線：拖到接近畫布中線或邊界時吸附，並把那條線畫出來。
@@ -4002,7 +4014,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1.6 * uiPx;
         ctx.setLineDash([6.7 * uiPx, 6.7 * uiPx]);
-        ctx.strokeRect(-o.w * s / 2, -o.h * s / 2, o.w * s, o.h * s);
+        /* 選了形狀的圖片，框要縮到剛好包住那個圖案 —— 不然愛心上面那片空白、
+           星星底下那條也會被框進去，看起來就是「框沒有貼著圖」。
+           沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
+        const ink = imgShapeInk(o.imgShape, o.w * s, o.h * s);
+        ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
         ctx.setLineDash([]);
       }
       ctx.restore();

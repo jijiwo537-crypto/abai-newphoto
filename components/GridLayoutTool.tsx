@@ -1813,10 +1813,14 @@ const CATS = ([
 ] as const).filter(c => !(hideShape && c[0] === 'shape'));
 
 // 編輯同款的圓形工具鈕
-const toolBtn = (id: string, label: string, icon: string, active: boolean, adjusted: boolean, onClick: () => void) => (
+/* icon 傳字串＝用圖示字型那一顆；傳一個元素＝直接畫那個元素。
+   形狀那幾顆走後者：圖示字型是**子集化過的**（只包含專案已經用到的那些），
+   隨手加一個新名字它並不在字型裡，畫面上就會直接顯示成那串英文字。
+   形狀本來就有現成的向量路徑，畫出來還比圖示更清楚。 */
+const toolBtn = (id: string, label: string, icon: string | React.ReactNode, active: boolean, adjusted: boolean, onClick: () => void) => (
   <button key={id} onClick={onClick} className="flex flex-col items-center gap-1 shrink-0 group w-16">
     <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}>
-      <Icon name={icon} className="text-lg" fill={active} />
+      {typeof icon === 'string' ? <Icon name={icon} className="text-lg" fill={active} /> : icon}
     </div>
     <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${active ? 'text-white' : 'text-white/20'}`}>{label}</span>
     <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${adjusted ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
@@ -2110,7 +2114,15 @@ return (
                 ? SHAPE_SUB_TOOLS[id].some(([k, , , , , d]) =>
                     !k.endsWith('Color') && (((img as any)[k]) || 0) !== d)
                 : (((img as any)[id]) || 0) !== dflt;
-            return toolBtn(id, label, icon, shapeTool === id, adjusted, () => {
+            /* 「形狀」那一顆直接畫目前套用的形狀 —— 不必點進去就看得出現在是哪一個，
+               而且不必依賴圖示字型（那顆字型是子集化的，新名字會變成一串英文字）。 */
+            const glyph = isShapePick
+              ? <ShapeGlyph
+                  item={{ id: 'cur', kind: IMG_SHAPES.find(s => s.id === (img.imgShape || 'rect'))?.glyph || 'square', filled: true }}
+                  size={19}
+                />
+              : icon;
+            return toolBtn(id, label, glyph, shapeTool === id, adjusted, () => {
               if (isShapePick) {
                 setShapeMenu('imgShape');
                 setShapeTool('imgShape');
@@ -2136,9 +2148,11 @@ return (
             {shapeMenu === 'imgShape'
               /* 形狀那一頁：按下去直接換外形。再按一次同一顆就回到方形，
                  不然選了愛心就沒有路可以退回去了。 */
-              ? IMG_SHAPES.map(({ id, label, icon }) => {
+              ? IMG_SHAPES.map(({ id, label, glyph }) => {
                   const cur = img.imgShape || 'rect';
-                  return toolBtn(id, label, icon, cur === id, false, () => {
+                  return toolBtn(id, label,
+                    <ShapeGlyph item={{ id, kind: glyph, filled: true }} size={19} />,
+                    cur === id, false, () => {
                     const next = cur === id ? 'rect' : id;
                     /* 換形狀時把位移歸零 —— 上一個形狀拖到的位置換到新形狀上
                        通常不是使用者要的，從正中間開始比較好調。 */
@@ -2380,14 +2394,27 @@ export const roundRectPath = (
  */
 
 /** 圖片可以選的外形。'rect' ＝ 原本的方形（還是可以再套圓角）。 */
-export const IMG_SHAPES: { id: string; label: string; icon: string }[] = [
-  { id: 'rect', label: '方形', icon: 'crop_square' },
-  { id: 'circle', label: '圓形', icon: 'circle' },
-  { id: 'star', label: '星型', icon: 'star' },
-  { id: 'heart', label: '愛心', icon: 'favorite' },
+export const IMG_SHAPES: { id: string; label: string; glyph: string }[] = [
+  // glyph ＝ 按鈕上要畫哪一顆（用 shapePathD 的向量，不靠圖示字型）
+  { id: 'rect', label: '方形', glyph: 'square' },
+  { id: 'circle', label: '圓形', glyph: 'circle' },
+  { id: 'star', label: '星型', glyph: 'star' },
+  { id: 'heart', label: '愛心', glyph: 'heart' },
 ];
 
 export const isImgShaped = (kind?: string) => !!kind && kind !== 'rect';
+
+/**
+ * 形狀要畫在框裡的哪一塊。
+ *
+ * 用「短邊的正方形、擺正中央」——因為圓形、星星、愛心本來就是 1:1 的
+ * （ADD_SHAPE_ITEMS 裡它們都沒有 ratio）。直接照框的長寬去畫的話，
+ * 4:3 的照片會把圓形壓成橢圓、星星拉歪，那不是使用者要的「正的圖案」。
+ */
+export const imgShapeBox = (w: number, h: number) => {
+  const s = Math.min(w, h);
+  return { x: (w - s) / 2, y: (h - s) / 2, s };
+};
 
 /**
  * 鋪好圖片的外框路徑，然後跑 run()。
@@ -2407,9 +2434,46 @@ export const withImgOutline = (
   run: (p?: Path2D) => void,
 ) => {
   if (!isImgShaped(kind)) { roundRectPath(g, x, y, w, h, rx, ry); run(); return; }
+  /* 正方形、擺中央。描邊那一次傳進來的框比填色那一次大 lw（四邊各 lw/2），
+     兩個正方形因此是同心的、邊距剛好 lw/2 —— 線就會貼著形狀的邊描。 */
+  const b = imgShapeBox(w, h);
   g.save();
-  g.translate(x, y);
-  try { run(new Path2D(shapePathD(kind!, w, h))); } finally { g.restore(); }
+  g.translate(x + b.x, y + b.y);
+  try { run(new Path2D(shapePathD(kind!, b.s, b.s))); } finally { g.restore(); }
+};
+
+/**
+ * 形狀真正「有畫到」的那一塊，回傳的是在原本那個 w×h 框裡的位置與大小。
+ *
+ * 選取框照這個畫，就會剛好把看得見的圖案包住 —— 愛心上面那片空白、
+ * 星星底下那條，都不會被框進去。沒有形狀時回傳整個框，跟以前一模一樣。
+ * 用的是跟按鈕小圖同一份 SHAPE_FIT，所以框與圖案永遠對得上。
+ */
+export const imgShapeInk = (kind: string | undefined, w: number, h: number) => {
+  if (!isImgShaped(kind)) return { x: 0, y: 0, w, h };
+  const b = imgShapeBox(w, h);
+  const f = SHAPE_FIT[kind!] || [0, 0, 1, 1];
+  return { x: b.x + f[0] * b.s, y: b.y + f[1] * b.s, w: f[2] * b.s, h: f[3] * b.s };
+};
+
+/** 這個點落在圖片「看得見的那一塊」裡面嗎？（形狀之外的角落不算） */
+let hitCtx: CanvasRenderingContext2D | null = null;
+export const isPointInImgShape = (
+  kind: string | undefined, w: number, h: number, lx: number, ly: number,
+): boolean => {
+  if (w <= 0 || h <= 0) return false;
+  if (!isImgShaped(kind)) return lx >= 0 && lx <= w && ly >= 0 && ly <= h;
+  if (!hitCtx) {
+    const c = document.createElement('canvas'); c.width = c.height = 1;
+    hitCtx = c.getContext('2d');
+  }
+  if (!hitCtx) return lx >= 0 && lx <= w && ly >= 0 && ly <= h;
+  const b = imgShapeBox(w, h);
+  try {
+    return hitCtx.isPointInPath(new Path2D(shapePathD(kind!, b.s, b.s)), lx - b.x, ly - b.y);
+  } catch {
+    return lx >= 0 && lx <= w && ly >= 0 && ly <= h;
+  }
 };
 
 /**
@@ -3630,8 +3694,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const containerRect = pagesContainerRef.current.getBoundingClientRect();
 
     const R = (image.rotation * Math.PI) / 180;
-    const halfW = image.width / 2;
-    const halfH = image.height / 2;
+    /* 選了形狀的照片，角球是坐在「形狀那個正方形」的四角上（見 chromeBox），
+       所以這裡的半寬半高要用同一個框，不然一抓下去比例就對不上、圖會跳一下。
+       那個正方形跟圖片框同心，所以下面的中心點與 newX/newY 都不必改。 */
+    const half = isImgShaped((image as any).imgShape)
+      ? imgShapeBox(image.width, image.height).s / 2
+      : 0;
+    const halfW = half || image.width / 2;
+    const halfH = half || image.height / 2;
 
     let dragLocalX = 0;
     let dragLocalY = 0;
@@ -4021,10 +4091,25 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           />
         </div>
       );
+      /* 選了形狀的照片：整組外框（白框＋四顆角球）縮到形狀真正佔的那一塊。
+         形狀是「短邊的正方形、擺正中央」，所以這個框跟原本的框是**同心**的 ——
+         角球縮放那一套是以中心與半寬半高在算的，中心沒變、只有半寬半高變小，
+         所以拉角落的手感與結果完全不會跑掉（見 handleScalePointerDown）。 */
+      const chromeBox = (() => {
+        if (!isPhoto || !isImgShaped((image as any).imgShape)) return null;
+        const b = imgShapeBox(image.width, image.height);
+        return {
+          left: `${r3((b.x / image.width) * 100)}%`,
+          top: `${r3((b.y / image.height) * 100)}%`,
+          width: `${r3((b.s / image.width) * 100)}%`,
+          height: `${r3((b.s / image.height) * 100)}%`,
+        };
+      })();
       return (
       <div
-        className="absolute inset-0 pointer-events-none"
+        className={chromeBox ? 'absolute pointer-events-none' : 'absolute inset-0 pointer-events-none'}
         style={{
+          ...(chromeBox || null),
           visibility: showChrome ? 'visible' : 'hidden',
           opacity: showChrome ? 1 : 0,
           transform: 'translateZ(0)',
@@ -8288,6 +8373,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         // 「形狀」那一頁開著時拖曳挪的是圖片在形狀裡的位置（見 handleWorkspaceTouchMove）
         baseShapeX: (fImg as any)?.imgShapeX ?? 0,
         baseShapeY: (fImg as any)?.imgShapeY ?? 0,
+        /* 手指是不是從「圖案裡面」按下去的。從形狀外面（愛心旁邊那塊空白）
+           按下去要照舊搬動整個物件，所以在這裡先算好、整段拖曳都用同一個答案。 */
+        startInShape: (() => {
+          if (kind !== 'floating' || !fImg || !isImgShaped((fImg as any).imgShape)) return false;
+          const el = document.querySelector(`[data-floating-id="${fImg.id}"]`);
+          if (!el) return false;
+          const r = el.getBoundingClientRect();
+          /* 轉過角度的元素，bounding rect 是它的外接矩形 —— 但**中心點還是同一個**，
+             所以從中心往外量再轉回來就對得上。 */
+          const kd = kRef.current || 1;
+          const sc = fImg.scale || 1;
+          const rot = ((fImg.rotation || 0) * Math.PI) / 180;
+          const ax = (cx - (r.x + r.width / 2)) / kd;
+          const ay = (cy - (r.y + r.height / 2)) / kd;
+          const ux = (ax * Math.cos(-rot) - ay * Math.sin(-rot)) / sc + fImg.width / 2;
+          const uy = (ax * Math.sin(-rot) + ay * Math.cos(-rot)) / sc + fImg.height / 2;
+          return isPointInImgShape((fImg as any).imgShape, fImg.width, fImg.height, ux, uy);
+        })(),
       };
       return;
     }
@@ -8510,9 +8613,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const dy = (e.touches[0].clientY - g.startY) / kd;
         if (g.kind === 'floating') {
           const selectedImg = floatingImages.find(img => img.id === g.floatingId);
-          /* 「形狀」那一頁開著、而且這張圖真的有形狀：拖曳是在挪動
-             「圖片在形狀裡的位置」，不是搬動圖片本身。頁面關掉就恢復原本的搬移。 */
-          if (selectedImg && shapePanRef.current && isImgShaped((selectedImg as any).imgShape)) {
+          /* 「形狀」那一頁開著、這張圖有形狀、而且手指是從圖案裡面按下去的：
+             拖曳是在挪動「圖片在形狀裡的位置」，不是搬動圖片本身。
+             從形狀外面按下去、或關掉那一頁，都還是原本的搬移。 */
+          if (selectedImg && shapePanRef.current && g.startInShape
+              && isImgShaped((selectedImg as any).imgShape)) {
             /* 可以拖的範圍就是「圖比框大出來的那一圈」，除以它換算成 -1~1。
                圖片轉過角度的話，手指的方向也要跟著轉回去，不然會歪著跑。 */
             const rot = ((selectedImg.rotation || 0) * Math.PI) / 180;
