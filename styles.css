@@ -321,3 +321,10 @@ select:focus, select:focus-visible {
      本來就寫了 pb-[calc(env(safe-area-inset-bottom,0px)+20px)]。 */
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+
+/* 捲到最頂／最底就停住，不要再多滑一段又彈回來（iOS 的橡皮筋），
+   也順便擋掉「捲動傳給外層」。全 App 的捲動面板都掛著 .no-scrollbar，
+   所以在這裡統一設一次就好，不用逐頁改。 */
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; overscroll-behavior: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.custom-scrollbar { overscroll-behavior: none; }
