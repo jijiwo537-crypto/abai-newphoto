@@ -134,8 +134,8 @@ select:focus, select:focus-visible {
 .slider-wrap > input[type=range] { position: absolute; left: -7px; width: calc(100% + 14px); top: 50%; }
 /* 高度一律是白點的兩倍（28px）。之前放到 96／72，滑桿的 touch-action: none
    會把它周圍一大片的上下滑動全吃掉，面板就捲不動了。 */
-.slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 28px; margin: -14px 0 0 0; }
-.slider-wrap > input.designer-color-slider { height: 28px; margin: -14px 0 0 0; left: 0; width: 100%; background: transparent !important; }
+.slider-wrap > input.premium-slider, .slider-wrap > input.slim-slider { height: 56px; margin: -28px 0 0 0; }
+.slider-wrap > input.designer-color-slider { height: 56px; margin: -28px 0 0 0; left: 0; width: 100%; background: transparent !important; }
 
 /* 顏色滑桿：6px 的漸層軌道 ＋ 自己畫的白圓球。
    圓球用 margin-top 對齊軌道正中央（(6-18)/2 = -6），
