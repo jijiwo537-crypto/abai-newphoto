@@ -5271,7 +5271,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             </button>
           </header>
           <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
-            <div className="relative shadow-2xl rounded overflow-hidden max-h-[60vh] max-w-full mb-4">
+            <div className="relative shadow-2xl rounded overflow-hidden max-h-[calc(60*var(--app-vh)/100)] max-w-full mb-4">
               {finalIsVideo ? (
                 <video
                   src={finalImage}
@@ -5282,13 +5282,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   controlsList="nodownload noplaybackrate noremoteplayback"
                   disablePictureInPicture
                   onContextMenu={e => e.preventDefault()}
-                  className="max-w-full max-h-[60vh] object-contain relative z-10 pointer-events-none"
+                  className="max-w-full max-h-[calc(60*var(--app-vh)/100)] object-contain relative z-10 pointer-events-none"
                 />
               ) : (
                 <img 
                   src={finalImage} 
                   alt="Final Result" 
-                  className="max-w-full max-h-[60vh] object-contain allow-callout relative z-10" 
+                  className="max-w-full max-h-[calc(60*var(--app-vh)/100)] object-contain allow-callout relative z-10" 
                 />
               )}
               <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded"></div>
@@ -5836,7 +5836,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     （實測 287px → 300px，畫面位移 6.5px）。
                     一律用最高的那個值，進哪一頁、開不開滑桿，預覽都不會動。 */
                  style={{
-          height: 'max(34dvh, 300px)',
+          height: 'max(calc(34*var(--app-dvh)/100), 300px)',
           /* 鍵盤升起時整條往上移，剛好讓輸入框的下緣貼著鍵盤上緣。
              用 transform 而不是改高度：transform 走合成執行緒，
              升起與收回都是滑順的動畫，不會硬切。 */

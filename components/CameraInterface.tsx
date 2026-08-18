@@ -746,7 +746,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         </div>
       )}
 
-      <div className="h-[2vh]"></div>
+      <div className="h-[calc(2*var(--app-vh)/100)]"></div>
 
       <main className="flex-1 relative flex flex-col justify-end px-4 overflow-hidden">
         {/* pb-0 to lower viewfinder frame */}

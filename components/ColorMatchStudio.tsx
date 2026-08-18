@@ -587,8 +587,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
           </button>
         </header>
         <div className="flex-1 flex items-center justify-center p-6">
-          <div className="relative shadow-2xl rounded overflow-hidden max-h-[62vh]">
-            <img src={finalUrl} alt="仿色結果" className="max-w-full max-h-[62vh] object-contain allow-callout" />
+          <div className="relative shadow-2xl rounded overflow-hidden max-h-[calc(62*var(--app-vh)/100)]">
+            <img src={finalUrl} alt="仿色結果" className="max-w-full max-h-[calc(62*var(--app-vh)/100)] object-contain allow-callout" />
             <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded" />
           </div>
         </div>

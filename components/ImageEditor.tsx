@@ -6600,11 +6600,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                            每個定位點都必須停下來，再快的一下也只前進一張。 */
                         style={{ scrollSnapStop: 'always' }}
                       >
-                        <div className="relative shadow-2xl rounded overflow-hidden max-h-[60vh]">
+                        <div className="relative shadow-2xl rounded overflow-hidden max-h-[calc(60*var(--app-vh)/100)]">
                           <img
                               src={src}
                               alt={`Final Result ${i + 1}`}
-                              className="max-w-[80vw] max-h-[60vh] object-contain allow-callout relative z-10"
+                              className="max-w-[80vw] max-h-[calc(60*var(--app-vh)/100)] object-contain allow-callout relative z-10"
                           />
                           <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded"></div>
                         </div>

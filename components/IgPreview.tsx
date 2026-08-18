@@ -1770,7 +1770,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                   touchAction: pageCount > 1 ? 'pan-y' : 'auto',
                   /* 連續動態牆：高度靠貼文本身的比例撐開（flex-1 在自動高度下會塌成 0），
                      但不超過畫面的八成高 —— 直式貼文才不會一篇就把整個螢幕吃滿。 */
-                  ...(flow ? { aspectRatio: `${igFrame.w} / ${igFrame.h}`, maxHeight: '80dvh' } : null),
+                  ...(flow ? { aspectRatio: `${igFrame.w} / ${igFrame.h}`, maxHeight: 'calc(80*var(--app-dvh)/100)' } : null),
                 }}
                 onPointerDown={onIgPointerDown}
                 onPointerMove={onIgPointerMove}
@@ -1937,7 +1937,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                      同理，flow 模式要用 fixed 貼在畫面底部，
                      absolute 會貼到那條長容器的最底下。 */
                   bottom: 0,
-                  height: '93dvh',
+                  height: 'calc(93*var(--app-dvh)/100)',
                   paddingBottom: 'env(safe-area-inset-bottom, 0px)',
                 }}
               >
