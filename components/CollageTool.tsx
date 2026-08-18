@@ -1691,18 +1691,31 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     }
   }, [initialFile]);
 
+  /** 目前這張照片的 object URL。換照片時才回收上一張（見下面的說明）。
+      刻意**不**在元件收掉時一併回收：StrictMode 會「掛載→清理→再掛載」，
+      那個清理會在照片還在用的時候就把網址收掉，草稿於是又讀不到了
+      （正是這裡本來要修的那個 bug）。最後那一張留到分頁關掉為止，
+      跟編輯、美顏兩個工具的做法一致。 */
+  const photoUrlRef = useRef<string | null>(null);
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const url = URL.createObjectURL(file);
     /* 這張照片就是草稿要存的那張（回來才接得回去）。
        saveDraft 內部是 `fetch(url)` 把位元組讀進 IndexedDB —— 那是非同步的，
        所以這個網址在讀完之前不能回收。以前是 img.onload 一觸發就 revoke，
        小張的圖解碼比讀取還快，那個 fetch 就拿到 ERR_FILE_NOT_FOUND、
        被 catch 吞掉，草稿於是存不到照片。
-       乾脆不回收：這個網址只是一個幾十位元組的參照，真正佔記憶體的是解碼後的
-       點陣圖，而它本來就要一直留著（畫布每一帧都要用）。
-       編輯與美顏兩個工具本來也就沒有回收，這樣三邊一致。 */
+
+       但也不能乾脆都不回收 —— 一次工作階段換十幾張照片的話，
+       每一張的原始位元組都會被那個沒回收的網址一直扣著（一張 5MB 就是 5MB）。
+       折衷：只留「現在這一張」，換下一張的時候才把上一張收掉。
+       那時候上一張的草稿早就讀完了，不會再有人用到它。 */
+    const url = URL.createObjectURL(file);
+    if (photoUrlRef.current && photoUrlRef.current !== url) {
+      try { URL.revokeObjectURL(photoUrlRef.current); } catch { /* 收過了就算了 */ }
+    }
+    photoUrlRef.current = url;
     saveToolDraft('collage', url, null);
     const img = new Image();
     img.onload = () => {
