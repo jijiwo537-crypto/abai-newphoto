@@ -160,9 +160,13 @@ export async function saveDraft(tool: ToolKind, src: string | null, state: any):
     /* state 給 null 的意思跟 src 一樣是「不要動它」（見上面的說明）。
        以前是不分青紅皂白直接寫進去，於是「只存照片」那一次
        （state 是 null）會把先前存好的參數清成 null。 */
-    const keep = state == null
+    const prev = state == null
       ? await tx<ToolDraftMeta>('readonly', s => s.get(META_KEY) as IDBRequest<ToolDraftMeta>)
       : null;
+    /* 只沿用「同一個工具」的參數。跨工具不能沿用 —— 上一份是編輯的參數、
+       這一次存的是創意拼圖，接回去會是另一個工具看不懂的東西。
+       （正常流程離開工具時會 clearDraft，但硬關掉 App 的話舊的那份會留著。） */
+    const keep = prev && prev.tool === tool ? prev : null;
     const meta: ToolDraftMeta = { tool, savedAt: Date.now(), state: state ?? keep?.state ?? null };
     await tx('readwrite', s => s.put(meta, META_KEY));
     try {
