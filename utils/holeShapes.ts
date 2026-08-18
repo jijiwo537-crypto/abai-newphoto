@@ -405,13 +405,16 @@ export const drawHoleShape = (
     strokeW?: number; strokeColor?: string;
     dots?: boolean; dotSize?: number; dotGap?: number; dotColor?: string;
     id?: string; randomNumber?: number;
+    /** 線寬的單位。不給就照外框的長邊 / 160 —— 那會讓「圖形拉大」連框線
+     *  也跟著變粗，所以呼叫端想要「粗細固定」時就把不含縮放的那個值傳進來。 */
+    lineUnit?: number;
   },
   bw: number, bh: number,
   blurs: number[],
 ) => {
   const col = o.color || '#FFFFFF';
   const size = Math.min(bw, bh);
-  const unit = Math.max(bw, bh) / 160;
+  const unit = (o.lineUnit && o.lineUnit > 0) ? o.lineUnit : Math.max(bw, bh) / 160;
   const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
   const solid = o.filled !== false;
   const gcol = o.glowColor || col;
@@ -510,13 +513,14 @@ export const holeOverflow = (
   o: {
     hole: string; text?: string; lineW?: number;
     glow?: number | boolean; strokeW?: number; id?: string; randomNumber?: number;
+    lineUnit?: number;
   },
   bw: number, bh: number,
   blurs: number[],
 ) => {
   // 下面這三行跟 drawHoleShape 開頭是同一組算式，不能各算各的
   const size = Math.min(bw, bh);
-  const unit = Math.max(bw, bh) / 160;
+  const unit = (o.lineUnit && o.lineUnit > 0) ? o.lineUnit : Math.max(bw, bh) / 160;
   const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
   const sw = (o.strokeW || 0) * unit;
   /* 發光是 canvas 的 shadowBlur：模糊半徑 r 大約散到 1.5r 才看不見 */
