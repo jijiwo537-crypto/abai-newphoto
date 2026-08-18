@@ -15,7 +15,7 @@ import {
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
   /* 圖片外形（形狀）：圓形／星型／愛心也共用同一份路徑與同一支算圖 */
-  isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, IMG_SHAPE_FILL, isPointInImgShape, imgShapeBox, imgShapeInk,
+  isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
@@ -987,10 +987,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const selectedObjRef = useRef<string | null>(null);
   selectedObjRef.current = selectedObj;
   const objDragRef = useRef<any>(null);
-  /* 「圖片調整 → 造型 → 形狀」那一頁開著沒有？
-     開著的時候在圖片上拖曳＝調整圖片在形狀裡的位置。
-     用 ref 是因為指標事件那幾支不會跟著 state 重新綁定。 */
-  const shapePanRef = useRef(false);
+  /* ── 形狀的第二段選取 ────────────────────────────────────────────
+     選中圖片之後**再點一次圖片**，才進到「選中形狀」：
+       · 選取框改成沿著形狀描一圈，方框收起來
+       · 在圖案裡面拖曳 ＝ 調整圖片在形狀裡的位置
+       · 兩指捏 ＝ 調整圖片在形狀裡的大小
+       · 點到形狀外面就退回「只選中圖片」
+     單純選中圖片（第一段）時不能調位置，跟一般物件一樣是搬移。
+     ref 是給指標事件那幾支用的 —— 它們不會跟著 state 重新綁定。 */
+  const [shapeSel, setShapeSel] = useState<string | null>(null);
+  const shapeSelRef = useRef<string | null>(null);
+  useEffect(() => { shapeSelRef.current = shapeSel; }, [shapeSel]);
+  // 取消選取、或換選別的物件 → 形狀選取一起收掉
+  useEffect(() => { if (shapeSel && shapeSel !== selectedObj) setShapeSel(null); }, [selectedObj, shapeSel]);
+  /** 這一點是不是落在某顆圖片的形狀裡面（物件座標→形狀命中判斷） */
+  const hitShapeOf = (o: any, px: number, py: number) => {
+    if (!o || !o.img || !isImgShaped(o.imgShape)) return false;
+    const r0 = ((o.rot || 0) * Math.PI) / 180;
+    const ax = px - (o.x + o.w / 2), ay = py - (o.y + o.h / 2);
+    const ux = ax * Math.cos(-r0) - ay * Math.sin(-r0) + o.w / 2;
+    const uy = ax * Math.sin(-r0) + ay * Math.cos(-r0) + o.h / 2;
+    return isPointInImgShape(o.imgShape, o.w, o.h, ux, uy);
+  };
   const objPinchRef = useRef<any>(null);
   /* 每個圖片物件跑完管線之後的成品，快取起來 —— 參數沒變就不重跑。
      key 是「物件 id + 參數指紋」，所以只有動到的那一張會重算。 */
@@ -1010,6 +1028,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       /* 外形（圓形／星型／愛心）與圖片在形狀裡的位移。
          沒選形狀時 k 是 undefined，下面每一段都走原本那條路。 */
       k: o.imgShape as string | undefined, px: o.imgShapeX || 0, py: o.imgShapeY || 0,
+      z: o.imgShapeZoom || 1,
     };
     const hasShape = shape.r || shape.f || shape.sw || shape.g || isImgShaped(shape.k);
     if ((!o.fx || !hasPhotoFx(o.fx)) && !hasShape) return o.img;
@@ -1401,9 +1420,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [effectCard, setEffectCard] = useState<string | null>(null);
   const [effectDetail, setEffectDetail] = useState(false);
   const [shapeMenu, setShapeMenu] = useState('root');
-  useEffect(() => {
-    shapePanRef.current = activeTab === 'objedit' && adjustSub === 'shape' && shapeMenu === 'imgShape';
-  }, [activeTab, adjustSub, shapeMenu]);
   /* 一進編輯頁不預先選好任何工具：滑桿要點下工具鈕才浮出來 */
   const [shapeTool, setShapeTool] = useState('');
   const [tuneTool, setTuneTool] = useState('');
@@ -2158,6 +2174,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState.globalScale || 1, offs = getLayoutOffsets();
 
+    /* 「選中形狀」只在手指按在那個圖案裡面時才留著 ——
+       點到形狀外面（旁邊的空白角落、別的物件、空畫布都算）就退回「只選中圖片」。
+       兩指的第二根不算，不然一捏就退出去了。 */
+    if (shapeSelRef.current && activePointers.current.size === 1) {
+      const so = objectsRef.current.find(z => z.id === shapeSelRef.current);
+      if (!so || !hitShapeOf(so, x, y)) { shapeSelRef.current = null; setShapeSel(null); }
+    }
+
     if (activePointers.current.size === 1) {
       // Determine clickedSide（物件與圖案誰在上面的判斷會用到，所以先算）
       let clickedSide: 'image' | 'mask' | undefined = undefined;
@@ -2217,6 +2241,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
               /* 只有一般文字可以點進去改字；符號的內容是固定的，
                  再點一次不進入編輯（所以也不會有剪下／複製／貼上）。 */
               moved: false, editIfTap: o.type === 'text' && !o.sym,
+              /* 圖片有形狀、而且這一下**點在圖案裡面**，放開沒拖動就進到「選中形狀」。
+                 一定要判斷「在圖案裡面」：只看方框的話，點愛心旁邊那塊空白角落
+                 會變成「按下去先退出、放開又立刻進去」，等於永遠退不出來。
+                 跟上面改字一樣要等放開才算 —— 按下去就切，會讓「再點一次順手拖走」
+                 變成在調形狀裡的位置。 */
+              shapeIfTap: !!o.img && isImgShaped(o.imgShape) && hitShapeOf(o, x, y),
             };
             return;
           }
@@ -2368,6 +2398,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           w0: oo.w, h0: oo.h, size0: oo.size || 0, rot0: oo.rot || 0,
           rotOn: false, rotBias: 0,   // 旋轉的不動區：超過門檻才開始轉
           cx0: oo.x + oo.w / 2, cy0: oo.y + oo.h / 2,
+          /* 已經進到「選中形狀」的話，兩指捏的是**圖片在形狀裡的大小**，
+             不是整個物件 —— 物件本身的大小與角度在這個狀態下不動。 */
+          shapeZoom: shapeSelRef.current === oo.id && isImgShaped(oo.imgShape),
+          z0: clampImgZoom(oo.imgShapeZoom),
         };
         setObjPinching(true);
       }
@@ -2618,6 +2652,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const pin = objPinchRef.current;
       const dist = Math.max(1, Math.hypot(pts2[0].clientX - pts2[1].clientX, pts2[0].clientY - pts2[1].clientY));
       const ang = Math.atan2(pts2[1].clientY - pts2[0].clientY, pts2[1].clientX - pts2[0].clientX) * 180 / Math.PI;
+      /* 「選中形狀」時兩指捏的是圖片在形狀裡的大小 —— 物件的大小與角度都不動。
+         縮回 1 倍以下沒有意義（圖就蓋不滿形狀了），所以下限就是 1。
+         倍率變小時位移要跟著夾回可拖的範圍，不然圖會被推出去露出空隙。 */
+      if (pin.shapeZoom) {
+        const nz = clampImgZoom(pin.z0 * (dist / pin.d0));
+        queueMove(() => setObjects(prev => prev.map(o => {
+          if (o.id !== pin.id) return o;
+          const { rx, ry } = imgShapePan(o.w || 1, o.h || 1, nz);
+          const cl = (v: any) => Math.max(-1, Math.min(1, Number(v) || 0));
+          return {
+            ...o, imgShapeZoom: nz,
+            imgShapeX: rx > 0.5 ? cl(o.imgShapeX) : 0,
+            imgShapeY: ry > 0.5 ? cl(o.imgShapeY) : 0,
+          };
+        })));
+        return;
+      }
       let k = Math.max(0.15, Math.min(8, dist / pin.d0));
       /* 旋轉有一段「不動區」：兩指轉不到 ROT_START 度就當成純縮放。
          超過之後把門檻扣掉再開始轉，所以不會在跨過門檻那一瞬間跳一下。
@@ -2660,36 +2711,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          · pickId 存在＝已經有選中的物件，只是手指剛好按在別的物件上；
            拖的話搬的是「已選中的那個」（d.id），沒拖才把選取換過去 */
       if (d.selectOnly && !d.pickId) return;
-      /* 「形狀」那一頁開著、這顆圖片有形狀、而且**手指是從圖案裡面按下去的**：
+      /* 已經進到「選中形狀」、而且手指是**從圖案裡面**按下去的：
          拖曳是在挪動「圖片在形狀裡的位置」。從形狀外面（例如愛心旁邊那塊
-         空白角落）按下去拖，就還是搬動整個物件。
+         空白角落）按下去拖，還是搬動整個物件。
          判斷只做一次、記在 d.inShape 上 —— 一路拖出去也不會中途換行為。 */
-      const oPan = shapePanRef.current ? objectsRef.current.find(z => z.id === d.id) : null;
+      const oPan = shapeSelRef.current === d.id ? objectsRef.current.find(z => z.id === d.id) : null;
       if (oPan && oPan.img && isImgShaped(oPan.imgShape)) {
-        if (d.inShape === undefined) {
-          /* 把「按下去的那一點」換算成物件自己的座標（先移到中心、轉回沒旋轉的方向） */
-          const r0 = ((oPan.rot || 0) * Math.PI) / 180;
-          const ax = d.startX - (oPan.x + oPan.w / 2), ay = d.startY - (oPan.y + oPan.h / 2);
-          const ux = ax * Math.cos(-r0) - ay * Math.sin(-r0) + oPan.w / 2;
-          const uy = ax * Math.sin(-r0) + ay * Math.cos(-r0) + oPan.h / 2;
-          d.inShape = isPointInImgShape(oPan.imgShape, oPan.w, oPan.h, ux, uy);
-        }
-        if (!d.inShape) { /* 從形狀外面按下去 → 照原本的搬移走 */ }
-        else {
-        if (d.px0 === undefined) { d.px0 = oPan.imgShapeX || 0; d.py0 = oPan.imgShapeY || 0; }
-        /* 可以拖的範圍就是「圖比框大出來的那一圈」，除以它換算成 -1~1。
-           物件轉過角度的話，手指的方向也要跟著轉回去，不然會歪著跑。 */
-        const rot = ((oPan.rot || 0) * Math.PI) / 180;
-        const ddx = x - d.startX, ddy = y - d.startY;
-        const lx = ddx * Math.cos(-rot) - ddy * Math.sin(-rot);
-        const ly = ddx * Math.sin(-rot) + ddy * Math.cos(-rot);
-        const rx = Math.max(1, ((oPan.w || 1) * (IMG_SHAPE_FILL - 1)) / 2);
-        const ry = Math.max(1, ((oPan.h || 1) * (IMG_SHAPE_FILL - 1)) / 2);
-        const cl = (v: number) => Math.max(-1, Math.min(1, v));
-        const px = cl(d.px0 + lx / rx), py = cl(d.py0 + ly / ry);
-        queueMove(() => setObjects(prev => prev.map(o =>
-          o.id === d.id ? { ...o, imgShapeX: px, imgShapeY: py } : o)));
-        return;
+        if (d.inShape === undefined) d.inShape = hitShapeOf(oPan, d.startX, d.startY);
+        if (d.inShape) {
+          if (d.px0 === undefined) { d.px0 = oPan.imgShapeX || 0; d.py0 = oPan.imgShapeY || 0; }
+          /* 可以拖的範圍＝圖片蓋過那個正方形之後多出來的部分，除以它換算成 -1~1。
+             物件轉過角度的話，手指的方向也要跟著轉回去，不然會歪著跑。 */
+          const rot = ((oPan.rot || 0) * Math.PI) / 180;
+          const ddx = x - d.startX, ddy = y - d.startY;
+          const lx = ddx * Math.cos(-rot) - ddy * Math.sin(-rot);
+          const ly = ddx * Math.sin(-rot) + ddy * Math.cos(-rot);
+          const { rx, ry } = imgShapePan(oPan.w || 1, oPan.h || 1, oPan.imgShapeZoom);
+          const cl = (v: number) => Math.max(-1, Math.min(1, v));
+          const px = rx > 0.5 ? cl(d.px0 + lx / rx) : (d.px0 || 0);
+          const py = ry > 0.5 ? cl(d.py0 + ly / ry) : (d.py0 || 0);
+          queueMove(() => setObjects(prev => prev.map(o =>
+            o.id === d.id ? { ...o, imgShapeX: px, imgShapeY: py } : o)));
+          return;
         }
       }
       let nx = d.ox + (x - d.startX), ny = d.oy + (y - d.startY);
@@ -2803,6 +2846,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (objDragRef.current?.editIfTap && !objDragRef.current.moved) {
       textOpenAtRef.current = performance.now();
       setEditingTextId(objDragRef.current.id);
+    }
+    // 已選中的圖片再點一下（沒有拖動）→ 進到「選中形狀」
+    if (objDragRef.current?.shapeIfTap && !objDragRef.current.moved) {
+      setShapeSel(objDragRef.current.id);
     }
     // 點在物件以外的地方、而且完全沒有拖動 → 取消選取
     if (objDragRef.current?.fromBlank && !objDragRef.current.moved) setSelectedObj(null);
@@ -4014,11 +4061,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1.6 * uiPx;
         ctx.setLineDash([6.7 * uiPx, 6.7 * uiPx]);
-        /* 選了形狀的圖片，框要縮到剛好包住那個圖案 —— 不然愛心上面那片空白、
-           星星底下那條也會被框進去，看起來就是「框沒有貼著圖」。
-           沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
-        const ink = imgShapeInk(o.imgShape, o.w * s, o.h * s);
-        ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
+        if (shapeSel === o.id && isImgShaped(o.imgShape)) {
+          /* 第二段：選中的是「形狀」—— 方框收起來，改成沿著形狀本身描一圈。
+             往外讓 2 個螢幕像素，線才不會壓在圖案的邊上。 */
+          const gp = 2 * uiPx;
+          withImgOutline(
+            ctx as any, -o.w * s / 2 - gp, -o.h * s / 2 - gp,
+            o.w * s + gp * 2, o.h * s + gp * 2, o.imgShape, 0, 0,
+            p => { if (p) ctx.stroke(p); },
+          );
+        } else {
+          /* 第一段：選中的是「圖片」。有形狀的話框要縮到剛好包住那個圖案 ——
+             不然愛心上面那片空白、星星底下那條也會被框進去。
+             沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
+          const ink = imgShapeInk(o.imgShape, o.w * s, o.h * s);
+          ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
+        }
         ctx.setLineDash([]);
       }
       ctx.restore();
@@ -4353,7 +4411,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
-  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, editingTextId, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
+  }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, shapeSel, editingTextId, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
      離開創意拼圖時記一筆。key 用「這一次拼圖」的 id（從歷史紀錄點進來的話

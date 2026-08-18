@@ -1937,14 +1937,8 @@ const sliderArea = (() => {
         v => set({ [k]: v }), undefined, true,
       );
     }
-    /* 形狀那一頁沒有滑桿，改放一句提示 —— 「可以拖」這件事不講沒人會發現 */
-    if (shapeMenu === 'imgShape') {
-      return (
-        <div className="w-full text-center text-[11px] tracking-wide text-white/35 select-none">
-          {isImgShaped(img.imgShape) ? '在圖片上拖曳可以調整位置' : '選一個形狀'}
-        </div>
-      );
-    }
+    // 形狀那一頁沒有滑桿，上面那一段就留白
+    if (shapeMenu === 'imgShape') return null;
     const t = SHAPE_TOOLS.find(x => x[0] === shapeTool);
     if (t && (t[0] === 'imgRadius' || t[0] === 'feather')) {
       const key = t[0] as 'imgRadius' | 'feather';
@@ -2114,14 +2108,9 @@ return (
                 ? SHAPE_SUB_TOOLS[id].some(([k, , , , , d]) =>
                     !k.endsWith('Color') && (((img as any)[k]) || 0) !== d)
                 : (((img as any)[id]) || 0) !== dflt;
-            /* 「形狀」那一顆直接畫目前套用的形狀 —— 不必點進去就看得出現在是哪一個，
-               而且不必依賴圖示字型（那顆字型是子集化的，新名字會變成一串英文字）。 */
-            const glyph = isShapePick
-              ? <ShapeGlyph
-                  item={{ id: 'cur', kind: IMG_SHAPES.find(s => s.id === (img.imgShape || 'rect'))?.glyph || 'square', filled: true }}
-                  size={19}
-                />
-              : icon;
+            /* 「形狀」那一顆用自己畫的向量圖標（固定的，不跟著目前的形狀變）——
+               圖示字型是子集化過的，隨手加的新名字並不在裡面，會變成一串英文字。 */
+            const glyph = isShapePick ? <ImgShapeIcon size={19} /> : icon;
             return toolBtn(id, label, glyph, shapeTool === id, adjusted, () => {
               if (isShapePick) {
                 setShapeMenu('imgShape');
@@ -2151,12 +2140,13 @@ return (
               ? IMG_SHAPES.map(({ id, label, glyph }) => {
                   const cur = img.imgShape || 'rect';
                   return toolBtn(id, label,
-                    <ShapeGlyph item={{ id, kind: glyph, filled: true }} size={19} />,
+                    // 空心版：跟「形狀」那顆圖標同一種語言
+                    <ShapeGlyph item={{ id, kind: glyph, filled: false }} size={19} />,
                     cur === id, false, () => {
                     const next = cur === id ? 'rect' : id;
                     /* 換形狀時把位移歸零 —— 上一個形狀拖到的位置換到新形狀上
                        通常不是使用者要的，從正中間開始比較好調。 */
-                    set({ imgShape: next, imgShapeX: 0, imgShapeY: 0 });
+                    set({ imgShape: next, imgShapeX: 0, imgShapeY: 0, imgShapeZoom: 1 });
                   });
                 })
               : SHAPE_SUB_TOOLS[shapeMenu].map(([id, label, icon, , , dflt]) => {
@@ -2402,6 +2392,22 @@ export const IMG_SHAPES: { id: string; label: string; glyph: string }[] = [
   { id: 'heart', label: '愛心', glyph: 'heart' },
 ];
 
+/**
+ * 「形狀」那一顆的圖標。
+ *
+ * 固定長這樣，不跟著目前選的形狀變 —— 分類鈕要一直是同一張臉，
+ * 變來變去反而認不出來（要知道現在選了哪一個，點進去那一排就看得到）。
+ * 一個方框疊一個圓，是「形狀」最好認的畫法；空心跟裡面那排一致。
+ */
+export const ImgShapeIcon: React.FC<{ size?: number }> = ({ size = 19 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+    stroke="currentColor" strokeWidth={1.7} strokeLinejoin="round" aria-hidden>
+    <rect x="2.6" y="2.6" width="12.2" height="12.2" rx="1.6" />
+    {/* 圓的那一塊：先把被方框蓋住的邊挖掉，兩個形狀才不會糊成一團 */}
+    <path d="M14.8 9.9a6.3 6.3 0 1 1-4.9 4.9" />
+  </svg>
+);
+
 export const isImgShaped = (kind?: string) => !!kind && kind !== 'rect';
 
 /**
@@ -2476,33 +2482,50 @@ export const isPointInImgShape = (
   }
 };
 
+/** 圖片在形狀裡最多能放到幾倍（跟佈局的格子同一個上限） */
+export const IMG_SHAPE_MAX_ZOOM = 5;
+
+export const clampImgZoom = (z: any) =>
+  Math.max(1, Math.min(IMG_SHAPE_MAX_ZOOM, Number(z) || 1));
+
 /**
- * 有形狀時圖片會放大一點，多出來的那一圈就是「可以拖的範圍」。
+ * 圖片在形狀裡還能往各方向挪多遠（單位跟 w／h 一樣，回傳的是半徑）。
  *
- * 1.4 ＝ 上下左右各多出 20%，也就是最多可以把圖挪動框的 20%。
- * 試過 1.18（±9%），手指才滑 40px 就到底了，等於沒得調；
- * 再往上加的話預設看到的範圍會被裁掉太多。這個數字只影響「有選形狀」的圖片。
+ * 看得見的只有中間那個正方形，所以只要「圖片蓋得住那個正方形」就不會露出空隙：
+ *   橫向可拖 = (圖片寬 × 倍率 − 正方形邊長) / 2
+ * 因此橫的照片在倍率 1 時就已經可以左右拖了（寬比正方形寬），
+ * 上下要拖則得先放大一點 —— 跟佈局裡調整格子內照片是同一種手感。
  */
-export const IMG_SHAPE_FILL = 1.4;
+export const imgShapePan = (w: number, h: number, zoom: any) => {
+  const b = imgShapeBox(w, h);
+  const z = clampImgZoom(zoom);
+  return { rx: Math.max(0, (w * z - b.s) / 2), ry: Math.max(0, (h * z - b.s) / 2) };
+};
 
 /**
  * 把圖片畫進外框裡。
  *
- * 有形狀時圖片會放大到 1.18 倍再置中 —— 這多出來的一圈就是「可以拖的範圍」。
- * imgShapeX／imgShapeY 是 -1~1 的比例（0 ＝ 置中），乘上那一圈的寬度就是位移。
- * 因為圖永遠比框大，不管拖到哪一邊都不會露出空隙。
+ * **預設不放大**（imgShapeZoom 沒設就是 1）—— 選了形狀之後圖片的大小、
+ * 看到的範圍都跟原本一模一樣，只是被裁成那個形狀而已。要放大是使用者
+ * 自己兩指捏出來的，不是我們偷偷幫他放大。
  *
- * 沒有形狀時倍率是 1、位移是 0，等同於原本那行 drawImage(base, x, y, w, h)。
+ * 倍率 1、沒有位移時，這一行等同於原本的 drawImage(base, x, y, w, h)。
  */
 export const drawImgBase = (
   g: CanvasRenderingContext2D, base: CanvasImageSource,
   x: number, y: number, w: number, h: number, o: any,
 ) => {
   if (!isImgShaped(o?.imgShape)) { g.drawImage(base, x, y, w, h); return; }
-  const dw = w * IMG_SHAPE_FILL, dh = h * IMG_SHAPE_FILL;
-  const rx = (dw - w) / 2, ry = (dh - h) / 2;
+  const z = clampImgZoom(o.imgShapeZoom);
+  const dw = w * z, dh = h * z;
+  const { rx, ry } = imgShapePan(w, h, z);
   const cl = (v: any) => Math.max(-1, Math.min(1, Number(v) || 0));
-  g.drawImage(base, x - rx + cl(o.imgShapeX) * rx, y - ry + cl(o.imgShapeY) * ry, dw, dh);
+  g.drawImage(
+    base,
+    x + (w - dw) / 2 + cl(o.imgShapeX) * rx,
+    y + (h - dh) / 2 + cl(o.imgShapeY) * ry,
+    dw, dh,
+  );
 };
 
 /** 單次盒狀模糊（滑動視窗，邊界夾住）。三次疊起來就很接近高斯。 */
@@ -2966,7 +2989,7 @@ const MiniShapeImage: React.FC<{
     return () => el.removeEventListener('load', draw);
   }, [img.src, img.fx, img.feather, img.imgRadius, img.imgGlow, img.imgGlowColor,
       img.imgStrokeWidth, img.imgStrokeColor, img.imgStrokeDash, img.scale, boxW, boxH, glowPad, lutRevision,
-      img.imgShape, img.imgShapeX, img.imgShapeY]);
+      img.imgShape, img.imgShapeX, img.imgShapeY, img.imgShapeZoom]);
   return <canvas ref={ref} style={style} />;
 };
 
@@ -3025,6 +3048,8 @@ interface FloatingImage {
   /** 圖片在形狀裡的位移，-1~1（0＝置中）。只有選了形狀才用得到 */
   imgShapeX?: number;
   imgShapeY?: number;
+  /** 圖片在形狀裡的放大倍率，1~5（1＝原大小，也是預設） */
+  imgShapeZoom?: number;
   /** 邊緣羽化，佔短邊的百分比 0~50 */
   feather?: number;
   /** 圖片邊緣發光強度 0~20 */
@@ -3114,6 +3139,10 @@ type SwapTarget = { kind: 'cell'; idx: number; layoutId?: string } | { kind: 'fl
 interface FloatingImageComponentProps {
   image: FloatingImage;
   isSelected: boolean;
+  /** 第二段選取：選中的是「形狀」而不是整張圖片（外框改成貼著形狀、角球收起來） */
+  shapeSelected?: boolean;
+  /** 滑鼠按在這張圖上（觸控走畫布層級那條，不會叫這支）。座標交給外面判斷在不在形狀裡 */
+  onShapeTap?: (clientX: number, clientY: number) => void;
   onSelect: () => void;
   onChange: (updated: Partial<FloatingImage>) => void;
   onDelete: () => void;
@@ -3183,6 +3212,8 @@ let globalDragPointerId: number | null = null;
 const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   image,
   isSelected,
+  shapeSelected,
+  onShapeTap,
   onSelect,
   onChange,
   onDelete,
@@ -3565,7 +3596,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     image.imgGlow, image.imgGlowColor, image.imgStrokeWidth, image.imgStrokeColor, image.imgStrokeDash,
     image.scale, boxW, boxH, glowPad,
     image.fx, lutRevision,
-    image.imgShape, image.imgShapeX, image.imgShapeY,
+    image.imgShape, image.imgShapeX, image.imgShapeY, image.imgShapeZoom,
   ]);
 
   const handleBodyPointerDown = (e: React.PointerEvent) => {
@@ -3576,6 +3607,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     }
 
     e.stopPropagation();
+    /* 形狀的第二段選取（滑鼠）：座標交給外面判斷在不在形狀裡面 ——
+       觸控是走畫布層級的 applyTapSelection，那條路已經自己處理過了。 */
+    onShapeTap?.(e.clientX, e.clientY);
     onSelect();
     
     // Forbid moving two images at the same time
@@ -4105,6 +4139,30 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           height: `${r3((b.s / image.height) * 100)}%`,
         };
       })();
+      /* 進到「選中形狀」：方框與四顆角球都收起來，改成沿著形狀描一圈。
+         那個正方形跟圖片框同心，所以直接畫在 chromeBox 這一格裡就對齊了。 */
+      const shapeOutline = shapeSelected && isImgShaped((image as any).imgShape) ? (() => {
+        const b = imgShapeBox(image.width, image.height);
+        const d = shapePathD((image as any).imgShape, b.s, b.s);
+        return (
+          <svg
+            className="absolute inset-0 pointer-events-none z-30"
+            viewBox={`0 0 ${r3(b.s)} ${r3(b.s)}`}
+            preserveAspectRatio="none"
+            style={{ overflow: 'visible' }}
+            aria-hidden
+          >
+            <path
+              d={d} fill="none" stroke="#ffffff"
+              /* 線寬與虛線節奏跟創意拼圖那條一致；除掉預覽倍率與物件縮放，
+                 放大之後線才不會跟著變粗。viewBox 的單位＝未縮放的內容單位。 */
+              strokeWidth={r3(1.6 / (kNow * (image.scale || 1)))}
+              strokeDasharray={`${r3(6.7 / (kNow * (image.scale || 1)))} ${r3(6.7 / (kNow * (image.scale || 1)))}`}
+              vectorEffect="none"
+            />
+          </svg>
+        );
+      })() : null;
       return (
       <div
         className={chromeBox ? 'absolute pointer-events-none' : 'absolute inset-0 pointer-events-none'}
@@ -4117,7 +4175,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           backfaceVisibility: 'hidden',
         }}
       >
-        {isPhoto ? (
+        {shapeOutline ? shapeOutline : isPhoto ? (
           /* Active border matching layout style（深色那一圈是往外畫的，跟原本一樣） */
           <div className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" />
         ) : (
@@ -4143,11 +4201,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           </svg>
         )}
 
-        {/* Four Corner scale dots（只有圖片才有） */}
-        {isPhoto && cornerDot('tl', 'top-0 left-0', 'translate(-50%, -50%)', 'cursor-nwse-resize')}
-        {isPhoto && cornerDot('tr', 'top-0 right-0', 'translate(50%, -50%)', 'cursor-nesw-resize')}
-        {isPhoto && cornerDot('bl', 'bottom-0 left-0', 'translate(-50%, 50%)', 'cursor-nesw-resize')}
-        {isPhoto && cornerDot('br', 'bottom-0 right-0', 'translate(50%, 50%)', 'cursor-nwse-resize')}
+        {/* Four Corner scale dots（只有圖片才有；選中形狀時整組收起來） */}
+        {isPhoto && !shapeOutline && cornerDot('tl', 'top-0 left-0', 'translate(-50%, -50%)', 'cursor-nwse-resize')}
+        {isPhoto && !shapeOutline && cornerDot('tr', 'top-0 right-0', 'translate(50%, -50%)', 'cursor-nesw-resize')}
+        {isPhoto && !shapeOutline && cornerDot('bl', 'bottom-0 left-0', 'translate(-50%, 50%)', 'cursor-nesw-resize')}
+        {isPhoto && !shapeOutline && cornerDot('br', 'bottom-0 right-0', 'translate(50%, 50%)', 'cursor-nwse-resize')}
 
       </div>
       );
@@ -5298,10 +5356,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [shapeTool, setShapeTool] = useState('imgRadius');
   /** 形狀分頁：root 是總覽，其餘是形狀／描邊／發光的子選單 */
   const [shapeMenu, setShapeMenu] = useState<'root' | 'stroke' | 'glow' | 'imgShape'>('root');
-  /* 「形狀」那一頁開著沒有？開著時在圖片上拖曳＝調整圖片在形狀裡的位置。
-     用 ref 是因為手勢那幾支不會跟著 state 重新綁定。 */
-  const shapePanRef = useRef(false);
-  useEffect(() => { shapePanRef.current = shapeMenu === 'imgShape'; }, [shapeMenu]);
+  /* ── 形狀的第二段選取 ────────────────────────────────────────────
+     選中圖片之後再點一次圖片，才進到「選中形狀」：
+       · 外框改成沿著形狀描一圈，方框與四顆角球收起來
+       · 在圖案裡面拖曳 ＝ 調整圖片在形狀裡的位置
+       · 兩指捏 ＝ 調整圖片在形狀裡的大小
+       · 點到形狀外面就退回「只選中圖片」
+     ref 是給手勢那幾支用的 —— 它們不會跟著 state 重新綁定。 */
+  const [shapeSelId, setShapeSelId] = useState<string | null>(null);
+  const shapeSelRef = useRef<string | null>(null);
+  useEffect(() => { shapeSelRef.current = shapeSelId; }, [shapeSelId]);
+  // 取消選取、或換選別張圖 → 形狀選取一起收掉
+  useEffect(() => {
+    if (shapeSelId && shapeSelId !== selectedFloatingId) setShapeSelId(null);
+  }, [selectedFloatingId, shapeSelId]);
   /** 正在拖形狀的滑桿：圖片的選取框先整組收起來 */
   const [tuningEdge, setTuningEdge] = useState(false);
   /** 特效分頁：選中哪一張卡片，以及細項有沒有展開（跟「編輯」同一種操作） */
@@ -8231,6 +8299,29 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    *  'pan'   —— 屬於畫布，左右捲頁
    * 規則就是「拖到被選中的物件身上＝操作它，拖別的地方＝捲頁」。
    */
+  /**
+   * 螢幕上這一點，落在這張浮動圖片的形狀裡面嗎？
+   *
+   * 轉過角度的元素，bounding rect 是它的外接矩形 —— 但**中心點還是同一個**，
+   * 所以從中心往外量、再轉回沒旋轉的方向，就能換算成圖片自己的座標。
+   */
+  const hitFloatingShape = (fImg: any, cx: number, cy: number): boolean => {
+    if (!fImg || !isImgShaped(fImg.imgShape)) return false;
+    const el = document.querySelector(`[data-floating-id="${fImg.id}"]`);
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    const kd = kRef.current || 1;
+    const sc = fImg.scale || 1;
+    const rot = ((fImg.rotation || 0) * Math.PI) / 180;
+    const ax = (cx - (r.x + r.width / 2)) / kd;
+    const ay = (cy - (r.y + r.height / 2)) / kd;
+    const ux = (ax * Math.cos(-rot) - ay * Math.sin(-rot)) / sc + fImg.width / 2;
+    const uy = (ax * Math.sin(-rot) + ay * Math.cos(-rot)) / sc + fImg.height / 2;
+    return isPointInImgShape(fImg.imgShape, fImg.width, fImg.height, ux, uy);
+  };
+  /** 這一下的觸控點在不在形狀裡（touchstart 算好，放開時判斷要不要進形狀選取） */
+  const tapInShapeRef = useRef(false);
+
   const gestureScope = (target: Element | null): 'none' | 'floating' | 'layout' | 'pan' => {
     if (!target) return 'pan';
     if (target.closest('button')) return 'none';
@@ -8288,6 +8379,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         /* 只有一般文字可以點進去改字；符號的內容是固定的，
            再點一次不進入編輯（所以也不會有剪下／複製／貼上）。 */
         const fl = floatingImages.find(f => f.id === id);
+        /* 已經選中的圖片、而且這一下點在形狀裡面 → 進到「選中形狀」 */
+        if (id === selectedFloatingId && isImgShaped((fl as any)?.imgShape) && tapInShapeRef.current) {
+          setShapeSelId(id);
+          return;
+        }
         if (id === selectedFloatingId && fl?.text !== undefined && !fl?.sym) {
           setEditingTextId(id);
           setInlineEditId(id);
@@ -8316,6 +8412,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     panRef.current = null;
     wsGestureRef.current = null;
     if (isLongPressedRef.current || touchDragState.current) return;
+
+    /* 先算「這一下是不是按在選中那張圖的形狀裡面」——
+       進出「選中形狀」都靠它，所以要在 gestureScope 判斷之前就算好。 */
+    if (e.touches.length === 1) {
+      const selImg = selectedFloatingId ? floatingImages.find(f => f.id === selectedFloatingId) : null;
+      tapInShapeRef.current = hitFloatingShape(selImg, e.touches[0].clientX, e.touches[0].clientY);
+      // 點到形狀外面 → 退回「只選中圖片」
+      if (shapeSelRef.current && !tapInShapeRef.current) {
+        shapeSelRef.current = null;
+        setShapeSelId(null);
+      }
+    }
 
     const scope = gestureScope(e.target as Element);
     if (scope === 'none') return;
@@ -8373,24 +8481,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         // 「形狀」那一頁開著時拖曳挪的是圖片在形狀裡的位置（見 handleWorkspaceTouchMove）
         baseShapeX: (fImg as any)?.imgShapeX ?? 0,
         baseShapeY: (fImg as any)?.imgShapeY ?? 0,
+        baseShapeZoom: clampImgZoom((fImg as any)?.imgShapeZoom),
         /* 手指是不是從「圖案裡面」按下去的。從形狀外面（愛心旁邊那塊空白）
            按下去要照舊搬動整個物件，所以在這裡先算好、整段拖曳都用同一個答案。 */
-        startInShape: (() => {
-          if (kind !== 'floating' || !fImg || !isImgShaped((fImg as any).imgShape)) return false;
-          const el = document.querySelector(`[data-floating-id="${fImg.id}"]`);
-          if (!el) return false;
-          const r = el.getBoundingClientRect();
-          /* 轉過角度的元素，bounding rect 是它的外接矩形 —— 但**中心點還是同一個**，
-             所以從中心往外量再轉回來就對得上。 */
-          const kd = kRef.current || 1;
-          const sc = fImg.scale || 1;
-          const rot = ((fImg.rotation || 0) * Math.PI) / 180;
-          const ax = (cx - (r.x + r.width / 2)) / kd;
-          const ay = (cy - (r.y + r.height / 2)) / kd;
-          const ux = (ax * Math.cos(-rot) - ay * Math.sin(-rot)) / sc + fImg.width / 2;
-          const uy = (ax * Math.sin(-rot) + ay * Math.cos(-rot)) / sc + fImg.height / 2;
-          return isPointInImgShape((fImg as any).imgShape, fImg.width, fImg.height, ux, uy);
-        })(),
+        startInShape: kind === 'floating' ? hitFloatingShape(fImg, cx, cy) : false,
       };
       return;
     }
@@ -8498,6 +8592,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const k = d / g.startDist;
         if (g.kind === 'floating') {
           const target = floatingImages.find(img => img.id === g.floatingId);
+          /* 進到「選中形狀」時，兩指捏的是**圖片在形狀裡的大小** ——
+             物件本身的大小與角度都不動。縮回 1 倍以下沒意義（圖就蓋不滿形狀），
+             所以下限是 1；倍率變小時位移要跟著夾回去，不然會露出空隙。 */
+          if (target && shapeSelRef.current === target.id && isImgShaped((target as any).imgShape)) {
+            const nz = clampImgZoom((g.baseShapeZoom || 1) * k);
+            const pan = imgShapePan(target.width, target.height, nz);
+            const cl = (v: any) => Math.max(-1, Math.min(1, Number(v) || 0));
+            setFloatingImages(prev => prev.map(img => img.id === g.floatingId ? {
+              ...img,
+              imgShapeZoom: nz,
+              imgShapeX: pan.rx > 0.5 ? cl((img as any).imgShapeX) : 0,
+              imgShapeY: pan.ry > 0.5 ? cl((img as any).imgShapeY) : 0,
+            } : img));
+            return;
+          }
           // 圖片跟文字都可以轉，邏輯跟創意拼圖同一套
           const canRotate = true;
           let rot = target?.rotation ?? 0;
@@ -8616,7 +8725,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           /* 「形狀」那一頁開著、這張圖有形狀、而且手指是從圖案裡面按下去的：
              拖曳是在挪動「圖片在形狀裡的位置」，不是搬動圖片本身。
              從形狀外面按下去、或關掉那一頁，都還是原本的搬移。 */
-          if (selectedImg && shapePanRef.current && g.startInShape
+          if (selectedImg && shapeSelRef.current === selectedImg.id && g.startInShape
               && isImgShaped((selectedImg as any).imgShape)) {
             /* 可以拖的範圍就是「圖比框大出來的那一圈」，除以它換算成 -1~1。
                圖片轉過角度的話，手指的方向也要跟著轉回去，不然會歪著跑。 */
@@ -8624,11 +8733,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const lx = dx * Math.cos(-rot) - dy * Math.sin(-rot);
             const ly = dx * Math.sin(-rot) + dy * Math.cos(-rot);
             const sc = selectedImg.scale || 1;
-            const rx = Math.max(1, (selectedImg.width * sc * (IMG_SHAPE_FILL - 1)) / 2);
-            const ry = Math.max(1, (selectedImg.height * sc * (IMG_SHAPE_FILL - 1)) / 2);
+            /* 可以拖的範圍＝圖片蓋過那個正方形之後多出來的部分（乘上物件本身的縮放，
+               因為手指的位移已經換算成內容單位了）。倍率 1 時橫的照片本來就左右有得拖。 */
+            const pan = imgShapePan(selectedImg.width, selectedImg.height, (selectedImg as any).imgShapeZoom);
+            const rx = pan.rx * sc, ry = pan.ry * sc;
             const cl = (v: number) => Math.max(-1, Math.min(1, v));
-            const px = cl((g.baseShapeX || 0) + lx / rx);
-            const py = cl((g.baseShapeY || 0) + ly / ry);
+            const px = rx > 0.5 ? cl((g.baseShapeX || 0) + lx / rx) : (g.baseShapeX || 0);
+            const py = ry > 0.5 ? cl((g.baseShapeY || 0) + ly / ry) : (g.baseShapeY || 0);
             setFloatingImages(prev => prev.map(img =>
               img.id === g.floatingId ? { ...img, imgShapeX: px, imgShapeY: py } : img));
             return;
@@ -11062,6 +11173,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         key={fImg.id}
                         image={fImg}
                         isSelected={selectedFloatingId === fImg.id}
+                        shapeSelected={shapeSelId === fImg.id}
+                        onShapeTap={(cx, cy) => {
+                          if (!isImgShaped((fImg as any).imgShape)) return;
+                          const inside = hitFloatingShape(fImg, cx, cy);
+                          // 已選中又點在圖案裡面 → 進第二段；點在圖案外面 → 退回第一段
+                          if (inside && selectedFloatingId === fImg.id) setShapeSelId(fImg.id);
+                          else if (!inside) setShapeSelId(null);
+                        }}
                         hasActiveGuidelines={activeGuidelines.length > 0}
                         stackIndex={fIdx}
                         // 選取框那一組改畫在不會被裁切的那一層
