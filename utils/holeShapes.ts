@@ -441,8 +441,11 @@ export const drawHoleShape = (
       ctx.restore();
     }
     if (o.dots) {
-      // 暫存畫布開大一點（長邊 ×1.6），字的墨水比框大時也不會被切掉
-      const side = Math.max(2, Math.ceil(Math.max(bw, bh) * 1.6));
+      /* 暫存畫布開大一點（長邊 ×1.6），字的墨水比框大時也不會被切掉。
+         「長邊」要連墨水一起算 —— 像 `<333` 的墨水有外框的 2.9 倍寬，
+         只看外框的話點點會在框的邊緣就被切斷。 */
+      const inkD = glyphInk(o.hole, gly, size);
+      const side = Math.max(2, Math.ceil(Math.max(bw, bh, inkD.w, inkD.h) * 1.6));
       const tmp = document.createElement('canvas');
       tmp.width = side; tmp.height = side;
       const tc = tmp.getContext('2d');
@@ -490,6 +493,49 @@ export const drawHoleShape = (
     paintDots(ctx, bw, bh, bw, bh, o.dotSize ?? 50, o.dotGap ?? 20, o.dotColor || '#FFFFFF');
     ctx.restore();
   }
+};
+
+/**
+ * 這顆圖案畫出來會超出外框多少（單邊，跟外框同一個座標系）。
+ *
+ * 好幾種圖案的墨水本來就比外框大 —— 像 `<333` 的寬度是外框的 2.9 倍、
+ * `zzz` 是 1.2 倍，路徑類的則是描邊有一半長在框外面。匯出是直接畫在整張
+ * 頁面上，所以是完整的；預覽與縮圖卻是畫在一張「跟外框一樣大」的畫布上，
+ * 超出去的部分被畫布邊緣切掉 —— 於是只看得到方框裡面那一截。
+ *
+ * 呼叫端拿這個值把畫布往外撐開就好：畫的內容、原點、大小全部不動
+ * （drawHoleShape 收到的還是原本的外框），只是多留了不會被切掉的餘地。
+ */
+export const holeOverflow = (
+  o: {
+    hole: string; text?: string; lineW?: number;
+    glow?: number | boolean; strokeW?: number; id?: string; randomNumber?: number;
+  },
+  bw: number, bh: number,
+  blurs: number[],
+) => {
+  // 下面這三行跟 drawHoleShape 開頭是同一組算式，不能各算各的
+  const size = Math.min(bw, bh);
+  const unit = Math.max(bw, bh) / 160;
+  const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
+  const sw = (o.strokeW || 0) * unit;
+  /* 發光是 canvas 的 shadowBlur：模糊半徑 r 大約散到 1.5r 才看不見 */
+  const glow = o.glow ? Math.max(0, ...blurs) * 1.5 : 0;
+  // 中心到墨水外緣：字符／去背圖量墨水，路徑類的半徑就是 size/2
+  let ix = size / 2, iy = size / 2;
+  if (isTextHole(o.hole)) {
+    const ink = glyphInk(o.hole, holeGlyph(o.hole, o.text || '', o), size);
+    ix = ink.w / 2; iy = ink.h / 2;
+  }
+  // 描邊往外加寬一圈，發光再往外散
+  const ex = ix + lw / 2 + sw + glow;
+  const ey = iy + lw / 2 + sw + glow;
+  /* 收在外框長邊的 3 倍以內 —— 再大就只是白白多開像素了 */
+  const cap = Math.max(bw, bh) * 3;
+  return {
+    x: Math.min(cap, Math.max(0, ex - bw / 2)),
+    y: Math.min(cap, Math.max(0, ey - bh / 2)),
+  };
 };
 
 /* ── 從圖案借過來的那幾種圖形 ─────────────────────────────────────
