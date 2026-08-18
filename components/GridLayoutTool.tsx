@@ -571,6 +571,8 @@ interface ColorPickerProps {
   color: string;
   onChange: (color: string) => void;
   onClose: () => void;
+  /** 有給的話，最上面會多一列「這個節點 ＋ 色號」，色票那一排就整排讓出來給色票 */
+  headerLeft?: React.ReactNode;
 }
 
 /** 文字圖層的編輯面板：內容、字體、顏色、字距、粗體、邊緣發光。 */
@@ -923,6 +925,33 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
       return `M ${P(cx, cy - b * 0.25)} `
         + `C ${P(cx + a * 0.6, cy - b)} ${P(cx + a * 1.3, cy - b * 0.1)} ${P(cx, cy + b * 0.9)} `
         + `C ${P(cx - a * 1.3, cy - b * 0.1)} ${P(cx - a * 0.6, cy - b)} ${P(cx, cy - b * 0.25)} Z`;
+    /* 橢圓：跟圓形同一條路徑 —— 框不是正方形時它自然就是橢圓 */
+    case 'ellipse':
+      return `M ${P(0, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(w, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(0, cy)} Z`;
+    /* 雲朵：平底、上面三個高低不同的圓駝峰。
+       控制點是照著畫好的雲量出來的比例（0~1），所以框拉成什麼比例，
+       雲就跟著等比例變形，兩邊也剛好貼齊框（0 與 1）。 */
+    case 'cloud': {
+      const C = (x1: number, y1: number, x2: number, y2: number, x3: number, y3: number) =>
+        `C ${P(x1 * w, y1 * h)} ${P(x2 * w, y2 * h)} ${P(x3 * w, y3 * h)}`;
+      return `M ${P(0.196 * w, h)} `
+        + `${C(0.065, 1, 0, 0.857, 0, 0.714)} `
+        + `${C(0, 0.554, 0.076, 0.429, 0.174, 0.429)} `
+        + `${C(0.196, 0.179, 0.326, 0, 0.478, 0)} `
+        + `${C(0.630, 0, 0.761, 0.179, 0.783, 0.429)} `
+        + `${C(0.913, 0.429, 1, 0.571, 1, 0.732)} `
+        + `${C(1, 0.875, 0.924, 1, 0.826, 1)} Z`;
+    }
+    /* 對話框：圓角矩形，左下角伸出一支尾巴 */
+    case 'bubble': {
+      const r = Math.min(w, h) * 0.20;
+      const bb = h * 0.80;                       // 本體的底線，下面留給尾巴
+      return `M ${P(r, 0)} L ${P(w - r, 0)} Q ${P(w, 0)} ${P(w, r)} `
+        + `L ${P(w, bb - r)} Q ${P(w, bb)} ${P(w - r, bb)} `
+        + `L ${P(w * 0.42, bb)} L ${P(w * 0.22, h)} L ${P(w * 0.30, bb)} `
+        + `L ${P(r, bb)} Q ${P(0, bb)} ${P(0, bb - r)} `
+        + `L ${P(0, r)} Q ${P(0, 0)} ${P(r, 0)} Z`;
+    }
     case 'line':
       return `M ${P(0, cy)} L ${P(w, cy)}`;
     default:
@@ -975,6 +1004,16 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'hexagon-o', kind: 'hexagon', filled: false },
   { id: 'star-o', kind: 'star', filled: false },
   { id: 'heart-o', kind: 'heart', filled: false },
+  /* 新增的八種邊框：四種常用比例的框、橢圓、窄菱形（＝實心第 6 顆的邊框版）、
+     雲朵、對話框。ratio 是「高 ÷ 寬」，所以 3:4 的框就是 4/3。 */
+  { id: 'diamond-n-o', kind: 'diamond-n', filled: false },
+  { id: 'ellipse-o', kind: 'ellipse', filled: false, ratio: 0.68 },
+  { id: 'rect34-o', kind: 'square', filled: false, ratio: 4 / 3 },
+  { id: 'rect23-o', kind: 'square', filled: false, ratio: 3 / 2 },
+  { id: 'rect45-o', kind: 'square', filled: false, ratio: 5 / 4 },
+  { id: 'rect916-o', kind: 'square', filled: false, ratio: 16 / 9 },
+  { id: 'cloud-o', kind: 'cloud', filled: false, ratio: 0.62 },
+  { id: 'bubble-o', kind: 'bubble', filled: false, ratio: 0.82 },
   // 線條
   { id: 'line-h', kind: 'line', filled: false, rot: 0, ratio: 0.08 },
   { id: 'line-v', kind: 'line', filled: false, rot: 90, ratio: 0.08 },
@@ -1001,6 +1040,9 @@ const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   hexagon: [0.067, 0, 0.866, 1],
   star: [0.0245, 0, 0.9511, 0.9045],
   heart: [0.1324, 0.2362, 0.7352, 0.7138],
+  ellipse: [0, 0, 1, 1],
+  cloud: [0, 0, 1, 1],
+  bubble: [0, 0, 1, 1],
   line: [0, 0.5, 1, 0],
 };
 
@@ -1026,18 +1068,23 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
      所以不管哪一種形狀，看起來都一樣大。 */
   const VB = 24;
   const BOX = VB;
-  const src = shapePathD(item.kind, BOX, isLine ? 0 : BOX);
+  /* 有指定比例的（3:4、2:3… 那種邊框、橢圓）要照比例畫，
+     不然按鈕上會全部變成正方形、看不出差別。 */
+  const ratio = isLine ? 0 : ((item as any).ratio || 0);
+  const bw = BOX;
+  const bh = isLine ? 0 : (ratio ? BOX * ratio : BOX);
+  const src = shapePathD(item.kind, bw, bh);
   const solid = item.filled && !isLine;
 
   const fit = SHAPE_FIT[item.kind] || [0, 0, 1, 1];
   // 內容的實際大小（線條的高度是 0，縮放只看寬度）
-  const cw = fit[2] * BOX, ch = fit[3] * BOX;
+  const cw = fit[2] * bw, ch = fit[3] * bh;
   const k = (GLYPH_ZOOM[item.kind] || 1)
     * Math.min(cw > 0 ? BOX / cw : Infinity, ch > 0 ? BOX / ch : Infinity);
   // 先把內容的中心搬到原點、放大、再搬到 viewBox 的正中央
-  const ccx = (fit[0] + fit[2] / 2) * BOX;
+  const ccx = (fit[0] + fit[2] / 2) * bw;
   // 線條的路徑高度是 0（畫在 y=0 那一條），所以它的內容中心 y 就是 0
-  const ccy = isLine ? 0 : (fit[1] + fit[3] / 2) * BOX;
+  const ccy = isLine ? 0 : (fit[1] + fit[3] / 2) * bh;
   /* 順序有講究：先把內容中心搬到原點 → 轉角度 → 縮放 → 搬到 viewBox 正中央。
      （SVG 的 transform 是由左往右套用到座標系上，所以寫起來剛好是反過來的。）
      轉角度要在「搬到原點之後」，不然斜線會繞著自己的端點轉，就歪掉了。 */
@@ -1063,10 +1110,17 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
 
 /* 「圖案」那幾顆借過來的圖形，按鈕上的小圖跟創意拼圖用同一份 —— 
    兩個工具的清單長得一樣，點下去加出來的也是同一顆。 */
-// --- 自製極簡單線十字星圖標 ---
-export const CrossStarIcon = ({ size = 20, strokeWidth = 1.5 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2 Q12 12 2 12 Q12 12 12 22 Q12 12 22 12 Q12 12 12 2" />
+/* --- 自製十字星圖標 ---
+   同一條路徑兩種畫法：filled 就填滿、不填就描邊。
+   （「新增圖形」實心那一排的第 11 顆是實心版，邊框那排是描邊版。） */
+export const CrossStarIcon = ({ size = 20, strokeWidth = 1.5, filled = false }) => (
+  <svg
+    width={size} height={size} viewBox="0 0 24 24"
+    fill={filled ? 'currentColor' : 'none'}
+    stroke={filled ? 'none' : 'currentColor'}
+    strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round"
+  >
+    <path d="M12 2 Q12 12 2 12 Q12 12 12 22 Q12 12 22 12 Q12 12 12 2 Z" />
   </svg>
 );
 
@@ -1078,9 +1132,9 @@ export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
 );
 
 /** 一顆「圖案」的小圖（形狀分頁的選單與『新增圖形』清單共用同一份）。 */
-export const HoleGlyph: React.FC<{ s: string }> = ({ s }) => (
+export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled }) => (
   <>
-    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} filled={filled} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
                         /* 去背的圖：拿它當遮罩、底色用 currentColor，
                            顏色就跟旁邊那些圖示走同一條規則 ——
                            沒選中時是暗的（#555），選中才變白。
@@ -2110,7 +2164,7 @@ const PatternLayer: React.FC<{ w: number; h: number; opts: PatternOpts }> = ({ w
   return <canvas ref={ref} className="absolute inset-0 pointer-events-none" style={{ width: w, height: h }} />;
 };
 
-const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onClose }) => {
+const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onClose, headerLeft }) => {
   const [hsv, setHsv] = useState(() => hexToHsv(color));
   const [hexInput, setHexInput] = useState(color);
 
@@ -2146,8 +2200,27 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
   // 跟發光同一條漸層，明度提到 90%；第一顆是純白
   const PRESETS = SOFT_COLORS;
 
+  /* 色號欄。沒有頂列時跟色票並排（原本的樣子）；
+     有頂列時搬上去跟返回鍵平行，色票就能佔滿整排。 */
+  const hexBox = (
+    <input
+      type="text"
+      value={hexInput}
+      onChange={handleHexInputChange}
+      maxLength={7}
+      aria-label="色號"
+      className="shrink-0 h-8 w-[86px] bg-[#1A1A1A] border border-[#333] rounded-[7px] px-2 text-white font-mono text-xs outline-none focus:border-white/50"
+    />
+  );
+
   return (
     <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-300">
+      {headerLeft && (
+        <div className="h-[38px] flex items-center gap-1 px-0.5 shrink-0">
+          {headerLeft}
+          <div className="ml-auto">{hexBox}</div>
+        </div>
+      )}
       <div className="flex items-center gap-2 mb-3">
         {/* 韓系拼貼常用色：一點就換。
             內距是留給選取外框的，否則第一顆與外框上緣會被捲動容器裁掉。 */}
@@ -2172,14 +2245,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
             );
           })}
         </div>
-        <input
-          type="text"
-          value={hexInput}
-          onChange={handleHexInputChange}
-          maxLength={7}
-          aria-label="色號"
-          className="shrink-0 h-8 w-[86px] bg-[#1A1A1A] border border-[#333] rounded-[7px] px-2 text-white font-mono text-xs outline-none focus:border-white/50"
-        />
+        {!headerLeft && hexBox}
       </div>
       
       <div className="flex-1 flex flex-col space-y-3">
@@ -5082,8 +5148,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const setGap = (v: number) => patchActiveLayout(l => ({ ...l, gap: v }));
   const setRadius = (v: number) => patchActiveLayout(l => ({ ...l, radius: v }));
 
+  /* 底色跟紋理一樣，只改「現在停在畫面正中央的那一頁」
+     （activePageIndex 就是捲動時算出來、離中心最近的那一頁）。 */
   const setBgColor = (newColor: string | ((prev: string) => string)) => {
     setPages(prev => prev.map((p, idx) => {
+      if (idx !== activePageIndex) return p;
       const updatedColor = typeof newColor === 'function' ? newColor(p.bgColor) : newColor;
       return { ...p, bgColor: updatedColor };
     }));
@@ -11243,8 +11312,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     </div>
                     {(() => {
                       /* 清單跟創意拼圖同一份：實心那排把十字星插在倒數第二，
-                         後面接上從圖案借過來的那 14 顆；邊框那排插空心版的十字星。
-                         最後再把第 10 顆搬到第 8 個，兩邊的順序完全一致。 */
+                         後面接上從圖案借過來的那幾顆；邊框那排接空心版的十字星。
+                         再用 moveTo 把兩排排成同樣的順序（愛心第 9、十字星第 11）。 */
                       const ins = (arr: any[], item: any) => {
                         const n = arr.slice();
                         n.splice(Math.max(0, n.length - 1), 0, item);
@@ -11262,8 +11331,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       };
                       const solidList = moveTo(
                         [...ins(ADD_SHAPE_ITEMS.filter(i => i.filled), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
-                        'heart-f', 8);
-                      const lineList = ins(ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line'), HOLE_ITEM_CROSS_O);
+                        'heart-f', 9);
+                      /* 邊框那排的順序跟實心那排對齊：第 6 顆窄菱形、第 9 顆愛心、
+                         第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
+                      const lineList = moveTo(moveTo(moveTo(
+                        [...ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line'), HOLE_ITEM_CROSS_O],
+                        'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 11);
                       return ([
                         ['實心', solidList],
                         ['邊框', lineList],
@@ -11281,7 +11354,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
                             >
                               {(it as any).hole
-                                ? <HoleGlyph s={(it as any).hole} />
+                                ? <HoleGlyph s={(it as any).hole} filled={(it as any).filled} />
                                 : <ShapeGlyph item={it as any} />}
                             </button>
                           ))}
@@ -11576,25 +11649,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               /* 紋理專屬的調色頁：從紋理那一排的色塊點進來，跟創意拼圖一樣。
                  挑色器本身用的是跟底色完全同一顆元件。 */
               <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto overflow-x-hidden no-scrollbar">
-                <div className="h-[38px] flex items-center gap-1 px-0.5">
-                  <button
-                    onClick={() => setColorSub('bg')}
-                    className="flex items-center gap-1 px-2 h-7 rounded-[4px] text-[10px] font-bold text-[#888] hover:text-white hover:bg-[#1a1a1a] transition-colors"
-                  >
-                    <ChevronLeft size={14} />
-                    <span>返回</span>
-                  </button>
-                  <div
-                    className="ml-auto w-6 h-5 rounded-[4px] shadow-inner border border-white/10"
-                    style={{ backgroundColor: patternColor }}
-                  />
-                </div>
-                {/* 一樣包一層高度 auto 的盒子擋掉 ColorPickerEmbedded 的 h-full */}
+                {/* 返回鍵交給挑色器放在頂列，色號跟它平行 ——
+                    色票那一排就整排都是色票，不會被色號擠掉一大截。 */}
                 <div>
                   <ColorPickerEmbedded
                     color={patternColor}
                     onChange={setPatternColor}
                     onClose={() => setColorSub('bg')}
+                    headerLeft={
+                      <button
+                        onClick={() => setColorSub('bg')}
+                        className="flex items-center gap-1 px-2 h-7 rounded-[4px] text-[10px] font-bold text-[#888] hover:text-white hover:bg-[#1a1a1a] transition-colors"
+                      >
+                        <ChevronLeft size={14} />
+                        <span>返回</span>
+                      </button>
+                    }
                   />
                 </div>
                 <div className="h-2" />

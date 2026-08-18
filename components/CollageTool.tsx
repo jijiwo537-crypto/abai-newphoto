@@ -6200,8 +6200,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           };
                           const solidList = moveTo(
                             [...ins(ADD_SHAPE_ITEMS.filter(i2 => i2.filled), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
-                            'heart-f', 8);
-                          const lineList = ins(ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && i2.kind !== 'line'), HOLE_ITEM_CROSS_O);
+                            'heart-f', 9);
+                          /* 邊框那排的順序跟實心那排對齊：第 6 顆窄菱形、第 9 顆愛心、
+                             第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
+                          const lineList = moveTo(moveTo(moveTo(
+                            [...ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && i2.kind !== 'line'), HOLE_ITEM_CROSS_O],
+                            'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 11);
                           return ([
                             ['實心', solidList],
                             ['邊框', lineList],
@@ -6219,7 +6223,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                                   className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
                                 >
                                   {(it as any).hole
-                                    ? <HoleGlyph s={(it as any).hole} />
+                                    ? <HoleGlyph s={(it as any).hole} filled={(it as any).filled} />
                                     : <ShapeGlyph item={it as any} />}
                                 </button>
                               ))}
