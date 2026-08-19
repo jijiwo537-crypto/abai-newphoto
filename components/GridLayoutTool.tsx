@@ -2400,11 +2400,15 @@ export const IMG_SHAPES: { id: string; label: string; glyph: string }[] = [
  * 一個方框疊一個圓，是「形狀」最好認的畫法；空心跟裡面那排一致。
  */
 export const ImgShapeIcon: React.FC<{ size?: number }> = ({ size = 19 }) => (
+  /* 兩個形狀**刻意不相交**：一疊在一起，交界處兩條線會重疊成一塊比較亮的
+     色斑，看起來就髒。圓心到方框右下角的距離是 5.09，圓半徑 4.6 —— 差了
+     半個線寬還有餘，所以永遠只是靠近、不會碰到。
+     線寬與端點的處理跟其他圖示同一組，粗細看起來才是一致的。 */
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth={1.7} strokeLinejoin="round" aria-hidden>
-    <rect x="2.6" y="2.6" width="12.2" height="12.2" rx="1.6" />
-    {/* 圓的那一塊：先把被方框蓋住的邊挖掉，兩個形狀才不會糊成一團 */}
-    <path d="M14.8 9.9a6.3 6.3 0 1 1-4.9 4.9" />
+    stroke="currentColor" strokeWidth={1.8}
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="2.9" y="2.9" width="10.2" height="10.2" rx="1.5" />
+    <circle cx="16.6" cy="16.6" r="4.6" />
   </svg>
 );
 
@@ -2420,6 +2424,34 @@ export const isImgShaped = (kind?: string) => !!kind && kind !== 'rect';
 export const imgShapeBox = (w: number, h: number) => {
   const s = Math.min(w, h);
   return { x: (w - s) / 2, y: (h - s) / 2, s };
+};
+
+/**
+ * 形狀要畫多大、畫在哪裡。
+ *
+ * 只把形狀塞進正方形是不夠的：愛心的路徑只佔它外框的 73%、上面還空著
+ * 四分之一（見 SHAPE_FIT）—— 照原樣畫，愛心就會比圓形、星星小一圈，
+ * 頂部一大片空白。所以先照 SHAPE_FIT 把「真正有畫到的那一塊」放大到剛好
+ * 填滿正方形（取寬、高兩個倍率裡小的那個，才不會有一邊爆出去），
+ * 再把墨水的中心對到正方形的中心。
+ *
+ * 回傳 S ＝ 要餵給 shapePathD 的外框邊長，tx／ty ＝ 路徑要平移到哪裡。
+ * 刻意回傳「平移量」而不是直接 ctx.scale：一 scale 連線寬都會跟著放大，
+ * 描邊就會變粗。shapePathD 本來就是照傳進去的尺寸等比產生的，
+ * 直接餵一個大一點的外框最乾淨。
+ */
+export const imgShapeXform = (kind: string, w: number, h: number) => {
+  const b = imgShapeBox(w, h);
+  const f = SHAPE_FIT[kind] || [0, 0, 1, 1];
+  const k = Math.min(f[2] > 0 ? 1 / f[2] : 1, f[3] > 0 ? 1 / f[3] : 1);
+  const S = b.s * k;
+  return {
+    S, b,
+    tx: b.x + b.s / 2 - (f[0] + f[2] / 2) * S,
+    ty: b.y + b.s / 2 - (f[1] + f[3] / 2) * S,
+    /** 放大之後墨水實際的寬高（選取框照這個畫） */
+    iw: f[2] * S, ih: f[3] * S,
+  };
 };
 
 /**
@@ -2440,12 +2472,13 @@ export const withImgOutline = (
   run: (p?: Path2D) => void,
 ) => {
   if (!isImgShaped(kind)) { roundRectPath(g, x, y, w, h, rx, ry); run(); return; }
-  /* 正方形、擺中央。描邊那一次傳進來的框比填色那一次大 lw（四邊各 lw/2），
-     兩個正方形因此是同心的、邊距剛好 lw/2 —— 線就會貼著形狀的邊描。 */
-  const b = imgShapeBox(w, h);
+  /* 正方形、擺中央、而且墨水放大到填滿它（見 imgShapeXform）。
+     描邊那一次傳進來的框比填色那一次大 lw（四邊各 lw/2），兩者因此同心、
+     邊距剛好 lw/2 —— 線就會貼著形狀的邊描。 */
+  const t = imgShapeXform(kind!, w, h);
   g.save();
-  g.translate(x + b.x, y + b.y);
-  try { run(new Path2D(shapePathD(kind!, b.s, b.s))); } finally { g.restore(); }
+  g.translate(x + t.tx, y + t.ty);
+  try { run(new Path2D(shapePathD(kind!, t.S, t.S))); } finally { g.restore(); }
 };
 
 /**
@@ -2457,9 +2490,13 @@ export const withImgOutline = (
  */
 export const imgShapeInk = (kind: string | undefined, w: number, h: number) => {
   if (!isImgShaped(kind)) return { x: 0, y: 0, w, h };
+  /* 形狀已經被放大到填滿那個正方形（見 imgShapeXform），所以正方形就是
+     「一定框得住、而且不會多留空白」的那個框。
+     這裡刻意**不**再用 SHAPE_FIT 去縮得更緊 —— 那份表是給按鈕小圖用的近似值，
+     拿來當選取框時，誤差會變成「圖案凸出框外」，那比稍微鬆一點難看得多。
+     經典拼圖的外框用的也是這個正方形，兩邊因此完全一致。 */
   const b = imgShapeBox(w, h);
-  const f = SHAPE_FIT[kind!] || [0, 0, 1, 1];
-  return { x: b.x + f[0] * b.s, y: b.y + f[1] * b.s, w: f[2] * b.s, h: f[3] * b.s };
+  return { x: b.x, y: b.y, w: b.s, h: b.s };
 };
 
 /** 這個點落在圖片「看得見的那一塊」裡面嗎？（形狀之外的角落不算） */
@@ -2474,9 +2511,9 @@ export const isPointInImgShape = (
     hitCtx = c.getContext('2d');
   }
   if (!hitCtx) return lx >= 0 && lx <= w && ly >= 0 && ly <= h;
-  const b = imgShapeBox(w, h);
+  const t = imgShapeXform(kind!, w, h);
   try {
-    return hitCtx.isPointInPath(new Path2D(shapePathD(kind!, b.s, b.s)), lx - b.x, ly - b.y);
+    return hitCtx.isPointInPath(new Path2D(shapePathD(kind!, t.S, t.S)), lx - t.tx, ly - t.ty);
   } catch {
     return lx >= 0 && lx <= w && ly >= 0 && ly <= h;
   }
@@ -2496,6 +2533,31 @@ export const clampImgZoom = (z: any) =>
  * 因此橫的照片在倍率 1 時就已經可以左右拖了（寬比正方形寬），
  * 上下要拖則得先放大一點 —— 跟佈局裡調整格子內照片是同一種手感。
  */
+/**
+ * 兩指放大／縮小時，位移要怎麼跟著變，才會像是「以形狀的中心為基準」在縮放。
+ *
+ * imgShapeX／Y 存的是「佔可拖範圍的幾成」。可拖範圍會隨倍率一起變大，
+ * 所以倍率一動、同樣的比例換算出來的實際位移就變了 —— 畫面上看起來就是
+ * 一邊放大一邊往旁邊滑，基準點跑掉。
+ *
+ * 要讓形狀中心底下的那一個點固定不動，實際位移必須跟倍率成正比
+ * （位移 / 圖片寬度 不變）。所以這裡先還原成實際位移、乘上倍率的變化，
+ * 再換算回新的比例，最後夾回範圍內。
+ */
+export const zoomAboutShapeCenter = (
+  w: number, h: number, z0: number, z1: number, x0: any, y0: any,
+) => {
+  const a = imgShapePan(w, h, z0), b = imgShapePan(w, h, z1);
+  const cl = (v: number) => Math.max(-1, Math.min(1, v));
+  const k = (Number(z0) || 1) > 0 ? (z1 / (Number(z0) || 1)) : 1;
+  const offX = (Number(x0) || 0) * a.rx * k;
+  const offY = (Number(y0) || 0) * a.ry * k;
+  return {
+    x: b.rx > 0.5 ? cl(offX / b.rx) : 0,
+    y: b.ry > 0.5 ? cl(offY / b.ry) : 0,
+  };
+};
+
 export const imgShapePan = (w: number, h: number, zoom: any) => {
   const b = imgShapeBox(w, h);
   const z = clampImgZoom(zoom);
@@ -4142,12 +4204,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       /* 進到「選中形狀」：方框與四顆角球都收起來，改成沿著形狀描一圈。
          那個正方形跟圖片框同心，所以直接畫在 chromeBox 這一格裡就對齊了。 */
       const shapeOutline = shapeSelected && isImgShaped((image as any).imgShape) ? (() => {
-        const b = imgShapeBox(image.width, image.height);
-        const d = shapePathD((image as any).imgShape, b.s, b.s);
+        /* chromeBox 已經把這一層縮到「形狀那個正方形」了，所以 viewBox 就用 b.s，
+           路徑再照 imgShapeXform 平移過去 —— 跟畫在畫布上的那一份完全對齊。 */
+        const t = imgShapeXform((image as any).imgShape, image.width, image.height);
+        const d = shapePathD((image as any).imgShape, t.S, t.S);
         return (
           <svg
             className="absolute inset-0 pointer-events-none z-30"
-            viewBox={`0 0 ${r3(b.s)} ${r3(b.s)}`}
+            viewBox={`${r3(t.b.x - t.tx)} ${r3(t.b.y - t.ty)} ${r3(t.b.s)} ${r3(t.b.s)}`}
             preserveAspectRatio="none"
             style={{ overflow: 'visible' }}
             aria-hidden
@@ -8321,6 +8385,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
   /** 這一下的觸控點在不在形狀裡（touchstart 算好，放開時判斷要不要進形狀選取） */
   const tapInShapeRef = useRef(false);
+  /** 這一下是不是「剛從選中形狀退回選中圖片」——是的話就不要再取消選取 */
+  const justLeftShapeRef = useRef(false);
 
   const gestureScope = (target: Element | null): 'none' | 'floating' | 'layout' | 'pan' => {
     if (!target) return 'pan';
@@ -8397,6 +8463,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return;
     }
     setInlineEditId(null);
+    /* 這一下才剛從「選中形狀」退回「選中圖片」：停在這一層，不要再往下掉。 */
+    if (justLeftShapeRef.current) { justLeftShapeRef.current = false; return; }
     if (target.closest('[data-cell-id]')) {
       // 格子／佈局的兩段式選取由 handleCellTouchEnd 負責，這裡只清掉圖片
       setSelectedFloatingId(null);
@@ -8418,10 +8486,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (e.touches.length === 1) {
       const selImg = selectedFloatingId ? floatingImages.find(f => f.id === selectedFloatingId) : null;
       tapInShapeRef.current = hitFloatingShape(selImg, e.touches[0].clientX, e.touches[0].clientY);
-      // 點到形狀外面 → 退回「只選中圖片」
+      /* 點到形狀外面 → 退回「只選中圖片」。
+         這一下只退一層，不能順手把圖片也取消選取，所以記一個旗標給
+         applyTapSelection 看（放開時它才不會把 selectedFloatingId 清掉）。 */
+      justLeftShapeRef.current = false;
       if (shapeSelRef.current && !tapInShapeRef.current) {
         shapeSelRef.current = null;
         setShapeSelId(null);
+        justLeftShapeRef.current = true;
       }
     }
 
@@ -8597,14 +8669,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
              所以下限是 1；倍率變小時位移要跟著夾回去，不然會露出空隙。 */
           if (target && shapeSelRef.current === target.id && isImgShaped((target as any).imgShape)) {
             const nz = clampImgZoom((g.baseShapeZoom || 1) * k);
-            const pan = imgShapePan(target.width, target.height, nz);
-            const cl = (v: any) => Math.max(-1, Math.min(1, Number(v) || 0));
-            setFloatingImages(prev => prev.map(img => img.id === g.floatingId ? {
-              ...img,
-              imgShapeZoom: nz,
-              imgShapeX: pan.rx > 0.5 ? cl((img as any).imgShapeX) : 0,
-              imgShapeY: pan.ry > 0.5 ? cl((img as any).imgShapeY) : 0,
-            } : img));
+            // 以形狀的中心為基準放大：位移要跟著倍率等比走，中心底下那一點才不會跑掉
+            const n = zoomAboutShapeCenter(
+              target.width, target.height, g.baseShapeZoom || 1, nz, g.baseShapeX, g.baseShapeY);
+            setFloatingImages(prev => prev.map(img => img.id === g.floatingId
+              ? { ...img, imgShapeZoom: nz, imgShapeX: n.x, imgShapeY: n.y } : img));
             return;
           }
           // 圖片跟文字都可以轉，邏輯跟創意拼圖同一套
@@ -11180,6 +11249,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           // 已選中又點在圖案裡面 → 進第二段；點在圖案外面 → 退回第一段
                           if (inside && selectedFloatingId === fImg.id) setShapeSelId(fImg.id);
                           else if (!inside) setShapeSelId(null);
+                          // 點在形狀外面但還在圖片身上：退回「選中圖片」，選取本身留著
                         }}
                         hasActiveGuidelines={activeGuidelines.length > 0}
                         stackIndex={fIdx}

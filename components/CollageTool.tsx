@@ -15,7 +15,7 @@ import {
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
   /* 圖片外形（形狀）：圓形／星型／愛心也共用同一份路徑與同一支算圖 */
-  isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom,
+  isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
@@ -997,6 +997,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
      ref 是給指標事件那幾支用的 —— 它們不會跟著 state 重新綁定。 */
   const [shapeSel, setShapeSel] = useState<string | null>(null);
   const shapeSelRef = useRef<string | null>(null);
+  /** 這一下的按壓是不是「剛從選中形狀退回選中圖片」——是的話就不要再取消選取 */
+  const justLeftShapeRef = useRef(false);
   useEffect(() => { shapeSelRef.current = shapeSel; }, [shapeSel]);
   // 取消選取、或換選別的物件 → 形狀選取一起收掉
   useEffect(() => { if (shapeSel && shapeSel !== selectedObj) setShapeSel(null); }, [selectedObj, shapeSel]);
@@ -2177,9 +2179,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     /* 「選中形狀」只在手指按在那個圖案裡面時才留著 ——
        點到形狀外面（旁邊的空白角落、別的物件、空畫布都算）就退回「只選中圖片」。
        兩指的第二根不算，不然一捏就退出去了。 */
+    justLeftShapeRef.current = false;
     if (shapeSelRef.current && activePointers.current.size === 1) {
       const so = objectsRef.current.find(z => z.id === shapeSelRef.current);
-      if (!so || !hitShapeOf(so, x, y)) { shapeSelRef.current = null; setShapeSel(null); }
+      if (!so || !hitShapeOf(so, x, y)) {
+        shapeSelRef.current = null; setShapeSel(null);
+        /* 退一層就好：這一下只是「離開形狀」，不能順手把圖片也取消選取 ——
+           不然點一次就從「選中形狀」直接掉到什麼都沒選。 */
+        justLeftShapeRef.current = true;
+      }
     }
 
     if (activePointers.current.size === 1) {
@@ -2402,6 +2410,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
              不是整個物件 —— 物件本身的大小與角度在這個狀態下不動。 */
           shapeZoom: shapeSelRef.current === oo.id && isImgShaped(oo.imgShape),
           z0: clampImgZoom(oo.imgShapeZoom),
+          // 放大要以形狀的中心為基準，所以要記住捏之前的位移
+          sx0: Number(oo.imgShapeX) || 0, sy0: Number(oo.imgShapeY) || 0,
         };
         setObjPinching(true);
       }
@@ -2659,13 +2669,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const nz = clampImgZoom(pin.z0 * (dist / pin.d0));
         queueMove(() => setObjects(prev => prev.map(o => {
           if (o.id !== pin.id) return o;
-          const { rx, ry } = imgShapePan(o.w || 1, o.h || 1, nz);
-          const cl = (v: any) => Math.max(-1, Math.min(1, Number(v) || 0));
-          return {
-            ...o, imgShapeZoom: nz,
-            imgShapeX: rx > 0.5 ? cl(o.imgShapeX) : 0,
-            imgShapeY: ry > 0.5 ? cl(o.imgShapeY) : 0,
-          };
+          const n = zoomAboutShapeCenter(o.w || 1, o.h || 1, pin.z0, nz, pin.sx0, pin.sy0);
+          return { ...o, imgShapeZoom: nz, imgShapeX: n.x, imgShapeY: n.y };
         })));
         return;
       }
@@ -2851,8 +2856,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (objDragRef.current?.shapeIfTap && !objDragRef.current.moved) {
       setShapeSel(objDragRef.current.id);
     }
-    // 點在物件以外的地方、而且完全沒有拖動 → 取消選取
-    if (objDragRef.current?.fromBlank && !objDragRef.current.moved) setSelectedObj(null);
+    /* 點在物件以外的地方、而且完全沒有拖動 → 取消選取。
+       但如果這一下才剛從「選中形狀」退出來，就停在「選中圖片」不要再往下掉。 */
+    if (objDragRef.current?.fromBlank && !objDragRef.current.moved && !justLeftShapeRef.current) {
+      setSelectedObj(null);
+    }
     // 還沒選中的物件：只有「點下去沒移動」才算選中，拖了就當作沒發生
     if (objDragRef.current?.selectOnly && !objDragRef.current.moved) {
       // pickId＝這一下真正按到的那個物件（拖動的可能是另一個「已選中的」）
