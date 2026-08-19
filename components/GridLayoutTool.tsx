@@ -1473,7 +1473,7 @@ export const TextEditorPanel: React.FC<{
         </button>
       </div>}
 
-      <div className={`flex-1 no-scrollbar h-full overflow-y-auto overflow-x-hidden pr-1 ${symbol ? '' : 'pl-3'}`}>
+      <div className={`flex-1 no-scrollbar h-full overflow-y-auto overflow-x-hidden pr-2 ${symbol ? 'pl-2' : 'pl-3'}`}>
         {colorPage && (
           <ColorPickerPage
             value={colorPage.value}
@@ -1636,7 +1636,7 @@ export const ShapeEditorPanel: React.FC<{
 
   return (
     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
-      <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar pr-1">
+      <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-2">
         {colorPage && (
           <ColorPickerPage
             value={colorPage.value}
@@ -1783,6 +1783,28 @@ export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
 const fx = img.fx || {};
 const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
 const fxVal = (key: string, dflt: number) => (fx as any)[key] ?? dflt;
+
+/* ── 兩段式的那幾顆（形狀／描邊／發光）點下去也要先亮一下 ──────────────
+ *
+ * 同一排裡，圓角與羽化點下去會變白 —— 因為它們只是把下面的滑桿換掉，
+ * 按鈕本人還留在原位。形狀／描邊／發光是「兩段式」的：點下去整排會被
+ * 子選單換掉，那顆按鈕根本來不及被畫成選中的樣子，手感上就是
+ * 「按了沒反應，畫面自己跳走」。
+ *
+ * 這裡先把它標成「按下去的那一顆」（畫面立刻變白，跟圓角一模一樣），
+ * 一個很短的節拍之後才換頁。子選單本來就有 300ms 的滑入動畫，
+ * 接在這 150ms 後面看起來就是「按鈕亮起 → 子選單滑進來」。 */
+const PRESS_FLASH_MS = 150;
+const [pressedTool, setPressedTool] = useState('');
+const pressTimerRef = useRef<number | undefined>(undefined);
+// 面板被收掉時把還沒跑完的計時器清乾淨，不要對已經卸載的元件 setState
+useEffect(() => () => window.clearTimeout(pressTimerRef.current), []);
+/** 先亮起來，再做真正要做的那件事 */
+const flashThen = (id: string, run: () => void) => {
+  window.clearTimeout(pressTimerRef.current);
+  setPressedTool(id);
+  pressTimerRef.current = window.setTimeout(() => { setPressedTool(''); run(); }, PRESS_FLASH_MS);
+};
 
 /* 點特效卡片＝只留這一顆（其他整組歸零）；
    長按＝疊在現在這些上面，好幾個同時生效（再長按一次就關掉那一顆）。 */
@@ -2111,13 +2133,20 @@ return (
             /* 「形狀」那一顆用自己畫的向量圖標（固定的，不跟著目前的形狀變）——
                圖示字型是子集化過的，隨手加的新名字並不在裡面，會變成一串英文字。 */
             const glyph = isShapePick ? <ImgShapeIcon size={19} /> : icon;
-            return toolBtn(id, label, glyph, shapeTool === id, adjusted, () => {
+            /* 兩段式的那幾顆（形狀／描邊／發光）點下去整排會被子選單換掉，
+               所以先讓它亮一下再換頁 —— 見上面 flashThen 的說明。
+               圓角／羽化不是兩段式，維持原本的一按就換滑桿，一點延遲都沒有。 */
+            return toolBtn(id, label, glyph, shapeTool === id || pressedTool === id, adjusted, () => {
               if (isShapePick) {
-                setShapeMenu('imgShape');
-                setShapeTool('imgShape');
+                flashThen(id, () => {
+                  setShapeMenu('imgShape');
+                  setShapeTool('imgShape');
+                });
               } else if (isSub) {
-                setShapeMenu(id as any);
-                setShapeTool(SHAPE_SUB_TOOLS[id][0][0]);
+                flashThen(id, () => {
+                  setShapeMenu(id as any);
+                  setShapeTool(SHAPE_SUB_TOOLS[id][0][0]);
+                });
               } else {
                 setShapeTool(id);
               }
@@ -12007,7 +12036,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
                 {/* Right side content */}
                 <div
-                  className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar pl-3 pr-1 h-full"
+                  className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar pl-3 pr-2 h-full"
                   /* 到頂了再往上拉、到底了再往下拉都不要有那一下橡皮筋
                      （contain 只擋「把捲動傳給外層」，自己還是會彈，所以用 none） */
                   style={{ overscrollBehavior: 'none' }}

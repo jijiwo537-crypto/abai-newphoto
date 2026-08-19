@@ -150,9 +150,15 @@ const AvatarView: React.FC<{
     );
   }
 
-  /* Material Symbols 的大小就是 font-size，所以用外面這層帶進去（Icon 會繼承） */
+  /* Material Symbols 的大小就是 font-size，所以用外面這層帶進去（Icon 會繼承）。
+     排版跟上面那個字母版一樣用 flex 置中 —— 圖示字型的「字身框」比圖案本身高
+     （上下各留了基線與行距的空間），只靠 leading-none 收不掉，
+     那段空白會把人像往下擠，看起來就是「偏下、沒有在正中間」。 */
   return (
-    <span className="leading-none" style={{ fontSize: Math.round(size * 0.5) }}>
+    <span
+      className="w-full h-full flex items-center justify-center leading-none"
+      style={{ fontSize: Math.round(size * 0.5) }}
+    >
       <Icon name="person" />
     </span>
   );
@@ -1009,7 +1015,8 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
 
           {/* 歷史紀錄（完整版）——首頁那一排的「查看全部」就是跳到這裡。
-               10 格、每排五個（兩排）；還沒導出過的位子留空格，點下去直接去挑照片。 */}
+               40 格、每排五個（八排）；還沒導出過的位子留空格，點下去直接去挑照片。
+               首頁那一排維持 10 格（那裡只是快捷，不是全部）。 */}
           <div className="mt-8">
             <div className="flex items-baseline justify-between mb-2">
               <span className="text-[12px] font-bold tracking-[0.14em] text-white/55">歷史紀錄</span>
@@ -1022,7 +1029,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   : `已存 ${histStat.rows} 筆・${histStat.rows - histStat.usable} 筆缺原圖`}
               </span>
             </div>
-            {historyGrid(10)}
+            {historyGrid(40)}
           </div>
 
           {/* 登出與刪除帳號都收進帳號設定那一頁了（點上面那列右邊的箭頭） */}

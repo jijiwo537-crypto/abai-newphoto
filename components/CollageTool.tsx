@@ -6435,7 +6435,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                      圖層上下不放這裡 —— 選中時畫面上那排工具列本來就有。 */
                   return (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
-                      <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar pr-1">
+                      <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-2">
                         <div className="space-y-3.5 pt-1 pb-2">
                           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
                           {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c, glowColor: c }), true)}
@@ -6791,7 +6791,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     <SlidersHorizontal size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'style' ? 'scale-110' : 'scale-100'}`} />
                   </button>
                 </div>
-                <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-1 h-full overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-2 h-full overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
                   {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'snow', 'love', 'love3', 'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'yaya', 'zzz', 'text'].map(s => (
@@ -6849,7 +6849,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 )}
                 </div>}
                 {shapeSub === 'style' && <div className="pt-1 pb-2">
-                  <div className="grid grid-cols-2 gap-4">
+                  {/* 上下那一排的間距比左右大：滑桿撐大的觸控區有 56px 高，
+                      原本 gap-4 排出來的行距只有 55px，兩排的觸控區剛好貼在一起，
+                      拖上面那根的時候很容易碰到下面那根。gap-y-6 之後行距 63px，
+                      中間留 7px 誰都不管的空白。左右維持 gap-4，寬度完全沒變。 */}
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-6">
                     <CompactSlider wide label="大小" value={holeSize} min={0} max={100} onChange={setHoleSize} />
                     <CompactSlider wide label="數量" value={holeCount} min={0} max={50} onChange={setHoleCount} step={1} />
                     <CompactSlider wide label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
