@@ -32,8 +32,13 @@
 
 /** 看得見的那一條有多高（單邊）。這個範圍內按下去就直接跳值，跟原生一樣。 */
 const CORE_HALF = 9;
-/** 手指移動超過這麼多就算「在拖」，不算「點一下」 */
+/** 手指橫向移動超過這麼多就算「在拖滑桿」，不算「點一下」 */
 const DRAG_SLOP = 4;
+/** 直向要移動超過這麼多才算「在捲面板」。刻意比橫向大很多 ——
+    拇指拖滑桿是弧線，起手常常先往下滑幾像素，那不是要捲頁面。 */
+const SCROLL_SLOP = 14;
+/** touchmove 一定要非被動，不然 preventDefault 沒有作用 */
+const TM_OPT = { passive: false, capture: true } as AddEventListenerOptions;
 /** 轉交點擊時最多往下找幾層（底下可能又是另一根滑桿的透明區） */
 const FORWARD_DEPTH = 4;
 /** 透明區比看得見的那一條往左右各多出多少（＝CSS 的 ::before left/right） */
@@ -158,38 +163,71 @@ export const installSliderTouch = () => {
     const r = el.getBoundingClientRect();
     const inCore = Math.abs(e.clientY - (r.top + r.height / 2)) <= CORE_HALF;
     const id = e.pointerId;
+    const isTouch = e.pointerType === 'touch';
     const x0 = e.clientX, y0 = e.clientY;
+
     /* 按下去的當下什麼都不做 —— 手指還可能是要直向捲面板，
        這時候就先跳值的話，捲一次就順手把滑桿也拉走了。
-       移動超過 4px 才開始算拖；完全沒移動就在放開時再決定。 */
-    let live = false;
+       所以先「不決定」，等手指往哪邊走比較多才算數。 */
+    let live = false;   // 已經認定是在拖滑桿（認定之後就再也不會反悔）
+    let dead = false;   // 已經認定使用者是在捲面板，這一下從頭到尾不關滑桿的事
     let done = false;
-    /* 明顯是直向的手勢 ＝ 使用者在捲面板，這一下從頭到尾都不關滑桿的事。
-       （有些捲動容器不會發 pointercancel，只能自己認。） */
-    let scrolling = false;
+
+    /** 手指移到 (cx, cy)：回傳 true 代表「這一下是滑桿的，別讓瀏覽器拿去捲」 */
+    const advance = (cx: number, cy: number): boolean => {
+      if (dead) return false;
+      if (!live) {
+        const dx = Math.abs(cx - x0), dy = Math.abs(cy - y0);
+        /* 兩邊的門檻刻意不對稱，而且一旦認定就不再改：
+           拇指拖滑桿本來就是弧線，起手常常先往下滑幾像素才轉成橫的
+           —— 舊版看第一顆 move 就把它判成「在捲面板」並且鎖死，
+           所以只要拖得不夠直就整段失效。現在橫向只要不是被直向輾壓
+           （dx*2 >= dy）就算拖滑桿；要判成捲面板則得直向明顯大很多
+           （超過 14px 而且是橫向的兩倍以上）。兩邊都還沒過門檻就繼續等，
+           這段期間什麼都不做，所以不會誤動到任何東西。 */
+        if (dx > DRAG_SLOP && dx * 2 >= dy) {
+          live = true;
+          /* 抓住這根指頭：接下來不管手指飄到哪一顆按鈕、哪一根滑桿上面，
+             事件都只會送到這裡，別人不會亮起來、也不會被按到。 */
+          try { wrap.setPointerCapture(id); } catch { /* 抓不到就算了，事件還是收得到 */ }
+        } else if (dy > SCROLL_SLOP && dy > dx * 2) {
+          dead = true; return false;
+        } else return false;
+      }
+      setValue(el, valueAt(el, cx));
+      return true;
+    };
 
     const onMove = (m: PointerEvent) => {
-      if (m.pointerId !== id || scrolling) return;
-      if (!live) {
-        const dx = Math.abs(m.clientX - x0), dy = Math.abs(m.clientY - y0);
-        if (dy > DRAG_SLOP && dy > dx) { scrolling = true; return; }
-        if (dx <= DRAG_SLOP) return;
-        live = true;
-        try { wrap.setPointerCapture(id); } catch { /* 抓不到就算了，事件還是收得到 */ }
-      }
-      setValue(el, valueAt(el, m.clientX));
+      if (m.pointerId !== id) return;
+      advance(m.clientX, m.clientY);
     };
-    const finish = (u: PointerEvent) => {
-      if (u.pointerId !== id || done) return;
+
+    /* 觸控多接一條，而且是 passive:false —— 這是「拖到一半不會被瀏覽器搶走」
+       的關鍵。.slider-wrap 是 touch-action: pan-y，手指只要往下帶一點，
+       瀏覽器就可能把這一整段手勢收去捲頁面並且發 pointercancel，滑桿當場斷掉。
+       確定是在拖滑桿之後就 preventDefault，瀏覽器從此不會插手；
+       還沒確定、或已經判成捲面板時完全不擋，原本的捲動手感一點都沒變。 */
+    const onTouchMove = (t: TouchEvent) => {
+      if (t.touches.length !== 1) return;          // 兩指以上是縮放，不要碰
+      const f = t.touches[0];
+      if (advance(f.clientX, f.clientY) && t.cancelable) t.preventDefault();
+    };
+
+    const end = (cancelled: boolean, cx: number, cy: number) => {
+      if (done) return;
       done = true;
       window.removeEventListener('pointermove', onMove, true);
-      window.removeEventListener('pointerup', finish, true);
-      window.removeEventListener('pointercancel', finish, true);
+      window.removeEventListener('pointerup', onPointerEnd, true);
+      window.removeEventListener('pointercancel', onPointerEnd, true);
+      window.removeEventListener('touchmove', onTouchMove, TM_OPT);
+      window.removeEventListener('touchend', onTouchEnd, true);
+      window.removeEventListener('touchcancel', onTouchEnd, true);
       try { wrap.releasePointerCapture(id); } catch { /* 同上 */ }
-      // 被瀏覽器收去捲動、或是手指明顯在直向滑：這一下跟滑桿無關
-      if (u.type === 'pointercancel' || scrolling) return;
+      // 手指明顯在直向滑、或整段被取消：這一下跟滑桿無關
+      if (dead || (cancelled && !live)) return;
       // 沒拖過、又是按在看得見的那一條上：跟原生一樣，值跳到手指的位置
-      if (!live && inCore) { live = true; setValue(el, valueAt(el, u.clientX)); }
+      if (!live && inCore) { live = true; setValue(el, valueAt(el, cx)); }
       if (live) {
         /* 有些滑桿是「手放開才算數」的（動畫頁放開後自動重播）——
            它們掛的是滑桿本人的 onPointerUp／onTouchEnd，補一顆給它們。 */
@@ -197,10 +235,28 @@ export const installSliderTouch = () => {
         return;
       }
       // 沒拖過、也不是按在那一條上 ＝ 使用者其實是想按底下那顆按鈕
-      forwardTap(wrap, u.clientX, u.clientY);
+      forwardTap(wrap, cx, cy);
     };
+
+    function onPointerEnd(u: PointerEvent) {
+      if (u.pointerId !== id) return;
+      /* 已經在拖了卻收到 pointercancel（瀏覽器想插手）：不收工。
+         touchmove／touchend 那條路還活著，讓它把這一段拖完。 */
+      if (u.type === 'pointercancel' && live && isTouch) return;
+      end(u.type === 'pointercancel', u.clientX, u.clientY);
+    }
+    function onTouchEnd(t: TouchEvent) {
+      const f = t.changedTouches[0];
+      end(t.type === 'touchcancel', f ? f.clientX : x0, f ? f.clientY : y0);
+    }
+
     window.addEventListener('pointermove', onMove, true);
-    window.addEventListener('pointerup', finish, true);
-    window.addEventListener('pointercancel', finish, true);
+    window.addEventListener('pointerup', onPointerEnd, true);
+    window.addEventListener('pointercancel', onPointerEnd, true);
+    if (isTouch) {
+      window.addEventListener('touchmove', onTouchMove, TM_OPT);
+      window.addEventListener('touchend', onTouchEnd, true);
+      window.addEventListener('touchcancel', onTouchEnd, true);
+    }
   }, true);
 };
