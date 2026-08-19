@@ -1703,7 +1703,7 @@ export const ShapeEditorPanel: React.FC<{
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
+            <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
               {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
               {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
             </div>
@@ -2135,8 +2135,12 @@ return (
             const glyph = isShapePick ? <ImgShapeIcon size={19} /> : icon;
             /* 兩段式的那幾顆（形狀／描邊／發光）點下去整排會被子選單換掉，
                所以先讓它亮一下再換頁 —— 見上面 flashThen 的說明。
-               圓角／羽化不是兩段式，維持原本的一按就換滑桿，一點延遲都沒有。 */
-            return toolBtn(id, label, glyph, shapeTool === id || pressedTool === id, adjusted, () => {
+               圓角／羽化不是兩段式，維持原本的一按就換滑桿，一點延遲都沒有。
+
+               閃亮的那 150ms 之內「只有被按的那一顆」是亮的 —— 不然剛剛選著的
+               圓角會跟新按下去的形狀一起亮著，看起來像兩顆同時被選中。 */
+            const lit = pressedTool ? pressedTool === id : shapeTool === id;
+            return toolBtn(id, label, glyph, lit, adjusted, () => {
               if (isShapePick) {
                 flashThen(id, () => {
                   setShapeMenu('imgShape');
@@ -2155,7 +2159,12 @@ return (
         : (
           <div className="flex items-center gap-4 animate-in slide-in-from-right duration-300">
             <button
-              onClick={() => { setShapeMenu('root'); setShapeTool(SHAPE_DEFAULT_TOOL); }}
+              /* 退回上一層時，剛剛進去的那一顆要留在亮著的狀態
+                 （shapeMenu 存的就是它的 id：imgShape／stroke／glow）。
+                 原本一律跳回圓角，所以從形狀退出來亮的是圓角，
+                 看起來就像「剛剛按的那一顆根本沒被選過」。
+                 這三顆在根選單沒有自己的滑桿，所以上面那一段照樣留白。 */
+              onClick={() => { setShapeMenu('root'); setShapeTool(shapeMenu); }}
               className="flex flex-col items-center justify-center gap-2 shrink-0 group w-12"
             >
               <div className="w-10 h-10 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-all text-white">
@@ -2334,7 +2343,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
             </div>
             <div className="slider-wrap" style={{ height: 6 }}><input type="range" min="0" max="360" value={hsv.h} onInput={e => handleHsvChange('h', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }} /></div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-x-7 gap-y-4">
             <div className="flex flex-col gap-1.5">
               <div className="flex justify-between items-center text-[9px] font-bold text-[#666] tracking-tighter uppercase">
                 <span>飽和度</span>
@@ -12345,7 +12354,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       </div>
                     </div>
                     {patternType !== 'none' && (
-                      <div className="grid grid-cols-2 gap-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
+                      <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                         {patternSlider('大小', patternSize, setPatternSize)}
                         {patternSlider('間距', patternGap, setPatternGap)}
                       </div>

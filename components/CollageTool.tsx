@@ -892,7 +892,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
             </div>
             <div className="slider-wrap" style={{ height: 6 }}><input type="range" min="0" max="360" value={hsv.h} onInput={e => handleHsvChange('h', (e.target as HTMLInputElement).value)} className="designer-color-slider w-full" style={{ ['--bar' as any]: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)' }} /></div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 gap-x-7 gap-y-4">
             <div className="flex flex-col gap-1.5">
               <div className="flex justify-between items-center text-[9px] font-bold text-[#666] tracking-tighter uppercase">
                 <span>飽和度</span>
@@ -6203,7 +6203,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     </div>
                   </div>
                   {patternType !== 'none' && (
-                    <div className="grid grid-cols-2 gap-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
+                    <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                       <CompactSlider wide label="大小" value={dotSize} min={0} max={100} onChange={setDotSize} />
                       <CompactSlider wide label="間距" value={dotGap} min={0} max={100} onChange={setDotGap} />
                     </div>
@@ -6486,7 +6486,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                                 />
                               </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
+                            <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                               {shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
                               {shapeSlider('間距', sel.dotGap ?? 20, 0, 100, (v: number) => patch({ dotGap: v }))}
                             </div>
@@ -6605,7 +6605,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         ))}
                       </div>
                       {gv.idle !== 'none' && (
-                        <div className="grid grid-cols-2 gap-4 mt-4">
+                        <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-4">
                           <CompactSlider label="幅度" value={gv.amp} min={0} max={100} step={1}
                             onCommit={replayMotion}
                             onChange={(v: number) => gset({ amp: v })} />
@@ -6670,7 +6670,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
                     {moTarget === 'link' ? (
                       <>
-                        <div className="grid grid-cols-2 gap-4 mt-4">
+                        <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-4">
                           <CompactSlider label="起始" value={Math.round(moLink.delay)} min={0} max={20} step={1}
                             onCommit={replayMotion}
                             onChange={(v: number) => setMoLink(m => ({ ...m, delay: v }))} />
@@ -6701,7 +6701,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                             </button>
                           ))}
                         </div>
-                        <div className="grid grid-cols-2 gap-4 mt-3">
+                        <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                           <CompactSlider label="起始" value={Math.round(cur.delay)} min={0} max={20} step={1}
                             onCommit={replayMotion}
                             onChange={(v: number) => setCur({ delay: v })} />
@@ -6719,7 +6719,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           ))}
                         </div>
                         {cur.idle !== 'none' && (
-                          <div className="grid grid-cols-2 gap-4 mt-3">
+                          <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                             <CompactSlider label="幅度" value={cur.amp} min={0} max={100} step={1}
                               onChange={(v: number) => setCur({ amp: v })} />
                             {/* 範圍 20～180 配 step 1：滑桿只有 167px 寬，範圍再寬一點
@@ -6756,7 +6756,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                                 ))}
                               </div>
                               {dk !== 'none' && (
-                                <div className="grid grid-cols-2 gap-4 mt-4">
+                                <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-4">
                                   <CompactSlider label="速度" value={dsp} min={20} max={180} step={1}
                                     onChange={(v: number) => setDash({ dashSpeed: v })} />
                                 </div>
@@ -6853,7 +6853,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       原本 gap-4 排出來的行距只有 55px，兩排的觸控區剛好貼在一起，
                       拖上面那根的時候很容易碰到下面那根。gap-y-6 之後行距 63px，
                       中間留 7px 誰都不管的空白。左右維持 gap-4，寬度完全沒變。 */}
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-6">
+                  <div className="grid grid-cols-2 gap-x-7 gap-y-6">
                     <CompactSlider wide label="大小" value={holeSize} min={0} max={100} onChange={setHoleSize} />
                     <CompactSlider wide label="數量" value={holeCount} min={0} max={50} onChange={setHoleCount} step={1} />
                     <CompactSlider wide label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
