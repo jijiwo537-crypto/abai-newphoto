@@ -2400,15 +2400,25 @@ export const IMG_SHAPES: { id: string; label: string; glyph: string }[] = [
  * 一個方框疊一個圓，是「形狀」最好認的畫法；空心跟裡面那排一致。
  */
 export const ImgShapeIcon: React.FC<{ size?: number }> = ({ size = 19 }) => (
-  /* 兩個形狀**刻意不相交**：一疊在一起，交界處兩條線會重疊成一塊比較亮的
-     色斑，看起來就髒。圓心到方框右下角的距離是 5.09，圓半徑 4.6 —— 差了
-     半個線寬還有餘，所以永遠只是靠近、不會碰到。
-     線寬與端點的處理跟其他圖示同一組，粗細看起來才是一致的。 */
+  /* 方框的右下角**整段不畫**，讓圓從那個缺口穿過去。
+   *
+   * 為什麼不是「讓兩個形狀剛好不相交」就好：沒選中時圖示是 40% 不透明的白，
+   * 兩條線只要有一點點疊到，疊合處就會變成 64%，看起來就是一塊比較白的斑。
+   * 上一版只讓**路徑**不相交，但線本身有寬度 —— 線寬還是疊到了。
+   *
+   * 這一版直接留一段空白，用距離保證它們永遠碰不到：
+   *   線段離圓心 7.63 － 半個線寬 0.95 ＝ 6.68
+   *   圓的外緣 4.6 ＋ 半個線寬 0.95 ＝ 5.55
+   * 中間隔著 1.13，怎麼畫都不會重疊。
+   *
+   * 風格對齊旁邊那幾顆（Material Symbols Outlined）：直角、平頭端點、
+   * miter 接角；線寬 1.9 在 19px 上算出來約 1.5px，跟它們一致。
+   */
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth={1.8}
-    strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <rect x="2.9" y="2.9" width="10.2" height="10.2" rx="1.5" />
-    <circle cx="16.6" cy="16.6" r="4.6" />
+    stroke="currentColor" strokeWidth={1.9}
+    strokeLinecap="butt" strokeLinejoin="miter" aria-hidden>
+    <path d="M13.5 11V3H3v10.5h8" />
+    <circle cx="17.5" cy="17.5" r="4.6" />
   </svg>
 );
 
