@@ -36,6 +36,54 @@ const CORE_HALF = 9;
 const DRAG_SLOP = 4;
 /** 轉交點擊時最多往下找幾層（底下可能又是另一根滑桿的透明區） */
 const FORWARD_DEPTH = 4;
+/** 透明區比看得見的那一條往左右各多出多少（＝CSS 的 ::before left/right） */
+const ZONE_X = 7;
+/** 透明區的上下半高（＝CSS 的 ::before height 56px 的一半） */
+const ZONE_Y = 28;
+
+/* ── 兩根滑桿靠太近的時候，該算誰的？ ─────────────────────────────
+ *
+ * 撐大的透明區有 56px 高，但版面上滑桿與滑桿的間距不一定有這麼多 ——
+ * 量過最擠的兩處：創意拼圖「圖案／參數」那一頁只有 55px（疊 1px），
+ * 調色頁的色相與飽和度只差 38px（整整疊掉 19px）。
+ *
+ * 疊在一起的那一段，原本是「DOM 順序在後面的那一根」贏（它畫在上面），
+ * 所以在色相下緣按下去其實拖到的是飽和度 —— 使用者的感覺就是
+ * 「這兩根靠太近，會拖到隔壁那根」。
+ *
+ * 改成看距離：疊到的每一根都算一次「手指到那條軌道的距離」，最近的那根贏。
+ * 等於把重疊的區域從中線切開，一人一半，兩根都拖得到，也不會互搶。
+ */
+const inZone = (r: DOMRect, x: number, y: number) => {
+  const cy = r.top + r.height / 2;
+  return x >= r.left - ZONE_X && x <= r.right + ZONE_X && y >= cy - ZONE_Y && y <= cy + ZONE_Y;
+};
+
+/** 手指到這條軌道（看得見的那個方框）有多遠 */
+const distTo = (r: DOMRect, x: number, y: number) => {
+  const dx = Math.max(r.left - x, 0, x - r.right);
+  const dy = Math.max(r.top - y, 0, y - r.bottom);
+  return Math.hypot(dx, dy);
+};
+
+/** 這一下按在好幾根滑桿的透明區裡時，挑離手指最近的那一根 */
+const nearestWrap = (from: HTMLElement, x: number, y: number): HTMLElement => {
+  let best = from;
+  let bestD = distTo(from.getBoundingClientRect(), x, y);
+  const all = document.querySelectorAll<HTMLElement>('.slider-wrap');
+  for (let i = 0; i < all.length; i++) {
+    const n = all[i];
+    if (n === from) continue;
+    const r = n.getBoundingClientRect();
+    if (!r.width || !inZone(r, x, y)) continue;
+    // 沒有滑桿、或滑桿是關著的，就不要把這一下搶過去
+    const inp = n.querySelector('input[type=range]') as HTMLInputElement | null;
+    if (!inp || inp.disabled) continue;
+    const d = distTo(r, x, y);
+    if (d < bestD) { bestD = d; best = n; }
+  }
+  return best;
+};
 
 const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
 
@@ -100,8 +148,10 @@ export const installSliderTouch = () => {
   installed = true;
 
   document.addEventListener('pointerdown', (e: PointerEvent) => {
-    const wrap = e.target as HTMLElement | null;
-    if (!wrap || !wrap.classList || !wrap.classList.contains('slider-wrap')) return;
+    const hit = e.target as HTMLElement | null;
+    if (!hit || !hit.classList || !hit.classList.contains('slider-wrap')) return;
+    // 透明區跟隔壁那根疊到的話，交給離手指近的那一根（見上面 nearestWrap 的說明）
+    const wrap = nearestWrap(hit, e.clientX, e.clientY);
     const el = wrap.querySelector('input[type=range]') as HTMLInputElement | null;
     if (!el || el.disabled) return;
 
