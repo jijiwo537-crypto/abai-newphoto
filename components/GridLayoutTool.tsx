@@ -1888,10 +1888,22 @@ const CATS = ([
    形狀本來就有現成的向量路徑，畫出來還比圖示更清楚。 */
 const toolBtn = (id: string, label: string, icon: string | React.ReactNode, active: boolean, adjusted: boolean, onClick: () => void) => (
   <button key={id} onClick={onClick} className="flex flex-col items-center gap-1 shrink-0 group w-16">
-    {/* 按下去的回饋：只放大，跟選中的那一顆是同一個放大幅度。
-        本來還會同時把底色翻成白的 —— 底色跟大小一起在 transition 裡跑，
-        看起來就是圖標抖了一下。只留放大就乾淨了。 */}
-    <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10 group-active:scale-110'}`}>
+    {/* 按下去的回饋：只是稍微放大一點點，別的都不動。
+        以前是「放大到跟選中一樣大（1.10）＋ 150ms 的 transition-all」——
+        那一圈是 40px，1.10 等於上下各長 2px，而且是慢慢脹上去的；
+        下面又緊接著文字，往下長的那 2px 被文字擋著、往上那 2px 是空的，
+        看起來就變成「圖標往上跑了一下」。
+        現在只長 1.05（上下各 1px）、而且 90ms 就到位，
+        是「按到了」的一下，不是一段會被眼睛追著看的位移。
+        底色與顏色維持原本的 150ms，跟大小分開跑，才不會又混在一起。 */}
+    <div
+      style={{
+        transitionProperty: 'transform, background-color, color',
+        transitionDuration: '90ms, 150ms, 150ms',
+        transitionTimingFunction: 'cubic-bezier(0.2, 0.8, 0.3, 1)',
+      }}
+      className={`w-10 h-10 rounded-full flex items-center justify-center ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10 group-active:scale-105'}`}
+    >
       {typeof icon === 'string' ? <Icon name={icon} className="text-lg" fill={active} /> : icon}
     </div>
     <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${active ? 'text-white' : 'text-white/20'}`}>{label}</span>

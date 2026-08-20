@@ -3445,8 +3445,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     };
     /** 把連線描在目前的座標系上（呼叫端已經 translate 到正確的原點）。
         端點跟著圖案的動態走，所以圖案在飄的時候線也黏著它們。 */
-    /** 把線畫一遍（發光、挖本體、真正描線都共用這支，形狀一定一致） */
-    const linkPath = (g: CanvasRenderingContext2D, pairs: [any, any][]) => {
+    /** 把線畫一遍（發光、挖本體、真正描線都共用這支，形狀一定一致）。
+        ox/oy：把線整個平移這麼多再畫。平常都是 0（呼叫端自己 translate 過了），
+        只有「線要用 pattern 上色」的時候才用得到 —— pattern 是釘在
+        目前座標系上的，座標系一旦推走，取到的顏色就跟著錯位。 */
+    const linkPath = (
+      g: CanvasRenderingContext2D, pairs: [any, any][], ox = 0, oy = 0,
+    ) => {
       const a0 = animRef.current;
       pairs.forEach(([a, b]) => {
         const pa = hA(a), pb = hA(b);
@@ -3454,8 +3459,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const local = a0 ? a0.link(holeOrder.get(a.id) ?? 0, holeOrder.get(b.id) ?? 0) : 1;
         if (local <= 0) return;
         g.beginPath();
-        g.moveTo(pa.x * s, pa.y * s);
-        g.lineTo(pa.x * s + (pb.x - pa.x) * s * local, pa.y * s + (pb.y - pa.y) * s * local);
+        g.moveTo(pa.x * s + ox, pa.y * s + oy);
+        g.lineTo(pa.x * s + ox + (pb.x - pa.x) * s * local, pa.y * s + oy + (pb.y - pa.y) * s * local);
         g.stroke();
       });
     };
@@ -3630,11 +3635,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
     /* 線只負責描線；光是另外一層（見 glowPass）。
        線一定畫在圖案「之前」，圖層才會比圖案低、不會蓋過圖案。 */
-    const strokeLinks = (g: CanvasRenderingContext2D, pairs: [any, any][]) => {
+    const strokeLinks = (
+      g: CanvasRenderingContext2D, pairs: [any, any][], ox = 0, oy = 0,
+    ) => {
       if (!pairs.length) return;
       g.save();
       linkStyle(g);
-      linkPath(g, pairs);
+      linkPath(g, pairs, ox, oy);
       g.restore();
     };
 
@@ -4328,7 +4335,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       /* createPattern 會把來源畫布整張複製一份 —— 幾百萬像素，每格一次很傷。
          只有「文字類的圖案」與「補畫連線」才用得到它，沒有就不要做。 */
       const maskLinks = maskLinksSig;
-      const needPat = isTextHole(holeType) || maskLinks.length > 0;
+      const needPat = isTextHole(holeType) || (maskLinks.length > 0 && !linkColor);
       const pat = needPat ? ctx2.createPattern(bd, 'no-repeat') : null;
       holes.forEach(h => {
         const side = h.side || 'both';
@@ -4368,12 +4375,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }
         ctx2.restore();
       });
-      if (pat) {
-        // 連線也要一起補畫，不然 below 的物件會壓在線上面
+      if (maskLinks.length && (linkColor || pat)) {
+        /* 連線也要一起補畫，不然 below 的物件會壓在線上面。
+           ⚠ 沒有自己指定顏色時，線的「顏色」就是墊在遮罩底下那張照片
+           （遮罩那一層是把線挖穿的），也就是上面這顆 pattern。
+           pattern 是釘在「畫的當下那個座標系」上的 —— 以前這裡為了對上
+           線的座標，先把座標系推到遮罩原點再描線，於是 pattern 也跟著位移了
+           (offs.mx, offs.my)。上下並排時那正好是一整張照片的高度，
+           取到的是那張圖上完全空白的地方 → 等於拿透明色描線 → 什麼都沒畫出來。
+           畫面上看到的就是「物件明明置底了，連線還是被它蓋住」。
+           改成不推座標系、直接把線平移過去畫，pattern 就跟照片對得上了。 */
         ctx2.save();
-        ctx2.translate(offs.mx, offs.my);
-        ctx2.strokeStyle = linkColor || pat;
-        strokeLinks(ctx2, maskLinks);
+        ctx2.strokeStyle = linkColor || (pat as CanvasPattern);
+        strokeLinks(ctx2, maskLinks, offs.mx, offs.my);
         ctx2.restore();
       }
       // 整層貼回目標，並留一份給下一格用
