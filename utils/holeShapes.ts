@@ -388,10 +388,71 @@ export const paintDots = (
   }
 };
 
+/* ── 紋理 ───────────────────────────────────────────────────────────
+ * 圖形裡面可以鋪一層紋理。原本只有「點點」一種、用一個布林開關，
+ * 現在多了「條紋」，所以改成一個種類欄位。
+ * 舊資料只有 dots，讀到 true 就當「點點」—— 舊作品打開來一模一樣。 */
+export type ShapeTex = 'none' | 'dot' | 'stripe';
+export const texOf = (o: { tex?: string; dots?: boolean } | null | undefined): ShapeTex => {
+  const t = o?.tex;
+  if (t === 'dot' || t === 'stripe' || t === 'none') return t;
+  return o?.dots ? 'dot' : 'none';
+};
+
+/** 條紋預設的兩個顏色 */
+export const STRIPE_A = '#A8CCF5';
+export const STRIPE_B = '#FDEBF7';
+
+/**
+ * 一條條紋有多寬。跟點點同一套換算：以「圖形長邊 / 600」為單位，
+ * 所以同一個數字在大圖形與小圖形上看起來的疏密是一樣的。
+ * 粗細 0～100 對應 6～60 個單位（最細像細線，最粗大約一條佔十分之一）。
+ */
+export const stripeBandOf = (unitW: number, unitH: number, w = 50) =>
+  (6 + (w / 100) * 54) * (Math.max(unitW, unitH) / 600);
+
+/**
+ * 把條紋鋪滿一塊區域（原點在**中心**）。呼叫端負責先剪裁在圖形裡面。
+ * 兩個顏色相間，沒有間距可以調 —— 一條接著一條，本來就是「相間排列」。
+ * dir：'h' 橫式（一條一條橫著排）／'v' 直式。
+ */
+export const paintStripes = (
+  c: CanvasRenderingContext2D,
+  unitW: number, unitH: number, covW: number, covH: number,
+  w = 50, dir: 'h' | 'v' = 'h', a = STRIPE_A, b = STRIPE_B,
+) => {
+  const band = Math.max(0.5, stripeBandOf(unitW, unitH, w));
+  const span = dir === 'h' ? covH : covW;
+  const n = Math.ceil(span / band) + 2;
+  for (let i = -n; i <= n; i++) {
+    // 用「取模再補正」拿到 0/1，負的索引才不會出現兩條同色黏在一起
+    c.fillStyle = ((i % 2) + 2) % 2 === 0 ? a : b;
+    // 多鋪 0.5px：相鄰兩條之間不要因為反鋸齒露出一條細縫
+    if (dir === 'h') c.fillRect(-covW, i * band, covW * 2, band + 0.5);
+    else c.fillRect(i * band, -covH, band + 0.5, covH * 2);
+  }
+};
+
+/** 一次把這顆圖形該有的紋理畫好（原點在中心，呼叫端已經剪裁好） */
+export const paintTex = (
+  c: CanvasRenderingContext2D,
+  unitW: number, unitH: number, covW: number, covH: number,
+  o: any,
+) => {
+  const t = texOf(o);
+  if (t === 'dot') {
+    paintDots(c, unitW, unitH, covW, covH, o.dotSize ?? 50, o.dotGap ?? 20, o.dotColor || '#FFFFFF');
+  } else if (t === 'stripe') {
+    paintStripes(c, unitW, unitH, covW, covH,
+      o.stripeW ?? 50, o.stripeDir === 'v' ? 'v' : 'h',
+      o.stripeA || STRIPE_A, o.stripeB || STRIPE_B);
+  }
+};
+
 /**
  * 畫一顆「從圖案借過來的圖形」。原點是圖形的**中心**。
  *
- * 兩個拼圖工具都呼叫這一支，所以形狀、發光、描邊、點點、上色方式一定一樣。
+ * 兩個拼圖工具都呼叫這一支，所以形狀、發光、描邊、紋理、上色方式一定一樣。
  * 字符／去背圖那幾種沒有路徑可以剪裁，點點改成畫在暫存畫布上再用
  * source-atop 蓋上去 —— 只有原本有墨水的地方會留下點點，結果跟路徑剪裁一樣。
  *
@@ -404,6 +465,8 @@ export const drawHoleShape = (
     glow?: number | boolean; glowColor?: string;
     strokeW?: number; strokeColor?: string;
     dots?: boolean; dotSize?: number; dotGap?: number; dotColor?: string;
+    /** 紋理：'none' | 'dot' | 'stripe'（沒給就照舊看 dots） */
+    tex?: string; stripeW?: number; stripeDir?: string; stripeA?: string; stripeB?: string;
     id?: string; randomNumber?: number;
     /** 線寬的單位。不給就照外框的長邊 / 160 —— 那會讓「圖形拉大」連框線
      *  也跟著變粗，所以呼叫端想要「粗細固定」時就把不含縮放的那個值傳進來。 */
@@ -443,10 +506,10 @@ export const drawHoleShape = (
       }
       ctx.restore();
     }
-    if (o.dots) {
+    if (texOf(o) !== 'none') {
       /* 暫存畫布開大一點（長邊 ×1.6），字的墨水比框大時也不會被切掉。
          「長邊」要連墨水一起算 —— 像 `<333` 的墨水有外框的 2.9 倍寬，
-         只看外框的話點點會在框的邊緣就被切斷。 */
+         只看外框的話紋理會在框的邊緣就被切斷。 */
       const inkD = glyphInk(o.hole, gly, size);
       const side = Math.max(2, Math.ceil(Math.max(bw, bh, inkD.w, inkD.h) * 1.6));
       const tmp = document.createElement('canvas');
@@ -456,7 +519,7 @@ export const drawHoleShape = (
         tc.translate(side / 2, side / 2);
         drawTextShape(tc, o.hole, gly, 0, 0, size, col, false, 0);
         tc.globalCompositeOperation = 'source-atop';
-        paintDots(tc, bw, bh, side, side, o.dotSize ?? 50, o.dotGap ?? 20, o.dotColor || '#FFFFFF');
+        paintTex(tc, bw, bh, side, side, o);
         ctx.drawImage(tmp, -side / 2, -side / 2);
         return;
       }
@@ -489,11 +552,11 @@ export const drawHoleShape = (
   }
   if (solid) { ctx.fillStyle = col; ctx.fill(); }
   else { ctx.strokeStyle = col; ctx.lineWidth = lw; ctx.stroke(); }
-  if (o.dots) {
+  if (texOf(o) !== 'none') {
     // 路徑還在，直接拿來當剪裁範圍
     ctx.save();
     ctx.clip();
-    paintDots(ctx, bw, bh, bw, bh, o.dotSize ?? 50, o.dotGap ?? 20, o.dotColor || '#FFFFFF');
+    paintTex(ctx, bw, bh, bw, bh, o);
     ctx.restore();
   }
 };
