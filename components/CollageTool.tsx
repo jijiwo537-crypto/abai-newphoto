@@ -31,7 +31,7 @@ import { SHAPE_IMAGES } from '../utils/shapeImages';
 import {
   getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio,
   isTextHole, holeGlyph, glyphFont, glyphInk, drawTextShape, drawShapePath,
-  drawHoleShape, paintDots, glowAmount,
+  drawHoleShape, paintDots, paintTex, texOf, STRIPE_A, STRIPE_B, glowAmount,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
@@ -175,37 +175,8 @@ const objKeyOf = (list: any[]) =>
 export const shapePathBox = (kind: string, w: number, h: number) =>
   new Path2D(shapePathD(kind, w, h));
 
-/**
- * 圖形上的「點點」。跟遮罩那邊完全同一套（同樣的 5~20 大小、40~140 間距、
- * 同樣的交錯三角網格），呼叫端負責把它剪裁在圖形裡面。
- *
- * 原點在**圖形的中心**（不是左上角），所以路徑類與字符類可以共用同一支。
- * unitW/unitH 決定點點的大小與間距（＝圖形本身的框），covW/covH 決定要鋪多大
- * 一塊 —— 字符類會畫在比框更大的暫存畫布上，兩個才要分開給。
- */
-const drawShapeDots = (
-  c: CanvasRenderingContext2D,
-  unitW: number, unitH: number, covW: number, covH: number, o: any,
-) => {
-  c.fillStyle = o.dotColor || '#FFFFFF';
-  /* 換算單位：讓「大小 50／間距 20」在圖形上看起來的密度，
-     跟遮罩用同樣的值時差不多（大約一排十顆）。 */
-  const unit2 = Math.max(unitW, unitH) / 600;
-  const dsz = (5 + ((o.dotSize ?? 50) / 100) * 15) * unit2;
-  const dgap = (40 + (o.dotGap ?? 20)) * unit2;
-  const rr = dsz / 2;
-  const dx2 = dgap, dy2 = dgap * Math.sqrt(3) / 2;
-  const rx2 = Math.ceil(covW / dx2) + 2, ry2 = Math.ceil(covH / dy2) + 2;
-  for (let j2 = -ry2; j2 <= ry2; j2++) {
-    const py = j2 * dy2;
-    const shiftX = Math.abs(j2) % 2 === 1 ? dx2 / 2 : 0;
-    for (let i2 = -rx2; i2 <= rx2; i2++) {
-      c.beginPath();
-      c.arc(i2 * dx2 + shiftX, py, rr, 0, Math.PI * 2);
-      c.fill();
-    }
-  }
-};
+/* 圖形上的紋理（點點／條紋）已經整組搬到共用模組去了 —— 見 utils/holeShapes.ts
+   的 paintTex：兩個拼圖工具吃同一份，畫出來一定一樣。 */
 
 /* ── 符號「真正畫出來的那一塊」 ─────────────────────────────────────
    跟圖案那邊是同一個問題、同一種解法：textAlign:'center' 對的是**前進寬度**、
@@ -997,6 +968,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
      ref 是給指標事件那幾支用的 —— 它們不會跟著 state 重新綁定。 */
   const [shapeSel, setShapeSel] = useState<string | null>(null);
   const shapeSelRef = useRef<string | null>(null);
+  /** 剛剛因為「手指按在形狀外面」而退掉的那一顆。第二根手指跟上時要復原。 */
+  const shapeSelUndoRef = useRef<string | null>(null);
   /** 這一下的按壓是不是「剛從選中形狀退回選中圖片」——是的話就不要再取消選取 */
   const justLeftShapeRef = useRef(false);
   useEffect(() => { shapeSelRef.current = shapeSel; }, [shapeSel]);
@@ -1698,6 +1671,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (st.glowMoImg) setGlowMoImg(st.glowMoImg);
     if (st.glowMoText) setGlowMoText(st.glowMoText);
     if (st.linkColor !== undefined) setLinkColor(st.linkColor);
+    /* 新增進來的內容（圖片／文字／圖形）。
+       文字與圖形本身就是純資料，放回去就完整了；圖片少了 img（那是 DOM 元素，
+       存不進去），所以先把物件放上去、再照 src 各自把照片載回來，
+       載好一張就補一張 —— 不必等全部載完，畫面不會空在那裡。 */
+    if (Array.isArray(st.objects) && st.objects.length) {
+      setObjects(st.objects.map((o: any) => ({ ...o })));
+      st.objects.forEach((o: any) => {
+        if (o.type !== 'image' || !o.src) return;
+        const im = new Image();
+        im.onload = () => setObjects(prev => prev.map(z => (z.id === o.id ? { ...z, img: im } : z)));
+        im.src = o.src;
+      });
+    }
   }, [initialState]);
 
   useEffect(() => {
@@ -2180,9 +2166,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        點到形狀外面（旁邊的空白角落、別的物件、空畫布都算）就退回「只選中圖片」。
        兩指的第二根不算，不然一捏就退出去了。 */
     justLeftShapeRef.current = false;
+    if (activePointers.current.size === 1) shapeSelUndoRef.current = null;
     if (shapeSelRef.current && activePointers.current.size === 1) {
       const so = objectsRef.current.find(z => z.id === shapeSelRef.current);
       if (!so || !hitShapeOf(so, x, y)) {
+        /* 先記下來是哪一顆：第二根手指跟上的話，這一下其實是「兩指縮放」，
+           不是「點外面退出去」—— 下面那條分支會照這個值把它復原。 */
+        shapeSelUndoRef.current = shapeSelRef.current;
         shapeSelRef.current = null; setShapeSel(null);
         /* 退一層就好：這一下只是「離開形狀」，不能順手把圖片也取消選取 ——
            不然點一次就從「選中形狀」直接掉到什麼都沒選。 */
@@ -2396,6 +2386,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          沒選中任何東西時才會落到下面那條「雙指縮放預覽」。 */
       e.stopPropagation();
       objDragRef.current = null;
+      /* 第一根手指落在形狀外面時，上面那一段已經把「選中形狀」退掉了 ——
+         但第二根手指跟上就代表這其實是一個縮放手勢，不是「點外面退出去」。
+         把它復原，所以在圖片外面捏也是在調「形狀裡面那張圖」的大小，
+         而不是把整個物件放大。 */
+      if (!shapeSelRef.current && shapeSelUndoRef.current
+        && shapeSelUndoRef.current === selectedObjRef.current) {
+        shapeSelRef.current = shapeSelUndoRef.current;
+        setShapeSel(shapeSelUndoRef.current);
+        justLeftShapeRef.current = false;
+      }
+      shapeSelUndoRef.current = null;
       const pts2: any[] = Array.from(activePointers.current.values());
       const oo = objectsRef.current.find(z => z.id === selectedObjRef.current);
       if (oo) {
@@ -3995,14 +3996,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           ctx.restore();
         }
         if (solid) ctx.fill(shapeP); else ctx.stroke(shapeP);
-        /* 點點：跟遮罩那邊完全同一套（同樣的 5~20 大小、40~140 間距、
-           同樣的交錯三角網格），只是剪裁在這個圖形裡面。 */
-        if (o.dots) {
+        /* 紋理：點點跟遮罩那邊完全同一套（同樣的 5~20 大小、40~140 間距、
+           同樣的交錯三角網格）；條紋是兩色相間。都剪裁在這個圖形裡面。 */
+        if (texOf(o) !== 'none') {
           ctx.save();
           ctx.clip(shapeP);
-          // 現在原點在框的左上角，點點那支是以中心為原點，先搬過去
+          // 現在原點在框的左上角，紋理那支是以中心為原點，先搬過去
           ctx.translate(bw / 2, bh / 2);
-          drawShapeDots(ctx, bw, bh, bw, bh, o);
+          paintTex(ctx, bw, bh, bw, bh, o);
           ctx.restore();
         }
         ctx.setLineDash([]);
@@ -4247,8 +4248,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         ctx2.translate(-hx, -hy);
         drawShapePath(ctx2, holeType, hx, hy, sz);
         ctx2.clip();
-        // 形狀可以轉，但貼進去的圖不能跟著轉 —— 先把座標系還原再貼
-        ctx2.setTransform(1, 0, 0, 1, 0, 0);
+        /* 形狀可以轉，但貼進去的圖不能跟著轉 —— 先把旋轉拿掉再貼。
+           ⚠ 這裡不能重設成「單位矩陣」：開了暫存層的時候，整個座標系本來就
+           往回平移了 (-rx0, -ry0)，重設成單位矩陣會讓貼上去的圖整個偏移
+           (rx0, ry0) —— 剪裁範圍還在原位，所以幾乎什麼都貼不進去，
+           整層等於空的。那正是「物件怎麼往下移都壓不到遮罩區的圖案下面」的原因：
+           補畫這一層根本沒畫出東西。要還原成「這一層自己的原點」。 */
+        ctx2.setTransform(1, 0, 0, 1, useLayer ? -rx0 : 0, useLayer ? -ry0 : 0);
         /* 只貼這個洞蓋得到的那一小塊。以前是整張貼（幾百萬像素）再靠 clip 蓋掉，
            一個洞一次、十幾個洞就是十幾次。剪裁範圍本來就把外面擋掉了，
            所以貼出來的像素完全一樣。 */
@@ -4452,6 +4458,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
+        /* 新增進來的內容（圖片／文字／圖形）也要一起記 —— 以前這一項不存在，
+           所以從歷史紀錄點回來時，設定都在、但「先前導入的東西」整批不見。
+
+           img 是 DOM 元素，JSON 化之後只會剩一個空物件，所以先拿掉；
+           照片本身靠 src 留著（addExport 會把 src 的內容另外收成附件，
+           點回來時再換成一條新的網址），回來之後照 src 重載一張就行。 */
+        objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
       }, histIdRef.current);
     } catch { /* 記錄失敗不能影響離開 */ }
   }, [imageState, getLayoutOffsets, renderToCanvas, layout, maskScale, holeType, customText,
@@ -6033,6 +6046,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   ? ((objects.find(o => o.id === selectedObj)?.color) || SHAPE_DEFAULT_COLOR)
                 : colorPickerTarget === 'shapeDot'
                   ? ((objects.find(o => o.id === selectedObj)?.dotColor) || '#FFFFFF')
+                : colorPickerTarget === 'shapeStripeA'
+                  ? ((objects.find(o => o.id === selectedObj)?.stripeA) || STRIPE_A)
+                : colorPickerTarget === 'shapeStripeB'
+                  ? ((objects.find(o => o.id === selectedObj)?.stripeB) || STRIPE_B)
                 : colorPickerTarget === 'shapeStroke'
                   ? ((objects.find(o => o.id === selectedObj)?.strokeColor) || '#000000')
                 : colorPickerTarget === 'shapeGlow'
@@ -6056,6 +6073,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, color: c, glowColor: c } : o));
                 else if(colorPickerTarget==='shapeDot')
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, dotColor: c } : o));
+                else if(colorPickerTarget==='shapeStripeA')
+                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, stripeA: c } : o));
+                else if(colorPickerTarget==='shapeStripeB')
+                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, stripeB: c } : o));
                 else if(colorPickerTarget==='shapeStroke')
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, strokeColor: c } : o));
                 else if(colorPickerTarget==='shapeGlow')
@@ -6075,6 +6096,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 : colorPickerTarget === 'linkColor' ? '連線顏色'
                 : colorPickerTarget === 'shapeObj' ? '圖形顏色'
                 : colorPickerTarget === 'shapeDot' ? '點點顏色'
+                : colorPickerTarget === 'shapeStripeA' ? '條紋顏色一'
+                : colorPickerTarget === 'shapeStripeB' ? '條紋顏色二'
                 : colorPickerTarget === 'shapeStroke' ? '描邊顏色'
                 : colorPickerTarget === 'shapeGlow' ? '發光顏色'
                 : colorPickerTarget === 'textStroke' ? '描邊顏色'
@@ -6459,38 +6482,86 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               onPick={(c: string) => patch({ strokeColor: c })}
                               onOpen={() => setColorPickerTarget('shapeStroke')} />
                           </div>
-                          {/* 點點整組收在同一格：開關、顏色、兩根滑桿全部在同一個框裡
-                              （跟「紋理」那一格同一種排法）。顏色常駐。 */}
+                          {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
+                              （跟經典拼圖的「背景紋理」同一種排法）。顏色常駐。
+                              點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
+                          {(() => {
+                            const tex = texOf(sel);
+                            return (
                           <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden">
                             <div className="h-[47px] flex items-center justify-between px-3">
-                              <span className="text-[10px] font-bold text-[#888]">點點</span>
+                              <span className="text-[10px] font-bold text-[#888]">紋理</span>
                               <div className="flex items-center gap-2">
                                 <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                                  {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
+                                  {([['關閉', 'none'], ['點點', 'dot'], ['條紋', 'stripe']] as const).map(([label, id]) => (
                                     <button
-                                      key={label}
-                                      onClick={() => patch({ dots: on })}
+                                      key={id}
+                                      onClick={() => patch({ tex: id, dots: id === 'dot' })}
                                       className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
-                                        !!sel.dots === on ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
+                                        tex === id ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
                                       }`}
                                     >
                                       {label}
                                     </button>
                                   ))}
                                 </div>
-                                <button
-                                  onClick={() => setColorPickerTarget('shapeDot')}
-                                  title="點點顏色"
-                                  className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                                  style={{ backgroundColor: sel.dotColor || '#FFFFFF' }}
-                                />
+                                {/* 條紋有兩個顏色，所以放兩塊色票；點點只有一塊 */}
+                                {tex === 'stripe' ? (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => setColorPickerTarget('shapeStripeA')}
+                                      title="條紋顏色一"
+                                      className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                                      style={{ backgroundColor: sel.stripeA || STRIPE_A }}
+                                    />
+                                    <button
+                                      onClick={() => setColorPickerTarget('shapeStripeB')}
+                                      title="條紋顏色二"
+                                      className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                                      style={{ backgroundColor: sel.stripeB || STRIPE_B }}
+                                    />
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => setColorPickerTarget('shapeDot')}
+                                    title="點點顏色"
+                                    className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                                    style={{ backgroundColor: sel.dotColor || '#FFFFFF' }}
+                                  />
+                                )}
                               </div>
                             </div>
-                            <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
-                              {shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
-                              {shapeSlider('間距', sel.dotGap ?? 20, 0, 100, (v: number) => patch({ dotGap: v }))}
-                            </div>
+                            {tex === 'stripe' ? (
+                              /* 條紋沒有間距可以調（一條接著一條），只有粗細。
+                                 右邊那一格放直式／橫式，跟滑桿並排。 */
+                              <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
+                                {shapeSlider('粗細', sel.stripeW ?? 50, 0, 100, (v: number) => patch({ stripeW: v }))}
+                                <div className="space-y-1.5">
+                                  <span className="text-[11px] font-bold text-white/70">方向</span>
+                                  <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                                    {([['橫式', 'h'], ['直式', 'v']] as const).map(([label, d]) => (
+                                      <button
+                                        key={d}
+                                        onClick={() => patch({ stripeDir: d })}
+                                        className={`flex-1 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
+                                          (sel.stripeDir === 'v' ? 'v' : 'h') === d ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
+                                        }`}
+                                      >
+                                        {label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
+                                {shapeSlider('大小', sel.dotSize ?? 50, 0, 100, (v: number) => patch({ dotSize: v }))}
+                                {shapeSlider('間距', sel.dotGap ?? 20, 0, 100, (v: number) => patch({ dotGap: v }))}
+                              </div>
+                            )}
                           </div>
+                            );
+                          })()}
                           {/* 粗細與虛線只有空心／線條才有，放在最後面 */}
                           {(!sel.filled || sel.kind === 'line') && (
                             <>

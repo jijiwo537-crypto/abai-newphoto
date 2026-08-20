@@ -13,6 +13,7 @@ import { SYMBOLS } from '../utils/symbols';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape, holeOverflow, glowAmount,
+  texOf, stripeBandOf, paintStripes, STRIPE_A, STRIPE_B,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -1673,41 +1674,95 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeStrokeColor: c }),
               })} />
           </div>
-          {/* 點點整組收在同一格：開關、顏色、兩根滑桿全部在同一個框裡
-              （跟「紋理」那一格同一種排法）。顏色常駐，關著也能先挑好。 */}
+          {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
+              （跟「背景紋理」那一格同一種排法）。顏色常駐，關著也能先挑好。
+              點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
+          {(() => {
+            const tex = texOf({ tex: layer.shapeTex, dots: layer.shapeDots });
+            return (
           <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden">
             <div className="h-[47px] flex items-center justify-between px-3">
-              <span className="text-[10px] font-bold text-[#888]">點點</span>
+              <span className="text-[10px] font-bold text-[#888]">紋理</span>
               <div className="flex items-center gap-2">
                 <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                  {([['關閉', false], ['開啟', true]] as const).map(([label, on]) => (
+                  {([['關閉', 'none'], ['點點', 'dot'], ['條紋', 'stripe']] as const).map(([label, id]) => (
                     <button
-                      key={label}
-                      onClick={() => onChange({ shapeDots: on })}
+                      key={id}
+                      onClick={() => onChange({ shapeTex: id, shapeDots: id === 'dot' })}
                       className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
-                        !!layer.shapeDots === on ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
+                        tex === id ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
                       }`}
                     >
                       {label}
                     </button>
                   ))}
                 </div>
-                <button
-                  onClick={() => setColorPage({
-                    value: layer.shapeDotColor || '#FFFFFF',
-                    onPick: c => onChange({ shapeDotColor: c }),
-                  })}
-                  title="點點顏色"
-                  className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                  style={{ backgroundColor: layer.shapeDotColor || '#FFFFFF' }}
-                />
+                {/* 條紋有兩個顏色，所以放兩塊色票；點點只有一塊 */}
+                {tex === 'stripe' ? (
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setColorPage({
+                        value: layer.shapeStripeA || STRIPE_A,
+                        onPick: c => onChange({ shapeStripeA: c }),
+                      })}
+                      title="條紋顏色一"
+                      className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                      style={{ backgroundColor: layer.shapeStripeA || STRIPE_A }}
+                    />
+                    <button
+                      onClick={() => setColorPage({
+                        value: layer.shapeStripeB || STRIPE_B,
+                        onPick: c => onChange({ shapeStripeB: c }),
+                      })}
+                      title="條紋顏色二"
+                      className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                      style={{ backgroundColor: layer.shapeStripeB || STRIPE_B }}
+                    />
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setColorPage({
+                      value: layer.shapeDotColor || '#FFFFFF',
+                      onPick: c => onChange({ shapeDotColor: c }),
+                    })}
+                    title="點點顏色"
+                    className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                    style={{ backgroundColor: layer.shapeDotColor || '#FFFFFF' }}
+                  />
+                )}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
-              {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
-              {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
-            </div>
+            {tex === 'stripe' ? (
+              /* 條紋沒有間距可以調（一條接著一條），只有粗細。
+                 右邊那一格放直式／橫式，跟滑桿並排。 */
+              <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
+                {slider('粗細', layer.shapeStripeW ?? 50, 0, 100, v => onChange({ shapeStripeW: v }))}
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold text-white/70">方向</span>
+                  <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                    {([['橫式', 'h'], ['直式', 'v']] as const).map(([label, d]) => (
+                      <button
+                        key={d}
+                        onClick={() => onChange({ shapeStripeDir: d })}
+                        className={`flex-1 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
+                          (layer.shapeStripeDir === 'v' ? 'v' : 'h') === d ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
+                {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
+                {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
+              </div>
+            )}
           </div>
+            );
+          })()}
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
           {hasOutline && (
             <>
@@ -2178,8 +2233,10 @@ return (
               ? IMG_SHAPES.map(({ id, label, glyph }) => {
                   const cur = img.imgShape || 'rect';
                   return toolBtn(id, label,
-                    // 空心版：跟「形狀」那顆圖標同一種語言
-                    <ShapeGlyph item={{ id, kind: glyph, filled: false }} size={19} />,
+                    // 空心版：跟「形狀」那顆圖標同一種語言。
+                    // 尺寸比其他工具鈕小兩成（19→15）—— 方形／圓形／星型／愛心
+                    // 都是滿版的實心輪廓，跟那些留白多的線條圖示放在一起會顯得太胖。
+                    <ShapeGlyph item={{ id, kind: glyph, filled: false }} size={15} />,
                     cur === id, false, () => {
                     const next = cur === id ? 'rect' : id;
                     /* 換形狀時把位移歸零 —— 上一個形狀拖到的位置換到新形狀上
@@ -3208,6 +3265,15 @@ interface FloatingImage {
   shapeDotGap?: number;
   /** 點點顏色（預設白） */
   shapeDotColor?: string;
+  /** 紋理種類：'none' | 'dot' | 'stripe'。沒給就照舊看 shapeDots。 */
+  shapeTex?: string;
+  /** 條紋粗細 0~100（預設 50） */
+  shapeStripeW?: number;
+  /** 條紋方向：'h' 橫式（預設）／'v' 直式 */
+  shapeStripeDir?: string;
+  /** 條紋的兩個顏色 */
+  shapeStripeA?: string;
+  shapeStripeB?: string;
 }
 
 /**
@@ -4091,6 +4157,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     strokeColor: image.shapeStrokeColor,
     dots: image.shapeDots, dotSize: image.shapeDotSize,
     dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
+    tex: image.shapeTex, stripeW: image.shapeStripeW, stripeDir: image.shapeStripeDir,
+    stripeA: image.shapeStripeA, stripeB: image.shapeStripeB,
     id: image.id,
     /* 線寬的單位刻意不含 scale：不然「把圖案拉大」框線也跟著變粗。
        跟 SVG 那些圖形除以 scale 是同一條規則。 */
@@ -4377,7 +4445,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             c.translate(w / 2, h / 2);
             drawHoleShape(c, opts, bw, bh, blurs);
           }}
-          key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${Math.round(image.width * image.scale)}|${Math.round(image.height * image.scale)}`}
+          key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${image.shapeTex}|${image.shapeStripeW}|${image.shapeStripeDir}|${image.shapeStripeA}|${image.shapeStripeB}|${Math.round(image.width * image.scale)}|${Math.round(image.height * image.scale)}`}
           style={{
             /* 用百分比而不是 px：外框的寬高會被吸到整數實體像素（見 wrapGeo），
                百分比才會跟著一起吸，畫布的中心才不會跟外框的中心差半個像素。 */
@@ -4450,7 +4518,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               patternTransform 把 tile 的原點移到圖形正中心，所以正中央
               一定有一顆點 —— 這樣才跟 canvas 那邊逐顆對得起來。
               四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
-          {!!image.shapeDots && (() => {
+          {texOf({ tex: image.shapeTex, dots: image.shapeDots }) === 'dot' && (() => {
             const { r, dx, dy, color } = shapeDotGrid(image.width, image.height, image);
             const id = `sdots-${image.id}`;
             return (
@@ -4464,6 +4532,41 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                     {[[0, 0], [dx, 0], [0, dy * 2], [dx, dy * 2], [dx / 2, dy]].map(([cx, cy], i) => (
                       <circle key={i} cx={r3(cx)} cy={r3(cy)} r={r3(r)} fill={color} />
                     ))}
+                  </pattern>
+                </defs>
+                <path
+                  d={shapePathD(image.shape, image.width, image.height)}
+                  fill={`url(#${id})`}
+                  stroke="none"
+                />
+              </>
+            );
+          })()}
+          {/* 條紋：一樣是疊在圖形填色區上的 pattern。
+              一個週期是「兩條」（各一個顏色），patternTransform 把原點移到
+              圖形正中心 —— 跟 canvas 那支 paintStripes 的起算點一致，
+              所以預覽跟匯出出來的條紋位置完全對得上。 */}
+          {texOf({ tex: image.shapeTex, dots: image.shapeDots }) === 'stripe' && (() => {
+            const band = Math.max(0.5, stripeBandOf(image.width, image.height, image.shapeStripeW ?? 50));
+            const vert = image.shapeStripeDir === 'v';
+            const a = image.shapeStripeA || STRIPE_A;
+            const b = image.shapeStripeB || STRIPE_B;
+            const id = `sstripe-${image.id}`;
+            return (
+              <>
+                <defs>
+                  <pattern
+                    id={id} patternUnits="userSpaceOnUse"
+                    width={r3(vert ? band * 2 : band)} height={r3(vert ? band : band * 2)}
+                    patternTransform={`translate(${r3(image.width / 2)} ${r3(image.height / 2)})`}
+                  >
+                    <rect x="0" y="0"
+                      width={r3(vert ? band : band)} height={r3(vert ? band : band)}
+                      fill={a} />
+                    <rect
+                      x={r3(vert ? band : 0)} y={r3(vert ? 0 : band)}
+                      width={r3(band)} height={r3(band)}
+                      fill={b} />
                   </pattern>
                 </defs>
                 <path
@@ -5120,16 +5223,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const diffLR = rawLeft - otherRight;
       if (Math.abs(diffLR) < SNAP_THRESHOLD && Math.abs(diffLR) < Math.abs(minDiffX)) {
         minDiffX = diffLR;
-        // Bleed 1px to overlap and prevent subpixel edge gap
-        bestSnapX = otherRight - imgWidth / 2 + scaledW / 2 - 1;
+        bestSnapX = otherRight - imgWidth / 2 + scaledW / 2;
         bestGuidelineX = otherRight;
       }
       // Current Right edge with other Left edge
       const diffRL = rawRight - otherLeft;
       if (Math.abs(diffRL) < SNAP_THRESHOLD && Math.abs(diffRL) < Math.abs(minDiffX)) {
         minDiffX = diffRL;
-        // Bleed 1px to overlap and prevent subpixel edge gap
-        bestSnapX = otherLeft - imgWidth / 2 - scaledW / 2 + 1;
+        bestSnapX = otherLeft - imgWidth / 2 - scaledW / 2;
         bestGuidelineX = otherLeft;
       }
       // Current Right edge with other Right edge
@@ -5143,19 +5244,27 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     if (bestGuidelineX !== null) {
       snappedX = bestSnapX;
-      guidelines.push({ type: 'vertical', coord: bestGuidelineX });
-      /* 貼齊之後再把「視覺邊緣」對到實體像素格線上。邊緣落在非整數的實體像素時，
-         瀏覽器會把最外面那一列跟底下的頁面白色混在一起，看起來就是一條髮絲白線
-         （只有預覽會，匯出是畫在 canvas 上）。往外捨入，最多只多蓋一個實體像素 ——
-         3 倍螢幕上是 0.33 CSS px，看不出凸出去。 */
+      /* ── 對齊線一定要跟吸附後的邊緣重合 ────────────────────────────
+         邊緣落在非整數的實體像素時，瀏覽器會把最外面那一列跟底下的頁面白色
+         混在一起，看起來就是一條髮絲白線（只有預覽會，匯出是畫在 canvas 上），
+         所以吸附完還要把邊緣挪到實體像素格線上。
+
+         以前只挪物件、對齊線留在原處，於是「線亮了，可是東西沒有剛好貼上去」；
+         而且是往外捨入，最多差一整個實體像素。現在改成就近捨入（最多差半個），
+         而且**把對齊線一起挪過去** —— 線畫在哪裡，邊緣就在哪裡，
+         看到的是 100% 重合。 */
       const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
       const leftEdge = snappedX + imgWidth / 2 - scaledW / 2;
       const rightEdge = leftEdge + scaledW;
-      if (Math.abs(leftEdge - bestGuidelineX) < 0.51) {
-        snappedX += (Math.floor(leftEdge * dpr) / dpr) - leftEdge;
-      } else if (Math.abs(rightEdge - bestGuidelineX) < 0.51) {
-        snappedX += (Math.ceil(rightEdge * dpr) / dpr) - rightEdge;
+      let gx: number = bestGuidelineX;
+      if (Math.abs(leftEdge - gx) < 0.51) {
+        const q = Math.round(leftEdge * dpr) / dpr;
+        snappedX += q - leftEdge; gx = q;
+      } else if (Math.abs(rightEdge - gx) < 0.51) {
+        const q = Math.round(rightEdge * dpr) / dpr;
+        snappedX += q - rightEdge; gx = q;
       }
+      guidelines.push({ type: 'vertical', coord: gx });
     }
     /* 圖層比頁面「幾乎一樣寬」時，左緣貼齊與右緣貼齊是兩個相差零點幾 px 的位置，
        從哪一邊靠過去就吸到哪一個 —— 那就是「由外而內沒縫、由內而外有縫」。
@@ -5234,16 +5343,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const diffTB = rawTop - otherBottom;
       if (Math.abs(diffTB) < SNAP_THRESHOLD && Math.abs(diffTB) < Math.abs(minDiffY)) {
         minDiffY = diffTB;
-        // Bleed 1px to overlap and prevent subpixel edge gap
-        bestSnapY = otherBottom - imgHeight / 2 + scaledH / 2 - 1;
+        bestSnapY = otherBottom - imgHeight / 2 + scaledH / 2;
         bestGuidelineY = otherBottom;
       }
       // Current Bottom edge with other Top edge
       const diffBT = rawBottom - otherTop;
       if (Math.abs(diffBT) < SNAP_THRESHOLD && Math.abs(diffBT) < Math.abs(minDiffY)) {
         minDiffY = diffBT;
-        // Bleed 1px to overlap and prevent subpixel edge gap
-        bestSnapY = otherTop - imgHeight / 2 - scaledH / 2 + 1;
+        bestSnapY = otherTop - imgHeight / 2 - scaledH / 2;
         bestGuidelineY = otherTop;
       }
       // Current Bottom edge with other Bottom edge
@@ -5257,15 +5364,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     if (bestGuidelineY !== null) {
       snappedY = bestSnapY;
-      guidelines.push({ type: 'horizontal', coord: bestGuidelineY });
+      // 跟上面 X 那一段完全同一套（說明見那裡）
       const dprY = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
       const topEdge = snappedY + imgHeight / 2 - scaledH / 2;
       const bottomEdge = topEdge + scaledH;
-      if (Math.abs(topEdge - bestGuidelineY) < 0.51) {
-        snappedY += (Math.floor(topEdge * dprY) / dprY) - topEdge;
-      } else if (Math.abs(bottomEdge - bestGuidelineY) < 0.51) {
-        snappedY += (Math.ceil(bottomEdge * dprY) / dprY) - bottomEdge;
+      let gy: number = bestGuidelineY;
+      if (Math.abs(topEdge - gy) < 0.51) {
+        const q = Math.round(topEdge * dprY) / dprY;
+        snappedY += q - topEdge; gy = q;
+      } else if (Math.abs(bottomEdge - gy) < 0.51) {
+        const q = Math.round(bottomEdge * dprY) / dprY;
+        snappedY += q - bottomEdge; gy = q;
       }
+      guidelines.push({ type: 'horizontal', coord: gy });
     }
     ownPageRectsForFit.forEach(pr => {
       const h = pr.bottom - pr.top;
@@ -5477,6 +5588,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      ref 是給手勢那幾支用的 —— 它們不會跟著 state 重新綁定。 */
   const [shapeSelId, setShapeSelId] = useState<string | null>(null);
   const shapeSelRef = useRef<string | null>(null);
+  /** 剛剛因為「手指按在形狀外面」而退掉的那一顆。第二根手指跟上時要復原。 */
+  const shapeSelUndoRef = useRef<string | null>(null);
   useEffect(() => { shapeSelRef.current = shapeSelId; }, [shapeSelId]);
   // 取消選取、或換選別張圖 → 形狀選取一起收掉
   useEffect(() => {
@@ -8538,7 +8651,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          這一下只退一層，不能順手把圖片也取消選取，所以記一個旗標給
          applyTapSelection 看（放開時它才不會把 selectedFloatingId 清掉）。 */
       justLeftShapeRef.current = false;
+      shapeSelUndoRef.current = null;
       if (shapeSelRef.current && !tapInShapeRef.current) {
+        /* 先記下來是哪一顆：第二根手指跟上的話，這一下其實是「兩指縮放」，
+           不是「點外面退出去」—— 下面那段會照這個值把它復原。 */
+        shapeSelUndoRef.current = shapeSelRef.current;
         shapeSelRef.current = null;
         setShapeSelId(null);
         justLeftShapeRef.current = true;
@@ -8558,6 +8675,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       : null;
     if (kind) {
       const twoFinger = e.touches.length >= 2;
+      /* 第一根手指落在形狀外面時，上面那一段已經把「選中形狀」退掉了 ——
+         但第二根手指跟上就代表這其實是一個縮放手勢，不是「點外面退出去」。
+         復原之後，在圖片外面捏也是在調「形狀裡面那張圖」的大小。 */
+      if (twoFinger && !shapeSelRef.current && shapeSelUndoRef.current
+        && shapeSelUndoRef.current === gestureFloatingId) {
+        shapeSelRef.current = shapeSelUndoRef.current;
+        setShapeSelId(shapeSelUndoRef.current);
+        justLeftShapeRef.current = false;
+      }
+      if (twoFinger) shapeSelUndoRef.current = null;
       const dist = twoFinger
         ? Math.hypot(
             e.touches[0].clientX - e.touches[1].clientX,
@@ -9126,6 +9253,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           lineW: fImg.shapeLineW, glow: fImg.shapeGlow as any,
           glowColor: fImg.shapeGlowColor, strokeW: fImg.shapeStrokeW,
           strokeColor: fImg.shapeStrokeColor,
+          tex: fImg.shapeTex, stripeW: fImg.shapeStripeW, stripeDir: fImg.shapeStripeDir,
+          stripeA: fImg.shapeStripeA, stripeB: fImg.shapeStripeB,
           dots: fImg.shapeDots, dotSize: fImg.shapeDotSize,
           dotGap: fImg.shapeDotGap, dotColor: fImg.shapeDotColor,
           id: fImg.id,
@@ -9186,14 +9315,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.restore();
     }
     if (solid) ctx.fill(path); else ctx.stroke(path);
-    /* 點點：剪裁在圖形裡面再鋪一層，跟預覽那塊 pattern 是同一塊區域、
-       同一組網格參數（shapeDotGrid），所以預覽跟匯出對得起來。 */
-    if (fImg.shapeDots) {
-      ctx.save();
-      ctx.clip(path);
-      ctx.translate(fw / 2, fh / 2);   // 點點那支是以圖形中心為原點
-      drawShapeDotsCanvas(ctx, fw, fh, fImg);
-      ctx.restore();
+    /* 紋理：剪裁在圖形裡面再鋪一層，跟預覽那塊 pattern 是同一塊區域、
+       同一組參數，所以預覽跟匯出對得起來。 */
+    {
+      const tx = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
+      if (tx !== 'none') {
+        ctx.save();
+        ctx.clip(path);
+        ctx.translate(fw / 2, fh / 2);   // 紋理那兩支都是以圖形中心為原點
+        if (tx === 'dot') drawShapeDotsCanvas(ctx, fw, fh, fImg);
+        else paintStripes(ctx, fw, fh, fw, fh,
+          fImg.shapeStripeW ?? 50, fImg.shapeStripeDir === 'v' ? 'v' : 'h',
+          fImg.shapeStripeA || STRIPE_A, fImg.shapeStripeB || STRIPE_B);
+        ctx.restore();
+      }
     }
     ctx.setLineDash([]);
     ctx.restore();
@@ -11640,22 +11775,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         let widthStyle = '100%';
                         let heightStyle = '100%';
 
+                        /* 線寬 2px，永遠「跨在座標上」（左緣 = 座標 - 1）。
+                           以前在最外面那兩邊會改成貼齊容器（0 或 寬-2），
+                           好處是整條線都看得到，代價是線的中心整整偏了 1px ——
+                           而頁面邊界正是最常拿來對齊的地方，所以使用者看到的就是
+                           「線亮了，可是東西沒有剛好貼在線上」。
+                           改成一律置中：最邊邊那一條會有一半落在容器外被切掉，
+                           剩下 1px 照樣看得見，而且線在哪裡、邊緣就在哪裡。 */
                         if (guideline.type === 'vertical') {
                           widthStyle = '2px';
-                          if (guideline.coord <= 1) {
-                            leftStyle = '0px';
-                          } else if (guideline.coord >= totalContainerWidth - 1) {
-                            leftStyle = `${totalContainerWidth - 2}px`;
-                          } else {
+                          {
                             leftStyle = `${guideline.coord - 1}px`;
                           }
                         } else {
                           heightStyle = '2px';
-                          if (guideline.coord <= 1) {
-                            topStyle = '0px';
-                          } else if (guideline.coord >= totalContainerHeight - 1) {
-                            topStyle = `${totalContainerHeight - 2}px`;
-                          } else {
+                          {
                             topStyle = `${guideline.coord - 1}px`;
                           }
                           /* 橫線只畫在物件自己那一頁：對齊的是這一頁的上下緣／中線，
