@@ -373,7 +373,7 @@ export const dotGridOf = (unitW: number, unitH: number, size = 50, gap = 20) => 
 export const paintDots = (
   c: CanvasRenderingContext2D,
   unitW: number, unitH: number, covW: number, covH: number,
-  size = 50, gap = 20, color = '#FFFFFF',
+  size = 50, gap = 20, color = '#FFFFFF', kind: string = 'dot',
 ) => {
   const { r, dx, dy } = dotGridOf(unitW, unitH, size, gap);
   c.fillStyle = color;
@@ -381,27 +381,27 @@ export const paintDots = (
   for (let j = -ry; j <= ry; j++) {
     const shiftX = Math.abs(j) % 2 === 1 ? dx / 2 : 0;
     for (let i = -rx; i <= rx; i++) {
-      c.beginPath();
-      c.arc(i * dx + shiftX, j * dy, r, 0, Math.PI * 2);
-      c.fill();
+      // 圖案本身跟背景紋理共用同一支（點點／星星／愛心都是它畫的）
+      patternGlyph(c, kind, i * dx + shiftX, j * dy, r);
     }
   }
 };
+
+import { patternGlyph, STRIPE_A as SA, STRIPE_B as SB, type TexKind } from './pattern';
 
 /* ── 紋理 ───────────────────────────────────────────────────────────
  * 圖形裡面可以鋪一層紋理。原本只有「點點」一種、用一個布林開關，
  * 現在多了「條紋」，所以改成一個種類欄位。
  * 舊資料只有 dots，讀到 true 就當「點點」—— 舊作品打開來一模一樣。 */
-export type ShapeTex = 'none' | 'dot' | 'stripe';
+export type ShapeTex = TexKind;
 export const texOf = (o: { tex?: string; dots?: boolean } | null | undefined): ShapeTex => {
   const t = o?.tex;
-  if (t === 'dot' || t === 'stripe' || t === 'none') return t;
+  if (t === 'dot' || t === 'star' || t === 'heart' || t === 'stripe' || t === 'none') return t;
   return o?.dots ? 'dot' : 'none';
 };
 
-/** 條紋預設的兩個顏色 */
-export const STRIPE_A = '#A8CCF5';
-export const STRIPE_B = '#FDEBF7';
+/** 條紋預設的兩個顏色（定義在 utils/pattern.ts，這裡只是轉出去） */
+export { STRIPE_A, STRIPE_B } from './pattern';
 
 /**
  * 一條條紋有多寬。跟點點同一套換算：以「圖形長邊 / 600」為單位，
@@ -419,7 +419,7 @@ export const stripeBandOf = (unitW: number, unitH: number, w = 50) =>
 export const paintStripes = (
   c: CanvasRenderingContext2D,
   unitW: number, unitH: number, covW: number, covH: number,
-  w = 50, dir: 'h' | 'v' = 'h', a = STRIPE_A, b = STRIPE_B,
+  w = 50, dir: 'h' | 'v' = 'h', a = SA, b = SB,
 ) => {
   const band = Math.max(0.5, stripeBandOf(unitW, unitH, w));
   const span = dir === 'h' ? covH : covW;
@@ -440,12 +440,16 @@ export const paintTex = (
   o: any,
 ) => {
   const t = texOf(o);
-  if (t === 'dot') {
-    paintDots(c, unitW, unitH, covW, covH, o.dotSize ?? 50, o.dotGap ?? 20, o.dotColor || '#FFFFFF');
+  /* 欄位名有兩套：圖形沿用最早的 dotSize／dotGap／dotColor，
+     文字與符號用比較中性的 texSize／texGap／texColor。兩套都吃。 */
+  if (t === 'dot' || t === 'star' || t === 'heart') {
+    paintDots(c, unitW, unitH, covW, covH,
+      o.texSize ?? o.dotSize ?? 50, o.texGap ?? o.dotGap ?? 20,
+      o.texColor || o.dotColor || '#FFFFFF', t);
   } else if (t === 'stripe') {
     paintStripes(c, unitW, unitH, covW, covH,
       o.stripeW ?? 50, o.stripeDir === 'v' ? 'v' : 'h',
-      o.stripeA || STRIPE_A, o.stripeB || STRIPE_B);
+      o.stripeA || SA, o.stripeB || SB);
   }
 };
 
