@@ -13,11 +13,11 @@ import { SYMBOLS } from '../utils/symbols';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape, holeOverflow, glowAmount,
-  texOf, stripeBandOf, paintStripes, STRIPE_A, STRIPE_B,
-  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
+  texOf, stripeBandOf, paintStripes,
+  HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { paintPattern, PatternOpts } from '../utils/pattern';
+import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_A, STRIPE_B, texTile } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
@@ -572,6 +572,8 @@ interface ColorPickerProps {
   color: string;
   onChange: (color: string) => void;
   onClose: () => void;
+  /** 換掉預設的那一排色票。條紋的兩個顏色用的就是遮罩那一組（全 App 同一份）。 */
+  colors?: string[];
   /** 有給的話，最上面會多一列「這個節點 ＋ 色號」，色票那一排就整排讓出來給色票 */
   headerLeft?: React.ReactNode;
 }
@@ -1594,6 +1596,71 @@ export const TextEditorPanel: React.FC<{
             </>
             )}
 
+            {/* 紋理：文字與符號都有，四種跟創意拼圖的遮罩紋理完全一樣
+                （點點／星星／愛心是一個顏色＋大小＋間距；條紋是兩個顏色＋粗細＋方向）。 */}
+            {(() => {
+              const tex = texOf({ tex: (layer as any).tex });
+              const L = layer as any;
+              return (
+              <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden">
+                <div className="h-[47px] flex items-center justify-between px-3">
+                  <span className="text-[10px] font-bold text-[#888]">紋理</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                      {TEX_OPTIONS.map(([id, label]) => (
+                        <button key={id} onClick={() => onChange({ tex: id } as any)}
+                          className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${tex === id ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {tex === 'stripe' ? (
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={() => setColorPage({ value: L.stripeA || STRIPE_A, colors: TEX_SWATCHES, onPick: c => onChange({ stripeA: c } as any) })}
+                          title="條紋顏色一"
+                          className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                          style={{ backgroundColor: L.stripeA || STRIPE_A }} />
+                        <button
+                          onClick={() => setColorPage({ value: L.stripeB || STRIPE_B, colors: TEX_SWATCHES, onPick: c => onChange({ stripeB: c } as any) })}
+                          title="條紋顏色二"
+                          className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                          style={{ backgroundColor: L.stripeB || STRIPE_B }} />
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setColorPage({ value: L.texColor || '#FFFFFF', colors: TEX_SWATCHES, onPick: c => onChange({ texColor: c } as any) })}
+                        title="紋理顏色"
+                        className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                        style={{ backgroundColor: L.texColor || '#FFFFFF' }} />
+                    )}
+                  </div>
+                </div>
+                {tex === 'stripe' ? (
+                  <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
+                    {slider('粗細', L.stripeW ?? 50, 0, 100, v => onChange({ stripeW: v } as any))}
+                    <div className="space-y-1.5">
+                      <span className="text-[11px] font-bold text-white/70">方向</span>
+                      <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                        {([['橫式', 'h'], ['直式', 'v']] as const).map(([label, d]) => (
+                          <button key={d} onClick={() => onChange({ stripeDir: d } as any)}
+                            className={`flex-1 h-6 text-[10px] font-bold rounded-[2px] transition-all ${(L.stripeDir === 'v' ? 'v' : 'h') === d ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : tex !== 'none' && (
+                  <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
+                    {slider('大小', L.texSize ?? 50, 0, 100, v => onChange({ texSize: v } as any))}
+                    {slider('間距', L.texGap ?? 20, 0, 100, v => onChange({ texGap: v } as any))}
+                  </div>
+                )}
+              </div>
+              );
+            })()}
+
           </div>
         )}
       </div>
@@ -1685,11 +1752,11 @@ export const ShapeEditorPanel: React.FC<{
               <span className="text-[10px] font-bold text-[#888]">紋理</span>
               <div className="flex items-center gap-2">
                 <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                  {([['關閉', 'none'], ['點點', 'dot'], ['條紋', 'stripe']] as const).map(([label, id]) => (
+                  {TEX_OPTIONS.map(([id, label]) => (
                     <button
                       key={id}
                       onClick={() => onChange({ shapeTex: id, shapeDots: id === 'dot' })}
-                      className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
+                      className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
                         tex === id ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
                       }`}
                     >
@@ -1702,7 +1769,7 @@ export const ShapeEditorPanel: React.FC<{
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setColorPage({
-                        value: layer.shapeStripeA || STRIPE_A,
+                        value: layer.shapeStripeA || STRIPE_A, colors: TEX_SWATCHES,
                         onPick: c => onChange({ shapeStripeA: c }),
                       })}
                       title="條紋顏色一"
@@ -1711,7 +1778,7 @@ export const ShapeEditorPanel: React.FC<{
                     />
                     <button
                       onClick={() => setColorPage({
-                        value: layer.shapeStripeB || STRIPE_B,
+                        value: layer.shapeStripeB || STRIPE_B, colors: TEX_SWATCHES,
                         onPick: c => onChange({ shapeStripeB: c }),
                       })}
                       title="條紋顏色二"
@@ -1722,10 +1789,10 @@ export const ShapeEditorPanel: React.FC<{
                 ) : (
                   <button
                     onClick={() => setColorPage({
-                      value: layer.shapeDotColor || '#FFFFFF',
+                      value: layer.shapeDotColor || '#FFFFFF', colors: TEX_SWATCHES,
                       onPick: c => onChange({ shapeDotColor: c }),
                     })}
-                    title="點點顏色"
+                    title="紋理顏色"
                     className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
                     style={{ backgroundColor: layer.shapeDotColor || '#FFFFFF' }}
                   />
@@ -1839,27 +1906,16 @@ const fx = img.fx || {};
 const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
 const fxVal = (key: string, dflt: number) => (fx as any)[key] ?? dflt;
 
-/* ── 兩段式的那幾顆（形狀／描邊／發光）點下去也要先亮一下 ──────────────
+/* ── 兩段式的那幾顆（形狀／描邊／發光）按下去要立刻有反應 ──────────────
  *
  * 同一排裡，圓角與羽化點下去會變白 —— 因為它們只是把下面的滑桿換掉，
  * 按鈕本人還留在原位。形狀／描邊／發光是「兩段式」的：點下去整排會被
- * 子選單換掉，那顆按鈕根本來不及被畫成選中的樣子，手感上就是
- * 「按了沒反應，畫面自己跳走」。
+ * 子選單換掉，那顆按鈕根本來不及被畫成選中的樣子。
  *
- * 這裡先把它標成「按下去的那一顆」（畫面立刻變白，跟圓角一模一樣），
- * 一個很短的節拍之後才換頁。子選單本來就有 300ms 的滑入動畫，
- * 接在這 150ms 後面看起來就是「按鈕亮起 → 子選單滑進來」。 */
-const PRESS_FLASH_MS = 150;
-const [pressedTool, setPressedTool] = useState('');
-const pressTimerRef = useRef<number | undefined>(undefined);
-// 面板被收掉時把還沒跑完的計時器清乾淨，不要對已經卸載的元件 setState
-useEffect(() => () => window.clearTimeout(pressTimerRef.current), []);
-/** 先亮起來，再做真正要做的那件事 */
-const flashThen = (id: string, run: () => void) => {
-  window.clearTimeout(pressTimerRef.current);
-  setPressedTool(id);
-  pressTimerRef.current = window.setTimeout(() => { setPressedTool(''); run(); }, PRESS_FLASH_MS);
-};
+ * 本來的做法是「先亮 150ms 再換頁」，但那 150ms 在手上就是「按了沒馬上進去」。
+ * 改成換頁完全不延遲，回饋交給 CSS 的 :active —— 手指一碰按鈕就變白
+ * （比 click 還早，因為 :active 在按下的當下就套用），放開時頁面已經換好了。
+ * 兩件事同時成立：立刻進分頁，而且按下去看得到它亮。 */
 
 /* 點特效卡片＝只留這一顆（其他整組歸零）；
    長按＝疊在現在這些上面，好幾個同時生效（再長按一次就關掉那一顆）。 */
@@ -1896,10 +1952,12 @@ const CATS = ([
    形狀本來就有現成的向量路徑，畫出來還比圖示更清楚。 */
 const toolBtn = (id: string, label: string, icon: string | React.ReactNode, active: boolean, adjusted: boolean, onClick: () => void) => (
   <button key={id} onClick={onClick} className="flex flex-col items-center gap-1 shrink-0 group w-16">
-    <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}>
+    {/* active:  ＝ 手指按著的當下就變白（不用等 click），
+        所以「兩段式」那幾顆就算馬上換頁，按下去也看得到它亮了一下。 */}
+    <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10 group-active:bg-white group-active:text-black group-active:scale-110'}`}>
       {typeof icon === 'string' ? <Icon name={icon} className="text-lg" fill={active} /> : icon}
     </div>
-    <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${active ? 'text-white' : 'text-white/20'}`}>{label}</span>
+    <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${active ? 'text-white' : 'text-white/20 group-active:text-white'}`}>{label}</span>
     <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${adjusted ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
   </button>
 );
@@ -2189,23 +2247,16 @@ return (
                圖示字型是子集化過的，隨手加的新名字並不在裡面，會變成一串英文字。 */
             const glyph = isShapePick ? <ImgShapeIcon size={19} /> : icon;
             /* 兩段式的那幾顆（形狀／描邊／發光）點下去整排會被子選單換掉，
-               所以先讓它亮一下再換頁 —— 見上面 flashThen 的說明。
-               圓角／羽化不是兩段式，維持原本的一按就換滑桿，一點延遲都沒有。
-
-               閃亮的那 150ms 之內「只有被按的那一顆」是亮的 —— 不然剛剛選著的
-               圓角會跟新按下去的形狀一起亮著，看起來像兩顆同時被選中。 */
-            const lit = pressedTool ? pressedTool === id : shapeTool === id;
-            return toolBtn(id, label, glyph, lit, adjusted, () => {
+               所以按下去的回饋交給 CSS 的 :active（見上面 toolBtn），
+               換頁本身一點延遲都沒有。退回上一層時，剛剛進去的那一顆會留在
+               亮著的狀態（見下面返回鍵）。 */
+            return toolBtn(id, label, glyph, shapeTool === id, adjusted, () => {
               if (isShapePick) {
-                flashThen(id, () => {
-                  setShapeMenu('imgShape');
-                  setShapeTool('imgShape');
-                });
+                setShapeMenu('imgShape');
+                setShapeTool('imgShape');
               } else if (isSub) {
-                flashThen(id, () => {
-                  setShapeMenu(id as any);
-                  setShapeTool(SHAPE_SUB_TOOLS[id][0][0]);
-                });
+                setShapeMenu(id as any);
+                setShapeTool(SHAPE_SUB_TOOLS[id][0][0]);
               } else {
                 setShapeTool(id);
               }
@@ -2307,7 +2358,7 @@ const PatternLayer: React.FC<{ w: number; h: number; opts: PatternOpts }> = ({ w
   return <canvas ref={ref} className="absolute inset-0 pointer-events-none" style={{ width: w, height: h }} />;
 };
 
-const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onClose, headerLeft }) => {
+const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onClose, headerLeft, colors }) => {
   const [hsv, setHsv] = useState(() => hexToHsv(color));
   const [hexInput, setHexInput] = useState(color);
 
@@ -2341,7 +2392,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
   };
 
   // 跟發光同一條漸層，明度提到 90%；第一顆是純白
-  const PRESETS = SOFT_COLORS;
+  const PRESETS = colors || SOFT_COLORS;
 
   /* 色號欄。沒有頂列時跟色票並排（原本的樣子）；
      有頂列時搬上去跟返回鍵平行，色票就能佔滿整排。 */
@@ -4684,6 +4735,26 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               display: 'inline-block',
               // 主層要蓋在發光層上面
               position: 'relative', zIndex: 1,
+              /* 紋理：把「一個週期」那張小圖鋪滿，再用 background-clip: text
+                 只留在字的墨水上。描邊是另外一層 paint（-webkit-text-stroke），
+                 所以描邊照常在、只有填色被換成紋理。
+                 那張小圖跟匯出用的是同一份程式碼（utils/pattern 的 texTile），
+                 而且是在「一倍字級」下算的 —— 縮放交給外層的 transform，
+                 所以放大縮小時紋理跟著字一起變，不會自己抖。 */
+              ...(() => {
+                const tile = texTile(image as any, image.width, image.height);
+                if (!tile) return null;
+                return {
+                  backgroundImage: `url(${tile.url})`,
+                  backgroundSize: `${tile.w}px ${tile.h}px`,
+                  backgroundPosition: 'center',
+                  backgroundRepeat: 'repeat',
+                  WebkitBackgroundClip: 'text',
+                  backgroundClip: 'text',
+                  color: 'transparent',
+                  WebkitTextFillColor: 'transparent',
+                } as React.CSSProperties;
+              })(),
               // width: max-content 才能不受外框寬度限制地量到真正需要的寬度，
               // 否則框被縮到上一次的寬度之後，文字就會一直卡在那個寬度換行
               width: 'max-content',
@@ -5698,7 +5769,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const setPatternColor = (c: string) => patchPattern({ color: c });
   /* 顏色分頁的子頁面：'bg' 是原本的底色挑色器，'pattern' 是點了紋理旁邊那顆
      色塊之後進去的紋理專屬調色頁（跟創意拼圖同一套操作）。 */
-  const [colorSub, setColorSub] = useState<'bg' | 'pattern'>('bg');
+  const [colorSub, setColorSub] = useState<'bg' | 'pattern' | 'stripeA' | 'stripeB'>('bg');
   /** 顏色分頁的捲動容器：換子頁時要捲回最上面 */
   const colorTabRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => { if (colorTabRef.current) colorTabRef.current.scrollTop = 0; }, [colorSub]);
@@ -5706,6 +5777,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const patternGap = patternOpts.gap;
   const setPatternSize = (v: number) => patchPattern({ size: v });
   const setPatternGap = (v: number) => patchPattern({ gap: v });
+  /* 條紋：粗細、方向、兩個顏色。跟點點／星星／愛心共用同一個「紋理」選單，
+     但參數不一樣（沒有間距，改成粗細＋方向）。 */
+  const stripeW = patternOpts.stripeW ?? 50;
+  const stripeDir: 'h' | 'v' = patternOpts.stripeDir === 'v' ? 'v' : 'h';
+  const stripeA = patternOpts.stripeA || STRIPE_A;
+  const stripeB = patternOpts.stripeB || STRIPE_B;
 
   /* 紋理的兩根滑桿。其他面板那幾支同名 helper 都關在各自的元件裡，
      主元件拿不到，所以就近寫一支。軌道用全域的 .premium-slider。 */
@@ -9212,6 +9289,33 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.strokeStyle = fImg.strokeColor || '#000000';
       lines.forEach((ln, i) => ctx.strokeText(ln, 0, startY + i * lineH));
     }
+    /* 紋理：字先畫在一張暫存畫布上，再用 source-atop 把紋理蓋上去 ——
+       只有「有墨水的地方」會留下紋理。單位跟預覽那一層一樣是「內容座標」，
+       所以放大匯出時紋理的密度跟畫面上看到的一致。 */
+    const texKind = texOf({ tex: (fImg as any).tex });
+    if (texKind !== 'none') {
+      const side = Math.max(2, Math.ceil(Math.max(fw, fh) * 2.4 + size * 2));
+      const tmp = document.createElement('canvas');
+      tmp.width = side; tmp.height = side;
+      const tc = tmp.getContext('2d');
+      if (tc) {
+        tc.translate(side / 2, side / 2);
+        tc.font = ctx.font;
+        tc.textAlign = 'center';
+        tc.textBaseline = 'middle';
+        (tc as any).letterSpacing = `${spacing}px`;
+        tc.fillStyle = fImg.color || '#FFFFFF';
+        lines.forEach((ln, i) => tc.fillText(ln, 0, startY + i * lineH));
+        tc.globalCompositeOperation = 'source-atop';
+        // 內容座標 × 這一次匯出的倍率：紋理才會跟著整張一起放大
+        const k = scaleFactor * fImg.scale;
+        paintTex(tc, fImg.width * k, fImg.height * k, side, side, fImg as any);
+        ctx.drawImage(tmp, -side / 2, -side / 2);
+        tmp.width = tmp.height = 0;
+        ctx.restore();
+        return;
+      }
+    }
     ctx.fillStyle = fImg.color || '#FFFFFF';
     drawLines();
     ctx.restore();
@@ -12420,6 +12524,29 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               </div>
             )}
 
+            {activeTab === 'color' && (colorSub === 'stripeA' || colorSub === 'stripeB') && (
+              /* 條紋的兩個顏色：跟紋理顏色同一頁、同一組色票 */
+              <div className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto overflow-x-hidden no-scrollbar">
+                <div>
+                  <ColorPickerEmbedded
+                    color={colorSub === 'stripeA' ? stripeA : stripeB}
+                    colors={TEX_SWATCHES}
+                    onChange={(c: string) => patchPattern(colorSub === 'stripeA' ? { stripeA: c } : { stripeB: c })}
+                    onClose={() => setColorSub('bg')}
+                    headerLeft={
+                      <button
+                        onClick={() => setColorSub('bg')}
+                        className="flex items-center gap-1 px-2 h-7 rounded-[4px] text-[10px] font-bold text-[#888] hover:text-white hover:bg-[#1a1a1a] transition-colors"
+                      >
+                        <ChevronLeft size={14} />
+                        <span>返回</span>
+                      </button>
+                    }
+                  />
+                </div>
+              </div>
+            )}
+
             {activeTab === 'color' && colorSub === 'pattern' && (
               /* 紋理專屬的調色頁：從紋理那一排的色塊點進來，跟創意拼圖一樣。
                  挑色器本身用的是跟底色完全同一顆元件。 */
@@ -12429,6 +12556,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 <div>
                   <ColorPickerEmbedded
                     color={patternColor}
+                    colors={TEX_SWATCHES}
                     onChange={setPatternColor}
                     onClose={() => setColorSub('bg')}
                     headerLeft={
@@ -12470,24 +12598,58 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       {/* 顏色跟紋理選項同一排：點色塊才進紋理專屬的調色頁 */}
                       <div className="flex items-center gap-2">
                         <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                          {([['none', '無'], ['dot', '點點'], ['star', '星星'], ['heart', '愛心']] as const).map(([t, label]) => (
+                          {TEX_OPTIONS.map(([t, label]) => (
                             <button key={t} onClick={() => setPatternType(t)}
-                              className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
+                              className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${patternType === t ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
                               {label}
                             </button>
                           ))}
                         </div>
                         {/* 顏色格常駐：關閉時也看得到（可以先挑好顏色再打開），
-                            而且切換時這一列的寬度不會變，就不會閃一下。 */}
-                        <button
-                          onClick={() => setColorSub('pattern')}
-                          title="紋理顏色"
-                          className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                          style={{ backgroundColor: patternColor }}
-                        />
+                            而且切換時這一列的寬度不會變，就不會閃一下。
+                            條紋有兩個顏色，所以放兩塊小的。 */}
+                        {patternType === 'stripe' ? (
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => setColorSub('stripeA')}
+                              title="條紋顏色一"
+                              className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                              style={{ backgroundColor: stripeA }}
+                            />
+                            <button
+                              onClick={() => setColorSub('stripeB')}
+                              title="條紋顏色二"
+                              className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                              style={{ backgroundColor: stripeB }}
+                            />
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setColorSub('pattern')}
+                            title="紋理顏色"
+                            className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+                            style={{ backgroundColor: patternColor }}
+                          />
+                        )}
                       </div>
                     </div>
-                    {patternType !== 'none' && (
+                    {patternType === 'stripe' ? (
+                      /* 條紋沒有間距（一條接著一條），只有粗細；右邊那一格是方向 */
+                      <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
+                        {patternSlider('粗細', stripeW, (v: number) => patchPattern({ stripeW: v }))}
+                        <div className="flex flex-col gap-1.5">
+                          <span className="text-[9px] font-bold text-[#666] tracking-tighter uppercase">方向</span>
+                          <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
+                            {([['橫式', 'h'], ['直式', 'v']] as const).map(([label, d]) => (
+                              <button key={d} onClick={() => patchPattern({ stripeDir: d })}
+                                className={`flex-1 h-6 text-[10px] font-bold rounded-[2px] transition-all ${stripeDir === d ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    ) : patternType !== 'none' && (
                       <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                         {patternSlider('大小', patternSize, setPatternSize)}
                         {patternSlider('間距', patternGap, setPatternGap)}
