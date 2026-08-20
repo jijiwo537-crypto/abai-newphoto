@@ -387,7 +387,7 @@ export const paintDots = (
   }
 };
 
-import { patternGlyph, STRIPE_A as SA, STRIPE_B as SB, type TexKind } from './pattern';
+import { patternGlyph, stripeFit, STRIPE_A as SA, STRIPE_B as SB, type TexKind } from './pattern';
 
 /* ── 紋理 ───────────────────────────────────────────────────────────
  * 圖形裡面可以鋪一層紋理。原本只有「點點」一種、用一個布林開關，
@@ -408,28 +408,33 @@ export { STRIPE_A, STRIPE_B } from './pattern';
  * 所以同一個數字在大圖形與小圖形上看起來的疏密是一樣的。
  * 粗細 0～100 對應 6～60 個單位（最細像細線，最粗大約一條佔十分之一）。
  */
+/* 粗細換算跟 utils/pattern 那一支同一條式子（滑桿 0~100 → 舊刻度 55~150） */
 export const stripeBandOf = (unitW: number, unitH: number, w = 50) =>
-  (6 + (w / 100) * 54) * (Math.max(unitW, unitH) / 600);
+  (35.7 + w * 0.513) * (Math.max(unitW, unitH) / 600);
 
 /**
  * 把條紋鋪滿一塊區域（原點在**中心**）。呼叫端負責先剪裁在圖形裡面。
  * 兩個顏色相間，沒有間距可以調 —— 一條接著一條，本來就是「相間排列」。
- * dir：'h' 橫式（一條一條橫著排）／'v' 直式。
+ * dir：'v' 直式（預設）／'h' 橫式。
+ *
+ * 條寬會「對齊到剛好填滿」（見 utils/pattern 的 stripeFit）：整段除以理想條寬
+ * 取最接近的整數條，再除回去。所以每一條都一樣寬、頭尾也都是完整的，
+ * 不會出現「最邊邊那一條只露一點點」。
  */
 export const paintStripes = (
   c: CanvasRenderingContext2D,
   unitW: number, unitH: number, covW: number, covH: number,
-  w = 50, dir: 'h' | 'v' = 'h', a = SA, b = SB,
+  w = 50, dir: 'h' | 'v' = 'v', a = SA, b = SB,
 ) => {
-  const band = Math.max(0.5, stripeBandOf(unitW, unitH, w));
   const span = dir === 'h' ? covH : covW;
-  const n = Math.ceil(span / band) + 2;
-  for (let i = -n; i <= n; i++) {
-    // 用「取模再補正」拿到 0/1，負的索引才不會出現兩條同色黏在一起
-    c.fillStyle = ((i % 2) + 2) % 2 === 0 ? a : b;
-    // 多鋪 0.5px：相鄰兩條之間不要因為反鋸齒露出一條細縫
-    if (dir === 'h') c.fillRect(-covW, i * band, covW * 2, band + 0.5);
-    else c.fillRect(i * band, -covH, band + 0.5, covH * 2);
+  const { band, n } = stripeFit(span, Math.max(0.5, stripeBandOf(unitW, unitH, w)));
+  // 原點在中心，所以從 -span/2 開始鋪
+  const x0 = -covW / 2, y0 = -covH / 2;
+  for (let i = 0; i < n; i++) {
+    c.fillStyle = i % 2 === 0 ? a : b;
+    // 多鋪 0.6px：相鄰兩條之間不要因為反鋸齒露出一條細縫
+    if (dir === 'h') c.fillRect(x0, y0 + i * band, covW, band + 0.6);
+    else c.fillRect(x0 + i * band, y0, band + 0.6, covH);
   }
 };
 
@@ -448,7 +453,7 @@ export const paintTex = (
       o.texColor || o.dotColor || '#FFFFFF', t);
   } else if (t === 'stripe') {
     paintStripes(c, unitW, unitH, covW, covH,
-      o.stripeW ?? 50, o.stripeDir === 'v' ? 'v' : 'h',
+      o.stripeW ?? 50, o.stripeDir === 'h' ? 'h' : 'v',
       o.stripeA || SA, o.stripeB || SB);
   }
 };

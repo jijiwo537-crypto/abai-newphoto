@@ -26,9 +26,16 @@ export const TEX_OPTIONS: [TexKind, string][] = [
   ['stripe', '條紋'],
 ];
 
-/** 條紋預設的兩個顏色 */
-export const STRIPE_A = '#A8CCF5';
-export const STRIPE_B = '#FDEBF7';
+/** 條紋預設的兩個顏色。第一個顏色實際上會用「那個東西當下的顏色」
+    （遮罩就是遮罩色、圖形就是圖形色），這裡只是最後的退路；第二個固定純白。 */
+export const STRIPE_A = '#D2E8E1';
+export const STRIPE_B = '#FFFFFF';
+
+/** 條紋的方向選單。直式在前 —— 預設就是直式。 */
+export const STRIPE_DIRS: ['v' | 'h', string][] = [['v', '直式'], ['h', '橫式']];
+
+/** 條紋預設的方向 */
+export const STRIPE_DIR_DEFAULT: 'v' = 'v';
 
 /** 是不是那三種「鋪在網格上」的紋理（跟條紋分開處理） */
 export const isGridTex = (t?: string) => t === 'dot' || t === 'star' || t === 'heart';
@@ -66,11 +73,30 @@ export const patternGlyph = (
 };
 
 /**
- * 一條條紋有多寬。粗細 0～100 對應 6～60 個單位
- * （最細像細線，最粗大約一條佔十分之一）。
+ * 一條條紋有多寬（還沒對齊到「剛好填滿」之前的理想值）。
+ *
+ * 滑桿還是 0～100，但實際對應的是舊刻度的 55～150 ——
+ * 也就是最細那一端就已經是以前的 55（比以前粗很多），
+ * 最粗那一端到以前的 150（比以前的上限再粗一截）。
+ *   舊：6 + 舊值/100 × 54
+ *   新：舊值 = 55 + 滑桿/100 × 95 → 35.7 + 滑桿 × 0.513
  */
 export const stripeBandOf = (refW: number, w = 50) =>
-  (6 + (w / 100) * 54) * (refW / REF_W);
+  (35.7 + w * 0.513) * (refW / REF_W);
+
+/**
+ * 把理想的條寬「對齊到剛好填滿」：整段長度除以條寬取最接近的整數條，
+ * 再用整段長度除回去。這樣每一條都一樣寬，而且頭尾兩條都是完整的 ——
+ * 不會出現「最邊邊那一條只露出一點點」。
+ *
+ * 代價是拖粗細的時候條數是一格一格跳的（那是刻意的，不然就填不滿），
+ * 但滑桿本身的值仍然是連續的，所以拖起來是滑順的。
+ */
+export const stripeFit = (span: number, ideal: number) => {
+  if (!(span > 0) || !(ideal > 0)) return { band: Math.max(1, ideal), n: 1 };
+  const n = Math.max(1, Math.round(span / ideal));
+  return { band: span / n, n };
+};
 
 /**
  * 把條紋鋪滿 (0,0)~(w,h)。兩個顏色相間，沒有間距可以調。
@@ -80,19 +106,18 @@ export const stripeBandOf = (refW: number, w = 50) =>
 export const paintStripesRect = (
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
-  width = 50, dir: 'h' | 'v' = 'h', a = STRIPE_A, b = STRIPE_B,
+  width = 50, dir: 'h' | 'v' = STRIPE_DIR_DEFAULT, a = STRIPE_A, b = STRIPE_B,
 ) => {
   if (w <= 0 || h <= 0) return;
-  const band = Math.max(0.5, stripeBandOf(w, width));
   const span = dir === 'h' ? h : w;
-  const n = Math.ceil(span / band / 2) + 2;
+  const { band, n } = stripeFit(span, Math.max(0.5, stripeBandOf(w, width)));
   ctx.save();
-  for (let i = -n; i <= n; i++) {
-    // 用「取模再補正」拿到 0/1，負的索引才不會出現兩條同色黏在一起
-    ctx.fillStyle = ((i % 2) + 2) % 2 === 0 ? a : b;
-    // 多鋪 0.5px：相鄰兩條之間不要因為反鋸齒露出一條細縫
-    if (dir === 'h') ctx.fillRect(-w, h / 2 + i * band, w * 3, band + 0.5);
-    else ctx.fillRect(w / 2 + i * band, -h, band + 0.5, h * 3);
+  for (let i = 0; i < n; i++) {
+    ctx.fillStyle = i % 2 === 0 ? a : b;
+    // 多鋪 0.6px：相鄰兩條之間不要因為反鋸齒露出一條細縫（最後一條不會超出去，
+    // 因為呼叫端本來就把這一塊剪裁住了）
+    if (dir === 'h') ctx.fillRect(0, i * band, w, band + 0.6);
+    else ctx.fillRect(i * band, 0, band + 0.6, h);
   }
   ctx.restore();
 };
@@ -121,7 +146,7 @@ export const paintPattern = (
   if (!o || o.type === 'none' || w <= 0 || h <= 0) return;
   if (o.type === 'stripe') {
     paintStripesRect(ctx, w, h, o.stripeW ?? 50,
-      o.stripeDir === 'v' ? 'v' : 'h', o.stripeA || STRIPE_A, o.stripeB || STRIPE_B);
+      o.stripeDir === 'h' ? 'h' : 'v', o.stripeA || STRIPE_A, o.stripeB || STRIPE_B);
     return;
   }
   const s = w / REF_W;
@@ -193,65 +218,3 @@ export const TEX_SWATCHES: string[] = [
   ...hueRing(MASK_BASE_LIGHT, 14),
   ...hueRing(MASK_BASE_DEEP, 14),
 ];
-
-
-/* ── 給 DOM 的文字用的紋理 ───────────────────────────────────────────
-   經典拼圖的文字是 DOM 元素（不是畫在 canvas 上），所以紋理得靠
-   background-image ＋ background-clip: text 才蓋得上去。
-   這裡把「一個週期」畫成一小張圖再轉成 data URL —— 用的就是上面那幾支
-   同一份程式碼，所以預覽跟匯出畫出來的紋理一模一樣。
-   同樣的參數只會產生一次（存在 Map 裡），拖動時不會一直重畫。 */
-const tileCache = new Map<string, { url: string; w: number; h: number }>();
-
-export const texTile = (o: any, unitW: number, unitH: number): { url: string; w: number; h: number } | null => {
-  const t = o?.tex;
-  if (!t || t === 'none' || typeof document === 'undefined') return null;
-  /* 單位跟 utils/holeShapes 的 dotGridOf／stripeBandOf 完全一致（長邊 / 600），
-     所以「同一個數字」在圖形上跟在文字上看起來一樣大。 */
-  const s = Math.max(unitW, unitH) / 600;
-  if (!(s > 0)) return null;
-  const key = [t, s.toFixed(4), o.texSize ?? o.dotSize ?? 50, o.texGap ?? o.dotGap ?? 20,
-    o.texColor || o.dotColor || '#FFFFFF', o.stripeW ?? 50, o.stripeDir || 'h',
-    o.stripeA || STRIPE_A, o.stripeB || STRIPE_B].join('|');
-  const hit = tileCache.get(key);
-  if (hit) return hit;
-
-  let w: number, h: number;
-  if (t === 'stripe') {
-    const band = Math.max(1, (6 + (o.stripeW ?? 50) / 100 * 54) * s);
-    const vert = o.stripeDir === 'v';
-    w = vert ? band * 2 : band;
-    h = vert ? band : band * 2;
-  } else {
-    const dgap = Math.max(2, (40 + (o.texGap ?? o.dotGap ?? 20)) * s);
-    w = dgap;
-    h = dgap * Math.sqrt(3);           // 交錯三角格的一個週期是兩列
-  }
-  const W = Math.max(2, Math.ceil(w)), H = Math.max(2, Math.ceil(h));
-  if (W > 512 || H > 512) return null;  // 太大就不做，避免一張很肥的 data URL
-  const cv = document.createElement('canvas');
-  cv.width = W; cv.height = H;
-  const c = cv.getContext('2d');
-  if (!c) return null;
-
-  if (t === 'stripe') {
-    const vert = o.stripeDir === 'v';
-    const a = o.stripeA || STRIPE_A, b = o.stripeB || STRIPE_B;
-    c.fillStyle = a;
-    if (vert) c.fillRect(0, 0, W / 2 + 0.5, H); else c.fillRect(0, 0, W, H / 2 + 0.5);
-    c.fillStyle = b;
-    if (vert) c.fillRect(W / 2, 0, W / 2 + 0.5, H); else c.fillRect(0, H / 2, W, H / 2 + 0.5);
-  } else {
-    const r = ((5 + (o.texSize ?? o.dotSize ?? 50) / 100 * 15) * s) / 2;
-    c.fillStyle = o.texColor || o.dotColor || '#FFFFFF';
-    // 一個週期裡有兩顆：角上四個（拼起來是同一顆）＋ 正中間錯開的那一顆
-    for (const [px, py] of [[0, 0], [W, 0], [0, H], [W, H], [W / 2, H / 2]] as const) {
-      patternGlyph(c, t, px, py, r);
-    }
-  }
-  const out = { url: cv.toDataURL('image/png'), w: W, h: H };
-  cv.width = cv.height = 0;
-  if (tileCache.size > 60) tileCache.clear();
-  tileCache.set(key, out);
-  return out;
-};
