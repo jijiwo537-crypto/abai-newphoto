@@ -35,7 +35,7 @@ import {
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
-import { patternGlyph, paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_A, STRIPE_B, isGridTex } from '../utils/pattern';
+import { patternGlyph, paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
 import { IgPreview } from './IgPreview';
@@ -1174,8 +1174,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       // 跟自己一樣用「旋轉之後的外接框」，轉過的物件才不會亮在半個身子外
       const { bw, bh } = aabbOf(o.w, o.h, o.rot || 0);
       const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
-      xs.push(cx - bw / 2, cx + bw / 2); cxs.push(cx);
-      ys.push(cy - bh / 2, cy + bh / 2); cys.push(cy);
+      // 只收邊緣（左右／上下）。中心刻意不收 —— 見 linesAt 裡的說明。
+      xs.push(cx - bw / 2, cx + bw / 2);
+      ys.push(cy - bh / 2, cy + bh / 2);
     }
     return { xs, ys, cxs, cys };
   };
@@ -1201,11 +1202,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       if (Math.abs(T - v) < EPS_E || Math.abs(B - v) < EPS_E) out.push({ y: v });
       else if (!edgeOnly && seams.ys.includes(v) && Math.abs(cy - v) < EPS_C) out.push({ y: v });
     }
-    // 物件跟物件的「中心對中心」
-    if (!edgeOnly) {
-      for (const v of others.cxs) if (Math.abs(cx - v) < EPS_C) out.push({ x: v });
-      for (const v of others.cys) if (Math.abs(cy - v) < EPS_C) out.push({ y: v });
-    }
+    /* 物件跟物件**只對邊緣**，不對中心 —— 中線只留給畫布自己那一條。
+       物件的中心線亮起來太容易，一堆物件在畫面上時會整片都是線。 */
     // 同一條線可能被多個來源推進來（例如畫布邊界剛好也是交界）
     const seen = new Set<string>();
     return out.filter(g => {
@@ -1222,7 +1220,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        線就會亮在離邊緣半個身子的地方。 */
     const { bw, bh } = aabbOf(w0, h0, rot);
     let cx = x0 + w0 / 2, cy = y0 + h0 / 2;
-    const snap = Math.max(4, Math.min(offsG.cw, offsG.ch) * 0.012);
+    /* ── 吸附力道 ────────────────────────────────────────────────
+       經典拼圖是「畫面上 4px 以內才吸」。這裡的座標是畫布單位（比畫面上大
+       好幾倍），本來用的是短邊的 1.2%，換算到畫面上大約是 8px ——
+       所以一靠近就被整個吸過去，那正是「感覺物件被搬走」的原因。
+       改成照實際的顯示比例換算成同樣的 4 個畫面像素。 */
+    const cssW = baseCssWRef.current;
+    const perCss = cssW > 0 ? offsG.cw / cssW : 3;   // 一個畫面像素等於幾個畫布單位
+    const snap = Math.max(2, 4 * perCss);
     const seams = seamLinesRef.current();
     /**
      * 單軸吸附：候選是「這條線」＋「中心要位移多少才貼上去」。
@@ -1251,8 +1256,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     };
     /* 畫布的邊界／中線／交界，再加上「其他物件的邊緣」——
        所以圖片跟圖片、圖片跟文字之間也吸得到、也會亮線。 */
-    cx += axis(cx, bw / 2, offsG.cw / 2, [0, offsG.cw, ...others.xs], seams.xs, others.cxs);
-    cy += axis(cy, bh / 2, offsG.ch / 2, [0, offsG.ch, ...others.ys], seams.ys, others.cys);
+    cx += axis(cx, bw / 2, offsG.cw / 2, [0, offsG.cw, ...others.xs], seams.xs);
+    cy += axis(cy, bh / 2, offsG.ch / 2, [0, offsG.ch, ...others.ys], seams.ys);
     return { x: cx - w0 / 2, y: cy - h0 / 2, guides: linesAt(cx, cy, bw, bh, edgeOnly, selfId) };
   }, [linesAt]);
 
@@ -1434,9 +1439,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /* 條紋：兩個顏色、粗細、方向。跟點點／星星／愛心共用同一個「紋理」選單，
      但參數不一樣（沒有間距，改成粗細＋方向），所以各自存。 */
   const [stripeW, setStripeW] = useState(50);
-  const [stripeDir, setStripeDir] = useState<'h' | 'v'>('h');
-  const [stripeA, setStripeA] = useState(STRIPE_A);
-  const [stripeB, setStripeB] = useState(STRIPE_B);
+  const [stripeDir, setStripeDir] = useState<'h' | 'v'>('v');
+  /* 第一個顏色沒挑過的時候就跟著「遮罩當下的顏色」走（存 null 代表沒挑過），
+     第二個固定從純白開始。 */
+  const [stripeAPick, setStripeAPick] = useState<string | null>(null);
+  const [stripeB, setStripeB] = useState('#FFFFFF');
+  const stripeA = stripeAPick || maskColor;
+  const setStripeA = (c: string) => setStripeAPick(c);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [finalImage, setFinalImage] = useState<string | null>(null);
   /** 成品是影片還是圖片 —— 完成頁要換成 <video>，副檔名也不一樣 */
@@ -1695,7 +1704,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (st.dotGap !== undefined) setDotGap(st.dotGap);
     if (st.stripeW !== undefined) setStripeW(st.stripeW);
     if (st.stripeDir === 'h' || st.stripeDir === 'v') setStripeDir(st.stripeDir);
-    if (st.stripeA !== undefined) setStripeA(st.stripeA);
+    if (st.stripeA !== undefined) setStripeAPick(st.stripeA);
     if (st.stripeB !== undefined) setStripeB(st.stripeB);
     if (st.symmetryEnabled !== undefined) setSymmetryEnabled(st.symmetryEnabled);
     // 'mask' 是舊版才有的選項，讀到就當「開啟」
@@ -1728,7 +1737,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       saveToolDraft('collage', null, {
         layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-        stripeW, stripeDir, stripeA, stripeB,
+        stripeW, stripeDir, stripeA: stripeAPick, stripeB,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
       });
     }, 1200);
@@ -3204,6 +3213,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     };
     const glowOn = (side: 'image' | 'mask') =>
       glowMode === 'both' || (glowMode === 'mask' && side === 'mask') || (glowMode === 'image' && side === 'image');
+    /* ── 遮罩側的光為什麼看不到 ────────────────────────────────────
+       發光顏色預設就是遮罩的顏色（換遮罩色時還會一起換）。圖片側沒問題
+       —— 光是散在照片上的，對比很清楚；但遮罩側的圖案是「挖穿」的，
+       光散在遮罩本身上面，同一個顏色等於整圈都看不見。實測光其實有畫，
+       只是跟底色一模一樣。
+       所以遮罩側在「光跟遮罩幾乎同色」時改用純白 —— 洞裡透出來的光本來
+       就該比遮罩亮。使用者自己挑過對比色的話這一條不會成立，照他挑的畫。 */
+    const hexRgb = (hex: string) => {
+      const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+      if (!m) return null;
+      const v = parseInt(m[1], 16);
+      return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+    };
+    const glowColorOf = (side: 'image' | 'mask') => {
+      if (side !== 'mask') return holeGlowColor;
+      const a = hexRgb(holeGlowColor), b = hexRgb(maskColor);
+      if (!a || !b) return holeGlowColor;
+      const d = Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
+      return d < 40 ? '#FFFFFF' : holeGlowColor;
+    };
     /* 三層疊起來的濃度不等於一層的濃度：0.2 疊三次會變成 0.49。
        把每一層開三次方根回去，疊完剛好等於本來要的那個值。 */
     const layerAlpha = (a: number) => (a >= 1 ? 1 : 1 - Math.pow(1 - Math.max(0, a), 1 / 3));
@@ -3346,9 +3375,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           現在**只有跨過階梯的那一格才算一次**，中間十幾格全部是現成的。
           刻意只往「上」取：小圖永遠比要用的大，縮下去不會糊。 */
     const SZ_STEP = 1.12;
-    const glowBmp = (h: any, sz: number) => {
+    const glowBmp = (h: any, sz: number, gcol: string) => {
       const szQ = Math.pow(SZ_STEP, Math.ceil(Math.log(sz) / Math.log(SZ_STEP)));
-      const key = `${holeType}|${isTextHole(holeType) ? holeGlyph(holeType, customText, h) : ''}|${szQ.toFixed(3)}|${holeGlowColor}`;
+      const key = `${holeType}|${isTextHole(holeType) ? holeGlyph(holeType, customText, h) : ''}|${szQ.toFixed(3)}|${gcol}`;
       const cache = glowBmpRef.current;
       const hit = cache.get(key);
       if (hit) { cache.delete(key); cache.set(key, hit); return hit; }   // 用到就移到最後（LRU）
@@ -3363,10 +3392,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       tmp.width = side; tmp.height = side;
       const tg = tmp.getContext('2d');
       if (!tg) return null;
-      tg.shadowColor = holeGlowColor;
+      tg.shadowColor = gcol;
       for (const kk of [1, 2, 3]) {
         tg.shadowBlur = szQ * 0.1 * kk;
-        strokeHoleShape(tg, h, szQ, 0, side / 2, side / 2, holeGlowColor);
+        strokeHoleShape(tg, h, szQ, 0, side / 2, side / 2, gcol);
       }
       /* 本體在這裡就先挖掉（滿透明度），剩下的才是純粹的一圈光暈。
          走暫存層時本體會再被挖一次 —— 挖已經是全透明的地方不會有任何改變。 */
@@ -3382,12 +3411,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     };
     const glowInto = (
       gg: CanvasRenderingContext2D, h: any, alpha: number,
-      sz: number, angle: number, gx: number, gy: number,
+      sz: number, angle: number, gx: number, gy: number, gcol: string,
     ) => {
       const amp = glowBeat(h);
       const a = alpha * amp;
       if (sz <= 0 || a <= 0.004) return;
-      const tmp = glowBmp(h, sz);
+      const tmp = glowBmp(h, sz, gcol);
       if (!tmp) return;
       const side = tmp.width;
       const k = sz / ((tmp as any).__sz || sz);      // ≤ 1，只會縮不會放
@@ -3488,7 +3517,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
          現在先算一個簽名，一樣就直接把上一次畫好的那一層貼回去（一次 drawImage）。
          圖案真的動了（大小／數量／角度）簽名才會變，那時候本來就該重算。 */
-      const sig = `${side}|${glowMode}|${holeGlowColor}|${linkMode}|${linkColor || ''}|${linkGlowColor}`
+      const sig = `${side}|${glowMode}|${glowColorOf(side)}|${linkMode}|${linkColor || ''}|${linkGlowColor}`
         + `|${LINK_W.toFixed(3)}|${holeType}|${isTextHole(holeType) ? customText : ''}|${s.toFixed(4)}`
         + `|${g.canvas.width}x${g.canvas.height}`
         + '|I' + items.map(it => `${it.x.toFixed(1)},${it.y.toFixed(1)},${it.sz.toFixed(1)},${it.ang.toFixed(1)},${(it.a * glowBeat(it.h)).toFixed(3)}`).join(';')
@@ -3523,12 +3552,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            全部走暫存層　p90 51ms、25 格掉幀
            走這條快路徑　p90 23.6ms、0 格掉幀（跟發光關掉時一樣順） */
       if (!pairs.length && items.every(it => it.a * glowBeat(it.h) >= 0.999)) {
-        items.forEach(it => glowInto(g, it.h, it.a, it.sz, it.ang, it.x, it.y));
+        items.forEach(it => glowInto(g, it.h, it.a, it.sz, it.ang, it.x, it.y, glowColorOf(side)));
         return;
       }
       const done = withGlowLayer(g, g.canvas.width, g.canvas.height,
         gg => {
-          items.forEach(it => glowInto(gg, it.h, it.a, it.sz, it.ang, it.x, it.y));
+          items.forEach(it => glowInto(gg, it.h, it.a, it.sz, it.ang, it.x, it.y, glowColorOf(side)));
           if (pairs.length) {
             /* 線也是同一個道理（見 glowInto）：先用滿透明度把三段疊好，
                再整張按透明度貼。透明度相同的線可以一起畫，
@@ -4107,31 +4136,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         /* 紋理：字要先畫在一張暫存畫布上，再用 source-atop 把紋理蓋上去 ——
            只有「有墨水的地方」會留下紋理，跟圖形那邊剪裁在路徑裡是同一個結果。
            描邊與發光照舊畫在本體底下，所以紋理只換掉填色那一層。 */
-        let texDone = false;
-        if (texOf(o) !== 'none') {
-          const side = Math.max(2, Math.ceil(Math.max(o.w, o.h) * s * 2.4));
-          const tmp = document.createElement('canvas');
-          tmp.width = side; tmp.height = side;
-          const tc = tmp.getContext('2d');
-          if (tc) {
-            tc.translate(side / 2, side / 2);
-            tc.font = ctx.font;
-            tc.textAlign = 'center';
-            tc.textBaseline = 'middle';
-            (tc as any).letterSpacing = (ctx as any).letterSpacing;
-            tc.fillStyle = o.color || '#ffffff';
-            tc.fillText(o.text || '', tdx, tdy);
-            tc.globalCompositeOperation = 'source-atop';
-            paintTex(tc, o.w * s, o.h * s, side, side, o);
-            ctx.drawImage(tmp, -side / 2, -side / 2);
-            tmp.width = tmp.height = 0;
-            texDone = true;
-          }
-        }
-        if (!texDone) {
-          ctx.fillStyle = o.color || '#ffffff';
-          ctx.fillText(o.text || '', tdx, tdy);
-        }
+        ctx.fillStyle = o.color || '#ffffff';
+        ctx.fillText(o.text || '', tdx, tdy);
         ctx.shadowBlur = 0;
         (ctx as any).letterSpacing = '0px';
       }
@@ -4166,6 +4172,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        所以圖片側的圖案會蓋在它上面，遮罩側則是被遮罩蓋住、只從洞裡透出來。
        兩種排版的插入點不同，但相對於圖案的層級是一致的。 */
     const belowObjs = objects.filter(o => o.below);
+    /* ── 置底物件實際蓋到的那一塊（畫布座標，含旋轉後的外接框）───────────
+       補畫遮罩圖案那一層本來是「整片有洞的區域」那麼大，可能好幾百萬像素，
+       每一格都要整層貼一次 —— 那就是「物件沉到圖案底下之後拖起來很卡」。
+       其實只有「被物件蓋住的那一小塊」需要補畫，所以把那一層縮到這個範圍。 */
+    const belowBox = (() => {
+      if (!belowObjs.length) return null;
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      belowObjs.forEach(o => {
+        const { bw: ow, bh: oh } = aabbOf(o.w || 0, o.h || 0, o.rot || 0);
+        const cx = (o.x + (o.w || 0) / 2) * s, cy = (o.y + (o.h || 0) / 2) * s;
+        // 描邊與發光會長到框外面，多留一點餘裕
+        const pad = Math.max(ow, oh) * s * 0.25 + 24 * s;
+        x0 = Math.min(x0, cx - ow * s / 2 - pad); y0 = Math.min(y0, cy - oh * s / 2 - pad);
+        x1 = Math.max(x1, cx + ow * s / 2 + pad); y1 = Math.max(y1, cy + oh * s / 2 + pad);
+      });
+      return Number.isFinite(x0) ? { x0, y0, x1, y1 } : null;
+    })();
     const aboveObjs = objects.filter(o => !o.below);
     /* 四周包圍時，遮罩側的圖案是「在遮罩上挖穿、看到墊在底下那張放大的圖」，
        而遮罩是在物件之前就畫好的 —— 所以那些洞會被 below 的物件蓋住，
@@ -4184,6 +4207,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const maskLinksSig = linksFor('mask');
       const a0h = animRef.current;
       const sigTop = `${layout}|${maskScale}|${s.toFixed(4)}|${offs.cw}x${offs.ch}|${offs.mx},${offs.my}`
+        + `|B${belowBox ? [belowBox.x0, belowBox.y0, belowBox.x1, belowBox.y1].map(v => Math.round(v)).join(',') : ''}`
         + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}`
         + `|${holeType}|${isTextHole(holeType) ? customText : ''}|${holeAngle}|${linkMode}|${linkColor || ''}`
         + `|${LINK_W.toFixed(3)}`
@@ -4265,6 +4289,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         });
       });
       if (!Number.isFinite(tx0)) return;      // 這一側完全沒有洞，什麼都不用畫
+      /* 只補畫「置底物件真的蓋到」的那一塊 —— 其他地方本來就沒被蓋住，
+         補畫過去畫出來的跟原本一模一樣，純粹是白花時間（見 belowBox）。 */
+      if (belowBox) {
+        tx0 = Math.max(tx0, belowBox.x0); ty0 = Math.max(ty0, belowBox.y0);
+        tx1 = Math.min(tx1, belowBox.x1); ty1 = Math.min(ty1, belowBox.y1);
+        if (!(tx1 > tx0 && ty1 > ty0)) return;   // 完全沒有交集
+      }
       const rx0 = Math.max(0, Math.floor(tx0)), ry0 = Math.max(0, Math.floor(ty0));
       const rw0 = Math.min(Math.round(offs.cw), Math.ceil(tx1)) - rx0;
       const rh0 = Math.min(Math.round(offs.ch), Math.ceil(ty1)) - ry0;
@@ -4529,7 +4560,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       await addExport('collage', out, srcUrl, {
         layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-        stripeW, stripeDir, stripeA, stripeB,
+        stripeW, stripeDir, stripeA: stripeAPick, stripeB,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
         /* 新增進來的內容（圖片／文字／圖形）也要一起記 —— 以前這一項不存在，
            所以從歷史紀錄點回來時，設定都在、但「先前導入的東西」整批不見。
@@ -6120,9 +6151,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 : colorPickerTarget === 'shapeDot'
                   ? ((objects.find(o => o.id === selectedObj)?.dotColor) || '#FFFFFF')
                 : colorPickerTarget === 'shapeStripeA'
-                  ? ((objects.find(o => o.id === selectedObj)?.stripeA) || STRIPE_A)
+                  ? ((objects.find(o => o.id === selectedObj)?.stripeA)
+                    || (objects.find(o => o.id === selectedObj)?.color) || SHAPE_DEFAULT_COLOR)
                 : colorPickerTarget === 'shapeStripeB'
-                  ? ((objects.find(o => o.id === selectedObj)?.stripeB) || STRIPE_B)
+                  ? ((objects.find(o => o.id === selectedObj)?.stripeB) || '#FFFFFF')
                 : colorPickerTarget === 'shapeStroke'
                   ? ((objects.find(o => o.id === selectedObj)?.strokeColor) || '#000000')
                 : colorPickerTarget === 'shapeGlow'
@@ -6132,12 +6164,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   ? ((objects.find(o => o.id === selectedObj)?.strokeColor) || '#000000')
                 : colorPickerTarget === 'textGlow'
                   ? ((objects.find(o => o.id === selectedObj)?.glowColor) || '#FFFFFF')
-                : colorPickerTarget === 'textDot'
-                  ? ((objects.find(o => o.id === selectedObj)?.dotColor) || '#FFFFFF')
-                : colorPickerTarget === 'textStripeA'
-                  ? ((objects.find(o => o.id === selectedObj)?.stripeA) || STRIPE_A)
-                : colorPickerTarget === 'textStripeB'
-                  ? ((objects.find(o => o.id === selectedObj)?.stripeB) || STRIPE_B)
                 : colorPickerTarget === 'stripeA' ? stripeA
                 : colorPickerTarget === 'stripeB' ? stripeB
                 : dotColor} 
@@ -6166,19 +6192,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, strokeColor: c } : o));
                 else if(colorPickerTarget==='textGlow')
                   setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, glowColor: c } : o));
-                else if(colorPickerTarget==='textDot')
-                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, dotColor: c } : o));
-                else if(colorPickerTarget==='textStripeA')
-                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, stripeA: c } : o));
-                else if(colorPickerTarget==='textStripeB')
-                  setObjects(prev => prev.map(o => o.id === selectedObj ? { ...o, stripeB: c } : o));
                 else if(colorPickerTarget==='stripeA') setStripeA(c);
                 else if(colorPickerTarget==='stripeB') setStripeB(c);
                 else setDotColor(c); }}
               /* 紋理與條紋的顏色一律用遮罩那一組色票 —— 全 App 一致 */
               swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor'
                 || colorPickerTarget === 'shapeGlow' ? GLOW_SWATCHES
-                : /^(mask|dot|stripeA|stripeB|shapeDot|shapeStripeA|shapeStripeB|textDot|textStripeA|textStripeB)$/.test(colorPickerTarget || '')
+                : /^(mask|dot|stripeA|stripeB|shapeDot|shapeStripeA|shapeStripeB)$/.test(colorPickerTarget || '')
                   ? MASK_SWATCHES
                 : undefined}
               onClose={() => setColorPickerTarget(null)}
@@ -6193,9 +6213,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                 : colorPickerTarget === 'shapeGlow' ? '發光顏色'
                 : colorPickerTarget === 'textStroke' ? '描邊顏色'
                 : colorPickerTarget === 'textGlow' ? '發光顏色'
-                : colorPickerTarget === 'textDot' ? '紋理顏色'
-                : colorPickerTarget === 'textStripeA' ? '條紋顏色一'
-                : colorPickerTarget === 'textStripeB' ? '條紋顏色二'
                 : colorPickerTarget === 'stripeA' ? '條紋顏色一'
                 : colorPickerTarget === 'stripeB' ? '條紋顏色二' : '紋理顏色'}
             />
@@ -6346,7 +6363,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                       <div className="flex flex-col">
                         <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">方向</div>
                         <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                          {([['橫式', 'h'], ['直式', 'v']] as const).map(([label, d]) => (
+                          {STRIPE_DIRS.map(([d, label]) => (
                             <button key={d} onClick={() => setStripeDir(d)}
                               className={`flex-1 h-6 text-[10px] font-bold rounded-[2px] transition-all ${stripeDir === d ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
                               {label}
@@ -6589,7 +6606,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   return (
                     <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
                       <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-2">
-                        <div className="space-y-3.5 pt-1 pb-2">
+                        {/* 底下留一段（跟經典拼圖的圖形編輯一樣的 pb-14）——
+                            捲到最底時最後那一格不會貼著邊，也比較好按。 */}
+                        <div className="space-y-3.5 pt-1 pb-14">
                           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
                           {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c, glowColor: c }), true)}
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
@@ -6642,13 +6661,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                                       onClick={() => setColorPickerTarget('shapeStripeA')}
                                       title="條紋顏色一"
                                       className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                                      style={{ backgroundColor: sel.stripeA || STRIPE_A }}
+                                      style={{ backgroundColor: sel.stripeA || sel.color || SHAPE_DEFAULT_COLOR }}
                                     />
                                     <button
                                       onClick={() => setColorPickerTarget('shapeStripeB')}
                                       title="條紋顏色二"
                                       className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                                      style={{ backgroundColor: sel.stripeB || STRIPE_B }}
+                                      style={{ backgroundColor: sel.stripeB || '#FFFFFF' }}
                                     />
                                   </div>
                                 ) : (
@@ -6669,12 +6688,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                                 <div className="space-y-1.5">
                                   <span className="text-[11px] font-bold text-white/70">方向</span>
                                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                                    {([['橫式', 'h'], ['直式', 'v']] as const).map(([label, d]) => (
+                                    {STRIPE_DIRS.map(([d, label]) => (
                                       <button
                                         key={d}
                                         onClick={() => patch({ stripeDir: d })}
                                         className={`flex-1 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
-                                          (sel.stripeDir === 'v' ? 'v' : 'h') === d ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
+                                          (sel.stripeDir === 'h' ? 'h' : 'v') === d ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
                                         }`}
                                       >
                                         {label}

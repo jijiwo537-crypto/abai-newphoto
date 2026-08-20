@@ -17,7 +17,7 @@ import {
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_A, STRIPE_B, texTile } from '../utils/pattern';
+import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeFit, STRIPE_A, STRIPE_B } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
@@ -1596,70 +1596,6 @@ export const TextEditorPanel: React.FC<{
             </>
             )}
 
-            {/* 紋理：文字與符號都有，四種跟創意拼圖的遮罩紋理完全一樣
-                （點點／星星／愛心是一個顏色＋大小＋間距；條紋是兩個顏色＋粗細＋方向）。 */}
-            {(() => {
-              const tex = texOf({ tex: (layer as any).tex });
-              const L = layer as any;
-              return (
-              <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden">
-                <div className="h-[47px] flex items-center justify-between px-3">
-                  <span className="text-[10px] font-bold text-[#888]">紋理</span>
-                  <div className="flex items-center gap-2">
-                    <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                      {TEX_OPTIONS.map(([id, label]) => (
-                        <button key={id} onClick={() => onChange({ tex: id } as any)}
-                          className={`px-2 h-6 text-[10px] font-bold rounded-[2px] transition-all ${tex === id ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                    {tex === 'stripe' ? (
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => setColorPage({ value: L.stripeA || STRIPE_A, colors: TEX_SWATCHES, onPick: c => onChange({ stripeA: c } as any) })}
-                          title="條紋顏色一"
-                          className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                          style={{ backgroundColor: L.stripeA || STRIPE_A }} />
-                        <button
-                          onClick={() => setColorPage({ value: L.stripeB || STRIPE_B, colors: TEX_SWATCHES, onPick: c => onChange({ stripeB: c } as any) })}
-                          title="條紋顏色二"
-                          className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                          style={{ backgroundColor: L.stripeB || STRIPE_B }} />
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setColorPage({ value: L.texColor || '#FFFFFF', colors: TEX_SWATCHES, onPick: c => onChange({ texColor: c } as any) })}
-                        title="紋理顏色"
-                        className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                        style={{ backgroundColor: L.texColor || '#FFFFFF' }} />
-                    )}
-                  </div>
-                </div>
-                {tex === 'stripe' ? (
-                  <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
-                    {slider('粗細', L.stripeW ?? 50, 0, 100, v => onChange({ stripeW: v } as any))}
-                    <div className="space-y-1.5">
-                      <span className="text-[11px] font-bold text-white/70">方向</span>
-                      <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                        {([['橫式', 'h'], ['直式', 'v']] as const).map(([label, d]) => (
-                          <button key={d} onClick={() => onChange({ stripeDir: d } as any)}
-                            className={`flex-1 h-6 text-[10px] font-bold rounded-[2px] transition-all ${(L.stripeDir === 'v' ? 'v' : 'h') === d ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                ) : tex !== 'none' && (
-                  <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
-                    {slider('大小', L.texSize ?? 50, 0, 100, v => onChange({ texSize: v } as any))}
-                    {slider('間距', L.texGap ?? 20, 0, 100, v => onChange({ texGap: v } as any))}
-                  </div>
-                )}
-              </div>
-              );
-            })()}
 
           </div>
         )}
@@ -1769,21 +1705,21 @@ export const ShapeEditorPanel: React.FC<{
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setColorPage({
-                        value: layer.shapeStripeA || STRIPE_A, colors: TEX_SWATCHES,
+                        value: layer.shapeStripeA || layer.color || SHAPE_DEFAULT_COLOR, colors: TEX_SWATCHES,
                         onPick: c => onChange({ shapeStripeA: c }),
                       })}
                       title="條紋顏色一"
                       className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                      style={{ backgroundColor: layer.shapeStripeA || STRIPE_A }}
+                      style={{ backgroundColor: layer.shapeStripeA || layer.color || SHAPE_DEFAULT_COLOR }}
                     />
                     <button
                       onClick={() => setColorPage({
-                        value: layer.shapeStripeB || STRIPE_B, colors: TEX_SWATCHES,
+                        value: layer.shapeStripeB || '#FFFFFF', colors: TEX_SWATCHES,
                         onPick: c => onChange({ shapeStripeB: c }),
                       })}
                       title="條紋顏色二"
                       className="w-6 h-6 rounded-[4px] shrink-0 border border-white/10 shadow-inner hover:border-white/40 transition-colors"
-                      style={{ backgroundColor: layer.shapeStripeB || STRIPE_B }}
+                      style={{ backgroundColor: layer.shapeStripeB || '#FFFFFF' }}
                     />
                   </div>
                 ) : (
@@ -1807,12 +1743,12 @@ export const ShapeEditorPanel: React.FC<{
                 <div className="space-y-1.5">
                   <span className="text-[11px] font-bold text-white/70">方向</span>
                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                    {([['橫式', 'h'], ['直式', 'v']] as const).map(([label, d]) => (
+                    {STRIPE_DIRS.map(([d, label]) => (
                       <button
                         key={d}
                         onClick={() => onChange({ shapeStripeDir: d })}
                         className={`flex-1 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
-                          (layer.shapeStripeDir === 'v' ? 'v' : 'h') === d ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
+                          (layer.shapeStripeDir === 'h' ? 'h' : 'v') === d ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
                         }`}
                       >
                         {label}
@@ -1952,12 +1888,13 @@ const CATS = ([
    形狀本來就有現成的向量路徑，畫出來還比圖示更清楚。 */
 const toolBtn = (id: string, label: string, icon: string | React.ReactNode, active: boolean, adjusted: boolean, onClick: () => void) => (
   <button key={id} onClick={onClick} className="flex flex-col items-center gap-1 shrink-0 group w-16">
-    {/* active:  ＝ 手指按著的當下就變白（不用等 click），
-        所以「兩段式」那幾顆就算馬上換頁，按下去也看得到它亮了一下。 */}
-    <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10 group-active:bg-white group-active:text-black group-active:scale-110'}`}>
+    {/* 按下去的回饋：只放大，跟選中的那一顆是同一個放大幅度。
+        本來還會同時把底色翻成白的 —— 底色跟大小一起在 transition 裡跑，
+        看起來就是圖標抖了一下。只留放大就乾淨了。 */}
+    <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10 group-active:scale-110'}`}>
       {typeof icon === 'string' ? <Icon name={icon} className="text-lg" fill={active} /> : icon}
     </div>
-    <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${active ? 'text-white' : 'text-white/20 group-active:text-white'}`}>{label}</span>
+    <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${active ? 'text-white' : 'text-white/20'}`}>{label}</span>
     <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${adjusted ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
   </button>
 );
@@ -4209,7 +4146,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     dots: image.shapeDots, dotSize: image.shapeDotSize,
     dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
     tex: image.shapeTex, stripeW: image.shapeStripeW, stripeDir: image.shapeStripeDir,
-    stripeA: image.shapeStripeA, stripeB: image.shapeStripeB,
+    stripeA: image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR,
+    stripeB: image.shapeStripeB || '#FFFFFF',
     id: image.id,
     /* 線寬的單位刻意不含 scale：不然「把圖案拉大」框線也跟著變粗。
        跟 SVG 那些圖形除以 scale 是同一條規則。 */
@@ -4598,10 +4536,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               圖形正中心 —— 跟 canvas 那支 paintStripes 的起算點一致，
               所以預覽跟匯出出來的條紋位置完全對得上。 */}
           {texOf({ tex: image.shapeTex, dots: image.shapeDots }) === 'stripe' && (() => {
-            const band = Math.max(0.5, stripeBandOf(image.width, image.height, image.shapeStripeW ?? 50));
-            const vert = image.shapeStripeDir === 'v';
-            const a = image.shapeStripeA || STRIPE_A;
-            const b = image.shapeStripeB || STRIPE_B;
+            const vert = image.shapeStripeDir !== 'h';   // 預設直式
+            const span = vert ? image.width : image.height;
+            /* 條寬「對齊到剛好填滿」——跟 canvas 那支 paintStripes 同一支 stripeFit，
+               所以預覽跟匯出的條數與寬度完全一樣，頭尾也都是完整的一條。 */
+            const { band } = stripeFit(span,
+              Math.max(0.5, stripeBandOf(image.width, image.height, image.shapeStripeW ?? 50)));
+            const a = image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR;
+            const b = image.shapeStripeB || '#FFFFFF';
             const id = `sstripe-${image.id}`;
             return (
               <>
@@ -4609,11 +4551,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                   <pattern
                     id={id} patternUnits="userSpaceOnUse"
                     width={r3(vert ? band * 2 : band)} height={r3(vert ? band : band * 2)}
-                    patternTransform={`translate(${r3(image.width / 2)} ${r3(image.height / 2)})`}
                   >
-                    <rect x="0" y="0"
-                      width={r3(vert ? band : band)} height={r3(vert ? band : band)}
-                      fill={a} />
+                    <rect x="0" y="0" width={r3(band)} height={r3(band)} fill={a} />
                     <rect
                       x={r3(vert ? band : 0)} y={r3(vert ? 0 : band)}
                       width={r3(band)} height={r3(band)}
@@ -4735,26 +4674,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               display: 'inline-block',
               // 主層要蓋在發光層上面
               position: 'relative', zIndex: 1,
-              /* 紋理：把「一個週期」那張小圖鋪滿，再用 background-clip: text
-                 只留在字的墨水上。描邊是另外一層 paint（-webkit-text-stroke），
-                 所以描邊照常在、只有填色被換成紋理。
-                 那張小圖跟匯出用的是同一份程式碼（utils/pattern 的 texTile），
-                 而且是在「一倍字級」下算的 —— 縮放交給外層的 transform，
-                 所以放大縮小時紋理跟著字一起變，不會自己抖。 */
-              ...(() => {
-                const tile = texTile(image as any, image.width, image.height);
-                if (!tile) return null;
-                return {
-                  backgroundImage: `url(${tile.url})`,
-                  backgroundSize: `${tile.w}px ${tile.h}px`,
-                  backgroundPosition: 'center',
-                  backgroundRepeat: 'repeat',
-                  WebkitBackgroundClip: 'text',
-                  backgroundClip: 'text',
-                  color: 'transparent',
-                  WebkitTextFillColor: 'transparent',
-                } as React.CSSProperties;
-              })(),
               // width: max-content 才能不受外框寬度限制地量到真正需要的寬度，
               // 否則框被縮到上一次的寬度之後，文字就會一直卡在那個寬度換行
               width: 'max-content',
@@ -5780,9 +5699,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /* 條紋：粗細、方向、兩個顏色。跟點點／星星／愛心共用同一個「紋理」選單，
      但參數不一樣（沒有間距，改成粗細＋方向）。 */
   const stripeW = patternOpts.stripeW ?? 50;
-  const stripeDir: 'h' | 'v' = patternOpts.stripeDir === 'v' ? 'v' : 'h';
-  const stripeA = patternOpts.stripeA || STRIPE_A;
-  const stripeB = patternOpts.stripeB || STRIPE_B;
+  const stripeDir: 'h' | 'v' = patternOpts.stripeDir === 'h' ? 'h' : 'v';
+  // 第一個顏色沒挑過就跟著「紋理當下的顏色」走，第二個從純白開始
+  const stripeA = patternOpts.stripeA || patternColor;
+  const stripeB = patternOpts.stripeB || '#FFFFFF';
 
   /* 紋理的兩根滑桿。其他面板那幾支同名 helper 都關在各自的元件裡，
      主元件拿不到，所以就近寫一支。軌道用全域的 .premium-slider。 */
@@ -9289,33 +9209,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.strokeStyle = fImg.strokeColor || '#000000';
       lines.forEach((ln, i) => ctx.strokeText(ln, 0, startY + i * lineH));
     }
-    /* 紋理：字先畫在一張暫存畫布上，再用 source-atop 把紋理蓋上去 ——
-       只有「有墨水的地方」會留下紋理。單位跟預覽那一層一樣是「內容座標」，
-       所以放大匯出時紋理的密度跟畫面上看到的一致。 */
-    const texKind = texOf({ tex: (fImg as any).tex });
-    if (texKind !== 'none') {
-      const side = Math.max(2, Math.ceil(Math.max(fw, fh) * 2.4 + size * 2));
-      const tmp = document.createElement('canvas');
-      tmp.width = side; tmp.height = side;
-      const tc = tmp.getContext('2d');
-      if (tc) {
-        tc.translate(side / 2, side / 2);
-        tc.font = ctx.font;
-        tc.textAlign = 'center';
-        tc.textBaseline = 'middle';
-        (tc as any).letterSpacing = `${spacing}px`;
-        tc.fillStyle = fImg.color || '#FFFFFF';
-        lines.forEach((ln, i) => tc.fillText(ln, 0, startY + i * lineH));
-        tc.globalCompositeOperation = 'source-atop';
-        // 內容座標 × 這一次匯出的倍率：紋理才會跟著整張一起放大
-        const k = scaleFactor * fImg.scale;
-        paintTex(tc, fImg.width * k, fImg.height * k, side, side, fImg as any);
-        ctx.drawImage(tmp, -side / 2, -side / 2);
-        tmp.width = tmp.height = 0;
-        ctx.restore();
-        return;
-      }
-    }
     ctx.fillStyle = fImg.color || '#FFFFFF';
     drawLines();
     ctx.restore();
@@ -9358,7 +9251,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           glowColor: fImg.shapeGlowColor, strokeW: fImg.shapeStrokeW,
           strokeColor: fImg.shapeStrokeColor,
           tex: fImg.shapeTex, stripeW: fImg.shapeStripeW, stripeDir: fImg.shapeStripeDir,
-          stripeA: fImg.shapeStripeA, stripeB: fImg.shapeStripeB,
+          stripeA: fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR,
+          stripeB: fImg.shapeStripeB || '#FFFFFF',
           dots: fImg.shapeDots, dotSize: fImg.shapeDotSize,
           dotGap: fImg.shapeDotGap, dotColor: fImg.shapeDotColor,
           id: fImg.id,
@@ -9429,8 +9323,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         ctx.translate(fw / 2, fh / 2);   // 紋理那兩支都是以圖形中心為原點
         if (tx === 'dot') drawShapeDotsCanvas(ctx, fw, fh, fImg);
         else paintStripes(ctx, fw, fh, fw, fh,
-          fImg.shapeStripeW ?? 50, fImg.shapeStripeDir === 'v' ? 'v' : 'h',
-          fImg.shapeStripeA || STRIPE_A, fImg.shapeStripeB || STRIPE_B);
+          fImg.shapeStripeW ?? 50, fImg.shapeStripeDir === 'h' ? 'h' : 'v',
+          fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR, fImg.shapeStripeB || '#FFFFFF');
         ctx.restore();
       }
     }
@@ -12526,7 +12420,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
             {activeTab === 'color' && (colorSub === 'stripeA' || colorSub === 'stripeB') && (
               /* 條紋的兩個顏色：跟紋理顏色同一頁、同一組色票 */
-              <div className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto overflow-x-hidden no-scrollbar">
+              <div className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto overflow-x-hidden no-scrollbar pb-16">
                 <div>
                   <ColorPickerEmbedded
                     color={colorSub === 'stripeA' ? stripeA : stripeB}
@@ -12550,7 +12444,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             {activeTab === 'color' && colorSub === 'pattern' && (
               /* 紋理專屬的調色頁：從紋理那一排的色塊點進來，跟創意拼圖一樣。
                  挑色器本身用的是跟底色完全同一顆元件。 */
-              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto overflow-x-hidden no-scrollbar">
+              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto overflow-x-hidden no-scrollbar pb-16">
                 {/* 返回鍵交給挑色器放在頂列，色號跟它平行 ——
                     色票那一排就整排都是色票，不會被色號擠掉一大截。 */}
                 <div>
@@ -12578,7 +12472,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               /* 上面是原本的底色挑色器（一個字沒動），下面緊接著背景紋理。
                  這一頁比原本高，所以自己捲 —— 外層那一格的 overflow 名單
                  是所有分頁共用的，完全沒動，別的分頁不受影響。 */
-              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-y-auto overflow-x-hidden no-scrollbar">
+              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-y-auto overflow-x-hidden no-scrollbar pb-16">
                 {/* 外面包一層高度 auto 的盒子：ColorPickerEmbedded 的根是 h-full，
                      直接放在這個「有固定高度」的捲動格裡會整個撐滿，把下面的紋理
                      推到很遠。包一層之後 100% 會解析成 auto，它就只佔自己需要的高度。 */}
@@ -12640,7 +12534,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         <div className="flex flex-col gap-1.5">
                           <span className="text-[9px] font-bold text-[#666] tracking-tighter uppercase">方向</span>
                           <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                            {([['橫式', 'h'], ['直式', 'v']] as const).map(([label, d]) => (
+                            {STRIPE_DIRS.map(([d, label]) => (
                               <button key={d} onClick={() => patchPattern({ stripeDir: d })}
                                 className={`flex-1 h-6 text-[10px] font-bold rounded-[2px] transition-all ${stripeDir === d ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'}`}>
                                 {label}
