@@ -387,7 +387,8 @@ export const paintDots = (
   }
 };
 
-import { patternGlyph, stripeFit, STRIPE_A as SA, STRIPE_B as SB, type TexKind } from './pattern';
+import { patternGlyph, stripeFit, STRIPE_A as SA, STRIPE_B as SB,
+  STRIPE_W_DEFAULT as SW_DEF, type TexKind } from './pattern';
 
 /* ── 紋理 ───────────────────────────────────────────────────────────
  * 圖形裡面可以鋪一層紋理。原本只有「點點」一種、用一個布林開關，
@@ -409,7 +410,7 @@ export { STRIPE_A, STRIPE_B } from './pattern';
  * 粗細 0～100 對應 6～60 個單位（最細像細線，最粗大約一條佔十分之一）。
  */
 /* 粗細換算跟 utils/pattern 那一支同一條式子（滑桿 0~100 → 舊刻度 55~150） */
-export const stripeBandOf = (unitW: number, unitH: number, w = 50) =>
+export const stripeBandOf = (unitW: number, unitH: number, w = SW_DEF) =>
   (35.7 + w * 0.513) * (Math.max(unitW, unitH) / 600);
 
 /**
@@ -453,7 +454,7 @@ export const paintTex = (
       o.texColor || o.dotColor || '#FFFFFF', t);
   } else if (t === 'stripe') {
     paintStripes(c, unitW, unitH, covW, covH,
-      o.stripeW ?? 50, o.stripeDir === 'h' ? 'h' : 'v',
+      o.stripeW ?? SW_DEF, o.stripeDir === 'h' ? 'h' : 'v',
       o.stripeA || SA, o.stripeB || SB);
   }
 };

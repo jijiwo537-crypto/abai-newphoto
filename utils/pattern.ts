@@ -72,16 +72,21 @@ export const patternGlyph = (
   c.fill();
 };
 
+/** 條紋粗細滑桿的範圍與預設。刻度沒有改過，只是把上限往外拉了一倍。 */
+export const STRIPE_W_MAX = 200;
+export const STRIPE_W_DEFAULT = 100;
+
 /**
  * 一條條紋有多寬（還沒對齊到「剛好填滿」之前的理想值）。
  *
- * 滑桿還是 0～100，但實際對應的是舊刻度的 55～150 ——
- * 也就是最細那一端就已經是以前的 55（比以前粗很多），
- * 最粗那一端到以前的 150（比以前的上限再粗一截）。
- *   舊：6 + 舊值/100 × 54
- *   新：舊值 = 55 + 滑桿/100 × 95 → 35.7 + 滑桿 × 0.513
+ * 滑桿 0～200、預設 100。同一個數字畫出來的粗細跟以前完全一樣，
+ * 只是能往上再拉一倍：
+ *   滑桿 0   → 35.7（最細）
+ *   滑桿 100 → 87.0　＝ 以前滑桿拉到底的粗度，現在是預設值
+ *   滑桿 200 → 138.3　比以前的上限再粗 59%
+ * 所以舊的存檔完全不受影響。
  */
-export const stripeBandOf = (refW: number, w = 50) =>
+export const stripeBandOf = (refW: number, w = STRIPE_W_DEFAULT) =>
   (35.7 + w * 0.513) * (refW / REF_W);
 
 /**
@@ -106,7 +111,7 @@ export const stripeFit = (span: number, ideal: number) => {
 export const paintStripesRect = (
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
-  width = 50, dir: 'h' | 'v' = STRIPE_DIR_DEFAULT, a = STRIPE_A, b = STRIPE_B,
+  width = STRIPE_W_DEFAULT, dir: 'h' | 'v' = STRIPE_DIR_DEFAULT, a = STRIPE_A, b = STRIPE_B,
 ) => {
   if (w <= 0 || h <= 0) return;
   const span = dir === 'h' ? h : w;
@@ -145,7 +150,7 @@ export const paintPattern = (
 ) => {
   if (!o || o.type === 'none' || w <= 0 || h <= 0) return;
   if (o.type === 'stripe') {
-    paintStripesRect(ctx, w, h, o.stripeW ?? 50,
+    paintStripesRect(ctx, w, h, o.stripeW ?? STRIPE_W_DEFAULT,
       o.stripeDir === 'h' ? 'h' : 'v', o.stripeA || STRIPE_A, o.stripeB || STRIPE_B);
     return;
   }
