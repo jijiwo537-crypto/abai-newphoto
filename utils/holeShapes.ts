@@ -387,8 +387,8 @@ export const paintDots = (
   }
 };
 
-import { patternGlyph, stripeFit, STRIPE_A as SA, STRIPE_B as SB,
-  STRIPE_W_DEFAULT as SW_DEF, type TexKind } from './pattern';
+import { patternGlyph, stripeBand, STRIPE_A as SA, STRIPE_B as SB,
+  STRIPE_N_DEFAULT as SN_DEF, type TexKind } from './pattern';
 
 /* ── 紋理 ───────────────────────────────────────────────────────────
  * 圖形裡面可以鋪一層紋理。原本只有「點點」一種、用一個布林開關，
@@ -405,30 +405,20 @@ export const texOf = (o: { tex?: string; dots?: boolean } | null | undefined): S
 export { STRIPE_A, STRIPE_B } from './pattern';
 
 /**
- * 一條條紋有多寬。跟點點同一套換算：以「圖形長邊 / 600」為單位，
- * 所以同一個數字在大圖形與小圖形上看起來的疏密是一樣的。
- * 粗細 0～100 對應 6～60 個單位（最細像細線，最粗大約一條佔十分之一）。
- */
-/* 粗細換算跟 utils/pattern 那一支同一條式子（滑桿 0~100 → 舊刻度 55~150） */
-export const stripeBandOf = (unitW: number, unitH: number, w = SW_DEF) =>
-  (35.7 + w * 0.513) * (Math.max(unitW, unitH) / 600);
-
-/**
  * 把條紋鋪滿一塊區域（原點在**中心**）。呼叫端負責先剪裁在圖形裡面。
  * 兩個顏色相間，沒有間距可以調 —— 一條接著一條，本來就是「相間排列」。
  * dir：'v' 直式（預設）／'h' 橫式。
  *
- * 條寬會「對齊到剛好填滿」（見 utils/pattern 的 stripeFit）：整段除以理想條寬
- * 取最接近的整數條，再除回去。所以每一條都一樣寬、頭尾也都是完整的，
- * 不會出現「最邊邊那一條只露一點點」。
+ * count 是「總共幾條」（見 utils/pattern 的 stripeBand），所以每一條都一樣寬、
+ * 頭尾也都是完整的，而且不管圖形多大，同一個數字看到的條數都一樣。
  */
 export const paintStripes = (
   c: CanvasRenderingContext2D,
   unitW: number, unitH: number, covW: number, covH: number,
-  w = 50, dir: 'h' | 'v' = 'v', a = SA, b = SB,
+  count = SN_DEF, dir: 'h' | 'v' = 'v', a = SA, b = SB,
 ) => {
   const span = dir === 'h' ? covH : covW;
-  const { band, n } = stripeFit(span, Math.max(0.5, stripeBandOf(unitW, unitH, w)));
+  const { band, n } = stripeBand(span, count);
   // 原點在中心，所以從 -span/2 開始鋪
   const x0 = -covW / 2, y0 = -covH / 2;
   for (let i = 0; i < n; i++) {
@@ -454,7 +444,7 @@ export const paintTex = (
       o.texColor || o.dotColor || '#FFFFFF', t);
   } else if (t === 'stripe') {
     paintStripes(c, unitW, unitH, covW, covH,
-      o.stripeW ?? SW_DEF, o.stripeDir === 'h' ? 'h' : 'v',
+      o.stripeN ?? SN_DEF, o.stripeDir === 'h' ? 'h' : 'v',
       o.stripeA || SA, o.stripeB || SB);
   }
 };
@@ -476,7 +466,7 @@ export const drawHoleShape = (
     strokeW?: number; strokeColor?: string;
     dots?: boolean; dotSize?: number; dotGap?: number; dotColor?: string;
     /** 紋理：'none' | 'dot' | 'stripe'（沒給就照舊看 dots） */
-    tex?: string; stripeW?: number; stripeDir?: string; stripeA?: string; stripeB?: string;
+    tex?: string; stripeN?: number; stripeDir?: string; stripeA?: string; stripeB?: string;
     id?: string; randomNumber?: number;
     /** 線寬的單位。不給就照外框的長邊 / 160 —— 那會讓「圖形拉大」連框線
      *  也跟著變粗，所以呼叫端想要「粗細固定」時就把不含縮放的那個值傳進來。 */

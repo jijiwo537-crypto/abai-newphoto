@@ -72,50 +72,39 @@ export const patternGlyph = (
   c.fill();
 };
 
-/** 條紋粗細滑桿的範圍與預設。刻度沒有改過，只是把上限往外拉了一倍。 */
-export const STRIPE_W_MAX = 200;
-export const STRIPE_W_DEFAULT = 100;
+/** 條紋的「數量」滑桿：0～30 條，預設 11 條。 */
+export const STRIPE_N_MAX = 30;
+export const STRIPE_N_DEFAULT = 11;
 
 /**
- * 一條條紋有多寬（還沒對齊到「剛好填滿」之前的理想值）。
+ * 條紋改成直接指定「有幾條」，不是指定粗細。
  *
- * 滑桿 0～200、預設 100。同一個數字畫出來的粗細跟以前完全一樣，
- * 只是能往上再拉一倍：
- *   滑桿 0   → 35.7（最細）
- *   滑桿 100 → 87.0　＝ 以前滑桿拉到底的粗度，現在是預設值
- *   滑桿 200 → 138.3　比以前的上限再粗 59%
- * 所以舊的存檔完全不受影響。
- */
-export const stripeBandOf = (refW: number, w = STRIPE_W_DEFAULT) =>
-  (35.7 + w * 0.513) * (refW / REF_W);
-
-/**
- * 把理想的條寬「對齊到剛好填滿」：整段長度除以條寬取最接近的整數條，
- * 再用整段長度除回去。這樣每一條都一樣寬，而且頭尾兩條都是完整的 ——
- * 不會出現「最邊邊那一條只露出一點點」。
+ * 這樣有兩個好處，而且都是白拿的：
+ *   ① 一定剛好填滿 —— 每一條就是「整段長度 ÷ 條數」，
+ *      不再需要以前那套「先算理想條寬、再湊到最接近的整數條」。
+ *   ② 跟畫布大小完全無關 —— 預覽、匯出、大圖形、小圖形，
+ *      同一個數字看到的條數一模一樣，不必再拿寬度去換算。
  *
- * 代價是拖粗細的時候條數是一格一格跳的（那是刻意的，不然就填不滿），
- * 但滑桿本身的值仍然是連續的，所以拖起來是滑順的。
+ * 0 條在畫面上沒有意義，所以夾成 1 條（＝整片都是第一個顏色）。
  */
-export const stripeFit = (span: number, ideal: number) => {
-  if (!(span > 0) || !(ideal > 0)) return { band: Math.max(1, ideal), n: 1 };
-  const n = Math.max(1, Math.round(span / ideal));
-  return { band: span / n, n };
+export const stripeBand = (span: number, count = STRIPE_N_DEFAULT) => {
+  const n = Math.max(1, Math.min(STRIPE_N_MAX, Math.round(count || 0)));
+  return { band: span > 0 ? span / n : 0, n };
 };
 
 /**
  * 把條紋鋪滿 (0,0)~(w,h)。兩個顏色相間，沒有間距可以調。
  * dir：'h' 橫式（一條一條橫著排）／'v' 直式。
- * 起算點在正中心 —— 預覽跟匯出用同一個基準，條紋的位置才對得上。
+ * count 是「總共幾條」，所以一定剛好填滿、每一條也一定一樣寬。
  */
 export const paintStripesRect = (
   ctx: CanvasRenderingContext2D,
   w: number, h: number,
-  width = STRIPE_W_DEFAULT, dir: 'h' | 'v' = STRIPE_DIR_DEFAULT, a = STRIPE_A, b = STRIPE_B,
+  count = STRIPE_N_DEFAULT, dir: 'h' | 'v' = STRIPE_DIR_DEFAULT, a = STRIPE_A, b = STRIPE_B,
 ) => {
   if (w <= 0 || h <= 0) return;
   const span = dir === 'h' ? h : w;
-  const { band, n } = stripeFit(span, Math.max(0.5, stripeBandOf(w, width)));
+  const { band, n } = stripeBand(span, count);
   ctx.save();
   for (let i = 0; i < n; i++) {
     ctx.fillStyle = i % 2 === 0 ? a : b;
@@ -135,8 +124,8 @@ export interface PatternOpts {
   size: number;
   /** UI 上的 0~100，對應實際間距 40~140 */
   gap: number;
-  /** 條紋：粗細 0~100、方向、兩個顏色 */
-  stripeW?: number;
+  /** 條紋：條數 0~30、方向、兩個顏色 */
+  stripeN?: number;
   stripeDir?: string;
   stripeA?: string;
   stripeB?: string;
@@ -150,7 +139,7 @@ export const paintPattern = (
 ) => {
   if (!o || o.type === 'none' || w <= 0 || h <= 0) return;
   if (o.type === 'stripe') {
-    paintStripesRect(ctx, w, h, o.stripeW ?? STRIPE_W_DEFAULT,
+    paintStripesRect(ctx, w, h, o.stripeN ?? STRIPE_N_DEFAULT,
       o.stripeDir === 'h' ? 'h' : 'v', o.stripeA || STRIPE_A, o.stripeB || STRIPE_B);
     return;
   }
