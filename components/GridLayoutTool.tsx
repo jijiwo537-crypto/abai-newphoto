@@ -17,7 +17,8 @@ import {
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeFit, STRIPE_A, STRIPE_B } from '../utils/pattern';
+import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeFit, STRIPE_A, STRIPE_B,
+  STRIPE_W_DEFAULT, STRIPE_W_MAX } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
@@ -1739,7 +1740,7 @@ export const ShapeEditorPanel: React.FC<{
               /* 條紋沒有間距可以調（一條接著一條），只有粗細。
                  右邊那一格放直式／橫式，跟滑桿並排。 */
               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
-                {slider('粗細', layer.shapeStripeW ?? 50, 0, 100, v => onChange({ shapeStripeW: v }))}
+                {slider('粗細', layer.shapeStripeW ?? STRIPE_W_DEFAULT, 0, STRIPE_W_MAX, v => onChange({ shapeStripeW: v }))}
                 <div className="space-y-1.5">
                   <span className="text-[11px] font-bold text-white/70">方向</span>
                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
@@ -4553,7 +4554,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             /* 條寬「對齊到剛好填滿」——跟 canvas 那支 paintStripes 同一支 stripeFit，
                所以預覽跟匯出的條數與寬度完全一樣，頭尾也都是完整的一條。 */
             const { band } = stripeFit(span,
-              Math.max(0.5, stripeBandOf(image.width, image.height, image.shapeStripeW ?? 50)));
+              Math.max(0.5, stripeBandOf(image.width, image.height, image.shapeStripeW ?? STRIPE_W_DEFAULT)));
             const a = image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR;
             const b = image.shapeStripeB || '#FFFFFF';
             const id = `sstripe-${image.id}`;
@@ -5710,7 +5711,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const setPatternGap = (v: number) => patchPattern({ gap: v });
   /* 條紋：粗細、方向、兩個顏色。跟點點／星星／愛心共用同一個「紋理」選單，
      但參數不一樣（沒有間距，改成粗細＋方向）。 */
-  const stripeW = patternOpts.stripeW ?? 50;
+  const stripeW = patternOpts.stripeW ?? STRIPE_W_DEFAULT;
   const stripeDir: 'h' | 'v' = patternOpts.stripeDir === 'h' ? 'h' : 'v';
   // 第一個顏色沒挑過就跟著「紋理當下的顏色」走，第二個從純白開始
   const stripeA = patternOpts.stripeA || patternColor;
@@ -5718,7 +5719,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   /* 紋理的兩根滑桿。其他面板那幾支同名 helper 都關在各自的元件裡，
      主元件拿不到，所以就近寫一支。軌道用全域的 .premium-slider。 */
-  const patternSlider = (label: string, value: number, onVal: (v: number) => void) => (
+  const patternSlider = (label: string, value: number, onVal: (v: number) => void, max = 100) => (
     <div className="flex flex-col gap-1.5">
       <div className="flex justify-between items-center text-[9px] font-bold text-[#666] tracking-tighter uppercase">
         <span>{label}</span>
@@ -5726,7 +5727,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       </div>
       {/* 圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆） */}
       <div className="slider-wrap" style={{ height: 16 }}>
-        <input type="range" min={0} max={100} step={1} value={value}
+        <input type="range" min={0} max={max} step={1} value={value}
           onChange={e => onVal(parseInt(e.target.value))} className="slim-slider w-full" />
       </div>
     </div>
@@ -9335,7 +9336,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         ctx.translate(fw / 2, fh / 2);   // 紋理那兩支都是以圖形中心為原點
         if (tx === 'dot') drawShapeDotsCanvas(ctx, fw, fh, fImg);
         else paintStripes(ctx, fw, fh, fw, fh,
-          fImg.shapeStripeW ?? 50, fImg.shapeStripeDir === 'h' ? 'h' : 'v',
+          fImg.shapeStripeW ?? STRIPE_W_DEFAULT, fImg.shapeStripeDir === 'h' ? 'h' : 'v',
           fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR, fImg.shapeStripeB || '#FFFFFF');
         ctx.restore();
       }
@@ -12542,7 +12543,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     {patternType === 'stripe' ? (
                       /* 條紋沒有間距（一條接著一條），只有粗細；右邊那一格是方向 */
                       <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
-                        {patternSlider('粗細', stripeW, (v: number) => patchPattern({ stripeW: v }))}
+                        {patternSlider('粗細', stripeW, (v: number) => patchPattern({ stripeW: v }), STRIPE_W_MAX)}
                         <div className="flex flex-col gap-1.5">
                           <span className="text-[9px] font-bold text-[#666] tracking-tighter uppercase">方向</span>
                           <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">

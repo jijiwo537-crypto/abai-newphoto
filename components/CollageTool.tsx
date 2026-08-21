@@ -35,7 +35,8 @@ import {
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
-import { patternGlyph, paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex } from '../utils/pattern';
+import { patternGlyph, paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
+  STRIPE_W_DEFAULT, STRIPE_W_MAX } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
 import { IgPreview } from './IgPreview';
@@ -1438,7 +1439,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [dotGap, setDotGap] = useState(20);
   /* 條紋：兩個顏色、粗細、方向。跟點點／星星／愛心共用同一個「紋理」選單，
      但參數不一樣（沒有間距，改成粗細＋方向），所以各自存。 */
-  const [stripeW, setStripeW] = useState(50);
+  const [stripeW, setStripeW] = useState(STRIPE_W_DEFAULT);
   const [stripeDir, setStripeDir] = useState<'h' | 'v'>('v');
   /* 第一個顏色沒挑過的時候就跟著「遮罩當下的顏色」走（存 null 代表沒挑過），
      第二個固定從純白開始。 */
@@ -2987,10 +2988,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     };
 
     const offs = getLayoutOffsetsS();
-    if (targetCanvas.width !== offs.cw || targetCanvas.height !== offs.ch) {
-      targetCanvas.width = offs.cw;
-      targetCanvas.height = offs.ch;
+    /* ⚠ 尺寸一定要用整數比對。
+       canvas.width 的 setter 會把小數截掉，而 offs.cw 幾乎都是小數
+       （實測 1402.1706749406885）。拿小數去比「尺寸有沒有變」永遠不相等，
+       於是每畫一格都會走進去指派一次 —— 而指派 canvas.width 就算值一樣，
+       瀏覽器也會把整塊點陣丟掉重新配置。一張 1402×1401 是 7.5MB，
+       滑桿一秒動幾十格就是每秒幾百 MB 的畫布記憶體來回，
+       iOS 的畫布記憶體一碰到上限就把整頁收掉 —— 那就是閃退。
+       截成整數之後畫出來的尺寸跟以前一模一樣（setter 本來就是這樣截的）。 */
+    const tW = Math.max(1, offs.cw | 0), tH = Math.max(1, offs.ch | 0);
+    if (targetCanvas.width !== tW || targetCanvas.height !== tH) {
+      targetCanvas.width = tW;
+      targetCanvas.height = tH;
     }
+    /* 指派寬高會順便把 context 狀態全部重置；現在尺寸沒變就不指派了，
+       所以 transform／透明度／合成模式要自己歸位，免得上一格的狀態殘留。 */
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
 
     ctx.fillStyle = '#0A0A0A'; ctx.fillRect(0, 0, offs.cw, offs.ch);
     ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, iw, ih); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
@@ -3003,24 +3018,46 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        那就是滑桿一幀一幀的原因。
        純色用 8×8 的小塊平鋪出來完全一樣（pattern 是 repeat），
        遮罩層那邊也改成直接 fillRect，畫出來的每個像素都不變。 */
-    const plainMask = !(maskImageState && maskImageState.img) && patternType === 'none';
+    const hasMaskImg = !!(maskImageState && maskImageState.img);
+    const plainMask = !hasMaskImg && patternType === 'none';
     const bCanvas = isMain ? baseMaskCanvasRef.current : document.createElement('canvas');
     /* 遮罩底稿（底色＋遮罩圖＋點點）只跟這幾個參數有關，圖案與動畫都不會動到它。
        播動畫時一秒要走 30 次，每次都重填兩張全尺寸畫布是純粹的浪費 ——
        這裡用一把鑰匙擋掉：參數沒變就直接沿用上一格畫好的那張。
        這是省成本，不是降畫質：畫出來的內容一模一樣。 */
     const TILE = 8;
-    const bW = plainMask ? TILE : maskW, bH = plainMask ? TILE : maskH;
+    /* 一樣要截成整數（見上面 targetCanvas 那一段）。maskW／maskH 是小數時，
+       下面的 maskHit 拿 `bCanvas.width === bW` 去比永遠不相等 ——
+       快取等於完全失效，每一格都把整片遮罩重畫一次、還重配一次點陣。 */
+    /* 底稿只有「有自訂遮罩圖」時才需要整片那麼大。
+       沒有遮罩圖的話它就是一片純色 —— 8×8 的小塊平鋪出來完全一樣
+       （用到它的兩個地方：貼進 fCanvas 當底、以及 createPattern(...,'repeat')，
+       純色下兩者的每一個像素都不變）。
+       這樣拖「比例」滑桿時就少一張跟著長寬變的全尺寸畫布。 */
+    const bW = hasMaskImg ? Math.max(1, maskW | 0) : TILE;
+    const bH = hasMaskImg ? Math.max(1, maskH | 0) : TILE;
+    /* ⚠ 遮罩本身的長寬一定要進這把鑰匙。底稿現在可能只有 8×8（純色的情況），
+       光看 bW/bH 是看不出「遮罩變大變小了」的 —— 少了這兩個，拖比例滑桿時
+       紋理就不會跟著重新鋪滿。 */
     const maskKey = isMain ? JSON.stringify([
-      bW, bH, maskColor, patternType, dotColor, dotGap, dotSize, sgs,
+      bW, bH, maskW | 0, maskH | 0,
+      maskColor, patternType, dotColor, dotGap, dotSize, sgs,
       stripeW, stripeDir, stripeA, stripeB,
       maskImageState && maskImageState.img ? (maskImageState.img.src || '1') : '',
     ]) : '';
     const maskHit = isMain && maskKey === maskCacheKeyRef.current
       && bCanvas.width === bW && bCanvas.height === bH;
-    if (!maskHit) { bCanvas.width = bW; bCanvas.height = bH; }
+    /* 尺寸沒變就不要指派 —— 指派等於整塊點陣丟掉重開。
+       條紋的粗細滑桿把 stripeW 放進了 maskKey，所以拖它的時候 maskHit 一定是
+       false、每一格都會走到這裡；尺寸其實一格都沒變過。 */
+    if (bCanvas.width !== bW || bCanvas.height !== bH) { bCanvas.width = bW; bCanvas.height = bH; }
     const bCtx = get2dWide(bCanvas)!;
     if (!maskHit) {
+    // 沿用同一塊時要自己清空與歸位（重配尺寸本來會順便做這兩件事）
+    bCtx.setTransform(1, 0, 0, 1, 0, 0);
+    bCtx.globalAlpha = 1;
+    bCtx.globalCompositeOperation = 'source-over';
+    bCtx.clearRect(0, 0, bW, bH);
     bCtx.fillStyle = maskColor;
     bCtx.fillRect(0, 0, bW, bH);
     if (maskImageState && maskImageState.img) {
@@ -3042,11 +3079,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const needPattern = patternType !== 'none';
     const fCanvas = !needPattern ? bCanvas
       : (isMain ? fullMaskCanvasRef.current : document.createElement('canvas'));
-    if (needPattern && !maskHit) {
-      fCanvas.width = maskW; fCanvas.height = maskH;
+    const fW = Math.max(1, maskW | 0), fH = Math.max(1, maskH | 0);
+    /* 「只長不縮」：這張只被 lmx.drawImage(fCanvas, 0, 0) 讀走，而那一步是
+       'copy'、之後又只取左上角 maskW×maskH 那一塊，所以畫布比需要的大不影響
+       任何一個看得到的像素。拖「比例」滑桿時尺寸就不用一格一格重配。
+       （它沒有被 createPattern 用到，所以不會有「平鋪到多餘區域」的問題。） */
+    if (needPattern && (fCanvas.width < fW || fCanvas.height < fH)) {
+      fCanvas.width = Math.max(fCanvas.width, fW);
+      fCanvas.height = Math.max(fCanvas.height, fH);
     }
     const fCtx = get2dWide(fCanvas)!;
-    if (needPattern && !maskHit) fCtx.drawImage(bCanvas, 0, 0);
+    if (needPattern && !maskHit) {
+      fCtx.setTransform(1, 0, 0, 1, 0, 0);
+      fCtx.globalAlpha = 1;
+      fCtx.globalCompositeOperation = 'source-over';
+      fCtx.clearRect(0, 0, fCanvas.width, fCanvas.height);
+      // 沒有遮罩圖時底稿只是 8×8 的純色，不能拉大貼上去 —— 直接填色，結果一樣
+      if (hasMaskImg) fCtx.drawImage(bCanvas, 0, 0);
+      else { fCtx.fillStyle = maskColor; fCtx.fillRect(0, 0, fW, fH); }
+    }
 
     if (patternType === 'stripe' && !maskHit) {
       /* 條紋鋪滿整片遮罩。跟點點那幾種一樣畫在 fCanvas 上，
@@ -6373,7 +6424,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                   {patternType === 'stripe' ? (
                     /* 條紋沒有間距（一條接著一條），只有粗細；右邊那一格是方向 */
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
-                      <CompactSlider wide label="粗細" value={stripeW} min={0} max={100} onChange={setStripeW} />
+                      <CompactSlider wide label="粗細" value={stripeW} min={0} max={STRIPE_W_MAX} onChange={setStripeW} />
                       <div className="flex flex-col">
                         <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">方向</div>
                         <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
@@ -6698,7 +6749,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               /* 條紋沒有間距可以調（一條接著一條），只有粗細。
                                  右邊那一格放直式／橫式，跟滑桿並排。 */
                               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
-                                {shapeSlider('粗細', sel.stripeW ?? 50, 0, 100, (v: number) => patch({ stripeW: v }))}
+                                {shapeSlider('粗細', sel.stripeW ?? STRIPE_W_DEFAULT, 0, STRIPE_W_MAX, (v: number) => patch({ stripeW: v }))}
                                 <div className="space-y-1.5">
                                   <span className="text-[11px] font-bold text-white/70">方向</span>
                                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">

@@ -1015,7 +1015,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
 
           {/* 歷史紀錄（完整版）——首頁那一排的「查看全部」就是跳到這裡。
-               40 格、每排五個（八排）；還沒導出過的位子留空格，點下去直接去挑照片。
+               20 格、每排五個（四排）；還沒導出過的位子留空格，點下去直接去挑照片。
                首頁那一排維持 10 格（那裡只是快捷，不是全部）。 */}
           <div className="mt-8">
             <div className="flex items-baseline justify-between mb-2">
@@ -1029,7 +1029,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   : `已存 ${histStat.rows} 筆・${histStat.rows - histStat.usable} 筆缺原圖`}
               </span>
             </div>
-            {historyGrid(40)}
+            {historyGrid(20)}
           </div>
 
           {/* 登出與刪除帳號都收進帳號設定那一頁了（點上面那列右邊的箭頭） */}
