@@ -72,9 +72,10 @@ export const patternGlyph = (
   c.fill();
 };
 
-/** 條紋的「數量」滑桿：0～30 條，預設 11 條。 */
+/** 條紋的「數量」滑桿：0～30 條，預設 13 條。
+    全 App 只有這一個地方定義 —— 遮罩、圖形、頁面背景都是讀它。 */
 export const STRIPE_N_MAX = 30;
-export const STRIPE_N_DEFAULT = 11;
+export const STRIPE_N_DEFAULT = 13;
 
 /**
  * 條紋改成直接指定「有幾條」，不是指定粗細。
