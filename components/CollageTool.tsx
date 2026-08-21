@@ -36,7 +36,7 @@ import {
 } from '../utils/holeShapes';
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
 import { patternGlyph, paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
-  STRIPE_W_DEFAULT, STRIPE_W_MAX } from '../utils/pattern';
+  STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
 import { IgPreview } from './IgPreview';
@@ -1439,7 +1439,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [dotGap, setDotGap] = useState(20);
   /* 條紋：兩個顏色、粗細、方向。跟點點／星星／愛心共用同一個「紋理」選單，
      但參數不一樣（沒有間距，改成粗細＋方向），所以各自存。 */
-  const [stripeW, setStripeW] = useState(STRIPE_W_DEFAULT);
+  const [stripeN, setStripeN] = useState(STRIPE_N_DEFAULT);
   const [stripeDir, setStripeDir] = useState<'h' | 'v'>('v');
   /* 第一個顏色沒挑過的時候就跟著「遮罩當下的顏色」走（存 null 代表沒挑過），
      第二個固定從純白開始。 */
@@ -1703,7 +1703,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     if (st.dotColor !== undefined) setDotColor(st.dotColor);
     if (st.dotSize !== undefined) setDotSize(st.dotSize);
     if (st.dotGap !== undefined) setDotGap(st.dotGap);
-    if (st.stripeW !== undefined) setStripeW(st.stripeW);
+    if (st.stripeN !== undefined) setStripeN(st.stripeN);
     if (st.stripeDir === 'h' || st.stripeDir === 'v') setStripeDir(st.stripeDir);
     if (st.stripeA !== undefined) setStripeAPick(st.stripeA);
     if (st.stripeB !== undefined) setStripeB(st.stripeB);
@@ -1738,7 +1738,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       saveToolDraft('collage', null, {
         layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-        stripeW, stripeDir, stripeA: stripeAPick, stripeB,
+        stripeN, stripeDir, stripeA: stripeAPick, stripeB,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
       });
     }, 1200);
@@ -3042,13 +3042,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const maskKey = isMain ? JSON.stringify([
       bW, bH, maskW | 0, maskH | 0,
       maskColor, patternType, dotColor, dotGap, dotSize, sgs,
-      stripeW, stripeDir, stripeA, stripeB,
+      stripeN, stripeDir, stripeA, stripeB,
       maskImageState && maskImageState.img ? (maskImageState.img.src || '1') : '',
     ]) : '';
     const maskHit = isMain && maskKey === maskCacheKeyRef.current
       && bCanvas.width === bW && bCanvas.height === bH;
     /* 尺寸沒變就不要指派 —— 指派等於整塊點陣丟掉重開。
-       條紋的粗細滑桿把 stripeW 放進了 maskKey，所以拖它的時候 maskHit 一定是
+       條紋的數量滑桿把 stripeN 放進了 maskKey，所以拖它的時候 maskHit 一定是
        false、每一格都會走到這裡；尺寸其實一格都沒變過。 */
     if (bCanvas.width !== bW || bCanvas.height !== bH) { bCanvas.width = bW; bCanvas.height = bH; }
     const bCtx = get2dWide(bCanvas)!;
@@ -3104,7 +3104,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          所以「圖案挖穿遮罩」那一段完全不用改。 */
       fCtx.save();
       fCtx.beginPath(); fCtx.rect(0, 0, maskW, maskH); fCtx.clip();
-      paintStripesRect(fCtx, maskW, maskH, stripeW, stripeDir, stripeA, stripeB);
+      paintStripesRect(fCtx, maskW, maskH, stripeN, stripeDir, stripeA, stripeB);
       fCtx.restore();
     } else if (patternType !== 'none' && !maskHit) {
       fCtx.fillStyle = dotColor; 
@@ -4593,7 +4593,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
   }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
-      stripeW, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, shapeSel, editingTextId, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
+      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, shapeSel, editingTextId, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
      離開創意拼圖時記一筆。key 用「這一次拼圖」的 id（從歷史紀錄點進來的話
@@ -4625,7 +4625,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       await addExport('collage', out, srcUrl, {
         layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-        stripeW, stripeDir, stripeA: stripeAPick, stripeB,
+        stripeN, stripeDir, stripeA: stripeAPick, stripeB,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
         /* 新增進來的內容（圖片／文字／圖形）也要一起記 —— 以前這一項不存在，
            所以從歷史紀錄點回來時，設定都在、但「先前導入的東西」整批不見。
@@ -6422,9 +6422,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                     </div>
                   </div>
                   {patternType === 'stripe' ? (
-                    /* 條紋沒有間距（一條接著一條），只有粗細；右邊那一格是方向 */
+                    /* 條紋沒有間距（一條接著一條），只有條數；右邊那一格是方向 */
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
-                      <CompactSlider wide label="粗細" value={stripeW} min={0} max={STRIPE_W_MAX} onChange={setStripeW} />
+                      {/* 左右各留 8px：滑桿為了好按，本人比外框寬 14px（見 styles.css
+                          的 .slider-wrap），不留這一點的話畫出來的線會比自己那一欄長，
+                          右邊還會伸進「方向」那一欄的間隙裡。 */}
+                      <div className="px-2">
+                        <CompactSlider wide label="數量" value={stripeN} min={0} max={STRIPE_N_MAX} step={1} onChange={setStripeN} />
+                      </div>
                       <div className="flex flex-col">
                         <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">方向</div>
                         <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
@@ -6746,10 +6751,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               </div>
                             </div>
                             {tex === 'stripe' ? (
-                              /* 條紋沒有間距可以調（一條接著一條），只有粗細。
+                              /* 條紋沒有間距可以調（一條接著一條），只有條數。
                                  右邊那一格放直式／橫式，跟滑桿並排。 */
                               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
-                                {shapeSlider('粗細', sel.stripeW ?? STRIPE_W_DEFAULT, 0, STRIPE_W_MAX, (v: number) => patch({ stripeW: v }))}
+                                {/* 左右各留 8px，畫出來的線才會收在自己那一欄裡 */}
+                                <div className="px-2">
+                                  {shapeSlider('數量', sel.stripeN ?? STRIPE_N_DEFAULT, 0, STRIPE_N_MAX, (v: number) => patch({ stripeN: v }))}
+                                </div>
                                 <div className="space-y-1.5">
                                   <span className="text-[11px] font-bold text-white/70">方向</span>
                                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">

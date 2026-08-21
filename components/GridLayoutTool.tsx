@@ -13,12 +13,12 @@ import { SYMBOLS } from '../utils/symbols';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape, holeOverflow, glowAmount,
-  texOf, stripeBandOf, paintStripes,
+  texOf, paintStripes,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex,
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeFit, STRIPE_A, STRIPE_B,
-  STRIPE_W_DEFAULT, STRIPE_W_MAX } from '../utils/pattern';
+import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
+  STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
@@ -1737,10 +1737,14 @@ export const ShapeEditorPanel: React.FC<{
               </div>
             </div>
             {tex === 'stripe' ? (
-              /* 條紋沒有間距可以調（一條接著一條），只有粗細。
-                 右邊那一格放直式／橫式，跟滑桿並排。 */
+              /* 條紋沒有間距可以調（一條接著一條），只有條數。
+                 右邊那一格放直式／橫式，跟滑桿並排。
+                 左右各留 8px：滑桿本人比外框寬 14px（見 styles.css 的 .slider-wrap），
+                 不留的話畫出來的線會比自己那一欄長、伸進隔壁的間隙。 */
               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
-                {slider('粗細', layer.shapeStripeW ?? STRIPE_W_DEFAULT, 0, STRIPE_W_MAX, v => onChange({ shapeStripeW: v }))}
+                <div className="px-2">
+                  {slider('數量', layer.shapeStripeN ?? STRIPE_N_DEFAULT, 0, STRIPE_N_MAX, v => onChange({ shapeStripeN: v }))}
+                </div>
                 <div className="space-y-1.5">
                   <span className="text-[11px] font-bold text-white/70">方向</span>
                   <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
@@ -2303,7 +2307,12 @@ const PatternLayer: React.FC<{ w: number; h: number; opts: PatternOpts }> = ({ w
     g.clearRect(0, 0, pw, ph);
     if (opts.type === 'none') return;
     g.save(); g.scale(dpr, dpr); paintPattern(g, w, h, opts); g.restore();
-  }, [w, h, opts.type, opts.color, opts.size, opts.gap]);
+    /* ⚠ 條紋那四個參數一定要進來。
+       少了它們，改數量／方向／兩個顏色時這一層根本不會重畫 ——
+       但匯出走的是同一支 paintPattern、吃的是當下的值，
+       於是「預覽看到的」跟「存出來的」會不一樣。 */
+  }, [w, h, opts.type, opts.color, opts.size, opts.gap,
+      opts.stripeN, opts.stripeDir, opts.stripeA, opts.stripeB]);
   if (opts.type === 'none' || w <= 0 || h <= 0) return null;
   return <canvas ref={ref} className="absolute inset-0 pointer-events-none" style={{ width: w, height: h }} />;
 };
@@ -3269,7 +3278,7 @@ interface FloatingImage {
   /** 紋理種類：'none' | 'dot' | 'stripe'。沒給就照舊看 shapeDots。 */
   shapeTex?: string;
   /** 條紋粗細 0~100（預設 50） */
-  shapeStripeW?: number;
+  shapeStripeN?: number;
   /** 條紋方向：'h' 橫式（預設）／'v' 直式 */
   shapeStripeDir?: string;
   /** 條紋的兩個顏色 */
@@ -4158,7 +4167,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     strokeColor: image.shapeStrokeColor,
     dots: image.shapeDots, dotSize: image.shapeDotSize,
     dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
-    tex: image.shapeTex, stripeW: image.shapeStripeW, stripeDir: image.shapeStripeDir,
+    tex: image.shapeTex, stripeN: image.shapeStripeN, stripeDir: image.shapeStripeDir,
     stripeA: image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR,
     stripeB: image.shapeStripeB || '#FFFFFF',
     id: image.id,
@@ -4447,7 +4456,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             c.translate(w / 2, h / 2);
             drawHoleShape(c, opts, bw, bh, blurs);
           }}
-          key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${image.shapeTex}|${image.shapeStripeW}|${image.shapeStripeDir}|${image.shapeStripeA}|${image.shapeStripeB}|${Math.round(image.width * image.scale)}|${Math.round(image.height * image.scale)}`}
+          key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${image.shapeTex}|${image.shapeStripeN}|${image.shapeStripeDir}|${image.shapeStripeA}|${image.shapeStripeB}|${Math.round(image.width * image.scale)}|${Math.round(image.height * image.scale)}`}
           style={{
             /* 用百分比而不是 px：外框的寬高會被吸到整數實體像素（見 wrapGeo），
                百分比才會跟著一起吸，畫布的中心才不會跟外框的中心差半個像素。 */
@@ -4551,10 +4560,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           {texOf({ tex: image.shapeTex, dots: image.shapeDots }) === 'stripe' && (() => {
             const vert = image.shapeStripeDir !== 'h';   // 預設直式
             const span = vert ? image.width : image.height;
-            /* 條寬「對齊到剛好填滿」——跟 canvas 那支 paintStripes 同一支 stripeFit，
+            /* 條數就是滑桿的值 —— 跟 canvas 那支 paintStripes 同一支 stripeBand，
                所以預覽跟匯出的條數與寬度完全一樣，頭尾也都是完整的一條。 */
-            const { band } = stripeFit(span,
-              Math.max(0.5, stripeBandOf(image.width, image.height, image.shapeStripeW ?? STRIPE_W_DEFAULT)));
+            const { band } = stripeBand(span, image.shapeStripeN ?? STRIPE_N_DEFAULT);
             const a = image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR;
             const b = image.shapeStripeB || '#FFFFFF';
             const id = `sstripe-${image.id}`;
@@ -5711,7 +5719,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const setPatternGap = (v: number) => patchPattern({ gap: v });
   /* 條紋：粗細、方向、兩個顏色。跟點點／星星／愛心共用同一個「紋理」選單，
      但參數不一樣（沒有間距，改成粗細＋方向）。 */
-  const stripeW = patternOpts.stripeW ?? STRIPE_W_DEFAULT;
+  const stripeN = patternOpts.stripeN ?? STRIPE_N_DEFAULT;
   const stripeDir: 'h' | 'v' = patternOpts.stripeDir === 'h' ? 'h' : 'v';
   // 第一個顏色沒挑過就跟著「紋理當下的顏色」走，第二個從純白開始
   const stripeA = patternOpts.stripeA || patternColor;
@@ -9263,7 +9271,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           lineW: fImg.shapeLineW, glow: fImg.shapeGlow as any,
           glowColor: fImg.shapeGlowColor, strokeW: fImg.shapeStrokeW,
           strokeColor: fImg.shapeStrokeColor,
-          tex: fImg.shapeTex, stripeW: fImg.shapeStripeW, stripeDir: fImg.shapeStripeDir,
+          tex: fImg.shapeTex, stripeN: fImg.shapeStripeN, stripeDir: fImg.shapeStripeDir,
           stripeA: fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR,
           stripeB: fImg.shapeStripeB || '#FFFFFF',
           dots: fImg.shapeDots, dotSize: fImg.shapeDotSize,
@@ -9336,7 +9344,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         ctx.translate(fw / 2, fh / 2);   // 紋理那兩支都是以圖形中心為原點
         if (tx === 'dot') drawShapeDotsCanvas(ctx, fw, fh, fImg);
         else paintStripes(ctx, fw, fh, fw, fh,
-          fImg.shapeStripeW ?? STRIPE_W_DEFAULT, fImg.shapeStripeDir === 'h' ? 'h' : 'v',
+          fImg.shapeStripeN ?? STRIPE_N_DEFAULT, fImg.shapeStripeDir === 'h' ? 'h' : 'v',
           fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR, fImg.shapeStripeB || '#FFFFFF');
         ctx.restore();
       }
@@ -12541,9 +12549,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       </div>
                     </div>
                     {patternType === 'stripe' ? (
-                      /* 條紋沒有間距（一條接著一條），只有粗細；右邊那一格是方向 */
+                      /* 條紋沒有間距（一條接著一條），只有條數；右邊那一格是方向。
+                         滑桿左右各留 8px，畫出來的線才會收在自己那一欄裡。 */
                       <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c] items-end">
-                        {patternSlider('粗細', stripeW, (v: number) => patchPattern({ stripeW: v }), STRIPE_W_MAX)}
+                        <div className="px-2">
+                          {patternSlider('數量', stripeN, (v: number) => patchPattern({ stripeN: v }), STRIPE_N_MAX)}
+                        </div>
                         <div className="flex flex-col gap-1.5">
                           <span className="text-[9px] font-bold text-[#666] tracking-tighter uppercase">方向</span>
                           <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
