@@ -106,13 +106,20 @@ export const paintStripesRect = (
   if (w <= 0 || h <= 0) return;
   const span = dir === 'h' ? h : w;
   const { band, n } = stripeBand(span, count);
+  /* ── 為什麼是「先鋪滿 a，再只畫 b」───────────────────────────────
+     以前是一條一條輪流畫，而且每條都多鋪 0.6px 去擋接縫。
+     條的邊界是小數（span / n），所以兩條會在同一個像素上各畫一次 ——
+     那個像素被混了兩次，邊緣就變成兩像素寬的漸變（實測匯出時中位數 2px）。
+     改成：整片先填第一個顏色，再把「第二個顏色的那幾條」畫上去。
+     每一條的邊只被畫一次，就是乾淨的一個反鋸齒像素；
+     而且相鄰的 a 與 b 之間本來就沒有縫可以露，那 0.6px 的補丁也不需要了。 */
   ctx.save();
-  for (let i = 0; i < n; i++) {
-    ctx.fillStyle = i % 2 === 0 ? a : b;
-    // 多鋪 0.6px：相鄰兩條之間不要因為反鋸齒露出一條細縫（最後一條不會超出去，
-    // 因為呼叫端本來就把這一塊剪裁住了）
-    if (dir === 'h') ctx.fillRect(0, i * band, w, band + 0.6);
-    else ctx.fillRect(i * band, 0, band + 0.6, h);
+  ctx.fillStyle = a;
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = b;
+  for (let i = 1; i < n; i += 2) {
+    if (dir === 'h') ctx.fillRect(0, i * band, w, band);
+    else ctx.fillRect(i * band, 0, band, h);
   }
   ctx.restore();
 };

@@ -421,11 +421,16 @@ export const paintStripes = (
   const { band, n } = stripeBand(span, count);
   // 原點在中心，所以從 -span/2 開始鋪
   const x0 = -covW / 2, y0 = -covH / 2;
-  for (let i = 0; i < n; i++) {
-    c.fillStyle = i % 2 === 0 ? a : b;
-    // 多鋪 0.6px：相鄰兩條之間不要因為反鋸齒露出一條細縫
-    if (dir === 'h') c.fillRect(x0, y0 + i * band, covW, band + 0.6);
-    else c.fillRect(x0 + i * band, y0, band + 0.6, covH);
+  /* 先鋪滿第一個顏色，再只畫第二個顏色的那幾條 ——
+     每條邊只被畫一次，就是乾淨的一個反鋸齒像素。
+     （以前是一條一條輪流畫、每條多鋪 0.6px 擋接縫，兩條會在同一個像素上
+       各畫一次，邊緣因此變成兩像素寬的漸變。詳見 utils/pattern 的同名說明。） */
+  c.fillStyle = a;
+  c.fillRect(x0, y0, covW, covH);
+  c.fillStyle = b;
+  for (let i = 1; i < n; i += 2) {
+    if (dir === 'h') c.fillRect(x0, y0 + i * band, covW, band);
+    else c.fillRect(x0 + i * band, y0, band, covH);
   }
 };
 
