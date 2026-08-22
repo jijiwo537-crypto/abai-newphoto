@@ -6719,7 +6719,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
                               不會有欄位突然冒出來閃一下。 */}
-                          <div className="flex items-end gap-3 px-2">
+                          <div className="flex items-center gap-3 px-2">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('發光', Math.round(glowAmount(sel.glow) * 100), 0, 100,
                                 (v: number) => patch(v > 0 && !sel.glowInit
@@ -6731,7 +6731,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>
-                          <div className="flex items-end gap-3 px-2">
+                          <div className="flex items-center gap-3 px-2">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('描邊', Math.round((sel.strokeW ?? 0) * 10), 0, 100,
                                 (v: number) => patch({ strokeW: v / 10 }))}
