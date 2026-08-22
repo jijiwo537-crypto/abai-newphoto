@@ -1348,9 +1348,10 @@ export const ColorPick: React.FC<{
         title={label}
         aria-label={label}
         onClick={() => (onOpen ? onOpen() : setOpen(o => !o))}
-        /* -mb-1：items-end 是對齊「底部」，但滑桿的軌道在它那 16px 盒子的正中間
-           （距底 8px），色塊高 24px（距底 12px）—— 往下讓 4px 兩者的中心才齊平。 */
-        className="shrink-0 w-8 h-6 -mb-1 rounded-[4px] border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+        /* mb-px：items-end 對齊的是「盒子的底」，但滑桿那顆白球的底其實在
+           盒子底往上 1px（盒子高 16、球直徑 14、置中）。讓 1px，
+           色塊的下緣就跟白球的下緣切齊。 */
+        className="shrink-0 w-8 h-6 mb-px rounded-[4px] border border-white/10 shadow-inner hover:border-white/40 transition-colors"
         style={{ backgroundColor: value }}
       />
     );
@@ -1548,7 +1549,7 @@ export const TextEditorPanel: React.FC<{
               <>
                 {/* 滑桿與顏色並排；顏色是兩段式的（點一下才攤開色票），
                     所以不會有「拉到 1 的瞬間欄位冒出來閃一下」。 */}
-                <div className="flex items-end gap-3">
+                <div className="flex items-end gap-3 px-2">
                   <div className="flex-1 min-w-0">
                     {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
                   </div>
@@ -1596,7 +1597,7 @@ export const TextEditorPanel: React.FC<{
                 描邊 0～2px，一樣分 50 格（每格 0.04px）：最小那一格只有 0.04px，
                 從 0 拉出來時是慢慢浮現，不會一下就跳出一圈明顯的邊。
                 顏色欄一直都在，所以不會有「從 0 拉到 1 的瞬間欄位冒出來閃一下」。 */}
-            <div className="flex items-end gap-3">
+            <div className="flex items-end gap-3 px-2">
               <div className="flex-1 min-w-0">
                 {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
               </div>
@@ -1607,7 +1608,7 @@ export const TextEditorPanel: React.FC<{
                   onPick: c => onChange({ strokeColor: c }),
                 })} />
             </div>
-            <div className="flex items-end gap-3">
+            <div className="flex items-end gap-3 px-2">
               <div className="flex-1 min-w-0">
                 {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
               </div>
@@ -1682,7 +1683,7 @@ export const ShapeEditorPanel: React.FC<{
               反過來不成立：單獨挑發光的顏色時，圖形的顏色不會被動到。 */}
           {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c, shapeGlowColor: c }), true)}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
-          <div className="flex items-end gap-3">
+          <div className="flex items-end gap-3 px-2">
             <div className="flex-1 min-w-0">
               {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
                 v => onChange({ shapeGlow: v } as any))}
@@ -1694,7 +1695,7 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>
-          <div className="flex items-end gap-3">
+          <div className="flex items-end gap-3 px-2">
             <div className="flex-1 min-w-0">
               {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
                 v => onChange({ shapeStrokeW: v / 10 }))}
