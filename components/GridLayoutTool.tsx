@@ -1335,8 +1335,26 @@ export const ColorPick: React.FC<{
   onPick: (c: string) => void;
   /** 有給就不再原地攤開色票，改成叫呼叫端切到獨立的顏色頁 */
   onOpen?: () => void;
-}> = ({ label, value, colors, onPick, onOpen }) => {
+  /** 只留最右邊那一顆色塊：不畫外框、不寫「顏色」、也不寫色號。
+      跟滑桿並排時就是這一種 —— 左邊那個標題（發光／描邊）已經說明了它是誰的顏色，
+      色號沒有人會去讀，而那張卡片本來吃掉了一半的寬度，滑桿只剩一半可以拖。 */
+  compact?: boolean;
+}> = ({ label, value, colors, onPick, onOpen, compact }) => {
   const [open, setOpen] = useState(false);
+  if (compact) {
+    return (
+      <button
+        type="button"
+        title={label}
+        aria-label={label}
+        onClick={() => (onOpen ? onOpen() : setOpen(o => !o))}
+        /* -mb-1：items-end 是對齊「底部」，但滑桿的軌道在它那 16px 盒子的正中間
+           （距底 8px），色塊高 24px（距底 12px）—— 往下讓 4px 兩者的中心才齊平。 */
+        className="shrink-0 w-8 h-6 -mb-1 rounded-[4px] border border-white/10 shadow-inner hover:border-white/40 transition-colors"
+        style={{ backgroundColor: value }}
+      />
+    );
+  }
   return (
     <div className="space-y-1.5">
       <div
@@ -1530,9 +1548,11 @@ export const TextEditorPanel: React.FC<{
               <>
                 {/* 滑桿與顏色並排；顏色是兩段式的（點一下才攤開色票），
                     所以不會有「拉到 1 的瞬間欄位冒出來閃一下」。 */}
-                <div className="grid grid-cols-2 gap-3 items-end">
-                  {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
-                  <ColorPick label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
+                <div className="flex items-end gap-3">
+                  <div className="flex-1 min-w-0">
+                    {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+                  </div>
+                  <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
                     onPick={c => onChange({ glowColor: c })}
                     onOpen={() => onPickColor ? onPickColor('glow') : setColorPage({
                       value: layer.glowColor || '#FFFFFF', colors: GLOW_COLORS,
@@ -1576,18 +1596,22 @@ export const TextEditorPanel: React.FC<{
                 描邊 0～2px，一樣分 50 格（每格 0.04px）：最小那一格只有 0.04px，
                 從 0 拉出來時是慢慢浮現，不會一下就跳出一圈明顯的邊。
                 顏色欄一直都在，所以不會有「從 0 拉到 1 的瞬間欄位冒出來閃一下」。 */}
-            <div className="grid grid-cols-2 gap-3 items-end">
-              {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
-              <ColorPick label="顏色" value={layer.strokeColor || '#000000'}
+            <div className="flex items-end gap-3">
+              <div className="flex-1 min-w-0">
+                {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
+              </div>
+              <ColorPick compact label="顏色" value={layer.strokeColor || '#000000'}
                 onPick={c => onChange({ strokeColor: c })}
                 onOpen={() => onPickColor ? onPickColor('stroke') : setColorPage({
                   value: layer.strokeColor || '#000000',
                   onPick: c => onChange({ strokeColor: c }),
                 })} />
             </div>
-            <div className="grid grid-cols-2 gap-3 items-end">
-              {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
-              <ColorPick label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
+            <div className="flex items-end gap-3">
+              <div className="flex-1 min-w-0">
+                {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+              </div>
+              <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
                 onPick={c => onChange({ glowColor: c })}
                 onOpen={() => onPickColor ? onPickColor('glow') : setColorPage({
                   value: layer.glowColor || '#FFFFFF', colors: GLOW_COLORS,
@@ -1658,20 +1682,24 @@ export const ShapeEditorPanel: React.FC<{
               反過來不成立：單獨挑發光的顏色時，圖形的顏色不會被動到。 */}
           {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c, shapeGlowColor: c }), true)}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
-          <div className="grid grid-cols-2 gap-3 items-end">
-            {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
-              v => onChange({ shapeGlow: v } as any))}
-            <ColorPick label="顏色" value={layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR}
+          <div className="flex items-end gap-3">
+            <div className="flex-1 min-w-0">
+              {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
+                v => onChange({ shapeGlow: v } as any))}
+            </div>
+            <ColorPick compact label="顏色" value={layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR}
               colors={GLOW_COLORS} onPick={c => onChange({ shapeGlowColor: c })}
               onOpen={() => setColorPage({
                 value: layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR, colors: GLOW_COLORS,
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>
-          <div className="grid grid-cols-2 gap-3 items-end">
-            {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
-              v => onChange({ shapeStrokeW: v / 10 }))}
-            <ColorPick label="顏色" value={layer.shapeStrokeColor || '#000000'}
+          <div className="flex items-end gap-3">
+            <div className="flex-1 min-w-0">
+              {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
+                v => onChange({ shapeStrokeW: v / 10 }))}
+            </div>
+            <ColorPick compact label="顏色" value={layer.shapeStrokeColor || '#000000'}
               onPick={c => onChange({ shapeStrokeColor: c })}
               onOpen={() => setColorPage({
                 value: layer.shapeStrokeColor || '#000000',

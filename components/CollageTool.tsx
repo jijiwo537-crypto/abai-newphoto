@@ -71,6 +71,16 @@ const DEFAULT_MASK_SCALE = 0.5;
 const MAX_FINAL_DIM = 4096;
 /** 導出畫布的總像素上限。真正把分頁殺掉的是「面積」不是「邊長」 */
 const MAX_EXPORT_PIXELS = 20_000_000;
+/* 匯出的「底線解析度」（長邊）。
+   以前成品最大就是原圖那麼大（finalScale 封頂 1.0）—— 照片小的時候，
+   畫在上面的圖案、圖形、文字、連線、紋理就只分到那幾個像素，邊緣自然糊。
+   實測（量「從一邊過渡到另一邊要幾個像素」）：
+     原圖 900×600  → 成品 900×900   邊緣 2px，第 90 百分位 3px
+     原圖 2400×3200 → 成品 3600×3200 邊緣 1px，第 90 百分位 1px（96% 的邊一個像素就過渡完）
+   那些東西是用路徑畫的，給多少像素就有多利。所以長邊不足這個數就整張放大上去。
+   照片本身不會因此多出細節（它在手機上本來就是被放大來看的），
+   但所有邊緣會真正到達「一個像素過渡完」＝ 看不到鋸齒。 */
+const EXPORT_MIN_DIM = 2400;
 /** IG 預覽裡「貼文與貼文之間」的間距。頭、尾、中間統一都用這個值 */
 const IG_GAP = 14;
 /** 動態牆最上面與最下面多留的空間：多一點才滑得舒服 */
@@ -591,7 +601,7 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
   { id: 'float', name: '上下飄' },
   { id: 'sway', name: '左右晃' },
-  { id: 'breathe', name: '不規則縮放' },
+  { id: 'breathe', name: '縮放' },
   { id: 'spin', name: '旋轉' },
   { id: 'wobble', name: '搖擺' },
   { id: 'orbit', name: '繞小圈' },
@@ -665,9 +675,19 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
   switch (kind) {
     case 'float':   return { k: 1, dx: 0, dy: Math.sin(w * 2.0) * A * 0.28, rot: 0, a: 1 };
     case 'sway':    return { k: 1, dx: Math.sin(w * 1.7) * A * 0.28, dy: 0, rot: 0, a: 1 };
-    // 兩個不同週期的正弦疊起來 → 縮放看起來不規則、不像節拍器
-    // 幅度加倍（滑桿還是 0～100，只是同一格數字的效果變兩倍）
-    case 'breathe': return { k: 1 + (Math.sin(w * 1.9) * 0.62 + Math.sin(w * 3.1 + 1.3) * 0.38) * A * 0.44, dx: 0, dy: 0, rot: 0, a: 1 };
+    /* 縮放：單純一顆正弦，大…小…大…小，在兩個固定大小之間來回。
+       （以前是兩個不同週期的正弦疊起來，所以每一次的最大最小都不一樣 ——
+         看起來就是「不規則」，那不是要的。）
+
+       同時要「每個圖案的節奏不一樣，但各自看都是規律的」，
+       所以只動兩件事、不動波形：
+         · 起點：phase（呼叫端已經依 id 給了各自不同的值）
+         · 快慢：由同一個 phase 推出來的 ±17% 倍率
+       於是兩顆圖案不會同時最大，但單看任何一顆，都是等速的一大一小。 */
+    case 'breathe': {
+      const rate = 1 + (((phase * 0.6180339887) % 1) - 0.5) * 0.34;   // 0.83 ~ 1.17
+      return { k: 1 + Math.sin(t * speed * 1.9 * rate + phase) * A * 0.44, dx: 0, dy: 0, rot: 0, a: 1 };
+    }
     /* 旋轉是「累積量」不是「來回擺」，所以不能吃 phase ——
        phase 最大 6.28，乘上去等於一開場就先轉掉大半圈，
        那正是主人看到的「開頭莫名其妙轉很多圈」。這裡一律從 0 開始轉。 */
@@ -1030,7 +1050,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           1600 各算了 30 次，等於完全沒省到）。 */
     if (isMain && lv.key && lv.key !== baseKey) lv.liveUntil = now + 300;
     const live = isMain && lv.liveUntil > now;
-    const cap = live ? 640 : 1600;
+    /* 匯出時工作尺寸放寬到 2400：成品現在最少也有 2400px 長邊（見 EXPORT_MIN_DIM），
+       圖片物件如果還卡在 1600，畫上去等於被放大過 —— 那一顆就會比旁邊的
+       圖形與文字糊。預覽維持 1600（拖曳中 640），手感完全沒動到。 */
+    const cap = live ? 640 : (isMain ? 1600 : 2400);
     const key = baseKey + '|' + cap;
     const hit = objFxCache.current.get(o.id);
     if (hit && hit.key === key) return hit.cv;
@@ -1170,8 +1193,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     ({ xs: [], ys: [], cxs: [], cys: [] }));
   objLinesRef.current = (selfId?: string) => {
     const xs: number[] = [], ys: number[] = [], cxs: number[] = [], cys: number[] = [];
+    /* 符號自成一群：符號只跟符號對齊，其他物件也看不到符號的邊。
+       符號通常是一堆散在畫面上的小裝飾，跟照片、文字混在一起對齊，
+       畫面上會到處亮線、也很難拖到想要的位置。
+       （找不到自己時一律當「不是符號」——那一邊比較保守。） */
+    const isSym = (z: any) => !!(z && z.type === 'text' && z.sym);
+    const selfSym = isSym(objectsRef.current.find((z: any) => z && z.id === selfId));
     for (const o of objectsRef.current) {
       if (!o || o.id === selfId || !o.w || !o.h) continue;
+      if (isSym(o) !== selfSym) continue;
       // 跟自己一樣用「旋轉之後的外接框」，轉過的物件才不會亮在半個身子外
       const { bw, bh } = aabbOf(o.w, o.h, o.rot || 0);
       const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
@@ -5212,7 +5242,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          的上限（編碼器與記憶體的現實），所以影片的清晰度就是成品本人。 */
       const rawSize = collageSizeOf(layout, imageState.originalW, imageState.originalH, maskScale);
       const cap = Math.min(MOTION_MAX_DIM, MAX_FINAL_DIM);
-      const k = Math.max(rawSize.w, rawSize.h) > cap ? cap / Math.max(rawSize.w, rawSize.h) : 1;
+      const longV = Math.max(rawSize.w, rawSize.h);
+      /* 跟存成圖片同一條規矩：小圖先拉到底線，再吃編碼器的上限。
+         影片的上限（MOTION_MAX_DIM）比圖片低，所以多半會被夾在那裡。 */
+      let k = longV > 0 && longV < EXPORT_MIN_DIM ? EXPORT_MIN_DIM / longV : 1;
+      if (longV * k > cap) k = cap / longV;
       const scale = Math.floor(imageState.originalW * k) / imageState.baseW;
       animRef.current = buildAnim(0);
       renderToCanvas(cv, scale);          // 先畫第一格，不然開頭會錄到黑畫面
@@ -5275,10 +5309,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
              ② 總像素 ≤ MAX_EXPORT_PIXELS（真正會爆的是面積不是邊長）
            而且量的是「拼完之後的畫布」不是原圖 —— 拿原圖量的話，
            四周包圍那種畫布是原圖的 1.67 倍寬高，會整個超出去。 */
-        let finalScale = 1.0;
-        if (Math.max(rawSize.w, rawSize.h) > MAX_FINAL_DIM) {
-          finalScale = MAX_FINAL_DIM / Math.max(rawSize.w, rawSize.h);
-        }
+        const rawLong = Math.max(rawSize.w, rawSize.h);
+        /* 先拉到底線解析度（見 EXPORT_MIN_DIM），再吃上面那兩道上限 ——
+           順序不能反，不然小圖永遠碰不到底線。 */
+        let finalScale = rawLong > 0 && rawLong < EXPORT_MIN_DIM ? EXPORT_MIN_DIM / rawLong : 1.0;
+        if (rawLong * finalScale > MAX_FINAL_DIM) finalScale = MAX_FINAL_DIM / rawLong;
         const area = rawSize.w * finalScale * rawSize.h * finalScale;
         if (area > MAX_EXPORT_PIXELS) finalScale *= Math.sqrt(MAX_EXPORT_PIXELS / area);
 
@@ -6684,20 +6719,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
                               不會有欄位突然冒出來閃一下。 */}
-                          <div className="grid grid-cols-2 gap-3 items-end">
-                            {shapeSlider('發光', Math.round(glowAmount(sel.glow) * 100), 0, 100,
-                              (v: number) => patch(v > 0 && !sel.glowInit
-                                /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色 */
-                                ? { glow: v, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
-                                : { glow: v }))}
-                            <ColorPick label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
+                          <div className="flex items-end gap-3">
+                            <div className="flex-1 min-w-0">
+                              {shapeSlider('發光', Math.round(glowAmount(sel.glow) * 100), 0, 100,
+                                (v: number) => patch(v > 0 && !sel.glowInit
+                                  /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色 */
+                                  ? { glow: v, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
+                                  : { glow: v }))}
+                            </div>
+                            <ColorPick compact label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>
-                          <div className="grid grid-cols-2 gap-3 items-end">
-                            {shapeSlider('描邊', Math.round((sel.strokeW ?? 0) * 10), 0, 100,
-                              (v: number) => patch({ strokeW: v / 10 }))}
-                            <ColorPick label="顏色" value={sel.strokeColor || '#000000'}
+                          <div className="flex items-end gap-3">
+                            <div className="flex-1 min-w-0">
+                              {shapeSlider('描邊', Math.round((sel.strokeW ?? 0) * 10), 0, 100,
+                                (v: number) => patch({ strokeW: v / 10 }))}
+                            </div>
+                            <ColorPick compact label="顏色" value={sel.strokeColor || '#000000'}
                               onPick={(c: string) => patch({ strokeColor: c })}
                               onOpen={() => setColorPickerTarget('shapeStroke')} />
                           </div>
