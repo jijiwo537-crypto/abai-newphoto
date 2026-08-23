@@ -1,4 +1,5 @@
 import heic2any from 'heic2any';
+import { isPlainWebImage, isVideoFileName } from './fileTypes';
 
 // ImageMagick 只在最後一道防線用到（TIFF、PSD、以及 HEIC/RAW 解碼失敗時），
 // 但它的 JS 膠水層與 13.7MB 的 wasm 若靜態載入，等於每位使用者一開 app
@@ -187,4 +188,52 @@ export async function processImageFile(file: File, onPreview?: (url: string) => 
 
     throw new Error("無法解析此圖片格式，抱歉！核心模組不支援該特殊編碼或檔案已損毀。\n" + file.name);
   }
+}
+
+
+/**
+ * 把「任何圖片檔」變成一個各處都吃得下的 File。
+ *
+ * ── 為什麼需要這一支 ──────────────────────────────────────────────
+ * processImageFile 回傳的是一條網址，但拼圖那幾支工具收的是 File
+ * （它們自己 createObjectURL、自己丟進 <img>）。所以以前只有「編輯」「相機」
+ * 「相簿」走得到解碼，**拼圖的入口與工具內的匯入完全沒有解碼**——
+ * 丟一張 RAW 或 HEIC 進創意拼圖，<img> 載不出來，畫面就是空的。
+ * 這一支把解碼補在最前面，而且回傳還是 File，所以下游一行都不用改。
+ *
+ * 影片原樣放行；瀏覽器本來就讀得懂的 JPEG/PNG/WebP… 也原樣放行
+ * （不多一次轉檔、不掉畫質、不多花時間）。
+ * 只有真的需要解碼的（RAW／HEIC／TIFF／PSD…）才會走解碼器。
+ */
+export async function normalizeImageFile(
+  file: File,
+  onPreview?: (url: string) => void,
+): Promise<File> {
+  if (isVideoFileName(file) || isPlainWebImage(file)) return file;
+  const url = await processImageFile(file, onPreview);
+  try {
+    const blob = await (await fetch(url)).blob();
+    /* 副檔名換成 .jpg：下游有些地方會看副檔名判斷型別，
+       留著 .ARW 會讓它們以為還是 RAW。 */
+    const base = file.name.replace(/\.[^.]+$/, '');
+    return new File([blob], `${base}.jpg`, { type: blob.type || 'image/jpeg', lastModified: file.lastModified });
+  } finally {
+    /* 上面已經把位元組讀進 blob 了，這條中繼網址就沒用了。
+       （processImageFile 內部若直接回傳原生網址，收掉它也沒關係 ——
+       因為那種情況在上面 isPlainWebImage 就先攔掉了。） */
+    try { URL.revokeObjectURL(url); } catch { /* 不是 blob 網址就算了 */ }
+  }
+}
+
+/** 一批一起處理，順序不變。任何一個失敗就把那一個原樣放行（讓下游自己報錯）。 */
+export async function normalizeImageFiles(
+  files: File[],
+  onPreview?: (url: string) => void,
+): Promise<File[]> {
+  const out: File[] = [];
+  for (const f of files) {
+    try { out.push(await normalizeImageFile(f, onPreview)); }
+    catch { out.push(f); }
+  }
+  return out;
 }
