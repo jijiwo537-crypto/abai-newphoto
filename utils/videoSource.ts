@@ -192,9 +192,17 @@ export const videoFrame = (el: any, maxPx = 0): CanvasImageSource => {
   let e = frameCache.get(el);
   if (!e) { e = { cv: document.createElement('canvas'), tok: -1 }; frameCache.set(el, e); }
   const cv = e.cv;
-  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; e.tok = -1; }
   const tok = videoToken(el);
-  if (e.tok !== tok) {
+  /* 什麼時候要重畫這一格：
+       ① 影格換了（正常的播放）—— 順便換成這一次要的尺寸；
+       ② 這一次要得比手上這張大（例如影片停下來、預覽切回完整倍率）。
+     反過來，「同一格、只是這次要得比較小」就**不要重畫**，直接把手上這張
+     交出去讓呼叫端自己縮 —— 離開工具時要做一張縮圖，那一下如果照著小尺寸
+     重新落一次格，等於把 1080p 的影格再解一次（實測那一下佔掉整個離開時間
+     的四分之一）。 */
+  const needBigger = cv.width < w || cv.height < h;
+  if (e.tok !== tok || needBigger) {
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     // alpha:false —— 影片沒有透明度，關掉這一項瀏覽器可以少做一次混色
     const g = cv.getContext('2d', { alpha: false });
     if (!g) return el;
