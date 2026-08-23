@@ -415,9 +415,10 @@ const App: React.FC = () => {
 
       <input 
         type="file" 
-        ref={collageFileInputRef} 
-        className="hidden" 
-        accept="image/*"
+        ref={collageFileInputRef}
+        className="hidden"
+        /* 創意拼圖的底可以是照片、也可以是一段影片 */
+        accept="image/*,video/*"
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) handleImportToCollage(file);
