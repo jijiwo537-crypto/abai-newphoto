@@ -2877,6 +2877,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
   const vidQualityRef = useRef(1);
   /** 這一次重畫不要畫選取框／對齊線那一組。只有「離開前拍縮圖」那一下會立起來。 */
   const hideChromeRef = useRef(false);
+  /** 每次重畫順手留下的「乾淨成品縮圖」（沒有選取框）。返回鍵直接拿它用。 */
+  const thumbRef = useRef<HTMLCanvasElement | null>(null);
+  /** 上一次留縮圖的時間 —— 0.4 秒留一次就夠 */
+  const thumbAtRef = useRef(0);
   /** 播動畫時實際用的倍率（見 MAX_MOTION_PIXELS）。跑不動時會被保險絲往下調 */
   const motionScaleRef = useRef(1);
   /** 上面那個值的上限：畫得動的話會慢慢升回來 */
@@ -4858,6 +4862,32 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
 
     drawObjects(aboveObjs);
 
+    /* ── 歷史紀錄的縮圖，就在這一行拍 ────────────────────────────────
+       這裡是「成品都畫完了、選取框還沒畫上去」的唯一一個時間點 ——
+       在這裡拍，縮圖天生就是乾淨的，離開時不用為了抹掉選取框再重畫一次。
+
+       為什麼要這樣做：返回鍵按下去要**立刻**退出，任何同步工作都不能留在
+       那條路上。以前是按下去才現拍（重畫一次 ＋ 編一張 JPEG ＋ 大圖再編一次），
+       所以底圖愈大等愈久。現在畫面每畫一次就順手留一張，返回鍵那一下
+       手上已經有圖了，一格都不用再算。
+       0.4 秒才留一次，播影片時多出來的成本可以忽略（實測一次約 2 毫秒）。 */
+    if (isMain) {
+      const nowT = performance.now();
+      if (nowT - thumbAtRef.current > 400) {
+        thumbAtRef.current = nowT;
+        try {
+          let tc = thumbRef.current;
+          if (!tc) { tc = document.createElement('canvas'); thumbRef.current = tc; }
+          const tk = Math.min(1, 720 / Math.max(targetCanvas.width, targetCanvas.height));
+          const tw = Math.max(1, Math.round(targetCanvas.width * tk));
+          const th = Math.max(1, Math.round(targetCanvas.height * tk));
+          if (tc.width !== tw || tc.height !== th) { tc.width = tw; tc.height = th; }
+          const tg = tc.getContext('2d');
+          if (tg) { tg.imageSmoothingQuality = 'high'; tg.drawImage(targetCanvas, 0, 0, tw, th); }
+        } catch { /* 拍不成就算了，下次再拍 */ }
+      }
+    }
+
     if (isMain && !hideChromeRef.current && guides.length) {
       ctx.save();
       /* 經典拼圖那邊是 2 CSS px 的 bg-blue-500。這裡畫在畫布上，
@@ -4975,41 +5005,33 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
      不會每點進去看一次就多一張一模一樣的。 */
   const histIdRef = useRef(histKey || `collage-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   /**
-   * 按返回鍵要做的事。
+   * 按返回鍵要做的事。原則只有一條：**這條路上不准有任何跟資料量有關的工作**。
    *
-   * 以前是 `recordHistory(); onHome();` —— 看起來沒問題，但 recordHistory 的
-   * 前半段是**同步的**（整張拼圖重畫一次 ＋ 編一張 JPEG），而那個時候：
-   *   ‧ 影片的解碼器還在跑，
-   *   ‧ 影片那支重畫迴圈也還在每一格畫整張拼圖，
-   * 三件事在同一條主執行緒上搶 —— 按下去到畫面真的切走，中間就是一段空白。
-   * 影片愈大、拼圖愈複雜，那段空白愈長（實測純照片 144ms、影片 248ms，
-   * 而手機上還要再乘好幾倍）。
+   * 上一版已經把「把影片寫進資料庫」搬走了，但還留了三件同步的重活在路上：
+   *   ① 為了抹掉選取框，整張拼圖重畫一次；
+   *   ② 把成品編成一張 JPEG（toDataURL）；
+   *   ③ 底是照片時，還要把**原尺寸**那張（可能是 4000×3000）再編一次 JPEG。
+   * 三件都跟素材大小成正比 —— 所以「照片大一點、影片長一點就要等更久」。
+   * 這也是為什麼上一輪量到的 58ms 在手機上仍然是「等很久」：
+   *   量的是桌機，而這三件事在手機上要乘好幾倍。
    *
-   * 現在的順序是：**先煞車，再記錄，最後退出**。
-   *   ① leavingRef 一立起來，重畫迴圈下一格就直接 return；
-   *   ② 影片全部暫停，解碼器不再跟我們搶；
-   *   ③ 這時候主執行緒是乾淨的，縮圖那一下才快；
-   *   ④ 退出。
-   * 真正重的那一段（把整段影片讀進資料庫）本來就是非同步的，
-   * 它會在畫面已經切走之後自己慢慢做完。
+   * 現在整條路只剩兩個動作，兩個都是常數時間、跟素材大小完全無關：
+   *   ① 立旗子 ＋ 暫停影片；② onHome()。
+   * ①～③ 全部搬到 whenIdle：縮圖改成畫面每畫一次就順手留一張乾淨的
+   * （見 renderToCanvas 末尾），另外兩個編碼在主頁畫出來之後才做。
    */
   const leaveToHome = useCallback(() => {
     leavingRef.current = true;
+    /* 這條路上**只准有這兩件事**，兩件都是常數時間：
+         ① 立旗子 ＋ 暫停影片（純狀態改動，不碰任何像素）
+         ② onHome()
+       記錄歷史、編 JPEG、把影片寫進資料庫全部搬到 whenIdle —— 那時候
+       主頁已經畫出來了，慢慢做沒有人會感覺到。縮圖不用現拍：畫面每畫一次
+       就已經留了一張乾淨的（見 renderToCanvas 裡拍縮圖那一段）。 */
     try { pauseVideos(allVideosRef.current()); } catch { /* 停不了就算了 */ }
-    /* 縮圖要拍畫面上那張，所以先把選取框／對齊線抹掉再重畫一次。
-       這一次重畫走的是主畫布那條路，快取全熱，比「另外開一張畫布從頭算」
-       便宜一個數量級。 */
-    try {
-      const cv = canvasRef.current;
-      if (cv && (selectedObj || selectedTarget)) {
-        hideChromeRef.current = true;
-        renderToCanvasRef.current(cv, drawnScaleRef.current);
-      }
-    } catch { /* 畫不出來就算了，下面照樣記錄 */ }
-    try { recordHistoryRef.current?.(); } catch { /* 記錄失敗不能擋著離開 */ }
-    hideChromeRef.current = false;
     onHome();
-  }, [onHome, selectedObj, selectedTarget]);
+    whenIdle(() => { try { recordHistoryRef.current?.(); } catch { /* 記錄失敗不影響任何事 */ } });
+  }, [onHome]);
 
   const recordHistory = useCallback(async () => {
     if (!imageState) return;
@@ -5017,20 +5039,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
       const off = getLayoutOffsets();
       if (!off) return;
       /* 縮圖用的成品：小一張就夠，首頁只拿它當格子。
-         **直接拍畫面上那一張**，不要另外重畫一次整張拼圖 ——
-         重畫走的是「不是主畫布」那條路（isMain 為 false ⇒ 每一層的快取都
-         用不到、還要為每一層開新的離屏畫布）。底圖是影片時實測那一下就吃掉
-         整個離開時間的四分之一，而畫面上那張本來就是同一個成品。
-         （選取框已經由 leaveToHome 先抹掉了，見那裡。）
-         真的拿不到畫布時才退回原本那條路，行為完全一樣。 */
+         **拿畫圖時順手留下的那一張**（thumbRef，見 renderToCanvas 末尾）——
+         那張天生沒有選取框，而且早就畫好了。這支現在是在「畫面已經切走」
+         之後才跑的，主畫布已經拆掉，本來也拿不到了。
+         真的沒有留成（極少見：一次都還沒畫完就離開）才退回原本那條路。 */
       const cv = document.createElement('canvas');
-      const liveCv = canvasRef.current;
+      const snap = thumbRef.current;
       const k = Math.max(0.25, 720 / Math.max(off.cw, off.ch));
-      if (liveCv && liveCv.width > 0 && liveCv.height > 0) {
-        cv.width = Math.max(1, Math.round(off.cw * k));
-        cv.height = Math.max(1, Math.round(off.ch * k));
+      if (snap && snap.width > 0 && snap.height > 0) {
+        cv.width = snap.width; cv.height = snap.height;
         const g = cv.getContext('2d');
-        if (g) { g.imageSmoothingQuality = 'high'; g.drawImage(liveCv, 0, 0, cv.width, cv.height); }
+        if (g) g.drawImage(snap, 0, 0);
       } else {
         renderToCanvas(cv, k);
       }

@@ -844,8 +844,11 @@ export const HomePage: React.FC<HomePageProps> = ({
     return () => { alive = false; off(); };
   }, []);
 
-  /** 主視覺要畫哪一張：自己挑的最優先，沒挑就用最近一張作品（大圖優先） */
-  const heroSrc = previews.hero || recent[0]?.hero || recent[0]?.thumb || null;
+  /** 主視覺要畫哪一張：**只認自己匯入的那張**。
+      以前沒挑的時候會自動抓最近一張作品（recent[0]）—— 於是每存一次檔，
+      首頁最上面那張大圖就自己換掉了，人沒挑過卻一直在變。
+      現在沒匯入就是空的（點下去挑一張），存檔再也不會動到它。 */
+  const heroSrc = previews.hero || null;
 
   /** 整頁共用的那顆檔案選擇器（掛在最外層，見 return 最下面） */
   const previewInput = (
