@@ -1862,6 +1862,8 @@ export type ImageAdjustPanelProps = {
   onSliderOpenChange?: (open: boolean) => void;
   /** 佈局裡的格子沒有「形狀」那一組，傳 true 就把它藏起來 */
   hideShape?: boolean;
+  /** 影片物件沒有「構圖」——構圖是把裁切的結果烤成一張圖，烤完就不是影片了 */
+  hideCompose?: boolean;
   /** 滑桿排成一排：名稱、軌道、數值全部同一列，上面不再有一排字 */
   inlineSlider?: boolean;
 };
@@ -1870,7 +1872,7 @@ export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   img, set, lutList, loadingLut, setLoadingLut, lutRevision, setLutRevision,
   adjustSub, setAdjustSub, effectCard, setEffectCard, effectDetail, setEffectDetail,
   shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
-  setTuningEdge, openComposeFor, composeOpen, onLeaveCompose, hideShape, deferSlider, onSliderOpenChange, inlineSlider,
+  setTuningEdge, openComposeFor, composeOpen, onLeaveCompose, hideShape, hideCompose, deferSlider, onSliderOpenChange, inlineSlider,
 }) => {
 const fx = img.fx || {};
 const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
@@ -1913,7 +1915,7 @@ const CATS = ([
   ['shape', 'shapes', '造型'],
   // 構圖圖標跟「編輯」那邊用同一顆（crop）
   ['compose', 'crop', '構圖'],
-] as const).filter(c => !(hideShape && c[0] === 'shape'));
+] as const).filter(c => !(hideShape && c[0] === 'shape') && !(hideCompose && c[0] === 'compose'));
 
 // 編輯同款的圓形工具鈕
 /* icon 傳字串＝用圖示字型那一顆；傳一個元素＝直接畫那個元素。
