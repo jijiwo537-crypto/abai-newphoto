@@ -155,6 +155,56 @@ export const pauseVideos = (list: HTMLVideoElement[]) => {
   list.forEach(v => { try { if (!v.paused) v.pause(); } catch { /* 停不了就算了 */ } });
 };
 
+/* ── 影片的「這一格」先落到一張普通畫布上 ────────────────────────────────
+   把 <video> 直接畫進拼圖的畫布很貴，而且貴得很不直覺：
+
+     ‧ 拼圖的畫布是 Display P3 的（見 utils/colorSpace），
+     ‧ 畫上去的時候還帶著旋轉與縮放，
+     ‧ 而影片解出來的那一格是 YUV、不是 RGB。
+
+   三件事湊在一起，Skia 每一次 drawImage 都得重做「YUV → P3 ＋ 幾何變換」，
+   一條快速路徑都走不到。實測**一次 13.9 毫秒**、佔掉整個畫面 42% 的時間 ——
+   那就是「導入影片之後格數掉下來」的全部原因，跟圖案、遮罩、濾鏡都無關。
+
+   改成兩段：影片先「原尺寸、不縮放、普通 sRGB」地畫進一張自己的畫布
+   （這是瀏覽器最擅長、也最短的那條路），之後所有人都拿那張畫布當來源。
+   畫布對畫布的 drawImage 是純記憶體搬移，同樣的縮放旋轉只要 0.06 毫秒。
+
+   同一格只會落一次（拿播放時間當號碼牌），所以一格裡被畫幾次都不會多花；
+   畫布掛在 WeakMap 上，影片被回收時它自己跟著走。 */
+const frameCache = new WeakMap<HTMLVideoElement, { cv: HTMLCanvasElement; tok: number }>();
+
+/**
+ * 拿這段影片「現在這一格」的畫布。
+ * 不是影片（或第一格還沒解出來）就原樣回傳 —— 所以呼叫端可以無腦包在外面，
+ * 圖片那條路一個位元組都不會變。
+ */
+export const videoFrame = (el: any, maxPx = 0): CanvasImageSource => {
+  if (!isVideoEl(el)) return el;
+  const vw = el.videoWidth | 0, vh = el.videoHeight | 0;
+  if (!vw || !vh || el.readyState < 2) return el;
+  /* maxPx：這一格最後會被畫成多大。一段 1080p 的影片顯示在 268px 的框裡，
+     落格時就直接落成 308px 就好 —— 落成 1920px 再讓每一次 drawImage 去做
+     高品質縮圖，等於同一件事做很多遍，而且每一遍都比這一次貴。
+     不傳就是原尺寸（底圖那一路要畫得很大，不能先縮）。 */
+  const k = maxPx > 0 ? Math.min(1, maxPx / Math.max(vw, vh)) : 1;
+  const w = Math.max(1, Math.round(vw * k)), h = Math.max(1, Math.round(vh * k));
+  let e = frameCache.get(el);
+  if (!e) { e = { cv: document.createElement('canvas'), tok: -1 }; frameCache.set(el, e); }
+  const cv = e.cv;
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; e.tok = -1; }
+  const tok = videoToken(el);
+  if (e.tok !== tok) {
+    // alpha:false —— 影片沒有透明度，關掉這一項瀏覽器可以少做一次混色
+    const g = cv.getContext('2d', { alpha: false });
+    if (!g) return el;
+    g.imageSmoothingQuality = 'high';
+    try { g.drawImage(el, 0, 0, w, h); } catch { return el; }
+    e.tok = tok;
+  }
+  return cv;
+};
+
 /** 這幾段影片裡最長的那一段有幾秒（讀不到就 0） */
 export const longestDuration = (list: HTMLVideoElement[]): number => {
   let d = 0;
