@@ -4,7 +4,7 @@ import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film } from 'lucide-react';
 import { Icon } from './Icon';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
@@ -24,6 +24,7 @@ import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stri
 import { ComposeStudio } from './ComposeStudio';
 import { StuckEscape } from './StuckEscape';
 import { VIDEO_ACCEPT, loadVideoEl, isVideoEl } from '../utils/videoSource';
+import { VideoGl } from '../utils/videoGl';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas, geoCssBox } from '../utils/compose';
@@ -56,16 +57,45 @@ export interface ImageCell {
 const isVideoFile = (f: File) => f.type.startsWith('video/') || /\.(mp4|mov|m4v|webm|ogv|3gp)$/i.test(f.name);
 
 /** 影片的原始尺寸：等 metadata 進來就有 videoWidth / videoHeight */
-const getVideoDimensions = (url: string): Promise<{ width: number; height: number }> => {
+/**
+ * 影片的尺寸，順便烤一張「第一格」。
+ *
+ * 那張第一格是給濾鏡／特效卡片牆用的：卡片是拿一條網址塞進 <img> 去重畫縮圖的，
+ * 而 <img src="blob:…mp4"> 永遠載不出來 —— 所以以前影片圖層的卡片牆整面是空的，
+ * 使用者根本看不到每個濾鏡長什麼樣（「影片大部分東西不能調整」的一部分）。
+ * 烤一張 PNG 當卡片的來源，卡片就跟圖片圖層長得一模一樣。
+ * 真正畫到畫面上的仍然是影片本人，這張只給卡片看。
+ */
+const getVideoDimensions = (url: string): Promise<{ width: number; height: number; poster?: string }> => {
   return new Promise((resolve) => {
     const v = document.createElement('video');
-    v.preload = 'metadata';
+    v.preload = 'auto';
     v.muted = true;
-    v.onloadedmetadata = () => resolve({
-      width: v.videoWidth || 800,
-      height: v.videoHeight || 600,
-    });
-    v.onerror = () => resolve({ width: 800, height: 600 });
+    (v as any).playsInline = true;
+    let done = false;
+    const finish = (poster?: string) => {
+      if (done) return; done = true;
+      resolve({ width: v.videoWidth || 800, height: v.videoHeight || 600, poster });
+      try { v.removeAttribute('src'); v.load(); } catch { /* 收不掉算了 */ }
+    };
+    const bake = () => {
+      try {
+        const w = v.videoWidth, h = v.videoHeight;
+        if (!w || !h) return finish();
+        const k = Math.min(1, 480 / Math.max(w, h));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(w * k));
+        c.height = Math.max(1, Math.round(h * k));
+        const g = c.getContext('2d');
+        if (!g) return finish();
+        g.drawImage(v, 0, 0, c.width, c.height);
+        finish(c.toDataURL('image/jpeg', 0.86));
+      } catch { finish(); }
+    };
+    v.onloadeddata = bake;
+    v.onerror = () => finish();
+    // 第一格一直等不到也不能卡住匯入
+    setTimeout(() => finish(), 4000);
     v.src = url;
   });
 };
@@ -1881,6 +1911,12 @@ export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
 const fx = img.fx || {};
 const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
 const fxVal = (key: string, dflt: number) => (fx as any)[key] ?? dflt;
+/* 卡片牆的縮圖來源。
+   影片不能直接用 img.src —— 卡片是把網址塞進 <img> 重畫的，
+   而 <img src="blob:…mp4"> 永遠載不出來，整面卡片會是空的。
+   匯入時已經烤了一張第一格（poster），拿它當來源，卡片就跟圖片長得一樣。
+   （創意拼圖是在外面就把 src 換成 poster 了，所以那邊照樣走 img.src。） */
+const cardSrc = (img.isVideo && img.poster) ? img.poster : img.src;
 
 /* ── 兩段式的那幾顆（形狀／描邊／發光）按下去要立刻有反應 ──────────────
  *
@@ -2152,8 +2188,8 @@ return (
           >
             <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
               <div className="absolute inset-0 bg-[#1a1a1a]" />
-              <CardThumb src={img.src} delay={li * 24}
-                         cacheKey={`${img.src}|lut:${l.id}|${lutRevision}`}
+              <CardThumb src={cardSrc} delay={li * 24}
+                         cacheKey={`${cardSrc}|lut:${l.id}|${lutRevision}`}
                          fx={{ lut: l.id, lutAmount: 100 }} />
               {loadingLut === l.id && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/40">
@@ -2191,8 +2227,8 @@ return (
           >
             <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
               <div className="absolute inset-0 bg-[#1a1a1a]" />
-              <CardThumb src={img.src} delay={fi * 24}
-                         cacheKey={`${img.src}|fx:${id}`}
+              <CardThumb src={cardSrc} delay={fi * 24}
+                         cacheKey={`${cardSrc}|fx:${id}`}
                          fx={{ [fxAmountId(id)]: FX_ON_AMOUNT[id] ?? 100 } as PhotoFx} />
               <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
                 <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${on ? 'text-white' : 'text-white/60'}`}>
@@ -3446,8 +3482,49 @@ const VideoLayer: React.FC<{
   image: any; boxW: number; boxH: number;
   /** 外層的版面樣式（位置／大小）。裁切過的時候會套在那個 overflow:hidden 的框上。 */
   style?: React.CSSProperties;
-}> = ({ image, boxW, boxH, style }) => {
+  /** 套了效果時，這個 <video> 只當 GPU 的來源 —— 讓外面拿得到它，不要再開第二份解碼 */
+  videoRef?: React.MutableRefObject<HTMLVideoElement | null>;
+  /** 第一格解出來了 */
+  onReady?: () => void;
+  /** 成品已經改由上面那張 canvas 顯示了，這一層就讓開（但**不能**卸載，卸載＝停止解碼） */
+  hidden?: boolean;
+  /**
+   * 套了濾鏡／調節時，畫面上顯示的不是 <video> 本人，而是這張 GPU 畫布。
+   * 它跟 <video> **套完全一樣的版面與變換** —— 裁切、旋轉、翻轉那一整套
+   * 幾何完全沿用下面既有的那份（geoCssBox），一行都沒有另外算，
+   * 所以「有沒有套濾鏡」不可能讓影片跑位。
+   */
+  glCanvas?: HTMLCanvasElement | null;
+}> = ({ image, boxW, boxH, style, videoRef, onReady, hidden, glCanvas }) => {
   const ref = useRef<HTMLVideoElement>(null);
+  /* ── 形狀（圓角／外形／羽化）──────────────────────────────────────
+     用 CSS 遮罩，來源是 previewMask —— **跟圖片那條路、跟匯出用的是同一支
+     makeShapeMask**，所以邊緣與羽化的衰減曲線一模一樣，不是另外做一套。
+     為什麼用 CSS 而不是畫在 canvas 上：影片的成品是交給瀏覽器合成的，
+     一旦為了套形狀而把它畫進 2D 畫布，就等於把畫面從顯示卡讀回 CPU
+     （實測一次 104 毫秒）。CSS 遮罩是合成器做的，不用回讀，而且
+     **沒套濾鏡的影片也一樣有效**（那條路根本沒有 GPU 畫布）。 */
+  const shapeKind = image.imgShape as string | undefined;
+  const radiusPct = image.imgRadius || 0;
+  const featherPct = image.feather || 0;
+  const wantMask = !!(radiusPct || featherPct || isImgShaped(shapeKind));
+  const maskUrl = useMemo(() => {
+    if (!wantMask || !boxW || !boxH) return '';
+    try { return previewMask(boxW / boxH, radiusPct, featherPct, shapeKind).toDataURL('image/png'); }
+    catch { return ''; }
+  }, [wantMask, boxW, boxH, radiusPct, featherPct, shapeKind]);
+  const maskCss: React.CSSProperties = maskUrl
+    ? {
+      WebkitMaskImage: `url(${maskUrl})`, maskImage: `url(${maskUrl})`,
+      WebkitMaskSize: '100% 100%', maskSize: '100% 100%',
+      WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+    }
+    : {};
+  /* 同一個元素同時交給裡面的 ref 與外面的 videoRef */
+  const setRef = (el: HTMLVideoElement | null) => {
+    (ref as any).current = el;
+    if (videoRef) videoRef.current = el;
+  };
   const geo: GeoParams | undefined = image.geo;
   const cropped = !!geo && !isGeoIdentity(geo);
   const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
@@ -3471,14 +3548,17 @@ const VideoLayer: React.FC<{
     : null;
   const vid = (
     <video
-      ref={ref}
+      ref={setRef}
       src={image.src}
       autoPlay
       loop
       muted
       playsInline
       preload="auto"
-      style={box
+      onLoadedData={onReady}
+      style={hidden
+        ? { position: 'absolute', left: 0, top: 0, width: 1, height: 1, opacity: 0, pointerEvents: 'none' }
+        : box
         ? {
           position: 'absolute', left: 0, top: 0,
           width: `${box.width}px`, height: `${box.height}px`,
@@ -3492,16 +3572,59 @@ const VideoLayer: React.FC<{
         : plain}
     />
   );
-  if (!box) return vid;
+  /* GPU 畫布：跟上面那個 <video> 套同一份 style。
+     ⚠ 它是 WebGL 畫布，**絕對不能**被 drawImage 到 2D 畫布上 ——
+     那會強迫把畫面從顯示卡讀回 CPU，實測一次 104 毫秒，整個優勢就沒了。
+     所以這裡是「直接掛在畫面上讓瀏覽器合成」，中間沒有任何一次回讀。 */
+  const glHost = glCanvas ? (
+    <GlCanvasHost
+      canvas={glCanvas}
+      style={box
+        ? {
+          position: 'absolute', left: 0, top: 0,
+          width: `${box.width}px`, height: `${box.height}px`,
+          maxWidth: 'none', maxHeight: 'none',
+          transformOrigin: '0 0', transform: box.transform,
+          pointerEvents: 'none',
+        }
+        : plain}
+    />
+  ) : null;
+
+  const inner = glHost ? <>{vid}{glHost}</> : vid;
+  if (!box) {
+    if (!maskUrl) return inner;
+    // 沒裁切、但有形狀 → 也要有一層框來承載遮罩
+    return (
+      <div style={{ position: 'relative', width: '100%', height: '100%', pointerEvents: 'none', ...maskCss }}>
+        {inner}
+      </div>
+    );
+  }
   return (
     <div
       style={style
-        ? { ...style, overflow: 'hidden', pointerEvents: 'none' }
-        : { position: 'relative', width: '100%', height: '100%', overflow: 'hidden', pointerEvents: 'none' }}
+        ? { ...style, overflow: 'hidden', pointerEvents: 'none', ...maskCss }
+        : { position: 'relative', width: '100%', height: '100%', overflow: 'hidden', pointerEvents: 'none', ...maskCss }}
     >
-      {vid}
+      {inner}
     </div>
   );
+};
+
+/** 把一張「不是 React 生的」畫布掛進版面裡，樣式照給。 */
+const GlCanvasHost: React.FC<{ canvas: HTMLCanvasElement; style: React.CSSProperties }> = ({ canvas, style }) => {
+  const host = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const h = host.current;
+    if (!h) return;
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.display = 'block';
+    h.appendChild(canvas);
+    return () => { try { h.removeChild(canvas); } catch { /* 已經不在了 */ } };
+  }, [canvas]);
+  return <div ref={host} style={style} />;
 };
 
 const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
@@ -3700,17 +3823,54 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     return () => el.removeEventListener('load', on);
   }, [image.src, image.text]);
 
+  /* ── 影片也要能調 ──────────────────────────────────────────────────
+     以前這裡把影片整個排除在 canvas 那條路之外，所以濾鏡、圓角、羽化、
+     描邊、發光在影片上**全部按了沒反應**（面板照樣長出來，只是不會動）。
+     原因不是懶得做，是那條路的第一個動作 `drawImage(來源, …)` 對影片太貴：
+     一段 1080p 的片子，光這一下在手機等級的 CPU 上就要 20.9 毫秒，
+     一秒 30 格根本畫不完。
+
+     現在改成：影片的影格先由 utils/videoGl 上到 GPU（1.0 毫秒，而且不佔
+     主執行緒），顏色鏈用烤好的 33³ 查色表在著色器裡查完，
+     再把**那張已經是 RGB 的小畫布**餵進原本這條路。
+     於是圓角／羽化／描邊／發光那一整段程式碼一行都不用改，
+     照片跟影片走的是同一份，長相不可能不一樣。 */
+  const isVid = !!image.isVideo;
+  /** 這一層的 <video>。有 fx／形狀時它不上畫面，只當 GPU 的來源。 */
+  const glVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [vidReady, setVidReady] = useState(false);
+  const glRef = useRef<VideoGl | null>(null);
+  /** 構圖裁切後那一張（重複使用，不要每格開一張新的） */
+  const glGeoRef = useRef<HTMLCanvasElement | null>(null);
+  /** GL 建不起來（很舊的裝置）就退回原本那條路：純 <video>、不套效果 */
+  const [glDead, setGlDead] = useState(false);
+  /** 成品已經在 canvas 上了 → 底下那個 <video> 可以讓開了 */
+  const [glLive, setGlLive] = useState(false);
+  /** GPU 那張畫布（不是 React 生的，要掛進版面裡，見 GlCanvasHost） */
+  const [glCanvas, setGlCanvas] = useState<HTMLCanvasElement | null>(null);
+  /* 同一件事再存一份 ref：draw() 是在 rVFC 回呼裡跑的，
+     看 state 會看到閉包當下那一份（永遠是 false），每一格都會再 setState 一次。 */
+  const glLiveRef = useRef(false);
+
   // 一旦用過 canvas 就一直用下去。
   // 不然把滑桿拉回 0 的那一格會從 canvas 換成 <img>，新的 <img> 還沒畫上來，
   // 圖片就會整張閃掉一下。值全是 0 的時候 canvas 畫的就是原圖，看起來一樣。
   const usedCanvasRef = useRef(false);
-  const wantsShapeCanvas =
-    image.text === undefined && !image.isVideo && shapeImgReady
-    && !!(image.feather || image.imgRadius || image.imgGlow || image.imgStrokeWidth
-      || isImgShaped(image.imgShape) || hasPhotoFx(image.fx));
+  /** 這一層身上有沒有「需要 canvas 才畫得出來」的東西 */
+  const hasShapeWork = !!(image.feather || image.imgRadius || image.imgGlow || image.imgStrokeWidth
+    || isImgShaped(image.imgShape) || hasPhotoFx(image.fx));
+  /** 影片要不要走 GPU：有顏色調整就要（形狀那幾項另外處理，見下面） */
+  const videoWantsGl = isVid && !glDead && vidReady && hasPhotoFx(image.fx);
+  const wantsShapeCanvas = image.text === undefined && !isVid && shapeImgReady && hasShapeWork;
   if (wantsShapeCanvas) usedCanvasRef.current = true;
-  const needsShapeCanvas =
-    image.text === undefined && !image.isVideo && shapeImgReady && usedCanvasRef.current;
+  /* ⚠ 影片**不走**這條 2D 形狀畫布。
+     一開始我讓它走了，結果每格 104 毫秒 —— 因為那條路會 drawImage(GPU 畫布)，
+     而那一下等於把整張畫面從顯示卡讀回 CPU（實測就是 104 毫秒，
+     跟 videoGl 檔頭寫的完全一致）。影片的成品直接讓瀏覽器合成，不經過 2D。 */
+  const needsShapeCanvas = image.text === undefined && !isVid && shapeImgReady && usedCanvasRef.current;
+  /* 效果被清光時把旗子放掉：下次再套效果，底下的 <video> 要能先頂著，
+     不然會有一格空白。 */
+  if (isVid && !hasPhotoFx(image.fx) && glLiveRef.current) glLiveRef.current = false;
 
   /* 濾鏡／調節算一次就留著。固定用長邊算，捏合時尺寸一直變也不會重算。
 
@@ -3735,7 +3895,74 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const fxIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fxKeyRef = useRef<string | null>(null);
   const drawRef = useRef<(() => void) | null>(null);
+  /** GPU 那顆查色表現在對應的是哪一組 fx —— 一樣就不重烤 */
+  const glFxKeyRef = useRef('');
   useEffect(() => () => { if (fxIdleRef.current) clearTimeout(fxIdleRef.current); }, []);
+  /* 這一層收掉時把 GL 上下文一起收掉。不收的話每個影片圖層都佔著一個，
+     瀏覽器對同時存在的 WebGL 上下文數量是有上限的（超過就整批被收走）。 */
+  useEffect(() => () => { glRef.current?.dispose(); glRef.current = null; }, []);
+  /**
+   * 影片這一格的「已經套完顏色」的來源。
+   *
+   * 回傳的是 GPU 那張畫布 —— 它已經是 RGB、而且就是畫面上要用的大小，
+   * 所以後面那一整段（圓角／羽化／描邊／發光）拿它去 drawImage 只要 0.06 毫秒。
+   * 影片的像素從頭到尾沒有進過 CPU。
+   */
+  /**
+   * 影片的 GPU 迴圈。每來一格新影格就上一次材質、查一次色表、畫在自己的畫布上，
+   * 那張畫布**直接掛在版面上讓瀏覽器合成** —— 全程沒有任何一次回讀。
+   *
+   * 用 requestVideoFrameCallback 而不是 rAF：它是「真的有新影格才叫我」，
+   * 所以 25fps 的素材就畫 25 次，不會為了同一格畫兩遍。
+   * 舊 Safari 沒有這支就退回 rAF，行為一樣，只是會多畫幾次。
+   */
+  useEffect(() => {
+    if (!videoWantsGl) {
+      if (glLiveRef.current) { glLiveRef.current = false; setGlLive(false); }
+      return;
+    }
+    const v = glVideoRef.current;
+    if (!v) return;
+    let gl = glRef.current;
+    if (!gl) {
+      gl = VideoGl.create();
+      if (!gl) { setGlDead(true); return; }
+      glRef.current = gl;
+      glFxKeyRef.current = '';
+      setGlCanvas(gl.canvas);
+    }
+    let live = true;
+    let handle = 0;
+    const anyV = v as any;
+    const useRvfc = typeof anyV.requestVideoFrameCallback === 'function';
+    const step = () => {
+      if (!live || !gl) return;
+      if (gl.lost) { setGlDead(true); return; }
+      /* 查色表只在「換濾鏡／動滑桿」時重烤，跟影格數無關 */
+      const key = `${JSON.stringify(image.fx || null)}|${lutRevision}`;
+      if (key !== glFxKeyRef.current) {
+        gl.setLut(bakePhotoFxLut(image.fx));
+        glFxKeyRef.current = key;
+      }
+      /* 畫出來的大小＝畫面上真正的實體像素。裁切過的話，版面是把「整格」
+         放大之後再用 overflow 切，所以這裡要照那個放大後的尺寸開。
+         幾何完全交給 VideoLayer 既有的那份 CSS（geoCssBox），這裡只管像素。 */
+      const el = gl.canvas.parentElement;
+      const w = Math.max(1, Math.round((el?.clientWidth || boxW) * shapeDpr));
+      const h = Math.max(1, Math.round((el?.clientHeight || boxH) * shapeDpr));
+      if (gl.drawFrame(v, w, h) && !glLiveRef.current) { glLiveRef.current = true; setGlLive(true); }
+      handle = useRvfc ? anyV.requestVideoFrameCallback(step) : requestAnimationFrame(step);
+    };
+    step();
+    return () => {
+      live = false;
+      try {
+        if (useRvfc) anyV.cancelVideoFrameCallback?.(handle);
+        else cancelAnimationFrame(handle);
+      } catch { /* 收不掉就算了 */ }
+    };
+  }, [videoWantsGl, image.fx, lutRevision, boxW, boxH, shapeDpr]);
+
   const fxSourceFor = (img: HTMLImageElement) => {
     if (!hasPhotoFx(image.fx)) return img as CanvasImageSource;
     const MAX = fxFullMax();
@@ -4901,9 +5128,19 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           }}
         />
       ) : image.isVideo ? (
-        // 影片直接交給瀏覽器播：預覽就是原生解析度（不是縮圖也不是逐格轉貼圖），
-        // 所以拖大拖小都還是清楚的。
-        <VideoLayer image={image} boxW={boxW} boxH={boxH} />
+        /* 影片一律走這一層。
+           沒套濾鏡時它就是原本那個 <video>（原生解析度、完全不佔主執行緒，
+           這條路本來就沒問題）；套了濾鏡就多掛一張 GPU 畫布蓋在上面，
+           **版面與變換兩者共用同一份**，所以套不套濾鏡都不會跑位。 */
+        <VideoLayer
+          image={image}
+          boxW={boxW}
+          boxH={boxH}
+          videoRef={glVideoRef}
+          onReady={() => setVidReady(true)}
+          hidden={glLive}
+          glCanvas={videoWantsGl ? glCanvas : null}
+        />
       ) : (
         <img
           src={image.src}
@@ -7810,7 +8047,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             height: initialHeight,
             scale: 1.0,
             rotation: 0,
-            ...(video ? { isVideo: true } : {}),
+            ...(video ? { isVideo: true, poster: (dims as any).poster } : {}),
           });
         }
         setFloatingImages(fImgs);
@@ -8014,7 +8251,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         height: initialHeight,
         scale: 1.0,
         rotation: 0,
-        ...(video ? { isVideo: true } : {}),
+        ...(video ? { isVideo: true, poster: (dims as any).poster } : {}),
       });
     }
 
