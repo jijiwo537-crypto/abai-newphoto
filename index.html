@@ -73,11 +73,31 @@
             var BOOT_MIN_MS = 3000;
             var bootT0 = Date.now();
 
+            /* 開場畫面在的時候，手勢一律吃掉：不捲動、不縮放、不傳下去。
+               passive:false 才 preventDefault 得動（touchmove 預設是被動的）。 */
+            (function () {
+                var el = document.getElementById('boot');
+                if (!el) return;
+                var eat = function (e) { if (e.cancelable) e.preventDefault(); };
+                el.addEventListener('touchmove', eat, { passive: false });
+                el.addEventListener('wheel', eat, { passive: false });
+                el.addEventListener('touchstart', eat, { passive: false });
+            })();
+
             function hideBoot() {
                 var el = document.getElementById('boot');
                 if (!el || el.dataset.going) return;
                 el.dataset.going = '1';
+                /* 淡出的這 0.5 秒它還蓋在上面，這時候就要放行了，
+                   不然看得到首頁卻按不動，那半秒會以為 App 當掉。 */
+                el.style.pointerEvents = 'none';
                 el.style.opacity = '0';
+                /* 保險：萬一開場那段仍有東西把頁面捲下去了，收掉之前歸零。
+                   首頁那條捲軸是 .home-scroll（見 HomePage）。 */
+                try {
+                    var sc = document.querySelector('.home-scroll');
+                    if (sc && sc.scrollTop) sc.scrollTop = 0;
+                } catch (err) { /* 沒有就算了 */ }
                 setTimeout(function () { el.remove(); }, 500);
             }
             function tryHide() {
@@ -331,7 +351,16 @@
             padding-bottom: 14vh;
             opacity: 1;
             transition: opacity 0.45s ease;
-            pointer-events: none;
+            /* 開場畫面**要接手勢**（以前是 pointer-events:none）。
+               底下的 #root 雖然是 opacity:0，卻還是一個能捲動的頁面 ——
+               手指在 logo 上滑一下，滑到的其實是看不見的首頁。
+               開場畫面收掉時首頁已經被捲到下面去了，那正是「一進主頁就在中間」。
+               這裡把手勢擋在這一層：touch-action:none 讓瀏覽器不要把它當捲動，
+               下面的 JS 再把 touchmove／wheel 收掉，一個像素都傳不下去。 */
+            pointer-events: auto;
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
         #boot img {
             /* 圖本身就是黑底，跟背景接得剛剛好，看不出邊 */
