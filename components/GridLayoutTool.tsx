@@ -9,6 +9,8 @@ import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
 import { addExport } from '../utils/exportHistory';
+// 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
+import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
@@ -20,6 +22,7 @@ import { SHAPE_IMAGES } from '../utils/shapeImages';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
+import { StuckEscape } from './StuckEscape';
 import { VIDEO_ACCEPT, loadVideoEl, isVideoEl } from '../utils/videoSource';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
@@ -6485,6 +6488,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        videoProg  —— 0～1；只有「這批裡有影片」才會有值，純圖片是 null
        videoLabel —— 每頁都是影片就是「正在匯出影片」，混到圖片就是「正在匯出成品」 */
   const [videoProg, setVideoProg] = useState<number | null>(null);
+  /** 匯出被使用者中止（忙碌畫面上那顆出口鍵按下去）—— 錄影迴圈看到就收工 */
+  const videoAbortRef = useRef(false);
   const [videoLabel, setVideoLabel] = useState('正在匯出成品');
   // One exported file per page. The object URLs are mirrored into a ref so they can be
   // revoked without making every consumer depend on the state value.
@@ -9953,6 +9958,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (pages.length === 0) return;
     const silent = !!opts?.silent;
     if (!silent) setExportState('processing');
+    videoAbortRef.current = false;
 
     try {
       const canvas = document.createElement('canvas');
@@ -10341,13 +10347,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             // 整批的進度＝(已錄完的頁數 + 這一頁錄到幾成) ÷ 總共要錄的頁數
             const local = Math.max(0, Math.min(1, el / (dur * 1000)));
             setVideoProg(Math.max(0, Math.min(1, (vidDone + local) / Math.max(1, vidTotal))));
-            if (el >= dur * 1000) return resolve();
+            if (el >= dur * 1000 || videoAbortRef.current) return resolve();
             requestAnimationFrame(frame);
           };
           requestAnimationFrame(frame);
         });
         rec.stop();
-        const blob = await done;
+        /* onstop 不回來的時候（編碼器被系統收走就會這樣）就拿手上已經收到的
+           片段湊一段出來 —— 不要讓整個匯出停在那裡。 */
+        const blob = await Promise.race([
+          done,
+          new Promise<Blob>(res => setTimeout(
+            () => res(new Blob(chunks, { type: mime || 'video/webm' })), 8000)),
+        ]);
         vidDone++;
         return URL.createObjectURL(blob);
       };
@@ -10404,9 +10416,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         }
         ctx.restore();
 
-        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
-        if (!blob) throw new Error('Blob creation failed');
-        urls.push(URL.createObjectURL(blob));
+        /* 一定要走 canvasToUrl，不能直接叫 toBlob：畫布很大又碰上記憶體吃緊時，
+           iOS 的 toBlob 有機會永遠不回來（見 utils/blobUrl 的看門狗）——
+           那時候整個匯出就停在「正在匯出成品」，而那一層蓋著返回鍵。 */
+        const url = await canvasToUrl(canvas);
+        if (!url) throw new Error('Blob creation failed');
+        urls.push(url);
         kinds.push('image');
       }
 
@@ -10652,6 +10667,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             <span className="text-[11px] tracking-[0.3em] text-white/60 tabular-nums">{Math.round(videoProg * 100)}%</span>
           )}
           <span className="text-[11px] text-white/50 tracking-widest">{videoLabel}</span>
+          {/* 這一層蓋住返回鍵，所以一定要有出口（見 StuckEscape） */}
+          <StuckEscape onEscape={() => { videoAbortRef.current = true; setVideoProg(null); setExportState('idle'); }} />
         </div>
       )}
 

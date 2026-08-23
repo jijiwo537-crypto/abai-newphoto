@@ -12,6 +12,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMe
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { canvasToUrl, revokeUrls } from '../utils/blobUrl';
+import { StuckEscape } from './StuckEscape';
 import { motion, AnimatePresence } from 'motion/react';
 import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
 import { ChevronLeft } from 'lucide-react';
@@ -5960,9 +5961,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             ? originalImgRef.current
             : await loadImg(srcList[i]);
           const cvs = renderOneCanvas(img, snap);
-          const blob = await new Promise<Blob | null>(res => cvs.toBlob(res, 'image/png'));
-          if (!blob) continue;              // 這一張烤不出來就維持原樣，不要留半成品
-          const url = URL.createObjectURL(blob);
+          /* 走 canvasToUrl 不直接叫 toBlob：iOS 的 toBlob 在畫布很大又碰上
+             記憶體吃緊時有機會永遠不回來（見 utils/blobUrl 的看門狗），
+             那會讓整批烤圖停在「正在存檔」，而那一層蓋著返回鍵。 */
+          const url = await canvasToUrl(cvs);
+          if (!url) continue;               // 這一張烤不出來就維持原樣，不要留半成品
           made.push(url);
           // 縮圖要一直是最初那張的樣子，所以把血緣接上去（可能已經合併過好幾次）
           thumbOriginRef.current[url] = thumbSrcOf(srcList[i]);
@@ -7895,6 +7898,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
           <div className="w-16 h-16 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
           <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">正在存檔</p>
+          {/* 這一層蓋住返回鍵，所以一定要有出口（見 StuckEscape） */}
+          <StuckEscape onEscape={() => setSaveState('idle')} />
         </div>
       )}
     </div>

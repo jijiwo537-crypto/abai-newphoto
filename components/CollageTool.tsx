@@ -38,11 +38,12 @@ import {
 import { patternGlyph, paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
   STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
+import { StuckEscape } from './StuckEscape';
 /* 影片：包成一個「長得跟 <img> 一樣」的來源，畫布那邊一行都不必改。
    詳細的理由與做法寫在 utils/videoSource.ts 的檔頭。 */
 import {
   isVideoFile, isVideoEl, loadVideoEl, releaseVideoEl, videoToken, videoTokenOf,
-  videosIn, rewindVideos, playVideos, pauseVideos, longestDuration, VIDEO_ACCEPT,
+  videosIn, rewindVideos, playVideos, pauseVideos, longestDuration, VIDEO_ACCEPT, videoFrame,
 } from '../utils/videoSource';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
 import { IgPreview } from './IgPreview';
@@ -104,10 +105,6 @@ const MOTION_MAX_DIM_VIDEO = 2160;
 const MOTION_MAX_PIXELS_VIDEO = 5_000_000;
 /** 導出影片最長錄幾秒。素材再長也要有個底，不然一按下去就回不來了 */
 const MAX_VIDEO_SECONDS = 60;
-/** 影片物件「連形狀一起重算」的最短間隔（毫秒）。理由見 fxCanvasOf。 */
-const VID_FX_MS = 50;
-/** 「正在存檔」超過這麼久就多給一顆返回鍵（那一層蓋著返回鍵，不能沒有出口） */
-const SAVE_STUCK_MS = 6000;
 /** 影片物件跑效果管線時固定重複使用的那幾張離屏畫布 */
 type VidScratch = { geo: HTMLCanvasElement; base: HTMLCanvasElement; cv: HTMLCanvasElement; off: HTMLCanvasElement };
 /**
@@ -1036,8 +1033,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const fxLiveRef = useRef<Map<string, { key: string; at: number; liveUntil: number }>>(new Map());
   /** 手一停就補一張完整尺寸的 */
   const fxSettleRef = useRef<number | null>(null);
-  /** 影片物件上一次「連形狀一起重算」是什麼時候（預覽時限速用，見 fxCanvasOf） */
-  const vidFxAtRef = useRef<Map<string, number>>(new Map());
   /** 影片物件固定用的那幾張離屏畫布（每顆一組，不重複配置） */
   const vidScratchRef = useRef<Map<string, VidScratch>>(new Map());
   /** 這次工作階段讀進來過的每一段影片 —— 離開時要一段不漏地收掉。
@@ -1057,7 +1052,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     return out;
   };
   const [fxTick, setFxTick] = useState(0);
-  const fxCanvasOf = useCallback((o: any, isMain = false): CanvasImageSource | null => {
+  /**
+   * onScreenPx：這一顆在**畫布上實際佔幾個像素**（呼叫端算好傳進來）。
+   *
+   * 影片是一秒幾十次地重跑整條效果管線，處理的像素多一個就多一分成本。
+   * 一段 1080p 的影片顯示在 268px 寬的框裡，卻照 1600px 去跑濾鏡 ——
+   * 那是 36 倍用不到的像素。這裡把工作尺寸夾到「畫面上真的看得到的大小」
+   * （再多給 15% 的餘裕，縮放、抗鋸齒都還夠用）。
+   * 匯出走的是另一條路（isMain 為 false、倍率是匯出倍率），
+   * 算出來的 onScreenPx 本來就是全解析度，所以一個像素都不會少。
+   */
+  const fxCanvasOf = useCallback((o: any, isMain = false, onScreenPx = 0): CanvasImageSource | null => {
     if (!o.img) return null;
     const shape = {
       r: o.imgRadius || 0, f: o.feather || 0,
@@ -1072,7 +1077,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     /* 影片裁切過的話，就算沒有效果也沒有形狀，也還是要走下面那條路
        （每一格都要先把構圖套上去）。照片的構圖是烤成一張新圖的，不受影響。 */
     const needGeo = isVideoEl(o.img) && o.geo && !isGeoIdentity(o.geo);
-    if ((!o.fx || !hasPhotoFx(o.fx)) && !hasShape && !needGeo) return o.img;
+    /* 影片這一格要落成多大：就是它在畫布上實際佔的大小（多給 15% 餘裕）。
+       一段 1080p 的影片顯示在 268px 的框裡，沒有任何理由去處理 1920px。 */
+    const vidCap = isVideoEl(o.img) && onScreenPx > 0
+      ? Math.max(64, Math.ceil(onScreenPx * 1.15)) : 0;
+    /* 什麼都沒套的時候直接用來源本人。影片的「來源本人」是那一格的畫布
+       （見 utils/videoSource 的 videoFrame）——**不能**把 <video> 直接交出去，
+       那會讓畫布端每一格多付十幾毫秒（那正是導入影片後掉格數的原因）。 */
+    if ((!o.fx || !hasPhotoFx(o.fx)) && !hasShape && !needGeo) return videoFrame(o.img, vidCap);
 
     /* ── 拖圖片調整的滑桿時先用小一號的工作尺寸 ─────────────────────────
        每動一格都要把整張圖重新套一次調整。1600px 的工作尺寸在沒有 GPU 的
@@ -1100,7 +1112,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     /* 匯出時工作尺寸放寬到 2400：成品現在最少也有 2400px 長邊（見 EXPORT_MIN_DIM），
        圖片物件如果還卡在 1600，畫上去等於被放大過 —— 那一顆就會比旁邊的
        圖形與文字糊。預覽維持 1600（拖曳中 640），手感完全沒動到。 */
-    const cap = live ? 640 : (isMain ? 1600 : 2400);
+    let cap = live ? 640 : (isMain ? 1600 : 2400);
+    /* 只有影片吃這個夾子 —— 圖片的成品是算一次就留著的，多算沒有代價，
+       維持原本的尺寸才不會讓任何既有的畫面變糊。 */
+    if (vidCap > 0) cap = Math.min(cap, vidCap);
     /* ── 來源是影片的時候 ────────────────────────────────────────────
        參數（濾鏡、形狀、描邊…）從頭到尾不會變，但內容每一格都不一樣 ——
        鑰匙裡不多放一個「現在是第幾格」，畫面就會停在第一幀。
@@ -1110,16 +1125,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const key = baseKey + '|' + cap + (isVid ? '|v' + vTok : '');
     const hit = objFxCache.current.get(o.id);
     if (hit && hit.key === key) return hit.cv;
-    /* 影片 ＋ 形狀（圓角／羽化／描邊／發光／外形）：這條路一次要開三、四張
-       離屏畫布（遮罩、描邊、光暈），沒辦法像上面那樣交一張回去重用。
-       一秒六十次地開，記憶體會被灌爆 —— 所以預覽時把它限制在 20 fps。
-       影片本體照樣是每一格（走的是上面那條不開畫布的路），只有「套了形狀
-       的那一顆」更新得慢一點；導出（isMain 為 false）不受限制，一格都不會省。 */
-    if (isVid && hasShape && isMain && hit) {
-      const last = vidFxAtRef.current.get(o.id) || 0;
-      if (now - last < VID_FX_MS) return hit.cv;
-      vidFxAtRef.current.set(o.id, now);
-    }
+    /* ── 這裡以前有一個「影片＋形狀就限速到 20fps」的閘門，已經拿掉 ────────
+       當初加它是因為那條路一格要開三、四張離屏畫布，一秒六十次會把記憶體灌爆。
+       現在那幾張都固定重複使用（vidScratchRef），而且工作尺寸夾到了螢幕上
+       真正的大小（見上面的 onScreenPx）—— 一格的成本已經跟「不套形狀」同一個
+       量級，限速反而變成唯一讓它看起來卡的原因（實測 12fps）。
+       跟不上的時候該降的是「整張畫面一秒畫幾格」，那件事由影片那支迴圈的
+       自適應保險絲統一負責，不該由單一顆物件自己偷偷少畫。 */
 
     /* 影片固定用同一組離屏畫布（每顆物件一組）：
          geo  —— 套完構圖（裁切／角度／翻轉）的那一格
@@ -1140,16 +1152,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       }
     }
 
-    let srcEl: CanvasImageSource = o.img;
-    let w0 = o.img.naturalWidth || o.img.videoWidth || o.img.width;
-    let h0 = o.img.naturalHeight || o.img.videoHeight || o.img.height;
+    let srcEl: CanvasImageSource = videoFrame(o.img, vidCap);
+    let w0 = (srcEl as any).naturalWidth || (srcEl as any).width || o.img.videoWidth;
+    let h0 = (srcEl as any).naturalHeight || (srcEl as any).height || o.img.videoHeight;
     /* ── 影片的構圖（裁切／角度／翻轉／縮放）───────────────────────────
        照片是把裁切的結果烤成一張新圖；影片不行 —— 內容每一格都不一樣。
        所以影片改成「把 geo 留在物件上，每一格畫的時候才套」。
        整段就是一次 setTransform ＋ 一次 drawImage（見 utils/compose 的 geoAffine），
        畫布固定重複使用，所以一秒幾十次也不會多配置一個位元組。 */
     if (isVid && scratch && o.geo && !isGeoIdentity(o.geo)) {
-      const gc = geoFrameCanvas(o.img, w0, h0, o.geo, cap, scratch.geo);
+      const gc = geoFrameCanvas(srcEl, w0, h0, o.geo, cap, scratch.geo);
       srcEl = gc; w0 = gc.width; h0 = gc.height;
     }
     /* 只有構圖、沒有效果也沒有形狀：套完構圖那一張就是成品了，
@@ -1209,7 +1221,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     );
     const W = iw + pad * 2, H = ih + pad * 2;
     /* 影片：這一段每 50ms 就要重跑一次，兩張大畫布不能每次都開新的
-       （見 VID_FX_MS 那段說明）。同一顆物件固定用同兩張，尺寸一樣就只清內容。 */
+       同一顆物件固定用同兩張，尺寸一樣就只清內容、完全不重新配置。 */
     const reuseCv = (t: HTMLCanvasElement, w2: number, h2: number) => {
       if (t.width !== w2 || t.height !== h2) { t.width = w2; t.height = h2; return; }
       const g0 = t.getContext('2d');
@@ -1630,13 +1642,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const stripeA = stripeAPick || maskColor;
   const setStripeA = (c: string) => setStripeAPick(c);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
-  /** 「正在存檔」拖太久了 —— 那一層會多出一顆返回鍵，不能把人關在裡面 */
-  const [saveStuck, setSaveStuck] = useState(false);
-  useEffect(() => {
-    if (saveState !== 'processing') { setSaveStuck(false); return; }
-    const t = window.setTimeout(() => setSaveStuck(true), SAVE_STUCK_MS);
-    return () => window.clearTimeout(t);
-  }, [saveState]);
   const [finalImage, setFinalImage] = useState<string | null>(null);
   /** 成品是影片還是圖片 —— 完成頁要換成 <video>，副檔名也不一樣 */
   const [finalIsVideo, setFinalIsVideo] = useState(false);
@@ -2811,6 +2816,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   previewScaleRef.current = previewScale;
   /** 主畫布上一次真的是用哪個倍率畫的（由 renderToCanvas 寫入，見那裡的說明） */
   const drawnScaleRef = useRef(1);
+  /** 主畫布上一次重畫的時間（不分是誰畫的）—— 影片那支迴圈用它避免重複畫 */
+  const lastMainDrawRef = useRef(0);
   /** 播動畫時實際用的倍率（見 MAX_MOTION_PIXELS）。跑不動時會被保險絲往下調 */
   const motionScaleRef = useRef(1);
   /** 上面那個值的上限：畫得動的話會慢慢升回來 */
@@ -3291,11 +3298,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, iw, ih); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
 
     const isMain = targetCanvas === canvasRef.current;
+    /* 底圖是影片的話，先落到一張普通畫布上再用（見 utils/videoSource 的 videoFrame）。
+       這一格底圖會被畫好幾次（中央那張、遮罩底下那張、洞裡看到的那張），
+       但落格只會做一次 —— 之後每一次都是「畫布對畫布」的純記憶體搬移。
+       不是影片就原樣回傳，圖片那條路完全沒有變。 */
+    const baseImg = videoFrame(imageState.img, Math.ceil(Math.max(
+      offs.cw, offs.ch,
+      Math.abs((imageTransform.w || 0) * s), Math.abs((imageTransform.h || 0) * s),
+    )));
+    /* 快取的號碼牌一定要看**原本那個 <video>**，不是上面那張畫布 ——
+       畫布本身沒有「現在第幾格」這回事，拿它去問會永遠拿到 0，
+       底圖那幾層就會定格在第一幀。 */
+    const baseVidTok = videoToken(imageState.img);
     /* 主畫布這一趟真的用了哪個倍率，記下來。
        所有「畫面座標 ↔ 畫布座標」的換算都要用這個，不能用 previewScale ——
        影片播放中會刻意畫得小一號（見影片那支迴圈），兩者就不一樣了，
        用錯的話點擊位置、拖曳、那排白色鍵全部會偏掉。 */
-    if (isMain) drawnScaleRef.current = renderScale;
+    if (isMain) {
+      drawnScaleRef.current = renderScale;
+      /* 主畫布這一格是什麼時候畫的。影片那支迴圈拿它當節拍器：
+         拖物件、拉滑桿的時候 React 本來就在每一格重畫，那些重畫同樣會
+         把影片的新影格帶上去 —— 迴圈再畫一次就是同一格畫兩遍。
+         （實測拖曳中兩邊加起來一秒送出九十次，難怪手感是黏的。） */
+      lastMainDrawRef.current = performance.now();
+    }
     /* 遮罩底稿只是一片純色時（沒有自訂遮罩圖、也沒有點點），根本不需要
        一張跟畫面一樣大的畫布去裝它。
        四周包圍時「遮罩」就是整個畫面，拉比例滑桿時每動一格就得把那張
@@ -3450,7 +3476,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       return bdOnce;
     };
     const aroundBackdropBuild = (): HTMLCanvasElement | null => {
-      const img = imageState.img, t = imageTransform;
+      const img = baseImg as any, t = imageTransform;
       if (!img || !t) return null;
       const W = Math.max(1, Math.round(offs.cw)), H = Math.max(1, Math.round(offs.ch));
       /* 這張其實**跟比例無關**。原式是「把中央那張縮好的照片，以畫布中心
@@ -3462,7 +3488,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const m = maskW / Math.max(1, sw);
       /* 底是影片的話還要加上「現在是第幾格」——不加的話這張底圖會一直
          沿用第一幀，畫面上就是「四周包圍的底定格了，只有洞在動」。 */
-      const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}|${videoToken(img)}`;
+      const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}|${baseVidTok}`;
       const hit = isMain ? aroundBdRef.current : null;
       if (hit && hit.key === key && hit.img === img) return hit.cv;
       const cv = isMain ? holeBackdropCanvasRef.current : document.createElement('canvas');
@@ -3486,10 +3512,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       ctx.drawImage(bd, 0, 0);
       ctx.restore();
     };
-    const drawCentreImage = () => drawImg(imageState.img, imageTransform, offs.ix, offs.iy, iw, ih, kIn);
+    const drawCentreImage = () => drawImg(baseImg as any, imageTransform, offs.ix, offs.iy, iw, ih, kIn);
     const drawBackdrop = () => (layout === AROUND
       ? drawBackdropAround()
-      : drawImg(imageState.img, imageTransform, offs.mx, offs.my, maskW, maskH));
+      : drawImg(baseImg as any, imageTransform, offs.mx, offs.my, maskW, maskH));
 
     /* ── 連線 ────────────────────────────────────────────────────
        線跟圖案走完全同一條路：在遮罩上是挖穿的、在圖片上是遮罩色的實心線，
@@ -4243,9 +4269,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            描邊在這裡即時畫一圈 —— 只是一條路徑，成本幾乎是零。 */
         const dashAnim = (o.imgStrokeDash || 0) > 0 ? (o.dashAnim || 'none') : 'none';
         const liveStroke = dashAnim !== 'none' && (o.imgStrokeWidth || 0) > 0;
+        // 這一顆在畫布上實際佔多大 —— 影片用它把效果的工作尺寸夾到剛好夠用
+        const onPx = Math.max(o.w, o.h) * s;
         const src2: any = liveStroke
-          ? (fxCanvasOf({ ...o, id: `${o.id}@nodash`, imgStrokeWidth: 0 }, isMain) || o.img)
-          : (fxCanvasOf(o, isMain) || o.img);
+          ? (fxCanvasOf({ ...o, id: `${o.id}@nodash`, imgStrokeWidth: 0 }, isMain, onPx) || o.img)
+          : (fxCanvasOf(o, isMain, onPx) || o.img);
         /* 有形狀效果時畫布比原圖大一圈（留給發光與描邊），
            畫的時候要等比放大回去，圖片本體才會剛好落在原本的框上。 */
         const padX = (src2 as any).__padX || 0, padY = (src2 as any).__padY || 0;
@@ -4257,7 +4285,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            兩張各有自己的快取（id 後面加了記號），所以不會互相洗掉。 */
         const gb = o.imgGlow && animRef.current?.glowObj ? animRef.current.glowObj(o) : 1;
         if (o.imgGlow && gb < 0.999) {
-          const plain: any = fxCanvasOf({ ...o, id: `${o.id}@nog`, imgGlow: 0 }, isMain);
+          const plain: any = fxCanvasOf({ ...o, id: `${o.id}@nog`, imgGlow: 0 }, isMain, onPx);
           if (plain) {
             const alpha0 = ctx.globalAlpha;
             ctx.globalAlpha = alpha0 * Math.max(0, Math.min(1, gb));
@@ -4540,7 +4568,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
        跟圖片側的圖案不同層。這裡在物件之上再把「洞裡看到的那張圖」補畫一次，
        兩側的圖案就都在物件上面了。只有真的有 below 物件時才做（省一張畫布）。 */
     const drawMaskHolesOnTop = () => {
-      const img = imageState.img, t = imageTransform;
+      const img = baseImg as any, t = imageTransform;
       if (!img || !t) return;
       /* ── 這一層跟物件在哪裡完全無關 ──────────────────────────────────
          它畫的是「遮罩上那些洞裡看得到的圖」＋ 遮罩側的連線。
@@ -4553,7 +4581,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const a0h = animRef.current;
       const sigTop = `${layout}|${maskScale}|${s.toFixed(4)}|${offs.cw}x${offs.ch}|${offs.mx},${offs.my}`
         + `|B${belowBox ? [belowBox.x0, belowBox.y0, belowBox.x1, belowBox.y1].map(v => Math.round(v)).join(',') : ''}`
-        + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}|${videoToken(img)}`
+        + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}|${baseVidTok}`
         + `|${holeType}|${isTextHole(holeType) ? customText : ''}|${holeAngle}|${linkMode}|${linkColor || ''}`
         + `|${LINK_W.toFixed(3)}`
         + '|H' + holes.map(h => {
@@ -4592,7 +4620,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            （幾百萬像素），所以只要有一個 below 的物件，拖它就會變得很卡。
            改成記住上次是用什麼參數畫的，一樣就直接沿用。 */
         const bdKey = `${bdW}x${bdH}|${layout}|${maskW}x${maskH}|${offs.mx},${offs.my}|`
-          + `${t.x},${t.y},${t.w},${t.h}|${s}|${(img as any).src || ''}|${videoToken(img)}`;
+          + `${t.x},${t.y},${t.w},${t.h}|${s}|${(img as any).src || ''}|${baseVidTok}`;
         const fresh = !isMain || holeBdKeyRef.current !== bdKey
           || bd.width !== bdW || bd.height !== bdH;
         if (fresh) {
@@ -5338,7 +5366,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const vids = allVideosRef.current();
     playVideos(vids);
     let raf = 0;
-    let last = -1;
     let interval = 1000 / 30;
     let slow = 0, fast = 0;
     let lastTok = '';
@@ -5346,7 +5373,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const now = performance.now();
-      if (last >= 0 && now - last < interval) return;
+      /* 節拍看的是「主畫布最近有沒有被畫過」，不是「這支迴圈上次畫是什麼時候」。
+         差別在拖物件與拉滑桿的那段時間：React 本來就在每一格重畫，那些重畫
+         已經把影片的新影格帶上去了，這支迴圈就該讓開 —— 不然同一格畫兩遍，
+         手上就是「拖起來黏黏的」。 */
+      if (now - lastMainDrawRef.current < interval) return;
       const cv = canvasRef.current;
       if (!cv) return;
       /* 有沒有換影格？沒換就直接回去 —— 這一步讓「畫幾次」等於素材本身的
@@ -5355,7 +5386,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const tok = videoTokenOf(vids);
       if (tok === lastTok && live === wasLive) return;
       lastTok = tok;
-      last = now;
       const first = wasLive === null;
       const justStopped = wasLive === true && !live;
       wasLive = live;
@@ -5372,7 +5402,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         if (slow >= 5 && interval < 1000 / 12) {
           interval = interval < 1000 / 20 ? 1000 / 20 : 1000 / 12;
           slow = 0;
-        } else if (fast >= 90 && interval > 1000 / 30) {
+        } else if (fast >= 45 && interval > 1000 / 30) {
           interval = interval > 1000 / 20 ? 1000 / 20 : 1000 / 30;
           fast = 0;
         }
@@ -5403,7 +5433,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   useEffect(() => {
     const ids = new Set(objects.map((o: any) => o.id));
     vidScratchRef.current.forEach((_, id) => { if (!ids.has(id)) vidScratchRef.current.delete(id); });
-    vidFxAtRef.current.forEach((_, id) => { if (!ids.has(id)) vidFxAtRef.current.delete(id); });
   }, [objects]);
 
   /* 離開這個工具時把影片收乾淨（解碼器不收會一直佔著記憶體） */
@@ -5947,6 +5976,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           >
             取消匯出
           </button>
+          {/* 上面那顆「取消匯出」是請錄影迴圈自己收工；萬一連它都沒反應
+              （編碼器被系統收走的時候會這樣），這一顆是硬出口。 */}
+          <StuckEscape onEscape={() => { videoAbortRef.current = true; setVideoProg(null); }} delayMs={12000} />
         </div>
       )}
 
@@ -6089,14 +6121,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
           <div className="w-16 h-16 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
           <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">正在存檔</p>
-          {saveStuck && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setSaveState('idle'); }}
-              className="mt-8 px-6 h-10 rounded-full border border-white/25 text-white/80 text-[12px] font-bold tracking-[0.2em] active:scale-95 transition-transform"
-            >
-              取消，回到編輯
-            </button>
-          )}
+          <StuckEscape onEscape={() => setSaveState('idle')} />
         </div>
       )}
 

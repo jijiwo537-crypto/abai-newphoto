@@ -1,4 +1,5 @@
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
+import { StuckEscape } from './StuckEscape';
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
@@ -1165,6 +1166,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           <div className="w-16 h-16 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
           <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">處理中</p>
           <p className="text-[10px] text-white/40 mt-3 uppercase tracking-widest font-bold">全解析度重新渲染</p>
+          {/* 這一層蓋住返回鍵，所以一定要有出口（見 StuckEscape） */}
+          <StuckEscape onEscape={() => setSaveState('idle')} />
         </div>
       )}
     </div>
