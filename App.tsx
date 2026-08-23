@@ -38,9 +38,11 @@ const LUT_LIST = [
 ];
 
 // Expanded support for RAW and HEIC formats, and fallback for all other types to be caught by ImageMagick
-const RAW_ACCEPT = "image/*,.heic,.heif,.dng,.cr2,.cr3,.nef,.arw,.orf,.rw2,.raf,.srw,.jpg,.jpeg,.png,.webp,.gif,.bmp,.tiff,.tif";
+/* 收哪些檔案統一由 utils/fileTypes 決定（以前這串複製在三個檔案裡，內容還不一樣）*/
+const RAW_ACCEPT = SHARED_RAW_ACCEPT;
 
-import { processImageFile } from './utils/imageLoader';
+import { processImageFile, normalizeImageFiles } from './utils/imageLoader';
+import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT } from './utils/fileTypes';
 import {
   draftTime as collageDraftTime,
   clearDraft as clearCollageDraft,
@@ -98,20 +100,47 @@ const App: React.FC = () => {
   const [histKey, setHistKey] = useState<string | null>(null);
 
   /** 創意拼圖：第一個當底，其餘的自動變成物件（相簿多選） */
-  const handleImportToCollage = (files: File | File[]) => {
+  /* 拼圖的入口以前是把 File 原封不動丟給工具，工具再自己 createObjectURL ——
+     所以 RAW／HEIC 這種瀏覽器讀不懂的檔案到那裡就是一張載不出來的 <img>，
+     畫面空白。這裡先解碼成一般 JPEG 再交出去，工具那邊一行都不用改。
+     一般的 JPEG/PNG 會原樣放行，不會多轉一次、也不會掉畫質。 */
+  const handleImportToCollage = async (files: File | File[]) => {
     const list = Array.isArray(files) ? files : [files];
     if (!list.length) return;
+    setIsImporting(true);
+    setImportPreviewUrl(null);
+    let ready = list;
+    try {
+      ready = await normalizeImageFiles(list, (u) => setImportPreviewUrl(u));
+    } catch (err) {
+      console.error('Failed to process image:', err);
+    } finally {
+      setIsImporting(false);
+      setImportPreviewUrl(null);
+    }
     setToolDraftState(null);
     setHistKey(null);
-    setCollageInitialFile(list[0]);
-    setCollageExtras(list.slice(1));
+    setCollageInitialFile(ready[0]);
+    setCollageExtras(ready.slice(1));
     setCollageKey(prev => prev + 1);
     setCurrentView('collage');
   };
 
-  const handleImportToLayout = (files: File[]) => {
+  const handleImportToLayout = async (files: File[]) => {
+    if (!files.length) return;
+    setIsImporting(true);
+    setImportPreviewUrl(null);
+    let ready = files;
+    try {
+      ready = await normalizeImageFiles(files, (u) => setImportPreviewUrl(u));
+    } catch (err) {
+      console.error('Failed to process image:', err);
+    } finally {
+      setIsImporting(false);
+      setImportPreviewUrl(null);
+    }
     setHistKey(null);
-    setLayoutInitialFiles(files);
+    setLayoutInitialFiles(ready);
     setLayoutKey(prev => prev + 1);
     setCurrentView('layout');
   };
@@ -423,8 +452,8 @@ const App: React.FC = () => {
         type="file" 
         ref={collageFileInputRef}
         className="hidden"
-        /* 創意拼圖的底可以是照片、也可以是一段影片 */
-        accept="image/*,video/*"
+        /* 創意拼圖的底可以是照片、也可以是一段影片（含 RAW） */
+        accept={MEDIA_ACCEPT}
         multiple
         onChange={(e) => {
           const files = Array.from(e.target.files || []) as File[];
@@ -448,7 +477,7 @@ const App: React.FC = () => {
         type="file" 
         ref={layoutFileInputRef} 
         className="hidden" 
-        accept="image/*,video/*"
+        accept={MEDIA_ACCEPT}
         multiple
         onChange={(e) => {
           const files = Array.from(e.target.files || []) as File[];
