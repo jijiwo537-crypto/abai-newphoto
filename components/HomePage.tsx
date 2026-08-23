@@ -412,23 +412,49 @@ export const HomePage: React.FC<HomePageProps> = ({
   const navLockRef = useRef<string | null>(null);
 
   /**
+   * 「模板那一段的上緣要停在畫面上 atPx 的地方時，捲軸該在哪裡」。
+   *
+   * 模板不是跟著捲軸一比一走的：排版上先往上挪了 lift（那個負的 margin-top），
+   * 畫面上再由動畫補回 lift×(1 − y/range)，所以它比捲軸快 0.35 屏。
+   * 上緣在畫面上的位置是
+   *     top − y + lift × (1 − y / range)
+   * 令它等於 atPx：
+   *     y = (top + lift − atPx) ÷ (1 + lift / range)
+   * 捲滿一屏之後位移已經收乾淨，就變成單純的一比一（y = top − atPx）。
+   * 沒有視差（關了動態效果）時 lift 是 0，兩條式子都會退回原本的值。
+   */
+  const libScrollAt = (sc: HTMLDivElement, atPx = 0) => {
+    const top = libBoxRef.current?.offsetTop ?? sc.clientHeight;
+    const range = sc.clientHeight || 1;
+    const lift = liftPx(sc);
+    const y = (top + lift - atPx) / (1 + lift / range);
+    return Math.max(0, Math.round(y <= range ? y : top - atPx));
+  };
+
+  /**
    * 點「模板」要捲到哪裡 —— 靈感區的頂端。
    *
    * 以前這裡要多算一段：廣告版位是「絕對定位往下多長 50px」的，那一截
    * 會蓋在 libRef 上面，捲到定位之後搜尋欄上方還看得到它的下緣。
    * 版位拿掉之後沒有東西會蓋過來了，直接捲到 libRef 的頂端就對。
    */
-  const libScrollTop = (sc: HTMLDivElement) => {
-    /* 模板那一段在排版上已經往上挪了 lift，畫面上再由動畫補回 lift×(1 − y/range)。
-       所以它貼齊上緣的時候：
-         top − y + lift × (1 − y / range) = 0
-         → y = (top + lift) ÷ (1 + lift / range)
-       沒有視差（關了動態效果）時 lift 是 0，算出來就是原本的值。 */
-    const top = libBoxRef.current?.offsetTop ?? sc.clientHeight;
-    const range = sc.clientHeight || 1;
-    const lift = liftPx(sc);
-    return Math.max(0, Math.round((top + lift) / (1 + lift / range)));
+  const libScrollTop = (sc: HTMLDivElement) => libScrollAt(sc, 0);
+
+  /* ── 分頁高亮的門檻 ────────────────────────────────────────────────
+     以前是「捲超過半屏就算到模板了」。那個數字跟模板實際在哪裡沒有關係 ——
+     模板上面有多少東西、一屏多高、視差讓它跑得多快，三個都會變，
+     結果就是要滑到模板都快占滿整個畫面了，下面那顆才亮。
+     改成看模板自己：上緣升過畫面的四分之三（＝模板已經吃掉最下面那 1/4）
+     就亮。先把那個時機換算成一個捲軸位置存起來，捲動途中就只是比大小，
+     不用再去量任何東西（量了就等於每一格都逼瀏覽器重新排版一次）。 */
+  const NAV_LIB_AT = 0.75;
+  const navThreshRef = useRef(-1);
+  const navThresh = (sc: HTMLDivElement) => {
+    if (navThreshRef.current < 0) navThreshRef.current = libScrollAt(sc, (sc.clientHeight || 1) * NAV_LIB_AT);
+    return navThreshRef.current;
   };
+  /** 一屏高度、或上面那些東西的高度變了就要重算 */
+  const resetNavThresh = () => { navThreshRef.current = -1; };
 
   /** 讀 --lib-lift 的實際像素。它寫成 calc()，要用一個暫時的元素讓瀏覽器算完再讀。 */
   const liftPx = (sc: HTMLElement) => {
@@ -581,6 +607,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     }
     rangePending.current = false;
     rangeWritten.current = h;
+    resetNavThresh();                 // 一屏高度變了 → 模板的位置跟門檻都要重算
     sc.style.setProperty('--hero-range', `${h}px`);
   }, []);
 
@@ -678,7 +705,7 @@ export const HomePage: React.FC<HomePageProps> = ({
      等於在最不該打擾的時間點去動兩支捲動動畫的範圍。 */
   useLayoutEffect(() => { syncRange(); applyParallax(); }, [syncRange, applyParallax]);
   useEffect(() => {
-    const on = () => { syncRange(); applyParallax(); };
+    const on = () => { resetNavThresh(); syncRange(); applyParallax(); };
     window.addEventListener('resize', on);
     window.addEventListener('orientationchange', on);
     return () => {
@@ -686,6 +713,10 @@ export const HomePage: React.FC<HomePageProps> = ({
       window.removeEventListener('orientationchange', on);
     };
   }, [syncRange, applyParallax]);
+
+  /* 歷史紀錄的張數會影響上半屏的高度，模板那一段的位置跟著變 —— 門檻要重算。
+     只是把快取作廢，下一次捲動才會真的去量，這裡不做任何量測。 */
+  useEffect(() => { resetNavThresh(); }, [recent.length]);
 
   /** 捲動停下來之後才做的事（目前只有補寫 --hero-range） */
   const scrollIdle = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -705,9 +736,8 @@ export const HomePage: React.FC<HomePageProps> = ({
     kickPump();
     const sc = scrollRef.current;
     if (!sc) return;
-    const h = sc.clientHeight || 1;
     if (navRef.current === 'me') return;
-    const next = sc.scrollTop > h * 0.5 ? 'lib' : 'home';
+    const next = sc.scrollTop >= navThresh(sc) ? 'lib' : 'home';
     // 捲動途中不要跟著跳，捲到目標了才解鎖交還控制權
     if (navLockRef.current) {
       if (next === navLockRef.current) navLockRef.current = null;
