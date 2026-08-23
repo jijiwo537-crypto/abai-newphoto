@@ -42,11 +42,11 @@ import { ComposeStudio } from './ComposeStudio';
    詳細的理由與做法寫在 utils/videoSource.ts 的檔頭。 */
 import {
   isVideoFile, isVideoEl, loadVideoEl, releaseVideoEl, videoToken, videoTokenOf,
-  videosIn, rewindVideos, playVideos, longestDuration, VIDEO_ACCEPT,
+  videosIn, rewindVideos, playVideos, pauseVideos, longestDuration, VIDEO_ACCEPT,
 } from '../utils/videoSource';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
 import { IgPreview } from './IgPreview';
-import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity } from '../utils/compose';
+import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } from '../utils/compose';
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
@@ -106,8 +106,10 @@ const MOTION_MAX_PIXELS_VIDEO = 5_000_000;
 const MAX_VIDEO_SECONDS = 60;
 /** 影片物件「連形狀一起重算」的最短間隔（毫秒）。理由見 fxCanvasOf。 */
 const VID_FX_MS = 50;
+/** 「正在存檔」超過這麼久就多給一顆返回鍵（那一層蓋著返回鍵，不能沒有出口） */
+const SAVE_STUCK_MS = 6000;
 /** 影片物件跑效果管線時固定重複使用的那幾張離屏畫布 */
-type VidScratch = { base: HTMLCanvasElement; cv: HTMLCanvasElement; off: HTMLCanvasElement };
+type VidScratch = { geo: HTMLCanvasElement; base: HTMLCanvasElement; cv: HTMLCanvasElement; off: HTMLCanvasElement };
 /**
  * 播動畫時「一格」能用掉的像素上限。
  * 靜態時可以放到 56M（反正只烤一次），但動畫一秒要烤 30 次 ——
@@ -1067,7 +1069,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       z: o.imgShapeZoom || 1,
     };
     const hasShape = shape.r || shape.f || shape.sw || shape.g || isImgShaped(shape.k);
-    if ((!o.fx || !hasPhotoFx(o.fx)) && !hasShape) return o.img;
+    /* 影片裁切過的話，就算沒有效果也沒有形狀，也還是要走下面那條路
+       （每一格都要先把構圖套上去）。照片的構圖是烤成一張新圖的，不受影響。 */
+    const needGeo = isVideoEl(o.img) && o.geo && !isGeoIdentity(o.geo);
+    if ((!o.fx || !hasPhotoFx(o.fx)) && !hasShape && !needGeo) return o.img;
 
     /* ── 拖圖片調整的滑桿時先用小一號的工作尺寸 ─────────────────────────
        每動一格都要把整張圖重新套一次調整。1600px 的工作尺寸在沒有 GPU 的
@@ -1116,8 +1121,43 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       vidFxAtRef.current.set(o.id, now);
     }
 
-    const w0 = o.img.naturalWidth || o.img.videoWidth || o.img.width;
-    const h0 = o.img.naturalHeight || o.img.videoHeight || o.img.height;
+    /* 影片固定用同一組離屏畫布（每顆物件一組）：
+         geo  —— 套完構圖（裁切／角度／翻轉）的那一格
+         base —— 再套完濾鏡／調節的那張
+         cv／off —— 只有套了形狀才會用到的那兩張（見下面）
+       尺寸一樣就連 width 都不重設，等於整段完全不配置記憶體。 */
+    let scratch: VidScratch | null = null;
+    if (isVid) {
+      scratch = vidScratchRef.current.get(o.id) || null;
+      if (!scratch) {
+        scratch = {
+          geo: document.createElement('canvas'),
+          base: document.createElement('canvas'),
+          cv: document.createElement('canvas'),
+          off: document.createElement('canvas'),
+        };
+        vidScratchRef.current.set(o.id, scratch);
+      }
+    }
+
+    let srcEl: CanvasImageSource = o.img;
+    let w0 = o.img.naturalWidth || o.img.videoWidth || o.img.width;
+    let h0 = o.img.naturalHeight || o.img.videoHeight || o.img.height;
+    /* ── 影片的構圖（裁切／角度／翻轉／縮放）───────────────────────────
+       照片是把裁切的結果烤成一張新圖；影片不行 —— 內容每一格都不一樣。
+       所以影片改成「把 geo 留在物件上，每一格畫的時候才套」。
+       整段就是一次 setTransform ＋ 一次 drawImage（見 utils/compose 的 geoAffine），
+       畫布固定重複使用，所以一秒幾十次也不會多配置一個位元組。 */
+    if (isVid && scratch && o.geo && !isGeoIdentity(o.geo)) {
+      const gc = geoFrameCanvas(o.img, w0, h0, o.geo, cap, scratch.geo);
+      srcEl = gc; w0 = gc.width; h0 = gc.height;
+    }
+    /* 只有構圖、沒有效果也沒有形狀：套完構圖那一張就是成品了，
+       不必再多跑一次 applyPhotoFx（那等於整張再複製一次）。 */
+    if (srcEl !== o.img && !hasShape && (!o.fx || !hasPhotoFx(o.fx))) {
+      objFxCache.current.set(o.id, { key, cv: srcEl as HTMLCanvasElement });
+      return srcEl;
+    }
     // 上限 1600：物件在畫面上不會比這更大，再高只是白燒記憶體
     const k = Math.min(1, cap / Math.max(w0, h0));
     const iw = Math.max(1, Math.round(w0 * k)), ih = Math.max(1, Math.round(h0 * k));
@@ -1127,27 +1167,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
        out：影片是一秒幾十次地重算，每次開一張新畫布的話，手機的畫布記憶體
        幾秒就被系統收走（＝閃退）。把上一次那張交回去重用，尺寸一樣就
-       連 width 都不重設，等於整段完全不配置記憶體。 */
-    /* 影片固定用同一組離屏畫布（每顆物件一組）：
-         base —— 套完濾鏡／調節的那張
-         cv／off —— 只有套了形狀才會用到的那兩張（見下面）
-       尺寸一樣就連 width 都不重設，等於整段完全不配置記憶體。 */
-    let scratch: VidScratch | null = null;
-    if (isVid) {
-      scratch = vidScratchRef.current.get(o.id) || null;
-      if (!scratch) {
-        scratch = {
-          base: document.createElement('canvas'),
-          cv: document.createElement('canvas'),
-          off: document.createElement('canvas'),
-        };
-        vidScratchRef.current.set(o.id, scratch);
-      }
-    }
-    /* 沒套形狀的時候，回傳的就是 base 本人 —— 那時候快取裡那張跟 scratch.base
+       連 width 都不重設，等於整段完全不配置記憶體。
+       沒套形狀的時候回傳的就是 base 本人 —— 那時候快取裡那張跟 scratch.base
        是同一張，交回去重用完全正確。 */
     const reuse = scratch ? scratch.base : undefined;
-    const base = applyPhotoFx(o.img, iw, ih, o.fx || {}, {
+    const base = applyPhotoFx(srcEl, iw, ih, o.fx || {}, {
       cacheSource: !isVid, fast: live, out: reuse,
     });
     const finish = () => {
@@ -1417,11 +1441,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /* ── 構圖：跟「編輯」「經典拼圖」共用同一個 ComposeStudio ──────────────
      套用完把裁切結果 bake 成新的一張圖塞回這個物件，寬度不變、
      高度依新的長寬比重算，並讓中心留在原地。 */
-  const [composeState, setComposeState] = useState<{ id: string; img: HTMLImageElement; geo: GeoParams } | null>(null);
+  const [composeState, setComposeState] = useState<{ id: string; img: HTMLImageElement | HTMLVideoElement; geo: GeoParams; vid?: boolean } | null>(null);
 
   const openComposeFor = useCallback((id: string) => {
     const o = objectsRef.current.find(z => z.id === id);
     if (!o || !o.src) return;
+    /* 影片直接把那個 <video> 交給構圖介面 —— 它跟 <img> 一樣畫得上畫布。
+       （另外開一張 <img> 去讀影片的網址是讀不到的，那正是經典拼圖那邊
+       「一按構圖就沒反應」的原因。）
+       進構圖的期間影片是停著的（見影片那支迴圈），所以你在裁的是一格
+       定住的畫面，框拖起來不會一直在動。 */
+    if (isVideoEl(o.img)) {
+      setComposeState({ id, img: o.img, geo: o.geo || DEFAULT_GEO, vid: true });
+      return;
+    }
     const el = new Image();
     el.onload = () => setComposeState({ id, img: el, geo: o.geo || DEFAULT_GEO });
     // baked 過就從原圖接續，參數還原成上次的樣子
@@ -1448,8 +1481,29 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         };
         el.src = newSrc;
       };
-      const sw = st.img.naturalWidth || st.img.width;
-      const sh = st.img.naturalHeight || st.img.height;
+      const sw = (st.img as any).naturalWidth || (st.img as any).videoWidth || st.img.width;
+      const sh = (st.img as any).naturalHeight || (st.img as any).videoHeight || st.img.height;
+      /* ── 影片：不烤 ─────────────────────────────────────────────────
+         照片的構圖是把裁切結果烤成一張新圖再換掉 src。影片這樣做的話，
+         換上去的是一張靜態圖 —— 那正是「裁切後影片就沒了」。
+         改成把 geo 留在物件上，每一格畫的時候才套（見 fxCanvasOf）。
+         這裡只要把框的高度改成裁切後的長寬比，並讓中心留在原地。 */
+      if (isVideoEl(st.img)) {
+        const q = ((st.geo.quarter % 4) + 4) % 4;
+        const swap = q === 1 || q === 3;
+        const bw = swap ? sh : sw, bh = swap ? sw : sh;
+        const c = st.geo.crop;
+        const aspect = (bw * c.w) / Math.max(1e-6, bh * c.h);
+        setObjects(prev => prev.map(f => {
+          if (f.id !== st.id) return f;
+          const nh = Math.max(8, f.w / aspect);
+          return { ...f, geo: st.geo, y: f.y + (f.h - nh) / 2, h: nh };
+        }));
+        objFxCache.current.delete(st.id);
+        setFxTick(n => n + 1);
+        setComposeState(null);
+        return null;
+      }
       if (isGeoIdentity(st.geo)) { finish(srcUrl, sw / sh); return st; }
       const baked = composeCanvas(st.img, sw, sh, st.geo, 2400);
       baked.toBlob(blob => {
@@ -1576,6 +1630,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const stripeA = stripeAPick || maskColor;
   const setStripeA = (c: string) => setStripeAPick(c);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
+  /** 「正在存檔」拖太久了 —— 那一層會多出一顆返回鍵，不能把人關在裡面 */
+  const [saveStuck, setSaveStuck] = useState(false);
+  useEffect(() => {
+    if (saveState !== 'processing') { setSaveStuck(false); return; }
+    const t = window.setTimeout(() => setSaveStuck(true), SAVE_STUCK_MS);
+    return () => window.clearTimeout(t);
+  }, [saveState]);
   const [finalImage, setFinalImage] = useState<string | null>(null);
   /** 成品是影片還是圖片 —— 完成頁要換成 <video>，副檔名也不一樣 */
   const [finalIsVideo, setFinalIsVideo] = useState(false);
@@ -2421,7 +2482,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     
     /* 除掉預覽倍率：畫布可能被畫得比工作解析度更細，但挖洞的座標一律是
        工作解析度，換算時要還原回去，不然放大之後點擊位置會整個偏掉。 */
-    const ps = previewScaleRef.current;
+    const ps = drawnScaleRef.current;
     const sx = canvasRef.current.width / rect.width / ps, sy = canvasRef.current.height / rect.height / ps;
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState.globalScale || 1, offs = getLayoutOffsets();
@@ -2748,6 +2809,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const [previewScale, setPreviewScale] = useState(1);
   const previewScaleRef = useRef(1);
   previewScaleRef.current = previewScale;
+  /** 主畫布上一次真的是用哪個倍率畫的（由 renderToCanvas 寫入，見那裡的說明） */
+  const drawnScaleRef = useRef(1);
   /** 播動畫時實際用的倍率（見 MAX_MOTION_PIXELS）。跑不動時會被保險絲往下調 */
   const motionScaleRef = useRef(1);
   /** 上面那個值的上限：畫得動的話會慢慢升回來 */
@@ -2915,7 +2978,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     deferHeavyWork();
     activePointers.current.set(e.pointerId, e);
     const rect = canvasRef.current.getBoundingClientRect();
-    const ps = previewScaleRef.current;
+    const ps = drawnScaleRef.current;
     const sx = canvasRef.current.width / rect.width / ps, sy = canvasRef.current.height / rect.height / ps;
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState?.globalScale || 1;
@@ -3228,6 +3291,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, iw, ih); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
 
     const isMain = targetCanvas === canvasRef.current;
+    /* 主畫布這一趟真的用了哪個倍率，記下來。
+       所有「畫面座標 ↔ 畫布座標」的換算都要用這個，不能用 previewScale ——
+       影片播放中會刻意畫得小一號（見影片那支迴圈），兩者就不一樣了，
+       用錯的話點擊位置、拖曳、那排白色鍵全部會偏掉。 */
+    if (isMain) drawnScaleRef.current = renderScale;
     /* 遮罩底稿只是一片純色時（沒有自訂遮罩圖、也沒有點點），根本不需要
        一張跟畫面一樣大的畫布去裝它。
        四周包圍時「遮罩」就是整個畫面，拉比例滑桿時每動一格就得把那張
@@ -5240,8 +5308,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
      幾個刻意的決定：
        ‧ 動畫正在播的時候不開這一支。上面那支本來就每一格都重畫整張，
          兩支一起跑等於同一格畫兩次（實測就是掉一半的格數）。
-       ‧ 倍率完全沿用原本那兩條路（動畫頁用 motionScale、其他用 previewScale），
-         不另外訂一套 —— 影片的清晰度就是這張拼圖本來的清晰度。
+       ‧ **影格沒有換就一個字都不畫。** 素材是 24／25／30fps，畫布卻照 30fps
+         盲目重畫的話，每五格就有一格是完全一樣的畫面 —— 白燒的電。
+       ‧ **播放中改用「一個畫布像素對一個裝置像素」。** 靜止畫面用 1.8 倍
+         超取樣是為了邊緣的抗鋸齒，那在會動的東西上根本看不出來，
+         卻要多付 1.8² ＝ 3.24 倍的像素工。停下來（或本來就沒有影片）
+         時立刻補畫一張完整倍率的，所以「看著不動的那一張」跟以前一樣細。
        ‧ 一樣掛自適應保險絲：一格畫不完就降格數，只動「一秒幾格」，
          一個像素都不會少。 */
   const allVideos = useCallback(
@@ -5260,21 +5332,42 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   useEffect(() => {
     if (!vidSig || !imageState || videoProg !== null || saveState !== 'idle') return;
     if (motionOn && motionPlaying) return;           // 那一支已經每格都畫了
+    /* 畫布被整個蓋住的時候就別畫了 —— 構圖、IG 預覽都是全螢幕的一層，
+       底下畫得再認真也沒有人看得到，純粹是把手機烤熱。 */
+    if (composeState || igPreview) { pauseVideos(allVideosRef.current()); return; }
+    const vids = allVideosRef.current();
+    playVideos(vids);
     let raf = 0;
     let last = -1;
     let interval = 1000 / 30;
     let slow = 0, fast = 0;
+    let lastTok = '';
+    let wasLive: boolean | null = null;
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const now = performance.now();
       if (last >= 0 && now - last < interval) return;
-      last = now;
       const cv = canvasRef.current;
       if (!cv) return;
+      /* 有沒有換影格？沒換就直接回去 —— 這一步讓「畫幾次」等於素材本身的
+         格數，而不是盲目的 30。25fps 的素材因此少畫六分之一。 */
+      const live = vids.some(v => !v.paused && !v.ended);
+      const tok = videoTokenOf(vids);
+      if (tok === lastTok && live === wasLive) return;
+      lastTok = tok;
+      last = now;
+      const first = wasLive === null;
+      const justStopped = wasLive === true && !live;
+      wasLive = live;
       try {
+        const base = motionOn ? motionScaleRef.current : previewScaleRef.current;
+        /* 播放中：拿掉超取樣（1 個畫布像素 ＝ 1 個裝置像素）。
+           停下來的那一格立刻補一張完整倍率的，靜止畫面的細緻度完全沒動到。 */
+        const scale = live ? Math.max(0.5, base / SUPERSAMPLE) : base;
         const t1 = performance.now();
-        renderToCanvasRef.current(cv, motionOn ? motionScaleRef.current : previewScaleRef.current);
+        renderToCanvasRef.current(cv, scale);
         const cost = performance.now() - t1;
+        if (first || justStopped) return;         // 這一格是補畫，不拿來評估快慢
         if (cost > interval * 0.9) { slow++; fast = 0; } else if (cost < interval * 0.45) { fast++; slow = 0; }
         if (slow >= 5 && interval < 1000 / 12) {
           interval = interval < 1000 / 20 ? 1000 / 20 : 1000 / 12;
@@ -5290,13 +5383,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [vidSig, imageState, videoProg, saveState, motionOn, motionPlaying]);
+  }, [vidSig, imageState, videoProg, saveState, motionOn, motionPlaying, composeState, igPreview]);
 
   /* 切到背景就停掉影片：背景分頁照樣在解碼，白吃電也白吃記憶體 */
   useEffect(() => {
     const onVis = () => {
       const list = allVideosRef.current();
-      if (document.hidden) list.forEach(v => { try { v.pause(); } catch { /* 停不了就算了 */ } });
+      if (document.hidden) pauseVideos(list);
       else playVideos(list);
     };
     document.addEventListener('visibilitychange', onVis);
@@ -5576,7 +5669,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         requestAnimationFrame(frame);
       });
       rec.stop();
-      const blob = await done;
+      /* onstop 也有不回來的時候（編碼器被系統收走時就會這樣）。
+         等超過就拿手上已經收到的片段湊一段出來，不要讓進度條停在那裡
+         —— 那一層蓋著返回鍵，卡住就等於退不出去。 */
+      const blob = await Promise.race([
+        done,
+        new Promise<Blob>(res => setTimeout(
+          () => res(new Blob(chunks, { type: mime || 'video/webm' })), 8000)),
+      ]);
       // 取消：錄到一半的東西直接丟掉，什麼都不改
       if (videoAbortRef.current) return;
       revokeUrl(finalUrlRef.current);
@@ -5630,6 +5730,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         
         // 一樣是無損 PNG，只是改用 blob 網址拿在手上（dataURL 會多吃一份 33% 膨脹的字串）
         const url = await canvasToUrl(exportCanvas);
+        // 兩條路都轉不出來（見 canvasToUrl）——當成失敗收掉，不要停在「正在存檔」
+        if (!url) throw new Error('導出的圖轉不出來');
         revokeUrl(finalUrlRef.current);
         finalUrlRef.current = url;
         setFinalImage(url);
@@ -5915,6 +6017,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
              105 剛好在標題列之上、又在導出／成品那幾層（110 以上）之下。 */
           zIndex={105}
           image={composeState.img}
+          /* 影片不給梯形（見 ComposeStudio 的 hideKeystone），其餘完全一樣 */
+          hideKeystone={!!composeState.vid}
           geo={composeState.geo}
           onChange={g => setComposeState(st => (st ? { ...st, geo: g } : st))}
           onCancel={() => setComposeState(null)}
@@ -5977,9 +6081,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       )}
 
       {saveState === 'processing' && (
+        /* 這一層是蓋住返回鍵的，所以它**一定**要有出口。
+           以前沒有：導出萬一在某一步卡住（見 canvasToUrl 那支的看門狗），
+           畫面就永遠停在這裡，連退回主頁都做不到。
+           現在等超過 SAVE_STUCK_MS 還沒好就多出一顆返回鍵 —— 正常的導出
+           兩三秒就結束，根本看不到它。 */
         <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
           <div className="w-16 h-16 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
           <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">正在存檔</p>
+          {saveStuck && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setSaveState('idle'); }}
+              className="mt-8 px-6 h-10 rounded-full border border-white/25 text-white/80 text-[12px] font-bold tracking-[0.2em] active:scale-95 transition-transform"
+            >
+              取消，回到編輯
+            </button>
+          )}
         </div>
       )}
 
@@ -6236,7 +6353,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           const r = cvsEl.getBoundingClientRect();
           const stEl = stageRef.current;
           const sr = stEl ? stEl.getBoundingClientRect() : { left: 0, top: 0 } as DOMRect;
-          const ps = previewScaleRef.current;
+          const ps = drawnScaleRef.current;
           const k = r.width / Math.max(1, cvsEl.width / ps);   // 畫布內部單位 → CSS
           /* 符號的框是「剛好包住墨水」的，常常比 em 方框小一大截 ——
              輸入框照那個框開的話字會被裁掉。所以符號的輸入框至少要有
@@ -6327,10 +6444,38 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
           const r = cvsEl.getBoundingClientRect();
           const stEl = stageRef.current;
           const sr = stEl ? stEl.getBoundingClientRect() : { left: 0, top: 0 };
-          const ps = previewScaleRef.current;
+          const ps = drawnScaleRef.current;
           const k = r.width / Math.max(1, cvsEl.width / ps);   // 畫布內部單位 → CSS
-          const cx = r.left - sr.left + (o.x + o.w / 2) * k;
-          const by = r.top - sr.top + (o.y + o.h) * k + 10;
+          /* ── 這排鍵要貼著「畫面上真的看得到的那個選取框」 ──────────────────
+             以前是拿 o.x / o.y / o.w / o.h 直接算，也就是物件的「原始方框」。
+             但畫出來的框有兩件事會讓它跟原始方框不一樣：
+               ① 選了外形（圓形／星星／愛心）或裁切過，框會縮到剛好包住實際的圖
+                  （imgShapeInk）—— 愛心上面那片空白不算在內。
+               ② 物件轉過角度時框跟著轉，最低的點是轉完之後的那個角。
+             兩者都會讓這排鍵離框好一段，看起來就是「它還停在原本的位置」。
+             這裡照畫選取框那一段同一份幾何重算：框的中心在哪、轉完之後最低點在哪。 */
+          const shapeMode = shapeSel === o.id && isImgShaped(o.imgShape);
+          // shapeMode 描的是整個外形（見畫選取框那一段），其他時候是 ink
+          const ink = shapeMode
+            ? { x: 0, y: 0, w: o.w, h: o.h }
+            : imgShapeInk(o.imgShape, o.w, o.h);
+          const bx0 = -o.w / 2 + ink.x, by0 = -o.h / 2 + ink.y;
+          const rad = ((o.rot || 0) * Math.PI) / 180;
+          const cosR = Math.cos(rad), sinR = Math.sin(rad);
+          let lowest = -Infinity;
+          for (const [px, py] of [
+            [bx0, by0], [bx0 + ink.w, by0], [bx0 + ink.w, by0 + ink.h], [bx0, by0 + ink.h],
+          ]) {
+            const ry = px * sinR + py * cosR;
+            if (ry > lowest) lowest = ry;
+          }
+          const mx = bx0 + ink.w / 2, my = by0 + ink.h / 2;    // 框的中心（物件座標）
+          const ox = o.x + o.w / 2, oy = o.y + o.h / 2;        // 物件中心（畫布座標）
+          const cx = r.left - sr.left + (ox + (mx * cosR - my * sinR)) * k;
+          let by = r.top - sr.top + (oy + lowest) * k + 10;
+          // 轉了角度之後框可能伸出舞台外面，那就把這排鍵收回看得到的地方
+          const stH = stEl ? stEl.getBoundingClientRect().height : 0;
+          if (stH) by = Math.min(by, stH - 44);
           const act = (fn: () => void) => (ev: React.SyntheticEvent) => { ev.stopPropagation(); ev.preventDefault(); fn(); };
           /* 比原本多一層：陣列最底下再往下按一次，就整個掉到「所有圖案之下」（below）。
              從 below 往上按就先回到圖案之上的最底層，再往上才是換順序。
@@ -6875,12 +7020,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                        React 會當成同一顆、只換 className —— 清單那邊的 <button>
                        就被留下來直接變成這一頁的按鈕，而按鈕掛著 transition-all，
                        於是從「返回鍵那個大小」一路補間過來，看起來就是抖一下。 */
-                    /* 五顆一排（多了「匯入影片」）。字加 whitespace-nowrap：
-                       格子窄了之後，四個字有機會被拆成兩行，那一顆就比別人高。 */
-                    <div key="add-root" className="flex justify-center gap-1 mt-6">
+                    /* 分兩排：上排是「從相簿拿東西進來」（圖片／影片），
+                       下排是「這個 App 自己生的東西」（文字／符號／圖形）。
+                       五顆擠成一排會讓每一顆只剩七十幾像素，而且兩種性質的
+                       東西混在一起也不好找。字都加 whitespace-nowrap，
+                       格子再窄也不會被拆成兩行、變得比隔壁高一截。 */
+                    <div key="add-root" className="flex flex-col gap-2 mt-5">
+                    {/* 上排只有兩顆，但寬度要跟下排那三顆一模一樣（不然上排會胖一圈）——
+                        (100% − 兩個 gap) ÷ 3 就是下排一顆的寬。 */}
+                    <div className="flex justify-center gap-2">
                       <button
                         onClick={() => objFileInputRef.current?.click()}
-                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[calc((100%-16px)/3)]"
                       >
                         <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">匯入圖片</span>
@@ -6889,11 +7040,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                           一眼就對得起來 */}
                       <button
                         onClick={() => objVidInputRef.current?.click()}
-                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[calc((100%-16px)/3)]"
                       >
                         <Film size={24} strokeWidth={1.5} className="text-white opacity-80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">匯入影片</span>
                       </button>
+                    </div>
+                    <div className="flex justify-center gap-2">
                       <button
                         onClick={addText}
                         className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
@@ -6922,6 +7075,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                         <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增圖形</span>
                       </button>
+                    </div>
                     </div>
                     ) : (
                       /* 點進「新增圖形」才看得到的圖案清單，跟經典拼圖同一份：
@@ -7182,8 +7336,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
                          真正畫到畫布上的還是 sel.img（那段影片本人），這裡換掉的
                          只有面板看的那條網址。 */
                       img={panelImgOf(sel)}
-                      /* 構圖是「把裁切結果烤成一張圖」，烤完就不是影片了 —— 藏起來 */
-                      hideCompose={!!sel.vid}
                       set={(d: any) => patch(d)} lutList={lutList}
                       loadingLut={loadingLut} setLoadingLut={setLoadingLut}
                       lutRevision={lutRevision} setLutRevision={setLutRevision}

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
-import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film } from 'lucide-react';
 import { Icon } from './Icon';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut } from '../utils/photoFx';
@@ -20,9 +20,10 @@ import { SHAPE_IMAGES } from '../utils/shapeImages';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
+import { VIDEO_ACCEPT, loadVideoEl, isVideoEl } from '../utils/videoSource';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
-import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity } from '../utils/compose';
+import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas, geoCssBox } from '../utils/compose';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
 interface CellRect {
@@ -3426,6 +3427,80 @@ interface FloatingImageComponentProps {
 
 let globalDragPointerId: number | null = null;
 
+/**
+ * 影片圖層的畫面。
+ *
+ * 沒有裁切過就是原本那一行 <video> —— 一個像素都沒動。
+ * 裁切／轉角度／翻轉過的話，就把構圖那組參數換成一個 CSS 的 matrix()
+ * 套在 <video> 上，外層再用 overflow:hidden 把框外的部分切掉。
+ * 用的是跟匯出完全同一個矩陣（utils/compose 的 geoAffine），
+ * 所以「預覽看到的」與「匯出畫出來的」不可能對不起來。
+ *
+ * 刻意**不**把影片逐格畫進 canvas：那樣每一格都要 drawImage 一次整張，
+ * 手機會燙；交給瀏覽器自己合成則幾乎不花 CPU，而且維持原生解析度。
+ */
+const VideoLayer: React.FC<{
+  image: any; boxW: number; boxH: number;
+  /** 外層的版面樣式（位置／大小）。裁切過的時候會套在那個 overflow:hidden 的框上。 */
+  style?: React.CSSProperties;
+}> = ({ image, boxW, boxH, style }) => {
+  const ref = useRef<HTMLVideoElement>(null);
+  const geo: GeoParams | undefined = image.geo;
+  const cropped = !!geo && !isGeoIdentity(geo);
+  const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
+  useEffect(() => {
+    const v = ref.current;
+    if (!v || !cropped) return;
+    const on = () => { if (v.videoWidth) setNat({ w: v.videoWidth, h: v.videoHeight }); };
+    on();
+    v.addEventListener('loadedmetadata', on);
+    return () => v.removeEventListener('loadedmetadata', on);
+  }, [cropped, image.src]);
+  /* 這裡是 fill 不是 contain：匯出是 drawImage(src, x, y, w, h)，直接把圖填滿
+     整個框、不留信箱邊。預覽如果用 contain，只要圖層框的長寬比跟原圖差一點點
+     （匯入時取整就會差），四周就會多出零點幾 px 的空白 —— 貼齊畫布邊緣時那就
+     是一條白縫，而匯出沒有。用 fill 才跟匯出一致。 */
+  const plain: React.CSSProperties = style
+    ? { ...style, objectFit: 'fill', pointerEvents: 'none' }
+    : { width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' };
+  const box = cropped && nat && boxW > 0 && boxH > 0
+    ? geoCssBox(nat.w, nat.h, geo!, boxW, boxH)
+    : null;
+  const vid = (
+    <video
+      ref={ref}
+      src={image.src}
+      autoPlay
+      loop
+      muted
+      playsInline
+      preload="auto"
+      style={box
+        ? {
+          position: 'absolute', left: 0, top: 0,
+          width: `${box.width}px`, height: `${box.height}px`,
+          /* Tailwind 的 preflight 給 img/video 掛了 max-width:100%，
+             那會把「來源原始寬度」直接夾成外框那麼寬 —— 變換算得再對，
+             畫出來的還是錯的（實測 480px 被夾成 160px）。這裡要明講不要夾。 */
+          maxWidth: 'none', maxHeight: 'none',
+          transformOrigin: '0 0', transform: box.transform,
+          pointerEvents: 'none',
+        }
+        : plain}
+    />
+  );
+  if (!box) return vid;
+  return (
+    <div
+      style={style
+        ? { ...style, overflow: 'hidden', pointerEvents: 'none' }
+        : { position: 'relative', width: '100%', height: '100%', overflow: 'hidden', pointerEvents: 'none' }}
+    >
+      {vid}
+    </div>
+  );
+};
+
 const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   image,
   isSelected,
@@ -4825,19 +4900,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       ) : image.isVideo ? (
         // 影片直接交給瀏覽器播：預覽就是原生解析度（不是縮圖也不是逐格轉貼圖），
         // 所以拖大拖小都還是清楚的。
-        <video
-          src={image.src}
-          autoPlay
-          loop
-          muted
-          playsInline
-          preload="auto"
-          /* 這裡是 fill 不是 contain：匯出是 drawImage(src, x, y, w, h)，直接把圖填滿
-             整個框、不留信箱邊。預覽如果用 contain，只要圖層框的長寬比跟原圖差一點點
-             （匯入時取整就會差），四周就會多出零點幾 px 的空白 —— 貼齊畫布邊緣時那就
-             是一條白縫，而匯出沒有。用 fill 才跟匯出一致。 */
-          style={{ width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' }}
-        />
+        <VideoLayer image={image} boxW={boxW} boxH={boxH} />
       ) : (
         <img
           src={image.src}
@@ -5649,11 +5712,26 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      滑桿卻已經接到新這張的參數上了。 */
   useEffect(() => { setEffectCard(''); setEffectDetail(false); }, [selectedFloatingId]);
   /** 構圖中的圖層：跟「編輯」共用同一個 ComposeStudio */
-  const [composeState, setComposeState] = useState<{ id: string; img: HTMLImageElement; geo: GeoParams } | null>(null);
+  const [composeState, setComposeState] = useState<{ id: string; img: HTMLImageElement | HTMLVideoElement; geo: GeoParams; vid?: boolean } | null>(null);
 
   const openComposeFor = (id: string) => {
     const layer = floatingImages.find(f => f.id === id);
     if (!layer) return;
+    /* ── 影片走另一條 ────────────────────────────────────────────────
+       以前這裡不管三七二十一都開一張 <img> 去讀那條網址。影片的網址
+       <img> 是讀不到的 → onload 永遠不會來 → 構圖介面根本打不開；
+       就算硬打開，套用時又會把 src 換成烤好的 PNG，而圖層還標著 isVideo，
+       於是 <video src="…png"> 播不出任何東西 —— 那就是「裁切後影片直接消失」。
+       改成：拿一個真的 <video> 給構圖介面用，套用時只留下 geo、不烤圖。 */
+    if (layer.isVideo) {
+      loadVideoEl(layer.origSrc || layer.src)
+        .then(v => {
+          try { v.pause(); } catch { /* 停不了也沒關係 */ }
+          setComposeState({ id, img: v, geo: layer.geo || DEFAULT_GEO, vid: true });
+        })
+        .catch(() => { /* 讀不到就當作沒按 */ });
+      return;
+    }
     const el = new Image();
     el.onload = () => setComposeState({ id, img: el, geo: layer.geo || DEFAULT_GEO });
     // baked 過就從原圖接續，參數還原成上次的樣子
@@ -5682,8 +5760,27 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }));
       setComposeState(null);
     };
-    const sw = st.img.naturalWidth || st.img.width;
-    const sh = st.img.naturalHeight || st.img.height;
+    const sw = (st.img as any).naturalWidth || (st.img as any).videoWidth || st.img.width;
+    const sh = (st.img as any).naturalHeight || (st.img as any).videoHeight || st.img.height;
+    /* 影片：只留 geo，不烤圖（理由見 openComposeFor）。
+       預覽是把同一個矩陣寫成 CSS transform，匯出是同一個矩陣畫在畫布上，
+       所以兩邊看到的一定一樣。這裡只要把框的高度換成裁切後的長寬比。 */
+    if (layer.isVideo) {
+      const q = ((st.geo.quarter % 4) + 4) % 4;
+      const swap = q === 1 || q === 3;
+      const bw = swap ? sh : sw, bh = swap ? sw : sh;
+      const c = st.geo.crop;
+      const aspect = (bw * c.w) / Math.max(1e-6, bh * c.h);
+      setFloatingImages(prev => prev.map(f => {
+        if (f.id !== st.id) return f;
+        const newH = Math.max(24, Math.round(f.width / aspect));
+        return { ...f, geo: st.geo, y: f.y + (f.height - newH) / 2, height: newH };
+      }));
+      // 構圖用的那個 <video> 是臨時開的，用完就收
+      if (isVideoEl(st.img)) { try { st.img.pause(); st.img.remove(); } catch { /* 收不掉算了 */ } }
+      setComposeState(null);
+      return;
+    }
     if (isGeoIdentity(st.geo)) {
       finish(srcUrl, sw / sh);
       return;
@@ -6856,6 +6953,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  /* 影片另外一顆 —— 一個 accept 同時寫圖片與影片的話，相簿那一頁會兩種混在
+     一起，找起來反而慢。走的是同一支 handleFileChange，行為完全一樣。 */
+  const vidInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -9399,8 +9499,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         drawShapeLayer(ctx, fImg, scaleFactor);
         continue;
       }
-      const img = fImg.isVideo ? await loadExportVideo(fImg.src) : await loadExportImage(fImg.src);
+      let img: any = fImg.isVideo ? await loadExportVideo(fImg.src) : await loadExportImage(fImg.src);
       if (!img) continue;
+      /* 影片的構圖是「留著參數、畫的時候才套」（照片是烤成一張新圖）。
+         這裡用的是跟預覽完全同一個矩陣，所以匯出跟畫面上看到的一致。 */
+      if (fImg.isVideo && fImg.geo && !isGeoIdentity(fImg.geo)) {
+        img = geoFrameCanvas(img, img.videoWidth || img.width, img.videoHeight || img.height, fImg.geo, 2400);
+      }
 
       ctx.save();
       // 扣掉預覽裡每頁之間那 1px 的間隔
@@ -9796,7 +9901,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             );
           }
           if (f.isVideo) {
-            return <video key={f.id} src={f.src} autoPlay loop muted playsInline style={{ ...common, objectFit: 'fill' }} />;
+            return (
+              <VideoLayer key={f.id} image={f} style={common}
+                boxW={f.width * f.scale * k} boxH={f.height * f.scale * k} />
+            );
           }
           /* 濾鏡、圓角、羽化、發光、描邊全部交給跟主預覽同一支演算法去畫，
              IG 預覽／頁面縮圖／畫布上看到的才會是同一張。 */
@@ -10447,6 +10555,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {composeState && (
         <ComposeStudio
           image={composeState.img}
+          /* 影片不給梯形（見 ComposeStudio 的 hideKeystone），其餘完全一樣 */
+          hideKeystone={!!composeState.vid}
           geo={composeState.geo}
           onChange={g => setComposeState(st => (st ? { ...st, geo: g } : st))}
           onCancel={() => setComposeState(null)}
@@ -10653,7 +10763,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         type="file"
         ref={fileInputRef}
         multiple
-        accept="image/*,video/*"
+        accept="image/*"
+        onChange={(e) => handleFileChange(e, true)}
+        className="hidden"
+      />
+      <input
+        type="file"
+        ref={vidInputRef}
+        multiple
+        accept={VIDEO_ACCEPT}
         onChange={(e) => handleFileChange(e, true)}
         className="hidden"
       />
@@ -12053,7 +12171,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 {addSub === 'symbol' ? (
                   <SymbolPicker onBack={() => setAddSub('root')} onPick={handleAddSymbolLayer} />
                 ) : addSub === 'root' ? (
-                  /* 五顆分兩排：第一排三顆、第二排兩顆。
+                  /* 六顆分兩排，各三顆。
+                     第一排是「這一頁要放什麼進來」（佈局／圖片／影片），
+                     第二排是「這個 App 自己生的東西」（文字／符號／圖形）——
+                     跟創意拼圖那邊的分法一致。
                      全部擠在同一排的話每顆只剩七十幾寬，字都快貼到邊了。
                      兩排都用同一個 max-w，所以每顆按鈕一樣大。
 
@@ -12072,15 +12193,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Icon name="grid_view" className="text-[24px] text-white/80" />
-                    <span className="text-[11px] font-bold tracking-widest text-white/90">新增佈局</span>
+                    <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增佈局</span>
                   </button>
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
-                    <span className="text-[11px] font-bold tracking-widest text-white/90">匯入圖片</span>
+                    <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">匯入圖片</span>
                   </button>
+                  {/* 影片：圖示用 lucide 的 Film，跟創意拼圖那顆同一個 */}
+                  <button
+                    onClick={() => vidInputRef.current?.click()}
+                    className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
+                  >
+                    <Film size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                    <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">匯入影片</span>
+                  </button>
+                  </div>
+                  <div className="flex justify-center gap-1.5">
                   <button
                     onClick={() => handleAddTextLayer()}
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
@@ -12090,10 +12221,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         圖示上（opacity-80）而不是筆畫顏色上（text-white/80）——
                         半透明的筆畫在交疊處會疊出更亮的一塊，看起來就是發白。 */}
                     <Type size={24} strokeWidth={1.5} className="text-white opacity-80" />
-                    <span className="text-[11px] font-bold tracking-widest text-white/90">新增文字</span>
+                    <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增文字</span>
                   </button>
-                  </div>
-                  <div className="flex justify-center gap-1.5">
                   {/* 新增符號：內容之後再補，先把位置與外觀定下來 */}
                   <button
                     onClick={() => setAddSub('symbol')}
@@ -12106,14 +12235,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         同一套的 lucide 線條圖示。 */}
                     {/* 圖標直接用清單裡的第五顆符號，一看就知道這一頁是什麼 */}
                     <span className="text-white opacity-80 text-[15px] leading-none whitespace-nowrap h-6 flex items-center">{SYMBOLS[4]}</span>
-                    <span className="text-[11px] font-bold tracking-widest text-white/90">新增符號</span>
+                    <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增符號</span>
                   </button>
                   <button
                     onClick={() => setAddSub('shape')}
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
                     <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80" />
-                    <span className="text-[11px] font-bold tracking-widest text-white/90">新增圖形</span>
+                    <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增圖形</span>
                   </button>
                   </div>
                   </div>

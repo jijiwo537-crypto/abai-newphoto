@@ -441,16 +441,19 @@ export const HomePage: React.FC<HomePageProps> = ({
   const libScrollTop = (sc: HTMLDivElement) => libScrollAt(sc, 0);
 
   /* ── 分頁高亮的門檻 ────────────────────────────────────────────────
-     以前是「捲超過半屏就算到模板了」。那個數字跟模板實際在哪裡沒有關係 ——
-     模板上面有多少東西、一屏多高、視差讓它跑得多快，三個都會變，
-     結果就是要滑到模板都快占滿整個畫面了，下面那顆才亮。
-     改成看模板自己：上緣升過畫面的四分之三（＝模板已經吃掉最下面那 1/4）
-     就亮。先把那個時機換算成一個捲軸位置存起來，捲動途中就只是比大小，
-     不用再去量任何東西（量了就等於每一格都逼瀏覽器重新排版一次）。 */
-  const NAV_LIB_AT = 0.75;
+     規則就一句話：**整條捲軸滑過 30% 就是「模板」**。
+     不換算模板在畫面上的哪裡、不管視差、不看上面有多少東西 ——
+     一個比例，滑到哪裡會亮永遠是同一個地方，手上也就沒有「它在想什麼」的感覺。
+     （上一版是拿模板的實際位置去算的，位置對，但門檻藏在一堆幾何後面，
+     跟手指滑了多少對不起來。） */
+  const NAV_LIB_AT = 0.30;
   const navThreshRef = useRef(-1);
   const navThresh = (sc: HTMLDivElement) => {
-    if (navThreshRef.current < 0) navThreshRef.current = libScrollAt(sc, (sc.clientHeight || 1) * NAV_LIB_AT);
+    /* 算一次就存起來。捲動途中不能去讀 scrollHeight —— 前一行才剛寫過
+       transform，這一讀就會逼瀏覽器把整頁重新排一次版，每一格都來一次。 */
+    if (navThreshRef.current < 0) {
+      navThreshRef.current = Math.max(0, sc.scrollHeight - sc.clientHeight) * NAV_LIB_AT;
+    }
     return navThreshRef.current;
   };
   /** 一屏高度、或上面那些東西的高度變了就要重算 */
@@ -484,14 +487,9 @@ export const HomePage: React.FC<HomePageProps> = ({
     }
     const sc = scrollRef.current;
     if (!sc) return;
-    if (navSettle.current) { clearTimeout(navSettle.current); navSettle.current = null; }
     navLockRef.current = id;
     sc.scrollTo({ top: id === 'lib' ? libScrollTop(sc) : 0, behavior: 'smooth' });
   }, []);
-
-  /** 分頁高亮的延遲切換計時器（捲動停下來才換，途中不重繪） */
-  const navSettle = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (navSettle.current) clearTimeout(navSettle.current); }, []);
 
   /* 使用者自己碰捲軸就立刻解鎖 —— 平滑捲動被打斷時不能一直鎖著 */
   const releaseNavLock = useCallback(() => { navLockRef.current = null; }, []);
@@ -743,16 +741,12 @@ export const HomePage: React.FC<HomePageProps> = ({
       if (next === navLockRef.current) navLockRef.current = null;
       return;
     }
-    /* 分頁高亮延到「停下來」再換。
-       原本是一過半屏就 setNav，那會在滑到一半時整棵首頁重繪一次 ——
-       正好落在從模板快速滑回修圖的那一刻，看起來就是卡一下。
-       捲動途中完全不碰 React，停 120ms 才換，手感上察覺不到延遲。 */
-    if (next === navRef.current) {
-      if (navSettle.current) { clearTimeout(navSettle.current); navSettle.current = null; }
-      return;
-    }
-    if (navSettle.current) clearTimeout(navSettle.current);
-    navSettle.current = setTimeout(() => { navSettle.current = null; setNav(next); }, 120);
+    /* 過了門檻就當場換，不再等。
+       以前這裡壓了 120ms 才換（怕在捲動途中重繪一次首頁會頓一下），
+       但那 120ms 在手上就是「滑過去了、它慢半拍才亮」—— 主人說的那個延遲感
+       就是它。門檻本身是個確定的位置，越過去的那一格就該亮。 */
+    if (next === navRef.current) return;
+    setNav(next);
   }, [kickPump, applyParallax, syncRange]);
 
   const copyEmail = async () => {

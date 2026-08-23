@@ -37,7 +37,9 @@ const HEADER_H = 56;
 const FOOTER_H = 77;
 
 interface ComposeStudioProps {
-  image: HTMLImageElement;
+  /* 影片也走這一支：<video> 跟 <img> 一樣畫得上畫布，
+     寬高改讀 videoWidth / videoHeight（下面那行已經一起處理）。 */
+  image: HTMLImageElement | HTMLVideoElement;
   geo: GeoParams;
   onChange: (geo: GeoParams) => void;
   onApply: () => void;
@@ -50,6 +52,16 @@ interface ComposeStudioProps {
    * 創意拼圖的標題列是 z-100，要傳一個比它大的值進來。
    */
   zIndex?: number;
+  /**
+   * 不要「梯形」那一頁。
+   *
+   * 梯形是唯一會讓整條構圖變成**投影變換**的一項；其餘每一項（90 度、翻轉、
+   * 微調角度、縮放平移、裁切）串起來都還是仿射。
+   * 影片沒辦法像照片那樣把結果烤成一張圖 —— 它每一格都不一樣，只能在畫的
+   * 當下即時套上去；而「即時」的前提就是那個變換是仿射（一次 drawImage 就好）。
+   * 所以影片這邊不提供梯形，其餘操作跟照片一模一樣。
+   */
+  hideKeystone?: boolean;
 }
 
 const HANDLES = [
@@ -95,8 +107,10 @@ export const COMPOSE_WARMUP_CLASSES =
   'transition-[background-color,color,border-color] transition-colors uppercase w-12 w-14 ' +
   'w-full w-px';
 
-export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70 }) => {
+export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone }) => {
   const [tab, setTab] = useState<Tab>('crop');
+  // 梯形藏起來的時候，萬一停在那一頁（或之後被藏起來）就退回裁切
+  useEffect(() => { if (hideKeystone && tab === 'keystone') setTab('crop'); }, [hideKeystone, tab]);
   const stageWrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
@@ -110,7 +124,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   const baseKey = `${geo.quarter}|${geo.angle}|${geo.flipH}|${geo.flipV}|${geo.keyV}|${geo.keyH}|${geo.zoom}|${geo.offset?.x}|${geo.offset?.y}|${live}`;
   const baseCanvas = useMemo(() => {
     if (!image) return null;
-    return stageAndWarp(image, image.naturalWidth || image.width, image.naturalHeight || image.height, geo, live ? LIVE_MAX : STAGE_MAX);
+    return stageAndWarp(image, (image as any).naturalWidth || (image as any).videoWidth || image.width, (image as any).naturalHeight || (image as any).videoHeight || image.height, geo, live ? LIVE_MAX : STAGE_MAX);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [image, baseKey]);
 
@@ -154,7 +168,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   // 旋轉或梯形校正之後畫面四角會空出來，裁切框不能框到那裡
   const quad = useMemo(() => {
     if (!image) return [[0, 0], [1, 0], [1, 1], [0, 1]] as [number, number][];
-    return outputQuad(image.naturalWidth || image.width, image.naturalHeight || image.height, geo);
+    return outputQuad((image as any).naturalWidth || (image as any).videoWidth || image.width, (image as any).naturalHeight || (image as any).videoHeight || image.height, geo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [image, baseKey]);
 
@@ -639,7 +653,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
             ['angle', 'rotate_90_degrees_ccw', '角度'],
             ['flip', 'flip', '翻轉'],
             ['keystone', 'transform', '梯形'],
-          ] as [Tab, string, string][]).map(([id, icon, label]) => (
+          ] as [Tab, string, string][]).filter(([id]) => !(hideKeystone && id === 'keystone')).map(([id, icon, label]) => (
             <button
               key={id}
               onClick={() => setTab(id)}
