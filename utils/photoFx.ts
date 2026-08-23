@@ -325,6 +325,53 @@ const toParams = (fx: PhotoFx): EditorParams => ({
 });
 
 /**
+ * 把「這一組調整的整條顏色鏈」烤成一顆 33³ 查色表，交給 GPU 用。
+ *
+ * 為什麼要獨立出這一支：影片。
+ * ────────────────────────────────────────────────────────────────
+ * applyPhotoFx 的第一個動作是 `drawImage(來源, …)` 把來源畫進 2D 畫布。
+ * 來源是圖片時那是一次性的；來源是**影片**時，那是每一格都要付的錢，
+ * 而且貴得離譜 —— 實測一段 1080p 的影片，光是這一個 drawImage 就要 20.9ms
+ * （手機等級的 CPU），一秒 30 格根本不可能。
+ *
+ * 但這裡有個關鍵：整條顏色鏈是純粹的 RGB→RGB 函數（見 lutBake 的說明），
+ * 所以它可以整條收進一顆表。表烤好之後，影片那一格根本不需要進 CPU ——
+ * 直接把影格上成 GPU 材質、查一次表就畫完了（實測 4.9ms，而且不佔主執行緒）。
+ *
+ * 顏色從哪裡來：**還是 processPixels 那一份 CPU 程式碼**，一行都沒有重寫。
+ * 這一支只是餵它 33³ 個格點而已，所以影片跟照片套同一顆濾鏡，顏色是同一個。
+ *
+ * lutAmount（濾鏡強度）也直接烤進去：兩顆表本身就是純查表函數，
+ * 「先各查一次再按比例混」跟「先把兩顆表按比例混再查一次」結果完全一樣，
+ * 所以這裡混表、只留一顆，GPU 那邊就只要一個 draw call。
+ *
+ * @returns 給 sampler3D 用的 RGBA8 資料與邊長；沒有任何顏色調整時回 null
+ *          （呼叫端看到 null 就知道「原樣顯示就好」，連查表都不必）。
+ */
+export function bakePhotoFxLut(fx?: PhotoFx): { tex: Uint8Array; size: number } | null {
+  if (!fx || !hasPhotoFx(fx)) return null;
+  const p = toParams(fx);
+  const film = getLoadedLut(fx.lut);
+  const amt = (fx.lutAmount ?? 100) / 100;
+  const baseLut = new Uint8Array(256);
+  generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseLut);
+  const bake = (f: LutData | null) => bakeColorLut(
+    (a, d, ww, hh) => processPixels(
+      a, d, ww, hh, p, f ? f.data : null, f ? f.size : 0, baseLut, null, false, IDENTITY_CURVE_LUTS,
+    ),
+    33,
+  );
+  const withFilm = bake(film);
+  /* 強度 100% 或根本沒挑濾鏡：一顆表就夠 */
+  if (!film || amt >= 1) return { tex: bakedToTexture(withFilm), size: 33 };
+  const noFilm = bake(null);
+  const a = withFilm.data, b = noFilm.data;
+  const mixed = new Uint8ClampedArray(a.length);
+  for (let i = 0; i < a.length; i++) mixed[i] = b[i] + (a[i] - b[i]) * amt;
+  return { tex: bakedToTexture({ size: 33, data: mixed }), size: 33 };
+}
+
+/**
  * 把調整套到來源圖上，回傳一張畫好的 canvas。
  * w / h 是要輸出的像素大小（呼叫端自己決定預覽用小張、匯出用大張）。
  */
