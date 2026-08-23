@@ -10,17 +10,38 @@
  * 唯一的代價是用完要記得 revoke，所以這裡把回收也一起包好。
  */
 
-/** 畫布 → blob 網址。轉不出來時退回 dataURL，至少不會整個失敗。 */
+/** toBlob 等多久就放棄、改走另一條路（理由見下面） */
+const TO_BLOB_TIMEOUT = 8000;
+
+/**
+ * 畫布 → blob 網址。轉不出來時退回 dataURL，至少不會整個失敗。
+ *
+ * ⚠ 那個看門狗不是「保險起見」，是真的會發生：畫布很大又碰上記憶體吃緊時，
+ * iOS 的 toBlob 有機會**永遠不回來** —— 不丟錯，那個 callback 就是不執行。
+ * 呼叫端於是一直等下去，畫面上是「正在存檔」轉圈轉到天荒地老，
+ * 而那一層是蓋住返回鍵的 —— 這就是「有時候退不出去」。
+ * 等超過就自己改走 toDataURL（同步的，一定有結果）；兩條都不行才回空字串，
+ * 讓呼叫端把它當成失敗收掉，而不是卡在那裡。
+ */
 export function canvasToUrl(cvs: HTMLCanvasElement, type = 'image/png', quality?: number): Promise<string> {
   return new Promise(resolve => {
+    let settled = false;
+    const finish = (s: string) => { if (!settled) { settled = true; resolve(s); } };
+    const fallback = () => { try { finish(cvs.toDataURL(type, quality)); } catch { finish(''); } };
+    const timer = setTimeout(fallback, TO_BLOB_TIMEOUT);
     try {
       cvs.toBlob(
-        b => resolve(b ? URL.createObjectURL(b) : cvs.toDataURL(type, quality)),
+        b => {
+          clearTimeout(timer);
+          if (b) finish(URL.createObjectURL(b));
+          else fallback();
+        },
         type,
         quality,
       );
     } catch {
-      resolve(cvs.toDataURL(type, quality));
+      clearTimeout(timer);
+      fallback();
     }
   });
 }

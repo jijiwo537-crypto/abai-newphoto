@@ -437,6 +437,139 @@ export function stageAndWarp(
   return warpCanvas(stageCanvas(img, srcW, srcH, g, maxSize), g, maxSize);
 }
 
+/* ── 影片用的構圖：同一套幾何，但寫成一個矩陣 ──────────────────────────
+   上面那條路（stageCanvas → warpCanvas → 裁切）是「烤成一張圖」，
+   照片可以，影片不行 —— 影片的內容每一格都不一樣，不可能烤起來。
+
+   好消息是：**只要沒有梯形，整條路就是一個仿射變換**。
+   90 度旋轉、翻轉、微調角度、自動蓋滿、縮放、平移、裁切，
+   每一項都是平移／旋轉／縮放的組合，串起來還是仿射。
+   （梯形是唯一會讓它變成投影變換的一項，所以影片那邊不提供梯形。）
+
+   換成一個矩陣之後，「把這一格套上構圖」就只是
+       ctx.setTransform(...m); ctx.drawImage(影片, 0, 0, srcW, srcH)
+   —— 一次 drawImage，沒有逐像素的迴圈、也沒有任何暫存畫布。
+   而且 m 的六個數字跟 CSS 的 matrix() 完全同一個順序，
+   所以「用 DOM 的 <video> 播」的地方（經典拼圖）可以用同一份數字寫成
+   CSS transform，預覽跟匯出因此不可能對不起來。 */
+
+/** canvas / CSS 的六數字仿射矩陣：x' = a·x + c·y + e，y' = b·x + d·y + f */
+export type Affine = [number, number, number, number, number, number];
+
+const mMul = (A: Affine, B: Affine): Affine => [
+  A[0] * B[0] + A[2] * B[1],
+  A[1] * B[0] + A[3] * B[1],
+  A[0] * B[2] + A[2] * B[3],
+  A[1] * B[2] + A[3] * B[3],
+  A[0] * B[4] + A[2] * B[5] + A[4],
+  A[1] * B[4] + A[3] * B[5] + A[5],
+];
+const mTrans = (x: number, y: number): Affine => [1, 0, 0, 1, x, y];
+const mScale = (x: number, y: number): Affine => [x, 0, 0, y, 0, 0];
+
+export interface GeoAffine {
+  /** 構圖之後的畫面有多大（來源像素為單位） */
+  outW: number;
+  outH: number;
+  /** 把來源整張畫上去時要套的變換 */
+  m: Affine;
+}
+
+/**
+ * 把 geo 換算成「輸出框 ← 來源」的仿射變換。梯形（keyV / keyH）會被忽略。
+ * 其餘每一項的意義與順序都跟 composeCanvas 完全一致 —— 兩條路是同一份幾何。
+ */
+export function geoAffine(srcW: number, srcH: number, g: GeoParams): GeoAffine {
+  const q = ((g.quarter % 4) + 4) % 4;
+  const swap = q === 1 || q === 3;
+  const W1 = Math.max(1, swap ? srcH : srcW);
+  const H1 = Math.max(1, swap ? srcW : srcH);
+
+  // ① 90 度旋轉 ＋ 翻轉（＝ stageCanvas 那一段）
+  const cq = Math.round(Math.cos((q * Math.PI) / 2));
+  const sq = Math.round(Math.sin((q * Math.PI) / 2));
+  const m1 = mMul(
+    mTrans(W1 / 2, H1 / 2),
+    mMul(
+      [cq, sq, -sq, cq, 0, 0],
+      mMul(mScale(g.flipH ? -1 : 1, g.flipV ? -1 : 1), mTrans(-srcW / 2, -srcH / 2)),
+    ),
+  );
+
+  // ② 微調角度 ＋ 自動蓋滿 ＋ 縮放平移（＝ warpCanvas 那一段，梯形留 0）
+  const flat: GeoParams = { ...g, keyV: 0, keyH: 0 };
+  const quad = targetQuad(W1, H1, flat);
+  const local = placeQuad(quad, W1, H1, g.zoom ?? 1, g.offset || { x: 0, y: 0 });
+  const s2q = squareToQuad(local);
+  // squareToQuad 給的是「單位正方形 → local」，前面再串上「舞台座標 → 單位正方形」
+  const m2 = mMul(
+    [s2q.a, s2q.d, s2q.b, s2q.e, s2q.c, s2q.f],
+    mScale(1 / W1, 1 / H1),
+  );
+
+  // ③ 裁切：把裁切框的左上角搬到原點
+  const c = g.crop || FULL_CROP;
+  const outW = Math.max(1, Math.round(c.w * W1));
+  const outH = Math.max(1, Math.round(c.h * H1));
+  const m = mMul(mTrans(-c.x * W1, -c.y * H1), mMul(m2, m1));
+  return { outW, outH, m };
+}
+
+/**
+ * 影片的「這一格」套上構圖之後的畫布。
+ *
+ * out 傳進來就重複使用那一張（影片一秒要跑幾十次，每次開新的會把手機的
+ * 畫布記憶體吃光）。整段就是一次 setTransform ＋ 一次 drawImage。
+ */
+export function geoFrameCanvas(
+  src: CanvasImageSource,
+  srcW: number,
+  srcH: number,
+  g: GeoParams,
+  maxSize?: number,
+  out?: HTMLCanvasElement,
+): HTMLCanvasElement {
+  const ga = geoAffine(srcW, srcH, g);
+  const k = maxSize && Math.max(ga.outW, ga.outH) > maxSize
+    ? maxSize / Math.max(ga.outW, ga.outH) : 1;
+  const w = Math.max(1, Math.round(ga.outW * k));
+  const h = Math.max(1, Math.round(ga.outH * k));
+  const c = out || document.createElement('canvas');
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const ctx = c.getContext('2d');
+  if (!ctx) return c;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.globalAlpha = 1;
+  // copy：畫的同時把框外面清乾淨（轉了角度時四個角會露出來），省一次 clearRect
+  ctx.globalCompositeOperation = 'copy';
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  ctx.transform(ga.m[0], ga.m[1], ga.m[2], ga.m[3], ga.m[4], ga.m[5]);
+  ctx.drawImage(src, 0, 0, srcW, srcH);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  return c;
+}
+
+/**
+ * 用 DOM 的 <video> 播的地方（經典拼圖）要的那一份：
+ * 把同一個 geoAffine 寫成 CSS 的 matrix()，塞進一個 boxW×boxH 的框裡。
+ *
+ * 用法：外層一個 overflow:hidden 的框，裡面的 <video> 用回傳的 width/height
+ * 當版面尺寸、transform 當變換，transformOrigin 設 '0 0'。
+ * 因為兩邊吃的是同一個矩陣，預覽跟匯出不可能對不起來。
+ */
+export function geoCssBox(srcW: number, srcH: number, g: GeoParams, boxW: number, boxH: number) {
+  const ga = geoAffine(srcW, srcH, g);
+  const sx = boxW / ga.outW, sy = boxH / ga.outH;
+  const m = ga.m;
+  const n = (v: number) => Number(v.toFixed(6));
+  return {
+    width: srcW,
+    height: srcH,
+    transform: `matrix(${n(sx * m[0])}, ${n(sy * m[1])}, ${n(sx * m[2])}, ${n(sy * m[3])}, ${n(sx * m[4])}, ${n(sy * m[5])})`,
+  };
+}
+
 /** 完整的構圖結果：翻轉 → 鏡像 → 梯形校正 → 角度 → 裁切。 */
 export function composeCanvas(
   img: CanvasImageSource,

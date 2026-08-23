@@ -147,7 +147,12 @@ export const rewindVideos = async (list: HTMLVideoElement[]) => {
 
 /** 一起播 */
 export const playVideos = (list: HTMLVideoElement[]) => {
-  list.forEach(v => { try { v.play().catch(() => { /* 擋下來就算了 */ }); } catch { /* 同上 */ } });
+  list.forEach(v => { try { if (v.paused) v.play().catch(() => { /* 擋下來就算了 */ }); } catch { /* 同上 */ } });
+};
+
+/** 一起停。看不到畫面的時候一定要停 —— 解碼器不會因為沒人看就自己休息。 */
+export const pauseVideos = (list: HTMLVideoElement[]) => {
+  list.forEach(v => { try { if (!v.paused) v.pause(); } catch { /* 停不了就算了 */ } });
 };
 
 /** 這幾段影片裡最長的那一段有幾秒（讀不到就 0） */
