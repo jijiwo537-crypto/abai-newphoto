@@ -132,15 +132,52 @@ export async function processImageFile(file: File, onPreview?: (url: string) => 
     console.warn("Native browser check failed", e);
   }
   
-  // 2. If it's a RAW camera file (Sony ARW, Canon CR2, etc.), intercept it early!
-  // ImageMagick WASM lacks delegates for many camera formats. Extracting the embedded preview is perfectly sharp.
+  // 2. 相機 RAW。
+  //
+  //    順序是刻意的：**先抽內嵌預覽當「先給你看」的那一張**（幾乎瞬間），
+  //    再交給 LibRaw 做真正的去馬賽克。專業軟體開 RAW 也是這個順序 ——
+  //    先讓你看到東西，全解碼在後面追上來。
+  //
+  //    為什麼真解碼值得等：內嵌的那張是相機沖好的 8-bit 成品，
+  //    爆掉的亮部已經沒了、白平衡也定死了。LibRaw 是從感光元件的
+  //    馬賽克資料重新算，所以亮部回復得回來、白平衡可以重新套。
   if (isRaw) {
+      let previewUrl: string | null = null;
       try {
-          const extractedUrl = await extractLargestJpegFromRaw(file, onPreview);
-          if (extractedUrl) return extractedUrl;
+          previewUrl = await extractLargestJpegFromRaw(file, onPreview);
+          // 抽到就先送出去墊著（呼叫端會先畫這張）
+          if (previewUrl && onPreview) onPreview(previewUrl);
       } catch (err) {
-          console.warn('RAW JPEG extraction failed, falling back to decoder', err);
+          console.warn('RAW 內嵌預覽抽取失敗', err);
       }
+      /* 真解碼有兩條路，依序試：
+           ① iOS 原生（Core Image 的 CIRAWFilter）—— 系統內建、有硬體加速，
+              但只有包成 App 而且 Xcode 專案裡加了那支外掛時才存在。
+           ② LibRaw（WebAssembly）—— 兩邊都能跑，慢一些但到處都在。
+         兩條都不行才退回內嵌預覽。 */
+      try {
+          const { decodeRawNative } = await import('./rawNative');
+          const nativeOut = await decodeRawNative(file);
+          if (nativeOut?.url) {
+              if (previewUrl) { try { URL.revokeObjectURL(previewUrl); } catch { /* 收過了 */ } }
+              return nativeOut.url;
+          }
+      } catch (err) {
+          console.warn('原生 RAW 解碼不可用，改用 LibRaw', err);
+      }
+      try {
+          const { decodeRawToUrl } = await import('./rawDecode');
+          const decoded = await decodeRawToUrl(file);
+          if (decoded) {
+              // 真解碼成功 → 墊檔那張可以收掉了
+              if (previewUrl) { try { URL.revokeObjectURL(previewUrl); } catch { /* 收過了 */ } }
+              return decoded;
+          }
+      } catch (err) {
+          console.warn('LibRaw 解碼失敗，改用內嵌預覽', err);
+      }
+      // 真解碼不行（很舊的機型、沒見過的壓縮方式…）→ 內嵌那張本來就夠好用
+      if (previewUrl) return previewUrl;
   }
 
   // 3. If it's a HEIC file, attempt heic2any.
