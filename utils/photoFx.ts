@@ -335,13 +335,29 @@ export function applyPhotoFx(
   fx: PhotoFx,
   /** cacheSource：來源是固定不變的圖，像素可以留著重用。
    *  fast：手指還在滑桿上的那幾格，顏色鏈用最近鄰取樣（跟編輯頁互動時同一招）。
-   *        手一停呼叫端會用 fast=false 重算一張，停下來看到的、匯出的都是完整版。 */
-  opts?: { cacheSource?: boolean; fast?: boolean },
+   *        手一停呼叫端會用 fast=false 重算一張，停下來看到的、匯出的都是完整版。
+   *  out：畫在呼叫端給的這張畫布上，不要每次都開一張新的。
+   *       來源是影片的時候一秒要跑幾十次，每次開一張幾百萬像素的畫布，
+   *       手機的畫布記憶體幾秒就會被系統收走（＝閃退回主畫面）。
+   *       尺寸一樣就直接沿用，連 width 都不重設（重設等於重新配置一次）。 */
+  opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement },
 ): HTMLCanvasElement {
-  const out = document.createElement('canvas');
-  out.width = Math.max(1, Math.round(w));
-  out.height = Math.max(1, Math.round(h));
+  const out = opts?.out || document.createElement('canvas');
+  const oW = Math.max(1, Math.round(w)), oH = Math.max(1, Math.round(h));
+  /* 尺寸沒變就一個字都不要寫 —— 寫 width 等於重新配置一張畫布，
+     那正是「來源是影片」時每一格都會發生、又完全不必要的那一次配置。 */
+  const resized = out.width !== oW || out.height !== oH;
+  if (resized) { out.width = oW; out.height = oH; }
   const ctx = out.getContext('2d', { willReadFrequently: true })!;
+  /* 沿用上一輪那張畫布時，裡面的東西還在。下面的 drawImage 是「整張鋪滿」，
+     不透明的來源會自己蓋掉，但去背的 PNG 會疊在舊的上面 —— 所以要先清乾淨。
+     剛換過尺寸的畫布本來就是空的，那一趟就不必清。 */
+  if (!resized && opts?.out) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.clearRect(0, 0, oW, oH);
+  }
   const px = hasPhotoFx(fx);
   const ck = opts?.cacheSource ? `${srcToken(source)}|${out.width}x${out.height}` : '';
   const hit = ck ? srcPxCache.get(ck) : undefined;
