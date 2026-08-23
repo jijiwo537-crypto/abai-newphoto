@@ -83,6 +83,8 @@ const App: React.FC = () => {
   /** 批量編輯：這次匯入的所有照片（只有一張時就跟以前一樣） */
   const [editorImages, setEditorImages] = useState<string[]>([]);
   const [collageInitialFile, setCollageInitialFile] = useState<File | null>(null);
+  /** 創意拼圖入口一次選了好幾個時，第一個之後的那些 */
+  const [collageExtras, setCollageExtras] = useState<File[]>([]);
   const [layoutInitialFiles, setLayoutInitialFiles] = useState<File[]>([]);
   const [editorKey, setEditorKey] = useState(0);
   const [collageKey, setCollageKey] = useState(0);
@@ -95,10 +97,14 @@ const App: React.FC = () => {
      這樣才會「蓋掉同一筆」而不是又多一筆一模一樣的。開新的照片就清掉。 */
   const [histKey, setHistKey] = useState<string | null>(null);
 
-  const handleImportToCollage = (file: File) => {
+  /** 創意拼圖：第一個當底，其餘的自動變成物件（相簿多選） */
+  const handleImportToCollage = (files: File | File[]) => {
+    const list = Array.isArray(files) ? files : [files];
+    if (!list.length) return;
     setToolDraftState(null);
     setHistKey(null);
-    setCollageInitialFile(file);
+    setCollageInitialFile(list[0]);
+    setCollageExtras(list.slice(1));
     setCollageKey(prev => prev + 1);
     setCurrentView('collage');
   };
@@ -419,9 +425,10 @@ const App: React.FC = () => {
         className="hidden"
         /* 創意拼圖的底可以是照片、也可以是一段影片 */
         accept="image/*,video/*"
+        multiple
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) handleImportToCollage(file);
+          const files = Array.from(e.target.files || []) as File[];
+          if (files.length) handleImportToCollage(files);
           if (collageFileInputRef.current) collageFileInputRef.current.value = '';
         }}
       />
@@ -546,8 +553,10 @@ const App: React.FC = () => {
           onHome={() => {
             leaveTool();
             setCollageInitialFile(null);
+            setCollageExtras([]);
           }}
           initialFile={collageInitialFile}
+          initialExtras={collageExtras}
           initialState={toolDraftState}
           histKey={histKey}
           lutList={LUT_LIST}
