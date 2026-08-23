@@ -24,6 +24,8 @@ import {
   shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
+import { normalizeImageFiles } from '../utils/imageLoader';
+import { MEDIA_ACCEPT, RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
@@ -127,6 +129,21 @@ const MAX_PREVIEW_PIXELS = 56_000_000;
 const SUPERSAMPLE = 1.8;
 /** 影片播放中，畫布倍率最低可以讓到多少（再低就真的看得出來糊了） */
 const VID_Q_MIN = 0.34;
+/** 手指碰到螢幕之後，影片的重畫迴圈讓開多久（見 inputAtRef 的完整說明）。
+    0.2 秒：夠讓「按下 → 事件處理 → 換頁」整串跑完，短到放開手也看不出停過。 */
+const INPUT_YIELD_MS = 200;
+/**
+ * 「現在有沒有使用者的事件正在等主執行緒」。
+ * Chromium 與較新的 Safari 有 navigator.scheduling.isInputPending()，
+ * 這支 API 就是為了「長工作中途讓路給輸入」而生的。沒有就回 false，
+ * 呼叫端會改用「最多用一半主執行緒」那條保險。
+ */
+const inputPending = (): boolean => {
+  try {
+    const sch = (navigator as any).scheduling;
+    return !!(sch && typeof sch.isInputPending === 'function' && sch.isInputPending());
+  } catch { return false; }
+};
 
 /**
  * 「等畫面真的畫出來、而且瀏覽器有空了再做」。
@@ -1991,8 +2008,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
   /** 底換好之後要接著加成物件的那幾個檔案（相簿多選時的第二個以後） */
   const pendingExtrasRef = useRef<File[]>([]);
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const picked = Array.from(e.target.files || []) as File[];
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    /* 先把元素抓起來再 await —— 這支現在是非同步的，等解碼回來之後
+       才去碰 e.target 會依賴「事件物件還活著」。React 19 不回收事件所以
+       其實沒事，但抓起來就完全不用依賴那件事。
+       （從 initialFile 那支 effect 呼叫時 e 是自己造的假物件，一樣沒問題。） */
+    const inputEl = e.target as HTMLInputElement;
+    const rawPicked = Array.from(inputEl.files || []) as File[];
+    if (!rawPicked.length) return;
+    /* RAW／HEIC／TIFF 先解成一般 JPEG（影片與一般 JPEG 原樣放行）。
+       不解的話 <img> 根本載不出來，畫面就是空白。 */
+    const picked = await normalizeImageFiles(rawPicked);
     const file = picked[0];
     if (!file) return;
     /* 相簿一次選了好幾個：第一個當底，其餘的加成物件。
@@ -2047,13 +2073,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
       loadVideoEl(url)
         .then(v => place(v, v.videoWidth, v.videoHeight))
         .catch(() => alert('這段影片讀不進來，換一個格式試試（MP4 最穩）'));
-      e.target.value = '';
+      inputEl.value = '';
       return;
     }
     const img = new Image();
     img.onload = () => place(img, img.width, img.height);
     img.src = url;
-    e.target.value = '';
+    inputEl.value = '';
   };
 
   const handleMaskImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2314,9 +2340,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
     im.src = url;
   }, []);
 
-  /** 一次把一批檔案加成物件（相簿多選）。順序照使用者選的順序。 */
+  /** 一次把一批檔案加成物件（相簿多選）。順序照使用者選的順序。
+      RAW／HEIC 先解碼再加，不然加進來會是一個載不出來的空物件。 */
   const addMediaFiles = useCallback((files: File[]) => {
-    files.forEach((f, i) => addMediaObject(f, i));
+    normalizeImageFiles(files)
+      .then(list => list.forEach((f, i) => addMediaObject(f, i)))
+      .catch(() => files.forEach((f, i) => addMediaObject(f, i)));
   }, [addMediaObject]);
 
   /* 底就位了 → 把多選時剩下那幾個補成物件。
@@ -2873,6 +2902,39 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
   const lastMainDrawRef = useRef(0);
   /** 正在離開這個工具。立起來之後所有重畫迴圈下一格就收工，把主執行緒讓出來 */
   const leavingRef = useRef(false);
+  /**
+   * 最後一次「手指碰到螢幕」的時間。
+   *
+   * ── 為什麼需要這個 ────────────────────────────────────────────────
+   * 「有影片時返回鍵要等很久」的真正原因，不在返回鍵的程式碼裡（那一段已經
+   * 縮到 6 毫秒了），而在**手指按下去之後，事件根本排不進主執行緒**。
+   * 實測（CPU 降速 4×，跟手機同一個量級）：
+   *     只有照片   主執行緒排隊延遲 中位 4.4ms、最差 5.2ms
+   *     底是影片   主執行緒排隊延遲 中位 61.3ms、最差 229.6ms
+   * 因為影片每一格要花 20.9 毫秒把影格搬進畫布（那是 2D 畫布的固定成本，
+   * 量過所有替代寫法都躲不掉），迴圈幾乎把整條主執行緒吃滿，
+   * 使用者按下去的那一下就得在後面排隊 —— 感覺就是「按了沒反應」。
+   *
+   * ── 做法 ────────────────────────────────────────────────────────
+   * 手指一碰到螢幕，影片的重畫迴圈就先讓開一小段時間。
+   * 人在「按東西」的那一瞬間並不是在看影片動不動，卻對「按了有沒有反應」
+   * 極度敏感 —— 所以這筆交易是划算的：影片停 0.2 秒，換按鍵即時。
+   * 拖曳物件那種持續互動不受影響，因為那時候 React 本來就每格都在重畫，
+   * 影片的新影格照樣會被帶上去（見下面 tick 裡「React 剛剛才畫過」那一段）。
+   */
+  const inputAtRef = useRef(0);
+  /* 用捕獲階段掛在 window 上：不管手指按在哪一顆按鈕、哪一層遮罩上，
+     這一支都是**最先**跑到的，而且它只寫一個數字，成本可以忽略。
+     passive 讓瀏覽器知道我們不會 preventDefault，捲動不會被拖慢。 */
+  useEffect(() => {
+    const mark = () => { inputAtRef.current = performance.now(); };
+    window.addEventListener('pointerdown', mark, { capture: true, passive: true });
+    window.addEventListener('touchstart', mark, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', mark, { capture: true } as any);
+      window.removeEventListener('touchstart', mark, { capture: true } as any);
+    };
+  }, []);
   /** 影片播放中用的畫布倍率（自適應，見影片那支迴圈）。存著，不用每次重找 */
   const vidQualityRef = useRef(1);
   /** 這一次重畫不要畫選取框／對齊線那一組。只有「離開前拍縮圖」那一下會立起來。 */
@@ -5523,10 +5585,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
     let rafPeriod = 1000 / 60;
     let lastRaf = 0;
     let due = 0;                         // 下一格該畫的時間（見 tick 裡的說明）
+
     const tick = () => {
       raf = requestAnimationFrame(tick);
       if (leavingRef.current) { cancelAnimationFrame(raf); return; }   // 要離開了，讓出主執行緒
       const now = performance.now();
+      /* 手指剛碰過螢幕 → 這一小段時間把主執行緒讓給輸入事件（見 inputAtRef）。
+         只是「這一格不畫」，不動任何狀態，所以放手之後就自己接回去。 */
+      if (now - inputAtRef.current < INPUT_YIELD_MS) return;
+      /* 已經有輸入在排隊了就先讓它過。
+         這支 API（Chromium／iOS 16 之後的 Safari 有）就是為這件事設計的：
+         「現在有沒有使用者的事件正在等主執行緒」。有的話這一格不畫，
+         那筆事件就能立刻被處理，而不是等我們把整張拼圖畫完。 */
+      if (inputPending()) return;
+      /* ⚠ 這裡本來還有一條「限制自己最多用一半主執行緒」的保險（上一格畫多久
+         就空出多久）。量過之後拿掉了：它把每秒重畫從 29.5 砍到 15.7，
+         而輸入延遲**一點都沒改善**（中位 82ms → 96ms，在雜訊範圍內）。
+         原因是延遲來自「事件到達時，那一格已經開始畫了」——
+         後面少畫幾格救不了已經在排隊的那一下。花了畫質換不到反應速度，
+         所以不留。真正的解法是別讓影片經過 2D 畫布，那是另一批的事。 */
       if (lastRaf) rafPeriod = rafPeriod * 0.85 + Math.min(60, now - lastRaf) * 0.15;
       lastRaf = now;
       /* ── 為什麼要排「下一格什麼時候到期」，而不是看「上一格是什麼時候畫的」──
@@ -6482,7 +6559,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
         )}
         {/* 換底也可以一次選好幾個：第一個當底，其餘自動變成物件。
             accept 跟首頁那個入口一致（影片也可以當底）。 */}
-        <input type="file" accept="image/*,video/*" multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
+        <input type="file" accept={MEDIA_ACCEPT} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
         <input type="file" accept="image/*" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
       </header>
       )}
@@ -6820,7 +6897,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
       <input
         type="file"
         ref={objFileInputRef}
-        accept="image/*"
+        accept={RAW_ACCEPT_IMG}
         multiple
         className="hidden"
         onChange={(e) => {

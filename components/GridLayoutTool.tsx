@@ -25,6 +25,8 @@ import { ComposeStudio } from './ComposeStudio';
 import { StuckEscape } from './StuckEscape';
 import { VIDEO_ACCEPT, loadVideoEl, isVideoEl } from '../utils/videoSource';
 import { VideoGl } from '../utils/videoGl';
+import { normalizeImageFiles } from '../utils/imageLoader';
+import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas, geoCssBox } from '../utils/compose';
@@ -8179,7 +8181,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   }, [images.length, templateIndex, selectedIndex]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, append = false) => {
-    const files = Array.from(e.target.files || []);
+    const picked = Array.from(e.target.files || []);
+    if (picked.length === 0) return;
+    /* RAW／HEIC／TIFF 先解成一般 JPEG（影片與一般 JPEG 原樣放行）——
+       不解的話 <img> 載不出來，圖層會是空的。 */
+    const files = await normalizeImageFiles(picked as File[]);
     if (files.length === 0) return;
 
     const newFloatingImages: FloatingImage[] = [];
@@ -11017,7 +11023,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         type="file"
         ref={fileInputRef}
         multiple
-        accept="image/*"
+        accept={RAW_ACCEPT_IMG}
         onChange={(e) => handleFileChange(e, true)}
         className="hidden"
       />
@@ -11032,7 +11038,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       <input
         type="file"
         ref={replaceInputRef}
-        accept="image/*"
+        accept={RAW_ACCEPT_IMG}
         multiple
         onChange={handleReplaceFileChange}
         className="hidden"
