@@ -125,6 +125,24 @@ const MAX_PREVIEW_PIXELS = 56_000_000;
    這是「畫質」唯一的旋鈕，而且從頭到尾只有這一個數字 ——
    下面所有跟倍率有關的計算都引用它，所以任何縮放倍率下的銳利度都一致。 */
 const SUPERSAMPLE = 1.8;
+/** 影片播放中，畫布倍率最低可以讓到多少（再低就真的看得出來糊了） */
+const VID_Q_MIN = 0.34;
+
+/**
+ * 「等畫面真的畫出來、而且瀏覽器有空了再做」。
+ *
+ * 離開工具的那一下要做兩件重活：把整段影片讀進資料庫、收掉解碼器。
+ * 它們都不急，但只要跟「切換畫面」搶同一條主執行緒，使用者感覺到的就是
+ * 「按了返回，過了好久才跳出去」。requestIdleCallback 就是為這件事存在的：
+ * 瀏覽器把該畫的都畫完、真的閒下來才回呼；設 timeout 當保險，
+ * 不支援的瀏覽器（Safari 舊版）就退回一個夠晚的 setTimeout。
+ */
+const whenIdle = (fn: () => void) => {
+  const ric = (typeof window !== 'undefined' && (window as any).requestIdleCallback) as
+    ((cb: () => void, o?: { timeout: number }) => number) | undefined;
+  if (ric) ric(() => fn(), { timeout: 2000 });
+  else setTimeout(fn, 300);
+};
 
 /**
  * 這張拼圖在某個「畫布倍率」下，主畫布加三張遮罩暫存畫布總共要幾個像素。
@@ -947,6 +965,8 @@ interface CollageToolProps {
   /** 濾鏡清單，跟「編輯」「經典拼圖」同一份 */
   lutList?: { id: string; name: string; url: string }[];
   initialFile?: File | null;
+  /** 從首頁一次選了好幾個時，第一個之後的那些 —— 會自動變成物件 */
+  initialExtras?: File[];
   onImportNew: () => void;
   /** 接續上次時把存下來的參數餵回來 */
   initialState?: any;
@@ -954,7 +974,7 @@ interface CollageToolProps {
   histKey?: string | null;
 }
 
-export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, onImportNew, initialState, histKey, lutList = [] }) => {
+export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [] }) => {
   const [imageState, setImageState] = useState<any>(null);
   const [layout, setLayout] = useState('mask-bottom');
   const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
@@ -1953,9 +1973,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   useEffect(() => {
     if (initialFile) {
-      const e = { target: { files: [initialFile] } } as any;
+      const e = { target: { files: [initialFile, ...(initialExtras || [])] } } as any;
       handleImageUpload(e);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialFile]);
 
   /** 目前這張照片的 object URL。換照片時才回收上一張（見下面的說明）。
@@ -1967,9 +1988,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   /** 現在當底的那一段影片（沒有影片就是 null）。換底、離開時要收掉。 */
   const baseVidRef = useRef<HTMLVideoElement | null>(null);
 
+  /** 底換好之後要接著加成物件的那幾個檔案（相簿多選時的第二個以後） */
+  const pendingExtrasRef = useRef<File[]>([]);
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const picked = Array.from(e.target.files || []) as File[];
+    const file = picked[0];
     if (!file) return;
+    /* 相簿一次選了好幾個：第一個當底，其餘的加成物件。
+       但物件要等底真的擺好（getLayoutOffsets 要有 imageState）才加得進去，
+       所以先寄放在這裡，由下面那支 effect 在底就位之後補上。 */
+    pendingExtrasRef.current = picked.slice(1);
     /* 這張照片就是草稿要存的那張（回來才接得回去）。
        saveDraft 內部是 `fetch(url)` 把位元組讀進 IndexedDB —— 那是非同步的，
        所以這個網址在讀完之前不能回收。以前是 img.onload 一觸發就 revoke，
@@ -2226,7 +2255,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
    *     重畫的，而 <img src="blob:…mp4"> 是畫不出來的，卡片會整片空白。
    *     用第一格當它們的來源，卡片就跟圖片物件長得一模一樣。
    */
-  const addMediaObject = useCallback((f: File) => {
+  /**
+   * 把一個檔案（圖片或影片）加成一顆物件。
+   * idx：這是這一批裡的第幾個 —— 相簿多選時每一顆往右下錯開一點，
+   * 不然全部疊在正中央，看起來像只加進來一個。
+   */
+  const addMediaObject = useCallback((f: File, idx = 0) => {
     const url = URL.createObjectURL(f);
     const place = (src: HTMLImageElement | HTMLVideoElement, w0: number, h0: number, poster?: string) => {
       const offs2 = getLayoutOffsetsRef.current?.();
@@ -2236,12 +2270,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       const target = Math.min(offs2.cw, offs2.ch) * 0.4;
       const k = target / Math.max(w0, h0);
       const w = w0 * k, h = h0 * k;
+      // 多選時每一顆往右下錯開一點，才看得出來加了幾個
+      const step = Math.min(offs2.cw, offs2.ch) * 0.045 * idx;
       setObjects(prev => [...prev, {
         /* src 一定要留著：濾鏡／特效卡片的縮圖是拿它去重畫的，
            構圖也要從它重新載一張原圖。所以這條 objectURL 不能 revoke。 */
         id, type: 'image', img: src, src: url,
         ...(poster ? { vid: true, poster } : {}),
-        x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
+        x: Math.max(0, Math.min(Math.max(0, offs2.cw - w), offs2.cw / 2 - w / 2 + step)),
+        y: Math.max(0, Math.min(Math.max(0, offs2.ch - h), offs2.ch / 2 - h / 2 + step)),
+        w, h, rot: 0,
       }]);
       setSelectedObj(id);
       setSelectedTarget(null);
@@ -2275,6 +2313,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     im.onload = () => place(im, im.width, im.height);
     im.src = url;
   }, []);
+
+  /** 一次把一批檔案加成物件（相簿多選）。順序照使用者選的順序。 */
+  const addMediaFiles = useCallback((files: File[]) => {
+    files.forEach((f, i) => addMediaObject(f, i));
+  }, [addMediaObject]);
+
+  /* 底就位了 → 把多選時剩下那幾個補成物件。
+     這個 effect 一定要放在 addMediaFiles 後面：相依陣列是在 render 當下就會算的，
+     放前面會直接踩到 TDZ（ReferenceError），不是只有型別檢查會唸。 */
+  useEffect(() => {
+    if (!imageState || !pendingExtrasRef.current.length) return;
+    const extra = pendingExtrasRef.current;
+    pendingExtrasRef.current = [];
+    addMediaFiles(extra);
+  }, [imageState, addMediaFiles]);
 
   /* 換排版時畫布的形狀會整個換掉（例如遮罩從下面搬到上面、或變成四周包圍），
      但浮動物件的座標還停在舊畫布上 —— 來回切幾次就會整個跑到畫面外面不見了。
@@ -2818,6 +2871,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
   const drawnScaleRef = useRef(1);
   /** 主畫布上一次重畫的時間（不分是誰畫的）—— 影片那支迴圈用它避免重複畫 */
   const lastMainDrawRef = useRef(0);
+  /** 正在離開這個工具。立起來之後所有重畫迴圈下一格就收工，把主執行緒讓出來 */
+  const leavingRef = useRef(false);
+  /** 影片播放中用的畫布倍率（自適應，見影片那支迴圈）。存著，不用每次重找 */
+  const vidQualityRef = useRef(1);
+  /** 這一次重畫不要畫選取框／對齊線那一組。只有「離開前拍縮圖」那一下會立起來。 */
+  const hideChromeRef = useRef(false);
   /** 播動畫時實際用的倍率（見 MAX_MOTION_PIXELS）。跑不動時會被保險絲往下調 */
   const motionScaleRef = useRef(1);
   /** 上面那個值的上限：畫得動的話會慢慢升回來 */
@@ -4515,7 +4574,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         (ctx as any).letterSpacing = '0px';
       }
       ctx.globalAlpha = 1;
-      if (isMain && selectedObj === o.id && !guides.length && !tuningEdge) {
+      if (isMain && !hideChromeRef.current && selectedObj === o.id && !guides.length && !tuningEdge) {
         // 選中框維持虛線（跟挖洞那邊同一種語言）
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1.6 * uiPx;
@@ -4799,7 +4858,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
     drawObjects(aboveObjs);
 
-    if (isMain && guides.length) {
+    if (isMain && !hideChromeRef.current && guides.length) {
       ctx.save();
       /* 經典拼圖那邊是 2 CSS px 的 bg-blue-500。這裡畫在畫布上，
          所以要把 2 CSS px 換算成畫布單位（畫布可能比螢幕細很多倍）。
@@ -4841,7 +4900,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
        改用 animRef 擋掉動畫頁：那邊本來就鎖住所有互動，
        虛線框留在畫面上只會被錄進預覽裡。 */
-    if (isMain && selectedTarget && !animRef.current) {
+    if (isMain && !hideChromeRef.current && selectedTarget && !animRef.current) {
       const selectedHole = holes.find(hx => hx.id === selectedTarget);
       if (selectedHole) {
         const h = selectedHole;
@@ -4915,14 +4974,66 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
      就沿用那一筆的），所以同一件作品不管進出幾次都只會留最新的一筆，
      不會每點進去看一次就多一張一模一樣的。 */
   const histIdRef = useRef(histKey || `collage-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+  /**
+   * 按返回鍵要做的事。
+   *
+   * 以前是 `recordHistory(); onHome();` —— 看起來沒問題，但 recordHistory 的
+   * 前半段是**同步的**（整張拼圖重畫一次 ＋ 編一張 JPEG），而那個時候：
+   *   ‧ 影片的解碼器還在跑，
+   *   ‧ 影片那支重畫迴圈也還在每一格畫整張拼圖，
+   * 三件事在同一條主執行緒上搶 —— 按下去到畫面真的切走，中間就是一段空白。
+   * 影片愈大、拼圖愈複雜，那段空白愈長（實測純照片 144ms、影片 248ms，
+   * 而手機上還要再乘好幾倍）。
+   *
+   * 現在的順序是：**先煞車，再記錄，最後退出**。
+   *   ① leavingRef 一立起來，重畫迴圈下一格就直接 return；
+   *   ② 影片全部暫停，解碼器不再跟我們搶；
+   *   ③ 這時候主執行緒是乾淨的，縮圖那一下才快；
+   *   ④ 退出。
+   * 真正重的那一段（把整段影片讀進資料庫）本來就是非同步的，
+   * 它會在畫面已經切走之後自己慢慢做完。
+   */
+  const leaveToHome = useCallback(() => {
+    leavingRef.current = true;
+    try { pauseVideos(allVideosRef.current()); } catch { /* 停不了就算了 */ }
+    /* 縮圖要拍畫面上那張，所以先把選取框／對齊線抹掉再重畫一次。
+       這一次重畫走的是主畫布那條路，快取全熱，比「另外開一張畫布從頭算」
+       便宜一個數量級。 */
+    try {
+      const cv = canvasRef.current;
+      if (cv && (selectedObj || selectedTarget)) {
+        hideChromeRef.current = true;
+        renderToCanvasRef.current(cv, drawnScaleRef.current);
+      }
+    } catch { /* 畫不出來就算了，下面照樣記錄 */ }
+    try { recordHistoryRef.current?.(); } catch { /* 記錄失敗不能擋著離開 */ }
+    hideChromeRef.current = false;
+    onHome();
+  }, [onHome, selectedObj, selectedTarget]);
+
   const recordHistory = useCallback(async () => {
     if (!imageState) return;
     try {
       const off = getLayoutOffsets();
       if (!off) return;
-      // 縮圖用的成品：小一張就夠，首頁只拿它當格子
+      /* 縮圖用的成品：小一張就夠，首頁只拿它當格子。
+         **直接拍畫面上那一張**，不要另外重畫一次整張拼圖 ——
+         重畫走的是「不是主畫布」那條路（isMain 為 false ⇒ 每一層的快取都
+         用不到、還要為每一層開新的離屏畫布）。底圖是影片時實測那一下就吃掉
+         整個離開時間的四分之一，而畫面上那張本來就是同一個成品。
+         （選取框已經由 leaveToHome 先抹掉了，見那裡。）
+         真的拿不到畫布時才退回原本那條路，行為完全一樣。 */
       const cv = document.createElement('canvas');
-      renderToCanvas(cv, Math.max(0.25, 720 / Math.max(off.cw, off.ch)));
+      const liveCv = canvasRef.current;
+      const k = Math.max(0.25, 720 / Math.max(off.cw, off.ch));
+      if (liveCv && liveCv.width > 0 && liveCv.height > 0) {
+        cv.width = Math.max(1, Math.round(off.cw * k));
+        cv.height = Math.max(1, Math.round(off.ch * k));
+        const g = cv.getContext('2d');
+        if (g) { g.imageSmoothingQuality = 'high'; g.drawImage(liveCv, 0, 0, cv.width, cv.height); }
+      } else {
+        renderToCanvas(cv, k);
+      }
       const out = cv.toDataURL('image/jpeg', 0.86);
       cv.width = cv.height = 0;
       /* 原圖：當初那個 object URL 載完就收掉了，所以直接把記憶體裡那張
@@ -4944,7 +5055,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         }
         sc.width = sc.height = 0;
       }
-      await addExport('collage', out, srcUrl, {
+      /* ── 重的那一段排到「畫面已經切走」之後 ──────────────────────────
+         addExport 要把整段影片讀進 IndexedDB（一段 20MB 的片子就是 20MB 的
+         fetch ＋ SHA-256 ＋ 寫入），全部在主執行緒上。放在這裡直接跑的話，
+         使用者按下返回之後就是盯著原地不動的畫面等它做完。
+         參數在這一行**同步**準備好（下面那個物件），只把「真的去做」延到
+         連續兩格畫面之後 —— 那時候主頁已經畫出來了，慢一點也沒人感覺得到。 */
+      const payload = {
         layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
         stripeN, stripeDir, stripeA: stripeAPick, stripeB,
@@ -4956,12 +5073,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
            照片本身靠 src 留著（addExport 會把 src 的內容另外收成附件，
            點回來時再換成一條新的網址），回來之後照 src 重載一張就行。 */
         objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
-      }, histIdRef.current);
+      };
+      const key = histIdRef.current;
+      whenIdle(() => {
+        addExport('collage', out, srcUrl, payload, key).catch(() => { /* 記錄失敗不影響任何事 */ });
+      });
     } catch { /* 記錄失敗不能影響離開 */ }
   }, [imageState, getLayoutOffsets, renderToCanvas, layout, maskScale, holeType, customText,
       holeSize, sizeJitter, holeAngle, holeCount, holes, maskColor, patternType, dotColor,
       dotSize, dotGap, symmetryEnabled, glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
       glowMoImg, glowMoText, linkColor]);
+  /* leaveToHome 定義在 recordHistory 前面（它要先煞車再記錄），所以走 ref */
+  const recordHistoryRef = useRef(recordHistory);
+  recordHistoryRef.current = recordHistory;
 
   /** 下面那個 useLayoutEffect 已經同步畫過的那一版（哪一支 renderToCanvas、畫在幾倍） */
   const syncDrawnRef = useRef<{ fn: any; ps: number } | null>(null);
@@ -5342,8 +5466,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
          超取樣是為了邊緣的抗鋸齒，那在會動的東西上根本看不出來，
          卻要多付 1.8² ＝ 3.24 倍的像素工。停下來（或本來就沒有影片）
          時立刻補畫一張完整倍率的，所以「看著不動的那一張」跟以前一樣細。
-       ‧ 一樣掛自適應保險絲：一格畫不完就降格數，只動「一秒幾格」，
-         一個像素都不會少。 */
+       ‧ **跟不上的時候讓的是解析度，不是格數。** 這是專業剪輯軟體的做法：
+         播放中沒有人在看單一格的銳利度，但只要掉到 20 格以下馬上就覺得卡。
+         所以保險絲改成調 quality（播放中的畫布倍率），格數固定守在 30；
+         停下來立刻補一張完整倍率的，靜止時的畫質一個像素都沒少。 */
   const allVideos = useCallback(
     () => videosIn([imageState?.img, ...objectsRef.current.map((o: any) => o.img)]),
     [imageState],
@@ -5366,20 +5492,45 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
     const vids = allVideosRef.current();
     playVideos(vids);
     let raf = 0;
-    let interval = 1000 / 30;
-    let slow = 0, fast = 0;
+    const interval = 1000 / 30;          // 目標格數固定 30，不再往下讓
+    /* 播放中的畫布倍率。1 ＝「一個畫布像素對一個裝置像素」，
+       跟不上就往下讓（最低 VID_Q_MIN），有餘裕就慢慢升回來。 */
+    let quality = vidQualityRef.current;
+    let over = 0, under = 0;
     let lastTok = '';
     let wasLive: boolean | null = null;
+    /* 瀏覽器實際多久給我們一格。它**不是固定 60Hz** —— 主執行緒一忙，
+       瀏覽器就會自己把 rAF 降下來（實測影片播放中降到 35Hz）。 */
+    let rafPeriod = 1000 / 60;
+    let lastRaf = 0;
+    let due = 0;                         // 下一格該畫的時間（見 tick 裡的說明）
     const tick = () => {
       raf = requestAnimationFrame(tick);
+      if (leavingRef.current) { cancelAnimationFrame(raf); return; }   // 要離開了，讓出主執行緒
       const now = performance.now();
-      /* 節拍看的是「主畫布最近有沒有被畫過」，不是「這支迴圈上次畫是什麼時候」。
-         差別在拖物件與拉滑桿的那段時間：React 本來就在每一格重畫，那些重畫
-         已經把影片的新影格帶上去了，這支迴圈就該讓開 —— 不然同一格畫兩遍，
-         手上就是「拖起來黏黏的」。 */
-      if (now - lastMainDrawRef.current < interval) return;
+      if (lastRaf) rafPeriod = rafPeriod * 0.85 + Math.min(60, now - lastRaf) * 0.15;
+      lastRaf = now;
+      /* ── 為什麼要排「下一格什麼時候到期」，而不是看「上一格是什麼時候畫的」──
+         瀏覽器給的 rAF **不是固定 60Hz**：主執行緒一忙它就自己降
+         （實測影片播放中在 32～45Hz 之間跑）。
+         如果寫成「距離上次畫超過 33.3ms 才畫」，rAF 只要落在 22～33ms 這個區間，
+         每一格都會差那麼一點點沒到期，於是變成「每兩格畫一次」——
+         實測 rAF 44.7Hz 卻只畫 22 次/秒，剛好一半，而機器明明還有餘裕。
+         改成排一張到期時間表：到期就畫，下一格排在「這一格 ＋ 33.3ms」。
+         rAF 22ms 一格時它會自己排出「畫、跳、畫、跳」的節奏，平均剛好 30 格。
+         落後太久（切到背景再回來）就從現在重新起算，不追進度。 */
+      if (!due) due = now;
+      if (now < due - rafPeriod * 0.5) return;
+      /* 排下一格。落後了就從「現在 ＋ 一整格」重新起算 —— **不要追進度**。 */
+      due = due + interval;
+      if (due < now + rafPeriod * 0.5) due = now + interval;
       const cv = canvasRef.current;
       if (!cv) return;
+      /* React 剛剛才畫過（拖物件、拉滑桿時它每一格都在畫），那一次已經把影片
+         的新影格帶上去了 —— 這裡就讓開，不要同一格畫兩遍。
+         窗口只留 8ms。原本開半格（16.6ms），結果連自己上一格的餘波都算進去，
+         實測每秒 49.8 次迴圈裡有 13.3 次是這樣被自己擋掉的（29.5 → 20 格）。 */
+      if (now - lastMainDrawRef.current < 8) return;
       /* 有沒有換影格？沒換就直接回去 —— 這一步讓「畫幾次」等於素材本身的
          格數，而不是盲目的 30。25fps 的素材因此少畫六分之一。 */
       const live = vids.some(v => !v.paused && !v.ended);
@@ -5393,18 +5544,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         const base = motionOn ? motionScaleRef.current : previewScaleRef.current;
         /* 播放中：拿掉超取樣（1 個畫布像素 ＝ 1 個裝置像素）。
            停下來的那一格立刻補一張完整倍率的，靜止畫面的細緻度完全沒動到。 */
-        const scale = live ? Math.max(0.5, base / SUPERSAMPLE) : base;
+        const scale = live ? Math.max(0.2, (base / SUPERSAMPLE) * quality) : base;
         const t1 = performance.now();
         renderToCanvasRef.current(cv, scale);
         const cost = performance.now() - t1;
-        if (first || justStopped) return;         // 這一格是補畫，不拿來評估快慢
-        if (cost > interval * 0.9) { slow++; fast = 0; } else if (cost < interval * 0.45) { fast++; slow = 0; }
-        if (slow >= 5 && interval < 1000 / 12) {
-          interval = interval < 1000 / 20 ? 1000 / 20 : 1000 / 12;
-          slow = 0;
-        } else if (fast >= 45 && interval > 1000 / 30) {
-          interval = interval > 1000 / 20 ? 1000 / 20 : 1000 / 30;
-          fast = 0;
+        if (first || justStopped || !live) return;   // 補畫的那一格不拿來評估快慢
+        /* 一格的預算。30 格＝33ms，但那 33ms 不是只有我們在用 ——
+           影片解碼、瀏覽器合成、React 都要分。所以門檻抓 33×0.62 ≈ 21ms：
+           我們自己畫超過 21ms 就開始讓解析度，這樣才守得住 30 格。
+           連續三格超過就降一階；連續三十格都很輕鬆才升一階（升得慢一點，
+           免得在邊界上來回換尺寸、每次都要重新配置畫布）。 */
+        if (cost > interval * 0.62) {
+          over++; under = 0;
+          if (over >= 3 && quality > VID_Q_MIN) {
+            quality = Math.max(VID_Q_MIN, quality * 0.8);
+            vidQualityRef.current = quality;
+            over = 0;
+          }
+        } else if (cost < interval * 0.32) {
+          under++; over = 0;
+          if (under >= 30 && quality < 1) {
+            quality = Math.min(1, quality * 1.15);
+            vidQualityRef.current = quality;
+            under = 0;
+          }
         }
       } catch (err) {
         console.error('影片這一格畫不出來', err);
@@ -5437,10 +5600,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
 
   /* 離開這個工具時把影片收乾淨（解碼器不收會一直佔著記憶體） */
   useEffect(() => () => {
-    bornVidsRef.current.forEach(releaseVideoEl);
+    /* 收解碼器（el.load()）在主執行緒上是有成本的，而這裡正好落在
+       「按了返回、畫面正要切走」那一格。先讓畫面切完再收 —— 影片在
+       leaveToHome 那一步就已經暫停了，晚一輪收不會有任何差別。 */
+    const list = [...bornVidsRef.current];
     bornVidsRef.current.clear();
     vidScratchRef.current.clear();
     baseVidRef.current = null;
+    whenIdle(() => list.forEach(releaseVideoEl));
   }, []);
 
   /* 分頁被切到背景時停掉：背景分頁的 rAF 會被節流成幾秒一格，
@@ -6062,7 +6229,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         <div className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
           <header className="h-14 flex items-center px-5 shrink-0 z-20 bg-black/40 backdrop-blur-xl">
             <button 
-              onClick={(e) => { e.stopPropagation(); recordHistory(); onHome(); }}
+              onClick={(e) => { e.stopPropagation(); leaveToHome(); }}
               className="p-2 -ml-2 text-[#888] hover:text-white transition-colors active:scale-90"
             >
               <ChevronLeft size={22} />
@@ -6116,7 +6283,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         /* 這一層是蓋住返回鍵的，所以它**一定**要有出口。
            以前沒有：導出萬一在某一步卡住（見 canvasToUrl 那支的看門狗），
            畫面就永遠停在這裡，連退回主頁都做不到。
-           現在等超過 SAVE_STUCK_MS 還沒好就多出一顆返回鍵 —— 正常的導出
+           現在等超過六秒還沒好就多出一顆返回鍵（見 StuckEscape）—— 正常的導出
            兩三秒就結束，根本看不到它。 */
         <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
           <div className="w-16 h-16 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
@@ -6130,7 +6297,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
       {saveState !== 'success' && (
       <header className="h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-[100] bg-black/90 backdrop-blur-md">
         <button
-          onClick={(e) => { e.stopPropagation(); recordHistory(); onHome(); }}
+          onClick={(e) => { e.stopPropagation(); leaveToHome(); }}
           className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"
           title="繼續編輯"
         >
@@ -6294,7 +6461,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
             </div>
           </div>
         )}
-        <input type="file" accept="image/*" className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
+        {/* 換底也可以一次選好幾個：第一個當底，其餘自動變成物件。
+            accept 跟首頁那個入口一致（影片也可以當底）。 */}
+        <input type="file" accept="image/*,video/*" multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
         <input type="file" accept="image/*" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
       </header>
       )}
@@ -6633,10 +6802,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         type="file"
         ref={objFileInputRef}
         accept="image/*"
+        multiple
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) addMediaObject(f);
+          const fs = Array.from(e.target.files || []) as File[];
+          if (fs.length) addMediaFiles(fs);
           e.target.value = '';
         }}
       />
@@ -6647,10 +6817,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, o
         type="file"
         ref={objVidInputRef}
         accept={VIDEO_ACCEPT}
+        multiple
         className="hidden"
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) addMediaObject(f);
+          const fs = Array.from(e.target.files || []) as File[];
+          if (fs.length) addMediaFiles(fs);
           e.target.value = '';
         }}
       />
