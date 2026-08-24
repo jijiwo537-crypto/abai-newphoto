@@ -120,6 +120,23 @@ export const loadVideoEl = (url: string): Promise<HTMLVideoElement> =>
     if (el.readyState >= 2) ready();
   });
 
+/**
+ * 把 <video> 放回那個 1×1 的角落。
+ *
+ * 借去別的地方掛（例如直接讓它自己在版面上播）之後，一定要用這支還回來 ——
+ * **不能只做 removeChild**。規格寫得很清楚：媒體元素一離開文件就會被暫停，
+ * 而暫停之後沒有人會再去播它，畫面就停在最後一格不動了。
+ * 這裡是同一個工作階段內「拔起來、立刻插回去」，中間沒有回到穩定狀態，
+ * 所以那條暫停規則不會觸發，播放完全不受影響。
+ */
+export const parkVideoEl = (el: any) => {
+  if (!isVideoEl(el)) return;
+  try {
+    el.style.cssText = '';
+    hostOf().appendChild(el);
+  } catch { /* 放不回去也不能讓畫面掛掉 */ }
+};
+
 /** 收掉一段影片：停下來、解掉解碼器、從角落拿走 */
 export const releaseVideoEl = (el: any) => {
   if (!isVideoEl(el)) return;
