@@ -195,8 +195,14 @@ const frameCache = new WeakMap<HTMLVideoElement, { cv: HTMLCanvasElement; tok: n
  * 拿這段影片「現在這一格」的畫布。
  * 不是影片（或第一格還沒解出來）就原樣回傳 —— 所以呼叫端可以無腦包在外面，
  * 圖片那條路一個位元組都不會變。
+ *
+ * freeze = true：手上已經有一張夠大的就直接用，**不要**去落新的一格。
+ * 手指正在畫面上拖的時候用這個。落一格 1080p 在手機等級的 CPU 上要 45 毫秒，
+ * 而拖曳中畫面每一格都會重畫 —— 那 45 毫秒就直接排在使用者那一下的前面
+ * （實測拖曳的輸入延遲 p90 從 16 毫秒變成 70 毫秒）。
+ * 拖的那一兩秒裡影格停著沒有人會發現，手感差別卻是立刻看得出來的。
  */
-export const videoFrame = (el: any, maxPx = 0): CanvasImageSource => {
+export const videoFrame = (el: any, maxPx = 0, freeze = false): CanvasImageSource => {
   if (!isVideoEl(el)) return el;
   const vw = el.videoWidth | 0, vh = el.videoHeight | 0;
   if (!vw || !vh || el.readyState < 2) return el;
@@ -218,6 +224,9 @@ export const videoFrame = (el: any, maxPx = 0): CanvasImageSource => {
      重新落一次格，等於把 1080p 的影格再解一次（實測那一下佔掉整個離開時間
      的四分之一）。 */
   const needBigger = cv.width < w || cv.height < h;
+  /* 拖曳中：手上那張夠大就直接交出去。夠不夠大是硬條件 ——
+     沒有的話畫出來會是糊的，那不能省。 */
+  if (freeze && e.tok >= 0 && !needBigger) return cv;
   if (e.tok !== tok || needBigger) {
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     // alpha:false —— 影片沒有透明度，關掉這一項瀏覽器可以少做一次混色
