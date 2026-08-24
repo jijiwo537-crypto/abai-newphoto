@@ -3036,6 +3036,43 @@ const previewMask = (aspect: number, radiusPct: number, featherPct: number, kind
   return c;
 };
 
+/**
+ * 一個圖層「看得到的那一塊形狀」，換成 CSS 講得出來的東西。
+ *
+ * 單純圓角 → border-radius。值就是 cornerR（(比例/100)×短邊），跟匯出一模一樣，
+ *   而且合成器直接畫，**不用解碼任何圖** —— 拖圓角滑桿因此不會閃。
+ * 羽化或非矩形的外形 → 遮罩圖，來源是跟匯出同一支 makeShapeMask。
+ *
+ * 影片圖層與「拖曳互換時那層變暗」用的是這同一支，所以暗下去的形狀
+ * 一定跟圖層現在的形狀一致。
+ */
+const maskUrlCache = new Map<string, string>();
+const shapeParts = (image: any, boxW: number, boxH: number) => {
+  const kind = image?.imgShape as string | undefined;
+  const radiusPct = image?.imgRadius || 0;
+  const featherPct = image?.feather || 0;
+  const needMaskImg = !!(featherPct || isImgShaped(kind));
+  if (!needMaskImg) {
+    return {
+      needMaskImg: false,
+      cssRadius: radiusPct > 0 && boxW && boxH ? `${cornerR(radiusPct, boxW, boxH)}px` : undefined,
+      maskUrl: '',
+    };
+  }
+  if (!boxW || !boxH) return { needMaskImg: true, cssRadius: undefined, maskUrl: '' };
+  /* 網址照「長寬比＋圓角＋羽化＋外形」快取：兩邊拿到的是同一個字串，
+     瀏覽器也就只解碼一次。 */
+  const key = `${(boxW / boxH).toFixed(2)}|${radiusPct}|${featherPct}|${kind || ''}`;
+  let url = maskUrlCache.get(key);
+  if (!url) {
+    try { url = previewMask(boxW / boxH, radiusPct, featherPct, kind).toDataURL('image/png'); }
+    catch { url = ''; }
+    if (maskUrlCache.size > 60) maskUrlCache.clear();
+    maskUrlCache.set(key, url);
+  }
+  return { needMaskImg: true, cssRadius: undefined, maskUrl: url };
+};
+
 /* ── 濾鏡／特效按鈕的縮圖 ────────────────────────────────────────────
    跟「編輯」那邊同一個做法：直接畫在 canvas 上（不轉 data URL，
    省掉 PNG 編碼與解碼那一段，按鈕才會馬上有圖）。
@@ -3127,119 +3164,6 @@ const CellFxImage: React.FC<{
     img.addEventListener('load', draw);
     return () => img.removeEventListener('load', draw);
   }, [url, fx, lutRevision, boxW, boxH]);
-  return <canvas ref={ref} style={style} />;
-};
-
-/**
- * 頁面縮圖／IG 預覽用的浮動圖片。
- * 跟主預覽走同一組演算法（濾鏡 → 圓角＋羽化遮罩 → 描邊 → 發光），
- * 只是畫在比較小的畫布上 —— 這樣三個地方看到的才會是同一張圖。
- */
-const MiniShapeImage: React.FC<{
-  img: FloatingImage;
-  boxW: number;
-  boxH: number;
-  glowPad: number;
-  style: React.CSSProperties;
-  lutRevision: number;
-}> = ({ img, boxW, boxH, glowPad, style, lutRevision }) => {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useLayoutEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    const el = getPreviewImg(img.src);
-    const draw = () => {
-      if (!el.naturalWidth) return;
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      const W = Math.max(1, Math.round((boxW + glowPad * 2) * dpr));
-      const H = Math.max(1, Math.round((boxH + glowPad * 2) * dpr));
-      if (c.width !== W) c.width = W;
-      if (c.height !== H) c.height = H;
-      const g = c.getContext('2d');
-      if (!g) return;
-      g.clearRect(0, 0, W, H);
-
-      const iw = Math.max(1, Math.round(boxW * dpr));
-      const ih = Math.max(1, Math.round(boxH * dpr));
-      const lw = (img.imgStrokeWidth || 0) * img.scale * dpr;
-      const sw = iw + lw * 2, sh = ih + lw * 2;
-      const ox = (W - sw) / 2, oy = (H - sh) / 2;
-
-      let base: CanvasImageSource = el;
-      if (hasPhotoFx(img.fx)) {
-        const ar = el.naturalWidth / el.naturalHeight;
-        const MAX = Math.min(1200, Math.max(120, Math.round(Math.max(boxW, boxH) * dpr)));
-        const fw = ar >= 1 ? MAX : Math.max(16, Math.round(MAX * ar));
-        const fh = ar >= 1 ? Math.max(16, Math.round(MAX / ar)) : MAX;
-        base = applyPhotoFx(el, fw, fh, img.fx!);
-      }
-
-      let shaped: CanvasImageSource = base;
-      let drawW = iw, drawH = ih, drawX = (W - iw) / 2, drawY = (H - ih) / 2;
-      const kind = img.imgShape;
-      if (img.feather || img.imgRadius || img.imgStrokeWidth || isImgShaped(kind)) {
-        const off = document.createElement('canvas');
-        off.width = Math.max(1, Math.round(sw));
-        off.height = Math.max(1, Math.round(sh));
-        const oc = off.getContext('2d');
-        if (!oc) return;
-        drawImgBase(oc, base, lw, lw, iw, ih, img);
-        if (img.feather || img.imgRadius || isImgShaped(kind)) {
-          oc.globalCompositeOperation = 'destination-in';
-          if (img.feather) {
-            oc.drawImage(previewMask(boxW / boxH, img.imgRadius || 0, img.feather, kind), lw, lw, iw, ih);
-          } else {
-            const R = cornerR(img.imgRadius || 0, iw, ih);
-            withImgOutline(oc, lw, lw, iw, ih, kind, R, R, p => {
-              oc.fillStyle = '#fff';
-              p ? oc.fill(p) : oc.fill();
-            });
-          }
-          oc.globalCompositeOperation = 'source-over';
-        }
-        if (lw > 0) {
-          const rp = img.imgRadius || 0;
-          const sr = rp ? cornerR(rp, iw, ih) + lw / 2 : 0;
-          withImgOutline(oc, lw / 2, lw / 2, iw + lw, ih + lw, kind, sr, sr, p => {
-          oc.lineWidth = lw;
-          oc.lineJoin = 'miter';
-          oc.miterLimit = 4;
-          /* 虛線。一段的長度用線寬當單位（0.6~4.6 倍），空隙是它的 0.85 倍，
-             所以不管預覽、縮圖還是匯出，看到的節奏都一樣。 */
-          const dashV = img.imgStrokeDash || 0;
-          if (dashV > 0) {
-            const seg = lw * (0.6 + (dashV / 100) * 4);
-            oc.setLineDash([seg, seg * 0.85]);
-            oc.lineCap = 'butt';
-          } else {
-            oc.setLineDash([]);
-          }
-          oc.strokeStyle = img.imgStrokeColor || '#FFFFFF';
-          p ? oc.stroke(p) : oc.stroke();
-          oc.setLineDash([]);
-          });
-        }
-        shaped = off;
-        drawW = off.width; drawH = off.height; drawX = ox; drawY = oy;
-      }
-
-      if (img.imgGlow) {
-        const gk = Math.min(1, 420 / Math.max(W, H));
-        const glow = makeGlowCanvas(
-          shaped, W * gk, H * gk, drawX * gk, drawY * gk, drawW * gk, drawH * gk,
-          (img.imgGlow / 20) * GLOW_BLUR_UNIT * img.scale * dpr * gk,
-          img.imgGlowColor || '#FFFFFF',
-        );
-        g.drawImage(glow, 0, 0, W, H);
-      }
-      g.drawImage(shaped, drawX, drawY, drawW, drawH);
-    };
-    if (el.complete && el.naturalWidth) { draw(); return; }
-    el.addEventListener('load', draw);
-    return () => el.removeEventListener('load', draw);
-  }, [img.src, img.fx, img.feather, img.imgRadius, img.imgGlow, img.imgGlowColor,
-      img.imgStrokeWidth, img.imgStrokeColor, img.imgStrokeDash, img.scale, boxW, boxH, glowPad, lutRevision,
-      img.imgShape, img.imgShapeX, img.imgShapeY, img.imgShapeZoom]);
   return <canvas ref={ref} style={style} />;
 };
 
@@ -3638,15 +3562,32 @@ const VideoLayer: React.FC<{
   const shapeKind = image.imgShape as string | undefined;
   const radiusPct = image.imgRadius || 0;
   const featherPct = image.feather || 0;
-  const wantMask = !!(radiusPct || featherPct || isImgShaped(shapeKind));
-  const maskUrl = useMemo(() => {
-    if (!wantMask || !boxW || !boxH) return '';
-    try { return previewMask(boxW / boxH, radiusPct, featherPct, shapeKind).toDataURL('image/png'); }
-    catch { return ''; }
-  }, [wantMask, boxW, boxH, radiusPct, featherPct, shapeKind]);
-  const maskCss: React.CSSProperties = maskUrl
+  /* 形狀怎麼表達交給 shapeParts —— 「拖曳互換時那層變暗」用的是同一支，
+     所以暗下去的形狀跟影片現在的形狀一定一樣。
+     單純圓角走 border-radius：不用解碼任何圖，拖滑桿就不會閃。 */
+  const { cssRadius, maskUrl } = useMemo(
+    () => shapeParts(image, boxW, boxH),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [boxW, boxH, radiusPct, featherPct, shapeKind],
+  );
+  /* 遮罩圖要**解碼完才換上去**。直接換的話，瀏覽器在解碼那幾十毫秒裡
+     手上沒有遮罩可用，那一層就整個不見 —— 拖滑桿時就是一直閃。
+     解碼中先沿用上一張（第一次才會有一格沒有遮罩，那只是「還沒變圓」，
+     不是消失）。 */
+  const [liveMask, setLiveMask] = useState('');
+  useEffect(() => {
+    if (!maskUrl) { setLiveMask(''); return; }
+    let alive = true;
+    const im = new Image();
+    const done = () => { if (alive) setLiveMask(maskUrl); };
+    im.onload = done;
+    im.onerror = done;
+    im.src = maskUrl;
+    return () => { alive = false; };
+  }, [maskUrl]);
+  const maskCss: React.CSSProperties = liveMask
     ? {
-      WebkitMaskImage: `url(${maskUrl})`, maskImage: `url(${maskUrl})`,
+      WebkitMaskImage: `url(${liveMask})`, maskImage: `url(${liveMask})`,
       WebkitMaskSize: '100% 100%', maskSize: '100% 100%',
       WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
     }
@@ -3677,6 +3618,11 @@ const VideoLayer: React.FC<{
   const box = cropped && nat && boxW > 0 && boxH > 0
     ? geoCssBox(nat.w, nat.h, geo!, boxW, boxH)
     : null;
+  /* 讓開只在「GPU 那張畫布真的在場」時才成立。
+     以前只看 hidden（＝glLive），而把濾鏡按回「原始」的那一格，
+     glCanvas 已經變成 null、glLive 卻還是 true —— 影片被藏起來、
+     畫布又不在，畫面就空了（實測連續空白 120 毫秒）。 */
+  const stepAside = !!hidden && !!glCanvas;
   const vid = (
     <video
       ref={setRef}
@@ -3687,7 +3633,7 @@ const VideoLayer: React.FC<{
       playsInline
       preload="auto"
       onLoadedData={onReady}
-      style={hidden
+      style={stepAside
         ? { position: 'absolute', left: 0, top: 0, width: 1, height: 1, opacity: 0, pointerEvents: 'none' }
         : box
         ? {
@@ -3733,51 +3679,38 @@ const VideoLayer: React.FC<{
       image.imgGlow, image.imgGlowColor, image.imgRadius, image.feather, image.imgShape,
       image.scale, image.width, image.height],
   );
-  const hasDeco = !!(deco.glow || deco.stroke);
 
-  /* 沒有描邊也沒有發光 → 回傳的東西跟以前**一模一樣**，一層都沒多包。 */
-  if (!hasDeco) {
-    if (!box) {
-      if (!maskUrl) return inner;
-      // 沒裁切、但有形狀 → 也要有一層框來承載遮罩
-      return (
-        <div style={{ position: 'relative', width: '100%', height: '100%', pointerEvents: 'none', ...maskCss }}>
-          {inner}
-        </div>
-      );
-    }
-    return (
-      <div
-        style={style
-          ? { ...style, overflow: 'hidden', pointerEvents: 'none', ...maskCss }
-          : { position: 'relative', width: '100%', height: '100%', overflow: 'hidden', pointerEvents: 'none', ...maskCss }}
-      >
-        {inner}
-      </div>
-    );
-  }
+  /* ⚠ 這裡**只有一種回傳結構**，而且不管有沒有形狀／描邊／發光都一樣。
+     以前是依情況回傳三種不同深度的樹（裸 <video>／包一層／包兩層）——
+     只要在這幾種之間切換，React 就會把 <video> 拆掉重建，
+     而重建一個 <video> 等於重新載入：畫面會空一下、播放也從頭來。
+     那正是「調整影片時它一直短暫消失」的其中一個來源。
+     結構固定之後，切換效果只是換樣式，<video> 從頭到尾是同一個節點。
 
-  /* 有描邊或發光時多一層外框：光暈與線都會長到框外面，
-     所以它們**不能**待在那個 overflow:hidden ＋ 遮罩的盒子裡（會被切掉／被遮罩吃掉）。
-     外框只負責定位（沿用原本那份 style），裡面那層才是原本那個盒子，
-     inset:0 貼滿外框 —— 幾何跟以前完全一樣。
-     疊法照匯出的順序：發光在影片底下，描邊在影片上面。 */
+     外層只負責定位；中間那層才是原本那個 overflow:hidden ＋ 遮罩的盒子；
+     發光在影片底下、描邊在影片上面（跟匯出的疊法一致）。
+     光暈與描邊會長到框外面，所以它們**不能**放進中間那層。 */
   return (
     <div
       style={style
         ? { ...style, pointerEvents: 'none' }
         : { position: 'relative', width: '100%', height: '100%', pointerEvents: 'none' }}
     >
-      {deco.glow && <DecoCanvas cv={deco.glow} pad={deco.pad} w={boxW} h={boxH} />}
+      {deco.glow ? <DecoCanvas cv={deco.glow} pad={deco.pad} w={boxW} h={boxH} /> : null}
       <div
         style={{
           position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
-          overflow: box ? 'hidden' : undefined, pointerEvents: 'none', ...maskCss,
+          /* 裁切過就要切掉框外的部分；單純圓角用 border-radius ＋ overflow 夾住，
+             不必動用圖片遮罩（見上面 cssRadius 的說明）。 */
+          overflow: (box || cssRadius) ? 'hidden' : undefined,
+          borderRadius: cssRadius,
+          pointerEvents: 'none',
+          ...maskCss,
         }}
       >
         {inner}
       </div>
-      {deco.stroke && <DecoCanvas cv={deco.stroke} pad={deco.pad} w={boxW} h={boxH} />}
+      {deco.stroke ? <DecoCanvas cv={deco.stroke} pad={deco.pad} w={boxW} h={boxH} /> : null}
     </div>
   );
 };
@@ -4060,6 +3993,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const glowPad = Math.round(
     ((image.imgGlow ? Math.ceil(GLOW_BLUR_UNIT * GLOW_EXTENT) : 0)
       + (image.imgStrokeWidth ? 20 : 0)) * image.scale,
+  );
+  /* 長按拖曳互換時「變暗的那一塊」要照圖層現在的形狀走 */
+  const dimShape = useMemo(
+    () => shapeParts(image, boxW, boxH),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [boxW, boxH, image.imgRadius, image.feather, image.imgShape],
   );
   // 原圖先在背景解好，第一次切到 canvas 才不會有一格空白（看起來就是閃一下）
   const [shapeImgReady, setShapeImgReady] = useState(false);
@@ -5325,12 +5264,23 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         />
       )}
 
-      {/* 拖曳來源與拖放目標都只是變暗，不用半透明也不加白框 */}
+      {/* 拖曳來源與拖放目標都只是變暗，不用半透明也不加白框。
+          變暗的那一塊要跟圖層現在的形狀一樣 —— 圓角、羽化、愛心、星星…
+          都跟著走（以前不管形狀怎麼改，暗下去的永遠是一個方塊）。
+          用的是跟影片圖層同一支 shapeParts，所以兩邊不可能長得不一樣。 */}
       {(isSwapTarget || isSwapSource) && (
         <div
           data-dim-overlay="1"
           className="absolute inset-0 pointer-events-none z-40"
-          style={{ backgroundColor: isSwapTarget ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.3)' }}
+          style={{
+            backgroundColor: isSwapTarget ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.3)',
+            borderRadius: dimShape.cssRadius,
+            ...(dimShape.maskUrl ? {
+              WebkitMaskImage: `url(${dimShape.maskUrl})`, maskImage: `url(${dimShape.maskUrl})`,
+              WebkitMaskSize: '100% 100%', maskSize: '100% 100%',
+              WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+            } : null),
+          }}
         />
       )}
       
@@ -8322,15 +8272,32 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     } catch { /* 記錄失敗不能影響離開 */ }
   };
 
-  /** 離開拼圖＝這一份結束了。先把成品記進歷史紀錄，再收草稿。 */
+  /**
+   * 離開拼圖＝這一份結束了。
+   *
+   * ⚠ **不等歷史紀錄做完**。以前這裡是 `await recordProgress()` 才 onHome()，
+   * 而 recordProgress 要把整張拼圖重烤一次 —— 按下返回鍵之後要乾等好幾秒，
+   * 畫面完全沒有反應。
+   *
+   * 現在改成：先把烤縮圖那件事「發動」（它前面那段是同步的，趁元件還在時跑掉），
+   * 然後**立刻**回主頁；剩下的部分在背景自己跑完再寫進歷史。
+   * 這樣做安全的原因是 handleExport 只依賴：
+   *   ‧ 閉包裡的 pages / floatingImages（值，元件收掉也還在）
+   *   ‧ 每一層的 blob 網址（沒有人在卸載時回收它們）
+   *   ‧ 自己開的離屏畫布
+   * 全都不需要這顆元件還掛在畫面上。實測：按下去 18ms、主頁 186ms 就出來，
+   * 縮圖在 1.2 秒後才在背景烤，完全不擋路。
+   */
   const leavingRef = useRef(false);
-  const handleLeave = async () => {
+  const handleLeave = () => {
     if (leavingRef.current) return;
     leavingRef.current = true;
-    try { await recordProgress(); } catch { /* 記錄失敗不能影響離開 */ }
+    /* 先發動、不要 await */
+    const bg = recordProgress();
     leftRef.current = true;
     clearDraft();
     onHome();
+    bg.catch(() => { /* 記錄失敗不能影響離開 */ });
   };
 
   useEffect(() => {
@@ -10110,258 +10077,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const igPageHasVideo = (pageIdx: number) =>
     floatingImages.some(f => f.isVideo && f.src && pageOfFloating(f, previewW + 1, pages.length) === pageIdx);
 
-  /**
-   * 把某一頁照原比例縮小畫一次（底色、佈局、照片、影片、文字都在）。
-   * 預覽用的縮圖與 IG 預覽共用這一支，看到的就跟畫布上那一頁一樣。
-   */
-  const renderMiniPage = (pageIdx: number, maxW: number, maxH: number, mode: 'contain' | 'cover' = 'contain') => {
-    const page = pages[pageIdx];
-    if (!page) return null;
-    /* contain：整頁完整顯示，絕不裁切。
-       以前用 cover 去填滿那個 4:5 的框，1:1 的頁面上下就被切掉一截 ——
-       IG 預覽的重點是「跟預覽／匯出看到的是同一張」，寧可留黑邊也不能裁。 */
-    /* 框的尺寸是整數 px（量出來再取整），長寬比會跟頁面差零點幾 % ——
-       用 contain 就會多出一條零點幾 px 的黑邊（IG 預覽上方那條就是這樣來的）。
-       差距小於 1% 時視為同比例，直接兩軸都拉滿：不留邊也不裁切。 */
-    const arBox = maxW / maxH, arPage = previewW / previewH;
-    const sameAR = Math.abs(arBox - arPage) / arPage < 0.01;
-    const kx = maxW / previewW, ky = maxH / previewH;
-    /* 同比例時仍然用「取小」：取大等於覆蓋，比例差那零點幾 % 就會把下緣切掉
-       ——「絕不裁切」比「絕不留邊」重要，何況差距 < 1%，留的邊不到 1px。 */
-    const k = (sameAR || mode !== 'cover') ? Math.min(kx, ky) : Math.max(kx, ky);
-    const stride = previewW + 1;
-    const onThisPage = floatingImages.filter(f => pageOfFloating(f, stride, pages.length) === pageIdx);
-    return (
-      <div
-        className="relative overflow-hidden shrink-0"
-        style={{ width: `${previewW * k}px`, height: `${previewH * k}px`, backgroundColor: page.bgColor }}
-      >
-        {page.layouts.map(layout => {
-          const tpls = TEMPLATE_MAP[layout.images.length] || [];
-          const tpl = tpls[layout.templateIndex] || tpls[0] || { name: '', rects: [] };
-          const ls = layout.t?.scale ?? 1;
-          const lbox = layoutBox(layout, previewW, previewH);
-          const lw = lbox.w * ls, lh = lbox.h * ls;
-          const gap = layout.gap * ls, inset = gap / 2;
-          const areaW = Math.max(1, lw - inset * 2), areaH = Math.max(1, lh - inset * 2);
-          return (
-            <div
-              key={layout.id}
-              className="absolute"
-              style={{
-                left: `${((previewW - lw) / 2 + (layout.t?.x || 0)) * k}px`,
-                top: `${((previewH - lh) / 2 + (layout.t?.y || 0)) * k}px`,
-                width: `${lw * k}px`,
-                height: `${lh * k}px`,
-                ...((layout.t?.rot || 0) !== 0
-                  ? { transform: `rotate(${layout.t!.rot}deg)`, transformOrigin: 'center center' }
-                  : null),
-              }}
-            >
-              {tpl.rects.map((rect, ci) => {
-                const cell = layout.images[ci];
-                return (
-                  <div
-                    key={ci}
-                    className="absolute overflow-hidden"
-                    style={{
-                      left: `${(inset + rect.x * areaW) * k}px`,
-                      top: `${(inset + rect.y * areaH) * k}px`,
-                      width: `${rect.w * areaW * k}px`,
-                      height: `${rect.h * areaH * k}px`,
-                      borderRadius: `${layout.radius * ls * k}px`,
-                      backgroundColor: cell?.url ? 'transparent' : 'rgba(0,0,0,0.06)',
-                    }}
-                  >
-                    {cell?.url && (
-                      <img
-                        src={cell.url}
-                        alt=""
-                        className="w-full h-full object-cover"
-                        style={{
-                          transform: `translate(${(cell.offsetX || 0) * 100}%, ${(cell.offsetY || 0) * 100}%) rotate(${cell.rotation || 0}deg) scale(${cell.zoom || 1})`,
-                        }}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })}
-        {onThisPage.map(f => {
-          const common: React.CSSProperties = {
-            position: 'absolute',
-            left: `${(f.x - pageIdx * stride + (f.width - f.width * f.scale) / 2) * k}px`,
-            top: `${(f.y + (f.height - f.height * f.scale) / 2) * k}px`,
-            width: `${f.width * f.scale * k}px`,
-            height: `${f.height * f.scale * k}px`,
-            transform: `rotate(${f.rotation}deg)`,
-          };
-          if (f.text !== undefined) {
-            return (
-              <span
-                key={f.id}
-                style={{
-                  ...common,
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontFamily: fontStack(f.fontFamily),
-                  fontSize: `${Math.max(2, (f.fontSize || 40) * f.scale * k)}px`,
-                  fontWeight: f.bold ? 700 : 400,
-                  fontStyle: f.italic ? 'italic' : 'normal',
-                  letterSpacing: `${(f.letterSpacing || 0) * f.scale * k}px`,
-                  color: f.color || '#1C1C1C',
-                  lineHeight: 1.12,
-                  overflow: 'visible',
-                  whiteSpace: 'pre',
-                  textAlign: 'center',
-                  WebkitTextStrokeWidth: f.strokeWidth ? `${f.strokeWidth * 2 * f.scale * k}px` : undefined,
-                  WebkitTextStrokeColor: f.strokeWidth ? (f.strokeColor || '#000000') : undefined,
-                  paintOrder: f.strokeWidth ? 'stroke fill' : undefined,
-                  textShadow: 'none',
-                }}
-              >
-                {!!f.glow && (
-                  <span
-                    aria-hidden
-                    style={{
-                      position: 'absolute', left: 0, top: 0, right: 0, bottom: 0,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      pointerEvents: 'none', whiteSpace: 'pre', textAlign: 'center',
-                      color: f.color || '#1C1C1C',
-                      WebkitTextStrokeWidth: 0,
-                      paintOrder: 'normal',
-                      textShadow: [1, 2, 3]
-                        .map(kk => `0 0 ${(f.glow! / 20) * 14 * kk * f.scale * k}px ${f.glowColor || '#FFFFFF'}`)
-                        .join(', '),
-                    }}
-                  >
-                    {f.text}
-                  </span>
-                )}
-                <span style={{ position: 'relative', zIndex: 1 }}>{f.text}</span>
-              </span>
-            );
-          }
-          if (f.shape) {
-            /* 圖形：跟畫布上同一支 shapePathD、同一支 shapeLineWidth，
-               只是外框換成縮圖的尺寸。 */
-            const isLine = f.shape === 'line';
-            const solid = !!f.shapeFilled && !isLine;
-            // 除掉 scale：框線不隨圖形放大而變粗（跟預覽、匯出同一條規則）
-            const lw = shapeLineWidth(f.shapeLineW, f.width, f.height) / (f.scale || 1);
-            const dash = f.shapeDash || 0;
-            const seg = lw * (0.6 + (dash / 100) * 4);
-            /* 借來的圖案不是 SVG 路徑，縮圖也走 canvas（跟預覽、匯出同一支） */
-            if (f.shape === 'hole') {
-              const ho = {
-                hole: f.holeType || 'circle', filled: f.shapeFilled,
-                color: f.color || SHAPE_DEFAULT_COLOR, lineW: f.shapeLineW,
-                glow: f.shapeGlow as any, glowColor: f.shapeGlowColor,
-                strokeW: f.shapeStrokeW, strokeColor: f.shapeStrokeColor,
-                dots: f.shapeDots, dotSize: f.shapeDotSize,
-                dotGap: f.shapeDotGap, dotColor: f.shapeDotColor, id: f.id,
-                // 線寬的單位不含 scale —— 跟預覽、匯出同一條規則
-                lineUnit: Math.max(f.width, f.height) / 160 / (f.scale || 1),
-              };
-              /* 跟預覽同一個道理：畫布要比外框大一圈，墨水才不會被切掉 */
-              const ov = holeOverflow(ho, f.width, f.height,
-                shapeGlowBlurs(f.width, f.height).map(r => r * glowAmount(f.shapeGlow as any)));
-              return (
-              <canvas
-                key={f.id}
-                ref={el => {
-                  if (!el) return;
-                  const bw = Math.max(1, f.width * f.scale * k * 2);
-                  const bh = Math.max(1, f.height * f.scale * k * 2);
-                  const w = Math.max(1, Math.round(bw + ov.x * f.scale * k * 2 * 2));
-                  const h = Math.max(1, Math.round(bh + ov.y * f.scale * k * 2 * 2));
-                  if (el.width !== w) el.width = w;
-                  if (el.height !== h) el.height = h;
-                  const c = el.getContext('2d');
-                  if (!c) return;
-                  c.setTransform(1, 0, 0, 1, 0, 0);
-                  c.clearRect(0, 0, w, h);
-                  c.translate(w / 2, h / 2);
-                  drawHoleShape(c, { ...ho, lineUnit: Math.max(bw, bh) / 160 / (f.scale || 1) },
-                    bw, bh, shapeGlowBlurs(bw, bh).map(r => r * glowAmount(f.shapeGlow as any)));
-                }}
-                style={{
-                  ...common,
-                  left: `${(f.x - pageIdx * stride + (f.width - f.width * f.scale) / 2 - ov.x * f.scale) * k}px`,
-                  top: `${(f.y + (f.height - f.height * f.scale) / 2 - ov.y * f.scale) * k}px`,
-                  width: `${(f.width + ov.x * 2) * f.scale * k}px`,
-                  height: `${(f.height + ov.y * 2) * f.scale * k}px`,
-                }}
-              />
-              );
-            }
-            return (
-              <svg
-                key={f.id}
-                viewBox={`0 0 ${f.width} ${f.height}`}
-                preserveAspectRatio="none"
-                style={{
-                  ...common, overflow: 'visible',
-                  filter: glowAmount(f.shapeGlow as any) > 0
-                    ? shapeGlowBlurs(f.width, f.height)
-                        .map(r => `drop-shadow(0 0 ${r3(r * f.scale * k * glowAmount(f.shapeGlow as any))}px ${f.shapeGlowColor || f.color || SHAPE_DEFAULT_COLOR})`)
-                        .join(' ')
-                    : undefined,
-                  willChange: glowAmount(f.shapeGlow as any) > 0 ? 'filter, transform' : undefined,
-                }}
-              >
-                <path
-                  d={shapePathD(f.shape, f.width, f.height)}
-                  fill={solid ? (f.color || SHAPE_DEFAULT_COLOR) : 'none'}
-                  stroke={solid ? 'none' : (f.color || SHAPE_DEFAULT_COLOR)}
-                  strokeWidth={lw}
-                  strokeDasharray={dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined}
-                  strokeLinecap="butt"
-                  strokeLinejoin={isLine ? 'round' : 'miter'}
-                />
-              </svg>
-            );
-          }
-          if (f.isVideo) {
-            return (
-              <VideoLayer key={f.id} image={f} style={common}
-                boxW={f.width * f.scale * k} boxH={f.height * f.scale * k} />
-            );
-          }
-          /* 濾鏡、圓角、羽化、發光、描邊全部交給跟主預覽同一支演算法去畫，
-             IG 預覽／頁面縮圖／畫布上看到的才會是同一張。 */
-          const bw = f.width * f.scale * k;
-          const bh = f.height * f.scale * k;
-          const needsCanvas = !!(f.feather || f.imgRadius || f.imgGlow || f.imgStrokeWidth || hasPhotoFx(f.fx));
-          if (!needsCanvas) {
-            return <img key={f.id} src={f.src} alt="" style={{ ...common, objectFit: 'fill' }} />;
-          }
-          const gp = Math.round(
-            ((f.imgGlow ? Math.ceil(GLOW_BLUR_UNIT * GLOW_EXTENT) : 0)
-              + (f.imgStrokeWidth ? 20 : 0)) * f.scale * k,
-          );
-          return (
-            <MiniShapeImage
-              key={f.id}
-              img={f}
-              boxW={bw}
-              boxH={bh}
-              glowPad={gp}
-              lutRevision={lutRevision}
-              style={{
-                ...common,
-                left: `${(f.x - pageIdx * stride + (f.width - f.width * f.scale) / 2) * k - gp}px`,
-                top: `${(f.y + (f.height - f.height * f.scale) / 2) * k - gp}px`,
-                width: `${bw + gp * 2}px`,
-                height: `${bh + gp * 2}px`,
-              }}
-            />
-          );
-        })}
-      </div>
-    );
-  };
+  /* 這裡本來有一支 renderMiniPage（連同它專用的 MiniShapeImage）——
+     那是舊版「IG 預覽自己用 DOM 重畫一次」留下來的。IG 預覽早就改成
+     直接顯示匯出成品（見上面 igShots），這一整段已經沒有任何人呼叫，
+     留著只會讓人以為 IG 預覽走的是它。整段移除。 */
 
   // Export to Canvas
   /**
@@ -10808,9 +10527,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          一頁都沒有 → 不顯示百分比（純圖片本來就很快，只留轉圈）；
          每一頁都是影片 → 文案「正在匯出影片」；
          有影片也有圖片 → 文案「正在匯出成品」。 */
-      const videoPages = pages.reduce(
+      const videoPages = stillOnly ? 0 : pages.reduce(
         (n, _p, i) => n + (pageHasVideo(i) && typeof MediaRecorder !== 'undefined' ? 1 : 0), 0);
       vidTotal = videoPages;
+      /* stillOnly 時根本不會去錄影片，那個進度畫面就不能跳出來
+         （它是整片蓋住的一層，閃一下很明顯）。 */
       if (videoPages > 0) {
         setVideoLabel(videoPages === pages.length ? '正在匯出影片' : '正在匯出成品');
         setVideoProg(0);
