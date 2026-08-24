@@ -42,7 +42,7 @@ const LUT_LIST = [
 const RAW_ACCEPT = SHARED_RAW_ACCEPT;
 
 import { processImageFile, normalizeImageFiles } from './utils/imageLoader';
-import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT } from './utils/fileTypes';
+import { RAW_ACCEPT as SHARED_RAW_ACCEPT, MEDIA_ACCEPT, isVideoFileName } from './utils/fileTypes';
 import {
   draftTime as collageDraftTime,
   clearDraft as clearCollageDraft,
@@ -448,16 +448,19 @@ const App: React.FC = () => {
         onChange={handleFileChange}
       />
 
-      <input 
-        type="file" 
+      <input
+        type="file"
         ref={collageFileInputRef}
         className="hidden"
-        /* 創意拼圖的底可以是照片、也可以是一段影片（含 RAW） */
-        accept={MEDIA_ACCEPT}
+        /* 創意拼圖只收照片（含 RAW）。影片統一走經典拼圖。 */
+        accept={RAW_ACCEPT}
         multiple
         onChange={(e) => {
           const files = Array.from(e.target.files || []) as File[];
-          if (files.length) handleImportToCollage(files);
+          /* 有些系統的選檔器不理會 accept（「最近項目」那一欄尤其會），
+             所以這裡再擋一次 —— 影片絕對不會進到創意拼圖。 */
+          const photos = files.filter(f => !isVideoFileName(f));
+          if (photos.length) handleImportToCollage(photos);
           if (collageFileInputRef.current) collageFileInputRef.current.value = '';
         }}
       />
