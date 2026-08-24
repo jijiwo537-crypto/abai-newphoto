@@ -46,6 +46,7 @@ import { StuckEscape } from './StuckEscape';
 import {
   isVideoFile, isVideoEl, loadVideoEl, releaseVideoEl, videoToken, videoTokenOf,
   videosIn, rewindVideos, playVideos, pauseVideos, longestDuration, VIDEO_ACCEPT, videoFrame,
+  parkVideoEl,
 } from '../utils/videoSource';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
 import { IgPreview } from './IgPreview';
@@ -132,6 +133,8 @@ const VID_Q_MIN = 0.34;
 /** 手指碰到螢幕之後，影片的重畫迴圈讓開多久（見 inputAtRef 的完整說明）。
     0.2 秒：夠讓「按下 → 事件處理 → 換頁」整串跑完，短到放開手也看不出停過。 */
 const INPUT_YIELD_MS = 200;
+/** 影片改由 <video> 顯示時，畫布這一層還要多快（只為了遮罩上的洞） */
+const DOM_VID_CANVAS_FPS = 8;
 /**
  * 「現在有沒有使用者的事件正在等主執行緒」。
  * Chromium 與較新的 Safari 有 navigator.scheduling.isInputPending()，
@@ -154,6 +157,54 @@ const inputPending = (): boolean => {
  * 瀏覽器把該畫的都畫完、真的閒下來才回呼；設 timeout 當保險，
  * 不支援的瀏覽器（Safari 舊版）就退回一個夠晚的 setTimeout。
  */
+/**
+ * 把「已經存在的那個 <video>」掛到版面裡的一個框，並照給定的百分比擺好。
+ *
+ * 為什麼是掛既有的元素、而不是再開一個 <video>：影片只能有一份解碼。
+ * 再開一個等於同一段影片解兩次，手機的解碼器與記憶體都吃不消。
+ * 這裡搬的就是 imageState.img 本人 —— 畫布那邊要取影格時拿到的也是它，
+ * 兩邊看到的永遠是同一格。
+ */
+const BaseVideoLayer: React.FC<{
+  el: HTMLVideoElement;
+  box: { l: number; t: number; w: number; h: number; vl: number; vt: number; vw: number; vh: number };
+}> = ({ el, box }) => {
+  const host = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const h = host.current;
+    if (!h) return;
+    /* Tailwind 的 preflight 給 video 掛了 max-width:100%，會把百分比寬度
+       夾回框寬 —— 影片放大時就會被夾扁，所以這裡明講不要夾。 */
+    el.style.cssText = 'position:absolute;max-width:none;max-height:none;object-fit:fill;pointer-events:none;';
+    h.appendChild(el);
+    return () => {
+      /* ⚠ 這裡一定要「還回原本那個角落」，不能只是把它拿下來。
+         媒體元素一旦離開文件就會被瀏覽器暫停（規格如此），而暫停之後
+         沒有人會再去播它 —— 切到四周包圍／動畫頁時影片就停在最後一格。
+         parkVideoEl 會在同一個工作階段內插回那個 1×1 的隱藏角落，
+         順便把行內樣式清掉，下一次被畫進畫布時才不會帶著 position:absolute。 */
+      parkVideoEl(el);
+    };
+  }, [el]);
+  useLayoutEffect(() => {
+    el.style.left = `${box.vl}%`;
+    el.style.top = `${box.vt}%`;
+    el.style.width = `${box.vw}%`;
+    el.style.height = `${box.vh}%`;
+  }, [el, box.vl, box.vt, box.vw, box.vh]);
+  return (
+    <div
+      ref={host}
+      style={{
+        position: 'absolute',
+        left: `${box.l}%`, top: `${box.t}%`,
+        width: `${box.w}%`, height: `${box.h}%`,
+        overflow: 'hidden', pointerEvents: 'none',
+      }}
+    />
+  );
+};
+
 const whenIdle = (fn: () => void) => {
   const ric = (typeof window !== 'undefined' && (window as any).requestIdleCallback) as
     ((cb: () => void, o?: { timeout: number }) => number) | undefined;
@@ -3364,7 +3415,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
   const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1) => {
     if (!imageState) return;
     const { baseW, baseH, globalScale: gs } = imageState;
-    const ctx = get2dWide(targetCanvas, { alpha: false });
+    /* alpha:true —— 影片當底時，中間那一大塊要「留白」讓底下那個
+       真正的 <video> 透上來（見 domVideoMode）。不是影片時整張畫布本來就
+       被底圖蓋滿，看起來完全一樣。 */
+    const ctx = get2dWide(targetCanvas, { alpha: true });
     if (!ctx) return;
 
     const s = renderScale;
@@ -3423,6 +3477,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
     ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, iw, ih); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
 
     const isMain = targetCanvas === canvasRef.current;
+    /* 中間那塊交給底下的 <video> 時，畫布這一層要把它挖成透明。
+       上面剛用 #1A1A1A 鋪過底色，所以一定要挖，不然影片被蓋住。
+       只有主畫布會這樣 —— 匯出、縮圖那些離屏畫布（isMain 為 false）
+       照樣把影片畫進去，成品一個像素都不會少。 */
+    const domVid = isMain && domVideoOnRef.current && layout !== AROUND;
+    if (domVid) ctx.clearRect(offs.ix, offs.iy, iw, ih);
     /* 底圖是影片的話，先落到一張普通畫布上再用（見 utils/videoSource 的 videoFrame）。
        這一格底圖會被畫好幾次（中央那張、遮罩底下那張、洞裡看到的那張），
        但落格只會做一次 —— 之後每一次都是「畫布對畫布」的純記憶體搬移。
@@ -4909,7 +4969,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
          先鋪底圖與遮罩色塊 → 畫物件 → 再把兩側的圖案補回最上層。
          以前物件是畫在 drawMaskLayer 之前，所以整個沉到遮罩色塊底下、
          在遮罩那一半完全看不見 —— 那是不對的。 */
-      drawCentreImage();
+      /* domVid：中間那張改由底下的 <video> 顯示，這裡就不畫了
+         （上面已經把那塊挖成透明）。其餘每一層都照舊。 */
+      if (!domVid) drawCentreImage();
       drawBackdrop();
       drawMaskLayer();
       drawObjects(belowObjs);
@@ -5412,6 +5474,58 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
   /** 畫布現在要不要照動畫來畫（暫停時也算：停在那一格） */
   const motionOn = activeTab === 'motion' && saveState === 'idle' && !igPreview;
 
+  /**
+   * ── 影片當底時，中間那一大塊交給真正的 <video>（不再逐格畫進畫布）──
+   *
+   * 為什麼一定要這樣做
+   * ────────────────────────────────────────────────────────────────
+   * 把一格 1080p 的影格搬進 2D 畫布要 20.9 毫秒，而且**跟畫多大無關**
+   * （量過：原尺寸 20.1ms、縮到 174px 20.7ms、createImageBitmap 20.4ms、
+   * 來源先降成 540p 還要 12.9ms）。一秒 30 格就是 630 毫秒，
+   * 主執行緒等於被佔走六成 —— 使用者按下去的那一下要排隊 200 毫秒以上才輪到。
+   * 那正是「有影片時返回鍵要等很久」的真正原因（拆解過：350ms 裡有 204ms
+   * 是事件根本還沒被叫到）。
+   *
+   * 實驗證實了這條路：把重畫硬壓到 6 格之後，返回鍵從 544ms 掉到 131ms
+   * （純照片是 120ms）。所以只要別再每格搬影片，反應速度就回來了。
+   *
+   * 做法
+   * ────────────────────────────────────────────────────────────────
+   * 中間那一大塊本來就是「一張矩形、只有平移縮放」，用 CSS 就表達得完
+   * —— 所以把**真的 <video> 墊在畫布底下**，讓瀏覽器自己合成（GPU，
+   * 主執行緒零成本、而且是原生解析度）。畫布那一層改成可透明，中間挖空。
+   * 遮罩上那些洞裡透出來的影片還是得靠畫布，但那是很小的裝飾，
+   * 讓它用比較低的格數更新就好（見影片那支迴圈的 DOM_VID_FPS）。
+   *
+   * 什麼時候**不**走這條（照舊全部畫進畫布，行為完全不變）：
+   *   ‧ 四周包圍：底圖被「模糊後的整張背景」蓋在下面，中間挖空會破圖
+   *   ‧ 動畫頁／存檔／構圖／IG 預覽：那幾條路要的是「畫布上就是成品」
+   *   ‧ 匯出：走的是另一張離屏畫布（isMain 為 false），本來就不受影響
+   */
+  const domVideoOn = !!imageState && isVideoEl(imageState.img)
+    && layout !== AROUND && !motionOn && saveState === 'idle' && !composeState && !igPreview;
+  const domVideoOnRef = useRef(false);
+  domVideoOnRef.current = domVideoOn;
+
+  /** 中間那塊、以及影片在裡面的位置，全部用**百分比**表示。
+      用百分比的好處：畫布放大縮小（viewT.k）、自適應解析度（renderScale）
+      怎麼變都不用重算，瀏覽器自己換算。 */
+  const domVideoBox = useMemo(() => {
+    if (!domVideoOn) return null;
+    const o = getLayoutOffsetsRef.current?.();
+    if (!o || !o.cw || !o.ch || !imageState) return null;
+    const { baseW: bw, baseH: bh } = imageState;
+    const t = imageTransform;
+    if (!bw || !bh || !t.w || !t.h) return null;
+    return {
+      l: (o.ix / o.cw) * 100, t: (o.iy / o.ch) * 100,
+      w: (bw / o.cw) * 100, h: (bh / o.ch) * 100,
+      vl: (t.x / bw) * 100, vt: (t.y / bh) * 100,
+      vw: (t.w / bw) * 100, vh: (t.h / bh) * 100,
+    };
+  }, [domVideoOn, imageState, layout, maskScale, imageTransform]);
+
+
   /** 一圈跑多久。最晚結束的那個元素跑完，再加上停留時間。 */
   /* 線是「以顆為單位」等的：某一條線的兩端都冒出來之後，那條線才開始長。
      所以圖案還在一顆一顆冒的時候，已經成形的那幾條就可以先連起來，
@@ -5573,7 +5687,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
     const vids = allVideosRef.current();
     playVideos(vids);
     let raf = 0;
-    const interval = 1000 / 30;          // 目標格數固定 30，不再往下讓
+    /* 中間那塊已經交給 <video> 自己播（GPU、原生解析度、主執行緒零成本）時，
+       畫布這一層剩下要更新的只有「遮罩上那些洞裡透出來的影片」——
+       那是很小的裝飾，用低格數更新完全看不出來，卻能把主執行緒讓回去。
+       實測：壓下來之後返回鍵從 544ms 掉到 131ms（純照片是 120ms）。
+       沒走 DOM 影片層時維持原本的 30 格，行為一點都沒變。
+
+       ⚠ 每一格都重讀 domVideoOnRef，不能在迴圈外面算一次：
+       這支 effect 的相依裡沒有 layout（有的話每換一次排版就要把迴圈整個
+       拆掉重建），所以切到四周包圍時 effect 不會重跑。算一次的話那邊
+       就會一直用著 8 格的節奏 —— 實測就是這樣，四周包圍只剩 8 格。 */
+    const intervalNow = () => (domVideoOnRef.current ? 1000 / DOM_VID_CANVAS_FPS : 1000 / 30);
     /* 播放中的畫布倍率。1 ＝「一個畫布像素對一個裝置像素」，
        跟不上就往下讓（最低 VID_Q_MIN），有餘裕就慢慢升回來。 */
     let quality = vidQualityRef.current;
@@ -5615,6 +5739,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
          改成排一張到期時間表：到期就畫，下一格排在「這一格 ＋ 33.3ms」。
          rAF 22ms 一格時它會自己排出「畫、跳、畫、跳」的節奏，平均剛好 30 格。
          落後太久（切到背景再回來）就從現在重新起算，不追進度。 */
+      const interval = intervalNow();
       if (!due) due = now;
       if (now < due - rafPeriod * 0.5) return;
       /* 排下一格。落後了就從「現在 ＋ 一整格」重新起算 —— **不要追進度**。 */
@@ -6607,11 +6732,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
                 transition: viewPinchRef.current ? 'none' : 'transform 90ms linear',
               }}
             >
+              {/* 畫布外面包一層「位置基準」，影片才有東西可以對齊。
+                  ⚠ 這一層的尺寸要**跟畫布一模一樣**，不能只寫 max-width:100%：
+                  放大之後畫布會超過 100%，外框卻被夾住，裡面的百分比就會
+                  對到一個比畫布小的框 —— 影片於是愈放大偏得愈多。
+                  所以這裡照抄畫布那一組尺寸規則。 */}
+              <div style={{
+                position: 'relative', lineHeight: 0,
+                ...(baseCss
+                  ? { width: baseCss.w * viewT.k, height: baseCss.h * viewT.k }
+                  : { maxWidth: '100%', maxHeight: '100%' }),
+              }}>
+              {domVideoBox && imageState && isVideoEl(imageState.img) && (
+                <BaseVideoLayer el={imageState.img as HTMLVideoElement} box={domVideoBox} />
+              )}
               <canvas 
                 ref={canvasRef} 
                 className={`block drop-shadow-[0_20px_50px_rgba(255,255,255,0.05)] pointer-events-auto ${baseCss ? '' : 'max-w-full max-h-full'}`}
                 style={{ 
                   touchAction: 'none',
+                  /* 畫布要壓在影片上面（影片是絕對定位、預設會蓋過來） */
+                  position: 'relative', zIndex: 1,
                   // 1 倍時交給 max-w/max-h 自己貼合；放大之後直接寫死尺寸，
                   // 畫布就是實打實地被排版成那麼大，不經過任何貼圖拉伸
                   ...(baseCss ? { width: baseCss.w * viewT.k, height: baseCss.h * viewT.k } : null),
@@ -6629,6 +6770,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
                   cursor: brushMode === 'pen' ? 'crosshair' : brushMode === 'eraser' ? 'pointer' : 'default' 
                 }}
               />
+              </div>
             </div>
           </div>
         )}
