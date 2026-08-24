@@ -2979,11 +2979,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
      passive 讓瀏覽器知道我們不會 preventDefault，捲動不會被拖慢。 */
   useEffect(() => {
     const mark = () => { inputAtRef.current = performance.now(); };
+    /* 移動也要算 —— 但只在「手指還按著」的時候。
+       原本只掛按下那一下，所以拖曳超過 0.2 秒之後迴圈就自己接回去了，
+       整段拖曳裡每一下都在跟它搶主執行緒（實測 p90 70 毫秒）。
+       滑鼠只是移過去（buttons = 0）不算，不然什麼都沒做也會一直讓開。 */
+    const markIfDown = (e: any) => {
+      if (e.type === 'touchmove' || e.buttons > 0 || e.pressure > 0) mark();
+    };
     window.addEventListener('pointerdown', mark, { capture: true, passive: true });
     window.addEventListener('touchstart', mark, { capture: true, passive: true });
+    window.addEventListener('pointermove', markIfDown, { capture: true, passive: true });
+    window.addEventListener('touchmove', markIfDown, { capture: true, passive: true });
     return () => {
       window.removeEventListener('pointerdown', mark, { capture: true } as any);
       window.removeEventListener('touchstart', mark, { capture: true } as any);
+      window.removeEventListener('pointermove', markIfDown, { capture: true } as any);
+      window.removeEventListener('touchmove', markIfDown, { capture: true } as any);
     };
   }, []);
   /** 影片播放中用的畫布倍率（自適應，見影片那支迴圈）。存著，不用每次重找 */
@@ -3487,10 +3498,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
        這一格底圖會被畫好幾次（中央那張、遮罩底下那張、洞裡看到的那張），
        但落格只會做一次 —— 之後每一次都是「畫布對畫布」的純記憶體搬移。
        不是影片就原樣回傳，圖片那條路完全沒有變。 */
+    /* 手指正在畫面上的時候不落新的一格 —— 手上那張照用。
+       落一格 1080p 要 45 毫秒，而拖曳中每一格都會重畫，那 45 毫秒會直接排在
+       使用者那一下前面（實測拖曳輸入延遲 p90 16 → 70 毫秒）。
+       中間那張影片是 <video> 自己在播，完全不受影響；會停住的只有
+       「遮罩上那些洞裡透出來的那一小片」，拖的那一兩秒沒有人會看它。
+       ⚠ 只有主畫布這樣做，匯出（isMain = false）永遠落真正的那一格。 */
+    const freezeFrame = isMain && (performance.now() - inputAtRef.current) < INPUT_YIELD_MS;
     const baseImg = videoFrame(imageState.img, Math.ceil(Math.max(
       offs.cw, offs.ch,
       Math.abs((imageTransform.w || 0) * s), Math.abs((imageTransform.h || 0) * s),
-    )));
+    )), freezeFrame);
     /* 快取的號碼牌一定要看**原本那個 <video>**，不是上面那張畫布 ——
        畫布本身沒有「現在第幾格」這回事，拿它去問會永遠拿到 0，
        底圖那幾層就會定格在第一幀。 */

@@ -3468,6 +3468,135 @@ interface FloatingImageComponentProps {
 
 let globalDragPointerId: number | null = null;
 
+/* ── 影片的描邊與發光 ────────────────────────────────────────────────
+   這兩樣**完全不需要影片的畫素**：
+     描邊 —— 沿著形狀的輪廓描一圈線，只跟形狀有關；
+     發光 —— 光暈只看「輪廓外面多遠」，makeGlowCanvas 讀的也只有 alpha。
+   所以兩張都可以在「形狀／粗細／顏色」變動時各算一次就留著，
+   之後每一格影格都不用再碰它們 —— 逐格成本是 0。
+
+   為什麼不能像照片那樣直接畫進那張 2D 形狀畫布：那條路的第一個動作是
+   drawImage(影片來源)，1080p 一次 20.9 毫秒；套了濾鏡的話來源還是 GPU 畫布，
+   一次 104 毫秒（等於把畫面從顯示卡讀回 CPU）。這裡改成「影片照舊交給
+   瀏覽器合成，描邊與發光是兩張靜態畫布疊在它前後」，
+   算式（withImgOutline／makeGlowCanvas）跟照片與匯出用的是同一份。 */
+const videoDeco = (
+  image: any, boxW: number, boxH: number, dpr: number,
+): { glow: HTMLCanvasElement | null; stroke: HTMLCanvasElement | null; pad: number } => {
+  const empty = { glow: null, stroke: null, pad: 0 };
+  if (!boxW || !boxH) return empty;
+  /* 版面已經縮放過的地方（IG 預覽、頁面縮圖）傳進來的 boxW 是縮過的，
+     所以粗細與光暈也要跟著同一個倍率，不然縮圖上的線會比較粗。 */
+  const kk = (image.width && image.scale) ? boxW / (image.width * image.scale) : 1;
+  const sc = (image.scale || 1) * kk;
+  const strokeW = (image.imgStrokeWidth || 0) * sc;
+  const glowAmt = image.imgGlow || 0;
+  if (!strokeW && !glowAmt) return empty;
+  const pad = Math.round(((glowAmt ? Math.ceil(GLOW_BLUR_UNIT * GLOW_EXTENT) : 0)
+    + (image.imgStrokeWidth ? 20 : 0)) * sc);
+  const W = Math.max(1, Math.round((boxW + pad * 2) * dpr));
+  const H = Math.max(1, Math.round((boxH + pad * 2) * dpr));
+  const iw = Math.max(1, Math.round(boxW * dpr));
+  const ih = Math.max(1, Math.round(boxH * dpr));
+  const lw = strokeW * dpr;
+  const sw = iw + lw * 2, sh = ih + lw * 2;
+  const ox = (W - sw) / 2, oy = (H - sh) / 2;
+  const kind = image.imgShape as string | undefined;
+  const dashV = image.imgStrokeDash || 0;
+
+  /** 描邊那一圈（照片那條路是畫在 lw/2 的框上，線整條長在圖片外面） */
+  const paintStroke = (g: CanvasRenderingContext2D, dx: number, dy: number) => {
+    if (lw <= 0) return;
+    const rp = image.imgRadius || 0;
+    const sr = rp ? cornerR(rp, iw, ih) + lw / 2 : 0;
+    g.save();
+    g.translate(dx, dy);
+    withImgOutline(g, lw / 2, lw / 2, iw + lw, ih + lw, kind, sr, sr, p => {
+      g.lineWidth = lw;
+      g.lineJoin = 'miter';
+      g.miterLimit = 4;
+      if (dashV > 0) {
+        const seg = lw * (0.6 + (dashV / 100) * 4);
+        g.setLineDash([seg, seg * 0.85]);
+        g.lineCap = 'butt';
+      } else {
+        g.setLineDash([]);
+      }
+      g.strokeStyle = image.imgStrokeColor || '#FFFFFF';
+      p ? g.stroke(p) : g.stroke();
+      g.setLineDash([]);
+    });
+    g.restore();
+  };
+
+  /* ① 描邊：只有線，疊在影片前面 */
+  let stroke: HTMLCanvasElement | null = null;
+  if (lw > 0) {
+    stroke = document.createElement('canvas');
+    stroke.width = W; stroke.height = H;
+    const g = stroke.getContext('2d');
+    if (g) paintStroke(g, ox, oy); else stroke = null;
+  }
+
+  /* ② 發光：先做一張「形狀＋描邊」的剪影（只有 alpha 有用），
+        再交給跟照片、匯出同一支 makeGlowCanvas。光暈疊在影片後面。 */
+  let glow: HTMLCanvasElement | null = null;
+  if (glowAmt) {
+    const sil = document.createElement('canvas');
+    sil.width = Math.max(1, Math.round(sw));
+    sil.height = Math.max(1, Math.round(sh));
+    const sg = sil.getContext('2d');
+    if (sg) {
+      sg.fillStyle = '#fff';
+      sg.fillRect(lw, lw, iw, ih);
+      if (image.feather || image.imgRadius || isImgShaped(kind)) {
+        sg.globalCompositeOperation = 'destination-in';
+        if (image.feather) {
+          sg.drawImage(previewMask(boxW / boxH, image.imgRadius || 0, image.feather, kind), lw, lw, iw, ih);
+        } else {
+          const R = cornerR(image.imgRadius || 0, iw, ih);
+          withImgOutline(sg, lw, lw, iw, ih, kind, R, R, p => {
+            sg.fillStyle = '#fff';
+            p ? sg.fill(p) : sg.fill();
+          });
+        }
+        sg.globalCompositeOperation = 'source-over';
+      }
+      paintStroke(sg, 0, 0);
+      const gk = Math.min(1, 420 / Math.max(W, H));
+      glow = makeGlowCanvas(
+        sil, W * gk, H * gk, ox * gk, oy * gk, sw * gk, sh * gk,
+        (glowAmt / 20) * GLOW_BLUR_UNIT * sc * dpr * gk,
+        image.imgGlowColor || '#FFFFFF',
+      );
+    }
+  }
+  return { glow, stroke, pad };
+};
+
+/** 把一張算好的裝飾畫布擺到「比影片框大 pad 一圈」的位置 */
+const DecoCanvas: React.FC<{ cv: HTMLCanvasElement; pad: number; w: number; h: number }> = ({ cv, pad, w, h }) => {
+  const host = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = host.current;
+    if (!el) return;
+    cv.style.width = '100%';
+    cv.style.height = '100%';
+    cv.style.display = 'block';
+    el.appendChild(cv);
+    return () => { try { el.removeChild(cv); } catch { /* 已經不在了 */ } };
+  }, [cv]);
+  return (
+    <div
+      ref={host}
+      style={{
+        position: 'absolute', left: `${-pad}px`, top: `${-pad}px`,
+        width: `${w + pad * 2}px`, height: `${h + pad * 2}px`, pointerEvents: 'none',
+      }}
+    />
+  );
+};
+
 /**
  * 影片圖層的畫面。
  *
@@ -3594,24 +3723,143 @@ const VideoLayer: React.FC<{
   ) : null;
 
   const inner = glHost ? <>{vid}{glHost}</> : vid;
-  if (!box) {
-    if (!maskUrl) return inner;
-    // 沒裁切、但有形狀 → 也要有一層框來承載遮罩
+
+  /* 描邊與發光。兩張都只跟形狀有關，所以只在那幾個值變動時才重算 ——
+     影格再怎麼跑都不會碰到它們。 */
+  const deco = useMemo(
+    () => videoDeco(image, boxW, boxH, Math.min(2, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [boxW, boxH, image.imgStrokeWidth, image.imgStrokeColor, image.imgStrokeDash,
+      image.imgGlow, image.imgGlowColor, image.imgRadius, image.feather, image.imgShape,
+      image.scale, image.width, image.height],
+  );
+  const hasDeco = !!(deco.glow || deco.stroke);
+
+  /* 沒有描邊也沒有發光 → 回傳的東西跟以前**一模一樣**，一層都沒多包。 */
+  if (!hasDeco) {
+    if (!box) {
+      if (!maskUrl) return inner;
+      // 沒裁切、但有形狀 → 也要有一層框來承載遮罩
+      return (
+        <div style={{ position: 'relative', width: '100%', height: '100%', pointerEvents: 'none', ...maskCss }}>
+          {inner}
+        </div>
+      );
+    }
     return (
-      <div style={{ position: 'relative', width: '100%', height: '100%', pointerEvents: 'none', ...maskCss }}>
+      <div
+        style={style
+          ? { ...style, overflow: 'hidden', pointerEvents: 'none', ...maskCss }
+          : { position: 'relative', width: '100%', height: '100%', overflow: 'hidden', pointerEvents: 'none', ...maskCss }}
+      >
         {inner}
       </div>
     );
   }
+
+  /* 有描邊或發光時多一層外框：光暈與線都會長到框外面，
+     所以它們**不能**待在那個 overflow:hidden ＋ 遮罩的盒子裡（會被切掉／被遮罩吃掉）。
+     外框只負責定位（沿用原本那份 style），裡面那層才是原本那個盒子，
+     inset:0 貼滿外框 —— 幾何跟以前完全一樣。
+     疊法照匯出的順序：發光在影片底下，描邊在影片上面。 */
   return (
     <div
       style={style
-        ? { ...style, overflow: 'hidden', pointerEvents: 'none', ...maskCss }
-        : { position: 'relative', width: '100%', height: '100%', overflow: 'hidden', pointerEvents: 'none', ...maskCss }}
+        ? { ...style, pointerEvents: 'none' }
+        : { position: 'relative', width: '100%', height: '100%', pointerEvents: 'none' }}
     >
-      {inner}
+      {deco.glow && <DecoCanvas cv={deco.glow} pad={deco.pad} w={boxW} h={boxH} />}
+      <div
+        style={{
+          position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
+          overflow: box ? 'hidden' : undefined, pointerEvents: 'none', ...maskCss,
+        }}
+      >
+        {inner}
+      </div>
+      {deco.stroke && <DecoCanvas cv={deco.stroke} pad={deco.pad} w={boxW} h={boxH} />}
     </div>
   );
+};
+
+/**
+ * 影片的顏色鏈（濾鏡／調節）交給 GPU。
+ *
+ * 每來一格新影格就上一次材質、查一次烤好的 33³ 色表、畫在自己的畫布上，
+ * 那張畫布**直接掛在版面上讓瀏覽器合成** —— 全程沒有任何一次回讀。
+ *
+ * 用 requestVideoFrameCallback 而不是 rAF：它是「真的有新影格才叫我」，
+ * 所以 25fps 的素材就畫 25 次，不會為了同一格畫兩遍。
+ * 舊 Safari 沒有這支就退回 rAF，行為一樣，只是會多畫幾次。
+ *
+ * （這一段本來直接寫在 FloatingImageComponent 裡面，內容一行都沒有改，
+ *   只是拉出來變成一支具名的 hook，讀起來清楚一點。）
+ */
+const useVideoFxGl = (
+  videoRef: React.MutableRefObject<HTMLVideoElement | null>,
+  fx: any, lutRevision: number, boxW: number, boxH: number, dpr: number,
+  want: boolean,
+) => {
+  const glRef = useRef<VideoGl | null>(null);
+  const glFxKeyRef = useRef('');
+  const glLiveRef = useRef(false);
+  const [glDead, setGlDead] = useState(false);
+  const [glLive, setGlLive] = useState(false);
+  const [glCanvas, setGlCanvas] = useState<HTMLCanvasElement | null>(null);
+  const on = want && !glDead;
+  /* 效果被清光時把旗子放掉：下次再套效果，底下的 <video> 要能先頂著，
+     不然會有一格空白。 */
+  if (!want && glLiveRef.current) glLiveRef.current = false;
+  /* 這一層收掉時把 GL 上下文一起收掉。不收的話每個影片圖層都佔著一個，
+     瀏覽器對同時存在的 WebGL 上下文數量是有上限的（超過就整批被收走）。 */
+  useEffect(() => () => { glRef.current?.dispose(); glRef.current = null; }, []);
+  useEffect(() => {
+    if (!on) {
+      if (glLiveRef.current) { glLiveRef.current = false; setGlLive(false); }
+      return;
+    }
+    const v = videoRef.current;
+    if (!v) return;
+    let gl = glRef.current;
+    if (!gl) {
+      gl = VideoGl.create();
+      if (!gl) { setGlDead(true); return; }
+      glRef.current = gl;
+      glFxKeyRef.current = '';
+      setGlCanvas(gl.canvas);
+    }
+    let live = true;
+    let handle = 0;
+    const anyV = v as any;
+    const useRvfc = typeof anyV.requestVideoFrameCallback === 'function';
+    const step = () => {
+      if (!live || !gl) return;
+      if (gl.lost) { setGlDead(true); return; }
+      /* 查色表只在「換濾鏡／動滑桿」時重烤，跟影格數無關 */
+      const key = `${JSON.stringify(fx || null)}|${lutRevision}`;
+      if (key !== glFxKeyRef.current) {
+        gl.setLut(bakePhotoFxLut(fx));
+        glFxKeyRef.current = key;
+      }
+      /* 畫出來的大小＝畫面上真正的實體像素。裁切過的話，版面是把「整格」
+         放大之後再用 overflow 切，所以這裡要照那個放大後的尺寸開。
+         幾何完全交給 VideoLayer 既有的那份 CSS（geoCssBox），這裡只管像素。 */
+      const el = gl.canvas.parentElement;
+      const w = Math.max(1, Math.round((el?.clientWidth || boxW) * dpr));
+      const h = Math.max(1, Math.round((el?.clientHeight || boxH) * dpr));
+      if (gl.drawFrame(v, w, h) && !glLiveRef.current) { glLiveRef.current = true; setGlLive(true); }
+      handle = useRvfc ? anyV.requestVideoFrameCallback(step) : requestAnimationFrame(step);
+    };
+    step();
+    return () => {
+      live = false;
+      try {
+        if (useRvfc) anyV.cancelVideoFrameCallback?.(handle);
+        else cancelAnimationFrame(handle);
+      } catch { /* 收不掉就算了 */ }
+    };
+  }, [on, fx, lutRevision, boxW, boxH, dpr, videoRef]);
+  return { glCanvas: on ? glCanvas : null, glLive, glDead };
 };
 
 /** 把一張「不是 React 生的」畫布掛進版面裡，樣式照給。 */
@@ -3841,18 +4089,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   /** 這一層的 <video>。有 fx／形狀時它不上畫面，只當 GPU 的來源。 */
   const glVideoRef = useRef<HTMLVideoElement | null>(null);
   const [vidReady, setVidReady] = useState(false);
-  const glRef = useRef<VideoGl | null>(null);
   /** 構圖裁切後那一張（重複使用，不要每格開一張新的） */
   const glGeoRef = useRef<HTMLCanvasElement | null>(null);
-  /** GL 建不起來（很舊的裝置）就退回原本那條路：純 <video>、不套效果 */
-  const [glDead, setGlDead] = useState(false);
-  /** 成品已經在 canvas 上了 → 底下那個 <video> 可以讓開了 */
-  const [glLive, setGlLive] = useState(false);
-  /** GPU 那張畫布（不是 React 生的，要掛進版面裡，見 GlCanvasHost） */
-  const [glCanvas, setGlCanvas] = useState<HTMLCanvasElement | null>(null);
-  /* 同一件事再存一份 ref：draw() 是在 rVFC 回呼裡跑的，
-     看 state 會看到閉包當下那一份（永遠是 false），每一格都會再 setState 一次。 */
-  const glLiveRef = useRef(false);
+  /* GPU 那條路整段搬到 useVideoFxGl 了，內容一行都沒有改。 */
+  const { glCanvas, glLive, glDead } = useVideoFxGl(
+    glVideoRef, image.fx, lutRevision, boxW, boxH, shapeDpr,
+    !!image.isVideo && vidReady && hasPhotoFx(image.fx),
+  );
 
   // 一旦用過 canvas 就一直用下去。
   // 不然把滑桿拉回 0 的那一格會從 canvas 換成 <img>，新的 <img> 還沒畫上來，
@@ -3870,9 +4113,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      而那一下等於把整張畫面從顯示卡讀回 CPU（實測就是 104 毫秒，
      跟 videoGl 檔頭寫的完全一致）。影片的成品直接讓瀏覽器合成，不經過 2D。 */
   const needsShapeCanvas = image.text === undefined && !isVid && shapeImgReady && usedCanvasRef.current;
-  /* 效果被清光時把旗子放掉：下次再套效果，底下的 <video> 要能先頂著，
-     不然會有一格空白。 */
-  if (isVid && !hasPhotoFx(image.fx) && glLiveRef.current) glLiveRef.current = false;
 
   /* 濾鏡／調節算一次就留著。固定用長邊算，捏合時尺寸一直變也不會重算。
 
@@ -3897,73 +4137,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const fxIdleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fxKeyRef = useRef<string | null>(null);
   const drawRef = useRef<(() => void) | null>(null);
-  /** GPU 那顆查色表現在對應的是哪一組 fx —— 一樣就不重烤 */
-  const glFxKeyRef = useRef('');
   useEffect(() => () => { if (fxIdleRef.current) clearTimeout(fxIdleRef.current); }, []);
-  /* 這一層收掉時把 GL 上下文一起收掉。不收的話每個影片圖層都佔著一個，
-     瀏覽器對同時存在的 WebGL 上下文數量是有上限的（超過就整批被收走）。 */
-  useEffect(() => () => { glRef.current?.dispose(); glRef.current = null; }, []);
-  /**
-   * 影片這一格的「已經套完顏色」的來源。
-   *
-   * 回傳的是 GPU 那張畫布 —— 它已經是 RGB、而且就是畫面上要用的大小，
-   * 所以後面那一整段（圓角／羽化／描邊／發光）拿它去 drawImage 只要 0.06 毫秒。
-   * 影片的像素從頭到尾沒有進過 CPU。
-   */
-  /**
-   * 影片的 GPU 迴圈。每來一格新影格就上一次材質、查一次色表、畫在自己的畫布上，
-   * 那張畫布**直接掛在版面上讓瀏覽器合成** —— 全程沒有任何一次回讀。
-   *
-   * 用 requestVideoFrameCallback 而不是 rAF：它是「真的有新影格才叫我」，
-   * 所以 25fps 的素材就畫 25 次，不會為了同一格畫兩遍。
-   * 舊 Safari 沒有這支就退回 rAF，行為一樣，只是會多畫幾次。
-   */
-  useEffect(() => {
-    if (!videoWantsGl) {
-      if (glLiveRef.current) { glLiveRef.current = false; setGlLive(false); }
-      return;
-    }
-    const v = glVideoRef.current;
-    if (!v) return;
-    let gl = glRef.current;
-    if (!gl) {
-      gl = VideoGl.create();
-      if (!gl) { setGlDead(true); return; }
-      glRef.current = gl;
-      glFxKeyRef.current = '';
-      setGlCanvas(gl.canvas);
-    }
-    let live = true;
-    let handle = 0;
-    const anyV = v as any;
-    const useRvfc = typeof anyV.requestVideoFrameCallback === 'function';
-    const step = () => {
-      if (!live || !gl) return;
-      if (gl.lost) { setGlDead(true); return; }
-      /* 查色表只在「換濾鏡／動滑桿」時重烤，跟影格數無關 */
-      const key = `${JSON.stringify(image.fx || null)}|${lutRevision}`;
-      if (key !== glFxKeyRef.current) {
-        gl.setLut(bakePhotoFxLut(image.fx));
-        glFxKeyRef.current = key;
-      }
-      /* 畫出來的大小＝畫面上真正的實體像素。裁切過的話，版面是把「整格」
-         放大之後再用 overflow 切，所以這裡要照那個放大後的尺寸開。
-         幾何完全交給 VideoLayer 既有的那份 CSS（geoCssBox），這裡只管像素。 */
-      const el = gl.canvas.parentElement;
-      const w = Math.max(1, Math.round((el?.clientWidth || boxW) * shapeDpr));
-      const h = Math.max(1, Math.round((el?.clientHeight || boxH) * shapeDpr));
-      if (gl.drawFrame(v, w, h) && !glLiveRef.current) { glLiveRef.current = true; setGlLive(true); }
-      handle = useRvfc ? anyV.requestVideoFrameCallback(step) : requestAnimationFrame(step);
-    };
-    step();
-    return () => {
-      live = false;
-      try {
-        if (useRvfc) anyV.cancelVideoFrameCallback?.(handle);
-        else cancelAnimationFrame(handle);
-      } catch { /* 收不掉就算了 */ }
-    };
-  }, [videoWantsGl, image.fx, lutRevision, boxW, boxH, shapeDpr]);
 
   const fxSourceFor = (img: HTMLImageElement) => {
     if (!hasPhotoFx(image.fx)) return img as CanvasImageSource;
@@ -8136,8 +8310,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (recordedRef.current === sig) return;
     recordedRef.current = sig;
     try {
-      // 版面是 DOM 畫的，沒有現成的畫布可以截 —— 用導出那一支靜靜地烤一張小的
-      const r = await handleExport({ silent: true, previewWidth: 900 });
+      /* 版面是 DOM 畫的，沒有現成的畫布可以截 —— 用導出那一支靜靜地烤一張小的。
+         stillOnly：歷史紀錄的縮圖只要一張圖，不必為它錄一整段影片。 */
+      const r = await handleExport({ silent: true, previewWidth: 900, stillOnly: true });
       const url = r && 'urls' in r ? r.urls[0] : null;
       if (!url) return;
       /* 原圖那一格放的是「拼好的成品」：真正還原用的是 state（裡面每一張照片
@@ -9892,12 +10067,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (!igPreview) return;
     let alive = true;
     (async () => {
-      let r = await handleExport({ silent: true, previewWidth: 900 });
+      let r = await handleExport({ silent: true, previewWidth: 900, stillOnly: true });
       let urls = (r && 'urls' in r) ? r.urls : [];
       // 偶爾第一次會算不出來（圖還沒解碼完之類），隔一下再試一次
       if (!urls.length && alive) {
         await new Promise(res => setTimeout(res, 400));
-        r = await handleExport({ silent: true, previewWidth: 900 });
+        r = await handleExport({ silent: true, previewWidth: 900, stillOnly: true });
         urls = (r && 'urls' in r) ? r.urls : [];
       }
       if (!alive) { urls.forEach(u => URL.revokeObjectURL(u)); return; }
@@ -10194,12 +10369,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * silent = true 時不動任何畫面狀態，直接把每一頁的圖回傳 ——
    * IG 預覽就是靠這個顯示「跟匯出一模一樣」的畫面（同一支程式碼、同一條管線，
    * 定義上不可能不一樣）。previewWidth 用來壓低解析度，預覽不需要 4096。
+   *
+   * stillOnly = true：有影片的那一頁也出「一張圖」，不去錄影片。
+   * IG 預覽與歷史紀錄縮圖都只需要一張圖 —— 以前這兩個地方會為了一張縮圖
+   * 去錄一段完整的影片（實測 8 秒），而 IgPreview 拿到影片網址是塞進 <img>，
+   * 結果就是**有影片時 IG 預覽整片空白**、離開拼圖也要多等好幾秒。
    */
   const handleExport = async (
-    opts?: { silent?: boolean; previewWidth?: number },
+    opts?: { silent?: boolean; previewWidth?: number; stillOnly?: boolean },
   ): Promise<{ urls: string[]; kinds: ('image' | 'video')[] } | void> => {
     if (pages.length === 0) return;
     const silent = !!opts?.silent;
+    const stillOnly = !!opts?.stillOnly;
     if (!silent) setExportState('processing');
     videoAbortRef.current = false;
 
@@ -10639,7 +10820,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       for (let pageIdx = 0; pageIdx < pages.length; pageIdx++) {
         const pageLeft = pageIdx * targetW;
         const hasVideo = pageHasVideo(pageIdx);
-        if (hasVideo && typeof MediaRecorder !== 'undefined') {
+        if (hasVideo && !stillOnly && typeof MediaRecorder !== 'undefined') {
           urls.push(await recordPageVideo(pageIdx, pageLeft));
           kinds.push('video');
           continue;
