@@ -1,5 +1,6 @@
 
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
+import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
 import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
@@ -561,11 +562,8 @@ const masterLUT_B = new Float32Array(32768);
  *
  * 沒列在這裡的就是 100。
  */
-const LUT_DEFAULT_AMOUNT: Record<string, number> = {
-  f12: 50, f13: 50, f14: 50, f20: 50, f22: 50,
-  f3: 70, f4: 70, f6: 70, f7: 70, f15: 70, f19: 70,
-  f17: 80, f23: 80,
-};
+/* 這份表搬到 utils/photoFx 共用了 —— 拼圖那邊挑同一顆濾鏡要有同樣的濃淡。
+   這裡沿用同一份（見檔頭的 import），行為一個字都沒有變。 */
 
 export const processPixels = (
   sourceData: Uint8ClampedArray,

@@ -22,18 +22,28 @@ export const StuckEscape: React.FC<{
   onEscape: () => void;
   label?: string;
   delayMs?: number;
-}> = ({ onEscape, label = '取消，回到編輯', delayMs = STUCK_MS }) => {
+  /**
+   * 先把位置佔著（看不見、也點不到），時間到才顯形。
+   *
+   * 給「上面還有轉圈動畫」的那種畫面用：這顆鍵是後來才冒出來的，
+   * 而外層是置中排列 —— 它一出現，上面那顆轉圈就會被往上頂一截，
+   * 看起來像畫面自己抖了一下。位置先留著就完全不會位移。
+   */
+  reserveSpace?: boolean;
+}> = ({ onEscape, label = '取消，回到編輯', delayMs = STUCK_MS, reserveSpace = false }) => {
   const [show, setShow] = useState(false);
   useEffect(() => {
     const t = window.setTimeout(() => setShow(true), delayMs);
     return () => window.clearTimeout(t);
   }, [delayMs]);
-  if (!show) return null;
+  if (!show && !reserveSpace) return null;
   return (
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onEscape(); }}
-      className="mt-8 px-6 h-10 rounded-full border border-white/25 text-white/80 text-[12px] font-bold tracking-[0.2em] active:scale-95 transition-transform"
+      aria-hidden={!show}
+      className={`mt-8 px-6 h-10 rounded-full border border-white/25 text-white/80 text-[12px] font-bold tracking-[0.2em] active:scale-95 transition-transform${
+        show ? '' : ' opacity-0 pointer-events-none'}`}
     >
       {label}
     </button>

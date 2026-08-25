@@ -4,7 +4,7 @@ import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film } from 'lucide-react';
 import { Icon } from './Icon';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
@@ -2183,7 +2183,9 @@ return (
               if (active) return;
               // eager：使用者正在等這一顆，不排隊（背景預載那一支才要等空檔）
               if (l.url) { setLoadingLut(l.id); await loadLut(l.id, l.url, true); setLoadingLut(null); }
-              setFx({ lut: l.id });
+              /* 強度用跟編輯頁同一份預設值（F3 是 70、F12 是 50…）——
+                 以前這裡一律 100，同一顆濾鏡在拼圖裡就比編輯頁濃。 */
+              setFx({ lut: l.id, lutAmount: lutDefaultAmount(l.id) });
               setLutRevision(n => n + 1);
             }}
             className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
@@ -2192,7 +2194,7 @@ return (
               <div className="absolute inset-0 bg-[#1a1a1a]" />
               <CardThumb src={cardSrc} delay={li * 24}
                          cacheKey={`${cardSrc}|lut:${l.id}|${lutRevision}`}
-                         fx={{ lut: l.id, lutAmount: 100 }} />
+                         fx={{ lut: l.id, lutAmount: lutDefaultAmount(l.id) }} />
               {loadingLut === l.id && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/40">
                   <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -3062,12 +3064,18 @@ const shapeParts = (image: any, boxW: number, boxH: number) => {
   if (!boxW || !boxH) return { needMaskImg: true, cssRadius: undefined, maskUrl: '' };
   /* 網址照「長寬比＋圓角＋羽化＋外形」快取：兩邊拿到的是同一個字串，
      瀏覽器也就只解碼一次。 */
-  const key = `${(boxW / boxH).toFixed(2)}|${radiusPct}|${featherPct}|${kind || ''}`;
+  /* 圓角與羽化吸到 2% 的格子上。
+     拖羽化滑桿時每一格都是一個新數字，而每一個新數字都要重新編一張 PNG
+     （toDataURL）再解碼一次 —— 實測拖曳中掉到 40 格。吸到 2% 之後，
+     整段 0→100 最多只會編 50 張，而且來回拖時全部命中快取。
+     1% 的差別肉眼看不出來，**匯出用的仍然是原始數值**，成品一點都沒變。 */
+  const q = (v: number) => Math.round(v / 2) * 2;
+  const key = `${(boxW / boxH).toFixed(2)}|${q(radiusPct)}|${q(featherPct)}|${kind || ''}`;
   let url = maskUrlCache.get(key);
   if (!url) {
-    try { url = previewMask(boxW / boxH, radiusPct, featherPct, kind).toDataURL('image/png'); }
+    try { url = previewMask(boxW / boxH, q(radiusPct), q(featherPct), kind).toDataURL('image/png'); }
     catch { url = ''; }
-    if (maskUrlCache.size > 60) maskUrlCache.clear();
+    if (maskUrlCache.size > 80) maskUrlCache.clear();
     maskUrlCache.set(key, url);
   }
   return { needMaskImg: true, cssRadius: undefined, maskUrl: url };
@@ -3578,12 +3586,16 @@ const VideoLayer: React.FC<{
   useEffect(() => {
     if (!maskUrl) { setLiveMask(''); return; }
     let alive = true;
-    const im = new Image();
-    const done = () => { if (alive) setLiveMask(maskUrl); };
-    im.onload = done;
-    im.onerror = done;
-    im.src = maskUrl;
-    return () => { alive = false; };
+    /* 再壓一層 40ms 的合併：拖羽化滑桿時一秒會來六十個新數字，
+       每一個都去編一張 PNG 再解碼，畫面就一路卡著。 */
+    const t = window.setTimeout(() => {
+      const im = new Image();
+      const done = () => { if (alive) setLiveMask(maskUrl); };
+      im.onload = done;
+      im.onerror = done;
+      im.src = maskUrl;
+    }, 40);
+    return () => { alive = false; window.clearTimeout(t); };
   }, [maskUrl]);
   const maskCss: React.CSSProperties = liveMask
     ? {
@@ -3597,6 +3609,25 @@ const VideoLayer: React.FC<{
     (ref as any).current = el;
     if (videoRef) videoRef.current = el;
   };
+  /* ── 圖片在形狀裡的位置與縮放（imgShapeX／Y／Zoom）──────────────────
+     照片那條路是 drawImgBase 在畫的時候套上去的；影片沒有經過那一支，
+     所以以前「套了形狀之後怎麼拖都不會動」。這裡用完全同一條算式，
+     只是換成 CSS：先開一個「形狀視窗」把影片按那個位置與大小擺好，
+     外面那層再用形狀遮罩切出來。倍率 1、沒位移時，這個視窗剛好等於整個框。 */
+  const shaped = isImgShaped(shapeKind);
+  const shapeZoom = shaped ? clampImgZoom((image as any).imgShapeZoom) : 1;
+  const innerW = boxW * shapeZoom;
+  const innerH = boxH * shapeZoom;
+  const shapeOff = (() => {
+    if (!shaped) return { left: 0, top: 0 };
+    const { rx, ry } = imgShapePan(boxW, boxH, shapeZoom);
+    const cl = (v: any) => Math.max(-1, Math.min(1, Number(v) || 0));
+    return {
+      left: (boxW - innerW) / 2 + cl((image as any).imgShapeX) * rx,
+      top: (boxH - innerH) / 2 + cl((image as any).imgShapeY) * ry,
+    };
+  })();
+
   const geo: GeoParams | undefined = image.geo;
   const cropped = !!geo && !isGeoIdentity(geo);
   const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
@@ -3615,8 +3646,8 @@ const VideoLayer: React.FC<{
   const plain: React.CSSProperties = style
     ? { ...style, objectFit: 'fill', pointerEvents: 'none' }
     : { width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' };
-  const box = cropped && nat && boxW > 0 && boxH > 0
-    ? geoCssBox(nat.w, nat.h, geo!, boxW, boxH)
+  const box = cropped && nat && innerW > 0 && innerH > 0
+    ? geoCssBox(nat.w, nat.h, geo!, innerW, innerH)
     : null;
   /* 讓開只在「GPU 那張畫布真的在場」時才成立。
      以前只看 hidden（＝glLive），而把濾鏡按回「原始」的那一格，
@@ -3668,7 +3699,21 @@ const VideoLayer: React.FC<{
     />
   ) : null;
 
-  const inner = glHost ? <>{vid}{glHost}</> : vid;
+  const innerRaw = glHost ? <>{vid}{glHost}</> : vid;
+  /* 形狀視窗。沒有形狀時（shaped=false）它剛好等於整個框，
+     等同於以前直接放 inner，一個像素都沒有變。 */
+  const inner = (
+    <div
+      style={{
+        position: 'absolute',
+        left: `${shapeOff.left}px`, top: `${shapeOff.top}px`,
+        width: `${innerW}px`, height: `${innerH}px`,
+        pointerEvents: 'none',
+      }}
+    >
+      {innerRaw}
+    </div>
+  );
 
   /* 描邊與發光。兩張都只跟形狀有關，所以只在那幾個值變動時才重算 ——
      影格再怎麼跑都不會碰到它們。 */
@@ -3702,7 +3747,9 @@ const VideoLayer: React.FC<{
           position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
           /* 裁切過就要切掉框外的部分；單純圓角用 border-radius ＋ overflow 夾住，
              不必動用圖片遮罩（見上面 cssRadius 的說明）。 */
-          overflow: (box || cssRadius) ? 'hidden' : undefined,
+          /* 套了形狀又放大時，多出來的部分也在這裡切掉（遮罩本來就會擋，
+             這一行是保險，免得放大很多倍時蓋到隔壁圖層）。 */
+          overflow: (box || cssRadius || shaped) ? 'hidden' : undefined,
           borderRadius: cssRadius,
           pointerEvents: 'none',
           ...maskCss,
@@ -3735,11 +3782,24 @@ const useVideoFxGl = (
 ) => {
   const glRef = useRef<VideoGl | null>(null);
   const glFxKeyRef = useRef('');
+  /** 特效那一串自己的鍵（跟顏色分開） */
+  const glFxOnlyKeyRef = useRef('');
+  /** 上一次換數值的時間 —— 手停下來之後才補完整的那顆表 */
+  const fxChangedAtRef = useRef(0);
+  /** 現在手上這顆是不是「拖曳用的粗表」 */
+  const fxCoarseRef = useRef(false);
   const glLiveRef = useRef(false);
   const [glDead, setGlDead] = useState(false);
   const [glLive, setGlLive] = useState(false);
   const [glCanvas, setGlCanvas] = useState<HTMLCanvasElement | null>(null);
   const on = want && !glDead;
+  /* fx 是個物件，每次 render 都是新的一份 —— 直接放進相依陣列的話，
+     這支 effect 每一次 render 都會被拆掉重建，而重建會立刻再跑一次 step()。
+     拖滑桿時 React 一秒 render 六十次，於是烤表也跟著變成一秒六十次。
+     改成只認「內容有沒有變」的字串，值本身用 ref 拿最新的。 */
+  const fxKey = JSON.stringify(fx || null);
+  const fxRef = useRef(fx);
+  fxRef.current = fx;
   /* 效果被清光時把旗子放掉：下次再套效果，底下的 <video> 要能先頂著，
      不然會有一格空白。 */
   if (!want && glLiveRef.current) glLiveRef.current = false;
@@ -3768,20 +3828,58 @@ const useVideoFxGl = (
     const step = () => {
       if (!live || !gl) return;
       if (gl.lost) { setGlDead(true); return; }
-      /* 查色表只在「換濾鏡／動滑桿」時重烤，跟影格數無關 */
-      const key = `${JSON.stringify(fx || null)}|${lutRevision}`;
+      /* ── 查色表只在「換濾鏡／動滑桿」時重烤，跟影格數無關 ──────────────
+         但「動滑桿」時每一格都會換一次數值，而烤一顆 33³ 的表在手機等級的
+         CPU 上要 8～11 毫秒（強度不是 100 時要烤兩顆，×2）——
+         一秒 30 格就吃掉三分之一條主執行緒，那正是「影片的調整滑桿很卡」。
+
+         改成兩段：手指在動的時候烤 17³（只要十分之一的成本，肉眼看不出差別），
+         停下來 180 毫秒之後再補一顆完整的 33³。
+         所以「拖的時候順、放手之後精準」，而匯出永遠走的是另一條完整的路。 */
+      const cur = fxRef.current;
+      /* ⚠ 只認「顏色」那幾個欄位。以前是整包 fx 當鍵，所以拖特效強度、圓角、
+         羽化這些跟顏色無關的滑桿時，每一格也會重烤一顆表（白花 8～11 毫秒）。 */
+      const key = `${colorKeyOf(cur)}|${lutRevision}`;
+      const now = performance.now();
       if (key !== glFxKeyRef.current) {
-        gl.setLut(bakePhotoFxLut(fx));
         glFxKeyRef.current = key;
+        fxChangedAtRef.current = now;
+        fxCoarseRef.current = true;
+        gl.setLut(bakePhotoFxLut(cur, 17));
+        /* 特效（朦朧／動態模糊／VHS／馬賽克…）：它們不是顏色，塞不進查色表，
+           所以另外交給 videoGl 的特效鏈跑（跟照片同一份著色器）。 */
+      }
+      /* 特效那一串跟顏色是兩回事，各自認自己的鍵 */
+      const fk = JSON.stringify(cur || null);
+      if (fk !== glFxOnlyKeyRef.current) {
+        glFxOnlyKeyRef.current = fk;
+        gl.setFx(cur, getNoisePattern());
+      }
+      if (fxCoarseRef.current && now - fxChangedAtRef.current > 180) {
+        fxCoarseRef.current = false;
+        gl.setLut(bakePhotoFxLut(cur, 33));
       }
       /* 畫出來的大小＝畫面上真正的實體像素。裁切過的話，版面是把「整格」
          放大之後再用 overflow 切，所以這裡要照那個放大後的尺寸開。
          幾何完全交給 VideoLayer 既有的那份 CSS（geoCssBox），這裡只管像素。 */
+      /* ⚠ 尺寸**只能**問「這張畫布真正被擺在哪個框裡」。
+         以前量不到就退回 boxW/boxH（圖層框）—— 但裁切過的圖層，那兩個數字
+         跟畫布實際被拉伸到的大小長寬比是不一樣的，畫出來就被壓扁。
+         而「量不到」是真的會發生：把濾鏡切回原始時這張畫布會被拔下來，
+         下次再套濾鏡的那一格它還沒被掛回去，parentElement 就是 null。
+         現在改成量不到就這一格不畫（底下的 <video> 還在頂著，畫面照常）。 */
       const el = gl.canvas.parentElement;
-      const w = Math.max(1, Math.round((el?.clientWidth || boxW) * dpr));
-      const h = Math.max(1, Math.round((el?.clientHeight || boxH) * dpr));
-      if (gl.drawFrame(v, w, h) && !glLiveRef.current) { glLiveRef.current = true; setGlLive(true); }
-      handle = useRvfc ? anyV.requestVideoFrameCallback(step) : requestAnimationFrame(step);
+      const cw = el ? el.clientWidth : 0;
+      const ch = el ? el.clientHeight : 0;
+      if (cw > 0 && ch > 0) {
+        const w = Math.max(1, Math.round(cw * dpr));
+        const h = Math.max(1, Math.round(ch * dpr));
+        if (gl.drawFrame(v, w, h) && !glLiveRef.current) { glLiveRef.current = true; setGlLive(true); }
+        handle = useRvfc ? anyV.requestVideoFrameCallback(step) : requestAnimationFrame(step);
+        return;
+      }
+      /* 還沒掛上去：用 rAF 再問一次（不能用 rVFC —— 影片停著就永遠等不到下一格） */
+      handle = requestAnimationFrame(step);
     };
     step();
     return () => {
@@ -3791,7 +3889,8 @@ const useVideoFxGl = (
         else cancelAnimationFrame(handle);
       } catch { /* 收不掉就算了 */ }
     };
-  }, [on, fx, lutRevision, boxW, boxH, dpr, videoRef]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [on, fxKey, lutRevision, boxW, boxH, dpr, videoRef]);
   return { glCanvas: on ? glCanvas : null, glLive, glDead };
 };
 
@@ -9085,6 +9184,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
   /** 這一下的觸控點在不在形狀裡（touchstart 算好，放開時判斷要不要進形狀選取） */
   const tapInShapeRef = useRef(false);
+  /** 這一下按在形狀外面，放手時如果只是「點一下」就要退出「選中形狀」 */
+  const shapeExitPendingRef = useRef<string | null>(null);
+  /**
+   * 手指放開時結算那件事。
+   * isTap ＝ 幾乎沒移動。拖過就不退出（那一段拖曳是在挪動形狀裡的圖片）。
+   */
+  const resolveShapeExit = (isTap: boolean) => {
+    const pending = shapeExitPendingRef.current;
+    shapeExitPendingRef.current = null;
+    if (!pending || !isTap) return;
+    if (shapeSelRef.current !== pending) return;
+    shapeSelRef.current = null;
+    setShapeSelId(null);
+    justLeftShapeRef.current = true;
+  };
   /** 這一下是不是「剛從選中形狀退回選中圖片」——是的話就不要再取消選取 */
   const justLeftShapeRef = useRef(false);
 
@@ -9192,12 +9306,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       justLeftShapeRef.current = false;
       shapeSelUndoRef.current = null;
       if (shapeSelRef.current && !tapInShapeRef.current) {
-        /* 先記下來是哪一顆：第二根手指跟上的話，這一下其實是「兩指縮放」，
-           不是「點外面退出去」—— 下面那段會照這個值把它復原。 */
-        shapeSelUndoRef.current = shapeSelRef.current;
-        shapeSelRef.current = null;
-        setShapeSelId(null);
-        justLeftShapeRef.current = true;
+        /* 按在形狀外面。
+           以前這裡就直接退出「選中形狀」了 —— 於是「從形狀外面拖」永遠變成
+           搬動整個圖層，而不是挪動圖片在形狀裡的位置。
+           現在改成先記著，放開手的時候再看：
+             ‧ 只是點一下（幾乎沒移動）→ 才真的退出去（行為跟以前一樣）
+             ‧ 拖了一段            → 不退出，整段拖曳都是在挪動形狀裡的圖片 */
+        shapeExitPendingRef.current = shapeSelRef.current;
       }
     }
 
@@ -9508,7 +9623,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           /* 「形狀」那一頁開著、這張圖有形狀、而且手指是從圖案裡面按下去的：
              拖曳是在挪動「圖片在形狀裡的位置」，不是搬動圖片本身。
              從形狀外面按下去、或關掉那一頁，都還是原本的搬移。 */
-          if (selectedImg && shapeSelRef.current === selectedImg.id && g.startInShape
+          /* 「形狀」那一頁開著、而且這張圖有形狀 → 單指拖曳一律是在挪動
+             「圖片在形狀裡的位置」，不管手指是從形狀裡面還是外面按下去的。
+             要搬動圖層就退出這一頁（點一下形狀外面）。 */
+          if (selectedImg && shapeSelRef.current === selectedImg.id
               && isImgShaped((selectedImg as any).imgShape)) {
             /* 可以拖的範圍就是「圖比框大出來的那一圈」，除以它換算成 -1~1。
                圖片轉過角度的話，手指的方向也要跟著轉回去，不然會歪著跑。 */
@@ -10029,6 +10147,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      以前 IG 預覽是另外用 DOM 重畫一次，兩份程式碼永遠會有對不上的地方
      （比例、裁切、跨頁、次像素…），改成共用同一條管線就不可能不一樣。 */
   const [igShots, setIgShots] = useState<string[]>([]);
+  /** 每一頁的成品是圖還是影片（影片那幾頁要放 <video> 才會動） */
+  const [igKinds, setIgKinds] = useState<('image' | 'video')[]>([]);
   const igShotsRef = useRef<string[]>([]);
   useEffect(() => {
     if (!igPreview) return;
@@ -10057,12 +10177,38 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       igShotsRef.current.forEach(u => URL.revokeObjectURL(u));
       igShotsRef.current = urls;
       setIgShots(urls);
+      setIgKinds(urls.map(() => 'image' as const));
+
+      /* 有影片的那幾頁再錄一次真正的影片。這一段是背景跑的，
+         使用者已經看得到畫面了，錄好才換上去 ——
+         以前只有上面那一段（stillOnly），所以「IG 預覽裡的影片不會播」。 */
+      const anyVideo = pages.some((_p, i) => igPageHasVideoRef.current(i));
+      if (!anyVideo || typeof MediaRecorder === 'undefined') return;
+      const r2 = await handleExport({ silent: true, previewWidth: 900 });
+      if (!alive || !r2 || !('urls' in r2) || !r2.urls.length) {
+        if (r2 && 'urls' in r2) r2.urls.forEach(u => URL.revokeObjectURL(u));
+        return;
+      }
+      const merged = igShotsRef.current.slice();
+      const kinds: ('image' | 'video')[] = merged.map(() => 'image');
+      r2.urls.forEach((u, i) => {
+        if (r2.kinds[i] === 'video') {
+          if (merged[i]) URL.revokeObjectURL(merged[i]);
+          merged[i] = u; kinds[i] = 'video';
+        } else {
+          URL.revokeObjectURL(u);
+        }
+      });
+      igShotsRef.current = merged;
+      setIgShots(merged);
+      setIgKinds(kinds);
     })();
     return () => {
       alive = false;
       igShotsRef.current.forEach(u => URL.revokeObjectURL(u));
       igShotsRef.current = [];
       setIgShots([]);
+      setIgKinds([]);
     };
   }, [igPreview]);
   /** 頭像與「說讚」那排的小頭像：直接拿拼圖裡的照片來用，看起來才像真的貼文 */
@@ -10073,9 +10219,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     pages.forEach(p => p.layouts.forEach(l => l.images.forEach(im => push(im?.url))));
     return [out[0] || '', out[1] || '', out[2] || ''];
   })();
-  /** 這一頁有沒有影片：有的話才顯示 IG 的聲音鍵 */
+  /** 這一頁有沒有影片 */
   const igPageHasVideo = (pageIdx: number) =>
     floatingImages.some(f => f.isVideo && f.src && pageOfFloating(f, previewW + 1, pages.length) === pageIdx);
+  /* 上面那支 IG 預覽的 effect 只在「打開預覽」時跑一次，相依裡不放 floatingImages
+     （放了的話拖一下圖層就整個重算一次）。所以用 ref 拿到最新的那一份。 */
+  const igPageHasVideoRef = useRef(igPageHasVideo);
+  igPageHasVideoRef.current = igPageHasVideo;
 
   /* 這裡本來有一支 renderMiniPage（連同它專用的 MiniShapeImage）——
      那是舊版「IG 預覽自己用 DOM 重畫一次」留下來的。IG 預覽早就改成
@@ -10812,8 +10962,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             <span className="text-[11px] tracking-[0.3em] text-white/60 tabular-nums">{Math.round(videoProg * 100)}%</span>
           )}
           <span className="text-[11px] text-white/50 tracking-widest">{videoLabel}</span>
-          {/* 這一層蓋住返回鍵，所以一定要有出口（見 StuckEscape） */}
-          <StuckEscape onEscape={() => { videoAbortRef.current = true; setVideoProg(null); setExportState('idle'); }} />
+          {/* 取消鍵。以前是「卡住六秒才長出來」的那顆（見 StuckEscape）——
+              它一冒出來，上面的轉圈就被往上頂一截，看起來像畫面自己抖了一下；
+              而且寫的是「取消，回到編輯」。
+              現在改成一開始就在、就寫「取消匯出」，位置固定在轉圈下方，
+              整個過程完全不會位移。它做的事跟原本那顆一模一樣。 */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              videoAbortRef.current = true;
+              setVideoProg(null);
+              setExportState('idle');
+            }}
+            className="mt-8 px-6 h-10 rounded-full border border-white/25 text-white/80 text-[12px] font-bold tracking-[0.2em] active:scale-95 transition-transform"
+          >
+            取消匯出
+          </button>
         </div>
       )}
 
@@ -10972,6 +11137,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           const movedObject = workspacePointerDown.current.movesObject;
           workspacePointerDown.current = null;
           const target = e.target as Element | null;
+          /* 放開手時才結算「要不要退出選中形狀」（見 resolveShapeExit） */
+          resolveShapeExit(Math.hypot(dx, dy) < 15);
           if (Math.hypot(dx, dy) >= 15) {
             // 從空白處按下、也在空白處放開＝取消選取（手指滑了多少都算）。
             // 但如果這一下其實是在搬某個被選中的物件，就不算 —— 鬆手要維持選取。
@@ -11030,6 +11197,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const dy = e.clientY - workspacePointerDown.current.y;
               const target = e.target as Element | null;
               const endOnBlank = isBlankTarget(target);
+              resolveShapeExit(Math.hypot(dx, dy) < 15);
               // 只要手指幾乎沒移動就算「點一下」。
               // 原本還限制 300ms 內，按久一點就不會取消，選取框與四角圓球會留在畫面上。
               if (Math.hypot(dx, dy) < 15) {
@@ -12971,6 +13139,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {igPreview && (
         <IgPreview
           shots={igShots}
+          kinds={igKinds}
           frame={{ w: previewW, h: previewH }}
           pageCount={pages.length}
           faces={igFaces}

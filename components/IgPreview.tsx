@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
-import { Heart, MessageCircle, Bookmark, Volume2, VolumeX } from 'lucide-react';
+import { Heart, MessageCircle, Bookmark } from 'lucide-react';
 
 /**
  * IG 貼文預覽。
@@ -39,6 +39,12 @@ export type IgPreviewProps = {
   /** 有值的話這一篇是影片版：媒體區放 <video> 而不是 <img> */
   video?: string;
   /**
+   * 每一頁的成品是圖還是影片（順序＝頁序）。
+   * 有影片的那一頁要放 <video> 才會動 —— 只給 <img> 的話畫面是定格的。
+   * 沒傳就一律當成圖片（跟以前完全一樣）。
+   */
+  kinds?: ('image' | 'video')[];
+  /**
    * 直接指定媒體區要放什麼（例如一張正在跑動畫的 canvas）。
    * 有它就不走 img／video —— 這樣動畫可以「當場播」，
    * 不必先錄成影片再放（錄影是即時錄的，一圈幾秒就要等幾秒）。
@@ -52,7 +58,7 @@ export type IgPreviewProps = {
 
 export const IgPreview: React.FC<IgPreviewProps> = ({
   shots, frame, pageCount, faces, hasVideo = (_pageIdx: number) => false, supported = true,
-  slot = '', embedded = false, flow = false, video, mediaNode, music, onMusicChange, onClose,
+  slot = '', embedded = false, flow = false, video, kinds, mediaNode, music, onMusicChange, onClose,
 }) => {
   /** 這一篇貼文自己的存檔前綴。沒有 slot 就完全等於以前的鍵名。 */
   const KEY = (k: string) => `abai_ig_${slot ? slot + '_' : ''}${k}`;
@@ -1436,7 +1442,6 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
      useLayoutEffect 在瀏覽器繪製之前就跑完，所以第一次畫出來就是就定位的。 */
   useLayoutEffect(() => {
     setIgPage(0);
-    setIgMuted(true);
     let ro: ResizeObserver | null = null;
     const el0 = igStripRef.current;
     const measure = (el: HTMLElement) =>
@@ -1625,14 +1630,9 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     />
   );
 
-  /** 聲音鍵：只有預覽裡「目前這一頁」的影片會出聲，其他一律靜音 */
-  const [igMuted, setIgMuted] = useState(true);
-  useEffect(() => {
-    document.querySelectorAll('video').forEach(v => { v.muted = true; });
-    if (igMuted) return;
-    const slide = igTrackRef.current?.children[igPage] as HTMLElement | undefined;
-    slide?.querySelectorAll('video').forEach(v => { v.muted = false; v.play().catch(() => { }); });
-  }, [igPage, igMuted, pageCount]);
+  /* 這裡本來有一顆右下角的聲音鍵。預覽只是「看版面長怎樣」，
+     用不到聲音，所以整組（按鈕＋靜音狀態＋切換效果）都拿掉了，
+     預覽裡的影片一律靜音播放。 */
 
   return (
         <div
@@ -1791,7 +1791,13 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                       {mediaNode
                         ? mediaNode
                         : video
-                        ? <video src={video} autoPlay loop playsInline muted={igMuted}
+                        ? <video src={video} autoPlay loop playsInline muted
+                            className="max-w-full max-h-full object-contain" />
+                        : (shots[idx] && kinds?.[idx] === 'video')
+                        /* 這一頁的成品是影片 —— 要用 <video> 才會動。
+                           塞進 <img> 的話畫面就是一片空白／定格。 */
+                        ? <video src={shots[idx]} autoPlay loop playsInline muted
+                            disablePictureInPicture
                             className="max-w-full max-h-full object-contain" />
                         : shots[idx]
                         ? <img src={shots[idx]} alt="" draggable={false} className="max-w-full max-h-full object-contain" />
@@ -1812,16 +1818,6 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                     {igPage + 1}/{pageCount}
                   </span>
                 </div>
-              )}
-              {/* 這一頁有影片才有聲音鍵，位置跟 IG 一樣在右下角 */}
-              {hasVideo(igPage) && (
-                <button
-                  onClick={() => setIgMuted(m => !m)}
-                  className="absolute bottom-3 right-3 w-9 h-9 rounded-full bg-black/50 flex items-center justify-center text-white active:scale-95 transition-transform"
-                  title={igMuted ? '開啟聲音' : '關閉聲音'}
-                >
-                  {igMuted ? <VolumeX size={17} strokeWidth={1.9} /> : <Volume2 size={17} strokeWidth={1.9} />}
-                </button>
               )}
             </div>
 

@@ -6083,7 +6083,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
           </button>
           {/* 上面那顆「取消匯出」是請錄影迴圈自己收工；萬一連它都沒反應
               （編碼器被系統收走的時候會這樣），這一顆是硬出口。 */}
-          <StuckEscape onEscape={() => { videoAbortRef.current = true; setVideoProg(null); }} delayMs={12000} />
+          {/* reserveSpace：位置先留著，時間到才顯形 —— 不然它一冒出來，
+              上面的轉圈與百分比就整批被往上頂一截。 */}
+          <StuckEscape onEscape={() => { videoAbortRef.current = true; setVideoProg(null); }} delayMs={12000} reserveSpace />
         </div>
       )}
 
@@ -7162,20 +7164,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
                        東西混在一起也不好找。字都加 whitespace-nowrap，
                        格子再窄也不會被拆成兩行、變得比隔壁高一截。 */
                     <div key="add-root" className="flex flex-col gap-2 mt-5">
-                    {/* 上排只有兩顆，但寬度要跟下排那三顆一模一樣（不然上排會胖一圈）——
-                        (100% − 兩個 gap) ÷ 3 就是下排一顆的寬。 */}
-                    {/* 這裡本來還有一顆「匯入影片」。創意拼圖已經不收影片了
-                        （影片統一走經典拼圖），所以那一顆連同它的選擇器一起拿掉。 */}
+                    {/* 「匯入影片」拿掉之後剩四顆，就排成一排 ——
+                        本來拆兩排是因為有五顆。 */}
                     <div className="flex justify-center gap-2">
                       <button
                         onClick={() => objFileInputRef.current?.click()}
-                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[calc((100%-16px)/3)]"
+                        className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
                         <Icon name="add_photo_alternate" className="text-[24px] text-white/80" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">匯入圖片</span>
                       </button>
-                    </div>
-                    <div className="flex justify-center gap-2">
                       <button
                         onClick={addText}
                         className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
