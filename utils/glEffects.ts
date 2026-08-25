@@ -27,10 +27,11 @@
  * 這樣不管實際畫在多大的畫布上，同一組參數都得到同一個結果。
  * uRefRes 同理，給那些拿解析度當像素格線用的效果（VHS 雜訊／掃描線、CRT 光罩）。
  */
-const REF = 1000;
+export const FX_REF = 1000;
+const REF = FX_REF;
 
 /* ---------- 共用工具（著色器端） ---------- */
-const GLSL_HEADER = `precision highp float;
+export const FX_GLSL_HEADER = `precision highp float;
 varying vec2 vUv;
 uniform sampler2D uTex;
 uniform sampler2D uSrc;
@@ -74,12 +75,15 @@ float fbm(vec2 p){
 vec3 blendScreen(vec3 b, vec3 s){ return 1.0 - (1.0 - b) * (1.0 - s); }
 `;
 
-const VS = `attribute vec2 aPos;
+export const FX_VS = `attribute vec2 aPos;
 varying vec2 vUv;
 void main(){ vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }`;
+const GLSL_HEADER = FX_GLSL_HEADER;
+const VS = FX_VS;
+
 
 /** 最後把算出來的結果與本層輸入按強度插值 */
-const BLEND_FS = `precision highp float;
+export const FX_BLEND_FS = `precision highp float;
 varying vec2 vUv;
 uniform sampler2D uTex;
 uniform sampler2D uSrc;
@@ -89,6 +93,8 @@ void main(){
   vec3 b = texture2D(uTex, vUv).rgb;
   gl_FragColor = vec4(mix(a, b, uAmount), 1.0);
 }`;
+const BLEND_FS = FX_BLEND_FS;
+
 
 export interface FxParamDef {
   /** 同時是 EditorParams 的鍵值 */
@@ -108,7 +114,7 @@ export interface FxParamDef {
   hidden?: boolean;
 }
 
-interface FxPass {
+export interface FxPass {
   body: string;
   /** 可分離卷積的方向 */
   dir?: [number, number];
@@ -683,8 +689,9 @@ function compile(c: Ctx, key: string, fs: string): WebGLProgram | null {
   return p;
 }
 
-/** 一趟 pass 的完整片段著色器：共用工具 + 這個特效的 uniform + effect() */
-function passSource(d: FxDef, pass: FxPass): string {
+/** 一趟 pass 的完整片段著色器：共用工具 + 這個特效的 uniform + effect()。
+    影片那條路（utils/videoGl）用的是同一支，所以照片與影片跑的是同一份著色器。 */
+export function fxPassSource(d: FxDef, pass: FxPass): string {
   const uniforms = d.params.map(p => `uniform float ${p.id};`).join('\n');
   return `${GLSL_HEADER}\n${uniforms}\nvec4 effect(vec2 uv){${pass.body}\n}\nvoid main(){ gl_FragColor = effect(vUv); }`;
 }
@@ -729,7 +736,7 @@ export function warmFx(fxId: string): void {
   try {
     compile(c, '__copy', `${GLSL_HEADER}\nvoid main(){ gl_FragColor = vec4(texture2D(uTex, vUv).rgb, 1.0); }`);
     compile(c, '__blend', BLEND_FS);
-    d.passes.forEach((pass, i) => compile(c, `${d.id}#${i}`, passSource(d, pass)));
+    d.passes.forEach((pass, i) => compile(c, `${d.id}#${i}`, fxPassSource(d, pass)));
   } catch { /* 預熱失敗就算了，真的要用的時候還會再編一次 */ }
 }
 
@@ -812,7 +819,7 @@ export function applyGlEffects(
       let from = cur;
       for (let i = 0; i < d.passes.length; i++) {
         const pass = d.passes[i];
-        const prog = compile(c, `${d.id}#${i}`, passSource(d, pass));
+        const prog = compile(c, `${d.id}#${i}`, fxPassSource(d, pass));
         if (!prog) { cleanup(); return; }
         // 目標不能是 layerIn，也不能是來源
         let to = 0;

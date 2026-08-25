@@ -345,11 +345,23 @@ const toParams = (fx: PhotoFx): EditorParams => ({
  * 「先各查一次再按比例混」跟「先把兩顆表按比例混再查一次」結果完全一樣，
  * 所以這裡混表、只留一顆，GPU 那邊就只要一個 draw call。
  *
+ * ── size：拖滑桿時要用小一點的表 ──────────────────────────────────
+ * 烤一顆 33³ 的表要跑 35937 個格點過整條像素管線 —— 實測在「手機等級」
+ * 的 CPU 上是 **8～11 毫秒**（挑了濾鏡而強度又不是 100 時要烤兩顆，×2）。
+ * 而拖滑桿時每一個影格都會換一次數值，也就是每一格都要付這筆錢，
+ * 一秒 30 格就吃掉三分之一條主執行緒 —— 那正是「影片的調整滑桿很卡」。
+ *
+ * 17³ 只有 4913 個格點（33³ 的 13.7%），烤起來一點三毫秒左右。
+ * 三線性內插之下 17³ 與 33³ 肉眼幾乎分不出來（很多專業軟體出的表就是 17³），
+ * 所以呼叫端的做法是：**手指在動的時候用 17³，手一停再補一顆 33³**。
+ * 停下來之後看到的、以及匯出的，永遠是完整的那一顆。
+ *
  * @returns 給 sampler3D 用的 RGBA8 資料與邊長；沒有任何顏色調整時回 null
  *          （呼叫端看到 null 就知道「原樣顯示就好」，連查表都不必）。
  */
-export function bakePhotoFxLut(fx?: PhotoFx): { tex: Uint8Array; size: number } | null {
+export function bakePhotoFxLut(fx?: PhotoFx, size = 33): { tex: Uint8Array; size: number } | null {
   if (!fx || !hasPhotoFx(fx)) return null;
+  const n = Math.max(9, Math.min(65, Math.round(size)));
   const p = toParams(fx);
   const film = getLoadedLut(fx.lut);
   const amt = (fx.lutAmount ?? 100) / 100;
@@ -359,16 +371,19 @@ export function bakePhotoFxLut(fx?: PhotoFx): { tex: Uint8Array; size: number } 
     (a, d, ww, hh) => processPixels(
       a, d, ww, hh, p, f ? f.data : null, f ? f.size : 0, baseLut, null, false, IDENTITY_CURVE_LUTS,
     ),
-    33,
+    n,
   );
   const withFilm = bake(film);
   /* 強度 100% 或根本沒挑濾鏡：一顆表就夠 */
-  if (!film || amt >= 1) return { tex: bakedToTexture(withFilm), size: 33 };
+  if (!film || amt >= 1) return { tex: bakedToTexture(withFilm), size: n };
+  /* ⚠ 這裡的混合方式**刻意跟 applyPhotoFx 一模一樣**（那是照片與匯出走的路）。
+     兩邊用同一種算法，影片跟照片、預覽跟成品才會是同一個顏色 ——
+     這一段看起來可以合併成一次，但那會讓濾鏡的濃淡跟現有成品對不上。 */
   const noFilm = bake(null);
   const a = withFilm.data, b = noFilm.data;
   const mixed = new Uint8ClampedArray(a.length);
   for (let i = 0; i < a.length; i++) mixed[i] = b[i] + (a[i] - b[i]) * amt;
-  return { tex: bakedToTexture({ size: 33, data: mixed }), size: 33 };
+  return { tex: bakedToTexture({ size: n, data: mixed }), size: n };
 }
 
 /**
@@ -663,7 +678,38 @@ export function applyPhotoFx(
 
 /** 噪點圖樣只做一次就重複用 */
 let noisePattern: HTMLCanvasElement | null = null;
-function getNoisePattern() {
+/** 噪點圖樣。影片那條路（utils/videoFxCpu）要把同一張圖樣上成材質，所以匯出。 */
+export function getNoisePattern() {
   if (!noisePattern) noisePattern = generateNoisePattern('color');
   return noisePattern;
 }
+
+
+/**
+ * 每一顆濾鏡「一挑就套」的預設強度。
+ *
+ * 這份表本來只寫在編輯頁裡面，所以拼圖那邊挑同一顆濾鏡會是 100 ——
+ * 同一個名字、同一張圖，兩邊濃淡卻不一樣。抽出來共用之後，
+ * 挑 F3 在哪裡都是 70。沒列在這裡的就是 100。
+ */
+export const LUT_DEFAULT_AMOUNT: Record<string, number> = {
+  f12: 50, f13: 50, f14: 50, f20: 50, f22: 50,
+  f3: 70, f4: 70, f6: 70, f7: 70, f15: 70, f19: 70,
+  f17: 80, f23: 80,
+};
+/** 挑這顆濾鏡時該用的強度 */
+export const lutDefaultAmount = (lutId?: string) =>
+  (lutId ? LUT_DEFAULT_AMOUNT[lutId] : undefined) ?? 100;
+
+/**
+ * 「這包 fx 裡跟**顏色**有關的部分」的指紋。
+ *
+ * 查色表只吃這幾個欄位（見 toParams）。以前 GPU 那邊是拿整包 fx 當快取鍵，
+ * 所以拖「特效強度」「圓角」「羽化」這些跟顏色完全無關的滑桿時，
+ * 每一格也會重烤一顆表 —— 白花 8～11 毫秒。
+ */
+export const colorKeyOf = (fx?: PhotoFx): string => {
+  if (!fx) return '';
+  const k = ['lut', 'lutAmount', ...ADJUST_KEYS.map(([a]) => a)] as const;
+  return k.map(n => String((fx as any)[n] ?? '')).join(',');
+};
