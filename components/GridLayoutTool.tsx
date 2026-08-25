@@ -651,6 +651,20 @@ const CustomColorButton: React.FC<{
   </label>
 );
 
+/**
+ * 「逐帧合成」時傳給畫圖那一支的加速用具（只有錄影與 IG 預覽會傳）。
+ *
+ * 匯出一張照片是一次性的，所以那條路可以慢慢算到 2400 像素；
+ * 但影片是**一秒要算三十次**的，用同一組數字就等於每一格都重做一次
+ * 「整張圖的濾鏡＋一張新的離屏畫布＋一次遮罩模糊」——
+ * 實測那正是「導出的影片幀率超低」與「套了形狀的影片在 IG 預覽裡不會動」。
+ *
+ *   k     ：合成畫布相對於頁面座標的倍率。所有中間畫布只算到「這一格
+ *           真的會被看到的大小」，畫回去的尺寸一個像素都沒變。
+ *   cache ：這一輪逐帧共用的暫存（遮罩、離屏畫布），不用每格重配。
+ */
+type LiveDraw = { k: number; cache: Map<string, any> };
+
 /** IG 預覽用的「活的一頁」：一張一直在重畫的畫布，收掉時要 stop() */
 type LivePage = { canvas: HTMLCanvasElement; stop: () => void } | null;
 
@@ -776,10 +790,10 @@ const SHAPE_TOOLS: [string, string, string, number, number, number][] = [
   ['glow', '發光', 'light_mode', 0, 0, 0],
 ];
 
-/* 「形狀」進來之後預設停在哪一顆工具上。
-   本來是抓 SHAPE_TOOLS 的第一顆，但第一顆現在換成「形狀」那個子選單了，
-   停在它身上不會有滑桿；所以固定指名圓角，手感跟以前一模一樣。 */
-const SHAPE_DEFAULT_TOOL = 'imgRadius';
+/* 「形狀」進來之後**不預先選任何一顆**。
+   以前是固定停在圓角上，所以一進造型頁圓角就亮著、下面還多出一根滑桿 ——
+   看起來像已經選好了，但使用者其實還沒挑。現在跟其他分頁一樣：
+   全部都是暗的，點下去才亮、才長出那一根滑桿。 */
 
 /** 描邊／發光點進去之後的子工具：粗細用滑桿、顏色用色票 */
 const SHAPE_SUB_TOOLS: Record<string, [string, string, string, number, number, number][]> = {
@@ -2378,7 +2392,7 @@ return (
             setAdjustSub(id as any);
             // 跟編輯一樣：切分類就把該分類的第一個工具選起來
             if (id === 'tune') setTuneTool(deferSlider ? '' : TUNE_TOOLS[0][0]);
-            if (id === 'shape') { setShapeMenu('root'); setShapeTool(deferSlider ? '' : SHAPE_DEFAULT_TOOL); }
+            if (id === 'shape') { setShapeMenu('root'); setShapeTool(''); }
             if (id === 'effect') { setEffectCard(''); setEffectDetail(false); }
           }}
           /* 構圖開著的時候，亮的是「構圖」那一顆（它不佔用 adjustSub） */
@@ -3059,7 +3073,15 @@ const previewMask = (aspect: number, radiusPct: number, featherPct: number, kind
   const key = `${aspect.toFixed(2)}|${radiusPct}|${featherPct}|${kind || ''}`;
   const hit = maskCanvasCache.get(key);
   if (hit) return hit;
-  const MAX = 400;
+  /* 有羽化的遮罩用比較小的邊長。
+     這一張的成本幾乎全在「模糊」那一步，而模糊是隨面積成長的 ——
+     實測 400×267 要 13.6 毫秒、240×160 只要 4.2 毫秒（PNG 編碼本身
+     只有 0.6 毫秒，因為這張圖就是一片平滑的漸層、壓完才 4KB）。
+     拖羽化滑桿時每換一個數字就要做一次，那 13.6 毫秒正是「很卡」。
+     羽化本來就是一片平滑的過渡，放大貼上看不出任何差別；
+     沒有羽化的（純外形／圓角）邊緣是硬的，維持 400 不動。
+     ⚠ 匯出走的是另一條全解析度的路（makeShapeMask），成品一個像素都沒變。 */
+  const MAX = featherPct > 0 ? 240 : 400;
   const w = aspect >= 1 ? MAX : Math.max(16, Math.round(MAX * aspect));
   const h = aspect >= 1 ? Math.max(16, Math.round(MAX / aspect)) : MAX;
   const c = makeShapeMask(w, h, radiusPct, featherPct, kind);
@@ -3100,15 +3122,67 @@ const shapeParts = (image: any, boxW: number, boxH: number) => {
      整段 0→100 最多只會編 50 張，而且來回拖時全部命中快取。
      1% 的差別肉眼看不出來，**匯出用的仍然是原始數值**，成品一點都沒變。 */
   const q = (v: number) => Math.round(v / 2) * 2;
-  const key = `${(boxW / boxH).toFixed(2)}|${q(radiusPct)}|${q(featherPct)}|${kind || ''}`;
+  const ar = boxW / boxH;
+  const qr = q(radiusPct), qf = q(featherPct);
+  const key = `${ar.toFixed(2)}|${qr}|${qf}|${kind || ''}`;
   let url = maskUrlCache.get(key);
   if (!url) {
-    try { url = previewMask(boxW / boxH, q(radiusPct), q(featherPct), kind).toDataURL('image/png'); }
-    catch { url = ''; }
-    if (maskUrlCache.size > 80) maskUrlCache.clear();
-    maskUrlCache.set(key, url);
+    url = buildMaskUrl(ar, qr, qf, kind);
+    /* 慢慢拖的時候，下一個值幾乎一定是現在這個 ±2。
+       趁空檔先把左右各兩格做好放進快取，手指移過去就完全不用再做一張 ——
+       實測一張要 4~14 毫秒，那正是「拖起來一頓一頓」的來源。 */
+    if (featherPct > 0) warmMasks(ar, qr, qf, kind);
   }
   return { needMaskImg: true, cssRadius: undefined, maskUrl: url };
+};
+
+/** 做一張遮罩網址（失敗就回空字串，呼叫端會當成「這一格先不套遮罩」） */
+const buildMaskUrl = (ar: number, radiusPct: number, featherPct: number, kind?: string): string => {
+  const key = `${ar.toFixed(2)}|${radiusPct}|${featherPct}|${kind || ''}`;
+  const hit = maskUrlCache.get(key);
+  if (hit !== undefined) return hit;
+  let url = '';
+  try { url = previewMask(ar, radiusPct, featherPct, kind).toDataURL('image/png'); }
+  catch { url = ''; }
+  if (maskUrlCache.size > 80) maskUrlCache.clear();
+  maskUrlCache.set(key, url);
+  return url;
+};
+
+/* 預熱：把「現在這個羽化值的左右各兩格」在空檔時先做好。
+   一次只做一張，而且是在 requestIdleCallback 裡做 —— 有別的事要忙就讓開，
+   絕對不會跟畫面搶時間。 */
+const maskWarmQueue: [number, number, number, string | undefined][] = [];
+let maskWarmScheduled = false;
+const runMaskWarm = () => {
+  maskWarmScheduled = false;
+  const job = maskWarmQueue.shift();
+  if (job) {
+    const [ar, r, f, k] = job;
+    const u = buildMaskUrl(ar, r, f, k);
+    // 順手解碼好，真的換上去時就不用再等
+    if (u) { try { const im = new Image(); im.src = u; } catch { /* ignore */ } }
+  }
+  if (maskWarmQueue.length) scheduleMaskWarm();
+};
+const scheduleMaskWarm = () => {
+  if (maskWarmScheduled || typeof window === 'undefined') return;
+  maskWarmScheduled = true;
+  const ric = (window as any).requestIdleCallback;
+  if (typeof ric === 'function') ric(runMaskWarm, { timeout: 300 });
+  else window.setTimeout(runMaskWarm, 60);
+};
+const warmMasks = (ar: number, radiusPct: number, featherPct: number, kind?: string) => {
+  for (const d of [2, -2, 4, -4]) {
+    const f = featherPct + d;
+    if (f < 0 || f > 100) continue;
+    const key = `${ar.toFixed(2)}|${radiusPct}|${f}|${kind || ''}`;
+    if (maskUrlCache.has(key)) continue;
+    if (maskWarmQueue.some(j => j[0] === ar && j[1] === radiusPct && j[2] === f && j[3] === kind)) continue;
+    maskWarmQueue.push([ar, radiusPct, f, kind]);
+  }
+  if (maskWarmQueue.length > 12) maskWarmQueue.splice(0, maskWarmQueue.length - 12);
+  scheduleMaskWarm();
 };
 
 /* ── 濾鏡／特效按鈕的縮圖 ────────────────────────────────────────────
@@ -3684,9 +3758,13 @@ const VideoLayer: React.FC<{
      整個框、不留信箱邊。預覽如果用 contain，只要圖層框的長寬比跟原圖差一點點
      （匯入時取整就會差），四周就會多出零點幾 px 的空白 —— 貼齊畫布邊緣時那就
      是一條白縫，而匯出沒有。用 fill 才跟匯出一致。 */
+  /* ⚠ 影片與 GPU 畫布是**疊在一起**的兩層，所以兩個都要絕對定位。
+     以前影片「讓開」時會被改成 position:absolute，畫布才會回到左上角；
+     現在讓開只動透明度、影片一直在原位，要是還照文件流排，
+     畫布就會被擠到影片正下方（實測整整低了一個圖層的高度）。 */
   const plain: React.CSSProperties = style
     ? { ...style, objectFit: 'fill', pointerEvents: 'none' }
-    : { width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' };
+    : { position: 'absolute', left: 0, top: 0, width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' };
   const box = cropped && nat && innerW > 0 && innerH > 0
     ? geoCssBox(nat.w, nat.h, geo!, innerW, innerH)
     : null;
@@ -3695,6 +3773,15 @@ const VideoLayer: React.FC<{
      glCanvas 已經變成 null、glLive 卻還是 true —— 影片被藏起來、
      畫布又不在，畫面就空了（實測連續空白 120 毫秒）。 */
   const stepAside = !!hidden && !!glCanvas;
+  /* ⚠ 讓開＝**只把透明度關掉**，位置與大小一個像素都不動。
+
+     以前是把 <video> 縮成 1×1（想省一點合成成本）。那會出兩個問題，
+     兩個主人都遇到了：
+       ① 換回來的那一格，合成器手上還是「1 像素的那一層」被放大到整個框，
+          畫面就被拉得很扁 —— 也就是「濾鏡切回原始時影片突然變扁」。
+       ② 尺寸一變就是一次版面變動，影片那一層要重新配置，中間會空一格。
+     改成只動 opacity：沒有版面變動、沒有重新配置，而且它整個被上面那張
+     不透明的畫布蓋住，合成器本來就會把被遮住的部分跳過。 */
   const vid = (
     <video
       ref={setRef}
@@ -3705,9 +3792,7 @@ const VideoLayer: React.FC<{
       playsInline
       preload="auto"
       onLoadedData={onReady}
-      style={stepAside
-        ? { position: 'absolute', left: 0, top: 0, width: 1, height: 1, opacity: 0, pointerEvents: 'none' }
-        : box
+      style={box
         ? {
           position: 'absolute', left: 0, top: 0,
           width: `${box.width}px`, height: `${box.height}px`,
@@ -3717,14 +3802,22 @@ const VideoLayer: React.FC<{
           maxWidth: 'none', maxHeight: 'none',
           transformOrigin: '0 0', transform: box.transform,
           pointerEvents: 'none',
+          opacity: stepAside ? 0 : 1,
         }
-        : plain}
+        : { ...plain, opacity: stepAside ? 0 : 1 }}
     />
   );
   /* GPU 畫布：跟上面那個 <video> 套同一份 style。
      ⚠ 它是 WebGL 畫布，**絕對不能**被 drawImage 到 2D 畫布上 ——
      那會強迫把畫面從顯示卡讀回 CPU，實測一次 104 毫秒，整個優勢就沒了。
      所以這裡是「直接掛在畫面上讓瀏覽器合成」，中間沒有任何一次回讀。 */
+  /* ⚠ 畫布在「還沒畫出任何東西」之前是**看不見**的。
+     它一被掛上去就是蓋在影片上面的一層，而剛建立的 WebGL 畫布是
+     300×150 的空緩衝區（實測：掛上去 33 毫秒之後才第一次畫）——
+     那 33 毫秒它蓋著影片、自己又什麼都沒有，就是「第一次套濾鏡／套特效時
+     閃黑一下」。畫出第一格（glLive）之後才顯形，中間完全看不到破綻。
+     反過來也一樣：哪一格畫不出來（著色器還在編、材質還沒配好）就自動退回
+     看不見，底下那個 <video> 立刻接手，不會露出背景。 */
   const glHost = glCanvas ? (
     <GlCanvasHost
       canvas={glCanvas}
@@ -3735,8 +3828,9 @@ const VideoLayer: React.FC<{
           maxWidth: 'none', maxHeight: 'none',
           transformOrigin: '0 0', transform: box.transform,
           pointerEvents: 'none',
+          opacity: stepAside ? 1 : 0,
         }
-        : plain}
+        : { ...plain, opacity: stepAside ? 1 : 0 }}
     />
   ) : null;
 
@@ -3923,7 +4017,12 @@ const useVideoFxGl = (
       if (cw > 0 && ch > 0) {
         const w = Math.max(1, Math.round(cw * dpr));
         const h = Math.max(1, Math.round(ch * dpr));
-        if (gl.drawFrame(v, w, h) && !glLiveRef.current) { glLiveRef.current = true; setGlLive(true); }
+        /* 「畫出來了沒」要**每一格**都跟著走，不是只認第一次成功。
+           特效剛打開的那幾格著色器還在編、材質還沒配好，drawFrame 會回 false
+           而畫布是被清空的 —— 這時候一定要讓底下的 <video> 回來頂著，
+           不然那一格看到的是背景色（黑底就是閃黑）。 */
+        const ok = gl.drawFrame(v, w, h);
+        if (ok !== glLiveRef.current) { glLiveRef.current = ok; setGlLive(ok); }
         handle = useRvfc ? anyV.requestVideoFrameCallback(step) : requestAnimationFrame(step);
         return;
       }
@@ -6195,7 +6294,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 調節分頁目前選中的工具 */
   const [tuneTool, setTuneTool] = useState('brightness');
   /** 形狀分頁目前選中的工具 */
-  const [shapeTool, setShapeTool] = useState('imgRadius');
+  /* 一開始不選任何一顆造型工具（見 CATS 那邊的說明）：進造型頁時全部是暗的 */
+  const [shapeTool, setShapeTool] = useState('');
   /** 形狀分頁：root 是總覽，其餘是形狀／描邊／發光的子選單 */
   const [shapeMenu, setShapeMenu] = useState<'root' | 'stroke' | 'glow' | 'imgShape'>('root');
   /* ── 形狀的第二段選取 ────────────────────────────────────────────
@@ -10054,8 +10154,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const drawFloatingLayers = async (
     ctx: CanvasRenderingContext2D,
     layers: FloatingImage[],
-    scaleFactor: number
+    scaleFactor: number,
+    live?: LiveDraw,
   ) => {
+    /* 逐帧合成時，中間畫布只算到「這一格真的會被看到的大小」，
+       而且整輪共用同一批畫布（見 LiveDraw 的說明）。 */
+    const q = live ? Math.max(0.02, Math.min(1, live.k)) : 1;
+    const scratch = (key: string, w: number, h: number): HTMLCanvasElement => {
+      const W = Math.max(1, Math.round(w)), H = Math.max(1, Math.round(h));
+      if (!live) { const c = document.createElement('canvas'); c.width = W; c.height = H; return c; }
+      let c = live.cache.get(key) as HTMLCanvasElement | undefined;
+      if (!c) { c = document.createElement('canvas'); live.cache.set(key, c); }
+      if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+      else { const g = c.getContext('2d'); if (g) g.clearRect(0, 0, W, H); }
+      return c;
+    };
     for (const fImg of layers) {
       if (fImg.text !== undefined) {
         await drawTextLayer(ctx, fImg, scaleFactor);
@@ -10092,13 +10205,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 濾鏡／調節先套上去（用匯出解析度重算一次，不是拿預覽那張小圖放大）
       let src: CanvasImageSource = img;
       if (hasPhotoFx(fImg.fx)) {
-        const cap = 2400;
+        /* 逐帧合成時上限改成「這個圖層在合成畫布上真正佔幾個像素」。
+           一段影片本來每一格都被算到 2400²（570 萬像素）再縮小貼上，
+           而它在畫面上可能只佔 300 像素寬 —— 白算了六十幾倍的量。 */
+        const cap = live
+          ? Math.max(64, Math.ceil(Math.max(fw, fh) * (fImg.scale || 1) * q))
+          : 2400;
         const k = Math.min(1, cap / Math.max(img.naturalWidth || fw, img.naturalHeight || fh));
+        /* 逐帧合成時把「畫在哪張畫布上」也一起交出去（applyPhotoFx 的 out）。
+           不給的話它每一格都會開一張新的畫布 —— 那支自己的註解就寫了：
+           「來源是影片的時候一秒要跑幾十次，每次開一張幾百萬像素的畫布，
+             手機的畫布記憶體幾秒就會被系統收走（＝閃退回主畫面）」。 */
+        let fxOut: HTMLCanvasElement | undefined;
+        if (live) {
+          fxOut = live.cache.get('fxOut') as HTMLCanvasElement | undefined;
+          if (!fxOut) { fxOut = document.createElement('canvas'); live.cache.set('fxOut', fxOut); }
+        }
         src = applyPhotoFx(
           img,
           Math.max(1, Math.round((img.naturalWidth || fw) * k)),
           Math.max(1, Math.round((img.naturalHeight || fh) * k)),
           fImg.fx!,
+          fxOut ? { out: fxOut } : undefined,
         );
       }
 
@@ -10109,18 +10237,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       let drawW = fw, drawH = fh;
       const kind = fImg.imgShape;
       if (fImg.imgRadius || fImg.feather || fImg.imgStrokeWidth || isImgShaped(kind)) {
-        const iw = Math.max(1, Math.round(fw * fImg.scale));
-        const ih = Math.max(1, Math.round(fh * fImg.scale));
-        const lw = strokeLw * fImg.scale;
-        const off = document.createElement('canvas');
-        off.width = Math.max(1, Math.round(iw + lw * 2));
-        off.height = Math.max(1, Math.round(ih + lw * 2));
+        const iw = Math.max(1, Math.round(fw * fImg.scale * q));
+        const ih = Math.max(1, Math.round(fh * fImg.scale * q));
+        const lw = strokeLw * fImg.scale * q;
+        const off = scratch('off', iw + lw * 2, ih + lw * 2);
         const oc = get2dWide(off)!;
         drawImgBase(oc, src, lw, lw, iw, ih, fImg);
         if (fImg.imgRadius || fImg.feather || isImgShaped(kind)) {
           // 只把「圖片那一塊」裁形狀，描邊的區域不能被裁掉
-          const shapeOnly = document.createElement('canvas');
-          shapeOnly.width = iw; shapeOnly.height = ih;
+          const shapeOnly = scratch('shapeOnly', iw, ih);
           const sc = get2dWide(shapeOnly)!;
           drawImgBase(sc, src, 0, 0, iw, ih, fImg);
           sc.globalCompositeOperation = 'destination-in';
@@ -10129,7 +10254,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             // 遮罩本來就是平滑的，放大看不出差別
             const cap = 1200;
             const k = Math.min(1, cap / Math.max(iw, ih));
-            const mask = makeShapeMask(iw * k, ih * k, fImg.imgRadius || 0, fImg.feather, kind);
+            /* 遮罩只跟「大小＋圓角＋羽化＋外形」有關，跟影片播到第幾格無關 ——
+               逐帧合成時算一次留著用，不然每一格都要再做一次模糊。 */
+            const mk = `mask|${Math.round(iw * k)}x${Math.round(ih * k)}|${fImg.imgRadius || 0}|${fImg.feather}|${kind || ''}`;
+            let mask = live ? live.cache.get(mk) : null;
+            if (!mask) {
+              mask = makeShapeMask(iw * k, ih * k, fImg.imgRadius || 0, fImg.feather, kind);
+              if (live) live.cache.set(mk, mask);
+            }
             sc.drawImage(mask, 0, 0, iw, ih);
           } else {
             sc.fillStyle = '#000';
@@ -10174,7 +10306,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const pad = blurUnit * GLOW_EXTENT + 2;
         const fullW = drawW + pad * 2;
         const fullH = drawH + pad * 2;
-        const k = Math.min(1, 1200 / Math.max(fullW, fullH));
+        const k = Math.min(1, (live ? Math.max(64, Math.max(fullW, fullH) * q) : 1200) / Math.max(fullW, fullH));
         const glow = makeGlowCanvas(
           src, fullW * k, fullH * k,
           pad * k, pad * k, drawW * k, drawH * k,
@@ -10523,7 +10655,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const drawJobs: {
         z: number; minX: number; maxX: number;
         isVideo?: boolean; src?: string;
-        run: (c: CanvasRenderingContext2D) => Promise<void>;
+        /* live 只有影片那條「一秒要畫三十次」的路會傳（見 LiveDraw） */
+        run: (c: CanvasRenderingContext2D, live?: LiveDraw) => Promise<void>;
       }[] = [];
       pages.forEach((page, pageIdx) => {
         page.layouts.forEach(lay => {
@@ -10564,7 +10697,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
              （不然預覽會露出一條抗鋸齒的白縫），預覽有 overflow:hidden 擋著，
              但匯出是把所有頁面畫在同一張長畫布上、沒有任何裁切 ——
              多出來的那半個像素就跑到隔壁那一頁去了。 */
-          run: async (c) => {
+          run: async (c, live) => {
             /* 裁切範圍是「這個圖層真正橫跨到的每一頁」，不是只有一頁 ——
                只裁一頁的話，刻意跨在兩頁上的物件會被切掉一半。
                判斷跨頁時留 1.5px 的容差：貼齊邊緣時圖層會往外多蓋半個像素
@@ -10580,7 +10713,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             c.rect(p0 * targetW, 0, (p1 - p0 + 1) * targetW, targetH);
             c.clip();
             try {
-              await drawFloatingLayers(c, [fImg], scaleFactor);
+              await drawFloatingLayers(c, [fImg], scaleFactor, live);
             } finally {
               c.restore();
             }
@@ -10677,14 +10810,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           setTimeout(finish, 3000);
         })));
 
-        // 逐帧合成：靜態底 → 影片 → 靜態上層
+        /* 逐帧合成：靜態底 → 影片 → 靜態上層。
+           影片那幾個 job 走「逐帧模式」：中間畫布只算到合成畫布上真正的大小
+           （VW/targetW），遮罩與離屏畫布整輪共用 —— 見 LiveDraw。 */
+        const live: LiveDraw = { k: VW / targetW, cache: new Map() };
         const composite = async () => {
           rg.clearRect(0, 0, VW, VH);
           rg.drawImage(below, 0, 0);
           rg.save();
           rg.scale(VW / targetW, VH / targetH);
           rg.translate(-pageLeft, 0);
-          for (const job of videoJobs) await job.run(rg);
+          for (const job of videoJobs) await job.run(rg, live);
           rg.restore();
           rg.drawImage(above, 0, 0);
         };

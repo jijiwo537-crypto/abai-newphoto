@@ -1465,12 +1465,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      資訊鍵上就關掉。 */
   const exifPanelRef = useRef<HTMLDivElement>(null);
   const exifBtnRef = useRef<HTMLButtonElement>(null);
+  /** 那片「點外面就收起來」的透明遮罩本人 */
+  const exifShieldRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!showExifPanel) return;
     const onDown = (ev: Event) => {
       const t = ev.target;
       if (!(t instanceof Node)) return;
       if (exifPanelRef.current?.contains(t) || exifBtnRef.current?.contains(t)) return;
+      /* 按在那片遮罩上就交給它自己的 onClick（鬆手才關）——
+         這裡如果搶著在按下的當下就關掉，遮罩會在鬆手前消失，
+         瀏覽器就把那一次 click 重新命中到底下的東西上。
+         這支監聽留給「遮罩蓋不到的地方」（祖先有 backdrop-filter／transform
+         時 fixed 會被關進去，那正是它存在的理由）。 */
+      if (exifShieldRef.current === t) return;
       setShowExifPanel(false);
     };
     document.addEventListener('pointerdown', onDown, true);
@@ -6633,8 +6641,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           </div>
       )}
 
+      {/* 面板開著時標題列要在那片 z-[59] 的遮罩**上面**，
+          不然按資訊鍵按到的是遮罩，一次點擊會被算成兩次（見下面 EXIF 那一段）。
+          面板收起來時就回到原本的 z-20，其餘完全不變。 */}
       {saveState !== 'success' && (
-      <header className="h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-20">
+      <header className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl ${showExifPanel ? 'z-[60]' : 'z-20'}`}>
         <div className="w-20">
             {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
             <button onClick={() => { recordProgress(); onCancel(); }} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"><ChevronLeft size={22} /></button>
@@ -6654,15 +6665,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             </button>
             <button
                 ref={exifBtnRef}
-                /* 用 onPointerDown 而不是 onClick —— 這一顆關不掉就是卡在這裡。
-                   面板開著的時候，上面那片 z-[59] 的透明遮罩比標題列（z-20）高，
-                   手指其實是按在遮罩上：文件層的 pointerdown 先把面板收掉，
-                   遮罩跟著從畫面上消失，鬆手時瀏覽器重新命中到底下這顆鍵，
-                   它的 onClick 又把面板打開 —— 就是主人說的「按下去觸發一次、
-                   鬆手又觸發一次」，怎麼按都關不掉。
-                   改成按下的當下就決定：面板開著時這一下被文件層的監聽收走（關掉），
-                   面板關著時才輪到這裡（打開）。一次點擊只會有一個結果。 */
-                onPointerDown={() => setShowExifPanel(prev => !prev)}
+                /* 跟其他按鈕一樣：**鬆手**才算一次點擊（onClick）。
+                   之前為了解決「關不掉」改成 onPointerDown，手指一碰就觸發，
+                   手感跟旁邊那幾顆不一樣。真正的原因不在這顆鍵身上 ——
+                   是那片 z-[59] 的透明遮罩蓋在標題列（z-20）上面，
+                   手指其實按在遮罩上，於是一次點擊被算成兩次。
+                   現在改成「面板開著時把標題列抬到遮罩上面」（見下面 header 的
+                   z-index），這顆鍵就直接接得到自己的點擊，一次就是一次。 */
+                onClick={() => setShowExifPanel(prev => !prev)}
                 className={`p-2 rounded-full transition-colors ${showExifPanel ? 'text-white' : 'text-white/40 hover:text-white'}`}
                 title="照片資訊"
             >
@@ -6700,14 +6710,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
       {/* EXIF panel overlay。點面板以外的任何地方就收起來 */}
       {showExifPanel && (
-        /* 這一層只負責「把點擊擋在外面」，**不能**自己也去關面板。
-           它蓋在標題列上面，所以按資訊鍵時命中的其實是它：
-           以前它的 onClick 會關一次、鬆手時瀏覽器又把 click 重新命中到底下
-           那顆資訊鍵、鍵上的 onClick 再開一次 —— 一次點擊被算成兩次，
-           面板就永遠關不掉。
-           關閉的事交給上面那支「文件層的 pointerdown」統一處理（見 exifPanelRef
-           那段）：它在按下的當下就決定，而且不會被重新命中影響。 */
-        <div className="fixed inset-0 z-[59]" />
+        /* 點面板外面就收起來，而且**鬆手才收**（onClick）——
+           跟資訊鍵那一顆的手感一致。
+           它同時也把點擊擋住，所以底下的滑桿、分頁不會被順手按到。
+           標題列在面板開著時會被抬到這一層上面，所以資訊鍵不會被它蓋住。 */
+        <div ref={exifShieldRef} className="fixed inset-0 z-[59]" onClick={() => setShowExifPanel(false)} />
       )}
       {showExifPanel && (
         <div ref={exifPanelRef} className="absolute top-16 right-4 left-4 md:left-auto md:right-4 mx-auto md:mx-0 bg-black/90 border border-white/10 rounded-2xl p-5 shadow-2xl backdrop-blur-xl z-[70] w-[320px] max-w-[calc(100vw-2rem)] text-white/90 text-xs flex flex-col gap-3">
