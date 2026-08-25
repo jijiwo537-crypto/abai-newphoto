@@ -139,6 +139,13 @@ const App: React.FC = () => {
       setIsImporting(false);
       setImportPreviewUrl(null);
     }
+    /* ⚠ 一定要把上一份的狀態清掉。
+       這一支是「匯入新照片、開一份新的經典拼圖」——首頁的版型按鈕與成品頁的
+       「拼下一組」都走這裡。以前只清了 histKey，toolDraftState 還留著上一份
+       （從最近作品點回來、或接續草稿時會被設起來），新開的那一份就照著它
+       把舊的頁面全部還原回去 —— 那正是「拼下一組之後頁數還是上一份的」。
+       創意拼圖與編輯那兩支本來就有清，這裡補上，三個入口的行為就一致了。 */
+    setToolDraftState(null);
     setHistKey(null);
     setLayoutInitialFiles(ready);
     setLayoutKey(prev => prev + 1);
