@@ -3622,7 +3622,7 @@ const VideoLayer: React.FC<{
        每一個都去編一張 PNG 再解碼，畫面就一路卡著。
 
        ⚠ **第一次**不進這個合併（手上還沒有任何遮罩可以頂著）。
-       原本不分first：拉下羽化之後要等 40 毫秒＋解碼才會有遮罩，而這段時間
+       原本不分第一次：拉下羽化之後要等 40 毫秒＋解碼才會有遮罩，而這段時間
        滑桿已經被拖到十幾了 —— 邊緣是「先完全不變，然後一次跳成很柔」，
        那一下看起來就是畫面閃了一下。第一張立刻做，之後才需要合併。 */
     const wait = liveMaskRef.current ? 40 : 0;
@@ -10307,10 +10307,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (pages.length === 0) return;
     const silent = !!opts?.silent;
     const stillOnly = !!opts?.stillOnly;
-    /* live = true：有影片的那幾頁不錄影，改成交出一張「一直在重畫的畫布」
-       （IG 預覽用）。那幾頁照樣也會出一張靜態圖當底，畫布還沒接上時先頂著。 */
-    const live = !!opts?.live;
-    const livePages: LivePage[] = [];
     if (!silent) setExportState('processing');
     videoAbortRef.current = false;
     /* 這一輪的號碼。使用者按「取消匯出」時號碼會被推走，cancelled() 就成立。
@@ -10319,6 +10315,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const cancelled = () => !silent && exportRunRef.current !== runId;
     /** 已經產出的網址在中途放棄時要收回去，不然那幾個 blob 會一直留在記憶體 */
     const dropUrls = (list: string[]) => { list.forEach(u => { try { URL.revokeObjectURL(u); } catch { /* ignore */ } }); };
+    /* live = true：有影片的那幾頁不錄影，改成交出一張「一直在重畫的畫布」
+       （IG 預覽用）。那幾頁照樣也會出一張靜態圖當底，畫布還沒接上時先頂著。 */
+    const live = !!opts?.live;
+    const livePages: LivePage[] = [];
 
     try {
       const canvas = document.createElement('canvas');
@@ -11082,9 +11082,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           <span className="text-[11px] text-white/50 tracking-widest">{videoLabel}</span>
           {/* 取消鍵。以前是「卡住六秒才長出來」的那顆（見 StuckEscape）——
               它一冒出來，上面的轉圈就被往上頂一截，看起來像畫面自己抖了一下；
-              而且寫的是「取消，回到編輯」。
-              現在改成一開始就在、就寫「取消匯出」，位置固定在轉圈下方，
-              整個過程完全不會位移。它做的事跟原本那顆一模一樣。 */}
+              而且寫的是「取消，回到編輯」。現在改成一開始就在、就寫「取消匯出」。
+
+              ⚠ 它是**絕對定位**掛在正中央下方的，不排進上面那個直排裡。
+              上一版我把它當成直排的第四個孩子（mt-8），外層又是
+              justify-center —— 多這一顆等於把「轉圈＋文字」那一組整個往上頂了
+              44 像素。匯出動畫的位置一變，緊接著跳出來的成品頁（它的圖是照
+              自己那一層置中的、位置沒動過）看起來就變成「比剛剛那一頁低」，
+              也就是主人說的「導出成果的畫面往下了」。
+              改成絕對定位之後，轉圈與文字回到「完全沒有這顆鍵」時的位置，
+              而這顆鍵在不在、什麼時候出現，都不會讓任何東西位移。 */}
           <button
             type="button"
             onClick={(e) => {
@@ -11095,7 +11102,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               setVideoProg(null);
               setExportState('idle');
             }}
-            className="mt-8 px-6 h-10 rounded-full border border-white/25 text-white/80 text-[12px] font-bold tracking-[0.2em] active:scale-95 transition-transform"
+            style={{ position: 'absolute', left: '50%', top: 'calc(50% + 86px)', transform: 'translateX(-50%)' }}
+            className="px-6 h-10 rounded-full border border-white/25 text-white/80 text-[12px] font-bold tracking-[0.2em] active:scale-95 transition-transform"
           >
             取消匯出
           </button>
