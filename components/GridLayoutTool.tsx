@@ -651,6 +651,9 @@ const CustomColorButton: React.FC<{
   </label>
 );
 
+/** IG 預覽用的「活的一頁」：一張一直在重畫的畫布，收掉時要 stop() */
+type LivePage = { canvas: HTMLCanvasElement; stop: () => void } | null;
+
 /* 「圖片調整」的工具清單：id / 名稱 / Material 圖標 / 範圍 / 預設值，跟「編輯」同一組 */
 const TUNE_TOOLS: [string, string, string, number, number, number][] = [
   ['brightness', '亮度', 'light_mode', -100, 100, 0],
@@ -688,12 +691,8 @@ const FX_ON_AMOUNT: Record<string, number> = {
   ...Object.fromEntries(FX_DEFS.map(d => [d.id, d.onAmount ?? 100])),
 };
 
-/** 每一顆卡片自己的參數鍵 —— 一次只能套一個，切到別顆時其餘的都要歸零 */
-const FX_OWN_KEYS: Record<string, string[]> = {
-  softLight: ['soft'], halation: ['fringeIntensity'], lightLeak: ['leakOpacity'],
-  colorNoise: ['colorNoise'], blur: ['blur'],
-  ...Object.fromEntries(FX_DEFS.map(d => [d.id, [d.id]])),
-};
+/* 「每一顆卡片自己的參數鍵」改由下面的 FX_CARD_KEYS 提供 ——
+   它連細項（門檻／擴散／色相…）都算進去，原本這裡只列強度。 */
 /** 所有特效的強度鍵，歸零時用 */
 const FX_ALL_AMOUNTS = ['soft', 'fringeIntensity', 'leakOpacity', 'colorNoise', 'blur', 'vignette',
   ...FX_DEFS.map(d => d.id)];
@@ -735,6 +734,34 @@ const FX_SUB_TOOLS: Record<string, [string, string, string, number, number, numb
     ['leakAngle', '角度', 'rotate_right', 0, 360, 45],
     ['leakHue', '色相', 'palette', 0, 360, 15],
   ],
+};
+
+/** 一張特效卡片「連細項在內」的所有參數鍵（第一個一定是強度） */
+const FX_CARD_KEYS: Record<string, string[]> = Object.fromEntries(
+  FX_ROOT_TOOLS.map(([id]) => [
+    id,
+    FX_DETAIL[id] ? FX_DETAIL[id].map(t => t[0])
+      : (FX_SUB_TOOLS[id] ? FX_SUB_TOOLS[id].map(t => t[0]) : [fxAmountId(id)]),
+  ]),
+);
+
+/**
+ * 所有特效參數的預設值 —— 強度歸零，細項回到出廠值。
+ *
+ * 跟「編輯」那邊是同一份（見 ImageEditor 的 EFFECT_ALL_KEYS／resetAllEffectParams，
+ * 數字也就是 DEFAULT_PARAMS 裡的那些：柔光門檻 70、擴散 100、光暈擴散 10、
+ * 羽化 100、色相 8、漏光角度 45、色相 15…）。
+ *
+ * 以前點特效卡片只把「別顆的強度」歸零，細項一律留著 —— 於是先在柔光的細項
+ * 面板把門檻拉到 20，再去點別顆、回頭再點柔光，門檻還是 20；同一顆特效打開
+ * 兩次得到不一樣的結果，跟編輯頁也對不起來。
+ */
+const FX_PARAM_DEFAULTS: Record<string, number> = {
+  ...Object.fromEntries(FX_ALL_AMOUNTS.map(k => [k, 0])),
+  ...Object.fromEntries(FX_ROOT_TOOLS.flatMap(([id]) => (
+    FX_DETAIL[id] ? FX_DETAIL[id].map(t => [t[0], t[4]] as [string, number])
+      : (FX_SUB_TOOLS[id] || []).map(t => [t[0], t[5]] as [string, number])
+  ))),
 };
 
 /** 形狀分頁的工具（拼圖獨有，取代編輯裡的遮色片）。
@@ -1939,10 +1966,13 @@ const pickEffect = (id: string) => {
   setEffectDetail(false);
   const amountId = fxAmountId(id);
   const on = fxVal(amountId, 0) !== 0;
-  const keep = new Set(FX_OWN_KEYS[id] || [id]);
-  const patch: any = {};
-  for (const k of FX_ALL_AMOUNTS) if (!keep.has(k)) patch[k] = 0;
-  if (!on) patch[amountId] = FX_ON_AMOUNT[id] ?? 100;
+  /* 打開一顆特效＝從頭來過：所有特效的參數**連細項一起**打回預設，
+     再把這一顆的強度設成預設值 —— 跟編輯頁一模一樣
+     （見 ImageEditor 的 handleEffectToolSelect）。
+     已經亮著的那一顆再點一次只是要開細項面板，它自己那幾根維持現況。 */
+  const patch: any = { ...FX_PARAM_DEFAULTS };
+  if (on) for (const k of (FX_CARD_KEYS[id] || [amountId])) delete patch[k];
+  else patch[amountId] = FX_ON_AMOUNT[id] ?? 100;
   setFx(patch);
 };
 
@@ -3580,21 +3610,32 @@ const VideoLayer: React.FC<{
   );
   /* 遮罩圖要**解碼完才換上去**。直接換的話，瀏覽器在解碼那幾十毫秒裡
      手上沒有遮罩可用，那一層就整個不見 —— 拖滑桿時就是一直閃。
-     解碼中先沿用上一張（第一次才會有一格沒有遮罩，那只是「還沒變圓」，
-     不是消失）。 */
+     解碼中先沿用上一張；第一次還沒有上一張，那就維持「完全沒有遮罩」
+     （也就是原本的方框），不會消失。 */
   const [liveMask, setLiveMask] = useState('');
+  const liveMaskRef = useRef('');
+  liveMaskRef.current = liveMask;
   useEffect(() => {
     if (!maskUrl) { setLiveMask(''); return; }
     let alive = true;
     /* 再壓一層 40ms 的合併：拖羽化滑桿時一秒會來六十個新數字，
-       每一個都去編一張 PNG 再解碼，畫面就一路卡著。 */
+       每一個都去編一張 PNG 再解碼，畫面就一路卡著。
+
+       ⚠ **第一次**不進這個合併（手上還沒有任何遮罩可以頂著）。
+       原本不分first：拉下羽化之後要等 40 毫秒＋解碼才會有遮罩，而這段時間
+       滑桿已經被拖到十幾了 —— 邊緣是「先完全不變，然後一次跳成很柔」，
+       那一下看起來就是畫面閃了一下。第一張立刻做，之後才需要合併。 */
+    const wait = liveMaskRef.current ? 40 : 0;
     const t = window.setTimeout(() => {
       const im = new Image();
       const done = () => { if (alive) setLiveMask(maskUrl); };
-      im.onload = done;
-      im.onerror = done;
+      /* decode() 比 onload 保險：onload 只保證「載進來了」，
+         真正畫上去之前還要解一次碼 —— WebKit 在那一小段裡拿不到遮罩內容，
+         整層會被當成「遮罩全黑」而不見。decode() 是解完才回來。 */
       im.src = maskUrl;
-    }, 40);
+      if (typeof (im as any).decode === 'function') (im as any).decode().then(done, done);
+      else { im.onload = done; im.onerror = done; }
+    }, wait);
     return () => { alive = false; window.clearTimeout(t); };
   }, [maskUrl]);
   const maskCss: React.CSSProperties = liveMask
@@ -3742,6 +3783,14 @@ const VideoLayer: React.FC<{
         : { position: 'relative', width: '100%', height: '100%', pointerEvents: 'none' }}
     >
       {deco.glow ? <DecoCanvas cv={deco.glow} pad={deco.pad} w={boxW} h={boxH} /> : null}
+      {/* 遮罩那張圖也掛一份在畫面上（1px、看不見）。
+          上面雖然已經等 decode() 解完才換上去，但解好的那張只活在一個區域變數裡，
+          回收之後 CSS 再要就得重解一次 —— 重解的那一小段 WebKit 會把整層當成
+          「遮罩是空的」而不見，也就是羽化偶爾閃一下。掛著就一直是解好的狀態。 */}
+      {liveMask ? (
+        <img src={liveMask} alt="" aria-hidden="true"
+             style={{ position: 'absolute', left: 0, top: 0, width: 1, height: 1, opacity: 0, pointerEvents: 'none' }} />
+      ) : null}
       <div
         style={{
           position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
@@ -6952,6 +7001,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [videoProg, setVideoProg] = useState<number | null>(null);
   /** 匯出被使用者中止（忙碌畫面上那顆出口鍵按下去）—— 錄影迴圈看到就收工 */
   const videoAbortRef = useRef(false);
+  /* 「取消匯出」按下去要**真的**取消。
+     只把錄影迴圈叫停是不夠的：那一輪 handleExport 還在往下跑，收完尾就照樣
+     setExportState('success') —— 使用者明明按了取消，畫面卻跳到成品頁，
+     那正是主人回報的那件事。
+     這裡給每一次「使用者按下匯出」發一個號碼，取消時把號碼往前推一格；
+     那一輪回頭看到號碼變了就知道自己已經被作廢，安安靜靜收工。
+     背景那些 silent 的匯出（IG 預覽、歷史紀錄縮圖）不吃這個號碼，
+     所以取消一次不會順手把背景的工作也殺掉。 */
+  const exportRunRef = useRef(0);
   const [videoLabel, setVideoLabel] = useState('正在匯出成品');
   // One exported file per page. The object URLs are mirrored into a ref so they can be
   // revoked without making every consumer depend on the state value.
@@ -10149,21 +10207,39 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [igShots, setIgShots] = useState<string[]>([]);
   /** 每一頁的成品是圖還是影片（影片那幾頁要放 <video> 才會動） */
   const [igKinds, setIgKinds] = useState<('image' | 'video')[]>([]);
+  /** 有影片的那幾頁：一張持續重畫的畫布，直接掛到 IG 預覽裡 */
+  const [igCanvases, setIgCanvases] = useState<(HTMLCanvasElement | null)[]>([]);
   const igShotsRef = useRef<string[]>([]);
+  const igLiveRef = useRef<LivePage[]>([]);
   useEffect(() => {
     if (!igPreview) return;
     let alive = true;
+    const stopLive = () => { igLiveRef.current.forEach(l => l && l.stop()); igLiveRef.current = []; };
     (async () => {
-      let r = await handleExport({ silent: true, previewWidth: 900, stillOnly: true });
+      /* 這一疊裡有影片嗎。有的話就走「現場合成」那條路：
+         有影片的那幾頁交出一張一直在重畫的畫布，打開的當下就在動。
+         以前是先出靜態圖、背景再用 MediaRecorder 錄一段真正的影片換上去 ——
+         錄影是即時的，八秒的片子就要等八秒（「剛開始都不會動、要等很久」），
+         而且錄的時候編碼器跟合成搶 CPU，掉的格是直接烤進檔案裡的（「播起來很卡」）。 */
+      const anyVideo = pages.some((_p, i) => igPageHasVideoRef.current(i));
+      const opts = anyVideo
+        ? { silent: true as const, previewWidth: 900, live: true }
+        : { silent: true as const, previewWidth: 900, stillOnly: true };
+      let r = await handleExport(opts);
       let urls = (r && 'urls' in r) ? r.urls : [];
       // 偶爾第一次會算不出來（圖還沒解碼完之類），隔一下再試一次
       if (!urls.length && alive) {
+        if (r && 'live' in r && r.live) r.live.forEach(l => l && l.stop());
         await new Promise(res => setTimeout(res, 400));
-        r = await handleExport({ silent: true, previewWidth: 900, stillOnly: true });
+        r = await handleExport(opts);
         urls = (r && 'urls' in r) ? r.urls : [];
       }
-      if (!alive) { urls.forEach(u => URL.revokeObjectURL(u)); return; }
-      if (!urls.length) return;   // 還是失敗就留著備援，不要清成空白
+      const live = (r && 'live' in r && r.live) ? r.live : [];
+      if (!alive || !urls.length) {
+        urls.forEach(u => URL.revokeObjectURL(u));
+        live.forEach(l => l && l.stop());
+        return;   // 算不出來就留著備援，不要清成空白
+      }
       /* 先把每一張都解碼完再交給畫面。
          以前是拿到網址就立刻 setState，<img> 還在解碼的那幾百毫秒畫面上是空的，
          看起來就是「進 IG 預覽時整片白」。等解碼完再換就沒有那段空窗。 */
@@ -10173,42 +10249,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         im.onerror = () => res();
         im.src = u;
       })));
-      if (!alive) { urls.forEach(u => URL.revokeObjectURL(u)); return; }
+      if (!alive) { urls.forEach(u => URL.revokeObjectURL(u)); live.forEach(l => l && l.stop()); return; }
       igShotsRef.current.forEach(u => URL.revokeObjectURL(u));
       igShotsRef.current = urls;
+      stopLive();
+      igLiveRef.current = live;
       setIgShots(urls);
       setIgKinds(urls.map(() => 'image' as const));
-
-      /* 有影片的那幾頁再錄一次真正的影片。這一段是背景跑的，
-         使用者已經看得到畫面了，錄好才換上去 ——
-         以前只有上面那一段（stillOnly），所以「IG 預覽裡的影片不會播」。 */
-      const anyVideo = pages.some((_p, i) => igPageHasVideoRef.current(i));
-      if (!anyVideo || typeof MediaRecorder === 'undefined') return;
-      const r2 = await handleExport({ silent: true, previewWidth: 900 });
-      if (!alive || !r2 || !('urls' in r2) || !r2.urls.length) {
-        if (r2 && 'urls' in r2) r2.urls.forEach(u => URL.revokeObjectURL(u));
-        return;
-      }
-      const merged = igShotsRef.current.slice();
-      const kinds: ('image' | 'video')[] = merged.map(() => 'image');
-      r2.urls.forEach((u, i) => {
-        if (r2.kinds[i] === 'video') {
-          if (merged[i]) URL.revokeObjectURL(merged[i]);
-          merged[i] = u; kinds[i] = 'video';
-        } else {
-          URL.revokeObjectURL(u);
-        }
-      });
-      igShotsRef.current = merged;
-      setIgShots(merged);
-      setIgKinds(kinds);
+      setIgCanvases(urls.map((_u, i) => (live[i] ? live[i]!.canvas : null)));
     })();
     return () => {
       alive = false;
+      stopLive();
       igShotsRef.current.forEach(u => URL.revokeObjectURL(u));
       igShotsRef.current = [];
       setIgShots([]);
       setIgKinds([]);
+      setIgCanvases([]);
     };
   }, [igPreview]);
   /** 頭像與「說讚」那排的小頭像：直接拿拼圖裡的照片來用，看起來才像真的貼文 */
@@ -10245,13 +10302,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 結果就是**有影片時 IG 預覽整片空白**、離開拼圖也要多等好幾秒。
    */
   const handleExport = async (
-    opts?: { silent?: boolean; previewWidth?: number; stillOnly?: boolean },
-  ): Promise<{ urls: string[]; kinds: ('image' | 'video')[] } | void> => {
+    opts?: { silent?: boolean; previewWidth?: number; stillOnly?: boolean; live?: boolean },
+  ): Promise<{ urls: string[]; kinds: ('image' | 'video')[]; live?: LivePage[] } | void> => {
     if (pages.length === 0) return;
     const silent = !!opts?.silent;
     const stillOnly = !!opts?.stillOnly;
+    /* live = true：有影片的那幾頁不錄影，改成交出一張「一直在重畫的畫布」
+       （IG 預覽用）。那幾頁照樣也會出一張靜態圖當底，畫布還沒接上時先頂著。 */
+    const live = !!opts?.live;
+    const livePages: LivePage[] = [];
     if (!silent) setExportState('processing');
     videoAbortRef.current = false;
+    /* 這一輪的號碼。使用者按「取消匯出」時號碼會被推走，cancelled() 就成立。
+       silent（背景）那幾輪永遠是 false —— 它們沒有取消鍵，也不該被取消。 */
+    const runId = silent ? -1 : ++exportRunRef.current;
+    const cancelled = () => !silent && exportRunRef.current !== runId;
+    /** 已經產出的網址在中途放棄時要收回去，不然那幾個 blob 會一直留在記憶體 */
+    const dropUrls = (list: string[]) => { list.forEach(u => { try { URL.revokeObjectURL(u); } catch { /* ignore */ } }); };
 
     try {
       const canvas = document.createElement('canvas');
@@ -10533,7 +10600,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 這一批一共要錄幾頁影片、現在錄完第幾頁 —— 進度是整批一起算的，
          三頁影片就是 0→100 跑一次，不是每頁各跑一次。 */
       let vidTotal = 0, vidDone = 0;
-      const recordPageVideo = async (pageIdx: number, pageLeft: number): Promise<string> => {
+      /**
+       * 把「這一頁要逐帧合成」需要的東西準備好：影片下面那一層、上面那一層、
+       * 影片來源，以及一支 composite()。
+       *
+       * 錄影（匯出）與 IG 預覽的即時畫面共用這一份 —— 兩邊看到的東西
+       * 是同一條程式碼畫出來的，不可能長得不一樣。
+       */
+      const preparePageVideo = async (pageIdx: number, pageLeft: number) => {
         // 跟 pageHasVideo 用同一條判斷，兩邊才不會一個說有、一個挑不到
         const videoJobs = drawJobs.filter(j =>
           j.isVideo && j.maxX > pageLeft + 0.5 && j.minX < pageLeft + targetW - 0.5);
@@ -10621,6 +10695,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         */
         await composite();
 
+        return { rc, composite, dur, vids };
+      };
+
+      const recordPageVideo = async (pageIdx: number, pageLeft: number): Promise<string> => {
+        const { rc, composite, dur, vids } = await preparePageVideo(pageIdx, pageLeft);
+
         const mime = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm']
           .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || '';
         const stream = rc.captureStream(30);
@@ -10640,7 +10720,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             // 整批的進度＝(已錄完的頁數 + 這一頁錄到幾成) ÷ 總共要錄的頁數
             const local = Math.max(0, Math.min(1, el / (dur * 1000)));
             setVideoProg(Math.max(0, Math.min(1, (vidDone + local) / Math.max(1, vidTotal))));
-            if (el >= dur * 1000 || videoAbortRef.current) return resolve();
+            if (el >= dur * 1000 || videoAbortRef.current || cancelled()) return resolve();
             requestAnimationFrame(frame);
           };
           requestAnimationFrame(frame);
@@ -10655,6 +10735,31 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         ]);
         vidDone++;
         return URL.createObjectURL(blob);
+      };
+
+      /**
+       * IG 預覽用的「活的」那一頁：不錄影，直接把這一頁持續合成到一張畫布上，
+       * 那張畫布掛到畫面上讓瀏覽器合成。
+       *
+       * 以前是先用 MediaRecorder 錄一段再放。錄影是**即時**的 ——
+       * 八秒的片子就得等八秒才會開始動（主人說的「要等很久才播」），
+       * 而且錄的時候編碼器跟合成搶同一顆 CPU，錄出來的東西本身就是掉格的
+       * （「播起來很卡」）。
+       * 現在打開的當下就在動，而且畫面是即時合成的，不會有掉格被烤進檔案裡。
+       */
+      const livePageCanvas = async (pageIdx: number, pageLeft: number) => {
+        const { rc, composite, vids } = await preparePageVideo(pageIdx, pageLeft);
+        vids.forEach(v => { try { v.play().catch(() => {}); } catch { /* ignore */ } });
+        let alive = true, busy = false, raf = 0;
+        const tick = () => {
+          if (!alive) return;
+          raf = requestAnimationFrame(tick);
+          if (busy) return;                       // 上一格還沒畫完就跳過，不要堆積
+          busy = true;
+          composite().catch(() => { /* ignore */ }).then(() => { busy = false; });
+        };
+        raf = requestAnimationFrame(tick);
+        return { canvas: rc, stop: () => { alive = false; cancelAnimationFrame(raf); } };
       };
 
       // 每頁各自輸出一張畫布：解析度不再被頁數瓜分，跨頁的東西靠平移座標接續。
@@ -10677,7 +10782,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          一頁都沒有 → 不顯示百分比（純圖片本來就很快，只留轉圈）；
          每一頁都是影片 → 文案「正在匯出影片」；
          有影片也有圖片 → 文案「正在匯出成品」。 */
-      const videoPages = stillOnly ? 0 : pages.reduce(
+      /* live 那條路不錄影（改成現場合成），所以也沒有「錄到第幾成」可言 —— 算 0。 */
+      const videoPages = (stillOnly || live) ? 0 : pages.reduce(
         (n, _p, i) => n + (pageHasVideo(i) && typeof MediaRecorder !== 'undefined' ? 1 : 0), 0);
       vidTotal = videoPages;
       /* stillOnly 時根本不會去錄影片，那個進度畫面就不能跳出來
@@ -10689,9 +10795,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
       // 有影片的那一頁輸出影片、沒有影片的那一頁照舊輸出無損 PNG，各出各的
       for (let pageIdx = 0; pageIdx < pages.length; pageIdx++) {
+        // 按了取消就別再做下一頁 —— 多頁時剩下的每一頁都要再等一輪錄影
+        if (cancelled()) { dropUrls(urls); livePages.forEach(l => l && l.stop()); setVideoProg(null); return; }
         const pageLeft = pageIdx * targetW;
         const hasVideo = pageHasVideo(pageIdx);
-        if (hasVideo && !stillOnly && typeof MediaRecorder !== 'undefined') {
+        if (hasVideo && live) {
+          // 現場合成：畫布留給呼叫端，這一頁再往下走一次，出一張靜態圖當底
+          try { livePages[pageIdx] = await livePageCanvas(pageIdx, pageLeft); }
+          catch { livePages[pageIdx] = null; }
+        } else if (hasVideo && !stillOnly && typeof MediaRecorder !== 'undefined') {
           urls.push(await recordPageVideo(pageIdx, pageLeft));
           kinds.push('video');
           continue;
@@ -10722,7 +10834,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
       if (urls.length === 0) throw new Error('Blob creation failed');
       setVideoProg(null);                      // 錄完了，進度畫面收掉
-      if (silent) return { urls, kinds };
+      if (silent) return { urls, kinds, live: live ? livePages : undefined };
+      /* 使用者在這一輪跑完之前按了「取消匯出」：留在編輯頁，
+         成品直接丟掉（畫面早就退回 idle 了，這裡不要再去動它）。 */
+      if (cancelled()) { dropUrls(urls); return; }
       finalImagesRef.current.forEach(u => URL.revokeObjectURL(u));
       finalImagesRef.current = urls;
       setFinalImages(urls);
@@ -10731,7 +10846,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     } catch (err) {
       console.error(err);
       setVideoProg(null);
+      livePages.forEach(l => l && l.stop());
       if (silent) return;
+      // 取消掉的那一輪半路壞掉是正常的（來源被收走），不要再彈一次失敗
+      if (cancelled()) return;
       alert('存檔失敗，請重試');
       setExportState('idle');
     }
@@ -10971,6 +11089,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             type="button"
             onClick={(e) => {
               e.stopPropagation();
+              // 號碼往前推一格＝那一輪匯出作廢，跑完也不會跳到成品頁
+              exportRunRef.current++;
               videoAbortRef.current = true;
               setVideoProg(null);
               setExportState('idle');
@@ -13140,6 +13260,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         <IgPreview
           shots={igShots}
           kinds={igKinds}
+          canvases={igCanvases}
           frame={{ w: previewW, h: previewH }}
           pageCount={pages.length}
           faces={igFaces}

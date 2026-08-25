@@ -6654,7 +6654,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             </button>
             <button
                 ref={exifBtnRef}
-                onClick={() => setShowExifPanel(prev => !prev)}
+                /* 用 onPointerDown 而不是 onClick —— 這一顆關不掉就是卡在這裡。
+                   面板開著的時候，上面那片 z-[59] 的透明遮罩比標題列（z-20）高，
+                   手指其實是按在遮罩上：文件層的 pointerdown 先把面板收掉，
+                   遮罩跟著從畫面上消失，鬆手時瀏覽器重新命中到底下這顆鍵，
+                   它的 onClick 又把面板打開 —— 就是主人說的「按下去觸發一次、
+                   鬆手又觸發一次」，怎麼按都關不掉。
+                   改成按下的當下就決定：面板開著時這一下被文件層的監聽收走（關掉），
+                   面板關著時才輪到這裡（打開）。一次點擊只會有一個結果。 */
+                onPointerDown={() => setShowExifPanel(prev => !prev)}
                 className={`p-2 rounded-full transition-colors ${showExifPanel ? 'text-white' : 'text-white/40 hover:text-white'}`}
                 title="照片資訊"
             >
@@ -6692,7 +6700,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
       {/* EXIF panel overlay。點面板以外的任何地方就收起來 */}
       {showExifPanel && (
-        <div className="fixed inset-0 z-[59]" onClick={() => setShowExifPanel(false)} />
+        /* 這一層只負責「把點擊擋在外面」，**不能**自己也去關面板。
+           它蓋在標題列上面，所以按資訊鍵時命中的其實是它：
+           以前它的 onClick 會關一次、鬆手時瀏覽器又把 click 重新命中到底下
+           那顆資訊鍵、鍵上的 onClick 再開一次 —— 一次點擊被算成兩次，
+           面板就永遠關不掉。
+           關閉的事交給上面那支「文件層的 pointerdown」統一處理（見 exifPanelRef
+           那段）：它在按下的當下就決定，而且不會被重新命中影響。 */
+        <div className="fixed inset-0 z-[59]" />
       )}
       {showExifPanel && (
         <div ref={exifPanelRef} className="absolute top-16 right-4 left-4 md:left-auto md:right-4 mx-auto md:mx-0 bg-black/90 border border-white/10 rounded-2xl p-5 shadow-2xl backdrop-blur-xl z-[70] w-[320px] max-w-[calc(100vw-2rem)] text-white/90 text-xs flex flex-col gap-3">

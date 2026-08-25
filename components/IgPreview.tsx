@@ -11,6 +11,27 @@ import { Heart, MessageCircle, Bookmark } from 'lucide-react';
  * 外面只要餵：匯出好的那幾張圖、版位比例、頁數、頭像用的照片，以及關閉的回呼。
  * 帳號、頭像、翻頁、選音樂、聲音鍵全部是這一層自己的事。
  */
+/**
+ * 把一張「外面做好的畫布」擺進版位裡。
+ *
+ * 用 appendChild 而不是把它畫到另一張畫布上 —— 後者等於每一格都多複製一次
+ * 整個畫面；這樣是直接讓瀏覽器合成，一次都不用複製。
+ */
+const CanvasSlot: React.FC<{ canvas: HTMLCanvasElement }> = ({ canvas }) => {
+  const host = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = host.current;
+    if (!el) return;
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.objectFit = 'contain';
+    canvas.style.display = 'block';
+    el.appendChild(canvas);
+    return () => { try { el.removeChild(canvas); } catch { /* 已經不在了 */ } };
+  }, [canvas]);
+  return <div ref={host} className="w-full h-full flex items-center justify-center" />;
+};
+
 export type IgPreviewProps = {
   /** 每一頁匯出的成品（順序＝頁序）。還沒算好就傳空陣列，會顯示轉圈 */
   shots: string[];
@@ -45,6 +66,12 @@ export type IgPreviewProps = {
    */
   kinds?: ('image' | 'video')[];
   /**
+   * 有影片的那幾頁改成掛一張「一直在重畫的畫布」（順序＝頁序，沒有的那頁是 null）。
+   * 貼文裡看到的就是即時合成的畫面：打開的當下就在動，也不會有掉格被烤進檔案裡。
+   * 沒傳就照舊走 shots／kinds（跟以前完全一樣）。
+   */
+  canvases?: (HTMLCanvasElement | null)[];
+  /**
    * 直接指定媒體區要放什麼（例如一張正在跑動畫的 canvas）。
    * 有它就不走 img／video —— 這樣動畫可以「當場播」，
    * 不必先錄成影片再放（錄影是即時錄的，一圈幾秒就要等幾秒）。
@@ -58,7 +85,7 @@ export type IgPreviewProps = {
 
 export const IgPreview: React.FC<IgPreviewProps> = ({
   shots, frame, pageCount, faces, hasVideo = (_pageIdx: number) => false, supported = true,
-  slot = '', embedded = false, flow = false, video, kinds, mediaNode, music, onMusicChange, onClose,
+  slot = '', embedded = false, flow = false, video, kinds, canvases, mediaNode, music, onMusicChange, onClose,
 }) => {
   /** 這一篇貼文自己的存檔前綴。沒有 slot 就完全等於以前的鍵名。 */
   const KEY = (k: string) => `abai_ig_${slot ? slot + '_' : ''}${k}`;
@@ -1790,6 +1817,9 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                       {/* 直接顯示匯出的那一張。object-contain 保證完整顯示、絕不裁切 */}
                       {mediaNode
                         ? mediaNode
+                        : canvases?.[idx]
+                        /* 這一頁是即時合成的畫布（有影片時）—— 直接掛上去 */
+                        ? <CanvasSlot canvas={canvases[idx]!} />
                         : video
                         ? <video src={video} autoPlay loop playsInline muted
                             className="max-w-full max-h-full object-contain" />
