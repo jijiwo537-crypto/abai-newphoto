@@ -3773,15 +3773,21 @@ const VideoLayer: React.FC<{
      glCanvas 已經變成 null、glLive 卻還是 true —— 影片被藏起來、
      畫布又不在，畫面就空了（實測連續空白 120 毫秒）。 */
   const stepAside = !!hidden && !!glCanvas;
-  /* ⚠ 讓開＝**只把透明度關掉**，位置與大小一個像素都不動。
+  /* ⚠ 讓開＝**什麼都不做**：影片一直在原位、一直是不透明的，
+     只是被上面那張不透明的 GPU 畫布整片蓋住。
 
-     以前是把 <video> 縮成 1×1（想省一點合成成本）。那會出兩個問題，
-     兩個主人都遇到了：
-       ① 換回來的那一格，合成器手上還是「1 像素的那一層」被放大到整個框，
-          畫面就被拉得很扁 —— 也就是「濾鏡切回原始時影片突然變扁」。
-       ② 尺寸一變就是一次版面變動，影片那一層要重新配置，中間會空一格。
-     改成只動 opacity：沒有版面變動、沒有重新配置，而且它整個被上面那張
-     不透明的畫布蓋住，合成器本來就會把被遮住的部分跳過。 */
+     為什麼可以這樣：這條路從來不把形狀遮罩交給 WebGL（videoGl 的 setMask
+     一次都沒被呼叫過），形狀與羽化是套在**外面那一層**的 CSS 遮罩上的，
+     影片與畫布一起被裁 —— 所以畫布必定是整片不透明的，底下的影片
+     一個像素都露不出來。
+     這樣做的好處是：萬一哪一格畫布是空的（著色器剛換、材質剛配好、
+     軟體合成偶爾漏一格），看到的會是**底下那格影片**，而不是頁面的底色。
+     那正是「第一次套特效會黑一下」的最後一個來源。
+
+     （再往前一版是把影片縮成 1×1 想省合成成本。那會讓合成器手上留著
+       「1 像素的那一層」再放大到整個框，換回來的那一格畫面就被拉得很扁 ——
+       也就是「濾鏡切回原始時影片突然變扁」；尺寸一變也是一次版面變動，
+       影片那一層要重新配置，中間會空一格。所以現在連大小都不動。） */
   const vid = (
     <video
       ref={setRef}
@@ -3802,9 +3808,8 @@ const VideoLayer: React.FC<{
           maxWidth: 'none', maxHeight: 'none',
           transformOrigin: '0 0', transform: box.transform,
           pointerEvents: 'none',
-          opacity: stepAside ? 0 : 1,
         }
-        : { ...plain, opacity: stepAside ? 0 : 1 }}
+        : plain}
     />
   );
   /* GPU 畫布：跟上面那個 <video> 套同一份 style。
@@ -3932,6 +3937,8 @@ const useVideoFxGl = (
   /** 現在手上這顆是不是「拖曳用的粗表」 */
   const fxCoarseRef = useRef(false);
   const glLiveRef = useRef(false);
+  /** 連續畫成功幾格了 —— 要滿三格才讓畫布顯形（見下面的說明） */
+  const glReadyRef = useRef(0);
   const [glDead, setGlDead] = useState(false);
   const [glLive, setGlLive] = useState(false);
   const [glCanvas, setGlCanvas] = useState<HTMLCanvasElement | null>(null);
@@ -3951,6 +3958,7 @@ const useVideoFxGl = (
   useEffect(() => () => { glRef.current?.dispose(); glRef.current = null; }, []);
   useEffect(() => {
     if (!on) {
+      glReadyRef.current = 0;
       if (glLiveRef.current) { glLiveRef.current = false; setGlLive(false); }
       return;
     }
@@ -4020,9 +4028,23 @@ const useVideoFxGl = (
         /* 「畫出來了沒」要**每一格**都跟著走，不是只認第一次成功。
            特效剛打開的那幾格著色器還在編、材質還沒配好，drawFrame 會回 false
            而畫布是被清空的 —— 這時候一定要讓底下的 <video> 回來頂著，
-           不然那一格看到的是背景色（黑底就是閃黑）。 */
+           不然那一格看到的是背景色（黑底就是閃黑）。
+
+           ⚠ 「顯形」還要多等兩格。畫布是新長出來的一層，合成器第一次
+           把它排進畫面時那一格是黑的（實測：第一次套特效必定黑一格，
+           第二次以後完全不會 —— 因為那時候這一層早就在了）。
+           讓它先在**看不見**的狀態下被畫上兩三格，合成器把這一層準備好之後
+           才顯形，那一格黑就發生在沒人看得到的時候。
+           反過來一失敗就立刻收回去，不必等。 */
         const ok = gl.drawFrame(v, w, h);
-        if (ok !== glLiveRef.current) { glLiveRef.current = ok; setGlLive(ok); }
+        if (!ok) {
+          glReadyRef.current = 0;
+          if (glLiveRef.current) { glLiveRef.current = false; setGlLive(false); }
+        } else {
+          if (glReadyRef.current < 3) glReadyRef.current++;
+          const show = glReadyRef.current >= 3;
+          if (show !== glLiveRef.current) { glLiveRef.current = show; setGlLive(show); }
+        }
         handle = useRvfc ? anyV.requestVideoFrameCallback(step) : requestAnimationFrame(step);
         return;
       }
@@ -4888,8 +4910,20 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       // 轉過角度之後要擺在「畫面上最靠下」的那一側：先算旋轉後外接框的半高，
       // 再把工具列沿著畫面的 Y 軸推出去（用區域座標表示，因為這層跟著框一起轉）。
       const rad = (image.rotation * Math.PI) / 180;
+      /* 套了形狀的圖片／影片，白框與四顆角球已經縮到「形狀那個正方形」了
+         （見下面的 chromeBox）—— 這一排白色藥丸也要跟著縮，不然它還停在
+         原本那個長方形的下面。直式的圖層差距最明顯：正方形的下緣比長方形
+         的下緣高出 (高-寬)/2，藥丸就會遠遠地掉在形狀底下一大截。
+         正方形跟原本的框是同心的，所以只要換掉「半寬半高」就好，
+         沒有形狀時 spanW/spanH 就是原本的 boxW/boxH，一個像素都不會動。 */
+      const shapeSide = (!image.shape && image.text === undefined
+        && isImgShaped((image as any).imgShape) && image.width > 0)
+        ? imgShapeBox(image.width, image.height).s * (boxW / image.width)
+        : 0;
+      const spanW = shapeSide || boxW;
+      const spanH = shapeSide || boxH;
       const halfSpan =
-        (boxW * Math.abs(Math.sin(rad)) + boxH * Math.abs(Math.cos(rad))) / 2;
+        (spanW * Math.abs(Math.sin(rad)) + spanH * Math.abs(Math.cos(rad))) / 2;
       const dir = toolbarAbove ? -1 : 1;
       const d = dir * (halfSpan + 26);
       return (
@@ -10703,8 +10737,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                判斷跨頁時留 1.5px 的容差：貼齊邊緣時圖層會往外多蓋半個像素
                （不然預覽會露出抗鋸齒的白縫），那半個像素不能被當成「跨頁」。 */
             const TOL = 1.5 * scaleFactor;
-            const lx = adjustedX * scaleFactor;
-            const rx = lx + fImg.width * fImg.scale * scaleFactor;
+            /* ⚠ 左右邊界要用「中心 ± 一半」，而且是**縮放與旋轉之後**的那個一半 ——
+               也就是上面 minX／maxX 用的同一組數字。
+
+               以前這裡是「沒有縮放時的左邊」＋「縮放後的寬度」。CSS 的 scale
+               是以中心為原點的，所以那一段整個往右偏了 寬×(倍率-1)÷2：
+               放大過的圖層，這裡算出來的頁碼就跟 minX／maxX 對不起來 ——
+               某一頁被判定成「這一頁有影片」（照 minX／maxX），畫的時候卻被
+               這個裁切框整片切掉。那一頁錄出來就只剩靜止的底圖，
+               也就是「影片跨頁時有一頁變成靜止的」「套了形狀的影片在 IG 預覽
+               與成品都不會動」（一般預覽走的是 DOM，沒有這道裁切，所以正常）。 */
+            const lx = cx - half;
+            const rx = cx + half;
             const last = Math.max(0, pages.length - 1);
             const p0 = Math.min(last, Math.max(0, Math.floor((lx + TOL) / targetW)));
             const p1 = Math.min(last, Math.max(p0, Math.floor((rx - TOL) / targetW)));
