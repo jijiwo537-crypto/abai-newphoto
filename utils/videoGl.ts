@@ -173,8 +173,12 @@ export class VideoGl {
       const gl = canvas.getContext('webgl2', {
         alpha: true, premultipliedAlpha: false, antialias: false,
         depth: false, stencil: false,
-        /* 影片是一直在動的，保留上一格沒有意義，關掉可以少一次複製 */
-        preserveDrawingBuffer: false,
+        /* ⚠ 一定要保留上一格。
+           關掉的話，只要有一次「合成器要畫這張畫布、但這一格還沒重畫」
+           （React 剛換完樣式、頁面剛捲動、影片剛好沒吐新影格…），
+           拿到的就是一塊空的緩衝區 —— 螢幕上看到的是整片黑。
+           保留的代價是每一格多一次複製，這張畫布只有幾百像素寬，可以忽略。 */
+        preserveDrawingBuffer: true,
       }) as WebGL2RenderingContext | null;
       if (!gl) return null;
 
@@ -301,6 +305,43 @@ export class VideoGl {
     this.fxDefs = params ? FX_DEFS.filter(d => fxActive(params, d)) : [];
     this.cpuFx = activeCpuFx(params);
     if (this.cpuFx.some(d => d.id === 'colorNoise')) this.ensureNoise(noisePattern || null);
+    this.warmFxPrograms();
+  }
+
+  /**
+   * 把這一串特效需要的著色器**現在就編好**。
+   *
+   * 以前是等到 drawFrame 要用的那一刻才編。編一支著色器在手機上動輒幾十毫秒，
+   * 而那一刻正好是「畫面已經交給 GPU 畫布」的時候 —— 編不完的那一格畫布是空的，
+   * 看到的就是底色，也就是「第一次套特效會黑一下」。
+   *
+   * 改成在使用者按下特效卡片的當下編（這裡）。那一下本來就是一次操作，
+   * 多幾十毫秒看不出來；而且從那之後每一格都直接拿現成的程式來用。
+   */
+  private warmFxPrograms(): void {
+    try {
+      for (const d of this.cpuFx) {
+        for (let i = 0; i < d.passes.length; i++) this.fxProg(`cpu:${d.id}#${i}`, d.passes[i].fs);
+      }
+      for (const d of this.fxDefs) {
+        for (let i = 0; i < d.passes.length; i++) this.fxProg(`${d.id}#${i}`, fxPassSource(d, d.passes[i]));
+      }
+      if (this.fxDefs.length) this.fxProg('__blend', FX_BLEND_FS);
+      if (this.fxDefs.length || this.cpuFx.length) this.fxProg('__out', FX_OUT_FS);
+    } catch { /* 編不起來就照舊，drawFrame 會退回單趟那條路 */ }
+  }
+
+  /** 這一串特效的著色器全部都編好了嗎 —— 只要缺一支就別走特效鏈 */
+  private fxReady(): boolean {
+    for (const d of this.cpuFx) {
+      for (let i = 0; i < d.passes.length; i++) if (!this.fxProgs.get(`cpu:${d.id}#${i}`)) return false;
+    }
+    for (const d of this.fxDefs) {
+      for (let i = 0; i < d.passes.length; i++) if (!this.fxProgs.get(`${d.id}#${i}`)) return false;
+    }
+    if (this.fxDefs.length && !this.fxProgs.get('__blend')) return false;
+    if ((this.fxDefs.length || this.cpuFx.length) && !this.fxProgs.get('__out')) return false;
+    return true;
   }
 
   /** 噪點那張圖樣（跟 CPU 版同一張），第一次要用到才上材質 */
@@ -400,6 +441,18 @@ export class VideoGl {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       this.fxTex.push(t);
     }
+    /* 剛配出來的材質內容是**未定義**的（規格就是這樣寫的，實作多半是全 0，
+       也就是「不透明的黑」）。特效鏈裡任何一趟只要讀到還沒寫過的那一張，
+       畫出來就是整片黑。這裡一次把三張都清成透明，最壞情況也只是透明。 */
+    const prevFb = gl.getParameter(gl.FRAMEBUFFER_BINDING);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbo);
+    gl.clearColor(0, 0, 0, 0);
+    for (const t of this.fxTex) {
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+      gl.viewport(0, 0, W, H);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFb);
     this.fxW = W; this.fxH = H;
     return true;
   }
@@ -453,7 +506,12 @@ export class VideoGl {
         this.canvas.width = W; this.canvas.height = H;
       }
       const c = this.crop;
-      const useFx = (this.fxDefs.length > 0 || this.cpuFx.length > 0) && this.fxPool(W, H);
+      /* ⚠ 著色器沒全部編好、或材質池配不出來，就**退回單趟那條路**
+         （只有顏色，沒有特效）—— 畫面照樣有東西。
+         以前是中途 return false，而那時候畫布已經被清空，
+         看到的就是底色：那正是「第一次套特效閃黑一下」。 */
+      const useFx = (this.fxDefs.length > 0 || this.cpuFx.length > 0)
+        && this.fxReady() && this.fxPool(W, H);
       gl.useProgram(this.prog);
       gl.uniform1i(this.u.uHasLut, this.hasLut ? 1 : 0);
       /* 有特效時，遮罩留到最後一趟才套 —— 先套的話特效會去抹到
@@ -490,7 +548,8 @@ export class VideoGl {
         for (let i = 0; i < d.passes.length; i++) {
           const pass = d.passes[i];
           const prog = this.fxProg(`${d.id}#${i}`, fxPassSource(d, pass));
-          if (!prog) { gl.bindFramebuffer(gl.FRAMEBUFFER, null); return false; }
+          // 這一支臨時編不出來：這一顆特效跳過，畫面維持上一層的結果
+          if (!prog) { from = layerIn; break; }
           let to = 0;
           while (to === from || to === layerIn) to++;
           gl.useProgram(prog);
@@ -506,7 +565,7 @@ export class VideoGl {
           from = to;
         }
         const blend = this.fxProg('__blend', FX_BLEND_FS);
-        if (!blend) { gl.bindFramebuffer(gl.FRAMEBUFFER, null); return false; }
+        if (!blend) { cur = from; continue; }        // 混不了就直接用這一層的結果
         let to = 0;
         while (to === from || to === layerIn) to++;
         gl.useProgram(blend);
@@ -518,7 +577,17 @@ export class VideoGl {
       }
 
       const out = this.fxProg('__out', FX_OUT_FS);
-      if (!out) { gl.bindFramebuffer(gl.FRAMEBUFFER, null); return false; }
+      if (!out) {
+        /* 最後那一趟都編不出來 —— 直接用單趟那條路把這一格畫完（沒有特效，
+           但畫面不會是空的）。空畫布＝看到底色＝閃一下，那才是最糟的結果。 */
+        gl.useProgram(this.prog);
+        gl.uniform1i(this.u.uHasMask, this.hasMask ? 1 : 0);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, W, H);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+        return true;
+      }
       gl.useProgram(out);
       gl.activeTexture(gl.TEXTURE3);
       gl.bindTexture(gl.TEXTURE_2D, T[cur]);
