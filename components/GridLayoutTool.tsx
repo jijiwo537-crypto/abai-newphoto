@@ -11244,7 +11244,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               onClick={(e) => { e.stopPropagation(); onImportNew?.(); }}
               className="flex-1 h-14 rounded-full border border-white/20 bg-white/5 text-white font-bold tracking-widest uppercase hover:bg-white/10 active:scale-95 transition-all text-sm"
             >
-              拼下一張
+              {/* 「組」而不是「張」：經典拼圖一次做的是一整疊頁面，不是一張 */}
+              拼下一組
             </button>
             </div>
           </div>
