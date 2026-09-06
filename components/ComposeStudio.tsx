@@ -113,27 +113,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   useEffect(() => { if (hideKeystone && tab === 'keystone') setTab('crop'); }, [hideKeystone, tab]);
   const stageWrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [stageSize, setStageSize] = useState({ w: 0, h: 0, boxW: 0, boxH: 0 });
-  const [cropSettled, setCropSettled] = useState(false);
-  const settleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const wakeCrop = useCallback(() => {
-    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
-    settleTimerRef.current = null;
-    setCropSettled(false);
-  }, []);
-
-  const settleCropSoon = useCallback(() => {
-    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
-    settleTimerRef.current = setTimeout(() => {
-      settleTimerRef.current = null;
-      setCropSettled(true);
-    }, 420);
-  }, []);
-
-  useEffect(() => () => {
-    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
-  }, []);
+  const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   /** 拖滑桿或縮放時先用低解析度重算，不然每動一格都要重取樣整張圖，看起來就是一幀一幀的 */
   const [live, setLive] = useState(false);
 
@@ -169,7 +149,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       const ctx = cvs.getContext('2d')!;
       ctx.clearRect(0, 0, cvs.width, cvs.height);
       ctx.drawImage(baseCanvas, 0, 0);
-      setStageSize({ w, h, boxW: box.width, boxH: box.height });
+      setStageSize({ w, h });
     };
 
     fit();
@@ -208,8 +188,6 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
   // 換比例時把裁切框重新塞成合法的最大置中矩形
   const applyAspect = useCallback((id: string) => {
-    wakeCrop();
-    settleCropSoon();
     const g = geoRef.current;
     const preset = ASPECT_PRESETS.find(a => a.id === id);
     if (!preset || !baseCanvas) { if (preset) onChange({ ...geoRef.current, aspect: id }); return; }
@@ -218,19 +196,15 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     if (ratio === null) { onChange({ ...g, aspect: id }); return; }
     const full: CropRect = { x: 0, y: 0, w: 1, h: 1 };
     onChange({ ...g, aspect: id, crop: fitCropInsideQuad(quad, full, baseCanvas.width, baseCanvas.height, ratio) });
-  }, [onChange, baseCanvas, quad, wakeCrop, settleCropSoon]);
+  }, [onChange, baseCanvas, quad]);
 
   // ---- 裁切框拖曳 ----
   const dragRef = useRef<{ id: HandleId; startX: number; startY: number; start: CropRect; baseOffset?: { x: number; y: number } } | null>(null);
-  const pinchRef = useRef<{ startDist: number; startZoom: number } | null>(null);
+  const pinchRef = useRef<{ startDist: number; startCrop: CropRect } | null>(null);
 
   const onHandleDown = (id: HandleId) => (e: React.PointerEvent) => {
-    wakeCrop();
     e.stopPropagation();
     e.preventDefault();
-    // iOS 相簿式互動：預覽已放大時，第一次觸碰只喚回完整裁切介面，
-    // 避免畫面正在縮回時立刻以變動中的座標開始拖曳而跳動。
-    if (cropSettled) return;
     try { (e.currentTarget as Element).setPointerCapture(e.pointerId); } catch { /* 有些瀏覽器會擋，忽略即可 */ }
     dragRef.current = {
       id, startX: e.clientX, startY: e.clientY,
@@ -249,11 +223,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     let { x, y, w, h } = s;
 
     if (d.id === 'move') {
-      // iPhone 相片裁切：框內拖曳移動的是照片，裁切框本身保持不動。
-      const origin = d.baseOffset || { x: 0, y: 0 };
-      setLive(true);
-      setGeo({ offset: { x: origin.x + dx, y: origin.y + dy } });
-      return;
+      x = Math.max(0, Math.min(1 - w, s.x + dx));
+      y = Math.max(0, Math.min(1 - h, s.y + dy));
     } else {
       const left = d.id.includes('l');
       const right = d.id.includes('r');
@@ -329,22 +300,19 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     if (!dragRef.current) return;
     try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* 同上 */ }
     dragRef.current = null;
-    setLive(false);
-    settleCropSoon();
   };
 
 
   // 雙指縮放影像（框固定）
   const onStageTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length < 2) return;
-    wakeCrop();
     dragRef.current = null;   // 兩指落下就取消單指的平移
     pinchRef.current = {
       startDist: Math.hypot(
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY
       ) || 1,
-      startZoom: geoRef.current.zoom || 1,
+      startCrop: { ...geoRef.current.crop },
     };
   };
 
@@ -356,16 +324,24 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       e.touches[0].clientX - e.touches[1].clientX,
       e.touches[0].clientY - e.touches[1].clientY
     );
-    // iPhone 相片裁切：雙指縮放照片，而不是把裁切框放大縮小。
-    setLive(true);
-    setGeo({ zoom: Math.max(1, Math.min(8, pz.startZoom * (d / pz.startDist))) });
+    // 以框的中心等比縮放裁切框；比例鎖著的話兩邊一起走，超出畫面就停住
+    const k = d / pz.startDist;
+    const c = pz.startCrop;
+    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+    let w = Math.max(MIN_CROP, c.w * k);
+    let h = Math.max(MIN_CROP, c.h * k);
+    if (w > 1) { h *= 1 / w; w = 1; }
+    if (h > 1) { w *= 1 / h; h = 1; }
+    setGeo({ crop: {
+      x: Math.max(0, Math.min(1 - w, cx - w / 2)),
+      y: Math.max(0, Math.min(1 - h, cy - h / 2)),
+      w, h,
+    } });
   };
 
   const onStageTouchEnd = (e: React.TouchEvent) => {
     if (e.touches.length >= 2) return;
     pinchRef.current = null;
-    setLive(false);
-    settleCropSoon();
   };
 
   const cropStyle = {
@@ -374,20 +350,6 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     width: `${geo.crop.w * 100}%`,
     height: `${geo.crop.h * 100}%`,
   };
-
-  const settledStageStyle = useMemo<React.CSSProperties>(() => {
-    if (!cropSettled || !stageSize.w || !stageSize.h || !stageSize.boxW || !stageSize.boxH) return {};
-    const cropW = Math.max(1, geo.crop.w * stageSize.w);
-    const cropH = Math.max(1, geo.crop.h * stageSize.h);
-    const scale = Math.min(stageSize.boxW / cropW, stageSize.boxH / cropH);
-    const cx = (geo.crop.x + geo.crop.w / 2) * stageSize.w;
-    const cy = (geo.crop.y + geo.crop.h / 2) * stageSize.h;
-    return {
-      clipPath: `inset(${geo.crop.y * 100}% ${(1 - geo.crop.x - geo.crop.w) * 100}% ${(1 - geo.crop.y - geo.crop.h) * 100}% ${geo.crop.x * 100}%)`,
-      transformOrigin: `${cx}px ${cy}px`,
-      transform: `translate3d(${stageSize.w / 2 - cx}px, ${stageSize.h / 2 - cy}px, 0) scale(${scale})`,
-    };
-  }, [cropSettled, geo.crop, stageSize]);
 
   const dirty = !isGeoIdentity(geo);
 
@@ -478,7 +440,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
              touchAction 要一起搬上來，不然瀏覽器會先把兩指當成自己的縮放收走。 */}
         <div
           ref={stageWrapRef}
-          className="w-full h-full flex items-center justify-center overflow-hidden"
+          className="w-full h-full flex items-center justify-center"
           /* 高度上限也要扣掉剛剛讓出去的安全區，不然舞台會比實際可用空間高，
              多出來的部分一樣會頂到瀏海。
              另外 100vh 在手機瀏覽器是「網址列收起來時」的高度（偏大），
@@ -497,8 +459,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
              手指非得先戳進那一小塊才行。落在框上或角上時，那邊自己會
              stopPropagation，所以走不到這裡 —— 兩種操作不會打架。 */}
         <div
-          className="relative select-none transition-[transform,clip-path] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]"
-          style={{ width: stageSize.w || undefined, height: stageSize.h || undefined, touchAction: 'none', ...settledStageStyle }}
+          className="relative select-none"
+          style={{ width: stageSize.w || undefined, height: stageSize.h || undefined, touchAction: 'none' }}
           onPointerDown={onHandleDown('move')}
           onPointerMove={onHandleMove}
           onPointerUp={onHandleUp}
