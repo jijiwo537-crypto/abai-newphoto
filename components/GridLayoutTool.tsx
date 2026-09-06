@@ -4895,6 +4895,26 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     transition: dragShift ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
   };
 
+  /* 圖形本體用固定 backing store + scale() 才不會重建畫布；操作 UI 不能跟著
+     scale，否則選中框、控制條與白色藥丸都會一起變粗變大。外框因此使用等價的
+     已縮放幾何，尺寸跟圖形完全重合，但 UI 自己維持螢幕上的固定大小。 */
+  const chromeWrapGeo: React.CSSProperties = image.shape ? (() => {
+    const cx = image.x + image.width / 2;
+    const cy = image.y + image.height / 2;
+    const w = snapPx2(image.width * (image.scale || 1));
+    const h = snapPx2(image.height * (image.scale || 1));
+    return {
+      position: 'absolute',
+      left: `${snapPx(cx - w / 2)}px`, top: `${snapPx(cy - h / 2)}px`,
+      width: `${w}px`, height: `${h}px`,
+      transformOrigin: 'center center',
+      transform: (dragShift || (image.rotation % 360) !== 0)
+        ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`
+        : undefined,
+      transition: dragShift ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
+    };
+  })() : wrapGeo;
+
   /* 選取框、四角圓球、工具列 —— 統稱「外框」。
      這一整組會被搬到 chromeLayer 那一層去畫（那一層不在 overflow-hidden 底下），
      所以物件被拖出畫布時，框跟按鈕不會被邊緣的黑色切掉。
@@ -5054,39 +5074,39 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const framePad = (() => {
         const sc = image.scale || 1;
         // 螢幕上固定留 2px 的空隙（除掉預覽倍率）
-        const gap = 2 / (kNow * sc);
+        const gap = 2 / kNow;
         if (image.shape === 'hole') {
           /* 借來的圖案：拿畫預覽時同一支算「會超出多少」，但把發光關掉 ——
              發光是散開的光暈，框不需要連光一起框進去。 */
           const ov = holeOpts
             ? holeOverflow({ ...holeOpts, glow: 0 }, image.width, image.height, [])
             : { x: 0, y: 0 };
-          return { x: ov.x + gap, y: ov.y + gap };
+          return { x: ov.x * sc + gap, y: ov.y * sc + gap };
         }
         if (!image.shape || !shapeStroke) return { x: gap, y: gap };
         // shapeStroke 是 viewBox 單位，乘回 scale 才是外框那一層的 px
-        const lwPx = shapeStroke.lw;
-        const outPx = shapeStroke.outer;
+        const lwPx = shapeStroke.lw * sc;
+        const outPx = shapeStroke.outer * sc;
         const half = (image.shapeFilled && image.shape !== 'line') ? 0 : lwPx / 2;
         const pad = half + outPx + gap;
         return { x: pad, y: pad };
       })();
       const starTopGap = (image.shape === 'star' || (image.shape === 'hole' && image.holeType === 'cross-star'))
-        ? 3 / (kNow * (image.scale || 1)) : 0;
+        ? 3 / kNow : 0;
       const frameInk = image.shape && image.shape !== 'hole'
         ? (SHAPE_FIT[image.shape] || [0, 0, 1, 1])
         : null;
       // 依真正有墨水的範圍畫框，四周留相同距離；星形額外距離也上下對稱。
       const frameRect = frameInk ? {
-        left: image.width * frameInk[0] - framePad.x - starTopGap,
-        top: image.height * frameInk[1] - framePad.y - starTopGap,
-        width: image.width * frameInk[2] + framePad.x * 2 + starTopGap * 2,
-        height: Math.max(1, image.height * frameInk[3]) + framePad.y * 2 + starTopGap * 2,
+        left: image.width * (image.scale || 1) * frameInk[0] - framePad.x - starTopGap,
+        top: image.height * (image.scale || 1) * frameInk[1] - framePad.y - starTopGap,
+        width: image.width * (image.scale || 1) * frameInk[2] + framePad.x * 2 + starTopGap * 2,
+        height: Math.max(1, image.height * (image.scale || 1) * frameInk[3]) + framePad.y * 2 + starTopGap * 2,
       } : {
         left: -framePad.x - starTopGap,
         top: -framePad.y - starTopGap,
-        width: image.width + framePad.x * 2 + starTopGap * 2,
-        height: image.height + framePad.y * 2 + starTopGap * 2,
+        width: image.width * (image.scale || 1) + framePad.x * 2 + starTopGap * 2,
+        height: image.height * (image.scale || 1) + framePad.y * 2 + starTopGap * 2,
       };
       /** 一顆角球。看得見的白點比觸控範圍小 20%（14 → 11.2），
        *  外面那層維持 14×14、而且事件還是掛在它身上，所以手感一點都沒變。 */
@@ -5648,7 +5668,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       />
 
       {/* 拿不到外框層時就照原本的方式掛在自己身上，行為完全不變 */}
-      {!chromeLayer && chrome}
+      {!chromeLayer && !image.shape && chrome}
     </div>
 
       {chromeLayer && createPortal(
@@ -5656,7 +5676,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           data-floating-id={image.id}
           className="floating-image-chrome"
           style={{
-            ...wrapGeo,
+            ...chromeWrapGeo,
             /* 這一層只是外框的容器，本身不接手勢：
                只有圓球與工具列自己開 pointer-events，其餘一律穿透下去，
                點在框裡面時仍然是打到底下那個物件（拖曳手感完全不變）。 */
