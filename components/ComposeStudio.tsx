@@ -383,7 +383,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     min: number,
     max: number,
     step: number,
-    onVal: (v: number) => void
+    onVal: (v: number) => void,
+    sensitivity = 0.72
   ) => (
     <div
       className="relative h-12 flex-1 min-w-0 overflow-hidden cursor-ew-resize select-none"
@@ -400,7 +401,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
         if (!drag) return;
         // 以可见宽度换算范围，但把灵敏度收敛到 72%；细小手势更精确，
         // 从屏幕一侧连续拖到另一侧仍足以抵达端点。
-        const raw = Math.max(min, Math.min(max, drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min) * 0.72));
+        const raw = Math.max(min, Math.min(max, drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min) * sensitivity));
         const tick = Math.round(raw / step);
         setRulerVisual(raw);
         if (lastTickRef.current !== tick) {
@@ -719,13 +720,17 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
           {tab === 'keystone' && (
             <div className="w-full flex items-center gap-3 px-5 -translate-y-1">
-              <div className="w-12 h-16 shrink-0 flex flex-col gap-1 -translate-y-1">
-                <button onClick={() => setKeystoneAxis('v')} className={`flex-1 rounded-lg border text-[10px] font-bold transition-colors ${keystoneAxis === 'v' ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/50 border-white/10'}`}>垂直</button>
-                <button onClick={() => setKeystoneAxis('h')} className={`flex-1 rounded-lg border text-[10px] font-bold transition-colors ${keystoneAxis === 'h' ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/50 border-white/10'}`}>水平</button>
-              </div>
+              <button
+                onClick={() => setKeystoneAxis(a => a === 'v' ? 'h' : 'v')}
+                aria-label={`切换为${keystoneAxis === 'v' ? '水平' : '垂直'}梯形调整`}
+                className="w-12 h-11 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-white/75 hover:text-white flex flex-col items-center justify-center gap-0 transition-colors active:scale-[0.96]"
+              >
+                <Icon name={keystoneAxis === 'v' ? 'height' : 'width'} className="text-[17px] leading-none" />
+                <span className="text-[8px] leading-none font-bold tracking-[0.08em] mt-0.5">{keystoneAxis === 'v' ? '垂直' : '水平'}</span>
+              </button>
               {keystoneAxis === 'v'
-                ? tickSlider(geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }))
-                : tickSlider(geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }))}
+                ? tickSlider(geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }), 0.36)
+                : tickSlider(geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }), 0.36)}
               <span className="w-12 h-11 shrink-0" aria-hidden="true" />
             </div>
           )}
