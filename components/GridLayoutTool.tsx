@@ -3465,6 +3465,7 @@ interface FloatingImageComponentProps {
     oppositeLocalY?: number
   ) => void;
   onScaleEnd?: () => void;
+  onStretchMove?: (next: { x: number; y: number; width: number; height: number }) => void;
   isSwapTarget?: boolean;
   isSwapSource?: boolean;
   stackIndex?: number;
@@ -4098,6 +4099,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   onScaleStart,
   onScaleMove,
   onScaleEnd,
+  onStretchMove,
   isSwapTarget = false,
   isSwapSource = false,
   stackIndex = 0,
@@ -4265,7 +4267,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                  在 3 倍螢幕上根本沒對齊，縮放時照樣沿路留殘影。
        shapeDpr —— 只決定 canvas 內部要開幾個像素（上限 2 是記憶體考量）。 */
   const geoDpr = Math.min(4, Math.max(1, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1));
-  const shapeDpr = Math.min(2, geoDpr);
+  // 預覽放大後也按實際螢幕像素重畫，而不是把原本的低解析畫布硬拉大。
+  const shapeDpr = Math.min(4, geoDpr * Math.max(1, canvasK()));
   /** 把長度吸到整數個實體像素（見 wrapGeo 的說明） */
   const snapPx = (v: number) => Math.round(v * geoDpr) / geoDpr;
   /** 吸到「偶數個」實體像素 —— 這樣一半也還落在格線上（見 wrapGeo） */
@@ -4838,12 +4841,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const width = Math.max(24, d.width + signed);
       const shift = (width - d.width) * (image.scale || 1) / 2 * (d.side === 'r' ? 1 : -1);
       const cx = oldCx + shift * Math.cos(d.rotationRad), cy = oldCy + shift * Math.sin(d.rotationRad);
-      onChange({ width, x: cx - width / 2, y: cy - d.height / 2 });
+      const next = { width, height: d.height, x: cx - width / 2, y: cy - d.height / 2 };
+      onChange(next); onStretchMove?.(next);
     } else {
       const height = Math.max(24, d.height + signed);
       const shift = (height - d.height) * (image.scale || 1) / 2 * (d.side === 'b' ? 1 : -1);
       const cx = oldCx - shift * Math.sin(d.rotationRad), cy = oldCy + shift * Math.cos(d.rotationRad);
-      onChange({ height, x: cx - d.width / 2, y: cy - height / 2 });
+      const next = { width: d.width, height, x: cx - d.width / 2, y: cy - height / 2 };
+      onChange(next); onStretchMove?.(next);
     }
   };
   const handleStretchPointerUp = (e: React.PointerEvent) => {
@@ -5280,7 +5285,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         <canvas
           ref={el => {
             if (!el) return;
-            const dpr = Math.min(3, window.devicePixelRatio || 1);
+            // 只在跨過整數倍率時提高 backing store，兼顧清晰度與連續縮放效能。
+            const quality = Math.min(4, Math.max(1, Math.ceil(image.scale || 1)));
+            const dpr = Math.min(8, (window.devicePixelRatio || 1) * quality);
             const bw = Math.max(1, image.width * dpr);
             const bh = Math.max(1, image.height * dpr);
             const blurs = shapeGlowBlurs(bw, bh);
@@ -7413,7 +7420,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
     // 右邊剛好留到「最後一頁停在正中間」為止；加號按鈕已經佔掉 ml-3 + 40
     if (pad) pad.style.width = `${Math.max(0, m - (plusVisibleRef.current ? 52 : 0))}px`;
-    if (col) col.style.transform = k === 1 ? '' : `scale(${k})`;
+    if (col) {
+      /* CSS transform 常會把整頁先光柵化再拉大，文字、線條與圖片都會糊。
+         zoom 會用目標尺寸重新排版／取樣；不支援時才退回 transform。 */
+      const nativeZoom = typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2');
+      if (nativeZoom) {
+        (col.style as any).zoom = String(k);
+        col.style.transform = '';
+      } else {
+        (col.style as any).zoom = '';
+        col.style.transform = k === 1 ? '' : `scale(${k})`;
+      }
+    }
   }, []);
 
   // 要在「把版面貼成目標倍率」那個 useLayoutEffect 之前先把動畫排好，
@@ -12713,6 +12731,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         onScaleEnd={() => {
                           setActiveGuidelines([]);
                         }}
+                        onStretchMove={(next) => {
+                          const lines = pageGuidelinesAt(
+                            next.x, next.y, next.width, next.height,
+                            fImg.scale, true, fImg.rotation || 0,
+                          );
+                          setActiveGuidelines(dedupeGuidelines(lines, next.x + next.width / 2));
+                        }}
                       />
                     ))}
 
@@ -12731,23 +12756,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         let widthStyle = '100%';
                         let heightStyle = '100%';
 
-                        /* 線寬 2px，永遠「跨在座標上」（左緣 = 座標 - 1）。
-                           以前在最外面那兩邊會改成貼齊容器（0 或 寬-2），
-                           好處是整條線都看得到，代價是線的中心整整偏了 1px ——
-                           而頁面邊界正是最常拿來對齊的地方，所以使用者看到的就是
-                           「線亮了，可是東西沒有剛好貼在線上」。
-                           改成一律置中：最邊邊那一條會有一半落在容器外被切掉，
-                           剩下 1px 照樣看得見，而且線在哪裡、邊緣就在哪裡。 */
+                        /* 邊界上的線不能有一半落進 overflow 裁切區，否則看起來會比
+                           中間線細。最外側改為完整貼在畫布內，其餘仍跨在座標上。 */
                         if (guideline.type === 'vertical') {
                           widthStyle = '2px';
-                          {
-                            leftStyle = `${guideline.coord - 1}px`;
-                          }
+                          leftStyle = `${Math.max(0, Math.min(totalContainerWidth - 2, guideline.coord - 1))}px`;
                         } else {
                           heightStyle = '2px';
-                          {
-                            topStyle = `${guideline.coord - 1}px`;
-                          }
+                          topStyle = `${Math.max(0, Math.min(totalContainerHeight - 2, guideline.coord - 1))}px`;
                           /* 橫線只畫在物件自己那一頁：對齊的是這一頁的上下緣／中線，
                              跨到隔壁頁去沒有意義（也會蓋到別頁的內容）。 */
                           if (guideline.x0 != null && guideline.x1 != null) {

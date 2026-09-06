@@ -3,6 +3,8 @@ import { fontStack } from './fonts';
 export type SymbolInk = { w: number; h: number; cx: number; cy: number };
 const REF = 100;
 const cache = new Map<string, SymbolInk>();
+// 字型載入前量到的是 fallback；載入完成後不可繼續沿用錯誤的墨水中心。
+if (typeof document !== 'undefined') document.fonts?.ready?.then(() => cache.clear()).catch(() => {});
 
 /** 直接掃描字形 alpha，取得符號真正的可見邊界；結果以字級 1 為單位。 */
 export const measureSymbolInk = (text: string, family: string): SymbolInk => {
@@ -17,7 +19,9 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
       const font = `400 ${REF}px ${fontStack(family)}`;
       ctx.font = font;
       const advance = Math.max(REF, ctx.measureText(text).width);
-      const px = Math.ceil(REF * 1.5), py = Math.ceil(REF * 2);
+      /* 大量符號含組合附加記號，墨水可能遠超出 advance/em box。
+         留四個 em 才不會先被量測畫布裁掉，導致算出錯誤中心與過小外框。 */
+      const px = Math.ceil(REF * 4), py = Math.ceil(REF * 4);
       canvas.width = Math.ceil(advance) + px * 2;
       canvas.height = py * 2;
       ctx.font = font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
