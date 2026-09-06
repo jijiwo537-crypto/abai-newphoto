@@ -528,19 +528,19 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                   <div
                     className={`absolute bg-white ${corner ? '' : 'shadow-[0_1px_4px_rgba(0,0,0,0.6)]'}`}
                     style={corner
-                      // 直角貼住九宮格角點，兩段線只往框外延伸；
+                      // 直角貼住九宮格角點，兩段線沿著框線往框內延伸；
                       // 角落不加整塊陰影，避免透明方形輪廓。
                       ? {
                           width: 20, height: 20,
-                          left: hd.x === 1 ? '50%' : undefined,
-                          right: hd.x === 0 ? '50%' : undefined,
-                          top: hd.y === 1 ? '50%' : undefined,
-                          bottom: hd.y === 0 ? '50%' : undefined,
+                          left: hd.x === 0 ? '50%' : undefined,
+                          right: hd.x === 1 ? '50%' : undefined,
+                          top: hd.y === 0 ? '50%' : undefined,
+                          bottom: hd.y === 1 ? '50%' : undefined,
                           background: 'transparent',
-                          borderLeft: hd.x === 1 ? '3px solid white' : undefined,
-                          borderRight: hd.x === 0 ? '3px solid white' : undefined,
-                          borderTop: hd.y === 1 ? '3px solid white' : undefined,
-                          borderBottom: hd.y === 0 ? '3px solid white' : undefined,
+                          borderLeft: hd.x === 0 ? '3px solid white' : undefined,
+                          borderRight: hd.x === 1 ? '3px solid white' : undefined,
+                          borderTop: hd.y === 0 ? '3px solid white' : undefined,
+                          borderBottom: hd.y === 1 ? '3px solid white' : undefined,
                         }
                       : {
                           width: (hd.id === 't' || hd.id === 'b') ? 20 : 3,
