@@ -492,10 +492,17 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
           >
             {/* 三分格線 */}
             <div className="absolute inset-0 pointer-events-none">
-              <div className="absolute left-1/3 top-0 bottom-0 w-px bg-white/25" />
-              <div className="absolute left-2/3 top-0 bottom-0 w-px bg-white/25" />
-              <div className="absolute top-1/3 left-0 right-0 h-px bg-white/25" />
-              <div className="absolute top-2/3 left-0 right-0 h-px bg-white/25" />
+              <svg className="block w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                <g opacity="0.25">
+                  <path
+                    d="M33.333 0V100 M66.667 0V100 M0 33.333H100 M0 66.667H100"
+                    fill="none"
+                    stroke="white"
+                    strokeWidth="1"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                </g>
+              </svg>
             </div>
 
             {HANDLES.map(hd => {
@@ -521,7 +528,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                   <div
                     className={`absolute bg-white ${corner ? '' : 'shadow-[0_1px_4px_rgba(0,0,0,0.6)]'}`}
                     style={corner
-                      // L 的轉角位於離裁切框最遠的外角，視覺方向朝外；
+                      // 直角貼住九宮格角點，兩段線只往框外延伸；
                       // 角落不加整塊陰影，避免透明方形輪廓。
                       ? {
                           width: 20, height: 20,
@@ -530,10 +537,10 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                           top: hd.y === 1 ? '50%' : undefined,
                           bottom: hd.y === 0 ? '50%' : undefined,
                           background: 'transparent',
-                          borderLeft: hd.x === 0 ? '3px solid white' : undefined,
-                          borderRight: hd.x === 1 ? '3px solid white' : undefined,
-                          borderTop: hd.y === 0 ? '3px solid white' : undefined,
-                          borderBottom: hd.y === 1 ? '3px solid white' : undefined,
+                          borderLeft: hd.x === 1 ? '3px solid white' : undefined,
+                          borderRight: hd.x === 0 ? '3px solid white' : undefined,
+                          borderTop: hd.y === 1 ? '3px solid white' : undefined,
+                          borderBottom: hd.y === 0 ? '3px solid white' : undefined,
                         }
                       : {
                           width: (hd.id === 't' || hd.id === 'b') ? 20 : 3,
