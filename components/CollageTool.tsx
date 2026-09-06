@@ -2886,8 +2886,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const signed = horizontal ? (d.side === 'r' ? lx : -lx) : (d.side === 'b' ? ly : -ly);
     setObjects(prev => prev.map(o => {
       if (o.id !== d.id) return o;
-      if (horizontal) { const w = Math.max(24, d.w + signed); return { ...o, w, x: d.x + (d.w - w) / 2 }; }
-      const h = Math.max(24, d.h + signed); return { ...o, h, y: d.y + (d.h - h) / 2 };
+      const oldCx = d.x + d.w / 2, oldCy = d.y + d.h / 2;
+      if (horizontal) {
+        const w = Math.max(24, d.w + signed);
+        const shift = (w - d.w) / 2 * (d.side === 'r' ? 1 : -1);
+        const cx = oldCx + shift * Math.cos(d.rot), cy = oldCy + shift * Math.sin(d.rot);
+        return { ...o, w, x: cx - w / 2, y: cy - d.h / 2 };
+      }
+      const h = Math.max(24, d.h + signed);
+      const shift = (h - d.h) / 2 * (d.side === 'b' ? 1 : -1);
+      const cx = oldCx - shift * Math.sin(d.rot), cy = oldCy + shift * Math.cos(d.rot);
+      return { ...o, h, x: cx - d.w / 2, y: cy - h / 2 };
     }));
   };
   const endObjStretch = (e: React.PointerEvent) => {
@@ -4175,7 +4184,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if (!A.on) return;
         const sz = getHoleSize(h) * A.k * s;
         // 五角星与十字星的可见墨水重心略偏上，方形选中框同步上提一点。
-        const starFrameLift = (holeType === 'star' || holeType === 'cross-star') ? sz * 0.045 : 0;
         const currentAngle = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
         const hx = A.x * s, hy = A.y * s;
         const mxp = hx * rx, myp = hy * ry;     // 遮罩上的對應點
@@ -5002,7 +5010,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 左側選取框 (帶旋轉, 只有在 image 側時顯示)
         if (hSide === 'both' || hSide === 'image') {
           ctx.save();
-          ctx.translate(A.x * s + offs.ix, A.y * s + offs.iy - starFrameLift);
+          ctx.translate(A.x * s + offs.ix, A.y * s + offs.iy);
           ctx.rotate(currentAngle * Math.PI / 180);
           if (isTextHole(holeType)) {
             const renderStr = holeGlyph(holeType, customText, h);
@@ -5014,7 +5022,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             ctx.strokeRect(-tw / 2, -th / 2, tw, th);
           } else {
             const szz = sz + 16 * sgs;
-            ctx.strokeRect(-szz / 2, -szz / 2, szz, szz);
+            const topGap = (holeType === 'star' || holeType === 'cross-star') ? 4 * sgs : 0;
+            ctx.strokeRect(-szz / 2, -szz / 2 - topGap, szz, szz + topGap);
           }
           ctx.restore();
         }
@@ -5022,7 +5031,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 右側選取框 (帶旋轉, 只有在 mask 側且完全在裡面時才顯示)
         if ((hSide === 'both' || hSide === 'mask') && isHoleFullyInsideMask(h, 1, maskW, maskH)) {
           ctx.save();
-          ctx.translate(A.x * s + offs.mx, A.y * s + offs.my - starFrameLift);
+          ctx.translate(A.x * s + offs.mx, A.y * s + offs.my);
           ctx.rotate(currentAngle * Math.PI / 180);
           if (isTextHole(holeType)) {
             const renderStr = holeGlyph(holeType, customText, h);
@@ -5034,7 +5043,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             ctx.strokeRect(-tw / 2, -th / 2, tw, th);
           } else {
             const szz = sz + 16 * sgs;
-            ctx.strokeRect(-szz / 2, -szz / 2, szz, szz);
+            const topGap = (holeType === 'star' || holeType === 'cross-star') ? 4 * sgs : 0;
+            ctx.strokeRect(-szz / 2, -szz / 2 - topGap, szz, szz + topGap);
           }
           ctx.restore();
         }
@@ -6684,7 +6694,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const bottom = r.top - sr.top + (oy + lowest) * k;
           const top = r.top - sr.top + (oy + highest) * k;
           const stH = stEl ? stEl.getBoundingClientRect().height : 0;
-          const crossedLowerThird = !!stH && bottom > stH * (2 / 3);
+          const crossedLowerThird = !!stH && cy > stH * (2 / 3);
           const aboveFits = top - 42 >= 0;
           const above = crossedLowerThird && aboveFits;
           let by = above ? top - 42 : bottom + 10;
@@ -6729,7 +6739,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   <div key={side} data-stretch-handle className={`absolute ${pos} ${size} pointer-events-auto flex items-center justify-center touch-none no-pointer-events`}
                     style={{ transform: tx }} onPointerDown={(e) => beginObjStretch(e, o, side, k)}
                     onPointerMove={moveObjStretch} onPointerUp={endObjStretch} onPointerCancel={endObjStretch}>
-                    <span className={`${side === 't' || side === 'b' ? 'w-4 h-1.5' : 'w-1.5 h-4'} block rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
+                    <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
                   </div>
                 ))}
               </div>

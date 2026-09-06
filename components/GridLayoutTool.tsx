@@ -4813,8 +4813,18 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const ly = -sx * Math.sin(d.rotationRad) + sy * Math.cos(d.rotationRad);
     const horizontal = d.side === 'l' || d.side === 'r';
     const signed = horizontal ? (d.side === 'r' ? lx : -lx) : (d.side === 'b' ? ly : -ly);
-    if (horizontal) { const width = Math.max(24, d.width + signed); onChange({ width, x: d.x + (d.width - width) / 2 }); }
-    else { const height = Math.max(24, d.height + signed); onChange({ height, y: d.y + (d.height - height) / 2 }); }
+    const oldCx = d.x + d.width / 2, oldCy = d.y + d.height / 2;
+    if (horizontal) {
+      const width = Math.max(24, d.width + signed);
+      const shift = (width - d.width) * (image.scale || 1) / 2 * (d.side === 'r' ? 1 : -1);
+      const cx = oldCx + shift * Math.cos(d.rotationRad), cy = oldCy + shift * Math.sin(d.rotationRad);
+      onChange({ width, x: cx - width / 2, y: cy - d.height / 2 });
+    } else {
+      const height = Math.max(24, d.height + signed);
+      const shift = (height - d.height) * (image.scale || 1) / 2 * (d.side === 'b' ? 1 : -1);
+      const cx = oldCx - shift * Math.sin(d.rotationRad), cy = oldCy + shift * Math.cos(d.rotationRad);
+      onChange({ height, x: cx - d.width / 2, y: cy - height / 2 });
+    }
   };
   const handleStretchPointerUp = (e: React.PointerEvent) => {
     if (stretchStart.current?.pointerId !== e.pointerId) return;
@@ -5055,6 +5065,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         const pad = half + outPx + gap;
         return { x: pad, y: pad };
       })();
+      const starTopGap = (image.shape === 'star' || (image.shape === 'hole' && image.holeType === 'cross-star'))
+        ? 3 / kNow : 0;
       /** 一顆角球。看得見的白點比觸控範圍小 20%（14 → 11.2），
        *  外面那層維持 14×14、而且事件還是掛在它身上，所以手感一點都沒變。 */
       const cornerDot = (
@@ -5116,8 +5128,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           </svg>
         );
       })() : null;
-      const starChromeLift = (image.shape === 'star' || (image.shape === 'hole' && image.holeType === 'cross-star'))
-        ? -image.height * 0.045 : 0;
       return (
       <div
         className={chromeBox ? 'absolute pointer-events-none' : 'absolute inset-0 pointer-events-none'}
@@ -5125,14 +5135,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ...(chromeBox || null),
           visibility: showChrome ? 'visible' : 'hidden',
           opacity: showChrome ? 1 : 0,
-          transform: `translateY(${starChromeLift}px) translateZ(0)`,
+          transform: 'translateZ(0)',
           willChange: 'transform',
           backfaceVisibility: 'hidden',
         }}
       >
         {shapeOutline ? shapeOutline : isPhoto ? (
           /* Active border matching layout style（深色那一圈是往外畫的，跟原本一樣） */
-          <div className="absolute pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" style={{ inset: -2 }} />
+          <div className="absolute pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" style={{ inset: -1 }} />
         ) : (
           /* 虛線框：數值跟創意拼圖那條 strokeRect 一模一樣（1.6px 寬、6.7/6.7 的節奏）。
              除掉預覽的倍率 k —— 放大預覽時框不會跟著變粗，跟那邊的 uiPx 同一個道理。
@@ -5140,9 +5150,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           <svg
             className="absolute pointer-events-none z-30"
             style={{
-              left: -framePad.x, top: -framePad.y,
+              left: -framePad.x, top: -framePad.y - starTopGap,
               width: `calc(100% + ${r3(framePad.x * 2)}px)`,
-              height: `calc(100% + ${r3(framePad.y * 2)}px)`,
+              height: `calc(100% + ${r3(framePad.y * 2 + starTopGap)}px)`,
               overflow: 'visible',
             }}
             aria-hidden
@@ -5170,7 +5180,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           <div key={side} data-stretch-handle className={`absolute ${pos} ${size} z-50 pointer-events-auto touch-none flex items-center justify-center`}
             style={{ transform: tx }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
             onPointerMove={handleStretchPointerMove} onPointerUp={handleStretchPointerUp} onPointerCancel={handleStretchPointerUp}>
-            <span className={`${side === 't' || side === 'b' ? 'w-4 h-1.5' : 'w-1.5 h-4'} block rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
+            <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
           </div>
         ))}
 
@@ -12326,7 +12336,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           const halfSpan = (fImg.width * fImg.scale * Math.abs(Math.sin(rad))
                             + fImg.height * fImg.scale * Math.abs(Math.cos(rad))) / 2;
                           const cy = fImg.y + fImg.height / 2;
-                          const crossedLowerThird = cy + halfSpan > previewH * (2 / 3);
+                          const crossedLowerThird = cy > previewH * (2 / 3);
                           const aboveFits = cy - halfSpan - 52 >= 0;
                           return crossedLowerThird && aboveFits;
                         })()}
