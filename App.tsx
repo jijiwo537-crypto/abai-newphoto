@@ -64,6 +64,11 @@ const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
   collage: '創意拼圖',
 };
 
+/** 匯入、開啟歷史作品與儲存草稿共用同一顆載入動畫，避免各處長得只「很像」。 */
+const AppLoadingSpinner: React.FC = () => (
+  <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin shadow-[0_0_15px_rgba(255,255,255,0.5)]" aria-label="載入中" />
+);
+
 const App: React.FC = () => {
   // 上次沒做完的東西一律先問過再接回去，不要一開 App 就直接跳進去。
   // 兩份草稿（經典拼圖／其他工具）取比較新的那一份。
@@ -473,18 +478,18 @@ const App: React.FC = () => {
              <img src={importPreviewUrl} alt="Preview" className="absolute inset-0 w-full h-full object-contain opacity-30 blur-sm mix-blend-screen" />
           )}
           <div className="flex flex-col items-center gap-4 text-white relative z-10">
-            <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin shadow-[0_0_15px_rgba(255,255,255,0.5)]"></div>
+            <AppLoadingSpinner />
             <p className="text-sm font-black tracking-[0.2em] uppercase animate-pulse drop-shadow-md">載入中...</p>
           </div>
         </div>
       )}
 
       {exitPromptOpen && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in duration-200">
+        <div className={`fixed inset-0 z-[300] flex items-center justify-center px-8 animate-in fade-in ${exitPromptBusy ? 'bg-transparent duration-300' : 'bg-black/80 backdrop-blur-sm duration-200'}`}>
           <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className={`w-full max-w-[320px] min-h-[248px] p-6 text-center flex items-center justify-center ${exitPromptBusy ? 'bg-transparent' : 'rounded-3xl bg-[#141414] border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200'}`}>
             {exitPromptBusy ? (
               <div className="flex items-center justify-center animate-in fade-in duration-300" aria-live="polite">
-                <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin shadow-[0_0_15px_rgba(255,255,255,0.5)]" aria-label="載入中" />
+                <AppLoadingSpinner />
               </div>
             ) : (
               <div className="w-full animate-in fade-in duration-200">
