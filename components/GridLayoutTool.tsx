@@ -3465,7 +3465,6 @@ interface FloatingImageComponentProps {
     oppositeLocalY?: number
   ) => void;
   onScaleEnd?: () => void;
-  onStretchMove?: (next: { x: number; y: number; width: number; height: number }) => void;
   isSwapTarget?: boolean;
   isSwapSource?: boolean;
   stackIndex?: number;
@@ -4099,7 +4098,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   onScaleStart,
   onScaleMove,
   onScaleEnd,
-  onStretchMove,
   isSwapTarget = false,
   isSwapSource = false,
   stackIndex = 0,
@@ -4842,13 +4840,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const shift = (width - d.width) * (image.scale || 1) / 2 * (d.side === 'r' ? 1 : -1);
       const cx = oldCx + shift * Math.cos(d.rotationRad), cy = oldCy + shift * Math.sin(d.rotationRad);
       const next = { width, height: d.height, x: cx - width / 2, y: cy - d.height / 2 };
-      onChange(next); onStretchMove?.(next);
+      onChange(next);
     } else {
       const height = Math.max(24, d.height + signed);
       const shift = (height - d.height) * (image.scale || 1) / 2 * (d.side === 'b' ? 1 : -1);
       const cx = oldCx - shift * Math.sin(d.rotationRad), cy = oldCy + shift * Math.cos(d.rotationRad);
       const next = { width: d.width, height, x: cx - d.width / 2, y: cy - height / 2 };
-      onChange(next); onStretchMove?.(next);
+      onChange(next);
     }
   };
   const handleStretchPointerUp = (e: React.PointerEvent) => {
@@ -5242,13 +5240,25 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ['r', 'right-0 top-1/2', 'translate(50%, -50%)', 'w-2 h-6 cursor-ew-resize'],
           ['b', 'bottom-0 left-1/2', 'translate(-50%, 50%)', 'w-6 h-2 cursor-ns-resize'],
           ['l', 'left-0 top-1/2', 'translate(-50%, -50%)', 'w-2 h-6 cursor-ew-resize'],
-        ] as const).map(([side, pos, tx, size]) => (
+        ] as const).map(([side, pos, tx, size]) => {
+          // 圖形的選取框依可見墨水縮過，控制點也必須使用同一個 frameRect，
+          // 才會確實落在四邊中央而不是停在物件原始方框上。
+          const shapeHandleStyle = image.shape ? {
+            left: side === 'l' ? frameRect.left : side === 'r' ? frameRect.left + frameRect.width : frameRect.left + frameRect.width / 2,
+            top: side === 't' ? frameRect.top : side === 'b' ? frameRect.top + frameRect.height : frameRect.top + frameRect.height / 2,
+          } : undefined;
+          return (
           <div key={side} data-stretch-handle className={`absolute ${pos} ${size} z-50 pointer-events-auto touch-none flex items-center justify-center`}
-            style={{ transform: tx }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
+            style={{ transform: tx, ...shapeHandleStyle }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
             onPointerMove={handleStretchPointerMove} onPointerUp={handleStretchPointerUp} onPointerCancel={handleStretchPointerUp}>
-            <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
+            {image.shape ? (
+              <span className="w-[7px] h-[7px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]" />
+            ) : (
+              <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
+            )}
           </div>
-        ))}
+          );
+        })}
 
       </div>
       );
@@ -6003,7 +6013,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
     }
 
-    const SNAP_THRESHOLD = 4; // Snapping threshold reduced to 4px
+    const SNAP_THRESHOLD = 1; // 外框實際貼線才吸附；僅容許次像素誤差
     const ownPageRectsForFit = pageRects;
     // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
     const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
@@ -12517,7 +12527,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               getAllPageRects(),
                               fImg.x + fImg.width / 2,
                             );
-                            const SNAP_THRESHOLD = 4; // Snapping threshold reduced to 4px
+                            const SNAP_THRESHOLD = 1; // 外框實際貼線才吸附；僅容許次像素誤差
                             
                             // Unsnapped position of the dragged corner
                             const rawCornerX = pivotContainerX + newScale * K_x;
@@ -12730,13 +12740,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         }}
                         onScaleEnd={() => {
                           setActiveGuidelines([]);
-                        }}
-                        onStretchMove={(next) => {
-                          const lines = pageGuidelinesAt(
-                            next.x, next.y, next.width, next.height,
-                            fImg.scale, true, fImg.rotation || 0,
-                          );
-                          setActiveGuidelines(dedupeGuidelines(lines, next.x + next.width / 2));
                         }}
                       />
                     ))}
