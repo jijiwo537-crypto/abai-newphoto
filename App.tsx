@@ -100,18 +100,26 @@ const App: React.FC = () => {
      這樣才會「蓋掉同一筆」而不是又多一筆一模一樣的。開新的照片就清掉。 */
   const [histKey, setHistKey] = useState<string | null>(null);
   const [exitPromptOpen, setExitPromptOpen] = useState(false);
+  const [exitPromptBusy, setExitPromptBusy] = useState(false);
   const exitPromptResolver = useRef<((choice: ExitChoice) => void) | null>(null);
 
   const requestExit = useCallback((): Promise<ExitChoice> => {
     setExitPromptOpen(true);
+    setExitPromptBusy(false);
     return new Promise(resolve => { exitPromptResolver.current = resolve; });
   }, []);
 
   const resolveExit = useCallback((choice: ExitChoice) => {
-    setExitPromptOpen(false);
+    if (choice === 'cancel') setExitPromptOpen(false);
+    else setExitPromptBusy(true);
     const resolve = exitPromptResolver.current;
     exitPromptResolver.current = null;
     resolve?.(choice);
+  }, []);
+
+  const finishExit = useCallback(() => {
+    setExitPromptOpen(false);
+    setExitPromptBusy(false);
   }, []);
 
   /** 創意拼圖：第一個當底，其餘的自動變成物件（相簿多選） */
@@ -327,7 +335,8 @@ const App: React.FC = () => {
     setCurrentView('home');
     setToolDraftState(null);
     if (!keepDraft) clearToolDraft();
-  }, []);
+    finishExit();
+  }, [finishExit]);
 
   const handleEditorSave = useCallback((newSrc: string) => {
     leaveTool();
@@ -456,9 +465,9 @@ const App: React.FC = () => {
           <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className="w-full max-w-[320px] rounded-3xl bg-[#141414] border border-white/10 p-6 text-center shadow-2xl animate-in zoom-in-95 duration-200">
             <p id="exit-draft-title" className="text-white font-black tracking-wide">是否儲存為草稿</p>
             <div className="mt-6 flex flex-col gap-2">
-              <button onClick={() => resolveExit('save')} className="h-12 rounded-full bg-white text-black font-black tracking-widest text-sm active:scale-[0.98] transition-transform">儲存</button>
-              <button onClick={() => resolveExit('discard')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform">放棄</button>
-              <button onClick={() => resolveExit('cancel')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform">取消</button>
+              <button disabled={exitPromptBusy} onClick={() => resolveExit('save')} className="h-12 rounded-full bg-white text-black font-black tracking-widest text-sm active:scale-[0.98] transition-transform disabled:opacity-60">{exitPromptBusy ? '處理中…' : '儲存'}</button>
+              <button disabled={exitPromptBusy} onClick={() => resolveExit('discard')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform disabled:opacity-40">放棄</button>
+              <button disabled={exitPromptBusy} onClick={() => resolveExit('cancel')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform disabled:opacity-40">取消</button>
             </div>
           </div>
         </div>
@@ -605,6 +614,7 @@ const App: React.FC = () => {
           onHome={() => {
             setCurrentView('home');
             setLayoutInitialFiles([]);
+            finishExit();
           }}
           initialFiles={layoutInitialFiles}
           initialState={toolDraftState}
