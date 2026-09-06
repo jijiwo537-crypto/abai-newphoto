@@ -4854,6 +4854,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
        中心點推出左上角。這樣中心不再隨縮放跳動（來回 0 次），四個邊也仍然
        都落在整數實體像素上，殘影的防治沒有變。 */
     ...(() => {
+      if (image.shape) {
+        return {
+          left: `${image.x}px`, top: `${image.y}px`,
+          width: `${image.width}px`, height: `${image.height}px`,
+        };
+      }
       const cx = image.x + image.width / 2;
       const cy = image.y + image.height / 2;
       const w = snapPx2(image.width * image.scale);
@@ -4879,8 +4885,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
        改走一般繪製，讓出來的區域一定會被重畫。
        （原本留著它是為了讓邊緣吸到整數像素，那件事現在由 snapPx 用「真正的」
        實體像素密度做掉了，不必再靠合成層。） */
-    transform: (dragShift || (image.rotation % 360) !== 0)
-      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`
+    transform: (dragShift || image.shape || (image.rotation % 360) !== 0)
+      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}${image.shape ? `scale(${image.scale || 1}) ` : ''}rotate(${image.rotation}deg)`
       : undefined,
     /* 過場一定要跟頁面容器那邊「一模一樣」（220ms、同一條曲線）。
        以前這裡是 200ms ease-out、那邊是 220ms cubic-bezier(0.2,0,0,1)：
@@ -5048,25 +5054,40 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const framePad = (() => {
         const sc = image.scale || 1;
         // 螢幕上固定留 2px 的空隙（除掉預覽倍率）
-        const gap = 2 / kNow;
+        const gap = 2 / (kNow * sc);
         if (image.shape === 'hole') {
           /* 借來的圖案：拿畫預覽時同一支算「會超出多少」，但把發光關掉 ——
              發光是散開的光暈，框不需要連光一起框進去。 */
           const ov = holeOpts
             ? holeOverflow({ ...holeOpts, glow: 0 }, image.width, image.height, [])
             : { x: 0, y: 0 };
-          return { x: ov.x * sc + gap, y: ov.y * sc + gap };
+          return { x: ov.x + gap, y: ov.y + gap };
         }
         if (!image.shape || !shapeStroke) return { x: gap, y: gap };
         // shapeStroke 是 viewBox 單位，乘回 scale 才是外框那一層的 px
-        const lwPx = shapeStroke.lw * sc;
-        const outPx = shapeStroke.outer * sc;
+        const lwPx = shapeStroke.lw;
+        const outPx = shapeStroke.outer;
         const half = (image.shapeFilled && image.shape !== 'line') ? 0 : lwPx / 2;
         const pad = half + outPx + gap;
         return { x: pad, y: pad };
       })();
       const starTopGap = (image.shape === 'star' || (image.shape === 'hole' && image.holeType === 'cross-star'))
-        ? 3 / kNow : 0;
+        ? 3 / (kNow * (image.scale || 1)) : 0;
+      const frameInk = image.shape && image.shape !== 'hole'
+        ? (SHAPE_FIT[image.shape] || [0, 0, 1, 1])
+        : null;
+      // 依真正有墨水的範圍畫框，四周留相同距離；星形額外距離也上下對稱。
+      const frameRect = frameInk ? {
+        left: image.width * frameInk[0] - framePad.x - starTopGap,
+        top: image.height * frameInk[1] - framePad.y - starTopGap,
+        width: image.width * frameInk[2] + framePad.x * 2 + starTopGap * 2,
+        height: Math.max(1, image.height * frameInk[3]) + framePad.y * 2 + starTopGap * 2,
+      } : {
+        left: -framePad.x - starTopGap,
+        top: -framePad.y - starTopGap,
+        width: image.width + framePad.x * 2 + starTopGap * 2,
+        height: image.height + framePad.y * 2 + starTopGap * 2,
+      };
       /** 一顆角球。看得見的白點比觸控範圍小 20%（14 → 11.2），
        *  外面那層維持 14×14、而且事件還是掛在它身上，所以手感一點都沒變。 */
       const cornerDot = (
@@ -5150,9 +5171,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           <svg
             className="absolute pointer-events-none z-30"
             style={{
-              left: -framePad.x, top: -framePad.y - starTopGap,
-              width: `calc(100% + ${r3(framePad.x * 2)}px)`,
-              height: `calc(100% + ${r3(framePad.y * 2 + starTopGap)}px)`,
+              left: frameRect.left, top: frameRect.top,
+              width: frameRect.width, height: frameRect.height,
               overflow: 'visible',
             }}
             aria-hidden
@@ -5220,8 +5240,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ref={el => {
             if (!el) return;
             const dpr = Math.min(3, window.devicePixelRatio || 1);
-            const bw = Math.max(1, image.width * image.scale * dpr);
-            const bh = Math.max(1, image.height * image.scale * dpr);
+            const bw = Math.max(1, image.width * dpr);
+            const bh = Math.max(1, image.height * dpr);
             const blurs = shapeGlowBlurs(bw, bh);
             /* 交給 drawHoleShape 的是畫布像素，線寬的單位也要換到同一個座標系
                （holeOpts 裡那個是內容單位，兩邊都是「長邊/160 再除掉 scale」）。 */
@@ -5231,8 +5251,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                畫布只開外框那麼大的話，超出去的全部被切掉。
                撐開的是畫布，畫的內容一個像素都沒動（原點還是框心、
                交給 drawHoleShape 的還是原本的外框）。 */
-            const w = Math.max(1, Math.round(bw + holeOv.x * image.scale * dpr * 2));
-            const h = Math.max(1, Math.round(bh + holeOv.y * image.scale * dpr * 2));
+            const w = Math.max(1, Math.round(bw + holeOv.x * dpr * 2));
+            const h = Math.max(1, Math.round(bh + holeOv.y * dpr * 2));
             if (el.width !== w) el.width = w;
             if (el.height !== h) el.height = h;
             const c = el.getContext('2d');
@@ -5242,7 +5262,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             c.translate(w / 2, h / 2);
             drawHoleShape(c, opts, bw, bh, blurs);
           }}
-          key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${image.shapeTex}|${image.shapeStripeN}|${image.shapeStripeDir}|${image.shapeStripeA}|${image.shapeStripeB}|${Math.round(image.width * image.scale)}|${Math.round(image.height * image.scale)}`}
+          key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${image.shapeTex}|${image.shapeStripeN}|${image.shapeStripeDir}|${image.shapeStripeA}|${image.shapeStripeB}|${Math.round(image.width)}|${Math.round(image.height)}`}
           style={{
             /* 用百分比而不是 px：外框的寬高會被吸到整數實體像素（見 wrapGeo），
                百分比才會跟著一起吸，畫布的中心才不會跟外框的中心差半個像素。 */
@@ -9476,6 +9496,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const gestureScope = (target: Element | null): 'none' | 'floating' | 'layout' | 'pan' => {
     if (!target) return 'pan';
     if (target.closest('button')) return 'none';
+    if (target.closest('[data-stretch-handle]')) return 'none';
     if (target.closest('.cursor-nwse-resize') || target.closest('.cursor-nesw-resize')) return 'none';
 
     const cellEl = target.closest('[data-cell-id]');
