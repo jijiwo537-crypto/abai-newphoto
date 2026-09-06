@@ -1019,6 +1019,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const selectedObjRef = useRef<string | null>(null);
   selectedObjRef.current = selectedObj;
   const objDragRef = useRef<any>(null);
+  const objStretchRef = useRef<any>(null);
   /* ── 形狀的第二段選取 ────────────────────────────────────────────
      選中圖片之後**再點一次圖片**，才進到「選中形狀」：
        · 選取框改成沿著形狀描一圈，方框收起來
@@ -2865,6 +2866,33 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
   };
 
+  const beginObjStretch = (e: React.PointerEvent, o: any, side: 't' | 'r' | 'b' | 'l', cssK: number) => {
+    e.stopPropagation(); e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    objStretchRef.current = { pointerId: e.pointerId, id: o.id, side, startX: e.clientX, startY: e.clientY,
+      x: o.x, y: o.y, w: o.w, h: o.h, rot: (o.rot || 0) * Math.PI / 180, k: cssK };
+  };
+  const moveObjStretch = (e: React.PointerEvent) => {
+    const d = objStretchRef.current; if (!d || d.pointerId !== e.pointerId) return;
+    e.stopPropagation();
+    const sx = (e.clientX - d.startX) / Math.max(0.001, d.k);
+    const sy = (e.clientY - d.startY) / Math.max(0.001, d.k);
+    const lx = sx * Math.cos(d.rot) + sy * Math.sin(d.rot);
+    const ly = -sx * Math.sin(d.rot) + sy * Math.cos(d.rot);
+    const horizontal = d.side === 'l' || d.side === 'r';
+    const signed = horizontal ? (d.side === 'r' ? lx : -lx) : (d.side === 'b' ? ly : -ly);
+    setObjects(prev => prev.map(o => {
+      if (o.id !== d.id) return o;
+      if (horizontal) { const w = Math.max(24, d.w + signed); return { ...o, w, x: d.x + (d.w - w) / 2 }; }
+      const h = Math.max(24, d.h + signed); return { ...o, h, y: d.y + (d.h - h) / 2 };
+    }));
+  };
+  const endObjStretch = (e: React.PointerEvent) => {
+    if (objStretchRef.current?.pointerId !== e.pointerId) return;
+    e.stopPropagation(); try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    objStretchRef.current = null;
+  };
+
   /* ---- 預覽縮放 ------------------------------------------------------------
      自己實作雙指縮放平移。react-zoom-pan-pinch 靠 touch 事件、畫布上的筆刷與
      拖曳靠 pointer 事件，兩者會互搶（美顏那邊也踩過同一個坑）。
@@ -4600,10 +4628,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       ctx.globalAlpha = 1;
       if (isMain && !hideChromeRef.current && selectedObj === o.id && !guides.length && !tuningEdge) {
-        // 選中框維持虛線（跟挖洞那邊同一種語言）
+        // 所有选中框统一为实线；虚线只保留给内容本身的描边样式。
         ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1.6 * uiPx;
-        ctx.setLineDash([6.7 * uiPx, 6.7 * uiPx]);
+        ctx.setLineDash([]);
         if (shapeSel === o.id && isImgShaped(o.imgShape)) {
           /* 第二段：選中的是「形狀」—— 方框收起來，改成沿著形狀本身描一圈。
              往外讓 2 個螢幕像素，線才不會壓在圖案的邊上。 */
@@ -6636,20 +6664,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const bx0 = -o.w / 2 + ink.x, by0 = -o.h / 2 + ink.y;
           const rad = ((o.rot || 0) * Math.PI) / 180;
           const cosR = Math.cos(rad), sinR = Math.sin(rad);
-          let lowest = -Infinity;
+          let lowest = -Infinity, highest = Infinity;
           for (const [px, py] of [
             [bx0, by0], [bx0 + ink.w, by0], [bx0 + ink.w, by0 + ink.h], [bx0, by0 + ink.h],
           ]) {
             const ry = px * sinR + py * cosR;
             if (ry > lowest) lowest = ry;
+            if (ry < highest) highest = ry;
           }
           const mx = bx0 + ink.w / 2, my = by0 + ink.h / 2;    // 框的中心（物件座標）
           const ox = o.x + o.w / 2, oy = o.y + o.h / 2;        // 物件中心（畫布座標）
           const cx = r.left - sr.left + (ox + (mx * cosR - my * sinR)) * k;
-          let by = r.top - sr.top + (oy + lowest) * k + 10;
-          // 轉了角度之後框可能伸出舞台外面，那就把這排鍵收回看得到的地方
+          const cy = r.top - sr.top + (oy + (mx * sinR + my * cosR)) * k;
+          const bottom = r.top - sr.top + (oy + lowest) * k;
+          const top = r.top - sr.top + (oy + highest) * k;
           const stH = stEl ? stEl.getBoundingClientRect().height : 0;
-          if (stH) by = Math.min(by, stH - 44);
+          const belowFits = !stH || bottom + 42 <= stH;
+          const aboveFits = top - 42 >= 0;
+          // 下方优先；被挡时翻到上方；上下都没空间则强制回下方并守住工具栏安全线。
+          const above = !belowFits && aboveFits;
+          let by = above ? top - 42 : bottom + 10;
+          if (!above && stH) by = Math.min(by, stH - 44);
           const act = (fn: () => void) => (ev: React.SyntheticEvent) => { ev.stopPropagation(); ev.preventDefault(); fn(); };
           /* 比原本多一層：陣列最底下再往下按一次，就整個掉到「所有圖案之下」（below）。
              從 below 往上按就先回到圖案之上的最底層，再往上才是換順序。
@@ -6675,7 +6710,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             setObjects(prev => [...prev, { ...o, id, x: o.x + o.w * 0.08, y: o.y + o.h * 0.08 }]);
             setSelectedObj(id);
           };
-          return (
+          const canStretch = o.type !== 'text' && !o.sym && !isVideoEl(o.img);
+          return (<>
+            {canStretch && (
+              <div className="absolute z-[69] pointer-events-none"
+                style={{ left: cx, top: cy, width: ink.w * k, height: ink.h * k,
+                  transform: `translate(-50%, -50%) rotate(${o.rot || 0}deg)`, touchAction: 'none' }}>
+                {([
+                  ['t','left-1/2 top-0','translate(-50%,-50%)','w-6 h-2 cursor-ns-resize'],
+                  ['r','right-0 top-1/2','translate(50%,-50%)','w-2 h-6 cursor-ew-resize'],
+                  ['b','left-1/2 bottom-0','translate(-50%,50%)','w-6 h-2 cursor-ns-resize'],
+                  ['l','left-0 top-1/2','translate(-50%,-50%)','w-2 h-6 cursor-ew-resize'],
+                ] as const).map(([side,pos,tx,size]) => (
+                  <div key={side} className={`absolute ${pos} ${size} pointer-events-auto flex items-center justify-center touch-none`}
+                    style={{ transform: tx }} onPointerDown={(e) => beginObjStretch(e, o, side, k)}
+                    onPointerMove={moveObjStretch} onPointerUp={endObjStretch} onPointerCancel={endObjStretch}>
+                    <span className={`${side === 't' || side === 'b' ? 'w-4 h-1.5' : 'w-1.5 h-4'} block rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
+                  </div>
+                ))}
+              </div>
+            )}
             <div
               className="absolute z-[70] flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto"
               style={{ left: cx, top: by, transform: 'translateX(-50%)', touchAction: 'none' }}
@@ -6702,7 +6756,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 </button>
               ))}
             </div>
-          );
+          </>);
         })()}
 
         {imageState && (
