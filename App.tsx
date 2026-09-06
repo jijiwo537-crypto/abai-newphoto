@@ -56,7 +56,6 @@ import {
 } from './utils/toolDraft';
 import { listExports, loadExport, subscribeExports, type ExportMeta } from './utils/exportHistory';
 import type { ExitChoice } from './types';
-import { ensureFont } from './utils/fonts';
 
 const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
   layout: '經典拼圖',
@@ -66,7 +65,6 @@ const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
 };
 
 const App: React.FC = () => {
-  useEffect(() => { ensureFont('Klee One'); }, []);
   // 上次沒做完的東西一律先問過再接回去，不要一開 App 就直接跳進去。
   // 兩份草稿（經典拼圖／其他工具）取比較新的那一份。
   /* 首頁的「接續上次」卡要顯示時間，所以順便把草稿的時間戳一起記著 */
@@ -132,8 +130,8 @@ const App: React.FC = () => {
       setExitPromptOpen(false);
       setExitPromptBusy(false);
     };
-    const elapsed = exitSaveStartedAt.current ? performance.now() - exitSaveStartedAt.current : 800;
-    const remaining = Math.max(0, 800 - elapsed);
+    const elapsed = exitSaveStartedAt.current ? performance.now() - exitSaveStartedAt.current : 1500;
+    const remaining = Math.max(0, 1500 - elapsed);
     if (remaining > 0) exitCloseTimer.current = setTimeout(close, remaining);
     else close();
   }, []);
@@ -487,8 +485,15 @@ const App: React.FC = () => {
             {exitPromptBusy ? (
               <div className="flex flex-col items-center animate-in fade-in duration-300" aria-live="polite">
                 <div className="draft-logo-stage" aria-label="ABAI">
-                  <span className="draft-logo-ink">ABAI</span>
-                  <span className="draft-logo-tip" aria-hidden="true" />
+                  <svg className="draft-logo-svg" viewBox="0 0 190 72" role="img" aria-hidden="true">
+                    <circle className="draft-logo-seed" cx="10" cy="58" r="3.2" />
+                    <path className="draft-logo-stroke draft-logo-a1" pathLength="1" d="M10 58 C17 43 24 19 34 12 C43 17 43 42 49 58" />
+                    <path className="draft-logo-stroke draft-logo-a1-cross" pathLength="1" d="M19 42 C29 39 40 39 49 41" />
+                    <path className="draft-logo-stroke draft-logo-b" pathLength="1" d="M64 14 C63 28 63 44 64 58 M64 15 C91 8 94 29 65 34 M65 34 C98 29 100 59 65 57" />
+                    <path className="draft-logo-stroke draft-logo-a2" pathLength="1" d="M108 58 C115 43 122 19 132 12 C141 17 141 42 147 58 M117 42 C127 39 138 39 147 41" />
+                    <path className="draft-logo-stroke draft-logo-i" pathLength="1" d="M164 17 C163 29 163 44 164 58" />
+                    <circle className="draft-logo-i-dot" cx="164" cy="9" r="3.2" />
+                  </svg>
                 </div>
                 <p className="mt-5 text-[11px] font-bold tracking-[0.28em] text-white/55">正在儲存草稿</p>
               </div>
