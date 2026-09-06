@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 168718)
-Total output lines: 13513
-
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
@@ -5045,7 +5042,4268 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           title="縮放"
         >
           <div
-            className="absolute rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5…48718 tokens truncated…setX,
+            className="absolute rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]"
+            style={{ left: 1.4, top: 1.4, right: 1.4, bottom: 1.4 }}
+          />
+        </div>
+      );
+      /* 選了形狀的照片：整組外框（白框＋四顆角球）縮到形狀真正佔的那一塊。
+         形狀是「短邊的正方形、擺正中央」，所以這個框跟原本的框是**同心**的 ——
+         角球縮放那一套是以中心與半寬半高在算的，中心沒變、只有半寬半高變小，
+         所以拉角落的手感與結果完全不會跑掉（見 handleScalePointerDown）。 */
+      const chromeBox = (() => {
+        if (!isPhoto || !isImgShaped((image as any).imgShape)) return null;
+        const b = imgShapeBox(image.width, image.height);
+        return {
+          left: `${r3((b.x / image.width) * 100)}%`,
+          top: `${r3((b.y / image.height) * 100)}%`,
+          width: `${r3((b.s / image.width) * 100)}%`,
+          height: `${r3((b.s / image.height) * 100)}%`,
+        };
+      })();
+      /* 進到「選中形狀」：方框與四顆角球都收起來，改成沿著形狀描一圈。
+         那個正方形跟圖片框同心，所以直接畫在 chromeBox 這一格裡就對齊了。 */
+      const shapeOutline = shapeSelected && isImgShaped((image as any).imgShape) ? (() => {
+        /* chromeBox 已經把這一層縮到「形狀那個正方形」了，所以 viewBox 就用 b.s，
+           路徑再照 imgShapeXform 平移過去 —— 跟畫在畫布上的那一份完全對齊。 */
+        const t = imgShapeXform((image as any).imgShape, image.width, image.height);
+        const d = shapePathD((image as any).imgShape, t.S, t.S);
+        return (
+          <svg
+            className="absolute inset-0 pointer-events-none z-30"
+            viewBox={`${r3(t.b.x - t.tx)} ${r3(t.b.y - t.ty)} ${r3(t.b.s)} ${r3(t.b.s)}`}
+            preserveAspectRatio="none"
+            style={{ overflow: 'visible' }}
+            aria-hidden
+          >
+            <path
+              d={d} fill="none" stroke="#ffffff"
+              /* 線寬與虛線節奏跟創意拼圖那條一致；除掉預覽倍率與物件縮放，
+                 放大之後線才不會跟著變粗。viewBox 的單位＝未縮放的內容單位。 */
+              strokeWidth={r3(1.6 / (kNow * (image.scale || 1)))}
+              strokeDasharray={`${r3(6.7 / (kNow * (image.scale || 1)))} ${r3(6.7 / (kNow * (image.scale || 1)))}`}
+              vectorEffect="none"
+            />
+          </svg>
+        );
+      })() : null;
+      return (
+      <div
+        className={chromeBox ? 'absolute pointer-events-none' : 'absolute inset-0 pointer-events-none'}
+        style={{
+          ...(chromeBox || null),
+          visibility: showChrome ? 'visible' : 'hidden',
+          opacity: showChrome ? 1 : 0,
+          transform: 'translateZ(0)',
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
+        }}
+      >
+        {shapeOutline ? shapeOutline : isPhoto ? (
+          /* Active border matching layout style（深色那一圈是往外畫的，跟原本一樣） */
+          <div className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" />
+        ) : (
+          /* 虛線框：數值跟創意拼圖那條 strokeRect 一模一樣（1.6px 寬、6.7/6.7 的節奏）。
+             除掉預覽的倍率 k —— 放大預覽時框不會跟著變粗，跟那邊的 uiPx 同一個道理。
+             線是畫在邊界上的（一半長在外面），所以要 overflow: visible。 */
+          <svg
+            className="absolute pointer-events-none z-30"
+            style={{
+              left: -framePad.x, top: -framePad.y,
+              width: `calc(100% + ${r3(framePad.x * 2)}px)`,
+              height: `calc(100% + ${r3(framePad.y * 2)}px)`,
+              overflow: 'visible',
+            }}
+            aria-hidden
+          >
+            <rect
+              x="0" y="0" width="100%" height="100%"
+              fill="none" stroke="#ffffff"
+              strokeWidth={r3(1.6 / kNow)}
+              strokeDasharray={`${r3(6.7 / kNow)} ${r3(6.7 / kNow)}`}
+            />
+          </svg>
+        )}
+
+        {/* Four Corner scale dots（只有圖片才有；選中形狀時整組收起來） */}
+        {isPhoto && !shapeOutline && cornerDot('tl', 'top-0 left-0', 'translate(-50%, -50%)', 'cursor-nwse-resize')}
+        {isPhoto && !shapeOutline && cornerDot('tr', 'top-0 right-0', 'translate(50%, -50%)', 'cursor-nesw-resize')}
+        {isPhoto && !shapeOutline && cornerDot('bl', 'bottom-0 left-0', 'translate(-50%, 50%)', 'cursor-nesw-resize')}
+        {isPhoto && !shapeOutline && cornerDot('br', 'bottom-0 right-0', 'translate(50%, 50%)', 'cursor-nwse-resize')}
+
+      </div>
+      );
+    })()}
+    </>
+  );
+
+
+
+  return (
+    <>
+    <div
+      ref={imageRef}
+      data-floating-id={image.id}
+      className="floating-image-wrapper group/floating"
+      style={{
+        ...wrapGeo,
+        // 要疊在選取時出現的透明拖曳層（z-40）之上，直接碰圖片才拖得動
+        // 一般圖片用偶數層，佈局用奇數層，兩者才能互相穿插
+        // 被拖的那一頁整組（頁面 900、上面的東西 1000+）要蓋過其他頁
+        zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
+        touchAction: touchMode,
+      }}
+      onTouchStart={onSwapTouchStart}
+      onTouchMove={onSwapTouchMove}
+      onTouchEnd={onSwapTouchEnd}
+      onTouchCancel={onSwapTouchEnd}
+    >
+      {image.shape === 'hole' ? (
+        /* 從「圖案」借過來的那幾顆：它們不是 SVG 路徑（有的是系統字型的字、
+           有的是去背 PNG），所以預覽直接畫在 canvas 上、用的就是匯出那一支
+           drawHoleShape —— 預覽跟成品是同一段程式碼畫的，不可能對不起來。
+           畫布開 dpr 倍再用 CSS 縮回去，放大時邊緣才不會糊。 */
+        <canvas
+          ref={el => {
+            if (!el) return;
+            const dpr = Math.min(3, window.devicePixelRatio || 1);
+            const bw = Math.max(1, image.width * image.scale * dpr);
+            const bh = Math.max(1, image.height * image.scale * dpr);
+            const blurs = shapeGlowBlurs(bw, bh);
+            /* 交給 drawHoleShape 的是畫布像素，線寬的單位也要換到同一個座標系
+               （holeOpts 裡那個是內容單位，兩邊都是「長邊/160 再除掉 scale」）。 */
+            const opts = { ...holeOpts!, lineUnit: Math.max(bw, bh) / 160 / (image.scale || 1) };
+            /* 畫布要比外框大一圈：好幾種圖案的墨水本來就比框大
+               （`<333` 有 2.9 倍寬），描邊與發光也長在框外面 ——
+               畫布只開外框那麼大的話，超出去的全部被切掉。
+               撐開的是畫布，畫的內容一個像素都沒動（原點還是框心、
+               交給 drawHoleShape 的還是原本的外框）。 */
+            const w = Math.max(1, Math.round(bw + holeOv.x * image.scale * dpr * 2));
+            const h = Math.max(1, Math.round(bh + holeOv.y * image.scale * dpr * 2));
+            if (el.width !== w) el.width = w;
+            if (el.height !== h) el.height = h;
+            const c = el.getContext('2d');
+            if (!c) return;
+            c.setTransform(1, 0, 0, 1, 0, 0);
+            c.clearRect(0, 0, w, h);
+            c.translate(w / 2, h / 2);
+            drawHoleShape(c, opts, bw, bh, blurs);
+          }}
+          key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${image.shapeTex}|${image.shapeStripeN}|${image.shapeStripeDir}|${image.shapeStripeA}|${image.shapeStripeB}|${Math.round(image.width * image.scale)}|${Math.round(image.height * image.scale)}`}
+          style={{
+            /* 用百分比而不是 px：外框的寬高會被吸到整數實體像素（見 wrapGeo），
+               百分比才會跟著一起吸，畫布的中心才不會跟外框的中心差半個像素。 */
+            position: 'absolute',
+            left: `${-holeOv.x / image.width * 100}%`,
+            top: `${-holeOv.y / image.height * 100}%`,
+            width: `${(1 + 2 * holeOv.x / image.width) * 100}%`,
+            height: `${(1 + 2 * holeOv.y / image.height) * 100}%`,
+            pointerEvents: 'none',
+          }}
+        />
+      ) : image.shape ? (
+        /* 圖形圖層。預覽是 SVG、匯出是 Path2D，吃的是同一條 d 字串。
+           viewBox 用「沒有縮放前」的尺寸，外框是 width×scale ——
+           兩軸的倍率一樣，所以描邊是等比例放大、不會被拉扁。
+           overflow: visible 是因為描邊有一半長在框外面，不放行就會被切掉。 */
+        <svg
+          viewBox={`0 0 ${image.width} ${image.height}`}
+          preserveAspectRatio="none"
+          style={{
+            position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
+            overflow: 'visible', pointerEvents: 'none',
+            /* 發光：三段 drop-shadow 疊起來，跟文字／圖片的光同一套濃淡。
+               半徑寫在「沒有縮放前」的座標系上，外框放大時光會跟著一起放大。 */
+            filter: glowAmount(image.shapeGlow as any) > 0
+              ? shapeGlowBlurs(image.width, image.height)
+                  .map(r => `drop-shadow(0 0 ${r3(r * image.scale * glowAmount(image.shapeGlow as any))}px ${image.shapeGlowColor || image.color || SHAPE_DEFAULT_COLOR})`)
+                  .join(' ')
+              : undefined,
+            /* 有發光時把這一層推上自己的合成層。
+               drop-shadow 的光會長到圖形框外面，而 WebKit 在元素被拖動／縮放時
+               只會重畫「框以內」那一塊 —— 框外那圈光就留在原地變成殘影
+               （拖一次留一道，看起來像一路拉出來的影子）。
+               自己一層之後整層一起重畫，就不會有殘留。 */
+            willChange: glowAmount(image.shapeGlow as any) > 0 ? 'filter, transform' : undefined,
+          }}
+        >
+          {/* 點點：用一塊 pattern 疊在圖形上，範圍就是圖形的填色區域 ——
+              跟匯出那邊「剪裁在圖形裡面再鋪點點」是同一塊區域。
+              tile 是交錯三角格的一個週期（寬 dx、高 2dy，裡面兩顆），
+              patternTransform 把 tile 的原點移到圖形正中心，所以正中央
+              一定有一顆點 —— 這樣才跟 canvas 那邊逐顆對得起來。
+              四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
+          {/* 外描邊：畫在本體「底下」、寬度加倍 —— 本體會蓋住內半邊，
+              留在外面的就是乾淨的一圈外描邊（跟文字的描邊同一種做法）。
+              虛線只屬於本體，描邊那一圈一律是實線。 */}
+          {!!image.shapeStrokeW && (
+            <path
+              d={shapePathD(image.shape, image.width, image.height)}
+              fill="none"
+              stroke={image.shapeStrokeColor || '#000000'}
+              strokeWidth={((image.shapeFilled && image.shape !== 'line') ? 0 : (shapeStroke?.lw || 0))
+                + (shapeStroke?.outer || 0) * 2}
+              strokeLinejoin="round"
+              strokeLinecap="butt"
+            />
+          )}
+          <path
+            d={shapePathD(image.shape, image.width, image.height)}
+            fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
+            stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || SHAPE_DEFAULT_COLOR)}
+            strokeWidth={shapeStroke?.lw}
+            strokeDasharray={shapeStroke?.dashArray}
+            strokeLinecap={shapeStroke?.cap}
+            strokeLinejoin={shapeStroke?.join}
+          />
+          {/* 點點：疊在圖形上面的一塊 pattern，範圍就是圖形的填色區域 ——
+              跟匯出那邊「剪裁在圖形裡面再鋪點點」是同一塊區域。
+              tile 是交錯三角格的一個週期（寬 dx、高 2dy，裡面兩顆），
+              patternTransform 把 tile 的原點移到圖形正中心，所以正中央
+              一定有一顆點 —— 這樣才跟 canvas 那邊逐顆對得起來。
+              四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
+          {texOf({ tex: image.shapeTex, dots: image.shapeDots }) === 'dot' && (() => {
+            const { r, dx, dy, color } = shapeDotGrid(image.width, image.height, image);
+            const id = `sdots-${image.id}`;
+            return (
+              <>
+                <defs>
+                  <pattern
+                    id={id} patternUnits="userSpaceOnUse"
+                    width={r3(dx)} height={r3(dy * 2)}
+                    patternTransform={`translate(${r3(image.width / 2)} ${r3(image.height / 2)})`}
+                  >
+                    {[[0, 0], [dx, 0], [0, dy * 2], [dx, dy * 2], [dx / 2, dy]].map(([cx, cy], i) => (
+                      <circle key={i} cx={r3(cx)} cy={r3(cy)} r={r3(r)} fill={color} />
+                    ))}
+                  </pattern>
+                </defs>
+                <path
+                  d={shapePathD(image.shape, image.width, image.height)}
+                  fill={`url(#${id})`}
+                  stroke="none"
+                />
+              </>
+            );
+          })()}
+          {/* 條紋：一樣是疊在圖形填色區上的 pattern。
+              一個週期是「兩條」（各一個顏色），patternTransform 把原點移到
+              圖形正中心 —— 跟 canvas 那支 paintStripes 的起算點一致，
+              所以預覽跟匯出出來的條紋位置完全對得上。 */}
+          {texOf({ tex: image.shapeTex, dots: image.shapeDots }) === 'stripe' && (() => {
+            const vert = image.shapeStripeDir !== 'h';   // 預設直式
+            const span = vert ? image.width : image.height;
+            /* 條數就是滑桿的值 —— 跟 canvas 那支 paintStripes 同一支 stripeBand，
+               所以預覽跟匯出的條數與寬度完全一樣，頭尾也都是完整的一條。 */
+            const { band } = stripeBand(span, image.shapeStripeN ?? STRIPE_N_DEFAULT);
+            const a = image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR;
+            const b = image.shapeStripeB || '#FFFFFF';
+            const id = `sstripe-${image.id}`;
+            return (
+              <>
+                <defs>
+                  <pattern
+                    id={id} patternUnits="userSpaceOnUse"
+                    width={r3(vert ? band * 2 : band)} height={r3(vert ? band : band * 2)}
+                  >
+                    <rect x="0" y="0" width={r3(band)} height={r3(band)} fill={a} />
+                    <rect
+                      x={r3(vert ? band : 0)} y={r3(vert ? 0 : band)}
+                      width={r3(band)} height={r3(band)}
+                      fill={b} />
+                  </pattern>
+                </defs>
+                <path
+                  d={shapePathD(image.shape, image.width, image.height)}
+                  fill={`url(#${id})`}
+                  stroke="none"
+                />
+              </>
+            );
+          })()}
+        </svg>
+      ) : image.text !== undefined ? (
+        <div
+          ref={textRef}
+          style={{
+            /* ── 縮放時的上下抖動：跟創意拼圖用同一套做法 ──────────────────
+               創意拼圖的文字是畫在 canvas 上的：字級直接乘上倍率
+               （ctx.font = size × s）、textBaseline = 'middle'、畫在 (0,0)。
+               關鍵是 canvas 的字形度量是「連續的浮點數」，字就永遠對稱掛在
+               中心點上，倍率再怎麼變都不會跳。
+
+               DOM 這邊做不到同一件事：字級一變，瀏覽器就要重排一次行盒，而
+               ascent／descent 是「每個字級各自取整」出來的，行盒高度卻是
+               字級 × 1.12 連續變化 —— 兩者相減出來的半行距（half-leading）
+               就是一條鋸齒，字因此一路往下爬、然後彈回去。上一版把這一層改掛
+               在框心，只解掉了「框」那一半，字形度量取整這一半還在。
+
+               所以改成跟 canvas 完全同構的做法：這一層永遠用「一倍大」的字級
+               排版（度量從頭到尾只算一次、不會重新取整），縮放交給 transform
+               的 scale 去做 —— 等同 canvas 連續縮放字形輪廓。
+               字級、字距、描邊、發光在這裡一律用原值，倍率統一由 scale 帶。 */
+            position: 'absolute', left: '50%', top: '50%',
+            transform: `translate(-50%, -50%) scale(${image.scale})`,
+            transformOrigin: 'center center',
+            /* 縮放時的殘影：這一層只有 transform 在變，可是它裡面是**文字**
+               （還可能帶 text-shadow 的發光），瀏覽器把它當一般內容重畫時，
+               上一格畫過的地方不一定會被清乾淨 —— 在手機上看起來就是一路
+               留下一串愈來愈小的殘影。把它升成自己的合成層（translateZ ＋
+               will-change），縮放就只是「把同一張貼圖拉大縮小」，
+               不會再有沒清掉的舊像素。 */
+            willChange: 'transform',
+            backfaceVisibility: 'hidden',
+            WebkitBackfaceVisibility: 'hidden',
+            width: `${image.width}px`, height: `${image.height}px`,
+            pointerEvents: 'none',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontFamily: fontStack(image.fontFamily),
+            fontSize: `${image.fontSize || 40}px`,
+            lineHeight: 1.12,
+            fontWeight: image.bold ? 700 : 400,
+            fontStyle: image.italic ? 'italic' : 'normal',
+            // 倍率由外層的 scale 帶，這裡一律用原值（見上面的說明）
+            letterSpacing: `${image.letterSpacing || 0}px`,
+            color: image.color || '#FFFFFF',
+            // 只有使用者自己按的換行才換行，不自動斷行
+            whiteSpace: 'pre',
+            wordBreak: 'normal',
+            overflowWrap: 'normal',
+            textAlign: 'center',
+            // 描邊：只描字的外圍輪廓。-webkit-text-stroke 是沿著輪廓中線描，
+            // 一半會吃進字身，看起來像每一筆都被描了一圈。改成 paint-order
+            // 把描邊畫在填色「下面」、寬度加倍 —— 字身蓋住內半邊，
+            // 剩下的就是純外描邊。
+            WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2}px` : undefined,
+            WebkitTextStrokeColor: image.strokeWidth ? (image.strokeColor || '#000000') : undefined,
+            // 沒有描邊時不要留著 paint-order。
+            paintOrder: image.strokeWidth ? 'stroke fill' : undefined,
+            /* 發光不畫在這一層。text-shadow 的輪廓是「填色＋描邊」合起來的形狀，
+               所以一旦加了描邊，光就沿著描邊的外緣散開 —— 看起來就是描邊突然
+               變粗一大圈。匯出那邊是「先用填色的形狀畫光、再畫描邊、最後填色」，
+               兩邊對不起來。改成下面另外疊一層只有光的文字，跟匯出同一套順序。 */
+            textShadow: 'none',
+            boxSizing: 'border-box',
+          }}
+        >
+          {/* 發光層：疊在主層底下，只負責發光。發光跟描邊是兩件獨立的事 ——
+              這一層把描邊明確歸零（-webkit-text-stroke 會從外層繼承下來，
+              不歸零的話這一層也會被描到），所以光永遠只從「字身本來的輪廓」
+              散出去，描邊粗細完全不參與計算：只調發光跟同時開描邊，看到的
+              光一模一樣。
+
+              用 text-shadow、而且只用「一層」，是刻意的：
+              ① text-shadow 是文字墨跡的一部分，不會建立合成層、不會有
+                 filter 的濾鏡區域，所以不會在光暈外圍被裁出一條硬邊；
+              ② 疊多層會讓字緣的抗鋸齒像素重複合成（0.5 疊三次變 0.875），
+                 在柔和的光暈上就浮出一圈明顯的分割線。
+              三段模糊半徑寫在同一個 text-shadow 裡，濃度跟原本一樣，
+              但整層只畫一次，邊緣乾淨。 */}
+          {!!image.glow && (
+            <span
+              aria-hidden
+              style={{
+                position: 'absolute', left: 0, top: 0, right: 0, bottom: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                pointerEvents: 'none', whiteSpace: 'pre', textAlign: 'center',
+                color: image.color || '#FFFFFF',
+                // 這一層絕對不描邊，光才不會算到描邊的部分
+                WebkitTextStrokeWidth: 0,
+                paintOrder: 'normal',
+                textShadow: [1, 2, 3]
+                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k}px ${image.glowColor || '#FFFFFF'}`)
+                  .join(', '),
+                // 跟圖形的發光同一個理由：光長在框外面，不自己一層就會拖出殘影
+                willChange: 'transform',
+                visibility: isTextEditing ? 'hidden' : undefined,
+              }}
+            >
+              {image.text}
+            </span>
+          )}
+
+          <span
+            ref={textInnerRef}
+            style={{
+              display: 'inline-block',
+              // 主層要蓋在發光層上面
+              position: 'relative', zIndex: 1,
+              // width: max-content 才能不受外框寬度限制地量到真正需要的寬度，
+              // 否則框被縮到上一次的寬度之後，文字就會一直卡在那個寬度換行
+              width: 'max-content',
+              // 外層是 flex，不擋住收縮的話這個 span 會被壓回外框寬度而提早換行
+              flexShrink: 0,
+              // 不設寬度上限：文字只在使用者自己換行的地方斷，
+              // 有上限的話 pre 會直接被裁掉而不是換行。
+              whiteSpace: 'pre',
+              // 打字時字還是由這個 span 撐出版面（框才會跟著長），
+              // 只是讓位給上面那層真正在收鍵盤輸入的 textarea
+              visibility: isTextEditing ? 'hidden' : undefined,
+            }}
+          >
+            {image.text}
+          </span>
+
+          {/* 量測專用：永遠 1 倍大、不參與版面，框的寬高只看它 */}
+          <span
+            ref={textMeasureRef}
+            aria-hidden
+            style={{
+              position: 'absolute', left: 0, top: 0,
+              visibility: 'hidden', pointerEvents: 'none',
+              display: 'inline-block', width: 'max-content',
+              whiteSpace: 'pre', wordBreak: 'normal', overflowWrap: 'normal',
+              fontFamily: fontStack(image.fontFamily),
+              fontSize: `${image.fontSize || 40}px`,
+              fontWeight: image.bold ? 700 : 400,
+              fontStyle: image.italic ? 'italic' : 'normal',
+              letterSpacing: `${image.letterSpacing || 0}px`,
+              lineHeight: 1.12,
+            }}
+          >
+            {/* 內容是空的（剛點進去打字、預設字被清掉）就拿預設那四個字來量，
+                框才會維持原本的大小，等真的打了字再照打的內容量。
+                符號則是拿自己那顆來量。 */}
+            {image.text === '' ? (image.sym || TEXT_PLACEHOLDER) : image.text}
+          </span>
+
+          {/* 直接在畫布上打字：疊一層一模一樣排版的 textarea，
+              原生鍵盤與游標都交給它，內容仍然即時寫回圖層 */}
+          {isTextEditing && (
+            <textarea
+              ref={textAreaRef}
+              value={image.text}
+              // 關掉軟換行，打字時看到的斷行才跟收工後一樣
+              wrap="off"
+              onChange={e => onChange({ text: e.target.value })}
+              onBlur={e => {
+                /* 剛打開的那一瞬間被搶走焦點的，是同一下手勢補送的滑鼠事件，
+                   不是使用者真的點去別的地方 —— 把焦點搶回來就好。 */
+                if (performance.now() - textOpenAt.current < 500) {
+                  const el = e.currentTarget;
+                  requestAnimationFrame(() => { try { el.focus({ preventScroll: true }); } catch {} });
+                  return;
+                }
+                onTextEditEnd?.();
+              }}
+              onPointerDown={e => e.stopPropagation()}
+              // 單指是在編輯文字，不要被畫布搶走；兩指則讓畫布接手，
+              // 這樣打字中也還能直接縮放／旋轉
+              onTouchStart={e => { if (e.touches.length < 2) e.stopPropagation(); }}
+              onTouchMove={e => { if (e.touches.length < 2) e.stopPropagation(); }}
+              style={{
+                position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
+                margin: 0, padding: 0, border: 'none', outline: 'none', resize: 'none',
+                background: 'transparent', overflow: 'hidden', pointerEvents: 'auto',
+                font: 'inherit', fontFamily: 'inherit', fontSize: 'inherit',
+                fontWeight: 'inherit', letterSpacing: 'inherit', lineHeight: 'inherit',
+                color: 'inherit', textAlign: 'center', whiteSpace: 'pre',
+                caretColor: image.color || '#FFFFFF',
+                zIndex: 45,
+              }}
+            />
+          )}
+        </div>
+      ) : needsShapeCanvas ? (
+        // 圓角／羽化／發光都畫在 canvas 上。用 CSS 遮罩的話每動一格滑桿就要
+        // 重新解碼一張遮罩圖，畫面會一閃一閃；canvas 是同一格畫完才送出，不會閃。
+        // 發光也才能跟文字一樣「同一個來源疊三層」，而不是一層陰影再套一層。
+        <canvas
+          ref={shapeCanvasRef}
+          style={{
+            position: 'absolute',
+            left: `${-glowPad}px`,
+            top: `${-glowPad}px`,
+            /* 版面尺寸要對齊實體像素格線。
+               內部畫布是 round((boxW+2pad)×dpr) 個像素，但 CSS 這裡本來寫的是
+               沒有捨入的浮點寬高 —— 兩者對不上時瀏覽器會用非整數倍率重取樣，
+               最外面那一列就跟外面的透明混在一起，縮放的過程中沿路留下一條
+               忽隱忽現的細線。改成用「同一個捨入結果 ÷ dpr」，倍率剛好是 1:1。 */
+            width: `${snapPx(boxW + glowPad * 2)}px`,
+            height: `${snapPx(boxH + glowPad * 2)}px`,
+            pointerEvents: 'none',
+          }}
+        />
+      ) : image.isVideo ? (
+        /* 影片一律走這一層。
+           沒套濾鏡時它就是原本那個 <video>（原生解析度、完全不佔主執行緒，
+           這條路本來就沒問題）；套了濾鏡就多掛一張 GPU 畫布蓋在上面，
+           **版面與變換兩者共用同一份**，所以套不套濾鏡都不會跑位。 */
+        <VideoLayer
+          image={image}
+          boxW={boxW}
+          boxH={boxH}
+          videoRef={glVideoRef}
+          onReady={() => setVidReady(true)}
+          hidden={glLive}
+          glCanvas={videoWantsGl ? glCanvas : null}
+        />
+      ) : (
+        <img
+          src={image.src}
+          alt="floating-item"
+          style={{ width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' }}
+        />
+      )}
+
+      {/* 拖曳來源與拖放目標都只是變暗，不用半透明也不加白框。
+          變暗的那一塊要跟圖層現在的形狀一樣 —— 圓角、羽化、愛心、星星…
+          都跟著走（以前不管形狀怎麼改，暗下去的永遠是一個方塊）。
+          用的是跟影片圖層同一支 shapeParts，所以兩邊不可能長得不一樣。 */}
+      {(isSwapTarget || isSwapSource) && (
+        <div
+          data-dim-overlay="1"
+          className="absolute inset-0 pointer-events-none z-40"
+          style={{
+            backgroundColor: isSwapTarget ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.3)',
+            borderRadius: dimShape.cssRadius,
+            ...(dimShape.maskUrl ? {
+              WebkitMaskImage: `url(${dimShape.maskUrl})`, maskImage: `url(${dimShape.maskUrl})`,
+              WebkitMaskSize: '100% 100%', maskSize: '100% 100%',
+              WebkitMaskRepeat: 'no-repeat', maskRepeat: 'no-repeat',
+            } : null),
+          }}
+        />
+      )}
+      
+      <div
+        className="absolute inset-0 cursor-move"
+        onPointerDown={handleBodyPointerDown}
+        onPointerMove={handleBodyPointerMove}
+        onPointerUp={handleBodyPointerUp}
+        onPointerCancel={handleBodyPointerUp}
+      />
+
+      {/* 拿不到外框層時就照原本的方式掛在自己身上，行為完全不變 */}
+      {!chromeLayer && chrome}
+    </div>
+
+      {chromeLayer && createPortal(
+        <div
+          data-floating-id={image.id}
+          className="floating-image-chrome"
+          style={{
+            ...wrapGeo,
+            /* 這一層只是外框的容器，本身不接手勢：
+               只有圓球與工具列自己開 pointer-events，其餘一律穿透下去，
+               點在框裡面時仍然是打到底下那個物件（拖曳手感完全不變）。 */
+            pointerEvents: 'none',
+            /* 外框永遠畫在最上面。頁面容器沒有自成堆疊環境（position: relative、
+               z-index: auto），所以裡面那些 60～1000+ 的圖層是跟這一層平起平坐地
+               比大小的 —— 要壓過它們就得比最大的那個還高。 */
+            zIndex: 100000 + stackIndex * 2,
+          }}
+        >
+          {chrome}
+        </div>,
+        chromeLayer,
+      )}
+    </>
+  );
+};
+
+interface GridLayoutToolProps {
+  /** 從歷史紀錄點開來的那一筆的 key。再記一次的時候沿用它＝更新同一筆 */
+  histKey?: string | null;
+  onHome: () => void;
+  onRequestExit?: () => Promise<ExitChoice>;
+  onImportNew?: () => void;
+  initialFiles?: File[];
+  /** 從首頁的歷史紀錄點回來時，把那一份版面餵回來（優先於自動存檔的草稿） */
+  initialState?: any;
+  /** 濾鏡清單，跟「編輯」用的是同一份 */
+  lutList?: { id: string; name: string; url: string }[];
+}
+
+export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome, onRequestExit, onImportNew, initialFiles, initialState, lutList = [] }) => {
+  /** 一頁上可以放多個佈局，每個佈局都是一個獨立物件（跟一般圖片一樣）。 */
+  interface LayoutItem {
+    id: string;
+    templateIndex: number;
+    images: ImageCell[];
+    /** 佈局在頁面上的位移與縮放。新增時預設佔頁面七分滿。 */
+    t: { x: number; y: number; scale: number; rot?: number };
+    /** 圖層堆疊位置：0 = 在所有一般圖片下方，N = 在全部上方。 */
+    z: number;
+    /** 這個佈局自己的長寬比（'3:4' 之類）。沒設就跟整頁一樣。 */
+    ratio?: string;
+    /** 這個佈局自己的比例是不是橫過來 */
+    landscape?: boolean;
+    /** 間距與圓角都是各佈局自己的設定，調整不會影響之後新增的佈局。 */
+    gap: number;
+    radius: number;
+  }
+
+  interface PageConfig {
+    id: string;
+    bgColor: string;
+    layouts: LayoutItem[];
+    /** 這一頁的背景紋理。沒設過就是「無」，所以舊作品讀回來也不會有東西冒出來 */
+    pattern?: PatternOpts;
+  }
+  /** 讀某一頁的紋理設定（沒設過就給預設值） */
+  const pagePattern = (p?: { pattern?: PatternOpts }): PatternOpts =>
+    p?.pattern || { type: 'none', color: '#A8DDE6', size: 50, gap: 20 };
+
+  const [pages, setPages] = useState<PageConfig[]>(() => [
+    { id: 'page-1', bgColor: '#ffffff', layouts: [] }
+  ]);
+  const [activePageIndex, setActivePageIndex] = useState<number>(0);
+  const [floatingImages, setFloatingImages] = useState<FloatingImage[]>([]);
+  const [selectedFloatingId, setSelectedFloatingId] = useState<string | null>(null);
+  const [activeGuidelines, setActiveGuidelines] = useState<AlignmentGuideline[]>([]);
+  const [enableSnapping, setEnableSnapping] = useState(true);
+  /** 上方那顆三個點的選單 */
+  const [moreOpen, setMoreOpen] = useState(false);
+  /* 三個點的選單：點畫面上任何其他地方都要收起來。
+     選單自己那塊 fixed inset-0 的遮罩不夠用 —— 它被關在頂欄裡面，而頂欄有
+     backdrop-blur，帶 backdrop-filter 的祖先會變成 fixed 的「包含塊」，
+     所以那片遮罩其實只蓋住頂欄那一條，點畫布是點不到它的。
+     改成開著的時候在 document 上聽一次按下：只要不是按在選單自己身上就關掉
+     （用捕獲階段，中途有人擋掉冒泡也照樣收得起來）。 */
+  const moreWrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onDown = (ev: Event) => {
+      const el = moreWrapRef.current;
+      if (el && ev.target instanceof Node && el.contains(ev.target)) return;
+      setMoreOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [moreOpen]);
+  /** IG 貼文預覽 */
+  const [igPreview, setIgPreview] = useState(false);
+
+  const workspacePointerDown = useRef<{ x: number, y: number, time: number, onBlank?: boolean, movesObject?: boolean } | null>(null);
+  /** 這個位置是空白嗎（不是圖層、不是格子、也不是佈局） */
+  const isBlankTarget = (t: Element | null) =>
+    !t || (!t.closest('[data-floating-id]') && !t.closest('[data-cell-id]') && !t.closest('[data-layout-wrapper]'));
+  const globalFloatingTouchState = useRef<{
+    startX: number;
+    startY: number;
+    startImgX: number;
+    startImgY: number;
+    startDist?: number;
+    startScale?: number;
+    isDragging: boolean;
+    isPinching: boolean;
+  } | null>(null);
+
+  const getPageRect = (pageIdx: number) => {
+    if (!pagesContainerRef.current) return null;
+    const activePageEl = document.getElementById(pageIdx === 0 ? "grid-preview-container" : `grid-preview-container-${pageIdx}`);
+    if (!activePageEl) {
+      return {
+        left: 0,
+        right: previewW,
+        top: 0,
+        bottom: previewH,
+        centerX: previewW / 2,
+        centerY: previewH / 2,
+        width: previewW,
+        height: previewH,
+      };
+    }
+    const containerRect = pagesContainerRef.current.getBoundingClientRect();
+    const pageRect = activePageEl.getBoundingClientRect();
+
+    /* getBoundingClientRect 量到的是「螢幕上的大小」，已經乘過畫布縮放倍率；
+       但圖片、文字的 x／y／寬高全都是「未縮放的內容座標」。
+       兩邊直接混在一起算，只要使用者縮放過畫布，對齊線就會落在錯的位置、
+       吸附也會吸到錯的地方 —— 所以這裡先除回內容座標。 */
+    const k = kRef.current || 1;
+    const left = (pageRect.left - containerRect.left) / k;
+    const top = (pageRect.top - containerRect.top) / k;
+    const width = pageRect.width / k;
+    const height = pageRect.height / k;
+    
+    return {
+      left,
+      top,
+      right: left + width,
+      bottom: top + height,
+      centerX: left + width / 2,
+      centerY: top + height / 2,
+      width,
+      height,
+    };
+  };
+
+  const getActivePageRect = () => getPageRect(activePageIndex);
+
+  const getAllPageRects = () => {
+    if (!pagesContainerRef.current) return [];
+    const containerRect = pagesContainerRef.current.getBoundingClientRect();
+    // 同 getPageRect：量到的是螢幕尺寸，要除回內容座標才能跟圖片的 x／y 比
+    const k = kRef.current || 1;
+
+    return pages.map((page, pageIdx) => {
+      const pageEl = document.getElementById(pageIdx === 0 ? "grid-preview-container" : `grid-preview-container-${pageIdx}`);
+      if (!pageEl) {
+        const left = pageIdx * (previewW + 1);
+        return {
+          left,
+          top: 0,
+          right: left + previewW,
+          bottom: previewH,
+          centerX: left + previewW / 2,
+          centerY: previewH / 2,
+          width: previewW,
+          height: previewH,
+          pageIdx,
+        };
+      }
+      const pageRect = pageEl.getBoundingClientRect();
+      const left = (pageRect.left - containerRect.left) / k;
+      const top = (pageRect.top - containerRect.top) / k;
+      const width = pageRect.width / k;
+      const height = pageRect.height / k;
+      return {
+        left,
+        top,
+        right: left + width,
+        bottom: top + height,
+        centerX: left + width / 2,
+        centerY: top + height / 2,
+        width,
+        height,
+        pageIdx,
+      };
+    });
+  };
+
+  /**
+   * 只回傳「物件目前所在的那一頁」的邊界。
+   *
+   * 相鄰兩頁中間留了 1px 的分隔（stride = previewW + 1），所以上一頁的右緣和
+   * 下一頁的左緣是兩個相差 1px 的獨立吸附點 —— 拖過去時會亮一次、再往前 1px
+   * 又亮一次，看起來就像同一條邊觸發了兩次。改成只跟自己這一頁對齊之後，
+   * 一條邊就只有一個吸附位置。
+   * 中心點不在任何一頁上（例如拖到頁面外的空白處）時退回全部，行為跟以前一樣。
+   */
+  const pageRectsNear = (rects: ReturnType<typeof getAllPageRects>, centerX: number) => {
+    const own = rects.filter(r => centerX >= r.left - 0.5 && centerX <= r.right + 0.5);
+    return own.length ? own : rects;
+  };
+
+  /**
+   * 頁與頁之間那條分割線的 x（內容座標）。
+   * 物件的「中心」可以對到它 —— 跨頁擺放時要的就是「正好騎在接縫上」。
+   */
+  const seamXs = () => {
+    const rs = getAllPageRects();
+    const out: number[] = [];
+    for (let i = 0; i < rs.length - 1; i++) out.push((rs[i].right + rs[i + 1].left) / 2);
+    return out;
+  };
+
+  /**
+   * 同一條線只留一份（吸附挑到的那條可能跟下面重新掃出來的重複）。
+   * 傳了 centerX 就順便把「橫線只畫在這一頁」的左右範圍補上 ——
+   * 水平的對齊線是對齊「這個物件所在的那一頁」，跨到隔壁頁去沒有意義。
+   * 直線不限制：它本來就只有一頁那麼寬。
+   */
+  const dedupeGuidelines = (list: AlignmentGuideline[], centerX?: number) => {
+    const pr = centerX == null ? null : (pageRectsNear(getAllPageRects(), centerX)[0] || null);
+    const seen = new Set<string>();
+    return list.filter(g => {
+      const k = `${g.type}|${Math.round(g.coord * 10)}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    }).map(g => (g.type === 'horizontal' && pr && g.x0 == null)
+      ? { ...g, x0: pr.left, x1: pr.right }
+      : g);
+  };
+
+  /**
+   * 在指定位置上，列出「現在真的對齊到」的畫布輔助線：
+   * 垂直中線、水平中線、以及畫布的四個邊界。
+   * 吸附時邊界會刻意外溢 1px 防止次像素縫，所以邊界的容許值放寬一點。
+   */
+  /** 旋轉之後真正佔的框（外接矩形）。0/180 度就是原本的寬高，90 度會對調。 */
+  const rotExtent = (w: number, h: number, rot: number) => {
+    const r = ((rot || 0) * Math.PI) / 180;
+    const c = Math.abs(Math.cos(r)), sn = Math.abs(Math.sin(r));
+    return { bw: w * c + h * sn, bh: w * sn + h * c };
+  };
+
+  const pageGuidelinesAt = (
+    x: number, y: number, imgWidth: number, imgHeight: number, scale: number, edgeOnly = false, rot = 0,
+  ): AlignmentGuideline[] => {
+    const out: AlignmentGuideline[] = [];
+    // 轉過的圖要用外接矩形去比，不然線會亮在離邊緣半個身子的地方
+    const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * scale, imgHeight * scale, rot);
+    const cx = x + imgWidth / 2;
+    const cy = y + imgHeight / 2;
+    const left = cx - scaledW / 2, right = cx + scaledW / 2;
+    const top = cy - scaledH / 2, bottom = cy + scaledH / 2;
+    const EPS_C = 0.75;   // 中線是精準吸附
+    /* 貼齊是「剛好對齊、不外溢」，容差只留給次像素捨入。
+       超過就代表真的有縫（或真的超出去），那就不該畫線 —— 不然會出現
+       「線亮了、圖卻沒真的貼上去」的落差。 */
+    const EPS_E = 0.6;
+    pageRectsNear(getAllPageRects(), cx).forEach(pr => {
+      if (!edgeOnly && Math.abs(cx - pr.centerX) < EPS_C) out.push({ type: 'vertical', coord: pr.centerX });
+      if (Math.abs(left - pr.left) < EPS_E) out.push({ type: 'vertical', coord: pr.left });
+      if (Math.abs(right - pr.right) < EPS_E) out.push({ type: 'vertical', coord: pr.right });
+      if (!edgeOnly && Math.abs(cy - pr.centerY) < EPS_C) out.push({ type: 'horizontal', coord: pr.centerY });
+      if (Math.abs(top - pr.top) < EPS_E) out.push({ type: 'horizontal', coord: pr.top });
+      if (Math.abs(bottom - pr.bottom) < EPS_E) out.push({ type: 'horizontal', coord: pr.bottom });
+    });
+    // 中心騎在頁與頁的分割線上時，也亮一條線
+    if (!edgeOnly) seamXs().forEach(sx => {
+      if (Math.abs(cx - sx) < EPS_C) out.push({ type: 'vertical', coord: sx });
+    });
+    return out;
+  };
+
+  const applySnapping = (
+    imgId: string,
+    rawX: number,
+    rawY: number,
+    imgWidth: number,
+    imgHeight: number,
+    imgScale: number,
+    edgeOnly?: boolean,
+    rot = 0
+  ) => {
+    if (!enableSnapping) {
+      return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
+    }
+    // 只跟自己所在的那一頁對齊：隔壁頁的邊界只差 1px，兩個都留著會讓同一條邊
+    // 出現兩個吸附位置（拖過去亮一次、再往前 1px 又亮一次）
+    const pageRects = pageRectsNear(getAllPageRects(), rawX + imgWidth / 2);
+    if (pageRects.length === 0) {
+      return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
+    }
+
+    const SNAP_THRESHOLD = 4; // Snapping threshold reduced to 4px
+    const ownPageRectsForFit = pageRects;
+    // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
+    const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
+
+    // Center coordinates for raw input
+    const rawCenterX = rawX + imgWidth / 2;
+    const rawCenterY = rawY + imgHeight / 2;
+
+    // Edges for raw input
+    const rawLeft = rawCenterX - scaledW / 2;
+    const rawRight = rawCenterX + scaledW / 2;
+    const rawTop = rawCenterY - scaledH / 2;
+    const rawBottom = rawCenterY + scaledH / 2;
+
+    let snappedX = rawX;
+    let snappedY = rawY;
+    const guidelines: AlignmentGuideline[] = [];
+
+    // 1. Vertical snapping (determines snappedX)
+    let minDiffX = Infinity;
+    let bestSnapX = rawX;
+    let bestGuidelineX: number | null = null;
+
+    // Check ALL pages' boundaries (centerX, left edge, right edge)
+    pageRects.forEach(pageRect => {
+      // Page centerX (only if not edgeOnly)
+      if (!edgeOnly) {
+        const diffCenterX = rawCenterX - pageRect.centerX;
+        if (Math.abs(diffCenterX) < SNAP_THRESHOLD && Math.abs(diffCenterX) < Math.abs(minDiffX)) {
+          minDiffX = diffCenterX;
+          bestSnapX = pageRect.centerX - imgWidth / 2;
+          bestGuidelineX = pageRect.centerX;
+        }
+      }
+
+      // Page left edge
+      const diffLeft = rawLeft - pageRect.left;
+      if (Math.abs(diffLeft) < SNAP_THRESHOLD && Math.abs(diffLeft) < Math.abs(minDiffX)) {
+        minDiffX = diffLeft;
+        /* 往外多半個像素：剛好貼齊時邊緣落在非整數像素上，抗鋸齒會讓最外面
+           那一列露出底下的頁面白色，看起來就是一條髮絲白縫。半個像素肉眼看不
+           出來，也不會像原本的 1px 那樣溢到隔壁頁。 */
+        bestSnapX = pageRect.left - imgWidth / 2 + scaledW / 2;
+        bestGuidelineX = pageRect.left;
+      }
+
+      // Page right edge
+      const diffRight = rawRight - pageRect.right;
+      if (Math.abs(diffRight) < SNAP_THRESHOLD && Math.abs(diffRight) < Math.abs(minDiffX)) {
+        minDiffX = diffRight;
+        bestSnapX = pageRect.right - imgWidth / 2 - scaledW / 2;
+        bestGuidelineX = pageRect.right;
+      }
+    });
+
+    /* 物件的中心也能吸到「頁與頁之間那條分割線」——
+       跨頁擺一個物件時，想要的就是正好騎在接縫上。
+       只在中心對齊模式下開放（edgeOnly 的手勢是在調大小，不該被拉走）。 */
+    if (!edgeOnly) {
+      seamXs().forEach(sx => {
+        const diffSeam = rawCenterX - sx;
+        if (Math.abs(diffSeam) < SNAP_THRESHOLD && Math.abs(diffSeam) < Math.abs(minDiffX)) {
+          minDiffX = diffSeam;
+          bestSnapX = sx - imgWidth / 2;
+          bestGuidelineX = sx;
+        }
+      });
+    }
+
+    // Image-to-image vertical edge snapping
+    floatingImages.forEach(other => {
+      if (other.id === imgId) return;
+
+      const otherW = rotExtent(other.width * other.scale, other.height * other.scale, other.rotation || 0).bw;
+      const otherCenterX = other.x + other.width / 2;
+      const otherLeft = otherCenterX - otherW / 2;
+      const otherRight = otherCenterX + otherW / 2;
+
+      // Center-to-center alignment
+      const diffCCX = rawCenterX - otherCenterX;
+      if (Math.abs(diffCCX) < SNAP_THRESHOLD && Math.abs(diffCCX) < Math.abs(minDiffX)) {
+        minDiffX = diffCCX;
+        bestSnapX = otherCenterX - imgWidth / 2;
+        bestGuidelineX = otherCenterX;
+      }
+
+      // Current Left edge with other Left edge
+      const diffLL = rawLeft - otherLeft;
+      if (Math.abs(diffLL) < SNAP_THRESHOLD && Math.abs(diffLL) < Math.abs(minDiffX)) {
+        minDiffX = diffLL;
+        bestSnapX = otherLeft - imgWidth / 2 + scaledW / 2;
+        bestGuidelineX = otherLeft;
+      }
+      // Current Left edge with other Right edge
+      const diffLR = rawLeft - otherRight;
+      if (Math.abs(diffLR) < SNAP_THRESHOLD && Math.abs(diffLR) < Math.abs(minDiffX)) {
+        minDiffX = diffLR;
+        bestSnapX = otherRight - imgWidth / 2 + scaledW / 2;
+        bestGuidelineX = otherRight;
+      }
+      // Current Right edge with other Left edge
+      const diffRL = rawRight - otherLeft;
+      if (Math.abs(diffRL) < SNAP_THRESHOLD && Math.abs(diffRL) < Math.abs(minDiffX)) {
+        minDiffX = diffRL;
+        bestSnapX = otherLeft - imgWidth / 2 - scaledW / 2;
+        bestGuidelineX = otherLeft;
+      }
+      // Current Right edge with other Right edge
+      const diffRR = rawRight - otherRight;
+      if (Math.abs(diffRR) < SNAP_THRESHOLD && Math.abs(diffRR) < Math.abs(minDiffX)) {
+        minDiffX = diffRR;
+        bestSnapX = otherRight - imgWidth / 2 - scaledW / 2;
+        bestGuidelineX = otherRight;
+      }
+    });
+
+    if (bestGuidelineX !== null) {
+      snappedX = bestSnapX;
+      /* ── 對齊線一定要跟吸附後的邊緣重合 ────────────────────────────
+         邊緣落在非整數的實體像素時，瀏覽器會把最外面那一列跟底下的頁面白色
+         混在一起，看起來就是一條髮絲白線（只有預覽會，匯出是畫在 canvas 上），
+         所以吸附完還要把邊緣挪到實體像素格線上。
+
+         以前只挪物件、對齊線留在原處，於是「線亮了，可是東西沒有剛好貼上去」；
+         而且是往外捨入，最多差一整個實體像素。現在改成就近捨入（最多差半個），
+         而且**把對齊線一起挪過去** —— 線畫在哪裡，邊緣就在哪裡，
+         看到的是 100% 重合。 */
+      const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+      const leftEdge = snappedX + imgWidth / 2 - scaledW / 2;
+      const rightEdge = leftEdge + scaledW;
+      let gx: number = bestGuidelineX;
+      if (Math.abs(leftEdge - gx) < 0.51) {
+        const q = Math.round(leftEdge * dpr) / dpr;
+        snappedX += q - leftEdge; gx = q;
+      } else if (Math.abs(rightEdge - gx) < 0.51) {
+        const q = Math.round(rightEdge * dpr) / dpr;
+        snappedX += q - rightEdge; gx = q;
+      }
+      guidelines.push({ type: 'vertical', coord: gx });
+    }
+    /* 圖層比頁面「幾乎一樣寬」時，左緣貼齊與右緣貼齊是兩個相差零點幾 px 的位置，
+       從哪一邊靠過去就吸到哪一個 —— 那就是「由外而內沒縫、由內而外有縫」。
+       這種情況直接把圖擺成「兩邊都不露白」：以較寬的那一側為準置中對齊。 */
+    ownPageRectsForFit.forEach(pr => {
+      const w = pr.right - pr.left;
+      if (Math.abs(scaledW - w) < 2 && Math.abs((snappedX + imgWidth / 2) - pr.centerX) < 4) {
+        snappedX = pr.centerX - imgWidth / 2;
+      }
+    });
+    /* 圖層已經「幾乎剛好等於整頁」時，光把位置對準還不夠 —— 只要比頁面窄零點幾
+       px，置中之後兩側各留 0.25px，抗鋸齒就會把那條縫顯示出來。這裡順便回報一個
+       「確實覆蓋整頁再多半個像素」的倍率，讓拖曳也能把最後那一點補起來。
+       頁面本來就會裁掉超出的部分，所以多蓋的完全看不到。 */
+    // 2. Horizontal snapping (determines snappedY)
+    let minDiffY = Infinity;
+    let bestSnapY = rawY;
+    let bestGuidelineY: number | null = null;
+
+    // Check ALL pages' boundaries (centerY, top edge, bottom edge)
+    pageRects.forEach(pageRect => {
+      // Page centerY (only if not edgeOnly)
+      if (!edgeOnly) {
+        const diffCenterY = rawCenterY - pageRect.centerY;
+        if (Math.abs(diffCenterY) < SNAP_THRESHOLD && Math.abs(diffCenterY) < Math.abs(minDiffY)) {
+          minDiffY = diffCenterY;
+          bestSnapY = pageRect.centerY - imgHeight / 2;
+          bestGuidelineY = pageRect.centerY;
+        }
+      }
+
+      // Page top edge
+      const diffTop = rawTop - pageRect.top;
+      if (Math.abs(diffTop) < SNAP_THRESHOLD && Math.abs(diffTop) < Math.abs(minDiffY)) {
+        minDiffY = diffTop;
+        // Bleed 1px outwards (top) to prevent subpixel edge gap in browser preview
+        bestSnapY = pageRect.top - imgHeight / 2 + scaledH / 2;
+        bestGuidelineY = pageRect.top;
+      }
+
+      // Page bottom edge
+      const diffBottom = rawBottom - pageRect.bottom;
+      if (Math.abs(diffBottom) < SNAP_THRESHOLD && Math.abs(diffBottom) < Math.abs(minDiffY)) {
+        minDiffY = diffBottom;
+        // Bleed 1px outwards (bottom) to prevent subpixel edge gap in browser preview
+        bestSnapY = pageRect.bottom - imgHeight / 2 - scaledH / 2;
+        bestGuidelineY = pageRect.bottom;
+      }
+    });
+
+    // Image-to-image horizontal edge snapping
+    floatingImages.forEach(other => {
+      if (other.id === imgId) return;
+
+      const otherH = rotExtent(other.width * other.scale, other.height * other.scale, other.rotation || 0).bh;
+      const otherCenterY = other.y + other.height / 2;
+      const otherTop = otherCenterY - otherH / 2;
+      const otherBottom = otherCenterY + otherH / 2;
+
+      // Center-to-center alignment
+      const diffCCY = rawCenterY - otherCenterY;
+      if (Math.abs(diffCCY) < SNAP_THRESHOLD && Math.abs(diffCCY) < Math.abs(minDiffY)) {
+        minDiffY = diffCCY;
+        bestSnapY = otherCenterY - imgHeight / 2;
+        bestGuidelineY = otherCenterY;
+      }
+
+      // Current Top edge with other Top edge
+      const diffTT = rawTop - otherTop;
+      if (Math.abs(diffTT) < SNAP_THRESHOLD && Math.abs(diffTT) < Math.abs(minDiffY)) {
+        minDiffY = diffTT;
+        bestSnapY = otherTop - imgHeight / 2 + scaledH / 2;
+        bestGuidelineY = otherTop;
+      }
+      // Current Top edge with other Bottom edge
+      const diffTB = rawTop - otherBottom;
+      if (Math.abs(diffTB) < SNAP_THRESHOLD && Math.abs(diffTB) < Math.abs(minDiffY)) {
+        minDiffY = diffTB;
+        bestSnapY = otherBottom - imgHeight / 2 + scaledH / 2;
+        bestGuidelineY = otherBottom;
+      }
+      // Current Bottom edge with other Top edge
+      const diffBT = rawBottom - otherTop;
+      if (Math.abs(diffBT) < SNAP_THRESHOLD && Math.abs(diffBT) < Math.abs(minDiffY)) {
+        minDiffY = diffBT;
+        bestSnapY = otherTop - imgHeight / 2 - scaledH / 2;
+        bestGuidelineY = otherTop;
+      }
+      // Current Bottom edge with other Bottom edge
+      const diffBB = rawBottom - otherBottom;
+      if (Math.abs(diffBB) < SNAP_THRESHOLD && Math.abs(diffBB) < Math.abs(minDiffY)) {
+        minDiffY = diffBB;
+        bestSnapY = otherBottom - imgHeight / 2 - scaledH / 2;
+        bestGuidelineY = otherBottom;
+      }
+    });
+
+    if (bestGuidelineY !== null) {
+      snappedY = bestSnapY;
+      // 跟上面 X 那一段完全同一套（說明見那裡）
+      const dprY = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+      const topEdge = snappedY + imgHeight / 2 - scaledH / 2;
+      const bottomEdge = topEdge + scaledH;
+      let gy: number = bestGuidelineY;
+      if (Math.abs(topEdge - gy) < 0.51) {
+        const q = Math.round(topEdge * dprY) / dprY;
+        snappedY += q - topEdge; gy = q;
+      } else if (Math.abs(bottomEdge - gy) < 0.51) {
+        const q = Math.round(bottomEdge * dprY) / dprY;
+        snappedY += q - bottomEdge; gy = q;
+      }
+      guidelines.push({ type: 'horizontal', coord: gy });
+    }
+    ownPageRectsForFit.forEach(pr => {
+      const h = pr.bottom - pr.top;
+      if (Math.abs(scaledH - h) < 2 && Math.abs((snappedY + imgHeight / 2) - pr.centerY) < 4) {
+        snappedY = pr.centerY - imgHeight / 2;
+      }
+    });
+
+
+    /* 貼齊只會挑「最近的那一條」來吸附，但畫面上該顯示的是「現在同時對齊的每一條」：
+       例如剛好卡在畫布正中央時，垂直中線與水平中線要一起亮起來；貼齊左邊界時，
+       如果高度也剛好跟畫布同高，上下兩條邊界線也要一起顯示。
+       這裡在「已經吸附完的位置」上把畫布的中線與四個邊界重新對一次，全部符合的
+       都加進去。跟其他物件的對齊線不列入（那是另一回事，維持原本只顯示吸附到的那一條）。 */
+    guidelines.push(...pageGuidelinesAt(snappedX, snappedY, imgWidth, imgHeight, imgScale, edgeOnly, rot));
+
+    return { snappedX, snappedY, fitScale: undefined, guidelines: dedupeGuidelines(guidelines, snappedX + imgWidth / 2) };
+  };
+
+  const [draggedFloatingIndex, setDraggedFloatingIndex] = useState<number | null>(null);
+
+  const handleReorder = (fromIndex: number, toIndex: number) => {
+    setFloatingImages(prev => {
+      const result = [...prev];
+      if (fromIndex < 0 || fromIndex >= result.length || toIndex < 0 || toIndex >= result.length) {
+        return prev;
+      }
+      const [removed] = result.splice(fromIndex, 1);
+      result.splice(toIndex, 0, removed);
+      return result;
+    });
+  };
+  const pagesContainerRef = useRef<HTMLDivElement>(null);
+  /**
+   * 「外框層」。
+   *
+   * 頁面容器（pagesContainerRef）是開 overflow-hidden 的 —— 那條裁切線就是使用者
+   * 看到的「畫布邊緣的黑」。物件被拖出去的部分本來就該被切掉，但選取框、四個角的
+   * 圓球、上面那排按鈕不該一起被切：東西一超出畫布就抓不到角，也按不到刪除。
+   *
+   * 所以外框改掛在這一層。它是頁面容器的「兄弟」（同一個父層、同樣的座標原點、
+   * 同樣的縮放與位移），只是不在那個 overflow-hidden 底下 ——
+   * 於是位置分毫不差，卻不會被裁切。
+   *
+   * 用 state 而不是 ref：要等這個 DOM 節點真的掛上去，子層才能 createPortal 過去。
+   * ref 不會觸發重新渲染，第一次渲染時子層拿到的還是 null。
+   */
+  const [chromeLayer, setChromeLayer] = useState<HTMLDivElement | null>(null);
+
+  // Workspace-wide interaction for selected floating images
+  const wsDragStart = useRef<{
+    startX: number;
+    startY: number;
+    imgX: number;
+    imgY: number;
+    pointerId: number;
+    hasMoved: boolean;
+  } | null>(null);
+
+  const wsPinchStart = useRef<{
+    startDist: number;
+    imgScale: number;
+  } | null>(null);
+
+  const handleWorkspacePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!selectedFloatingId) return;
+    const selectedImg = floatingImages.find(img => img.id === selectedFloatingId);
+    if (!selectedImg) return;
+
+    e.currentTarget.setPointerCapture(e.pointerId);
+
+    wsDragStart.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      imgX: selectedImg.x,
+      imgY: selectedImg.y,
+      pointerId: e.pointerId,
+      hasMoved: false,
+    };
+  };
+
+  const handleWorkspacePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!selectedFloatingId || !wsDragStart.current || wsDragStart.current.pointerId !== e.pointerId) return;
+
+    if (e.buttons === 0) {
+      wsDragStart.current = null;
+      setActiveGuidelines([]);
+      return;
+    }
+
+    if (wsPinchStart.current) return;
+
+    const dx = e.clientX - wsDragStart.current.startX;
+    const dy = e.clientY - wsDragStart.current.startY;
+
+    if (Math.hypot(dx, dy) > 3) {
+      wsDragStart.current.hasMoved = true;
+    }
+
+    const selectedImg = floatingImages.find(img => img.id === selectedFloatingId);
+    if (!selectedImg) return;
+
+    const rawX = wsDragStart.current.imgX + dx;
+    const rawY = wsDragStart.current.imgY + dy;
+
+    const { snappedX, snappedY, guidelines } = applySnapping(
+      selectedImg.id,
+      rawX,
+      rawY,
+      selectedImg.width,
+      selectedImg.height,
+      selectedImg.scale,
+      undefined,
+      selectedImg.rotation || 0,
+    );
+
+    setActiveGuidelines(guidelines);
+
+    setFloatingImages(prev => prev.map(img => {
+      if (img.id === selectedFloatingId) {
+        return {
+          ...img,
+          x: snappedX,
+          y: snappedY,
+        };
+      }
+      return img;
+    }));
+  };
+
+  const handleWorkspacePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!wsDragStart.current || wsDragStart.current.pointerId !== e.pointerId) return;
+
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (err) {}
+
+    if (!wsDragStart.current.hasMoved) {
+      setSelectedFloatingId(null);
+    }
+
+    wsDragStart.current = null;
+    setActiveGuidelines([]);
+  };
+
+  const handleWorkspaceWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (!selectedFloatingId) return;
+    if (e.ctrlKey) {
+      e.preventDefault();
+      const selectedImg = floatingImages.find(img => img.id === selectedFloatingId);
+      if (!selectedImg) return;
+
+      const factor = 1 - e.deltaY * 0.01;
+      const newScale = Math.max(0.1, Math.min(10.0, selectedImg.scale * factor));
+
+      setFloatingImages(prev => prev.map(img => {
+        if (img.id === selectedFloatingId) {
+          return {
+            ...img,
+            scale: newScale,
+          };
+        }
+        return img;
+      }));
+    }
+  };
+
+  // Keyboard listener to delete selected floating image on Delete/Backspace keypress
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (selectedFloatingId && (e.key === 'Delete' || e.key === 'Backspace')) {
+        const activeEl = document.activeElement;
+        if (
+          activeEl &&
+          (activeEl.tagName === 'INPUT' ||
+            activeEl.tagName === 'TEXTAREA' ||
+            activeEl.getAttribute('contenteditable') === 'true')
+        ) {
+          return;
+        }
+        setFloatingImages(prev => prev.filter(img => img.id !== selectedFloatingId));
+        setSelectedFloatingId(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedFloatingId]);
+
+  /** 正在編輯的文字圖層 id，null 代表沒有打開文字面板 */
+  const [editingTextId, setEditingTextId] = useState<string | null>(null);
+  /** 正在畫布上直接打字的文字圖層 */
+  const [inlineEditId, setInlineEditId] = useState<string | null>(null);
+  /** 正在被雙指縮放／旋轉的圖層：這段期間工具列先收起來 */
+  const [pinchFloatingId, setPinchFloatingId] = useState<string | null>(null);
+  /** 「圖片調整」的子分頁 */
+  const [adjustSub, setAdjustSub] = useState<'shape' | 'tune' | 'filter' | 'effect'>('filter');
+  /** 調節分頁目前選中的工具 */
+  const [tuneTool, setTuneTool] = useState('brightness');
+  /** 形狀分頁目前選中的工具 */
+  /* 一開始不選任何一顆造型工具（見 CATS 那邊的說明）：進造型頁時全部是暗的 */
+  const [shapeTool, setShapeTool] = useState('');
+  /** 形狀分頁：root 是總覽，其餘是形狀／描邊／發光的子選單 */
+  const [shapeMenu, setShapeMenu] = useState<'root' | 'stroke' | 'glow' | 'imgShape'>('root');
+  /* ── 形狀的第二段選取 ────────────────────────────────────────────
+     選中圖片之後再點一次圖片，才進到「選中形狀」：
+       · 外框改成沿著形狀描一圈，方框與四顆角球收起來
+       · 在圖案裡面拖曳 ＝ 調整圖片在形狀裡的位置
+       · 兩指捏 ＝ 調整圖片在形狀裡的大小
+       · 點到形狀外面就退回「只選中圖片」
+     ref 是給手勢那幾支用的 —— 它們不會跟著 state 重新綁定。 */
+  const [shapeSelId, setShapeSelId] = useState<string | null>(null);
+  const shapeSelRef = useRef<string | null>(null);
+  /** 剛剛因為「手指按在形狀外面」而退掉的那一顆。第二根手指跟上時要復原。 */
+  const shapeSelUndoRef = useRef<string | null>(null);
+  useEffect(() => { shapeSelRef.current = shapeSelId; }, [shapeSelId]);
+  // 取消選取、或換選別張圖 → 形狀選取一起收掉
+  useEffect(() => {
+    if (shapeSelId && shapeSelId !== selectedFloatingId) setShapeSelId(null);
+  }, [selectedFloatingId, shapeSelId]);
+  /** 正在拖形狀的滑桿：圖片的選取框先整組收起來 */
+  const [tuningEdge, setTuningEdge] = useState(false);
+  /** 特效分頁：選中哪一張卡片，以及細項有沒有展開（跟「編輯」同一種操作） */
+  const [effectCard, setEffectCard] = useState('');
+  const [effectDetail, setEffectDetail] = useState(false);
+  /** 正在下載的濾鏡：那張卡片上要有轉圈動畫 */
+  const [loadingLut, setLoadingLut] = useState<string | null>(null);
+
+  /* 換一張圖層就把特效的選取收乾淨 —— 不然細項面板還開著上一張選的那顆，
+     滑桿卻已經接到新這張的參數上了。 */
+  useEffect(() => { setEffectCard(''); setEffectDetail(false); }, [selectedFloatingId]);
+  /** 構圖中的圖層：跟「編輯」共用同一個 ComposeStudio */
+  const [composeState, setComposeState] = useState<{ id: string; img: HTMLImageElement | HTMLVideoElement; geo: GeoParams; vid?: boolean } | null>(null);
+
+  const openComposeFor = (id: string) => {
+    const layer = floatingImages.find(f => f.id === id);
+    if (!layer) return;
+    /* ── 影片走另一條 ────────────────────────────────────────────────
+       以前這裡不管三七二十一都開一張 <img> 去讀那條網址。影片的網址
+       <img> 是讀不到的 → onload 永遠不會來 → 構圖介面根本打不開；
+       就算硬打開，套用時又會把 src 換成烤好的 PNG，而圖層還標著 isVideo，
+       於是 <video src="…png"> 播不出任何東西 —— 那就是「裁切後影片直接消失」。
+       改成：拿一個真的 <video> 給構圖介面用，套用時只留下 geo、不烤圖。 */
+    if (layer.isVideo) {
+      loadVideoEl(layer.origSrc || layer.src)
+        .then(v => {
+          try { v.pause(); } catch { /* 停不了也沒關係 */ }
+          setComposeState({ id, img: v, geo: layer.geo || DEFAULT_GEO, vid: true });
+        })
+        .catch(() => { /* 讀不到就當作沒按 */ });
+      return;
+    }
+    const el = new Image();
+    el.onload = () => setComposeState({ id, img: el, geo: layer.geo || DEFAULT_GEO });
+    // baked 過就從原圖接續，參數還原成上次的樣子
+    el.src = layer.origSrc || layer.src;
+  };
+
+  const applyComposeToLayer = () => {
+    const st = composeState;
+    if (!st) return;
+    const layer = floatingImages.find(f => f.id === st.id);
+    if (!layer) { setComposeState(null); return; }
+    const srcUrl = layer.origSrc || layer.src;
+    const finish = (newSrc: string, aspect: number) => {
+      setFloatingImages(prev => prev.map(f => {
+        if (f.id !== st.id) return f;
+        const newH = Math.max(24, Math.round(f.width / aspect));
+        return {
+          ...f,
+          src: newSrc,
+          origSrc: srcUrl,
+          geo: st.geo,
+          // 高度變了讓中心留在原地
+          y: f.y + (f.height - newH) / 2,
+          height: newH,
+        };
+      }));
+      setComposeState(null);
+    };
+    const sw = (st.img as any).naturalWidth || (st.img as any).videoWidth || st.img.width;
+    const sh = (st.img as any).naturalHeight || (st.img as any).videoHeight || st.img.height;
+    /* 影片：只留 geo，不烤圖（理由見 openComposeFor）。
+       預覽是把同一個矩陣寫成 CSS transform，匯出是同一個矩陣畫在畫布上，
+       所以兩邊看到的一定一樣。這裡只要把框的高度換成裁切後的長寬比。 */
+    if (layer.isVideo) {
+      const q = ((st.geo.quarter % 4) + 4) % 4;
+      const swap = q === 1 || q === 3;
+      const bw = swap ? sh : sw, bh = swap ? sw : sh;
+      const c = st.geo.crop;
+      const aspect = (bw * c.w) / Math.max(1e-6, bh * c.h);
+      setFloatingImages(prev => prev.map(f => {
+        if (f.id !== st.id) return f;
+        const newH = Math.max(24, Math.round(f.width / aspect));
+        return { ...f, geo: st.geo, y: f.y + (f.height - newH) / 2, height: newH };
+      }));
+      // 構圖用的那個 <video> 是臨時開的，用完就收
+      if (isVideoEl(st.img)) { try { st.img.pause(); st.img.remove(); } catch { /* 收不掉算了 */ } }
+      setComposeState(null);
+      return;
+    }
+    if (isGeoIdentity(st.geo)) {
+      finish(srcUrl, sw / sh);
+      return;
+    }
+    const baked = composeCanvas(st.img, sw, sh, st.geo, 2400);
+    baked.toBlob(blob => {
+      if (!blob) { setComposeState(null); return; }
+      finish(URL.createObjectURL(blob), baked.width / baked.height);
+    }, 'image/png');
+  };
+  /** 濾鏡每載好一個就 +1，讓已經套用的圖層重畫 */
+  const [lutRevision, setLutRevision] = useState(0);
+
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  /** 第一次點佈局是選整個佈局（等同一張圖片被選取），再點一次才會選到裡面的格子 */
+  const [selectedLayoutId, setSelectedLayoutId] = useState<string | null>(null);
+
+  const activePage = pages[activePageIndex] || pages[0];
+  /** 被選取的佈局可能不在目前捲到的那一頁上（選好之後滑到別頁），所以一律用 id 全域找。 */
+  const selectedLayoutPageIdx = selectedLayoutId
+    ? pages.findIndex(p => p.layouts.some(l => l.id === selectedLayoutId))
+    : -1;
+  // 目前正在編輯的佈局：優先用被選取的那個，沒選就退回這一頁的第一個
+  const activeLayout: LayoutItem | null =
+    (selectedLayoutPageIdx >= 0
+      ? pages[selectedLayoutPageIdx].layouts.find(l => l.id === selectedLayoutId)
+      : undefined) || activePage.layouts[0] || null;
+  const images = activeLayout?.images ?? EMPTY_CELLS;
+  const templateIndex = activeLayout?.templateIndex ?? 0;
+  const gap = activeLayout?.gap ?? 0;
+  const radius = activeLayout?.radius ?? 0;
+  /** 目前選中的佈局自己的長寬比（沒設就跟整頁一樣） */
+  const layoutRatio = activeLayout?.ratio ?? '';
+  const layoutLandscape = !!activeLayout?.landscape;
+  /** 改「這個佈局」的比例；不影響整頁，也不影響其他佈局 */
+  const patchLayoutShape = (patch: { ratio?: string; landscape?: boolean }) => {
+    const id = selectedLayoutId;
+    if (!id) return;
+    setPages(prev => prev.map(p => p.layouts.some(l => l.id === id) ? ({
+      ...p,
+      layouts: p.layouts.map(l => l.id === id ? { ...l, ...patch } : l),
+    }) : p));
+  };
+  const bgColor = activePage.bgColor;
+  /* 背景紋理。跟創意拼圖的遮罩紋理同一套參數，畫法共用 utils/pattern.ts。
+     每一頁各存一份：改紋理時只會動到「現在停在畫面正中央的那一頁」
+     （activePageIndex 就是捲動時算出來、離中心最近的那一頁）。 */
+  const patternOpts: PatternOpts = pagePattern(activePage);
+  const patchPattern = (patch: Partial<PatternOpts>) => setPages(prev => prev.map((p, i) =>
+    i === activePageIndex ? { ...p, pattern: { ...pagePattern(p), ...patch } } : p));
+  const patternType = patternOpts.type;
+  const patternColor = patternOpts.color;
+  const setPatternType = (t: string) => patchPattern({ type: t });
+  const setPatternColor = (c: string) => patchPattern({ color: c });
+  /* 顏色分頁的子頁面：'bg' 是原本的底色挑色器，'pattern' 是點了紋理旁邊那顆
+     色塊之後進去的紋理專屬調色頁（跟創意拼圖同一套操作）。 */
+  const [colorSub, setColorSub] = useState<'bg' | 'pattern' | 'stripeA' | 'stripeB'>('bg');
+  /** 顏色分頁的捲動容器：換子頁時要捲回最上面 */
+  const colorTabRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { if (colorTabRef.current) colorTabRef.current.scrollTop = 0; }, [colorSub]);
+  const patternSize = patternOpts.size;
+  const patternGap = patternOpts.gap;
+  const setPatternSize = (v: number) => patchPattern({ size: v });
+  const setPatternGap = (v: number) => patchPattern({ gap: v });
+  /* 條紋：粗細、方向、兩個顏色。跟點點／星星／愛心共用同一個「紋理」選單，
+     但參數不一樣（沒有間距，改成粗細＋方向）。 */
+  const stripeN = patternOpts.stripeN ?? STRIPE_N_DEFAULT;
+  const stripeDir: 'h' | 'v' = patternOpts.stripeDir === 'h' ? 'h' : 'v';
+  // 第一個顏色沒挑過就跟著「紋理當下的顏色」走，第二個從純白開始
+  const stripeA = patternOpts.stripeA || patternColor;
+  const stripeB = patternOpts.stripeB || '#FFFFFF';
+
+  /* 紋理的兩根滑桿。其他面板那幾支同名 helper 都關在各自的元件裡，
+     主元件拿不到，所以就近寫一支。軌道用全域的 .premium-slider。 */
+  const patternSlider = (label: string, value: number, onVal: (v: number) => void, max = 100) => (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex justify-between items-center text-[9px] font-bold text-[#666] tracking-tighter uppercase">
+        <span>{label}</span>
+        <span className="text-white/70 tabular-nums">{value}</span>
+      </div>
+      {/* 圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆） */}
+      <div className="slider-wrap" style={{ height: 16 }}>
+        <input type="range" min={0} max={max} step={1} value={value}
+          onChange={e => onVal(parseInt(e.target.value))} className="slim-slider w-full" />
+      </div>
+    </div>
+  );
+  const layoutSelected = selectedLayoutId !== null;
+
+  /** 只改動「正在編輯的那個佈局」，不管它現在在哪一頁。 */
+  const patchActiveLayout = (fn: (l: LayoutItem) => LayoutItem) => {
+    setPages(prev => prev.map((p, idx) => {
+      if (selectedLayoutId) {
+        if (!p.layouts.some(l => l.id === selectedLayoutId)) return p;
+        return { ...p, layouts: p.layouts.map(l => (l.id === selectedLayoutId ? fn(l) : l)) };
+      }
+      if (idx !== activePageIndex || p.layouts.length === 0) return p;
+      return { ...p, layouts: p.layouts.map((l, i) => (i === 0 ? fn(l) : l)) };
+    }));
+  };
+
+  const setImages = (newImages: ImageCell[] | ((prev: ImageCell[]) => ImageCell[])) => {
+    patchActiveLayout(l => ({ ...l, images: typeof newImages === 'function' ? newImages(l.images) : newImages }));
+  };
+
+  const setTemplateIndex = (newTmplIdx: number | ((prev: number) => number)) => {
+    patchActiveLayout(l => ({ ...l, templateIndex: typeof newTmplIdx === 'function' ? newTmplIdx(l.templateIndex) : newTmplIdx }));
+  };
+
+  const setGap = (v: number) => patchActiveLayout(l => ({ ...l, gap: v }));
+  const setRadius = (v: number) => patchActiveLayout(l => ({ ...l, radius: v }));
+
+  /* 底色跟紋理一樣，只改「現在停在畫面正中央的那一頁」
+     （activePageIndex 就是捲動時算出來、離中心最近的那一頁）。 */
+  const setBgColor = (newColor: string | ((prev: string) => string)) => {
+    setPages(prev => prev.map((p, idx) => {
+      if (idx !== activePageIndex) return p;
+      const updatedColor = typeof newColor === 'function' ? newColor(p.bgColor) : newColor;
+      return { ...p, bgColor: updatedColor };
+    }));
+  };
+
+  const addedPagesCount = pages.length - 1;
+
+  const setAddedPagesCount = (newCountOrFn: number | ((prev: number) => number)) => {
+    setPages(prev => {
+      const currentCount = prev.length - 1;
+      const targetCount = typeof newCountOrFn === 'function' ? newCountOrFn(currentCount) : newCountOrFn;
+      
+      if (targetCount > currentCount) {
+        const newPages = [...prev];
+        const currentBgColor = prev[activePageIndex]?.bgColor || prev[0]?.bgColor || '#ffffff';
+        for (let i = currentCount; i < targetCount; i++) {
+          newPages.push({
+            id: `page-${Math.random().toString(36).substring(2, 9)}`,
+            bgColor: currentBgColor,
+            layouts: [],
+          });
+        }
+        return newPages;
+      } else if (targetCount < currentCount) {
+        return prev.slice(0, targetCount + 1);
+      }
+      return prev;
+    });
+  };
+
+  const handleSwitchPage = (targetIdx: number) => {
+    if (targetIdx >= 0 && targetIdx < pages.length) {
+      setActivePageIndex(targetIdx);
+    }
+  };
+
+  /** 在指定頁面「再加一個」佈局，不動既有的。 */
+  /** 在目前這一頁的中央加一個文字圖層，並直接打開編輯面板。 */
+  const handleAddTextLayer = (init?: Partial<FloatingImage>) => {
+    const rect = getActivePageRect();
+    const w = Math.round((rect?.width ?? previewW) * 0.7);
+    const h = 96;
+    const id = `text-${Math.random().toString(36).substring(2, 9)}`;
+    ensureFont(DEFAULT_FONT);
+    const item: FloatingImage = {
+      id, src: '',
+      x: (rect ? rect.centerX : previewW / 2) - w / 2,
+      y: (rect ? rect.centerY : previewH / 2) - h / 2,
+      width: w, height: h, scale: 1, rotation: 0,
+      text: TEXT_PLACEHOLDER,
+      fontFamily: DEFAULT_FONT,
+      fontSize: 20,
+      // 頁面底色預設是白的，文字也用白色的話新增完會看不到
+      color: '#1C1C1C',
+      bold: false,
+      italic: false,
+      letterSpacing: 0,
+      // 描邊沒設過就是黑的 —— 第一次把描邊拉出來就該看得到
+      strokeColor: '#000000',
+      glow: 0,
+      glowColor: '#FFFFFF',
+      ...init,
+    };
+    setFloatingImages(prev => [...prev, item]);
+    setSelectedFloatingId(id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setEditingTextId(id);
+    // 新增完直接進文字編輯頁，省掉「再按一次工具列的編輯」那一步
+    setActiveTab('adjust');
+  };
+
+  /**
+   * 新增一顆符號。
+   *
+   * 符號就是文字圖層，所以位置、縮放、旋轉、圖層順序、直接在畫布上改字
+   * 全部跟文字共用同一套；差別只在 sym 有值，面板會換成符號那一組。
+   * 字級照長度回推：符號長短差很多（最長的接近一百個字），字級寫死的話
+   * 長的會直接戳出頁面 —— 用「大約佔頁寬七成」回推，挑哪一顆加進來的
+   * 份量都差不多。刻意留在這一頁、也不進入打字狀態，可以連著加好幾顆。
+   */
+  const handleAddSymbolLayer = (txt: string) => {
+    const rect = getActivePageRect();
+    const pw = rect?.width ?? previewW;
+    const ph = rect?.height ?? previewH;
+    ensureFont(DEFAULT_FONT);
+    const M = 100;
+    const c = document.createElement('canvas').getContext('2d');
+    let w100 = M * Math.max(1, txt.length) * 0.5;
+    if (c) { c.font = `400 ${M}px ${fontStack(DEFAULT_FONT)}`; w100 = Math.max(1, c.measureText(txt).width); }
+    const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
+    const w = Math.max(8, Math.round((w100 / M) * fontSize));
+    const h = Math.max(8, Math.round(fontSize * 1.4));
+    const id = `text-${Math.random().toString(36).substring(2, 9)}`;
+    const item: FloatingImage = {
+      id, src: '',
+      x: (rect ? rect.centerX : previewW / 2) - w / 2,
+      y: (rect ? rect.centerY : previewH / 2) - h / 2,
+      width: w, height: h, scale: 1, rotation: 0,
+      text: txt, sym: txt,
+      fontFamily: DEFAULT_FONT,
+      fontSize,
+      // 頁面底色預設是白的，符號也用白色的話加完會看不到
+      color: '#1C1C1C',
+      bold: false, italic: false, letterSpacing: 0,
+      strokeColor: '#000000',
+      glow: 0, glowColor: '#FFFFFF',
+    };
+    setFloatingImages(prev => [...prev, item]);
+    setSelectedFloatingId(id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+  };
+
+  /**
+   * 新增一個圖形圖層。
+   * 大小預設佔頁面短邊的三成；線條類壓成細長條（高度只有寬度的 8%）。
+   * 顏色跟文字一樣預設墨黑 —— 頁面底色預設是白的，白色圖形會看不到。
+   */
+  const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem) => {
+    const rect = getActivePageRect();
+    const short = Math.min(rect?.width ?? previewW, rect?.height ?? previewH);
+    const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+    const h = (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
+    const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
+    const item: FloatingImage = {
+      id, src: '',
+      x: (rect ? rect.centerX : previewW / 2) - w / 2,
+      y: (rect ? rect.centerY : previewH / 2) - h / 2,
+      width: w, height: h, scale: 1, rotation: (it as any).rot || 0,
+      shape: it.kind,
+      // 借來的圖案：kind 一律是 'hole'，真正畫哪一顆看 holeType
+      holeType: (it as HoleShapeItem).hole,
+      shapeFilled: it.filled,
+      shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
+      shapeDash: 0,
+      shapeGlow: false,
+      shapeGlowColor: SHAPE_DEFAULT_COLOR,
+      color: SHAPE_DEFAULT_COLOR,
+    };
+    setFloatingImages(prev => [...prev, item]);
+    setSelectedFloatingId(id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+    /* 刻意留在這一頁、不跳去編輯 —— 常常是要連著加好幾個，
+       每加一個就被丟去編輯頁的話還得自己按回來。 */
+  };
+
+  /** 複製一份圖片／文字圖層，稍微錯開一點放在原件上面，並直接選中新的那一份。 */
+  const handleDuplicateFloating = (id: string) => {
+    const src = floatingImages.find(f => f.id === id);
+    if (!src) return;
+    const copy: FloatingImage = {
+      ...src,
+      id: `${src.text !== undefined ? 'text' : src.shape ? 'shape' : 'img'}-${Math.random().toString(36).substring(2, 9)}`,
+      x: src.x + 16,
+      y: src.y + 16,
+    };
+    setFloatingImages(prev => {
+      const i = prev.findIndex(f => f.id === id);
+      const next = [...prev];
+      next.splice(i + 1, 0, copy);   // 疊在原件正上方
+      return next;
+    });
+    setSelectedFloatingId(copy.id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+  };
+
+  const patchTextLayer = (id: string, patch: Partial<FloatingImage>) => {
+    setFloatingImages(prev => prev.map(f => (f.id === id ? { ...f, ...patch } : f)));
+  };
+
+  const handleAddLayoutToPage = (pageIdx: number, templateIdx = 0, count = 4) => {
+    const item = makeLayout(templateIdx, count);
+    setPages(prev => prev.map((p, idx) => idx === pageIdx ? { ...p, layouts: [...p.layouts, item] } : p));
+    setActivePageIndex(pageIdx);
+    // 刻意不自動選中新佈局：選中＝進入編輯，會讓下一次點版型變成「換版型」而不是「再加一個」
+    setSelectedLayoutId(null);
+    setSelectedIndex(null);
+    setSelectedFloatingId(null);
+  };
+
+  /**
+   * 自由圖層的 x 是整條頁面帶的座標，所以「第幾頁」是用中心點除以一頁的寬度算出來的
+   * （每頁之間還有預覽裡那 1px 的縫）。搬頁面或刪頁面時，這些圖層都要跟著處理。
+   */
+  const pageOfFloating = (f: FloatingImage, stride: number, count: number) =>
+    Math.max(0, Math.min(count - 1, Math.floor((f.x + f.width / 2) / stride)));
+
+  const handleDeletePage = (pageIdx: number) => {
+    if (pages.length <= 1) return;
+    const stride = previewW + 1;
+    const count = pages.length;
+    // 這一頁上的自由圖層一起刪掉；後面幾頁的圖層往前挪一頁
+    setFloatingImages(prev => prev
+      .filter(f => pageOfFloating(f, stride, count) !== pageIdx)
+      .map(f => {
+        const p = pageOfFloating(f, stride, count);
+        return p > pageIdx ? { ...f, x: f.x - stride } : f;
+      }));
+    setSelectedFloatingId(prev => {
+      const sel = floatingImages.find(f => f.id === prev);
+      return sel && pageOfFloating(sel, stride, count) === pageIdx ? null : prev;
+    });
+    setPages(prev => prev.filter((_, idx) => idx !== pageIdx));
+    setActivePageIndex(prev => {
+      if (pageIdx === prev) {
+        return Math.max(0, pageIdx - 1);
+      } else if (pageIdx < prev) {
+        return prev - 1;
+      }
+      return prev;
+    });
+  };
+
+  /* ---- 頁面順序模式 ---- */
+  /**
+   * 進這個模式時整條操作欄往下滑，只留最上面那排分頁鍵；空出來的高度
+   * 讓畫布往下滑一半，看起來就是頁面平順地移到畫面中央。
+   * 每一頁下面會出現一顆握把與刪除鍵，拖握把就是直接在拖真正的那一頁。
+   */
+  /**
+   * 頁面順序模式：操作欄留在原位，畫布縮成一半 ——
+   * 一次看得到前後好幾頁，排起來才知道自己在排什麼。
+   * 用 transform 縮，不動 previewW/H，圖層的座標才不會跟著跑掉。
+   */
+  const PAGES_MODE_SCALE = 0.4;
+  /** 握把要按住這麼久才算開始拖（太短會誤觸） */
+  const PAGE_DRAG_HOLD_MS = 260;
+  /** 拖曳中被拿起來的那一頁：微微放大＋陰影，看起來像被拿離桌面（專業排序介面的做法） */
+  const PAGE_DRAG_SCALE = 1.05;
+
+  /** 正在拖的是哪一頁（拖的就是畫布上真正的那一頁） */
+  const [pageDragIdx, setPageDragIdx] = useState<number | null>(null);
+  /** 放手後的收尾：內容從「放手時看起來的位置」平順滑回新定位 */
+  const [dragSettle, setDragSettle] = useState<{ page: number; x: number; ease: boolean } | null>(null);
+  const settleTimerRef = useRef(0);
+
+  /**
+   * 拖曳中，每一頁該往哪邊讓開：
+   * 被拖的那一頁跟著手指；夾在「原本位置」與「目標位置」之間的頁面各讓一格。
+   */
+  const pageDragOffset = (idx: number) => {
+    const from = pageDragIdx;
+    const to = pageDragTo;
+    if (from === null || to === null) return { x: 0, live: false };
+    if (idx === from) return { x: pageDragShift / Math.max(0.01, pagesScale), live: true };
+    const stride = previewW + 1;
+    if (from < to && idx > from && idx <= to) return { x: -stride, live: false };
+    if (to < from && idx >= to && idx < from) return { x: stride, live: false };
+    return { x: 0, live: false };
+  };
+
+  /**
+   * 排頁面時「畫布不動、動的是上面的東西」。
+   *
+   * 被拖的那一頁：整組跟著手指、而且統一縮到 80%（一眼就知道自己在搬哪一頁）。
+   * 其他頁：讓開一格。縮放是以「那一頁的中心」為原點的群組縮放，但**每個元素
+   * 各自算一個位移**、不包成一個容器 —— 包起來會多一個堆疊環境，佈局與圖層
+   * 之間的前後關係就會跑掉。
+   *
+   * cx/cy 是那一頁的中心、ex/ey 是元素自己的中心，兩者要在同一個座標系裡
+   * （佈局用頁內座標，自由圖層用整條頁面的座標）。
+   */
+  const pageContentShift = (pageIdx: number) => {
+    if (!pagesMode) return null;
+    if (pageDragIdx === null) {
+      // 放手瞬間的收尾（FLIP）：換完順序後內容先停在「看起來的位置」，
+      // 下一帧再平順滑回定位 —— 不做這一段的話會先閃回再跳走
+      if (dragSettle && pageIdx === dragSettle.page) {
+        return { dx: dragSettle.x, s: 1, live: !dragSettle.ease };
+      }
+      return null;
+    }
+    // 拖曳中每一頁都回傳位移（包含 0）：讓開再讓回來時 transition 才接得上，
+    // 不會從「有 transform」直接跳成「沒 transform」閃一下
+    const off = pageDragOffset(pageIdx);
+    const s = off.live ? PAGE_DRAG_SCALE : 1;
+    return { dx: off.x, s, live: off.live };
+  };
+  const groupShift = (
+    shift: { dx: number; s: number; live: boolean },
+    cx: number, cy: number, ex: number, ey: number,
+  ) => ({
+    tx: shift.dx + (1 - shift.s) * (cx - ex),
+    ty: (1 - shift.s) * (cy - ey),
+    s: shift.s,
+    live: shift.live,
+  });
+  /** 自由圖層：中心就是 x + 寬/2（外框的 left 已經把縮放算進去了） */
+  const floatingDragShift = (f: FloatingImage) => {
+    const stride = previewW + 1;
+    const idx = pageOfFloating(f, stride, pages.length);
+    const shift = pageContentShift(idx);
+    if (!shift) return null;
+    return groupShift(shift, idx * stride + previewW / 2, previewH / 2, f.x + f.width / 2, f.y + f.height / 2);
+  };
+
+  /** 手指位置落在畫布上第幾頁（用每一頁真正的位置判斷） */
+  const pageUnder = (clientX: number) => {
+    const els = [...document.querySelectorAll('[id^="grid-preview-container"]')] as HTMLElement[];
+    let best: number | null = null;
+    let bestD = Infinity;
+    els.forEach((el, i) => {
+      const r = el.getBoundingClientRect();
+      const d = Math.abs(clientX - (r.left + r.width / 2));
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    return best;
+  };
+
+  const dragIdxRef = useRef<number | null>(null);
+  /** 這次拖曳手指真的移動過了嗎（沒動過就不啟動邊緣自動捲動） */
+  const dragMovedRef = useRef(false);
+  /** 邊緣自動捲動「這個方向已經到底了」的鎖，手指離開感應範圍才鬆開 */
+  const edgeScrollDoneRef = useRef({ left: false, right: false });
+  const dragXRef = useRef(0);
+  const dragStartXRef = useRef(0);
+  const dragRafRef = useRef(0);
+  /**
+   * 拖曳中的位移：被拖的那一頁直接跟著手指走（不加動畫），
+   * 被讓開的那幾頁用 200ms 平順地滑到新位置。放手時才真的改順序。
+   */
+  const [pageDragShift, setPageDragShift] = useState(0);
+  /** 每一帧要用（按鈕跟著那一頁的東西走），所以另外留一份 ref */
+  const pageDragShiftRef = useRef(0);
+  const [pageDragTo, setPageDragTo] = useState<number | null>(null);
+  const pageDragToRef = useRef<number | null>(null);
+  useEffect(() => { pageDragToRef.current = pageDragTo; }, [pageDragTo]);
+
+  /** 手指移動多少＝往前／往後幾頁（一頁的寬度就是一格） */
+  const settlePageDrag = () => {
+    const from = dragIdxRef.current;
+    if (from === null) return;
+    const stride = (previewW + 1) * pagesScale;
+    // 頭尾之外再多給「半格」：拖到第一頁之前／最後一頁之後時會露出一小塊黑，
+    // 知道自己已經到底了，但不會整個甩出去（放手仍然只會落在有效的頁次上）
+    const slack = stride / 2;
+    const raw = Math.max(
+      (0 - from) * stride - slack,
+      Math.min((pagesCountRef.current - 1 - from) * stride + slack, dragXRef.current - dragStartXRef.current),
+    );
+    pageDragShiftRef.current = raw;
+    setPageDragShift(raw);
+    const slots = Math.round(raw / Math.max(1, stride));
+    const to = Math.max(0, Math.min(pagesCountRef.current - 1, from + slots));
+    // ref 當場就寫（自動捲動的煞車同一帧要用），state 慢一帧沒關係
+    pageDragToRef.current = to;
+    setPageDragTo(prev => (prev === to ? prev : to));
+  };
+
+  /**
+   * 一頁差不多就跟螢幕一樣寬，所以隔壁那一頁通常在畫面外。
+   * 手指靠近左右邊緣時就自動捲動，捲到隔壁那一頁就換過去。
+   */
+  const dragTick = () => {
+    const el = containerRef.current;
+    if (el && dragIdxRef.current !== null) {
+      const r = el.getBoundingClientRect();
+      // 手指還沒真的移動過就不捲：不然原地長按時，握把本來就落在感應範圍裡，
+      // 頁面會自己往一邊飄走
+      const EDGE = 80, SPEED = 13;
+      if (!dragMovedRef.current) { settlePageDrag(); dragRafRef.current = requestAnimationFrame(dragTick); return; }
+      let dir = 0;
+      if (dragXRef.current < r.left + EDGE) dir = -1;
+      else if (dragXRef.current > r.right - EDGE) dir = 1;
+      let dx = dir === -1
+        ? -SPEED * Math.min(1, (r.left + EDGE - dragXRef.current) / EDGE)
+        : dir === 1
+          ? SPEED * Math.min(1, (dragXRef.current - (r.right - EDGE)) / EDGE)
+          : 0;
+      if (dir === -1 && edgeScrollDoneRef.current.left) dx = 0;
+      if (dir === 1 && edgeScrollDoneRef.current.right) dx = 0;
+      /*
+        什麼時候「這個方向捲到底了」：
+
+        自動捲動會回頭把 dragStartX 補掉，所以「捲了多少」也會算進拖曳位移裡。
+        以前的煞車是看那個位移有沒有到頂 —— 那會變成棘輪：一到頂就停，手指
+        往回一點位移就掉下來、又開始捲，捲又把位移推回頂端⋯⋯在最邊邊來回晃
+        就等於一直往那邊捲個不停。
+
+        改成兩個條件，而且踩下去之後會「鎖住」，要真的往反方向捲過才鬆開
+        （鎖在手指離開感應範圍時就放掉的話，手指再靠過來又會多捲一小段 ——
+        「第二次頂到底又滑一下」就是這樣來的）：
+        1) 容器已經捲到底：再捲也沒有新的畫面可看。
+        2) 被拖的那一頁已經走到可以走的極限（最後一頁再多半格）：再捲的話
+           頁面的位移被夾住、整排卻還在跑，那一頁就會被帶著離開手指。
+      */
+      if (dx) {
+        const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+        const from = dragIdxRef.current;
+        const stride = (previewWRef.current + 1) * PAGES_MODE_SCALE;
+        const shift = pageDragShiftRef.current;
+        const atEnd = dx > 0
+          ? el.scrollLeft >= maxScroll - 0.5
+            || shift >= (pagesCountRef.current - 1 - from) * stride + stride / 2 - 0.5
+          : el.scrollLeft <= 0.5
+            || shift <= (0 - from) * stride - stride / 2 + 0.5;
+        if (atEnd) {
+          dx = 0;
+          if (dir === 1) edgeScrollDoneRef.current.right = true;
+          else if (dir === -1) edgeScrollDoneRef.current.left = true;
+        }
+      }
+      if (dx) {
+        // 捲動等於手指相對頁面又多移動了一點。捲動已經是一比一（捲 1px 畫面就走
+        // 1px），所以補的量就是「真的捲了多少」—— 捲到頭時瀏覽器會夾住，
+        // 這時一點都不能補，不然被拖的那一頁會愈跑愈離開手指。
+        const before = el.scrollLeft;
+        el.scrollLeft = before + dx;
+        const applied = el.scrollLeft - before;
+        dragStartXRef.current -= applied;
+        // 往反方向捲過了＝另一邊又有東西可以捲出來，那邊的鎖就鬆開
+        if (applied > 0) edgeScrollDoneRef.current.left = false;
+        if (applied < 0) edgeScrollDoneRef.current.right = false;
+      }
+      settlePageDrag();
+    }
+    dragRafRef.current = requestAnimationFrame(dragTick);
+  };
+
+  /**
+   * 拖曳中的事件掛在 window 上，不用 setPointerCapture ——
+   * 換順序時握把在 DOM 裡會被搬位置，指標捕捉會因此掉掉，
+   * 那樣就收不到放手事件（握把會一直停在按下的樣子）。
+   */
+  const handlePageDragStart = (e: React.PointerEvent, idx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // 先按住一下下才算開始拖：手指剛碰到就跟著跑的話很容易誤觸
+    const downX = e.clientX, downY = e.clientY;
+    let armed = false;
+    let hold: number | undefined = window.setTimeout(() => {
+      hold = undefined;
+      armed = true;
+      dragMovedRef.current = false;
+      edgeScrollDoneRef.current = { left: false, right: false };
+      dragIdxRef.current = idx;
+      dragXRef.current = downX;
+      dragStartXRef.current = downX;
+      setPageDragIdx(idx);
+      setPageDragTo(idx);
+      pageDragShiftRef.current = 0;
+      setPageDragShift(0);
+      if (!dragRafRef.current) dragRafRef.current = requestAnimationFrame(dragTick);
+    }, PAGE_DRAG_HOLD_MS);
+    const onMove = (ev: PointerEvent) => {
+      if (!armed) {
+        // 還沒按滿時間就滑走＝不是要拖，取消
+        if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 12) {
+          if (hold !== undefined) { clearTimeout(hold); hold = undefined; }
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onUp);
+        }
+        return;
+      }
+      if (Math.abs(ev.clientX - downX) > 6) dragMovedRef.current = true;
+      dragXRef.current = ev.clientX;
+      settlePageDrag();
+    };
+    const onUp = () => {
+      if (hold !== undefined) { clearTimeout(hold); hold = undefined; }
+      if (!armed) {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        return;
+      }
+      return onUpReal();
+    };
+    const onUpReal = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      const from = dragIdxRef.current;
+      const to = pageDragToRef.current;
+      // 放手那一刻的位移要先抄下來 —— 下面就要清掉了，
+      // 收尾動畫的起點就是它（先清再讀會變成從原位起跑＝瞬移回去再滑過來）
+      const releasedShift = pageDragShiftRef.current;
+      dragIdxRef.current = null;
+      setPageDragIdx(null);
+      pageDragShiftRef.current = 0;
+      setPageDragShift(0);
+      setPageDragTo(null);
+      if (dragRafRef.current) { cancelAnimationFrame(dragRafRef.current); dragRafRef.current = 0; }
+      // 放手才真的改順序。畫面不捲動：內容本來就停在使用者放手的位置，
+      // 只要讓它從那裡平順滑回新定位就好（FLIP），不會先閃回再跳走
+      if (from !== null && to !== null) {
+        const liveDx = releasedShift / Math.max(0.01, PAGES_MODE_SCALE);
+        const remainder = liveDx - (to - from) * (previewW + 1);
+        if (from !== to) handleMovePage(from, to);
+        window.clearTimeout(settleTimerRef.current);
+        setDragSettle({ page: to, x: remainder, ease: false });
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          setDragSettle(prev => (prev && !prev.ease ? { page: prev.page, x: 0, ease: true } : prev));
+        }));
+        settleTimerRef.current = window.setTimeout(() => setDragSettle(null), 260);
+      }
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
+
+  useEffect(() => () => { if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); }, []);
+
+  /**
+   * React 的 onTouchMove 是 passive 的 —— 裡面的 e.preventDefault() 完全不會生效
+   * （console 會一直噴 "Unable to preventDefault inside passive event listener"）。
+   * 結果就是：操作物件（縮放佈局、平移格內照片）的時候，瀏覽器的原生捲動
+   * 還是照跑，手勢被搶走、甚至被瀏覽器中斷，縮放做到一半就被打斷還原。
+   * 這裡自己補一個「非 passive」的監聽器，真正把原生捲動擋掉。
+   */
+  useEffect(() => {
+    const block = (e: TouchEvent) => {
+      const busy = wsGestureRef.current || layoutGestureRef.current
+        || layoutCornerRef.current || pointerState.current.isDraggingContent
+        || floatSwapRef.current?.dragging || touchDragState.current
+        // 雙指縮放畫布時也要擋掉原生捲動，不然會邊縮放邊被瀏覽器捲走
+        || canvasZoomRef.current;
+      if (busy && e.cancelable) e.preventDefault();
+    };
+    document.addEventListener('touchmove', block, { passive: false });
+    return () => document.removeEventListener('touchmove', block);
+  }, []);
+
+  /* IG 預覽的翻頁已經改成自己搬位置（見 igMoveTrack），容器完全不捲動，
+     所以「第一張再往左滑就擋掉」那個非 passive 的 touchmove 監聽器不用了 ——
+     頭尾拖不出去的判斷直接寫在 onIgPointerMove 裡。 */
+
+  /**
+   * 換頁面順序：頁面裡的佈局本來就跟著頁面走，頁面上的自由圖層要自己搬過去。
+   *
+   * 「舊頁碼 → 新頁碼」用純算式算（搬一個項目的位移），不依賴當下的 pages，
+   * 這樣拖曳過程中連續換好幾次也不會用到過期的狀態。
+   */
+  const pagesCountRef = useRef(pages.length);
+  // render 當下就更新：整排的版面是在 useLayoutEffect 裡用這個值算的，
+  // 放到 useEffect 才寫的話會晚一步，新增／刪除頁面那一帧會用到舊的頁數
+  pagesCountRef.current = pages.length;
+  /** 每一帧要照頁碼找元素，用 ref 拿最新的 pages（rAF 迴圈不跟著 pages 重掛） */
+  const pagesRef = useRef(pages);
+  useEffect(() => { pagesRef.current = pages; }, [pages]);
+
+  const handleMovePage = (from: number, to: number) => {
+    const count = pagesCountRef.current;
+    if (from === to || from < 0 || to < 0 || from >= count || to >= count) return;
+    const stride = previewW + 1;
+    const remap = (p: number) => {
+      if (p === from) return to;
+      if (from < to) return p > from && p <= to ? p - 1 : p;
+      return p >= to && p < from ? p + 1 : p;
+    };
+    setPages(prev => {
+      const next = [...prev];
+      next.splice(to, 0, next.splice(from, 1)[0]);
+      return next;
+    });
+    /* 這裡一定要用 pageOfFloating（跟畫面上判斷「這個圖層屬於哪一頁」是同一支）。
+       以前是自己再算一次、而且只夾了下界沒夾上界：中心點落在最後一頁右緣外面的
+       圖層會算出 count（不存在的頁），remap 原封不動回傳，於是拖曳中它跟著最後
+       一頁走、放手卻留在原地 —— 那就是「圖片跟頁面沒有完全同步」。 */
+    setFloatingImages(prev => prev.map(f => {
+      const p = pageOfFloating(f, stride, count);
+      const np = remap(p);
+      return np === p ? f : { ...f, x: f.x + (np - p) * stride };
+    }));
+    setActivePageIndex(prev => remap(prev));
+  };
+
+  const [selectedRatio, setSelectedRatio] = useState('3:4');
+  const [isLandscape, setIsLandscape] = useState(false);
+
+  /** 觸控結束後瀏覽器還會補送一次 click，兩邊都處理的話一次點擊會被算成兩次 */
+  const touchHandledAtRef = useRef(0);
+  /** 有東西被選取時，畫布就進入編輯狀態：手勢全部給選取物，不再左右滑動 */
+  const anySelected = selectedIndex !== null || selectedFloatingId !== null || layoutSelected;
+  const [exportState, setExportState] = useState<'idle' | 'processing' | 'success'>('idle');
+  /* 匯出時的進度。整批共用一個畫面（不是每頁各跑一次）：
+       videoProg  —— 0～1；只有「這批裡有影片」才會有值，純圖片是 null
+       videoLabel —— 每頁都是影片就是「正在匯出影片」，混到圖片就是「正在匯出成品」 */
+  const [videoProg, setVideoProg] = useState<number | null>(null);
+  /** 匯出被使用者中止（忙碌畫面上那顆出口鍵按下去）—— 錄影迴圈看到就收工 */
+  const videoAbortRef = useRef(false);
+  /* 「取消匯出」按下去要**真的**取消。
+     只把錄影迴圈叫停是不夠的：那一輪 handleExport 還在往下跑，收完尾就照樣
+     setExportState('success') —— 使用者明明按了取消，畫面卻跳到成品頁，
+     那正是主人回報的那件事。
+     這裡給每一次「使用者按下匯出」發一個號碼，取消時把號碼往前推一格；
+     那一輪回頭看到號碼變了就知道自己已經被作廢，安安靜靜收工。
+     背景那些 silent 的匯出（IG 預覽、歷史紀錄縮圖）不吃這個號碼，
+     所以取消一次不會順手把背景的工作也殺掉。 */
+  const exportRunRef = useRef(0);
+  const [videoLabel, setVideoLabel] = useState('正在匯出成品');
+  // One exported file per page. The object URLs are mirrored into a ref so they can be
+  // revoked without making every consumer depend on the state value.
+  const [finalImages, setFinalImages] = useState<string[]>([]);
+  /** 每一頁匯出的是圖片還是影片（有影片圖層的那一頁會輸出影片） */
+  const [finalKinds, setFinalKinds] = useState<('image' | 'video')[]>([]);
+  const finalImagesRef = useRef<string[]>([]);
+  const resultStripRef = useRef<HTMLDivElement>(null);
+
+  /** 匯出完成的預覽一定要從第一頁開始，不要停在剛才編輯的那一頁。 */
+  const [resultIdx, setResultIdx] = useState(0);
+  useEffect(() => {
+    if (finalImages.length === 0) return;
+    const el = resultStripRef.current;
+    if (!el) return;
+    el.scrollLeft = 0;
+    setResultIdx(0);
+    const t = setTimeout(() => { if (resultStripRef.current) resultStripRef.current.scrollLeft = 0; }, 60);
+    return () => clearTimeout(t);
+  }, [finalImages]);
+  /* 頁數只放一個，固定在圖片下面 —— 跟著捲到中間的那一頁走，
+     不用每張圖底下都掛一個。用 rAF 跟捲動，慣性滑完也對得上。 */
+  useEffect(() => {
+    const el = resultStripRef.current;
+    if (!el || finalImages.length < 2) return;
+    let raf = 0;
+    const pick = () => {
+      raf = 0;
+      const r = el.getBoundingClientRect();
+      const mid = r.left + r.width / 2;
+      let best = 0, bestD = Infinity;
+      Array.from(el.children).forEach((ch: Element, i: number) => {
+        const c = ch.getBoundingClientRect();
+        const d = Math.abs((c.left + c.width / 2) - mid);
+        if (d < bestD) { bestD = d; best = i; }
+      });
+      setResultIdx(best);
+    };
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(pick); };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    pick();
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [finalImages, exportState]);
+
+  const clearFinalImages = useCallback(() => {
+    finalImagesRef.current.forEach(u => URL.revokeObjectURL(u));
+    finalImagesRef.current = [];
+    setFinalImages([]);
+    setFinalKinds([]);
+  }, []);
+  useEffect(() => () => { finalImagesRef.current.forEach(u => URL.revokeObjectURL(u)); }, []);
+  const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages'>('ratio');
+  /** 頁面順序模式：操作欄往下滑、畫布往下移到中央、每一頁下面出現握把與刪除鍵 */
+  const pagesMode = activeTab === 'pages';
+  const pagesModeRef = useRef(false);
+  pagesModeRef.current = pagesMode;
+  /** 排頁面時整排頁面縮成一半（用 transform，不動 previewW/H） */
+  /* --- 雙指縮放預覽 ---
+     整排頁面本來就有一套縮放機制（排頁面模式用的 k），這裡沿用同一套：
+     使用者的倍率就是「沒有在排頁面時的 k」。這樣捲動幾何、頁面置中、
+     底下那排按鈕的定位全部自動跟著對，不必再開一條平行的邏輯。 */
+  const [userZoom, setUserZoom] = useState(1);
+  /* 手勢期間倍率是直接寫進 DOM 的（不經過 state，才不會每一帧重繪整棵樹），
+     所以這個 ref 是「現在真正的倍率」。千萬不要在 render 裡把它蓋回 state ——
+     捏合中如果剛好有別的原因重繪一次，就會把手勢的值抹掉。 */
+  const userZoomRef = useRef(1);
+  useEffect(() => { userZoomRef.current = userZoom; }, [userZoom]);
+  const ZOOM_MIN = 0.4, ZOOM_MAX = 3;
+  /** 正在雙指縮放畫布。有值的時候不准任何其他手勢介入 */
+  /** 雙指縮放整個預覽：起手的兩指距離、起手倍率，以及「捏住的那個內容座標」與它在螢幕上的位置 */
+  const canvasZoomRef = useRef<{ startDist: number; baseZoom: number; anchorC: number; anchorPx: number } | null>(null);
+  /* 手指已經開始把頁面拖著走了。
+     第二根手指落下時 handleWorkspaceTouchStart 會重跑一次、把 panRef 清掉，
+     所以光看 panRef 分不出「剛按下去」跟「拖到一半」——另外用這個旗標記著，
+     拖到一半再放第二根手指就不會突然變成縮放（放開全部手指才解除）。 */
+  const panMovedRef = useRef(false);
+  const pagesScale = pagesMode ? PAGES_MODE_SCALE : userZoom;
+  /** 整排頁面左邊要留的空白（讓第一頁置中） */
+  const stripOffset = (w: number, k: number) => Math.max(16, (w - previewW * k) / 2);
+  /** 第 i 頁置中時的捲動位置 */
+  const pageScrollLeft = (i: number, w: number, k: number) =>
+    stripOffset(w, k) + k * (i * (previewW + 1) + previewW / 2) - w / 2;
+  // 這個模式是在排頁面，先把選取取消掉，免得順手拖到圖層
+  useEffect(() => {
+    if (!pagesMode) return;
+    setSelectedFloatingId(null);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    // 正在畫布上打字也要一併收掉，不然鍵盤跟輸入框會留在畫面上
+    setInlineEditId(null);
+  }, [pagesMode]);
+
+  /**
+   * 握把與刪除鍵要長在「真正那一頁」的正下方，但畫布容器會裁切也會位移，
+   * 所以控制項放在容器外面、用固定定位貼上去。位置每一帧量一次：
+   * 這樣操作欄滑下去的動畫、左右捲動、換頁數都跟得上。
+   */
+  const pageCtlRefs = useRef(new Map<string, HTMLDivElement>());
+  const pagesColRef = useRef<HTMLDivElement>(null);
+  /** 整排頁面的外殼（尺寸＝縮放後真正佔的大小）與右邊的留白 */
+  const stripShellRef = useRef<HTMLDivElement>(null);
+  const stripPadRef = useRef<HTMLDivElement>(null);
+  const addPageBtnRef = useRef<HTMLButtonElement>(null);
+  /**
+   * 縮放與「補回縮放造成的位移」必須是同一帧算出來的同一個值。
+   * 之前縮放交給 CSS transition、位移自己每一帧補，兩邊差一帧 ——
+   * 位移量又跟捲動位置成正比（可以到一百多 px），進出這個模式就會抖。
+   * 所以動畫自己跑：每一帧算出 k，縮放與位移一起寫進同一個 transform。
+   */
+  /** 縮放動畫還沒結束前，視覺上仍然當作在排頁面（接縫、外框、陰影） */
+  const [pagesVisual, setPagesVisual] = useState(false);
+  const pagesVisualTimerRef = useRef(0);
+  const kRef = useRef(1);
+  const kAnimRef = useRef<{ from: number; to: number; t0: number } | null>(null);
+  /** 動畫期間繞著哪一頁縮放（就是動畫開始時停在畫面正中間的那一頁） */
+  const kAnchorRef = useRef(0);
+  const prevPagesScaleRef = useRef(pagesScale);
+  const containerWRef = useRef(0);
+  const plusVisibleRef = useRef(true);
+  plusVisibleRef.current = pages.length - 1 < 24;
+
+  /**
+   * 整排頁面在縮放倍率 k 之下該有的版面。**尺寸、留白、捲動位置全部由 k 算出來**，
+   * 動畫每一帧重算一次 —— 這樣縮放的過程中版面本身永遠是對的，
+   * 不會像以前那樣「外殼的大小和位置瞬間換成新的、只有縮放在慢慢跑」，
+   * 一進去整排就先瞬移一百多 px 再縮小。
+   */
+  const applyStripGeometry = useCallback((k: number) => {
+    const n = Math.max(1, pagesCountRef.current);
+    const pw = previewWRef.current;
+    const w = containerWRef.current;
+    const shell = stripShellRef.current;
+    const col = pagesColRef.current;
+    const pad = stripPadRef.current;
+    // 跟 stripOffset 同一條式子，但頁寬取自 ref —— 這支是 useCallback([])，
+    // 直接用外面的 stripOffset 會一直沿用第一次 render 那時候的頁寬
+    const m = Math.max(16, (w - pw * k) / 2);
+    if (shell) {
+      shell.style.marginLeft = `${m}px`;
+      shell.style.width = `${(n * pw + (n - 1)) * k}px`;
+      shell.style.height = `${previewHRef.current * k}px`;
+    }
+    // 右邊剛好留到「最後一頁停在正中間」為止；加號按鈕已經佔掉 ml-3 + 40
+    if (pad) pad.style.width = `${Math.max(0, m - (plusVisibleRef.current ? 52 : 0))}px`;
+    if (col) col.style.transform = k === 1 ? '' : `scale(${k})`;
+  }, []);
+
+  // 要在「把版面貼成目標倍率」那個 useLayoutEffect 之前先把動畫排好，
+  // 不然版面會先一步跳到目標值，動畫就整段被跳過了
+  useLayoutEffect(() => {
+    const prev = prevPagesScaleRef.current;
+    prevPagesScaleRef.current = pagesScale;
+    if (Math.abs(kRef.current - pagesScale) < 0.0001) return;
+    /* 記下動畫開始時「畫面正中央對到的那個內容座標」（未縮放單位），
+       整段動畫都把同一個座標擺回正中央 —— 也就是原地縮放。
+       以前記的是「最接近中央的那一頁」再把那一頁擺到正中間：只要中心
+       不是剛好落在某一頁正中央，第一帧就會被硬拉過去，那就是「一開始就跳」。 */
+    const el = containerRef.current;
+    if (el && containerSize.width > 0) {
+      kAnchorRef.current =
+        (el.scrollLeft + containerSize.width / 2 - stripOffset(containerSize.width, prev)) / (prev || 1);
+    } else {
+      kAnchorRef.current = 0;
+    }
+    kAnimRef.current = { from: kRef.current, to: pagesScale, t0: performance.now() };
+    // 縮放動畫還在跑的時候，維持排頁面的樣子（接縫、外框、陰影都先不要回來），
+    // 不然退出的瞬間會先閃一排線條再縮回去
+    setPagesVisual(true);
+    window.clearTimeout(pagesVisualTimerRef.current);
+    pagesVisualTimerRef.current = window.setTimeout(() => setPagesVisual(pagesModeRef.current), 340);
+  }, [pagesScale]);
+
+  /**
+   * 把握把／刪除鍵／加號貼到目前的捲動位置上。
+   * 除了每一帧跑一次，手動捲頁時「寫完 scrollLeft 立刻」也要再跑一次 ——
+   * 頁面是被 scrollLeft 直接帶著走的，按鈕是 transform，
+   * 兩者不在同一帧寫就會差一帧，看起來就是按鈕跟不上頁面。
+   */
+  const positionPageCtls = useCallback(() => {
+    const k = kRef.current;
+    const cont = containerRef.current;
+    const col = pagesColRef.current;
+    if (!cont || !col) return;
+    const rc = cont.getBoundingClientRect();
+    const colRect = col.getBoundingClientRect();
+    const m = parseFloat((col.parentElement as HTMLElement).style.marginLeft) || 0;
+    const stride = previewWRef.current + 1;
+    // 這裡拿到的是「那一頁沒被拖走時」該在的位置。
+    // 不去量頁框本身：頁框拖曳時會被移走、還會放大，量它會把位移算兩次。
+    const left0 = rc.left - cont.scrollLeft + m;
+    const bottom = colRect.top + k * previewHRef.current;
+    pageCtlRefs.current.forEach((node, id) => {
+      const i = pagesRef.current.findIndex(pg => pg.id === id);
+      if (i < 0) return;
+      node.style.transform =
+        `translate3d(${left0 + k * (i * stride + previewWRef.current / 2)}px, ${bottom + 8}px, 0) translateX(-50%)`;
+      node.style.visibility = 'visible';
+    });
+    // 「新增一頁」貼在最後一頁原本的位置旁邊 —— 用算的，才不會被拖曳中的
+    // 最後一頁拖著跑（看起來像跟那一頁黏在一起）
+    const plus = addPageBtnRef.current;
+    if (plus) {
+      plus.style.transition = k === 1 ? '' : 'none';
+      if (k === 1) {
+        plus.style.transform = '';
+      } else {
+        const n = pagesRef.current.length;
+        const want = left0 + k * ((n - 1) * stride + previewWRef.current) + 12;
+        const curTx = new DOMMatrixReadOnly(getComputedStyle(plus).transform).m41;
+        const layoutLeft = plus.getBoundingClientRect().left - curTx;
+        if (Math.abs(want - layoutLeft - curTx) > 0.5) plus.style.transform = `translateX(${want - layoutLeft}px)`;
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const anim = kAnimRef.current;
+      if (anim) {
+        const t = Math.min(1, (performance.now() - anim.t0) / 300);
+        kRef.current = anim.from + (anim.to - anim.from) * (1 - Math.pow(1 - t, 3));
+        if (t >= 1) { kRef.current = anim.to; kAnimRef.current = null; }
+      }
+      const k = kRef.current;
+      // 版面（外殼尺寸、左右留白、縮放）全部由這一帧的 k 算出來，
+      // 捲動幾何永遠跟看到的大小一致：捲 1px 畫面就走 1px
+      applyStripGeometry(k);
+      if (anim) {
+        // 先寫完尺寸（scrollWidth 才是對的）再寫捲動位置，
+        // 讓「動畫開始時停在中間的那一頁」整段都待在正中間
+        const cont = containerRef.current;
+        const w = containerWRef.current;
+        if (cont && w > 0) {
+          // 同樣用 ref 版的頁寬（這個迴圈不跟著每次 render 重掛）
+          const pw = previewWRef.current;
+          const m = Math.max(16, (w - pw * k) / 2);
+          // kAnchorRef 存的是「內容座標」，乘上當下倍率就是它現在的位置
+          cont.scrollLeft = Math.max(0, m + kAnchorRef.current * k - w / 2);
+        }
+      }
+      // 外層（貼在頁框正下方）由這裡每一帧定位 —— 頁框在排頁面時是不動的，
+      // 所以這層只跟捲動與模式動畫有關。拖曳的位移放在「內層」、由 React
+      // 跟內容用同一次 render 寫出來，兩邊永遠同一帧、速度不可能不一樣。
+      positionPageCtls();
+      // 離開這個模式後還要再跑到動畫結束，位移才有東西補
+      /* 原本是寫死的 k === 1；有了使用者縮放之後，目標值不一定是 1，
+         改成「沒有動畫、而且已經到達目標倍率」就收工，不會一直空轉。 */
+      if (!pagesMode && !kAnimRef.current && Math.abs(k - pagesScale) < 0.0001) return;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [pagesMode, pagesScale, positionPageCtls, applyStripGeometry]);
+
+  // 進到濾鏡分頁才在背景把濾鏡一個一個載進來，載好一個就重畫一次
+  useEffect(() => {
+    if (activeTab !== 'adjust' || adjustSub !== 'filter') return;
+    let alive = true;
+    (async () => {
+      for (const l of lutList) {
+        if (!alive) return;
+        if (!l.url || getLoadedLut(l.id)) continue;
+        await loadLut(l.id, l.url);
+        if (!alive) return;
+        setLutRevision(n => n + 1);
+      }
+    })();
+    return () => { alive = false; };
+  }, [activeTab, adjustSub, lutList]);
+
+  const [layoutSubTab, setLayoutSubTab] = useState<'layout' | 'adjust'>('layout');
+  /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
+  const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
+  /* 離開「新增」分頁就回到最外層：下次再進來看到的是那幾顆大按鈕，
+     而不是上次停在的圖形／符號清單。 */
+  useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
+  // 離開「新增」分頁就退回大按鈕那一層，下次進來不會停在圖案清單
+  useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
+  const [colorPickerActive, setColorPickerActive] = useState(false);
+  /** 編輯頁選到的是圖片（不是文字）—— 這時整個工具欄要換成跟「編輯」一樣的三段式 */
+  /* 這個旗標控制外框要不要再包一層 p-4。編輯圖片的那套介面自己就把邊界算好了，
+     多包一層 padding 就會整個縮一圈、位置也跟著偏 —— 佈局裡的格子走的是同一套
+     介面，所以也要算進來，不然只有格子那邊會縮小跑位。 */
+  const imageEditMode = activeTab === 'adjust'
+    && (!!floatingImages.find(f => f.id === selectedFloatingId && f.text === undefined && !f.shape)
+        || (!selectedFloatingId && selectedIndex !== null && selectedLayoutId !== null));
+
+  const [historyState, setHistoryState] = useState<{
+    history: { pages: PageConfig[]; floatingImages: FloatingImage[]; selectedRatio: string; isLandscape: boolean }[];
+    index: number;
+  }>({
+    history: [],
+    index: -1
+  });
+  const isUndoing = useRef(false);
+
+  useEffect(() => {
+    if (isUndoing.current) {
+      isUndoing.current = false;
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setHistoryState(prev => {
+        const stateToSave = { pages, floatingImages, selectedRatio, isLandscape };
+        
+        if (prev.index === -1) {
+          return { history: [stateToSave], index: 0 };
+        }
+
+        const current = prev.history[prev.index];
+        if (current && JSON.stringify(current) === JSON.stringify(stateToSave)) {
+          return prev;
+        }
+
+        /* 以前只留 30 格，編久一點就退不回最初的樣子了。
+           改用共用的 pushHistoryEntry：留到 500 格，而且第 0 格永遠留著。
+           一格只是參數的淺拷貝（圖片是共用參照），所以放寬不會吃記憶體。 */
+        return pushHistoryEntry(prev.history, prev.index, stateToSave);
+      });
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [pages, floatingImages, selectedRatio, isLandscape]);
+
+  const undo = () => {
+    if (historyState.index > 0) {
+      isUndoing.current = true;
+      const prevIndex = historyState.index - 1;
+      const state = historyState.history[prevIndex];
+      setPages(state.pages);
+      setFloatingImages(state.floatingImages);
+      setSelectedRatio(state.selectedRatio);
+      setIsLandscape(state.isLandscape);
+      setHistoryState(prev => ({ ...prev, index: prevIndex }));
+    }
+  };
+
+  const redo = () => {
+    if (historyState.index < historyState.history.length - 1) {
+      isUndoing.current = true;
+      const nextIndex = historyState.index + 1;
+      const state = historyState.history[nextIndex];
+      setPages(state.pages);
+      setFloatingImages(state.floatingImages);
+      setSelectedRatio(state.selectedRatio);
+      setIsLandscape(state.isLandscape);
+      setHistoryState(prev => ({ ...prev, index: nextIndex }));
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'color') {
+      setColorPickerActive(false);
+      // 離開顏色分頁就回到底色那一頁，下次進來不會停在紋理調色頁
+      setColorSub('bg');
+    }
+    
+    if (activeTab === 'layout') {
+      setTimeout(() => {
+        const el = document.getElementById('active-layout-button');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }, 50);
+    }
+  }, [activeTab]);
+
+  const [slotToUpload, setSlotToUpload] = useState<number | null>(null);
+  const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
+  /** 容器還沒量到之前用的是預設值，先不要畫出來，不然量到的瞬間會跳一下 */
+  const [containerMeasured, setContainerMeasured] = useState(false);
+  const [allowSingleLayout, setAllowSingleLayout] = useState(false);
+  const [layoutSortBase, setLayoutSortBase] = useState(() => 4);
+  const isLayoutChangeRef = useRef(false);
+
+  useEffect(() => {
+    if (isLayoutChangeRef.current) {
+      isLayoutChangeRef.current = false;
+    } else {
+      setLayoutSortBase(images.length);
+    }
+  }, [images.length]);
+
+  // Drag and drop to swap states
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [hoveredSwapTargetIndex, setHoveredSwapTargetIndex] = useState<number | null>(null);
+  const [activeCollisions, setActiveCollisions] = useState<{
+    left: boolean;
+    right: boolean;
+    top: boolean;
+    bottom: boolean;
+  }>({ left: false, right: false, top: false, bottom: false });
+
+  // Mobile Touch States
+  const [touchDraggedIndex, setTouchDraggedIndex] = useState<number | null>(null);
+  const [touchDragOverIndex, setTouchDragOverIndex] = useState<number | null>(null);
+
+  const touchDragState = useRef<{
+    startX: number;
+    startY: number;
+    currentIndex: number;
+    hasMoved: boolean;
+  } | null>(null);
+
+  const touchZoomState = useRef<{
+    startDist: number;
+    startZoom: number;
+  } | null>(null);
+  const wasZoomingRef = useRef<boolean>(false);
+
+  const touchDragOverIndexRef = useRef<number | null>(null);
+  const touchPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Long press refs for mobile touch drag-to-swap
+  const longPressTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isLongPressedRef = useRef<boolean>(false);
+  const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  // Cells keep touch-action:none so long-press reordering can own the gesture, which also
+  // killed the native horizontal scroll everywhere a photo covers the canvas. While no
+  // long-press is in flight we drive that scroll ourselves from the raw touch delta.
+  const cellSwipeRef = useRef<{ lastX: number; active: boolean } | null>(null);
+
+  // Long-press swapping for free-standing images, and the shared drop-target highlight
+  // used by both the cell drag and this one.
+  const floatSwapRef = useRef<{
+    id: string; src: string; startX: number; startY: number;
+    lastX: number; swiping: boolean; dragging: boolean;
+  } | null>(null);
+  const floatSwapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const swapOverRef = useRef<SwapTarget | null>(null);
+  const [swapOver, setSwapOver] = useState<SwapTarget | null>(null);
+  const [floatDragSrc, setFloatDragSrc] = useState<string | null>(null);
+  useEffect(() => () => { if (floatSwapTimerRef.current) clearTimeout(floatSwapTimerRef.current); }, []);
+
+  const setSwapOverTarget = (t: SwapTarget | null) => {
+    const a = swapOverRef.current;
+    const same = a && t && a.kind === t.kind &&
+      (a.kind === 'cell'
+        ? a.idx === (t as any).idx && a.layoutId === (t as any).layoutId
+        : a.id === (t as any).id);
+    if (same) return;
+    swapOverRef.current = t;
+    setSwapOver(t);
+  };
+  const pointerStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  const dragOrMoveOccurredRef = useRef<boolean>(false);
+
+  // Pointer state for dragging to pan the image inside the selected cell
+  const pointerState = useRef({
+    isDraggingContent: false,
+    // 只認第一根手指：第二根落下就是要縮放，不是要平移
+    pointerId: -1,
+    startX: 0,
+    startY: 0,
+    startOffsetX: 0,
+    startOffsetY: 0,
+    cellIdx: -1
+  });
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  /* 影片另外一顆 —— 一個 accept 同時寫圖片與影片的話，相簿那一頁會兩種混在
+     一起，找起來反而慢。走的是同一支 handleFileChange，行為完全一樣。 */
+  const vidInputRef = useRef<HTMLInputElement>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Measure container size dynamically
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setContainerSize({ width, height });
+          setContainerMeasured(true);
+        }
+      }
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // Automatically clamp image offsets when layout, ratio, gap, or preview dimensions change to prevent shifting and empty spaces
+  const imagesStateKey = images.map(img => `${img.zoom || 1}-${img.rotation || 0}-${img.url || ''}`).join(',');
+
+  useEffect(() => {
+    if (images.length === 0) return;
+    const templates = TEMPLATE_MAP[images.length] || [];
+    const activeTmpl = templates[templateIndex] || templates[0];
+    if (!activeTmpl) return;
+ 
+    const { width: previewW, height: previewH } = getRatioDimensions();
+ 
+    let hasChanges = false;
+    const clamped = images.map((cell, idx) => {
+      if (!cell || !cell.url) return cell;
+      const rect = activeTmpl.rects[idx];
+      if (!rect) return cell;
+ 
+      const cellWidth = rect.w * previewW;
+      const cellHeight = rect.h * previewH;
+      if (cellWidth <= 0 || cellHeight <= 0) return cell;
+ 
+      const w_img = cell.naturalWidth || 800;
+      const h_img = cell.naturalHeight || 600;
+      const is90or270 = (cell.rotation % 180) !== 0;
+      const drawW = is90or270 ? h_img : w_img;
+      const drawH = is90or270 ? w_img : h_img;
+ 
+      const scaleX = cellWidth / drawW;
+      const scaleY = cellHeight / drawH;
+      const coverScale = Math.max(scaleX, scaleY);
+      const finalScale = coverScale * (cell.zoom || 1);
+ 
+      const rotatedImgW = is90or270 ? (h_img * finalScale) : (w_img * finalScale);
+      const rotatedImgH = is90or270 ? (w_img * finalScale) : (h_img * finalScale);
+ 
+      const maxShiftX = Math.max(0, (rotatedImgW - cellWidth) / 2) / cellWidth;
+      const maxShiftY = Math.max(0, (rotatedImgH - cellHeight) / 2) / cellHeight;
+ 
+      const newOffsetX = Math.max(-maxShiftX, Math.min(maxShiftX, cell.offsetX));
+      const newOffsetY = Math.max(-maxShiftY, Math.min(maxShiftY, cell.offsetY));
+ 
+      if (Math.abs(newOffsetX - cell.offsetX) > 0.001 || Math.abs(newOffsetY - cell.offsetY) > 0.001) {
+        hasChanges = true;
+        return {
+          ...cell,
+          offsetX: newOffsetX,
+          offsetY: newOffsetY
+        };
+      }
+      return cell;
+    });
+ 
+    if (hasChanges) {
+      setImages(clamped);
+    }
+  }, [templateIndex, selectedRatio, isLandscape, gap, containerSize.width, containerSize.height, images.length, imagesStateKey]);
+
+  const getRatioDimensions = () => {
+    // 上下左右都只留這麼一點空隙（容器自己還有 py-2）。
+    // 頁面下方原本要留給刪除鍵的位置已經移到「頁面順序」分頁，所以這裡可以留很少。
+    const pad = 8;
+    // 寬度仍然壓在 450 以免桌機上過大；高度就讓它撐滿可用空間，
+    // 這樣白色畫布下緣跟工具欄之間的空隙才會跟上緣一樣小。
+    const maxW = Math.min(450, Math.max(200, containerSize.width - pad));
+    const maxH = Math.max(200, containerSize.height - pad);
+    let w = maxW;
+
+    let ratioW = 1;
+    let ratioH = 1;
+
+    if (selectedRatio === '1:1') {
+      ratioW = 1;
+      ratioH = 1;
+    } else if (selectedRatio === '3:4') {
+      ratioW = isLandscape ? 4 : 3;
+      ratioH = isLandscape ? 3 : 4;
+    } else if (selectedRatio === '2:3') {
+      ratioW = isLandscape ? 3 : 2;
+      ratioH = isLandscape ? 2 : 3;
+    } else if (selectedRatio === '9:16') {
+      ratioW = isLandscape ? 16 : 9;
+      ratioH = isLandscape ? 9 : 16;
+    } else if (selectedRatio === '4:5') {
+      ratioW = isLandscape ? 5 : 4;
+      ratioH = isLandscape ? 4 : 5;
+    }
+
+    let h = w * (ratioH / ratioW);
+
+    const scale = Math.min(maxW / w, maxH / h);
+    return { width: Math.round(w * scale), height: Math.round(h * scale) };
+  };
+
+  const { width: previewW, height: previewH } = getRatioDimensions();
+
+  /* --- 換比例時，浮動物件要跟著頁面一起縮放 ---
+     圖片／文字這些浮動物件的 x/y 是「從頁面左上角算起的絕對像素」，
+     而佈局（格子）是以頁面中心為基準的偏移量。所以換頁面比例的時候，
+     格子會自己待在中間，浮動物件卻原地不動 —— 頁面一變窄或變矮，
+     原本靠邊的物件就跑到頁面外面、被裁掉（上方的物件最常中招）。
+
+     這裡在頁面尺寸真的變了的那一刻，把每個浮動物件按比例重新擺一次：
+       · 中心點：依 x、y 兩個方向各自的縮放比例移動 → 相對位置不變
+       · 大小：頁面變小的時候乘上兩個比例中「較小」的那個 → 等比縮放，
+               圖不會被壓扁，而且原本在框內的一定還在框內
+
+     ── 大小那一項為什麼要分兩種 ─────────────────────────────────────
+     以前不管變大變小都取 min，那是**不可逆**的：
+     直式 → 橫式時 (sx, sy) = (1, 0.56)，取 min 縮成 0.56；
+     切回來 (1, 1.77) 取 min 卻是 1 —— 沒有還原。所以只要來回切幾次，
+     物件就一路縮下去（實測 56px → 32 → 18 → 10 → 8 → 6 → 4）。
+     改成「頁面變小取 min、變大取 max」：變小的方向跟以前一模一樣
+     （不會有東西被裁掉），變大的方向剛好是它的反運算，來回切就原地不動。
+     面積剛好沒變的那種（例如長寬互換）走幾何平均＝1，同樣是對稱的。 */
+  const pageFrameRef = useRef<{ w: number; h: number } | null>(null);
+  useLayoutEffect(() => {
+    const prev = pageFrameRef.current;
+    pageFrameRef.current = { w: previewW, h: previewH };
+    if (!prev || prev.w <= 0 || prev.h <= 0 || previewW <= 0 || previewH <= 0) return;
+    // 只有真的變了才動（0.5px 以內當作沒變，避免量測誤差一直觸發）
+    if (Math.abs(prev.w - previewW) < 0.5 && Math.abs(prev.h - previewH) < 0.5) return;
+    const sx = previewW / prev.w;
+    const sy = previewH / prev.h;
+    const area = sx * sy;
+    const s = Math.abs(Math.log(area)) < 1e-6
+      ? Math.sqrt(area)                                  // 面積沒變：兩邊互換，不縮放
+      : (area < 1 ? Math.min(sx, sy) : Math.max(sx, sy));
+    setFloatingImages(list => list.length === 0 ? list : list.map(f => {
+      /* 版面盒的中心就是 x + width/2（scale 是以中心為原點放大的，
+         見 wrapGeo），所以搬中心、再把左上角推回去就對了。 */
+      const cx = (f.x + f.width / 2) * sx;
+      const cy = (f.y + f.height / 2) * sy;
+      return { ...f, scale: f.scale * s, x: cx - f.width / 2, y: cy - f.height / 2 };
+    }));
+  }, [previewW, previewH]);
+
+  /** 頁面順序模式縮小的倍率：騰出下面那兩顆按鈕的高度 */
+  /** rAF 迴圈裡要用到的頁寬（不想讓迴圈跟著每次 render 重掛） */
+  const previewWRef = useRef(previewW);
+  previewWRef.current = previewW;
+  const previewHRef = useRef(previewH);
+  previewHRef.current = previewH;
+  containerWRef.current = containerSize.width;
+  /**
+   * 沒有縮放動畫在跑的時候，整排的版面就是目標倍率該有的樣子。
+   * （換頁數、換版型比例、視窗大小改變都走這裡；動畫期間交給 rAF 每一帧寫。）
+   */
+  useLayoutEffect(() => {
+    if (kAnimRef.current) return;
+    // 手指還在畫布上捏合時，倍率由手勢每一帧直接寫，這裡不要插手
+    if (canvasZoomRef.current) return;
+    kRef.current = pagesScale;
+    applyStripGeometry(pagesScale);
+  }, [pagesScale, pages.length, previewW, previewH, containerSize.width, applyStripGeometry]);
+  /** 格子在畫面上的實際大小會乘上整組佈局的縮放；把螢幕位移換算成格內偏移時要跟著乘。 */
+  const layoutScale = activeLayout?.t?.scale ?? 1;
+
+  // Pointer event handlers for panning the image inside the selected cell
+  const handleContentPointerDown = (e: React.PointerEvent<HTMLDivElement>, idx: number) => {
+    if (selectedIndex !== idx) return;
+    if (isLongPressedRef.current) return;
+    // 第二根手指落下＝要雙指縮放了：把平移收掉，不然兩根手指的移動
+    // 會輪流被拿來當平移量，照片就在兩根手指之間亂跳
+    if (pointerState.current.isDraggingContent) {
+      pointerState.current.isDraggingContent = false;
+      pointerState.current.cellIdx = -1;
+      return;
+    }
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+
+    // Reset move flag for content panning
+    dragOrMoveOccurredRef.current = false;
+    pointerStartPosRef.current = { x: e.clientX, y: e.clientY };
+
+    const cell = images[idx];
+    pointerState.current = {
+      isDraggingContent: true,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startOffsetX: cell ? cell.offsetX : 0,
+      startOffsetY: cell ? cell.offsetY : 0,
+      cellIdx: idx
+    };
+  };
+
+  const handleContentPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointerState.current.isDraggingContent) return;
+    // 別的手指（或縮放中冒出來的事件）不算：平移只跟著當初按下的那一根
+    if (e.pointerId !== pointerState.current.pointerId) return;
+    if (wsGestureRef.current?.mode === 'pinch') {
+      pointerState.current.isDraggingContent = false;
+      return;
+    }
+    if (isLongPressedRef.current) {
+      pointerState.current.isDraggingContent = false;
+      return;
+    }
+    e.stopPropagation();
+
+    // Check distance for click cancellation
+    if (pointerStartPosRef.current) {
+      const dx = e.clientX - pointerStartPosRef.current.x;
+      const dy = e.clientY - pointerStartPosRef.current.y;
+      if (Math.hypot(dx, dy) > 8) {
+        dragOrMoveOccurredRef.current = true;
+      }
+    }
+
+    const { startX, startY, startOffsetX, startOffsetY, cellIdx } = pointerState.current;
+    if (cellIdx === -1) return;
+
+    // 格子的寬高是內容單位（previewW／previewH），手指是螢幕像素 —— 先除回去
+    const kc = kRef.current || 1;
+    const dx = (e.clientX - startX) / kc;
+    const dy = (e.clientY - startY) / kc;
+
+    const templates = TEMPLATE_MAP[images.length] || [];
+    const activeTmpl = templates[templateIndex] || templates[0];
+    if (!activeTmpl) return;
+
+    const rect = activeTmpl.rects[cellIdx];
+    if (!rect) return;
+
+    const cellWidth = rect.w * previewW * layoutScale;
+    const cellHeight = rect.h * previewH * layoutScale;
+
+    if (cellWidth > 0 && cellHeight > 0) {
+      const cell = images[cellIdx];
+      const w_img = cell.naturalWidth || 800;
+      const h_img = cell.naturalHeight || 600;
+
+      const is90or270 = (cell.rotation % 180) !== 0;
+      const drawW = is90or270 ? h_img : w_img;
+      const drawH = is90or270 ? w_img : h_img;
+
+      const scaleX = cellWidth / drawW;
+      const scaleY = cellHeight / drawH;
+      const coverScale = Math.max(scaleX, scaleY);
+      const finalScale = coverScale * cell.zoom;
+
+      const rotatedImgW = is90or270 ? (h_img * finalScale) : (w_img * finalScale);
+      const rotatedImgH = is90or270 ? (w_img * finalScale) : (h_img * finalScale);
+
+      const maxShiftX = Math.max(0, (rotatedImgW - cellWidth) / 2) / cellWidth;
+      const maxShiftY = Math.max(0, (rotatedImgH - cellHeight) / 2) / cellHeight;
+
+      const calculatedOffsetX = startOffsetX + (dx / cellWidth);
+      const calculatedOffsetY = startOffsetY + (dy / cellHeight);
+
+      let newOffsetX = calculatedOffsetX;
+      let newOffsetY = calculatedOffsetY;
+
+      const snapThreshold = 0.015; // Snapping threshold
+
+      // Snap & collision detection for X
+      if (maxShiftX > 0) {
+        if (Math.abs(calculatedOffsetX - maxShiftX) <= snapThreshold) {
+          newOffsetX = maxShiftX;
+        } else if (Math.abs(calculatedOffsetX - (-maxShiftX)) <= snapThreshold) {
+          newOffsetX = -maxShiftX;
+        }
+      }
+
+      // Snap & collision detection for Y
+      if (maxShiftY > 0) {
+        if (Math.abs(calculatedOffsetY - maxShiftY) <= snapThreshold) {
+          newOffsetY = maxShiftY;
+        } else if (Math.abs(calculatedOffsetY - (-maxShiftY)) <= snapThreshold) {
+          newOffsetY = -maxShiftY;
+        }
+      }
+
+      // Strictly clamp to prevent showing empty black areas
+      newOffsetX = Math.max(-maxShiftX, Math.min(maxShiftX, newOffsetX));
+      newOffsetY = Math.max(-maxShiftY, Math.min(maxShiftY, newOffsetY));
+
+      // Determine active collisions based on final clamped positions
+      const collisionMargin = 0.001;
+      const leftColliding = maxShiftX > 0 && Math.abs(newOffsetX - maxShiftX) <= collisionMargin;
+      const rightColliding = maxShiftX > 0 && Math.abs(newOffsetX - (-maxShiftX)) <= collisionMargin;
+      const topColliding = maxShiftY > 0 && Math.abs(newOffsetY - maxShiftY) <= collisionMargin;
+      const bottomColliding = maxShiftY > 0 && Math.abs(newOffsetY - (-maxShiftY)) <= collisionMargin;
+
+      setActiveCollisions({
+        left: leftColliding,
+        right: rightColliding,
+        top: topColliding,
+        bottom: bottomColliding
+      });
+
+      setImages(prev => prev.map((img, i) => {
+        if (i !== cellIdx) return img;
+        return {
+          ...img,
+          offsetX: newOffsetX,
+          offsetY: newOffsetY
+        };
+      }));
+    }
+  };
+
+  const handleContentPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (pointerState.current.isDraggingContent) {
+      e.stopPropagation();
+      pointerState.current.isDraggingContent = false;
+      pointerState.current.cellIdx = -1;
+      setActiveCollisions({ left: false, right: false, top: false, bottom: false });
+    }
+  };
+
+  // HTML5 Drag and Drop handlers for swapping images
+  const handleDragStart = (e: React.DragEvent<HTMLDivElement>, idx: number) => {
+    if (pointerState.current.isDraggingContent) {
+      e.preventDefault();
+      return;
+    }
+
+    // Set drag image to match the original aspect ratio with no rounded corners
+    const img = e.currentTarget.querySelector('img');
+    if (img) {
+      const container = document.createElement('div');
+      const w_nat = images[idx]?.naturalWidth || img.naturalWidth || 800;
+      const h_nat = images[idx]?.naturalHeight || img.naturalHeight || 600;
+      const aspect = w_nat / h_nat;
+
+      // Base size of 200px on the larger side
+      let dragW = 200;
+      let dragH = 200;
+      if (aspect >= 1) {
+        dragW = 200;
+        dragH = Math.round(200 / aspect);
+      } else {
+        dragW = Math.round(200 * aspect);
+        dragH = 200;
+      }
+
+      container.style.width = `${dragW}px`;
+      container.style.height = `${dragH}px`;
+      container.style.position = 'fixed';
+      container.style.top = '-2000px';
+      container.style.left = '-2000px';
+      container.style.zIndex = '-9999';
+      container.style.borderRadius = '0px';
+      container.style.overflow = 'hidden';
+      container.style.border = 'none';
+      container.style.backgroundColor = '#000000';
+      container.style.boxShadow = '0 12px 30px rgba(0,0,0,0.6)';
+      container.style.pointerEvents = 'none';
+
+      const cloneImg = document.createElement('img');
+      cloneImg.src = images[idx]?.url || img.src;
+      cloneImg.style.width = '100%';
+      cloneImg.style.height = '100%';
+      cloneImg.style.maxWidth = 'none';
+      cloneImg.style.maxHeight = 'none';
+      cloneImg.style.objectFit = 'cover';
+      cloneImg.style.borderRadius = '0px';
+      cloneImg.style.transform = `rotate(${images[idx]?.rotation || 0}deg)`;
+
+      container.appendChild(cloneImg);
+      document.body.appendChild(container);
+      e.dataTransfer.setDragImage(container, dragW / 2, dragH / 2);
+
+      setTimeout(() => {
+        if (container.parentNode) {
+          container.parentNode.removeChild(container);
+        }
+      }, 0);
+    }
+
+    // Wrap in setTimeout so the browser finishes capturing the drag image before we hide the source cell's image
+    setTimeout(() => {
+      setDraggedIndex(idx);
+    }, 0);
+
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>, idx: number) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === idx) return;
+    if (selectedIndex === draggedIndex) return;
+    setDragOverIndex(idx);
+  };
+
+  const handleDragLeave = () => {
+    setDragOverIndex(null);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>, idx: number) => {
+    e.preventDefault();
+    if (draggedIndex === null || draggedIndex === idx) return;
+    if (selectedIndex === draggedIndex) return;
+
+    setImages(prev => {
+      const copy = [...prev];
+      const temp = { ...copy[draggedIndex] };
+      // After swapping, both images must become fully filling/occupying the cell (zoom = 1.0, offsetX = 0, offsetY = 0)
+      copy[draggedIndex] = {
+        ...copy[idx],
+        zoom: 1.0,
+        offsetX: 0,
+        offsetY: 0
+      };
+      copy[idx] = {
+        ...temp,
+        zoom: 1.0,
+        offsetX: 0,
+        offsetY: 0
+      };
+      return copy;
+    });
+
+    if (selectedIndex === draggedIndex) {
+      setSelectedIndex(idx);
+    } else if (selectedIndex === idx) {
+      setSelectedIndex(draggedIndex);
+    }
+
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedIndex(null);
+    setDragOverIndex(null);
+  };
+
+  /** 兩段式選取：先選整組佈局，已經選中同一個佈局時再點才選到裡面的格子。 */
+  const selectCellOrLayout = (layoutId: string, idx: number) => {
+    // 兩段式：第一次點先選整組佈局，已經選中同一個佈局時再點才選到裡面的格子。
+    if (selectedLayoutId !== layoutId) {
+      setSelectedLayoutId(layoutId);
+      setSelectedIndex(null);
+      setSelectedFloatingId(null);
+      return;
+    }
+    setSelectedIndex(idx);
+    // 空格子被選到就直接開選圖（觸控的合成 click 會被防重複機制擋掉，這裡要自己開）
+    const lay = pages.flatMap(p => p.layouts).find(l => l.id === layoutId);
+    if (lay && !lay.images[idx]?.url) {
+      setSlotToUpload(idx);
+      replaceInputRef.current?.click();
+    }
+  };
+
+  const handleCellTouchStart = (e: React.TouchEvent<HTMLDivElement>, idx: number, layoutId: string) => {
+    const isSelected = selectedIndex === idx;
+
+    // Reset touch movement tracking
+    dragOrMoveOccurredRef.current = false;
+
+    // Clear any existing long-press timer
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+    isLongPressedRef.current = false;
+
+    // 已經選中別的東西時，這一手勢屬於「畫布層級手勢」（移動/縮放選中物件），
+    // 不要在這裡再啟動長按交換或格內縮放。
+    if (selectedFloatingId) return;
+    // 別的佈局被選取時，手勢屬於那個佈局
+    if (selectedLayoutId !== null && selectedLayoutId !== layoutId) return;
+    if (selectedIndex !== null && selectedIndex !== idx) return;
+    // 註：這個佈局整組被選取時仍然允許往下走 —— 短拖曳會搬整組佈局，
+    //     但長按 150ms 之後就切換成「拖曳交換這一格的照片」。
+
+    if (e.touches.length >= 2) {
+      // 整組佈局被選取時，雙指是要縮放「整組」；手指剛好落在某一格上面
+      // 不代表要縮那一格裡的照片，這裡直接讓給佈局自己的處理器
+      if (selectedIndex === null) {
+        touchZoomState.current = null;
+        touchDragState.current = null;
+        return;
+      }
+      wasZoomingRef.current = true;
+      touchDragState.current = null;
+      // Pinch-to-zoom start
+      const dist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      touchZoomState.current = {
+        startDist: dist,
+        startZoom: images[idx]?.zoom || 1.0,
+      };
+      // Cancel pointer panning
+      pointerState.current.isDraggingContent = false;
+    } else if (e.touches.length === 1) {
+      wasZoomingRef.current = false;
+      // Prevent dragging empty cells
+      const thisLayout = pages.flatMap(p => p.layouts).find(l => l.id === layoutId);
+      if (!thisLayout?.images[idx]?.url) {
+        // 空格子沒有長按交換，但仍要記起點，滑動時才判斷得出這是拖曳而不是點擊
+        touchStartPosRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        return;
+      }
+
+      const touch = e.touches[0];
+      touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+      cellSwipeRef.current = { lastX: touch.clientX, active: false };
+
+      /* 長按門檻。原本 150ms 太短，手指稍微停一下就被判定成「要拖去交換」，
+         滑動與點選都很容易誤觸。250ms 是拖曳排序常見的手感：還是立即，
+         但已經過了「手指剛放上去那一瞬間」。 */
+      longPressTimeoutRef.current = setTimeout(() => {
+        isLongPressedRef.current = true;
+
+        // Ensure pointer content dragging is fully disabled when long-press triggers
+        pointerState.current.isDraggingContent = false;
+        pointerState.current.cellIdx = -1;
+        // 長按交換勝過「搬動整組佈局」與畫布捲動
+        layoutGestureRef.current = null;
+        stopInertia();
+        panRef.current = null;
+        wsGestureRef.current = null;
+
+        // Vibrate to give physical feedback to the user (if supported)
+        if (navigator.vibrate) {
+          navigator.vibrate(40);
+        }
+
+        // Initialize custom touch drag state
+        touchPosRef.current = { x: touch.clientX, y: touch.clientY };
+        touchDragState.current = {
+          startX: touch.clientX,
+          startY: touch.clientY,
+          currentIndex: idx,
+          hasMoved: true, // Started with long-press, mark as moved so the floating preview shows up!
+        };
+
+        setTouchDraggedIndex(idx);
+      }, LONG_PRESS_MS);
+    }
+  };
+
+  const handleCellTouchMove = (e: React.TouchEvent<HTMLDivElement>, idx: number, layoutId: string) => {
+    const isSelected = selectedIndex === idx;
+
+    if (touchZoomState.current && e.touches.length >= 2) {
+      e.preventDefault();
+      dragOrMoveOccurredRef.current = true;
+      const currentDist = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      const factor = currentDist / touchZoomState.current.startDist;
+      let newZoom = touchZoomState.current.startZoom * factor;
+      newZoom = Math.max(1.0, Math.min(5.0, newZoom));
+
+      // Calculate and clamp offsets simultaneously inside the state setter
+      // to completely prevent any frame from showing empty space borders
+      setImages(prev => prev.map((cell, i) => {
+        if (i !== idx) return cell;
+
+        const templates = TEMPLATE_MAP[prev.length] || [];
+        const activeTmpl = templates[templateIndex] || templates[0];
+        const rect = activeTmpl?.rects[i];
+        if (!rect) return { ...cell, zoom: newZoom };
+
+        const cellWidth = rect.w * previewW;
+        const cellHeight = rect.h * previewH;
+        if (cellWidth <= 0 || cellHeight <= 0) return { ...cell, zoom: newZoom };
+
+        const w_img = cell.naturalWidth || 800;
+        const h_img = cell.naturalHeight || 600;
+        const is90or270 = (cell.rotation % 180) !== 0;
+        const drawW = is90or270 ? h_img : w_img;
+        const drawH = is90or270 ? w_img : h_img;
+
+        const scaleX = cellWidth / drawW;
+        const scaleY = cellHeight / drawH;
+        const coverScale = Math.max(scaleX, scaleY);
+        const finalScale = coverScale * newZoom;
+
+        const rotatedImgW = is90or270 ? (h_img * finalScale) : (w_img * finalScale);
+        const rotatedImgH = is90or270 ? (w_img * finalScale) : (h_img * finalScale);
+
+        const maxShiftX = Math.max(0, (rotatedImgW - cellWidth) / 2) / cellWidth;
+        const maxShiftY = Math.max(0, (rotatedImgH - cellHeight) / 2) / cellHeight;
+
+        const newOffsetX = Math.max(-maxShiftX, Math.min(maxShiftX, cell.offsetX));
+        const newOffsetY = Math.max(-maxShiftY, Math.min(maxShiftY, cell.offsetY));
+
+        return {
+          ...cell,
+          zoom: newZoom,
+          offsetX: newOffsetX,
+          offsetY: newOffsetY
+        };
+      }));
+    } else if (e.touches.length === 1) {
+      if (wasZoomingRef.current) {
+        // Prevent drag behavior if we were just zooming and one finger is still down
+        return;
+      }
+      const touch = e.touches[0];
+      
+      if (touchStartPosRef.current) {
+        const dx = touch.clientX - touchStartPosRef.current.x;
+        const dy = touch.clientY - touchStartPosRef.current.y;
+        if (Math.hypot(dx, dy) > 8) {
+          dragOrMoveOccurredRef.current = true;
+        }
+      }
+
+      // If long press has not triggered yet, check if finger moved too far to cancel
+      if (!isLongPressedRef.current) {
+        if (touchStartPosRef.current) {
+          const dx = touch.clientX - touchStartPosRef.current.x;
+          const dy = touch.clientY - touchStartPosRef.current.y;
+          if (Math.hypot(dx, dy) > 10) {
+            // Cancel long press timeout
+            if (longPressTimeoutRef.current) {
+              clearTimeout(longPressTimeoutRef.current);
+              longPressTimeoutRef.current = null;
+            }
+          }
+        }
+        return; // Skip dragging behavior until long pressed
+      }
+
+      if (touchDragState.current) {
+        // Prevent default screen scrolling during mobile touch drags
+        if (e.cancelable) {
+          e.preventDefault();
+        }
+
+        const floatingEl = document.getElementById('mobile-drag-floating-thumbnail');
+        if (floatingEl) {
+          floatingEl.style.transform = `translate3d(${touch.clientX}px, ${touch.clientY}px, 0) translate(-50%, -50%) scale(1.15) rotate(4deg)`;
+        }
+
+        const dx = touch.clientX - touchDragState.current.startX;
+        const dy = touch.clientY - touchDragState.current.startY;
+
+        touchDragState.current.hasMoved = true;
+        
+        const hoveredIdx = getCellIndexFromPoint(touch.clientX, touch.clientY);
+        if (hoveredIdx !== touchDragOverIndexRef.current) {
+          touchDragOverIndexRef.current = hoveredIdx;
+          setTouchDragOverIndex(hoveredIdx);
+        }
+        // A cell can also be dropped onto a free-standing image.
+        const swapTarget = getSwapTargetFromPoint(touch.clientX, touch.clientY);
+        setSwapOverTarget(swapTarget && swapTarget.kind === 'floating' ? swapTarget : null);
+      }
+    }
+  };
+
+  const handleCellTouchEnd = (e: React.TouchEvent<HTMLDivElement>, idx: number, layoutId: string) => {
+    if (e.touches.length === 0) {
+      wasZoomingRef.current = false;
+    }
+
+    // Clear any active long-press timer
+    if (longPressTimeoutRef.current) {
+      clearTimeout(longPressTimeoutRef.current);
+      longPressTimeoutRef.current = null;
+    }
+
+    if (touchZoomState.current) {
+      touchZoomState.current = null;
+    }
+
+    if (touchDragState.current) {
+      if (isLongPressedRef.current && touchDragState.current.hasMoved) {
+        // Perform Touch Swap
+        const targetOverIndex = touchDragOverIndexRef.current;
+        const floatTarget = swapOverRef.current;
+        const fromIdx = touchDragState.current.currentIndex;
+
+        if (floatTarget && floatTarget.kind === 'floating') {
+          void applySwap({ kind: 'cell', idx: fromIdx, src: images[fromIdx]?.url || '' }, floatTarget);
+        } else if (targetOverIndex !== null && targetOverIndex !== fromIdx) {
+          const toIdx = targetOverIndex;
+
+          setImages(prev => {
+            const copy = [...prev];
+            const temp = { ...copy[fromIdx] };
+            copy[fromIdx] = {
+              ...copy[toIdx],
+              zoom: 1.0,
+              offsetX: 0,
+              offsetY: 0
+            };
+            copy[toIdx] = {
+              ...temp,
+              zoom: 1.0,
+              offsetX: 0,
+              offsetY: 0
+            };
+            return copy;
+          });
+
+          if (selectedIndex === fromIdx) {
+            setSelectedIndex(toIdx);
+          } else if (selectedIndex === toIdx) {
+            setSelectedIndex(fromIdx);
+          }
+        }
+      } else {
+        // Simple touch tap - select the cell (only if we didn't move/drag)
+        if (!dragOrMoveOccurredRef.current) {
+          selectCellOrLayout(layoutId, idx);
+        }
+      }
+
+      touchDragState.current = null;
+      touchDragOverIndexRef.current = null;
+      setTouchDraggedIndex(null);
+      setTouchDragOverIndex(null);
+      setSwapOverTarget(null);
+      touchPosRef.current = null;
+    } else {
+      // Regular touch release without starting drag state
+      if (!isLongPressedRef.current && !dragOrMoveOccurredRef.current) {
+        selectCellOrLayout(layoutId, idx);
+      }
+    }
+
+    isLongPressedRef.current = false;
+    touchStartPosRef.current = null;
+    cellSwipeRef.current = null;
+    touchHandledAtRef.current = Date.now();
+  };
+
+  // Cleanup long press timer on unmount
+  useEffect(() => {
+    return () => {
+      if (longPressTimeoutRef.current) {
+        clearTimeout(longPressTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  /** 這批匯入的圖只放一次（等版面量好之後才放，見下面） */
+  const initialPlacedRef = useRef(false);
+
+  // Initialize with initialFiles if provided
+  useEffect(() => {
+    /* 一定要等畫布量好才放。
+       這支以前只掛在 [initialFiles] 上，第一次執行時 containerSize 還是 0 ——
+       previewW/previewH 那時候是保底的 150×200，而不是真正的頁面大小。
+       於是「置中」是照 150×200 算的，換算到真的頁面上就變成偏左上一大塊。
+       改成等 containerMeasured 之後才放，第一張才會真的在正中央。 */
+    if (!containerMeasured) return;
+    if (initialPlacedRef.current) return;
+    if (initialFiles && initialFiles.length > 0) {
+      initialPlacedRef.current = true;
+      const filesToLoad = initialFiles.slice(0, 25);
+      const loadInitial = async () => {
+        const fImgs: FloatingImage[] = [];
+        for (let idx = 0; idx < filesToLoad.length; idx++) {
+          const f = filesToLoad[idx];
+          const url = URL.createObjectURL(f);
+          const video = isVideoFile(f);
+          const dims = video ? await getVideoDimensions(url) : await getImageDimensions(url);
+
+          const aspect = dims.width / dims.height;
+
+          /* 讀圖是非同步的，中途畫面可能又量了一次（旋轉、鍵盤收起來…），
+             所以每一張都當場拿最新的頁面尺寸，不要用閉包裡那份。 */
+          const previewW = previewWRef.current;
+          const previewH = previewHRef.current;
+
+          const margin = 12; // comfortable margin from boundaries
+          const maxAllowedW = Math.max(10, previewW - 2 * margin);
+          const maxAllowedH = Math.max(10, previewH - 2 * margin);
+
+          let initialWidth = 160;
+          let initialHeight = 160;
+          
+          if (aspect > 1) {
+            initialHeight = initialWidth / aspect;
+          } else {
+            initialWidth = initialHeight * aspect;
+          }
+          
+          if (initialWidth > maxAllowedW) {
+            initialWidth = maxAllowedW;
+            initialHeight = initialWidth / aspect;
+          }
+          if (initialHeight > maxAllowedH) {
+            initialHeight = maxAllowedH;
+            initialWidth = initialHeight * aspect;
+          }
+          
+          const baseX = (previewW - initialWidth) / 2;
+          const baseY = (previewH - initialHeight) / 2;
+          
+          const minX = margin;
+          const maxX = Math.max(margin, previewW - margin - initialWidth);
+          const minY = margin;
+          const maxY = Math.max(margin, previewH - margin - initialHeight);
+          
+          const maxOffsetX = Math.max(0, maxX - baseX);
+          const maxOffsetY = Math.max(0, maxY - baseY);
+          
+          let offsetStep = 16;
+          if (filesToLoad.length > 1) {
+            const maxNeededStepX = maxOffsetX / (filesToLoad.length - 1);
+            const maxNeededStepY = maxOffsetY / (filesToLoad.length - 1);
+            offsetStep = Math.min(16, maxNeededStepX, maxNeededStepY);
+          }
+          
+          /* 第一張永遠是正中央（idx 0 ⇒ 位移 0），其餘依序往右下錯開。
+             夾邊界時特別讓第一張免夾 —— 圖再大也不會超出（上面已經先縮到
+             maxAllowedW/H 了），夾了反而會在極端比例下把它推離中心。 */
+          let x = baseX + (idx * offsetStep);
+          let y = baseY + (idx * offsetStep);
+
+          if (idx > 0) {
+            // Clamp to stay strictly inside the margin
+            x = Math.max(minX, Math.min(x, maxX));
+            y = Math.max(minY, Math.min(y, maxY));
+          }
+
+          fImgs.push({
+            id: Math.random().toString(36).substring(2, 9),
+            src: url,
+            x,
+            y,
+            width: initialWidth,
+            height: initialHeight,
+            scale: 1.0,
+            rotation: 0,
+            ...(video ? { isVideo: true, poster: (dims as any).poster } : {}),
+          });
+        }
+        setFloatingImages(fImgs);
+      };
+      loadInitial();
+    }
+  }, [initialFiles, containerMeasured]);
+
+  /* 收尾單獨一支：上面那支現在會因為 containerMeasured 變動而重跑，
+     清空的動作要是還留在裡面，量好尺寸的那一刻就會把剛放好的圖全部清掉。 */
+  useEffect(() => {
+    return () => {
+      // Cleanup URLs on unmount
+      setImages(prev => {
+        prev.forEach(img => {
+          /* revoke */
+        });
+        return [];
+      });
+      setFloatingImages(prev => {
+        prev.forEach(img => {
+          /* revoke */
+        });
+        return [];
+      });
+    };
+  }, []);
+
+  /* ── 自動存檔 ────────────────────────────────────────────────────
+     照片放 IndexedDB、版面放 JSON。帶著新照片進來就是全新的一份，
+     重新整理（沒有帶照片）才會把上次的接回來。 */
+  // 用 state 而不是 ref：旗標翻起來的時候要讓存檔的 effect 再跑一次，
+  // 不然「進來就沒再動過」的那一份會漏存
+  const [draftReady, setDraftReady] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      /* 從首頁的歷史紀錄點回來：直接套那一份，不要理自動存檔的草稿。 */
+      if (initialState && Array.isArray(initialState.pages)) {
+        await clearDraft();
+        if (!alive) return;
+        setPages(initialState.pages);
+        setFloatingImages(initialState.floatingImages || []);
+        if (initialState.selectedRatio) setSelectedRatio(initialState.selectedRatio);
+        if (initialState.isLandscape !== undefined) setIsLandscape(initialState.isLandscape);
+        setActivePageIndex(0);
+        setDraftReady(true);
+        return;
+      }
+      if (initialFiles && initialFiles.length > 0) {
+        await clearDraft();
+        if (alive) setDraftReady(true);
+        return;
+      }
+      if (!hasDraft()) { setDraftReady(true); return; }
+      const draft = await loadDraft();
+      if (!alive) return;
+      if (draft) {
+        setPages(draft.pages);
+        setFloatingImages(draft.floatingImages);
+        setSelectedRatio(draft.selectedRatio);
+        setIsLandscape(draft.isLandscape);
+        setActivePageIndex(0);
+      }
+      setDraftReady(true);
+    })();
+    return () => { alive = false; };
+  }, [initialFiles, initialState]);
+
+  /** 離開拼圖＝這一份結束了：先關掉自動存檔再把草稿收掉，
+      不然剛排隊的那次存檔會在清掉之後又寫回去。 */
+  const leftRef = useRef(false);
+
+  /* ── 歷史紀錄 ────────────────────────────────────────────────────
+     一份拼圖是好幾張照片拼起來的，沒有「那一張原圖」——
+     所以用一個開工具時產生的 id 當識別，同一份不管記幾次都只留最新的一筆。 */
+  const histKeyRef = useRef(`layout-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+  const recordedRef = useRef('');
+  const recordProgress = async () => {
+    const empty = floatingImages.length === 0 && pages.every(p => p.layouts.length === 0);
+    if (empty) return;
+    const state = { pages, floatingImages, selectedRatio, isLandscape };
+    const sig = JSON.stringify(state);
+    if (recordedRef.current === sig) return;
+    recordedRef.current = sig;
+    try {
+      /* 版面是 DOM 畫的，沒有現成的畫布可以截 —— 用導出那一支靜靜地烤一張小的。
+         stillOnly：歷史紀錄的縮圖只要一張圖，不必為它錄一整段影片。 */
+      const r = await handleExport({ silent: true, previewWidth: 900, stillOnly: true });
+      const url = r && 'urls' in r ? r.urls[0] : null;
+      if (!url) return;
+      /* 原圖那一格放的是「拼好的成品」：真正還原用的是 state（裡面每一張照片
+         都會被 exportHistory 收成附件）。 */
+      await addExport('layout', url, url, state, histKey || histKeyRef.current);
+      URL.revokeObjectURL(url);
+    } catch { /* 記錄失敗不能影響離開 */ }
+  };
+
+  /**
+   * 離開拼圖＝這一份結束了。
+   *
+   * ⚠ **不等歷史紀錄做完**。以前這裡是 `await recordProgress()` 才 onHome()，
+   * 而 recordProgress 要把整張拼圖重烤一次 —— 按下返回鍵之後要乾等好幾秒，
+   * 畫面完全沒有反應。
+   *
+   * 現在改成：先把烤縮圖那件事「發動」（它前面那段是同步的，趁元件還在時跑掉），
+   * 然後**立刻**回主頁；剩下的部分在背景自己跑完再寫進歷史。
+   * 這樣做安全的原因是 handleExport 只依賴：
+   *   ‧ 閉包裡的 pages / floatingImages（值，元件收掉也還在）
+   *   ‧ 每一層的 blob 網址（沒有人在卸載時回收它們）
+   *   ‧ 自己開的離屏畫布
+   * 全都不需要這顆元件還掛在畫面上。實測：按下去 18ms、主頁 186ms 就出來，
+   * 縮圖在 1.2 秒後才在背景烤，完全不擋路。
+   */
+  const leavingRef = useRef(false);
+  const handleLeave = async () => {
+    if (leavingRef.current) return;
+    const choice = onRequestExit ? await onRequestExit() : 'discard';
+    if (choice === 'cancel') return;
+    leavingRef.current = true;
+    leftRef.current = true;
+    if (choice === 'save') {
+      await saveDraft({ pages, floatingImages, selectedRatio, isLandscape });
+    } else {
+      await clearDraft();
+    }
+    onHome();
+  };
+
+  useEffect(() => {
+    if (!draftReady || leftRef.current) return;
+    const empty = floatingImages.length === 0 && pages.every(p => p.layouts.length === 0);
+    if (empty) return;
+    const t = setTimeout(() => {
+      if (leftRef.current) return;
+      saveDraft({ pages, floatingImages, selectedRatio, isLandscape });
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [draftReady, pages, floatingImages, selectedRatio, isLandscape]);
+
+  // When image count changes, reset selected index if out of bounds, and clamp templateIndex
+  useEffect(() => {
+    const templates = TEMPLATE_MAP[images.length] || [];
+    if (templateIndex >= templates.length) {
+      setTemplateIndex(0);
+    }
+    if (selectedIndex !== null && selectedIndex >= images.length) {
+      setSelectedIndex(null);
+    }
+  }, [images.length, templateIndex, selectedIndex]);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>, append = false) => {
+    const picked = Array.from(e.target.files || []);
+    if (picked.length === 0) return;
+    /* RAW／HEIC／TIFF 先解成一般 JPEG（影片與一般 JPEG 原樣放行）——
+       不解的話 <img> 載不出來，圖層會是空的。 */
+    const files = await normalizeImageFiles(picked as File[]);
+    if (files.length === 0) return;
+
+    const newFloatingImages: FloatingImage[] = [];
+    for (let idx = 0; idx < files.length; idx++) {
+      const f = files[idx];
+      const url = URL.createObjectURL(f);
+      const video = isVideoFile(f as File);
+      const dims = video ? await getVideoDimensions(url) : await getImageDimensions(url);
+      
+      const aspect = dims.width / dims.height;
+
+      // 讀圖是非同步的，中途畫面可能又量過一次，所以當場拿最新的頁面尺寸
+      const previewW = previewWRef.current;
+      const previewH = previewHRef.current;
+
+      const margin = 12; // comfortable margin from boundaries
+      const maxAllowedW = Math.max(10, previewW - 2 * margin);
+      const maxAllowedH = Math.max(10, previewH - 2 * margin);
+      
+      let initialWidth = 160;
+      let initialHeight = 160;
+      
+      if (aspect > 1) {
+        initialHeight = initialWidth / aspect;
+      } else {
+        initialWidth = initialHeight * aspect;
+      }
+      
+      if (initialWidth > maxAllowedW) {
+        initialWidth = maxAllowedW;
+        initialHeight = initialWidth / aspect;
+      }
+      if (initialHeight > maxAllowedH) {
+        initialHeight = maxAllowedH;
+        initialWidth = initialHeight * aspect;
+      }
+      
+      const baseX = activePageIndex * (previewW + 1) + (previewW - initialWidth) / 2;
+      const baseY = (previewH - initialHeight) / 2;
+      
+      const minX = activePageIndex * (previewW + 1) + margin;
+      const maxX = Math.max(minX, activePageIndex * (previewW + 1) + previewW - margin - initialWidth);
+      const minY = margin;
+      const maxY = Math.max(margin, previewH - margin - initialHeight);
+      
+      const maxOffsetX = Math.max(0, maxX - baseX);
+      const maxOffsetY = Math.max(0, maxY - baseY);
+      
+      let offsetStep = 16;
+      if (files.length > 1) {
+        const maxNeededStepX = maxOffsetX / (files.length - 1);
+        const maxNeededStepY = maxOffsetY / (files.length - 1);
+        offsetStep = Math.min(16, maxNeededStepX, maxNeededStepY);
+      }
+      
+      let x = baseX + (idx * offsetStep);
+      let y = baseY + (idx * offsetStep);
+      
+      // Clamp to stay strictly inside the margin for the active page
+      x = Math.max(minX, Math.min(x, maxX));
+      y = Math.max(minY, Math.min(y, maxY));
+      
+      newFloatingImages.push({
+        id: Math.random().toString(36).substring(2, 9),
+        src: url,
+        x,
+        y,
+        width: initialWidth,
+        height: initialHeight,
+        scale: 1.0,
+        rotation: 0,
+        ...(video ? { isVideo: true, poster: (dims as any).poster } : {}),
+      });
+    }
+
+    setFloatingImages(prev => [...prev, ...newFloatingImages]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleReplaceFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const targetIdx = slotToUpload !== null ? slotToUpload : selectedIndex;
+
+    const loadPromises = files.map(async (file) => {
+      const url = URL.createObjectURL(file);
+      const dims = await getImageDimensions(url);
+      return { file, url, dims };
+    });
+
+    const loadedFiles = await Promise.all(loadPromises);
+
+    setImages(prev => {
+      const updated = [...prev];
+      let fileIdx = 0;
+
+      if (targetIdx !== null && fileIdx < loadedFiles.length) {
+        const { file, url, dims } = loadedFiles[fileIdx++];
+        const currentCell = updated[targetIdx];
+        if (currentCell && currentCell.url) {
+          /* revoke */
+        }
+        updated[targetIdx] = {
+          ...currentCell,
+          id: currentCell?.id || Math.random().toString(36).substring(2, 9),
+          url: url,
+          file: file,
+          zoom: 1.0,
+          offsetX: 0,
+          offsetY: 0,
+          rotation: 0,
+          naturalWidth: dims.width,
+          naturalHeight: dims.height,
+        };
+      }
+
+      for (let i = 0; i < updated.length && fileIdx < loadedFiles.length; i++) {
+        if (updated[i].url === '') {
+          const { file, url, dims } = loadedFiles[fileIdx++];
+          updated[i] = {
+            ...updated[i],
+            id: updated[i].id || Math.random().toString(36).substring(2, 9),
+            url: url,
+            file: file,
+            zoom: 1.0,
+            offsetX: 0,
+            offsetY: 0,
+            rotation: 0,
+            naturalWidth: dims.width,
+            naturalHeight: dims.height,
+          };
+        }
+      }
+
+      return updated;
+    });
+
+    setSlotToUpload(null);
+    if (replaceInputRef.current) replaceInputRef.current.value = '';
+  };
+  const handleRemoveImage = (index: number) => {
+    const cell = images[index];
+    /* revoke */
+    const updated = images.filter((_, idx) => idx !== index);
+    setImages(updated);
+    setSelectedIndex(null);
+  };
+
+  const handleDeleteCellImage = (index: number) => {
+    setImages(prev => prev.map((img, idx) => {
+      if (idx !== index) return img;
+      return {
+        ...img,
+        url: '',
+        zoom: 1.0,
+        offsetX: 0,
+        offsetY: 0,
+        rotation: 0
+      };
+    }));
+  };
+
+  const handleResetCellImage = (index: number) => {
+    setImages(prev => prev.map((img, idx) => {
+      if (idx !== index) return img;
+      return {
+        ...img,
+        zoom: 1.0,
+        offsetX: 0,
+        offsetY: 0,
+        rotation: 0
+      };
+    }));
+  };
+
+  const getCellIndexFromPoint = (clientX: number, clientY: number): number | null => {
+    const elem = document.elementFromPoint(clientX, clientY);
+    if (!elem) return null;
+    const cellElem = elem.closest('[data-cell-id]');
+    // 一頁上可能有多個佈局，只有「正在編輯的那個」的格子才算數
+    if (cellElem && cellElem.closest(`[data-layout-id="${selectedLayoutId}"]`)) {
+      const idAttr = cellElem.getAttribute('data-cell-id');
+      if (idAttr !== null) {
+        return parseInt(idAttr, 10);
+      }
+    }
+    return null;
+  };
+
+  // A long-press drag can start from a layout cell or from a free-standing image, and can
+  // land on either kind, so drop targets are resolved for both. Stickers sit above the
+  // cells, so whichever is on top at that point wins.
+  const getSwapTargetFromPoint = (clientX: number, clientY: number): SwapTarget | null => {
+    const elem = document.elementFromPoint(clientX, clientY);
+    if (!elem) return null;
+    const fEl = elem.closest('[data-floating-id]');
+    if (fEl) {
+      const id = fEl.getAttribute('data-floating-id');
+      // 文字圖層沒有照片可以換
+      if (id && !floatingImages.find(f => f.id === id)?.text) return { kind: 'floating', id };
+      if (id) return null;
+    }
+    const cEl = elem.closest('[data-cell-id]');
+    if (cEl) {
+      // 拖放不需要先選中佈局，任何佈局的格子都可以接收
+      const idAttr = cEl.getAttribute('data-cell-id');
+      const layEl = cEl.closest('[data-layout-id]');
+      if (idAttr !== null) {
+        return { kind: 'cell', idx: parseInt(idAttr, 10), layoutId: layEl?.getAttribute('data-layout-id') || undefined };
+      }
+    }
+    return null;
+  };
+
+  // Swapping a picture into a free-standing frame has to re-derive the frame's box from the
+  // incoming aspect ratio, otherwise the picture would be stretched. The frame's longest
+  // side, its position and its rotation are preserved.
+  const reframeFloating = (box: { width: number; height: number }, url: string): Promise<{ width: number; height: number }> =>
+    new Promise(resolve => {
+      const longest = Math.max(box.width, box.height);
+      const img = new Image();
+      img.onload = () => {
+        const aspect = img.naturalWidth / Math.max(1, img.naturalHeight);
+        resolve(aspect >= 1
+          ? { width: longest, height: longest / aspect }
+          : { width: longest * aspect, height: longest });
+      };
+      img.onerror = () => resolve({ width: box.width, height: box.height });
+      img.src = url;
+    });
+
+  const applySwap = async (source: SwapSource, target: SwapTarget) => {
+    if (source.kind === 'cell' && target.kind === 'cell') {
+      if (source.idx === target.idx) return;
+      const fromIdx = source.idx, toIdx = target.idx;
+      setImages(prev => {
+        const copy = [...prev];
+        const temp = { ...copy[fromIdx] };
+        copy[fromIdx] = { ...copy[toIdx], zoom: 1.0, offsetX: 0, offsetY: 0 };
+        copy[toIdx] = { ...temp, zoom: 1.0, offsetX: 0, offsetY: 0 };
+        return copy;
+      });
+      if (selectedIndex === fromIdx) setSelectedIndex(toIdx);
+      else if (selectedIndex === toIdx) setSelectedIndex(fromIdx);
+      return;
+    }
+
+    if (source.kind === 'floating' && target.kind === 'floating') {
+      if (source.id === target.id) return;
+      const a = floatingImages.find(f => f.id === source.id);
+      const b = floatingImages.find(f => f.id === target.id);
+      if (!a || !b) return;
+      const [boxA, boxB] = await Promise.all([
+        reframeFloating(a, b.src),
+        reframeFloating(b, a.src),
+      ]);
+      setFloatingImages(prev => prev.map(f => {
+        if (f.id === a.id) return { ...f, src: b.src, ...boxA };
+        if (f.id === b.id) return { ...f, src: a.src, ...boxB };
+        return f;
+      }));
+      return;
+    }
+
+    // Mixed: one side is a layout cell, the other a free-standing image.
+    const cellIdx = source.kind === 'cell' ? source.idx : (target as { kind: 'cell'; idx: number }).idx;
+    const floatId = source.kind === 'floating' ? source.id : (target as { kind: 'floating'; id: string }).id;
+    // 目標格子可能屬於「沒有被選中的佈局」，所以要指名是哪一個佈局
+    const targetLayoutId = target.kind === 'cell' ? target.layoutId : undefined;
+    const targetLayout = targetLayoutId
+      ? pages.flatMap(p => p.layouts).find(l => l.id === targetLayoutId)
+      : activeLayout;
+    const setCells = (fn: (imgs: ImageCell[]) => ImageCell[]) => {
+      if (!targetLayoutId) { setImages(fn); return; }
+      setPages(prev => prev.map(p => p.layouts.some(l => l.id === targetLayoutId)
+        ? { ...p, layouts: p.layouts.map(l => l.id === targetLayoutId ? { ...l, images: fn(l.images) } : l) }
+        : p));
+    };
+    const cellImages = targetLayout?.images ?? images;
+    const cell = cellImages[cellIdx];
+    const float = floatingImages.find(f => f.id === floatId);
+    if (!cell || !float) return;
+    // 格子必須拿到新圖的原始長寬，否則 cover 會用上一張圖的比例算，畫面就被拉扁了
+    const incoming = await getImageDimensions(float.src);
+
+    if (!cell.url) {
+      // 空格子沒有東西可以換，等於把圖片搬進去，自由圖層就此消失
+      setCells(prev => prev.map((c, i) => i === cellIdx
+        ? { ...c, url: float.src, file: undefined, zoom: 1.0, offsetX: 0, offsetY: 0, rotation: 0,
+            naturalWidth: incoming.width, naturalHeight: incoming.height }
+        : c));
+      setFloatingImages(prev => prev.filter(f => f.id !== floatId));
+      setSelectedFloatingId(null);
+      return;
+    }
+
+    const box = await reframeFloating(float, cell.url);
+    setCells(prev => prev.map((c, i) => i === cellIdx
+      ? { ...c, url: float.src, file: undefined, zoom: 1.0, offsetX: 0, offsetY: 0,
+          naturalWidth: incoming.width, naturalHeight: incoming.height }
+      : c));
+    setFloatingImages(prev => prev.map(f => f.id === floatId ? { ...f, src: cell.url, ...box } : f));
+  };
+
+  const handleFloatSwapTouchStart = (fImg: FloatingImage) => (e: React.TouchEvent) => {
+    // 文字與圖形圖層沒有照片，不參與長按交換
+    if (fImg.text !== undefined || fImg.shape) return;
+    if (e.touches.length !== 1) {
+      if (floatSwapTimerRef.current) { clearTimeout(floatSwapTimerRef.current); floatSwapTimerRef.current = null; }
+      floatSwapRef.current = null;
+      return;
+    }
+    const t = e.touches[0];
+    floatSwapRef.current = {
+      id: fImg.id, src: fImg.src,
+      startX: t.clientX, startY: t.clientY, lastX: t.clientX,
+      swiping: false, dragging: false,
+    };
+    if (floatSwapTimerRef.current) clearTimeout(floatSwapTimerRef.current);
+    floatSwapTimerRef.current = setTimeout(() => {
+      const s = floatSwapRef.current;
+      if (!s || s.swiping) return;
+      s.dragging = true;
+      // A swap drag wins over the free-move drag the canvas handler would otherwise run.
+      globalFloatingTouchState.current = null;
+      // 也要把畫布的捲動／物件手勢一起取消，長按拖曳時頁面不該跟著滑
+      stopInertia();
+      panRef.current = null;
+      wsGestureRef.current = null;
+      setActiveGuidelines([]);
+      if (navigator.vibrate) navigator.vibrate(40);
+      setFloatDragSrc(s.src);
+    }, LONG_PRESS_MS);
+  };
+
+  const handleFloatSwapTouchMove = (e: React.TouchEvent) => {
+    const s = floatSwapRef.current;
+    if (!s || e.touches.length !== 1) return;
+    const t = e.touches[0];
+
+    if (s.dragging) {
+      // 擋原生捲動的是那個非 passive 的 document 監聽器（React 這層是 passive 的）
+      const el = document.getElementById('float-drag-thumbnail');
+      if (el) el.style.transform = `translate3d(${t.clientX}px, ${t.clientY}px, 0) translate(-50%, -50%) scale(1.1) rotate(4deg)`;
+      const target = getSwapTargetFromPoint(t.clientX, t.clientY);
+      setSwapOverTarget(target && !(target.kind === 'floating' && target.id === s.id) ? target : null);
+      return;
+    }
+
+    const dx = t.clientX - s.startX;
+    const dy = t.clientY - s.startY;
+    if (Math.hypot(dx, dy) > 10) {
+      if (floatSwapTimerRef.current) { clearTimeout(floatSwapTimerRef.current); floatSwapTimerRef.current = null; }
+    }
+  };
+
+  const handleFloatSwapTouchEnd = () => {
+    if (floatSwapTimerRef.current) { clearTimeout(floatSwapTimerRef.current); floatSwapTimerRef.current = null; }
+    const s = floatSwapRef.current;
+    floatSwapRef.current = null;
+    if (!s) return;
+    if (s.dragging) {
+      const target = swapOverRef.current;
+      setSwapOverTarget(null);
+      setFloatDragSrc(null);
+      if (target && !(target.kind === 'floating' && target.id === s.id)) {
+        void applySwap({ kind: 'floating', id: s.id, src: s.src }, target);
+      }
+    }
+  };
+
+
+  // ------ 佈局被選取時的手勢：拖曳移動、雙指縮放 ------
+  const layoutGestureRef = useRef<{
+    mode: 'drag' | 'pinch';
+    startX: number; startY: number;
+    baseX: number; baseY: number; baseScale: number;
+    startDist: number;
+  } | null>(null);
+
+  /**
+   * 全選佈局的縮放：就是單純把整組等比例放大縮小，位置不動。
+   *
+   * 這裡刻意「每一帧就直接寫進真實尺寸」，不做那種「手勢中先用 transform 撐著、
+   * 放手才提交」的把戲 —— 只要提交那一步因為任何原因沒跑到（手勢被瀏覽器中斷、
+   * 選取狀態剛好被清掉…），畫面就會整個彈回原大小。沒有提交這一步就不會有這種事。
+   */
+  const scaleLayout = (next: number, targetId: string | null) => {
+    patchLayoutT({ scale: Math.max(MIN_LAYOUT_SCALE, Math.min(4, next)) }, targetId);
+  };
+
+  /**
+   * 雙指縮放佈局：跟一般圖片的捏合完全一樣 —— 邊界會吸附頁緣，而且把「現在真的
+   * 對齊到」的線畫出來。捏合時中心不動，只有四個邊會隨倍率移動，所以把倍率解成
+   * 「這條邊剛好落在頁緣上」的值，最近的那一個在門檻內就吸附過去。
+   *
+   * 四角的縮放圓點刻意不套這一支（見 handleLayoutCornerMove 的註解）：佈局在
+   * scale 1 時剛好等於整頁，四個邊會同時對齊，拉角的時候會一直被拉回 1。
+   * 捏合是兩根手指、位移量大得多，4px 的黏著範圍推得過去，不會卡住。
+   */
+  const scaleLayoutSnapped = (next: number, targetId: string | null) => {
+    let ns = Math.max(MIN_LAYOUT_SCALE, Math.min(4, next));
+    const rect = getPageRect(selectedLayoutPageIdx >= 0 ? selectedLayoutPageIdx : activePageIndex);
+    const t = activeLayout?.t;
+    if (!rect || !t) { scaleLayout(ns, targetId); return; }
+    /* 佈局的「未縮放框」不一定等於整頁 —— 它可以有自己的長寬比（layoutBox），
+       而且是置中的。吸附一定要用這個框算，不然設過比例的佈局會照著整頁的
+       邊界吸，畫面上的框跟實際行為就對不上。 */
+    const box = layoutBox(activeLayout, rect.width, rect.height);
+    const x = rect.left + (rect.width - box.w) / 2 + t.x;
+    const y = rect.top + (rect.height - box.h) / 2 + t.y;
+    const cx = x + box.w / 2, cy = y + box.h / 2;
+    /* 佈局轉過角度之後，貼齊要看的是「轉完真正佔的那個外框」，
+       跟一般圖片、文字同一套（見 rotExtent）—— 不然轉 90 度時線會亮在
+       離邊緣半個身子的地方。倍率對外框是線性的，所以拿「一倍」的外框去解就好。 */
+    const lRot = t.rot || 0;
+    const ext1 = rotExtent(box.w, box.h, lRot);
+    if (enableSnapping) {
+      const SNAP = 4;
+      let best = Infinity, bestScale = ns;
+      pageRectsNear(getAllPageRects(), cx).forEach(pr => {
+        const cands: number[] = [];
+        if (ext1.bw > 1) {
+          cands.push((2 * (cx - pr.left)) / ext1.bw);    // 左邊貼齊
+          cands.push((2 * (pr.right - cx)) / ext1.bw);   // 右邊貼齊
+        }
+        if (ext1.bh > 1) {
+          cands.push((2 * (cy - pr.top)) / ext1.bh);     // 上邊貼齊
+          cands.push((2 * (pr.bottom - cy)) / ext1.bh);  // 下邊貼齊
+        }
+        cands.forEach(cand => {
+          if (!(cand > MIN_LAYOUT_SCALE) || cand > 4) return;
+          // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
+          const px = Math.abs(cand - ns) * Math.max(ext1.bw, ext1.bh) / 2;
+          if (px < SNAP && px < best) { best = px; bestScale = cand; }
+        });
+      });
+      if (best < SNAP) ns = bestScale;
+    }
+    patchLayoutT({ scale: ns }, targetId);
+    /* 只畫「邊」的線（edgeOnly）：捏合時中心點根本不會動，中線會從頭亮到尾 ——
+       佈局沒搬過的時候本來就正正對在頁面中心，那兩條線等於整趟手勢都掛在畫面上，
+       看起來像壞掉。會隨倍率移動的只有四個邊，那才是這個手勢真正的回饋。 */
+    /* 這裡一定要傳佈局自己的框（box）跟角度：
+       傳整頁的寬高會讓中心點算錯（設過比例的佈局比整頁小、而且是置中的），
+       少傳角度則是轉過之後線會亮錯位置。 */
+    setActiveGuidelines(dedupeGuidelines(pageGuidelinesAt(x, y, box.w, box.h, ns, true, lRot), x + box.w / 2));
+  };
+
+  /**
+   * 改佈局的位置／大小。targetId 由手勢在「開始的時候」記下來 ——
+   * 不要靠當下的 selectedLayoutId：手指放開的瞬間選取狀態可能已經被別的
+   * handler 清掉，那樣這一筆就會寫不進去，看起來就是「縮放完自己彈回原大小」。
+   */
+  const patchLayoutT = (patch: Partial<{ x: number; y: number; scale: number; rot: number }>, targetId?: string | null) => {
+    const id = targetId ?? selectedLayoutId;
+    if (!id) return;
+    setPages(prev => prev.map(p => p.layouts.some(l => l.id === id) ? ({
+      ...p,
+      layouts: p.layouts.map(l => l.id === id ? { ...l, t: { ...l.t, ...patch } } : l),
+    }) : p));
+  };
+
+  /**
+   * 每個物件（照片、文字、佈局）共用同一條圖層順序。
+   *
+   * 畫面上的 z-index 一般圖片是 60 + 2i、佈局是 59 + 2z，兩邊剛好交錯 ——
+   * 也就是「佈局的 z」＝「它下面有幾張一般圖片」。這裡把兩邊攤平成一條
+   * 由下到上的清單，上移／下移就只是跟清單裡的隔壁換位子。
+   * 以前兩邊各排各的（圖片只跟圖片換、佈局只跟佈局換），圖片永遠爬不到
+   * 最上面那組佈局上面，這就是「圖片無法超過佈局的圖層」的原因。
+   */
+  type StackRef = { kind: 'float' | 'layout'; id: string };
+  const layerStack = useMemo<StackRef[]>(() => {
+    const items: { key: number; ref: StackRef }[] = [];
+    floatingImages.forEach((f, i) => items.push({ key: 60 + i * 2, ref: { kind: 'float', id: f.id } }));
+    pages.forEach(p => p.layouts.forEach(l =>
+      items.push({ key: 59 + (l.z ?? 0) * 2, ref: { kind: 'layout', id: l.id } })));
+    // 同一層的兩個佈局 key 會相同，穩定排序會保留陣列順序＝DOM 順序＝畫面上的上下
+    items.sort((a, b) => a.key - b.key);
+    return items.map(i => i.ref);
+  }, [floatingImages, pages]);
+
+  const stackPos = (kind: StackRef['kind'], id: string | null) =>
+    id ? layerStack.findIndex(s => s.kind === kind && s.id === id) : -1;
+
+  /** 在共用的圖層清單裡跟上／下一個物件換位子，再換算回各自的表示法 */
+  const moveInStack = (kind: StackRef['kind'], id: string, dir: 1 | -1) => {
+    const i = stackPos(kind, id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= layerStack.length) return;
+    const next = [...layerStack];
+    [next[i], next[j]] = [next[j], next[i]];
+
+    const floatRank = new Map<string, number>();
+    const layoutZ = new Map<string, number>();
+    const layoutRank = new Map<string, number>();
+    let floats = 0;
+    next.forEach((s, k) => {
+      if (s.kind === 'float') floatRank.set(s.id, floats++);
+      // 佈局的 z 就是「底下有幾張一般圖片」；同 z 的佈局再用陣列順序分上下
+      else { layoutZ.set(s.id, floats); layoutRank.set(s.id, k); }
+    });
+    setFloatingImages(prev => [...prev].sort((a, b) => (floatRank.get(a.id) ?? 0) - (floatRank.get(b.id) ?? 0)));
+    setPages(prev => prev.map(p => ({
+      ...p,
+      layouts: [...p.layouts]
+        .sort((a, b) => (layoutRank.get(a.id) ?? 0) - (layoutRank.get(b.id) ?? 0))
+        .map(l => (layoutZ.has(l.id) ? { ...l, z: layoutZ.get(l.id)! } : l)),
+    })));
+  };
+
+  // 佈局四角的縮放圓點：拖哪一角，對角就固定不動（與一般圖片的縮放邏輯相同）
+  const layoutCornerRef = useRef<{
+    pointerId: number;
+    /** 手勢一開始就記住在縮哪一組，之後不看當下的選取狀態 */
+    layoutId: string | null;
+    pivotX: number; pivotY: number;
+    startDist: number;
+    baseScale: number; baseX: number; baseY: number;
+    ox: number; oy: number;
+  } | null>(null);
+
+  const handleLayoutCornerDown = (e: React.PointerEvent, corner: 'tl' | 'tr' | 'bl' | 'br') => {
+    e.stopPropagation();
+    const wrapper = (e.currentTarget as HTMLElement).closest('[data-layout-wrapper]') as HTMLElement | null;
+    if (!wrapper) return;
+    const r = wrapper.getBoundingClientRect();
+    // 拖角球＝單純等比縮放，跟在空白畫布上雙指縮放完全一樣：
+    // 以「佈局中心」為原點，只看手指離中心多遠，位置完全不動。
+    const pivotX = r.left + r.width / 2;
+    const pivotY = r.top + r.height / 2;
+    const dist = Math.hypot(e.clientX - pivotX, e.clientY - pivotY);
+    if (dist < 1) return;
+    const base = activeLayout?.t || { x: 0, y: 0, scale: 1 };
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch (err) {}
+    layoutCornerRef.current = {
+      pointerId: e.pointerId,
+      layoutId: wrapper.getAttribute('data-layout-id') || selectedLayoutId,
+      pivotX, pivotY, startDist: dist,
+      baseScale: base.scale || 1, baseX: base.x, baseY: base.y,
+      ox: 0, oy: 0,
+    };
+  };
+
+  const handleLayoutCornerMove = (e: React.PointerEvent) => {
+    const g = layoutCornerRef.current;
+    if (!g || g.pointerId !== e.pointerId) return;
+    e.stopPropagation();
+    // 單純等比：手指離中心的距離變幾倍，佈局就變幾倍。
+    // （這裡刻意不做「角吸附頁緣」—— 佈局在 scale 1 時剛好等於整頁，
+    //   四個邊會同時對齊，吸附就會一直把尺寸拉回 1，放大到一半就縮回去。）
+    const dist = Math.hypot(e.clientX - g.pivotX, e.clientY - g.pivotY);
+    scaleLayout(g.baseScale * (dist / g.startDist), g.layoutId);
+  };
+
+  const handleLayoutCornerUp = (e: React.PointerEvent) => {
+    if (!layoutCornerRef.current || layoutCornerRef.current.pointerId !== e.pointerId) return;
+    e.stopPropagation();
+    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch (err) {}
+    layoutCornerRef.current = null;
+    setActiveGuidelines([]);
+  };
+
+  /** 手勢開始時記下在操作哪一組佈局（不看之後的選取狀態） */
+  const layoutGestureIdRef = useRef<string | null>(null);
+  const wsGestureLayoutIdRef = useRef<string | null>(null);
+
+  const handleLayoutTouchStart = (e: React.TouchEvent) => {
+    if (!layoutSelected || selectedIndex !== null) return;
+    layoutGestureIdRef.current = (e.currentTarget as HTMLElement)
+      .closest('[data-layout-wrapper]')?.getAttribute('data-layout-id') || selectedLayoutId;
+    const t = e.target as Element;
+    if (t.closest('.cursor-nwse-resize') || t.closest('.cursor-nesw-resize')) return;
+    const base = activeLayout?.t || { x: 0, y: 0, scale: 1 };
+    if (e.touches.length >= 2) {
+      const d = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      ) || 1;
+      layoutGestureRef.current = {
+        mode: 'pinch',
+        startX: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+        startY: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+        baseX: base.x, baseY: base.y, baseScale: base.scale, startDist: d,
+      };
+    } else {
+      layoutGestureRef.current = {
+        mode: 'drag',
+        startX: e.touches[0].clientX, startY: e.touches[0].clientY,
+        baseX: base.x, baseY: base.y, baseScale: base.scale, startDist: 1,
+      };
+    }
+  };
+
+  const handleLayoutTouchMove = (e: React.TouchEvent) => {
+    if (isLongPressedRef.current || touchDragState.current) { layoutGestureRef.current = null; return; }
+    const g = layoutGestureRef.current;
+    if (!g) return;
+    if (g.mode === 'pinch' && e.touches.length >= 2) {
+      const d = Math.hypot(
+        e.touches[0].clientX - e.touches[1].clientX,
+        e.touches[0].clientY - e.touches[1].clientY
+      );
+      scaleLayoutSnapped(g.baseScale * (d / g.startDist), layoutGestureIdRef.current);
+    } else if (g.mode === 'drag' && e.touches.length === 1) {
+      // 同上：螢幕位移要先換算回內容單位
+      const kd = kRef.current || 1;
+      moveLayoutTo(
+        g.baseX + (e.touches[0].clientX - g.startX) / kd,
+        g.baseY + (e.touches[0].clientY - g.startY) / kd,
+      );
+    }
+  };
+
+  const handleLayoutTouchEnd = () => { layoutGestureRef.current = null; setActiveGuidelines([]); };
+
+  /**
+   * 佈局被整組選取時就等同一張圖片，移動時同樣要吸附並顯示對齊線。
+   * 佈局未變形時剛好等於整頁，所以它的「未縮放框」就是頁面本身。
+   */
+  const moveLayoutTo = (nx: number, ny: number) => {
+    const scale = activeLayout?.t?.scale ?? 1;
+    const rect = getPageRect(selectedLayoutPageIdx >= 0 ? selectedLayoutPageIdx : activePageIndex);
+    if (!rect) { patchLayoutT({ x: nx, y: ny }); return; }
+    // 跟上面同一個理由：用佈局自己的框（可能比整頁小、而且是置中的）
+    const box = layoutBox(activeLayout, rect.width, rect.height);
+    const { snappedX, snappedY, guidelines } = applySnapping(
+      `layout:${selectedLayoutId}`,
+      rect.left + (rect.width - box.w) / 2 + nx,
+      rect.top + (rect.height - box.h) / 2 + ny,
+      box.w,
+      box.h,
+      scale,
+      undefined,
+      // 轉過角度的佈局，一樣用轉完的外框去比（跟一般圖片、文字同一套）
+      activeLayout?.t?.rot || 0,
+    );
+    setActiveGuidelines(guidelines);
+    // 吸附回來的是「框的左上角」，扣掉置中的那一段才是佈局的位移量
+    patchLayoutT({
+      x: snappedX - rect.left - (rect.width - box.w) / 2,
+      y: snappedY - rect.top - (rect.height - box.h) / 2,
+    });
+  };
+
+  // 依格子尺寸算出照片可位移的範圍（單位為格子寬/高的比例）
+  const cellShiftLimits = (idx: number, zoom: number) => {
+    const templates = TEMPLATE_MAP[images.length] || [];
+    const activeTmpl = templates[templateIndex] || templates[0];
+    const rect = activeTmpl?.rects[idx];
+    const cell = images[idx];
+    if (!rect || !cell) return null;
+    const cellWidth = rect.w * previewW * layoutScale;
+    const cellHeight = rect.h * previewH * layoutScale;
+    if (cellWidth <= 0 || cellHeight <= 0) return null;
+    const w_img = cell.naturalWidth || 800;
+    const h_img = cell.naturalHeight || 600;
+    const is90or270 = (cell.rotation % 180) !== 0;
+    const drawW = is90or270 ? h_img : w_img;
+    const drawH = is90or270 ? w_img : h_img;
+    const coverScale = Math.max(cellWidth / drawW, cellHeight / drawH);
+    const finalScale = coverScale * zoom;
+    const rotatedImgW = (is90or270 ? h_img : w_img) * finalScale;
+    const rotatedImgH = (is90or270 ? w_img : h_img) * finalScale;
+    return {
+      cellWidth,
+      cellHeight,
+      maxShiftX: Math.max(0, (rotatedImgW - cellWidth) / 2) / cellWidth,
+      maxShiftY: Math.max(0, (rotatedImgH - cellHeight) / 2) / cellHeight,
+    };
+  };
+
+  const applyCellZoom = (idx: number, zoom: number) => {
+    const lim = cellShiftLimits(idx, zoom);
+    setImages(prev => prev.map((cell, i) => i !== idx ? cell : ({
+      ...cell,
+      zoom,
+      offsetX: lim ? Math.max(-lim.maxShiftX, Math.min(lim.maxShiftX, cell.offsetX)) : cell.offsetX,
       offsetY: lim ? Math.max(-lim.maxShiftY, Math.min(lim.maxShiftY, cell.offsetY)) : cell.offsetY,
     })));
   };
