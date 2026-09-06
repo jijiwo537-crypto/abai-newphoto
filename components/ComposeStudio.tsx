@@ -429,7 +429,11 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
         const nearest = Math.round(shown / step) * step;
         const active = Math.abs(tickValue - nearest) < step / 2;
         const major = Math.round(tickValue / step) % 10 === 0;
-        const baseHeight = major ? 17 : 10;
+        const zero = Math.abs(tickValue) < step / 2;
+        // 零刻度离开中央、缩回短状态后仍保留一点识别度：只比十格主刻度
+        // 高 2px、亮一点，不抢中央活动刻度的视觉焦点。
+        const baseHeight = zero ? 19 : (major ? 17 : 10);
+        const baseOpacity = zero ? 0.68 : (major ? 0.52 : 0.28);
         return (
           <i
             key={tickValue}
@@ -437,7 +441,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
             style={{
               left: `calc(50% + ${offset}px)`,
               height: active ? 27 : baseHeight,
-              opacity: active ? 1 : (major ? 0.52 : 0.28),
+              opacity: active ? 1 : baseOpacity,
               transform: 'translateX(-50%)',
               // 经过中央时立即升高；只有离开中央才用 280ms 回落。
               // 快速拖动时，连续几根旧刻度依序衰减，形成由高到低的尾波。
@@ -720,11 +724,11 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
           {tab === 'keystone' && (
             keystoneAxis === null ? (
-              <div className="w-full flex justify-center items-center gap-3 px-5 -translate-y-1">
-                <button onClick={() => setKeystoneAxis('v')} className="h-11 px-6 rounded-full bg-white/[0.06] border border-white/10 text-white/65 flex items-center text-[11px] font-bold tracking-[0.1em] active:scale-[0.97]">
+              <div className="w-full flex justify-center items-center gap-2 px-4 -translate-y-1">
+                <button onClick={() => setKeystoneAxis('v')} className="h-9 px-3.5 rounded-full bg-white/[0.06] border border-white/10 text-white/65 flex items-center text-[11px] font-bold tracking-[0.1em] active:scale-[0.97]">
                   垂直
                 </button>
-                <button onClick={() => setKeystoneAxis('h')} className="h-11 px-6 rounded-full bg-white/[0.06] border border-white/10 text-white/65 flex items-center text-[11px] font-bold tracking-[0.1em] active:scale-[0.97]">
+                <button onClick={() => setKeystoneAxis('h')} className="h-9 px-3.5 rounded-full bg-white/[0.06] border border-white/10 text-white/65 flex items-center text-[11px] font-bold tracking-[0.1em] active:scale-[0.97]">
                   水平
                 </button>
               </div>

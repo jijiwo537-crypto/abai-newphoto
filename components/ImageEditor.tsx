@@ -6247,10 +6247,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const DETAIL_CATS = ['fx', 'soft', 'leak', 'halation'];
   const detailSwitch = DETAIL_CATS.includes(activeCategory) || DETAIL_CATS.includes(prevCategoryRef.current);
 
-  /* 遮色片還沒建立時，版面跟建立後一模一樣 —— 只是那些控制項不能動。
-     （原本會把兩列都收起來、預覽也放大，變成一個完全不同的畫面。） */
+  /* 遮色片还没建立时，不显示没有作用的滑杆列；建立完成后才展开参数。 */
   const maskLocked = activeCategory === 'mask' && !params.maskCreated;
-  const sliderRowHidden = activeToolId === 'curves' || activeToolId === 'hsl' || activeCategory === 'compose';
+  const sliderRowHidden = activeToolId === 'curves' || activeToolId === 'hsl' || activeCategory === 'compose' || maskLocked;
   const subStripHidden = activeCategory === 'compose';
 
   /* ---- 新特效的細項面板 ------------------------------------------------------
