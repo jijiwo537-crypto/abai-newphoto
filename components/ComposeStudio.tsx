@@ -112,7 +112,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h'>('v');
   const audioRef = useRef<AudioContext | null>(null);
   const lastTickRef = useRef<number | null>(null);
-  const rulerDragRef = useRef<{ startX: number; startValue: number } | null>(null);
+  const rulerDragRef = useRef<{ startX: number; startValue: number; width: number } | null>(null);
   const [rulerVisual, setRulerVisual] = useState<number | null>(null);
   // 梯形藏起來的時候，萬一停在那一頁（或之後被藏起來）就退回裁切
   useEffect(() => { if (hideKeystone && tab === 'keystone') setTab('crop'); }, [hideKeystone, tab]);
@@ -379,6 +379,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   }, []);
 
   const tickSlider = (
+    label: string,
     value: number,
     min: number,
     max: number,
@@ -390,7 +391,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       style={{ touchAction: 'none' }}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId);
-        rulerDragRef.current = { startX: e.clientX, startValue: value };
+        rulerDragRef.current = { startX: e.clientX, startValue: value, width: Math.max(1, e.currentTarget.getBoundingClientRect().width) };
         lastTickRef.current = Math.round(value / step);
         setRulerVisual(value);
         setLive(true);
@@ -398,7 +399,9 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       onPointerMove={(e) => {
         const drag = rulerDragRef.current;
         if (!drag) return;
-        const raw = Math.max(min, Math.min(max, drag.startValue + ((drag.startX - e.clientX) / 8) * step));
+        // 整个范围刚好对应一条可见刻度尺的宽度：从中央拖到任一侧，
+        // 不松手就能到达该侧极值，窄 iPhone 也不需要分段滑动。
+        const raw = Math.max(min, Math.min(max, drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min)));
         const magnetic = Math.abs(raw) <= (max <= 45 ? step * 2 : step * 4) ? 0 : raw;
         const tick = Math.round(magnetic / step);
         setRulerVisual(magnetic);
@@ -416,24 +419,29 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       }}
       onPointerCancel={() => { rulerDragRef.current = null; setRulerVisual(null); setLive(false); }}
     >
+      <span className="absolute top-0 left-1/2 -translate-x-1/2 text-[10px] font-bold tracking-[0.12em] text-white/65 tabular-nums whitespace-nowrap pointer-events-none">
+        {label} {(rulerVisual ?? value) > 0 ? '+' : ''}{Math.round((rulerVisual ?? value) / step) * step}{max <= 45 ? '°' : ''}
+      </span>
       {Array.from({ length: Math.round((max - min) / step) + 1 }, (_, i) => min + i * step).map(tickValue => {
         const shown = rulerVisual ?? value;
-        const offset = ((tickValue - shown) / step) * 8;
-        if (Math.abs(offset) > 190) return null;
-        const proximity = Math.max(0, 1 - Math.abs(offset) / 8);
+        const offsetPercent = ((tickValue - shown) / (max - min)) * 100;
+        if (Math.abs(offsetPercent) > 55) return null;
+        const nearest = Math.round(shown / step) * step;
+        const active = Math.abs(tickValue - nearest) < step / 2;
         const major = Math.round((tickValue - min) / step) % 5 === 0;
         const baseHeight = major ? 17 : 10;
-        const height = baseHeight + (27 - baseHeight) * proximity;
         return (
           <i
             key={tickValue}
-            className="absolute top-1/2 w-px bg-white rounded-full pointer-events-none"
+            className="absolute bottom-0 w-px bg-white rounded-full pointer-events-none"
             style={{
-              left: `calc(50% + ${offset}px)`,
-              height,
-              opacity: 0.28 + proximity * 0.72,
-              transform: 'translate(-50%, -50%)',
-              transition: rulerVisual === null ? 'left 180ms cubic-bezier(0.2,0.8,0.2,1), height 140ms ease, opacity 140ms ease' : 'height 70ms linear, opacity 70ms linear',
+              left: `calc(50% + ${offsetPercent}%)`,
+              height: active ? 27 : baseHeight,
+              opacity: active ? 1 : (major ? 0.52 : 0.28),
+              transform: 'translateX(-50%)',
+              transition: rulerVisual === null
+                ? 'left 180ms cubic-bezier(0.2,0.8,0.2,1), height 70ms cubic-bezier(0.2,0.8,0.2,1), opacity 70ms ease'
+                : 'height 70ms cubic-bezier(0.2,0.8,0.2,1), opacity 70ms ease',
             }}
           />
         );
@@ -674,7 +682,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                 >
                   <Icon name="rotate_left" className="text-xl" />
                 </button>
-                {tickSlider(geo.angle, -45, 45, 1, v => setGeo({ angle: v }))}
+                {tickSlider('角度', geo.angle, -45, 45, 1, v => setGeo({ angle: v }))}
                 <button
                   onClick={() => setGeo({ quarter: (geo.quarter + 1) % 4 })}
                   aria-label="順時針旋轉 90 度"
@@ -715,8 +723,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                 <button onClick={() => setKeystoneAxis('h')} className={`flex-1 rounded-md border text-[9px] font-bold transition-colors ${keystoneAxis === 'h' ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/45 border-white/10'}`}>水平</button>
               </div>
               {keystoneAxis === 'v'
-                ? tickSlider(geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }))
-                : tickSlider(geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }))}
+                ? tickSlider('垂直', geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }))
+                : tickSlider('水平', geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }))}
               <span className="w-10 h-10 shrink-0" aria-hidden="true" />
             </div>
           )}
