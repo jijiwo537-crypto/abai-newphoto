@@ -68,6 +68,12 @@ const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
 const AppLoadingSpinner: React.FC = () => (
   <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin shadow-[0_0_15px_rgba(255,255,255,0.5)]" aria-label="載入中" />
 );
+const AppLoadingIndicator: React.FC = () => (
+  <div className="flex flex-col items-center gap-4 text-white">
+    <AppLoadingSpinner />
+    <p className="text-sm font-black tracking-[0.2em] uppercase animate-pulse drop-shadow-md">載入中...</p>
+  </div>
+);
 
 const App: React.FC = () => {
   // 上次沒做完的東西一律先問過再接回去，不要一開 App 就直接跳進去。
@@ -135,8 +141,8 @@ const App: React.FC = () => {
       setExitPromptOpen(false);
       setExitPromptBusy(false);
     };
-    const elapsed = exitSaveStartedAt.current ? performance.now() - exitSaveStartedAt.current : 1500;
-    const remaining = Math.max(0, 1500 - elapsed);
+    const elapsed = exitSaveStartedAt.current ? performance.now() - exitSaveStartedAt.current : 500;
+    const remaining = Math.max(0, 500 - elapsed);
     if (remaining > 0) exitCloseTimer.current = setTimeout(close, remaining);
     else close();
   }, []);
@@ -354,24 +360,27 @@ const App: React.FC = () => {
    * 的 effect 相依於 onCancel，函式每次 render 都變新的話，App 只要重新 render
    * 一次就會把使用者的調整整組打回預設（接續上次時剛好會踩到）。
    */
-  const leaveTool = useCallback((keepDraft = false) => {
+  const leaveTool = useCallback((keepDraft = false, cleanup?: () => void) => {
     if (!keepDraft) clearToolDraft();
     finishExit(() => {
       setCurrentView('home');
       setToolDraftState(null);
+      cleanup?.();
     });
   }, [finishExit]);
 
   const handleEditorSave = useCallback((newSrc: string) => {
-    leaveTool();
-    setEditorImage(null);
-    setEditorFile(null);
+    leaveTool(false, () => {
+      setEditorImage(null);
+      setEditorFile(null);
+    });
   }, [leaveTool]);
 
   const handleEditorCancel = useCallback((keepDraft = false) => {
-    leaveTool(keepDraft);
-    setEditorImage(null);
-    setEditorFile(null);
+    leaveTool(keepDraft, () => {
+      setEditorImage(null);
+      setEditorFile(null);
+    });
   }, [leaveTool]);
 
   /** 接續上次：經典拼圖自己會從草稿還原，其他工具要把照片與參數餵回去 */
@@ -477,19 +486,16 @@ const App: React.FC = () => {
           {importPreviewUrl && (
              <img src={importPreviewUrl} alt="Preview" className="absolute inset-0 w-full h-full object-contain opacity-30 blur-sm mix-blend-screen" />
           )}
-          <div className="flex flex-col items-center gap-4 text-white relative z-10">
-            <AppLoadingSpinner />
-            <p className="text-sm font-black tracking-[0.2em] uppercase animate-pulse drop-shadow-md">載入中...</p>
-          </div>
+          <div className="relative z-10"><AppLoadingIndicator /></div>
         </div>
       )}
 
       {exitPromptOpen && (
-        <div className={`fixed inset-0 z-[300] flex items-center justify-center px-8 animate-in fade-in ${exitPromptBusy ? 'bg-transparent duration-300' : 'bg-black/80 backdrop-blur-sm duration-200'}`}>
+        <div className={`fixed inset-0 z-[300] flex items-center justify-center px-8 animate-in fade-in ${exitPromptBusy ? 'bg-[#242424]/70 backdrop-blur-sm duration-300' : 'bg-black/80 backdrop-blur-sm duration-200'}`}>
           <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className={`w-full max-w-[320px] min-h-[248px] p-6 text-center flex items-center justify-center ${exitPromptBusy ? 'bg-transparent' : 'rounded-3xl bg-[#141414] border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200'}`}>
             {exitPromptBusy ? (
-              <div className="flex items-center justify-center animate-in fade-in duration-300" aria-live="polite">
-                <AppLoadingSpinner />
+              <div className="animate-in fade-in duration-300" aria-live="polite">
+                <AppLoadingIndicator />
               </div>
             ) : (
               <div className="w-full animate-in fade-in duration-200">
@@ -627,12 +633,10 @@ const App: React.FC = () => {
           initialState={toolDraftState}
           onRequestExit={requestExit}
           onCancel={(keepDraft) => {
-            leaveTool(keepDraft);
-            setBeautyImage(null);
+            leaveTool(keepDraft, () => setBeautyImage(null));
           }}
           onHome={(keepDraft) => {
-            leaveTool(keepDraft);
-            setBeautyImage(null);
+            leaveTool(keepDraft, () => setBeautyImage(null));
           }}
           onImportNew={handleBeautyImportClick}
           onSendToEditor={handleBeautyToEditor}
@@ -664,9 +668,10 @@ const App: React.FC = () => {
           key={collageKey}
           onRequestExit={requestExit}
           onHome={(keepDraft) => {
-            leaveTool(keepDraft);
-            setCollageInitialFile(null);
-            setCollageExtras([]);
+            leaveTool(keepDraft, () => {
+              setCollageInitialFile(null);
+              setCollageExtras([]);
+            });
           }}
           initialFile={collageInitialFile}
           initialExtras={collageExtras}
