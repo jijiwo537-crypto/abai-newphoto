@@ -5859,7 +5859,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   /** 離開編輯器時，如果調整過但沒導出，也記一筆到歷史紀錄。
       縮圖直接用畫面上的預覽（已經是顯示解析度，很小很安全）。 */
-  const recordProgress = useCallback(() => {
+  const recordProgress = useCallback(async () => {
     // isDirtyRef 是「畫面要重畫」的旗標，畫完就會被清掉，不能拿來判斷有沒有編輯過。
     // 有沒有動過看歷史：index 0 是剛載入的狀態。
     if (historyIndex <= 0) return;
@@ -5872,7 +5872,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (p.maskCreated && p.maskShowOverlay && activeCategory === 'mask') {
         render({ ...p, maskShowOverlay: false });
       }
-      addExport('editor', cv.toDataURL('image/png'), srcList[safeIdx] || imageSrc, {
+      await addExport('editor', cv.toDataURL('image/png'), srcList[safeIdx] || imageSrc, {
         params: p, geo, selectedLutIdx,
       }, histKey || undefined);
     } catch { /* 記錄失敗不能影響離開 */ }
@@ -5888,7 +5888,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (choice === 'cancel') return;
     if (choice === 'save') {
       await saveToolDraft('editor', imageSrc, { params: paramsRef.current, geo, selectedLutIdx });
-      recordProgress();
+      await recordProgress();
     }
     onCancel(choice === 'save');
   }, [historyIndex, initialState, onRequestExit, onCancel, imageSrc, geo, selectedLutIdx, recordProgress]);
