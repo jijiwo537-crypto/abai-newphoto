@@ -4134,6 +4134,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     oppositeLocalY: number;
     rotationRad: number;
   } | null>(null);
+  const stretchStart = useRef<{
+    pointerId: number; side: 't' | 'r' | 'b' | 'l'; startX: number; startY: number;
+    width: number; height: number; x: number; y: number; rotationRad: number;
+  } | null>(null);
 
   /** 畫布縮放倍率；沒傳就是 1（＝跟以前一模一樣） */
   const canvasK = () => (canvasKRef?.current || 1);
@@ -4792,6 +4796,31 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     }
   };
 
+  const handleStretchPointerDown = (e: React.PointerEvent, side: 't' | 'r' | 'b' | 'l') => {
+    e.stopPropagation(); e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
+    stretchStart.current = { pointerId: e.pointerId, side, startX: e.clientX, startY: e.clientY,
+      width: image.width, height: image.height, x: image.x, y: image.y,
+      rotationRad: image.rotation * Math.PI / 180 };
+    setIsScaling(true); onScaleStart?.();
+  };
+  const handleStretchPointerMove = (e: React.PointerEvent) => {
+    const d = stretchStart.current; if (!d || d.pointerId !== e.pointerId) return;
+    e.stopPropagation();
+    const k = canvasK() * Math.max(0.01, image.scale || 1);
+    const sx = (e.clientX - d.startX) / k, sy = (e.clientY - d.startY) / k;
+    const lx = sx * Math.cos(d.rotationRad) + sy * Math.sin(d.rotationRad);
+    const ly = -sx * Math.sin(d.rotationRad) + sy * Math.cos(d.rotationRad);
+    const horizontal = d.side === 'l' || d.side === 'r';
+    const signed = horizontal ? (d.side === 'r' ? lx : -lx) : (d.side === 'b' ? ly : -ly);
+    if (horizontal) { const width = Math.max(24, d.width + signed); onChange({ width, x: d.x + (d.width - width) / 2 }); }
+    else { const height = Math.max(24, d.height + signed); onChange({ height, y: d.y + (d.height - height) / 2 }); }
+  };
+  const handleStretchPointerUp = (e: React.PointerEvent) => {
+    if (stretchStart.current?.pointerId !== e.pointerId) return;
+    e.stopPropagation(); try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    stretchStart.current = null; setIsScaling(false); onScaleEnd?.();
+  };
+
   /* 外框的幾何：選取框那一組要搬到另一層去畫（見 chromeLayer），
      搬過去之後必須落在完全一樣的位置，所以位置／大小／旋轉抽成同一份，
      兩邊共用 —— 不是各算一次，才不會有任何一格的偏差。 */
@@ -5081,7 +5110,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               /* 線寬與虛線節奏跟創意拼圖那條一致；除掉預覽倍率與物件縮放，
                  放大之後線才不會跟著變粗。viewBox 的單位＝未縮放的內容單位。 */
               strokeWidth={r3(1.6 / (kNow * (image.scale || 1)))}
-              strokeDasharray={`${r3(6.7 / (kNow * (image.scale || 1)))} ${r3(6.7 / (kNow * (image.scale || 1)))}`}
               vectorEffect="none"
             />
           </svg>
@@ -5120,7 +5148,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               x="0" y="0" width="100%" height="100%"
               fill="none" stroke="#ffffff"
               strokeWidth={r3(1.6 / kNow)}
-              strokeDasharray={`${r3(6.7 / kNow)} ${r3(6.7 / kNow)}`}
             />
           </svg>
         )}
@@ -5130,6 +5157,19 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         {isPhoto && !shapeOutline && cornerDot('tr', 'top-0 right-0', 'translate(50%, -50%)', 'cursor-nesw-resize')}
         {isPhoto && !shapeOutline && cornerDot('bl', 'bottom-0 left-0', 'translate(-50%, 50%)', 'cursor-nesw-resize')}
         {isPhoto && !shapeOutline && cornerDot('br', 'bottom-0 right-0', 'translate(50%, 50%)', 'cursor-nwse-resize')}
+
+        {image.text === undefined && !image.isVideo && !shapeOutline && ([
+          ['t', 'top-0 left-1/2', 'translate(-50%, -50%)', 'w-6 h-2 cursor-ns-resize'],
+          ['r', 'right-0 top-1/2', 'translate(50%, -50%)', 'w-2 h-6 cursor-ew-resize'],
+          ['b', 'bottom-0 left-1/2', 'translate(-50%, 50%)', 'w-6 h-2 cursor-ns-resize'],
+          ['l', 'left-0 top-1/2', 'translate(-50%, -50%)', 'w-2 h-6 cursor-ew-resize'],
+        ] as const).map(([side, pos, tx, size]) => (
+          <div key={side} className={`absolute ${pos} ${size} z-50 pointer-events-auto touch-none flex items-center justify-center`}
+            style={{ transform: tx }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
+            onPointerMove={handleStretchPointerMove} onPointerUp={handleStretchPointerUp} onPointerCancel={handleStretchPointerUp}>
+            <span className={`${side === 't' || side === 'b' ? 'w-4 h-1.5' : 'w-1.5 h-4'} block rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
+          </div>
+        ))}
 
       </div>
       );
@@ -12281,7 +12321,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           const rad = (fImg.rotation * Math.PI) / 180;
                           const halfSpan = (fImg.width * fImg.scale * Math.abs(Math.sin(rad))
                             + fImg.height * fImg.scale * Math.abs(Math.cos(rad))) / 2;
-                          return fImg.y + fImg.height / 2 + halfSpan + 52 > previewH;
+                          const cy = fImg.y + fImg.height / 2;
+                          const belowFits = cy + halfSpan + 52 <= previewH;
+                          const aboveFits = cy - halfSpan - 52 >= 0;
+                          return !belowFits && aboveFits;
                         })()}
                         maxTextWidth={previewW}
                         isTextEditing={inlineEditId === fImg.id}
