@@ -109,7 +109,7 @@ export const COMPOSE_WARMUP_CLASSES =
 
 export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone }) => {
   const [tab, setTab] = useState<Tab>('crop');
-  const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h'>('v');
+  const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h' | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
   const lastTickRef = useRef<number | null>(null);
   const rulerDragRef = useRef<{ startX: number; startValue: number; width: number } | null>(null);
@@ -358,7 +358,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
   const dirty = !isGeoIdentity(geo);
 
-  const tickFeedback = useCallback((zero: boolean) => {
+  const tickFeedback = useCallback((_zero: boolean) => {
     try {
       const AudioCtor = window.AudioContext || (window as any).webkitAudioContext;
       const ctx = audioRef.current || (audioRef.current = new AudioCtor());
@@ -367,15 +367,15 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       const gain = ctx.createGain();
       const now = ctx.currentTime;
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(zero ? 1560 : 1280, now);
+      osc.frequency.setValueAtTime(1280, now);
       gain.gain.setValueAtTime(0.0001, now);
-      gain.gain.exponentialRampToValueAtTime(zero ? 0.032 : 0.018, now + 0.002);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + (zero ? 0.026 : 0.016));
+      gain.gain.exponentialRampToValueAtTime(0.018, now + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.016);
       osc.connect(gain).connect(ctx.destination);
       osc.start(now);
       osc.stop(now + 0.03);
     } catch { /* 静音模式或浏览器限制时保留触觉反馈 */ }
-    try { navigator.vibrate?.(zero ? 10 : 4); } catch { /* iOS 网页可能不提供 vibration */ }
+    try { navigator.vibrate?.(4); } catch { /* iOS 网页可能不提供 vibration */ }
   }, []);
 
   const tickSlider = (
@@ -419,7 +419,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       onPointerCancel={() => { rulerDragRef.current = null; setRulerVisual(null); setLive(false); }}
     >
       <span className="absolute top-0 left-1/2 -translate-x-1/2 text-[10px] font-bold tracking-[0.12em] text-white/65 tabular-nums whitespace-nowrap pointer-events-none">
-        {(rulerVisual ?? value) > 0 ? '+' : ''}{Math.round((rulerVisual ?? value) / step) * step}{max <= 45 ? '°' : ''}
+        {Math.round((rulerVisual ?? value) / step) * step > 0 ? '+' : ''}{Math.round((rulerVisual ?? value) / step) * step}{max <= 45 ? '°' : ''}
       </span>
       {Array.from({ length: Math.round((max - min) / step) + 1 }, (_, i) => min + i * step).map(tickValue => {
         const shown = rulerVisual ?? value;
@@ -719,20 +719,30 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
           )}
 
           {tab === 'keystone' && (
-            <div className="w-full flex items-center gap-3 px-5 -translate-y-1">
-              <button
-                onClick={() => setKeystoneAxis(a => a === 'v' ? 'h' : 'v')}
-                aria-label={`切换为${keystoneAxis === 'v' ? '水平' : '垂直'}梯形调整`}
-                className="w-12 h-11 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-white/75 hover:text-white flex flex-col items-center justify-center gap-0 transition-colors active:scale-[0.96]"
-              >
-                <Icon name={keystoneAxis === 'v' ? 'height' : 'width'} className="text-[17px] leading-none" />
-                <span className="text-[8px] leading-none font-bold tracking-[0.08em] mt-0.5">{keystoneAxis === 'v' ? '垂直' : '水平'}</span>
-              </button>
-              {keystoneAxis === 'v'
-                ? tickSlider(geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }), 0.36)
-                : tickSlider(geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }), 0.36)}
-              <span className="w-12 h-11 shrink-0" aria-hidden="true" />
-            </div>
+            keystoneAxis === null ? (
+              <div className="w-full flex justify-center items-center gap-3 px-5 -translate-y-1">
+                <button onClick={() => setKeystoneAxis('v')} className="h-11 px-5 rounded-full bg-white/[0.06] border border-white/10 text-white/65 hover:text-white flex items-center gap-2 text-[11px] font-bold tracking-[0.1em] transition-colors active:scale-[0.97]">
+                  <Icon name="height" className="text-lg" />垂直
+                </button>
+                <button onClick={() => setKeystoneAxis('h')} className="h-11 px-5 rounded-full bg-white/[0.06] border border-white/10 text-white/65 hover:text-white flex items-center gap-2 text-[11px] font-bold tracking-[0.1em] transition-colors active:scale-[0.97]">
+                  <Icon name="width" className="text-lg" />水平
+                </button>
+              </div>
+            ) : (
+              <div className="w-full flex items-center gap-3 px-5 -translate-y-1">
+                <button
+                  onClick={() => setKeystoneAxis(null)}
+                  aria-label="返回梯形方向选择"
+                  className="w-12 h-11 shrink-0 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-colors text-white active:scale-[0.96]"
+                >
+                  <Icon name="arrow_back" className="text-xl" />
+                </button>
+                {keystoneAxis === 'v'
+                  ? tickSlider(geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }), 0.36)
+                  : tickSlider(geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }), 0.36)}
+                <span className="w-12 h-11 shrink-0" aria-hidden="true" />
+              </div>
+            )
           )}
         </div>
 
@@ -750,7 +760,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
           ] as [Tab, string, string][]).filter(([id]) => !(hideKeystone && id === 'keystone')).map(([id, icon, label]) => (
             <button
               key={id}
-              onClick={() => setTab(id)}
+              onClick={() => { setTab(id); if (id === 'keystone') setKeystoneAxis(null); }}
               className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors duration-200 ${tab === id ? 'text-white' : 'text-white/20'}`}
             >
               {/* 梯形那顆自己畫。Material Symbols 的 transform 是四支箭頭，
