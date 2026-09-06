@@ -476,15 +476,24 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                改成一塊剛好貼在裁切框上、什麼都不畫的元素，用外擴陰影把外圍壓暗 ——
                只上色一次、完全沒有接縫，怎麼拖都不會有線。外層 overflow-hidden
                負責把那圈很大的陰影收在舞台裡。 */}
-          <div className="absolute inset-0 pointer-events-none overflow-hidden">
-            <div className="absolute" style={{ ...cropStyle, boxShadow: '0 0 0 9999px rgba(0,0,0,0.6)' }} />
-          </div>
+          <svg
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            viewBox="0 0 1 1"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <path
+              d={`M0 0H1V1H0Z M${geo.crop.x} ${geo.crop.y}H${geo.crop.x + geo.crop.w}V${geo.crop.y + geo.crop.h}H${geo.crop.x}Z`}
+              fill="rgba(0,0,0,0.6)"
+              fillRule="evenodd"
+            />
+          </svg>
 
           {/* 裁切框 */}
           <div
             className="absolute border border-white/90"
             data-geo={`${geo.zoom}|${(geo.offset?.x ?? 0).toFixed(3)}|${(geo.offset?.y ?? 0).toFixed(3)}`}
-            style={{ ...cropStyle, touchAction: 'none' }}
+            style={{ ...cropStyle, touchAction: 'none', willChange: 'left, top, width, height' }}
             onPointerDown={onHandleDown('move')}
             onPointerMove={onHandleMove}
             onPointerUp={onHandleUp}
@@ -528,14 +537,16 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                   <div
                     className={`absolute bg-white ${corner ? '' : 'shadow-[0_1px_4px_rgba(0,0,0,0.6)]'}`}
                     style={corner
-                      // 直角貼住九宮格角點，兩段線沿著框線往框內延伸；
-                      // 角落不加整塊陰影，避免透明方形輪廓。
+                      // 外掛式括號：兩段線方向與框角一致，但整體位於框外；
+                      // 線條內緣剛好貼住裁切框外緣，角落不加陰影。
                       ? {
                           width: 20, height: 20,
-                          left: hd.x === 0 ? '50%' : undefined,
-                          right: hd.x === 1 ? '50%' : undefined,
-                          top: hd.y === 0 ? '50%' : undefined,
-                          bottom: hd.y === 1 ? '50%' : undefined,
+                          left: '50%',
+                          top: '50%',
+                          transform: hd.id === 'tl' ? 'translate(-3px, -3px)'
+                            : hd.id === 'tr' ? 'translate(calc(-100% + 3px), -3px)'
+                            : hd.id === 'br' ? 'translate(calc(-100% + 3px), calc(-100% + 3px))'
+                            : 'translate(-3px, calc(-100% + 3px))',
                           background: 'transparent',
                           borderLeft: hd.x === 0 ? '3px solid white' : undefined,
                           borderRight: hd.x === 1 ? '3px solid white' : undefined,
