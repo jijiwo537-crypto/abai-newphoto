@@ -192,6 +192,10 @@ export async function loadDraft(): Promise<LoadedToolDraft | null> {
 }
 
 export async function clearDraft(): Promise<void> {
+  /* 明確選「放棄」時，不能讓已排隊的自動存檔在清除後又寫回來。 */
+  queued = null;
+  while (saving) await new Promise(resolve => setTimeout(resolve, 0));
+  queued = null;
   try {
     localStorage.removeItem(FLAG_KEY);
     localStorage.removeItem(FLAG_KEY + ':tool');

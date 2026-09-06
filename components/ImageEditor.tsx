@@ -19,6 +19,7 @@ import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from "reac
 import { ChevronLeft } from 'lucide-react';
 import ExifReader from 'exifreader';
 import { Icon } from './Icon';
+import type { ExitChoice } from '../types';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
 interface Point { x: number; y: number; }
@@ -955,8 +956,9 @@ interface ImageEditorProps {
   onAddPhotos?: () => void;
   lutList: { id: string, name: string, url: string }[];
   onSave: (newSrc: string) => void;
-  onCancel: () => void;
+  onCancel: (keepDraft?: boolean) => void;
   onHome?: () => void;
+  onRequestExit?: () => Promise<ExitChoice>;
   onImportNew?: () => void;
   originalFile?: File | null;
   /** 接續上次時把存下來的參數餵回來（跳出應用再回來用的） */
@@ -1399,7 +1401,7 @@ function runThumbChunks<T>(
   step();
 }
 
-export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onImportNew, originalFile, initialState }) => {
+export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState }) => {
   /* ── 批量編輯 ───────────────────────────────────────────────────────────
      一次匯入多張時，編輯器本身完全不變 —— 畫面上永遠只有「目前這一張」，
      其他張的參數各自收在旁邊。連結中的照片共用同一份參數（改一張＝全部一起改），
@@ -5877,6 +5879,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [historyIndex, srcList, safeIdx, imageSrc, geo, selectedLutIdx, activeCategory, render]);
 
+  const requestLeave = useCallback(async () => {
+    const choice = onRequestExit ? await onRequestExit() : 'discard';
+    if (choice === 'cancel') return;
+    if (choice === 'save') {
+      await saveToolDraft('editor', imageSrc, { params: paramsRef.current, geo, selectedLutIdx });
+    }
+    onCancel(choice === 'save');
+  }, [onRequestExit, onCancel, imageSrc, geo, selectedLutIdx]);
+
   /* 「合併」：把現在畫面上的樣子用全解析度烤成一張新的原圖，參數整組歸零。
      特效一次只能套一個，合併過的那一層已經變成點陣圖的一部分，
      所以合併完就可以再疊下一個特效。
@@ -6648,7 +6659,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       <header className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl ${showExifPanel ? 'z-[60]' : 'z-20'}`}>
         <div className="w-20">
             {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
-            <button onClick={() => { recordProgress(); onCancel(); }} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"><ChevronLeft size={22} /></button>
+            <button onClick={requestLeave} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"><ChevronLeft size={22} /></button>
         </div>
         <div className="flex items-center gap-4">
            <button onClick={undo} disabled={historyIndex <= 0} className={`p-2 transition-all ${historyIndex <= 0 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="undo" className="text-xl" /></button>

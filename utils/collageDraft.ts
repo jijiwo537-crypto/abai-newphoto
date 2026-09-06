@@ -173,6 +173,10 @@ export async function loadDraft(): Promise<CollageDraft | null> {
 }
 
 export async function clearDraft(): Promise<void> {
+  /* 等正在寫入的自動存檔結束再清，避免使用者放棄後草稿又出現。 */
+  queued = null;
+  while (saving) await new Promise(resolve => setTimeout(resolve, 0));
+  queued = null;
   savedSrc.clear();
   try { localStorage.removeItem(FLAG_KEY); } catch { /* ignore */ }
   await tx(STORE_META, 'readwrite', s => s.delete(META_KEY));

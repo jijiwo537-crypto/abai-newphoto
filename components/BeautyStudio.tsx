@@ -6,6 +6,7 @@ import { addExport } from '../utils/exportHistory';
 import { Icon } from './Icon';
 import { ChevronLeft } from 'lucide-react';
 import { SaveButton } from './SaveButton';
+import type { ExitChoice } from '../types';
 import {
   Rect, LiquifyMode, LiquifyField,
   BRUSH_REF_WIDTH, DEFAULT_BRUSH, BRUSH_RANGE, LIP_PRESETS,
@@ -84,8 +85,9 @@ interface Session {
 
 interface BeautyStudioProps {
   imageSrc: string;
-  onCancel: () => void;
-  onHome: () => void;
+  onCancel: (keepDraft?: boolean) => void;
+  onHome: (keepDraft?: boolean) => void;
+  onRequestExit?: () => Promise<ExitChoice>;
   onImportNew: () => void;
   onSendToEditor: (dataUrl: string) => void;
   /** 接續上次：把存下來的操作記錄餵回來（跳出應用再回來用的） */
@@ -136,7 +138,7 @@ const unionRect = (a: Rect | null, b: Rect): Rect => {
 };
 
 export const BeautyStudio: React.FC<BeautyStudioProps> = ({
-  imageSrc, onCancel, onHome, onImportNew, onSendToEditor, initialState,
+  imageSrc, onCancel, onHome, onRequestExit, onImportNew, onSendToEditor, initialState,
 }) => {
   const [tool, setTool] = useState<BeautyTool>('blemish');
   const [brush, setBrush] = useState<Record<string, number>>({ ...DEFAULT_BRUSH });
@@ -788,6 +790,16 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     } catch { /* 記錄失敗不能影響離開 */ }
   }, [imageSrc, showOriginal, render]);
 
+  const requestLeave = useCallback(async () => {
+    const choice = onRequestExit ? await onRequestExit() : 'discard';
+    if (choice === 'cancel') return;
+    if (choice === 'save') {
+      const s = sessionRef.current;
+      if (s) await saveToolDraft('beauty', imageSrc, { ops: s.ops.slice(0, s.opsApplied) });
+    }
+    onCancel(choice === 'save');
+  }, [onRequestExit, onCancel, imageSrc]);
+
   // ---------------------------------------------------------------
   // 全解析度輸出：把記錄下來的每一筆操作，在原圖解析度重跑一次
   // ---------------------------------------------------------------
@@ -962,7 +974,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         <header className="h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-20">
           <div className="w-24">
             {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
-            <button onClick={() => { recordProgress(); onCancel(); }} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
+            <button onClick={requestLeave} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
               <ChevronLeft size={22} />
             </button>
           </div>

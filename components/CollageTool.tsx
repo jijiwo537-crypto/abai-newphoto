@@ -54,6 +54,7 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
    所以濾鏡與調節的效果不可能有差。 */
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
 import { SaveButton } from './SaveButton';
+import type { ExitChoice } from '../types';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
 
@@ -960,7 +961,8 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
 };
 
 interface CollageToolProps {
-  onHome: () => void;
+  onHome: (keepDraft?: boolean) => void;
+  onRequestExit?: () => Promise<ExitChoice>;
   /** 濾鏡清單，跟「編輯」「經典拼圖」同一份 */
   lutList?: { id: string; name: string; url: string }[];
   initialFile?: File | null;
@@ -973,7 +975,7 @@ interface CollageToolProps {
   histKey?: string | null;
 }
 
-export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [] }) => {
+export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [] }) => {
   const [imageState, setImageState] = useState<any>(null);
   const [layout, setLayout] = useState('mask-bottom');
   const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
@@ -5052,6 +5054,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
     whenIdle(() => { try { recordHistoryRef.current?.(); } catch { /* 記錄失敗不影響任何事 */ } });
   }, [onHome]);
 
+  const requestLeaveToHome = useCallback(async () => {
+    const choice = onRequestExit ? await onRequestExit() : 'discard';
+    if (choice === 'cancel') return;
+    leavingRef.current = true;
+    try { pauseVideos(allVideosRef.current()); } catch { /* 停不了就算了 */ }
+    if (choice === 'save') {
+      await saveToolDraft('collage', photoUrlRef.current, {
+        layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
+        holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
+        stripeN, stripeDir, stripeA: stripeAPick, stripeB,
+        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
+        objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
+      });
+    }
+    onHome(choice === 'save');
+  }, [onRequestExit, onHome, layout, maskScale, holeType, customText, holeSize, sizeJitter,
+      holeAngle, holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap,
+      symmetryEnabled, stripeN, stripeDir, stripeAPick, stripeB, glowMode, holeGlowColor,
+      glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor]);
+
   const recordHistory = useCallback(async () => {
     if (!imageState) return;
     try {
@@ -6237,7 +6259,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, initialFile, i
       {saveState !== 'success' && (
       <header className="h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-[100] bg-black/90 backdrop-blur-md">
         <button
-          onClick={(e) => { e.stopPropagation(); leaveToHome(); }}
+          onClick={(e) => { e.stopPropagation(); requestLeaveToHome(); }}
           className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"
           title="繼續編輯"
         >

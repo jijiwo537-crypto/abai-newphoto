@@ -29,6 +29,7 @@ import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
+import type { ExitChoice } from '../types';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas, geoCssBox } from '../utils/compose';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
@@ -5605,6 +5606,7 @@ interface GridLayoutToolProps {
   /** 從歷史紀錄點開來的那一筆的 key。再記一次的時候沿用它＝更新同一筆 */
   histKey?: string | null;
   onHome: () => void;
+  onRequestExit?: () => Promise<ExitChoice>;
   onImportNew?: () => void;
   initialFiles?: File[];
   /** 從首頁的歷史紀錄點回來時，把那一份版面餵回來（優先於自動存檔的草稿） */
@@ -5613,7 +5615,7 @@ interface GridLayoutToolProps {
   lutList?: { id: string; name: string; url: string }[];
 }
 
-export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome, onImportNew, initialFiles, initialState, lutList = [] }) => {
+export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome, onRequestExit, onImportNew, initialFiles, initialState, lutList = [] }) => {
   /** 一頁上可以放多個佈局，每個佈局都是一個獨立物件（跟一般圖片一樣）。 */
   interface LayoutItem {
     id: string;
@@ -8580,15 +8582,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 縮圖在 1.2 秒後才在背景烤，完全不擋路。
    */
   const leavingRef = useRef(false);
-  const handleLeave = () => {
+  const handleLeave = async () => {
     if (leavingRef.current) return;
+    const choice = onRequestExit ? await onRequestExit() : 'discard';
+    if (choice === 'cancel') return;
     leavingRef.current = true;
-    /* 先發動、不要 await */
-    const bg = recordProgress();
     leftRef.current = true;
-    clearDraft();
+    if (choice === 'save') {
+      await saveDraft({ pages, floatingImages, selectedRatio, isLandscape });
+    } else {
+      await clearDraft();
+    }
     onHome();
-    bg.catch(() => { /* 記錄失敗不能影響離開 */ });
   };
 
   useEffect(() => {
