@@ -293,35 +293,49 @@ select:focus, select:focus-visible {
   backface-visibility: hidden;
 }
 
-/* 草稿儲存：以品牌字標與一道光線呈現進度，不使用制式轉圈。 */
-@keyframes draft-save-breathe {
-  0%, 100% { opacity: 0.58; transform: scale3d(0.985, 0.985, 1); }
-  50%      { opacity: 1; transform: scale3d(1, 1, 1); }
+/* 小白點成為筆尖，從左到右寫出品牌字標；沒有轉圈或裝飾底線。 */
+@keyframes draft-logo-write {
+  0%, 23% { clip-path: inset(0 100% 0 0); opacity: 0; }
+  27%      { opacity: 1; }
+  76%,100% { clip-path: inset(0 0 0 0); opacity: 1; }
 }
-@keyframes draft-save-scan {
-  0%   { transform: translate3d(-140%, 0, 0); opacity: 0; }
-  18%  { opacity: 1; }
-  82%  { opacity: 1; }
-  100% { transform: translate3d(240%, 0, 0); opacity: 0; }
+@keyframes draft-logo-tip {
+  0%       { opacity: 0; transform: translate3d(0, 0, 0) scale(0); }
+  12%      { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  23%      { opacity: 1; transform: translate3d(-58px, 7px, 0) scale(0.82); }
+  76%      { opacity: 1; transform: translate3d(62px, -3px, 0) scale(0.72); }
+  86%,100% { opacity: 0; transform: translate3d(62px, -3px, 0) scale(0.25); }
 }
-.draft-save-wordmark {
-  animation: draft-save-breathe 1.25s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-  will-change: transform, opacity;
-}
-.draft-save-track {
+.draft-logo-stage {
   position: relative;
-  width: 112px;
-  height: 1px;
-  overflow: hidden;
-  background: rgba(255,255,255,0.13);
+  width: 144px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  isolation: isolate;
 }
-.draft-save-scan {
+.draft-logo-ink {
+  color: #fff;
+  font-family: 'Klee One', 'Segoe Print', 'Bradley Hand', cursive;
+  font-size: 38px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.015em;
+  transform: rotate(-2deg);
+  transform-origin: center;
+  animation: draft-logo-write 800ms cubic-bezier(0.65, 0, 0.2, 1) both;
+  will-change: clip-path, opacity;
+}
+.draft-logo-tip {
   position: absolute;
-  inset: 0 auto 0 0;
-  width: 42px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.95), transparent);
-  filter: drop-shadow(0 0 5px rgba(255,255,255,0.75));
-  animation: draft-save-scan 1.05s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+  left: 70px;
+  top: 23px;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 0 10px rgba(255,255,255,0.75), 0 0 24px rgba(255,255,255,0.28);
+  animation: draft-logo-tip 800ms cubic-bezier(0.65, 0, 0.2, 1) both;
   will-change: transform, opacity;
 }
 

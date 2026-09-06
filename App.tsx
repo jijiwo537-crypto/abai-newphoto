@@ -56,6 +56,7 @@ import {
 } from './utils/toolDraft';
 import { listExports, loadExport, subscribeExports, type ExportMeta } from './utils/exportHistory';
 import type { ExitChoice } from './types';
+import { ensureFont } from './utils/fonts';
 
 const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
   layout: '經典拼圖',
@@ -65,6 +66,7 @@ const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
 };
 
 const App: React.FC = () => {
+  useEffect(() => { ensureFont('Klee One'); }, []);
   // 上次沒做完的東西一律先問過再接回去，不要一開 App 就直接跳進去。
   // 兩份草稿（經典拼圖／其他工具）取比較新的那一份。
   /* 首頁的「接續上次」卡要顯示時間，所以順便把草稿的時間戳一起記著 */
@@ -130,8 +132,8 @@ const App: React.FC = () => {
       setExitPromptOpen(false);
       setExitPromptBusy(false);
     };
-    const elapsed = exitSaveStartedAt.current ? performance.now() - exitSaveStartedAt.current : 500;
-    const remaining = Math.max(0, 500 - elapsed);
+    const elapsed = exitSaveStartedAt.current ? performance.now() - exitSaveStartedAt.current : 800;
+    const remaining = Math.max(0, 800 - elapsed);
     if (remaining > 0) exitCloseTimer.current = setTimeout(close, remaining);
     else close();
   }, []);
@@ -484,11 +486,11 @@ const App: React.FC = () => {
           <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className={`w-full max-w-[320px] min-h-[248px] p-6 text-center flex items-center justify-center ${exitPromptBusy ? 'bg-transparent' : 'rounded-3xl bg-[#141414] border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200'}`}>
             {exitPromptBusy ? (
               <div className="flex flex-col items-center animate-in fade-in duration-300" aria-live="polite">
-                <div className="draft-save-wordmark font-serif text-[34px] leading-none tracking-[-0.04em] text-white">ABAI</div>
-                <div className="draft-save-track mt-5" aria-hidden="true">
-                  <span className="draft-save-scan" />
+                <div className="draft-logo-stage" aria-label="ABAI">
+                  <span className="draft-logo-ink">ABAI</span>
+                  <span className="draft-logo-tip" aria-hidden="true" />
                 </div>
-                <p className="mt-4 text-[11px] font-bold tracking-[0.28em] text-white/55">正在儲存草稿</p>
+                <p className="mt-5 text-[11px] font-bold tracking-[0.28em] text-white/55">正在儲存草稿</p>
               </div>
             ) : (
               <div className="w-full animate-in fade-in duration-200">
