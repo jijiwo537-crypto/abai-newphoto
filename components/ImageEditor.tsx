@@ -99,7 +99,7 @@ const HSL_MAX_SAT = 0.5;
 const HSL_MAX_LUM = 0.1;
 const HSL_CENTERS = Float32Array.from(HSL_BANDS.map(b => b.hue));
 /** HSL 面板的高度（量出來的，見上面的說明） */
-const HSL_PANEL_H = 220;
+const HSL_PANEL_H = 196;
 const HSL_SLIDERS = [
   { key: 'h' as const, label: '色相' },
   { key: 's' as const, label: '飽和度' },
@@ -5480,6 +5480,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           b: [{x:0,y:0}, {x:255,y:255}]
         }
       };
+      const WARMUP_HSL_PARAMS: EditorParams = {
+        ...DEFAULT_PARAMS,
+        // 身分值會直接跳過整段 HSL；給一個肉眼無關的小值，讓瀏覽器在使用者
+        // 碰滑桿前就完成這條熱路徑的 JIT 編譯。
+        hsl: DEFAULT_HSL.map((band, i) => i === 0 ? { ...band, h: 1 } : { ...band }),
+      };
       
       // Warmup logic using shared buffer
       generateBaseCorrectionLut(0,0,0, baseCorrectionLutRef.current);
@@ -5489,6 +5495,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         if (!pipelineWarmedRef.current) {
           processPixels(pData, buffers.current.preview.dest!, pw, ph, WARMUP_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, getCurveLuts(WARMUP_PARAMS.curves));
           processPixels(pData, buffers.current.preview.dest!, pw, ph, DEFAULT_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, getCurveLuts(DEFAULT_PARAMS.curves));
+          // HSL 分支以前没有被上面两次身分参数覆盖，首次拖动时才触发 JIT，
+          // 因而只在前几次手势卡顿。用最多 192×192 的工作区先跑两次，足以
+          // 优化热点，又不会拿整张 1800px 预览做无意义的重运算。
+          const hw = Math.min(pw, 192), hh = Math.min(ph, 192);
+          const hLen = hw * hh * 4;
+          const hSrc = pData.subarray(0, hLen);
+          const hDst = new Uint8ClampedArray(hLen);
+          const hCurves = getCurveLuts(WARMUP_HSL_PARAMS.curves);
+          processPixels(hSrc, hDst, hw, hh, WARMUP_HSL_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, hCurves);
+          processPixels(hSrc, hDst, hw, hh, WARMUP_HSL_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, hCurves);
           pipelineWarmedRef.current = true;
         }
         // 已經用預熱的畫面補上調整後的樣子了，就別再畫一次原圖 —— 那會閃一下。
@@ -7322,9 +7338,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {activeToolId === 'hsl' && (
         <div
            data-hsl-panel
-           className="absolute inset-x-0 bottom-0 z-40 px-8 pt-2 pb-4 bg-[#111]/95 backdrop-blur-xl border-t border-white/5"
+           className="absolute inset-x-0 bottom-0 z-40 px-8 pt-2 pb-2 bg-[#111]/95 backdrop-blur-xl border-t border-white/5"
         >
-<div className="w-full flex flex-col pb-4">
+<div className="w-full flex flex-col">
               {/* 這一排伸進外層的左右內距裡（w = 100%+4rem 配 -mx-8），才排得下。
                   外層的 border box 是整個畫面寬，所以伸出去不會被裁掉。
                   內層用 w-max + mx-auto：排得下的時候自動置中，排不下的時候
