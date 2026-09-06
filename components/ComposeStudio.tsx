@@ -519,9 +519,10 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                   }}
                 >
                   <div
-                    className="absolute bg-white shadow-[0_1px_4px_rgba(0,0,0,0.6)]"
+                    className={`absolute bg-white ${corner ? '' : 'shadow-[0_1px_4px_rgba(0,0,0,0.6)]'}`}
                     style={corner
-                      // 四角的兩段都只往框外長；3px 粗度與四邊控制物完全一致。
+                      // L 的轉角位於離裁切框最遠的外角，視覺方向朝外；
+                      // 角落不加整塊陰影，避免透明方形輪廓。
                       ? {
                           width: 20, height: 20,
                           left: hd.x === 1 ? '50%' : undefined,
@@ -529,10 +530,10 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                           top: hd.y === 1 ? '50%' : undefined,
                           bottom: hd.y === 0 ? '50%' : undefined,
                           background: 'transparent',
-                          borderLeft: hd.x === 1 ? '3px solid white' : undefined,
-                          borderRight: hd.x === 0 ? '3px solid white' : undefined,
-                          borderTop: hd.y === 1 ? '3px solid white' : undefined,
-                          borderBottom: hd.y === 0 ? '3px solid white' : undefined,
+                          borderLeft: hd.x === 0 ? '3px solid white' : undefined,
+                          borderRight: hd.x === 1 ? '3px solid white' : undefined,
+                          borderTop: hd.y === 0 ? '3px solid white' : undefined,
+                          borderBottom: hd.y === 1 ? '3px solid white' : undefined,
                         }
                       : {
                           width: (hd.id === 't' || hd.id === 'b') ? 20 : 3,
