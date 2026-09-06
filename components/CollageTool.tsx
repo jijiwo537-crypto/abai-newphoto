@@ -2869,6 +2869,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const beginObjStretch = (e: React.PointerEvent, o: any, side: 't' | 'r' | 'b' | 'l', cssK: number) => {
     e.stopPropagation(); e.preventDefault();
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    objDragRef.current = null;
+    interactionRef.current = null;
+    activePointers.current.clear();
     objStretchRef.current = { pointerId: e.pointerId, id: o.id, side, startX: e.clientX, startY: e.clientY,
       x: o.x, y: o.y, w: o.w, h: o.h, rot: (o.rot || 0) * Math.PI / 180, k: cssK };
   };
@@ -4171,6 +4174,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const A = hA(h);
         if (!A.on) return;
         const sz = getHoleSize(h) * A.k * s;
+        // 五角星与十字星的可见墨水重心略偏上，方形选中框同步上提一点。
+        const starFrameLift = (holeType === 'star' || holeType === 'cross-star') ? sz * 0.045 : 0;
         const currentAngle = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
         const hx = A.x * s, hy = A.y * s;
         const mxp = hx * rx, myp = hy * ry;     // 遮罩上的對應點
@@ -4997,7 +5002,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 左側選取框 (帶旋轉, 只有在 image 側時顯示)
         if (hSide === 'both' || hSide === 'image') {
           ctx.save();
-          ctx.translate(A.x * s + offs.ix, A.y * s + offs.iy);
+          ctx.translate(A.x * s + offs.ix, A.y * s + offs.iy - starFrameLift);
           ctx.rotate(currentAngle * Math.PI / 180);
           if (isTextHole(holeType)) {
             const renderStr = holeGlyph(holeType, customText, h);
@@ -5017,7 +5022,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 右側選取框 (帶旋轉, 只有在 mask 側且完全在裡面時才顯示)
         if ((hSide === 'both' || hSide === 'mask') && isHoleFullyInsideMask(h, 1, maskW, maskH)) {
           ctx.save();
-          ctx.translate(A.x * s + offs.mx, A.y * s + offs.my);
+          ctx.translate(A.x * s + offs.mx, A.y * s + offs.my - starFrameLift);
           ctx.rotate(currentAngle * Math.PI / 180);
           if (isTextHole(holeType)) {
             const renderStr = holeGlyph(holeType, customText, h);
@@ -6679,10 +6684,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const bottom = r.top - sr.top + (oy + lowest) * k;
           const top = r.top - sr.top + (oy + highest) * k;
           const stH = stEl ? stEl.getBoundingClientRect().height : 0;
-          const belowFits = !stH || bottom + 42 <= stH;
+          const crossedLowerThird = !!stH && bottom > stH * (2 / 3);
           const aboveFits = top - 42 >= 0;
-          // 下方优先；被挡时翻到上方；上下都没空间则强制回下方并守住工具栏安全线。
-          const above = !belowFits && aboveFits;
+          const above = crossedLowerThird && aboveFits;
           let by = above ? top - 42 : bottom + 10;
           if (!above && stH) by = Math.min(by, stH - 44);
           const act = (fn: () => void) => (ev: React.SyntheticEvent) => { ev.stopPropagation(); ev.preventDefault(); fn(); };
@@ -6722,7 +6726,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   ['b','left-1/2 bottom-0','translate(-50%,50%)','w-6 h-2 cursor-ns-resize'],
                   ['l','left-0 top-1/2','translate(-50%,-50%)','w-2 h-6 cursor-ew-resize'],
                 ] as const).map(([side,pos,tx,size]) => (
-                  <div key={side} className={`absolute ${pos} ${size} pointer-events-auto flex items-center justify-center touch-none`}
+                  <div key={side} data-stretch-handle className={`absolute ${pos} ${size} pointer-events-auto flex items-center justify-center touch-none no-pointer-events`}
                     style={{ transform: tx }} onPointerDown={(e) => beginObjStretch(e, o, side, k)}
                     onPointerMove={moveObjStretch} onPointerUp={endObjStretch} onPointerCancel={endObjStretch}>
                     <span className={`${side === 't' || side === 'b' ? 'w-4 h-1.5' : 'w-1.5 h-4'} block rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />

@@ -4798,6 +4798,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 
   const handleStretchPointerDown = (e: React.PointerEvent, side: 't' | 'r' | 'b' | 'l') => {
     e.stopPropagation(); e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
+    dragStart.current = null;
     stretchStart.current = { pointerId: e.pointerId, side, startX: e.clientX, startY: e.clientY,
       width: image.width, height: image.height, x: image.x, y: image.y,
       rotationRad: image.rotation * Math.PI / 180 };
@@ -5115,6 +5116,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           </svg>
         );
       })() : null;
+      const starChromeLift = (image.shape === 'star' || (image.shape === 'hole' && image.holeType === 'cross-star'))
+        ? -image.height * 0.045 : 0;
       return (
       <div
         className={chromeBox ? 'absolute pointer-events-none' : 'absolute inset-0 pointer-events-none'}
@@ -5122,14 +5125,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ...(chromeBox || null),
           visibility: showChrome ? 'visible' : 'hidden',
           opacity: showChrome ? 1 : 0,
-          transform: 'translateZ(0)',
+          transform: `translateY(${starChromeLift}px) translateZ(0)`,
           willChange: 'transform',
           backfaceVisibility: 'hidden',
         }}
       >
         {shapeOutline ? shapeOutline : isPhoto ? (
           /* Active border matching layout style（深色那一圈是往外畫的，跟原本一樣） */
-          <div className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" />
+          <div className="absolute pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" style={{ inset: -2 }} />
         ) : (
           /* 虛線框：數值跟創意拼圖那條 strokeRect 一模一樣（1.6px 寬、6.7/6.7 的節奏）。
              除掉預覽的倍率 k —— 放大預覽時框不會跟著變粗，跟那邊的 uiPx 同一個道理。
@@ -5164,7 +5167,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ['b', 'bottom-0 left-1/2', 'translate(-50%, 50%)', 'w-6 h-2 cursor-ns-resize'],
           ['l', 'left-0 top-1/2', 'translate(-50%, -50%)', 'w-2 h-6 cursor-ew-resize'],
         ] as const).map(([side, pos, tx, size]) => (
-          <div key={side} className={`absolute ${pos} ${size} z-50 pointer-events-auto touch-none flex items-center justify-center`}
+          <div key={side} data-stretch-handle className={`absolute ${pos} ${size} z-50 pointer-events-auto touch-none flex items-center justify-center`}
             style={{ transform: tx }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
             onPointerMove={handleStretchPointerMove} onPointerUp={handleStretchPointerUp} onPointerCancel={handleStretchPointerUp}>
             <span className={`${side === 't' || side === 'b' ? 'w-4 h-1.5' : 'w-1.5 h-4'} block rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
@@ -6237,6 +6240,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   } | null>(null);
 
   const handleWorkspacePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as Element).closest?.('[data-stretch-handle]')) return;
     if (!selectedFloatingId) return;
     const selectedImg = floatingImages.find(img => img.id === selectedFloatingId);
     if (!selectedImg) return;
@@ -12322,9 +12326,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           const halfSpan = (fImg.width * fImg.scale * Math.abs(Math.sin(rad))
                             + fImg.height * fImg.scale * Math.abs(Math.cos(rad))) / 2;
                           const cy = fImg.y + fImg.height / 2;
-                          const belowFits = cy + halfSpan + 52 <= previewH;
+                          const crossedLowerThird = cy + halfSpan > previewH * (2 / 3);
                           const aboveFits = cy - halfSpan - 52 >= 0;
-                          return !belowFits && aboveFits;
+                          return crossedLowerThird && aboveFits;
                         })()}
                         maxTextWidth={previewW}
                         isTextEditing={inlineEditId === fImg.id}
