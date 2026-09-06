@@ -211,13 +211,6 @@ function coversFrame(q: Quad, w: number, h: number) {
     .every(([x, y]) => insideConvex(q, x, y));
 }
 
-function coversCrop(q: Quad, w: number, h: number, crop: CropRect) {
-  const x0 = crop.x * w, y0 = crop.y * h;
-  const x1 = (crop.x + crop.w) * w, y1 = (crop.y + crop.h) * h;
-  return ([[x0, y0], [x1, y0], [x1, y1], [x0, y1]] as [number, number][])
-    .every(([x, y]) => insideConvex(q, x, y));
-}
-
 /** 蓋滿整個輸出框所需的最小放大倍率 */
 function coverFactor(quad: Quad, w: number, h: number) {
   const [cx, cy] = quadCenter(quad);
@@ -235,31 +228,18 @@ function coverFactor(quad: Quad, w: number, h: number) {
  * 先自動放大到蓋滿輸出框，再套上使用者的縮放與平移。
  * 平移量會被收斂到「四邊仍然頂住框」為止 —— 也就是只有還有多餘的影像可以拉時才拉得動。
  */
-function placeQuad(quad: Quad, w: number, h: number, zoom: number, offset: { x: number; y: number }, crop: CropRect = FULL_CROP): Quad {
+function placeQuad(quad: Quad, w: number, h: number, zoom: number, offset: { x: number; y: number }): Quad {
   const [cx, cy] = quadCenter(quad);
-  const full = isCropFull(crop);
-  let auto = 1;
-  if (full) auto = coverFactor(quad, w, h);
-  else if (!coversCrop(quad, w, h, crop)) {
-    let lo = 1, hi = 2;
-    for (let i = 0; i < 20 && !coversCrop(scaleAbout(quad, hi, cx, cy), w, h, crop); i++) hi *= 1.5;
-    for (let i = 0; i < 24; i++) {
-      const mid = (lo + hi) / 2;
-      if (coversCrop(scaleAbout(quad, mid, cx, cy), w, h, crop)) hi = mid; else lo = mid;
-    }
-    auto = hi;
-  }
-  const base = scaleAbout(quad, auto * Math.max(1, zoom), cx, cy);
+  const base = scaleAbout(quad, coverFactor(quad, w, h) * Math.max(1, zoom), cx, cy);
   const dx = offset.x * w;
   const dy = offset.y * h;
   if (dx === 0 && dy === 0) return base;
-  const coversTarget = (candidate: Quad) => full ? coversFrame(candidate, w, h) : coversCrop(candidate, w, h, crop);
-  if (coversTarget(translateQuad(base, dx, dy))) return translateQuad(base, dx, dy);
+  if (coversFrame(translateQuad(base, dx, dy), w, h)) return translateQuad(base, dx, dy);
   // 拉過頭就退到還蓋得住的最遠位置
   let lo = 0, hi = 1;
   for (let i = 0; i < 24; i++) {
     const mid = (lo + hi) / 2;
-    if (coversTarget(translateQuad(base, dx * mid, dy * mid))) lo = mid; else hi = mid;
+    if (coversFrame(translateQuad(base, dx * mid, dy * mid), w, h)) lo = mid; else hi = mid;
   }
   return translateQuad(base, dx * lo, dy * lo);
 }
@@ -312,7 +292,7 @@ export function warpCanvas(src: HTMLCanvasElement, g: GeoParams, maxSize?: numbe
   }
 
   const quad = targetQuad(src.width, src.height, g).map(([x, y]) => [x * shrink, y * shrink]) as Quad;
-  const local = placeQuad(quad, outW, outH, g.zoom ?? 1, g.offset || { x: 0, y: 0 }, g.crop || FULL_CROP);
+  const local = placeQuad(quad, outW, outH, g.zoom ?? 1, g.offset || { x: 0, y: 0 });
   const fwd = squareToQuad(local);
   const inv = invert3(fwd);
 
@@ -519,7 +499,7 @@ export function geoAffine(srcW: number, srcH: number, g: GeoParams): GeoAffine {
   // ② 微調角度 ＋ 自動蓋滿 ＋ 縮放平移（＝ warpCanvas 那一段，梯形留 0）
   const flat: GeoParams = { ...g, keyV: 0, keyH: 0 };
   const quad = targetQuad(W1, H1, flat);
-  const local = placeQuad(quad, W1, H1, g.zoom ?? 1, g.offset || { x: 0, y: 0 }, g.crop || FULL_CROP);
+  const local = placeQuad(quad, W1, H1, g.zoom ?? 1, g.offset || { x: 0, y: 0 });
   const s2q = squareToQuad(local);
   // squareToQuad 給的是「單位正方形 → local」，前面再串上「舞台座標 → 單位正方形」
   const m2 = mMul(
