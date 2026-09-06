@@ -2851,25 +2851,29 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const ly = -sx * Math.sin(d.rot) + sy * Math.cos(d.rot);
     const horizontal = d.side === 'l' || d.side === 'r';
     const signed = horizontal ? (d.side === 'r' ? lx : -lx) : (d.side === 'b' ? ly : -ly);
-    setObjects(prev => prev.map(o => {
-      if (o.id !== d.id) return o;
-      const oldCx = d.x + d.w / 2, oldCy = d.y + d.h / 2;
-      if (horizontal) {
-        const w = Math.max(24, d.w + signed);
-        const shift = (w - d.w) / 2 * (d.side === 'r' ? 1 : -1);
-        const cx = oldCx + shift * Math.cos(d.rot), cy = oldCy + shift * Math.sin(d.rot);
-        return { ...o, w, x: cx - w / 2, y: cy - d.h / 2 };
-      }
+    const oldCx = d.x + d.w / 2, oldCy = d.y + d.h / 2;
+    let next: any;
+    if (horizontal) {
+      const w = Math.max(24, d.w + signed);
+      const shift = (w - d.w) / 2 * (d.side === 'r' ? 1 : -1);
+      const cx = oldCx + shift * Math.cos(d.rot), cy = oldCy + shift * Math.sin(d.rot);
+      next = { w, h: d.h, x: cx - w / 2, y: cy - d.h / 2 };
+    } else {
       const h = Math.max(24, d.h + signed);
       const shift = (h - d.h) / 2 * (d.side === 'b' ? 1 : -1);
       const cx = oldCx - shift * Math.sin(d.rot), cy = oldCy + shift * Math.cos(d.rot);
-      return { ...o, h, x: cx - d.w / 2, y: cy - h / 2 };
-    }));
+      next = { w: d.w, h, x: cx - d.w / 2, y: cy - h / 2 };
+    }
+    const aligned = snapToGuides(next.x, next.y, next.w, next.h, d.rot * 180 / Math.PI, true, d.id);
+    guidesRef.current = aligned.guides;
+    setGuides(aligned.guides);
+    setObjects(prev => prev.map(o => o.id === d.id ? { ...o, ...next } : o));
   };
   const endObjStretch = (e: React.PointerEvent) => {
     if (objStretchRef.current?.pointerId !== e.pointerId) return;
     e.stopPropagation(); try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
     objStretchRef.current = null;
+    guidesRef.current = []; setGuides([]);
   };
 
   /* ---- 預覽縮放 ------------------------------------------------------------
@@ -4626,7 +4630,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           /* 第一段：選中的是「圖片」。有形狀的話框要縮到剛好包住那個圖案 ——
              不然愛心上面那片空白、星星底下那條也會被框進去。
              沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
-          const ink = objectSelectionInk(o, s, 2 * uiPx);
+          // 圖片框的內緣剛好貼齊圖片，不留下空隙也不蓋住像素。
+          const ink = objectSelectionInk(o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx);
           ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
         }
         ctx.setLineDash([]);
@@ -4972,7 +4977,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.save(); 
         ctx.strokeStyle = '#FFFFFF'; 
         // 與經典拼圖圖片選中框相同的 0.75px；虛線語意維持不變。
-        ctx.lineWidth = 0.75 * uiPx;
+        ctx.lineWidth = 0.9 * uiPx;
         ctx.setLineDash([4.8 * uiPx, 4.8 * uiPx]);
 
         // 左側選取框 (帶旋轉, 只有在 image 側時顯示)
@@ -6641,9 +6646,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              這裡照畫選取框那一段同一份幾何重算：框的中心在哪、轉完之後最低點在哪。 */
           const shapeMode = shapeSel === o.id && isImgShaped(o.imgShape);
           // shapeMode 描的是整個外形（見畫選取框那一段），其他時候是 ink
+          const frameGap = o.type === 'image' ? 0.375 / Math.max(k, 0.0001) : 2 / Math.max(k, 0.0001);
           const ink = shapeMode
             ? { x: 0, y: 0, w: o.w, h: o.h }
-            : objectSelectionInk(o, 1, 0);
+            : objectSelectionInk(o, 1, frameGap);
           const bx0 = -o.w / 2 + ink.x, by0 = -o.h / 2 + ink.y;
           const rad = ((o.rot || 0) * Math.PI) / 180;
           const cosR = Math.cos(rad), sinR = Math.sin(rad);
@@ -6707,7 +6713,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   <div key={side} data-stretch-handle className={`absolute ${pos} ${size} pointer-events-auto flex items-center justify-center touch-none no-pointer-events`}
                     style={{ transform: tx }} onPointerDown={(e) => beginObjStretch(e, o, side, k)}
                     onPointerMove={moveObjStretch} onPointerUp={endObjStretch} onPointerCancel={endObjStretch}>
-                    <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
+                    <span className="w-[7px] h-[7px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]" />
                   </div>
                 ))}
               </div>
