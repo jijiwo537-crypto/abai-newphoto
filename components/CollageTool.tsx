@@ -5071,7 +5071,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
         objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
       });
-      recordHistoryRef.current?.();
+      await recordHistoryRef.current?.();
     }
     onHome(choice === 'save');
   }, [initialState, onRequestExit, onHome, layout, maskScale, holeType, customText, holeSize, sizeJitter,
@@ -5140,9 +5140,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
       };
       const key = histIdRef.current;
-      whenIdle(() => {
-        addExport('collage', out, srcUrl, payload, key).catch(() => { /* 記錄失敗不影響任何事 */ });
-      });
+      await addExport('collage', out, srcUrl, payload, key);
     } catch { /* 記錄失敗不能影響離開 */ }
   }, [imageState, getLayoutOffsets, renderToCanvas, layout, maskScale, holeType, customText,
       holeSize, sizeJitter, holeAngle, holeCount, holes, maskColor, patternType, dotColor,
