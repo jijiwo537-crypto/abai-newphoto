@@ -39,7 +39,7 @@ const FOOTER_H = 77;
 interface ComposeStudioProps {
   /* 影片也走這一支：<video> 跟 <img> 一樣畫得上畫布，
      寬高改讀 videoWidth / videoHeight（下面那行已經一起處理）。 */
-  image: HTMLImageElement | HTMLVideoElement;
+  image: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement;
   geo: GeoParams;
   onChange: (geo: GeoParams) => void;
   onApply: () => void;
@@ -110,6 +110,8 @@ export const COMPOSE_WARMUP_CLASSES =
 export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone }) => {
   const [tab, setTab] = useState<Tab>('crop');
   const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h'>('v');
+  const audioRef = useRef<AudioContext | null>(null);
+  const lastTickRef = useRef<number | null>(null);
   // 梯形藏起來的時候，萬一停在那一頁（或之後被藏起來）就退回裁切
   useEffect(() => { if (hideKeystone && tab === 'keystone') setTab('crop'); }, [hideKeystone, tab]);
   const stageWrapRef = useRef<HTMLDivElement>(null);
@@ -354,6 +356,26 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
   const dirty = !isGeoIdentity(geo);
 
+  const tickFeedback = useCallback((zero: boolean) => {
+    try {
+      const AudioCtor = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = audioRef.current || (audioRef.current = new AudioCtor());
+      if (ctx.state === 'suspended') void ctx.resume();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const now = ctx.currentTime;
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(zero ? 1560 : 1280, now);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(zero ? 0.032 : 0.018, now + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + (zero ? 0.026 : 0.016));
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.03);
+    } catch { /* 静音模式或浏览器限制时保留触觉反馈 */ }
+    try { navigator.vibrate?.(zero ? 10 : 4); } catch { /* iOS 网页可能不提供 vibration */ }
+  }, []);
+
   const tickSlider = (
     value: number,
     min: number,
@@ -377,8 +399,18 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
         max={max}
         step={step}
         value={value}
-        onChange={(e) => onVal(parseFloat(e.target.value))}
-        onPointerDown={() => setLive(true)}
+        onChange={(e) => {
+          const raw = parseFloat(e.target.value);
+          const snapRange = max <= 45 ? 2 : 4;
+          const next = Math.abs(raw) <= snapRange ? 0 : raw;
+          const tick = Math.round(next / step);
+          if (lastTickRef.current !== tick) {
+            lastTickRef.current = tick;
+            tickFeedback(next === 0);
+          }
+          onVal(next);
+        }}
+        onPointerDown={() => { lastTickRef.current = Math.round(value / step); setLive(true); }}
         onPointerUp={() => setLive(false)}
         onPointerCancel={() => setLive(false)}
         onTouchStart={() => setLive(true)}
@@ -662,22 +694,14 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
           {tab === 'keystone' && (
             <div className="w-full flex items-center gap-3 px-5 translate-y-2">
-              <button
-                onClick={() => setKeystoneAxis(a => a === 'v' ? 'h' : 'v')}
-                className="w-14 h-10 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-[10px] font-bold tracking-[0.12em] text-white/70"
-              >
-                {keystoneAxis === 'v' ? '垂直' : '水平'}
-              </button>
+              <div className="w-10 h-10 shrink-0 rounded-lg overflow-hidden border border-white/10 flex flex-col">
+                <button onClick={() => setKeystoneAxis('v')} className={`flex-1 text-[9px] font-bold transition-colors ${keystoneAxis === 'v' ? 'bg-white text-black' : 'bg-white/[0.06] text-white/45'}`}>垂直</button>
+                <button onClick={() => setKeystoneAxis('h')} className={`flex-1 border-t border-white/10 text-[9px] font-bold transition-colors ${keystoneAxis === 'h' ? 'bg-white text-black' : 'bg-white/[0.06] text-white/45'}`}>水平</button>
+              </div>
               {keystoneAxis === 'v'
                 ? tickSlider(geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }))
                 : tickSlider(geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }))}
-              <button
-                onClick={() => setGeo(keystoneAxis === 'v' ? { keyV: 0 } : { keyH: 0 })}
-                aria-label="重設梯形"
-                className="w-10 h-10 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-white/60 flex items-center justify-center"
-              >
-                <Icon name="restart_alt" className="text-lg" />
-              </button>
+              <span className="w-10 h-10 shrink-0" aria-hidden="true" />
             </div>
           )}
         </div>
