@@ -109,6 +109,7 @@ export const COMPOSE_WARMUP_CLASSES =
 
 export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone }) => {
   const [tab, setTab] = useState<Tab>('crop');
+  const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h'>('v');
   // 梯形藏起來的時候，萬一停在那一頁（或之後被藏起來）就退回裁切
   useEffect(() => { if (hideKeystone && tab === 'keystone') setTab('crop'); }, [hideKeystone, tab]);
   const stageWrapRef = useRef<HTMLDivElement>(null);
@@ -353,17 +354,23 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
   const dirty = !isGeoIdentity(geo);
 
-  const sliderRow = (
-    label: string,
+  const tickSlider = (
     value: number,
     min: number,
     max: number,
     step: number,
-    onVal: (v: number) => void,
-    onReset: () => void
+    onVal: (v: number) => void
   ) => (
-    <div className="flex items-center gap-3 w-full max-w-md mx-auto px-5">
-      <span className="text-[10px] font-bold tracking-[0.15em] text-white/50 w-14 shrink-0">{label}</span>
+    <div className="relative h-12 flex-1 min-w-0 overflow-hidden">
+      <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex items-center justify-between px-1 pointer-events-none">
+        {Array.from({ length: 31 }, (_, i) => (
+          <i key={i} className={`block w-px bg-white ${i % 5 === 0 ? 'h-5 opacity-55' : 'h-3 opacity-25'}`} />
+        ))}
+      </div>
+      <div
+        className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-[2px] h-7 bg-white rounded-full pointer-events-none"
+        style={{ left: `${((value - min) / (max - min)) * 100}%` }}
+      />
       <input
         type="range"
         min={min}
@@ -376,14 +383,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
         onPointerCancel={() => setLive(false)}
         onTouchStart={() => setLive(true)}
         onTouchEnd={() => setLive(false)}
-        className="compose-slider flex-1"
+        className="compose-tick-slider absolute inset-0 w-full h-full"
       />
-      <button
-        onClick={onReset}
-        className={`text-[11px] font-bold tabular-nums w-12 text-right shrink-0 transition-colors ${value === 0 ? 'text-white/35' : 'text-white'}`}
-      >
-        {value > 0 ? `+${value}` : value}
-      </button>
     </div>
   );
 
@@ -410,9 +411,11 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       style={{ zIndex, top: HEADER_H, bottom: FOOTER_H }}
     >
       <style>{`
-        .compose-slider { -webkit-appearance: none; appearance: none; height: 2px; border-radius: 2px; background: rgba(255,255,255,0.18); outline: none; touch-action: none; }
-        .compose-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 2px 6px rgba(0,0,0,0.5); cursor: pointer; }
-        .compose-slider::-moz-range-thumb { width: 16px; height: 16px; border: none; border-radius: 50%; background: #fff; cursor: pointer; }
+        .compose-tick-slider { -webkit-appearance: none; appearance: none; background: transparent; outline: none; touch-action: none; cursor: ew-resize; }
+        .compose-tick-slider::-webkit-slider-runnable-track { height: 100%; background: transparent; }
+        .compose-tick-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 48px; background: transparent; border: 0; }
+        .compose-tick-slider::-moz-range-track { height: 100%; background: transparent; }
+        .compose-tick-slider::-moz-range-thumb { width: 28px; height: 48px; background: transparent; border: 0; }
       `}</style>
 
 
@@ -615,24 +618,22 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
           )}
 
           {tab === 'angle' && (
-            <div className="w-full h-full relative">
-              <div className="absolute left-0 right-0" style={{ top: -4 }}>
-                {sliderRow('角度', geo.angle, -45, 45, 1, v => setGeo({ angle: v }), () => setGeo({ angle: 0 }))}
-              </div>
-              <div className="absolute left-0 right-0 flex justify-center gap-2" style={{ top: BUTTON_ROW_TOP }}>
+            <div className="w-full flex items-center gap-3 px-5 translate-y-2">
                 <button
                   onClick={() => setGeo({ quarter: (geo.quarter + 3) % 4 })}
-                  className="h-9 px-3.5 rounded-full bg-white/[0.06] border border-white/10 text-white/70 hover:text-white text-[11px] font-bold tracking-[0.1em] flex items-center gap-1.5"
+                  aria-label="逆時針旋轉 90 度"
+                  className="w-10 h-10 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-white/70 hover:text-white flex items-center justify-center"
                 >
-                  <Icon name="rotate_left" className="text-base" />逆時針 90°
+                  <Icon name="rotate_left" className="text-xl" />
                 </button>
+                {tickSlider(geo.angle, -45, 45, 1, v => setGeo({ angle: v }))}
                 <button
                   onClick={() => setGeo({ quarter: (geo.quarter + 1) % 4 })}
-                  className="h-9 px-3.5 rounded-full bg-white/[0.06] border border-white/10 text-white/70 hover:text-white text-[11px] font-bold tracking-[0.1em] flex items-center gap-1.5"
+                  aria-label="順時針旋轉 90 度"
+                  className="w-10 h-10 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-white/70 hover:text-white flex items-center justify-center"
                 >
-                  <Icon name="rotate_right" className="text-base" />順時針 90°
+                  <Icon name="rotate_right" className="text-xl" />
                 </button>
-              </div>
             </div>
           )}
 
@@ -660,9 +661,23 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
           )}
 
           {tab === 'keystone' && (
-            <div className="w-full flex flex-col gap-3">
-              {sliderRow('垂直', geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }), () => setGeo({ keyV: 0 }))}
-              {sliderRow('水平', geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }), () => setGeo({ keyH: 0 }))}
+            <div className="w-full flex items-center gap-3 px-5 translate-y-2">
+              <button
+                onClick={() => setKeystoneAxis(a => a === 'v' ? 'h' : 'v')}
+                className="w-14 h-10 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-[10px] font-bold tracking-[0.12em] text-white/70"
+              >
+                {keystoneAxis === 'v' ? '垂直' : '水平'}
+              </button>
+              {keystoneAxis === 'v'
+                ? tickSlider(geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }))
+                : tickSlider(geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }))}
+              <button
+                onClick={() => setGeo(keystoneAxis === 'v' ? { keyV: 0 } : { keyH: 0 })}
+                aria-label="重設梯形"
+                className="w-10 h-10 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-white/60 flex items-center justify-center"
+              >
+                <Icon name="restart_alt" className="text-lg" />
+              </button>
             </div>
           )}
         </div>
