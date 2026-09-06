@@ -398,12 +398,11 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       onPointerMove={(e) => {
         const drag = rulerDragRef.current;
         if (!drag) return;
-        // 整个范围刚好对应一条可见刻度尺的宽度：从中央拖到任一侧，
-        // 不松手就能到达该侧极值，窄 iPhone 也不需要分段滑动。
-        const raw = Math.max(min, Math.min(max, drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min)));
-        const magnetic = Math.abs(raw) <= (max <= 45 ? step * 2 : step * 4) ? 0 : raw;
-        const tick = Math.round(magnetic / step);
-        setRulerVisual(magnetic);
+        // 以可见宽度换算范围，但把灵敏度收敛到 72%；细小手势更精确，
+        // 从屏幕一侧连续拖到另一侧仍足以抵达端点。
+        const raw = Math.max(min, Math.min(max, drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min) * 0.72));
+        const tick = Math.round(raw / step);
+        setRulerVisual(raw);
         if (lastTickRef.current !== tick) {
           lastTickRef.current = tick;
           tickFeedback(tick === 0);
@@ -428,7 +427,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
         if (Math.abs(offset) > 190) return null;
         const nearest = Math.round(shown / step) * step;
         const active = Math.abs(tickValue - nearest) < step / 2;
-        const major = Math.round((tickValue - min) / step) % 5 === 0;
+        const major = Math.round(tickValue / step) % 10 === 0;
         const baseHeight = major ? 17 : 10;
         return (
           <i
@@ -439,11 +438,11 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
               height: active ? 27 : baseHeight,
               opacity: active ? 1 : (major ? 0.52 : 0.28),
               transform: 'translateX(-50%)',
-              // 经过中央时立即升高；只有离开中央才用 160ms 回落。
+              // 经过中央时立即升高；只有离开中央才用 280ms 回落。
               // 快速拖动时，连续几根旧刻度依序衰减，形成由高到低的尾波。
               transition: active
                 ? 'none'
-                : `height 160ms cubic-bezier(0.22,1,0.36,1), opacity 160ms ease${rulerVisual === null ? ', left 180ms cubic-bezier(0.2,0.8,0.2,1)' : ''}`,
+                : `height 280ms cubic-bezier(0.22,1,0.36,1), opacity 280ms ease${rulerVisual === null ? ', left 180ms cubic-bezier(0.2,0.8,0.2,1)' : ''}`,
             }}
           />
         );
@@ -676,7 +675,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
           )}
 
           {tab === 'angle' && (
-            <div className="w-full flex items-center gap-3 px-5 translate-y-2">
+            <div className="w-full flex items-center gap-3 px-5 -translate-y-1">
                 <button
                   onClick={() => setGeo({ quarter: (geo.quarter + 3) % 4 })}
                   aria-label="逆時針旋轉 90 度"
@@ -719,8 +718,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
           )}
 
           {tab === 'keystone' && (
-            <div className="w-full flex items-center gap-3 px-5 translate-y-2">
-              <div className="w-12 h-16 shrink-0 flex flex-col gap-1">
+            <div className="w-full flex items-center gap-3 px-5 -translate-y-1">
+              <div className="w-12 h-16 shrink-0 flex flex-col gap-1 -translate-y-1">
                 <button onClick={() => setKeystoneAxis('v')} className={`flex-1 rounded-lg border text-[10px] font-bold transition-colors ${keystoneAxis === 'v' ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/50 border-white/10'}`}>垂直</button>
                 <button onClick={() => setKeystoneAxis('h')} className={`flex-1 rounded-lg border text-[10px] font-bold transition-colors ${keystoneAxis === 'h' ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/50 border-white/10'}`}>水平</button>
               </div>
