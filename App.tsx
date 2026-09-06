@@ -454,12 +454,11 @@ const App: React.FC = () => {
       {exitPromptOpen && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in duration-200">
           <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className="w-full max-w-[320px] rounded-3xl bg-[#141414] border border-white/10 p-6 text-center shadow-2xl animate-in zoom-in-95 duration-200">
-            <p id="exit-draft-title" className="text-white font-black tracking-wide">要將目前內容儲存為草稿嗎？</p>
-            <p className="mt-2 text-[12px] leading-relaxed text-white/45">之後可以回來繼續編輯</p>
+            <p id="exit-draft-title" className="text-white font-black tracking-wide">是否儲存為草稿</p>
             <div className="mt-6 flex flex-col gap-2">
-              <button onClick={() => resolveExit('save')} className="h-12 rounded-full bg-white text-black font-black tracking-widest text-sm active:scale-95 transition-transform">儲存</button>
-              <button onClick={() => resolveExit('discard')} className="h-12 rounded-full border border-red-400/30 text-red-300 font-bold tracking-widest text-sm active:scale-95 transition-transform">放棄</button>
-              <button onClick={() => resolveExit('cancel')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-95 transition-transform">取消</button>
+              <button onClick={() => resolveExit('save')} className="h-12 rounded-full bg-white text-black font-black tracking-widest text-sm active:scale-[0.98] transition-transform">儲存</button>
+              <button onClick={() => resolveExit('discard')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform">放棄</button>
+              <button onClick={() => resolveExit('cancel')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform">取消</button>
             </div>
           </div>
         </div>
