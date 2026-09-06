@@ -222,7 +222,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
   // ---- 裁切框拖曳 ----
   const dragRef = useRef<{ id: HandleId; startX: number; startY: number; start: CropRect; baseOffset?: { x: number; y: number } } | null>(null);
-  const pinchRef = useRef<{ startDist: number; startCrop: CropRect } | null>(null);
+  const pinchRef = useRef<{ startDist: number; startZoom: number } | null>(null);
 
   const onHandleDown = (id: HandleId) => (e: React.PointerEvent) => {
     wakeCrop();
@@ -249,8 +249,11 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     let { x, y, w, h } = s;
 
     if (d.id === 'move') {
-      x = Math.max(0, Math.min(1 - w, s.x + dx));
-      y = Math.max(0, Math.min(1 - h, s.y + dy));
+      // iPhone 相片裁切：框內拖曳移動的是照片，裁切框本身保持不動。
+      const origin = d.baseOffset || { x: 0, y: 0 };
+      setLive(true);
+      setGeo({ offset: { x: origin.x + dx, y: origin.y + dy } });
+      return;
     } else {
       const left = d.id.includes('l');
       const right = d.id.includes('r');
@@ -326,6 +329,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     if (!dragRef.current) return;
     try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* 同上 */ }
     dragRef.current = null;
+    setLive(false);
     settleCropSoon();
   };
 
@@ -340,7 +344,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY
       ) || 1,
-      startCrop: { ...geoRef.current.crop },
+      startZoom: geoRef.current.zoom || 1,
     };
   };
 
@@ -352,24 +356,15 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       e.touches[0].clientX - e.touches[1].clientX,
       e.touches[0].clientY - e.touches[1].clientY
     );
-    // 以框的中心等比縮放裁切框；比例鎖著的話兩邊一起走，超出畫面就停住
-    const k = d / pz.startDist;
-    const c = pz.startCrop;
-    const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
-    let w = Math.max(MIN_CROP, c.w * k);
-    let h = Math.max(MIN_CROP, c.h * k);
-    if (w > 1) { h *= 1 / w; w = 1; }
-    if (h > 1) { w *= 1 / h; h = 1; }
-    setGeo({ crop: {
-      x: Math.max(0, Math.min(1 - w, cx - w / 2)),
-      y: Math.max(0, Math.min(1 - h, cy - h / 2)),
-      w, h,
-    } });
+    // iPhone 相片裁切：雙指縮放照片，而不是把裁切框放大縮小。
+    setLive(true);
+    setGeo({ zoom: Math.max(1, Math.min(8, pz.startZoom * (d / pz.startDist))) });
   };
 
   const onStageTouchEnd = (e: React.TouchEvent) => {
     if (e.touches.length >= 2) return;
     pinchRef.current = null;
+    setLive(false);
     settleCropSoon();
   };
 
@@ -519,13 +514,13 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                改成一塊剛好貼在裁切框上、什麼都不畫的元素，用外擴陰影把外圍壓暗 ——
                只上色一次、完全沒有接縫，怎麼拖都不會有線。外層 overflow-hidden
                負責把那圈很大的陰影收在舞台裡。 */}
-          <div className={`absolute inset-0 pointer-events-none overflow-hidden transition-opacity duration-300 ${cropSettled ? 'opacity-0' : 'opacity-100'}`}>
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
             <div className="absolute" style={{ ...cropStyle, boxShadow: '0 0 0 9999px rgba(0,0,0,0.6)' }} />
           </div>
 
           {/* 裁切框 */}
           <div
-            className={`absolute border border-white/90 transition-opacity duration-300 ${cropSettled ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+            className="absolute border border-white/90"
             data-geo={`${geo.zoom}|${(geo.offset?.x ?? 0).toFixed(3)}|${(geo.offset?.y ?? 0).toFixed(3)}`}
             style={{ ...cropStyle, touchAction: 'none' }}
             onPointerDown={onHandleDown('move')}
