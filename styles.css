@@ -293,53 +293,6 @@ select:focus, select:focus-visible {
   backface-visibility: hidden;
 }
 
-/* 白點就是第一筆的圓形墨頭，之後沿真實 SVG 路徑依序寫出 ABAI。 */
-@keyframes draft-logo-seed {
-  0%   { opacity: 0; transform: scale(0); }
-  55%  { opacity: 1; transform: scale(1); }
-  100% { opacity: 0; transform: scale(1); }
-}
-@keyframes draft-logo-draw { to { stroke-dashoffset: 0; } }
-@keyframes draft-logo-dot { to { opacity: 1; transform: scale(1); } }
-.draft-logo-stage {
-  position: relative;
-  width: 190px;
-  height: 72px;
-  display: grid;
-  place-items: center;
-}
-.draft-logo-svg { width: 100%; height: 100%; overflow: visible; }
-.draft-logo-stroke {
-  fill: none;
-  stroke: #fff;
-  stroke-width: 6.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: draft-logo-draw 300ms cubic-bezier(0.55, 0, 0.15, 1) forwards;
-  filter: drop-shadow(0 0 3px rgba(255,255,255,0.16));
-}
-.draft-logo-seed {
-  fill: #fff;
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: draft-logo-seed 150ms ease-out forwards;
-}
-.draft-logo-a1       { animation-delay: 120ms; animation-duration: 330ms; }
-.draft-logo-a1-cross { animation-delay: 400ms; animation-duration: 150ms; }
-.draft-logo-b        { animation-delay: 510ms; animation-duration: 360ms; }
-.draft-logo-a2       { animation-delay: 820ms; animation-duration: 350ms; }
-.draft-logo-i        { animation-delay: 1130ms; animation-duration: 210ms; }
-.draft-logo-i-dot {
-  fill: #fff;
-  opacity: 0;
-  transform: scale(0);
-  transform-box: fill-box;
-  transform-origin: center;
-  animation: draft-logo-dot 130ms cubic-bezier(0.2, 1.5, 0.4, 1) 1330ms forwards;
-}
-
 /* 主視覺裡的照片：在 .home-hero 已經慢下來的基礎上再慢一層，
    等於整體走 39% 的速度。scale 讓它同時推近，避免「只是往下掉」。
    位移量刻意壓在 6% 屏以內：照片上下各只多留 10% 的餘裕，超過就會露出空白 ——
