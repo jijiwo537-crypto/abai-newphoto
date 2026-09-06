@@ -123,9 +123,10 @@ const App: React.FC = () => {
     resolve?.(choice);
   }, []);
 
-  const finishExit = useCallback(() => {
+  const finishExit = useCallback((complete?: () => void) => {
     const close = () => {
       exitCloseTimer.current = null;
+      complete?.();
       setExitPromptOpen(false);
       setExitPromptBusy(false);
     };
@@ -349,10 +350,11 @@ const App: React.FC = () => {
    * 一次就會把使用者的調整整組打回預設（接續上次時剛好會踩到）。
    */
   const leaveTool = useCallback((keepDraft = false) => {
-    setCurrentView('home');
-    setToolDraftState(null);
     if (!keepDraft) clearToolDraft();
-    finishExit();
+    finishExit(() => {
+      setCurrentView('home');
+      setToolDraftState(null);
+    });
   }, [finishExit]);
 
   const handleEditorSave = useCallback((newSrc: string) => {
@@ -479,15 +481,14 @@ const App: React.FC = () => {
 
       {exitPromptOpen && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in duration-200">
-          <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className="w-full max-w-[320px] min-h-[248px] rounded-3xl bg-[#141414] border border-white/10 p-6 text-center shadow-2xl animate-in zoom-in-95 duration-200 flex items-center justify-center">
+          <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className={`w-full max-w-[320px] min-h-[248px] p-6 text-center flex items-center justify-center ${exitPromptBusy ? 'bg-transparent' : 'rounded-3xl bg-[#141414] border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200'}`}>
             {exitPromptBusy ? (
-              <div className="flex flex-col items-center animate-in fade-in zoom-in-95 duration-300" aria-live="polite">
-                <div className="relative w-16 h-16">
-                  <div className="absolute inset-0 rounded-full border border-white/10 shadow-[0_0_28px_rgba(255,255,255,0.08)]" />
-                  <div className="absolute inset-1 rounded-full border-2 border-transparent border-t-white border-r-white/30 animate-spin" />
-                  <div className="absolute inset-[19px] rounded-full bg-white shadow-[0_0_16px_rgba(255,255,255,0.65)] animate-pulse" />
+              <div className="flex flex-col items-center animate-in fade-in duration-300" aria-live="polite">
+                <div className="draft-save-wordmark font-serif text-[34px] leading-none tracking-[-0.04em] text-white">ABAI</div>
+                <div className="draft-save-track mt-5" aria-hidden="true">
+                  <span className="draft-save-scan" />
                 </div>
-                <p className="mt-5 text-sm font-black tracking-[0.18em] text-white">正在儲存草稿</p>
+                <p className="mt-4 text-[11px] font-bold tracking-[0.28em] text-white/55">正在儲存草稿</p>
               </div>
             ) : (
               <div className="w-full animate-in fade-in duration-200">
@@ -642,9 +643,10 @@ const App: React.FC = () => {
           key={layoutKey}
           onRequestExit={requestExit}
           onHome={() => {
-            setCurrentView('home');
-            setLayoutInitialFiles([]);
-            finishExit();
+            finishExit(() => {
+              setCurrentView('home');
+              setLayoutInitialFiles([]);
+            });
           }}
           initialFiles={layoutInitialFiles}
           initialState={toolDraftState}

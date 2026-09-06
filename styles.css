@@ -293,6 +293,38 @@ select:focus, select:focus-visible {
   backface-visibility: hidden;
 }
 
+/* 草稿儲存：以品牌字標與一道光線呈現進度，不使用制式轉圈。 */
+@keyframes draft-save-breathe {
+  0%, 100% { opacity: 0.58; transform: scale3d(0.985, 0.985, 1); }
+  50%      { opacity: 1; transform: scale3d(1, 1, 1); }
+}
+@keyframes draft-save-scan {
+  0%   { transform: translate3d(-140%, 0, 0); opacity: 0; }
+  18%  { opacity: 1; }
+  82%  { opacity: 1; }
+  100% { transform: translate3d(240%, 0, 0); opacity: 0; }
+}
+.draft-save-wordmark {
+  animation: draft-save-breathe 1.25s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  will-change: transform, opacity;
+}
+.draft-save-track {
+  position: relative;
+  width: 112px;
+  height: 1px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.13);
+}
+.draft-save-scan {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 42px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.95), transparent);
+  filter: drop-shadow(0 0 5px rgba(255,255,255,0.75));
+  animation: draft-save-scan 1.05s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+  will-change: transform, opacity;
+}
+
 /* 主視覺裡的照片：在 .home-hero 已經慢下來的基礎上再慢一層，
    等於整體走 39% 的速度。scale 讓它同時推近，避免「只是往下掉」。
    位移量刻意壓在 6% 屏以內：照片上下各只多留 10% 的餘裕，超過就會露出空白 ——
