@@ -112,6 +112,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h'>('v');
   const audioRef = useRef<AudioContext | null>(null);
   const lastTickRef = useRef<number | null>(null);
+  const rulerDragRef = useRef<{ startX: number; startValue: number } | null>(null);
+  const [rulerVisual, setRulerVisual] = useState<number | null>(null);
   // 梯形藏起來的時候，萬一停在那一頁（或之後被藏起來）就退回裁切
   useEffect(() => { if (hideKeystone && tab === 'keystone') setTab('crop'); }, [hideKeystone, tab]);
   const stageWrapRef = useRef<HTMLDivElement>(null);
@@ -383,40 +385,59 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     step: number,
     onVal: (v: number) => void
   ) => (
-    <div className="relative h-12 flex-1 min-w-0 overflow-hidden">
-      <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex items-center justify-between px-1 pointer-events-none">
-        {Array.from({ length: 31 }, (_, i) => (
-          <i key={i} className={`block w-px bg-white ${i % 5 === 0 ? 'h-5 opacity-55' : 'h-3 opacity-25'}`} />
-        ))}
-      </div>
-      <div
-        className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 w-[2px] h-7 bg-white rounded-full pointer-events-none"
-        style={{ left: `${((value - min) / (max - min)) * 100}%` }}
-      />
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => {
-          const raw = parseFloat(e.target.value);
-          const snapRange = max <= 45 ? 2 : 4;
-          const next = Math.abs(raw) <= snapRange ? 0 : raw;
-          const tick = Math.round(next / step);
-          if (lastTickRef.current !== tick) {
-            lastTickRef.current = tick;
-            tickFeedback(next === 0);
-          }
-          onVal(next);
-        }}
-        onPointerDown={() => { lastTickRef.current = Math.round(value / step); setLive(true); }}
-        onPointerUp={() => setLive(false)}
-        onPointerCancel={() => setLive(false)}
-        onTouchStart={() => setLive(true)}
-        onTouchEnd={() => setLive(false)}
-        className="compose-tick-slider absolute inset-0 w-full h-full"
-      />
+    <div
+      className="relative h-12 flex-1 min-w-0 overflow-hidden cursor-ew-resize select-none"
+      style={{ touchAction: 'none' }}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        rulerDragRef.current = { startX: e.clientX, startValue: value };
+        lastTickRef.current = Math.round(value / step);
+        setRulerVisual(value);
+        setLive(true);
+      }}
+      onPointerMove={(e) => {
+        const drag = rulerDragRef.current;
+        if (!drag) return;
+        const raw = Math.max(min, Math.min(max, drag.startValue + ((drag.startX - e.clientX) / 8) * step));
+        const magnetic = Math.abs(raw) <= (max <= 45 ? step * 2 : step * 4) ? 0 : raw;
+        const tick = Math.round(magnetic / step);
+        setRulerVisual(magnetic);
+        if (lastTickRef.current !== tick) {
+          lastTickRef.current = tick;
+          tickFeedback(tick === 0);
+          onVal(Math.max(min, Math.min(max, tick * step)));
+        }
+      }}
+      onPointerUp={(e) => {
+        rulerDragRef.current = null;
+        try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+        setRulerVisual(null);
+        setLive(false);
+      }}
+      onPointerCancel={() => { rulerDragRef.current = null; setRulerVisual(null); setLive(false); }}
+    >
+      {Array.from({ length: Math.round((max - min) / step) + 1 }, (_, i) => min + i * step).map(tickValue => {
+        const shown = rulerVisual ?? value;
+        const offset = ((tickValue - shown) / step) * 8;
+        if (Math.abs(offset) > 190) return null;
+        const proximity = Math.max(0, 1 - Math.abs(offset) / 8);
+        const major = Math.round((tickValue - min) / step) % 5 === 0;
+        const baseHeight = major ? 17 : 10;
+        const height = baseHeight + (27 - baseHeight) * proximity;
+        return (
+          <i
+            key={tickValue}
+            className="absolute top-1/2 w-px bg-white rounded-full pointer-events-none"
+            style={{
+              left: `calc(50% + ${offset}px)`,
+              height,
+              opacity: 0.28 + proximity * 0.72,
+              transform: 'translate(-50%, -50%)',
+              transition: rulerVisual === null ? 'left 180ms cubic-bezier(0.2,0.8,0.2,1), height 140ms ease, opacity 140ms ease' : 'height 70ms linear, opacity 70ms linear',
+            }}
+          />
+        );
+      })}
     </div>
   );
 
@@ -443,11 +464,6 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       style={{ zIndex, top: HEADER_H, bottom: FOOTER_H }}
     >
       <style>{`
-        .compose-tick-slider { -webkit-appearance: none; appearance: none; background: transparent; outline: none; touch-action: none; cursor: ew-resize; }
-        .compose-tick-slider::-webkit-slider-runnable-track { height: 100%; background: transparent; }
-        .compose-tick-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 48px; background: transparent; border: 0; }
-        .compose-tick-slider::-moz-range-track { height: 100%; background: transparent; }
-        .compose-tick-slider::-moz-range-thumb { width: 28px; height: 48px; background: transparent; border: 0; }
       `}</style>
 
 
@@ -694,9 +710,9 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
           {tab === 'keystone' && (
             <div className="w-full flex items-center gap-3 px-5 translate-y-2">
-              <div className="w-10 h-10 shrink-0 rounded-lg overflow-hidden border border-white/10 flex flex-col">
-                <button onClick={() => setKeystoneAxis('v')} className={`flex-1 text-[9px] font-bold transition-colors ${keystoneAxis === 'v' ? 'bg-white text-black' : 'bg-white/[0.06] text-white/45'}`}>垂直</button>
-                <button onClick={() => setKeystoneAxis('h')} className={`flex-1 border-t border-white/10 text-[9px] font-bold transition-colors ${keystoneAxis === 'h' ? 'bg-white text-black' : 'bg-white/[0.06] text-white/45'}`}>水平</button>
+              <div className="w-10 h-11 shrink-0 flex flex-col gap-1">
+                <button onClick={() => setKeystoneAxis('v')} className={`flex-1 rounded-md border text-[9px] font-bold transition-colors ${keystoneAxis === 'v' ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/45 border-white/10'}`}>垂直</button>
+                <button onClick={() => setKeystoneAxis('h')} className={`flex-1 rounded-md border text-[9px] font-bold transition-colors ${keystoneAxis === 'h' ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/45 border-white/10'}`}>水平</button>
               </div>
               {keystoneAxis === 'v'
                 ? tickSlider(geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }))
