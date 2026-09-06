@@ -777,7 +777,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   /** 離開美顏時，如果動過但沒有儲存，也記一筆到歷史紀錄。
       縮圖直接用畫面上的預覽（已經是顯示解析度，很小很安全）——
       跟「修圖」那邊的做法完全一樣。 */
-  const recordProgress = useCallback(() => {
+  const recordProgress = useCallback(async () => {
     const s = sessionRef.current;
     if (!s || s.opsApplied <= 0) return;                 // 一筆都沒動過
     if (recordedOpsRef.current === s.opsApplied) return; // 這個狀態剛剛已經記過了
@@ -787,7 +787,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       // 畫面上可能正按著「看原圖」，那張是原圖不是成品 —— 先用同一支 render 重畫回來
       if (showOriginal) render();
       recordedOpsRef.current = s.opsApplied;
-      addExport('beauty', cv.toDataURL('image/png'), imageSrc, { ops: s.ops.slice(0, s.opsApplied) });
+      await addExport('beauty', cv.toDataURL('image/png'), imageSrc, { ops: s.ops.slice(0, s.opsApplied) });
     } catch { /* 記錄失敗不能影響離開 */ }
   }, [imageSrc, showOriginal, render]);
 
@@ -802,7 +802,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     if (choice === 'save') {
       const s = sessionRef.current;
       if (s) await saveToolDraft('beauty', imageSrc, { ops: s.ops.slice(0, s.opsApplied) });
-      recordProgress();
+      await recordProgress();
     }
     onCancel(choice === 'save');
   }, [initialState, onRequestExit, onCancel, imageSrc, recordProgress]);
