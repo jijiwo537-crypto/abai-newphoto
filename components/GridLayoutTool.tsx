@@ -8564,7 +8564,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     try {
       /* 版面是 DOM 畫的，沒有現成的畫布可以截 —— 用導出那一支靜靜地烤一張小的。
          stillOnly：歷史紀錄的縮圖只要一張圖，不必為它錄一整段影片。 */
-      const r = await handleExport({ silent: true, previewWidth: 900, stillOnly: true });
+      const r = await handleExport({ silent: true, previewWidth: 480, stillOnly: true });
       const url = r && 'urls' in r ? r.urls[0] : null;
       if (!url) return;
       /* 原圖那一格放的是「拼好的成品」：真正還原用的是 state（裡面每一張照片
@@ -8606,9 +8606,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     leavingRef.current = true;
     leftRef.current = true;
     if (choice === 'save') {
-      const historyJob = recordProgress();
-      await saveDraft({ pages, floatingImages, selectedRatio, isLandscape });
-      historyJob.catch(() => { /* 歷史紀錄失敗不影響退出 */ });
+      await Promise.all([
+        recordProgress(),
+        saveDraft({ pages, floatingImages, selectedRatio, isLandscape }),
+      ]);
     } else {
       await clearDraft();
     }

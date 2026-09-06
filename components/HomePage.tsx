@@ -459,19 +459,9 @@ export const HomePage: React.FC<HomePageProps> = ({
   /** 一屏高度、或上面那些東西的高度變了就要重算 */
   const resetNavThresh = () => { navThreshRef.current = -1; };
 
-  /** 讀 --lib-lift 的實際像素。它寫成 calc()，要用一個暫時的元素讓瀏覽器算完再讀。 */
-  const liftPx = (sc: HTMLElement) => {
-    const v = getComputedStyle(sc).getPropertyValue('--lib-lift').trim();
-    if (!v) return 0;
-    const n = parseFloat(v);
-    if (!Number.isNaN(n) && /^[\d.]+px$/.test(v)) return n;
-    const probe = document.createElement('div');
-    probe.style.cssText = `position:absolute;visibility:hidden;height:${v}`;
-    sc.appendChild(probe);
-    const h2 = probe.getBoundingClientRect().height;
-    probe.remove();
-    return h2 || 0;
-  };
+  /* JS 視差版直接沿用同一個 35% 數值。舊版每一幀都插入 DOM 再量高度，
+     會強迫瀏覽器同步排版，是 iOS 上 ABAI 出場動畫頓挫的主要來源。 */
+  const libLiftRef = useRef(0);
 
   /** 分頁列：首頁／靈感是同一條捲軸的兩個位置，「我」才是換頁 */
   const goNav = useCallback((id: string) => {
@@ -605,6 +595,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     }
     rangePending.current = false;
     rangeWritten.current = h;
+    libLiftRef.current = h * 0.35;
     resetNavThresh();                 // 一屏高度變了 → 模板的位置跟門檻都要重算
     sc.style.setProperty('--hero-range', `${h}px`);
   }, []);
@@ -623,7 +614,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     const h = sc.clientHeight || 1;
     // 夾在 0～可捲上限之間：iOS 橡皮筋期間讀到的值可能超出範圍，
     // 直接拿去算會讓圖案往回彈一下。
-    const y = Math.min(Math.max(0, sc.scrollTop), Math.max(0, sc.scrollHeight - h));
+    const y = Math.max(0, sc.scrollTop);
     /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。
        0.55＝修圖那一屏走 45% 的速度。試過 0.26（走 74%，太淡看不出視差）
        跟 0.70（走 30%，太重），0.55 是兩者中間。
@@ -643,7 +634,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     // 模板那一段：一開始往下位移 +lift，隨捲動收回 0（等於比捲軸快 0.35 屏）
     const lib = libRef.current;
     if (lib) {
-      const lift = liftPx(sc);
+      const lift = libLiftRef.current;
       lib.style.transform = `translate3d(0, ${((1 - Math.min(1, y / h)) * lift).toFixed(2)}px, 0)`;
     }
     /* 淡出的節奏：前 6% 完全不動（手指才剛碰到就整片變淡會很躁），
@@ -1181,7 +1172,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             <Icon name="mail" className="text-[16px]" />
           </button>
 
-          {/* 品牌字 ＋「立即使用」：照參考圖靠左、貼在主視覺左下角，
+          {/* 品牌字：靠左、貼在主視覺左下角。
                字級與間距也照參考圖的比例縮到位（以前置中、而且大了快一倍）。
                字型、顏色、字重、文字內容都沒動。
                中間那行副標拿掉了，所以按鈕的上緣間距補回它原本佔的位置。 */}
@@ -1189,22 +1180,12 @@ export const HomePage: React.FC<HomePageProps> = ({
             onClick={e => e.stopPropagation()}
             className="absolute left-5 right-5 bottom-[7px] flex flex-col items-start select-none"
           >
-            <motion.h1
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
-              className="font-serif leading-none tracking-tight font-medium"
+            <h1
+              className="abai-wordmark-enter font-serif leading-none tracking-tight font-medium"
               style={{ fontSize: 'clamp(46px, 14.6vw, 62px)' }}
             >
               ABAI
-            </motion.h1>
-            <button
-              onClick={onImportPhoto}
-              className="mt-[12px] h-[27px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
-            >
-              立即使用
-              {pillArrow}
-            </button>
+            </h1>
           </div>
         </div>
 
