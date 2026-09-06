@@ -102,24 +102,41 @@ const App: React.FC = () => {
   const [exitPromptOpen, setExitPromptOpen] = useState(false);
   const [exitPromptBusy, setExitPromptBusy] = useState(false);
   const exitPromptResolver = useRef<((choice: ExitChoice) => void) | null>(null);
+  const exitSaveStartedAt = useRef(0);
+  const exitCloseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const requestExit = useCallback((): Promise<ExitChoice> => {
     setExitPromptOpen(true);
     setExitPromptBusy(false);
+    exitSaveStartedAt.current = 0;
     return new Promise(resolve => { exitPromptResolver.current = resolve; });
   }, []);
 
   const resolveExit = useCallback((choice: ExitChoice) => {
     if (choice === 'cancel') setExitPromptOpen(false);
-    else setExitPromptBusy(true);
+    else if (choice === 'save') {
+      exitSaveStartedAt.current = performance.now();
+      setExitPromptBusy(true);
+    }
     const resolve = exitPromptResolver.current;
     exitPromptResolver.current = null;
     resolve?.(choice);
   }, []);
 
   const finishExit = useCallback(() => {
-    setExitPromptOpen(false);
-    setExitPromptBusy(false);
+    const close = () => {
+      exitCloseTimer.current = null;
+      setExitPromptOpen(false);
+      setExitPromptBusy(false);
+    };
+    const elapsed = exitSaveStartedAt.current ? performance.now() - exitSaveStartedAt.current : 500;
+    const remaining = Math.max(0, 500 - elapsed);
+    if (remaining > 0) exitCloseTimer.current = setTimeout(close, remaining);
+    else close();
+  }, []);
+
+  useEffect(() => () => {
+    if (exitCloseTimer.current) clearTimeout(exitCloseTimer.current);
   }, []);
 
   /** 創意拼圖：第一個當底，其餘的自動變成物件（相簿多選） */
@@ -462,13 +479,26 @@ const App: React.FC = () => {
 
       {exitPromptOpen && (
         <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in duration-200">
-          <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className="w-full max-w-[320px] rounded-3xl bg-[#141414] border border-white/10 p-6 text-center shadow-2xl animate-in zoom-in-95 duration-200">
-            <p id="exit-draft-title" className="text-white font-black tracking-wide">是否儲存為草稿</p>
-            <div className="mt-6 flex flex-col gap-2">
-              <button disabled={exitPromptBusy} onClick={() => resolveExit('save')} className="h-12 rounded-full bg-white text-black font-black tracking-widest text-sm active:scale-[0.98] transition-transform disabled:opacity-60">儲存</button>
-              <button disabled={exitPromptBusy} onClick={() => resolveExit('discard')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform disabled:opacity-40">放棄</button>
-              <button disabled={exitPromptBusy} onClick={() => resolveExit('cancel')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform disabled:opacity-40">取消</button>
-            </div>
+          <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className="w-full max-w-[320px] min-h-[248px] rounded-3xl bg-[#141414] border border-white/10 p-6 text-center shadow-2xl animate-in zoom-in-95 duration-200 flex items-center justify-center">
+            {exitPromptBusy ? (
+              <div className="flex flex-col items-center animate-in fade-in zoom-in-95 duration-300" aria-live="polite">
+                <div className="relative w-16 h-16">
+                  <div className="absolute inset-0 rounded-full border border-white/10 shadow-[0_0_28px_rgba(255,255,255,0.08)]" />
+                  <div className="absolute inset-1 rounded-full border-2 border-transparent border-t-white border-r-white/30 animate-spin" />
+                  <div className="absolute inset-[19px] rounded-full bg-white shadow-[0_0_16px_rgba(255,255,255,0.65)] animate-pulse" />
+                </div>
+                <p className="mt-5 text-sm font-black tracking-[0.18em] text-white">正在儲存草稿</p>
+              </div>
+            ) : (
+              <div className="w-full animate-in fade-in duration-200">
+                <p id="exit-draft-title" className="text-white font-black tracking-wide">是否儲存為草稿</p>
+                <div className="mt-6 flex flex-col gap-2">
+                  <button onClick={() => resolveExit('save')} className="h-12 rounded-full bg-white text-black font-black tracking-widest text-sm active:scale-[0.98] transition-transform">儲存</button>
+                  <button onClick={() => resolveExit('discard')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform">放棄</button>
+                  <button onClick={() => resolveExit('cancel')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-[0.98] transition-transform">取消</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
