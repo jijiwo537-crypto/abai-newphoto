@@ -1939,14 +1939,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const updateCanvasBounds = useCallback(() => {
     const canvas = displayCanvasRef.current;
     if (canvas) {
-      const rect = canvas.getBoundingClientRect();
-      const parentRect = canvas.parentElement?.getBoundingClientRect();
-      if (parentRect) {
+      const parent = canvas.offsetParent as HTMLElement | null;
+      if (parent) {
+        // 遮色片 SVG 和 canvas 一起位于缩放层内，所以这里必须保存「层内坐标」，
+        // 不能用 getBoundingClientRect()：后者包含当前缩放倍率，复位 transform 又
+        // 不会触发 ResizeObserver，之后创建的遮色片就会沿用放大后的错误尺寸。
         setCanvasBounds({
-          width: rect.width,
-          height: rect.height,
-          top: rect.top - parentRect.top,
-          left: rect.left - parentRect.left,
+          width: canvas.offsetWidth,
+          height: canvas.offsetHeight,
+          top: canvas.offsetTop,
+          left: canvas.offsetLeft,
         });
       }
     }
@@ -1976,18 +1978,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch(err) {}
 
-    const overlay = e.currentTarget.ownerDocument.getElementById('mask-svg-overlay');
-    const rect = overlay?.getBoundingClientRect();
-    if (!rect) return;
-
-    const clientX = e.clientX;
-    const clientY = e.clientY;
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-
-    // Convert parent container coordinates (x, y) to canvas bounds coordinate space
-    const canvasX = x - canvasBounds.left;
-    const canvasY = y - canvasBounds.top;
+    const canvasRect = displayCanvasRef.current?.getBoundingClientRect();
+    if (!canvasRect?.width || !canvasRect.height) return;
+    // 手势坐标先按画布当前的屏幕矩形正规化，再换回 SVG 的层内尺寸。
+    // 因此即使图片仍在缩放复位动画中，遮色片也不会产生倍率或位移误差。
+    const canvasX = ((e.clientX - canvasRect.left) / canvasRect.width) * canvasBounds.width;
+    const canvasY = ((e.clientY - canvasRect.top) / canvasRect.height) * canvasBounds.height;
 
     const p = paramsRef.current;
 
@@ -2015,18 +2011,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const handleMaskPointerMove = (e: React.PointerEvent<SVGElement>) => {
     if (!activeDragRef.current) return;
     
-    const overlay = e.currentTarget.ownerDocument.getElementById('mask-svg-overlay');
-    const rect = overlay?.getBoundingClientRect();
-    if (!rect) return;
-
-    const clientX = e.clientX;
-    const clientY = e.clientY;
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
-
-    // Convert parent container coordinates (x, y) to canvas bounds coordinate space
-    const canvasX = x - canvasBounds.left;
-    const canvasY = y - canvasBounds.top;
+    const canvasRect = displayCanvasRef.current?.getBoundingClientRect();
+    if (!canvasRect?.width || !canvasRect.height) return;
+    const canvasX = ((e.clientX - canvasRect.left) / canvasRect.width) * canvasBounds.width;
+    const canvasY = ((e.clientY - canvasRect.top) / canvasRect.height) * canvasBounds.height;
 
     const drag = activeDragRef.current;
     const p = { ...paramsRef.current };
@@ -6247,9 +6235,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const DETAIL_CATS = ['fx', 'soft', 'leak', 'halation'];
   const detailSwitch = DETAIL_CATS.includes(activeCategory) || DETAIL_CATS.includes(prevCategoryRef.current);
 
-  /* 遮色片还没建立时，不显示没有作用的滑杆列；建立完成后才展开参数。 */
+  /* 遮色片还没建立时，版面跟建立后保持一致，只锁住暂时不能使用的控制项。 */
   const maskLocked = activeCategory === 'mask' && !params.maskCreated;
-  const sliderRowHidden = activeToolId === 'curves' || activeToolId === 'hsl' || activeCategory === 'compose' || maskLocked;
+  const sliderRowHidden = activeToolId === 'curves' || activeToolId === 'hsl' || activeCategory === 'compose';
   const subStripHidden = activeCategory === 'compose';
 
   /* ---- 新特效的細項面板 ------------------------------------------------------
