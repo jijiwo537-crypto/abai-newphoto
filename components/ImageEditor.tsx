@@ -1708,6 +1708,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   // 構圖參數。套用之後整個預覽緩衝會用新的幾何重建，色彩流程完全不用知道它的存在。
   const [geo, setGeo] = useState<GeoParams>(() => ({ ...DEFAULT_GEO, crop: { ...FULL_CROP } }));
   const [draftGeo, setDraftGeo] = useState<GeoParams | null>(null);
+  const composePreviewRef = useRef<HTMLCanvasElement | HTMLImageElement | null>(null);
   const geoRef = useRef<GeoParams>({ ...DEFAULT_GEO, crop: { ...FULL_CROP } });
   useEffect(() => { geoRef.current = geo; }, [geo]);
 
@@ -7516,12 +7517,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {/* 構圖：只蓋住預覽區，不再是另外開一整頁 —— 下方的分頁列留在原位。
              它自己的小分類（裁切／角度／翻轉／梯形）就接在分頁列上面，
              位置跟其他功能的小分類列一樣。 */}
-        {activeCategory === 'compose' && draftGeo && originalImgRef.current && (
+        {activeCategory === 'compose' && draftGeo && (composePreviewRef.current || originalImgRef.current) && (
           <ComposeStudio
-            image={originalImgRef.current}
+            image={composePreviewRef.current || originalImgRef.current!}
             geo={draftGeo}
             onChange={setDraftGeo}
             onCancel={() => {
+              composePreviewRef.current = null;
               setDraftGeo(null);
               setActiveCategory(beforeComposeRef.current.cat);
               setActiveToolId(beforeComposeRef.current.tool);
@@ -7530,6 +7532,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               applyGeo(draftGeo);
               addToHistory(paramsRef.current, selectedLutIdx);
               setDraftGeo(null);
+              composePreviewRef.current = null;
               setActiveCategory(beforeComposeRef.current.cat);
               setActiveToolId(beforeComposeRef.current.tool);
             }}
@@ -7919,6 +7922,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           </button>
           <button onClick={() => {
               if (activeCategory !== 'compose') beforeComposeRef.current = { cat: activeCategory, tool: activeToolId };
+              const shown = displayCanvasRef.current;
+              if (shown && isGeoIdentity(geo)) {
+                const snapshot = document.createElement('canvas');
+                snapshot.width = shown.width;
+                snapshot.height = shown.height;
+                snapshot.getContext('2d')?.drawImage(shown, 0, 0);
+                composePreviewRef.current = snapshot;
+              } else {
+                composePreviewRef.current = originalImgRef.current;
+              }
               setDraftGeo(geo);
               setActiveCategory('compose');
             }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
