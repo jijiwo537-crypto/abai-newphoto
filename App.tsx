@@ -75,6 +75,14 @@ const AppLoadingIndicator: React.FC = () => (
   </div>
 );
 
+/** 與從歷史紀錄進入編輯器時完全相同的暗色載入圓環與文字規格。 */
+const HistoryLoadingIndicator: React.FC = () => (
+  <div className="flex flex-col items-center gap-4 text-white">
+    <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin" aria-label="正在儲存草稿" />
+    <p className="text-[10px] font-black tracking-[0.2em] uppercase animate-pulse opacity-70">正在儲存草稿</p>
+  </div>
+);
+
 /** 歷史作品先解碼再換頁，避免編輯器先以空白／黑底掛載一幀。 */
 const preloadHistoryImage = async (src?: string | null) => {
   if (!src) return;
@@ -508,7 +516,7 @@ const App: React.FC = () => {
           <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className={`w-full max-w-[320px] min-h-[248px] p-6 text-center flex items-center justify-center ${exitPromptBusy ? 'bg-transparent' : 'rounded-3xl bg-[#141414] border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200'}`}>
             {exitPromptBusy ? (
               <div className="animate-in fade-in duration-300" aria-live="polite">
-                <AppLoadingIndicator />
+                <HistoryLoadingIndicator />
               </div>
             ) : (
               <div className="w-full animate-in fade-in duration-200">
