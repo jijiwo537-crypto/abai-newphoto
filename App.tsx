@@ -75,6 +75,18 @@ const AppLoadingIndicator: React.FC = () => (
   </div>
 );
 
+/** 歷史作品先解碼再換頁，避免編輯器先以空白／黑底掛載一幀。 */
+const preloadHistoryImage = async (src?: string | null) => {
+  if (!src) return;
+  await new Promise<void>((resolve) => {
+    const image = new Image();
+    image.onload = () => resolve();
+    image.onerror = () => resolve();
+    image.src = src;
+    if (image.complete) resolve();
+  });
+};
+
 const App: React.FC = () => {
   // 上次沒做完的東西一律先問過再接回去，不要一開 App 就直接跳進去。
   // 兩份草稿（經典拼圖／其他工具）取比較新的那一份。
@@ -436,6 +448,7 @@ const App: React.FC = () => {
   const handleOpenRecent = async (id: string) => {
     const rec = await loadExport(id);
     if (!rec) return;
+    await preloadHistoryImage(rec.src);
     setToolDraftState(rec.meta.state ?? null);
     // 沿用這一筆的 key：等一下工具再記一次的時候是「更新這一筆」，不是多一筆
     setHistKey(rec.meta.photoKey ?? null);
@@ -491,7 +504,7 @@ const App: React.FC = () => {
       )}
 
       {exitPromptOpen && (
-        <div className={`fixed inset-0 z-[300] flex items-center justify-center px-8 animate-in fade-in ${exitPromptBusy ? 'bg-[#242424]/70 backdrop-blur-sm duration-300' : 'bg-black/80 backdrop-blur-sm duration-200'}`}>
+        <div className={`fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in ${exitPromptBusy ? 'duration-300' : 'duration-200'}`}>
           <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className={`w-full max-w-[320px] min-h-[248px] p-6 text-center flex items-center justify-center ${exitPromptBusy ? 'bg-transparent' : 'rounded-3xl bg-[#141414] border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200'}`}>
             {exitPromptBusy ? (
               <div className="animate-in fade-in duration-300" aria-live="polite">
