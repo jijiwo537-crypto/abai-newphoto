@@ -480,21 +480,11 @@ const App: React.FC = () => {
       )}
 
       {exitPromptOpen && (
-        <div className={`fixed inset-0 z-[300] flex items-center justify-center px-8 animate-in fade-in duration-200 ${exitPromptBusy ? 'bg-black/20 backdrop-blur-[2px]' : 'bg-black/80 backdrop-blur-sm'}`}>
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in duration-200">
           <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className={`w-full max-w-[320px] min-h-[248px] p-6 text-center flex items-center justify-center ${exitPromptBusy ? 'bg-transparent' : 'rounded-3xl bg-[#141414] border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200'}`}>
             {exitPromptBusy ? (
               <div className="flex items-center justify-center animate-in fade-in duration-300" aria-live="polite">
-                <div className="draft-logo-stage" aria-label="ABAI">
-                  <svg className="draft-logo-svg" viewBox="0 0 190 72" role="img" aria-hidden="true">
-                    <circle className="draft-logo-seed" cx="10" cy="58" r="3.2" />
-                    <path className="draft-logo-stroke draft-logo-a1" pathLength="1" d="M10 58 C17 43 24 19 34 12 C43 17 43 42 49 58" />
-                    <path className="draft-logo-stroke draft-logo-a1-cross" pathLength="1" d="M19 42 C29 39 40 39 49 41" />
-                    <path className="draft-logo-stroke draft-logo-b" pathLength="1" d="M64 14 C63 28 63 44 64 58 M64 15 C91 8 94 29 65 34 M65 34 C98 29 100 59 65 57" />
-                    <path className="draft-logo-stroke draft-logo-a2" pathLength="1" d="M108 58 C115 43 122 19 132 12 C141 17 141 42 147 58 M117 42 C127 39 138 39 147 41" />
-                    <path className="draft-logo-stroke draft-logo-i" pathLength="1" d="M164 17 C163 29 163 44 164 58" />
-                    <circle className="draft-logo-i-dot" cx="164" cy="9" r="3.2" />
-                  </svg>
-                </div>
+                <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin shadow-[0_0_15px_rgba(255,255,255,0.5)]" aria-label="載入中" />
               </div>
             ) : (
               <div className="w-full animate-in fade-in duration-200">
