@@ -5880,13 +5880,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, [historyIndex, srcList, safeIdx, imageSrc, geo, selectedLutIdx, activeCategory, render]);
 
   const requestLeave = useCallback(async () => {
+    if (historyIndex <= 0) {
+      onCancel(Boolean(initialState));
+      return;
+    }
     const choice = onRequestExit ? await onRequestExit() : 'discard';
     if (choice === 'cancel') return;
     if (choice === 'save') {
       await saveToolDraft('editor', imageSrc, { params: paramsRef.current, geo, selectedLutIdx });
+      recordProgress();
     }
     onCancel(choice === 'save');
-  }, [onRequestExit, onCancel, imageSrc, geo, selectedLutIdx]);
+  }, [historyIndex, initialState, onRequestExit, onCancel, imageSrc, geo, selectedLutIdx, recordProgress]);
 
   /* 「合併」：把現在畫面上的樣子用全解析度烤成一張新的原圖，參數整組歸零。
      特效一次只能套一個，合併過的那一層已經變成點陣圖的一部分，

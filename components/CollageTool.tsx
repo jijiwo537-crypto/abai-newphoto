@@ -5055,6 +5055,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [onHome]);
 
   const requestLeaveToHome = useCallback(async () => {
+    if (histRef.current.index <= 0 && !dirtyRef.current) {
+      onHome(Boolean(initialState));
+      return;
+    }
     const choice = onRequestExit ? await onRequestExit() : 'discard';
     if (choice === 'cancel') return;
     leavingRef.current = true;
@@ -5067,9 +5071,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
         objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
       });
+      recordHistoryRef.current?.();
     }
     onHome(choice === 'save');
-  }, [onRequestExit, onHome, layout, maskScale, holeType, customText, holeSize, sizeJitter,
+  }, [initialState, onRequestExit, onHome, layout, maskScale, holeType, customText, holeSize, sizeJitter,
       holeAngle, holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap,
       symmetryEnabled, stripeN, stripeDir, stripeAPick, stripeB, glowMode, holeGlowColor,
       glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor]);

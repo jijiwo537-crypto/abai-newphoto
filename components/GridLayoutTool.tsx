@@ -5616,6 +5616,7 @@ interface GridLayoutToolProps {
 }
 
 export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome, onRequestExit, onImportNew, initialFiles, initialState, lutList = [] }) => {
+  const openedFromDraftRef = useRef(!initialState && !(initialFiles && initialFiles.length) && hasDraft());
   /** 一頁上可以放多個佈局，每個佈局都是一個獨立物件（跟一般圖片一樣）。 */
   interface LayoutItem {
     id: string;
@@ -8545,6 +8546,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      所以用一個開工具時產生的 id 當識別，同一份不管記幾次都只留最新的一筆。 */
   const histKeyRef = useRef(`layout-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
   const recordedRef = useRef('');
+  const exitBaselineRef = useRef('');
+  useEffect(() => {
+    if (!draftReady || exitBaselineRef.current) return;
+    const t = setTimeout(() => {
+      exitBaselineRef.current = JSON.stringify({ pages, floatingImages, selectedRatio, isLandscape });
+    }, 500);
+    return () => clearTimeout(t);
+  }, [draftReady, pages, floatingImages, selectedRatio, isLandscape]);
   const recordProgress = async () => {
     const empty = floatingImages.length === 0 && pages.every(p => p.layouts.length === 0);
     if (empty) return;
@@ -8584,12 +8593,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const leavingRef = useRef(false);
   const handleLeave = async () => {
     if (leavingRef.current) return;
+    const sig = JSON.stringify({ pages, floatingImages, selectedRatio, isLandscape });
+    if (exitBaselineRef.current && sig === exitBaselineRef.current) {
+      leavingRef.current = true;
+      leftRef.current = true;
+      if (!openedFromDraftRef.current && !initialState) await clearDraft();
+      onHome();
+      return;
+    }
     const choice = onRequestExit ? await onRequestExit() : 'discard';
     if (choice === 'cancel') return;
     leavingRef.current = true;
     leftRef.current = true;
     if (choice === 'save') {
+      const historyJob = recordProgress();
       await saveDraft({ pages, floatingImages, selectedRatio, isLandscape });
+      historyJob.catch(() => { /* 歷史紀錄失敗不影響退出 */ });
     } else {
       await clearDraft();
     }
