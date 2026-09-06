@@ -12,6 +12,7 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
+import { measureSymbolInk, symbolBox } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape, holeOverflow, glowAmount,
@@ -1124,7 +1125,7 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
  * 這張表是拿真正的路徑量出來的（路徑是固定的常數，量一次就好），
  * 按鈕靠它把圖案縮到剛好、擺到正中間。
  */
-const SHAPE_FIT: Record<string, [number, number, number, number]> = {
+export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   circle: [0, 0, 1, 1],
   square: [0, 0, 1, 1],
   rounded: [0, 0, 1, 1],
@@ -4204,6 +4205,21 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      useLayoutEffect 在瀏覽器畫之前就量完並改好，錯的那一幀根本不會上畫面。 */
   useLayoutEffect(() => {
     if (image.text === undefined) return;
+    if (image.sym) {
+      const b = symbolBox(image.text || image.sym, image.fontFamily || DEFAULT_FONT, image.fontSize || 40);
+      const patch: Partial<FloatingImage> = {};
+      const nw = Math.ceil(b.w), nh = Math.ceil(b.h);
+      if (Math.abs(nw - dimsRef.current.w) > 1) {
+        patch.width = nw;
+        patch.x = image.x + (dimsRef.current.w - nw) / 2;
+      }
+      if (Math.abs(nh - dimsRef.current.h) > 1) {
+        patch.height = nh;
+        patch.y = image.y + (dimsRef.current.h - nh) / 2;
+      }
+      if (patch.width !== undefined || patch.height !== undefined) onChangeRef.current(patch);
+      return;
+    }
     const el = textMeasureRef.current;
     if (!el) return;
     const measure = () => {
@@ -4239,7 +4255,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     // 真的載不到（離線、家族名打錯）就別讓框永遠停在舊尺寸
     const t = setTimeout(done, 3000);
     return () => { alive = false; clearTimeout(t); };
-  }, [image.text, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, maxTextWidth]);
+  }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, maxTextWidth]);
 
   /* 圓角／羽化／發光都自己畫在 canvas 上，預覽與匯出走同一套邏輯 */
   const shapeCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -4259,6 +4275,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const drawnSrcRef = useRef<string | null>(null);
   const boxW = image.width * image.scale;
   const boxH = image.height * image.scale;
+  const symbolShift = image.sym ? (() => {
+    const ink = measureSymbolInk(image.text || image.sym || '', image.fontFamily || DEFAULT_FONT);
+    return { x: -ink.cx * (image.fontSize || 40), y: -ink.cy * (image.fontSize || 40) };
+  })() : { x: 0, y: 0 };
   // 發光與描邊都會超出框，canvas 要留邊。
   // 留邊固定用「最大強度」算：拖發光滑桿時邊界就不會每一格都變，
   // 不然 canvas 的位置與大小一直重算，圖看起來就是在抖。
@@ -5071,7 +5091,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
          借來的圖案更誇張（`<333` 的墨水有外框的 2.9 倍寬）。
          所以框要往外推到墨水外面，再留 2px 的空隙，才不會壓在圖形身上。
          推的是「看得到的框」而已，物件本身的大小、拖曳的範圍都沒有變。 */
-      const framePad = (() => {
+  const framePad = (() => {
         const sc = image.scale || 1;
         // 螢幕上固定留 2px 的空隙（除掉預覽倍率）
         const gap = 2 / kNow;
@@ -5091,6 +5111,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         const pad = half + outPx + gap;
         return { x: pad, y: pad };
       })();
+      const symbolGap = image.sym ? 2 / kNow : 0;
       const starTopGap = (image.shape === 'star' || (image.shape === 'hole' && image.holeType === 'cross-star'))
         ? 3 / kNow : 0;
       const frameInk = image.shape && image.shape !== 'hole'
@@ -5103,10 +5124,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         width: image.width * (image.scale || 1) * frameInk[2] + framePad.x * 2 + starTopGap * 2,
         height: Math.max(1, image.height * (image.scale || 1) * frameInk[3]) + framePad.y * 2 + starTopGap * 2,
       } : {
-        left: -framePad.x - starTopGap,
-        top: -framePad.y - starTopGap,
-        width: image.width * (image.scale || 1) + framePad.x * 2 + starTopGap * 2,
-        height: image.height * (image.scale || 1) + framePad.y * 2 + starTopGap * 2,
+        left: -framePad.x - starTopGap - symbolGap,
+        top: -framePad.y - starTopGap - symbolGap,
+        width: image.width * (image.scale || 1) + framePad.x * 2 + starTopGap * 2 + symbolGap * 2,
+        height: image.height * (image.scale || 1) + framePad.y * 2 + starTopGap * 2 + symbolGap * 2,
       };
       /** 一顆角球。看得見的白點比觸控範圍小 20%（14 → 11.2），
        *  外面那層維持 14×14、而且事件還是掛在它身上，所以手感一點都沒變。 */
@@ -5498,6 +5519,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               style={{
                 position: 'absolute', left: 0, top: 0, right: 0, bottom: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transform: image.sym ? `translate(${symbolShift.x}px, ${symbolShift.y}px)` : undefined,
                 pointerEvents: 'none', whiteSpace: 'pre', textAlign: 'center',
                 color: image.color || '#FFFFFF',
                 // 這一層絕對不描邊，光才不會算到描邊的部分
@@ -5521,6 +5543,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               display: 'inline-block',
               // 主層要蓋在發光層上面
               position: 'relative', zIndex: 1,
+              transform: image.sym ? `translate(${symbolShift.x}px, ${symbolShift.y}px)` : undefined,
               // width: max-content 才能不受外框寬度限制地量到真正需要的寬度，
               // 否則框被縮到上一次的寬度之後，文字就會一直卡在那個寬度換行
               width: 'max-content',
@@ -6734,8 +6757,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     let w100 = M * Math.max(1, txt.length) * 0.5;
     if (c) { c.font = `400 ${M}px ${fontStack(DEFAULT_FONT)}`; w100 = Math.max(1, c.measureText(txt).width); }
     const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
-    const w = Math.max(8, Math.round((w100 / M) * fontSize));
-    const h = Math.max(8, Math.round(fontSize * 1.4));
+    const measured = symbolBox(txt, DEFAULT_FONT, fontSize);
+    const w = Math.ceil(measured.w);
+    const h = Math.ceil(measured.h);
     const id = `text-${Math.random().toString(36).substring(2, 9)}`;
     const item: FloatingImage = {
       id, src: '',
@@ -6745,8 +6769,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       text: txt, sym: txt,
       fontFamily: DEFAULT_FONT,
       fontSize,
-      // 頁面底色預設是白的，符號也用白色的話加完會看不到
-      color: '#1C1C1C',
+      color: '#FFFFFF',
       bold: false, italic: false, letterSpacing: 0,
       strokeColor: '#000000',
       glow: 0, glowColor: '#FFFFFF',
@@ -10157,7 +10180,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const lineH = size * 1.12;
     const startY = -((lines.length - 1) * lineH) / 2;
 
-    const drawLines = () => lines.forEach((ln, i) => ctx.fillText(ln, 0, startY + i * lineH));
+    const symInk = fImg.sym ? measureSymbolInk(fImg.text || fImg.sym, family) : null;
+    const symDx = symInk ? -symInk.cx * size : 0;
+    const symDy = symInk ? -symInk.cy * size : 0;
+    const drawLines = () => lines.forEach((ln, i) => ctx.fillText(ln, symDx, startY + i * lineH + symDy));
     if (fImg.glow) {
       ctx.shadowColor = fImg.glowColor || '#FFFFFF';
       ctx.fillStyle = fImg.color || '#FFFFFF';
@@ -10179,7 +10205,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.lineJoin = 'round';
       ctx.miterLimit = 2;
       ctx.strokeStyle = fImg.strokeColor || '#000000';
-      lines.forEach((ln, i) => ctx.strokeText(ln, 0, startY + i * lineH));
+      lines.forEach((ln, i) => ctx.strokeText(ln, symDx, startY + i * lineH + symDy));
     }
     ctx.fillStyle = fImg.color || '#FFFFFF';
     drawLines();

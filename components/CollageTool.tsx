@@ -21,12 +21,13 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker,
-  shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR,
+  shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
+import { measureSymbolInk, symbolBox as sharedSymbolBox } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -238,72 +239,38 @@ export const shapePathBox = (kind: string, w: number, h: number) =>
    一種符號只量一次（字級 100），其他尺寸等比換算，量出來的東西拿去做三件事：
      ① 新增時的框大小 ② 畫的時候把墨水中心移到框心 ③ 選取框與命中範圍
    三邊同一份數字，框就一定框得到它。 */
-const SYM_INK_REF = 100;
-const symInkCache = new Map<string, { w: number; h: number; cx: number; cy: number }>();
 /** 回傳值都以「字級 1」為單位：w/h＝墨水大小，cx/cy＝墨水中心相對於下筆點的位移 */
-const symInk = (str: string, fam: string) => {
-  const key = `${fam}|${str}`;
-  const hit = symInkCache.get(key);
-  if (hit) return hit;
-  const S = SYM_INK_REF;
-  let out = { w: Math.max(0.3, str.length * 0.5), h: 1.2, cx: 0, cy: 0 };
-  try {
-    const c = document.createElement('canvas');
-    const g = c.getContext('2d', { willReadFrequently: true } as any) as CanvasRenderingContext2D | null;
-    if (g) {
-      const font = `400 ${S}px ${fontStack(fam)}`;
-      /* 量測用的畫布要先照「這一串有多寬」開，不能開一個固定大小的方框：
-         符號有長有短（最長的接近一百個字），字級 100 畫出來可能好幾千像素寬 ——
-         畫布不夠大就會被裁掉，量到的墨水只有前面那幾個字，選取框自然也就
-         只框得到前面那一段。這就是主人看到的「框只框前面幾個字」。 */
-      g.font = font;
-      const adv = Math.max(S, g.measureText(str).width);
-      const padX = Math.ceil(S * 1.2);
-      const padY = Math.ceil(S * 1.8);
-      const w = Math.ceil(adv) + padX * 2;
-      const h = padY * 2;
-      c.width = w; c.height = h;
-      // 改過畫布尺寸之後所有設定都會重置，字型要再設一次
-      g.font = font;
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillStyle = '#fff';
-      const ax = w / 2, ay = h / 2;
-      g.fillText(str, ax, ay);
-      const d = g.getImageData(0, 0, w, h).data;
-      let minx = w, miny = h, maxx = -1, maxy = -1;
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          if (d[(y * w + x) * 4 + 3] > 8) {
-            if (x < minx) minx = x;
-            if (x > maxx) maxx = x;
-            if (y < miny) miny = y;
-            if (y > maxy) maxy = y;
-          }
-        }
-      }
-      if (maxx >= minx && maxy >= miny) {
-        out = {
-          w: (maxx - minx + 1) / S,
-          h: (maxy - miny + 1) / S,
-          cx: ((minx + maxx + 1) / 2 - ax) / S,
-          cy: ((miny + maxy + 1) / 2 - ay) / S,
-        };
-      }
-      c.width = c.height = 0;
-    }
-  } catch {}
-  symInkCache.set(key, out);
-  return out;
-};
+const symInk = measureSymbolInk;
 
 /** 依符號的內容與字級算出「剛好包住它」的框（含一點點留白，才好按） */
 const symBox = (str: string, fam: string, size: number) => {
-  const ink = symInk(str, fam);
-  return {
-    w: Math.max(6, ink.w * size * 1.06),
-    h: Math.max(6, ink.h * size * 1.16),
-  };
+  return sharedSymbolBox(str, fam, size);
+};
+
+/** 創意拼圖與經典拼圖共用同一份圖形路徑範圍；這裡把它換成物件座標。 */
+const objectSelectionInk = (o: any, scale: number, gap: number) => {
+  const bw = o.w * scale, bh = o.h * scale;
+  if (o.sym) {
+    const ink = symInk(o.text || o.sym, o.fontFamily || DEFAULT_FONT);
+    const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
+    const edge = gap + stroke;
+    const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
+    return { x: (bw - w) / 2 - edge, y: (bh - h) / 2 - edge, w: w + edge * 2, h: h + edge * 2 };
+  }
+  if (o.type === 'shape' && o.kind !== 'hole') {
+    const fit = SHAPE_FIT[o.kind] || [0, 0, 1, 1];
+    const unit = ((o as any).lineBase || Math.max(o.w, o.h)) * scale / 160;
+    const line = Math.max(.4, (o.lineW ?? 6) * unit);
+    const edge = gap + ((o.filled && o.kind !== 'line') ? 0 : line / 2) + (o.strokeW || 0) * unit;
+    return {
+      x: bw * fit[0] - edge, y: bh * fit[1] - edge,
+      w: Math.max(1, bw * fit[2]) + edge * 2,
+      h: Math.max(1, bh * fit[3]) + edge * 2,
+    };
+  }
+  if (o.type === 'shape') return { x: -gap, y: -gap, w: bw + gap * 2, h: bh + gap * 2 };
+  const ink = imgShapeInk(o.imgShape, bw, bh);
+  return { x: ink.x - gap, y: ink.y - gap, w: ink.w + gap * 2, h: ink.h + gap * 2 };
 };
 
 /**
@@ -4643,7 +4610,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (isMain && !hideChromeRef.current && selectedObj === o.id && !guides.length && !tuningEdge) {
         // 所有选中框统一为实线；虚线只保留给内容本身的描边样式。
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.6 * uiPx;
+        // 與經典拼圖圖片選中框相同的 0.75px 視覺粗度。
+        ctx.lineWidth = 0.75 * uiPx;
         ctx.setLineDash([]);
         if (shapeSel === o.id && isImgShaped(o.imgShape)) {
           /* 第二段：選中的是「形狀」—— 方框收起來，改成沿著形狀本身描一圈。
@@ -4658,7 +4626,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           /* 第一段：選中的是「圖片」。有形狀的話框要縮到剛好包住那個圖案 ——
              不然愛心上面那片空白、星星底下那條也會被框進去。
              沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
-          const ink = imgShapeInk(o.imgShape, o.w * s, o.h * s);
+          const ink = objectSelectionInk(o, s, 2 * uiPx);
           ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
         }
         ctx.setLineDash([]);
@@ -5003,8 +4971,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
         ctx.save(); 
         ctx.strokeStyle = '#FFFFFF'; 
-        // 固定 1.9 CSS px：放大預覽時不會跟著變粗
-        ctx.lineWidth = 1.9 * uiPx; 
+        // 與經典拼圖圖片選中框相同的 0.75px；虛線語意維持不變。
+        ctx.lineWidth = 0.75 * uiPx;
         ctx.setLineDash([4.8 * uiPx, 4.8 * uiPx]);
 
         // 左側選取框 (帶旋轉, 只有在 image 側時顯示)
@@ -6675,7 +6643,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           // shapeMode 描的是整個外形（見畫選取框那一段），其他時候是 ink
           const ink = shapeMode
             ? { x: 0, y: 0, w: o.w, h: o.h }
-            : imgShapeInk(o.imgShape, o.w, o.h);
+            : objectSelectionInk(o, 1, 0);
           const bx0 = -o.w / 2 + ink.x, by0 = -o.h / 2 + ink.y;
           const rad = ((o.rot || 0) * Math.PI) / 180;
           const cosR = Math.cos(rad), sinR = Math.sin(rad);
