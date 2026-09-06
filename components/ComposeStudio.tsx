@@ -724,13 +724,15 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
           {tab === 'keystone' && (
             keystoneAxis === null ? (
-              <div className="w-full flex justify-center items-center gap-2 px-4 -translate-y-1">
+              <div className="w-full h-full relative">
+              <div className="absolute left-0 right-0 flex justify-center gap-2 px-4 [&>*]:shrink-0" style={{ top: BUTTON_ROW_TOP }}>
                 <button onClick={() => setKeystoneAxis('v')} className="h-9 px-3.5 rounded-full bg-white/[0.06] border border-white/10 text-white/65 flex items-center text-[11px] font-bold tracking-[0.1em] active:scale-[0.97]">
                   垂直
                 </button>
                 <button onClick={() => setKeystoneAxis('h')} className="h-9 px-3.5 rounded-full bg-white/[0.06] border border-white/10 text-white/65 flex items-center text-[11px] font-bold tracking-[0.1em] active:scale-[0.97]">
                   水平
                 </button>
+              </div>
               </div>
             ) : (
               <div className="w-full flex items-center gap-3 px-5 -translate-y-1">
