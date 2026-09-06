@@ -55,6 +55,7 @@ import {
   type ToolKind,
 } from './utils/toolDraft';
 import { listExports, loadExport, subscribeExports, type ExportMeta } from './utils/exportHistory';
+import type { ExitChoice } from './types';
 
 const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
   layout: '經典拼圖',
@@ -98,6 +99,20 @@ const App: React.FC = () => {
   /* 從歷史紀錄點開來的那一筆是誰。工具再存一次的時候要沿用同一個 key，
      這樣才會「蓋掉同一筆」而不是又多一筆一模一樣的。開新的照片就清掉。 */
   const [histKey, setHistKey] = useState<string | null>(null);
+  const [exitPromptOpen, setExitPromptOpen] = useState(false);
+  const exitPromptResolver = useRef<((choice: ExitChoice) => void) | null>(null);
+
+  const requestExit = useCallback((): Promise<ExitChoice> => {
+    setExitPromptOpen(true);
+    return new Promise(resolve => { exitPromptResolver.current = resolve; });
+  }, []);
+
+  const resolveExit = useCallback((choice: ExitChoice) => {
+    setExitPromptOpen(false);
+    const resolve = exitPromptResolver.current;
+    exitPromptResolver.current = null;
+    resolve?.(choice);
+  }, []);
 
   /** 創意拼圖：第一個當底，其餘的自動變成物件（相簿多選） */
   /* 拼圖的入口以前是把 File 原封不動丟給工具，工具再自己 createObjectURL ——
@@ -308,10 +323,10 @@ const App: React.FC = () => {
    * 的 effect 相依於 onCancel，函式每次 render 都變新的話，App 只要重新 render
    * 一次就會把使用者的調整整組打回預設（接續上次時剛好會踩到）。
    */
-  const leaveTool = useCallback(() => {
+  const leaveTool = useCallback((keepDraft = false) => {
     setCurrentView('home');
     setToolDraftState(null);
-    clearToolDraft();
+    if (!keepDraft) clearToolDraft();
   }, []);
 
   const handleEditorSave = useCallback((newSrc: string) => {
@@ -320,8 +335,8 @@ const App: React.FC = () => {
     setEditorFile(null);
   }, [leaveTool]);
 
-  const handleEditorCancel = useCallback(() => {
-    leaveTool();
+  const handleEditorCancel = useCallback((keepDraft = false) => {
+    leaveTool(keepDraft);
     setEditorImage(null);
     setEditorFile(null);
   }, [leaveTool]);
@@ -432,6 +447,20 @@ const App: React.FC = () => {
           <div className="flex flex-col items-center gap-4 text-white relative z-10">
             <div className="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin shadow-[0_0_15px_rgba(255,255,255,0.5)]"></div>
             <p className="text-sm font-black tracking-[0.2em] uppercase animate-pulse drop-shadow-md">載入中...</p>
+          </div>
+        </div>
+      )}
+
+      {exitPromptOpen && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in duration-200">
+          <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className="w-full max-w-[320px] rounded-3xl bg-[#141414] border border-white/10 p-6 text-center shadow-2xl animate-in zoom-in-95 duration-200">
+            <p id="exit-draft-title" className="text-white font-black tracking-wide">要將目前內容儲存為草稿嗎？</p>
+            <p className="mt-2 text-[12px] leading-relaxed text-white/45">之後可以回來繼續編輯</p>
+            <div className="mt-6 flex flex-col gap-2">
+              <button onClick={() => resolveExit('save')} className="h-12 rounded-full bg-white text-black font-black tracking-widest text-sm active:scale-95 transition-transform">儲存</button>
+              <button onClick={() => resolveExit('discard')} className="h-12 rounded-full border border-red-400/30 text-red-300 font-bold tracking-widest text-sm active:scale-95 transition-transform">放棄</button>
+              <button onClick={() => resolveExit('cancel')} className="h-12 rounded-full border border-white/15 text-white/70 font-bold tracking-widest text-sm active:scale-95 transition-transform">取消</button>
+            </div>
           </div>
         </div>
       )}
@@ -556,12 +585,13 @@ const App: React.FC = () => {
           key={beautyKey}
           imageSrc={beautyImage}
           initialState={toolDraftState}
-          onCancel={() => {
-            leaveTool();
+          onRequestExit={requestExit}
+          onCancel={(keepDraft) => {
+            leaveTool(keepDraft);
             setBeautyImage(null);
           }}
-          onHome={() => {
-            leaveTool();
+          onHome={(keepDraft) => {
+            leaveTool(keepDraft);
             setBeautyImage(null);
           }}
           onImportNew={handleBeautyImportClick}
@@ -572,6 +602,7 @@ const App: React.FC = () => {
       {currentView === 'layout' && (
         <GridLayoutTool 
           key={layoutKey}
+          onRequestExit={requestExit}
           onHome={() => {
             setCurrentView('home');
             setLayoutInitialFiles([]);
@@ -589,8 +620,9 @@ const App: React.FC = () => {
       {currentView === 'collage' && (
         <CollageTool 
           key={collageKey}
-          onHome={() => {
-            leaveTool();
+          onRequestExit={requestExit}
+          onHome={(keepDraft) => {
+            leaveTool(keepDraft);
             setCollageInitialFile(null);
             setCollageExtras([]);
           }}
@@ -623,6 +655,7 @@ const App: React.FC = () => {
           onSave={handleEditorSave}
           onCancel={handleEditorCancel}
           onHome={leaveTool}
+          onRequestExit={requestExit}
           onImportNew={handleGlobalImportClick}
           originalFile={editorFile}
         />
