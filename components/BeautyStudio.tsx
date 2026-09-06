@@ -140,6 +140,7 @@ const unionRect = (a: Rect | null, b: Rect): Rect => {
 export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   imageSrc, onCancel, onHome, onRequestExit, onImportNew, onSendToEditor, initialState,
 }) => {
+  const initialOpsCountRef = useRef(Array.isArray(initialState?.ops) ? initialState!.ops!.length : 0);
   const [tool, setTool] = useState<BeautyTool>('blemish');
   const [brush, setBrush] = useState<Record<string, number>>({ ...DEFAULT_BRUSH });
   // 力度分工具記錄。共用一個值的話，液化套用預設會連帶改掉去皺的力度。
@@ -791,14 +792,20 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   }, [imageSrc, showOriginal, render]);
 
   const requestLeave = useCallback(async () => {
+    const currentOps = sessionRef.current?.opsApplied ?? 0;
+    if (currentOps === initialOpsCountRef.current) {
+      onCancel(Boolean(initialState));
+      return;
+    }
     const choice = onRequestExit ? await onRequestExit() : 'discard';
     if (choice === 'cancel') return;
     if (choice === 'save') {
       const s = sessionRef.current;
       if (s) await saveToolDraft('beauty', imageSrc, { ops: s.ops.slice(0, s.opsApplied) });
+      recordProgress();
     }
     onCancel(choice === 'save');
-  }, [onRequestExit, onCancel, imageSrc]);
+  }, [initialState, onRequestExit, onCancel, imageSrc, recordProgress]);
 
   // ---------------------------------------------------------------
   // 全解析度輸出：把記錄下來的每一筆操作，在原圖解析度重跑一次
