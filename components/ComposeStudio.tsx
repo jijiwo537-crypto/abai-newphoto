@@ -521,21 +521,27 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                   <div
                     className="absolute bg-white shadow-[0_1px_4px_rgba(0,0,0,0.6)]"
                     style={corner
-                      // 直角緊貼裁切框的四個角，不再以角為中心往外浮出去
+                      // 四角的兩段都只往框外長；3px 粗度與四邊控制物完全一致。
                       ? {
                           width: 20, height: 20,
-                          left: hd.x === 0 ? '50%' : undefined,
-                          right: hd.x === 1 ? '50%' : undefined,
-                          top: hd.y === 0 ? '50%' : undefined,
-                          bottom: hd.y === 1 ? '50%' : undefined,
-                          clipPath: 'polygon(0 0, 100% 0, 100% 3px, 3px 3px, 3px 100%, 0 100%)',
-                          rotate: `${hd.id === 'tl' ? 0 : hd.id === 'tr' ? 90 : hd.id === 'br' ? 180 : 270}deg`,
+                          left: hd.x === 1 ? '50%' : undefined,
+                          right: hd.x === 0 ? '50%' : undefined,
+                          top: hd.y === 1 ? '50%' : undefined,
+                          bottom: hd.y === 0 ? '50%' : undefined,
+                          background: 'transparent',
+                          borderLeft: hd.x === 1 ? '3px solid white' : undefined,
+                          borderRight: hd.x === 0 ? '3px solid white' : undefined,
+                          borderTop: hd.y === 1 ? '3px solid white' : undefined,
+                          borderBottom: hd.y === 0 ? '3px solid white' : undefined,
                         }
                       : {
-                          left: '50%', top: '50%',
-                          width: (hd.id === 't' || hd.id === 'b') ? 22 : 3,
-                          height: (hd.id === 't' || hd.id === 'b') ? 3 : 22,
-                          transform: 'translate(-50%, -50%)',
+                          width: (hd.id === 't' || hd.id === 'b') ? 20 : 3,
+                          height: (hd.id === 't' || hd.id === 'b') ? 3 : 20,
+                          left: hd.id === 'r' ? '50%' : hd.id === 'l' ? undefined : '50%',
+                          right: hd.id === 'l' ? '50%' : undefined,
+                          top: hd.id === 'b' ? '50%' : hd.id === 't' ? undefined : '50%',
+                          bottom: hd.id === 't' ? '50%' : undefined,
+                          transform: (hd.id === 't' || hd.id === 'b') ? 'translateX(-50%)' : 'translateY(-50%)',
                         }}
                   />
                 </div>
