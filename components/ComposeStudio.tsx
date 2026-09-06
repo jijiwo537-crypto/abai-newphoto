@@ -721,11 +721,11 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
           {tab === 'keystone' && (
             keystoneAxis === null ? (
               <div className="w-full flex justify-center items-center gap-3 px-5 -translate-y-1">
-                <button onClick={() => setKeystoneAxis('v')} className="h-11 px-5 rounded-full bg-white/[0.06] border border-white/10 text-white/65 hover:text-white flex items-center gap-2 text-[11px] font-bold tracking-[0.1em] transition-colors active:scale-[0.97]">
-                  <Icon name="height" className="text-lg" />垂直
+                <button onClick={() => setKeystoneAxis('v')} className="h-11 px-6 rounded-full bg-white/[0.06] border border-white/10 text-white/65 flex items-center text-[11px] font-bold tracking-[0.1em] active:scale-[0.97]">
+                  垂直
                 </button>
-                <button onClick={() => setKeystoneAxis('h')} className="h-11 px-5 rounded-full bg-white/[0.06] border border-white/10 text-white/65 hover:text-white flex items-center gap-2 text-[11px] font-bold tracking-[0.1em] transition-colors active:scale-[0.97]">
-                  <Icon name="width" className="text-lg" />水平
+                <button onClick={() => setKeystoneAxis('h')} className="h-11 px-6 rounded-full bg-white/[0.06] border border-white/10 text-white/65 flex items-center text-[11px] font-bold tracking-[0.1em] active:scale-[0.97]">
+                  水平
                 </button>
               </div>
             ) : (
@@ -733,14 +733,14 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                 <button
                   onClick={() => setKeystoneAxis(null)}
                   aria-label="返回梯形方向选择"
-                  className="w-12 h-11 shrink-0 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-colors text-white active:scale-[0.96]"
+                  className="w-10 h-10 shrink-0 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-colors text-white active:scale-[0.96]"
                 >
-                  <Icon name="arrow_back" className="text-xl" />
+                  <Icon name="arrow_back" className="text-lg" />
                 </button>
                 {keystoneAxis === 'v'
                   ? tickSlider(geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }), 0.36)
                   : tickSlider(geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }), 0.36)}
-                <span className="w-12 h-11 shrink-0" aria-hidden="true" />
+                <span className="w-10 h-10 shrink-0" aria-hidden="true" />
               </div>
             )
           )}
@@ -772,7 +772,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                 <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" className="shrink-0">
                   <path
                     d="M8 5.5H16L20 18.5H4Z"
-                    fill={tab === id ? 'currentColor' : 'none'}
+                    fill="none"
                     stroke="currentColor"
                     strokeWidth="1.7"
                     strokeLinejoin="round"
