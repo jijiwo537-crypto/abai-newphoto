@@ -282,6 +282,17 @@ select:focus, select:focus-visible {
   100% { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.55), 0); opacity: 0; }
 }
 
+/* 品牌字首次出場只動合成層，不交給 JS 動畫庫，也不觸發版面重排。 */
+@keyframes abai-wordmark-enter {
+  from { opacity: 0; transform: translate3d(0, 10px, 0); }
+  to   { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.abai-wordmark-enter {
+  animation: abai-wordmark-enter 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+
 /* 主視覺裡的照片：在 .home-hero 已經慢下來的基礎上再慢一層，
    等於整體走 39% 的速度。scale 讓它同時推近，避免「只是往下掉」。
    位移量刻意壓在 6% 屏以內：照片上下各只多留 10% 的餘裕，超過就會露出空白 ——
