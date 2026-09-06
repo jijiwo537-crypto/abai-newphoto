@@ -1380,7 +1380,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        改成照實際的顯示比例換算成同樣的 4 個畫面像素。 */
     const cssW = baseCssWRef.current;
     const perCss = cssW > 0 ? offsG.cw / cssW : 3;   // 一個畫面像素等於幾個畫布單位
-    const snap = Math.max(2, 4 * perCss);
+    // 只有外框真的碰到目標線時才顯示／吸附；約一個畫面像素只用來
+    // 吃掉觸控與縮放造成的次像素誤差，避免還有明顯距離就提早亮線。
+    const snap = Math.max(0.75, perCss);
     const seams = seamLinesRef.current();
     /**
      * 單軸吸附：候選是「這條線」＋「中心要位移多少才貼上去」。
@@ -2864,16 +2866,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const cx = oldCx - shift * Math.sin(d.rot), cy = oldCy + shift * Math.cos(d.rot);
       next = { w: d.w, h, x: cx - d.w / 2, y: cy - h / 2 };
     }
-    const aligned = snapToGuides(next.x, next.y, next.w, next.h, d.rot * 180 / Math.PI, true, d.id);
-    guidesRef.current = aligned.guides;
-    setGuides(aligned.guides);
     setObjects(prev => prev.map(o => o.id === d.id ? { ...o, ...next } : o));
   };
   const endObjStretch = (e: React.PointerEvent) => {
     if (objStretchRef.current?.pointerId !== e.pointerId) return;
     e.stopPropagation(); try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
     objStretchRef.current = null;
-    guidesRef.current = []; setGuides([]);
   };
 
   /* ---- 預覽縮放 ------------------------------------------------------------
@@ -6698,7 +6696,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             setObjects(prev => [...prev, { ...o, id, x: o.x + o.w * 0.08, y: o.y + o.h * 0.08 }]);
             setSelectedObj(id);
           };
-          const canStretch = o.type !== 'text' && !o.sym && !isVideoEl(o.img);
+          const canStretch = !shapeMode && o.type !== 'text' && !o.sym && !isVideoEl(o.img);
           return (<>
             {canStretch && (
               <div className="absolute z-[69] pointer-events-none"
@@ -6713,7 +6711,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   <div key={side} data-stretch-handle className={`absolute ${pos} ${size} pointer-events-auto flex items-center justify-center touch-none no-pointer-events`}
                     style={{ transform: tx }} onPointerDown={(e) => beginObjStretch(e, o, side, k)}
                     onPointerMove={moveObjStretch} onPointerUp={endObjStretch} onPointerCancel={endObjStretch}>
-                    <span className="w-[7px] h-[7px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]" />
+                    {o.type === 'shape' ? (
+                      <span className="w-[7px] h-[7px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]" />
+                    ) : (
+                      <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
+                    )}
                   </div>
                 ))}
               </div>
