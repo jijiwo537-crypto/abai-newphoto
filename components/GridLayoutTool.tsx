@@ -5229,7 +5229,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         {isPhoto && !shapeOutline && cornerDot('bl', 'bottom-0 left-0', 'translate(-50%, 50%)', 'cursor-nesw-resize')}
         {isPhoto && !shapeOutline && cornerDot('br', 'bottom-0 right-0', 'translate(50%, 50%)', 'cursor-nwse-resize')}
 
-        {image.text === undefined && !image.isVideo && !shapeOutline && ([
+        {(!!image.shape || image.text === undefined) && !image.isVideo && !shapeOutline && ([
           ['t', 'top-0 left-1/2', 'translate(-50%, -50%)', 'w-6 h-2 cursor-ns-resize'],
           ['r', 'right-0 top-1/2', 'translate(50%, -50%)', 'w-2 h-6 cursor-ew-resize'],
           ['b', 'bottom-0 left-1/2', 'translate(-50%, 50%)', 'w-6 h-2 cursor-ns-resize'],
@@ -5241,9 +5241,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             left: side === 'l' ? frameRect.left : side === 'r' ? frameRect.left + frameRect.width : frameRect.left + frameRect.width / 2,
             top: side === 't' ? frameRect.top : side === 'b' ? frameRect.top + frameRect.height : frameRect.top + frameRect.height / 2,
           } : undefined;
+          // 圖形四邊已經直接給「框線上的中心座標」，四個方向都只需把
+          // 觸控盒自身的中心搬回該座標。舊的右／下 +50% 是搭配 right/bottom
+          // 定位使用的，留在精確座標模式會多推出半個觸控盒。
+          const handleTransform = image.shape ? 'translate(-50%, -50%)' : tx;
           return (
           <div key={side} data-stretch-handle className={`absolute ${image.shape ? '' : pos} ${size} z-50 pointer-events-auto touch-none flex items-center justify-center`}
-            style={{ transform: tx, ...shapeHandleStyle }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
+            style={{ transform: handleTransform, ...shapeHandleStyle }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
             onPointerMove={handleStretchPointerMove} onPointerUp={handleStretchPointerUp} onPointerCancel={handleStretchPointerUp}>
             {image.shape ? (
               <span className="w-[5px] h-[5px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]" />
