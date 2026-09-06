@@ -379,7 +379,6 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   }, []);
 
   const tickSlider = (
-    label: string,
     value: number,
     min: number,
     max: number,
@@ -420,12 +419,13 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       onPointerCancel={() => { rulerDragRef.current = null; setRulerVisual(null); setLive(false); }}
     >
       <span className="absolute top-0 left-1/2 -translate-x-1/2 text-[10px] font-bold tracking-[0.12em] text-white/65 tabular-nums whitespace-nowrap pointer-events-none">
-        {label} {(rulerVisual ?? value) > 0 ? '+' : ''}{Math.round((rulerVisual ?? value) / step) * step}{max <= 45 ? '°' : ''}
+        {(rulerVisual ?? value) > 0 ? '+' : ''}{Math.round((rulerVisual ?? value) / step) * step}{max <= 45 ? '°' : ''}
       </span>
       {Array.from({ length: Math.round((max - min) / step) + 1 }, (_, i) => min + i * step).map(tickValue => {
         const shown = rulerVisual ?? value;
-        const offsetPercent = ((tickValue - shown) / (max - min)) * 100;
-        if (Math.abs(offsetPercent) > 55) return null;
+        // 视觉间距与手势灵敏度分离：完整范围仍可一划到底，刻度本身不会挤成一片。
+        const offset = ((tickValue - shown) / step) * 6;
+        if (Math.abs(offset) > 190) return null;
         const nearest = Math.round(shown / step) * step;
         const active = Math.abs(tickValue - nearest) < step / 2;
         const major = Math.round((tickValue - min) / step) % 5 === 0;
@@ -435,13 +435,15 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
             key={tickValue}
             className="absolute bottom-0 w-px bg-white rounded-full pointer-events-none"
             style={{
-              left: `calc(50% + ${offsetPercent}%)`,
+              left: `calc(50% + ${offset}px)`,
               height: active ? 27 : baseHeight,
               opacity: active ? 1 : (major ? 0.52 : 0.28),
               transform: 'translateX(-50%)',
-              transition: rulerVisual === null
-                ? 'left 180ms cubic-bezier(0.2,0.8,0.2,1), height 70ms cubic-bezier(0.2,0.8,0.2,1), opacity 70ms ease'
-                : 'height 70ms cubic-bezier(0.2,0.8,0.2,1), opacity 70ms ease',
+              // 经过中央时立即升高；只有离开中央才用 160ms 回落。
+              // 快速拖动时，连续几根旧刻度依序衰减，形成由高到低的尾波。
+              transition: active
+                ? 'none'
+                : `height 160ms cubic-bezier(0.22,1,0.36,1), opacity 160ms ease${rulerVisual === null ? ', left 180ms cubic-bezier(0.2,0.8,0.2,1)' : ''}`,
             }}
           />
         );
@@ -678,15 +680,15 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
                 <button
                   onClick={() => setGeo({ quarter: (geo.quarter + 3) % 4 })}
                   aria-label="逆時針旋轉 90 度"
-                  className="w-10 h-10 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-white/70 hover:text-white flex items-center justify-center"
+                  className="w-12 h-11 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-white/70 hover:text-white flex items-center justify-center"
                 >
                   <Icon name="rotate_left" className="text-xl" />
                 </button>
-                {tickSlider('角度', geo.angle, -45, 45, 1, v => setGeo({ angle: v }))}
+                {tickSlider(geo.angle, -45, 45, 1, v => setGeo({ angle: v }))}
                 <button
                   onClick={() => setGeo({ quarter: (geo.quarter + 1) % 4 })}
                   aria-label="順時針旋轉 90 度"
-                  className="w-10 h-10 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-white/70 hover:text-white flex items-center justify-center"
+                  className="w-12 h-11 shrink-0 rounded-full bg-white/[0.06] border border-white/10 text-white/70 hover:text-white flex items-center justify-center"
                 >
                   <Icon name="rotate_right" className="text-xl" />
                 </button>
@@ -718,14 +720,14 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
           {tab === 'keystone' && (
             <div className="w-full flex items-center gap-3 px-5 translate-y-2">
-              <div className="w-10 h-11 shrink-0 flex flex-col gap-1">
-                <button onClick={() => setKeystoneAxis('v')} className={`flex-1 rounded-md border text-[9px] font-bold transition-colors ${keystoneAxis === 'v' ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/45 border-white/10'}`}>垂直</button>
-                <button onClick={() => setKeystoneAxis('h')} className={`flex-1 rounded-md border text-[9px] font-bold transition-colors ${keystoneAxis === 'h' ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/45 border-white/10'}`}>水平</button>
+              <div className="w-12 h-16 shrink-0 flex flex-col gap-1">
+                <button onClick={() => setKeystoneAxis('v')} className={`flex-1 rounded-lg border text-[10px] font-bold transition-colors ${keystoneAxis === 'v' ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/50 border-white/10'}`}>垂直</button>
+                <button onClick={() => setKeystoneAxis('h')} className={`flex-1 rounded-lg border text-[10px] font-bold transition-colors ${keystoneAxis === 'h' ? 'bg-white text-black border-white' : 'bg-white/[0.06] text-white/50 border-white/10'}`}>水平</button>
               </div>
               {keystoneAxis === 'v'
-                ? tickSlider('垂直', geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }))
-                : tickSlider('水平', geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }))}
-              <span className="w-10 h-10 shrink-0" aria-hidden="true" />
+                ? tickSlider(geo.keyV, -100, 100, 1, v => setGeo({ keyV: v }))
+                : tickSlider(geo.keyH, -100, 100, 1, v => setGeo({ keyH: v }))}
+              <span className="w-12 h-11 shrink-0" aria-hidden="true" />
             </div>
           )}
         </div>
