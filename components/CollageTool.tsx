@@ -6712,7 +6712,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     style={{ transform: tx }} onPointerDown={(e) => beginObjStretch(e, o, side, k)}
                     onPointerMove={moveObjStretch} onPointerUp={endObjStretch} onPointerCancel={endObjStretch}>
                     {o.type === 'shape' ? (
-                      <span className="w-[7px] h-[7px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]" />
+                      <span className="w-[5px] h-[5px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]" />
                     ) : (
                       <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
                     )}

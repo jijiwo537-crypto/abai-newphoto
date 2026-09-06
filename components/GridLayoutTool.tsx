@@ -4278,7 +4278,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const boxH = image.height * image.scale;
   const symbolShift = image.sym ? (() => {
     const ink = measureSymbolInk(image.text || image.sym || '', image.fontFamily || DEFAULT_FONT);
-    return { x: -ink.cx * (image.fontSize || 40), y: -ink.cy * (image.fontSize || 40) };
+    return { x: -ink.cx * (image.fontSize || 40) * image.scale, y: -ink.cy * (image.fontSize || 40) * image.scale };
   })() : { x: 0, y: 0 };
   // 發光與描邊都會超出框，canvas 要留邊。
   // 留邊固定用「最大強度」算：拖發光滑桿時邊界就不會每一格都變，
@@ -4877,12 +4877,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
        中心點推出左上角。這樣中心不再隨縮放跳動（來回 0 次），四個邊也仍然
        都落在整數實體像素上，殘影的防治沒有變。 */
     ...(() => {
-      if (image.shape) {
-        return {
-          left: `${image.x}px`, top: `${image.y}px`,
-          width: `${image.width}px`, height: `${image.height}px`,
-        };
-      }
       const cx = image.x + image.width / 2;
       const cy = image.y + image.height / 2;
       const w = snapPx2(image.width * image.scale);
@@ -4908,8 +4902,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
        改走一般繪製，讓出來的區域一定會被重畫。
        （原本留著它是為了讓邊緣吸到整數像素，那件事現在由 snapPx 用「真正的」
        實體像素密度做掉了，不必再靠合成層。） */
-    transform: (dragShift || image.shape || (image.rotation % 360) !== 0)
-      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}${image.shape ? `scale(${image.scale || 1}) ` : ''}rotate(${image.rotation}deg)`
+    transform: (dragShift || (image.rotation % 360) !== 0)
+      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`
       : undefined,
     /* 過場一定要跟頁面容器那邊「一模一樣」（220ms、同一條曲線）。
        以前這裡是 200ms ease-out、那邊是 220ms cubic-bezier(0.2,0,0,1)：
@@ -5248,11 +5242,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             top: side === 't' ? frameRect.top : side === 'b' ? frameRect.top + frameRect.height : frameRect.top + frameRect.height / 2,
           } : undefined;
           return (
-          <div key={side} data-stretch-handle className={`absolute ${pos} ${size} z-50 pointer-events-auto touch-none flex items-center justify-center`}
+          <div key={side} data-stretch-handle className={`absolute ${image.shape ? '' : pos} ${size} z-50 pointer-events-auto touch-none flex items-center justify-center`}
             style={{ transform: tx, ...shapeHandleStyle }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
             onPointerMove={handleStretchPointerMove} onPointerUp={handleStretchPointerUp} onPointerCancel={handleStretchPointerUp}>
             {image.shape ? (
-              <span className="w-[7px] h-[7px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]" />
+              <span className="w-[5px] h-[5px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]" />
             ) : (
               <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
             )}
@@ -5296,10 +5290,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ref={el => {
             if (!el) return;
             // 只在跨過整數倍率時提高 backing store，兼顧清晰度與連續縮放效能。
-            const quality = Math.min(4, Math.max(1, Math.ceil(image.scale || 1)));
-            const dpr = Math.min(8, (window.devicePixelRatio || 1) * quality);
-            const bw = Math.max(1, image.width * dpr);
-            const bh = Math.max(1, image.height * dpr);
+            const dpr = Math.min(8, (window.devicePixelRatio || 1) * Math.max(1, canvasK()));
+            // 外框現在直接使用放大後的實際尺寸；backing store 也跟著使用同一尺寸，
+            // 不再把一張較小的點陣 canvas 交給 CSS 拉大。
+            const bw = Math.max(1, image.width * image.scale * dpr);
+            const bh = Math.max(1, image.height * image.scale * dpr);
             const blurs = shapeGlowBlurs(bw, bh);
             /* 交給 drawHoleShape 的是畫布像素，線寬的單位也要換到同一個座標系
                （holeOpts 裡那個是內容單位，兩邊都是「長邊/160 再除掉 scale」）。 */
@@ -5309,8 +5304,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                畫布只開外框那麼大的話，超出去的全部被切掉。
                撐開的是畫布，畫的內容一個像素都沒動（原點還是框心、
                交給 drawHoleShape 的還是原本的外框）。 */
-            const w = Math.max(1, Math.round(bw + holeOv.x * dpr * 2));
-            const h = Math.max(1, Math.round(bh + holeOv.y * dpr * 2));
+            const w = Math.max(1, Math.round(bw + holeOv.x * image.scale * dpr * 2));
+            const h = Math.max(1, Math.round(bh + holeOv.y * image.scale * dpr * 2));
             if (el.width !== w) el.width = w;
             if (el.height !== h) el.height = h;
             const c = el.getContext('2d');
@@ -5474,7 +5469,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                的 scale 去做 —— 等同 canvas 連續縮放字形輪廓。
                字級、字距、描邊、發光在這裡一律用原值，倍率統一由 scale 帶。 */
             position: 'absolute', left: '50%', top: '50%',
-            transform: `translate(-50%, -50%) scale(${image.scale})`,
+            transform: 'translate(-50%, -50%)',
             transformOrigin: 'center center',
             /* 縮放時的殘影：這一層只有 transform 在變，可是它裡面是**文字**
                （還可能帶 text-shadow 的發光），瀏覽器把它當一般內容重畫時，
@@ -5485,16 +5480,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             willChange: 'transform',
             backfaceVisibility: 'hidden',
             WebkitBackfaceVisibility: 'hidden',
-            width: `${image.width}px`, height: `${image.height}px`,
+            width: `${image.width * image.scale}px`, height: `${image.height * image.scale}px`,
             pointerEvents: 'none',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontFamily: fontStack(image.fontFamily),
-            fontSize: `${image.fontSize || 40}px`,
+            fontSize: `${(image.fontSize || 40) * image.scale}px`,
             lineHeight: 1.12,
             fontWeight: image.bold ? 700 : 400,
             fontStyle: image.italic ? 'italic' : 'normal',
             // 倍率由外層的 scale 帶，這裡一律用原值（見上面的說明）
-            letterSpacing: `${image.letterSpacing || 0}px`,
+            letterSpacing: `${(image.letterSpacing || 0) * image.scale}px`,
             color: image.color || '#FFFFFF',
             // 只有使用者自己按的換行才換行，不自動斷行
             whiteSpace: 'pre',
@@ -5505,7 +5500,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             // 一半會吃進字身，看起來像每一筆都被描了一圈。改成 paint-order
             // 把描邊畫在填色「下面」、寬度加倍 —— 字身蓋住內半邊，
             // 剩下的就是純外描邊。
-            WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2}px` : undefined,
+            WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2 * image.scale}px` : undefined,
             WebkitTextStrokeColor: image.strokeWidth ? (image.strokeColor || '#000000') : undefined,
             // 沒有描邊時不要留著 paint-order。
             paintOrder: image.strokeWidth ? 'stroke fill' : undefined,
@@ -5543,7 +5538,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 WebkitTextStrokeWidth: 0,
                 paintOrder: 'normal',
                 textShadow: [1, 2, 3]
-                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k}px ${image.glowColor || '#FFFFFF'}`)
+                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k * image.scale}px ${image.glowColor || '#FFFFFF'}`)
                   .join(', '),
                 // 跟圖形的發光同一個理由：光長在框外面，不自己一層就會拖出殘影
                 willChange: 'transform',
@@ -7356,7 +7351,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const ZOOM_MIN = 0.4, ZOOM_MAX = 3;
   /** 正在雙指縮放畫布。有值的時候不准任何其他手勢介入 */
   /** 雙指縮放整個預覽：起手的兩指距離、起手倍率，以及「捏住的那個內容座標」與它在螢幕上的位置 */
-  const canvasZoomRef = useRef<{ startDist: number; baseZoom: number; anchorC: number; anchorPx: number } | null>(null);
+  const canvasZoomRef = useRef<{ startDist: number; baseZoom: number; anchorC: number; anchorPx: number; lastZoom: number } | null>(null);
   /* 手指已經開始把頁面拖著走了。
      第二根手指落下時 handleWorkspaceTouchStart 會重跑一次、把 panRef 清掉，
      所以光看 panRef 分不出「剛按下去」跟「拖到一半」——另外用這個旗標記著，
@@ -9789,7 +9784,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
          連續捏兩次時，第二次一定要從第一次的結果接著算。 */
-      canvasZoomRef.current = { startDist: d, baseZoom: k0, anchorC, anchorPx };
+      canvasZoomRef.current = { startDist: d, baseZoom: k0, anchorC, anchorPx, lastZoom: k0 };
       return;
     }
 
@@ -9829,7 +9824,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         e.touches[0].clientX - e.touches[1].clientX,
         e.touches[0].clientY - e.touches[1].clientY,
       ) || 1;
-      const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cz.baseZoom * (d / cz.startDist)));
+      const rawZ = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cz.baseZoom * (d / cz.startDist)));
+      // 觸控距離會在相鄰事件間抖動零點幾個像素；直接把每一筆噪聲寫入 zoom
+      // 會讓整張預覽反覆放大縮小。輕量低通只濾掉這種高頻抖動，手勢方向與範圍不變。
+      const z = Math.abs(rawZ - cz.lastZoom) < 0.001
+        ? cz.lastZoom
+        : cz.lastZoom + (rawZ - cz.lastZoom) * 0.72;
+      cz.lastZoom = z;
       userZoomRef.current = z;
       kRef.current = z;
       // 尺寸先寫（scrollWidth 才是對的），再把「捏住的那個點」放回原位
