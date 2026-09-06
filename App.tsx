@@ -480,10 +480,10 @@ const App: React.FC = () => {
       )}
 
       {exitPromptOpen && (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/80 backdrop-blur-sm px-8 animate-in fade-in duration-200">
+        <div className={`fixed inset-0 z-[300] flex items-center justify-center px-8 animate-in fade-in duration-200 ${exitPromptBusy ? 'bg-black/20 backdrop-blur-[2px]' : 'bg-black/80 backdrop-blur-sm'}`}>
           <div role="dialog" aria-modal="true" aria-labelledby="exit-draft-title" className={`w-full max-w-[320px] min-h-[248px] p-6 text-center flex items-center justify-center ${exitPromptBusy ? 'bg-transparent' : 'rounded-3xl bg-[#141414] border border-white/10 shadow-2xl animate-in zoom-in-95 duration-200'}`}>
             {exitPromptBusy ? (
-              <div className="flex flex-col items-center animate-in fade-in duration-300" aria-live="polite">
+              <div className="flex items-center justify-center animate-in fade-in duration-300" aria-live="polite">
                 <div className="draft-logo-stage" aria-label="ABAI">
                   <svg className="draft-logo-svg" viewBox="0 0 190 72" role="img" aria-hidden="true">
                     <circle className="draft-logo-seed" cx="10" cy="58" r="3.2" />
@@ -495,7 +495,6 @@ const App: React.FC = () => {
                     <circle className="draft-logo-i-dot" cx="164" cy="9" r="3.2" />
                   </svg>
                 </div>
-                <p className="mt-5 text-[11px] font-bold tracking-[0.28em] text-white/55">正在儲存草稿</p>
               </div>
             ) : (
               <div className="w-full animate-in fade-in duration-200">
