@@ -1067,26 +1067,25 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
     case 'wave': {
       // 波長跟高度綁定；只增加寬度時會加入完整波峰，而不是把既有波形拉扁。
       const amp = h * 0.42;
-      const count = Math.max(1, Math.round(w / Math.max(1, h * 2.4)));
+      const count = Math.max(1, Math.round(w / Math.max(1, h * 1.2)));
       const step = w / count;
-      let d = `M ${P(0, cy)}`;
+      let d = `M ${P(0, cy - amp)}`;
       for (let i = 0; i < count; i++) {
         const x = i * step;
-        d += ` C ${P(x + step * 0.125, cy - amp)} ${P(x + step * 0.375, cy - amp)} ${P(x + step * 0.5, cy)}`;
-        d += ` C ${P(x + step * 0.625, cy + amp)} ${P(x + step * 0.875, cy + amp)} ${P(x + step, cy)}`;
+        d += ` C ${P(x + step * 0.25, cy - amp)} ${P(x + step * 0.25, cy + amp)} ${P(x + step * 0.5, cy + amp)}`;
+        d += ` C ${P(x + step * 0.75, cy + amp)} ${P(x + step * 0.75, cy - amp)} ${P(x + step, cy - amp)}`;
       }
       return d;
     }
     case 'lightning-wave': {
       // 稜角波浪同樣以完整週期增減；每一個週期保持固定的閃電折角比例。
       const amp = h * 0.44;
-      const count = Math.max(1, Math.round(w / Math.max(1, h * 1.8)));
+      const count = Math.max(1, Math.round(w / Math.max(1, h * 0.9)));
       const step = w / count;
-      let d = `M ${P(0, cy)}`;
+      let d = `M ${P(0, cy - amp)}`;
       for (let i = 0; i < count; i++) {
         const x = i * step;
-        d += ` L ${P(x + step * 0.25, cy - amp)} L ${P(x + step * 0.5, cy)}`;
-        d += ` L ${P(x + step * 0.75, cy + amp)} L ${P(x + step, cy)}`;
+        d += ` L ${P(x + step * 0.5, cy + amp)} L ${P(x + step, cy - amp)}`;
       }
       return d;
     }
@@ -1923,7 +1922,7 @@ export const ShapeEditorPanel: React.FC<{
   layer: FloatingImage;
   onChange: (patch: Partial<FloatingImage>) => void;
 }> = ({ layer, onChange }) => {
-  const isLine = layer.shape === 'line';
+  const isLine = SPECIAL_LINE_KINDS.has(layer.shape || '');
   const hasOutline = !layer.shapeFilled || isLine;
   const canFeather = shapeSupportsFeather(layer.shape, layer.shapeFilled, layer.holeType);
   /* 顏色改成「點進去有一頁」（跟文字那一頁同一顆元件） */
@@ -1965,6 +1964,12 @@ export const ShapeEditorPanel: React.FC<{
               換圖形顏色時發光也一起換成同一個色 —— 發光本來就是圖形自己的光暈。
               反過來不成立：單獨挑發光的顏色時，圖形的顏色不會被動到。 */}
           {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c, shapeGlowColor: c }), true)}
+          {isLine && (
+            <div className="px-2">
+              {slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
+                v => onChange({ shapeLineW: v / 10 }))}
+            </div>
+          )}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
           <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
@@ -1993,7 +1998,7 @@ export const ShapeEditorPanel: React.FC<{
           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
               （跟「背景紋理」那一格同一種排法）。顏色常駐，關著也能先挑好。
               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-          {(() => {
+          {!isLine && (() => {
             const tex = texOf({ tex: layer.shapeTex, dots: layer.shapeDots });
             return (
           <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3 w-full">
@@ -2089,13 +2094,10 @@ export const ShapeEditorPanel: React.FC<{
             </div>
           )}
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
-          {hasOutline && (
+          {hasOutline && (!isLine || layer.shape === 'line') && (
             <div className="order-5 flex flex-col gap-3.5">
-              {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
-              {slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
+              {!isLine && slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
                 v => onChange({ shapeLineW: v / 10 }))}
-              {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
-                  所以線越粗、虛線的節奏就跟著等比例放大 */}
               {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
             </div>
           )}
