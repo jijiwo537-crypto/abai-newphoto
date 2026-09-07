@@ -2834,6 +2834,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           d0: Math.max(1, Math.hypot(pts2[0].clientX - pts2[1].clientX, pts2[0].clientY - pts2[1].clientY)),
           a0: Math.atan2(pts2[1].clientY - pts2[0].clientY, pts2[1].clientX - pts2[0].clientX) * 180 / Math.PI,
           w0: oo.w, h0: oo.h, size0: oo.size || 0, rot0: oo.rot || 0,
+          textureBaseW0: (oo as any).textureBaseW || oo.w,
+          textureBaseH0: (oo as any).textureBaseH || oo.h,
           rotOn: false, rotBias: 0,   // 旋轉的不動區：超過門檻才開始轉
           cx0: oo.x + oo.w / 2, cy0: oo.y + oo.h / 2,
           /* 已經進到「選中形狀」的話，兩指捏的是**圖片在形狀裡的大小**，
@@ -3190,6 +3192,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         setGuides(sres.guides);
         setObjects(prev => prev.map(o => o.id === pin.id
           ? { ...o, w: nw, h: nh, size: pin.size0 ? pin.size0 * k : o.size,
+              /* 整体缩放时纹理与图形一起缩放，网格数量保持不变；
+                 四边挤压走另一条路径，不会改这两个基准。 */
+              textureBaseW: pin.textureBaseW0 * k,
+              textureBaseH: pin.textureBaseH0 * k,
               x: sres.x, y: sres.y, rot: nrot }
           : o));
       });
