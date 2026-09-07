@@ -24,6 +24,7 @@ export const getHoleNumber = (h: any) => {
 export const GLYPH_HOLES: Record<string, string> = {
   flower:   '❋',   // ❋ 原本就有
   snow:     '\u2744\uFE0E',   // ❄︎ 雪花（後面那個字是「用文字樣式畫」，不要變成彩色 emoji）
+  burst:    '\u2733\uFE0E',   // ✳︎ 八角星芒（固定文字樣式，避免彩色 emoji）
   vortex:   '🌀',   // 🌀 原本就有
   seagrass: '𓇼',   // 𓇼 海草
   darkstar: '𖤐',   // 𖤐 暗星
