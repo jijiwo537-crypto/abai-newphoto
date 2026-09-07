@@ -4318,8 +4318,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   // 四边挤压期间不能逐帧取整：取整点会让本应固定的对边在两个实体像素间跳。
   // 放手后再恢复像素对齐，静止画面仍保持锐利。
   const stretching = !!stretchStart.current;
-  const boxW = stretching ? image.width * image.scale : snapPx2(image.width * image.scale);
-  const boxH = stretching ? image.height * image.scale : snapPx2(image.height * image.scale);
+  /* 互動中絕不能逐幀跨越實體像素取整點：縮放、旋轉或拖曳時若每一格都
+     Math.round，物件中心會在相鄰像素間跳。手勢期間保留連續幾何，放手後才
+     一次吸回實體像素格，兼顧操作穩定與靜止清晰度。 */
+  const liveGeometry = stretching || isScaling || isDragging || hideChrome;
+  const boxW = liveGeometry ? image.width * image.scale : snapPx2(image.width * image.scale);
+  const boxH = liveGeometry ? image.height * image.scale : snapPx2(image.height * image.scale);
   const renderScale = Math.max(
     boxW / Math.max(1, image.width),
     boxH / Math.max(1, image.height),
@@ -4934,8 +4938,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const w = boxW;
       const h = boxH;
       return {
-        left: `${stretching ? cx - w / 2 : snapPx(cx - w / 2)}px`,
-        top: `${stretching ? cy - h / 2 : snapPx(cy - h / 2)}px`,
+        left: `${liveGeometry ? cx - w / 2 : snapPx(cx - w / 2)}px`,
+        top: `${liveGeometry ? cy - h / 2 : snapPx(cy - h / 2)}px`,
         width: `${w}px`,
         height: `${h}px`,
       };
@@ -4974,8 +4978,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const h = boxH;
     return {
       position: 'absolute',
-      left: `${stretching ? cx - w / 2 : snapPx(cx - w / 2)}px`,
-      top: `${stretching ? cy - h / 2 : snapPx(cy - h / 2)}px`,
+      left: `${liveGeometry ? cx - w / 2 : snapPx(cx - w / 2)}px`,
+      top: `${liveGeometry ? cy - h / 2 : snapPx(cy - h / 2)}px`,
       width: `${w}px`, height: `${h}px`,
       transformOrigin: 'center center',
       transform: (dragShift || (image.rotation % 360) !== 0)
@@ -5116,7 +5120,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         畫面上就會留下已經取消選取的框與圓球。 */}
     {(() => {
       // 對齊線亮起來時，選取框與四角圓球也一起讓位（跟工具列同一個理由）
-      const showChrome = isSelected && !hideChrome && !isDragging && !hasActiveGuidelines;
+      const showChrome = isSelected && !hideChrome && !isDragging && !isScaling && !hasActiveGuidelines;
       /* ── 縮放時陰影會留下殘影，但**不能**用 overflow:hidden 解 ──────────
          問題本身：白色選取框帶一圈 4px 的深色外陰影、四顆圓球也各帶一圈，
          那些都畫在「框的外面」。框在縮放時每一格都在縮，瀏覽器算要重畫哪一塊
@@ -5236,7 +5240,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               d={d} fill="none" stroke="#ffffff"
               /* 線寬與虛線節奏跟創意拼圖那條一致；除掉預覽倍率與物件縮放，
                  放大之後線才不會跟著變粗。viewBox 的單位＝未縮放的內容單位。 */
-              strokeWidth={r3(1.6 / (kNow * (image.scale || 1)))}
+              strokeWidth={r3(1.05 / (kNow * (image.scale || 1)))}
               vectorEffect="none"
             />
           </svg>
@@ -5274,7 +5278,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             <rect
               x="0" y="0" width="100%" height="100%"
               fill="none" stroke="#ffffff"
-              strokeWidth={r3((image.sym ? 0.8 : image.shape === 'line' ? 0.8 : 1.6) / kNow)}
+              strokeWidth={r3((image.sym ? 0.8 : image.shape === 'line' ? 0.55 : image.shape ? 1.05 : 1.6) / kNow)}
             />
           </svg>
         )}
@@ -12506,7 +12510,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         chromeLayer={chromeLayer}
                         touchMode="none"
                         hideToolbar={pinchFloatingId === fImg.id || (selectionDragging && selectedFloatingId === fImg.id)}
-                        hideChrome={(tuningEdge || selectionDragging) && selectedFloatingId === fImg.id}
+                        hideChrome={(tuningEdge || selectionDragging || pinchFloatingId === fImg.id) && selectedFloatingId === fImg.id}
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}
                         lutRevision={lutRevision}
