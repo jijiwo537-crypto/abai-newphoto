@@ -6364,14 +6364,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       {saveState !== 'success' && (
       <header className="h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-[100] bg-black/90 backdrop-blur-md">
         <button
-          onClick={(e) => { e.stopPropagation(); requestLeaveToHome(); }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (composeState) setComposeState(null);
+            else requestLeaveToHome();
+          }}
+          aria-label={composeState ? '退出構圖並放棄變更' : '返回主頁'}
           className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"
-          title="繼續編輯"
+          title={composeState ? '返回圖片編輯' : '返回主頁'}
         >
           <ChevronLeft size={22} />
         </button>
 
-        {imageState && (
+        {imageState && !composeState && (
           <div className="flex items-center gap-2">
             {/* 畫筆／橡皮擦：創意拼圖獨有，留在外面 */}
             <button

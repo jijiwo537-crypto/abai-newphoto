@@ -12335,12 +12335,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {/* Top Header */}
       <header className="h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-50 bg-black/90 backdrop-blur-md">
         <button
-          onClick={handleLeave}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (composeState) setComposeState(null);
+            else handleLeave();
+          }}
+          aria-label={composeState ? '退出構圖並放棄變更' : '返回主頁'}
           className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"
         >
             <ChevronLeft size={22} />
           </button>
           
+          {!composeState && (
           <div className="flex items-center gap-2">
             <button 
               onClick={(e) => { e.stopPropagation(); undo(); }} 
@@ -12433,6 +12439,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               </button>
             )}
           </div>
+          )}
         </header>
 
       {/* Hidden File Inputs */}
