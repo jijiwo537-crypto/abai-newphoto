@@ -800,10 +800,11 @@ const SHAPE_TOOLS: [string, string, string, number, number, number][] = [
 /** 描邊／發光點進去之後的子工具：粗細用滑桿、顏色用色票 */
 const SHAPE_SUB_TOOLS: Record<string, [string, string, string, number, number, number][]> = {
   stroke: [
-    ['imgStrokeWidth', '粗細', 'line_weight', 0, 20, 0],
+    ['imgStrokeWidth', '粗細', 'line_weight', 0, 100, 0],
     /* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
        所以線越粗、虛線的節奏就跟著等比例放大，不會粗線配細碎的點。 */
     ['imgStrokeDash', '虛線', 'line_style', 0, 100, 0],
+    ['imgStrokeGap', '間距', 'space_bar', 0, 100, 0],
     ['imgStrokeColor', '顏色', 'palette', 0, 0, 0],
   ],
   glow: [
@@ -2350,12 +2351,14 @@ const sliderArea = (() => {
       // 描邊色跟發光色用同一組色票
       if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, SOFT_COLORS, c => set({ imgStrokeColor: c }), true);
       if (subTool[0] === 'imgGlowColor') return swatchStrip(img.imgGlowColor, GLOW_COLORS, c => set({ imgGlowColor: c }), true);
-      const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow' | 'imgStrokeDash';
+      const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow' | 'imgStrokeDash' | 'imgStrokeGap';
       // 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來。
       // 羽化的「範圍」是佔短邊的百分比，只有 50 段太粗，改成 0.5 一格。
+      const preciseStroke = k === 'imgStrokeWidth' || k === 'imgStrokeGap';
       return editorSlider(
-        subTool[1], (img[k] as number) || 0, subTool[3], subTool[4],
-        v => set({ [k]: v }), undefined, true,
+        subTool[1], preciseStroke ? (((img[k] as number) || 0) * 10) : ((img[k] as number) || 0),
+        subTool[3], subTool[4],
+        v => set({ [k]: preciseStroke ? v / 10 : v }), undefined, true,
       );
     }
     // 形狀那一頁沒有滑桿，上面那一段就留白
@@ -3565,6 +3568,8 @@ interface FloatingImage {
   imgStrokeColor?: string;
   /** 描邊的虛線長度（0＝實線，1~100 是「一段有幾倍線寬」的比例） */
   imgStrokeDash?: number;
+  /** 描邊與圖片輪廓之間的距離 px（未縮放），介面以 0～100 對應 0～10。 */
+  imgStrokeGap?: number;
   /** 構圖（裁切／旋轉／翻轉）：baked 之前的原圖與參數，重開構圖時從這裡接續 */
   origSrc?: string;
   geo?: GeoParams;
@@ -4090,7 +4095,7 @@ const VideoLayer: React.FC<{
   const deco = useMemo(
     () => videoDeco(image, boxW, boxH, Math.min(2, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [boxW, boxH, image.imgStrokeWidth, image.imgStrokeColor, image.imgStrokeDash,
+    [boxW, boxH, image.imgStrokeWidth, image.imgStrokeColor, image.imgStrokeDash, image.imgStrokeGap,
       image.imgGlow, image.imgGlowColor, image.imgRadius, image.feather, image.imgShape,
       image.scale, image.width, image.height],
   );
@@ -4699,8 +4704,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const ih = Math.max(1, Math.round(boxH * dpr));
       // 描邊是往外長的，所以形狀那一張要比框大 lw 一圈
       const lw = (image.imgStrokeWidth || 0) * image.scale * dpr;
-      const sw = iw + lw * 2;
-      const sh = ih + lw * 2;
+      const strokeGap = (image.imgStrokeGap || 0) * image.scale * dpr;
+      const strokeExtent = lw + strokeGap;
+      const sw = iw + strokeExtent * 2;
+      const sh = ih + strokeExtent * 2;
       const ox = (W - sw) / 2;
       const oy = (H - sh) / 2;
 
@@ -4715,19 +4722,19 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         const oc = off.getContext('2d');
         if (!oc) return;
         // 圖片畫在中間，四周留給描邊
-        drawImgBase(oc, base, lw, lw, iw, ih, image);
+        drawImgBase(oc, base, strokeExtent, strokeExtent, iw, ih, image);
         if (image.feather || image.imgRadius || isImgShaped(kind)) {
           oc.globalCompositeOperation = 'destination-in';
           if (image.feather) {
             // 有羽化才需要那張模糊過的遮罩；邊本來就是糊的，縮放貼回來看不出差別
             const m = previewMask(boxW / boxH, image.imgRadius || 0, image.feather, kind);
-            oc.drawImage(m, lw, lw, iw, ih);
+            oc.drawImage(m, strokeExtent, strokeExtent, iw, ih);
           } else {
             /* 只有圓角、沒有羽化：以前也走那張 400px 的遮罩再拉大，
                硬邊被放大就變成階梯狀的鋸齒。改成直接在這張畫布上填路徑 ——
                原生解析度、瀏覽器自己抗鋸齒，邊緣才會乾淨。 */
             const R = cornerR(image.imgRadius || 0, iw, ih);
-            withImgOutline(oc, lw, lw, iw, ih, kind, R, R, p => {
+            withImgOutline(oc, strokeExtent, strokeExtent, iw, ih, kind, R, R, p => {
               oc.fillStyle = '#fff';
               p ? oc.fill(p) : oc.fill();
             });
@@ -4738,8 +4745,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         // 圖片沒有圓角就描成直角（miter），不要自己多加一個圓角出來。
         if (lw > 0) {
           const rp = image.imgRadius || 0;
-          const sr = rp ? cornerR(rp, iw, ih) + lw / 2 : 0;
-          withImgOutline(oc, lw / 2, lw / 2, iw + lw, ih + lw, kind, sr, sr, p => {
+          const sr = rp ? cornerR(rp, iw, ih) + strokeGap + lw / 2 : 0;
+          withImgOutline(oc, lw / 2, lw / 2, iw + strokeGap * 2 + lw, ih + strokeGap * 2 + lw, kind, sr, sr, p => {
           oc.lineWidth = lw;
           oc.lineJoin = 'miter';
           oc.miterLimit = 4;
@@ -4816,7 +4823,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     return () => img.removeEventListener('load', draw);
   }, [
     needsShapeCanvas, image.src, image.feather, image.imgRadius,
-    image.imgGlow, image.imgGlowColor, image.imgStrokeWidth, image.imgStrokeColor, image.imgStrokeDash,
+    image.imgGlow, image.imgGlowColor, image.imgStrokeWidth, image.imgStrokeColor, image.imgStrokeDash, image.imgStrokeGap,
     image.scale, boxW, boxH, glowPad,
     image.fx, lutRevision,
     image.imgShape, image.imgShapeX, image.imgShapeY, image.imgShapeZoom,
@@ -11399,9 +11406,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const iw = Math.max(1, Math.round(fw * fImg.scale * q));
         const ih = Math.max(1, Math.round(fh * fImg.scale * q));
         const lw = strokeLw * fImg.scale * q;
-        const off = scratch('off', iw + lw * 2, ih + lw * 2);
+        const strokeGap = (fImg.imgStrokeGap || 0) * scaleFactor * fImg.scale * fImg.scale * q;
+        const strokeExtent = lw + strokeGap;
+        const off = scratch('off', iw + strokeExtent * 2, ih + strokeExtent * 2);
         const oc = get2dWide(off)!;
-        drawImgBase(oc, src, lw, lw, iw, ih, fImg);
+        drawImgBase(oc, src, strokeExtent, strokeExtent, iw, ih, fImg);
         if (fImg.imgRadius || fImg.feather || isImgShaped(kind)) {
           // 只把「圖片那一塊」裁形狀，描邊的區域不能被裁掉
           const shapeOnly = scratch('shapeOnly', iw, ih);
@@ -11429,12 +11438,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           }
           sc.globalCompositeOperation = 'source-over';
           oc.clearRect(0, 0, off.width, off.height);
-          oc.drawImage(shapeOnly, lw, lw, iw, ih);
+          oc.drawImage(shapeOnly, strokeExtent, strokeExtent, iw, ih);
         }
         if (lw > 0) {
           const rp = fImg.imgRadius || 0;
-          const sr = rp ? cornerR(rp, iw, ih) + lw / 2 : 0;
-          withImgOutline(oc, lw / 2, lw / 2, iw + lw, ih + lw, kind, sr, sr, p => {
+          const sr = rp ? cornerR(rp, iw, ih) + strokeGap + lw / 2 : 0;
+          withImgOutline(oc, lw / 2, lw / 2, iw + strokeGap * 2 + lw, ih + strokeGap * 2 + lw, kind, sr, sr, p => {
           oc.lineWidth = lw;
           oc.lineJoin = 'miter';
           oc.miterLimit = 4;
@@ -11454,8 +11463,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           });
         }
         src = off;
-        drawW = fw + strokeLw * 2;
-        drawH = fh + strokeLw * 2;
+        const exportGap = (fImg.imgStrokeGap || 0) * scaleFactor;
+        drawW = fw + (strokeLw + exportGap) * 2;
+        drawH = fh + (strokeLw + exportGap) * 2;
       }
 
       // 發光：跟預覽同一支（文字那三層的濃淡），形狀取自已經裁好的那一張。
