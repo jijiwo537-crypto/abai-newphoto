@@ -1064,6 +1064,32 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
       // 尾巴接在本體左下（115°～137°）—— 接口窄、尖端更靠左，斜得比較明顯
       return `M ${E(0)} ${A(115, 0)} L ${P(w * 0.04, h)} L ${E(137)} ${A(360, 1)} Z`;
     }
+    case 'wave': {
+      // 波長跟高度綁定；只增加寬度時會加入完整波峰，而不是把既有波形拉扁。
+      const amp = h * 0.42;
+      const count = Math.max(1, Math.round(w / Math.max(1, h * 2.4)));
+      const step = w / count;
+      let d = `M ${P(0, cy)}`;
+      for (let i = 0; i < count; i++) {
+        const x = i * step;
+        d += ` C ${P(x + step * 0.125, cy - amp)} ${P(x + step * 0.375, cy - amp)} ${P(x + step * 0.5, cy)}`;
+        d += ` C ${P(x + step * 0.625, cy + amp)} ${P(x + step * 0.875, cy + amp)} ${P(x + step, cy)}`;
+      }
+      return d;
+    }
+    case 'lightning-wave': {
+      // 稜角波浪同樣以完整週期增減；每一個週期保持固定的閃電折角比例。
+      const amp = h * 0.44;
+      const count = Math.max(1, Math.round(w / Math.max(1, h * 1.8)));
+      const step = w / count;
+      let d = `M ${P(0, cy)}`;
+      for (let i = 0; i < count; i++) {
+        const x = i * step;
+        d += ` L ${P(x + step * 0.25, cy - amp)} L ${P(x + step * 0.5, cy)}`;
+        d += ` L ${P(x + step * 0.75, cy + amp)} L ${P(x + step, cy)}`;
+      }
+      return d;
+    }
     case 'line':
       return `M ${P(0, cy)} L ${P(w, cy)}`;
     default:
@@ -1086,9 +1112,10 @@ export const shapeGlowBlurs = (w: number, h: number) =>
   [1, 2, 3].map(k => Math.max(w, h) * 0.045 * k);
 
 /** 新增圖形時的預設值。線條比較細長，所以粗細與大小另外給。 */
-export const SHAPE_DEFAULT_LINEW = (kind: string) => (kind === 'line' ? 4 : 6);
+export const SPECIAL_LINE_KINDS = new Set(['line', 'wave', 'lightning-wave']);
+export const SHAPE_DEFAULT_LINEW = (kind: string) => (SPECIAL_LINE_KINDS.has(kind) ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
-export const SHAPE_DEFAULT_RATIO = (kind: string) => (kind === 'line' ? 0.24 : 0.15);
+export const SHAPE_DEFAULT_RATIO = (kind: string) => (SPECIAL_LINE_KINDS.has(kind) ? 0.24 : 0.15);
 /** 新圖形的預設顏色。 */
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 
@@ -1103,6 +1130,7 @@ const STRETCH_OUTLINE_KINDS = new Set([
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if (!shape || shape === 'line') return false;
+  if (shape === 'wave' || shape === 'lightning-wave') return true;
   if (shape === 'hole') return false;
   return filled ? STRETCH_SOLID_KINDS.has(shape) : STRETCH_OUTLINE_KINDS.has(shape);
 };
@@ -1165,6 +1193,8 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'line-v', kind: 'line', filled: false, rot: 90, ratio: 0.08 },
   { id: 'line-d1', kind: 'line', filled: false, rot: -45, ratio: 0.08 },
   { id: 'line-d2', kind: 'line', filled: false, rot: 45, ratio: 0.08 },
+  { id: 'line-wave', kind: 'wave', filled: false, ratio: 0.34 },
+  { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, ratio: 0.34 },
 ];
 
 /**
@@ -1190,6 +1220,8 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   cloud: [0, 0, 1, 1],
   bubble: [0, 0, 1, 1],
   line: [0, 0.5, 1, 0],
+  wave: [0, 0.08, 1, 0.84],
+  'lightning-wave': [0, 0.06, 1, 0.88],
 };
 
 /** 個別圖案的加大倍率。星形是實心面積最少的一個，稍微放大一點才看得清楚。
@@ -14116,12 +14148,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       /* 邊框那排的順序跟實心那排對齊：第 6 顆窄菱形、第 9 顆愛心、
                          第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
                       const lineList = moveTo(moveTo(moveTo(
-                        [...ADD_SHAPE_ITEMS.filter(i => !i.filled && i.kind !== 'line'), HOLE_ITEM_CROSS_O],
+                        [...ADD_SHAPE_ITEMS.filter(i => !i.filled && !SPECIAL_LINE_KINDS.has(i.kind)), HOLE_ITEM_CROSS_O],
                         'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 11);
                       return ([
                         ['實心', solidList],
                         ['邊框', lineList],
-                        ['線條', ADD_SHAPE_ITEMS.filter(i => i.kind === 'line')],
+                        ['線條', ADD_SHAPE_ITEMS.filter(i => SPECIAL_LINE_KINDS.has(i.kind))],
                       ] as const);
                     })().map(([label, list]) => (
                       <div key={label} className="mb-3">
