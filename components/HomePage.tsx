@@ -403,12 +403,8 @@ export const HomePage: React.FC<HomePageProps> = ({
     finally { setDelBusy(false); }
   };
 
-  /** 從「我」切回來時要定位到哪裡（直接跳，不能用捲動動畫） */
-  const jumpRef = useRef<string | null>(null);
-  /* 點了分頁之後、平滑捲動還在跑的那段時間，鎖住亮的是哪一顆。
-     不鎖的話：點「模板」→ 馬上亮模板 → 捲動途中還沒過半屏，
-     捲動處理器算出來是「修圖」就把它蓋回去 → 到了才又變回模板，
-     看起來就是點一下閃一下。捲到目標（或使用者自己動了捲軸）就解鎖。 */
+  /* 程式定位分頁时先锁住高亮，避免 scroll 事件在同一帧仍用旧门槛
+     把刚点亮的分页覆盖回去；用户自己触碰滚动区就立即交还控制。 */
   const navLockRef = useRef<string | null>(null);
 
   /**
@@ -481,38 +477,31 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   /** 分頁列：首頁／靈感是同一條捲軸的兩個位置，「我」才是換頁 */
   const goNav = useCallback((id: string) => {
-    const fromMe = navRef.current === 'me';
-    if (fromMe) {
-      // 捲動區在「我」的時候是藏起來的，還停在離開時的位置。
-      // 這裡交給下面的 layout effect 在畫出來之前直接定位 ——
-      // 用 scrollTo 的話會看到它從下面滑上來。
-      jumpRef.current = id;
+    const sc = scrollRef.current;
+    if (id !== 'me' && sc) {
+      /* 先在仍隐藏的滚动页上完成定位，再切换页面。这样从「我的」返回时，
+         第一帧看到的就已经是正确内容，不会先露出两段之间的黑色底。
+         分页点击的职责是“跳到分段”，这里不用容易被 WebKit 中断的 smooth
+         scroll；同步写 scrollTop 才能保证每一次都确实到达。 */
+      navLockRef.current = id;
+      sc.scrollTop = id === 'lib' ? libScrollTop(sc) : 0;
+      applyRef.current();
     }
-    /* ref 要和 state 同步更新。React 的 state 會到下一次 render 才生效，
-       快速連點分頁時若仍讀到舊頁，就可能走錯「從我的返回」的分支。 */
     navRef.current = id;
     setNav(id);
-    if (id === 'me' || fromMe) return;
-    const sc = scrollRef.current;
-    if (!sc) return;
-    navLockRef.current = id;
-    sc.scrollTo({ top: id === 'lib' ? libScrollTop(sc) : 0, behavior: 'smooth' });
+    if (id === 'me' || !sc) return;
+
+    /* iOS 在切页同一帧可能更新安全区域／可视高度。下一帧以最终高度再算一次，
+       同时让 JS 视差与 scrollTop 保持同一帧；这个校正不可见，但能消除偶发偏位。 */
+    requestAnimationFrame(() => {
+      if (navRef.current !== id) return;
+      sc.scrollTop = id === 'lib' ? libScrollTop(sc) : 0;
+      applyRef.current();
+    });
   }, []);
 
-  /* 使用者自己碰捲軸就立刻解鎖 —— 平滑捲動被打斷時不能一直鎖著 */
+  /* 使用者自己碰捲軸就立刻解鎖 */
   const releaseNavLock = useCallback(() => { navLockRef.current = null; }, []);
-
-  /* 在瀏覽器畫出來之前就把位置設好，所以看不到任何位移 */
-  useLayoutEffect(() => {
-    const target = jumpRef.current;
-    if (target == null) return;
-    jumpRef.current = null;
-    const sc = scrollRef.current;
-    if (!sc) return;
-    sc.scrollTop = target === 'lib' ? libScrollTop(sc) : 0;
-    // 直接改了捲動位置，視差要立刻跟上（用 ref 取用，因為它在下面才定義）
-    applyRef.current();
-  }, [nav]);
 
   /** 捲到哪裡就亮哪一個分頁。
       主視覺不用在這裡動 —— 它現在就在捲動內容裡，瀏覽器自己會捲，
