@@ -633,14 +633,13 @@ export const HOLE_ITEMS_EXTRA: HoleShapeItem[] =
 /**
  * 圖形發光的強度換算。面板上是一根 0～100 的滑桿，畫的時候拿它去乘發光的半徑。
  *
- * 舊資料相容：以前發光只有開／關，經典拼圖存的是 true／false、創意拼圖存的是
- * 1／0。所以 true 與「剛好等於 1」都當成 100（滿），不然舊的草稿打開來
- * 會變成幾乎看不見的 1%。真的想要 1% 的人看到的跟 0% 也沒有差別。
+ * 舊資料相容：以前經典拼圖以 true／false 儲存開關，因此 boolean true 仍代表滿格。
+ * 數字一律視為現在滑桿的 0～100；尤其數字 1 必須保持 1%，不能跳成 100%。
  */
 export const glowAmount = (g: number | boolean | undefined): number => {
   if (g === true) return 1;
   if (!g) return 0;
   const v = Number(g);
   if (!isFinite(v) || v <= 0) return 0;
-  return (v === 1 ? 100 : Math.min(100, v)) / 100;
+  return Math.min(100, v) / 100;
 };
