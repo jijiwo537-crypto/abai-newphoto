@@ -4578,6 +4578,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              線寬的單位跟上面的圖形同一個 —— 拉大不會變粗。 */
           const ga = glowAmount(o.glow);
           ctx.translate(bw / 2, bh / 2);
+          const holeFeather = shapeSupportsFeather(o.kind, o.filled, o.hole)
+            ? shapeFeatherBlur(bw, bh, o.shapeFeather) : 0;
+          if (holeFeather > 0) ctx.filter = `blur(${holeFeather}px)`;
           drawHoleShape(ctx, {
             ...o,
             lineUnit: unit,
@@ -7510,7 +7513,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {(() => {
                             const tex = texOf(sel);
                             return (
-                          <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden">
+                          <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-1">
                             <div className="h-[47px] flex items-center justify-between px-3">
                               <span className="text-[10px] font-bold text-[#888]">紋理</span>
                               <div className="flex items-center gap-2">
@@ -7595,12 +7598,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           )}
                           {/* 粗細與虛線只有空心／線條才有，放在最後面 */}
                           {(!sel.filled || sel.kind === 'line') && (
-                            <>
+                            <div className="order-5 flex flex-col gap-3.5">
                               {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
                               {shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }))}
                               {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位） */}
                               {shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
-                            </>
+                            </div>
                           )}
                         </div>
                       </div>
