@@ -12498,9 +12498,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   const inset = gap / 2;
                                   const areaW = Math.max(1, lw - inset * 2);
                                   const areaH = Math.max(1, lh - inset * 2);
-Warning: truncated output (original token count: 9247)
-Total output lines: 500
-
                                   const leftPx = inset + rect.x * areaW;
                                   const rightPx = inset + (rect.x + rect.w) * areaW;
                                   const topPx = inset + rect.y * areaH;
@@ -12755,7 +12752,21 @@ Total output lines: 500
                                           const photoStyle: React.CSSProperties = {
                                             position: 'absolute',
                                             left: '50%',
-                              …247 tokens truncated…                                             url={cell.url}
+                                            top: '50%',
+                                            width: `${layoutW}px`,
+                                            height: `${layoutH}px`,
+                                            maxWidth: 'none',
+                                            maxHeight: 'none',
+                                            transformOrigin: 'center center',
+                                            transform: `translate(-50%, -50%) translate(${cell.offsetX * rawW + fixX}px, ${cell.offsetY * rawH + fixY}px) rotate(${cell.rotation}deg) scale(${cssScale})`,
+                                            transition: imageTransition,
+                                            opacity: 1,
+                                            pointerEvents: 'none',
+                                          };
+                                          return hasPhotoFx(cell.fx)
+                                            ? (
+                                              <CellFxImage
+                                                url={cell.url}
                                                 fx={cell.fx!}
                                                 style={photoStyle}
                                                 lutRevision={lutRevision}
