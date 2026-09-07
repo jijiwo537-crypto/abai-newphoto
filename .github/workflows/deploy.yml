@@ -27,7 +27,8 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      # package.json 目前比既有 lockfile 新；先讓 npm 同步依賴後再執行正式編譯。
+      - run: npm install --no-audit --no-fund
 
       # vite.config.ts 已經設成相對路徑，所以放在使用者名稱底下的子路徑也能正常載入
       #
