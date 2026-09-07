@@ -5262,8 +5262,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       }
 
       const family = image.fontFamily || DEFAULT_FONT;
-      const size = (image.fontSize || 40) * image.scale;
-      const spacing = (image.letterSpacing || 0) * image.scale;
+      const size = image.fontSize || 40;
+      const spacing = image.letterSpacing || 0;
+      /* Safari 會依每一個 font-size 重新 hint 字形、再各自取整 baseline。之前
+         捏合的每一幀都改 font-size，畫布中心雖然固定，真正的文字墨水中心卻
+         會在相鄰像素間跳；符號的複合字形尤其明顯。固定基礎字級與字形度量，
+         將連續倍率只套在 Canvas 矩陣上，與創意拼圖在固定主畫布裡變換物件
+         座標的結構相同，也不會觸發 DOM／字型引擎重新排版。 */
+      ctx.scale(image.scale, image.scale);
       ctx.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -5286,7 +5292,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         ctx.shadowColor = 'transparent';
       }
       if (image.strokeWidth) {
-        ctx.lineWidth = image.strokeWidth * 2 * image.scale;
+        // lineWidth 會跟著目前的 CTM 一起縮放，這裡維持基礎值即可。
+        ctx.lineWidth = image.strokeWidth * 2;
         ctx.lineJoin = 'round';
         ctx.strokeStyle = image.strokeColor || '#000000';
         lines.forEach((line, i) => ctx.strokeText(line, dx, startY + i * lineH + dy));
@@ -5295,7 +5302,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       ctx.restore();
     };
     draw();
-    if (image.text !== undefined) {
+    /* 字體完成後補畫只需要用在靜止狀態。手勢中每次 state 更新已經由上面的
+       layout effect 同步畫過；若每一幀又排一個 font promise + RAF，文字／符號
+       會比圖形多畫近一倍，在 iPhone 上掉幀後便像是仍在抖動。 */
+    if (image.text !== undefined && !gestureRendering) {
       waitForFont(image.fontFamily || DEFAULT_FONT, image.bold ? 700 : 400, !!image.italic)
         .then(() => { if (alive) raf = requestAnimationFrame(draw); });
     }
