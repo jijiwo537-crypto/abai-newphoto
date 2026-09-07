@@ -21,7 +21,7 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker,
-  shapePathD, shapeGlowBlurs, shapeFeatherBlur, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch,
+  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { normalizeImageFiles } from '../utils/imageLoader';
@@ -408,15 +408,15 @@ export const linkEase = (id: string) => (LINK_EASES.find(e => e.id === id) || LI
  * 所以放在第一顆，不用每次都往後找。離場用的是同一份清單，只是倒著跑。
  */
 export const IN_KINDS: { id: string; name: string }[] = [
-  { id: 'none', name: '直接出現' },
+  { id: 'none', name: '無' },
   { id: 'pop', name: '果凍' },
   { id: 'fade', name: '淡入' },
-  { id: 'rise', name: '由下升起' },
-  { id: 'drop', name: '由上落下' },
-  { id: 'spin', name: '轉著出現' },
+  { id: 'rise', name: '升起' },
+  { id: 'drop', name: '落下' },
+  { id: 'spin', name: '旋轉' },
   { id: 'flip', name: '翻轉' },
   // 這兩個是特別做的：一個會落地彈兩下，一個是從側邊甩進來再晃回正
-  { id: 'bounce', name: '彈跳落地' },
+  { id: 'bounce', name: '彈跳' },
   { id: 'spring', name: '流星' },
 ];
 
@@ -601,12 +601,12 @@ const glowIdleAmp = (
 /** 常駐動畫：進場之後、離場之前一直在動的那一層 */
 export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
-  { id: 'float', name: '上下飄' },
+  { id: 'float', name: '漂浮' },
   { id: 'sway', name: '左右晃' },
   { id: 'breathe', name: '縮放' },
   { id: 'spin', name: '旋轉' },
   { id: 'wobble', name: '搖擺' },
-  { id: 'orbit', name: '繞小圈' },
+  { id: 'orbit', name: '繞圈' },
   // 特別做的：高頻又不規則的細微抖動，像手持鏡頭
   { id: 'jitter', name: '抖動' },
 ];
@@ -4619,25 +4619,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.stroke(shapeP);
           ctx.restore();
         }
-        ctx.save();
-        const featherBlur = solid ? shapeFeatherBlur(bw, bh, o.shapeFeather) : 0;
-        if (featherBlur > 0) ctx.filter = `blur(${featherBlur}px)`;
-        if (solid) ctx.fill(shapeP); else ctx.stroke(shapeP);
-        /* 紋理：點點跟遮罩那邊完全同一套（同樣的 5~20 大小、40~140 間距、
-           同樣的交錯三角網格）；條紋是兩色相間。都剪裁在這個圖形裡面。 */
-        if (texOf(o) !== 'none') {
-          ctx.save();
-          ctx.clip(shapeP);
-          // 現在原點在框的左上角，紋理那支是以中心為原點，先搬過去
-          ctx.translate(bw / 2, bh / 2);
-          paintTex(ctx, bw, bh, bw, bh, {
-            ...o,
-            textureBaseW: ((o as any).textureBaseW || o.w) * s,
-            textureBaseH: ((o as any).textureBaseH || o.h) * s,
+        if (solid) {
+          drawFeatheredShapeBody(ctx, o.kind, bw, bh, o.shapeFeather, col, (tc, bodyPath) => {
+            if (texOf(o) === 'none') return;
+            tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
+            paintTex(tc, bw, bh, bw, bh, {
+              ...o,
+              textureBaseW: ((o as any).textureBaseW || o.w) * s,
+              textureBaseH: ((o as any).textureBaseH || o.h) * s,
+            });
+            tc.restore();
           });
-          ctx.restore();
-        }
-        ctx.restore();
+        } else ctx.stroke(shapeP);
         ctx.setLineDash([]);
         ctx.restore();
         }
@@ -5570,13 +5563,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         glowIdle === 'glitch' ? 0.9 : 1),
       /** 這一格的時間，畫布端要拿它算虛線描邊的動畫 */
       t,
-      /** 圖片／文字物件的發光亮度（各自一組設定） */
-      glowObj: (o: any) => {
-        const cfg = o.type === 'text' ? glowMoText : glowMoImg;
-        if (cfg.idle === 'none') return 1;
-        return glowIdleAmp(cfg.idle, t, (hashId(o.id) % 628) / 100, cfg.amp, cfg.speed / 100,
-          cfg.idle === 'glitch' ? 1.5 : 1);
-      },
+      /** 除了图案以外，图片、文字、符号与普通图形的发光都保持静止。 */
+      glowObj: (_o: any) => 1,
     };
   }, [moShape, moLink, hasLink, linkStart, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText]);
 
@@ -7176,7 +7164,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 </div>
                 {/* 紋理整組收在同一格：選項、顏色、兩根滑桿全部在同一個框裡
                     （跟經典拼圖那一頁排法一致）。 */}
-                <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-1">
+                <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3 w-full">
                   <div className="h-[47px] flex items-center justify-between px-3">
                     <span className="text-[10px] font-bold text-[#888]">紋理</span>
                     <div className="flex items-center gap-2">
@@ -7480,13 +7468,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-2">
                         {/* 底下留一段（跟經典拼圖的圖形編輯一樣的 pb-14）——
                             捲到最底時最後那一格不會貼著邊，也比較好按。 */}
-                        <div className="flex flex-col gap-3.5 pt-1 pb-14">
+                        <div className="flex flex-row flex-wrap gap-3.5 pt-1 pb-14">
                           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
                           {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c, glowColor: c }), true)}
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
                               不會有欄位突然冒出來閃一下。 */}
-                          <div className="flex items-center gap-3 px-2 order-2">
+                          <div className={`flex items-center gap-3 px-2 order-1 ${shapeSupportsFeather(sel.kind, sel.filled, sel.hole) ? 'w-[calc(50%-0.44rem)]' : 'w-full'}`}>
                             <div className="flex-1 min-w-0">
                               {shapeSlider('發光', Math.round(glowAmount(sel.glow) * 100), 0, 100,
                                 (v: number) => patch(v > 0 && !sel.glowInit
@@ -7498,7 +7486,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>
-                          <div className="flex items-center gap-3 px-2 order-3">
+                          <div className={`flex items-center gap-3 px-2 order-2 ${shapeSupportsFeather(sel.kind, sel.filled, sel.hole) ? 'w-[calc(50%-0.44rem)]' : 'w-full'}`}>
                             <div className="flex-1 min-w-0">
                               {shapeSlider('描邊', Math.round((sel.strokeW ?? 0) * 10), 0, 100,
                                 (v: number) => patch({ strokeW: v / 10 }))}
@@ -7591,7 +7579,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             );
                           })()}
                           {shapeSupportsFeather(sel.kind, sel.filled, sel.hole) && (
-                            <div className="px-2 order-4">
+                            <div className="px-2 order-4 w-full">
                               {shapeSlider('羽化', sel.shapeFeather || 0, 0, 100,
                                 (v: number) => patch({ shapeFeather: v }))}
                             </div>
