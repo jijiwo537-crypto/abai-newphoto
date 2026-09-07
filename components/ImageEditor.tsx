@@ -6278,6 +6278,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 進構圖之前待在哪一頁 —— 按完成之後回去那一頁，不要一律跳回濾鏡 */
   const beforeComposeRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
 
+  /** 左上返回与构图内的取消共用同一条“放弃草稿几何”路径。 */
+  const cancelCompose = useCallback(() => {
+    composePreviewRef.current = null;
+    setDraftGeo(null);
+    setActiveCategory(beforeComposeRef.current.cat);
+    setActiveToolId(beforeComposeRef.current.tool);
+  }, []);
+
   const isParamAdjusted = useCallback((id: string): boolean => {
     /* GLSL 特效：跟柔光／光暈同一套規則 —— 強度是 0 就整組都不亮白點，
        不管細項被動過沒有。細項本身則是「跟預設不同才算」，而且最小值不是 0 的
@@ -6667,13 +6675,22 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       {saveState !== 'success' && (
       <header className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl ${showExifPanel ? 'z-[60]' : 'z-20'}`}>
         <div className="w-20">
-            {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
-            <button onClick={requestLeave} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"><ChevronLeft size={22} /></button>
+            {/* 构图中的返回只退出构图并丢弃 draftGeo；其他分页才离开编辑器。 */}
+            <button
+              onClick={activeCategory === 'compose' ? cancelCompose : requestLeave}
+              aria-label={activeCategory === 'compose' ? '退出构图并放弃变更' : '返回'}
+              className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"
+            >
+              <ChevronLeft size={22} />
+            </button>
         </div>
+        {activeCategory !== 'compose' ? (
         <div className="flex items-center gap-4">
            <button onClick={undo} disabled={historyIndex <= 0} className={`p-2 transition-all ${historyIndex <= 0 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="undo" className="text-xl" /></button>
            <button onClick={redo} disabled={historyIndex >= history.length - 1} className={`p-2 transition-all ${historyIndex >= history.length - 1 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="redo" className="text-xl" /></button>
         </div>
+        ) : <div aria-hidden="true" />}
+        {activeCategory !== 'compose' ? (
         <div className="w-28 flex justify-end items-center gap-1">
             {/* 眼睛：進 IG 貼文預覽（跟拼圖那兩個工具同一顆元件） */}
             <button
@@ -6700,6 +6717,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             </button>
             <button onClick={handleSave} className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap">儲存</button>
         </div>
+        ) : <div className="w-28" aria-hidden="true" />}
       </header>
       )}
 
@@ -7525,12 +7543,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             image={composePreviewRef.current || originalImgRef.current!}
             geo={draftGeo}
             onChange={setDraftGeo}
-            onCancel={() => {
-              composePreviewRef.current = null;
-              setDraftGeo(null);
-              setActiveCategory(beforeComposeRef.current.cat);
-              setActiveToolId(beforeComposeRef.current.tool);
-            }}
+            onCancel={cancelCompose}
             onApply={() => {
               applyGeo(draftGeo);
               addToHistory(paramsRef.current, selectedLutIdx);
