@@ -2146,6 +2146,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       nextSize = 40;
     } else if (id === 'snow') {
       nextSize = 50;
+    } else if (id === 'burst') {
+      nextSize = 45;
     } else if (id === 'pic333') {
       // 橫的一長條，長邊當大小，所以要給大一點才看得清楚
       nextSize = 60;
