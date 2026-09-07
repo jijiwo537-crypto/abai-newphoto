@@ -7420,7 +7420,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                              第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
                           const lineList = moveTo(moveTo(moveTo(
                             [...ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && !SPECIAL_LINE_KINDS.has(i2.kind)), HOLE_ITEM_CROSS_O],
-                            'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 11);
+                            'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 13);
                           return ([
                             ['實心', solidList],
                             ['邊框', lineList],

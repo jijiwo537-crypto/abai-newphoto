@@ -804,7 +804,7 @@ const SHAPE_SUB_TOOLS: Record<string, [string, string, string, number, number, n
     /* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
        所以線越粗、虛線的節奏就跟著等比例放大，不會粗線配細碎的點。 */
     ['imgStrokeDash', '虛線', 'line_style', 0, 100, 0],
-    ['imgStrokeGap', '間距', 'space_bar', 0, 100, 0],
+    ['imgStrokeGap', '間距', 'open_in_full', 0, 100, 0],
     ['imgStrokeColor', '顏色', 'palette', 0, 0, 0],
   ],
   glow: [
@@ -1028,6 +1028,31 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
       }
       return poly(pts);
     }
+    case 'star8': {
+      const pts: [number, number][] = [];
+      for (let i = 0; i < 16; i++) {
+        const t = -Math.PI / 2 + (i / 16) * Math.PI * 2;
+        const k = i % 2 ? 0.46 : 1;
+        pts.push([cx + Math.cos(t) * a * k, cy + Math.sin(t) * b * k]);
+      }
+      return poly(pts);
+    }
+    case 'cloud-oval': {
+      // 十二個柔和圓瓣圍成封閉橢圓，沒有一般雲朵的平底。
+      const n = 12;
+      const valley = (t: number) => [cx + Math.cos(t) * a * 0.84, cy + Math.sin(t) * b * 0.78] as [number, number];
+      const peak = (t: number) => [cx + Math.cos(t) * a, cy + Math.sin(t) * b] as [number, number];
+      let d = '';
+      for (let i = 0; i < n; i++) {
+        const t = -Math.PI / 2 + (i / n) * Math.PI * 2;
+        const v0 = valley(t - Math.PI / n);
+        const pk = peak(t);
+        const v1 = valley(t + Math.PI / n);
+        d += i === 0 ? `M ${P(v0[0], v0[1])} Q ${P(pk[0], pk[1])} ${P(v1[0], v1[1])}`
+          : ` Q ${P(pk[0], pk[1])} ${P(v1[0], v1[1])}`;
+      }
+      return d + ' Z';
+    }
     case 'heart':
       return `M ${P(cx, cy - b * 0.25)} `
         + `C ${P(cx + a * 0.6, cy - b)} ${P(cx + a * 1.3, cy - b * 0.1)} ${P(cx, cy + b * 0.9)} `
@@ -1090,6 +1115,15 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
         d += ` L ${P(x + step * 0.5, cy + amp)} L ${P(x + step, cy - amp)}`;
       }
       return d;
+    }
+    case 'bubble-mirror': {
+      const bb = h * 0.80, bx = w / 2, by = bb / 2, ra = w / 2, rb = bb / 2;
+      const E = (t: number) => {
+        const rad = t * Math.PI / 180;
+        return P(w - (bx + ra * Math.cos(rad)), by + rb * Math.sin(rad));
+      };
+      const A = (t: number, large: 0 | 1) => `A ${r3(ra)} ${r3(rb)} 0 ${large} 0 ${E(t)}`;
+      return `M ${E(0)} ${A(115, 0)} L ${P(w * 0.96, h)} L ${E(137)} ${A(360, 1)} Z`;
     }
     case 'line':
       return `M ${P(0, cy)} L ${P(w, cy)}`;
@@ -1179,17 +1213,15 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'pentagon-o', kind: 'pentagon', filled: false },
   { id: 'hexagon-o', kind: 'hexagon', filled: false },
   { id: 'star-o', kind: 'star', filled: false },
+  { id: 'star8-o', kind: 'star8', filled: false },
+  { id: 'star8-oval-o', kind: 'star8', filled: false, ratio: 0.62 },
   { id: 'heart-o', kind: 'heart', filled: false },
-  /* 新增的八種邊框：四種常用比例的框、橢圓、窄菱形（＝實心第 6 顆的邊框版）、
-     雲朵、對話框。ratio 是「高 ÷ 寬」，所以 3:4 的框就是 4/3。 */
   { id: 'diamond-n-o', kind: 'diamond-n', filled: false },
   { id: 'ellipse-o', kind: 'ellipse', filled: false, ratio: 0.68 },
-  { id: 'rect34-o', kind: 'square', filled: false, ratio: 4 / 3 },
-  { id: 'rect23-o', kind: 'square', filled: false, ratio: 3 / 2 },
-  { id: 'rect45-o', kind: 'square', filled: false, ratio: 5 / 4 },
-  { id: 'rect916-o', kind: 'square', filled: false, ratio: 16 / 9 },
+  { id: 'cloud-oval-o', kind: 'cloud-oval', filled: false, ratio: 0.68 },
   { id: 'cloud-o', kind: 'cloud', filled: false, ratio: 0.62 },
   { id: 'bubble-o', kind: 'bubble', filled: false, ratio: 0.82 },
+  { id: 'bubble-mirror-o', kind: 'bubble-mirror', filled: false, ratio: 0.82 },
   // 線條
   { id: 'line-h', kind: 'line', filled: false, rot: 0, ratio: 0.08 },
   { id: 'line-v', kind: 'line', filled: false, rot: 90, ratio: 0.08 },
@@ -1221,6 +1253,9 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   ellipse: [0, 0, 1, 1],
   cloud: [0, 0, 1, 1],
   bubble: [0, 0, 1, 1],
+  'bubble-mirror': [0, 0, 1, 1],
+  star8: [0, 0, 1, 1],
+  'cloud-oval': [0, 0, 1, 1],
   line: [0, 0.5, 1, 0],
   wave: [0, 0.08, 1, 0.84],
   'lightning-wave': [0, 0.06, 1, 0.88],
@@ -14164,7 +14199,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                          第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
                       const lineList = moveTo(moveTo(moveTo(
                         [...ADD_SHAPE_ITEMS.filter(i => !i.filled && !SPECIAL_LINE_KINDS.has(i.kind)), HOLE_ITEM_CROSS_O],
-                        'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 11);
+                        'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 13);
                       return ([
                         ['實心', solidList],
                         ['邊框', lineList],
