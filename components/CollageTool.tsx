@@ -990,6 +990,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const objDragRef = useRef<any>(null);
   const [objDragging, setObjDragging] = useState(false);
   const objDraggingRef = useRef(false);
+  const [objStretching, setObjStretching] = useState(false);
   const objStretchRef = useRef<any>(null);
   /* ── 形狀的第二段選取 ────────────────────────────────────────────
      選中圖片之後**再點一次圖片**，才進到「選中形狀」：
@@ -2847,6 +2848,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     activePointers.current.clear();
     objStretchRef.current = { pointerId: e.pointerId, id: o.id, side, startX: e.clientX, startY: e.clientY,
       x: o.x, y: o.y, w: o.w, h: o.h, rot: (o.rot || 0) * Math.PI / 180, k: cssK };
+    setObjStretching(true);
     if (o.type === 'shape' && (!o.textureBaseW || !o.textureBaseH)) {
       setObjects(prev => prev.map(z => z.id === o.id ? { ...z, textureBaseW: o.w, textureBaseH: o.h } : z));
     }
@@ -2873,12 +2875,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const cx = oldCx - shift * Math.sin(d.rot), cy = oldCy + shift * Math.cos(d.rot);
       next = { w: d.w, h, x: cx - d.w / 2, y: cy - h / 2 };
     }
-    setObjects(prev => prev.map(o => o.id === d.id ? { ...o, ...next } : o));
+    // 高更新率觸控一個畫面幀可能送數筆事件；只提交該幀最後的位置，避免
+    // React 排隊重畫過期的中間尺寸而造成物件與固定邊來回抖動。
+    queueMove(() => setObjects(prev => prev.map(o => o.id === d.id ? { ...o, ...next } : o)));
   };
   const endObjStretch = (e: React.PointerEvent) => {
     if (objStretchRef.current?.pointerId !== e.pointerId) return;
     e.stopPropagation(); try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    flushMoveNow();
     objStretchRef.current = null;
+    setObjStretching(false);
   };
 
   /* ---- 預覽縮放 ------------------------------------------------------------
@@ -4624,11 +4630,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         (ctx as any).letterSpacing = '0px';
       }
       ctx.globalAlpha = 1;
-      if (isMain && !hideChromeRef.current && !objDragging && selectedObj === o.id && !guides.length && !tuningEdge) {
+      if (isMain && !hideChromeRef.current && !objDragging && !objPinching && !objStretching
+          && selectedObj === o.id && !guides.length && !tuningEdge) {
         // 所有选中框统一为实线；虚线只保留给内容本身的描边样式。
         ctx.strokeStyle = '#ffffff';
         // 符號的外框刻意比圖片／圖形再輕一階，避免細小符號被白框搶走焦點。
-        ctx.lineWidth = (o.type === 'shape' && o.kind === 'line' ? 0.375 : o.sym ? 0.5 : 0.75) * uiPx;
+        ctx.lineWidth = (o.type === 'shape' ? (o.kind === 'line' ? 0.32 : 0.55) : o.sym ? 0.5 : 0.75) * uiPx;
         // 專業修圖軟體常用的低擴散暗影：只負責把細白線從亮色內容中分離，不能像發光。
         ctx.shadowColor = 'rgba(0, 0, 0, 0.28)';
         ctx.shadowBlur = 3 * uiPx;
@@ -5059,7 +5066,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
   }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
-      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, shapeSel, editingTextId, guides, tuningEdge, objDragging, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
+      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
      離開創意拼圖時記一筆。key 用「這一次拼圖」的 id（從歷史紀錄點進來的話
@@ -6652,7 +6659,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
         {/* 構圖那一頁是全螢幕的，這排白色鍵不能浮在它上面 */}
         {/* 對齊線亮著、或正在拖形狀滑桿時，這排鍵也要一起讓開 */}
-        {imageState && selectedObj && !objDragging && !composeState && !guides.length && !tuningEdge && !objPinching && (() => {
+        {imageState && selectedObj && !objDragging && !objStretching && !composeState && !guides.length && !tuningEdge && !objPinching && (() => {
           const o = objects.find(z => z.id === selectedObj);
           const cvsEl = canvasRef.current;
           if (!o || !cvsEl) return null;
