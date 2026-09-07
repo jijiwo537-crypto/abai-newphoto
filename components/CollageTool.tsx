@@ -1350,8 +1350,26 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const L = cx - bw / 2, R = cx + bw / 2, T = cy - bh / 2, B = cy + bh / 2;
     const xs = [0, o.cw, ...seams.xs, ...others.xs];
     const ys = [0, o.ch, ...seams.ys, ...others.ys];
+    /* 底圖與遮罩各自的中心。以前只有「整張成品畫布」的中心會亮線，
+       左右／上下排版時，物件移到某一半的正中央完全沒有回饋。 */
+    const regionCenters = (() => {
+      const st = imageState;
+      if (!st) return { xs: [] as number[], ys: [] as number[] };
+      const md = maskDims(layout, st.baseW, st.baseH, maskScale);
+      const around = layout === AROUND;
+      const iw = around ? Math.max(1, md.mw - md.padX * 2) : st.baseW;
+      const ih = around ? Math.max(1, md.mh - md.padY * 2) : st.baseH;
+      return {
+        xs: [o.ix + iw / 2, o.mx + md.mw / 2],
+        ys: [o.iy + ih / 2, o.my + md.mh / 2],
+      };
+    })();
     if (!edgeOnly && Math.abs(cx - o.cw / 2) < EPS_C) out.push({ x: o.cw / 2 });
     if (!edgeOnly && Math.abs(cy - o.ch / 2) < EPS_C) out.push({ y: o.ch / 2 });
+    if (!edgeOnly) {
+      for (const v of regionCenters.xs) if (Math.abs(cx - v) < EPS_C) out.push({ x: v });
+      for (const v of regionCenters.ys) if (Math.abs(cy - v) < EPS_C) out.push({ y: v });
+    }
     for (const v of xs) {
       if (Math.abs(L - v) < EPS_E || Math.abs(R - v) < EPS_E) out.push({ x: v });
       else if (!edgeOnly && seams.xs.includes(v) && Math.abs(cx - v) < EPS_C) out.push({ x: v });
@@ -1368,7 +1386,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const k = (g.x !== undefined ? 'x' : 'y') + Math.round((g.x !== undefined ? g.x : g.y) * 10);
       if (seen.has(k)) return false; seen.add(k); return true;
     });
-  }, []);
+  }, [imageState, layout, maskScale]);
 
   /** 把位置吸附到畫布中線／邊界／遮罩交界，並回報要亮哪幾條線 */
   const snapToGuides = useCallback((x0: number, y0: number, w0: number, h0: number, rot = 0, edgeOnly = false, selfId?: string) => {
@@ -1397,6 +1415,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      *     下一格黏另一邊，看起來就是在抖。
      */
     const others = objLinesRef.current(selfId);
+    const regionCenters = (() => {
+      const st = imageState;
+      if (!st) return { xs: [] as number[], ys: [] as number[] };
+      const md = maskDims(layout, st.baseW, st.baseH, maskScale);
+      const around = layout === AROUND;
+      const iw = around ? Math.max(1, md.mw - md.padX * 2) : st.baseW;
+      const ih = around ? Math.max(1, md.mh - md.padY * 2) : st.baseH;
+      return {
+        xs: [offsG.ix + iw / 2, offsG.mx + md.mw / 2],
+        ys: [offsG.iy + ih / 2, offsG.my + md.mh / 2],
+      };
+    })();
     /* centreOnly：只跟「我的中心」配對的線（其他物件的中心）。
        邊緣碰到別人的中心不算對齊，跟畫布中線是同一條規則。 */
     const axis = (c0: number, half: number, centre: number, edges: number[], seamList: number[], centreOnly: number[] = []) => {
@@ -1416,10 +1446,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     /* 畫布的邊界／中線／交界，再加上「其他物件的邊緣」——
        所以圖片跟圖片、圖片跟文字之間也吸得到、也會亮線。 */
-    cx += axis(cx, bw / 2, offsG.cw / 2, [0, offsG.cw, ...others.xs], seams.xs);
-    cy += axis(cy, bh / 2, offsG.ch / 2, [0, offsG.ch, ...others.ys], seams.ys);
+    cx += axis(cx, bw / 2, offsG.cw / 2, [0, offsG.cw, ...others.xs], seams.xs, regionCenters.xs);
+    cy += axis(cy, bh / 2, offsG.ch / 2, [0, offsG.ch, ...others.ys], seams.ys, regionCenters.ys);
     return { x: cx - w0 / 2, y: cy - h0 / 2, guides: linesAt(cx, cy, bw, bh, edgeOnly, selfId) };
-  }, [linesAt]);
+  }, [linesAt, imageState, layout, maskScale]);
 
   /**
    * 兩指縮放時把「倍率」也吸一下：找一個倍率讓外接框的某一邊剛好落在
