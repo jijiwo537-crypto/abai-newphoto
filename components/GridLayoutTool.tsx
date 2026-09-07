@@ -5173,7 +5173,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         left: boxW * frameInk[0] - framePad.x - starTopGap,
         top: boxH * frameInk[1] - framePad.y - starTopGap,
         width: boxW * frameInk[2] + framePad.x * 2 + starTopGap * 2,
-        height: Math.max(1, boxH * frameInk[3]) + framePad.y * 2 + starTopGap * 2,
+        // 線條高度為 0；多補的 1px 只會長在框下側，視覺上反而不置中。
+        height: (image.shape === 'line' ? 0 : Math.max(1, boxH * frameInk[3])) + framePad.y * 2 + starTopGap * 2,
       } : {
         left: -framePad.x - starTopGap - symbolGap,
         top: -framePad.y - starTopGap - symbolGap,
@@ -5228,7 +5229,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             className="absolute inset-0 pointer-events-none z-30"
             viewBox={`${r3(t.b.x - t.tx)} ${r3(t.b.y - t.ty)} ${r3(t.b.s)} ${r3(t.b.s)}`}
             preserveAspectRatio="none"
-            style={{ overflow: 'visible', filter: 'drop-shadow(0 0.5px 1.5px rgba(0,0,0,0.48))' }}
+            style={{ overflow: 'visible', filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.28))' }}
             aria-hidden
           >
             <path
@@ -5266,7 +5267,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               left: frameRect.left, top: frameRect.top,
               width: frameRect.width, height: frameRect.height,
               overflow: 'visible',
-              filter: 'drop-shadow(0 0.5px 1.5px rgba(0,0,0,0.48))',
+              filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.28))',
             }}
             aria-hidden
           >
@@ -5454,7 +5455,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             const tex = texOf({ tex: image.shapeTex, dots: image.shapeDots }) as 'dot' | 'star' | 'heart';
             const baseW = image.shapeTextureBaseW || image.width;
             const baseH = image.shapeTextureBaseH || image.height;
-            const sx = image.width / Math.max(1, baseW), sy = image.height / Math.max(1, baseH);
             const { r, dx, dy, color } = shapeDotGrid(baseW, baseH, image);
             const id = `sgrid-${tex}-${image.id}`;
             const glyphs: [number, number][] = [[0, 0], [dx, 0], [0, dy * 2], [dx, dy * 2], [dx / 2, dy]];
@@ -5463,12 +5463,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 <defs>
                   <pattern
                     id={id} patternUnits="userSpaceOnUse"
-                    width={r3(dx * sx)} height={r3(dy * 2 * sy)}
+                    width={r3(dx)} height={r3(dy * 2)}
                     patternTransform={`translate(${r3(image.width / 2)} ${r3(image.height / 2)})`}
                   >
                     {glyphs.map(([cx, cy], i) => tex === 'dot'
-                      ? <ellipse key={i} cx={r3(cx * sx)} cy={r3(cy * sy)} rx={r3(r * sx)} ry={r3(r * sy)} fill={color} />
-                      : <g key={i} transform={`translate(${r3(cx * sx)} ${r3(cy * sy)}) scale(${r3(sx)} ${r3(sy)})`}>
+                      ? <circle key={i} cx={r3(cx)} cy={r3(cy)} r={r3(r)} fill={color} />
+                      : <g key={i} transform={`translate(${r3(cx)} ${r3(cy)})`}>
                           <path d={textureGlyphD(tex, 0, 0, r)} fill={color} />
                         </g>)}
                   </pattern>
@@ -12253,7 +12253,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         {/* Thin solid outline on top of the image */}
                                         {isSelected && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (
                                           <div 
-                                            className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/90 shadow-[0_0_4px_rgba(0,0,0,0.3)]"
+                                            className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/90 shadow-[0_0_3px_rgba(0,0,0,0.28)]"
                                             style={{
                                               borderRadius: `${radius}px`,
                                               transform: 'translateZ(0)',
