@@ -1434,15 +1434,11 @@ export const SymbolPicker: React.FC<{
 );
 
 /**
- * 空格提示是操作介面，不是照片内容：它必须维持固定的萤幕尺寸。
+ * 空格提示是操作介面，透过萤幕坐标层避免跟着 Canvas 重取样而抖动。
  *
- * 旧版把文字与加号画进一张 Canvas，再让 Canvas 跟着布局／预览缩放。
- * 每一个缩放倍率都会重新取样整张位图，细线与中文字的抗锯齿像素会在
- * 相邻像素间来回切换；几何中心虽然没变，肉眼看到的就是加号和文字抖动。
- *
- * 现在改成独立的萤幕坐标操作层：布局中的透明锚点只负责提供每格中心，实际
- * 提示透过 portal 画在缩放树之外。布局或整张预览怎么缩放都只更新中心坐标，
- * 字形与加号本身从不重画、不缩放，因此不会再发生抗锯齿像素来回跳动。
+ * 正常尺寸时维持清楚、稳定的萤幕字号；但格子缩得比提示本身还小时，整组提示
+ * 会依格子的萤幕尺寸等比缩小，确保不会压过其他物件或越出小格。提示层位于
+ * 自由物件之下，所以后来加入的照片、文字、图形与符号会正确盖住它。
  */
 const LayoutEmptyPromptLayer: React.FC<{
   cells: { x: number; y: number; w: number; h: number }[];
@@ -1467,8 +1463,11 @@ const LayoutEmptyPromptLayer: React.FC<{
       const prompt = prompts[idx];
       if (!prompt) return;
       const r = point.getBoundingClientRect();
+      /* 76×44 是提示的自然尺寸；为四周各留约 8px，再依格子的实际萤幕
+         大小缩小。只改合成层 transform，不触发布局与字体重排。 */
+      const promptScale = Math.max(0.18, Math.min(1, r.width / 92, r.height / 60));
       prompt.style.transform =
-        `translate3d(${r.left + r.width / 2 - vr.left}px, ${r.top + r.height / 2 - vr.top}px, 0) translate(-50%, -50%)`;
+        `translate3d(${r.left + r.width / 2 - vr.left}px, ${r.top + r.height / 2 - vr.top}px, 0) translate(-50%, -50%) scale(${promptScale})`;
       prompt.style.visibility = r.right > vr.left && r.left < vr.right && r.bottom > vr.top && r.top < vr.bottom
         ? 'visible'
         : 'hidden';
@@ -1515,14 +1514,14 @@ const LayoutEmptyPromptLayer: React.FC<{
           ref={overlayRef}
           data-layout-empty-prompt-overlay="1"
           aria-hidden
-          className="fixed overflow-hidden pointer-events-none z-[45]"
+          className="fixed overflow-hidden pointer-events-none z-[10]"
         >
           {cells.map((_, idx) => (
             <div
               key={idx}
               data-layout-empty-prompt="1"
               className="absolute w-[76px] h-[44px] text-white/20"
-              style={{ backfaceVisibility: 'hidden', willChange: 'transform' }}
+              style={{ backfaceVisibility: 'hidden', willChange: 'transform', transformOrigin: 'center center' }}
             >
               <svg
                 width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden
@@ -4303,7 +4302,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      起手的物件节点。局部 isDragging/isScaling 若因此卡住，外框和药丸就永远
      过不了显示条件。和创意拼图一样加全域兜底；延后一格让正常的局部收尾先跑。 */
   useEffect(() => {
-    if (!isDragging && !isScaling) return;
+    /* 监听器必须在手势开始前就存在。若等 isDragging/isScaling render 后才挂，
+       极快的按下／放开可能已错过 pointerup，选中框便会一直隐藏。 */
     let timer = 0;
     const finish = () => {
       window.clearTimeout(timer);
@@ -4333,7 +4333,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       window.removeEventListener('blur', finish);
       document.removeEventListener('visibilitychange', finishVisibility);
     };
-  }, [isDragging, isScaling]);
+  }, []);
 
   /** 畫布縮放倍率；沒傳就是 1（＝跟以前一模一樣） */
   const canvasK = () => (canvasKRef?.current || 1);
@@ -10901,6 +10901,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         setActiveGuidelines([]);
         setActiveCollisions({ left: false, right: false, top: false, bottom: false });
         wsGestureRef.current = null;
+        layoutGestureRef.current = null;
+        layoutGestureIdRef.current = null;
+        wsGestureLayoutIdRef.current = null;
+        layoutCornerRef.current = null;
+        pointerState.current.isDraggingContent = false;
+        pointerState.current.pointerId = -1;
         panRef.current = null;
         panMovedRef.current = false;
         if (canvasZoomRef.current) {
@@ -10912,6 +10918,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     };
     const finishTouch = (e: TouchEvent) => { if (e.touches.length === 0) restoreChrome(); };
     const finishVisibility = () => { if (document.visibilityState !== 'visible') restoreChrome(); };
+    /* Pointer Events 与 Touch Events 在不同 iOS／WebView 版本不一定同时送达。
+       记录仍按着的 pointer，最后一根离开时才恢复，避免双指缩放先放开一根就闪框。 */
+    const activePointers = new Set<number>();
+    const pointerDown = (e: PointerEvent) => { activePointers.add(e.pointerId); };
+    const pointerFinish = (e: PointerEvent) => {
+      activePointers.delete(e.pointerId);
+      if (activePointers.size === 0) restoreChrome();
+    };
+    window.addEventListener('pointerdown', pointerDown, true);
+    window.addEventListener('pointerup', pointerFinish, true);
+    window.addEventListener('pointercancel', pointerFinish, true);
     window.addEventListener('touchend', finishTouch, true);
     window.addEventListener('touchcancel', finishTouch, true);
     window.addEventListener('blur', restoreChrome);
@@ -10919,6 +10936,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     document.addEventListener('visibilitychange', finishVisibility);
     return () => {
       window.clearTimeout(timer);
+      window.removeEventListener('pointerdown', pointerDown, true);
+      window.removeEventListener('pointerup', pointerFinish, true);
+      window.removeEventListener('pointercancel', pointerFinish, true);
       window.removeEventListener('touchend', finishTouch, true);
       window.removeEventListener('touchcancel', finishTouch, true);
       window.removeEventListener('blur', restoreChrome);
