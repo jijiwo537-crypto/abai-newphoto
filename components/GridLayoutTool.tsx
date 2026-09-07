@@ -4198,6 +4198,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const textInnerRef = useRef<HTMLSpanElement>(null);
   const textMeasureRef = useRef<HTMLSpanElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const symbolSvgTextRef = useRef<SVGTextElement>(null);
+  const [symbolSvgBounds, setSymbolSvgBounds] = useState<DOMRect | null>(null);
 
   /* 輸入框是「手指放開」那一刻才打開的，而瀏覽器在 touchend 之後還會補送
      一輪滑鼠事件（mousedown/click）到畫布上 —— 那一下會把焦點從剛冒出來的
@@ -4246,19 +4248,24 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     if (image.sym) {
       let alive = true;
       const fam = image.fontFamily || DEFAULT_FONT;
-      /* 草稿中的符號也必須等真實字體完成後才量。先用 fallback 算再修一次會讓
-         符號和框在載入時跳動，而且 fallback 的中心差異可能非常大。 */
+      /* 直接量「畫面上真正負責渲染的 SVG text」。Canvas、DOM 與 SVG 對複合
+         Unicode 的 baseline/ink box 定義不完全一致，跨引擎估算永遠會有例外。 */
       ensureFont(fam).then(() => {
         if (!alive) return;
         clearSymbolInkCache();
-        const b = symbolBox(image.text || image.sym, fam, image.fontSize || 40);
+        const node = symbolSvgTextRef.current;
+        if (!node) return;
+        const b = node.getBBox();
+        const pad = 4 + (image.strokeWidth || 0) * 2;
+        const bounds = new DOMRect(b.x - pad, b.y - pad, b.width + pad * 2, b.height + pad * 2);
+        setSymbolSvgBounds(bounds);
         const patch: Partial<FloatingImage> = {};
-        const nw = Math.ceil(b.w), nh = Math.ceil(b.h);
-        if (Math.abs(nw - dimsRef.current.w) > 1) {
+        const nw = bounds.width, nh = bounds.height;
+        if (Math.abs(nw - dimsRef.current.w) > 0.1) {
           patch.width = nw;
           patch.x = image.x + (dimsRef.current.w - nw) / 2;
         }
-        if (Math.abs(nh - dimsRef.current.h) > 1) {
+        if (Math.abs(nh - dimsRef.current.h) > 0.1) {
           patch.height = nh;
           patch.y = image.y + (dimsRef.current.h - nh) / 2;
         }
@@ -4301,7 +4308,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     // 真的載不到（離線、家族名打錯）就別讓框永遠停在舊尺寸
     const t = setTimeout(done, 3000);
     return () => { alive = false; clearTimeout(t); };
-  }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, maxTextWidth]);
+  }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic, image.letterSpacing, image.strokeWidth, maxTextWidth]);
 
   /* 圓角／羽化／發光都自己畫在 canvas 上，預覽與匯出走同一套邏輯 */
   const shapeCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -4336,18 +4343,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     boxW / Math.max(1, image.width),
     boxH / Math.max(1, image.height),
   );
-  const symbolShift = image.sym ? (() => {
-    const ink = measureSymbolInk(image.text || image.sym || '', image.fontFamily || DEFAULT_FONT);
-    // 符號內容維持一倍座標，整層再統一縮放；位移不能預先乘 scale，否則會被
-    // 外層 transform 再乘一次，符號愈放大就愈容易跑出選中框。
-    return { x: -ink.cx * (image.fontSize || 40), y: -ink.cy * (image.fontSize || 40) };
-  })() : { x: 0, y: 0 };
   const textRenderScale = liveGeometry ? image.scale : 1;
   const textMetricScale = liveGeometry ? 1 : image.scale;
-  const renderedSymbolShift = {
-    x: symbolShift.x * textMetricScale,
-    y: symbolShift.y * textMetricScale,
-  };
   // 發光與描邊都會超出框，canvas 要留邊。
   // 留邊固定用「最大強度」算：拖發光滑桿時邊界就不會每一格都變，
   // 不然 canvas 的位置與大小一直重算，圖看起來就是在抖。
@@ -5420,14 +5417,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           preserveAspectRatio="none"
           style={{
             position: 'absolute',
-            /* 操作時固定 SVG 的基準尺寸，只讓合成層做連續縮放。每一格改 width／height
-               會反覆重建濾鏡表面，舊的陰影與抗鋸齒像素就可能殘留在四周。 */
-            left: liveGeometry ? '50%' : 0, top: liveGeometry ? '50%' : 0,
-            width: liveGeometry ? `${image.width}px` : '100%',
-            height: liveGeometry ? `${image.height}px` : '100%',
-            transform: liveGeometry
-              ? `translate3d(-50%, -50%, 0) scale(${image.scale})`
-              : undefined,
+            /* SVG 每一幀直接按目前顯示尺寸重畫向量輪廓，不縮放舊的點陣快取；
+               所以手指還沒放開時也和最終畫面一樣清楚。 */
+            left: 0, top: 0, width: '100%', height: '100%',
+            transform: undefined,
             transformOrigin: 'center center',
             overflow: 'visible', pointerEvents: 'none',
             /* 發光：三段 drop-shadow 疊起來，跟文字／圖片的光同一套濃淡。
@@ -5442,7 +5435,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                只會重畫「框以內」那一塊 —— 框外那圈光就留在原地變成殘影
                （拖一次留一道，看起來像一路拉出來的影子）。
                自己一層之後整層一起重畫，就不會有殘留。 */
-            willChange: liveGeometry || glowAmount(image.shapeGlow as any) > 0 ? 'filter, transform' : undefined,
+            willChange: glowAmount(image.shapeGlow as any) > 0 ? 'filter' : undefined,
             backfaceVisibility: 'hidden',
             WebkitBackfaceVisibility: 'hidden',
             isolation: 'isolate',
@@ -5554,29 +5547,21 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
            Canvas 量到的墨水中心套到 DOM 上會偏移。SVG 使用與量測相同的中央基線，
            並保留向量輪廓，所以放到很大仍然清楚、也不會因字級取整而抖動。 */
         <svg
-          viewBox={`0 0 ${image.width} ${image.height}`}
+          viewBox={symbolSvgBounds
+            ? `${symbolSvgBounds.x} ${symbolSvgBounds.y} ${symbolSvgBounds.width} ${symbolSvgBounds.height}`
+            : `0 0 ${Math.max(1, image.width)} ${Math.max(1, image.height)}`}
           preserveAspectRatio="none"
           style={{
-            position: 'absolute',
-            left: liveGeometry ? '50%' : 0,
-            top: liveGeometry ? '50%' : 0,
-            width: liveGeometry ? `${image.width}px` : '100%',
-            height: liveGeometry ? `${image.height}px` : '100%',
-            transform: liveGeometry
-              ? `translate3d(-50%, -50%, 0) scale(${image.scale})`
-              : undefined,
-            transformOrigin: 'center center',
+            position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
             overflow: 'visible', pointerEvents: 'none',
-            willChange: liveGeometry ? 'transform' : undefined,
-            backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+            opacity: symbolSvgBounds ? 1 : 0,
           }}
           aria-hidden
         >
           <text
-            x={image.width / 2 + symbolShift.x}
-            y={image.height / 2 + symbolShift.y}
-            textAnchor="middle"
-            dominantBaseline="middle"
+            ref={symbolSvgTextRef}
+            x={0}
+            y={0}
             fontFamily={fontStack(image.fontFamily)}
             fontSize={image.fontSize || 40}
             fontWeight={image.bold ? 700 : 400}
