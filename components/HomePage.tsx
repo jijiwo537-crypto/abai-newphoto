@@ -475,30 +475,29 @@ export const HomePage: React.FC<HomePageProps> = ({
      會強迫瀏覽器同步排版，是 iOS 上 ABAI 出場動畫頓挫的主要來源。 */
   const libLiftRef = useRef(0);
 
-  /** 分頁列：首頁／靈感是同一條捲軸的兩個位置，「我」才是換頁 */
+  /** 分頁列：首頁／模板是同一條捲軸的兩個位置，「我」才是橫向換頁。 */
   const goNav = useCallback((id: string) => {
     const sc = scrollRef.current;
-    if (id !== 'me' && sc) {
-      /* 先在仍隐藏的滚动页上完成定位，再切换页面。这样从「我的」返回时，
-         第一帧看到的就已经是正确内容，不会先露出两段之间的黑色底。
-         分页点击的职责是“跳到分段”，这里不用容易被 WebKit 中断的 smooth
-         scroll；同步写 scrollTop 才能保证每一次都确实到达。 */
-      navLockRef.current = id;
-      sc.scrollTop = id === 'lib' ? libScrollTop(sc) : 0;
-      applyRef.current();
-    }
     navRef.current = id;
     setNav(id);
     if (id === 'me' || !sc) return;
 
-    /* iOS 在切页同一帧可能更新安全区域／可视高度。下一帧以最终高度再算一次，
-       同时让 JS 视差与 scrollTop 保持同一帧；这个校正不可见，但能消除偶发偏位。 */
-    requestAnimationFrame(() => {
+    navLockRef.current = id;
+    const target = id === 'lib' ? libScrollTop(sc) : 0;
+    let reduce = false;
+    try { reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch {}
+
+    /* 讓瀏覽器原生捲軸負責補間，視差會由既有 onScroll 在同一個時間軸更新。
+       從「我的」切回來時先讓橫向頁面掛回畫面，再於下一幀開始縱向滑動；
+       這樣既不會露出黑底，也不會因為在隱藏頁上啟動動畫而被 WebKit 取消。 */
+    const run = () => {
       if (navRef.current !== id) return;
-      sc.scrollTop = id === 'lib' ? libScrollTop(sc) : 0;
-      applyRef.current();
-    });
-  }, []);
+      sc.scrollTo({ top: target, behavior: reduce ? 'auto' : 'smooth' });
+      if (reduce) applyRef.current();
+    };
+    if (nav === 'me') requestAnimationFrame(run);
+    else run();
+  }, [nav]);
 
   /* 使用者自己碰捲軸就立刻解鎖 */
   const releaseNavLock = useCallback(() => { navLockRef.current = null; }, []);
