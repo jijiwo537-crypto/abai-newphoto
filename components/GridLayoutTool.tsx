@@ -12,7 +12,7 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
-import { measureSymbolInk, symbolBox } from '../utils/symbolGeometry';
+import { measureSymbolInk, symbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape, holeOverflow, glowAmount,
@@ -4244,19 +4244,27 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   useLayoutEffect(() => {
     if (image.text === undefined) return;
     if (image.sym) {
-      const b = symbolBox(image.text || image.sym, image.fontFamily || DEFAULT_FONT, image.fontSize || 40);
-      const patch: Partial<FloatingImage> = {};
-      const nw = Math.ceil(b.w), nh = Math.ceil(b.h);
-      if (Math.abs(nw - dimsRef.current.w) > 1) {
-        patch.width = nw;
-        patch.x = image.x + (dimsRef.current.w - nw) / 2;
-      }
-      if (Math.abs(nh - dimsRef.current.h) > 1) {
-        patch.height = nh;
-        patch.y = image.y + (dimsRef.current.h - nh) / 2;
-      }
-      if (patch.width !== undefined || patch.height !== undefined) onChangeRef.current(patch);
-      return;
+      let alive = true;
+      const fam = image.fontFamily || DEFAULT_FONT;
+      /* 草稿中的符號也必須等真實字體完成後才量。先用 fallback 算再修一次會讓
+         符號和框在載入時跳動，而且 fallback 的中心差異可能非常大。 */
+      ensureFont(fam).then(() => {
+        if (!alive) return;
+        clearSymbolInkCache();
+        const b = symbolBox(image.text || image.sym, fam, image.fontSize || 40);
+        const patch: Partial<FloatingImage> = {};
+        const nw = Math.ceil(b.w), nh = Math.ceil(b.h);
+        if (Math.abs(nw - dimsRef.current.w) > 1) {
+          patch.width = nw;
+          patch.x = image.x + (dimsRef.current.w - nw) / 2;
+        }
+        if (Math.abs(nh - dimsRef.current.h) > 1) {
+          patch.height = nh;
+          patch.y = image.y + (dimsRef.current.h - nh) / 2;
+        }
+        if (patch.width !== undefined || patch.height !== undefined) onChangeRef.current(patch);
+      });
+      return () => { alive = false; };
     }
     const el = textMeasureRef.current;
     if (!el) return;
@@ -4334,6 +4342,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     // 外層 transform 再乘一次，符號愈放大就愈容易跑出選中框。
     return { x: -ink.cx * (image.fontSize || 40), y: -ink.cy * (image.fontSize || 40) };
   })() : { x: 0, y: 0 };
+  const textRenderScale = liveGeometry ? image.scale : 1;
+  const textMetricScale = liveGeometry ? 1 : image.scale;
+  const renderedSymbolShift = {
+    x: symbolShift.x * textMetricScale,
+    y: symbolShift.y * textMetricScale,
+  };
   // 發光與描邊都會超出框，canvas 要留邊。
   // 留邊固定用「最大強度」算：拖發光滑桿時邊界就不會每一格都變，
   // 不然 canvas 的位置與大小一直重算，圖看起來就是在抖。
@@ -5535,6 +5549,52 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             );
           })()}
         </svg>
+      ) : image.sym ? (
+        /* 符號不用 DOM 行盒：Unicode 組合符號的 baseline 與 line-height 差異很大，
+           Canvas 量到的墨水中心套到 DOM 上會偏移。SVG 使用與量測相同的中央基線，
+           並保留向量輪廓，所以放到很大仍然清楚、也不會因字級取整而抖動。 */
+        <svg
+          viewBox={`0 0 ${image.width} ${image.height}`}
+          preserveAspectRatio="none"
+          style={{
+            position: 'absolute',
+            left: liveGeometry ? '50%' : 0,
+            top: liveGeometry ? '50%' : 0,
+            width: liveGeometry ? `${image.width}px` : '100%',
+            height: liveGeometry ? `${image.height}px` : '100%',
+            transform: liveGeometry
+              ? `translate3d(-50%, -50%, 0) scale(${image.scale})`
+              : undefined,
+            transformOrigin: 'center center',
+            overflow: 'visible', pointerEvents: 'none',
+            willChange: liveGeometry ? 'transform' : undefined,
+            backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+          }}
+          aria-hidden
+        >
+          <text
+            x={image.width / 2 + symbolShift.x}
+            y={image.height / 2 + symbolShift.y}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            fontFamily={fontStack(image.fontFamily)}
+            fontSize={image.fontSize || 40}
+            fontWeight={image.bold ? 700 : 400}
+            fontStyle={image.italic ? 'italic' : 'normal'}
+            letterSpacing={image.letterSpacing || 0}
+            fill={image.color || '#FFFFFF'}
+            stroke={image.strokeWidth ? (image.strokeColor || '#000000') : 'none'}
+            strokeWidth={image.strokeWidth ? image.strokeWidth * 2 : 0}
+            paintOrder="stroke fill"
+            style={{
+              filter: image.glow
+                ? [1, 2, 3].map(k => `drop-shadow(0 0 ${(image.glow! / 20) * 14 * k}px ${image.glowColor || '#FFFFFF'})`).join(' ')
+                : undefined,
+            }}
+          >
+            {image.text}
+          </text>
+        </svg>
       ) : image.text !== undefined ? (
         <div
           ref={textRef}
@@ -5556,7 +5616,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                的 scale 去做 —— 等同 canvas 連續縮放字形輪廓。
                字級、字距、描邊、發光在這裡一律用原值，倍率統一由 scale 帶。 */
             position: 'absolute', left: '50%', top: '50%',
-            transform: `translate3d(-50%, -50%, 0) scale(${image.scale})`,
+            transform: `translate3d(-50%, -50%, 0) scale(${textRenderScale})`,
             transformOrigin: 'center center',
             /* 縮放時的殘影：這一層只有 transform 在變，可是它裡面是**文字**
                （還可能帶 text-shadow 的發光），瀏覽器把它當一般內容重畫時，
@@ -5569,16 +5629,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             WebkitBackfaceVisibility: 'hidden',
             // 內容盒、字級和字距永遠維持一倍；只變上面的 transform，瀏覽器便不會
             // 每一幀重新計算字體 ascent/descent，文字與符號中心也不會跳動。
-            width: `${image.width}px`, height: `${image.height}px`,
+            width: `${image.width * textMetricScale}px`, height: `${image.height * textMetricScale}px`,
             pointerEvents: 'none',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontFamily: fontStack(image.fontFamily),
-            fontSize: `${image.fontSize || 40}px`,
+            fontSize: `${(image.fontSize || 40) * textMetricScale}px`,
             lineHeight: 1.12,
             fontWeight: image.bold ? 700 : 400,
             fontStyle: image.italic ? 'italic' : 'normal',
             // 倍率由外層的 scale 帶，這裡一律用原值（見上面的說明）
-            letterSpacing: `${image.letterSpacing || 0}px`,
+            letterSpacing: `${(image.letterSpacing || 0) * textMetricScale}px`,
             color: image.color || '#FFFFFF',
             // 只有使用者自己按的換行才換行，不自動斷行
             whiteSpace: 'pre',
@@ -5589,7 +5649,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             // 一半會吃進字身，看起來像每一筆都被描了一圈。改成 paint-order
             // 把描邊畫在填色「下面」、寬度加倍 —— 字身蓋住內半邊，
             // 剩下的就是純外描邊。
-            WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2}px` : undefined,
+            WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2 * textMetricScale}px` : undefined,
             WebkitTextStrokeColor: image.strokeWidth ? (image.strokeColor || '#000000') : undefined,
             // 沒有描邊時不要留著 paint-order。
             paintOrder: image.strokeWidth ? 'stroke fill' : undefined,
@@ -5620,14 +5680,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               style={{
                 position: 'absolute', left: 0, top: 0, right: 0, bottom: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transform: image.sym ? `translate(${symbolShift.x}px, ${symbolShift.y}px)` : undefined,
+                transform: image.sym ? `translate(${renderedSymbolShift.x}px, ${renderedSymbolShift.y}px)` : undefined,
                 pointerEvents: 'none', whiteSpace: 'pre', textAlign: 'center',
                 color: image.color || '#FFFFFF',
                 // 這一層絕對不描邊，光才不會算到描邊的部分
                 WebkitTextStrokeWidth: 0,
                 paintOrder: 'normal',
                 textShadow: [1, 2, 3]
-                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k}px ${image.glowColor || '#FFFFFF'}`)
+                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k * textMetricScale}px ${image.glowColor || '#FFFFFF'}`)
                   .join(', '),
                 // 跟圖形的發光同一個理由：光長在框外面，不自己一層就會拖出殘影
                 willChange: 'transform',
@@ -5644,7 +5704,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               display: 'inline-block',
               // 主層要蓋在發光層上面
               position: 'relative', zIndex: 1,
-              transform: image.sym ? `translate(${symbolShift.x}px, ${symbolShift.y}px)` : undefined,
+              transform: image.sym ? `translate(${renderedSymbolShift.x}px, ${renderedSymbolShift.y}px)` : undefined,
               // width: max-content 才能不受外框寬度限制地量到真正需要的寬度，
               // 否則框被縮到上一次的寬度之後，文字就會一直卡在那個寬度換行
               width: 'max-content',
@@ -5871,6 +5931,27 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [selectedFloatingId, setSelectedFloatingId] = useState<string | null>(null);
   /** 手指正在移动任一已选物件；期间统一隐藏选中框与白色药丸 */
   const [selectionDragging, setSelectionDragging] = useState(false);
+  /* iPhone 的觸控事件頻率可能高於螢幕更新率。把同一畫面幀內的中間狀態全部
+     丟棄，只提交最新幾何，避免 React 依序畫出已過期倍率造成縮放往返抖動。 */
+  const interactionRafRef = useRef<number | null>(null);
+  const interactionPendingRef = useRef<(() => void) | null>(null);
+  const flushInteraction = useCallback(() => {
+    interactionRafRef.current = null;
+    const job = interactionPendingRef.current;
+    interactionPendingRef.current = null;
+    job?.();
+  }, []);
+  const queueInteraction = useCallback((job: () => void) => {
+    interactionPendingRef.current = job;
+    if (interactionRafRef.current == null) interactionRafRef.current = requestAnimationFrame(flushInteraction);
+  }, [flushInteraction]);
+  const flushInteractionNow = useCallback(() => {
+    if (interactionRafRef.current != null) cancelAnimationFrame(interactionRafRef.current);
+    flushInteraction();
+  }, [flushInteraction]);
+  useEffect(() => () => {
+    if (interactionRafRef.current != null) cancelAnimationFrame(interactionRafRef.current);
+  }, []);
   const [activeGuidelines, setActiveGuidelines] = useState<AlignmentGuideline[]>([]);
   const [enableSnapping, setEnableSnapping] = useState(true);
   /** 上方那顆三個點的選單 */
@@ -5951,6 +6032,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const getActivePageRect = () => getPageRect(activePageIndex);
+
+  /** 直接以此刻螢幕中央判斷最近頁面，不依賴 onScroll 尚未提交的 state。 */
+  const getClosestPageRect = () => {
+    const viewport = containerRef.current?.getBoundingClientRect();
+    if (!viewport) return getActivePageRect();
+    const vx = viewport.left + viewport.width / 2;
+    let best: ReturnType<typeof getPageRect> = null;
+    let bestDistance = Infinity;
+    pages.forEach((_, idx) => {
+      const el = document.getElementById(idx === 0 ? 'grid-preview-container' : `grid-preview-container-${idx}`);
+      const screen = el?.getBoundingClientRect();
+      if (!screen) return;
+      const d = Math.abs(screen.left + screen.width / 2 - vx);
+      if (d < bestDistance) { bestDistance = d; best = getPageRect(idx); }
+    });
+    return best || getActivePageRect();
+  };
 
   const getAllPageRects = () => {
     if (!pagesContainerRef.current) return [];
@@ -6808,7 +6906,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 在指定頁面「再加一個」佈局，不動既有的。 */
   /** 在目前這一頁的中央加一個文字圖層，並直接打開編輯面板。 */
   const handleAddTextLayer = (init?: Partial<FloatingImage>) => {
-    const rect = getActivePageRect();
+    const rect = getClosestPageRect();
     const w = Math.round((rect?.width ?? previewW) * 0.7);
     const h = 96;
     const id = `text-${Math.random().toString(36).substring(2, 9)}`;
@@ -6850,11 +6948,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 長的會直接戳出頁面 —— 用「大約佔頁寬七成」回推，挑哪一顆加進來的
    * 份量都差不多。刻意留在這一頁、也不進入打字狀態，可以連著加好幾顆。
    */
-  const handleAddSymbolLayer = (txt: string) => {
-    const rect = getActivePageRect();
+  const handleAddSymbolLayer = async (txt: string) => {
+    const rect = getClosestPageRect();
     const pw = rect?.width ?? previewW;
     const ph = rect?.height ?? previewH;
-    ensureFont(DEFAULT_FONT);
+    // 一定等真正字體到齊再量；用 fallback 量出的框會讓不同 Unicode 符號嚴重偏移。
+    await ensureFont(DEFAULT_FONT);
+    clearSymbolInkCache();
     const M = 100;
     const c = document.createElement('canvas').getContext('2d');
     let w100 = M * Math.max(1, txt.length) * 0.5;
@@ -6890,7 +6990,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 顏色跟文字一樣預設墨黑 —— 頁面底色預設是白的，白色圖形會看不到。
    */
   const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem) => {
-    const rect = getActivePageRect();
+    const rect = getClosestPageRect();
     const short = Math.min(rect?.width ?? previewW, rect?.height ?? previewH);
     const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
     const h = (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
@@ -9960,8 +10060,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             // 以形狀的中心為基準放大：位移要跟著倍率等比走，中心底下那一點才不會跑掉
             const n = zoomAboutShapeCenter(
               target.width, target.height, g.baseShapeZoom || 1, nz, g.baseShapeX, g.baseShapeY);
-            setFloatingImages(prev => prev.map(img => img.id === g.floatingId
-              ? { ...img, imgShapeZoom: nz, imgShapeX: n.x, imgShapeY: n.y } : img));
+            queueInteraction(() => setFloatingImages(prev => prev.map(img => img.id === g.floatingId
+              ? { ...img, imgShapeZoom: nz, imgShapeX: n.x, imgShapeY: n.y } : img)));
             return;
           }
           // 圖片跟文字都可以轉，邏輯跟創意拼圖同一套
@@ -10021,11 +10121,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             });
             if (best < SNAP) ns = bestScale;
           }
-          setFloatingImages(prev => prev.map(img =>
-            img.id === g.floatingId
-              ? { ...img, scale: ns, ...(canRotate ? { rotation: rot } : {}) }
-              : img
-          ));
+          let nextGuidelines: AlignmentGuideline[] | null = null;
           if (target) {
             // 同樣只畫「邊」的線：捏合時中心不動，中線會整趟亮著（見 scaleLayoutSnapped）
             const pageLines = pageGuidelinesAt(target.x, target.y, target.width, target.height, ns, true, rot);
@@ -10033,14 +10129,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                原本只看 straight —— 沒轉過的物件角度本來就是 0，等於一整趟
                純縮放都掛著那兩條線，看起來莫名其妙。加上 g.rotOn：
                手指真的轉超過不動區才算在轉。 */
-            setActiveGuidelines(dedupeGuidelines(straight && g.rotOn
+            nextGuidelines = dedupeGuidelines(straight && g.rotOn
               ? [
                   { type: 'vertical', coord: target.x + target.width / 2 },
                   { type: 'horizontal', coord: target.y + target.height / 2 },
                   ...pageLines,
                 ]
-              : pageLines, target.x + target.width / 2));
+              : pageLines, target.x + target.width / 2);
           }
+          const finalNs = ns, finalRot = rot;
+          queueInteraction(() => {
+            setFloatingImages(prev => prev.map(img =>
+              img.id === g.floatingId
+                ? { ...img, scale: finalNs, ...(canRotate ? { rotation: finalRot } : {}) }
+                : img
+            ));
+            if (nextGuidelines) setActiveGuidelines(nextGuidelines);
+          });
         } else if (g.kind === 'layout') {
           scaleLayoutSnapped(g.baseScale * k, wsGestureLayoutIdRef.current);
           /* 整組佈局的兩指旋轉，手感跟一般圖片、文字同一套：
@@ -10101,8 +10206,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const cl = (v: number) => Math.max(-1, Math.min(1, v));
             const px = rx > 0.5 ? cl((g.baseShapeX || 0) + lx / rx) : (g.baseShapeX || 0);
             const py = ry > 0.5 ? cl((g.baseShapeY || 0) + ly / ry) : (g.baseShapeY || 0);
-            setFloatingImages(prev => prev.map(img =>
-              img.id === g.floatingId ? { ...img, imgShapeX: px, imgShapeY: py } : img));
+            queueInteraction(() => setFloatingImages(prev => prev.map(img =>
+              img.id === g.floatingId ? { ...img, imgShapeX: px, imgShapeY: py } : img)));
             return;
           }
           if (selectedImg) {
@@ -10111,10 +10216,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               selectedImg.width, selectedImg.height, selectedImg.scale,
               undefined, selectedImg.rotation || 0,
             );
-            setActiveGuidelines(guidelines);
-            setFloatingImages(prev => prev.map(img =>
-              img.id === g.floatingId ? { ...img, x: snappedX, y: snappedY } : img
-            ));
+            queueInteraction(() => {
+              setActiveGuidelines(guidelines);
+              setFloatingImages(prev => prev.map(img =>
+                img.id === g.floatingId ? { ...img, x: snappedX, y: snappedY } : img
+              ));
+            });
           }
         } else if (g.kind === 'layout') {
           moveLayoutTo(g.baseX + dx, g.baseY + dy);
@@ -10150,6 +10257,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const handleWorkspaceTouchEnd = () => {
+    flushInteractionNow();
     setSelectionDragging(false);
     setPinchFloatingId(null);
     // 手指全部離開了，下一次手勢才能重新決定是捲頁還是縮放
