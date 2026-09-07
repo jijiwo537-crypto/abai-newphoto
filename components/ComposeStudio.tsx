@@ -335,17 +335,25 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
       e.touches[0].clientX - e.touches[1].clientX,
       e.touches[0].clientY - e.touches[1].clientY
     );
-    // 以框的中心等比縮放裁切框；比例鎖著的話兩邊一起走，超出畫面就停住
-    const k = d / pz.startDist;
+    // 以框的中心等比縮放。放大時以四個方向最先碰到舞台邊界的倍率為上限：
+    // 任一邊碰邊後整體立即停止，不能再靠夾值偷偷平移中心、繼續長大。
+    const requestedScale = d / pz.startDist;
     const c = pz.startCrop;
     const cx = c.x + c.w / 2, cy = c.y + c.h / 2;
-    let w = Math.max(MIN_CROP, c.w * k);
-    let h = Math.max(MIN_CROP, c.h * k);
-    if (w > 1) { h *= 1 / w; w = 1; }
-    if (h > 1) { w *= 1 / h; h = 1; }
+    const halfW = c.w / 2, halfH = c.h / 2;
+    const maxScale = Math.min(
+      halfW > 0 ? cx / halfW : 1,
+      halfW > 0 ? (1 - cx) / halfW : 1,
+      halfH > 0 ? cy / halfH : 1,
+      halfH > 0 ? (1 - cy) / halfH : 1,
+    );
+    const minScale = Math.max(MIN_CROP / c.w, MIN_CROP / c.h);
+    const scale = Math.max(minScale, Math.min(requestedScale, maxScale));
+    const w = c.w * scale;
+    const h = c.h * scale;
     setGeo({ crop: {
-      x: Math.max(0, Math.min(1 - w, cx - w / 2)),
-      y: Math.max(0, Math.min(1 - h, cy - h / 2)),
+      x: cx - w / 2,
+      y: cy - h / 2,
       w, h,
     } });
   };
