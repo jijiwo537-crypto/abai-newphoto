@@ -21,7 +21,7 @@ import {
 } from '../utils/holeShapes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
-  STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
+  STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
 import { ComposeStudio } from './ComposeStudio';
 import { StuckEscape } from './StuckEscape';
 import { VIDEO_ACCEPT, loadVideoEl, isVideoEl } from '../utils/videoSource';
@@ -958,6 +958,25 @@ export const ColorPickerPage: React.FC<{
    而且是「照外框 w×h 直接畫」，不是先畫正方形再拉伸 ——
    拉成長方形時描邊的粗細才不會跟著被拉扁。 */
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/** SVG 预览用的纹理字形；尺寸与 utils/pattern.ts 的 canvas patternGlyph 完全相同。 */
+const textureGlyphD = (kind: 'star' | 'heart', cx: number, cy: number, r: number) => {
+  const P = (x: number, y: number) => `${r3(x)} ${r3(y)}`;
+  if (kind === 'star') {
+    const R = r * 1.38;
+    const pts: string[] = [];
+    for (let k = 0; k < 10; k++) {
+      const rr = k % 2 === 0 ? R : R * 0.45;
+      const a = -Math.PI / 2 + (k * Math.PI) / 5;
+      pts.push(`${k === 0 ? 'M' : 'L'} ${P(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr)}`);
+    }
+    return `${pts.join(' ')} Z`;
+  }
+  const s = r * 1.22;
+  return `M ${P(cx, cy + s * 0.85)} `
+    + `C ${P(cx - s * 1.5, cy - s * 0.2)} ${P(cx - s * 0.55, cy - s * 1.15)} ${P(cx, cy - s * 0.4)} `
+    + `C ${P(cx + s * 0.55, cy - s * 1.15)} ${P(cx + s * 1.5, cy - s * 0.2)} ${P(cx, cy + s * 0.85)} Z`;
+};
 
 export const shapePathD = (kind: string, w: number, h: number): string => {
   const a = w / 2, b = h / 2, cx = a, cy = b;
@@ -5424,9 +5443,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               patternTransform 把 tile 的原點移到圖形正中心，所以正中央
               一定有一顆點 —— 這樣才跟 canvas 那邊逐顆對得起來。
               四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
-          {texOf({ tex: image.shapeTex, dots: image.shapeDots }) === 'dot' && (() => {
+          {isGridTex(texOf({ tex: image.shapeTex, dots: image.shapeDots })) && (() => {
+            const tex = texOf({ tex: image.shapeTex, dots: image.shapeDots }) as 'dot' | 'star' | 'heart';
             const { r, dx, dy, color } = shapeDotGrid(image.width, image.height, image);
-            const id = `sdots-${image.id}`;
+            const id = `sgrid-${tex}-${image.id}`;
+            const glyphs: [number, number][] = [[0, 0], [dx, 0], [0, dy * 2], [dx, dy * 2], [dx / 2, dy]];
             return (
               <>
                 <defs>
@@ -5435,9 +5456,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                     width={r3(dx)} height={r3(dy * 2)}
                     patternTransform={`translate(${r3(image.width / 2)} ${r3(image.height / 2)})`}
                   >
-                    {[[0, 0], [dx, 0], [0, dy * 2], [dx, dy * 2], [dx / 2, dy]].map(([cx, cy], i) => (
-                      <circle key={i} cx={r3(cx)} cy={r3(cy)} r={r3(r)} fill={color} />
-                    ))}
+                    {glyphs.map(([cx, cy], i) => tex === 'dot'
+                      ? <circle key={i} cx={r3(cx)} cy={r3(cy)} r={r3(r)} fill={color} />
+                      : <path key={i} d={textureGlyphD(tex, cx, cy, r)} fill={color} />)}
                   </pattern>
                 </defs>
                 <path
