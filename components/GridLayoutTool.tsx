@@ -5074,6 +5074,27 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      的同一套 path、紋理、描邊與字體度量，所以預覽與成品也會一致。 */
   const vectorCanvasRef = useRef<HTMLCanvasElement>(null);
   const isCanvasVector = !!image.shape || image.text !== undefined;
+  /* 真正需要畫的墨水範圍。固定外層可以很大，但 backing store 只配置這一塊，
+     才不會把有限的像素平均浪費在物件周圍大片透明區域。 */
+  const vectorPad = (() => {
+    if (image.shape === 'hole') {
+      return {
+        x: Math.max(2, holeOv.x * boxW / Math.max(1, image.width)),
+        y: Math.max(2, holeOv.y * boxH / Math.max(1, image.height)),
+      };
+    }
+    const shapeGlow = image.shape
+      ? Math.max(...shapeGlowBlurs(image.width, image.height), 0) * image.scale * glowAmount(image.shapeGlow as any)
+      : 0;
+    const textGlow = image.text !== undefined && image.glow
+      ? (image.glow / 20) * 14 * 3 * image.scale
+      : 0;
+    const stroke = image.shape
+      ? (image.shapeStrokeW || 0) * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
+      : (image.strokeWidth || 0) * 2 * image.scale;
+    const p = Math.ceil(Math.max(2, shapeGlow, textGlow, stroke) + 2);
+    return { x: p, y: p };
+  })();
   /* 固定畫布：尺寸只看「物件的未縮放尺寸」與頁面尺寸，不看 image.scale。
      因此整段雙指縮放期間 canvas.width／height、CSS box、left／top 都不變；
      唯一改變的是畫布裡重畫的圖案大小。這才與創意拼圖的固定主畫布同構。 */
@@ -5094,12 +5115,15 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     let raf = 0;
     const draw = () => {
       if (!alive) return;
-      const dpr = Math.min(4, Math.max(1, geoDpr * Math.max(1, canvasK())));
-      const cssW = Math.max(1, vectorSurfaceW);
-      const cssH = Math.max(1, vectorSurfaceH);
-      /* 超大物件仍維持固定 CSS 畫布，但 backing store 長邊限制在 2048，
-         避免多個物件同時存在時耗盡 iOS 的 Canvas 記憶體。 */
-      const backingScale = Math.min(dpr, 2048 / Math.max(cssW, cssH));
+      /* 預先保留到預覽最大 3 倍所需的像素密度。整體預覽正在雙指縮放時
+         React 不必每幀重建畫布，瀏覽器放大的仍是足夠密的原始像素。 */
+      const dpr = Math.max(1, geoDpr * 3);
+      const cssW = Math.max(1, boxW + vectorPad.x * 2);
+      const cssH = Math.max(1, boxH + vectorPad.y * 2);
+      /* backing store 只對「有內容的內層」設上限，不再對固定大外層設限。
+         一般手機物件可完整取得 dpr×3；極端超大物件才退到 4096，避免 iOS
+         因單張 Canvas 過大直接回收整個頁面。 */
+      const backingScale = Math.min(dpr, 4096 / Math.max(cssW, cssH));
       const W = Math.max(1, Math.ceil(cssW * backingScale));
       const H = Math.max(1, Math.ceil(cssH * backingScale));
       if (canvas.width !== W) canvas.width = W;
@@ -5109,7 +5133,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       ctx.setTransform(backingScale, 0, 0, backingScale, 0, 0);
       ctx.clearRect(0, 0, cssW, cssH);
       ctx.save();
-      ctx.translate(cssW / 2, cssH / 2);
+      ctx.translate(vectorPad.x + boxW / 2, vectorPad.y + boxH / 2);
       ctx.rotate((image.rotation * Math.PI) / 180);
 
       if (image.shape === 'hole') {
@@ -5224,7 +5248,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     }
     return () => { alive = false; if (raf) cancelAnimationFrame(raf); };
   }, [
-    isCanvasVector, boxW, boxH, vectorSurfaceW, vectorSurfaceH,
+    isCanvasVector, boxW, boxH, vectorPad.x, vectorPad.y,
     image.shape, image.holeType, image.shapeFilled, image.shapeLineW, image.shapeDash,
     image.shapeGlow, image.shapeGlowColor, image.shapeStrokeW, image.shapeStrokeColor,
     image.shapeTex, image.shapeDots, image.shapeDotSize, image.shapeDotGap, image.shapeDotColor,
@@ -5523,9 +5547,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   return (
     <>
     {isCanvasVector && pagesContainerRef.current && createPortal(
-      <canvas
-        ref={vectorCanvasRef}
-        data-vector-canvas={image.id}
+      <div
+        data-vector-surface={image.id}
         aria-hidden
         className="absolute pointer-events-none"
         style={{
@@ -5544,7 +5567,21 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             : undefined,
           contain: 'strict',
         }}
-      />,
+      >
+        <canvas
+          ref={vectorCanvasRef}
+          data-vector-canvas={image.id}
+          style={{
+            position: 'absolute',
+            left: '50%', top: '50%',
+            width: `${Math.max(1, boxW + vectorPad.x * 2)}px`,
+            height: `${Math.max(1, boxH + vectorPad.y * 2)}px`,
+            transform: 'translate(-50%, -50%)',
+            pointerEvents: 'none',
+            contain: 'strict',
+          }}
+        />
+      </div>,
       pagesContainerRef.current,
     )}
     <div
@@ -7813,13 +7850,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     // 右邊剛好留到「最後一頁停在正中間」為止；加號按鈕已經佔掉 ml-3 + 40
     if (pad) pad.style.width = `${Math.max(0, m - (plusVisibleRef.current ? 52 : 0))}px`;
     if (col) {
-      /* 靜止時用 zoom 讓文字與向量依目標尺寸重新排版／取樣；手勢或動畫
-         進行中則一定把整排頁面當成單一合成層縮放。若每一幀都改 CSS zoom，
-         瀏覽器會逐項重排並把小數座標各自取整，頁面裡的文字／符號／圖形就會
-         互相錯開一點，看起來像不停抖動。鬆手後再切回 zoom，畫面會恢復原生
-         清晰度，又不犧牲操作中的幾何穩定性。 */
+      /* 支援原生 zoom 時，手勢中也持續用目標尺寸重新取樣，照片不會因整頁
+         先被光柵化再放大而變糊。圖形／文字／符號已改成固定頁面座標 Canvas，
+         不再依賴各自的 DOM 排版，所以這裡逐幀更新 zoom 也不會重現舊抖動。
+         不支援 zoom 的瀏覽器才退回整頁 transform。 */
       const nativeZoom = typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2');
-      if (nativeZoom && !liveTransform) {
+      if (nativeZoom) {
         (col.style as any).zoom = String(k);
         col.style.transform = '';
         col.style.willChange = '';
@@ -12192,9 +12228,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                          containment，瀏覽器每幀會以這個完整區域失效與合成。 */
                       contain: 'paint',
                       isolation: 'isolate',
-                      transform: 'translate3d(0,0,0)',
-                      backfaceVisibility: 'hidden',
-                      WebkitBackfaceVisibility: 'hidden',
                     }}
                   >
                     {pages.map((page, pageIdx) => {
