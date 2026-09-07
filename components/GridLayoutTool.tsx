@@ -11977,6 +11977,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     className={`flex flex-row flex-nowrap relative ${
                       pagesMode || pagesVisual ? '' : 'shadow-[0_25px_60px_rgba(0,0,0,0.8)] overflow-hidden'
                     }`}
+                    style={{
+                      /* 所有頁面內容共用一個明確的繪製邊界。Safari 對 overflow:visible
+                         的 SVG／文字在尺寸或位置連續變動時，偶爾只重畫新範圍、沒有
+                         清掉舊範圍，於是圖形邊緣一路留下殘影；各子層分別合成時也會
+                         因小數座標取整不同而互相抖動。把整排內容設成同一個 paint
+                         containment，瀏覽器每幀會以這個完整區域失效與合成。 */
+                      contain: 'paint',
+                      isolation: 'isolate',
+                      transform: 'translate3d(0,0,0)',
+                      backfaceVisibility: 'hidden',
+                      WebkitBackfaceVisibility: 'hidden',
+                    }}
                   >
                     {pages.map((page, pageIdx) => {
                       const isPageActive = pageIdx === activePageIndex;
@@ -12987,6 +12999,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     {(() => {
                       const totalContainerWidth = pages.length * previewW + (pages.length - 1) * 1;
                       const totalContainerHeight = previewH;
+                      /* 對齊線在縮放容器裡，因此其內容座標粗細要除以預覽倍率，
+                         畫到螢幕上才會永遠維持 2px，不會跟著預覽一起變粗／變細。 */
+                      const guidePx = 2 / Math.max(0.0001, kRef.current || 1);
+                      const guideHalf = guidePx / 2;
 
                       return activeGuidelines.map((guideline, idx) => {
                         let leftStyle = '0';
@@ -12997,11 +13013,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         /* 邊界上的線不能有一半落進 overflow 裁切區，否則看起來會比
                            中間線細。最外側改為完整貼在畫布內，其餘仍跨在座標上。 */
                         if (guideline.type === 'vertical') {
-                          widthStyle = '2px';
-                          leftStyle = `${Math.max(0, Math.min(totalContainerWidth - 2, guideline.coord - 1))}px`;
+                          widthStyle = `${guidePx}px`;
+                          leftStyle = `${Math.max(0, Math.min(totalContainerWidth - guidePx, guideline.coord - guideHalf))}px`;
                         } else {
-                          heightStyle = '2px';
-                          topStyle = `${Math.max(0, Math.min(totalContainerHeight - 2, guideline.coord - 1))}px`;
+                          heightStyle = `${guidePx}px`;
+                          topStyle = `${Math.max(0, Math.min(totalContainerHeight - guidePx, guideline.coord - guideHalf))}px`;
                           /* 橫線只畫在物件自己那一頁：對齊的是這一頁的上下緣／中線，
                              跨到隔壁頁去沒有意義（也會蓋到別頁的內容）。 */
                           if (guideline.x0 != null && guideline.x1 != null) {
