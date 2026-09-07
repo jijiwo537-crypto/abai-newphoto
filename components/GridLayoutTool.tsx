@@ -3485,6 +3485,8 @@ interface FloatingImageComponentProps {
   /** 畫布目前真正套用的縮放倍率（使用者雙指縮放預覽用的那個）。
       手指走的是螢幕像素、物件的座標是未縮放的內容單位，兩者要靠它換算。 */
   canvasKRef?: React.RefObject<number>;
+  /** 已提交的預覽倍率；只用來在縮放手勢結束後重建高清 Canvas backing store。 */
+  canvasScale?: number;
   hasActiveGuidelines?: boolean;
   onDragStart?: () => void;
   onDragMove?: (rawX: number, rawY: number) => void;
@@ -4129,6 +4131,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   onDelete,
   pagesContainerRef,
   canvasKRef,
+  canvasScale = 1,
   hasActiveGuidelines = false,
   onDragStart,
   onDragMove,
@@ -5057,6 +5060,183 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     ? holeOverflow(holeOpts, image.width, image.height, shapeGlowBlurs(image.width, image.height))
     : { x: 0, y: 0 };
 
+  /* ── 經典拼圖的向量物件改用 Canvas 預覽 ────────────────────────────
+     創意拼圖之所以移動、縮放時不抖也不留殘影，關鍵不是多加一層 CSS，
+     而是每一幀都在同一張 canvas 上先 clearRect、再用同一組中心座標重畫。
+     經典拼圖原本卻讓圖形走 SVG、文字走 DOM 行盒、符號又走另一張 SVG；
+     三種引擎的小數取整與失效範圍不同，任何外層縮放都可能互相錯一格。
+
+     這裡把圖形／符號／文字的「可見本體」全部收斂到 Canvas。原本的 DOM
+     仍留著做精確字形量測與文字輸入，但平常不再顯示。繪圖參數沿用匯出
+     的同一套 path、紋理、描邊與字體度量，所以預覽與成品也會一致。 */
+  const vectorCanvasRef = useRef<HTMLCanvasElement>(null);
+  const isCanvasVector = !!image.shape || image.text !== undefined;
+  const vectorPad = (() => {
+    if (image.shape === 'hole') {
+      return {
+        x: Math.max(2, holeOv.x * boxW / Math.max(1, image.width)),
+        y: Math.max(2, holeOv.y * boxH / Math.max(1, image.height)),
+      };
+    }
+    const shapeGlow = image.shape
+      ? Math.max(...shapeGlowBlurs(image.width, image.height), 0) * image.scale * glowAmount(image.shapeGlow as any)
+      : 0;
+    const textGlow = image.text !== undefined && image.glow
+      ? (image.glow / 20) * 14 * 3 * image.scale
+      : 0;
+    const stroke = image.shape
+      ? (image.shapeStrokeW || 0) * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
+      : (image.strokeWidth || 0) * 2 * image.scale;
+    const p = Math.ceil(Math.max(2, shapeGlow, textGlow, stroke) + 2);
+    return { x: p, y: p };
+  })();
+
+  useLayoutEffect(() => {
+    if (!isCanvasVector) return;
+    const canvas = vectorCanvasRef.current;
+    if (!canvas) return;
+    let alive = true;
+    let raf = 0;
+    const draw = () => {
+      if (!alive) return;
+      const dpr = Math.min(4, Math.max(1, geoDpr * Math.max(1, canvasK())));
+      const cssW = Math.max(1, boxW + vectorPad.x * 2);
+      const cssH = Math.max(1, boxH + vectorPad.y * 2);
+      const W = Math.max(1, Math.ceil(cssW * dpr));
+      const H = Math.max(1, Math.ceil(cssH * dpr));
+      if (canvas.width !== W) canvas.width = W;
+      if (canvas.height !== H) canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssW, cssH);
+      ctx.save();
+      ctx.translate(vectorPad.x, vectorPad.y);
+
+      if (image.shape === 'hole') {
+        ctx.translate(boxW / 2, boxH / 2);
+        drawHoleShape(ctx, {
+          ...holeOpts!,
+          lineUnit: Math.max(image.width, image.height) / 160,
+        }, boxW, boxH,
+        shapeGlowBlurs(image.width, image.height)
+          .map(r => r * image.scale * glowAmount(image.shapeGlow as any)));
+        ctx.restore();
+        return;
+      }
+
+      if (image.shape) {
+        const path = new Path2D(shapePathD(image.shape, boxW, boxH));
+        const color = image.color || SHAPE_DEFAULT_COLOR;
+        const solid = !!image.shapeFilled && image.shape !== 'line';
+        const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
+        const lw = Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
+        const outer = (image.shapeStrokeW || 0) * (lineBase / 160);
+        ctx.lineJoin = image.shape === 'line' ? 'round' : 'miter';
+        ctx.lineCap = 'butt';
+        ctx.miterLimit = 4;
+        ctx.fillStyle = color;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lw;
+        const dash = image.shapeDash || 0;
+        ctx.setLineDash(dash > 0 ? [lw * (0.6 + dash / 100 * 4), lw * (0.6 + dash / 100 * 4) * 0.85] : []);
+        const gAmt = glowAmount(image.shapeGlow as any);
+        if (gAmt > 0) {
+          ctx.save();
+          ctx.shadowColor = image.shapeGlowColor || color;
+          for (const r of shapeGlowBlurs(image.width, image.height)) {
+            ctx.shadowBlur = r * image.scale * gAmt;
+            solid ? ctx.fill(path) : ctx.stroke(path);
+          }
+          ctx.restore();
+        }
+        if (outer > 0) {
+          ctx.save();
+          ctx.setLineDash([]);
+          ctx.strokeStyle = image.shapeStrokeColor || '#000000';
+          ctx.lineWidth = (solid ? 0 : lw) + outer * 2;
+          ctx.stroke(path);
+          ctx.restore();
+        }
+        solid ? ctx.fill(path) : ctx.stroke(path);
+        const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
+        if (tx !== 'none') {
+          ctx.save();
+          ctx.clip(path);
+          ctx.translate(boxW / 2, boxH / 2);
+          if (tx === 'dot' || tx === 'star' || tx === 'heart') {
+            paintTex(ctx, boxW, boxH, boxW, boxH, {
+              tex: tx,
+              dotSize: image.shapeDotSize,
+              dotGap: image.shapeDotGap,
+              dotColor: image.shapeDotColor,
+              textureBaseW: (image.shapeTextureBaseW || image.width) * image.scale,
+              textureBaseH: (image.shapeTextureBaseH || image.height) * image.scale,
+            });
+          } else {
+            paintStripes(ctx, boxW, boxH, boxW, boxH,
+              image.shapeStripeN ?? STRIPE_N_DEFAULT,
+              image.shapeStripeDir === 'h' ? 'h' : 'v',
+              image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
+          }
+          ctx.restore();
+        }
+        ctx.restore();
+        return;
+      }
+
+      const family = image.fontFamily || DEFAULT_FONT;
+      const size = (image.fontSize || 40) * image.scale;
+      const spacing = (image.letterSpacing || 0) * image.scale;
+      ctx.translate(boxW / 2, boxH / 2);
+      ctx.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      (ctx as any).letterSpacing = `${spacing}px`;
+      const lines = (image.text || '').split('\n');
+      const lineH = size * 1.12;
+      const startY = -((lines.length - 1) * lineH) / 2;
+      const ink = image.sym ? measureSymbolInk(image.text || image.sym, family) : null;
+      const dx = ink ? -ink.cx * size : 0;
+      const dy = ink ? -ink.cy * size : 0;
+      const fill = () => lines.forEach((line, i) => ctx.fillText(line, dx, startY + i * lineH + dy));
+      ctx.fillStyle = image.color || '#FFFFFF';
+      if (image.glow) {
+        ctx.shadowColor = image.glowColor || '#FFFFFF';
+        for (const k of [1, 2, 3]) {
+          ctx.shadowBlur = (image.glow / 20) * 14 * k * image.scale;
+          fill();
+        }
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
+      }
+      if (image.strokeWidth) {
+        ctx.lineWidth = image.strokeWidth * 2 * image.scale;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = image.strokeColor || '#000000';
+        lines.forEach((line, i) => ctx.strokeText(line, dx, startY + i * lineH + dy));
+      }
+      fill();
+      ctx.restore();
+    };
+    draw();
+    if (image.text !== undefined) {
+      waitForFont(image.fontFamily || DEFAULT_FONT, image.bold ? 700 : 400, !!image.italic)
+        .then(() => { if (alive) raf = requestAnimationFrame(draw); });
+    }
+    return () => { alive = false; if (raf) cancelAnimationFrame(raf); };
+  }, [
+    isCanvasVector, boxW, boxH, vectorPad.x, vectorPad.y,
+    image.shape, image.holeType, image.shapeFilled, image.shapeLineW, image.shapeDash,
+    image.shapeGlow, image.shapeGlowColor, image.shapeStrokeW, image.shapeStrokeColor,
+    image.shapeTex, image.shapeDots, image.shapeDotSize, image.shapeDotGap, image.shapeDotColor,
+    image.shapeStripeN, image.shapeStripeDir, image.shapeStripeA, image.shapeStripeB,
+    image.shapeTextureBaseW, image.shapeTextureBaseH, image.color,
+    image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
+    image.letterSpacing, image.strokeWidth, image.strokeColor, image.glow, image.glowColor,
+    image.scale, canvasScale,
+  ]);
+
   const chrome = (
     <>
     {/* 對齊線亮起來的時候，工具列先收起來 —— 那一刻使用者在看的是「有沒有對齊」，
@@ -5361,7 +5541,25 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       onTouchEnd={onSwapTouchEnd}
       onTouchCancel={onSwapTouchEnd}
     >
-      {image.shape === 'hole' ? (
+      {isCanvasVector && (
+        <canvas
+          ref={vectorCanvasRef}
+          aria-hidden
+          style={{
+            position: 'absolute',
+            left: `${-vectorPad.x}px`,
+            top: `${-vectorPad.y}px`,
+            width: `${Math.max(1, boxW + vectorPad.x * 2)}px`,
+            height: `${Math.max(1, boxH + vectorPad.y * 2)}px`,
+            pointerEvents: 'none',
+            opacity: image.text !== undefined && isTextEditing ? 0 : 1,
+            /* Canvas 自己完整清除並重畫，不再讓每個 SVG path／DOM 字形各自
+               留一個合成層；這也是創意拼圖不會拖出舊幀殘影的核心。 */
+            contain: 'strict',
+          }}
+        />
+      )}
+      {isCanvasVector && image.shape ? null : image.shape === 'hole' ? (
         /* 從「圖案」借過來的那幾顆：它們不是 SVG 路徑（有的是系統字型的字、
            有的是去背 PNG），所以預覽直接畫在 canvas 上、用的就是匯出那一支
            drawHoleShape —— 預覽跟成品是同一段程式碼畫的，不可能對不起來。
@@ -5405,6 +5603,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             width: `${(1 + 2 * holeOv.x / image.width) * 100}%`,
             height: `${(1 + 2 * holeOv.y / image.height) * 100}%`,
             pointerEvents: 'none',
+            visibility: 'hidden',
           }}
         />
       ) : image.shape ? (
@@ -5439,6 +5638,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             backfaceVisibility: 'hidden',
             WebkitBackfaceVisibility: 'hidden',
             isolation: 'isolate',
+            visibility: 'hidden',
           }}
         >
           {/* 點點：用一塊 pattern 疊在圖形上，範圍就是圖形的填色區域 ——
@@ -5552,9 +5752,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             : `0 0 ${Math.max(1, image.width)} ${Math.max(1, image.height)}`}
           preserveAspectRatio="none"
           style={{
-            position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
+            position: 'absolute', left: 0, top: 0, width: `${image.width}px`, height: `${image.height}px`,
             overflow: 'visible', pointerEvents: 'none',
-            opacity: symbolSvgBounds ? 1 : 0,
+            opacity: 0,
           }}
           aria-hidden
         >
@@ -5601,7 +5801,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                的 scale 去做 —— 等同 canvas 連續縮放字形輪廓。
                字級、字距、描邊、發光在這裡一律用原值，倍率統一由 scale 帶。 */
             position: 'absolute', left: '50%', top: '50%',
-            transform: `translate3d(-50%, -50%, 0) scale(${textRenderScale})`,
+            transform: isTextEditing ? `translate3d(-50%, -50%, 0) scale(${textRenderScale})` : 'none',
             transformOrigin: 'center center',
             /* 縮放時的殘影：這一層只有 transform 在變，可是它裡面是**文字**
                （還可能帶 text-shadow 的發光），瀏覽器把它當一般內容重畫時，
@@ -5614,16 +5814,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             WebkitBackfaceVisibility: 'hidden',
             // 內容盒、字級和字距永遠維持一倍；只變上面的 transform，瀏覽器便不會
             // 每一幀重新計算字體 ascent/descent，文字與符號中心也不會跳動。
-            width: `${image.width * textMetricScale}px`, height: `${image.height * textMetricScale}px`,
+            width: `${image.width * (isTextEditing ? textMetricScale : 1)}px`, height: `${image.height * (isTextEditing ? textMetricScale : 1)}px`,
             pointerEvents: 'none',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontFamily: fontStack(image.fontFamily),
-            fontSize: `${(image.fontSize || 40) * textMetricScale}px`,
+            fontSize: `${(image.fontSize || 40) * (isTextEditing ? textMetricScale : 1)}px`,
             lineHeight: 1.12,
             fontWeight: image.bold ? 700 : 400,
             fontStyle: image.italic ? 'italic' : 'normal',
             // 倍率由外層的 scale 帶，這裡一律用原值（見上面的說明）
-            letterSpacing: `${(image.letterSpacing || 0) * textMetricScale}px`,
+            letterSpacing: `${(image.letterSpacing || 0) * (isTextEditing ? textMetricScale : 1)}px`,
             color: image.color || '#FFFFFF',
             // 只有使用者自己按的換行才換行，不自動斷行
             whiteSpace: 'pre',
@@ -5634,7 +5834,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             // 一半會吃進字身，看起來像每一筆都被描了一圈。改成 paint-order
             // 把描邊畫在填色「下面」、寬度加倍 —— 字身蓋住內半邊，
             // 剩下的就是純外描邊。
-            WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2 * textMetricScale}px` : undefined,
+            WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2 * (isTextEditing ? textMetricScale : 1)}px` : undefined,
             WebkitTextStrokeColor: image.strokeWidth ? (image.strokeColor || '#000000') : undefined,
             // 沒有描邊時不要留著 paint-order。
             paintOrder: image.strokeWidth ? 'stroke fill' : undefined,
@@ -5644,6 +5844,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                兩邊對不起來。改成下面另外疊一層只有光的文字，跟匯出同一套順序。 */
             textShadow: 'none',
             boxSizing: 'border-box',
+            /* 非編輯狀態由上面的 Canvas 顯示；這層只保留量測與 textarea。 */
+            opacity: isTextEditing ? 1 : 0,
           }}
         >
           {/* 發光層：疊在主層底下，只負責發光。發光跟描邊是兩件獨立的事 ——
@@ -12725,6 +12927,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         }}
                         pagesContainerRef={pagesContainerRef}
                         canvasKRef={kRef}
+                        canvasScale={pagesScale}
                         onDragStart={() => {}}
                         onDragMove={(rawX, rawY) => {
                           const { snappedX, snappedY, fitScale, guidelines } = applySnapping(
