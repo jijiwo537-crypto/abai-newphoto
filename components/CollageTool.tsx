@@ -7461,6 +7461,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </div>
                 );
                 if (sel.type === 'shape') {
+                  const isLine = SPECIAL_LINE_KINDS.has(sel.kind || '');
                   /* 圖形調整：欄位與經典拼圖那顆 ShapeEditorPanel 一致。
                      圖層上下不放這裡 —— 選中時畫面上那排工具列本來就有。 */
                   return (
@@ -7471,6 +7472,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         <div className="flex flex-col gap-3.5 pt-1 pb-14">
                           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
                           {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c, glowColor: c }), true)}
+                          {isLine && (
+                            <div className="px-2">
+                              {shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100,
+                                (v: number) => patch({ lineW: v / 10 }))}
+                            </div>
+                          )}
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
                               不會有欄位突然冒出來閃一下。 */}
@@ -7498,7 +7505,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
                               （跟經典拼圖的「背景紋理」同一種排法）。顏色常駐。
                               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-                          {(() => {
+                          {!isLine && (() => {
                             const tex = texOf(sel);
                             return (
                           <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3">
@@ -7585,11 +7592,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             </div>
                           )}
                           {/* 粗細與虛線只有空心／線條才有，放在最後面 */}
-                          {(!sel.filled || sel.kind === 'line') && (
+                          {(!sel.filled || isLine) && (!isLine || sel.kind === 'line') && (
                             <div className="order-5 flex flex-col gap-3.5">
-                              {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
-                              {shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }))}
-                              {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位） */}
+                              {!isLine && shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100,
+                                (v: number) => patch({ lineW: v / 10 }))}
                               {shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
                             </div>
                           )}
