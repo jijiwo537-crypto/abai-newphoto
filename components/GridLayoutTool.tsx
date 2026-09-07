@@ -1466,7 +1466,27 @@ const LayoutEmptyPromptLayer: React.FC<{
       const cellScreenW = point.offsetWidth * k;
       const cellScreenH = point.offsetHeight * k;
       const fit = Math.max(0.18, Math.min(1, cellScreenW / 92, cellScreenH / 60));
-      prompt.style.transform = `translate3d(-50%, -50%, 0) scale(${fit / k})`;
+      const ui = fit / k;
+
+      /* 不再把一份 9px 字与 16px SVG 先点阵化、再用 transform 放大抵销
+         预览缩放；那会让 WebKit 沿用低解析度合成贴图，预览越小越模糊。
+         直接把 DOM 的实际字号与 SVG 版面建立在需要的解析度，再由外层预览
+         缩回萤幕尺寸。最终视觉大小相同，但每一帧都从向量／字体轮廓栅格化。 */
+      prompt.style.width = `${76 * ui}px`;
+      prompt.style.height = `${44 * ui}px`;
+      prompt.style.transform = 'translate3d(-50%, -50%, 0)';
+      const plus = prompt.querySelector<SVGElement>('[data-layout-empty-plus]');
+      if (plus) {
+        plus.style.width = `${16 * ui}px`;
+        plus.style.height = `${16 * ui}px`;
+        plus.style.top = `${3 * ui}px`;
+      }
+      const label = prompt.querySelector<HTMLElement>('[data-layout-empty-label]');
+      if (label) {
+        label.style.top = `${28.5 * ui}px`;
+        label.style.fontSize = `${9 * ui}px`;
+        label.style.letterSpacing = `${1.2 * ui}px`;
+      }
     });
   }, []);
 
@@ -1507,18 +1527,21 @@ const LayoutEmptyPromptLayer: React.FC<{
         >
           <span
             data-layout-empty-prompt="1"
-            className="absolute left-1/2 top-1/2 block w-[76px] h-[44px] text-white/20 not-italic"
-            style={{ backfaceVisibility: 'hidden', willChange: 'transform', transformOrigin: 'center center' }}
+            className="absolute left-1/2 top-1/2 block text-white/20 not-italic"
+            style={{ transformOrigin: 'center center', textRendering: 'geometricPrecision' }}
           >
             <svg
+              data-layout-empty-plus="1"
               width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden
-              className="absolute left-1/2 top-[3px] -translate-x-1/2"
+              className="absolute left-1/2 -translate-x-1/2"
+              shapeRendering="geometricPrecision"
             >
               <path d="M1 8H15M8 1V15" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
             </svg>
             <span
-              className="absolute left-1/2 top-[28.5px] -translate-x-1/2 whitespace-nowrap text-[9px] font-bold tracking-[1.2px] leading-none"
-              style={{ fontFamily: fontStack(DEFAULT_FONT) }}
+              data-layout-empty-label="1"
+              className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap font-bold leading-none"
+              style={{ fontFamily: fontStack(DEFAULT_FONT), textRendering: 'geometricPrecision' }}
             >
               選擇相片
             </span>
