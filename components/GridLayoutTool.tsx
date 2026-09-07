@@ -5404,7 +5404,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ctx.save();
           ctx.shadowColor = image.shapeGlowColor || color;
           for (const r of shapeGlowBlurs(image.width, image.height)) {
-            ctx.shadowBlur = r * image.scale * gAmt;
+            // shadowBlur 不吃目前的 CTM；補上 backingScale，縮回 CSS 尺寸後才是正確強度。
+            ctx.shadowBlur = r * image.scale * gAmt * backingScale;
             solid ? ctx.fill(path) : ctx.stroke(path);
           }
           ctx.restore();
@@ -5468,7 +5469,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       if (image.glow) {
         ctx.shadowColor = image.glowColor || '#FFFFFF';
         for (const k of [1, 2, 3]) {
-          ctx.shadowBlur = (image.glow / 20) * 14 * k * image.scale;
+          // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
+          ctx.shadowBlur = (image.glow / 20) * 14 * k * image.scale * backingScale;
           fill();
         }
         ctx.shadowBlur = 0;
@@ -5861,11 +5863,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           const startY = -((lines.length - 1) * lineH) / 2;
           const dx = vectorGlyphCorrection.x;
           const dy = vectorGlyphCorrection.y;
-          const glow = image.glow
-            ? [1, 2, 3]
-                .map(k => `drop-shadow(0 0 ${(image.glow! / 20) * 14 * k * image.scale}px ${image.glowColor || '#FFFFFF'})`)
-                .join(' ')
-            : undefined;
+          const glowId = `vector-text-glow-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+          const glowUnit = (image.glow || 0) / 20 * 14;
           return (
             <svg
               data-vector-text={image.id}
@@ -5879,6 +5878,25 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               }}
               aria-hidden
             >
+              {image.glow ? (
+                <defs>
+                  <filter id={glowId} x={-vectorCssW} y={-vectorCssH}
+                    width={vectorCssW * 3} height={vectorCssH * 3}
+                    filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+                    <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit} result="blur1" />
+                    <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit * 2} result="blur2" />
+                    <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit * 3} result="blur3" />
+                    <feFlood floodColor={image.glowColor || '#FFFFFF'} result="glowColor" />
+                    <feComposite in="glowColor" in2="blur1" operator="in" result="glow1" />
+                    <feComposite in="glowColor" in2="blur2" operator="in" result="glow2" />
+                    <feComposite in="glowColor" in2="blur3" operator="in" result="glow3" />
+                    <feMerge>
+                      <feMergeNode in="glow3" /><feMergeNode in="glow2" />
+                      <feMergeNode in="glow1" /><feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                </defs>
+              ) : null}
               <g transform={`translate(${vectorCssW / 2} ${vectorCssH / 2}) rotate(${image.rotation}) scale(${image.scale})`}>
                 <text
                   ref={vectorGlyphRef}
@@ -5896,7 +5914,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                   stroke={image.strokeWidth ? (image.strokeColor || '#000000') : 'none'}
                   strokeWidth={image.strokeWidth ? image.strokeWidth * 2 : 0}
                   paintOrder="stroke fill"
-                  style={{ filter: glow, textRendering: 'geometricPrecision' }}
+                  filter={image.glow ? `url(#${glowId})` : undefined}
+                  style={{ textRendering: 'geometricPrecision' }}
                 >
                   {image.sym || lines.length === 1
                     ? image.text
