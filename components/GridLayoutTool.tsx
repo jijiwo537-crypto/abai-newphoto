@@ -1103,14 +1103,57 @@ const STRETCH_OUTLINE_KINDS = new Set([
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if (!shape || shape === 'line') return false;
-  if (shape === 'hole') return holeType === 'cross-star';
+  if (shape === 'hole') return false;
   return filled ? STRETCH_SOLID_KINDS.has(shape) : STRETCH_OUTLINE_KINDS.has(shape);
 };
-/** 羽化只开放给实心分类的基础图形：十种路径图形＋实心十字星。 */
-export const shapeSupportsFeather = (shape: string | undefined, filled: boolean | undefined, holeType?: string) =>
-  !!filled && (shape === 'hole' ? holeType === 'cross-star' : !!shape && STRETCH_SOLID_KINDS.has(shape));
+/** 羽化只开放给前十个基础实心路径图形；第十一个实心十字星不支持。 */
+export const shapeSupportsFeather = (shape: string | undefined, filled: boolean | undefined, _holeType?: string) =>
+  !!filled && !!shape && shape !== 'hole' && STRETCH_SOLID_KINDS.has(shape);
 export const shapeFeatherBlur = (w: number, h: number, value?: number) =>
   Math.max(0, Math.min(w, h) * (Math.max(0, Math.min(100, value || 0)) / 100) * 0.03);
+
+/** 将实心图形先画到独立画布，再用内缩模糊 alpha 遮罩合成。
+ * 与图片边缘羽化一样，改变的是边缘透明度，而不是给硬边图形加一层视觉 blur。 */
+export const drawFeatheredShapeBody = (
+  target: CanvasRenderingContext2D,
+  kind: string, w: number, h: number, feather: number | undefined,
+  color: string,
+  paintTexture?: (ctx: CanvasRenderingContext2D, path: Path2D) => void,
+) => {
+  const W = Math.max(2, Math.ceil(w)), H = Math.max(2, Math.ceil(h));
+  const value = Math.max(0, Math.min(100, feather || 0));
+  const direct = () => {
+    const path = new Path2D(shapePathD(kind, w, h));
+    target.fillStyle = color; target.fill(path); paintTexture?.(target, path);
+  };
+  if (value <= 0) { direct(); return; }
+  const layer = document.createElement('canvas');
+  layer.width = W; layer.height = H;
+  const lc = layer.getContext('2d');
+  if (!lc) { direct(); return; }
+  const path = new Path2D(shapePathD(kind, w, h));
+  lc.fillStyle = color; lc.fill(path); paintTexture?.(lc, path);
+
+  const mask = document.createElement('canvas');
+  mask.width = W; mask.height = H;
+  const mc = mask.getContext('2d')!;
+  const band = (value / 100) * Math.min(w, h) / 2;
+  const blur = Math.max(0.5, band / 3);
+  const inset = Math.min(Math.min(w, h) * 0.45, blur * 1.5);
+  mc.filter = `blur(${blur}px)`;
+  mc.fillStyle = '#fff';
+  mc.fill(new Path2D(shapePathD(kind, Math.max(1, w - inset * 2), Math.max(1, h - inset * 2))));
+  // 上面的内缩路径从 (0,0) 起算，重新画到居中位置。
+  mc.setTransform(1, 0, 0, 1, inset, inset);
+  mc.clearRect(-inset, -inset, W, H);
+  mc.filter = `blur(${blur}px)`;
+  mc.fill(new Path2D(shapePathD(kind, Math.max(1, w - inset * 2), Math.max(1, h - inset * 2))));
+
+  lc.globalCompositeOperation = 'destination-in';
+  lc.drawImage(mask, 0, 0);
+  lc.globalCompositeOperation = 'source-over';
+  target.drawImage(layer, 0, 0, w, h);
+};
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
 export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number };
@@ -1914,13 +1957,13 @@ export const ShapeEditorPanel: React.FC<{
         )}
         {!colorPage && (
         /* 底部留一段：捲到最底時最後一根滑桿不會貼著邊 */
-        <div className="flex flex-col gap-3.5 pt-1 pb-14">
+        <div className="flex flex-row flex-wrap gap-3.5 pt-1 pb-14">
           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題）。
               換圖形顏色時發光也一起換成同一個色 —— 發光本來就是圖形自己的光暈。
               反過來不成立：單獨挑發光的顏色時，圖形的顏色不會被動到。 */}
           {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c, shapeGlowColor: c }), true)}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
-          <div className="flex items-center gap-3 px-2 order-2">
+          <div className={`flex items-center gap-3 px-2 order-1 ${canFeather ? 'w-[calc(50%-0.44rem)]' : 'w-full'}`}>
             <div className="flex-1 min-w-0">
               {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
                 v => onChange({ shapeGlow: v } as any))}
@@ -1932,7 +1975,7 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>
-          <div className="flex items-center gap-3 px-2 order-3">
+          <div className={`flex items-center gap-3 px-2 order-2 ${canFeather ? 'w-[calc(50%-0.44rem)]' : 'w-full'}`}>
             <div className="flex-1 min-w-0">
               {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
                 v => onChange({ shapeStrokeW: v / 10 }))}
@@ -1950,7 +1993,7 @@ export const ShapeEditorPanel: React.FC<{
           {(() => {
             const tex = texOf({ tex: layer.shapeTex, dots: layer.shapeDots });
             return (
-          <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-1">
+          <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3 w-full">
             <div className="h-[47px] flex items-center justify-between px-3">
               <span className="text-[10px] font-bold text-[#888]">紋理</span>
               <div className="flex items-center gap-2">
@@ -2038,7 +2081,7 @@ export const ShapeEditorPanel: React.FC<{
             );
           })()}
           {canFeather && (
-            <div className="px-2 order-4">
+            <div className="px-2 order-4 w-full">
               {slider('羽化', layer.shapeFeather || 0, 0, 100, v => onChange({ shapeFeather: v }))}
             </div>
           )}
@@ -5436,33 +5479,23 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ctx.stroke(path);
           ctx.restore();
         }
-        ctx.save();
-        const featherBlur = solid ? shapeFeatherBlur(boxW, boxH, image.shapeFeather) : 0;
-        if (featherBlur > 0) ctx.filter = `blur(${featherBlur}px)`;
-        solid ? ctx.fill(path) : ctx.stroke(path);
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
-        if (tx !== 'none') {
-          ctx.save();
-          ctx.clip(path);
-          ctx.translate(boxW / 2, boxH / 2);
-          if (tx === 'dot' || tx === 'star' || tx === 'heart') {
-            paintTex(ctx, boxW, boxH, boxW, boxH, {
-              tex: tx,
-              dotSize: image.shapeDotSize,
-              dotGap: image.shapeDotGap,
-              dotColor: image.shapeDotColor,
+        if (solid) {
+          drawFeatheredShapeBody(ctx, image.shape, boxW, boxH, image.shapeFeather, color, (tc, bodyPath) => {
+            if (tx === 'none') return;
+            tc.save(); tc.clip(bodyPath); tc.translate(boxW / 2, boxH / 2);
+            if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, boxW, boxH, boxW, boxH, {
+              tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
               textureBaseW: (image.shapeTextureBaseW || image.width) * image.scale,
               textureBaseH: (image.shapeTextureBaseH || image.height) * image.scale,
             });
-          } else {
-            paintStripes(ctx, boxW, boxH, boxW, boxH,
-              image.shapeStripeN ?? STRIPE_N_DEFAULT,
-              image.shapeStripeDir === 'h' ? 'h' : 'v',
-              image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
-          }
-          ctx.restore();
+            else paintStripes(tc, boxW, boxH, boxW, boxH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
+              image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
+            tc.restore();
+          });
+        } else {
+          ctx.stroke(path);
         }
-        ctx.restore();
         ctx.restore();
         return;
       }
