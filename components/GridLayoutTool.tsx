@@ -1106,6 +1106,11 @@ export const shapeSupportsStretch = (shape: string | undefined, filled: boolean 
   if (shape === 'hole') return holeType === 'cross-star';
   return filled ? STRETCH_SOLID_KINDS.has(shape) : STRETCH_OUTLINE_KINDS.has(shape);
 };
+/** 羽化只开放给实心分类的基础图形：十种路径图形＋实心十字星。 */
+export const shapeSupportsFeather = (shape: string | undefined, filled: boolean | undefined, holeType?: string) =>
+  !!filled && (shape === 'hole' ? holeType === 'cross-star' : !!shape && STRETCH_SOLID_KINDS.has(shape));
+export const shapeFeatherBlur = (w: number, h: number, value?: number) =>
+  Math.max(0, Math.min(w, h) * (Math.max(0, Math.min(100, value || 0)) / 100) * 0.03);
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
 export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number };
@@ -1874,6 +1879,7 @@ export const ShapeEditorPanel: React.FC<{
 }> = ({ layer, onChange }) => {
   const isLine = layer.shape === 'line';
   const hasOutline = !layer.shapeFilled || isLine;
+  const canFeather = shapeSupportsFeather(layer.shape, layer.shapeFilled, layer.holeType);
   /* 顏色改成「點進去有一頁」（跟文字那一頁同一顆元件） */
   const [colorPage, setColorPage] = useState<
     { value: string; colors?: string[]; onPick: (c: string) => void } | null
@@ -1908,13 +1914,13 @@ export const ShapeEditorPanel: React.FC<{
         )}
         {!colorPage && (
         /* 底部留一段：捲到最底時最後一根滑桿不會貼著邊 */
-        <div className="space-y-3.5 pt-1 pb-14">
+        <div className="flex flex-col gap-3.5 pt-1 pb-14">
           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題）。
               換圖形顏色時發光也一起換成同一個色 —— 發光本來就是圖形自己的光暈。
               反過來不成立：單獨挑發光的顏色時，圖形的顏色不會被動到。 */}
           {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c, shapeGlowColor: c }), true)}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
-          <div className="flex items-center gap-3 px-2">
+          <div className="flex items-center gap-3 px-2 order-2">
             <div className="flex-1 min-w-0">
               {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
                 v => onChange({ shapeGlow: v } as any))}
@@ -1926,7 +1932,7 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>
-          <div className="flex items-center gap-3 px-2">
+          <div className="flex items-center gap-3 px-2 order-3">
             <div className="flex-1 min-w-0">
               {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
                 v => onChange({ shapeStrokeW: v / 10 }))}
@@ -1944,7 +1950,7 @@ export const ShapeEditorPanel: React.FC<{
           {(() => {
             const tex = texOf({ tex: layer.shapeTex, dots: layer.shapeDots });
             return (
-          <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden">
+          <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-1">
             <div className="h-[47px] flex items-center justify-between px-3">
               <span className="text-[10px] font-bold text-[#888]">紋理</span>
               <div className="flex items-center gap-2">
@@ -2031,16 +2037,21 @@ export const ShapeEditorPanel: React.FC<{
           </div>
             );
           })()}
+          {canFeather && (
+            <div className="px-2 order-4">
+              {slider('羽化', layer.shapeFeather || 0, 0, 100, v => onChange({ shapeFeather: v }))}
+            </div>
+          )}
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
           {hasOutline && (
-            <>
+            <div className="order-5 flex flex-col gap-3.5">
               {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
               {slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
                 v => onChange({ shapeLineW: v / 10 }))}
               {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
                   所以線越粗、虛線的節奏就跟著等比例放大 */}
               {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
-            </>
+            </div>
           )}
         </div>
         )}
@@ -3530,6 +3541,8 @@ interface FloatingImage {
   shapeGlow?: number | boolean;
   /** 圖形發光的顏色。沒設就用圖形自己的顏色 */
   shapeGlowColor?: string;
+  /** 实心基础图形的边缘羽化 0～100。 */
+  shapeFeather?: number;
   /** 發光顏色是不是已經給過預設值了（只在第一次打開發光時帶入圖層自己的顏色） */
   glowInit?: boolean;
   /** 圖形的外描邊寬度（跟粗細同一種刻度：存 0~10，滑桿顯示 0~100），0＝不描邊 */
@@ -5375,6 +5388,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.translate(cssW / 2 * backingScale, cssH / 2 * backingScale);
         ctx.rotate((image.rotation * Math.PI) / 180);
+        const holeFeather = shapeSupportsFeather(image.shape, image.shapeFilled, image.holeType)
+          ? shapeFeatherBlur(boxW, boxH, image.shapeFeather) * backingScale : 0;
+        if (holeFeather > 0) ctx.filter = `blur(${holeFeather}px)`;
         drawHoleShape(ctx, {
           ...holeOpts!,
           lineUnit: Math.max(image.width, image.height) / 160 * backingScale,
@@ -5420,6 +5436,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ctx.stroke(path);
           ctx.restore();
         }
+        ctx.save();
+        const featherBlur = solid ? shapeFeatherBlur(boxW, boxH, image.shapeFeather) : 0;
+        if (featherBlur > 0) ctx.filter = `blur(${featherBlur}px)`;
         solid ? ctx.fill(path) : ctx.stroke(path);
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
         if (tx !== 'none') {
@@ -5443,6 +5462,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           }
           ctx.restore();
         }
+        ctx.restore();
         ctx.restore();
         return;
       }
@@ -11221,6 +11241,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.stroke(path);
       ctx.restore();
     }
+    ctx.save();
+    const featherBlur = solid ? shapeFeatherBlur(fw, fh, fImg.shapeFeather) : 0;
+    if (featherBlur > 0) ctx.filter = `blur(${featherBlur}px)`;
     if (solid) ctx.fill(path); else ctx.stroke(path);
     /* 紋理：剪裁在圖形裡面再鋪一層，跟預覽那塊 pattern 是同一塊區域、
        同一組參數，所以預覽跟匯出對得起來。 */
