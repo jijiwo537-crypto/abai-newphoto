@@ -4187,6 +4187,42 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     width: number; height: number; x: number; y: number; rotationRad: number;
   } | null>(null);
 
+  /* iOS 偶尔会把最后一个 pointerup/touchend 送到被重新合成后的祖先，而不是
+     起手的物件节点。局部 isDragging/isScaling 若因此卡住，外框和药丸就永远
+     过不了显示条件。和创意拼图一样加全域兜底；延后一格让正常的局部收尾先跑。 */
+  useEffect(() => {
+    if (!isDragging && !isScaling) return;
+    let timer = 0;
+    const finish = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        dragStart.current = null;
+        rotateStart.current = null;
+        scaleStart.current = null;
+        stretchStart.current = null;
+        setIsDragging(false);
+        setIsScaling(false);
+      }, 0);
+    };
+    const finishTouch = (e: TouchEvent) => { if (e.touches.length === 0) finish(); };
+    const finishVisibility = () => { if (document.visibilityState !== 'visible') finish(); };
+    window.addEventListener('pointerup', finish, true);
+    window.addEventListener('pointercancel', finish, true);
+    window.addEventListener('touchend', finishTouch, true);
+    window.addEventListener('touchcancel', finishTouch, true);
+    window.addEventListener('blur', finish);
+    document.addEventListener('visibilitychange', finishVisibility);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('pointerup', finish, true);
+      window.removeEventListener('pointercancel', finish, true);
+      window.removeEventListener('touchend', finishTouch, true);
+      window.removeEventListener('touchcancel', finishTouch, true);
+      window.removeEventListener('blur', finish);
+      document.removeEventListener('visibilitychange', finishVisibility);
+    };
+  }, [isDragging, isScaling]);
+
   /** 畫布縮放倍率；沒傳就是 1（＝跟以前一模一樣） */
   const canvasK = () => (canvasKRef?.current || 1);
 
@@ -5481,25 +5517,40 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         const pad = half + outPx + gap;
         return { x: pad, y: pad };
       })();
-      const symbolGap = image.sym ? 2 / kNow : 0;
       const starTopGap = (image.shape === 'star' || (image.shape === 'hole' && image.holeType === 'cross-star'))
         ? 3 / kNow : 0;
       const frameInk = image.shape && image.shape !== 'hole'
         ? (SHAPE_FIT[image.shape] || [0, 0, 1, 1])
         : null;
+      /* 跟創意拼圖的 objectSelectionInk 完全相同：使用共用的 symInk、字号、
+         描边和固定 2 个屏幕像素留白，不再拿储存用的 width/height 外盒加框。 */
+      const symbolFrame = image.sym ? (() => {
+        const ink = measureSymbolInk(image.text || image.sym!, image.fontFamily || DEFAULT_FONT);
+        const size = image.fontSize || 40;
+        const sc = image.scale || 1;
+        const inkW = ink.w * size * sc;
+        const inkH = ink.h * size * sc;
+        const edge = 2 / kNow + (image.strokeWidth || 0) * (size / 40) * sc;
+        return {
+          left: (boxW - inkW) / 2 - edge,
+          top: (boxH - inkH) / 2 - edge,
+          width: inkW + edge * 2,
+          height: inkH + edge * 2,
+        };
+      })() : null;
       // 依真正有墨水的範圍畫框，四周留相同距離；星形額外距離也上下對稱。
-      const frameRect = frameInk ? {
+      const frameRect = symbolFrame || (frameInk ? {
         left: boxW * frameInk[0] - framePad.x - starTopGap,
         top: boxH * frameInk[1] - framePad.y - starTopGap,
         width: boxW * frameInk[2] + framePad.x * 2 + starTopGap * 2,
         // 線條高度為 0；多補的 1px 只會長在框下側，視覺上反而不置中。
         height: (image.shape === 'line' ? 0 : Math.max(1, boxH * frameInk[3])) + framePad.y * 2 + starTopGap * 2,
       } : {
-        left: -framePad.x - starTopGap - symbolGap,
-        top: -framePad.y - starTopGap - symbolGap,
-        width: boxW + framePad.x * 2 + starTopGap * 2 + symbolGap * 2,
-        height: boxH + framePad.y * 2 + starTopGap * 2 + symbolGap * 2,
-      };
+        left: -framePad.x - starTopGap,
+        top: -framePad.y - starTopGap,
+        width: boxW + framePad.x * 2 + starTopGap * 2,
+        height: boxH + framePad.y * 2 + starTopGap * 2,
+      });
       /** 一顆角球。看得見的白點比觸控範圍小 20%（14 → 11.2），
        *  外面那層維持 14×14、而且事件還是掛在它身上，所以手感一點都沒變。 */
       const cornerDot = (
@@ -5600,7 +5651,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             <rect
               x="0" y="0" width="100%" height="100%"
               fill="none" stroke="#ffffff"
-              strokeWidth={r3((image.sym ? 0.8 : image.shape === 'line' ? 0.55 : image.shape ? 1.05 : 1.6) / kNow)}
+              strokeWidth={r3((image.sym ? 0.5 : image.shape === 'line' ? 0.55 : image.shape ? 1.05 : 0.75) / kNow)}
             />
           </svg>
         )}
@@ -10765,6 +10816,46 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     inertiaRef.current = requestAnimationFrame(step);
   };
 
+  /* React 的 onTouchEnd 在 Safari 重建合成层的同一帧偶尔收不到。用 window 捕获
+     最后一根手指离开的事件，并延后到本轮事件结束后检查；正常收尾已执行时这
+     是无操作，漏掉时则统一清掉所有会隐藏外框／药丸的旗标与手势引用。 */
+  useEffect(() => {
+    let timer = 0;
+    const restoreChrome = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        flushInteractionNow();
+        setSelectionDragging(false);
+        setPinchFloatingId(null);
+        setActiveGuidelines([]);
+        setActiveCollisions({ left: false, right: false, top: false, bottom: false });
+        wsGestureRef.current = null;
+        panRef.current = null;
+        panMovedRef.current = false;
+        if (canvasZoomRef.current) {
+          canvasZoomRef.current = null;
+          applyStripGeometry(userZoomRef.current, false);
+          setUserZoom(userZoomRef.current);
+        }
+      }, 0);
+    };
+    const finishTouch = (e: TouchEvent) => { if (e.touches.length === 0) restoreChrome(); };
+    const finishVisibility = () => { if (document.visibilityState !== 'visible') restoreChrome(); };
+    window.addEventListener('touchend', finishTouch, true);
+    window.addEventListener('touchcancel', finishTouch, true);
+    window.addEventListener('blur', restoreChrome);
+    window.addEventListener('pagehide', restoreChrome);
+    document.addEventListener('visibilitychange', finishVisibility);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('touchend', finishTouch, true);
+      window.removeEventListener('touchcancel', finishTouch, true);
+      window.removeEventListener('blur', restoreChrome);
+      window.removeEventListener('pagehide', restoreChrome);
+      document.removeEventListener('visibilitychange', finishVisibility);
+    };
+  }, [applyStripGeometry, flushInteractionNow]);
+
   const handleDeleteLayout = () => {
     setPages(prev => prev.map(p => p.layouts.some(l => l.id === selectedLayoutId)
       ? { ...p, layouts: p.layouts.filter(l => l.id !== selectedLayoutId) }
@@ -12604,7 +12695,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           transition: layoutTransition,
                                         }}
                                       >
-                                        <div className="w-full h-full flex items-center justify-center bg-neutral-950" style={{ borderRadius: `${radius}px`, WebkitMaskImage: '-webkit-radial-gradient(white, black)' }}>
+                                        <div
+                                          className="w-full h-full flex items-center justify-center bg-neutral-950"
+                                          style={{
+                                            borderRadius: `${radius}px`,
+                                            ...(radius > 0 ? { WebkitMaskImage: '-webkit-radial-gradient(white, black)' } : null),
+                                          }}
+                                        >
                                           <button
                                             onClick={(e) => {
                                               e.stopPropagation();
@@ -12685,7 +12782,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                               ? 'border-white bg-[#141414] shadow-[0_0_15px_rgba(255,255,255,0.05)]' 
                                               : 'border-white/10 ' + (wholeLayoutSelected ? '' : 'cell-hover')
                                           }`}
-                                          style={{ borderRadius: `${radius}px`, WebkitMaskImage: '-webkit-radial-gradient(white, black)' }}
+                                          style={{
+                                            borderRadius: `${radius}px`,
+                                            /* 新增布局的 radius 是 0。此时建立 WebKit mask 只会把每个
+                                               相邻格子拆成独立合成层，重绘时从中间漏出页面白底；真正
+                                               有圆角时才需要这个抗锯齿遮罩。 */
+                                            ...(radius > 0 ? { WebkitMaskImage: '-webkit-radial-gradient(white, black)' } : null),
+                                          }}
                                         >
                                           <Plus className={`text-white opacity-20 transition-all duration-300 mb-1 ${wholeLayoutSelected ? '' : 'cell-hover-icon'}`} size={20} />
                                           <span className={`text-[9px] font-bold text-white/20 tracking-widest uppercase ${wholeLayoutSelected ? '' : 'cell-hover-text'}`}>選擇相片</span>
@@ -12852,7 +12955,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                               borderWidth: 0.75 / Math.max(0.0001, kRef.current),
                                               boxShadow: `0 0 ${3 / Math.max(0.0001, kRef.current)}px rgba(0,0,0,0.28)`,
                                               transform: 'translateZ(0)',
-                                              WebkitMaskImage: '-webkit-radial-gradient(white, black)'
+                                              ...(radius > 0 ? { WebkitMaskImage: '-webkit-radial-gradient(white, black)' } : null),
                                             }}
                                           />
                                         )}
