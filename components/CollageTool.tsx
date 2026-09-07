@@ -265,7 +265,9 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     return {
       x: bw * fit[0] - edge, y: bh * fit[1] - edge,
       w: Math.max(1, bw * fit[2]) + edge * 2,
-      h: Math.max(1, bh * fit[3]) + edge * 2,
+      // 線條本身的墨水高度是 0，框高只應由線寬與留白組成；額外塞 1px
+      // 會只加在下方，造成線條看起來偏離選中框中心。
+      h: (o.kind === 'line' ? 0 : Math.max(1, bh * fit[3])) + edge * 2,
     };
   }
   if (o.type === 'shape') return { x: -gap, y: -gap, w: bw + gap * 2, h: bh + gap * 2 };
@@ -4628,10 +4630,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 符號的外框刻意比圖片／圖形再輕一階，避免細小符號被白框搶走焦點。
         ctx.lineWidth = (o.type === 'shape' && o.kind === 'line' ? 0.375 : o.sym ? 0.5 : 0.75) * uiPx;
         // 專業修圖軟體常用的低擴散暗影：只負責把細白線從亮色內容中分離，不能像發光。
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.48)';
-        ctx.shadowBlur = 2.5 * uiPx;
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.28)';
+        ctx.shadowBlur = 3 * uiPx;
         ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0.5 * uiPx;
+        ctx.shadowOffsetY = 0;
         ctx.setLineDash([]);
         if (shapeSel === o.id && isImgShaped(o.imgShape)) {
           /* 第二段：選中的是「形狀」—— 方框收起來，改成沿著形狀本身描一圈。
@@ -4997,10 +4999,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.strokeStyle = '#FFFFFF'; 
         // 與經典拼圖圖片選中框相同的 0.75px；虛線語意維持不變。
         ctx.lineWidth = 0.9 * uiPx;
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.48)';
-        ctx.shadowBlur = 2.5 * uiPx;
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.28)';
+        ctx.shadowBlur = 3 * uiPx;
         ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0.5 * uiPx;
+        ctx.shadowOffsetY = 0;
         ctx.setLineDash([4.8 * uiPx, 4.8 * uiPx]);
 
         // 左側選取框 (帶旋轉, 只有在 image 側時顯示)
