@@ -1557,6 +1557,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const enableSnappingRef = useRef(true);
   enableSnappingRef.current = enableSnapping;
   const guidesRef = useRef<any[]>([]);
+  /* pointer capture 在 iOS 被系統手勢中斷時，元件偶爾收不到最後一個 cancel，
+     互動旗標便會卡住，選中框看起來像永久消失。全域收尾只在已沒有手指時執行。 */
+  useEffect(() => {
+    const finish = () => setTimeout(() => {
+      if (activePointers.current.size !== 0) return;
+      objDragRef.current = null;
+      objPinchRef.current = null;
+      objStretchRef.current = null;
+      objDraggingRef.current = false;
+      guidesRef.current = [];
+      setObjDragging(false);
+      setObjPinching(false);
+      setObjStretching(false);
+      setGuides([]);
+    }, 0);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish);
+    return () => {
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
+    };
+  }, []);
   const objFileInputRef = useRef<HTMLInputElement>(null);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [colorPickerTarget, setColorPickerTarget] = useState<string | null>(null); 
@@ -4631,7 +4655,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       ctx.globalAlpha = 1;
       if (isMain && !hideChromeRef.current && !objDragging && !objPinching && !objStretching
-          && selectedObj === o.id && !guides.length && !tuningEdge) {
+          && selectedObj === o.id && !tuningEdge) {
         // 所有选中框统一为实线；虚线只保留给内容本身的描边样式。
         ctx.strokeStyle = '#ffffff';
         // 符號的外框刻意比圖片／圖形再輕一階，避免細小符號被白框搶走焦點。
@@ -6659,7 +6683,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
         {/* 構圖那一頁是全螢幕的，這排白色鍵不能浮在它上面 */}
         {/* 對齊線亮著、或正在拖形狀滑桿時，這排鍵也要一起讓開 */}
-        {imageState && selectedObj && !objDragging && !objStretching && !composeState && !guides.length && !tuningEdge && !objPinching && (() => {
+        {imageState && selectedObj && !objDragging && !objStretching && !composeState && !tuningEdge && !objPinching && (() => {
           const o = objects.find(z => z.id === selectedObj);
           const cvsEl = canvasRef.current;
           if (!o || !cvsEl) return null;

@@ -9671,6 +9671,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     startAngle: number; baseRotation: number;
     /** 旋轉的不動區：轉超過門檻才開始轉，rotBias 是要扣掉的那一段 */
     rotOn?: boolean; rotBias?: number;
+    /** 低通後的連續倍率與帶遲滯的吸附倍率；避免臨界點反覆吸入／跳出。 */
+    lastScale?: number; snapScale?: number;
     baseX: number; baseY: number; baseScale: number;
     /** 整組佈局當下的角度（佈局的雙指旋轉用） */
     baseLayoutRot: number;
@@ -9912,6 +9914,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         baseX: kind === 'floating' ? (fImg?.x ?? 0) : lt.x,
         baseY: kind === 'floating' ? (fImg?.y ?? 0) : lt.y,
         baseScale: kind === 'floating' ? (fImg?.scale ?? 1) : lt.scale,
+        lastScale: kind === 'floating' ? (fImg?.scale ?? 1) : lt.scale,
         baseLayoutRot: lt.rot || 0,
         cellIdx: selectedIndex ?? -1,
         baseOffsetX: cell?.offsetX ?? 0,
@@ -10079,9 +10082,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
              才有，捏合完全沒有，很難把圖縮到剛好貼齊畫布。
              中心點在捏合時不動，所以只有「四個邊界」會隨倍率移動：把倍率解成
              「這條邊剛好落在畫布邊界上」的值，最近的那一個在門檻內就吸附過去。 */
-          let ns = Math.max(0.1, g.baseScale * k);
+          const rawScale = Math.max(0.1, g.baseScale * k);
+          // 距離感測會在相鄰事件間抖動零點幾 px；創意拼圖是一幀只採最後一筆，
+          // DOM 版再加輕量低通，避免這些高頻雜訊直接變成盒子尺寸。
+          let ns = g.lastScale === undefined || Math.abs(rawScale - g.lastScale) < 0.0005
+            ? (g.lastScale ?? rawScale)
+            : g.lastScale + (rawScale - g.lastScale) * 0.72;
+          g.lastScale = ns;
           if (target && enableSnapping) {
-            const SNAP = 4;
+            const SNAP_IN = 3, SNAP_OUT = 8;
             const cx = target.x + target.width / 2;
             const cy = target.y + target.height / 2;
             let best = Infinity, bestScale = ns;
@@ -10101,10 +10110,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 if (!(cand > 0.1)) return;
                 // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
                 const px = Math.abs(cand - ns) * Math.max(ext.bw, ext.bh) / 2;
-                if (px < SNAP && px < best) { best = px; bestScale = cand; }
+                if (px < SNAP_IN && px < best) { best = px; bestScale = cand; }
               });
             });
-            if (best < SNAP) ns = bestScale;
+            /* 吸住後使用较宽的离开门槛。没有迟滞时，手指的微小噪声会让倍率
+               在 raw/snap 两个值之间逐帧切换，视觉上就是图形与符号抖动。 */
+            if (g.snapScale !== undefined) {
+              const px = Math.abs(ns - g.snapScale) * Math.max(ext.bw, ext.bh) / 2;
+              if (px <= SNAP_OUT) ns = g.snapScale;
+              else g.snapScale = undefined;
+            }
+            if (g.snapScale === undefined && best < SNAP_IN) {
+              g.snapScale = bestScale;
+              ns = bestScale;
+            }
           }
           let nextGuidelines: AlignmentGuideline[] | null = null;
           if (target) {
