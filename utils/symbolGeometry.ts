@@ -3,8 +3,9 @@ import { fontStack } from './fonts';
 export type SymbolInk = { w: number; h: number; cx: number; cy: number };
 const REF = 100;
 const cache = new Map<string, SymbolInk>();
+const sizedCache = new Map<string, SymbolInk>();
 /** 字體剛下載完成時丟掉 fallback 的量測結果。 */
-export const clearSymbolInkCache = () => cache.clear();
+export const clearSymbolInkCache = () => { cache.clear(); sizedCache.clear(); };
 // 字型載入前量到的是 fallback；載入完成後不可繼續沿用錯誤的墨水中心。
 if (typeof document !== 'undefined') document.fonts?.ready?.then(() => cache.clear()).catch(() => {});
 
@@ -48,6 +49,55 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
     }
   } catch { /* fallback metrics above keep the symbol usable */ }
   cache.set(key, out);
+  return out;
+};
+
+/**
+ * 以最终显示字号扫描一次。大部分字体可以直接把 100px 结果等比缩放，但某些
+ * 组合 Unicode 会落到多套系统 fallback 字体；WebKit 对这些字形会在不同字号
+ * 使用不同 hinting / baseline。经典拼图的符号 Canvas 与选中框共同使用这份结果，
+ * 因此无论符号放多大，墨水中心和四边范围都仍是同一套数据。
+ */
+export const measureSymbolInkAtSize = (text: string, family: string, fontSize: number): SymbolInk => {
+  const size = Math.max(8, Math.round(fontSize * 1000) / 1000);
+  const key = `${family}|${text}|${size}`;
+  const hit = sizedCache.get(key);
+  if (hit) return hit;
+  let out = measureSymbolInk(text, family);
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
+    if (ctx) {
+      const font = `400 ${size}px ${fontStack(family)}`;
+      ctx.font = font;
+      const advance = Math.max(size, ctx.measureText(text).width);
+      const px = Math.ceil(size * 4), py = Math.ceil(size * 4);
+      canvas.width = Math.ceil(advance) + px * 2;
+      canvas.height = py * 2;
+      ctx.font = font;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#fff';
+      const ax = canvas.width / 2, ay = canvas.height / 2;
+      ctx.fillText(text, ax, ay);
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let x0 = canvas.width, y0 = canvas.height, x1 = -1, y1 = -1;
+      for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+        if (data[(y * canvas.width + x) * 4 + 3] > 0) {
+          x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+          x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+        }
+      }
+      if (x1 >= x0 && y1 >= y0) out = {
+        w: (x1 - x0 + 1) / size,
+        h: (y1 - y0 + 1) / size,
+        cx: ((x0 + x1 + 1) / 2 - ax) / size,
+        cy: ((y0 + y1 + 1) / 2 - ay) / size,
+      };
+      canvas.width = canvas.height = 0;
+    }
+  } catch { /* 固定 100px 的共用量测仍可安全兜底 */ }
+  sizedCache.set(key, out);
   return out;
 };
 

@@ -12,7 +12,7 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
-import { measureSymbolInk, symbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, measureSymbolInkAtSize, symbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, drawHoleShape, holeOverflow, glowAmount,
@@ -4243,8 +4243,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const textInnerRef = useRef<HTMLSpanElement>(null);
   const textMeasureRef = useRef<HTMLSpanElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
-  const symbolSvgTextRef = useRef<SVGTextElement>(null);
-  const [symbolSvgBounds, setSymbolSvgBounds] = useState<DOMRect | null>(null);
 
   /* 輸入框是「手指放開」那一刻才打開的，而瀏覽器在 touchend 之後還會補送
      一輪滑鼠事件（mousedown/click）到畫布上 —— 那一下會把焦點從剛冒出來的
@@ -4293,19 +4291,17 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     if (image.sym) {
       let alive = true;
       const fam = image.fontFamily || DEFAULT_FONT;
-      /* 直接量「畫面上真正負責渲染的 SVG text」。Canvas、DOM 與 SVG 對複合
-         Unicode 的 baseline/ink box 定義不完全一致，跨引擎估算永遠會有例外。 */
+      /* 与创意拼图完全同源：新增、显示、命中和选中框都使用 symbolBox /
+         measureSymbolInk。以前这里又用 SVG getBBox 覆盖一次尺寸，等于同一个
+         符号同时拥有 Canvas 与 SVG 两套边界，放大后框必然逐渐对不上。 */
       ensureFont(fam).then(() => {
         if (!alive) return;
         clearSymbolInkCache();
-        const node = symbolSvgTextRef.current;
-        if (!node) return;
-        const b = node.getBBox();
-        const pad = 4 + (image.strokeWidth || 0) * 2;
-        const bounds = new DOMRect(b.x - pad, b.y - pad, b.width + pad * 2, b.height + pad * 2);
-        setSymbolSvgBounds(bounds);
+        const size = image.fontSize || 40;
+        const ink = measureSymbolInkAtSize(image.text || image.sym!, fam, size);
+        const bounds = { w: Math.max(6, ink.w * size + 8), h: Math.max(6, ink.h * size + 8) };
         const patch: Partial<FloatingImage> = {};
-        const nw = bounds.width, nh = bounds.height;
+        const nw = bounds.w, nh = bounds.h;
         if (Math.abs(nw - dimsRef.current.w) > 0.1) {
           patch.width = nw;
           patch.x = image.x + (dimsRef.current.w - nw) / 2;
@@ -5166,7 +5162,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const vectorCssH = gestureCanvasLock.current?.h ?? vectorContentH;
   const vectorGlyphRef = useRef<SVGTextElement>(null);
   const [vectorGlyphCorrection, setVectorGlyphCorrection] = useState({ x: 0, y: 0 });
-  const [vectorGlyphBounds, setVectorGlyphBounds] = useState<{ width: number; height: number } | null>(null);
   /* 不猜不同引擎的 baseline：直接读取最终负责显示的 SVG 字形范围，再把它的
      实际中心校回物件中心。getBBox 是未套外层 scale 的固定向量座标，所以只需
      在文字内容或字体样式改变时量一次，缩放期间完全不会触发布局或重新校正。 */
@@ -5180,13 +5175,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const node = vectorGlyphRef.current;
       if (!node) return;
       const b = node.getBBox();
-      /* 选中框也使用这颗最终显示字形的真实尺寸。只在字体／内容改变后的
-         校准阶段记录，不参与缩放手势，所以既精确也不会引入逐帧 reflow。 */
-      setVectorGlyphBounds(prev => (
-        prev && Math.abs(prev.width - b.width) < 0.01 && Math.abs(prev.height - b.height) < 0.01
-          ? prev
-          : { width: b.width, height: b.height }
-      ));
       const ex = b.x + b.width / 2;
       const ey = b.y + b.height / 2;
       if (Math.abs(ex) < 0.01 && Math.abs(ey) < 0.01) return;
@@ -5199,7 +5187,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       .then(() => { if (alive) raf = requestAnimationFrame(centerGlyph); });
     return () => { alive = false; if (raf) cancelAnimationFrame(raf); };
   }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
-      image.letterSpacing, image.strokeWidth, symbolSvgBounds]);
+      image.letterSpacing, image.strokeWidth]);
   const [holeAssetRevision, setHoleAssetRevision] = useState(0);
   useEffect(() => {
     if (image.shape !== 'hole' || !image.holeType || !isImageHole(image.holeType)) return;
@@ -5217,10 +5205,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   }, [image.shape, image.holeType]);
 
   useLayoutEffect(() => {
-    /* 文字與符號直接由下面的 SVG 向量層顯示。若先畫進每顆物件自己的 Canvas，
-       外層整頁 zoom 時就會對多張點陣圖各自二次取樣；不同的小數相位正是只有
-       經典拼圖會發生的文字／符號抖動。Canvas 只保留給真正的圖形路徑。 */
-    if (!isCanvasVector || image.text !== undefined) return;
+    /* 一般文字維持 SVG；符號则与创意拼图一样走 Canvas 的同一套墨水测量与
+       fillText。这样预览缩放只是在移动一张预先超取样的紧凑位图，不会每一帧
+       让 WebKit 重建大型复合 Unicode SVG，解决有符号时的明显掉帧。 */
+    if (!isCanvasVector || (image.text !== undefined && !image.sym)) return;
     const canvas = vectorCanvasRef.current;
     if (!canvas) return;
     let alive = true;
@@ -5352,7 +5340,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const lines = (image.text || '').split('\n');
       const lineH = size * 1.12;
       const startY = -((lines.length - 1) * lineH) / 2;
-      const ink = image.sym ? measureSymbolInk(image.text || image.sym, family) : null;
+      const ink = image.sym ? measureSymbolInkAtSize(image.text || image.sym, family, size) : null;
       const dx = ink ? -ink.cx * size : 0;
       const dy = ink ? -ink.cy * size : 0;
       const fill = () => lines.forEach((line, i) => ctx.fillText(line, dx, startY + i * lineH + dy));
@@ -5533,21 +5521,15 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       /* 跟創意拼圖的 objectSelectionInk 完全相同：使用共用的 symInk、字号、
          描边和固定 2 个屏幕像素留白，不再拿储存用的 width/height 外盒加框。 */
       const symbolFrame = image.sym ? (() => {
-        const ink = measureSymbolInk(image.text || image.sym!, image.fontFamily || DEFAULT_FONT);
+        const ink = measureSymbolInkAtSize(
+          image.text || image.sym!, image.fontFamily || DEFAULT_FONT, image.fontSize || 40,
+        );
         const size = image.fontSize || 40;
         const sc = image.scale || 1;
-        /* 本體最後是 SVG <text>，框也必須吃同一顆 SVG 實際量到的 getBBox。
-           Canvas alpha 掃描（measureSymbolInk）對大多數符號很準，但複合 Unicode
-           在 WebKit 的 SVG fallback 字型可能寬一點；誤差乘上很大的 scale 後，
-           符號就會越出框。symbolSvgBounds 是 getBBox 外加量測安全邊，先扣回
-           安全邊便是真正的 SVG 墨水尺寸；尚未量到時才退回共用估算。 */
-        const measuredPad = 4 + (image.strokeWidth || 0) * 2;
-        const svgInkW = vectorGlyphBounds?.width
-          ?? (symbolSvgBounds ? Math.max(1, symbolSvgBounds.width - measuredPad * 2) : ink.w * size);
-        const svgInkH = vectorGlyphBounds?.height
-          ?? (symbolSvgBounds ? Math.max(1, symbolSvgBounds.height - measuredPad * 2) : ink.h * size);
-        const inkW = svgInkW * sc;
-        const inkH = svgInkH * sc;
+        /* 与 CollageTool.objectSelectionInk 逐项相同。符号本体也已改回同一支
+           Canvas measureSymbolInk 绘制，因此这里不再混入任何 SVG 度量。 */
+        const inkW = ink.w * size * sc;
+        const inkH = ink.h * size * sc;
         const edge = 2 / kNow + (image.strokeWidth || 0) * (size / 40) * sc;
         return {
           left: (boxW - inkW) / 2 - edge,
@@ -5748,7 +5730,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             : undefined,
         }}
       >
-        {image.text !== undefined ? (() => {
+        {image.text !== undefined && !image.sym ? (() => {
           /* 固定字級、字距與字形度量，只讓 SVG 的連續矩陣負責縮放。SVG 會在
              當下顯示倍率直接重建向量輪廓，不像獨立 Canvas 先變點陣再被頁面
              zoom 一次；文字和複合 Unicode 符號因此共用同一個穩定中心。 */
@@ -5757,18 +5739,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           const lines = (image.text || '').split('\n');
           const lineH = size * 1.12;
           const startY = -((lines.length - 1) * lineH) / 2;
-          const ink = image.sym ? measureSymbolInk(image.text || image.sym, family) : null;
-          /* 符號优先使用同一个 SVG 字形节点的真实 getBBox 中心。Canvas 的
-             actualBoundingBox 与 SVG 对组合 Unicode 的 baseline 定义不同，
-             混用时虽然不会来回抖，放大过程中仍可能慢慢偏离选中框。 */
-          const dx0 = image.sym
-            ? (symbolSvgBounds ? -(symbolSvgBounds.x + symbolSvgBounds.width / 2) : -(ink?.cx || 0) * size)
-            : 0;
-          const dy0 = image.sym
-            ? (symbolSvgBounds ? -(symbolSvgBounds.y + symbolSvgBounds.height / 2) : -(ink?.cy || 0) * size)
-            : 0;
-          const dx = dx0 + vectorGlyphCorrection.x;
-          const dy = dy0 + vectorGlyphCorrection.y;
+          const dx = vectorGlyphCorrection.x;
+          const dy = vectorGlyphCorrection.y;
           const glow = image.glow
             ? [1, 2, 3]
                 .map(k => `drop-shadow(0 0 ${(image.glow! / 20) * 14 * k * image.scale}px ${image.glowColor || '#FFFFFF'})`)
@@ -6031,47 +6003,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             );
           })()}
         </svg>
-      ) : image.sym ? (
-        /* 符號不用 DOM 行盒：Unicode 組合符號的 baseline 與 line-height 差異很大，
-           Canvas 量到的墨水中心套到 DOM 上會偏移。SVG 使用與量測相同的中央基線，
-           並保留向量輪廓，所以放到很大仍然清楚、也不會因字級取整而抖動。 */
-        <svg
-          viewBox={symbolSvgBounds
-            ? `${symbolSvgBounds.x} ${symbolSvgBounds.y} ${symbolSvgBounds.width} ${symbolSvgBounds.height}`
-            : `0 0 ${Math.max(1, image.width)} ${Math.max(1, image.height)}`}
-          preserveAspectRatio="none"
-          style={{
-            position: 'absolute', left: 0, top: 0, width: `${image.width}px`, height: `${image.height}px`,
-            overflow: 'visible', pointerEvents: 'none',
-            opacity: 0,
-          }}
-          aria-hidden
-        >
-          <text
-            ref={symbolSvgTextRef}
-            x={0}
-            y={0}
-            textAnchor="middle"
-            dominantBaseline="middle"
-            fontFamily={fontStack(image.fontFamily)}
-            fontSize={image.fontSize || 40}
-            fontWeight={image.bold ? 700 : 400}
-            fontStyle={image.italic ? 'italic' : 'normal'}
-            letterSpacing={image.letterSpacing || 0}
-            fill={image.color || '#FFFFFF'}
-            stroke={image.strokeWidth ? (image.strokeColor || '#000000') : 'none'}
-            strokeWidth={image.strokeWidth ? image.strokeWidth * 2 : 0}
-            paintOrder="stroke fill"
-            style={{
-              filter: image.glow
-                ? [1, 2, 3].map(k => `drop-shadow(0 0 ${(image.glow! / 20) * 14 * k}px ${image.glowColor || '#FFFFFF'})`).join(' ')
-                : undefined,
-            }}
-          >
-            {image.text}
-          </text>
-        </svg>
-      ) : image.text !== undefined ? (
+      ) : image.sym ? null : image.text !== undefined ? (
         <div
           ref={textRef}
           style={{
@@ -8109,6 +8041,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          一套座標與光柵化方式。 */
       const nativeZoom = typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2');
       col.style.setProperty('--preview-scale', String(k));
+      /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
+         每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
+      col.style.setProperty('--layout-grid-stroke', `${1 / Math.max(0.0001, k)}px`);
       if (nativeZoom) {
         (col.style as any).zoom = String(k);
         const sub = stripSubpixelXRef.current;
@@ -13045,7 +12980,27 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   dashed border，相邻边会重叠成两个独立合成层；native zoom
                                   时两层取整不同便会闪烁或有一层暂时消失。单一向量层共享
                                   坐标，non-scaling-stroke 则让线宽不随预览放大缩小。 */}
-                              {layout.images.some(cell => !cell || cell.url === '') && (
+                              {layout.images.some(cell => !cell || cell.url === '') && (() => {
+                                const emptyRects = pageActiveTemplate.rects.flatMap((rect, idx) => {
+                                  const cell = layout.images[idx];
+                                  if (cell && cell.url !== '') return [];
+                                  const inset = gap / 2;
+                                  const areaW = Math.max(1, lw - inset * 2);
+                                  const areaH = Math.max(1, lh - inset * 2);
+                                  const x = inset + rect.x * areaW + gap / 2;
+                                  const y = inset + rect.y * areaH + gap / 2;
+                                  const w = Math.max(0, rect.w * areaW - gap);
+                                  const h = Math.max(0, rect.h * areaH - gap);
+                                  return [{ idx, x, y, w, h }];
+                                });
+                                /* 所有矩形作为同一个 path 的子路径一次栅格化。即使横线与
+                                   竖线在交点相遇，也只会混合一次 alpha，不会叠成更白的点。 */
+                                const d = emptyRects
+                                  .map(r => `M ${r.x} ${r.y} h ${r.w} v ${r.h} h ${-r.w} Z`)
+                                  .join(' ');
+                                const selectedEmpty = emptyRects.find(r =>
+                                  r.idx === selectedIndex && isThisLayoutSelected);
+                                return (
                                 <svg
                                   data-layout-grid-lines={layout.id}
                                   className="absolute inset-0 pointer-events-none z-[5]"
@@ -13054,31 +13009,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   style={{ overflow: 'visible' }}
                                   aria-hidden
                                 >
-                                  {pageActiveTemplate.rects.map((rect, idx) => {
-                                    const cell = layout.images[idx];
-                                    if (cell && cell.url !== '') return null;
-                                    const inset = gap / 2;
-                                    const areaW = Math.max(1, lw - inset * 2);
-                                    const areaH = Math.max(1, lh - inset * 2);
-                                    const x = inset + rect.x * areaW + gap / 2;
-                                    const y = inset + rect.y * areaH + gap / 2;
-                                    const w = Math.max(0, rect.w * areaW - gap);
-                                    const h = Math.max(0, rect.h * areaH - gap);
-                                    return (
-                                      <rect
-                                        key={`empty-grid-line-${idx}`}
-                                        x={x} y={y} width={w} height={h}
-                                        fill="none"
-                                        stroke={selectedIndex === idx && isThisLayoutSelected
-                                          ? 'rgba(255,255,255,1)'
-                                          : 'rgba(255,255,255,0.10)'}
-                                        strokeWidth="1"
-                                        vectorEffect="non-scaling-stroke"
-                                      />
-                                    );
-                                  })}
+                                  <path
+                                    d={d}
+                                    fill="none"
+                                    stroke="rgba(255,255,255,0.10)"
+                                    style={{ strokeWidth: 'var(--layout-grid-stroke, 1px)' }}
+                                  />
+                                  {selectedEmpty && (
+                                    <rect
+                                      x={selectedEmpty.x} y={selectedEmpty.y}
+                                      width={selectedEmpty.w} height={selectedEmpty.h}
+                                      fill="none" stroke="white"
+                                      style={{ strokeWidth: 'var(--layout-grid-stroke, 1px)' }}
+                                    />
+                                  )}
                                 </svg>
-                              )}
+                                );
+                              })()}
 
                               {isThisLayoutSelected && selectedIndex === null && (() => {
                                 const dot = 'absolute w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] z-[60] pointer-events-auto touch-none';
