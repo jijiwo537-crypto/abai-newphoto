@@ -1433,78 +1433,115 @@ export const SymbolPicker: React.FC<{
   </div>
 );
 
-/** 所有空格提示一次画进整块布局的同一张 Canvas，彻底取消逐格合成与取整。 */
+/**
+ * 空格提示是操作介面，不是照片内容：它必须维持固定的萤幕尺寸。
+ *
+ * 旧版把文字与加号画进一张 Canvas，再让 Canvas 跟着布局／预览缩放。
+ * 每一个缩放倍率都会重新取样整张位图，细线与中文字的抗锯齿像素会在
+ * 相邻像素间来回切换；几何中心虽然没变，肉眼看到的就是加号和文字抖动。
+ *
+ * 现在改成独立的萤幕坐标操作层：布局中的透明锚点只负责提供每格中心，实际
+ * 提示透过 portal 画在缩放树之外。布局或整张预览怎么缩放都只更新中心坐标，
+ * 字形与加号本身从不重画、不缩放，因此不会再发生抗锯齿像素来回跳动。
+ */
 const LayoutEmptyPromptLayer: React.FC<{
-  width: number;
-  height: number;
   cells: { x: number; y: number; w: number; h: number }[];
-}> = ({ width, height, cells }) => {
-  const ref = useRef<HTMLCanvasElement>(null);
+  hidden?: boolean;
+}> = ({ cells, hidden = false }) => {
+  const anchorsRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  const place = useCallback(() => {
+    const anchors = anchorsRef.current;
+    const overlay = overlayRef.current;
+    const viewport = anchors?.closest('[data-grid-preview-viewport]') as HTMLElement | null;
+    if (!anchors || !overlay || !viewport) return;
+    const vr = viewport.getBoundingClientRect();
+    overlay.style.left = `${vr.left}px`;
+    overlay.style.top = `${vr.top}px`;
+    overlay.style.width = `${vr.width}px`;
+    overlay.style.height = `${vr.height}px`;
+    const points = anchors.querySelectorAll<HTMLElement>('[data-layout-empty-prompt-anchor]');
+    const prompts = overlay.querySelectorAll<HTMLElement>('[data-layout-empty-prompt]');
+    points.forEach((point, idx) => {
+      const prompt = prompts[idx];
+      if (!prompt) return;
+      const r = point.getBoundingClientRect();
+      prompt.style.transform =
+        `translate3d(${r.left + r.width / 2 - vr.left}px, ${r.top + r.height / 2 - vr.top}px, 0) translate(-50%, -50%)`;
+      prompt.style.visibility = r.right > vr.left && r.left < vr.right && r.bottom > vr.top && r.top < vr.bottom
+        ? 'visible'
+        : 'hidden';
+    });
+  }, []);
+
   useLayoutEffect(() => {
-    let alive = true;
-    const draw = () => {
-      if (!alive || !ref.current) return;
-      const canvas = ref.current;
-      /* 只配置一次布局大小的 backing store。8MP 面积上限避免大型布局耗尽
-         iOS Canvas 内存；正常手机布局约为 7～8 倍超取样，3 倍预览仍很清楚。 */
-      const S = Math.max(1, Math.min(
-        8,
-        4096 / Math.max(1, width, height),
-        Math.sqrt(8_388_608 / Math.max(1, width * height)),
-      ));
-      const W = Math.max(1, Math.ceil(width * S));
-      const H = Math.max(1, Math.ceil(height * S));
-      if (canvas.width !== W) canvas.width = W;
-      if (canvas.height !== H) canvas.height = H;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.setTransform(S, 0, 0, S, 0, 0);
-      ctx.clearRect(0, 0, width, height);
-      ctx.strokeStyle = '#fff';
-      ctx.lineCap = 'round';
-      ctx.fillStyle = '#fff';
-      ctx.font = `700 9px ${fontStack(DEFAULT_FONT)}`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      (ctx as any).letterSpacing = '1.2px';
-      ctx.globalAlpha = 0.20;
-      cells.forEach(cell => {
-        const cx = cell.x + cell.w / 2;
-        const cy = cell.y + cell.h / 2;
-        const fit = Math.max(0.45, Math.min(1, cell.w / 88, cell.h / 56));
-        ctx.save();
-        ctx.translate(cx, cy);
-        ctx.scale(fit, fit);
-        ctx.lineWidth = 1.7;
-        ctx.beginPath();
-        ctx.moveTo(-7, -11);
-        ctx.lineTo(7, -11);
-        ctx.moveTo(0, -18);
-        ctx.lineTo(0, -4);
-        ctx.stroke();
-        ctx.fillText('選擇相片', 0, 11);
-        ctx.restore();
-      });
-      ctx.globalAlpha = 1;
-      (ctx as any).letterSpacing = '0px';
+    if (hidden) return;
+    const anchors = anchorsRef.current;
+    const viewport = anchors?.closest('[data-grid-preview-viewport]') as HTMLElement | null;
+    const scaledColumn = anchors?.closest('[data-grid-pages-column]') as HTMLElement | null;
+    if (!anchors || !viewport || !scaledColumn) return;
+    let raf = 0;
+    const schedule = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; place(); });
     };
-    draw();
-    ensureFont(DEFAULT_FONT).then(draw);
-    return () => { alive = false; };
-  }, [width, height, cells]);
+    place();
+    viewport.addEventListener('scroll', schedule, { passive: true });
+    scaledColumn.addEventListener('abai-preview-transform', schedule);
+    window.addEventListener('resize', schedule);
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      viewport.removeEventListener('scroll', schedule);
+      scaledColumn.removeEventListener('abai-preview-transform', schedule);
+      window.removeEventListener('resize', schedule);
+    };
+  }, [cells, hidden, place]);
+
   return (
-    <canvas
-      ref={ref}
-      data-layout-empty-prompts="1"
-      aria-hidden
-      className="absolute inset-0 pointer-events-none z-[6]"
-      style={{
-        width: '100%',
-        height: '100%',
-        transform: 'translateZ(0)',
-        backfaceVisibility: 'hidden',
-      }}
-    />
+    <>
+      <div ref={anchorsRef} data-layout-empty-prompts="1" aria-hidden className="absolute inset-0 pointer-events-none z-[6]">
+        {cells.map((cell, idx) => (
+          <i
+            key={idx}
+            data-layout-empty-prompt-anchor="1"
+            className="absolute block pointer-events-none"
+            style={{ left: cell.x, top: cell.y, width: cell.w, height: cell.h }}
+          />
+        ))}
+      </div>
+      {!hidden && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={overlayRef}
+          data-layout-empty-prompt-overlay="1"
+          aria-hidden
+          className="fixed overflow-hidden pointer-events-none z-[45]"
+        >
+          {cells.map((_, idx) => (
+            <div
+              key={idx}
+              data-layout-empty-prompt="1"
+              className="absolute w-[76px] h-[44px] text-white/20"
+              style={{ backfaceVisibility: 'hidden', willChange: 'transform' }}
+            >
+              <svg
+                width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden
+                className="absolute left-1/2 top-[3px] -translate-x-1/2"
+              >
+                <path d="M1 8H15M8 1V15" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+              </svg>
+              <span
+                className="absolute left-1/2 top-[28.5px] -translate-x-1/2 whitespace-nowrap text-[9px] font-bold tracking-[1.2px] leading-none"
+                style={{ fontFamily: fontStack(DEFAULT_FONT) }}
+              >
+                選擇相片
+              </span>
+            </div>
+          ))}
+        </div>,
+        document.body,
+      )}
+    </>
   );
 };
 
@@ -8130,6 +8167,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         col.style.transformOrigin = '0 0';
         col.style.willChange = liveTransform ? 'transform' : '';
       }
+      /* 固定在萤幕坐标层的空格提示收到通知后才量中心点。
+         事件只排一个 rAF，不在手势处理内同步读取版面。 */
+      col.dispatchEvent(new Event('abai-preview-transform'));
     }
   }, []);
 
@@ -12440,6 +12480,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         <div 
           className="flex-1 flex items-center justify-start py-2 bg-[#070707] relative overflow-x-auto overflow-y-hidden select-none no-scrollbar overscroll-x-contain touch-none"
           ref={containerRef}
+          data-grid-preview-viewport="1"
           onScroll={(e) => {
             if (!containerRef.current || pages.length <= 1) return;
             const scrollLeft = e.currentTarget.scrollLeft;
@@ -12523,6 +12564,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 <div ref={stripShellRef} className="flex-shrink-0 relative">
                 <div
                   ref={pagesColRef}
+                  data-grid-pages-column="1"
                   className="flex flex-col items-start flex-shrink-0 relative"
                   style={{
                     // 外殼是「縮放後」的尺寸，這一層要自己撐住「縮放前」的尺寸，
@@ -13107,11 +13149,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     />
                                   )}
                                 </svg>
-                                <LayoutEmptyPromptLayer
-                                  width={lw}
-                                  height={lh}
-                                  cells={emptyRects}
-                                />
+                                <LayoutEmptyPromptLayer cells={emptyRects} hidden={pagesMode || pagesVisual} />
                                 </>
                                 );
                               })()}
