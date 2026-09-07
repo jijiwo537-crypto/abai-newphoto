@@ -4330,7 +4330,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   );
   const symbolShift = image.sym ? (() => {
     const ink = measureSymbolInk(image.text || image.sym || '', image.fontFamily || DEFAULT_FONT);
-    return { x: -ink.cx * (image.fontSize || 40) * image.scale, y: -ink.cy * (image.fontSize || 40) * image.scale };
+    // 符號內容維持一倍座標，整層再統一縮放；位移不能預先乘 scale，否則會被
+    // 外層 transform 再乘一次，符號愈放大就愈容易跑出選中框。
+    return { x: -ink.cx * (image.fontSize || 40), y: -ink.cy * (image.fontSize || 40) };
   })() : { x: 0, y: 0 };
   // 發光與描邊都會超出框，canvas 要留邊。
   // 留邊固定用「最大強度」算：拖發光滑桿時邊界就不會每一格都變，
@@ -5403,7 +5405,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           viewBox={`0 0 ${image.width} ${image.height}`}
           preserveAspectRatio="none"
           style={{
-            position: 'absolute', left: 0, top: 0, width: '100%', height: '100%',
+            position: 'absolute',
+            /* 操作時固定 SVG 的基準尺寸，只讓合成層做連續縮放。每一格改 width／height
+               會反覆重建濾鏡表面，舊的陰影與抗鋸齒像素就可能殘留在四周。 */
+            left: liveGeometry ? '50%' : 0, top: liveGeometry ? '50%' : 0,
+            width: liveGeometry ? `${image.width}px` : '100%',
+            height: liveGeometry ? `${image.height}px` : '100%',
+            transform: liveGeometry
+              ? `translate3d(-50%, -50%, 0) scale(${image.scale})`
+              : undefined,
+            transformOrigin: 'center center',
             overflow: 'visible', pointerEvents: 'none',
             /* 發光：三段 drop-shadow 疊起來，跟文字／圖片的光同一套濃淡。
                半徑寫在「沒有縮放前」的座標系上，外框放大時光會跟著一起放大。 */
@@ -5417,7 +5428,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                只會重畫「框以內」那一塊 —— 框外那圈光就留在原地變成殘影
                （拖一次留一道，看起來像一路拉出來的影子）。
                自己一層之後整層一起重畫，就不會有殘留。 */
-            willChange: glowAmount(image.shapeGlow as any) > 0 ? 'filter, transform' : undefined,
+            willChange: liveGeometry || glowAmount(image.shapeGlow as any) > 0 ? 'filter, transform' : undefined,
+            backfaceVisibility: 'hidden',
+            WebkitBackfaceVisibility: 'hidden',
+            isolation: 'isolate',
           }}
         >
           {/* 點點：用一塊 pattern 疊在圖形上，範圍就是圖形的填色區域 ——
@@ -5542,7 +5556,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                的 scale 去做 —— 等同 canvas 連續縮放字形輪廓。
                字級、字距、描邊、發光在這裡一律用原值，倍率統一由 scale 帶。 */
             position: 'absolute', left: '50%', top: '50%',
-            transform: 'translate(-50%, -50%)',
+            transform: `translate3d(-50%, -50%, 0) scale(${image.scale})`,
             transformOrigin: 'center center',
             /* 縮放時的殘影：這一層只有 transform 在變，可是它裡面是**文字**
                （還可能帶 text-shadow 的發光），瀏覽器把它當一般內容重畫時，
@@ -5553,16 +5567,18 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             willChange: 'transform',
             backfaceVisibility: 'hidden',
             WebkitBackfaceVisibility: 'hidden',
-            width: `${boxW}px`, height: `${boxH}px`,
+            // 內容盒、字級和字距永遠維持一倍；只變上面的 transform，瀏覽器便不會
+            // 每一幀重新計算字體 ascent/descent，文字與符號中心也不會跳動。
+            width: `${image.width}px`, height: `${image.height}px`,
             pointerEvents: 'none',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontFamily: fontStack(image.fontFamily),
-            fontSize: `${(image.fontSize || 40) * image.scale}px`,
+            fontSize: `${image.fontSize || 40}px`,
             lineHeight: 1.12,
             fontWeight: image.bold ? 700 : 400,
             fontStyle: image.italic ? 'italic' : 'normal',
             // 倍率由外層的 scale 帶，這裡一律用原值（見上面的說明）
-            letterSpacing: `${(image.letterSpacing || 0) * image.scale}px`,
+            letterSpacing: `${image.letterSpacing || 0}px`,
             color: image.color || '#FFFFFF',
             // 只有使用者自己按的換行才換行，不自動斷行
             whiteSpace: 'pre',
@@ -5573,7 +5589,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             // 一半會吃進字身，看起來像每一筆都被描了一圈。改成 paint-order
             // 把描邊畫在填色「下面」、寬度加倍 —— 字身蓋住內半邊，
             // 剩下的就是純外描邊。
-            WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2 * image.scale}px` : undefined,
+            WebkitTextStrokeWidth: image.strokeWidth ? `${image.strokeWidth * 2}px` : undefined,
             WebkitTextStrokeColor: image.strokeWidth ? (image.strokeColor || '#000000') : undefined,
             // 沒有描邊時不要留著 paint-order。
             paintOrder: image.strokeWidth ? 'stroke fill' : undefined,
@@ -5611,7 +5627,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 WebkitTextStrokeWidth: 0,
                 paintOrder: 'normal',
                 textShadow: [1, 2, 3]
-                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k * image.scale}px ${image.glowColor || '#FFFFFF'}`)
+                  .map(k => `0 0 ${(image.glow! / 20) * 14 * k}px ${image.glowColor || '#FFFFFF'}`)
                   .join(', '),
                 // 跟圖形的發光同一個理由：光長在框外面，不自己一層就會拖出殘影
                 willChange: 'transform',
