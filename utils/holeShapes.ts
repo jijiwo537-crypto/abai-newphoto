@@ -477,6 +477,9 @@ export const drawHoleShape = (
     dots?: boolean; dotSize?: number; dotGap?: number; dotColor?: string;
     /** 紋理：'none' | 'dot' | 'stripe'（沒給就照舊看 dots） */
     tex?: string; stripeN?: number; stripeDir?: string; stripeA?: string; stripeB?: string;
+    /** 非條紋紋理的固定座標基準；呼叫端傳入當前 Canvas 像素尺寸。 */
+    textureBaseW?: number; textureBaseH?: number;
+    texSize?: number; texGap?: number; texColor?: string;
     id?: string; randomNumber?: number;
     /** 線寬的單位。不給就照外框的長邊 / 160 —— 那會讓「圖形拉大」連框線
      *  也跟著變粗，所以呼叫端想要「粗細固定」時就把不含縮放的那個值傳進來。 */
