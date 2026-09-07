@@ -2044,14 +2044,14 @@ export const ShapeEditorPanel: React.FC<{
           )}
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
           {hasOutline && (
-            <>
+            <div className="order-5 flex flex-col gap-3.5">
               {/* 存的是 0.1~10，滑桿顯示成 1~100 —— 格子多，拖起來才不會一格一格跳 */}
               {slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
                 v => onChange({ shapeLineW: v / 10 }))}
               {/* 虛線：0＝實線，往上拉是「一段有多長」（以線寬為單位），
                   所以線越粗、虛線的節奏就跟著等比例放大 */}
               {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
-            </>
+            </div>
           )}
         </div>
         )}
@@ -5388,6 +5388,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.translate(cssW / 2 * backingScale, cssH / 2 * backingScale);
         ctx.rotate((image.rotation * Math.PI) / 180);
+        const holeFeather = shapeSupportsFeather(image.shape, image.shapeFilled, image.holeType)
+          ? shapeFeatherBlur(boxW, boxH, image.shapeFeather) * backingScale : 0;
+        if (holeFeather > 0) ctx.filter = `blur(${holeFeather}px)`;
         drawHoleShape(ctx, {
           ...holeOpts!,
           lineUnit: Math.max(image.width, image.height) / 160 * backingScale,
