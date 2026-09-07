@@ -1139,15 +1139,11 @@ export const drawFeatheredShapeBody = (
   const mc = mask.getContext('2d')!;
   const band = (value / 100) * Math.min(w, h) / 2;
   const blur = Math.max(0.5, band / 3);
-  const inset = Math.min(Math.min(w, h) * 0.45, blur * 1.5);
+  // 保持原始路径与尺寸不变，只让原始轮廓内侧的 alpha 逐渐变透明。
+  // 不再内缩路径，避免羽化看起来像把整个图形缩小。
   mc.filter = `blur(${blur}px)`;
   mc.fillStyle = '#fff';
-  mc.fill(new Path2D(shapePathD(kind, Math.max(1, w - inset * 2), Math.max(1, h - inset * 2))));
-  // 上面的内缩路径从 (0,0) 起算，重新画到居中位置。
-  mc.setTransform(1, 0, 0, 1, inset, inset);
-  mc.clearRect(-inset, -inset, W, H);
-  mc.filter = `blur(${blur}px)`;
-  mc.fill(new Path2D(shapePathD(kind, Math.max(1, w - inset * 2), Math.max(1, h - inset * 2))));
+  mc.fill(new Path2D(shapePathD(kind, w, h)));
 
   lc.globalCompositeOperation = 'destination-in';
   lc.drawImage(mask, 0, 0);
@@ -1963,7 +1959,7 @@ export const ShapeEditorPanel: React.FC<{
               反過來不成立：單獨挑發光的顏色時，圖形的顏色不會被動到。 */}
           {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c, shapeGlowColor: c }), true)}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
-          <div className={`flex items-center gap-3 px-2 order-1 ${canFeather ? 'w-[calc(50%-0.44rem)]' : 'w-full'}`}>
+          <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
               {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
                 v => onChange({ shapeGlow: v } as any))}
@@ -1975,7 +1971,7 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>
-          <div className={`flex items-center gap-3 px-2 order-2 ${canFeather ? 'w-[calc(50%-0.44rem)]' : 'w-full'}`}>
+          <div className="flex items-center gap-3 px-2 order-2 w-full">
             <div className="flex-1 min-w-0">
               {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
                 v => onChange({ shapeStrokeW: v / 10 }))}
