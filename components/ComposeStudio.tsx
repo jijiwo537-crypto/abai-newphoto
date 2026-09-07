@@ -684,7 +684,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
         <div className="flex items-center" style={{ height: 86 }}>
           {tab === 'crop' && (
             <div className="w-full flex overflow-x-auto no-scrollbar px-4">
-              <div className="flex gap-2 mx-auto">
+              <div className="flex gap-2 mx-auto pr-6">
               {ASPECT_PRESETS.map(a => (
                 <button
                   key={a.id}
