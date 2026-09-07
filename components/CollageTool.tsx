@@ -602,7 +602,7 @@ const glowIdleAmp = (
 export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
   { id: 'float', name: '漂浮' },
-  { id: 'sway', name: '左右晃' },
+  { id: 'sway', name: '左右' },
   { id: 'breathe', name: '縮放' },
   { id: 'spin', name: '旋轉' },
   { id: 'wobble', name: '搖擺' },
@@ -7474,7 +7474,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
                               不會有欄位突然冒出來閃一下。 */}
-                          <div className={`flex items-center gap-3 px-2 order-1 ${shapeSupportsFeather(sel.kind, sel.filled, sel.hole) ? 'w-[calc(50%-0.44rem)]' : 'w-full'}`}>
+                          <div className="flex items-center gap-3 px-2 order-1 w-full">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('發光', Math.round(glowAmount(sel.glow) * 100), 0, 100,
                                 (v: number) => patch(v > 0 && !sel.glowInit
@@ -7486,7 +7486,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>
-                          <div className={`flex items-center gap-3 px-2 order-2 ${shapeSupportsFeather(sel.kind, sel.filled, sel.hole) ? 'w-[calc(50%-0.44rem)]' : 'w-full'}`}>
+                          <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('描邊', Math.round((sel.strokeW ?? 0) * 10), 0, 100,
                                 (v: number) => patch({ strokeW: v / 10 }))}
