@@ -446,14 +446,12 @@ export const paintTex = (
   if (t === 'dot' || t === 'star' || t === 'heart') {
     const baseW = Math.max(1, o.textureBaseW || unitW);
     const baseH = Math.max(1, o.textureBaseH || unitH);
-    const sx = unitW / baseW, sy = unitH / baseH;
-    c.save();
-    // 网格与每颗纹理一起从原始坐标系做非等比缩放，挤压时图案本身也会变形。
-    c.scale(sx, sy);
-    paintDots(c, baseW, baseH, covW / sx, covH / sy,
+    /* 點點／星星／愛心是固定尺寸的印花，不跟圖形一起被拉扁，也不因擠壓
+       改變間距；只有圖形的剪裁邊界改變。baseW/baseH 是開始擠壓前留下的
+       座標基準，因此每顆圖案與網格節奏都能保持完全一致。 */
+    paintDots(c, baseW, baseH, covW, covH,
       o.texSize ?? o.dotSize ?? 50, o.texGap ?? o.dotGap ?? 20,
       o.texColor || o.dotColor || '#FFFFFF', t);
-    c.restore();
   } else if (t === 'stripe') {
     paintStripes(c, unitW, unitH, covW, covH,
       o.stripeN ?? SN_DEF, o.stripeDir === 'h' ? 'h' : 'v',
