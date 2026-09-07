@@ -987,12 +987,9 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
         + `L ${P(0, r)} Q ${P(0, 0)} ${P(r, 0)} Z`;
     }
     case 'triangle': {
-      /* 正三角形（三邊等長）。邊長取「這個框裝得下的最大值」再置中 ——
-         框是方的時候就填滿寬度，高度自然是邊長的 √3/2。 */
-      const side = Math.min(w, h * 2 / Math.sqrt(3));
-      const th = side * Math.sqrt(3) / 2;
-      const x0 = (w - side) / 2, y0 = (h - th) / 2;
-      return poly([[x0 + side / 2, y0], [x0 + side, y0 + th], [x0, y0 + th]]);
+      // 四边挤压必须真正改变路径本身；三角形直接占满当前 w×h，
+      // 不能再强制维持正三角形后只在变大的外框里重新置中。
+      return poly([[w / 2, 0], [w, h], [0, h]]);
     }
     case 'diamond':
       return poly([[cx, 0], [w, cy], [cx, h], [0, cy]]);
@@ -1144,7 +1141,7 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   circle: [0, 0, 1, 1],
   square: [0, 0, 1, 1],
   rounded: [0, 0, 1, 1],
-  triangle: [0, 0.067, 1, 0.866],
+  triangle: [0, 0, 1, 1],
   diamond: [0, 0, 1, 1],
   'diamond-n': [0.22, 0, 0.56, 1],
   pentagon: [0.0245, 0, 0.9511, 0.9045],
@@ -3382,6 +3379,8 @@ interface FloatingImage {
   holeType?: string;
   /** 線寬，1 個單位 = 外框長邊的 1/160（滑桿顯示成 1~100，存進來是 ÷10） */
   shapeLineW?: number;
+  /** 新增／首次挤压时的线宽基准，挤压只改变轮廓比例、不改变笔画粗细 */
+  shapeLineBase?: number;
   /** 描邊的虛線長度（0＝實線，1~100 是「一段有幾倍線寬」的比例，跟圖片描邊同一套） */
   shapeDash?: number;
   /** 圖形發光強度 0~100（0＝關）。舊資料存的是 true／false，glowAmount 會相容 */
@@ -4840,6 +4839,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     stretchStart.current = { pointerId: e.pointerId, side, startX: e.clientX, startY: e.clientY,
       width: image.width, height: image.height, x: image.x, y: image.y,
       rotationRad: image.rotation * Math.PI / 180 };
+    if (image.shape && !image.shapeLineBase) onChange({ shapeLineBase: Math.max(image.width, image.height) });
     setIsScaling(true); onScaleStart?.();
   };
   const handleStretchPointerMove = (e: React.PointerEvent) => {
@@ -4963,13 +4963,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const shapeStroke = (() => {
     if (!image.shape) return null;
     const s = image.scale || 1;
-    const lw = shapeLineWidth(image.shapeLineW, image.width, image.height) / s;
+    const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
+    const lw = Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160)) / s;
     const dash = image.shapeDash || 0;
     const seg = lw * (0.6 + (dash / 100) * 4);
     return {
       lw,
       /** 外描邊的寬度（單邊）。跟框線同一個道理，也要除掉 scale */
-      outer: (image.shapeStrokeW || 0) * (Math.max(image.width, image.height) / 160) / s,
+      outer: (image.shapeStrokeW || 0) * (lineBase / 160) / s,
       dashArray: dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined,
       // 一律平頭：線條的兩端要是切齊的，不要圓角
       cap: 'butt' as const,
@@ -5235,7 +5236,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             <rect
               x="0" y="0" width="100%" height="100%"
               fill="none" stroke="#ffffff"
-              strokeWidth={r3(1.6 / kNow)}
+              strokeWidth={r3((image.shape === 'line' ? 0.8 : 1.6) / kNow)}
             />
           </svg>
         )}
@@ -6839,6 +6840,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       holeType: (it as HoleShapeItem).hole,
       shapeFilled: it.filled,
       shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
+      shapeLineBase: Math.max(w, h),
       shapeDash: 0,
       shapeGlow: false,
       shapeGlowColor: SHAPE_DEFAULT_COLOR,
@@ -10309,7 +10311,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           dotGap: fImg.shapeDotGap, dotColor: fImg.shapeDotColor,
           id: fImg.id,
           // 線寬的單位不含 scale（上面已經 ctx.scale 過了）—— 跟預覽同一條規則
-          lineUnit: Math.max(fw, fh) / 160 / (fImg.scale || 1),
+          lineUnit: ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor)
+            / 160 / (fImg.scale || 1),
         },
         fw, fh, shapeGlowBlurs(fw, fh).map(r => r * glowAmount(fImg.shapeGlow as any)),
       );
@@ -10323,7 +10326,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /* 線寬要除掉 scale：上面已經 ctx.scale(fImg.scale, ...) 過了，
        不除的話「圖形拉大」連框線也跟著變粗 —— 跟預覽同一條規則。 */
     const sScale = fImg.scale || 1;
-    const lw = shapeLineWidth(fImg.shapeLineW, fw, fh) / sScale;
+    const exportLineBase = (fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor;
+    const lw = Math.max(0.4 * scaleFactor, (fImg.shapeLineW ?? 6) * (exportLineBase / 160)) / sScale;
     if (!solid) {
       const dash = fImg.shapeDash || 0;
       ctx.lineWidth = lw;

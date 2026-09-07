@@ -4613,7 +4613,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 所有选中框统一为实线；虚线只保留给内容本身的描边样式。
         ctx.strokeStyle = '#ffffff';
         // 與經典拼圖圖片選中框相同的 0.75px 視覺粗度。
-        ctx.lineWidth = 0.75 * uiPx;
+        ctx.lineWidth = (o.type === 'shape' && o.kind === 'line' ? 0.375 : 0.75) * uiPx;
         ctx.setLineDash([]);
         if (shapeSel === o.id && isImgShaped(o.imgShape)) {
           /* 第二段：選中的是「形狀」—— 方框收起來，改成沿著形狀本身描一圈。
