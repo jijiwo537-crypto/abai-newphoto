@@ -40,6 +40,7 @@ export const GLYPH_HOLES: Record<string, string> = {
 export const GLYPH_BTN: Record<string, { size?: number; dx?: number; dy?: number }> = {
   flower:   { size: 19.8 },                     // 18 × 1.1
   snow:     { size: 21.6 },                     // 18 × 1.2
+  burst:    { size: 21.6 },                     // 與旁邊雪花保持相同視覺尺寸
   seagrass: { dx: 0.3, dy: -0.7 },
   darkstar: { size: 19.8, dx: 0.1 },            // 18 × 1.1
   // ⊹ 的字身在字框裡本來就偏小，放大 1.5 倍（18 → 27）才看得清楚
@@ -631,7 +632,7 @@ export const HOLE_ITEM_CROSS_O: HoleShapeItem = { id: 'hole-cross-star-o', kind:
 export const HOLE_ITEMS_EXTRA: HoleShapeItem[] =
   /* random-num（那顆「(9)」）拿掉了 —— 圖形不需要一顆會變的編號 */
   ['flower', 'snow', 'love', 'love3', 'pic333', 'vortex',
-   'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'yaya', 'zzz']
+   'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'burst', 'zzz']
     .map(h => ({ id: `hole-${h}`, kind: 'hole' as const, hole: h, filled: true }));
 
 /**
