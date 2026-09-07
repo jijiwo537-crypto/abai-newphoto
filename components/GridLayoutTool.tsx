@@ -1107,8 +1107,7 @@ export const shapeSupportsStretch = (shape: string | undefined, filled: boolean 
   return filled ? STRETCH_SOLID_KINDS.has(shape) : STRETCH_OUTLINE_KINDS.has(shape);
 };
 /** 羽化只开放给前十个基础实心路径图形；第十一个实心十字星不支持。 */
-export const shapeSupportsFeather = (shape: string | undefined, filled: boolean | undefined, _holeType?: string) =>
-  !!filled && !!shape && shape !== 'hole' && STRETCH_SOLID_KINDS.has(shape);
+export const shapeSupportsFeather = (_shape: string | undefined, _filled: boolean | undefined, _holeType?: string) => false;
 export const shapeFeatherBlur = (w: number, h: number, value?: number) =>
   Math.max(0, Math.min(w, h) * (Math.max(0, Math.min(100, value || 0)) / 100) * 0.03);
 
@@ -1116,39 +1115,15 @@ export const shapeFeatherBlur = (w: number, h: number, value?: number) =>
  * 与图片边缘羽化一样，改变的是边缘透明度，而不是给硬边图形加一层视觉 blur。 */
 export const drawFeatheredShapeBody = (
   target: CanvasRenderingContext2D,
-  kind: string, w: number, h: number, feather: number | undefined,
+  kind: string, w: number, h: number, _feather: number | undefined,
   color: string,
   paintTexture?: (ctx: CanvasRenderingContext2D, path: Path2D) => void,
 ) => {
-  const W = Math.max(2, Math.ceil(w)), H = Math.max(2, Math.ceil(h));
-  const value = Math.max(0, Math.min(100, feather || 0));
-  const direct = () => {
-    const path = new Path2D(shapePathD(kind, w, h));
-    target.fillStyle = color; target.fill(path); paintTexture?.(target, path);
-  };
-  if (value <= 0) { direct(); return; }
-  const layer = document.createElement('canvas');
-  layer.width = W; layer.height = H;
-  const lc = layer.getContext('2d');
-  if (!lc) { direct(); return; }
+  // 圖形羽化已移除；保留同一個繪製入口以相容既有草稿資料。
   const path = new Path2D(shapePathD(kind, w, h));
-  lc.fillStyle = color; lc.fill(path); paintTexture?.(lc, path);
-
-  const mask = document.createElement('canvas');
-  mask.width = W; mask.height = H;
-  const mc = mask.getContext('2d')!;
-  const band = (value / 100) * Math.min(w, h) / 2;
-  const blur = Math.max(0.5, band / 3);
-  // 保持原始路径与尺寸不变，只让原始轮廓内侧的 alpha 逐渐变透明。
-  // 不再内缩路径，避免羽化看起来像把整个图形缩小。
-  mc.filter = `blur(${blur}px)`;
-  mc.fillStyle = '#fff';
-  mc.fill(new Path2D(shapePathD(kind, w, h)));
-
-  lc.globalCompositeOperation = 'destination-in';
-  lc.drawImage(mask, 0, 0);
-  lc.globalCompositeOperation = 'source-over';
-  target.drawImage(layer, 0, 0, w, h);
+  target.fillStyle = color;
+  target.fill(path);
+  paintTexture?.(target, path);
 };
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
@@ -1953,7 +1928,7 @@ export const ShapeEditorPanel: React.FC<{
         )}
         {!colorPage && (
         /* 底部留一段：捲到最底時最後一根滑桿不會貼著邊 */
-        <div className="flex flex-row flex-wrap gap-3.5 pt-1 pb-14">
+        <div className="flex flex-col gap-3.5 pt-1 pb-14">
           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題）。
               換圖形顏色時發光也一起換成同一個色 —— 發光本來就是圖形自己的光暈。
               反過來不成立：單獨挑發光的顏色時，圖形的顏色不會被動到。 */}
