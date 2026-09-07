@@ -478,24 +478,35 @@ export const HomePage: React.FC<HomePageProps> = ({
   /** 分頁列：首頁／模板是同一條捲軸的兩個位置，「我」才是橫向換頁。 */
   const goNav = useCallback((id: string) => {
     const sc = scrollRef.current;
+    const fromMe = nav === 'me';
+
+    /* 「我的」右边藏着的是同一条首页／模板捲轴。返回修图时必须趁它仍在
+       画面外先复位，否则横向滑回来后才做 smooth scroll，会把模板往上滑的
+       整段过程露给使用者。这个复位不可见，也不会影响首页内点击分页的动画。 */
+    if (fromMe && id === 'home' && sc) {
+      navLockRef.current = 'home';
+      sc.scrollTop = 0;
+      applyRef.current();
+    }
+
     navRef.current = id;
     setNav(id);
     if (id === 'me' || !sc) return;
+    if (fromMe && id === 'home') return;
 
     navLockRef.current = id;
     const target = id === 'lib' ? libScrollTop(sc) : 0;
     let reduce = false;
     try { reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch {}
 
-    /* 讓瀏覽器原生捲軸負責補間，視差會由既有 onScroll 在同一個時間軸更新。
-       從「我的」切回來時先讓橫向頁面掛回畫面，再於下一幀開始縱向滑動；
-       這樣既不會露出黑底，也不會因為在隱藏頁上啟動動畫而被 WebKit 取消。 */
+    /* 首页与模板之间交给浏览器原生捲轴补间，视差由既有 onScroll 同步更新。
+       从「我的」进入模板则等横向页面开始回来后再启动，避免隐藏页动画被取消。 */
     const run = () => {
       if (navRef.current !== id) return;
       sc.scrollTo({ top: target, behavior: reduce ? 'auto' : 'smooth' });
       if (reduce) applyRef.current();
     };
-    if (nav === 'me') requestAnimationFrame(run);
+    if (fromMe) requestAnimationFrame(run);
     else run();
   }, [nav]);
 
