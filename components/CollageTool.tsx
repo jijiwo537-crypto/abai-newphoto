@@ -1054,7 +1054,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (!o.img) return null;
     const shape = {
       r: o.imgRadius || 0, f: o.feather || 0,
-      sw: o.imgStrokeWidth || 0, sc: o.imgStrokeColor || '#FFFFFF', sd: o.imgStrokeDash || 0,
+      sw: o.imgStrokeWidth || 0, sg: o.imgStrokeGap || 0, sc: o.imgStrokeColor || '#FFFFFF', sd: o.imgStrokeDash || 0,
       g: o.imgGlow || 0, gc: o.imgGlowColor || '#FFFFFF',
       /* 外形（圓形／星型／愛心）與圖片在形狀裡的位移。
          沒選形狀時 k 是 undefined，下面每一段都走原本那條路。 */
@@ -1225,7 +1225,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const c = cv.getContext('2d')!;
 
     // 描邊往外長，所以形狀那一張要比框大 lw 一圈
-    const swid = iw + lw * 2, shgt = ih + lw * 2;
+    const strokeGap = shape.sg * UNIT;
+    const strokeExtent = lw + strokeGap;
+    const swid = iw + strokeExtent * 2, shgt = ih + strokeExtent * 2;
     let shaped: CanvasImageSource = base;
     let drawW = iw, drawH = ih, drawX = (W - iw) / 2, drawY = (H - ih) / 2;
     if (shape.f || shape.r || shape.sw || isImgShaped(shape.k)) {
@@ -1234,14 +1236,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (scratch) reuseCv(off, offW, offH);
       else { off.width = offW; off.height = offH; }
       const oc = off.getContext('2d')!;
-      drawImgBase(oc, base, lw, lw, iw, ih, o);
+      drawImgBase(oc, base, strokeExtent, strokeExtent, iw, ih, o);
       if (shape.f || shape.r || isImgShaped(shape.k)) {
         oc.globalCompositeOperation = 'destination-in';
         if (shape.f) {
-          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f, shape.k), lw, lw, iw, ih);
+          oc.drawImage(makeShapeMask(iw, ih, shape.r, shape.f, shape.k), strokeExtent, strokeExtent, iw, ih);
         } else {
           const R = cornerR(shape.r, iw, ih);
-          withImgOutline(oc, lw, lw, iw, ih, shape.k, R, R, p => {
+          withImgOutline(oc, strokeExtent, strokeExtent, iw, ih, shape.k, R, R, p => {
             oc.fillStyle = '#fff';
             p ? oc.fill(p) : oc.fill();
           });
@@ -1249,8 +1251,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         oc.globalCompositeOperation = 'source-over';
       }
       if (lw > 0) {
-        const sr = shape.r ? cornerR(shape.r, iw, ih) + lw / 2 : 0;
-        withImgOutline(oc, lw / 2, lw / 2, iw + lw, ih + lw, shape.k, sr, sr, p => {
+        const sr = shape.r ? cornerR(shape.r, iw, ih) + strokeGap + lw / 2 : 0;
+        withImgOutline(oc, lw / 2, lw / 2, iw + strokeGap * 2 + lw, ih + strokeGap * 2 + lw, shape.k, sr, sr, p => {
         oc.lineWidth = lw;
         oc.lineJoin = 'miter';
         oc.miterLimit = 4;
@@ -4476,11 +4478,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const bw = o.w * s, bh = o.h * s;
           const unit = Math.max(bw, bh) / 160;
           const lw2 = (o.imgStrokeWidth || 0) * unit;
-          const sr = o.imgRadius ? cornerR(o.imgRadius, bw, bh) + lw2 / 2 : 0;
+          const strokeGap2 = (o.imgStrokeGap || 0) * unit;
+          const sr = o.imgRadius ? cornerR(o.imgRadius, bw, bh) + strokeGap2 + lw2 / 2 : 0;
           const seg = lw2 * (0.6 + ((o.imgStrokeDash || 0) / 100) * 4);
           const gap = seg * 0.85;
           /* 路徑總長（圓角矩形）：四條直邊 ＋ 四個角的圓弧 */
-          const rw = bw + lw2, rh = bh + lw2;
+          const rw = bw + strokeGap2 * 2 + lw2, rh = bh + strokeGap2 * 2 + lw2;
           const rr = Math.min(sr, Math.min(rw, rh) / 2);
           const P = 2 * (rw - 2 * rr) + 2 * (rh - 2 * rr) + 2 * Math.PI * rr;
           const tt = animRef.current ? animRef.current.t : 0;
