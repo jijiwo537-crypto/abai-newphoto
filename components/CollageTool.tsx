@@ -21,7 +21,7 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker,
-  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch,
+  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { normalizeImageFiles } from '../utils/imageLoader';
@@ -7414,12 +7414,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           /* 邊框那排的順序跟實心那排對齊：第 6 顆窄菱形、第 9 顆愛心、
                              第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
                           const lineList = moveTo(moveTo(moveTo(
-                            [...ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && i2.kind !== 'line'), HOLE_ITEM_CROSS_O],
+                            [...ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && !SPECIAL_LINE_KINDS.has(i2.kind)), HOLE_ITEM_CROSS_O],
                             'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 11);
                           return ([
                             ['實心', solidList],
                             ['邊框', lineList],
-                            ['線條', ADD_SHAPE_ITEMS.filter(i2 => i2.kind === 'line')],
+                            ['線條', ADD_SHAPE_ITEMS.filter(i2 => SPECIAL_LINE_KINDS.has(i2.kind))],
                           ] as const);
                         })().map(([label, list]) => (
                           <div key={label} className="mb-3">
