@@ -4578,7 +4578,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              線寬的單位跟上面的圖形同一個 —— 拉大不會變粗。 */
           const ga = glowAmount(o.glow);
           ctx.translate(bw / 2, bh / 2);
-          drawHoleShape(ctx, { ...o, lineUnit: unit }, bw, bh, shapeGlowBlurs(bw, bh).map(r => r * ga));
+          drawHoleShape(ctx, {
+            ...o,
+            lineUnit: unit,
+            textureBaseW: ((o as any).textureBaseW || o.w) * s,
+            textureBaseH: ((o as any).textureBaseH || o.h) * s,
+          }, bw, bh, shapeGlowBlurs(bw, bh).map(r => r * ga));
           ctx.setLineDash([]);
           ctx.restore();
         } else {
@@ -4619,7 +4624,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.clip(shapeP);
           // 現在原點在框的左上角，紋理那支是以中心為原點，先搬過去
           ctx.translate(bw / 2, bh / 2);
-          paintTex(ctx, bw, bh, bw, bh, o);
+          paintTex(ctx, bw, bh, bw, bh, {
+            ...o,
+            textureBaseW: ((o as any).textureBaseW || o.w) * s,
+            textureBaseH: ((o as any).textureBaseH || o.h) * s,
+          });
           ctx.restore();
         }
         ctx.setLineDash([]);
