@@ -7468,7 +7468,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-2">
                         {/* 底下留一段（跟經典拼圖的圖形編輯一樣的 pb-14）——
                             捲到最底時最後那一格不會貼著邊，也比較好按。 */}
-                        <div className="flex flex-row flex-wrap gap-3.5 pt-1 pb-14">
+                        <div className="flex flex-col gap-3.5 pt-1 pb-14">
                           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
                           {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c, glowColor: c }), true)}
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
