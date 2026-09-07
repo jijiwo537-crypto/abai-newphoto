@@ -7501,7 +7501,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {(() => {
                             const tex = texOf(sel);
                             return (
-                          <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-1">
+                          <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3">
                             <div className="h-[47px] flex items-center justify-between px-3">
                               <span className="text-[10px] font-bold text-[#888]">紋理</span>
                               <div className="flex items-center gap-2">
