@@ -1780,7 +1780,8 @@ export const TextEditorPanel: React.FC<{
                     所以不會有「拉到 1 的瞬間欄位冒出來閃一下」。 */}
                 <div className="flex items-center gap-3 px-2">
                   <div className="flex-1 min-w-0">
-                    {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+                    {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / 12) * 100)), 0, 100,
+                      v => onChange({ glow: (v / 100) * 12 }), '', 1)}
                   </div>
                   <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
                     onPick={c => onChange({ glowColor: c })}
@@ -1839,7 +1840,8 @@ export const TextEditorPanel: React.FC<{
             </div>
             <div className="flex items-center gap-3 px-2">
               <div className="flex-1 min-w-0">
-                {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+                {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / 12) * 100)), 0, 100,
+                      v => onChange({ glow: (v / 100) * 12 }), '', 1)}
               </div>
               <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
                 onPick={c => onChange({ glowColor: c })}
@@ -5243,7 +5245,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     }
     const glow = image.shape
       ? Math.max(...shapeGlowBlurs(image.width, image.height), 0) * image.scale * glowAmount(image.shapeGlow as any)
-      : (image.glow || 0) / 20 * 42 * image.scale;
+      : Math.min(12, image.glow || 0) / 20 * 42 * image.scale;
     const stroke = image.shape
       ? (image.shapeStrokeW || 0) * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
       : (image.strokeWidth || 0) * 2 * image.scale;
@@ -5470,7 +5472,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         ctx.shadowColor = image.glowColor || '#FFFFFF';
         for (const k of [1, 2, 3]) {
           // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
-          ctx.shadowBlur = (image.glow / 20) * 14 * k * image.scale * backingScale;
+          ctx.shadowBlur = (Math.min(12, image.glow) / 20) * 14 * k * image.scale * backingScale;
           fill();
         }
         ctx.shadowBlur = 0;
@@ -5864,7 +5866,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           const dx = vectorGlyphCorrection.x;
           const dy = vectorGlyphCorrection.y;
           const glowId = `vector-text-glow-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-          const glowUnit = (image.glow || 0) / 20 * 14;
+          const glowUnit = Math.min(12, image.glow || 0) / 20 * 14;
           return (
             <svg
               data-vector-text={image.id}
@@ -11099,7 +11101,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          算進發光裡；發光與描邊要各自獨立，所以這一段不描邊。 */
       // 疊三層，跟預覽那一層的三段 text-shadow 對齊
       for (const k of [1, 2, 3]) {
-        ctx.shadowBlur = (fImg.glow / 20) * 14 * k * scaleFactor * fImg.scale;
+        ctx.shadowBlur = (Math.min(12, fImg.glow) / 20) * 14 * k * scaleFactor * fImg.scale;
         drawLines();
       }
       ctx.shadowBlur = 0;
