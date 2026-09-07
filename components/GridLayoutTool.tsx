@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
-import { createPortal, flushSync } from 'react-dom';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film } from 'lucide-react';
 import { Icon } from './Icon';
@@ -3522,6 +3522,8 @@ interface FloatingImageComponentProps {
   onTextEditEnd?: () => void;
   /** 雙指縮放／旋轉進行中：工具列先收起來 */
   hideToolbar?: boolean;
+  /** 文字／符號／圖形正在雙指縮放：改用固定畫布、逐幀重畫內容。 */
+  gestureRendering?: boolean;
   /** 正在拖形狀的滑桿：選取框、四角圓球、工具列全部收起來，邊緣的效果才看得清楚 */
   hideChrome?: boolean;
   /** 濾鏡載完會 +1，用來讓已經套用濾鏡的圖層重畫 */
@@ -4153,6 +4155,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   isTextEditing = false,
   onTextEditEnd,
   hideToolbar = false,
+  gestureRendering = false,
   hideChrome = false,
   lutRevision = 0,
   touchMode = 'none',
@@ -5105,10 +5108,26 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const vectorRotRad = (image.rotation * Math.PI) / 180;
   /* 畫布本身不旋轉、內容在裡面旋轉，因此要配置旋轉後的外接矩形；否則窄長
      文字或圖形轉到 45° 時四個角會被 Canvas 邊界切掉，看起來像偶發消失。 */
-  const vectorCssW = snapPx2(Math.max(1,
+  const vectorContentW = snapPx2(Math.max(1,
     vectorInkW * Math.abs(Math.cos(vectorRotRad)) + vectorInkH * Math.abs(Math.sin(vectorRotRad))));
-  const vectorCssH = snapPx2(Math.max(1,
+  const vectorContentH = snapPx2(Math.max(1,
     vectorInkW * Math.abs(Math.sin(vectorRotRad)) + vectorInkH * Math.abs(Math.cos(vectorRotRad))));
+  /* 創意拼圖縮放物件時，物件是在一張尺寸固定的主 Canvas 裡重畫；經典拼圖
+     以前卻讓每顆物件自己的 Canvas 跟著內容每幀改尺寸。Safari 每次重設
+     canvas.width/height 都會銷毀再建立 backing store，中心與邊緣的取整也會
+     重新開始，肉眼看到的就是抖動。手勢開始時只擴一次工作畫布，之後只 clear
+     與重畫內容；放手才縮回內容範圍。 */
+  const gestureCanvasLock = useRef<{ w: number; h: number } | null>(null);
+  if (gestureRendering && !gestureCanvasLock.current) {
+    gestureCanvasLock.current = {
+      w: snapPx2(Math.min(vectorSurfaceW, Math.max(256, vectorContentW * 3))),
+      h: snapPx2(Math.min(vectorSurfaceH, Math.max(256, vectorContentH * 3))),
+    };
+  } else if (!gestureRendering && gestureCanvasLock.current) {
+    gestureCanvasLock.current = null;
+  }
+  const vectorCssW = gestureCanvasLock.current?.w ?? vectorContentW;
+  const vectorCssH = gestureCanvasLock.current?.h ?? vectorContentH;
   const [holeAssetRevision, setHoleAssetRevision] = useState(0);
   useEffect(() => {
     if (image.shape !== 'hole' || !image.holeType || !isImageHole(image.holeType)) return;
@@ -5135,18 +5154,17 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       if (!alive) return;
       /* 跟創意拼圖一樣以「畫面實體像素＋超取樣」決定解析度。只配置墨水範圍，
          因此可以在同樣記憶體內保留更高密度，同時避開 Safari 回收畫布。 */
-      /* 手勢中 Canvas 不重畫，而是由 compositor 放大同一張圖層；預留 3x
-         超取樣，連續放大到約兩倍時仍有 Retina 等級的有效解析度。 */
-      const dpr = Math.max(2, geoDpr * Math.max(1, canvasScale) * 3);
+      /* 手勢中鎖定同一塊 Canvas，僅清除並重畫內容，避免每幀改變 backing
+         store 尺寸造成抖動與殘影；放手後再以完整密度精繪一次。 */
+      const dpr = Math.max(2, geoDpr * Math.max(1, canvasScale) * (gestureRendering ? 1.5 : 3));
       const cssW = vectorCssW;
       const cssH = vectorCssH;
-      /* 尺寸上限與面積上限要同時守住：窄長文字不能因長邊先撞上 2048 就失去
-         Retina 密度，正方形又不能無限制吃記憶體。8MP 約 32MB，是極端單一
-         大物件的上限；一般物件實測只有約 0.1MP。 */
+      /* 尺寸上限與面積上限要同時守住：手勢期間以 4MP 維持每幀流暢，靜止時
+         回到 8MP；窄長文字也不會只因長邊較長就過早失去 Retina 密度。 */
       const backingScale = Math.min(
         dpr,
         4096 / Math.max(cssW, cssH),
-        Math.sqrt(8_388_608 / Math.max(1, cssW * cssH)),
+        Math.sqrt((gestureRendering ? 4_194_304 : 8_388_608) / Math.max(1, cssW * cssH)),
       );
       const W = Math.max(1, Math.ceil(cssW * backingScale));
       const H = Math.max(1, Math.ceil(cssH * backingScale));
@@ -5291,8 +5309,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     image.shapeTextureBaseW, image.shapeTextureBaseH, image.color,
     image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
     image.letterSpacing, image.strokeWidth, image.strokeColor, image.glow, image.glowColor,
-    image.scale, image.rotation, canvasScale, holeAssetRevision,
+    image.scale, image.rotation, canvasScale, gestureRendering, holeAssetRevision,
   ]);
+
+  /* 操作 UI 掛在整頁的縮放容器裡，但視覺尺寸必須維持螢幕 px。
+     選取後一定會重新 render，所以這裡讀到的是當下真正的預覽倍率。 */
+  const previewK = Math.max(0.0001, canvasK());
+  const previewInv = 1 / previewK;
 
   const chrome = (
     <>
@@ -5317,12 +5340,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const halfSpan =
         (spanW * Math.abs(Math.sin(rad)) + spanH * Math.abs(Math.cos(rad))) / 2;
       const dir = toolbarAbove ? -1 : 1;
-      const d = dir * (halfSpan + 26);
+      // 物件半徑是內容座標；框外的 26px 間距則是螢幕座標，要除掉預覽倍率。
+      const d = dir * (halfSpan + 26 * previewInv);
       return (
       <div
         className="absolute left-1/2 top-1/2 flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto z-50"
         style={{
-          transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-image.rotation}deg)`,
+          transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-image.rotation}deg) scale(${previewInv})`,
         }}
         onPointerDown={(e) => e.stopPropagation()}
         onTouchStart={(e) => e.stopPropagation()}
@@ -5390,7 +5414,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
          而且**不畫**四個角的圓球 —— 那兩種本來就是兩指縮放，圓球只是擋路。
          圖片維持原本的實線框＋四顆圓球（要靠它們拉比例）。 */
       const isPhoto = !image.shape && image.text === undefined;
-      const kNow = canvasK();
+      const kNow = previewK;
       /* 虛線框要真的把圖形「框住」：圖形畫出來的墨水常常長在外框外面 ——
          框線是騎在路徑上的（一半在框外），外描邊再往外一圈，
          借來的圖案更誇張（`<333` 的墨水有外框的 2.9 倍寬）。
@@ -5444,7 +5468,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         <div
           key={corner}
           className={`absolute ${pos} w-3.5 h-3.5 ${cur} z-50 pointer-events-auto touch-none`}
-          style={{ transform: tx }}
+          style={{ transform: `${tx} scale(${previewInv})` }}
           onPointerDown={(e) => handleScalePointerDown(e, corner)}
           onPointerMove={handleScalePointerMove}
           onPointerUp={handleScalePointerUp}
@@ -5483,7 +5507,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             className="absolute inset-0 pointer-events-none z-30"
             viewBox={`${r3(t.b.x - t.tx)} ${r3(t.b.y - t.ty)} ${r3(t.b.s)} ${r3(t.b.s)}`}
             preserveAspectRatio="none"
-            style={{ overflow: 'visible', filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.28))' }}
+            style={{ overflow: 'visible', filter: `drop-shadow(0 0 ${2 * previewInv}px rgba(0,0,0,0.28))` }}
             aria-hidden
           >
             <path
@@ -5510,7 +5534,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       >
         {shapeOutline ? shapeOutline : isPhoto ? (
           /* Active border matching layout style（深色那一圈是往外畫的，跟原本一樣） */
-          <div className="absolute pointer-events-none z-30 border-[0.75px] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]" style={{ inset: -1 }} />
+          <div
+            className="absolute pointer-events-none z-30 border-solid border-white/95"
+            style={{
+              inset: -previewInv,
+              borderWidth: 0.75 * previewInv,
+              boxShadow: `0 0 ${4 * previewInv}px rgba(0,0,0,0.3)`,
+            }}
+          />
         ) : (
           /* 虛線框：數值跟創意拼圖那條 strokeRect 一模一樣（1.6px 寬、6.7/6.7 的節奏）。
              除掉預覽的倍率 k —— 放大預覽時框不會跟著變粗，跟那邊的 uiPx 同一個道理。
@@ -5521,7 +5552,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               left: frameRect.left, top: frameRect.top,
               width: frameRect.width, height: frameRect.height,
               overflow: 'visible',
-              filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.28))',
+              filter: `drop-shadow(0 0 ${2 * previewInv}px rgba(0,0,0,0.28))`,
             }}
             aria-hidden
           >
@@ -5557,7 +5588,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           // 圖形四邊已經直接給「框線上的中心座標」，四個方向都只需把
           // 觸控盒自身的中心搬回該座標。舊的右／下 +50% 是搭配 right/bottom
           // 定位使用的，留在精確座標模式會多推出半個觸控盒。
-          const handleTransform = image.shape ? 'translate(-50%, -50%)' : tx;
+          const handleTransform = `${image.shape ? 'translate(-50%, -50%)' : tx} scale(${previewInv})`;
           return (
           <div key={side} data-stretch-handle className={`absolute ${image.shape ? '' : pos} ${size} z-50 pointer-events-auto touch-none flex items-center justify-center`}
             style={{ transform: handleTransform, ...shapeHandleStyle }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
@@ -5587,16 +5618,18 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         aria-hidden
         className="absolute pointer-events-none"
         style={{
-          left: `${image.x + image.width / 2 - vectorSurfaceW / 2}px`,
-          top: `${image.y + image.height / 2 - vectorSurfaceH / 2}px`,
+          /* 用合成器保留次像素位置。CSS zoom 會把 absolute 的 left/top 先吸到
+             版面像素，再乘倍率；倍率連續變化時吸附方向反覆切換，正是向量物件
+             在預覽縮放時左右跳的來源。固定在原點、位置全交給 translate3d，
+             與創意拼圖把物件畫在同一張 Canvas 浮點座標上的結果一致。 */
+          left: 0,
+          top: 0,
           width: `${vectorSurfaceW}px`,
           height: `${vectorSurfaceH}px`,
           zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
           opacity: image.text !== undefined && isTextEditing ? 0 : 1,
           transformOrigin: 'center center',
-          transform: dragShift
-            ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s})`
-            : undefined,
+          transform: `translate3d(${image.x + image.width / 2 - vectorSurfaceW / 2 + (dragShift?.tx || 0)}px, ${image.y + image.height / 2 - vectorSurfaceH / 2 + (dragShift?.ty || 0)}px, 0)${dragShift ? ` scale(${dragShift.s})` : ''}`,
           transition: dragShift
             ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
             : undefined,
@@ -7850,6 +7883,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [pagesVisual, setPagesVisual] = useState(false);
   const pagesVisualTimerRef = useRef(0);
   const kRef = useRef(1);
+  /** scrollLeft 在 WebKit 只會落在離散像素；保留不足一像素的尾數，用純平移補回。
+      這跟創意拼圖的 viewT.tx 一樣，只負責位置，不參與縮放與光柵化。 */
+  const stripSubpixelXRef = useRef(0);
   const kAnimRef = useRef<{ from: number; to: number; t0: number } | null>(null);
   /** 動畫期間繞著哪一頁縮放（就是動畫開始時停在畫面正中間的那一頁） */
   const kAnchorRef = useRef(0);
@@ -7882,12 +7918,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     // 右邊剛好留到「最後一頁停在正中間」為止；加號按鈕已經佔掉 ml-3 + 40
     if (pad) pad.style.width = `${Math.max(0, m - (plusVisibleRef.current ? 52 : 0))}px`;
     if (col) {
-      /* 手勢進行中只改一個 compositor transform，避免原生 zoom 每幀觸發整頁
-         layout／文字重排而抖動；手勢結束後再一次切回原生 zoom 取得靜態清晰度。 */
+      /* Safari 上不能在手勢開始／結束時於 zoom 與 transform 之間切換。
+         transform 會先把整頁光柵化成貼圖再反覆取樣；頁面上的細字、圖形與符號
+         即使中心座標完全不動，邊緣仍會像在左右抖。創意拼圖一直改畫布的實際
+         顯示尺寸、不做貼圖縮放；這裡用原生 zoom 做同一件事，整段手勢只保留
+         一套座標與光柵化方式。 */
       const nativeZoom = typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2');
-      if (nativeZoom && !liveTransform) {
+      col.style.setProperty('--preview-scale', String(k));
+      if (nativeZoom) {
         (col.style as any).zoom = String(k);
-        col.style.transform = '';
+        const sub = stripSubpixelXRef.current;
+        col.style.transform = Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0)` : '';
         col.style.willChange = '';
       } else {
         (col.style as any).zoom = '';
@@ -9957,52 +9998,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     baseLayoutRot: number;
     cellIdx: number; baseOffsetX: number; baseOffsetY: number; baseZoom: number;
     baseShapeX?: number; baseShapeY?: number; baseShapeZoom?: number; startInShape?: boolean;
-    /**
-     * 文字／符號／圖形在手勢期間不再改 React state，也不重設 Canvas 尺寸。
-     * 同一張高解析圖層只交給合成器做矩陣變換，放手才一次提交最終資料。
-     */
-    isVector?: boolean;
-    liveScale?: number; liveRotation?: number;
-    vectorEl?: HTMLElement | null;
-    vectorRaf?: number | null;
-    vectorOriginalTransform?: string;
-    vectorOriginalTransition?: string;
-    vectorOriginalWillChange?: string;
-    vectorOriginalBackface?: string;
   } | null>(null);
-
-  const restoreVectorGestureLayer = (g = wsGestureRef.current) => {
-    if (!g?.isVector) return;
-    if (g.vectorRaf != null) cancelAnimationFrame(g.vectorRaf);
-    const el = g.vectorEl;
-    if (!el) return;
-    el.style.transform = g.vectorOriginalTransform || '';
-    el.style.transition = g.vectorOriginalTransition || '';
-    el.style.willChange = g.vectorOriginalWillChange || '';
-    el.style.backfaceVisibility = g.vectorOriginalBackface || '';
-  };
-
-  const beginVectorGestureLayer = (id: string | null) => {
-    if (!id) return null;
-    const el = document.querySelector<HTMLElement>(`[data-vector-surface="${id}"]`);
-    if (!el) return null;
-    const saved = {
-      vectorEl: el,
-      vectorOriginalTransform: el.style.transform,
-      vectorOriginalTransition: el.style.transition,
-      vectorOriginalWillChange: el.style.willChange,
-      vectorOriginalBackface: el.style.backfaceVisibility,
-    };
-    // Safari 必須在第一個 move 以前就把圖層提升到 compositor；若在 move 裡才做，
-    // 第一、二幀會各觸發一次 rasterize，看起來正是「剛開始縮放抖一下」。
-    el.style.transition = 'none';
-    el.style.willChange = 'transform';
-    el.style.backfaceVisibility = 'hidden';
-    el.style.transformOrigin = 'center center';
-    return saved;
-  };
-
-  useEffect(() => () => restoreVectorGestureLayer(wsGestureRef.current), []);
 
   const panRef = useRef<{
     startX: number; startScroll: number;
@@ -10157,7 +10153,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const handleWorkspaceTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     stopInertia();
     panRef.current = null;
-    restoreVectorGestureLayer();
     wsGestureRef.current = null;
     if (isLongPressedRef.current || touchDragState.current) return;
 
@@ -10225,10 +10220,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const cell = kind === 'cell' && selectedIndex !== null ? images[selectedIndex] : undefined;
       if (kind === 'cell' && !cell?.url) return;
       const lt = activeLayout?.t || { x: 0, y: 0, scale: 1 };
-      const isVector = !!fImg && (!!fImg.shape || fImg.text !== undefined);
-      const vectorLayer = kind === 'floating' && twoFinger && isVector
-        ? beginVectorGestureLayer(gestureFloatingId)
-        : null;
 
       // 雙指操作時先把圖層工具列收起來，放開才依旋轉後的方向重新擺
       setPinchFloatingId(kind === 'floating' && twoFinger ? gestureFloatingId : null);
@@ -10250,11 +10241,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         baseOffsetX: cell?.offsetX ?? 0,
         baseOffsetY: cell?.offsetY ?? 0,
         baseZoom: cell?.zoom ?? 1,
-        isVector: !!vectorLayer,
-        liveScale: fImg?.scale ?? 1,
-        liveRotation: fImg?.rotation ?? 0,
-        vectorRaf: null,
-        ...vectorLayer,
         // 「形狀」那一頁開著時拖曳挪的是圖片在形狀裡的位置（見 handleWorkspaceTouchMove）
         baseShapeX: (fImg as any)?.imgShapeX ?? 0,
         baseShapeY: (fImg as any)?.imgShapeY ?? 0,
@@ -10302,7 +10288,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const anchorPx = w / 2;
       let anchorC = 0;
       if (cont && w > 0) {
-        anchorC = (cont.scrollLeft + anchorPx - stripOffset(w, k0)) / k0;
+        anchorC = (cont.scrollLeft + anchorPx - stripOffset(w, k0)
+          - stripSubpixelXRef.current * k0) / k0;
       }
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
          連續捏兩次時，第二次一定要從第一次的結果接著算。 */
@@ -10364,7 +10351,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (cont && w > 0) {
         /* z 還等於 baseZoom 時算出來就是起手的 scrollLeft 本身，
            所以第一帧不會有任何位移 —— 純粹原地放大。 */
-        cont.scrollLeft = Math.max(0, stripOffset(w, z) + cz.anchorC * z - cz.anchorPx);
+        const desired = Math.max(0, Math.min(
+          Math.max(0, cont.scrollWidth - cont.clientWidth),
+          stripOffset(w, z) + cz.anchorC * z - cz.anchorPx,
+        ));
+        cont.scrollLeft = desired;
+        /* Safari 會把 scrollLeft 吸到離散像素，誤差會隨倍率在正負方向切換；
+           細線條看起來便會來回抖。縮放仍完全走原生 zoom，只用 translate3d
+           補回不足一像素的尾數，和創意拼圖「實際尺寸＋純平移」的結構一致。 */
+        const actual = cont.scrollLeft;
+        stripSubpixelXRef.current = (actual - desired) / Math.max(0.0001, z);
+        const col = pagesColRef.current;
+        if (col) {
+          const sub = stripSubpixelXRef.current;
+          col.style.transform = Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0)` : '';
+        }
       }
       positionPageCtls();
       return;
@@ -10487,23 +10488,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               : pageLines, target.x + target.width / 2);
           }
           const finalNs = ns, finalRot = rot;
-          if (isVectorObject && g.isVector && g.vectorEl) {
-            /* 手勢期間只動一個已 rasterize 的合成層。React 物件尺寸、Canvas
-               backing store、字型量測與選取框完全不參與每一幀。 */
-            g.liveScale = finalNs;
-            g.liveRotation = finalRot;
-            if (g.vectorEl && g.vectorRaf == null) {
-              g.vectorRaf = requestAnimationFrame(() => {
-                g.vectorRaf = null;
-                if (!g.vectorEl?.isConnected) return;
-                const scale = Math.max(0.0001, (g.liveScale ?? g.baseScale) / Math.max(0.0001, g.baseScale));
-                const rawDelta = (g.liveRotation ?? g.baseRotation) - g.baseRotation;
-                const delta = ((rawDelta + 180) % 360 + 360) % 360 - 180;
-                g.vectorEl.style.transform = `scale(${scale}) rotate(${delta}deg)`;
-              });
-            }
-            return;
-          }
           queueInteraction(() => {
             setFloatingImages(prev => prev.map(img =>
               img.id === g.floatingId
@@ -10624,28 +10608,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const handleWorkspaceTouchEnd = () => {
     flushInteractionNow();
-    const endingGesture = wsGestureRef.current;
-    if (endingGesture?.kind === 'floating' && endingGesture.mode === 'pinch' && endingGesture.isVector) {
-      if (endingGesture.vectorRaf != null) cancelAnimationFrame(endingGesture.vectorRaf);
-      const finalScale = endingGesture.liveScale ?? endingGesture.baseScale;
-      const finalRotation = endingGesture.liveRotation ?? endingGesture.baseRotation;
-      /* 一次同步提交，確保新解析度 Canvas 已在 layout effect 畫完，才移除
-         手勢矩陣；中間不會露出基準尺寸那一幀。 */
-      flushSync(() => {
-        setFloatingImages(prev => prev.map(img => img.id === endingGesture.floatingId
-          ? { ...img, scale: finalScale, rotation: finalRotation }
-          : img));
-        setSelectionDragging(false);
-        setPinchFloatingId(null);
-        setActiveGuidelines([]);
-        setActiveCollisions({ left: false, right: false, top: false, bottom: false });
-      });
-      restoreVectorGestureLayer(endingGesture);
-      wsGestureRef.current = null;
-      panMovedRef.current = false;
-      applyStripGeometry(kRef.current, false);
-      return;
-    }
     setSelectionDragging(false);
     setPinchFloatingId(null);
     // 手指全部離開了，下一次手勢才能重新決定是捲頁還是縮放
@@ -12780,9 +12742,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         {/* Thin solid outline on top of the image */}
                                         {isSelected && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (
                                           <div 
-                                            className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/90 shadow-[0_0_3px_rgba(0,0,0,0.28)]"
+                                            className="absolute inset-0 pointer-events-none z-30 border-solid border-white/90"
                                             style={{
                                               borderRadius: `${radius}px`,
+                                              borderWidth: 0.75 / Math.max(0.0001, kRef.current),
+                                              boxShadow: `0 0 ${3 / Math.max(0.0001, kRef.current)}px rgba(0,0,0,0.28)`,
                                               transform: 'translateZ(0)',
                                               WebkitMaskImage: '-webkit-radial-gradient(white, black)'
                                             }}
@@ -12810,9 +12774,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                            改成掛在格子**外面的下方** —— 跟整組佈局被選中時那排鍵同一種做法。
                                            貼著頁面下緣的那一列格子放不下，就翻到格子上方，不會被裁掉。 */
                                         <div className="absolute left-1/2 flex items-center gap-1 z-[60] bg-white backdrop-blur-md rounded-full p-1 shadow-xl pointer-events-auto"
-                                             style={lTop + t0 + cellHeight + 46 > previewH
-                                               ? { bottom: '100%', marginBottom: 8, transform: 'translate(-50%, 0)' }
-                                               : { top: '100%', marginTop: 8, transform: 'translate(-50%, 0)' }}
+                                             style={lTop + t0 + cellHeight + 46 / Math.max(0.0001, kRef.current) > previewH
+                                               ? { bottom: '100%', marginBottom: 8 / Math.max(0.0001, kRef.current), transform: `translate(-50%, 0) scale(${1 / Math.max(0.0001, kRef.current)})`, transformOrigin: 'bottom center' }
+                                               : { top: '100%', marginTop: 8 / Math.max(0.0001, kRef.current), transform: `translate(-50%, 0) scale(${1 / Math.max(0.0001, kRef.current)})`, transformOrigin: 'top center' }}
                                              onPointerDown={(e) => e.stopPropagation()}
                                              onTouchStart={(e) => e.stopPropagation()}
                                         >
@@ -12858,11 +12822,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                    跟一般圖片一樣：外框搬到不會被裁切的那一層去畫。 */
                                 const mvChrome = pageContentShift(pageIdx);
                                 const liftedChrome = !!mvChrome && mvChrome.s !== 1;
+                                const layoutUiInv = 1 / Math.max(0.0001, kRef.current);
                                 const corner = (key: 'tl' | 'tr' | 'bl' | 'br', pos: string, cursor: string) => (
                                   <div
                                     key={key}
                                     className={`${dot} ${pos} ${cursor}`}
-                                    style={{ transform: 'translate(-50%, -50%)' }}
+                                    style={{ transform: `translate(-50%, -50%) scale(${layoutUiInv})` }}
                                     onPointerDown={(e) => handleLayoutCornerDown(e, key)}
                                     onPointerMove={handleLayoutCornerMove}
                                     onPointerUp={handleLayoutCornerUp}
@@ -12880,8 +12845,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   >
                                     {/* 選取框跟一般圖片同款：細白線 + 陰影 */}
                                     <div
-                                      className="absolute inset-0 pointer-events-none z-[55] border-solid border-white/95 shadow-[0_0_4px_rgba(0,0,0,0.3)]"
-                                      style={{ borderWidth: 0.75 }}
+                                      className="absolute inset-0 pointer-events-none z-[55] border-solid border-white/95"
+                                      style={{
+                                        borderWidth: 0.75 * layoutUiInv,
+                                        boxShadow: `0 0 ${4 * layoutUiInv}px rgba(0,0,0,0.3)`,
+                                      }}
                                     />
                                     {corner('tl', 'top-0 left-0', 'cursor-nwse-resize')}
                                     {corner('tr', 'top-0 left-full', 'cursor-nesw-resize')}
@@ -12899,9 +12867,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           (lw * Math.abs(Math.sin(rad)) + lh * Math.abs(Math.cos(rad))) / 2;
                                         const cy = (previewH - lh) / 2 + (layout.t?.y || 0) + lh / 2;
                                         const dir = cy + halfSpan + 52 > previewH ? -1 : 1;
-                                        const d = dir * (halfSpan + 26);
+                                        const d = dir * (halfSpan + 26 * layoutUiInv);
                                         return {
-                                          transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-lrot}deg)`,
+                                          transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-lrot}deg) scale(${layoutUiInv})`,
                                         };
                                       })()}
                                       onPointerDown={(e) => e.stopPropagation()}
@@ -13034,6 +13002,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         touchMode="none"
                         hideToolbar={pinchFloatingId === fImg.id || (selectionDragging && selectedFloatingId === fImg.id)}
                         hideChrome={(tuningEdge || selectionDragging || pinchFloatingId === fImg.id) && selectedFloatingId === fImg.id}
+                        gestureRendering={pinchFloatingId === fImg.id && (!!fImg.shape || fImg.text !== undefined)}
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}
                         lutRevision={lutRevision}
