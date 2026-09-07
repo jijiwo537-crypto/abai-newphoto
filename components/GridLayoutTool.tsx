@@ -5166,6 +5166,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const vectorCssH = gestureCanvasLock.current?.h ?? vectorContentH;
   const vectorGlyphRef = useRef<SVGTextElement>(null);
   const [vectorGlyphCorrection, setVectorGlyphCorrection] = useState({ x: 0, y: 0 });
+  const [vectorGlyphBounds, setVectorGlyphBounds] = useState<{ width: number; height: number } | null>(null);
   /* 不猜不同引擎的 baseline：直接读取最终负责显示的 SVG 字形范围，再把它的
      实际中心校回物件中心。getBBox 是未套外层 scale 的固定向量座标，所以只需
      在文字内容或字体样式改变时量一次，缩放期间完全不会触发布局或重新校正。 */
@@ -5179,6 +5180,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const node = vectorGlyphRef.current;
       if (!node) return;
       const b = node.getBBox();
+      /* 选中框也使用这颗最终显示字形的真实尺寸。只在字体／内容改变后的
+         校准阶段记录，不参与缩放手势，所以既精确也不会引入逐帧 reflow。 */
+      setVectorGlyphBounds(prev => (
+        prev && Math.abs(prev.width - b.width) < 0.01 && Math.abs(prev.height - b.height) < 0.01
+          ? prev
+          : { width: b.width, height: b.height }
+      ));
       const ex = b.x + b.width / 2;
       const ey = b.y + b.height / 2;
       if (Math.abs(ex) < 0.01 && Math.abs(ey) < 0.01) return;
@@ -5528,8 +5536,18 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         const ink = measureSymbolInk(image.text || image.sym!, image.fontFamily || DEFAULT_FONT);
         const size = image.fontSize || 40;
         const sc = image.scale || 1;
-        const inkW = ink.w * size * sc;
-        const inkH = ink.h * size * sc;
+        /* 本體最後是 SVG <text>，框也必須吃同一顆 SVG 實際量到的 getBBox。
+           Canvas alpha 掃描（measureSymbolInk）對大多數符號很準，但複合 Unicode
+           在 WebKit 的 SVG fallback 字型可能寬一點；誤差乘上很大的 scale 後，
+           符號就會越出框。symbolSvgBounds 是 getBBox 外加量測安全邊，先扣回
+           安全邊便是真正的 SVG 墨水尺寸；尚未量到時才退回共用估算。 */
+        const measuredPad = 4 + (image.strokeWidth || 0) * 2;
+        const svgInkW = vectorGlyphBounds?.width
+          ?? (symbolSvgBounds ? Math.max(1, symbolSvgBounds.width - measuredPad * 2) : ink.w * size);
+        const svgInkH = vectorGlyphBounds?.height
+          ?? (symbolSvgBounds ? Math.max(1, symbolSvgBounds.height - measuredPad * 2) : ink.h * size);
+        const inkW = svgInkW * sc;
+        const inkH = svgInkH * sc;
         const edge = 2 / kNow + (image.strokeWidth || 0) * (size / 40) * sc;
         return {
           left: (boxW - inkW) / 2 - edge,
@@ -5710,18 +5728,21 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         aria-hidden
         className="absolute pointer-events-none"
         style={{
-          /* 用合成器保留次像素位置。CSS zoom 會把 absolute 的 left/top 先吸到
-             版面像素，再乘倍率；倍率連續變化時吸附方向反覆切換，正是向量物件
-             在預覽縮放時左右跳的來源。固定在原點、位置全交給 translate3d，
-             與創意拼圖把物件畫在同一張 Canvas 浮點座標上的結果一致。 */
-          left: 0,
-          top: 0,
-          width: `${vectorSurfaceW}px`,
-          height: `${vectorSurfaceH}px`,
+          /* 可見向量與本體／選中框共用完全相同的外盒。舊版另外建立一個
+             vectorSurfaceW 大盒再用 translate3d 推到物件中心；WebKit 在 native
+             zoom 下会分别取整 absolute box 和 transform translation，连续缩放时
+             两个取整相位不同，符号便会相对页面左右乱动。现在只保留一套
+             left/top/width/height，内部的大 SVG 仍以中心向外延伸，不会被裁切。 */
+          left: wrapGeo.left,
+          top: wrapGeo.top,
+          width: `${boxW}px`,
+          height: `${boxH}px`,
           zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
           opacity: image.text !== undefined && isTextEditing ? 0 : 1,
           transformOrigin: 'center center',
-          transform: `translate3d(${image.x + image.width / 2 - vectorSurfaceW / 2 + (dragShift?.tx || 0)}px, ${image.y + image.height / 2 - vectorSurfaceH / 2 + (dragShift?.ty || 0)}px, 0)${dragShift ? ` scale(${dragShift.s})` : ''}`,
+          transform: dragShift
+            ? `translate3d(${dragShift.tx}px, ${dragShift.ty}px, 0) scale(${dragShift.s})`
+            : undefined,
           transition: dragShift
             ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
             : undefined,
@@ -12621,6 +12642,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   height: `${lh}px`,
                                   transition: 'none',
                                   zIndex: 59 + (layout.z ?? 0) * 2,
+                                  /* native zoom 不能让每个格子各自成为取整／合成单位。
+                                     整个布局固定在同一个合成坐标系，缩放时格子、本体与
+                                     共享边界作为一块移动，不会各自跳到相邻像素。 */
+                                  isolation: 'isolate',
+                                  backfaceVisibility: 'hidden',
+                                  willChange: 'transform',
                                   /* 兩指旋轉：直接轉整個外框，裡面的格子、照片、
                                      選取框、四個角、那排按鈕全部跟著轉，
                                      連點擊命中判定都是瀏覽器自己算的。 */
@@ -12660,26 +12687,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   const topPx = inset + rect.y * areaH;
                                   const bottomPx = inset + (rect.y + rect.h) * areaH;
 
-                                  /* ── 格子邊界一律取整 ────────────────────────────────
-                                     每一條格線都取整，相鄰兩格自然算出同一條整數邊，必然重合。
-
-                                     以前只有「空格子」取整、有照片的不取整。於是只要有格子
-                                     沒放照片，它跟旁邊那格有照片的邊界就對不上，中間那條
-                                     頁面底色會在縮放過程中一格閃一格 —— 就是主人說的白線。
-
-                                     當初不敢對有照片的格子取整，是怕格內照片跟著跳 1px。
-                                     這裡把兩件事拆開：**框**用取整後的值，**格內照片**用
-                                     沒取整的真實幾何（rawW/rawH），再把「取整後的中心」與
-                                     「真實中心」的差補回去（fixX/fixY）。
-                                     於是框永遠貼齊像素、照片永遠連續，兩邊都拿到。 */
-                                  const l0 = Math.round(leftPx), t0 = Math.round(topPx);
-                                  const cellWidth = Math.round(rightPx) - l0;
-                                  const cellHeight = Math.round(bottomPx) - t0;
-                                  /** 沒取整的真實格子大小與中心補正（只給格內照片用） */
+                                  /* 预览缩放期间整棵 React 树不会逐帧重绘，外层 native zoom
+                                     会负责连续缩放。格子若先各自 Math.round，再交给 zoom，
+                                     每一条边会在不同倍率跨过像素格：格子会抖，公共分割线也会
+                                     忽隐忽现。这里让相邻格直接共享同一组浮点边界，整块布局只
+                                     光栅化一次；静止与手势期间都不再切换几何规则。 */
+                                  const l0 = leftPx, t0 = topPx;
+                                  const cellWidth = Math.max(1, rightPx - leftPx);
+                                  const cellHeight = Math.max(1, bottomPx - topPx);
                                   const rawW = Math.max(1, rightPx - leftPx);
                                   const rawH = Math.max(1, bottomPx - topPx);
-                                  const fixX = (leftPx + rightPx) / 2 - (l0 + cellWidth / 2);
-                                  const fixY = (topPx + bottomPx) / 2 - (t0 + cellHeight / 2);
+                                  const fixX = 0;
+                                  const fixY = 0;
 
                                   if (!cell) {
                                     return (
@@ -12777,10 +12796,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         }}
                                       >
                                         <div 
-                                          className={`w-full h-full relative flex flex-col items-center justify-center border border-dashed rounded-lg bg-[#0c0c0c] transition-[border-color,background-color,box-shadow] duration-300 ${
+                                        className={`w-full h-full relative flex flex-col items-center justify-center rounded-lg bg-[#0c0c0c] transition-[background-color,box-shadow] duration-300 ${
                                             isSelected && !selectionDragging
-                                              ? 'border-white bg-[#141414] shadow-[0_0_15px_rgba(255,255,255,0.05)]' 
-                                              : 'border-white/10 ' + (wholeLayoutSelected ? '' : 'cell-hover')
+                                              ? 'bg-[#141414] shadow-[0_0_15px_rgba(255,255,255,0.05)]'
+                                              : (wholeLayoutSelected ? '' : 'cell-hover')
                                           }`}
                                           style={{
                                             borderRadius: `${radius}px`,
@@ -13021,6 +13040,45 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   );
                                 });
                               })()}
+
+                              {/* 空格子的分割线集中在同一个 SVG 中绘制。原本每格各画一圈
+                                  dashed border，相邻边会重叠成两个独立合成层；native zoom
+                                  时两层取整不同便会闪烁或有一层暂时消失。单一向量层共享
+                                  坐标，non-scaling-stroke 则让线宽不随预览放大缩小。 */}
+                              {layout.images.some(cell => !cell || cell.url === '') && (
+                                <svg
+                                  data-layout-grid-lines={layout.id}
+                                  className="absolute inset-0 pointer-events-none z-[5]"
+                                  viewBox={`0 0 ${lw} ${lh}`}
+                                  preserveAspectRatio="none"
+                                  style={{ overflow: 'visible' }}
+                                  aria-hidden
+                                >
+                                  {pageActiveTemplate.rects.map((rect, idx) => {
+                                    const cell = layout.images[idx];
+                                    if (cell && cell.url !== '') return null;
+                                    const inset = gap / 2;
+                                    const areaW = Math.max(1, lw - inset * 2);
+                                    const areaH = Math.max(1, lh - inset * 2);
+                                    const x = inset + rect.x * areaW + gap / 2;
+                                    const y = inset + rect.y * areaH + gap / 2;
+                                    const w = Math.max(0, rect.w * areaW - gap);
+                                    const h = Math.max(0, rect.h * areaH - gap);
+                                    return (
+                                      <rect
+                                        key={`empty-grid-line-${idx}`}
+                                        x={x} y={y} width={w} height={h}
+                                        fill="none"
+                                        stroke={selectedIndex === idx && isThisLayoutSelected
+                                          ? 'rgba(255,255,255,1)'
+                                          : 'rgba(255,255,255,0.10)'}
+                                        strokeWidth="1"
+                                        vectorEffect="non-scaling-stroke"
+                                      />
+                                    );
+                                  })}
+                                </svg>
+                              )}
 
                               {isThisLayoutSelected && selectedIndex === null && (() => {
                                 const dot = 'absolute w-3.5 h-3.5 rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] z-[60] pointer-events-auto touch-none';
