@@ -121,6 +121,8 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   /** 拖滑桿或縮放時先用低解析度重算，不然每動一格都要重取樣整張圖，看起來就是一幀一幀的 */
   const [live, setLive] = useState(false);
+  /** 九宫格只在裁切框正在移动／缩放时显示；DOM 常驻才能完整播放离场淡出。 */
+  const [cropInteracting, setCropInteracting] = useState(false);
 
   const geoRef = useRef(geo);
   useEffect(() => { geoRef.current = geo; }, [geo]);
@@ -211,6 +213,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     e.stopPropagation();
     e.preventDefault();
     try { (e.currentTarget as Element).setPointerCapture(e.pointerId); } catch { /* 有些瀏覽器會擋，忽略即可 */ }
+    setCropInteracting(true);
     dragRef.current = {
       id, startX: e.clientX, startY: e.clientY,
       start: { ...geoRef.current.crop },
@@ -302,15 +305,18 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   };
 
   const onHandleUp = (e: React.PointerEvent) => {
-    if (!dragRef.current) return;
-    try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* 同上 */ }
-    dragRef.current = null;
+    if (dragRef.current) {
+      try { (e.currentTarget as Element).releasePointerCapture(e.pointerId); } catch { /* 同上 */ }
+      dragRef.current = null;
+    }
+    setCropInteracting(false);
   };
 
 
   // 雙指縮放影像（框固定）
   const onStageTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length < 2) return;
+    setCropInteracting(true);
     dragRef.current = null;   // 兩指落下就取消單指的平移
     pinchRef.current = {
       startDist: Math.hypot(
@@ -347,6 +353,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
   const onStageTouchEnd = (e: React.TouchEvent) => {
     if (e.touches.length >= 2) return;
     pinchRef.current = null;
+    setCropInteracting(false);
   };
 
   const cropStyle = {
@@ -564,8 +571,16 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
             onPointerUp={onHandleUp}
             onPointerCancel={onHandleUp}
           >
-            {/* 三分格線 */}
-            <div className="absolute inset-0 pointer-events-none">
+            {/* 三分格线只在拖动／缩放裁切框时出现。元素不拆掉，确保松手后的
+                500ms 离场不会被 React 直接截断。 */}
+            <div
+              className="absolute inset-0 pointer-events-none"
+              style={{
+                opacity: cropInteracting ? 1 : 0,
+                transition: 'opacity 500ms cubic-bezier(0.22, 1, 0.36, 1)',
+                willChange: 'opacity',
+              }}
+            >
               <svg className="block w-full h-full" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
                 <g opacity="0.25">
                   <path
