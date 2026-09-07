@@ -1483,7 +1483,17 @@ const EmptyCellPrompt: React.FC<{ interactive: boolean }> = ({ interactive }) =>
       height={352}
       aria-hidden
       className={`block opacity-20 transition-opacity duration-300 ${interactive ? 'group-hover:opacity-50' : ''}`}
-      style={{ width: 76, height: 44, transform: 'translateZ(0)', backfaceVisibility: 'hidden' }}
+      style={{
+        width: 76,
+        height: 44,
+        /* 这是操作提示，不是作品内容：保持固定屏幕尺寸。外层 native zoom 每帧
+           放大 k，这里同一帧乘 1/k，Canvas 的细加号便永远以同一张像素网格
+           显示，不再被反复重采样而产生视觉抖动。 */
+        transform: 'translateZ(0) scale(var(--preview-inverse, 1))',
+        transformOrigin: 'center center',
+        backfaceVisibility: 'hidden',
+        willChange: 'transform',
+      }}
     />
   );
 };
@@ -8096,6 +8106,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          一套座標與光柵化方式。 */
       const nativeZoom = typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2');
       col.style.setProperty('--preview-scale', String(k));
+      col.style.setProperty('--preview-inverse', String(1 / Math.max(0.0001, k)));
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
       col.style.setProperty('--layout-grid-stroke', `${1 / Math.max(0.0001, k)}px`);
