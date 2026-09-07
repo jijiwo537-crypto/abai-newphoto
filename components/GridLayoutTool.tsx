@@ -4293,8 +4293,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   /* 物件本體、選中框、控制點必須共用同一組「實體像素對齊後」尺寸。
      以前本體外殼使用 snapPx2，但 SVG／文字與 frameRect 仍用未取整尺寸；
      缩放经过半像素边界时，两边会在不同帧进位，看起来就是图形在框内抖动。 */
-  const boxW = snapPx2(image.width * image.scale);
-  const boxH = snapPx2(image.height * image.scale);
+  // 四边挤压期间不能逐帧取整：取整点会让本应固定的对边在两个实体像素间跳。
+  // 放手后再恢复像素对齐，静止画面仍保持锐利。
+  const stretching = !!stretchStart.current;
+  const boxW = stretching ? image.width * image.scale : snapPx2(image.width * image.scale);
+  const boxH = stretching ? image.height * image.scale : snapPx2(image.height * image.scale);
   const renderScale = Math.max(
     boxW / Math.max(1, image.width),
     boxH / Math.max(1, image.height),
@@ -4906,8 +4909,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const w = boxW;
       const h = boxH;
       return {
-        left: `${snapPx(cx - w / 2)}px`,
-        top: `${snapPx(cy - h / 2)}px`,
+        left: `${stretching ? cx - w / 2 : snapPx(cx - w / 2)}px`,
+        top: `${stretching ? cy - h / 2 : snapPx(cy - h / 2)}px`,
         width: `${w}px`,
         height: `${h}px`,
       };
@@ -4946,7 +4949,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const h = boxH;
     return {
       position: 'absolute',
-      left: `${snapPx(cx - w / 2)}px`, top: `${snapPx(cy - h / 2)}px`,
+      left: `${stretching ? cx - w / 2 : snapPx(cx - w / 2)}px`,
+      top: `${stretching ? cy - h / 2 : snapPx(cy - h / 2)}px`,
       width: `${w}px`, height: `${h}px`,
       transformOrigin: 'center center',
       transform: (dragShift || (image.rotation % 360) !== 0)
@@ -5015,7 +5019,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     <>
     {/* 對齊線亮起來的時候，工具列先收起來 —— 那一刻使用者在看的是「有沒有對齊」，
         白色的按鈕壓在白色的對齊線上會看不清楚。放開手（線消失）就自己回來。 */}
-    {isSelected && onLayerAction && !hideToolbar && !hideChrome && !isScaling && !hasActiveGuidelines && (() => {
+    {isSelected && onLayerAction && !hideToolbar && !hideChrome && !isDragging && !isScaling && !hasActiveGuidelines && (() => {
       // 轉過角度之後要擺在「畫面上最靠下」的那一側：先算旋轉後外接框的半高，
       // 再把工具列沿著畫面的 Y 軸推出去（用區域座標表示，因為這層跟著框一起轉）。
       const rad = (image.rotation * Math.PI) / 180;
@@ -5087,7 +5091,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         畫面上就會留下已經取消選取的框與圓球。 */}
     {(() => {
       // 對齊線亮起來時，選取框與四角圓球也一起讓位（跟工具列同一個理由）
-      const showChrome = isSelected && !hideChrome && !hasActiveGuidelines;
+      const showChrome = isSelected && !hideChrome && !isDragging && !hasActiveGuidelines;
       /* ── 縮放時陰影會留下殘影，但**不能**用 overflow:hidden 解 ──────────
          問題本身：白色選取框帶一圈 4px 的深色外陰影、四顆圓球也各帶一圈，
          那些都畫在「框的外面」。框在縮放時每一格都在縮，瀏覽器算要重畫哪一塊
@@ -5812,6 +5816,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [activePageIndex, setActivePageIndex] = useState<number>(0);
   const [floatingImages, setFloatingImages] = useState<FloatingImage[]>([]);
   const [selectedFloatingId, setSelectedFloatingId] = useState<string | null>(null);
+  /** 手指正在移动任一已选物件；期间统一隐藏选中框与白色药丸 */
+  const [selectionDragging, setSelectionDragging] = useState(false);
   const [activeGuidelines, setActiveGuidelines] = useState<AlignmentGuideline[]>([]);
   const [enableSnapping, setEnableSnapping] = useState(true);
   /** 上方那顆三個點的選單 */
@@ -10011,6 +10017,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           applyCellZoom(g.cellIdx, Math.max(1.0, Math.min(5.0, g.baseZoom * k)));
         }
       } else if (g.mode === 'drag' && e.touches.length === 1) {
+        if (!selectionDragging) setSelectionDragging(true);
         // 手指是螢幕像素、物件座標是內容單位：除以畫布倍率，
         // 縮小預覽時拖東西才不會變得又慢又不跟手
         const kd = kRef.current || 1;
@@ -10088,6 +10095,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const handleWorkspaceTouchEnd = () => {
+    setSelectionDragging(false);
     setPinchFloatingId(null);
     // 手指全部離開了，下一次手勢才能重新決定是捲頁還是縮放
     panMovedRef.current = false;
@@ -12040,7 +12048,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                       >
                                         <div 
                                           className={`w-full h-full relative flex flex-col items-center justify-center border border-dashed rounded-lg bg-[#0c0c0c] transition-[border-color,background-color,box-shadow] duration-300 ${
-                                            isSelected 
+                                            isSelected && !selectionDragging
                                               ? 'border-white bg-[#141414] shadow-[0_0_15px_rgba(255,255,255,0.05)]' 
                                               : 'border-white/10 ' + (wholeLayoutSelected ? '' : 'cell-hover')
                                           }`}
@@ -12203,7 +12211,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         })()}
 
                                         {/* Thin solid outline on top of the image */}
-                                        {isSelected && draggedIndex === null && touchDraggedIndex === null && (
+                                        {isSelected && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (
                                           <div 
                                             className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/90"
                                             style={{
@@ -12230,7 +12238,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           );
                                         })()}
                                       </div>
-                                      {isSelected && draggedIndex === null && touchDraggedIndex === null && (
+                                      {isSelected && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (
                                         /* 這排鍵本來壓在格子裡面（bottom-2），正好蓋住剛選中的那張照片。
                                            改成掛在格子**外面的下方** —— 跟整組佈局被選中時那排鍵同一種做法。
                                            貼著頁面下緣的那一列格子放不下，就翻到格子上方，不會被裁掉。 */
@@ -12301,7 +12309,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                      偶爾不會重繪，畫面上會留下已經該消失的框。 */
                                   <div
                                     className="absolute inset-0 pointer-events-none"
-                                    style={{ visibility: activeGuidelines.length > 0 ? 'hidden' : 'visible' }}
+                                    style={{ visibility: activeGuidelines.length > 0 || selectionDragging ? 'hidden' : 'visible' }}
                                   >
                                     {/* 選取框跟一般圖片同款：細白線 + 陰影 */}
                                     <div
@@ -12457,8 +12465,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         // 選取框那一組改畫在不會被裁切的那一層
                         chromeLayer={chromeLayer}
                         touchMode="none"
-                        hideToolbar={pinchFloatingId === fImg.id}
-                        hideChrome={tuningEdge && selectedFloatingId === fImg.id}
+                        hideToolbar={pinchFloatingId === fImg.id || (selectionDragging && selectedFloatingId === fImg.id)}
+                        hideChrome={(tuningEdge || selectionDragging) && selectedFloatingId === fImg.id}
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}
                         lutRevision={lutRevision}
