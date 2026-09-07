@@ -15,7 +15,7 @@ import { SYMBOLS } from '../utils/symbols';
 import { measureSymbolInk, symbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
-  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, drawHoleShape, holeOverflow, glowAmount,
+  GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, drawHoleShape, holeOverflow, glowAmount,
   texOf, paintStripes,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA, paintTex,
 } from '../utils/holeShapes';
@@ -5074,12 +5074,56 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      的同一套 path、紋理、描邊與字體度量，所以預覽與成品也會一致。 */
   const vectorCanvasRef = useRef<HTMLCanvasElement>(null);
   const isCanvasVector = !!image.shape || image.text !== undefined;
-  /* 跟創意拼圖一樣，真正的 canvas 本身就是固定頁面畫布。尺寸、像素緩衝區與
-     中心在手勢期間一律不變；scale 只參與畫布內的向量重畫。這可同時避開：
-     1. canvas resize 清空造成的閃動；2. 小物件被配置成小 bitmap 後的糊化；
-     3. 奇偶像素取整讓選取框與內容來回偏移。 */
+  /* 外層只負責固定物件中心；真正配置像素的內層只包住墨水。
+     上一版每個物件都開一張最高 3072² 的「整頁透明畫布」，iOS/Safari 很快
+     就會超過 Canvas 記憶體額度，後建立的畫布會被清空，看起來就是物件偶發
+     消失。創意拼圖只有一張主畫布，不會浪費這些透明像素；經典拼圖在保留
+     DOM 圖層順序的前提下，也只配置實際內容範圍。 */
+  const vectorPad = (() => {
+    if (image.shape === 'hole') {
+      return {
+        x: Math.max(3, holeOv.x * boxW / Math.max(1, image.width)),
+        y: Math.max(3, holeOv.y * boxH / Math.max(1, image.height)),
+      };
+    }
+    const glow = image.shape
+      ? Math.max(...shapeGlowBlurs(image.width, image.height), 0) * image.scale * glowAmount(image.shapeGlow as any)
+      : (image.glow || 0) / 20 * 42 * image.scale;
+    const stroke = image.shape
+      ? (image.shapeStrokeW || 0) * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
+      : (image.strokeWidth || 0) * 2 * image.scale;
+    const p = Math.ceil(Math.max(3, glow * 1.5, stroke) + 3);
+    return { x: p, y: p };
+  })();
   const vectorSurfaceW = Math.max(256, (maxTextWidth || image.width || 1) * 2);
   const vectorSurfaceH = Math.max(256, (canvasHeight || image.height || 1) * 2);
+  /* WebKit 會把 translate(-50%) 的「半個奇數實體像素」交替往兩側取整，
+     即使資料中心完全不動，畫面仍會來回約 0.16px。內層寬高固定吸到偶數個
+     裝置像素後，一半仍落在同一條像素格線上，中心不再隨尺寸變化漂移。 */
+  const vectorInkW = Math.max(1, boxW + vectorPad.x * 2);
+  const vectorInkH = Math.max(1, boxH + vectorPad.y * 2);
+  const vectorRotRad = (image.rotation * Math.PI) / 180;
+  /* 畫布本身不旋轉、內容在裡面旋轉，因此要配置旋轉後的外接矩形；否則窄長
+     文字或圖形轉到 45° 時四個角會被 Canvas 邊界切掉，看起來像偶發消失。 */
+  const vectorCssW = snapPx2(Math.max(1,
+    vectorInkW * Math.abs(Math.cos(vectorRotRad)) + vectorInkH * Math.abs(Math.sin(vectorRotRad))));
+  const vectorCssH = snapPx2(Math.max(1,
+    vectorInkW * Math.abs(Math.sin(vectorRotRad)) + vectorInkH * Math.abs(Math.cos(vectorRotRad))));
+  const [holeAssetRevision, setHoleAssetRevision] = useState(0);
+  useEffect(() => {
+    if (image.shape !== 'hole' || !image.holeType || !isImageHole(image.holeType)) return;
+    const asset = getHoleImg(image.holeType);
+    if (!asset || (asset.complete && asset.naturalWidth)) return;
+    let alive = true;
+    const ready = () => { if (alive) setHoleAssetRevision(v => v + 1); };
+    asset.addEventListener('load', ready, { once: true });
+    asset.addEventListener('error', ready, { once: true });
+    return () => {
+      alive = false;
+      asset.removeEventListener('load', ready);
+      asset.removeEventListener('error', ready);
+    };
+  }, [image.shape, image.holeType]);
 
   useLayoutEffect(() => {
     if (!isCanvasVector) return;
@@ -5089,18 +5133,27 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     let raf = 0;
     const draw = () => {
       if (!alive) return;
-      /* 預留整體預覽放大的解析度；buffer 上限避免 iOS 因單張畫布過大回收頁面。
-         關鍵是這些值完全不含 image.scale，所以縮得再小也不會降成低解析 bitmap。 */
-      const dpr = Math.max(2, geoDpr * 3);
-      const cssW = vectorSurfaceW;
-      const cssH = vectorSurfaceH;
-      const backingScale = Math.min(dpr, 3072 / Math.max(cssW, cssH));
+      /* 跟創意拼圖一樣以「畫面實體像素＋超取樣」決定解析度。只配置墨水範圍，
+         因此可以在同樣記憶體內保留更高密度，同時避開 Safari 回收畫布。 */
+      const dpr = Math.max(2, geoDpr * Math.max(1, canvasScale) * 1.5);
+      const cssW = vectorCssW;
+      const cssH = vectorCssH;
+      /* 尺寸上限與面積上限要同時守住：窄長文字不能因長邊先撞上 2048 就失去
+         Retina 密度，正方形又不能無限制吃記憶體。8MP 約 32MB，是極端單一
+         大物件的上限；一般物件實測只有約 0.1MP。 */
+      const backingScale = Math.min(
+        dpr,
+        4096 / Math.max(cssW, cssH),
+        Math.sqrt(8_388_608 / Math.max(1, cssW * cssH)),
+      );
       const W = Math.max(1, Math.ceil(cssW * backingScale));
       const H = Math.max(1, Math.ceil(cssH * backingScale));
       if (canvas.width !== W) canvas.width = W;
       if (canvas.height !== H) canvas.height = H;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       ctx.setTransform(backingScale, 0, 0, backingScale, 0, 0);
       ctx.clearRect(0, 0, cssW, cssH);
       ctx.save();
@@ -5108,12 +5161,21 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       ctx.rotate((image.rotation * Math.PI) / 180);
 
       if (image.shape === 'hole') {
+        /* 字符／去背圖片型圖形會在 drawHoleShape 裡先畫到暫存 Canvas。
+           外層 CTM 不會傳進那張暫存 Canvas；以前因此先生成低解析字，再整張
+           放大 backingScale 倍，文字型圖形縮小時就糊。這一支改用實體像素
+           座標直接畫，暫存 Canvas 也會得到相同的高解析度。 */
+        ctx.restore();
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.translate(cssW / 2 * backingScale, cssH / 2 * backingScale);
+        ctx.rotate((image.rotation * Math.PI) / 180);
         drawHoleShape(ctx, {
           ...holeOpts!,
-          lineUnit: Math.max(image.width, image.height) / 160,
-        }, boxW, boxH,
+          lineUnit: Math.max(image.width, image.height) / 160 * backingScale,
+        }, boxW * backingScale, boxH * backingScale,
         shapeGlowBlurs(image.width, image.height)
-          .map(r => r * image.scale * glowAmount(image.shapeGlow as any)));
+          .map(r => r * image.scale * glowAmount(image.shapeGlow as any) * backingScale));
         ctx.restore();
         return;
       }
@@ -5219,7 +5281,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     }
     return () => { alive = false; if (raf) cancelAnimationFrame(raf); };
   }, [
-    isCanvasVector, boxW, boxH, vectorSurfaceW, vectorSurfaceH,
+    isCanvasVector, boxW, boxH, vectorPad.x, vectorPad.y, vectorCssW, vectorCssH,
     image.shape, image.holeType, image.shapeFilled, image.shapeLineW, image.shapeDash,
     image.shapeGlow, image.shapeGlowColor, image.shapeStrokeW, image.shapeStrokeColor,
     image.shapeTex, image.shapeDots, image.shapeDotSize, image.shapeDotGap, image.shapeDotColor,
@@ -5227,7 +5289,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     image.shapeTextureBaseW, image.shapeTextureBaseH, image.color,
     image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
     image.letterSpacing, image.strokeWidth, image.strokeColor, image.glow, image.glowColor,
-    image.scale, image.rotation, canvasScale,
+    image.scale, image.rotation, canvasScale, holeAssetRevision,
   ]);
 
   const chrome = (
@@ -5518,10 +5580,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   return (
     <>
     {isCanvasVector && pagesContainerRef.current && createPortal(
-      <canvas
-        ref={vectorCanvasRef}
+      <div
         data-vector-surface={image.id}
-        data-vector-canvas={image.id}
         aria-hidden
         className="absolute pointer-events-none"
         style={{
@@ -5538,9 +5598,20 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           transition: dragShift
             ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
             : undefined,
-          contain: 'strict',
         }}
-      />,
+      >
+        <canvas
+          ref={vectorCanvasRef}
+          data-vector-canvas={image.id}
+          style={{
+            position: 'absolute', left: '50%', top: '50%',
+            width: `${vectorCssW}px`,
+            height: `${vectorCssH}px`,
+            transform: 'translate3d(-50%, -50%, 0)',
+            pointerEvents: 'none',
+          }}
+        />
+      </div>,
       pagesContainerRef.current,
     )}
     <div
@@ -12936,12 +13007,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             undefined,
                             fImg.rotation || 0,
                           );
-                          setActiveGuidelines(guidelines);
-                          setFloatingImages(prev => prev.map(item => item.id === fImg.id
-                            ? { ...item, x: snappedX, y: snappedY, ...(fitScale ? { scale: fitScale } : {}) }
-                            : item));
+                          queueInteraction(() => {
+                            setActiveGuidelines(guidelines);
+                            setFloatingImages(prev => prev.map(item => item.id === fImg.id
+                              ? { ...item, x: snappedX, y: snappedY, ...(fitScale ? { scale: fitScale } : {}) }
+                              : item));
+                          });
                         }}
                         onDragEnd={() => {
+                          flushInteractionNow();
                           setActiveGuidelines([]);
                         }}
                         onScaleStart={() => {}}
@@ -13178,13 +13252,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             const finalX = newCx - fImg.width / 2;
                             const finalY = newCy - fImg.height / 2;
 
-                            setActiveGuidelines(dedupeGuidelines(finalGuidelines, fImg.x + fImg.width / 2));
-                            setFloatingImages(prev => prev.map(item => item.id === fImg.id ? { ...item, x: finalX, y: finalY, scale: finalScale } : item));
+                            const nextGuidelines = dedupeGuidelines(finalGuidelines, fImg.x + fImg.width / 2);
+                            queueInteraction(() => {
+                              setActiveGuidelines(nextGuidelines);
+                              setFloatingImages(prev => prev.map(item => item.id === fImg.id
+                                ? { ...item, x: finalX, y: finalY, scale: finalScale }
+                                : item));
+                            });
                           } else {
-                            setFloatingImages(prev => prev.map(item => item.id === fImg.id ? { ...item, x: newX, y: newY, scale: newScale } : item));
+                            queueInteraction(() => setFloatingImages(prev => prev.map(item => item.id === fImg.id
+                              ? { ...item, x: newX, y: newY, scale: newScale }
+                              : item)));
                           }
                         }}
                         onScaleEnd={() => {
+                          flushInteractionNow();
                           setActiveGuidelines([]);
                         }}
                       />
