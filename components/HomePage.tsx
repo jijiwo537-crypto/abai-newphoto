@@ -412,6 +412,22 @@ export const HomePage: React.FC<HomePageProps> = ({
   const navLockRef = useRef<string | null>(null);
 
   /**
+   * 模板視差在第一屏內額外前進 0.35 屏；減少動態時則完全不位移。
+   *
+   * 這個值原本透過 liftPx 讀取，但該 helper 遺失後仍保留了呼叫：
+   * 首頁點「模板」會在事件中拋錯而不捲動，從「我的」返回時則會在
+   * layout effect 中拋錯、讓整棵首頁被卸載，所以畫面只剩黑色背景。
+   * 直接從捲動容器的實際高度計算，和 styles.css 的 --lib-lift 完全一致；
+   * 不去解析 CSS calc() 字串，也就不會在不同 WebView 得到 NaN。
+   */
+  const liftPx = (sc: HTMLDivElement) => {
+    try {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return 0;
+    } catch { /* 舊 WebView 沒有 matchMedia 時沿用正常動畫 */ }
+    return sc.clientHeight * 0.35;
+  };
+
+  /**
    * 「模板那一段的上緣要停在畫面上 atPx 的地方時，捲軸該在哪裡」。
    *
    * 模板不是跟著捲軸一比一走的：排版上先往上挪了 lift（那個負的 margin-top），
@@ -466,15 +482,17 @@ export const HomePage: React.FC<HomePageProps> = ({
   /** 分頁列：首頁／靈感是同一條捲軸的兩個位置，「我」才是換頁 */
   const goNav = useCallback((id: string) => {
     const fromMe = navRef.current === 'me';
-    setNav(id);
-    if (id === 'me') return;
     if (fromMe) {
       // 捲動區在「我」的時候是藏起來的，還停在離開時的位置。
       // 這裡交給下面的 layout effect 在畫出來之前直接定位 ——
       // 用 scrollTo 的話會看到它從下面滑上來。
       jumpRef.current = id;
-      return;
     }
+    /* ref 要和 state 同步更新。React 的 state 會到下一次 render 才生效，
+       快速連點分頁時若仍讀到舊頁，就可能走錯「從我的返回」的分支。 */
+    navRef.current = id;
+    setNav(id);
+    if (id === 'me' || fromMe) return;
     const sc = scrollRef.current;
     if (!sc) return;
     navLockRef.current = id;
