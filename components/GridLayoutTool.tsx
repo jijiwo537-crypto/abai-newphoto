@@ -1780,7 +1780,8 @@ export const TextEditorPanel: React.FC<{
                     所以不會有「拉到 1 的瞬間欄位冒出來閃一下」。 */}
                 <div className="flex items-center gap-3 px-2">
                   <div className="flex-1 min-w-0">
-                    {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+                    {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / 12) * 100)), 0, 100,
+                      v => onChange({ glow: (v / 100) * 12 }), '', 1)}
                   </div>
                   <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
                     onPick={c => onChange({ glowColor: c })}
@@ -1839,7 +1840,8 @@ export const TextEditorPanel: React.FC<{
             </div>
             <div className="flex items-center gap-3 px-2">
               <div className="flex-1 min-w-0">
-                {slider('發光', (layer.glow || 0) / 40, 0, 0.5, v => onChange({ glow: v * 40 }), '', 0.01)}
+                {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / 12) * 100)), 0, 100,
+                      v => onChange({ glow: (v / 100) * 12 }), '', 1)}
               </div>
               <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
                 onPick={c => onChange({ glowColor: c })}
