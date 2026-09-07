@@ -4290,8 +4290,15 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   /** 重畫收斂成一幀一次用的 */
   const rafRef = useRef(0);
   const drawnSrcRef = useRef<string | null>(null);
-  const boxW = image.width * image.scale;
-  const boxH = image.height * image.scale;
+  /* 物件本體、選中框、控制點必須共用同一組「實體像素對齊後」尺寸。
+     以前本體外殼使用 snapPx2，但 SVG／文字與 frameRect 仍用未取整尺寸；
+     缩放经过半像素边界时，两边会在不同帧进位，看起来就是图形在框内抖动。 */
+  const boxW = snapPx2(image.width * image.scale);
+  const boxH = snapPx2(image.height * image.scale);
+  const renderScale = Math.max(
+    boxW / Math.max(1, image.width),
+    boxH / Math.max(1, image.height),
+  );
   const symbolShift = image.sym ? (() => {
     const ink = measureSymbolInk(image.text || image.sym || '', image.fontFamily || DEFAULT_FONT);
     return { x: -ink.cx * (image.fontSize || 40) * image.scale, y: -ink.cy * (image.fontSize || 40) * image.scale };
@@ -4896,8 +4903,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     ...(() => {
       const cx = image.x + image.width / 2;
       const cy = image.y + image.height / 2;
-      const w = snapPx2(image.width * image.scale);
-      const h = snapPx2(image.height * image.scale);
+      const w = boxW;
+      const h = boxH;
       return {
         left: `${snapPx(cx - w / 2)}px`,
         top: `${snapPx(cy - h / 2)}px`,
@@ -4935,8 +4942,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const chromeWrapGeo: React.CSSProperties = image.shape ? (() => {
     const cx = image.x + image.width / 2;
     const cy = image.y + image.height / 2;
-    const w = snapPx2(image.width * (image.scale || 1));
-    const h = snapPx2(image.height * (image.scale || 1));
+    const w = boxW;
+    const h = boxH;
     return {
       position: 'absolute',
       left: `${snapPx(cx - w / 2)}px`, top: `${snapPx(cy - h / 2)}px`,
@@ -4962,7 +4969,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      框線、虛線的節奏、外描邊看起來都是同一個粗細。 */
   const shapeStroke = (() => {
     if (!image.shape) return null;
-    const s = image.scale || 1;
+    const s = renderScale;
     const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
     const lw = Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160)) / s;
     const dash = image.shapeDash || 0;
@@ -4995,7 +5002,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     id: image.id,
     /* 線寬的單位刻意不含 scale：不然「把圖案拉大」框線也跟著變粗。
        跟 SVG 那些圖形除以 scale 是同一條規則。 */
-    lineUnit: Math.max(image.width, image.height) / 160 / (image.scale || 1),
+    lineUnit: Math.max(image.width, image.height) / 160 / renderScale,
   } : null;
   /* 超出量跟尺寸成正比，所以用「沒有縮放前」的框算一次就好，
      要換到畫布的像素只要再乘上 scale×dpr。
@@ -5134,15 +5141,15 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         : null;
       // 依真正有墨水的範圍畫框，四周留相同距離；星形額外距離也上下對稱。
       const frameRect = frameInk ? {
-        left: image.width * (image.scale || 1) * frameInk[0] - framePad.x - starTopGap,
-        top: image.height * (image.scale || 1) * frameInk[1] - framePad.y - starTopGap,
-        width: image.width * (image.scale || 1) * frameInk[2] + framePad.x * 2 + starTopGap * 2,
-        height: Math.max(1, image.height * (image.scale || 1) * frameInk[3]) + framePad.y * 2 + starTopGap * 2,
+        left: boxW * frameInk[0] - framePad.x - starTopGap,
+        top: boxH * frameInk[1] - framePad.y - starTopGap,
+        width: boxW * frameInk[2] + framePad.x * 2 + starTopGap * 2,
+        height: Math.max(1, boxH * frameInk[3]) + framePad.y * 2 + starTopGap * 2,
       } : {
         left: -framePad.x - starTopGap - symbolGap,
         top: -framePad.y - starTopGap - symbolGap,
-        width: image.width * (image.scale || 1) + framePad.x * 2 + starTopGap * 2 + symbolGap * 2,
-        height: image.height * (image.scale || 1) + framePad.y * 2 + starTopGap * 2 + symbolGap * 2,
+        width: boxW + framePad.x * 2 + starTopGap * 2 + symbolGap * 2,
+        height: boxH + framePad.y * 2 + starTopGap * 2 + symbolGap * 2,
       };
       /** 一顆角球。看得見的白點比觸控範圍小 20%（14 → 11.2），
        *  外面那層維持 14×14、而且事件還是掛在它身上，所以手感一點都沒變。 */
@@ -5318,19 +5325,19 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             const dpr = Math.min(8, (window.devicePixelRatio || 1) * Math.max(1, canvasK()));
             // 外框現在直接使用放大後的實際尺寸；backing store 也跟著使用同一尺寸，
             // 不再把一張較小的點陣 canvas 交給 CSS 拉大。
-            const bw = Math.max(1, image.width * image.scale * dpr);
-            const bh = Math.max(1, image.height * image.scale * dpr);
+            const bw = Math.max(1, boxW * dpr);
+            const bh = Math.max(1, boxH * dpr);
             const blurs = shapeGlowBlurs(bw, bh);
             /* 交給 drawHoleShape 的是畫布像素，線寬的單位也要換到同一個座標系
                （holeOpts 裡那個是內容單位，兩邊都是「長邊/160 再除掉 scale」）。 */
-            const opts = { ...holeOpts!, lineUnit: Math.max(bw, bh) / 160 / (image.scale || 1) };
+            const opts = { ...holeOpts!, lineUnit: Math.max(bw, bh) / 160 / renderScale };
             /* 畫布要比外框大一圈：好幾種圖案的墨水本來就比框大
                （`<333` 有 2.9 倍寬），描邊與發光也長在框外面 ——
                畫布只開外框那麼大的話，超出去的全部被切掉。
                撐開的是畫布，畫的內容一個像素都沒動（原點還是框心、
                交給 drawHoleShape 的還是原本的外框）。 */
-            const w = Math.max(1, Math.round(bw + holeOv.x * image.scale * dpr * 2));
-            const h = Math.max(1, Math.round(bh + holeOv.y * image.scale * dpr * 2));
+            const w = Math.max(1, Math.round(bw + holeOv.x * (boxW / Math.max(1, image.width)) * dpr * 2));
+            const h = Math.max(1, Math.round(bh + holeOv.y * (boxH / Math.max(1, image.height)) * dpr * 2));
             if (el.width !== w) el.width = w;
             if (el.height !== h) el.height = h;
             const c = el.getContext('2d');
@@ -5505,7 +5512,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             willChange: 'transform',
             backfaceVisibility: 'hidden',
             WebkitBackfaceVisibility: 'hidden',
-            width: `${image.width * image.scale}px`, height: `${image.height * image.scale}px`,
+            width: `${boxW}px`, height: `${boxH}px`,
             pointerEvents: 'none',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontFamily: fontStack(image.fontFamily),
