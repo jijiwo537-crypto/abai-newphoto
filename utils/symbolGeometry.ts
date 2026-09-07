@@ -3,6 +3,8 @@ import { fontStack } from './fonts';
 export type SymbolInk = { w: number; h: number; cx: number; cy: number };
 const REF = 100;
 const cache = new Map<string, SymbolInk>();
+/** 字體剛下載完成時丟掉 fallback 的量測結果。 */
+export const clearSymbolInkCache = () => cache.clear();
 // 字型載入前量到的是 fallback；載入完成後不可繼續沿用錯誤的墨水中心。
 if (typeof document !== 'undefined') document.fonts?.ready?.then(() => cache.clear()).catch(() => {});
 
@@ -31,7 +33,8 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
       const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
       let x0 = canvas.width, y0 = canvas.height, x1 = -1, y1 = -1;
       for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
-        if (data[(y * canvas.width + x) * 4 + 3] > 8) {
+        // 連最外圈的抗鋸齒像素也算入；門檻過高會在大倍率下露出框外。
+        if (data[(y * canvas.width + x) * 4 + 3] > 0) {
           x0 = Math.min(x0, x); y0 = Math.min(y0, y);
           x1 = Math.max(x1, x); y1 = Math.max(y1, y);
         }
@@ -49,7 +52,7 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
 };
 
 /** 完整包住墨水並在四邊保留一致安全距離。 */
-export const symbolBox = (text: string, family: string, size: number, gap = 3) => {
+export const symbolBox = (text: string, family: string, size: number, gap = 4) => {
   const ink = measureSymbolInk(text, family);
   return { w: Math.max(6, ink.w * size + gap * 2), h: Math.max(6, ink.h * size + gap * 2) };
 };
