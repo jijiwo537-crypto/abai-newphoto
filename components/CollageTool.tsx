@@ -2845,6 +2845,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     activePointers.current.clear();
     objStretchRef.current = { pointerId: e.pointerId, id: o.id, side, startX: e.clientX, startY: e.clientY,
       x: o.x, y: o.y, w: o.w, h: o.h, rot: (o.rot || 0) * Math.PI / 180, k: cssK };
+    if (o.type === 'shape' && (!o.textureBaseW || !o.textureBaseH)) {
+      setObjects(prev => prev.map(z => z.id === o.id ? { ...z, textureBaseW: o.w, textureBaseH: o.h } : z));
+    }
   };
   const moveObjStretch = (e: React.PointerEvent) => {
     const d = objStretchRef.current; if (!d || d.pointerId !== e.pointerId) return;
@@ -7218,6 +7221,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     kind: it.kind, hole: it.hole, filled: it.filled, shapeItemId: it.id,
                     /* 框線的粗細以「新增時的長邊」為準，之後拉大拉小都不變 */
                     lineBase: Math.max(w, h),
+                    textureBaseW: w, textureBaseH: h,
                     lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
                     color: SHAPE_DEFAULT_COLOR,
                     glow: 0, glowColor: SHAPE_DEFAULT_COLOR,

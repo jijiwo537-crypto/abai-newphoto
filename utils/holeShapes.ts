@@ -444,9 +444,16 @@ export const paintTex = (
   /* 欄位名有兩套：圖形沿用最早的 dotSize／dotGap／dotColor，
      文字與符號用比較中性的 texSize／texGap／texColor。兩套都吃。 */
   if (t === 'dot' || t === 'star' || t === 'heart') {
-    paintDots(c, unitW, unitH, covW, covH,
+    const baseW = Math.max(1, o.textureBaseW || unitW);
+    const baseH = Math.max(1, o.textureBaseH || unitH);
+    const sx = unitW / baseW, sy = unitH / baseH;
+    c.save();
+    // 网格与每颗纹理一起从原始坐标系做非等比缩放，挤压时图案本身也会变形。
+    c.scale(sx, sy);
+    paintDots(c, baseW, baseH, covW / sx, covH / sy,
       o.texSize ?? o.dotSize ?? 50, o.texGap ?? o.dotGap ?? 20,
       o.texColor || o.dotColor || '#FFFFFF', t);
+    c.restore();
   } else if (t === 'stripe') {
     paintStripes(c, unitW, unitH, covW, covH,
       o.stripeN ?? SN_DEF, o.stripeDir === 'h' ? 'h' : 'v',

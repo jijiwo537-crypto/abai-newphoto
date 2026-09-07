@@ -3400,6 +3400,9 @@ interface FloatingImage {
   shapeLineW?: number;
   /** 新增／首次挤压时的线宽基准，挤压只改变轮廓比例、不改变笔画粗细 */
   shapeLineBase?: number;
+  /** 点点／星星／爱心纹理的原始坐标系；挤压时整层随宽高变形 */
+  shapeTextureBaseW?: number;
+  shapeTextureBaseH?: number;
   /** 描邊的虛線長度（0＝實線，1~100 是「一段有幾倍線寬」的比例，跟圖片描邊同一套） */
   shapeDash?: number;
   /** 圖形發光強度 0~100（0＝關）。舊資料存的是 true／false，glowAmount 會相容 */
@@ -4869,6 +4872,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       width: image.width, height: image.height, x: image.x, y: image.y,
       rotationRad: image.rotation * Math.PI / 180 };
     if (image.shape && !image.shapeLineBase) onChange({ shapeLineBase: Math.max(image.width, image.height) });
+    if (image.shape && (!image.shapeTextureBaseW || !image.shapeTextureBaseH)) {
+      onChange({ shapeTextureBaseW: image.width, shapeTextureBaseH: image.height });
+    }
     setIsScaling(true); onScaleStart?.();
   };
   const handleStretchPointerMove = (e: React.PointerEvent) => {
@@ -5445,7 +5451,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
           {isGridTex(texOf({ tex: image.shapeTex, dots: image.shapeDots })) && (() => {
             const tex = texOf({ tex: image.shapeTex, dots: image.shapeDots }) as 'dot' | 'star' | 'heart';
-            const { r, dx, dy, color } = shapeDotGrid(image.width, image.height, image);
+            const baseW = image.shapeTextureBaseW || image.width;
+            const baseH = image.shapeTextureBaseH || image.height;
+            const sx = image.width / Math.max(1, baseW), sy = image.height / Math.max(1, baseH);
+            const { r, dx, dy, color } = shapeDotGrid(baseW, baseH, image);
             const id = `sgrid-${tex}-${image.id}`;
             const glyphs: [number, number][] = [[0, 0], [dx, 0], [0, dy * 2], [dx, dy * 2], [dx / 2, dy]];
             return (
@@ -5453,12 +5462,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 <defs>
                   <pattern
                     id={id} patternUnits="userSpaceOnUse"
-                    width={r3(dx)} height={r3(dy * 2)}
+                    width={r3(dx * sx)} height={r3(dy * 2 * sy)}
                     patternTransform={`translate(${r3(image.width / 2)} ${r3(image.height / 2)})`}
                   >
                     {glyphs.map(([cx, cy], i) => tex === 'dot'
-                      ? <circle key={i} cx={r3(cx)} cy={r3(cy)} r={r3(r)} fill={color} />
-                      : <path key={i} d={textureGlyphD(tex, cx, cy, r)} fill={color} />)}
+                      ? <ellipse key={i} cx={r3(cx * sx)} cy={r3(cy * sy)} rx={r3(r * sx)} ry={r3(r * sy)} fill={color} />
+                      : <g key={i} transform={`translate(${r3(cx * sx)} ${r3(cy * sy)}) scale(${r3(sx)} ${r3(sy)})`}>
+                          <path d={textureGlyphD(tex, 0, 0, r)} fill={color} />
+                        </g>)}
                   </pattern>
                 </defs>
                 <path
@@ -6875,6 +6886,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       shapeFilled: it.filled,
       shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
       shapeLineBase: Math.max(w, h),
+      shapeTextureBaseW: w,
+      shapeTextureBaseH: h,
       shapeDash: 0,
       shapeGlow: false,
       shapeGlowColor: SHAPE_DEFAULT_COLOR,
@@ -10413,7 +10426,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         ctx.save();
         ctx.clip(path);
         ctx.translate(fw / 2, fh / 2);   // 紋理那兩支都是以圖形中心為原點
-        if (tx === 'dot') drawShapeDotsCanvas(ctx, fw, fh, fImg);
+        if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(ctx, fw, fh, fw, fh, {
+          tex: tx,
+          dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotColor: fImg.shapeDotColor,
+          textureBaseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
+          textureBaseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
+        });
         else paintStripes(ctx, fw, fh, fw, fh,
           fImg.shapeStripeN ?? STRIPE_N_DEFAULT, fImg.shapeStripeDir === 'h' ? 'h' : 'v',
           fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR, fImg.shapeStripeB || '#FFFFFF');
