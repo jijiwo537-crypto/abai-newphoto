@@ -1076,6 +1076,21 @@ export const SHAPE_DEFAULT_RATIO = (kind: string) => (kind === 'line' ? 0.24 : 0
 /** 新圖形的預設顏色。 */
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 
+/** 四邊擠壓白名單：實心前 11 顆、邊框前 16 顆。 */
+const STRETCH_SOLID_KINDS = new Set([
+  'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
+  'pentagon', 'hexagon', 'star', 'heart',
+]);
+const STRETCH_OUTLINE_KINDS = new Set([
+  'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
+  'pentagon', 'hexagon', 'star', 'heart', 'ellipse',
+]);
+export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
+  if (!shape || shape === 'line') return false;
+  if (shape === 'hole') return holeType === 'cross-star';
+  return filled ? STRETCH_SOLID_KINDS.has(shape) : STRETCH_OUTLINE_KINDS.has(shape);
+};
+
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
 export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number };
 export const ADD_SHAPE_ITEMS: ShapeItem[] = [
@@ -3359,6 +3374,8 @@ interface FloatingImage {
      有 shape 就是圖形層：沒有照片、沒有文字，內容就是一條路徑。
      顏色沿用上面的 color（跟文字同一個欄位，色票也是同一組）。 */
   shape?: string;
+  /** 新增面板中的來源項目；舊草稿仍可由 shape／filled／holeType 判斷 */
+  shapeItemId?: string;
   /** 實心（填色）還是細框（只描邊） */
   shapeFilled?: boolean;
   /** shape === 'hole' 時，真正要畫哪一顆圖案（跟創意拼圖同一份清單） */
@@ -5229,7 +5246,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         {isPhoto && !shapeOutline && cornerDot('bl', 'bottom-0 left-0', 'translate(-50%, 50%)', 'cursor-nesw-resize')}
         {isPhoto && !shapeOutline && cornerDot('br', 'bottom-0 right-0', 'translate(50%, 50%)', 'cursor-nwse-resize')}
 
-        {(!!image.shape || image.text === undefined) && !image.isVideo && !shapeOutline && ([
+        {((image.shape
+          ? shapeSupportsStretch(image.shape, image.shapeFilled, image.holeType)
+          : image.text === undefined)
+          && !image.isVideo && !shapeOutline) && ([
           ['t', 'top-0 left-1/2', 'translate(-50%, -50%)', 'w-6 h-2 cursor-ns-resize'],
           ['r', 'right-0 top-1/2', 'translate(50%, -50%)', 'w-2 h-6 cursor-ew-resize'],
           ['b', 'bottom-0 left-1/2', 'translate(-50%, 50%)', 'w-6 h-2 cursor-ns-resize'],
@@ -6814,6 +6834,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       y: (rect ? rect.centerY : previewH / 2) - h / 2,
       width: w, height: h, scale: 1, rotation: (it as any).rot || 0,
       shape: it.kind,
+      shapeItemId: it.id,
       // 借來的圖案：kind 一律是 'hole'，真正畫哪一顆看 holeType
       holeType: (it as HoleShapeItem).hole,
       shapeFilled: it.filled,
