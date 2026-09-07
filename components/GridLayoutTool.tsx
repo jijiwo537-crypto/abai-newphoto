@@ -1433,66 +1433,76 @@ export const SymbolPicker: React.FC<{
   </div>
 );
 
-/**
- * 空布局格的「＋／选择相片」必须作为一个不可拆分的图层缩放。
- * 若让 SVG 图标与 DOM 文字分别参与 WebKit native zoom，两者会各自做字体 hinting
- * 与像素取整，慢慢缩放时便会一上一下跳。这里预先画成高密度紧凑 Canvas；
- * 最大 3 倍预览下仍有充足实体像素，同时缩放期间不触发布局或重栅格化。
- */
-const EmptyCellPrompt: React.FC<{ interactive: boolean }> = ({ interactive }) => {
+/** 所有空格提示一次画进整块布局的同一张 Canvas，彻底取消逐格合成与取整。 */
+const LayoutEmptyPromptLayer: React.FC<{
+  width: number;
+  height: number;
+  cells: { x: number; y: number; w: number; h: number }[];
+}> = ({ width, height, cells }) => {
   const ref = useRef<HTMLCanvasElement>(null);
   useLayoutEffect(() => {
     let alive = true;
     const draw = () => {
       if (!alive || !ref.current) return;
       const canvas = ref.current;
-      const S = 8;
-      const W = 76, H = 44;
-      if (canvas.width !== W * S) canvas.width = W * S;
-      if (canvas.height !== H * S) canvas.height = H * S;
+      /* 只配置一次布局大小的 backing store。8MP 面积上限避免大型布局耗尽
+         iOS Canvas 内存；正常手机布局约为 7～8 倍超取样，3 倍预览仍很清楚。 */
+      const S = Math.max(1, Math.min(
+        8,
+        4096 / Math.max(1, width, height),
+        Math.sqrt(8_388_608 / Math.max(1, width * height)),
+      ));
+      const W = Math.max(1, Math.ceil(width * S));
+      const H = Math.max(1, Math.ceil(height * S));
+      if (canvas.width !== W) canvas.width = W;
+      if (canvas.height !== H) canvas.height = H;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.setTransform(S, 0, 0, S, 0, 0);
-      ctx.clearRect(0, 0, W, H);
+      ctx.clearRect(0, 0, width, height);
       ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 1.7;
       ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(W / 2 - 7, 11);
-      ctx.lineTo(W / 2 + 7, 11);
-      ctx.moveTo(W / 2, 4);
-      ctx.lineTo(W / 2, 18);
-      ctx.stroke();
       ctx.fillStyle = '#fff';
       ctx.font = `700 9px ${fontStack(DEFAULT_FONT)}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       (ctx as any).letterSpacing = '1.2px';
-      ctx.fillText('選擇相片', W / 2, 33);
+      ctx.globalAlpha = 0.20;
+      cells.forEach(cell => {
+        const cx = cell.x + cell.w / 2;
+        const cy = cell.y + cell.h / 2;
+        const fit = Math.max(0.45, Math.min(1, cell.w / 88, cell.h / 56));
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.scale(fit, fit);
+        ctx.lineWidth = 1.7;
+        ctx.beginPath();
+        ctx.moveTo(-7, -11);
+        ctx.lineTo(7, -11);
+        ctx.moveTo(0, -18);
+        ctx.lineTo(0, -4);
+        ctx.stroke();
+        ctx.fillText('選擇相片', 0, 11);
+        ctx.restore();
+      });
+      ctx.globalAlpha = 1;
       (ctx as any).letterSpacing = '0px';
     };
     draw();
     ensureFont(DEFAULT_FONT).then(draw);
     return () => { alive = false; };
-  }, []);
+  }, [width, height, cells]);
   return (
     <canvas
       ref={ref}
-      data-empty-cell-prompt="1"
-      width={608}
-      height={352}
+      data-layout-empty-prompts="1"
       aria-hidden
-      className={`block opacity-20 transition-opacity duration-300 ${interactive ? 'group-hover:opacity-50' : ''}`}
+      className="absolute inset-0 pointer-events-none z-[6]"
       style={{
-        width: 76,
-        height: 44,
-        /* 这是操作提示，不是作品内容：保持固定屏幕尺寸。外层 native zoom 每帧
-           放大 k，这里同一帧乘 1/k，Canvas 的细加号便永远以同一张像素网格
-           显示，不再被反复重采样而产生视觉抖动。 */
-        transform: 'translateZ(0) scale(var(--preview-inverse, 1))',
-        transformOrigin: 'center center',
+        width: '100%',
+        height: '100%',
+        transform: 'translateZ(0)',
         backfaceVisibility: 'hidden',
-        willChange: 'transform',
       }}
     />
   );
@@ -8106,7 +8116,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          一套座標與光柵化方式。 */
       const nativeZoom = typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2');
       col.style.setProperty('--preview-scale', String(k));
-      col.style.setProperty('--preview-inverse', String(1 / Math.max(0.0001, k)));
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
       col.style.setProperty('--layout-grid-stroke', `${1 / Math.max(0.0001, k)}px`);
@@ -12729,10 +12738,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                               setSlotToUpload(idx);
                                               replaceInputRef.current?.click();
                                             }}
-                                            className="p-2 hover:bg-white/5 rounded-full transition-all"
-                                          >
-                                            <Plus size={16} />
-                                          </button>
+                                            aria-label="選擇相片"
+                                            className="w-[76px] h-[44px]"
+                                          />
                                         </div>
                                       </div>
                                     );
@@ -12818,10 +12826,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                               replaceInputRef.current?.click();
                                             }}
                                             aria-label="選擇相片"
-                                            className="flex items-center justify-center"
-                                          >
-                                            <EmptyCellPrompt interactive={!wholeLayoutSelected} />
-                                          </button>
+                                            className="w-[76px] h-[44px]"
+                                          />
                                           <div
                                             data-dim-overlay="1"
                                             className="absolute inset-0 pointer-events-none"
@@ -13077,6 +13083,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 const selectedEmpty = emptyRects.find(r =>
                                   r.idx === selectedIndex && isThisLayoutSelected);
                                 return (
+                                <>
                                 <svg
                                   data-layout-grid-lines={layout.id}
                                   className="absolute inset-0 pointer-events-none z-[5]"
@@ -13100,6 +13107,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     />
                                   )}
                                 </svg>
+                                <LayoutEmptyPromptLayer
+                                  width={lw}
+                                  height={lh}
+                                  cells={emptyRects}
+                                />
+                                </>
                                 );
                               })()}
 
