@@ -5245,7 +5245,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     }
     const glow = image.shape
       ? Math.max(...shapeGlowBlurs(image.width, image.height), 0) * image.scale * glowAmount(image.shapeGlow as any)
-      : (image.glow || 0) / 20 * 42 * image.scale;
+      : Math.min(12, image.glow || 0) / 20 * 42 * image.scale;
     const stroke = image.shape
       ? (image.shapeStrokeW || 0) * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
       : (image.strokeWidth || 0) * 2 * image.scale;
@@ -5472,7 +5472,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         ctx.shadowColor = image.glowColor || '#FFFFFF';
         for (const k of [1, 2, 3]) {
           // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
-          ctx.shadowBlur = (image.glow / 20) * 14 * k * image.scale * backingScale;
+          ctx.shadowBlur = (Math.min(12, image.glow) / 20) * 14 * k * image.scale * backingScale;
           fill();
         }
         ctx.shadowBlur = 0;
@@ -5866,7 +5866,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           const dx = vectorGlyphCorrection.x;
           const dy = vectorGlyphCorrection.y;
           const glowId = `vector-text-glow-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-          const glowUnit = (image.glow || 0) / 20 * 14;
+          const glowUnit = Math.min(12, image.glow || 0) / 20 * 14;
           return (
             <svg
               data-vector-text={image.id}
@@ -11101,7 +11101,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          算進發光裡；發光與描邊要各自獨立，所以這一段不描邊。 */
       // 疊三層，跟預覽那一層的三段 text-shadow 對齊
       for (const k of [1, 2, 3]) {
-        ctx.shadowBlur = (fImg.glow / 20) * 14 * k * scaleFactor * fImg.scale;
+        ctx.shadowBlur = (Math.min(12, fImg.glow) / 20) * 14 * k * scaleFactor * fImg.scale;
         drawLines();
       }
       ctx.shadowBlur = 0;
