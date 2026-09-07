@@ -7588,7 +7588,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 不會像以前那樣「外殼的大小和位置瞬間換成新的、只有縮放在慢慢跑」，
    * 一進去整排就先瞬移一百多 px 再縮小。
    */
-  const applyStripGeometry = useCallback((k: number) => {
+  const applyStripGeometry = useCallback((k: number, liveTransform = false) => {
     const n = Math.max(1, pagesCountRef.current);
     const pw = previewWRef.current;
     const w = containerWRef.current;
@@ -7606,15 +7606,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     // 右邊剛好留到「最後一頁停在正中間」為止；加號按鈕已經佔掉 ml-3 + 40
     if (pad) pad.style.width = `${Math.max(0, m - (plusVisibleRef.current ? 52 : 0))}px`;
     if (col) {
-      /* CSS transform 常會把整頁先光柵化再拉大，文字、線條與圖片都會糊。
-         zoom 會用目標尺寸重新排版／取樣；不支援時才退回 transform。 */
+      /* 靜止時用 zoom 讓文字與向量依目標尺寸重新排版／取樣；手勢或動畫
+         進行中則一定把整排頁面當成單一合成層縮放。若每一幀都改 CSS zoom，
+         瀏覽器會逐項重排並把小數座標各自取整，頁面裡的文字／符號／圖形就會
+         互相錯開一點，看起來像不停抖動。鬆手後再切回 zoom，畫面會恢復原生
+         清晰度，又不犧牲操作中的幾何穩定性。 */
       const nativeZoom = typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2');
-      if (nativeZoom) {
+      if (nativeZoom && !liveTransform) {
         (col.style as any).zoom = String(k);
         col.style.transform = '';
+        col.style.willChange = '';
       } else {
         (col.style as any).zoom = '';
         col.style.transform = k === 1 ? '' : `scale(${k})`;
+        col.style.transformOrigin = '0 0';
+        col.style.willChange = liveTransform ? 'transform' : '';
       }
     }
   }, []);
@@ -7699,7 +7705,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const k = kRef.current;
       // 版面（外殼尺寸、左右留白、縮放）全部由這一帧的 k 算出來，
       // 捲動幾何永遠跟看到的大小一致：捲 1px 畫面就走 1px
-      applyStripGeometry(k);
+      applyStripGeometry(k, !!anim);
       if (anim) {
         // 先寫完尺寸（scrollWidth 才是對的）再寫捲動位置，
         // 讓「動畫開始時停在中間的那一頁」整段都待在正中間
@@ -9928,6 +9934,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
            按下去要照舊搬動整個物件，所以在這裡先算好、整段拖曳都用同一個答案。 */
         startInShape: kind === 'floating' ? hitFloatingShape(fImg, cx, cy) : false,
       };
+      // 物件雙指縮放期間也暫時把整頁鎖成同一個合成層。頁面若仍使用 CSS
+      // zoom，物件尺寸每幀改變時其文字／SVG 與選取幾何會各自做小數取整，
+      // 即使資料本身很平滑，畫面上仍會左右抖一個像素。
+      if (twoFinger) applyStripGeometry(kRef.current, true);
       return;
     }
 
@@ -9968,6 +9978,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
          連續捏兩次時，第二次一定要從第一次的結果接著算。 */
       canvasZoomRef.current = { startDist: d, baseZoom: k0, anchorC, anchorPx, lastZoom: k0 };
+      applyStripGeometry(k0, true);
       return;
     }
 
@@ -10000,6 +10011,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          剩下那根手指接著滑會變成「一邊縮放一邊捲頁」，正是要避免的情況。 */
       if (e.touches.length < 2) {
         canvasZoomRef.current = null;
+        applyStripGeometry(userZoomRef.current, false);
         setUserZoom(userZoomRef.current);
         return;
       }
@@ -10017,7 +10029,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       userZoomRef.current = z;
       kRef.current = z;
       // 尺寸先寫（scrollWidth 才是對的），再把「捏住的那個點」放回原位
-      applyStripGeometry(z);
+      applyStripGeometry(z, true);
       const cont = containerRef.current;
       const w = containerSize.width;
       if (cont && w > 0) {
@@ -10089,7 +10101,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             ? (g.lastScale ?? rawScale)
             : g.lastScale + (rawScale - g.lastScale) * 0.72;
           g.lastScale = ns;
-          if (target && enableSnapping) {
+          const isVectorObject = !!target && (!!target.shape || target.text !== undefined);
+          // 圖形、符號與文字縮放時不做邊界倍率吸附。它們的尺寸會即時改寫，
+          // 吸入／離開臨界值即使有遲滯，仍會形成肉眼可見的一格跳動；圖片保留
+          // 原本的貼邊吸附，向量物件則維持連續的一對一縮放。
+          if (target && enableSnapping && !isVectorObject) {
             const SNAP_IN = 3, SNAP_OUT = 8;
             const cx = target.x + target.width / 2;
             const cy = target.y + target.height / 2;
@@ -10272,11 +10288,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (canvasZoomRef.current) {
       canvasZoomRef.current = null;
       panRef.current = null;
+      applyStripGeometry(userZoomRef.current, false);
       setUserZoom(userZoomRef.current);
       return;
     }
     if (wsGestureRef.current) {
       wsGestureRef.current = null;
+      applyStripGeometry(kRef.current, false);
       setActiveGuidelines([]);
       setActiveCollisions({ left: false, right: false, top: false, bottom: false });
       return;
