@@ -3770,7 +3770,8 @@ const videoDeco = (
   const iw = Math.max(1, Math.round(boxW * dpr));
   const ih = Math.max(1, Math.round(boxH * dpr));
   const lw = strokeW * dpr;
-  const sw = iw + lw * 2, sh = ih + lw * 2;
+  const strokeGap = (image.imgStrokeGap || 0) * sc * dpr;
+  const sw = iw + (lw + strokeGap) * 2, sh = ih + (lw + strokeGap) * 2;
   const ox = (W - sw) / 2, oy = (H - sh) / 2;
   const kind = image.imgShape as string | undefined;
   const dashV = image.imgStrokeDash || 0;
@@ -3779,10 +3780,10 @@ const videoDeco = (
   const paintStroke = (g: CanvasRenderingContext2D, dx: number, dy: number) => {
     if (lw <= 0) return;
     const rp = image.imgRadius || 0;
-    const sr = rp ? cornerR(rp, iw, ih) + lw / 2 : 0;
+    const sr = rp ? cornerR(rp, iw, ih) + strokeGap + lw / 2 : 0;
     g.save();
     g.translate(dx, dy);
-    withImgOutline(g, lw / 2, lw / 2, iw + lw, ih + lw, kind, sr, sr, p => {
+    withImgOutline(g, lw / 2, lw / 2, iw + strokeGap * 2 + lw, ih + strokeGap * 2 + lw, kind, sr, sr, p => {
       g.lineWidth = lw;
       g.lineJoin = 'miter';
       g.miterLimit = 4;
