@@ -6683,7 +6683,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
         {/* 構圖那一頁是全螢幕的，這排白色鍵不能浮在它上面 */}
         {/* 對齊線亮著、或正在拖形狀滑桿時，這排鍵也要一起讓開 */}
-        {imageState && selectedObj && !objDragging && !objStretching && !composeState && !tuningEdge && !objPinching && (() => {
+        {imageState && selectedObj && !objDragging && !composeState && !tuningEdge && !objPinching && (() => {
           const o = objects.find(z => z.id === selectedObj);
           const cvsEl = canvasRef.current;
           if (!o || !cvsEl) return null;
@@ -6771,15 +6771,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     style={{ transform: tx }} onPointerDown={(e) => beginObjStretch(e, o, side, k)}
                     onPointerMove={moveObjStretch} onPointerUp={endObjStretch} onPointerCancel={endObjStretch}>
                     {o.type === 'shape' ? (
-                      <span className="w-[5px] h-[5px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]" />
+                      <span className={`w-[5px] h-[5px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)] ${objStretching ? 'invisible' : ''}`} />
                     ) : (
-                      <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
+                      <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] ${objStretching ? 'invisible' : ''}`} />
                     )}
                   </div>
                 ))}
               </div>
             )}
-            <div
+            {!objStretching && <div
               className="absolute z-[70] flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto"
               style={{ left: cx, top: by, transform: 'translateX(-50%)', touchAction: 'none' }}
               onPointerDown={(e) => e.stopPropagation()}
@@ -6804,7 +6804,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   {b.el}
                 </button>
               ))}
-            </div>
+            </div>}
           </>);
         })()}
 
