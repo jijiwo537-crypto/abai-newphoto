@@ -10,6 +10,7 @@ import { SaveButton } from './SaveButton';
 /* IG 貼文預覽跟拼圖那兩個工具共用同一顆元件 */
 import { IgPreview } from './IgPreview';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
+import { flushSync } from 'react-dom';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { canvasToUrl, revokeUrls } from '../utils/blobUrl';
@@ -6278,12 +6279,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 進構圖之前待在哪一頁 —— 按完成之後回去那一頁，不要一律跳回濾鏡 */
   const beforeComposeRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
 
-  /** 左上返回与构图内的取消共用同一条“放弃草稿几何”路径。 */
+  /** 左上返回与构图内的取消共用同一条“放弃草稿几何”路径。
+      先同步清空 draft，再切回进入构图前的分页，避免离开构图的自动套用 effect
+      在同一批更新中读到旧 draft，并确保它绝不会继续冒泡成退出整个编辑器。 */
   const cancelCompose = useCallback(() => {
+    const previous = beforeComposeRef.current;
     composePreviewRef.current = null;
-    setDraftGeo(null);
-    setActiveCategory(beforeComposeRef.current.cat);
-    setActiveToolId(beforeComposeRef.current.tool);
+    flushSync(() => setDraftGeo(null));
+    setActiveCategory(previous.cat);
+    setActiveToolId(previous.tool);
   }, []);
 
   const isParamAdjusted = useCallback((id: string): boolean => {
