@@ -3515,6 +3515,8 @@ interface FloatingImageComponentProps {
   toolbarAbove?: boolean;
   /** 文字圖層自動貼合寬度時的上限（未縮放像素） */
   maxTextWidth?: number;
+  /** 固定向量畫布需要的頁面高度（與 maxTextWidth 同為內容座標）。 */
+  canvasHeight?: number;
   /** 直接在畫布上打字：選中後再點一次就進入這個狀態 */
   isTextEditing?: boolean;
   onTextEditEnd?: () => void;
@@ -4147,6 +4149,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   canLayerDown = true,
   toolbarAbove,
   maxTextWidth,
+  canvasHeight,
   isTextEditing = false,
   onTextEditEnd,
   hideToolbar = false,
@@ -5071,25 +5074,17 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      的同一套 path、紋理、描邊與字體度量，所以預覽與成品也會一致。 */
   const vectorCanvasRef = useRef<HTMLCanvasElement>(null);
   const isCanvasVector = !!image.shape || image.text !== undefined;
-  const vectorPad = (() => {
-    if (image.shape === 'hole') {
-      return {
-        x: Math.max(2, holeOv.x * boxW / Math.max(1, image.width)),
-        y: Math.max(2, holeOv.y * boxH / Math.max(1, image.height)),
-      };
-    }
-    const shapeGlow = image.shape
-      ? Math.max(...shapeGlowBlurs(image.width, image.height), 0) * image.scale * glowAmount(image.shapeGlow as any)
-      : 0;
-    const textGlow = image.text !== undefined && image.glow
-      ? (image.glow / 20) * 14 * 3 * image.scale
-      : 0;
-    const stroke = image.shape
-      ? (image.shapeStrokeW || 0) * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
-      : (image.strokeWidth || 0) * 2 * image.scale;
-    const p = Math.ceil(Math.max(2, shapeGlow, textGlow, stroke) + 2);
-    return { x: p, y: p };
-  })();
+  /* 固定畫布：尺寸只看「物件的未縮放尺寸」與頁面尺寸，不看 image.scale。
+     因此整段雙指縮放期間 canvas.width／height、CSS box、left／top 都不變；
+     唯一改變的是畫布裡重畫的圖案大小。這才與創意拼圖的固定主畫布同構。 */
+  const vectorSurfaceW = Math.max(
+    (maxTextWidth || image.width || 1) * 2,
+    image.width * 8 + Math.max(64, holeOv.x * 16),
+  );
+  const vectorSurfaceH = Math.max(
+    (canvasHeight || image.height || 1) * 2,
+    image.height * 8 + Math.max(64, holeOv.y * 16),
+  );
 
   useLayoutEffect(() => {
     if (!isCanvasVector) return;
@@ -5100,21 +5095,24 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const draw = () => {
       if (!alive) return;
       const dpr = Math.min(4, Math.max(1, geoDpr * Math.max(1, canvasK())));
-      const cssW = Math.max(1, boxW + vectorPad.x * 2);
-      const cssH = Math.max(1, boxH + vectorPad.y * 2);
-      const W = Math.max(1, Math.ceil(cssW * dpr));
-      const H = Math.max(1, Math.ceil(cssH * dpr));
+      const cssW = Math.max(1, vectorSurfaceW);
+      const cssH = Math.max(1, vectorSurfaceH);
+      /* 超大物件仍維持固定 CSS 畫布，但 backing store 長邊限制在 2048，
+         避免多個物件同時存在時耗盡 iOS 的 Canvas 記憶體。 */
+      const backingScale = Math.min(dpr, 2048 / Math.max(cssW, cssH));
+      const W = Math.max(1, Math.ceil(cssW * backingScale));
+      const H = Math.max(1, Math.ceil(cssH * backingScale));
       if (canvas.width !== W) canvas.width = W;
       if (canvas.height !== H) canvas.height = H;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.setTransform(backingScale, 0, 0, backingScale, 0, 0);
       ctx.clearRect(0, 0, cssW, cssH);
       ctx.save();
-      ctx.translate(vectorPad.x, vectorPad.y);
+      ctx.translate(cssW / 2, cssH / 2);
+      ctx.rotate((image.rotation * Math.PI) / 180);
 
       if (image.shape === 'hole') {
-        ctx.translate(boxW / 2, boxH / 2);
         drawHoleShape(ctx, {
           ...holeOpts!,
           lineUnit: Math.max(image.width, image.height) / 160,
@@ -5126,6 +5124,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       }
 
       if (image.shape) {
+        ctx.translate(-boxW / 2, -boxH / 2);
         const path = new Path2D(shapePathD(image.shape, boxW, boxH));
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const solid = !!image.shapeFilled && image.shape !== 'line';
@@ -5188,7 +5187,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const family = image.fontFamily || DEFAULT_FONT;
       const size = (image.fontSize || 40) * image.scale;
       const spacing = (image.letterSpacing || 0) * image.scale;
-      ctx.translate(boxW / 2, boxH / 2);
       ctx.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -5226,7 +5224,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     }
     return () => { alive = false; if (raf) cancelAnimationFrame(raf); };
   }, [
-    isCanvasVector, boxW, boxH, vectorPad.x, vectorPad.y,
+    isCanvasVector, boxW, boxH, vectorSurfaceW, vectorSurfaceH,
     image.shape, image.holeType, image.shapeFilled, image.shapeLineW, image.shapeDash,
     image.shapeGlow, image.shapeGlowColor, image.shapeStrokeW, image.shapeStrokeColor,
     image.shapeTex, image.shapeDots, image.shapeDotSize, image.shapeDotGap, image.shapeDotColor,
@@ -5234,7 +5232,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     image.shapeTextureBaseW, image.shapeTextureBaseH, image.color,
     image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
     image.letterSpacing, image.strokeWidth, image.strokeColor, image.glow, image.glowColor,
-    image.scale, canvasScale,
+    image.scale, image.rotation, canvasScale,
   ]);
 
   const chrome = (
@@ -5524,6 +5522,31 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 
   return (
     <>
+    {isCanvasVector && pagesContainerRef.current && createPortal(
+      <canvas
+        ref={vectorCanvasRef}
+        data-vector-canvas={image.id}
+        aria-hidden
+        className="absolute pointer-events-none"
+        style={{
+          left: `${image.x + image.width / 2 - vectorSurfaceW / 2}px`,
+          top: `${image.y + image.height / 2 - vectorSurfaceH / 2}px`,
+          width: `${vectorSurfaceW}px`,
+          height: `${vectorSurfaceH}px`,
+          zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
+          opacity: image.text !== undefined && isTextEditing ? 0 : 1,
+          transformOrigin: 'center center',
+          transform: dragShift
+            ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s})`
+            : undefined,
+          transition: dragShift
+            ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
+            : undefined,
+          contain: 'strict',
+        }}
+      />,
+      pagesContainerRef.current,
+    )}
     <div
       ref={imageRef}
       data-floating-id={image.id}
@@ -5541,24 +5564,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       onTouchEnd={onSwapTouchEnd}
       onTouchCancel={onSwapTouchEnd}
     >
-      {isCanvasVector && (
-        <canvas
-          ref={vectorCanvasRef}
-          aria-hidden
-          style={{
-            position: 'absolute',
-            left: `${-vectorPad.x}px`,
-            top: `${-vectorPad.y}px`,
-            width: `${Math.max(1, boxW + vectorPad.x * 2)}px`,
-            height: `${Math.max(1, boxH + vectorPad.y * 2)}px`,
-            pointerEvents: 'none',
-            opacity: image.text !== undefined && isTextEditing ? 0 : 1,
-            /* Canvas 自己完整清除並重畫，不再讓每個 SVG path／DOM 字形各自
-               留一個合成層；這也是創意拼圖不會拖出舊幀殘影的核心。 */
-            contain: 'strict',
-          }}
-        />
-      )}
       {isCanvasVector && image.shape ? null : image.shape === 'hole' ? (
         /* 從「圖案」借過來的那幾顆：它們不是 SVG 路徑（有的是系統字型的字、
            有的是去背 PNG），所以預覽直接畫在 canvas 上、用的就是匯出那一支
@@ -12885,6 +12890,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           return crossedLowerThird && aboveFits;
                         })()}
                         maxTextWidth={previewW}
+                        canvasHeight={previewH}
                         isTextEditing={inlineEditId === fImg.id}
                         onTextEditEnd={() => setInlineEditId(prev => (prev === fImg.id ? null : prev))}
                         // 圖層上下是所有物件共用一條清單（照片、文字、佈局都算），
