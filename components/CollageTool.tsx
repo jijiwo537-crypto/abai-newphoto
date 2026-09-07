@@ -986,6 +986,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const selectedObjRef = useRef<string | null>(null);
   selectedObjRef.current = selectedObj;
   const objDragRef = useRef<any>(null);
+  const [objDragging, setObjDragging] = useState(false);
+  const objDraggingRef = useRef(false);
   const objStretchRef = useRef<any>(null);
   /* ── 形狀的第二段選取 ────────────────────────────────────────────
      選中圖片之後**再點一次圖片**，才進到「選中形狀」：
@@ -3132,7 +3134,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (objDragRef.current && activePointers.current.size === 1) {
       e.stopPropagation();
       const d = objDragRef.current;
-      if (Math.hypot(x - d.startX, y - d.startY) > 3) d.moved = true;
+      if (Math.hypot(x - d.startX, y - d.startY) > 3) {
+        d.moved = true;
+        if (!objDraggingRef.current) {
+          objDraggingRef.current = true;
+          setObjDragging(true);
+        }
+      }
       /* selectOnly 有兩種：
          · pickId 不存在＝什麼都還沒選，這一下只能點選，不搬東西
          · pickId 存在＝已經有選中的物件，只是手指剛好按在別的物件上；
@@ -3290,6 +3298,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       setSelectedTarget(null);
     }
     objDragRef.current = null;
+    objDraggingRef.current = false;
+    setObjDragging(false);
     if (guidesRef.current.length) { guidesRef.current = []; setGuides([]); }
     if (activePointers.current.size <= 2) { objPinchRef.current = null; setObjPinching(false); }
     try {
@@ -4609,7 +4619,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         (ctx as any).letterSpacing = '0px';
       }
       ctx.globalAlpha = 1;
-      if (isMain && !hideChromeRef.current && selectedObj === o.id && !guides.length && !tuningEdge) {
+      if (isMain && !hideChromeRef.current && !objDragging && selectedObj === o.id && !guides.length && !tuningEdge) {
         // 所有选中框统一为实线；虚线只保留给内容本身的描边样式。
         ctx.strokeStyle = '#ffffff';
         // 與經典拼圖圖片選中框相同的 0.75px 視覺粗度。
@@ -5032,7 +5042,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
   }, [imageState, layout, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
-      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, shapeSel, editingTextId, guides, tuningEdge, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
+      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, shapeSel, editingTextId, guides, tuningEdge, objDragging, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
      離開創意拼圖時記一筆。key 用「這一次拼圖」的 id（從歷史紀錄點進來的話
@@ -6625,7 +6635,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
         {/* 構圖那一頁是全螢幕的，這排白色鍵不能浮在它上面 */}
         {/* 對齊線亮著、或正在拖形狀滑桿時，這排鍵也要一起讓開 */}
-        {imageState && selectedObj && !composeState && !guides.length && !tuningEdge && !objPinching && (() => {
+        {imageState && selectedObj && !objDragging && !composeState && !guides.length && !tuningEdge && !objPinching && (() => {
           const o = objects.find(z => z.id === selectedObj);
           const cvsEl = canvasRef.current;
           if (!o || !cvsEl) return null;
