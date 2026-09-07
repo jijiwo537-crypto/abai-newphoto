@@ -1434,6 +1434,61 @@ export const SymbolPicker: React.FC<{
 );
 
 /**
+ * 空布局格的「＋／选择相片」必须作为一个不可拆分的图层缩放。
+ * 若让 SVG 图标与 DOM 文字分别参与 WebKit native zoom，两者会各自做字体 hinting
+ * 与像素取整，慢慢缩放时便会一上一下跳。这里预先画成高密度紧凑 Canvas；
+ * 最大 3 倍预览下仍有充足实体像素，同时缩放期间不触发布局或重栅格化。
+ */
+const EmptyCellPrompt: React.FC<{ interactive: boolean }> = ({ interactive }) => {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useLayoutEffect(() => {
+    let alive = true;
+    const draw = () => {
+      if (!alive || !ref.current) return;
+      const canvas = ref.current;
+      const S = 8;
+      const W = 76, H = 44;
+      if (canvas.width !== W * S) canvas.width = W * S;
+      if (canvas.height !== H * S) canvas.height = H * S;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.setTransform(S, 0, 0, S, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1.7;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(W / 2 - 7, 11);
+      ctx.lineTo(W / 2 + 7, 11);
+      ctx.moveTo(W / 2, 4);
+      ctx.lineTo(W / 2, 18);
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = `700 9px ${fontStack(DEFAULT_FONT)}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      (ctx as any).letterSpacing = '1.2px';
+      ctx.fillText('選擇相片', W / 2, 33);
+      (ctx as any).letterSpacing = '0px';
+    };
+    draw();
+    ensureFont(DEFAULT_FONT).then(draw);
+    return () => { alive = false; };
+  }, []);
+  return (
+    <canvas
+      ref={ref}
+      data-empty-cell-prompt="1"
+      width={608}
+      height={352}
+      aria-hidden
+      className={`block opacity-20 transition-opacity duration-300 ${interactive ? 'group-hover:opacity-50' : ''}`}
+      style={{ width: 76, height: 44, transform: 'translateZ(0)', backfaceVisibility: 'hidden' }}
+    />
+  );
+};
+
+/**
  * 兩段式的顏色欄：平常只是一列（標題＋色號＋一小塊顏色），
  * 點一下才把色票攤開來 —— 這樣它可以跟滑桿並排，不會把版面撐開。
  * 兩個拼圖工具的描邊／發光／點點顏色都用這一顆，長相與操作完全一致。
@@ -12744,8 +12799,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             ...(radius > 0 ? { WebkitMaskImage: '-webkit-radial-gradient(white, black)' } : null),
                                           }}
                                         >
-                                          <Plus className={`text-white opacity-20 transition-all duration-300 mb-1 ${wholeLayoutSelected ? '' : 'cell-hover-icon'}`} size={20} />
-                                          <span className={`text-[9px] font-bold text-white/20 tracking-widest uppercase ${wholeLayoutSelected ? '' : 'cell-hover-text'}`}>選擇相片</span>
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleSwitchPage(pageIdx);
+                                              setSlotToUpload(idx);
+                                              replaceInputRef.current?.click();
+                                            }}
+                                            aria-label="選擇相片"
+                                            className="flex items-center justify-center"
+                                          >
+                                            <EmptyCellPrompt interactive={!wholeLayoutSelected} />
+                                          </button>
                                           <div
                                             data-dim-overlay="1"
                                             className="absolute inset-0 pointer-events-none"
