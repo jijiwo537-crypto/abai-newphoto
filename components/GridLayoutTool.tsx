@@ -1434,113 +1434,98 @@ export const SymbolPicker: React.FC<{
 );
 
 /**
- * 空格提示是操作介面，透过萤幕坐标层避免跟着 Canvas 重取样而抖动。
+ * 空格提示必须属于它所在的布局图层。
  *
- * 正常尺寸时维持清楚、稳定的萤幕字号；但格子缩得比提示本身还小时，整组提示
- * 会依格子的萤幕尺寸等比缩小，确保不会压过其他物件或越出小格。提示层位于
- * 自由物件之下，所以后来加入的照片、文字、图形与符号会正确盖住它。
+ * 提示直接留在布局 wrapper 内，因此会和格子一起参与 59/60/61… 的交错层级：
+ * 在它上面的照片、文字、图形或符号会自然盖住它，不再由 document.body 上的
+ * 全画面 Portal 无条件压在最前面。
+ *
+ * 加号与文字仍以萤幕像素为基准：外层预览缩放时，用反向倍率抵销；当格子本身
+ * 小于提示的自然尺寸时再等比缩小。更新只写合成 transform，不重新排版字体。
  */
 const LayoutEmptyPromptLayer: React.FC<{
   cells: { x: number; y: number; w: number; h: number }[];
   hidden?: boolean;
 }> = ({ cells, hidden = false }) => {
-  const anchorsRef = useRef<HTMLDivElement>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
 
   const place = useCallback(() => {
-    const anchors = anchorsRef.current;
-    const overlay = overlayRef.current;
-    const viewport = anchors?.closest('[data-grid-preview-viewport]') as HTMLElement | null;
-    if (!anchors || !overlay || !viewport) return;
-    const vr = viewport.getBoundingClientRect();
-    overlay.style.left = `${vr.left}px`;
-    overlay.style.top = `${vr.top}px`;
-    overlay.style.width = `${vr.width}px`;
-    overlay.style.height = `${vr.height}px`;
-    const points = anchors.querySelectorAll<HTMLElement>('[data-layout-empty-prompt-anchor]');
-    const prompts = overlay.querySelectorAll<HTMLElement>('[data-layout-empty-prompt]');
-    points.forEach((point, idx) => {
-      const prompt = prompts[idx];
+    const layer = layerRef.current;
+    const scaledColumn = layer?.closest('[data-grid-pages-column]') as HTMLElement | null;
+    if (!layer || !scaledColumn) return;
+
+    const columnWidth = scaledColumn.offsetWidth;
+    const screenWidth = scaledColumn.getBoundingClientRect().width;
+    const previewScale = columnWidth > 0 ? screenWidth / columnWidth : 1;
+    const k = Math.max(0.0001, previewScale);
+    const points = layer.querySelectorAll<HTMLElement>('[data-layout-empty-prompt-anchor]');
+
+    points.forEach(point => {
+      const prompt = point.querySelector<HTMLElement>('[data-layout-empty-prompt]');
       if (!prompt) return;
-      const r = point.getBoundingClientRect();
-      /* 76×44 是提示的自然尺寸；为四周各留约 8px，再依格子的实际萤幕
-         大小缩小。只改合成层 transform，不触发布局与字体重排。 */
-      const promptScale = Math.max(0.18, Math.min(1, r.width / 92, r.height / 60));
-      prompt.style.transform =
-        `translate3d(${r.left + r.width / 2 - vr.left}px, ${r.top + r.height / 2 - vr.top}px, 0) translate(-50%, -50%) scale(${promptScale})`;
-      prompt.style.visibility = r.right > vr.left && r.left < vr.right && r.bottom > vr.top && r.top < vr.bottom
-        ? 'visible'
-        : 'hidden';
+      const cellScreenW = point.offsetWidth * k;
+      const cellScreenH = point.offsetHeight * k;
+      const fit = Math.max(0.18, Math.min(1, cellScreenW / 92, cellScreenH / 60));
+      prompt.style.transform = `translate3d(-50%, -50%, 0) scale(${fit / k})`;
     });
   }, []);
 
   useLayoutEffect(() => {
     if (hidden) return;
-    const anchors = anchorsRef.current;
-    const viewport = anchors?.closest('[data-grid-preview-viewport]') as HTMLElement | null;
-    const scaledColumn = anchors?.closest('[data-grid-pages-column]') as HTMLElement | null;
-    if (!anchors || !viewport || !scaledColumn) return;
+    const layer = layerRef.current;
+    const scaledColumn = layer?.closest('[data-grid-pages-column]') as HTMLElement | null;
+    if (!layer || !scaledColumn) return;
     let raf = 0;
     const schedule = () => {
       if (raf) return;
       raf = requestAnimationFrame(() => { raf = 0; place(); });
     };
     place();
-    viewport.addEventListener('scroll', schedule, { passive: true });
     scaledColumn.addEventListener('abai-preview-transform', schedule);
     window.addEventListener('resize', schedule);
     return () => {
       if (raf) cancelAnimationFrame(raf);
-      viewport.removeEventListener('scroll', schedule);
       scaledColumn.removeEventListener('abai-preview-transform', schedule);
       window.removeEventListener('resize', schedule);
     };
   }, [cells, hidden, place]);
 
   return (
-    <>
-      <div ref={anchorsRef} data-layout-empty-prompts="1" aria-hidden className="absolute inset-0 pointer-events-none z-[6]">
-        {cells.map((cell, idx) => (
-          <i
-            key={idx}
-            data-layout-empty-prompt-anchor="1"
-            className="absolute block pointer-events-none"
-            style={{ left: cell.x, top: cell.y, width: cell.w, height: cell.h }}
-          />
-        ))}
-      </div>
-      {!hidden && typeof document !== 'undefined' && createPortal(
-        <div
-          ref={overlayRef}
-          data-layout-empty-prompt-overlay="1"
-          aria-hidden
-          className="fixed overflow-hidden pointer-events-none z-[10]"
+    <div
+      ref={layerRef}
+      data-layout-empty-prompts="1"
+      aria-hidden
+      className="absolute inset-0 pointer-events-none z-[6]"
+      style={{ visibility: hidden ? 'hidden' : 'visible' }}
+    >
+      {cells.map((cell, idx) => (
+        <i
+          key={idx}
+          data-layout-empty-prompt-anchor="1"
+          className="absolute block pointer-events-none"
+          style={{ left: cell.x, top: cell.y, width: cell.w, height: cell.h }}
         >
-          {cells.map((_, idx) => (
-            <div
-              key={idx}
-              data-layout-empty-prompt="1"
-              className="absolute w-[76px] h-[44px] text-white/20"
-              style={{ backfaceVisibility: 'hidden', willChange: 'transform', transformOrigin: 'center center' }}
+          <span
+            data-layout-empty-prompt="1"
+            className="absolute left-1/2 top-1/2 block w-[76px] h-[44px] text-white/20 not-italic"
+            style={{ backfaceVisibility: 'hidden', willChange: 'transform', transformOrigin: 'center center' }}
+          >
+            <svg
+              width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden
+              className="absolute left-1/2 top-[3px] -translate-x-1/2"
             >
-              <svg
-                width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden
-                className="absolute left-1/2 top-[3px] -translate-x-1/2"
-              >
-                <path d="M1 8H15M8 1V15" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-              </svg>
-              <span
-                className="absolute left-1/2 top-[28.5px] -translate-x-1/2 whitespace-nowrap text-[9px] font-bold tracking-[1.2px] leading-none"
-                style={{ fontFamily: fontStack(DEFAULT_FONT) }}
-              >
-                選擇相片
-              </span>
-            </div>
-          ))}
-        </div>,
-        document.body,
-      )}
-    </>
+              <path d="M1 8H15M8 1V15" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+            </svg>
+            <span
+              className="absolute left-1/2 top-[28.5px] -translate-x-1/2 whitespace-nowrap text-[9px] font-bold tracking-[1.2px] leading-none"
+              style={{ fontFamily: fontStack(DEFAULT_FONT) }}
+            >
+              選擇相片
+            </span>
+          </span>
+        </i>
+      ))}
+    </div>
   );
 };
 
