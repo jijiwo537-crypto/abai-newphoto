@@ -21,7 +21,7 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker,
-  shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT,
+  shapePathD, shapeGlowBlurs, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch,
 } from './GridLayoutTool';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { normalizeImageFiles } from '../utils/imageLoader';
@@ -6696,7 +6696,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             setObjects(prev => [...prev, { ...o, id, x: o.x + o.w * 0.08, y: o.y + o.h * 0.08 }]);
             setSelectedObj(id);
           };
-          const canStretch = !shapeMode && o.type !== 'text' && !o.sym && !isVideoEl(o.img);
+          const canStretch = !shapeMode && o.type !== 'text' && !o.sym && !isVideoEl(o.img)
+            && (o.type !== 'shape' || shapeSupportsStretch(o.kind, o.filled, o.hole));
           return (<>
             {canStretch && (
               <div className="absolute z-[69] pointer-events-none"
@@ -7204,7 +7205,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const id = Math.random().toString(36).slice(2, 9);
                   setObjects(prev => [...prev, {
                     id, type: 'shape',
-                    kind: it.kind, hole: it.hole, filled: it.filled,
+                    kind: it.kind, hole: it.hole, filled: it.filled, shapeItemId: it.id,
                     /* 框線的粗細以「新增時的長邊」為準，之後拉大拉小都不變 */
                     lineBase: Math.max(w, h),
                     lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
