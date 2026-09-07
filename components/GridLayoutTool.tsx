@@ -5128,6 +5128,34 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   }
   const vectorCssW = gestureCanvasLock.current?.w ?? vectorContentW;
   const vectorCssH = gestureCanvasLock.current?.h ?? vectorContentH;
+  const vectorGlyphRef = useRef<SVGTextElement>(null);
+  const [vectorGlyphCorrection, setVectorGlyphCorrection] = useState({ x: 0, y: 0 });
+  /* 不猜不同引擎的 baseline：直接读取最终负责显示的 SVG 字形范围，再把它的
+     实际中心校回物件中心。getBBox 是未套外层 scale 的固定向量座标，所以只需
+     在文字内容或字体样式改变时量一次，缩放期间完全不会触发布局或重新校正。 */
+  useLayoutEffect(() => {
+    if (image.text === undefined) return;
+    let alive = true;
+    let raf = 0;
+    let passes = 0;
+    const centerGlyph = () => {
+      if (!alive) return;
+      const node = vectorGlyphRef.current;
+      if (!node) return;
+      const b = node.getBBox();
+      const ex = b.x + b.width / 2;
+      const ey = b.y + b.height / 2;
+      if (Math.abs(ex) < 0.01 && Math.abs(ey) < 0.01) return;
+      setVectorGlyphCorrection(prev => ({ x: prev.x - ex, y: prev.y - ey }));
+      /* 字体首次进入 SVG 时，WebKit 偶尔会在下一次 layout 才换掉 fallback。
+         连续校验至多三帧只发生在新增／换字体之后，不参与任何缩放手势。 */
+      if (++passes < 3) raf = requestAnimationFrame(centerGlyph);
+    };
+    waitForFont(image.fontFamily || DEFAULT_FONT, image.bold ? 700 : 400, !!image.italic)
+      .then(() => { if (alive) raf = requestAnimationFrame(centerGlyph); });
+    return () => { alive = false; if (raf) cancelAnimationFrame(raf); };
+  }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
+      image.letterSpacing, image.strokeWidth, symbolSvgBounds]);
   const [holeAssetRevision, setHoleAssetRevision] = useState(0);
   useEffect(() => {
     if (image.shape !== 'hole' || !image.holeType || !isImageHole(image.holeType)) return;
@@ -5145,7 +5173,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   }, [image.shape, image.holeType]);
 
   useLayoutEffect(() => {
-    if (!isCanvasVector) return;
+    /* 文字與符號直接由下面的 SVG 向量層顯示。若先畫進每顆物件自己的 Canvas，
+       外層整頁 zoom 時就會對多張點陣圖各自二次取樣；不同的小數相位正是只有
+       經典拼圖會發生的文字／符號抖動。Canvas 只保留給真正的圖形路徑。 */
+    if (!isCanvasVector || image.text !== undefined) return;
     const canvas = vectorCanvasRef.current;
     if (!canvas) return;
     let alive = true;
@@ -5645,17 +5676,86 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             : undefined,
         }}
       >
-        <canvas
-          ref={vectorCanvasRef}
-          data-vector-canvas={image.id}
-          style={{
-            position: 'absolute', left: '50%', top: '50%',
-            width: `${vectorCssW}px`,
-            height: `${vectorCssH}px`,
-            transform: 'translate3d(-50%, -50%, 0)',
-            pointerEvents: 'none',
-          }}
-        />
+        {image.text !== undefined ? (() => {
+          /* 固定字級、字距與字形度量，只讓 SVG 的連續矩陣負責縮放。SVG 會在
+             當下顯示倍率直接重建向量輪廓，不像獨立 Canvas 先變點陣再被頁面
+             zoom 一次；文字和複合 Unicode 符號因此共用同一個穩定中心。 */
+          const family = image.fontFamily || DEFAULT_FONT;
+          const size = image.fontSize || 40;
+          const lines = (image.text || '').split('\n');
+          const lineH = size * 1.12;
+          const startY = -((lines.length - 1) * lineH) / 2;
+          const ink = image.sym ? measureSymbolInk(image.text || image.sym, family) : null;
+          /* 符號优先使用同一个 SVG 字形节点的真实 getBBox 中心。Canvas 的
+             actualBoundingBox 与 SVG 对组合 Unicode 的 baseline 定义不同，
+             混用时虽然不会来回抖，放大过程中仍可能慢慢偏离选中框。 */
+          const dx0 = image.sym
+            ? (symbolSvgBounds ? -(symbolSvgBounds.x + symbolSvgBounds.width / 2) : -(ink?.cx || 0) * size)
+            : 0;
+          const dy0 = image.sym
+            ? (symbolSvgBounds ? -(symbolSvgBounds.y + symbolSvgBounds.height / 2) : -(ink?.cy || 0) * size)
+            : 0;
+          const dx = dx0 + vectorGlyphCorrection.x;
+          const dy = dy0 + vectorGlyphCorrection.y;
+          const glow = image.glow
+            ? [1, 2, 3]
+                .map(k => `drop-shadow(0 0 ${(image.glow! / 20) * 14 * k * image.scale}px ${image.glowColor || '#FFFFFF'})`)
+                .join(' ')
+            : undefined;
+          return (
+            <svg
+              data-vector-text={image.id}
+              viewBox={`0 0 ${vectorCssW} ${vectorCssH}`}
+              preserveAspectRatio="none"
+              style={{
+                position: 'absolute', left: '50%', top: '50%',
+                width: `${vectorCssW}px`, height: `${vectorCssH}px`,
+                transform: 'translate3d(-50%, -50%, 0)',
+                overflow: 'visible', pointerEvents: 'none',
+              }}
+              aria-hidden
+            >
+              <g transform={`translate(${vectorCssW / 2} ${vectorCssH / 2}) rotate(${image.rotation}) scale(${image.scale})`}>
+                <text
+                  ref={vectorGlyphRef}
+                  data-vector-glyph={image.id}
+                  x={dx}
+                  y={startY + dy}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontFamily={fontStack(family)}
+                  fontSize={size}
+                  fontWeight={image.bold ? 700 : 400}
+                  fontStyle={image.italic ? 'italic' : 'normal'}
+                  letterSpacing={image.letterSpacing || 0}
+                  fill={image.color || '#FFFFFF'}
+                  stroke={image.strokeWidth ? (image.strokeColor || '#000000') : 'none'}
+                  strokeWidth={image.strokeWidth ? image.strokeWidth * 2 : 0}
+                  paintOrder="stroke fill"
+                  style={{ filter: glow, textRendering: 'geometricPrecision' }}
+                >
+                  {image.sym || lines.length === 1
+                    ? image.text
+                    : lines.map((line, i) => (
+                        <tspan key={i} x={dx} y={startY + i * lineH + dy}>{line || ' '}</tspan>
+                      ))}
+                </text>
+              </g>
+            </svg>
+          );
+        })() : (
+          <canvas
+            ref={vectorCanvasRef}
+            data-vector-canvas={image.id}
+            style={{
+              position: 'absolute', left: '50%', top: '50%',
+              width: `${vectorCssW}px`,
+              height: `${vectorCssH}px`,
+              transform: 'translate3d(-50%, -50%, 0)',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
       </div>,
       pagesContainerRef.current,
     )}
@@ -5879,6 +5979,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             ref={symbolSvgTextRef}
             x={0}
             y={0}
+            textAnchor="middle"
+            dominantBaseline="middle"
             fontFamily={fontStack(image.fontFamily)}
             fontSize={image.fontSize || 40}
             fontWeight={image.bold ? 700 : 400}
@@ -12344,24 +12446,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 另外疊在頁面上面，不然右邊那一頁會把它蓋掉半條。
                               */
                               style={{
-                                /* 一律用不透明的顏色（工作區底色再壓深 15%）。
-                                   原本一般模式走 class 的 bg-black/15 是半透明的，
-                                   相鄰兩頁各自做次像素抗鋸齒，底下透出來多少要看
-                                   那條縫落在像素格的哪，每條深淺就會不一樣；
-                                   照片疊上來時也會透出照片的顏色。
-                                   排頁面拖曳中仍然要隱形，那是原本就有的行為。 */
-                                backgroundColor: (pageDragIdx !== null || dragSettle)
-                                  ? 'transparent'
-                                  : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
-                                /* 分割線疊在所有物件之上：照片拖到跨頁的位置時
-                                   不會把這條線蓋掉，兩頁的界線永遠看得見。
-                                   佈局是 59+、一般圖片是 60+，所以取 200
-                                   （仍低於拖曳浮起的 900 與各種浮層）。
-                                   這一段只存在於「一般預覽」——匯出是另外畫在
-                                   canvas 上的、IG 預覽也是另一支元件，
-                                   兩邊都不會受這裡影響。 */
+                                /* 分隔線永遠使用同一個不透明墨色；拖頁與回彈期间也
+                                   不再临时变透明，否则那几帧看起来就像被页面盖住。 */
+                                backgroundColor: shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                                /* 它必须高于拖起的页面与自由图层。再用同色半像素阴影
+                                   覆盖 fractional zoom 在两侧产生的抗锯齿浅边，最终只
+                                   留下一条颜色一致的接缝，不会多出旁边那条淡线。 */
                                 position: 'relative',
-                                zIndex: 200,
+                                zIndex: 200000,
+                                boxShadow: `0 0 0 0.5px ${shadeHex(WORKSPACE_BG, PAGE_SEAM_INK)}`,
+                                transform: 'translateZ(0)',
                               }}
                             />
                           )}
@@ -12379,7 +12473,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             // 這裡刻意不裁切也不自成堆疊環境：佈局才能被拖出這一頁、
                             // 並和一般圖片互相穿插圖層（裁切改由整條頁面容器負責）
                             className={`relative flex-shrink-0 cursor-pointer transition-[ring-color] duration-200 ${
-                              isPageActive && !pagesMode && !pagesVisual ? 'ring-2 ring-white/20' : ''
+                              isPageActive && pages.length === 1 && !pagesMode && !pagesVisual ? 'ring-2 ring-white/20' : ''
                             } opacity-100`}
                             // 排頁面拖曳：整張頁面（含裡面的佈局）一起跟著手指走。
                             // 被拿起來的那一張微微放大＋加陰影，其他張平順讓開。
