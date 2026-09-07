@@ -1079,9 +1079,10 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
     }
     case 'lightning-wave': {
       // 稜角波浪同樣以完整週期增減；每一個週期保持固定的閃電折角比例。
-      const amp = h * 0.44;
       const count = Math.max(1, Math.round(w / Math.max(1, h * 0.9)));
       const step = w / count;
+      // 每一段的水平距離與垂直距離相同，兩條 ±45° 線相交時正好是 90°。
+      const amp = Math.min(h * 0.44, step / 4);
       let d = `M ${P(0, cy - amp)}`;
       for (let i = 0; i < count; i++) {
         const x = i * step;
@@ -1114,7 +1115,8 @@ export const shapeGlowBlurs = (w: number, h: number) =>
 export const SPECIAL_LINE_KINDS = new Set(['line', 'wave', 'lightning-wave']);
 export const SHAPE_DEFAULT_LINEW = (kind: string) => (SPECIAL_LINE_KINDS.has(kind) ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
-export const SHAPE_DEFAULT_RATIO = (kind: string) => (SPECIAL_LINE_KINDS.has(kind) ? 0.24 : 0.15);
+export const SHAPE_DEFAULT_RATIO = (kind: string) =>
+  (kind === 'wave' || kind === 'lightning-wave') ? 0.48 : (kind === 'line' ? 0.24 : 0.15);
 /** 新圖形的預設顏色。 */
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 
