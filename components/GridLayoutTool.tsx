@@ -5228,7 +5228,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             className="absolute inset-0 pointer-events-none z-30"
             viewBox={`${r3(t.b.x - t.tx)} ${r3(t.b.y - t.ty)} ${r3(t.b.s)} ${r3(t.b.s)}`}
             preserveAspectRatio="none"
-            style={{ overflow: 'visible' }}
+            style={{ overflow: 'visible', filter: 'drop-shadow(0 0.5px 1.5px rgba(0,0,0,0.48))' }}
             aria-hidden
           >
             <path
@@ -5266,13 +5266,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               left: frameRect.left, top: frameRect.top,
               width: frameRect.width, height: frameRect.height,
               overflow: 'visible',
+              filter: 'drop-shadow(0 0.5px 1.5px rgba(0,0,0,0.48))',
             }}
             aria-hidden
           >
             <rect
               x="0" y="0" width="100%" height="100%"
               fill="none" stroke="#ffffff"
-              strokeWidth={r3((image.shape === 'line' ? 0.8 : 1.6) / kNow)}
+              strokeWidth={r3((image.sym ? 0.8 : image.shape === 'line' ? 0.8 : 1.6) / kNow)}
             />
           </svg>
         )}
@@ -12252,7 +12253,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         {/* Thin solid outline on top of the image */}
                                         {isSelected && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (
                                           <div 
-                                            className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/90"
+                                            className="absolute inset-0 pointer-events-none z-30 border-[0.75px] border-solid border-white/90 shadow-[0_0_4px_rgba(0,0,0,0.3)]"
                                             style={{
                                               borderRadius: `${radius}px`,
                                               transform: 'translateZ(0)',
