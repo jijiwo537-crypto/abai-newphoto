@@ -4678,7 +4678,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.fillStyle = o.color || '#ffffff';
           ctx.shadowColor = o.glowColor || '#ffffff';
           for (const k2 of [1, 2, 3]) {
-            ctx.shadowBlur = (o.glow / 20) * 14 * k2 * tk;
+            ctx.shadowBlur = (Math.min(12, o.glow) / 20) * 14 * k2 * tk;
             ctx.fillText(o.text || '', tdx, tdy);
           }
           ctx.restore();
