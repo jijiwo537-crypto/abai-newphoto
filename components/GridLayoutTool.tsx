@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film } from 'lucide-react';
 import { Icon } from './Icon';
@@ -5135,7 +5135,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       if (!alive) return;
       /* 跟創意拼圖一樣以「畫面實體像素＋超取樣」決定解析度。只配置墨水範圍，
          因此可以在同樣記憶體內保留更高密度，同時避開 Safari 回收畫布。 */
-      const dpr = Math.max(2, geoDpr * Math.max(1, canvasScale) * 1.5);
+      /* 手勢中 Canvas 不重畫，而是由 compositor 放大同一張圖層；預留 3x
+         超取樣，連續放大到約兩倍時仍有 Retina 等級的有效解析度。 */
+      const dpr = Math.max(2, geoDpr * Math.max(1, canvasScale) * 3);
       const cssW = vectorCssW;
       const cssH = vectorCssH;
       /* 尺寸上限與面積上限要同時守住：窄長文字不能因長邊先撞上 2048 就失去
@@ -9954,7 +9956,53 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /** 整組佈局當下的角度（佈局的雙指旋轉用） */
     baseLayoutRot: number;
     cellIdx: number; baseOffsetX: number; baseOffsetY: number; baseZoom: number;
+    baseShapeX?: number; baseShapeY?: number; baseShapeZoom?: number; startInShape?: boolean;
+    /**
+     * 文字／符號／圖形在手勢期間不再改 React state，也不重設 Canvas 尺寸。
+     * 同一張高解析圖層只交給合成器做矩陣變換，放手才一次提交最終資料。
+     */
+    isVector?: boolean;
+    liveScale?: number; liveRotation?: number;
+    vectorEl?: HTMLElement | null;
+    vectorRaf?: number | null;
+    vectorOriginalTransform?: string;
+    vectorOriginalTransition?: string;
+    vectorOriginalWillChange?: string;
+    vectorOriginalBackface?: string;
   } | null>(null);
+
+  const restoreVectorGestureLayer = (g = wsGestureRef.current) => {
+    if (!g?.isVector) return;
+    if (g.vectorRaf != null) cancelAnimationFrame(g.vectorRaf);
+    const el = g.vectorEl;
+    if (!el) return;
+    el.style.transform = g.vectorOriginalTransform || '';
+    el.style.transition = g.vectorOriginalTransition || '';
+    el.style.willChange = g.vectorOriginalWillChange || '';
+    el.style.backfaceVisibility = g.vectorOriginalBackface || '';
+  };
+
+  const beginVectorGestureLayer = (id: string | null) => {
+    if (!id) return null;
+    const el = document.querySelector<HTMLElement>(`[data-vector-surface="${id}"]`);
+    if (!el) return null;
+    const saved = {
+      vectorEl: el,
+      vectorOriginalTransform: el.style.transform,
+      vectorOriginalTransition: el.style.transition,
+      vectorOriginalWillChange: el.style.willChange,
+      vectorOriginalBackface: el.style.backfaceVisibility,
+    };
+    // Safari 必須在第一個 move 以前就把圖層提升到 compositor；若在 move 裡才做，
+    // 第一、二幀會各觸發一次 rasterize，看起來正是「剛開始縮放抖一下」。
+    el.style.transition = 'none';
+    el.style.willChange = 'transform';
+    el.style.backfaceVisibility = 'hidden';
+    el.style.transformOrigin = 'center center';
+    return saved;
+  };
+
+  useEffect(() => () => restoreVectorGestureLayer(wsGestureRef.current), []);
 
   const panRef = useRef<{
     startX: number; startScroll: number;
@@ -10109,6 +10157,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const handleWorkspaceTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     stopInertia();
     panRef.current = null;
+    restoreVectorGestureLayer();
     wsGestureRef.current = null;
     if (isLongPressedRef.current || touchDragState.current) return;
 
@@ -10176,6 +10225,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const cell = kind === 'cell' && selectedIndex !== null ? images[selectedIndex] : undefined;
       if (kind === 'cell' && !cell?.url) return;
       const lt = activeLayout?.t || { x: 0, y: 0, scale: 1 };
+      const isVector = !!fImg && (!!fImg.shape || fImg.text !== undefined);
+      const vectorLayer = kind === 'floating' && twoFinger && isVector
+        ? beginVectorGestureLayer(gestureFloatingId)
+        : null;
 
       // 雙指操作時先把圖層工具列收起來，放開才依旋轉後的方向重新擺
       setPinchFloatingId(kind === 'floating' && twoFinger ? gestureFloatingId : null);
@@ -10197,6 +10250,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         baseOffsetX: cell?.offsetX ?? 0,
         baseOffsetY: cell?.offsetY ?? 0,
         baseZoom: cell?.zoom ?? 1,
+        isVector: !!vectorLayer,
+        liveScale: fImg?.scale ?? 1,
+        liveRotation: fImg?.rotation ?? 0,
+        vectorRaf: null,
+        ...vectorLayer,
         // 「形狀」那一頁開著時拖曳挪的是圖片在形狀裡的位置（見 handleWorkspaceTouchMove）
         baseShapeX: (fImg as any)?.imgShapeX ?? 0,
         baseShapeY: (fImg as any)?.imgShapeY ?? 0,
@@ -10429,6 +10487,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               : pageLines, target.x + target.width / 2);
           }
           const finalNs = ns, finalRot = rot;
+          if (isVectorObject && g.isVector && g.vectorEl) {
+            /* 手勢期間只動一個已 rasterize 的合成層。React 物件尺寸、Canvas
+               backing store、字型量測與選取框完全不參與每一幀。 */
+            g.liveScale = finalNs;
+            g.liveRotation = finalRot;
+            if (g.vectorEl && g.vectorRaf == null) {
+              g.vectorRaf = requestAnimationFrame(() => {
+                g.vectorRaf = null;
+                if (!g.vectorEl?.isConnected) return;
+                const scale = Math.max(0.0001, (g.liveScale ?? g.baseScale) / Math.max(0.0001, g.baseScale));
+                const rawDelta = (g.liveRotation ?? g.baseRotation) - g.baseRotation;
+                const delta = ((rawDelta + 180) % 360 + 360) % 360 - 180;
+                g.vectorEl.style.transform = `scale(${scale}) rotate(${delta}deg)`;
+              });
+            }
+            return;
+          }
           queueInteraction(() => {
             setFloatingImages(prev => prev.map(img =>
               img.id === g.floatingId
@@ -10549,6 +10624,28 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const handleWorkspaceTouchEnd = () => {
     flushInteractionNow();
+    const endingGesture = wsGestureRef.current;
+    if (endingGesture?.kind === 'floating' && endingGesture.mode === 'pinch' && endingGesture.isVector) {
+      if (endingGesture.vectorRaf != null) cancelAnimationFrame(endingGesture.vectorRaf);
+      const finalScale = endingGesture.liveScale ?? endingGesture.baseScale;
+      const finalRotation = endingGesture.liveRotation ?? endingGesture.baseRotation;
+      /* 一次同步提交，確保新解析度 Canvas 已在 layout effect 畫完，才移除
+         手勢矩陣；中間不會露出基準尺寸那一幀。 */
+      flushSync(() => {
+        setFloatingImages(prev => prev.map(img => img.id === endingGesture.floatingId
+          ? { ...img, scale: finalScale, rotation: finalRotation }
+          : img));
+        setSelectionDragging(false);
+        setPinchFloatingId(null);
+        setActiveGuidelines([]);
+        setActiveCollisions({ left: false, right: false, top: false, bottom: false });
+      });
+      restoreVectorGestureLayer(endingGesture);
+      wsGestureRef.current = null;
+      panMovedRef.current = false;
+      applyStripGeometry(kRef.current, false);
+      return;
+    }
     setSelectionDragging(false);
     setPinchFloatingId(null);
     // 手指全部離開了，下一次手勢才能重新決定是捲頁還是縮放
@@ -12401,6 +12498,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   const inset = gap / 2;
                                   const areaW = Math.max(1, lw - inset * 2);
                                   const areaH = Math.max(1, lh - inset * 2);
+Warning: truncated output (original token count: 9247)
+Total output lines: 500
+
                                   const leftPx = inset + rect.x * areaW;
                                   const rightPx = inset + (rect.x + rect.w) * areaW;
                                   const topPx = inset + rect.y * areaH;
@@ -12655,21 +12755,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           const photoStyle: React.CSSProperties = {
                                             position: 'absolute',
                                             left: '50%',
-                                            top: '50%',
-                                            width: `${layoutW}px`,
-                                            height: `${layoutH}px`,
-                                            maxWidth: 'none',
-                                            maxHeight: 'none',
-                                            transformOrigin: 'center center',
-                                            transform: `translate(-50%, -50%) translate(${cell.offsetX * rawW + fixX}px, ${cell.offsetY * rawH + fixY}px) rotate(${cell.rotation}deg) scale(${cssScale})`,
-                                            transition: imageTransition,
-                                            opacity: 1,
-                                            pointerEvents: 'none',
-                                          };
-                                          return hasPhotoFx(cell.fx)
-                                            ? (
-                                              <CellFxImage
-                                                url={cell.url}
+                              …247 tokens truncated…                                             url={cell.url}
                                                 fx={cell.fx!}
                                                 style={photoStyle}
                                                 lutRevision={lutRevision}
