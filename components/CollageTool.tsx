@@ -420,7 +420,7 @@ export const IN_KINDS: { id: string; name: string }[] = [
   { id: 'spring', name: '流星' },
 ];
 const LINE_IN_KINDS = [...IN_KINDS.filter(k => k.id !== 'spring'), { id: 'draw', name: '畫筆' }];
-const SYMBOL_IN_KINDS = IN_KINDS.map(k => k.id === 'spring' ? { id: 'bubble', name: '泡泡' } : k);
+const SYMBOL_IN_KINDS = IN_KINDS.map(k => k.id === 'fade' ? { id: 'bubble', name: '泡泡' } : k.id === 'spring' ? { id: 'fade', name: '淡入' } : k);
 
 /* 發光用的色票：第一顆是純白，其餘 14 顆是把預設色 #9BD4C3 只轉色相
    （飽和度與亮度完全不動）之後，照色相由小到大排出來的一圈漸層。 */
@@ -7709,7 +7709,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 };
                 // 換動畫種類 → 從頭播一次，不用自己等一圈
                 const pickKind = (d: Partial<MoCfg>) => {
-                  if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 80, speed: 1.2 });
+                  if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
+                  else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 80, speed: 1.2 });
                   else if (d.idle && isSpecialLineTarget) setCur({ ...d, amp: 20 });
                   else setCur(d);
                   replayMotion();
@@ -7843,9 +7844,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           <CompactSlider label="起始" value={Number(cur.delay.toFixed(1))} min={0} max={3} step={0.1} decimals={1} fixedDecimals
                             onCommit={replayMotion}
                             onChange={(v: number) => setCur({ delay: v })} />
-                          <CompactSlider label="速度" value={speedFromDur(cur.dur)} min={0} max={100} step={1}
+                          <CompactSlider label="速度"
+                            value={cur.in === 'bubble' ? Math.round((speedFromDur(cur.dur) - 50) * 2) : speedFromDur(cur.dur)}
+                            min={0} max={100} step={1}
                             onCommit={replayMotion}
-                            onChange={(v: number) => setCur({ dur: durFromSpeed(v) })} />
+                            onChange={(v: number) => setCur({ dur: durFromSpeed(cur.in === 'bubble' ? 50 + v / 2 : v) })} />
                         </div>
 
                         {label('常駐動畫')}
