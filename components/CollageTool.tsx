@@ -955,6 +955,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const objectsRef = useRef<any[]>([]);
   objectsRef.current = objects;
   const [selectedObj, setSelectedObj] = useState<string | null>(null);
+  /* 動畫目標提示：切換目標時只短暫畫虛線框，不改動正式選取狀態。 */
+  const motionTargetFlashRef = useRef<{ id: string; started: number; duration: number } | null>(null);
+  const [motionTargetFlashSeq, setMotionTargetFlashSeq] = useState(0);
   const selectedObjRef = useRef<string | null>(null);
   selectedObjRef.current = selectedObj;
   const objDragRef = useRef<any>(null);
@@ -4711,19 +4714,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         (ctx as any).letterSpacing = '0px';
       }
       ctx.globalAlpha = 1;
+      const targetFlash = motionTargetFlashRef.current;
+      const flashProgress = targetFlash && targetFlash.id === o.id
+        ? (performance.now() - targetFlash.started) / targetFlash.duration : 2;
+      const flashingTarget = flashProgress >= 0 && flashProgress < 1;
       if (isMain && !hideChromeRef.current && !objDragging && !objPinching && !objStretching
-          && selectedObj === o.id && !tuningEdge) {
+          && (selectedObj === o.id || flashingTarget) && !tuningEdge) {
         // 所有选中框统一为实线；虚线只保留给内容本身的描边样式。
         ctx.strokeStyle = '#ffffff';
-        // 符號的外框刻意比圖片／圖形再輕一階，避免細小符號被白框搶走焦點。
+        if (flashingTarget) ctx.globalAlpha = Math.sin(Math.PI * flashProgress) * 0.92;
+        // 符號的外框刻意比圖片／圖形再輕一階，避免細小符號被白框搶走焦點.
         ctx.lineWidth = (o.type === 'shape' ? (o.kind === 'line' ? 0.32 : 0.55) : o.sym ? 0.5 : 0.75) * uiPx;
         // 專業修圖軟體常用的低擴散暗影：只負責把細白線從亮色內容中分離，不能像發光。
         ctx.shadowColor = 'rgba(0, 0, 0, 0.28)';
         ctx.shadowBlur = 3 * uiPx;
         ctx.shadowOffsetX = 0;
         ctx.shadowOffsetY = 0;
-        ctx.setLineDash([]);
-        if (shapeSel === o.id && isImgShaped(o.imgShape)) {
+        ctx.setLineDash(flashingTarget ? [5 * uiPx, 4 * uiPx] : []);
+        if (!flashingTarget && shapeSel === o.id && isImgShaped(o.imgShape)) {
           /* 第二段：選中的是「形狀」—— 方框收起來，改成沿著形狀本身描一圈。
              往外讓 2 個螢幕像素，線才不會壓在圖案的邊上。 */
           const gp = 2 * uiPx;
@@ -5602,6 +5610,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      播放迴圈會被拆掉重建幾十次。走 ref 就不會，rAF 從頭到尾只有一個。 */
   const renderToCanvasRef = useRef(renderToCanvas);
   renderToCanvasRef.current = renderToCanvas;
+  useEffect(() => {
+    if (!motionTargetFlashSeq || !imageState) return;
+    let raf = 0;
+    const tick = () => {
+      const flash = motionTargetFlashRef.current;
+      if (!flash) return;
+      if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, motionScaleRef.current);
+      if (performance.now() - flash.started < flash.duration) raf = requestAnimationFrame(tick);
+      else {
+        motionTargetFlashRef.current = null;
+        if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, motionScaleRef.current);
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [motionTargetFlashSeq, imageState]);
   useEffect(() => {
     if (!motionOn || !motionPlaying || !imageState || videoProg !== null) return;
     let raf = 0;
@@ -7779,6 +7803,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const isSymbolTarget = !!selObj?.sym;
                 const isSpecialLineTarget = !!selObj && selObj.type === 'shape' && SPECIAL_LINE_KINDS.has(selObj.kind);
                 const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
+                const chooseMotionTarget = (id: string) => {
+                  setMoTarget(id);
+                  if (objects.some(o => o.id === id)) {
+                    motionTargetFlashRef.current = { id, started: performance.now(), duration: 850 };
+                    setMotionTargetFlashSeq(n => n + 1);
+                  }
+                };
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
                     {/* 要調哪一個元素（播放列不在這裡 —— 它跟分頁列一樣在捲動區外面） */}
@@ -7794,7 +7825,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           shapeIds.length > 1 ? `圖形${shapeIds.indexOf(id) + 1}` : '圖形';
                         return objects.map((o, i) => (
                         <button key={o.id}
-                          onClick={() => setMoTarget(o.id)}
+                          onClick={() => chooseMotionTarget(o.id)}
                           className={chip(moTarget === o.id)}>
                           {/* 符號直接標「符號」：它的內容常常是組合附加符號或冷門字，
                               切前六個字很容易剛好切在一半、或整顆在這裡根本畫不出來 ——
