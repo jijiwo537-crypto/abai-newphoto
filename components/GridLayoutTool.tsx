@@ -1038,18 +1038,33 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
       return poly(pts);
     }
     case 'cloud-oval': {
-      // 十二個柔和圓瓣圍成封閉橢圓，沒有一般雲朵的平底。
-      const n = 8;
-      const valley = (t: number) => [cx + Math.cos(t) * a * 0.70, cy + Math.sin(t) * b * 0.66] as [number, number];
-      const peak = (t: number) => [cx + Math.cos(t) * a, cy + Math.sin(t) * b] as [number, number];
-      let d = '';
+      // 沿內縮橢圓按實際弧長等距取八個節點，每一瓣使用相同凸出距離；
+      // 因此上下左右的圓瓣都對稱且同尺寸，不會因橢圓參數角度而忽大忽小。
+      const n = 8, samples = 720;
+      const bump = Math.max(1, Math.min(a, b) * 0.22);
+      const ra = Math.max(1, a - bump), rb = Math.max(1, b - bump);
+      const dense: [number, number][] = [];
+      const acc: number[] = [0];
+      for (let i = 0; i <= samples; i++) {
+        const t = -Math.PI / 2 + (i / samples) * Math.PI * 2;
+        dense.push([cx + Math.cos(t) * ra, cy + Math.sin(t) * rb]);
+        if (i > 0) acc.push(acc[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]));
+      }
+      const total = acc[acc.length - 1];
+      const pts: [number, number][] = [];
+      for (let k = 0; k < n; k++) {
+        const goal = total * k / n;
+        let j = 1;
+        while (j < acc.length && acc[j] < goal) j++;
+        pts.push(dense[Math.min(samples - 1, j)]);
+      }
+      let d = `M ${P(pts[0][0], pts[0][1])}`;
       for (let i = 0; i < n; i++) {
-        const t = -Math.PI / 2 + (i / n) * Math.PI * 2;
-        const v0 = valley(t - Math.PI / n);
-        const pk = peak(t);
-        const v1 = valley(t + Math.PI / n);
-        d += i === 0 ? `M ${P(v0[0], v0[1])} Q ${P(pk[0], pk[1])} ${P(v1[0], v1[1])}`
-          : ` Q ${P(pk[0], pk[1])} ${P(v1[0], v1[1])}`;
+        const p0 = pts[i], p1 = pts[(i + 1) % n];
+        const mx = (p0[0] + p1[0]) / 2, my = (p0[1] + p1[1]) / 2;
+        const nx0 = (mx - cx) / Math.max(1, ra * ra), ny0 = (my - cy) / Math.max(1, rb * rb);
+        const nl = Math.hypot(nx0, ny0) || 1;
+        d += ` Q ${P(mx + nx0 / nl * bump, my + ny0 / nl * bump)} ${P(p1[0], p1[1])}`;
       }
       return d + ' Z';
     }
@@ -1148,10 +1163,11 @@ export const shapeGlowBlurs = (w: number, h: number) =>
 
 /** 新增圖形時的預設值。線條比較細長，所以粗細與大小另外給。 */
 export const SPECIAL_LINE_KINDS = new Set(['line', 'wave', 'lightning-wave']);
-export const SHAPE_DEFAULT_LINEW = (kind: string) => (SPECIAL_LINE_KINDS.has(kind) ? 4 : 6);
+export const SHAPE_DEFAULT_LINEW = (kind: string) =>
+  (kind === 'wave' || kind === 'lightning-wave') ? 2.5 : (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
 export const SHAPE_DEFAULT_RATIO = (kind: string) =>
-  (kind === 'wave' || kind === 'lightning-wave') ? 0.48 : (kind === 'line' ? 0.24 : 0.15);
+  (kind === 'wave' || kind === 'lightning-wave') ? 0.96 : (kind === 'line' ? 0.24 : 0.15);
 /** 新圖形的預設顏色。 */
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 
@@ -1263,7 +1279,7 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
 
 /** 個別圖案的加大倍率。星形是實心面積最少的一個，稍微放大一點才看得清楚。
     1.1 ＝ 長邊從 20px 變成 22px。 */
-const GLYPH_ZOOM: Record<string, number> = { star: 1.1 };
+const GLYPH_ZOOM: Record<string, number> = { star: 1.1, 'cloud-oval': 1.18 };
 
 /**
  * 「新增圖形」按鈕上的小圖。
@@ -2627,10 +2643,8 @@ return (
                     ? !!cur && cur.toUpperCase() !== '#FFFFFF'
                     : (cur || 0) !== dflt;
                   const glyph = id === 'imgStrokeGap' ? (
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <path d="M8 5H4v14h4M16 5h4v14h-4" />
-                      <path d="M9 12H5m0 0 2-2m-2 2 2 2M15 12h4m0 0-2-2m2 2-2 2" />
+                    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
+                      <path fill="currentColor" d="M3 12 8 7v4h8V7l5 5-5 5v-4H8v4Z" />
                     </svg>
                   ) : icon;
                   return toolBtn(id, label, glyph, shapeTool === id, adjusted, () => setShapeTool(id));

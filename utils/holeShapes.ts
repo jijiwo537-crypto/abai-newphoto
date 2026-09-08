@@ -631,8 +631,8 @@ export const HOLE_ITEM_CROSS_O: HoleShapeItem = { id: 'hole-cross-star-o', kind:
 /** 第六個圖案到倒數第二個，照原本的順序接在實心那一排後面（不做空心版） */
 export const HOLE_ITEMS_EXTRA: HoleShapeItem[] =
   /* random-num（那顆「(9)」）拿掉了 —— 圖形不需要一顆會變的編號 */
-  ['flower', 'snow', 'love', 'love3', 'pic333', 'vortex',
-   'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'burst', 'zzz']
+  ['flower', 'snow', 'burst', 'love', 'love3', 'pic333', 'vortex',
+   'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'zzz']
     .map(h => ({ id: `hole-${h}`, kind: 'hole' as const, hole: h, filled: true }));
 
 /**
