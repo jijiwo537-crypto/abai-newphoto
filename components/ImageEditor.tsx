@@ -1941,10 +1941,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const timer = window.setInterval(() => {
       const first = draftSrcSavedRef.current !== imageSrc;
       draftSrcSavedRef.current = imageSrc;
-      saveToolDraft('editor', first ? imageSrc : null, latestEditorDraftRef.current);
+      const latest = latestEditorDraftRef.current;
+      const hasEditedContent =
+        Boolean(initialState) ||
+        historyIndex > 0 ||
+        JSON.stringify(latest.params) !== JSON.stringify(DEFAULT_PARAMS) ||
+        !isGeoIdentity(latest.geo) ||
+        latest.selectedLutIdx !== 0 ||
+        activeSrc !== imageSrc;
+      /* 未編輯時仍可預存原圖，但不能建立首頁的「繼續編輯」提示。 */
+      saveToolDraft('editor', first ? imageSrc : null, latest, hasEditedContent);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [imageSrc]);
+  }, [imageSrc, activeSrc, historyIndex, initialState]);
   const applyGeoRef = useRef<(g: GeoParams) => void>(() => {});
   const activeDragRef = useRef<{
     type: 'center' | 'start' | 'end' | 'rotate' | 'create';
