@@ -1038,33 +1038,22 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
       return poly(pts);
     }
     case 'cloud-oval': {
-      // 沿內縮橢圓按實際弧長等距取八個節點，每一瓣使用相同凸出距離；
-      // 因此上下左右的圓瓣都對稱且同尺寸，不會因橢圓參數角度而忽大忽小。
-      const n = 8, samples = 720;
-      const bump = Math.max(1, Math.min(a, b) * 0.22);
-      const ra = Math.max(1, a - bump), rb = Math.max(1, b - bump);
-      const dense: [number, number][] = [];
-      const acc: number[] = [0];
-      for (let i = 0; i <= samples; i++) {
-        const t = -Math.PI / 2 + (i / samples) * Math.PI * 2;
-        dense.push([cx + Math.cos(t) * ra, cy + Math.sin(t) * rb]);
-        if (i > 0) acc.push(acc[i - 1] + Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]));
-      }
-      const total = acc[acc.length - 1];
+      // 八瓣橢圓雲：以完全對稱的週期函數建立八個相同圓頂，
+      // 谷底刻意加深，讓每一個凸起在小尺寸按鈕上也清楚可辨。
+      const n = 96;
       const pts: [number, number][] = [];
-      for (let k = 0; k < n; k++) {
-        const goal = total * k / n;
-        let j = 1;
-        while (j < acc.length && acc[j] < goal) j++;
-        pts.push(dense[Math.min(samples - 1, j)]);
-      }
-      let d = `M ${P(pts[0][0], pts[0][1])}`;
       for (let i = 0; i < n; i++) {
-        const p0 = pts[i], p1 = pts[(i + 1) % n];
-        const mx = (p0[0] + p1[0]) / 2, my = (p0[1] + p1[1]) / 2;
-        const nx0 = (mx - cx) / Math.max(1, ra * ra), ny0 = (my - cy) / Math.max(1, rb * rb);
-        const nl = Math.hypot(nx0, ny0) || 1;
-        d += ` Q ${P(mx + nx0 / nl * bump, my + ny0 / nl * bump)} ${P(p1[0], p1[1])}`;
+        const t = -Math.PI / 2 + (i / n) * Math.PI * 2;
+        const radius = 0.76 + 0.24 * Math.cos(8 * t);
+        pts.push([cx + Math.cos(t) * a * radius, cy + Math.sin(t) * b * radius]);
+      }
+      const mid = (p0: [number, number], p1: [number, number]) =>
+        [(p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2] as [number, number];
+      const first = mid(pts[pts.length - 1], pts[0]);
+      let d = `M ${P(first[0], first[1])}`;
+      for (let i = 0; i < n; i++) {
+        const next = mid(pts[i], pts[(i + 1) % n]);
+        d += ` Q ${P(pts[i][0], pts[i][1])} ${P(next[0], next[1])}`;
       }
       return d + ' Z';
     }
@@ -1243,8 +1232,8 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'line-v', kind: 'line', filled: false, rot: 90, ratio: 0.08 },
   { id: 'line-d1', kind: 'line', filled: false, rot: -45, ratio: 0.08 },
   { id: 'line-d2', kind: 'line', filled: false, rot: 45, ratio: 0.08 },
-  { id: 'line-wave', kind: 'wave', filled: false, ratio: 0.34 },
-  { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, ratio: 0.34 },
+  { id: 'line-wave', kind: 'wave', filled: false, ratio: 0.085 },
+  { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, ratio: 0.085 },
 ];
 
 /**
@@ -1279,7 +1268,7 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
 
 /** 個別圖案的加大倍率。星形是實心面積最少的一個，稍微放大一點才看得清楚。
     1.1 ＝ 長邊從 20px 變成 22px。 */
-const GLYPH_ZOOM: Record<string, number> = { star: 1.1, 'cloud-oval': 1.18 };
+const GLYPH_ZOOM: Record<string, number> = { star: 1.1, 'cloud-oval': 1.3 };
 
 /**
  * 「新增圖形」按鈕上的小圖。
@@ -2643,8 +2632,9 @@ return (
                     ? !!cur && cur.toUpperCase() !== '#FFFFFF'
                     : (cur || 0) !== dflt;
                   const glyph = id === 'imgStrokeGap' ? (
-                    <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden>
-                      <path fill="currentColor" d="M3 12 8 7v4h8V7l5 5-5 5v-4H8v4Z" />
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"
+                        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   ) : icon;
                   return toolBtn(id, label, glyph, shapeTool === id, adjusted, () => setShapeTool(id));
@@ -7681,7 +7671,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       holeType: (it as HoleShapeItem).hole,
       shapeFilled: it.filled,
       shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
-      shapeLineBase: Math.max(w, h),
+      shapeLineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')
+        ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
       shapeTextureBaseW: w,
       shapeTextureBaseH: h,
       shapeDash: 0,
