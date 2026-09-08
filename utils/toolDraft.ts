@@ -132,7 +132,7 @@ export function draftTool(): ToolKind | null {
 }
 
 let saving = false;
-let queued: { tool: ToolKind; src: string | null; state: any } | null = null;
+let queued: { tool: ToolKind; src: string | null; state: any; resumable: boolean } | null = null;
 
 /* 創意拼圖的 state 內還可能有多張浮動圖片。它們同樣是 blob: 網址，
    不能原封不動塞進 meta，否則重開 App 後物件仍可選、內容卻完全透明。 */
@@ -217,7 +217,7 @@ async function internalizeState(value: any, urls = new Map<string, string>()): P
  * src 給 null 就沿用上一次存的那張照片，只更新參數 —— 照片沒換的時候不用重存一次。
  * 反過來 state 給 null 也一樣是「沿用上一次的參數」，只換照片。
  */
-export async function saveDraft(tool: ToolKind, src: string | null, state: any): Promise<void> {
+export async function saveDraft(tool: ToolKind, src: string | null, state: any, resumable = true): Promise<void> {
   if (saving) {
     /* 佇列只有一格，以前是直接覆蓋 —— 那會把「還沒寫進去的那張照片」蓋掉。
        實際發生過的順序：選完照片的那一次存檔被排進佇列，緊接著的參數自動存檔
@@ -228,6 +228,7 @@ export async function saveDraft(tool: ToolKind, src: string | null, state: any):
       tool,
       src: src ?? queued?.src ?? null,
       state: state ?? queued?.state ?? null,
+      resumable: resumable || queued?.resumable || false,
     };
     return;
   }
@@ -271,14 +272,20 @@ export async function saveDraft(tool: ToolKind, src: string | null, state: any):
     const metaWritten = await tx<IDBValidKey>('readwrite', s => s.put(meta, META_KEY));
     if (metaWritten == null) return;
     try {
-      localStorage.setItem(FLAG_KEY, String(meta.savedAt));
-      localStorage.setItem(FLAG_KEY + ':tool', tool);
+      if (resumable) {
+        localStorage.setItem(FLAG_KEY, String(meta.savedAt));
+        localStorage.setItem(FLAG_KEY + ':tool', tool);
+      } else {
+        /* 只預存素材，不代表使用者已開始編輯；首頁不能因此跳出「繼續編輯」。 */
+        localStorage.removeItem(FLAG_KEY);
+        localStorage.removeItem(FLAG_KEY + ':tool');
+      }
     } catch { /* 私密瀏覽會擋 */ }
   } finally {
     saving = false;
     const next = queued;
     queued = null;
-    if (next) saveDraft(next.tool, next.src, next.state);
+    if (next) saveDraft(next.tool, next.src, next.state, next.resumable);
   }
 }
 
