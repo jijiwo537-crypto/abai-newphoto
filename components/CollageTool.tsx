@@ -1996,6 +1996,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => {
     if (!imageState) return;
     const persistLatest = () => {
+      /* 初次只匯入底圖不算編輯。只有歷史已前進、尚有未入歷史的變更，
+         或本來就是恢復中的已編輯專案，才建立下次啟動的恢復提示。 */
+      const hasEditedContent =
+        Boolean(initialState) || histRef.current.index > 0 || dirtyRef.current;
+      if (!hasEditedContent) return;
       const sourceEnv = envSrcRef.current || {};
       /* 选中状态属于临时 UI，不是作品内容；草稿永远只保存编辑结果。 */
       const { selectedObj: _selectedObj, selectedTarget: _selectedTarget, ...env } = sourceEnv;
@@ -2010,7 +2015,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        在同一轮 effect 中覆盖刚载入的草稿。 */
     const timer = window.setInterval(persistLatest, 1000);
     return () => window.clearInterval(timer);
-  }, [imageState]);
+  }, [imageState, initialState]);
 
   useEffect(() => {
     if (initialFile) {
@@ -2066,7 +2071,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       try { URL.revokeObjectURL(photoUrlRef.current); } catch { /* 收過了就算了 */ }
     }
     photoUrlRef.current = url;
-    saveToolDraft('collage', url, null);
+    saveToolDraft('collage', url, null, false);
     /* 照片跟影片只差在「怎麼把來源生出來」，生出來之後的擺放完全一樣 ——
        所以擺放這一段抽出來共用，兩條路走的是同一份程式碼。
        w0 / h0 一定要傳進來：影片的原始尺寸在 videoWidth / videoHeight，
