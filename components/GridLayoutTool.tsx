@@ -1268,7 +1268,7 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
 
 /** 個別圖案的加大倍率。星形是實心面積最少的一個，稍微放大一點才看得清楚。
     1.1 ＝ 長邊從 20px 變成 22px。 */
-const GLYPH_ZOOM: Record<string, number> = { star: 1.1, 'cloud-oval': 1.3 };
+const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.14, 'cloud-oval': 1.3 };
 
 /**
  * 「新增圖形」按鈕上的小圖。
@@ -1356,7 +1356,7 @@ export const VortexIcon = ({ size = 20, strokeWidth = 2.2 }) => (
    圖示少很多、看起來小一號 —— 所以實心版單獨放大到 28px。 */
 export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled }) => (
   <>
-    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 28 : 18} filled={filled} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
+    {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={filled ? 28 : 22} filled={filled} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
                         /* 去背的圖：拿它當遮罩、底色用 currentColor，
                            顏色就跟旁邊那些圖示走同一條規則 ——
                            沒選中時是暗的（#555），選中才變白。
@@ -14209,9 +14209,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         'heart-f', 9);
                       /* 邊框那排的順序跟實心那排對齊：第 6 顆窄菱形、第 9 顆愛心、
                          第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
-                      const lineList = moveTo(moveTo(moveTo(moveTo(
+                      const lineList = moveTo(moveTo(moveTo(moveTo(moveTo(
                         [...ADD_SHAPE_ITEMS.filter(i => !i.filled && !SPECIAL_LINE_KINDS.has(i.kind)), HOLE_ITEM_CROSS_O],
-                        'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 11), 'cloud-oval-o', 13);
+                        'diamond-n-o', 6), 'heart-o', 9), 'star8-oval-o', 13), 'hole-cross-star-o', 14), 'cloud-oval-o', 15);
                       return ([
                         ['實心', solidList],
                         ['邊框', lineList],
