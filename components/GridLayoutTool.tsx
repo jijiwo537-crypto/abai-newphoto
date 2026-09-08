@@ -1268,7 +1268,7 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
 
 /** 個別圖案的加大倍率。星形是實心面積最少的一個，稍微放大一點才看得清楚。
     1.1 ＝ 長邊從 20px 變成 22px。 */
-const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.14, 'cloud-oval': 1.3 };
+const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval': 1.3 };
 
 /**
  * 「新增圖形」按鈕上的小圖。
@@ -14211,7 +14211,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                          第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
                       const lineList = moveTo(moveTo(moveTo(moveTo(moveTo(
                         [...ADD_SHAPE_ITEMS.filter(i => !i.filled && !SPECIAL_LINE_KINDS.has(i.kind)), HOLE_ITEM_CROSS_O],
-                        'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 13), 'star8-oval-o', 14), 'cloud-oval-o', 15);
+                        'diamond-n-o', 6), 'heart-o', 9), 'star8-oval-o', 13), 'hole-cross-star-o', 14), 'cloud-oval-o', 15);
                       return ([
                         ['實心', solidList],
                         ['邊框', lineList],

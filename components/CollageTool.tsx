@@ -371,7 +371,7 @@ const hashId = (id: string) => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -417,7 +417,7 @@ export const IN_KINDS: { id: string; name: string }[] = [
   { id: 'flip', name: '翻轉' },
   // 這兩個是特別做的：一個會落地彈兩下，一個是從側邊甩進來再晃回正
   { id: 'bounce', name: '彈跳' },
-  { id: 'spring', name: '流星' },
+  { id: 'draw', name: '畫筆' },
 ];
 
 /* 發光用的色票：第一顆是純白，其餘 14 顆是把預設色 #9BD4C3 只轉色相
@@ -625,29 +625,10 @@ const inFrame = (kind: string, p: number): MoFrame => {
     // 翻轉用「橫向壓扁」模擬（見下面的 inFlipX），不需要真的 3D
     case 'flip':   return { k: 1, dx: 0, dy: 0, rot: 0, a: fade };
     case 'bounce': return { k: 1, dx: 0, dy: -(1 - easeOutBounce(p)) * 1.1, rot: 0, a: Math.min(1, p * 4) };
-    /* 流星：從左上角外面斜著衝進來，帶著一條被拉長的尾巴，
-       到定位時尾巴收掉、身體微微一頓。
-         ① 0～62%「衝進來」：沿 45° 斜線飛進來（距離 1.15 個身位），
-            用 easeOutCubic 所以是「快進、慢收」；飛行途中整個被拉長
-            （fx 撐開、k 壓扁，見 inFlipX），就是速度線的感覺。
-         ② 62～100%「煞住」：拉長收回原形，帶一次很小的過衝（+6%），
-            像真的被慣性帶了一下。
-       轉角度是跟著飛行方向的：一開始 -28°，到定位轉回 0。 */
-    case 'spring': {
-      const q = easeOutCubic(Math.min(1, p / 0.62));        // 0→1：飛進來
-      const r = Math.max(0, (p - 0.62) / 0.38);             // 煞住那一段
-      const over = r > 0 ? Math.sin(r * Math.PI) * 0.06 : 0;
-      const d = (1 - q) * 1.15;                             // 還差幾個身位
-      const stretch = (1 - q) * 0.55;                       // 飛行中被拉長的量
-      return {
-        // 橫向撐開多少，縱向就壓扁多少（體積守恆）＝ 流線型
-        k: (1 + over) / (1 + stretch),
-        dx: -d, dy: -d * 0.72,                              // 從左上角外面來
-        rot: -(1 - q) * 28,
-        a: Math.min(1, p * 4),
-        burst: 0,
-      };
-    }
+    /* 畫筆：線條由起點往終點描出。畫布端會讀 draw 值做幾何裁切；
+       其他物件則保留柔和淡入，避免把一般圖案硬切一半。 */
+    case 'draw':
+      return { k: 1, dx: 0, dy: 0, rot: 0, a: fade, draw: e };
     case 'none':   return FLAT;
     default:       return { k: easeOutBack(p), dx: 0, dy: 0, rot: 0, a: fade };   // pop
   }
@@ -656,14 +637,6 @@ const inFrame = (kind: string, p: number): MoFrame => {
 const inFlipX = (kind: string, p: number) => {
   if (p <= 0 || p >= 1) return 1;
   if (kind === 'flip') return Math.max(0.02, Math.abs(Math.cos((1 - easeOutCubic(p)) * Math.PI)));
-  if (kind === 'spring') {
-    /* 飛行途中把身體拉長：橫向撐開、縱向就被壓扁（見上面的 k），
-       兩者相乘保持體積，看起來就是一顆被速度拉成流線型的東西。
-       數字跟上面那支必須是同一組。 */
-    const q = easeOutCubic(Math.min(1, p / 0.62));
-    const stretch = (1 - q) * 0.55;
-    return 1 + stretch;
-  }
   return 1;
 };
 
@@ -1674,7 +1647,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [maskColor, setMaskColor] = useState('#D2E8E1'); 
   const [patternType, setPatternType] = useState('none'); 
   const [dotColor, setDotColor] = useState('#595959'); 
-  const [dotSize, setDotSize] = useState(20); 
+  const [dotSize, setDotSize] = useState(15); 
   const [dotGap, setDotGap] = useState(20);
   /* 條紋：兩個顏色、粗細、方向。跟點點／星星／愛心共用同一個「紋理」選單，
      但參數不一樣（沒有間距，改成粗細＋方向），所以各自存。 */
@@ -4557,6 +4530,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.save();
         // 路徑是左上角起算的，所以先把原點從框心搬到左上角
         ctx.translate(-bw / 2, -bh / 2);
+        /* 畫筆進場只套用在線條：沿著線條自身的長軸逐段揭露。
+           物件旋轉後裁切也跟著轉，因此直向線會由上往下畫出。 */
+        if (o.mo?.in === 'draw' && SPECIAL_LINE_KINDS.has(o.kind) && f?.draw !== undefined) {
+          ctx.beginPath();
+          ctx.rect(0, 0, bw * Math.max(0, Math.min(1, f.draw)), bh);
+          ctx.clip();
+        }
         ctx.lineJoin = o.kind === 'line' ? 'round' : 'miter';
         // 一律平頭：線條的兩端要切齊，不要圓角
         ctx.lineCap = 'butt';
@@ -6535,7 +6515,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                        「按下去」的回饋都被拖慢，看起來也像卡了一下 */
                     className="pl-3 pr-4 h-9 rounded-full bg-[#141414] border border-white/15 text-white text-[11px] font-bold tracking-widest whitespace-nowrap shadow-[0_6px_20px_rgba(0,0,0,0.6)] active:scale-95 hover:bg-[#1d1d1d] transition-colors duration-200 flex items-center gap-2"
                   >
-                    {icon}儲存{name}
+                    <span className="w-[13px] h-[13px] shrink-0 flex items-center justify-center transform-gpu">
+                      {icon}
+                    </span>
+                    儲存{name}
                   </button>
                 ))}
               </div>
@@ -7421,7 +7404,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                              第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
                           const lineList = moveTo(moveTo(moveTo(moveTo(moveTo(
                             [...ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && !SPECIAL_LINE_KINDS.has(i2.kind)), HOLE_ITEM_CROSS_O],
-                            'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 13), 'star8-oval-o', 14), 'cloud-oval-o', 15);
+                            'diamond-n-o', 6), 'heart-o', 9), 'star8-oval-o', 13), 'hole-cross-star-o', 14), 'cloud-oval-o', 15);
                           return ([
                             ['實心', solidList],
                             ['邊框', lineList],
