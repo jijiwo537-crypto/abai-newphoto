@@ -982,12 +982,14 @@ const textureGlyphD = (kind: 'star' | 'heart', cx: number, cy: number, r: number
     + `C ${P(cx + s * 0.55, cy - s * 1.15)} ${P(cx + s * 1.5, cy - s * 0.2)} ${P(cx, cy + s * 0.85)} Z`;
 };
 
-export const shapePathD = (kind: string, w: number, h: number, repeatScale = 1): string => {
+export const shapePathD = (
+  kind: string, w: number, h: number,
+  gridBaseW = w, gridBaseH = h,
+): string => {
   const a = w / 2, b = h / 2, cx = a, cy = b;
-  /* 網格的單位不跟物件縮放：預覽／匯出把目前縮放倍率傳進來，
-     週期與點徑先除掉倍率，外層放大後仍維持相同的視覺大小。 */
-  const gridUnit = 8 / Math.max(0.01, repeatScale);
-  const gridLine = 1.25 / Math.max(0.01, repeatScale);
+  /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
+     因此縮放只會把整張網格等比放大；只有變形才會增加重複單位。 */
+  const gbw = Math.max(1, gridBaseW), gbh = Math.max(1, gridBaseH);
   const P = (x: number, y: number) => `${r3(x)} ${r3(y)}`;
   const poly = (pts: [number, number][]) =>
     `M ${P(pts[0][0], pts[0][1])} ${pts.slice(1).map(p => `L ${P(p[0], p[1])}`).join(' ')} Z`;
@@ -1102,38 +1104,58 @@ export const shapePathD = (kind: string, w: number, h: number, repeatScale = 1):
       return `M ${E(0)} ${A(115, 0)} L ${P(w * 0.04, h)} L ${E(137)} ${A(360, 1)} Z`;
     }
     case 'grid-h': {
+      const stepY = gbh / 6; // 原密度的一半：初始六條
       let d = '';
-      for (let y = gridUnit / 2; y < h; y += gridUnit) d += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
+      for (let y = stepY / 2; y < h; y += stepY) d += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
       return d;
     }
-    case 'grid-cross':
-    case 'grid-frame': {
+    case 'grid-cross': {
+      const stepX = gbw / 6, stepY = gbh / 6;
       let d = '';
-      for (let y = gridUnit / 2; y < h; y += gridUnit) d += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
-      for (let x = gridUnit / 2; x < w; x += gridUnit) d += `M ${r3(x)} 0 L ${r3(x)} ${r3(h)} `;
-      if (kind === 'grid-frame') d += `M 0 0 H ${r3(w)} V ${r3(h)} H 0 Z`;
+      for (let y = stepY / 2; y < h; y += stepY) d += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
+      for (let x = stepX / 2; x < w; x += stepX) d += `M ${r3(x)} 0 L ${r3(x)} ${r3(h)} `;
+      return d;
+    }
+    case 'grid-frame': {
+      /* 初始 3×3（原密度的四分之一）。每次以完整格數重新等分，
+         所以四邊永遠剛好封口，不會在右側或底部留下比較窄的小格。 */
+      const cols = Math.max(1, Math.round((w / gbw) * 3));
+      const rows = Math.max(1, Math.round((h / gbh) * 3));
+      let d = `M 0 0 H ${r3(w)} V ${r3(h)} H 0 Z `;
+      for (let col = 1; col < cols; col++) {
+        const x = w * col / cols; d += `M ${r3(x)} 0 L ${r3(x)} ${r3(h)} `;
+      }
+      for (let row = 1; row < rows; row++) {
+        const y = h * row / rows; d += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
+      }
       return d;
     }
     case 'grid-dots':
     case 'grid-dots-fade': {
+      /* 初始固定 8×8。縮放時 w 與 base 同比例變化，數量維持 8×8；
+         單邊變形只改 w/h，才會自然增加或減少行列。 */
+      const stepX = gbw / 8, stepY = gbh / 8;
+      const cols = Math.max(1, Math.ceil(w / stepX));
+      const rows = Math.max(1, Math.ceil(h / stepY));
       let d = '';
-      const cols = Math.max(1, Math.floor(w / gridUnit));
-      const rows = Math.max(1, Math.floor(h / gridUnit));
       for (let row = 0; row < rows; row++) {
-        const y = (row + 0.5) * h / rows;
+        const y = Math.min(h - stepY / 2, (row + 0.5) * stepY);
+        if (y < 0 || y > h) continue;
         for (let col = 0; col < cols; col++) {
-          const x = (col + 0.5) * w / cols;
-          const fade = kind === 'grid-dots-fade' ? (1 - 0.68 * (col / Math.max(1, cols - 1))) : 1;
-          const rr = gridLine * 1.35 * fade;
+          const x = Math.min(w - stepX / 2, (col + 0.5) * stepX);
+          if (x < 0 || x > w) continue;
+          const fade = kind === 'grid-dots-fade' ? (1 - 0.68 * (x / Math.max(1, w))) : 1;
+          const rr = Math.min(gbw, gbh) / 160 * 1.35 * fade;
           d += `M ${r3(x - rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x + rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x - rr)} ${r3(y)} Z `;
         }
       }
       return d;
     }
     case 'grid-diag': {
+      /* 初始約五條 45° 線（原密度的四分之一）；變形才在兩端增減。 */
+      const step = Math.max(gbw, gbh) / 2;
       let d = '';
-      /* 45° 斜線以 x+y=常數排列；範圍改變時只增減完整線段。 */
-      for (let q = -h; q <= w; q += gridUnit) {
+      for (let q = -h; q <= w; q += step) {
         const x1 = Math.max(0, q), y1 = Math.max(0, -q);
         const x2 = Math.min(w, q + h), y2 = Math.min(h, w - q);
         d += `M ${r3(x1)} ${r3(y1)} L ${r3(x2)} ${r3(y2)} `;
@@ -5591,7 +5613,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 
       if (image.shape) {
         ctx.translate(-boxW / 2, -boxH / 2);
-        const path = new Path2D(shapePathD(image.shape, boxW, boxH));
+        const path = new Path2D(shapePathD(
+          image.shape, boxW, boxH,
+          (image.shapeTextureBaseW || image.width) * renderScale,
+          (image.shapeTextureBaseH || image.height) * renderScale,
+        ));
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const solid = !!image.shapeFilled && image.shape !== 'line';
         const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
@@ -6287,7 +6313,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               虛線只屬於本體，描邊那一圈一律是實線。 */}
           {!!image.shapeStrokeW && (
             <path
-              d={shapePathD(image.shape, image.width, image.height, renderScale)}
+              d={shapePathD(
+                image.shape, image.width, image.height,
+                image.shapeTextureBaseW || image.width,
+                image.shapeTextureBaseH || image.height,
+              )}
               fill="none"
               stroke={image.shapeStrokeColor || '#000000'}
               strokeWidth={((image.shapeFilled && image.shape !== 'line') ? 0 : (shapeStroke?.lw || 0))
@@ -6297,7 +6327,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             />
           )}
           <path
-            d={shapePathD(image.shape, image.width, image.height, renderScale)}
+            d={shapePathD(
+                image.shape, image.width, image.height,
+                image.shapeTextureBaseW || image.width,
+                image.shapeTextureBaseH || image.height,
+              )}
             fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
             stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || SHAPE_DEFAULT_COLOR)}
             strokeWidth={shapeStroke?.lw}
@@ -6334,7 +6368,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                   </pattern>
                 </defs>
                 <path
-                  d={shapePathD(image.shape, image.width, image.height, renderScale)}
+                  d={shapePathD(
+                image.shape, image.width, image.height,
+                image.shapeTextureBaseW || image.width,
+                image.shapeTextureBaseH || image.height,
+              )}
                   fill={`url(#${id})`}
                   stroke="none"
                 />
@@ -6369,7 +6407,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                   </pattern>
                 </defs>
                 <path
-                  d={shapePathD(image.shape, image.width, image.height, renderScale)}
+                  d={shapePathD(
+                image.shape, image.width, image.height,
+                image.shapeTextureBaseW || image.width,
+                image.shapeTextureBaseH || image.height,
+              )}
                   fill={`url(#${id})`}
                   stroke="none"
                 />
@@ -11495,7 +11537,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.restore();
       return;
     }
-    const path = new Path2D(shapePathD(fImg.shape!, fw, fh, (fImg.scale || 1) / Math.max(0.01, scaleFactor)));
+    const path = new Path2D(shapePathD(
+      fImg.shape!, fw, fh,
+      (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
+      (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
+    ));
     const color = fImg.color || SHAPE_DEFAULT_COLOR;
     const solid = fImg.shapeFilled && fImg.shape !== 'line';
     /* 線寬要除掉 scale：上面已經 ctx.scale(fImg.scale, ...) 過了，

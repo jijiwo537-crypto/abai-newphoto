@@ -232,8 +232,9 @@ const objKeyOf = (list: any[]) =>
  * **一定**是同一個形狀，不可能各自走鐘。
  * 路徑的座標是「左上角 (0,0) 到 (w,h)」，呼叫端負責搬到框心。
  */
-export const shapePathBox = (kind: string, w: number, h: number, repeatScale = 1) =>
-  new Path2D(shapePathD(kind, w, h, repeatScale));
+export const shapePathBox = (
+  kind: string, w: number, h: number, gridBaseW = w, gridBaseH = h,
+) => new Path2D(shapePathD(kind, w, h, gridBaseW, gridBaseH));
 
 /* 圖形上的紋理（點點／條紋）已經整組搬到共用模組去了 —— 見 utils/holeShapes.ts
    的 paintTex：兩個拼圖工具吃同一份，畫出來一定一樣。 */
@@ -4657,7 +4658,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.setLineDash([]);
           ctx.restore();
         } else {
-        const shapeP = shapePathBox(o.kind, bw, bh, 1 / Math.max(0.01, s));
+        const shapeP = shapePathBox(
+          o.kind, bw, bh,
+          ((o as any).textureBaseW || o.w) * s,
+          ((o as any).textureBaseH || o.h) * s,
+        );
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
         // 發光：三段模糊疊起來，跟經典拼圖那邊同一組半徑
