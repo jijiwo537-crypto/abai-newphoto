@@ -383,7 +383,7 @@ const hashId = (id: string) => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -432,6 +432,7 @@ export const IN_KINDS: { id: string; name: string }[] = [
   { id: 'spring', name: '流星' },
 ];
 const LINE_IN_KINDS = [...IN_KINDS.filter(k => k.id !== 'spring'), { id: 'draw', name: '畫筆' }];
+const GRID_IN_KINDS = IN_KINDS.map(k => k.id === 'spring' ? { id: 'grid-wave', name: '波浪' } : k);
 const SYMBOL_IN_KINDS = IN_KINDS.map(k => k.id === 'fade' ? { id: 'bubble', name: '泡泡' } : k.id === 'spring' ? { id: 'fade', name: '淡入' } : k);
 
 /* 發光用的色票：第一顆是純白，其餘 14 顆是把預設色 #9BD4C3 只轉色相
@@ -624,6 +625,7 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   // 特別做的：高頻又不規則的細微抖動，像手持鏡頭
   { id: 'jitter', name: '抖動' },
 ];
+const GRID_IDLE_KINDS = IDLE_KINDS.map(k => k.id === 'sway' ? { id: 'grid-wave', name: '波浪' } : k);
 const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'sway').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 
 /** 進場動畫在進度 p（0～1）時的樣子 */
@@ -633,6 +635,7 @@ const inFrame = (kind: string, p: number): MoFrame => {
   const fade = Math.max(0, Math.min(1, p * 1.6));
   const e = easeOutCubic(p);
   switch (kind) {
+    case 'grid-wave': return { ...FLAT, gridWave: p, gridReveal: easeOutCubic(p) };
     case 'fade':   return { k: 1, dx: 0, dy: 0, rot: 0, a: p };
     case 'rise':   return { k: 1, dx: 0, dy: (1 - e) * 0.9, rot: 0, a: fade };
     case 'drop':   return { k: 1, dx: 0, dy: -(1 - e) * 0.9, rot: 0, a: fade };
@@ -665,6 +668,7 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
   switch (kind) {
     case 'float':   return { k: 1, dx: 0, dy: Math.sin(w * 2.0) * A * 0.28, rot: 0, a: 1 };
     case 'sway':    return { k: 1, dx: Math.sin(w * 1.7) * A * 0.28, dy: 0, rot: 0, a: 1 };
+    case 'grid-wave': return { ...FLAT, gridWave: (t * speed * 0.22 + phase / (Math.PI * 2)) };
     /* 縮放：單純一顆正弦，大…小…大…小，在兩個固定大小之間來回。
        （以前是兩個不同週期的正弦疊起來，所以每一次的最大最小都不一樣 ——
          看起來就是「不規則」，那不是要的。）
@@ -721,7 +725,14 @@ export const MO_DEFAULT: MoCfg = {
   delay: 0, dur: durFromSpeed(70), in: 'pop',
   idle: 'none', amp: 50, speed: 0.9,
 };
-export const moOf = (o: any): MoCfg => ({ ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) });
+export const moOf = (o: any): MoCfg => {
+  const cfg = { ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) };
+  if (o?.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind)) {
+    if (cfg.in === 'spring') cfg.in = 'grid-wave';
+    if (cfg.idle === 'sway') cfg.idle = 'grid-wave';
+  }
+  return cfg;
+};
 
 /**
  * 把進場 → 常駐 → 離場疊起來。
@@ -729,6 +740,12 @@ export const moOf = (o: any): MoCfg => ({ ...MO_DEFAULT, ...(o && o.mo ? o.mo : 
  */
 const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number } => {
   const p = cfg.dur > 0 ? (t - cfg.delay) / cfg.dur : (t >= cfg.delay ? 1 : 0);
+  /* 進場與常駐都選波浪時共用同一條 phase：進場跑完一個完整週期，
+     接著直接循環，不會同時疊上兩個波形。 */
+  if (cfg.in === 'grid-wave' && cfg.idle === 'grid-wave') {
+    const q = Math.max(0, p);
+    return { ...FLAT, fx: 1, burst: 0, gridWave: q, ...(q < 1 ? { gridReveal: easeOutCubic(q) } : null) };
+  }
   const f = inFrame(cfg.in, Math.max(0, Math.min(1, p)));
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
   if (p < 1) return { ...f, fx, burst: f.burst || 0 };
@@ -739,6 +756,7 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
     k: 1 + (g.k - 1) * blend,
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
     a: 1, fx: 1, burst: 0,
+    gridWave: g.gridWave,
   };
 };
 
@@ -4675,6 +4693,39 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         );
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
+
+        /* 網格波浪不是搬動整個物件，而是把向量路徑切成細直片後，依 x 位置
+           套用同一條連續正弦。進場用 reveal 從左往右揭露；常駐只循環 phase。
+           composeMo 已保證進場＋常駐同選波浪時只會提供一個 gridWave。 */
+        const paintShapePath = (fill: boolean) => {
+          const phase = f?.gridWave;
+          if (!GRID_SHAPE_KINDS.has(o.kind) || phase === undefined) {
+            fill ? ctx.fill(shapeP) : ctx.stroke(shapeP);
+            return;
+          }
+          const reveal = f?.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, f.gridReveal));
+          const shownW = bw * reveal;
+          if (shownW <= 0.01) return;
+          const slices = Math.max(24, Math.min(56, Math.ceil(bw / Math.max(2, 5 * s))));
+          const sliceW = bw / slices;
+          const amp = Math.min(10 * s, bh * 0.065) * Math.max(0.15, (o.mo?.amp ?? 50) / 100);
+          for (let i = 0; i < slices; i++) {
+            const x = i * sliceW;
+            if (x >= shownW) break;
+            const clipW = Math.min(sliceW + 0.8 * s, shownW - x);
+            const nx = (x + sliceW / 2) / Math.max(1, bw);
+            const envelope = Math.sin(Math.PI * Math.min(1, reveal));
+            const dy = Math.sin((nx - phase) * Math.PI * 2) * amp
+              * (f?.gridReveal === undefined ? 1 : Math.max(0.35, envelope));
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(x - 0.4 * s, -amp - 2 * s, clipW, bh + amp * 2 + 4 * s);
+            ctx.clip();
+            ctx.translate(0, dy);
+            fill ? ctx.fill(shapeP) : ctx.stroke(shapeP);
+            ctx.restore();
+          }
+        };
         // 發光：三段模糊疊起來，跟經典拼圖那邊同一組半徑
         const gAmt = glowAmount(o.glow);
         if (gAmt > 0) {
@@ -4683,7 +4734,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           // 半徑乘上強度（面板那根 0～100 的滑桿）
           for (const r of shapeGlowBlurs(bw, bh)) {
             ctx.shadowBlur = r * gAmt;
-            if (solid) ctx.fill(shapeP); else ctx.stroke(shapeP);
+            paintShapePath(!!solid);
           }
           ctx.restore();
         }
@@ -4698,13 +4749,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.miterLimit = 2;
           ctx.strokeStyle = o.strokeColor || '#000000';
           ctx.lineWidth = solid ? sw * 2 : lw + sw * 2;
-          ctx.stroke(shapeP);
+          paintShapePath(false);
           ctx.restore();
         }
         if (solid) {
           if (GRID_DOT_KINDS.has(o.kind)) {
             /* 直接畫已帶固定點距與點徑的 shapeP，不能再用當前框重建一次。 */
-            ctx.fill(shapeP);
+            paintShapePath(true);
           } else drawFeatheredShapeBody(ctx, o.kind, bw, bh, o.shapeFeather, col, (tc, bodyPath) => {
             if (texOf(o) === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
@@ -4715,7 +4766,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             });
             tc.restore();
           });
-        } else ctx.stroke(shapeP);
+        } else paintShapePath(false);
         ctx.setLineDash([]);
         ctx.restore();
         }
@@ -7957,7 +8008,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   <p className="text-[10px] font-bold text-[#666] uppercase tracking-widest mb-2 mt-4">{t}</p>;
                 const isSymbolTarget = !!selObj?.sym;
                 const isSpecialLineTarget = !!selObj && selObj.type === 'shape' && SPECIAL_LINE_KINDS.has(selObj.kind);
-                const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
+                const isGridTarget = !!selObj && selObj.type === 'shape' && GRID_SHAPE_KINDS.has(selObj.kind);
+                const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
                 const chooseMotionTarget = (id: string) => {
                   setMoTarget(id);
                   if (id === 'shape' || objects.some(o => o.id === id)) {
@@ -8039,7 +8091,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {(isSymbolTarget ? SYMBOL_IDLE_KINDS : IDLE_KINDS).map(k => (
+                          {(isSymbolTarget ? SYMBOL_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : IDLE_KINDS).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>
