@@ -13355,10 +13355,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         /* 這排鍵本來壓在格子裡面（bottom-2），正好蓋住剛選中的那張照片。
                                            改成掛在格子**外面的下方** —— 跟整組佈局被選中時那排鍵同一種做法。
                                            貼著頁面下緣的那一列格子放不下，就翻到格子上方，不會被裁掉。 */
-                                        <div className="absolute left-1/2 flex items-center gap-1 z-[60] bg-white backdrop-blur-md rounded-full p-1 shadow-xl pointer-events-auto"
-                                             style={lTop + t0 + cellHeight + 46 / Math.max(0.0001, kRef.current) > previewH
-                                               ? { bottom: '100%', marginBottom: 8 / Math.max(0.0001, kRef.current), transform: `translate(-50%, 0) scale(${1 / Math.max(0.0001, kRef.current)})`, transformOrigin: 'bottom center' }
-                                               : { top: '100%', marginTop: 8 / Math.max(0.0001, kRef.current), transform: `translate(-50%, 0) scale(${1 / Math.max(0.0001, kRef.current)})`, transformOrigin: 'top center' }}
+                                        <div className="absolute left-1/2 flex items-center z-[60] bg-white backdrop-blur-md rounded-full pointer-events-auto"
+                                             style={(() => {
+                                               const inv = 1 / Math.max(0.0001, kRef.current);
+                                               const common = {
+                                                 gap: 4 * inv,
+                                                 padding: 4 * inv,
+                                                 boxShadow: `0 ${10 * inv}px ${24 * inv}px rgba(0,0,0,0.35)`,
+                                               };
+                                               return lTop + t0 + cellHeight + 46 * inv > previewH
+                                                 ? { ...common, bottom: '100%', marginBottom: 8 * inv, transform: 'translate(-50%, 0)', transformOrigin: 'bottom center' }
+                                                 : { ...common, top: '100%', marginTop: 8 * inv, transform: 'translate(-50%, 0)', transformOrigin: 'top center' };
+                                             })()}
                                              onPointerDown={(e) => e.stopPropagation()}
                                              onTouchStart={(e) => e.stopPropagation()}
                                         >
@@ -13368,9 +13376,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                               handleDeleteCellImage(idx);
                                               setSelectedIndex(null);
                                             }}
-                                            className="text-black hover:text-neutral-400 p-1.5 rounded-full transition-colors flex items-center justify-center"
+                                            style={{ width: 26 / Math.max(0.0001, kRef.current), height: 26 / Math.max(0.0001, kRef.current) }}
+                                            className="text-black hover:text-neutral-400 rounded-full transition-colors flex items-center justify-center"
                                           >
-                                            <Trash2 size={14} />
+                                            <Trash2 size={14 / Math.max(0.0001, kRef.current)} />
                                           </button>
                                           <button
                                             onClick={(e) => {
@@ -13378,17 +13387,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                               setSlotToUpload(idx);
                                               replaceInputRef.current?.click();
                                             }}
-                                            className="text-black hover:text-neutral-400 p-1.5 rounded-full transition-colors flex items-center justify-center"
+                                            style={{ width: 26 / Math.max(0.0001, kRef.current), height: 26 / Math.max(0.0001, kRef.current) }}
+                                            className="text-black hover:text-neutral-400 rounded-full transition-colors flex items-center justify-center"
                                           >
-                                            <RefreshCw size={14} />
+                                            <RefreshCw size={14 / Math.max(0.0001, kRef.current)} />
                                           </button>
                                           {/* 跟浮動圖片同一顆「圖片調整」，進的是同一個編輯面板 */}
                                           <button
                                             onClick={(e) => { e.stopPropagation(); setActiveTab('adjust'); }}
                                             title="圖片調整"
-                                            className="text-black hover:text-neutral-400 p-1.5 rounded-full transition-colors flex items-center justify-center"
+                                            style={{ width: 26 / Math.max(0.0001, kRef.current), height: 26 / Math.max(0.0001, kRef.current) }}
+                                            className="text-black hover:text-neutral-400 rounded-full transition-colors flex items-center justify-center"
                                           >
-                                            <Sliders size={14} />
+                                            <Sliders size={14 / Math.max(0.0001, kRef.current)} />
                                           </button>
                                         </div>
                                       )}
@@ -13463,7 +13474,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   <div
                                     key={key}
                                     className={`${dot} ${pos} ${cursor}`}
-                                    style={{ transform: `translate(-50%, -50%) scale(${layoutUiInv})` }}
+                                    style={{
+                                      width: 14 * layoutUiInv,
+                                      height: 14 * layoutUiInv,
+                                      transform: 'translate(-50%, -50%)',
+                                      boxShadow: `0 ${2 * layoutUiInv}px ${5 * layoutUiInv}px rgba(0,0,0,0.5)`,
+                                    }}
                                     onPointerDown={(e) => handleLayoutCornerDown(e, key)}
                                     onPointerMove={handleLayoutCornerMove}
                                     onPointerUp={handleLayoutCornerUp}
@@ -13505,7 +13521,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         const dir = cy + halfSpan + 52 > previewH ? -1 : 1;
                                         const d = dir * (halfSpan + 26 * layoutUiInv);
                                         return {
-                                          transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-lrot}deg) scale(${layoutUiInv})`,
+                                          transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-lrot}deg)`,
+                                          gap: 2 * layoutUiInv,
+                                          padding: 2 * layoutUiInv,
+                                          boxShadow: `0 ${10 * layoutUiInv}px ${24 * layoutUiInv}px rgba(0,0,0,0.35)`,
                                         };
                                       })()}
                                       onPointerDown={(e) => e.stopPropagation()}
@@ -13522,17 +13541,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                               onClick={(e) => { e.stopPropagation(); if (canDown) moveInStack('layout', layout.id, -1); }}
                                               disabled={!canDown}
                                               title="下移一層"
-                                              className={`w-7 h-7 rounded-full flex items-center justify-center ${canDown ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
+                                              style={{ width: 28 * layoutUiInv, height: 28 * layoutUiInv }}
+                                              className={`rounded-full flex items-center justify-center ${canDown ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
                                             >
-                                              <MoveDown size={14} />
+                                              <MoveDown size={14 * layoutUiInv} />
                                             </button>
                                             <button
                                               onClick={(e) => { e.stopPropagation(); if (canUp) moveInStack('layout', layout.id, 1); }}
                                               disabled={!canUp}
                                               title="上移一層"
-                                              className={`w-7 h-7 rounded-full flex items-center justify-center ${canUp ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
+                                              style={{ width: 28 * layoutUiInv, height: 28 * layoutUiInv }}
+                                              className={`rounded-full flex items-center justify-center ${canUp ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
                                             >
-                                              <MoveUp size={14} />
+                                              <MoveUp size={14 * layoutUiInv} />
                                             </button>
                                           </>
                                         );
@@ -13540,12 +13561,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                       <button
                                         onClick={(e) => { e.stopPropagation(); setActiveTab('layout'); setLayoutSubTab('adjust'); }}
                                         title="佈局調整"
-                                        className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black"
+                                        style={{ width: 28 * layoutUiInv, height: 28 * layoutUiInv }}
+                                        className="rounded-full hover:bg-black/10 flex items-center justify-center text-black"
                                       >
-                                        <Sliders size={14} />
+                                        <Sliders size={14 * layoutUiInv} />
                                       </button>
-                                      <button onClick={(e) => { e.stopPropagation(); handleDeleteLayout(); }} title="刪除佈局" className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black">
-                                        <Trash2 size={14} />
+                                      <button onClick={(e) => { e.stopPropagation(); handleDeleteLayout(); }} title="刪除佈局" style={{ width: 28 * layoutUiInv, height: 28 * layoutUiInv }}
+                                        className="rounded-full hover:bg-black/10 flex items-center justify-center text-black">
+                                        <Trash2 size={14 * layoutUiInv} />
                                       </button>
                                     </div>
                                   </div>
