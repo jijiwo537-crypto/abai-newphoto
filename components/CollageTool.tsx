@@ -2672,6 +2672,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         };
         const takeObj = (o: any) => {
           e.stopPropagation();
+          /* 圖案已選中時，整個畫布都是它的拖曳區。
+             手指剛好落在另一個物件上，不能在 pointerdown 就把手勢搶走：
+             拖動仍搬目前圖案；只有原地輕點，放開時才切換成那個物件。 */
+          const activeHole = selectedTarget
+            ? holesRef.current.find(h => h.id === selectedTarget)
+            : null;
+          if (activeHole) {
+            interactionRef.current = {
+              type: 'move_hole', id: activeHole.id,
+              startX: x, startY: y, initX: activeHole.x, initY: activeHole.y,
+              isClick: true, hitItself: false, pickObjId: o.id, clickedSide,
+            };
+            return;
+          }
           setSelectedTarget(null);
           const selId = selectedObjRef.current;
           if (selId === o.id) {
@@ -3408,7 +3422,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (intr.type === 'select_hole' && intr.isClick) setSelectedTarget(intr.id);
       // 按在別顆圖案上但沒拖動 → 把選取換到那一顆
       if (intr.type === 'move_hole' && intr.isClick && intr.pickId) setSelectedTarget(intr.pickId);
-      if (intr.isClick && !intr.hitItself) setSelectedTarget(null);
+      // 已選圖案上方剛好有物件：拖動仍是圖案；只有輕點才切換到該物件。
+      if (intr.type === 'move_hole' && intr.isClick && intr.pickObjId) {
+        setSelectedObj(intr.pickObjId);
+        setSelectedTarget(null);
+      } else if (intr.isClick && !intr.hitItself) {
+        setSelectedTarget(null);
+      }
       if (intr.type === 'brush_draw' || intr.type === 'brush_erase' || intr.type === 'move_hole' || intr.type === 'pinch_hole') {
         if (!(intr.type === 'move_hole' && intr.isClick)) {
           pushHistory(holesRef.current);

@@ -5906,7 +5906,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, [historyIndex, srcList, safeIdx, imageSrc, geo, selectedLutIdx, activeCategory, render]);
 
   const requestLeave = useCallback(async () => {
-    if (historyIndex <= 0) {
+    /* 是否要詢問不能只看「這次進來後有沒有新增 history」。
+       從自動暫存恢復時 history 會從 0 重新開始，但畫面本身可能早已不是原圖；
+       這種情況直接返回會讓使用者誤以為編輯不需要保存。
+       因此以實際成品判斷：參數、濾鏡、構圖、已烤進來源的合併，任一不同即為已編輯。 */
+    const paramsChanged = JSON.stringify(paramsRef.current) !== JSON.stringify(DEFAULT_PARAMS);
+    const geoChanged = !isGeoIdentity(geo);
+    const sourceChanged = activeSrc !== imageSrc;
+    const hasEditedContent =
+      historyIndex > 0 || paramsChanged || geoChanged || selectedLutIdx !== 0 || sourceChanged;
+    if (!hasEditedContent) {
       onCancel(Boolean(initialState));
       return;
     }
@@ -5917,7 +5926,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       await recordProgress();
     }
     onCancel(choice === 'save');
-  }, [historyIndex, initialState, onRequestExit, onCancel, imageSrc, geo, selectedLutIdx, recordProgress]);
+  }, [historyIndex, initialState, onRequestExit, onCancel, imageSrc, activeSrc, geo, selectedLutIdx, recordProgress]);
 
   /* 「合併」：把現在畫面上的樣子用全解析度烤成一張新的原圖，參數整組歸零。
      特效一次只能套一個，合併過的那一層已經變成點陣圖的一部分，
