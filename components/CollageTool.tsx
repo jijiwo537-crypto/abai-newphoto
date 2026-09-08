@@ -1333,8 +1333,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const EPS_C = 0.75;   // 中線是精準吸附
     const EPS_E = 0.6;    // 邊只留給次像素捨入；有縫就不該畫線
     const L = cx - bw / 2, R = cx + bw / 2, T = cy - bh / 2, B = cy + bh / 2;
-    const xs = [0, o.cw, ...seams.xs, ...others.xs];
-    const ys = [0, o.ch, ...seams.ys, ...others.ys];
+    const xs = [0, o.cw, ...seams.xs, ...(edgeOnly ? [] : others.xs)];
+    const ys = [0, o.ch, ...seams.ys, ...(edgeOnly ? [] : others.ys)];
     /* 底圖與遮罩各自的中心。以前只有「整張成品畫布」的中心會亮線，
        左右／上下排版時，物件移到某一半的正中央完全沒有回饋。 */
     const regionCenters = (() => {
@@ -1426,8 +1426,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     /* 畫布的邊界／中線／交界，再加上「其他物件的邊緣」——
        所以圖片跟圖片、圖片跟文字之間也吸得到、也會亮線。 */
-    cx += axis(cx, bw / 2, offsG.cw / 2, [0, offsG.cw, ...others.xs], seams.xs, regionCenters.xs);
-    cy += axis(cy, bh / 2, offsG.ch / 2, [0, offsG.ch, ...others.ys], seams.ys, regionCenters.ys);
+    cx += axis(cx, bw / 2, offsG.cw / 2, [0, offsG.cw, ...(edgeOnly ? [] : others.xs)], seams.xs, regionCenters.xs);
+    cy += axis(cy, bh / 2, offsG.ch / 2, [0, offsG.ch, ...(edgeOnly ? [] : others.ys)], seams.ys, regionCenters.ys);
     return { x: cx - w0 / 2, y: cy - h0 / 2, guides: linesAt(cx, cy, bw, bh, edgeOnly, selfId) };
   }, [linesAt, imageState, layout, maskScale]);
 
