@@ -1987,7 +1987,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
       });
     };
-    persistLatest();
+    /* 首次恢复的 setState 要先完成；第一份新快照从一秒后开始写，避免默认值
+       在同一轮 effect 中覆盖刚载入的草稿。 */
     const timer = window.setInterval(persistLatest, 1000);
     return () => window.clearInterval(timer);
   }, [imageState]);
