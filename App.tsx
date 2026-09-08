@@ -417,6 +417,9 @@ const App: React.FC = () => {
       const draft = await loadToolDraft();
       if (!draft) { await clearToolDraft(); setResume(null); return; }
       setToolDraftState(draft.state ?? null);
+      /* 自动恢复也要延续原历史项目的身份；否则工具会生成新 key，
+         再次储存时历史中就会多出一份完全相同的项目。 */
+      setHistKey(draft.state?.__histKey ?? null);
       if (draft.tool === 'editor') {
         setEditorImage(draft.src);
         setEditorImages([draft.src]);
