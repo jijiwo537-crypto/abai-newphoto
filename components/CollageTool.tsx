@@ -4664,7 +4664,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           o.kind, bw, bh,
           ((o as any).textureBaseW || o.w) * s,
           ((o as any).textureBaseH || o.h) * s,
-          (((o as any).lineBase || Math.max(o.w, o.h)) * s / 160) * 2.325,
+          (((o as any).lineBase || Math.max(o.w, o.h)) * s / 160) * 2.325
+            * Math.pow(
+              Math.max(0.01,
+                Math.max((o as any).textureBaseW || o.w, (o as any).textureBaseH || o.h)
+                / Math.max(1, (o as any).lineBase || Math.max(o.w, o.h))
+              ),
+              0.35,
+            ),
         );
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
