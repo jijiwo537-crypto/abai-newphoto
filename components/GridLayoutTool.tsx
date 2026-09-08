@@ -9647,13 +9647,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     onHome();
   };
 
-  const liveDraftRef = useRef<CollageDraft | null>(null);
+  const liveDraftRef = useRef<{ pages: any[]; floatingImages: any[]; selectedRatio: string; isLandscape: boolean } | null>(null);
   useEffect(() => {
     if (!draftReady || leftRef.current) return;
     const empty = floatingImages.length === 0 && pages.every(p => p.layouts.length === 0);
     if (empty) return;
     const snapshot = { pages, floatingImages, selectedRatio, isLandscape };
-    liveDraftRef.current = snapshot as CollageDraft;
+    liveDraftRef.current = snapshot;
     const t = setTimeout(() => {
       if (!leftRef.current) saveDraft(snapshot);
     }, 250);
