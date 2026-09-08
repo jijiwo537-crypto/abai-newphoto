@@ -750,7 +750,9 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
   if (p < 1) return { ...f, fx, burst: f.burst || 0 };
   const after = t - (cfg.delay + cfg.dur);
-  const blend = Math.max(0, Math.min(1, after / 0.35));
+  /* 進場結束後立即銜接常駐；只保留兩格左右的極短混合來避免位移型動畫跳點。
+     舊版 0.35 秒的近靜止混合會被看成明顯停頓。 */
+  const blend = Math.max(0, Math.min(1, after / 0.07));
   const g = idleFrame(cfg.idle, after, cfg.amp, cfg.speed, phase);
   return {
     k: 1 + (g.k - 1) * blend,
@@ -4416,6 +4418,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         lmx.rotate(currentAngle * Math.PI / 180);
         drawShapePath(lmx, holeType, 0, 0, sz);
         lmx.fill();
+        /* 填色挖孔的反鋸齒邊緣會殘留約半個像素的遮罩色，
+           預覽倍率改變時那圈殘色就像多出邊框。用同一路徑擦掉
+           極細外緣，只消除殘色，不改圖案本身的幾何大小。 */
+        lmx.lineWidth = Math.max(0.75, 0.8 * s);
+        lmx.lineJoin = 'round';
+        lmx.strokeStyle = '#000';
+        lmx.stroke();
       }
       lmx.restore();
       if (A.burst > 0.01) {
@@ -4706,20 +4715,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const reveal = f?.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, f.gridReveal));
           const shownW = bw * reveal;
           if (shownW <= 0.01) return;
-          const slices = Math.max(24, Math.min(56, Math.ceil(bw / Math.max(2, 5 * s))));
+          /* 每片維持在約 1 個畫布像素，並限制總數避免手機負擔過高。
+             舊版最多 56 片，預覽放大時垂直位移會形成明顯階梯鋸齒。 */
+          const slices = Math.max(64, Math.min(220, Math.ceil(bw / Math.max(0.9, 1.15 * s))));
           const sliceW = bw / slices;
           const amp = Math.min(10 * s, bh * 0.065) * Math.max(0.15, (o.mo?.amp ?? 50) / 100);
           for (let i = 0; i < slices; i++) {
             const x = i * sliceW;
             if (x >= shownW) break;
-            const clipW = Math.min(sliceW + 0.8 * s, shownW - x);
+            const clipW = Math.min(sliceW + 1.6 * s, shownW - x + 0.8 * s);
             const nx = (x + sliceW / 2) / Math.max(1, bw);
             const envelope = Math.sin(Math.PI * Math.min(1, reveal));
             const dy = Math.sin((nx - phase) * Math.PI * 2) * amp
               * (f?.gridReveal === undefined ? 1 : Math.max(0.35, envelope));
             ctx.save();
             ctx.beginPath();
-            ctx.rect(x - 0.4 * s, -amp - 2 * s, clipW, bh + amp * 2 + 4 * s);
+            ctx.rect(x - 0.8 * s, -amp - 2 * s, clipW, bh + amp * 2 + 4 * s);
             ctx.clip();
             ctx.translate(0, dy);
             fill ? ctx.fill(shapeP) : ctx.stroke(shapeP);
