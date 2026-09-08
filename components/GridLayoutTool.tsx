@@ -6919,7 +6919,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     /* 經典／創意拼圖共用 8 個螢幕像素的吸附距離。換算回內容座標，
        預覽無論放大或縮小，吸附手感都保持一致。 */
-    const SNAP_THRESHOLD = 8 / Math.max(0.0001, kRef.current || 1);
+    const SNAP_THRESHOLD = 6.5 / Math.max(0.0001, kRef.current || 1);
     const ownPageRectsForFit = pageRects;
     // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
     const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
@@ -13282,7 +13282,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           : (isThisLayoutSelected && (draggedIndex === idx || touchDraggedIndex === idx))
                                             ? 3
                                             : isSelected
-                                              ? 2
+                                              /* 選中格子的框外藥丸必須高於所有相鄰格子的
+                                                 圖片遮罩；只提升這個格子的互動 UI 堆疊，
+                                                 不改變布局本身在物件層級中的順序。 */
+                                              ? 100
                                               : 1,
                                       }}
                                     >
@@ -13370,7 +13373,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         /* 這排鍵本來壓在格子裡面（bottom-2），正好蓋住剛選中的那張照片。
                                            改成掛在格子**外面的下方** —— 跟整組佈局被選中時那排鍵同一種做法。
                                            貼著頁面下緣的那一列格子放不下，就翻到格子上方，不會被裁掉。 */
-                                        <div className="absolute left-1/2 flex items-center z-[60] bg-white backdrop-blur-md rounded-full pointer-events-auto"
+                                        <div className="absolute left-1/2 flex items-center z-[300] bg-white backdrop-blur-md rounded-full pointer-events-auto"
                                              style={(() => {
                                                const inv = 1 / Math.max(0.0001, kRef.current);
                                                const common = {
