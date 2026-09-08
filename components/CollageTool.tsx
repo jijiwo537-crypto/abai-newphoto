@@ -371,7 +371,7 @@ const hashId = (id: string) => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -417,8 +417,10 @@ export const IN_KINDS: { id: string; name: string }[] = [
   { id: 'flip', name: '翻轉' },
   // 這兩個是特別做的：一個會落地彈兩下，一個是從側邊甩進來再晃回正
   { id: 'bounce', name: '彈跳' },
-  { id: 'draw', name: '畫筆' },
+  { id: 'spring', name: '流星' },
 ];
+const LINE_IN_KINDS = [...IN_KINDS.filter(k => k.id !== 'spring'), { id: 'draw', name: '畫筆' }];
+const SYMBOL_IN_KINDS = [...IN_KINDS, { id: 'pop2', name: '果凍II' }, { id: 'fade2', name: '淡入II' }, { id: 'rise2', name: '升起II' }, { id: 'drop2', name: '落下II' }];
 
 /* 發光用的色票：第一顆是純白，其餘 14 顆是把預設色 #9BD4C3 只轉色相
    （飽和度與亮度完全不動）之後，照色相由小到大排出來的一圈漸層。 */
@@ -610,6 +612,7 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   // 特別做的：高頻又不規則的細微抖動，像手持鏡頭
   { id: 'jitter', name: '抖動' },
 ];
+const SYMBOL_IDLE_KINDS = [...IDLE_KINDS.filter(k => k.id !== 'sway').map(k => k.id === 'breathe' ? { ...k, name: '縮放I' } : k), { id: 'symbol-breathe2', name: '縮放II' }];
 
 /** 進場動畫在進度 p（0～1）時的樣子 */
 const inFrame = (kind: string, p: number): MoFrame => {
@@ -625,10 +628,9 @@ const inFrame = (kind: string, p: number): MoFrame => {
     // 翻轉用「橫向壓扁」模擬（見下面的 inFlipX），不需要真的 3D
     case 'flip':   return { k: 1, dx: 0, dy: 0, rot: 0, a: fade };
     case 'bounce': return { k: 1, dx: 0, dy: -(1 - easeOutBounce(p)) * 1.1, rot: 0, a: Math.min(1, p * 4) };
-    /* 畫筆：線條由起點往終點描出。畫布端會讀 draw 值做幾何裁切；
-       其他物件則保留柔和淡入，避免把一般圖案硬切一半。 */
-    case 'draw':
-      return { k: 1, dx: 0, dy: 0, rot: 0, a: fade, draw: e };
+    case 'spring': { const q = easeOutCubic(Math.min(1, p / 0.62)); const z = Math.max(0, (p - 0.62) / 0.38); const over = z > 0 ? Math.sin(z * Math.PI) * 0.06 : 0; const d = (1 - q) * 1.15; const stretch = (1 - q) * 0.55; return { k: (1 + over) / (1 + stretch), dx: -d, dy: -d * 0.72, rot: -(1 - q) * 28, a: Math.min(1, p * 4), burst: 0 }; }
+    case 'draw': return { k: 1, dx: 0, dy: 0, rot: 0, a: 1, draw: e };
+    case 'pop2': case 'fade2': case 'rise2': case 'drop2': return { k: 1, dx: 0, dy: 0, rot: 0, a: 1, seq: p };
     case 'none':   return FLAT;
     default:       return { k: easeOutBack(p), dx: 0, dy: 0, rot: 0, a: fade };   // pop
   }
@@ -637,6 +639,7 @@ const inFrame = (kind: string, p: number): MoFrame => {
 const inFlipX = (kind: string, p: number) => {
   if (p <= 0 || p >= 1) return 1;
   if (kind === 'flip') return Math.max(0.02, Math.abs(Math.cos((1 - easeOutCubic(p)) * Math.PI)));
+  if (kind === 'spring') { const q = easeOutCubic(Math.min(1, p / 0.62)); return 1 + (1 - q) * 0.55; }
   return 1;
 };
 
@@ -1646,7 +1649,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [lutRevision, setLutRevision] = useState(0);
   const [maskColor, setMaskColor] = useState('#D2E8E1'); 
   const [patternType, setPatternType] = useState('none'); 
-  const [dotColor, setDotColor] = useState('#595959'); 
+  const [dotColor, setDotColor] = useState('#728C86'); 
   const [dotSize, setDotSize] = useState(15); 
   const [dotGap, setDotGap] = useState(20);
   /* 條紋：兩個顏色、粗細、方向。跟點點／星星／愛心共用同一個「紋理」選單，
@@ -4673,7 +4676,36 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            只有「有墨水的地方」會留下紋理，跟圖形那邊剪裁在路徑裡是同一個結果。
            描邊與發光照舊畫在本體底下，所以紋理只換掉填色那一層。 */
         ctx.fillStyle = o.color || '#ffffff';
-        ctx.fillText(o.text || '', tdx, tdy);
+        /* 符號 II：每一個 Unicode 單位由左至右進場；常駐縮放 II 則給每個單位
+           固定但不同的節奏。普通文字與普通符號維持原本單次繪製，字距完全不變。 */
+        const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
+        const individualBreathe = o.sym && o.mo?.idle === 'symbol-breathe2';
+        if (seqIn !== null || individualBreathe) {
+          const units = Array.from(o.text || '');
+          const widths = units.map(ch => ctx.measureText(ch).width);
+          const total = widths.reduce((sum, v) => sum + v, 0);
+          let cursor = tdx - total / 2;
+          const now = performance.now() / 1000;
+          units.forEach((ch, index) => {
+            const q = seqIn === null ? 1 : Math.max(0, Math.min(1, (seqIn * units.length - index) * 2.4));
+            const kind = o.mo?.in;
+            const ease = easeOutCubic(q);
+            const scale = individualBreathe
+              ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71) * ((o.mo?.amp || 50) / 100) * 0.18
+              : kind === 'pop2' ? easeOutBack(q) : 1;
+            const rise = kind === 'rise2' ? (1 - ease) * o.size * s * 0.45 : kind === 'drop2' ? -(1 - ease) * o.size * s * 0.45 : 0;
+            ctx.save();
+            ctx.globalAlpha *= kind === 'fade2' ? q : (seqIn === null ? 1 : Math.min(1, q * 3));
+            ctx.translate(cursor + widths[index] / 2, tdy + rise);
+            ctx.scale(scale, scale);
+            ctx.textAlign = 'center';
+            ctx.fillText(ch, 0, 0);
+            ctx.restore();
+            cursor += widths[index];
+          });
+        } else {
+          ctx.fillText(o.text || '', tdx, tdy);
+        }
         ctx.shadowBlur = 0;
         (ctx as any).letterSpacing = '0px';
       }
@@ -7301,6 +7333,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     glow: 0, glowColor: SHAPE_DEFAULT_COLOR,
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
+                    ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(30) } } : {}),
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
@@ -7404,7 +7437,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                              第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
                           const lineList = moveTo(moveTo(moveTo(moveTo(moveTo(
                             [...ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && !SPECIAL_LINE_KINDS.has(i2.kind)), HOLE_ITEM_CROSS_O],
-                            'diamond-n-o', 6), 'heart-o', 9), 'star8-oval-o', 13), 'hole-cross-star-o', 14), 'cloud-oval-o', 15);
+                            'diamond-n-o', 6), 'heart-o', 9), 'cloud-oval-o', 13), 'hole-cross-star-o', 14);
                           return ([
                             ['實心', solidList],
                             ['邊框', lineList],
@@ -7730,10 +7763,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                        : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
                 const label = (t: string) =>
                   <p className="text-[10px] font-bold text-[#666] uppercase tracking-widest mb-2 mt-4">{t}</p>;
-                // 圖案是一整群、共用一條路徑，翻轉那種單體效果套上去只會亂
-                const kinds = moTarget === 'shape'
-                  ? IN_KINDS.filter(k => k.id !== 'flip')
-                  : IN_KINDS.filter(k => k.id !== 'bounce');
+                const isSymbolTarget = !!selObj?.sym;
+                const isSpecialLineTarget = !!selObj && selObj.type === 'shape' && SPECIAL_LINE_KINDS.has(selObj.kind);
+                const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
                     {/* 要調哪一個元素（播放列不在這裡 —— 它跟分頁列一樣在捲動區外面） */}
@@ -7806,7 +7838,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {IDLE_KINDS.map(k => (
+                          {(isSymbolTarget ? SYMBOL_IDLE_KINDS : IDLE_KINDS).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>
