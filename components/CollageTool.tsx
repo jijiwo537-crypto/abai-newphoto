@@ -5262,8 +5262,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [onHome]);
 
   const requestLeaveToHome = useCallback(async () => {
-    if (histRef.current.index <= 0 && !dirtyRef.current) {
-      onHome(Boolean(initialState));
+    /* 新导入的图片本身就是一份尚未明确保存的项目，即使历史仍在第 0 格，
+       返回时也必须询问。只有「从草稿／历史进入，而且没有任何新操作」
+       才能依照既有规则直接返回。 */
+    if (initialState && histRef.current.index <= 0 && !dirtyRef.current) {
+      onHome(true);
       return;
     }
     const choice = onRequestExit ? await onRequestExit() : 'discard';
