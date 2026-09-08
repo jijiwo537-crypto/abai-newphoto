@@ -1950,10 +1950,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         latest.selectedLutIdx !== 0 ||
         activeSrc !== imageSrc;
       /* 未編輯時仍可預存原圖，但不能建立首頁的「繼續編輯」提示。 */
-      saveToolDraft('editor', first ? imageSrc : null, latest, hasEditedContent);
+      saveToolDraft('editor', first ? imageSrc : null, {
+        ...latest,
+        __histKey: histKey || initialState?.__histKey || null,
+      }, hasEditedContent);
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [imageSrc, activeSrc, historyIndex, initialState]);
+  }, [imageSrc, activeSrc, historyIndex, initialState, histKey]);
   const applyGeoRef = useRef<(g: GeoParams) => void>(() => {});
   const activeDragRef = useRef<{
     type: 'center' | 'start' | 'end' | 'rotate' | 'create';
@@ -5931,7 +5934,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const choice = onRequestExit ? await onRequestExit() : 'discard';
     if (choice === 'cancel') return;
     if (choice === 'save') {
-      await saveToolDraft('editor', imageSrc, { params: paramsRef.current, geo, selectedLutIdx });
+      await saveToolDraft('editor', imageSrc, {
+        params: paramsRef.current, geo, selectedLutIdx,
+        __histKey: histKey || initialState?.__histKey || null,
+      });
       await recordProgress();
     }
     onCancel(choice === 'save');

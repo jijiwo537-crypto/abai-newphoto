@@ -2009,13 +2009,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         __completeDraft: 1,
         holes: holesRef.current.map((h: any) => ({ ...h })),
         objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
+        __histKey: histKey || initialState?.__histKey || null,
       });
     };
     /* 首次恢复的 setState 要先完成；第一份新快照从一秒后开始写，避免默认值
        在同一轮 effect 中覆盖刚载入的草稿。 */
     const timer = window.setInterval(persistLatest, 1000);
     return () => window.clearInterval(timer);
-  }, [imageState, initialState]);
+  }, [imageState, initialState, histKey]);
 
   useEffect(() => {
     if (initialFile) {
@@ -5319,11 +5320,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         stripeN, stripeDir, stripeA: stripeAPick, stripeB,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
         objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
+        __histKey: histKey || initialState?.__histKey || null,
       });
       await recordHistoryRef.current?.();
     }
     onHome(choice === 'save');
-  }, [onRequestExit, onHome, layout, maskScale, holeType, customText, holeSize, sizeJitter,
+  }, [onRequestExit, onHome, initialState, histKey, layout, maskScale, holeType, customText, holeSize, sizeJitter,
       holeAngle, holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap,
       symmetryEnabled, stripeN, stripeDir, stripeAPick, stripeB, glowMode, holeGlowColor,
       glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor]);
