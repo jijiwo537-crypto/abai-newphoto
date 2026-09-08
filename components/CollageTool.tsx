@@ -21,7 +21,7 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker,
-  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS,
+  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS,
 } from './GridLayoutTool';
 const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   /* 箭頭與圓弧是同一個 path、一次描邊；半透明時交接處不會累加變白。 */
@@ -4695,7 +4695,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.restore();
         }
         if (solid) {
-          drawFeatheredShapeBody(ctx, o.kind, bw, bh, o.shapeFeather, col, (tc, bodyPath) => {
+          if (GRID_DOT_KINDS.has(o.kind)) {
+            /* 直接畫已帶固定點距與點徑的 shapeP，不能再用當前框重建一次。 */
+            ctx.fill(shapeP);
+          } else drawFeatheredShapeBody(ctx, o.kind, bw, bh, o.shapeFeather, col, (tc, bodyPath) => {
             if (texOf(o) === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
             paintTex(tc, bw, bh, bw, bh, {
