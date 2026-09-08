@@ -1590,6 +1590,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
   const [colorPickerTarget, setColorPickerTarget] = useState<string | null>(null); 
   const [maskImageState, setMaskImageState] = useState<any>(null);
+  /** 自訂遮罩的網址要活到草稿真正寫入；过早 revoke 会让下一次自动保存读不到。 */
+  const maskDraftUrlRef = useRef<string | null>(null);
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [maskTransform, setMaskTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [activeTab, setActiveTab] = useState('setting');
@@ -1907,6 +1909,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (restoredRef.current || !initialState) return;
     restoredRef.current = true;
     const st = initialState;
+    if (st.__completeDraft === 1) {
+      const maskSrc = st.maskImageState?.src;
+      /* 先套纯数据；自订遮罩要等 Image 解码完成后再放入画布，不能把数据库
+         还原出的普通对象当成 CanvasImageSource，否则会直接造成黑屏。 */
+      applyEnvRef.current({ ...st, maskImageState: null });
+      if (maskSrc) {
+        const restoredMask = new Image();
+        restoredMask.onload = () => {
+          maskDraftUrlRef.current = maskSrc;
+          setMaskImageState({ img: restoredMask, src: maskSrc });
+        };
+        restoredMask.src = maskSrc;
+      }
+    }
     if (st.layout !== undefined) setLayout(st.layout);
     if (st.maskScale !== undefined) setMaskScale(st.maskScale);
     if (st.holeType !== undefined) setHoleType(st.holeType);
@@ -1958,22 +1974,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
   }, [initialState]);
 
+  /* 每秒只覆盖同一个 META_KEY。画面状态从 ref 读取，因此不会在这里引用
+     尚未声明的动画状态，也不会重现上次导入后黑屏的运行时错误。 */
   useEffect(() => {
     if (!imageState) return;
-    const t = setTimeout(() => {
+    const persistLatest = () => {
+      const env = envSrcRef.current || {};
       saveToolDraft('collage', null, {
-        layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
-        holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-        stripeN, stripeDir, stripeA: stripeAPick, stripeB,
-        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
+        ...env,
+        __completeDraft: 1,
+        holes: holesRef.current.map((h: any) => ({ ...h })),
+        objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
       });
-    }, 1200);
-    return () => clearTimeout(t);
-  }, [
-    imageState, layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
-    holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
-  ]);
+    };
+    persistLatest();
+    const timer = window.setInterval(persistLatest, 1000);
+    return () => window.clearInterval(timer);
+  }, [imageState]);
 
   useEffect(() => {
     if (initialFile) {
@@ -2082,10 +2099,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const scale = Math.max(baseW / img.width, baseH / img.height);
       const w = Math.round(img.width * scale);
       const h = Math.round(img.height * scale);
-      setMaskImageState({ img });
+      if (maskDraftUrlRef.current && maskDraftUrlRef.current !== url) {
+        try { URL.revokeObjectURL(maskDraftUrlRef.current); } catch { /* ignore */ }
+      }
+      maskDraftUrlRef.current = url;
+      setMaskImageState({ img, src: url });
       setMaskTransform({ x: (baseW - w) / 2, y: (baseH - h) / 2, w, h });
       setSelectedTarget(null);
-      URL.revokeObjectURL(url);
     };
     img.src = url;
     e.target.value = '';
@@ -5829,6 +5849,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   envSrcRef.current = {
     layout, maskScale,
     maskColor, patternType, dotColor, dotSize, dotGap,
+    stripeN, stripeDir, stripeA: stripeAPick, stripeB,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
     glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
@@ -5842,6 +5863,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setLayout(e.layout); setMaskScale(e.maskScale);
     setMaskColor(e.maskColor); setPatternType(e.patternType);
     setDotColor(e.dotColor); setDotSize(e.dotSize); setDotGap(e.dotGap);
+    if (e.stripeN !== undefined) setStripeN(e.stripeN);
+    if (e.stripeDir === 'h' || e.stripeDir === 'v') setStripeDir(e.stripeDir);
+    if (e.stripeA !== undefined) setStripeAPick(e.stripeA);
+    if (e.stripeB !== undefined) setStripeB(e.stripeB);
     setMaskImageState(e.maskImageState ?? null);
     setMaskTransform(e.maskTransform); setImageTransform(e.imageTransform);
     setHoleType(e.holeType); setCustomText(e.customText);
