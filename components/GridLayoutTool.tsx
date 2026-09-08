@@ -5660,7 +5660,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         }
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
         if (solid) {
-          drawFeatheredShapeBody(ctx, image.shape, boxW, boxH, image.shapeFeather, color, (tc, bodyPath) => {
+          if (GRID_DOT_KINDS.has(image.shape)) {
+            /* 點陣必須使用上面已帶入固定 base／固定半徑的 path。
+               一般實心函式會用當前寬高重建路徑，會把點距重新平均並放大點徑。 */
+            ctx.fill(path);
+          } else drawFeatheredShapeBody(ctx, image.shape, boxW, boxH, image.shapeFeather, color, (tc, bodyPath) => {
             if (tx === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(boxW / 2, boxH / 2);
             if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, boxW, boxH, boxW, boxH, {
