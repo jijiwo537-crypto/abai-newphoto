@@ -134,6 +134,84 @@ export function draftTool(): ToolKind | null {
 let saving = false;
 let queued: { tool: ToolKind; src: string | null; state: any } | null = null;
 
+/* 創意拼圖的 state 內還可能有多張浮動圖片。它們同樣是 blob: 網址，
+   不能原封不動塞進 meta，否則重開 App 後物件仍可選、內容卻完全透明。 */
+let assetSeq = 0;
+const storedAssets = new Map<string, string>();
+
+async function storeStateAsset(src: string): Promise<string | null> {
+  const cached = storedAssets.get(src);
+  if (cached) {
+    const hit = await tx<Blob>('readonly', s => s.get(cached) as IDBRequest<Blob>);
+    if (hit instanceof Blob && hit.size > 0) return cached;
+    storedAssets.delete(src);
+  }
+  try {
+    const response = await fetch(src);
+    const blob = await response.blob();
+    if (!blob.size) return null;
+    const key = `asset:${Date.now().toString(36)}-${assetSeq++}`;
+    const written = await tx<IDBValidKey>('readwrite', s => s.put(blob, key));
+    if (written == null) return null;
+    const verified = await tx<Blob>('readonly', s => s.get(key) as IDBRequest<Blob>);
+    if (!(verified instanceof Blob) || !verified.size) return null;
+    storedAssets.set(src, key);
+    return key;
+  } catch {
+    return null;
+  }
+}
+
+async function externalizeState(value: any, seen = new Map<string, string>()): Promise<any> {
+  if (Array.isArray(value)) return Promise.all(value.map(v => externalizeState(v, seen)));
+  if (value && typeof value === 'object') {
+    const out: any = {};
+    for (const [key, raw] of Object.entries(value)) {
+      if ((key === 'src' || key === 'url' || key === 'origSrc') && typeof raw === 'string' && raw) {
+        if (raw.startsWith('idbtool:')) { out[key] = raw; continue; }
+        let stored = seen.get(raw);
+        if (!stored) {
+          stored = await storeStateAsset(raw) || undefined;
+          if (stored) seen.set(raw, stored);
+        }
+        if (!stored) throw new Error('tool-draft-asset-persistence-failed');
+        out[key] = `idbtool:${stored}`;
+      } else {
+        out[key] = await externalizeState(raw, seen);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
+async function internalizeState(value: any, urls = new Map<string, string>()): Promise<any> {
+  if (Array.isArray(value)) return Promise.all(value.map(v => internalizeState(v, urls)));
+  if (value && typeof value === 'object') {
+    const out: any = {};
+    for (const [key, raw] of Object.entries(value)) {
+      if ((key === 'src' || key === 'url' || key === 'origSrc')
+          && typeof raw === 'string' && raw.startsWith('idbtool:')) {
+        const id = raw.slice(8);
+        let url = urls.get(id);
+        if (!url) {
+          const blob = await tx<Blob>('readonly', s => s.get(id) as IDBRequest<Blob>);
+          if (blob instanceof Blob && blob.size > 0) {
+            url = URL.createObjectURL(blob);
+            urls.set(id, url);
+          }
+        }
+        if (!url) throw new Error('tool-draft-asset-missing');
+        out[key] = url;
+      } else {
+        out[key] = await internalizeState(raw, urls);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
 /**
  * 存一份草稿。同一時間只留一份（最後動的那個工具）。
  * src 給 null 就沿用上一次存的那張照片，只更新參數 —— 照片沒換的時候不用重存一次。
@@ -184,7 +262,12 @@ export async function saveDraft(tool: ToolKind, src: string | null, state: any):
        這一次存的是創意拼圖，接回去會是另一個工具看不懂的東西。
        （正常流程離開工具時會 clearDraft，但硬關掉 App 的話舊的那份會留著。） */
     const keep = prev && prev.tool === tool ? prev : null;
-    const meta: ToolDraftMeta = { tool, savedAt: Date.now(), state: state ?? keep?.state ?? null };
+    let persistedState = keep?.state ?? null;
+    if (state != null) {
+      try { persistedState = await externalizeState(state); }
+      catch { return; }
+    }
+    const meta: ToolDraftMeta = { tool, savedAt: Date.now(), state: persistedState };
     const metaWritten = await tx<IDBValidKey>('readwrite', s => s.put(meta, META_KEY));
     if (metaWritten == null) return;
     try {
@@ -211,7 +294,16 @@ export async function loadDraft(): Promise<LoadedToolDraft | null> {
     } catch { /* ignore */ }
     return null;
   }
-  return { ...meta, src: URL.createObjectURL(blob) };
+  try {
+    const restoredState = await internalizeState(meta.state);
+    return { ...meta, state: restoredState, src: URL.createObjectURL(blob) };
+  } catch {
+    try {
+      localStorage.removeItem(FLAG_KEY);
+      localStorage.removeItem(FLAG_KEY + ':tool');
+    } catch { /* ignore */ }
+    return null;
+  }
 }
 
 export async function clearDraft(): Promise<void> {
@@ -219,6 +311,7 @@ export async function clearDraft(): Promise<void> {
   queued = null;
   while (saving) await new Promise(resolve => setTimeout(resolve, 0));
   queued = null;
+  storedAssets.clear();
   try {
     localStorage.removeItem(FLAG_KEY);
     localStorage.removeItem(FLAG_KEY + ':tool');
