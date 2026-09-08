@@ -6825,6 +6825,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return { bw: w * c + h * sn, bh: w * sn + h * c };
   };
 
+  /** 自由图片拖动时不可进入图形图层的占用范围。选中框使用旋转后的外接矩形，
+      与画面上真正看见的范围一致；边缘刚好相贴不算重叠。 */
+  const floatingBoundsAt = (f: FloatingImage, x = f.x, y = f.y) => {
+    const ext = rotExtent(f.width * (f.scale || 1), f.height * (f.scale || 1), f.rotation || 0);
+    const cx = x + f.width / 2, cy = y + f.height / 2;
+    return { left: cx - ext.bw / 2, right: cx + ext.bw / 2, top: cy - ext.bh / 2, bottom: cy + ext.bh / 2 };
+  };
+  const imageWouldOverlapShape = (moving: FloatingImage, x: number, y: number) => {
+    if (moving.shape || moving.text !== undefined) return false;
+    const a = floatingBoundsAt(moving, x, y);
+    return floatingImages.some(f => {
+      if (f.id === moving.id || !f.shape) return false;
+      const b = floatingBoundsAt(f);
+      return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+    });
+  };
+
   const pageGuidelinesAt = (
     x: number, y: number, imgWidth: number, imgHeight: number, scale: number, edgeOnly = false, rot = 0,
   ): AlignmentGuideline[] => {
@@ -10960,12 +10977,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               selectedImg.width, selectedImg.height, selectedImg.scale,
               undefined, selectedImg.rotation || 0,
             );
-            queueInteraction(() => {
-              setActiveGuidelines(guidelines);
-              setFloatingImages(prev => prev.map(img =>
-                img.id === g.floatingId ? { ...img, x: snappedX, y: snappedY } : img
-              ));
-            });
+            /* 图片不能被拖到图形物件上。碰撞时维持上一帧的合法位置；
+               手指移出图形范围后会立刻继续跟随，不会卡死或跳位。 */
+            if (imageWouldOverlapShape(selectedImg, snappedX, snappedY)) {
+              queueInteraction(() => setActiveGuidelines([]));
+            } else {
+              queueInteraction(() => {
+                setActiveGuidelines(guidelines);
+                setFloatingImages(prev => prev.map(img =>
+                  img.id === g.floatingId ? { ...img, x: snappedX, y: snappedY } : img
+                ));
+              });
+            }
           }
         } else if (g.kind === 'layout') {
           moveLayoutTo(g.baseX + dx, g.baseY + dy);
