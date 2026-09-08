@@ -5639,7 +5639,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   /* 操作 UI 掛在整頁的縮放容器裡，但視覺尺寸必須維持螢幕 px。
      選取後一定會重新 render，所以這裡讀到的是當下真正的預覽倍率。 */
   const previewK = Math.max(0.0001, canvasK());
-  const previewInv = 1 / previewK;
+  /* 预览缩小时，操作 UI 应与画布一起缩小，不能为了维持原屏幕尺寸而反向放大；
+     后者会让白色药丸、控制点和阴影相对画布异常巨大，并产生重采样模糊。
+     预览放大时仍反向补偿，避免 UI 跟着无限变大。 */
+  const previewInv = previewK < 1 ? 1 : 1 / previewK;
 
   const chrome = (
     <>
@@ -14844,8 +14847,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           style={{
             left: 0,
             top: 0,
-            width: `${Math.round(80 * (0.65 + 0.35 * Math.min(1, kRef.current || 1)))}px`,
-            height: `${Math.round(80 * (0.65 + 0.35 * Math.min(1, kRef.current || 1)))}px`,
+            width: '80px',
+            height: '80px',
             transform: `translate3d(${floatSwapRef.current?.startX || 0}px, ${floatSwapRef.current?.startY || 0}px, 0) translate(-50%, -50%) scale(1.1) rotate(4deg)`,
             borderRadius: '8px',
             boxShadow: '0 4px 14px rgba(0,0,0,0.34)',
