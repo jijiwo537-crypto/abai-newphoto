@@ -1107,20 +1107,22 @@ export const shapePathD = (
       const stepY = gbh / 6; // 原密度的一半：初始六條
       let d = '';
       for (let y = stepY / 2; y < h; y += stepY) d += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
-      return d;
+      // 壓得比一個週期更窄時仍保留正中央一條，不會縮到完全消失。
+      return d || `M 0 ${r3(h / 2)} L ${r3(w)} ${r3(h / 2)}`;
     }
     case 'grid-cross': {
       const stepX = gbw / 6, stepY = gbh / 6;
-      let d = '';
-      for (let y = stepY / 2; y < h; y += stepY) d += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
-      for (let x = stepX / 2; x < w; x += stepX) d += `M ${r3(x)} 0 L ${r3(x)} ${r3(h)} `;
-      return d;
+      let hd = '', vd = '';
+      for (let y = stepY / 2; y < h; y += stepY) hd += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
+      for (let x = stepX / 2; x < w; x += stepX) vd += `M ${r3(x)} 0 L ${r3(x)} ${r3(h)} `;
+      return (hd || `M 0 ${r3(h / 2)} L ${r3(w)} ${r3(h / 2)} `)
+        + (vd || `M ${r3(w / 2)} 0 L ${r3(w / 2)} ${r3(h)}`);
     }
     case 'grid-frame': {
-      /* 初始 3×3（原密度的四分之一）。每次以完整格數重新等分，
+      /* 初始 6×6。每次以完整格數重新等分，
          所以四邊永遠剛好封口，不會在右側或底部留下比較窄的小格。 */
-      const cols = Math.max(1, Math.round((w / gbw) * 3));
-      const rows = Math.max(1, Math.round((h / gbh) * 3));
+      const cols = Math.max(1, Math.round((w / gbw) * 6));
+      const rows = Math.max(1, Math.round((h / gbh) * 6));
       let d = `M 0 0 H ${r3(w)} V ${r3(h)} H 0 Z `;
       for (let col = 1; col < cols; col++) {
         const x = w * col / cols; d += `M ${r3(x)} 0 L ${r3(x)} ${r3(h)} `;
@@ -1145,22 +1147,26 @@ export const shapePathD = (
           const x = Math.min(w - stepX / 2, (col + 0.5) * stepX);
           if (x < 0 || x > w) continue;
           const fade = kind === 'grid-dots-fade' ? (1 - 0.68 * (x / Math.max(1, w))) : 1;
-          const rr = Math.min(gbw, gbh) / 160 * 1.35 * fade;
+          const rr = Math.min(gbw, gbh) / 160 * 1.55 * fade;
           d += `M ${r3(x - rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x + rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x - rr)} ${r3(y)} Z `;
         }
       }
       return d;
     }
     case 'grid-diag': {
-      /* 初始約五條 45° 線（原密度的四分之一）；變形才在兩端增減。 */
-      const step = Math.max(gbw, gbh) / 2;
+      /* 預設斜線數量加倍；變形才在兩端增減完整線段。 */
+      const step = Math.max(gbw, gbh) / 4;
       let d = '';
       for (let q = -h; q <= w; q += step) {
         const x1 = Math.max(0, q), y1 = Math.max(0, -q);
         const x2 = Math.min(w, q + h), y2 = Math.min(h, w - q);
-        d += `M ${r3(x1)} ${r3(y1)} L ${r3(x2)} ${r3(y2)} `;
+        if (Math.hypot(x2 - x1, y2 - y1) > 0.5) {
+          d += `M ${r3(x1)} ${r3(y1)} L ${r3(x2)} ${r3(y2)} `;
+        }
       }
-      return d;
+      if (d) return d;
+      const q = (w - h) / 2;
+      return `M ${r3(Math.max(0, q))} ${r3(Math.max(0, -q))} L ${r3(Math.min(w, q + h))} ${r3(Math.min(h, w - q))}`;
     }
     case 'wave': {
       // 波長跟高度綁定；只增加寬度時會加入完整波峰，而不是把既有波形拉扁。
@@ -1405,7 +1411,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
           d={src}
           fill={solid ? 'currentColor' : 'none'}
           stroke={solid ? 'none' : 'currentColor'}
-          strokeWidth={(isGridGlyph ? 1.25 : (isLine ? 1.9 : 1.6)) / k}
+          strokeWidth={(isGridGlyph ? 1.5 : (isLine ? 1.9 : 1.6)) / k}
           strokeLinecap="butt"
           strokeLinejoin={isLine ? 'round' : 'miter'}
         />
@@ -5402,7 +5408,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const s = renderScale;
     const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
     const lw = GRID_SHAPE_KINDS.has(image.shape)
-      ? 1.25 / s
+      ? 1.5 / s
       : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160)) / s;
     const dash = image.shapeDash || 0;
     const seg = lw * (0.6 + (dash / 100) * 4);
@@ -5622,7 +5628,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         const solid = !!image.shapeFilled && image.shape !== 'line';
         const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
         const lw = GRID_SHAPE_KINDS.has(image.shape)
-          ? 1.25
+          ? 1.5
           : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
         const outer = (image.shapeStrokeW || 0) * (lineBase / 160);
         ctx.lineJoin = image.shape === 'line' ? 'round' : 'miter';
@@ -11549,7 +11555,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const sScale = fImg.scale || 1;
     const exportLineBase = (fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor;
     const lw = GRID_SHAPE_KINDS.has(fImg.shape!)
-      ? 1.25 * scaleFactor / sScale
+      ? 1.5 * scaleFactor / sScale
       : Math.max(0.4 * scaleFactor, (fImg.shapeLineW ?? 6) * (exportLineBase / 160)) / sScale;
     if (!solid) {
       const dash = fImg.shapeDash || 0;
