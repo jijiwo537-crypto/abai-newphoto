@@ -985,6 +985,7 @@ const textureGlyphD = (kind: 'star' | 'heart', cx: number, cy: number, r: number
 export const shapePathD = (
   kind: string, w: number, h: number,
   gridBaseW = w, gridBaseH = h,
+  gridDotRadius = Math.min(gridBaseW, gridBaseH) / 160 * 2.325,
 ): string => {
   const a = w / 2, b = h / 2, cx = a, cy = b;
   /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
@@ -1145,7 +1146,7 @@ export const shapePathD = (
         for (let col = 0; col < cols; col++) {
           const x = cols === 1 ? w / 2 : (col + 0.5) * stepX;
           const fade = kind === 'grid-dots-fade' ? (1 - 0.68 * (x / Math.max(1, w))) : 1;
-          const rr = Math.min(gbw, gbh) / 160 * 2.325 * fade;
+          const rr = gridDotRadius * fade;
           d += `M ${r3(x - rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x + rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x - rr)} ${r3(y)} Z `;
         }
       }
@@ -1232,9 +1233,7 @@ export const SHAPE_DEFAULT_LINEW = (kind: string) =>
   (kind === 'wave' || kind === 'lightning-wave') ? 2.5 : (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
 export const SHAPE_DEFAULT_RATIO = (kind: string) =>
-  GRID_DOT_KINDS.has(kind) ? 0.225
-    : (kind === 'wave' || kind === 'lightning-wave') ? 0.576
-    : (kind === 'line' ? 0.24 : 0.15);
+  (kind === 'wave' || kind === 'lightning-wave') ? 0.576 : (kind === 'line' ? 0.24 : 0.15);
 /** 新圖形的預設顏色。 */
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 
@@ -5623,6 +5622,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           image.shape, boxW, boxH,
           (image.shapeTextureBaseW || image.width) * renderScale,
           (image.shapeTextureBaseH || image.height) * renderScale,
+          ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325,
         ));
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const solid = !!image.shapeFilled && image.shape !== 'line';
@@ -6323,6 +6323,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shape, image.width, image.height,
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
+                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
+                  / Math.max(0.01, renderScale),
               )}
               fill="none"
               stroke={image.shapeStrokeColor || '#000000'}
@@ -6337,6 +6339,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shape, image.width, image.height,
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
+                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
+                  / Math.max(0.01, renderScale),
               )}
             fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
             stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || SHAPE_DEFAULT_COLOR)}
@@ -6378,6 +6382,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shape, image.width, image.height,
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
+                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
+                  / Math.max(0.01, renderScale),
               )}
                   fill={`url(#${id})`}
                   stroke="none"
@@ -6417,6 +6423,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shape, image.width, image.height,
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
+                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
+                  / Math.max(0.01, renderScale),
               )}
                   fill={`url(#${id})`}
                   stroke="none"
@@ -11547,6 +11555,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       fImg.shape!, fw, fh,
       (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
       (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
+      ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor / 160) * 2.325
+        / Math.max(0.01, fImg.scale || 1),
     ));
     const color = fImg.color || SHAPE_DEFAULT_COLOR;
     const solid = fImg.shapeFilled && fImg.shape !== 'line';
