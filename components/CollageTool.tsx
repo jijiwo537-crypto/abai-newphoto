@@ -7447,6 +7447,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     fontFamily: DEFAULT_FONT, bold: false, italic: false,
                     letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
                     glow: 0, glowColor: '#ffffff',
+                    /* 新增符號即使用符號專屬預設：泡泡進場、縮放 II 常駐。 */
+                    mo: {
+                      ...MO_DEFAULT,
+                      in: 'bubble',
+                      dur: durFromSpeed(80),
+                      idle: 'symbol-breathe2',
+                      amp: 60,
+                      speed: 1.2,
+                    },
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
                   }]);
                   setSelectedObj(id);
@@ -7846,7 +7855,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 // 換動畫種類 → 從頭播一次，不用自己等一圈
                 const pickKind = (d: Partial<MoCfg>) => {
                   if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
-                  else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 80, speed: 1.2 });
+                  else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 60, speed: 1.2 });
                   else if (d.idle && isSpecialLineTarget) setCur({ ...d, amp: 20 });
                   else setCur(d);
                   replayMotion();
