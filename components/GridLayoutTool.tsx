@@ -2286,9 +2286,13 @@ const toolBtn = (id: string, label: string, icon: string | React.ReactNode, acti
         transitionDuration: '90ms, 150ms, 150ms',
         transitionTimingFunction: 'cubic-bezier(0.2, 0.8, 0.3, 1)',
       }}
-      className={`w-10 h-10 rounded-full flex items-center justify-center ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10 group-active:scale-105'}`}
+      className={`w-10 h-10 rounded-full flex items-center justify-center ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white group-hover:bg-white/10 group-active:scale-105'}`}
     >
-      {typeof icon === 'string' ? <Icon name={icon} className="text-lg" fill={active} /> : icon}
+      {/* 未選中時讓整顆圖標一次合成後再降低透明度；若 SVG 內有線條交會，
+          不會因每段半透明描邊重複混色而在交界處變白。 */}
+      <span className={`flex items-center justify-center transition-opacity duration-150 ${active ? 'opacity-100' : 'opacity-40 group-hover:opacity-70'}`}>
+        {typeof icon === 'string' ? <Icon name={icon} className="text-lg" fill={active} /> : icon}
+      </span>
     </div>
     <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${active ? 'text-white' : 'text-white/20'}`}>{label}</span>
     <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${adjusted ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
@@ -2900,14 +2904,12 @@ export const IMG_SHAPES: { id: string; label: string; glyph: string }[] = [
  * 一個方框疊一個圓，是「形狀」最好認的畫法；空心跟裡面那排一致。
  */
 export const ImgShapeIcon: React.FC<{ size?: number }> = ({ size = 19 }) => (
-  /* 「形狀」工具使用安靜的雙輪廓：外框代表圖片範圍，內圓代表套用外形。
-     兩條路徑不重疊，低透明度時不會出現局部特別白的交界；1.25px 細線
-     也與同列工具的視覺重量一致，不再像原本的疊合圖案那麼厚重。 */
+  /* 方形、圓形與三角形用清楚的留白分隔，直覺表達「選擇形狀」。
+     三個封閉輪廓合併成一次 SVG 描邊，透明狀態也不會在接點疊白。 */
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth={1.25}
+    stroke="currentColor" strokeWidth={1.35}
     strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <rect x="3.5" y="3.5" width="17" height="17" rx="2.25" />
-    <circle cx="12" cy="12" r="4.25" />
+    <path d="M3.5 3.5h6.25v6.25H3.5z M20.5 6.625a3.125 3.125 0 1 1-6.25 0 3.125 3.125 0 1 1 6.25 0 M3.5 20.5h7l-3.5-6z" />
   </svg>
 );
 
