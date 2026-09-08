@@ -371,7 +371,7 @@ const hashId = (id: string) => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
