@@ -9647,33 +9647,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     onHome();
   };
 
-  const liveDraftRef = useRef<{ pages: any[]; floatingImages: any[]; selectedRatio: string; isLandscape: boolean } | null>(null);
   useEffect(() => {
     if (!draftReady || leftRef.current) return;
     const empty = floatingImages.length === 0 && pages.every(p => p.layouts.length === 0);
     if (empty) return;
-    const snapshot = { pages, floatingImages, selectedRatio, isLandscape };
-    liveDraftRef.current = snapshot;
     const t = setTimeout(() => {
-      if (!leftRef.current) saveDraft(snapshot);
-    }, 250);
+      if (leftRef.current) return;
+      saveDraft({ pages, floatingImages, selectedRatio, isLandscape });
+    }, 1200);
     return () => clearTimeout(t);
   }, [draftReady, pages, floatingImages, selectedRatio, isLandscape]);
-  useEffect(() => {
-    const flush = () => {
-      if (!leftRef.current && liveDraftRef.current) {
-        const { pages, floatingImages, selectedRatio, isLandscape } = liveDraftRef.current;
-        saveDraft({ pages, floatingImages, selectedRatio, isLandscape });
-      }
-    };
-    const onVisibility = () => { if (document.visibilityState !== 'visible') flush(); };
-    window.addEventListener('pagehide', flush);
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => {
-      window.removeEventListener('pagehide', flush);
-      document.removeEventListener('visibilitychange', onVisibility);
-    };
-  }, []);
 
   // When image count changes, reset selected index if out of bounds, and clamp templateIndex
   useEffect(() => {
