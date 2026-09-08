@@ -420,7 +420,7 @@ export const IN_KINDS: { id: string; name: string }[] = [
   { id: 'spring', name: '流星' },
 ];
 const LINE_IN_KINDS = [...IN_KINDS.filter(k => k.id !== 'spring'), { id: 'draw', name: '畫筆' }];
-const SYMBOL_IN_KINDS = [...IN_KINDS, { id: 'pop2', name: '果凍II' }, { id: 'fade2', name: '淡入II' }, { id: 'rise2', name: '升起II' }, { id: 'drop2', name: '落下II' }];
+const SYMBOL_IN_KINDS = IN_KINDS.map(k => k.id === 'spring' ? { id: 'bubble', name: '泡泡' } : k);
 
 /* 發光用的色票：第一顆是純白，其餘 14 顆是把預設色 #9BD4C3 只轉色相
    （飽和度與亮度完全不動）之後，照色相由小到大排出來的一圈漸層。 */
@@ -612,7 +612,7 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   // 特別做的：高頻又不規則的細微抖動，像手持鏡頭
   { id: 'jitter', name: '抖動' },
 ];
-const SYMBOL_IDLE_KINDS = [...IDLE_KINDS.filter(k => k.id !== 'sway').map(k => k.id === 'breathe' ? { ...k, name: '縮放I' } : k), { id: 'symbol-breathe2', name: '縮放II' }];
+const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'sway').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 
 /** 進場動畫在進度 p（0～1）時的樣子 */
 const inFrame = (kind: string, p: number): MoFrame => {
@@ -630,7 +630,7 @@ const inFrame = (kind: string, p: number): MoFrame => {
     case 'bounce': return { k: 1, dx: 0, dy: -(1 - easeOutBounce(p)) * 1.1, rot: 0, a: Math.min(1, p * 4) };
     case 'spring': { const q = easeOutCubic(Math.min(1, p / 0.62)); const z = Math.max(0, (p - 0.62) / 0.38); const over = z > 0 ? Math.sin(z * Math.PI) * 0.06 : 0; const d = (1 - q) * 1.15; const stretch = (1 - q) * 0.55; return { k: (1 + over) / (1 + stretch), dx: -d, dy: -d * 0.72, rot: -(1 - q) * 28, a: Math.min(1, p * 4), burst: 0 }; }
     case 'draw': return { k: 1, dx: 0, dy: 0, rot: 0, a: 1, draw: e };
-    case 'pop2': case 'fade2': case 'rise2': case 'drop2': return { k: 1, dx: 0, dy: 0, rot: 0, a: 1, seq: p };
+    case 'bubble': return { k: 1, dx: 0, dy: 0, rot: 0, a: 1, seq: p };
     case 'none':   return FLAT;
     default:       return { k: easeOutBack(p), dx: 0, dy: 0, rot: 0, a: fade };   // pop
   }
@@ -4687,15 +4687,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           let cursor = tdx - total / 2;
           const now = performance.now() / 1000;
           units.forEach((ch, index) => {
-            const q = seqIn === null ? 1 : Math.max(0, Math.min(1, (seqIn * units.length - index) * 2.4));
+            const q = seqIn === null ? 1 : Math.max(0, Math.min(1, (seqIn * (units.length + 1) - index) / 2));
             const kind = o.mo?.in;
             const ease = easeOutCubic(q);
             const scale = individualBreathe
               ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71) * ((o.mo?.amp || 50) / 100) * 0.18
-              : kind === 'pop2' ? easeOutBack(q) : 1;
-            const rise = kind === 'rise2' ? (1 - ease) * o.size * s * 0.45 : kind === 'drop2' ? -(1 - ease) * o.size * s * 0.45 : 0;
+              : kind === 'bubble' ? easeOutBack(q) : 1;
+            const rise = 0;
             ctx.save();
-            ctx.globalAlpha *= kind === 'fade2' ? q : (seqIn === null ? 1 : Math.min(1, q * 3));
+            ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
             ctx.translate(cursor + widths[index] / 2, tdy + rise);
             ctx.scale(scale, scale);
             ctx.textAlign = 'center';
@@ -5569,7 +5569,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const span = Math.max(0.1, moLink.dur);
         return ez(Math.max(0, Math.min(1, (t - st) / span)));
       },
-      obj: (o: any, i: number) => composeMo(moOf(o), t, (hashId(o.id) % 628) / 100 + i * 0.7),
+      obj: (o: any, i: number) => {
+        const cfg = moOf(o);
+        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, Array.from(o.text || '').length) : 1;
+        const timed = units > 1 ? { ...cfg, dur: cfg.dur * (units + 1) / 2 } : cfg;
+        return composeMo(timed, t, (hashId(o.id) % 628) / 100 + i * 0.7);
+      },
       /* 發光的常駐動畫跟圖案那組是分開的：圖案可以完全靜止，光自己在閃。 */
       /* gain：故障那一款，圖案要更兇（+50%）、線要收斂一點（−10%）。
          其他款不受影響（gain 只在 twinkle/blink/glitch 的暗度上相乘，
@@ -7333,7 +7338,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     glow: 0, glowColor: SHAPE_DEFAULT_COLOR,
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
-                    ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(30) } } : {}),
+                    ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(15), amp: 20 } } : {}),
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
@@ -7701,7 +7706,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   else if (selObj) patchMo(selObj.id, d);
                 };
                 // 換動畫種類 → 從頭播一次，不用自己等一圈
-                const pickKind = (d: Partial<MoCfg>) => { setCur(d); replayMotion(); };
+                const pickKind = (d: Partial<MoCfg>) => {
+                  if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 80, speed: 1.2 });
+                  else if (d.idle && isSpecialLineTarget) setCur({ ...d, amp: 20 });
+                  else setCur(d);
+                  replayMotion();
+                };
                 /* 發光的常駐動畫不再自成一頁 —— 直接接在「本體」那一頁的最下面：
                    圖案的接在圖案頁、圖片／文字的接在那個物件自己的頁。 */
                 const glowPanel = (which: 'hole' | 'img' | 'text') => {
@@ -7797,7 +7807,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     {moTarget === 'link' ? (
                       <>
                         <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-4">
-                          <CompactSlider label="起始" value={Math.round(moLink.delay)} min={0} max={20} step={1}
+                          <CompactSlider label="起始" value={Number(moLink.delay.toFixed(1))} min={0} max={3} step={0.1} decimals={1} fixedDecimals
                             onCommit={replayMotion}
                             onChange={(v: number) => setMoLink(m => ({ ...m, delay: v }))} />
                           {/* 面板上調速度（越大越快），內部照樣存秒數 */}
@@ -7828,7 +7838,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           ))}
                         </div>
                         <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                          <CompactSlider label="起始" value={Math.round(cur.delay)} min={0} max={20} step={1}
+                          <CompactSlider label="起始" value={Number(cur.delay.toFixed(1))} min={0} max={3} step={0.1} decimals={1} fixedDecimals
                             onCommit={replayMotion}
                             onChange={(v: number) => setCur({ delay: v })} />
                           <CompactSlider label="速度" value={speedFromDur(cur.dur)} min={0} max={100} step={1}
@@ -8119,7 +8129,7 @@ const RafRange = ({ min, max, step, value, onChange }: any) => {
 
 /* wide＝圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆）。
    只有指定要換的那幾頁會傳，其他地方維持原樣。 */
-const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, onCommit, wide = false }: any) => {
+const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, fixedDecimals = false, onCommit, wide = false }: any) => {
   const { push, flush } = useRafOnChange(onChange);
   const done = () => { flush(); onCommit && onCommit(); };
   return (
@@ -8128,7 +8138,7 @@ const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimal
       <span>{label}</span>
       {/* 小數位要能顯示出來，不然 1.25 跟 1.5 在畫面上都是 1，看起來就像滑桿沒作用 */}
       <span className="text-white font-sans tabular-nums">
-        {decimals > 0 ? Number(value).toFixed(decimals).replace(/\.?0+$/, '') || '0' : Math.round(value)}
+        {decimals > 0 ? (fixedDecimals ? Number(value).toFixed(decimals) : Number(value).toFixed(decimals).replace(/\.?0+$/, '') || '0') : Math.round(value)}
       </span>
     </div>
     {/* onCommit：手指／滑鼠放開時才觸發（動畫頁拿它來自動重播） */}
