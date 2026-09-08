@@ -5895,9 +5895,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /** 離開編輯器時，如果調整過但沒導出，也記一筆到歷史紀錄。
       縮圖直接用畫面上的預覽（已經是顯示解析度，很小很安全）。 */
   const recordProgress = useCallback(async () => {
-    // isDirtyRef 是「畫面要重畫」的旗標，畫完就會被清掉，不能拿來判斷有沒有編輯過。
-    // 有沒有動過看歷史：index 0 是剛載入的狀態。
-    if (historyIndex <= 0) return;
+    /* 是否需要詢問已由 requestLeave 按實際成品判斷。
+       恢復的已編輯專案會把當前成品設成 history 第 0 格，因此這裡不能再用
+       historyIndex <= 0 跳過；否则按了「儲存」也不會寫入歷史紀錄。 */
     const cv = displayCanvasRef.current;
     if (!cv || !cv.width || !cv.height) return;
     try {
