@@ -7033,7 +7033,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 e.stopPropagation();
                 generateRandomHoles();
               }} 
-              className="p-3 bg-[#111] hover:bg-[#1a1a1a] border border-white/10 hover:border-white/20 text-[#aaa] hover:text-white rounded-full active:scale-95 transition-all shadow-[0_4px_16px_rgba(0,0,0,0.5)] flex items-center justify-center backdrop-blur-md"
+              className="p-3 bg-[#111] hover:bg-[#1a1a1a] border border-white/10 hover:border-white/20 text-[#aaa] hover:text-white rounded-full active:scale-95 transition-all flex items-center justify-center backdrop-blur-md"
               title="隨機圖形"
             >
               <RefreshCw size={18} />

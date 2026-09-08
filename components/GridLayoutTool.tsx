@@ -9894,8 +9894,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const fEl = elem.closest('[data-floating-id]');
     if (fEl) {
       const id = fEl.getAttribute('data-floating-id');
-      // 文字圖層沒有照片可以換
-      if (id && !floatingImages.find(f => f.id === id)?.text) return { kind: 'floating', id };
+      /* 只有真正的自由图片能成为交换目标。
+         图形与文字都不接收拖入：经过图形时不高亮、不选中，也不触发任何交换反馈。 */
+      const target = id ? floatingImages.find(f => f.id === id) : null;
+      if (id && target && !target.shape && target.text === undefined) return { kind: 'floating', id };
       if (id) return null;
     }
     const cEl = elem.closest('[data-cell-id]');
@@ -14784,7 +14786,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {floatDragSrc && (
         <div
           id="float-drag-thumbnail"
-          className="fixed pointer-events-none z-[9999] border-2 border-white/80 shadow-2xl overflow-hidden bg-neutral-900 flex items-center justify-center will-change-transform"
+          className="fixed pointer-events-none z-[9999] border-2 border-white/80 overflow-hidden bg-neutral-900 flex items-center justify-center will-change-transform"
           style={{
             left: 0,
             top: 0,
@@ -14792,7 +14794,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             height: '80px',
             transform: `translate3d(${floatSwapRef.current?.startX || 0}px, ${floatSwapRef.current?.startY || 0}px, 0) translate(-50%, -50%) scale(1.1) rotate(4deg)`,
             borderRadius: '8px',
-            boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.34)',
           }}
         >
           <img src={floatDragSrc} alt="dragging" className="w-full h-full object-cover" />
@@ -14803,7 +14805,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {touchDraggedIndex !== null && images[touchDraggedIndex]?.url && (
         <div
           id="mobile-drag-floating-thumbnail"
-          className="fixed pointer-events-none z-[9999] border-2 border-white/80 shadow-2xl overflow-hidden bg-neutral-900 flex items-center justify-center will-change-transform"
+          className="fixed pointer-events-none z-[9999] border-2 border-white/80 overflow-hidden bg-neutral-900 flex items-center justify-center will-change-transform"
           style={{
             left: 0,
             top: 0,
@@ -14811,7 +14813,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             height: '80px',
             transform: `translate3d(${touchDragState.current?.startX || 0}px, ${touchDragState.current?.startY || 0}px, 0) translate(-50%, -50%) scale(1.1) rotate(4deg)`,
             borderRadius: '8px', // Square design
-            boxShadow: '0 12px 40px rgba(0,0,0,0.6)',
+            boxShadow: '0 4px 14px rgba(0,0,0,0.34)',
           }}
         >
           <img
