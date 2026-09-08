@@ -5670,7 +5670,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       <div
         className="absolute left-1/2 top-1/2 flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto z-50"
         style={{
-          transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-image.rotation}deg) scale(${previewInv})`,
+          transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-image.rotation}deg)`,
+          gap: 2 * previewInv,
+          padding: 2 * previewInv,
+          boxShadow: `0 ${10 * previewInv}px ${24 * previewInv}px rgba(0,0,0,0.35)`,
         }}
         onPointerDown={(e) => e.stopPropagation()}
         onTouchStart={(e) => e.stopPropagation()}
@@ -5679,35 +5682,40 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           onClick={(e) => { e.stopPropagation(); if (canLayerDown) onLayerAction('down'); }}
           disabled={!canLayerDown}
           title="下移一層"
-          className={`w-7 h-7 rounded-full flex items-center justify-center ${canLayerDown ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
+          style={{ width: 28 * previewInv, height: 28 * previewInv }}
+          className={`rounded-full flex items-center justify-center ${canLayerDown ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
         >
-          <MoveDown size={14} />
+          <MoveDown size={14 * previewInv} />
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); if (canLayerUp) onLayerAction('up'); }}
           disabled={!canLayerUp}
           title="上移一層"
-          className={`w-7 h-7 rounded-full flex items-center justify-center ${canLayerUp ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
+          style={{ width: 28 * previewInv, height: 28 * previewInv }}
+          className={`rounded-full flex items-center justify-center ${canLayerUp ? 'text-black hover:bg-black/10' : 'text-black/25 cursor-default'}`}
         >
-          <MoveUp size={14} />
+          <MoveUp size={14 * previewInv} />
         </button>
         <button
           onClick={(e) => { e.stopPropagation(); onLayerAction('copy'); }}
           title="複製"
-          className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black"
+          style={{ width: 28 * previewInv, height: 28 * previewInv }}
+          className="rounded-full hover:bg-black/10 flex items-center justify-center text-black"
         >
-          <Copy size={14} />
+          <Copy size={14 * previewInv} />
         </button>
         {/* 編輯鍵：文字與圖片都用同一顆（跟佈局那顆同款） */}
         <button
           onClick={(e) => { e.stopPropagation(); onLayerAction('edit'); }}
           title={image.text !== undefined ? '編輯文字' : image.shape ? '圖形調整' : '圖片調整'}
-          className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black"
+          style={{ width: 28 * previewInv, height: 28 * previewInv }}
+          className="rounded-full hover:bg-black/10 flex items-center justify-center text-black"
         >
-          <Sliders size={14} />
+          <Sliders size={14 * previewInv} />
         </button>
-        <button onClick={(e) => { e.stopPropagation(); onLayerAction('delete'); }} title="刪除" className="w-7 h-7 rounded-full hover:bg-black/10 flex items-center justify-center text-black">
-          <Trash2 size={14} />
+        <button onClick={(e) => { e.stopPropagation(); onLayerAction('delete'); }} title="刪除" style={{ width: 28 * previewInv, height: 28 * previewInv }}
+          className="rounded-full hover:bg-black/10 flex items-center justify-center text-black">
+          <Trash2 size={14 * previewInv} />
         </button>
       </div>
       );
@@ -5810,8 +5818,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       ) => (
         <div
           key={corner}
-          className={`absolute ${pos} w-3.5 h-3.5 ${cur} z-50 pointer-events-auto touch-none`}
-          style={{ transform: `${tx} scale(${previewInv})` }}
+          className={`absolute ${pos} ${cur} z-50 pointer-events-auto touch-none`}
+          style={{ width: 14 * previewInv, height: 14 * previewInv, transform: tx }}
           onPointerDown={(e) => handleScalePointerDown(e, corner)}
           onPointerMove={handleScalePointerMove}
           onPointerUp={handleScalePointerUp}
@@ -5819,8 +5827,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           title="縮放"
         >
           <div
-            className="absolute rounded-full bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]"
-            style={{ left: 1.4, top: 1.4, right: 1.4, bottom: 1.4 }}
+            className="absolute rounded-full bg-white"
+            style={{
+              left: 1.4 * previewInv, top: 1.4 * previewInv,
+              right: 1.4 * previewInv, bottom: 1.4 * previewInv,
+              boxShadow: `0 ${2 * previewInv}px ${5 * previewInv}px rgba(0,0,0,0.5)`,
+            }}
           />
         </div>
       );
@@ -5931,15 +5943,28 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           // 圖形四邊已經直接給「框線上的中心座標」，四個方向都只需把
           // 觸控盒自身的中心搬回該座標。舊的右／下 +50% 是搭配 right/bottom
           // 定位使用的，留在精確座標模式會多推出半個觸控盒。
-          const handleTransform = `${image.shape ? 'translate(-50%, -50%)' : tx} scale(${previewInv})`;
+          const handleTransform = image.shape ? 'translate(-50%, -50%)' : tx;
+          const horizontalHandle = side === 't' || side === 'b';
           return (
-          <div key={side} data-stretch-handle className={`absolute ${image.shape ? '' : pos} ${size} z-50 pointer-events-auto touch-none flex items-center justify-center`}
-            style={{ transform: handleTransform, ...shapeHandleStyle }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
+          <div key={side} data-stretch-handle className={`absolute ${image.shape ? '' : pos} z-50 pointer-events-auto touch-none flex items-center justify-center`}
+            style={{
+              width: (horizontalHandle ? 24 : 8) * previewInv,
+              height: (horizontalHandle ? 8 : 24) * previewInv,
+              transform: handleTransform,
+              ...shapeHandleStyle,
+            }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
             onPointerMove={handleStretchPointerMove} onPointerUp={handleStretchPointerUp} onPointerCancel={handleStretchPointerUp}>
             {image.shape ? (
-              <span className="w-[5px] h-[5px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)]" />
+              <span className="rounded-full block bg-white" style={{
+                width: 5 * previewInv, height: 5 * previewInv,
+                boxShadow: `0 ${previewInv}px ${3 * previewInv}px rgba(0,0,0,0.5)`,
+              }} />
             ) : (
-              <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)]`} />
+              <span className="block bg-white" style={{
+                width: (horizontalHandle ? 16 : 4) * previewInv,
+                height: (horizontalHandle ? 4 : 16) * previewInv,
+                boxShadow: `0 ${2 * previewInv}px ${5 * previewInv}px rgba(0,0,0,0.5)`,
+              }} />
             )}
           </div>
           );
