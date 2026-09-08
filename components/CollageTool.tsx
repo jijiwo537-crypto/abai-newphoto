@@ -1972,6 +1972,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         im.src = o.src;
       });
     }
+    /* 不论来自自动草稿还是历史项目，进入时都从干净的未选中画面开始。 */
+    setSelectedObj(null);
+    setSelectedTarget(null);
+    setShapeSel(null);
   }, [initialState]);
 
   /* 每秒只覆盖同一个 META_KEY。画面状态从 ref 读取，因此不会在这里引用
@@ -1979,7 +1983,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => {
     if (!imageState) return;
     const persistLatest = () => {
-      const env = envSrcRef.current || {};
+      const sourceEnv = envSrcRef.current || {};
+      /* 选中状态属于临时 UI，不是作品内容；草稿永远只保存编辑结果。 */
+      const { selectedObj: _selectedObj, selectedTarget: _selectedTarget, ...env } = sourceEnv;
       saveToolDraft('collage', null, {
         ...env,
         __completeDraft: 1,
