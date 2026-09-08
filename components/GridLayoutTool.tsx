@@ -3483,15 +3483,28 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
       let thumb = cardThumbCache.get(cacheKey);
       if (!thumb) {
         const img = getPreviewImg(src);
-        if (!img.naturalWidth) { img.decode?.().then(() => { if (!dead) paint(); }).catch(() => {}); return; }
+        if (!img.complete || !img.naturalWidth) {
+          const ready = () => { if (!dead) paint(); };
+          img.addEventListener('load', ready, { once: true });
+          if (img.decode) img.decode().then(ready).catch(() => {});
+          return;
+        }
         const made = makeCardThumb(img, fx);
-        if (!made) return;
+        if (!made || !made.width || !made.height) return;
         if (cardThumbCache.size > 200) cardThumbCache.clear();
         cardThumbCache.set(cacheKey, made);
         thumb = made;
       }
+      if (dead || !ref.current) return;
       cvs.width = thumb.width; cvs.height = thumb.height;
-      cvs.getContext('2d')!.drawImage(thumb, 0, 0);
+      const ctx = cvs.getContext('2d')!;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.filter = 'none';
+      ctx.globalCompositeOperation = 'copy';
+      ctx.drawImage(thumb, 0, 0);
+      ctx.restore();
     };
     // 一次算 20 幾張會卡住主執行緒，錯開一點點就順了
     const t = setTimeout(paint, delay);
