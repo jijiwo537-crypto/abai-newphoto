@@ -1156,7 +1156,7 @@ export const SHAPE_DEFAULT_LINEW = (kind: string) =>
   (kind === 'wave' || kind === 'lightning-wave') ? 2.5 : (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
 export const SHAPE_DEFAULT_RATIO = (kind: string) =>
-  (kind === 'wave' || kind === 'lightning-wave') ? 0.96 : (kind === 'line' ? 0.24 : 0.15);
+  (kind === 'wave' || kind === 'lightning-wave') ? 0.576 : (kind === 'line' ? 0.24 : 0.15);
 /** 新圖形的預設顏色。 */
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 
@@ -1196,7 +1196,7 @@ export const drawFeatheredShapeBody = (
 };
 
 /** 「新增圖形」清單。rot 是按鈕與圖形都要轉的角度，ratio 是高度佔寬度的比例 */
-export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number };
+export type ShapeItem = { id: string; kind: string; filled: boolean; rot?: number; ratio?: number; glyphRatio?: number };
 export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   // 實心
   { id: 'circle-f', kind: 'circle', filled: true },
@@ -1232,8 +1232,8 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'line-v', kind: 'line', filled: false, rot: 90, ratio: 0.08 },
   { id: 'line-d1', kind: 'line', filled: false, rot: -45, ratio: 0.08 },
   { id: 'line-d2', kind: 'line', filled: false, rot: 45, ratio: 0.08 },
-  { id: 'line-wave', kind: 'wave', filled: false, ratio: 0.085 },
-  { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, ratio: 0.085 },
+  { id: 'line-wave', kind: 'wave', filled: false, rot: 90, ratio: 0.1417, glyphRatio: 0.17 },
+  { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, rot: 90, ratio: 0.1417, glyphRatio: 0.17 },
 ];
 
 /**
@@ -1290,7 +1290,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
   const BOX = VB;
   /* 有指定比例的（3:4、2:3… 那種邊框、橢圓）要照比例畫，
      不然按鈕上會全部變成正方形、看不出差別。 */
-  const ratio = isLine ? 0 : ((item as any).ratio || 0);
+  const ratio = isLine ? 0 : ((item as any).glyphRatio ?? (item as any).ratio ?? 0);
   const bw = BOX;
   const bh = isLine ? 0 : (ratio ? BOX * ratio : BOX);
   const src = shapePathD(item.kind, bw, bh);
@@ -14209,9 +14209,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         'heart-f', 9);
                       /* 邊框那排的順序跟實心那排對齊：第 6 顆窄菱形、第 9 顆愛心、
                          第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
-                      const lineList = moveTo(moveTo(moveTo(
+                      const lineList = moveTo(moveTo(moveTo(moveTo(
                         [...ADD_SHAPE_ITEMS.filter(i => !i.filled && !SPECIAL_LINE_KINDS.has(i.kind)), HOLE_ITEM_CROSS_O],
-                        'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 13);
+                        'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 11), 'cloud-oval-o', 13);
                       return ([
                         ['實心', solidList],
                         ['邊框', lineList],
