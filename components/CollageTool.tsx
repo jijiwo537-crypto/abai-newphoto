@@ -1375,7 +1375,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        畫布座標，因此不同手機尺寸與預覽倍率下的吸附力道仍然一致。 */
     const cssW = baseCssWRef.current;
     const perCss = cssW > 0 ? offsG.cw / cssW : 3;   // 一個畫面像素等於幾個畫布單位
-    const snap = Math.max(0.75, perCss * 8);
+    const snap = Math.max(0.75, perCss * 6.5);
     const seams = seamLinesRef.current();
     /**
      * 單軸吸附：候選是「這條線」＋「中心要位移多少才貼上去」。
