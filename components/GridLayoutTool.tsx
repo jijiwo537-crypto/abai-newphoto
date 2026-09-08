@@ -6919,7 +6919,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     /* 經典／創意拼圖共用 8 個螢幕像素的吸附距離。換算回內容座標，
        預覽無論放大或縮小，吸附手感都保持一致。 */
-    const SNAP_THRESHOLD = 6.5 / Math.max(0.0001, kRef.current || 1);
+    const SNAP_THRESHOLD = 5.5 / Math.max(0.0001, kRef.current || 1);
     const ownPageRectsForFit = pageRects;
     // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
     const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
@@ -13282,10 +13282,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           : (isThisLayoutSelected && (draggedIndex === idx || touchDraggedIndex === idx))
                                             ? 3
                                             : isSelected
-                                              /* 選中格子的框外藥丸必須高於所有相鄰格子的
-                                                 圖片遮罩；只提升這個格子的互動 UI 堆疊，
-                                                 不改變布局本身在物件層級中的順序。 */
-                                              ? 100
+                                              ? 2
                                               : 1,
                                       }}
                                     >
@@ -13369,10 +13366,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           );
                                         })()}
                                       </div>
-                                      {isSelected && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (
-                                        /* 這排鍵本來壓在格子裡面（bottom-2），正好蓋住剛選中的那張照片。
-                                           改成掛在格子**外面的下方** —— 跟整組佈局被選中時那排鍵同一種做法。
-                                           貼著頁面下緣的那一列格子放不下，就翻到格子上方，不會被裁掉。 */
+                                      {isSelected && !selectionDragging && draggedIndex === null && touchDraggedIndex === null && (() => {
+                                        /* 只提高 z-index 無法逃離頁面／布局的裁切與堆疊環境。
+                                           藥丸改掛到既有 chromeLayer，內容仍留在布局內，
+                                           只有互動工具能完整浮在相鄰格子與黑色遮罩上方。 */
+                                        const cellToolbar = (
                                         <div className="absolute left-1/2 flex items-center z-[300] bg-white backdrop-blur-md rounded-full pointer-events-auto"
                                              style={(() => {
                                                const inv = 1 / Math.max(0.0001, kRef.current);
@@ -13420,7 +13418,48 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             <Sliders size={14 / Math.max(0.0001, kRef.current)} />
                                           </button>
                                         </div>
-                                      )}
+                                        );
+                                        if (!chromeLayer) return cellToolbar;
+                                        const pageMove = pageContentShift(pageIdx);
+                                        const pageLifted = !!pageMove && pageMove.s !== 1;
+                                        return createPortal(
+                                          <div
+                                            className="absolute pointer-events-none"
+                                            style={{
+                                              left: pageIdx * (previewW + 1),
+                                              top: 0,
+                                              width: previewW,
+                                              height: previewH,
+                                              transform: pageMove
+                                                ? `translateX(${pageMove.dx}px)${pageLifted ? ` scale(${pageMove.s})` : ''}`
+                                                : undefined,
+                                              transformOrigin: 'center center',
+                                              transition: pageMove ? (pageMove.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
+                                              zIndex: 200000,
+                                            }}
+                                          >
+                                            <div
+                                              className="absolute pointer-events-none"
+                                              style={{
+                                                left: lLeft,
+                                                top: lTop,
+                                                width: lw,
+                                                height: lh,
+                                                transform: (layout.t?.rot || 0) !== 0 ? `rotate(${layout.t!.rot}deg)` : undefined,
+                                                transformOrigin: 'center center',
+                                              }}
+                                            >
+                                              <div
+                                                className="absolute pointer-events-none"
+                                                style={{ left: l0, top: t0, width: cellWidth, height: cellHeight }}
+                                              >
+                                                {cellToolbar}
+                                              </div>
+                                            </div>
+                                          </div>,
+                                          chromeLayer,
+                                        );
+                                      })()}
                                     </div>
                                   );
                                 });
