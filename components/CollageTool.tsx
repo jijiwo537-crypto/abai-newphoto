@@ -5299,13 +5299,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [onHome]);
 
   const requestLeaveToHome = useCallback(async () => {
-    /* 新导入的图片本身就是一份尚未明确保存的项目，即使历史仍在第 0 格，
-       返回时也必须询问。只有「从草稿／历史进入，而且没有任何新操作」
-       才能依照既有规则直接返回。 */
-    if (initialState && histRef.current.index <= 0 && !dirtyRef.current) {
-      onHome(true);
-      return;
-    }
+    /* 從自動暫存恢復的專案，即使本次進入後沒有再操作，內容也已經不同於
+       最初匯入的原圖，仍然是一份尚未由使用者確認保存／放棄的編輯成果。
+       不能用「history index 為 0、目前不 dirty」略過詢問：恢復流程會刻意
+       把當下狀態設成新的歷史起點，這兩個值只代表本次工作階段沒再修改。 */
     const choice = onRequestExit ? await onRequestExit() : 'discard';
     if (choice === 'cancel') return;
     leavingRef.current = true;
@@ -5321,7 +5318,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       await recordHistoryRef.current?.();
     }
     onHome(choice === 'save');
-  }, [initialState, onRequestExit, onHome, layout, maskScale, holeType, customText, holeSize, sizeJitter,
+  }, [onRequestExit, onHome, layout, maskScale, holeType, customText, holeSize, sizeJitter,
       holeAngle, holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap,
       symmetryEnabled, stripeN, stripeDir, stripeAPick, stripeB, glowMode, holeGlowColor,
       glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor]);
