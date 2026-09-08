@@ -4606,7 +4606,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            的算法（跟著現在的大小走），行為不會突然變。 */
         const unit = ((o as any).lineBase || Math.max(o.w, o.h)) * s / 160;
         const lw = GRID_SHAPE_KINDS.has(o.kind)
-          ? 1.25 * s
+          ? 1.5 * s
           : Math.max(0.4, (o.lineW ?? 6) * unit);
         const col = o.color || SHAPE_DEFAULT_COLOR;
         const solid = o.filled && o.kind !== 'line';
