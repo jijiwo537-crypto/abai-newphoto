@@ -7376,11 +7376,34 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      滑桿卻已經接到新這張的參數上了。 */
   useEffect(() => { setEffectCard(''); setEffectDetail(false); }, [selectedFloatingId]);
   /** 構圖中的圖層：跟「編輯」共用同一個 ComposeStudio */
-  const [composeState, setComposeState] = useState<{ id: string; img: HTMLImageElement | HTMLVideoElement; geo: GeoParams; vid?: boolean } | null>(null);
+  const [composeState, setComposeState] = useState<{
+    id: string;
+    img: HTMLImageElement | HTMLVideoElement;
+    geo: GeoParams;
+    vid?: boolean;
+    cell?: { layoutId: string; index: number };
+  } | null>(null);
 
   const openComposeFor = (id: string) => {
     const layer = floatingImages.find(f => f.id === id);
-    if (!layer) return;
+    /* 布局小格不是 floatingImages 图层。编辑面板会为它建立一个临时 layer，
+       以前这里又只回头找 floatingImages，所以点击“构图”必定直接 return。
+       现在明确记录格子所属布局与索引，套用时再准确写回该格。 */
+    if (!layer) {
+      if (selectedIndex === null || !selectedLayoutId) return;
+      const layoutHit = pages.flatMap(p => p.layouts).find(l => l.id === selectedLayoutId);
+      const cell = layoutHit?.images[selectedIndex];
+      if (!cell?.url) return;
+      const el = new Image();
+      el.onload = () => setComposeState({
+        id: cell.id,
+        img: el,
+        geo: DEFAULT_GEO,
+        cell: { layoutId: selectedLayoutId, index: selectedIndex },
+      });
+      el.src = cell.url;
+      return;
+    }
     /* ── 影片走另一條 ────────────────────────────────────────────────
        以前這裡不管三七二十一都開一張 <img> 去讀那條網址。影片的網址
        <img> 是讀不到的 → onload 永遠不會來 → 構圖介面根本打不開；
@@ -7405,6 +7428,37 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const applyComposeToLayer = () => {
     const st = composeState;
     if (!st) return;
+    /* 布局格子的构图直接烤回该格；不经过 floatingImages，也不会误写当前页
+       上另一个同索引的布局。 */
+    if (st.cell) {
+      const sw = (st.img as any).naturalWidth || st.img.width;
+      const sh = (st.img as any).naturalHeight || st.img.height;
+      if (isGeoIdentity(st.geo)) { setComposeState(null); return; }
+      const baked = composeCanvas(st.img, sw, sh, st.geo, 2400);
+      baked.toBlob(blob => {
+        if (!blob) { setComposeState(null); return; }
+        const url = URL.createObjectURL(blob);
+        setPages(prev => prev.map(p => ({
+          ...p,
+          layouts: p.layouts.map(l => l.id !== st.cell!.layoutId ? l : {
+            ...l,
+            images: l.images.map((cell, i) => i !== st.cell!.index ? cell : {
+              ...cell,
+              url,
+              file: undefined as any,
+              naturalWidth: baked.width,
+              naturalHeight: baked.height,
+              zoom: 1,
+              offsetX: 0,
+              offsetY: 0,
+              rotation: 0,
+            }),
+          }),
+        })));
+        setComposeState(null);
+      }, 'image/png');
+      return;
+    }
     const layer = floatingImages.find(f => f.id === st.id);
     if (!layer) { setComposeState(null); return; }
     const srcUrl = layer.origSrc || layer.src;
@@ -14790,8 +14844,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           style={{
             left: 0,
             top: 0,
-            width: '80px',
-            height: '80px',
+            width: `${Math.round(80 * (0.65 + 0.35 * Math.min(1, kRef.current || 1)))}px`,
+            height: `${Math.round(80 * (0.65 + 0.35 * Math.min(1, kRef.current || 1)))}px`,
             transform: `translate3d(${floatSwapRef.current?.startX || 0}px, ${floatSwapRef.current?.startY || 0}px, 0) translate(-50%, -50%) scale(1.1) rotate(4deg)`,
             borderRadius: '8px',
             boxShadow: '0 4px 14px rgba(0,0,0,0.34)',
@@ -14809,8 +14863,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           style={{
             left: 0,
             top: 0,
-            width: '80px',
-            height: '80px',
+            width: `${Math.round(80 * (0.65 + 0.35 * Math.min(1, kRef.current || 1)))}px`,
+            height: `${Math.round(80 * (0.65 + 0.35 * Math.min(1, kRef.current || 1)))}px`,
             transform: `translate3d(${touchDragState.current?.startX || 0}px, ${touchDragState.current?.startY || 0}px, 0) translate(-50%, -50%) scale(1.1) rotate(4deg)`,
             borderRadius: '8px', // Square design
             boxShadow: '0 4px 14px rgba(0,0,0,0.34)',
