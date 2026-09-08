@@ -420,7 +420,7 @@ export const IN_KINDS: { id: string; name: string }[] = [
   { id: 'spring', name: '流星' },
 ];
 const LINE_IN_KINDS = [...IN_KINDS.filter(k => k.id !== 'spring'), { id: 'draw', name: '畫筆' }];
-const SYMBOL_IN_KINDS = IN_KINDS.map(k => k.id === 'spring' ? { id: 'bubble', name: '泡泡' } : k);
+const SYMBOL_IN_KINDS = IN_KINDS.map(k => k.id === 'fade' ? { id: 'bubble', name: '泡泡' } : k.id === 'spring' ? { id: 'fade', name: '淡入' } : k);
 
 /* 發光用的色票：第一顆是純白，其餘 14 顆是把預設色 #9BD4C3 只轉色相
    （飽和度與亮度完全不動）之後，照色相由小到大排出來的一圈漸層。 */
