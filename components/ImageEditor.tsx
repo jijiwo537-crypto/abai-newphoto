@@ -1934,15 +1934,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   // 照片先存一次，之後只要參數變了就（延遲）更新參數那一份
   const draftSrcSavedRef = useRef<string | null>(null);
+  const latestEditorDraftRef = useRef({ params, geo, selectedLutIdx });
+  latestEditorDraftRef.current = { params, geo, selectedLutIdx };
   useEffect(() => {
     if (!imageSrc) return;
-    const first = draftSrcSavedRef.current !== imageSrc;
-    const t = setTimeout(() => {
+    const timer = window.setInterval(() => {
+      const first = draftSrcSavedRef.current !== imageSrc;
       draftSrcSavedRef.current = imageSrc;
-      saveToolDraft('editor', first ? imageSrc : null, { params, geo, selectedLutIdx });
-    }, first ? 300 : 1200);
-    return () => clearTimeout(t);
-  }, [imageSrc, params, geo, selectedLutIdx]);
+      saveToolDraft('editor', first ? imageSrc : null, latestEditorDraftRef.current);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [imageSrc]);
   const applyGeoRef = useRef<(g: GeoParams) => void>(() => {});
   const activeDragRef = useRef<{
     type: 'center' | 'start' | 'end' | 'rotate' | 'create';
