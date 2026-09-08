@@ -381,7 +381,8 @@ const App: React.FC = () => {
    * 一次就會把使用者的調整整組打回預設（接續上次時剛好會踩到）。
    */
   const leaveTool = useCallback((keepDraft = false, cleanup?: () => void) => {
-    if (!keepDraft) clearToolDraft();
+    /* 主動返回（儲存或放棄）與完成／導出都不是意外中斷，不能留下啟動恢復提示。 */
+    clearToolDraft();
     finishExit(() => {
       setCurrentView('home');
       setToolDraftState(null);
@@ -669,6 +670,7 @@ const App: React.FC = () => {
           key={layoutKey}
           onRequestExit={requestExit}
           onHome={() => {
+            clearCollageDraft();
             finishExit(() => {
               setCurrentView('home');
               setLayoutInitialFiles([]);
