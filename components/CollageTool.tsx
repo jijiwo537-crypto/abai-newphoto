@@ -4530,6 +4530,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.save();
         // 路徑是左上角起算的，所以先把原點從框心搬到左上角
         ctx.translate(-bw / 2, -bh / 2);
+        /* 畫筆進場只套用在線條：沿著線條自身的長軸逐段揭露。
+           物件旋轉後裁切也跟著轉，因此直向線會由上往下畫出。 */
+        if (o.mo?.in === 'draw' && SPECIAL_LINE_KINDS.has(o.kind) && f?.draw !== undefined) {
+          ctx.beginPath();
+          ctx.rect(0, 0, bw * Math.max(0, Math.min(1, f.draw)), bh);
+          ctx.clip();
+        }
         ctx.lineJoin = o.kind === 'line' ? 'round' : 'miter';
         // 一律平頭：線條的兩端要切齊，不要圓角
         ctx.lineCap = 'butt';
