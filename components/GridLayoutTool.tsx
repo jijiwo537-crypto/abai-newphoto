@@ -2676,9 +2676,7 @@ return (
             (composeOpen ? id === 'compose' : adjustSub === id) ? 'text-white' : 'text-white/20'
           }`}
         >
-          {id === 'shape'
-            ? <Shapes size={19} strokeWidth={1.25} aria-hidden />
-            : <Icon name={icon} className="text-xl" fill={composeOpen ? id === 'compose' : adjustSub === id} />}
+          <Icon name={icon} className="text-xl" fill={composeOpen ? id === 'compose' : adjustSub === id} />
           <span className="text-[9px] font-black uppercase tracking-[0.2em]">{label}</span>
         </button>
       ))}
@@ -2902,25 +2900,14 @@ export const IMG_SHAPES: { id: string; label: string; glyph: string }[] = [
  * 一個方框疊一個圓，是「形狀」最好認的畫法；空心跟裡面那排一致。
  */
 export const ImgShapeIcon: React.FC<{ size?: number }> = ({ size = 19 }) => (
-  /* 方框的右下角**整段不畫**，讓圓從那個缺口穿過去。
-   *
-   * 為什麼不是「讓兩個形狀剛好不相交」就好：沒選中時圖示是 40% 不透明的白，
-   * 兩條線只要有一點點疊到，疊合處就會變成 64%，看起來就是一塊比較白的斑。
-   * 上一版只讓**路徑**不相交，但線本身有寬度 —— 線寬還是疊到了。
-   *
-   * 這一版直接留一段空白，用距離保證它們永遠碰不到：
-   *   線段離圓心 7.63 － 半個線寬 0.95 ＝ 6.68
-   *   圓的外緣 4.6 ＋ 半個線寬 0.95 ＝ 5.55
-   * 中間隔著 1.13，怎麼畫都不會重疊。
-   *
-   * 風格對齊旁邊那幾顆（Material Symbols Outlined）：直角、平頭端點、
-   * miter 接角；線寬 1.9 在 19px 上算出來約 1.5px，跟它們一致。
-   */
+  /* 「形狀」工具使用安靜的雙輪廓：外框代表圖片範圍，內圓代表套用外形。
+     兩條路徑不重疊，低透明度時不會出現局部特別白的交界；1.25px 細線
+     也與同列工具的視覺重量一致，不再像原本的疊合圖案那麼厚重。 */
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth={1.9}
-    strokeLinecap="butt" strokeLinejoin="miter" aria-hidden>
-    <path d="M13.5 11V3H3v10.5h8" />
-    <circle cx="17.5" cy="17.5" r="4.6" />
+    stroke="currentColor" strokeWidth={1.25}
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="3.5" y="3.5" width="17" height="17" rx="2.25" />
+    <circle cx="12" cy="12" r="4.25" />
   </svg>
 );
 
