@@ -7419,9 +7419,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             'heart-f', 9);
                           /* 邊框那排的順序跟實心那排對齊：第 6 顆窄菱形、第 9 顆愛心、
                              第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
-                          const lineList = moveTo(moveTo(moveTo(moveTo(
+                          const lineList = moveTo(moveTo(moveTo(moveTo(moveTo(
                             [...ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && !SPECIAL_LINE_KINDS.has(i2.kind)), HOLE_ITEM_CROSS_O],
-                            'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 11), 'cloud-oval-o', 13);
+                            'diamond-n-o', 6), 'heart-o', 9), 'star8-oval-o', 13), 'hole-cross-star-o', 14), 'cloud-oval-o', 15);
                           return ([
                             ['實心', solidList],
                             ['邊框', lineList],
