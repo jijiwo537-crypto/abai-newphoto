@@ -49,6 +49,8 @@ export interface ImageCell {
   offsetX: number;
   offsetY: number;
   rotation: number;
+  /** 圖片透明度，0～100；舊專案未設定時視為 100。 */
+  opacity?: number;
   naturalWidth?: number;
   naturalHeight?: number;
   /** 濾鏡／調節／特效。跟浮動圖片用同一組資料與同一支算圖 */
@@ -681,6 +683,7 @@ const TUNE_TOOLS: [string, string, string, number, number, number][] = [
   ['tint', '色調', 'colorize', -100, 100, 0],
   ['sat', '飽和度', 'palette', -100, 100, 0],
   ['vib', '自然飽和度', 'color_lens', -100, 100, 0],
+  ['opacity', '透明度', 'opacity', 0, 100, 100],
 ];
 
 /* 特效清單跟「編輯」完全一致（順序、名稱、圖標、預設強度都是同一份），
@@ -2131,14 +2134,17 @@ export const ShapeEditorPanel: React.FC<{
           </div>
             );
           })()}
+          <div className="px-2 order-4 w-full">
+            {slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
+          </div>
           {canFeather && (
-            <div className="px-2 order-4 w-full">
+            <div className="px-2 order-5 w-full">
               {slider('羽化', layer.shapeFeather || 0, 0, 100, v => onChange({ shapeFeather: v }))}
             </div>
           )}
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
           {hasOutline && (!isLine || layer.shape === 'line') && (
-            <div className="order-5 flex flex-col gap-3.5">
+            <div className="order-6 flex flex-col gap-3.5">
               {!isLine && slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
                 v => onChange({ shapeLineW: v / 10 }))}
               {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
@@ -2365,7 +2371,11 @@ const sliderArea = (() => {
   if (adjustSub === 'tune') {
     const t = TUNE_TOOLS.find(x => x[0] === tuneTool) || (deferSlider ? null : TUNE_TOOLS[0]);
     if (!t) return null;
-    return editorSlider(t[1], fxVal(t[0], t[5]), t[3], t[4], v => setFx({ [t[0]]: v }));
+    const isOpacity = t[0] === 'opacity';
+    return editorSlider(
+      '', isOpacity ? (img.opacity ?? 100) : fxVal(t[0], t[5]), t[3], t[4],
+      v => isOpacity ? set({ opacity: v }) : setFx({ [t[0]]: v }),
+    );
   }
   if (adjustSub === 'effect') {
     // 細項是另外一整區（並排滑桿），不走這一根
@@ -2514,7 +2524,9 @@ return (
       })}
 
       {adjustSub === 'tune' && TUNE_TOOLS.map(([id, label, icon, , , dflt]) =>
-        toolBtn(id, label, icon, tuneTool === id, fxVal(id, dflt) !== dflt, () => setTuneTool(id))
+        toolBtn(id, label, icon, tuneTool === id,
+          id === 'opacity' ? (img.opacity ?? 100) !== 100 : fxVal(id, dflt) !== dflt,
+          () => setTuneTool(id))
       )}
 
       {/* 特效卡片：跟「編輯」同一份清單、同一種卡片外觀。
@@ -2664,7 +2676,9 @@ return (
             (composeOpen ? id === 'compose' : adjustSub === id) ? 'text-white' : 'text-white/20'
           }`}
         >
-          <Icon name={icon} className="text-xl" fill={composeOpen ? id === 'compose' : adjustSub === id} />
+          {id === 'shape'
+            ? <Shapes size={19} strokeWidth={1.25} aria-hidden />
+            : <Icon name={icon} className="text-xl" fill={composeOpen ? id === 'compose' : adjustSub === id} />}
           <span className="text-[9px] font-black uppercase tracking-[0.2em]">{label}</span>
         </button>
       ))}
@@ -3576,6 +3590,8 @@ interface FloatingImage {
   height: number;
   scale: number;
   rotation: number;
+  /** 圖片／圖形透明度，0～100；舊專案未設定時視為 100。 */
+  opacity?: number;
   /** 有 text 就是文字圖層。位置、縮放、旋轉、圖層順序全部沿用圖片那一套。 */
   text?: string;
   /**
@@ -5998,7 +6014,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           width: `${boxW}px`,
           height: `${boxH}px`,
           zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
-          opacity: image.text !== undefined && isTextEditing ? 0 : 1,
+          opacity: (image.text !== undefined && isTextEditing ? 0 : 1) * ((image.opacity ?? 100) / 100),
           transformOrigin: 'center center',
           transform: dragShift
             ? `translate3d(${dragShift.tx}px, ${dragShift.ty}px, 0) scale(${dragShift.s})`
@@ -6113,6 +6129,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         // 被拖的那一頁整組（頁面 900、上面的東西 1000+）要蓋過其他頁
         zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
         touchAction: touchMode,
+        opacity: isCanvasVector ? 1 : (image.opacity ?? 100) / 100,
         /* 圖片同樣預先建立移動用合成層；第一次拖動不再臨時升層。 */
         willChange: 'transform',
         backfaceVisibility: 'hidden',
@@ -11325,6 +11342,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const size = (fImg.fontSize || 40) * scaleFactor * fImg.scale;
     const spacing = (fImg.letterSpacing || 0) * scaleFactor * fImg.scale;
     ctx.save();
+    ctx.globalAlpha *= (fImg.opacity ?? 100) / 100;
     ctx.translate(cx, cy);
     ctx.rotate((fImg.rotation * Math.PI) / 180);
     ctx.font = `${fImg.italic ? 'italic ' : ''}${fImg.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
@@ -11387,6 +11405,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const fh = fImg.height * scaleFactor;
 
     ctx.save();
+    ctx.globalAlpha *= (fImg.opacity ?? 100) / 100;
     // CSS 的 scale 以未縮放框的中心為原點，所以先搬到中心再縮放，最後推回左上角
     ctx.translate(fx + fw / 2, fy + fh / 2);
     ctx.rotate((fImg.rotation * Math.PI) / 180);
@@ -11534,6 +11553,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
 
       ctx.save();
+      ctx.globalAlpha *= (fImg.opacity ?? 100) / 100;
       // 扣掉預覽裡每頁之間那 1px 的間隔
       const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
       const fx = adjustedX * scaleFactor;
@@ -11956,6 +11976,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               ctx.rect(ix, iy, iw, ih);
             }
             ctx.clip();
+            ctx.globalAlpha *= (cell.opacity ?? 100) / 100;
 
             /* 套了濾鏡／調節／特效就先算出處理過的那一張，再照原本的
                裁切與縮放畫上去 —— 跟預覽用的是同一支 applyPhotoFx。 */
@@ -13330,7 +13351,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             transformOrigin: 'center center',
                                             transform: `translate(-50%, -50%) translate(${cell.offsetX * rawW + fixX}px, ${cell.offsetY * rawH + fixY}px) rotate(${cell.rotation}deg) scale(${cssScale})`,
                                             transition: imageTransition,
-                                            opacity: 1,
+                                            opacity: (cell.opacity ?? 100) / 100,
                                             pointerEvents: 'none',
                                           };
                                           return hasPhotoFx(cell.fx)
