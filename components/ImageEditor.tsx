@@ -1307,14 +1307,21 @@ type ThumbStore = React.MutableRefObject<Record<string, ThumbEntry>>;
 
 /** 把一張算好的縮圖收進倉庫（重複使用同一張畫布，不要一直生新的） */
 function putThumb(store: ThumbStore, id: string, src: HTMLCanvasElement, sig = ''): void {
+  if (!src.width || !src.height) return;
   let e = store.current[id];
   if (!e) e = store.current[id] = { cvs: document.createElement('canvas'), v: 0, sig: '' };
-  e.sig = sig;
   const c = e.cvs;
   if (c.width !== src.width || c.height !== src.height) { c.width = src.width; c.height = src.height; }
   const cx = c.getContext('2d')!;
-  cx.clearRect(0, 0, c.width, c.height);
+  cx.save();
+  cx.setTransform(1, 0, 0, 1, 0, 0);
+  cx.globalAlpha = 1;
+  cx.filter = 'none';
+  cx.globalCompositeOperation = 'copy';
   cx.drawImage(src, 0, 0);
+  cx.restore();
+  /* 內容完整複製成功後才發布版本，畫面端不會讀到只畫了一半的共用畫布。 */
+  e.sig = sig;
   e.v++;
 }
 
@@ -1341,8 +1348,13 @@ const ThumbCanvas: React.FC<{
     if (!el) return;
     const own = store.current[id];
     const e = own || (fallbackId ? store.current[fallbackId] : undefined);
-    // 兩份都還沒有就什麼都不做 —— 保留上一張的內容，總比清成空白好
-    if (!e) return;
+    // 兩份都還沒有時清掉舊照片，不能把上一張／上一顆濾鏡的殘片冒充新縮圖。
+    if (!e) {
+      if (el.width && el.height) el.getContext('2d')?.clearRect(0, 0, el.width, el.height);
+      drawn.current = '';
+      el.dataset.thumbReady = '0';
+      return;
+    }
     const key = `${own ? id : fallbackId}#${e.v}`;
     if (drawn.current === key) return;      // 沒換內容就不要重畫
     drawn.current = key;
@@ -1356,8 +1368,13 @@ const ThumbCanvas: React.FC<{
        重設 width／height 本來就會順便清空，但尺寸沒變時不會走那條路，
        所以這裡明確清一次。 */
     if (el.width !== e.cvs.width || el.height !== e.cvs.height) { el.width = e.cvs.width; el.height = e.cvs.height; }
-    else cx.clearRect(0, 0, el.width, el.height);
+    cx.save();
+    cx.setTransform(1, 0, 0, 1, 0, 0);
+    cx.globalAlpha = 1;
+    cx.filter = 'none';
+    cx.globalCompositeOperation = 'copy';
     cx.drawImage(e.cvs, 0, 0);
+    cx.restore();
     el.dataset.thumbReady = own ? '1' : '0';
   }, [store, id, fallbackId]);
   /* useLayoutEffect：卡片是每次進頁才掛上來的，排在 useEffect 的話
@@ -3261,7 +3278,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           // 背景預載每載好一顆就會再跑一輪，這裡跳過已經是最新的那些格子，
           // 才不會為了補一格把整排重算一次
           if (filterThumbStore.current[key]?.sig === itemSig) return false;
-          const dst = new Uint8ClampedArray(thumbSrc.length);
+          /* 先以完整原圖填滿；即使某個濾鏡資料異常，也不可能留下未寫入的彩色區塊。 */
+          const dst = new Uint8ClampedArray(thumbSrc);
           try {
             processPixels(thumbSrc, dst, W, H,
               { ...flat, lutAmount: amount }, data ? data.data : null, data ? data.size : 0,

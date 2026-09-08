@@ -52,8 +52,12 @@ function tx<T>(store: string, mode: IDBTransactionMode, run: (s: IDBObjectStore)
       try {
         const t = db.transaction(store, mode);
         const req = run(t.objectStore(store));
-        req.onsuccess = () => resolve(req.result as T);
-        req.onerror = () => resolve(null);
+        let result: T | null = null;
+        req.onsuccess = () => { result = req.result as T; };
+        req.onerror = () => { /* transaction handlers below settle the promise */ };
+        t.oncomplete = () => resolve(result);
+        t.onerror = () => resolve(null);
+        t.onabort = () => resolve(null);
       } catch {
         resolve(null);
       }
@@ -85,11 +89,21 @@ let blobSeq = 0;
 
 async function putBlob(src: string): Promise<string | null> {
   const hit = savedSrc.get(src);
-  if (hit) return hit;
+  if (hit) {
+    const existing = await tx<Blob>(STORE_BLOBS, 'readonly', s => s.get(hit) as IDBRequest<Blob>);
+    if (existing instanceof Blob && existing.size > 0) return hit;
+    savedSrc.delete(src);
+  }
   try {
-    const blob = await (await fetch(src)).blob();
+    const response = await fetch(src);
+    if (!response.ok && !src.startsWith('blob:') && !src.startsWith('data:')) return null;
+    const blob = await response.blob();
+    if (!blob.size) return null;
     const id = `b${Date.now().toString(36)}-${blobSeq++}`;
-    await tx(STORE_BLOBS, 'readwrite', s => s.put(blob, id));
+    const written = await tx<IDBValidKey>(STORE_BLOBS, 'readwrite', s => s.put(blob, id));
+    if (written == null) return null;
+    const verified = await tx<Blob>(STORE_BLOBS, 'readonly', s => s.get(id) as IDBRequest<Blob>);
+    if (!(verified instanceof Blob) || !verified.size) return null;
     savedSrc.set(src, id);
     return id;
   } catch {
@@ -109,7 +123,8 @@ async function externalize(value: any, seen: Map<string, string>): Promise<any> 
           const stored = await putBlob(v);
           if (stored) { id = stored; seen.set(v, stored); }
         }
-        out[k] = id ? `idb:${id}` : '';
+        if (!id) throw new Error('draft-image-persistence-failed');
+        out[k] = `idb:${id}`;
       } else {
         out[k] = await externalize(v, seen);
       }
@@ -129,12 +144,13 @@ async function internalize(value: any, urls: Map<string, string>): Promise<any> 
         let url = urls.get(id);
         if (!url) {
           const blob = await tx<Blob>(STORE_BLOBS, 'readonly', s => s.get(id) as IDBRequest<Blob>);
-          if (blob) {
+          if (blob instanceof Blob && blob.size > 0) {
             url = URL.createObjectURL(blob);
             urls.set(id, url);
           }
         }
-        out[k] = url || '';
+        if (!url) throw new Error('draft-image-missing');
+        out[k] = url;
       } else {
         out[k] = await internalize(v, urls);
       }
@@ -154,7 +170,8 @@ export async function saveDraft(draft: Omit<CollageDraft, 'savedAt'>): Promise<v
   try {
     const seen = new Map<string, string>();
     const data = await externalize(payload, seen);
-    await tx(STORE_META, 'readwrite', s => s.put(data, META_KEY));
+    const written = await tx<IDBValidKey>(STORE_META, 'readwrite', s => s.put(data, META_KEY));
+    if (written == null) throw new Error('draft-meta-persistence-failed');
     try { localStorage.setItem(FLAG_KEY, String(payload.savedAt)); } catch { /* 私密瀏覽會擋 */ }
   } finally {
     saving = false;
@@ -167,9 +184,17 @@ export async function saveDraft(draft: Omit<CollageDraft, 'savedAt'>): Promise<v
 export async function loadDraft(): Promise<CollageDraft | null> {
   if (!hasDraft()) return null;
   const raw = await tx<CollageDraft>(STORE_META, 'readonly', s => s.get(META_KEY) as IDBRequest<CollageDraft>);
-  if (!raw) return null;
-  if (Date.now() - (raw.savedAt || 0) > MAX_AGE_MS) return null;
-  return internalize(raw, new Map());
+  if (!raw || Date.now() - (raw.savedAt || 0) > MAX_AGE_MS) {
+    try { localStorage.removeItem(FLAG_KEY); } catch { /* ignore */ }
+    return null;
+  }
+  try {
+    return await internalize(raw, new Map());
+  } catch {
+    /* 不把「物件仍在、照片卻透明」的壞草稿交給畫面；也避免每次進首頁反覆詢問。 */
+    try { localStorage.removeItem(FLAG_KEY); } catch { /* ignore */ }
+    return null;
+  }
 }
 
 export async function clearDraft(): Promise<void> {

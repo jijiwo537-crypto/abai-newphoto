@@ -5072,6 +5072,49 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.restore();
     }
 
+    /* 動畫目標選到「圖案」時，每一顆圖案都短暫顯示同一種淡入淡出的虛線框。
+       直接沿用正式選取框的兩側座標，遮罩／圖片並排或四周包圍時都不會跑位。 */
+    const groupFlash = motionTargetFlashRef.current;
+    const groupFlashProgress = groupFlash?.id === 'shape'
+      ? (performance.now() - groupFlash.started) / groupFlash.duration : 2;
+    if (isMain && !hideChromeRef.current && groupFlashProgress >= 0 && groupFlashProgress < 1) {
+      ctx.save();
+      ctx.globalAlpha = Math.sin(Math.PI * groupFlashProgress) * 0.92;
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 0.9 * uiPx;
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.28)';
+      ctx.shadowBlur = 3 * uiPx;
+      ctx.setLineDash([4.8 * uiPx, 4.8 * uiPx]);
+      const frameOne = (h: any, x: number, y: number) => {
+        const A = hA(h);
+        if (!A.on) return;
+        const sz = getHoleSize(h) * A.k * s;
+        const currentAngle = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(currentAngle * Math.PI / 180);
+        if (isTextHole(holeType)) {
+          const ink = glyphInk(holeType, holeGlyph(holeType, customText, h), sz);
+          ctx.strokeRect(-(ink.w + 16 * sgs) / 2, -(ink.h + 16 * sgs) / 2,
+            ink.w + 16 * sgs, ink.h + 16 * sgs);
+        } else {
+          const box = sz + 16 * sgs;
+          const topGap = (holeType === 'star' || holeType === 'cross-star') ? 4 * sgs : 0;
+          ctx.strokeRect(-box / 2, -box / 2 - topGap, box, box + topGap);
+        }
+        ctx.restore();
+      };
+      holes.forEach(h => {
+        const A = hA(h);
+        const side = h.side || 'both';
+        if (side === 'both' || side === 'image') frameOne(h, A.x * s + offs.ix, A.y * s + offs.iy);
+        if ((side === 'both' || side === 'mask') && isHoleFullyInsideMask(h, 1, maskW, maskH)) {
+          frameOne(h, A.x * s + offs.mx, A.y * s + offs.my);
+        }
+      });
+      ctx.restore();
+    }
+
     /* 選取框只畫在螢幕上那張。畫布可能被畫得更細，所以尺寸與座標都要乘上 s，
        不然放大重畫之後虛線框會停在原本的小尺寸、對不上那個洞。
 
@@ -7805,7 +7848,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
                 const chooseMotionTarget = (id: string) => {
                   setMoTarget(id);
-                  if (objects.some(o => o.id === id)) {
+                  if (id === 'shape' || objects.some(o => o.id === id)) {
                     motionTargetFlashRef.current = { id, started: performance.now(), duration: 850 };
                     setMotionTargetFlashSeq(n => n + 1);
                   }
@@ -7814,7 +7857,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
                     {/* 要調哪一個元素（播放列不在這裡 —— 它跟分頁列一樣在捲動區外面） */}
                     <div className="flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
-                      <button onClick={() => setMoTarget('shape')} className={chip(moTarget === 'shape')}>圖案</button>
+                      <button onClick={() => chooseMotionTarget('shape')} className={chip(moTarget === 'shape')}>圖案</button>
                       {hasLink && <button onClick={() => setMoTarget('link')} className={chip(moTarget === 'link')}>
                         {linkMode === 'dash' ? '虛線' : '連線'}
                       </button>}
