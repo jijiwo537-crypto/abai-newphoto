@@ -6917,7 +6917,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
     }
 
-    const SNAP_THRESHOLD = 1; // 外框實際貼線才吸附；僅容許次像素誤差
+    /* 使用固定的屏幕吸附距离：当前 1 个内容像素在缩小预览时甚至不到
+       1 个屏幕像素，实际几乎抓不到。5px 足够明确，又不会让物件远距离跳动。 */
+    const SNAP_THRESHOLD = 5 / Math.max(0.0001, kRef.current || 1);
     const ownPageRectsForFit = pageRects;
     // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
     const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
@@ -14038,8 +14040,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             /* z 要高過頁與頁之間那條分割線（200），
                                不然對齊線壓在接縫上時會被分割線切掉一半、
                                看起來比其他邊的線細。 */
-                            className="absolute pointer-events-none z-[300] bg-blue-500"
+                            className="absolute pointer-events-none bg-blue-500"
                             style={{
+                              /* 页间分割线是 200000；对齐线必须稳定盖在它上面。 */
+                              zIndex: 300000,
                               left: leftStyle,
                               top: topStyle,
                               width: widthStyle,
