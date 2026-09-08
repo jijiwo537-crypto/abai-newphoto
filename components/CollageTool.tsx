@@ -7807,7 +7807,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     {moTarget === 'link' ? (
                       <>
                         <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-4">
-                          <CompactSlider label="起始" value={Number(moLink.delay.toFixed(1))} min={0} max={3} step={0.1}
+                          <CompactSlider label="起始" value={Number(moLink.delay.toFixed(1))} min={0} max={3} step={0.1} decimals={1} fixedDecimals
                             onCommit={replayMotion}
                             onChange={(v: number) => setMoLink(m => ({ ...m, delay: v }))} />
                           {/* 面板上調速度（越大越快），內部照樣存秒數 */}
@@ -7838,7 +7838,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           ))}
                         </div>
                         <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                          <CompactSlider label="起始" value={Number(cur.delay.toFixed(1))} min={0} max={3} step={0.1}
+                          <CompactSlider label="起始" value={Number(cur.delay.toFixed(1))} min={0} max={3} step={0.1} decimals={1} fixedDecimals
                             onCommit={replayMotion}
                             onChange={(v: number) => setCur({ delay: v })} />
                           <CompactSlider label="速度" value={speedFromDur(cur.dur)} min={0} max={100} step={1}
@@ -8129,7 +8129,7 @@ const RafRange = ({ min, max, step, value, onChange }: any) => {
 
 /* wide＝圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆）。
    只有指定要換的那幾頁會傳，其他地方維持原樣。 */
-const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, onCommit, wide = false }: any) => {
+const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, fixedDecimals = false, onCommit, wide = false }: any) => {
   const { push, flush } = useRafOnChange(onChange);
   const done = () => { flush(); onCommit && onCommit(); };
   return (
@@ -8138,7 +8138,7 @@ const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimal
       <span>{label}</span>
       {/* 小數位要能顯示出來，不然 1.25 跟 1.5 在畫面上都是 1，看起來就像滑桿沒作用 */}
       <span className="text-white font-sans tabular-nums">
-        {decimals > 0 ? Number(value).toFixed(decimals).replace(/\.?0+$/, '') || '0' : Math.round(value)}
+        {decimals > 0 ? (fixedDecimals ? Number(value).toFixed(decimals) : Number(value).toFixed(decimals).replace(/\.?0+$/, '') || '0') : Math.round(value)}
       </span>
     </div>
     {/* onCommit：手指／滑鼠放開時才觸發（動畫頁拿它來自動重播） */}
