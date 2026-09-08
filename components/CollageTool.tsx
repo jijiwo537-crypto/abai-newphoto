@@ -5973,32 +5973,35 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          影片就只剩工作區那點解析度，放大來看當然糊。
          現在走的是「跟存成圖片完全同一條算式」，只是多一個 MOTION_MAX_DIM
          的上限（編碼器與記憶體的現實），所以影片的清晰度就是成品本人。 */
-      const rawSize = collageSizeOf(layout, imageState.originalW, imageState.originalH, maskScale);
-      /* 拼圖裡有真的影片素材時，上限整組換掉（見 MOTION_MAX_DIM_VIDEO）——
-         1440 是給「畫面全是路徑畫出來的純動畫」訂的，拿它去夾一段 1080p
-         的素材，等於把使用者的原始畫質降級。 */
+      /* 經典拼圖的影片輸出只有一套座標：先以實際頁面大小決定輸出倍率，
+         每一幀再用同一倍率合成。創意拼圖以前從 originalW/baseW 反推倍率；
+         圖片經過裁切或編輯後，兩者不一定還是同一個座標系，動畫的 dx/dy
+         便會被額外放大而嚴重跑位。這裡直接以 renderToCanvas 真正使用的
+         工作區 off.cw/off.ch 為基準，預覽與輸出從頭到尾只剩一套座標。 */
       const vids = allVideos();
       const hasVid = vids.length > 0;
-      let cap = Math.min(hasVid ? MOTION_MAX_DIM_VIDEO : MOTION_MAX_DIM, MAX_FINAL_DIM);
-      const longV = Math.max(rawSize.w, rawSize.h);
-      /* 跟存成圖片同一條規矩：小圖先拉到底線，再吃編碼器的上限。
-         影片的上限（MOTION_MAX_DIM）比圖片低，所以多半會被夾在那裡。 */
-      let k = longV > 0 && longV < EXPORT_MIN_DIM ? EXPORT_MIN_DIM / longV : 1;
-      if (longV * k > cap) k = cap / longV;
-      /* 面積才是真正會爆的那一項：MediaRecorder 一秒要吃三、四十張，
-         過大的畫布手機的編碼器追不上，錄出來會掉格甚至整段失敗。 */
+      const cap = Math.min(hasVid ? MOTION_MAX_DIM_VIDEO : MOTION_MAX_DIM, MAX_FINAL_DIM);
+      const logicalW = Math.max(1, off.cw);
+      const logicalH = Math.max(1, off.ch);
+      const logicalLong = Math.max(logicalW, logicalH);
+      let scale = Math.min(cap / logicalLong, Math.max(1, EXPORT_MIN_DIM / logicalLong));
       if (hasVid) {
-        const area = rawSize.w * k * rawSize.h * k;
-        if (area > MOTION_MAX_PIXELS_VIDEO) k *= Math.sqrt(MOTION_MAX_PIXELS_VIDEO / area);
+        const area = logicalW * scale * logicalH * scale;
+        if (area > MOTION_MAX_PIXELS_VIDEO) {
+          scale *= Math.sqrt(MOTION_MAX_PIXELS_VIDEO / area);
+        }
       }
-      const scale = Math.floor(imageState.originalW * k) / imageState.baseW;
+      /* 固定到 1/1000，避免浮點尾數令 canvas 在逐幀重畫時偶爾差一個像素。 */
+      scale = Math.max(0.001, Math.floor(scale * 1000) / 1000);
       // 錄到的第一格就要是影片的第一格，所以先全部倒帶再開始
       if (hasVid) { await rewindVideos(vids); playVideos(vids); }
       animRef.current = buildAnim(0);
       renderToCanvas(cv, scale);          // 先畫第一格，不然開頭會錄到黑畫面
       const mime = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm']
         .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || '';
-      const stream = (cv as any).captureStream(60);
+      /* 跟經典拼圖一致以 30fps 餵給編碼器；避免 60fps 下繪圖追不上時，
+         編碼器收到半更新畫面，看起來像物件在幀間跳位。 */
+      const stream = (cv as any).captureStream(30);
       const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 40_000_000 } : undefined);
       const chunks: Blob[] = [];
       rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
@@ -6303,11 +6306,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           >
             取消匯出
           </button>
-          {/* 上面那顆「取消匯出」是請錄影迴圈自己收工；萬一連它都沒反應
-              （編碼器被系統收走的時候會這樣），這一顆是硬出口。 */}
-          {/* reserveSpace：位置先留著，時間到才顯形 —— 不然它一冒出來，
-              上面的轉圈與百分比就整批被往上頂一截。 */}
-          <StuckEscape onEscape={() => { videoAbortRef.current = true; setVideoProg(null); }} delayMs={12000} reserveSpace />
         </div>
       )}
 
