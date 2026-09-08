@@ -4676,7 +4676,36 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            只有「有墨水的地方」會留下紋理，跟圖形那邊剪裁在路徑裡是同一個結果。
            描邊與發光照舊畫在本體底下，所以紋理只換掉填色那一層。 */
         ctx.fillStyle = o.color || '#ffffff';
-        ctx.fillText(o.text || '', tdx, tdy);
+        /* 符號 II：每一個 Unicode 單位由左至右進場；常駐縮放 II 則給每個單位
+           固定但不同的節奏。普通文字與普通符號維持原本單次繪製，字距完全不變。 */
+        const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
+        const individualBreathe = o.sym && o.mo?.idle === 'symbol-breathe2';
+        if (seqIn !== null || individualBreathe) {
+          const units = Array.from(o.text || '');
+          const widths = units.map(ch => ctx.measureText(ch).width);
+          const total = widths.reduce((sum, v) => sum + v, 0);
+          let cursor = tdx - total / 2;
+          const now = performance.now() / 1000;
+          units.forEach((ch, index) => {
+            const q = seqIn === null ? 1 : Math.max(0, Math.min(1, (seqIn * units.length - index) * 2.4));
+            const kind = o.mo?.in;
+            const ease = easeOutCubic(q);
+            const scale = individualBreathe
+              ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71) * ((o.mo?.amp || 50) / 100) * 0.18
+              : kind === 'pop2' ? easeOutBack(q) : 1;
+            const rise = kind === 'rise2' ? (1 - ease) * o.size * s * 0.45 : kind === 'drop2' ? -(1 - ease) * o.size * s * 0.45 : 0;
+            ctx.save();
+            ctx.globalAlpha *= kind === 'fade2' ? q : (seqIn === null ? 1 : Math.min(1, q * 3));
+            ctx.translate(cursor + widths[index] / 2, tdy + rise);
+            ctx.scale(scale, scale);
+            ctx.textAlign = 'center';
+            ctx.fillText(ch, 0, 0);
+            ctx.restore();
+            cursor += widths[index];
+          });
+        } else {
+          ctx.fillText(o.text || '', tdx, tdy);
+        }
         ctx.shadowBlur = 0;
         (ctx as any).letterSpacing = '0px';
       }
