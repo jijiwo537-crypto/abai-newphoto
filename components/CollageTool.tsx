@@ -4479,7 +4479,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
       if (f && (f.k !== 1 || f.fx !== 1)) ctx.scale(f.k * f.fx, f.k);
-      ctx.globalAlpha = (o.alpha ?? 1) * (f ? f.a : 1);
+      ctx.globalAlpha = ((o.opacity ?? ((o.alpha ?? 1) * 100)) / 100) * (f ? f.a : 1);
       if (o.type === 'image' && o.img) {
         /* 虛線描邊有常駐動畫時，描邊不能烤進快取那張（快取是靠參數當 key 的，
            每一帧都變等於每一帧重算整張圖）。改成：快取那張不畫描邊，
@@ -7759,15 +7759,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </div>
                             );
                           })()}
+                          <div className="px-2 order-4 w-full">
+                            {shapeSlider('透明度', sel.opacity ?? 100, 0, 100,
+                              (v: number) => patch({ opacity: v }))}
+                          </div>
                           {shapeSupportsFeather(sel.kind, sel.filled, sel.hole) && (
-                            <div className="px-2 order-4 w-full">
+                            <div className="px-2 order-5 w-full">
                               {shapeSlider('羽化', sel.shapeFeather || 0, 0, 100,
                                 (v: number) => patch({ shapeFeather: v }))}
                             </div>
                           )}
                           {/* 粗細與虛線只有空心／線條才有，放在最後面 */}
                           {(!sel.filled || isLine) && (!isLine || sel.kind === 'line') && (
-                            <div className="order-5 flex flex-col gap-3.5">
+                            <div className="order-6 flex flex-col gap-3.5">
                               {!isLine && shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100,
                                 (v: number) => patch({ lineW: v / 10 }))}
                               {shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
