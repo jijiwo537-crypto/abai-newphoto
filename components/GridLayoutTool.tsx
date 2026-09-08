@@ -9647,16 +9647,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     onHome();
   };
 
+  const latestDraftRef = useRef({ pages, floatingImages, selectedRatio, isLandscape });
+  latestDraftRef.current = { pages, floatingImages, selectedRatio, isLandscape };
   useEffect(() => {
-    if (!draftReady || leftRef.current) return;
-    const empty = floatingImages.length === 0 && pages.every(p => p.layouts.length === 0);
-    if (empty) return;
-    const t = setTimeout(() => {
+    if (!draftReady) return;
+    const timer = window.setInterval(() => {
       if (leftRef.current) return;
-      saveDraft({ pages, floatingImages, selectedRatio, isLandscape });
-    }, 1200);
-    return () => clearTimeout(t);
-  }, [draftReady, pages, floatingImages, selectedRatio, isLandscape]);
+      const latest = latestDraftRef.current;
+      const empty = latest.floatingImages.length === 0
+        && latest.pages.every(p => p.layouts.length === 0);
+      if (!empty) saveDraft(latest);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [draftReady]);
 
   // When image count changes, reset selected index if out of bounds, and clamp templateIndex
   useEffect(() => {
