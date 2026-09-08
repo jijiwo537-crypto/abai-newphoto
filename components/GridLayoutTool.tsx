@@ -2590,9 +2590,9 @@ return (
                 ? SHAPE_SUB_TOOLS[id].some(([k, , , , , d]) =>
                     !k.endsWith('Color') && (((img as any)[k]) || 0) !== d)
                 : (((img as any)[id]) || 0) !== dflt;
-            /* 「形狀」那一顆用自己畫的向量圖標（固定的，不跟著目前的形狀變）——
-               圖示字型是子集化過的，隨手加的新名字並不在裡面，會變成一串英文字。 */
-            const glyph = isShapePick ? <ImgShapeIcon size={19} /> : icon;
+            /* 「形狀」直接共用下方「造型」分頁的 shapes 圖標，
+               兩個入口使用完全相同的視覺語言。 */
+            const glyph = isShapePick ? 'shapes' : icon;
             /* 兩段式的那幾顆（形狀／描邊／發光）點下去整排會被子選單換掉，
                所以按下去的回饋交給 CSS 的 :active（見上面 toolBtn），
                換頁本身一點延遲都沒有。退回上一層時，剛剛進去的那一顆會留在
@@ -14385,7 +14385,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     onClick={() => setAddSub('shape')}
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                    <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80 translate-x-px" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增圖形</span>
                   </button>
                   </div>
