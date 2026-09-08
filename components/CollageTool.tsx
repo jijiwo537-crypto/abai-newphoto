@@ -233,8 +233,10 @@ const objKeyOf = (list: any[]) =>
  * 路徑的座標是「左上角 (0,0) 到 (w,h)」，呼叫端負責搬到框心。
  */
 export const shapePathBox = (
-  kind: string, w: number, h: number, gridBaseW = w, gridBaseH = h,
-) => new Path2D(shapePathD(kind, w, h, gridBaseW, gridBaseH));
+  kind: string, w: number, h: number,
+  gridBaseW = w, gridBaseH = h,
+  gridDotRadius = Math.min(gridBaseW, gridBaseH) / 160 * 2.325,
+) => new Path2D(shapePathD(kind, w, h, gridBaseW, gridBaseH, gridDotRadius));
 
 /* 圖形上的紋理（點點／條紋）已經整組搬到共用模組去了 —— 見 utils/holeShapes.ts
    的 paintTex：兩個拼圖工具吃同一份，畫出來一定一樣。 */
@@ -4662,6 +4664,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           o.kind, bw, bh,
           ((o as any).textureBaseW || o.w) * s,
           ((o as any).textureBaseH || o.h) * s,
+          (((o as any).lineBase || Math.max(o.w, o.h)) * s / 160) * 2.325,
         );
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
