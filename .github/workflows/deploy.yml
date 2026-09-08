@@ -11,7 +11,7 @@ permissions:
   pages: write
   id-token: write
 
-# 重新發布觸發：保留單一正式建置，避免連續預覽部署耗用額度。
+# GitHub Pages 正式發布：啟用 Pages 後只觸發這一次完整建置。
 # 同時只跑一個發布；後來的推送會取代排隊中的那一次，但不會中斷正在跑的
 concurrency:
   group: pages
