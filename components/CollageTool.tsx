@@ -21,7 +21,7 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker,
-  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS,
+  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS,
 } from './GridLayoutTool';
 const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   /* 箭頭與圓弧是同一個 path、一次描邊；半透明時交接處不會累加變白。 */
@@ -232,8 +232,8 @@ const objKeyOf = (list: any[]) =>
  * **一定**是同一個形狀，不可能各自走鐘。
  * 路徑的座標是「左上角 (0,0) 到 (w,h)」，呼叫端負責搬到框心。
  */
-export const shapePathBox = (kind: string, w: number, h: number) =>
-  new Path2D(shapePathD(kind, w, h));
+export const shapePathBox = (kind: string, w: number, h: number, repeatScale = 1) =>
+  new Path2D(shapePathD(kind, w, h, repeatScale));
 
 /* 圖形上的紋理（點點／條紋）已經整組搬到共用模組去了 —— 見 utils/holeShapes.ts
    的 paintTex：兩個拼圖工具吃同一份，畫出來一定一樣。 */
@@ -4604,7 +4604,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            lineBase 是新增時記下來的長邊；舊草稿沒有這個欄位，就沿用原本
            的算法（跟著現在的大小走），行為不會突然變。 */
         const unit = ((o as any).lineBase || Math.max(o.w, o.h)) * s / 160;
-        const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
+        const lw = GRID_SHAPE_KINDS.has(o.kind)
+          ? 1.25 * s
+          : Math.max(0.4, (o.lineW ?? 6) * unit);
         const col = o.color || SHAPE_DEFAULT_COLOR;
         const solid = o.filled && o.kind !== 'line';
         ctx.save();
@@ -4655,7 +4657,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.setLineDash([]);
           ctx.restore();
         } else {
-        const shapeP = shapePathBox(o.kind, bw, bh);
+        const shapeP = shapePathBox(o.kind, bw, bh, 1 / Math.max(0.01, s));
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
         // 發光：三段模糊疊起來，跟經典拼圖那邊同一組半徑
@@ -7600,9 +7602,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             [...ADD_SHAPE_ITEMS.filter(i2 => !i2.filled && !SPECIAL_LINE_KINDS.has(i2.kind)), HOLE_ITEM_CROSS_O],
                             'diamond-n-o', 6), 'heart-o', 9), 'cloud-oval-o', 13), 'hole-cross-star-o', 14);
                           return ([
-                            ['實心', solidList],
-                            ['邊框', lineList],
+                            ['實心', solidList.filter(i2 => !GRID_SHAPE_KINDS.has(i2.kind))],
+                            ['邊框', lineList.filter(i2 => !GRID_SHAPE_KINDS.has(i2.kind))],
                             ['線條', ADD_SHAPE_ITEMS.filter(i2 => SPECIAL_LINE_KINDS.has(i2.kind))],
+                            ['網格', ADD_SHAPE_ITEMS.filter(i2 => GRID_SHAPE_KINDS.has(i2.kind))],
                           ] as const);
                         })().map(([label, list]) => (
                           <div key={label} className="mb-3">

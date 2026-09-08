@@ -982,8 +982,12 @@ const textureGlyphD = (kind: 'star' | 'heart', cx: number, cy: number, r: number
     + `C ${P(cx + s * 0.55, cy - s * 1.15)} ${P(cx + s * 1.5, cy - s * 0.2)} ${P(cx, cy + s * 0.85)} Z`;
 };
 
-export const shapePathD = (kind: string, w: number, h: number): string => {
+export const shapePathD = (kind: string, w: number, h: number, repeatScale = 1): string => {
   const a = w / 2, b = h / 2, cx = a, cy = b;
+  /* 網格的單位不跟物件縮放：預覽／匯出把目前縮放倍率傳進來，
+     週期與點徑先除掉倍率，外層放大後仍維持相同的視覺大小。 */
+  const gridUnit = 8 / Math.max(0.01, repeatScale);
+  const gridLine = 1.25 / Math.max(0.01, repeatScale);
   const P = (x: number, y: number) => `${r3(x)} ${r3(y)}`;
   const poly = (pts: [number, number][]) =>
     `M ${P(pts[0][0], pts[0][1])} ${pts.slice(1).map(p => `L ${P(p[0], p[1])}`).join(' ')} Z`;
@@ -1097,6 +1101,45 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
       // 尾巴接在本體左下（115°～137°）—— 接口窄、尖端更靠左，斜得比較明顯
       return `M ${E(0)} ${A(115, 0)} L ${P(w * 0.04, h)} L ${E(137)} ${A(360, 1)} Z`;
     }
+    case 'grid-h': {
+      let d = '';
+      for (let y = gridUnit / 2; y < h; y += gridUnit) d += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
+      return d;
+    }
+    case 'grid-cross':
+    case 'grid-frame': {
+      let d = '';
+      for (let y = gridUnit / 2; y < h; y += gridUnit) d += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
+      for (let x = gridUnit / 2; x < w; x += gridUnit) d += `M ${r3(x)} 0 L ${r3(x)} ${r3(h)} `;
+      if (kind === 'grid-frame') d += `M 0 0 H ${r3(w)} V ${r3(h)} H 0 Z`;
+      return d;
+    }
+    case 'grid-dots':
+    case 'grid-dots-fade': {
+      let d = '';
+      const cols = Math.max(1, Math.floor(w / gridUnit));
+      const rows = Math.max(1, Math.floor(h / gridUnit));
+      for (let row = 0; row < rows; row++) {
+        const y = (row + 0.5) * h / rows;
+        for (let col = 0; col < cols; col++) {
+          const x = (col + 0.5) * w / cols;
+          const fade = kind === 'grid-dots-fade' ? (1 - 0.68 * (col / Math.max(1, cols - 1))) : 1;
+          const rr = gridLine * 1.35 * fade;
+          d += `M ${r3(x - rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x + rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x - rr)} ${r3(y)} Z `;
+        }
+      }
+      return d;
+    }
+    case 'grid-diag': {
+      let d = '';
+      /* 45° 斜線以 x+y=常數排列；範圍改變時只增減完整線段。 */
+      for (let q = -h; q <= w; q += gridUnit) {
+        const x1 = Math.max(0, q), y1 = Math.max(0, -q);
+        const x2 = Math.min(w, q + h), y2 = Math.min(h, w - q);
+        d += `M ${r3(x1)} ${r3(y1)} L ${r3(x2)} ${r3(y2)} `;
+      }
+      return d;
+    }
     case 'wave': {
       // 波長跟高度綁定；只增加寬度時會加入完整波峰，而不是把既有波形拉扁。
       const amp = h * 0.42;
@@ -1155,6 +1198,10 @@ export const shapeGlowBlurs = (w: number, h: number) =>
 
 /** 新增圖形時的預設值。線條比較細長，所以粗細與大小另外給。 */
 export const SPECIAL_LINE_KINDS = new Set(['line', 'wave', 'lightning-wave']);
+export const GRID_SHAPE_KINDS = new Set([
+  'grid-h', 'grid-cross', 'grid-frame', 'grid-dots', 'grid-dots-fade', 'grid-diag',
+]);
+export const GRID_DOT_KINDS = new Set(['grid-dots', 'grid-dots-fade']);
 export const SHAPE_DEFAULT_LINEW = (kind: string) =>
   (kind === 'wave' || kind === 'lightning-wave') ? 2.5 : (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
@@ -1174,7 +1221,7 @@ const STRETCH_OUTLINE_KINDS = new Set([
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if (!shape || shape === 'line') return false;
-  if (shape === 'wave' || shape === 'lightning-wave') return true;
+  if (shape === 'wave' || shape === 'lightning-wave' || GRID_SHAPE_KINDS.has(shape)) return true;
   if (shape === 'hole') return false;
   return filled ? STRETCH_SOLID_KINDS.has(shape) : STRETCH_OUTLINE_KINDS.has(shape);
 };
@@ -1237,6 +1284,13 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'line-d2', kind: 'line', filled: false, rot: 45, ratio: 0.08 },
   { id: 'line-wave', kind: 'wave', filled: false, rot: 90, ratio: 0.1417, glyphRatio: 0.17 },
   { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, rot: 90, ratio: 0.1417, glyphRatio: 0.17 },
+  // 網格：線／點的尺寸固定；改變外框只會增減重複單位
+  { id: 'grid-horizontal', kind: 'grid-h', filled: false },
+  { id: 'grid-cross', kind: 'grid-cross', filled: false },
+  { id: 'grid-frame', kind: 'grid-frame', filled: false },
+  { id: 'grid-dots', kind: 'grid-dots', filled: true },
+  { id: 'grid-dots-fade', kind: 'grid-dots-fade', filled: true },
+  { id: 'grid-diagonal', kind: 'grid-diag', filled: false },
 ];
 
 /**
@@ -1267,6 +1321,12 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   line: [0, 0.5, 1, 0],
   wave: [0, 0.08, 1, 0.84],
   'lightning-wave': [0, 0.06, 1, 0.88],
+  'grid-h': [0, 0, 1, 1],
+  'grid-cross': [0, 0, 1, 1],
+  'grid-frame': [0, 0, 1, 1],
+  'grid-dots': [0, 0, 1, 1],
+  'grid-dots-fade': [0, 0, 1, 1],
+  'grid-diag': [0, 0, 1, 1],
 };
 
 /** 個別圖案的加大倍率。星形是實心面積最少的一個，稍微放大一點才看得清楚。
@@ -1287,6 +1347,7 @@ const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval
  */
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
   const isLine = item.kind === 'line';
+  const isGridGlyph = GRID_SHAPE_KINDS.has(item.kind);
   /* viewBox 與圖案的框一樣大 —— 每一顆圖案的長邊都剛好等於 size（預設 20px），
      所以不管哪一種形狀，看起來都一樣大。 */
   const VB = 24;
@@ -1297,7 +1358,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
   const bw = BOX;
   const bh = isLine ? 0 : (ratio ? BOX * ratio : BOX);
   const src = shapePathD(item.kind, bw, bh);
-  const solid = item.filled && !isLine;
+  const solid = item.filled && (!isLine || GRID_DOT_KINDS.has(item.kind));
 
   const fit = SHAPE_FIT[item.kind] || [0, 0, 1, 1];
   // 內容的實際大小（線條的高度是 0，縮放只看寬度）
@@ -1322,7 +1383,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
           d={src}
           fill={solid ? 'currentColor' : 'none'}
           stroke={solid ? 'none' : 'currentColor'}
-          strokeWidth={(isLine ? 1.9 : 1.6) / k}
+          strokeWidth={(isGridGlyph ? 1.25 : (isLine ? 1.9 : 1.6)) / k}
           strokeLinecap="butt"
           strokeLinejoin={isLine ? 'round' : 'miter'}
         />
@@ -1969,7 +2030,8 @@ export const ShapeEditorPanel: React.FC<{
   onChange: (patch: Partial<FloatingImage>) => void;
 }> = ({ layer, onChange }) => {
   const isLine = SPECIAL_LINE_KINDS.has(layer.shape || '');
-  const hasOutline = !layer.shapeFilled || isLine;
+  const isGridShape = GRID_SHAPE_KINDS.has(layer.shape || '');
+  const hasOutline = (!layer.shapeFilled || isLine) && !isGridShape;
   const canFeather = shapeSupportsFeather(layer.shape, layer.shapeFilled, layer.holeType);
   /* 顏色改成「點進去有一頁」（跟文字那一頁同一顆元件） */
   const [colorPage, setColorPage] = useState<
@@ -5317,7 +5379,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     if (!image.shape) return null;
     const s = renderScale;
     const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
-    const lw = Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160)) / s;
+    const lw = GRID_SHAPE_KINDS.has(image.shape)
+      ? 1.25 / s
+      : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160)) / s;
     const dash = image.shapeDash || 0;
     const seg = lw * (0.6 + (dash / 100) * 4);
     return {
@@ -5531,7 +5595,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const solid = !!image.shapeFilled && image.shape !== 'line';
         const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
-        const lw = Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
+        const lw = GRID_SHAPE_KINDS.has(image.shape)
+          ? 1.25
+          : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
         const outer = (image.shapeStrokeW || 0) * (lineBase / 160);
         ctx.lineJoin = image.shape === 'line' ? 'round' : 'miter';
         ctx.lineCap = 'butt';
@@ -6221,7 +6287,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               虛線只屬於本體，描邊那一圈一律是實線。 */}
           {!!image.shapeStrokeW && (
             <path
-              d={shapePathD(image.shape, image.width, image.height)}
+              d={shapePathD(image.shape, image.width, image.height, renderScale)}
               fill="none"
               stroke={image.shapeStrokeColor || '#000000'}
               strokeWidth={((image.shapeFilled && image.shape !== 'line') ? 0 : (shapeStroke?.lw || 0))
@@ -6231,7 +6297,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             />
           )}
           <path
-            d={shapePathD(image.shape, image.width, image.height)}
+            d={shapePathD(image.shape, image.width, image.height, renderScale)}
             fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
             stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || SHAPE_DEFAULT_COLOR)}
             strokeWidth={shapeStroke?.lw}
@@ -6268,7 +6334,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                   </pattern>
                 </defs>
                 <path
-                  d={shapePathD(image.shape, image.width, image.height)}
+                  d={shapePathD(image.shape, image.width, image.height, renderScale)}
                   fill={`url(#${id})`}
                   stroke="none"
                 />
@@ -6303,7 +6369,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                   </pattern>
                 </defs>
                 <path
-                  d={shapePathD(image.shape, image.width, image.height)}
+                  d={shapePathD(image.shape, image.width, image.height, renderScale)}
                   fill={`url(#${id})`}
                   stroke="none"
                 />
@@ -11429,14 +11495,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.restore();
       return;
     }
-    const path = new Path2D(shapePathD(fImg.shape!, fw, fh));
+    const path = new Path2D(shapePathD(fImg.shape!, fw, fh, (fImg.scale || 1) / Math.max(0.01, scaleFactor)));
     const color = fImg.color || SHAPE_DEFAULT_COLOR;
     const solid = fImg.shapeFilled && fImg.shape !== 'line';
     /* 線寬要除掉 scale：上面已經 ctx.scale(fImg.scale, ...) 過了，
        不除的話「圖形拉大」連框線也跟著變粗 —— 跟預覽同一條規則。 */
     const sScale = fImg.scale || 1;
     const exportLineBase = (fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor;
-    const lw = Math.max(0.4 * scaleFactor, (fImg.shapeLineW ?? 6) * (exportLineBase / 160)) / sScale;
+    const lw = GRID_SHAPE_KINDS.has(fImg.shape!)
+      ? 1.25 * scaleFactor / sScale
+      : Math.max(0.4 * scaleFactor, (fImg.shapeLineW ?? 6) * (exportLineBase / 160)) / sScale;
     if (!solid) {
       const dash = fImg.shapeDash || 0;
       ctx.lineWidth = lw;
@@ -14436,9 +14504,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         [...ADD_SHAPE_ITEMS.filter(i => !i.filled && !SPECIAL_LINE_KINDS.has(i.kind)), HOLE_ITEM_CROSS_O],
                         'diamond-n-o', 6), 'heart-o', 9), 'cloud-oval-o', 13), 'hole-cross-star-o', 14);
                       return ([
-                        ['實心', solidList],
-                        ['邊框', lineList],
+                        ['實心', solidList.filter(i => !GRID_SHAPE_KINDS.has(i.kind))],
+                        ['邊框', lineList.filter(i => !GRID_SHAPE_KINDS.has(i.kind))],
                         ['線條', ADD_SHAPE_ITEMS.filter(i => SPECIAL_LINE_KINDS.has(i.kind))],
+                        ['網格', ADD_SHAPE_ITEMS.filter(i => GRID_SHAPE_KINDS.has(i.kind))],
                       ] as const);
                     })().map(([label, list]) => (
                       <div key={label} className="mb-3">
