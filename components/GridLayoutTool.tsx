@@ -1039,8 +1039,8 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
     }
     case 'cloud-oval': {
       // 十二個柔和圓瓣圍成封閉橢圓，沒有一般雲朵的平底。
-      const n = 12;
-      const valley = (t: number) => [cx + Math.cos(t) * a * 0.84, cy + Math.sin(t) * b * 0.78] as [number, number];
+      const n = 8;
+      const valley = (t: number) => [cx + Math.cos(t) * a * 0.70, cy + Math.sin(t) * b * 0.66] as [number, number];
       const peak = (t: number) => [cx + Math.cos(t) * a, cy + Math.sin(t) * b] as [number, number];
       let d = '';
       for (let i = 0; i < n; i++) {
@@ -1162,7 +1162,7 @@ const STRETCH_SOLID_KINDS = new Set([
 ]);
 const STRETCH_OUTLINE_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
-  'pentagon', 'hexagon', 'star', 'heart', 'ellipse',
+  'pentagon', 'hexagon', 'star', 'star8', 'heart', 'ellipse',
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if (!shape || shape === 'line') return false;
@@ -2626,7 +2626,14 @@ return (
                   const adjusted = id.endsWith('Color')
                     ? !!cur && cur.toUpperCase() !== '#FFFFFF'
                     : (cur || 0) !== dflt;
-                  return toolBtn(id, label, icon, shapeTool === id, adjusted, () => setShapeTool(id));
+                  const glyph = id === 'imgStrokeGap' ? (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M8 5H4v14h4M16 5h4v14h-4" />
+                      <path d="M9 12H5m0 0 2-2m-2 2 2 2M15 12h4m0 0-2-2m2 2-2 2" />
+                    </svg>
+                  ) : icon;
+                  return toolBtn(id, label, glyph, shapeTool === id, adjusted, () => setShapeTool(id));
                 })}
           </div>
         ))}
