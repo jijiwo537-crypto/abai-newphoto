@@ -311,9 +311,29 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       const cur = sessionRef.current;
       if (!cur) return;
       saveToolDraft('beauty', first ? imageSrc : null, { ops: cur.ops.slice(0, cur.opsApplied) });
-    }, 1000);
+    }, 250);
   }, [imageSrc]);
-  useEffect(() => () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); }, []);
+  useEffect(() => {
+    const flush = () => {
+      if (draftTimerRef.current) {
+        clearTimeout(draftTimerRef.current);
+        draftTimerRef.current = null;
+      }
+      const cur = sessionRef.current;
+      if (!cur) return;
+      const first = draftSrcSavedRef.current !== imageSrc;
+      draftSrcSavedRef.current = imageSrc;
+      saveToolDraft('beauty', first ? imageSrc : null, { ops: cur.ops.slice(0, cur.opsApplied) });
+    };
+    const onVisibility = () => { if (document.visibilityState !== 'visible') flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [imageSrc]);
 
   const syncHist = useCallback(() => {
     const s = sessionRef.current;
