@@ -100,13 +100,13 @@ const MAX_EXPORT_PIXELS = 20_000_000;
    那些東西是用路徑畫的，給多少像素就有多利。所以長邊不足這個數就整張放大上去。
    照片本身不會因此多出細節（它在手機上本來就是被放大來看的），
    但所有邊緣會真正到達「一個像素過渡完」＝ 看不到鋸齒。 */
-const EXPORT_MIN_DIM = 2400;
+const EXPORT_MIN_DIM = 3200;
 /** IG 預覽裡「貼文與貼文之間」的間距。頭、尾、中間統一都用這個值 */
 const IG_GAP = 14;
 /** 動態牆最上面與最下面多留的空間：多一點才滑得舒服 */
 const IG_EDGE = 48;
 /** 動態影片的長邊上限。1440 已經比手機螢幕還細，再高只是白燒編碼時間 */
-const MOTION_MAX_DIM = 1440;
+const MOTION_MAX_DIM = 2160;
 /* ── 拼圖裡有影片時的導出上限 ────────────────────────────────────────
    1440 是給「純動畫」訂的：那種畫面全部是路徑畫出來的，1440 已經看不出
    差別。但如果拼圖的底（或某個物件）本身就是一段 1080p／4K 的影片，
@@ -4013,7 +4013,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          走暫存層時本體會再被挖一次 —— 挖已經是全透明的地方不會有任何改變。 */
       tg.globalCompositeOperation = 'destination-out';
       tg.shadowBlur = 0;
-      strokeHoleShape(tg, h, szQ, 0, side / 2, side / 2, '#000');
+      eraseGlowBody(tg, h, szQ, 0, side / 2, side / 2, 1.25);
       tg.globalCompositeOperation = 'source-over';
       (tmp as any).__sz = szQ;
       cache.set(key, tmp);
@@ -4021,6 +4021,29 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       while (cache.size > 24) { const k0 = cache.keys().next().value; if (k0 === undefined) break; cache.delete(k0); }
       return tmp;
     };
+    /* 光暈裡的本體要比可見本體多擦除一個畫布像素。
+       只填色會在反鋸齒邊緣留下半透明亮線，星形尖角尤其明顯。 */
+    const eraseGlowBody = (
+      g: CanvasRenderingContext2D, h: any, sz: number, angle: number,
+      gx: number, gy: number, fringe = 1,
+    ) => {
+      if (isTextHole(holeType)) {
+        strokeHoleShape(g, h, sz, angle, gx, gy, '#000');
+        return;
+      }
+      g.save();
+      g.translate(gx, gy);
+      g.rotate((angle * Math.PI) / 180);
+      g.fillStyle = '#000';
+      g.strokeStyle = '#000';
+      g.lineJoin = 'round';
+      g.lineWidth = Math.max(0.75, fringe);
+      drawShapePath(g, holeType, 0, 0, sz);
+      g.fill();
+      g.stroke();
+      g.restore();
+    };
+
     const glowInto = (
       gg: CanvasRenderingContext2D, h: any, alpha: number,
       sz: number, angle: number, gx: number, gy: number, gcol: string,
@@ -4223,7 +4246,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         gg => {
           // 本體一律用滿透明度挖掉，剩下的才是純粹的光暈
           // 挖除仍照「全部的本體」來，互相挖除的結果才跟以前一致
-          items.forEach(it => strokeHoleShape(gg, it.h, it.sz, it.ang, it.x, it.y, '#000'));
+          items.forEach(it => eraseGlowBody(gg, it.h, it.sz, it.ang, it.x, it.y, Math.max(1, s)));
           if (pairs.length) {
             gg.save();
             linkStyle(gg);
@@ -4723,7 +4746,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           for (let i = 0; i < slices; i++) {
             const x = i * sliceW;
             if (x >= shownW) break;
-            const clipW = Math.min(sliceW + 1.6 * s, shownW - x + 0.8 * s);
+            /* 完整揭露時右框線的筆畫有一半位於 bw 外側；裁切區必須把那半邊
+               也包含進來，否則 grid-frame 最右線只剩半粗。 */
+            const endPad = reveal >= 0.999 ? Math.max(lw, 1.2 * s) : 0;
+            const clipW = Math.min(sliceW + 1.6 * s + endPad, shownW - x + 0.8 * s + endPad);
             const nx = (x + sliceW / 2) / Math.max(1, bw);
             const envelope = Math.sin(Math.PI * Math.min(1, reveal));
             const dy = Math.sin((nx - phase) * Math.PI * 2) * amp
