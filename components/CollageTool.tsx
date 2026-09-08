@@ -7551,7 +7551,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         onClick={() => setAddSub('shape')}
                         className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                       >
-                        <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                        <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80 translate-x-px" />
                         <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增圖形</span>
                       </button>
                     </div>
