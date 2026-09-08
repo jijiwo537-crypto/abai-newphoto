@@ -14211,7 +14211,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                          第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
                       const lineList = moveTo(moveTo(moveTo(moveTo(moveTo(
                         [...ADD_SHAPE_ITEMS.filter(i => !i.filled && !SPECIAL_LINE_KINDS.has(i.kind)), HOLE_ITEM_CROSS_O],
-                        'diamond-n-o', 6), 'heart-o', 9), 'star8-oval-o', 13), 'hole-cross-star-o', 14), 'cloud-oval-o', 15);
+                        'diamond-n-o', 6), 'heart-o', 9), 'hole-cross-star-o', 13), 'star8-oval-o', 14), 'cloud-oval-o', 15);
                       return ([
                         ['實心', solidList],
                         ['邊框', lineList],
