@@ -1371,16 +1371,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        線就會亮在離邊緣半個身子的地方。 */
     const { bw, bh } = aabbOf(w0, h0, rot);
     let cx = x0 + w0 / 2, cy = y0 + h0 / 2;
-    /* ── 吸附力道 ────────────────────────────────────────────────
-       經典拼圖是「畫面上 4px 以內才吸」。這裡的座標是畫布單位（比畫面上大
-       好幾倍），本來用的是短邊的 1.2%，換算到畫面上大約是 8px ——
-       所以一靠近就被整個吸過去，那正是「感覺物件被搬走」的原因。
-       改成照實際的顯示比例換算成同樣的 4 個畫面像素。 */
+    /* 經典／創意拼圖共用 8 個螢幕像素的吸附距離。這裡先換算成
+       畫布座標，因此不同手機尺寸與預覽倍率下的吸附力道仍然一致。 */
     const cssW = baseCssWRef.current;
     const perCss = cssW > 0 ? offsG.cw / cssW : 3;   // 一個畫面像素等於幾個畫布單位
-    // 只有外框真的碰到目標線時才顯示／吸附；約一個畫面像素只用來
-    // 吃掉觸控與縮放造成的次像素誤差，避免還有明顯距離就提早亮線。
-    const snap = Math.max(0.75, perCss);
+    const snap = Math.max(0.75, perCss * 8);
     const seams = seamLinesRef.current();
     /**
      * 單軸吸附：候選是「這條線」＋「中心要位移多少才貼上去」。

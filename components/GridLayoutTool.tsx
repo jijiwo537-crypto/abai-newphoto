@@ -6917,9 +6917,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
     }
 
-    /* 使用固定的屏幕吸附距离：当前 1 个内容像素在缩小预览时甚至不到
-       1 个屏幕像素，实际几乎抓不到。5px 足够明确，又不会让物件远距离跳动。 */
-    const SNAP_THRESHOLD = 5 / Math.max(0.0001, kRef.current || 1);
+    /* 經典／創意拼圖共用 8 個螢幕像素的吸附距離。換算回內容座標，
+       預覽無論放大或縮小，吸附手感都保持一致。 */
+    const SNAP_THRESHOLD = 8 / Math.max(0.0001, kRef.current || 1);
     const ownPageRectsForFit = pageRects;
     // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
     const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
@@ -12894,6 +12894,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   >
                     {pages.map((page, pageIdx) => {
                       const isPageActive = pageIdx === activePageIndex;
+                      const previewScale = Math.max(0.0001, kRef.current || 1);
+                      /* 頁縫本身也同步呈現對齊狀態，避免原本的深色 1px 分割線
+                         從藍色導引線中央透出，造成頁與頁之間看起來特別細。 */
+                      const seamGuideX = pageIdx * (previewW + 1) - 0.5;
+                      const isSeamGuideActive = pageIdx > 0 && activeGuidelines.some(
+                        guide => guide.type === 'vertical'
+                          && Math.abs(guide.coord - seamGuideX) <= 0.75 / previewScale
+                      );
+                      const seamGuideSpread = Math.max(0, (2 / previewScale - 1) / 2);
 
                       return (
                         <React.Fragment key={page.id}>
@@ -12911,13 +12920,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               style={{
                                 /* 分隔線永遠使用同一個不透明墨色；拖頁與回彈期间也
                                    不再临时变透明，否则那几帧看起来就像被页面盖住。 */
-                                backgroundColor: shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                                backgroundColor: isSeamGuideActive
+                                  ? 'rgb(59 130 246)'
+                                  : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
                                 /* 它必须高于拖起的页面与自由图层。再用同色半像素阴影
                                    覆盖 fractional zoom 在两侧产生的抗锯齿浅边，最终只
                                    留下一条颜色一致的接缝，不会多出旁边那条淡线。 */
                                 position: 'relative',
-                                zIndex: 200000,
-                                boxShadow: `0 0 0 0.5px ${shadeHex(WORKSPACE_BG, PAGE_SEAM_INK)}`,
+                                zIndex: isSeamGuideActive ? 300001 : 200000,
+                                boxShadow: isSeamGuideActive
+                                  ? `0 0 0 ${seamGuideSpread}px rgb(59 130 246)`
+                                  : `0 0 0 0.5px ${shadeHex(WORKSPACE_BG, PAGE_SEAM_INK)}`,
                                 transform: 'translateZ(0)',
                               }}
                             />
