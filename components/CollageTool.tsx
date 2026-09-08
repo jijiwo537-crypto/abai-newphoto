@@ -4679,15 +4679,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號 II：每一個 Unicode 單位由左至右進場；常駐縮放 II 則給每個單位
            固定但不同的節奏。普通文字與普通符號維持原本單次繪製，字距完全不變。 */
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        const individualBreathe = o.sym && o.mo?.idle === 'symbol-breathe2';
+        const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2';
         if (seqIn !== null || individualBreathe) {
           const units = Array.from(o.text || '');
           const widths = units.map(ch => ctx.measureText(ch).width);
           const total = widths.reduce((sum, v) => sum + v, 0);
           let cursor = tdx - total / 2;
-          const now = performance.now() / 1000;
+          const now = animRef.current?.t ?? 0;
           units.forEach((ch, index) => {
-            const q = seqIn === null ? 1 : Math.max(0, Math.min(1, (seqIn * (units.length + 1) - index) / 2));
+            const bubbleSpan = 1 + Math.max(0, units.length - 1) * 0.2;
+            const q = seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
             const kind = o.mo?.in;
             const ease = easeOutCubic(q);
             const scale = individualBreathe
@@ -5572,7 +5573,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       obj: (o: any, i: number) => {
         const cfg = moOf(o);
         const units = o.sym && cfg.in === 'bubble' ? Math.max(1, Array.from(o.text || '').length) : 1;
-        const timed = units > 1 ? { ...cfg, dur: cfg.dur * (units + 1) / 2 } : cfg;
+        const bubbleSpan = 1 + Math.max(0, units - 1) * 0.2;
+        const timed = units > 1 ? { ...cfg, dur: cfg.dur * bubbleSpan } : cfg;
         return composeMo(timed, t, (hashId(o.id) % 628) / 100 + i * 0.7);
       },
       /* 發光的常駐動畫跟圖案那組是分開的：圖案可以完全靜止，光自己在閃。 */
