@@ -12,7 +12,7 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
-import { measureSymbolInk, measureSymbolInkAtSize, symbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, measureSymbolInkAtSize, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, drawHoleShape, holeOverflow, glowAmount,
@@ -4546,7 +4546,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
          符号同时拥有 Canvas 与 SVG 两套边界，放大后框必然逐渐对不上。 */
       ensureFont(fam).then(() => {
         if (!alive) return;
-        clearSymbolInkCache();
+        /* 新增符號時已在真正字體載入後量過同一個字級；沿用該快取，
+           不在首次顯示／拖動前重新掃描整張 alpha 畫布。歷史資料若尚未
+           有快取，這裡仍會正常量一次。 */
         const size = image.fontSize || 40;
         const ink = measureSymbolInkAtSize(image.text || image.sym!, fam, size);
         const bounds = { w: Math.max(6, ink.w * size + 8), h: Math.max(6, ink.h * size + 8) };
@@ -6004,6 +6006,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           transition: dragShift
             ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
             : undefined,
+          /* 在第一次拖動前就建立合成層，避免首個 pointermove 才上傳
+             圖片／符號貼圖到 GPU 而漏掉一幀。 */
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
         }}
       >
         {image.text !== undefined && !image.sym ? (() => {
@@ -6107,6 +6113,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         // 被拖的那一頁整組（頁面 900、上面的東西 1000+）要蓋過其他頁
         zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
         touchAction: touchMode,
+        /* 圖片同樣預先建立移動用合成層；第一次拖動不再臨時升層。 */
+        willChange: 'transform',
+        backfaceVisibility: 'hidden',
       }}
       onTouchStart={onSwapTouchStart}
       onTouchMove={onSwapTouchMove}
@@ -6919,7 +6928,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     /* 經典／創意拼圖共用 8 個螢幕像素的吸附距離。換算回內容座標，
        預覽無論放大或縮小，吸附手感都保持一致。 */
-    const SNAP_THRESHOLD = 5.5 / Math.max(0.0001, kRef.current || 1);
+    const SNAP_THRESHOLD = 4 / Math.max(0.0001, kRef.current || 1);
     const ownPageRectsForFit = pageRects;
     // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
     const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
@@ -7736,9 +7745,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     let w100 = M * Math.max(1, txt.length) * 0.5;
     if (c) { c.font = `400 ${M}px ${fontStack(DEFAULT_FONT)}`; w100 = Math.max(1, c.measureText(txt).width); }
     const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
-    const measured = symbolBox(txt, DEFAULT_FONT, fontSize);
-    const w = Math.ceil(measured.w);
-    const h = Math.ceil(measured.h);
+    /* 初始外盒直接使用顯示字級的實際墨水邊界，與 Canvas 本體及選中框
+       完全同源；不先用 100px 推算、下一幀再換成另一套尺寸。 */
+    const symbolInk = measureSymbolInkAtSize(txt, DEFAULT_FONT, fontSize);
+    const w = Math.max(6, symbolInk.w * fontSize + 8);
+    const h = Math.max(6, symbolInk.h * fontSize + 8);
     const id = `text-${Math.random().toString(36).substring(2, 9)}`;
     const item: FloatingImage = {
       id, src: '',
