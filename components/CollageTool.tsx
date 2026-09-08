@@ -7310,7 +7310,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     id, type: 'shape',
                     kind: it.kind, hole: it.hole, filled: it.filled, shapeItemId: it.id,
                     /* 框線的粗細以「新增時的長邊」為準，之後拉大拉小都不變 */
-                    lineBase: Math.max(w, h),
+                    lineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')
+          ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
                     textureBaseW: w, textureBaseH: h,
                     lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
                     color: SHAPE_DEFAULT_COLOR,
