@@ -1934,7 +1934,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (st.glowSpeed !== undefined) setGlowSpeed(st.glowSpeed);
     if (st.glowMoImg) setGlowMoImg(st.glowMoImg);
     if (st.glowMoText) setGlowMoText(st.glowMoText);
+    if (st.linkMode !== undefined) setLinkMode(st.linkMode);
     if (st.linkColor !== undefined) setLinkColor(st.linkColor);
+    if (st.imageTransform) setImageTransform(st.imageTransform);
+    if (st.maskTransform) setMaskTransform(st.maskTransform);
+    if (st.moShape) setMoShape(st.moShape);
+    if (st.moLink) setMoLink(st.moLink);
+    if (st.motionHold !== undefined) setMotionHold(st.motionHold);
     /* 新增進來的內容（圖片／文字／圖形）。
        文字與圖形本身就是純資料，放回去就完整了；圖片少了 img（那是 DOM 元素，
        存不進去），所以先把物件放上去、再照 src 各自把照片載回來，
@@ -1958,22 +1964,42 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
   }, [initialState]);
 
+  /* 自動草稿必須與正常「儲存草稿」保存同一份完整狀態。
+     舊版漏了 objects、圖片位置、連線模式與動畫參數，所以強制關閉分頁後
+     雖然能繼續，實際只回到一個不完整的較早畫面。 */
+  const liveDraftStateRef = useRef<any>(null);
   useEffect(() => {
     if (!imageState) return;
-    const t = setTimeout(() => {
-      saveToolDraft('collage', null, {
-        layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
-        holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-        stripeN, stripeDir, stripeA: stripeAPick, stripeB,
-        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
-      });
-    }, 1200);
+    const snapshot = {
+      layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
+      holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
+      stripeN, stripeDir, stripeA: stripeAPick, stripeB,
+      glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
+      linkMode, linkColor, imageTransform, maskTransform, moShape, moLink, motionHold,
+      objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
+    };
+    liveDraftStateRef.current = snapshot;
+    /* 250ms 足以合併連續拖動，又不會在使用者很快滑掉分頁時落後一大段。 */
+    const t = setTimeout(() => saveToolDraft('collage', null, snapshot), 250);
     return () => clearTimeout(t);
   }, [
     imageState, layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
     holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
+    stripeN, stripeDir, stripeAPick, stripeB, objects,
+    glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
+    linkMode, linkColor, imageTransform, maskTransform, moShape, moLink, motionHold,
   ]);
+  useEffect(() => {
+    const flush = () => {
+      if (liveDraftStateRef.current) saveToolDraft('collage', null, liveDraftStateRef.current);
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', flush);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', flush);
+    };
+  }, []);
 
   useEffect(() => {
     if (initialFile) {
@@ -5244,13 +5270,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     leavingRef.current = true;
     try { pauseVideos(allVideosRef.current()); } catch { /* 停不了就算了 */ }
     if (choice === 'save') {
-      await saveToolDraft('collage', photoUrlRef.current, {
-        layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
-        holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-        stripeN, stripeDir, stripeA: stripeAPick, stripeB,
-        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
-        objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
-      });
+      await saveToolDraft('collage', photoUrlRef.current,
+        liveDraftStateRef.current || {
+          layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
+          holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
+          stripeN, stripeDir, stripeA: stripeAPick, stripeB,
+          glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
+          linkMode, linkColor, imageTransform, maskTransform, moShape, moLink, motionHold,
+          objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
+        });
       await recordHistoryRef.current?.();
     }
     onHome(choice === 'save');

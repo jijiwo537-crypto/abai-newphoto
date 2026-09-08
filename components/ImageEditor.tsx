@@ -1934,15 +1934,33 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   // 照片先存一次，之後只要參數變了就（延遲）更新參數那一份
   const draftSrcSavedRef = useRef<string | null>(null);
+  const liveEditorDraftRef = useRef<{ src: string; state: any } | null>(null);
+  liveEditorDraftRef.current = { src: imageSrc, state: { params, geo, selectedLutIdx } };
   useEffect(() => {
     if (!imageSrc) return;
     const first = draftSrcSavedRef.current !== imageSrc;
     const t = setTimeout(() => {
       draftSrcSavedRef.current = imageSrc;
       saveToolDraft('editor', first ? imageSrc : null, { params, geo, selectedLutIdx });
-    }, first ? 300 : 1200);
+    }, first ? 120 : 250);
     return () => clearTimeout(t);
   }, [imageSrc, params, geo, selectedLutIdx]);
+  useEffect(() => {
+    const flush = () => {
+      const latest = liveEditorDraftRef.current;
+      if (!latest?.src) return;
+      const first = draftSrcSavedRef.current !== latest.src;
+      draftSrcSavedRef.current = latest.src;
+      saveToolDraft('editor', first ? latest.src : null, latest.state);
+    };
+    const onVisibility = () => { if (document.visibilityState !== 'visible') flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
   const applyGeoRef = useRef<(g: GeoParams) => void>(() => {});
   const activeDragRef = useRef<{
     type: 'center' | 'start' | 'end' | 'rotate' | 'create';
