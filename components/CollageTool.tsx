@@ -1906,8 +1906,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   // 這裡只負責把面板上的設定存起來、以及接續時套回去。
   const restoredRef = useRef(false);
   useEffect(() => {
-    if (restoredRef.current || !initialState) return;
+    /* 必须等底图建立 baseW/baseH 后才恢复。以前在空画布阶段先套位置，
+       随后的底图初始化又随机生成一次图案，保存的位置便被覆盖。 */
+    if (restoredRef.current || !initialState || !imageState) return;
     restoredRef.current = true;
+    restoringRef.current = true;
     const st = initialState;
     if (st.__completeDraft === 1) {
       const maskSrc = st.maskImageState?.src;
@@ -1976,7 +1979,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setSelectedObj(null);
     setSelectedTarget(null);
     setShapeSel(null);
-  }, [initialState]);
+    /* 等同一批 state 完成后，把恢复后的内容设为历史基线。
+       之后只有真正的新编辑会让返回键询问是否保存。 */
+    const settle = window.setTimeout(() => {
+      resetHistory(
+        Array.isArray(st.holes) ? st.holes : holesRef.current,
+        Array.isArray(st.objects) ? st.objects : objectsRef.current,
+      );
+      restoringRef.current = false;
+    }, 320);
+    return () => window.clearTimeout(settle);
+  }, [initialState, imageState, resetHistory]);
 
   /* 每秒只覆盖同一个 META_KEY。画面状态从 ref 读取，因此不会在这里引用
      尚未声明的动画状态，也不会重现上次导入后黑屏的运行时错误。 */
@@ -2267,12 +2280,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     histImageRef.current = imageState;
     /* 還原上一步時「數量」也會跟著回到舊值，但圖案本身已經從快照拿回來了 ——
        這時候再重灑一次就會變成一組全新的隨機圖案，上一步就等於回不去。 */
-    if (restoringRef.current && !fresh) return;
+    if (restoringRef.current) {
+      /* 恢复草稿的第一张底图也不能重撒图案；保存坐标会由上面的恢复 effect 套回。 */
+      if (initialState) return;
+      if (!fresh) return;
+    }
     generateRandomHoles(fresh); 
     /* 這裡刻意「不」放 layout：換排版時是在按鈕裡跟 setLayout 同一批更新
        一起重灑的，放進來反而會多跑一輪 —— 那多出來的一格畫面就是
        「新版面配舊座標的圖案」，看起來就是閃一下。 */
-  }, [imageState, holeCount]);
+  }, [imageState, holeCount, initialState]);
 
   const getLayoutOffsets = useCallback(() => {
     if (!imageState) return null;
