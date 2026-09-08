@@ -1137,17 +1137,15 @@ export const shapePathD = (
       /* 初始固定 8×8。縮放時 w 與 base 同比例變化，數量維持 8×8；
          單邊變形只改 w/h，才會自然增加或減少行列。 */
       const stepX = gbw / 8, stepY = gbh / 8;
-      const cols = Math.max(1, Math.ceil(w / stepX));
-      const rows = Math.max(1, Math.ceil(h / stepY));
+      const cols = Math.max(1, Math.floor(w / stepX));
+      const rows = Math.max(1, Math.floor(h / stepY));
       let d = '';
       for (let row = 0; row < rows; row++) {
-        const y = Math.min(h - stepY / 2, (row + 0.5) * stepY);
-        if (y < 0 || y > h) continue;
+        const y = rows === 1 ? h / 2 : (row + 0.5) * stepY;
         for (let col = 0; col < cols; col++) {
-          const x = Math.min(w - stepX / 2, (col + 0.5) * stepX);
-          if (x < 0 || x > w) continue;
+          const x = cols === 1 ? w / 2 : (col + 0.5) * stepX;
           const fade = kind === 'grid-dots-fade' ? (1 - 0.68 * (x / Math.max(1, w))) : 1;
-          const rr = Math.min(gbw, gbh) / 160 * 1.55 * fade;
+          const rr = Math.min(gbw, gbh) / 160 * 2.325 * fade;
           d += `M ${r3(x - rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x + rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x - rr)} ${r3(y)} Z `;
         }
       }
@@ -1234,7 +1232,9 @@ export const SHAPE_DEFAULT_LINEW = (kind: string) =>
   (kind === 'wave' || kind === 'lightning-wave') ? 2.5 : (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
 export const SHAPE_DEFAULT_RATIO = (kind: string) =>
-  (kind === 'wave' || kind === 'lightning-wave') ? 0.576 : (kind === 'line' ? 0.24 : 0.15);
+  GRID_DOT_KINDS.has(kind) ? 0.225
+    : (kind === 'wave' || kind === 'lightning-wave') ? 0.576
+    : (kind === 'line' ? 0.24 : 0.15);
 /** 新圖形的預設顏色。 */
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 
@@ -7119,7 +7119,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
 
     // Image-to-image vertical edge snapping
-    floatingImages.forEach(other => {
+    if (!edgeOnly) floatingImages.forEach(other => {
       if (other.id === imgId) return;
 
       const otherW = rotExtent(other.width * other.scale, other.height * other.scale, other.rotation || 0).bw;
@@ -7239,7 +7239,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     });
 
     // Image-to-image horizontal edge snapping
-    floatingImages.forEach(other => {
+    if (!edgeOnly) floatingImages.forEach(other => {
       if (other.id === imgId) return;
 
       const otherH = rotExtent(other.width * other.scale, other.height * other.scale, other.rotation || 0).bh;
