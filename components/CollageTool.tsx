@@ -5270,13 +5270,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     leavingRef.current = true;
     try { pauseVideos(allVideosRef.current()); } catch { /* 停不了就算了 */ }
     if (choice === 'save') {
-      await saveToolDraft('collage', photoUrlRef.current, {
-        layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
-        holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
-        stripeN, stripeDir, stripeA: stripeAPick, stripeB,
-        glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
-        objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
-      });
+      await saveToolDraft('collage', photoUrlRef.current,
+        liveDraftStateRef.current || {
+          layout, maskScale, holeType, customText, holeSize, sizeJitter, holeAngle,
+          holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
+          stripeN, stripeDir, stripeA: stripeAPick, stripeB,
+          glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
+          linkMode, linkColor, imageTransform, maskTransform, moShape, moLink, motionHold,
+          objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
+        });
       await recordHistoryRef.current?.();
     }
     onHome(choice === 'save');
