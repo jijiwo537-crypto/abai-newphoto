@@ -1,6 +1,6 @@
 import { SYMBOLS } from '../utils/symbols';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { clearSymbolInkCache, measureSymbolAdvance, measureSymbolUnitLayout } from '../utils/symbolGeometry';
+import { clearSymbolInkCache, measureSymbolAdvance, measureSymbolInkAtSize, measureSymbolUnitLayout, symbolBreatheScale } from '../utils/symbolGeometry';
 
 declare global {
   interface Window { __symbolReport?: { done: boolean; total: number; failed: any[] } }
@@ -68,6 +68,24 @@ const drawCanonical = (
     const centered=!!actual&&Math.abs((actual.l+actual.r)/2-w/2)<=3&&Math.abs((actual.t+actual.b)/2-h/2)<=3;
     const tight=!!actual&&(actual.l-pl)<=gap+3&&(pr-actual.r)<=gap+3&&(actual.t-pt)<=gap+3&&(pb-actual.b)<=gap+3;
 
+    /* 相鄰完整字素的真實墨水不能互相壓住；組合附加記號已被保留在同一 unit。 */
+    const unitInks=layout.units.map(unit=>measureSymbolInkAtSize(unit,DEFAULT_FONT,size));
+    let overlap=false;
+    for(let i=1;i<layout.units.length;i++){
+      const a=unitInks[i-1],b=unitInks[i];
+      const ar=layout.centers[i-1]+a.cx*size+a.w*size/2;
+      const bl=layout.centers[i]+b.cx*size-b.w*size/2;
+      if(bl<ar-.05){overlap=true;break;}
+    }
+
+    /* 縮放 II：第一幀必須完全不跳，之後每一顆 unit 必須有自己的倍率。 */
+    const scaleStart=layout.units.map((_u,i)=>symbolBreatheScale(i,0,60,1.2));
+    const scaleA=layout.units.map((_u,i)=>symbolBreatheScale(i,.43,60,1.2));
+    const scaleB=layout.units.map((_u,i)=>symbolBreatheScale(i,.91,60,1.2));
+    const scale2StartsFlat=scaleStart.every(v=>Math.abs(v-1)<1e-9);
+    const trajectories=scaleA.map((v,i)=>`${v.toFixed(6)}|${scaleB[i].toFixed(6)}`);
+    const scale2Independent=layout.units.length<=1||new Set(trajectories).size===layout.units.length;
+
     // 動畫最後一幀必須逐像素回到靜止版面。
     const reference=ctx.getImageData(0,0,w,h).data;
     const c2=document.createElement('canvas');c2.width=w;c2.height=h;
@@ -75,16 +93,23 @@ const drawCanonical = (
     drawCanonical(g2,text,size,cssW/2,cssH/2,new Array(layout.units.length).fill(1));
     const animated=g2.getImageData(0,0,w,h).data;
     let diff=0;for(let i=3;i<reference.length;i+=4) if(reference[i]!==animated[i]){diff++;if(diff>2)break;}
-    const pass=inside&&centered&&tight&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    const pass=inside&&centered&&tight&&!overlap&&scale2StartsFlat&&scale2Independent&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,overlap,scale2StartsFlat,scale2Independent,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
     ctx.strokeRect(pl,pt,pr-pl,pb-pt);
     const card=document.createElement('div');card.className='card'+(pass?'':' bad');
     const label=document.createElement('div');label.className='label';
-    label.textContent=`#${index+1} · ${layout.units.length} unit · ${pass?'PASS':'FAIL'}`;
-    card.append(label,canvas);grid.append(card);
+    label.textContent=`#${index+1} · ${layout.units.length} unit · 靜止／縮放II · ${pass?'PASS':'FAIL'}`;
+    const scaleCanvas=document.createElement('canvas');scaleCanvas.width=w;scaleCanvas.height=h;
+    const scaleCtx=scaleCanvas.getContext('2d',{willReadFrequently:true})!;
+    scaleCtx.scale(dpr,dpr);
+    drawCanonical(scaleCtx,text,size,cssW/2,cssH/2,scaleB);
+    scaleCtx.setTransform(1,0,0,1,0,0);
+    scaleCtx.strokeStyle=pass?'#64e6a5':'#ff4d4d';scaleCtx.lineWidth=2;
+    scaleCtx.strokeRect(pl,pt,pr-pl,pb-pt);
+    card.append(label,canvas,scaleCanvas);grid.append(card);
     if(index%12===0) await new Promise(requestAnimationFrame);
   }
   const summary=document.querySelector('#summary')!;
