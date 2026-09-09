@@ -175,7 +175,16 @@ export const splitSymbolUnits = (text: string): string[] => {
         (part: any) => part.segment as string);
     }
   } catch { /* Safari 舊版走下面的保守分組 */ }
-  if (!raw.length) raw = Array.from(text);
+  if (!raw.length) {
+    /* 舊版 Safari 沒有 Intl.Segmenter 時仍要把附加記號、變體選擇符與
+       ZWJ 序列黏回前一顆，絕不能退回逐 code point 拆字。 */
+    for (const ch of Array.from(text)) {
+      const attach = /\p{Mark}/u.test(ch) || /[\ufe00-\ufe0f\u200d]/u.test(ch)
+        || (raw.length > 0 && raw[raw.length - 1].endsWith('\u200d'));
+      if (raw.length && attach) raw[raw.length - 1] += ch;
+      else raw.push(ch);
+    }
+  }
 
   /* 空白與格式控制沒有自己的墨水，也不能佔一個動畫節拍；併入相鄰單位，
      prefix advance 仍完整保留原字串的間距。 */
@@ -212,23 +221,43 @@ export const measureSymbolUnitLayout = (
   const units = splitSymbolUnits(text);
   let advance = measureSymbolAdvance(text, family, size);
   let centers = units.map((_u, i) => ((i + .5) / Math.max(1, units.length) - .5) * advance);
+  let unitAdvances = units.map(() => advance / Math.max(1, units.length));
 
   try {
     const ctx = document.createElement('canvas').getContext('2d');
     if (ctx) {
       ctx.font = `400 ${size}px ${fontStack(family)}`;
-      advance = Math.max(.1, ctx.measureText(text).width);
-      let prefix = '';
-      const edges = [0];
-      for (const unit of units) {
-        prefix += unit;
-        edges.push(ctx.measureText(prefix).width);
-      }
-      centers = units.map((_u, i) => (edges[i] + edges[i + 1]) / 2 - advance / 2);
+      /* 每個單位用自己真正的 advance 排隊。舊版使用「整串 prefix 的差值」，
+         但 fallback 字型、kerning 與方向控制可能讓相鄰差值變得過小甚至逆向，
+         單獨繪製時便會互相壓住。獨立 advance 才和實際 drawText(unit) 一致。 */
+      unitAdvances = units.map(unit => Math.max(.01, ctx.measureText(unit).width));
+      advance = Math.max(.1, unitAdvances.reduce((sum, value) => sum + value, 0));
+      let cursor = -advance / 2;
+      centers = unitAdvances.map(value => {
+        const center = cursor + value / 2;
+        cursor += value;
+        return center;
+      });
     }
   } catch { /* 均勻錨點仍可用 */ }
 
   const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
+
+  /* 可見墨水不得互相重疊。某些冷門 fallback 字形的 bearing 會伸出 advance；
+     只把發生碰撞的當前單位向右推，其他單位與空白的原始距離完全不動。
+     附加記號已在 splitSymbolUnits 內與母字合併，所以不會把真正需要疊合的
+     點、星號或變體選擇符拆開。 */
+  const minVisibleGap = Math.max(.35, size * .006);
+  for (let i = 1; i < centers.length; i++) {
+    const prev = unitInks[i - 1];
+    const cur = unitInks[i];
+    const previousRight = centers[i - 1] + prev.cx * size + prev.w * size / 2;
+    const currentLeft = centers[i] + cur.cx * size - cur.w * size / 2;
+    if (currentLeft < previousRight + minVisibleGap) {
+      centers[i] += previousRight + minVisibleGap - currentLeft;
+    }
+  }
+
   const bounds = (xs: number[]) => {
     let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
     unitInks.forEach((ink, i) => {
@@ -257,6 +286,25 @@ export const measureSymbolUnitLayout = (
   const out = { units, centers, advance, ink };
   unitLayoutCache.set(key, out);
   return out;
+};
+
+/**
+ * 縮放 II 的單位倍率。每顆完整字素都有不同的相位與速度，但在常駐動畫
+ * 接手的第一幀全部精確從 1 開始；短 attack 讓差異平滑長出，不會瞬移。
+ */
+export const symbolBreatheScale = (
+  index: number,
+  time: number,
+  amp: number,
+  speed: number,
+) => {
+  const t = Math.max(0, time);
+  const attackP = Math.min(1, t / .22);
+  const attack = attackP * attackP * (3 - 2 * attackP);
+  const phase = (index * 2.399963229728653) % (Math.PI * 2);
+  const rate = .84 + ((index * 37) % 11) / 10 * .32;
+  const wave = Math.sin(t * 1.5 * Math.max(.05, speed) * rate + phase);
+  return 1 + wave * Math.max(0, amp) / 100 * .18 * attack;
 };
 
 /** 完整包住墨水並在四邊保留一致安全距離。 */
