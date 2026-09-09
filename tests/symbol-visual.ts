@@ -1,6 +1,6 @@
 import { SYMBOLS } from '../utils/symbols';
 import { SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { clearSymbolInkCache, measureSymbolAdvance, measureSymbolUnitLayout, symbolBreatheScale } from '../utils/symbolGeometry';
+import { clearSymbolInkCache, measureSymbolAdvance, measureSymbolUnitLayout, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
 
 declare global {
   interface Window { __symbolReport?: { done: boolean; total: number; failed: any[] } }
@@ -32,13 +32,15 @@ const drawCanonical = (
   }else{
     layout.unitLefts.forEach((_left0,i)=>{
       const pivot=layout.unitPivots[i];
+      const pivotY=layout.unitPivotsY[i];
       const origin=layout.unitOrigins[i];
+      const originY=layout.unitOriginsY[i];
       const k=unitScales?.[i]??1;
       ctx.save();
       ctx.globalAlpha*=unitAlphas?.[i]??1;
-      ctx.translate(cx+dx+pivot,cy+dy+layout.unitOffsetY);
+      ctx.translate(cx+dx+pivot,cy+dy+pivotY);
       ctx.scale(k,k);
-      ctx.textAlign='left';ctx.fillText(layout.units[i],origin-pivot,0);
+      ctx.textAlign='left';ctx.fillText(layout.units[i],origin-pivot,originY-pivotY);
       ctx.restore();
     });
   }
@@ -86,6 +88,10 @@ const drawCanonical = (
     /* 同一基準尺寸必須命中幾何快取：縮放手勢只做數值變換，
        不得在每一幀重新掃描符號 alpha。 */
     const stableCacheHit=measureSymbolUnitLayout(text,SYMBOL_FONT,size)===layout;
+    /* 肉眼可見的 code point 必須各自取得動畫節拍；只有 VS/ZWJ 與空白
+       可以附著，不能再被 Intl grapheme 合併成一個單調的大單位。 */
+    const animationUnitCount=layout.units.length===splitSymbolUnits(text).length;
+    const noRectSlices=layout.unitUseSlice.every(value=>!value);
 
     /* 縮放 II：第一幀必須完全不跳，之後每一顆 unit 必須有自己的倍率。 */
     const scaleStart=layout.units.map((_u,i)=>symbolBreatheScale(i,0,60,1.2));
@@ -136,8 +142,8 @@ const drawCanonical = (
     /* 整串 native shaping 在 DPR=2 会有最多一个 device-pixel 的 hinting
        差异；验证真实墨水仍被 4px 安全框完整包住，不再要求 alpha 左右逐像素对称。 */
     const geometryPass=nativeSafe;
-    const pass=geometryPass&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,scale2StartsFlat,scale2Independent,firstFrameStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&noRectSlices&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,noRectSlices,scale2StartsFlat,scale2Independent,firstFrameStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;

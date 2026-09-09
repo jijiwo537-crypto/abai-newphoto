@@ -12,11 +12,11 @@ export type SymbolUnitLayout = {
   unitRights: number[];
   /** 每段真正可見墨水的中心；動畫以此縮放，避免圖案在片段內滑動。 */
   unitPivots: number[];
+  unitPivotsY: number[];
   /** 小單位獨立繪製時的 baseline 起點，已校回完整 native 字串的墨水中心。 */
   unitOrigins: number[];
-  /** 獨立字素聯集相對於完整原生字串的 baseline 垂直校正。 */
-  unitOffsetY: number;
-  /** contextual shaping 與 standalone 差異過大的罕見字素，才使用安全空隙切片。 */
+  unitOriginsY: number[];
+  /** 保證正式動畫沒有任何矩形裁切；測試也會逐顆檢查此旗標。 */
   unitUseSlice: boolean[];
   /** 靜止顯示與外框沿用瀏覽器原生字素排版，不受動畫拆分影響。 */
   staticUnits: string[];
@@ -294,6 +294,7 @@ const measureStandaloneCompositionCenter = (
   text: string,
   units: string[],
   origins: number[],
+  originsY: number[],
   family: string,
   size: number,
 ): { x: number; y: number } | null => {
@@ -322,7 +323,8 @@ const measureStandaloneCompositionCenter = (
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#fff';
-    units.forEach((unit, index) => ctx.fillText(unit, ax + origins[index] * ratio, ay));
+    units.forEach((unit, index) => ctx.fillText(
+      unit, ax + origins[index] * ratio, ay + originsY[index] * ratio));
     const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     let left = canvas.width, right = -1, top = canvas.height, bottom = -1;
     for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
@@ -414,6 +416,70 @@ const splitSymbolClusters = (text: string): string[] => {
 };
 
 /**
+ * 量出同一個 native grapheme 裡，每個肉眼可見 code point 真正新增的墨水中心。
+ * 例如「*ੈ」在系統排版裡是一個 grapheme，但 * 與 ੈ 必須各自播放動畫；逐步
+ * 繪製 prefix，再比較新增的 alpha，就能保留 ੈ 原本相對於 * 的精確位置。
+ */
+const measureClusterPartCenters = (
+  cluster: string,
+  parts: string[],
+  family: string,
+  size: number,
+): Array<{ x: number; y: number } | null> => {
+  if (typeof document === 'undefined' || parts.length < 2) return parts.map(() => null);
+  try {
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    let scanSize = Math.max(16, size * dpr);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
+    if (!ctx) return parts.map(() => null);
+    ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+    let width = Math.max(scanSize, ctx.measureText(cluster).width);
+    if (width + scanSize * 8 > MAX_SCAN_SIDE) {
+      scanSize *= MAX_SCAN_SIDE / (width + scanSize * 8);
+      ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+      width = Math.max(scanSize, ctx.measureText(cluster).width);
+    }
+    const ratio = scanSize / size;
+    const pad = scanSize * 4;
+    canvas.width = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(width + pad * 2)));
+    canvas.height = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(scanSize * 8)));
+    const ax = pad, ay = canvas.height / 2;
+    ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+    let prefix = '';
+    let previous = new Uint8Array(canvas.width * canvas.height);
+    const result: Array<{ x: number; y: number } | null> = [];
+    parts.forEach(part => {
+      prefix += part;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillText(prefix, ax, ay);
+      const rgba = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const current = new Uint8Array(previous.length);
+      let left = canvas.width, right = -1, top = canvas.height, bottom = -1;
+      for (let i = 0; i < current.length; i++) {
+        const alpha = rgba[i * 4 + 3];
+        current[i] = alpha;
+        /* 只追蹤新增加的墨水；既有字形因 shaping 產生的一點 AA 變化不應
+           把中心拉回主字。 */
+        if (alpha > previous[i] + 24) {
+          const x = i % canvas.width, y = Math.floor(i / canvas.width);
+          left = Math.min(left, x); right = Math.max(right, x);
+          top = Math.min(top, y); bottom = Math.max(bottom, y);
+        }
+      }
+      result.push(right >= left ? {
+        x: ((left + right + 1) / 2 - ax) / ratio,
+        y: ((top + bottom + 1) / 2 - ay) / ratio,
+      } : null);
+      previous = current;
+    });
+    canvas.width = canvas.height = 0;
+    return result;
+  } catch { return parts.map(() => null); }
+};
+
+/**
  * 唯一的符號版面來源。靜止、外框、泡泡與縮放 II 全部讀這一份資料：
  * 只掃描一次完整原生字串取得外框，再用整串 prefix advance 建立動畫切片。
  * 小單位不另外排字或掃描，因此首次新增與手勢幀都不會被同步量測拖慢。
@@ -462,7 +528,9 @@ export const measureSymbolUnitLayout = (
   } catch { /* 等分范围仍可安全绘制 */ }
   const safeSlices = findSafeSymbolSlices(text, family, size, nativeSpans);
   const unitPivots: number[] = [];
+  const unitPivotsY: number[] = [];
   const unitOrigins: number[] = [];
+  const unitOriginsY: number[] = [];
   const unitUseSlice: boolean[] = [];
   let unitMetricCtx: CanvasRenderingContext2D | null = null;
   try {
@@ -470,41 +538,64 @@ export const measureSymbolUnitLayout = (
     if (unitMetricCtx) unitMetricCtx.font = `400 ${size}px ${fontStack(family)}`;
   } catch { /* 退回 prefix 起點 */ }
   originalClusters.forEach((cluster, clusterIndex) => {
-    units.push(cluster);
-    centers.push(safeSlices.pivots[clusterIndex]);
-    unitClusters.push(clusterIndex);
-    unitLefts.push(safeSlices.lefts[clusterIndex]);
-    unitRights.push(safeSlices.rights[clusterIndex]);
-    unitPivots.push(safeSlices.pivots[clusterIndex]);
-    let localInkCenter = (nativeSpans[clusterIndex].right - nativeSpans[clusterIndex].left) / 2;
-    if (unitMetricCtx) {
-      const metrics = unitMetricCtx.measureText(cluster);
-      const metricLeft = Number(metrics.actualBoundingBoxLeft) || 0;
-      const metricRight = Number(metrics.actualBoundingBoxRight) || 0;
-      localInkCenter = (metricRight - metricLeft) / 2;
-    }
-    unitOrigins.push(safeSlices.pivots[clusterIndex] - localInkCenter);
-    unitUseSlice.push(false);
+    /* Intl grapheme 適合靜止排版，卻會把肉眼分開的星、點與附加符號合成
+       一個動畫單位。動畫時間改以可見 code point 為單位；VS/ZWJ 仍保留
+       在所屬字形內，空白只維持原生間距、不額外佔一個節拍。 */
+    const animationUnits = splitSymbolUnits(cluster);
+    const partCenters = measureClusterPartCenters(cluster, animationUnits, family, size);
+    animationUnits.forEach((rawUnit, partIndex) => {
+      /* 單獨畫 combining mark 時，部分系統會補一顆「虛線圓」。用不可見的
+         NBSP 當 shaping 基底即可保留原字形，而且不會多畫任何內容。 */
+      const firstVisible = Array.from(rawUnit).find(ch => !/^[\s\u200b\u200e\u200f]$/u.test(ch));
+      const unit = firstVisible && /\p{Mark}/u.test(firstVisible) ? `\u00a0${rawUnit}` : rawUnit;
+      const measuredPart = partCenters[partIndex];
+      const targetX = nativeSpans[clusterIndex].left
+        + (measuredPart?.x ?? (safeSlices.pivots[clusterIndex] - nativeSpans[clusterIndex].left));
+      units.push(unit);
+      centers.push(targetX);
+      unitClusters.push(clusterIndex);
+      unitLefts.push(safeSlices.lefts[clusterIndex]);
+      unitRights.push(safeSlices.rights[clusterIndex]);
+      unitPivots.push(targetX);
+      let localInkCenter = (nativeSpans[clusterIndex].right - nativeSpans[clusterIndex].left) / 2;
+      let localInkCenterY = 0;
+      if (unitMetricCtx) {
+        const metrics = unitMetricCtx.measureText(unit);
+        const metricLeft = Number(metrics.actualBoundingBoxLeft) || 0;
+        const metricRight = Number(metrics.actualBoundingBoxRight) || 0;
+        localInkCenter = (metricRight - metricLeft) / 2;
+        const metricTop = Number(metrics.actualBoundingBoxAscent) || 0;
+        const metricBottom = Number(metrics.actualBoundingBoxDescent) || 0;
+        localInkCenterY = (metricBottom - metricTop) / 2;
+      }
+      const targetY = measuredPart?.y ?? localInkCenterY;
+      unitPivotsY.push(targetY);
+      unitOrigins.push(targetX - localInkCenter);
+      unitOriginsY.push(targetY - localInkCenterY);
+      unitUseSlice.push(false);
+    });
   });
   /* 動畫不能再用矩形 clip：即使基準幀切在透明欄，單元放大後仍可能把
-     抗鋸齒、描邊或發光切成筆直裂縫。每個完整 grapheme 都直接繪製；再把
+     抗鋸齒、描邊或發光切成筆直裂縫。每個可見小單位都直接完整繪製；再把
      獨立排版的實際墨水聯集校回整串 native 墨水中心，切換動畫不會橫移。 */
-  let unitOffsetY = 0;
   if (unitOrigins.length) {
-    const composedCenter = measureStandaloneCompositionCenter(text, units, unitOrigins, family, size);
+    const composedCenter = measureStandaloneCompositionCenter(text, units, unitOrigins, unitOriginsY, family, size);
     if (composedCenter !== null) {
       const correction = safeSlices.fullInkCenter - composedCenter.x;
-      unitOffsetY = ink.cy * size - composedCenter.y;
+      const correctionY = ink.cy * size - composedCenter.y;
       for (let i = 0; i < unitOrigins.length; i++) {
         unitOrigins[i] += correction;
         unitPivots[i] += correction;
         centers[i] += correction;
+        unitOriginsY[i] += correctionY;
+        unitPivotsY[i] += correctionY;
       }
     }
   }
 
   const out = {
-    units, centers, unitClusters, unitLefts, unitRights, unitPivots, unitOrigins, unitOffsetY, unitUseSlice,
+    units, centers, unitClusters, unitLefts, unitRights,
+    unitPivots, unitPivotsY, unitOrigins, unitOriginsY, unitUseSlice,
     staticUnits, staticCenters, staticUnitInks,
     advance, ink,
   };
