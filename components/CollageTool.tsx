@@ -265,11 +265,15 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   if (o.sym) {
     /* 新增時保存的墨水量測是符號與選中框的共同幾何基準。
        不再於第一個動畫影格重新量字型，避免字型剛就緒時框先用到另一組度量。 */
-    const fontPx = Math.max(8, (o.size || 40) * Math.max(0.01, scale));
-    const layout = symbolUnitLayoutAt(o.text || o.sym, o.fontFamily || DEFAULT_FONT, fontPx);
+    /* 靜止符號由整串 shaping 繪製，外框也必須量整串，不能拿逐單位
+       外接框代替，否則組合符號會重疊或超出。 */
+    const ink = measureSymbolInkAtSize(
+      o.text || o.sym, o.fontFamily || DEFAULT_FONT,
+      Math.max(8, (o.size || 40) * Math.max(0.01, scale)),
+    );
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
-    const w = layout.inkW, h = layout.inkH;
+    const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
     return { x: (bw - w) / 2 - edge, y: (bh - h) / 2 - edge, w: w + edge * 2, h: h + edge * 2 };
   }
   if (o.type === 'shape' && o.kind !== 'hole') {
@@ -7700,9 +7704,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   /* 最终字号再扫描一次：WebKit 对 fallback 符号在不同字号可能使用
                      不同 hinting／基线，不能只拿 100px 结果等比推算。 */
                   const finalInk = measureSymbolInkAtSize(txt, DEFAULT_FONT, size);
-                  const finalLayout = symbolUnitLayoutAt(txt, DEFAULT_FONT, size);
-                  const w = Math.ceil(finalLayout.inkW + 8);
-                  const h = Math.ceil(finalLayout.inkH + 8);
+                  const w = Math.ceil(finalInk.w * size + 8);
+                  const h = Math.ceil(finalInk.h * size + 8);
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
                     /* 固定保存这次实际扫描到的墨水范围；绘制与框都只认这一份。 */
