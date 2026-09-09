@@ -265,12 +265,7 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   if (o.sym) {
     /* 新增時保存的墨水量測是符號與選中框的共同幾何基準。
        不再於第一個動畫影格重新量字型，避免字型剛就緒時框先用到另一組度量。 */
-    /* 靜止符號由整串 shaping 繪製，外框也必須量整串，不能拿逐單位
-       外接框代替，否則組合符號會重疊或超出。 */
-    const ink = measureSymbolInkAtSize(
-      o.text || o.sym, o.fontFamily || DEFAULT_FONT,
-      Math.max(8, (o.size || 40) * Math.max(0.01, scale)),
-    );
+    /* 外框與本體都直接讀取同一份逐單位幾何。 */
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const fontPx = Math.max(8, (o.size || 40) * Math.max(0.01, scale));
