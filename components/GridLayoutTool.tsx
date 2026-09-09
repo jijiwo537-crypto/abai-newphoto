@@ -1544,38 +1544,17 @@ const FontCard: React.FC<{
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
 export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
-  const boxRef = useRef<HTMLDivElement>(null);
-  const inkRef = useRef<HTMLSpanElement>(null);
-  const [k, setK] = useState(1);
-  useLayoutEffect(() => {
-    const box = boxRef.current, ink = inkRef.current;
-    if (!box || !ink) return;
-    let alive = true;
-    const fit = () => {
-      if (!alive) return;
-      const bw = box.clientWidth;
-      const tw = ink.scrollWidth;
-      if (bw > 0 && tw > 0) setK(Math.min(1, bw / tw));
-    };
-    fit();
-    (document as any).fonts?.ready?.then(fit).catch(() => {});
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
-    ro?.observe(box);
-    return () => { alive = false; ro?.disconnect(); };
-  }, [text, base]);
+  /* 首帧直接使用确定字号，不再先画 scale(1)、layout effect 后整页 setState。
+     长符号按可见 Unicode 单位同步缩小；短符号维持原尺寸。 */
+  const count = Math.max(1, Array.from(text).length);
+  const fontSize = base * Math.min(1, 18 / count);
   return (
-    <div ref={boxRef} className="max-w-full overflow-hidden flex items-center justify-center">
-      <span
-        ref={inkRef}
-        style={{
-          display: 'inline-block', whiteSpace: 'pre', flexShrink: 0,
-          fontSize: base, lineHeight: 1.4,
-          transform: `scale(${k})`, transformOrigin: 'center center',
-        }}
-      >
-        {text}
-      </span>
-    </div>
+    <span
+      className="block max-w-full overflow-hidden text-center"
+      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4 }}
+    >
+      {text}
+    </span>
   );
 };
 
