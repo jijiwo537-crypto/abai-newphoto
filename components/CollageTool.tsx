@@ -4950,7 +4950,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             ctx.scale(scale, scale);
             /* 每顆完整字素直接繪製，不能用矩形裁切完整字串。矩形邊界會在
                單元縮放時切斷抗鋸齒／描邊／發光，肉眼看起來像被刀切過。 */
-            ctx.textAlign = 'left';
+            /* 整串符號原本以 center anchor shaping；每個 grapheme 也必須沿用
+               center anchor。改成 left anchor 會讓方向字元與 fallback 字體重新
+               解讀基準點，造成泡泡／縮放 II 的整體位置與內部結構漂移。 */
+            ctx.textAlign = 'center';
             if (stroke) ctx.strokeText(unitLayout.units[index], origin - pivot, originY - pivotY);
             else ctx.fillText(unitLayout.units[index], origin - pivot, originY - pivotY);
             ctx.restore();
@@ -5892,7 +5895,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       },
       obj: (o: any, i: number) => {
         const cfg = moOf(o);
-        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, splitSymbolUnits(o.text || '').length) : 1;
+        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, splitSymbolUnits(o.text || '', SYMBOL_FONT, 100).length) : 1;
         const bubbleSpan = 1 + Math.max(0, units - 1) * 0.2;
         const timed = units > 1 ? { ...cfg, dur: cfg.dur * bubbleSpan } : cfg;
         return composeMo(timed, t, (hashId(o.id) % 628) / 100 + i * 0.7);
