@@ -4895,7 +4895,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            舊版只有填色拆成 Array.from，發光／描邊仍畫整串；代理對、附加記號
            與字距因此各算一套，進動畫頁就會整串向左移或讓小單位彼此重疊。 */
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        const individualBreathe = !!o.sym && !objPinching && !symbolSizeTuningRef.current && o.mo?.idle === 'symbol-breathe2'
+        const individualBreathe = !!o.sym && !objDragging && !objPinching && !symbolSizeTuningRef.current && o.mo?.idle === 'symbol-breathe2'
           && f?.idleT !== undefined;
         /* 符號在靜止與動畫時都使用同一份 unitLayout。切換動畫頁只改每個
            單位的倍率／透明度，不會從整串 shaping 突然換成另一套排版。 */
@@ -4909,7 +4909,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const now = f?.idleT ?? 0;
           /* 进场最后一帧所有倍率已回到 1 时，立即交回原生 grapheme 渲染。
              这样位置完全沿用静止版，也不会因拆分 combining marks 留下抗锯齿跳帧。 */
-          const sequenceAnimating = !objPinching && !symbolSizeTuningRef.current
+          const sequenceAnimating = !objDragging && !objPinching && !symbolSizeTuningRef.current
             && o.mo?.in === 'bubble' && seqIn !== null && seqIn < 1 - 1e-6;
           /* 普通显示、拖移和双指缩放只画完整字符串一次。泡泡／缩放 II
              才启用切片；切片不是重新排字，而是重复绘制同一份完整 native
@@ -4937,7 +4937,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
             const q = seqIn === null ? 1
               : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
-            const ease = easeOutCubic(q);
+            /* 尚未輪到的泡泡片段不要建立退化的 scale(0) 變換，也省掉
+               長符號在拖曳後第一幀的大量無效 Canvas 呼叫。 */
+            if (!unitScales && q <= 0) continue;
             const scale = unitScales ? unitScales[index] : easeOutBack(q);
             const left = unitLayout.unitLefts[index] * symbolUnitScale * s;
             const right = unitLayout.unitRights[index] * symbolUnitScale * s;

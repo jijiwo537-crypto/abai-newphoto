@@ -5,7 +5,6 @@ export type SymbolUnitLayout = {
   /** 動畫用的可見小單元；附加點、星、弧線可以各自取得時間相位。 */
   units: string[];
   centers: number[];
-  unitInks: SymbolInk[];
   /** 每个动画单元继承自哪一个稳定 grapheme，只用于辨认原生叠合关系。 */
   unitClusters: number[];
   /** 每个动画片段在整串原生 shaping 中的水平裁切范围（基准字号 px）。 */
@@ -15,9 +14,6 @@ export type SymbolUnitLayout = {
   staticUnits: string[];
   staticCenters: number[];
   staticUnitInks: SymbolInk[];
-  /** 只影響實際繪製、不參與外框幾何的精準微調；單位是 canvas px。 */
-  drawOffsetsX: number[];
-  drawOffsetsY: number[];
   advance: number;
   /** 依照原始 units/centers 實際畫出的聯集墨水範圍；以字級 1 為單位。 */
   ink: SymbolInk;
@@ -254,8 +250,8 @@ const splitSymbolClusters = (text: string): string[] => {
 
 /**
  * 唯一的符號版面來源。靜止、外框、泡泡與縮放 II 全部讀這一份資料：
- * 先用整串 prefix advance 決定每個安全字素的位置，再掃描每個單位真正的 alpha
- * 墨水，最後把聯集中心校到 (0,0)。之後任何頁面都不再重新排一次符號。
+ * 只掃描一次完整原生字串取得外框，再用整串 prefix advance 建立動畫切片。
+ * 小單位不另外排字或掃描，因此首次新增與手勢幀都不會被同步量測拖慢。
  */
 export const measureSymbolUnitLayout = (
   text: string,
@@ -267,73 +263,18 @@ export const measureSymbolUnitLayout = (
   const hit = unitLayoutCache.get(key);
   if (hit) return hit;
 
-  /* 先完全照修改前的 grapheme 逻辑排静止版。动画拆成多少小单元，
-     都不能反过来改变这一组中心、总宽度或选中框。 */
-  let staticUnits = splitSymbolClusters(text);
-  const originalClusters = staticUnits.slice();
-  const needsNativeTiming = false;
-  let advance = measureSymbolAdvance(text, family, size);
-  let staticCenters = staticUnits.map((_unit, i) =>
-    ((i + .5) / Math.max(1, staticUnits.length) - .5) * advance);
-  let staticAdvances = staticUnits.map(() => advance / Math.max(1, staticUnits.length));
-  try {
-    const ctx = document.createElement('canvas').getContext('2d');
-    if (ctx) {
-      ctx.font = `400 ${size}px ${fontStack(family)}`;
-      staticAdvances = staticUnits.map(unit => Math.max(.01, ctx.measureText(unit).width));
-      advance = Math.max(.1, staticAdvances.reduce((sum, value) => sum + value, 0));
-      let cursor = -advance / 2;
-      staticCenters = staticAdvances.map(value => {
-        const center = cursor + value / 2;
-        cursor += value;
-        return center;
-      });
-    }
-  } catch { /* 均匀中心仍可用 */ }
+  /* 一次完整字串 alpha 掃描就是外框的唯一來源。上一版在首次新增時又為
+     每個小單位各掃一次，長符號會同步建立幾十張 Canvas，正是點擊延遲與
+     第一段拖曳掉幀的主因；那些結果現已不參與任何正式繪製。 */
+  const originalClusters = splitSymbolClusters(text);
+  const advance = measureSymbolAdvance(text, family, size);
+  const ink = measureSymbolInkAtSize(text, family, size);
+  const staticUnits = [text];
+  const staticCenters = [0];
+  const staticUnitInks = [ink];
 
-  let staticUnitInks = staticUnits.map(unit => measureSymbolInkAtSize(unit, family, size));
-  const minVisibleGap = Math.max(.35, size * .006);
-  for (let i = 1; i < staticCenters.length; i++) {
-    const prev = staticUnitInks[i - 1], cur = staticUnitInks[i];
-    const previousRight = staticCenters[i - 1] + prev.cx * size + prev.w * size / 2;
-    const currentLeft = staticCenters[i] + cur.cx * size - cur.w * size / 2;
-    if (currentLeft < previousRight + minVisibleGap) {
-      staticCenters[i] += previousRight + minVisibleGap - currentLeft;
-    }
-  }
-
-  const clusterBounds = (xs: number[]) => {
-    let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
-    staticUnitInks.forEach((ink, i) => {
-      const cx = xs[i] + ink.cx * size, cy = ink.cy * size;
-      left = Math.min(left, cx - ink.w * size / 2);
-      right = Math.max(right, cx + ink.w * size / 2);
-      top = Math.min(top, cy - ink.h * size / 2);
-      bottom = Math.max(bottom, cy + ink.h * size / 2);
-    });
-    if (!Number.isFinite(left)) return { left: 0, right: 1, top: 0, bottom: 1 };
-    return { left, right, top, bottom };
-  };
-  const first = clusterBounds(staticCenters);
-  const shiftX = -(first.left + first.right) / 2;
-  staticCenters = staticCenters.map(x => x + shiftX);
-  const final = clusterBounds(staticCenters);
-  let ink: SymbolInk = {
-    w: Math.max(.01, final.right - final.left) / size,
-    h: Math.max(.01, final.bottom - final.top) / size,
-    cx: (final.left + final.right) / 2 / size,
-    cy: (final.top + final.bottom) / 2 / size,
-  };
-
-  /* 静止本体一律整串交给系统字体 shaping。不能把字素逐颗量宽后再拼，
-     否则 kerning、combining mark 与空白都会和 iPhone 实际输入不同。 */
-  staticUnits = [text];
-  staticCenters = [0];
-  staticUnitInks = [measureSymbolInkAtSize(text, family, size)];
-  ink = staticUnitInks[0];
-
-  /* 一般符号继续沿用已验证的完整 grapheme 动画；只有含 ੈ 的结构
-     才分开可见 code point 的时间，同时共用所属 grapheme 的原生锚点。 */
+  /* 動畫只需要完整 native shaping 中每個 grapheme 的水平切片，不需要把
+     grapheme 另外 rasterize。 */
   const units: string[] = [];
   const centers: number[] = [];
   const unitClusters: number[] = [];
@@ -355,57 +296,17 @@ export const measureSymbolUnitLayout = (
     }
   } catch { /* 等分范围仍可安全绘制 */ }
   originalClusters.forEach((cluster, clusterIndex) => {
-    const parts = needsNativeTiming ? splitSymbolUnits(cluster) : [cluster];
-    parts.forEach(part => {
-      units.push(part);
-      centers.push((() => {
-        /* 每个动画字素的位置也从整串 prefix advance 推导，保留系统字体
-           的 kerning/空白，不再使用人为碰撞修正后的中心。 */
-        try {
-          const ctx = document.createElement('canvas').getContext('2d');
-          if (ctx) {
-            ctx.font = `400 ${size}px ${fontStack(family)}`;
-            const beforeText = originalClusters.slice(0, clusterIndex).join('');
-            const throughText = originalClusters.slice(0, clusterIndex + 1).join('');
-            const before = ctx.measureText(beforeText).width;
-            const after = ctx.measureText(throughText).width;
-            const total = ctx.measureText(text).width;
-            return -total / 2 + (before + after) / 2;
-          }
-        } catch {}
-        return ((clusterIndex + .5) / originalClusters.length - .5) * advance;
-      })());
-      unitClusters.push(clusterIndex);
-      unitLefts.push(nativeSpans[clusterIndex].left);
-      unitRights.push(nativeSpans[clusterIndex].right);
-    });
+    units.push(cluster);
+    centers.push((nativeSpans[clusterIndex].left + nativeSpans[clusterIndex].right) / 2);
+    unitClusters.push(clusterIndex);
+    unitLefts.push(nativeSpans[clusterIndex].left);
+    unitRights.push(nativeSpans[clusterIndex].right);
   });
-  const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
-
-
-  /* 独立绘制 combining mark 后，它的 standalone alpha 中心可能和整串
-     native shaping 不同。先把动画单元的墨水联集校回静止整串的真实中心；
-     只消除进入动画页的整体跳位，不改变各单元之间的原生位置。 */
-  let animLeft = Infinity, animRight = -Infinity, animTop = Infinity, animBottom = -Infinity;
-  unitInks.forEach((unitInk, i) => {
-    const ux = centers[i] + unitInk.cx * size;
-    const uy = unitInk.cy * size;
-    animLeft = Math.min(animLeft, ux - unitInk.w * size / 2);
-    animRight = Math.max(animRight, ux + unitInk.w * size / 2);
-    animTop = Math.min(animTop, uy - unitInk.h * size / 2);
-    animBottom = Math.max(animBottom, uy + unitInk.h * size / 2);
-  });
-  const correctionX = Number.isFinite(animLeft)
-    ? ink.cx * size - (animLeft + animRight) / 2 : 0;
-  const correctionY = Number.isFinite(animTop)
-    ? ink.cy * size - (animTop + animBottom) / 2 : 0;
-  const drawOffsetsX = units.map(() => correctionX);
-  const drawOffsetsY = units.map(() => correctionY);
 
   const out = {
-    units, centers, unitInks, unitClusters, unitLefts, unitRights,
+    units, centers, unitClusters, unitLefts, unitRights,
     staticUnits, staticCenters, staticUnitInks,
-    drawOffsetsX, drawOffsetsY, advance, ink,
+    advance, ink,
   };
   unitLayoutCache.set(key, out);
   return out;
