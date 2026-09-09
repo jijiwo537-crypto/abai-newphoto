@@ -5003,8 +5003,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               y1 = Math.max(y1, (ink.cy + ink.h / 2) * o.size * s * sc);
             });
             if (Number.isFinite(x0)) {
-              shiftX = -(x0 + x1) / 2;
-              shiftY = -(y0 + y1) / 2;
+              /* 進場最後一幀的補償量是 0；縮放 II 接手後才隨 idleBlend
+                 平滑加入，避免整串在交接瞬間往上（或往旁邊）瞬移。 */
+              const handoff = Math.max(0, Math.min(1, f?.idleBlend ?? 0));
+              shiftX = -(x0 + x1) / 2 * handoff;
+              shiftY = -(y0 + y1) / 2 * handoff;
             }
           }
           layout.units.forEach((ch, index) => {
@@ -7698,16 +7701,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  * 加進來的份量都差不多。
                  * 刻意不跳去編輯頁、也不進入打字狀態，可以連著加好幾顆。
                  */
-                const addSymbol = async (txt: string) => {
+                const addSymbol = (txt: string) => {
                   const offs2 = getLayoutOffsets();
                   if (!offs2) return;
                   const id = Math.random().toString(36).slice(2, 9);
-                  await ensureFont(DEFAULT_FONT);
-                  /* 等浏览器真正提交字体，再做唯一一次墨水扫描。
-                     ensureFont resolve 与 Safari 首次 canvas 绘字之间偶尔仍差一帧。 */
-                  if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
-                  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-                  clearSymbolInkCache();
+                  /* SymbolPicker 只會在 DEFAULT_FONT 完整就緒後顯示按鈕，因此點擊時
+                     字型與量測快取已可直接使用；這裡不得再等待網路、fonts.ready
+                     或下一個 animation frame，按下的同一個事件就建立物件。 */
                   /* 框照「真正畫出來的那一塊」量（見 symInk 的說明），
                      不是照前進寬度 —— 這樣選取框才會貼著符號本身。 */
                   const ink = symInk(txt, DEFAULT_FONT);
