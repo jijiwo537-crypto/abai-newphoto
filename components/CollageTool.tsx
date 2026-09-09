@@ -1754,7 +1754,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
   /* 在工具掛載時就準備符號實際使用的字型，而不是等符號頁已經畫出來才載入。
      如此按鈕首幀與畫布量測會使用同一套 glyph，不會整頁突然換字型。 */
-  useEffect(() => { void ensureFont(DEFAULT_FONT); }, []);
+  useEffect(() => {
+    /* 編輯器啟動後在背景完成正式字身；絕不阻塞符號頁或點擊事件。 */
+    void waitForFont(DEFAULT_FONT).then(clearSymbolInkCache);
+  }, []);
   /** 編輯頁的左側子分頁 */
   const [objSub, setObjSub] = useState<'main' | 'style'>('main');
   /* 圖片調整面板的 UI 狀態 —— 跟經典拼圖同一組，只是各自持有，
