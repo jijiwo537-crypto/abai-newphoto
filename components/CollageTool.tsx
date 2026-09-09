@@ -265,15 +265,15 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   if (o.sym) {
     /* 新增時保存的墨水量測是符號與選中框的共同幾何基準。
        不再於第一個動畫影格重新量字型，避免字型剛就緒時框先用到另一組度量。 */
-    /* 外框與本體都直接讀取同一份逐單位幾何。 */
+    /* iOS 靜止狀態使用原生 Canvas 的整串 shaping；動畫才拆單位。
+       外框涵蓋兩者，生成後與播放動畫時都不會越框。 */
+    const fontPx = Math.max(8, (o.size || 40) * Math.max(0.01, scale));
+    const wholeInk = measureSymbolInkAtSize(o.text || o.sym, o.fontFamily || DEFAULT_FONT, fontPx);
+    const unitLayout = symbolUnitLayoutAt(o.text || o.sym, o.fontFamily || DEFAULT_FONT, fontPx);
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
-    const fontPx = Math.max(8, (o.size || 40) * Math.max(0.01, scale));
-    const unitLayout = symbolUnitLayoutAt(o.text || o.sym, o.fontFamily || DEFAULT_FONT, fontPx);
-    /* 外框以靜止整串與逐單位動畫兩者較大的可見範圍為準，泡泡回彈與
-       縮放 II 的額外幅度另由既有 idleScalePad 處理。 */
-    const w = unitLayout.inkW;
-    const h = unitLayout.inkH;
+    const w = Math.max(wholeInk.w * fontPx, unitLayout.inkW);
+    const h = Math.max(wholeInk.h * fontPx, unitLayout.inkH);
     return { x: (bw - w) / 2 - edge, y: (bh - h) / 2 - edge, w: w + edge * 2, h: h + edge * 2 };
   }
   if (o.type === 'shape' && o.kind !== 'hole') {
@@ -4985,7 +4985,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           && seqIn === null && (f.idleBlend ?? 0) > 0;
         /* 靜止符號必須整串交給瀏覽器 shaping，避免組合符號拆開後重疊或越框。
            只有泡泡／逐單位進場與縮放 II 真正需要時才拆單位。 */
-        if (o.sym) {
+        if (o.sym && (seqIn !== null || individualBreathe)) {
           const layout = symbolUnitLayoutAt(o.text || o.sym, fam, Math.max(8, o.size * s));
           const now = animRef.current?.t ?? 0;
           const bubbleSpan = 1 + Math.max(0, layout.units.length - 1) * 0.2;
@@ -7734,9 +7734,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   /* 最终字号再扫描一次：WebKit 对 fallback 符号在不同字号可能使用
                      不同 hinting／基线，不能只拿 100px 结果等比推算。 */
                   const finalInk = measureSymbolInkAtSize(txt, DEFAULT_FONT, size);
-                  const finalLayout = symbolUnitLayoutAt(txt, DEFAULT_FONT, size);
-                  const w = Math.ceil(finalLayout.inkW + 8);
-                  const h = Math.ceil(finalLayout.inkH + 8);
+                  const w = Math.ceil(finalInk.w * size + 8);
+                  const h = Math.ceil(finalInk.h * size + 8);
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
                     /* 固定保存这次实际扫描到的墨水范围；绘制与框都只认这一份。 */
