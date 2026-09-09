@@ -36,7 +36,7 @@ import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { measureSymbolInk, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, splitSymbolUnits, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -263,7 +263,7 @@ const symBox = (str: string, fam: string, size: number) => {
 const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
   if (o.sym) {
-    const ink = symInk(o.text || o.sym, o.fontFamily || DEFAULT_FONT);
+    const ink = measureSymbolInkAtSize(o.text || o.sym, o.fontFamily || DEFAULT_FONT, o.size || 40);
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -383,7 +383,7 @@ const hashId = (id: string) => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; idleT?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -759,6 +759,8 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
     a: 1, fx: 1, burst: 0,
     gridWave: g.gridWave,
+    /* 常駐的本地時間明確交給符號分單位動畫；進場期間不存在，交棒第一幀為 0。 */
+    idleT: after,
   };
 };
 
@@ -4824,7 +4826,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
         let tdx = 0, tdy = 0;
         if (o.sym) {
-          const ink2 = symInk(o.text || '', fam);
+          const ink2 = measureSymbolInkAtSize(o.text || '', fam, o.size || 40);
           tdx = -ink2.cx * o.size * s;
           tdy = -ink2.cy * o.size * s;
         }
@@ -4837,6 +4839,46 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            我們的文字通常被放大好幾倍，用原值畫就會細得像沒有 —— 這就是主人說
            「太細了」的原因。以 40px 為基準等比放大，兩邊看起來才一樣。 */
         const tk = (o.size / 40) * s;
+        /* 符號的本體、描邊與發光必須逐幀走完全相同的字素佈局。
+           舊版只有填色拆成 Array.from，發光／描邊仍畫整串；代理對、附加記號
+           與字距因此各算一套，進動畫頁就會整串向左移或讓小單位彼此重疊。 */
+        const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
+        const individualBreathe = !!o.sym && o.mo?.idle === 'symbol-breathe2'
+          && f?.idleT !== undefined;
+        const unitLayout = (seqIn !== null || individualBreathe)
+          ? measureSymbolUnitLayout(o.text || '', fam, o.size * s)
+          : null;
+        const drawText = (stroke = false) => {
+          if (!unitLayout || unitLayout.units.length <= 1) {
+            if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
+            else ctx.fillText(o.text || '', tdx, tdy);
+            return;
+          }
+          const now = f?.idleT ?? 0;
+          unitLayout.units.forEach((unit, index) => {
+            const bubbleSpan = 1 + Math.max(0, unitLayout.units.length - 1) * 0.2;
+            const q = seqIn === null ? 1
+              : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
+            const ease = easeOutCubic(q);
+            /* 所有單位在常駐交棒第一幀都從 1 開始，再用不同速率逐漸分開節奏；
+               不加入初始 phase，避免一進動畫頁就各自跳到不同大小與位置。 */
+            const rate = 1 + (index % 4) * 0.13;
+            const scale = individualBreathe
+              ? 1 + Math.sin(now * 1.5 * rate * (o.mo?.speed || 1))
+                  * ((o.mo?.amp || 50) / 100) * 0.18
+              : o.mo?.in === 'bubble' ? easeOutBack(q) : 1;
+            ctx.save();
+            ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
+            /* centers 由整串 prefix advance 算出，永遠以整串的 tdx 為中心。
+               不再把各字 measureText 後相加，所以 kerning/fallback run 不會被重排。 */
+            ctx.translate(tdx + unitLayout.centers[index], tdy);
+            ctx.scale(scale, scale);
+            ctx.textAlign = 'center';
+            if (stroke) ctx.strokeText(unit, 0, 0);
+            else ctx.fillText(unit, 0, 0);
+            ctx.restore();
+          });
+        };
         // 文字的光是當場畫的，乘上這一格的亮度就會跟著閃
         const tb = animRef.current?.glowObj ? animRef.current.glowObj(o) : 1;
         if (o.glow && tb > 0.004) {
@@ -4846,7 +4888,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.shadowColor = o.glowColor || '#ffffff';
           for (const k2 of [1, 2, 3]) {
             ctx.shadowBlur = (Math.min(12, o.glow) / 20) * 14 * k2 * tk;
-            ctx.fillText(o.text || '', tdx, tdy);
+            drawText(false);
           }
           ctx.restore();
         }
@@ -4855,43 +4897,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.miterLimit = 2;
           ctx.strokeStyle = o.strokeColor || '#FFFFFF';
           ctx.lineWidth = o.strokeWidth * 2 * tk;
-          ctx.strokeText(o.text || '', tdx, tdy);
+          drawText(true);
         }
-        /* 紋理：字要先畫在一張暫存畫布上，再用 source-atop 把紋理蓋上去 ——
-           只有「有墨水的地方」會留下紋理，跟圖形那邊剪裁在路徑裡是同一個結果。
-           描邊與發光照舊畫在本體底下，所以紋理只換掉填色那一層。 */
         ctx.fillStyle = o.color || '#ffffff';
-        /* 符號 II：每一個 Unicode 單位由左至右進場；常駐縮放 II 則給每個單位
-           固定但不同的節奏。普通文字與普通符號維持原本單次繪製，字距完全不變。 */
-        const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2';
-        if (seqIn !== null || individualBreathe) {
-          const units = Array.from(o.text || '');
-          const widths = units.map(ch => ctx.measureText(ch).width);
-          const total = widths.reduce((sum, v) => sum + v, 0);
-          let cursor = tdx - total / 2;
-          const now = animRef.current?.t ?? 0;
-          units.forEach((ch, index) => {
-            const bubbleSpan = 1 + Math.max(0, units.length - 1) * 0.2;
-            const q = seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
-            const kind = o.mo?.in;
-            const ease = easeOutCubic(q);
-            const scale = individualBreathe
-              ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71) * ((o.mo?.amp || 50) / 100) * 0.18
-              : kind === 'bubble' ? easeOutBack(q) : 1;
-            const rise = 0;
-            ctx.save();
-            ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            ctx.translate(cursor + widths[index] / 2, tdy + rise);
-            ctx.scale(scale, scale);
-            ctx.textAlign = 'center';
-            ctx.fillText(ch, 0, 0);
-            ctx.restore();
-            cursor += widths[index];
-          });
-        } else {
-          ctx.fillText(o.text || '', tdx, tdy);
-        }
+        drawText(false);
         ctx.shadowBlur = 0;
         (ctx as any).letterSpacing = '0px';
       }
@@ -5806,7 +5815,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       },
       obj: (o: any, i: number) => {
         const cfg = moOf(o);
-        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, Array.from(o.text || '').length) : 1;
+        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, splitSymbolUnits(o.text || '').length) : 1;
         const bubbleSpan = 1 + Math.max(0, units - 1) * 0.2;
         const timed = units > 1 ? { ...cfg, dur: cfg.dur * bubbleSpan } : cfg;
         return composeMo(timed, t, (hashId(o.id) % 628) / 100 + i * 0.7);
@@ -7547,6 +7556,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   if (!offs2) return;
                   const id = Math.random().toString(36).slice(2, 9);
                   await ensureFont(DEFAULT_FONT);
+                  try {
+                    await document.fonts?.load(`400 64px "${DEFAULT_FONT}"`, txt);
+                    await document.fonts?.ready;
+                  } catch { /* 離線時沿用系統 fallback，但仍只量一次 */ }
                   clearSymbolInkCache();
                   /* 框照「真正畫出來的那一塊」量（見 symInk 的說明），
                      不是照前進寬度 —— 這樣選取框才會貼著符號本身。 */
