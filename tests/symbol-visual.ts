@@ -75,6 +75,9 @@ const drawCanonical = (
     const unitInks=layout.units.map(unit=>measureSymbolInkAtSize(unit,DEFAULT_FONT,size));
     let overlap=false;
     for(let i=1;i<layout.units.length;i++){
+      /* 同一主字上的可見 combining marks 會共用中心，但仍是不同動畫單元；
+         這種重疊是原符號造型，不是相鄰單元互相壓住。 */
+      if(Math.abs(layout.centers[i]-layout.centers[i-1])<.01) continue;
       const a=unitInks[i-1],b=unitInks[i];
       const ar=layout.centers[i-1]+(layout.drawOffsetsX[i-1]||0)+a.cx*size+a.w*size/2;
       const bl=layout.centers[i]+(layout.drawOffsetsX[i]||0)+b.cx*size-b.w*size/2;
@@ -101,8 +104,11 @@ const drawCanonical = (
       layout.units.some((unit,i)=>unit.includes("\u08ea")&&layout.drawOffsetsX[i]<0)
       && layout.drawOffsetsX.every((offset,i)=>layout.units[i].includes("\u08ea")||offset===0)
     );
-    const pass=inside&&centered&&tight&&!overlap&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,overlap,scale2StartsFlat,scale2Independent,specialDotAdjusted,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    /* 第七顆原本被 Intl.Segmenter 合併成四組；肉眼可見的附加點與弧線
+       現在必須各自成為動畫單元。 */
+    const visibleUnitsSeparated=index!==6||layout.units.length>=7;
+    const pass=inside&&centered&&tight&&!overlap&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&visibleUnitsSeparated&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,overlap,scale2StartsFlat,scale2Independent,specialDotAdjusted,visibleUnitsSeparated,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
