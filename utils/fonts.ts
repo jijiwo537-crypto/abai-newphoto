@@ -202,6 +202,7 @@ const cssDone = new Set<string>();
  * 會拿到「可以」的假答案（其實是配到系統的退回字體）。
  */
 export function ensureFont(family: string): Promise<void> {
+  if (family === SYMBOL_FONT) { cssDone.add(family); return Promise.resolve(); }
   if (typeof document === 'undefined') return Promise.resolve();
   const hit = requested.get(family);
   if (hit) return hit;
