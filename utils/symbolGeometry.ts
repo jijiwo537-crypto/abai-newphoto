@@ -268,7 +268,7 @@ export const measureSymbolUnitLayout = (
      都不能反过来改变这一组中心、总宽度或选中框。 */
   let staticUnits = splitSymbolClusters(text);
   const originalClusters = staticUnits.slice();
-  const needsNativeTiming = text.includes("\u0a48");
+  const needsNativeTiming = false;
   let advance = measureSymbolAdvance(text, family, size);
   let staticCenters = staticUnits.map((_unit, i) =>
     ((i + .5) / Math.max(1, staticUnits.length) - .5) * advance);
