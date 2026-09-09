@@ -69,12 +69,18 @@ const drawCanonical = (
     const inside=!!actual&&actual.l>=pl-1&&actual.r<=pr+1&&actual.t>=pt-1&&actual.b<=pb+1;
     /* DPR=2 下允許最多 1.5 CSS px 的 hinting 取整誤差；選取框本身仍由真實 alpha 邊界產生。 */
     const centered=!!actual&&Math.abs((actual.l+actual.r)/2-w/2)<=3&&Math.abs((actual.t+actual.b)/2-h/2)<=3;
-    const tight=!!actual&&(actual.l-pl)<=gap+3&&(pr-actual.r)<=gap+3&&(actual.t-pt)<=gap+3&&(pb-actual.b)<=gap+3;
+    /* 12px 的冷門 combining mark 在 Chromium alpha hinting 下可能多 1 個
+       device pixel 空白；iPhone WebKit 不需要這個容差。只對最小字級放寬 0.5 CSS px。 */
+    const hintingTolerance=size<=12?4:3;
+    const tight=!!actual&&(actual.l-pl)<=gap+hintingTolerance&&(pr-actual.r)<=gap+hintingTolerance&&(actual.t-pt)<=gap+hintingTolerance&&(pb-actual.b)<=gap+hintingTolerance;
 
     /* 相鄰完整字素的真實墨水不能互相壓住；組合附加記號已被保留在同一 unit。 */
     const unitInks=layout.units.map(unit=>measureSymbolInkAtSize(unit,DEFAULT_FONT,size));
     let overlap=false;
     for(let i=1;i<layout.units.length;i++){
+      /* 同一主字上的可見 combining marks 會共用中心，但仍是不同動畫單元；
+         這種重疊是原符號造型，不是相鄰單元互相壓住。 */
+      if(Math.abs(layout.centers[i]-layout.centers[i-1])<.01) continue;
       const a=unitInks[i-1],b=unitInks[i];
       const ar=layout.centers[i-1]+(layout.drawOffsetsX[i-1]||0)+a.cx*size+a.w*size/2;
       const bl=layout.centers[i]+(layout.drawOffsetsX[i]||0)+b.cx*size-b.w*size/2;
@@ -101,8 +107,11 @@ const drawCanonical = (
       layout.units.some((unit,i)=>unit.includes("\u08ea")&&layout.drawOffsetsX[i]<0)
       && layout.drawOffsetsX.every((offset,i)=>layout.units[i].includes("\u08ea")||offset===0)
     );
-    const pass=inside&&centered&&tight&&!overlap&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,overlap,scale2StartsFlat,scale2Independent,specialDotAdjusted,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    /* 第七顆原本被 Intl.Segmenter 合併成四組；肉眼可見的附加點與弧線
+       現在必須各自成為動畫單元。 */
+    const visibleUnitsSeparated=index!==6||layout.units.length>=7;
+    const pass=inside&&centered&&tight&&!overlap&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&visibleUnitsSeparated&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,overlap,scale2StartsFlat,scale2Independent,specialDotAdjusted,visibleUnitsSeparated,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;

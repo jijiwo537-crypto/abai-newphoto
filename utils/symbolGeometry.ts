@@ -171,27 +171,21 @@ export const measureSymbolAdvance = (text: string, family: string, fontSize: num
 export const splitSymbolUnits = (text: string): string[] => {
   if (!text) return [];
 
-  let raw: string[] = [];
-  try {
-    const Segmenter = (Intl as any).Segmenter;
-    if (Segmenter) {
-      raw = Array.from(new Segmenter(undefined, { granularity: 'grapheme' }).segment(text),
-        (part: any) => part.segment as string);
-    }
-  } catch { /* Safari 舊版走下面的保守分組 */ }
-  if (!raw.length) {
-    /* 舊版 Safari 沒有 Intl.Segmenter 時仍要把附加記號、變體選擇符與
-       ZWJ 序列黏回前一顆，絕不能退回逐 code point 拆字。 */
-    for (const ch of Array.from(text)) {
-      const attach = /\p{Mark}/u.test(ch) || /[\ufe00-\ufe0f\u200d]/u.test(ch)
-        || (raw.length > 0 && raw[raw.length - 1].endsWith('\u200d'));
-      if (raw.length && attach) raw[raw.length - 1] += ch;
-      else raw.push(ch);
-    }
+  /* Intl.Segmenter 的 grapheme 規則適合游標移動，卻不適合這裡的視覺動畫：
+     它會把一個主字與旁邊數顆可見附加點／星／弧線合成一顆 grapheme，
+     於是肉眼看到五顆，泡泡與縮放 II 卻只播放兩三組。動畫改以 code point
+     為基礎；只有變體選擇符與 ZWJ 序列仍黏回主字，避免拆壞真正的單一字形。 */
+  const raw: string[] = [];
+  for (const ch of Array.from(text)) {
+    const variation = /[\ufe00-\ufe0f]/u.test(ch);
+    const joiner = ch === "\u200d";
+    const continuesJoiner = raw.length > 0 && raw[raw.length - 1].endsWith("\u200d");
+    if (raw.length && (variation || joiner || continuesJoiner)) raw[raw.length - 1] += ch;
+    else raw.push(ch);
   }
 
-  /* 空白與格式控制沒有自己的墨水，也不能佔一個動畫節拍；併入相鄰單位，
-     prefix advance 仍完整保留原字串的間距。 */
+  /* 空白與格式控制沒有自己的墨水，也不能佔動畫節拍；留在前一單位內只負責
+     保持原本間距。附加符號本身不再併回主字，因此每顆可見裝飾都有獨立節奏。 */
   const invisible = /^[\s\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/u;
   const out: string[] = [];
   let leading = '';
@@ -227,38 +221,62 @@ export const measureSymbolUnitLayout = (
   let centers = units.map((_u, i) => ((i + .5) / Math.max(1, units.length) - .5) * advance);
   let unitAdvances = units.map(() => advance / Math.max(1, units.length));
 
+  /* 沒有空白隔開的 combining mark 視覺上仍附著在前一顆主字，
+     但動畫節奏必須獨立。它不另佔 advance，中心沿用主字；有空白隔開的 mark
+     則是清單作者刻意放置的獨立小單元，照正常順序排版。 */
+  const markOnly = (unit: string) =>
+    /^\p{Mark}+[\s\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/u.test(unit);
+  const attachedTo = units.map(() => -1);
+
   try {
     const ctx = document.createElement('canvas').getContext('2d');
     if (ctx) {
       ctx.font = `400 ${size}px ${fontStack(family)}`;
-      /* 每個單位用自己真正的 advance 排隊。舊版使用「整串 prefix 的差值」，
-         但 fallback 字型、kerning 與方向控制可能讓相鄰差值變得過小甚至逆向，
-         單獨繪製時便會互相壓住。獨立 advance 才和實際 drawText(unit) 一致。 */
       unitAdvances = units.map(unit => Math.max(.01, ctx.measureText(unit).width));
-      advance = Math.max(.1, unitAdvances.reduce((sum, value) => sum + value, 0));
+      for (let i = 1; i < units.length; i++) {
+        if (markOnly(units[i]) && !/[\s\u200b\u200e\u200f]$/u.test(units[i - 1])) {
+          attachedTo[i] = attachedTo[i - 1] >= 0 ? attachedTo[i - 1] : i - 1;
+        }
+      }
+      advance = Math.max(.1, unitAdvances.reduce((sum, value, i) =>
+        sum + (attachedTo[i] >= 0 ? 0 : value), 0));
       let cursor = -advance / 2;
-      centers = unitAdvances.map(value => {
-        const center = cursor + value / 2;
-        cursor += value;
-        return center;
+      const nextCenters: number[] = [];
+      units.forEach((_unit, i) => {
+        if (attachedTo[i] >= 0) nextCenters[i] = nextCenters[attachedTo[i]];
+        else {
+          nextCenters[i] = cursor + unitAdvances[i] / 2;
+          cursor += unitAdvances[i];
+        }
       });
+      centers = nextCenters;
     }
   } catch { /* 均勻錨點仍可用 */ }
 
   const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
 
-  /* 可見墨水不得互相重疊。某些冷門 fallback 字形的 bearing 會伸出 advance；
-     只把發生碰撞的當前單位向右推，其他單位與空白的原始距離完全不動。
-     附加記號已在 splitSymbolUnits 內與母字合併，所以不會把真正需要疊合的
-     點、星號或變體選擇符拆開。 */
+  /* 獨立小單元不得互相壓住；附著在同一主字上的可見 marks 刻意允許共用中心，
+     才能保持原符號造型，同時由泡泡／縮放 II 分別取得不同時間相位。 */
   const minVisibleGap = Math.max(.35, size * .006);
   for (let i = 1; i < centers.length; i++) {
-    const prev = unitInks[i - 1];
+    if (attachedTo[i] >= 0) {
+      centers[i] = centers[attachedTo[i]];
+      continue;
+    }
+    let previousRight = -Infinity;
+    for (let j = 0; j < i; j++) {
+      const prev = unitInks[j];
+      previousRight = Math.max(previousRight,
+        centers[j] + prev.cx * size + prev.w * size / 2);
+    }
     const cur = unitInks[i];
-    const previousRight = centers[i - 1] + prev.cx * size + prev.w * size / 2;
     const currentLeft = centers[i] + cur.cx * size - cur.w * size / 2;
     if (currentLeft < previousRight + minVisibleGap) {
-      centers[i] += previousRight + minVisibleGap - currentLeft;
+      const delta = previousRight + minVisibleGap - currentLeft;
+      centers[i] += delta;
+      for (let j = i + 1; j < centers.length; j++) {
+        if (attachedTo[j] === i) centers[j] += delta;
+      }
     }
   }
 
