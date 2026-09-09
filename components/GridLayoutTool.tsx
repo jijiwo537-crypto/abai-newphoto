@@ -12,6 +12,7 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
+import { clearSymbolInkCache } from '../utils/symbolGeometry';
 import { measureSymbolInk, measureSymbolInkAtSize, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
@@ -1563,6 +1564,7 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
  * 一排只放一顆 —— 長的符號要一整排的寬度才擺得完整。
  * 跟「新增圖形」一樣，點完留在這一頁、不跳去編輯，可以連著加好幾顆。
  */
+let symbolPickerFontReady = false;
 export const SymbolPicker: React.FC<{
   onBack: () => void;
   onPick: (s: string) => void;
@@ -1570,13 +1572,18 @@ export const SymbolPicker: React.FC<{
   /* 不讓替代字型先露出再整頁切換。字型通常已由工具掛載時預載；
      若使用者非常快地點進來，符號列只延後到同一字型可用的第一幀顯示。 */
   const [fontReady, setFontReady] = useState(() =>
-    typeof document === 'undefined' || fontCssLoaded(DEFAULT_FONT)
+    typeof document === 'undefined' || symbolPickerFontReady
   );
   useLayoutEffect(() => {
     let alive = true;
-    void ensureFont(DEFAULT_FONT).then(async () => {
-      if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
-      requestAnimationFrame(() => { if (alive) setFontReady(true); });
+    /* cssDone 只代表 @font-face 宣告已下載，不代表字身已套用；必須等
+       document.fonts.load + ready，清掉 fallback 量測，再隔兩幀確認繪製穩定。 */
+    void waitForFont(DEFAULT_FONT).then(() => {
+      clearSymbolInkCache();
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        symbolPickerFontReady = true;
+        if (alive) setFontReady(true);
+      }));
     });
     return () => { alive = false; };
   }, []);
