@@ -3,10 +3,14 @@ import { fontStack } from './fonts';
 export type SymbolInk = { w: number; h: number; cx: number; cy: number };
 export type SymbolUnitLayout = {
   units: string[];
-  /** 每個字素的固定繪製中心；單位是 canvas px。 */
+  /** 每個字素的固定排版中心；單位是 canvas px。 */
   centers: number[];
+  /** 每個字素自己的可見墨水，動畫以它的中心作為縮放支點。 */
+  unitInks: SymbolInk[];
+  /** 只影響實際繪製、不參與外框幾何的精準微調；單位是 canvas px。 */
+  drawOffsetsX: number[];
   advance: number;
-  /** 依照上述 units/centers 實際畫出的聯集墨水範圍；以字級 1 為單位。 */
+  /** 依照原始 units/centers 實際畫出的聯集墨水範圍；以字級 1 為單位。 */
   ink: SymbolInk;
 };
 
@@ -283,7 +287,16 @@ export const measureSymbolUnitLayout = (
     cx: (final.left + final.right) / 2 / size,
     cy: (final.top + final.bottom) / 2 / size,
   };
-  const out = { units, centers, advance, ink };
+  /* 第七顆符號裡，U+08EA 是弧線左側那顆獨立小點。只移動它的
+     繪製位置，不把位移算進 ink：符號本體更舒服，但既有選中框尺寸與位置不變。 */
+  const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
+  const drawOffsetsX = units.map(() => 0);
+  if (text === seventhSymbol) {
+    const dotIndex = units.findIndex(unit => unit.includes("\u08ea"));
+    if (dotIndex >= 0) drawOffsetsX[dotIndex] = -size * 0.08;
+  }
+
+  const out = { units, centers, unitInks, drawOffsetsX, advance, ink };
   unitLayoutCache.set(key, out);
   return out;
 };
