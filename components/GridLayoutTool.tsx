@@ -5622,7 +5622,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           image.shape, boxW, boxH,
           (image.shapeTextureBaseW || image.width) * renderScale,
           (image.shapeTextureBaseH || image.height) * renderScale,
-          ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325,
+          ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
+            * Math.pow(Math.max(0.01, renderScale), 0.35),
         ));
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const solid = !!image.shapeFilled && image.shape !== 'line';
@@ -6328,7 +6329,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
                 ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.max(0.01, renderScale),
+                  / Math.pow(Math.max(0.01, renderScale), 0.65),
               )}
               fill="none"
               stroke={image.shapeStrokeColor || '#000000'}
@@ -6344,7 +6345,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
                 ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.max(0.01, renderScale),
+                  / Math.pow(Math.max(0.01, renderScale), 0.65),
               )}
             fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
             stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || SHAPE_DEFAULT_COLOR)}
@@ -6387,7 +6388,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
                 ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.max(0.01, renderScale),
+                  / Math.pow(Math.max(0.01, renderScale), 0.65),
               )}
                   fill={`url(#${id})`}
                   stroke="none"
@@ -6428,7 +6429,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
                 ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.max(0.01, renderScale),
+                  / Math.pow(Math.max(0.01, renderScale), 0.65),
               )}
                   fill={`url(#${id})`}
                   stroke="none"
@@ -11560,7 +11561,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
       (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
       ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor / 160) * 2.325
-        / Math.max(0.01, fImg.scale || 1),
+        / Math.pow(Math.max(0.01, fImg.scale || 1), 0.65),
     ));
     const color = fImg.color || SHAPE_DEFAULT_COLOR;
     const solid = fImg.shapeFilled && fImg.shape !== 'line';
