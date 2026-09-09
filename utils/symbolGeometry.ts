@@ -2,11 +2,14 @@ import { fontStack } from './fonts';
 
 export type SymbolInk = { w: number; h: number; cx: number; cy: number };
 export type SymbolUnitLayout = {
+  /** 動畫用的可見小單元；附加點、星、弧線可以各自取得時間相位。 */
   units: string[];
-  /** 每個字素的固定排版中心；單位是 canvas px。 */
   centers: number[];
-  /** 每個字素自己的可見墨水，動畫以它的中心作為縮放支點。 */
   unitInks: SymbolInk[];
+  /** 靜止顯示與外框沿用瀏覽器原生字素排版，不受動畫拆分影響。 */
+  staticUnits: string[];
+  staticCenters: number[];
+  staticUnitInks: SymbolInk[];
   /** 只影響實際繪製、不參與外框幾何的精準微調；單位是 canvas px。 */
   drawOffsetsX: number[];
   advance: number;
@@ -202,6 +205,41 @@ export const splitSymbolUnits = (text: string): string[] => {
   return out.length ? out : [text];
 };
 
+/* 靜止排版仍使用瀏覽器的完整 grapheme。這份切分只负责位置与外框，
+   不参与泡泡／缩放 II 的节奏，避免动画需求反过来改变原符号位置。 */
+const splitSymbolClusters = (text: string): string[] => {
+  let raw: string[] = [];
+  try {
+    const Segmenter = (Intl as any).Segmenter;
+    if (Segmenter) {
+      raw = Array.from(new Segmenter(undefined, { granularity: 'grapheme' }).segment(text),
+        (part: any) => part.segment as string);
+    }
+  } catch { /* 舊 Safari 走保守分組 */ }
+  if (!raw.length) {
+    for (const ch of Array.from(text)) {
+      const attach = /\p{Mark}/u.test(ch) || /[\ufe00-\ufe0f\u200d]/u.test(ch)
+        || (raw.length > 0 && raw[raw.length - 1].endsWith("\u200d"));
+      if (raw.length && attach) raw[raw.length - 1] += ch;
+      else raw.push(ch);
+    }
+  }
+  const invisible = /^[\s\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/u;
+  const out: string[] = [];
+  let leading = '';
+  raw.forEach(part => {
+    if (invisible.test(part)) {
+      if (out.length) out[out.length - 1] += part;
+      else leading += part;
+    } else {
+      out.push(leading + part);
+      leading = '';
+    }
+  });
+  if (leading && out.length) out[out.length - 1] += leading;
+  return out.length ? out : [text];
+};
+
 /**
  * 唯一的符號版面來源。靜止、外框、泡泡與縮放 II 全部讀這一份資料：
  * 先用整串 prefix advance 決定每個安全字素的位置，再掃描每個單位真正的 alpha
@@ -216,75 +254,44 @@ export const measureSymbolUnitLayout = (
   const key = `${family}|${text}|${size}`;
   const hit = unitLayoutCache.get(key);
   if (hit) return hit;
-  const units = splitSymbolUnits(text);
+
+  /* 先完全照修改前的 grapheme 逻辑排静止版。动画拆成多少小单元，
+     都不能反过来改变这一组中心、总宽度或选中框。 */
+  const staticUnits = splitSymbolClusters(text);
   let advance = measureSymbolAdvance(text, family, size);
-  let centers = units.map((_u, i) => ((i + .5) / Math.max(1, units.length) - .5) * advance);
-  let unitAdvances = units.map(() => advance / Math.max(1, units.length));
-
-  /* 沒有空白隔開的 combining mark 視覺上仍附著在前一顆主字，
-     但動畫節奏必須獨立。它不另佔 advance，中心沿用主字；有空白隔開的 mark
-     則是清單作者刻意放置的獨立小單元，照正常順序排版。 */
-  const markOnly = (unit: string) =>
-    /^\p{Mark}+[\s\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]*$/u.test(unit);
-  const attachedTo = units.map(() => -1);
-
+  let staticCenters = staticUnits.map((_unit, i) =>
+    ((i + .5) / Math.max(1, staticUnits.length) - .5) * advance);
+  let staticAdvances = staticUnits.map(() => advance / Math.max(1, staticUnits.length));
   try {
     const ctx = document.createElement('canvas').getContext('2d');
     if (ctx) {
       ctx.font = `400 ${size}px ${fontStack(family)}`;
-      unitAdvances = units.map(unit => Math.max(.01, ctx.measureText(unit).width));
-      for (let i = 1; i < units.length; i++) {
-        if (markOnly(units[i]) && !/[\s\u200b\u200e\u200f]$/u.test(units[i - 1])) {
-          attachedTo[i] = attachedTo[i - 1] >= 0 ? attachedTo[i - 1] : i - 1;
-        }
-      }
-      advance = Math.max(.1, unitAdvances.reduce((sum, value, i) =>
-        sum + (attachedTo[i] >= 0 ? 0 : value), 0));
+      staticAdvances = staticUnits.map(unit => Math.max(.01, ctx.measureText(unit).width));
+      advance = Math.max(.1, staticAdvances.reduce((sum, value) => sum + value, 0));
       let cursor = -advance / 2;
-      const nextCenters: number[] = [];
-      units.forEach((_unit, i) => {
-        if (attachedTo[i] >= 0) nextCenters[i] = nextCenters[attachedTo[i]];
-        else {
-          nextCenters[i] = cursor + unitAdvances[i] / 2;
-          cursor += unitAdvances[i];
-        }
+      staticCenters = staticAdvances.map(value => {
+        const center = cursor + value / 2;
+        cursor += value;
+        return center;
       });
-      centers = nextCenters;
     }
-  } catch { /* 均勻錨點仍可用 */ }
+  } catch { /* 均匀中心仍可用 */ }
 
-  const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
-
-  /* 獨立小單元不得互相壓住；附著在同一主字上的可見 marks 刻意允許共用中心，
-     才能保持原符號造型，同時由泡泡／縮放 II 分別取得不同時間相位。 */
+  const staticUnitInks = staticUnits.map(unit => measureSymbolInkAtSize(unit, family, size));
   const minVisibleGap = Math.max(.35, size * .006);
-  for (let i = 1; i < centers.length; i++) {
-    if (attachedTo[i] >= 0) {
-      centers[i] = centers[attachedTo[i]];
-      continue;
-    }
-    let previousRight = -Infinity;
-    for (let j = 0; j < i; j++) {
-      const prev = unitInks[j];
-      previousRight = Math.max(previousRight,
-        centers[j] + prev.cx * size + prev.w * size / 2);
-    }
-    const cur = unitInks[i];
-    const currentLeft = centers[i] + cur.cx * size - cur.w * size / 2;
+  for (let i = 1; i < staticCenters.length; i++) {
+    const prev = staticUnitInks[i - 1], cur = staticUnitInks[i];
+    const previousRight = staticCenters[i - 1] + prev.cx * size + prev.w * size / 2;
+    const currentLeft = staticCenters[i] + cur.cx * size - cur.w * size / 2;
     if (currentLeft < previousRight + minVisibleGap) {
-      const delta = previousRight + minVisibleGap - currentLeft;
-      centers[i] += delta;
-      for (let j = i + 1; j < centers.length; j++) {
-        if (attachedTo[j] === i) centers[j] += delta;
-      }
+      staticCenters[i] += previousRight + minVisibleGap - currentLeft;
     }
   }
 
-  const bounds = (xs: number[]) => {
+  const clusterBounds = (xs: number[]) => {
     let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
-    unitInks.forEach((ink, i) => {
-      const cx = xs[i] + ink.cx * size;
-      const cy = ink.cy * size;
+    staticUnitInks.forEach((ink, i) => {
+      const cx = xs[i] + ink.cx * size, cy = ink.cy * size;
       left = Math.min(left, cx - ink.w * size / 2);
       right = Math.max(right, cx + ink.w * size / 2);
       top = Math.min(top, cy - ink.h * size / 2);
@@ -293,20 +300,30 @@ export const measureSymbolUnitLayout = (
     if (!Number.isFinite(left)) return { left: 0, right: 1, top: 0, bottom: 1 };
     return { left, right, top, bottom };
   };
-
-  /* 固定校正一次，此後所有幀只改單位 scale，不再重算中心。 */
-  const first = bounds(centers);
+  const first = clusterBounds(staticCenters);
   const shiftX = -(first.left + first.right) / 2;
-  centers = centers.map(x => x + shiftX);
-  const final = bounds(centers);
+  staticCenters = staticCenters.map(x => x + shiftX);
+  const final = clusterBounds(staticCenters);
   const ink: SymbolInk = {
     w: Math.max(.01, final.right - final.left) / size,
     h: Math.max(.01, final.bottom - final.top) / size,
     cx: (final.left + final.right) / 2 / size,
     cy: (final.top + final.bottom) / 2 / size,
   };
-  /* 第七顆符號裡，U+08EA 是弧線左側那顆獨立小點。只移動它的
-     繪製位置，不把位移算進 ink：符號本體更舒服，但既有選中框尺寸與位置不變。 */
+
+  /* 每个原生 grapheme 内再拆可见动画单元，并全部继承该 grapheme 的固定中心。
+     因此五个可见小单元能有五种节奏，但符号本身不会被重新排版。 */
+  const units: string[] = [];
+  const centers: number[] = [];
+  staticUnits.forEach((cluster, clusterIndex) => {
+    const visualParts = splitSymbolUnits(cluster);
+    visualParts.forEach(part => {
+      units.push(part);
+      centers.push(staticCenters[clusterIndex]);
+    });
+  });
+  const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
+
   const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
   const drawOffsetsX = units.map(() => 0);
   if (text === seventhSymbol) {
@@ -314,7 +331,11 @@ export const measureSymbolUnitLayout = (
     if (dotIndex >= 0) drawOffsetsX[dotIndex] = -size * 0.08;
   }
 
-  const out = { units, centers, unitInks, drawOffsetsX, advance, ink };
+  const out = {
+    units, centers, unitInks,
+    staticUnits, staticCenters, staticUnitInks,
+    drawOffsetsX, advance, ink,
+  };
   unitLayoutCache.set(key, out);
   return out;
 };
