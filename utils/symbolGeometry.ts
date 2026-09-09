@@ -379,12 +379,6 @@ export const measureSymbolUnitLayout = (
   const drawOffsetsX = units.map(() => correctionX);
   const drawOffsetsY = units.map(() => correctionY);
 
-  const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
-  if (text === seventhSymbol) {
-    const dotIndex = units.findIndex(unit => unit.includes("\u08ea"));
-    if (dotIndex >= 0) drawOffsetsX[dotIndex] -= size * 0.08;
-  }
-
   const out = {
     units, centers, unitInks, unitClusters,
     staticUnits, staticCenters, staticUnitInks,
