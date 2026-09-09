@@ -101,8 +101,15 @@ const drawCanonical = (
     ctx.strokeRect(pl,pt,pr-pl,pb-pt);
     const card=document.createElement('div');card.className='card'+(pass?'':' bad');
     const label=document.createElement('div');label.className='label';
-    label.textContent=`#${index+1} · ${layout.units.length} unit · ${pass?'PASS':'FAIL'}`;
-    card.append(label,canvas);grid.append(card);
+    label.textContent=`#${index+1} · ${layout.units.length} unit · 靜止／縮放II · ${pass?'PASS':'FAIL'}`;
+    const scaleCanvas=document.createElement('canvas');scaleCanvas.width=w;scaleCanvas.height=h;
+    const scaleCtx=scaleCanvas.getContext('2d',{willReadFrequently:true})!;
+    scaleCtx.scale(dpr,dpr);
+    drawCanonical(scaleCtx,text,size,cssW/2,cssH/2,scaleB);
+    scaleCtx.setTransform(1,0,0,1,0,0);
+    scaleCtx.strokeStyle=pass?'#64e6a5':'#ff4d4d';scaleCtx.lineWidth=2;
+    scaleCtx.strokeRect(pl,pt,pr-pl,pb-pt);
+    card.append(label,canvas,scaleCanvas);grid.append(card);
     if(index%12===0) await new Promise(requestAnimationFrame);
   }
   const summary=document.querySelector('#summary')!;
