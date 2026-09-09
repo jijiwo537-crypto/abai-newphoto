@@ -360,6 +360,22 @@ export const measureSymbolUnitLayout = (
   });
   const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
 
+  /* 泡泡／缩放 II 会把 grapheme 分开绘制。少数字体在脱离整串 shaping 后
+     standalone 墨水会变宽，若仍只用 prefix advance，邻近单元就会重叠乱掉。
+     只在不同 grapheme 之间补足最小可见间隔；同一 grapheme 内的 combining
+     mark 仍共享锚点，不拆坏附加点与弧线。后续再把联集校回原本中心。 */
+  for (let i = 1; i < centers.length; i++) {
+    if (unitClusters[i] === unitClusters[i - 1]) continue;
+    const prev = unitInks[i - 1], cur = unitInks[i];
+    const prevRight = centers[i - 1] + prev.cx * size + prev.w * size / 2;
+    const curLeft = centers[i] + cur.cx * size - cur.w * size / 2;
+    const gap = Math.max(.35, size * .006);
+    if (curLeft < prevRight + gap) {
+      const delta = prevRight + gap - curLeft;
+      for (let j = i; j < centers.length; j++) centers[j] += delta;
+    }
+  }
+
   /* 独立绘制 combining mark 后，它的 standalone alpha 中心可能和整串
      native shaping 不同。先把动画单元的墨水联集校回静止整串的真实中心；
      只消除进入动画页的整体跳位，不改变各单元之间的原生位置。 */

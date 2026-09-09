@@ -278,7 +278,7 @@ const prepareCreativeSymbolPlacement = (
   const short = Math.min(cw, ch);
   const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
     Math.round((cw * 0.7) / Math.max(0.05, ink.w))));
-  const canonical = measureSymbolUnitLayout(text, SYMBOL_FONT, size);
+  const canonical = measureSymbolUnitLayout(text, SYMBOL_FONT, 100);
   const value = {
     size,
     w: Math.round(Math.max(6, canonical.ink.w * size + 8)),
