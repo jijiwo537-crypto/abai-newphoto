@@ -263,7 +263,11 @@ const symBox = (str: string, fam: string, size: number) => {
 const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
   if (o.sym) {
-    const ink = symInk(o.text || o.sym, o.fontFamily || DEFAULT_FONT);
+    /* 新增時保存的墨水量測是符號與選中框的共同幾何基準。
+       不再於第一個動畫影格重新量字型，避免字型剛就緒時框先用到另一組度量。 */
+    const ink = (Number.isFinite(o.symInkW) && Number.isFinite(o.symInkH))
+      ? { w: o.symInkW, h: o.symInkH, cx: o.symInkCx || 0, cy: o.symInkCy || 0 }
+      : symInk(o.text || o.sym, o.fontFamily || DEFAULT_FONT);
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -374,6 +378,15 @@ const hashId = (id: string) => {
   let x = 0;
   for (let i = 0; i < (id || '').length; i++) x = (x * 31 + id.charCodeAt(i)) >>> 0;
   return x;
+};
+
+/** 泡泡动画必须按「用户看到的一颗符号」切分。
+ * Array.from 会把附加符号、变体选择符与 ZWJ 组合拆开，第一帧各自缩放时
+ * 墨水会飞离整串外框；播放结束改回整串绘制后才突然正常。 */
+const symbolUnits = (text: string): string[] => {
+  const Seg = typeof Intl !== 'undefined' ? (Intl as any).Segmenter : null;
+  if (Seg) return Array.from(new Seg(undefined, { granularity: 'grapheme' }).segment(text), (v: any) => v.segment);
+  return Array.from(text);
 };
 
 /* ── 動態 ──────────────────────────────────────────────────────────
@@ -617,7 +630,7 @@ const glowIdleAmp = (
 export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
   { id: 'float', name: '漂浮' },
-  { id: 'sway', name: '左右' },
+  { id: 'sway', name: '波浪' },
   { id: 'breathe', name: '縮放' },
   { id: 'spin', name: '旋轉' },
   { id: 'wobble', name: '搖擺' },
@@ -4824,7 +4837,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
         let tdx = 0, tdy = 0;
         if (o.sym) {
-          const ink2 = symInk(o.text || '', fam);
+          /* 和选中框读取同一份建立时度量，动画第一帧与后续影格不会因
+             字型缓存由 fallback 切到正式字型而改变中心。 */
+          const ink2 = (Number.isFinite(o.symInkW) && Number.isFinite(o.symInkH))
+            ? { w: o.symInkW, h: o.symInkH, cx: o.symInkCx || 0, cy: o.symInkCy || 0 }
+            : symInk(o.text || '', fam);
           tdx = -ink2.cx * o.size * s;
           tdy = -ink2.cy * o.size * s;
         }
@@ -4866,7 +4883,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
         const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2';
         if (seqIn !== null || individualBreathe) {
-          const units = Array.from(o.text || '');
+          const units = symbolUnits(o.text || '');
           const widths = units.map(ch => ctx.measureText(ch).width);
           const total = widths.reduce((sum, v) => sum + v, 0);
           let cursor = tdx - total / 2;
@@ -5806,7 +5823,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       },
       obj: (o: any, i: number) => {
         const cfg = moOf(o);
-        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, Array.from(o.text || '').length) : 1;
+        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, symbolUnits(o.text || '').length) : 1;
         const bubbleSpan = 1 + Math.max(0, units - 1) * 0.2;
         const timed = units > 1 ? { ...cfg, dur: cfg.dur * bubbleSpan } : cfg;
         return composeMo(timed, t, (hashId(o.id) % 628) / 100 + i * 0.7);
@@ -7547,6 +7564,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   if (!offs2) return;
                   const id = Math.random().toString(36).slice(2, 9);
                   await ensureFont(DEFAULT_FONT);
+                  /* 等浏览器真正提交字体，再做唯一一次墨水扫描。
+                     ensureFont resolve 与 Safari 首次 canvas 绘字之间偶尔仍差一帧。 */
+                  if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
+                  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
                   clearSymbolInkCache();
                   /* 框照「真正畫出來的那一塊」量（見 symInk 的說明），
                      不是照前進寬度 —— 這樣選取框才會貼著符號本身。 */
@@ -7561,6 +7582,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const w = Math.round(box.w), h = Math.round(box.h);
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
+                    /* 固定保存这次实际扫描到的墨水范围；绘制与框都只认这一份。 */
+                    symInkW: ink.w, symInkH: ink.h, symInkCx: ink.cx, symInkCy: ink.cy,
                     fontFamily: DEFAULT_FONT, bold: false, italic: false,
                     letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
                     glow: 0, glowColor: '#ffffff',
@@ -8050,7 +8073,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const chooseMotionTarget = (id: string) => {
                   setMoTarget(id);
                   if (id === 'shape' || objects.some(o => o.id === id)) {
-                    motionTargetFlashRef.current = { id, started: performance.now(), duration: 850 };
+                    /* 第一帧只负责让目标切换与动画状态完成提交；从下一帧才显示框。
+                       否则框会短暂读取到上一目标的变换矩阵，随后才回到正确位置。 */
+                    motionTargetFlashRef.current = { id, started: performance.now() + 34, duration: 850 };
                     setMotionTargetFlashSeq(n => n + 1);
                   }
                 };
