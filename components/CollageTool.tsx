@@ -4922,14 +4922,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
           const count = unitLayout.unitLefts.length;
           const fontPx = (o.size || 40) * s;
+          const unitScales = individualBreathe
+            ? unitLayout.unitLefts.map((_x, index) =>
+                symbolBreatheScale(index, now, o.mo?.amp || 50, o.mo?.speed || 1))
+            : null;
+          /* 缩放 II 接手的精确第一帧仍画一次完整原生字符串；下一帧切片
+             只产生极小倍率变化，不会在交界处出现抗锯齿闪线。 */
+          if (unitScales?.every(value => Math.abs(value - 1) < 1e-6)) {
+            if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
+            else ctx.fillText(o.text || '', tdx, tdy);
+            return;
+          }
           for (let index = 0; index < count; index++) {
             const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
             const q = seqIn === null ? 1
               : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
             const ease = easeOutCubic(q);
-            const scale = individualBreathe
-              ? symbolBreatheScale(index, now, o.mo?.amp || 50, o.mo?.speed || 1)
-              : easeOutBack(q);
+            const scale = unitScales ? unitScales[index] : easeOutBack(q);
             const left = unitLayout.unitLefts[index] * symbolUnitScale * s;
             const right = unitLayout.unitRights[index] * symbolUnitScale * s;
             const pivot = (left + right) / 2;
