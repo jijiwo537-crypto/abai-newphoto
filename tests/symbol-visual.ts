@@ -17,7 +17,7 @@ const scan = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
 
 const drawCanonical = (
   ctx: CanvasRenderingContext2D, text: string, size: number,
-  cx: number, cy: number, unitScales?: number[],
+  cx: number, cy: number, unitScales?: number[], forceAnimated = false,
 ) => {
   const layout=measureSymbolUnitLayout(text,SYMBOL_FONT,size);
   ctx.save();
@@ -26,7 +26,7 @@ const drawCanonical = (
   const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
   /* 全部回到 1 倍时与生产代码一样交回原生静止字素；只有仍在变化的
      小单元才走拆分动画渲染。 */
-  const animated=!!unitScales&&unitScales.some(scale=>Math.abs(scale-1)>1e-6);
+  const animated=forceAnimated||!!unitScales&&unitScales.some(scale=>Math.abs(scale-1)>1e-6);
   const units=animated?layout.units:layout.staticUnits;
   const centers=animated?layout.centers:layout.staticCenters;
   const inks=animated?layout.unitInks:layout.staticUnitInks;
@@ -109,6 +109,19 @@ const drawCanonical = (
     drawCanonical(g2,text,size,cssW/2,cssH/2,new Array(layout.units.length).fill(1));
     const animated=g2.getImageData(0,0,w,h).data;
     let diff=0;for(let i=3;i<reference.length;i+=4) if(reference[i]!==animated[i]){diff++;if(diff>2)break;}
+
+    /* 强制走真实动画单元路径但保持倍率 1：进入动画页的第一帧不能
+       让整串中心跳位，也不能把左右可见内容推出静止外框。 */
+    const c3=document.createElement('canvas');c3.width=w;c3.height=h;
+    const g3=c3.getContext('2d',{willReadFrequently:true})!;g3.scale(dpr,dpr);
+    drawCanonical(g3,text,size,cssW/2,cssH/2,new Array(layout.units.length).fill(1),true);
+    g3.setTransform(1,0,0,1,0,0);
+    const forcedAnimatedBounds=scan(g3,w,h);
+    const firstFrameStable=!!actual&&!!forcedAnimatedBounds
+      && Math.abs((forcedAnimatedBounds.l+forcedAnimatedBounds.r-actual.l-actual.r)/2)<=4
+      && Math.abs((forcedAnimatedBounds.t+forcedAnimatedBounds.b-actual.t-actual.b)/2)<=4
+      && forcedAnimatedBounds.l>=pl-8&&forcedAnimatedBounds.r<=pr+8
+      && forcedAnimatedBounds.t>=pt-8&&forcedAnimatedBounds.b<=pb+8;
     /* 第七顆只允許 U+08EA 那顆點向左微調；其他 unit 不可被一起移動。 */
     const specialDotAdjusted=index!==6||(
       layout.units.some((unit,i)=>unit.includes("\u08ea")&&layout.drawOffsetsX[i]<0)
@@ -140,8 +153,8 @@ const drawCanonical = (
       && actual.l>=pl-24&&actual.r<=pr+24
       && actual.t>=pt-24&&actual.b<=pb+24;
     const geometryPass=nativeMark?nativeSafe:(inside&&centered&&tight);
-    const pass=geometryPass&&!overlap&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,overlap,stableCacheHit,scale2StartsFlat,scale2Independent,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    const pass=geometryPass&&!overlap&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,overlap,stableCacheHit,scale2StartsFlat,scale2Independent,firstFrameStable,forcedAnimatedBounds,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
