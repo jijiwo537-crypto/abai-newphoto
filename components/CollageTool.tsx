@@ -1686,6 +1686,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 離開「新增」分頁就回到最外層：下次再進來看到的是三顆大按鈕，
      而不是上次停在的圖形／符號清單。 */
   useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
+  /* 使用者打开符号清单时就提前准备字体；点击符号本身不再等待网络、
+     document.fonts.ready 或额外一帧，因此第一次也会立即建立。 */
+  useEffect(() => {
+    if (activeTab === 'add' && addSub === 'symbol') void ensureFont(DEFAULT_FONT);
+  }, [activeTab, addSub]);
   /** 編輯頁的左側子分頁 */
   const [objSub, setObjSub] = useState<'main' | 'style'>('main');
   /* 圖片調整面板的 UI 狀態 —— 跟經典拼圖同一組，只是各自持有，
@@ -4911,8 +4916,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號 II：每一個 Unicode 單位由左至右進場；常駐縮放 II 則給每個單位
            固定但不同的節奏。普通文字與普通符號維持原本單次繪製，字距完全不變。 */
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2';
-        if (seqIn !== null || individualBreathe) {
+        /* 缩放 II 从符号建立后就固定使用逐单位布局；进入动画页只改变倍率，
+           绝不再从整串 Canvas shaping 突然切换成另一种排版。 */
+        const unitLayout = !!o.sym && o.mo?.idle === 'symbol-breathe2';
+        const individualBreathe = !!f && unitLayout && seqIn === null && (f.idleBlend ?? 0) > 0;
+        if (seqIn !== null || unitLayout) {
           const units = symbolUnits(o.text || '');
           /* 用整串前缀的 shaping 宽度定位每个单位，而不是把各字宽相加。
              组合符号、fallback 字体与 kerning 下，两者并不相等；前缀宽度
@@ -4999,8 +5007,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              不然愛心上面那片空白、星星底下那條也會被框進去。
              沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
           // 圖片框的內緣剛好貼齊圖片，不留下空隙也不蓋住像素。
-          const idleScalePad = o.sym && f && o.mo?.idle === 'symbol-breathe2'
-            ? (o.size || 40) * s * ((o.mo?.amp || 50) / 100) * 0.18 * (f?.idleBlend ?? 1)
+          const idleScalePad = o.sym && o.mo?.idle === 'symbol-breathe2'
+            ? (o.size || 40) * s * ((o.mo?.amp || 50) / 100) * 0.18 * (f?.idleBlend ?? 0)
             : 0;
           const ink = objectSelectionInk(
             o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx + idleScalePad,
@@ -7642,16 +7650,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  * 加進來的份量都差不多。
                  * 刻意不跳去編輯頁、也不進入打字狀態，可以連著加好幾顆。
                  */
-                const addSymbol = async (txt: string) => {
+                const addSymbol = (txt: string) => {
                   const offs2 = getLayoutOffsets();
                   if (!offs2) return;
                   const id = Math.random().toString(36).slice(2, 9);
-                  await ensureFont(DEFAULT_FONT);
-                  /* 等浏览器真正提交字体，再做唯一一次墨水扫描。
-                     ensureFont resolve 与 Safari 首次 canvas 绘字之间偶尔仍差一帧。 */
-                  if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
-                  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-                  clearSymbolInkCache();
                   /* 框照「真正畫出來的那一塊」量（見 symInk 的說明），
                      不是照前進寬度 —— 這樣選取框才會貼著符號本身。 */
                   const ink = symInk(txt, DEFAULT_FONT);
