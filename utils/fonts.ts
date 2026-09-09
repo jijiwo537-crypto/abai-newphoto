@@ -188,6 +188,8 @@ export const FONTS: FontDef[] = [
 ];
 
 export const DEFAULT_FONT = 'Noto Sans TC';
+/** 符號要與 iPhone 直接輸入時一致：先走 Apple 系統字體，再由系統自行 fallback。 */
+export const SYMBOL_FONT = 'PingFang TC';
 
 const requested = new Map<string, Promise<void>>();
 /** CSS 已經下載完的家族。要「同步」知道能不能直接量字寬時用。 */
