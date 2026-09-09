@@ -7,7 +7,7 @@ const sizedCache = new Map<string, SymbolInk>();
 /** 字體剛下載完成時丟掉 fallback 的量測結果。 */
 export const clearSymbolInkCache = () => { cache.clear(); sizedCache.clear(); };
 // 字型載入前量到的是 fallback；載入完成後不可繼續沿用錯誤的墨水中心。
-if (typeof document !== 'undefined') document.fonts?.ready?.then(() => cache.clear()).catch(() => {});
+if (typeof document !== 'undefined') document.fonts?.ready?.then(clearSymbolInkCache).catch(() => {});
 
 /** 直接掃描字形 alpha，取得符號真正的可見邊界；結果以字級 1 為單位。 */
 export const measureSymbolInk = (text: string, family: string): SymbolInk => {

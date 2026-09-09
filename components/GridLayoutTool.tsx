@@ -12,7 +12,7 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
-import { measureSymbolInk, measureSymbolInkAtSize, symbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, measureSymbolInkAtSize, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, drawHoleShape, holeOverflow, glowAmount,
@@ -49,6 +49,8 @@ export interface ImageCell {
   offsetX: number;
   offsetY: number;
   rotation: number;
+  /** 圖片透明度，0～100；舊專案未設定時視為 100。 */
+  opacity?: number;
   naturalWidth?: number;
   naturalHeight?: number;
   /** 濾鏡／調節／特效。跟浮動圖片用同一組資料與同一支算圖 */
@@ -681,6 +683,7 @@ const TUNE_TOOLS: [string, string, string, number, number, number][] = [
   ['tint', '色調', 'colorize', -100, 100, 0],
   ['sat', '飽和度', 'palette', -100, 100, 0],
   ['vib', '自然飽和度', 'color_lens', -100, 100, 0],
+  ['opacity', '透明度', 'opacity', 0, 100, 100],
 ];
 
 /* 特效清單跟「編輯」完全一致（順序、名稱、圖標、預設強度都是同一份），
@@ -979,8 +982,15 @@ const textureGlyphD = (kind: 'star' | 'heart', cx: number, cy: number, r: number
     + `C ${P(cx + s * 0.55, cy - s * 1.15)} ${P(cx + s * 1.5, cy - s * 0.2)} ${P(cx, cy + s * 0.85)} Z`;
 };
 
-export const shapePathD = (kind: string, w: number, h: number): string => {
+export const shapePathD = (
+  kind: string, w: number, h: number,
+  gridBaseW = w, gridBaseH = h,
+  gridDotRadius = Math.min(gridBaseW, gridBaseH) / 160 * 2.325,
+): string => {
   const a = w / 2, b = h / 2, cx = a, cy = b;
+  /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
+     因此縮放只會把整張網格等比放大；只有變形才會增加重複單位。 */
+  const gbw = Math.max(1, gridBaseW), gbh = Math.max(1, gridBaseH);
   const P = (x: number, y: number) => `${r3(x)} ${r3(y)}`;
   const poly = (pts: [number, number][]) =>
     `M ${P(pts[0][0], pts[0][1])} ${pts.slice(1).map(p => `L ${P(p[0], p[1])}`).join(' ')} Z`;
@@ -1094,6 +1104,69 @@ export const shapePathD = (kind: string, w: number, h: number): string => {
       // 尾巴接在本體左下（115°～137°）—— 接口窄、尖端更靠左，斜得比較明顯
       return `M ${E(0)} ${A(115, 0)} L ${P(w * 0.04, h)} L ${E(137)} ${A(360, 1)} Z`;
     }
+    case 'grid-h': {
+      const stepY = gbh / 6; // 原密度的一半：初始六條
+      let d = '';
+      for (let y = stepY / 2; y < h; y += stepY) d += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
+      // 壓得比一個週期更窄時仍保留正中央一條，不會縮到完全消失。
+      return d || `M 0 ${r3(h / 2)} L ${r3(w)} ${r3(h / 2)}`;
+    }
+    case 'grid-cross': {
+      const stepX = gbw / 6, stepY = gbh / 6;
+      let hd = '', vd = '';
+      for (let y = stepY / 2; y < h; y += stepY) hd += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
+      for (let x = stepX / 2; x < w; x += stepX) vd += `M ${r3(x)} 0 L ${r3(x)} ${r3(h)} `;
+      return (hd || `M 0 ${r3(h / 2)} L ${r3(w)} ${r3(h / 2)} `)
+        + (vd || `M ${r3(w / 2)} 0 L ${r3(w / 2)} ${r3(h)}`);
+    }
+    case 'grid-frame': {
+      /* 初始 6×6。每次以完整格數重新等分，
+         所以四邊永遠剛好封口，不會在右側或底部留下比較窄的小格。 */
+      const cols = Math.max(1, Math.round((w / gbw) * 6));
+      const rows = Math.max(1, Math.round((h / gbh) * 6));
+      let d = `M 0 0 H ${r3(w)} V ${r3(h)} H 0 Z `;
+      for (let col = 1; col < cols; col++) {
+        const x = w * col / cols; d += `M ${r3(x)} 0 L ${r3(x)} ${r3(h)} `;
+      }
+      for (let row = 1; row < rows; row++) {
+        const y = h * row / rows; d += `M 0 ${r3(y)} L ${r3(w)} ${r3(y)} `;
+      }
+      return d;
+    }
+    case 'grid-dots':
+    case 'grid-dots-fade': {
+      /* 初始固定 8×8。縮放時 w 與 base 同比例變化，數量維持 8×8；
+         單邊變形只改 w/h，才會自然增加或減少行列。 */
+      const stepX = gbw / 8, stepY = gbh / 8;
+      const cols = Math.max(1, Math.floor(w / stepX));
+      const rows = Math.max(1, Math.floor(h / stepY));
+      let d = '';
+      for (let row = 0; row < rows; row++) {
+        const y = rows === 1 ? h / 2 : (row + 0.5) * stepY;
+        for (let col = 0; col < cols; col++) {
+          const x = cols === 1 ? w / 2 : (col + 0.5) * stepX;
+          const fade = kind === 'grid-dots-fade' ? (1 - 0.68 * (x / Math.max(1, w))) : 1;
+          const rr = gridDotRadius * fade;
+          d += `M ${r3(x - rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x + rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x - rr)} ${r3(y)} Z `;
+        }
+      }
+      return d;
+    }
+    case 'grid-diag': {
+      /* 預設斜線數量加倍；變形才在兩端增減完整線段。 */
+      const step = Math.max(gbw, gbh) / 4;
+      let d = '';
+      for (let q = -h; q <= w; q += step) {
+        const x1 = Math.max(0, q), y1 = Math.max(0, -q);
+        const x2 = Math.min(w, q + h), y2 = Math.min(h, w - q);
+        if (Math.hypot(x2 - x1, y2 - y1) > 0.5) {
+          d += `M ${r3(x1)} ${r3(y1)} L ${r3(x2)} ${r3(y2)} `;
+        }
+      }
+      if (d) return d;
+      const q = (w - h) / 2;
+      return `M ${r3(Math.max(0, q))} ${r3(Math.max(0, -q))} L ${r3(Math.min(w, q + h))} ${r3(Math.min(h, w - q))}`;
+    }
     case 'wave': {
       // 波長跟高度綁定；只增加寬度時會加入完整波峰，而不是把既有波形拉扁。
       const amp = h * 0.42;
@@ -1152,6 +1225,10 @@ export const shapeGlowBlurs = (w: number, h: number) =>
 
 /** 新增圖形時的預設值。線條比較細長，所以粗細與大小另外給。 */
 export const SPECIAL_LINE_KINDS = new Set(['line', 'wave', 'lightning-wave']);
+export const GRID_SHAPE_KINDS = new Set([
+  'grid-h', 'grid-cross', 'grid-frame', 'grid-dots', 'grid-dots-fade', 'grid-diag',
+]);
+export const GRID_DOT_KINDS = new Set(['grid-dots', 'grid-dots-fade']);
 export const SHAPE_DEFAULT_LINEW = (kind: string) =>
   (kind === 'wave' || kind === 'lightning-wave') ? 2.5 : (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
@@ -1171,7 +1248,7 @@ const STRETCH_OUTLINE_KINDS = new Set([
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
   if (!shape || shape === 'line') return false;
-  if (shape === 'wave' || shape === 'lightning-wave') return true;
+  if (shape === 'wave' || shape === 'lightning-wave' || GRID_SHAPE_KINDS.has(shape)) return true;
   if (shape === 'hole') return false;
   return filled ? STRETCH_SOLID_KINDS.has(shape) : STRETCH_OUTLINE_KINDS.has(shape);
 };
@@ -1234,6 +1311,13 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'line-d2', kind: 'line', filled: false, rot: 45, ratio: 0.08 },
   { id: 'line-wave', kind: 'wave', filled: false, rot: 90, ratio: 0.1417, glyphRatio: 0.17 },
   { id: 'line-lightning-wave', kind: 'lightning-wave', filled: false, rot: 90, ratio: 0.1417, glyphRatio: 0.17 },
+  // 網格：線／點的尺寸固定；改變外框只會增減重複單位
+  { id: 'grid-horizontal', kind: 'grid-h', filled: false },
+  { id: 'grid-cross', kind: 'grid-cross', filled: false },
+  { id: 'grid-frame', kind: 'grid-frame', filled: false },
+  { id: 'grid-dots', kind: 'grid-dots', filled: true },
+  { id: 'grid-dots-fade', kind: 'grid-dots-fade', filled: true },
+  { id: 'grid-diagonal', kind: 'grid-diag', filled: false },
 ];
 
 /**
@@ -1264,6 +1348,12 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   line: [0, 0.5, 1, 0],
   wave: [0, 0.08, 1, 0.84],
   'lightning-wave': [0, 0.06, 1, 0.88],
+  'grid-h': [0, 0, 1, 1],
+  'grid-cross': [0, 0, 1, 1],
+  'grid-frame': [0, 0, 1, 1],
+  'grid-dots': [0, 0, 1, 1],
+  'grid-dots-fade': [0, 0, 1, 1],
+  'grid-diag': [0, 0, 1, 1],
 };
 
 /** 個別圖案的加大倍率。星形是實心面積最少的一個，稍微放大一點才看得清楚。
@@ -1284,6 +1374,7 @@ const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval
  */
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
   const isLine = item.kind === 'line';
+  const isGridGlyph = GRID_SHAPE_KINDS.has(item.kind);
   /* viewBox 與圖案的框一樣大 —— 每一顆圖案的長邊都剛好等於 size（預設 20px），
      所以不管哪一種形狀，看起來都一樣大。 */
   const VB = 24;
@@ -1294,7 +1385,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
   const bw = BOX;
   const bh = isLine ? 0 : (ratio ? BOX * ratio : BOX);
   const src = shapePathD(item.kind, bw, bh);
-  const solid = item.filled && !isLine;
+  const solid = item.filled && (!isLine || GRID_DOT_KINDS.has(item.kind));
 
   const fit = SHAPE_FIT[item.kind] || [0, 0, 1, 1];
   // 內容的實際大小（線條的高度是 0，縮放只看寬度）
@@ -1319,7 +1410,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
           d={src}
           fill={solid ? 'currentColor' : 'none'}
           stroke={solid ? 'none' : 'currentColor'}
-          strokeWidth={(isLine ? 1.9 : 1.6) / k}
+          strokeWidth={(isGridGlyph ? 1.5 : (isLine ? 1.9 : 1.6)) / k}
           strokeLinecap="butt"
           strokeLinejoin={isLine ? 'round' : 'miter'}
         />
@@ -1453,38 +1544,17 @@ const FontCard: React.FC<{
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
 export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
-  const boxRef = useRef<HTMLDivElement>(null);
-  const inkRef = useRef<HTMLSpanElement>(null);
-  const [k, setK] = useState(1);
-  useLayoutEffect(() => {
-    const box = boxRef.current, ink = inkRef.current;
-    if (!box || !ink) return;
-    let alive = true;
-    const fit = () => {
-      if (!alive) return;
-      const bw = box.clientWidth;
-      const tw = ink.scrollWidth;
-      if (bw > 0 && tw > 0) setK(Math.min(1, bw / tw));
-    };
-    fit();
-    (document as any).fonts?.ready?.then(fit).catch(() => {});
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
-    ro?.observe(box);
-    return () => { alive = false; ro?.disconnect(); };
-  }, [text, base]);
+  /* 首帧直接使用确定字号，不再先画 scale(1)、layout effect 后整页 setState。
+     长符号按可见 Unicode 单位同步缩小；短符号维持原尺寸。 */
+  const count = Math.max(1, Array.from(text).length);
+  const fontSize = base * Math.min(1, 18 / count);
   return (
-    <div ref={boxRef} className="max-w-full overflow-hidden flex items-center justify-center">
-      <span
-        ref={inkRef}
-        style={{
-          display: 'inline-block', whiteSpace: 'pre', flexShrink: 0,
-          fontSize: base, lineHeight: 1.4,
-          transform: `scale(${k})`, transformOrigin: 'center center',
-        }}
-      >
-        {text}
-      </span>
-    </div>
+    <span
+      className="block max-w-full overflow-hidden text-center"
+      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: fontStack(DEFAULT_FONT) }}
+    >
+      {text}
+    </span>
   );
 };
 
@@ -1496,7 +1566,21 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
 export const SymbolPicker: React.FC<{
   onBack: () => void;
   onPick: (s: string) => void;
-}> = ({ onBack, onPick }) => (
+}> = ({ onBack, onPick }) => {
+  /* 不讓替代字型先露出再整頁切換。字型通常已由工具掛載時預載；
+     若使用者非常快地點進來，符號列只延後到同一字型可用的第一幀顯示。 */
+  const [fontReady, setFontReady] = useState(() =>
+    typeof document === 'undefined' || fontCssLoaded(DEFAULT_FONT)
+  );
+  useLayoutEffect(() => {
+    let alive = true;
+    void ensureFont(DEFAULT_FONT).then(async () => {
+      if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
+      requestAnimationFrame(() => { if (alive) setFontReady(true); });
+    });
+    return () => { alive = false; };
+  }, []);
+  return (
   <div className="pt-1">
     <div className="flex items-center gap-2 mb-3">
       <button
@@ -1511,7 +1595,11 @@ export const SymbolPicker: React.FC<{
     </div>
     {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行 ——
         短的符號一排可以擺好幾顆，長的才自己佔一整排（而且照樣完整顯示）。 */}
-    <div className="flex flex-wrap gap-1.5 pb-4">
+    <div
+      className="flex flex-wrap gap-1.5 pb-4"
+      style={{ visibility: fontReady ? 'visible' : 'hidden' }}
+      aria-busy={!fontReady}
+    >
       {SYMBOLS.map((s, i) => (
         <button
           key={i}
@@ -1524,7 +1612,8 @@ export const SymbolPicker: React.FC<{
       ))}
     </div>
   </div>
-);
+  );
+};
 
 /**
  * 空格提示必须属于它所在的布局图层。
@@ -1966,7 +2055,8 @@ export const ShapeEditorPanel: React.FC<{
   onChange: (patch: Partial<FloatingImage>) => void;
 }> = ({ layer, onChange }) => {
   const isLine = SPECIAL_LINE_KINDS.has(layer.shape || '');
-  const hasOutline = !layer.shapeFilled || isLine;
+  const isGridShape = GRID_SHAPE_KINDS.has(layer.shape || '');
+  const hasOutline = (!layer.shapeFilled || isLine) && !isGridShape;
   const canFeather = shapeSupportsFeather(layer.shape, layer.shapeFilled, layer.holeType);
   /* 顏色改成「點進去有一頁」（跟文字那一頁同一顆元件） */
   const [colorPage, setColorPage] = useState<
@@ -2131,14 +2221,17 @@ export const ShapeEditorPanel: React.FC<{
           </div>
             );
           })()}
+          <div className="px-2 order-4 w-full">
+            {slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
+          </div>
           {canFeather && (
-            <div className="px-2 order-4 w-full">
+            <div className="px-2 order-5 w-full">
               {slider('羽化', layer.shapeFeather || 0, 0, 100, v => onChange({ shapeFeather: v }))}
             </div>
           )}
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
           {hasOutline && (!isLine || layer.shape === 'line') && (
-            <div className="order-5 flex flex-col gap-3.5">
+            <div className="order-6 flex flex-col gap-3.5">
               {!isLine && slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
                 v => onChange({ shapeLineW: v / 10 }))}
               {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
@@ -2280,9 +2373,13 @@ const toolBtn = (id: string, label: string, icon: string | React.ReactNode, acti
         transitionDuration: '90ms, 150ms, 150ms',
         transitionTimingFunction: 'cubic-bezier(0.2, 0.8, 0.3, 1)',
       }}
-      className={`w-10 h-10 rounded-full flex items-center justify-center ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10 group-active:scale-105'}`}
+      className={`w-10 h-10 rounded-full flex items-center justify-center ${active ? 'bg-white text-black scale-110' : 'bg-white/5 text-white group-hover:bg-white/10 group-active:scale-105'}`}
     >
-      {typeof icon === 'string' ? <Icon name={icon} className="text-lg" fill={active} /> : icon}
+      {/* 未選中時讓整顆圖標一次合成後再降低透明度；若 SVG 內有線條交會，
+          不會因每段半透明描邊重複混色而在交界處變白。 */}
+      <span className={`flex items-center justify-center transition-opacity duration-150 ${active ? 'opacity-100' : 'opacity-40 group-hover:opacity-70'}`}>
+        {typeof icon === 'string' ? <Icon name={icon} className="text-lg" fill={active} /> : icon}
+      </span>
     </div>
     <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${active ? 'text-white' : 'text-white/20'}`}>{label}</span>
     <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${adjusted ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
@@ -2365,7 +2462,11 @@ const sliderArea = (() => {
   if (adjustSub === 'tune') {
     const t = TUNE_TOOLS.find(x => x[0] === tuneTool) || (deferSlider ? null : TUNE_TOOLS[0]);
     if (!t) return null;
-    return editorSlider(t[1], fxVal(t[0], t[5]), t[3], t[4], v => setFx({ [t[0]]: v }));
+    const isOpacity = t[0] === 'opacity';
+    return editorSlider(
+      '', isOpacity ? (img.opacity ?? 100) : fxVal(t[0], t[5]), t[3], t[4],
+      v => isOpacity ? set({ opacity: v }) : setFx({ [t[0]]: v }),
+    );
   }
   if (adjustSub === 'effect') {
     // 細項是另外一整區（並排滑桿），不走這一根
@@ -2514,7 +2615,9 @@ return (
       })}
 
       {adjustSub === 'tune' && TUNE_TOOLS.map(([id, label, icon, , , dflt]) =>
-        toolBtn(id, label, icon, tuneTool === id, fxVal(id, dflt) !== dflt, () => setTuneTool(id))
+        toolBtn(id, label, icon, tuneTool === id,
+          id === 'opacity' ? (img.opacity ?? 100) !== 100 : fxVal(id, dflt) !== dflt,
+          () => setTuneTool(id))
       )}
 
       {/* 特效卡片：跟「編輯」同一份清單、同一種卡片外觀。
@@ -2574,9 +2677,9 @@ return (
                 ? SHAPE_SUB_TOOLS[id].some(([k, , , , , d]) =>
                     !k.endsWith('Color') && (((img as any)[k]) || 0) !== d)
                 : (((img as any)[id]) || 0) !== dflt;
-            /* 「形狀」那一顆用自己畫的向量圖標（固定的，不跟著目前的形狀變）——
-               圖示字型是子集化過的，隨手加的新名字並不在裡面，會變成一串英文字。 */
-            const glyph = isShapePick ? <ImgShapeIcon size={19} /> : icon;
+            /* 「形狀」直接共用下方「造型」分頁的 shapes 圖標，
+               兩個入口使用完全相同的視覺語言。 */
+            const glyph = isShapePick ? 'shapes' : icon;
             /* 兩段式的那幾顆（形狀／描邊／發光）點下去整排會被子選單換掉，
                所以按下去的回饋交給 CSS 的 :active（見上面 toolBtn），
                換頁本身一點延遲都沒有。退回上一層時，剛剛進去的那一顆會留在
@@ -2888,25 +2991,12 @@ export const IMG_SHAPES: { id: string; label: string; glyph: string }[] = [
  * 一個方框疊一個圓，是「形狀」最好認的畫法；空心跟裡面那排一致。
  */
 export const ImgShapeIcon: React.FC<{ size?: number }> = ({ size = 19 }) => (
-  /* 方框的右下角**整段不畫**，讓圓從那個缺口穿過去。
-   *
-   * 為什麼不是「讓兩個形狀剛好不相交」就好：沒選中時圖示是 40% 不透明的白，
-   * 兩條線只要有一點點疊到，疊合處就會變成 64%，看起來就是一塊比較白的斑。
-   * 上一版只讓**路徑**不相交，但線本身有寬度 —— 線寬還是疊到了。
-   *
-   * 這一版直接留一段空白，用距離保證它們永遠碰不到：
-   *   線段離圓心 7.63 － 半個線寬 0.95 ＝ 6.68
-   *   圓的外緣 4.6 ＋ 半個線寬 0.95 ＝ 5.55
-   * 中間隔著 1.13，怎麼畫都不會重疊。
-   *
-   * 風格對齊旁邊那幾顆（Material Symbols Outlined）：直角、平頭端點、
-   * miter 接角；線寬 1.9 在 19px 上算出來約 1.5px，跟它們一致。
-   */
+  /* 方形、圓形與三角形用清楚的留白分隔，直覺表達「選擇形狀」。
+     三個封閉輪廓合併成一次 SVG 描邊，透明狀態也不會在接點疊白。 */
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-    stroke="currentColor" strokeWidth={1.9}
-    strokeLinecap="butt" strokeLinejoin="miter" aria-hidden>
-    <path d="M13.5 11V3H3v10.5h8" />
-    <circle cx="17.5" cy="17.5" r="4.6" />
+    stroke="currentColor" strokeWidth={1.35}
+    strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M3.5 3.5h6.25v6.25H3.5z M20.5 6.625a3.125 3.125 0 1 1-6.25 0 3.125 3.125 0 1 1 6.25 0 M3.5 20.5h7l-3.5-6z" />
   </svg>
 );
 
@@ -3576,6 +3666,8 @@ interface FloatingImage {
   height: number;
   scale: number;
   rotation: number;
+  /** 圖片／圖形透明度，0～100；舊專案未設定時視為 100。 */
+  opacity?: number;
   /** 有 text 就是文字圖層。位置、縮放、旋轉、圖層順序全部沿用圖片那一套。 */
   text?: string;
   /**
@@ -4546,7 +4638,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
          符号同时拥有 Canvas 与 SVG 两套边界，放大后框必然逐渐对不上。 */
       ensureFont(fam).then(() => {
         if (!alive) return;
-        clearSymbolInkCache();
+        /* 新增符號時已在真正字體載入後量過同一個字級；沿用該快取，
+           不在首次顯示／拖動前重新掃描整張 alpha 畫布。歷史資料若尚未
+           有快取，這裡仍會正常量一次。 */
         const size = image.fontSize || 40;
         const ink = measureSymbolInkAtSize(image.text || image.sym!, fam, size);
         const bounds = { w: Math.max(6, ink.w * size + 8), h: Math.max(6, ink.h * size + 8) };
@@ -5310,7 +5404,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     if (!image.shape) return null;
     const s = renderScale;
     const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
-    const lw = Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160)) / s;
+    const lw = GRID_SHAPE_KINDS.has(image.shape)
+      ? 1.5 / s
+      : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160)) / s;
     const dash = image.shapeDash || 0;
     const seg = lw * (0.6 + (dash / 100) * 4);
     return {
@@ -5520,11 +5616,19 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 
       if (image.shape) {
         ctx.translate(-boxW / 2, -boxH / 2);
-        const path = new Path2D(shapePathD(image.shape, boxW, boxH));
+        const path = new Path2D(shapePathD(
+          image.shape, boxW, boxH,
+          (image.shapeTextureBaseW || image.width) * renderScale,
+          (image.shapeTextureBaseH || image.height) * renderScale,
+          ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
+            * Math.pow(Math.max(0.01, renderScale), 0.35),
+        ));
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const solid = !!image.shapeFilled && image.shape !== 'line';
         const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
-        const lw = Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
+        const lw = GRID_SHAPE_KINDS.has(image.shape)
+          ? 1.5
+          : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
         const outer = (image.shapeStrokeW || 0) * (lineBase / 160);
         ctx.lineJoin = image.shape === 'line' ? 'round' : 'miter';
         ctx.lineCap = 'butt';
@@ -5555,7 +5659,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         }
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
         if (solid) {
-          drawFeatheredShapeBody(ctx, image.shape, boxW, boxH, image.shapeFeather, color, (tc, bodyPath) => {
+          if (GRID_DOT_KINDS.has(image.shape)) {
+            /* 點陣必須使用上面已帶入固定 base／固定半徑的 path。
+               一般實心函式會用當前寬高重建路徑，會把點距重新平均並放大點徑。 */
+            ctx.fill(path);
+          } else drawFeatheredShapeBody(ctx, image.shape, boxW, boxH, image.shapeFeather, color, (tc, bodyPath) => {
             if (tx === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(boxW / 2, boxH / 2);
             if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, boxW, boxH, boxW, boxH, {
@@ -5996,7 +6104,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           width: `${boxW}px`,
           height: `${boxH}px`,
           zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
-          opacity: image.text !== undefined && isTextEditing ? 0 : 1,
+          opacity: (image.text !== undefined && isTextEditing ? 0 : 1) * ((image.opacity ?? 100) / 100),
           transformOrigin: 'center center',
           transform: dragShift
             ? `translate3d(${dragShift.tx}px, ${dragShift.ty}px, 0) scale(${dragShift.s})`
@@ -6004,6 +6112,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           transition: dragShift
             ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
             : undefined,
+          /* 在第一次拖動前就建立合成層，避免首個 pointermove 才上傳
+             圖片／符號貼圖到 GPU 而漏掉一幀。 */
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
         }}
       >
         {image.text !== undefined && !image.sym ? (() => {
@@ -6107,6 +6219,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         // 被拖的那一頁整組（頁面 900、上面的東西 1000+）要蓋過其他頁
         zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
         touchAction: touchMode,
+        opacity: isCanvasVector ? 1 : (image.opacity ?? 100) / 100,
+        /* 圖片同樣預先建立移動用合成層；第一次拖動不再臨時升層。 */
+        willChange: 'transform',
+        backfaceVisibility: 'hidden',
       }}
       onTouchStart={onSwapTouchStart}
       onTouchMove={onSwapTouchMove}
@@ -6206,7 +6322,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               虛線只屬於本體，描邊那一圈一律是實線。 */}
           {!!image.shapeStrokeW && (
             <path
-              d={shapePathD(image.shape, image.width, image.height)}
+              d={shapePathD(
+                image.shape, image.width, image.height,
+                image.shapeTextureBaseW || image.width,
+                image.shapeTextureBaseH || image.height,
+                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
+                  / Math.pow(Math.max(0.01, renderScale), 0.65),
+              )}
               fill="none"
               stroke={image.shapeStrokeColor || '#000000'}
               strokeWidth={((image.shapeFilled && image.shape !== 'line') ? 0 : (shapeStroke?.lw || 0))
@@ -6216,7 +6338,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             />
           )}
           <path
-            d={shapePathD(image.shape, image.width, image.height)}
+            d={shapePathD(
+                image.shape, image.width, image.height,
+                image.shapeTextureBaseW || image.width,
+                image.shapeTextureBaseH || image.height,
+                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
+                  / Math.pow(Math.max(0.01, renderScale), 0.65),
+              )}
             fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
             stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || SHAPE_DEFAULT_COLOR)}
             strokeWidth={shapeStroke?.lw}
@@ -6253,7 +6381,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                   </pattern>
                 </defs>
                 <path
-                  d={shapePathD(image.shape, image.width, image.height)}
+                  d={shapePathD(
+                image.shape, image.width, image.height,
+                image.shapeTextureBaseW || image.width,
+                image.shapeTextureBaseH || image.height,
+                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
+                  / Math.pow(Math.max(0.01, renderScale), 0.65),
+              )}
                   fill={`url(#${id})`}
                   stroke="none"
                 />
@@ -6288,7 +6422,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                   </pattern>
                 </defs>
                 <path
-                  d={shapePathD(image.shape, image.width, image.height)}
+                  d={shapePathD(
+                image.shape, image.width, image.height,
+                image.shapeTextureBaseW || image.width,
+                image.shapeTextureBaseH || image.height,
+                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
+                  / Math.pow(Math.max(0.01, renderScale), 0.65),
+              )}
                   fill={`url(#${id})`}
                   stroke="none"
                 />
@@ -6919,7 +7059,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     /* 經典／創意拼圖共用 8 個螢幕像素的吸附距離。換算回內容座標，
        預覽無論放大或縮小，吸附手感都保持一致。 */
-    const SNAP_THRESHOLD = 5.5 / Math.max(0.0001, kRef.current || 1);
+    const SNAP_THRESHOLD = 4 / Math.max(0.0001, kRef.current || 1);
     const ownPageRectsForFit = pageRects;
     // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
     const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
@@ -6990,7 +7130,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
 
     // Image-to-image vertical edge snapping
-    floatingImages.forEach(other => {
+    if (!edgeOnly) floatingImages.forEach(other => {
       if (other.id === imgId) return;
 
       const otherW = rotExtent(other.width * other.scale, other.height * other.scale, other.rotation || 0).bw;
@@ -7110,7 +7250,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     });
 
     // Image-to-image horizontal edge snapping
-    floatingImages.forEach(other => {
+    if (!edgeOnly) floatingImages.forEach(other => {
       if (other.id === imgId) return;
 
       const otherH = rotExtent(other.width * other.scale, other.height * other.scale, other.rotation || 0).bh;
@@ -7736,9 +7876,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     let w100 = M * Math.max(1, txt.length) * 0.5;
     if (c) { c.font = `400 ${M}px ${fontStack(DEFAULT_FONT)}`; w100 = Math.max(1, c.measureText(txt).width); }
     const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
-    const measured = symbolBox(txt, DEFAULT_FONT, fontSize);
-    const w = Math.ceil(measured.w);
-    const h = Math.ceil(measured.h);
+    /* 初始外盒直接使用顯示字級的實際墨水邊界，與 Canvas 本體及選中框
+       完全同源；不先用 100px 推算、下一幀再換成另一套尺寸。 */
+    const symbolInk = measureSymbolInkAtSize(txt, DEFAULT_FONT, fontSize);
+    const w = Math.max(6, symbolInk.w * fontSize + 8);
+    const h = Math.max(6, symbolInk.h * fontSize + 8);
     const id = `text-${Math.random().toString(36).substring(2, 9)}`;
     const item: FloatingImage = {
       id, src: '',
@@ -11314,6 +11456,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const size = (fImg.fontSize || 40) * scaleFactor * fImg.scale;
     const spacing = (fImg.letterSpacing || 0) * scaleFactor * fImg.scale;
     ctx.save();
+    ctx.globalAlpha *= (fImg.opacity ?? 100) / 100;
     ctx.translate(cx, cy);
     ctx.rotate((fImg.rotation * Math.PI) / 180);
     ctx.font = `${fImg.italic ? 'italic ' : ''}${fImg.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
@@ -11376,6 +11519,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const fh = fImg.height * scaleFactor;
 
     ctx.save();
+    ctx.globalAlpha *= (fImg.opacity ?? 100) / 100;
     // CSS 的 scale 以未縮放框的中心為原點，所以先搬到中心再縮放，最後推回左上角
     ctx.translate(fx + fw / 2, fy + fh / 2);
     ctx.rotate((fImg.rotation * Math.PI) / 180);
@@ -11410,14 +11554,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.restore();
       return;
     }
-    const path = new Path2D(shapePathD(fImg.shape!, fw, fh));
+    const path = new Path2D(shapePathD(
+      fImg.shape!, fw, fh,
+      (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
+      (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
+      ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor / 160) * 2.325
+        / Math.pow(Math.max(0.01, fImg.scale || 1), 0.65),
+    ));
     const color = fImg.color || SHAPE_DEFAULT_COLOR;
     const solid = fImg.shapeFilled && fImg.shape !== 'line';
     /* 線寬要除掉 scale：上面已經 ctx.scale(fImg.scale, ...) 過了，
        不除的話「圖形拉大」連框線也跟著變粗 —— 跟預覽同一條規則。 */
     const sScale = fImg.scale || 1;
     const exportLineBase = (fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor;
-    const lw = Math.max(0.4 * scaleFactor, (fImg.shapeLineW ?? 6) * (exportLineBase / 160)) / sScale;
+    const lw = GRID_SHAPE_KINDS.has(fImg.shape!)
+      ? 1.5 * scaleFactor / sScale
+      : Math.max(0.4 * scaleFactor, (fImg.shapeLineW ?? 6) * (exportLineBase / 160)) / sScale;
     if (!solid) {
       const dash = fImg.shapeDash || 0;
       ctx.lineWidth = lw;
@@ -11523,6 +11675,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
 
       ctx.save();
+      ctx.globalAlpha *= (fImg.opacity ?? 100) / 100;
       // 扣掉預覽裡每頁之間那 1px 的間隔
       const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
       const fx = adjustedX * scaleFactor;
@@ -11945,6 +12098,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               ctx.rect(ix, iy, iw, ih);
             }
             ctx.clip();
+            ctx.globalAlpha *= (cell.opacity ?? 100) / 100;
 
             /* 套了濾鏡／調節／特效就先算出處理過的那一張，再照原本的
                裁切與縮放畫上去 —— 跟預覽用的是同一支 applyPhotoFx。 */
@@ -13319,7 +13473,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             transformOrigin: 'center center',
                                             transform: `translate(-50%, -50%) translate(${cell.offsetX * rawW + fixX}px, ${cell.offsetY * rawH + fixY}px) rotate(${cell.rotation}deg) scale(${cssScale})`,
                                             transition: imageTransition,
-                                            opacity: 1,
+                                            opacity: (cell.opacity ?? 100) / 100,
                                             pointerEvents: 'none',
                                           };
                                           return hasPhotoFx(cell.fx)
@@ -14364,7 +14518,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     onClick={() => setAddSub('shape')}
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
                   >
-                    <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80" />
+                    <Blocks size={24} strokeWidth={1.5} className="text-white opacity-80 translate-x-px" />
                     <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增圖形</span>
                   </button>
                   </div>
@@ -14415,9 +14569,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         [...ADD_SHAPE_ITEMS.filter(i => !i.filled && !SPECIAL_LINE_KINDS.has(i.kind)), HOLE_ITEM_CROSS_O],
                         'diamond-n-o', 6), 'heart-o', 9), 'cloud-oval-o', 13), 'hole-cross-star-o', 14);
                       return ([
-                        ['實心', solidList],
-                        ['邊框', lineList],
+                        ['實心', solidList.filter(i => !GRID_SHAPE_KINDS.has(i.kind))],
+                        ['邊框', lineList.filter(i => !GRID_SHAPE_KINDS.has(i.kind))],
                         ['線條', ADD_SHAPE_ITEMS.filter(i => SPECIAL_LINE_KINDS.has(i.kind))],
+                        ['網格', ADD_SHAPE_ITEMS.filter(i => GRID_SHAPE_KINDS.has(i.kind))],
                       ] as const);
                     })().map(([label, list]) => (
                       <div key={label} className="mb-3">
