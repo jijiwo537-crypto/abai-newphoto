@@ -4931,10 +4931,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                中心作支點，再把文字反向放回原座標：scale=1 的畫面逐像素不變，
                動畫時每個可見小單位只在自己的位置上縮放。 */
             const unitInk = drawInks[index];
-            const isSeventh = (o.text || '') === "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
             const baseOffsetX = useAnimationUnits
               ? (unitLayout.drawOffsetsX[index] || 0)
-              : (isSeventh && unit.includes("\u08ea") ? -(o.size || 40) * 0.08 : 0);
+              : 0;
             const pivotX = unitInk.cx * (o.size || 40) * s;
             const pivotY = unitInk.cy * (o.size || 40) * s;
             ctx.translate(
