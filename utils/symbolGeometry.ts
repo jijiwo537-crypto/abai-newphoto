@@ -33,6 +33,7 @@ const cache = new Map<string, SymbolInk>();
 const sizedCache = new Map<string, SymbolInk>();
 const advanceCache = new Map<string, number>();
 const unitLayoutCache = new Map<string, SymbolUnitLayout>();
+const splitUnitCache = new Map<string, string[]>();
 
 /** 字體剛下載完成時丟掉 fallback 的量測結果。 */
 export const clearSymbolInkCache = () => {
@@ -40,6 +41,7 @@ export const clearSymbolInkCache = () => {
   sizedCache.clear();
   advanceCache.clear();
   unitLayoutCache.clear();
+  splitUnitCache.clear();
 };
 // 字型載入前量到的是 fallback；載入完成後不可繼續沿用錯誤的墨水中心。
 if (typeof document !== 'undefined') document.fonts?.ready?.then(clearSymbolInkCache).catch(() => {});
@@ -346,40 +348,6 @@ const measureStandaloneCompositionCenter = (
  * Intl.Segmenter 會把代理對、附加記號與變體選擇符留在同一顆字素內，因此既不會
  * 把符號拆壞，也不會因整串含一個附加記號就讓整顆符號完全失去逐顆動畫。
  */
-export const splitSymbolUnits = (text: string): string[] => {
-  if (!text) return [];
-
-  /* Intl.Segmenter 的 grapheme 規則適合游標移動，卻不適合這裡的視覺動畫：
-     它會把一個主字與旁邊數顆可見附加點／星／弧線合成一顆 grapheme，
-     於是肉眼看到五顆，泡泡與縮放 II 卻只播放兩三組。動畫改以 code point
-     為基礎；只有變體選擇符與 ZWJ 序列仍黏回主字，避免拆壞真正的單一字形。 */
-  const raw: string[] = [];
-  for (const ch of Array.from(text)) {
-    const variation = /[\ufe00-\ufe0f]/u.test(ch);
-    const joiner = ch === "\u200d";
-    const continuesJoiner = raw.length > 0 && raw[raw.length - 1].endsWith("\u200d");
-    if (raw.length && (variation || joiner || continuesJoiner)) raw[raw.length - 1] += ch;
-    else raw.push(ch);
-  }
-
-  /* 空白與格式控制沒有自己的墨水，也不能佔動畫節拍；留在前一單位內只負責
-     保持原本間距。附加符號本身不再併回主字，因此每顆可見裝飾都有獨立節奏。 */
-  const invisible = /^[\s\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/u;
-  const out: string[] = [];
-  let leading = '';
-  for (const part of raw) {
-    if (invisible.test(part)) {
-      if (out.length) out[out.length - 1] += part;
-      else leading += part;
-    } else {
-      out.push(leading + part);
-      leading = '';
-    }
-  }
-  if (leading && out.length) out[out.length - 1] += leading;
-  return out.length ? out : [text];
-};
-
 /* 靜止排版仍使用瀏覽器的完整 grapheme。這份切分只负责位置与外框，
    不参与泡泡／缩放 II 的节奏，避免动画需求反过来改变原符号位置。 */
 const splitSymbolClusters = (text: string): string[] => {
@@ -413,6 +381,148 @@ const splitSymbolClusters = (text: string): string[] => {
   });
   if (leading && out.length) out[out.length - 1] += leading;
   return out.length ? out : [text];
+};
+
+/**
+ * 判斷相鄰兩段分開繪製後是否仍與瀏覽器整段 shaping 相同。
+ * 字寬相同不代表像素相同（fallback 字體、kerning、附加記號都可能改字形），
+ * 所以直接比較同一張 Canvas 上的 alpha；有上下文依賴就必須合併成一個單位。
+ */
+const pairKeepsNativeShape = (left: string, right: string, family: string, size: number) => {
+  if (typeof document === 'undefined') return true;
+  try {
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const scanSize = Math.max(24, size);
+    const canvasA = document.createElement('canvas');
+    const canvasB = document.createElement('canvas');
+    const probe = canvasA.getContext('2d');
+    if (!probe) return true;
+    probe.font = `400 ${scanSize}px ${fontStack(family)}`;
+    const leftW = probe.measureText(left).width;
+    const totalW = Math.max(scanSize, probe.measureText(left + right).width, leftW + probe.measureText(right).width);
+    const pad = scanSize * 2;
+    const cssWidth = totalW + pad * 2, cssHeight = scanSize * 3;
+    const width = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(cssWidth * dpr)));
+    const height = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(cssHeight * dpr)));
+    canvasA.width = canvasB.width = width;
+    canvasA.height = canvasB.height = height;
+    const a = canvasA.getContext('2d', { willReadFrequently: true } as any);
+    const b = canvasB.getContext('2d', { willReadFrequently: true } as any);
+    if (!a || !b) return true;
+    for (const ctx of [a, b]) {
+      ctx.scale(dpr, dpr);
+      ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+    }
+    const y = cssHeight / 2;
+    a.fillText(left + right, pad, y);
+    b.fillText(left, pad, y);
+    b.fillText(right, pad + leftW, y);
+    const pa = a.getImageData(0, 0, width, height).data;
+    const pb = b.getImageData(0, 0, width, height).data;
+    let union = 0, changed = 0;
+    for (let i = 3; i < pa.length; i += 4) {
+      if (pa[i] > 8 || pb[i] > 8) union++;
+      if (Math.abs(pa[i] - pb[i]) > 12) changed++;
+    }
+    canvasA.width = canvasA.height = canvasB.width = canvasB.height = 0;
+    return union === 0 || changed / union <= .012;
+  } catch { return false; }
+};
+
+const compositionKeepsNativeShape = (text: string, units: string[], family: string, size: number) => {
+  if (typeof document === 'undefined' || units.length < 2) return true;
+  try {
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    let scanSize = Math.max(24, size);
+    const probeCanvas = document.createElement('canvas');
+    const probe = probeCanvas.getContext('2d');
+    if (!probe) return true;
+    probe.font = `400 ${scanSize}px ${fontStack(family)}`;
+    let advance = probe.measureText(text).width;
+    let totalW = Math.max(scanSize, advance);
+    if ((totalW + scanSize * 4) * dpr > MAX_SCAN_SIDE) {
+      scanSize *= MAX_SCAN_SIDE / ((totalW + scanSize * 4) * dpr);
+      probe.font = `400 ${scanSize}px ${fontStack(family)}`;
+      advance = probe.measureText(text).width;
+      totalW = Math.max(scanSize, advance);
+    }
+    const pad = Math.min(scanSize * 2, Math.max(4, (MAX_SCAN_SIDE / dpr - totalW) / 2));
+    const cssWidth = totalW + pad * 2, cssHeight = scanSize * 3;
+    const width = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(cssWidth * dpr)));
+    const height = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(cssHeight * dpr)));
+    const nativeCanvas = document.createElement('canvas');
+    const unitsCanvas = document.createElement('canvas');
+    nativeCanvas.width = unitsCanvas.width = width;
+    nativeCanvas.height = unitsCanvas.height = height;
+    const nativeCtx = nativeCanvas.getContext('2d', { willReadFrequently: true } as any);
+    const unitsCtx = unitsCanvas.getContext('2d', { willReadFrequently: true } as any);
+    if (!nativeCtx || !unitsCtx) return true;
+    for (const ctx of [nativeCtx, unitsCtx]) {
+      ctx.scale(dpr, dpr);
+      ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+      ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+    }
+    const y = cssHeight / 2;
+    /* 正式畫布以物件中心為固定 anchor，再由整串 advance 往左右展開；
+       不能反過來固定左緣，否則次像素相位不同時會漏判 emoji/fallback 差異。 */
+    const anchor = Math.round(cssWidth / 2);
+    nativeCtx.textAlign = 'center';
+    nativeCtx.fillText(text, anchor, y);
+    let prefix = '';
+    for (const unit of units) {
+      const start = unitsCtx.measureText(prefix).width;
+      prefix += unit;
+      const end = unitsCtx.measureText(prefix).width;
+      unitsCtx.textAlign = 'center';
+      unitsCtx.fillText(unit, anchor - advance / 2 + (start + end) / 2, y);
+    }
+    const nativePixels = nativeCtx.getImageData(0, 0, width, height).data;
+    const unitPixels = unitsCtx.getImageData(0, 0, width, height).data;
+    let union = 0, changed = 0;
+    for (let i = 3; i < nativePixels.length; i += 4) {
+      if (nativePixels[i] > 8 || unitPixels[i] > 8) union++;
+      if (Math.abs(nativePixels[i] - unitPixels[i]) > 1) changed++;
+    }
+    nativeCanvas.width = nativeCanvas.height = unitsCanvas.width = unitsCanvas.height = 0;
+    /* 動畫切換的第一幀不能接受任何可見 alpha 差異；即使只有彩色 emoji
+       邊緣的幾個像素，也會在 iPhone 上形成一次閃動。無差異才允許拆分。 */
+    return union === 0 || changed === 0;
+  } catch { return false; }
+};
+
+/**
+ * 泡泡與縮放 II 的最小單位以原生 grapheme 為起點；若相鄰單位分開畫會
+ * 改變任何字形結構，就自動合併。這讓可安全分開的小符號仍各自播放，同時
+ * 保證帶附加記號、fallback 或 contextual shaping 的組合不會錯位散開。
+ */
+export const splitSymbolUnits = (text: string, family = 'sans-serif', fontSize = REF): string[] => {
+  if (!text) return [];
+  const size = Math.max(8, Math.round(fontSize * 1000) / 1000);
+  const key = `${family}|${text}|${size}`;
+  const cached = splitUnitCache.get(key);
+  if (cached) return cached;
+  /* 彩色 emoji 的 glyph run 由 CoreText/系統 emoji 字體整串合成；拆成多次
+     fillText 時即使 Unicode 與座標相同，彩色圖層的內部 baseline 仍會改變。
+     保留完整 run 才能在 iOS 上逐像素一致。 */
+  if (/\p{Extended_Pictographic}/u.test(text)) {
+    const result = [text];
+    splitUnitCache.set(key, result);
+    return result;
+  }
+  const raw = splitSymbolClusters(text);
+  const out: string[] = [];
+  for (const cluster of raw) {
+    if (out.length && !pairKeepsNativeShape(out[out.length - 1], cluster, family, size)) {
+      out[out.length - 1] += cluster;
+    } else out.push(cluster);
+  }
+  /* 少數稀有 fallback 字形的上下文會跨越兩個以上 grapheme，成對檢查仍抓不到。
+     最後再以整串逐像素驗證；不一致時寧可讓該複合字形作為一個動畫單位，
+     也不能為了拆分而改壞使用者原本看到的符號。 */
+  const result = out.length && compositionKeepsNativeShape(text, out, family, size) ? out : [text];
+  splitUnitCache.set(key, result);
+  return result;
 };
 
 /**
@@ -497,7 +607,7 @@ export const measureSymbolUnitLayout = (
   /* 一次完整字串 alpha 掃描就是外框的唯一來源。上一版在首次新增時又為
      每個小單位各掃一次，長符號會同步建立幾十張 Canvas，正是點擊延遲與
      第一段拖曳掉幀的主因；那些結果現已不參與任何正式繪製。 */
-  const originalClusters = splitSymbolClusters(text);
+  const originalClusters = splitSymbolUnits(text, family, size);
   const advance = measureSymbolAdvance(text, family, size);
   const ink = measureSymbolInkAtSize(text, family, size);
   const staticUnits = [text];
@@ -538,61 +648,27 @@ export const measureSymbolUnitLayout = (
     if (unitMetricCtx) unitMetricCtx.font = `400 ${size}px ${fontStack(family)}`;
   } catch { /* 退回 prefix 起點 */ }
   originalClusters.forEach((cluster, clusterIndex) => {
-    /* Intl grapheme 適合靜止排版，卻會把肉眼分開的星、點與附加符號合成
-       一個動畫單位。動畫時間改以可見 code point 為單位；VS/ZWJ 仍保留
-       在所屬字形內，空白只維持原生間距、不額外佔一個節拍。 */
-    const animationUnits = splitSymbolUnits(cluster);
-    const partCenters = measureClusterPartCenters(cluster, animationUnits, family, size);
-    animationUnits.forEach((rawUnit, partIndex) => {
-      /* 單獨畫 combining mark 時，部分系統會補一顆「虛線圓」。用不可見的
-         NBSP 當 shaping 基底即可保留原字形，而且不會多畫任何內容。 */
-      const firstVisible = Array.from(rawUnit).find(ch => !/^[\s\u200b\u200e\u200f]$/u.test(ch));
-      const unit = firstVisible && /\p{Mark}/u.test(firstVisible) ? `\u00a0${rawUnit}` : rawUnit;
-      const measuredPart = partCenters[partIndex];
-      const targetX = nativeSpans[clusterIndex].left
-        + (measuredPart?.x ?? (safeSlices.pivots[clusterIndex] - nativeSpans[clusterIndex].left));
-      units.push(unit);
-      centers.push(targetX);
-      unitClusters.push(clusterIndex);
-      unitLefts.push(safeSlices.lefts[clusterIndex]);
-      unitRights.push(safeSlices.rights[clusterIndex]);
-      unitPivots.push(targetX);
-      let localInkCenter = (nativeSpans[clusterIndex].right - nativeSpans[clusterIndex].left) / 2;
-      let localInkCenterY = 0;
-      if (unitMetricCtx) {
-        const metrics = unitMetricCtx.measureText(unit);
-        const metricLeft = Number(metrics.actualBoundingBoxLeft) || 0;
-        const metricRight = Number(metrics.actualBoundingBoxRight) || 0;
-        localInkCenter = (metricRight - metricLeft) / 2;
-        const metricTop = Number(metrics.actualBoundingBoxAscent) || 0;
-        const metricBottom = Number(metrics.actualBoundingBoxDescent) || 0;
-        localInkCenterY = (metricBottom - metricTop) / 2;
-      }
-      const targetY = measuredPart?.y ?? localInkCenterY;
-      unitPivotsY.push(targetY);
-      unitOrigins.push(targetX - localInkCenter);
-      unitOriginsY.push(targetY - localInkCenterY);
-      unitUseSlice.push(false);
-    });
-  });
-  /* 動畫不能再用矩形 clip：即使基準幀切在透明欄，單元放大後仍可能把
-     抗鋸齒、描邊或發光切成筆直裂縫。每個可見小單位都直接完整繪製；再把
-     獨立排版的實際墨水聯集校回整串 native 墨水中心，切換動畫不會橫移。 */
-  if (unitOrigins.length) {
-    const composedCenter = measureStandaloneCompositionCenter(text, units, unitOrigins, unitOriginsY, family, size);
-    if (composedCenter !== null) {
-      const correction = safeSlices.fullInkCenter - composedCenter.x;
-      const correctionY = ink.cy * size - composedCenter.y;
-      for (let i = 0; i < unitOrigins.length; i++) {
-        unitOrigins[i] += correction;
-        unitPivots[i] += correction;
-        centers[i] += correction;
-        unitOriginsY[i] += correctionY;
-        unitPivotsY[i] += correctionY;
-      }
+    const origin = (nativeSpans[clusterIndex].left + nativeSpans[clusterIndex].right) / 2;
+    const pivot = safeSlices.pivots[clusterIndex];
+    let pivotY = 0;
+    if (unitMetricCtx) {
+      const metrics = unitMetricCtx.measureText(cluster);
+      pivotY = ((Number(metrics.actualBoundingBoxDescent) || 0)
+        - (Number(metrics.actualBoundingBoxAscent) || 0)) / 2;
     }
-  }
-
+    units.push(cluster);
+    centers.push(pivot);
+    unitClusters.push(clusterIndex);
+    unitLefts.push(safeSlices.lefts[clusterIndex]);
+    unitRights.push(safeSlices.rights[clusterIndex]);
+    unitPivots.push(pivot);
+    unitPivotsY.push(pivotY);
+    /* 原生中心 anchor 與原生 baseline 原樣保留；動畫只改這個單位的 scale。 */
+    unitOrigins.push(origin);
+    unitOriginsY.push(0);
+    unitUseSlice.push(false);
+  });
+  /* 動畫不用矩形 clip；每個通過像素驗證的完整 run 都直接繪製。 */
   const out = {
     units, centers, unitClusters, unitLefts, unitRights,
     unitPivots, unitPivotsY, unitOrigins, unitOriginsY, unitUseSlice,
