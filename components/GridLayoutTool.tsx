@@ -1544,15 +1544,25 @@ const FontCard: React.FC<{
  * 也不會變成「…」。字型晚一點才載好時寬度會變，所以 fonts.ready 之後
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
+const SYMBOL_PICKER_FONT = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", "Apple Symbols", "PingFang TC", sans-serif';
+let symbolPickerMeasureCtx: CanvasRenderingContext2D | null | undefined;
+const getSymbolPickerMeasureCtx = () => {
+  if (symbolPickerMeasureCtx !== undefined) return symbolPickerMeasureCtx;
+  if (typeof document === 'undefined') return (symbolPickerMeasureCtx = null);
+  return (symbolPickerMeasureCtx = document.createElement('canvas').getContext('2d'));
+};
 export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
-  /* 首帧直接使用确定字号，不再先画 scale(1)、layout effect 后整页 setState。
-     长符号按可见 Unicode 单位同步缩小；短符号维持原尺寸。 */
-  const count = Math.max(1, Array.from(text).length);
-  const fontSize = base * Math.min(1, 18 / count);
+  /* 所有按鈕共用一張量測 Canvas；iOS 不再一次建立上百張 Canvas。
+     按鈕只使用裝置字型，所以第一幀就是最終字形，不會等待或換字。 */
+  const cg = getSymbolPickerMeasureCtx();
+  if (cg) cg.font = `400 ${base}px ${SYMBOL_PICKER_FONT}`;
+  const measured = cg ? Math.max(1, cg.measureText(text).width) : Math.max(base, text.length * base * 0.55);
+  const available = typeof window === 'undefined' ? 280 : Math.max(72, Math.min(360, window.innerWidth - 56));
+  const fontSize = base * Math.min(1, available / measured);
   return (
     <span
       className="block max-w-full overflow-hidden text-center"
-      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: fontStack(DEFAULT_FONT) }}
+      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: SYMBOL_PICKER_FONT }}
     >
       {text}
     </span>
@@ -1564,28 +1574,12 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
  * 一排只放一顆 —— 長的符號要一整排的寬度才擺得完整。
  * 跟「新增圖形」一樣，點完留在這一頁、不跳去編輯，可以連著加好幾顆。
  */
-let symbolPickerFontReady = false;
 export const SymbolPicker: React.FC<{
   onBack: () => void;
   onPick: (s: string) => void;
 }> = ({ onBack, onPick }) => {
-  /* 不讓替代字型先露出再整頁切換。字型通常已由工具掛載時預載；
-     若使用者非常快地點進來，符號列只延後到同一字型可用的第一幀顯示。 */
-  const [fontReady, setFontReady] = useState(() =>
-    typeof document === 'undefined' || symbolPickerFontReady
-  );
-  useLayoutEffect(() => {
-    let alive = true;
-    /* cssDone 只代表 @font-face 宣告已下載，不代表字身已套用；必須等
-       document.fonts.load + ready，清掉 fallback 量測，再隔兩幀確認繪製穩定。 */
-    void waitForFont(DEFAULT_FONT).then(() => {
-      clearSymbolInkCache();
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        symbolPickerFontReady = true;
-        if (alive) setFontReady(true);
-      }));
-    });
-    return () => { alive = false; };
+  /* 裝置字型無下載階段，進頁第一幀直接顯示。 */
+  return () => { alive = false; };
   }, []);
   return (
   <div className="pt-1">
@@ -1602,11 +1596,7 @@ export const SymbolPicker: React.FC<{
     </div>
     {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行 ——
         短的符號一排可以擺好幾顆，長的才自己佔一整排（而且照樣完整顯示）。 */}
-    <div
-      className="flex flex-wrap gap-1.5 pb-4"
-      style={{ visibility: fontReady ? 'visible' : 'hidden' }}
-      aria-busy={!fontReady}
-    >
+    <div className="flex flex-wrap gap-1.5 pb-4">
       {SYMBOLS.map((s, i) => (
         <button
           key={i}
