@@ -1628,6 +1628,7 @@ export const SymbolPicker: React.FC<{
   const NEXT_BATCH = 24;
   const [visibleCount, setVisibleCount] = useState(() => Math.min(FIRST_BATCH, SYMBOLS.length));
   const preparedCountRef = useRef(0);
+  const prewarmStoppedRef = useRef(false);
   const onPrepareRef = useRef(onPrepare);
   onPrepareRef.current = onPrepare;
 
@@ -1639,7 +1640,7 @@ export const SymbolPicker: React.FC<{
     let idleId: number | undefined;
     let timerId: number | undefined;
     const step = () => {
-      if (cancelled || preparedCountRef.current >= visibleCount) return;
+      if (cancelled || prewarmStoppedRef.current || preparedCountRef.current >= visibleCount) return;
       onPrepareRef.current?.(SYMBOLS[preparedCountRef.current++]);
       schedule();
     };
@@ -1691,7 +1692,7 @@ export const SymbolPicker: React.FC<{
         {SYMBOLS.slice(0, visibleCount).map((symbol, index) => (
           <button
             key={index}
-            onClick={() => onPick(symbol)}
+            onClick={() => { prewarmStoppedRef.current = true; onPick(symbol); }}
             aria-label={symbol}
             className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85"
           >
