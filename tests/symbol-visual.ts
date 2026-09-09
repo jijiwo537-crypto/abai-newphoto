@@ -25,7 +25,8 @@ const drawCanonical = (
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
   const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
   const animated=forceAnimated||!!unitScales;
-  if(!animated){
+  const flat=!!unitScales&&unitScales.every(value=>Math.abs(value-1)<1e-6);
+  if(!animated||flat){
     ctx.fillText(text,cx+dx,cy+dy);
   }else{
     layout.unitLefts.forEach((left0,i)=>{
