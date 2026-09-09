@@ -1544,17 +1544,38 @@ const FontCard: React.FC<{
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
 export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
-  /* 首帧直接使用确定字号，不再先画 scale(1)、layout effect 后整页 setState。
-     长符号按可见 Unicode 单位同步缩小；短符号维持原尺寸。 */
-  const count = Math.max(1, Array.from(text).length);
-  const fontSize = base * Math.min(1, 18 / count);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const inkRef = useRef<HTMLSpanElement>(null);
+  const [k, setK] = useState(1);
+  useLayoutEffect(() => {
+    const box = boxRef.current, ink = inkRef.current;
+    if (!box || !ink) return;
+    let alive = true;
+    const fit = () => {
+      if (!alive) return;
+      const bw = box.clientWidth;
+      const tw = ink.scrollWidth;
+      if (bw > 0 && tw > 0) setK(Math.min(1, bw / tw));
+    };
+    fit();
+    (document as any).fonts?.ready?.then(fit).catch(() => {});
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
+    ro?.observe(box);
+    return () => { alive = false; ro?.disconnect(); };
+  }, [text, base]);
   return (
-    <span
-      className="block max-w-full overflow-hidden text-center"
-      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: fontStack(DEFAULT_FONT) }}
-    >
-      {text}
-    </span>
+    <div ref={boxRef} className="max-w-full overflow-hidden flex items-center justify-center">
+      <span
+        ref={inkRef}
+        style={{
+          display: 'inline-block', whiteSpace: 'pre', flexShrink: 0,
+          fontSize: base, lineHeight: 1.4,
+          transform: `scale(${k})`, transformOrigin: 'center center',
+        }}
+      >
+        {text}
+      </span>
+    </div>
   );
 };
 
@@ -1566,21 +1587,7 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
 export const SymbolPicker: React.FC<{
   onBack: () => void;
   onPick: (s: string) => void;
-}> = ({ onBack, onPick }) => {
-  /* 不讓替代字型先露出再整頁切換。字型通常已由工具掛載時預載；
-     若使用者非常快地點進來，符號列只延後到同一字型可用的第一幀顯示。 */
-  const [fontReady, setFontReady] = useState(() =>
-    typeof document === 'undefined' || fontCssLoaded(DEFAULT_FONT)
-  );
-  useLayoutEffect(() => {
-    let alive = true;
-    void ensureFont(DEFAULT_FONT).then(async () => {
-      if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
-      requestAnimationFrame(() => { if (alive) setFontReady(true); });
-    });
-    return () => { alive = false; };
-  }, []);
-  return (
+}> = ({ onBack, onPick }) => (
   <div className="pt-1">
     <div className="flex items-center gap-2 mb-3">
       <button
@@ -1595,11 +1602,7 @@ export const SymbolPicker: React.FC<{
     </div>
     {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行 ——
         短的符號一排可以擺好幾顆，長的才自己佔一整排（而且照樣完整顯示）。 */}
-    <div
-      className="flex flex-wrap gap-1.5 pb-4"
-      style={{ visibility: fontReady ? 'visible' : 'hidden' }}
-      aria-busy={!fontReady}
-    >
+    <div className="flex flex-wrap gap-1.5 pb-4">
       {SYMBOLS.map((s, i) => (
         <button
           key={i}
@@ -1612,8 +1615,7 @@ export const SymbolPicker: React.FC<{
       ))}
     </div>
   </div>
-  );
-};
+);
 
 /**
  * 空格提示必须属于它所在的布局图层。
@@ -5620,8 +5622,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           image.shape, boxW, boxH,
           (image.shapeTextureBaseW || image.width) * renderScale,
           (image.shapeTextureBaseH || image.height) * renderScale,
-          ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-            * Math.pow(Math.max(0.01, renderScale), 0.35),
+          ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325,
         ));
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const solid = !!image.shapeFilled && image.shape !== 'line';
@@ -6327,7 +6328,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
                 ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.pow(Math.max(0.01, renderScale), 0.65),
+                  / Math.max(0.01, renderScale),
               )}
               fill="none"
               stroke={image.shapeStrokeColor || '#000000'}
@@ -6343,7 +6344,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
                 ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.pow(Math.max(0.01, renderScale), 0.65),
+                  / Math.max(0.01, renderScale),
               )}
             fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
             stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || SHAPE_DEFAULT_COLOR)}
@@ -6386,7 +6387,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
                 ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.pow(Math.max(0.01, renderScale), 0.65),
+                  / Math.max(0.01, renderScale),
               )}
                   fill={`url(#${id})`}
                   stroke="none"
@@ -6427,7 +6428,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                 image.shapeTextureBaseW || image.width,
                 image.shapeTextureBaseH || image.height,
                 ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.pow(Math.max(0.01, renderScale), 0.65),
+                  / Math.max(0.01, renderScale),
               )}
                   fill={`url(#${id})`}
                   stroke="none"
@@ -11559,7 +11560,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
       (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
       ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor / 160) * 2.325
-        / Math.pow(Math.max(0.01, fImg.scale || 1), 0.65),
+        / Math.max(0.01, fImg.scale || 1),
     ));
     const color = fImg.color || SHAPE_DEFAULT_COLOR;
     const solid = fImg.shapeFilled && fImg.shape !== 'line';
