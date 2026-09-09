@@ -265,9 +265,12 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   if (o.sym) {
     /* 新增時保存的墨水量測是符號與選中框的共同幾何基準。
        不再於第一個動畫影格重新量字型，避免字型剛就緒時框先用到另一組度量。 */
-    const ink = (o.symInkSize === o.size && Number.isFinite(o.symInkW) && Number.isFinite(o.symInkH))
-      ? { w: o.symInkW, h: o.symInkH, cx: o.symInkCx || 0, cy: o.symInkCy || 0 }
-      : measureSymbolInkAtSize(o.text || o.sym, o.fontFamily || DEFAULT_FONT, o.size || 40);
+    /* 以这一格真正绘制的字号扫描；选中框与符号本体在任何预览倍率下
+       都读取同一个 sized cache，不再用另一字号的比例估算。 */
+    const ink = measureSymbolInkAtSize(
+      o.text || o.sym, o.fontFamily || DEFAULT_FONT,
+      Math.max(8, (o.size || 40) * Math.max(0.01, scale)),
+    );
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -4862,9 +4865,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if (o.sym) {
           /* 和选中框读取同一份建立时度量，动画第一帧与后续影格不会因
              字型缓存由 fallback 切到正式字型而改变中心。 */
-          const ink2 = (o.symInkSize === o.size && Number.isFinite(o.symInkW) && Number.isFinite(o.symInkH))
-            ? { w: o.symInkW, h: o.symInkH, cx: o.symInkCx || 0, cy: o.symInkCy || 0 }
-            : measureSymbolInkAtSize(o.text || '', fam, o.size || 40);
+          const ink2 = measureSymbolInkAtSize(
+            o.text || '', fam, Math.max(8, (o.size || 40) * s),
+          );
           tdx = -ink2.cx * o.size * s;
           tdy = -ink2.cy * o.size * s;
         }
@@ -4917,18 +4920,35 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const total = prefixes[prefixes.length - 1] || 0;
           const centers = units.map((_, i) => (prefixes[i] + prefixes[i + 1]) / 2);
           const now = animRef.current?.t ?? 0;
+          const bubbleSpan = 1 + Math.max(0, units.length - 1) * 0.2;
+          const qs = units.map((_, index) =>
+            seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2)));
+          const scales = units.map((_, index) => {
+            if (individualBreathe) {
+              return 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71)
+                * ((o.mo?.amp || 50) / 100) * 0.18;
+            }
+            return o.mo?.in === 'bubble' ? easeOutBack(qs[index]) : 1;
+          });
+          /* 缩放 II 每颗符号倍率不同，若只固定每颗基准点，整串的可见外接框
+             会左右漂移。按这一帧的实际倍率算出外接中心并补偿回原中心。 */
+          let groupShift = 0;
+          if (individualBreathe && units.length) {
+            let x0 = Infinity, x1 = -Infinity;
+            units.forEach((_, index) => {
+              const half = (prefixes[index + 1] - prefixes[index]) * scales[index] / 2;
+              x0 = Math.min(x0, centers[index] - half);
+              x1 = Math.max(x1, centers[index] + half);
+            });
+            if (Number.isFinite(x0) && Number.isFinite(x1)) groupShift = total / 2 - (x0 + x1) / 2;
+          }
           units.forEach((ch, index) => {
-            const bubbleSpan = 1 + Math.max(0, units.length - 1) * 0.2;
-            const q = seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
-            const kind = o.mo?.in;
-            const ease = easeOutCubic(q);
-            const scale = individualBreathe
-              ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71) * ((o.mo?.amp || 50) / 100) * 0.18
-              : kind === 'bubble' ? easeOutBack(q) : 1;
+            const q = qs[index];
+            const scale = scales[index];
             const rise = 0;
             ctx.save();
             ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            ctx.translate(tdx - total / 2 + centers[index], tdy + rise);
+            ctx.translate(tdx - total / 2 + centers[index] + groupShift, tdy + rise);
             ctx.scale(scale, scale);
             ctx.textAlign = 'center';
             ctx.fillText(ch, 0, 0);
@@ -4972,7 +4992,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              不然愛心上面那片空白、星星底下那條也會被框進去。
              沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
           // 圖片框的內緣剛好貼齊圖片，不留下空隙也不蓋住像素。
-          const ink = objectSelectionInk(o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx);
+          const idleScalePad = o.sym && f && o.mo?.idle === 'symbol-breathe2'
+            ? (o.size || 40) * s * ((o.mo?.amp || 50) / 100) * 0.18
+            : 0;
+          const ink = objectSelectionInk(
+            o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx + idleScalePad,
+          );
           ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
         }
         ctx.shadowColor = 'transparent';
