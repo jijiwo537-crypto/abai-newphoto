@@ -26,9 +26,12 @@ const drawCanonical = (
   const dy=-layout.ink.cy*size;
   layout.units.forEach((unit,i)=>{
     ctx.save();
-    ctx.translate(cx+layout.centers[i],cy+dy);
+    const ink=layout.unitInks[i];
+    const ox=layout.drawOffsetsX[i]||0;
+    const px=ink.cx*size,py=ink.cy*size;
+    ctx.translate(cx+layout.centers[i]+ox+px,cy+dy+py);
     const k=unitScales?.[i]??1;ctx.scale(k,k);
-    ctx.fillText(unit,0,0);ctx.restore();
+    ctx.fillText(unit,-px,-py);ctx.restore();
   });
   ctx.restore();
   return layout;
@@ -73,8 +76,8 @@ const drawCanonical = (
     let overlap=false;
     for(let i=1;i<layout.units.length;i++){
       const a=unitInks[i-1],b=unitInks[i];
-      const ar=layout.centers[i-1]+a.cx*size+a.w*size/2;
-      const bl=layout.centers[i]+b.cx*size-b.w*size/2;
+      const ar=layout.centers[i-1]+(layout.drawOffsetsX[i-1]||0)+a.cx*size+a.w*size/2;
+      const bl=layout.centers[i]+(layout.drawOffsetsX[i]||0)+b.cx*size-b.w*size/2;
       if(bl<ar-.05){overlap=true;break;}
     }
 
@@ -93,8 +96,13 @@ const drawCanonical = (
     drawCanonical(g2,text,size,cssW/2,cssH/2,new Array(layout.units.length).fill(1));
     const animated=g2.getImageData(0,0,w,h).data;
     let diff=0;for(let i=3;i<reference.length;i+=4) if(reference[i]!==animated[i]){diff++;if(diff>2)break;}
-    const pass=inside&&centered&&tight&&!overlap&&scale2StartsFlat&&scale2Independent&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,overlap,scale2StartsFlat,scale2Independent,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    /* 第七顆只允許 U+08EA 那顆點向左微調；其他 unit 不可被一起移動。 */
+    const specialDotAdjusted=index!==6||(
+      layout.units.some((unit,i)=>unit.includes("\u08ea")&&layout.drawOffsetsX[i]<0)
+      && layout.drawOffsetsX.every((offset,i)=>layout.units[i].includes("\u08ea")||offset===0)
+    );
+    const pass=inside&&centered&&tight&&!overlap&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,overlap,scale2StartsFlat,scale2Independent,specialDotAdjusted,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
