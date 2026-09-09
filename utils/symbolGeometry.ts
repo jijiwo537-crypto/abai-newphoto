@@ -160,17 +160,12 @@ export const measureSymbolAdvance = (text: string, family: string, fontSize: num
 };
 
 /**
- * 泡泡與縮放 II 的最小單位必須是「字素」，不能是 UTF-16 code unit/code point。
- * 否則代理對、附加記號與變體選擇符會被拆開，畫面上就會重疊或四散。
- * 含方向控制字元或需要上下文塑形的文字整串視為一個 run，優先保留正確排版。
+ * 泡泡與縮放 II 的最小單位必須是「完整字素」，不能是 UTF-16 code unit/code point。
+ * Intl.Segmenter 會把代理對、附加記號與變體選擇符留在同一顆字素內，因此既不會
+ * 把符號拆壞，也不會因整串含一個附加記號就讓整顆符號完全失去逐顆動畫。
  */
 export const splitSymbolUnits = (text: string): string[] => {
   if (!text) return [];
-  /* Canvas 不提供已塑形字串的逐 glyph 位置。含組合記號、雙向控制或需上下文
-     塑形的文字保留成單一 run；動畫仍會作用在整個 run，不會拆壞內部排版。 */
-  if (/[\p{Mark}\u0590-\u0fff\u1780-\u1cff\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(text)) {
-    return [text];
-  }
 
   let raw: string[] = [];
   try {
