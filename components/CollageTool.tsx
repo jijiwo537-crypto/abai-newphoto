@@ -36,7 +36,7 @@ import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { measureSymbolInk, measureSymbolInkAtSize, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -100,13 +100,13 @@ const MAX_EXPORT_PIXELS = 20_000_000;
    那些東西是用路徑畫的，給多少像素就有多利。所以長邊不足這個數就整張放大上去。
    照片本身不會因此多出細節（它在手機上本來就是被放大來看的），
    但所有邊緣會真正到達「一個像素過渡完」＝ 看不到鋸齒。 */
-const EXPORT_MIN_DIM = 3200;
+const EXPORT_MIN_DIM = 2400;
 /** IG 預覽裡「貼文與貼文之間」的間距。頭、尾、中間統一都用這個值 */
 const IG_GAP = 14;
 /** 動態牆最上面與最下面多留的空間：多一點才滑得舒服 */
 const IG_EDGE = 48;
 /** 動態影片的長邊上限。1440 已經比手機螢幕還細，再高只是白燒編碼時間 */
-const MOTION_MAX_DIM = 2160;
+const MOTION_MAX_DIM = 1440;
 /* ── 拼圖裡有影片時的導出上限 ────────────────────────────────────────
    1440 是給「純動畫」訂的：那種畫面全部是路徑畫出來的，1440 已經看不出
    差別。但如果拼圖的底（或某個物件）本身就是一段 1080p／4K 的影片，
@@ -263,14 +263,7 @@ const symBox = (str: string, fam: string, size: number) => {
 const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
   if (o.sym) {
-    /* 新增時保存的墨水量測是符號與選中框的共同幾何基準。
-       不再於第一個動畫影格重新量字型，避免字型剛就緒時框先用到另一組度量。 */
-    /* 靜止符號由整串 shaping 繪製，外框也必須量整串，不能拿逐單位
-       外接框代替，否則組合符號會重疊或超出。 */
-    const ink = measureSymbolInkAtSize(
-      o.text || o.sym, o.fontFamily || DEFAULT_FONT,
-      Math.max(8, (o.size || 40) * Math.max(0.01, scale)),
-    );
+    const ink = symInk(o.text || o.sym, o.fontFamily || DEFAULT_FONT);
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -383,60 +376,6 @@ const hashId = (id: string) => {
   return x;
 };
 
-/** 泡泡动画必须按「用户看到的一颗符号」切分。
- * Array.from 会把附加符号、变体选择符与 ZWJ 组合拆开，第一帧各自缩放时
- * 墨水会飞离整串外框；播放结束改回整串绘制后才突然正常。 */
-const symbolUnits = (text: string): string[] => {
-  const Seg = typeof Intl !== 'undefined' ? (Intl as any).Segmenter : null;
-  if (Seg) return Array.from(new Seg(undefined, { granularity: 'grapheme' }).segment(text), (v: any) => v.segment);
-  return Array.from(text);
-};
-
-type SymbolUnitLayout = {
-  units: string[]; anchors: number[]; inks: { w: number; h: number; cx: number; cy: number }[];
-  inkW: number; inkH: number;
-};
-const symbolUnitLayoutCache = new Map<string, SymbolUnitLayout>();
-/** 单一符号布局来源：静态、选中框与所有动画都读取同一份实际墨水几何。 */
-const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): SymbolUnitLayout => {
-  const px = Math.max(8, Math.round(fontPx * 100) / 100);
-  const key = `${family}|${text}|${px}`;
-  const hit = symbolUnitLayoutCache.get(key);
-  if (hit) return hit;
-  const units = symbolUnits(text);
-  const cv = document.createElement('canvas');
-  const cg = cv.getContext('2d');
-  if (cg) cg.font = `400 ${px}px ${fontStack(family)}`;
-  const prefixes = [0];
-  for (let i = 1; i <= units.length; i++) {
-    prefixes.push(cg ? cg.measureText(units.slice(0, i).join('')).width : i * px * 0.5);
-  }
-  const total = prefixes[prefixes.length - 1] || 0;
-  const rawAnchors = units.map((_, i) => -total / 2 + (prefixes[i] + prefixes[i + 1]) / 2);
-  const inks = units.map(unit => measureSymbolInkAtSize(unit, family, px));
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  units.forEach((_, i) => {
-    const ink = inks[i], ax = rawAnchors[i];
-    x0 = Math.min(x0, ax + (ink.cx - ink.w / 2) * px);
-    x1 = Math.max(x1, ax + (ink.cx + ink.w / 2) * px);
-    y0 = Math.min(y0, (ink.cy - ink.h / 2) * px);
-    y1 = Math.max(y1, (ink.cy + ink.h / 2) * px);
-  });
-  if (!Number.isFinite(x0)) { x0 = y0 = -px / 2; x1 = y1 = px / 2; }
-  const sx = -(x0 + x1) / 2;
-  const out = {
-    units, anchors: rawAnchors.map(x => x + sx), inks,
-    inkW: Math.max(1, x1 - x0), inkH: Math.max(1, y1 - y0),
-  };
-  symbolUnitLayoutCache.set(key, out);
-  while (symbolUnitLayoutCache.size > 256) {
-    const first = symbolUnitLayoutCache.keys().next().value;
-    if (first === undefined) break;
-    symbolUnitLayoutCache.delete(first);
-  }
-  return out;
-};
-
 /* ── 動態 ──────────────────────────────────────────────────────────
    整套動畫是「純函式」：給一個時間 t，算出每個元素當下的
    縮放、位移、旋轉、透明度。畫布只負責照著畫，所以預覽跟輸出
@@ -444,7 +383,7 @@ const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): Symbo
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; idleBlend?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -493,7 +432,6 @@ export const IN_KINDS: { id: string; name: string }[] = [
   { id: 'spring', name: '流星' },
 ];
 const LINE_IN_KINDS = [...IN_KINDS.filter(k => k.id !== 'spring'), { id: 'draw', name: '畫筆' }];
-const GRID_IN_KINDS = IN_KINDS.map(k => k.id === 'spring' ? { id: 'grid-wave', name: '波浪' } : k);
 const SYMBOL_IN_KINDS = IN_KINDS.map(k => k.id === 'fade' ? { id: 'bubble', name: '泡泡' } : k.id === 'spring' ? { id: 'fade', name: '淡入' } : k);
 
 /* 發光用的色票：第一顆是純白，其餘 14 顆是把預設色 #9BD4C3 只轉色相
@@ -678,7 +616,7 @@ const glowIdleAmp = (
 export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
   { id: 'float', name: '漂浮' },
-  { id: 'sway', name: '波浪' },
+  { id: 'sway', name: '左右' },
   { id: 'breathe', name: '縮放' },
   { id: 'spin', name: '旋轉' },
   { id: 'wobble', name: '搖擺' },
@@ -686,7 +624,6 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   // 特別做的：高頻又不規則的細微抖動，像手持鏡頭
   { id: 'jitter', name: '抖動' },
 ];
-const GRID_IDLE_KINDS = IDLE_KINDS.map(k => k.id === 'sway' ? { id: 'grid-wave', name: '波浪' } : k);
 const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'sway').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 
 /** 進場動畫在進度 p（0～1）時的樣子 */
@@ -696,7 +633,6 @@ const inFrame = (kind: string, p: number): MoFrame => {
   const fade = Math.max(0, Math.min(1, p * 1.6));
   const e = easeOutCubic(p);
   switch (kind) {
-    case 'grid-wave': return { ...FLAT, gridWave: p, gridReveal: easeOutCubic(p) };
     case 'fade':   return { k: 1, dx: 0, dy: 0, rot: 0, a: p };
     case 'rise':   return { k: 1, dx: 0, dy: (1 - e) * 0.9, rot: 0, a: fade };
     case 'drop':   return { k: 1, dx: 0, dy: -(1 - e) * 0.9, rot: 0, a: fade };
@@ -728,9 +664,7 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
   const A = amp / 100, w = t * speed + phase;
   switch (kind) {
     case 'float':   return { k: 1, dx: 0, dy: Math.sin(w * 2.0) * A * 0.28, rot: 0, a: 1 };
-    /* 原本的左右平移已改为与网格相同的连续正弦波相位。 */
-    case 'sway':    return { ...FLAT, gridWave: (t * speed * 0.22 + phase / (Math.PI * 2)) };
-    case 'grid-wave': return { ...FLAT, gridWave: (t * speed * 0.22 + phase / (Math.PI * 2)) };
+    case 'sway':    return { k: 1, dx: Math.sin(w * 1.7) * A * 0.28, dy: 0, rot: 0, a: 1 };
     /* 縮放：單純一顆正弦，大…小…大…小，在兩個固定大小之間來回。
        （以前是兩個不同週期的正弦疊起來，所以每一次的最大最小都不一樣 ——
          看起來就是「不規則」，那不是要的。）
@@ -787,14 +721,7 @@ export const MO_DEFAULT: MoCfg = {
   delay: 0, dur: durFromSpeed(70), in: 'pop',
   idle: 'none', amp: 50, speed: 0.9,
 };
-export const moOf = (o: any): MoCfg => {
-  const cfg = { ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) };
-  if (o?.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind)) {
-    if (cfg.in === 'spring') cfg.in = 'grid-wave';
-    if (cfg.idle === 'sway') cfg.idle = 'grid-wave';
-  }
-  return cfg;
-};
+export const moOf = (o: any): MoCfg => ({ ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) });
 
 /**
  * 把進場 → 常駐 → 離場疊起來。
@@ -802,28 +729,16 @@ export const moOf = (o: any): MoCfg => {
  */
 const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number } => {
   const p = cfg.dur > 0 ? (t - cfg.delay) / cfg.dur : (t >= cfg.delay ? 1 : 0);
-  /* 進場與常駐都選波浪時共用同一條 phase：進場跑完一個完整週期，
-     接著直接循環，不會同時疊上兩個波形。 */
-  if (cfg.in === 'grid-wave' && cfg.idle === 'grid-wave') {
-    const q = Math.max(0, p);
-    return { ...FLAT, fx: 1, burst: 0, gridWave: q, ...(q < 1 ? { gridReveal: easeOutCubic(q) } : null) };
-  }
   const f = inFrame(cfg.in, Math.max(0, Math.min(1, p)));
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
-  /* 进场期间严禁常驻动画同时参与。符号的缩放 II 曾经绕过 composeMo，
-     在泡泡尚未结束时就套上另一组倍率，正是首帧错位与交接断层的来源。 */
-  if (p < 1) return { ...f, fx, burst: f.burst || 0, idleBlend: 0 };
-  const after = Math.max(0, t - (cfg.delay + cfg.dur));
-  /* 从同一个静止帧开始，并让位移与速度同时平滑增加。
-     高斯包络在 t=0 的值和斜率都为 0，不会瞬移；约 0.28 秒自然进入完整常驻，
-     又不会产生旧版 0.35 秒线性淡入那种近乎静止的停顿。 */
-  const blend = 1 - Math.exp(-Math.pow(after / 0.12, 2));
+  if (p < 1) return { ...f, fx, burst: f.burst || 0 };
+  const after = t - (cfg.delay + cfg.dur);
+  const blend = Math.max(0, Math.min(1, after / 0.35));
   const g = idleFrame(cfg.idle, after, cfg.amp, cfg.speed, phase);
   return {
     k: 1 + (g.k - 1) * blend,
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
-    a: 1, fx: 1, burst: 0, idleBlend: blend,
-    gridWave: g.gridWave,
+    a: 1, fx: 1, burst: 0,
   };
 };
 
@@ -1731,9 +1646,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 離開「新增」分頁就回到最外層：下次再進來看到的是三顆大按鈕，
      而不是上次停在的圖形／符號清單。 */
   useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
-  /* 在工具掛載時就準備符號實際使用的字型，而不是等符號頁已經畫出來才載入。
-     如此按鈕首幀與畫布量測會使用同一套 glyph，不會整頁突然換字型。 */
-  useEffect(() => { void ensureFont(DEFAULT_FONT); }, []);
   /** 編輯頁的左側子分頁 */
   const [objSub, setObjSub] = useState<'main' | 'style'>('main');
   /* 圖片調整面板的 UI 狀態 —— 跟經典拼圖同一組，只是各自持有，
@@ -1807,9 +1719,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      光是配置與清空就要搬好幾 MB；一顆圖案那張也是每顆都重來。
      搬成 ref 之後，同一張畫布從頭用到尾，只有尺寸真的變了才重新配置。 */
   const glowLayerRef = useRef<HTMLCanvasElement | null>(null);
-  /** 图片／文字／符号／一般图形的波浪先画到透明层，再用连续直片重组。
-      只在该常驻动画播放时启用，并重复使用同一张画布。 */
-  const objectWaveLayerRef = useRef<HTMLCanvasElement | null>(null);
   /** 「洞裡看到的那張圖」上次是用什麼參數畫的（見 drawMaskHolesOnTop） */
   const holeBdKeyRef = useRef('');
   /** 「洞裡看到的那一層」畫好的成品（見 drawMaskHolesOnTop）。
@@ -3554,7 +3463,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const { baseW, baseH, globalScale: gs } = imageState;
     /* alpha:true —— 拼圖的畫布本來就會被底圖與遮罩鋪滿，
        所以留不留 alpha 看起來一樣；留著是為了遮罩以外那圈不要被填成黑色。 */
-    let ctx = get2dWide(targetCanvas, { alpha: true });
+    const ctx = get2dWide(targetCanvas, { alpha: true });
     if (!ctx) return;
 
     const s = renderScale;
@@ -4084,7 +3993,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          走暫存層時本體會再被挖一次 —— 挖已經是全透明的地方不會有任何改變。 */
       tg.globalCompositeOperation = 'destination-out';
       tg.shadowBlur = 0;
-      eraseGlowBody(tg, h, szQ, 0, side / 2, side / 2, 1.25);
+      strokeHoleShape(tg, h, szQ, 0, side / 2, side / 2, '#000');
       tg.globalCompositeOperation = 'source-over';
       (tmp as any).__sz = szQ;
       cache.set(key, tmp);
@@ -4092,29 +4001,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       while (cache.size > 24) { const k0 = cache.keys().next().value; if (k0 === undefined) break; cache.delete(k0); }
       return tmp;
     };
-    /* 光暈裡的本體要比可見本體多擦除一個畫布像素。
-       只填色會在反鋸齒邊緣留下半透明亮線，星形尖角尤其明顯。 */
-    const eraseGlowBody = (
-      g: CanvasRenderingContext2D, h: any, sz: number, angle: number,
-      gx: number, gy: number, fringe = 1,
-    ) => {
-      if (isTextHole(holeType)) {
-        strokeHoleShape(g, h, sz, angle, gx, gy, '#000');
-        return;
-      }
-      g.save();
-      g.translate(gx, gy);
-      g.rotate((angle * Math.PI) / 180);
-      g.fillStyle = '#000';
-      g.strokeStyle = '#000';
-      g.lineJoin = 'round';
-      g.lineWidth = Math.max(0.75, fringe);
-      drawShapePath(g, holeType, 0, 0, sz);
-      g.fill();
-      g.stroke();
-      g.restore();
-    };
-
     const glowInto = (
       gg: CanvasRenderingContext2D, h: any, alpha: number,
       sz: number, angle: number, gx: number, gy: number, gcol: string,
@@ -4317,7 +4203,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         gg => {
           // 本體一律用滿透明度挖掉，剩下的才是純粹的光暈
           // 挖除仍照「全部的本體」來，互相挖除的結果才跟以前一致
-          items.forEach(it => eraseGlowBody(gg, it.h, it.sz, it.ang, it.x, it.y, Math.max(1, s)));
+          items.forEach(it => strokeHoleShape(gg, it.h, it.sz, it.ang, it.x, it.y, '#000'));
           if (pairs.length) {
             gg.save();
             linkStyle(gg);
@@ -4512,13 +4398,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         lmx.rotate(currentAngle * Math.PI / 180);
         drawShapePath(lmx, holeType, 0, 0, sz);
         lmx.fill();
-        /* 填色挖孔的反鋸齒邊緣會殘留約半個像素的遮罩色，
-           預覽倍率改變時那圈殘色就像多出邊框。用同一路徑擦掉
-           極細外緣，只消除殘色，不改圖案本身的幾何大小。 */
-        lmx.lineWidth = Math.max(0.75, 0.8 * s);
-        lmx.lineJoin = 'round';
-        lmx.strokeStyle = '#000';
-        lmx.stroke();
       }
       lmx.restore();
       if (A.burst > 0.01) {
@@ -4608,25 +4487,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          靜態時 f 是 null，這一段完全不影響畫面。 */
       const f = animRef.current ? animRef.current.obj(o, objIndex.get(o.id) ?? 0) : null;
       if (f && (f.k <= 0.002 || f.a <= 0.004)) return;
-      /* 网格图形有自己的向量波浪；其他物件统一在独立透明层画完后逐列重组。 */
-      const genericWave = f?.gridWave !== undefined
-        && !(o.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind));
-      const waveTarget = genericWave ? ctx : null;
-      if (genericWave) {
-        let layer = objectWaveLayerRef.current;
-        if (!layer) { layer = document.createElement('canvas'); objectWaveLayerRef.current = layer; }
-        if (layer.width !== targetCanvas.width || layer.height !== targetCanvas.height) {
-          layer.width = targetCanvas.width; layer.height = targetCanvas.height;
-        }
-        const layerCtx = get2dWide(layer, { alpha: true });
-        if (layerCtx) {
-          layerCtx.setTransform(1, 0, 0, 1, 0, 0);
-          layerCtx.globalAlpha = 1;
-          layerCtx.globalCompositeOperation = 'source-over';
-          layerCtx.clearRect(0, 0, layer.width, layer.height);
-          ctx = layerCtx;
-        }
-      }
       ctx.save();
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
@@ -4804,56 +4664,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           o.kind, bw, bh,
           ((o as any).textureBaseW || o.w) * s,
           ((o as any).textureBaseH || o.h) * s,
-          (((o as any).lineBase || Math.max(o.w, o.h)) * s / 160) * 2.325
-            * Math.pow(
-              Math.max(0.01,
-                Math.max((o as any).textureBaseW || o.w, (o as any).textureBaseH || o.h)
-                / Math.max(1, (o as any).lineBase || Math.max(o.w, o.h))
-              ),
-              0.35,
-            ),
+          (((o as any).lineBase || Math.max(o.w, o.h)) * s / 160) * 2.325,
         );
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
-
-        /* 網格波浪不是搬動整個物件，而是把向量路徑切成細直片後，依 x 位置
-           套用同一條連續正弦。進場用 reveal 從左往右揭露；常駐只循環 phase。
-           composeMo 已保證進場＋常駐同選波浪時只會提供一個 gridWave。 */
-        const paintShapePath = (fill: boolean) => {
-          const phase = f?.gridWave;
-          if (!GRID_SHAPE_KINDS.has(o.kind) || phase === undefined) {
-            fill ? ctx.fill(shapeP) : ctx.stroke(shapeP);
-            return;
-          }
-          const reveal = f?.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, f.gridReveal));
-          const shownW = bw * reveal;
-          if (shownW <= 0.01) return;
-          /* 每片維持在約 1 個畫布像素，並限制總數避免手機負擔過高。
-             舊版最多 56 片，預覽放大時垂直位移會形成明顯階梯鋸齒。 */
-          const slices = Math.max(64, Math.min(220, Math.ceil(bw / Math.max(0.9, 1.15 * s))));
-          const sliceW = bw / slices;
-          const amp = Math.min(10 * s, bh * 0.065)
-            * Math.max(0.15, (o.mo?.amp ?? 50) / 100) * (f?.idleBlend ?? 1);
-          for (let i = 0; i < slices; i++) {
-            const x = i * sliceW;
-            if (x >= shownW) break;
-            /* 完整揭露時右框線的筆畫有一半位於 bw 外側；裁切區必須把那半邊
-               也包含進來，否則 grid-frame 最右線只剩半粗。 */
-            const endPad = reveal >= 0.999 ? Math.max(lw, 1.2 * s) : 0;
-            const clipW = Math.min(sliceW + 1.6 * s + endPad, shownW - x + 0.8 * s + endPad);
-            const nx = (x + sliceW / 2) / Math.max(1, bw);
-            const envelope = Math.sin(Math.PI * Math.min(1, reveal));
-            const dy = Math.sin((nx - phase) * Math.PI * 2) * amp
-              * (f?.gridReveal === undefined ? 1 : Math.max(0.35, envelope));
-            ctx.save();
-            ctx.beginPath();
-            ctx.rect(x - 0.8 * s, -amp - 2 * s, clipW, bh + amp * 2 + 4 * s);
-            ctx.clip();
-            ctx.translate(0, dy);
-            fill ? ctx.fill(shapeP) : ctx.stroke(shapeP);
-            ctx.restore();
-          }
-        };
         // 發光：三段模糊疊起來，跟經典拼圖那邊同一組半徑
         const gAmt = glowAmount(o.glow);
         if (gAmt > 0) {
@@ -4862,7 +4676,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           // 半徑乘上強度（面板那根 0～100 的滑桿）
           for (const r of shapeGlowBlurs(bw, bh)) {
             ctx.shadowBlur = r * gAmt;
-            paintShapePath(!!solid);
+            if (solid) ctx.fill(shapeP); else ctx.stroke(shapeP);
           }
           ctx.restore();
         }
@@ -4877,13 +4691,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.miterLimit = 2;
           ctx.strokeStyle = o.strokeColor || '#000000';
           ctx.lineWidth = solid ? sw * 2 : lw + sw * 2;
-          paintShapePath(false);
+          ctx.stroke(shapeP);
           ctx.restore();
         }
         if (solid) {
           if (GRID_DOT_KINDS.has(o.kind)) {
             /* 直接畫已帶固定點距與點徑的 shapeP，不能再用當前框重建一次。 */
-            paintShapePath(true);
+            ctx.fill(shapeP);
           } else drawFeatheredShapeBody(ctx, o.kind, bw, bh, o.shapeFeather, col, (tc, bodyPath) => {
             if (texOf(o) === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(bw / 2, bh / 2);
@@ -4894,7 +4708,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             });
             tc.restore();
           });
-        } else paintShapePath(false);
+        } else ctx.stroke(shapeP);
         ctx.setLineDash([]);
         ctx.restore();
         }
@@ -4915,11 +4729,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
         let tdx = 0, tdy = 0;
         if (o.sym) {
-          /* 和选中框读取同一份建立时度量，动画第一帧与后续影格不会因
-             字型缓存由 fallback 切到正式字型而改变中心。 */
-          const ink2 = measureSymbolInkAtSize(
-            o.text || '', fam, Math.max(8, (o.size || 40) * s),
-          );
+          const ink2 = symInk(o.text || '', fam);
           tdx = -ink2.cx * o.size * s;
           tdy = -ink2.cy * o.size * s;
         }
@@ -4959,47 +4769,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號 II：每一個 Unicode 單位由左至右進場；常駐縮放 II 則給每個單位
            固定但不同的節奏。普通文字與普通符號維持原本單次繪製，字距完全不變。 */
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        const individualBreathe = !!o.sym && !!f && o.mo?.idle === 'symbol-breathe2'
-          && seqIn === null && (f.idleBlend ?? 0) > 0;
-        /* 靜止符號必須整串交給瀏覽器 shaping，避免組合符號拆開後重疊或越框。
-           只有泡泡／逐單位進場與縮放 II 真正需要時才拆單位。 */
-        if (o.sym && (seqIn !== null || individualBreathe)) {
-          const layout = symbolUnitLayoutAt(o.text || o.sym, fam, Math.max(8, o.size * s));
+        const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2';
+        if (seqIn !== null || individualBreathe) {
+          const units = Array.from(o.text || '');
+          const widths = units.map(ch => ctx.measureText(ch).width);
+          const total = widths.reduce((sum, v) => sum + v, 0);
+          let cursor = tdx - total / 2;
           const now = animRef.current?.t ?? 0;
-          const bubbleSpan = 1 + Math.max(0, layout.units.length - 1) * 0.2;
-          const qs = layout.units.map((_, index) =>
-            seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2)));
-          const scales = layout.units.map((_, index) => {
-            if (seqIn !== null) return o.mo?.in === 'bubble' ? easeOutBack(qs[index]) : 1;
-            return 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71)
-              * ((o.mo?.amp || 50) / 100) * 0.18 * (f?.idleBlend ?? 0);
-          });
-          /* 泡泡保留原本由左至右、各單位在原位長出的節奏，不能每幀把整組
-             重新置中；縮放 II 才補償外接框中心，避免常駐動畫使整串漂移。 */
-          let shiftX = 0, shiftY = 0;
-          if (individualBreathe) {
-            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-            layout.units.forEach((_, index) => {
-              const ink = layout.inks[index], sc = scales[index], ax = layout.anchors[index];
-              x0 = Math.min(x0, ax + (ink.cx - ink.w / 2) * o.size * s * sc);
-              x1 = Math.max(x1, ax + (ink.cx + ink.w / 2) * o.size * s * sc);
-              y0 = Math.min(y0, (ink.cy - ink.h / 2) * o.size * s * sc);
-              y1 = Math.max(y1, (ink.cy + ink.h / 2) * o.size * s * sc);
-            });
-            if (Number.isFinite(x0)) {
-              shiftX = -(x0 + x1) / 2;
-              shiftY = -(y0 + y1) / 2;
-            }
-          }
-          layout.units.forEach((ch, index) => {
-            const q = qs[index], sc = scales[index];
+          units.forEach((ch, index) => {
+            const bubbleSpan = 1 + Math.max(0, units.length - 1) * 0.2;
+            const q = seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
+            const kind = o.mo?.in;
+            const ease = easeOutCubic(q);
+            const scale = individualBreathe
+              ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71) * ((o.mo?.amp || 50) / 100) * 0.18
+              : kind === 'bubble' ? easeOutBack(q) : 1;
+            const rise = 0;
             ctx.save();
             ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            ctx.translate(tdx + layout.anchors[index] + shiftX, tdy + shiftY);
-            ctx.scale(sc, sc);
+            ctx.translate(cursor + widths[index] / 2, tdy + rise);
+            ctx.scale(scale, scale);
             ctx.textAlign = 'center';
             ctx.fillText(ch, 0, 0);
             ctx.restore();
+            cursor += widths[index];
           });
         } else {
           ctx.fillText(o.text || '', tdx, tdy);
@@ -5039,12 +4832,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              不然愛心上面那片空白、星星底下那條也會被框進去。
              沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
           // 圖片框的內緣剛好貼齊圖片，不留下空隙也不蓋住像素。
-          const idleScalePad = o.sym && f && o.mo?.idle === 'symbol-breathe2'
-            ? (o.size || 40) * s * ((o.mo?.amp || 50) / 100) * 0.18 * (f?.idleBlend ?? 1)
-            : 0;
-          const ink = objectSelectionInk(
-            o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx + idleScalePad,
-          );
+          const ink = objectSelectionInk(o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx);
           ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
         }
         ctx.shadowColor = 'transparent';
@@ -5053,29 +4841,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.setLineDash([]);
       }
       ctx.restore();
-      if (genericWave && waveTarget && ctx !== waveTarget) {
-        const layer = objectWaveLayerRef.current!;
-        ctx = waveTarget;
-        const phase = f!.gridWave!;
-        const amp = Math.min(10 * s, o.h * s * 0.065)
-          * Math.max(0.15, (o.mo?.amp ?? 50) / 100) * (f?.idleBlend ?? 1);
-        const wb = aabbOf(o.w || 0, o.h || 0, o.rot || 0);
-        const wcx = (o.x + o.w / 2) * s;
-        const wavePad = amp + Math.max(4 * s, Math.max(o.w, o.h) * s * 0.08);
-        const left = Math.max(0, Math.floor(wcx - wb.bw * s / 2 - wavePad));
-        const right = Math.min(layer.width, Math.ceil(wcx + wb.bw * s / 2 + wavePad));
-        const span = Math.max(1, right - left);
-        const slices = Math.max(64, Math.min(220, Math.ceil(span / Math.max(0.9, 1.15 * s))));
-        const sliceW = span / slices;
-        for (let i = 0; i < slices; i++) {
-          const x = left + i * sliceW;
-          const sw = Math.min(sliceW + 1.6 * s, right - x + 0.8 * s);
-          const nx = (x - left + sliceW / 2) / span;
-          const dy = Math.sin((nx - phase) * Math.PI * 2) * amp;
-          ctx.drawImage(layer, x - 0.8 * s, 0, sw, layer.height,
-            x - 0.8 * s, dy, sw, layer.height);
-        }
-      }
     });
 
     /* 標了 below 的物件插在「底圖鋪好之後、所有圖案之前」——
@@ -5946,7 +5711,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       },
       obj: (o: any, i: number) => {
         const cfg = moOf(o);
-        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, symbolUnits(o.text || '').length) : 1;
+        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, Array.from(o.text || '').length) : 1;
         const bubbleSpan = 1 + Math.max(0, units - 1) * 0.2;
         const timed = units > 1 ? { ...cfg, dur: cfg.dur * bubbleSpan } : cfg;
         return composeMo(timed, t, (hashId(o.id) % 628) / 100 + i * 0.7);
@@ -7687,10 +7452,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   if (!offs2) return;
                   const id = Math.random().toString(36).slice(2, 9);
                   await ensureFont(DEFAULT_FONT);
-                  /* 等浏览器真正提交字体，再做唯一一次墨水扫描。
-                     ensureFont resolve 与 Safari 首次 canvas 绘字之间偶尔仍差一帧。 */
-                  if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
-                  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
                   clearSymbolInkCache();
                   /* 框照「真正畫出來的那一塊」量（見 symInk 的說明），
                      不是照前進寬度 —— 這樣選取框才會貼著符號本身。 */
@@ -7701,16 +7462,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                      那根「大小」滑桿的最大值 —— 不然一加進來就頂在滑桿外面。 */
                   const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
                     Math.round((offs2.cw * 0.7) / Math.max(0.05, ink.w))));
-                  /* 最终字号再扫描一次：WebKit 对 fallback 符号在不同字号可能使用
-                     不同 hinting／基线，不能只拿 100px 结果等比推算。 */
-                  const finalInk = measureSymbolInkAtSize(txt, DEFAULT_FONT, size);
-                  const w = Math.ceil(finalInk.w * size + 8);
-                  const h = Math.ceil(finalInk.h * size + 8);
+                  const box = symBox(txt, DEFAULT_FONT, size);
+                  const w = Math.round(box.w), h = Math.round(box.h);
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
-                    /* 固定保存这次实际扫描到的墨水范围；绘制与框都只认这一份。 */
-                    symInkW: finalInk.w, symInkH: finalInk.h,
-                    symInkCx: finalInk.cx, symInkCy: finalInk.cy, symInkSize: size,
                     fontFamily: DEFAULT_FONT, bold: false, italic: false,
                     letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
                     glow: 0, glowColor: '#ffffff',
@@ -8195,14 +7950,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   <p className="text-[10px] font-bold text-[#666] uppercase tracking-widest mb-2 mt-4">{t}</p>;
                 const isSymbolTarget = !!selObj?.sym;
                 const isSpecialLineTarget = !!selObj && selObj.type === 'shape' && SPECIAL_LINE_KINDS.has(selObj.kind);
-                const isGridTarget = !!selObj && selObj.type === 'shape' && GRID_SHAPE_KINDS.has(selObj.kind);
-                const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
+                const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
                 const chooseMotionTarget = (id: string) => {
                   setMoTarget(id);
                   if (id === 'shape' || objects.some(o => o.id === id)) {
-                    /* 第一帧只负责让目标切换与动画状态完成提交；从下一帧才显示框。
-                       否则框会短暂读取到上一目标的变换矩阵，随后才回到正确位置。 */
-                    motionTargetFlashRef.current = { id, started: performance.now() + 34, duration: 850 };
+                    motionTargetFlashRef.current = { id, started: performance.now(), duration: 850 };
                     setMotionTargetFlashSeq(n => n + 1);
                   }
                 };
@@ -8280,7 +8032,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {(isSymbolTarget ? SYMBOL_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : IDLE_KINDS).map(k => (
+                          {(isSymbolTarget ? SYMBOL_IDLE_KINDS : IDLE_KINDS).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>
