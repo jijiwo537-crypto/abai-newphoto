@@ -20,7 +20,7 @@ import {
      兩邊的圖形不可能長得不一樣。 */
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
-  SymbolPicker,
+  SymbolPicker, symbolFontReady,
   shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS,
 } from './GridLayoutTool';
 const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
@@ -253,6 +253,44 @@ export const shapePathBox = (
    三邊同一份數字，框就一定框得到它。 */
 /** 回傳值都以「字級 1」為單位：w/h＝墨水大小，cx/cy＝墨水中心相對於下筆點的位移 */
 const symInk = measureSymbolInk;
+
+type CreativeSymbolPlacement = {
+  size: number;
+  w: number;
+  h: number;
+};
+const creativeSymbolPlacementCache = new Map<string, CreativeSymbolPlacement>();
+
+/* 選擇頁在 pointerdown 階段只預算使用者正在按的那一顆；click 階段直接讀快取，
+   避免 iOS 在觸控結束後才掃描整串字形 alpha，造成「點了才過一下新增」的感覺。 */
+const prepareCreativeSymbolPlacement = (
+  text: string,
+  canvasWidth: number,
+  canvasHeight: number,
+): CreativeSymbolPlacement => {
+  const cw = Math.max(1, Math.round(canvasWidth * 100) / 100);
+  const ch = Math.max(1, Math.round(canvasHeight * 100) / 100);
+  const key = `${DEFAULT_FONT}|${cw}|${ch}|${text}`;
+  const cached = creativeSymbolPlacementCache.get(key);
+  if (cached) return cached;
+
+  const ink = symInk(text, DEFAULT_FONT);
+  const short = Math.min(cw, ch);
+  const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
+    Math.round((cw * 0.7) / Math.max(0.05, ink.w))));
+  const canonical = measureSymbolUnitLayout(text, DEFAULT_FONT, size);
+  const value = {
+    size,
+    w: Math.round(Math.max(6, canonical.ink.w * size + 8)),
+    h: Math.round(Math.max(6, canonical.ink.h * size + 8)),
+  };
+  creativeSymbolPlacementCache.set(key, value);
+  return value;
+};
+
+/* 若使用者極快進頁、恰好在字體完成前預算，最終字體就緒時丟掉那批 fallback
+   幾何；後續點擊仍會以最終字身重新準備，不會保留錯誤外框。 */
+symbolFontReady.then(() => creativeSymbolPlacementCache.clear());
 
 /** 依符號的內容與字級算出「剛好包住它」的框（含一點點留白，才好按） */
 const symBox = (str: string, fam: string, size: number) => {
@@ -7552,28 +7590,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  * 加進來的份量都差不多。
                  * 刻意不跳去編輯頁、也不進入打字狀態，可以連著加好幾顆。
                  */
-                const addSymbol = async (txt: string) => {
+                const prepareAddSymbol = (txt: string) => {
                   const offs2 = getLayoutOffsets();
-                  if (!offs2) return;
+                  if (!offs2) return null;
+                  return {
+                    offs: offs2,
+                    geometry: prepareCreativeSymbolPlacement(txt, offs2.cw, offs2.ch),
+                  };
+                };
+                const addSymbol = (txt: string) => {
+                  const prepared = prepareAddSymbol(txt);
+                  if (!prepared) return;
+                  const { offs: offs2, geometry } = prepared;
+                  const { size, w, h } = geometry;
                   const id = Math.random().toString(36).slice(2, 9);
-                  await ensureFont(DEFAULT_FONT);
-                  try {
-                    await document.fonts?.load(`400 64px "${DEFAULT_FONT}"`, txt);
-                    await document.fonts?.ready;
-                  } catch { /* 離線時沿用系統 fallback，但仍只量一次 */ }
-                  clearSymbolInkCache();
-                  /* 框照「真正畫出來的那一塊」量（見 symInk 的說明），
-                     不是照前進寬度 —— 這樣選取框才會貼著符號本身。 */
-                  const ink = symInk(txt, DEFAULT_FONT);
-                  const short = Math.min(offs2.cw, offs2.ch);
-                  /* 短的符號照寬度回推會算出很大的字級，所以再壓一次上限：
-                     跟一段新文字差不多大（短邊的一成二），而且不超過編輯頁
-                     那根「大小」滑桿的最大值 —— 不然一加進來就頂在滑桿外面。 */
-                  const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
-                    Math.round((offs2.cw * 0.7) / Math.max(0.05, ink.w))));
-                  const canonical = measureSymbolUnitLayout(txt, DEFAULT_FONT, size);
-                  const w = Math.round(Math.max(6, canonical.ink.w * size + 8));
-                  const h = Math.round(Math.max(6, canonical.ink.h * size + 8));
+                  /* 字體在模組載入時預熱；這裡不再等待 Promise、清空所有符號快取，
+                     或重掃清單。選中的物件會在同一次 click 立刻加入。 */
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
                     fontFamily: DEFAULT_FONT, bold: false, italic: false,
@@ -7627,7 +7659,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     {/* 按鈕與圖標尺寸跟經典拼圖的加號頁完全一致；
                         只差沒有「新增佈局」——創意拼圖的版面是排版＋遮罩決定的。 */}
                     {addSub === 'symbol' ? (
-                      <SymbolPicker onBack={() => setAddSub('root')} onPick={addSymbol} />
+                      <SymbolPicker
+                        onBack={() => setAddSub('root')}
+                        onPrepare={(symbol) => { prepareAddSymbol(symbol); }}
+                        onPick={addSymbol}
+                      />
                     ) : addSub === 'root' ? (
                     /* key 是必要的：兩個分頁的最外層都是 <div>，沒有 key 的話
                        React 會當成同一顆、只換 className —— 清單那邊的 <button>

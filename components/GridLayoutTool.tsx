@@ -35,9 +35,35 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas, g
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
 
+type PreparedSymbolPlacement = {
+  fontSize: number;
+  w: number;
+  h: number;
+};
+const classicSymbolPlacementCache = new Map<string, PreparedSymbolPlacement>();
+
+const prepareClassicSymbolPlacement = (text: string, pageWidth: number): PreparedSymbolPlacement => {
+  const pw = Math.max(1, Math.round(pageWidth * 100) / 100);
+  const key = `${DEFAULT_FONT}|${pw}|${text}`;
+  const cached = classicSymbolPlacementCache.get(key);
+  if (cached) return cached;
+
+  const M = 100;
+  const w100 = measureSymbolAdvance(text, DEFAULT_FONT, M);
+  const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
+  const ink = measureSymbolInkAtSize(text, DEFAULT_FONT, fontSize);
+  const value = {
+    fontSize,
+    w: Math.max(6, ink.w * fontSize + 8),
+    h: Math.max(6, ink.h * fontSize + 8),
+  };
+  classicSymbolPlacementCache.set(key, value);
+  return value;
+};
+
 /* 符號頁不能在打開後才開始下載字體。模組載入時就在背景把清單會用到的
    字形預熱；使用者點進頁面時，按鈕與新增物件便直接使用最終字身。 */
-const symbolFontReady: Promise<void> = typeof document === 'undefined'
+export const symbolFontReady: Promise<void> = typeof document === 'undefined'
   ? Promise.resolve()
   : ensureFont(DEFAULT_FONT)
       .then(async () => {
@@ -46,6 +72,7 @@ const symbolFontReady: Promise<void> = typeof document === 'undefined'
           await document.fonts?.ready;
         } catch { /* 離線時穩定使用系統 fallback */ }
         clearSymbolInkCache();
+        classicSymbolPlacementCache.clear();
       })
       .catch(() => {});
 interface CellRect {
@@ -1588,35 +1615,62 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
 export const SymbolPicker: React.FC<{
   onBack: () => void;
   onPick: (s: string) => void;
-}> = ({ onBack, onPick }) => (
-  <div className="pt-1">
-    <div className="flex items-center gap-2 mb-3">
-      <button
-        onClick={onBack}
-        aria-label="返回"
-        title="返回"
-        className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
-      >
-        <Icon name="arrow_back" className="text-[20px]" />
-      </button>
-      <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
-    </div>
-    {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行 ——
-        短的符號一排可以擺好幾顆，長的才自己佔一整排（而且照樣完整顯示）。 */}
-    <div className="flex flex-wrap gap-1.5 pb-4">
-      {SYMBOLS.map((s, i) => (
+  /** 在手指放下、click 觸發以前先把這一顆的精確外框算進快取。 */
+  onPrepare?: (s: string) => void;
+}> = ({ onBack, onPick, onPrepare }) => {
+  /* iOS 一次建立整份長符號清單時，React、文字塑形與版面計算會共同堵住
+     主執行緒。首屏只建立真正看得到的數量，其餘利用空閒幀分批補齊；
+     使用者點「新增符號」後不必等整份清單完成才看到頁面。 */
+  const FIRST_BATCH = 28;
+  const NEXT_BATCH = 24;
+  const [visibleCount, setVisibleCount] = useState(() => Math.min(FIRST_BATCH, SYMBOLS.length));
+
+  useEffect(() => {
+    if (visibleCount >= SYMBOLS.length || typeof window === 'undefined') return;
+    let idleId: number | undefined;
+    let timerId: number | undefined;
+    const append = () => setVisibleCount(count => Math.min(SYMBOLS.length, count + NEXT_BATCH));
+    const requestIdle = (window as any).requestIdleCallback as
+      | ((cb: () => void, opts?: { timeout: number }) => number)
+      | undefined;
+    if (requestIdle) idleId = requestIdle(append, { timeout: 80 });
+    else timerId = window.setTimeout(append, 0);
+    return () => {
+      if (idleId !== undefined) (window as any).cancelIdleCallback?.(idleId);
+      if (timerId !== undefined) window.clearTimeout(timerId);
+    };
+  }, [visibleCount]);
+
+  return (
+    <div className="pt-1">
+      <div className="flex items-center gap-2 mb-3">
         <button
-          key={i}
-          onClick={() => onPick(s)}
-          aria-label={s}
-          className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-all inline-flex items-center justify-center text-white/85"
+          onClick={onBack}
+          aria-label="返回"
+          title="返回"
+          className="shrink-0 w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"
         >
-          <SymbolGlyph text={s} />
+          <Icon name="arrow_back" className="text-[20px]" />
         </button>
-      ))}
+        <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
+      </div>
+      {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行；只渲染已就緒批次。 */}
+      <div className="flex flex-wrap gap-1.5 pb-4">
+        {SYMBOLS.slice(0, visibleCount).map((symbol, index) => (
+          <button
+            key={index}
+            onPointerDown={() => onPrepare?.(symbol)}
+            onClick={() => onPick(symbol)}
+            aria-label={symbol}
+            className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85"
+          >
+            <SymbolGlyph text={symbol} />
+          </button>
+        ))}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 /**
  * 空格提示必须属于它所在的布局图层。
@@ -7875,21 +7929,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 長的會直接戳出頁面 —— 用「大約佔頁寬七成」回推，挑哪一顆加進來的
    * 份量都差不多。刻意留在這一頁、也不進入打字狀態，可以連著加好幾顆。
    */
-  const handleAddSymbolLayer = async (txt: string) => {
+  const prepareAddSymbolLayer = (txt: string) => {
     const rect = getClosestPageRect();
     const pw = rect?.width ?? previewW;
     const ph = rect?.height ?? previewH;
-    // 頁面打開前已在背景預熱；這裡通常同步完成，首次新增也不會用 fallback 量框。
-    await symbolFontReady;
-    clearSymbolInkCache();
-    const M = 100;
-    const w100 = measureSymbolAdvance(txt, DEFAULT_FONT, M);
-    const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
-    /* 初始外盒直接使用顯示字級的實際墨水邊界，與 Canvas 本體及選中框
-       完全同源；不先用 100px 推算、下一幀再換成另一套尺寸。 */
-    const symbolInk = measureSymbolInkAtSize(txt, DEFAULT_FONT, fontSize);
-    const w = Math.max(6, symbolInk.w * fontSize + 8);
-    const h = Math.max(6, symbolInk.h * fontSize + 8);
+    const geometry = prepareClassicSymbolPlacement(txt, pw);
+    return { rect, pw, ph, ...geometry };
+  };
+
+  const handleAddSymbolLayer = (txt: string) => {
+    /* pointerdown 已先準備這顆的幾何；即使由鍵盤觸發，這裡也只計算該顆，
+       不等待字體 Promise、更不清掉整份快取。setState 能在同一個 click 提交。 */
+    const { rect, fontSize, w, h } = prepareAddSymbolLayer(txt);
     const id = `text-${Math.random().toString(36).substring(2, 9)}`;
     const item: FloatingImage = {
       id, src: '',
@@ -14455,7 +14506,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             {activeTab === 'add' && (
               <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300">
                 {addSub === 'symbol' ? (
-                  <SymbolPicker onBack={() => setAddSub('root')} onPick={handleAddSymbolLayer} />
+                  <SymbolPicker
+                        onBack={() => setAddSub('root')}
+                        onPrepare={(symbol) => { prepareAddSymbolLayer(symbol); }}
+                        onPick={handleAddSymbolLayer}
+                      />
                 ) : addSub === 'root' ? (
                   /* 六顆分兩排，各三顆。
                      第一排是「這一頁要放什麼進來」（佈局／圖片／影片），
