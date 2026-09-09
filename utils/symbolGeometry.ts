@@ -19,12 +19,17 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
     if (ctx) {
-      const font = `400 ${REF}px ${fontStack(family)}`;
+      const probeFont = `400 ${REF}px ${fontStack(family)}`;
+      ctx.font = probeFont;
+      const probeAdvance = Math.max(REF, ctx.measureText(text).width);
+      /* 超長符號若固定以 100px 掃描，在 iOS 會超過 Canvas 安全邊長，
+         getImageData 失敗後只能使用過短 fallback。把掃描寬度限制在 2200px，
+         再依實際 scanSize 換算，無論符號多長都能完整取得左右墨水邊界。 */
+      const scanSize = Math.max(12, Math.min(REF, REF * 2200 / probeAdvance));
+      const font = `400 ${scanSize}px ${fontStack(family)}`;
       ctx.font = font;
-      const advance = Math.max(REF, ctx.measureText(text).width);
-      /* 大量符號含組合附加記號，墨水可能遠超出 advance/em box。
-         留四個 em 才不會先被量測畫布裁掉，導致算出錯誤中心與過小外框。 */
-      const px = Math.ceil(REF * 4), py = Math.ceil(REF * 4);
+      const advance = Math.max(scanSize, ctx.measureText(text).width);
+      const px = Math.ceil(scanSize * 4), py = Math.ceil(scanSize * 4);
       canvas.width = Math.ceil(advance) + px * 2;
       canvas.height = py * 2;
       ctx.font = font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -41,9 +46,9 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
         }
       }
       if (x1 >= x0 && y1 >= y0) out = {
-        w: (x1 - x0 + 1) / REF, h: (y1 - y0 + 1) / REF,
-        cx: ((x0 + x1 + 1) / 2 - ax) / REF,
-        cy: ((y0 + y1 + 1) / 2 - ay) / REF,
+        w: (x1 - x0 + 1) / scanSize, h: (y1 - y0 + 1) / scanSize,
+        cx: ((x0 + x1 + 1) / 2 - ax) / scanSize,
+        cy: ((y0 + y1 + 1) / 2 - ay) / scanSize,
       };
       canvas.width = canvas.height = 0;
     }
@@ -68,10 +73,14 @@ export const measureSymbolInkAtSize = (text: string, family: string, fontSize: n
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
     if (ctx) {
-      const font = `400 ${size}px ${fontStack(family)}`;
+      const probeFont = `400 ${size}px ${fontStack(family)}`;
+      ctx.font = probeFont;
+      const probeAdvance = Math.max(size, ctx.measureText(text).width);
+      const scanSize = Math.max(12, Math.min(size, size * 2200 / probeAdvance));
+      const font = `400 ${scanSize}px ${fontStack(family)}`;
       ctx.font = font;
-      const advance = Math.max(size, ctx.measureText(text).width);
-      const px = Math.ceil(size * 4), py = Math.ceil(size * 4);
+      const advance = Math.max(scanSize, ctx.measureText(text).width);
+      const px = Math.ceil(scanSize * 4), py = Math.ceil(scanSize * 4);
       canvas.width = Math.ceil(advance) + px * 2;
       canvas.height = py * 2;
       ctx.font = font;
@@ -89,10 +98,10 @@ export const measureSymbolInkAtSize = (text: string, family: string, fontSize: n
         }
       }
       if (x1 >= x0 && y1 >= y0) out = {
-        w: (x1 - x0 + 1) / size,
-        h: (y1 - y0 + 1) / size,
-        cx: ((x0 + x1 + 1) / 2 - ax) / size,
-        cy: ((y0 + y1 + 1) / 2 - ay) / size,
+        w: (x1 - x0 + 1) / scanSize,
+        h: (y1 - y0 + 1) / scanSize,
+        cx: ((x0 + x1 + 1) / 2 - ax) / scanSize,
+        cy: ((y0 + y1 + 1) / 2 - ay) / scanSize,
       };
       canvas.width = canvas.height = 0;
     }
