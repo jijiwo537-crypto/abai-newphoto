@@ -4692,7 +4692,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     if (image.text === undefined) return;
     if (image.sym) {
       let alive = true;
-      const fam = image.fontFamily || DEFAULT_FONT;
+      const fam = (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT));
       /* 与创意拼图完全同源：新增、显示、命中和选中框都使用 symbolBox /
          measureSymbolInk。以前这里又用 SVG getBBox 覆盖一次尺寸，等于同一个
          符号同时拥有 Canvas 与 SVG 两套边界，放大后框必然逐渐对不上。 */
@@ -4733,7 +4733,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
        的就是「跳一次又跳回來」。
        所以：字身已經在手上才立刻量；還沒在的話這一輪先不動框，等真的載好
        再量一次，框就只會變一次。 */
-    const fam = image.fontFamily || DEFAULT_FONT;
+    const fam = (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT));
     const spec = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${(image.fontSize || 40)}px "${fam}"`;
     const fontsApi = typeof document !== 'undefined' ? document.fonts : undefined;
     // CSS 還沒到的時候 @font-face 還不存在，check 會拿到「可以」的假答案，
@@ -5548,7 +5548,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      Canvas 裁掉；物件中心與既有位置資料完全不變。 */
   const symbolVectorInk = image.sym ? (() => {
     const size = image.fontSize || 40;
-    const ink = measureSymbolInkAtSize(image.text || image.sym!, image.fontFamily || DEFAULT_FONT, size);
+    const ink = measureSymbolInkAtSize(image.text || image.sym!, (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)), size);
     return { w: ink.w * size * (image.scale || 1), h: ink.h * size * (image.scale || 1) };
   })() : null;
   const vectorInkW = Math.max(1, boxW, symbolVectorInk?.w || 0) + vectorPad.x * 2;
@@ -5599,7 +5599,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
          连续校验至多三帧只发生在新增／换字体之后，不参与任何缩放手势。 */
       if (++passes < 3) raf = requestAnimationFrame(centerGlyph);
     };
-    waitForFont(image.fontFamily || DEFAULT_FONT, image.bold ? 700 : 400, !!image.italic)
+    waitForFont((image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)), image.bold ? 700 : 400, !!image.italic)
       .then(() => { if (alive) raf = requestAnimationFrame(centerGlyph); });
     return () => { alive = false; if (raf) cancelAnimationFrame(raf); };
   }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
@@ -5750,7 +5750,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         return;
       }
 
-      const family = image.fontFamily || DEFAULT_FONT;
+      const family = (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT));
       const size = image.fontSize || 40;
       const spacing = image.letterSpacing || 0;
       /* Safari 會依每一個 font-size 重新 hint 字形、再各自取整 baseline。之前
@@ -5796,7 +5796,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
        layout effect 同步畫過；若每一幀又排一個 font promise + RAF，文字／符號
        會比圖形多畫近一倍，在 iPhone 上掉幀後便像是仍在抖動。 */
     if (image.text !== undefined && !gestureRendering) {
-      waitForFont(image.fontFamily || DEFAULT_FONT, image.bold ? 700 : 400, !!image.italic)
+      waitForFont((image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)), image.bold ? 700 : 400, !!image.italic)
         .then(() => { if (alive) raf = requestAnimationFrame(draw); });
     }
     return () => { alive = false; if (raf) cancelAnimationFrame(raf); };
@@ -5957,7 +5957,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
          描边和固定 2 个屏幕像素留白，不再拿储存用的 width/height 外盒加框。 */
       const symbolFrame = image.sym ? (() => {
         const ink = measureSymbolInkAtSize(
-          image.text || image.sym!, image.fontFamily || DEFAULT_FONT, image.fontSize || 40,
+          image.text || image.sym!, (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)), image.fontSize || 40,
         );
         const size = image.fontSize || 40;
         const sc = image.scale || 1;
@@ -6190,7 +6190,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           /* 固定字級、字距與字形度量，只讓 SVG 的連續矩陣負責縮放。SVG 會在
              當下顯示倍率直接重建向量輪廓，不像獨立 Canvas 先變點陣再被頁面
              zoom 一次；文字和複合 Unicode 符號因此共用同一個穩定中心。 */
-          const family = image.fontFamily || DEFAULT_FONT;
+          const family = (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT));
           const size = image.fontSize || 40;
           const lines = (image.text || '').split('\n');
           const lineH = size * 1.12;
