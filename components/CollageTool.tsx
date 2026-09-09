@@ -4995,19 +4995,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           let shiftX = 0, shiftY = 0;
           if (individualBreathe) {
             let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
             layout.units.forEach((_, index) => {
               const ink = layout.inks[index], sc = scales[index], ax = layout.anchors[index];
-              x0 = Math.min(x0, ax + (ink.cx - ink.w / 2) * o.size * s * sc);
-              x1 = Math.max(x1, ax + (ink.cx + ink.w / 2) * o.size * s * sc);
-              y0 = Math.min(y0, (ink.cy - ink.h / 2) * o.size * s * sc);
-              y1 = Math.max(y1, (ink.cy + ink.h / 2) * o.size * s * sc);
+              const left = (ink.cx - ink.w / 2) * o.size * s;
+              const right = (ink.cx + ink.w / 2) * o.size * s;
+              const top = (ink.cy - ink.h / 2) * o.size * s;
+              const bottom = (ink.cy + ink.h / 2) * o.size * s;
+              /* bx/by 是進場結束、所有倍率為 1 的基準框。 */
+              bx0 = Math.min(bx0, ax + left); bx1 = Math.max(bx1, ax + right);
+              by0 = Math.min(by0, top); by1 = Math.max(by1, bottom);
+              x0 = Math.min(x0, ax + left * sc); x1 = Math.max(x1, ax + right * sc);
+              y0 = Math.min(y0, top * sc); y1 = Math.max(y1, bottom * sc);
             });
-            if (Number.isFinite(x0)) {
-              /* 進場最後一幀的補償量是 0；縮放 II 接手後才隨 idleBlend
-                 平滑加入，避免整串在交接瞬間往上（或往旁邊）瞬移。 */
-              const handoff = Math.max(0, Math.min(1, f?.idleBlend ?? 0));
-              shiftX = -(x0 + x1) / 2 * handoff;
-              shiftY = -(y0 + y1) / 2 * handoff;
+            if (Number.isFinite(x0) && Number.isFinite(bx0)) {
+              /* 只抵銷縮放造成的中心差，不把原始墨水中心硬搬到零點。
+                 因此縮放 II 無論如何呼吸，整個符號都停在進場結束的位置。 */
+              shiftX = (bx0 + bx1 - x0 - x1) / 2;
+              shiftY = (by0 + by1 - y0 - y1) / 2;
             }
           }
           layout.units.forEach((ch, index) => {
