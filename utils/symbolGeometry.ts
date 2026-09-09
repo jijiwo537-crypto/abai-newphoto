@@ -94,10 +94,14 @@ const scanInk = (text: string, family: string, requestedSize: number): SymbolInk
         }
       }
       if (x1 >= x0 && y1 >= y0) {
-        left = Math.min(left, x0 - ax);
-        right = Math.max(right, x1 + 1 - ax);
-        top = Math.min(top, y0 - ay);
-        bottom = Math.max(bottom, y1 + 1 - ay);
+        /* getImageData 成功時，alpha 掃描就是真正顯示在畫面上的墨水。
+           不能再和 TextMetrics 聯集：WebKit/Chromium 的 actualBoundingBox*
+           對 middle baseline 仍可能以 alphabetic baseline 回報，會在上方製造
+           數十像素的假空白，正是長符號外框偏移、左／右留白不一致的來源。 */
+        left = x0 - ax;
+        right = x1 + 1 - ax;
+        top = y0 - ay;
+        bottom = y1 + 1 - ay;
       }
     } catch {
       /* 部分 iOS 裝置會拒絕讀大型 Canvas；上面的向量度量仍完整可用。 */
