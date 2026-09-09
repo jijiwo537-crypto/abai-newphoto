@@ -7872,8 +7872,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const ph = rect?.height ?? previewH;
     // 一定等真正字體到齊再量；用 fallback 量出的框會讓不同 Unicode 符號嚴重偏移。
     await ensureFont(DEFAULT_FONT);
-    // 等所有 iOS fallback 字形穩定後才量第一個外框，避免建立後才跳尺寸。
-    await (document as any).fonts?.ready;
     clearSymbolInkCache();
     const M = 100;
     const c = document.createElement('canvas').getContext('2d');
