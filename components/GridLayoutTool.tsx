@@ -1544,17 +1544,21 @@ const FontCard: React.FC<{
  * 也不會變成「…」。字型晚一點才載好時寬度會變，所以 fonts.ready 之後
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
+let sharedSymbolMeasureCtx: CanvasRenderingContext2D | null | undefined;
+const symbolMeasureCtx = () => {
+  if (sharedSymbolMeasureCtx !== undefined) return sharedSymbolMeasureCtx;
+  if (typeof document === 'undefined') return (sharedSymbolMeasureCtx = null);
+  sharedSymbolMeasureCtx = document.createElement('canvas').getContext('2d');
+  return sharedSymbolMeasureCtx;
+};
 export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
   /* 用正確字型的實際 advance 寬度決定字級，不能用 Unicode 單位數猜：
      有些裝飾符號只有幾個 grapheme，實際卻非常寬，舊算法會被按鈕裁掉。 */
   let measuredWidth = Math.max(base, Array.from(text).length * base * 0.55);
-  if (typeof document !== 'undefined') {
-    const cv = document.createElement('canvas');
-    const cg = cv.getContext('2d');
-    if (cg) {
-      cg.font = `400 ${base}px ${fontStack(DEFAULT_FONT)}`;
-      measuredWidth = Math.max(1, cg.measureText(text).width);
-    }
+  const cg = symbolMeasureCtx();
+  if (cg) {
+    cg.font = `400 ${base}px ${SYMBOL_FONT_STACK}`;
+    measuredWidth = Math.max(1, cg.measureText(text).width);
   }
   const available = typeof window === 'undefined'
     ? 280 : Math.max(72, Math.min(360, window.innerWidth - 56));
