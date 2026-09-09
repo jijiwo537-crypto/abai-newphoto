@@ -4911,45 +4911,42 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              这样位置完全沿用静止版，也不会因拆分 combining marks 留下抗锯齿跳帧。 */
           const sequenceAnimating = !objPinching && !symbolSizeTuningRef.current
             && o.mo?.in === 'bubble' && seqIn !== null && seqIn < 1 - 1e-6;
-          /* 静止、泡泡与缩放 II 永远使用同一套 grapheme 几何。
-             过去静止画整串、动画改画拆分单元，切换页面的那一帧必然会换 shaping，
-             肉眼看到的就是整串位移与小单元重排。现在只改变倍率/透明度。 */
-          const useAnimationUnits = true;
-          const drawUnits = unitLayout.units;
-          const drawCenters = unitLayout.centers;
-          const drawInks = unitLayout.unitInks;
-          drawUnits.forEach((unit, index) => {
-            const bubbleSpan = 1 + Math.max(0, drawUnits.length - 1) * 0.2;
+          /* 普通显示、拖移和双指缩放只画完整字符串一次。泡泡／缩放 II
+             才启用切片；切片不是重新排字，而是重复绘制同一份完整 native
+             shaping 后按原始字素区间裁切，因此拼回 1 倍时逐像素相同。 */
+          const useSlices = sequenceAnimating || individualBreathe;
+          if (!useSlices) {
+            if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
+            else ctx.fillText(o.text || '', tdx, tdy);
+            return;
+          }
+          const count = unitLayout.unitLefts.length;
+          const fontPx = (o.size || 40) * s;
+          for (let index = 0; index < count; index++) {
+            const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
             const q = seqIn === null ? 1
               : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
             const ease = easeOutCubic(q);
-            /* 縮放 II 由共用純函式計算：每顆完整字素有獨立相位與速度，
-               但交棒第一幀全部從 1 開始，不會整串跳位。 */
             const scale = individualBreathe
               ? symbolBreatheScale(index, now, o.mo?.amp || 50, o.mo?.speed || 1)
-              : o.mo?.in === 'bubble' ? easeOutBack(q) : 1;
+              : easeOutBack(q);
+            const left = unitLayout.unitLefts[index] * symbolUnitScale * s;
+            const right = unitLayout.unitRights[index] * symbolUnitScale * s;
+            const pivot = (left + right) / 2;
             ctx.save();
             ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            /* 排版中心可能包含前後空白；若直接以它縮放，可見圖案會橫向滑向
-               隔壁，看起來像多顆黏成同一單位。改以該 unit 真正的 alpha 墨水
-               中心作支點，再把文字反向放回原座標：scale=1 的畫面逐像素不變，
-               動畫時每個可見小單位只在自己的位置上縮放。 */
-            const unitInk = drawInks[index];
-            const baseOffsetX = useAnimationUnits
-              ? (unitLayout.drawOffsetsX[index] || 0)
-              : 0;
-            const pivotX = unitInk.cx * (o.size || 40) * s;
-            const pivotY = unitInk.cy * (o.size || 40) * s;
-            ctx.translate(
-              tdx + (drawCenters[index] + baseOffsetX) * symbolUnitScale * s + pivotX,
-              tdy + (useAnimationUnits ? (unitLayout.drawOffsetsY[index] || 0) * symbolUnitScale * s : 0) + pivotY,
-            );
+            ctx.translate(tdx + pivot, tdy);
             ctx.scale(scale, scale);
+            /* clip 与完整文字处于同一变换空间。边界不重叠，避免半透明片段
+               接缝变亮；字素边界由整串 prefix advance 决定，不切 combining mark。 */
+            ctx.beginPath();
+            ctx.rect(left - pivot, -fontPx * 2.2, Math.max(0.01, right - left), fontPx * 4.4);
+            ctx.clip();
             ctx.textAlign = 'center';
-            if (stroke) ctx.strokeText(unit, -pivotX, -pivotY);
-            else ctx.fillText(unit, -pivotX, -pivotY);
+            if (stroke) ctx.strokeText(o.text || '', -pivot, 0);
+            else ctx.fillText(o.text || '', -pivot, 0);
             ctx.restore();
-          });
+          }
         };
         // 文字的光是當場畫的，乘上這一格的亮度就會跟著閃
         const tb = animRef.current?.glowObj ? animRef.current.glowObj(o) : 1;
