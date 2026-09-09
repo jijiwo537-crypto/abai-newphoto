@@ -257,70 +257,47 @@ export const measureSymbolUnitLayout = (
   const hit = unitLayoutCache.get(key);
   if (hit) return hit;
 
-  /* 先完全照修改前的 grapheme 逻辑排静止版。动画拆成多少小单元，
-     都不能反过来改变这一组中心、总宽度或选中框。 */
-  const staticUnits = splitSymbolClusters(text);
+  /* 静止画面直接使用整串原生 shaping：字型替补、组合附加记号、
+     标点大小与 kerning 都必须和用户在 iPhone 上输入时完全相同。 */
+  const clusters = splitSymbolClusters(text);
+  const fullInk = measureSymbolInkAtSize(text, family, size);
   let advance = measureSymbolAdvance(text, family, size);
-  let staticCenters = staticUnits.map((_unit, i) =>
-    ((i + .5) / Math.max(1, staticUnits.length) - .5) * advance);
-  let staticAdvances = staticUnits.map(() => advance / Math.max(1, staticUnits.length));
+  let clusterCenters = clusters.map((_cluster, i) =>
+    ((i + .5) / Math.max(1, clusters.length) - .5) * advance);
   try {
     const ctx = document.createElement('canvas').getContext('2d');
     if (ctx) {
       ctx.font = `400 ${size}px ${fontStack(family)}`;
-      staticAdvances = staticUnits.map(unit => Math.max(.01, ctx.measureText(unit).width));
-      advance = Math.max(.1, staticAdvances.reduce((sum, value) => sum + value, 0));
-      let cursor = -advance / 2;
-      staticCenters = staticAdvances.map(value => {
-        const center = cursor + value / 2;
-        cursor += value;
-        return center;
+      advance = Math.max(.1, ctx.measureText(text).width);
+      let prefix = '';
+      clusterCenters = clusters.map(cluster => {
+        const before = ctx.measureText(prefix).width;
+        prefix += cluster;
+        const after = ctx.measureText(prefix).width;
+        return -advance / 2 + (before + after) / 2;
       });
     }
   } catch { /* 均匀中心仍可用 */ }
 
-  const staticUnitInks = staticUnits.map(unit => measureSymbolInkAtSize(unit, family, size));
-  const minVisibleGap = Math.max(.35, size * .006);
-  for (let i = 1; i < staticCenters.length; i++) {
-    const prev = staticUnitInks[i - 1], cur = staticUnitInks[i];
-    const previousRight = staticCenters[i - 1] + prev.cx * size + prev.w * size / 2;
-    const currentLeft = staticCenters[i] + cur.cx * size - cur.w * size / 2;
-    if (currentLeft < previousRight + minVisibleGap) {
-      staticCenters[i] += previousRight + minVisibleGap - currentLeft;
-    }
-  }
+  /* 静止 renderer 只有一个完整单元，绝不逐字重排。 */
+  const staticUnits = [text];
+  const staticCenters = [0];
+  const staticUnitInks = [fullInk];
+  const ink = fullInk;
 
-  const clusterBounds = (xs: number[]) => {
-    let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
-    staticUnitInks.forEach((ink, i) => {
-      const cx = xs[i] + ink.cx * size, cy = ink.cy * size;
-      left = Math.min(left, cx - ink.w * size / 2);
-      right = Math.max(right, cx + ink.w * size / 2);
-      top = Math.min(top, cy - ink.h * size / 2);
-      bottom = Math.max(bottom, cy + ink.h * size / 2);
+  /* 动画节拍按可见 code point 分开，但位置继承所属 grapheme 在整串原生
+     shaping 中的锚点。因此 * 与 ੈ 能先后出现，却不会改变 ✩、‧、₊ 的位置。 */
+  const units: string[] = [];
+  const centers: number[] = [];
+  const unitClusters: number[] = [];
+  clusters.forEach((cluster, clusterIndex) => {
+    splitSymbolUnits(cluster).forEach(part => {
+      units.push(part);
+      centers.push(clusterCenters[clusterIndex]);
+      unitClusters.push(clusterIndex);
     });
-    if (!Number.isFinite(left)) return { left: 0, right: 1, top: 0, bottom: 1 };
-    return { left, right, top, bottom };
-  };
-  const first = clusterBounds(staticCenters);
-  const shiftX = -(first.left + first.right) / 2;
-  staticCenters = staticCenters.map(x => x + shiftX);
-  const final = clusterBounds(staticCenters);
-  const ink: SymbolInk = {
-    w: Math.max(.01, final.right - final.left) / size,
-    h: Math.max(.01, final.bottom - final.top) / size,
-    cx: (final.left + final.right) / 2 / size,
-    cy: (final.top + final.bottom) / 2 / size,
-  };
-
-  /* 动画必须沿用静止版的完整 grapheme。组合附加记号只有跟主字一起 shaping
-     才有正确锚点；把它单独 fillText 会由系统补上虚拟基字符，在 iOS 上尤其会
-     产生横向偏移、点圈散开或小单元错位。真正彼此独立的符号本来就是不同
-     grapheme，仍会逐颗取得泡泡／缩放 II 的独立节奏。 */
-  const units = staticUnits.slice();
-  const centers = staticCenters.slice();
-  const unitClusters = staticUnits.map((_cluster, index) => index);
-  const unitInks = staticUnitInks.slice();
+  });
+  const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
 
   const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
   const drawOffsetsX = units.map(() => 0);
