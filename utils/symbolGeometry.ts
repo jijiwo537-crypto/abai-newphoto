@@ -3,9 +3,11 @@ import { fontStack } from './fonts';
 export type SymbolInk = { w: number; h: number; cx: number; cy: number };
 export type SymbolUnitLayout = {
   units: string[];
-  /** 每個字素中心相對於整串 advance 中心的位置；單位是 canvas px。 */
+  /** 每個字素的固定繪製中心；單位是 canvas px。 */
   centers: number[];
   advance: number;
+  /** 依照上述 units/centers 實際畫出的聯集墨水範圍；以字級 1 為單位。 */
+  ink: SymbolInk;
 };
 
 const REF = 100;
@@ -92,10 +94,14 @@ const scanInk = (text: string, family: string, requestedSize: number): SymbolInk
         }
       }
       if (x1 >= x0 && y1 >= y0) {
-        left = Math.min(left, x0 - ax);
-        right = Math.max(right, x1 + 1 - ax);
-        top = Math.min(top, y0 - ay);
-        bottom = Math.max(bottom, y1 + 1 - ay);
+        /* getImageData 成功時，alpha 掃描就是真正顯示在畫面上的墨水。
+           不能再和 TextMetrics 聯集：WebKit/Chromium 的 actualBoundingBox*
+           對 middle baseline 仍可能以 alphabetic baseline 回報，會在上方製造
+           數十像素的假空白，正是長符號外框偏移、左／右留白不一致的來源。 */
+        left = x0 - ax;
+        right = x1 + 1 - ax;
+        top = y0 - ay;
+        bottom = y1 + 1 - ay;
       }
     } catch {
       /* 部分 iOS 裝置會拒絕讀大型 Canvas；上面的向量度量仍完整可用。 */
@@ -154,18 +160,13 @@ export const measureSymbolAdvance = (text: string, family: string, fontSize: num
 };
 
 /**
- * 泡泡與縮放 II 的最小單位必須是「字素」，不能是 UTF-16 code unit/code point。
- * 否則代理對、附加記號與變體選擇符會被拆開，畫面上就會重疊或四散。
- * 含方向控制字元或需要上下文塑形的文字整串視為一個 run，優先保留正確排版。
+ * 泡泡與縮放 II 的最小單位必須是「完整字素」，不能是 UTF-16 code unit/code point。
+ * Intl.Segmenter 會把代理對、附加記號與變體選擇符留在同一顆字素內，因此既不會
+ * 把符號拆壞，也不會因整串含一個附加記號就讓整顆符號完全失去逐顆動畫。
  */
 export const splitSymbolUnits = (text: string): string[] => {
   if (!text) return [];
-  /* Canvas 不提供已塑形字串的逐字 glyph 位置。含組合記號、雙向控制或需上下文
-     塑形的文字若硬拆，任何 prefix-width 算法都可能破壞原本排版。這類符號保留
-     為單一穩定 run；泡泡／縮放 II 仍會對整個 run 播放，絕不會停住或錯位。 */
-  if (/[\p{Mark}\u0590-\u0fff\u1780-\u1cff\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(text)) {
-    return [text];
-  }
+
   let raw: string[] = [];
   try {
     const Segmenter = (Intl as any).Segmenter;
@@ -174,20 +175,15 @@ export const splitSymbolUnits = (text: string): string[] => {
         (part: any) => part.segment as string);
     }
   } catch { /* Safari 舊版走下面的保守分組 */ }
-  if (!raw.length) {
-    for (const ch of Array.from(text)) {
-      if (raw.length && (/\p{Mark}/u.test(ch) || /[\ufe00-\ufe0f\u200d]/u.test(ch))) raw[raw.length - 1] += ch;
-      else raw.push(ch);
-    }
-  }
+  if (!raw.length) raw = Array.from(text);
 
-  /* 方向／格式控制字元沒有自己的墨水，不能成為一個動畫單位。
-     併回相鄰字素後仍保留原字串順序，但不會產生一個看不見的停頓。 */
-  const controls = /^[\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/u;
+  /* 空白與格式控制沒有自己的墨水，也不能佔一個動畫節拍；併入相鄰單位，
+     prefix advance 仍完整保留原字串的間距。 */
+  const invisible = /^[\s\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/u;
   const out: string[] = [];
   let leading = '';
   for (const part of raw) {
-    if (controls.test(part)) {
+    if (invisible.test(part)) {
       if (out.length) out[out.length - 1] += part;
       else leading += part;
     } else {
@@ -198,23 +194,25 @@ export const splitSymbolUnits = (text: string): string[] => {
   if (leading && out.length) out[out.length - 1] += leading;
   return out.length ? out : [text];
 };
+
 /**
- * 每個字素的動畫錨點來自「整串文字逐步增加字素」的 prefix advance，
- * 而不是把每個字寬相加。這會保留 kerning 與 fallback run 的原始位置；
- * 靜止、進場與常駐因此都共用同一個整串中心，不會進動畫頁就向左偏移。
+ * 唯一的符號版面來源。靜止、外框、泡泡與縮放 II 全部讀這一份資料：
+ * 先用整串 prefix advance 決定每個安全字素的位置，再掃描每個單位真正的 alpha
+ * 墨水，最後把聯集中心校到 (0,0)。之後任何頁面都不再重新排一次符號。
  */
 export const measureSymbolUnitLayout = (
   text: string,
   family: string,
   fontSize: number,
 ): SymbolUnitLayout => {
-  const size = Math.max(1, fontSize);
+  const size = Math.max(8, Math.round(fontSize * 1000) / 1000);
   const key = `${family}|${text}|${size}`;
   const hit = unitLayoutCache.get(key);
   if (hit) return hit;
   const units = splitSymbolUnits(text);
   let advance = measureSymbolAdvance(text, family, size);
   let centers = units.map((_u, i) => ((i + .5) / Math.max(1, units.length) - .5) * advance);
+
   try {
     const ctx = document.createElement('canvas').getContext('2d');
     if (ctx) {
@@ -227,27 +225,36 @@ export const measureSymbolUnitLayout = (
         edges.push(ctx.measureText(prefix).width);
       }
       centers = units.map((_u, i) => (edges[i] + edges[i + 1]) / 2 - advance / 2);
-
-      /* 單獨畫字素與整串 shaping 的左右 bearing 可能不同。用每個字素的
-         actualBoundingBox 算出動畫整組可見中心，再一次性校回靜止整串的墨水中心。
-         這個 correction 是固定值，不會逐幀重算，因此動畫頁不會向左跳。 */
-      let visibleLeft = Infinity, visibleRight = -Infinity;
-      units.forEach((unit, i) => {
-        const m = ctx.measureText(unit);
-        const half = Math.max(.05, m.width / 2);
-        const l = centers[i] - Math.max(half, Number(m.actualBoundingBoxLeft) || 0);
-        const r = centers[i] + Math.max(half, Number(m.actualBoundingBoxRight) || 0);
-        visibleLeft = Math.min(visibleLeft, l);
-        visibleRight = Math.max(visibleRight, r);
-      });
-      if (Number.isFinite(visibleLeft) && Number.isFinite(visibleRight)) {
-        const targetCenter = measureSymbolInkAtSize(text, family, size).cx * size;
-        const correction = targetCenter - (visibleLeft + visibleRight) / 2;
-        centers = centers.map(x => x + correction);
-      }
     }
-  } catch { /* 均勻錨點仍保持整組中心不動 */ }
-  const out = { units, centers, advance };
+  } catch { /* 均勻錨點仍可用 */ }
+
+  const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
+  const bounds = (xs: number[]) => {
+    let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+    unitInks.forEach((ink, i) => {
+      const cx = xs[i] + ink.cx * size;
+      const cy = ink.cy * size;
+      left = Math.min(left, cx - ink.w * size / 2);
+      right = Math.max(right, cx + ink.w * size / 2);
+      top = Math.min(top, cy - ink.h * size / 2);
+      bottom = Math.max(bottom, cy + ink.h * size / 2);
+    });
+    if (!Number.isFinite(left)) return { left: 0, right: 1, top: 0, bottom: 1 };
+    return { left, right, top, bottom };
+  };
+
+  /* 固定校正一次，此後所有幀只改單位 scale，不再重算中心。 */
+  const first = bounds(centers);
+  const shiftX = -(first.left + first.right) / 2;
+  centers = centers.map(x => x + shiftX);
+  const final = bounds(centers);
+  const ink: SymbolInk = {
+    w: Math.max(.01, final.right - final.left) / size,
+    h: Math.max(.01, final.bottom - final.top) / size,
+    cx: (final.left + final.right) / 2 / size,
+    cy: (final.top + final.bottom) / 2 / size,
+  };
+  const out = { units, centers, advance, ink };
   unitLayoutCache.set(key, out);
   return out;
 };
