@@ -5486,8 +5486,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   /* WebKit 會把 translate(-50%) 的「半個奇數實體像素」交替往兩側取整，
      即使資料中心完全不動，畫面仍會來回約 0.16px。內層寬高固定吸到偶數個
      裝置像素後，一半仍落在同一條像素格線上，中心不再隨尺寸變化漂移。 */
-  const vectorInkW = Math.max(1, boxW + vectorPad.x * 2);
-  const vectorInkH = Math.max(1, boxH + vectorPad.y * 2);
+  /* 舊草稿裡的長符號可能仍保存著早期算得過小的 width/height。
+     可見 Canvas 與選中框都以目前真正墨水範圍為下限，右半邊不會先被內層
+     Canvas 裁掉；物件中心與既有位置資料完全不變。 */
+  const symbolVectorInk = image.sym ? (() => {
+    const size = image.fontSize || 40;
+    const ink = measureSymbolInkAtSize(image.text || image.sym!, image.fontFamily || DEFAULT_FONT, size);
+    return { w: ink.w * size * (image.scale || 1), h: ink.h * size * (image.scale || 1) };
+  })() : null;
+  const vectorInkW = Math.max(1, boxW, symbolVectorInk?.w || 0) + vectorPad.x * 2;
+  const vectorInkH = Math.max(1, boxH, symbolVectorInk?.h || 0) + vectorPad.y * 2;
   const vectorRotRad = (image.rotation * Math.PI) / 180;
   /* 畫布本身不旋轉、內容在裡面旋轉，因此要配置旋轉後的外接矩形；否則窄長
      文字或圖形轉到 45° 時四個角會被 Canvas 邊界切掉，看起來像偶發消失。 */
