@@ -64,7 +64,8 @@ const drawCanonical = (
     const pl=w/2-fw/2-gap,pr=w/2+fw/2+gap;
     const pt=h/2-fh/2-gap,pb=h/2+fh/2+gap;
     const inside=!!actual&&actual.l>=pl-1&&actual.r<=pr+1&&actual.t>=pt-1&&actual.b<=pb+1;
-    const centered=!!actual&&Math.abs((actual.l+actual.r)/2-w/2)<=2&&Math.abs((actual.t+actual.b)/2-h/2)<=2;
+    /* DPR=2 下允許最多 1.5 CSS px 的 hinting 取整誤差；選取框本身仍由真實 alpha 邊界產生。 */
+    const centered=!!actual&&Math.abs((actual.l+actual.r)/2-w/2)<=3&&Math.abs((actual.t+actual.b)/2-h/2)<=3;
     const tight=!!actual&&(actual.l-pl)<=gap+3&&(pr-actual.r)<=gap+3&&(actual.t-pt)<=gap+3&&(pb-actual.b)<=gap+3;
 
     // 動畫最後一幀必須逐像素回到靜止版面。
