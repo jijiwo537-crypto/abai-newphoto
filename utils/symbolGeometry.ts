@@ -6,6 +6,8 @@ export type SymbolUnitLayout = {
   units: string[];
   centers: number[];
   unitInks: SymbolInk[];
+  /** 每个动画单元继承自哪一个稳定 grapheme，只用于辨认原生叠合关系。 */
+  unitClusters: number[];
   /** 靜止顯示與外框沿用瀏覽器原生字素排版，不受動畫拆分影響。 */
   staticUnits: string[];
   staticCenters: number[];
@@ -315,11 +317,13 @@ export const measureSymbolUnitLayout = (
      因此五个可见小单元能有五种节奏，但符号本身不会被重新排版。 */
   const units: string[] = [];
   const centers: number[] = [];
+  const unitClusters: number[] = [];
   staticUnits.forEach((cluster, clusterIndex) => {
     const visualParts = splitSymbolUnits(cluster);
     visualParts.forEach(part => {
       units.push(part);
       centers.push(staticCenters[clusterIndex]);
+      unitClusters.push(clusterIndex);
     });
   });
   const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
@@ -332,7 +336,7 @@ export const measureSymbolUnitLayout = (
   }
 
   const out = {
-    units, centers, unitInks,
+    units, centers, unitInks, unitClusters,
     staticUnits, staticCenters, staticUnitInks,
     drawOffsetsX, advance, ink,
   };
