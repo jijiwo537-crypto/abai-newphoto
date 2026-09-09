@@ -4909,7 +4909,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           /* 进场最后一帧所有倍率已回到 1 时，立即交回原生 grapheme 渲染。
              这样位置完全沿用静止版，也不会因拆分 combining marks 留下抗锯齿跳帧。 */
           const sequenceAnimating = !objPinching && !symbolSizeTuningRef.current
-            && seqIn !== null && seqIn < 1 - 1e-6;
+            && o.mo?.in === 'bubble' && seqIn !== null && seqIn < 1 - 1e-6;
           const useAnimationUnits = sequenceAnimating || individualBreathe;
           const drawUnits = useAnimationUnits ? unitLayout.units : unitLayout.staticUnits;
           const drawCenters = useAnimationUnits ? unitLayout.centers : unitLayout.staticCenters;
@@ -4939,7 +4939,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const pivotY = unitInk.cy * (o.size || 40) * s;
             ctx.translate(
               tdx + drawCenters[index] * s + baseOffsetX * s + pivotX,
-              tdy + pivotY,
+              tdy + (useAnimationUnits ? (unitLayout.drawOffsetsY[index] || 0) * s : 0) + pivotY,
             );
             ctx.scale(scale, scale);
             ctx.textAlign = 'center';
