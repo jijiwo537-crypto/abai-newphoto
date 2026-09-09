@@ -257,53 +257,105 @@ export const measureSymbolUnitLayout = (
   const hit = unitLayoutCache.get(key);
   if (hit) return hit;
 
-  /* 静止画面直接使用整串原生 shaping：字型替补、组合附加记号、
-     标点大小与 kerning 都必须和用户在 iPhone 上输入时完全相同。 */
-  const clusters = splitSymbolClusters(text);
-  const fullInk = measureSymbolInkAtSize(text, family, size);
+  /* 先完全照修改前的 grapheme 逻辑排静止版。动画拆成多少小单元，
+     都不能反过来改变这一组中心、总宽度或选中框。 */
+  let staticUnits = splitSymbolClusters(text);
+  const originalClusters = staticUnits.slice();
+  const needsNativeTiming = text.includes("\u0a48");
   let advance = measureSymbolAdvance(text, family, size);
-  let clusterCenters = clusters.map((_cluster, i) =>
-    ((i + .5) / Math.max(1, clusters.length) - .5) * advance);
+  let staticCenters = staticUnits.map((_unit, i) =>
+    ((i + .5) / Math.max(1, staticUnits.length) - .5) * advance);
+  let staticAdvances = staticUnits.map(() => advance / Math.max(1, staticUnits.length));
   try {
     const ctx = document.createElement('canvas').getContext('2d');
     if (ctx) {
       ctx.font = `400 ${size}px ${fontStack(family)}`;
-      advance = Math.max(.1, ctx.measureText(text).width);
-      let prefix = '';
-      clusterCenters = clusters.map(cluster => {
-        const before = ctx.measureText(prefix).width;
-        prefix += cluster;
-        const after = ctx.measureText(prefix).width;
-        return -advance / 2 + (before + after) / 2;
+      staticAdvances = staticUnits.map(unit => Math.max(.01, ctx.measureText(unit).width));
+      advance = Math.max(.1, staticAdvances.reduce((sum, value) => sum + value, 0));
+      let cursor = -advance / 2;
+      staticCenters = staticAdvances.map(value => {
+        const center = cursor + value / 2;
+        cursor += value;
+        return center;
       });
     }
   } catch { /* 均匀中心仍可用 */ }
 
-  const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
-  /* 一般符号静止时整串原生 shaping；第七颗保留既有的单点微调，
-     避免这次修复动到主人已经确认过的位置。 */
-  const keepSeventhParts = text === seventhSymbol;
-  const staticUnits = keepSeventhParts ? clusters.slice() : [text];
-  const staticCenters = keepSeventhParts ? clusterCenters.slice() : [0];
-  const staticUnitInks = keepSeventhParts
-    ? clusters.map(unit => measureSymbolInkAtSize(unit, family, size))
-    : [fullInk];
-  const ink = fullInk;
+  let staticUnitInks = staticUnits.map(unit => measureSymbolInkAtSize(unit, family, size));
+  const minVisibleGap = Math.max(.35, size * .006);
+  for (let i = 1; i < staticCenters.length; i++) {
+    const prev = staticUnitInks[i - 1], cur = staticUnitInks[i];
+    const previousRight = staticCenters[i - 1] + prev.cx * size + prev.w * size / 2;
+    const currentLeft = staticCenters[i] + cur.cx * size - cur.w * size / 2;
+    if (currentLeft < previousRight + minVisibleGap) {
+      staticCenters[i] += previousRight + minVisibleGap - currentLeft;
+    }
+  }
 
-  /* 动画节拍按可见 code point 分开，但位置继承所属 grapheme 在整串原生
-     shaping 中的锚点。因此 * 与 ੈ 能先后出现，却不会改变 ✩、‧、₊ 的位置。 */
+  const clusterBounds = (xs: number[]) => {
+    let left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+    staticUnitInks.forEach((ink, i) => {
+      const cx = xs[i] + ink.cx * size, cy = ink.cy * size;
+      left = Math.min(left, cx - ink.w * size / 2);
+      right = Math.max(right, cx + ink.w * size / 2);
+      top = Math.min(top, cy - ink.h * size / 2);
+      bottom = Math.max(bottom, cy + ink.h * size / 2);
+    });
+    if (!Number.isFinite(left)) return { left: 0, right: 1, top: 0, bottom: 1 };
+    return { left, right, top, bottom };
+  };
+  const first = clusterBounds(staticCenters);
+  const shiftX = -(first.left + first.right) / 2;
+  staticCenters = staticCenters.map(x => x + shiftX);
+  const final = clusterBounds(staticCenters);
+  let ink: SymbolInk = {
+    w: Math.max(.01, final.right - final.left) / size,
+    h: Math.max(.01, final.bottom - final.top) / size,
+    cx: (final.left + final.right) / 2 / size,
+    cy: (final.top + final.bottom) / 2 / size,
+  };
+
+  /* 含 ੈ 的符号需要把组合记号拆成独立节拍，但静止外观必须直接使用
+     整串原生 shaping，才能保持 iPhone 上 ‧ 与 ₊ 的大小、间距和位置。 */
+  if (needsNativeTiming) {
+    staticUnits = [text];
+    staticCenters = [0];
+    staticUnitInks = [measureSymbolInkAtSize(text, family, size)];
+    ink = staticUnitInks[0];
+  }
+
+  /* 一般符号继续沿用已验证的完整 grapheme 动画；只有含 ੈ 的结构
+     才分开可见 code point 的时间，同时共用所属 grapheme 的原生锚点。 */
   const units: string[] = [];
   const centers: number[] = [];
   const unitClusters: number[] = [];
-  clusters.forEach((cluster, clusterIndex) => {
-    splitSymbolUnits(cluster).forEach(part => {
+  originalClusters.forEach((cluster, clusterIndex) => {
+    const parts = needsNativeTiming ? splitSymbolUnits(cluster) : [cluster];
+    parts.forEach(part => {
       units.push(part);
-      centers.push(clusterCenters[clusterIndex]);
+      centers.push(needsNativeTiming
+        ? (() => {
+            try {
+              const ctx = document.createElement('canvas').getContext('2d');
+              if (ctx) {
+                ctx.font = `400 ${size}px ${fontStack(family)}`;
+                const beforeText = originalClusters.slice(0, clusterIndex).join('');
+                const throughText = originalClusters.slice(0, clusterIndex + 1).join('');
+                const before = ctx.measureText(beforeText).width;
+                const after = ctx.measureText(throughText).width;
+                const total = ctx.measureText(text).width;
+                return -total / 2 + (before + after) / 2;
+              }
+            } catch {}
+            return ((clusterIndex + .5) / originalClusters.length - .5) * advance;
+          })()
+        : staticCenters[clusterIndex]);
       unitClusters.push(clusterIndex);
     });
   });
   const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
 
+  const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
   const drawOffsetsX = units.map(() => 0);
   if (text === seventhSymbol) {
     const dotIndex = units.findIndex(unit => unit.includes("\u08ea"));
