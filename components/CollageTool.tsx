@@ -399,7 +399,7 @@ const symbolUnits = (text: string): string[] => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; idleBlend?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -765,16 +765,19 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
   }
   const f = inFrame(cfg.in, Math.max(0, Math.min(1, p)));
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
-  if (p < 1) return { ...f, fx, burst: f.burst || 0 };
-  const after = t - (cfg.delay + cfg.dur);
-  /* 進場結束後立即銜接常駐；只保留兩格左右的極短混合來避免位移型動畫跳點。
-     舊版 0.35 秒的近靜止混合會被看成明顯停頓。 */
-  const blend = Math.max(0, Math.min(1, after / 0.07));
+  /* 进场期间严禁常驻动画同时参与。符号的缩放 II 曾经绕过 composeMo，
+     在泡泡尚未结束时就套上另一组倍率，正是首帧错位与交接断层的来源。 */
+  if (p < 1) return { ...f, fx, burst: f.burst || 0, idleBlend: 0 };
+  const after = Math.max(0, t - (cfg.delay + cfg.dur));
+  /* 从同一个静止帧开始，并让位移与速度同时平滑增加。
+     高斯包络在 t=0 的值和斜率都为 0，不会瞬移；约 0.28 秒自然进入完整常驻，
+     又不会产生旧版 0.35 秒线性淡入那种近乎静止的停顿。 */
+  const blend = 1 - Math.exp(-Math.pow(after / 0.12, 2));
   const g = idleFrame(cfg.idle, after, cfg.amp, cfg.speed, phase);
   return {
     k: 1 + (g.k - 1) * blend,
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
-    a: 1, fx: 1, burst: 0,
+    a: 1, fx: 1, burst: 0, idleBlend: blend,
     gridWave: g.gridWave,
   };
 };
@@ -4781,7 +4784,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              舊版最多 56 片，預覽放大時垂直位移會形成明顯階梯鋸齒。 */
           const slices = Math.max(64, Math.min(220, Math.ceil(bw / Math.max(0.9, 1.15 * s))));
           const sliceW = bw / slices;
-          const amp = Math.min(10 * s, bh * 0.065) * Math.max(0.15, (o.mo?.amp ?? 50) / 100);
+          const amp = Math.min(10 * s, bh * 0.065)
+            * Math.max(0.15, (o.mo?.amp ?? 50) / 100) * (f?.idleBlend ?? 1);
           for (let i = 0; i < slices; i++) {
             const x = i * sliceW;
             if (x >= shownW) break;
@@ -4924,16 +4928,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const qs = units.map((_, index) =>
             seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2)));
           const scales = units.map((_, index) => {
+            /* 进场优先：泡泡播放时只使用泡泡倍率；进场结束后才由
+               idleBlend 从 0 接入缩放 II，不能让两套动画叠在第一帧。 */
+            if (seqIn !== null) return o.mo?.in === 'bubble' ? easeOutBack(qs[index]) : 1;
             if (individualBreathe) {
               return 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71)
-                * ((o.mo?.amp || 50) / 100) * 0.18;
+                * ((o.mo?.amp || 50) / 100) * 0.18 * (f?.idleBlend ?? 1);
             }
-            return o.mo?.in === 'bubble' ? easeOutBack(qs[index]) : 1;
+            return 1;
           });
           /* 缩放 II 每颗符号倍率不同，若只固定每颗基准点，整串的可见外接框
              会左右漂移。按这一帧的实际倍率算出外接中心并补偿回原中心。 */
           let groupShift = 0;
-          if (individualBreathe && units.length) {
+          if (individualBreathe && seqIn === null && units.length) {
             let x0 = Infinity, x1 = -Infinity;
             units.forEach((_, index) => {
               const half = (prefixes[index + 1] - prefixes[index]) * scales[index] / 2;
@@ -4993,7 +5000,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
           // 圖片框的內緣剛好貼齊圖片，不留下空隙也不蓋住像素。
           const idleScalePad = o.sym && f && o.mo?.idle === 'symbol-breathe2'
-            ? (o.size || 40) * s * ((o.mo?.amp || 50) / 100) * 0.18
+            ? (o.size || 40) * s * ((o.mo?.amp || 50) / 100) * 0.18 * (f?.idleBlend ?? 1)
             : 0;
           const ink = objectSelectionInk(
             o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx + idleScalePad,
@@ -5010,7 +5017,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const layer = objectWaveLayerRef.current!;
         ctx = waveTarget;
         const phase = f!.gridWave!;
-        const amp = Math.min(10 * s, o.h * s * 0.065) * Math.max(0.15, (o.mo?.amp ?? 50) / 100);
+        const amp = Math.min(10 * s, o.h * s * 0.065)
+          * Math.max(0.15, (o.mo?.amp ?? 50) / 100) * (f?.idleBlend ?? 1);
         const wb = aabbOf(o.w || 0, o.h || 0, o.rot || 0);
         const wcx = (o.x + o.w / 2) * s;
         const wavePad = amp + Math.max(4 * s, Math.max(o.w, o.h) * s * 0.08);
