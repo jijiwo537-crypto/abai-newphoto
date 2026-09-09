@@ -4866,7 +4866,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號 II：每一個 Unicode 單位由左至右進場；常駐縮放 II 則給每個單位
            固定但不同的節奏。普通文字與普通符號維持原本單次繪製，字距完全不變。 */
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2';
+        // 縮放 II 只能在進場真正結束後接手；若進場期間便啟用，泡泡會被
+        // 覆蓋，而且每個單位的首幀倍率不同，視覺上就是整串突然跑位。
+        const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2'
+          && f.idleT !== undefined;
         if (seqIn !== null || individualBreathe) {
           const source = o.text || '';
           /* 不可用 Array.from：它會把組合附加記號拆成獨立單位，動畫時便會
@@ -4889,7 +4892,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const kind = o.mo?.in;
             const ease = easeOutCubic(q);
             const scale = individualBreathe
-              ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71) * ((o.mo?.amp || 50) / 100) * 0.18
+              ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1)) * ((o.mo?.amp || 50) / 100) * 0.18
               : kind === 'bubble' ? easeOutBack(q) : 1;
             const segmentLeft = tdx - total / 2 + left;
             const segmentRight = tdx - total / 2 + right;
