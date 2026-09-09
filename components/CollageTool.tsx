@@ -380,6 +380,15 @@ const hashId = (id: string) => {
   return x;
 };
 
+/** 泡泡动画必须按「用户看到的一颗符号」切分。
+ * Array.from 会把附加符号、变体选择符与 ZWJ 组合拆开，第一帧各自缩放时
+ * 墨水会飞离整串外框；播放结束改回整串绘制后才突然正常。 */
+const symbolUnits = (text: string): string[] => {
+  const Seg = typeof Intl !== 'undefined' ? (Intl as any).Segmenter : null;
+  if (Seg) return Array.from(new Seg(undefined, { granularity: 'grapheme' }).segment(text), (v: any) => v.segment);
+  return Array.from(text);
+};
+
 /* ── 動態 ──────────────────────────────────────────────────────────
    整套動畫是「純函式」：給一個時間 t，算出每個元素當下的
    縮放、位移、旋轉、透明度。畫布只負責照著畫，所以預覽跟輸出
@@ -4874,7 +4883,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
         const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2';
         if (seqIn !== null || individualBreathe) {
-          const units = Array.from(o.text || '');
+          const units = symbolUnits(o.text || '');
           const widths = units.map(ch => ctx.measureText(ch).width);
           const total = widths.reduce((sum, v) => sum + v, 0);
           let cursor = tdx - total / 2;
@@ -5814,7 +5823,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       },
       obj: (o: any, i: number) => {
         const cfg = moOf(o);
-        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, Array.from(o.text || '').length) : 1;
+        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, symbolUnits(o.text || '').length) : 1;
         const bubbleSpan = 1 + Math.max(0, units - 1) * 0.2;
         const timed = units > 1 ? { ...cfg, dur: cfg.dur * bubbleSpan } : cfg;
         return composeMo(timed, t, (hashId(o.id) % 628) / 100 + i * 0.7);
