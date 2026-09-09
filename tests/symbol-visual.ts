@@ -1,5 +1,5 @@
 import { SYMBOLS } from '../utils/symbols';
-import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
+import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { clearSymbolInkCache, measureSymbolAdvance, measureSymbolUnitLayout, symbolBreatheScale } from '../utils/symbolGeometry';
 
 declare global {
@@ -19,9 +19,9 @@ const drawCanonical = (
   ctx: CanvasRenderingContext2D, text: string, size: number,
   cx: number, cy: number, unitScales?: number[],
 ) => {
-  const layout=measureSymbolUnitLayout(text,DEFAULT_FONT,size);
+  const layout=measureSymbolUnitLayout(text,SYMBOL_FONT,size);
   ctx.save();
-  ctx.font=`400 ${size}px ${fontStack(DEFAULT_FONT)}`;
+  ctx.font=`400 ${size}px ${fontStack(SYMBOL_FONT)}`;
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
   const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
   /* 全部回到 1 倍时与生产代码一样交回原生静止字素；只有仍在变化的
@@ -46,9 +46,9 @@ const drawCanonical = (
 
 (async()=>{
   window.__symbolReport={done:false,total:SYMBOLS.length,failed:[]};
-  await ensureFont(DEFAULT_FONT);
+  await ensureFont(SYMBOL_FONT);
   try {
-    await document.fonts.load(`400 64px "${DEFAULT_FONT}"`,SYMBOLS.join(''));
+    await document.fonts.load(`400 64px "${SYMBOL_FONT}"`,SYMBOLS.join(''));
     await document.fonts.ready;
   } catch {}
   clearSymbolInkCache();
@@ -57,9 +57,9 @@ const drawCanonical = (
   const failed:any[]=[];
   for(let index=0;index<SYMBOLS.length;index++){
     const text=SYMBOLS[index];
-    const w100=measureSymbolAdvance(text,DEFAULT_FONT,100);
+    const w100=measureSymbolAdvance(text,SYMBOL_FONT,100);
     const size=Math.max(12,Math.min(72,Math.round(252*100/Math.max(1,w100))));
-    const probe=measureSymbolUnitLayout(text,DEFAULT_FONT,size);
+    const probe=measureSymbolUnitLayout(text,SYMBOL_FONT,size);
     const cssW=Math.max(360,Math.min(1500,Math.ceil(probe.ink.w*size+40)));
     const cssH=Math.max(92,Math.ceil(probe.ink.h*size+28));
     const dpr=2,w=Math.ceil(cssW*dpr),h=Math.ceil(cssH*dpr);
@@ -92,7 +92,7 @@ const drawCanonical = (
     }
     /* 同一基準尺寸必須命中幾何快取：縮放手勢只做數值變換，
        不得在每一幀重新掃描符號 alpha。 */
-    const stableCacheHit=measureSymbolUnitLayout(text,DEFAULT_FONT,size)===layout;
+    const stableCacheHit=measureSymbolUnitLayout(text,SYMBOL_FONT,size)===layout;
 
     /* 縮放 II：第一幀必須完全不跳，之後每一顆 unit 必須有自己的倍率。 */
     const scaleStart=layout.units.map((_u,i)=>symbolBreatheScale(i,0,60,1.2));
