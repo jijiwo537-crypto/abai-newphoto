@@ -680,7 +680,8 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
   const A = amp / 100, w = t * speed + phase;
   switch (kind) {
     case 'float':   return { k: 1, dx: 0, dy: Math.sin(w * 2.0) * A * 0.28, rot: 0, a: 1 };
-    case 'sway':    return { k: 1, dx: Math.sin(w * 1.7) * A * 0.28, dy: 0, rot: 0, a: 1 };
+    /* 原本的左右平移已改为与网格相同的连续正弦波相位。 */
+    case 'sway':    return { ...FLAT, gridWave: (t * speed * 0.22 + phase / (Math.PI * 2)) };
     case 'grid-wave': return { ...FLAT, gridWave: (t * speed * 0.22 + phase / (Math.PI * 2)) };
     /* 縮放：單純一顆正弦，大…小…大…小，在兩個固定大小之間來回。
        （以前是兩個不同週期的正弦疊起來，所以每一次的最大最小都不一樣 ——
@@ -1752,6 +1753,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      光是配置與清空就要搬好幾 MB；一顆圖案那張也是每顆都重來。
      搬成 ref 之後，同一張畫布從頭用到尾，只有尺寸真的變了才重新配置。 */
   const glowLayerRef = useRef<HTMLCanvasElement | null>(null);
+  /** 图片／文字／符号／一般图形的波浪先画到透明层，再用连续直片重组。
+      只在该常驻动画播放时启用，并重复使用同一张画布。 */
+  const objectWaveLayerRef = useRef<HTMLCanvasElement | null>(null);
   /** 「洞裡看到的那張圖」上次是用什麼參數畫的（見 drawMaskHolesOnTop） */
   const holeBdKeyRef = useRef('');
   /** 「洞裡看到的那一層」畫好的成品（見 drawMaskHolesOnTop）。
@@ -3496,7 +3500,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const { baseW, baseH, globalScale: gs } = imageState;
     /* alpha:true —— 拼圖的畫布本來就會被底圖與遮罩鋪滿，
        所以留不留 alpha 看起來一樣；留著是為了遮罩以外那圈不要被填成黑色。 */
-    const ctx = get2dWide(targetCanvas, { alpha: true });
+    let ctx = get2dWide(targetCanvas, { alpha: true });
     if (!ctx) return;
 
     const s = renderScale;
@@ -4550,6 +4554,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          靜態時 f 是 null，這一段完全不影響畫面。 */
       const f = animRef.current ? animRef.current.obj(o, objIndex.get(o.id) ?? 0) : null;
       if (f && (f.k <= 0.002 || f.a <= 0.004)) return;
+      /* 网格图形有自己的向量波浪；其他物件统一在独立透明层画完后逐列重组。 */
+      const genericWave = f?.gridWave !== undefined
+        && !(o.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind));
+      const waveTarget = genericWave ? ctx : null;
+      if (genericWave) {
+        let layer = objectWaveLayerRef.current;
+        if (!layer) { layer = document.createElement('canvas'); objectWaveLayerRef.current = layer; }
+        if (layer.width !== targetCanvas.width || layer.height !== targetCanvas.height) {
+          layer.width = targetCanvas.width; layer.height = targetCanvas.height;
+        }
+        const layerCtx = get2dWide(layer, { alpha: true });
+        if (layerCtx) {
+          layerCtx.setTransform(1, 0, 0, 1, 0, 0);
+          layerCtx.globalAlpha = 1;
+          layerCtx.globalCompositeOperation = 'source-over';
+          layerCtx.clearRect(0, 0, layer.width, layer.height);
+          ctx = layerCtx;
+        }
+      }
       ctx.save();
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
@@ -4953,6 +4976,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.setLineDash([]);
       }
       ctx.restore();
+      if (genericWave && waveTarget && ctx !== waveTarget) {
+        const layer = objectWaveLayerRef.current!;
+        ctx = waveTarget;
+        const phase = f!.gridWave!;
+        const amp = Math.min(10 * s, o.h * s * 0.065) * Math.max(0.15, (o.mo?.amp ?? 50) / 100);
+        const wb = aabbOf(o.w || 0, o.h || 0, o.rot || 0);
+        const wcx = (o.x + o.w / 2) * s;
+        const wavePad = amp + Math.max(4 * s, Math.max(o.w, o.h) * s * 0.08);
+        const left = Math.max(0, Math.floor(wcx - wb.bw * s / 2 - wavePad));
+        const right = Math.min(layer.width, Math.ceil(wcx + wb.bw * s / 2 + wavePad));
+        const span = Math.max(1, right - left);
+        const slices = Math.max(64, Math.min(220, Math.ceil(span / Math.max(0.9, 1.15 * s))));
+        const sliceW = span / slices;
+        for (let i = 0; i < slices; i++) {
+          const x = left + i * sliceW;
+          const sw = Math.min(sliceW + 1.6 * s, right - x + 0.8 * s);
+          const nx = (x - left + sliceW / 2) / span;
+          const dy = Math.sin((nx - phase) * Math.PI * 2) * amp;
+          ctx.drawImage(layer, x - 0.8 * s, 0, sw, layer.height,
+            x - 0.8 * s, dy, sw, layer.height);
+        }
+      }
     });
 
     /* 標了 below 的物件插在「底圖鋪好之後、所有圖案之前」——
