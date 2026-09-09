@@ -63,7 +63,7 @@ const drawCanonical = (
     const probe=measureSymbolUnitLayout(text,SYMBOL_FONT,size);
     const cssW=Math.max(360,Math.min(1500,Math.ceil(probe.ink.w*size+40)));
     const cssH=Math.max(92,Math.ceil(probe.ink.h*size+28));
-    const dpr=2,w=Math.ceil(cssW*dpr),h=Math.ceil(cssH*dpr);
+    const dpr=Math.max(1,Math.min(3,window.devicePixelRatio||1)),w=Math.ceil(cssW*dpr),h=Math.ceil(cssH*dpr);
     const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
     const ctx=canvas.getContext('2d',{willReadFrequently:true})!;
     ctx.scale(dpr,dpr);
