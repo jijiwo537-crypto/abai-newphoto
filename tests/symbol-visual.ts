@@ -35,8 +35,9 @@ const drawCanonical = (
     const ink=inks[i];
     const seventh=text==="\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
     const ox=animated?(layout.drawOffsetsX[i]||0):(seventh&&unit.includes("\u08ea")?-size*.08:0);
+    const oy=animated?(layout.drawOffsetsY[i]||0):0;
     const px=ink.cx*size,py=ink.cy*size;
-    ctx.translate(cx+centers[i]+ox+px,cy+dy+py);
+    ctx.translate(cx+centers[i]+ox+px,cy+dy+oy+py);
     const k=unitScales?.[i]??1;ctx.scale(k,k);
     ctx.fillText(unit,-px,-py);ctx.restore();
   });
