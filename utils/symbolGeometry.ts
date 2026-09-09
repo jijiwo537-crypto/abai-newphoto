@@ -143,10 +143,16 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
  */
 export const measureSymbolInkAtSize = (text: string, family: string, fontSize: number): SymbolInk => {
   const size = Math.max(8, Math.round(fontSize * 1000) / 1000);
-  const key = `${family}|${text}|${size}`;
+  /* Canvas 在 iPhone 上实际以 DPR=2/3 rasterize；若只用 CSS 字号扫描，
+     冷门字形的 hinting 会和画面相差数像素，框就会偏。用同一设备倍率扫描，
+     最后仍除回 scanSize，所以回传几何单位不变。 */
+  const dpr = typeof window !== 'undefined'
+    ? Math.max(1, Math.min(3, window.devicePixelRatio || 1)) : 1;
+  const rasterSize = size * dpr;
+  const key = `${family}|${text}|${size}|dpr:${dpr}`;
   const hit = sizedCache.get(key);
   if (hit) return hit;
-  const out = scanInk(text, family, size) || measureSymbolInk(text, family);
+  const out = scanInk(text, family, rasterSize) || measureSymbolInk(text, family);
   sizedCache.set(key, out);
   return out;
 };
