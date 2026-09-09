@@ -265,11 +265,15 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   if (o.sym) {
     /* 新增時保存的墨水量測是符號與選中框的共同幾何基準。
        不再於第一個動畫影格重新量字型，避免字型剛就緒時框先用到另一組度量。 */
-    const fontPx = Math.max(8, (o.size || 40) * Math.max(0.01, scale));
-    const layout = symbolUnitLayoutAt(o.text || o.sym, o.fontFamily || DEFAULT_FONT, fontPx);
+    /* 靜止符號由整串 shaping 繪製，外框也必須量整串，不能拿逐單位
+       外接框代替，否則組合符號會重疊或超出。 */
+    const ink = measureSymbolInkAtSize(
+      o.text || o.sym, o.fontFamily || DEFAULT_FONT,
+      Math.max(8, (o.size || 40) * Math.max(0.01, scale)),
+    );
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
-    const w = layout.inkW, h = layout.inkH;
+    const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
     return { x: (bw - w) / 2 - edge, y: (bh - h) / 2 - edge, w: w + edge * 2, h: h + edge * 2 };
   }
   if (o.type === 'shape' && o.kind !== 'hole') {
@@ -1727,6 +1731,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 離開「新增」分頁就回到最外層：下次再進來看到的是三顆大按鈕，
      而不是上次停在的圖形／符號清單。 */
   useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
+  /* 在工具掛載時就準備符號實際使用的字型，而不是等符號頁已經畫出來才載入。
+     如此按鈕首幀與畫布量測會使用同一套 glyph，不會整頁突然換字型。 */
+  useEffect(() => { void ensureFont(DEFAULT_FONT); }, []);
   /** 編輯頁的左側子分頁 */
   const [objSub, setObjSub] = useState<'main' | 'style'>('main');
   /* 圖片調整面板的 UI 狀態 —— 跟經典拼圖同一組，只是各自持有，
@@ -4952,36 +4959,43 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號 II：每一個 Unicode 單位由左至右進場；常駐縮放 II 則給每個單位
            固定但不同的節奏。普通文字與普通符號維持原本單次繪製，字距完全不變。 */
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        if (o.sym) {
+        const individualBreathe = !!o.sym && !!f && o.mo?.idle === 'symbol-breathe2'
+          && seqIn === null && (f.idleBlend ?? 0) > 0;
+        /* 靜止符號必須整串交給瀏覽器 shaping，避免組合符號拆開後重疊或越框。
+           只有泡泡／逐單位進場與縮放 II 真正需要時才拆單位。 */
+        if (o.sym && (seqIn !== null || individualBreathe)) {
           const layout = symbolUnitLayoutAt(o.text || o.sym, fam, Math.max(8, o.size * s));
           const now = animRef.current?.t ?? 0;
           const bubbleSpan = 1 + Math.max(0, layout.units.length - 1) * 0.2;
           const qs = layout.units.map((_, index) =>
             seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2)));
-          const idleOn = !!f && o.mo?.idle === 'symbol-breathe2' && seqIn === null;
           const scales = layout.units.map((_, index) => {
             if (seqIn !== null) return o.mo?.in === 'bubble' ? easeOutBack(qs[index]) : 1;
-            if (!idleOn) return 1;
             return 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71)
               * ((o.mo?.amp || 50) / 100) * 0.18 * (f?.idleBlend ?? 0);
           });
-          /* 以每颗实际墨水（不是 advance width）求这一帧的外接框，
-             X/Y 都补偿回物件原点，因此任何进场与缩放 II 都不会改变整串中心。 */
-          let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-          layout.units.forEach((_, index) => {
-            const ink = layout.inks[index], sc = scales[index], ax = layout.anchors[index];
-            x0 = Math.min(x0, ax + (ink.cx - ink.w / 2) * o.size * s * sc);
-            x1 = Math.max(x1, ax + (ink.cx + ink.w / 2) * o.size * s * sc);
-            y0 = Math.min(y0, (ink.cy - ink.h / 2) * o.size * s * sc);
-            y1 = Math.max(y1, (ink.cy + ink.h / 2) * o.size * s * sc);
-          });
-          const shiftX = Number.isFinite(x0) ? -(x0 + x1) / 2 : 0;
-          const shiftY = Number.isFinite(y0) ? -(y0 + y1) / 2 : 0;
+          /* 泡泡保留原本由左至右、各單位在原位長出的節奏，不能每幀把整組
+             重新置中；縮放 II 才補償外接框中心，避免常駐動畫使整串漂移。 */
+          let shiftX = 0, shiftY = 0;
+          if (individualBreathe) {
+            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            layout.units.forEach((_, index) => {
+              const ink = layout.inks[index], sc = scales[index], ax = layout.anchors[index];
+              x0 = Math.min(x0, ax + (ink.cx - ink.w / 2) * o.size * s * sc);
+              x1 = Math.max(x1, ax + (ink.cx + ink.w / 2) * o.size * s * sc);
+              y0 = Math.min(y0, (ink.cy - ink.h / 2) * o.size * s * sc);
+              y1 = Math.max(y1, (ink.cy + ink.h / 2) * o.size * s * sc);
+            });
+            if (Number.isFinite(x0)) {
+              shiftX = -(x0 + x1) / 2;
+              shiftY = -(y0 + y1) / 2;
+            }
+          }
           layout.units.forEach((ch, index) => {
             const q = qs[index], sc = scales[index];
             ctx.save();
             ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            ctx.translate(layout.anchors[index] + shiftX, shiftY);
+            ctx.translate(tdx + layout.anchors[index] + shiftX, tdy + shiftY);
             ctx.scale(sc, sc);
             ctx.textAlign = 'center';
             ctx.fillText(ch, 0, 0);
@@ -7690,9 +7704,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   /* 最终字号再扫描一次：WebKit 对 fallback 符号在不同字号可能使用
                      不同 hinting／基线，不能只拿 100px 结果等比推算。 */
                   const finalInk = measureSymbolInkAtSize(txt, DEFAULT_FONT, size);
-                  const finalLayout = symbolUnitLayoutAt(txt, DEFAULT_FONT, size);
-                  const w = Math.ceil(finalLayout.inkW + 8);
-                  const h = Math.ceil(finalLayout.inkH + 8);
+                  const w = Math.ceil(finalInk.w * size + 8);
+                  const h = Math.ceil(finalInk.h * size + 8);
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
                     /* 固定保存这次实际扫描到的墨水范围；绘制与框都只认这一份。 */
