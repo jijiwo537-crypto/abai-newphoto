@@ -1606,6 +1606,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 兩指縮放物件的期間把那排白色鍵收起來 —— 它掛在物件下緣，
      物件一邊變大它就一邊亂跳（經典拼圖也是這樣處理的）。 */
   const [objPinching, setObjPinching] = useState(false);
+  /* 符号大小滑杆连续输入时只画完整字形，停止逐单元常驻动画。
+     计时器只负责判断手指已停下，不触发每格额外 React render。 */
+  const symbolSizeTuningRef = useRef(false);
+  const symbolSizeTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (symbolSizeTimerRef.current !== null) window.clearTimeout(symbolSizeTimerRef.current);
+  }, []);
   /* 圖片編輯頁：一進去工具欄維持原高度（不要往上跳），
      等真的點出滑桿才長高，而且是帶過場動畫地長。 */
   const [objSliderOpen, setObjSliderOpen] = useState(false);
@@ -4887,7 +4894,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            舊版只有填色拆成 Array.from，發光／描邊仍畫整串；代理對、附加記號
            與字距因此各算一套，進動畫頁就會整串向左移或讓小單位彼此重疊。 */
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        const individualBreathe = !!o.sym && !objPinching && o.mo?.idle === 'symbol-breathe2'
+        const individualBreathe = !!o.sym && !objPinching && !symbolSizeTuningRef.current && o.mo?.idle === 'symbol-breathe2'
           && f?.idleT !== undefined;
         /* 符號在靜止與動畫時都使用同一份 unitLayout。切換動畫頁只改每個
            單位的倍率／透明度，不會從整串 shaping 突然換成另一套排版。 */
@@ -4901,7 +4908,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const now = f?.idleT ?? 0;
           /* 进场最后一帧所有倍率已回到 1 时，立即交回原生 grapheme 渲染。
              这样位置完全沿用静止版，也不会因拆分 combining marks 留下抗锯齿跳帧。 */
-          const sequenceAnimating = seqIn !== null && seqIn < 1 - 1e-6;
+          const sequenceAnimating = !objPinching && !symbolSizeTuningRef.current
+            && o.mo?.in === 'bubble' && seqIn !== null && seqIn < 1 - 1e-6;
           const useAnimationUnits = sequenceAnimating || individualBreathe;
           const drawUnits = useAnimationUnits ? unitLayout.units : unitLayout.staticUnits;
           const drawCenters = useAnimationUnits ? unitLayout.centers : unitLayout.staticCenters;
@@ -4923,15 +4931,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                中心作支點，再把文字反向放回原座標：scale=1 的畫面逐像素不變，
                動畫時每個可見小單位只在自己的位置上縮放。 */
             const unitInk = drawInks[index];
-            const isSeventh = (o.text || '') === "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
             const baseOffsetX = useAnimationUnits
               ? (unitLayout.drawOffsetsX[index] || 0)
-              : (isSeventh && unit.includes("\u08ea") ? -(o.size || 40) * 0.08 : 0);
+              : 0;
             const pivotX = unitInk.cx * (o.size || 40) * s;
             const pivotY = unitInk.cy * (o.size || 40) * s;
             ctx.translate(
               tdx + drawCenters[index] * s + baseOffsetX * s + pivotX,
-              tdy + pivotY,
+              tdy + (useAnimationUnits ? (unitLayout.drawOffsetsY[index] || 0) * s : 0) + pivotY,
             );
             ctx.scale(scale, scale);
             ctx.textAlign = 'center';
@@ -7591,7 +7598,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const w = size * 4, h = size * 1.3;
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: TEXT_PLACEHOLDER, color: '#ffffff', size,
-                    fontFamily: SYMBOL_FONT, bold: false, italic: false,
+                    fontFamily: DEFAULT_FONT, bold: false, italic: false,
                     letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
                     glow: 0, glowColor: '#ffffff',
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
@@ -7630,7 +7637,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                      或重掃清單。選中的物件會在同一次 click 立刻加入。 */
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
-                    fontFamily: DEFAULT_FONT, bold: false, italic: false,
+                    fontFamily: SYMBOL_FONT, bold: false, italic: false,
                     letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
                     glow: 0, glowColor: '#ffffff',
                     /* 新增符號即使用符號專屬預設：泡泡進場、縮放 II 常駐。 */
@@ -7995,7 +8002,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             // 文字（含符號）的發光預設就是純白
                             d = { ...d, glowColor: '#ffffff', glowInit: true };
                           }
-                          if (d.fontSize !== undefined) { patch({ ...d, size: d.fontSize }); return; }
+                          if (d.fontSize !== undefined) {
+                            if (sel.sym) {
+                              symbolSizeTuningRef.current = true;
+                              if (symbolSizeTimerRef.current !== null) window.clearTimeout(symbolSizeTimerRef.current);
+                              symbolSizeTimerRef.current = window.setTimeout(() => {
+                                symbolSizeTuningRef.current = false;
+                                symbolSizeTimerRef.current = null;
+                                setFxTick(n => n + 1);
+                              }, 140);
+                            }
+                            patch({ ...d, size: d.fontSize }); return;
+                          }
                           patch(d);
                         }}
                       />

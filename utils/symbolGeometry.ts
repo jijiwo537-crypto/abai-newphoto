@@ -14,6 +14,7 @@ export type SymbolUnitLayout = {
   staticUnitInks: SymbolInk[];
   /** 只影響實際繪製、不參與外框幾何的精準微調；單位是 canvas px。 */
   drawOffsetsX: number[];
+  drawOffsetsY: number[];
   advance: number;
   /** 依照原始 units/centers 實際畫出的聯集墨水範圍；以字級 1 為單位。 */
   ink: SymbolInk;
@@ -142,10 +143,16 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
  */
 export const measureSymbolInkAtSize = (text: string, family: string, fontSize: number): SymbolInk => {
   const size = Math.max(8, Math.round(fontSize * 1000) / 1000);
-  const key = `${family}|${text}|${size}`;
+  /* Canvas 在 iPhone 上实际以 DPR=2/3 rasterize；若只用 CSS 字号扫描，
+     冷门字形的 hinting 会和画面相差数像素，框就会偏。用同一设备倍率扫描，
+     最后仍除回 scanSize，所以回传几何单位不变。 */
+  const dpr = typeof window !== 'undefined'
+    ? Math.max(1, Math.min(3, window.devicePixelRatio || 1)) : 1;
+  const rasterSize = size * dpr;
+  const key = `${family}|${text}|${size}|dpr:${dpr}`;
   const hit = sizedCache.get(key);
   if (hit) return hit;
-  const out = scanInk(text, family, size) || measureSymbolInk(text, family);
+  const out = scanInk(text, family, rasterSize) || measureSymbolInk(text, family);
   sizedCache.set(key, out);
   return out;
 };
@@ -315,14 +322,12 @@ export const measureSymbolUnitLayout = (
     cy: (final.top + final.bottom) / 2 / size,
   };
 
-  /* 含 ੈ 的符号需要把组合记号拆成独立节拍，但静止外观必须直接使用
-     整串原生 shaping，才能保持 iPhone 上 ‧ 与 ₊ 的大小、间距和位置。 */
-  if (needsNativeTiming) {
-    staticUnits = [text];
-    staticCenters = [0];
-    staticUnitInks = [measureSymbolInkAtSize(text, family, size)];
-    ink = staticUnitInks[0];
-  }
+  /* 静止本体一律整串交给系统字体 shaping。不能把字素逐颗量宽后再拼，
+     否则 kerning、combining mark 与空白都会和 iPhone 实际输入不同。 */
+  staticUnits = [text];
+  staticCenters = [0];
+  staticUnitInks = [measureSymbolInkAtSize(text, family, size)];
+  ink = staticUnitInks[0];
 
   /* 一般符号继续沿用已验证的完整 grapheme 动画；只有含 ੈ 的结构
      才分开可见 code point 的时间，同时共用所属 grapheme 的原生锚点。 */
@@ -333,39 +338,51 @@ export const measureSymbolUnitLayout = (
     const parts = needsNativeTiming ? splitSymbolUnits(cluster) : [cluster];
     parts.forEach(part => {
       units.push(part);
-      centers.push(needsNativeTiming
-        ? (() => {
-            try {
-              const ctx = document.createElement('canvas').getContext('2d');
-              if (ctx) {
-                ctx.font = `400 ${size}px ${fontStack(family)}`;
-                const beforeText = originalClusters.slice(0, clusterIndex).join('');
-                const throughText = originalClusters.slice(0, clusterIndex + 1).join('');
-                const before = ctx.measureText(beforeText).width;
-                const after = ctx.measureText(throughText).width;
-                const total = ctx.measureText(text).width;
-                return -total / 2 + (before + after) / 2;
-              }
-            } catch {}
-            return ((clusterIndex + .5) / originalClusters.length - .5) * advance;
-          })()
-        : staticCenters[clusterIndex]);
+      centers.push((() => {
+        /* 每个动画字素的位置也从整串 prefix advance 推导，保留系统字体
+           的 kerning/空白，不再使用人为碰撞修正后的中心。 */
+        try {
+          const ctx = document.createElement('canvas').getContext('2d');
+          if (ctx) {
+            ctx.font = `400 ${size}px ${fontStack(family)}`;
+            const beforeText = originalClusters.slice(0, clusterIndex).join('');
+            const throughText = originalClusters.slice(0, clusterIndex + 1).join('');
+            const before = ctx.measureText(beforeText).width;
+            const after = ctx.measureText(throughText).width;
+            const total = ctx.measureText(text).width;
+            return -total / 2 + (before + after) / 2;
+          }
+        } catch {}
+        return ((clusterIndex + .5) / originalClusters.length - .5) * advance;
+      })());
       unitClusters.push(clusterIndex);
     });
   });
   const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
 
-  const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
-  const drawOffsetsX = units.map(() => 0);
-  if (text === seventhSymbol) {
-    const dotIndex = units.findIndex(unit => unit.includes("\u08ea"));
-    if (dotIndex >= 0) drawOffsetsX[dotIndex] = -size * 0.08;
-  }
+  /* 独立绘制 combining mark 后，它的 standalone alpha 中心可能和整串
+     native shaping 不同。先把动画单元的墨水联集校回静止整串的真实中心；
+     只消除进入动画页的整体跳位，不改变各单元之间的原生位置。 */
+  let animLeft = Infinity, animRight = -Infinity, animTop = Infinity, animBottom = -Infinity;
+  unitInks.forEach((unitInk, i) => {
+    const ux = centers[i] + unitInk.cx * size;
+    const uy = unitInk.cy * size;
+    animLeft = Math.min(animLeft, ux - unitInk.w * size / 2);
+    animRight = Math.max(animRight, ux + unitInk.w * size / 2);
+    animTop = Math.min(animTop, uy - unitInk.h * size / 2);
+    animBottom = Math.max(animBottom, uy + unitInk.h * size / 2);
+  });
+  const correctionX = Number.isFinite(animLeft)
+    ? ink.cx * size - (animLeft + animRight) / 2 : 0;
+  const correctionY = Number.isFinite(animTop)
+    ? ink.cy * size - (animTop + animBottom) / 2 : 0;
+  const drawOffsetsX = units.map(() => correctionX);
+  const drawOffsetsY = units.map(() => correctionY);
 
   const out = {
     units, centers, unitInks, unitClusters,
     staticUnits, staticCenters, staticUnitInks,
-    drawOffsetsX, advance, ink,
+    drawOffsetsX, drawOffsetsY, advance, ink,
   };
   unitLayoutCache.set(key, out);
   return out;

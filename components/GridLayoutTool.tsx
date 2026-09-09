@@ -44,14 +44,14 @@ const classicSymbolPlacementCache = new Map<string, PreparedSymbolPlacement>();
 
 const prepareClassicSymbolPlacement = (text: string, pageWidth: number): PreparedSymbolPlacement => {
   const pw = Math.max(1, Math.round(pageWidth * 100) / 100);
-  const key = `${DEFAULT_FONT}|${pw}|${text}`;
+  const key = `${SYMBOL_FONT}|${pw}|${text}`;
   const cached = classicSymbolPlacementCache.get(key);
   if (cached) return cached;
 
   const M = 100;
-  const w100 = measureSymbolAdvance(text, DEFAULT_FONT, M);
+  const w100 = measureSymbolAdvance(text, SYMBOL_FONT, M);
   const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
-  const ink = measureSymbolInkAtSize(text, DEFAULT_FONT, fontSize);
+  const ink = measureSymbolInkAtSize(text, SYMBOL_FONT, fontSize);
   const value = {
     fontSize,
     w: Math.max(6, ink.w * fontSize + 8),
@@ -65,10 +65,10 @@ const prepareClassicSymbolPlacement = (text: string, pageWidth: number): Prepare
    字形預熱；使用者點進頁面時，按鈕與新增物件便直接使用最終字身。 */
 export const symbolFontReady: Promise<void> = typeof document === 'undefined'
   ? Promise.resolve()
-  : ensureFont(DEFAULT_FONT)
+  : ensureFont(SYMBOL_FONT)
       .then(async () => {
         try {
-          await document.fonts?.load(`400 32px "${DEFAULT_FONT}"`, SYMBOLS.join(''));
+          await document.fonts?.load(`400 32px "${SYMBOL_FONT}"`, SYMBOLS.join(''));
           await document.fonts?.ready;
         } catch { /* 離線時穩定使用系統 fallback */ }
         clearSymbolInkCache();
@@ -7951,7 +7951,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       y: (rect ? rect.centerY : previewH / 2) - h / 2,
       width: w, height: h, scale: 1, rotation: 0,
       text: txt, sym: txt,
-      fontFamily: DEFAULT_FONT,
+      fontFamily: SYMBOL_FONT,
       fontSize,
       color: '#FFFFFF',
       bold: false, italic: false, letterSpacing: 0,
