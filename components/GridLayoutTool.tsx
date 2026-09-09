@@ -51,7 +51,7 @@ const prepareClassicSymbolPlacement = (text: string, pageWidth: number): Prepare
   const M = 100;
   const w100 = measureSymbolAdvance(text, SYMBOL_FONT, M);
   const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
-  const ink = measureSymbolInkAtSize(text, SYMBOL_FONT, fontSize);
+  const ink = measureSymbolInkAtSize(text, SYMBOL_FONT, 100);
   const value = {
     fontSize,
     w: Math.max(6, ink.w * fontSize + 8),
@@ -1627,6 +1627,33 @@ export const SymbolPicker: React.FC<{
   const FIRST_BATCH = 28;
   const NEXT_BATCH = 24;
   const [visibleCount, setVisibleCount] = useState(() => Math.min(FIRST_BATCH, SYMBOLS.length));
+  const preparedCountRef = useRef(0);
+
+  /* 精确几何在按钮出现后的空闲帧逐颗预热。过去把扫描放在 pointerdown，
+     iOS 会先阻塞点击事件，用户看到的就是按下后隔一下才生成。 */
+  useEffect(() => {
+    if (!onPrepare || typeof window === 'undefined') return;
+    let cancelled = false;
+    let idleId: number | undefined;
+    let timerId: number | undefined;
+    const step = () => {
+      if (cancelled || preparedCountRef.current >= visibleCount) return;
+      onPrepare(SYMBOLS[preparedCountRef.current++]);
+      schedule();
+    };
+    const schedule = () => {
+      const requestIdle = (window as any).requestIdleCallback as
+        | ((cb: () => void, opts?: { timeout: number }) => number) | undefined;
+      if (requestIdle) idleId = requestIdle(step, { timeout: 50 });
+      else timerId = window.setTimeout(step, 0);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (idleId !== undefined) (window as any).cancelIdleCallback?.(idleId);
+      if (timerId !== undefined) window.clearTimeout(timerId);
+    };
+  }, [visibleCount, onPrepare]);
 
   useEffect(() => {
     if (visibleCount >= SYMBOLS.length || typeof window === 'undefined') return;
@@ -1662,7 +1689,6 @@ export const SymbolPicker: React.FC<{
         {SYMBOLS.slice(0, visibleCount).map((symbol, index) => (
           <button
             key={index}
-            onPointerDown={() => onPrepare?.(symbol)}
             onClick={() => onPick(symbol)}
             aria-label={symbol}
             className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85"
