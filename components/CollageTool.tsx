@@ -36,7 +36,7 @@ import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, splitSymbolUnits, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, splitSymbolUnits, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -4863,12 +4863,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const q = seqIn === null ? 1
               : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
             const ease = easeOutCubic(q);
-            /* 所有單位在常駐交棒第一幀都從 1 開始，再用不同速率逐漸分開節奏；
-               不加入初始 phase，避免一進動畫頁就各自跳到不同大小與位置。 */
-            const rate = 1 + (index % 4) * 0.13;
+            /* 縮放 II 由共用純函式計算：每顆完整字素有獨立相位與速度，
+               但交棒第一幀全部從 1 開始，不會整串跳位。 */
             const scale = individualBreathe
-              ? 1 + Math.sin(now * 1.5 * rate * (o.mo?.speed || 1))
-                  * ((o.mo?.amp || 50) / 100) * 0.18
+              ? symbolBreatheScale(index, now, o.mo?.amp || 50, o.mo?.speed || 1)
               : o.mo?.in === 'bubble' ? easeOutBack(q) : 1;
             ctx.save();
             ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
