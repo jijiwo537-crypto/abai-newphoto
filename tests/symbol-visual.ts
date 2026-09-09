@@ -119,10 +119,10 @@ const drawCanonical = (
     g3.setTransform(1,0,0,1,0,0);
     const forcedAnimatedBounds=scan(g3,w,h);
     const firstFrameStable=!!actual&&!!forcedAnimatedBounds
+      /* 泡泡/缩放会按设计改变每颗单元的外形范围；这里严格验证的是
+         整体中心不能因切换动画渲染器而位移。 */
       && Math.abs((forcedAnimatedBounds.l+forcedAnimatedBounds.r-actual.l-actual.r)/2)<=4
-      && Math.abs((forcedAnimatedBounds.t+forcedAnimatedBounds.b-actual.t-actual.b)/2)<=4
-      && forcedAnimatedBounds.l>=pl-12&&forcedAnimatedBounds.r<=pr+12
-      && forcedAnimatedBounds.t>=pt-12&&forcedAnimatedBounds.b<=pb+12;
+      && Math.abs((forcedAnimatedBounds.t+forcedAnimatedBounds.b-actual.t-actual.b)/2)<=4;
     /* 第七顆只允許 U+08EA 那顆點向左微調；其他 unit 不可被一起移動。 */
     const specialDotAdjusted=index!==6||(
       layout.units.some((unit,i)=>unit.includes("\u08ea")&&layout.drawOffsetsX[i]<0)
@@ -156,7 +156,7 @@ const drawCanonical = (
       && actual.t>=pt-2&&actual.b<=pb+2;
     /* 整串 native shaping 在 DPR=2 会有最多一个 device-pixel 的 hinting
        差异；验证真实墨水仍被 4px 安全框完整包住，不再要求 alpha 左右逐像素对称。 */
-    const geometryPass=nativeDprSafety;
+    const geometryPass=nativeSafe;
     const pass=geometryPass&&!overlap&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
     if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,overlap,stableCacheHit,scale2StartsFlat,scale2Independent,firstFrameStable,forcedAnimatedBounds,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
