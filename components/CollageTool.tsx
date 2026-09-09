@@ -36,7 +36,7 @@ import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { measureSymbolInk, measureSymbolInkAtSize, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -263,22 +263,10 @@ const symBox = (str: string, fam: string, size: number) => {
 const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
   if (o.sym) {
-    /* 新增時保存的墨水量測是符號與選中框的共同幾何基準。
-       不再於第一個動畫影格重新量字型，避免字型剛就緒時框先用到另一組度量。 */
-    /* 靜止符號由整串 shaping 繪製，外框也必須量整串，不能拿逐單位
-       外接框代替，否則組合符號會重疊或超出。 */
-    const ink = measureSymbolInkAtSize(
-      o.text || o.sym, o.fontFamily || DEFAULT_FONT,
-      Math.max(8, (o.size || 40) * Math.max(0.01, scale)),
-    );
+    const ink = symInk(o.text || o.sym, o.fontFamily || DEFAULT_FONT);
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
-    const fontPx = Math.max(8, (o.size || 40) * Math.max(0.01, scale));
-    const unitLayout = symbolUnitLayoutAt(o.text || o.sym, o.fontFamily || DEFAULT_FONT, fontPx);
-    /* 外框以靜止整串與逐單位動畫兩者較大的可見範圍為準，泡泡回彈與
-       縮放 II 的額外幅度另由既有 idleScalePad 處理。 */
-    const w = Math.max(ink.w * o.size * scale, unitLayout.inkW);
-    const h = Math.max(ink.h * o.size * scale, unitLayout.inkH);
+    const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
     return { x: (bw - w) / 2 - edge, y: (bh - h) / 2 - edge, w: w + edge * 2, h: h + edge * 2 };
   }
   if (o.type === 'shape' && o.kind !== 'hole') {
@@ -388,71 +376,6 @@ const hashId = (id: string) => {
   return x;
 };
 
-/** 泡泡动画必须按「用户看到的一颗符号」切分。
- * Array.from 会把附加符号、变体选择符与 ZWJ 组合拆开，第一帧各自缩放时
- * 墨水会飞离整串外框；播放结束改回整串绘制后才突然正常。 */
-const symbolUnits = (text: string): string[] => {
-  const Seg = typeof Intl !== 'undefined' ? (Intl as any).Segmenter : null;
-  if (Seg) return Array.from(new Seg(undefined, { granularity: 'grapheme' }).segment(text), (v: any) => v.segment);
-  return Array.from(text);
-};
-
-type SymbolUnitLayout = {
-  units: string[]; anchors: number[]; inks: { w: number; h: number; cx: number; cy: number }[];
-  inkW: number; inkH: number;
-};
-const symbolUnitLayoutCache = new Map<string, SymbolUnitLayout>();
-/** 单一符号布局来源：静态、选中框与所有动画都读取同一份实际墨水几何。 */
-const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): SymbolUnitLayout => {
-  const px = Math.max(8, Math.round(fontPx * 100) / 100);
-  const key = `${family}|${text}|${px}`;
-  const hit = symbolUnitLayoutCache.get(key);
-  if (hit) return hit;
-  const units = symbolUnits(text);
-  const cv = document.createElement('canvas');
-  const cg = cv.getContext('2d');
-  if (cg) cg.font = `400 ${px}px ${fontStack(family)}`;
-  const prefixes = [0];
-  for (let i = 1; i <= units.length; i++) {
-    prefixes.push(cg ? cg.measureText(units.slice(0, i).join('')).width : i * px * 0.5);
-  }
-  const total = prefixes[prefixes.length - 1] || 0;
-  const rawAnchors = units.map((_, i) => -total / 2 + (prefixes[i] + prefixes[i + 1]) / 2);
-  const inks = units.map(unit => measureSymbolInkAtSize(unit, family, px));
-  /* 某些裝飾符號的可見墨水比字型宣告的 advance 寬；只用前綴中點會讓
-     相鄰單位重疊。保持瀏覽器原始位置，僅在真正相交時把後續單位推開。 */
-  const anchors = rawAnchors.slice();
-  for (let i = 1; i < anchors.length; i++) {
-    const prevRight = anchors[i - 1] + (inks[i - 1].cx + inks[i - 1].w / 2) * px;
-    const thisLeft = anchors[i] + (inks[i].cx - inks[i].w / 2) * px;
-    if (thisLeft < prevRight) {
-      const push = prevRight - thisLeft;
-      for (let j = i; j < anchors.length; j++) anchors[j] += push;
-    }
-  }
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  units.forEach((_, i) => {
-    const ink = inks[i], ax = anchors[i];
-    x0 = Math.min(x0, ax + (ink.cx - ink.w / 2) * px);
-    x1 = Math.max(x1, ax + (ink.cx + ink.w / 2) * px);
-    y0 = Math.min(y0, (ink.cy - ink.h / 2) * px);
-    y1 = Math.max(y1, (ink.cy + ink.h / 2) * px);
-  });
-  if (!Number.isFinite(x0)) { x0 = y0 = -px / 2; x1 = y1 = px / 2; }
-  const sx = -(x0 + x1) / 2;
-  const out = {
-    units, anchors: anchors.map(x => x + sx), inks,
-    inkW: Math.max(1, x1 - x0), inkH: Math.max(1, y1 - y0),
-  };
-  symbolUnitLayoutCache.set(key, out);
-  while (symbolUnitLayoutCache.size > 256) {
-    const first = symbolUnitLayoutCache.keys().next().value;
-    if (first === undefined) break;
-    symbolUnitLayoutCache.delete(first);
-  }
-  return out;
-};
-
 /* ── 動態 ──────────────────────────────────────────────────────────
    整套動畫是「純函式」：給一個時間 t，算出每個元素當下的
    縮放、位移、旋轉、透明度。畫布只負責照著畫，所以預覽跟輸出
@@ -460,7 +383,7 @@ const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): Symbo
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; idleBlend?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -694,7 +617,7 @@ const glowIdleAmp = (
 export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
   { id: 'float', name: '漂浮' },
-  { id: 'sway', name: '波浪' },
+  { id: 'sway', name: '左右' },
   { id: 'breathe', name: '縮放' },
   { id: 'spin', name: '旋轉' },
   { id: 'wobble', name: '搖擺' },
@@ -703,10 +626,6 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'jitter', name: '抖動' },
 ];
 const GRID_IDLE_KINDS = IDLE_KINDS.map(k => k.id === 'sway' ? { id: 'grid-wave', name: '波浪' } : k);
-/* 所有物件的波浪與網格共用同一套面板尺度與預設，不再依物件類型分叉。 */
-const WAVE_DEFAULT = { amp: 50, speed: 0.9 };
-const WAVE_AMP_RANGE = { min: 0, max: 100 };
-const WAVE_SPEED_RANGE = { min: 20, max: 180 };
 const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'sway').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 
 /** 進場動畫在進度 p（0～1）時的樣子 */
@@ -748,8 +667,7 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
   const A = amp / 100, w = t * speed + phase;
   switch (kind) {
     case 'float':   return { k: 1, dx: 0, dy: Math.sin(w * 2.0) * A * 0.28, rot: 0, a: 1 };
-    /* 原本的左右平移已改为与网格相同的连续正弦波相位。 */
-    case 'sway':    return { ...FLAT, gridWave: (t * speed * 0.22 + phase / (Math.PI * 2)) };
+    case 'sway':    return { k: 1, dx: Math.sin(w * 1.7) * A * 0.28, dy: 0, rot: 0, a: 1 };
     case 'grid-wave': return { ...FLAT, gridWave: (t * speed * 0.22 + phase / (Math.PI * 2)) };
     /* 縮放：單純一顆正弦，大…小…大…小，在兩個固定大小之間來回。
        （以前是兩個不同週期的正弦疊起來，所以每一次的最大最小都不一樣 ——
@@ -830,20 +748,16 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
   }
   const f = inFrame(cfg.in, Math.max(0, Math.min(1, p)));
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
-  /* 进场期间严禁常驻动画同时参与。符号的缩放 II 曾经绕过 composeMo，
-     在泡泡尚未结束时就套上另一组倍率，正是首帧错位与交接断层的来源。 */
-  if (p < 1) return { ...f, fx, burst: f.burst || 0, idleBlend: 0 };
-  const after = Math.max(0, t - (cfg.delay + cfg.dur));
-  /* 從完全靜止的進場終點接手，0.6 秒內以 smoothstep 同時增加位移
-     與速度。兩端斜率都是 0，不會像舊高斯曲線在前 0.1 秒猛然衝到大半，
-     波浪、縮放、搖擺與繞圈的開頭因此都自然且可預期。 */
-  const handoff = Math.max(0, Math.min(1, after / 0.6));
-  const blend = handoff * handoff * (3 - 2 * handoff);
+  if (p < 1) return { ...f, fx, burst: f.burst || 0 };
+  const after = t - (cfg.delay + cfg.dur);
+  /* 進場結束後立即銜接常駐；只保留兩格左右的極短混合來避免位移型動畫跳點。
+     舊版 0.35 秒的近靜止混合會被看成明顯停頓。 */
+  const blend = Math.max(0, Math.min(1, after / 0.07));
   const g = idleFrame(cfg.idle, after, cfg.amp, cfg.speed, phase);
   return {
     k: 1 + (g.k - 1) * blend,
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
-    a: 1, fx: 1, burst: 0, idleBlend: blend,
+    a: 1, fx: 1, burst: 0,
     gridWave: g.gridWave,
   };
 };
@@ -1752,12 +1666,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 離開「新增」分頁就回到最外層：下次再進來看到的是三顆大按鈕，
      而不是上次停在的圖形／符號清單。 */
   useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
-  /* 在工具掛載時就準備符號實際使用的字型，而不是等符號頁已經畫出來才載入。
-     如此按鈕首幀與畫布量測會使用同一套 glyph，不會整頁突然換字型。 */
-  useEffect(() => {
-    /* 編輯器啟動後在背景完成正式字身；絕不阻塞符號頁或點擊事件。 */
-    void waitForFont(DEFAULT_FONT).then(clearSymbolInkCache);
-  }, []);
   /** 編輯頁的左側子分頁 */
   const [objSub, setObjSub] = useState<'main' | 'style'>('main');
   /* 圖片調整面板的 UI 狀態 —— 跟經典拼圖同一組，只是各自持有，
@@ -1831,9 +1739,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      光是配置與清空就要搬好幾 MB；一顆圖案那張也是每顆都重來。
      搬成 ref 之後，同一張畫布從頭用到尾，只有尺寸真的變了才重新配置。 */
   const glowLayerRef = useRef<HTMLCanvasElement | null>(null);
-  /** 图片／文字／符号／一般图形的波浪先画到透明层，再用连续直片重组。
-      只在该常驻动画播放时启用，并重复使用同一张画布。 */
-  const objectWaveLayerRef = useRef<HTMLCanvasElement | null>(null);
   /** 「洞裡看到的那張圖」上次是用什麼參數畫的（見 drawMaskHolesOnTop） */
   const holeBdKeyRef = useRef('');
   /** 「洞裡看到的那一層」畫好的成品（見 drawMaskHolesOnTop）。
@@ -3578,7 +3483,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const { baseW, baseH, globalScale: gs } = imageState;
     /* alpha:true —— 拼圖的畫布本來就會被底圖與遮罩鋪滿，
        所以留不留 alpha 看起來一樣；留著是為了遮罩以外那圈不要被填成黑色。 */
-    let ctx = get2dWide(targetCanvas, { alpha: true });
+    const ctx = get2dWide(targetCanvas, { alpha: true });
     if (!ctx) return;
 
     const s = renderScale;
@@ -4632,25 +4537,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          靜態時 f 是 null，這一段完全不影響畫面。 */
       const f = animRef.current ? animRef.current.obj(o, objIndex.get(o.id) ?? 0) : null;
       if (f && (f.k <= 0.002 || f.a <= 0.004)) return;
-      /* 网格图形有自己的向量波浪；其他物件统一在独立透明层画完后逐列重组。 */
-      const genericWave = f?.gridWave !== undefined
-        && !(o.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind));
-      const waveTarget = genericWave ? ctx : null;
-      if (genericWave) {
-        let layer = objectWaveLayerRef.current;
-        if (!layer) { layer = document.createElement('canvas'); objectWaveLayerRef.current = layer; }
-        if (layer.width !== targetCanvas.width || layer.height !== targetCanvas.height) {
-          layer.width = targetCanvas.width; layer.height = targetCanvas.height;
-        }
-        const layerCtx = get2dWide(layer, { alpha: true });
-        if (layerCtx) {
-          layerCtx.setTransform(1, 0, 0, 1, 0, 0);
-          layerCtx.globalAlpha = 1;
-          layerCtx.globalCompositeOperation = 'source-over';
-          layerCtx.clearRect(0, 0, layer.width, layer.height);
-          ctx = layerCtx;
-        }
-      }
       ctx.save();
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
@@ -4856,8 +4742,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              舊版最多 56 片，預覽放大時垂直位移會形成明顯階梯鋸齒。 */
           const slices = Math.max(64, Math.min(220, Math.ceil(bw / Math.max(0.9, 1.15 * s))));
           const sliceW = bw / slices;
-          const amp = Math.min(10 * s, bh * 0.065)
-            * Math.max(0.15, (o.mo?.amp ?? 50) / 100) * (f?.idleBlend ?? 1);
+          const amp = Math.min(10 * s, bh * 0.065) * Math.max(0.15, (o.mo?.amp ?? 50) / 100);
           for (let i = 0; i < slices; i++) {
             const x = i * sliceW;
             if (x >= shownW) break;
@@ -4939,11 +4824,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
         let tdx = 0, tdy = 0;
         if (o.sym) {
-          /* 和选中框读取同一份建立时度量，动画第一帧与后续影格不会因
-             字型缓存由 fallback 切到正式字型而改变中心。 */
-          const ink2 = measureSymbolInkAtSize(
-            o.text || '', fam, Math.max(8, (o.size || 40) * s),
-          );
+          const ink2 = symInk(o.text || '', fam);
           tdx = -ink2.cx * o.size * s;
           tdy = -ink2.cy * o.size * s;
         }
@@ -4983,71 +4864,31 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號 II：每一個 Unicode 單位由左至右進場；常駐縮放 II 則給每個單位
            固定但不同的節奏。普通文字與普通符號維持原本單次繪製，字距完全不變。 */
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        const individualBreathe = !!o.sym && !!f && o.mo?.idle === 'symbol-breathe2'
-          && seqIn === null && (f.idleBlend ?? 0) > 0;
-        /* 靜止符號必須整串交給瀏覽器 shaping，避免組合符號拆開後重疊或越框。
-           只有泡泡／逐單位進場與縮放 II 真正需要時才拆單位。 */
-        if (o.sym && (seqIn !== null || individualBreathe)) {
-          const layout = symbolUnitLayoutAt(o.text || o.sym, fam, Math.max(8, o.size * s));
+        const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2';
+        if (seqIn !== null || individualBreathe) {
+          const units = Array.from(o.text || '');
+          const widths = units.map(ch => ctx.measureText(ch).width);
+          const total = widths.reduce((sum, v) => sum + v, 0);
+          let cursor = tdx - total / 2;
           const now = animRef.current?.t ?? 0;
-          const bubbleSpan = 1 + Math.max(0, layout.units.length - 1) * 0.2;
-          const qs = layout.units.map((_, index) =>
-            seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2)));
-          const scales = layout.units.map((_, index) => {
-            if (seqIn !== null) return o.mo?.in === 'bubble' ? easeOutBack(qs[index]) : 1;
-            return 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71)
-              * ((o.mo?.amp || 50) / 100) * 0.18 * (f?.idleBlend ?? 0);
-          });
-          /* 泡泡保留原本由左至右、各單位在原位長出的節奏，不能每幀把整組
-             重新置中；縮放 II 才補償外接框中心，避免常駐動畫使整串漂移。 */
-          let shiftX = 0, shiftY = 0;
-          if (individualBreathe) {
-            let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-            let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
-            layout.units.forEach((_, index) => {
-              const ink = layout.inks[index], sc = scales[index], ax = layout.anchors[index];
-              const left = (ink.cx - ink.w / 2) * o.size * s;
-              const right = (ink.cx + ink.w / 2) * o.size * s;
-              const top = (ink.cy - ink.h / 2) * o.size * s;
-              const bottom = (ink.cy + ink.h / 2) * o.size * s;
-              /* bx/by 是進場結束、所有倍率為 1 的基準框。 */
-              bx0 = Math.min(bx0, ax + left); bx1 = Math.max(bx1, ax + right);
-              by0 = Math.min(by0, top); by1 = Math.max(by1, bottom);
-              x0 = Math.min(x0, ax + left * sc); x1 = Math.max(x1, ax + right * sc);
-              y0 = Math.min(y0, top * sc); y1 = Math.max(y1, bottom * sc);
-            });
-            if (Number.isFinite(x0) && Number.isFinite(bx0)) {
-              /* 只抵銷縮放造成的中心差，不把原始墨水中心硬搬到零點。
-                 因此縮放 II 無論如何呼吸，整個符號都停在進場結束的位置。 */
-              shiftX = (bx0 + bx1 - x0 - x1) / 2;
-              shiftY = (by0 + by1 - y0 - y1) / 2;
-            }
-          }
-          /* 泡泡末段由逐單位平滑交給完整 shaping；縮放 II 開始時則從
-             完整 shaping 平滑拆成單位。兩次都不在單一影格切換排版座標。 */
-          const mixProgress = seqIn !== null
-            ? Math.max(0, Math.min(1, (seqIn - 0.86) / 0.14))
-            : Math.max(0, Math.min(1, f?.idleBlend ?? 0));
-          const smoothMix = mixProgress * mixProgress * (3 - 2 * mixProgress);
-          const unitMix = seqIn !== null ? 1 - smoothMix : smoothMix;
-          if (unitMix > 0.001) {
-            layout.units.forEach((ch, index) => {
-              const q = qs[index], sc = scales[index];
-              ctx.save();
-              ctx.globalAlpha *= unitMix * (seqIn === null ? 1 : Math.min(1, q * 3));
-              ctx.translate(tdx + layout.anchors[index] + shiftX, tdy + shiftY);
-              ctx.scale(sc, sc);
-              ctx.textAlign = 'center';
-              ctx.fillText(ch, 0, 0);
-              ctx.restore();
-            });
-          }
-          if (unitMix < 0.999) {
+          units.forEach((ch, index) => {
+            const bubbleSpan = 1 + Math.max(0, units.length - 1) * 0.2;
+            const q = seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
+            const kind = o.mo?.in;
+            const ease = easeOutCubic(q);
+            const scale = individualBreathe
+              ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71) * ((o.mo?.amp || 50) / 100) * 0.18
+              : kind === 'bubble' ? easeOutBack(q) : 1;
+            const rise = 0;
             ctx.save();
-            ctx.globalAlpha *= 1 - unitMix;
-            ctx.fillText(o.text || '', tdx, tdy);
+            ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
+            ctx.translate(cursor + widths[index] / 2, tdy + rise);
+            ctx.scale(scale, scale);
+            ctx.textAlign = 'center';
+            ctx.fillText(ch, 0, 0);
             ctx.restore();
-          }
+            cursor += widths[index];
+          });
         } else {
           ctx.fillText(o.text || '', tdx, tdy);
         }
@@ -5086,12 +4927,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              不然愛心上面那片空白、星星底下那條也會被框進去。
              沒有形狀時 imgShapeInk 回傳整個框，畫出來跟以前一模一樣。 */
           // 圖片框的內緣剛好貼齊圖片，不留下空隙也不蓋住像素。
-          const idleScalePad = o.sym && f && o.mo?.idle === 'symbol-breathe2'
-            ? (o.size || 40) * s * ((o.mo?.amp || 50) / 100) * 0.18 * (f?.idleBlend ?? 1)
-            : 0;
-          const ink = objectSelectionInk(
-            o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx + idleScalePad,
-          );
+          const ink = objectSelectionInk(o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx);
           ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
         }
         ctx.shadowColor = 'transparent';
@@ -5100,29 +4936,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.setLineDash([]);
       }
       ctx.restore();
-      if (genericWave && waveTarget && ctx !== waveTarget) {
-        const layer = objectWaveLayerRef.current!;
-        ctx = waveTarget;
-        const phase = f!.gridWave!;
-        const amp = Math.min(10 * s, o.h * s * 0.065)
-          * Math.max(0.15, (o.mo?.amp ?? 50) / 100) * (f?.idleBlend ?? 1);
-        const wb = aabbOf(o.w || 0, o.h || 0, o.rot || 0);
-        const wcx = (o.x + o.w / 2) * s;
-        const wavePad = amp + Math.max(4 * s, Math.max(o.w, o.h) * s * 0.08);
-        const left = Math.max(0, Math.floor(wcx - wb.bw * s / 2 - wavePad));
-        const right = Math.min(layer.width, Math.ceil(wcx + wb.bw * s / 2 + wavePad));
-        const span = Math.max(1, right - left);
-        const slices = Math.max(64, Math.min(220, Math.ceil(span / Math.max(0.9, 1.15 * s))));
-        const sliceW = span / slices;
-        for (let i = 0; i < slices; i++) {
-          const x = left + i * sliceW;
-          const sw = Math.min(sliceW + 1.6 * s, right - x + 0.8 * s);
-          const nx = (x - left + sliceW / 2) / span;
-          const dy = Math.sin((nx - phase) * Math.PI * 2) * amp;
-          ctx.drawImage(layer, x - 0.8 * s, 0, sw, layer.height,
-            x - 0.8 * s, dy, sw, layer.height);
-        }
-      }
     });
 
     /* 標了 below 的物件插在「底圖鋪好之後、所有圖案之前」——
@@ -5993,7 +5806,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       },
       obj: (o: any, i: number) => {
         const cfg = moOf(o);
-        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, symbolUnits(o.text || '').length) : 1;
+        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, Array.from(o.text || '').length) : 1;
         const bubbleSpan = 1 + Math.max(0, units - 1) * 0.2;
         const timed = units > 1 ? { ...cfg, dur: cfg.dur * bubbleSpan } : cfg;
         return composeMo(timed, t, (hashId(o.id) % 628) / 100 + i * 0.7);
@@ -7729,13 +7542,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  * 加進來的份量都差不多。
                  * 刻意不跳去編輯頁、也不進入打字狀態，可以連著加好幾顆。
                  */
-                const addSymbol = (txt: string) => {
+                const addSymbol = async (txt: string) => {
                   const offs2 = getLayoutOffsets();
                   if (!offs2) return;
                   const id = Math.random().toString(36).slice(2, 9);
-                  /* SymbolPicker 只會在 DEFAULT_FONT 完整就緒後顯示按鈕，因此點擊時
-                     字型與量測快取已可直接使用；這裡不得再等待網路、fonts.ready
-                     或下一個 animation frame，按下的同一個事件就建立物件。 */
+                  await ensureFont(DEFAULT_FONT);
+                  clearSymbolInkCache();
                   /* 框照「真正畫出來的那一塊」量（見 symInk 的說明），
                      不是照前進寬度 —— 這樣選取框才會貼著符號本身。 */
                   const ink = symInk(txt, DEFAULT_FONT);
@@ -7745,16 +7557,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                      那根「大小」滑桿的最大值 —— 不然一加進來就頂在滑桿外面。 */
                   const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
                     Math.round((offs2.cw * 0.7) / Math.max(0.05, ink.w))));
-                  /* 最终字号再扫描一次：WebKit 对 fallback 符号在不同字号可能使用
-                     不同 hinting／基线，不能只拿 100px 结果等比推算。 */
-                  const finalInk = measureSymbolInkAtSize(txt, DEFAULT_FONT, size);
-                  const w = Math.ceil(finalInk.w * size + 8);
-                  const h = Math.ceil(finalInk.h * size + 8);
+                  const box = symBox(txt, DEFAULT_FONT, size);
+                  const w = Math.round(box.w), h = Math.round(box.h);
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
-                    /* 固定保存这次实际扫描到的墨水范围；绘制与框都只认这一份。 */
-                    symInkW: finalInk.w, symInkH: finalInk.h,
-                    symInkCx: finalInk.cx, symInkCy: finalInk.cy, symInkSize: size,
                     fontFamily: DEFAULT_FONT, bold: false, italic: false,
                     letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
                     glow: 0, glowColor: '#ffffff',
@@ -8172,7 +7978,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const pickKind = (d: Partial<MoCfg>) => {
                   if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
                   else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 60, speed: 1.2 });
-                  else if (d.idle === 'sway' || d.idle === 'grid-wave') setCur({ ...d, ...WAVE_DEFAULT });
                   else if (d.idle && isSpecialLineTarget) setCur({ ...d, amp: 20 });
                   else setCur(d);
                   replayMotion();
@@ -8245,9 +8050,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const chooseMotionTarget = (id: string) => {
                   setMoTarget(id);
                   if (id === 'shape' || objects.some(o => o.id === id)) {
-                    /* 第一帧只负责让目标切换与动画状态完成提交；从下一帧才显示框。
-                       否则框会短暂读取到上一目标的变换矩阵，随后才回到正确位置。 */
-                    motionTargetFlashRef.current = { id, started: performance.now() + 34, duration: 850 };
+                    motionTargetFlashRef.current = { id, started: performance.now(), duration: 850 };
                     setMotionTargetFlashSeq(n => n + 1);
                   }
                 };
@@ -8333,14 +8136,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         </div>
                         {cur.idle !== 'none' && (
                           <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                            <CompactSlider label="幅度" value={cur.amp}
-                              min={(cur.idle === 'sway' || cur.idle === 'grid-wave') ? WAVE_AMP_RANGE.min : 0}
-                              max={(cur.idle === 'sway' || cur.idle === 'grid-wave') ? WAVE_AMP_RANGE.max : 100} step={1}
+                            <CompactSlider label="幅度" value={cur.amp} min={0} max={100} step={1}
                               onChange={(v: number) => setCur({ amp: v })} />
-                            {/* 波浪明確共用網格的 20～180；其他動畫維持既有範圍。 */}
-                            <CompactSlider label="速度" value={Math.round(cur.speed * 100)}
-                              min={(cur.idle === 'sway' || cur.idle === 'grid-wave') ? WAVE_SPEED_RANGE.min : 20}
-                              max={(cur.idle === 'sway' || cur.idle === 'grid-wave') ? WAVE_SPEED_RANGE.max : 180} step={1}
+                            {/* 範圍 20～180 配 step 1：滑桿只有 167px 寬，範圍再寬一點
+                                一個螢幕像素就會跳 2 —— 那正是主人說「動一下就 +2」的原因 */}
+                            <CompactSlider label="速度" value={Math.round(cur.speed * 100)} min={20} max={180} step={1}
                               onChange={(v: number) => setCur({ speed: v / 100 })} />
                           </div>
                         )}

@@ -12,7 +12,6 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
-import { clearSymbolInkCache } from '../utils/symbolGeometry';
 import { measureSymbolInk, measureSymbolInkAtSize, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
@@ -1544,31 +1543,39 @@ const FontCard: React.FC<{
  * 也不會變成「…」。字型晚一點才載好時寬度會變，所以 fonts.ready 之後
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
-const SYMBOL_PICKER_FONT = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", "Apple Symbols", "PingFang TC", sans-serif';
-let symbolPickerMeasureCtx: CanvasRenderingContext2D | null | undefined;
-const getSymbolPickerMeasureCtx = () => {
-  if (symbolPickerMeasureCtx !== undefined) return symbolPickerMeasureCtx;
-  if (typeof document === 'undefined') return (symbolPickerMeasureCtx = null);
-  return (symbolPickerMeasureCtx = document.createElement('canvas').getContext('2d'));
-};
 export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
-  /* 所有按鈕共用一張量測 Canvas；iOS 不再一次建立上百張 Canvas。
-     按鈕只使用裝置字型，所以第一幀就是最終字形，不會等待或換字。 */
-  /* 顯示副本強制 text presentation；onPick 仍傳原始 text。 */
-  const displayText = text.replace(/\uFE0F/g, '\uFE0E')
-    .replace(/(\p{Extended_Pictographic})(?![\uFE0E\uFE0F])/gu, '$1\uFE0E');
-  const cg = getSymbolPickerMeasureCtx();
-  if (cg) cg.font = `400 ${base}px ${SYMBOL_PICKER_FONT}`;
-  const measured = cg ? Math.max(1, cg.measureText(displayText).width) : Math.max(base, displayText.length * base * 0.55);
-  const available = typeof window === 'undefined' ? 280 : Math.max(72, Math.min(360, window.innerWidth - 56));
-  const fontSize = base * Math.min(1, available / measured);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const inkRef = useRef<HTMLSpanElement>(null);
+  const [k, setK] = useState(1);
+  useLayoutEffect(() => {
+    const box = boxRef.current, ink = inkRef.current;
+    if (!box || !ink) return;
+    let alive = true;
+    const fit = () => {
+      if (!alive) return;
+      const bw = box.clientWidth;
+      const tw = ink.scrollWidth;
+      if (bw > 0 && tw > 0) setK(Math.min(1, bw / tw));
+    };
+    fit();
+    (document as any).fonts?.ready?.then(fit).catch(() => {});
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
+    ro?.observe(box);
+    return () => { alive = false; ro?.disconnect(); };
+  }, [text, base]);
   return (
-    <span
-      className="block max-w-full overflow-hidden text-center"
-      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: SYMBOL_PICKER_FONT, fontVariantEmoji: 'text' as any }}
-    >
-      {displayText}
-    </span>
+    <div ref={boxRef} className="max-w-full overflow-hidden flex items-center justify-center">
+      <span
+        ref={inkRef}
+        style={{
+          display: 'inline-block', whiteSpace: 'pre', flexShrink: 0,
+          fontSize: base, lineHeight: 1.4,
+          transform: `scale(${k})`, transformOrigin: 'center center',
+        }}
+      >
+        {text}
+      </span>
+    </div>
   );
 };
 
@@ -1580,9 +1587,7 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
 export const SymbolPicker: React.FC<{
   onBack: () => void;
   onPick: (s: string) => void;
-}> = ({ onBack, onPick }) => {
-  /* 裝置字型無下載階段，進頁第一幀直接顯示。 */
-  return (
+}> = ({ onBack, onPick }) => (
   <div className="pt-1">
     <div className="flex items-center gap-2 mb-3">
       <button
@@ -1610,8 +1615,7 @@ export const SymbolPicker: React.FC<{
       ))}
     </div>
   </div>
-  );
-};
+);
 
 /**
  * 空格提示必须属于它所在的布局图层。
