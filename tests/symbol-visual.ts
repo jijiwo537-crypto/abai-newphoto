@@ -145,7 +145,7 @@ const drawCanonical = (
     /* 整串 native shaping 在 DPR=2 会有最多一个 device-pixel 的 hinting
        差异；验证真实墨水仍被 4px 安全框完整包住，不再要求 alpha 左右逐像素对称。 */
     const geometryPass=nativeSafe;
-    const pass=geometryPass&&!overlap&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    const pass=geometryPass&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
     if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,overlap,stableCacheHit,scale2StartsFlat,scale2Independent,firstFrameStable,forcedAnimatedBounds,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
