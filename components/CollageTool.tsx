@@ -4891,12 +4891,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const scale = individualBreathe
               ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71) * ((o.mo?.amp || 50) / 100) * 0.18
               : kind === 'bubble' ? easeOutBack(q) : 1;
+            const segmentLeft = tdx - total / 2 + left;
+            const segmentRight = tdx - total / 2 + right;
+            const center = (segmentLeft + segmentRight) / 2;
             ctx.save();
             ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            ctx.translate(tdx - total / 2 + (left + right) / 2, tdy);
+            /* 每個單位仍可獨立縮放，但內容永遠重畫「完整原字串」，再以該
+               grapheme 原本佔據的區段裁切。這會保留 iOS 的字距、fallback
+               字型與組合記號定位；逐顆 fillText 會重新塑形，正是點與弧線
+               重疊、以及一進動畫整串水平位移的來源。 */
+            ctx.translate(center, tdy);
             ctx.scale(scale, scale);
+            ctx.translate(-center, -tdy);
+            ctx.beginPath();
+            ctx.rect(segmentLeft, tdy - o.size * s * 5, Math.max(0.5, segmentRight - segmentLeft), o.size * s * 10);
+            ctx.clip();
             ctx.textAlign = 'center';
-            ctx.fillText(part.ch, 0, 0);
+            ctx.fillText(source, tdx, tdy);
             ctx.restore();
           });
         } else {
