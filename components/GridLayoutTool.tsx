@@ -1595,7 +1595,7 @@ export const SymbolPicker: React.FC<{
           key={i}
           onClick={() => onPick(s)}
           aria-label={s}
-          className="h-10 px-3 max-w-full rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-all inline-flex items-center justify-center text-white/85"
+          className={`h-10 px-3 max-w-full rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-all inline-flex items-center justify-center text-white/85 ${Array.from(s).length > 18 ? 'w-full' : ''}`}
           style={{ contentVisibility: 'auto', containIntrinsicSize: '40px 72px' }}
         >
           <SymbolGlyph text={s} />
