@@ -4870,10 +4870,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if (seqIn !== null || individualBreathe) {
           const source = o.text || '';
           const Seg = (Intl as any).Segmenter;
-          const units: { at: number }[] = Seg
-            ? Array.from(new Seg(undefined, { granularity: 'grapheme' }).segment(source) as any,
-                (part: any) => ({ at: part.index }))
-            : Array.from(source).map((_ch, at) => ({ at }));
+          /* 方向控制字只有放在完整字串裡才有意義；拆開繪製會改變整串方向。
+             這類少數符號整體播放，其他符號才依 grapheme 逐單位播放。 */
+          const hasBidiControls = /[\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(source);
+          const units: { ch: string; at: number }[] = hasBidiControls
+            ? [{ ch: source, at: 0 }]
+            : Seg
+              ? Array.from(new Seg(undefined, { granularity: 'grapheme' }).segment(source) as any,
+                  (part: any) => ({ ch: part.segment, at: part.index }))
+              : Array.from(source).map((ch, at) => ({ ch, at }));
           const total = ctx.measureText(source).width;
           const now = f?.idleT ?? 0;
           units.forEach((unit, index) => {
@@ -4885,25 +4890,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const scale = individualBreathe
               ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1)) * ((o.mo?.amp || 50) / 100) * 0.18
               : o.mo?.in === 'bubble' ? easeOutBack(q) : 1;
-            const normalLeft = tdx - total / 2 + leftAdvance;
-            const normalRight = tdx - total / 2 + rightAdvance;
-            const center = (normalLeft + normalRight) / 2;
-            /* 永遠繪製原本的完整字串，再用互不重疊的區域分片動畫。
-               因此組合記號、fallback 字型、雙向控制字都保留靜止時的原始塑形；
-               動畫不會再把第二排第二個這類符號拆開後重新定位。首尾區域向外延伸，
-               也不會裁掉超出 advance box 的墨水。 */
-            const clipLeft = index === 0 ? tdx - total / 2 - o.size * s * 4 : normalLeft;
-            const clipRight = index === units.length - 1 ? tdx + total / 2 + o.size * s * 4 : normalRight;
+            const center = tdx - total / 2 + (leftAdvance + rightAdvance) / 2;
             ctx.save();
             ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
             ctx.translate(center, tdy);
             ctx.scale(scale, scale);
-            ctx.translate(-center, -tdy);
-            ctx.beginPath();
-            ctx.rect(clipLeft, tdy - o.size * s * 5, Math.max(0.5, clipRight - clipLeft), o.size * s * 10);
-            ctx.clip();
             ctx.textAlign = 'center';
-            ctx.fillText(source, tdx, tdy);
+            /* grapheme 會把基底字與所有附加記號保持在同一顆，沒有任何裁切區域，
+               所以動畫期間不會再看到符號被切成兩半。 */
+            ctx.fillText(unit.ch, 0, 0);
             ctx.restore();
           });
         } else {
@@ -7564,6 +7559,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   if (!offs2) return;
                   const id = Math.random().toString(36).slice(2, 9);
                   await ensureFont(DEFAULT_FONT);
+                  // iOS 的 fallback 字形也必須完成後才建立外盒，避免先用暫時字型量框，
+                  // 幾秒後 fonts.ready 清快取才突然變成另一個尺寸。
+                  await (document as any).fonts?.ready;
                   clearSymbolInkCache();
                   /* 框照「真正畫出來的那一塊」量（見 symInk 的說明），
                      不是照前進寬度 —— 這樣選取框才會貼著符號本身。 */
