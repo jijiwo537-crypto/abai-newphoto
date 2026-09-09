@@ -65,13 +65,19 @@ const scanInk = (text: string, family: string, requestedSize: number): SymbolInk
     ctx.fillStyle = '#fff';
     const ax = canvas.width / 2, ay = canvas.height / 2;
 
-    /* TextMetrics 是安全下限：即使 iOS 因 Canvas 面積或記憶體拒絕 getImageData，
-       advance 與 actualBoundingBox 仍能保證左右兩端不會掉出外框。 */
+    /* TextMetrics 只作為 iOS 拒絕 getImageData 時的備援，而且使用真正墨水邊界，
+       不能把 advance 算進外框：長字串兩端的空白／方向控制字元沒有墨水，
+       把 advance 當內容正是左側莫名突出一塊的原因。 */
     const metrics = ctx.measureText(text);
-    let left = -Math.max(advance / 2, Number(metrics.actualBoundingBoxLeft) || 0);
-    let right = Math.max(advance / 2, Number(metrics.actualBoundingBoxRight) || 0);
-    let top = -(Number(metrics.actualBoundingBoxAscent) || scanSize * .75);
-    let bottom = Number(metrics.actualBoundingBoxDescent) || scanSize * .45;
+    const metricLeft = Number(metrics.actualBoundingBoxLeft) || 0;
+    const metricRight = Number(metrics.actualBoundingBoxRight) || 0;
+    const metricTop = Number(metrics.actualBoundingBoxAscent) || 0;
+    const metricBottom = Number(metrics.actualBoundingBoxDescent) || 0;
+    const hasMetricInk = metricLeft > 0 || metricRight > 0;
+    let left = hasMetricInk ? -metricLeft : -advance / 2;
+    let right = hasMetricInk ? metricRight : advance / 2;
+    let top = metricTop > 0 ? -metricTop : -scanSize * .75;
+    let bottom = metricBottom > 0 ? metricBottom : scanSize * .45;
 
     ctx.fillText(text, ax, ay);
     try {
@@ -154,6 +160,12 @@ export const measureSymbolAdvance = (text: string, family: string, fontSize: num
  */
 export const splitSymbolUnits = (text: string): string[] => {
   if (!text) return [];
+  /* Canvas 不提供已塑形字串的逐字 glyph 位置。含組合記號、雙向控制或需上下文
+     塑形的文字若硬拆，任何 prefix-width 算法都可能破壞原本排版。這類符號保留
+     為單一穩定 run；泡泡／縮放 II 仍會對整個 run 播放，絕不會停住或錯位。 */
+  if (/[\p{Mark}\u0590-\u0fff\u1780-\u1cff\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]/u.test(text)) {
+    return [text];
+  }
   let raw: string[] = [];
   try {
     const Segmenter = (Intl as any).Segmenter;
