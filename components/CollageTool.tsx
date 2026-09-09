@@ -36,7 +36,7 @@ import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { measureSymbolInk, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, measureSymbolInkAtSize, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -265,9 +265,9 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   if (o.sym) {
     /* 新增時保存的墨水量測是符號與選中框的共同幾何基準。
        不再於第一個動畫影格重新量字型，避免字型剛就緒時框先用到另一組度量。 */
-    const ink = (Number.isFinite(o.symInkW) && Number.isFinite(o.symInkH))
+    const ink = (o.symInkSize === o.size && Number.isFinite(o.symInkW) && Number.isFinite(o.symInkH))
       ? { w: o.symInkW, h: o.symInkH, cx: o.symInkCx || 0, cy: o.symInkCy || 0 }
-      : symInk(o.text || o.sym, o.fontFamily || DEFAULT_FONT);
+      : measureSymbolInkAtSize(o.text || o.sym, o.fontFamily || DEFAULT_FONT, o.size || 40);
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -4862,9 +4862,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if (o.sym) {
           /* 和选中框读取同一份建立时度量，动画第一帧与后续影格不会因
              字型缓存由 fallback 切到正式字型而改变中心。 */
-          const ink2 = (Number.isFinite(o.symInkW) && Number.isFinite(o.symInkH))
+          const ink2 = (o.symInkSize === o.size && Number.isFinite(o.symInkW) && Number.isFinite(o.symInkH))
             ? { w: o.symInkW, h: o.symInkH, cx: o.symInkCx || 0, cy: o.symInkCy || 0 }
-            : symInk(o.text || '', fam);
+            : measureSymbolInkAtSize(o.text || '', fam, o.size || 40);
           tdx = -ink2.cx * o.size * s;
           tdy = -ink2.cy * o.size * s;
         }
@@ -4907,9 +4907,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2';
         if (seqIn !== null || individualBreathe) {
           const units = symbolUnits(o.text || '');
-          const widths = units.map(ch => ctx.measureText(ch).width);
-          const total = widths.reduce((sum, v) => sum + v, 0);
-          let cursor = tdx - total / 2;
+          /* 用整串前缀的 shaping 宽度定位每个单位，而不是把各字宽相加。
+             组合符号、fallback 字体与 kerning 下，两者并不相等；前缀宽度
+             可保证动画首帧、常驻动画与静态整串拥有完全相同的中心。 */
+          const prefixes = [0];
+          for (let i = 1; i <= units.length; i++) {
+            prefixes.push(ctx.measureText(units.slice(0, i).join('')).width);
+          }
+          const total = prefixes[prefixes.length - 1] || 0;
+          const centers = units.map((_, i) => (prefixes[i] + prefixes[i + 1]) / 2);
           const now = animRef.current?.t ?? 0;
           units.forEach((ch, index) => {
             const bubbleSpan = 1 + Math.max(0, units.length - 1) * 0.2;
@@ -4922,12 +4928,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const rise = 0;
             ctx.save();
             ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            ctx.translate(cursor + widths[index] / 2, tdy + rise);
+            ctx.translate(tdx - total / 2 + centers[index], tdy + rise);
             ctx.scale(scale, scale);
             ctx.textAlign = 'center';
             ctx.fillText(ch, 0, 0);
             ctx.restore();
-            cursor += widths[index];
           });
         } else {
           ctx.fillText(o.text || '', tdx, tdy);
@@ -7623,12 +7628,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                      那根「大小」滑桿的最大值 —— 不然一加進來就頂在滑桿外面。 */
                   const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
                     Math.round((offs2.cw * 0.7) / Math.max(0.05, ink.w))));
-                  const box = symBox(txt, DEFAULT_FONT, size);
-                  const w = Math.round(box.w), h = Math.round(box.h);
+                  /* 最终字号再扫描一次：WebKit 对 fallback 符号在不同字号可能使用
+                     不同 hinting／基线，不能只拿 100px 结果等比推算。 */
+                  const finalInk = measureSymbolInkAtSize(txt, DEFAULT_FONT, size);
+                  const w = Math.ceil(finalInk.w * size + 8);
+                  const h = Math.ceil(finalInk.h * size + 8);
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
                     /* 固定保存这次实际扫描到的墨水范围；绘制与框都只认这一份。 */
-                    symInkW: ink.w, symInkH: ink.h, symInkCx: ink.cx, symInkCy: ink.cy,
+                    symInkW: finalInk.w, symInkH: finalInk.h,
+                    symInkCx: finalInk.cx, symInkCy: finalInk.cy, symInkSize: size,
                     fontFamily: DEFAULT_FONT, bold: false, italic: false,
                     letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
                     glow: 0, glowColor: '#ffffff',
