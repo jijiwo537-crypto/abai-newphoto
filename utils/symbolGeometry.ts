@@ -103,6 +103,9 @@ export const measureSymbolInkAtSize = (text: string, family: string, fontSize: n
 
 /** 完整包住墨水並在四邊保留一致安全距離。 */
 export const symbolBox = (text: string, family: string, size: number, gap = 4) => {
-  const ink = measureSymbolInk(text, family);
+  // 外框與真正顯示的字級必須使用同一次掃描。iOS 對含組合附加記號的
+  // Unicode 在不同字級會套用不同 hinting；拿 100px 結果等比推算會讓少數
+  // 符號在生成當下就偏出框，播放動畫後重新排版時才看似恢復。
+  const ink = measureSymbolInkAtSize(text, family, size);
   return { w: Math.max(6, ink.w * size + gap * 2), h: Math.max(6, ink.h * size + gap * 2) };
 };
