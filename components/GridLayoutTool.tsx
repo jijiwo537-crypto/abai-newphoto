@@ -1545,14 +1545,24 @@ const FontCard: React.FC<{
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
 export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
-  /* 首帧直接使用确定字号，不再先画 scale(1)、layout effect 后整页 setState。
-     长符号按可见 Unicode 单位同步缩小；短符号维持原尺寸。 */
-  const count = Math.max(1, Array.from(text).length);
-  const fontSize = base * Math.min(1, 18 / count);
+  /* 用正確字型的實際 advance 寬度決定字級，不能用 Unicode 單位數猜：
+     有些裝飾符號只有幾個 grapheme，實際卻非常寬，舊算法會被按鈕裁掉。 */
+  let measuredWidth = Math.max(base, Array.from(text).length * base * 0.55);
+  if (typeof document !== 'undefined') {
+    const cv = document.createElement('canvas');
+    const cg = cv.getContext('2d');
+    if (cg) {
+      cg.font = `400 ${base}px ${fontStack(DEFAULT_FONT)}`;
+      measuredWidth = Math.max(1, cg.measureText(text).width);
+    }
+  }
+  const available = typeof window === 'undefined'
+    ? 280 : Math.max(72, Math.min(360, window.innerWidth - 56));
+  const fontSize = base * Math.min(1, available / measuredWidth);
   return (
     <span
       className="block max-w-full overflow-hidden text-center"
-      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: fontStack(DEFAULT_FONT) }}
+      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: fontStack(DEFAULT_FONT), maxWidth: available }}
     >
       {text}
     </span>

@@ -399,7 +399,7 @@ const symbolUnits = (text: string): string[] => {
 
 type SymbolUnitLayout = {
   units: string[]; anchors: number[]; inks: { w: number; h: number; cx: number; cy: number }[];
-  inkW: number; inkH: number;
+  inkW: number; inkH: number; inkCy: number;
 };
 const symbolUnitLayoutCache = new Map<string, SymbolUnitLayout>();
 /** 单一符号布局来源：静态、选中框与所有动画都读取同一份实际墨水几何。 */
@@ -423,8 +423,11 @@ const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): Symbo
      相鄰單位重疊。保持瀏覽器原始位置，僅在真正相交時把後續單位推開。 */
   const anchors = rawAnchors.slice();
   for (let i = 1; i < anchors.length; i++) {
-    const prevRight = anchors[i - 1] + (inks[i - 1].cx + inks[i - 1].w / 2) * px;
-    const thisLeft = anchors[i] + (inks[i].cx - inks[i].w / 2) * px;
+    /* 泡泡的 easeOutBack 最高會略大於 1；以 1.12 倍墨水邊界預留
+       回彈空間，動畫峰值也不會讓相鄰單位互相壓住。 */
+    const safeScale = 1.12;
+    const prevRight = anchors[i - 1] + (inks[i - 1].cx + inks[i - 1].w / 2 * safeScale) * px;
+    const thisLeft = anchors[i] + (inks[i].cx - inks[i].w / 2 * safeScale) * px;
     if (thisLeft < prevRight) {
       const push = prevRight - thisLeft;
       for (let j = i; j < anchors.length; j++) anchors[j] += push;
@@ -443,6 +446,7 @@ const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): Symbo
   const out = {
     units, anchors: anchors.map(x => x + sx), inks,
     inkW: Math.max(1, x1 - x0), inkH: Math.max(1, y1 - y0),
+    inkCy: (y0 + y1) / 2,
   };
   symbolUnitLayoutCache.set(key, out);
   while (symbolUnitLayoutCache.size > 256) {
@@ -5032,7 +5036,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               const q = qs[index], sc = scales[index];
               ctx.save();
               ctx.globalAlpha *= unitMix * (seqIn === null ? 1 : Math.min(1, q * 3));
-              ctx.translate(tdx + layout.anchors[index] + shiftX, tdy + shiftY);
+              /* layout 已按逐單位實際墨水置中，不能再疊加整串文字的
+                 tdx/tdy，否則同一個中心會被補償兩次。 */
+              ctx.translate(layout.anchors[index] + shiftX, -layout.inkCy + shiftY);
               ctx.scale(sc, sc);
               ctx.textAlign = 'center';
               ctx.fillText(ch, 0, 0);
