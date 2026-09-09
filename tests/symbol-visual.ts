@@ -84,10 +84,11 @@ const drawCanonical = (
     /* 實際靜止排版由完整 grapheme 決定；動畫拆出的 combining mark
        可能刻意共用同一位置，不能拿它的獨立 alpha box 誤判成排版重疊。 */
     let overlap=false;
-    for(let i=1;i<layout.staticUnits.length;i++){
-      const a=layout.staticUnitInks[i-1],b=layout.staticUnitInks[i];
-      const ar=layout.staticCenters[i-1]+a.cx*size+a.w*size/2;
-      const bl=layout.staticCenters[i]+b.cx*size-b.w*size/2;
+    for(let i=1;i<layout.units.length;i++){
+      if(layout.unitClusters[i]===layout.unitClusters[i-1]) continue;
+      const a=layout.unitInks[i-1],b=layout.unitInks[i];
+      const ar=layout.centers[i-1]+layout.drawOffsetsX[i-1]+a.cx*size+a.w*size/2;
+      const bl=layout.centers[i]+layout.drawOffsetsX[i]+b.cx*size-b.w*size/2;
       if(bl<ar-.05){overlap=true;break;}
     }
     /* 同一基準尺寸必須命中幾何快取：縮放手勢只做數值變換，
