@@ -4921,7 +4921,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             return;
           }
           const count = unitLayout.unitLefts.length;
-          const fontPx = (o.size || 40) * s;
           const unitScales = individualBreathe
             ? unitLayout.unitLefts.map((_x, index) =>
                 symbolBreatheScale(index, now, o.mo?.amp || 50, o.mo?.speed || 1))
@@ -4933,6 +4932,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             else ctx.fillText(o.text || '', tdx, tdy);
             return;
           }
+          /* 縮放 II 從完整 native 字串平順交棒給獨立小單位；避免第一個
+             動畫幀因 contextual shaping 差異閃一下。 */
+          const unitBlend = individualBreathe ? Math.max(0, Math.min(1, now / .12)) : 1;
+          if (unitBlend < 1) {
+            ctx.save();
+            ctx.globalAlpha *= 1 - unitBlend;
+            if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
+            else ctx.fillText(o.text || '', tdx, tdy);
+            ctx.restore();
+          }
           for (let index = 0; index < count; index++) {
             const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
             const q = seqIn === null ? 1
@@ -4941,21 +4950,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                長符號在拖曳後第一幀的大量無效 Canvas 呼叫。 */
             if (!unitScales && q <= 0) continue;
             const scale = unitScales ? unitScales[index] : easeOutBack(q);
-            const left = unitLayout.unitLefts[index] * symbolUnitScale * s;
-            const right = unitLayout.unitRights[index] * symbolUnitScale * s;
-            const pivot = (left + right) / 2;
+            const pivot = unitLayout.unitPivots[index] * symbolUnitScale * s;
+            const origin = unitLayout.unitOrigins[index] * symbolUnitScale * s;
             ctx.save();
-            ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            ctx.translate(tdx + pivot, tdy);
+            ctx.globalAlpha *= (seqIn === null ? 1 : Math.min(1, q * 3)) * unitBlend;
+            ctx.translate(tdx + pivot, tdy + unitLayout.unitOffsetY * symbolUnitScale * s);
             ctx.scale(scale, scale);
-            /* clip 与完整文字处于同一变换空间。边界不重叠，避免半透明片段
-               接缝变亮；字素边界由整串 prefix advance 决定，不切 combining mark。 */
-            ctx.beginPath();
-            ctx.rect(left - pivot, -fontPx * 2.2, Math.max(0.01, right - left), fontPx * 4.4);
-            ctx.clip();
-            ctx.textAlign = 'center';
-            if (stroke) ctx.strokeText(o.text || '', -pivot, 0);
-            else ctx.fillText(o.text || '', -pivot, 0);
+            /* 每顆完整字素直接繪製，不能用矩形裁切完整字串。矩形邊界會在
+               單元縮放時切斷抗鋸齒／描邊／發光，肉眼看起來像被刀切過。 */
+            ctx.textAlign = 'left';
+            if (stroke) ctx.strokeText(unitLayout.units[index], origin - pivot, 0);
+            else ctx.fillText(unitLayout.units[index], origin - pivot, 0);
             ctx.restore();
           }
         };

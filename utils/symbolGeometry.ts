@@ -10,6 +10,14 @@ export type SymbolUnitLayout = {
   /** 每个动画片段在整串原生 shaping 中的水平裁切范围（基准字号 px）。 */
   unitLefts: number[];
   unitRights: number[];
+  /** 每段真正可見墨水的中心；動畫以此縮放，避免圖案在片段內滑動。 */
+  unitPivots: number[];
+  /** 小單位獨立繪製時的 baseline 起點，已校回完整 native 字串的墨水中心。 */
+  unitOrigins: number[];
+  /** 獨立字素聯集相對於完整原生字串的 baseline 垂直校正。 */
+  unitOffsetY: number;
+  /** contextual shaping 與 standalone 差異過大的罕見字素，才使用安全空隙切片。 */
+  unitUseSlice: boolean[];
   /** 靜止顯示與外框沿用瀏覽器原生字素排版，不受動畫拆分影響。 */
   staticUnits: string[];
   staticCenters: number[];
@@ -175,6 +183,163 @@ export const measureSymbolAdvance = (text: string, family: string, fontSize: num
 };
 
 /**
+ * 把原生完整字串切在「真正沒有墨水」的直欄，而不是切在 advance 邊界。
+ * 字形常會伸出 advance（星角、弧線、斜筆尤其明顯）；直接拿 prefix width
+ * 當剪裁線就會把筆畫剖開，泡泡／縮放 II 看起來像被直刀切過。
+ */
+const findSafeSymbolSlices = (
+  text: string,
+  family: string,
+  size: number,
+  spans: Array<{ left: number; right: number }>,
+) => {
+  const fallback = () => ({
+    lefts: spans.map(span => span.left),
+    rights: spans.map(span => span.right),
+    pivots: spans.map(span => (span.left + span.right) / 2),
+    inkWidths: spans.map(span => Math.max(.01, span.right - span.left)),
+    fullInkCenter: spans.length ? (spans[0].left + spans[spans.length - 1].right) / 2 : 0,
+  });
+  if (typeof document === 'undefined' || spans.length < 1) return fallback();
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
+    if (!ctx) return fallback();
+    let scanSize = Math.max(16, size * Math.max(1, Math.min(2, window.devicePixelRatio || 1)));
+    ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+    let total = Math.max(scanSize, ctx.measureText(text).width);
+    if (total + scanSize * 4 > MAX_SCAN_SIDE) {
+      scanSize *= MAX_SCAN_SIDE / (total + scanSize * 4);
+      ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+      total = Math.max(scanSize, ctx.measureText(text).width);
+    }
+    const ratio = scanSize / size;
+    const pad = Math.min(scanSize * 2, Math.max(4, (MAX_SCAN_SIDE - total) / 2));
+    canvas.width = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(total + pad * 2)));
+    canvas.height = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(scanSize * 2.4)));
+    ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    const ax = canvas.width / 2, ay = canvas.height / 2;
+    ctx.fillText(text, ax, ay);
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    const columns = new Uint16Array(canvas.width);
+    let firstInk = canvas.width, lastInk = -1;
+    for (let y = 0; y < canvas.height; y++) {
+      for (let x = 0; x < canvas.width; x++) {
+        if (pixels[(y * canvas.width + x) * 4 + 3] > 8) {
+          columns[x]++;
+          if (x < firstInk) firstInk = x;
+          if (x > lastInk) lastInk = x;
+        }
+      }
+    }
+    if (lastInk < firstInk) return fallback();
+
+    const boundaries: number[] = [];
+    for (let i = 0; i < spans.length - 1; i++) {
+      const nominal = ax + spans[i].right * ratio;
+      const leftCenter = ax + (spans[i].left + spans[i].right) / 2 * ratio;
+      const rightCenter = ax + (spans[i + 1].left + spans[i + 1].right) / 2 * ratio;
+      const lo = Math.max(0, Math.ceil(Math.min(leftCenter, rightCenter)));
+      const hi = Math.min(canvas.width - 1, Math.floor(Math.max(leftCenter, rightCenter)));
+      let best = Math.max(lo, Math.min(hi, Math.round(nominal)));
+      let bestInk = columns[best] ?? 65535;
+      let bestDistance = Math.abs(best - nominal);
+      for (let x = lo; x <= hi; x++) {
+        const inkCount = columns[x];
+        const distance = Math.abs(x - nominal);
+        if (inkCount < bestInk || (inkCount === bestInk && distance < bestDistance)) {
+          best = x; bestInk = inkCount; bestDistance = distance;
+        }
+      }
+      boundaries.push((best + .5 - ax) / ratio);
+    }
+    /* 每條邊各自找最近透明欄時，密集符號的搜尋區可能重疊；強制維持
+       左到右順序，否則相鄰 clip 會交叉並漏掉一整塊墨水。 */
+    const minStep = .5 / ratio;
+    for (let i = 1; i < boundaries.length; i++) {
+      if (boundaries[i] <= boundaries[i - 1]) {
+        boundaries[i] = boundaries[i - 1] + minStep;
+      }
+    }
+
+    /* 小字級 hinting 可能讓最外側筆畫比 2× 掃描多冒出數個像素；外緣沒有
+       鄰居會重疊，直接多留半個 em，絕不能把首尾裝飾裁掉。 */
+    const outerLeft = Math.min(spans[0].left, (firstInk - 1 - ax) / ratio) - size * .5;
+    const outerRight = Math.max(spans[spans.length - 1].right, (lastInk + 2 - ax) / ratio) + size * .5;
+    const lefts = spans.map((_span, i) => i ? boundaries[i - 1] : outerLeft);
+    const rights = spans.map((_span, i) => i < boundaries.length ? boundaries[i] : outerRight);
+    const inkWidths: number[] = [];
+    const pivots = lefts.map((left, i) => {
+      const x0 = Math.max(0, Math.floor(ax + left * ratio));
+      const x1 = Math.min(canvas.width - 1, Math.ceil(ax + rights[i] * ratio));
+      let l = x1, r = x0 - 1;
+      for (let x = x0; x <= x1; x++) if (columns[x]) { l = Math.min(l, x); r = Math.max(r, x); }
+      inkWidths.push(r >= l ? (r - l + 1) / ratio : Math.max(.01, rights[i] - left));
+      return r >= l ? ((l + r + 1) / 2 - ax) / ratio : (left + rights[i]) / 2;
+    });
+    canvas.width = canvas.height = 0;
+    const fullInkCenter = ((firstInk + lastInk + 1) / 2 - ax) / ratio;
+    return { lefts, rights, pivots, inkWidths, fullInkCenter };
+  } catch {
+    return fallback();
+  }
+};
+
+/** 在同一個 DPR raster 上量一次「完整 grapheme 各自繪製」的聯集中心。
+ * 只在建立版面時執行一次並快取；手勢與動畫幀完全不會重新量測。 */
+const measureStandaloneCompositionCenter = (
+  text: string,
+  units: string[],
+  origins: number[],
+  family: string,
+  size: number,
+): { x: number; y: number } | null => {
+  if (typeof document === 'undefined' || !units.length) return null;
+  try {
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    let scanSize = Math.max(16, size * dpr);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
+    if (!ctx) return null;
+    ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+    let total = Math.max(scanSize, ctx.measureText(text).width);
+    if (total + scanSize * 8 > MAX_SCAN_SIDE) {
+      scanSize *= MAX_SCAN_SIDE / (total + scanSize * 8);
+      ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+      total = Math.max(scanSize, ctx.measureText(text).width);
+    }
+    const ratio = scanSize / size;
+    const pad = Math.min(scanSize * 4, Math.max(4, (MAX_SCAN_SIDE - total) / 2));
+    canvas.width = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(total + pad * 2)));
+    /* 附加記號可能伸到 em 方框數倍之外；高度太小會把 standalone 掃描本身
+       截斷，接著產生假的垂直校正。與完整墨水掃描一樣保留上下各 4em。 */
+    canvas.height = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(scanSize * 8)));
+    const ax = canvas.width / 2, ay = canvas.height / 2;
+    ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    units.forEach((unit, index) => ctx.fillText(unit, ax + origins[index] * ratio, ay));
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let left = canvas.width, right = -1, top = canvas.height, bottom = -1;
+    for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+      if (pixels[(y * canvas.width + x) * 4 + 3] > 0) {
+        left = Math.min(left, x); right = Math.max(right, x);
+        top = Math.min(top, y); bottom = Math.max(bottom, y);
+      }
+    }
+    canvas.width = canvas.height = 0;
+    return right >= left ? {
+      x: ((left + right + 1) / 2 - ax) / ratio,
+      y: ((top + bottom + 1) / 2 - ay) / ratio,
+    } : null;
+  } catch { return null; }
+};
+
+/**
  * 泡泡與縮放 II 的最小單位必須是「完整字素」，不能是 UTF-16 code unit/code point。
  * Intl.Segmenter 會把代理對、附加記號與變體選擇符留在同一顆字素內，因此既不會
  * 把符號拆壞，也不會因整串含一個附加記號就讓整顆符號完全失去逐顆動畫。
@@ -295,16 +460,51 @@ export const measureSymbolUnitLayout = (
       }));
     }
   } catch { /* 等分范围仍可安全绘制 */ }
+  const safeSlices = findSafeSymbolSlices(text, family, size, nativeSpans);
+  const unitPivots: number[] = [];
+  const unitOrigins: number[] = [];
+  const unitUseSlice: boolean[] = [];
+  let unitMetricCtx: CanvasRenderingContext2D | null = null;
+  try {
+    unitMetricCtx = document.createElement('canvas').getContext('2d');
+    if (unitMetricCtx) unitMetricCtx.font = `400 ${size}px ${fontStack(family)}`;
+  } catch { /* 退回 prefix 起點 */ }
   originalClusters.forEach((cluster, clusterIndex) => {
     units.push(cluster);
-    centers.push((nativeSpans[clusterIndex].left + nativeSpans[clusterIndex].right) / 2);
+    centers.push(safeSlices.pivots[clusterIndex]);
     unitClusters.push(clusterIndex);
-    unitLefts.push(nativeSpans[clusterIndex].left);
-    unitRights.push(nativeSpans[clusterIndex].right);
+    unitLefts.push(safeSlices.lefts[clusterIndex]);
+    unitRights.push(safeSlices.rights[clusterIndex]);
+    unitPivots.push(safeSlices.pivots[clusterIndex]);
+    let localInkCenter = (nativeSpans[clusterIndex].right - nativeSpans[clusterIndex].left) / 2;
+    if (unitMetricCtx) {
+      const metrics = unitMetricCtx.measureText(cluster);
+      const metricLeft = Number(metrics.actualBoundingBoxLeft) || 0;
+      const metricRight = Number(metrics.actualBoundingBoxRight) || 0;
+      localInkCenter = (metricRight - metricLeft) / 2;
+    }
+    unitOrigins.push(safeSlices.pivots[clusterIndex] - localInkCenter);
+    unitUseSlice.push(false);
   });
+  /* 動畫不能再用矩形 clip：即使基準幀切在透明欄，單元放大後仍可能把
+     抗鋸齒、描邊或發光切成筆直裂縫。每個完整 grapheme 都直接繪製；再把
+     獨立排版的實際墨水聯集校回整串 native 墨水中心，切換動畫不會橫移。 */
+  let unitOffsetY = 0;
+  if (unitOrigins.length) {
+    const composedCenter = measureStandaloneCompositionCenter(text, units, unitOrigins, family, size);
+    if (composedCenter !== null) {
+      const correction = safeSlices.fullInkCenter - composedCenter.x;
+      unitOffsetY = ink.cy * size - composedCenter.y;
+      for (let i = 0; i < unitOrigins.length; i++) {
+        unitOrigins[i] += correction;
+        unitPivots[i] += correction;
+        centers[i] += correction;
+      }
+    }
+  }
 
   const out = {
-    units, centers, unitClusters, unitLefts, unitRights,
+    units, centers, unitClusters, unitLefts, unitRights, unitPivots, unitOrigins, unitOffsetY, unitUseSlice,
     staticUnits, staticCenters, staticUnitInks,
     advance, ink,
   };
