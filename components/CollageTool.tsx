@@ -4995,16 +4995,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           let shiftX = 0, shiftY = 0;
           if (individualBreathe) {
             let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+            let bx0 = Infinity, by0 = Infinity, bx1 = -Infinity, by1 = -Infinity;
             layout.units.forEach((_, index) => {
               const ink = layout.inks[index], sc = scales[index], ax = layout.anchors[index];
-              x0 = Math.min(x0, ax + (ink.cx - ink.w / 2) * o.size * s * sc);
-              x1 = Math.max(x1, ax + (ink.cx + ink.w / 2) * o.size * s * sc);
-              y0 = Math.min(y0, (ink.cy - ink.h / 2) * o.size * s * sc);
-              y1 = Math.max(y1, (ink.cy + ink.h / 2) * o.size * s * sc);
+              const left = (ink.cx - ink.w / 2) * o.size * s;
+              const right = (ink.cx + ink.w / 2) * o.size * s;
+              const top = (ink.cy - ink.h / 2) * o.size * s;
+              const bottom = (ink.cy + ink.h / 2) * o.size * s;
+              /* bx/by 是進場結束、所有倍率為 1 的基準框。 */
+              bx0 = Math.min(bx0, ax + left); bx1 = Math.max(bx1, ax + right);
+              by0 = Math.min(by0, top); by1 = Math.max(by1, bottom);
+              x0 = Math.min(x0, ax + left * sc); x1 = Math.max(x1, ax + right * sc);
+              y0 = Math.min(y0, top * sc); y1 = Math.max(y1, bottom * sc);
             });
-            if (Number.isFinite(x0)) {
-              shiftX = -(x0 + x1) / 2;
-              shiftY = -(y0 + y1) / 2;
+            if (Number.isFinite(x0) && Number.isFinite(bx0)) {
+              /* 只抵銷縮放造成的中心差，不把原始墨水中心硬搬到零點。
+                 因此縮放 II 無論如何呼吸，整個符號都停在進場結束的位置。 */
+              shiftX = (bx0 + bx1 - x0 - x1) / 2;
+              shiftY = (by0 + by1 - y0 - y1) / 2;
             }
           }
           layout.units.forEach((ch, index) => {
@@ -7698,16 +7706,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  * 加進來的份量都差不多。
                  * 刻意不跳去編輯頁、也不進入打字狀態，可以連著加好幾顆。
                  */
-                const addSymbol = async (txt: string) => {
+                const addSymbol = (txt: string) => {
                   const offs2 = getLayoutOffsets();
                   if (!offs2) return;
                   const id = Math.random().toString(36).slice(2, 9);
-                  await ensureFont(DEFAULT_FONT);
-                  /* 等浏览器真正提交字体，再做唯一一次墨水扫描。
-                     ensureFont resolve 与 Safari 首次 canvas 绘字之间偶尔仍差一帧。 */
-                  if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
-                  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-                  clearSymbolInkCache();
+                  /* SymbolPicker 只會在 DEFAULT_FONT 完整就緒後顯示按鈕，因此點擊時
+                     字型與量測快取已可直接使用；這裡不得再等待網路、fonts.ready
+                     或下一個 animation frame，按下的同一個事件就建立物件。 */
                   /* 框照「真正畫出來的那一塊」量（見 symInk 的說明），
                      不是照前進寬度 —— 這樣選取框才會貼著符號本身。 */
                   const ink = symInk(txt, DEFAULT_FONT);
