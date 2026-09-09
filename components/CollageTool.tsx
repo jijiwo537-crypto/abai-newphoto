@@ -4899,7 +4899,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             return;
           }
           const now = f?.idleT ?? 0;
-          const useAnimationUnits = seqIn !== null || individualBreathe;
+          /* 进场最后一帧所有倍率已回到 1 时，立即交回原生 grapheme 渲染。
+             这样位置完全沿用静止版，也不会因拆分 combining marks 留下抗锯齿跳帧。 */
+          const sequenceAnimating = seqIn !== null && seqIn < 1 - 1e-6;
+          const useAnimationUnits = sequenceAnimating || individualBreathe;
           const drawUnits = useAnimationUnits ? unitLayout.units : unitLayout.staticUnits;
           const drawCenters = useAnimationUnits ? unitLayout.centers : unitLayout.staticCenters;
           const drawInks = useAnimationUnits ? unitLayout.unitInks : unitLayout.staticUnitInks;
