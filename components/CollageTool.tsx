@@ -301,8 +301,9 @@ const symBox = (str: string, fam: string, size: number) => {
 const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
   if (o.sym) {
-    const renderSize = (o.size || 40) * scale;
-    const ink = measureSymbolUnitLayout(o.text || o.sym, o.fontFamily || DEFAULT_FONT, renderSize).ink;
+    /* 外框使用固定基础字级的规范化几何，再跟物件一起等比缩放。
+       缩放期间不可按每一帧的新字级重新扫描 alpha，否则 iOS 会卡顿且框会跳。 */
+    const ink = measureSymbolUnitLayout(o.text || o.sym, o.fontFamily || DEFAULT_FONT, o.size || 40).ink;
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -4864,7 +4865,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            不校正的話，前進寬度／em 方框跟墨水差多少，符號就偏出框多少 ——
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
         const symbolLayout = o.sym
-          ? measureSymbolUnitLayout(o.text || '', fam, (o.size || 40) * s)
+          /* 几何只按物件基础字级量一次。s 在缩放手势中每帧变化，只用于下面的
+             数值乘法，不再制造几百份不同字级的 alpha 扫描与缓存。 */
+          ? measureSymbolUnitLayout(o.text || '', fam, o.size || 40)
           : null;
         let tdx = 0, tdy = 0;
         if (symbolLayout) {
@@ -4896,8 +4899,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             return;
           }
           const now = f?.idleT ?? 0;
-          unitLayout.units.forEach((unit, index) => {
-            const bubbleSpan = 1 + Math.max(0, unitLayout.units.length - 1) * 0.2;
+          const useAnimationUnits = seqIn !== null || individualBreathe;
+          const drawUnits = useAnimationUnits ? unitLayout.units : unitLayout.staticUnits;
+          const drawCenters = useAnimationUnits ? unitLayout.centers : unitLayout.staticCenters;
+          const drawInks = useAnimationUnits ? unitLayout.unitInks : unitLayout.staticUnitInks;
+          drawUnits.forEach((unit, index) => {
+            const bubbleSpan = 1 + Math.max(0, drawUnits.length - 1) * 0.2;
             const q = seqIn === null ? 1
               : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
             const ease = easeOutCubic(q);
@@ -4912,11 +4919,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                隔壁，看起來像多顆黏成同一單位。改以該 unit 真正的 alpha 墨水
                中心作支點，再把文字反向放回原座標：scale=1 的畫面逐像素不變，
                動畫時每個可見小單位只在自己的位置上縮放。 */
-            const unitInk = unitLayout.unitInks[index];
-            const drawOffsetX = unitLayout.drawOffsetsX[index] || 0;
+            const unitInk = drawInks[index];
+            const isSeventh = (o.text || '') === "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
+            const baseOffsetX = useAnimationUnits
+              ? (unitLayout.drawOffsetsX[index] || 0)
+              : (isSeventh && unit.includes("\u08ea") ? -(o.size || 40) * 0.08 : 0);
             const pivotX = unitInk.cx * (o.size || 40) * s;
             const pivotY = unitInk.cy * (o.size || 40) * s;
-            ctx.translate(tdx + unitLayout.centers[index] + drawOffsetX + pivotX, tdy + pivotY);
+            ctx.translate(
+              tdx + drawCenters[index] * s + baseOffsetX * s + pivotX,
+              tdy + pivotY,
+            );
             ctx.scale(scale, scale);
             ctx.textAlign = 'center';
             if (stroke) ctx.strokeText(unit, -pivotX, -pivotY);
