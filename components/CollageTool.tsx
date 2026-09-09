@@ -703,6 +703,10 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'jitter', name: '抖動' },
 ];
 const GRID_IDLE_KINDS = IDLE_KINDS.map(k => k.id === 'sway' ? { id: 'grid-wave', name: '波浪' } : k);
+/* 所有物件的波浪與網格共用同一套面板尺度與預設，不再依物件類型分叉。 */
+const WAVE_DEFAULT = { amp: 50, speed: 0.9 };
+const WAVE_AMP_RANGE = { min: 0, max: 100 };
+const WAVE_SPEED_RANGE = { min: 20, max: 180 };
 const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'sway').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 
 /** 進場動畫在進度 p（0～1）時的樣子 */
@@ -830,10 +834,11 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
      在泡泡尚未结束时就套上另一组倍率，正是首帧错位与交接断层的来源。 */
   if (p < 1) return { ...f, fx, burst: f.burst || 0, idleBlend: 0 };
   const after = Math.max(0, t - (cfg.delay + cfg.dur));
-  /* 从同一个静止帧开始，并让位移与速度同时平滑增加。
-     高斯包络在 t=0 的值和斜率都为 0，不会瞬移；约 0.28 秒自然进入完整常驻，
-     又不会产生旧版 0.35 秒线性淡入那种近乎静止的停顿。 */
-  const blend = 1 - Math.exp(-Math.pow(after / 0.12, 2));
+  /* 從完全靜止的進場終點接手，0.6 秒內以 smoothstep 同時增加位移
+     與速度。兩端斜率都是 0，不會像舊高斯曲線在前 0.1 秒猛然衝到大半，
+     波浪、縮放、搖擺與繞圈的開頭因此都自然且可預期。 */
+  const handoff = Math.max(0, Math.min(1, after / 0.6));
+  const blend = handoff * handoff * (3 - 2 * handoff);
   const g = idleFrame(cfg.idle, after, cfg.amp, cfg.speed, phase);
   return {
     k: 1 + (g.k - 1) * blend,
@@ -8149,6 +8154,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const pickKind = (d: Partial<MoCfg>) => {
                   if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
                   else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 60, speed: 1.2 });
+                  else if (d.idle === 'sway' || d.idle === 'grid-wave') setCur({ ...d, ...WAVE_DEFAULT });
                   else if (d.idle && isSpecialLineTarget) setCur({ ...d, amp: 20 });
                   else setCur(d);
                   replayMotion();
@@ -8309,11 +8315,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         </div>
                         {cur.idle !== 'none' && (
                           <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                            <CompactSlider label="幅度" value={cur.amp} min={0} max={100} step={1}
+                            <CompactSlider label="幅度" value={cur.amp}
+                              min={(cur.idle === 'sway' || cur.idle === 'grid-wave') ? WAVE_AMP_RANGE.min : 0}
+                              max={(cur.idle === 'sway' || cur.idle === 'grid-wave') ? WAVE_AMP_RANGE.max : 100} step={1}
                               onChange={(v: number) => setCur({ amp: v })} />
-                            {/* 範圍 20～180 配 step 1：滑桿只有 167px 寬，範圍再寬一點
-                                一個螢幕像素就會跳 2 —— 那正是主人說「動一下就 +2」的原因 */}
-                            <CompactSlider label="速度" value={Math.round(cur.speed * 100)} min={20} max={180} step={1}
+                            {/* 波浪明確共用網格的 20～180；其他動畫維持既有範圍。 */}
+                            <CompactSlider label="速度" value={Math.round(cur.speed * 100)}
+                              min={(cur.idle === 'sway' || cur.idle === 'grid-wave') ? WAVE_SPEED_RANGE.min : 20}
+                              max={(cur.idle === 'sway' || cur.idle === 'grid-wave') ? WAVE_SPEED_RANGE.max : 180} step={1}
                               onChange={(v: number) => setCur({ speed: v / 100 })} />
                           </div>
                         )}
