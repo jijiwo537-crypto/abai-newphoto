@@ -114,11 +114,15 @@ const drawCanonical = (
       layout.units.some((unit,i)=>unit.includes("\u08ea")&&layout.drawOffsetsX[i]<0)
       && layout.drawOffsetsX.every((offset,i)=>layout.units[i].includes("\u08ea")||offset===0)
     );
-    /* 第七顆原本被 Intl.Segmenter 合併成四組；肉眼可見的附加點與弧線
-       現在必須各自成為動畫單元。 */
-    const visibleUnitsSeparated=index!==6||layout.units.length>=7;
-    const pass=inside&&centered&&tight&&!overlap&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&visibleUnitsSeparated&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,overlap,stableCacheHit,scale2StartsFlat,scale2Independent,specialDotAdjusted,visibleUnitsSeparated,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    /* 动画与静止必须使用完全相同的 grapheme、中心及墨水几何。
+       这是避免进入动画页时组合符号重新 shaping 后跑位的核心回归检查。 */
+    const animationLayoutStable=
+      layout.units.length===layout.staticUnits.length
+      && layout.units.every((unit,i)=>unit===layout.staticUnits[i]
+        && Math.abs(layout.centers[i]-layout.staticCenters[i])<1e-9
+        && layout.unitInks[i]===layout.staticUnitInks[i]);
+    const pass=inside&&centered&&tight&&!overlap&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&animationLayoutStable&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,overlap,stableCacheHit,scale2StartsFlat,scale2Independent,specialDotAdjusted,animationLayoutStable,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
