@@ -279,10 +279,15 @@ export const measureSymbolUnitLayout = (
     }
   } catch { /* 均匀中心仍可用 */ }
 
-  /* 静止 renderer 只有一个完整单元，绝不逐字重排。 */
-  const staticUnits = [text];
-  const staticCenters = [0];
-  const staticUnitInks = [fullInk];
+  const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
+  /* 一般符号静止时整串原生 shaping；第七颗保留既有的单点微调，
+     避免这次修复动到主人已经确认过的位置。 */
+  const keepSeventhParts = text === seventhSymbol;
+  const staticUnits = keepSeventhParts ? clusters.slice() : [text];
+  const staticCenters = keepSeventhParts ? clusterCenters.slice() : [0];
+  const staticUnitInks = keepSeventhParts
+    ? clusters.map(unit => measureSymbolInkAtSize(unit, family, size))
+    : [fullInk];
   const ink = fullInk;
 
   /* 动画节拍按可见 code point 分开，但位置继承所属 grapheme 在整串原生
@@ -299,7 +304,6 @@ export const measureSymbolUnitLayout = (
   });
   const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
 
-  const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
   const drawOffsetsX = units.map(() => 0);
   if (text === seventhSymbol) {
     const dotIndex = units.findIndex(unit => unit.includes("\u08ea"));
