@@ -21,7 +21,22 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
     if (ctx) {
       const font = `400 ${REF}px ${fontStack(family)}`;
       ctx.font = font;
-      const advance = Math.max(REF, ctx.measureText(text).width);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const tm = ctx.measureText(text);
+      /* 現代 Safari/Chrome 直接提供向量字形的實際四邊，無需建立巨大點陣
+         再逐像素掃描；點擊符號時可同步完成且邊界與 Canvas 繪製一致。 */
+      if (Number.isFinite(tm.actualBoundingBoxLeft) && Number.isFinite(tm.actualBoundingBoxRight)
+          && tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight > 0) {
+        out = {
+          w: (tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight) / REF,
+          h: (tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent) / REF,
+          cx: (tm.actualBoundingBoxRight - tm.actualBoundingBoxLeft) / (2 * REF),
+          cy: (tm.actualBoundingBoxDescent - tm.actualBoundingBoxAscent) / (2 * REF),
+        };
+        cache.set(key, out);
+        return out;
+      }
+      const advance = Math.max(REF, tm.width);
       /* 大量符號含組合附加記號，墨水可能遠超出 advance/em box。
          留四個 em 才不會先被量測畫布裁掉，導致算出錯誤中心與過小外框。 */
       const px = Math.ceil(REF * 4), py = Math.ceil(REF * 4);
@@ -70,7 +85,20 @@ export const measureSymbolInkAtSize = (text: string, family: string, fontSize: n
     if (ctx) {
       const font = `400 ${size}px ${fontStack(family)}`;
       ctx.font = font;
-      const advance = Math.max(size, ctx.measureText(text).width);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const tm = ctx.measureText(text);
+      if (Number.isFinite(tm.actualBoundingBoxLeft) && Number.isFinite(tm.actualBoundingBoxRight)
+          && tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight > 0) {
+        out = {
+          w: (tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight) / size,
+          h: (tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent) / size,
+          cx: (tm.actualBoundingBoxRight - tm.actualBoundingBoxLeft) / (2 * size),
+          cy: (tm.actualBoundingBoxDescent - tm.actualBoundingBoxAscent) / (2 * size),
+        };
+        sizedCache.set(key, out);
+        return out;
+      }
+      const advance = Math.max(size, tm.width);
       const px = Math.ceil(size * 4), py = Math.ceil(size * 4);
       canvas.width = Math.ceil(advance) + px * 2;
       canvas.height = py * 2;
