@@ -14,6 +14,7 @@ export type SymbolUnitLayout = {
   staticUnitInks: SymbolInk[];
   /** 只影響實際繪製、不參與外框幾何的精準微調；單位是 canvas px。 */
   drawOffsetsX: number[];
+  drawOffsetsY: number[];
   advance: number;
   /** 依照原始 units/centers 實際畫出的聯集墨水範圍；以字級 1 為單位。 */
   ink: SymbolInk;
@@ -355,17 +356,35 @@ export const measureSymbolUnitLayout = (
   });
   const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
 
+  /* 独立绘制 combining mark 后，它的 standalone alpha 中心可能和整串
+     native shaping 不同。先把动画单元的墨水联集校回静止整串的真实中心；
+     只消除进入动画页的整体跳位，不改变各单元之间的原生位置。 */
+  let animLeft = Infinity, animRight = -Infinity, animTop = Infinity, animBottom = -Infinity;
+  unitInks.forEach((unitInk, i) => {
+    const ux = centers[i] + unitInk.cx * size;
+    const uy = unitInk.cy * size;
+    animLeft = Math.min(animLeft, ux - unitInk.w * size / 2);
+    animRight = Math.max(animRight, ux + unitInk.w * size / 2);
+    animTop = Math.min(animTop, uy - unitInk.h * size / 2);
+    animBottom = Math.max(animBottom, uy + unitInk.h * size / 2);
+  });
+  const correctionX = Number.isFinite(animLeft)
+    ? ink.cx * size - (animLeft + animRight) / 2 : 0;
+  const correctionY = Number.isFinite(animTop)
+    ? ink.cy * size - (animTop + animBottom) / 2 : 0;
+  const drawOffsetsX = units.map(() => correctionX);
+  const drawOffsetsY = units.map(() => correctionY);
+
   const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
-  const drawOffsetsX = units.map(() => 0);
   if (text === seventhSymbol) {
     const dotIndex = units.findIndex(unit => unit.includes("\u08ea"));
-    if (dotIndex >= 0) drawOffsetsX[dotIndex] = -size * 0.08;
+    if (dotIndex >= 0) drawOffsetsX[dotIndex] -= size * 0.08;
   }
 
   const out = {
     units, centers, unitInks, unitClusters,
     staticUnits, staticCenters, staticUnitInks,
-    drawOffsetsX, advance, ink,
+    drawOffsetsX, drawOffsetsY, advance, ink,
   };
   unitLayoutCache.set(key, out);
   return out;
