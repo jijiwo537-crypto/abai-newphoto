@@ -1554,17 +1554,20 @@ const getSymbolPickerMeasureCtx = () => {
 export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
   /* 所有按鈕共用一張量測 Canvas；iOS 不再一次建立上百張 Canvas。
      按鈕只使用裝置字型，所以第一幀就是最終字形，不會等待或換字。 */
+  /* 顯示副本強制 text presentation；onPick 仍傳原始 text。 */
+  const displayText = text.replace(/\uFE0F/g, '\uFE0E')
+    .replace(/(\p{Extended_Pictographic})(?![\uFE0E\uFE0F])/gu, '$1\uFE0E');
   const cg = getSymbolPickerMeasureCtx();
   if (cg) cg.font = `400 ${base}px ${SYMBOL_PICKER_FONT}`;
-  const measured = cg ? Math.max(1, cg.measureText(text).width) : Math.max(base, text.length * base * 0.55);
+  const measured = cg ? Math.max(1, cg.measureText(displayText).width) : Math.max(base, displayText.length * base * 0.55);
   const available = typeof window === 'undefined' ? 280 : Math.max(72, Math.min(360, window.innerWidth - 56));
   const fontSize = base * Math.min(1, available / measured);
   return (
     <span
       className="block max-w-full overflow-hidden text-center"
-      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: SYMBOL_PICKER_FONT }}
+      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: SYMBOL_PICKER_FONT, fontVariantEmoji: 'text' as any }}
     >
-      {text}
+      {displayText}
     </span>
   );
 };
@@ -1579,8 +1582,6 @@ export const SymbolPicker: React.FC<{
   onPick: (s: string) => void;
 }> = ({ onBack, onPick }) => {
   /* 裝置字型無下載階段，進頁第一幀直接顯示。 */
-  return () => { alive = false; };
-  }, []);
   return (
   <div className="pt-1">
     <div className="flex items-center gap-2 mb-3">
