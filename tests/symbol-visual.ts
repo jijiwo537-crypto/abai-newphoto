@@ -33,8 +33,7 @@ const drawCanonical = (
   units.forEach((unit,i)=>{
     ctx.save();
     const ink=inks[i];
-    const seventh=text==="\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
-    const ox=animated?(layout.drawOffsetsX[i]||0):(seventh&&unit.includes("\u08ea")?-size*.08:0);
+    const ox=animated?(layout.drawOffsetsX[i]||0):0;
     const oy=animated?(layout.drawOffsetsY[i]||0):0;
     const px=ink.cx*size,py=ink.cy*size;
     ctx.translate(cx+centers[i]+ox+px,cy+dy+oy+py);
@@ -123,11 +122,7 @@ const drawCanonical = (
          整体中心不能因切换动画渲染器而位移。 */
       && Math.abs((forcedAnimatedBounds.l+forcedAnimatedBounds.r-actual.l-actual.r)/2)<=4
       && Math.abs((forcedAnimatedBounds.t+forcedAnimatedBounds.b-actual.t-actual.b)/2)<=4;
-    /* 第七顆只允許 U+08EA 那顆點向左微調；其他 unit 不可被一起移動。 */
-    const specialDotAdjusted=index!==6||(
-      layout.units.some((unit,i)=>unit.includes("\u08ea")&&layout.drawOffsetsX[i]<0)
-      && layout.drawOffsetsX.every((offset,i)=>layout.units[i].includes("\u08ea")||offset===0)
-    );
+    const specialDotAdjusted=true;
     /* 只有含 ੈ 的目标结构改用整串原生 shaping；其他符号必须逐项保持
        上一版稳定布局，避免修一个例子却改变其余符号。 */
     const target="*\u0a48\u2729\u2027\u208a";
