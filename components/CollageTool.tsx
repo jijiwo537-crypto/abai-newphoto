@@ -273,7 +273,12 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     );
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
-    const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
+    const fontPx = Math.max(8, (o.size || 40) * Math.max(0.01, scale));
+    const unitLayout = symbolUnitLayoutAt(o.text || o.sym, o.fontFamily || DEFAULT_FONT, fontPx);
+    /* 外框以靜止整串與逐單位動畫兩者較大的可見範圍為準，泡泡回彈與
+       縮放 II 的額外幅度另由既有 idleScalePad 處理。 */
+    const w = Math.max(ink.w * o.size * scale, unitLayout.inkW);
+    const h = Math.max(ink.h * o.size * scale, unitLayout.inkH);
     return { x: (bw - w) / 2 - edge, y: (bh - h) / 2 - edge, w: w + edge * 2, h: h + edge * 2 };
   }
   if (o.type === 'shape' && o.kind !== 'hole') {
@@ -414,9 +419,20 @@ const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): Symbo
   const total = prefixes[prefixes.length - 1] || 0;
   const rawAnchors = units.map((_, i) => -total / 2 + (prefixes[i] + prefixes[i + 1]) / 2);
   const inks = units.map(unit => measureSymbolInkAtSize(unit, family, px));
+  /* 某些裝飾符號的可見墨水比字型宣告的 advance 寬；只用前綴中點會讓
+     相鄰單位重疊。保持瀏覽器原始位置，僅在真正相交時把後續單位推開。 */
+  const anchors = rawAnchors.slice();
+  for (let i = 1; i < anchors.length; i++) {
+    const prevRight = anchors[i - 1] + (inks[i - 1].cx + inks[i - 1].w / 2) * px;
+    const thisLeft = anchors[i] + (inks[i].cx - inks[i].w / 2) * px;
+    if (thisLeft < prevRight) {
+      const push = prevRight - thisLeft;
+      for (let j = i; j < anchors.length; j++) anchors[j] += push;
+    }
+  }
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   units.forEach((_, i) => {
-    const ink = inks[i], ax = rawAnchors[i];
+    const ink = inks[i], ax = anchors[i];
     x0 = Math.min(x0, ax + (ink.cx - ink.w / 2) * px);
     x1 = Math.max(x1, ax + (ink.cx + ink.w / 2) * px);
     y0 = Math.min(y0, (ink.cy - ink.h / 2) * px);
@@ -425,7 +441,7 @@ const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): Symbo
   if (!Number.isFinite(x0)) { x0 = y0 = -px / 2; x1 = y1 = px / 2; }
   const sx = -(x0 + x1) / 2;
   const out = {
-    units, anchors: rawAnchors.map(x => x + sx), inks,
+    units, anchors: anchors.map(x => x + sx), inks,
     inkW: Math.max(1, x1 - x0), inkH: Math.max(1, y1 - y0),
   };
   symbolUnitLayoutCache.set(key, out);
