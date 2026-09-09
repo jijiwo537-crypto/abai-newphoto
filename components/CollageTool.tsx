@@ -263,7 +263,11 @@ const symBox = (str: string, fam: string, size: number) => {
 const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
   if (o.sym) {
-    const ink = symInk(o.text || o.sym, o.fontFamily || DEFAULT_FONT);
+    /* 新增時保存的墨水量測是符號與選中框的共同幾何基準。
+       不再於第一個動畫影格重新量字型，避免字型剛就緒時框先用到另一組度量。 */
+    const ink = (Number.isFinite(o.symInkW) && Number.isFinite(o.symInkH))
+      ? { w: o.symInkW, h: o.symInkH, cx: o.symInkCx || 0, cy: o.symInkCy || 0 }
+      : symInk(o.text || o.sym, o.fontFamily || DEFAULT_FONT);
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -617,7 +621,7 @@ const glowIdleAmp = (
 export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
   { id: 'float', name: '漂浮' },
-  { id: 'sway', name: '左右' },
+  { id: 'sway', name: '波浪' },
   { id: 'breathe', name: '縮放' },
   { id: 'spin', name: '旋轉' },
   { id: 'wobble', name: '搖擺' },
@@ -4824,7 +4828,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
         let tdx = 0, tdy = 0;
         if (o.sym) {
-          const ink2 = symInk(o.text || '', fam);
+          /* 和选中框读取同一份建立时度量，动画第一帧与后续影格不会因
+             字型缓存由 fallback 切到正式字型而改变中心。 */
+          const ink2 = (Number.isFinite(o.symInkW) && Number.isFinite(o.symInkH))
+            ? { w: o.symInkW, h: o.symInkH, cx: o.symInkCx || 0, cy: o.symInkCy || 0 }
+            : symInk(o.text || '', fam);
           tdx = -ink2.cx * o.size * s;
           tdy = -ink2.cy * o.size * s;
         }
@@ -7547,6 +7555,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   if (!offs2) return;
                   const id = Math.random().toString(36).slice(2, 9);
                   await ensureFont(DEFAULT_FONT);
+                  /* 等浏览器真正提交字体，再做唯一一次墨水扫描。
+                     ensureFont resolve 与 Safari 首次 canvas 绘字之间偶尔仍差一帧。 */
+                  if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
+                  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
                   clearSymbolInkCache();
                   /* 框照「真正畫出來的那一塊」量（見 symInk 的說明），
                      不是照前進寬度 —— 這樣選取框才會貼著符號本身。 */
@@ -7561,6 +7573,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const w = Math.round(box.w), h = Math.round(box.h);
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
+                    /* 固定保存这次实际扫描到的墨水范围；绘制与框都只认这一份。 */
+                    symInkW: ink.w, symInkH: ink.h, symInkCx: ink.cx, symInkCy: ink.cy,
                     fontFamily: DEFAULT_FONT, bold: false, italic: false,
                     letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
                     glow: 0, glowColor: '#ffffff',
@@ -8050,7 +8064,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const chooseMotionTarget = (id: string) => {
                   setMoTarget(id);
                   if (id === 'shape' || objects.some(o => o.id === id)) {
-                    motionTargetFlashRef.current = { id, started: performance.now(), duration: 850 };
+                    /* 第一帧只负责让目标切换与动画状态完成提交；从下一帧才显示框。
+                       否则框会短暂读取到上一目标的变换矩阵，随后才回到正确位置。 */
+                    motionTargetFlashRef.current = { id, started: performance.now() + 34, duration: 850 };
                     setMotionTargetFlashSeq(n => n + 1);
                   }
                 };
