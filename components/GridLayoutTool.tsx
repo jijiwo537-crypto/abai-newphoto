@@ -12,7 +12,7 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
-import { measureSymbolInk, measureSymbolInkAtSize, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, measureSymbolInkAtSize, measureSymbolAdvance, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, drawHoleShape, holeOverflow, glowAmount,
@@ -34,6 +34,20 @@ import type { ExitChoice } from '../types';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas, geoCssBox } from '../utils/compose';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
+
+/* 符號頁不能在打開後才開始下載字體。模組載入時就在背景把清單會用到的
+   字形預熱；使用者點進頁面時，按鈕與新增物件便直接使用最終字身。 */
+const symbolFontReady: Promise<void> = typeof document === 'undefined'
+  ? Promise.resolve()
+  : ensureFont(DEFAULT_FONT)
+      .then(async () => {
+        try {
+          await document.fonts?.load(`400 32px "${DEFAULT_FONT}"`, SYMBOLS.join(''));
+          await document.fonts?.ready;
+        } catch { /* 離線時穩定使用系統 fallback */ }
+        clearSymbolInkCache();
+      })
+      .catch(() => {});
 interface CellRect {
   x: number;
   y: number;
@@ -1544,41 +1558,28 @@ const FontCard: React.FC<{
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
 export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
-  const boxRef = useRef<HTMLDivElement>(null);
-  const inkRef = useRef<HTMLSpanElement>(null);
-  const [k, setK] = useState(1);
-  useLayoutEffect(() => {
-    const box = boxRef.current, ink = inkRef.current;
-    if (!box || !ink) return;
-    let alive = true;
-    const fit = () => {
-      if (!alive) return;
-      const bw = box.clientWidth;
-      const tw = ink.scrollWidth;
-      if (bw > 0 && tw > 0) setK(Math.min(1, bw / tw));
-    };
-    fit();
-    (document as any).fonts?.ready?.then(fit).catch(() => {});
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
-    ro?.observe(box);
-    return () => { alive = false; ro?.disconnect(); };
-  }, [text, base]);
+  /* 不再為清單中的每一顆建立 state、ResizeObserver 與 fonts.ready 回呼。
+     那套做法會讓幾百顆按鈕先用 fallback 畫一遍，再同時換字體與縮放一次，
+     正是進頁面時「整片符號抖一下」與點擊延遲的來源。Canvas advance 是同步、
+     有快取的純量測；第一次繪製前就已經得到最終尺寸。 */
+  const naturalWidth = measureSymbolAdvance(text, DEFAULT_FONT, base);
+  const fontSize = base * Math.min(1, 252 / Math.max(1, naturalWidth));
   return (
-    <div ref={boxRef} className="max-w-full overflow-hidden flex items-center justify-center">
-      <span
-        ref={inkRef}
-        style={{
-          display: 'inline-block', whiteSpace: 'pre', flexShrink: 0,
-          fontSize: base, lineHeight: 1.4,
-          transform: `scale(${k})`, transformOrigin: 'center center',
-        }}
-      >
-        {text}
-      </span>
-    </div>
+    <span
+      className="inline-flex max-w-full items-center justify-center whitespace-pre text-center"
+      style={{
+        flexShrink: 0,
+        fontFamily: fontStack(DEFAULT_FONT),
+        fontSize,
+        lineHeight: 1.9,
+        minHeight: base * 1.9,
+        overflow: 'visible',
+      }}
+    >
+      {text}
+    </span>
   );
 };
-
 /**
  * 「新增符號」那一頁：上面一顆返回，下面一長串符號，點一下就加到版面正中間。
  * 一排只放一顆 —— 長的符號要一整排的寬度才擺得完整。
@@ -1608,7 +1609,7 @@ export const SymbolPicker: React.FC<{
           key={i}
           onClick={() => onPick(s)}
           aria-label={s}
-          className="h-10 px-3 max-w-full rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-all inline-flex items-center justify-center text-white/85"
+          className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-all inline-flex items-center justify-center text-white/85"
         >
           <SymbolGlyph text={s} />
         </button>
@@ -7870,13 +7871,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const rect = getClosestPageRect();
     const pw = rect?.width ?? previewW;
     const ph = rect?.height ?? previewH;
-    // 一定等真正字體到齊再量；用 fallback 量出的框會讓不同 Unicode 符號嚴重偏移。
-    await ensureFont(DEFAULT_FONT);
+    // 頁面打開前已在背景預熱；這裡通常同步完成，首次新增也不會用 fallback 量框。
+    await symbolFontReady;
     clearSymbolInkCache();
     const M = 100;
-    const c = document.createElement('canvas').getContext('2d');
-    let w100 = M * Math.max(1, txt.length) * 0.5;
-    if (c) { c.font = `400 ${M}px ${fontStack(DEFAULT_FONT)}`; w100 = Math.max(1, c.measureText(txt).width); }
+    const w100 = measureSymbolAdvance(txt, DEFAULT_FONT, M);
     const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
     /* 初始外盒直接使用顯示字級的實際墨水邊界，與 Canvas 本體及選中框
        完全同源；不先用 100px 推算、下一幀再換成另一套尺寸。 */
