@@ -114,15 +114,23 @@ const drawCanonical = (
       layout.units.some((unit,i)=>unit.includes("\u08ea")&&layout.drawOffsetsX[i]<0)
       && layout.drawOffsetsX.every((offset,i)=>layout.units[i].includes("\u08ea")||offset===0)
     );
-    /* 动画与静止必须使用完全相同的 grapheme、中心及墨水几何。
-       这是避免进入动画页时组合符号重新 shaping 后跑位的核心回归检查。 */
-    const animationLayoutStable=
-      layout.units.length===layout.staticUnits.length
-      && layout.units.every((unit,i)=>unit===layout.staticUnits[i]
-        && Math.abs(layout.centers[i]-layout.staticCenters[i])<1e-9
-        && layout.unitInks[i]===layout.staticUnitInks[i]);
-    const pass=inside&&centered&&tight&&!overlap&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&animationLayoutStable&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,overlap,stableCacheHit,scale2StartsFlat,scale2Independent,specialDotAdjusted,animationLayoutStable,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    /* 静止画面必须保留整串原生 shaping；动画才拆节拍。第七颗因为主人
+       指定过单点微调，继续沿用既有的分段静止 renderer。 */
+    const seventh=index===6;
+    const nativeStatic=seventh
+      ? layout.staticUnits.length>1
+      : layout.staticUnits.length===1&&layout.staticUnits[0]===text;
+    /* *ੈ✩‧₊ 肉眼是五个单位：组合记号 ੈ 必须有自己的动画时间，
+       但它和 * 仍共用同一个原生 grapheme 锚点。 */
+    const target="*\u0a48\u2729\u2027\u208a";
+    const targetTiming=text!==target||(
+      layout.units.length===5
+      && layout.units[0]==="*"
+      && layout.units[1].includes("\u0a48")
+      && Math.abs(layout.centers[0]-layout.centers[1])<1e-9
+    );
+    const pass=inside&&centered&&tight&&!overlap&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&nativeStatic&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,overlap,stableCacheHit,scale2StartsFlat,scale2Independent,specialDotAdjusted,nativeStatic,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
