@@ -1628,6 +1628,8 @@ export const SymbolPicker: React.FC<{
   const NEXT_BATCH = 24;
   const [visibleCount, setVisibleCount] = useState(() => Math.min(FIRST_BATCH, SYMBOLS.length));
   const preparedCountRef = useRef(0);
+  const onPrepareRef = useRef(onPrepare);
+  onPrepareRef.current = onPrepare;
 
   /* 精确几何在按钮出现后的空闲帧逐颗预热。过去把扫描放在 pointerdown，
      iOS 会先阻塞点击事件，用户看到的就是按下后隔一下才生成。 */
@@ -1638,13 +1640,13 @@ export const SymbolPicker: React.FC<{
     let timerId: number | undefined;
     const step = () => {
       if (cancelled || preparedCountRef.current >= visibleCount) return;
-      onPrepare(SYMBOLS[preparedCountRef.current++]);
+      onPrepareRef.current?.(SYMBOLS[preparedCountRef.current++]);
       schedule();
     };
     const schedule = () => {
       const requestIdle = (window as any).requestIdleCallback as
         | ((cb: () => void, opts?: { timeout: number }) => number) | undefined;
-      if (requestIdle) idleId = requestIdle(step, { timeout: 50 });
+      if (requestIdle) idleId = requestIdle(step);
       else timerId = window.setTimeout(step, 0);
     };
     schedule();
@@ -1653,7 +1655,7 @@ export const SymbolPicker: React.FC<{
       if (idleId !== undefined) (window as any).cancelIdleCallback?.(idleId);
       if (timerId !== undefined) window.clearTimeout(timerId);
     };
-  }, [visibleCount, onPrepare]);
+  }, [visibleCount]);
 
   useEffect(() => {
     if (visibleCount >= SYMBOLS.length || typeof window === 'undefined') return;

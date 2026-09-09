@@ -4911,10 +4911,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              这样位置完全沿用静止版，也不会因拆分 combining marks 留下抗锯齿跳帧。 */
           const sequenceAnimating = !objPinching && !symbolSizeTuningRef.current
             && o.mo?.in === 'bubble' && seqIn !== null && seqIn < 1 - 1e-6;
-          const useAnimationUnits = sequenceAnimating || individualBreathe;
-          const drawUnits = useAnimationUnits ? unitLayout.units : unitLayout.staticUnits;
-          const drawCenters = useAnimationUnits ? unitLayout.centers : unitLayout.staticCenters;
-          const drawInks = useAnimationUnits ? unitLayout.unitInks : unitLayout.staticUnitInks;
+          /* 静止、泡泡与缩放 II 永远使用同一套 grapheme 几何。
+             过去静止画整串、动画改画拆分单元，切换页面的那一帧必然会换 shaping，
+             肉眼看到的就是整串位移与小单元重排。现在只改变倍率/透明度。 */
+          const useAnimationUnits = true;
+          const drawUnits = unitLayout.units;
+          const drawCenters = unitLayout.centers;
+          const drawInks = unitLayout.unitInks;
           drawUnits.forEach((unit, index) => {
             const bubbleSpan = 1 + Math.max(0, drawUnits.length - 1) * 0.2;
             const q = seqIn === null ? 1
