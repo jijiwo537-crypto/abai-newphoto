@@ -24,12 +24,17 @@ const drawCanonical = (
   ctx.font=`400 ${size}px ${fontStack(DEFAULT_FONT)}`;
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
   const dy=-layout.ink.cy*size;
-  layout.units.forEach((unit,i)=>{
+  const animated=!!unitScales;
+  const units=animated?layout.units:layout.staticUnits;
+  const centers=animated?layout.centers:layout.staticCenters;
+  const inks=animated?layout.unitInks:layout.staticUnitInks;
+  units.forEach((unit,i)=>{
     ctx.save();
-    const ink=layout.unitInks[i];
-    const ox=layout.drawOffsetsX[i]||0;
+    const ink=inks[i];
+    const seventh=text==="\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
+    const ox=animated?(layout.drawOffsetsX[i]||0):(seventh&&unit.includes("\u08ea")?-size*.08:0);
     const px=ink.cx*size,py=ink.cy*size;
-    ctx.translate(cx+layout.centers[i]+ox+px,cy+dy+py);
+    ctx.translate(cx+centers[i]+ox+px,cy+dy+py);
     const k=unitScales?.[i]??1;ctx.scale(k,k);
     ctx.fillText(unit,-px,-py);ctx.restore();
   });
@@ -95,7 +100,7 @@ const drawCanonical = (
     const trajectories=scaleA.map((v,i)=>`${v.toFixed(6)}|${scaleB[i].toFixed(6)}`);
     const scale2Independent=layout.units.length<=1||new Set(trajectories).size===layout.units.length;
 
-    // 動畫最後一幀必須逐像素回到靜止版面。
+    // 動畫最後一幀必須逐像素回到「原生 grapheme 靜止排版」。
     const reference=ctx.getImageData(0,0,w,h).data;
     const c2=document.createElement('canvas');c2.width=w;c2.height=h;
     const g2=c2.getContext('2d',{willReadFrequently:true})!;g2.scale(dpr,dpr);
