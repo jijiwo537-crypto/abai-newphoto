@@ -28,7 +28,9 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
       /* 現代 Safari/Chrome 直接提供向量字形的實際四邊，無需建立巨大點陣
          再逐像素掃描；點擊符號時可同步完成且邊界與 Canvas 繪製一致。 */
       if (Number.isFinite(tm.actualBoundingBoxLeft) && Number.isFinite(tm.actualBoundingBoxRight)
-          && tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight > 0) {
+          && Number.isFinite(tm.actualBoundingBoxAscent) && Number.isFinite(tm.actualBoundingBoxDescent)
+          && tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight > 0
+          && tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent > 0) {
         out = {
           w: (tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight) / REF,
           h: (tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent) / REF,
@@ -90,7 +92,9 @@ export const measureSymbolInkAtSize = (text: string, family: string, fontSize: n
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const tm = ctx.measureText(text);
       if (Number.isFinite(tm.actualBoundingBoxLeft) && Number.isFinite(tm.actualBoundingBoxRight)
-          && tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight > 0) {
+          && Number.isFinite(tm.actualBoundingBoxAscent) && Number.isFinite(tm.actualBoundingBoxDescent)
+          && tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight > 0
+          && tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent > 0) {
         out = {
           w: (tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight) / size,
           h: (tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent) / size,
