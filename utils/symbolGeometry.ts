@@ -1,5 +1,9 @@
 import { fontStack } from './fonts';
 
+/* Unicode 裝飾符號固定使用裝置字型：不走網路、不會在首次顯示後換字身。
+   清單、畫布、量測與匯出全部引用同一常數。 */
+export const SYMBOL_FONT_STACK = '"Apple Symbols", "Segoe UI Symbol", "Noto Sans Symbols 2", "PingFang TC", "Arial Unicode MS", sans-serif';
+
 export type SymbolInk = { w: number; h: number; cx: number; cy: number };
 const REF = 100;
 const cache = new Map<string, SymbolInk>();
@@ -19,7 +23,7 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
     if (ctx) {
-      const font = `400 ${REF}px ${fontStack(family)}`;
+      const font = `400 ${REF}px ${SYMBOL_FONT_STACK}`;
       ctx.font = font;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const tm = ctx.measureText(text);
@@ -83,7 +87,7 @@ export const measureSymbolInkAtSize = (text: string, family: string, fontSize: n
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
     if (ctx) {
-      const font = `400 ${size}px ${fontStack(family)}`;
+      const font = `400 ${size}px ${SYMBOL_FONT_STACK}`;
       ctx.font = font;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const tm = ctx.measureText(text);
