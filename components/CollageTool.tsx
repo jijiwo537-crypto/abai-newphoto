@@ -436,7 +436,7 @@ const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): Symbo
     y0 = Math.min(y0, (ink.cy - ink.h / 2) * px);
     y1 = Math.max(y1, (ink.cy + ink.h / 2) * px);
   });
-  if (!Number.isFinite(x0)) { x0 = y0 = -px / 2; x1 = y1 = px / 2; }
+  if (![x0, y0, x1, y1].every(Number.isFinite)) { x0 = y0 = -px / 2; x1 = y1 = px / 2; }
   const sx = -(x0 + x1) / 2;
   const out = {
     units, anchors: anchors.map(x => x + sx), inks,
