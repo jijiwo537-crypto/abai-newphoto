@@ -277,8 +277,8 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     const unitLayout = symbolUnitLayoutAt(o.text || o.sym, o.fontFamily || DEFAULT_FONT, fontPx);
     /* 外框以靜止整串與逐單位動畫兩者較大的可見範圍為準，泡泡回彈與
        縮放 II 的額外幅度另由既有 idleScalePad 處理。 */
-    const w = Math.max(ink.w * o.size * scale, unitLayout.inkW);
-    const h = Math.max(ink.h * o.size * scale, unitLayout.inkH);
+    const w = unitLayout.inkW;
+    const h = unitLayout.inkH;
     return { x: (bw - w) / 2 - edge, y: (bh - h) / 2 - edge, w: w + edge * 2, h: h + edge * 2 };
   }
   if (o.type === 'shape' && o.kind !== 'hole') {
@@ -411,7 +411,7 @@ const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): Symbo
   const units = symbolUnits(text);
   const cv = document.createElement('canvas');
   const cg = cv.getContext('2d');
-  if (cg) cg.font = `400 ${px}px ${fontStack(family)}`;
+  if (cg) cg.font = `400 ${px}px ${SYMBOL_FONT_STACK}`;
   const prefixes = [0];
   for (let i = 1; i <= units.length; i++) {
     prefixes.push(cg ? cg.measureText(units.slice(0, i).join('')).width : i * px * 0.5);
@@ -4931,7 +4931,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const fam = o.fontFamily || DEFAULT_FONT;
         const weight = o.bold ? 800 : 400;
         const style = o.italic ? 'italic ' : '';
-        ctx.font = `${style}${weight} ${o.size * s}px ${fontStack(fam)}`;
+        ctx.font = o.sym
+          ? `400 ${o.size * s}px ${SYMBOL_FONT_STACK}`
+          : `${style}${weight} ${o.size * s}px ${fontStack(fam)}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         (ctx as any).letterSpacing = `${(o.letterSpacing || 0) * s}px`;
@@ -4988,7 +4990,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           && seqIn === null && (f.idleBlend ?? 0) > 0;
         /* 靜止符號必須整串交給瀏覽器 shaping，避免組合符號拆開後重疊或越框。
            只有泡泡／逐單位進場與縮放 II 真正需要時才拆單位。 */
-        if (o.sym && (seqIn !== null || individualBreathe)) {
+        if (o.sym) {
           const layout = symbolUnitLayoutAt(o.text || o.sym, fam, Math.max(8, o.size * s));
           const now = animRef.current?.t ?? 0;
           const bubbleSpan = 1 + Math.max(0, layout.units.length - 1) * 0.2;
@@ -4996,6 +4998,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2)));
           const scales = layout.units.map((_, index) => {
             if (seqIn !== null) return o.mo?.in === 'bubble' ? easeOutBack(qs[index]) : 1;
+            if (!individualBreathe) return 1;
             return 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71)
               * ((o.mo?.amp || 50) / 100) * 0.18 * (f?.idleBlend ?? 0);
           });
@@ -5024,33 +5027,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               shiftY = (by0 + by1 - y0 - y1) / 2;
             }
           }
-          /* 泡泡末段由逐單位平滑交給完整 shaping；縮放 II 開始時則從
-             完整 shaping 平滑拆成單位。兩次都不在單一影格切換排版座標。 */
-          const mixProgress = seqIn !== null
-            ? Math.max(0, Math.min(1, (seqIn - 0.86) / 0.14))
-            : Math.max(0, Math.min(1, f?.idleBlend ?? 0));
-          const smoothMix = mixProgress * mixProgress * (3 - 2 * mixProgress);
-          const unitMix = seqIn !== null ? 1 - smoothMix : smoothMix;
-          if (unitMix > 0.001) {
-            layout.units.forEach((ch, index) => {
-              const q = qs[index], sc = scales[index];
-              ctx.save();
-              ctx.globalAlpha *= unitMix * (seqIn === null ? 1 : Math.min(1, q * 3));
-              /* layout 已按逐單位實際墨水置中，不能再疊加整串文字的
-                 tdx/tdy，否則同一個中心會被補償兩次。 */
-              ctx.translate(layout.anchors[index] + shiftX, -layout.inkCy + shiftY);
-              ctx.scale(sc, sc);
-              ctx.textAlign = 'center';
-              ctx.fillText(ch, 0, 0);
-              ctx.restore();
-            });
-          }
-          if (unitMix < 0.999) {
+          /* 靜止、進場與常駐永遠使用同一份單位布局；不再在完整字串與
+             逐單位排版之間交叉淡化，因此銜接處不會視覺縮小或換位置。 */
+          layout.units.forEach((ch, index) => {
+            const q = qs[index], sc = scales[index];
             ctx.save();
-            ctx.globalAlpha *= 1 - unitMix;
-            ctx.fillText(o.text || '', tdx, tdy);
+            ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
+            ctx.translate(layout.anchors[index] + shiftX, -layout.inkCy + shiftY);
+            ctx.scale(sc, sc);
+            ctx.textAlign = 'center';
+            ctx.fillText(ch, 0, 0);
             ctx.restore();
-          }
+          });
         } else {
           ctx.fillText(o.text || '', tdx, tdy);
         }
@@ -7751,8 +7739,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   /* 最终字号再扫描一次：WebKit 对 fallback 符号在不同字号可能使用
                      不同 hinting／基线，不能只拿 100px 结果等比推算。 */
                   const finalInk = measureSymbolInkAtSize(txt, DEFAULT_FONT, size);
-                  const w = Math.ceil(finalInk.w * size + 8);
-                  const h = Math.ceil(finalInk.h * size + 8);
+                  const finalLayout = symbolUnitLayoutAt(txt, DEFAULT_FONT, size);
+                  const w = Math.ceil(finalLayout.inkW + 8);
+                  const h = Math.ceil(finalLayout.inkH + 8);
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
                     /* 固定保存这次实际扫描到的墨水范围；绘制与框都只认这一份。 */
