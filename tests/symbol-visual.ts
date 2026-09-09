@@ -36,7 +36,7 @@ const drawCanonical = (
     const ox=animated?(layout.drawOffsetsX[i]||0):0;
     const oy=animated?(layout.drawOffsetsY[i]||0):0;
     const px=ink.cx*size,py=ink.cy*size;
-    ctx.translate(cx+centers[i]+ox+px,cy+dy+oy+py);
+    ctx.translate(cx+dx+centers[i]+ox+px,cy+dy+oy+py);
     const k=unitScales?.[i]??1;ctx.scale(k,k);
     ctx.fillText(unit,-px,-py);ctx.restore();
   });
