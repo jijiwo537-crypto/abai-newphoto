@@ -241,12 +241,15 @@ export const measureSymbolUnitLayout = (
       advance = Math.max(.1, unitAdvances.reduce((sum, value, i) =>
         sum + (attachedTo[i] >= 0 ? 0 : value), 0));
       let cursor = -advance / 2;
-      centers = units.map((_unit, i) => {
-        if (attachedTo[i] >= 0) return centers[attachedTo[i]];
-        const center = cursor + unitAdvances[i] / 2;
-        cursor += unitAdvances[i];
-        return center;
+      const nextCenters: number[] = [];
+      units.forEach((_unit, i) => {
+        if (attachedTo[i] >= 0) nextCenters[i] = nextCenters[attachedTo[i]];
+        else {
+          nextCenters[i] = cursor + unitAdvances[i] / 2;
+          cursor += unitAdvances[i];
+        }
       });
+      centers = nextCenters;
     }
   } catch { /* 均勻錨點仍可用 */ }
 
