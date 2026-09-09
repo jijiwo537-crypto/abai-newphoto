@@ -12,7 +12,7 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
-import { clearSymbolInkCache } from '../utils/symbolGeometry';
+import { SYMBOL_FONT_STACK } from '../utils/symbolGeometry';
 import { measureSymbolInk, measureSymbolInkAtSize, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
@@ -1562,7 +1562,7 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
   return (
     <span
       className="block max-w-full overflow-hidden text-center"
-      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: fontStack(DEFAULT_FONT), maxWidth: available }}
+      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: SYMBOL_FONT_STACK, maxWidth: available }}
     >
       {text}
     </span>
@@ -1574,29 +1574,11 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
  * 一排只放一顆 —— 長的符號要一整排的寬度才擺得完整。
  * 跟「新增圖形」一樣，點完留在這一頁、不跳去編輯，可以連著加好幾顆。
  */
-let symbolPickerFontReady = false;
 export const SymbolPicker: React.FC<{
   onBack: () => void;
   onPick: (s: string) => void;
 }> = ({ onBack, onPick }) => {
-  /* 不讓替代字型先露出再整頁切換。字型通常已由工具掛載時預載；
-     若使用者非常快地點進來，符號列只延後到同一字型可用的第一幀顯示。 */
-  const [fontReady, setFontReady] = useState(() =>
-    typeof document === 'undefined' || symbolPickerFontReady
-  );
-  useLayoutEffect(() => {
-    let alive = true;
-    /* cssDone 只代表 @font-face 宣告已下載，不代表字身已套用；必須等
-       document.fonts.load + ready，清掉 fallback 量測，再隔兩幀確認繪製穩定。 */
-    void waitForFont(DEFAULT_FONT).then(() => {
-      clearSymbolInkCache();
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        symbolPickerFontReady = true;
-        if (alive) setFontReady(true);
-      }));
-    });
-    return () => { alive = false; };
-  }, []);
+  /* 系統符號字型不需下載，清單可在點進來的第一幀完整顯示。 */
   return (
   <div className="pt-1">
     <div className="flex items-center gap-2 mb-3">
@@ -1612,11 +1594,7 @@ export const SymbolPicker: React.FC<{
     </div>
     {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行 ——
         短的符號一排可以擺好幾顆，長的才自己佔一整排（而且照樣完整顯示）。 */}
-    <div
-      className="flex flex-wrap gap-1.5 pb-4"
-      style={{ visibility: fontReady ? 'visible' : 'hidden' }}
-      aria-busy={!fontReady}
-    >
+    <div className="flex flex-wrap gap-1.5 pb-4">
       {SYMBOLS.map((s, i) => (
         <button
           key={i}
