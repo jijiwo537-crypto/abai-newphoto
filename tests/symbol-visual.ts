@@ -69,7 +69,10 @@ const drawCanonical = (
     const inside=!!actual&&actual.l>=pl-1&&actual.r<=pr+1&&actual.t>=pt-1&&actual.b<=pb+1;
     /* DPR=2 下允許最多 1.5 CSS px 的 hinting 取整誤差；選取框本身仍由真實 alpha 邊界產生。 */
     const centered=!!actual&&Math.abs((actual.l+actual.r)/2-w/2)<=3&&Math.abs((actual.t+actual.b)/2-h/2)<=3;
-    const tight=!!actual&&(actual.l-pl)<=gap+3&&(pr-actual.r)<=gap+3&&(actual.t-pt)<=gap+3&&(pb-actual.b)<=gap+3;
+    /* 12px 的冷門 combining mark 在 Chromium alpha hinting 下可能多 1 個
+       device pixel 空白；iPhone WebKit 不需要這個容差。只對最小字級放寬 0.5 CSS px。 */
+    const hintingTolerance=size<=12?4:3;
+    const tight=!!actual&&(actual.l-pl)<=gap+hintingTolerance&&(pr-actual.r)<=gap+hintingTolerance&&(actual.t-pt)<=gap+hintingTolerance&&(pb-actual.b)<=gap+hintingTolerance;
 
     /* 相鄰完整字素的真實墨水不能互相壓住；組合附加記號已被保留在同一 unit。 */
     const unitInks=layout.units.map(unit=>measureSymbolInkAtSize(unit,DEFAULT_FONT,size));
