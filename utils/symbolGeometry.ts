@@ -8,6 +8,9 @@ export type SymbolUnitLayout = {
   unitInks: SymbolInk[];
   /** 每个动画单元继承自哪一个稳定 grapheme，只用于辨认原生叠合关系。 */
   unitClusters: number[];
+  /** 每个动画片段在整串原生 shaping 中的水平裁切范围（基准字号 px）。 */
+  unitLefts: number[];
+  unitRights: number[];
   /** 靜止顯示與外框沿用瀏覽器原生字素排版，不受動畫拆分影響。 */
   staticUnits: string[];
   staticCenters: number[];
@@ -334,6 +337,23 @@ export const measureSymbolUnitLayout = (
   const units: string[] = [];
   const centers: number[] = [];
   const unitClusters: number[] = [];
+  const unitLefts: number[] = [];
+  const unitRights: number[] = [];
+  let nativeSpans = originalClusters.map((_cluster, i) => ({
+    left: ((i / Math.max(1, originalClusters.length)) - .5) * advance,
+    right: (((i + 1) / Math.max(1, originalClusters.length)) - .5) * advance,
+  }));
+  try {
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (ctx) {
+      ctx.font = `400 ${size}px ${fontStack(family)}`;
+      const total = ctx.measureText(text).width;
+      nativeSpans = originalClusters.map((_cluster, i) => ({
+        left: -total / 2 + ctx.measureText(originalClusters.slice(0, i).join('')).width,
+        right: -total / 2 + ctx.measureText(originalClusters.slice(0, i + 1).join('')).width,
+      }));
+    }
+  } catch { /* 等分范围仍可安全绘制 */ }
   originalClusters.forEach((cluster, clusterIndex) => {
     const parts = needsNativeTiming ? splitSymbolUnits(cluster) : [cluster];
     parts.forEach(part => {
@@ -356,6 +376,8 @@ export const measureSymbolUnitLayout = (
         return ((clusterIndex + .5) / originalClusters.length - .5) * advance;
       })());
       unitClusters.push(clusterIndex);
+      unitLefts.push(nativeSpans[clusterIndex].left);
+      unitRights.push(nativeSpans[clusterIndex].right);
     });
   });
   const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
@@ -381,7 +403,7 @@ export const measureSymbolUnitLayout = (
   const drawOffsetsY = units.map(() => correctionY);
 
   const out = {
-    units, centers, unitInks, unitClusters,
+    units, centers, unitInks, unitClusters, unitLefts, unitRights,
     staticUnits, staticCenters, staticUnitInks,
     drawOffsetsX, drawOffsetsY, advance, ink,
   };
