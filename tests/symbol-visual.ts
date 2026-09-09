@@ -26,22 +26,19 @@ const drawCanonical = (
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
   const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
   const animated=forceAnimated||!!unitScales;
-  const flat=!!unitScales&&unitScales.every(value=>Math.abs(value-1)<1e-6);
+  const flat=!!unitScales&&!forceAnimated&&unitScales.every(value=>Math.abs(value-1)<1e-6);
   if(!animated||flat){
     ctx.fillText(text,cx+dx,cy+dy);
   }else{
-    layout.unitLefts.forEach((left0,i)=>{
-      const right0=layout.unitRights[i];
-      const pivot=(left0+right0)/2;
+    layout.unitLefts.forEach((_left0,i)=>{
+      const pivot=layout.unitPivots[i];
+      const origin=layout.unitOrigins[i];
       const k=unitScales?.[i]??1;
       ctx.save();
       ctx.globalAlpha*=unitAlphas?.[i]??1;
       ctx.translate(cx+dx+pivot,cy+dy);
       ctx.scale(k,k);
-      ctx.beginPath();
-      ctx.rect(left0-pivot,-size*2.2,Math.max(.01,right0-left0),size*4.4);
-      ctx.clip();
-      ctx.fillText(text,-pivot,0);
+      ctx.textAlign='left';ctx.fillText(layout.units[i],origin-pivot,0);
       ctx.restore();
     });
   }
@@ -140,7 +137,7 @@ const drawCanonical = (
        差异；验证真实墨水仍被 4px 安全框完整包住，不再要求 alpha 左右逐像素对称。 */
     const geometryPass=nativeSafe;
     const pass=geometryPass&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,scale2StartsFlat,scale2Independent,firstFrameStable,forcedAnimatedBounds,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,scale2StartsFlat,scale2Independent,firstFrameStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;

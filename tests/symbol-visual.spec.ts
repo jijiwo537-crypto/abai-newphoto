@@ -10,5 +10,5 @@ test('every symbol is tightly enclosed and animation returns pixel-perfectly', a
     await page.screenshot({ path: `test-results/symbol-contact-${info.project.name}.png` });
   }
   console.log(`Pixel-verified ${report?.total ?? 0} symbols in ${info.project.name}; failures: ${report?.failed?.length ?? -1}`);
-  expect(report?.failed, JSON.stringify(report?.failed?.slice(0, 10), null, 2)).toEqual([]);
+  expect(report?.failed?.map((item: any) => item.index), JSON.stringify(report?.failed?.slice(0, 3), null, 2)).toEqual([]);
 });
