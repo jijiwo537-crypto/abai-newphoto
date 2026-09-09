@@ -24,22 +24,24 @@ const drawCanonical = (
   ctx.font=`400 ${size}px ${fontStack(SYMBOL_FONT)}`;
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
   const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
-  /* 全部回到 1 倍时与生产代码一样交回原生静止字素；只有仍在变化的
-     小单元才走拆分动画渲染。 */
-  const animated=true;
-  const units=animated?layout.units:layout.staticUnits;
-  const centers=animated?layout.centers:layout.staticCenters;
-  const inks=animated?layout.unitInks:layout.staticUnitInks;
-  units.forEach((unit,i)=>{
-    ctx.save();
-    const ink=inks[i];
-    const ox=animated?(layout.drawOffsetsX[i]||0):0;
-    const oy=animated?(layout.drawOffsetsY[i]||0):0;
-    const px=ink.cx*size,py=ink.cy*size;
-    ctx.translate(cx+dx+centers[i]+ox+px,cy+dy+oy+py);
-    const k=unitScales?.[i]??1;ctx.scale(k,k);
-    ctx.fillText(unit,-px,-py);ctx.restore();
-  });
+  const animated=forceAnimated||!!unitScales;
+  if(!animated){
+    ctx.fillText(text,cx+dx,cy+dy);
+  }else{
+    layout.unitLefts.forEach((left0,i)=>{
+      const right0=layout.unitRights[i];
+      const pivot=(left0+right0)/2;
+      const k=unitScales?.[i]??1;
+      ctx.save();
+      ctx.translate(cx+dx+pivot,cy+dy);
+      ctx.scale(k,k);
+      ctx.beginPath();
+      ctx.rect(left0-pivot,-size*2.2,Math.max(.01,right0-left0),size*4.4);
+      ctx.clip();
+      ctx.fillText(text,-pivot,0);
+      ctx.restore();
+    });
+  }
   ctx.restore();
   return layout;
 };
