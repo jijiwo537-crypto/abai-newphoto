@@ -19,17 +19,12 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
     if (ctx) {
-      const probeFont = `400 ${REF}px ${fontStack(family)}`;
-      ctx.font = probeFont;
-      const probeAdvance = Math.max(REF, ctx.measureText(text).width);
-      /* iOS 對單邊超過約 4K 的 Canvas 可能直接讓 getImageData 失敗。長符號
-         不可用固定 100px 掃描；把掃描字級等比降到安全寬度，再依 scanSize
-         正規化，才能完整量到最右側而不是落回粗略 fallback。 */
-      const scanSize = Math.max(12, Math.min(REF, REF * 2200 / probeAdvance));
-      const font = `400 ${scanSize}px ${fontStack(family)}`;
+      const font = `400 ${REF}px ${fontStack(family)}`;
       ctx.font = font;
-      const advance = Math.max(scanSize, ctx.measureText(text).width);
-      const px = Math.ceil(scanSize * 4), py = Math.ceil(scanSize * 4);
+      const advance = Math.max(REF, ctx.measureText(text).width);
+      /* 大量符號含組合附加記號，墨水可能遠超出 advance/em box。
+         留四個 em 才不會先被量測畫布裁掉，導致算出錯誤中心與過小外框。 */
+      const px = Math.ceil(REF * 4), py = Math.ceil(REF * 4);
       canvas.width = Math.ceil(advance) + px * 2;
       canvas.height = py * 2;
       ctx.font = font; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -46,9 +41,9 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
         }
       }
       if (x1 >= x0 && y1 >= y0) out = {
-        w: (x1 - x0 + 1) / scanSize, h: (y1 - y0 + 1) / scanSize,
-        cx: ((x0 + x1 + 1) / 2 - ax) / scanSize,
-        cy: ((y0 + y1 + 1) / 2 - ay) / scanSize,
+        w: (x1 - x0 + 1) / REF, h: (y1 - y0 + 1) / REF,
+        cx: ((x0 + x1 + 1) / 2 - ax) / REF,
+        cy: ((y0 + y1 + 1) / 2 - ay) / REF,
       };
       canvas.width = canvas.height = 0;
     }
@@ -73,14 +68,10 @@ export const measureSymbolInkAtSize = (text: string, family: string, fontSize: n
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
     if (ctx) {
-      const probeFont = `400 ${size}px ${fontStack(family)}`;
-      ctx.font = probeFont;
-      const probeAdvance = Math.max(size, ctx.measureText(text).width);
-      const scanSize = Math.max(12, Math.min(size, size * 2200 / probeAdvance));
-      const font = `400 ${scanSize}px ${fontStack(family)}`;
+      const font = `400 ${size}px ${fontStack(family)}`;
       ctx.font = font;
-      const advance = Math.max(scanSize, ctx.measureText(text).width);
-      const px = Math.ceil(scanSize * 4), py = Math.ceil(scanSize * 4);
+      const advance = Math.max(size, ctx.measureText(text).width);
+      const px = Math.ceil(size * 4), py = Math.ceil(size * 4);
       canvas.width = Math.ceil(advance) + px * 2;
       canvas.height = py * 2;
       ctx.font = font;
@@ -98,10 +89,10 @@ export const measureSymbolInkAtSize = (text: string, family: string, fontSize: n
         }
       }
       if (x1 >= x0 && y1 >= y0) out = {
-        w: (x1 - x0 + 1) / scanSize,
-        h: (y1 - y0 + 1) / scanSize,
-        cx: ((x0 + x1 + 1) / 2 - ax) / scanSize,
-        cy: ((y0 + y1 + 1) / 2 - ay) / scanSize,
+        w: (x1 - x0 + 1) / size,
+        h: (y1 - y0 + 1) / size,
+        cx: ((x0 + x1 + 1) / 2 - ax) / size,
+        cy: ((y0 + y1 + 1) / 2 - ay) / size,
       };
       canvas.width = canvas.height = 0;
     }
@@ -112,9 +103,6 @@ export const measureSymbolInkAtSize = (text: string, family: string, fontSize: n
 
 /** 完整包住墨水並在四邊保留一致安全距離。 */
 export const symbolBox = (text: string, family: string, size: number, gap = 4) => {
-  // 外框與真正顯示的字級必須使用同一次掃描。iOS 對含組合附加記號的
-  // Unicode 在不同字級會套用不同 hinting；拿 100px 結果等比推算會讓少數
-  // 符號在生成當下就偏出框，播放動畫後重新排版時才看似恢復。
-  const ink = measureSymbolInkAtSize(text, family, size);
+  const ink = measureSymbolInk(text, family);
   return { w: Math.max(6, ink.w * size + gap * 2), h: Math.max(6, ink.h * size + gap * 2) };
 };

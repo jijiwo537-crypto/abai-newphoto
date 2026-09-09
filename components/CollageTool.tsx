@@ -36,7 +36,7 @@ import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { measureSymbolInk, measureSymbolInkAtSize, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -263,7 +263,7 @@ const symBox = (str: string, fam: string, size: number) => {
 const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
   if (o.sym) {
-    const ink = measureSymbolInkAtSize(o.text || o.sym, o.fontFamily || DEFAULT_FONT, o.size);
+    const ink = symInk(o.text || o.sym, o.fontFamily || DEFAULT_FONT);
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -4824,7 +4824,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
         let tdx = 0, tdy = 0;
         if (o.sym) {
-          const ink2 = measureSymbolInkAtSize(o.text || '', fam, o.size);
+          const ink2 = symInk(o.text || '', fam);
           tdx = -ink2.cx * o.size * s;
           tdy = -ink2.cy * o.size * s;
         }
