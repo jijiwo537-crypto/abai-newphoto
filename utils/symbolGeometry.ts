@@ -313,20 +313,14 @@ export const measureSymbolUnitLayout = (
     cy: (final.top + final.bottom) / 2 / size,
   };
 
-  /* 每个原生 grapheme 内再拆可见动画单元，并全部继承该 grapheme 的固定中心。
-     因此五个可见小单元能有五种节奏，但符号本身不会被重新排版。 */
-  const units: string[] = [];
-  const centers: number[] = [];
-  const unitClusters: number[] = [];
-  staticUnits.forEach((cluster, clusterIndex) => {
-    const visualParts = splitSymbolUnits(cluster);
-    visualParts.forEach(part => {
-      units.push(part);
-      centers.push(staticCenters[clusterIndex]);
-      unitClusters.push(clusterIndex);
-    });
-  });
-  const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
+  /* 动画必须沿用静止版的完整 grapheme。组合附加记号只有跟主字一起 shaping
+     才有正确锚点；把它单独 fillText 会由系统补上虚拟基字符，在 iOS 上尤其会
+     产生横向偏移、点圈散开或小单元错位。真正彼此独立的符号本来就是不同
+     grapheme，仍会逐颗取得泡泡／缩放 II 的独立节奏。 */
+  const units = staticUnits.slice();
+  const centers = staticCenters.slice();
+  const unitClusters = staticUnits.map((_cluster, index) => index);
+  const unitInks = staticUnitInks.slice();
 
   const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
   const drawOffsetsX = units.map(() => 0);
