@@ -1,6 +1,4 @@
-/* Unicode 裝飾符號固定使用裝置字型：不走網路、不會在首次顯示後換字身。
-   清單、畫布、量測與匯出全部引用同一常數。 */
-export const SYMBOL_FONT_STACK = '-apple-system, BlinkMacSystemFont, "Helvetica Neue", "Apple Symbols", "PingFang TC", "Arial Unicode MS", sans-serif';
+import { fontStack } from './fonts';
 
 export type SymbolInk = { w: number; h: number; cx: number; cy: number };
 const REF = 100;
@@ -21,16 +19,14 @@ export const measureSymbolInk = (text: string, family: string): SymbolInk => {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
     if (ctx) {
-      const font = `400 ${REF}px ${SYMBOL_FONT_STACK}`;
+      const font = `400 ${REF}px ${fontStack(family)}`;
       ctx.font = font;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const tm = ctx.measureText(text);
       /* 現代 Safari/Chrome 直接提供向量字形的實際四邊，無需建立巨大點陣
          再逐像素掃描；點擊符號時可同步完成且邊界與 Canvas 繪製一致。 */
       if (Number.isFinite(tm.actualBoundingBoxLeft) && Number.isFinite(tm.actualBoundingBoxRight)
-          && Number.isFinite(tm.actualBoundingBoxAscent) && Number.isFinite(tm.actualBoundingBoxDescent)
-          && tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight > 0
-          && tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent > 0) {
+          && tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight > 0) {
         out = {
           w: (tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight) / REF,
           h: (tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent) / REF,
@@ -87,14 +83,12 @@ export const measureSymbolInkAtSize = (text: string, family: string, fontSize: n
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
     if (ctx) {
-      const font = `400 ${size}px ${SYMBOL_FONT_STACK}`;
+      const font = `400 ${size}px ${fontStack(family)}`;
       ctx.font = font;
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       const tm = ctx.measureText(text);
       if (Number.isFinite(tm.actualBoundingBoxLeft) && Number.isFinite(tm.actualBoundingBoxRight)
-          && Number.isFinite(tm.actualBoundingBoxAscent) && Number.isFinite(tm.actualBoundingBoxDescent)
-          && tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight > 0
-          && tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent > 0) {
+          && tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight > 0) {
         out = {
           w: (tm.actualBoundingBoxLeft + tm.actualBoundingBoxRight) / size,
           h: (tm.actualBoundingBoxAscent + tm.actualBoundingBoxDescent) / size,
