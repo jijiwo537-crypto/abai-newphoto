@@ -47,49 +47,64 @@ const scanInk = (text: string, family: string, requestedSize: number): SymbolInk
 
     let scanSize = Math.max(8, requestedSize);
     ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
-    const initialAdvance = Math.max(scanSize, ctx.measureText(text).width);
-    const desiredW = initialAdvance + scanSize * 8;
+    let advance = Math.max(scanSize, ctx.measureText(text).width);
+    const desiredW = advance + scanSize * 8;
     if (desiredW > MAX_SCAN_SIDE) {
       scanSize = Math.max(8, scanSize * (MAX_SCAN_SIDE / desiredW));
       ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+      advance = Math.max(scanSize, ctx.measureText(text).width);
     }
 
-    const advance = Math.max(scanSize, ctx.measureText(text).width);
-    /* 四個 em 能完整收進大量上下組合記號，同時仍守住 Safari 的 Canvas 上限。 */
-    const padX = Math.min(scanSize * 4, (MAX_SCAN_SIDE - advance) / 2);
+    const padX = Math.min(scanSize * 4, Math.max(2, (MAX_SCAN_SIDE - advance) / 2));
     const padY = Math.min(scanSize * 4, MAX_SCAN_SIDE / 2);
-    canvas.width = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(advance + Math.max(2, padX) * 2)));
+    canvas.width = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(advance + padX * 2)));
     canvas.height = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(Math.max(scanSize * 2, padY * 2))));
     ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#fff';
     const ax = canvas.width / 2, ay = canvas.height / 2;
-    ctx.fillText(text, ax, ay);
 
-    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    let x0 = canvas.width, y0 = canvas.height, x1 = -1, y1 = -1;
-    for (let y = 0; y < canvas.height; y++) {
-      for (let x = 0; x < canvas.width; x++) {
-        if (data[(y * canvas.width + x) * 4 + 3] > 0) {
-          x0 = Math.min(x0, x); y0 = Math.min(y0, y);
-          x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+    /* TextMetrics 是安全下限：即使 iOS 因 Canvas 面積或記憶體拒絕 getImageData，
+       advance 與 actualBoundingBox 仍能保證左右兩端不會掉出外框。 */
+    const metrics = ctx.measureText(text);
+    let left = -Math.max(advance / 2, Number(metrics.actualBoundingBoxLeft) || 0);
+    let right = Math.max(advance / 2, Number(metrics.actualBoundingBoxRight) || 0);
+    let top = -(Number(metrics.actualBoundingBoxAscent) || scanSize * .75);
+    let bottom = Number(metrics.actualBoundingBoxDescent) || scanSize * .45;
+
+    ctx.fillText(text, ax, ay);
+    try {
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let x0 = canvas.width, y0 = canvas.height, x1 = -1, y1 = -1;
+      for (let y = 0; y < canvas.height; y++) {
+        for (let x = 0; x < canvas.width; x++) {
+          if (data[(y * canvas.width + x) * 4 + 3] > 0) {
+            x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+            x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+          }
         }
       }
+      if (x1 >= x0 && y1 >= y0) {
+        left = Math.min(left, x0 - ax);
+        right = Math.max(right, x1 + 1 - ax);
+        top = Math.min(top, y0 - ay);
+        bottom = Math.max(bottom, y1 + 1 - ay);
+      }
+    } catch {
+      /* 部分 iOS 裝置會拒絕讀大型 Canvas；上面的向量度量仍完整可用。 */
     }
     canvas.width = canvas.height = 0;
-    if (x1 < x0 || y1 < y0) return null;
     return {
-      w: (x1 - x0 + 1) / scanSize,
-      h: (y1 - y0 + 1) / scanSize,
-      cx: ((x0 + x1 + 1) / 2 - ax) / scanSize,
-      cy: ((y0 + y1 + 1) / 2 - ay) / scanSize,
+      w: Math.max(.01, right - left) / scanSize,
+      h: Math.max(.01, bottom - top) / scanSize,
+      cx: (left + right) / 2 / scanSize,
+      cy: (top + bottom) / 2 / scanSize,
     };
   } catch {
     return null;
   }
 };
-
 /** 直接掃描字形 alpha，取得符號真正的可見邊界；結果以字級 1 為單位。 */
 export const measureSymbolInk = (text: string, family: string): SymbolInk => {
   const key = `${family}|${text}`;
@@ -139,24 +154,38 @@ export const measureSymbolAdvance = (text: string, family: string, fontSize: num
  */
 export const splitSymbolUnits = (text: string): string[] => {
   if (!text) return [];
-  if (/[֐-࿿ក-᳿‎‏‪-‮⁦-⁩]/u.test(text)) return [text];
+  let raw: string[] = [];
   try {
     const Segmenter = (Intl as any).Segmenter;
     if (Segmenter) {
-      const parts = Array.from(new Segmenter(undefined, { granularity: 'grapheme' }).segment(text),
+      raw = Array.from(new Segmenter(undefined, { granularity: 'grapheme' }).segment(text),
         (part: any) => part.segment as string);
-      if (parts.length) return parts;
     }
   } catch { /* Safari 舊版走下面的保守分組 */ }
-
-  const out: string[] = [];
-  for (const ch of Array.from(text)) {
-    if (out.length && (/\p{Mark}/u.test(ch) || /[\ufe00-\ufe0f\u200d]/u.test(ch))) out[out.length - 1] += ch;
-    else out.push(ch);
+  if (!raw.length) {
+    for (const ch of Array.from(text)) {
+      if (raw.length && (/\p{Mark}/u.test(ch) || /[\ufe00-\ufe0f\u200d]/u.test(ch))) raw[raw.length - 1] += ch;
+      else raw.push(ch);
+    }
   }
-  return out;
-};
 
+  /* 方向／格式控制字元沒有自己的墨水，不能成為一個動畫單位。
+     併回相鄰字素後仍保留原字串順序，但不會產生一個看不見的停頓。 */
+  const controls = /^[\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/u;
+  const out: string[] = [];
+  let leading = '';
+  for (const part of raw) {
+    if (controls.test(part)) {
+      if (out.length) out[out.length - 1] += part;
+      else leading += part;
+    } else {
+      out.push(leading + part);
+      leading = '';
+    }
+  }
+  if (leading && out.length) out[out.length - 1] += leading;
+  return out.length ? out : [text];
+};
 /**
  * 每個字素的動畫錨點來自「整串文字逐步增加字素」的 prefix advance，
  * 而不是把每個字寬相加。這會保留 kerning 與 fallback run 的原始位置；
@@ -186,6 +215,24 @@ export const measureSymbolUnitLayout = (
         edges.push(ctx.measureText(prefix).width);
       }
       centers = units.map((_u, i) => (edges[i] + edges[i + 1]) / 2 - advance / 2);
+
+      /* 單獨畫字素與整串 shaping 的左右 bearing 可能不同。用每個字素的
+         actualBoundingBox 算出動畫整組可見中心，再一次性校回靜止整串的墨水中心。
+         這個 correction 是固定值，不會逐幀重算，因此動畫頁不會向左跳。 */
+      let visibleLeft = Infinity, visibleRight = -Infinity;
+      units.forEach((unit, i) => {
+        const m = ctx.measureText(unit);
+        const half = Math.max(.05, m.width / 2);
+        const l = centers[i] - Math.max(half, Number(m.actualBoundingBoxLeft) || 0);
+        const r = centers[i] + Math.max(half, Number(m.actualBoundingBoxRight) || 0);
+        visibleLeft = Math.min(visibleLeft, l);
+        visibleRight = Math.max(visibleRight, r);
+      });
+      if (Number.isFinite(visibleLeft) && Number.isFinite(visibleRight)) {
+        const targetCenter = measureSymbolInkAtSize(text, family, size).cx * size;
+        const correction = targetCenter - (visibleLeft + visibleRight) / 2;
+        centers = centers.map(x => x + correction);
+      }
     }
   } catch { /* 均勻錨點仍保持整組中心不動 */ }
   const out = { units, centers, advance };

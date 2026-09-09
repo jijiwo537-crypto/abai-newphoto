@@ -4849,7 +4849,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ? measureSymbolUnitLayout(o.text || '', fam, o.size * s)
           : null;
         const drawText = (stroke = false) => {
-          if (!unitLayout || unitLayout.units.length <= 1) {
+          if (!unitLayout) {
             if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
             else ctx.fillText(o.text || '', tdx, tdy);
             return;
