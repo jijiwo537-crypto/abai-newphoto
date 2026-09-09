@@ -303,7 +303,7 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   if (o.sym) {
     /* 外框使用固定基础字级的规范化几何，再跟物件一起等比缩放。
        缩放期间不可按每一帧的新字级重新扫描 alpha，否则 iOS 会卡顿且框会跳。 */
-    const ink = measureSymbolUnitLayout(o.text || o.sym, o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT), o.size || 40).ink;
+    const ink = measureSymbolUnitLayout(o.text || o.sym, o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT), o.sym ? 100 : (o.size || 40)).ink;
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -4874,8 +4874,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const symbolLayout = o.sym
           /* 几何只按物件基础字级量一次。s 在缩放手势中每帧变化，只用于下面的
              数值乘法，不再制造几百份不同字级的 alpha 扫描与缓存。 */
-          ? measureSymbolUnitLayout(o.text || '', fam, o.size || 40)
+          ? measureSymbolUnitLayout(o.text || '', fam, 100)
           : null;
+        const symbolUnitScale = o.sym ? (o.size || 40) / 100 : 1;
         let tdx = 0, tdy = 0;
         if (symbolLayout) {
           tdx = -symbolLayout.ink.cx * (o.size || 40) * s;
@@ -4937,8 +4938,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const pivotX = unitInk.cx * (o.size || 40) * s;
             const pivotY = unitInk.cy * (o.size || 40) * s;
             ctx.translate(
-              tdx + drawCenters[index] * s + baseOffsetX * s + pivotX,
-              tdy + (useAnimationUnits ? (unitLayout.drawOffsetsY[index] || 0) * s : 0) + pivotY,
+              tdx + (drawCenters[index] + baseOffsetX) * symbolUnitScale * s + pivotX,
+              tdy + (useAnimationUnits ? (unitLayout.drawOffsetsY[index] || 0) * symbolUnitScale * s : 0) + pivotY,
             );
             ctx.scale(scale, scale);
             ctx.textAlign = 'center';
