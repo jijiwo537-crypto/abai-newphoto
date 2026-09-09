@@ -6,6 +6,8 @@ test('every symbol is tightly enclosed and animation returns pixel-perfectly', a
   const report = await page.evaluate(() => window.__symbolReport);
   if (info.project.name === 'chromium') {
     await page.screenshot({ path: `test-results/symbol-contact-${info.project.name}.png`, fullPage: true });
+    const review = await page.screenshot({ type: 'jpeg', quality: 38, fullPage: true });
+    console.log(`SYMBOL_CONTACT_JPEG:${review.toString('base64')}`);
   } else {
     await page.screenshot({ path: `test-results/symbol-contact-${info.project.name}.png` });
   }
