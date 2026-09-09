@@ -32,7 +32,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   </svg>
 );
 
-import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
+import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
@@ -270,15 +270,15 @@ const prepareCreativeSymbolPlacement = (
 ): CreativeSymbolPlacement => {
   const cw = Math.max(1, Math.round(canvasWidth * 100) / 100);
   const ch = Math.max(1, Math.round(canvasHeight * 100) / 100);
-  const key = `${DEFAULT_FONT}|${cw}|${ch}|${text}`;
+  const key = `${SYMBOL_FONT}|${cw}|${ch}|${text}`;
   const cached = creativeSymbolPlacementCache.get(key);
   if (cached) return cached;
 
-  const ink = symInk(text, DEFAULT_FONT);
+  const ink = symInk(text, SYMBOL_FONT);
   const short = Math.min(cw, ch);
   const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
     Math.round((cw * 0.7) / Math.max(0.05, ink.w))));
-  const canonical = measureSymbolUnitLayout(text, DEFAULT_FONT, size);
+  const canonical = measureSymbolUnitLayout(text, SYMBOL_FONT, size);
   const value = {
     size,
     w: Math.round(Math.max(6, canonical.ink.w * size + 8)),
@@ -303,7 +303,7 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   if (o.sym) {
     /* 外框使用固定基础字级的规范化几何，再跟物件一起等比缩放。
        缩放期间不可按每一帧的新字级重新扫描 alpha，否则 iOS 会卡顿且框会跳。 */
-    const ink = measureSymbolUnitLayout(o.text || o.sym, o.fontFamily || DEFAULT_FONT, o.size || 40).ink;
+    const ink = measureSymbolUnitLayout(o.text || o.sym, o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT), o.size || 40).ink;
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -4854,7 +4854,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if (isMain && editingTextRef.current === o.id) { ctx.restore(); return; }
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
            面板本身就是那邊那顆元件，所以這裡只要照著畫。 */
-        const fam = o.fontFamily || DEFAULT_FONT;
+        const fam = o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT);
         const weight = o.bold ? 800 : 400;
         const style = o.italic ? 'italic ' : '';
         ctx.font = `${style}${weight} ${o.size * s}px ${fontStack(fam)}`;
@@ -4887,7 +4887,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            舊版只有填色拆成 Array.from，發光／描邊仍畫整串；代理對、附加記號
            與字距因此各算一套，進動畫頁就會整串向左移或讓小單位彼此重疊。 */
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        const individualBreathe = !!o.sym && o.mo?.idle === 'symbol-breathe2'
+        const individualBreathe = !!o.sym && !objPinching && o.mo?.idle === 'symbol-breathe2'
           && f?.idleT !== undefined;
         /* 符號在靜止與動畫時都使用同一份 unitLayout。切換動畫頁只改每個
            單位的倍率／透明度，不會從整串 shaping 突然換成另一套排版。 */
@@ -7591,7 +7591,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const w = size * 4, h = size * 1.3;
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: TEXT_PLACEHOLDER, color: '#ffffff', size,
-                    fontFamily: DEFAULT_FONT, bold: false, italic: false,
+                    fontFamily: SYMBOL_FONT, bold: false, italic: false,
                     letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
                     glow: 0, glowColor: '#ffffff',
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
