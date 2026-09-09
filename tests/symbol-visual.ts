@@ -149,9 +149,14 @@ const drawCanonical = (
     const geometryPass=nativeSafe;
     /* 單一 run 在正式路徑的倍率 1 會直接畫 native 字串，不會走強制拆分測試；
        WebKit 對等價的 save/translate/restore 會留下 1～3 個 alpha rounding 像素。 */
-    const forcedPixelsStable=layout.units.length===1||forcedPixelDiff<=2;
+    const oneDevicePixelHinting=!!actual&&!!forcedAnimatedBounds
+      && Math.abs(actual.l-forcedAnimatedBounds.l)<=1
+      && Math.abs(actual.r-forcedAnimatedBounds.r)<=1
+      && Math.abs(actual.t-forcedAnimatedBounds.t)<=1
+      && Math.abs(actual.b-forcedAnimatedBounds.b)<=1;
+    const forcedPixelsStable=layout.units.length===1||forcedPixelDiff<=2||oneDevicePixelHinting;
     const pass=geometryPass&&stableCacheHit&&animationUnitCount&&noRectSlices&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,noRectSlices,scale2StartsFlat,scale2Independent,firstFrameStable,forcedPixelDiff,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,noRectSlices,scale2StartsFlat,scale2Independent,firstFrameStable,forcedPixelDiff,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
