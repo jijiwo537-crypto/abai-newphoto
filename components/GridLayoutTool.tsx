@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film } from 'lucide-react';
 import { Icon } from './Icon';
-import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
+import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
@@ -1596,14 +1596,17 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
       className="inline-flex max-w-full items-center justify-center whitespace-pre text-center"
       style={{
         flexShrink: 0,
-        fontFamily: fontStack(DEFAULT_FONT),
+        fontFamily: fontStack(SYMBOL_FONT),
         fontSize,
         lineHeight: 1.9,
         minHeight: base * 1.9,
         overflow: 'visible',
       }}
     >
-      {text}
+      {text === "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605" ? (() => {
+        const [before, after] = text.split("\u08ea");
+        return <>{before}<span style={{ display: 'inline-block', transform: 'translateX(-0.08em)' }}>{"\u08ea"}</span>{after}</>;
+      })() : text}
     </span>
   );
 };
