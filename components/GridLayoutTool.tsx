@@ -1543,28 +1543,41 @@ const FontCard: React.FC<{
  * 也不會變成「…」。字型晚一點才載好時寬度會變，所以 fonts.ready 之後
  * 再量一次；按鈕本身寬度變了（轉向）也用 ResizeObserver 重量。
  */
-export const SymbolGlyph: React.FC<{ text: string; base?: number }> = React.memo(({ text, base = 15 }) => {
-  /* 選擇頁必須在點擊後的第一幀就能顯示。舊版每顆符號都會同步讀取
-     scrollWidth、setState，再各自建立 ResizeObserver；數百顆一起 mount 會
-     強制 iPhone 做數百次 layout。這裡只用字串長度預估安全字級，完全不讀 DOM。
-     長字串會直接以較小字級完整排進按鈕，短符號仍維持原本 15px。 */
-  const units = Math.max(1, Array.from(text).length);
-  const fitted = Math.max(3.5, Math.min(base, 190 / (units * 0.72)));
+export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, base = 15 }) => {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const inkRef = useRef<HTMLSpanElement>(null);
+  const [k, setK] = useState(1);
+  useLayoutEffect(() => {
+    const box = boxRef.current, ink = inkRef.current;
+    if (!box || !ink) return;
+    let alive = true;
+    const fit = () => {
+      if (!alive) return;
+      const bw = box.clientWidth;
+      const tw = ink.scrollWidth;
+      if (bw > 0 && tw > 0) setK(Math.min(1, bw / tw));
+    };
+    fit();
+    (document as any).fonts?.ready?.then(fit).catch(() => {});
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
+    ro?.observe(box);
+    return () => { alive = false; ro?.disconnect(); };
+  }, [text, base]);
   return (
-    <span
-      style={{
-        display: 'inline-block',
-        maxWidth: '100%',
-        whiteSpace: 'pre',
-        flexShrink: 0,
-        fontSize: fitted,
-        lineHeight: 1.4,
-      }}
-    >
-      {text}
-    </span>
+    <div ref={boxRef} className="max-w-full overflow-hidden flex items-center justify-center">
+      <span
+        ref={inkRef}
+        style={{
+          display: 'inline-block', whiteSpace: 'pre', flexShrink: 0,
+          fontSize: base, lineHeight: 1.4,
+          transform: `scale(${k})`, transformOrigin: 'center center',
+        }}
+      >
+        {text}
+      </span>
+    </div>
   );
-});
+};
 
 /**
  * 「新增符號」那一頁：上面一顆返回，下面一長串符號，點一下就加到版面正中間。
@@ -1595,8 +1608,7 @@ export const SymbolPicker: React.FC<{
           key={i}
           onClick={() => onPick(s)}
           aria-label={s}
-          className={`h-10 px-3 max-w-full rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-all inline-flex items-center justify-center text-white/85 ${Array.from(s).length > 18 ? 'w-full' : ''}`}
-          style={{ contentVisibility: 'auto', containIntrinsicSize: '40px 72px' }}
+          className="h-10 px-3 max-w-full rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-all inline-flex items-center justify-center text-white/85"
         >
           <SymbolGlyph text={s} />
         </button>
