@@ -265,15 +265,20 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   if (o.sym) {
     /* 新增時保存的墨水量測是符號與選中框的共同幾何基準。
        不再於第一個動畫影格重新量字型，避免字型剛就緒時框先用到另一組度量。 */
-    /* iOS 靜止狀態使用原生 Canvas 的整串 shaping；動畫才拆單位。
-       外框涵蓋兩者，生成後與播放動畫時都不會越框。 */
-    const fontPx = Math.max(8, (o.size || 40) * Math.max(0.01, scale));
-    const wholeInk = measureSymbolInkAtSize(o.text || o.sym, o.fontFamily || DEFAULT_FONT, fontPx);
-    const unitLayout = symbolUnitLayoutAt(o.text || o.sym, o.fontFamily || DEFAULT_FONT, fontPx);
+    /* 靜止符號由整串 shaping 繪製，外框也必須量整串，不能拿逐單位
+       外接框代替，否則組合符號會重疊或超出。 */
+    const ink = measureSymbolInkAtSize(
+      o.text || o.sym, o.fontFamily || DEFAULT_FONT,
+      Math.max(8, (o.size || 40) * Math.max(0.01, scale)),
+    );
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
-    const w = Math.max(wholeInk.w * fontPx, unitLayout.inkW);
-    const h = Math.max(wholeInk.h * fontPx, unitLayout.inkH);
+    const fontPx = Math.max(8, (o.size || 40) * Math.max(0.01, scale));
+    const unitLayout = symbolUnitLayoutAt(o.text || o.sym, o.fontFamily || DEFAULT_FONT, fontPx);
+    /* 外框以靜止整串與逐單位動畫兩者較大的可見範圍為準，泡泡回彈與
+       縮放 II 的額外幅度另由既有 idleScalePad 處理。 */
+    const w = Math.max(ink.w * o.size * scale, unitLayout.inkW);
+    const h = Math.max(ink.h * o.size * scale, unitLayout.inkH);
     return { x: (bw - w) / 2 - edge, y: (bh - h) / 2 - edge, w: w + edge * 2, h: h + edge * 2 };
   }
   if (o.type === 'shape' && o.kind !== 'hole') {
@@ -394,7 +399,7 @@ const symbolUnits = (text: string): string[] => {
 
 type SymbolUnitLayout = {
   units: string[]; anchors: number[]; inks: { w: number; h: number; cx: number; cy: number }[];
-  inkW: number; inkH: number; inkCy: number;
+  inkW: number; inkH: number;
 };
 const symbolUnitLayoutCache = new Map<string, SymbolUnitLayout>();
 /** 单一符号布局来源：静态、选中框与所有动画都读取同一份实际墨水几何。 */
@@ -406,7 +411,7 @@ const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): Symbo
   const units = symbolUnits(text);
   const cv = document.createElement('canvas');
   const cg = cv.getContext('2d');
-  if (cg) cg.font = `400 ${px}px ${SYMBOL_FONT_STACK}`;
+  if (cg) cg.font = `400 ${px}px ${fontStack(family)}`;
   const prefixes = [0];
   for (let i = 1; i <= units.length; i++) {
     prefixes.push(cg ? cg.measureText(units.slice(0, i).join('')).width : i * px * 0.5);
@@ -418,11 +423,8 @@ const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): Symbo
      相鄰單位重疊。保持瀏覽器原始位置，僅在真正相交時把後續單位推開。 */
   const anchors = rawAnchors.slice();
   for (let i = 1; i < anchors.length; i++) {
-    /* 泡泡的 easeOutBack 最高會略大於 1；以 1.12 倍墨水邊界預留
-       回彈空間，動畫峰值也不會讓相鄰單位互相壓住。 */
-    const safeScale = 1.12;
-    const prevRight = anchors[i - 1] + (inks[i - 1].cx + inks[i - 1].w / 2 * safeScale) * px;
-    const thisLeft = anchors[i] + (inks[i].cx - inks[i].w / 2 * safeScale) * px;
+    const prevRight = anchors[i - 1] + (inks[i - 1].cx + inks[i - 1].w / 2) * px;
+    const thisLeft = anchors[i] + (inks[i].cx - inks[i].w / 2) * px;
     if (thisLeft < prevRight) {
       const push = prevRight - thisLeft;
       for (let j = i; j < anchors.length; j++) anchors[j] += push;
@@ -436,12 +438,11 @@ const symbolUnitLayoutAt = (text: string, family: string, fontPx: number): Symbo
     y0 = Math.min(y0, (ink.cy - ink.h / 2) * px);
     y1 = Math.max(y1, (ink.cy + ink.h / 2) * px);
   });
-  if (![x0, y0, x1, y1].every(Number.isFinite)) { x0 = y0 = -px / 2; x1 = y1 = px / 2; }
+  if (!Number.isFinite(x0)) { x0 = y0 = -px / 2; x1 = y1 = px / 2; }
   const sx = -(x0 + x1) / 2;
   const out = {
     units, anchors: anchors.map(x => x + sx), inks,
     inkW: Math.max(1, x1 - x0), inkH: Math.max(1, y1 - y0),
-    inkCy: (y0 + y1) / 2,
   };
   symbolUnitLayoutCache.set(key, out);
   while (symbolUnitLayoutCache.size > 256) {
@@ -4926,9 +4927,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const fam = o.fontFamily || DEFAULT_FONT;
         const weight = o.bold ? 800 : 400;
         const style = o.italic ? 'italic ' : '';
-        ctx.font = o.sym
-          ? `400 ${o.size * s}px ${SYMBOL_FONT_STACK}`
-          : `${style}${weight} ${o.size * s}px ${fontStack(fam)}`;
+        ctx.font = `${style}${weight} ${o.size * s}px ${fontStack(fam)}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         (ctx as any).letterSpacing = `${(o.letterSpacing || 0) * s}px`;
@@ -4993,7 +4992,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2)));
           const scales = layout.units.map((_, index) => {
             if (seqIn !== null) return o.mo?.in === 'bubble' ? easeOutBack(qs[index]) : 1;
-            if (!individualBreathe) return 1;
             return 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71)
               * ((o.mo?.amp || 50) / 100) * 0.18 * (f?.idleBlend ?? 0);
           });
@@ -5022,18 +5020,31 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               shiftY = (by0 + by1 - y0 - y1) / 2;
             }
           }
-          /* 靜止、進場與常駐永遠使用同一份單位布局；不再在完整字串與
-             逐單位排版之間交叉淡化，因此銜接處不會視覺縮小或換位置。 */
-          layout.units.forEach((ch, index) => {
-            const q = qs[index], sc = scales[index];
+          /* 泡泡末段由逐單位平滑交給完整 shaping；縮放 II 開始時則從
+             完整 shaping 平滑拆成單位。兩次都不在單一影格切換排版座標。 */
+          const mixProgress = seqIn !== null
+            ? Math.max(0, Math.min(1, (seqIn - 0.86) / 0.14))
+            : Math.max(0, Math.min(1, f?.idleBlend ?? 0));
+          const smoothMix = mixProgress * mixProgress * (3 - 2 * mixProgress);
+          const unitMix = seqIn !== null ? 1 - smoothMix : smoothMix;
+          if (unitMix > 0.001) {
+            layout.units.forEach((ch, index) => {
+              const q = qs[index], sc = scales[index];
+              ctx.save();
+              ctx.globalAlpha *= unitMix * (seqIn === null ? 1 : Math.min(1, q * 3));
+              ctx.translate(tdx + layout.anchors[index] + shiftX, tdy + shiftY);
+              ctx.scale(sc, sc);
+              ctx.textAlign = 'center';
+              ctx.fillText(ch, 0, 0);
+              ctx.restore();
+            });
+          }
+          if (unitMix < 0.999) {
             ctx.save();
-            ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            ctx.translate(layout.anchors[index] + shiftX, -layout.inkCy + shiftY);
-            ctx.scale(sc, sc);
-            ctx.textAlign = 'center';
-            ctx.fillText(ch, 0, 0);
+            ctx.globalAlpha *= 1 - unitMix;
+            ctx.fillText(o.text || '', tdx, tdy);
             ctx.restore();
-          });
+          }
         } else {
           ctx.fillText(o.text || '', tdx, tdy);
         }
