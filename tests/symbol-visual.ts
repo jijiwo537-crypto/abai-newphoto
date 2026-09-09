@@ -1,6 +1,6 @@
 import { SYMBOLS } from '../utils/symbols';
 import { DEFAULT_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { clearSymbolInkCache, measureSymbolAdvance, measureSymbolInkAtSize, measureSymbolUnitLayout, symbolBreatheScale } from '../utils/symbolGeometry';
+import { clearSymbolInkCache, measureSymbolAdvance, measureSymbolUnitLayout, symbolBreatheScale } from '../utils/symbolGeometry';
 
 declare global {
   interface Window { __symbolReport?: { done: boolean; total: number; failed: any[] } }
@@ -24,12 +24,19 @@ const drawCanonical = (
   ctx.font=`400 ${size}px ${fontStack(DEFAULT_FONT)}`;
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
   const dy=-layout.ink.cy*size;
-  layout.units.forEach((unit,i)=>{
+  /* 全部回到 1 倍时与生产代码一样交回原生静止字素；只有仍在变化的
+     小单元才走拆分动画渲染。 */
+  const animated=!!unitScales&&unitScales.some(scale=>Math.abs(scale-1)>1e-6);
+  const units=animated?layout.units:layout.staticUnits;
+  const centers=animated?layout.centers:layout.staticCenters;
+  const inks=animated?layout.unitInks:layout.staticUnitInks;
+  units.forEach((unit,i)=>{
     ctx.save();
-    const ink=layout.unitInks[i];
-    const ox=layout.drawOffsetsX[i]||0;
+    const ink=inks[i];
+    const seventh=text==="\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
+    const ox=animated?(layout.drawOffsetsX[i]||0):(seventh&&unit.includes("\u08ea")?-size*.08:0);
     const px=ink.cx*size,py=ink.cy*size;
-    ctx.translate(cx+layout.centers[i]+ox+px,cy+dy+py);
+    ctx.translate(cx+centers[i]+ox+px,cy+dy+py);
     const k=unitScales?.[i]??1;ctx.scale(k,k);
     ctx.fillText(unit,-px,-py);ctx.restore();
   });
@@ -74,18 +81,18 @@ const drawCanonical = (
     const hintingTolerance=size<=12?4:3;
     const tight=!!actual&&(actual.l-pl)<=gap+hintingTolerance&&(pr-actual.r)<=gap+hintingTolerance&&(actual.t-pt)<=gap+hintingTolerance&&(pb-actual.b)<=gap+hintingTolerance;
 
-    /* 相鄰完整字素的真實墨水不能互相壓住；組合附加記號已被保留在同一 unit。 */
-    const unitInks=layout.units.map(unit=>measureSymbolInkAtSize(unit,DEFAULT_FONT,size));
+    /* 實際靜止排版由完整 grapheme 決定；動畫拆出的 combining mark
+       可能刻意共用同一位置，不能拿它的獨立 alpha box 誤判成排版重疊。 */
     let overlap=false;
-    for(let i=1;i<layout.units.length;i++){
-      /* 同一主字上的可見 combining marks 會共用中心，但仍是不同動畫單元；
-         這種重疊是原符號造型，不是相鄰單元互相壓住。 */
-      if(Math.abs(layout.centers[i]-layout.centers[i-1])<.01) continue;
-      const a=unitInks[i-1],b=unitInks[i];
-      const ar=layout.centers[i-1]+(layout.drawOffsetsX[i-1]||0)+a.cx*size+a.w*size/2;
-      const bl=layout.centers[i]+(layout.drawOffsetsX[i]||0)+b.cx*size-b.w*size/2;
+    for(let i=1;i<layout.staticUnits.length;i++){
+      const a=layout.staticUnitInks[i-1],b=layout.staticUnitInks[i];
+      const ar=layout.staticCenters[i-1]+a.cx*size+a.w*size/2;
+      const bl=layout.staticCenters[i]+b.cx*size-b.w*size/2;
       if(bl<ar-.05){overlap=true;break;}
     }
+    /* 同一基準尺寸必須命中幾何快取：縮放手勢只做數值變換，
+       不得在每一幀重新掃描符號 alpha。 */
+    const stableCacheHit=measureSymbolUnitLayout(text,DEFAULT_FONT,size)===layout;
 
     /* 縮放 II：第一幀必須完全不跳，之後每一顆 unit 必須有自己的倍率。 */
     const scaleStart=layout.units.map((_u,i)=>symbolBreatheScale(i,0,60,1.2));
@@ -95,7 +102,7 @@ const drawCanonical = (
     const trajectories=scaleA.map((v,i)=>`${v.toFixed(6)}|${scaleB[i].toFixed(6)}`);
     const scale2Independent=layout.units.length<=1||new Set(trajectories).size===layout.units.length;
 
-    // 動畫最後一幀必須逐像素回到靜止版面。
+    // 動畫最後一幀必須逐像素回到「原生 grapheme 靜止排版」。
     const reference=ctx.getImageData(0,0,w,h).data;
     const c2=document.createElement('canvas');c2.width=w;c2.height=h;
     const g2=c2.getContext('2d',{willReadFrequently:true})!;g2.scale(dpr,dpr);
@@ -110,8 +117,8 @@ const drawCanonical = (
     /* 第七顆原本被 Intl.Segmenter 合併成四組；肉眼可見的附加點與弧線
        現在必須各自成為動畫單元。 */
     const visibleUnitsSeparated=index!==6||layout.units.length>=7;
-    const pass=inside&&centered&&tight&&!overlap&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&visibleUnitsSeparated&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,overlap,scale2StartsFlat,scale2Independent,specialDotAdjusted,visibleUnitsSeparated,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    const pass=inside&&centered&&tight&&!overlap&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&visibleUnitsSeparated&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,overlap,stableCacheHit,scale2StartsFlat,scale2Independent,specialDotAdjusted,visibleUnitsSeparated,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
