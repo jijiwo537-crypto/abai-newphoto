@@ -87,7 +87,7 @@ const drawCanonical = (
     for(let i=1;i<layout.units.length;i++){
       /* 同一主字上的可見 combining marks 會共用中心，但仍是不同動畫單元；
          這種重疊是原符號造型，不是相鄰單元互相壓住。 */
-      if(Math.abs(layout.centers[i]-layout.centers[i-1])<.01) continue;
+      if(layout.unitClusters[i]===layout.unitClusters[i-1]) continue;
       const a=unitInks[i-1],b=unitInks[i];
       const ar=layout.centers[i-1]+(layout.drawOffsetsX[i-1]||0)+a.cx*size+a.w*size/2;
       const bl=layout.centers[i]+(layout.drawOffsetsX[i]||0)+b.cx*size-b.w*size/2;
