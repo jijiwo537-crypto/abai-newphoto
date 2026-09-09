@@ -1,5 +1,5 @@
 import { SYMBOLS } from '../utils/symbols';
-import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
+import { SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
 import { clearSymbolInkCache, measureSymbolAdvance, measureSymbolUnitLayout, symbolBreatheScale } from '../utils/symbolGeometry';
 
 declare global {
