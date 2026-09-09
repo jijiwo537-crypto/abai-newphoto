@@ -1551,7 +1551,7 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
   return (
     <span
       className="block max-w-full overflow-hidden text-center"
-      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4 }}
+      style={{ whiteSpace: 'pre', flexShrink: 0, fontSize, lineHeight: 1.4, fontFamily: fontStack(DEFAULT_FONT) }}
     >
       {text}
     </span>
@@ -1566,7 +1566,21 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
 export const SymbolPicker: React.FC<{
   onBack: () => void;
   onPick: (s: string) => void;
-}> = ({ onBack, onPick }) => (
+}> = ({ onBack, onPick }) => {
+  /* 不讓替代字型先露出再整頁切換。字型通常已由工具掛載時預載；
+     若使用者非常快地點進來，符號列只延後到同一字型可用的第一幀顯示。 */
+  const [fontReady, setFontReady] = useState(() =>
+    typeof document === 'undefined' || fontCssLoaded(DEFAULT_FONT)
+  );
+  useLayoutEffect(() => {
+    let alive = true;
+    void ensureFont(DEFAULT_FONT).then(async () => {
+      if (typeof document !== 'undefined' && document.fonts) await document.fonts.ready;
+      requestAnimationFrame(() => { if (alive) setFontReady(true); });
+    });
+    return () => { alive = false; };
+  }, []);
+  return (
   <div className="pt-1">
     <div className="flex items-center gap-2 mb-3">
       <button
@@ -1581,7 +1595,11 @@ export const SymbolPicker: React.FC<{
     </div>
     {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行 ——
         短的符號一排可以擺好幾顆，長的才自己佔一整排（而且照樣完整顯示）。 */}
-    <div className="flex flex-wrap gap-1.5 pb-4">
+    <div
+      className="flex flex-wrap gap-1.5 pb-4"
+      style={{ visibility: fontReady ? 'visible' : 'hidden' }}
+      aria-busy={!fontReady}
+    >
       {SYMBOLS.map((s, i) => (
         <button
           key={i}
@@ -1594,7 +1612,8 @@ export const SymbolPicker: React.FC<{
       ))}
     </div>
   </div>
-);
+  );
+};
 
 /**
  * 空格提示必须属于它所在的布局图层。
