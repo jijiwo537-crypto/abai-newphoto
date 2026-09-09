@@ -316,14 +316,12 @@ export const measureSymbolUnitLayout = (
     cy: (final.top + final.bottom) / 2 / size,
   };
 
-  /* 含 ੈ 的符号需要把组合记号拆成独立节拍，但静止外观必须直接使用
-     整串原生 shaping，才能保持 iPhone 上 ‧ 与 ₊ 的大小、间距和位置。 */
-  if (needsNativeTiming) {
-    staticUnits = [text];
-    staticCenters = [0];
-    staticUnitInks = [measureSymbolInkAtSize(text, family, size)];
-    ink = staticUnitInks[0];
-  }
+  /* 静止本体一律整串交给系统字体 shaping。不能把字素逐颗量宽后再拼，
+     否则 kerning、combining mark 与空白都会和 iPhone 实际输入不同。 */
+  staticUnits = [text];
+  staticCenters = [0];
+  staticUnitInks = [measureSymbolInkAtSize(text, family, size)];
+  ink = staticUnitInks[0];
 
   /* 一般符号继续沿用已验证的完整 grapheme 动画；只有含 ੈ 的结构
      才分开可见 code point 的时间，同时共用所属 grapheme 的原生锚点。 */
@@ -334,23 +332,23 @@ export const measureSymbolUnitLayout = (
     const parts = needsNativeTiming ? splitSymbolUnits(cluster) : [cluster];
     parts.forEach(part => {
       units.push(part);
-      centers.push(needsNativeTiming
-        ? (() => {
-            try {
-              const ctx = document.createElement('canvas').getContext('2d');
-              if (ctx) {
-                ctx.font = `400 ${size}px ${fontStack(family)}`;
-                const beforeText = originalClusters.slice(0, clusterIndex).join('');
-                const throughText = originalClusters.slice(0, clusterIndex + 1).join('');
-                const before = ctx.measureText(beforeText).width;
-                const after = ctx.measureText(throughText).width;
-                const total = ctx.measureText(text).width;
-                return -total / 2 + (before + after) / 2;
-              }
-            } catch {}
-            return ((clusterIndex + .5) / originalClusters.length - .5) * advance;
-          })()
-        : staticCenters[clusterIndex]);
+      centers.push((() => {
+        /* 每个动画字素的位置也从整串 prefix advance 推导，保留系统字体
+           的 kerning/空白，不再使用人为碰撞修正后的中心。 */
+        try {
+          const ctx = document.createElement('canvas').getContext('2d');
+          if (ctx) {
+            ctx.font = `400 ${size}px ${fontStack(family)}`;
+            const beforeText = originalClusters.slice(0, clusterIndex).join('');
+            const throughText = originalClusters.slice(0, clusterIndex + 1).join('');
+            const before = ctx.measureText(beforeText).width;
+            const after = ctx.measureText(throughText).width;
+            const total = ctx.measureText(text).width;
+            return -total / 2 + (before + after) / 2;
+          }
+        } catch {}
+        return ((clusterIndex + .5) / originalClusters.length - .5) * advance;
+      })());
       unitClusters.push(clusterIndex);
     });
   });
