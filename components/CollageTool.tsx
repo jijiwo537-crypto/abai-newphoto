@@ -383,7 +383,7 @@ const hashId = (id: string) => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; idleT?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -664,8 +664,7 @@ const inFlipX = (kind: string, p: number) => {
  */
 const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: number): MoFrame => {
   if (kind === 'none' || amp <= 0) return FLAT;
-  // 常駐動畫一律從目前的靜止姿態開始；phase 只能微調節奏，不能改第一幀位置。
-  const A = amp / 100, w = t * speed;
+  const A = amp / 100, w = t * speed + phase;
   switch (kind) {
     case 'float':   return { k: 1, dx: 0, dy: Math.sin(w * 2.0) * A * 0.28, rot: 0, a: 1 };
     case 'sway':    return { k: 1, dx: Math.sin(w * 1.7) * A * 0.28, dy: 0, rot: 0, a: 1 };
@@ -681,14 +680,14 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
        於是兩顆圖案不會同時最大，但單看任何一顆，都是等速的一大一小。 */
     case 'breathe': {
       const rate = 1 + (((phase * 0.6180339887) % 1) - 0.5) * 0.34;   // 0.83 ~ 1.17
-      return { k: 1 + Math.sin(t * speed * 1.9 * rate) * A * 0.44, dx: 0, dy: 0, rot: 0, a: 1 };
+      return { k: 1 + Math.sin(t * speed * 1.9 * rate + phase) * A * 0.44, dx: 0, dy: 0, rot: 0, a: 1 };
     }
     /* 旋轉是「累積量」不是「來回擺」，所以不能吃 phase ——
        phase 最大 6.28，乘上去等於一開場就先轉掉大半圈，
        那正是主人看到的「開頭莫名其妙轉很多圈」。這裡一律從 0 開始轉。 */
     case 'spin':    return { k: 1, dx: 0, dy: 0, rot: t * speed * A * 90, a: 1 };
     case 'wobble':  return { k: 1, dx: 0, dy: 0, rot: Math.sin(w * 2.4) * A * 22, a: 1 };
-    case 'orbit':   return { k: 1, dx: (Math.cos(w * 1.6) - 1) * A * 0.1, dy: Math.sin(w * 1.6) * A * 0.1, rot: 0, a: 1 };
+    case 'orbit':   return { k: 1, dx: Math.cos(w * 1.6) * A * 0.2, dy: Math.sin(w * 1.6) * A * 0.2, rot: 0, a: 1 };
     /* 抖動：三個互為無理數比的高頻正弦疊起來，永遠不會回到同一個位置，
        所以看起來是真的在抖，不是在打拍子。 */
     case 'jitter':  return {
@@ -760,7 +759,6 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
     a: 1, fx: 1, burst: 0,
     gridWave: g.gridWave,
-    idleT: after,
   };
 };
 
@@ -4866,52 +4864,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號 II：每一個 Unicode 單位由左至右進場；常駐縮放 II 則給每個單位
            固定但不同的節奏。普通文字與普通符號維持原本單次繪製，字距完全不變。 */
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        // 縮放 II 只能在進場真正結束後接手；若進場期間便啟用，泡泡會被
-        // 覆蓋，而且每個單位的首幀倍率不同，視覺上就是整串突然跑位。
-        const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2'
-          && f.idleT !== undefined;
+        const individualBreathe = !!f && o.sym && o.mo?.idle === 'symbol-breathe2';
         if (seqIn !== null || individualBreathe) {
-          const source = o.text || '';
-          /* 不可用 Array.from：它會把組合附加記號拆成獨立單位，動畫時便會
-             重疊或越框。使用 grapheme cluster，並從整串文字的前綴寬度取得
-             每個單位的原始中心，讓動畫與靜止狀態維持同一套排版。 */
-          const Seg = (Intl as any).Segmenter;
-          const parts: { ch: string; at: number }[] = Seg
-            ? Array.from(new Seg(undefined, { granularity: 'grapheme' }).segment(source) as any,
-                (part: any) => ({ ch: part.segment, at: part.index }))
-            : Array.from(source).map((ch, at) => ({ ch, at }));
-          const total = ctx.measureText(source).width;
-          // 從進場結束的 0 秒開始，避免縮放 II 在交棒首幀跳到任意相位。
-          const now = f?.idleT ?? 0;
-          parts.forEach((part, index) => {
-            const nextAt = index + 1 < parts.length ? parts[index + 1].at : source.length;
-            const left = ctx.measureText(source.slice(0, part.at)).width;
-            const right = ctx.measureText(source.slice(0, nextAt)).width;
-            const bubbleSpan = 1 + Math.max(0, parts.length - 1) * 0.2;
+          const units = Array.from(o.text || '');
+          const widths = units.map(ch => ctx.measureText(ch).width);
+          const total = widths.reduce((sum, v) => sum + v, 0);
+          let cursor = tdx - total / 2;
+          const now = animRef.current?.t ?? 0;
+          units.forEach((ch, index) => {
+            const bubbleSpan = 1 + Math.max(0, units.length - 1) * 0.2;
             const q = seqIn === null ? 1 : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
             const kind = o.mo?.in;
             const ease = easeOutCubic(q);
             const scale = individualBreathe
-              ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1)) * ((o.mo?.amp || 50) / 100) * 0.18
+              ? 1 + Math.sin(now * (1.5 + (index % 3) * 0.27) * (o.mo?.speed || 1) + index * 1.71) * ((o.mo?.amp || 50) / 100) * 0.18
               : kind === 'bubble' ? easeOutBack(q) : 1;
-            const segmentLeft = tdx - total / 2 + left;
-            const segmentRight = tdx - total / 2 + right;
-            const center = (segmentLeft + segmentRight) / 2;
+            const rise = 0;
             ctx.save();
             ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            /* 每個單位仍可獨立縮放，但內容永遠重畫「完整原字串」，再以該
-               grapheme 原本佔據的區段裁切。這會保留 iOS 的字距、fallback
-               字型與組合記號定位；逐顆 fillText 會重新塑形，正是點與弧線
-               重疊、以及一進動畫整串水平位移的來源。 */
-            ctx.translate(center, tdy);
+            ctx.translate(cursor + widths[index] / 2, tdy + rise);
             ctx.scale(scale, scale);
-            ctx.translate(-center, -tdy);
-            ctx.beginPath();
-            ctx.rect(segmentLeft, tdy - o.size * s * 5, Math.max(0.5, segmentRight - segmentLeft), o.size * s * 10);
-            ctx.clip();
             ctx.textAlign = 'center';
-            ctx.fillText(source, tdx, tdy);
+            ctx.fillText(ch, 0, 0);
             ctx.restore();
+            cursor += widths[index];
           });
         } else {
           ctx.fillText(o.text || '', tdx, tdy);
