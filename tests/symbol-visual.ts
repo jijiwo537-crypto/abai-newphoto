@@ -24,7 +24,9 @@ const drawCanonical = (
   ctx.font=`400 ${size}px ${fontStack(DEFAULT_FONT)}`;
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
   const dy=-layout.ink.cy*size;
-  const animated=!!unitScales;
+  /* 全部回到 1 倍时与生产代码一样交回原生静止字素；只有仍在变化的
+     小单元才走拆分动画渲染。 */
+  const animated=!!unitScales&&unitScales.some(scale=>Math.abs(scale-1)>1e-6);
   const units=animated?layout.units:layout.staticUnits;
   const centers=animated?layout.centers:layout.staticCenters;
   const inks=animated?layout.unitInks:layout.staticUnitInks;
