@@ -14,6 +14,8 @@ export type SymbolUnitLayout = {
   unitPivots: number[];
   /** 小單位獨立繪製時的 baseline 起點，已校回完整 native 字串的墨水中心。 */
   unitOrigins: number[];
+  /** 獨立字素聯集相對於完整原生字串的 baseline 垂直校正。 */
+  unitOffsetY: number;
   /** contextual shaping 與 standalone 差異過大的罕見字素，才使用安全空隙切片。 */
   unitUseSlice: boolean[];
   /** 靜止顯示與外框沿用瀏覽器原生字素排版，不受動畫拆分影響。 */
@@ -294,7 +296,7 @@ const measureStandaloneCompositionCenter = (
   origins: number[],
   family: string,
   size: number,
-): number | null => {
+): { x: number; y: number } | null => {
   if (typeof document === 'undefined' || !units.length) return null;
   try {
     const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
@@ -312,7 +314,9 @@ const measureStandaloneCompositionCenter = (
     const ratio = scanSize / size;
     const pad = Math.min(scanSize * 4, Math.max(4, (MAX_SCAN_SIDE - total) / 2));
     canvas.width = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(total + pad * 2)));
-    canvas.height = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(scanSize * 2.4)));
+    /* 附加記號可能伸到 em 方框數倍之外；高度太小會把 standalone 掃描本身
+       截斷，接著產生假的垂直校正。與完整墨水掃描一樣保留上下各 4em。 */
+    canvas.height = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(scanSize * 8)));
     const ax = canvas.width / 2, ay = canvas.height / 2;
     ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
     ctx.textAlign = 'left';
@@ -320,14 +324,18 @@ const measureStandaloneCompositionCenter = (
     ctx.fillStyle = '#fff';
     units.forEach((unit, index) => ctx.fillText(unit, ax + origins[index] * ratio, ay));
     const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    let left = canvas.width, right = -1;
+    let left = canvas.width, right = -1, top = canvas.height, bottom = -1;
     for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
       if (pixels[(y * canvas.width + x) * 4 + 3] > 0) {
         left = Math.min(left, x); right = Math.max(right, x);
+        top = Math.min(top, y); bottom = Math.max(bottom, y);
       }
     }
     canvas.width = canvas.height = 0;
-    return right >= left ? ((left + right + 1) / 2 - ax) / ratio : null;
+    return right >= left ? {
+      x: ((left + right + 1) / 2 - ax) / ratio,
+      y: ((top + bottom + 1) / 2 - ay) / ratio,
+    } : null;
   } catch { return null; }
 };
 
@@ -481,10 +489,12 @@ export const measureSymbolUnitLayout = (
   /* 動畫不能再用矩形 clip：即使基準幀切在透明欄，單元放大後仍可能把
      抗鋸齒、描邊或發光切成筆直裂縫。每個完整 grapheme 都直接繪製；再把
      獨立排版的實際墨水聯集校回整串 native 墨水中心，切換動畫不會橫移。 */
+  let unitOffsetY = 0;
   if (unitOrigins.length) {
     const composedCenter = measureStandaloneCompositionCenter(text, units, unitOrigins, family, size);
     if (composedCenter !== null) {
-      const correction = safeSlices.fullInkCenter - composedCenter;
+      const correction = safeSlices.fullInkCenter - composedCenter.x;
+      unitOffsetY = ink.cy * size - composedCenter.y;
       for (let i = 0; i < unitOrigins.length; i++) {
         unitOrigins[i] += correction;
         unitPivots[i] += correction;
@@ -494,7 +504,7 @@ export const measureSymbolUnitLayout = (
   }
 
   const out = {
-    units, centers, unitClusters, unitLefts, unitRights, unitPivots, unitOrigins, unitUseSlice,
+    units, centers, unitClusters, unitLefts, unitRights, unitPivots, unitOrigins, unitOffsetY, unitUseSlice,
     staticUnits, staticCenters, staticUnitInks,
     advance, ink,
   };

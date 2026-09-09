@@ -4954,7 +4954,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const origin = unitLayout.unitOrigins[index] * symbolUnitScale * s;
             ctx.save();
             ctx.globalAlpha *= (seqIn === null ? 1 : Math.min(1, q * 3)) * unitBlend;
-            ctx.translate(tdx + pivot, tdy);
+            ctx.translate(tdx + pivot, tdy + unitLayout.unitOffsetY * symbolUnitScale * s);
             ctx.scale(scale, scale);
             /* 每顆完整字素直接繪製，不能用矩形裁切完整字串。矩形邊界會在
                單元縮放時切斷抗鋸齒／描邊／發光，肉眼看起來像被刀切過。 */

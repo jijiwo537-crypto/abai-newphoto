@@ -36,7 +36,7 @@ const drawCanonical = (
       const k=unitScales?.[i]??1;
       ctx.save();
       ctx.globalAlpha*=unitAlphas?.[i]??1;
-      ctx.translate(cx+dx+pivot,cy+dy);
+      ctx.translate(cx+dx+pivot,cy+dy+layout.unitOffsetY);
       ctx.scale(k,k);
       ctx.textAlign='left';ctx.fillText(layout.units[i],origin-pivot,0);
       ctx.restore();
