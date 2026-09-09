@@ -4908,13 +4908,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               : o.mo?.in === 'bubble' ? easeOutBack(q) : 1;
             ctx.save();
             ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            /* centers 由整串 prefix advance 算出，永遠以整串的 tdx 為中心。
-               不再把各字 measureText 後相加，所以 kerning/fallback run 不會被重排。 */
-            ctx.translate(tdx + unitLayout.centers[index], tdy);
+            /* 排版中心可能包含前後空白；若直接以它縮放，可見圖案會橫向滑向
+               隔壁，看起來像多顆黏成同一單位。改以該 unit 真正的 alpha 墨水
+               中心作支點，再把文字反向放回原座標：scale=1 的畫面逐像素不變，
+               動畫時每個可見小單位只在自己的位置上縮放。 */
+            const unitInk = unitLayout.unitInks[index];
+            const drawOffsetX = unitLayout.drawOffsetsX[index] || 0;
+            const pivotX = unitInk.cx * (o.size || 40) * s;
+            const pivotY = unitInk.cy * (o.size || 40) * s;
+            ctx.translate(tdx + unitLayout.centers[index] + drawOffsetX + pivotX, tdy + pivotY);
             ctx.scale(scale, scale);
             ctx.textAlign = 'center';
-            if (stroke) ctx.strokeText(unit, 0, 0);
-            else ctx.fillText(unit, 0, 0);
+            if (stroke) ctx.strokeText(unit, -pivotX, -pivotY);
+            else ctx.fillText(unit, -pivotX, -pivotY);
             ctx.restore();
           });
         };
