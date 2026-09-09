@@ -5020,16 +5020,31 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               shiftY = (by0 + by1 - y0 - y1) / 2;
             }
           }
-          layout.units.forEach((ch, index) => {
-            const q = qs[index], sc = scales[index];
+          /* 泡泡末段由逐單位平滑交給完整 shaping；縮放 II 開始時則從
+             完整 shaping 平滑拆成單位。兩次都不在單一影格切換排版座標。 */
+          const mixProgress = seqIn !== null
+            ? Math.max(0, Math.min(1, (seqIn - 0.86) / 0.14))
+            : Math.max(0, Math.min(1, f?.idleBlend ?? 0));
+          const smoothMix = mixProgress * mixProgress * (3 - 2 * mixProgress);
+          const unitMix = seqIn !== null ? 1 - smoothMix : smoothMix;
+          if (unitMix > 0.001) {
+            layout.units.forEach((ch, index) => {
+              const q = qs[index], sc = scales[index];
+              ctx.save();
+              ctx.globalAlpha *= unitMix * (seqIn === null ? 1 : Math.min(1, q * 3));
+              ctx.translate(tdx + layout.anchors[index] + shiftX, tdy + shiftY);
+              ctx.scale(sc, sc);
+              ctx.textAlign = 'center';
+              ctx.fillText(ch, 0, 0);
+              ctx.restore();
+            });
+          }
+          if (unitMix < 0.999) {
             ctx.save();
-            ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            ctx.translate(tdx + layout.anchors[index] + shiftX, tdy + shiftY);
-            ctx.scale(sc, sc);
-            ctx.textAlign = 'center';
-            ctx.fillText(ch, 0, 0);
+            ctx.globalAlpha *= 1 - unitMix;
+            ctx.fillText(o.text || '', tdx, tdy);
             ctx.restore();
-          });
+          }
         } else {
           ctx.fillText(o.text || '', tdx, tdy);
         }
