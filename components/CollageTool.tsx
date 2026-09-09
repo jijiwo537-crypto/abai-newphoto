@@ -264,7 +264,7 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
   if (o.sym) {
     const renderSize = (o.size || 40) * scale;
-    const ink = measureSymbolInkAtSize(o.text || o.sym, o.fontFamily || DEFAULT_FONT, renderSize);
+    const ink = measureSymbolUnitLayout(o.text || o.sym, o.fontFamily || DEFAULT_FONT, renderSize).ink;
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -4825,12 +4825,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號：把「真正畫出來的那一塊」的中心搬到框心。
            不校正的話，前進寬度／em 方框跟墨水差多少，符號就偏出框多少 ——
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
+        const symbolLayout = o.sym
+          ? measureSymbolUnitLayout(o.text || '', fam, (o.size || 40) * s)
+          : null;
         let tdx = 0, tdy = 0;
-        if (o.sym) {
-          const renderSize = (o.size || 40) * s;
-          const ink2 = measureSymbolInkAtSize(o.text || '', fam, renderSize);
-          tdx = -ink2.cx * renderSize;
-          tdy = -ink2.cy * renderSize;
+        if (symbolLayout) {
+          tdx = -symbolLayout.ink.cx * (o.size || 40) * s;
+          tdy = -symbolLayout.ink.cy * (o.size || 40) * s;
         }
         /* 順序跟經典拼圖一致：先只用「填色的形狀」畫光（三段模糊疊起來），
            再畫描邊，最後才填色。
@@ -4847,9 +4848,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
         const individualBreathe = !!o.sym && o.mo?.idle === 'symbol-breathe2'
           && f?.idleT !== undefined;
-        const unitLayout = (seqIn !== null || individualBreathe)
-          ? measureSymbolUnitLayout(o.text || '', fam, o.size * s)
-          : null;
+        /* 符號在靜止與動畫時都使用同一份 unitLayout。切換動畫頁只改每個
+           單位的倍率／透明度，不會從整串 shaping 突然換成另一套排版。 */
+        const unitLayout = symbolLayout;
         const drawText = (stroke = false) => {
           if (!unitLayout) {
             if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
@@ -7572,8 +7573,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                      那根「大小」滑桿的最大值 —— 不然一加進來就頂在滑桿外面。 */
                   const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
                     Math.round((offs2.cw * 0.7) / Math.max(0.05, ink.w))));
-                  const box = symBox(txt, DEFAULT_FONT, size);
-                  const w = Math.round(box.w), h = Math.round(box.h);
+                  const canonical = measureSymbolUnitLayout(txt, DEFAULT_FONT, size);
+                  const w = Math.round(Math.max(6, canonical.ink.w * size + 8));
+                  const h = Math.round(Math.max(6, canonical.ink.h * size + 8));
                   setObjects(prev => [...prev, {
                     id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
                     fontFamily: DEFAULT_FONT, bold: false, italic: false,
