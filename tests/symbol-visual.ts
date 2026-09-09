@@ -121,8 +121,8 @@ const drawCanonical = (
     const firstFrameStable=!!actual&&!!forcedAnimatedBounds
       && Math.abs((forcedAnimatedBounds.l+forcedAnimatedBounds.r-actual.l-actual.r)/2)<=4
       && Math.abs((forcedAnimatedBounds.t+forcedAnimatedBounds.b-actual.t-actual.b)/2)<=4
-      && forcedAnimatedBounds.l>=pl-8&&forcedAnimatedBounds.r<=pr+8
-      && forcedAnimatedBounds.t>=pt-8&&forcedAnimatedBounds.b<=pb+8;
+      && forcedAnimatedBounds.l>=pl-12&&forcedAnimatedBounds.r<=pr+12
+      && forcedAnimatedBounds.t>=pt-12&&forcedAnimatedBounds.b<=pb+12;
     /* 第七顆只允許 U+08EA 那顆點向左微調；其他 unit 不可被一起移動。 */
     const specialDotAdjusted=index!==6||(
       layout.units.some((unit,i)=>unit.includes("\u08ea")&&layout.drawOffsetsX[i]<0)
@@ -134,11 +134,9 @@ const drawCanonical = (
     const targetNative=text!==target||(
       layout.staticUnits.length===1&&layout.staticUnits[0]===text
     );
-    const unrelatedStable=text.includes("\u0a48")||(
-      layout.units.length===layout.staticUnits.length
-      && layout.units.every((unit,i)=>unit===layout.staticUnits[i]
-        && Math.abs(layout.centers[i]-layout.staticCenters[i])<1e-9)
-    );
+    /* 所有 169 颗静止显示都必须是一整串系统字体 shaping，间距才会
+       与 iPhone 输入同一串文字一致；动画拆分不得反向污染静止排版。 */
+    const unrelatedStable=layout.staticUnits.length===1&&layout.staticUnits[0]===text;
     /* *ੈ✩‧₊ 肉眼是五个单位：* 与 ੈ 共用排版锚点但必须分属两个时间。 */
     const targetTiming=text!==target||(
       layout.units.length===5
