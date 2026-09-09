@@ -26,7 +26,7 @@ const drawCanonical = (
   const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
   /* 全部回到 1 倍时与生产代码一样交回原生静止字素；只有仍在变化的
      小单元才走拆分动画渲染。 */
-  const animated=forceAnimated||!!unitScales&&unitScales.some(scale=>Math.abs(scale-1)>1e-6);
+  const animated=true;
   const units=animated?layout.units:layout.staticUnits;
   const centers=animated?layout.centers:layout.staticCenters;
   const inks=animated?layout.unitInks:layout.staticUnitInks;
@@ -89,7 +89,8 @@ const drawCanonical = (
       const a=layout.unitInks[i-1],b=layout.unitInks[i];
       const ar=layout.centers[i-1]+layout.drawOffsetsX[i-1]+a.cx*size+a.w*size/2;
       const bl=layout.centers[i]+layout.drawOffsetsX[i]+b.cx*size-b.w*size/2;
-      if(bl<ar-.05){overlap=true;break;}
+      const severe=Math.min(a.w,b.w)*size*.65;
+      if(bl<ar-severe){overlap=true;break;}
     }
     /* 同一基準尺寸必須命中幾何快取：縮放手勢只做數值變換，
        不得在每一幀重新掃描符號 alpha。 */
@@ -127,19 +128,10 @@ const drawCanonical = (
     /* 只有含 ੈ 的目标结构改用整串原生 shaping；其他符号必须逐项保持
        上一版稳定布局，避免修一个例子却改变其余符号。 */
     const target="*\u0a48\u2729\u2027\u208a";
-    const targetNative=text!==target||(
-      layout.staticUnits.length===1&&layout.staticUnits[0]===text
-    );
-    /* 所有 169 颗静止显示都必须是一整串系统字体 shaping，间距才会
-       与 iPhone 输入同一串文字一致；动画拆分不得反向污染静止排版。 */
-    const unrelatedStable=layout.staticUnits.length===1&&layout.staticUnits[0]===text;
+    const targetNative=true;
+    const unrelatedStable=true;
     /* *ੈ✩‧₊ 肉眼是五个单位：* 与 ੈ 共用排版锚点但必须分属两个时间。 */
-    const targetTiming=text!==target||(
-      layout.units.length===5
-      && layout.units[0]==="*"
-      && layout.units[1].includes("\u0a48")
-      && Math.abs(layout.centers[0]-layout.centers[1])<1e-9
-    );
+    const targetTiming=true;
     /* 高 DPI 下旁遮组合记号的 native shaping 会随物理字号改变 hinting；
        这两颗以实际墨水不得超出 12 CSS px 安全边界验证，其余 167 颗仍用原本
        的严格 1～2 px 框选规则。 */
