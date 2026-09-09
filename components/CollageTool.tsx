@@ -263,7 +263,8 @@ const symBox = (str: string, fam: string, size: number) => {
 const objectSelectionInk = (o: any, scale: number, gap: number) => {
   const bw = o.w * scale, bh = o.h * scale;
   if (o.sym) {
-    const ink = measureSymbolInkAtSize(o.text || o.sym, o.fontFamily || DEFAULT_FONT, o.size || 40);
+    const renderSize = (o.size || 40) * scale;
+    const ink = measureSymbolInkAtSize(o.text || o.sym, o.fontFamily || DEFAULT_FONT, renderSize);
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -4826,9 +4827,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
         let tdx = 0, tdy = 0;
         if (o.sym) {
-          const ink2 = measureSymbolInkAtSize(o.text || '', fam, o.size || 40);
-          tdx = -ink2.cx * o.size * s;
-          tdy = -ink2.cy * o.size * s;
+          const renderSize = (o.size || 40) * s;
+          const ink2 = measureSymbolInkAtSize(o.text || '', fam, renderSize);
+          tdx = -ink2.cx * renderSize;
+          tdy = -ink2.cy * renderSize;
         }
         /* 順序跟經典拼圖一致：先只用「填色的形狀」畫光（三段模糊疊起來），
            再畫描邊，最後才填色。
