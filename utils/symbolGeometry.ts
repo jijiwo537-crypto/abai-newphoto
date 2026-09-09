@@ -259,7 +259,9 @@ export const measureSymbolUnitLayout = (
 
   /* 先完全照修改前的 grapheme 逻辑排静止版。动画拆成多少小单元，
      都不能反过来改变这一组中心、总宽度或选中框。 */
-  const staticUnits = splitSymbolClusters(text);
+  let staticUnits = splitSymbolClusters(text);
+  const originalClusters = staticUnits.slice();
+  const needsNativeTiming = text.includes("\u0a48");
   let advance = measureSymbolAdvance(text, family, size);
   let staticCenters = staticUnits.map((_unit, i) =>
     ((i + .5) / Math.max(1, staticUnits.length) - .5) * advance);
@@ -279,7 +281,7 @@ export const measureSymbolUnitLayout = (
     }
   } catch { /* 均匀中心仍可用 */ }
 
-  const staticUnitInks = staticUnits.map(unit => measureSymbolInkAtSize(unit, family, size));
+  let staticUnitInks = staticUnits.map(unit => measureSymbolInkAtSize(unit, family, size));
   const minVisibleGap = Math.max(.35, size * .006);
   for (let i = 1; i < staticCenters.length; i++) {
     const prev = staticUnitInks[i - 1], cur = staticUnitInks[i];
@@ -306,21 +308,52 @@ export const measureSymbolUnitLayout = (
   const shiftX = -(first.left + first.right) / 2;
   staticCenters = staticCenters.map(x => x + shiftX);
   const final = clusterBounds(staticCenters);
-  const ink: SymbolInk = {
+  let ink: SymbolInk = {
     w: Math.max(.01, final.right - final.left) / size,
     h: Math.max(.01, final.bottom - final.top) / size,
     cx: (final.left + final.right) / 2 / size,
     cy: (final.top + final.bottom) / 2 / size,
   };
 
-  /* 动画必须沿用静止版的完整 grapheme。组合附加记号只有跟主字一起 shaping
-     才有正确锚点；把它单独 fillText 会由系统补上虚拟基字符，在 iOS 上尤其会
-     产生横向偏移、点圈散开或小单元错位。真正彼此独立的符号本来就是不同
-     grapheme，仍会逐颗取得泡泡／缩放 II 的独立节奏。 */
-  const units = staticUnits.slice();
-  const centers = staticCenters.slice();
-  const unitClusters = staticUnits.map((_cluster, index) => index);
-  const unitInks = staticUnitInks.slice();
+  /* 含 ੈ 的符号需要把组合记号拆成独立节拍，但静止外观必须直接使用
+     整串原生 shaping，才能保持 iPhone 上 ‧ 与 ₊ 的大小、间距和位置。 */
+  if (needsNativeTiming) {
+    staticUnits = [text];
+    staticCenters = [0];
+    staticUnitInks = [measureSymbolInkAtSize(text, family, size)];
+    ink = staticUnitInks[0];
+  }
+
+  /* 一般符号继续沿用已验证的完整 grapheme 动画；只有含 ੈ 的结构
+     才分开可见 code point 的时间，同时共用所属 grapheme 的原生锚点。 */
+  const units: string[] = [];
+  const centers: number[] = [];
+  const unitClusters: number[] = [];
+  originalClusters.forEach((cluster, clusterIndex) => {
+    const parts = needsNativeTiming ? splitSymbolUnits(cluster) : [cluster];
+    parts.forEach(part => {
+      units.push(part);
+      centers.push(needsNativeTiming
+        ? (() => {
+            try {
+              const ctx = document.createElement('canvas').getContext('2d');
+              if (ctx) {
+                ctx.font = `400 ${size}px ${fontStack(family)}`;
+                const beforeText = originalClusters.slice(0, clusterIndex).join('');
+                const throughText = originalClusters.slice(0, clusterIndex + 1).join('');
+                const before = ctx.measureText(beforeText).width;
+                const after = ctx.measureText(throughText).width;
+                const total = ctx.measureText(text).width;
+                return -total / 2 + (before + after) / 2;
+              }
+            } catch {}
+            return ((clusterIndex + .5) / originalClusters.length - .5) * advance;
+          })()
+        : staticCenters[clusterIndex]);
+      unitClusters.push(clusterIndex);
+    });
+  });
+  const unitInks = units.map(unit => measureSymbolInkAtSize(unit, family, size));
 
   const seventhSymbol = "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605";
   const drawOffsetsX = units.map(() => 0);

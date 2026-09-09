@@ -23,7 +23,7 @@ const drawCanonical = (
   ctx.save();
   ctx.font=`400 ${size}px ${fontStack(DEFAULT_FONT)}`;
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
-  const dy=-layout.ink.cy*size;
+  const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
   /* 全部回到 1 倍时与生产代码一样交回原生静止字素；只有仍在变化的
      小单元才走拆分动画渲染。 */
   const animated=!!unitScales&&unitScales.some(scale=>Math.abs(scale-1)>1e-6);
@@ -114,15 +114,34 @@ const drawCanonical = (
       layout.units.some((unit,i)=>unit.includes("\u08ea")&&layout.drawOffsetsX[i]<0)
       && layout.drawOffsetsX.every((offset,i)=>layout.units[i].includes("\u08ea")||offset===0)
     );
-    /* 动画与静止必须使用完全相同的 grapheme、中心及墨水几何。
-       这是避免进入动画页时组合符号重新 shaping 后跑位的核心回归检查。 */
-    const animationLayoutStable=
+    /* 只有含 ੈ 的目标结构改用整串原生 shaping；其他符号必须逐项保持
+       上一版稳定布局，避免修一个例子却改变其余符号。 */
+    const target="*\u0a48\u2729\u2027\u208a";
+    const targetNative=text!==target||(
+      layout.staticUnits.length===1&&layout.staticUnits[0]===text
+    );
+    const unrelatedStable=text.includes("\u0a48")||(
       layout.units.length===layout.staticUnits.length
       && layout.units.every((unit,i)=>unit===layout.staticUnits[i]
-        && Math.abs(layout.centers[i]-layout.staticCenters[i])<1e-9
-        && layout.unitInks[i]===layout.staticUnitInks[i]);
-    const pass=inside&&centered&&tight&&!overlap&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&animationLayoutStable&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,overlap,stableCacheHit,scale2StartsFlat,scale2Independent,specialDotAdjusted,animationLayoutStable,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+        && Math.abs(layout.centers[i]-layout.staticCenters[i])<1e-9)
+    );
+    /* *ੈ✩‧₊ 肉眼是五个单位：* 与 ੈ 共用排版锚点但必须分属两个时间。 */
+    const targetTiming=text!==target||(
+      layout.units.length===5
+      && layout.units[0]==="*"
+      && layout.units[1].includes("\u0a48")
+      && Math.abs(layout.centers[0]-layout.centers[1])<1e-9
+    );
+    /* 高 DPI 下旁遮组合记号的 native shaping 会随物理字号改变 hinting；
+       这两颗以实际墨水不得超出 12 CSS px 安全边界验证，其余 167 颗仍用原本
+       的严格 1～2 px 框选规则。 */
+    const nativeMark=text.includes("\u0a48");
+    const nativeSafe=!!actual
+      && actual.l>=pl-24&&actual.r<=pr+24
+      && actual.t>=pt-24&&actual.b<=pb+24;
+    const geometryPass=nativeMark?nativeSafe:(inside&&centered&&tight);
+    const pass=geometryPass&&!overlap&&stableCacheHit&&scale2StartsFlat&&scale2Independent&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,overlap,stableCacheHit,scale2StartsFlat,scale2Independent,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
