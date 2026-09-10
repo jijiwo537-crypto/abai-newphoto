@@ -36,7 +36,7 @@ import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, symbolLayerCenterCorrection, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -4957,9 +4957,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             else ctx.fillText(o.text || '', tdx, tdy);
             return;
           }
-          const centerCorrection = raster
-            ? symbolLayerCenterCorrection(raster.layers, unitScales, unitAlphas)
-            : { x: 0, y: 0 };
           for (let index = 0; index < count; index++) {
             const q = unitProgress[index];
             /* 尚未輪到的泡泡片段不要建立退化的 scale(0) 變換，也省掉
@@ -4970,7 +4967,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             ctx.globalAlpha *= unitAlphas[index];
             const layer = raster?.layers[index];
             if (layer) {
-              ctx.translate(tdx + centerCorrection.x + layer.pivotX, tdy + centerCorrection.y + layer.pivotY);
+              /* 每個小單元從第一幀就待在完整符號的最終座標，只繞自己的
+                 固定 pivot 縮放。不能按照當幀可見內容重新置中，否則第一顆
+                 會先出現在中央，再隨後續單元出現而被一路推向左邊。 */
+              ctx.translate(tdx + layer.pivotX, tdy + layer.pivotY);
               ctx.scale(scale, scale);
               ctx.imageSmoothingEnabled = true;
               ctx.imageSmoothingQuality = 'high';

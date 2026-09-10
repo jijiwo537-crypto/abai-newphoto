@@ -1,6 +1,6 @@
 import { SYMBOLS } from '../utils/symbols';
 import { SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { clearSymbolInkCache, countSymbolAnimationBeats, measureSymbolAdvance, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale, symbolLayerCenterCorrection } from '../utils/symbolGeometry';
+import { clearSymbolInkCache, countSymbolAnimationBeats, measureSymbolAdvance, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
 
 declare global {
   interface Window { __symbolReport?: { done: boolean; total: number; failed: any[] } }
@@ -23,6 +23,16 @@ const alphaHash = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
   return `${hash>>>0}:${visible}`;
 };
 
+const alphaCentroid = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+  const data=ctx.getImageData(0,0,w,h).data;
+  let sx=0,sy=0,mass=0;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    const a=data[(y*w+x)*4+3];
+    if(a){sx+=x*a;sy+=y*a;mass+=a;}
+  }
+  return mass?{x:sx/mass,y:sy/mass}:null;
+};
+
 const drawCanonical = (
   ctx: CanvasRenderingContext2D, text: string, size: number,
   cx: number, cy: number, unitScales?: number[], forceAnimated = false,
@@ -42,13 +52,12 @@ const drawCanonical = (
       Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
     const scales=raster?.layers.map((_layer,i)=>unitScales?.[i]??1)||[];
     const alphas=raster?.layers.map((_layer,i)=>unitAlphas?.[i]??1)||[];
-    const correction=raster?symbolLayerCenterCorrection(raster.layers,scales,alphas):{x:0,y:0};
     raster?.layers.forEach((layer,i)=>{
       const k=scales[i];
       if(alphas[i]*k*k<=.03)return;
       ctx.save();
       ctx.globalAlpha*=alphas[i];
-      ctx.translate(cx+dx+correction.x+layer.pivotX,cy+dy+correction.y+layer.pivotY);ctx.scale(k,k);
+      ctx.translate(cx+dx+layer.pivotX,cy+dy+layer.pivotY);ctx.scale(k,k);
       ctx.drawImage(layer.canvas,layer.x-layer.pivotX,layer.y-layer.pivotY,layer.w,layer.h);
       ctx.restore();
     });
@@ -132,6 +141,35 @@ const drawCanonical = (
     }).length||0;
     const visibleUnitsIndependent=layout.beatCount<=1||visibleRasterUnits>=2;
 
+    /* 固定錨點驗證：只顯示第一顆／最後一顆並改變倍率時，它的 alpha 重心
+       必須始終停在完整符號排版中的原始 pivot。若按照「目前看得見的內容」
+       重新置中，這裡會立刻抓到第一顆先出現在中央、之後才被推向左邊。 */
+    let fixedUnitAnchors=!!verificationRaster;
+    if(verificationRaster){
+      const visibleIndices=verificationRaster.layers.map((layer,i)=>{
+        const g=layer.canvas.getContext('2d',{willReadFrequently:true});
+        return g&&scan(g,layer.canvas.width,layer.canvas.height)?i:-1;
+      }).filter(i=>i>=0);
+      const sampleIndices=visibleIndices.length
+        ? Array.from(new Set([visibleIndices[0],visibleIndices[visibleIndices.length-1]]))
+        : [];
+      if(!sampleIndices.length) fixedUnitAnchors=false;
+      const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
+      for(const unitIndex of sampleIndices)for(const sampleScale of [.58,1.13]){
+        const anchorCanvas=document.createElement('canvas');anchorCanvas.width=w;anchorCanvas.height=h;
+        const anchorCtx=anchorCanvas.getContext('2d',{willReadFrequently:true})!;anchorCtx.scale(dpr,dpr);
+        const scales=new Array(verificationRaster.layers.length).fill(0);scales[unitIndex]=sampleScale;
+        const alphas=new Array(verificationRaster.layers.length).fill(0);alphas[unitIndex]=1;
+        drawCanonical(anchorCtx,text,size,cssW/2,cssH/2,scales,true,alphas);
+        anchorCtx.setTransform(1,0,0,1,0,0);
+        const center=alphaCentroid(anchorCtx,w,h),layer=verificationRaster.layers[unitIndex];
+        const expectedX=(cssW/2+dx+layer.pivotX)*dpr;
+        const expectedY=(cssH/2+dy+layer.pivotY)*dpr;
+        if(!center||Math.abs(center.x-expectedX)>2||Math.abs(center.y-expectedY)>2) fixedUnitAnchors=false;
+        anchorCanvas.width=anchorCanvas.height=0;
+      }
+    }
+
     /* 縮放 II：第一幀必須完全不跳，之後每一顆 unit 必須有自己的倍率。 */
     const animatedLayerCount=verificationRaster?.layers.length||layout.beatCount;
     const animatedLayerIndices=Array.from({length:animatedLayerCount},(_value,i)=>i);
@@ -153,7 +191,7 @@ const drawCanonical = (
        這會抓到「程式裡看似有多個 index，實際畫面卻整組同步」的退化。 */
     const frameCanvas=document.createElement('canvas');frameCanvas.width=w;frameCanvas.height=h;
     const frameCtx=frameCanvas.getContext('2d',{willReadFrequently:true})!;
-    const bubbleHashes=new Set<string>();const bubbleDrifts:any[]=[];let bubblePerUnit=layout.units.length<=1,bubbleCenterStable=true,bubbleCenterDx=0,bubbleCenterDy=0;
+    const bubbleHashes=new Set<string>();let bubblePerUnit=layout.units.length<=1;
     const bubbleSpanFrames=1+Math.max(0,layout.beatCount-1)*.2;
     for(let fi=0;fi<9;fi++){
       const seq=fi/8;
@@ -163,17 +201,8 @@ const drawCanonical = (
       frameCtx.setTransform(1,0,0,1,0,0);frameCtx.clearRect(0,0,w,h);frameCtx.scale(dpr,dpr);
       drawCanonical(frameCtx,text,size,cssW/2,cssH/2,scales,true,qs.map(q=>Math.min(1,q*3)));
       frameCtx.setTransform(1,0,0,1,0,0);bubbleHashes.add(alphaHash(frameCtx,w,h));
-      const frameBounds=scan(frameCtx,w,h);
-      if(frameBounds&&actual){
-        const dx=(frameBounds.l+frameBounds.r-actual.l-actual.r)/2;
-        const dy=(frameBounds.t+frameBounds.b-actual.t-actual.b)/2;
-        bubbleDrifts.push({fi,dx,dy,frameBounds});
-        bubbleCenterDx=Math.max(bubbleCenterDx,Math.abs(dx));
-        bubbleCenterDy=Math.max(bubbleCenterDy,Math.abs(dy));
-        if(bubbleCenterDx>2.5||bubbleCenterDy>2.5) bubbleCenterStable=false;
-      }
     }
-    const scaleHashes=new Set<string>();let scalePerUnit=layout.units.length<=1,scaleCenterStable=true;
+    const scaleHashes=new Set<string>();let scalePerUnit=layout.units.length<=1;
     for(let fi=0;fi<16;fi++){
       const tt=fi*.11;
       const scales=animatedLayerIndices.map(layerIndex=>symbolBreatheScale(layerIndex,tt,60,1.2));
@@ -181,8 +210,6 @@ const drawCanonical = (
       frameCtx.setTransform(1,0,0,1,0,0);frameCtx.clearRect(0,0,w,h);frameCtx.scale(dpr,dpr);
       drawCanonical(frameCtx,text,size,cssW/2,cssH/2,scales,true);
       frameCtx.setTransform(1,0,0,1,0,0);scaleHashes.add(alphaHash(frameCtx,w,h));
-      const frameBounds=scan(frameCtx,w,h);
-      if(frameBounds&&actual&&(Math.abs((frameBounds.l+frameBounds.r-actual.l-actual.r)/2)>2.5||Math.abs((frameBounds.t+frameBounds.b-actual.t-actual.b)/2)>2.5)) scaleCenterStable=false;
     }
     frameCanvas.width=frameCanvas.height=0;
     const multiFrameVisual=bubblePerUnit&&scalePerUnit
@@ -251,8 +278,8 @@ const drawCanonical = (
     /* 分開畫的倍率 1 幀與原生整串的 alpha 差異不得超過 8%；避免為了逐顆
        動畫把符號本身換成另一個樣子。位置邊界仍另外用 firstFrameStable 限制。 */
     const forcedPixelsStable=layout.units.length===1||forcedPixelDiff<=2||oneDevicePixelHinting||forcedAlphaError<=.08;
-    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&bubbleCenterStable&&scaleCenterStable&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleCenterStable,bubbleCenterDx,bubbleCenterDy,bubbleDrifts,scaleCenterStable,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&fixedUnitAnchors&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,fixedUnitAnchors,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
