@@ -571,6 +571,14 @@ export const nearestGlowSwatch = (hex: string): string => {
    預設效果一點都沒變，只是數字從 100 變成 50，上面還留了一半可以再加快。 */
 export const glowSpeedToUi = (v: number) => Math.round((v - 20) / 3.2);
 export const glowSpeedFromUi = (u: number) => Math.round(20 + u * 3.2);
+/**
+ * 符號「縮放 II」的面板固定顯示 0～100，但動畫仍使用原本的速度倍率：
+ * UI 0 → 0.70、UI 100 → 1.80。預設的 1.20 因此完全不會被改快或改慢。
+ */
+export const symbolBreathe2SpeedToUi = (speed: number) =>
+  Math.round(Math.max(0, Math.min(100, (speed * 100 - 70) / 1.1)));
+export const symbolBreathe2SpeedFromUi = (ui: number) =>
+  (70 + Math.max(0, Math.min(100, ui)) * 1.1) / 100;
 /** 每一種發光動畫自己的預設速度（內部值；括號是滑桿上看到的數字） */
 export const GLOW_SPEED_DEFAULT: Record<string, number> = {
   none: 180,          // (50)
@@ -8264,10 +8272,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                             <CompactSlider label="幅度" value={cur.amp} min={0} max={100} step={1}
                               onChange={(v: number) => setCur({ amp: v })} />
-                            {/* 範圍 20～180 配 step 1：滑桿只有 167px 寬，範圍再寬一點
-                                一個螢幕像素就會跳 2 —— 那正是主人說「動一下就 +2」的原因 */}
-                            <CompactSlider label="速度" value={Math.round(cur.speed * 100)} min={20} max={180} step={1}
-                              onChange={(v: number) => setCur({ speed: v / 100 })} />
+                            <CompactSlider label="速度"
+                              value={cur.idle === 'symbol-breathe2' && isSymbolTarget
+                                ? symbolBreathe2SpeedToUi(cur.speed)
+                                : Math.round(cur.speed * 100)}
+                              min={cur.idle === 'symbol-breathe2' && isSymbolTarget ? 0 : 20}
+                              max={cur.idle === 'symbol-breathe2' && isSymbolTarget ? 100 : 180}
+                              step={1}
+                              onChange={(v: number) => setCur({
+                                speed: cur.idle === 'symbol-breathe2' && isSymbolTarget
+                                  ? symbolBreathe2SpeedFromUi(v)
+                                  : v / 100,
+                              })} />
                           </div>
                         )}
 
