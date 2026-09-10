@@ -50,9 +50,9 @@ const drawCanonical = (
   }else{
     const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
       Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
-    const isiOS=/iP(?:hone|ad|od)/.test(navigator.userAgent)
-      ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-    const rasterAnchorX=isiOS&&raster?layout.ink.cx*size-raster.inkCenterX:0;
+    /* 正式畫布與靜止 fillText 共用原生 advance anchor；動畫不可在 iOS
+       額外依量測中心搬移，否則真機 fallback 字形會整串向左跳。 */
+    const rasterAnchorX=0;
     const scales=raster?.layers.map((_layer,i)=>unitScales?.[i]??1)||[];
     const alphas=raster?.layers.map((_layer,i)=>unitAlphas?.[i]??1)||[];
     raster?.layers.forEach((layer,i)=>{
@@ -158,7 +158,7 @@ const drawCanonical = (
         : [];
       if(!sampleIndices.length) fixedUnitAnchors=false;
       const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
-      const rasterAnchorX=iosWebKit?layout.ink.cx*size-verificationRaster.inkCenterX:0;
+      const rasterAnchorX=0;
       for(const unitIndex of sampleIndices)for(const sampleScale of [.58,1.13]){
         const anchorCanvas=document.createElement('canvas');anchorCanvas.width=w;anchorCanvas.height=h;
         const anchorCtx=anchorCanvas.getContext('2d',{willReadFrequently:true})!;anchorCtx.scale(dpr,dpr);

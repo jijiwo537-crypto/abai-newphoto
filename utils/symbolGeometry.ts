@@ -62,10 +62,11 @@ const fallbackInk = (text: string): SymbolInk => ({
 });
 
 /**
- * 直接掃描字形 alpha。長符號不能照原字級無限制拉寬 Canvas：iOS WebKit
- * 超過可用邊長時會回傳空白，舊版因此只量到 fallback 寬度，外框只包住左半邊。
- * 先用 measureText 預估，再把掃描字級縮到安全尺寸；結果除回 scanSize 後仍是
- * 同一份標準化墨水幾何。
+ * 直接掃描字形 alpha。iOS WebKit 對「很寬但不高」的 Canvas 也可能拒絕
+ * getImageData，或只回傳其中一段；把長符號塞進單張 Canvas 正是手機上外框
+ * 只包住左半邊的根因。這裡維持真機原字級與完整 native shaping，只把讀取區
+ * 橫向切成安全的小片。每片仍重畫同一份完整字串，因此不會改變字距、fallback
+ * 字體或 combining mark 的位置，最後再把各片的 alpha 邊界合併。
  */
 const scanInk = (text: string, family: string, requestedSize: number): SymbolInk | null => {
   if (typeof document === 'undefined') return null;
@@ -74,25 +75,13 @@ const scanInk = (text: string, family: string, requestedSize: number): SymbolInk
     const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
     if (!ctx) return null;
 
-    let scanSize = Math.max(8, requestedSize);
+    const scanSize = Math.max(8, requestedSize);
     ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
-    let advance = Math.max(scanSize, ctx.measureText(text).width);
-    const desiredW = advance + scanSize * 8;
-    if (desiredW > MAX_SCAN_SIDE) {
-      scanSize = Math.max(8, scanSize * (MAX_SCAN_SIDE / desiredW));
-      ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
-      advance = Math.max(scanSize, ctx.measureText(text).width);
-    }
-
-    const padX = Math.min(scanSize * 4, Math.max(2, (MAX_SCAN_SIDE - advance) / 2));
-    const padY = Math.min(scanSize * 4, MAX_SCAN_SIDE / 2);
-    canvas.width = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(advance + padX * 2)));
-    canvas.height = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(Math.max(scanSize * 2, padY * 2))));
-    ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = '#fff';
-    const ax = canvas.width / 2, ay = canvas.height / 2;
+    const advance = Math.max(scanSize, ctx.measureText(text).width);
+    const padX = scanSize * 4;
+    const totalWidth = Math.max(1, Math.ceil(advance + padX * 2));
+    const scanHeight = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(scanSize * 6)));
+    const anchorX = totalWidth / 2, anchorY = scanHeight / 2;
 
     /* TextMetrics 只作為 iOS 拒絕 getImageData 時的備援，而且使用真正墨水邊界，
        不能把 advance 算進外框：長字串兩端的空白／方向控制字元沒有墨水，
@@ -108,27 +97,43 @@ const scanInk = (text: string, family: string, requestedSize: number): SymbolInk
     let top = metricTop > 0 ? -metricTop : -scanSize * .75;
     let bottom = metricBottom > 0 ? metricBottom : scanSize * .45;
 
-    ctx.fillText(text, ax, ay);
+    /* 1536×(最多 6em) 在 Retina iPhone 上也只占很小一块记忆体。不要把
+       tile 加大到 MAX_SCAN_SIDE；旧装置最容易在这里静默回传透明像素。 */
+    const tileSide = Math.min(1536, MAX_SCAN_SIDE);
+    let x0 = totalWidth, y0 = scanHeight, x1 = -1, y1 = -1;
+    let scannedInk = false;
     try {
-      const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-      let x0 = canvas.width, y0 = canvas.height, x1 = -1, y1 = -1;
-      for (let y = 0; y < canvas.height; y++) {
-        for (let x = 0; x < canvas.width; x++) {
-          if (data[(y * canvas.width + x) * 4 + 3] > 0) {
-            x0 = Math.min(x0, x); y0 = Math.min(y0, y);
-            x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+      for (let tileX = 0; tileX < totalWidth; tileX += tileSide) {
+        const tileWidth = Math.min(tileSide, totalWidth - tileX);
+        canvas.width = tileWidth;
+        canvas.height = scanHeight;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, tileWidth, scanHeight);
+        ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#fff';
+        /* anchor 可落在当前 tile 外；浏览器仍先完成整串 shaping，再裁进 tile。 */
+        ctx.fillText(text, anchorX - tileX, anchorY);
+        const data = ctx.getImageData(0, 0, tileWidth, scanHeight).data;
+        for (let p = 0; p < tileWidth * scanHeight; p++) {
+          if (data[p * 4 + 3] > 0) {
+            const x = p % tileWidth, y = Math.floor(p / tileWidth);
+            x0 = Math.min(x0, tileX + x); y0 = Math.min(y0, y);
+            x1 = Math.max(x1, tileX + x); y1 = Math.max(y1, y);
+            scannedInk = true;
           }
         }
       }
-      if (x1 >= x0 && y1 >= y0) {
+      if (scannedInk) {
         /* getImageData 成功時，alpha 掃描就是真正顯示在畫面上的墨水。
            不能再和 TextMetrics 聯集：WebKit/Chromium 的 actualBoundingBox*
            對 middle baseline 仍可能以 alphabetic baseline 回報，會在上方製造
            數十像素的假空白，正是長符號外框偏移、左／右留白不一致的來源。 */
-        left = x0 - ax;
-        right = x1 + 1 - ax;
-        top = y0 - ay;
-        bottom = y1 + 1 - ay;
+        left = x0 - anchorX;
+        right = x1 + 1 - anchorX;
+        top = y0 - anchorY;
+        bottom = y1 + 1 - anchorY;
       }
     } catch {
       /* 部分 iOS 裝置會拒絕讀大型 Canvas；上面的向量度量仍完整可用。 */
