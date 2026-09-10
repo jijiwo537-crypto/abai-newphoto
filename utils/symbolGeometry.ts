@@ -463,7 +463,11 @@ const splitSymbolTimingUnits = (text: string): string[] => {
     const variation = /[\ufe00-\ufe0f]/u.test(ch);
     const joiner = ch === '\u200d';
     const continuesJoiner = raw.length > 0 && raw[raw.length - 1].endsWith('\u200d');
-    if (raw.length && (variation || joiner || continuesJoiner)) raw[raw.length - 1] += ch;
+    /* 附加記號通常是前一顆字形的一部分，必須跟著基底一起縮放。把它拆成
+       獨立 raster 層會讓同一個字形的一小段繞著另一個中心跑掉。清單中的
+       Gurmukhi ੈ 是唯一刻意畫成獨立弧線的小單位，保留原本逐顆節奏。 */
+    const attachedMark = /\p{Mark}/u.test(ch) && ch !== '\u0a48';
+    if (raw.length && (variation || joiner || continuesJoiner || attachedMark)) raw[raw.length - 1] += ch;
     else raw.push(ch);
   }
   const invisible = /^[\s\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/u;
