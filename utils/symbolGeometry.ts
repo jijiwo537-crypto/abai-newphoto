@@ -425,7 +425,12 @@ export type SymbolRasterLayer = {
   w: number; h: number;
 };
 
-export type SymbolRasterLayers = { layers: SymbolRasterLayer[]; beatCount: number };
+export type SymbolRasterLayers = {
+  layers: SymbolRasterLayer[];
+  beatCount: number;
+  /** 完整離屏字串的實際墨水中心，相對於文字 advance 中心。 */
+  inkCenterX: number;
+};
 const rasterLayerCache = new Map<string, SymbolRasterLayers>();
 const MAX_RASTER_LAYER_CACHE = 64;
 /* 最長的裝飾符號在 iPhone Retina 仍要以原生物理解析度分層；8192 會把
@@ -618,7 +623,11 @@ export const rasterizeSymbolAnimationLayers = (
       };
     });
     source.width = source.height = 0;
-    const out = { layers, beatCount: units.length };
+    const out = {
+      layers,
+      beatCount: units.length,
+      inkCenterX: ((fullL + fullR + 1) / 2 - anchorX) * inv,
+    };
     rasterLayerCache.set(key, out);
     while (rasterLayerCache.size > MAX_RASTER_LAYER_CACHE) {
       const first = rasterLayerCache.keys().next().value as string | undefined;
