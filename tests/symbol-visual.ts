@@ -50,6 +50,9 @@ const drawCanonical = (
   }else{
     const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
       Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
+    const isiOS=/iP(?:hone|ad|od)/.test(navigator.userAgent)
+      ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+    const rasterAnchorX=isiOS&&raster?layout.ink.cx*size-raster.inkCenterX:0;
     const scales=raster?.layers.map((_layer,i)=>unitScales?.[i]??1)||[];
     const alphas=raster?.layers.map((_layer,i)=>unitAlphas?.[i]??1)||[];
     raster?.layers.forEach((layer,i)=>{
@@ -57,7 +60,7 @@ const drawCanonical = (
       if(alphas[i]*k*k<=.03)return;
       ctx.save();
       ctx.globalAlpha*=alphas[i];
-      ctx.translate(cx+dx+layer.pivotX,cy+dy+layer.pivotY);ctx.scale(k,k);
+      ctx.translate(cx+dx+rasterAnchorX+layer.pivotX,cy+dy+layer.pivotY);ctx.scale(k,k);
       ctx.drawImage(layer.canvas,layer.x-layer.pivotX,layer.y-layer.pivotY,layer.w,layer.h);
       ctx.restore();
     });
@@ -155,6 +158,7 @@ const drawCanonical = (
         : [];
       if(!sampleIndices.length) fixedUnitAnchors=false;
       const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
+      const rasterAnchorX=iosWebKit?layout.ink.cx*size-verificationRaster.inkCenterX:0;
       for(const unitIndex of sampleIndices)for(const sampleScale of [.58,1.13]){
         const anchorCanvas=document.createElement('canvas');anchorCanvas.width=w;anchorCanvas.height=h;
         const anchorCtx=anchorCanvas.getContext('2d',{willReadFrequently:true})!;anchorCtx.scale(dpr,dpr);
@@ -163,7 +167,7 @@ const drawCanonical = (
         drawCanonical(anchorCtx,text,size,cssW/2,cssH/2,scales,true,alphas);
         anchorCtx.setTransform(1,0,0,1,0,0);
         const center=alphaCentroid(anchorCtx,w,h),layer=verificationRaster.layers[unitIndex];
-        const expectedX=(cssW/2+dx+layer.pivotX)*dpr;
+        const expectedX=(cssW/2+dx+rasterAnchorX+layer.pivotX)*dpr;
         const expectedY=(cssH/2+dy+layer.pivotY)*dpr;
         if(!center||Math.abs(center.x-expectedX)>2||Math.abs(center.y-expectedY)>2) fixedUnitAnchors=false;
         anchorCanvas.width=anchorCanvas.height=0;
