@@ -1,6 +1,6 @@
 import { SYMBOLS } from '../utils/symbols';
 import { SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { clearSymbolInkCache, countSymbolAnimationBeats, measureSymbolAdvance, measureSymbolUnitLayout, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
+import { clearSymbolInkCache, countSymbolAnimationBeats, measureSymbolAdvance, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
 
 declare global {
   interface Window { __symbolReport?: { done: boolean; total: number; failed: any[] } }
@@ -38,17 +38,14 @@ const drawCanonical = (
   if(!animated||flat){
     ctx.fillText(text,cx+dx,cy+dy);
   }else{
-    layout.unitLefts.forEach((_left0,i)=>{
-      const pivot=layout.unitPivots[i];
-      const pivotY=layout.unitPivotsY[i];
-      const origin=layout.unitOrigins[i];
-      const originY=layout.unitOriginsY[i];
+    const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
+      Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
+    raster?.layers.forEach((layer,i)=>{
       const k=unitScales?.[i]??1;
       ctx.save();
       ctx.globalAlpha*=unitAlphas?.[i]??1;
-      ctx.translate(cx+dx+pivot,cy+dy+pivotY);
-      ctx.scale(k*layout.unitBaseScaleX[i],k*layout.unitBaseScaleY[i]);
-      ctx.textAlign='center';ctx.fillText(layout.units[i],origin-pivot,originY-pivotY);
+      ctx.translate(cx+dx+layer.pivotX,cy+dy+layer.pivotY);ctx.scale(k,k);
+      ctx.drawImage(layer.canvas,layer.x-layer.pivotX,layer.y-layer.pivotY,layer.w,layer.h);
       ctx.restore();
     });
   }
@@ -115,6 +112,21 @@ const drawCanonical = (
       return startsOnOriginalBeat;
     })&&expectedBeat===layout.beatCount;
     const noRectSlices=layout.unitUseSlice.every(value=>!value);
+    /* 記錄每個節拍是否有自己的 raster。重複的 combining mark 可能完全
+       疊在同一像素上而合理地沒有新墨水；但多單元符號不可退化成只剩一層，
+       指定的 *／ੈ 兩顆也必須各自保有可見內容。 */
+    const verificationRaster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,dpr);
+    const everyUnitVisible=!!verificationRaster
+      &&verificationRaster.layers.length===layout.beatCount
+      &&verificationRaster.layers.every(layer=>{
+        const g=layer.canvas.getContext('2d',{willReadFrequently:true});
+        return !!g&&!!scan(g,layer.canvas.width,layer.canvas.height);
+      });
+    const visibleRasterUnits=verificationRaster?.layers.filter(layer=>{
+      const g=layer.canvas.getContext('2d',{willReadFrequently:true});
+      return !!g&&!!scan(g,layer.canvas.width,layer.canvas.height);
+    }).length||0;
+    const visibleUnitsIndependent=layout.beatCount<=1||visibleRasterUnits>=2;
 
     /* 縮放 II：第一幀必須完全不跳，之後每一顆 unit 必須有自己的倍率。 */
     const scaleStart=layout.unitBeatIndices.map(i=>symbolBreatheScale(i,0,60,1.2));
@@ -185,8 +197,12 @@ const drawCanonical = (
     const specialDotAdjusted=true;
     /* 只有含 ੈ 的目标结构改用整串原生 shaping；其他符号必须逐项保持
        上一版稳定布局，避免修一个例子却改变其余符号。 */
-    const target="*\u0a48\u2729\u2027\u208a";
-    const targetNative=true;
+    const target="*\u0a48\u2729\u2027\u208a\u02da";
+    const targetNative=text!==target||!!verificationRaster&&[0,1].every(index=>{
+      const layer=verificationRaster.layers[index];
+      const g=layer?.canvas.getContext('2d',{willReadFrequently:true});
+      return !!layer&&!!g&&!!scan(g,layer.canvas.width,layer.canvas.height);
+    });
     const unrelatedStable=true;
     const targetTiming=true;
     /* 高 DPI 下旁遮组合记号的 native shaping 会随物理字号改变 hinting；
@@ -212,8 +228,8 @@ const drawCanonical = (
     /* 分開畫的倍率 1 幀與原生整串的 alpha 差異不得超過 8%；避免為了逐顆
        動畫把符號本身換成另一個樣子。位置邊界仍另外用 firstFrameStable 限制。 */
     const forcedPixelsStable=layout.units.length===1||forcedPixelDiff<=2||oneDevicePixelHinting||forcedAlphaError<=.08;
-    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,scale2StartsFlat,scale2Independent,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,scale2StartsFlat,scale2Independent,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
