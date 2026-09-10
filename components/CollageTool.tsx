@@ -36,7 +36,7 @@ import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, splitSymbolUnits, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -4923,7 +4923,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const count = unitLayout.unitLefts.length;
           const unitScales = individualBreathe
             ? unitLayout.unitLefts.map((_x, index) =>
-                symbolBreatheScale(index, now, o.mo?.amp || 50, o.mo?.speed || 1))
+                symbolBreatheScale(unitLayout.unitBeatIndices[index], now, o.mo?.amp || 50, o.mo?.speed || 1))
             : null;
           /* 缩放 II 接手的精确第一帧仍画一次完整原生字符串；下一帧切片
              只产生极小倍率变化，不会在交界处出现抗锯齿闪线。 */
@@ -4933,9 +4933,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             return;
           }
           for (let index = 0; index < count; index++) {
-            const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
+            const bubbleSpan = 1 + Math.max(0, unitLayout.beatCount - 1) * 0.2;
             const q = seqIn === null ? 1
-              : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
+              : Math.max(0, Math.min(1, seqIn * bubbleSpan - unitLayout.unitBeatIndices[index] * 0.2));
             /* 尚未輪到的泡泡片段不要建立退化的 scale(0) 變換，也省掉
                長符號在拖曳後第一幀的大量無效 Canvas 呼叫。 */
             if (!unitScales && q <= 0) continue;
@@ -5895,7 +5895,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       },
       obj: (o: any, i: number) => {
         const cfg = moOf(o);
-        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, splitSymbolUnits(o.text || '', SYMBOL_FONT, 100).length) : 1;
+        const units = o.sym && cfg.in === 'bubble' ? Math.max(1, countSymbolAnimationBeats(o.text || '')) : 1;
         const bubbleSpan = 1 + Math.max(0, units - 1) * 0.2;
         const timed = units > 1 ? { ...cfg, dur: cfg.dur * bubbleSpan } : cfg;
         return composeMo(timed, t, (hashId(o.id) % 628) / 100 + i * 0.7);

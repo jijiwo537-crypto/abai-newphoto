@@ -1,6 +1,6 @@
 import { SYMBOLS } from '../utils/symbols';
 import { SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { clearSymbolInkCache, measureSymbolAdvance, measureSymbolUnitLayout, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
+import { clearSymbolInkCache, countSymbolAnimationBeats, measureSymbolAdvance, measureSymbolUnitLayout, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
 
 declare global {
   interface Window { __symbolReport?: { done: boolean; total: number; failed: any[] } }
@@ -91,12 +91,19 @@ const drawCanonical = (
     /* 動畫與正式排版必須共用同一份 grapheme 結構；產品指定的可見例外
        由 splitSymbolUnits 精準拆分，不能退回 UTF-16/code-point 粗暴切割。 */
     const animationUnitCount=layout.units.length===splitSymbolUnits(text,SYMBOL_FONT,size).length;
+    const originalCadence=layout.beatCount===countSymbolAnimationBeats(text);
+    let expectedBeat=0;
+    const originalBeatOrder=layout.units.every((unit,index)=>{
+      const startsOnOriginalBeat=layout.unitBeatIndices[index]===expectedBeat;
+      expectedBeat+=Math.max(1,countSymbolAnimationBeats(unit));
+      return startsOnOriginalBeat;
+    })&&expectedBeat===layout.beatCount;
     const noRectSlices=layout.unitUseSlice.every(value=>!value);
 
     /* 縮放 II：第一幀必須完全不跳，之後每一顆 unit 必須有自己的倍率。 */
-    const scaleStart=layout.units.map((_u,i)=>symbolBreatheScale(i,0,60,1.2));
-    const scaleA=layout.units.map((_u,i)=>symbolBreatheScale(i,.43,60,1.2));
-    const scaleB=layout.units.map((_u,i)=>symbolBreatheScale(i,.91,60,1.2));
+    const scaleStart=layout.unitBeatIndices.map(i=>symbolBreatheScale(i,0,60,1.2));
+    const scaleA=layout.unitBeatIndices.map(i=>symbolBreatheScale(i,.43,60,1.2));
+    const scaleB=layout.unitBeatIndices.map(i=>symbolBreatheScale(i,.91,60,1.2));
     const scale2StartsFlat=scaleStart.every(v=>Math.abs(v-1)<1e-9);
     const trajectories=scaleA.map((v,i)=>`${v.toFixed(6)}|${scaleB[i].toFixed(6)}`);
     const scale2Independent=layout.units.length<=1||new Set(trajectories).size===layout.units.length;
@@ -155,8 +162,8 @@ const drawCanonical = (
       && Math.abs(actual.t-forcedAnimatedBounds.t)<=1
       && Math.abs(actual.b-forcedAnimatedBounds.b)<=1;
     const forcedPixelsStable=layout.units.length===1||forcedPixelDiff<=2||oneDevicePixelHinting;
-    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&noRectSlices&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,noRectSlices,scale2StartsFlat,scale2Independent,firstFrameStable,forcedPixelDiff,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&originalBeatOrder&&noRectSlices&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,originalBeatOrder,noRectSlices,scale2StartsFlat,scale2Independent,firstFrameStable,forcedPixelDiff,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
