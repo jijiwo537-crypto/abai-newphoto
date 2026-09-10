@@ -12,7 +12,7 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
-import { measureSymbolInk, measureSymbolInkFast, measureSymbolInkAtSize, measureSymbolAdvance, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { isIOSProblemLongSymbol, measureSymbolInk, measureSymbolInkFast, measureSymbolInkAtSize, measureSymbolAdvance, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, drawHoleShape, holeOverflow, glowAmount,
@@ -51,7 +51,14 @@ const prepareClassicSymbolPlacement = (text: string, pageWidth: number): Prepare
   const M = 100;
   const w100 = measureSymbolAdvance(text, SYMBOL_FONT, M);
   const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
-  const ink = measureSymbolInkFast(text, SYMBOL_FONT);
+  const iosCanvas = typeof navigator !== 'undefined' && (
+    /iP(?:hone|ad|od)/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1
+      && !/Chrome|Chromium|Edg\//.test(navigator.userAgent))
+  );
+  const ink = isIOSProblemLongSymbol(text) || !iosCanvas
+    ? measureSymbolInkFast(text, SYMBOL_FONT)
+    : measureSymbolInkAtSize(text, SYMBOL_FONT, 100);
   const value = {
     fontSize,
     w: Math.max(6, ink.w * fontSize + 8),

@@ -647,9 +647,14 @@ export const rasterizeSymbolAnimationLayers = (
        乘上 DPR。後者會讓 WebKit 重新做 fallback、hinting 與 combining-mark
        shaping，長符號的字距和小單位位置就會跟正式畫面不同。 */
     const strokePx = Math.max(0, logicalStrokeWidth);
-    const pad = Math.ceil(px * 1.6 + strokePx * 2);
+    /* middle baseline 的可見字墨穩定落在約 ±1.15em；舊版上下各留 3.35em，
+       Retina 時會無謂建立 4K 高的透明 Canvas，第一幀因此阻塞數秒。 */
+    const interactionRaster = px >= 64;
+    const pad = Math.ceil(px * (interactionRaster ? .75 : 1.6) + strokePx * 2);
     const logicalWidth = Math.ceil(logicalAdvance + pad * 2);
-    const logicalHeight = Math.ceil(px * 3.5 + pad * 2);
+    const logicalHeight = interactionRaster
+      ? Math.ceil(px * 2.5 + strokePx * 4)
+      : Math.ceil(px * 3.5 + pad * 2);
     const width = Math.max(1, Math.min(MAX_RASTER_SIDE, Math.ceil(logicalWidth * oversample)));
     const height = Math.max(1, Math.min(MAX_RASTER_SIDE, Math.ceil(logicalHeight * oversample)));
     const source = document.createElement('canvas'); source.width = width; source.height = height;
@@ -690,13 +695,27 @@ export const rasterizeSymbolAnimationLayers = (
     let previous = new Uint8Array(pixelCount);
     const centres = new Array<number>(units.length).fill(anchorX);
     let prefix = '';
+    let previousAdvance = 0;
     for (let ui = 0; ui < units.length; ui++) {
       prefix += units[ui]; setup(); paint(prefix);
-      const rgba = g.getImageData(0, 0, width, height).data;
-      const current = new Uint8Array(pixelCount);
+      const currentAdvance = probe.measureText(prefix).width;
+      /* 新增一個單元只可能改變字串尾端附近的 shaping。舊版每新增一顆都讀回
+         整張 Canvas（長符號等於重掃數億像素）；現在只掃前後各 2em 的尾端
+         區域，已完成的前綴像素沿用 previous。 */
+      /* 小字級是視覺測試與精密匯出的像素基準，保留完整掃描；互動動畫固定
+         使用 96/128px，才走尾端增量掃描。 */
+      const incremental = interactionRaster;
+      const scanLeftLogical = incremental ? Math.max(0, textLeft + previousAdvance - px * 2) : 0;
+      const scanRightLogical = incremental ? Math.min(logicalWidth, textLeft + currentAdvance + px * 2) : logicalWidth;
+      const scanLeft = incremental ? Math.max(0, Math.floor(scanLeftLogical * oversample)) : 0;
+      const scanRight = incremental ? Math.min(width, Math.ceil(scanRightLogical * oversample)) : width;
+      const scanWidth = Math.max(1, scanRight - scanLeft);
+      const rgba = g.getImageData(scanLeft, 0, scanWidth, height).data;
+      const current = previous.slice();
       let sumX = 0, mass = 0;
-      for (let p = 0; p < pixelCount; p++) {
-        const a = rgba[p * 4 + 3]; current[p] = a;
+      for (let yy = 0; yy < height; yy++) for (let localX = 0; localX < scanWidth; localX++) {
+        const p = yy * width + scanLeft + localX;
+        const a = rgba[(yy * scanWidth + localX) * 4 + 3]; current[p] = a;
         const delta = Math.max(0, a - previous[p]);
         /* 像素一旦由某個 prefix 首次畫出，就固定屬於該單元。不能讓後面的
            combining mark 以較大的 alpha 增量把前一顆符號的交疊像素搶走；
@@ -706,6 +725,7 @@ export const rasterizeSymbolAnimationLayers = (
       }
       centres[ui] = mass ? sumX / mass : (textLeft + probe.measureText(prefix).width) * oversample;
       previous = current;
+      previousAdvance = currentAdvance;
     }
     const fd = final.data;
     /* prefix 比對在「兩個字形真的碰在一起」的位置可能把同一條筆畫切成

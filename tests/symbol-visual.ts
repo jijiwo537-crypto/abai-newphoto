@@ -1,6 +1,15 @@
 import { SYMBOLS } from '../utils/symbols';
 import { SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { clearSymbolInkCache, countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolAdvance, measureSymbolInkFast, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
+import { clearSymbolInkCache, countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolAdvance, measureSymbolInk, measureSymbolInkFast, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
+
+const interactiveSymbolInk = (text: string) => {
+  const iosCanvas = /iP(?:hone|ad|od)/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1
+      && !/Chrome|Chromium|Edg\//.test(navigator.userAgent));
+  return isIOSProblemLongSymbol(text) || !iosCanvas
+    ? measureSymbolInkFast(text, SYMBOL_FONT)
+    : measureSymbolInk(text, SYMBOL_FONT);
+};
 
 declare global {
   interface Window { __symbolReport?: { done: boolean; total: number; failed: any[] } }
@@ -41,7 +50,7 @@ const drawCanonical = (
   /* tail 模式精準複製 App：物件永遠用 100px 基準幾何，再縮到實際顯示字級。 */
   const layout=measureSymbolUnitLayout(text,SYMBOL_FONT,
     new URLSearchParams(location.search).has('tail')?100:size);
-  const fastInk=measureSymbolInkFast(text,SYMBOL_FONT);
+  const fastInk=interactiveSymbolInk(text);
   ctx.save();
   ctx.font=`400 ${size}px ${fontStack(SYMBOL_FONT)}`;
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
@@ -117,7 +126,7 @@ const drawCanonical = (
     const longIOSMain=iosWebKit&&isIOSProblemLongSymbol(text);
     const frameRaster=tailOnly||longIOSMain
       ?rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,dpr):null;
-    const interactiveInk=measureSymbolInkFast(text,SYMBOL_FONT);
+    const interactiveInk=interactiveSymbolInk(text);
     const fw=interactiveInk.w*size*dpr,fh=interactiveInk.h*size*dpr;
     const pl=w/2-fw/2-gap,pr=w/2+fw/2+gap;
     const pt=h/2-fh/2-gap,pb=h/2+fh/2+gap;
@@ -176,7 +185,7 @@ const drawCanonical = (
         ? Array.from(new Set([visibleIndices[0],visibleIndices[visibleIndices.length-1]]))
         : [];
       if(!sampleIndices.length) fixedUnitAnchors=false;
-      const fastInk=measureSymbolInkFast(text,SYMBOL_FONT);
+      const fastInk=interactiveSymbolInk(text);
       const dx=-fastInk.cx*size,dy=-fastInk.cy*size;
       const rasterAnchorX=0;
       for(const unitIndex of sampleIndices)for(const sampleScale of [.58,1.13]){
