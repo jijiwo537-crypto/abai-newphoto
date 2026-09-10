@@ -27,7 +27,8 @@ import {
    fillText 之間補回同一個實測中心。 */
 const IS_IOS_CANVAS = typeof navigator !== 'undefined' && (
   /iP(?:hone|ad|od)/.test(navigator.userAgent)
-  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1
+    && !/Chrome|Chromium|Edg\//.test(navigator.userAgent))
 );
 const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   /* 箭頭與圓弧是同一個 path、一次描邊；半透明時交接處不會累加變白。 */
@@ -260,6 +261,17 @@ export const shapePathBox = (
 /** 回傳值都以「字級 1」為單位：w/h＝墨水大小，cx/cy＝墨水中心相對於下筆點的位移 */
 const symInk = measureSymbolInk;
 
+/* 一般符號需要逐像素墨水邊界，才能在 iPhone 的 fallback glyph 上保持
+   本體與選中框完全對齊；只有已知的尾端長符號使用輕量 TextMetrics，避免
+   它們在新增／進動畫頁時建立巨大同步掃描而阻塞主執行緒。 */
+const interactiveSymbolInk = (text: string, family: string) =>
+  isIOSProblemLongSymbol(text) || !IS_IOS_CANVAS
+    ? measureSymbolInkFast(text, family)
+    : symInk(text, family);
+
+/* 動畫母片使用固定解析度：鍵值不會隨動畫本身的 scale 每幀改變。 */
+const symbolAnimationRasterPx = (text: string) => isIOSProblemLongSymbol(text) ? 96 : 128;
+
 type CreativeSymbolPlacement = {
   size: number;
   w: number;
@@ -280,7 +292,7 @@ const prepareCreativeSymbolPlacement = (
   const cached = creativeSymbolPlacementCache.get(key);
   if (cached) return cached;
 
-  const ink = measureSymbolInkFast(text, SYMBOL_FONT);
+  const ink = interactiveSymbolInk(text, SYMBOL_FONT);
   const short = Math.min(cw, ch);
   const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
     Math.round((cw * 0.7) / Math.max(0.05, ink.w))));
@@ -312,7 +324,7 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
        缩放期间不可按每一帧的新字级重新扫描 alpha，否则 iOS 会卡顿且框会跳。 */
     const text = o.text || o.sym;
     const fam = o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT);
-    const ink = o.sym ? measureSymbolInkFast(text, fam)
+    const ink = o.sym ? interactiveSymbolInk(text, fam)
       : measureSymbolUnitLayout(text, fam, o.size || 40).ink;
     /* 選中框只讀固定 100px 基準幾何。長符號過去在每次縮放鬆手後又建立
        一份大型動畫 raster，會阻塞下一次手勢；框與本體本來就應共用 layout。 */
@@ -1054,6 +1066,43 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 動畫目標提示：切換目標時只短暫畫虛線框，不改動正式選取狀態。 */
   const motionTargetFlashRef = useRef<{ id: string; started: number; duration: number } | null>(null);
   const [motionTargetFlashSeq, setMotionTargetFlashSeq] = useState(0);
+
+  /* 只預備畫布上實際存在的符號（不是掃整個符號庫），而且每個 idle slot
+     只做一顆。這讓動畫頁按鈕立即切頁，第一格不會同步停住數秒。 */
+  const symbolAnimationWarmSig = objects.filter(o => o.sym)
+    .map(o => `${o.text || o.sym}|${o.color || '#ffffff'}|${o.strokeWidth || 0}|${o.strokeColor || '#ffffff'}`)
+    .join('\u0001');
+  useEffect(() => {
+    const symbols = objects.filter(o => o.sym);
+    if (!symbols.length) return;
+    let cancelled = false;
+    let handle = 0;
+    const schedule = (task: () => void) => {
+      if ('requestIdleCallback' in window) {
+        handle = (window as any).requestIdleCallback(task, { timeout: 700 });
+      } else handle = window.setTimeout(task, 24);
+    };
+    let index = 0;
+    const warmNext = () => {
+      if (cancelled || index >= symbols.length) return;
+      const o = symbols[index++];
+      const text = o.text || o.sym || '';
+      const px = symbolAnimationRasterPx(text);
+      rasterizeSymbolAnimationLayers(text, SYMBOL_FONT, px, 'fill', o.color || '#ffffff', 0, 3);
+      if (o.strokeWidth) rasterizeSymbolAnimationLayers(
+        text, SYMBOL_FONT, px, 'stroke', o.strokeColor || '#ffffff', o.strokeWidth * 2 * (o.size / 40), 3,
+      );
+      schedule(warmNext);
+    };
+    symbolFontReady.then(() => { if (!cancelled) schedule(warmNext); });
+    return () => {
+      cancelled = true;
+      if ('cancelIdleCallback' in window) (window as any).cancelIdleCallback(handle);
+      else window.clearTimeout(handle);
+    };
+  // 幾何拖曳不影響母片；只在會改變 raster 的內容／顏色／描邊變動時重排。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbolAnimationWarmSig]);
   const selectedObjRef = useRef<string | null>(null);
   selectedObjRef.current = selectedObj;
   const objDragRef = useRef<any>(null);
@@ -4920,7 +4969,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號：把「真正畫出來的那一塊」的中心搬到框心。
            不校正的話，前進寬度／em 方框跟墨水差多少，符號就偏出框多少 ——
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
-        const symbolInk = o.sym ? measureSymbolInkFast(o.text || '', fam) : null;
+        const symbolInk = o.sym ? interactiveSymbolInk(o.text || '', fam) : null;
         const symbolUnitScale = o.sym ? (o.size || 40) / 100 : 1;
         let tdx = 0, tdy = 0;
         if (symbolInk) {
@@ -4954,9 +5003,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           && isIOSProblemLongSymbol(o.text || '');
         /* iPhone 的超長符號固定從同一張 256px 高解析母片縮放。雙指手勢只改
            drawImage 的目的尺寸，不再每一格用新的字級重建上萬像素寬的 raster。 */
-        const longRasterBase = 256;
-        const longRasterScale = longIOSSymbol ? (o.size || 40) / longRasterBase : 1;
-        const rasterFontPx = longIOSSymbol ? longRasterBase * s : (o.size || 40) * s;
+        /* 動畫分層不可以直接用目前畫面上的巨大字級建立母片。iPhone 上一顆
+           放大的符號可能因此同步配置數千萬像素，按動畫頁時看起來就像死機。
+           固定在足夠銳利的基準字級產生一次，再依實際字級縮放；outputScale
+           仍會依 Retina 倍率超取樣，所以畫質不會降低，快取也不會因縮放失效。 */
+        const actualSymbolFontPx = (o.size || 40) * s;
+        const rasterFontPx = symbolAnimationRasterPx(o.text || '');
+        const symbolRasterScale = actualSymbolFontPx / rasterFontPx;
         /* Mobile Safari 對很長的 fallback 字串會錯誤套用 textAlign=center，
            把傳入的中心當成起點。長符號改用完整 advance 算出的明確左起點；
            短符號完全保留既有 center 路徑。 */
@@ -5005,8 +5058,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              重新排字，符號內部就會錯位。先從完整原生字串的同一張 raster
              分出像素層，泡泡／縮放 II 只變換各層，原本結構完全不動。 */
           const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
-          const matrix = ctx.getTransform();
-          const outputScale = Math.max(1, Math.hypot(matrix.a, matrix.b));
+          /* 不能把當幀的動畫 scale 放進 raster 快取鍵；否則每一幀都是新母片，
+             點動畫頁後會持續同步掃描 Canvas。固定 3× 足以覆蓋 Retina。 */
+          const outputScale = 3;
           const raster = rasterizeSymbolAnimationLayers(
             o.text || '', fam, rasterFontPx, stroke ? 'stroke' : 'fill',
             typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
@@ -5049,15 +5103,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               /* 每個小單元從第一幀就待在完整符號的最終座標，只繞自己的
                  固定 pivot 縮放。不能按照當幀可見內容重新置中，否則第一顆
                  會先出現在中央，再隨後續單元出現而被一路推向左邊。 */
-              ctx.translate(tdx + rasterAnchorX + layer.pivotX * longRasterScale,
-                tdy + rasterAnchorY + layer.pivotY * longRasterScale);
+              ctx.translate(tdx + rasterAnchorX + layer.pivotX * symbolRasterScale,
+                tdy + rasterAnchorY + layer.pivotY * symbolRasterScale);
               ctx.scale(scale, scale);
               ctx.imageSmoothingEnabled = true;
               ctx.imageSmoothingQuality = 'high';
               ctx.drawImage(layer.canvas,
-                (layer.x - layer.pivotX) * longRasterScale,
-                (layer.y - layer.pivotY) * longRasterScale,
-                layer.w * longRasterScale, layer.h * longRasterScale);
+                (layer.x - layer.pivotX) * symbolRasterScale,
+                (layer.y - layer.pivotY) * symbolRasterScale,
+                layer.w * symbolRasterScale, layer.h * symbolRasterScale);
             } else {
               /* 極端低記憶體裝置無法建立暫存 Canvas 時的保守退路。 */
               const pivot = unitLayout.unitPivots[index] * symbolUnitScale * s;
