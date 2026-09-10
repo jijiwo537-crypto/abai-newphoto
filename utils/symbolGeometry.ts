@@ -44,6 +44,16 @@ const sizedCache = new Map<string, SymbolInk>();
 const advanceCache = new Map<string, number>();
 const unitLayoutCache = new Map<string, SymbolUnitLayout>();
 const splitUnitCache = new Map<string, string[]>();
+/* 符號選單一次要量完整份清單。每顆都建立一張 Canvas 會讓 iPhone 在點進
+   選單時停住數百毫秒；量寬只需要一個 2D context，整個模組共用即可。 */
+let measureCanvas: HTMLCanvasElement | null = null;
+let measureCtx: CanvasRenderingContext2D | null = null;
+const sharedMeasureContext = () => {
+  if (measureCtx || typeof document === 'undefined') return measureCtx;
+  measureCanvas = document.createElement('canvas');
+  measureCtx = measureCanvas.getContext('2d');
+  return measureCtx;
+};
 
 /** 字體剛下載完成時丟掉 fallback 的量測結果。 */
 export const clearSymbolInkCache = () => {
@@ -246,7 +256,7 @@ export const measureSymbolAdvance = (text: string, family: string, fontSize: num
   if (hit !== undefined) return hit;
   let width = Math.max(size * .3, Array.from(text).length * size * .5);
   try {
-    const ctx = document.createElement('canvas').getContext('2d');
+    const ctx = sharedMeasureContext();
     if (ctx) {
       ctx.font = `400 ${size}px ${fontStack(family)}`;
       width = Math.max(.1, ctx.measureText(text).width);
