@@ -36,7 +36,7 @@ import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, symbolLayerCenterCorrection, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -4932,30 +4932,37 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             stroke ? ctx.lineWidth : 0, outputScale,
           );
           const count = raster?.layers.length || unitLayout.unitLefts.length;
+          const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
+          const unitProgress = new Array(count).fill(0).map((_x, index) => seqIn === null ? 1
+            : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2)));
           const unitScales = individualBreathe
             ? new Array(count).fill(0).map((_x, index) =>
                 symbolBreatheScale(index, now, o.mo?.amp || 50, o.mo?.speed || 1))
-            : null;
+            : unitProgress.map(q => easeOutBack(q));
+          const unitAlphas = seqIn === null
+            ? new Array(count).fill(1)
+            : unitProgress.map(q => Math.min(1, q * 3));
           /* 缩放 II 接手的精确第一帧仍画一次完整原生字符串；下一帧切片
              只产生极小倍率变化，不会在交界处出现抗锯齿闪线。 */
-          if (unitScales?.every(value => Math.abs(value - 1) < 1e-6)) {
+          if (individualBreathe && unitScales.every(value => Math.abs(value - 1) < 1e-6)) {
             if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
             else ctx.fillText(o.text || '', tdx, tdy);
             return;
           }
+          const centerCorrection = raster
+            ? symbolLayerCenterCorrection(raster.layers, unitScales, unitAlphas)
+            : { x: 0, y: 0 };
           for (let index = 0; index < count; index++) {
-            const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
-            const q = seqIn === null ? 1
-              : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
+            const q = unitProgress[index];
             /* 尚未輪到的泡泡片段不要建立退化的 scale(0) 變換，也省掉
                長符號在拖曳後第一幀的大量無效 Canvas 呼叫。 */
-            if (!unitScales && q <= 0) continue;
-            const scale = unitScales ? unitScales[index] : easeOutBack(q);
+            const scale = unitScales[index];
+            if (!individualBreathe && unitAlphas[index] * scale * scale <= .03) continue;
             ctx.save();
-            ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
+            ctx.globalAlpha *= unitAlphas[index];
             const layer = raster?.layers[index];
             if (layer) {
-              ctx.translate(tdx + layer.pivotX, tdy + layer.pivotY);
+              ctx.translate(tdx + centerCorrection.x + layer.pivotX, tdy + centerCorrection.y + layer.pivotY);
               ctx.scale(scale, scale);
               ctx.imageSmoothingEnabled = true;
               ctx.imageSmoothingQuality = 'high';
