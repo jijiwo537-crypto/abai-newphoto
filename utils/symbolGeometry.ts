@@ -1,4 +1,10 @@
 import { fontStack } from './fonts';
+import { SYMBOLS } from './symbols';
+
+/* 只有清單最後這批超長裝飾字串會觸發 iPhone Safari 的長字串光柵 bug。
+   用內容白名單而不是寬度門檻，避免把原本正常的其他符號帶進特殊路徑。 */
+const IOS_PROBLEM_LONG_SYMBOLS = new Set(SYMBOLS.slice(-12));
+export const isIOSProblemLongSymbol = (text: string) => IOS_PROBLEM_LONG_SYMBOLS.has(text);
 
 export type SymbolInk = { w: number; h: number; cx: number; cy: number };
 export type SymbolUnitLayout = {
@@ -86,7 +92,7 @@ const scanInk = (text: string, family: string, requestedSize: number): SymbolInk
        真正超過安全邊長的長符號才走下面的分片路徑。 */
     const iosCanvas = /iP(?:hone|ad|od)/.test(navigator.userAgent)
       || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    const overlyLongFallbackRun = iosCanvas && advance / scanSize > 18;
+    const overlyLongFallbackRun = iosCanvas && isIOSProblemLongSymbol(text);
     if (desiredWidth <= MAX_SCAN_SIDE && !overlyLongFallbackRun) {
       const padX = Math.min(scanSize * 4, Math.max(2, (MAX_SCAN_SIDE - advance) / 2));
       const padY = Math.min(scanSize * 4, MAX_SCAN_SIDE / 2);
@@ -128,21 +134,69 @@ const scanInk = (text: string, family: string, requestedSize: number): SymbolInk
         cy: (top + bottom) / 2 / scanSize,
       };
     }
-    /* Mobile Safari 對超長 fallback 字串的 actualBoundingBoxLeft/Right 只會
-       回報其中一段，這正是長符號只被框住左／右半邊的根因。advance 則是
-       完整 shaping 後的總寬；長字串專用分支以它為對稱水平邊界，既不配置
-       巨型 Canvas，也不會讓錯誤的墨水中心把靜止或動畫內容推向一側。 */
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    if (overlyLongFallbackRun) {
+      /* Mobile Safari 對超長 fallback 字串的 actualBoundingBoxLeft/Right 只會
+         回報其中一段，這正是長符號只被框住左／右半邊的根因。advance 則是
+         完整 shaping 後的總寬；長字串專用分支以它為對稱水平邊界，既不配置
+         巨型 Canvas，也不會讓錯誤的墨水中心把靜止或動畫內容推向一側。 */
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const metrics = ctx.measureText(text);
+      const metricLeft = Number(metrics.actualBoundingBoxLeft) || 0;
+      const metricRight = Number(metrics.actualBoundingBoxRight) || 0;
+      const metricTop = Number(metrics.actualBoundingBoxAscent) || 0;
+      const metricBottom = Number(metrics.actualBoundingBoxDescent) || 0;
+      const left = -advance / 2;
+      const right = advance / 2;
+      const top = metricTop > 0 ? -metricTop : -scanSize * .75;
+      const bottom = metricBottom > 0 ? metricBottom : scanSize * .45;
+      canvas.width = canvas.height = 0;
+      return {
+        w: Math.max(.01, right - left) / scanSize,
+        h: Math.max(.01, bottom - top) / scanSize,
+        cx: (left + right) / 2 / scanSize,
+        cy: (top + bottom) / 2 / scanSize,
+      };
+    }
+
+    /* 非白名單符號完全回到原本的分片量測，不能因字串較寬就套用新中心。 */
+    const padX = scanSize * 4;
+    const totalWidth = Math.max(1, Math.ceil(advance + padX * 2));
+    const scanHeight = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(scanSize * 6)));
+    const anchorX = totalWidth / 2, anchorY = scanHeight / 2;
     const metrics = ctx.measureText(text);
     const metricLeft = Number(metrics.actualBoundingBoxLeft) || 0;
     const metricRight = Number(metrics.actualBoundingBoxRight) || 0;
     const metricTop = Number(metrics.actualBoundingBoxAscent) || 0;
     const metricBottom = Number(metrics.actualBoundingBoxDescent) || 0;
-    const left = -advance / 2;
-    const right = advance / 2;
-    const top = metricTop > 0 ? -metricTop : -scanSize * .75;
-    const bottom = metricBottom > 0 ? metricBottom : scanSize * .45;
+    const hasMetricInk = metricLeft > 0 || metricRight > 0;
+    let left = hasMetricInk ? -metricLeft : -advance / 2;
+    let right = hasMetricInk ? metricRight : advance / 2;
+    let top = metricTop > 0 ? -metricTop : -scanSize * .75;
+    let bottom = metricBottom > 0 ? metricBottom : scanSize * .45;
+    const tileSide = Math.min(1536, MAX_SCAN_SIDE);
+    let x0 = totalWidth, y0 = scanHeight, x1 = -1, y1 = -1;
+    let scannedInk = false;
+    try {
+      for (let tileX = 0; tileX < totalWidth; tileX += tileSide) {
+        const tileWidth = Math.min(tileSide, totalWidth - tileX);
+        canvas.width = tileWidth; canvas.height = scanHeight;
+        ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, tileWidth, scanHeight);
+        ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+        ctx.fillText(text, anchorX - tileX, anchorY);
+        const data = ctx.getImageData(0, 0, tileWidth, scanHeight).data;
+        for (let p = 0; p < tileWidth * scanHeight; p++) if (data[p * 4 + 3] > 0) {
+          const x = p % tileWidth, y = Math.floor(p / tileWidth);
+          x0 = Math.min(x0, tileX + x); y0 = Math.min(y0, y);
+          x1 = Math.max(x1, tileX + x); y1 = Math.max(y1, y); scannedInk = true;
+        }
+      }
+      if (scannedInk) {
+        left = x0 - anchorX; right = x1 + 1 - anchorX;
+        top = y0 - anchorY; bottom = y1 + 1 - anchorY;
+      }
+    } catch { /* 沿用 TextMetrics 備援。 */ }
     canvas.width = canvas.height = 0;
     return {
       w: Math.max(.01, right - left) / scanSize,
@@ -521,7 +575,7 @@ export const rasterizeSymbolAnimationLayers = (
       : g.fillText(value, x, anchorY / oversample);
     const paint = (value: string) => {
       const valueUnits = splitSymbolTimingUnits(value);
-      if (!iosCanvas || logicalAdvance / px <= 18) { paintRun(value, textLeft); return; }
+      if (!iosCanvas || !isIOSProblemLongSymbol(text)) { paintRun(value, textLeft); return; }
       /* Mobile Safari 會在一次 fillText 含太多 fallback glyph 時從字串中段
          才開始畫。每 8 個完整 grapheme 作一段，位置用同一字型的 prefix
          advance 累加；combining mark 不會被拆開，也不影響正常短符號。 */

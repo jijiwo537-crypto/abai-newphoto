@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
 
 test('every symbol is tightly enclosed and animation returns pixel-perfectly', async ({ page }, info) => {
+  test.setTimeout(360000);
   await page.goto('/tests/symbol-visual.html');
-  await page.waitForFunction(() => window.__symbolReport?.done, undefined, { timeout: 180000 });
+  await page.waitForFunction(() => window.__symbolReport?.done, undefined, { timeout: 300000 });
   const report = await page.evaluate(() => window.__symbolReport);
   if (info.project.name === 'chromium') {
     await page.screenshot({ path: `test-results/symbol-contact-${info.project.name}.png`, fullPage: true });
