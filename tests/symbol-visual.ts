@@ -1,6 +1,6 @@
 import { SYMBOLS } from '../utils/symbols';
 import { SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { clearSymbolInkCache, countSymbolAnimationBeats, measureSymbolAdvance, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
+import { clearSymbolInkCache, countSymbolAnimationBeats, measureSymbolAdvance, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale, symbolLayerCenterCorrection } from '../utils/symbolGeometry';
 
 declare global {
   interface Window { __symbolReport?: { done: boolean; total: number; failed: any[] } }
@@ -40,11 +40,15 @@ const drawCanonical = (
   }else{
     const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
       Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
+    const scales=raster?.layers.map((_layer,i)=>unitScales?.[i]??1)||[];
+    const alphas=raster?.layers.map((_layer,i)=>unitAlphas?.[i]??1)||[];
+    const correction=raster?symbolLayerCenterCorrection(raster.layers,scales,alphas):{x:0,y:0};
     raster?.layers.forEach((layer,i)=>{
-      const k=unitScales?.[i]??1;
+      const k=scales[i];
+      if(alphas[i]*k*k<=.03)return;
       ctx.save();
-      ctx.globalAlpha*=unitAlphas?.[i]??1;
-      ctx.translate(cx+dx+layer.pivotX,cy+dy+layer.pivotY);ctx.scale(k,k);
+      ctx.globalAlpha*=alphas[i];
+      ctx.translate(cx+dx+correction.x+layer.pivotX,cy+dy+correction.y+layer.pivotY);ctx.scale(k,k);
       ctx.drawImage(layer.canvas,layer.x-layer.pivotX,layer.y-layer.pivotY,layer.w,layer.h);
       ctx.restore();
     });
@@ -129,19 +133,27 @@ const drawCanonical = (
     const visibleUnitsIndependent=layout.beatCount<=1||visibleRasterUnits>=2;
 
     /* 縮放 II：第一幀必須完全不跳，之後每一顆 unit 必須有自己的倍率。 */
-    const scaleStart=layout.unitBeatIndices.map(i=>symbolBreatheScale(i,0,60,1.2));
-    const scaleA=layout.unitBeatIndices.map(i=>symbolBreatheScale(i,.43,60,1.2));
-    const scaleB=layout.unitBeatIndices.map(i=>symbolBreatheScale(i,.91,60,1.2));
+    const animatedLayerCount=verificationRaster?.layers.length||layout.beatCount;
+    const animatedLayerIndices=Array.from({length:animatedLayerCount},(_value,i)=>i);
+    const scaleStart=animatedLayerIndices.map(i=>symbolBreatheScale(i,0,60,1.2));
+    /* 用完整多幀軌跡辨識時間線，避免兩條不同的正弦節奏剛好在少數
+       採樣點相交，造成 Chromium 誤判成同一條時間線。 */
+    const trajectoryTimes=[.23,.37,.53,.71,.94,1.19];
+    const trajectories=animatedLayerIndices.map(i=>trajectoryTimes
+      .map(t=>symbolBreatheScale(i,t,60,1.2).toFixed(7)).join('|'));
+    const scalePreview=animatedLayerIndices.map(i=>symbolBreatheScale(i,.91,60,1.2));
     const scale2StartsFlat=scaleStart.every(v=>Math.abs(v-1)<1e-9);
-    const trajectories=scaleA.map((v,i)=>`${v.toFixed(6)}|${scaleB[i].toFixed(6)}`);
-    const scale2Independent=layout.units.length<=1||new Set(trajectories).size===layout.units.length;
+    const timelineCount=new Set(trajectories).size;
+    const adjacentTimelinesDiffer=trajectories.every((value,index)=>index===0||value!==trajectories[index-1]);
+    const scale2Independent=animatedLayerCount<=1
+      ||timelineCount===Math.min(3,animatedLayerCount)&&timelineCount<=3&&adjacentTimelinesDiffer;
 
     /* 多幀像素掃描：泡泡取 9 幀、縮放 II 取 16 幀。至少要得到多個不同的
        真實 raster frame；同時每一幀的各單位倍率／出場進度不得全相同。
        這會抓到「程式裡看似有多個 index，實際畫面卻整組同步」的退化。 */
     const frameCanvas=document.createElement('canvas');frameCanvas.width=w;frameCanvas.height=h;
     const frameCtx=frameCanvas.getContext('2d',{willReadFrequently:true})!;
-    const bubbleHashes=new Set<string>();let bubblePerUnit=layout.units.length<=1;
+    const bubbleHashes=new Set<string>();const bubbleDrifts:any[]=[];let bubblePerUnit=layout.units.length<=1,bubbleCenterStable=true,bubbleCenterDx=0,bubbleCenterDy=0;
     const bubbleSpanFrames=1+Math.max(0,layout.beatCount-1)*.2;
     for(let fi=0;fi<9;fi++){
       const seq=fi/8;
@@ -151,15 +163,26 @@ const drawCanonical = (
       frameCtx.setTransform(1,0,0,1,0,0);frameCtx.clearRect(0,0,w,h);frameCtx.scale(dpr,dpr);
       drawCanonical(frameCtx,text,size,cssW/2,cssH/2,scales,true,qs.map(q=>Math.min(1,q*3)));
       frameCtx.setTransform(1,0,0,1,0,0);bubbleHashes.add(alphaHash(frameCtx,w,h));
+      const frameBounds=scan(frameCtx,w,h);
+      if(frameBounds&&actual){
+        const dx=(frameBounds.l+frameBounds.r-actual.l-actual.r)/2;
+        const dy=(frameBounds.t+frameBounds.b-actual.t-actual.b)/2;
+        bubbleDrifts.push({fi,dx,dy,frameBounds});
+        bubbleCenterDx=Math.max(bubbleCenterDx,Math.abs(dx));
+        bubbleCenterDy=Math.max(bubbleCenterDy,Math.abs(dy));
+        if(bubbleCenterDx>2.5||bubbleCenterDy>2.5) bubbleCenterStable=false;
+      }
     }
-    const scaleHashes=new Set<string>();let scalePerUnit=layout.units.length<=1;
+    const scaleHashes=new Set<string>();let scalePerUnit=layout.units.length<=1,scaleCenterStable=true;
     for(let fi=0;fi<16;fi++){
       const tt=fi*.11;
-      const scales=layout.unitBeatIndices.map(beat=>symbolBreatheScale(beat,tt,60,1.2));
-      if(layout.units.length>1&&fi>1&&new Set(scales.map(v=>v.toFixed(5))).size>=2) scalePerUnit=true;
+      const scales=animatedLayerIndices.map(layerIndex=>symbolBreatheScale(layerIndex,tt,60,1.2));
+      if(animatedLayerCount>1&&fi>1&&new Set(scales.map(v=>v.toFixed(5))).size>=2) scalePerUnit=true;
       frameCtx.setTransform(1,0,0,1,0,0);frameCtx.clearRect(0,0,w,h);frameCtx.scale(dpr,dpr);
       drawCanonical(frameCtx,text,size,cssW/2,cssH/2,scales,true);
       frameCtx.setTransform(1,0,0,1,0,0);scaleHashes.add(alphaHash(frameCtx,w,h));
+      const frameBounds=scan(frameCtx,w,h);
+      if(frameBounds&&actual&&(Math.abs((frameBounds.l+frameBounds.r-actual.l-actual.r)/2)>2.5||Math.abs((frameBounds.t+frameBounds.b-actual.t-actual.b)/2)>2.5)) scaleCenterStable=false;
     }
     frameCanvas.width=frameCanvas.height=0;
     const multiFrameVisual=bubblePerUnit&&scalePerUnit
@@ -228,8 +251,8 @@ const drawCanonical = (
     /* 分開畫的倍率 1 幀與原生整串的 alpha 差異不得超過 8%；避免為了逐顆
        動畫把符號本身換成另一個樣子。位置邊界仍另外用 firstFrameStable 限制。 */
     const forcedPixelsStable=layout.units.length===1||forcedPixelDiff<=2||oneDevicePixelHinting||forcedAlphaError<=.08;
-    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,scale2StartsFlat,scale2Independent,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&bubbleCenterStable&&scaleCenterStable&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleCenterStable,bubbleCenterDx,bubbleCenterDy,bubbleDrifts,scaleCenterStable,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
@@ -251,7 +274,7 @@ const drawCanonical = (
     const scaleCanvas=document.createElement('canvas');scaleCanvas.width=w;scaleCanvas.height=h;
     const scaleCtx=scaleCanvas.getContext('2d',{willReadFrequently:true})!;
     scaleCtx.scale(dpr,dpr);
-    drawCanonical(scaleCtx,text,size,cssW/2,cssH/2,scaleB);
+    drawCanonical(scaleCtx,text,size,cssW/2,cssH/2,scalePreview);
     scaleCtx.setTransform(1,0,0,1,0,0);
     scaleCtx.strokeStyle=pass?'#64e6a5':'#ff4d4d';scaleCtx.lineWidth=2;
     scaleCtx.strokeRect(pl,pt,pr-pl,pb-pt);
