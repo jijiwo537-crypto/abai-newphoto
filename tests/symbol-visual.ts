@@ -39,7 +39,7 @@ const drawCanonical = (
       ctx.save();
       ctx.globalAlpha*=unitAlphas?.[i]??1;
       ctx.translate(cx+dx+pivot,cy+dy+pivotY);
-      ctx.scale(k,k);
+      ctx.scale(k*layout.unitBaseScaleX[i],k*layout.unitBaseScaleY[i]);
       ctx.textAlign='center';ctx.fillText(layout.units[i],origin-pivot,originY-pivotY);
       ctx.restore();
     });
@@ -92,6 +92,7 @@ const drawCanonical = (
        由 splitSymbolUnits 精準拆分，不能退回 UTF-16/code-point 粗暴切割。 */
     const animationUnitCount=layout.units.length===splitSymbolUnits(text,SYMBOL_FONT,size).length;
     const originalCadence=layout.beatCount===countSymbolAnimationBeats(text);
+    const independentGroups=layout.beatCount<=1||layout.units.length>1;
     let expectedBeat=0;
     const originalBeatOrder=layout.units.every((unit,index)=>{
       const startsOnOriginalBeat=layout.unitBeatIndices[index]===expectedBeat;
@@ -157,13 +158,13 @@ const drawCanonical = (
     /* 單一 run 在正式路徑的倍率 1 會直接畫 native 字串，不會走強制拆分測試；
        WebKit 對等價的 save/translate/restore 會留下 1～3 個 alpha rounding 像素。 */
     const oneDevicePixelHinting=!!actual&&!!forcedAnimatedBounds
-      && Math.abs(actual.l-forcedAnimatedBounds.l)<=1
-      && Math.abs(actual.r-forcedAnimatedBounds.r)<=1
-      && Math.abs(actual.t-forcedAnimatedBounds.t)<=1
-      && Math.abs(actual.b-forcedAnimatedBounds.b)<=1;
+      && Math.abs(actual.l-forcedAnimatedBounds.l)<=dpr
+      && Math.abs(actual.r-forcedAnimatedBounds.r)<=dpr
+      && Math.abs(actual.t-forcedAnimatedBounds.t)<=dpr
+      && Math.abs(actual.b-forcedAnimatedBounds.b)<=dpr;
     const forcedPixelsStable=layout.units.length===1||forcedPixelDiff<=2||oneDevicePixelHinting;
-    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&originalBeatOrder&&noRectSlices&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,originalBeatOrder,noRectSlices,scale2StartsFlat,scale2Independent,firstFrameStable,forcedPixelDiff,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,scale2StartsFlat,scale2Independent,firstFrameStable,forcedPixelDiff,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
