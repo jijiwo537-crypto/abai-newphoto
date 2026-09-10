@@ -36,7 +36,7 @@ import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -4920,10 +4920,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             else ctx.fillText(o.text || '', tdx, tdy);
             return;
           }
-          const count = unitLayout.unitLefts.length;
+          /* 動畫不能把每個 Unicode 片段重新 fillText：那會讓 combining mark
+             重新排字，符號內部就會錯位。先從完整原生字串的同一張 raster
+             分出像素層，泡泡／縮放 II 只變換各層，原本結構完全不動。 */
+          const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
+          const matrix = ctx.getTransform();
+          const outputScale = Math.max(1, Math.hypot(matrix.a, matrix.b));
+          const raster = rasterizeSymbolAnimationLayers(
+            o.text || '', fam, (o.size || 40) * s, stroke ? 'stroke' : 'fill',
+            typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
+            stroke ? ctx.lineWidth : 0, outputScale,
+          );
+          const count = raster?.layers.length || unitLayout.unitLefts.length;
           const unitScales = individualBreathe
-            ? unitLayout.unitLefts.map((_x, index) =>
-                symbolBreatheScale(unitLayout.unitBeatIndices[index], now, o.mo?.amp || 50, o.mo?.speed || 1))
+            ? new Array(count).fill(0).map((_x, index) =>
+                symbolBreatheScale(index, now, o.mo?.amp || 50, o.mo?.speed || 1))
             : null;
           /* 缩放 II 接手的精确第一帧仍画一次完整原生字符串；下一帧切片
              只产生极小倍率变化，不会在交界处出现抗锯齿闪线。 */
@@ -4933,32 +4944,34 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             return;
           }
           for (let index = 0; index < count; index++) {
-            const bubbleSpan = 1 + Math.max(0, unitLayout.beatCount - 1) * 0.2;
+            const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
             const q = seqIn === null ? 1
-              : Math.max(0, Math.min(1, seqIn * bubbleSpan - unitLayout.unitBeatIndices[index] * 0.2));
+              : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2));
             /* 尚未輪到的泡泡片段不要建立退化的 scale(0) 變換，也省掉
                長符號在拖曳後第一幀的大量無效 Canvas 呼叫。 */
             if (!unitScales && q <= 0) continue;
             const scale = unitScales ? unitScales[index] : easeOutBack(q);
-            const pivot = unitLayout.unitPivots[index] * symbolUnitScale * s;
-            const pivotY = unitLayout.unitPivotsY[index] * symbolUnitScale * s;
-            const origin = unitLayout.unitOrigins[index] * symbolUnitScale * s;
-            const originY = unitLayout.unitOriginsY[index] * symbolUnitScale * s;
             ctx.save();
             ctx.globalAlpha *= seqIn === null ? 1 : Math.min(1, q * 3);
-            ctx.translate(tdx + pivot, tdy + pivotY);
-            ctx.scale(
-              scale * unitLayout.unitBaseScaleX[index],
-              scale * unitLayout.unitBaseScaleY[index],
-            );
-            /* 每顆完整字素直接繪製，不能用矩形裁切完整字串。矩形邊界會在
-               單元縮放時切斷抗鋸齒／描邊／發光，肉眼看起來像被刀切過。 */
-            /* 整串符號原本以 center anchor shaping；每個 grapheme 也必須沿用
-               center anchor。改成 left anchor 會讓方向字元與 fallback 字體重新
-               解讀基準點，造成泡泡／縮放 II 的整體位置與內部結構漂移。 */
-            ctx.textAlign = 'center';
-            if (stroke) ctx.strokeText(unitLayout.units[index], origin - pivot, originY - pivotY);
-            else ctx.fillText(unitLayout.units[index], origin - pivot, originY - pivotY);
+            const layer = raster?.layers[index];
+            if (layer) {
+              ctx.translate(tdx + layer.pivotX, tdy + layer.pivotY);
+              ctx.scale(scale, scale);
+              ctx.imageSmoothingEnabled = true;
+              ctx.imageSmoothingQuality = 'high';
+              ctx.drawImage(layer.canvas, layer.x - layer.pivotX, layer.y - layer.pivotY, layer.w, layer.h);
+            } else {
+              /* 極端低記憶體裝置無法建立暫存 Canvas 時的保守退路。 */
+              const pivot = unitLayout.unitPivots[index] * symbolUnitScale * s;
+              const pivotY = unitLayout.unitPivotsY[index] * symbolUnitScale * s;
+              const origin = unitLayout.unitOrigins[index] * symbolUnitScale * s;
+              const originY = unitLayout.unitOriginsY[index] * symbolUnitScale * s;
+              ctx.translate(tdx + pivot, tdy + pivotY);
+              ctx.scale(scale * unitLayout.unitBaseScaleX[index], scale * unitLayout.unitBaseScaleY[index]);
+              ctx.textAlign = 'center';
+              if (stroke) ctx.strokeText(unitLayout.units[index], origin - pivot, originY - pivotY);
+              else ctx.fillText(unitLayout.units[index], origin - pivot, originY - pivotY);
+            }
             ctx.restore();
           }
         };

@@ -46,6 +46,10 @@ export const clearSymbolInkCache = () => {
   advanceCache.clear();
   unitLayoutCache.clear();
   splitUnitCache.clear();
+  if (typeof rasterLayerCache !== 'undefined') {
+    rasterLayerCache.forEach(pack => pack.layers.forEach(layer => { layer.canvas.width = layer.canvas.height = 0; }));
+    rasterLayerCache.clear();
+  }
 };
 // 字型載入前量到的是 fallback；載入完成後不可繼續沿用錯誤的墨水中心。
 if (typeof document !== 'undefined') document.fonts?.ready?.then(clearSymbolInkCache).catch(() => {});
@@ -413,6 +417,218 @@ const splitSymbolTimingUnits = (text: string): string[] => {
 
 export const countSymbolAnimationBeats = (text: string) =>
   text ? splitSymbolTimingUnits(text).length : 0;
+
+export type SymbolRasterLayer = {
+  canvas: HTMLCanvasElement;
+  x: number; y: number;
+  pivotX: number; pivotY: number;
+  w: number; h: number;
+};
+
+export type SymbolRasterLayers = { layers: SymbolRasterLayer[]; beatCount: number };
+const rasterLayerCache = new Map<string, SymbolRasterLayers>();
+const MAX_RASTER_LAYER_CACHE = 64;
+/* 最長的裝飾符號在 iPhone Retina 仍要以原生物理解析度分層；8192 會把
+   少數長字串左右同時裁掉。這些 raster 高度很小，16384×約 200 的實際
+   面積仍遠低於一般照片 Canvas，不能因單邊上限誤判成大型畫布。 */
+const MAX_RASTER_SIDE = 16384;
+
+/**
+ * 從同一份完整原生字串 raster 中分出動畫層。不能把 unit 各自 fillText：
+ * combining mark 與 fallback 字體會重新排字，造成動畫時字距和位置改變。
+ * 這裡用逐步 prefix 的 alpha 增量辨認每個成品像素屬於哪個小單位；倍率 1
+ * 時所有層的聯集就是原生完整字串，動畫只改各層自己的 transform。
+ */
+export const rasterizeSymbolAnimationLayers = (
+  text: string,
+  family: string,
+  logicalFontPx: number,
+  mode: 'fill' | 'stroke',
+  color: string,
+  logicalStrokeWidth = 0,
+  outputScale = 1,
+): SymbolRasterLayers | null => {
+  if (typeof document === 'undefined' || !text) return null;
+  const units = splitSymbolTimingUnits(text);
+  if (!units.length) return null;
+  const px = Math.max(8, logicalFontPx);
+  const wantedScale = Math.max(1, Math.min(3, outputScale));
+  const key = `${text}|${family}|${px.toFixed(3)}|${mode}|${color}|${logicalStrokeWidth.toFixed(3)}|${wantedScale.toFixed(3)}`;
+  const hit = rasterLayerCache.get(key);
+  if (hit) return hit;
+  try {
+    const probe = document.createElement('canvas').getContext('2d');
+    if (!probe) return null;
+    probe.font = `400 ${px}px ${fontStack(family)}`;
+    const logicalAdvance = Math.max(px * .25, probe.measureText(text).width);
+    /* 按目的 Canvas 的實際 transform 建立一樣多的實體像素；drawImage 時除回
+       同一倍率，因此不是把低解析度圖放大，也不是額外超取樣後再縮小。 */
+    const oversample = Math.max(1, Math.min(wantedScale,
+      16000 / Math.max(px * 4, logicalAdvance + px * 4)));
+    /* Retina 解析度只能放大 backing store／transform，不能直接把 font-size
+       乘上 DPR。後者會讓 WebKit 重新做 fallback、hinting 與 combining-mark
+       shaping，長符號的字距和小單位位置就會跟正式畫面不同。 */
+    const strokePx = Math.max(0, logicalStrokeWidth);
+    const pad = Math.ceil(px * 1.6 + strokePx * 2);
+    const logicalWidth = Math.ceil(logicalAdvance + pad * 2);
+    const logicalHeight = Math.ceil(px * 3.5 + pad * 2);
+    const width = Math.max(1, Math.min(MAX_RASTER_SIDE, Math.ceil(logicalWidth * oversample)));
+    const height = Math.max(1, Math.min(MAX_RASTER_SIDE, Math.ceil(logicalHeight * oversample)));
+    const source = document.createElement('canvas'); source.width = width; source.height = height;
+    const g = source.getContext('2d', { willReadFrequently: true } as any);
+    if (!g) return null;
+    const textLeft = pad, anchorX = (textLeft + logicalAdvance / 2) * oversample;
+    const anchorY = logicalHeight * oversample / 2;
+    const setup = () => {
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, width, height);
+      g.setTransform(oversample, 0, 0, oversample, 0, 0);
+      g.font = `400 ${px}px ${fontStack(family)}`;
+      g.textAlign = 'left'; g.textBaseline = 'middle';
+      g.fillStyle = color || '#fff'; g.strokeStyle = color || '#fff';
+      g.lineWidth = strokePx; g.lineJoin = 'round'; g.miterLimit = 2;
+    };
+    const paint = (value: string) => mode === 'stroke'
+      ? g.strokeText(value, textLeft, anchorY / oversample)
+      : g.fillText(value, textLeft, anchorY / oversample);
+    setup(); paint(text);
+    const final = g.getImageData(0, 0, width, height);
+    const pixelCount = width * height;
+    const owner = new Uint16Array(pixelCount); owner.fill(65535);
+    let previous = new Uint8Array(pixelCount);
+    const centres = new Array<number>(units.length).fill(anchorX);
+    let prefix = '';
+    for (let ui = 0; ui < units.length; ui++) {
+      prefix += units[ui]; setup(); paint(prefix);
+      const rgba = g.getImageData(0, 0, width, height).data;
+      const current = new Uint8Array(pixelCount);
+      let sumX = 0, mass = 0;
+      for (let p = 0; p < pixelCount; p++) {
+        const a = rgba[p * 4 + 3]; current[p] = a;
+        const delta = Math.max(0, a - previous[p]);
+        /* 像素一旦由某個 prefix 首次畫出，就固定屬於該單元。不能讓後面的
+           combining mark 以較大的 alpha 增量把前一顆符號的交疊像素搶走；
+           否則兩顆倍率不同時，前一顆會像被切掉幾刀。 */
+        if (delta && owner[p] === 65535) owner[p] = ui;
+        if (delta) { sumX += (p % width) * delta; mass += delta; }
+      }
+      centres[ui] = mass ? sumX / mass : (textLeft + probe.measureText(prefix).width) * oversample;
+      previous = current;
+    }
+    const fd = final.data;
+    /* prefix 比對在「兩個字形真的碰在一起」的位置可能把同一條筆畫切成
+       不同 owner。下面以連通的成品墨水辨認這種交疊，只修補不會吃掉
+       後一單元本體的區塊；彼此獨立的點、弧線與裝飾仍各自保留。 */
+    for (let p = 0; p < pixelCount; p++) {
+      if (!fd[p * 4 + 3] || owner[p] !== 65535) continue;
+      const xx = p % width;
+      let nearest = Infinity, nearestUnit = 0;
+      for (let i = 0; i < centres.length; i++) {
+        const d = Math.abs(xx - centres[i]);
+        if (d < nearest) { nearest = d; nearestUnit = i; }
+      }
+      owner[p] = nearestUnit;
+    }
+    const visited = new Uint8Array(pixelCount);
+    const queue = new Int32Array(pixelCount);
+    const masses = new Float64Array(units.length);
+    const totalMasses = new Float64Array(units.length);
+    for (let p = 0; p < pixelCount; p++) {
+      const a = fd[p * 4 + 3];
+      if (a) totalMasses[owner[p]] += a;
+    }
+    for (let start = 0; start < pixelCount; start++) {
+      if (visited[start] || !fd[start * 4 + 3]) continue;
+      masses.fill(0);
+      let head = 0, tail = 0;
+      queue[tail++] = start; visited[start] = 1;
+      while (head < tail) {
+        const p = queue[head++], a = fd[p * 4 + 3];
+        masses[owner[p]] += a;
+        const x = p % width;
+        let n: number;
+        if (x > 0) { n = p - 1; if (!visited[n] && fd[n * 4 + 3]) { visited[n] = 1; queue[tail++] = n; } }
+        if (x + 1 < width) { n = p + 1; if (!visited[n] && fd[n * 4 + 3]) { visited[n] = 1; queue[tail++] = n; } }
+        if (p >= width) { n = p - width; if (!visited[n] && fd[n * 4 + 3]) { visited[n] = 1; queue[tail++] = n; } }
+        if (p + width < pixelCount) { n = p + width; if (!visited[n] && fd[n * 4 + 3]) { visited[n] = 1; queue[tail++] = n; } }
+        if (x > 0 && p >= width) { n = p - width - 1; if (!visited[n] && fd[n * 4 + 3]) { visited[n] = 1; queue[tail++] = n; } }
+        if (x + 1 < width && p >= width) { n = p - width + 1; if (!visited[n] && fd[n * 4 + 3]) { visited[n] = 1; queue[tail++] = n; } }
+        if (x > 0 && p + width < pixelCount) { n = p + width - 1; if (!visited[n] && fd[n * 4 + 3]) { visited[n] = 1; queue[tail++] = n; } }
+        if (x + 1 < width && p + width < pixelCount) { n = p + width + 1; if (!visited[n] && fd[n * 4 + 3]) { visited[n] = 1; queue[tail++] = n; } }
+      }
+      /* 若後置附加記號碰到前一顆，而且它在別處仍保有自己的主要筆畫，
+         這塊交疊筆畫就完整留給較早的基底字形。反之若後一單元全部都在
+         這個連通區內，不能整塊吞掉，否則會製造空動畫層與節奏停頓。 */
+      let earliest = 0;
+      while (earliest + 1 < masses.length && masses[earliest] === 0) earliest++;
+      let mayRepair = false, wouldEraseUnit = false;
+      for (let i = earliest + 1; i < masses.length; i++) {
+        if (!masses[i]) continue;
+        mayRepair = true;
+        const remaining = totalMasses[i] - masses[i];
+        if (remaining < Math.max(255, totalMasses[i] * .18)) wouldEraseUnit = true;
+      }
+      if (mayRepair && !wouldEraseUnit) {
+        for (let i = 0; i < tail; i++) owner[queue[i]] = earliest;
+      }
+    }
+    const bounds = units.map(() => ({ l: width, r: -1, t: height, b: -1, sx: 0, sy: 0, mass: 0 }));
+    let fullL = width, fullR = -1, fullT = height, fullB = -1;
+    for (let p = 0; p < pixelCount; p++) {
+      const a = fd[p * 4 + 3]; if (!a) continue;
+      const xx = p % width, yy = Math.floor(p / width);
+      fullL = Math.min(fullL, xx); fullR = Math.max(fullR, xx);
+      fullT = Math.min(fullT, yy); fullB = Math.max(fullB, yy);
+      const ui = owner[p];
+      const b = bounds[ui];
+      b.l = Math.min(b.l, xx); b.r = Math.max(b.r, xx);
+      b.t = Math.min(b.t, yy); b.b = Math.max(b.b, yy);
+      b.sx += xx * a; b.sy += yy * a; b.mass += a;
+    }
+    if (fullR < fullL) return null;
+    /* 所有裁片都保留原生 fillText 的同一個 baseline anchor，不能改用掃描後
+       的像素外框中心；後者每個字級會有半像素 hinting 差，切換動畫就會跳。 */
+    const fullCx = anchorX, fullCy = anchorY;
+    const inv = 1 / oversample;
+    const layers = bounds.map((b, ui): SymbolRasterLayer => {
+      if (b.r < b.l) {
+        const empty = document.createElement('canvas'); empty.width = empty.height = 1;
+        return { canvas: empty, x: 0, y: 0, pivotX: 0, pivotY: 0, w: inv, h: inv };
+      }
+      const l = Math.max(0, b.l - 2), r = Math.min(width - 1, b.r + 2);
+      const t = Math.max(0, b.t - 2), bb = Math.min(height - 1, b.b + 2);
+      const cw = r - l + 1, ch = bb - t + 1;
+      const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+      const cg = cv.getContext('2d');
+      if (cg) {
+        const image = cg.createImageData(cw, ch);
+        for (let yy = t; yy <= bb; yy++) for (let xx = l; xx <= r; xx++) {
+          const srcP = yy * width + xx;
+          if (owner[srcP] !== ui) continue;
+          const si = srcP * 4, di = ((yy - t) * cw + xx - l) * 4;
+          image.data[di] = fd[si]; image.data[di + 1] = fd[si + 1];
+          image.data[di + 2] = fd[si + 2]; image.data[di + 3] = fd[si + 3];
+        }
+        cg.putImageData(image, 0, 0);
+      }
+      return {
+        canvas: cv, x: (l - fullCx) * inv, y: (t - fullCy) * inv,
+        pivotX: ((b.mass ? b.sx / b.mass : centres[ui]) - fullCx) * inv,
+        pivotY: ((b.mass ? b.sy / b.mass : fullCy) - fullCy) * inv,
+        w: cw * inv, h: ch * inv,
+      };
+    });
+    source.width = source.height = 0;
+    const out = { layers, beatCount: units.length };
+    rasterLayerCache.set(key, out);
+    while (rasterLayerCache.size > MAX_RASTER_LAYER_CACHE) {
+      const first = rasterLayerCache.keys().next().value as string | undefined;
+      if (!first) break;
+      rasterLayerCache.get(first)?.layers.forEach(layer => { layer.canvas.width = layer.canvas.height = 0; });
+      rasterLayerCache.delete(first);
+    }
+    return out;
+  } catch { return null; }
+};
 
 /**
  * 判斷相鄰兩段分開繪製後是否仍與瀏覽器整段 shaping 相同。
