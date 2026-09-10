@@ -23,6 +23,12 @@ import {
   SymbolPicker, symbolFontReady,
   shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS,
 } from './GridLayoutTool';
+/* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
+   fillText 之間補回同一個實測中心。 */
+const IS_IOS_CANVAS = typeof navigator !== 'undefined' && (
+  /iP(?:hone|ad|od)/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+);
 const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   /* 箭頭與圓弧是同一個 path、一次描邊；半透明時交接處不會累加變白。 */
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -4939,11 +4945,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
             stroke ? ctx.lineWidth : 0, outputScale,
           );
-          /* 動畫 raster 與靜止 fillText 都保留同一個原生 advance anchor。
-             iOS 上不能再依「理論墨水中心」二次搬移 raster：WebKit 的 fallback
-             字形中心和桌面不同，那個補償會讓長符號一進動畫就整串向左跳。
-             選取框的校正只改框，不改符號本身的原生排版座標。 */
-          const rasterAnchorX = 0;
+          /* 一般符號恢復原本的 iOS 中心補償；長符號的 unitLayout 現在來自
+             完整分片 alpha 聯集，不再因右半邊漏掃而算出誇張的向左位移。 */
+          const rasterAnchorX = IS_IOS_CANVAS && raster
+            ? unitLayout.ink.cx * (o.size || 40) * s - raster.inkCenterX
+            : 0;
           const count = raster?.layers.length || unitLayout.unitLefts.length;
           const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
           const unitProgress = new Array(count).fill(0).map((_x, index) => seqIn === null ? 1
