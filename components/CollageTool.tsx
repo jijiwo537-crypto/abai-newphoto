@@ -42,7 +42,7 @@ import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolAdvance, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -439,7 +439,7 @@ const hashId = (id: string) => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; idleT?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; waveMix?: number; idleT?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -681,7 +681,7 @@ const glowIdleAmp = (
 export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
   { id: 'float', name: '漂浮' },
-  { id: 'sway', name: '左右' },
+  { id: 'grid-wave', name: '波浪' },
   { id: 'breathe', name: '縮放' },
   { id: 'spin', name: '旋轉' },
   { id: 'wobble', name: '搖擺' },
@@ -689,8 +689,8 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   // 特別做的：高頻又不規則的細微抖動，像手持鏡頭
   { id: 'jitter', name: '抖動' },
 ];
-const GRID_IDLE_KINDS = IDLE_KINDS.map(k => k.id === 'sway' ? { id: 'grid-wave', name: '波浪' } : k);
-const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'sway').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
+const GRID_IDLE_KINDS = IDLE_KINDS;
+const SYMBOL_IDLE_KINDS = IDLE_KINDS.flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 
 /** 進場動畫在進度 p（0～1）時的樣子 */
 const inFrame = (kind: string, p: number): MoFrame => {
@@ -791,10 +791,9 @@ export const MO_DEFAULT: MoCfg = {
 };
 export const moOf = (o: any): MoCfg => {
   const cfg = { ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) };
-  if (o?.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind)) {
-    if (cfg.in === 'spring') cfg.in = 'grid-wave';
-    if (cfg.idle === 'sway') cfg.idle = 'grid-wave';
-  }
+  /* 舊草稿裡的「左右」也真正遷移到網格同款波浪，不只是改顯示名稱。 */
+  if (cfg.idle === 'sway') cfg.idle = 'grid-wave';
+  if (o?.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind) && cfg.in === 'spring') cfg.in = 'grid-wave';
   return cfg;
 };
 
@@ -814,15 +813,16 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
   if (p < 1) return { ...f, fx, burst: f.burst || 0 };
   const after = t - (cfg.delay + cfg.dur);
-  /* 進場結束後立即銜接常駐；只保留兩格左右的極短混合來避免位移型動畫跳點。
-     舊版 0.35 秒的近靜止混合會被看成明顯停頓。 */
-  const blend = Math.max(0, Math.min(1, after / 0.07));
+  /* 從完全靜止以零速度、零加速度起步。舊版 70ms 線性混合在手機第一幀
+     會像突然加速；420ms smootherstep 讓波浪、縮放、搖擺、繞圈平滑接手。 */
+  const attackP = Math.max(0, Math.min(1, after / 0.42));
+  const blend = attackP * attackP * attackP * (attackP * (attackP * 6 - 15) + 10);
   const g = idleFrame(cfg.idle, after, cfg.amp, cfg.speed, phase);
   return {
     k: 1 + (g.k - 1) * blend,
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
     a: 1, fx: 1, burst: 0,
-    gridWave: g.gridWave,
+    gridWave: g.gridWave, waveMix: blend,
     /* 常駐的本地時間明確交給符號分單位動畫；進場期間不存在，交棒第一幀為 0。 */
     idleT: after,
   };
@@ -1791,6 +1791,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const baseMaskCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas')); 
   const fullMaskCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas')); 
   const lowerMaskCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
+  /* 常駐波浪的透明中繼層。預覽動畫每格沿用同一張，避免一秒建立數十張
+     全尺寸 Canvas；匯出則使用自己的暫存層，不會與畫面互相覆寫。 */
+  const waveObjectCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
   /** 挖穿的洞裡看到的那張底圖。跟上面幾張一樣重複使用，播動畫時才不會一直配置記憶體 */
   const holeBackdropCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
   /* 四周包圍那張「墊在遮罩底下、放大到整張畫布」的底圖。
@@ -4605,11 +4608,33 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        標了 below 的那些會被畫在「所有圖案之下」，見下面兩次呼叫。 */
     const objIndex = new Map<string, number>();
     objects.forEach((o, i) => objIndex.set(o.id, i));
+    /* 圖片、文字、符號與一般圖形共用網格同款波浪：先畫到透明層，再以
+       細直片套用同一條連續正弦；網格圖形仍走既有向量切片。 */
+    let waveObjectCanvas: HTMLCanvasElement | null = isMain ? waveObjectCanvasRef.current : null;
+    let waveObjectCtx: CanvasRenderingContext2D | null = null;
+    const waveLayer = () => {
+      if (!waveObjectCanvas) {
+        waveObjectCanvas = document.createElement('canvas');
+      }
+      if (waveObjectCanvas.width !== targetCanvas.width || waveObjectCanvas.height !== targetCanvas.height) {
+        waveObjectCanvas.width = targetCanvas.width;
+        waveObjectCanvas.height = targetCanvas.height;
+      }
+      if (!waveObjectCtx) waveObjectCtx = waveObjectCanvas.getContext('2d');
+      if (!waveObjectCtx || !waveObjectCanvas) return null;
+      waveObjectCtx.setTransform(1, 0, 0, 1, 0, 0);
+      waveObjectCtx.clearRect(0, 0, waveObjectCanvas.width, waveObjectCanvas.height);
+      return { canvas: waveObjectCanvas, ctx: waveObjectCtx };
+    };
     const drawObjects = (list: any[]) => list.forEach(o => {
       /* 播動態時，每個物件有自己的一格（出場 ＋ 常駐）。
          靜態時 f 是 null，這一段完全不影響畫面。 */
       const f = animRef.current ? animRef.current.obj(o, objIndex.get(o.id) ?? 0) : null;
       if (f && (f.k <= 0.002 || f.a <= 0.004)) return;
+      const internalWave = f?.gridWave !== undefined
+        && !(o.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind));
+      const layer = internalWave ? waveLayer() : null;
+      const paintObject = (ctx: CanvasRenderingContext2D) => {
       ctx.save();
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
@@ -4935,30 +4960,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             else ctx.fillText(o.text || '', tdx, tdy);
             return;
           }
-          /* iOS 不只會錯報超長字串邊界，直接 fillText 也可能從字串中段才開始
-             rasterize。使用動畫本來就會建立的完整左對齊 raster，將所有層以
-             1 倍合成；靜止與動畫因此逐像素共用同一個來源。 */
-          const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
-          const matrix = ctx.getTransform();
-          const outputScale = Math.max(1, Math.hypot(matrix.a, matrix.b));
-          const wholeRaster = rasterizeSymbolAnimationLayers(
-            o.text || '', fam, (o.size || 40) * s, stroke ? 'stroke' : 'fill',
-            typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
-            stroke ? ctx.lineWidth : 0, outputScale,
-          );
-          if (wholeRaster) {
-            ctx.drawImage(wholeRaster.fullCanvas,
-              wholeRaster.fullSX, wholeRaster.fullSY, wholeRaster.fullSW, wholeRaster.fullSH,
-              tdx + wholeRaster.fullX - wholeRaster.inkCenterX,
-              tdy + wholeRaster.fullY - wholeRaster.inkCenterY,
-              wholeRaster.fullW, wholeRaster.fullH);
-            return;
-          }
+          /* 雙指縮放時絕不能依每一幀的新字級重建動畫 raster。Mobile Safari
+             對超長字串一次 fillText 可能漏掉後半段，因此以完整 grapheme 每
+             8 顆畫一段；仍是原生文字，只有座標乘法，手勢期間不配置點陣。 */
           const previousAlign = ctx.textAlign;
           ctx.textAlign = 'left';
-          const left = tdx - unitLayout.advance * symbolUnitScale * s / 2;
-          if (stroke) ctx.strokeText(o.text || '', left, tdy);
-          else ctx.fillText(o.text || '', left, tdy);
+          const text = o.text || '';
+          const graphemes = splitSymbolUnits(text, fam, 100);
+          let x = tdx - measureSymbolAdvance(text, fam, 100) * symbolUnitScale * s / 2;
+          for (let i = 0; i < graphemes.length; i += 8) {
+            const run = graphemes.slice(i, i + 8).join('');
+            if (stroke) ctx.strokeText(run, x, tdy); else ctx.fillText(run, x, tdy);
+            /* 每段寬度也固定在 100px 量一次後只做倍率換算；手勢每幀不再
+               觸發 WebKit 的文字塑形量測。 */
+            x += measureSymbolAdvance(run, fam, 100) * symbolUnitScale * s;
+          }
           ctx.textAlign = previousAlign;
         };
         const drawText = (stroke = false) => {
@@ -5003,7 +5019,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             : Math.max(0, Math.min(1, seqIn * bubbleSpan - index * 0.2)));
           const unitScales = individualBreathe
             ? new Array(count).fill(0).map((_x, index) =>
-                symbolBreatheScale(index, now, o.mo?.amp || 50, o.mo?.speed || 1))
+                /* 縮放 II 原本直接吃常駐相位，進場結束的第一幀就可能跳到
+                   另一個倍率。與其他常駐動畫共用同一段平滑起步。 */
+                1 + (symbolBreatheScale(index, now, o.mo?.amp || 50, o.mo?.speed || 1) - 1)
+                  * (f?.waveMix ?? 1))
             : unitProgress.map(q => easeOutBack(q));
           const unitAlphas = seqIn === null
             ? new Array(count).fill(1)
@@ -5111,6 +5130,34 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.shadowBlur = 0;
         ctx.shadowOffsetY = 0;
         ctx.setLineDash([]);
+      }
+      ctx.restore();
+      };
+      if (!layer || !f || f.gridWave === undefined) {
+        paintObject(ctx);
+        return;
+      }
+      paintObject(layer.ctx);
+      const cx = (o.x + o.w / 2 + f.dx * o.w) * s;
+      const cy = (o.y + o.h / 2 + f.dy * o.h) * s;
+      const rotated = aabbOf((o.w || 1) * (f.k || 1), (o.h || 1) * (f.k || 1), (o.rot || 0) + (f.rot || 0));
+      const pad = Math.max(12 * s, Math.max(o.w || 1, o.h || 1) * s * .24);
+      const x0 = Math.max(0, Math.floor(cx - rotated.bw * s / 2 - pad));
+      const x1 = Math.min(targetCanvas.width, Math.ceil(cx + rotated.bw * s / 2 + pad));
+      const y0 = Math.max(0, Math.floor(cy - rotated.bh * s / 2 - pad));
+      const y1 = Math.min(targetCanvas.height, Math.ceil(cy + rotated.bh * s / 2 + pad));
+      const span = Math.max(1, x1 - x0);
+      const sliceW = Math.max(1, Math.min(2.5, 1.15 * s));
+      const amp = Math.min(10 * s, Math.max(1, o.h || 1) * s * .065)
+        * Math.max(.15, (moOf(o).amp ?? 50) / 100) * (f.waveMix ?? 1);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      for (let x = x0; x < x1; x += sliceW) {
+        const sw2 = Math.min(sliceW + .8 * s, x1 - x);
+        const nx = (x - x0 + sliceW / 2) / span;
+        const dy = Math.sin((nx - f.gridWave) * Math.PI * 2) * amp;
+        ctx.drawImage(layer.canvas, x, y0, sw2, Math.max(1, y1 - y0),
+          x, y0 + dy, sw2, Math.max(1, y1 - y0));
       }
       ctx.restore();
     });

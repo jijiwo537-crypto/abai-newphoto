@@ -1620,60 +1620,21 @@ export const SymbolPicker: React.FC<{
   onPick: (s: string) => void;
   /** 在手指放下、click 觸發以前先把這一顆的精確外框算進快取。 */
   onPrepare?: (s: string) => void;
-}> = ({ onBack, onPick, onPrepare }) => {
-  /* iOS 一次建立整份長符號清單時，React、文字塑形與版面計算會共同堵住
-     主執行緒。首屏只建立真正看得到的數量，其餘利用空閒幀分批補齊；
-     使用者點「新增符號」後不必等整份清單完成才看到頁面。 */
-  const FIRST_BATCH = 28;
-  const NEXT_BATCH = 24;
-  const [visibleCount, setVisibleCount] = useState(() => Math.min(FIRST_BATCH, SYMBOLS.length));
-  const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const preparedCountRef = useRef(0);
-  const prewarmStoppedRef = useRef(false);
-  const onPrepareRef = useRef(onPrepare);
-  onPrepareRef.current = onPrepare;
-
-  /* 精确几何在按钮出现后的空闲帧逐颗预热。过去把扫描放在 pointerdown，
-     iOS 会先阻塞点击事件，用户看到的就是按下后隔一下才生成。 */
-  useEffect(() => {
-    if (!onPrepare || typeof window === 'undefined') return;
-    let cancelled = false;
-    let idleId: number | undefined;
-    let timerId: number | undefined;
-    const step = () => {
-      if (cancelled || prewarmStoppedRef.current || preparedCountRef.current >= visibleCount) return;
-      onPrepareRef.current?.(SYMBOLS[preparedCountRef.current++]);
-      schedule();
-    };
-    const schedule = () => {
-      const requestIdle = (window as any).requestIdleCallback as
-        | ((cb: () => void, opts?: { timeout: number }) => number) | undefined;
-      if (requestIdle) idleId = requestIdle(step);
-      else timerId = window.setTimeout(step, 0);
-    };
-    schedule();
-    return () => {
-      cancelled = true;
-      if (idleId !== undefined) (window as any).cancelIdleCallback?.(idleId);
-      if (timerId !== undefined) window.clearTimeout(timerId);
-    };
-  }, [visibleCount]);
-
-  /* 不再用 80ms 定時器在使用者剛新增並拖曳物件時持續塞入 24 顆按鈕。
-     只有清單底部接近可視區域才建立下一批，畫布手勢期間完全沒有背景 React
-     批次更新；這也保留了往下滑時能看完全部符號的行為。 */
-  useEffect(() => {
-    if (visibleCount >= SYMBOLS.length || typeof IntersectionObserver === 'undefined') return;
-    const node = loadMoreRef.current;
-    if (!node) return;
-    const observer = new IntersectionObserver(entries => {
-      if (entries.some(entry => entry.isIntersecting)) {
-        setVisibleCount(count => Math.min(SYMBOLS.length, count + NEXT_BATCH));
-      }
-    }, { rootMargin: '240px 0px' });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [visibleCount]);
+}> = ({ onBack, onPick }) => {
+  /* 全部選項一次建立，使用者第一次滑到底時不會再遇到分批載入或空按鈕。
+     不在背景逐顆掃 alpha；那會與 iPhone 的捲動、拖曳競爭主執行緒。 */
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
+  const symbolButtons = useMemo(() => SYMBOLS.map((symbol, index) => (
+    <button
+      key={index}
+      onClick={() => { onPickRef.current(symbol); }}
+      aria-label={symbol}
+      className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85"
+    >
+      <SymbolGlyph text={symbol} />
+    </button>
+  )), []);
 
   return (
     <div className="pt-1">
@@ -1688,20 +1649,9 @@ export const SymbolPicker: React.FC<{
         </button>
         <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
       </div>
-      {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行；只渲染已就緒批次。 */}
+      {/* 一次渲染完整清單，避免往下滑到一半才等待下一批。 */}
       <div className="flex flex-wrap gap-1.5 pb-4">
-        {SYMBOLS.slice(0, visibleCount).map((symbol, index) => (
-          <button
-            key={index}
-            onPointerDown={() => { onPrepareRef.current?.(symbol); }}
-            onClick={() => { prewarmStoppedRef.current = true; onPick(symbol); }}
-            aria-label={symbol}
-            className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85"
-          >
-            <SymbolGlyph text={symbol} />
-          </button>
-        ))}
-        {visibleCount < SYMBOLS.length && <div ref={loadMoreRef} className="w-full h-px" aria-hidden="true" />}
+        {symbolButtons}
       </div>
     </div>
   );
