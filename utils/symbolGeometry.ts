@@ -16,6 +16,8 @@ export type SymbolUnitLayout = {
   /** 小單位獨立繪製時的 baseline 起點，已校回完整 native 字串的墨水中心。 */
   unitOrigins: number[];
   unitOriginsY: number[];
+  unitBaseScaleX: number[];
+  unitBaseScaleY: number[];
   unitBeatIndices: number[];
   beatCount: number;
   /** 保證正式動畫沒有任何矩形裁切；測試也會逐顆檢查此旗標。 */
@@ -301,7 +303,7 @@ const measureStandaloneCompositionCenter = (
   originsY: number[],
   family: string,
   size: number,
-): { x: number; y: number } | null => {
+): { x: number; y: number; w: number; h: number } | null => {
   if (typeof document === 'undefined' || !units.length) return null;
   try {
     const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
@@ -324,7 +326,7 @@ const measureStandaloneCompositionCenter = (
     canvas.height = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(scanSize * 8)));
     const ax = canvas.width / 2, ay = canvas.height / 2;
     ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
-    ctx.textAlign = 'left';
+    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#fff';
     units.forEach((unit, index) => ctx.fillText(
@@ -341,6 +343,8 @@ const measureStandaloneCompositionCenter = (
     return right >= left ? {
       x: ((left + right + 1) / 2 - ax) / ratio,
       y: ((top + bottom + 1) / 2 - ay) / ratio,
+      w: (right - left + 1) / ratio,
+      h: (bottom - top + 1) / ratio,
     } : null;
   } catch { return null; }
 };
@@ -559,10 +563,9 @@ export const splitSymbolUnits = (text: string, family = 'sans-serif', fontSize =
       out[out.length - 1] += cluster;
     } else out.push(cluster);
   }
-  /* 少數稀有 fallback 字形的上下文會跨越兩個以上 grapheme，成對檢查仍抓不到。
-     最後再以整串逐像素驗證；不一致時寧可讓該複合字形作為一個動畫單位，
-     也不能為了拆分而改壞使用者原本看到的符號。 */
-  const result = out.length && compositionKeepsNativeShape(text, out, family, size) ? out : [text];
+  /* 不再因整串 fallback 有細微差異就把所有單元合成一組；版面建立時會用
+     完整原生墨水边界统一校准，泡泡與縮放 II 才能保留逐顆動畫。 */
+  const result = out.length ? out : [text];
   splitUnitCache.set(key, result);
   return result;
 };
@@ -683,6 +686,8 @@ export const measureSymbolUnitLayout = (
   const unitPivotsY: number[] = [];
   const unitOrigins: number[] = [];
   const unitOriginsY: number[] = [];
+  const unitBaseScaleX: number[] = [];
+  const unitBaseScaleY: number[] = [];
   const unitBeatIndices: number[] = [];
   const unitUseSlice: boolean[] = [];
   let unitMetricCtx: CanvasRenderingContext2D | null = null;
@@ -711,16 +716,45 @@ export const measureSymbolUnitLayout = (
     /* 原生中心 anchor 與原生 baseline 原樣保留；動畫只改這個單位的 scale。 */
     unitOrigins.push(origin);
     unitOriginsY.push(0);
+    unitBaseScaleX.push(1);
+    unitBaseScaleY.push(1);
     /* 若多個 code point 必須共用同一個安全排版 run，就沿用第一顆原始小單位
        的節拍；不能取平均而把整組延後，否則泡泡與縮放 II 會明顯變慢。 */
     unitBeatIndices.push(consumedBeats);
     consumedBeats += coveredBeats;
     unitUseSlice.push(false);
   });
+  /* 少數 fallback 字體在分段繪製時 bearing 會略有不同。保留全部獨立動畫
+     單元，再只對整組做一次中心與外框校準；不再為了位置穩定把整串退化成
+     一個動畫單元。 */
+  if (!compositionKeepsNativeShape(text, originalClusters, family, size)) {
+    const composed = measureStandaloneCompositionCenter(
+      text, units, unitOrigins, unitOriginsY, family, size);
+    if (composed && composed.w > .01 && composed.h > .01) {
+      const targetX = ink.cx * size, targetY = ink.cy * size;
+      const sx = Math.max(.5, Math.min(2, ink.w * size / composed.w));
+      const sy = Math.max(.5, Math.min(2, ink.h * size / composed.h));
+      for (let i = 0; i < units.length; i++) {
+        const oldPivotX = unitPivots[i], oldPivotY = unitPivotsY[i];
+        const nextPivotX = targetX + (oldPivotX - composed.x) * sx;
+        const nextPivotY = targetY + (oldPivotY - composed.y) * sy;
+        unitOrigins[i] = nextPivotX + unitOrigins[i] - oldPivotX;
+        unitOriginsY[i] = nextPivotY + unitOriginsY[i] - oldPivotY;
+        centers[i] = nextPivotX;
+        unitPivots[i] = nextPivotX;
+        unitPivotsY[i] = nextPivotY;
+        unitLefts[i] = targetX + (unitLefts[i] - composed.x) * sx;
+        unitRights[i] = targetX + (unitRights[i] - composed.x) * sx;
+        unitBaseScaleX[i] = sx;
+        unitBaseScaleY[i] = sy;
+      }
+    }
+  }
   /* 動畫不用矩形 clip；每個通過像素驗證的完整 run 都直接繪製。 */
   const out = {
     units, centers, unitClusters, unitLefts, unitRights,
-    unitPivots, unitPivotsY, unitOrigins, unitOriginsY, unitBeatIndices,
+    unitPivots, unitPivotsY, unitOrigins, unitOriginsY,
+    unitBaseScaleX, unitBaseScaleY, unitBeatIndices,
     beatCount: Math.max(1, countSymbolAnimationBeats(text)), unitUseSlice,
     staticUnits, staticCenters, staticUnitInks,
     advance, ink,
