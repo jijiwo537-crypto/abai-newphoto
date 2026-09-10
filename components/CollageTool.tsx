@@ -309,7 +309,17 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
   if (o.sym) {
     /* 外框使用固定基础字级的规范化几何，再跟物件一起等比缩放。
        缩放期间不可按每一帧的新字级重新扫描 alpha，否则 iOS 会卡顿且框会跳。 */
-    const ink = measureSymbolUnitLayout(o.text || o.sym, o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT), o.sym ? 100 : (o.size || 40)).ink;
+    const text = o.text || o.sym;
+    const fam = o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT);
+    const layout = measureSymbolUnitLayout(text, fam, o.sym ? 100 : (o.size || 40));
+    const longIOS = !!o.sym && IS_IOS_CANVAS && layout.advance / 100 > 18;
+    const raster = longIOS ? rasterizeSymbolAnimationLayers(
+      text, fam, o.size || 40, 'fill', '#fff', 0,
+      typeof window !== 'undefined' ? Math.max(1, Math.min(3, window.devicePixelRatio || 1)) : 1,
+    ) : null;
+    const ink = raster
+      ? { w: raster.inkWidth / (o.size || 40), h: raster.inkHeight / (o.size || 40), cx: 0, cy: 0 }
+      : layout.ink;
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -4914,6 +4924,43 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號在靜止與動畫時都使用同一份 unitLayout。切換動畫頁只改每個
            單位的倍率／透明度，不會從整串 shaping 突然換成另一套排版。 */
         const unitLayout = symbolLayout;
+        const longIOSSymbol = !!unitLayout && IS_IOS_CANVAS
+          && unitLayout.advance / 100 > 18;
+        /* Mobile Safari 對很長的 fallback 字串會錯誤套用 textAlign=center，
+           把傳入的中心當成起點。長符號改用完整 advance 算出的明確左起點；
+           短符號完全保留既有 center 路徑。 */
+        const paintWholeSymbol = (stroke: boolean) => {
+          if (!longIOSSymbol || !unitLayout) {
+            if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
+            else ctx.fillText(o.text || '', tdx, tdy);
+            return;
+          }
+          /* iOS 不只會錯報超長字串邊界，直接 fillText 也可能從字串中段才開始
+             rasterize。使用動畫本來就會建立的完整左對齊 raster，將所有層以
+             1 倍合成；靜止與動畫因此逐像素共用同一個來源。 */
+          const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
+          const matrix = ctx.getTransform();
+          const outputScale = Math.max(1, Math.hypot(matrix.a, matrix.b));
+          const wholeRaster = rasterizeSymbolAnimationLayers(
+            o.text || '', fam, (o.size || 40) * s, stroke ? 'stroke' : 'fill',
+            typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
+            stroke ? ctx.lineWidth : 0, outputScale,
+          );
+          if (wholeRaster) {
+            ctx.drawImage(wholeRaster.fullCanvas,
+              wholeRaster.fullSX, wholeRaster.fullSY, wholeRaster.fullSW, wholeRaster.fullSH,
+              tdx + wholeRaster.fullX - wholeRaster.inkCenterX,
+              tdy + wholeRaster.fullY - wholeRaster.inkCenterY,
+              wholeRaster.fullW, wholeRaster.fullH);
+            return;
+          }
+          const previousAlign = ctx.textAlign;
+          ctx.textAlign = 'left';
+          const left = tdx - unitLayout.advance * symbolUnitScale * s / 2;
+          if (stroke) ctx.strokeText(o.text || '', left, tdy);
+          else ctx.fillText(o.text || '', left, tdy);
+          ctx.textAlign = previousAlign;
+        };
         const drawText = (stroke = false) => {
           if (!unitLayout) {
             if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
@@ -4930,8 +4977,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              shaping 后按原始字素区间裁切，因此拼回 1 倍时逐像素相同。 */
           const useSlices = sequenceAnimating || individualBreathe;
           if (!useSlices) {
-            if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
-            else ctx.fillText(o.text || '', tdx, tdy);
+            paintWholeSymbol(stroke);
             return;
           }
           /* 動畫不能把每個 Unicode 片段重新 fillText：那會讓 combining mark
@@ -4945,11 +4991,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
             stroke ? ctx.lineWidth : 0, outputScale,
           );
-          /* 一般符號恢復原本的 iOS 中心補償；長符號的 unitLayout 現在來自
-             完整分片 alpha 聯集，不再因右半邊漏掃而算出誇張的向左位移。 */
+          /* 靜止與動畫都使用同一份 unitLayout 中心。超長 iOS 字串的 layout
+             已改用完整 advance 對稱中心，因此不會在切換動畫時再換座標系。 */
+          const renderedInkCenterX = unitLayout.ink.cx * (o.size || 40) * s;
           const rasterAnchorX = IS_IOS_CANVAS && raster
-            ? unitLayout.ink.cx * (o.size || 40) * s - raster.inkCenterX
-            : 0;
+            ? renderedInkCenterX - raster.inkCenterX : 0;
+          const rasterAnchorY = longIOSSymbol && raster ? -raster.inkCenterY : 0;
           const count = raster?.layers.length || unitLayout.unitLefts.length;
           const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
           const unitProgress = new Array(count).fill(0).map((_x, index) => seqIn === null ? 1
@@ -4964,8 +5011,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           /* 缩放 II 接手的精确第一帧仍画一次完整原生字符串；下一帧切片
              只产生极小倍率变化，不会在交界处出现抗锯齿闪线。 */
           if (individualBreathe && unitScales.every(value => Math.abs(value - 1) < 1e-6)) {
-            if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
-            else ctx.fillText(o.text || '', tdx, tdy);
+            paintWholeSymbol(stroke);
             return;
           }
           for (let index = 0; index < count; index++) {
@@ -4981,7 +5027,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               /* 每個小單元從第一幀就待在完整符號的最終座標，只繞自己的
                  固定 pivot 縮放。不能按照當幀可見內容重新置中，否則第一顆
                  會先出現在中央，再隨後續單元出現而被一路推向左邊。 */
-              ctx.translate(tdx + rasterAnchorX + layer.pivotX, tdy + layer.pivotY);
+              ctx.translate(tdx + rasterAnchorX + layer.pivotX, tdy + rasterAnchorY + layer.pivotY);
               ctx.scale(scale, scale);
               ctx.imageSmoothingEnabled = true;
               ctx.imageSmoothingQuality = 'high';
