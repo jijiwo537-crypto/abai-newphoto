@@ -266,6 +266,9 @@ const drawCanonical = (
       && Math.abs((forcedAnimatedBounds.l+forcedAnimatedBounds.r-actual.l-actual.r)/2)<=4
       && Math.abs((forcedAnimatedBounds.t+forcedAnimatedBounds.b-actual.t-actual.b)/2)<=4;
     const specialDotAdjusted=true;
+    /* 手機選單第四排第二顆：中點與它的上下附加筆畫是一個原生字形。
+       動畫若拆成三層，兩個附加筆畫縮放時會從中點身上跑開。 */
+    const attachedMarksStayTogether=sourceIndex!==14||layout.units.includes("\u00b7\u0329\u0359");
     /* 只有含 ੈ 的目标结构改用整串原生 shaping；其他符号必须逐项保持
        上一版稳定布局，避免修一个例子却改变其余符号。 */
     const target="*\u0a48\u2729\u2027\u208a\u02da";
@@ -303,8 +306,8 @@ const drawCanonical = (
        前後的倍率 1 畫面不位移。其餘節奏／特殊符號條件仍由 168 顆主測試負責。 */
     const pass=tailOnly||longIOSMain
       ? inside&&firstFrameStable&&forcedPixelsStable
-      : geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&fixedUnitAnchors&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,sourceIndex,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,fixedUnitAnchors,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+      : geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&fixedUnitAnchors&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&attachedMarksStayTogether&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,sourceIndex,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,fixedUnitAnchors,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,attachedMarksStayTogether,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
