@@ -423,8 +423,6 @@ export type SymbolRasterLayer = {
   x: number; y: number;
   pivotX: number; pivotY: number;
   w: number; h: number;
-  /** 不含透明裁片 padding 的真實墨水外緣。 */
-  inkX: number; inkY: number; inkW: number; inkH: number;
 };
 
 export type SymbolRasterLayers = { layers: SymbolRasterLayer[]; beatCount: number };
@@ -594,10 +592,7 @@ export const rasterizeSymbolAnimationLayers = (
     const layers = bounds.map((b, ui): SymbolRasterLayer => {
       if (b.r < b.l) {
         const empty = document.createElement('canvas'); empty.width = empty.height = 1;
-        return {
-          canvas: empty, x: 0, y: 0, pivotX: 0, pivotY: 0,
-          w: inv, h: inv, inkX: 0, inkY: 0, inkW: 0, inkH: 0,
-        };
+        return { canvas: empty, x: 0, y: 0, pivotX: 0, pivotY: 0, w: inv, h: inv };
       }
       const l = Math.max(0, b.l - 2), r = Math.min(width - 1, b.r + 2);
       const t = Math.max(0, b.t - 2), bb = Math.min(height - 1, b.b + 2);
@@ -620,8 +615,6 @@ export const rasterizeSymbolAnimationLayers = (
         pivotX: ((b.mass ? b.sx / b.mass : centres[ui]) - fullCx) * inv,
         pivotY: ((b.mass ? b.sy / b.mass : fullCy) - fullCy) * inv,
         w: cw * inv, h: ch * inv,
-        inkX: (b.l - fullCx) * inv, inkY: (b.t - fullCy) * inv,
-        inkW: (b.r - b.l + 1) * inv, inkH: (b.b - b.t + 1) * inv,
       };
     });
     source.width = source.height = 0;
@@ -635,40 +628,6 @@ export const rasterizeSymbolAnimationLayers = (
     }
     return out;
   } catch { return null; }
-};
-
-/**
- * 小單元的倍率／透明度不同時，左側先出現或先放大會把整組外框拉走。
- * 直接以每層真實墨水外緣算同一幀的補償，不受細線抗鋸齒的 alpha 變化影響。
- */
-export const symbolLayerCenterCorrection = (
-  layers: SymbolRasterLayer[],
-  scales: number[],
-  alphas?: number[],
-) => {
-  let baseL = Infinity, baseR = -Infinity, baseT = Infinity, baseB = -Infinity;
-  let liveL = Infinity, liveR = -Infinity, liveT = Infinity, liveB = -Infinity;
-  layers.forEach((layer, index) => {
-    if (layer.inkW <= 0 || layer.inkH <= 0) return;
-    baseL = Math.min(baseL, layer.inkX); baseR = Math.max(baseR, layer.inkX + layer.inkW);
-    baseT = Math.min(baseT, layer.inkY); baseB = Math.max(baseB, layer.inkY + layer.inkH);
-    const scale = Math.max(0, scales[index] ?? 1);
-    /* 剛起泡時可能只有極淡、極小的一個 sub-pixel；Canvas 會把它量化成
-       完全透明。用 alpha×面積判斷是否已真正可見，不能讓尚未出現的遠端
-       單元先參與外框中心，否則會在那一幀反向拉偏整組。 */
-    if (Math.max(0, alphas?.[index] ?? 1) * scale * scale <= .03) return;
-    const l = layer.pivotX + (layer.inkX - layer.pivotX) * scale;
-    const r = layer.pivotX + (layer.inkX + layer.inkW - layer.pivotX) * scale;
-    const t = layer.pivotY + (layer.inkY - layer.pivotY) * scale;
-    const b = layer.pivotY + (layer.inkY + layer.inkH - layer.pivotY) * scale;
-    liveL = Math.min(liveL, l); liveR = Math.max(liveR, r);
-    liveT = Math.min(liveT, t); liveB = Math.max(liveB, b);
-  });
-  if (!Number.isFinite(baseL) || !Number.isFinite(liveL)) return { x: 0, y: 0 };
-  return {
-    x: (baseL + baseR - liveL - liveR) / 2,
-    y: (baseT + baseB - liveT - liveB) / 2,
-  };
 };
 
 /**
