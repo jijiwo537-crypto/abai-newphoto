@@ -42,7 +42,7 @@ import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolAdvance, measureSymbolInk, measureSymbolInkFast, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -280,16 +280,15 @@ const prepareCreativeSymbolPlacement = (
   const cached = creativeSymbolPlacementCache.get(key);
   if (cached) return cached;
 
-  const ink = measureSymbolInkFast(text, SYMBOL_FONT);
+  const ink = symInk(text, SYMBOL_FONT);
   const short = Math.min(cw, ch);
   const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
     Math.round((cw * 0.7) / Math.max(0.05, ink.w))));
+  const canonical = measureSymbolUnitLayout(text, SYMBOL_FONT, 100);
   const value = {
     size,
-    /* 新增只需要完整字串外框，不需要建立逐單元動畫切片。後者對長符號
-       會同步掃描多張大型 Canvas，正是按下後隔很久才出現的原因。 */
-    w: Math.round(Math.max(6, ink.w * size + 8)),
-    h: Math.round(Math.max(6, ink.h * size + 8)),
+    w: Math.round(Math.max(6, canonical.ink.w * size + 8)),
+    h: Math.round(Math.max(6, canonical.ink.h * size + 8)),
   };
   creativeSymbolPlacementCache.set(key, value);
   return value;
@@ -312,10 +311,15 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
        缩放期间不可按每一帧的新字级重新扫描 alpha，否则 iOS 会卡顿且框会跳。 */
     const text = o.text || o.sym;
     const fam = o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT);
-    const ink = o.sym ? measureSymbolInkFast(text, fam)
-      : measureSymbolUnitLayout(text, fam, o.size || 40).ink;
-    /* 選中框只讀固定 100px 基準幾何。長符號過去在每次縮放鬆手後又建立
-       一份大型動畫 raster，會阻塞下一次手勢；框與本體本來就應共用 layout。 */
+    const layout = measureSymbolUnitLayout(text, fam, o.sym ? 100 : (o.size || 40));
+    const longIOS = !!o.sym && IS_IOS_CANVAS && isIOSProblemLongSymbol(text);
+    const raster = longIOS ? rasterizeSymbolAnimationLayers(
+      text, fam, o.size || 40, 'fill', '#fff', 0,
+      typeof window !== 'undefined' ? Math.max(1, Math.min(3, window.devicePixelRatio || 1)) : 1,
+    ) : null;
+    const ink = raster
+      ? { w: raster.inkWidth / (o.size || 40), h: raster.inkHeight / (o.size || 40), cx: 0, cy: 0 }
+      : layout.ink;
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -435,7 +439,7 @@ const hashId = (id: string) => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; waveMix?: number; idleT?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; idleT?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -677,7 +681,7 @@ const glowIdleAmp = (
 export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'none', name: '靜止' },
   { id: 'float', name: '漂浮' },
-  { id: 'grid-wave', name: '波浪' },
+  { id: 'sway', name: '左右' },
   { id: 'breathe', name: '縮放' },
   { id: 'spin', name: '旋轉' },
   { id: 'wobble', name: '搖擺' },
@@ -685,8 +689,8 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   // 特別做的：高頻又不規則的細微抖動，像手持鏡頭
   { id: 'jitter', name: '抖動' },
 ];
-const GRID_IDLE_KINDS = IDLE_KINDS;
-const SYMBOL_IDLE_KINDS = IDLE_KINDS.flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
+const GRID_IDLE_KINDS = IDLE_KINDS.map(k => k.id === 'sway' ? { id: 'grid-wave', name: '波浪' } : k);
+const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'sway').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 
 /** 進場動畫在進度 p（0～1）時的樣子 */
 const inFrame = (kind: string, p: number): MoFrame => {
@@ -727,8 +731,7 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
   const A = amp / 100, w = t * speed + phase;
   switch (kind) {
     case 'float':   return { k: 1, dx: 0, dy: Math.sin(w * 2.0) * A * 0.28, rot: 0, a: 1 };
-    /* sway 只為讀取舊草稿保留；效果已和新 grid-wave 完全相同。 */
-    case 'sway':
+    case 'sway':    return { k: 1, dx: Math.sin(w * 1.7) * A * 0.28, dy: 0, rot: 0, a: 1 };
     case 'grid-wave': return { ...FLAT, gridWave: (t * speed * 0.22 + phase / (Math.PI * 2)) };
     /* 縮放：單純一顆正弦，大…小…大…小，在兩個固定大小之間來回。
        （以前是兩個不同週期的正弦疊起來，所以每一次的最大最小都不一樣 ——
@@ -788,9 +791,10 @@ export const MO_DEFAULT: MoCfg = {
 };
 export const moOf = (o: any): MoCfg => {
   const cfg = { ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) };
-  /* 舊草稿裡的「左右」資料直接遷移成真正的波浪，而不是只換顯示名稱。 */
-  if (cfg.idle === 'sway') cfg.idle = 'grid-wave';
-  if (o?.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind) && cfg.in === 'spring') cfg.in = 'grid-wave';
+  if (o?.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind)) {
+    if (cfg.in === 'spring') cfg.in = 'grid-wave';
+    if (cfg.idle === 'sway') cfg.idle = 'grid-wave';
+  }
   return cfg;
 };
 
@@ -810,17 +814,15 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
   if (p < 1) return { ...f, fx, burst: f.burst || 0 };
   const after = t - (cfg.delay + cfg.dur);
-  /* 常駐從進場最後一幀的靜止狀態，以零速度、零加速度起步。手機 30fps 下
-     240ms 只有約七格，第一下仍會顯得突然；420ms smootherstep 讓漂浮、波浪、
-     縮放、搖擺與繞圈共用同一段自然加速，不會出現銜接瞬移。 */
-  const attackP = Math.max(0, Math.min(1, after / 0.42));
-  const blend = attackP * attackP * attackP * (attackP * (attackP * 6 - 15) + 10);
+  /* 進場結束後立即銜接常駐；只保留兩格左右的極短混合來避免位移型動畫跳點。
+     舊版 0.35 秒的近靜止混合會被看成明顯停頓。 */
+  const blend = Math.max(0, Math.min(1, after / 0.07));
   const g = idleFrame(cfg.idle, after, cfg.amp, cfg.speed, phase);
   return {
     k: 1 + (g.k - 1) * blend,
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
     a: 1, fx: 1, burst: 0,
-    gridWave: g.gridWave, waveMix: blend,
+    gridWave: g.gridWave,
     /* 常駐的本地時間明確交給符號分單位動畫；進場期間不存在，交棒第一幀為 0。 */
     idleT: after,
   };
@@ -3855,13 +3857,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!a) return { k: 1, x: h.x, y: h.y, rot: 0, a: 1, fx: 1, on: true, burst: 0 };
       const f = a.hole(h, holeOrder.get(h.id) ?? 0);
       const base = getHoleSize(h);
-      /* 圖案的波浪以整張畫面的 x 位置作相位：左邊先起、右邊後起，和網格
-         使用同一條正弦與同一個 phase，不再把舊「左右」只是改名。 */
-      const waveY = f.gridWave === undefined ? 0
-        : Math.sin((h.x / Math.max(1, offs.cw) - f.gridWave) * Math.PI * 2)
-          * base * 0.2 * Math.max(0.15, moShape.amp / 100) * (f.waveMix ?? 1);
       return {
-        k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base + waveY, rot: f.rot, a: f.a, fx: f.fx,
+        k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base, rot: f.rot, a: f.a, fx: f.fx,
         burst: f.burst || 0,
         // 放射線還在的時候，就算圖案本身還沒亮起來也要留著這一格
         on: (f.k > 0.002 && f.a > 0.004) || (f.burst || 0) > 0.01,
@@ -4608,32 +4605,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        標了 below 的那些會被畫在「所有圖案之下」，見下面兩次呼叫。 */
     const objIndex = new Map<string, number>();
     objects.forEach((o, i) => objIndex.set(o.id, i));
-    /* 圖片、文字、符號與一般圖形的波浪先各自畫到同一張可重用透明層，再以
-       約一個畫布像素寬的直片套用網格同款正弦。只配置一張，不會每個物件／
-       每一幀製造新 Canvas。網格圖形仍走它原本的向量切片。 */
-    let waveObjectCanvas: HTMLCanvasElement | null = null;
-    let waveObjectCtx: CanvasRenderingContext2D | null = null;
-    const waveLayer = () => {
-      if (!waveObjectCanvas) {
-        waveObjectCanvas = document.createElement('canvas');
-        waveObjectCanvas.width = targetCanvas.width;
-        waveObjectCanvas.height = targetCanvas.height;
-        waveObjectCtx = waveObjectCanvas.getContext('2d');
-      }
-      if (!waveObjectCtx || !waveObjectCanvas) return null;
-      waveObjectCtx.setTransform(1, 0, 0, 1, 0, 0);
-      waveObjectCtx.clearRect(0, 0, waveObjectCanvas.width, waveObjectCanvas.height);
-      return { canvas: waveObjectCanvas, ctx: waveObjectCtx };
-    };
     const drawObjects = (list: any[]) => list.forEach(o => {
       /* 播動態時，每個物件有自己的一格（出場 ＋ 常駐）。
          靜態時 f 是 null，這一段完全不影響畫面。 */
       const f = animRef.current ? animRef.current.obj(o, objIndex.get(o.id) ?? 0) : null;
       if (f && (f.k <= 0.002 || f.a <= 0.004)) return;
-      const internalWave = f?.gridWave !== undefined
-        && !(o.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind));
-      const layer = internalWave ? waveLayer() : null;
-      const paintObject = (ctx: CanvasRenderingContext2D) => {
       ctx.save();
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
@@ -4839,8 +4815,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              舊版最多 56 片，預覽放大時垂直位移會形成明顯階梯鋸齒。 */
           const slices = Math.max(64, Math.min(220, Math.ceil(bw / Math.max(0.9, 1.15 * s))));
           const sliceW = bw / slices;
-          const amp = Math.min(10 * s, bh * 0.065) * Math.max(0.15, (o.mo?.amp ?? 50) / 100)
-            * (f?.waveMix ?? 1);
+          const amp = Math.min(10 * s, bh * 0.065) * Math.max(0.15, (o.mo?.amp ?? 50) / 100);
           for (let i = 0; i < slices; i++) {
             const x = i * sliceW;
             if (x >= shownW) break;
@@ -4920,12 +4895,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號：把「真正畫出來的那一塊」的中心搬到框心。
            不校正的話，前進寬度／em 方框跟墨水差多少，符號就偏出框多少 ——
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
-        const symbolInk = o.sym ? measureSymbolInkFast(o.text || '', fam) : null;
+        const symbolLayout = o.sym
+          /* 几何只按物件基础字级量一次。s 在缩放手势中每帧变化，只用于下面的
+             数值乘法，不再制造几百份不同字级的 alpha 扫描与缓存。 */
+          ? measureSymbolUnitLayout(o.text || '', fam, 100)
+          : null;
         const symbolUnitScale = o.sym ? (o.size || 40) / 100 : 1;
         let tdx = 0, tdy = 0;
-        if (symbolInk) {
-          tdx = -symbolInk.cx * (o.size || 40) * s;
-          tdy = -symbolInk.cy * (o.size || 40) * s;
+        if (symbolLayout) {
+          tdx = -symbolLayout.ink.cx * (o.size || 40) * s;
+          tdy = -symbolLayout.ink.cy * (o.size || 40) * s;
         }
         /* 順序跟經典拼圖一致：先只用「填色的形狀」畫光（三段模糊疊起來），
            再畫描邊，最後才填色。
@@ -4942,50 +4921,50 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
         const individualBreathe = !!o.sym && !objDragging && !objPinching && !symbolSizeTuningRef.current && o.mo?.idle === 'symbol-breathe2'
           && f?.idleT !== undefined;
-        /* 平常顯示、拖曳與雙指縮放完全不建立動畫分層資料；只有泡泡／縮放 II
-           正在播放時才需要它。這條快速路徑同時適用短符號與超長符號。 */
-        const symbolLayout = o.sym && (seqIn !== null || individualBreathe)
-          ? measureSymbolUnitLayout(o.text || '', fam, 100)
-          : null;
         /* 符號在靜止與動畫時都使用同一份 unitLayout。切換動畫頁只改每個
            單位的倍率／透明度，不會從整串 shaping 突然換成另一套排版。 */
         const unitLayout = symbolLayout;
-        const longIOSSymbol = !!o.sym && IS_IOS_CANVAS
+        const longIOSSymbol = !!unitLayout && IS_IOS_CANVAS
           && isIOSProblemLongSymbol(o.text || '');
-        /* iPhone 的超長符號固定從同一張 256px 高解析母片縮放。雙指手勢只改
-           drawImage 的目的尺寸，不再每一格用新的字級重建上萬像素寬的 raster。 */
-        const longRasterBase = 256;
-        const longRasterScale = longIOSSymbol ? (o.size || 40) / longRasterBase : 1;
-        const rasterFontPx = longIOSSymbol ? longRasterBase * s : (o.size || 40) * s;
         /* Mobile Safari 對很長的 fallback 字串會錯誤套用 textAlign=center，
            把傳入的中心當成起點。長符號改用完整 advance 算出的明確左起點；
            短符號完全保留既有 center 路徑。 */
         const paintWholeSymbol = (stroke: boolean) => {
-          if (!longIOSSymbol) {
+          if (!longIOSSymbol || !unitLayout) {
             if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
             else ctx.fillText(o.text || '', tdx, tdy);
             return;
           }
-          /* Mobile Safari 對超長 fallback 字串的一次 fillText 可能漏掉後半段。
-             靜止與手勢期間改成每 8 個完整 grapheme 畫一段；只做原生文字繪製，
-             不建立大型像素陣列，因此新增、拖曳和縮放都能立即回應。 */
+          /* iOS 不只會錯報超長字串邊界，直接 fillText 也可能從字串中段才開始
+             rasterize。使用動畫本來就會建立的完整左對齊 raster，將所有層以
+             1 倍合成；靜止與動畫因此逐像素共用同一個來源。 */
+          const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
+          const matrix = ctx.getTransform();
+          const outputScale = Math.max(1, Math.hypot(matrix.a, matrix.b));
+          const wholeRaster = rasterizeSymbolAnimationLayers(
+            o.text || '', fam, (o.size || 40) * s, stroke ? 'stroke' : 'fill',
+            typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
+            stroke ? ctx.lineWidth : 0, outputScale,
+          );
+          if (wholeRaster) {
+            ctx.drawImage(wholeRaster.fullCanvas,
+              wholeRaster.fullSX, wholeRaster.fullSY, wholeRaster.fullSW, wholeRaster.fullSH,
+              tdx + wholeRaster.fullX - wholeRaster.inkCenterX,
+              tdy + wholeRaster.fullY - wholeRaster.inkCenterY,
+              wholeRaster.fullW, wholeRaster.fullH);
+            return;
+          }
           const previousAlign = ctx.textAlign;
           ctx.textAlign = 'left';
-          const text = o.text || '';
-          /* 與動畫 raster 使用完全相同的安全單元分段；Intl.Segmenter 對少數
-             附加記號的分法不同，會讓分段邊界的 advance 累積差一小截。 */
-          const graphemes = splitSymbolUnits(text, fam, 100);
-          let x = tdx - measureSymbolAdvance(text, fam, 100) * symbolUnitScale * s / 2;
-          for (let i = 0; i < graphemes.length; i += 8) {
-            const run = graphemes.slice(i, i + 8).join('');
-            if (stroke) ctx.strokeText(run, x, tdy); else ctx.fillText(run, x, tdy);
-            x += ctx.measureText(run).width;
-          }
+          const left = tdx - unitLayout.advance * symbolUnitScale * s / 2;
+          if (stroke) ctx.strokeText(o.text || '', left, tdy);
+          else ctx.fillText(o.text || '', left, tdy);
           ctx.textAlign = previousAlign;
         };
         const drawText = (stroke = false) => {
           if (!unitLayout) {
-            paintWholeSymbol(stroke);
+            if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
+            else ctx.fillText(o.text || '', tdx, tdy);
             return;
           }
           const now = f?.idleT ?? 0;
@@ -5008,17 +4987,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const matrix = ctx.getTransform();
           const outputScale = Math.max(1, Math.hypot(matrix.a, matrix.b));
           const raster = rasterizeSymbolAnimationLayers(
-            o.text || '', fam, rasterFontPx, stroke ? 'stroke' : 'fill',
+            o.text || '', fam, (o.size || 40) * s, stroke ? 'stroke' : 'fill',
             typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
             stroke ? ctx.lineWidth : 0, outputScale,
           );
           /* 靜止與動畫都使用同一份 unitLayout 中心。超長 iOS 字串的 layout
              已改用完整 advance 對稱中心，因此不會在切換動畫時再換座標系。 */
-          /* 靜止與動畫都以完整 advance 中心、同一條 baseline 為唯一座標系。
-             raster 本身已經相對該 anchor 保存 x/y；再按墨水中心校正一次，
-             就會讓長符號或特殊 fallback 字形進動畫後整組偏移。 */
-          const rasterAnchorX = 0;
-          const rasterAnchorY = 0;
+          const renderedInkCenterX = unitLayout.ink.cx * (o.size || 40) * s;
+          const rasterAnchorX = IS_IOS_CANVAS && raster
+            ? renderedInkCenterX - raster.inkCenterX : 0;
+          const rasterAnchorY = longIOSSymbol && raster ? -raster.inkCenterY : 0;
           const count = raster?.layers.length || unitLayout.unitLefts.length;
           const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
           const unitProgress = new Array(count).fill(0).map((_x, index) => seqIn === null ? 1
@@ -5049,15 +5027,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               /* 每個小單元從第一幀就待在完整符號的最終座標，只繞自己的
                  固定 pivot 縮放。不能按照當幀可見內容重新置中，否則第一顆
                  會先出現在中央，再隨後續單元出現而被一路推向左邊。 */
-              ctx.translate(tdx + rasterAnchorX + layer.pivotX * longRasterScale,
-                tdy + rasterAnchorY + layer.pivotY * longRasterScale);
+              ctx.translate(tdx + rasterAnchorX + layer.pivotX, tdy + rasterAnchorY + layer.pivotY);
               ctx.scale(scale, scale);
               ctx.imageSmoothingEnabled = true;
               ctx.imageSmoothingQuality = 'high';
-              ctx.drawImage(layer.canvas,
-                (layer.x - layer.pivotX) * longRasterScale,
-                (layer.y - layer.pivotY) * longRasterScale,
-                layer.w * longRasterScale, layer.h * longRasterScale);
+              ctx.drawImage(layer.canvas, layer.x - layer.pivotX, layer.y - layer.pivotY, layer.w, layer.h);
             } else {
               /* 極端低記憶體裝置無法建立暫存 Canvas 時的保守退路。 */
               const pivot = unitLayout.unitPivots[index] * symbolUnitScale * s;
@@ -5137,34 +5111,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.shadowBlur = 0;
         ctx.shadowOffsetY = 0;
         ctx.setLineDash([]);
-      }
-      ctx.restore();
-      };
-      if (!layer || !f || f.gridWave === undefined) {
-        paintObject(ctx);
-        return;
-      }
-      paintObject(layer.ctx);
-      const cx = (o.x + o.w / 2 + f.dx * o.w) * s;
-      const cy = (o.y + o.h / 2 + f.dy * o.h) * s;
-      const rotated = aabbOf((o.w || 1) * (f.k || 1), (o.h || 1) * (f.k || 1), (o.rot || 0) + (f.rot || 0));
-      const pad = Math.max(12 * s, Math.max(o.w || 1, o.h || 1) * s * .24);
-      const x0 = Math.max(0, Math.floor(cx - rotated.bw * s / 2 - pad));
-      const x1 = Math.min(targetCanvas.width, Math.ceil(cx + rotated.bw * s / 2 + pad));
-      const y0 = Math.max(0, Math.floor(cy - rotated.bh * s / 2 - pad));
-      const y1 = Math.min(targetCanvas.height, Math.ceil(cy + rotated.bh * s / 2 + pad));
-      const span = Math.max(1, x1 - x0);
-      const sliceW = Math.max(1, Math.min(2.5, 1.15 * s));
-      const amp = Math.min(10 * s, Math.max(1, o.h || 1) * s * .065)
-        * Math.max(.15, (moOf(o).amp ?? 50) / 100) * (f.waveMix ?? 1);
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      for (let x = x0; x < x1; x += sliceW) {
-        const sw2 = Math.min(sliceW + .8 * s, x1 - x);
-        const nx = (x - x0 + sliceW / 2) / span;
-        const dy = Math.sin((nx - f.gridWave) * Math.PI * 2) * amp;
-        ctx.drawImage(layer.canvas, x, y0, sw2, Math.max(1, y1 - y0),
-          x, y0 + dy, sw2, Math.max(1, y1 - y0));
       }
       ctx.restore();
     });
@@ -6273,8 +6219,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setGlowMoImg(e.glowMoImg || { idle: 'none', amp: 100, speed: 100 });
     setGlowMoText(e.glowMoText || { idle: 'none', amp: 100, speed: 100 });
     setLinkMode(e.linkMode); setLinkColor(e.linkColor ?? null);
-    setMoShape(e.moShape?.idle === 'sway' ? { ...e.moShape, idle: 'grid-wave' } : e.moShape);
-    setMoLink(e.moLink); setMotionHold(e.motionHold);
+    setMoShape(e.moShape); setMoLink(e.moLink); setMotionHold(e.motionHold);
     setSelectedObj(e.selectedObj ?? null); setSelectedTarget(e.selectedTarget ?? null);
   };
 

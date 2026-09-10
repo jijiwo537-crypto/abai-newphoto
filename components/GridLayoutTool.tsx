@@ -12,7 +12,7 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
-import { measureSymbolInk, measureSymbolInkFast, measureSymbolInkAtSize, measureSymbolAdvance, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, measureSymbolInkAtSize, measureSymbolAdvance, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, drawHoleShape, holeOverflow, glowAmount,
@@ -51,7 +51,7 @@ const prepareClassicSymbolPlacement = (text: string, pageWidth: number): Prepare
   const M = 100;
   const w100 = measureSymbolAdvance(text, SYMBOL_FONT, M);
   const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
-  const ink = measureSymbolInkFast(text, SYMBOL_FONT);
+  const ink = measureSymbolInkAtSize(text, SYMBOL_FONT, 100);
   const value = {
     fontSize,
     w: Math.max(6, ink.w * fontSize + 8),
@@ -1620,25 +1620,60 @@ export const SymbolPicker: React.FC<{
   onPick: (s: string) => void;
   /** 在手指放下、click 觸發以前先把這一顆的精確外框算進快取。 */
   onPrepare?: (s: string) => void;
-}> = ({ onBack, onPick }) => {
-  /* 168 顆按鈕一次建立，但不在背景逐顆做 alpha 掃描。Safari 的 idle callback
-     會在快速捲動與畫布手勢之間持續搶主執行緒，造成空白按鈕及全域拖曳掉幀。
-     新增所需的輕量幾何已改為單次 TextMetrics，點擊可直接完成。 */
+}> = ({ onBack, onPick, onPrepare }) => {
+  /* iOS 一次建立整份長符號清單時，React、文字塑形與版面計算會共同堵住
+     主執行緒。首屏只建立真正看得到的數量，其餘利用空閒幀分批補齊；
+     使用者點「新增符號」後不必等整份清單完成才看到頁面。 */
+  const FIRST_BATCH = 28;
+  const NEXT_BATCH = 24;
+  const [visibleCount, setVisibleCount] = useState(() => Math.min(FIRST_BATCH, SYMBOLS.length));
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+  const preparedCountRef = useRef(0);
+  const prewarmStoppedRef = useRef(false);
+  const onPrepareRef = useRef(onPrepare);
+  onPrepareRef.current = onPrepare;
 
-  const onPickRef = useRef(onPick);
-  onPickRef.current = onPick;
-  /* 新增一顆物件會讓上層畫布 state 更新，但 168 顆選項本身完全沒變。
-     固定這棵 React 子樹可避免每次新增都重新比對整份長符號清單。 */
-  const symbolButtons = useMemo(() => SYMBOLS.map((symbol, index) => (
-    <button
-      key={index}
-      onClick={() => { onPickRef.current(symbol); }}
-      aria-label={symbol}
-      className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85"
-    >
-      <SymbolGlyph text={symbol} />
-    </button>
-  )), []);
+  /* 精确几何在按钮出现后的空闲帧逐颗预热。过去把扫描放在 pointerdown，
+     iOS 会先阻塞点击事件，用户看到的就是按下后隔一下才生成。 */
+  useEffect(() => {
+    if (!onPrepare || typeof window === 'undefined') return;
+    let cancelled = false;
+    let idleId: number | undefined;
+    let timerId: number | undefined;
+    const step = () => {
+      if (cancelled || prewarmStoppedRef.current || preparedCountRef.current >= visibleCount) return;
+      onPrepareRef.current?.(SYMBOLS[preparedCountRef.current++]);
+      schedule();
+    };
+    const schedule = () => {
+      const requestIdle = (window as any).requestIdleCallback as
+        | ((cb: () => void, opts?: { timeout: number }) => number) | undefined;
+      if (requestIdle) idleId = requestIdle(step);
+      else timerId = window.setTimeout(step, 0);
+    };
+    schedule();
+    return () => {
+      cancelled = true;
+      if (idleId !== undefined) (window as any).cancelIdleCallback?.(idleId);
+      if (timerId !== undefined) window.clearTimeout(timerId);
+    };
+  }, [visibleCount]);
+
+  /* 不再用 80ms 定時器在使用者剛新增並拖曳物件時持續塞入 24 顆按鈕。
+     只有清單底部接近可視區域才建立下一批，畫布手勢期間完全沒有背景 React
+     批次更新；這也保留了往下滑時能看完全部符號的行為。 */
+  useEffect(() => {
+    if (visibleCount >= SYMBOLS.length || typeof IntersectionObserver === 'undefined') return;
+    const node = loadMoreRef.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) {
+        setVisibleCount(count => Math.min(SYMBOLS.length, count + NEXT_BATCH));
+      }
+    }, { rootMargin: '240px 0px' });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [visibleCount]);
 
   return (
     <div className="pt-1">
@@ -1653,11 +1688,20 @@ export const SymbolPicker: React.FC<{
         </button>
         <span className="text-[10px] font-bold text-[#888] uppercase tracking-widest">新增符號</span>
       </div>
-      {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行。符號本身只是文字，
-          直接交給 Safari 正常繪製；content-visibility 在 iOS 快速捲動時會延遲
-          子文字的首次繪製，留下只有外框、沒有符號的空按鈕。 */}
+      {/* 每一顆的寬度跟著符號自己的長度走，排不下才換行；只渲染已就緒批次。 */}
       <div className="flex flex-wrap gap-1.5 pb-4">
-        {symbolButtons}
+        {SYMBOLS.slice(0, visibleCount).map((symbol, index) => (
+          <button
+            key={index}
+            onPointerDown={() => { onPrepareRef.current?.(symbol); }}
+            onClick={() => { prewarmStoppedRef.current = true; onPick(symbol); }}
+            aria-label={symbol}
+            className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85"
+          >
+            <SymbolGlyph text={symbol} />
+          </button>
+        ))}
+        {visibleCount < SYMBOLS.length && <div ref={loadMoreRef} className="w-full h-px" aria-hidden="true" />}
       </div>
     </div>
   );

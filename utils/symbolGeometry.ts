@@ -40,7 +40,6 @@ export type SymbolUnitLayout = {
 const REF = 100;
 const MAX_SCAN_SIDE = 3072;
 const cache = new Map<string, SymbolInk>();
-const fastInkCache = new Map<string, SymbolInk>();
 const sizedCache = new Map<string, SymbolInk>();
 const advanceCache = new Map<string, number>();
 const unitLayoutCache = new Map<string, SymbolUnitLayout>();
@@ -49,7 +48,6 @@ const splitUnitCache = new Map<string, string[]>();
 /** 字體剛下載完成時丟掉 fallback 的量測結果。 */
 export const clearSymbolInkCache = () => {
   cache.clear();
-  fastInkCache.clear();
   sizedCache.clear();
   advanceCache.clear();
   unitLayoutCache.clear();
@@ -71,97 +69,6 @@ const fallbackInk = (text: string): SymbolInk => ({
   cx: 0,
   cy: 0,
 });
-
-/**
- * 互動幀專用的同步幾何。TextMetrics 不讀回 Canvas 像素，iPhone 上約快
- * 30～60 倍；四周仍由 actualBoundingBox* 取得真實字形邊界。超長 fallback
- * 字串沿用完整 advance，避開 Mobile Safari 只回報半段 bbox 的已知問題。
- */
-export const measureSymbolInkFast = (text: string, family: string): SymbolInk => {
-  const key = `${family}|${text}`;
-  const hit = fastInkCache.get(key);
-  if (hit) return hit;
-  let out = fallbackInk(text);
-  try {
-    /* 字串若以 combining mark 開頭，WebKit 的 TextMetrics 會把 bidi 重排後的
-       墨水中心誤報成 0；只有這個小集合退回 32px 輕量 alpha 掃描。 */
-    if (/^\s*\p{Mark}/u.test(text)) {
-      const scanned = scanInk(text, family, 32);
-      if (scanned) {
-        fastInkCache.set(key, scanned);
-        return scanned;
-      }
-    }
-    const ctx = document.createElement('canvas').getContext('2d');
-    if (ctx) {
-      ctx.font = `400 ${REF}px ${fontStack(family)}`;
-      /* WebKit 對少數 fallback run 在 textAlign=center 時回傳的左右 bbox 仍以
-         start anchor 為基準。固定用 left 量測，再明確減掉完整 advance/2，
-         所有字形都會落在與正式 center 繪製相同的座標系。 */
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      const m = ctx.measureText(text);
-      const advance = Math.max(REF * .25, m.width);
-      const iosCanvas = /iP(?:hone|ad|od)/.test(navigator.userAgent)
-        || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-      const longIOS = iosCanvas && isIOSProblemLongSymbol(text);
-      if (longIOS) {
-        /* 超長 fallback 的 TextMetrics 連上下中心也可能只看其中一段。用 32px
-           小型分段 raster 掃一次（約數萬像素，而非舊版數百萬像素）；既能
-           得到完整真實邊界，首次新增仍可在一格內完成。 */
-        const scanPx = 32;
-        const scale = scanPx / REF;
-        const scanAdvance = advance * scale;
-        const pad = scanPx;
-        const cv = document.createElement('canvas');
-        cv.width = Math.max(1, Math.ceil(scanAdvance + pad * 2));
-        cv.height = scanPx * 3;
-        const cg = cv.getContext('2d', { willReadFrequently: true } as any);
-        if (cg) {
-          cg.font = `400 ${scanPx}px ${fontStack(family)}`;
-          cg.textAlign = 'left'; cg.textBaseline = 'middle'; cg.fillStyle = '#fff';
-          let x = pad;
-          const units = splitSymbolTimingUnits(text);
-          for (let i = 0; i < units.length; i += 8) {
-            const run = units.slice(i, i + 8).join('');
-            cg.fillText(run, x, cv.height / 2);
-            x += cg.measureText(run).width;
-          }
-          const pixels = cg.getImageData(0, 0, cv.width, cv.height).data;
-          let l = cv.width, r = -1, t = cv.height, b = -1;
-          for (let p = 0; p < cv.width * cv.height; p++) if (pixels[p * 4 + 3]) {
-            const xx = p % cv.width, yy = Math.floor(p / cv.width);
-            l = Math.min(l, xx); r = Math.max(r, xx); t = Math.min(t, yy); b = Math.max(b, yy);
-          }
-          if (r >= l) {
-            const ax = pad + scanAdvance / 2, ay = cv.height / 2;
-            out = {
-              w: (r - l + 1) / scanPx, h: (b - t + 1) / scanPx,
-              cx: ((l + r + 1) / 2 - ax) / scanPx,
-              cy: ((t + b + 1) / 2 - ay) / scanPx,
-            };
-            cv.width = cv.height = 0;
-            fastInkCache.set(key, out);
-            return out;
-          }
-        }
-        cv.width = cv.height = 0;
-      }
-      const left = longIOS ? -advance / 2 : -(Number(m.actualBoundingBoxLeft) || 0) - advance / 2;
-      const right = longIOS ? advance / 2 : (Number(m.actualBoundingBoxRight) || advance) - advance / 2;
-      const top = -(Number(m.actualBoundingBoxAscent) || REF * .75);
-      const bottom = Number(m.actualBoundingBoxDescent) || REF * .45;
-      out = {
-        w: Math.max(.01, right - left) / REF,
-        h: Math.max(.01, bottom - top) / REF,
-        cx: (left + right) / 2 / REF,
-        cy: (top + bottom) / 2 / REF,
-      };
-    }
-  } catch { /* 使用穩定 fallback */ }
-  fastInkCache.set(key, out);
-  return out;
-};
 
 /**
  * 直接掃描字形 alpha。一般符號沿用已驗證的 3072 Canvas；超寬符號不能建立
@@ -556,11 +463,7 @@ const splitSymbolTimingUnits = (text: string): string[] => {
     const variation = /[\ufe00-\ufe0f]/u.test(ch);
     const joiner = ch === '\u200d';
     const continuesJoiner = raw.length > 0 && raw[raw.length - 1].endsWith('\u200d');
-    /* 附加記號通常是前一顆字形的一部分，必須跟著基底一起縮放。把它拆成
-       獨立 raster 層會讓同一個字形的一小段繞著另一個中心跑掉。清單中的
-       Gurmukhi ੈ 是唯一刻意畫成獨立弧線的小單位，保留原本逐顆節奏。 */
-    const attachedMark = /\p{Mark}/u.test(ch) && ch !== '\u0a48';
-    if (raw.length && (variation || joiner || continuesJoiner || attachedMark)) raw[raw.length - 1] += ch;
+    if (raw.length && (variation || joiner || continuesJoiner)) raw[raw.length - 1] += ch;
     else raw.push(ch);
   }
   const invisible = /^[\s\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/u;
