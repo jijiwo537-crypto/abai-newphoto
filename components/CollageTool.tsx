@@ -7518,6 +7518,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             {['setting', 'shape', 'add', 'objedit', 'motion'].map(id => (
               <button 
                 key={id} 
+                aria-label={id === 'setting' ? '構圖分頁'
+                  : id === 'shape' ? '圖案分頁'
+                  : id === 'add' ? '新增分頁'
+                  : id === 'objedit' ? '編輯分頁'
+                  : '動畫分頁'}
                 onClick={() => {
                   setActiveTab(id);
                   /* 已經點進「新增符號／新增圖形」的時候再點一次加號，

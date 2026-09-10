@@ -31,15 +31,13 @@ test('opening the animation panel stays responsive on iPhone', async ({ page }, 
   await page.getByRole('button', { name: /創意拼圖/ }).click();
   await (await chooser).setFiles('public/icon-source.jpg');
   await page.waitForTimeout(600);
-  const viewport = page.viewportSize();
-  const tabY = (viewport?.height || 844) - 275;
-  await page.mouse.click(195, tabY); // 新增分頁
+  await page.getByRole('button', { name: '新增分頁', exact: true }).click();
   await page.getByRole('button', { name: /新增符號/ }).click();
   await page.locator('button[aria-label]').nth(13).click();
   await page.waitForTimeout(800); // 讓單顆放置符號在 idle slot 完成母片
 
   const started = Date.now();
-  await page.mouse.click(339, tabY); // 動畫分頁
+  await page.getByRole('button', { name: '動畫分頁', exact: true }).click();
   await page.getByText('進場動畫', { exact: true }).waitFor({ state: 'visible', timeout: 1500 });
   const openMs = Date.now() - started;
   const nextFrame = await page.evaluate(() => new Promise<boolean>(resolve => requestAnimationFrame(() => resolve(true))));
