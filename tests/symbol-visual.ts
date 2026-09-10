@@ -84,6 +84,11 @@ const drawCanonical = (
 
   const grid=document.querySelector('#grid')!;
   const failed:any[]=[];
+  /* 取实际 advance 最长的 12 组做 DPR 3 宽幅压力测试；它们覆盖分片门槛，
+     同时避免 CI 为 168 组重复配置数千像素宽的 Canvas 而超时。 */
+  const longStressSymbols=new Set([...SYMBOLS]
+    .sort((a,b)=>measureSymbolAdvance(b,SYMBOL_FONT,100)-measureSymbolAdvance(a,SYMBOL_FONT,100))
+    .slice(0,12));
   for(let index=0;index<SYMBOLS.length;index++){
     const text=SYMBOLS[index];
     const w100=measureSymbolAdvance(text,SYMBOL_FONT,100);
@@ -117,7 +122,7 @@ const drawCanonical = (
        尺寸才會超過 WebKit 安全 Canvas 邊長。另開足夠寬的完整 Canvas 畫出
        真實字串，確認分片量測的框確實包住左右兩端，而且動畫首幀不位移。 */
     const stressAdvance=measureSymbolAdvance(text,SYMBOL_FONT,100);
-    const stressNeeded=(stressAdvance+800)*dpr>3072;
+    const stressNeeded=longStressSymbols.has(text);
     let longMobileBounds=true,longMobileAnimation=true;
     if(stressNeeded){
       const stressLayout=measureSymbolUnitLayout(text,SYMBOL_FONT,100);
