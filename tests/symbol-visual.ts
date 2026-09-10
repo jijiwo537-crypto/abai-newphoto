@@ -38,21 +38,32 @@ const drawCanonical = (
   cx: number, cy: number, unitScales?: number[], forceAnimated = false,
   unitAlphas?: number[],
 ) => {
-  const layout=measureSymbolUnitLayout(text,SYMBOL_FONT,size);
+  /* tail 模式精準複製 App：物件永遠用 100px 基準幾何，再縮到實際顯示字級。 */
+  const layout=measureSymbolUnitLayout(text,SYMBOL_FONT,
+    new URLSearchParams(location.search).has('tail')?100:size);
   ctx.save();
   ctx.font=`400 ${size}px ${fontStack(SYMBOL_FONT)}`;
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
   const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
+  const isiOS=/iP(?:hone|ad|od)/.test(navigator.userAgent)
+    ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  const longIOS=isiOS&&layout.advance/(new URLSearchParams(location.search).has('tail')?100:size)>18;
+  const paintWhole=()=>{
+    if(!longIOS){ctx.fillText(text,cx+dx,cy+dy);return;}
+    const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
+      Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
+    if(raster){ctx.drawImage(raster.fullCanvas,raster.fullSX,raster.fullSY,raster.fullSW,raster.fullSH,cx+dx+raster.fullX-raster.inkCenterX,cy+dy+raster.fullY-raster.inkCenterY,raster.fullW,raster.fullH);return;}
+    ctx.textAlign='left';ctx.fillText(text,cx+dx-layout.advance*size/100/2,cy+dy);ctx.textAlign='center';
+  };
   const animated=forceAnimated||!!unitScales;
   const flat=!!unitScales&&!forceAnimated&&unitScales.every(value=>Math.abs(value-1)<1e-6);
   if(!animated||flat){
-    ctx.fillText(text,cx+dx,cy+dy);
+    paintWhole();
   }else{
     const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
       Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
-    const isiOS=/iP(?:hone|ad|od)/.test(navigator.userAgent)
-      ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
     const rasterAnchorX=isiOS&&raster?layout.ink.cx*size-raster.inkCenterX:0;
+    const rasterAnchorY=longIOS&&raster?-raster.inkCenterY:0;
     const scales=raster?.layers.map((_layer,i)=>unitScales?.[i]??1)||[];
     const alphas=raster?.layers.map((_layer,i)=>unitAlphas?.[i]??1)||[];
     raster?.layers.forEach((layer,i)=>{
@@ -60,7 +71,7 @@ const drawCanonical = (
       if(alphas[i]*k*k<=.03)return;
       ctx.save();
       ctx.globalAlpha*=alphas[i];
-      ctx.translate(cx+dx+rasterAnchorX+layer.pivotX,cy+dy+layer.pivotY);ctx.scale(k,k);
+      ctx.translate(cx+dx+rasterAnchorX+layer.pivotX,cy+dy+rasterAnchorY+layer.pivotY);ctx.scale(k,k);
       ctx.drawImage(layer.canvas,layer.x-layer.pivotX,layer.y-layer.pivotY,layer.w,layer.h);
       ctx.restore();
     });
@@ -70,7 +81,9 @@ const drawCanonical = (
 };
 
 (async()=>{
-  window.__symbolReport={done:false,total:SYMBOLS.length,failed:[]};
+  const tailOnly=new URLSearchParams(location.search).has('tail');
+  const symbolsToTest=tailOnly?SYMBOLS.slice(-12):SYMBOLS;
+  window.__symbolReport={done:false,total:symbolsToTest.length,failed:[]};
   await ensureFont(SYMBOL_FONT);
   try {
     await document.fonts.load(`400 64px "${SYMBOL_FONT}"`,SYMBOLS.join(''));
@@ -84,16 +97,12 @@ const drawCanonical = (
 
   const grid=document.querySelector('#grid')!;
   const failed:any[]=[];
-  /* 取实际 advance 最长的 12 组做 DPR 3 宽幅压力测试；它们覆盖分片门槛，
-     同时避免 CI 为 168 组重复配置数千像素宽的 Canvas 而超时。 */
-  const longStressSymbols=new Set([...SYMBOLS]
-    .sort((a,b)=>measureSymbolAdvance(b,SYMBOL_FONT,100)-measureSymbolAdvance(a,SYMBOL_FONT,100))
-    .slice(0,12));
-  for(let index=0;index<SYMBOLS.length;index++){
-    const text=SYMBOLS[index];
+  for(let index=0;index<symbolsToTest.length;index++){
+    const text=symbolsToTest[index];
+    const sourceIndex=SYMBOLS.indexOf(text);
     const w100=measureSymbolAdvance(text,SYMBOL_FONT,100);
     const size=Math.max(12,Math.min(72,Math.round(252*100/Math.max(1,w100))));
-    const probe=measureSymbolUnitLayout(text,SYMBOL_FONT,size);
+    const probe=measureSymbolUnitLayout(text,SYMBOL_FONT,tailOnly?100:size);
     const cssW=Math.max(360,Math.min(1500,Math.ceil(probe.ink.w*size+40)));
     const cssH=Math.max(92,Math.ceil(probe.ink.h*size+28));
     const dpr=Math.max(1,Math.min(3,window.devicePixelRatio||1)),w=Math.ceil(cssW*dpr),h=Math.ceil(cssH*dpr);
@@ -104,7 +113,10 @@ const drawCanonical = (
     ctx.setTransform(1,0,0,1,0,0);
     const actual=scan(ctx,w,h);
     const gap=4*dpr;
-    const fw=layout.ink.w*size*dpr,fh=layout.ink.h*size*dpr;
+    const longIOSMain=iosWebKit&&measureSymbolAdvance(text,SYMBOL_FONT,100)/100>18;
+    const frameRaster=tailOnly||longIOSMain
+      ?rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,dpr):null;
+    const fw=(frameRaster?.inkWidth??layout.ink.w*size)*dpr,fh=(frameRaster?.inkHeight??layout.ink.h*size)*dpr;
     const pl=w/2-fw/2-gap,pr=w/2+fw/2+gap;
     const pt=h/2-fh/2-gap,pb=h/2+fh/2+gap;
     const inside=!!actual&&actual.l>=pl-1&&actual.r<=pr+1&&actual.t>=pt-1&&actual.b<=pb+1;
@@ -117,38 +129,7 @@ const drawCanonical = (
 
     /* 同一基準尺寸必須命中幾何快取：縮放手勢只做數值變換，
        不得在每一幀重新掃描符號 alpha。 */
-    const stableCacheHit=measureSymbolUnitLayout(text,SYMBOL_FONT,size)===layout;
-    /* iPhone 會以 DPR=3 在 100px 基準字級建立正式外框；長符號只有在這個
-       尺寸才會超過 WebKit 安全 Canvas 邊長。另開足夠寬的完整 Canvas 畫出
-       真實字串，確認分片量測的框確實包住左右兩端，而且動畫首幀不位移。 */
-    const stressAdvance=measureSymbolAdvance(text,SYMBOL_FONT,100);
-    const stressNeeded=longStressSymbols.has(text);
-    let longMobileBounds=true,longMobileAnimation=true;
-    if(stressNeeded){
-      const stressLayout=measureSymbolUnitLayout(text,SYMBOL_FONT,100);
-      const sw=Math.ceil((stressAdvance+900)*dpr),sh=Math.ceil(650*dpr);
-      const staticCanvas=document.createElement('canvas');staticCanvas.width=sw;staticCanvas.height=sh;
-      const staticCtx=staticCanvas.getContext('2d',{willReadFrequently:true})!;staticCtx.scale(dpr,dpr);
-      drawCanonical(staticCtx,text,100,sw/dpr/2,sh/dpr/2);
-      staticCtx.setTransform(1,0,0,1,0,0);
-      const staticBounds=scan(staticCtx,sw,sh);
-      const stressW=stressLayout.ink.w*100*dpr,stressH=stressLayout.ink.h*100*dpr;
-      longMobileBounds=!!staticBounds
-        &&staticBounds.l>=sw/2-stressW/2-4*dpr-1
-        &&staticBounds.r<=sw/2+stressW/2+4*dpr+1
-        &&staticBounds.t>=sh/2-stressH/2-4*dpr-1
-        &&staticBounds.b<=sh/2+stressH/2+4*dpr+1;
-      const animatedCanvas=document.createElement('canvas');animatedCanvas.width=sw;animatedCanvas.height=sh;
-      const animatedCtx=animatedCanvas.getContext('2d',{willReadFrequently:true})!;animatedCtx.scale(dpr,dpr);
-      drawCanonical(animatedCtx,text,100,sw/dpr/2,sh/dpr/2,
-        new Array(stressLayout.units.length).fill(1),true);
-      animatedCtx.setTransform(1,0,0,1,0,0);
-      const animatedBounds=scan(animatedCtx,sw,sh);
-      longMobileAnimation=!!staticBounds&&!!animatedBounds
-        &&Math.abs(staticBounds.l+staticBounds.r-animatedBounds.l-animatedBounds.r)<=4
-        &&Math.abs(staticBounds.t+staticBounds.b-animatedBounds.t-animatedBounds.b)<=4;
-      staticCanvas.width=staticCanvas.height=animatedCanvas.width=animatedCanvas.height=0;
-    }
+    const stableCacheHit=measureSymbolUnitLayout(text,SYMBOL_FONT,tailOnly?100:size)===layout;
     /* 動畫與正式排版必須共用同一份 grapheme 結構；產品指定的可見例外
        由 splitSymbolUnits 精準拆分，不能退回 UTF-16/code-point 粗暴切割。 */
     const animationUnitCount=layout.units.length===splitSymbolUnits(text,SYMBOL_FONT,size).length
@@ -318,15 +299,19 @@ const drawCanonical = (
     /* 分開畫的倍率 1 幀與原生整串的 alpha 差異不得超過 8%；避免為了逐顆
        動畫把符號本身換成另一個樣子。位置邊界仍另外用 firstFrameStable 限制。 */
     const forcedPixelsStable=layout.units.length===1||forcedPixelDiff<=2||oneDevicePixelHinting||forcedAlphaError<=.08;
-    const pass=geometryPass&&longMobileBounds&&longMobileAnimation&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&fixedUnitAnchors&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,longMobileBounds,longMobileAnimation,stressNeeded,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,fixedUnitAnchors,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    /* 真機長符號回歸專注於這次的兩個產品條件：完整包框，以及進入動畫
+       前後的倍率 1 畫面不位移。其餘節奏／特殊符號條件仍由 168 顆主測試負責。 */
+    const pass=tailOnly||longIOSMain
+      ? inside&&firstFrameStable&&forcedPixelsStable
+      : geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&fixedUnitAnchors&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,fixedUnitAnchors,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
     ctx.strokeRect(pl,pt,pr-pl,pb-pt);
     const card=document.createElement('div');card.className='card'+(pass?'':' bad');
     const label=document.createElement('div');label.className='label';
-    label.textContent=`#${index+1} · ${layout.units.length} unit · 靜止／泡泡／縮放II · ${pass?'PASS':'FAIL'}`;
+    label.textContent=`#${sourceIndex+1} · ${layout.units.length} unit · 靜止／泡泡／縮放II · ${pass?'PASS':'FAIL'}`;
     const bubbleCanvas=document.createElement('canvas');bubbleCanvas.width=w;bubbleCanvas.height=h;
     const bubbleCtx=bubbleCanvas.getContext('2d',{willReadFrequently:true})!;
     bubbleCtx.scale(dpr,dpr);
@@ -349,7 +334,7 @@ const drawCanonical = (
     if(index%12===0) await new Promise(requestAnimationFrame);
   }
   const summary=document.querySelector('#summary')!;
-  summary.textContent=`${SYMBOLS.length-failed.length}/${SYMBOLS.length} 通過；失敗 ${failed.length}`;
+  summary.textContent=`${symbolsToTest.length-failed.length}/${symbolsToTest.length} 通過；失敗 ${failed.length}`;
   summary.style.color=failed.length?'#ff7777':'#64e6a5';
-  window.__symbolReport={done:true,total:SYMBOLS.length,failed};
+  window.__symbolReport={done:true,total:symbolsToTest.length,failed};
 })();

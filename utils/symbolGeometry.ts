@@ -47,7 +47,10 @@ export const clearSymbolInkCache = () => {
   unitLayoutCache.clear();
   splitUnitCache.clear();
   if (typeof rasterLayerCache !== 'undefined') {
-    rasterLayerCache.forEach(pack => pack.layers.forEach(layer => { layer.canvas.width = layer.canvas.height = 0; }));
+    rasterLayerCache.forEach(pack => {
+      pack.layers.forEach(layer => { layer.canvas.width = layer.canvas.height = 0; });
+      pack.fullCanvas.width = pack.fullCanvas.height = 0;
+    });
     rasterLayerCache.clear();
   }
 };
@@ -62,11 +65,10 @@ const fallbackInk = (text: string): SymbolInk => ({
 });
 
 /**
- * 直接掃描字形 alpha。iOS WebKit 對「很寬但不高」的 Canvas 也可能拒絕
- * getImageData，或只回傳其中一段；把長符號塞進單張 Canvas 正是手機上外框
- * 只包住左半邊的根因。這裡維持真機原字級與完整 native shaping，只把讀取區
- * 橫向切成安全的小片。每片仍重畫同一份完整字串，因此不會改變字距、fallback
- * 字體或 combining mark 的位置，最後再把各片的 alpha 邊界合併。
+ * 直接掃描字形 alpha。一般符號沿用已驗證的 3072 Canvas；超寬符號不能建立
+ * 巨型 Canvas（真機 Safari 會因記憶體壓力黑屏），也不能橫向切片（anchor
+ * 落在片外時 WebKit 會漏畫）。超寬時直接使用同一個 native shaping 回傳的
+ * actualBoundingBox*，它涵蓋整串左右端且完全不配置像素緩衝區。
  */
 const scanInk = (text: string, family: string, requestedSize: number): SymbolInk | null => {
   if (typeof document === 'undefined') return null;
@@ -82,7 +84,10 @@ const scanInk = (text: string, family: string, requestedSize: number): SymbolInk
     /* 一般符號完全沿用原本已驗證的單張 Canvas 路徑。上一版把所有符號都
        切片量測，連本來正常的短符號中心也受到 WebKit tile 取整影響。只有
        真正超過安全邊長的長符號才走下面的分片路徑。 */
-    if (desiredWidth <= MAX_SCAN_SIDE) {
+    const iosCanvas = /iP(?:hone|ad|od)/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const overlyLongFallbackRun = iosCanvas && advance / scanSize > 18;
+    if (desiredWidth <= MAX_SCAN_SIDE && !overlyLongFallbackRun) {
       const padX = Math.min(scanSize * 4, Math.max(2, (MAX_SCAN_SIDE - advance) / 2));
       const padY = Math.min(scanSize * 4, MAX_SCAN_SIDE / 2);
       canvas.width = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(advance + padX * 2)));
@@ -123,66 +128,21 @@ const scanInk = (text: string, family: string, requestedSize: number): SymbolInk
         cy: (top + bottom) / 2 / scanSize,
       };
     }
-    const padX = scanSize * 4;
-    const totalWidth = Math.max(1, Math.ceil(advance + padX * 2));
-    const scanHeight = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(scanSize * 6)));
-    const anchorX = totalWidth / 2, anchorY = scanHeight / 2;
-
-    /* TextMetrics 只作為 iOS 拒絕 getImageData 時的備援，而且使用真正墨水邊界，
-       不能把 advance 算進外框：長字串兩端的空白／方向控制字元沒有墨水，
-       把 advance 當內容正是左側莫名突出一塊的原因。 */
+    /* Mobile Safari 對超長 fallback 字串的 actualBoundingBoxLeft/Right 只會
+       回報其中一段，這正是長符號只被框住左／右半邊的根因。advance 則是
+       完整 shaping 後的總寬；長字串專用分支以它為對稱水平邊界，既不配置
+       巨型 Canvas，也不會讓錯誤的墨水中心把靜止或動畫內容推向一側。 */
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
     const metrics = ctx.measureText(text);
     const metricLeft = Number(metrics.actualBoundingBoxLeft) || 0;
     const metricRight = Number(metrics.actualBoundingBoxRight) || 0;
     const metricTop = Number(metrics.actualBoundingBoxAscent) || 0;
     const metricBottom = Number(metrics.actualBoundingBoxDescent) || 0;
-    const hasMetricInk = metricLeft > 0 || metricRight > 0;
-    let left = hasMetricInk ? -metricLeft : -advance / 2;
-    let right = hasMetricInk ? metricRight : advance / 2;
-    let top = metricTop > 0 ? -metricTop : -scanSize * .75;
-    let bottom = metricBottom > 0 ? metricBottom : scanSize * .45;
-
-    /* 1536×(最多 6em) 在 Retina iPhone 上也只占很小一块记忆体。不要把
-       tile 加大到 MAX_SCAN_SIDE；旧装置最容易在这里静默回传透明像素。 */
-    const tileSide = Math.min(1536, MAX_SCAN_SIDE);
-    let x0 = totalWidth, y0 = scanHeight, x1 = -1, y1 = -1;
-    let scannedInk = false;
-    try {
-      for (let tileX = 0; tileX < totalWidth; tileX += tileSide) {
-        const tileWidth = Math.min(tileSide, totalWidth - tileX);
-        canvas.width = tileWidth;
-        canvas.height = scanHeight;
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, tileWidth, scanHeight);
-        ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillStyle = '#fff';
-        /* anchor 可落在当前 tile 外；浏览器仍先完成整串 shaping，再裁进 tile。 */
-        ctx.fillText(text, anchorX - tileX, anchorY);
-        const data = ctx.getImageData(0, 0, tileWidth, scanHeight).data;
-        for (let p = 0; p < tileWidth * scanHeight; p++) {
-          if (data[p * 4 + 3] > 0) {
-            const x = p % tileWidth, y = Math.floor(p / tileWidth);
-            x0 = Math.min(x0, tileX + x); y0 = Math.min(y0, y);
-            x1 = Math.max(x1, tileX + x); y1 = Math.max(y1, y);
-            scannedInk = true;
-          }
-        }
-      }
-      if (scannedInk) {
-        /* getImageData 成功時，alpha 掃描就是真正顯示在畫面上的墨水。
-           不能再和 TextMetrics 聯集：WebKit/Chromium 的 actualBoundingBox*
-           對 middle baseline 仍可能以 alphabetic baseline 回報，會在上方製造
-           數十像素的假空白，正是長符號外框偏移、左／右留白不一致的來源。 */
-        left = x0 - anchorX;
-        right = x1 + 1 - anchorX;
-        top = y0 - anchorY;
-        bottom = y1 + 1 - anchorY;
-      }
-    } catch {
-      /* 部分 iOS 裝置會拒絕讀大型 Canvas；上面的向量度量仍完整可用。 */
-    }
+    const left = -advance / 2;
+    const right = advance / 2;
+    const top = metricTop > 0 ? -metricTop : -scanSize * .75;
+    const bottom = metricBottom > 0 ? metricBottom : scanSize * .45;
     canvas.width = canvas.height = 0;
     return {
       w: Math.max(.01, right - left) / scanSize,
@@ -477,9 +437,21 @@ export type SymbolRasterLayer = {
 
 export type SymbolRasterLayers = {
   layers: SymbolRasterLayer[];
+  fullCanvas: HTMLCanvasElement;
+  fullSX: number;
+  fullSY: number;
+  fullSW: number;
+  fullSH: number;
+  fullX: number;
+  fullY: number;
+  fullW: number;
+  fullH: number;
   beatCount: number;
   /** 完整離屏字串的實際墨水中心，相對於文字 advance 中心。 */
   inkCenterX: number;
+  inkCenterY: number;
+  inkWidth: number;
+  inkHeight: number;
 };
 const rasterLayerCache = new Map<string, SymbolRasterLayers>();
 const MAX_RASTER_LAYER_CACHE = 64;
@@ -542,9 +514,24 @@ export const rasterizeSymbolAnimationLayers = (
       g.fillStyle = color || '#fff'; g.strokeStyle = color || '#fff';
       g.lineWidth = strokePx; g.lineJoin = 'round'; g.miterLimit = 2;
     };
-    const paint = (value: string) => mode === 'stroke'
-      ? g.strokeText(value, textLeft, anchorY / oversample)
-      : g.fillText(value, textLeft, anchorY / oversample);
+    const iosCanvas = /iP(?:hone|ad|od)/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const paintRun = (value: string, x: number) => mode === 'stroke'
+      ? g.strokeText(value, x, anchorY / oversample)
+      : g.fillText(value, x, anchorY / oversample);
+    const paint = (value: string) => {
+      const valueUnits = splitSymbolTimingUnits(value);
+      if (!iosCanvas || logicalAdvance / px <= 18) { paintRun(value, textLeft); return; }
+      /* Mobile Safari 會在一次 fillText 含太多 fallback glyph 時從字串中段
+         才開始畫。每 8 個完整 grapheme 作一段，位置用同一字型的 prefix
+         advance 累加；combining mark 不會被拆開，也不影響正常短符號。 */
+      let x = textLeft;
+      for (let i = 0; i < valueUnits.length; i += 8) {
+        const run = valueUnits.slice(i, i + 8).join('');
+        paintRun(run, x);
+        x += probe.measureText(run).width;
+      }
+    };
     setup(); paint(text);
     const final = g.getImageData(0, 0, width, height);
     const pixelCount = width * height;
@@ -672,17 +659,30 @@ export const rasterizeSymbolAnimationLayers = (
         w: cw * inv, h: ch * inv,
       };
     });
-    source.width = source.height = 0;
     const out = {
       layers,
+      fullCanvas: source,
+      fullSX: fullL,
+      fullSY: fullT,
+      fullSW: fullR - fullL + 1,
+      fullSH: fullB - fullT + 1,
+      fullX: (fullL - anchorX) * inv,
+      fullY: (fullT - anchorY) * inv,
+      fullW: (fullR - fullL + 1) * inv,
+      fullH: (fullB - fullT + 1) * inv,
       beatCount: units.length,
       inkCenterX: ((fullL + fullR + 1) / 2 - anchorX) * inv,
+      inkCenterY: ((fullT + fullB + 1) / 2 - anchorY) * inv,
+      inkWidth: (fullR - fullL + 1) * inv,
+      inkHeight: (fullB - fullT + 1) * inv,
     };
     rasterLayerCache.set(key, out);
     while (rasterLayerCache.size > MAX_RASTER_LAYER_CACHE) {
       const first = rasterLayerCache.keys().next().value as string | undefined;
       if (!first) break;
-      rasterLayerCache.get(first)?.layers.forEach(layer => { layer.canvas.width = layer.canvas.height = 0; });
+      const evicted = rasterLayerCache.get(first);
+      evicted?.layers.forEach(layer => { layer.canvas.width = layer.canvas.height = 0; });
+      if (evicted) evicted.fullCanvas.width = evicted.fullCanvas.height = 0;
       rasterLayerCache.delete(first);
     }
     return out;
