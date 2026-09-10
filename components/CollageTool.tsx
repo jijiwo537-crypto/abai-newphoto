@@ -42,7 +42,7 @@ import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolAdvance, measureSymbolInk, measureSymbolInkFast, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -280,15 +280,16 @@ const prepareCreativeSymbolPlacement = (
   const cached = creativeSymbolPlacementCache.get(key);
   if (cached) return cached;
 
-  const ink = symInk(text, SYMBOL_FONT);
+  const ink = measureSymbolInkFast(text, SYMBOL_FONT);
   const short = Math.min(cw, ch);
   const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
     Math.round((cw * 0.7) / Math.max(0.05, ink.w))));
-  const canonical = measureSymbolUnitLayout(text, SYMBOL_FONT, 100);
   const value = {
     size,
-    w: Math.round(Math.max(6, canonical.ink.w * size + 8)),
-    h: Math.round(Math.max(6, canonical.ink.h * size + 8)),
+    /* 新增只需要完整字串外框，不需要建立逐單元動畫切片。後者對長符號
+       會同步掃描多張大型 Canvas，正是按下後隔很久才出現的原因。 */
+    w: Math.round(Math.max(6, ink.w * size + 8)),
+    h: Math.round(Math.max(6, ink.h * size + 8)),
   };
   creativeSymbolPlacementCache.set(key, value);
   return value;
@@ -311,15 +312,10 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
        缩放期间不可按每一帧的新字级重新扫描 alpha，否则 iOS 会卡顿且框会跳。 */
     const text = o.text || o.sym;
     const fam = o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT);
-    const layout = measureSymbolUnitLayout(text, fam, o.sym ? 100 : (o.size || 40));
-    const longIOS = !!o.sym && IS_IOS_CANVAS && isIOSProblemLongSymbol(text);
-    const raster = longIOS ? rasterizeSymbolAnimationLayers(
-      text, fam, o.size || 40, 'fill', '#fff', 0,
-      typeof window !== 'undefined' ? Math.max(1, Math.min(3, window.devicePixelRatio || 1)) : 1,
-    ) : null;
-    const ink = raster
-      ? { w: raster.inkWidth / (o.size || 40), h: raster.inkHeight / (o.size || 40), cx: 0, cy: 0 }
-      : layout.ink;
+    const ink = o.sym ? measureSymbolInkFast(text, fam)
+      : measureSymbolUnitLayout(text, fam, o.size || 40).ink;
+    /* 選中框只讀固定 100px 基準幾何。長符號過去在每次縮放鬆手後又建立
+       一份大型動畫 raster，會阻塞下一次手勢；框與本體本來就應共用 layout。 */
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -814,11 +810,11 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
   if (p < 1) return { ...f, fx, burst: f.burst || 0 };
   const after = t - (cfg.delay + cfg.dur);
-  /* 常駐從進場最後一幀的靜止狀態，以零速度平滑起步。70ms 的線性衝刺會在
-     手機第一格直接跳到很大的位移；240ms smoothstep 足夠柔順，又不會像舊版
-     350ms 線性淡入那樣看成停頓。 */
-  const attackP = Math.max(0, Math.min(1, after / 0.24));
-  const blend = attackP * attackP * (3 - 2 * attackP);
+  /* 常駐從進場最後一幀的靜止狀態，以零速度、零加速度起步。手機 30fps 下
+     240ms 只有約七格，第一下仍會顯得突然；420ms smootherstep 讓漂浮、波浪、
+     縮放、搖擺與繞圈共用同一段自然加速，不會出現銜接瞬移。 */
+  const attackP = Math.max(0, Math.min(1, after / 0.42));
+  const blend = attackP * attackP * attackP * (attackP * (attackP * 6 - 15) + 10);
   const g = idleFrame(cfg.idle, after, cfg.amp, cfg.speed, phase);
   return {
     k: 1 + (g.k - 1) * blend,
@@ -4924,16 +4920,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號：把「真正畫出來的那一塊」的中心搬到框心。
            不校正的話，前進寬度／em 方框跟墨水差多少，符號就偏出框多少 ——
            那正是「選取框沒有對齊符號」的原因。一般文字不動（它本來就對得上）。 */
-        const symbolLayout = o.sym
-          /* 几何只按物件基础字级量一次。s 在缩放手势中每帧变化，只用于下面的
-             数值乘法，不再制造几百份不同字级的 alpha 扫描与缓存。 */
-          ? measureSymbolUnitLayout(o.text || '', fam, 100)
-          : null;
+        const symbolInk = o.sym ? measureSymbolInkFast(o.text || '', fam) : null;
         const symbolUnitScale = o.sym ? (o.size || 40) / 100 : 1;
         let tdx = 0, tdy = 0;
-        if (symbolLayout) {
-          tdx = -symbolLayout.ink.cx * (o.size || 40) * s;
-          tdy = -symbolLayout.ink.cy * (o.size || 40) * s;
+        if (symbolInk) {
+          tdx = -symbolInk.cx * (o.size || 40) * s;
+          tdy = -symbolInk.cy * (o.size || 40) * s;
         }
         /* 順序跟經典拼圖一致：先只用「填色的形狀」畫光（三段模糊疊起來），
            再畫描邊，最後才填色。
@@ -4950,10 +4942,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
         const individualBreathe = !!o.sym && !objDragging && !objPinching && !symbolSizeTuningRef.current && o.mo?.idle === 'symbol-breathe2'
           && f?.idleT !== undefined;
+        /* 平常顯示、拖曳與雙指縮放完全不建立動畫分層資料；只有泡泡／縮放 II
+           正在播放時才需要它。這條快速路徑同時適用短符號與超長符號。 */
+        const symbolLayout = o.sym && (seqIn !== null || individualBreathe)
+          ? measureSymbolUnitLayout(o.text || '', fam, 100)
+          : null;
         /* 符號在靜止與動畫時都使用同一份 unitLayout。切換動畫頁只改每個
            單位的倍率／透明度，不會從整串 shaping 突然換成另一套排版。 */
         const unitLayout = symbolLayout;
-        const longIOSSymbol = !!unitLayout && IS_IOS_CANVAS
+        const longIOSSymbol = !!o.sym && IS_IOS_CANVAS
           && isIOSProblemLongSymbol(o.text || '');
         /* iPhone 的超長符號固定從同一張 256px 高解析母片縮放。雙指手勢只改
            drawImage 的目的尺寸，不再每一格用新的字級重建上萬像素寬的 raster。 */
@@ -4964,41 +4961,31 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            把傳入的中心當成起點。長符號改用完整 advance 算出的明確左起點；
            短符號完全保留既有 center 路徑。 */
         const paintWholeSymbol = (stroke: boolean) => {
-          if (!longIOSSymbol || !unitLayout) {
+          if (!longIOSSymbol) {
             if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
             else ctx.fillText(o.text || '', tdx, tdy);
             return;
           }
-          /* iOS 不只會錯報超長字串邊界，直接 fillText 也可能從字串中段才開始
-             rasterize。使用動畫本來就會建立的完整左對齊 raster，將所有層以
-             1 倍合成；靜止與動畫因此逐像素共用同一個來源。 */
-          const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
-          const matrix = ctx.getTransform();
-          const outputScale = Math.max(1, Math.hypot(matrix.a, matrix.b));
-          const wholeRaster = rasterizeSymbolAnimationLayers(
-            o.text || '', fam, rasterFontPx, stroke ? 'stroke' : 'fill',
-            typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
-            stroke ? ctx.lineWidth : 0, outputScale,
-          );
-          if (wholeRaster) {
-            ctx.drawImage(wholeRaster.fullCanvas,
-              wholeRaster.fullSX, wholeRaster.fullSY, wholeRaster.fullSW, wholeRaster.fullSH,
-              tdx + (wholeRaster.fullX - wholeRaster.inkCenterX) * longRasterScale,
-              tdy + (wholeRaster.fullY - wholeRaster.inkCenterY) * longRasterScale,
-              wholeRaster.fullW * longRasterScale, wholeRaster.fullH * longRasterScale);
-            return;
-          }
+          /* Mobile Safari 對超長 fallback 字串的一次 fillText 可能漏掉後半段。
+             靜止與手勢期間改成每 8 個完整 grapheme 畫一段；只做原生文字繪製，
+             不建立大型像素陣列，因此新增、拖曳和縮放都能立即回應。 */
           const previousAlign = ctx.textAlign;
           ctx.textAlign = 'left';
-          const left = tdx - unitLayout.advance * symbolUnitScale * s / 2;
-          if (stroke) ctx.strokeText(o.text || '', left, tdy);
-          else ctx.fillText(o.text || '', left, tdy);
+          const text = o.text || '';
+          /* 與動畫 raster 使用完全相同的安全單元分段；Intl.Segmenter 對少數
+             附加記號的分法不同，會讓分段邊界的 advance 累積差一小截。 */
+          const graphemes = splitSymbolUnits(text, fam, 100);
+          let x = tdx - measureSymbolAdvance(text, fam, 100) * symbolUnitScale * s / 2;
+          for (let i = 0; i < graphemes.length; i += 8) {
+            const run = graphemes.slice(i, i + 8).join('');
+            if (stroke) ctx.strokeText(run, x, tdy); else ctx.fillText(run, x, tdy);
+            x += ctx.measureText(run).width;
+          }
           ctx.textAlign = previousAlign;
         };
         const drawText = (stroke = false) => {
           if (!unitLayout) {
-            if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
-            else ctx.fillText(o.text || '', tdx, tdy);
+            paintWholeSymbol(stroke);
             return;
           }
           const now = f?.idleT ?? 0;
@@ -5027,10 +5014,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           );
           /* 靜止與動畫都使用同一份 unitLayout 中心。超長 iOS 字串的 layout
              已改用完整 advance 對稱中心，因此不會在切換動畫時再換座標系。 */
-          const renderedInkCenterX = unitLayout.ink.cx * (o.size || 40) * s;
-          const rasterAnchorX = IS_IOS_CANVAS && raster
-            ? renderedInkCenterX - raster.inkCenterX * longRasterScale : 0;
-          const rasterAnchorY = longIOSSymbol && raster ? -raster.inkCenterY * longRasterScale : 0;
+          /* 靜止與動畫都以完整 advance 中心、同一條 baseline 為唯一座標系。
+             raster 本身已經相對該 anchor 保存 x/y；再按墨水中心校正一次，
+             就會讓長符號或特殊 fallback 字形進動畫後整組偏移。 */
+          const rasterAnchorX = 0;
+          const rasterAnchorY = 0;
           const count = raster?.layers.length || unitLayout.unitLefts.length;
           const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
           const unitProgress = new Array(count).fill(0).map((_x, index) => seqIn === null ? 1

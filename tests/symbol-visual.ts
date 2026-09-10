@@ -1,6 +1,6 @@
 import { SYMBOLS } from '../utils/symbols';
 import { SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { clearSymbolInkCache, countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolAdvance, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
+import { clearSymbolInkCache, countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolAdvance, measureSymbolInkFast, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
 
 declare global {
   interface Window { __symbolReport?: { done: boolean; total: number; failed: any[] } }
@@ -41,19 +41,20 @@ const drawCanonical = (
   /* tail 模式精準複製 App：物件永遠用 100px 基準幾何，再縮到實際顯示字級。 */
   const layout=measureSymbolUnitLayout(text,SYMBOL_FONT,
     new URLSearchParams(location.search).has('tail')?100:size);
+  const fastInk=measureSymbolInkFast(text,SYMBOL_FONT);
   ctx.save();
   ctx.font=`400 ${size}px ${fontStack(SYMBOL_FONT)}`;
   ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';
-  const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
+  const dx=-fastInk.cx*size,dy=-fastInk.cy*size;
   const isiOS=/iP(?:hone|ad|od)/.test(navigator.userAgent)
     ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
   const longIOS=isiOS&&isIOSProblemLongSymbol(text);
   const paintWhole=()=>{
     if(!longIOS){ctx.fillText(text,cx+dx,cy+dy);return;}
-    const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
-      Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
-    if(raster){ctx.drawImage(raster.fullCanvas,raster.fullSX,raster.fullSY,raster.fullSW,raster.fullSH,cx+dx+raster.fullX-raster.inkCenterX,cy+dy+raster.fullY-raster.inkCenterY,raster.fullW,raster.fullH);return;}
-    ctx.textAlign='left';ctx.fillText(text,cx+dx-layout.advance*size/100/2,cy+dy);ctx.textAlign='center';
+    const gs=splitSymbolUnits(text,SYMBOL_FONT,100);
+    ctx.textAlign='left';let x=cx+dx-measureSymbolAdvance(text,SYMBOL_FONT,100)*size/100/2;
+    for(let i=0;i<gs.length;i+=8){const run=gs.slice(i,i+8).join('');ctx.fillText(run,x,cy+dy);x+=ctx.measureText(run).width}
+    ctx.textAlign='center';
   };
   const animated=forceAnimated||!!unitScales;
   const flat=!!unitScales&&!forceAnimated&&unitScales.every(value=>Math.abs(value-1)<1e-6);
@@ -62,8 +63,8 @@ const drawCanonical = (
   }else{
     const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
       Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
-    const rasterAnchorX=isiOS&&raster?layout.ink.cx*size-raster.inkCenterX:0;
-    const rasterAnchorY=longIOS&&raster?-raster.inkCenterY:0;
+    const rasterAnchorX=0;
+    const rasterAnchorY=0;
     const scales=raster?.layers.map((_layer,i)=>unitScales?.[i]??1)||[];
     const alphas=raster?.layers.map((_layer,i)=>unitAlphas?.[i]??1)||[];
     raster?.layers.forEach((layer,i)=>{
@@ -116,7 +117,8 @@ const drawCanonical = (
     const longIOSMain=iosWebKit&&isIOSProblemLongSymbol(text);
     const frameRaster=tailOnly||longIOSMain
       ?rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,dpr):null;
-    const fw=(frameRaster?.inkWidth??layout.ink.w*size)*dpr,fh=(frameRaster?.inkHeight??layout.ink.h*size)*dpr;
+    const interactiveInk=measureSymbolInkFast(text,SYMBOL_FONT);
+    const fw=interactiveInk.w*size*dpr,fh=interactiveInk.h*size*dpr;
     const pl=w/2-fw/2-gap,pr=w/2+fw/2+gap;
     const pt=h/2-fh/2-gap,pb=h/2+fh/2+gap;
     const inside=!!actual&&actual.l>=pl-1&&actual.r<=pr+1&&actual.t>=pt-1&&actual.b<=pb+1;
@@ -174,8 +176,9 @@ const drawCanonical = (
         ? Array.from(new Set([visibleIndices[0],visibleIndices[visibleIndices.length-1]]))
         : [];
       if(!sampleIndices.length) fixedUnitAnchors=false;
-      const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
-      const rasterAnchorX=iosWebKit?layout.ink.cx*size-verificationRaster.inkCenterX:0;
+      const fastInk=measureSymbolInkFast(text,SYMBOL_FONT);
+      const dx=-fastInk.cx*size,dy=-fastInk.cy*size;
+      const rasterAnchorX=0;
       for(const unitIndex of sampleIndices)for(const sampleScale of [.58,1.13]){
         const anchorCanvas=document.createElement('canvas');anchorCanvas.width=w;anchorCanvas.height=h;
         const anchorCtx=anchorCanvas.getContext('2d',{willReadFrequently:true})!;anchorCtx.scale(dpr,dpr);
