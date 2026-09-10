@@ -16,6 +16,8 @@ export type SymbolUnitLayout = {
   /** 小單位獨立繪製時的 baseline 起點，已校回完整 native 字串的墨水中心。 */
   unitOrigins: number[];
   unitOriginsY: number[];
+  unitBeatIndices: number[];
+  beatCount: number;
   /** 保證正式動畫沒有任何矩形裁切；測試也會逐顆檢查此旗標。 */
   unitUseSlice: boolean[];
   /** 靜止顯示與外框沿用瀏覽器原生字素排版，不受動畫拆分影響。 */
@@ -383,6 +385,31 @@ const splitSymbolClusters = (text: string): string[] => {
   return out.length ? out : [text];
 };
 
+const splitSymbolTimingUnits = (text: string): string[] => {
+  const raw: string[] = [];
+  for (const ch of Array.from(text)) {
+    const variation = /[\ufe00-\ufe0f]/u.test(ch);
+    const joiner = ch === '\u200d';
+    const continuesJoiner = raw.length > 0 && raw[raw.length - 1].endsWith('\u200d');
+    if (raw.length && (variation || joiner || continuesJoiner)) raw[raw.length - 1] += ch;
+    else raw.push(ch);
+  }
+  const invisible = /^[\s\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/u;
+  const out: string[] = [];
+  let leading = '';
+  for (const part of raw) {
+    if (invisible.test(part)) {
+      if (out.length) out[out.length - 1] += part;
+      else leading += part;
+    } else { out.push(leading + part); leading = ''; }
+  }
+  if (leading && out.length) out[out.length - 1] += leading;
+  return out.length ? out : [text];
+};
+
+export const countSymbolAnimationBeats = (text: string) =>
+  text ? splitSymbolTimingUnits(text).length : 0;
+
 /**
  * 判斷相鄰兩段分開繪製後是否仍與瀏覽器整段 shaping 相同。
  * 字寬相同不代表像素相同（fallback 字體、kerning、附加記號都可能改字形），
@@ -480,14 +507,37 @@ const compositionKeepsNativeShape = (text: string, units: string[], family: stri
     const nativePixels = nativeCtx.getImageData(0, 0, width, height).data;
     const unitPixels = unitsCtx.getImageData(0, 0, width, height).data;
     let union = 0, changed = 0;
+    const nativeBounds = { left: width, right: -1, top: height, bottom: -1 };
+    const unitBounds = { left: width, right: -1, top: height, bottom: -1 };
     for (let i = 3; i < nativePixels.length; i += 4) {
       if (nativePixels[i] > 8 || unitPixels[i] > 8) union++;
       if (Math.abs(nativePixels[i] - unitPixels[i]) > 1) changed++;
+      const pixel = (i - 3) / 4;
+      const x = pixel % width, py = Math.floor(pixel / width);
+      if (nativePixels[i] > 8) {
+        nativeBounds.left = Math.min(nativeBounds.left, x);
+        nativeBounds.right = Math.max(nativeBounds.right, x);
+        nativeBounds.top = Math.min(nativeBounds.top, py);
+        nativeBounds.bottom = Math.max(nativeBounds.bottom, py);
+      }
+      if (unitPixels[i] > 8) {
+        unitBounds.left = Math.min(unitBounds.left, x);
+        unitBounds.right = Math.max(unitBounds.right, x);
+        unitBounds.top = Math.min(unitBounds.top, py);
+        unitBounds.bottom = Math.max(unitBounds.bottom, py);
+      }
     }
     nativeCanvas.width = nativeCanvas.height = unitsCanvas.width = unitsCanvas.height = 0;
-    /* 動畫切換的第一幀不能接受任何可見 alpha 差異；即使只有彩色 emoji
-       邊緣的幾個像素，也會在 iPhone 上形成一次閃動。無差異才允許拆分。 */
-    return union === 0 || changed === 0;
+    /* 次像素 hinting 可能改變少量 alpha，卻不會讓肉眼看到跑位。只有拆分後
+       的實際墨水邊界移動超過一個 device pixel 才整組合併；因此保住位置的
+       同時，不會把原本可逐顆播放的長符號退化成一整組。 */
+    const boundsStable = nativeBounds.right < nativeBounds.left || (
+      Math.abs(nativeBounds.left - unitBounds.left) <= 1
+      && Math.abs(nativeBounds.right - unitBounds.right) <= 1
+      && Math.abs(nativeBounds.top - unitBounds.top) <= 1
+      && Math.abs(nativeBounds.bottom - unitBounds.bottom) <= 1
+    );
+    return union === 0 || changed <= 2 || boundsStable;
   } catch { return false; }
 };
 
@@ -502,14 +552,6 @@ export const splitSymbolUnits = (text: string, family = 'sans-serif', fontSize =
   const key = `${family}|${text}|${size}`;
   const cached = splitUnitCache.get(key);
   if (cached) return cached;
-  /* 彩色 emoji 的 glyph run 由 CoreText/系統 emoji 字體整串合成；拆成多次
-     fillText 時即使 Unicode 與座標相同，彩色圖層的內部 baseline 仍會改變。
-     保留完整 run 才能在 iOS 上逐像素一致。 */
-  if (/\p{Extended_Pictographic}/u.test(text)) {
-    const result = [text];
-    splitUnitCache.set(key, result);
-    return result;
-  }
   const raw = splitSymbolClusters(text);
   const out: string[] = [];
   for (const cluster of raw) {
@@ -641,13 +683,16 @@ export const measureSymbolUnitLayout = (
   const unitPivotsY: number[] = [];
   const unitOrigins: number[] = [];
   const unitOriginsY: number[] = [];
+  const unitBeatIndices: number[] = [];
   const unitUseSlice: boolean[] = [];
   let unitMetricCtx: CanvasRenderingContext2D | null = null;
   try {
     unitMetricCtx = document.createElement('canvas').getContext('2d');
     if (unitMetricCtx) unitMetricCtx.font = `400 ${size}px ${fontStack(family)}`;
   } catch { /* 退回 prefix 起點 */ }
+  let consumedBeats = 0;
   originalClusters.forEach((cluster, clusterIndex) => {
+    const coveredBeats = Math.max(1, splitSymbolTimingUnits(cluster).length);
     const origin = (nativeSpans[clusterIndex].left + nativeSpans[clusterIndex].right) / 2;
     const pivot = safeSlices.pivots[clusterIndex];
     let pivotY = 0;
@@ -666,12 +711,17 @@ export const measureSymbolUnitLayout = (
     /* 原生中心 anchor 與原生 baseline 原樣保留；動畫只改這個單位的 scale。 */
     unitOrigins.push(origin);
     unitOriginsY.push(0);
+    /* 若多個 code point 必須共用同一個安全排版 run，就沿用第一顆原始小單位
+       的節拍；不能取平均而把整組延後，否則泡泡與縮放 II 會明顯變慢。 */
+    unitBeatIndices.push(consumedBeats);
+    consumedBeats += coveredBeats;
     unitUseSlice.push(false);
   });
   /* 動畫不用矩形 clip；每個通過像素驗證的完整 run 都直接繪製。 */
   const out = {
     units, centers, unitClusters, unitLefts, unitRights,
-    unitPivots, unitPivotsY, unitOrigins, unitOriginsY, unitUseSlice,
+    unitPivots, unitPivotsY, unitOrigins, unitOriginsY, unitBeatIndices,
+    beatCount: Math.max(1, countSymbolAnimationBeats(text)), unitUseSlice,
     staticUnits, staticCenters, staticUnitInks,
     advance, ink,
   };
