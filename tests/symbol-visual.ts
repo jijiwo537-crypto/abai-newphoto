@@ -129,22 +129,22 @@ const drawCanonical = (
        這會抓到「程式裡看似有多個 index，實際畫面卻整組同步」的退化。 */
     const frameCanvas=document.createElement('canvas');frameCanvas.width=w;frameCanvas.height=h;
     const frameCtx=frameCanvas.getContext('2d',{willReadFrequently:true})!;
-    const bubbleHashes=new Set<string>();let bubblePerUnit=true;
+    const bubbleHashes=new Set<string>();let bubblePerUnit=layout.units.length<=1;
     const bubbleSpanFrames=1+Math.max(0,layout.beatCount-1)*.2;
     for(let fi=0;fi<9;fi++){
       const seq=fi/8;
       const qs=layout.unitBeatIndices.map(beat=>Math.max(0,Math.min(1,seq*bubbleSpanFrames-beat*.2)));
-      if(layout.units.length>1&&fi>0&&fi<8&&new Set(qs.map(v=>v.toFixed(5))).size<2) bubblePerUnit=false;
+      if(layout.units.length>1&&fi>0&&fi<8&&new Set(qs.map(v=>v.toFixed(5))).size>=2) bubblePerUnit=true;
       const scales=qs.map(q=>1+2.70158*Math.pow(q-1,3)+1.70158*Math.pow(q-1,2));
       frameCtx.setTransform(1,0,0,1,0,0);frameCtx.clearRect(0,0,w,h);frameCtx.scale(dpr,dpr);
       drawCanonical(frameCtx,text,size,cssW/2,cssH/2,scales,true,qs.map(q=>Math.min(1,q*3)));
       frameCtx.setTransform(1,0,0,1,0,0);bubbleHashes.add(alphaHash(frameCtx,w,h));
     }
-    const scaleHashes=new Set<string>();let scalePerUnit=true;
+    const scaleHashes=new Set<string>();let scalePerUnit=layout.units.length<=1;
     for(let fi=0;fi<16;fi++){
       const tt=fi*.11;
       const scales=layout.unitBeatIndices.map(beat=>symbolBreatheScale(beat,tt,60,1.2));
-      if(layout.units.length>1&&fi>1&&new Set(scales.map(v=>v.toFixed(5))).size<2) scalePerUnit=false;
+      if(layout.units.length>1&&fi>1&&new Set(scales.map(v=>v.toFixed(5))).size>=2) scalePerUnit=true;
       frameCtx.setTransform(1,0,0,1,0,0);frameCtx.clearRect(0,0,w,h);frameCtx.scale(dpr,dpr);
       drawCanonical(frameCtx,text,size,cssW/2,cssH/2,scales,true);
       frameCtx.setTransform(1,0,0,1,0,0);scaleHashes.add(alphaHash(frameCtx,w,h));
