@@ -42,7 +42,7 @@ import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -312,7 +312,7 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     const text = o.text || o.sym;
     const fam = o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT);
     const layout = measureSymbolUnitLayout(text, fam, o.sym ? 100 : (o.size || 40));
-    const longIOS = !!o.sym && IS_IOS_CANVAS && layout.advance / 100 > 18;
+    const longIOS = !!o.sym && IS_IOS_CANVAS && isIOSProblemLongSymbol(text);
     const raster = longIOS ? rasterizeSymbolAnimationLayers(
       text, fam, o.size || 40, 'fill', '#fff', 0,
       typeof window !== 'undefined' ? Math.max(1, Math.min(3, window.devicePixelRatio || 1)) : 1,
@@ -4925,7 +4925,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            單位的倍率／透明度，不會從整串 shaping 突然換成另一套排版。 */
         const unitLayout = symbolLayout;
         const longIOSSymbol = !!unitLayout && IS_IOS_CANVAS
-          && unitLayout.advance / 100 > 18;
+          && isIOSProblemLongSymbol(o.text || '');
         /* Mobile Safari 對很長的 fallback 字串會錯誤套用 textAlign=center，
            把傳入的中心當成起點。長符號改用完整 advance 算出的明確左起點；
            短符號完全保留既有 center 路徑。 */

@@ -1,6 +1,6 @@
 import { SYMBOLS } from '../utils/symbols';
 import { SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { clearSymbolInkCache, countSymbolAnimationBeats, measureSymbolAdvance, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
+import { clearSymbolInkCache, countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolAdvance, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
 
 declare global {
   interface Window { __symbolReport?: { done: boolean; total: number; failed: any[] } }
@@ -47,7 +47,7 @@ const drawCanonical = (
   const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
   const isiOS=/iP(?:hone|ad|od)/.test(navigator.userAgent)
     ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-  const longIOS=isiOS&&layout.advance/(new URLSearchParams(location.search).has('tail')?100:size)>18;
+  const longIOS=isiOS&&isIOSProblemLongSymbol(text);
   const paintWhole=()=>{
     if(!longIOS){ctx.fillText(text,cx+dx,cy+dy);return;}
     const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
@@ -99,7 +99,7 @@ const drawCanonical = (
   const failed:any[]=[];
   for(let index=0;index<symbolsToTest.length;index++){
     const text=symbolsToTest[index];
-    const sourceIndex=SYMBOLS.indexOf(text);
+    const sourceIndex=tailOnly?SYMBOLS.length-symbolsToTest.length+index:index;
     const w100=measureSymbolAdvance(text,SYMBOL_FONT,100);
     const size=Math.max(12,Math.min(72,Math.round(252*100/Math.max(1,w100))));
     const probe=measureSymbolUnitLayout(text,SYMBOL_FONT,tailOnly?100:size);
@@ -113,7 +113,7 @@ const drawCanonical = (
     ctx.setTransform(1,0,0,1,0,0);
     const actual=scan(ctx,w,h);
     const gap=4*dpr;
-    const longIOSMain=iosWebKit&&measureSymbolAdvance(text,SYMBOL_FONT,100)/100>18;
+    const longIOSMain=iosWebKit&&isIOSProblemLongSymbol(text);
     const frameRaster=tailOnly||longIOSMain
       ?rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,dpr):null;
     const fw=(frameRaster?.inkWidth??layout.ink.w*size)*dpr,fh=(frameRaster?.inkHeight??layout.ink.h*size)*dpr;
@@ -304,7 +304,7 @@ const drawCanonical = (
     const pass=tailOnly||longIOSMain
       ? inside&&firstFrameStable&&forcedPixelsStable
       : geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&fixedUnitAnchors&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,fixedUnitAnchors,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    if(!pass)failed.push({index,sourceIndex,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,fixedUnitAnchors,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;
