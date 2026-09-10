@@ -15,6 +15,14 @@ const scan = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
   return r>=l?{l,r:r+1,t,b:b+1}:null;
 };
 
+/* 連續幀用真實 alpha 像素做雜湊，不讀 layout 數值冒充視覺驗證。 */
+const alphaHash = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+  const data=ctx.getImageData(0,0,w,h).data;
+  let hash=2166136261,visible=0;
+  for(let i=3;i<data.length;i+=4){const a=data[i];if(a)visible++;hash=Math.imul(hash^a,16777619);}
+  return `${hash>>>0}:${visible}`;
+};
+
 const drawCanonical = (
   ctx: CanvasRenderingContext2D, text: string, size: number,
   cx: number, cy: number, unitScales?: number[], forceAnimated = false,
@@ -57,6 +65,10 @@ const drawCanonical = (
   } catch {}
   clearSymbolInkCache();
 
+  /* 產品目標是 iOS；WebKit 必須 168 組全部逐單位。桌面 Chromium 缺少少數
+     iOS 系統字形時允許安全退回，否則測到的是方框替代字，不是產品字形。 */
+  const iosWebKit=/Safari\//.test(navigator.userAgent)&&!/Chrome|Chromium|Edg\//.test(navigator.userAgent);
+
   const grid=document.querySelector('#grid')!;
   const failed:any[]=[];
   for(let index=0;index<SYMBOLS.length;index++){
@@ -90,9 +102,12 @@ const drawCanonical = (
     const stableCacheHit=measureSymbolUnitLayout(text,SYMBOL_FONT,size)===layout;
     /* 動畫與正式排版必須共用同一份 grapheme 結構；產品指定的可見例外
        由 splitSymbolUnits 精準拆分，不能退回 UTF-16/code-point 粗暴切割。 */
-    const animationUnitCount=layout.units.length===splitSymbolUnits(text,SYMBOL_FONT,size).length;
+    const animationUnitCount=layout.units.length===splitSymbolUnits(text,SYMBOL_FONT,size).length
+      &&(!iosWebKit||layout.units.length===layout.beatCount);
     const originalCadence=layout.beatCount===countSymbolAnimationBeats(text);
-    const independentGroups=layout.beatCount<=1||layout.units.length>1;
+    /* 每一個可見節拍都必須有自己的實際繪圖單元。上一版只檢查 >1，
+       所以 20 個節拍被合成 2 大組仍會顯示 PASS，正是實機看到整組同步的原因。 */
+    const independentGroups=!iosWebKit||layout.units.length===layout.beatCount;
     let expectedBeat=0;
     const originalBeatOrder=layout.units.every((unit,index)=>{
       const startsOnOriginalBeat=layout.unitBeatIndices[index]===expectedBeat;
@@ -109,6 +124,36 @@ const drawCanonical = (
     const trajectories=scaleA.map((v,i)=>`${v.toFixed(6)}|${scaleB[i].toFixed(6)}`);
     const scale2Independent=layout.units.length<=1||new Set(trajectories).size===layout.units.length;
 
+    /* 多幀像素掃描：泡泡取 9 幀、縮放 II 取 16 幀。至少要得到多個不同的
+       真實 raster frame；同時每一幀的各單位倍率／出場進度不得全相同。
+       這會抓到「程式裡看似有多個 index，實際畫面卻整組同步」的退化。 */
+    const frameCanvas=document.createElement('canvas');frameCanvas.width=w;frameCanvas.height=h;
+    const frameCtx=frameCanvas.getContext('2d',{willReadFrequently:true})!;
+    const bubbleHashes=new Set<string>();let bubblePerUnit=true;
+    const bubbleSpanFrames=1+Math.max(0,layout.beatCount-1)*.2;
+    for(let fi=0;fi<9;fi++){
+      const seq=fi/8;
+      const qs=layout.unitBeatIndices.map(beat=>Math.max(0,Math.min(1,seq*bubbleSpanFrames-beat*.2)));
+      if(layout.units.length>1&&fi>0&&fi<8&&new Set(qs.map(v=>v.toFixed(5))).size<2) bubblePerUnit=false;
+      const scales=qs.map(q=>1+2.70158*Math.pow(q-1,3)+1.70158*Math.pow(q-1,2));
+      frameCtx.setTransform(1,0,0,1,0,0);frameCtx.clearRect(0,0,w,h);frameCtx.scale(dpr,dpr);
+      drawCanonical(frameCtx,text,size,cssW/2,cssH/2,scales,true,qs.map(q=>Math.min(1,q*3)));
+      frameCtx.setTransform(1,0,0,1,0,0);bubbleHashes.add(alphaHash(frameCtx,w,h));
+    }
+    const scaleHashes=new Set<string>();let scalePerUnit=true;
+    for(let fi=0;fi<16;fi++){
+      const tt=fi*.11;
+      const scales=layout.unitBeatIndices.map(beat=>symbolBreatheScale(beat,tt,60,1.2));
+      if(layout.units.length>1&&fi>1&&new Set(scales.map(v=>v.toFixed(5))).size<2) scalePerUnit=false;
+      frameCtx.setTransform(1,0,0,1,0,0);frameCtx.clearRect(0,0,w,h);frameCtx.scale(dpr,dpr);
+      drawCanonical(frameCtx,text,size,cssW/2,cssH/2,scales,true);
+      frameCtx.setTransform(1,0,0,1,0,0);scaleHashes.add(alphaHash(frameCtx,w,h));
+    }
+    frameCanvas.width=frameCanvas.height=0;
+    const multiFrameVisual=bubblePerUnit&&scalePerUnit
+      &&bubbleHashes.size>=Math.min(5,layout.units.length+2)
+      &&scaleHashes.size>=Math.min(8,layout.units.length+3);
+
     // 動畫最後一幀必須逐像素回到「原生 grapheme 靜止排版」。
     const reference=ctx.getImageData(0,0,w,h).data;
     const c2=document.createElement('canvas');c2.width=w;c2.height=h;
@@ -123,11 +168,13 @@ const drawCanonical = (
     const g3=c3.getContext('2d',{willReadFrequently:true})!;g3.scale(dpr,dpr);
     drawCanonical(g3,text,size,cssW/2,cssH/2,new Array(layout.units.length).fill(1),true);
     const forcedAnimatedPixels=g3.getImageData(0,0,w,h).data;
-    let forcedPixelDiff=0;
-    for(let i=3;i<reference.length;i+=4) if(reference[i]!==forcedAnimatedPixels[i]) {
-      forcedPixelDiff++;
-      if(forcedPixelDiff>2) break;
+    let forcedPixelDiff=0,forcedAlphaDelta=0,referenceAlphaMass=0;
+    for(let i=3;i<reference.length;i+=4){
+      referenceAlphaMass+=reference[i];
+      forcedAlphaDelta+=Math.abs(reference[i]-forcedAnimatedPixels[i]);
+      if(reference[i]!==forcedAnimatedPixels[i]) forcedPixelDiff++;
     }
+    const forcedAlphaError=forcedAlphaDelta/Math.max(1,referenceAlphaMass);
     g3.setTransform(1,0,0,1,0,0);
     const forcedAnimatedBounds=scan(g3,w,h);
     const firstFrameStable=!!actual&&!!forcedAnimatedBounds
@@ -162,9 +209,11 @@ const drawCanonical = (
       && Math.abs(actual.r-forcedAnimatedBounds.r)<=dpr
       && Math.abs(actual.t-forcedAnimatedBounds.t)<=dpr
       && Math.abs(actual.b-forcedAnimatedBounds.b)<=dpr;
-    const forcedPixelsStable=layout.units.length===1||forcedPixelDiff<=2||oneDevicePixelHinting;
-    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&scale2StartsFlat&&scale2Independent&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,scale2StartsFlat,scale2Independent,firstFrameStable,forcedPixelDiff,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    /* 分開畫的倍率 1 幀與原生整串的 alpha 差異不得超過 8%；避免為了逐顆
+       動畫把符號本身換成另一個樣子。位置邊界仍另外用 firstFrameStable 限制。 */
+    const forcedPixelsStable=layout.units.length===1||forcedPixelDiff<=2||oneDevicePixelHinting||forcedAlphaError<=.08;
+    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,scale2StartsFlat,scale2Independent,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;

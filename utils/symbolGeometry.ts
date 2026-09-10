@@ -556,16 +556,30 @@ export const splitSymbolUnits = (text: string, family = 'sans-serif', fontSize =
   const key = `${family}|${text}|${size}`;
   const cached = splitUnitCache.get(key);
   if (cached) return cached;
-  const raw = splitSymbolClusters(text);
-  const out: string[] = [];
-  for (const cluster of raw) {
-    if (out.length && !pairKeepsNativeShape(out[out.length - 1], cluster, family, size)) {
-      out[out.length - 1] += cluster;
-    } else out.push(cluster);
+  /* 泡泡／縮放 II 的產品單位是畫面上每一個小符號，不是 Unicode 的
+     grapheme cluster。像 `*ੈ` 雖然會被 Intl.Segmenter 視為一顆字素，肉眼
+     卻明確是星號與弧線兩個單位；若在這裡為了 native shaping 把它們合併，
+     動畫就只剩整組同步。變體選擇符與 ZWJ 仍由 timing splitter 留在前一顆，
+     所以真正不可拆的 emoji 不會被拆壞。 */
+  const timingUnits = splitSymbolTimingUnits(text);
+  let result = timingUnits;
+  /* iOS / WebKit 能原樣分開繪製目前清單中的全部 168 組符號。少數缺少
+     對應字形的桌面瀏覽器會把單獨的 combining mark 畫成方框或虛線圓；
+     只有確認分段後已經不是同一個外觀時才退回安全 grapheme，避免動畫時
+     符號突然換形。這個保護不會在 iPhone 上合併任何單位。 */
+  const iosWebKit = typeof navigator !== 'undefined'
+    && /Safari\//.test(navigator.userAgent)
+    && !/Chrome|Chromium|Edg\//.test(navigator.userAgent);
+  if (!iosWebKit && !compositionKeepsNativeShape(text, timingUnits, family, size)) {
+    const raw = splitSymbolClusters(text);
+    const safe: string[] = [];
+    for (const cluster of raw) {
+      if (safe.length && !pairKeepsNativeShape(safe[safe.length - 1], cluster, family, size)) {
+        safe[safe.length - 1] += cluster;
+      } else safe.push(cluster);
+    }
+    result = safe.length ? safe : [text];
   }
-  /* 不再因整串 fallback 有細微差異就把所有單元合成一組；版面建立時會用
-     完整原生墨水边界统一校准，泡泡與縮放 II 才能保留逐顆動畫。 */
-  const result = out.length ? out : [text];
   splitUnitCache.set(key, result);
   return result;
 };
@@ -652,6 +666,7 @@ export const measureSymbolUnitLayout = (
   /* 一次完整字串 alpha 掃描就是外框的唯一來源。上一版在首次新增時又為
      每個小單位各掃一次，長符號會同步建立幾十張 Canvas，正是點擊延遲與
      第一段拖曳掉幀的主因；那些結果現已不參與任何正式繪製。 */
+  /* 動畫節拍就是實際繪圖單位，兩者不可再用不同陣列。 */
   const originalClusters = splitSymbolUnits(text, family, size);
   const advance = measureSymbolAdvance(text, family, size);
   const ink = measureSymbolInkAtSize(text, family, size);
