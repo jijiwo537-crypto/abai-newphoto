@@ -50,9 +50,9 @@ const drawCanonical = (
   }else{
     const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
       Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
-    /* 正式畫布與靜止 fillText 共用原生 advance anchor；動畫不可在 iOS
-       額外依量測中心搬移，否則真機 fallback 字形會整串向左跳。 */
-    const rasterAnchorX=0;
+    const isiOS=/iP(?:hone|ad|od)/.test(navigator.userAgent)
+      ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+    const rasterAnchorX=isiOS&&raster?layout.ink.cx*size-raster.inkCenterX:0;
     const scales=raster?.layers.map((_layer,i)=>unitScales?.[i]??1)||[];
     const alphas=raster?.layers.map((_layer,i)=>unitAlphas?.[i]??1)||[];
     raster?.layers.forEach((layer,i)=>{
@@ -84,6 +84,11 @@ const drawCanonical = (
 
   const grid=document.querySelector('#grid')!;
   const failed:any[]=[];
+  /* 取实际 advance 最长的 12 组做 DPR 3 宽幅压力测试；它们覆盖分片门槛，
+     同时避免 CI 为 168 组重复配置数千像素宽的 Canvas 而超时。 */
+  const longStressSymbols=new Set([...SYMBOLS]
+    .sort((a,b)=>measureSymbolAdvance(b,SYMBOL_FONT,100)-measureSymbolAdvance(a,SYMBOL_FONT,100))
+    .slice(0,12));
   for(let index=0;index<SYMBOLS.length;index++){
     const text=SYMBOLS[index];
     const w100=measureSymbolAdvance(text,SYMBOL_FONT,100);
@@ -113,6 +118,37 @@ const drawCanonical = (
     /* 同一基準尺寸必須命中幾何快取：縮放手勢只做數值變換，
        不得在每一幀重新掃描符號 alpha。 */
     const stableCacheHit=measureSymbolUnitLayout(text,SYMBOL_FONT,size)===layout;
+    /* iPhone 會以 DPR=3 在 100px 基準字級建立正式外框；長符號只有在這個
+       尺寸才會超過 WebKit 安全 Canvas 邊長。另開足夠寬的完整 Canvas 畫出
+       真實字串，確認分片量測的框確實包住左右兩端，而且動畫首幀不位移。 */
+    const stressAdvance=measureSymbolAdvance(text,SYMBOL_FONT,100);
+    const stressNeeded=longStressSymbols.has(text);
+    let longMobileBounds=true,longMobileAnimation=true;
+    if(stressNeeded){
+      const stressLayout=measureSymbolUnitLayout(text,SYMBOL_FONT,100);
+      const sw=Math.ceil((stressAdvance+900)*dpr),sh=Math.ceil(650*dpr);
+      const staticCanvas=document.createElement('canvas');staticCanvas.width=sw;staticCanvas.height=sh;
+      const staticCtx=staticCanvas.getContext('2d',{willReadFrequently:true})!;staticCtx.scale(dpr,dpr);
+      drawCanonical(staticCtx,text,100,sw/dpr/2,sh/dpr/2);
+      staticCtx.setTransform(1,0,0,1,0,0);
+      const staticBounds=scan(staticCtx,sw,sh);
+      const stressW=stressLayout.ink.w*100*dpr,stressH=stressLayout.ink.h*100*dpr;
+      longMobileBounds=!!staticBounds
+        &&staticBounds.l>=sw/2-stressW/2-4*dpr-1
+        &&staticBounds.r<=sw/2+stressW/2+4*dpr+1
+        &&staticBounds.t>=sh/2-stressH/2-4*dpr-1
+        &&staticBounds.b<=sh/2+stressH/2+4*dpr+1;
+      const animatedCanvas=document.createElement('canvas');animatedCanvas.width=sw;animatedCanvas.height=sh;
+      const animatedCtx=animatedCanvas.getContext('2d',{willReadFrequently:true})!;animatedCtx.scale(dpr,dpr);
+      drawCanonical(animatedCtx,text,100,sw/dpr/2,sh/dpr/2,
+        new Array(stressLayout.units.length).fill(1),true);
+      animatedCtx.setTransform(1,0,0,1,0,0);
+      const animatedBounds=scan(animatedCtx,sw,sh);
+      longMobileAnimation=!!staticBounds&&!!animatedBounds
+        &&Math.abs(staticBounds.l+staticBounds.r-animatedBounds.l-animatedBounds.r)<=4
+        &&Math.abs(staticBounds.t+staticBounds.b-animatedBounds.t-animatedBounds.b)<=4;
+      staticCanvas.width=staticCanvas.height=animatedCanvas.width=animatedCanvas.height=0;
+    }
     /* 動畫與正式排版必須共用同一份 grapheme 結構；產品指定的可見例外
        由 splitSymbolUnits 精準拆分，不能退回 UTF-16/code-point 粗暴切割。 */
     const animationUnitCount=layout.units.length===splitSymbolUnits(text,SYMBOL_FONT,size).length
@@ -158,7 +194,7 @@ const drawCanonical = (
         : [];
       if(!sampleIndices.length) fixedUnitAnchors=false;
       const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
-      const rasterAnchorX=0;
+      const rasterAnchorX=iosWebKit?layout.ink.cx*size-verificationRaster.inkCenterX:0;
       for(const unitIndex of sampleIndices)for(const sampleScale of [.58,1.13]){
         const anchorCanvas=document.createElement('canvas');anchorCanvas.width=w;anchorCanvas.height=h;
         const anchorCtx=anchorCanvas.getContext('2d',{willReadFrequently:true})!;anchorCtx.scale(dpr,dpr);
@@ -282,8 +318,8 @@ const drawCanonical = (
     /* 分開畫的倍率 1 幀與原生整串的 alpha 差異不得超過 8%；避免為了逐顆
        動畫把符號本身換成另一個樣子。位置邊界仍另外用 firstFrameStable 限制。 */
     const forcedPixelsStable=layout.units.length===1||forcedPixelDiff<=2||oneDevicePixelHinting||forcedAlphaError<=.08;
-    const pass=geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&fixedUnitAnchors&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
-    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,fixedUnitAnchors,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+    const pass=geometryPass&&longMobileBounds&&longMobileAnimation&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&fixedUnitAnchors&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&diff<=2;
+    if(!pass)failed.push({index,inside,centered,tight,nativeSafe,nativeDprSafety,longMobileBounds,longMobileAnimation,stressNeeded,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,fixedUnitAnchors,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,bubbleFrames:bubbleHashes.size,scaleFrames:scaleHashes.size,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
     ctx.strokeStyle=pass?'#64e6a5':'#ff4d4d';ctx.lineWidth=2;

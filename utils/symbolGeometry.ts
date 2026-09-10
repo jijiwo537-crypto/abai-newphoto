@@ -78,6 +78,51 @@ const scanInk = (text: string, family: string, requestedSize: number): SymbolInk
     const scanSize = Math.max(8, requestedSize);
     ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
     const advance = Math.max(scanSize, ctx.measureText(text).width);
+    const desiredWidth = advance + scanSize * 8;
+    /* 一般符號完全沿用原本已驗證的單張 Canvas 路徑。上一版把所有符號都
+       切片量測，連本來正常的短符號中心也受到 WebKit tile 取整影響。只有
+       真正超過安全邊長的長符號才走下面的分片路徑。 */
+    if (desiredWidth <= MAX_SCAN_SIDE) {
+      const padX = Math.min(scanSize * 4, Math.max(2, (MAX_SCAN_SIDE - advance) / 2));
+      const padY = Math.min(scanSize * 4, MAX_SCAN_SIDE / 2);
+      canvas.width = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(advance + padX * 2)));
+      canvas.height = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(Math.max(scanSize * 2, padY * 2))));
+      ctx.font = `400 ${scanSize}px ${fontStack(family)}`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+      const ax = canvas.width / 2, ay = canvas.height / 2;
+      const metrics = ctx.measureText(text);
+      const metricLeft = Number(metrics.actualBoundingBoxLeft) || 0;
+      const metricRight = Number(metrics.actualBoundingBoxRight) || 0;
+      const metricTop = Number(metrics.actualBoundingBoxAscent) || 0;
+      const metricBottom = Number(metrics.actualBoundingBoxDescent) || 0;
+      const hasMetricInk = metricLeft > 0 || metricRight > 0;
+      let left = hasMetricInk ? -metricLeft : -advance / 2;
+      let right = hasMetricInk ? metricRight : advance / 2;
+      let top = metricTop > 0 ? -metricTop : -scanSize * .75;
+      let bottom = metricBottom > 0 ? metricBottom : scanSize * .45;
+      ctx.fillText(text, ax, ay);
+      try {
+        const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+        let x0 = canvas.width, y0 = canvas.height, x1 = -1, y1 = -1;
+        for (let y = 0; y < canvas.height; y++) for (let x = 0; x < canvas.width; x++) {
+          if (data[(y * canvas.width + x) * 4 + 3] > 0) {
+            x0 = Math.min(x0, x); y0 = Math.min(y0, y);
+            x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+          }
+        }
+        if (x1 >= x0 && y1 >= y0) {
+          left = x0 - ax; right = x1 + 1 - ax;
+          top = y0 - ay; bottom = y1 + 1 - ay;
+        }
+      } catch { /* iOS 拒絕讀取時沿用真正墨水 TextMetrics。 */ }
+      canvas.width = canvas.height = 0;
+      return {
+        w: Math.max(.01, right - left) / scanSize,
+        h: Math.max(.01, bottom - top) / scanSize,
+        cx: (left + right) / 2 / scanSize,
+        cy: (top + bottom) / 2 / scanSize,
+      };
+    }
     const padX = scanSize * 4;
     const totalWidth = Math.max(1, Math.ceil(advance + padX * 2));
     const scanHeight = Math.max(1, Math.min(MAX_SCAN_SIDE, Math.ceil(scanSize * 6)));
