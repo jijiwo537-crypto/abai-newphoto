@@ -797,7 +797,10 @@ export const rasterizeSymbolAnimationLayers = (
   const units = splitSymbolTimingUnits(renderText);
   if (!units.length) return null;
   const px = Math.max(8, logicalFontPx);
-  const wantedScale = Math.max(1, Math.min(3, outputScale));
+  /* 縮放 II 會持續改變每個小單位的目的尺寸；3× 貼圖在放大的 Retina
+     預覽仍可能被往上採樣，邊緣 alpha 便會逐幀游動。短符號允許到 6×，
+     實際尺寸仍會被下方 16000px 單邊限制夾住，長符號不會無限配置。 */
+  const wantedScale = Math.max(1, Math.min(6, outputScale));
   const key = `${text}|${family}|${px.toFixed(3)}|${mode}|${color}|${logicalStrokeWidth.toFixed(3)}|${wantedScale.toFixed(3)}`;
   const hit = rasterLayerCache.get(key);
   if (hit) return hit;

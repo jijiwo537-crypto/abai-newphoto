@@ -4836,27 +4836,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const reveal = f?.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, f.gridReveal));
           const shownW = bw * reveal;
           if (shownW <= 0.01) return;
-          /* 每片維持在約 1 個畫布像素，並限制總數避免手機負擔過高。
-             舊版最多 56 片，預覽放大時垂直位移會形成明顯階梯鋸齒。 */
-          const slices = Math.max(64, Math.min(220, Math.ceil(bw / Math.max(0.9, 1.15 * s))));
+          /* 每段不是再做「整片同高」的階梯位移，而是用仿射剪切連接正弦
+             兩端。相鄰段在同一個 y 精確接合，32～128 段就能得到次像素級
+             的連續曲線，也比舊版數百次重畫 Path2D 更順。 */
+          const slices = Math.max(32, Math.min(128, Math.ceil(bw / 8)));
           const sliceW = bw / slices;
           const amp = Math.min(10 * s, bh * 0.065) * Math.max(0.15, (o.mo?.amp ?? 50) / 100);
           for (let i = 0; i < slices; i++) {
             const x = i * sliceW;
             if (x >= shownW) break;
-            /* 完整揭露時右框線的筆畫有一半位於 bw 外側；裁切區必須把那半邊
-               也包含進來，否則 grid-frame 最右線只剩半粗。 */
-            const endPad = reveal >= 0.999 ? Math.max(lw, 1.2 * s) : 0;
-            const clipW = Math.min(sliceW + 1.6 * s + endPad, shownW - x + 0.8 * s + endPad);
-            const nx = (x + sliceW / 2) / Math.max(1, bw);
+            const x1 = Math.min(shownW, x + sliceW);
             const envelope = Math.sin(Math.PI * Math.min(1, reveal));
-            const dy = Math.sin((nx - phase) * Math.PI * 2) * amp
-              * (f?.gridReveal === undefined ? 1 : Math.max(0.35, envelope));
+            const gain = f?.gridReveal === undefined ? 1 : Math.max(0.35, envelope);
+            const dy0 = Math.sin((x / Math.max(1, bw) - phase) * Math.PI * 2) * amp * gain;
+            const dy1 = Math.sin((x1 / Math.max(1, bw) - phase) * Math.PI * 2) * amp * gain;
+            const slope = (dy1 - dy0) / Math.max(.001, x1 - x);
             ctx.save();
             ctx.beginPath();
-            ctx.rect(x - 0.8 * s, -amp - 2 * s, clipW, bh + amp * 2 + 4 * s);
+            /* 半像素重疊只負責蓋住 clip 的抗鋸齒縫；兩段位移在交界相同，
+               不會再產生較白或較粗的接線。 */
+            ctx.rect(x - .5, -amp - 2 * s, x1 - x + 1, bh + amp * 2 + 4 * s);
             ctx.clip();
-            ctx.translate(0, dy);
+            ctx.transform(1, slope, 0, 1, 0, dy0 - slope * x);
             fill ? ctx.fill(shapeP) : ctx.stroke(shapeP);
             ctx.restore();
           }
@@ -4991,10 +4992,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              分出像素層，泡泡／縮放 II 只變換各層，原本結構完全不動。 */
           const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
           const logicalStroke = stroke && stickerScale > 0 ? ctx.lineWidth / stickerScale : 0;
+          /* 動畫分層貼圖必須至少覆蓋目前目的像素的 1.5 倍。靜止時固定 3×
+             已足夠，但縮放 II 逐幀重採樣低解析貼圖時，放大查看會看到 alpha
+             邊緣在相鄰像素間游動；依實際顯示倍率提高 backing store 才能根治。 */
+          const animationRasterScale = Math.max(
+            symbolStickerOversample(o.text || ''),
+            Math.min(6, stickerScale * 1.5),
+          );
           const raster = rasterizeSymbolAnimationLayers(
             o.text || '', fam, stickerFontPx, stroke ? 'stroke' : 'fill',
             typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
-            logicalStroke, symbolStickerOversample(o.text || ''),
+            logicalStroke, animationRasterScale,
           );
           /* 靜止與動畫都使用同一份 unitLayout 中心。超長 iOS 字串的 layout
              已改用完整 advance 對稱中心，因此不會在切換動畫時再換座標系。 */
@@ -5147,17 +5155,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          幅度與網格圖形完全使用同一組參數。 */
       const objectSpan = Math.max(1, rotated.bw * s);
       const objectLeft = cx - objectSpan / 2;
-      const sliceW = Math.max(1, Math.min(2.5, 1.15 * s));
       const amp = Math.min(10 * s, Math.max(1, o.h || 1) * s * .065)
         * Math.max(.15, (moOf(o).amp ?? 50) / 100) * (f.waveMix ?? 1);
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
-      for (let x = x0; x < x1; x += sliceW) {
-        const sw2 = Math.min(sliceW + .8 * s, x1 - x);
-        const nx = (x - objectLeft + sliceW / 2) / objectSpan;
-        const dy = Math.sin((nx - f.gridWave) * Math.PI * 2) * amp;
-        ctx.drawImage(layer.canvas, x, y0, sw2, Math.max(1, y1 - y0),
-          x, y0 + dy, sw2, Math.max(1, y1 - y0));
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      /* 以連續斜率近似正弦，而不是把每條直片整片平移。每個交界的 y 完全
+         相同，因此圖片、文字與一般圖形的外緣不再形成階梯或亮色接縫。 */
+      const segments = Math.max(32, Math.min(128, Math.ceil((x1 - x0) / 8)));
+      const segmentW = (x1 - x0) / segments;
+      for (let index = 0; index < segments; index++) {
+        const x = x0 + index * segmentW;
+        const xx = index + 1 === segments ? x1 : x + segmentW;
+        const dy0 = Math.sin(((x - objectLeft) / objectSpan - f.gridWave) * Math.PI * 2) * amp;
+        const dy1 = Math.sin(((xx - objectLeft) / objectSpan - f.gridWave) * Math.PI * 2) * amp;
+        const slope = (dy1 - dy0) / Math.max(.001, xx - x);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x - .5, y0 - amp - 2, xx - x + 1, Math.max(1, y1 - y0) + amp * 2 + 4);
+        ctx.clip();
+        ctx.transform(1, slope, 0, 1, 0, dy0 - slope * x);
+        ctx.drawImage(layer.canvas, x - 1, y0, xx - x + 2, Math.max(1, y1 - y0),
+          x - 1, y0, xx - x + 2, Math.max(1, y1 - y0));
+        ctx.restore();
       }
       ctx.restore();
     });
@@ -7793,7 +7814,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       in: 'bubble',
                       dur: durFromSpeed(80),
                       idle: 'symbol-breathe2',
-                      amp: 60,
+                      amp: 30,
                       speed: 1.2,
                     },
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
@@ -8215,7 +8236,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 // 換動畫種類 → 從頭播一次，不用自己等一圈
                 const pickKind = (d: Partial<MoCfg>) => {
                   if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
-                  else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 60, speed: 1.2 });
+                  else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 30, speed: 1.2 });
                   /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
                      就共用同一套，切換種類時也不能沿用上一個動畫的怪速度。 */
                   else if (d.idle === 'grid-wave') setCur({
