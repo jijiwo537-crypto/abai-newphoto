@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
-import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film } from 'lucide-react';
+import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Paintbrush, Eraser, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
@@ -12,7 +12,10 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
-import { measureSymbolInk, measureSymbolInkAtSize, measureSymbolAdvance, clearSymbolInkCache, symbolTextPresentation } from '../utils/symbolGeometry';
+import {
+  measureSymbolInk, measureSymbolInkAtSize, measureSymbolAdvance, clearSymbolInkCache,
+  symbolTextPresentation, rasterizeSymbolAnimationLayers, symbolBreatheScale,
+} from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, drawHoleShape, holeOverflow, glowAmount,
@@ -32,6 +35,11 @@ import { IgPreview } from './IgPreview';
 import { SaveButton } from './SaveButton';
 import type { ExitChoice } from '../types';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas, geoCssBox } from '../utils/compose';
+import {
+  ObjectMotionConfig, ObjectMotionFrame, OBJECT_MOTION_DEFAULT, OBJECT_IN_KINDS,
+  SYMBOL_OBJECT_IN_KINDS, OBJECT_IDLE_KINDS, objectMotionOf, objectMotionFrame,
+  motionDurationFromUi, motionUiFromDuration,
+} from '../utils/objectMotion';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
 
@@ -3825,6 +3833,20 @@ interface FloatingImage {
   /** 條紋的兩個顏色 */
   shapeStripeA?: string;
   shapeStripeB?: string;
+  /** 經典與創意拼圖共用同一組進場／常駐動畫參數。 */
+  mo?: ObjectMotionConfig;
+}
+
+type ClassicBrushKind = 'normal' | 'pencil' | 'crayon' | 'dash' | 'highlight';
+type ClassicBrushPoint = { x: number; y: number };
+interface ClassicBrushStroke {
+  id: string;
+  kind: ClassicBrushKind;
+  points: ClassicBrushPoint[];
+  color: string;
+  width: number;
+  hardness: number;
+  z: number;
 }
 
 /**
@@ -3938,6 +3960,8 @@ interface FloatingImageComponentProps {
    * 拿不到這一層時就退回原本的畫法（掛在自己身上），行為完全不變。
    */
   chromeLayer?: HTMLElement | null;
+  /** 動畫頁當下這一格；選中框不吃這個變形，避免跟著動畫跳動。 */
+  motionFrame?: ObjectMotionFrame | null;
 }
 
 let globalDragPointerId: number | null = null;
@@ -4557,6 +4581,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   onSwapTouchMove,
   onSwapTouchEnd,
   chromeLayer = null,
+  motionFrame = null,
 }) => {
   const imageRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -5410,8 +5435,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
        改走一般繪製，讓出來的區域一定會被重畫。
        （原本留著它是為了讓邊緣吸到整數像素，那件事現在由 snapPx 用「真正的」
        實體像素密度做掉了，不必再靠合成層。） */
-    transform: (dragShift || (image.rotation % 360) !== 0)
-      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`
+    transform: (motionFrame || dragShift || (image.rotation % 360) !== 0)
+      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}${motionFrame ? `translate3d(${motionFrame.dx * boxW}px, ${motionFrame.dy * boxH}px, 0) scale(${motionFrame.k}) ` : ''}rotate(${image.rotation + (motionFrame?.rot || 0)}deg)`
       : undefined,
     /* 過場一定要跟頁面容器那邊「一模一樣」（220ms、同一條曲線）。
        以前這裡是 200ms ease-out、那邊是 220ms cubic-bezier(0.2,0,0,1)：
@@ -5509,6 +5534,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      的同一套 path、紋理、描邊與字體度量，所以預覽與成品也會一致。 */
   const vectorCanvasRef = useRef<HTMLCanvasElement>(null);
   const isCanvasVector = !!image.shape || image.text !== undefined;
+  const usesUnitMotion = image.text !== undefined && (
+    motionFrame?.seq !== undefined
+    || (image.mo?.idle === 'symbol-breathe2' && motionFrame?.idleT !== undefined)
+  );
   /* 外層只負責固定物件中心；真正配置像素的內層只包住墨水。
      上一版每個物件都開一張最高 3072² 的「整頁透明畫布」，iOS/Safari 很快
      就會超過 Canvas 記憶體額度，後建立的畫布會被清空，看起來就是物件偶發
@@ -5616,7 +5645,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     /* 一般文字維持 SVG；符號则与创意拼图一样走 Canvas 的同一套墨水测量与
        fillText。这样预览缩放只是在移动一张预先超取样的紧凑位图，不会每一帧
        让 WebKit 重建大型复合 Unicode SVG，解决有符号时的明显掉帧。 */
-    if (!isCanvasVector || (image.text !== undefined && !image.sym)) return;
+    if (!isCanvasVector || (image.text !== undefined && !image.sym && !usesUnitMotion)) return;
     const canvas = vectorCanvasRef.current;
     if (!canvas) return;
     let alive = true;
@@ -5761,7 +5790,59 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const ink = image.sym ? measureSymbolInkAtSize(image.text || image.sym, family, size) : null;
       const dx = ink ? -ink.cx * size : 0;
       const dy = ink ? -ink.cy * size : 0;
-      const fill = () => lines.forEach((line, i) => ctx.fillText(line, dx, startY + i * lineH + dy));
+      const unitMotionFrame = usesUnitMotion && lines.length === 1 ? motionFrame : null;
+      const drawAnimatedUnits = (stroke = false) => {
+        if (!unitMotionFrame) {
+          lines.forEach((line, i) => stroke
+            ? ctx.strokeText(line, dx, startY + i * lineH + dy)
+            : ctx.fillText(line, dx, startY + i * lineH + dy));
+          return;
+        }
+        const raster = rasterizeSymbolAnimationLayers(
+          image.text || '', family, size, stroke ? 'stroke' : 'fill',
+          stroke ? (image.strokeColor || '#000000') : (image.color || '#FFFFFF'),
+          stroke ? (image.strokeWidth || 0) * 2 : 0,
+          Math.max(2.5, Math.min(7, backingScale * Math.max(1, image.scale))),
+          image.sym ? undefined : {
+            plainText: true,
+            fontWeight: image.bold ? 700 : 400,
+            fontStyle: image.italic ? 'italic' : 'normal',
+            letterSpacing: spacing,
+          },
+        );
+        if (!raster) {
+          lines.forEach((line, i) => stroke
+            ? ctx.strokeText(line, dx, startY + i * lineH + dy)
+            : ctx.fillText(line, dx, startY + i * lineH + dy));
+          return;
+        }
+        const count = raster.layers.length;
+        const bubbleSpan = 1 + Math.max(0, count - 1) * .2;
+        const seq = unitMotionFrame.seq;
+        raster.layers.forEach((layer, index) => {
+          const q = seq === undefined ? 1 : Math.max(0, Math.min(1, seq * bubbleSpan - index * .2));
+          if (seq !== undefined && q <= .001) return;
+          const backQ = (() => {
+            const c1 = 1.70158, c3 = c1 + 1, z = q - 1;
+            return 1 + c3 * z * z * z + c1 * z * z;
+          })();
+          const scale = image.mo?.idle === 'symbol-breathe2' && unitMotionFrame.idleT !== undefined
+            ? 1 + (symbolBreatheScale(index, unitMotionFrame.idleT, image.mo.amp, image.mo.speed) - 1)
+                * (unitMotionFrame.waveMix ?? 1)
+            : backQ;
+          ctx.save();
+          if (seq !== undefined) ctx.globalAlpha *= Math.min(1, q * 3);
+          /* 每層只繞自己固定的墨水重心縮放；完整字串的 dx/dy 永遠不變，
+             因此動畫與靜止共用同一個中心，不會向左漂移或重排組合字。 */
+          ctx.translate(dx + layer.pivotX, dy + layer.pivotY);
+          ctx.scale(scale, scale);
+          ctx.drawImage(layer.canvas,
+            layer.x - layer.pivotX, layer.y - layer.pivotY,
+            layer.w, layer.h);
+          ctx.restore();
+        });
+      };
+      const fill = () => drawAnimatedUnits(false);
       ctx.fillStyle = image.color || '#FFFFFF';
       if (image.glow) {
         ctx.shadowColor = image.glowColor || '#FFFFFF';
@@ -5778,7 +5859,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         ctx.lineWidth = image.strokeWidth * 2;
         ctx.lineJoin = 'round';
         ctx.strokeStyle = image.strokeColor || '#000000';
-        lines.forEach((line, i) => ctx.strokeText(line, dx, startY + i * lineH + dy));
+        drawAnimatedUnits(true);
       }
       fill();
       ctx.restore();
@@ -5793,7 +5874,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     }
     return () => { alive = false; if (raf) cancelAnimationFrame(raf); };
   }, [
-    isCanvasVector, boxW, boxH, vectorPad.x, vectorPad.y, vectorCssW, vectorCssH,
+    isCanvasVector, usesUnitMotion, boxW, boxH, vectorPad.x, vectorPad.y, vectorCssW, vectorCssH,
     image.shape, image.holeType, image.shapeFilled, image.shapeLineW, image.shapeDash,
     image.shapeGlow, image.shapeGlowColor, image.shapeStrokeW, image.shapeStrokeColor,
     image.shapeTex, image.shapeDots, image.shapeDotSize, image.shapeDotGap, image.shapeDotColor,
@@ -5801,7 +5882,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     image.shapeTextureBaseW, image.shapeTextureBaseH, image.color,
     image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
     image.letterSpacing, image.strokeWidth, image.strokeColor, image.glow, image.glowColor,
-    image.scale, image.rotation, canvasScale, gestureRendering, holeAssetRevision,
+    image.scale, image.rotation, image.mo, canvasScale, gestureRendering, holeAssetRevision,
+    motionFrame?.seq, motionFrame?.idleT, motionFrame?.waveMix,
   ]);
 
   /* 操作 UI 掛在整頁的縮放容器裡，但視覺尺寸必須維持螢幕 px。
@@ -6164,11 +6246,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           width: `${boxW}px`,
           height: `${boxH}px`,
           zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
-          opacity: (image.text !== undefined && isTextEditing ? 0 : 1) * ((image.opacity ?? 100) / 100),
+          opacity: (image.text !== undefined && isTextEditing ? 0 : 1) * ((image.opacity ?? 100) / 100) * (motionFrame?.a ?? 1),
           transformOrigin: 'center center',
-          transform: dragShift
-            ? `translate3d(${dragShift.tx}px, ${dragShift.ty}px, 0) scale(${dragShift.s})`
-            : undefined,
+          transform: [
+            dragShift ? `translate3d(${dragShift.tx}px, ${dragShift.ty}px, 0) scale(${dragShift.s})` : '',
+            motionFrame ? `translate3d(${motionFrame.dx * boxW}px, ${motionFrame.dy * boxH}px, 0) scale(${motionFrame.k}) rotate(${motionFrame.rot}deg)` : '',
+          ].filter(Boolean).join(' ') || undefined,
           transition: dragShift
             ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
             : undefined,
@@ -6178,7 +6261,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           backfaceVisibility: 'hidden',
         }}
       >
-        {image.text !== undefined && !image.sym ? (() => {
+        {image.text !== undefined && !image.sym && !usesUnitMotion ? (() => {
           /* 固定字級、字距與字形度量，只讓 SVG 的連續矩陣負責縮放。SVG 會在
              當下顯示倍率直接重建向量輪廓，不像獨立 Canvas 先變點陣再被頁面
              zoom 一次；文字和複合 Unicode 符號因此共用同一個穩定中心。 */
@@ -6279,7 +6362,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         // 被拖的那一頁整組（頁面 900、上面的東西 1000+）要蓋過其他頁
         zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
         touchAction: touchMode,
-        opacity: isCanvasVector ? 1 : (image.opacity ?? 100) / 100,
+        opacity: (isCanvasVector ? 1 : (image.opacity ?? 100) / 100) * (motionFrame?.a ?? 1),
         /* 圖片同樣預先建立移動用合成層；第一次拖動不再臨時升層。 */
         willChange: 'transform',
         backfaceVisibility: 'hidden',
@@ -6832,6 +6915,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [activePageIndex, setActivePageIndex] = useState<number>(0);
   const [floatingImages, setFloatingImages] = useState<FloatingImage[]>([]);
   const [selectedFloatingId, setSelectedFloatingId] = useState<string | null>(null);
+  const [brushStrokes, setBrushStrokes] = useState<ClassicBrushStroke[]>([]);
+  const [selectedBrushId, setSelectedBrushId] = useState<string | null>(null);
+  const [brushKind, setBrushKind] = useState<ClassicBrushKind>('normal');
+  const [brushColor, setBrushColor] = useState('#FFFFFF');
+  const [brushWidth, setBrushWidth] = useState(12);
+  const [brushHardness, setBrushHardness] = useState(80);
+  const [brushEraser, setBrushEraser] = useState(false);
+  const [brushSizing, setBrushSizing] = useState(false);
+  const brushLiveRef = useRef<{ pointerId: number; stroke: ClassicBrushStroke } | null>(null);
+  const [motionPlaying, setMotionPlaying] = useState(true);
+  const [motionTime, setMotionTime] = useState(0);
+  const motionClockRef = useRef(0);
+  const [motionTargetId, setMotionTargetId] = useState<string | null>(null);
   /** 手指正在移动任一已选物件；期间统一隐藏选中框与白色药丸 */
   const [selectionDragging, setSelectionDragging] = useState(false);
   /* iPhone 的觸控事件頻率可能高於螢幕更新率。把同一畫面幀內的中間狀態全部
@@ -6882,7 +6978,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const workspacePointerDown = useRef<{ x: number, y: number, time: number, onBlank?: boolean, movesObject?: boolean } | null>(null);
   /** 這個位置是空白嗎（不是圖層、不是格子、也不是佈局） */
   const isBlankTarget = (t: Element | null) =>
-    !t || (!t.closest('[data-floating-id]') && !t.closest('[data-cell-id]') && !t.closest('[data-layout-wrapper]'));
+    !t || (!t.closest('[data-floating-id]') && !t.closest('[data-brush-id]') && !t.closest('[data-cell-id]') && !t.closest('[data-layout-wrapper]'));
   const globalFloatingTouchState = useRef<{
     startX: number;
     startY: number;
@@ -7136,6 +7232,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     let snappedX = rawX;
     let snappedY = rawY;
+    let fitScale: number | undefined;
     const guidelines: AlignmentGuideline[] = [];
 
     // 1. Vertical snapping (determines snappedX)
@@ -7258,6 +7355,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const q = Math.round(rightEdge * dpr) / dpr;
         snappedX += q - rightEdge; gx = q;
       }
+      /* DOM 合成的透明邊在 Safari 會混入一小條底色；輸出 canvas 沒有這層
+         抗鋸齒，所以才會出現「輸出無縫、預覽有髮絲縫」。只在真正貼頁面
+         外緣時向裁切區多蓋 0.35 個螢幕像素，內部物件互相對齊完全不動。 */
+      const bleed = .35 / Math.max(.0001, kRef.current || 1);
+      const isPageLeft = pageRects.some(pr => Math.abs(pr.left - bestGuidelineX!) < .51);
+      const isPageRight = pageRects.some(pr => Math.abs(pr.right - bestGuidelineX!) < .51);
+      if (isPageLeft && Math.abs(leftEdge - bestGuidelineX!) < .8) snappedX -= bleed;
+      else if (isPageRight && Math.abs(rightEdge - bestGuidelineX!) < .8) snappedX += bleed;
       guidelines.push({ type: 'vertical', coord: gx });
     }
     /* 圖層比頁面「幾乎一樣寬」時，左緣貼齊與右緣貼齊是兩個相差零點幾 px 的位置，
@@ -7267,6 +7372,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const w = pr.right - pr.left;
       if (Math.abs(scaledW - w) < 2 && Math.abs((snappedX + imgWidth / 2) - pr.centerX) < 4) {
         snappedX = pr.centerX - imgWidth / 2;
+        const bleed = .35 / Math.max(.0001, kRef.current || 1);
+        fitScale = Math.max(fitScale || imgScale, imgScale * (w + bleed * 2) / Math.max(.001, scaledW));
       }
     });
     /* 圖層已經「幾乎剛好等於整頁」時，光把位置對準還不夠 —— 只要比頁面窄零點幾
@@ -7370,12 +7477,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const q = Math.round(bottomEdge * dprY) / dprY;
         snappedY += q - bottomEdge; gy = q;
       }
+      const bleed = .35 / Math.max(.0001, kRef.current || 1);
+      const isPageTop = pageRects.some(pr => Math.abs(pr.top - bestGuidelineY!) < .51);
+      const isPageBottom = pageRects.some(pr => Math.abs(pr.bottom - bestGuidelineY!) < .51);
+      if (isPageTop && Math.abs(topEdge - bestGuidelineY!) < .8) snappedY -= bleed;
+      else if (isPageBottom && Math.abs(bottomEdge - bestGuidelineY!) < .8) snappedY += bleed;
       guidelines.push({ type: 'horizontal', coord: gy });
     }
     ownPageRectsForFit.forEach(pr => {
       const h = pr.bottom - pr.top;
       if (Math.abs(scaledH - h) < 2 && Math.abs((snappedY + imgHeight / 2) - pr.centerY) < 4) {
         snappedY = pr.centerY - imgHeight / 2;
+        const bleed = .35 / Math.max(.0001, kRef.current || 1);
+        fitScale = Math.max(fitScale || imgScale, imgScale * (h + bleed * 2) / Math.max(.001, scaledH));
       }
     });
 
@@ -7387,7 +7501,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        都加進去。跟其他物件的對齊線不列入（那是另一回事，維持原本只顯示吸附到的那一條）。 */
     guidelines.push(...pageGuidelinesAt(snappedX, snappedY, imgWidth, imgHeight, imgScale, edgeOnly, rot));
 
-    return { snappedX, snappedY, fitScale: undefined, guidelines: dedupeGuidelines(guidelines, snappedX + imgWidth / 2) };
+    return { snappedX, snappedY, fitScale, guidelines: dedupeGuidelines(guidelines, snappedX + imgWidth / 2) };
   };
 
   const [draggedFloatingIndex, setDraggedFloatingIndex] = useState<number | null>(null);
@@ -7949,6 +8063,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       bold: false, italic: false, letterSpacing: 0,
       strokeColor: '#000000',
       glow: 0, glowColor: '#FFFFFF',
+      /* 經典／創意共用同一組符號預設：泡泡進場、縮放 II 常駐。 */
+      mo: {
+        ...OBJECT_MOTION_DEFAULT,
+        in: 'bubble', dur: motionDurationFromUi(80),
+        idle: 'symbol-breathe2', amp: 60, speed: 1.2,
+      },
     };
     setFloatingImages(prev => [...prev, item]);
     setSelectedFloatingId(id);
@@ -8501,9 +8621,36 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     setFinalKinds([]);
   }, []);
   useEffect(() => () => { finalImagesRef.current.forEach(u => URL.revokeObjectURL(u)); }, []);
-  const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages'>('ratio');
+  const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
   /** 頁面順序模式：操作欄往下滑、畫布往下移到中央、每一頁下面出現握把與刪除鍵 */
   const pagesMode = activeTab === 'pages';
+
+  /* 經典拼圖動畫使用與創意拼圖相同的「進場結束後 0.72 秒平順交棒」時間函式。
+     每格只更新一個輕量時間值；照片／文字／符號都不改寫幾何資料，因此動畫
+     不會污染草稿，也不會在停止後留下偏移。 */
+  useEffect(() => {
+    if (activeTab !== 'motion' || !motionPlaying) return;
+    let raf = 0, last = -1;
+    const started = performance.now() - motionClockRef.current * 1000;
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      if (last >= 0 && now - last < 1000 / 30) return;
+      last = now;
+      const t = ((now - started) / 1000) % 8;
+      motionClockRef.current = t;
+      setMotionTime(t);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [activeTab, motionPlaying]);
+  useEffect(() => {
+    if (activeTab !== 'motion') return;
+    setSelectedFloatingId(null);
+    setSelectedBrushId(null);
+    if (!motionTargetId || !floatingImages.some(f => f.id === motionTargetId)) {
+      setMotionTargetId(floatingImages[0]?.id || null);
+    }
+  }, [activeTab, floatingImages, motionTargetId]);
   const pagesModeRef = useRef(false);
   pagesModeRef.current = pagesMode;
   /** 排頁面時整排頁面縮成一半（用 transform，不動 previewW/H） */
@@ -8767,7 +8914,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         || (!selectedFloatingId && selectedIndex !== null && selectedLayoutId !== null));
 
   const [historyState, setHistoryState] = useState<{
-    history: { pages: PageConfig[]; floatingImages: FloatingImage[]; selectedRatio: string; isLandscape: boolean }[];
+    history: { pages: PageConfig[]; floatingImages: FloatingImage[]; brushStrokes: ClassicBrushStroke[]; selectedRatio: string; isLandscape: boolean }[];
     index: number;
   }>({
     history: [],
@@ -8783,7 +8930,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     const timer = setTimeout(() => {
       setHistoryState(prev => {
-        const stateToSave = { pages, floatingImages, selectedRatio, isLandscape };
+        const stateToSave = { pages, floatingImages, brushStrokes, selectedRatio, isLandscape };
         
         if (prev.index === -1) {
           return { history: [stateToSave], index: 0 };
@@ -8802,7 +8949,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [pages, floatingImages, selectedRatio, isLandscape]);
+  }, [pages, floatingImages, brushStrokes, selectedRatio, isLandscape]);
 
   const undo = () => {
     if (historyState.index > 0) {
@@ -8811,6 +8958,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const state = historyState.history[prevIndex];
       setPages(state.pages);
       setFloatingImages(state.floatingImages);
+      setBrushStrokes(state.brushStrokes || []);
       setSelectedRatio(state.selectedRatio);
       setIsLandscape(state.isLandscape);
       setHistoryState(prev => ({ ...prev, index: prevIndex }));
@@ -8824,6 +8972,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const state = historyState.history[nextIndex];
       setPages(state.pages);
       setFloatingImages(state.floatingImages);
+      setBrushStrokes(state.brushStrokes || []);
       setSelectedRatio(state.selectedRatio);
       setIsLandscape(state.isLandscape);
       setHistoryState(prev => ({ ...prev, index: nextIndex }));
@@ -9057,6 +9206,112 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const { width: previewW, height: previewH } = getRatioDimensions();
+
+  const brushPoint = (clientX: number, clientY: number): ClassicBrushPoint | null => {
+    const root = pagesContainerRef.current;
+    if (!root) return null;
+    const r = root.getBoundingClientRect();
+    const totalW = pages.length * previewW + Math.max(0, pages.length - 1);
+    const kx = r.width / Math.max(1, totalW);
+    const ky = r.height / Math.max(1, previewH);
+    const p = { x: (clientX - r.left) / Math.max(.0001, kx), y: (clientY - r.top) / Math.max(.0001, ky) };
+    return p.x >= 0 && p.x <= totalW && p.y >= 0 && p.y <= previewH ? p : null;
+  };
+  const brushBounds = (s: ClassicBrushStroke) => {
+    const xs = s.points.map(p => p.x), ys = s.points.map(p => p.y), pad = s.width / 2 + 5;
+    return {
+      x: Math.min(...xs) - pad, y: Math.min(...ys) - pad,
+      w: Math.max(1, Math.max(...xs) - Math.min(...xs) + pad * 2),
+      h: Math.max(1, Math.max(...ys) - Math.min(...ys) + pad * 2),
+    };
+  };
+  const eraseBrushAt = (p: ClassicBrushPoint) => {
+    const radius = Math.max(8, brushWidth / 2);
+    setBrushStrokes(prev => prev.flatMap(s => {
+      const hit = radius + s.width / 2;
+      const groups: ClassicBrushPoint[][] = [];
+      let group: ClassicBrushPoint[] = [];
+      s.points.forEach(q => {
+        if (Math.hypot(q.x - p.x, q.y - p.y) <= hit) {
+          if (group.length) groups.push(group);
+          group = [];
+        } else group.push(q);
+      });
+      if (group.length) groups.push(group);
+      if (groups.length === 1 && groups[0].length === s.points.length) return [s];
+      /* 橡皮擦只切掉碰到的路段，不會因為擦到一小點就刪除整組筆畫。 */
+      return groups.map((points, index) => ({
+        ...s, points,
+        id: index === 0 ? s.id : `${s.id}-cut-${Date.now().toString(36)}-${index}`,
+      }));
+    }));
+  };
+  const brushAtPoint = (p: ClassicBrushPoint) => {
+    const segmentDistance = (q: ClassicBrushPoint, a: ClassicBrushPoint, b: ClassicBrushPoint) => {
+      const vx = b.x - a.x, vy = b.y - a.y;
+      const vv = vx * vx + vy * vy;
+      const t = vv <= 1e-6 ? 0 : Math.max(0, Math.min(1, ((q.x - a.x) * vx + (q.y - a.y) * vy) / vv));
+      return Math.hypot(q.x - (a.x + vx * t), q.y - (a.y + vy * t));
+    };
+    return [...brushStrokes].sort((a, b) => b.z - a.z).find(s => {
+      const hit = Math.max(8, s.width / 2 + 5);
+      if (s.points.length === 1) return Math.hypot(p.x - s.points[0].x, p.y - s.points[0].y) <= hit;
+      for (let i = 1; i < s.points.length; i++) if (segmentDistance(p, s.points[i - 1], s.points[i]) <= hit) return true;
+      return false;
+    }) || null;
+  };
+  const handleBrushPointerDown = (e: React.PointerEvent) => {
+    if (activeTab !== 'brush') return;
+    e.preventDefault(); e.stopPropagation();
+    const p = brushPoint(e.clientX, e.clientY);
+    if (!p) return;
+    try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* iOS may decline */ }
+    setSelectedFloatingId(null); setSelectedIndex(null); setSelectedLayoutId(null); setSelectedBrushId(null);
+    if (brushEraser) { eraseBrushAt(p); brushLiveRef.current = { pointerId: e.pointerId, stroke: { id: 'eraser', kind: brushKind, points: [p], color: '#000', width: brushWidth, hardness: brushHardness, z: 0 } }; return; }
+    /* 點在既有筆畫上＝選取；點空白處才開始新的一筆。這讓每次鬆手形成的
+       path 都是真正可再次選取、調整圖層或刪除的物件。 */
+    const hit = brushAtPoint(p);
+    if (hit) { setSelectedBrushId(hit.id); return; }
+    const stroke: ClassicBrushStroke = {
+      id: `brush-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      kind: brushKind, points: [p], color: brushColor, width: brushWidth,
+      hardness: brushHardness, z: layerStack.length + brushStrokes.length,
+    };
+    brushLiveRef.current = { pointerId: e.pointerId, stroke };
+    setBrushStrokes(prev => [...prev, stroke]);
+  };
+  const handleBrushPointerMove = (e: React.PointerEvent) => {
+    const live = brushLiveRef.current;
+    if (activeTab !== 'brush' || !live || live.pointerId !== e.pointerId) return;
+    e.preventDefault(); e.stopPropagation();
+    const p = brushPoint(e.clientX, e.clientY);
+    if (!p) return;
+    const last = live.stroke.points[live.stroke.points.length - 1];
+    if (last && Math.hypot(p.x - last.x, p.y - last.y) < Math.max(1.2, brushWidth * .08)) return;
+    if (brushEraser) { eraseBrushAt(p); live.stroke.points.push(p); return; }
+    live.stroke = { ...live.stroke, points: [...live.stroke.points, p] };
+    const next = live.stroke;
+    setBrushStrokes(prev => prev.map(s => s.id === next.id ? next : s));
+  };
+  const handleBrushPointerUp = (e: React.PointerEvent) => {
+    const live = brushLiveRef.current;
+    if (!live || live.pointerId !== e.pointerId) return;
+    e.preventDefault(); e.stopPropagation();
+    brushLiveRef.current = null;
+    if (!brushEraser && live.stroke.points.length) setSelectedBrushId(live.stroke.id);
+  };
+
+  const brushPath = (s: ClassicBrushStroke) => {
+    if (!s.points.length) return '';
+    if (s.points.length === 1) return `M ${s.points[0].x} ${s.points[0].y} l .01 .01`;
+    let d = `M ${s.points[0].x} ${s.points[0].y}`;
+    for (let i = 1; i < s.points.length - 1; i++) {
+      const p = s.points[i], n = s.points[i + 1];
+      d += ` Q ${p.x} ${p.y} ${(p.x + n.x) / 2} ${(p.y + n.y) / 2}`;
+    }
+    const z = s.points[s.points.length - 1];
+    return `${d} L ${z.x} ${z.y}`;
+  };
 
   /* --- 換比例時，浮動物件要跟著頁面一起縮放 ---
      圖片／文字這些浮動物件的 x/y 是「從頁面左上角算起的絕對像素」，
@@ -9837,6 +10092,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         if (!alive) return;
         setPages(initialState.pages);
         setFloatingImages(initialState.floatingImages || []);
+        setBrushStrokes(initialState.brushStrokes || []);
         if (initialState.selectedRatio) setSelectedRatio(initialState.selectedRatio);
         if (initialState.isLandscape !== undefined) setIsLandscape(initialState.isLandscape);
         setActivePageIndex(0);
@@ -9854,6 +10110,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (draft) {
         setPages(draft.pages);
         setFloatingImages(draft.floatingImages);
+        setBrushStrokes(draft.brushStrokes || []);
         setSelectedRatio(draft.selectedRatio);
         setIsLandscape(draft.isLandscape);
         setActivePageIndex(0);
@@ -9876,14 +10133,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   useEffect(() => {
     if (!draftReady || exitBaselineRef.current) return;
     const t = setTimeout(() => {
-      exitBaselineRef.current = JSON.stringify({ pages, floatingImages, selectedRatio, isLandscape });
+      exitBaselineRef.current = JSON.stringify({ pages, floatingImages, brushStrokes, selectedRatio, isLandscape });
     }, 500);
     return () => clearTimeout(t);
-  }, [draftReady, pages, floatingImages, selectedRatio, isLandscape]);
+  }, [draftReady, pages, floatingImages, brushStrokes, selectedRatio, isLandscape]);
   const recordProgress = async () => {
-    const empty = floatingImages.length === 0 && pages.every(p => p.layouts.length === 0);
+    const empty = floatingImages.length === 0 && brushStrokes.length === 0 && pages.every(p => p.layouts.length === 0);
     if (empty) return;
-    const state = { pages, floatingImages, selectedRatio, isLandscape };
+    const state = { pages, floatingImages, brushStrokes, selectedRatio, isLandscape };
     const sig = JSON.stringify(state);
     if (recordedRef.current === sig) return;
     recordedRef.current = sig;
@@ -9919,7 +10176,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const leavingRef = useRef(false);
   const handleLeave = async () => {
     if (leavingRef.current) return;
-    const sig = JSON.stringify({ pages, floatingImages, selectedRatio, isLandscape });
+    const sig = JSON.stringify({ pages, floatingImages, brushStrokes, selectedRatio, isLandscape });
     if (exitBaselineRef.current && sig === exitBaselineRef.current) {
       leavingRef.current = true;
       leftRef.current = true;
@@ -9934,7 +10191,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (choice === 'save') {
       await Promise.all([
         recordProgress(),
-        saveDraft({ pages, floatingImages, selectedRatio, isLandscape }),
+        saveDraft({ pages, floatingImages, brushStrokes, selectedRatio, isLandscape }),
       ]);
     } else {
       await clearDraft();
@@ -9942,14 +10199,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     onHome();
   };
 
-  const latestDraftRef = useRef({ pages, floatingImages, selectedRatio, isLandscape });
-  latestDraftRef.current = { pages, floatingImages, selectedRatio, isLandscape };
+  const latestDraftRef = useRef({ pages, floatingImages, brushStrokes, selectedRatio, isLandscape });
+  latestDraftRef.current = { pages, floatingImages, brushStrokes, selectedRatio, isLandscape };
   useEffect(() => {
     if (!draftReady) return;
     const timer = window.setInterval(() => {
       if (leftRef.current) return;
       const latest = latestDraftRef.current;
-      const empty = latest.floatingImages.length === 0
+      const empty = latest.floatingImages.length === 0 && latest.brushStrokes.length === 0
         && latest.pages.every(p => p.layouts.length === 0);
       if (!empty) saveDraft(latest);
     }, 1000);
@@ -10803,6 +11060,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const applyTapSelection = (target: Element) => {
+    const brushEl = target.closest('[data-brush-id]');
+    if (brushEl) {
+      const id = brushEl.getAttribute('data-brush-id');
+      if (id) {
+        setSelectedBrushId(id);
+        setSelectedFloatingId(null); setSelectedIndex(null); setSelectedLayoutId(null);
+      }
+      return;
+    }
     const fEl = target.closest('[data-floating-id]');
     if (fEl) {
       const id = fEl.getAttribute('data-floating-id');
@@ -10823,6 +11089,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           setInlineEditId(null);
         }
         setSelectedFloatingId(id);
+        setSelectedBrushId(null);
         setSelectedIndex(null);
         setSelectedLayoutId(null);
       }
@@ -10839,6 +11106,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     setSelectedIndex(null);
     setSelectedLayoutId(null);
     setSelectedFloatingId(null);
+    setSelectedBrushId(null);
   };
 
   const handleWorkspaceTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
@@ -12278,6 +12546,42 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           },
         });
       });
+      /* 畫筆同樣走圖層工作佇列，預覽與匯出共用原始點列；不先點陣化，
+         因此輸出放大後仍是銳利的向量筆畫。 */
+      brushStrokes.forEach((stroke, i) => {
+        if (!stroke.points.length) return;
+        const exportPoint = (p: ClassicBrushPoint) => ({
+          x: (p.x - Math.floor(p.x / (previewW + 1))) * scaleFactor,
+          y: p.y * scaleFactor,
+        });
+        const ep = stroke.points.map(exportPoint);
+        const xs = ep.map(p => p.x), pad = stroke.width * scaleFactor;
+        drawJobs.push({
+          z: 60 + stroke.z * 2,
+          minX: Math.min(...xs) - pad,
+          maxX: Math.max(...xs) + pad,
+          run: async c => {
+            c.save();
+            c.beginPath();
+            c.moveTo(ep[0].x, ep[0].y);
+            if (ep.length === 1) c.lineTo(ep[0].x + .01, ep[0].y + .01);
+            for (let j = 1; j < ep.length - 1; j++) {
+              const p = ep[j], n = ep[j + 1];
+              c.quadraticCurveTo(p.x, p.y, (p.x + n.x) / 2, (p.y + n.y) / 2);
+            }
+            if (ep.length > 1) c.lineTo(ep[ep.length - 1].x, ep[ep.length - 1].y);
+            c.strokeStyle = stroke.color;
+            c.lineWidth = stroke.width * scaleFactor;
+            c.lineCap = 'round'; c.lineJoin = 'round';
+            c.globalAlpha *= stroke.kind === 'highlight' ? .36 : stroke.kind === 'pencil' ? .82 : 1;
+            if (stroke.kind === 'dash') c.setLineDash([Math.max(4, stroke.width * 1.4) * scaleFactor, Math.max(3, stroke.width) * scaleFactor]);
+            if (stroke.kind === 'highlight') { c.shadowColor = stroke.color; c.shadowBlur = 2.3 * scaleFactor; }
+            if (stroke.kind === 'normal' && stroke.hardness < 100) c.shadowBlur = (100 - stroke.hardness) / 100 * stroke.width * .36 * scaleFactor;
+            c.stroke();
+            c.restore();
+          },
+        });
+      });
       drawJobs.sort((x, y) => x.z - y.z);
 
       /**
@@ -13008,10 +13312,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               setActivePageIndex(closestIdx);
             }
           }}
-          onTouchStart={handleWorkspaceTouchStart}
-          onTouchMove={handleWorkspaceTouchMove}
-          onTouchEnd={handleWorkspaceTouchEnd}
-          onTouchCancel={handleWorkspaceTouchEnd}
+          onTouchStart={activeTab === 'brush' ? undefined : handleWorkspaceTouchStart}
+          onTouchMove={activeTab === 'brush' ? undefined : handleWorkspaceTouchMove}
+          onTouchEnd={activeTab === 'brush' ? undefined : handleWorkspaceTouchEnd}
+          onTouchCancel={activeTab === 'brush' ? undefined : handleWorkspaceTouchEnd}
+          onPointerDownCapture={activeTab === 'brush' ? handleBrushPointerDown : undefined}
+          onPointerMoveCapture={activeTab === 'brush' ? handleBrushPointerMove : undefined}
+          onPointerUpCapture={activeTab === 'brush' ? handleBrushPointerUp : undefined}
+          onPointerCancelCapture={activeTab === 'brush' ? handleBrushPointerUp : undefined}
           onPointerDown={(e) => {
             workspacePointerDown.current = {
               x: e.clientX, y: e.clientY, time: Date.now(),
@@ -13910,6 +14218,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       <FloatingImageComponent
                         key={fImg.id}
                         image={fImg}
+                        motionFrame={activeTab === 'motion'
+                          ? objectMotionFrame(fImg.mo, motionTime, (fIdx * .7) % (Math.PI * 2))
+                          : null}
                         isSelected={selectedFloatingId === fImg.id}
                         shapeSelected={shapeSelId === fImg.id}
                         onShapeTap={(cx, cy) => {
@@ -13975,7 +14286,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         onSwapTouchStart={handleFloatSwapTouchStart(fImg)}
                         onSwapTouchMove={handleFloatSwapTouchMove}
                         onSwapTouchEnd={handleFloatSwapTouchEnd}
-                        onSelect={() => { setSelectedFloatingId(fImg.id); setSelectedLayoutId(null); setSelectedIndex(null); }}
+                        onSelect={() => {
+                          if (activeTab === 'motion') {
+                            setMotionTargetId(fImg.id);
+                            motionClockRef.current = 0;
+                            setMotionTime(0);
+                            setMotionPlaying(true);
+                            return;
+                          }
+                          setSelectedFloatingId(fImg.id); setSelectedLayoutId(null); setSelectedIndex(null);
+                        }}
                         onChange={(updated) => {
                           setFloatingImages(prev => prev.map(item => item.id === fImg.id ? { ...item, ...updated } : item));
                         }}
@@ -14263,6 +14583,64 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       />
                     ))}
 
+                    {/* 畫筆是獨立向量圖層：一筆一個 path，因此可以選取、復原、
+                        儲存與輸出；整張 SVG 橫跨全部頁面，筆畫不會在頁縫被截斷。 */}
+                    {brushStrokes.map(s => (
+                      <svg key={s.id}
+                        className="absolute left-0 top-0 pointer-events-none overflow-visible"
+                        width={pages.length * previewW + Math.max(0, pages.length - 1)} height={previewH}
+                        viewBox={`0 0 ${pages.length * previewW + Math.max(0, pages.length - 1)} ${previewH}`}
+                        style={{ zIndex: 60 + s.z * 2 }}>
+                        <defs>
+                          <filter id={`classic-crayon-${s.id}`} x="-20%" y="-20%" width="140%" height="140%">
+                            <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" seed="8" result="noise" />
+                            <feDisplacementMap in="SourceGraphic" in2="noise" scale="0.55" />
+                          </filter>
+                          <filter id={`classic-highlight-${s.id}`} x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="1.15" /></filter>
+                          <filter id={`classic-soft-${s.id}`} x="-30%" y="-30%" width="160%" height="160%">
+                            <feGaussianBlur stdDeviation={Math.max(0, (100 - s.hardness) / 100 * s.width * .12)} />
+                          </filter>
+                        </defs>
+                        <path data-brush-id={s.id} d={brushPath(s)} fill="none"
+                          stroke={s.color} strokeWidth={s.width} strokeLinecap="round" strokeLinejoin="round"
+                          strokeDasharray={s.kind === 'dash' ? `${Math.max(4, s.width * 1.4)} ${Math.max(3, s.width)}` : undefined}
+                          opacity={s.kind === 'highlight' ? .36 : s.kind === 'pencil' ? .82 : 1}
+                          filter={s.kind === 'crayon' ? `url(#classic-crayon-${s.id})` : s.kind === 'highlight' ? `url(#classic-highlight-${s.id})` : s.kind === 'normal' && s.hardness < 96 ? `url(#classic-soft-${s.id})` : undefined}
+                        />
+                      </svg>
+                    ))}
+
+                    {activeTab === 'brush' && brushSizing && (
+                      <div className="absolute rounded-full pointer-events-none border border-white/95"
+                        style={{
+                          left: activePageIndex * (previewW + 1) + previewW / 2 - brushWidth / 2,
+                          top: previewH / 2 - brushWidth / 2,
+                          width: brushWidth, height: brushWidth, zIndex: 100060,
+                          background: brushEraser ? 'rgba(255,255,255,.08)' : `${brushColor}33`,
+                          boxShadow: '0 1px 4px rgba(0,0,0,.55)',
+                        }} />
+                    )}
+
+                    {selectedBrushId && (() => {
+                      const stroke = brushStrokes.find(s => s.id === selectedBrushId);
+                      if (!stroke) return null;
+                      const b = brushBounds(stroke);
+                      return (
+                        <div data-brush-id={stroke.id} className="absolute pointer-events-none border border-dashed border-white/95"
+                          style={{ left: b.x, top: b.y, width: b.w, height: b.h, zIndex: 100050,
+                            boxShadow: '0 1px 3px rgba(0,0,0,.42)' }}>
+                          <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 h-9 px-1 rounded-full bg-white text-black flex items-center shadow-lg pointer-events-auto">
+                            <button className="w-8 h-8 rounded-full flex items-center justify-center" title="下移一層"
+                              onClick={() => setBrushStrokes(v => v.map(x => x.id===stroke.id ? {...x,z:Math.max(0,x.z-1)} : x))}><MoveDown size={14}/></button>
+                            <button className="w-8 h-8 rounded-full flex items-center justify-center" title="上移一層"
+                              onClick={() => setBrushStrokes(v => v.map(x => x.id===stroke.id ? {...x,z:Math.min(layerStack.length+v.length,x.z+1)} : x))}><MoveUp size={14}/></button>
+                            <button className="w-8 h-8 rounded-full flex items-center justify-center" title="刪除"
+                              onClick={() => { setBrushStrokes(v=>v.filter(x=>x.id!==stroke.id)); setSelectedBrushId(null); }}><Trash2 size={14}/></button>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
                     {/* 選取一張圖之後原本會蓋上一層 touch-action:none 的全畫布拖曳層，
                         「從任何地方都能拖」的代價是畫布完全不能左右滑。已移除 ——
                         要移動圖片直接拖那張圖即可，點空白處仍然是取消選取。 */}
@@ -14379,7 +14757,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* Tabs list */}
           <div className="flex px-4 pt-1 border-b border-[#1a1a1a] shrink-0 overflow-x-auto overflow-y-hidden touch-pan-x no-scrollbar">
-            {['ratio', 'pages', 'add', 'adjust', 'color'].map(id => {
+            {['ratio', 'pages', 'adjust', 'add', 'brush', 'color', 'motion'].map(id => {
               let iconEl = null;
               let titleText = '';
               if (id === 'ratio') {
@@ -14397,6 +14775,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               } else if (id === 'color') {
                 iconEl = <Palette size={18} />;
                 titleText = '背景顏色';
+              } else if (id === 'brush') {
+                iconEl = <Paintbrush size={18} />;
+                titleText = '畫筆';
+              } else if (id === 'motion') {
+                iconEl = <Play size={18} />;
+                titleText = '動畫';
               }
 
               const isActive = activeTab === id || (id === 'add' && activeTab === 'layout');
@@ -14423,7 +14807,107 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           </div>
 
           {/* Tabs Content */}
-          <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
+          <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages', 'brush'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
+
+            {activeTab === 'brush' && (
+              <div className="max-w-md mx-auto h-full flex flex-col gap-3 animate-in fade-in duration-200">
+                <div className="grid grid-cols-5 gap-1.5">
+                  {([
+                    ['normal', '一般'], ['pencil', '鉛筆'], ['crayon', '蠟筆'],
+                    ['dash', '虛線'], ['highlight', '螢光'],
+                  ] as [ClassicBrushKind, string][]).map(([id, label]) => (
+                    <button key={id} onClick={() => { setBrushKind(id); setBrushEraser(false); }}
+                      className={`h-9 rounded-[8px] border text-[10px] font-bold transition-colors ${!brushEraser && brushKind === id ? 'bg-[#222] text-white border-white' : 'border-[#222] text-[#666]'}`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-3 items-end">
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-[9px] font-bold text-[#777]"><span>粗細</span><span className="text-white tabular-nums">{brushWidth}</span></div>
+                    <input type="range" min="2" max="80" step="1" value={brushWidth} className="premium-slider w-full"
+                      onPointerDown={() => setBrushSizing(true)} onPointerUp={() => setBrushSizing(false)} onPointerCancel={() => setBrushSizing(false)}
+                      onChange={e => setBrushWidth(Number(e.target.value))} />
+                  </div>
+                  <div className={`space-y-1.5 transition-opacity ${brushKind === 'normal' || brushEraser ? 'opacity-100' : 'opacity-25 pointer-events-none'}`}>
+                    <div className="flex justify-between text-[9px] font-bold text-[#777]"><span>硬度</span><span className="text-white tabular-nums">{brushHardness}</span></div>
+                    <input type="range" min="0" max="100" step="1" value={brushHardness} className="premium-slider w-full"
+                      onChange={e => setBrushHardness(Number(e.target.value))} />
+                  </div>
+                  <button onClick={() => setBrushEraser(v => !v)} title="橡皮擦"
+                    className={`w-10 h-10 rounded-[9px] border flex items-center justify-center transition-colors ${brushEraser ? 'bg-white text-black border-white' : 'bg-[#111] text-white/65 border-[#2a2a2a]'}`}>
+                    <Eraser size={17} />
+                  </button>
+                </div>
+                <div className="min-h-0">{swatchStrip(brushColor, SOFT_COLORS, c => { setBrushColor(c); setBrushEraser(false); }, true)}</div>
+              </div>
+            )}
+
+            {activeTab === 'motion' && (() => {
+              const target = floatingImages.find(f => f.id === motionTargetId) || null;
+              const cfg = objectMotionOf(target?.mo);
+              const patchMotion = (d: Partial<ObjectMotionConfig>) => {
+                if (!target) return;
+                setFloatingImages(v => v.map(f => f.id === target.id ? { ...f, mo: { ...cfg, ...d } } : f));
+                motionClockRef.current = 0; setMotionTime(0); setMotionPlaying(true);
+              };
+              const isGridTarget = !!target?.shape && GRID_SHAPE_KINDS.has(target.shape);
+              const introKinds = target?.sym
+                ? SYMBOL_OBJECT_IN_KINDS
+                : OBJECT_IN_KINDS;
+              const idleKinds = OBJECT_IDLE_KINDS.filter(([id]) => {
+                if (target?.sym) return id !== 'grid-wave';
+                if (target?.text !== undefined) return id !== 'spin';
+                return true;
+              });
+              const pickIntro = (id: string) => patchMotion(id === 'bubble'
+                ? { in: id, dur: motionDurationFromUi(80) }
+                : { in: id });
+              const pickIdle = (id: string) => {
+                if (id === 'symbol-breathe2') return patchMotion({ idle: id, amp: 60, speed: 1.2 });
+                if (id === 'grid-wave') return patchMotion(isGridTarget
+                  ? { idle: id, amp: 50, speed: .9 }
+                  : { idle: id, amp: 30, speed: 1.75 });
+                patchMotion({ idle: id });
+              };
+              const cell = (on: boolean) => `h-9 rounded-[8px] border text-[10px] font-bold transition-colors ${on ? 'bg-[#222] text-white border-white' : 'border-[#222] text-[#666]'}`;
+              return (
+                <div className="max-w-md mx-auto pb-5 animate-in fade-in duration-200">
+                  <div className="flex items-center gap-2 mb-3 sticky top-0 bg-[#0a0a0a] z-10 pb-2">
+                    <button onClick={() => setMotionPlaying(v => !v)} className="w-10 h-9 rounded-[8px] border border-white/15 flex items-center justify-center text-white/80">
+                      {motionPlaying ? <Pause size={15}/> : <Play size={15}/>}
+                    </button>
+                    <button onClick={() => { motionClockRef.current=0; setMotionTime(0); setMotionPlaying(true); }} className="w-10 h-9 rounded-[8px] border border-white/15 flex items-center justify-center text-white/80"><RefreshCw size={15}/></button>
+                    <div className="flex-1 flex gap-1.5 overflow-x-auto no-scrollbar">
+                      {floatingImages.map((f) => {
+                        const media = floatingImages.filter(x => x.text === undefined && !x.shape);
+                        return (
+                        <button key={f.id} onClick={() => setMotionTargetId(f.id)}
+                          className={`shrink-0 px-3 h-9 rounded-[8px] border text-[10px] font-bold ${motionTargetId===f.id?'border-white text-white bg-[#222]':'border-[#222] text-[#666]'}`}>
+                          {f.sym ? '符號' : f.text !== undefined ? '文字' : f.shape ? '圖形' : f.isVideo
+                            ? `影片${media.filter(x => x.isVideo).length > 1 ? media.filter(x => x.isVideo).findIndex(x => x.id === f.id) + 1 : ''}`
+                            : `圖片${media.filter(x => !x.isVideo).length > 1 ? media.filter(x => !x.isVideo).findIndex(x => x.id === f.id) + 1 : ''}`}
+                        </button>
+                      );})}
+                    </div>
+                  </div>
+                  {!target ? <p className="text-[11px] text-white/40 text-center pt-8">請先新增可動畫的物件</p> : <>
+                    <p className="text-[10px] font-bold text-[#666] tracking-widest mb-2">進場動畫</p>
+                    <div className="grid grid-cols-5 gap-1.5">{introKinds.map(([id,name]) => <button key={id} className={cell(cfg.in===id)} onClick={()=>pickIntro(id)}>{name}</button>)}</div>
+                    <div className="grid grid-cols-2 gap-5 mt-3">
+                      <div><div className="flex justify-between text-[9px] text-[#777] mb-1"><span>起始</span><span>{cfg.delay.toFixed(1)}</span></div><input className="premium-slider w-full" type="range" min="0" max="3" step="0.1" value={cfg.delay} onChange={e=>patchMotion({delay:Number(e.target.value)})}/></div>
+                      <div><div className="flex justify-between text-[9px] text-[#777] mb-1"><span>速度</span><span>{motionUiFromDuration(cfg.dur)}</span></div><input className="premium-slider w-full" type="range" min="0" max="100" step="1" value={motionUiFromDuration(cfg.dur)} onChange={e=>patchMotion({dur:motionDurationFromUi(Number(e.target.value))})}/></div>
+                    </div>
+                    <p className="text-[10px] font-bold text-[#666] tracking-widest mb-2 mt-4">常駐動畫</p>
+                    <div className="grid grid-cols-5 gap-1.5">{idleKinds.map(([id,name]) => <button key={id} className={cell(cfg.idle===id)} onClick={()=>pickIdle(id)}>{name}</button>)}</div>
+                    {cfg.idle !== 'none' && <div className="grid grid-cols-2 gap-5 mt-3">
+                      <div><div className="flex justify-between text-[9px] text-[#777] mb-1"><span>幅度</span><span>{cfg.amp}</span></div><input className="premium-slider w-full" type="range" min="0" max="100" value={cfg.amp} onChange={e=>patchMotion({amp:Number(e.target.value)})}/></div>
+                      <div><div className="flex justify-between text-[9px] text-[#777] mb-1"><span>速度</span><span>{Math.round(cfg.speed*100)}</span></div><input className="premium-slider w-full" type="range" min="20" max="180" value={Math.round(cfg.speed*100)} onChange={e=>patchMotion({speed:Number(e.target.value)/100})}/></div>
+                    </div>}
+                  </>}
+                </div>
+              );
+            })()}
 
             {activeTab === 'adjust' && (() => {
               /* 佈局裡的格子也走同一套面板：把格子包成跟浮動圖片一樣的形狀，

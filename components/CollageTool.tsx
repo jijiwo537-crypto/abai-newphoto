@@ -56,7 +56,7 @@ import { StuckEscape } from './StuckEscape';
 /* 影片：包成一個「長得跟 <img> 一樣」的來源，畫布那邊一行都不必改。
    詳細的理由與做法寫在 utils/videoSource.ts 的檔頭。 */
 import {
-  isVideoFile, isVideoEl, loadVideoEl, releaseVideoEl, videoToken, videoTokenOf,
+  VIDEO_ACCEPT, isVideoFile, isVideoEl, loadVideoEl, releaseVideoEl, videoToken, videoTokenOf,
   videosIn, rewindVideos, playVideos, pauseVideos, longestDuration, videoFrame,
 } from '../utils/videoSource';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
@@ -1034,6 +1034,21 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
           </div>
           {/* 預設是韓系拼貼常用色（與經典拼圖同一組）；呼叫端可以換掉 */}
           <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-0.5 py-0.5 mt-2">
+            {/* 遮罩／紋理的色票也和其他顏色工具一致：第一格永遠是自訂色，
+                不必先離開色票頁才找得到完整調色盤。 */}
+            <label
+              title="自訂顏色"
+              aria-label="自訂顏色"
+              className="w-8 h-8 rounded-full shrink-0 relative cursor-pointer ring-1 ring-white/40 flex items-center justify-center overflow-hidden active:scale-90 transition-transform"
+              style={{ background: 'conic-gradient(#f43,#fa3,#fd3,#3d6,#3cf,#63f,#f3a,#f43)' }}
+            >
+              <span className="absolute inset-[5px] rounded-full bg-[#080808] flex items-center justify-center">
+                <Icon name="colorize" className="text-[13px] text-white" />
+              </span>
+              <input type="color" value={/^#[0-9a-f]{6}$/i.test(color) ? color : '#ffffff'}
+                onChange={e => handlePresetClick(e.target.value.toUpperCase())}
+                className="absolute inset-0 opacity-0 cursor-pointer" aria-label="自訂顏色" />
+            </label>
             {(swatches || KOREAN_PRESETS).map(c => {
               const active = c.toUpperCase() === (color || '').toUpperCase();
               return (
@@ -2237,13 +2252,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        （從 initialFile 那支 effect 呼叫時 e 是自己造的假物件，一樣沒問題。） */
     const inputEl = e.target as HTMLInputElement;
     const preserveLayout = inputEl === replaceFileInputRef.current;
-    /* 創意拼圖不收影片（統一走經典拼圖）。accept 已經寫死只收圖片，
-       但有些系統的選檔器不理它，所以這裡再擋一次。 */
-    const rawPicked = (Array.from(inputEl.files || []) as File[]).filter(f => !isVideoFile(f));
+    /* 底圖與後續物件都允許照片／影片。影片不交給圖片正規化器，避免 iOS
+       把 MOV 當成不支援的圖片而丟掉；圖片則照舊處理 HEIC／RAW。 */
+    const rawPicked = Array.from(inputEl.files || []) as File[];
     if (!rawPicked.length) { inputEl.value = ''; return; }
     /* RAW／HEIC／TIFF 先解成一般 JPEG（影片與一般 JPEG 原樣放行）。
        不解的話 <img> 根本載不出來，畫面就是空白。 */
-    const picked = await normalizeImageFiles(rawPicked);
+    const picked: File[] = [];
+    for (const item of rawPicked) {
+      if (isVideoFile(item)) picked.push(item);
+      else picked.push(...await normalizeImageFiles([item]));
+    }
     const file = picked[0];
     if (!file) return;
     /* 相簿一次選了好幾個：第一個當底，其餘的加成物件。
@@ -7558,9 +7577,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         )}
         {/* 換底也可以一次選好幾個：第一個當底，其餘自動變成物件。
             accept 跟首頁那個入口一致（影片也可以當底）。 */}
-        {/* 底圖只收照片（含 RAW）。影片統一走經典拼圖。 */}
-        <input type="file" accept={RAW_ACCEPT_IMG} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
-        <input type="file" accept={RAW_ACCEPT_IMG} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
+        <input type="file" accept={`${RAW_ACCEPT_IMG},${VIDEO_ACCEPT}`} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
+        <input type="file" accept={`${RAW_ACCEPT_IMG},${VIDEO_ACCEPT}`} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
         <input type="file" accept="image/*" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
       </header>
       )}
