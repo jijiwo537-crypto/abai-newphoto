@@ -25,10 +25,6 @@ import {
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
-const IS_IOS_CANVAS = typeof navigator !== 'undefined' && (
-  /iP(?:hone|ad|od)/.test(navigator.userAgent)
-  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
-);
 const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   /* 箭頭與圓弧是同一個 path、一次描邊；半透明時交接處不會累加變白。 */
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -42,7 +38,7 @@ import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { countSymbolAnimationBeats, isIOSProblemLongSymbol, longSymbolPaintRuns, measureLongSymbolInk, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolStickerInk, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, rasterizeSymbolSticker, symbolBreatheScale, symbolStickerFontPx, symbolStickerOversample, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -280,9 +276,7 @@ const prepareCreativeSymbolPlacement = (
   const cached = creativeSymbolPlacementCache.get(key);
   if (cached) return cached;
 
-  const ink = isIOSProblemLongSymbol(text)
-    ? measureLongSymbolInk(text, SYMBOL_FONT)
-    : symInk(text, SYMBOL_FONT);
+  const ink = measureSymbolStickerInk(text, SYMBOL_FONT);
   const short = Math.min(cw, ch);
   const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
     Math.round((cw * 0.7) / Math.max(0.05, ink.w))));
@@ -316,7 +310,7 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     const layout = measureSymbolUnitLayout(text, fam, o.sym ? 100 : (o.size || 40));
     /* 新增、靜止、動畫與外框必須讀同一份幾何。長符號若在這裡另外建立
        animation raster 量一次，Mobile Safari 的寬度便會忽長忽短。 */
-    const ink = layout.ink;
+    const ink = measureSymbolStickerInk(text, fam);
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -4926,10 +4920,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ? measureSymbolUnitLayout(o.text || '', fam, 100)
           : null;
         const symbolUnitScale = o.sym ? (o.size || 40) / 100 : 1;
+        const symbolStickerInk = o.sym ? measureSymbolStickerInk(o.text || '', fam) : null;
+        const stickerFontPx = o.sym ? symbolStickerFontPx(o.text || '') : 1;
+        const stickerScale = o.sym ? (o.size || 40) * s / stickerFontPx : 1;
         let tdx = 0, tdy = 0;
-        if (symbolLayout) {
-          tdx = -symbolLayout.ink.cx * (o.size || 40) * s;
-          tdy = -symbolLayout.ink.cy * (o.size || 40) * s;
+        if (symbolStickerInk) {
+          tdx = -symbolStickerInk.cx * (o.size || 40) * s;
+          tdy = -symbolStickerInk.cy * (o.size || 40) * s;
         }
         /* 順序跟經典拼圖一致：先只用「填色的形狀」畫光（三段模糊疊起來），
            再畫描邊，最後才填色。
@@ -4949,35 +4946,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 符號在靜止與動畫時都使用同一份 unitLayout。切換動畫頁只改每個
            單位的倍率／透明度，不會從整串 shaping 突然換成另一套排版。 */
         const unitLayout = symbolLayout;
-        const longIOSSymbol = !!unitLayout && IS_IOS_CANVAS
-          && isIOSProblemLongSymbol(o.text || '');
-        /* Mobile Safari 對很長的 fallback 字串會錯誤套用 textAlign=center，
-           把傳入的中心當成起點。長符號改用完整 advance 算出的明確左起點；
-           短符號完全保留既有 center 路徑。 */
+        /* 符號固定成高解析度貼圖：不論新增文字、雙指縮放或切換動畫，都不再
+           交給 Safari 重新排版。一般文字仍維持原本的原生文字路徑。 */
         const paintWholeSymbol = (stroke: boolean) => {
-          if (!longIOSSymbol || !unitLayout) {
-            if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
-            else ctx.fillText(o.text || '', tdx, tdy);
-            return;
-          }
-          /* 雙指縮放時絕不能依每一幀的新字級重建動畫 raster。Mobile Safari
-             對超長字串一次 fillText 可能漏掉後半段，因此以完整 grapheme 每
-             8 顆畫一段；仍是原生文字，只有座標乘法，手勢期間不配置點陣。 */
-          const previousAlign = ctx.textAlign;
-          ctx.textAlign = 'left';
-          const text = o.text || '';
-          /* 靜止長符號只能按完整 grapheme 分段，不能用動畫節拍切 combining
-             mark；否則右半段雖畫出來，字形結構仍可能改變。 */
-          const runLayout = longSymbolPaintRuns(text, fam);
-          let x = tdx - runLayout.total * symbolUnitScale * s / 2;
-          for (let i = 0; i < runLayout.runs.length; i++) {
-            const run = runLayout.runs[i];
-            if (stroke) ctx.strokeText(run, x, tdy); else ctx.fillText(run, x, tdy);
-            /* 每段寬度也固定在 100px 量一次後只做倍率換算；手勢每幀不再
-               觸發 WebKit 的文字塑形量測。 */
-            x += runLayout.advances[i] * symbolUnitScale * s;
-          }
-          ctx.textAlign = previousAlign;
+          const style = stroke ? ctx.strokeStyle : ctx.fillStyle;
+          const logicalStroke = stroke && stickerScale > 0 ? ctx.lineWidth / stickerScale : 0;
+          const sticker = rasterizeSymbolSticker(
+            o.text || '', fam, stroke ? 'stroke' : 'fill',
+            typeof style === 'string' ? style : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
+            logicalStroke,
+          );
+          if (!sticker) return;
+          ctx.drawImage(sticker.canvas,
+            tdx + sticker.x * stickerScale, tdy + sticker.y * stickerScale,
+            sticker.w * stickerScale, sticker.h * stickerScale);
         };
         const drawText = (stroke = false) => {
           if (!unitLayout) {
@@ -5002,12 +4984,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              重新排字，符號內部就會錯位。先從完整原生字串的同一張 raster
              分出像素層，泡泡／縮放 II 只變換各層，原本結構完全不動。 */
           const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
-          const matrix = ctx.getTransform();
-          const outputScale = Math.max(1, Math.hypot(matrix.a, matrix.b));
+          const logicalStroke = stroke && stickerScale > 0 ? ctx.lineWidth / stickerScale : 0;
           const raster = rasterizeSymbolAnimationLayers(
-            o.text || '', fam, (o.size || 40) * s, stroke ? 'stroke' : 'fill',
+            o.text || '', fam, stickerFontPx, stroke ? 'stroke' : 'fill',
             typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
-            stroke ? ctx.lineWidth : 0, outputScale,
+            logicalStroke, symbolStickerOversample(o.text || ''),
           );
           /* 靜止與動畫都使用同一份 unitLayout 中心。超長 iOS 字串的 layout
              已改用完整 advance 對稱中心，因此不會在切換動畫時再換座標系。 */
@@ -5015,14 +4996,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              只拿 100px 基準幾何校正，在 Mobile Safari 會漏掉 fallback font
              隨字級產生的 hinting 差，結果就是靜止正常、泡泡／縮放 II 偏左。
              長符號仍使用共用 run 幾何，避免重新觸發 WebKit 的長字串錯誤。 */
-          const renderedStaticInk = measureSymbolInkAtSize(o.text || '', fam, o.size || 40);
-          const renderedInkCenterX = renderedStaticInk.cx * (o.size || 40) * s;
-          const renderedInkCenterY = renderedStaticInk.cy * (o.size || 40) * s;
-          /* 長符號的靜止版與動畫 raster 已經共用同一份 run 下筆座標；直接
-             保留它的原生中心最精準。再用 32px 量測值二次置中，反而會在
-             iPhone 小字級產生 1～2px 的上下跳動。 */
-          const rasterAnchorX = raster && !longIOSSymbol ? renderedInkCenterX - raster.inkCenterX : 0;
-          const rasterAnchorY = raster && !longIOSSymbol ? renderedInkCenterY - raster.inkCenterY : 0;
+          /* 動畫 raster 與貼圖使用相同字級、同一個 advance anchor，倍率一
+             回到 1 就會像素級回到靜止位置，不再做裝置／字級猜測校正。 */
+          const rasterAnchorX = 0;
+          const rasterAnchorY = 0;
           const count = raster?.layers.length || unitLayout.unitLefts.length;
           const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
           const unitProgress = new Array(count).fill(0).map((_x, index) => seqIn === null ? 1
@@ -5056,11 +5033,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               /* 每個小單元從第一幀就待在完整符號的最終座標，只繞自己的
                  固定 pivot 縮放。不能按照當幀可見內容重新置中，否則第一顆
                  會先出現在中央，再隨後續單元出現而被一路推向左邊。 */
-              ctx.translate(tdx + rasterAnchorX + layer.pivotX, tdy + rasterAnchorY + layer.pivotY);
+              ctx.translate(tdx + rasterAnchorX + layer.pivotX * stickerScale,
+                tdy + rasterAnchorY + layer.pivotY * stickerScale);
               ctx.scale(scale, scale);
               ctx.imageSmoothingEnabled = true;
               ctx.imageSmoothingQuality = 'high';
-              ctx.drawImage(layer.canvas, layer.x - layer.pivotX, layer.y - layer.pivotY, layer.w, layer.h);
+              ctx.drawImage(layer.canvas,
+                (layer.x - layer.pivotX) * stickerScale,
+                (layer.y - layer.pivotY) * stickerScale,
+                layer.w * stickerScale, layer.h * stickerScale);
             } else {
               /* 極端低記憶體裝置無法建立暫存 Canvas 時的保守退路。 */
               const pivot = unitLayout.unitPivots[index] * symbolUnitScale * s;

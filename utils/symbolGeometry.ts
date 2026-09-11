@@ -48,6 +48,28 @@ const advanceCache = new Map<string, number>();
 const unitLayoutCache = new Map<string, SymbolUnitLayout>();
 const splitUnitCache = new Map<string, string[]>();
 const longRunCache = new Map<string, { runs: string[]; advances: number[]; total: number }>();
+export const SYMBOL_STICKER_FONT_PX = 64;
+/**
+ * 短符號多留一級解析度，放大後仍保持銳利；長裝飾符號維持 64px，避免
+ * iPhone 為超寬 Canvas 配置過多記憶體。兩者都只在建立貼圖時排版一次。
+ */
+export const symbolStickerFontPx = (text: string) =>
+  isIOSProblemLongSymbol(text) ? SYMBOL_STICKER_FONT_PX : 96;
+export type SymbolStickerRaster = {
+  canvas: HTMLCanvasElement;
+  fontPx: number;
+  x: number; y: number; w: number; h: number;
+  inkCenterX: number; inkCenterY: number;
+};
+const stickerCache = new Map<string, SymbolStickerRaster>();
+const MAX_STICKER_CACHE = 32;
+export const symbolStickerOversample = (text: string) => {
+  const iosCanvas = typeof navigator !== 'undefined' && (
+    /iP(?:hone|ad|od)/.test(navigator.userAgent)
+    || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+  );
+  return iosCanvas && isIOSProblemLongSymbol(text) ? 2 : 3;
+};
 /* 符號選單一次要量完整份清單。每顆都建立一張 Canvas 會讓 iPhone 在點進
    選單時停住數百毫秒；量寬只需要一個 2D context，整個模組共用即可。 */
 let measureCanvas: HTMLCanvasElement | null = null;
@@ -68,6 +90,8 @@ export const clearSymbolInkCache = () => {
   unitLayoutCache.clear();
   splitUnitCache.clear();
   longRunCache.clear();
+  stickerCache.forEach(sticker => { sticker.canvas.width = sticker.canvas.height = 0; });
+  stickerCache.clear();
   if (typeof rasterLayerCache !== 'undefined') {
     rasterLayerCache.forEach(pack => {
       pack.layers.forEach(layer => { layer.canvas.width = layer.canvas.height = 0; });
@@ -76,8 +100,9 @@ export const clearSymbolInkCache = () => {
     rasterLayerCache.clear();
   }
 };
-// 字型載入前量到的是 fallback；載入完成後不可繼續沿用錯誤的墨水中心。
-if (typeof document !== 'undefined') document.fonts?.ready?.then(clearSymbolInkCache).catch(() => {});
+/* 只由 symbolFontReady 在符號字體本身完成時清一次。不能監聽全域
+   document.fonts.ready：使用者新增一般文字、下載另一款字體時，會把正在
+   使用的符號貼圖清掉並重新 shaping，造成符號與外框關係突然改變。 */
 
 const fallbackInk = (text: string): SymbolInk => ({
   w: Math.max(.3, Array.from(text).length * .5),
@@ -137,6 +162,111 @@ export const measureLongSymbolInk = (text: string, family: string): SymbolInk =>
   } catch { /* 沿用穩定 fallback。 */ }
   fastInkCache.set(key, out);
   return out;
+};
+
+/**
+ * 符號不是可編輯文字：把完整原生排版固定成一張高解析度「貼圖」。靜止、
+ * 雙指縮放、文字物件增刪與選取框都只縮放這張圖，不再要求 Safari 在每個
+ * 字級重新 shaping。回傳座標以 256px 的邏輯字級為單位，canvas 本身保留
+ * 固定基準字級的邏輯單位，canvas 本身保留最高 3× 的實體像素；長符號會
+ * 自動降低倍率以避開 iOS Canvas 寬度上限。
+ */
+export const rasterizeSymbolSticker = (
+  text: string,
+  family: string,
+  mode: 'fill' | 'stroke' = 'fill',
+  color = '#fff',
+  logicalStrokeWidth = 0,
+): SymbolStickerRaster | null => {
+  if (typeof document === 'undefined' || !text) return null;
+  const px = symbolStickerFontPx(text);
+  const stroke = Math.max(0, logicalStrokeWidth);
+  const key = `${text}|${family}|${mode}|${color}|${stroke.toFixed(3)}`;
+  const hit = stickerCache.get(key);
+  if (hit) {
+    /* LRU：多物件畫布不會因為總數稍多於上限，就每一幀從頭重建所有貼圖。 */
+    stickerCache.delete(key); stickerCache.set(key, hit);
+    return hit;
+  }
+  try {
+    const probe = sharedMeasureContext();
+    if (!probe) return null;
+    probe.font = `400 ${px}px ${fontStack(family)}`;
+    const iosCanvas = /iP(?:hone|ad|od)/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const longIOS = iosCanvas && isIOSProblemLongSymbol(text);
+    const runs = longIOS ? longSymbolPaintRuns(text, family) : null;
+    const advance = Math.max(px * .25,
+      runs ? runs.total * px / REF : probe.measureText(text).width);
+    const pad = Math.ceil(px * .72 + stroke * 2);
+    const logicalW = Math.ceil(advance + pad * 2);
+    const logicalH = Math.ceil(px * 2.45 + pad * 2);
+    const oversample = Math.max(1, Math.min(symbolStickerOversample(text),
+      16000 / Math.max(logicalW, logicalH)));
+    const width = Math.max(1, Math.min(MAX_RASTER_SIDE, Math.ceil(logicalW * oversample)));
+    const height = Math.max(1, Math.min(MAX_RASTER_SIDE, Math.ceil(logicalH * oversample)));
+    const source = document.createElement('canvas'); source.width = width; source.height = height;
+    const ctx = source.getContext('2d', { willReadFrequently: true } as any);
+    if (!ctx) return null;
+    ctx.setTransform(oversample, 0, 0, oversample, 0, 0);
+    ctx.font = `400 ${px}px ${fontStack(family)}`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = color || '#fff'; ctx.strokeStyle = color || '#fff';
+    ctx.lineWidth = stroke; ctx.lineJoin = 'round'; ctx.miterLimit = 2;
+    const left = pad, middle = logicalH / 2;
+    const paint = (value: string, x: number) => mode === 'stroke'
+      ? ctx.strokeText(value, x, middle) : ctx.fillText(value, x, middle);
+    if (runs) {
+      let x = left;
+      for (let i = 0; i < runs.runs.length; i++) {
+        paint(runs.runs[i], x);
+        x += runs.advances[i] * px / REF;
+      }
+    } else paint(text, left);
+    const image = ctx.getImageData(0, 0, width, height);
+    let l = width, r = -1, t = height, b = -1;
+    for (let p = 0; p < width * height; p++) if (image.data[p * 4 + 3]) {
+      const x = p % width, y = Math.floor(p / width);
+      l = Math.min(l, x); r = Math.max(r, x); t = Math.min(t, y); b = Math.max(b, y);
+    }
+    if (r < l) { source.width = source.height = 0; return null; }
+    const crop = document.createElement('canvas');
+    crop.width = r - l + 1; crop.height = b - t + 1;
+    crop.getContext('2d')?.drawImage(source, l, t, crop.width, crop.height, 0, 0, crop.width, crop.height);
+    const anchorX = (left + advance / 2) * oversample;
+    const anchorY = middle * oversample;
+    const inv = 1 / oversample;
+    const out = {
+      canvas: crop,
+      fontPx: px,
+      x: (l - anchorX) * inv, y: (t - anchorY) * inv,
+      w: crop.width * inv, h: crop.height * inv,
+      inkCenterX: ((l + r + 1) / 2 - anchorX) * inv,
+      inkCenterY: ((t + b + 1) / 2 - anchorY) * inv,
+    };
+    source.width = source.height = 0;
+    stickerCache.set(key, out);
+    while (stickerCache.size > MAX_STICKER_CACHE) {
+      const first = stickerCache.keys().next().value as string | undefined;
+      if (!first) break;
+      const old = stickerCache.get(first);
+      if (old) old.canvas.width = old.canvas.height = 0;
+      stickerCache.delete(first);
+    }
+    return out;
+  } catch { return null; }
+};
+
+export const measureSymbolStickerInk = (text: string, family: string): SymbolInk => {
+  const sticker = rasterizeSymbolSticker(text, family);
+  if (!sticker) return isIOSProblemLongSymbol(text)
+    ? measureLongSymbolInk(text, family) : measureSymbolInk(text, family);
+  return {
+    w: sticker.w / sticker.fontPx,
+    h: sticker.h / sticker.fontPx,
+    cx: sticker.inkCenterX / sticker.fontPx,
+    cy: sticker.inkCenterY / sticker.fontPx,
+  };
 };
 
 /**
@@ -635,24 +765,33 @@ export const rasterizeSymbolAnimationLayers = (
     const fullRuns = longIOS ? longSymbolPaintRuns(text, family) : null;
     const logicalAdvance = Math.max(px * .25,
       fullRuns ? fullRuns.total * px / REF : probe.measureText(text).width);
+    const strokePx = Math.max(0, logicalStrokeWidth);
+    /* 動畫只需要貼圖真正有墨水的區域。舊版用 6.7em 高、完整 advance 寬的
+       巨型 Canvas 跑每個 prefix；固定高解析度後長符號會浪費數十 MB，甚至
+       被 iOS 清掉。以同一張貼圖的真實邊界建立緊實工作區，再留安全邊界。 */
+    const stickerInk = measureSymbolStickerInk(text, family);
+    const inkW = Math.max(px * .05, stickerInk.w * px);
+    const inkH = Math.max(px * .05, stickerInk.h * px);
+    const inkLeft = stickerInk.cx * px - inkW / 2;
+    const inkTop = stickerInk.cy * px - inkH / 2;
+    const margin = Math.ceil(Math.max(6, strokePx * 2 + 5));
+    const logicalWidth = Math.ceil(inkW + margin * 2);
+    const logicalHeight = Math.ceil(inkH + margin * 2);
     /* 按目的 Canvas 的實際 transform 建立一樣多的實體像素；drawImage 時除回
        同一倍率，因此不是把低解析度圖放大，也不是額外超取樣後再縮小。 */
     const oversample = Math.max(1, Math.min(wantedScale,
-      16000 / Math.max(px * 4, logicalAdvance + px * 4)));
+      16000 / Math.max(logicalWidth, logicalHeight)));
     /* Retina 解析度只能放大 backing store／transform，不能直接把 font-size
        乘上 DPR。後者會讓 WebKit 重新做 fallback、hinting 與 combining-mark
        shaping，長符號的字距和小單位位置就會跟正式畫面不同。 */
-    const strokePx = Math.max(0, logicalStrokeWidth);
-    const pad = Math.ceil(px * 1.6 + strokePx * 2);
-    const logicalWidth = Math.ceil(logicalAdvance + pad * 2);
-    const logicalHeight = Math.ceil(px * 3.5 + pad * 2);
     const width = Math.max(1, Math.min(MAX_RASTER_SIDE, Math.ceil(logicalWidth * oversample)));
     const height = Math.max(1, Math.min(MAX_RASTER_SIDE, Math.ceil(logicalHeight * oversample)));
     const source = document.createElement('canvas'); source.width = width; source.height = height;
     const g = source.getContext('2d', { willReadFrequently: true } as any);
     if (!g) return null;
-    const textLeft = pad, anchorX = (textLeft + logicalAdvance / 2) * oversample;
-    const anchorY = logicalHeight * oversample / 2;
+    const anchorX = (margin - inkLeft) * oversample;
+    const anchorY = (margin - inkTop) * oversample;
+    const textLeft = anchorX / oversample - logicalAdvance / 2;
     const setup = () => {
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, width, height);
       g.setTransform(oversample, 0, 0, oversample, 0, 0);
@@ -683,25 +822,64 @@ export const rasterizeSymbolAnimationLayers = (
     const owner = new Uint16Array(pixelCount); owner.fill(65535);
     let previous = new Uint8Array(pixelCount);
     const centres = new Array<number>(units.length).fill(anchorX);
-    let prefix = '';
-    for (let ui = 0; ui < units.length; ui++) {
-      prefix += units[ui]; setup(); paint(prefix);
-      const rgba = g.getImageData(0, 0, width, height).data;
-      const current = new Uint8Array(pixelCount);
-      let sumX = 0, mass = 0;
-      for (let p = 0; p < pixelCount; p++) {
-        const a = rgba[p * 4 + 3]; current[p] = a;
-        const delta = Math.max(0, a - previous[p]);
-        /* 像素一旦由某個 prefix 首次畫出，就固定屬於該單元。不能讓後面的
-           combining mark 以較大的 alpha 增量把前一顆符號的交疊像素搶走；
-           否則兩顆倍率不同時，前一顆會像被切掉幾刀。 */
-        if (delta && owner[p] === 65535) owner[p] = ui;
-        if (delta) { sumX += (p % width) * delta; mass += delta; }
-      }
-      centres[ui] = mass ? sumX / mass : (textLeft + probe.measureText(prefix).width) * oversample;
-      previous = current;
-    }
     const fd = final.data;
+    if (longIOS) {
+      /* 長貼圖不能為八十多個單元各重畫／讀回一張數百萬像素 Canvas；那會
+         讓手機進動畫頁停住。完整貼圖只讀一次，再在每個原生 prefix 邊界
+         附近尋找墨水最少的直欄，所有片段拼回 1 倍時仍是同一張貼圖。 */
+      const boundaries: number[] = [];
+      let prefix = '';
+      for (let i = 0; i < units.length - 1; i++) {
+        prefix += units[i];
+        const prefixAdvance = longSymbolPaintRuns(prefix, family).total * px / REF;
+        const nominal = Math.round((textLeft + prefixAdvance) * oversample);
+        const radius = Math.max(2, Math.round(px * oversample * .18));
+        let best = Math.max(0, Math.min(width - 1, nominal)), bestInk = Infinity;
+        for (let x = Math.max(0, nominal - radius); x <= Math.min(width - 1, nominal + radius); x++) {
+          let ink = 0;
+          for (let y = 0; y < height; y++) if (fd[(y * width + x) * 4 + 3] > 8) ink++;
+          if (ink < bestInk || (ink === bestInk && Math.abs(x - nominal) < Math.abs(best - nominal))) {
+            best = x; bestInk = ink;
+          }
+        }
+        boundaries.push(best);
+      }
+      for (let i = 1; i < boundaries.length; i++) boundaries[i] = Math.max(boundaries[i], boundaries[i - 1] + 1);
+      const sums = units.map(() => ({ x: 0, mass: 0 }));
+      for (let p = 0; p < pixelCount; p++) {
+        const a = fd[p * 4 + 3]; if (!a) continue;
+        const x = p % width;
+        let lo = 0, hi = boundaries.length;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          if (x >= boundaries[mid]) lo = mid + 1; else hi = mid;
+        }
+        const ui = lo;
+        owner[p] = Math.min(units.length - 1, ui);
+        sums[ui].x += x * a; sums[ui].mass += a;
+      }
+      for (let i = 0; i < units.length; i++) centres[i] = sums[i].mass
+        ? sums[i].x / sums[i].mass
+        : (i ? boundaries[Math.min(i - 1, boundaries.length - 1)] : anchorX);
+    } else {
+      let prefix = '';
+      for (let ui = 0; ui < units.length; ui++) {
+        prefix += units[ui]; setup(); paint(prefix);
+        const rgba = g.getImageData(0, 0, width, height).data;
+        const current = new Uint8Array(pixelCount);
+        let sumX = 0, mass = 0;
+        for (let p = 0; p < pixelCount; p++) {
+          const a = rgba[p * 4 + 3]; current[p] = a;
+          const delta = Math.max(0, a - previous[p]);
+          /* 像素一旦由某個 prefix 首次畫出，就固定屬於該單元。不能讓後面的
+             combining mark 以較大的 alpha 增量把前一顆符號的交疊像素搶走；
+             否則兩顆倍率不同時，前一顆會像被切掉幾刀。 */
+          if (delta && owner[p] === 65535) owner[p] = ui;
+          if (delta) { sumX += (p % width) * delta; mass += delta; }
+        }
+        centres[ui] = mass ? sumX / mass : (textLeft + probe.measureText(prefix).width) * oversample;
+        previous = current;
+      }
     /* prefix 比對在「兩個字形真的碰在一起」的位置可能把同一條筆畫切成
        不同 owner。下面以連通的成品墨水辨認這種交疊，只修補不會吃掉
        後一單元本體的區塊；彼此獨立的點、弧線與裝飾仍各自保留。 */
@@ -757,6 +935,7 @@ export const rasterizeSymbolAnimationLayers = (
       if (mayRepair && !wouldEraseUnit) {
         for (let i = 0; i < tail; i++) owner[queue[i]] = earliest;
       }
+    }
     }
     const bounds = units.map(() => ({ l: width, r: -1, t: height, b: -1, sx: 0, sy: 0, mass: 0 }));
     let fullL = width, fullR = -1, fullT = height, fullB = -1;
