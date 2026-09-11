@@ -1438,12 +1438,19 @@ export const symbolBreatheScale = (
   speed: number,
 ) => {
   const t = Math.max(0, time);
-  const attackP = Math.min(1, t / .22);
-  const attack = attackP * attackP * (3 - 2 * attackP);
   const timeline = ((index % 3) + 3) % 3;
-  const phase = timeline * Math.PI * 2 / 3;
-  const rate = [.86, 1, 1.14][timeline];
-  const wave = Math.sin(t * 1.5 * Math.max(.05, speed) * rate + phase);
+  /* 三條時間線改用同一條連續呼吸曲線，只錯開起跑時間。舊版同時用了
+     不同頻率與 120° 相位，手機掉一幀時相鄰單位會往相反方向跨過較大的
+     距離，看起來像每顆都在抖。現在每條線都由 1 倍、零速度平順起步，
+     仍維持相鄰單位不同步，但不再產生拍頻或第一幀抽動。 */
+  const angularRate = 1.5 * Math.max(.05, speed);
+  /* 只錯開 140ms，而不是錯開三分之一週期。這能讓三組很快都開始呼吸，
+     同時避免慢速設定下第三組等兩秒以上才動、看起來像動畫壞掉。 */
+  const localT = t - timeline * .14;
+  if (localT <= 0) return 1;
+  const attackP = Math.min(1, localT / .28);
+  const attack = attackP * attackP * attackP * (attackP * (attackP * 6 - 15) + 10);
+  const wave = Math.sin(localT * angularRate);
   return 1 + wave * Math.max(0, amp) / 100 * .18 * attack;
 };
 

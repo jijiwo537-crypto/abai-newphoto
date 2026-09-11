@@ -213,6 +213,15 @@ const drawCanonical = (
     const adjacentTimelinesDiffer=trajectories.every((value,index)=>index===0||value!==trajectories[index-1]);
     const scale2Independent=animatedLayerCount<=1
       ||timelineCount===Math.min(3,animatedLayerCount)&&timelineCount<=3&&adjacentTimelinesDiffer;
+    /* 縮放 II 連續影格不能有倍率尖峰。以 60fps 掃過三條時間線，限制單格
+       位移與速度突變；這會抓到不同頻率／相位在掉幀時產生的視覺抖動。 */
+    const scale2MotionStable=[0,1,2].every(unit=>{
+      const frames=Array.from({length:241},(_v,frame)=>symbolBreatheScale(unit,frame/60,60,1.2));
+      const deltas=frames.slice(1).map((value,i)=>value-frames[i]);
+      const maxStep=Math.max(...deltas.map(Math.abs));
+      const maxAcceleration=Math.max(...deltas.slice(1).map((value,i)=>Math.abs(value-deltas[i])));
+      return maxStep<.008&&maxAcceleration<.0025;
+    });
 
     /* 泡泡與縮放 II 的代表中間幀必須具有不同單元進度；下方會把兩種
        代表幀實際畫到驗證卡，和剛生成、靜止狀態並排檢查。 */
@@ -223,7 +232,7 @@ const drawCanonical = (
     const bubbleMid=layout.unitBeatIndices.map(beat=>Math.max(0,Math.min(1,.56*bubbleSpanFrames-beat*.2)));
     const bubblePerUnit=layout.units.length<=1||new Set(bubbleMid.map(v=>v.toFixed(5))).size>=2;
     const scalePerUnit=animatedLayerCount<=1||new Set(scalePreview.map(v=>v.toFixed(5))).size>=2;
-    const multiFrameVisual=bubblePerUnit&&scalePerUnit;
+    const multiFrameVisual=bubblePerUnit&&scalePerUnit&&scale2MotionStable;
 
     // 動畫結束會直接交回同一張完整貼圖，因此最後一幀不存在第二套排版。
     const reference=ctx.getImageData(0,0,w,h).data;
