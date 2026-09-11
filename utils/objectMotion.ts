@@ -12,6 +12,10 @@ export type ObjectMotionFrame = {
   idleT?: number;
   /** 進場交棒到常駐時的平滑混合量。 */
   waveMix?: number;
+  /** 網格同款的真正波形相位；繪製端依 x 切片做連續正弦變形。 */
+  gridWave?: number;
+  /** 波浪進場由左至右的揭露量。 */
+  gridReveal?: number;
 };
 
 export type ObjectMotionConfig = {
@@ -94,11 +98,22 @@ export const objectMotionFrame = (
   const hasIntro = cfg.in !== 'none';
   const introEnd = hasIntro ? cfg.delay + Math.max(.01, cfg.dur) : 0;
   const p = hasIntro ? clamp((time - cfg.delay) / Math.max(.01, cfg.dur)) : 1;
+  /* 進場與常駐都選波浪時沿用同一條相位，不在交界另外疊一次波形。 */
+  if (cfg.in === 'grid-wave' && cfg.idle === 'grid-wave') {
+    const q = Math.max(0, (time - cfg.delay) / Math.max(.01, cfg.dur));
+    return {
+      ...flat,
+      gridWave: q,
+      gridReveal: q < 1 ? cubic(clamp(q)) : undefined,
+      waveMix: 1,
+    };
+  }
   let intro = flat;
   if (hasIntro && time < cfg.delay) intro = { ...flat, k: 0, a: 0 };
   else if (p < 1) {
     const e = cubic(p), fade = clamp(p * 1.6);
     if (cfg.in === 'bubble') intro = { ...flat, seq: p };
+    else if (cfg.in === 'grid-wave') intro = { ...flat, gridWave: p, gridReveal: cubic(p) };
     else if (cfg.in === 'fade') intro = { ...flat, a: p };
     else if (cfg.in === 'rise') intro = { ...flat, dy: (1 - e) * .9, a: fade };
     else if (cfg.in === 'drop') intro = { ...flat, dy: -(1 - e) * .9, a: fade };
@@ -122,7 +137,9 @@ export const objectMotionFrame = (
   const w = t * Math.max(.05, cfg.speed) + phase;
   let idle = flat;
   if (cfg.idle === 'float') idle = { ...flat, dy: Math.sin(w * 2) * A * .28 };
-  else if (cfg.idle === 'grid-wave') idle = { ...flat, dy: Math.sin(w * 2.2) * A * .18, rot: Math.sin(w * 1.1) * A * 3 };
+  /* 波浪不能搬動或旋轉整個物件。相位交給繪製端，使用與創意拼圖相同的
+     連續正弦切片；根節點留在原位，所以選「波浪」不會再看成「漂浮」。 */
+  else if (cfg.idle === 'grid-wave') idle = { ...flat, gridWave: t * Math.max(.05, cfg.speed) * .22 + phase / (Math.PI * 2) };
   else if (cfg.idle === 'breathe') {
     const rate = 1 + (((phase * .6180339887) % 1) - .5) * .34;
     idle = { ...flat, k: 1 + Math.sin(t * cfg.speed * 1.9 * rate + phase) * A * .44 };
@@ -146,6 +163,8 @@ export const objectMotionFrame = (
     a: 1,
     idleT: idle.idleT,
     waveMix: blend,
+    gridWave: idle.gridWave,
+    gridReveal: idle.gridReveal,
   };
 };
 

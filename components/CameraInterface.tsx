@@ -110,7 +110,10 @@ const CameraTickScale: React.FC<CameraTickScaleProps> = ({
           drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min) * 1.08));
         const index = Math.max(0, Math.min(total, Math.round((raw - min) / step)));
         const snapped = min + index * step;
-        setVisualValue(raw);
+        /* 相機刻度必須真的「卡」在中央刻度上。舊版雖然把數值 round 了，
+           刻度帶卻仍用 raw 小數位移，所以中央最長線會落在中心左右約 3px，
+           曝光看起來尤其明顯。視覺與輸出改成共用同一個 snapped 值。 */
+        setVisualValue(snapped);
         onStep(snapped, index);
       }}
       onPointerUp={(e) => finish(e.currentTarget, e.pointerId)}
@@ -128,6 +131,7 @@ const CameraTickScale: React.FC<CameraTickScaleProps> = ({
           return (
             <i
               key={index}
+              data-camera-tick={selected ? 'active' : undefined}
               className="absolute bottom-0 w-px bg-white rounded-full pointer-events-none"
               style={{
                 left: `calc(50% + ${offset}px)`,

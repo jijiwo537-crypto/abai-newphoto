@@ -13,7 +13,7 @@ import { addExport } from '../utils/exportHistory';
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
 import {
-  measureSymbolInk, measureSymbolInkAtSize, measureSymbolAdvance, clearSymbolInkCache,
+  measureSymbolInk, measureSymbolInkAtSize, measureSymbolStickerInk, measureSymbolAdvance, clearSymbolInkCache,
   symbolTextPresentation, rasterizeSymbolAnimationLayers, symbolBreatheScale, countSymbolAnimationBeats,
 } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
@@ -114,7 +114,10 @@ const prepareClassicSymbolPlacement = (text: string, pageWidth: number): Prepare
   const M = 100;
   const w100 = measureSymbolAdvance(text, SYMBOL_FONT, M);
   const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
-  const ink = measureSymbolInkAtSize(text, SYMBOL_FONT, 100);
+  /* 新增時直接量「最後真正畫到畫布上的符號貼圖」。Mobile Safari 對部分
+     VS15／fallback 字形的原生文字量測不同；若外框量 raw text、動畫畫貼圖，
+     一進動畫頁就必然會偏移。 */
+  const ink = measureSymbolStickerInk(text, SYMBOL_FONT);
   const value = {
     fontSize,
     w: Math.max(6, ink.w * fontSize + 8),
@@ -4791,7 +4794,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
            不在首次顯示／拖動前重新掃描整張 alpha 畫布。歷史資料若尚未
            有快取，這裡仍會正常量一次。 */
         const size = image.fontSize || 40;
-        const ink = measureSymbolInkAtSize(image.text || image.sym!, fam, size);
+        const ink = measureSymbolStickerInk(image.text || image.sym!, fam);
         const bounds = { w: Math.max(6, ink.w * size + 8), h: Math.max(6, ink.h * size + 8) };
         const patch: Partial<FloatingImage> = {};
         const nw = bounds.w, nh = bounds.h;
@@ -4846,6 +4849,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 
   /* 圓角／羽化／發光都自己畫在 canvas 上，預覽與匯出走同一套邏輯 */
   const shapeCanvasRef = useRef<HTMLCanvasElement>(null);
+  const waveImageCanvasRef = useRef<HTMLCanvasElement>(null);
+  const waveImageScratchRef = useRef<HTMLCanvasElement | null>(null);
   /* 兩個 dpr 是不同的東西，之前混用是錯的：
        geoDpr —— 螢幕「真正」的實體像素密度。版面盒要吸到它的格線上才叫對齊；
                  iPhone 常見是 3，之前拿被上限砍到 2 的那個去吸等於吸到半格，
@@ -4985,6 +4990,73 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     fxCacheRef.current = { key, canvas };
     return canvas;
   };
+
+  /* 一般圖片的波浪也不能靠根節點 translate 假裝。只有波浪播放期間才建立
+     這張局部 Canvas；原圖、濾鏡來源與外框幾何都不改，結束後立刻回原本的
+     <img> 路徑。 */
+  const plainImageWave = image.text === undefined && !image.shape && !image.isVideo
+    && !needsShapeCanvas && motionFrame?.gridWave !== undefined
+    && (motionFrame.waveMix ?? 1) > 1e-5;
+  const waveImagePad = plainImageWave
+    ? Math.ceil(Math.min(10, boxH * .065) * Math.max(.15, (image.mo?.amp ?? 50) / 100) + 2)
+    : 0;
+  useLayoutEffect(() => {
+    if (!plainImageWave) return;
+    const canvas = waveImageCanvasRef.current;
+    if (!canvas) return;
+    const img = getPreviewImg(image.src);
+    let alive = true;
+    const draw = () => {
+      if (!alive || !img.naturalWidth) return;
+      const dpr = Math.max(2, Math.min(4, geoDpr * Math.max(1, canvasK())));
+      const W = Math.max(1, Math.round(boxW * dpr));
+      const pad = waveImagePad * dpr;
+      const bodyH = Math.max(1, Math.round(boxH * dpr));
+      const H = Math.max(1, Math.round(bodyH + pad * 2));
+      if (canvas.width !== W) canvas.width = W;
+      if (canvas.height !== H) canvas.height = H;
+      const scratch = waveImageScratchRef.current || document.createElement('canvas');
+      waveImageScratchRef.current = scratch;
+      if (scratch.width !== W) scratch.width = W;
+      if (scratch.height !== H) scratch.height = H;
+      const sg = scratch.getContext('2d');
+      const ctx = canvas.getContext('2d');
+      if (!sg || !ctx) return;
+      sg.setTransform(1, 0, 0, 1, 0, 0);
+      sg.clearRect(0, 0, W, H);
+      sg.imageSmoothingEnabled = true;
+      sg.imageSmoothingQuality = 'high';
+      sg.drawImage(fxSourceFor(img), 0, pad, W, bodyH);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      const reveal = motionFrame?.gridReveal === undefined
+        ? 1 : Math.max(0, Math.min(1, motionFrame.gridReveal));
+      const shownW = W * reveal;
+      const amp = Math.min(10 * dpr, bodyH * .065)
+        * Math.max(.15, (image.mo?.amp ?? 50) / 100) * (motionFrame?.waveMix ?? 1);
+      const phase = motionFrame?.gridWave ?? 0;
+      const segments = Math.max(32, Math.min(128, Math.ceil(shownW / 8)));
+      const sw = shownW / segments;
+      for (let i = 0; i < segments; i++) {
+        const x = i * sw;
+        const x1 = i + 1 === segments ? shownW : x + sw;
+        const dy0 = Math.sin((x / Math.max(1, W) - phase) * Math.PI * 2) * amp;
+        const dy1 = Math.sin((x1 / Math.max(1, W) - phase) * Math.PI * 2) * amp;
+        const slope = (dy1 - dy0) / Math.max(.001, x1 - x);
+        ctx.save();
+        ctx.beginPath(); ctx.rect(x - .5, 0, x1 - x + 1, H); ctx.clip();
+        ctx.transform(1, slope, 0, 1, 0, dy0 - slope * x);
+        ctx.drawImage(scratch, x - 1, 0, x1 - x + 2, H, x - 1, 0, x1 - x + 2, H);
+        ctx.restore();
+      }
+    };
+    if (img.complete && img.naturalWidth) draw();
+    else img.addEventListener('load', draw, { once: true });
+    return () => { alive = false; img.removeEventListener('load', draw); };
+  }, [plainImageWave, image.src, image.fx, lutRevision, boxW, boxH, waveImagePad,
+      motionFrame?.gridWave, motionFrame?.gridReveal, motionFrame?.waveMix, image.mo?.amp]);
 
   useLayoutEffect(() => {
     if (!needsShapeCanvas) return;
@@ -5605,10 +5677,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      仍留著做精確字形量測與文字輸入，但平常不再顯示。繪圖參數沿用匯出
      的同一套 path、紋理、描邊與字體度量，所以預覽與成品也會一致。 */
   const vectorCanvasRef = useRef<HTMLCanvasElement>(null);
+  const vectorWaveCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const isCanvasVector = !!image.shape || image.text !== undefined;
   const usesUnitMotion = image.text !== undefined && (
     motionFrame?.seq !== undefined
     || (image.mo?.idle === 'symbol-breathe2' && motionFrame?.idleT !== undefined)
+    || motionFrame?.gridWave !== undefined
   );
   /* 外層只負責固定物件中心；真正配置像素的內層只包住墨水。
      上一版每個物件都開一張最高 3072² 的「整頁透明畫布」，iOS/Safari 很快
@@ -5629,7 +5703,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       ? (image.shapeStrokeW || 0) * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
       : (image.strokeWidth || 0) * 2 * image.scale;
     const p = Math.ceil(Math.max(3, glow * 1.5, stroke) + 3);
-    return { x: p, y: p };
+    /* 泡泡／縮放 II 會讓單一小單位暫時超出靜止墨水外框；Canvas 留白若只
+       按描邊計算，最外側單位放大時會被切掉。只擴透明工作區，不改物件盒、
+       選中框或中心，因此原本正常的符號不會被推移。 */
+    const unitMotionPad = image.sym && usesUnitMotion
+      ? Math.ceil((image.fontSize || 40) * (image.scale || 1) * .3)
+      : 0;
+    return { x: p + unitMotionPad, y: p + unitMotionPad };
   })();
   const vectorSurfaceW = Math.max(256, (maxTextWidth || image.width || 1) * 2);
   const vectorSurfaceH = Math.max(256, (canvasHeight || image.height || 1) * 2);
@@ -5641,7 +5721,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      Canvas 裁掉；物件中心與既有位置資料完全不變。 */
   const symbolVectorInk = image.sym ? (() => {
     const size = image.fontSize || 40;
-    const ink = measureSymbolInkAtSize(image.text || image.sym!, (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)), size);
+    const ink = measureSymbolStickerInk(image.text || image.sym!, (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)));
     return { w: ink.w * size * (image.scale || 1), h: ink.h * size * (image.scale || 1) };
   })() : null;
   const vectorInkW = Math.max(1, boxW, symbolVectorInk?.w || 0) + vectorPad.x * 2;
@@ -5748,6 +5828,50 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       ctx.imageSmoothingQuality = 'high';
       ctx.setTransform(backingScale, 0, 0, backingScale, 0, 0);
       ctx.clearRect(0, 0, cssW, cssH);
+      /* 經典拼圖的波浪與創意拼圖共用同一種做法：本體先完整畫好，再把
+         成品分成連續斜率的小直片。這個收尾函式只改像素，不動物件根節點、
+         外框或中心座標，因此不可能退化成整顆上下漂移。 */
+      const applyVectorWave = () => {
+        const phase = motionFrame?.gridWave;
+        const mix = motionFrame?.waveMix ?? 1;
+        if (phase === undefined || mix <= 1e-5) return;
+        const scratch = vectorWaveCanvasRef.current || document.createElement('canvas');
+        vectorWaveCanvasRef.current = scratch;
+        if (scratch.width !== W) scratch.width = W;
+        if (scratch.height !== H) scratch.height = H;
+        const sg = scratch.getContext('2d');
+        if (!sg) return;
+        sg.setTransform(1, 0, 0, 1, 0, 0);
+        sg.clearRect(0, 0, W, H);
+        sg.drawImage(canvas, 0, 0);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        const reveal = motionFrame?.gridReveal === undefined
+          ? 1 : Math.max(0, Math.min(1, motionFrame.gridReveal));
+        const shownW = W * reveal;
+        const span = Math.max(1, boxW * backingScale);
+        const left = W / 2 - span / 2;
+        const amp = Math.min(10 * backingScale, boxH * backingScale * .065)
+          * Math.max(.15, (image.mo?.amp ?? 50) / 100) * mix;
+        const segments = Math.max(32, Math.min(128, Math.ceil(shownW / 8)));
+        const sw = shownW / segments;
+        for (let i = 0; i < segments; i++) {
+          const x = i * sw;
+          const x1 = i + 1 === segments ? shownW : x + sw;
+          const dy0 = Math.sin(((x - left) / span - phase) * Math.PI * 2) * amp;
+          const dy1 = Math.sin(((x1 - left) / span - phase) * Math.PI * 2) * amp;
+          const slope = (dy1 - dy0) / Math.max(.001, x1 - x);
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x - .5, -amp - 2, x1 - x + 1, H + amp * 2 + 4);
+          ctx.clip();
+          ctx.transform(1, slope, 0, 1, 0, dy0 - slope * x);
+          ctx.drawImage(scratch, x - 1, 0, x1 - x + 2, H, x - 1, 0, x1 - x + 2, H);
+          ctx.restore();
+        }
+      };
       ctx.save();
       ctx.translate(cssW / 2, cssH / 2);
       ctx.rotate((image.rotation * Math.PI) / 180);
@@ -5772,6 +5896,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         shapeGlowBlurs(image.width, image.height)
           .map(r => r * image.scale * glowAmount(image.shapeGlow as any) * backingScale));
         ctx.restore();
+        applyVectorWave();
         return;
       }
 
@@ -5840,6 +5965,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ctx.stroke(path);
         }
         ctx.restore();
+        applyVectorWave();
         return;
       }
 
@@ -5859,12 +5985,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const lines = (image.text || '').split('\n');
       const lineH = size * 1.12;
       const startY = -((lines.length - 1) * lineH) / 2;
-      const ink = image.sym ? measureSymbolInkAtSize(image.text || image.sym, family, size) : null;
+      const ink = image.sym ? measureSymbolStickerInk(image.text || image.sym, family) : null;
       const dx = ink ? -ink.cx * size : 0;
       const dy = ink ? -ink.cy * size : 0;
       const unitMotionFrame = usesUnitMotion && lines.length === 1 ? motionFrame : null;
       const drawAnimatedUnits = (stroke = false) => {
-        if (!unitMotionFrame) {
+        if (!unitMotionFrame && !image.sym) {
           lines.forEach((line, i) => stroke
             ? ctx.strokeText(line, dx, startY + i * lineH + dy)
             : ctx.fillText(line, dx, startY + i * lineH + dy));
@@ -5886,6 +6012,15 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           lines.forEach((line, i) => stroke
             ? ctx.strokeText(line, dx, startY + i * lineH + dy)
             : ctx.fillText(line, dx, startY + i * lineH + dy));
+          return;
+        }
+        /* 符號靜止時也畫動畫所使用的同一張完整 raster，而不是切回 raw
+           fillText。這是消除 iPhone 上「剛生成正常、進動畫就整串偏移」的
+           關鍵：靜止、泡泡、縮放 II 現在共用同一個 anchor 與同一批像素。 */
+        if (!unitMotionFrame) {
+          ctx.drawImage(raster.fullCanvas,
+            raster.fullSX, raster.fullSY, raster.fullSW, raster.fullSH,
+            dx + raster.fullX, dy + raster.fullY, raster.fullW, raster.fullH);
           return;
         }
         const count = raster.layers.length;
@@ -5935,6 +6070,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       }
       fill();
       ctx.restore();
+      applyVectorWave();
     };
     draw();
     /* 字體完成後補畫只需要用在靜止狀態。手勢中每次 state 更新已經由上面的
@@ -5956,6 +6092,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     image.letterSpacing, image.strokeWidth, image.strokeColor, image.glow, image.glowColor,
     image.scale, image.rotation, image.mo, canvasScale, gestureRendering, holeAssetRevision,
     motionFrame?.seq, motionFrame?.idleT, motionFrame?.waveMix,
+    motionFrame?.gridWave, motionFrame?.gridReveal,
   ]);
 
   /* 操作 UI 掛在整頁的縮放容器裡，但視覺尺寸必須維持螢幕 px。
@@ -6102,8 +6239,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       /* 跟創意拼圖的 objectSelectionInk 完全相同：使用共用的 symInk、字号、
          描边和固定 2 个屏幕像素留白，不再拿储存用的 width/height 外盒加框。 */
       const symbolFrame = image.sym ? (() => {
-        const ink = measureSymbolInkAtSize(
-          image.text || image.sym!, (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)), image.fontSize || 40,
+        const ink = measureSymbolStickerInk(
+          image.text || image.sym!, (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)),
         );
         const size = image.fontSize || 40;
         const sc = image.scale || 1;
@@ -6224,6 +6361,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
              除掉預覽的倍率 k —— 放大預覽時框不會跟著變粗，跟那邊的 uiPx 同一個道理。
              線是畫在邊界上的（一半長在外面），所以要 overflow: visible。 */
           <svg
+            data-classic-selection-frame={image.id}
             className="absolute pointer-events-none z-30"
             style={{
               left: frameRect.left, top: frameRect.top,
@@ -6856,6 +6994,16 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                忽隱忽現的細線。改成用「同一個捨入結果 ÷ dpr」，倍率剛好是 1:1。 */
             width: `${snapPx(boxW + glowPad * 2)}px`,
             height: `${snapPx(boxH + glowPad * 2)}px`,
+            pointerEvents: 'none',
+          }}
+        />
+      ) : plainImageWave ? (
+        <canvas
+          ref={waveImageCanvasRef}
+          data-classic-wave-canvas={image.id}
+          style={{
+            position: 'absolute', left: 0, top: `${-waveImagePad}px`,
+            width: '100%', height: `${boxH + waveImagePad * 2}px`,
             pointerEvents: 'none',
           }}
         />
@@ -8965,7 +9113,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** scrollLeft 在 WebKit 只會落在離散像素；保留不足一像素的尾數，用純平移補回。
       這跟創意拼圖的 viewT.tx 一樣，只負責位置，不參與縮放與光柵化。 */
   const stripSubpixelXRef = useRef(0);
-  const kAnimRef = useRef<{ from: number; to: number; t0: number } | null>(null);
+  const kAnimRef = useRef<{
+    from: number; to: number; t0: number; fromTop: number; toTop: number;
+  } | null>(null);
+  const stripTopRef = useRef(0);
+  const plusMotionTransitionRef = useRef<{
+    kind: 'enter' | 'exit'; from: number; to: number;
+  } | null>(null);
+  const lastMotionModeRef = useRef(activeTab === 'motion');
+  const motionModeRef = useRef(activeTab === 'motion');
+  motionModeRef.current = activeTab === 'motion';
   /** 動畫期間繞著哪一頁縮放（就是動畫開始時停在畫面正中間的那一頁） */
   const kAnchorRef = useRef(0);
   const prevPagesScaleRef = useRef(pagesScale);
@@ -8991,6 +9148,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const m = Math.max(16, (w - pw * k) / 2);
     if (shell) {
       shell.style.marginLeft = `${m}px`;
+      shell.style.marginTop = `${stripTopRef.current}px`;
       shell.style.width = `${(n * pw + (n - 1)) * k}px`;
       shell.style.height = `${previewHRef.current * k}px`;
     }
@@ -9029,7 +9187,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   useLayoutEffect(() => {
     const prev = prevPagesScaleRef.current;
     prevPagesScaleRef.current = pagesScale;
-    if (Math.abs(kRef.current - pagesScale) < 0.0001) return;
+    const nowMotion = activeTab === 'motion';
+    if (nowMotion !== lastMotionModeRef.current) {
+      plusMotionTransitionRef.current = {
+        kind: nowMotion ? 'enter' : 'exit', from: kRef.current, to: pagesScale,
+      };
+      lastMotionModeRef.current = nowMotion;
+    }
+    /* 工作區固定使用 top 對齊；一般頁面的垂直置中改由同一條 rAF 幾何動畫
+       算出。舊版在退出動畫頁的第一幀直接把 flex 從 items-start 切成
+       items-center，畫面會先往下跳，再一邊放大一邊往回走。 */
+    const targetTop = nowMotion ? 0 : Math.max(0,
+      (containerSize.height - previewHRef.current * pagesScale) / 2 - 8);
+    if (Math.abs(kRef.current - pagesScale) < 0.0001
+        && Math.abs(stripTopRef.current - targetTop) < .01) return;
     /* 記下動畫開始時「畫面正中央對到的那個內容座標」（未縮放單位），
        整段動畫都把同一個座標擺回正中央 —— 也就是原地縮放。
        以前記的是「最接近中央的那一頁」再把那一頁擺到正中間：只要中心
@@ -9041,13 +9212,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     } else {
       kAnchorRef.current = 0;
     }
-    kAnimRef.current = { from: kRef.current, to: pagesScale, t0: performance.now() };
+    kAnimRef.current = {
+      from: kRef.current, to: pagesScale, t0: performance.now(),
+      fromTop: stripTopRef.current, toTop: targetTop,
+    };
     // 縮放動畫還在跑的時候，維持排頁面的樣子（接縫、外框、陰影都先不要回來），
     // 不然退出的瞬間會先閃一排線條再縮回去
     setPagesVisual(true);
     window.clearTimeout(pagesVisualTimerRef.current);
     pagesVisualTimerRef.current = window.setTimeout(() => setPagesVisual(pagesModeRef.current), 340);
-  }, [pagesScale]);
+  }, [pagesScale, activeTab]);
 
   /**
    * 把握把／刪除鍵／加號貼到目前的捲動位置上。
@@ -9079,16 +9253,33 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     // 最後一頁拖著跑（看起來像跟那一頁黏在一起）
     const plus = addPageBtnRef.current;
     if (plus) {
-      plus.style.transition = k === 1 ? '' : 'none';
-      if (k === 1) {
-        plus.style.transform = '';
-      } else {
-        const n = pagesRef.current.length;
-        const want = left0 + k * ((n - 1) * stride + previewWRef.current) + 12;
-        const curTx = new DOMMatrixReadOnly(getComputedStyle(plus).transform).m41;
-        const layoutLeft = plus.getBoundingClientRect().left - curTx;
-        if (Math.abs(want - layoutLeft - curTx) > 0.5) plus.style.transform = `translateX(${want - layoutLeft}px)`;
+      const transition = plusMotionTransitionRef.current;
+      let alpha = motionModeRef.current ? 0 : 1;
+      if (transition && kAnimRef.current) {
+        const span = transition.to - transition.from;
+        const progress = Math.max(0, Math.min(1,
+          Math.abs(span) < 1e-5 ? 1 : (k - transition.from) / span));
+        alpha = transition.kind === 'enter' ? 1 - progress : progress;
       }
+      const animateWithPreview = !!transition || motionModeRef.current;
+      const plusScale = animateWithPreview ? k : 1;
+      const n = pagesRef.current.length;
+      /* offsetLeft/Top 是「尚未套 transform」的版面座標，拿它定位不會像
+         getBoundingClientRect 那樣把上一幀 transform 又算一次。加號中心永遠
+         貼在縮小後頁面的水平中線，X 位置則跟著最後一頁右緣一起收合。 */
+      const parent = plus.offsetParent as HTMLElement | null;
+      const parentRect = parent?.getBoundingClientRect();
+      if (parentRect) {
+        const baseCx = parentRect.left + plus.offsetLeft + plus.offsetWidth / 2;
+        const baseCy = parentRect.top + plus.offsetTop + plus.offsetHeight / 2;
+        const wantCx = left0 + k * ((n - 1) * stride + previewWRef.current) + 12 + plus.offsetWidth / 2;
+        const wantCy = colRect.top + k * previewHRef.current / 2;
+        plus.style.transform = `translate3d(${wantCx - baseCx}px, ${wantCy - baseCy}px, 0) scale(${plusScale})`;
+      }
+      plus.style.opacity = `${alpha}`;
+      plus.style.pointerEvents = alpha > .98 ? 'auto' : 'none';
+      plus.style.visibility = 'visible';
+      plus.style.transition = 'none';
     }
   }, []);
 
@@ -9098,8 +9289,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const anim = kAnimRef.current;
       if (anim) {
         const t = Math.min(1, (performance.now() - anim.t0) / 300);
-        kRef.current = anim.from + (anim.to - anim.from) * (1 - Math.pow(1 - t, 3));
-        if (t >= 1) { kRef.current = anim.to; kAnimRef.current = null; }
+        const eased = 1 - Math.pow(1 - t, 3);
+        kRef.current = anim.from + (anim.to - anim.from) * eased;
+        stripTopRef.current = anim.fromTop + (anim.toTop - anim.fromTop) * eased;
+        if (t >= 1) {
+          kRef.current = anim.to;
+          kAnimRef.current = null;
+          plusMotionTransitionRef.current = null;
+        }
       }
       const k = kRef.current;
       // 版面（外殼尺寸、左右留白、縮放）全部由這一帧的 k 算出來，
@@ -9115,7 +9312,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           const pw = previewWRef.current;
           const m = Math.max(16, (w - pw * k) / 2);
           // kAnchorRef 存的是「內容座標」，乘上當下倍率就是它現在的位置
-          cont.scrollLeft = Math.max(0, m + kAnchorRef.current * k - w / 2);
+          const desired = Math.max(0, Math.min(
+            Math.max(0, cont.scrollWidth - cont.clientWidth),
+            m + kAnchorRef.current * k - w / 2,
+          ));
+          cont.scrollLeft = desired;
+          /* 進／出動畫頁也補回 WebKit scrollLeft 的次像素取整誤差。之前只有
+             手勢縮放做這件事，所以退出時頁面放大的每幀會左右跳約 1px。 */
+          const actual = cont.scrollLeft;
+          stripSubpixelXRef.current = (actual - desired) / Math.max(.0001, k);
+          const col = pagesColRef.current;
+          if (col) {
+            const sub = stripSubpixelXRef.current;
+            col.style.transform = Math.abs(sub) > .0001 ? `translate3d(${sub}px, 0, 0)` : '';
+          }
         }
       }
       // 外層（貼在頁框正下方）由這裡每一帧定位 —— 頁框在排頁面時是不動的，
@@ -9583,8 +9793,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     // 手指還在畫布上捏合時，倍率由手勢每一帧直接寫，這裡不要插手
     if (canvasZoomRef.current) return;
     kRef.current = pagesScale;
+    stripTopRef.current = motionModeRef.current ? 0 : Math.max(0,
+      (containerSize.height - previewH * pagesScale) / 2 - 8);
     applyStripGeometry(pagesScale);
-  }, [pagesScale, pages.length, previewW, previewH, containerSize.width, applyStripGeometry]);
+  }, [pagesScale, pages.length, previewW, previewH, containerSize.width, containerSize.height, applyStripGeometry]);
   /** 格子在畫面上的實際大小會乘上整組佈局的縮放；把螢幕位移換算成格內偏移時要跟著乘。 */
   const layoutScale = activeLayout?.t?.scale ?? 1;
 
@@ -13554,7 +13766,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       >
         {/* Left/Top Collage Preview Area */}
         <div 
-          className={`flex-1 flex ${activeTab === 'motion' ? 'items-start touch-pan-x' : 'items-center touch-none'} justify-start py-2 bg-[#070707] relative overflow-x-auto overflow-y-hidden select-none no-scrollbar overscroll-x-contain`}
+          className={`flex-1 flex items-start ${activeTab === 'motion' ? 'touch-pan-x' : 'touch-none'} justify-start py-2 bg-[#070707] relative overflow-x-auto overflow-y-hidden select-none no-scrollbar overscroll-x-contain`}
           ref={containerRef}
           data-grid-preview-viewport="1"
           onScroll={(e) => {
@@ -13618,7 +13830,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           {(() => {
             return (
               <div
-                className={`flex flex-row flex-nowrap flex-shrink-0 transition-opacity duration-150 ${activeTab === 'motion' ? 'items-start h-auto' : 'items-center h-full'}`}
+                className="flex flex-row flex-nowrap flex-shrink-0 items-start h-full transition-opacity duration-150"
                 style={{
                   // max-content ＋ flex-shrink-0：這一排的寬度＝所有小孩加起來。
                   // 外層是 flex 容器，不鎖 shrink 的話這排會被壓回容器寬度，
@@ -14974,11 +15186,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 {addedPagesCount < 24 && (
                   <button
                     ref={addPageBtnRef}
+                    data-classic-add-page="1"
                     onClick={(e) => {
                       e.stopPropagation();
                       setAddedPagesCount(prev => prev + 1);
                     }}
-                    className="flex-shrink-0 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 border border-white/25 flex items-center justify-center text-white transition-all ml-3 hover:scale-105 active:scale-95 cursor-pointer shadow-lg"
+                    className="flex-shrink-0 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 border border-white/25 flex items-center justify-center text-white ml-3 cursor-pointer shadow-lg"
                     title="新增一頁"
                   >
                     <Plus size={20} />
