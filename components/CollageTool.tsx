@@ -781,7 +781,8 @@ export const MO_DEFAULT: MoCfg = {
   idle: 'none', amp: 50, speed: 0.9,
 };
 const GRID_WAVE_DEFAULT = { amp: 50, speed: 0.9 } as const;
-const NON_GRID_WAVE_DEFAULT = { amp: 40, speed: 1.8 } as const;
+/* 非網格物件的波浪滑桿仍映射 100～250 的實際速度；介面 50 對應 175。 */
+const NON_GRID_WAVE_DEFAULT = { amp: 30, speed: 1.75 } as const;
 export const nonGridWaveSpeedToUi = (speed: number) =>
   Math.round(Math.max(0, Math.min(100, (speed * 100 - 100) / 1.5)));
 export const nonGridWaveSpeedFromUi = (ui: number) =>
