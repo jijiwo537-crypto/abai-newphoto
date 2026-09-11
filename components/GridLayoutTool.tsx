@@ -12,7 +12,7 @@ import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
-import { measureSymbolInk, measureSymbolInkAtSize, measureSymbolAdvance, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { measureSymbolInk, measureSymbolInkAtSize, measureSymbolAdvance, clearSymbolInkCache, symbolTextPresentation } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
   GLYPH_HOLES, GLYPH_BTN, holeImgRatio, getHoleImg, isImageHole, drawHoleShape, holeOverflow, glowAmount,
@@ -1589,7 +1589,8 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
      那套做法會讓幾百顆按鈕先用 fallback 畫一遍，再同時換字體與縮放一次，
      正是進頁面時「整片符號抖一下」與點擊延遲的來源。Canvas advance 是同步、
      有快取的純量測；第一次繪製前就已經得到最終尺寸。 */
-  const naturalWidth = measureSymbolAdvance(text, DEFAULT_FONT, base);
+  const displayText = symbolTextPresentation(text);
+  const naturalWidth = measureSymbolAdvance(displayText, SYMBOL_FONT, base);
   const fontSize = base * Math.min(1, 252 / Math.max(1, naturalWidth));
   return (
     <span
@@ -1601,12 +1602,15 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
         lineHeight: 1.9,
         minHeight: base * 1.9,
         overflow: 'visible',
+        /* 少數碼位在 iOS 沒有單色字身時仍會退回 Color Emoji；選單統一
+           轉成白色輪廓，和新增到畫布後的可改色符號一致。 */
+        filter: 'grayscale(1) brightness(0) invert(1)',
       }}
     >
       {text === "\u22b9 \u08ea \u02d6\u0359\u0358\u0361\u2605" ? (() => {
-        const [before, after] = text.split("\u08ea");
+        const [before, after] = displayText.split("\u08ea");
         return <>{before}<span style={{ display: 'inline-block', transform: 'translateX(-0.08em)' }}>{"\u08ea"}</span>{after}</>;
-      })() : text}
+      })() : displayText}
     </span>
   );
 };

@@ -780,7 +780,12 @@ export const MO_DEFAULT: MoCfg = {
   delay: 0, dur: durFromSpeed(70), in: 'pop',
   idle: 'none', amp: 50, speed: 0.9,
 };
-const WAVE_DEFAULT = { amp: 50, speed: 0.9 } as const;
+const GRID_WAVE_DEFAULT = { amp: 50, speed: 0.9 } as const;
+const NON_GRID_WAVE_DEFAULT = { amp: 40, speed: 1.8 } as const;
+export const nonGridWaveSpeedToUi = (speed: number) =>
+  Math.round(Math.max(0, Math.min(100, (speed * 100 - 100) / 1.5)));
+export const nonGridWaveSpeedFromUi = (ui: number) =>
+  (100 + Math.max(0, Math.min(100, ui)) * 1.5) / 100;
 export const moOf = (o: any): MoCfg => {
   const cfg = { ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) };
   /* 舊草稿裡的「左右」也真正遷移到網格同款波浪，不只是改顯示名稱。 */
@@ -8212,7 +8217,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 60, speed: 1.2 });
                   /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
                      就共用同一套，切換種類時也不能沿用上一個動畫的怪速度。 */
-                  else if (d.idle === 'grid-wave') setCur({ ...d, ...WAVE_DEFAULT });
+                  else if (d.idle === 'grid-wave') setCur({
+                    ...d,
+                    ...(isGridTarget ? GRID_WAVE_DEFAULT : NON_GRID_WAVE_DEFAULT),
+                  });
                   else if (d.idle && isSpecialLineTarget) setCur({ ...d, amp: 20 });
                   else setCur(d);
                   replayMotion();
@@ -8376,14 +8384,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             <CompactSlider label="速度"
                               value={cur.idle === 'symbol-breathe2' && isSymbolTarget
                                 ? symbolBreathe2SpeedToUi(cur.speed)
-                                : Math.round(cur.speed * 100)}
-                              min={cur.idle === 'symbol-breathe2' && isSymbolTarget ? 0 : 20}
-                              max={cur.idle === 'symbol-breathe2' && isSymbolTarget ? 100 : 180}
+                                : cur.idle === 'grid-wave' && !isGridTarget
+                                  ? nonGridWaveSpeedToUi(cur.speed)
+                                  : Math.round(cur.speed * 100)}
+                              min={cur.idle === 'symbol-breathe2' && isSymbolTarget
+                                || cur.idle === 'grid-wave' && !isGridTarget ? 0 : 20}
+                              max={cur.idle === 'symbol-breathe2' && isSymbolTarget
+                                || cur.idle === 'grid-wave' && !isGridTarget ? 100 : 180}
                               step={1}
                               onChange={(v: number) => setCur({
                                 speed: cur.idle === 'symbol-breathe2' && isSymbolTarget
                                   ? symbolBreathe2SpeedFromUi(v)
-                                  : v / 100,
+                                  : cur.idle === 'grid-wave' && !isGridTarget
+                                    ? nonGridWaveSpeedFromUi(v)
+                                    : v / 100,
                               })} />
                           </div>
                         )}

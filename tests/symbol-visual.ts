@@ -15,6 +15,14 @@ const scan = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
   return r>=l?{l,r:r+1,t,b:b+1}:null;
 };
 
+const isMonochromeWhite = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+  const data=ctx.getImageData(0,0,w,h).data;
+  for(let i=0;i<data.length;i+=4)if(data[i+3]>8){
+    if(Math.max(data[i],data[i+1],data[i+2])-Math.min(data[i],data[i+1],data[i+2])>4)return false;
+  }
+  return true;
+};
+
 const drawCanonical = (
   ctx: CanvasRenderingContext2D, text: string, size: number,
   cx: number, cy: number, unitScales?: number[], forceAnimated = false,
@@ -94,6 +102,7 @@ const drawCanonical = (
     const layout=drawCanonical(ctx,text,size,cssW/2,cssH/2);
     ctx.setTransform(1,0,0,1,0,0);
     const actual=scan(ctx,w,h);
+    const monochrome=isMonochromeWhite(ctx,w,h);
     const gap=4*dpr;
     const longIOSMain=iosWebKit&&isIOSProblemLongSymbol(text);
     /* 第四排第二顆是本次指定案例，保留完整逐單元可見性檢查；其餘符號
@@ -284,15 +293,16 @@ const drawCanonical = (
     /* 真機長符號回歸專注於這次的兩個產品條件：完整包框，以及進入動畫
        前後的倍率 1 畫面不位移。其餘節奏／特殊符號條件仍由 168 顆主測試負責。 */
     const pass=tailOnly||longIOSMain
-      ? inside&&firstFrameStable&&forcedPixelsStable&&stickerScaleInvariant&&unaffectedByText
-      : geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&fixedUnitAnchors&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&stickerScaleInvariant&&unaffectedByText&&diff<=2;
-    if(!pass)failed.push({index,sourceIndex,inside,centered,tight,nativeSafe,nativeDprSafety,stickerScaleInvariant,unaffectedByText,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,fixedUnitAnchors,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
+      ? monochrome&&inside&&firstFrameStable&&forcedPixelsStable&&stickerScaleInvariant&&unaffectedByText
+      : monochrome&&geometryPass&&stableCacheHit&&animationUnitCount&&originalCadence&&independentGroups&&originalBeatOrder&&noRectSlices&&visibleUnitsIndependent&&fixedUnitAnchors&&scale2StartsFlat&&scale2Independent&&multiFrameVisual&&firstFrameStable&&forcedPixelsStable&&specialDotAdjusted&&targetNative&&unrelatedStable&&targetTiming&&stickerScaleInvariant&&unaffectedByText&&diff<=2;
+    if(!pass)failed.push({index,sourceIndex,monochrome,inside,centered,tight,nativeSafe,nativeDprSafety,stickerScaleInvariant,unaffectedByText,stableCacheHit,animationUnitCount,originalCadence,independentGroups,originalBeatOrder,noRectSlices,everyUnitVisible,visibleRasterUnits,visibleUnitsIndependent,fixedUnitAnchors,scale2StartsFlat,scale2Independent,timelineCount,adjacentTimelinesDiffer,multiFrameVisual,bubblePerUnit,scalePerUnit,firstFrameStable,forcedPixelDiff,forcedAlphaError,oneDevicePixelHinting,forcedPixelsStable,forcedAnimatedBounds,unitUseSlice:layout.unitUseSlice,specialDotAdjusted,targetNative,unrelatedStable,targetTiming,diff,size,units:layout.units.length,actual,predicted:{pl,pr,pt,pb}});
 
     /* getImageData 陣列用完立刻釋放 backing store。舊測試把 168×4 張 Retina
        Canvas 全留在 DOM，Mobile WebKit 後半段會花數分鐘回收記憶體。完整
        數值驗證照跑；畫面保留指定案例、代表樣本與最後 12 顆長符號。 */
     c3.width=c3.height=0;
-    const keepVisualCard=detailedMotion||sourceIndex>=SYMBOLS.length-12;
+    const keepVisualCard=detailedMotion||[110,120,124].includes(sourceIndex)
+      ||sourceIndex>=SYMBOLS.length-12;
     if(!keepVisualCard){canvas.width=canvas.height=0;if(index%12===0)await new Promise(requestAnimationFrame);continue;}
 
     // 畫出實際驗證圖：綠框就是 App 的選取框，肉眼可逐顆檢查。
