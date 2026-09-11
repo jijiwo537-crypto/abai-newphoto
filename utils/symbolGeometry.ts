@@ -1,6 +1,24 @@
 import { fontStack } from './fonts';
 import { SYMBOLS } from './symbols';
 
+/* iOS 對部分星星、愛心、天體等碼位會優先選 Apple Color Emoji。符號在
+   產品裡是可改色的單色裝飾，不是 Emoji；為每個 pictograph 明確補上
+   text-presentation selector。原始專案資料不變，只在量測／繪製時使用。 */
+const pictograph = /\p{Extended_Pictographic}/u;
+export const symbolTextPresentation = (text: string) => {
+  /* 長裝飾字串需維持原始 advance；Safari 對大量 VS15 的 fallback 寬度會
+     失真。長字串由下方 alpha 染色保證單色，不插入任何新碼位。 */
+  if (isIOSProblemLongSymbol(text)) return text;
+  const points = Array.from(text);
+  let out = '';
+  for (let i = 0; i < points.length; i++) {
+    const ch = points[i];
+    out += ch;
+    if (pictograph.test(ch) && points[i + 1] !== '\ufe0e' && points[i + 1] !== '\ufe0f') out += '\ufe0e';
+  }
+  return out;
+};
+
 /* 清單從第 124 顆開始就是橫向長裝飾字串。Mobile Safari 對這批字串會依
    fallback 字體與當下字級偶發截掉右半、或回報過大的 advance；若只保護
    最後 12 顆，前面的長符號仍會出現框太短／太寬。用固定內容白名單，而
@@ -63,6 +81,27 @@ export type SymbolStickerRaster = {
 };
 const stickerCache = new Map<string, SymbolStickerRaster>();
 const MAX_STICKER_CACHE = 32;
+const tintCache = new Map<string, [number, number, number]>();
+const tintRgb = (color: string): [number, number, number] => {
+  const hit = tintCache.get(color); if (hit) return hit;
+  let rgb: [number, number, number] = [255, 255, 255];
+  try {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
+    if (ctx) {
+      ctx.fillStyle = color || '#fff'; ctx.fillRect(0, 0, 1, 1);
+      const p = ctx.getImageData(0, 0, 1, 1).data; rgb = [p[0], p[1], p[2]];
+    }
+    canvas.width = canvas.height = 0;
+  } catch { /* 白色是安全備援。 */ }
+  tintCache.set(color, rgb); return rgb;
+};
+const forceMonochrome = (data: Uint8ClampedArray, color: string) => {
+  const [r, g, b] = tintRgb(color);
+  for (let i = 0; i < data.length; i += 4) if (data[i + 3]) {
+    data[i] = r; data[i + 1] = g; data[i + 2] = b;
+  }
+};
 export const symbolStickerOversample = (text: string) => {
   const iosCanvas = typeof navigator !== 'undefined' && (
     /iP(?:hone|ad|od)/.test(navigator.userAgent)
@@ -90,6 +129,7 @@ export const clearSymbolInkCache = () => {
   unitLayoutCache.clear();
   splitUnitCache.clear();
   longRunCache.clear();
+  tintCache.clear();
   stickerCache.forEach(sticker => { sticker.canvas.width = sticker.canvas.height = 0; });
   stickerCache.clear();
   if (typeof rasterLayerCache !== 'undefined') {
@@ -179,6 +219,7 @@ export const rasterizeSymbolSticker = (
   logicalStrokeWidth = 0,
 ): SymbolStickerRaster | null => {
   if (typeof document === 'undefined' || !text) return null;
+  const renderText = symbolTextPresentation(text);
   const px = symbolStickerFontPx(text);
   const stroke = Math.max(0, logicalStrokeWidth);
   const key = `${text}|${family}|${mode}|${color}|${stroke.toFixed(3)}`;
@@ -195,9 +236,9 @@ export const rasterizeSymbolSticker = (
     const iosCanvas = /iP(?:hone|ad|od)/.test(navigator.userAgent)
       || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const longIOS = iosCanvas && isIOSProblemLongSymbol(text);
-    const runs = longIOS ? longSymbolPaintRuns(text, family) : null;
+    const runs = longIOS ? longSymbolPaintRuns(renderText, family) : null;
     const advance = Math.max(px * .25,
-      runs ? runs.total * px / REF : probe.measureText(text).width);
+      runs ? runs.total * px / REF : probe.measureText(renderText).width);
     const pad = Math.ceil(px * .72 + stroke * 2);
     const logicalW = Math.ceil(advance + pad * 2);
     const logicalH = Math.ceil(px * 2.45 + pad * 2);
@@ -222,8 +263,12 @@ export const rasterizeSymbolSticker = (
         paint(runs.runs[i], x);
         x += runs.advances[i] * px / REF;
       }
-    } else paint(text, left);
+    } else paint(renderText, left);
     const image = ctx.getImageData(0, 0, width, height);
+    /* Apple Color Emoji 即使遇到 VS15，在少數只有彩色字身的碼位仍會忽略
+       fillStyle。保留它的 alpha 輪廓，但把 RGB 強制染成使用者指定顏色。 */
+    forceMonochrome(image.data, color || '#fff');
+    ctx.putImageData(image, 0, 0);
     let l = width, r = -1, t = height, b = -1;
     for (let p = 0; p < width * height; p++) if (image.data[p * 4 + 3]) {
       const x = p % width, y = Math.floor(p / width);
@@ -748,7 +793,8 @@ export const rasterizeSymbolAnimationLayers = (
   outputScale = 1,
 ): SymbolRasterLayers | null => {
   if (typeof document === 'undefined' || !text) return null;
-  const units = splitSymbolTimingUnits(text);
+  const renderText = symbolTextPresentation(text);
+  const units = splitSymbolTimingUnits(renderText);
   if (!units.length) return null;
   const px = Math.max(8, logicalFontPx);
   const wantedScale = Math.max(1, Math.min(3, outputScale));
@@ -762,9 +808,9 @@ export const rasterizeSymbolAnimationLayers = (
     const iosCanvas = /iP(?:hone|ad|od)/.test(navigator.userAgent)
       || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const longIOS = iosCanvas && isIOSProblemLongSymbol(text);
-    const fullRuns = longIOS ? longSymbolPaintRuns(text, family) : null;
+    const fullRuns = longIOS ? longSymbolPaintRuns(renderText, family) : null;
     const logicalAdvance = Math.max(px * .25,
-      fullRuns ? fullRuns.total * px / REF : probe.measureText(text).width);
+      fullRuns ? fullRuns.total * px / REF : probe.measureText(renderText).width);
     const strokePx = Math.max(0, logicalStrokeWidth);
     /* 動畫只需要貼圖真正有墨水的區域。舊版用 6.7em 高、完整 advance 寬的
        巨型 Canvas 跑每個 prefix；固定高解析度後長符號會浪費數十 MB，甚至
@@ -816,8 +862,9 @@ export const rasterizeSymbolAnimationLayers = (
         x += valueRuns.advances[i] * px / REF;
       }
     };
-    setup(); paint(text);
+    setup(); paint(renderText);
     const final = g.getImageData(0, 0, width, height);
+    forceMonochrome(final.data, color || '#fff');
     const pixelCount = width * height;
     const owner = new Uint16Array(pixelCount); owner.fill(65535);
     let previous = new Uint8Array(pixelCount);
