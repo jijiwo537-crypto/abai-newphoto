@@ -1,6 +1,6 @@
 import { SYMBOLS } from '../utils/symbols';
 import { SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts';
-import { clearSymbolInkCache, countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolAdvance, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
+import { clearSymbolInkCache, countSymbolAnimationBeats, isIOSProblemLongSymbol, longSymbolPaintRuns, measureLongSymbolInk, measureSymbolAdvance, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale } from '../utils/symbolGeometry';
 
 declare global {
   interface Window { __symbolReport?: { done: boolean; total: number; failed: any[] } }
@@ -50,10 +50,10 @@ const drawCanonical = (
   const longIOS=isiOS&&isIOSProblemLongSymbol(text);
   const paintWhole=()=>{
     if(!longIOS){ctx.fillText(text,cx+dx,cy+dy);return;}
-    const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
-      Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
-    if(raster){ctx.drawImage(raster.fullCanvas,raster.fullSX,raster.fullSY,raster.fullSW,raster.fullSH,cx+dx+raster.fullX-raster.inkCenterX,cy+dy+raster.fullY-raster.inkCenterY,raster.fullW,raster.fullH);return;}
-    ctx.textAlign='left';ctx.fillText(text,cx+dx-layout.advance*size/100/2,cy+dy);ctx.textAlign='center';
+    const runLayout=longSymbolPaintRuns(text,SYMBOL_FONT);
+    ctx.textAlign='left';let x=cx+dx-runLayout.total*size/200;
+    for(let i=0;i<runLayout.runs.length;i++){ctx.fillText(runLayout.runs[i],x,cy+dy);x+=runLayout.advances[i]*size/100;}
+    ctx.textAlign='center';
   };
   const animated=forceAnimated||!!unitScales;
   const flat=!!unitScales&&!forceAnimated&&unitScales.every(value=>Math.abs(value-1)<1e-6);
@@ -62,8 +62,9 @@ const drawCanonical = (
   }else{
     const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,
       Math.max(1,Math.hypot(ctx.getTransform().a,ctx.getTransform().b)));
-    const rasterAnchorX=isiOS&&raster?layout.ink.cx*size-raster.inkCenterX:0;
-    const rasterAnchorY=longIOS&&raster?-raster.inkCenterY:0;
+    const staticInk=measureSymbolInkAtSize(text,SYMBOL_FONT,size);
+    const rasterAnchorX=raster&&!longIOS?staticInk.cx*size-raster.inkCenterX:0;
+    const rasterAnchorY=raster&&!longIOS?staticInk.cy*size-raster.inkCenterY:0;
     const scales=raster?.layers.map((_layer,i)=>unitScales?.[i]??1)||[];
     const alphas=raster?.layers.map((_layer,i)=>unitAlphas?.[i]??1)||[];
     raster?.layers.forEach((layer,i)=>{
@@ -114,9 +115,8 @@ const drawCanonical = (
     const actual=scan(ctx,w,h);
     const gap=4*dpr;
     const longIOSMain=iosWebKit&&isIOSProblemLongSymbol(text);
-    const frameRaster=tailOnly||longIOSMain
-      ?rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,size,'fill','#fff',0,dpr):null;
-    const fw=(frameRaster?.inkWidth??layout.ink.w*size)*dpr,fh=(frameRaster?.inkHeight??layout.ink.h*size)*dpr;
+    const frameInk=isIOSProblemLongSymbol(text)?measureLongSymbolInk(text,SYMBOL_FONT):layout.ink;
+    const fw=frameInk.w*size*dpr,fh=frameInk.h*size*dpr;
     const pl=w/2-fw/2-gap,pr=w/2+fw/2+gap;
     const pt=h/2-fh/2-gap,pb=h/2+fh/2+gap;
     const inside=!!actual&&actual.l>=pl-1&&actual.r<=pr+1&&actual.t>=pt-1&&actual.b<=pb+1;
@@ -175,7 +175,9 @@ const drawCanonical = (
         : [];
       if(!sampleIndices.length) fixedUnitAnchors=false;
       const dx=-layout.ink.cx*size,dy=-layout.ink.cy*size;
-      const rasterAnchorX=iosWebKit?layout.ink.cx*size-verificationRaster.inkCenterX:0;
+      const verificationStaticInk=measureSymbolInkAtSize(text,SYMBOL_FONT,size);
+      const rasterAnchorX=longIOSMain?0:verificationStaticInk.cx*size-verificationRaster.inkCenterX;
+      const rasterAnchorY=longIOSMain?0:verificationStaticInk.cy*size-verificationRaster.inkCenterY;
       for(const unitIndex of sampleIndices)for(const sampleScale of [.58,1.13]){
         const anchorCanvas=document.createElement('canvas');anchorCanvas.width=w;anchorCanvas.height=h;
         const anchorCtx=anchorCanvas.getContext('2d',{willReadFrequently:true})!;anchorCtx.scale(dpr,dpr);
@@ -185,7 +187,7 @@ const drawCanonical = (
         anchorCtx.setTransform(1,0,0,1,0,0);
         const center=alphaCentroid(anchorCtx,w,h),layer=verificationRaster.layers[unitIndex];
         const expectedX=(cssW/2+dx+rasterAnchorX+layer.pivotX)*dpr;
-        const expectedY=(cssH/2+dy+layer.pivotY)*dpr;
+        const expectedY=(cssH/2+dy+rasterAnchorY+layer.pivotY)*dpr;
         if(!center||Math.abs(center.x-expectedX)>2||Math.abs(center.y-expectedY)>2) fixedUnitAnchors=false;
         anchorCanvas.width=anchorCanvas.height=0;
       }
@@ -263,9 +265,16 @@ const drawCanonical = (
     const firstFrameStable=!!actual&&!!forcedAnimatedBounds
       /* 泡泡/缩放会按设计改变每颗单元的外形范围；这里严格验证的是
          整体中心不能因切换动画渲染器而位移。 */
-      && Math.abs((forcedAnimatedBounds.l+forcedAnimatedBounds.r-actual.l-actual.r)/2)<=4
-      && Math.abs((forcedAnimatedBounds.t+forcedAnimatedBounds.b-actual.t-actual.b)/2)<=4;
-    const specialDotAdjusted=true;
+      && Math.abs((forcedAnimatedBounds.l+forcedAnimatedBounds.r-actual.l-actual.r)/2)<=2
+      && Math.abs((forcedAnimatedBounds.t+forcedAnimatedBounds.b-actual.t-actual.b)/2)<=2;
+    /* 第四排第二顆：中點與其下方兩個 combining marks 是一個視覺單位，
+       不能在泡泡／縮放 II 分成三顆散開；同時只限定這個結構，避免牽動
+       其他原本正常的符號。 */
+    const fourthRowSecond=SYMBOLS[14];
+    const specialDotAdjusted=text!==fourthRowSecond||(
+      layout.units.includes('\u00b7\u0329\u0359')
+      &&!layout.units.includes('\u0329')&&!layout.units.includes('\u0359')
+    );
     /* 只有含 ੈ 的目标结构改用整串原生 shaping；其他符号必须逐项保持
        上一版稳定布局，避免修一个例子却改变其余符号。 */
     const target="*\u0a48\u2729\u2027\u208a\u02da";
@@ -311,7 +320,12 @@ const drawCanonical = (
     ctx.strokeRect(pl,pt,pr-pl,pb-pt);
     const card=document.createElement('div');card.className='card'+(pass?'':' bad');
     const label=document.createElement('div');label.className='label';
-    label.textContent=`#${sourceIndex+1} · ${layout.units.length} unit · 靜止／泡泡／縮放II · ${pass?'PASS':'FAIL'}`;
+    label.textContent=`#${sourceIndex+1} · ${layout.units.length} unit · 剛生成／靜止／泡泡／縮放II · ${pass?'PASS':'FAIL'}`;
+    const generatedCanvas=document.createElement('canvas');generatedCanvas.width=w;generatedCanvas.height=h;
+    const generatedCtx=generatedCanvas.getContext('2d',{willReadFrequently:true})!;generatedCtx.scale(dpr,dpr);
+    drawCanonical(generatedCtx,text,size,cssW/2,cssH/2);
+    generatedCtx.setTransform(1,0,0,1,0,0);generatedCtx.strokeStyle=pass?'#64e6a5':'#ff4d4d';generatedCtx.lineWidth=2;
+    generatedCtx.strokeRect(pl,pt,pr-pl,pb-pt);
     const bubbleCanvas=document.createElement('canvas');bubbleCanvas.width=w;bubbleCanvas.height=h;
     const bubbleCtx=bubbleCanvas.getContext('2d',{willReadFrequently:true})!;
     bubbleCtx.scale(dpr,dpr);
@@ -330,7 +344,7 @@ const drawCanonical = (
     scaleCtx.setTransform(1,0,0,1,0,0);
     scaleCtx.strokeStyle=pass?'#64e6a5':'#ff4d4d';scaleCtx.lineWidth=2;
     scaleCtx.strokeRect(pl,pt,pr-pl,pb-pt);
-    card.append(label,canvas,bubbleCanvas,scaleCanvas);grid.append(card);
+    card.append(label,generatedCanvas,canvas,bubbleCanvas,scaleCanvas);grid.append(card);
     if(index%12===0) await new Promise(requestAnimationFrame);
   }
   const summary=document.querySelector('#summary')!;
