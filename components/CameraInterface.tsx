@@ -1132,36 +1132,24 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     </span>
                  </div>
 
-                 <div className={`flex items-center justify-center w-full px-5 relative ${activeControl === 'kelvin' ? '-translate-y-4' : ''}`}>
+                 <div className="flex items-center justify-center w-full px-5 relative">
                     {/* 收合鍵改成絕對定位；否則它會佔掉右側寬度，把整條刻度推離螢幕中心。 */}
-                    <div data-camera-scale={activeControl} className="relative flex items-center h-12 w-[214px] max-w-[calc(100%-72px)]">
+                    <div
+                      data-camera-scale={activeControl}
+                      className={`relative flex items-center h-12 w-[214px] max-w-[calc(100%-72px)] ${activeControl === 'kelvin' ? '-translate-y-4' : ''}`}
+                    >
                         {activeControl === 'exposure' && (
-                          <>
-                            <div className="absolute inset-x-0 h-4 z-0 flex items-center overflow-hidden pointer-events-none">
-                              <div className="w-full h-full opacity-30" style={{ background: 'repeating-linear-gradient(90deg, #fff, #fff 1px, transparent 1px, transparent 10px)', maskImage: 'linear-gradient(to right, transparent, black 15%, black 85%, transparent)' }} />
-                              <div className="absolute left-1/2 -translate-x-1/2 w-[1.5px] h-full bg-white/60" />
-                            </div>
-                            <div
-                              className="absolute top-1/2 -translate-y-1/2 h-8 w-[2px] bg-white rounded-full shadow-[0_0_15px_rgba(255,255,255,1)] z-10 pointer-events-none transition-none"
-                              style={{ left: `${((parseFloat(settings.exposure) + 1) / 2) * 100}%`, transform: 'translate(-50%, -50%)' }}
-                            />
-                            <input
-                              type="range"
-                              min="-1"
-                              max="1"
-                              step="0.1"
-                              value={parseFloat(settings.exposure)}
-                              onChange={(e) => {
-                                const rawVal = parseFloat(e.target.value);
-                                const val = (rawVal > 0 ? '+' : '') + rawVal.toFixed(1);
-                                if (val !== settings.exposure) {
-                                  triggerHaptic();
-                                  setSettings(prev => ({ ...prev, exposure: val }));
-                                }
-                              }}
-                              className="absolute left-0 -top-4 w-full h-16 opacity-0 z-20 cursor-pointer [&::-webkit-slider-thumb]:w-12 [&::-webkit-slider-thumb]:h-12 [&::-webkit-slider-thumb]:appearance-none"
-                            />
-                          </>
+                          <CameraTickScale
+                            label="曝光"
+                            value={Math.round(parseFloat(settings.exposure) * 10)} min={-10} max={10} step={1}
+                            onStep={(raw, index) => {
+                              const n = raw / 10;
+                              const val = `${n > 0 ? '+' : ''}${n.toFixed(1)}`;
+                              if (val === settings.exposure) return;
+                              triggerCameraTick('exposure', index);
+                              setSettings(prev => ({ ...prev, exposure: val }));
+                            }}
+                          />
                         )}
                         {activeControl === 'kelvin' && (
                           <CameraTickScale

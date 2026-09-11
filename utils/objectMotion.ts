@@ -1,5 +1,7 @@
 export type ObjectMotionFrame = {
   k: number;
+  /** 翻轉／流星只在水平方向需要的額外倍率。 */
+  fx?: number;
   dx: number;
   dy: number;
   rot: number;
@@ -28,6 +30,13 @@ export const OBJECT_MOTION_DEFAULT: ObjectMotionConfig = {
   idle: 'none',
   amp: 50,
   speed: 0.9,
+};
+
+/** 經典拼圖的新物件預設完全靜止；保留其餘參數只是讓使用者首次切換時有合理值。 */
+export const CLASSIC_OBJECT_MOTION_DEFAULT: ObjectMotionConfig = {
+  ...OBJECT_MOTION_DEFAULT,
+  in: 'none',
+  idle: 'none',
 };
 
 export const OBJECT_IN_KINDS = [
@@ -71,6 +80,11 @@ export const objectMotionOf = (value?: Partial<ObjectMotionConfig> | null): Obje
   ...(value || {}),
 });
 
+export const classicObjectMotionOf = (value?: Partial<ObjectMotionConfig> | null): ObjectMotionConfig => ({
+  ...CLASSIC_OBJECT_MOTION_DEFAULT,
+  ...(value || {}),
+});
+
 export const objectMotionFrame = (
   value: Partial<ObjectMotionConfig> | null | undefined,
   time: number,
@@ -89,9 +103,15 @@ export const objectMotionFrame = (
     else if (cfg.in === 'rise') intro = { ...flat, dy: (1 - e) * .9, a: fade };
     else if (cfg.in === 'drop') intro = { ...flat, dy: -(1 - e) * .9, a: fade };
     else if (cfg.in === 'spin') intro = { ...flat, k: e, rot: -(1 - e) * 200, a: fade };
-    else if (cfg.in === 'flip') intro = { ...flat, k: Math.max(.02, Math.abs(Math.cos((1 - e) * Math.PI))), a: fade };
+    else if (cfg.in === 'flip') intro = { ...flat, fx: Math.max(.02, Math.abs(Math.cos((1 - e) * Math.PI))), a: fade };
     else if (cfg.in === 'bounce') intro = { ...flat, dy: -(1 - bounce(p)) * 1.1, a: clamp(p * 4) };
-    else if (cfg.in === 'spring') intro = { ...flat, k: e, dx: -(1 - e) * 1.15, dy: -(1 - e) * .82, rot: -(1 - e) * 28, a: fade };
+    else if (cfg.in === 'spring') {
+      const q = cubic(Math.min(1, p / .62));
+      const z = Math.max(0, (p - .62) / .38);
+      const over = z > 0 ? Math.sin(z * Math.PI) * .06 : 0;
+      const stretch = (1 - q) * .55;
+      intro = { ...flat, k: (1 + over) / (1 + stretch), fx: 1 + stretch, dx: -(1 - q) * 1.15, dy: -(1 - q) * .82, rot: -(1 - q) * 28, a: fade };
+    }
     else intro = { ...flat, k: back(p), a: fade };
   }
   if (p < 1) return intro;
@@ -103,7 +123,10 @@ export const objectMotionFrame = (
   let idle = flat;
   if (cfg.idle === 'float') idle = { ...flat, dy: Math.sin(w * 2) * A * .28 };
   else if (cfg.idle === 'grid-wave') idle = { ...flat, dy: Math.sin(w * 2.2) * A * .18, rot: Math.sin(w * 1.1) * A * 3 };
-  else if (cfg.idle === 'breathe') idle = { ...flat, k: 1 + Math.sin(w * 1.9) * A * .44 };
+  else if (cfg.idle === 'breathe') {
+    const rate = 1 + (((phase * .6180339887) % 1) - .5) * .34;
+    idle = { ...flat, k: 1 + Math.sin(t * cfg.speed * 1.9 * rate + phase) * A * .44 };
+  }
   else if (cfg.idle === 'symbol-breathe2') idle = { ...flat, idleT: t };
   else if (cfg.idle === 'spin') idle = { ...flat, rot: t * cfg.speed * A * 90 };
   else if (cfg.idle === 'wobble') idle = { ...flat, rot: Math.sin(w * 2.4) * A * 22 };
@@ -116,6 +139,7 @@ export const objectMotionFrame = (
   };
   return {
     k: 1 + (idle.k - 1) * blend,
+    fx: 1,
     dx: idle.dx * blend,
     dy: idle.dy * blend,
     rot: idle.rot * blend,

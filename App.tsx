@@ -177,7 +177,11 @@ const App: React.FC = () => {
      畫面空白。這裡先解碼成一般 JPEG 再交出去，工具那邊一行都不用改。
      一般的 JPEG/PNG 會原樣放行，不會多轉一次、也不會掉畫質。 */
   const handleImportToCollage = async (files: File | File[]) => {
-    const list = Array.isArray(files) ? files : [files];
+    // 創意拼圖只接受靜態圖片。accept 只是選擇器提示，拖放／分享進來的檔案
+    // 仍可能繞過它，因此在真正進工具前再做一次內容型別防線。
+    const list = (Array.isArray(files) ? files : [files]).filter(file =>
+      file.type.startsWith('image/') || /\.(heic|heif|dng|cr2|cr3|nef|arw|orf|rw2|raf|srw|jpe?g|png|webp|gif|bmp|tiff?)$/i.test(file.name),
+    );
     if (!list.length) return;
     setIsImporting(true);
     setImportPreviewUrl(null);
@@ -559,7 +563,7 @@ const App: React.FC = () => {
         type="file"
         ref={collageFileInputRef}
         className="hidden"
-        accept={MEDIA_ACCEPT}
+        accept={RAW_ACCEPT}
         multiple
         onChange={(e) => {
           const files = Array.from(e.target.files || []) as File[];

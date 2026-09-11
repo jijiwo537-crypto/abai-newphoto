@@ -14,7 +14,7 @@ import { canvasToUrl } from '../utils/blobUrl';
 import { SYMBOLS } from '../utils/symbols';
 import {
   measureSymbolInk, measureSymbolInkAtSize, measureSymbolAdvance, clearSymbolInkCache,
-  symbolTextPresentation, rasterizeSymbolAnimationLayers, symbolBreatheScale,
+  symbolTextPresentation, rasterizeSymbolAnimationLayers, symbolBreatheScale, countSymbolAnimationBeats,
 } from '../utils/symbolGeometry';
 /* 從「圖案」借過來的那批圖形：清單、按鈕小圖、算圖全部跟創意拼圖共用同一份 */
 import {
@@ -36,8 +36,8 @@ import { SaveButton } from './SaveButton';
 import type { ExitChoice } from '../types';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas, geoCssBox } from '../utils/compose';
 import {
-  ObjectMotionConfig, ObjectMotionFrame, OBJECT_MOTION_DEFAULT, OBJECT_IN_KINDS,
-  SYMBOL_OBJECT_IN_KINDS, OBJECT_IDLE_KINDS, objectMotionOf, objectMotionFrame,
+  ObjectMotionConfig, ObjectMotionFrame, CLASSIC_OBJECT_MOTION_DEFAULT, OBJECT_IN_KINDS,
+  SYMBOL_OBJECT_IN_KINDS, OBJECT_IDLE_KINDS, classicObjectMotionOf, objectMotionFrame,
   motionDurationFromUi, motionUiFromDuration,
 } from '../utils/objectMotion';
 
@@ -54,7 +54,7 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
 /* 經典拼圖動畫頁原先直接使用了創意拼圖檔案內的區域元件；那個元件沒有
    export，桌面開發環境有時直到點進動畫才報錯，iPhone WebKit 則會直接把
    整個 React 畫面清成黑色。這裡保留同款外觀，但讓經典拼圖自己持有元件。 */
-const CompactSlider = ({ label, value, min, max, onChange, step = 'any', decimals = 0, fixedDecimals = false, onCommit }: any) => {
+const CompactSlider = ({ label, value, min, max, onChange, step = 'any', decimals = 0, fixedDecimals = false, onCommit, disabled = false }: any) => {
   const queued = useRef<number | null>(null);
   const raf = useRef(0);
   const push = (next: number) => {
@@ -75,7 +75,7 @@ const CompactSlider = ({ label, value, min, max, onChange, step = 'any', decimal
   };
   useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
   return (
-    <div className="flex flex-col">
+    <div className={`flex flex-col ${disabled ? 'opacity-45' : ''}`}>
       <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
         <span>{label}</span>
         <span className="text-white font-sans tabular-nums">
@@ -87,6 +87,7 @@ const CompactSlider = ({ label, value, min, max, onChange, step = 'any', decimal
       <div className="slider-wrap" style={{ height: 16 }}>
         <input
           type="range" min={min} max={max} step={step} value={value}
+          disabled={disabled}
           onChange={e => push(Number(e.target.value))}
           onPointerUp={finish} onTouchEnd={finish} onKeyUp={finish}
           onPointerDown={e => e.stopPropagation()}
@@ -4016,6 +4017,12 @@ interface FloatingImageComponentProps {
   chromeLayer?: HTMLElement | null;
   /** 動畫頁當下這一格；選中框不吃這個變形，避免跟著動畫跳動。 */
   motionFrame?: ObjectMotionFrame | null;
+  /** 動畫頁只允許點選目標，不允許移動、縮放、旋轉或換位。 */
+  motionPickOnly?: boolean;
+  /** 切換動畫目標時短暫顯示的虛線提示框。 */
+  motionTargetFlash?: number | null;
+  /** 經典動畫頁暫停時，同步暫停可見的影片節點。 */
+  videoPaused?: boolean;
 }
 
 let globalDragPointerId: number | null = null;
@@ -4179,7 +4186,9 @@ const VideoLayer: React.FC<{
    * 所以「有沒有套濾鏡」不可能讓影片跑位。
    */
   glCanvas?: HTMLCanvasElement | null;
-}> = ({ image, boxW, boxH, style, videoRef, onReady, hidden, glCanvas }) => {
+  /** 動畫頁暫停時，真正顯示在畫面上的這個節點也必須停住。 */
+  paused?: boolean;
+}> = ({ image, boxW, boxH, style, videoRef, onReady, hidden, glCanvas, paused = false }) => {
   const ref = useRef<HTMLVideoElement>(null);
   /* ── 形狀（圓角／外形／羽化）──────────────────────────────────────
      用 CSS 遮罩，來源是 previewMask —— **跟圖片那條路、跟匯出用的是同一支
@@ -4241,6 +4250,12 @@ const VideoLayer: React.FC<{
     (ref as any).current = el;
     if (videoRef) videoRef.current = el;
   };
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    if (paused) video.pause();
+    else video.play().catch(() => { /* 等待下一次使用者互動 */ });
+  }, [paused, image.src]);
   /* ── 圖片在形狀裡的位置與縮放（imgShapeX／Y／Zoom）──────────────────
      照片那條路是 drawImgBase 在畫的時候套上去的；影片沒有經過那一支，
      所以以前「套了形狀之後怎麼拖都不會動」。這裡用完全同一條算式，
@@ -4636,6 +4651,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   onSwapTouchEnd,
   chromeLayer = null,
   motionFrame = null,
+  motionPickOnly = false,
+  motionTargetFlash = null,
+  videoPaused = false,
 }) => {
   const imageRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -5490,7 +5508,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
        （原本留著它是為了讓邊緣吸到整數像素，那件事現在由 snapPx 用「真正的」
        實體像素密度做掉了，不必再靠合成層。） */
     transform: (motionFrame || dragShift || (image.rotation % 360) !== 0)
-      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}${motionFrame ? `translate3d(${motionFrame.dx * boxW}px, ${motionFrame.dy * boxH}px, 0) scale(${motionFrame.k}) ` : ''}rotate(${image.rotation + (motionFrame?.rot || 0)}deg)`
+      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}${motionFrame ? `translate3d(${motionFrame.dx * boxW}px, ${motionFrame.dy * boxH}px, 0) scale(${motionFrame.k * (motionFrame.fx ?? 1)}, ${motionFrame.k}) ` : ''}rotate(${image.rotation + (motionFrame?.rot || 0)}deg)`
       : undefined,
     /* 過場一定要跟頁面容器那邊「一模一樣」（220ms、同一條曲線）。
        以前這裡是 200ms ease-out、那邊是 220ms cubic-bezier(0.2,0,0,1)：
@@ -6304,7 +6322,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           transformOrigin: 'center center',
           transform: [
             dragShift ? `translate3d(${dragShift.tx}px, ${dragShift.ty}px, 0) scale(${dragShift.s})` : '',
-            motionFrame ? `translate3d(${motionFrame.dx * boxW}px, ${motionFrame.dy * boxH}px, 0) scale(${motionFrame.k}) rotate(${motionFrame.rot}deg)` : '',
+            motionFrame ? `translate3d(${motionFrame.dx * boxW}px, ${motionFrame.dy * boxH}px, 0) scale(${motionFrame.k * (motionFrame.fx ?? 1)}, ${motionFrame.k}) rotate(${motionFrame.rot}deg)` : '',
           ].filter(Boolean).join(' ') || undefined,
           transition: dragShift
             ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
@@ -6421,10 +6439,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         willChange: 'transform',
         backfaceVisibility: 'hidden',
       }}
-      onTouchStart={onSwapTouchStart}
-      onTouchMove={onSwapTouchMove}
-      onTouchEnd={onSwapTouchEnd}
-      onTouchCancel={onSwapTouchEnd}
+      onTouchStart={motionPickOnly ? undefined : onSwapTouchStart}
+      onTouchMove={motionPickOnly ? undefined : onSwapTouchMove}
+      onTouchEnd={motionPickOnly ? undefined : onSwapTouchEnd}
+      onTouchCancel={motionPickOnly ? undefined : onSwapTouchEnd}
     >
       {isCanvasVector && image.shape ? null : image.shape === 'hole' ? (
         /* 從「圖案」借過來的那幾顆：它們不是 SVG 路徑（有的是系統字型的字、
@@ -6854,6 +6872,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           onReady={() => setVidReady(true)}
           hidden={glLive}
           glCanvas={videoWantsGl ? glCanvas : null}
+          paused={videoPaused}
         />
       ) : (
         <img
@@ -6882,13 +6901,28 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           }}
         />
       )}
+
+      {motionTargetFlash && (
+        <div
+          key={`motion-flash-${image.id}-${motionTargetFlash}`}
+          data-motion-target-flash={image.id}
+          className="absolute pointer-events-none"
+          style={{
+            inset: `${-4 / previewK}px`,
+            border: `${1 / previewK}px dashed rgba(255,255,255,.95)`,
+            borderRadius: `${4 / previewK}px`,
+            animation: 'classic-motion-target-flash 850ms ease-out both',
+            zIndex: 100,
+          }}
+        />
+      )}
       
       <div
-        className="absolute inset-0 cursor-move"
-        onPointerDown={handleBodyPointerDown}
-        onPointerMove={handleBodyPointerMove}
-        onPointerUp={handleBodyPointerUp}
-        onPointerCancel={handleBodyPointerUp}
+        className={`absolute inset-0 ${motionPickOnly ? 'cursor-pointer' : 'cursor-move'}`}
+        onPointerDown={motionPickOnly ? (e) => { e.stopPropagation(); onSelect(); } : handleBodyPointerDown}
+        onPointerMove={motionPickOnly ? undefined : handleBodyPointerMove}
+        onPointerUp={motionPickOnly ? undefined : handleBodyPointerUp}
+        onPointerCancel={motionPickOnly ? undefined : handleBodyPointerUp}
       />
 
       {/* 拿不到外框層時就照原本的方式掛在自己身上，行為完全不變 */}
@@ -6958,6 +6992,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     layouts: LayoutItem[];
     /** 這一頁的背景紋理。沒設過就是「無」，所以舊作品讀回來也不會有東西冒出來 */
     pattern?: PatternOpts;
+    /** 每頁自己的動畫循環停留秒數。 */
+    motionHold?: number;
   }
   /** 讀某一頁的紋理設定（沒設過就給預設值） */
   const pagePattern = (p?: { pattern?: PatternOpts }): PatternOpts =>
@@ -6980,9 +7016,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const brushLiveRef = useRef<{ pointerId: number; stroke: ClassicBrushStroke } | null>(null);
   const [motionPlaying, setMotionPlaying] = useState(true);
   const [motionTime, setMotionTime] = useState(0);
-  const [motionHold, setMotionHold] = useState(4);
+  const [motionRunSeq, setMotionRunSeq] = useState(0);
   const motionClockRef = useRef(0);
   const [motionTargetId, setMotionTargetId] = useState<string | null>(null);
+  const [motionFlash, setMotionFlash] = useState<{ id: string; nonce: number } | null>(null);
+  const motionFlashTimerRef = useRef<number | null>(null);
   /** 手指正在移动任一已选物件；期间统一隐藏选中框与白色药丸 */
   const [selectionDragging, setSelectionDragging] = useState(false);
   /* iPhone 的觸控事件頻率可能高於螢幕更新率。把同一畫面幀內的中間狀態全部
@@ -8118,12 +8156,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       bold: false, italic: false, letterSpacing: 0,
       strokeColor: '#000000',
       glow: 0, glowColor: '#FFFFFF',
-      /* 經典／創意共用同一組符號預設：泡泡進場、縮放 II 常駐。 */
-      mo: {
-        ...OBJECT_MOTION_DEFAULT,
-        in: 'bubble', dur: motionDurationFromUi(80),
-        idle: 'symbol-breathe2', amp: 60, speed: 1.2,
-      },
+      // 經典拼圖的所有新物件預設都是「無／靜止」。
+      mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT },
     };
     setFloatingImages(prev => [...prev, item]);
     setSelectedFloatingId(id);
@@ -8599,6 +8633,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const [selectedRatio, setSelectedRatio] = useState('3:4');
   const [isLandscape, setIsLandscape] = useState(false);
+  const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
+  const getRatioDimensions = () => {
+    const pad = 8;
+    const maxW = Math.min(450, Math.max(200, containerSize.width - pad));
+    const maxH = Math.max(200, containerSize.height - pad);
+    let ratioW = 1, ratioH = 1;
+    if (selectedRatio === '3:4') { ratioW = isLandscape ? 4 : 3; ratioH = isLandscape ? 3 : 4; }
+    else if (selectedRatio === '2:3') { ratioW = isLandscape ? 3 : 2; ratioH = isLandscape ? 2 : 3; }
+    else if (selectedRatio === '9:16') { ratioW = isLandscape ? 16 : 9; ratioH = isLandscape ? 9 : 16; }
+    else if (selectedRatio === '4:5') { ratioW = isLandscape ? 5 : 4; ratioH = isLandscape ? 4 : 5; }
+    const w = maxW;
+    const h = w * ratioH / ratioW;
+    const scale = Math.min(maxW / w, maxH / h);
+    return { width: Math.round(w * scale), height: Math.round(h * scale) };
+  };
+  const { width: previewW, height: previewH } = getRatioDimensions();
 
   /** 觸控結束後瀏覽器還會補送一次 click，兩邊都處理的話一次點擊會被算成兩次 */
   const touchHandledAtRef = useRef(0);
@@ -8680,20 +8730,93 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 頁面順序模式：操作欄往下滑、畫布往下移到中央、每一頁下面出現握把與刪除鍵 */
   const pagesMode = activeTab === 'pages';
 
+  /** 動畫目標只看目前這一頁，而且影片永遠不是動畫目標。 */
+  const motionItems = useMemo(() => floatingImages.filter(item =>
+    !item.isVideo && pageOfFloating(item, previewW + 1, pages.length) === activePageIndex,
+  ), [floatingImages, previewW, pages.length, activePageIndex]);
+  const pageVideoItems = useMemo(() => floatingImages.filter(item =>
+    item.isVideo && pageOfFloating(item, previewW + 1, pages.length) === activePageIndex,
+  ), [floatingImages, previewW, pages.length, activePageIndex]);
+  const motionHold = activePage.motionHold ?? 4;
+  const setMotionHold = useCallback((seconds: number) => {
+    setPages(prev => prev.map((page, index) => index === activePageIndex
+      ? { ...page, motionHold: seconds }
+      : page));
+  }, [activePageIndex]);
+  const hasConfiguredMotion = useCallback((item: FloatingImage) => {
+    const cfg = classicObjectMotionOf(item.mo);
+    return !item.isVideo && (cfg.in !== 'none' || cfg.idle !== 'none');
+  }, []);
+  /** 泡泡的每個小單位都保留完整果凍時間；符號越長，整段自然越長。
+      相位也沿用創意拼圖的 id 雜湊，預覽、重播與匯出才會完全一致。 */
+  const timedMotionConfig = useCallback((item: FloatingImage) => {
+    const cfg = classicObjectMotionOf(item.mo);
+    if (!item.sym || cfg.in !== 'bubble') return cfg;
+    const units = Math.max(1, countSymbolAnimationBeats(item.text || item.sym));
+    return units > 1 ? { ...cfg, dur: cfg.dur * (1 + (units - 1) * .2) } : cfg;
+  }, []);
+  const motionPhase = useCallback((item: FloatingImage, index: number) => {
+    let hash = 0;
+    for (let i = 0; i < item.id.length; i++) hash = (hash * 31 + item.id.charCodeAt(i)) >>> 0;
+    return (hash % 628) / 100 + index * .7;
+  }, []);
+  const frameForItem = useCallback((item: FloatingImage, index: number, time: number) =>
+    objectMotionFrame(timedMotionConfig(item), time, motionPhase(item, index)),
+  [timedMotionConfig, motionPhase]);
+  const anyClassicMotion = useMemo(
+    () => floatingImages.some(hasConfiguredMotion),
+    [floatingImages, hasConfiguredMotion],
+  );
+  const [pageVideoDuration, setPageVideoDuration] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    if (!pageVideoItems.length) { setPageVideoDuration(0); return; }
+    const videos = pageVideoItems.map(item => getPreviewVideo(item.src));
+    const update = () => {
+      if (!alive) return;
+      const duration = Math.max(0, ...videos.map(v => Number.isFinite(v.duration) ? v.duration : 0));
+      if (duration > 0) setPageVideoDuration(duration);
+    };
+    videos.forEach(v => v.addEventListener('loadedmetadata', update));
+    update();
+    return () => {
+      alive = false;
+      videos.forEach(v => v.removeEventListener('loadedmetadata', update));
+    };
+  }, [pageVideoItems]);
+
   /** 跟創意拼圖相同：最後一個物件完成進場後，再停留指定秒數才循環。 */
   const motionTotal = useMemo(() => {
+    if (pageVideoItems.length && pageVideoDuration > 0) return pageVideoDuration;
     let end = 1.2;
-    floatingImages.forEach((item) => {
-      const cfg = objectMotionOf(item.mo);
+    motionItems.forEach((item) => {
+      const cfg = timedMotionConfig(item);
       if (cfg.in !== 'none') end = Math.max(end, cfg.delay + Math.max(.01, cfg.dur));
     });
     return end + Math.max(0, motionHold);
-  }, [floatingImages, motionHold]);
+  }, [motionItems, motionHold, pageVideoItems.length, pageVideoDuration, timedMotionConfig]);
 
   const replayMotion = useCallback(() => {
     motionClockRef.current = 0;
     setMotionTime(0);
     setMotionPlaying(true);
+    setMotionRunSeq(n => n + 1);
+    pageVideoItems.forEach(item => {
+      const video = getPreviewVideo(item.src);
+      try { video.currentTime = 0; } catch { /* metadata 還沒完成時下一次播放會自己從頭 */ }
+      video.play().catch(() => {});
+    });
+  }, [pageVideoItems]);
+
+  const chooseMotionTarget = useCallback((id: string) => {
+    if (!motionItems.some(item => item.id === id)) return;
+    setMotionTargetId(id);
+    setMotionFlash({ id, nonce: Date.now() });
+    if (motionFlashTimerRef.current) window.clearTimeout(motionFlashTimerRef.current);
+    motionFlashTimerRef.current = window.setTimeout(() => setMotionFlash(null), 850);
+  }, [motionItems]);
+  useEffect(() => () => {
+    if (motionFlashTimerRef.current) window.clearTimeout(motionFlashTimerRef.current);
   }, []);
 
   const [motionBarMounted, setMotionBarMounted] = useState(false);
@@ -8710,17 +8833,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return () => window.clearTimeout(timer);
   }, [activeTab]);
 
+  const wasMotionTabRef = useRef(false);
   useEffect(() => {
-    motionClockRef.current = 0;
-    setMotionTime(0);
-    if (activeTab === 'motion') setMotionPlaying(true);
-  }, [activeTab]);
+    const entering = activeTab === 'motion' && !wasMotionTabRef.current;
+    if (entering) {
+      motionClockRef.current = 0;
+      setMotionTime(0);
+      setMotionRunSeq(n => n + 1);
+    }
+    // 離開動畫頁後不重設時鐘；已套用的動畫從同一格繼續。
+    if (activeTab === 'motion' || anyClassicMotion) setMotionPlaying(true);
+    wasMotionTabRef.current = activeTab === 'motion';
+  }, [activeTab, anyClassicMotion]);
 
   /* 經典拼圖動畫使用與創意拼圖相同的「進場結束後 0.72 秒平順交棒」時間函式。
      每格只更新一個輕量時間值；照片／文字／符號都不改寫幾何資料，因此動畫
      不會污染草稿，也不會在停止後留下偏移。 */
   useEffect(() => {
-    if (activeTab !== 'motion' || !motionPlaying) return;
+    if ((!anyClassicMotion && activeTab !== 'motion') || !motionPlaying) return;
     let raf = 0, last = -1;
     const started = performance.now() - motionClockRef.current * 1000;
     const tick = (now: number) => {
@@ -8733,15 +8863,39 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [activeTab, motionPlaying, motionTotal]);
+  }, [activeTab, motionPlaying, motionTotal, motionRunSeq, anyClassicMotion]);
   useEffect(() => {
     if (activeTab !== 'motion') return;
     setSelectedFloatingId(null);
     setSelectedBrushId(null);
-    if (!motionTargetId || !floatingImages.some(f => f.id === motionTargetId)) {
-      setMotionTargetId(floatingImages[0]?.id || null);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+    if (!motionTargetId || !motionItems.some(f => f.id === motionTargetId)) {
+      setMotionTargetId(motionItems[0]?.id || null);
     }
-  }, [activeTab, floatingImages, motionTargetId]);
+  }, [activeTab, activePageIndex, motionItems, motionTargetId]);
+
+  /* 每一頁有自己的動畫時間軸。滑到另一頁時從該頁第 0 幀開始，避免沿用
+     上一頁的循環位置；影片也一起歸零，畫面與下方播放鍵保持同一時間。 */
+  useEffect(() => {
+    motionClockRef.current = 0;
+    setMotionTime(0);
+    setMotionRunSeq(n => n + 1);
+    pageVideoItems.forEach(item => {
+      const video = getPreviewVideo(item.src);
+      try { video.currentTime = 0; } catch { /* metadata 未完成時維持待播 */ }
+    });
+  }, [activePageIndex]);
+
+  /* 動畫頁的播放／暫停也控制該頁影片；離開動畫頁則恢復影片正常播放。 */
+  useEffect(() => {
+    const videos = pageVideoItems.map(item => getPreviewVideo(item.src));
+    videos.forEach(video => {
+      if (activeTab === 'motion' && !motionPlaying) video.pause();
+      else video.play().catch(() => {});
+    });
+  }, [activeTab, motionPlaying, pageVideoItems]);
   const pagesModeRef = useRef(false);
   pagesModeRef.current = pagesMode;
   /** 排頁面時整排頁面縮成一半（用 transform，不動 previewW/H） */
@@ -8766,7 +8920,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const panMovedRef = useRef(false);
   /* 動畫頁的縮小也走既有的頁面倍率管線。不要 transform 整個可捲動 viewport：
      iPhone Safari 會把超寬頁帶光柵化成一張 GPU 貼圖，超過紋理上限就整塊黑掉。 */
-  const pagesScale = pagesMode ? PAGES_MODE_SCALE : userZoom * (activeTab === 'motion' ? 0.86 : 1);
+  const motionFitScale = Math.max(.24, Math.min(
+    userZoom,
+    (Math.max(120, containerSize.width - 32)) / Math.max(1, previewW),
+    (Math.max(100, containerSize.height - 84)) / Math.max(1, previewH),
+  ));
+  const pagesScale = pagesMode ? PAGES_MODE_SCALE : activeTab === 'motion' ? motionFitScale : userZoom;
   /** 整排頁面左邊要留的空白（讓第一頁置中） */
   const stripOffset = (w: number, k: number) => Math.max(16, (w - previewW * k) / 2);
   /** 第 i 頁置中時的捲動位置 */
@@ -9090,7 +9249,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   }, [activeTab]);
 
   const [slotToUpload, setSlotToUpload] = useState<number | null>(null);
-  const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
   /** 容器還沒量到之前用的是預設值，先不要畫出來，不然量到的瞬間會跳一下 */
   const [containerMeasured, setContainerMeasured] = useState(false);
   const [allowSingleLayout, setAllowSingleLayout] = useState(false);
@@ -9261,44 +9419,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       setImages(clamped);
     }
   }, [templateIndex, selectedRatio, isLandscape, gap, containerSize.width, containerSize.height, images.length, imagesStateKey]);
-
-  const getRatioDimensions = () => {
-    // 上下左右都只留這麼一點空隙（容器自己還有 py-2）。
-    // 頁面下方原本要留給刪除鍵的位置已經移到「頁面順序」分頁，所以這裡可以留很少。
-    const pad = 8;
-    // 寬度仍然壓在 450 以免桌機上過大；高度就讓它撐滿可用空間，
-    // 這樣白色畫布下緣跟工具欄之間的空隙才會跟上緣一樣小。
-    const maxW = Math.min(450, Math.max(200, containerSize.width - pad));
-    const maxH = Math.max(200, containerSize.height - pad);
-    let w = maxW;
-
-    let ratioW = 1;
-    let ratioH = 1;
-
-    if (selectedRatio === '1:1') {
-      ratioW = 1;
-      ratioH = 1;
-    } else if (selectedRatio === '3:4') {
-      ratioW = isLandscape ? 4 : 3;
-      ratioH = isLandscape ? 3 : 4;
-    } else if (selectedRatio === '2:3') {
-      ratioW = isLandscape ? 3 : 2;
-      ratioH = isLandscape ? 2 : 3;
-    } else if (selectedRatio === '9:16') {
-      ratioW = isLandscape ? 16 : 9;
-      ratioH = isLandscape ? 9 : 16;
-    } else if (selectedRatio === '4:5') {
-      ratioW = isLandscape ? 5 : 4;
-      ratioH = isLandscape ? 4 : 5;
-    }
-
-    let h = w * (ratioH / ratioW);
-
-    const scale = Math.min(maxW / w, maxH / h);
-    return { width: Math.round(w * scale), height: Math.round(h * scale) };
-  };
-
-  const { width: previewW, height: previewH } = getRatioDimensions();
 
   const brushPoint = (clientX: number, clientY: number): ClassicBrushPoint | null => {
     const root = pagesContainerRef.current;
@@ -11859,7 +11979,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const drawTextLayer = async (
     ctx: CanvasRenderingContext2D,
     fImg: FloatingImage,
-    scaleFactor: number
+    scaleFactor: number,
+    motionFrame?: ObjectMotionFrame | null,
   ) => {
     const family = fImg.fontFamily || DEFAULT_FONT;
     await waitForFont(family, fImg.bold ? 700 : 400, !!fImg.italic);
@@ -11888,7 +12009,43 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const symInk = fImg.sym ? measureSymbolInk(fImg.text || fImg.sym, family) : null;
     const symDx = symInk ? -symInk.cx * size : 0;
     const symDy = symInk ? -symInk.cy * size : 0;
-    const drawLines = () => lines.forEach((ln, i) => ctx.fillText(ln, symDx, startY + i * lineH + symDy));
+    const unitMotion = fImg.sym && lines.length === 1 && motionFrame
+      && (motionFrame.seq !== undefined || (fImg.mo?.idle === 'symbol-breathe2' && motionFrame.idleT !== undefined));
+    const drawAnimated = (stroke = false) => {
+      if (!unitMotion) {
+        lines.forEach((ln, i) => stroke
+          ? ctx.strokeText(ln, symDx, startY + i * lineH + symDy)
+          : ctx.fillText(ln, symDx, startY + i * lineH + symDy));
+        return;
+      }
+      const raster = rasterizeSymbolAnimationLayers(
+        fImg.text || '', family, size, stroke ? 'stroke' : 'fill',
+        stroke ? (fImg.strokeColor || '#000000') : (fImg.color || '#FFFFFF'),
+        stroke ? (fImg.strokeWidth || 0) * 2 * scaleFactor * fImg.scale : 0,
+        Math.max(2, Math.min(5, window.devicePixelRatio || 1)),
+      );
+      if (!raster) return;
+      const count = raster.layers.length;
+      const bubbleSpan = 1 + Math.max(0, count - 1) * .2;
+      raster.layers.forEach((layer, index) => {
+        const q = motionFrame?.seq === undefined ? 1
+          : Math.max(0, Math.min(1, motionFrame.seq * bubbleSpan - index * .2));
+        if (motionFrame?.seq !== undefined && q <= .001) return;
+        const c1 = 1.70158, c3 = c1 + 1, z = q - 1;
+        const popScale = 1 + c3 * z * z * z + c1 * z * z;
+        const unitScale = fImg.mo?.idle === 'symbol-breathe2' && motionFrame?.idleT !== undefined
+          ? 1 + (symbolBreatheScale(index, motionFrame.idleT, fImg.mo.amp, fImg.mo.speed) - 1)
+              * (motionFrame.waveMix ?? 1)
+          : popScale;
+        ctx.save();
+        if (motionFrame?.seq !== undefined) ctx.globalAlpha *= Math.min(1, q * 3);
+        ctx.translate(symDx + layer.pivotX, symDy + layer.pivotY);
+        ctx.scale(unitScale, unitScale);
+        ctx.drawImage(layer.canvas, layer.x - layer.pivotX, layer.y - layer.pivotY, layer.w, layer.h);
+        ctx.restore();
+      });
+    };
+    const drawLines = () => drawAnimated(false);
     if (fImg.glow) {
       ctx.shadowColor = fImg.glowColor || '#FFFFFF';
       ctx.fillStyle = fImg.color || '#FFFFFF';
@@ -11910,7 +12067,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.lineJoin = 'round';
       ctx.miterLimit = 2;
       ctx.strokeStyle = fImg.strokeColor || '#000000';
-      lines.forEach((ln, i) => ctx.strokeText(ln, symDx, startY + i * lineH + symDy));
+      drawAnimated(true);
     }
     ctx.fillStyle = fImg.color || '#FFFFFF';
     drawLines();
@@ -12060,6 +12217,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     layers: FloatingImage[],
     scaleFactor: number,
     live?: LiveDraw,
+    motionFrame?: ObjectMotionFrame | null,
   ) => {
     /* 逐帧合成時，中間畫布只算到「這一格真的會被看到的大小」，
        而且整輪共用同一批畫布（見 LiveDraw 的說明）。 */
@@ -12074,16 +12232,32 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       return c;
     };
     for (const fImg of layers) {
+      const frame = fImg.isVideo ? null : motionFrame;
+      if (frame) {
+        const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
+        const fw = fImg.width * scaleFactor;
+        const fh = fImg.height * scaleFactor;
+        const cx = adjustedX * scaleFactor + fw / 2;
+        const cy = fImg.y * scaleFactor + fh / 2;
+        ctx.save();
+        ctx.globalAlpha *= frame.a;
+        ctx.translate(cx + frame.dx * fw, cy + frame.dy * fh);
+        ctx.rotate((frame.rot * Math.PI) / 180);
+        ctx.scale(frame.k * (frame.fx ?? 1), frame.k);
+        ctx.translate(-cx, -cy);
+      }
       if (fImg.text !== undefined) {
-        await drawTextLayer(ctx, fImg, scaleFactor);
+        await drawTextLayer(ctx, fImg, scaleFactor, frame);
+        if (frame) ctx.restore();
         continue;
       }
       if (fImg.shape) {
         drawShapeLayer(ctx, fImg, scaleFactor);
+        if (frame) ctx.restore();
         continue;
       }
       let img: any = fImg.isVideo ? await loadExportVideo(fImg.src) : await loadExportImage(fImg.src);
-      if (!img) continue;
+      if (!img) { if (frame) ctx.restore(); continue; }
       /* 影片的構圖是「留著參數、畫的時候才套」（照片是烤成一張新圖）。
          這裡用的是跟預覽完全同一個矩陣，所以匯出跟畫面上看到的一致。 */
       if (fImg.isVideo && fImg.geo && !isGeoIdentity(fImg.geo)) {
@@ -12224,6 +12398,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
       ctx.drawImage(src, -drawW / 2, -drawH / 2, drawW, drawH);
       ctx.restore();
+      if (frame) ctx.restore();
     }
   };
 
@@ -12563,9 +12738,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // minX/maxX 是物件在「整條頁面帶」上的範圍，用來跳過畫不到這一頁的東西。
       const drawJobs: {
         z: number; minX: number; maxX: number;
-        isVideo?: boolean; src?: string;
+        isVideo?: boolean; src?: string; motionItem?: FloatingImage;
         /* live 只有影片那條「一秒要畫三十次」的路會傳（見 LiveDraw） */
-        run: (c: CanvasRenderingContext2D, live?: LiveDraw) => Promise<void>;
+        run: (c: CanvasRenderingContext2D, live?: LiveDraw, motionAt?: number) => Promise<void>;
       }[] = [];
       pages.forEach((page, pageIdx) => {
         page.layouts.forEach(lay => {
@@ -12602,11 +12777,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           maxX: cx + half,
           isVideo: !!fImg.isVideo,
           src: fImg.src,
+          motionItem: fImg,
           /* 裁在自己那一頁裡面。貼齊畫布邊緣時圖層會刻意往外多蓋半個像素
              （不然預覽會露出一條抗鋸齒的白縫），預覽有 overflow:hidden 擋著，
              但匯出是把所有頁面畫在同一張長畫布上、沒有任何裁切 ——
              多出來的那半個像素就跑到隔壁那一頁去了。 */
-          run: async (c, live) => {
+          run: async (c, live, motionAt) => {
             /* 裁切範圍是「這個圖層真正橫跨到的每一頁」，不是只有一頁 ——
                只裁一頁的話，刻意跨在兩頁上的物件會被切掉一半。
                判斷跨頁時留 1.5px 的容差：貼齊邊緣時圖層會往外多蓋半個像素
@@ -12632,7 +12808,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             c.rect(p0 * targetW, 0, (p1 - p0 + 1) * targetW, targetH);
             c.clip();
             try {
-              await drawFloatingLayers(c, [fImg], scaleFactor, live);
+              const frame = motionAt === undefined || !hasConfiguredMotion(fImg)
+                ? null
+                : frameForItem(fImg, i, motionAt);
+              await drawFloatingLayers(c, [fImg], scaleFactor, live, frame);
             } finally {
               c.restore();
             }
@@ -12696,44 +12875,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        * 是同一條程式碼畫出來的，不可能長得不一樣。
        */
       const preparePageVideo = async (pageIdx: number, pageLeft: number) => {
-        // 跟 pageHasVideo 用同一條判斷，兩邊才不會一個說有、一個挑不到
-        const videoJobs = drawJobs.filter(j =>
-          j.isVideo && j.maxX > pageLeft + 0.5 && j.minX < pageLeft + targetW - 0.5);
+        const pageJobs = drawJobs.filter(j =>
+          j.maxX > pageLeft + 0.5 && j.minX < pageLeft + targetW - 0.5);
+        const videoJobs = pageJobs.filter(j => j.isVideo);
+        const animated = pageJobs.filter(j => j.motionItem && hasConfiguredMotion(j.motionItem));
         const k = Math.min(1, 1280 / Math.max(targetW, targetH));
         // 編碼器要求偶數邊長
         const VW = Math.max(2, Math.round(targetW * k / 2) * 2);
         const VH = Math.max(2, Math.round(targetH * k / 2) * 2);
 
-        const lowestVideoZ = Math.min(...videoJobs.map(j => j.z));
-        const mkLayer = async (pick: (z: number) => boolean, withBg: boolean) => {
-          const c = document.createElement('canvas');
-          c.width = VW; c.height = VH;
-          const g = c.getContext('2d')!;
-          if (withBg) {
-            g.fillStyle = pages[pageIdx].bgColor || '#ffffff';
-            g.fillRect(0, 0, VW, VH);
-            paintPattern(g, VW, VH, pagePattern(pages[pageIdx]));   // 紋理跟底色是一組的（每頁各自）
-          }
-          g.save();
-          g.scale(VW / targetW, VH / targetH);
-          g.translate(-pageLeft, 0);
-          for (const job of drawJobs) {
-            if (job.isVideo) continue;
-            if (job.maxX <= pageLeft || job.minX >= pageLeft + targetW) continue;
-            if (!pick(job.z)) continue;
-            await job.run(g);
-          }
-          g.restore();
-          return c;
-        };
-        const below = await mkLayer(z => z < lowestVideoZ, true);
-        const above = await mkLayer(z => z > lowestVideoZ, false);
-
         const rc = document.createElement('canvas');
         rc.width = VW; rc.height = VH;
         const rg = rc.getContext('2d')!;
 
-        // 影片全部從頭開始播，長度取最長的那一支（上限 15 秒）
+        // 有影片時循環長度只能等於影片；純動畫頁則用該頁最晚完成的進場＋停留。
         const vids = videoJobs.map(j => getPreviewVideo(j.src!));
         await Promise.all(vids.map(v => new Promise<void>(res => {
           if (v.readyState >= 1) return res();
@@ -12741,7 +12896,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           v.addEventListener('loadedmetadata', on);
           setTimeout(on, 3000);
         })));
-        const dur = Math.min(15, Math.max(...vids.map(v => (isFinite(v.duration) && v.duration > 0 ? v.duration : 3))));
+        const motionEnd = animated.reduce((end, job) => {
+          const cfg = timedMotionConfig(job.motionItem!);
+          return cfg.in === 'none' ? end : Math.max(end, cfg.delay + Math.max(.01, cfg.dur));
+        }, 1.2) + Math.max(0, pages[pageIdx]?.motionHold ?? 4);
+        const dur = vids.length
+          ? Math.min(15, Math.max(...vids.map(v => (isFinite(v.duration) && v.duration > 0 ? v.duration : 3))))
+          : motionEnd;
         /*
           倒回開頭，而且要等到「真的有畫面可以畫」（readyState ≥ HAVE_CURRENT_DATA）。
           只等 loadedmetadata 的話只有長寬、還沒有任何一帧，畫上去是空的。
@@ -12765,26 +12926,26 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           setTimeout(finish, 3000);
         })));
 
-        /* 逐帧合成：靜態底 → 影片 → 靜態上層。
-           影片那幾個 job 走「逐帧模式」：中間畫布只算到合成畫布上真正的大小
-           （VW/targetW），遮罩與離屏畫布整輪共用 —— 見 LiveDraw。 */
+        /* 每格都走與預覽相同的 objectMotionFrame；靜態、影片及動畫物件按原本
+           z 順序一起合成，才不會因拆成上下兩張底圖而讓動畫物件穿層。 */
         const live: LiveDraw = { k: VW / targetW, cache: new Map() };
-        const composite = async () => {
+        const composite = async (motionAt = 0) => {
           rg.clearRect(0, 0, VW, VH);
-          rg.drawImage(below, 0, 0);
+          rg.fillStyle = pages[pageIdx].bgColor || '#ffffff';
+          rg.fillRect(0, 0, VW, VH);
+          paintPattern(rg, VW, VH, pagePattern(pages[pageIdx]));
           rg.save();
           rg.scale(VW / targetW, VH / targetH);
           rg.translate(-pageLeft, 0);
-          for (const job of videoJobs) await job.run(rg, live);
+          for (const job of pageJobs) await job.run(rg, live, motionAt);
           rg.restore();
-          rg.drawImage(above, 0, 0);
         };
         /*
           先把第一帧合成上去再開始錄。captureStream 會把「開始錄的當下」畫布上
           的內容當成第一帧 —— 畫布還是空的就會錄到一段黑畫面，而第一次合成又
           特別慢（要載入影片、解碼、套濾鏡），黑掉的那段就更長。
         */
-        await composite();
+        await composite(0);
 
         return { rc, composite, dur, vids };
       };
@@ -12806,8 +12967,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const t0 = performance.now();
         await new Promise<void>(resolve => {
           const frame = async () => {
-            await composite();
             const el = performance.now() - t0;
+            await composite(el / 1000);
             // 整批的進度＝(已錄完的頁數 + 這一頁錄到幾成) ÷ 總共要錄的頁數
             const local = Math.max(0, Math.min(1, el / (dur * 1000)));
             setVideoProg(Math.max(0, Math.min(1, (vidDone + local) / Math.max(1, vidTotal))));
@@ -12842,12 +13003,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const { rc, composite, vids } = await preparePageVideo(pageIdx, pageLeft);
         vids.forEach(v => { try { v.play().catch(() => {}); } catch { /* ignore */ } });
         let alive = true, busy = false, raf = 0;
+        const started = performance.now();
         const tick = () => {
           if (!alive) return;
           raf = requestAnimationFrame(tick);
           if (busy) return;                       // 上一格還沒畫完就跳過，不要堆積
           busy = true;
-          composite().catch(() => { /* ignore */ }).then(() => { busy = false; });
+          composite((performance.now() - started) / 1000).catch(() => { /* ignore */ }).then(() => { busy = false; });
         };
         raf = requestAnimationFrame(tick);
         return { canvas: rc, stop: () => { alive = false; cancelAnimationFrame(raf); } };
@@ -12867,7 +13029,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const pageHasVideo = (pageIdx: number) => {
         const left = pageIdx * targetW;
         return drawJobs.some(j =>
-          j.isVideo && j.maxX > left + VIDEO_EDGE_EPS && j.minX < left + targetW - VIDEO_EDGE_EPS);
+          (j.isVideo || (j.motionItem && hasConfiguredMotion(j.motionItem)))
+          && j.maxX > left + VIDEO_EDGE_EPS && j.minX < left + targetW - VIDEO_EDGE_EPS);
       };
       /* 先數過一遍：有幾頁是影片。
          一頁都沒有 → 不顯示百分比（純圖片本來就很快，只留轉圈）；
@@ -12988,6 +13151,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         .designer-color-slider::-moz-range-track { height: 6px; border-radius: 3px; background: var(--bar, #333); }
         .designer-color-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
+        @keyframes classic-motion-target-flash {
+          0% { opacity: 0; }
+          18% { opacity: 1; }
+          72% { opacity: 1; }
+          100% { opacity: 0; }
+        }
         /* 圖片編輯那一頁的滑桿：跟「編輯」用同一組樣式，連軌道與圓點都一樣 */
         .custom-range {
           -webkit-appearance: none;
@@ -13347,6 +13516,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       <div
         className="flex-1 flex flex-col md:flex-row overflow-hidden relative z-0"
         onPointerDown={(e) => {
+          if (activeTab === 'motion') return;
           workspacePointerDown.current = {
             x: e.clientX, y: e.clientY, time: Date.now(),
             onBlank: isBlankTarget(e.target as Element | null),
@@ -13357,6 +13527,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           };
         }}
         onPointerUp={(e) => {
+          if (activeTab === 'motion') return;
           if (!workspacePointerDown.current) return;
           const dx = e.clientX - workspacePointerDown.current.x;
           const dy = e.clientY - workspacePointerDown.current.y;
@@ -13383,7 +13554,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       >
         {/* Left/Top Collage Preview Area */}
         <div 
-          className="flex-1 flex items-center justify-start py-2 bg-[#070707] relative overflow-x-auto overflow-y-hidden select-none no-scrollbar overscroll-x-contain touch-none"
+          className={`flex-1 flex ${activeTab === 'motion' ? 'items-start touch-pan-x' : 'items-center touch-none'} justify-start py-2 bg-[#070707] relative overflow-x-auto overflow-y-hidden select-none no-scrollbar overscroll-x-contain`}
           ref={containerRef}
           data-grid-preview-viewport="1"
           onScroll={(e) => {
@@ -13405,11 +13576,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               setActivePageIndex(closestIdx);
             }
           }}
-          onTouchStart={handleWorkspaceTouchStart}
-          onTouchMove={handleWorkspaceTouchMove}
-          onTouchEnd={handleWorkspaceTouchEnd}
-          onTouchCancel={handleWorkspaceTouchEnd}
+          onTouchStart={activeTab === 'motion' ? undefined : handleWorkspaceTouchStart}
+          onTouchMove={activeTab === 'motion' ? undefined : handleWorkspaceTouchMove}
+          onTouchEnd={activeTab === 'motion' ? undefined : handleWorkspaceTouchEnd}
+          onTouchCancel={activeTab === 'motion' ? undefined : handleWorkspaceTouchEnd}
           onPointerDown={(e) => {
+            if (activeTab === 'motion') return;
             workspacePointerDown.current = {
               x: e.clientX, y: e.clientY, time: Date.now(),
               onBlank: isBlankTarget(e.target as Element | null),
@@ -13420,6 +13592,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             };
           }}
           onPointerUp={(e) => {
+            if (activeTab === 'motion') return;
             if (workspacePointerDown.current) {
               const dx = e.clientX - workspacePointerDown.current.x;
               const dy = e.clientY - workspacePointerDown.current.y;
@@ -13445,7 +13618,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           {(() => {
             return (
               <div
-                className="flex items-center flex-row flex-nowrap flex-shrink-0 h-full transition-opacity duration-150"
+                className={`flex flex-row flex-nowrap flex-shrink-0 transition-opacity duration-150 ${activeTab === 'motion' ? 'items-start h-auto' : 'items-center h-full'}`}
                 style={{
                   // max-content ＋ flex-shrink-0：這一排的寬度＝所有小孩加起來。
                   // 外層是 flex 容器，不鎖 shrink 的話這排會被壓回容器寬度，
@@ -13618,6 +13791,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   isolation: 'isolate',
                                   backfaceVisibility: 'hidden',
                                   willChange: 'transform',
+                                  pointerEvents: activeTab === 'motion' ? 'none' : undefined,
                                   /* 兩指旋轉：直接轉整個外框，裡面的格子、照片、
                                      選取框、四個角、那排按鈕全部跟著轉，
                                      連點擊命中判定都是瀏覽器自己算的。 */
@@ -14307,10 +14481,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       <FloatingImageComponent
                         key={fImg.id}
                         image={fImg}
-                        motionFrame={activeTab === 'motion'
-                          ? objectMotionFrame(fImg.mo, motionTime, (fIdx * .7) % (Math.PI * 2))
+                        motionFrame={!fImg.isVideo && hasConfiguredMotion(fImg)
+                          ? frameForItem(fImg, fIdx, motionTime)
                           : null}
-                        isSelected={selectedFloatingId === fImg.id}
+                        motionPickOnly={activeTab === 'motion'}
+                        motionTargetFlash={activeTab === 'motion' && motionFlash?.id === fImg.id ? motionFlash.nonce : null}
+                        videoPaused={activeTab === 'motion' && !motionPlaying}
+                        isSelected={activeTab !== 'motion' && selectedFloatingId === fImg.id}
                         shapeSelected={shapeSelId === fImg.id}
                         onShapeTap={(cx, cy) => {
                           if (!isImgShaped((fImg as any).imgShape)) return;
@@ -14324,7 +14501,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         stackIndex={fIdx}
                         // 選取框那一組改畫在不會被裁切的那一層
                         chromeLayer={chromeLayer}
-                        touchMode="none"
+                        touchMode={activeTab === 'motion' ? 'pan-x' : 'none'}
                         hideToolbar={pinchFloatingId === fImg.id || (selectionDragging && selectedFloatingId === fImg.id)}
                         hideChrome={(tuningEdge || selectionDragging || pinchFloatingId === fImg.id) && selectedFloatingId === fImg.id}
                         gestureRendering={pinchFloatingId === fImg.id && (!!fImg.shape || fImg.text !== undefined)}
@@ -14377,10 +14554,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         onSwapTouchEnd={handleFloatSwapTouchEnd}
                         onSelect={() => {
                           if (activeTab === 'motion') {
-                            setMotionTargetId(fImg.id);
-                            motionClockRef.current = 0;
-                            setMotionTime(0);
-                            setMotionPlaying(true);
+                            if (!fImg.isVideo) chooseMotionTarget(fImg.id);
                             return;
                           }
                           setSelectedFloatingId(fImg.id); setSelectedLayoutId(null); setSelectedIndex(null);
@@ -14826,6 +15000,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         {/* 與創意拼圖同款播放列：從工具列下方滑入，預覽同時平順縮小讓位。 */}
         {motionBarMounted && (
           <div
+            data-classic-motion-time={motionTime.toFixed(3)}
             className="absolute left-3 right-3 bottom-3 z-40 flex items-center gap-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/10 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
             style={{
               opacity: motionBarIn ? 1 : 0,
@@ -14837,6 +15012,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           >
             <button
               onClick={() => setMotionPlaying(v => !v)}
+              data-classic-motion-play="1"
               title={motionPlaying ? '暫停' : '播放'}
               className={`h-9 w-11 shrink-0 rounded-[8px] border flex items-center justify-center transition-all active:scale-90 ${
                 motionPlaying ? 'bg-transparent text-white border-white' : 'bg-white text-black border-white'
@@ -14848,14 +15024,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             </button>
             <button
               onClick={replayMotion}
+              data-classic-motion-replay="1"
               title="從頭播"
               className="h-9 w-11 shrink-0 rounded-[8px] border border-white/15 text-white/70 hover:bg-white/10 hover:text-white flex items-center justify-center transition-all active:scale-90"
             >
               <ReplayIcon size={15} />
             </button>
             <div className="flex-1 min-w-0">
-              <CompactSlider label="循環間隔" value={Math.round(motionHold)} min={0} max={20} step={1}
-                onChange={(v: number) => setMotionHold(v)} />
+              <CompactSlider
+                label="循環間隔"
+                value={pageVideoItems.length ? Number(pageVideoDuration.toFixed(1)) : Math.round(motionHold)}
+                min={0} max={pageVideoItems.length ? Math.max(1, Math.ceil(pageVideoDuration)) : 20}
+                step={pageVideoItems.length ? .1 : 1}
+                decimals={pageVideoItems.length ? 1 : 0}
+                fixedDecimals={pageVideoItems.length > 0}
+                disabled={pageVideoItems.length > 0}
+                onChange={(v: number) => { if (!pageVideoItems.length) setMotionHold(v); }}
+              />
             </div>
           </div>
         )}
@@ -14922,30 +15107,44 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
 
             {activeTab === 'motion' && (() => {
-              const target = floatingImages.find(f => f.id === motionTargetId) || null;
-              const cfg = objectMotionOf(target?.mo);
+              const target = motionItems.find(f => f.id === motionTargetId) || null;
+              const cfg = classicObjectMotionOf(target?.mo);
               const patchMotion = (d: Partial<ObjectMotionConfig>) => {
                 if (!target) return;
                 setFloatingImages(v => v.map(f => f.id === target.id ? { ...f, mo: { ...cfg, ...d } } : f));
               };
               const isGridTarget = !!target?.shape && GRID_SHAPE_KINDS.has(target.shape);
+              const isSpecialLineTarget = !!target?.shape && SPECIAL_LINE_KINDS.has(target.shape);
+              const isTextTarget = target?.text !== undefined && !target.sym;
+              const baseIntro = OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce');
               const introKinds = target?.sym
-                ? SYMBOL_OBJECT_IN_KINDS
-                : OBJECT_IN_KINDS;
-              const idleKinds = OBJECT_IDLE_KINDS.filter(([id]) => {
-                if (target?.sym) return id !== 'grid-wave';
-                if (target?.text !== undefined) return id !== 'spin';
-                return true;
-              });
+                ? SYMBOL_OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce')
+                : isGridTarget
+                  ? baseIntro.map(([id, name]) => id === 'spring' ? ['grid-wave', '波浪'] as const : [id, name] as const)
+                  : isSpecialLineTarget
+                    ? [...baseIntro.filter(([id]) => id !== 'spring'), ['draw', '畫筆'] as const]
+                    : baseIntro;
+              const baseIdle = OBJECT_IDLE_KINDS
+                .filter(([id]) => id !== 'symbol-breathe2')
+                .map(([id, name]) => id === 'breathe' ? [id, '縮放'] as const : [id, name] as const);
+              const idleKinds = target?.sym
+                ? baseIdle.filter(([id]) => id !== 'grid-wave').flatMap(([id, name]) =>
+                    id === 'breathe' ? [[id, '縮放I'] as const, ['symbol-breathe2', '縮放II'] as const] : [[id, name] as const])
+                : isTextTarget
+                  ? baseIdle.filter(([id]) => id !== 'spin').flatMap(([id, name]) =>
+                      id === 'breathe' ? [[id, '縮放'] as const, ['symbol-breathe2', '縮放II'] as const] : [[id, name] as const])
+                  : baseIdle;
               const pickIntro = (id: string) => {
                 patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) } : { in: id });
                 replayMotion();
               };
               const pickIdle = (id: string) => {
                 if (id === 'symbol-breathe2') patchMotion({ idle: id, amp: 60, speed: 1.2 });
+                else if (id === 'breathe' && target.sym) patchMotion({ idle: id, amp: 30 });
                 else if (id === 'grid-wave') patchMotion(isGridTarget
                   ? { idle: id, amp: 50, speed: .9 }
                   : { idle: id, amp: 30, speed: 1.75 });
+                else if (isSpecialLineTarget) patchMotion({ idle: id, amp: 20 });
                 else patchMotion({ idle: id });
                 replayMotion();
               };
@@ -14953,31 +15152,47 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const cell = (on: boolean) => `h-9 rounded-[8px] border text-[10px] font-bold tracking-wider transition-all ${on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
               return (
                 <div className="max-w-md mx-auto pb-5 animate-in fade-in duration-300">
-                  <div className="flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
-                      {floatingImages.map((f) => {
-                        const media = floatingImages.filter(x => x.text === undefined && !x.shape);
+                  <div data-classic-motion-targets="1" className="flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
+                      {motionItems.map((f) => {
+                        const media = motionItems.filter(x => x.text === undefined && !x.shape);
+                        const shapes = motionItems.filter(x => !!x.shape);
                         return (
-                        <button key={f.id} onClick={() => setMotionTargetId(f.id)}
+                        <button key={f.id} onClick={() => chooseMotionTarget(f.id)}
                           className={chip(motionTargetId === f.id)}>
-                          {f.isVideo && <Film size={12} strokeWidth={1.8} />}
-                          <span>{f.sym ? '符號' : f.text !== undefined ? '文字' : f.shape ? '圖形' : f.isVideo
-                            ? `影片${media.filter(x => x.isVideo).length > 1 ? media.filter(x => x.isVideo).findIndex(x => x.id === f.id) + 1 : ''}`
-                            : `圖片${media.filter(x => !x.isVideo).length > 1 ? media.filter(x => !x.isVideo).findIndex(x => x.id === f.id) + 1 : ''}`}</span>
+                          <span>{f.sym ? '符號' : f.text !== undefined ? '文字' : f.shape
+                            ? `圖形${shapes.length > 1 ? shapes.findIndex(x => x.id === f.id) + 1 : ''}`
+                            : `圖片${media.length > 1 ? media.findIndex(x => x.id === f.id) + 1 : ''}`}</span>
                         </button>
                       );})}
                   </div>
-                  {!target ? <p className="text-[11px] text-white/40 text-center pt-8">請先新增可動畫的物件</p> : <>
+                  {!target ? <p data-no-motion-items="1" className="text-[11px] text-white/40 text-center pt-8">沒有可編輯項目</p> : <>
                     <p className="text-[10px] font-bold text-[#666] uppercase tracking-widest mb-2 mt-4">進場動畫</p>
                     <div className="grid grid-cols-4 gap-2">{introKinds.map(([id,name]) => <button key={id} className={cell(cfg.in===id)} onClick={()=>pickIntro(id)}>{name}</button>)}</div>
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                       <CompactSlider label="起始" value={Number(cfg.delay.toFixed(1))} min={0} max={3} step={.1} decimals={1} fixedDecimals onCommit={replayMotion} onChange={(v:number)=>patchMotion({delay:v})}/>
-                      <CompactSlider label="速度" value={motionUiFromDuration(cfg.dur)} min={0} max={100} step={1} onCommit={replayMotion} onChange={(v:number)=>patchMotion({dur:motionDurationFromUi(v)})}/>
+                      <CompactSlider label="速度"
+                        value={cfg.in === 'bubble' && target.sym
+                          ? Math.round((motionUiFromDuration(cfg.dur) - 50) * 2)
+                          : motionUiFromDuration(cfg.dur)}
+                        min={0} max={100} step={1} onCommit={replayMotion}
+                        onChange={(v:number)=>patchMotion({dur:motionDurationFromUi(cfg.in === 'bubble' && target.sym ? 50 + v / 2 : v)})}/>
                     </div>
                     <p className="text-[10px] font-bold text-[#666] tracking-widest mb-2 mt-4">常駐動畫</p>
                     <div className="grid grid-cols-4 gap-2">{idleKinds.map(([id,name]) => <button key={id} className={cell(cfg.idle===id)} onClick={()=>pickIdle(id)}>{name}</button>)}</div>
                     {cfg.idle !== 'none' && <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                       <CompactSlider label="幅度" value={cfg.amp} min={0} max={100} step={1} onCommit={replayMotion} onChange={(v:number)=>patchMotion({amp:v})}/>
-                      <CompactSlider label="速度" value={Math.round(cfg.speed*100)} min={20} max={180} step={1} onCommit={replayMotion} onChange={(v:number)=>patchMotion({speed:v/100})}/>
+                      <CompactSlider label="速度"
+                        value={cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget)
+                          ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 70) / 1.1)))
+                          : cfg.idle === 'grid-wave' && !isGridTarget
+                            ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 100) / 1.5)))
+                            : Math.round(cfg.speed*100)}
+                        min={cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !isGridTarget ? 0 : 20}
+                        max={cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !isGridTarget ? 100 : 180}
+                        step={1} onCommit={replayMotion}
+                        onChange={(v:number)=>patchMotion({speed: cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget)
+                          ? (70 + v * 1.1) / 100
+                          : cfg.idle === 'grid-wave' && !isGridTarget ? (100 + v * 1.5) / 100 : v/100})}/>
                     </div>}
                   </>}
                 </div>

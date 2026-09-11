@@ -56,7 +56,7 @@ import { StuckEscape } from './StuckEscape';
 /* 影片：包成一個「長得跟 <img> 一樣」的來源，畫布那邊一行都不必改。
    詳細的理由與做法寫在 utils/videoSource.ts 的檔頭。 */
 import {
-  VIDEO_ACCEPT, isVideoFile, isVideoEl, loadVideoEl, releaseVideoEl, videoToken, videoTokenOf,
+  isVideoFile, isVideoEl, loadVideoEl, releaseVideoEl, videoToken, videoTokenOf,
   videosIn, rewindVideos, playVideos, pauseVideos, longestDuration, videoFrame,
 } from '../utils/videoSource';
 /* IG 預覽跟經典拼圖共用同一顆元件 —— 同一份程式碼，兩邊不可能有差 */
@@ -2252,9 +2252,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        （從 initialFile 那支 effect 呼叫時 e 是自己造的假物件，一樣沒問題。） */
     const inputEl = e.target as HTMLInputElement;
     const preserveLayout = inputEl === replaceFileInputRef.current;
-    /* 底圖與後續物件都允許照片／影片。影片不交給圖片正規化器，避免 iOS
-       把 MOV 當成不支援的圖片而丟掉；圖片則照舊處理 HEIC／RAW。 */
-    const rawPicked = Array.from(inputEl.files || []) as File[];
+    /* 創意拼圖恢復為只接受圖片。accept 只會限制相簿介面，分享／拖放仍可能
+       帶入影片，所以真正處理之前也必須過濾一次。 */
+    const rawPicked = (Array.from(inputEl.files || []) as File[]).filter(file => !isVideoFile(file));
     if (!rawPicked.length) { inputEl.value = ''; return; }
     /* RAW／HEIC／TIFF 先解成一般 JPEG（影片與一般 JPEG 原樣放行）。
        不解的話 <img> 根本載不出來，畫面就是空白。 */
@@ -7671,8 +7671,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         )}
         {/* 換底也可以一次選好幾個：第一個當底，其餘自動變成物件。
             accept 跟首頁那個入口一致（影片也可以當底）。 */}
-        <input type="file" accept={`${RAW_ACCEPT_IMG},${VIDEO_ACCEPT}`} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
-        <input type="file" accept={`${RAW_ACCEPT_IMG},${VIDEO_ACCEPT}`} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
+        <input type="file" accept={RAW_ACCEPT_IMG} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
+        <input type="file" accept={RAW_ACCEPT_IMG} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
         <input type="file" accept="image/*" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
       </header>
       )}
