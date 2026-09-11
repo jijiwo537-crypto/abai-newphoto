@@ -6677,6 +6677,38 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   allVideosRef.current = allVideos;
   /* 相依只認「有哪幾段影片」這件事：拖物件時 objects 每一格都是新陣列，
      但這串字不會變，迴圈就不會被拆掉重建。 */
+  const videoRoster = [
+    isVideoEl(imageState?.img) ? 'base' : '',
+    ...objects.filter((o: any) => isVideoEl(o.img)).map((o: any) => o.id),
+  ].filter(Boolean).join('|');
+
+  /* 非動畫頁也必須跟著影片的新影格重畫主畫布。之前只有影片元素在背景播放，
+     canvas 沒有人更新，因此看起來永遠是一張靜態截圖。這裡只在 token 真的
+     改變時畫一次，24/30fps 素材不會被 60Hz 螢幕重複畫兩遍。 */
+  useEffect(() => {
+    if (!imageState || motionOn || videoProg !== null || !videoRoster) return;
+    const vids = allVideosRef.current();
+    if (!vids.length) return;
+    playVideos(vids);
+    let raf = 0;
+    let lastToken = '';
+    let lastPaint = 0;
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      if (document.hidden || now - lastPaint < 1000 / 30) return;
+      const token = videoTokenOf(allVideosRef.current());
+      if (!token || token === lastToken) return;
+      lastToken = token;
+      lastPaint = now;
+      const cv = canvasRef.current;
+      if (!cv) return;
+      try { renderToCanvasRef.current(cv, previewScaleRef.current); }
+      catch (err) { console.error('影片預覽影格畫不出來', err); }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [imageState, motionOn, videoProg, videoRoster]);
+
   /* 切到背景就停掉影片：背景分頁照樣在解碼，白吃電也白吃記憶體 */
   useEffect(() => {
     const onVis = () => {

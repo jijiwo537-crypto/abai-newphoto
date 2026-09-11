@@ -8718,9 +8718,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      所以光看 panRef 分不出「剛按下去」跟「拖到一半」——另外用這個旗標記著，
      拖到一半再放第二根手指就不會突然變成縮放（放開全部手指才解除）。 */
   const panMovedRef = useRef(false);
-  /* 動畫頁下緣會滑入播放列；沿用既有的同步幾何動畫縮小整個預覽，
-     不對頁面內容再疊一層 CSS scale，避免文字／符號與選中框不同步。 */
-  const pagesScale = pagesMode ? PAGES_MODE_SCALE : userZoom * (activeTab === 'motion' ? .82 : 1);
+  const pagesScale = pagesMode ? PAGES_MODE_SCALE : userZoom;
   /** 整排頁面左邊要留的空白（讓第一頁置中） */
   const stripOffset = (w: number, k: number) => Math.max(16, (w - previewW * k) / 2);
   /** 第 i 頁置中時的捲動位置 */
@@ -13338,6 +13336,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         {/* Left/Top Collage Preview Area */}
         <div 
           className="flex-1 flex items-center justify-start py-2 bg-[#070707] relative overflow-x-auto overflow-y-hidden select-none no-scrollbar overscroll-x-contain touch-none"
+          style={{
+            transform: activeTab === 'motion' ? 'translateY(-8px) scale(.86)' : 'translateY(0) scale(1)',
+            transformOrigin: 'center center',
+            transition: 'transform 420ms cubic-bezier(0.22, 0.61, 0.36, 1)',
+          }}
           ref={containerRef}
           data-grid-preview-viewport="1"
           onScroll={(e) => {
@@ -14845,7 +14848,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 iconEl = <Palette size={18} />;
                 titleText = '背景顏色';
               } else if (id === 'motion') {
-                iconEl = <Play size={18} />;
+                iconEl = <Film size={18} />;
                 titleText = '動畫';
               }
 
