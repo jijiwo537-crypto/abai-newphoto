@@ -87,15 +87,6 @@ const cropSizeToRatio = (w: number, h: number, ratio?: string) => {
   if (w / Math.max(1, h) > r) return { w: h * r, h };
   return { w, h: w / r };
 };
-const cropOffsetsToRatio = <T extends { cw: number; ch: number; ix: number; iy: number; mx: number; my: number }>(
-  offsets: T, ratio?: string,
-) => {
-  const size = cropSizeToRatio(offsets.cw, offsets.ch, ratio);
-  const dx = (size.w - offsets.cw) / 2;
-  const dy = (size.h - offsets.ch) / 2;
-  return { ...offsets, cw: size.w, ch: size.h, ix: offsets.ix + dx, iy: offsets.iy + dy,
-    mx: offsets.mx + dx, my: offsets.my + dy };
-};
 /* ── 四周包圍的「比例」 ────────────────────────────────────────────────
    跟其他排版一致：滑桿上的 1/N 指的都是「遮罩那一塊相對於圖片」。
    四周包圍的遮罩就是圖片周圍那一圈，所以 1/N ＝ 單邊的邊框寬度是圖片的 1/N。
@@ -188,9 +179,8 @@ const previewPixelsAt = (
   layout: string, bw: number, bh: number, maskScale: number, ps: number, maskCanvases: number,
   canvasRatio?: string,
 ) => {
-  const cs = collageSizeOf(layout, bw, bh, maskScale, canvasRatio);
-  const md = maskDims(layout, bw, bh, maskScale);
-  return (cs.w * cs.h + maskCanvases * md.mw * md.mh) * ps * ps;
+  const g = layoutGeometry(layout, bw, bh, maskScale, canvasRatio);
+  return (g.cw * g.ch + maskCanvases * g.mw * g.mh) * ps * ps;
 };
 
 /** 這個排版下遮罩相對原圖的尺寸；四周包圍時遮罩就是整張輸出畫布 */
@@ -219,14 +209,45 @@ const maskDims = (layout: string, bw: number, bh: number, maskScale: number) => 
   };
 };
 
+/**
+ * 版面真正的幾何。比例改的是整張成品，但不是把既有拼圖硬切掉：先決定
+ * 成品尺寸，再依「佔比」重新分配照片區與遮罩區。如此 1/2 永遠代表遮罩
+ * 在目前比例下仍是照片區的二分之一，切換比例也不會把某一側遮罩裁掉。
+ */
+const layoutGeometry = (layout: string, bw: number, bh: number, maskScale: number, ratio?: string) => {
+  const legacy = maskDims(layout, bw, bh, maskScale);
+  const native = layout === 'mask-bottom' || layout === 'mask-top' ? { w: bw, h: bh + legacy.mh }
+    : layout === 'mask-right' || layout === 'mask-left' ? { w: bw + legacy.mw, h: bh }
+    : layout === AROUND ? { w: legacy.mw, h: legacy.mh }
+    : { w: bw, h: bh };
+  const size = ratio ? cropSizeToRatio(native.w, native.h, ratio) : native;
+  const cw = size.w, ch = size.h;
+  if (layout === FULL) {
+    return { cw, ch, iw: cw, ih: ch, mw: 0, mh: 0, ix: 0, iy: 0, mx: 0, my: 0, padX: 0, padY: 0 };
+  }
+  if (layout === AROUND) {
+    const k = Math.max(0.05, Math.min(1, maskScale));
+    const iw = cw * k, ih = ch * k;
+    const padX = (cw - iw) / 2, padY = (ch - ih) / 2;
+    return { cw, ch, iw, ih, mw: cw, mh: ch, ix: padX, iy: padY, mx: 0, my: 0, padX, padY };
+  }
+  const m = Math.max(0.01, maskScale);
+  if (layout === 'mask-bottom' || layout === 'mask-top') {
+    const iw = cw, ih = ch / (1 + m), mw = cw, mh = ch - ih;
+    return layout === 'mask-bottom'
+      ? { cw, ch, iw, ih, mw, mh, ix: 0, iy: 0, mx: 0, my: ih, padX: 0, padY: 0 }
+      : { cw, ch, iw, ih, mw, mh, ix: 0, iy: mh, mx: 0, my: 0, padX: 0, padY: 0 };
+  }
+  const iw = cw / (1 + m), ih = ch, mw = cw - iw, mh = ch;
+  return layout === 'mask-right'
+    ? { cw, ch, iw, ih, mw, mh, ix: 0, iy: 0, mx: iw, my: 0, padX: 0, padY: 0 }
+    : { cw, ch, iw, ih, mw, mh, ix: mw, iy: 0, mx: 0, my: 0, padX: 0, padY: 0 };
+};
+
 /** 原圖 w×h 在這個排版下拼完之後，整張畫布有多大 */
 const collageSizeOf = (layout: string, w: number, h: number, maskScale: number, canvasRatio?: string) => {
-  const { mw, mh } = maskDims(layout, w, h, maskScale);
-  const native = layout === 'mask-bottom' || layout === 'mask-top' ? { w, h: h + mh }
-    : layout === 'mask-right' || layout === 'mask-left' ? { w: w + mw, h }
-    : layout === AROUND ? { w: mw, h: mh }
-    : { w, h };
-  return canvasRatio ? cropSizeToRatio(native.w, native.h, canvasRatio) : native;
+  const g = layoutGeometry(layout, w, h, maskScale, canvasRatio);
+  return { w: g.cw, h: g.ch };
 };
 
 /** 把 id 轉成一個穩定的數字，用來打散順序（同一顆圖案永遠拿同一格，不會閃） */
@@ -1083,6 +1104,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const objectsRef = useRef<any[]>([]);
   objectsRef.current = objects;
   const [selectedObj, setSelectedObj] = useState<string | null>(null);
+  /** 最初匯入的底圖不是「新增圖片」物件；它有自己獨立、只負責構圖的選取狀態。 */
+  const [baseSelected, setBaseSelected] = useState(false);
+  const baseSelectedRef = useRef(false);
+  baseSelectedRef.current = baseSelected;
+  const baseDragRef = useRef<any>(null);
+  const basePinchRef = useRef<any>(null);
   /* 動畫目標提示：切換目標時只短暫畫虛線框，不改動正式選取狀態。 */
   const motionTargetFlashRef = useRef<{ id: string; started: number; duration: number } | null>(null);
   const [motionTargetFlashSeq, setMotionTargetFlashSeq] = useState(0);
@@ -1458,13 +1485,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const regionCenters = (() => {
       const st = imageState;
       if (!st) return { xs: [] as number[], ys: [] as number[] };
-      const md = maskDims(layout, st.baseW, st.baseH, maskScale);
-      const around = layout === AROUND;
-      const iw = around ? Math.max(1, md.mw - md.padX * 2) : st.baseW;
-      const ih = around ? Math.max(1, md.mh - md.padY * 2) : st.baseH;
       return {
-        xs: [o.ix + iw / 2, o.mx + md.mw / 2],
-        ys: [o.iy + ih / 2, o.my + md.mh / 2],
+        xs: [o.ix + o.iw / 2, ...(o.mw > 0 ? [o.mx + o.mw / 2] : [])],
+        ys: [o.iy + o.ih / 2, ...(o.mh > 0 ? [o.my + o.mh / 2] : [])],
       };
     })();
     if (!edgeOnly && Math.abs(cx - o.cw / 2) < EPS_C) out.push({ x: o.cw / 2 });
@@ -1516,13 +1539,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const regionCenters = (() => {
       const st = imageState;
       if (!st) return { xs: [] as number[], ys: [] as number[] };
-      const md = maskDims(layout, st.baseW, st.baseH, maskScale);
-      const around = layout === AROUND;
-      const iw = around ? Math.max(1, md.mw - md.padX * 2) : st.baseW;
-      const ih = around ? Math.max(1, md.mh - md.padY * 2) : st.baseH;
       return {
-        xs: [offsG.ix + iw / 2, offsG.mx + md.mw / 2],
-        ys: [offsG.iy + ih / 2, offsG.my + md.mh / 2],
+        xs: [offsG.ix + offsG.iw / 2, ...(offsG.mw > 0 ? [offsG.mx + offsG.mw / 2] : [])],
+        ys: [offsG.iy + offsG.ih / 2, ...(offsG.mh > 0 ? [offsG.my + offsG.mh / 2] : [])],
       };
     })();
     /* centreOnly：只跟「我的中心」配對的線（其他物件的中心）。
@@ -1554,24 +1573,44 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
    * 畫布邊界／遮罩交界上。置中放大時左右（或上下）算出來的倍率是同一個，
    * 所以兩條邊會同時貼上去、兩條線一起亮 —— 這就是經典拼圖捏合時的手感。
    */
-  const snapPinchScale = useCallback((k: number, w0: number, h0: number, cx: number, cy: number, rot: number) => {
+  const snapPinchScale = useCallback((k: number, w0: number, h0: number, cx: number, cy: number, rot: number, selfId?: string) => {
     const o = getLayoutOffsetsRef.current?.();
-    if (!o || !enableSnappingRef.current) return k;
-    const seams = seamLinesRef.current();
+    if (!o || !enableSnappingRef.current) return { k, guides: [] as any[] };
     const { bw, bh } = aabbOf(w0, h0, rot);
-    if (bw < 1 || bh < 1) return k;
-    const SNAP = Math.max(4, Math.min(o.cw, o.ch) * 0.012);
-    const cands: number[] = [];
-    for (const v of [0, o.cw, ...seams.xs]) { cands.push((2 * (cx - v)) / bw); cands.push((2 * (v - cx)) / bw); }
-    for (const v of [0, o.ch, ...seams.ys]) { cands.push((2 * (cy - v)) / bh); cands.push((2 * (v - cy)) / bh); }
-    let best = Infinity, bestK = k;
-    for (const cand of cands) {
-      if (!(cand > 0.05) || cand > 8) continue;
-      // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
-      const px = Math.abs(cand - k) * Math.max(bw, bh) / 2;
-      if (px < SNAP && px < best) { best = px; bestK = cand; }
+    if (bw < 1 || bh < 1) return { k, guides: [] as any[] };
+    const shown = Math.max(1, baseCssWRef.current * Math.max(1, viewTRef.current.k));
+    const perCss = o.cw / shown;
+    const snap = Math.max(0.75, perCss * 4);
+    const centreEps = Math.max(0.35, perCss * 0.75);
+    const xs = [0, o.cw], ys = [0, o.ch];
+    /* 縮放時通常只認整張畫布外緣。唯一例外是另一個物件跟目前物件
+       中心完全重合：這時把那個物件的四邊加入，才能做同心等寬／等高。 */
+    for (const z of objectsRef.current) {
+      if (!z || z.id === selfId || !z.w || !z.h) continue;
+      const zcx = z.x + z.w / 2, zcy = z.y + z.h / 2;
+      if (Math.abs(zcx - cx) > centreEps || Math.abs(zcy - cy) > centreEps) continue;
+      const a = aabbOf(z.w, z.h, z.rot || 0);
+      xs.push(zcx - a.bw / 2, zcx + a.bw / 2);
+      ys.push(zcy - a.bh / 2, zcy + a.bh / 2);
     }
-    return best < SNAP ? bestK : k;
+    const cands: { k: number; axis: 'x' | 'y'; line: number; delta: number }[] = [];
+    for (const v of xs) {
+      for (const cand of [(2 * (cx - v)) / bw, (2 * (v - cx)) / bw])
+        cands.push({ k: cand, axis: 'x', line: v, delta: Math.abs(cand - k) * bw / 2 });
+    }
+    for (const v of ys) {
+      for (const cand of [(2 * (cy - v)) / bh, (2 * (v - cy)) / bh])
+        cands.push({ k: cand, axis: 'y', line: v, delta: Math.abs(cand - k) * bh / 2 });
+    }
+    const best = cands.filter(c => c.k > 0.05 && c.k <= 8 && c.delta < snap)
+      .sort((a, b) => a.delta - b.delta)[0];
+    const bestK = best ? best.k : k;
+    if (!best) return { k, guides: [] as any[] };
+    const bw1 = bw * bestK, bh1 = bh * bestK;
+    const guides: any[] = [];
+    for (const v of xs) if (Math.min(Math.abs(cx - bw1 / 2 - v), Math.abs(cx + bw1 / 2 - v)) < centreEps) guides.push({ x: v });
+    for (const v of ys) if (Math.min(Math.abs(cy - bh1 / 2 - v), Math.abs(cy + bh1 / 2 - v)) < centreEps) guides.push({ y: v });
+    return { k: bestK, guides };
   }, []);
 
   /* ── 構圖：跟「編輯」「經典拼圖」共用同一個 ComposeStudio ──────────────
@@ -1700,6 +1739,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       objDragRef.current = null;
       objPinchRef.current = null;
       objStretchRef.current = null;
+      baseDragRef.current = null;
+      basePinchRef.current = null;
       objDraggingRef.current = false;
       guidesRef.current = [];
       setObjDragging(false);
@@ -1725,6 +1766,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [maskTransform, setMaskTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [activeTab, setActiveTab] = useState('setting');
+  useEffect(() => {
+    if (selectedObj || selectedTarget) setBaseSelected(false);
+  }, [selectedObj, selectedTarget]);
   /* 圖片編輯頁是自己排好三段式高度的整頁面板：外面不能再包內距，
      footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-16 分類列 ＋ 分頁列）。 */
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
@@ -2233,8 +2277,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       baseVidRef.current = isVideoEl(src) ? src : null;
       if (baseVidRef.current) bornVidsRef.current.add(baseVidRef.current);
       setImageState({ img: src, baseW: bw, baseH: bh, originalW, originalH, globalScale: gs, vid: isVideoEl(src) });
-      setImageTransform({ x: 0, y: 0, w: bw, h: bh });
-      if (!preserveLayout) setLayout(bh > bw * 1.1 ? 'mask-right' : 'mask-bottom');
+      const nextLayout = preserveLayout ? layout : (bh > bw * 1.1 ? 'mask-right' : 'mask-bottom');
+      const geo = layoutGeometry(nextLayout, bw, bh, maskScale, canvasRatio);
+      const kk = nextLayout === AROUND
+        ? Math.max(geo.iw / Math.max(1, bw), geo.ih / Math.max(1, bh)) : 1;
+      const cover = Math.max(1, geo.iw / Math.max(1, bw * kk), geo.ih / Math.max(1, bh * kk));
+      const w = bw * cover, h = bh * cover;
+      setImageTransform({
+        x: (geo.iw - w * kk) / (2 * kk),
+        y: (geo.ih - h * kk) / (2 * kk),
+        w, h,
+      });
+      if (!preserveLayout) setLayout(nextLayout);
+      setBaseSelected(false);
       setSelectedTarget(null);
     };
     if (isVideoFile(file)) {
@@ -2345,9 +2400,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 跟 getHoleSize 用同一個固定倍率（不再跟著比例滑桿變）
     const drawnS = around ? s * AROUND_SCALE : s;
     const p = around ? drawnS * 0.75 + 25 * gs : s / 2 + 25 * gs;
-    const md = maskDims(lay, baseW, baseH, maskScale);
-    const fieldW = around ? md.mw : baseW;
-    const fieldH = around ? md.mh : baseH;
+    const geo = layoutGeometry(lay, baseW, baseH, maskScale, canvasRatio);
+    const fieldW = around ? geo.mw : geo.iw;
+    const fieldH = around ? geo.mh : geo.ih;
 
     const newHoles = [];
     for (let i = 0; i < holeCount; i++) {
@@ -2367,7 +2422,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setHoles(newHoles);
     if (record === 'reset') resetHistory(newHoles);
     else if (record === 'push') pushHistory(newHoles);
-  }, [imageState, holeCount, holeSize, sizeJitter, pushHistory, resetHistory, symmetryEnabled, layout, maskScale]);
+  }, [imageState, holeCount, holeSize, sizeJitter, pushHistory, resetHistory, symmetryEnabled, layout, maskScale, canvasRatio]);
 
   /* 對稱鎖定：本來是 header 上的一顆按鈕，現在收進三個點的選單裡。
      邏輯完全沒動 —— 關掉就把 side:'both' 的圖案拆成 image/mask 兩顆，
@@ -2436,19 +2491,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const getLayoutOffsets = useCallback(() => {
     if (!imageState) return null;
     let { baseW: bw, baseH: bh } = imageState;
-    const { mw, mh, padX, padY } = maskDims(layout, bw, bh, maskScale);
-
-    let native;
-    if (layout === 'mask-bottom') native = { cw: bw, ch: bh + mh, ix: 0, iy: 0, mx: 0, my: bh };
-    else if (layout === 'mask-top') native = { cw: bw, ch: bh + mh, ix: 0, iy: mh, mx: 0, my: 0 };
-    else if (layout === 'mask-right') native = { cw: bw + mw, ch: bh, ix: 0, iy: 0, mx: bw, my: 0 };
-    else if (layout === 'mask-left') native = { cw: bw + mw, ch: bh, ix: mw, iy: 0, mx: 0, my: 0 };
-    // 四周包圍：遮罩就是整張畫布，原圖擺正中央
-    else if (layout === AROUND) native = { cw: mw, ch: mh, ix: padX, iy: padY, mx: 0, my: 0 };
-    else native = { cw: bw, ch: bh, ix: 0, iy: 0, mx: 0, my: 0 };
-    return cropOffsetsToRatio(native, canvasRatio);
+    return layoutGeometry(layout, bw, bh, maskScale, canvasRatio);
   }, [imageState, layout, maskScale, canvasRatio]);
   getLayoutOffsetsRef.current = getLayoutOffsets;
+
+  /** 底圖在照片框內的實際倍率；四周排版要先把原圖鋪滿中央框。 */
+  const baseFrameScale = useCallback((o: any) => {
+    if (!imageState || !o || layout !== AROUND) return 1;
+    return Math.max(o.iw / Math.max(1, imageState.baseW), o.ih / Math.max(1, imageState.baseH));
+  }, [imageState, layout]);
+
+  /** 底圖拖曳／縮放後仍要完整鋪滿照片框，不讓邊緣露出黑底。 */
+  const clampBaseTransform = useCallback((t: any, o: any) => {
+    if (!imageState || !o) return t;
+    const kk = baseFrameScale(o);
+    let w = Math.max(1, Number(t.w) || imageState.baseW);
+    let h = Math.max(1, Number(t.h) || imageState.baseH);
+    const cover = Math.max(1, o.iw / Math.max(1, w * kk), o.ih / Math.max(1, h * kk));
+    w *= cover; h *= cover;
+    const dx = Math.min(0, Math.max(o.iw - w * kk, (Number(t.x) || 0) * kk));
+    const dy = Math.min(0, Math.max(o.ih - h * kk, (Number(t.y) || 0) * kk));
+    return { x: dx / kk, y: dy / kk, w, h };
+  }, [imageState, baseFrameScale]);
 
   /**
    * 「匯入圖片」與「匯入影片」共用的那一支 —— 兩者除了「來源怎麼生出來」
@@ -2544,24 +2608,61 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      但浮動物件的座標還停在舊畫布上 —— 來回切幾次就會整個跑到畫面外面不見了。
      這裡在畫布尺寸真的變了的時候，把每個物件的「中心」按比例搬到新畫布的
      同一個相對位置，再夾在畫布範圍內。大小不動，手感才不會每切一次就縮一輪。 */
-  const prevCanvasRef = useRef<{ cw: number; ch: number } | null>(null);
-  useEffect(() => {
+  const prevCanvasRef = useRef<{ cw: number; ch: number; iw: number; ih: number; layout: string } | null>(null);
+  useLayoutEffect(() => {
     const o = getLayoutOffsets();
     if (!o || !o.cw || !o.ch) return;
     const prev = prevCanvasRef.current;
-    prevCanvasRef.current = { cw: o.cw, ch: o.ch };
-    if (!prev || (prev.cw === o.cw && prev.ch === o.ch)) return;
+    prevCanvasRef.current = { cw: o.cw, ch: o.ch, iw: o.iw, ih: o.ih, layout };
+    if (!prev) return;
+    const canvasChanged = prev.cw !== o.cw || prev.ch !== o.ch;
+    const frameChanged = prev.iw !== o.iw || prev.ih !== o.ih || prev.layout !== layout;
+    if (!canvasChanged && !frameChanged) return;
     /* 正在還原上一步：快照裡的座標本來就是「那個排版下的正確座標」，
        再映射一次等於算兩次，回不到原本的位置。 */
     if (restoringRef.current) return;
-    const kx = o.cw / prev.cw, ky = o.ch / prev.ch;
-    setObjects(list => {
-      if (!list.length) return list;
-      return list.map(ob => {
-        const cx = Math.min(Math.max((ob.x + ob.w / 2) * kx, 0), o.cw);
-        const cy = Math.min(Math.max((ob.y + ob.h / 2) * ky, 0), o.ch);
-        return { ...ob, x: cx - ob.w / 2, y: cy - ob.h / 2 };
+    if (canvasChanged) {
+      const kx = o.cw / prev.cw, ky = o.ch / prev.ch;
+      setObjects(list => {
+        if (!list.length) return list;
+        return list.map(ob => {
+          const cx = Math.min(Math.max((ob.x + ob.w / 2) * kx, 0), o.cw);
+          const cy = Math.min(Math.max((ob.y + ob.h / 2) * ky, 0), o.ch);
+          return { ...ob, x: cx - ob.w / 2, y: cy - ob.h / 2 };
+        });
       });
+    }
+    /* 同一種排版裡只改比例／佔比時，圖案保持原本大小，只把中心映射到
+       新的照片區。這樣不會因為畫布變窄就被放大，也不會整片掉到裁切外。 */
+    if (prev.layout === layout) {
+      const oldFW = layout === AROUND ? prev.cw : prev.iw;
+      const oldFH = layout === AROUND ? prev.ch : prev.ih;
+      const newFW = layout === AROUND ? o.cw : o.iw;
+      const newFH = layout === AROUND ? o.ch : o.ih;
+      if (oldFW > 0 && oldFH > 0) {
+        setHoles(list => list.map(h => ({ ...h,
+          x: h.x / oldFW * newFW,
+          y: h.y / oldFH * newFH,
+        })));
+      }
+    }
+
+    /* 底圖保留原本看向的焦點；若新照片框較大，只補到剛好鋪滿，絕不露黑邊。 */
+    const oldK = prev.layout === AROUND
+      ? Math.max(prev.iw / Math.max(1, imageState.baseW), prev.ih / Math.max(1, imageState.baseH)) : 1;
+    const newK = layout === AROUND
+      ? Math.max(o.iw / Math.max(1, imageState.baseW), o.ih / Math.max(1, imageState.baseH)) : 1;
+    setImageTransform(t => {
+      let w = t.w, h = t.h;
+      const fx = (prev.iw / 2 - t.x * oldK) / Math.max(1, t.w * oldK);
+      const fy = (prev.ih / 2 - t.y * oldK) / Math.max(1, t.h * oldK);
+      const cover = Math.max(1, o.iw / Math.max(1, w * newK), o.ih / Math.max(1, h * newK));
+      w *= cover; h *= cover;
+      let dx = o.iw / 2 - fx * w * newK;
+      let dy = o.ih / 2 - fy * h * newK;
+      dx = Math.min(0, Math.max(o.iw - w * newK, dx));
+      dy = Math.min(0, Math.max(o.ih - h * newK, dy));
+      return { x: dx / newK, y: dy / newK, w, h };
     });
   }, [getLayoutOffsets]);
 
@@ -2570,15 +2671,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const o = getLayoutOffsets();
     if (!o || !imageState) return { xs: [] as number[], ys: [] as number[] };
     if (layout === FULL) return { xs: [], ys: [] };
-    const { baseW: bw, baseH: bh } = imageState;
     if (layout === 'mask-bottom') return { xs: [], ys: [o.my] };
     if (layout === 'mask-top') return { xs: [], ys: [o.iy] };
     if (layout === 'mask-right') return { xs: [o.mx], ys: [] };
     if (layout === 'mask-left') return { xs: [o.ix], ys: [] };
     if (layout === AROUND) {
       // 中間那張照片是縮過的，對齊線要貼在它真正的邊上
-      const k = Math.max(0.05, Math.min(1, maskScale));
-      return { xs: [o.ix, o.ix + bw * k], ys: [o.iy, o.iy + bh * k] };
+      return { xs: [o.ix, o.ix + o.iw], ys: [o.iy, o.iy + o.ih] };
     }
     return { xs: [], ys: [] };
   };
@@ -2629,7 +2728,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   const checkHitHole = useCallback((hx: number, hy: number, h: any, gs: number, offs: any, clickedSide?: 'image' | 'mask') => {
     const s = getHoleSize(h);
-    const { mw, mh } = maskDims(layout, imageState.baseW, imageState.baseH, maskScale);
+    const { mw, mh } = layoutGeometry(layout, imageState.baseW, imageState.baseH, maskScale, canvasRatio);
 
     const side = h.side || 'both';
     if (clickedSide) {
@@ -2672,7 +2771,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const hitMask = (side === 'both' || side === 'mask') && isHoleFullyInsideMask(h, 1, mw, mh) && checkInCircleMask(offs.mx, offs.my);
       return hitImg || hitMask;
     }
-  }, [getHoleSize, holeType, customText, layout, maskScale, imageState, isHoleFullyInsideMask]);
+  }, [getHoleSize, holeType, customText, layout, maskScale, canvasRatio, imageState, isHoleFullyInsideMask]);
 
   const checkHitHoleSegment = useCallback((pA: { x: number, y: number }, pB: { x: number, y: number }, h: any, gs: number, offs: any, clickedSide?: 'image' | 'mask') => {
     const s = getHoleSize(h);
@@ -2702,7 +2801,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       return false;
     } else {
-      const { mw, mh } = maskDims(layout, imageState.baseW, imageState.baseH, maskScale);
+      const { mw, mh } = layoutGeometry(layout, imageState.baseW, imageState.baseH, maskScale, canvasRatio);
 
       if (clickedSide === 'image') {
         const dist1 = getDistToSegment(h.x + offs.ix, h.y + offs.iy);
@@ -2724,7 +2823,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
       return hitImg || hitMask;
     }
-  }, [getHoleSize, holeType, checkHitHole, layout, maskScale, imageState, isHoleFullyInsideMask]);
+  }, [getHoleSize, holeType, checkHitHole, layout, maskScale, canvasRatio, imageState, isHoleFullyInsideMask]);
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (!imageState || !canvasRef.current) return;
@@ -2780,15 +2879,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       let clickedSide: 'image' | 'mask' | undefined = undefined;
       if (offs) {
         const { baseW: bw, baseH: bh } = imageState;
-        const md = maskDims(layout, bw, bh, maskScale);
         /* 四周包圍是特殊的：遮罩就是整張畫布，圖案可以自由跨進跨出圖片，
            沒有「左邊那塊 / 右邊那塊」的對稱關係。所以整張畫布一律當成
            同一個場（side 'mask'），命中判定與拖曳都用遮罩座標系 ——
            不然點圖片上的圖案會抓不到，抓到遮罩上的又會瞬間跳到圖片座標去。 */
         const around = layout === AROUND;
-        const inOriginal = !around && x >= offs.ix && x <= offs.ix + bw && y >= offs.iy && y <= offs.iy + bh;
+        const inOriginal = !around && x >= offs.ix && x <= offs.ix + offs.iw && y >= offs.iy && y <= offs.iy + offs.ih;
         const inMask = (around || !inOriginal)
-          && x >= offs.mx && x <= offs.mx + md.mw && y >= offs.my && y <= offs.my + md.mh;
+          && x >= offs.mx && x <= offs.mx + offs.mw && y >= offs.my && y <= offs.my + offs.mh;
         if (inOriginal) clickedSide = 'image';
         else if (inMask) clickedSide = 'mask';
       }
@@ -2879,7 +2977,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
         // 有沒有點到圖案（圖案疊在 below 物件之上）
         let holeUnder = false;
-        for (let i = holesRef.current.length - 1; i >= 0; i--) {
+        if (layout !== FULL) for (let i = holesRef.current.length - 1; i >= 0; i--) {
           if (checkHitHole(x, y, holesRef.current[i], gs, offs, clickedSide)) { holeUnder = true; break; }
         }
         if (!holeUnder) {
@@ -2952,7 +3050,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
 
       let hitHole = null;
-      for (let i = holesRef.current.length - 1; i >= 0; i--) {
+      if (layout !== FULL) for (let i = holesRef.current.length - 1; i >= 0; i--) {
         const h = holesRef.current[i];
         if (checkHitHole(x, y, h, gs, offs, clickedSide)) { hitHole = h; break; }
       }
@@ -2988,6 +3086,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           interactionRef.current = { type: 'move_hole', id: selectedTarget, startX: x, startY: y, initX: currentHole.x, initY: currentHole.y, isClick: true, hitItself: false, clickedSide };
         } else {
           setSelectedTarget(null);
+        }
+      } else if (brushMode === 'off' && offs) {
+        e.stopPropagation();
+        const inPhoto = x >= offs.ix && x <= offs.ix + offs.iw
+          && y >= offs.iy && y <= offs.iy + offs.ih;
+        if (baseSelectedRef.current && inPhoto) {
+          const t = imageTransform;
+          baseDragRef.current = { startX: x, startY: y, x: t.x, y: t.y, t, moved: false };
+          interactionRef.current = { type: 'base_drag', isClick: true, hitItself: true };
+        } else {
+          /* 第一下只負責選取底圖；若原本有別的選取，前面的分支只會先取消它，
+             不會在同一下誤選到底圖。 */
+          interactionRef.current = { type: inPhoto ? 'select_base' : 'deselect_base', isClick: true, hitItself: inPhoto };
         }
       }
     } else if (activePointers.current.size === 2 && selectedObjRef.current) {
@@ -3051,6 +3162,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const hole = holesRef.current.find(h => h.id === selectedTarget);
       // 捏不是點擊：isClick 留著的話放開時會被當成「點了旁邊」而取消選取
       if (hole) interactionRef.current = { type: 'pinch_hole', id: selectedTarget, isClick: false, hitItself: true, startDist: Math.hypot(p1.x - p2.x, p1.y - p2.y) };
+    } else if (activePointers.current.size === 2 && baseSelectedRef.current) {
+      e.stopPropagation();
+      const pts: any[] = Array.from(activePointers.current.values());
+      const p1 = { x: (pts[0].clientX - rect.left) * sx, y: (pts[0].clientY - rect.top) * sy };
+      const p2 = { x: (pts[1].clientX - rect.left) * sx, y: (pts[1].clientY - rect.top) * sy };
+      const o = getLayoutOffsets();
+      if (o) {
+        const t = baseDragRef.current?.t || imageTransform;
+        movePending.current = null;
+        setImageTransform(t);
+        const kk = baseFrameScale(o);
+        const mx = (p1.x + p2.x) / 2 - o.ix;
+        const my = (p1.y + p2.y) / 2 - o.iy;
+        basePinchRef.current = {
+          d0: Math.max(1, Math.hypot(p1.x - p2.x, p1.y - p2.y)),
+          w0: t.w, h0: t.h,
+          anchorX: (mx - t.x * kk) / Math.max(1, t.w * kk),
+          anchorY: (my - t.y * kk) / Math.max(1, t.h * kk),
+        };
+        baseDragRef.current = null;
+        interactionRef.current = { type: 'base_pinch', isClick: false, hitItself: true };
+      }
     } else if (activePointers.current.size === 2) {
       // 沒選中東西 → 雙指縮放整個預覽
       e.stopPropagation();
@@ -3326,6 +3459,45 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState?.globalScale || 1;
     // 雙指縮放預覽時完全不碰筆刷與拖曳
+    if (basePinchRef.current && activePointers.current.size >= 2) {
+      e.stopPropagation();
+      const pts: any[] = Array.from(activePointers.current.values());
+      const p1 = { x: (pts[0].clientX - rect.left) * sx, y: (pts[0].clientY - rect.top) * sy };
+      const p2 = { x: (pts[1].clientX - rect.left) * sx, y: (pts[1].clientY - rect.top) * sy };
+      const pin = basePinchRef.current;
+      const o = getLayoutOffsets();
+      if (!o) return;
+      const kk = baseFrameScale(o);
+      const scale = Math.max(0.15, Math.min(8,
+        Math.hypot(p1.x - p2.x, p1.y - p2.y) / pin.d0));
+      const w = pin.w0 * scale, h = pin.h0 * scale;
+      const mx = (p1.x + p2.x) / 2 - o.ix;
+      const my = (p1.y + p2.y) / 2 - o.iy;
+      const next = clampBaseTransform({
+        x: (mx - pin.anchorX * w * kk) / kk,
+        y: (my - pin.anchorY * h * kk) / kk,
+        w, h,
+      }, o);
+      queueMove(() => setImageTransform(next));
+      return;
+    }
+    if (baseDragRef.current && activePointers.current.size === 1) {
+      e.stopPropagation();
+      const d = baseDragRef.current;
+      const o = getLayoutOffsets();
+      if (!o) return;
+      if (Math.hypot(x - d.startX, y - d.startY) > 3) {
+        d.moved = true;
+        if (interactionRef.current) interactionRef.current.isClick = false;
+      }
+      const kk = baseFrameScale(o);
+      const next = clampBaseTransform({ ...d.t,
+        x: d.x + (x - d.startX) / kk,
+        y: d.y + (y - d.startY) / kk,
+      }, o);
+      queueMove(() => setImageTransform(next));
+      return;
+    }
     // 兩指縮放／旋轉浮動物件
     if (objPinchRef.current && activePointers.current.size >= 2) {
       e.stopPropagation();
@@ -3363,20 +3535,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (Math.abs(wrap180(nrot - upright)) < ROT_SNAP) nrot = upright;
       /* 倍率也吸一下：讓外接框的某一邊剛好落在畫布邊界／遮罩交界上。
          置中放大時左右算出來的倍率一樣，所以兩條邊會同時貼上、兩條線一起亮。 */
-      k = snapPinchScale(k, pin.w0, pin.h0, pin.cx0, pin.cy0, nrot);
+      const pinchSnap = snapPinchScale(k, pin.w0, pin.h0, pin.cx0, pin.cy0, nrot, pin.id);
+      k = pinchSnap.k;
       const nw = pin.w0 * k, nh = pin.h0 * k;
-      // 縮放中的對齊線只畫「邊」：中心點整趟都沒動，中線會從頭亮到尾
-      const sres = snapToGuides(pin.cx0 - nw / 2, pin.cy0 - nh / 2, nw, nh, nrot, true, pin.id);
-      guidesRef.current = sres.guides;
+      const sx0 = pin.cx0 - nw / 2, sy0 = pin.cy0 - nh / 2;
+      guidesRef.current = pinchSnap.guides;
       queueMove(() => {
-        setGuides(sres.guides);
+        setGuides(pinchSnap.guides);
         setObjects(prev => prev.map(o => o.id === pin.id
           ? { ...o, w: nw, h: nh, size: pin.size0 ? pin.size0 * k : o.size,
               /* 整体缩放时纹理与图形一起缩放，网格数量保持不变；
                  四边挤压走另一条路径，不会改这两个基准。 */
               textureBaseW: pin.textureBaseW0 * k,
               textureBaseH: pin.textureBaseH0 * k,
-              x: sres.x, y: sres.y, rot: nrot }
+              x: sx0, y: sy0, rot: nrot }
           : o));
       });
       return;
@@ -3507,9 +3679,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const dx = x - intr.startX;
       const dy = y - intr.startY;
       // 四周包圍時圖案活動範圍是整張畫布，用原圖尺寸夾會把它擠回左上角
-      const fld = maskDims(layout, imageState.baseW, imageState.baseH, maskScale);
-      const limX = layout === AROUND ? fld.mw : imageState.baseW;
-      const limY = layout === AROUND ? fld.mh : imageState.baseH;
+      const fld = layoutGeometry(layout, imageState.baseW, imageState.baseH, maskScale, canvasRatio);
+      const limX = layout === AROUND ? fld.mw : fld.iw;
+      const limY = layout === AROUND ? fld.mh : fld.ih;
       const nx = Math.max(0, Math.min(limX, intr.initX + dx));
       const ny = Math.max(0, Math.min(limY, intr.initY + dy));
       setHoles(prev => prev.map(h => h.id === intr.id ? { ...h, x: nx, y: ny } : h));
@@ -3549,10 +3721,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       setSelectedTarget(null);
     }
     objDragRef.current = null;
+    baseDragRef.current = null;
     objDraggingRef.current = false;
     setObjDragging(false);
     if (guidesRef.current.length) { guidesRef.current = []; setGuides([]); }
     if (activePointers.current.size <= 2) { objPinchRef.current = null; setObjPinching(false); }
+    if (activePointers.current.size <= 2) basePinchRef.current = null;
     try {
       const target = e.target as HTMLElement;
       if (target && target.hasPointerCapture(e.pointerId)) {
@@ -3565,6 +3739,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       e.stopPropagation();
       /* 還沒選中的圖案：沒移動才算選中；拖了就當作沒發生（不選、也不動任何圖案） */
       if (intr.type === 'select_hole' && intr.isClick) setSelectedTarget(intr.id);
+      if (intr.type === 'select_base' && intr.isClick) {
+        setSelectedObj(null); setSelectedTarget(null); setBaseSelected(true);
+      }
+      if (intr.type === 'deselect_base' && intr.isClick) setBaseSelected(false);
       // 按在別顆圖案上但沒拖動 → 把選取換到那一顆
       if (intr.type === 'move_hole' && intr.isClick && intr.pickId) setSelectedTarget(intr.pickId);
       // 已選圖案上方剛好有物件：拖動仍是圖案；只有輕點才切換到該物件。
@@ -3608,30 +3786,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const sh = baseH * s;
     const sgs = gs * s;
 
-    const mdS = maskDims(layout, sw, sh, maskScale);
-    const maskW = mdS.mw;
-    const maskH = mdS.mh;
-    /* 中間那張照片實際畫多大。四周包圍時是「畫布扣掉兩邊的邊框」——
-       直接用 padX 反推，左右上下才會剛好對稱，不會因為四捨五入差一個像素。
-       其餘排版就是照片本人的大小。 */
-    const iw = layout === AROUND ? Math.max(1, maskW - mdS.padX * 2) : sw;
-    const ih = layout === AROUND ? Math.max(1, maskH - mdS.padY * 2) : sh;
+    const offs = layoutGeometry(layout, sw, sh, maskScale, canvasRatio);
+    const maskW = offs.mw;
+    const maskH = offs.mh;
+    const iw = offs.iw;
+    const ih = offs.ih;
     /* 中間那一格比整張畫布小，照片要**等比例縮小**塞進去 ——
        以前是拿原尺寸直接畫、再用小框裁掉，看到的就只有左上角那一塊
        （主人說的「向左上裁切」）。這個倍率就是縮小的比例。 */
-    const kIn = layout === AROUND && sw > 0 ? iw / sw : 1;
-
-    const getLayoutOffsetsS = () => {
-      const native = layout === 'mask-bottom' ? { cw: sw, ch: sh + maskH, ix: 0, iy: 0, mx: 0, my: sh }
-        : layout === 'mask-top' ? { cw: sw, ch: sh + maskH, ix: 0, iy: maskH, mx: 0, my: 0 }
-        : layout === 'mask-right' ? { cw: sw + maskW, ch: sh, ix: 0, iy: 0, mx: sw, my: 0 }
-        : layout === 'mask-left' ? { cw: sw + maskW, ch: sh, ix: maskW, iy: 0, mx: 0, my: 0 }
-        : layout === AROUND ? { cw: maskW, ch: maskH, ix: mdS.padX, iy: mdS.padY, mx: 0, my: 0 }
-        : { cw: sw, ch: sh, ix: 0, iy: 0, mx: 0, my: 0 };
-      return cropOffsetsToRatio(native, canvasRatio);
-    };
-
-    const offs = getLayoutOffsetsS();
+    const kIn = layout === AROUND
+      ? Math.max(iw / Math.max(1, sw), ih / Math.max(1, sh)) : 1;
     /* ⚠ 尺寸一定要用整數比對。
        canvas.width 的 setter 會把小數截掉，而 offs.cw 幾乎都是小數
        （實測 1402.1706749406885）。拿小數去比「尺寸有沒有變」永遠不相等，
@@ -3846,7 +4010,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          也就是「原本那張構圖照原尺寸鋪在畫布上」，跟比例一點關係都沒有。
          所以鑰匙裡不能放 kIn / iw / offs.ix —— 放了就變成每動一格滑桿都要
          把 2400×1800 的原圖重新縮一次（拖比例時因此每一格多背一次全畫布縮圖）。 */
-      const m = maskW / Math.max(1, sw);
+      const m = Math.max(maskW / Math.max(1, sw), maskH / Math.max(1, sh));
       /* 底是影片的話還要加上「現在是第幾格」——不加的話這張底圖會一直
          沿用第一幀，畫面上就是「四周包圍的底定格了，只有洞在動」。 */
       const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}|${baseVidTok}`;
@@ -5185,7 +5349,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ? (performance.now() - targetFlash.started) / targetFlash.duration : 2;
       const flashingTarget = flashProgress >= 0 && flashProgress < 1;
       if (isMain && !hideChromeRef.current && !objDragging && !objPinching && !objStretching
-          && (selectedObj === o.id || flashingTarget) && !tuningEdge) {
+          && flashingTarget && !tuningEdge) {
         // 所有选中框统一为实线；虚线只保留给内容本身的描边样式。
         ctx.strokeStyle = '#ffffff';
         if (flashingTarget) ctx.globalAlpha = Math.sin(Math.PI * flashProgress) * 0.92;
@@ -5587,6 +5751,48 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.restore();
     }
 
+    /* 正式選取框統一放到所有內容的最上層。以前框跟著物件本身的圖層畫，
+       置底物件靠近遮罩時，後畫的黑色遮罩會把其中一段框吃掉。
+       這段也刻意放在乾淨縮圖拍完之後，草稿封面不會存進選取狀態。 */
+    if (isMain && selectedObj && !hideChromeRef.current && !objDragging && !objPinching
+        && !objStretching && !tuningEdge && !animRef.current) {
+      const o = objects.find(z => z.id === selectedObj);
+      if (o) {
+        ctx.save();
+        ctx.translate((o.x + o.w / 2) * s, (o.y + o.h / 2) * s);
+        ctx.rotate((o.rot || 0) * Math.PI / 180);
+        ctx.strokeStyle = '#FFFFFF';
+        ctx.lineWidth = (o.type === 'shape' ? (o.kind === 'line' ? 0.32 : 0.55) : o.sym ? 0.5 : 0.75) * uiPx;
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.22)';
+        ctx.shadowBlur = 2 * uiPx;
+        ctx.setLineDash([]);
+        if (shapeSel === o.id && isImgShaped(o.imgShape)) {
+          const gp = 2 * uiPx;
+          withImgOutline(ctx as any, -o.w * s / 2 - gp, -o.h * s / 2 - gp,
+            o.w * s + gp * 2, o.h * s + gp * 2, o.imgShape, 0, 0,
+            p => { if (p) ctx.stroke(p); });
+        } else {
+          const ink = objectSelectionInk(o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx);
+          ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
+        }
+        ctx.restore();
+      }
+    }
+
+    /* 最初匯入的底圖有獨立選取框。最後才畫，確保相鄰的黑色遮罩與置底物件
+       都不可能把框壓住；整條線往照片區內收半個線寬，貼畫布邊也不會被裁半。 */
+    if (isMain && baseSelected && !hideChromeRef.current && !animRef.current) {
+      const lw = 0.9 * uiPx;
+      const inset = lw / 2;
+      ctx.save();
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = lw;
+      ctx.setLineDash([4.8 * uiPx, 4.8 * uiPx]);
+      ctx.strokeRect(offs.ix + inset, offs.iy + inset,
+        Math.max(0, iw - lw), Math.max(0, ih - lw));
+      ctx.restore();
+    }
+
     /* 動畫目標選到「圖案」時，每一顆圖案都短暫顯示同一種淡入淡出的虛線框。
        直接沿用正式選取框的兩側座標，遮罩／圖片並排或四周包圍時都不會跑位。 */
     const groupFlash = motionTargetFlashRef.current;
@@ -5712,7 +5918,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
-  }, [imageState, layout, canvasRatio, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
+  }, [imageState, layout, canvasRatio, baseSelected, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
       stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
@@ -6144,11 +6350,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const offs = getLayoutOffsets();
     if (offs) {
       const { baseW: bw, baseH: bh } = imageState;
-      const md = maskDims(layout, bw, bh, maskScale);
       const around = layout === AROUND;
-      const inOriginal = !around && x >= offs.ix && x <= offs.ix + bw && y >= offs.iy && y <= offs.iy + bh;
+      const inOriginal = !around && x >= offs.ix && x <= offs.ix + offs.iw && y >= offs.iy && y <= offs.iy + offs.ih;
       const inMask = (around || !inOriginal)
-        && x >= offs.mx && x <= offs.mx + md.mw && y >= offs.my && y <= offs.my + md.mh;
+        && x >= offs.mx && x <= offs.mx + offs.mw && y >= offs.my && y <= offs.my + offs.mh;
       const side: 'image' | 'mask' | undefined = inOriginal ? 'image' : inMask ? 'mask' : undefined;
       const gs = imageState.globalScale || 1;
       const orderedHoles = [...holesRef.current].sort((a, b) => (a.x - b.x) || (a.y - b.y));
@@ -6173,7 +6378,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     const below = hitObject(true);
     if (below) chooseMotionTarget(below.id);
-  }, [imageState, getLayoutOffsets, layout, maskScale, checkHitHole, getHoleSize, holeAngle, chooseMotionTarget]);
+  }, [imageState, getLayoutOffsets, layout, maskScale, canvasRatio, checkHitHole, getHoleSize, holeAngle, chooseMotionTarget]);
 
   /** 畫布現在要不要照動畫來畫（暫停時也算：停在那一格） */
   const motionOn = activeTab === 'motion' && saveState === 'idle' && !igPreview;
@@ -6446,6 +6651,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   applyEnvRef.current = (e: any) => {
     if (!e) return;
+    setBaseSelected(false);
     setLayout(e.layout); setMaskScale(e.maskScale);
     if (CANVAS_RATIOS.some(([name]) => name === e.canvasRatio)) setCanvasRatio(e.canvasRatio);
     setMaskColor(e.maskColor); setPatternType(e.patternType);
@@ -7252,7 +7458,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       
       <main 
         className="flex-1 flex items-center justify-center relative p-4 interactive-area overflow-hidden no-callout no-select"
-        onPointerDown={() => { setSelectedTarget(null); setExportAsk(false); }}
+        onPointerDown={() => { setSelectedTarget(null); setBaseSelected(false); setExportAsk(false); }}
       >
         {imageState && (
           <div
@@ -7506,16 +7712,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 style={{ left: cx, top: cy, width: ink.w * k, height: ink.h * k,
                   transform: `translate(-50%, -50%) rotate(${o.rot || 0}deg)`, touchAction: 'none' }}>
                 {([
-                  ['t','left-1/2 top-0','translate(-50%,-50%)','w-6 h-2 cursor-ns-resize'],
-                  ['r','right-0 top-1/2','translate(50%,-50%)','w-2 h-6 cursor-ew-resize'],
-                  ['b','left-1/2 bottom-0','translate(-50%,50%)','w-6 h-2 cursor-ns-resize'],
-                  ['l','left-0 top-1/2','translate(-50%,-50%)','w-2 h-6 cursor-ew-resize'],
+                  ['t','left-1/2 top-0','translate(-50%,-50%)','w-24 h-4 cursor-ns-resize'],
+                  ['r','right-0 top-1/2','translate(50%,-50%)','w-8 h-12 cursor-ew-resize'],
+                  ['b','left-1/2 bottom-0','translate(-50%,50%)','w-24 h-4 cursor-ns-resize'],
+                  ['l','left-0 top-1/2','translate(-50%,-50%)','w-8 h-12 cursor-ew-resize'],
                 ] as const).map(([side,pos,tx,size]) => (
                   <div key={side} data-stretch-handle className={`absolute ${pos} ${size} pointer-events-auto flex items-center justify-center touch-none no-pointer-events`}
                     style={{ transform: tx }} onPointerDown={(e) => beginObjStretch(e, o, side, k)}
                     onPointerMove={moveObjStretch} onPointerUp={endObjStretch} onPointerCancel={endObjStretch}>
                     {o.type === 'shape' ? (
-                      <span className={`w-[5px] h-[5px] rounded-full block bg-white shadow-[0_1px_3px_rgba(0,0,0,0.5)] ${objStretching ? 'invisible' : ''}`} />
+                      <span className={`w-[5px] h-[5px] rounded-full block bg-white ${objStretching ? 'invisible' : ''}`} />
                     ) : (
                       <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] ${objStretching ? 'invisible' : ''}`} />
                     )}
@@ -7778,6 +7984,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <div className="h-9 flex items-center justify-between gap-1.5 bg-[#111] border border-[#222] px-1.5 rounded-[6px] w-full">
                       {[FULL, 'mask-bottom', 'mask-top', 'mask-left', 'mask-right', AROUND].map(t => (
                         <button key={t} onClick={() => {
+                          if (t === layout) return;
                           // 排版、比例、圖案在同一批更新裡一起換，中間不會露出半舊半新的那一格
                           setLayout(t);
                           if (t === AROUND) setMaskScale(AROUND_SCALE);
@@ -7859,9 +8066,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     -mt-1 是為了讓它跟上面那排的間距，跟這三項彼此之間一樣。 */}
                 <div className="space-y-3 !mt-3">
 
-                <div className="grid grid-cols-3 bg-[#111] border border-[#222] rounded-[6px] overflow-hidden">
-                  <div className={`h-[58px] flex flex-col items-center justify-center gap-1.5 border-r border-[#222] min-w-0 ${layout === FULL ? 'opacity-35 pointer-events-none' : ''}`}>
-                    <span className="text-[9px] font-bold text-[#888] whitespace-nowrap">自訂遮罩</span>
+                <div className={`h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] ${layout === FULL ? 'opacity-35 pointer-events-none' : ''}`}>
+                  <span className="text-[10px] font-bold text-[#888] shrink-0">自訂遮罩</span>
+                  <div className="flex items-center gap-2 min-w-0">
                     <div className="flex items-center gap-1.5">
                       {maskImageState && (
                         <button onClick={(e) => { e.stopPropagation(); setMaskImageState(null); }} className="flex items-center justify-center p-1.5 text-[10px] bg-[#222] text-white font-bold rounded-[4px] border border-[#333] hover:bg-[#333] transition-all" title="還原素色">
@@ -7872,20 +8079,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         上傳
                       </button>
                     </div>
+                    <button className="w-8 h-6 rounded-[4px] shadow-inner border border-white/10 hover:ring-1 hover:ring-white/30 transition-shadow"
+                      aria-label="遮罩顏色" onClick={() => setColorPickerTarget('mask')} style={{ backgroundColor: maskColor }} />
                   </div>
-                  <button className={`h-[58px] flex flex-col items-center justify-center gap-1.5 border-r border-[#222] hover:bg-[#151515] transition-colors ${layout === FULL ? 'opacity-35 pointer-events-none' : ''}`} onClick={() => setColorPickerTarget('mask')}>
-                    <span className="text-[9px] font-bold text-[#888]">顏色</span>
-                    <span className="w-8 h-6 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: maskColor }} />
-                  </button>
-                  <div className="h-[58px] flex flex-col items-center justify-center gap-1.5 min-w-0">
-                    <span className="text-[9px] font-bold text-[#888] whitespace-nowrap">更換圖片</span>
-                    <button onClick={(e) => {
+                </div>
+                <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
+                  <span className="text-[10px] font-bold text-[#888]">更換圖片</span>
+                  <button onClick={(e) => {
                       e.stopPropagation();
                       replaceFileInputRef.current?.click();
-                    }} className="px-3 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-widest whitespace-nowrap">
-                      上傳
-                    </button>
-                  </div>
+                    }} className="px-3 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-widest whitespace-nowrap">上傳</button>
                 </div>
                 {/* 紋理整組收在同一格：選項、顏色、兩根滑桿全部在同一個框裡
                     （跟經典拼圖那一頁排法一致）。 */}
@@ -8914,9 +9117,7 @@ const LayoutIcon = ({ type, active }: any) => {
   // 滿版：整個方塊都是照片，不存在遮罩分區。
   if (type === FULL) {
     return (
-      <div className={`w-5 h-5 rounded-[2px] border relative overflow-hidden transition-all shrink-0 ${active ? 'border-white scale-110 shadow-lg' : 'border-[#333]'}`}>
-        <div className={`absolute inset-[2px] rounded-[1px] ${active ? 'bg-white' : 'bg-[#333]'}`} />
-      </div>
+      <div className={`w-5 h-5 rounded-[2px] border transition-all shrink-0 ${active ? 'border-white scale-110 shadow-lg' : 'border-[#444]'}`} />
     );
   }
   // 四周包圍：畫成一個「框」，中間留白就是那張原圖
