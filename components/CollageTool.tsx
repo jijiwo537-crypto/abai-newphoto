@@ -2596,8 +2596,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [getLayoutOffsets]);
 
   const stampPaletteObject = useCallback((choice: any, cx: number, cy: number) => {
-    const obj = makePaletteObject(choice, cx, cy);
-    if (!obj) return 0;
+    const raw = makePaletteObject(choice, cx, cy);
+    if (!raw) return 0;
+    /* 上方畫筆是連續蓋章工具，不應生成和單次點選一樣大的物件。
+       依需求縮成原本的一半再一半（25%），並以手指位置為固定中心；
+       同步縮放符號字級與圖形的基準尺寸，避免框縮了、內容卻仍維持原大小。 */
+    const k = .25;
+    const w = raw.w * k, h = raw.h * k;
+    const obj = {
+      ...raw,
+      x: cx - w / 2, y: cy - h / 2, w, h,
+      ...(raw.type === 'text' ? { size: raw.size * k } : null),
+      ...(raw.type === 'shape' ? {
+        lineBase: Math.max(2, (raw.lineBase || Math.max(raw.w, raw.h)) * k),
+        textureBaseW: Math.max(2, (raw.textureBaseW || raw.w) * k),
+        textureBaseH: Math.max(2, (raw.textureBaseH || raw.h) * k),
+      } : null),
+    };
     const next = [...objectsRef.current, obj];
     objectsRef.current = next;
     setObjects(next);
@@ -4955,7 +4970,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          靜態時 f 是 null，這一段完全不影響畫面。 */
       const f = animRef.current ? animRef.current.obj(o, objIndex.get(o.id) ?? 0) : null;
       if (f && (f.k <= 0.002 || f.a <= 0.004)) return;
+      /* 波浪交棒的第 0 幀必須和進場最後一幀逐像素相同。
+         若 blend 還是 0 就不要提前切到分段重採樣的畫法，否則即便位移為 0，
+         Safari 的分段縮放仍會讓邊緣看起來閃一下。 */
       const internalWave = f?.gridWave !== undefined
+        && (f.waveMix === undefined || f.waveMix > 1e-5)
         && !(o.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind));
       const layer = internalWave ? waveLayer() : null;
       const paintObject = (ctx: CanvasRenderingContext2D) => {
@@ -5153,7 +5172,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            composeMo 已保證進場＋常駐同選波浪時只會提供一個 gridWave。 */
         const paintShapePath = (fill: boolean) => {
           const phase = f?.gridWave;
-          if (!GRID_SHAPE_KINDS.has(o.kind) || phase === undefined) {
+          if (!GRID_SHAPE_KINDS.has(o.kind) || phase === undefined
+              || (f?.waveMix !== undefined && f.waveMix <= 1e-5)) {
             fill ? ctx.fill(shapeP) : ctx.stroke(shapeP);
             return;
           }
@@ -5165,7 +5185,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              的連續曲線，也比舊版數百次重畫 Path2D 更順。 */
           const slices = Math.max(32, Math.min(128, Math.ceil(bw / 8)));
           const sliceW = bw / slices;
-          const amp = Math.min(10 * s, bh * 0.065) * Math.max(0.15, (o.mo?.amp ?? 50) / 100);
+          const amp = Math.min(10 * s, bh * 0.065)
+            * Math.max(0.15, (o.mo?.amp ?? 50) / 100)
+            * (f?.waveMix ?? 1);
           for (let i = 0; i < slices; i++) {
             const x = i * sliceW;
             if (x >= shownW) break;
@@ -7947,7 +7969,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 e.stopPropagation();
                 generateRandomHoles();
               }} 
-              className="p-3 bg-black/15 hover:bg-white/[0.06] border border-white/15 hover:border-white/30 text-[#aaa] hover:text-white rounded-full active:scale-95 transition-all flex items-center justify-center backdrop-blur-sm"
+              className="p-3 bg-[#111] hover:bg-[#1a1a1a] border border-white/10 hover:border-white/20 text-[#aaa] hover:text-white rounded-full active:scale-95 transition-all flex items-center justify-center backdrop-blur-md"
               title="隨機圖形"
             >
               <RefreshCw size={18} />
