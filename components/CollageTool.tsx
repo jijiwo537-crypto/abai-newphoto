@@ -683,7 +683,7 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
 const GRID_IDLE_KINDS = IDLE_KINDS;
 const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'grid-wave').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 /* 一般文字不再提供旋轉，原位置換成符號同款的縮放 II。 */
-const TEXT_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'grid-wave' && k.id !== 'spin')
+const TEXT_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'spin')
   .flatMap(k => k.id === 'breathe' ? [k, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 
 /** 進場動畫在進度 p（0～1）時的樣子 */
@@ -4951,8 +4951,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            舊版只有填色拆成 Array.from，發光／描邊仍畫整串；代理對、附加記號
            與字距因此各算一套，進動畫頁就會整串向左移或讓小單位彼此重疊。 */
         const seqIn = o.sym && f?.seq !== undefined ? f.seq : null;
-        const individualBreathe = !!o.sym && !objDragging && !objPinching && !symbolSizeTuningRef.current && o.mo?.idle === 'symbol-breathe2'
+        const individualBreathe = !objDragging && !objPinching && !symbolSizeTuningRef.current && o.mo?.idle === 'symbol-breathe2'
           && f?.idleT !== undefined;
+        const textUnitBreathe = !o.sym && individualBreathe;
         /* 符號在靜止與動畫時都使用同一份 unitLayout。切換動畫頁只改每個
            單位的倍率／透明度，不會從整串 shaping 突然換成另一套排版。 */
         const unitLayout = symbolLayout;
@@ -4972,6 +4973,51 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             sticker.w * stickerScale, sticker.h * stickerScale);
         };
         const drawText = (stroke = false) => {
+          if (textUnitBreathe) {
+            /* 一般文字的縮放 II 也必須先完整排版一次，再從同一張成品分層。
+               逐字重新 fillText 會破壞 kerning、組合字、粗斜體與自訂字距。 */
+            const rasterFontPx = 96;
+            const rasterScale = o.size * s / rasterFontPx;
+            const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
+            const logicalStroke = stroke && rasterScale > 0 ? ctx.lineWidth / rasterScale : 0;
+            const raster = rasterizeSymbolAnimationLayers(
+              o.text || '', fam, rasterFontPx, stroke ? 'stroke' : 'fill',
+              typeof paintStyle === 'string' ? paintStyle : (stroke ? (o.strokeColor || '#fff') : (o.color || '#fff')),
+              logicalStroke, Math.min(7, Math.max(2.5, rasterScale * 2.25)), {
+                plainText: true,
+                fontWeight: weight,
+                fontStyle: o.italic ? 'italic' : 'normal',
+                letterSpacing: (o.letterSpacing || 0) * rasterFontPx / Math.max(1, o.size),
+              },
+            );
+            if (!raster) {
+              if (stroke) ctx.strokeText(o.text || '', 0, 0);
+              else ctx.fillText(o.text || '', 0, 0);
+              return;
+            }
+            const now = f?.idleT ?? 0;
+            const scales = raster.layers.map((_layer, index) =>
+              1 + (symbolBreatheScale(index, now, o.mo?.amp || 50, o.mo?.speed || 1) - 1)
+                * (f?.waveMix ?? 1));
+            if (scales.every(value => Math.abs(value - 1) < 1e-6)) {
+              if (stroke) ctx.strokeText(o.text || '', 0, 0);
+              else ctx.fillText(o.text || '', 0, 0);
+              return;
+            }
+            raster.layers.forEach((layer, index) => {
+              ctx.save();
+              ctx.translate(layer.pivotX * rasterScale, layer.pivotY * rasterScale);
+              ctx.scale(scales[index], scales[index]);
+              ctx.imageSmoothingEnabled = true;
+              ctx.imageSmoothingQuality = 'high';
+              ctx.drawImage(layer.canvas,
+                (layer.x - layer.pivotX) * rasterScale,
+                (layer.y - layer.pivotY) * rasterScale,
+                layer.w * rasterScale, layer.h * rasterScale);
+              ctx.restore();
+            });
+            return;
+          }
           if (!unitLayout) {
             if (stroke) ctx.strokeText(o.text || '', tdx, tdy);
             else ctx.fillText(o.text || '', tdx, tdy);
@@ -6147,14 +6193,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const timed = units > 1 ? { ...cfg, dur: cfg.dur * bubbleSpan } : cfg;
         const phase = (hashId(o.id) % 628) / 100 + i * 0.7;
         const frame = composeMo(timed, t, phase);
-        /* 一般文字的縮放 II 使用符號同款曲線，但把完整文字視為一個排版
-           單位；不能拆字，否則字距、連字、粗斜體與合成字都會改變。符號
-           本身仍只走下方既有的逐小單位動畫，不會被整組再縮放一次。 */
-        if (!o.sym && o.type === 'text' && cfg.idle === 'symbol-breathe2' && frame.idleT !== undefined) {
-          const timeline = Math.abs(Math.floor(phase * 1000)) % 3;
-          const unitScale = symbolBreatheScale(timeline, frame.idleT, cfg.amp, cfg.speed);
-          return { ...frame, k: 1 + (unitScale - 1) * (frame.waveMix ?? 1) };
-        }
         return frame;
       },
       /* 發光的常駐動畫跟圖案那組是分開的：圖案可以完全靜止，光自己在閃。 */

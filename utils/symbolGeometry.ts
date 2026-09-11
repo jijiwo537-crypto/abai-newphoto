@@ -770,6 +770,14 @@ export type SymbolRasterLayers = {
   inkWidth: number;
   inkHeight: number;
 };
+export type TextAnimationRasterStyle = {
+  /** 一般文字不能套用符號專用的 VS15 與拆分規則。 */
+  plainText?: boolean;
+  fontWeight?: number | string;
+  fontStyle?: 'normal' | 'italic';
+  /** 以 logicalFontPx 為座標的 Canvas 字距。 */
+  letterSpacing?: number;
+};
 const rasterLayerCache = new Map<string, SymbolRasterLayers>();
 const MAX_RASTER_LAYER_CACHE = 64;
 /* 最長的裝飾符號在 iPhone Retina 仍要以原生物理解析度分層；8192 會把
@@ -791,26 +799,36 @@ export const rasterizeSymbolAnimationLayers = (
   color: string,
   logicalStrokeWidth = 0,
   outputScale = 1,
+  textStyle?: TextAnimationRasterStyle,
 ): SymbolRasterLayers | null => {
   if (typeof document === 'undefined' || !text) return null;
-  const renderText = symbolTextPresentation(text);
-  const units = splitSymbolTimingUnits(renderText);
+  const plainText = !!textStyle?.plainText;
+  const renderText = plainText ? text : symbolTextPresentation(text);
+  /* 一般文字以完整 grapheme 為單位：組合音標、ZWJ emoji 不可從中切開，
+     但每個真正可見的字／符號都會得到自己的動畫時間線。 */
+  const units = plainText ? splitSymbolClusters(renderText) : splitSymbolTimingUnits(renderText);
   if (!units.length) return null;
   const px = Math.max(8, logicalFontPx);
+  const fontWeight = textStyle?.fontWeight ?? 400;
+  const fontStyle = textStyle?.fontStyle === 'italic' ? 'italic ' : '';
+  const letterSpacing = Number.isFinite(textStyle?.letterSpacing) ? Number(textStyle?.letterSpacing) : 0;
+  const fontCss = `${fontStyle}${fontWeight} ${px}px ${fontStack(family)}`;
   /* 縮放 II 會持續改變每個小單位的目的尺寸；3× 貼圖在放大的 Retina
      預覽仍可能被往上採樣，邊緣 alpha 便會逐幀游動。短符號允許到 7×，
      實際尺寸仍會被下方 16000px 單邊限制夾住，長符號不會無限配置。 */
   const wantedScale = Math.max(1, Math.min(7, outputScale));
-  const key = `${text}|${family}|${px.toFixed(3)}|${mode}|${color}|${logicalStrokeWidth.toFixed(3)}|${wantedScale.toFixed(3)}`;
+  const key = `${plainText ? 'text' : 'symbol'}|${text}|${family}|${fontWeight}|${fontStyle}|${letterSpacing.toFixed(3)}|${px.toFixed(3)}|${mode}|${color}|${logicalStrokeWidth.toFixed(3)}|${wantedScale.toFixed(3)}`;
   const hit = rasterLayerCache.get(key);
   if (hit) return hit;
   try {
     const probe = document.createElement('canvas').getContext('2d');
     if (!probe) return null;
-    probe.font = `400 ${px}px ${fontStack(family)}`;
+    probe.font = fontCss;
+    (probe as any).letterSpacing = `${letterSpacing}px`;
+    probe.textAlign = 'center'; probe.textBaseline = 'middle';
     const iosCanvas = /iP(?:hone|ad|od)/.test(navigator.userAgent)
       || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    const longIOS = iosCanvas && isIOSProblemLongSymbol(text);
+    const longIOS = !plainText && iosCanvas && isIOSProblemLongSymbol(text);
     const fullRuns = longIOS ? longSymbolPaintRuns(renderText, family) : null;
     const logicalAdvance = Math.max(px * .25,
       fullRuns ? fullRuns.total * px / REF : probe.measureText(renderText).width);
@@ -818,11 +836,26 @@ export const rasterizeSymbolAnimationLayers = (
     /* 動畫只需要貼圖真正有墨水的區域。舊版用 6.7em 高、完整 advance 寬的
        巨型 Canvas 跑每個 prefix；固定高解析度後長符號會浪費數十 MB，甚至
        被 iOS 清掉。以同一張貼圖的真實邊界建立緊實工作區，再留安全邊界。 */
-    const stickerInk = measureSymbolStickerInk(text, family);
-    const inkW = Math.max(px * .05, stickerInk.w * px);
-    const inkH = Math.max(px * .05, stickerInk.h * px);
-    const inkLeft = stickerInk.cx * px - inkW / 2;
-    const inkTop = stickerInk.cy * px - inkH / 2;
+    const stickerInk = plainText ? null : measureSymbolStickerInk(text, family);
+    const metrics = probe.measureText(renderText);
+    /* 一般文字直接採用同一個 Canvas 字型的實際墨水邊界，不能借用符號字型
+       的固定 em 框；否則粗體、斜體與字距一換，切片就可能被裁掉。 */
+    const measuredLeft = Number(metrics.actualBoundingBoxLeft);
+    const measuredRight = Number(metrics.actualBoundingBoxRight);
+    const measuredTop = Number(metrics.actualBoundingBoxAscent);
+    const measuredBottom = Number(metrics.actualBoundingBoxDescent);
+    const inkW = plainText
+      ? Math.max(px * .05, Number.isFinite(measuredLeft + measuredRight) ? measuredLeft + measuredRight : logicalAdvance)
+      : Math.max(px * .05, stickerInk!.w * px);
+    const inkH = plainText
+      ? Math.max(px * .05, Number.isFinite(measuredTop + measuredBottom) ? measuredTop + measuredBottom : px * 1.25)
+      : Math.max(px * .05, stickerInk!.h * px);
+    const inkLeft = plainText
+      ? -(Number.isFinite(measuredLeft) ? measuredLeft : logicalAdvance / 2)
+      : stickerInk!.cx * px - inkW / 2;
+    const inkTop = plainText
+      ? -(Number.isFinite(measuredTop) ? measuredTop : px * .75)
+      : stickerInk!.cy * px - inkH / 2;
     const margin = Math.ceil(Math.max(6, strokePx * 2 + 5));
     const logicalWidth = Math.ceil(inkW + margin * 2);
     const logicalHeight = Math.ceil(inkH + margin * 2);
@@ -844,7 +877,8 @@ export const rasterizeSymbolAnimationLayers = (
     const setup = () => {
       g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, width, height);
       g.setTransform(oversample, 0, 0, oversample, 0, 0);
-      g.font = `400 ${px}px ${fontStack(family)}`;
+      g.font = fontCss;
+      (g as any).letterSpacing = `${letterSpacing}px`;
       g.textAlign = 'left'; g.textBaseline = 'middle';
       g.fillStyle = color || '#fff'; g.strokeStyle = color || '#fff';
       g.lineWidth = strokePx; g.lineJoin = 'round'; g.miterLimit = 2;
