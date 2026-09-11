@@ -6682,31 +6682,71 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ...objects.filter((o: any) => isVideoEl(o.img)).map((o: any) => o.id),
   ].filter(Boolean).join('|');
 
-  /* 非動畫頁也必須跟著影片的新影格重畫主畫布。之前只有影片元素在背景播放，
-     canvas 沒有人更新，因此看起來永遠是一張靜態截圖。這裡只在 token 真的
-     改變時畫一次，24/30fps 素材不會被 60Hz 螢幕重複畫兩遍。 */
+  /* 非動畫頁也必須跟著影片的新影格重畫主畫布。用影片解碼器的
+     requestVideoFrameCallback 當時鐘：50fps 素材就是 50 次、30fps 素材就是
+     30 次，不把低幀片硬補格，也不再用固定 30fps 閘門砍掉高幀片。這在 iOS
+     特別重要，因為 rAF 與影片解碼不是同一個節拍，開頭很容易連續漏兩三格。 */
   useEffect(() => {
     if (!imageState || motionOn || videoProg !== null || !videoRoster) return;
     const vids = allVideosRef.current();
     if (!vids.length) return;
     playVideos(vids);
-    let raf = 0;
-    let lastToken = '';
-    let lastPaint = 0;
-    const tick = (now: number) => {
-      raf = requestAnimationFrame(tick);
-      if (document.hidden || now - lastPaint < 1000 / 30) return;
-      const token = videoTokenOf(allVideosRef.current());
-      if (!token || token === lastToken) return;
-      lastToken = token;
-      lastPaint = now;
+    let stopped = false;
+    let paintRaf = 0;
+    let paintQueued = false;
+    let fallbackRaf = 0;
+    let lastFallbackToken = '';
+    const paint = () => {
+      paintRaf = 0;
+      paintQueued = false;
+      if (stopped || document.hidden) return;
       const cv = canvasRef.current;
       if (!cv) return;
-      try { renderToCanvasRef.current(cv, previewScaleRef.current); }
+      /* 播放時只畫螢幕實際需要的像素；原本的 1.8x 超取樣會把每格成本放大
+         3.24 倍，手機第一秒建立快取時尤其明顯。靜止重畫仍走完整倍率。 */
+      const liveScale = Math.min(previewScaleRef.current, 0.55);
+      try { renderToCanvasRef.current(cv, liveScale); }
       catch (err) { console.error('影片預覽影格畫不出來', err); }
     };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    const queuePaint = () => {
+      if (stopped || paintQueued) return;
+      paintQueued = true;
+      paintRaf = requestAnimationFrame(paint);
+    };
+
+    const callbackIds = new Map<HTMLVideoElement, number>();
+    const supported = vids.filter(v => typeof (v as any).requestVideoFrameCallback === 'function');
+    supported.forEach(v => {
+      const next = () => {
+        if (stopped) return;
+        queuePaint();
+        callbackIds.set(v, (v as any).requestVideoFrameCallback(next));
+      };
+      callbackIds.set(v, (v as any).requestVideoFrameCallback(next));
+    });
+
+    /* 舊版 iOS 的保底路徑。只在影片時間真的改變時重畫；不設 30fps 上限。 */
+    if (supported.length !== vids.length) {
+      const fallback = () => {
+        fallbackRaf = requestAnimationFrame(fallback);
+        const token = videoTokenOf(allVideosRef.current());
+        if (token && token !== lastFallbackToken) {
+          lastFallbackToken = token;
+          queuePaint();
+        }
+      };
+      fallbackRaf = requestAnimationFrame(fallback);
+    }
+    /* 先畫一次，避免等待第一個解碼回呼時保留匯入縮圖，看起來像開頭卡住。 */
+    queuePaint();
+    return () => {
+      stopped = true;
+      if (paintRaf) cancelAnimationFrame(paintRaf);
+      if (fallbackRaf) cancelAnimationFrame(fallbackRaf);
+      callbackIds.forEach((id, v) => {
+        try { (v as any).cancelVideoFrameCallback?.(id); } catch { /* 已執行 */ }
+      });
+    };
   }, [imageState, motionOn, videoProg, videoRoster]);
 
   /* 切到背景就停掉影片：背景分頁照樣在解碼，白吃電也白吃記憶體 */

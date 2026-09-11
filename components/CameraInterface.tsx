@@ -201,6 +201,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
   const [focusPoint, setFocusPoint] = useState<{ x: number, y: number, nonce: number } | null>(null);
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastFocusEventRef = useRef<{ x: number; y: number; at: number } | null>(null);
   const lastCameraTickRef = useRef<string>('');
   
   const localFileInputRef = useRef<HTMLInputElement>(null);
@@ -471,7 +472,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   /* 換鏡頭之後鎖定狀態不成立了，要清掉 */
   useEffect(() => { setAeafLock(false); }, [facingMode]);
 
-  const handleFocus = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+  const handleFocus = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement> | React.PointerEvent<HTMLDivElement>) => {
     if (showSettingsMenu) {
       /* 收起選單不能吃掉這次點擊；同一次點擊仍然要顯示並執行對焦。 */
       setShowSettingsMenu(false);
@@ -483,12 +484,18 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         clientX = e.touches[0].clientX;
         clientY = e.touches[0].clientY;
     } else {
-        clientX = (e as React.MouseEvent).clientX;
-        clientY = (e as React.MouseEvent).clientY;
+        clientX = e.clientX;
+        clientY = e.clientY;
     }
 
     const x = clientX - rect.left;
     const y = clientY - rect.top;
+    /* 同一次觸控在新 WebKit 會依序送 pointerup 與 click。click 是舊版保底，
+       但新版本不能因此讓相機硬體重做兩次對焦。 */
+    const now = performance.now();
+    const prevFocus = lastFocusEventRef.current;
+    if (prevFocus && now - prevFocus.at < 180 && Math.hypot(x - prevFocus.x, y - prevFocus.y) < 3) return;
+    lastFocusEventRef.current = { x, y, at: now };
     /* nonce 強制每次點擊都換一個節點，連續點同一位置時 CSS 動畫才會重播。 */
     setFocusPoint({ x, y, nonce: Date.now() });
     if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
@@ -872,6 +879,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               isUserFacing={visualFacingMode === 'user'}
               fx={fx}
               digitalZoom={digitalZoom}
+              /* click 保留為鍵盤／舊版 WebKit 的保底；新 iOS 由 pointerup 立即觸發。 */
               onClick={handleFocus}
               onPointerDown={() => {
                 if (!canLock) return;
@@ -879,7 +887,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 // 按住 550ms 就鎖定；已經鎖住的話長按是解除
                 lockTimerRef.current = setTimeout(() => { triggerHaptic(); applyLock(!aeafLock); }, 550);
               }}
-              onPointerUp={() => { if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; } }}
+              onPointerUp={(e) => {
+                if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; }
+                /* iOS 的 WebGL canvas 偶爾不會合成出 synthetic click；直接在真實的
+                   pointerup 顯示對焦框，點一下就一定有回饋，也少掉 300ms click 延遲。 */
+                handleFocus(e);
+              }}
               onPointerCancel={() => { if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; } }}
             />
 
@@ -960,7 +973,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 )}
             </div>
             
-            {focusPoint && focusPoint.visible && (
+            {focusPoint && (
                 <div
                     key={focusPoint.nonce}
                     className="absolute z-40 pointer-events-none"
@@ -1119,9 +1132,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     </span>
                  </div>
 
-                 <div className={`flex items-center justify-center w-full px-5 relative gap-5 ${activeControl === 'kelvin' ? '-translate-y-2' : ''}`}>
-                    <div className="flex-1 flex justify-center">
-                      <div className="relative flex items-center h-12 w-full max-w-[214px]">
+                 <div className={`flex items-center justify-center w-full px-5 relative ${activeControl === 'kelvin' ? '-translate-y-4' : ''}`}>
+                    {/* 收合鍵改成絕對定位；否則它會佔掉右側寬度，把整條刻度推離螢幕中心。 */}
+                    <div data-camera-scale={activeControl} className="relative flex items-center h-12 w-[214px] max-w-[calc(100%-72px)]">
                         {activeControl === 'exposure' && (
                           <>
                             <div className="absolute inset-x-0 h-4 z-0 flex items-center overflow-hidden pointer-events-none">
@@ -1161,9 +1174,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                             }}
                           />
                         )}
-                      </div>
                     </div>
-                    <button onClick={() => { triggerHaptic(); setActiveControl('none'); }} className="flex-shrink-0 w-7 h-9 text-white/45 hover:text-white flex items-center justify-center active:scale-90 transition-all">
+                    <button onClick={() => { triggerHaptic(); setActiveControl('none'); }} className="absolute right-5 top-1/2 -translate-y-1/2 w-7 h-9 text-white/45 hover:text-white flex items-center justify-center active:scale-90 transition-all">
                       <Icon name="expand_more" className="text-lg" />
                     </button>
                  </div>
