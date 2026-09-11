@@ -8009,7 +8009,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       </div>
       {saveState === 'processing' && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
-          <div className="w-16 h-16 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
+          <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
           <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">正在存檔</p>
           {/* 這一層蓋住返回鍵，所以一定要有出口（見 StuckEscape） */}
           <StuckEscape onEscape={() => setSaveState('idle')} />

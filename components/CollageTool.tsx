@@ -682,6 +682,9 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
 ];
 const GRID_IDLE_KINDS = IDLE_KINDS;
 const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'grid-wave').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
+/* 一般文字不再提供旋轉，原位置換成符號同款的縮放 II。 */
+const TEXT_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'grid-wave' && k.id !== 'spin')
+  .flatMap(k => k.id === 'breathe' ? [k, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 
 /** 進場動畫在進度 p（0～1）時的樣子 */
 const inFrame = (kind: string, p: number): MoFrame => {
@@ -5999,6 +6002,94 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [exportAsk, setExportAsk] = useState(false);
 
   const hasLink = linkMode !== 'none' && linkableType(holeType);
+  /** 切換動畫目標時只更新動畫面板與短暫虛線提示，不改正式選取狀態。 */
+  const chooseMotionTarget = useCallback((requestedId: string) => {
+    const id = requestedId === 'shape'
+      || (requestedId === 'link' && hasLink)
+      || objectsRef.current.some(o => o.id === requestedId)
+      ? requestedId : 'shape';
+    setMoTarget(id);
+    motionTargetFlashRef.current = { id, started: performance.now(), duration: 850 };
+    setMotionTargetFlashSeq(n => n + 1);
+  }, [hasLink]);
+
+  /* 動畫目標若被刪除（或連線被關閉），直接安全回到圖案，不再留下失效 id
+     讓面板顯示「物件已經不在了」。 */
+  useEffect(() => {
+    if (activeTab !== 'motion') return;
+    const valid = moTarget === 'shape'
+      || (moTarget === 'link' && hasLink)
+      || objects.some(o => o.id === moTarget);
+    if (!valid) chooseMotionTarget('shape');
+  }, [activeTab, moTarget, hasLink, objects, chooseMotionTarget]);
+
+  /** 動畫頁仍禁止拖曳，但允許直接點預覽中的可見物件切換調整目標。 */
+  const handleMotionTargetPointerDown = useCallback((e: React.PointerEvent) => {
+    if (!imageState || !canvasRef.current) return;
+    e.stopPropagation();
+    const rect = canvasRef.current.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const ps = drawnScaleRef.current || 1;
+    const x = (e.clientX - rect.left) * canvasRef.current.width / rect.width / ps;
+    const y = (e.clientY - rect.top) * canvasRef.current.height / rect.height / ps;
+    const animation = animRef.current;
+    const list = objectsRef.current;
+    const hitObject = (wantBelow: boolean) => {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const o = list[i];
+        if (!!o.below !== wantBelow) continue;
+        const f: any = animation?.obj(o, i);
+        if (f && (f.k <= .002 || f.a <= .004)) continue;
+        const kx = Math.max(.002, Math.abs((f?.k ?? 1) * (f?.fx ?? 1)));
+        const ky = Math.max(.002, Math.abs(f?.k ?? 1));
+        const cx = o.x + o.w / 2 + (f?.dx ?? 0) * o.w;
+        const cy = o.y + o.h / 2 + (f?.dy ?? 0) * o.h;
+        const rad = -((o.rot || 0) + (f?.rot ?? 0)) * Math.PI / 180;
+        const dx = x - cx, dy = y - cy;
+        const lx = (dx * Math.cos(rad) - dy * Math.sin(rad)) / kx;
+        const ly = (dx * Math.sin(rad) + dy * Math.cos(rad)) / ky;
+        if (Math.abs(lx) <= o.w / 2 && Math.abs(ly) <= o.h / 2) return o;
+      }
+      return null;
+    };
+
+    /* 疊放順序與正式選取一致：上層物件 → 圖案 → 下層物件。 */
+    const above = hitObject(false);
+    if (above) { chooseMotionTarget(above.id); return; }
+    const offs = getLayoutOffsets();
+    if (offs) {
+      const { baseW: bw, baseH: bh } = imageState;
+      const md = maskDims(layout, bw, bh, maskScale);
+      const around = layout === AROUND;
+      const inOriginal = !around && x >= offs.ix && x <= offs.ix + bw && y >= offs.iy && y <= offs.iy + bh;
+      const inMask = (around || !inOriginal)
+        && x >= offs.mx && x <= offs.mx + md.mw && y >= offs.my && y <= offs.my + md.mh;
+      const side: 'image' | 'mask' | undefined = inOriginal ? 'image' : inMask ? 'mask' : undefined;
+      const gs = imageState.globalScale || 1;
+      const orderedHoles = [...holesRef.current].sort((a, b) => (a.x - b.x) || (a.y - b.y));
+      const holeOrder = new Map(orderedHoles.map((h, i) => [h.id, i]));
+      for (let i = holesRef.current.length - 1; i >= 0; i--) {
+        const h = holesRef.current[i];
+        const f: any = animation?.hole(h, holeOrder.get(h.id) ?? 0);
+        if (f && (f.k <= .002 || f.a <= .004)) continue;
+        const baseSize = getHoleSize(h);
+        const animatedHole = f ? {
+          ...h,
+          x: h.x + (f.dx ?? 0) * baseSize,
+          y: h.y + (f.dy ?? 0) * baseSize,
+          localScale: (h.localScale || 1) * (f.k ?? 1),
+          angle: (h.angle !== undefined ? h.angle : holeAngle) + (f.rot ?? 0),
+        } : h;
+        if (checkHitHole(x, y, animatedHole, gs, offs, side)) {
+          chooseMotionTarget('shape');
+          return;
+        }
+      }
+    }
+    const below = hitObject(true);
+    if (below) chooseMotionTarget(below.id);
+  }, [imageState, getLayoutOffsets, layout, maskScale, checkHitHole, getHoleSize, holeAngle, chooseMotionTarget]);
+
   /** 畫布現在要不要照動畫來畫（暫停時也算：停在那一格） */
   const motionOn = activeTab === 'motion' && saveState === 'idle' && !igPreview;
 
@@ -6054,7 +6145,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const units = o.sym && cfg.in === 'bubble' ? Math.max(1, countSymbolAnimationBeats(o.text || '')) : 1;
         const bubbleSpan = 1 + Math.max(0, units - 1) * 0.2;
         const timed = units > 1 ? { ...cfg, dur: cfg.dur * bubbleSpan } : cfg;
-        return composeMo(timed, t, (hashId(o.id) % 628) / 100 + i * 0.7);
+        const phase = (hashId(o.id) % 628) / 100 + i * 0.7;
+        const frame = composeMo(timed, t, phase);
+        /* 一般文字的縮放 II 使用符號同款曲線，但把完整文字視為一個排版
+           單位；不能拆字，否則字距、連字、粗斜體與合成字都會改變。符號
+           本身仍只走下方既有的逐小單位動畫，不會被整組再縮放一次。 */
+        if (!o.sym && o.type === 'text' && cfg.idle === 'symbol-breathe2' && frame.idleT !== undefined) {
+          const timeline = Math.abs(Math.floor(phase * 1000)) % 3;
+          const unitScale = symbolBreatheScale(timeline, frame.idleT, cfg.amp, cfg.speed);
+          return { ...frame, k: 1 + (unitScale - 1) * (frame.waveMix ?? 1) };
+        }
+        return frame;
       },
       /* 發光的常駐動畫跟圖案那組是分開的：圖案可以完全靜止，光自己在閃。 */
       /* gain：故障那一款，圖案要更兇（+50%）、線要收斂一點（−10%）。
@@ -6879,7 +6980,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            現在等超過六秒還沒好就多出一顆返回鍵（見 StuckEscape）—— 正常的導出
            兩三秒就結束，根本看不到它。 */
         <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
-          <div className="w-16 h-16 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
+          <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
           <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">正在存檔</p>
           <StuckEscape onEscape={() => setSaveState('idle')} />
         </div>
@@ -7090,7 +7191,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             /* 手勢掛在整個工作區上，不是只有畫布：選中物件之後，
                畫布外面那片黑底也能拖、也能兩指縮放。挖洞／筆刷本來就會
                檢查座標落在哪一塊，落在黑底上就自然什麼都不做。 */
-            onPointerDown={handlePointerDown}
+            onPointerDown={activeTab === 'motion' ? handleMotionTargetPointerDown : handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
@@ -8236,7 +8337,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 // 換動畫種類 → 從頭播一次，不用自己等一圈
                 const pickKind = (d: Partial<MoCfg>) => {
                   if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
-                  else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 60, speed: 1.2 });
+                  else if (d.idle === 'symbol-breathe2' && selObj?.type === 'text') setCur({ ...d, amp: 60, speed: 1.2 });
                   else if (d.idle === 'breathe' && selObj?.sym) setCur({ ...d, amp: 30 });
                   /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
                      就共用同一套，切換種類時也不能沿用上一個動畫的怪速度。 */
@@ -8310,30 +8411,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const label = (t: string) =>
                   <p className="text-[10px] font-bold text-[#666] uppercase tracking-widest mb-2 mt-4">{t}</p>;
                 const isSymbolTarget = !!selObj?.sym;
+                const isTextTarget = selObj?.type === 'text' && !selObj.sym;
                 const isSpecialLineTarget = !!selObj && selObj.type === 'shape' && SPECIAL_LINE_KINDS.has(selObj.kind);
                 const isGridTarget = !!selObj && selObj.type === 'shape' && GRID_SHAPE_KINDS.has(selObj.kind);
                 const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
-                const chooseMotionTarget = (id: string) => {
-                  setMoTarget(id);
-                  if (id === 'shape' || objects.some(o => o.id === id)) {
-                    motionTargetFlashRef.current = { id, started: performance.now(), duration: 850 };
-                    setMotionTargetFlashSeq(n => n + 1);
-                  }
-                };
                 return (
                   <div className="max-w-md mx-auto pb-4 animate-in fade-in duration-300">
                     {/* 要調哪一個元素（播放列不在這裡 —— 它跟分頁列一樣在捲動區外面） */}
                     <div className="flex gap-2 overflow-x-auto no-scrollbar [&::-webkit-scrollbar]:hidden pb-1">
                       <button onClick={() => chooseMotionTarget('shape')} className={chip(moTarget === 'shape')}>圖案</button>
-                      {hasLink && <button onClick={() => setMoTarget('link')} className={chip(moTarget === 'link')}>
+                      {hasLink && <button onClick={() => chooseMotionTarget('link')} className={chip(moTarget === 'link')}>
                         {linkMode === 'dash' ? '虛線' : '連線'}
                       </button>}
                       {(() => {
                         /* 圖形有兩顆以上就編號（圖形1、圖形2…），只有一顆就單純叫「圖形」 */
                         const shapeIds = objects.filter(z => z.type === 'shape').map(z => z.id);
+                        const imageIds = objects.filter(z => z.type === 'image').map(z => z.id);
                         const shapeNo = (id: string) =>
                           shapeIds.length > 1 ? `圖形${shapeIds.indexOf(id) + 1}` : '圖形';
-                        return objects.map((o, i) => (
+                        const imageNo = (id: string) =>
+                          imageIds.length > 1 ? `圖片${imageIds.indexOf(id) + 1}` : '圖片';
+                        return objects.map(o => (
                         <button key={o.id}
                           onClick={() => chooseMotionTarget(o.id)}
                           className={chip(moTarget === o.id)}>
@@ -8342,7 +8440,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               那樣這顆鈕看起來就是空的，等於選不到，也就沒辦法給它動畫。 */}
                           {o.type === 'text' ? (o.sym ? '符號' : (o.text || '文字').slice(0, 6))
                             : o.type === 'shape' ? shapeNo(o.id)
-                            : `圖片 ${i + 1}`}
+                            : imageNo(o.id)}
                         </button>
                       ));
                       })()}
@@ -8369,8 +8467,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           ))}
                         </div>
                       </>
-                    ) : (moTarget !== 'shape' && !selObj) ? (
-                      <p className="text-[11px] text-white/40 text-center py-8">這個物件已經不在了，請重新選一個</p>
                     ) : (
                       <>
                         {label('進場動畫')}
@@ -8394,7 +8490,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {(isSymbolTarget ? SYMBOL_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : IDLE_KINDS).map(k => (
+                          {(isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : IDLE_KINDS).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>
@@ -8405,18 +8501,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             <CompactSlider label="幅度" value={cur.amp} min={0} max={100} step={1}
                               onChange={(v: number) => setCur({ amp: v })} />
                             <CompactSlider label="速度"
-                              value={cur.idle === 'symbol-breathe2' && isSymbolTarget
+                              value={cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                 ? symbolBreathe2SpeedToUi(cur.speed)
                                 : cur.idle === 'grid-wave' && !isGridTarget
                                   ? nonGridWaveSpeedToUi(cur.speed)
                                   : Math.round(cur.speed * 100)}
-                              min={cur.idle === 'symbol-breathe2' && isSymbolTarget
+                              min={cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                 || cur.idle === 'grid-wave' && !isGridTarget ? 0 : 20}
-                              max={cur.idle === 'symbol-breathe2' && isSymbolTarget
+                              max={cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                 || cur.idle === 'grid-wave' && !isGridTarget ? 100 : 180}
                               step={1}
                               onChange={(v: number) => setCur({
-                                speed: cur.idle === 'symbol-breathe2' && isSymbolTarget
+                                speed: cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                   ? symbolBreathe2SpeedFromUi(v)
                                   : cur.idle === 'grid-wave' && !isGridTarget
                                     ? nonGridWaveSpeedFromUi(v)

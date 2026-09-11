@@ -1442,15 +1442,17 @@ export const symbolBreatheScale = (
 ) => {
   const t = Math.max(0, time);
   const timeline = ((index % 3) + 3) % 3;
-  /* 三條時間線共用完全相同的頻率，只以固定 120° 相位區分。固定頻率不會
-     產生拍頻；清楚的相位差則可避免三組進入穩態後看起來一起縮放。 */
+  /* 三條時間線都從正弦波的零交點開始，方向與速度在起步當下就確定。
+     舊版的 120° 相位會讓本來要縮小的單位先放大約半秒才折返，看起來像
+     猶豫；現在第二條從縮小開始，第一、三條從放大開始且速度略微錯開。 */
   const angularRate = 1.5 * Math.max(.05, speed);
-  const phase = timeline * Math.PI * 2 / 3;
-  /* 相位從第一幀就固定，僅讓振幅用 smootherstep 從零平滑展開。這樣三組
-     都精確從 1 倍、零速度起步，不會在銜接處抽動，也不會先後等候。 */
+  const rate = [1, .94, 1.06][timeline];
+  const direction = timeline === 1 ? -1 : 1;
+  /* 僅讓振幅用 smootherstep 從零平滑展開。三組都精確從 1 倍、零速度
+     起步，但第一個有效變化就沿著各自被分配的方向前進，不會中途折返。 */
   const attackP = Math.min(1, t / .55);
   const attack = attackP * attackP * attackP * (attackP * (attackP * 6 - 15) + 10);
-  const wave = Math.sin(t * angularRate + phase);
+  const wave = direction * Math.sin(t * angularRate * rate);
   return 1 + wave * Math.max(0, amp) / 100 * .18 * attack;
 };
 
