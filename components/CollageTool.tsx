@@ -5751,13 +5751,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.restore();
     }
 
-    /* 正式選取框統一放到所有內容的最上層。以前框跟著物件本身的圖層畫，
-       置底物件靠近遮罩時，後畫的黑色遮罩會把其中一段框吃掉。
-       這段也刻意放在乾淨縮圖拍完之後，草稿封面不會存進選取狀態。 */
+    /* 有造型的圖片仍沿著造型本身描框；一般矩形框與底圖虛線框改由畫布上方
+       的獨立 SVG overlay 顯示。overlay 不受畫布裁切，因此靠著黑色遮罩或
+       畫布邊緣時也不會被吃掉。這裡只留下不能用矩形取代的造型外框。 */
     if (isMain && selectedObj && !hideChromeRef.current && !objDragging && !objPinching
         && !objStretching && !tuningEdge && !animRef.current) {
       const o = objects.find(z => z.id === selectedObj);
-      if (o) {
+      if (o && shapeSel === o.id && isImgShaped(o.imgShape)) {
         ctx.save();
         ctx.translate((o.x + o.w / 2) * s, (o.y + o.h / 2) * s);
         ctx.rotate((o.rot || 0) * Math.PI / 180);
@@ -5766,31 +5766,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.shadowColor = 'rgba(0, 0, 0, 0.22)';
         ctx.shadowBlur = 2 * uiPx;
         ctx.setLineDash([]);
-        if (shapeSel === o.id && isImgShaped(o.imgShape)) {
-          const gp = 2 * uiPx;
-          withImgOutline(ctx as any, -o.w * s / 2 - gp, -o.h * s / 2 - gp,
-            o.w * s + gp * 2, o.h * s + gp * 2, o.imgShape, 0, 0,
-            p => { if (p) ctx.stroke(p); });
-        } else {
-          const ink = objectSelectionInk(o, s, o.type === 'image' ? 0.375 * uiPx : 2 * uiPx);
-          ctx.strokeRect(-o.w * s / 2 + ink.x, -o.h * s / 2 + ink.y, ink.w, ink.h);
-        }
+        const gp = 2 * uiPx;
+        withImgOutline(ctx as any, -o.w * s / 2 - gp, -o.h * s / 2 - gp,
+          o.w * s + gp * 2, o.h * s + gp * 2, o.imgShape, 0, 0,
+          p => { if (p) ctx.stroke(p); });
         ctx.restore();
       }
-    }
-
-    /* 最初匯入的底圖有獨立選取框。最後才畫，確保相鄰的黑色遮罩與置底物件
-       都不可能把框壓住；整條線往照片區內收半個線寬，貼畫布邊也不會被裁半。 */
-    if (isMain && baseSelected && !hideChromeRef.current && !animRef.current) {
-      const lw = 0.9 * uiPx;
-      const inset = lw / 2;
-      ctx.save();
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = lw;
-      ctx.setLineDash([4.8 * uiPx, 4.8 * uiPx]);
-      ctx.strokeRect(offs.ix + inset, offs.iy + inset,
-        Math.max(0, iw - lw), Math.max(0, ih - lw));
-      ctx.restore();
     }
 
     /* 動畫目標選到「圖案」時，每一顆圖案都短暫顯示同一種淡入淡出的虛線框。
@@ -5918,7 +5899,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
-  }, [imageState, layout, canvasRatio, baseSelected, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
+  }, [imageState, layout, canvasRatio, baseSelected, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
       stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
@@ -7534,6 +7515,50 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   cursor: brushMode === 'pen' ? 'crosshair' : brushMode === 'eraser' ? 'pointer' : 'default' 
                 }}
               />
+              {/* 選中框是純介面，不再烘進畫布。SVG 疊在所有畫布內容之上，
+                  overflow:visible 讓線條即使跨到旁邊的黑色遮罩或畫布外側也完整顯示；
+                  vector-effect 則確保預覽放大縮小後仍維持相同粗細。 */}
+              {activeTab !== 'motion' && !composeState && (() => {
+                const off = getLayoutOffsets();
+                if (!off) return null;
+                const o = selectedObj && !objDragging && !objPinching && !objStretching && !tuningEdge
+                  ? objects.find(z => z.id === selectedObj) : null;
+                const shaped = !!(o && shapeSel === o.id && isImgShaped(o.imgShape));
+                if (!baseSelected && (!o || shaped)) return null;
+                const logicalPerCssPx = off.cw / Math.max(1, (baseCss?.w || off.cw) * viewT.k);
+                const ink = o && !shaped
+                  ? objectSelectionInk(o, 1, (o.type === 'image' ? 0.375 : 2) * logicalPerCssPx)
+                  : null;
+                const stroke = o
+                  ? (o.type === 'shape' ? (o.kind === 'line' ? 0.32 : 0.55) : o.sym ? 0.5 : 0.75)
+                  : 0.9;
+                return (
+                  <svg
+                    aria-hidden="true"
+                    viewBox={`0 0 ${off.cw} ${off.ch}`}
+                    preserveAspectRatio="none"
+                    className="absolute inset-0 pointer-events-none"
+                    style={{ width: '100%', height: '100%', zIndex: 6, overflow: 'visible' }}
+                  >
+                    {baseSelected && (
+                      <rect
+                        x={off.ix} y={off.iy} width={off.iw} height={off.ih}
+                        fill="none" stroke="#fff" strokeWidth={0.9}
+                        strokeDasharray="4.8 4.8" vectorEffect="non-scaling-stroke"
+                      />
+                    )}
+                    {o && ink && (
+                      <rect
+                        x={o.x + ink.x} y={o.y + ink.y} width={ink.w} height={ink.h}
+                        fill="none" stroke="#fff" strokeWidth={stroke}
+                        vectorEffect="non-scaling-stroke"
+                        transform={`rotate(${o.rot || 0} ${o.x + o.w / 2} ${o.y + o.h / 2})`}
+                        style={{ filter: 'drop-shadow(0 0 1.5px rgba(0,0,0,.32))' }}
+                      />
+                    )}
+                  </svg>
+                );
+              })()}
               </div>
             </div>
           </div>
@@ -8064,35 +8089,35 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
                     它們講的都是「這張版面長什麼樣」，本來就該在同一頁。
                     -mt-1 是為了讓它跟上面那排的間距，跟這三項彼此之間一樣。 */}
-                <div className="space-y-3 !mt-3">
+                <div className="grid grid-cols-2 gap-3 !mt-3">
 
-                <div className={`h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px] ${layout === FULL ? 'opacity-35 pointer-events-none' : ''}`}>
+                <div className={`min-w-0 h-[47px] flex items-center justify-between gap-1.5 bg-[#111] px-2.5 border border-[#222] rounded-[6px] ${layout === FULL ? 'opacity-35 pointer-events-none' : ''}`}>
                   <span className="text-[10px] font-bold text-[#888] shrink-0">自訂遮罩</span>
-                  <div className="flex items-center gap-2 min-w-0">
-                    <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="flex items-center gap-1">
                       {maskImageState && (
                         <button onClick={(e) => { e.stopPropagation(); setMaskImageState(null); }} className="flex items-center justify-center p-1.5 text-[10px] bg-[#222] text-white font-bold rounded-[4px] border border-[#333] hover:bg-[#333] transition-all" title="還原素色">
                           <ReplayIcon size={12} />
                         </button>
                       )}
-                      <button onClick={(e) => { e.stopPropagation(); maskFileInputRef.current?.click(); }} className="px-3 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-widest whitespace-nowrap">
+                      <button onClick={(e) => { e.stopPropagation(); maskFileInputRef.current?.click(); }} className="px-2 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-wider whitespace-nowrap">
                         上傳
                       </button>
                     </div>
-                    <button className="w-8 h-6 rounded-[4px] shadow-inner border border-white/10 hover:ring-1 hover:ring-white/30 transition-shadow"
+                    <button className="w-7 h-6 shrink-0 rounded-[4px] shadow-inner border border-white/10 hover:ring-1 hover:ring-white/30 transition-shadow"
                       aria-label="遮罩顏色" onClick={() => setColorPickerTarget('mask')} style={{ backgroundColor: maskColor }} />
                   </div>
                 </div>
-                <div className="h-[47px] flex items-center justify-between bg-[#111] px-3 border border-[#222] rounded-[6px]">
+                <div className="min-w-0 h-[47px] flex items-center justify-between gap-2 bg-[#111] px-2.5 border border-[#222] rounded-[6px]">
                   <span className="text-[10px] font-bold text-[#888]">更換圖片</span>
                   <button onClick={(e) => {
                       e.stopPropagation();
                       replaceFileInputRef.current?.click();
-                    }} className="px-3 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-widest whitespace-nowrap">上傳</button>
+                    }} className="px-2 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-wider whitespace-nowrap">上傳</button>
                 </div>
                 {/* 紋理整組收在同一格：選項、顏色、兩根滑桿全部在同一個框裡
                     （跟經典拼圖那一頁排法一致）。 */}
-                <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3 w-full">
+                <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden col-span-2 order-3 w-full">
                   <div className="h-[47px] flex items-center justify-between px-3">
                     <span className="text-[10px] font-bold text-[#888]">紋理</span>
                     <div className="flex items-center gap-2">
