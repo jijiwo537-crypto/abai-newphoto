@@ -2599,9 +2599,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const raw = makePaletteObject(choice, cx, cy);
     if (!raw) return 0;
     /* 上方畫筆是連續蓋章工具，不應生成和單次點選一樣大的物件。
-       依需求縮成原本的一半再一半（25%），並以手指位置為固定中心；
+       使用單次點選的一半（50%），並以手指位置為固定中心；
        同步縮放符號字級與圖形的基準尺寸，避免框縮了、內容卻仍維持原大小。 */
-    const k = .25;
+    const k = .5;
     const w = raw.w * k, h = raw.h * k;
     const obj = {
       ...raw,

@@ -58,59 +58,89 @@ type CameraTickScaleProps = {
   min: number;
   max: number;
   step: number;
-  temperature?: boolean;
   onStep: (value: number, index: number) => void;
 };
 
-/** 畫面刻度與 input 步進共用同一份 index，指示線不會停在兩格之間。 */
+/** 與構圖「梯形」同款：拖的是整條刻度帶，當前刻度永遠吸附在中央。 */
 const CameraTickScale: React.FC<CameraTickScaleProps> = ({
-  label, value, min, max, step, temperature = false, onStep,
+  label, value, min, max, step, onStep,
 }) => {
+  const dragRef = useRef<{ startX: number; startValue: number; width: number } | null>(null);
+  const [visualValue, setVisualValue] = useState<number | null>(null);
   const total = Math.max(1, Math.round((max - min) / step));
-  const activeIndex = Math.max(0, Math.min(total, Math.round((value - min) / step)));
-  const snappedValue = min + activeIndex * step;
+  const shown = Math.max(min, Math.min(max, visualValue ?? value));
+  const activeIndex = Math.max(0, Math.min(total, Math.round((shown - min) / step)));
+  const finish = useCallback((el?: HTMLDivElement, pointerId?: number) => {
+    dragRef.current = null;
+    if (el && pointerId !== undefined) {
+      try { el.releasePointerCapture(pointerId); } catch { /* already released */ }
+    }
+    setVisualValue(null);
+  }, []);
   return (
-    <div className="relative flex items-center h-9 w-full max-w-[238px]" aria-label={label}>
-      {temperature && (
-        <div
-          className="absolute left-0 right-0 top-1/2 h-px -translate-y-1/2 opacity-20 pointer-events-none"
-          style={{ background: 'linear-gradient(to right, #ff9a3c, #ffd68a, #fff, #bdddff, #6bb6ff)' }}
-        />
-      )}
-      <div className="absolute inset-0 pointer-events-none">
-        {Array.from({ length: total + 1 }, (_, index) => {
+    <div
+      className="relative h-12 flex-1 min-w-0 max-w-[214px] overflow-hidden cursor-ew-resize select-none"
+      style={{ touchAction: 'none' }}
+      role="slider"
+      tabIndex={0}
+      aria-label={label}
+      aria-valuemin={min}
+      aria-valuemax={max}
+      aria-valuenow={value}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        e.preventDefault();
+        const next = Math.max(min, Math.min(max, value + (e.key === 'ArrowLeft' ? -step : step)));
+        const index = Math.round((next - min) / step);
+        onStep(min + index * step, index);
+      }}
+      onPointerDown={(e) => {
+        e.currentTarget.setPointerCapture(e.pointerId);
+        dragRef.current = {
+          startX: e.clientX,
+          startValue: value,
+          width: Math.max(1, e.currentTarget.getBoundingClientRect().width),
+        };
+        setVisualValue(value);
+      }}
+      onPointerMove={(e) => {
+        const drag = dragRef.current;
+        if (!drag) return;
+        const raw = Math.max(min, Math.min(max,
+          drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min) * .72));
+        const index = Math.max(0, Math.min(total, Math.round((raw - min) / step)));
+        const snapped = min + index * step;
+        setVisualValue(raw);
+        onStep(snapped, index);
+      }}
+      onPointerUp={(e) => finish(e.currentTarget, e.pointerId)}
+      onPointerCancel={(e) => finish(e.currentTarget, e.pointerId)}
+    >
+      {Array.from({ length: total + 1 }, (_, index) => {
+          const tickValue = min + index * step;
+          const offset = ((tickValue - shown) / step) * 6;
+          if (Math.abs(offset) > 190) return null;
           const major = index % 10 === 0;
-          const mid = !major && index % 5 === 0;
+          const zero = Math.abs(tickValue) < step / 2;
           const selected = index === activeIndex;
+          const baseHeight = zero ? 19 : (major ? 17 : 10);
+          const baseOpacity = zero ? .68 : (major ? .52 : .28);
           return (
-            <span
+            <i
               key={index}
-              className="absolute bottom-1/2 bg-white"
+              className="absolute bottom-0 w-px bg-white rounded-full pointer-events-none"
               style={{
-                left: `${(index / total) * 100}%`,
-                width: selected ? 1.5 : major ? 1.25 : 1,
-                height: selected ? 24 : major ? 14 : mid ? 11 : 7,
-                opacity: selected ? .95 : major ? .5 : mid ? .38 : .25,
-                transform: 'translate(-50%, 50%)',
+                left: `calc(50% + ${offset}px)`,
+                height: selected ? 27 : baseHeight,
+                opacity: selected ? 1 : baseOpacity,
+                transform: 'translateX(-50%)',
+                transition: selected
+                  ? 'none'
+                  : `height 280ms cubic-bezier(0.22,1,0.36,1), opacity 280ms ease${visualValue === null ? ', left 180ms cubic-bezier(0.2,0.8,0.2,1)' : ''}`,
               }}
             />
           );
         })}
-      </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={snappedValue}
-        aria-label={label}
-        onInput={(e) => {
-          const raw = Number((e.currentTarget as HTMLInputElement).value);
-          const index = Math.max(0, Math.min(total, Math.round((raw - min) / step)));
-          onStep(min + index * step, index);
-        }}
-        className="absolute left-0 -top-3 w-full h-16 opacity-0 z-20 cursor-pointer [&::-webkit-slider-thumb]:w-12 [&::-webkit-slider-thumb]:h-12 [&::-webkit-slider-thumb]:appearance-none"
-      />
     </div>
   );
 };
@@ -171,7 +201,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
   const [focusPoint, setFocusPoint] = useState<{ x: number, y: number, visible: boolean } | null>(null);
   const focusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const tickAudioRef = useRef<AudioContext | null>(null);
   const lastCameraTickRef = useRef<string>('');
   
   const localFileInputRef = useRef<HTMLInputElement>(null);
@@ -199,8 +228,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
   useEffect(() => () => {
     if (focusTimerRef.current) clearTimeout(focusTimerRef.current);
-    try { void tickAudioRef.current?.close(); } catch { /* 已關閉 */ }
-    tickAudioRef.current = null;
   }, []);
 
   // Initialize Camera
@@ -400,29 +427,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     }
   };
 
-  /** 每跨一格只發一次很短、低音量的機械刻度聲；零刻度不另換音色。 */
+  /** 相機刻度保持安靜；只去重狀態更新，避免拖動時重複渲染同一格。 */
   const triggerCameraTick = useCallback((control: 'kelvin' | 'exposure', index: number) => {
     const key = `${control}:${index}`;
     if (lastCameraTickRef.current === key) return;
     lastCameraTickRef.current = key;
-    try { navigator.vibrate?.(3); } catch { /* iOS Web App 可能不提供 vibration */ }
-    try {
-      const AudioCtor = window.AudioContext || (window as any).webkitAudioContext;
-      if (!AudioCtor) return;
-      const audio = tickAudioRef.current || (tickAudioRef.current = new AudioCtor());
-      if (audio.state === 'suspended') void audio.resume();
-      const now = audio.currentTime;
-      const osc = audio.createOscillator();
-      const gain = audio.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(1180, now);
-      osc.frequency.exponentialRampToValueAtTime(920, now + .014);
-      gain.gain.setValueAtTime(.0001, now);
-      gain.gain.exponentialRampToValueAtTime(.016, now + .002);
-      gain.gain.exponentialRampToValueAtTime(.0001, now + .017);
-      osc.connect(gain); gain.connect(audio.destination);
-      osc.start(now); osc.stop(now + .019);
-    } catch { /* 靜音模式或瀏覽器限制時保留滑桿本身 */ }
   }, []);
 
   const handleZoomClick = (val: string) => {
@@ -955,16 +964,17 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     className="absolute z-40 pointer-events-none"
                     style={{ left: focusPoint.x, top: focusPoint.y, transform: 'translate(-50%, -50%)' }}
                 >
-                    <div className="w-[52px] h-[52px] animate-[focusTap_0.88s_cubic-bezier(0.2,0.72,0.2,1)_forwards]">
+                    <div className="w-[52px] h-[52px] animate-[focusTap_0.92s_cubic-bezier(0.2,0.72,0.2,1)_forwards]">
                          <svg width="100%" height="100%" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_1px_1px_rgba(0,0,0,0.32)]">
-                             <rect x="2.5" y="2.5" width="47" height="47" stroke="#fff" strokeWidth="1"/>
+                             <rect x="5.5" y="5.5" width="41" height="41" stroke="#fff" strokeWidth="1"/>
+                             <path d="M26 1.5V6.5M26 45.5V50.5M1.5 26H6.5M45.5 26H50.5" stroke="#fff" strokeWidth="1" strokeLinecap="square"/>
                          </svg>
                     </div>
                     <style>{`
                         @keyframes focusTap {
-                          0% { transform: scale(1.16); opacity: 0; }
-                          17% { transform: scale(1); opacity: 1; }
-                          76% { transform: scale(1); opacity: 1; }
+                          0% { transform: scale(1.22); opacity: 1; }
+                          20% { transform: scale(1); opacity: 1; }
+                          78% { transform: scale(1); opacity: 1; }
                           100% { transform: scale(1); opacity: 0; }
                         }
                     `}</style>
@@ -1106,10 +1116,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     </span>
                  </div>
 
-                 <div className="flex items-center w-full px-4 relative">
-                    <div className="w-8"></div>
+                 <div className="flex items-center justify-center w-full px-5 relative gap-5">
                     <div className="flex-1 flex justify-center">
-                      <div className="relative flex items-center h-9 w-full max-w-[238px]">
+                      <div className="relative flex items-center h-12 w-full max-w-[214px]">
                         {activeControl === 'exposure' && (
                           <CameraTickScale
                             label="曝光"
@@ -1126,7 +1135,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                         {activeControl === 'kelvin' && (
                           <CameraTickScale
                             label="白平衡"
-                            value={settings.kelvin} min={2500} max={9000} step={100} temperature
+                            value={settings.kelvin} min={2500} max={9000} step={100}
                             onStep={(val, index) => {
                               if (val === settings.kelvin) return;
                               triggerCameraTick('kelvin', index);
@@ -1136,7 +1145,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                         )}
                       </div>
                     </div>
-                    <button onClick={() => { triggerHaptic(); setActiveControl('none'); }} className="flex-shrink-0 w-8 h-8 bg-white/5 hover:bg-white/15 text-white/40 hover:text-white rounded-full flex items-center justify-center active:scale-90 transition-all border border-white/5 backdrop-blur-lg">
+                    <button onClick={() => { triggerHaptic(); setActiveControl('none'); }} className="flex-shrink-0 w-7 h-9 text-white/45 hover:text-white flex items-center justify-center active:scale-90 transition-all">
                       <Icon name="expand_more" className="text-lg" />
                     </button>
                  </div>
