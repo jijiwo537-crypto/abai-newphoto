@@ -47,8 +47,11 @@ const drawCanonical = (
   if(!animated||flat){
     paintWhole();
   }else{
+    /* 與產品相同：動畫分層貼圖至少保留目前顯示倍率 2.25 倍的取樣，
+       測試不能只驗證較低解析度的另一條繪製路徑。 */
+    const animationRasterScale=Math.max(symbolStickerOversample(text),Math.min(7,stickerScale*2.25));
     const raster=rasterizeSymbolAnimationLayers(text,SYMBOL_FONT,stickerFontPx,
-      'fill','#fff',0,symbolStickerOversample(text));
+      'fill','#fff',0,animationRasterScale);
     const scales=raster?.layers.map((_layer,i)=>unitScales?.[i]??1)||[];
     const alphas=raster?.layers.map((_layer,i)=>unitAlphas?.[i]??1)||[];
     raster?.layers.forEach((layer,i)=>{

@@ -798,9 +798,9 @@ export const rasterizeSymbolAnimationLayers = (
   if (!units.length) return null;
   const px = Math.max(8, logicalFontPx);
   /* 縮放 II 會持續改變每個小單位的目的尺寸；3× 貼圖在放大的 Retina
-     預覽仍可能被往上採樣，邊緣 alpha 便會逐幀游動。短符號允許到 6×，
+     預覽仍可能被往上採樣，邊緣 alpha 便會逐幀游動。短符號允許到 7×，
      實際尺寸仍會被下方 16000px 單邊限制夾住，長符號不會無限配置。 */
-  const wantedScale = Math.max(1, Math.min(6, outputScale));
+  const wantedScale = Math.max(1, Math.min(7, outputScale));
   const key = `${text}|${family}|${px.toFixed(3)}|${mode}|${color}|${logicalStrokeWidth.toFixed(3)}|${wantedScale.toFixed(3)}`;
   const hit = rasterLayerCache.get(key);
   if (hit) return hit;
@@ -1442,18 +1442,15 @@ export const symbolBreatheScale = (
 ) => {
   const t = Math.max(0, time);
   const timeline = ((index % 3) + 3) % 3;
-  /* 三條時間線改用同一條連續呼吸曲線，只錯開起跑時間。舊版同時用了
-     不同頻率與 120° 相位，手機掉一幀時相鄰單位會往相反方向跨過較大的
-     距離，看起來像每顆都在抖。現在每條線都由 1 倍、零速度平順起步，
-     仍維持相鄰單位不同步，但不再產生拍頻或第一幀抽動。 */
+  /* 三條時間線共用完全相同的頻率，只以固定 120° 相位區分。固定頻率不會
+     產生拍頻；清楚的相位差則可避免三組進入穩態後看起來一起縮放。 */
   const angularRate = 1.5 * Math.max(.05, speed);
-  /* 只錯開 140ms，而不是錯開三分之一週期。這能讓三組很快都開始呼吸，
-     同時避免慢速設定下第三組等兩秒以上才動、看起來像動畫壞掉。 */
-  const localT = t - timeline * .14;
-  if (localT <= 0) return 1;
-  const attackP = Math.min(1, localT / .28);
+  const phase = timeline * Math.PI * 2 / 3;
+  /* 相位從第一幀就固定，僅讓振幅用 smootherstep 從零平滑展開。這樣三組
+     都精確從 1 倍、零速度起步，不會在銜接處抽動，也不會先後等候。 */
+  const attackP = Math.min(1, t / .55);
   const attack = attackP * attackP * attackP * (attackP * (attackP * 6 - 15) + 10);
-  const wave = Math.sin(localT * angularRate);
+  const wave = Math.sin(t * angularRate + phase);
   return 1 + wave * Math.max(0, amp) / 100 * .18 * attack;
 };
 

@@ -4992,12 +4992,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
              分出像素層，泡泡／縮放 II 只變換各層，原本結構完全不動。 */
           const paintStyle = stroke ? ctx.strokeStyle : ctx.fillStyle;
           const logicalStroke = stroke && stickerScale > 0 ? ctx.lineWidth / stickerScale : 0;
-          /* 動畫分層貼圖必須至少覆蓋目前目的像素的 1.5 倍。靜止時固定 3×
+          /* 動畫分層貼圖必須至少覆蓋目前目的像素的 2.25 倍。靜止時固定 3×
              已足夠，但縮放 II 逐幀重採樣低解析貼圖時，放大查看會看到 alpha
              邊緣在相鄰像素間游動；依實際顯示倍率提高 backing store 才能根治。 */
           const animationRasterScale = Math.max(
             symbolStickerOversample(o.text || ''),
-            Math.min(6, stickerScale * 1.5),
+            Math.min(7, stickerScale * 2.25),
           );
           const raster = rasterizeSymbolAnimationLayers(
             o.text || '', fam, stickerFontPx, stroke ? 'stroke' : 'fill',
@@ -7814,7 +7814,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       in: 'bubble',
                       dur: durFromSpeed(80),
                       idle: 'symbol-breathe2',
-                      amp: 30,
+                      amp: 60,
                       speed: 1.2,
                     },
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2, w, h, rot: 0,
@@ -8236,7 +8236,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 // 換動畫種類 → 從頭播一次，不用自己等一圈
                 const pickKind = (d: Partial<MoCfg>) => {
                   if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
-                  else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 30, speed: 1.2 });
+                  else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 60, speed: 1.2 });
+                  else if (d.idle === 'breathe' && selObj?.sym) setCur({ ...d, amp: 30 });
                   /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
                      就共用同一套，切換種類時也不能沿用上一個動畫的怪速度。 */
                   else if (d.idle === 'grid-wave') setCur({
