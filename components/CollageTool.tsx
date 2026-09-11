@@ -42,7 +42,7 @@ import { DEFAULT_FONT, SYMBOL_FONT, ensureFont, fontStack } from '../utils/fonts
 import { normalizeImageFiles } from '../utils/imageLoader';
 import { RAW_ACCEPT as RAW_ACCEPT_IMG } from '../utils/fileTypes';
 import { SHAPE_IMAGES } from '../utils/shapeImages';
-import { countSymbolAnimationBeats, isIOSProblemLongSymbol, measureSymbolAdvance, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, splitSymbolUnits, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
+import { countSymbolAnimationBeats, isIOSProblemLongSymbol, longSymbolPaintRuns, measureLongSymbolInk, measureSymbolInk, measureSymbolInkAtSize, measureSymbolUnitLayout, rasterizeSymbolAnimationLayers, symbolBreatheScale, symbolBox as sharedSymbolBox, clearSymbolInkCache } from '../utils/symbolGeometry';
 /* 「圖案」怎麼畫（路徑、字符、去背圖）整組搬到共用模組去了 ——
    經典拼圖那邊的圖形也吃同一份，兩邊才不會各畫各的。
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
@@ -280,7 +280,9 @@ const prepareCreativeSymbolPlacement = (
   const cached = creativeSymbolPlacementCache.get(key);
   if (cached) return cached;
 
-  const ink = symInk(text, SYMBOL_FONT);
+  const ink = isIOSProblemLongSymbol(text)
+    ? measureLongSymbolInk(text, SYMBOL_FONT)
+    : symInk(text, SYMBOL_FONT);
   const short = Math.min(cw, ch);
   const size = Math.max(12, Math.min(160, Math.round(short * 0.12),
     Math.round((cw * 0.7) / Math.max(0.05, ink.w))));
@@ -312,14 +314,9 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     const text = o.text || o.sym;
     const fam = o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT);
     const layout = measureSymbolUnitLayout(text, fam, o.sym ? 100 : (o.size || 40));
-    const longIOS = !!o.sym && IS_IOS_CANVAS && isIOSProblemLongSymbol(text);
-    const raster = longIOS ? rasterizeSymbolAnimationLayers(
-      text, fam, o.size || 40, 'fill', '#fff', 0,
-      typeof window !== 'undefined' ? Math.max(1, Math.min(3, window.devicePixelRatio || 1)) : 1,
-    ) : null;
-    const ink = raster
-      ? { w: raster.inkWidth / (o.size || 40), h: raster.inkHeight / (o.size || 40), cx: 0, cy: 0 }
-      : layout.ink;
+    /* 新增、靜止、動畫與外框必須讀同一份幾何。長符號若在這裡另外建立
+       animation raster 量一次，Mobile Safari 的寬度便會忽長忽短。 */
+    const ink = layout.ink;
     const stroke = (o.strokeWidth || 0) * (o.size / 40) * scale;
     const edge = gap + stroke;
     const w = ink.w * o.size * scale, h = ink.h * o.size * scale;
@@ -690,7 +687,7 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'jitter', name: '抖動' },
 ];
 const GRID_IDLE_KINDS = IDLE_KINDS;
-const SYMBOL_IDLE_KINDS = IDLE_KINDS.flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
+const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'grid-wave').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 
 /** 進場動畫在進度 p（0～1）時的樣子 */
 const inFrame = (kind: string, p: number): MoFrame => {
@@ -789,10 +786,13 @@ export const MO_DEFAULT: MoCfg = {
   delay: 0, dur: durFromSpeed(70), in: 'pop',
   idle: 'none', amp: 50, speed: 0.9,
 };
+const WAVE_DEFAULT = { amp: 50, speed: 0.9 } as const;
 export const moOf = (o: any): MoCfg => {
   const cfg = { ...MO_DEFAULT, ...(o && o.mo ? o.mo : null) };
   /* 舊草稿裡的「左右」也真正遷移到網格同款波浪，不只是改顯示名稱。 */
   if (cfg.idle === 'sway') cfg.idle = 'grid-wave';
+  /* 符號不提供波浪；舊草稿若曾選過，恢復為靜止，其他物件維持原設定。 */
+  if (o?.sym && cfg.idle === 'grid-wave') cfg.idle = 'none';
   if (o?.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind) && cfg.in === 'spring') cfg.in = 'grid-wave';
   return cfg;
 };
@@ -4966,14 +4966,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const previousAlign = ctx.textAlign;
           ctx.textAlign = 'left';
           const text = o.text || '';
-          const graphemes = splitSymbolUnits(text, fam, 100);
-          let x = tdx - measureSymbolAdvance(text, fam, 100) * symbolUnitScale * s / 2;
-          for (let i = 0; i < graphemes.length; i += 8) {
-            const run = graphemes.slice(i, i + 8).join('');
+          /* 靜止長符號只能按完整 grapheme 分段，不能用動畫節拍切 combining
+             mark；否則右半段雖畫出來，字形結構仍可能改變。 */
+          const runLayout = longSymbolPaintRuns(text, fam);
+          let x = tdx - runLayout.total * symbolUnitScale * s / 2;
+          for (let i = 0; i < runLayout.runs.length; i++) {
+            const run = runLayout.runs[i];
             if (stroke) ctx.strokeText(run, x, tdy); else ctx.fillText(run, x, tdy);
             /* 每段寬度也固定在 100px 量一次後只做倍率換算；手勢每幀不再
                觸發 WebKit 的文字塑形量測。 */
-            x += measureSymbolAdvance(run, fam, 100) * symbolUnitScale * s;
+            x += runLayout.advances[i] * symbolUnitScale * s;
           }
           ctx.textAlign = previousAlign;
         };
@@ -5009,10 +5011,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           );
           /* 靜止與動畫都使用同一份 unitLayout 中心。超長 iOS 字串的 layout
              已改用完整 advance 對稱中心，因此不會在切換動畫時再換座標系。 */
-          const renderedInkCenterX = unitLayout.ink.cx * (o.size || 40) * s;
-          const rasterAnchorX = IS_IOS_CANVAS && raster
-            ? renderedInkCenterX - raster.inkCenterX : 0;
-          const rasterAnchorY = longIOSSymbol && raster ? -raster.inkCenterY : 0;
+          /* 動畫必須對準「同一台裝置、同一個實際字級」下剛生成的原生字形。
+             只拿 100px 基準幾何校正，在 Mobile Safari 會漏掉 fallback font
+             隨字級產生的 hinting 差，結果就是靜止正常、泡泡／縮放 II 偏左。
+             長符號仍使用共用 run 幾何，避免重新觸發 WebKit 的長字串錯誤。 */
+          const renderedStaticInk = measureSymbolInkAtSize(o.text || '', fam, o.size || 40);
+          const renderedInkCenterX = renderedStaticInk.cx * (o.size || 40) * s;
+          const renderedInkCenterY = renderedStaticInk.cy * (o.size || 40) * s;
+          /* 長符號的靜止版與動畫 raster 已經共用同一份 run 下筆座標；直接
+             保留它的原生中心最精準。再用 32px 量測值二次置中，反而會在
+             iPhone 小字級產生 1～2px 的上下跳動。 */
+          const rasterAnchorX = raster && !longIOSSymbol ? renderedInkCenterX - raster.inkCenterX : 0;
+          const rasterAnchorY = raster && !longIOSSymbol ? renderedInkCenterY - raster.inkCenterY : 0;
           const count = raster?.layers.length || unitLayout.unitLefts.length;
           const bubbleSpan = 1 + Math.max(0, count - 1) * 0.2;
           const unitProgress = new Array(count).fill(0).map((_x, index) => seqIn === null ? 1
@@ -5146,7 +5156,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const x1 = Math.min(targetCanvas.width, Math.ceil(cx + rotated.bw * s / 2 + pad));
       const y0 = Math.max(0, Math.floor(cy - rotated.bh * s / 2 - pad));
       const y1 = Math.min(targetCanvas.height, Math.ceil(cy + rotated.bh * s / 2 + pad));
-      const span = Math.max(1, x1 - x0);
+      /* 相位以物件真正的寬度正規化，不能把透明 pad 算進波長；如此速度、
+         幅度與網格圖形完全使用同一組參數。 */
+      const objectSpan = Math.max(1, rotated.bw * s);
+      const objectLeft = cx - objectSpan / 2;
       const sliceW = Math.max(1, Math.min(2.5, 1.15 * s));
       const amp = Math.min(10 * s, Math.max(1, o.h || 1) * s * .065)
         * Math.max(.15, (moOf(o).amp ?? 50) / 100) * (f.waveMix ?? 1);
@@ -5154,7 +5167,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       for (let x = x0; x < x1; x += sliceW) {
         const sw2 = Math.min(sliceW + .8 * s, x1 - x);
-        const nx = (x - x0 + sliceW / 2) / span;
+        const nx = (x - objectLeft + sliceW / 2) / objectSpan;
         const dy = Math.sin((nx - f.gridWave) * Math.PI * 2) * amp;
         ctx.drawImage(layer.canvas, x, y0, sw2, Math.max(1, y1 - y0),
           x, y0 + dy, sw2, Math.max(1, y1 - y0));
@@ -8216,6 +8229,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const pickKind = (d: Partial<MoCfg>) => {
                   if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
                   else if (d.idle === 'symbol-breathe2' && selObj?.sym) setCur({ ...d, amp: 60, speed: 1.2 });
+                  /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
+                     就共用同一套，切換種類時也不能沿用上一個動畫的怪速度。 */
+                  else if (d.idle === 'grid-wave') setCur({ ...d, ...WAVE_DEFAULT });
                   else if (d.idle && isSpecialLineTarget) setCur({ ...d, amp: 20 });
                   else setCur(d);
                   replayMotion();

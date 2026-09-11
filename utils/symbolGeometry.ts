@@ -1,9 +1,11 @@
 import { fontStack } from './fonts';
 import { SYMBOLS } from './symbols';
 
-/* 只有清單最後這批超長裝飾字串會觸發 iPhone Safari 的長字串光柵 bug。
-   用內容白名單而不是寬度門檻，避免把原本正常的其他符號帶進特殊路徑。 */
-const IOS_PROBLEM_LONG_SYMBOLS = new Set(SYMBOLS.slice(-12));
+/* 清單從第 124 顆開始就是橫向長裝飾字串。Mobile Safari 對這批字串會依
+   fallback 字體與當下字級偶發截掉右半、或回報過大的 advance；若只保護
+   最後 12 顆，前面的長符號仍會出現框太短／太寬。用固定內容白名單，而
+   不是會隨裝置字體改變的寬度門檻，確保前 123 顆原本正常的短符號不變。 */
+const IOS_PROBLEM_LONG_SYMBOLS = new Set(SYMBOLS.slice(123));
 export const isIOSProblemLongSymbol = (text: string) => IOS_PROBLEM_LONG_SYMBOLS.has(text);
 
 export type SymbolInk = { w: number; h: number; cx: number; cy: number };
@@ -40,10 +42,12 @@ export type SymbolUnitLayout = {
 const REF = 100;
 const MAX_SCAN_SIDE = 3072;
 const cache = new Map<string, SymbolInk>();
+const fastInkCache = new Map<string, SymbolInk>();
 const sizedCache = new Map<string, SymbolInk>();
 const advanceCache = new Map<string, number>();
 const unitLayoutCache = new Map<string, SymbolUnitLayout>();
 const splitUnitCache = new Map<string, string[]>();
+const longRunCache = new Map<string, { runs: string[]; advances: number[]; total: number }>();
 /* 符號選單一次要量完整份清單。每顆都建立一張 Canvas 會讓 iPhone 在點進
    選單時停住數百毫秒；量寬只需要一個 2D context，整個模組共用即可。 */
 let measureCanvas: HTMLCanvasElement | null = null;
@@ -58,10 +62,12 @@ const sharedMeasureContext = () => {
 /** 字體剛下載完成時丟掉 fallback 的量測結果。 */
 export const clearSymbolInkCache = () => {
   cache.clear();
+  fastInkCache.clear();
   sizedCache.clear();
   advanceCache.clear();
   unitLayoutCache.clear();
   splitUnitCache.clear();
+  longRunCache.clear();
   if (typeof rasterLayerCache !== 'undefined') {
     rasterLayerCache.forEach(pack => {
       pack.layers.forEach(layer => { layer.canvas.width = layer.canvas.height = 0; });
@@ -79,6 +85,59 @@ const fallbackInk = (text: string): SymbolInk => ({
   cx: 0,
   cy: 0,
 });
+
+/**
+ * iPhone 長符號專用的真實墨水量測。字級固定為 32px，並以完整 grapheme
+ * 分段畫進同一張低高度 Canvas；因此不會建立巨大點陣，也不會把右半段漏掉。
+ * 回傳值仍是字級 1 的幾何，新增、靜止、動畫與選中框可共用同一份結果。
+ */
+export const measureLongSymbolInk = (text: string, family: string): SymbolInk => {
+  const key = `${family}|${text}`;
+  const hit = fastInkCache.get(key);
+  if (hit) return hit;
+  if (typeof document === 'undefined') return fallbackInk(text);
+  let out = fallbackInk(text);
+  try {
+    const px = 32;
+    const probe = sharedMeasureContext();
+    if (!probe) return out;
+    probe.font = `400 ${px}px ${fontStack(family)}`;
+    const runLayout = longSymbolPaintRuns(text, family);
+    const advance = Math.max(px * .25, runLayout.total * px / REF);
+    const padX = px * 1.5, padY = px;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.ceil(advance + padX * 2));
+    canvas.height = px * 3;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true } as any);
+    if (ctx) {
+      ctx.font = `400 ${px}px ${fontStack(family)}`;
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#fff';
+      let x = padX;
+      for (let i = 0; i < runLayout.runs.length; i++) {
+        const run = runLayout.runs[i];
+        ctx.fillText(run, x, canvas.height / 2);
+        x += runLayout.advances[i] * px / REF;
+      }
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      let l = canvas.width, r = -1, t = canvas.height, b = -1;
+      for (let p = 0; p < canvas.width * canvas.height; p++) if (pixels[p * 4 + 3]) {
+        const xx = p % canvas.width, yy = Math.floor(p / canvas.width);
+        l = Math.min(l, xx); r = Math.max(r, xx); t = Math.min(t, yy); b = Math.max(b, yy);
+      }
+      if (r >= l) {
+        const anchorX = padX + advance / 2, anchorY = canvas.height / 2;
+        out = {
+          w: (r - l + 1) / px, h: (b - t + 1) / px,
+          cx: ((l + r + 1) / 2 - anchorX) / px,
+          cy: ((t + b + 1) / 2 - anchorY) / px,
+        };
+      }
+    }
+    canvas.width = canvas.height = 0;
+  } catch { /* 沿用穩定 fallback。 */ }
+  fastInkCache.set(key, out);
+  return out;
+};
 
 /**
  * 直接掃描字形 alpha。一般符號沿用已驗證的 3072 Canvas；超寬符號不能建立
@@ -473,7 +532,12 @@ const splitSymbolTimingUnits = (text: string): string[] => {
     const variation = /[\ufe00-\ufe0f]/u.test(ch);
     const joiner = ch === '\u200d';
     const continuesJoiner = raw.length > 0 && raw[raw.length - 1].endsWith('\u200d');
-    if (raw.length && (variation || joiner || continuesJoiner)) raw[raw.length - 1] += ch;
+    /* 中點下方的組合記號在視覺上屬於同一顆裝飾；若拆成三層各自縮放，
+       第四排第二個符號會在泡泡／縮放 II 中散開。只收這個已確認結構，
+       `*ੈ` 等產品指定要分開播放的組合完全不受影響。 */
+    const middleDotMark = raw.length > 0 && /\p{Mark}/u.test(ch)
+      && raw[raw.length - 1].startsWith('\u00b7');
+    if (raw.length && (variation || joiner || continuesJoiner || middleDotMark)) raw[raw.length - 1] += ch;
     else raw.push(ch);
   }
   const invisible = /^[\s\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069]+$/u;
@@ -487,6 +551,20 @@ const splitSymbolTimingUnits = (text: string): string[] => {
   }
   if (leading && out.length) out[out.length - 1] += leading;
   return out.length ? out : [text];
+};
+
+/** 長符號靜止、量框與動畫共同使用的分段與寬度；固定在 100px 量一次。 */
+export const longSymbolPaintRuns = (text: string, family: string) => {
+  const key = `${family}|${text}`;
+  const hit = longRunCache.get(key);
+  if (hit) return hit;
+  const clusters = splitSymbolClusters(text);
+  const runs: string[] = [];
+  for (let i = 0; i < clusters.length; i += 8) runs.push(clusters.slice(i, i + 8).join(''));
+  const advances = runs.map(run => measureSymbolAdvance(run, family, REF));
+  const out = { runs, advances, total: advances.reduce((sum, value) => sum + value, 0) };
+  longRunCache.set(key, out);
+  return out;
 };
 
 export const countSymbolAnimationBeats = (text: string) =>
@@ -551,7 +629,12 @@ export const rasterizeSymbolAnimationLayers = (
     const probe = document.createElement('canvas').getContext('2d');
     if (!probe) return null;
     probe.font = `400 ${px}px ${fontStack(family)}`;
-    const logicalAdvance = Math.max(px * .25, probe.measureText(text).width);
+    const iosCanvas = /iP(?:hone|ad|od)/.test(navigator.userAgent)
+      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const longIOS = iosCanvas && isIOSProblemLongSymbol(text);
+    const fullRuns = longIOS ? longSymbolPaintRuns(text, family) : null;
+    const logicalAdvance = Math.max(px * .25,
+      fullRuns ? fullRuns.total * px / REF : probe.measureText(text).width);
     /* 按目的 Canvas 的實際 transform 建立一樣多的實體像素；drawImage 時除回
        同一倍率，因此不是把低解析度圖放大，也不是額外超取樣後再縮小。 */
     const oversample = Math.max(1, Math.min(wantedScale,
@@ -578,22 +661,20 @@ export const rasterizeSymbolAnimationLayers = (
       g.fillStyle = color || '#fff'; g.strokeStyle = color || '#fff';
       g.lineWidth = strokePx; g.lineJoin = 'round'; g.miterLimit = 2;
     };
-    const iosCanvas = /iP(?:hone|ad|od)/.test(navigator.userAgent)
-      || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const paintRun = (value: string, x: number) => mode === 'stroke'
       ? g.strokeText(value, x, anchorY / oversample)
       : g.fillText(value, x, anchorY / oversample);
     const paint = (value: string) => {
-      const valueUnits = splitSymbolTimingUnits(value);
-      if (!iosCanvas || !isIOSProblemLongSymbol(text)) { paintRun(value, textLeft); return; }
+      if (!longIOS) { paintRun(value, textLeft); return; }
       /* Mobile Safari 會在一次 fillText 含太多 fallback glyph 時從字串中段
          才開始畫。每 8 個完整 grapheme 作一段，位置用同一字型的 prefix
          advance 累加；combining mark 不會被拆開，也不影響正常短符號。 */
       let x = textLeft;
-      for (let i = 0; i < valueUnits.length; i += 8) {
-        const run = valueUnits.slice(i, i + 8).join('');
+      const valueRuns = longSymbolPaintRuns(value, family);
+      for (let i = 0; i < valueRuns.runs.length; i++) {
+        const run = valueRuns.runs[i];
         paintRun(run, x);
-        x += probe.measureText(run).width;
+        x += valueRuns.advances[i] * px / REF;
       }
     };
     setup(); paint(text);
@@ -1008,7 +1089,9 @@ export const measureSymbolUnitLayout = (
   /* 動畫節拍就是實際繪圖單位，兩者不可再用不同陣列。 */
   const originalClusters = splitSymbolUnits(text, family, size);
   const advance = measureSymbolAdvance(text, family, size);
-  const ink = measureSymbolInkAtSize(text, family, size);
+  const ink = isIOSProblemLongSymbol(text)
+    ? measureLongSymbolInk(text, family)
+    : measureSymbolInkAtSize(text, family, size);
   const staticUnits = [text];
   const staticCenters = [0];
   const staticUnitInks = [ink];
@@ -1140,6 +1223,8 @@ export const symbolBreatheScale = (
 
 /** 完整包住墨水並在四邊保留一致安全距離。 */
 export const symbolBox = (text: string, family: string, size: number, gap = 4) => {
-  const ink = measureSymbolInkAtSize(text, family, size);
+  const ink = isIOSProblemLongSymbol(text)
+    ? measureLongSymbolInk(text, family)
+    : measureSymbolInkAtSize(text, family, size);
   return { w: Math.max(6, ink.w * size + gap * 2), h: Math.max(6, ink.h * size + gap * 2) };
 };
