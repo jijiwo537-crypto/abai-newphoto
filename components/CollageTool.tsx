@@ -852,7 +852,13 @@ export const moOf = (o: any): MoCfg => {
  * 交棒處用 0.35 秒淡入接上常駐，不然從進場切到常駐會跳一下。
  */
 const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number } => {
-  const p = cfg.dur > 0 ? (t - cfg.delay) / cfg.dur : (t >= cfg.delay ? 1 : 0);
+  /* 「無」不是一段看不見的進場動畫：它沒有 delay、也沒有 duration。
+     舊版仍先空等 cfg.delay + cfg.dur，使用者就會看到畫面靜止幾秒才開始常駐。 */
+  const hasIntro = cfg.in !== 'none';
+  const introEnd = hasIntro ? cfg.delay + Math.max(0, cfg.dur) : 0;
+  const p = hasIntro
+    ? (cfg.dur > 0 ? (t - cfg.delay) / cfg.dur : (t >= cfg.delay ? 1 : 0))
+    : 1;
   /* 進場與常駐都選波浪時共用同一條 phase：進場跑完一個完整週期，
      接著直接循環，不會同時疊上兩個波形。 */
   if (cfg.in === 'grid-wave' && cfg.idle === 'grid-wave') {
@@ -862,11 +868,13 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
   const f = inFrame(cfg.in, Math.max(0, Math.min(1, p)));
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
   if (p < 1) return { ...f, fx, burst: f.burst || 0 };
-  const after = t - (cfg.delay + cfg.dur);
-  /* 從完全靜止以零速度、零加速度起步。舊版 70ms 線性混合在手機第一幀
-     會像突然加速；420ms smootherstep 讓波浪、縮放、搖擺、繞圈平滑接手。 */
-  const attackP = Math.max(0, Math.min(1, after / 0.42));
-  const blend = attackP * attackP * attackP * (attackP * (attackP * 6 - 15) + 10);
+  const after = Math.max(0, t - introEnd);
+  /* 交棒不再用短促的 420ms smootherstep（中段速度峰值很高，手機上看起來
+     就是前 0.x 秒突然加速）。改成 720ms smoothstep：第一格位置與速度都是 0，
+     中段不會暴衝，結束時速度也能平順接上完整的常駐曲線。沒有進場時同樣
+     從第 0 秒開始漸進，並沒有額外等待。 */
+  const attackP = Math.max(0, Math.min(1, after / 0.72));
+  const blend = attackP * attackP * (3 - 2 * attackP);
   const g = idleFrame(cfg.idle, after, cfg.amp, cfg.speed, phase);
   return {
     k: 1 + (g.k - 1) * blend,
@@ -879,7 +887,7 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
 };
 
 /** 這個元素整段動畫在什麼時候結束（排時間軸用） */
-const moEnd = (cfg: MoCfg) => cfg.delay + cfg.dur;
+const moEnd = (cfg: MoCfg) => cfg.in === 'none' ? 0 : cfg.delay + cfg.dur;
 
 /** 新增文字時預設放的字。跟經典拼圖同一個字串。 */
 const TEXT_PLACEHOLDER = '輸入文字';
@@ -1810,6 +1818,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const footerRef = useRef<HTMLElement>(null);
   /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
   const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
+  /** 新增清單目前亮白框的選項，以及真正交給上方畫筆連續生成的選項。 */
+  const [addPaletteChoice, setAddPaletteChoice] = useState<any>(null);
+  const [objectBrushChoice, setObjectBrushChoice] = useState<any>(null);
+  const objectBrushChoiceRef = useRef<any>(null);
+  objectBrushChoiceRef.current = objectBrushChoice;
   /* 離開「新增」分頁就回到最外層：下次再進來看到的是三顆大按鈕，
      而不是上次停在的圖形／符號清單。 */
   useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
@@ -2507,12 +2520,70 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const kk = baseFrameScale(o);
     let w = Math.max(1, Number(t.w) || imageState.baseW);
     let h = Math.max(1, Number(t.h) || imageState.baseH);
+    let px = (Number(t.x) || 0) * kk;
+    let py = (Number(t.y) || 0) * kk;
     const cover = Math.max(1, o.iw / Math.max(1, w * kk), o.ih / Math.max(1, h * kk));
-    w *= cover; h *= cover;
-    const dx = Math.min(0, Math.max(o.iw - w * kk, (Number(t.x) || 0) * kk));
-    const dy = Math.min(0, Math.max(o.ih - h * kk, (Number(t.y) || 0) * kk));
+    if (cover > 1.000001) {
+      /* 比例切換等外部變更讓圖片暫時小於框時，以照片框中心所對應的原圖點
+         為錨點補足 cover，不再只放大尺寸卻沿用舊的左上角。 */
+      const focusX = (o.iw / 2 - px) / Math.max(1, w * kk);
+      const focusY = (o.ih / 2 - py) / Math.max(1, h * kk);
+      w *= cover; h *= cover;
+      px = o.iw / 2 - focusX * w * kk;
+      py = o.ih / 2 - focusY * h * kk;
+    }
+    const dx = Math.min(0, Math.max(o.iw - w * kk, px));
+    const dy = Math.min(0, Math.max(o.ih - h * kk, py));
     return { x: dx / kk, y: dy / kk, w, h };
   }, [imageState, baseFrameScale]);
+
+  /** 把符號／圖形清單的選項做成一顆可放在任意座標的物件。
+      一般點選與畫筆共用同一份預設，避免兩種入口生成出不同大小或動畫。 */
+  const makePaletteObject = useCallback((choice: any, cx: number, cy: number) => {
+    const off = getLayoutOffsets();
+    if (!off || !choice) return null;
+    const id = Math.random().toString(36).slice(2, 9);
+    if (choice.type === 'symbol') {
+      const txt = choice.symbol;
+      const { size, w, h } = prepareCreativeSymbolPlacement(txt, off.cw, off.ch);
+      return {
+        id, type: 'text', text: txt, sym: txt, color: '#ffffff', size,
+        fontFamily: SYMBOL_FONT, bold: false, italic: false,
+        letterSpacing: 0, strokeWidth: 0, strokeColor: '#000000',
+        glow: 0, glowColor: '#ffffff',
+        mo: { ...MO_DEFAULT, in: 'bubble', dur: durFromSpeed(80), idle: 'symbol-breathe2', amp: 60, speed: 1.2 },
+        x: cx - w / 2, y: cy - h / 2, w, h, rot: 0,
+      };
+    }
+    if (choice.type === 'shape') {
+      const it = choice.item;
+      const short = Math.min(off.cw, off.ch);
+      const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+      const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
+      return {
+        id, type: 'shape', kind: it.kind, hole: it.hole, filled: it.filled, shapeItemId: it.id,
+        lineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')
+          ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
+        textureBaseW: w, textureBaseH: h,
+        lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
+        color: SHAPE_DEFAULT_COLOR, glow: 0, glowColor: SHAPE_DEFAULT_COLOR,
+        x: cx - w / 2, y: cy - h / 2, w, h, rot: it.rot || 0,
+        ...(SPECIAL_LINE_KINDS.has(it.kind)
+          ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(15), amp: 20 } }
+          : null),
+      };
+    }
+    return null;
+  }, [getLayoutOffsets]);
+
+  const stampPaletteObject = useCallback((choice: any, cx: number, cy: number) => {
+    const obj = makePaletteObject(choice, cx, cy);
+    if (!obj) return 0;
+    const next = [...objectsRef.current, obj];
+    objectsRef.current = next;
+    setObjects(next);
+    return Math.max(obj.w, obj.h);
+  }, [makePaletteObject]);
 
   /**
    * 「匯入圖片」與「匯入影片」共用的那一支 —— 兩者除了「來源怎麼生出來」
@@ -2998,6 +3069,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
       if (brushMode === 'pen') {
         e.stopPropagation();
+        /* 在新增符號／圖形清單按下畫筆後，畫的是當前白框選項，而不是遮罩圖案。
+           第一下就生成，之後依物件實際尺寸控制間距。 */
+        const palette = objectBrushChoiceRef.current;
+        if (palette && offs && x >= 0 && x <= offs.cw && y >= 0 && y <= offs.ch) {
+          const size = stampPaletteObject(palette, x, y);
+          lastDrawPosRef.current = { x, y };
+          interactionRef.current = {
+            type: 'brush_object', startX: x, startY: y,
+            isClick: false, hitItself: true, palette,
+            minDistance: Math.max(18, size * 1.08),
+          };
+          return;
+        }
         if (offs && clickedSide) {
           const { baseW: bw, baseH: bh } = imageState;
           let localX = -1;
@@ -3012,7 +3096,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
           if (localX >= 0 && localY >= 0) {
             const mappedHoleSize = 25 + (holeSize / 100) * 125;
-            const minDistance = mappedHoleSize * 0.75;
+            /* 連續拖動畫筆時保留一個完整圖案以上的呼吸距離；0.75 倍會讓
+               相鄰圖案大量重疊，看起來像密度失控。 */
+            const minDistance = mappedHoleSize * 1.08;
             const tooClose = holesRef.current.some(h => {
               const side = h.side || 'both';
               if (side !== 'both' && side !== clickedSide) return false;
@@ -3468,8 +3554,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const o = getLayoutOffsets();
       if (!o) return;
       const kk = baseFrameScale(o);
-      const scale = Math.max(0.15, Math.min(8,
-        Math.hypot(p1.x - p2.x, p1.y - p2.y) / pin.d0));
+      /* 先把倍率夾到「剛好仍能鋪滿照片框」再算錨點。
+         舊版先算一個過小的位置、最後才由 clamp 把尺寸放回最小值，尺寸與位置
+         使用不同倍率，繼續往內捏時圖片就會被一格一格推向左邊。 */
+      const requested = Math.hypot(p1.x - p2.x, p1.y - p2.y) / pin.d0;
+      const minScale = Math.max(
+        o.iw / Math.max(1, pin.w0 * kk),
+        o.ih / Math.max(1, pin.h0 * kk),
+      );
+      const scale = Math.max(minScale, Math.min(8, requested));
       const w = pin.w0 * scale, h = pin.h0 * scale;
       const mx = (p1.x + p2.x) / 2 - o.ix;
       const my = (p1.y + p2.y) / 2 - o.iy;
@@ -3641,7 +3734,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
         if (localX >= 0 && localY >= 0) {
           const mappedHoleSize = 25 + (holeSize / 100) * 125;
-          const minDistance = mappedHoleSize * 0.75;
+          const minDistance = mappedHoleSize * 1.08;
           const tooClose = holesRef.current.some(h => {
             const side = h.side || 'both';
             if (side !== 'both' && side !== intr.clickedSide) return false;
@@ -3660,6 +3753,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             setHoles(nextHoles);
             lastDrawPosRef.current = { x: localX, y: localY };
           }
+        }
+      }
+    } else if (intr.type === 'brush_object') {
+      const off = getLayoutOffsets();
+      const last = lastDrawPosRef.current;
+      if (off && last && x >= 0 && x <= off.cw && y >= 0 && y <= off.ch) {
+        const dist = Math.hypot(x - last.x, y - last.y);
+        if (dist >= Math.max(18, intr.minDistance || 18)) {
+          const size = stampPaletteObject(intr.palette, x, y);
+          intr.minDistance = Math.max(18, size * 1.08);
+          lastDrawPosRef.current = { x, y };
         }
       }
     } else if (intr.type === 'brush_erase') {
@@ -3752,9 +3856,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       } else if (intr.isClick && !intr.hitItself) {
         setSelectedTarget(null);
       }
-      if (intr.type === 'brush_draw' || intr.type === 'brush_erase' || intr.type === 'move_hole' || intr.type === 'pinch_hole') {
+      if (intr.type === 'brush_draw' || intr.type === 'brush_object' || intr.type === 'brush_erase' || intr.type === 'move_hole' || intr.type === 'pinch_hole') {
         if (!(intr.type === 'move_hole' && intr.isClick)) {
-          pushHistory(holesRef.current);
+          pushHistory(holesRef.current, objectsRef.current);
         }
       }
     }
@@ -6377,8 +6481,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const step = n > 1 ? Math.max(0, (moShape.dur - POP) / (n - 1)) : 0;
     /* 連線用的門檻：圖案「已經看得出來」就可以開始連，不必等它完全長好。
        用 POP 的兩成當門檻 —— 幾乎跟圖案同時，但仍然是「先有圖案才有線」。 */
-    return { n, POP, step, upAt: (i: number) => moShape.delay + i * step + POP * 0.2 };
-  }, [holes.length, moShape.delay, moShape.dur]);
+    return { n, POP, step, upAt: (i: number) => moShape.in === 'none'
+      ? 0 : moShape.delay + i * step + POP * 0.2 };
+  }, [holes.length, moShape.in, moShape.delay, moShape.dur]);
   /* 連線的「進場耗時」＝從第一條線能開始畫算起，這麼多秒之內全部畫完。
      第一條線最早要等到第二顆圖案冒出來（一條線要有兩端）。 */
   const linkStart = shapeTiming.upAt(Math.min(1, shapeTiming.n - 1)) + Math.max(0, moLink.delay);
@@ -6398,7 +6503,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const stepH = nHole > 1 ? Math.max(0, (moShape.dur - POP) / (nHole - 1)) : 0;
     const shapeCfg = (i: number): MoCfg => ({ ...moShape, delay: moShape.delay + i * stepH, dur: POP });
     /** 第 i 顆圖案「已經看得出來」的時間（POP 的兩成）——線從這一刻就能接上去 */
-    const holeUpAt = (i: number) => moShape.delay + i * stepH + POP * 0.2;
+    const holeUpAt = (i: number) => moShape.in === 'none'
+      ? 0 : moShape.delay + i * stepH + POP * 0.2;
     const ez = linkEase(moLink.ease);
     return {
       hole: (h: any, i: number) => composeMo(shapeCfg(i), t, hashId(h.id) % 628 / 100),
@@ -6693,6 +6799,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => {
     motionLockRef.current = activeTab === 'motion';
     if (activeTab !== 'motion') return;
+    setBaseSelected(false);
     setSelectedTarget(null);
     setSelectedObj(null);
     motionClockRef.current = 0;
@@ -7274,6 +7381,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             <button
               onClick={(e) => {
                 e.stopPropagation();
+                const paletteReady = activeTab === 'add' && (
+                  (addSub === 'symbol' && addPaletteChoice?.type === 'symbol')
+                  || (addSub === 'shape' && addPaletteChoice?.type === 'shape')
+                );
+                if (paletteReady) {
+                  const same = objectBrushChoice
+                    && objectBrushChoice.type === addPaletteChoice.type
+                    && (addPaletteChoice.type === 'symbol'
+                      ? objectBrushChoice.symbol === addPaletteChoice.symbol
+                      : objectBrushChoice.item?.id === addPaletteChoice.item?.id);
+                  if (brushMode === 'pen' && same) {
+                    setBrushMode('off');
+                    setObjectBrushChoice(null);
+                  } else {
+                    setObjectBrushChoice(addPaletteChoice);
+                    setBrushMode('pen');
+                    setSelectedObj(null); setSelectedTarget(null); setBaseSelected(false);
+                  }
+                  return;
+                }
+                setObjectBrushChoice(null);
                 setBrushMode(prev => {
                   if (prev === 'off') return 'pen';
                   if (prev === 'pen') return 'eraser';
@@ -7801,7 +7929,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 e.stopPropagation();
                 generateRandomHoles();
               }} 
-              className="p-3 bg-[#111] hover:bg-[#1a1a1a] border border-white/10 hover:border-white/20 text-[#aaa] hover:text-white rounded-full active:scale-95 transition-all flex items-center justify-center backdrop-blur-md"
+              className="p-3 bg-black/15 hover:bg-white/[0.06] border border-white/15 hover:border-white/30 text-[#aaa] hover:text-white rounded-full active:scale-95 transition-all flex items-center justify-center backdrop-blur-sm"
               title="隨機圖形"
             >
               <RefreshCw size={18} />
@@ -8287,7 +8415,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       <SymbolPicker
                         onBack={() => setAddSub('root')}
                         onPrepare={(symbol) => { prepareAddSymbol(symbol); }}
-                        onPick={addSymbol}
+                        selected={addPaletteChoice?.type === 'symbol' ? addPaletteChoice.symbol : null}
+                        onPick={(symbol) => {
+                          const choice = { type: 'symbol', symbol };
+                          setAddPaletteChoice(choice);
+                          if (brushMode === 'pen' && objectBrushChoice) setObjectBrushChoice(choice);
+                          addSymbol(symbol);
+                        }}
                       />
                     ) : addSub === 'root' ? (
                     /* key 是必要的：兩個分頁的最外層都是 <div>，沒有 key 的話
@@ -8396,9 +8530,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               {list.map(it => (
                                 <button
                                   key={it.id}
-                                  onClick={() => addShape(it)}
+                                  onClick={() => {
+                                    const choice = { type: 'shape', item: it };
+                                    setAddPaletteChoice(choice);
+                                    if (brushMode === 'pen' && objectBrushChoice) setObjectBrushChoice(choice);
+                                    addShape(it);
+                                  }}
                                   aria-label={it.id}
-                                  className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
+                                  aria-pressed={addPaletteChoice?.type === 'shape' && addPaletteChoice.item?.id === it.id}
+                                  className={`h-11 rounded-[10px] bg-white/5 border ${addPaletteChoice?.type === 'shape' && addPaletteChoice.item?.id === it.id ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85`}
                                 >
                                   {(it as any).hole
                                     ? <HoleGlyph s={(it as any).hole} filled={(it as any).filled} />

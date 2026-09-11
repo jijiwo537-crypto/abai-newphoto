@@ -1622,9 +1622,11 @@ export const SymbolGlyph: React.FC<{ text: string; base?: number }> = ({ text, b
 export const SymbolPicker: React.FC<{
   onBack: () => void;
   onPick: (s: string) => void;
+  /** 創意拼圖用：目前要交給畫筆連續生成的符號。 */
+  selected?: string | null;
   /** 在手指放下、click 觸發以前先把這一顆的精確外框算進快取。 */
   onPrepare?: (s: string) => void;
-}> = ({ onBack, onPick, onPrepare }) => {
+}> = ({ onBack, onPick, onPrepare, selected = null }) => {
   /* 全部選項一次建立，使用者第一次滑到底時不會再遇到分批載入或空按鈕。
      不在背景逐顆掃 alpha；那會與 iPhone 的捲動、拖曳競爭主執行緒。 */
   const onPickRef = useRef(onPick);
@@ -1637,11 +1639,12 @@ export const SymbolPicker: React.FC<{
       onPointerDown={() => onPrepareRef.current?.(symbol)}
       onClick={() => { onPickRef.current(symbol); }}
       aria-label={symbol}
-      className="min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85"
+      aria-pressed={selected === symbol}
+      className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
     >
       <SymbolGlyph text={symbol} />
     </button>
-  )), []);
+  )), [selected]);
 
   return (
     <div className="pt-1">
