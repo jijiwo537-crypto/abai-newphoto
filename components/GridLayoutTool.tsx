@@ -8069,7 +8069,319 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       bold: false,
       italic: false,
       letterSpacing: 0,
-   ���弭z�&��^t const dragTick = () => {
+      // 描邊沒設過就是黑的 —— 第一次把描邊拉出來就該看得到
+      strokeColor: '#000000',
+      glow: 0,
+      glowColor: '#FFFFFF',
+      ...init,
+    };
+    setFloatingImages(prev => [...prev, item]);
+    setSelectedFloatingId(id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setEditingTextId(id);
+    // 新增完直接進文字編輯頁，省掉「再按一次工具列的編輯」那一步
+    setActiveTab('adjust');
+  };
+
+  /**
+   * 新增一顆符號。
+   *
+   * 符號就是文字圖層，所以位置、縮放、旋轉、圖層順序、直接在畫布上改字
+   * 全部跟文字共用同一套；差別只在 sym 有值，面板會換成符號那一組。
+   * 字級照長度回推：符號長短差很多（最長的接近一百個字），字級寫死的話
+   * 長的會直接戳出頁面 —— 用「大約佔頁寬七成」回推，挑哪一顆加進來的
+   * 份量都差不多。刻意留在這一頁、也不進入打字狀態，可以連著加好幾顆。
+   */
+  const prepareAddSymbolLayer = (txt: string) => {
+    const rect = getClosestPageRect();
+    const pw = rect?.width ?? previewW;
+    const ph = rect?.height ?? previewH;
+    const geometry = prepareClassicSymbolPlacement(txt, pw);
+    return { rect, pw, ph, ...geometry };
+  };
+
+  const handleAddSymbolLayer = (txt: string) => {
+    /* pointerdown 已先準備這顆的幾何；即使由鍵盤觸發，這裡也只計算該顆，
+       不等待字體 Promise、更不清掉整份快取。setState 能在同一個 click 提交。 */
+    const { rect, fontSize, w, h } = prepareAddSymbolLayer(txt);
+    const id = `text-${Math.random().toString(36).substring(2, 9)}`;
+    const item: FloatingImage = {
+      id, src: '',
+      x: (rect ? rect.centerX : previewW / 2) - w / 2,
+      y: (rect ? rect.centerY : previewH / 2) - h / 2,
+      width: w, height: h, scale: 1, rotation: 0,
+      text: txt, sym: txt,
+      fontFamily: SYMBOL_FONT,
+      fontSize,
+      color: '#FFFFFF',
+      bold: false, italic: false, letterSpacing: 0,
+      strokeColor: '#000000',
+      glow: 0, glowColor: '#FFFFFF',
+      /* 經典／創意共用同一組符號預設：泡泡進場、縮放 II 常駐。 */
+      mo: {
+        ...OBJECT_MOTION_DEFAULT,
+        in: 'bubble', dur: motionDurationFromUi(80),
+        idle: 'symbol-breathe2', amp: 60, speed: 1.2,
+      },
+    };
+    setFloatingImages(prev => [...prev, item]);
+    setSelectedFloatingId(id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+  };
+
+  /**
+   * 新增一個圖形圖層。
+   * 大小預設佔頁面短邊的三成；線條類壓成細長條（高度只有寬度的 8%）。
+   * 顏色跟文字一樣預設墨黑 —— 頁面底色預設是白的，白色圖形會看不到。
+   */
+  const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem) => {
+    const rect = getClosestPageRect();
+    const short = Math.min(rect?.width ?? previewW, rect?.height ?? previewH);
+    const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+    const h = (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
+    const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
+    const item: FloatingImage = {
+      id, src: '',
+      x: (rect ? rect.centerX : previewW / 2) - w / 2,
+      y: (rect ? rect.centerY : previewH / 2) - h / 2,
+      width: w, height: h, scale: 1, rotation: (it as any).rot || 0,
+      shape: it.kind,
+      shapeItemId: it.id,
+      // 借來的圖案：kind 一律是 'hole'，真正畫哪一顆看 holeType
+      holeType: (it as HoleShapeItem).hole,
+      shapeFilled: it.filled,
+      shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
+      shapeLineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')
+        ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
+      shapeTextureBaseW: w,
+      shapeTextureBaseH: h,
+      shapeDash: 0,
+      shapeGlow: false,
+      shapeGlowColor: SHAPE_DEFAULT_COLOR,
+      color: SHAPE_DEFAULT_COLOR,
+    };
+    setFloatingImages(prev => [...prev, item]);
+    setSelectedFloatingId(id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+    /* 刻意留在這一頁、不跳去編輯 —— 常常是要連著加好幾個，
+       每加一個就被丟去編輯頁的話還得自己按回來。 */
+  };
+
+  /** 複製一份圖片／文字圖層，稍微錯開一點放在原件上面，並直接選中新的那一份。 */
+  const handleDuplicateFloating = (id: string) => {
+    const src = floatingImages.find(f => f.id === id);
+    if (!src) return;
+    const copy: FloatingImage = {
+      ...src,
+      id: `${src.text !== undefined ? 'text' : src.shape ? 'shape' : 'img'}-${Math.random().toString(36).substring(2, 9)}`,
+      x: src.x + 16,
+      y: src.y + 16,
+    };
+    setFloatingImages(prev => {
+      const i = prev.findIndex(f => f.id === id);
+      const next = [...prev];
+      next.splice(i + 1, 0, copy);   // 疊在原件正上方
+      return next;
+    });
+    setSelectedFloatingId(copy.id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+  };
+
+  const patchTextLayer = (id: string, patch: Partial<FloatingImage>) => {
+    setFloatingImages(prev => prev.map(f => (f.id === id ? { ...f, ...patch } : f)));
+  };
+
+  const handleAddLayoutToPage = (pageIdx: number, templateIdx = 0, count = 4) => {
+    const item = makeLayout(templateIdx, count);
+    setPages(prev => prev.map((p, idx) => idx === pageIdx ? { ...p, layouts: [...p.layouts, item] } : p));
+    setActivePageIndex(pageIdx);
+    // 刻意不自動選中新佈局：選中＝進入編輯，會讓下一次點版型變成「換版型」而不是「再加一個」
+    setSelectedLayoutId(null);
+    setSelectedIndex(null);
+    setSelectedFloatingId(null);
+  };
+
+  /**
+   * 自由圖層的 x 是整條頁面帶的座標，所以「第幾頁」是用中心點除以一頁的寬度算出來的
+   * （每頁之間還有預覽裡那 1px 的縫）。搬頁面或刪頁面時，這些圖層都要跟著處理。
+   */
+  const pageOfFloating = (f: FloatingImage, stride: number, count: number) =>
+    Math.max(0, Math.min(count - 1, Math.floor((f.x + f.width / 2) / stride)));
+
+  const handleDeletePage = (pageIdx: number) => {
+    if (pages.length <= 1) return;
+    const stride = previewW + 1;
+    const count = pages.length;
+    // 這一頁上的自由圖層一起刪掉；後面幾頁的圖層往前挪一頁
+    setFloatingImages(prev => prev
+      .filter(f => pageOfFloating(f, stride, count) !== pageIdx)
+      .map(f => {
+        const p = pageOfFloating(f, stride, count);
+        return p > pageIdx ? { ...f, x: f.x - stride } : f;
+      }));
+    setSelectedFloatingId(prev => {
+      const sel = floatingImages.find(f => f.id === prev);
+      return sel && pageOfFloating(sel, stride, count) === pageIdx ? null : prev;
+    });
+    setPages(prev => prev.filter((_, idx) => idx !== pageIdx));
+    setActivePageIndex(prev => {
+      if (pageIdx === prev) {
+        return Math.max(0, pageIdx - 1);
+      } else if (pageIdx < prev) {
+        return prev - 1;
+      }
+      return prev;
+    });
+  };
+
+  /* ---- 頁面順序模式 ---- */
+  /**
+   * 進這個模式時整條操作欄往下滑，只留最上面那排分頁鍵；空出來的高度
+   * 讓畫布往下滑一半，看起來就是頁面平順地移到畫面中央。
+   * 每一頁下面會出現一顆握把與刪除鍵，拖握把就是直接在拖真正的那一頁。
+   */
+  /**
+   * 頁面順序模式：操作欄留在原位，畫布縮成一半 ——
+   * 一次看得到前後好幾頁，排起來才知道自己在排什麼。
+   * 用 transform 縮，不動 previewW/H，圖層的座標才不會跟著跑掉。
+   */
+  const PAGES_MODE_SCALE = 0.4;
+  /** 握把要按住這麼久才算開始拖（太短會誤觸） */
+  const PAGE_DRAG_HOLD_MS = 260;
+  /** 拖曳中被拿起來的那一頁：微微放大＋陰影，看起來像被拿離桌面（專業排序介面的做法） */
+  const PAGE_DRAG_SCALE = 1.05;
+
+  /** 正在拖的是哪一頁（拖的就是畫布上真正的那一頁） */
+  const [pageDragIdx, setPageDragIdx] = useState<number | null>(null);
+  /** 放手後的收尾：內容從「放手時看起來的位置」平順滑回新定位 */
+  const [dragSettle, setDragSettle] = useState<{ page: number; x: number; ease: boolean } | null>(null);
+  const settleTimerRef = useRef(0);
+
+  /**
+   * 拖曳中，每一頁該往哪邊讓開：
+   * 被拖的那一頁跟著手指；夾在「原本位置」與「目標位置」之間的頁面各讓一格。
+   */
+  const pageDragOffset = (idx: number) => {
+    const from = pageDragIdx;
+    const to = pageDragTo;
+    if (from === null || to === null) return { x: 0, live: false };
+    if (idx === from) return { x: pageDragShift / Math.max(0.01, pagesScale), live: true };
+    const stride = previewW + 1;
+    if (from < to && idx > from && idx <= to) return { x: -stride, live: false };
+    if (to < from && idx >= to && idx < from) return { x: stride, live: false };
+    return { x: 0, live: false };
+  };
+
+  /**
+   * 排頁面時「畫布不動、動的是上面的東西」。
+   *
+   * 被拖的那一頁：整組跟著手指、而且統一縮到 80%（一眼就知道自己在搬哪一頁）。
+   * 其他頁：讓開一格。縮放是以「那一頁的中心」為原點的群組縮放，但**每個元素
+   * 各自算一個位移**、不包成一個容器 —— 包起來會多一個堆疊環境，佈局與圖層
+   * 之間的前後關係就會跑掉。
+   *
+   * cx/cy 是那一頁的中心、ex/ey 是元素自己的中心，兩者要在同一個座標系裡
+   * （佈局用頁內座標，自由圖層用整條頁面的座標）。
+   */
+  const pageContentShift = (pageIdx: number) => {
+    if (!pagesMode) return null;
+    if (pageDragIdx === null) {
+      // 放手瞬間的收尾（FLIP）：換完順序後內容先停在「看起來的位置」，
+      // 下一帧再平順滑回定位 —— 不做這一段的話會先閃回再跳走
+      if (dragSettle && pageIdx === dragSettle.page) {
+        return { dx: dragSettle.x, s: 1, live: !dragSettle.ease };
+      }
+      return null;
+    }
+    // 拖曳中每一頁都回傳位移（包含 0）：讓開再讓回來時 transition 才接得上，
+    // 不會從「有 transform」直接跳成「沒 transform」閃一下
+    const off = pageDragOffset(pageIdx);
+    const s = off.live ? PAGE_DRAG_SCALE : 1;
+    return { dx: off.x, s, live: off.live };
+  };
+  const groupShift = (
+    shift: { dx: number; s: number; live: boolean },
+    cx: number, cy: number, ex: number, ey: number,
+  ) => ({
+    tx: shift.dx + (1 - shift.s) * (cx - ex),
+    ty: (1 - shift.s) * (cy - ey),
+    s: shift.s,
+    live: shift.live,
+  });
+  /** 自由圖層：中心就是 x + 寬/2（外框的 left 已經把縮放算進去了） */
+  const floatingDragShift = (f: FloatingImage) => {
+    const stride = previewW + 1;
+    const idx = pageOfFloating(f, stride, pages.length);
+    const shift = pageContentShift(idx);
+    if (!shift) return null;
+    return groupShift(shift, idx * stride + previewW / 2, previewH / 2, f.x + f.width / 2, f.y + f.height / 2);
+  };
+
+  /** 手指位置落在畫布上第幾頁（用每一頁真正的位置判斷） */
+  const pageUnder = (clientX: number) => {
+    const els = [...document.querySelectorAll('[id^="grid-preview-container"]')] as HTMLElement[];
+    let best: number | null = null;
+    let bestD = Infinity;
+    els.forEach((el, i) => {
+      const r = el.getBoundingClientRect();
+      const d = Math.abs(clientX - (r.left + r.width / 2));
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    return best;
+  };
+
+  const dragIdxRef = useRef<number | null>(null);
+  /** 這次拖曳手指真的移動過了嗎（沒動過就不啟動邊緣自動捲動） */
+  const dragMovedRef = useRef(false);
+  /** 邊緣自動捲動「這個方向已經到底了」的鎖，手指離開感應範圍才鬆開 */
+  const edgeScrollDoneRef = useRef({ left: false, right: false });
+  const dragXRef = useRef(0);
+  const dragStartXRef = useRef(0);
+  const dragRafRef = useRef(0);
+  /**
+   * 拖曳中的位移：被拖的那一頁直接跟著手指走（不加動畫），
+   * 被讓開的那幾頁用 200ms 平順地滑到新位置。放手時才真的改順序。
+   */
+  const [pageDragShift, setPageDragShift] = useState(0);
+  /** 每一帧要用（按鈕跟著那一頁的東西走），所以另外留一份 ref */
+  const pageDragShiftRef = useRef(0);
+  const [pageDragTo, setPageDragTo] = useState<number | null>(null);
+  const pageDragToRef = useRef<number | null>(null);
+  useEffect(() => { pageDragToRef.current = pageDragTo; }, [pageDragTo]);
+
+  /** 手指移動多少＝往前／往後幾頁（一頁的寬度就是一格） */
+  const settlePageDrag = () => {
+    const from = dragIdxRef.current;
+    if (from === null) return;
+    const stride = (previewW + 1) * pagesScale;
+    // 頭尾之外再多給「半格」：拖到第一頁之前／最後一頁之後時會露出一小塊黑，
+    // 知道自己已經到底了，但不會整個甩出去（放手仍然只會落在有效的頁次上）
+    const slack = stride / 2;
+    const raw = Math.max(
+      (0 - from) * stride - slack,
+      Math.min((pagesCountRef.current - 1 - from) * stride + slack, dragXRef.current - dragStartXRef.current),
+    );
+    pageDragShiftRef.current = raw;
+    setPageDragShift(raw);
+    const slots = Math.round(raw / Math.max(1, stride));
+    const to = Math.max(0, Math.min(pagesCountRef.current - 1, from + slots));
+    // ref 當場就寫（自動捲動的煞車同一帧要用），state 慢一帧沒關係
+    pageDragToRef.current = to;
+    setPageDragTo(prev => (prev === to ? prev : to));
+  };
+
+  /**
+   * 一頁差不多就跟螢幕一樣寬，所以隔壁那一頁通常在畫面外。
+   * 手指靠近左右邊緣時就自動捲動，捲到隔壁那一頁就換過去。
+   */
+  const dragTick = () => {
     const el = containerRef.current;
     if (el && dragIdxRef.current !== null) {
       const r = el.getBoundingClientRect();
