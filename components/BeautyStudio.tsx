@@ -155,7 +155,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const [ringPos, setRingPos] = useState<{ x: number; y: number } | null>(null);
   const [makeupColor, setMakeupColor] = useState<string>(LIP_PRESETS[0].hex);
   // 往右拖 = 效果更強，所以是濃度而不是透明度（先前方向相反，拖右反而變淡）
-  const [intensity, setIntensity] = useState(30);
+  /* UI 顯示值是實際值的兩倍；25 對應使用者看到的預設 50。 */
+  const [intensity, setIntensity] = useState(25);
   const [isLoading, setIsLoading] = useState(true);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -1085,7 +1086,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
       {/* 參數區固定高度：切換工具時圖片不會跳動，滑桿位置也永遠對齊。
           額外控制列即使沒有內容也保留空間，四個工具的滑桿才會落在同一個位置。 */}
-      <div className="h-[124px] shrink-0 border-t border-white/[0.06] py-3 flex flex-col">
+      <div className="h-[116px] shrink-0 border-t border-white/[0.06] py-2 flex flex-col">
         <div className="h-8 shrink-0 flex items-center gap-2 overflow-x-auto overflow-y-hidden no-scrollbar px-5">
           {tool === 'liquify' && LIQUIFY_PRESETS.map(m => (
             <button
@@ -1165,15 +1166,14 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         </div>
       </div>
 
-      {/* 再收掉底部多餘空位；44px 仍完整容納圖標與標籤，不會在矮螢幕裁字。 */}
+      {/* 稍微加高並貼底排列：圖標可再往下一點，同時不會被 44px 外框裁掉。 */}
       <div className="border-t border-white/10 bg-black shrink-0">
-      <div className="flex h-11">
+      <div className="flex h-12">
         {BEAUTY_TOOLS.map(t => (
           <button
             key={t.id}
             onClick={() => setTool(t.id)}
-            /* 只調整內容位置；分隔線與整個底欄高度維持不變。 */
-            className={`flex-1 flex flex-col items-center justify-center gap-1 pt-[10px] transition-all ${tool === t.id ? 'text-white' : 'text-white/20'}`}
+            className={`flex-1 flex flex-col items-center justify-center gap-1 pt-3 transition-all ${tool === t.id ? 'text-white' : 'text-white/20'}`}
           >
             <Icon name={t.icon} className="text-xl" fill={tool === t.id} />
             <span className="text-[9px] font-black uppercase tracking-[0.15em]">{t.label}</span>

@@ -6923,6 +6923,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 /* 進出 HSL 不做動畫，所以那一次切換把過場關掉 */
                 className={`relative flex items-center justify-center ease-[cubic-bezier(0.2,0,0,1)] max-w-[calc(100%-32px)] ${hslSwitch ? 'transition-none' : 'transition-[max-height] duration-500'}`}
                 style={{
+                  /* 尺寸與比例尚未量完時不先畫錯誤位置；useLayoutEffect 會在首幀
+                     顯示前完成量測，所以長圖不會再先抖一下才歸位。 */
+                  visibility: previewAspect && previewBoxSize.width && previewBoxSize.height ? 'visible' : 'hidden',
                   maxHeight: hslFitNow
                     ? `${hslFitNow.mh}px`
                     : (previewBoxSize.height ? `${Math.max(1, previewBoxSize.height - 40)}px` : 'calc(100vh - 356px)'),
@@ -8036,16 +8039,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        {/* 48px 高並讓內容貼近底部：圖標尺寸不變，只收掉按鈕下方多餘空白；
-            空出的 8px 全數交還預覽區。 */}
-        <div className="flex h-12 border-t border-white/10 bg-black box-content" style={{ paddingBottom: 2 }}>
-          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-end pb-[2px] gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
+        {/* 底部基線只對齊創意拼圖的圖片編輯分類列；功能、內容與其餘版面不照搬。 */}
+        <div className="flex h-16 border-t border-white/10 bg-black pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content shrink-0">
+          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
           </button>
-          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-end pb-[2px] gap-1 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="tune" className="text-xl" fill={activeCategory === 'adjust'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">調節</span>
           </button>
-          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-end pb-[2px] gap-1 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
             <Icon name="magic_button" className="text-xl" fill={['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory)} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">特效</span>
           </button>
           <button onClick={() => {
@@ -8062,11 +8064,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               }
               setDraftGeo(geo);
               setActiveCategory('compose');
-            }} className={`flex-1 flex flex-col items-center justify-end pb-[2px] gap-1 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
+            }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
             {/* crop_rotate 兩側各有一支旋轉箭頭，改成單純的裁切符號 */}
             <Icon name="crop" className="text-xl" fill={activeCategory === 'compose'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">構圖</span>
           </button>
-          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-end pb-[2px] gap-1 transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="gradient" className="text-xl" fill={activeCategory === 'mask'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">遮色片</span>
           </button>
         </div>
