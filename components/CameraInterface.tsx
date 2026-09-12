@@ -677,6 +677,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     } finally {
       /* 任一步驟失敗或逾時都會走到這裡：熄燈、解鎖快門與整個介面。 */
       setTorch(false);
+      /* JPEG blob 已經有自己的壓縮資料，不能把這張 4K RGBA 畫布繼續留著。
+         它在 iPhone 上可能佔 50MB 以上，會直接擠掉下一頁匯出所需的 GPU。 */
+      const photoCanvas = canvasRef.current;
+      if (photoCanvas) { photoCanvas.width = 1; photoCanvas.height = 1; }
       capturingRef.current = false;
       setIsCapturing(false);
       if (captureQueueRef.current > 0) {
@@ -739,6 +743,24 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     document.addEventListener('visibilitychange', onVis);
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [videoEl, stopCountdown, setTorch]);
+
+  /* 編輯器蓋上來後，舊版的相機串流與高解析 WebGL 觀景窗仍在背後逐幀運算。
+     iPhone 接著又建立全解析編輯畫布時會耗盡圖形記憶體，造成成功頁拿到黑圖。
+     編輯期間暫停軌道，並由下方條件渲染卸載 Viewfinder；返回時沿用原串流恢復。 */
+  useEffect(() => {
+    if (!editingPhoto) return;
+    captureQueueRef.current = 0;
+    stopCountdown();
+    setTorch(false);
+    if (videoTrack?.readyState === 'live') videoTrack.enabled = false;
+    videoEl?.pause();
+    return () => {
+      if (document.visibilityState === 'visible' && videoTrack?.readyState === 'live') {
+        videoTrack.enabled = true;
+        videoEl?.play().catch(() => {});
+      }
+    };
+  }, [editingPhoto, setTorch, stopCountdown, videoEl, videoTrack]);
 
   const getFrameStyle = (): React.CSSProperties => {
     if (containerSize.w === 0 || containerSize.h === 0) return { opacity: 0 };
@@ -882,7 +904,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               </div>
             )}
 
-            <Viewfinder 
+            {!editingPhoto && <Viewfinder
               ref={viewfinderRef}
               video={videoEl}
               lutUrl={lutList[selectedLutIdx].url}
@@ -906,7 +928,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 handleFocus(e);
               }}
               onPointerCancel={() => { if (lockTimerRef.current) { clearTimeout(lockTimerRef.current); lockTimerRef.current = null; } }}
-            />
+            />}
 
             {/* 鎖定中的提示，位置與樣式照 iOS 相機 */}
             {aeafLock && (

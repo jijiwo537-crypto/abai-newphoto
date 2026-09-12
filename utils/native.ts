@@ -36,16 +36,15 @@ export const APP_SCHEME = 'com.abai.photo';
 /**
  * App 啟動時做一次的原生設定。網頁環境會在第一行就回去，一個外掛都不會載。
  *
- * 目前只做狀態列：把時間、電量那排字設成白色，因為我們的底是黑的。
- * 這裡刻意**不去動** overlaysWebView（也就是讓畫面延伸到瀏海底下）——
- * 那會讓 100vh 連狀態列一起算進去，版面會整個被撐開。之前在網頁版試過兩次
- * 都是這樣壞掉的，要做也得等能在模擬器上邊改邊看的時候再說。
+ * 狀態列文字維持白色，並讓 WebView 鋪到狀態列下方。首頁主視覺因此能真的
+ * 延伸到瀏海；其他工具最外層的 .safe-top 會補回安全距離。
  */
 export async function setupNativeShell(): Promise<void> {
   if (!isNative()) return;
   try {
     const { StatusBar, Style } = await import('@capacitor/status-bar');
     // Capacitor 的命名是以「背景」為準：Style.Dark ＝ 深色背景，所以字是白的。
+    await StatusBar.setOverlaysWebView({ overlay: true });
     await StatusBar.setStyle({ style: Style.Dark });
   } catch {
     /* 外掛沒裝、或這個平台不支援，就當作沒這回事 —— 不能因此讓 App 起不來 */

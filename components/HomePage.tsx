@@ -865,6 +865,46 @@ export const HomePage: React.FC<HomePageProps> = ({
       現在沒匯入就是空的（點下去挑一張），存檔再也不會動到它。 */
   const heroSrc = previews.hero || null;
 
+  /* iOS Safari 會用 theme-color 畫時間／網路／電量那一列。以前全站固定 #000，
+     所以首頁主視覺即使已鋪到頂端，瀏覽器仍會蓋一條黑色。只在「修圖」首頁
+     取主視覺頂部平均色交給系統列；模板、我的與其他工具仍保持原本黑底。 */
+  const [homeBarColor, setHomeBarColor] = useState('#000000');
+  useEffect(() => {
+    if (!heroSrc) { setHomeBarColor('#000000'); return; }
+    let alive = true;
+    const image = new Image();
+    if (!heroSrc.startsWith('blob:') && !heroSrc.startsWith('data:')) image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      if (!alive) return;
+      try {
+        const cv = document.createElement('canvas');
+        cv.width = 32; cv.height = 2;
+        const cx = cv.getContext('2d', { willReadFrequently: true });
+        if (!cx) return;
+        const sw = image.naturalWidth || 1, sh = image.naturalHeight || 1;
+        cx.drawImage(image, 0, 0, sw, Math.max(1, sh * 0.08), 0, 0, 32, 2);
+        const d = cx.getImageData(0, 0, 32, 2).data;
+        let red = 0, green = 0, blue = 0, count = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          red += d[i]; green += d[i + 1]; blue += d[i + 2]; count++;
+        }
+        const hex = (v: number) => Math.round(v / Math.max(1, count)).toString(16).padStart(2, '0');
+        setHomeBarColor(`#${hex(red)}${hex(green)}${hex(blue)}`);
+      } catch { setHomeBarColor('#000000'); }
+    };
+    image.onerror = () => { if (alive) setHomeBarColor('#000000'); };
+    image.src = heroSrc;
+    return () => { alive = false; };
+  }, [heroSrc]);
+
+  useLayoutEffect(() => {
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (!meta) return;
+    const previous = meta.content;
+    meta.content = nav === 'home' ? homeBarColor : '#000000';
+    return () => { meta.content = previous; };
+  }, [homeBarColor, nav]);
+
   /** 整頁共用的那顆檔案選擇器（掛在最外層，見 return 最下面） */
   const previewInput = (
     <input
@@ -979,7 +1019,10 @@ export const HomePage: React.FC<HomePageProps> = ({
   );
 
   return (
-    <div className="w-full h-screen bg-black text-white font-sans flex flex-col overflow-hidden relative">
+    <div
+      className="w-full h-screen text-white font-sans flex flex-col overflow-hidden relative"
+      style={{ backgroundColor: nav === 'home' ? homeBarColor : '#000000' }}
+    >
       {/* 主視覺搬到捲動區裡面去了（見下面）。標題列整個拿掉了 ——
            品牌字與聯絡鈕都在首頁那一頁裡，所以主視覺上面不再壓著任何一條。 */}
 

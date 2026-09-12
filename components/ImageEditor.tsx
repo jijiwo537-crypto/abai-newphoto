@@ -5835,10 +5835,17 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     ctxOriginal.drawImage(geoSource, 0, 0, w, h);
     const sourceData = ctxOriginal.getImageData(0, 0, w, h).data;
     const len = sourceData.length;
+    /* 像素已經讀出來後立即釋放來源畫布。12MP 的一張 RGBA 畫布約 48MB；
+       舊版匯出時同時保留多份，iOS 會因此收走 WebGL context。 */
+    c.width = 1; c.height = 1;
+    if (geoSource instanceof HTMLCanvasElement && geoSource !== c) {
+      geoSource.width = 1; geoSource.height = 1;
+    }
 
-    const destData = new Uint8ClampedArray(len);
-    const sharedData = new Uint8ClampedArray(len);
-    const sharpenDetail = precomputeSharpenDetail(sourceData, w, h);
+    /* 大型緩衝只在真的需要時建立。正常 GPU 匯出不再預先多佔兩張全尺寸圖，
+       銳化為零時也不計算完全用不到的 detail。 */
+    let destData: Uint8ClampedArray | null = null;
+    const sharpenDetail = p.sharpen > 0 ? precomputeSharpenDetail(sourceData, w, h) : null;
 
     const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext('2d')!;
@@ -5868,17 +5875,42 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (gpuOk) {
         ctx.clearRect(0, 0, w, h);
         ctx.drawImage(gc, 0, 0);
+        /* Safari 記憶體吃緊時偶爾不回 WebGL 錯誤，卻只交出全黑 drawing buffer。
+           驗證真實像素；只有來源有色彩而輸出完全為零時才退回 CPU。 */
+        const sourceHasColor = (() => {
+          const stride = Math.max(4, Math.floor(sourceData.length / (512 * 4)) * 4);
+          for (let i = 0; i < sourceData.length; i += stride) {
+            if (sourceData[i] || sourceData[i + 1] || sourceData[i + 2]) return true;
+          }
+          return false;
+        })();
+        if (sourceHasColor) {
+          try {
+            const probe = document.createElement('canvas');
+            probe.width = 16; probe.height = 16;
+            const probeCtx = probe.getContext('2d', { willReadFrequently: true });
+            probeCtx?.drawImage(canvas, 0, 0, 16, 16);
+            const px = probeCtx?.getImageData(0, 0, 16, 16).data;
+            let outputHasColor = false;
+            if (px) for (let i = 0; i < px.length; i += 4) {
+              if (px[i] || px[i + 1] || px[i + 2]) { outputHasColor = true; break; }
+            }
+            if (!outputHasColor) gpuOk = false;
+            probe.width = 1; probe.height = 1;
+          } catch { gpuOk = false; }
+        }
       }
       // 貼圖已經被換成匯出那張了，讓預覽下次重新上傳自己的
       gpuSrcKeyRef.current = '';
       gpuWarmKeyRef.current = '';
     }
     if (!gpuOk) {
+      destData = new Uint8ClampedArray(len);
       processPixels(sourceData, destData, w, h, p, activeLut ? activeLut.data : null, lutSize, baseCorrectionLutRef.current, sharpenDetail, false, getCurveLuts(p.curves));
       ctx.putImageData(new ImageData(destData, w, h), 0, 0);
     }
     const scale = Math.max(w, h) / 1080;
-    applyComplexEffects(ctx, w, h, p, scale, sharedData, false, true, gpuOk ? null : destData);
+    applyComplexEffects(ctx, w, h, p, scale, null, false, true, gpuOk ? null : destData);
     return canvas;
   };
 
