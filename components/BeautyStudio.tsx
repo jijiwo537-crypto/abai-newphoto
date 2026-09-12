@@ -1166,14 +1166,15 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         </div>
       </div>
 
-      {/* 稍微加高並貼底排列：圖標可再往下一點，同時不會被 44px 外框裁掉。 */}
+      {/* 保留 48px 觸控高度，但不再用 padding 把內容擠出容器；整組只下移 2px，
+          因此圖標與文字完整可見，文字下方也只剩必要呼吸距離。 */}
       <div className="border-t border-white/10 bg-black shrink-0">
       <div className="flex h-12">
         {BEAUTY_TOOLS.map(t => (
           <button
             key={t.id}
             onClick={() => setTool(t.id)}
-            className={`flex-1 flex flex-col items-center justify-center gap-1 pt-3 transition-all ${tool === t.id ? 'text-white' : 'text-white/20'}`}
+            className={`flex-1 flex flex-col items-center justify-center gap-0.5 translate-y-0.5 transition-all ${tool === t.id ? 'text-white' : 'text-white/20'}`}
           >
             <Icon name={t.icon} className="text-xl" fill={tool === t.id} />
             <span className="text-[9px] font-black uppercase tracking-[0.15em]">{t.label}</span>
