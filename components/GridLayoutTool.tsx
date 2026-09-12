@@ -9263,18 +9263,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
       const animateWithPreview = !!transition || motionModeRef.current;
       const plusScale = animateWithPreview ? k : 1;
-      const n = pagesRef.current.length;
-      /* offsetLeft/Top 是「尚未套 transform」的版面座標，拿它定位不會像
-         getBoundingClientRect 那樣把上一幀 transform 又算一次。加號中心永遠
-         貼在縮小後頁面的水平中線，X 位置則跟著最後一頁右緣一起收合。 */
+      /* X 完全交還 flex 版面：加號永遠自然接在最後一頁右側，不再於一般模式
+         另外算一組螢幕座標。外殼寬度本來就逐幀跟著 k 改變，因此進退動畫時
+         它仍會平順跟著最後一頁移動；這裡只補上垂直置中與等比例縮放。 */
       const parent = plus.offsetParent as HTMLElement | null;
       const parentRect = parent?.getBoundingClientRect();
       if (parentRect) {
-        const baseCx = parentRect.left + plus.offsetLeft + plus.offsetWidth / 2;
         const baseCy = parentRect.top + plus.offsetTop + plus.offsetHeight / 2;
-        const wantCx = left0 + k * ((n - 1) * stride + previewWRef.current) + 12 + plus.offsetWidth / 2;
         const wantCy = colRect.top + k * previewHRef.current / 2;
-        plus.style.transform = `translate3d(${wantCx - baseCx}px, ${wantCy - baseCy}px, 0) scale(${plusScale})`;
+        plus.style.transform = `translate3d(0, ${wantCy - baseCy}px, 0) scale(${plusScale})`;
       }
       plus.style.opacity = `${alpha}`;
       plus.style.pointerEvents = alpha > .98 ? 'auto' : 'none';
@@ -9796,7 +9793,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     stripTopRef.current = motionModeRef.current ? 0 : Math.max(0,
       (containerSize.height - previewH * pagesScale) / 2 - 8);
     applyStripGeometry(pagesScale);
-  }, [pagesScale, pages.length, previewW, previewH, containerSize.width, containerSize.height, applyStripGeometry]);
+    /* 首次量到真正畫布尺寸時，幾何會由預設值再更新一次；加號也必須在
+       同一輪 layout 後重新定位，不能沿用第一次量測留下的 Y 位移。 */
+    const raf = requestAnimationFrame(positionPageCtls);
+    return () => cancelAnimationFrame(raf);
+  }, [pagesScale, pages.length, previewW, previewH, containerSize.width, containerSize.height, applyStripGeometry, positionPageCtls]);
   /** 格子在畫面上的實際大小會乘上整組佈局的縮放；把螢幕位移換算成格內偏移時要跟著乘。 */
   const layoutScale = activeLayout?.t?.scale ?? 1;
 
@@ -12445,6 +12446,54 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     };
     for (const fImg of layers) {
       const frame = fImg.isVideo ? null : motionFrame;
+      /* 匯出與 IG 即時預覽也要畫真正的波浪。DOM 預覽是把物件切成直條後
+         做正弦位移；Canvas 若只忽略 gridWave，IG 預覽就會停在靜態第 0 幀。
+         先把單一物件完整畫進有安全邊界的離屏畫布，再用相同切片邏輯貼回，
+         文字、圖形與圖片都共用這條路，根節點座標完全不會被搬動。 */
+      if (frame?.gridWave !== undefined) {
+        const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
+        const fw = fImg.width * scaleFactor;
+        const fh = fImg.height * scaleFactor;
+        const cx = adjustedX * scaleFactor + fw / 2;
+        const cy = fImg.y * scaleFactor + fh / 2;
+        const s = Math.max(.01, fImg.scale || 1);
+        const rad = ((fImg.rotation || 0) * Math.PI) / 180;
+        const bw = Math.abs(fw * s * Math.cos(rad)) + Math.abs(fh * s * Math.sin(rad));
+        const bh = Math.abs(fw * s * Math.sin(rad)) + Math.abs(fh * s * Math.cos(rad));
+        const amplitude = Math.max(2 * scaleFactor,
+          Math.min(Math.max(1, bw) * .055, Math.max(1, bh) * .13)
+          * Math.max(.15, (fImg.mo?.amp ?? 50) / 100) * (frame.waveMix ?? 1));
+        const pad = Math.max(24 * scaleFactor, Math.max(bw, bh) * .22, amplitude * 2 + 4);
+        const W = Math.max(2, Math.ceil(bw + pad * 2));
+        const H = Math.max(2, Math.ceil(bh + pad * 2));
+        const off = scratch(`wave-object|${fImg.id}`, W, H);
+        const og = get2dWide(off)!;
+        og.clearRect(0, 0, W, H);
+        og.save();
+        og.translate(W / 2 - cx, H / 2 - cy);
+        await drawFloatingLayers(og, [fImg], scaleFactor, live, null);
+        og.restore();
+
+        const x0 = cx - W / 2;
+        const y0 = cy - H / 2;
+        const reveal = frame.gridReveal === undefined ? 1 : Math.max(0, Math.min(1, frame.gridReveal));
+        const slices = Math.max(32, Math.min(128, Math.ceil(W / Math.max(1, 5 * scaleFactor))));
+        const sw = W / slices;
+        ctx.save();
+        if (reveal < 1) {
+          ctx.beginPath();
+          ctx.rect(x0, y0 - amplitude - 2, W * reveal, H + amplitude * 2 + 4);
+          ctx.clip();
+        }
+        for (let i = 0; i < slices; i++) {
+          const sx = i * sw;
+          const sampleX = (sx + sw / 2) / W;
+          const dy = Math.sin(sampleX * Math.PI * 2.2 - frame.gridWave * Math.PI * 2) * amplitude;
+          ctx.drawImage(off, sx, 0, sw + .7, H, x0 + sx, y0 + dy, sw + .7, H);
+        }
+        ctx.restore();
+        continue;
+      }
       if (frame) {
         const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
         const fw = fImg.width * scaleFactor;
@@ -12648,8 +12697,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          以前是先出靜態圖、背景再用 MediaRecorder 錄一段真正的影片換上去 ——
          錄影是即時的，八秒的片子就要等八秒（「剛開始都不會動、要等很久」），
          而且錄的時候編碼器跟合成搶 CPU，掉的格是直接烤進檔案裡的（「播起來很卡」）。 */
-      const anyVideo = pages.some((_p, i) => igPageHasVideoRef.current(i));
-      const opts = anyVideo
+      /* IG 預覽不只影片要持續重畫；頁面上只要有經典拼圖動畫，也必須走
+         同一張即時合成 Canvas。否則預覽拿到的只是動畫第 0 幀靜態 PNG。 */
+      const needsLivePreview = pages.some((_p, i) => igPageHasVideoRef.current(i)) || anyClassicMotion;
+      const opts = needsLivePreview
         ? { silent: true as const, previewWidth: 900, live: true }
         : { silent: true as const, previewWidth: 900, stillOnly: true };
       let r = await handleExport(opts);
@@ -15427,7 +15478,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               if (!layer) return (
                 // 置中之後再稍微往上一點（pb 讓可用高度變矮，等於整段往上挪 12px）
                 <div className="h-full flex items-center justify-center pb-6">
-                  <p className="text-[11px] text-white/40 text-center">請先選中圖片、文字或圖形</p>
+                  <p className="text-[11px] text-white/40 text-center">請選中要編輯的物件</p>
                 </div>
               );
 

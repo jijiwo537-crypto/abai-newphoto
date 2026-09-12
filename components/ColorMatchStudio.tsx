@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft } from 'lucide-react';
 import { Icon } from './Icon';
 import { SaveButton } from './SaveButton';
+import { StuckEscape } from './StuckEscape';
 import {
   METHODS, METHOD_LABEL, Method,
   sampleRgb, bakeFor, applyLut, Lut3D,
@@ -357,6 +358,12 @@ export const ColorMatchStudio: React.FC<Props> = ({
 
   const handleSave = () => {
     if (!srcImg || !luts) return;
+    const savingStarted = performance.now();
+    const finishSaving = () => window.setTimeout(
+      () => setSaving(false),
+      Math.max(0, 450 - (performance.now() - savingStarted)),
+    );
+    setSaving(true);
     const w = srcImg.naturalWidth || srcImg.width, h = srcImg.naturalHeight || srcImg.height;
     // GPU 一次畫完，全解析度也是瞬間 —— 按下去就直接進導出畫面，不用等
     const pw = useWeight(skin / 100);
@@ -364,10 +371,15 @@ export const ColorMatchStudio: React.FC<Props> = ({
       srcImg, w, h, luts[picked], strength / 100, skin / 100,
       pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null,
     );
-    if (gpu) { canvasToUrl(gpu).then(u => { putFinal(u); record(u); }); return; }   // 一樣無損，只是用 blob 網址
+    if (gpu) {
+      canvasToUrl(gpu)
+        .then(async u => { putFinal(u); await record(u); })
+        .catch(() => {})
+        .finally(finishSaving);
+      return;
+    }   // 一樣無損，只是用 blob 網址
     // 沒有 WebGL2（或圖太大塞不進貼圖）才退回 CPU
-    setSaving(true);
-    window.setTimeout(() => {
+    window.setTimeout(async () => {
       try {
         const c = document.createElement('canvas');
         c.width = w; c.height = h;
@@ -379,8 +391,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
           protect: useWeight(skin / 100), width: w,
         });
         x.putImageData(d, 0, 0);
-        canvasToUrl(c).then(u => { putFinal(u); record(u); });
-      } finally { setSaving(false); }
+        const u = await canvasToUrl(c);
+        putFinal(u);
+        await record(u);
+      } finally { finishSaving(); }
     }, 30);
   };
 
@@ -614,6 +628,14 @@ export const ColorMatchStudio: React.FC<Props> = ({
         </div>
       </div>
 
+      )}
+
+      {saving && (
+        <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
+          <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6" />
+          <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>
+          <StuckEscape onEscape={() => setSaving(false)} />
+        </div>
       )}
     </div>
   );

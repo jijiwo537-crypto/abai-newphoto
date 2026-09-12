@@ -107,7 +107,9 @@ const CameraTickScale: React.FC<CameraTickScaleProps> = ({
         const drag = dragRef.current;
         if (!drag) return;
         const raw = Math.max(min, Math.min(max,
-          drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min) * 1.08));
+          /* 同一段手指距離改成原本的兩倍靈敏度。仍然在 min/max 內逐格吸附，
+             所以加快反應不會犧牲中央刻度的精準度。 */
+          drag.startValue + ((drag.startX - e.clientX) / drag.width) * (max - min) * 2.16));
         const index = Math.max(0, Math.min(total, Math.round((raw - min) / step)));
         const snapped = min + index * step;
         /* 相機刻度必須真的「卡」在中央刻度上。舊版雖然把數值 round 了，
@@ -829,7 +831,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   };
 
   return (
-    <div className="safe-top flex flex-col h-screen max-h-screen justify-end pb-4 overflow-hidden select-none bg-black font-sans text-white animate-in fade-in duration-300">
+    <div className="safe-top flex flex-col h-screen max-h-screen justify-end pb-6 overflow-hidden select-none bg-black font-sans text-white animate-in fade-in duration-300">
       
       {isImportingLocal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
@@ -852,21 +854,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         onChange={handleLocalFileChange}
       />
 
-      {/* Home Button (Top Left) */}
-      {/* 濾鏡／特效面板打開時退出鍵先收起來，關掉面板才回來 */}
-      {!showGallery && !editingPhoto && activeControl !== 'filters' && activeControl !== 'effects' && (
-        <div className="absolute top-2 left-4 z-[60]">
-           <button 
-             onClick={() => { onHome(); }} 
-             className="w-10 h-10 rounded-full flex items-center justify-center text-white/70 hover:text-white transition-colors"
-           >
-             <Icon name="arrow_back" className="text-2xl" />
-           </button>
-        </div>
-      )}
-
-      <div className="h-[2vh]"></div>
-
       <main className="flex-1 relative flex flex-col justify-end px-4 overflow-hidden">
         {/* pb-0 to lower viewfinder frame */}
         <div className="w-full h-full flex items-end justify-center pb-0" ref={containerRef}>
@@ -874,6 +861,18 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             className="relative rounded-camera overflow-hidden bg-zinc-900 shadow-2xl flex items-center justify-center border border-white/5 transition-all duration-300 ease-[cubic-bezier(0.2,0,0,1)]"
             style={getFrameStyle()}
           >
+            {/* 返回鍵屬於相機畫面本身，和右上角的更多按鈕平行對稱。 */}
+            {!showGallery && !editingPhoto && activeControl !== 'filters' && activeControl !== 'effects' && (
+              <div className="absolute top-1 left-2 z-50">
+                <button
+                  onClick={(e) => { e.stopPropagation(); onHome(); }}
+                  className="w-10 h-10 rounded-full flex items-center justify-center text-white/70 hover:text-white transition-colors"
+                >
+                  <Icon name="arrow_back" className="text-2xl drop-shadow-md" />
+                </button>
+              </div>
+            )}
+
             <Viewfinder 
               ref={viewfinderRef}
               video={videoEl}
@@ -1140,7 +1139,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     {/* 收合鍵改成絕對定位；否則它會佔掉右側寬度，把整條刻度推離螢幕中心。 */}
                     <div
                       data-camera-scale={activeControl}
-                      className={`relative flex items-center h-12 w-[214px] max-w-[calc(100%-72px)] ${activeControl === 'kelvin' ? '-translate-y-4' : ''}`}
+                      className="relative flex items-center h-12 w-[214px] max-w-[calc(100%-72px)] -translate-y-4"
                     >
                         {activeControl === 'exposure' && (
                           <CameraTickScale

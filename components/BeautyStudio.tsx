@@ -1183,8 +1183,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       {saveState === 'processing' && (
         <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
-          <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">處理中</p>
-          <p className="text-[10px] text-white/40 mt-3 uppercase tracking-widest font-bold">全解析度重新渲染</p>
+          <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">儲存中</p>
           {/* 這一層蓋住返回鍵，所以一定要有出口（見 StuckEscape） */}
           <StuckEscape onEscape={() => setSaveState('idle')} />
         </div>
