@@ -343,6 +343,12 @@ select:focus, select:focus-visible {
   padding-bottom: 0;
 }
 
+/* 非首頁工具沿用透明 viewport 時，原本潛伏的 bottom env() 會突然多算一次。
+   只把既有 12px 工具列內距鎖回原值，首頁沒有使用這個 class，因此不受影響。 */
+.safe-top .pb-\[calc\(env\(safe-area-inset-bottom\,0px\)\+12px\)\] {
+  padding-bottom: 12px !important;
+}
+
 /* 捲到最頂／最底就停住，不要再多滑一段又彈回來（iOS 的橡皮筋），
    也順便擋掉「捲動傳給外層」。全 App 的捲動面板都掛著 .no-scrollbar，
    所以在這裡統一設一次就好，不用逐頁改。 */
