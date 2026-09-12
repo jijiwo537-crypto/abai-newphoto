@@ -8041,8 +8041,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         </div>
         {/* 獨立編輯器的 safe-top 已經把可用 viewport 鎖在安全區內，這裡若再讀一次
             env(safe-area-inset-bottom) 就會在安裝版 Web App 底部多出一整塊黑帶。
-            明確採 48px 且不再加 safe-area；這只作用於主頁進入的獨立編輯器。 */}
-        <div className="flex h-12 border-t border-white/10 bg-black shrink-0" style={{ paddingBottom: 0 }}>
+            明確採 40px 且不再加 safe-area；進一步收掉按鈕下方殘留空隙，
+            這只作用於主頁進入的獨立編輯器。 */}
+        <div className="flex h-10 border-t border-white/10 bg-black shrink-0" style={{ paddingBottom: 0 }}>
           <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
           </button>
