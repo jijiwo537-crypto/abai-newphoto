@@ -26,9 +26,10 @@ const config: CapacitorConfig = {
       /* Capacitor 的命名以「背景」為準：DARK ＝ 深色背景，所以時間、電量是白字 */
       style: 'DARK',
       backgroundColor: '#000000',
-      /* 首頁主視覺要延伸到時間／網路／電量下方，不能由原生外殼切出黑條；
-         其他工具已由 .safe-top 補回安全距離。 */
-      overlaysWebView: true,
+      /* 刻意設 false：讓畫面延伸到瀏海底下會把 100vh 連狀態列一起算進去，
+         版面會整個被撐開（網頁版試過兩次都是這樣壞的）。要做也要等能在
+         模擬器上邊改邊看的時候。 */
+      overlaysWebView: false,
     },
   },
 };

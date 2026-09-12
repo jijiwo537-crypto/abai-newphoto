@@ -865,9 +865,9 @@ export const HomePage: React.FC<HomePageProps> = ({
       現在沒匯入就是空的（點下去挑一張），存檔再也不會動到它。 */
   const heroSrc = previews.hero || null;
 
-  /* iOS Safari 會用 theme-color 畫時間／網路／電量那一列。以前全站固定 #000，
-     所以首頁主視覺即使已鋪到頂端，瀏覽器仍會蓋一條黑色。只在「修圖」首頁
-     取主視覺頂部平均色交給系統列；模板、我的與其他工具仍保持原本黑底。 */
+  /* Safari 的狀態列安全區露出的是 html/body 底色，不是首頁內容層本身。
+     取主視覺頂部平均色只填那塊頁面外的底；首頁內容仍維持原本 bg-black，
+     因此底部黑色漸層、半透明卡片與其他頁面的顏色都完全不受影響。 */
   const [homeBarColor, setHomeBarColor] = useState('#000000');
   useEffect(() => {
     if (!heroSrc) { setHomeBarColor('#000000'); return; }
@@ -882,7 +882,24 @@ export const HomePage: React.FC<HomePageProps> = ({
         const cx = cv.getContext('2d', { willReadFrequently: true });
         if (!cx) return;
         const sw = image.naturalWidth || 1, sh = image.naturalHeight || 1;
-        cx.drawImage(image, 0, 0, sw, Math.max(1, sh * 0.08), 0, 0, 32, 2);
+        /* 不是取原圖最上緣：object-cover 可能把原圖上下裁掉，那會讓系統列顏色
+           跟畫面真正接壤的那一排不同。照實際 .home-hero-art 尺寸反算目前可見
+           頂邊在原圖的位置，取到的就是使用者眼前那一排。 */
+        const art = artRef.current;
+        const frame = art?.parentElement;
+        if (art && frame) {
+          const ar = art.getBoundingClientRect();
+          const fr = frame.getBoundingClientRect();
+          const scale = Math.max(ar.width / sw, ar.height / sh);
+          const cropX = Math.max(0, (sw * scale - ar.width) / 2);
+          const cropY = Math.max(0, (sh * scale - ar.height) / 2);
+          const sx = Math.max(0, (cropX + fr.left - ar.left) / scale);
+          const sy = Math.max(0, (cropY + fr.top - ar.top) / scale);
+          const sampleW = Math.max(1, Math.min(sw - sx, fr.width / scale));
+          cx.drawImage(image, sx, sy, sampleW, Math.max(1, 3 / scale), 0, 0, 32, 2);
+        } else {
+          cx.drawImage(image, 0, sh * 0.4, sw, Math.max(1, sh * 0.02), 0, 0, 32, 2);
+        }
         const d = cx.getImageData(0, 0, 32, 2).data;
         let red = 0, green = 0, blue = 0, count = 0;
         for (let i = 0; i < d.length; i += 4) {
@@ -898,11 +915,30 @@ export const HomePage: React.FC<HomePageProps> = ({
   }, [heroSrc]);
 
   useLayoutEffect(() => {
-    const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-    if (!meta) return;
-    const previous = meta.content;
-    meta.content = nav === 'home' ? homeBarColor : '#000000';
-    return () => { meta.content = previous; };
+    const html = document.documentElement;
+    const viewport = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+    const previousHtml = html.style.backgroundColor;
+    const previousBody = document.body.style.backgroundColor;
+    const previousViewport = viewport?.content || '';
+    const color = nav === 'home' ? homeBarColor : '#000000';
+    /* Safari 的狀態列取 body 底色。真正的首頁內容仍由上面的 bg-black 根層完整
+       蓋住，所以這個顏色只會從瀏覽器保留的系統安全區露出，不會再染掉首頁
+       下方的黑色漸層／遮罩。切離首頁時 effect 會立刻恢復原值。 */
+    html.style.backgroundColor = '#000000';
+    document.body.style.backgroundColor = color;
+    /* viewport-fit 只允許在「加到主畫面」且正停在修圖首頁時存在。
+       之前把它寫死在 index.html，構圖／美顏／仿色也被迫改用瀏海座標系，
+       正是其他介面位置與底部空間一起變掉的原因。 */
+    const standalone = window.matchMedia?.('(display-mode: standalone)').matches ||
+      (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+    if (viewport && standalone && nav === 'home' && !/viewport-fit\s*=/.test(viewport.content)) {
+      viewport.content = `${viewport.content}, viewport-fit=cover`;
+    }
+    return () => {
+      html.style.backgroundColor = previousHtml;
+      document.body.style.backgroundColor = previousBody;
+      if (viewport) viewport.content = previousViewport;
+    };
   }, [homeBarColor, nav]);
 
   /** 整頁共用的那顆檔案選擇器（掛在最外層，見 return 最下面） */
@@ -1019,10 +1055,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   );
 
   return (
-    <div
-      className="w-full h-screen text-white font-sans flex flex-col overflow-hidden relative"
-      style={{ backgroundColor: nav === 'home' ? homeBarColor : '#000000' }}
-    >
+    <div className="w-full h-screen bg-black text-white font-sans flex flex-col overflow-hidden relative">
       {/* 主視覺搬到捲動區裡面去了（見下面）。標題列整個拿掉了 ——
            品牌字與聯絡鈕都在首頁那一頁裡，所以主視覺上面不再壓著任何一條。 */}
 
