@@ -6262,6 +6262,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      那塊區域」置中，跟圖多高無關。用 useLayoutEffect 是為了在同一次繪製前
      就把值算好，不會先閃一下原尺寸。ResizeObserver 負責轉向／視窗變化。 */
   const previewBoxRef = useRef<HTMLDivElement>(null);
+  const [previewBoxSize, setPreviewBoxSize] = useState({ width: 0, height: 0 });
+
+  /* 以預覽區「實際剩餘尺寸」限制圖片，而不是用 100vh 猜工具列高度。
+     這樣超長直圖也一定完整落在上下安全距離內，不會被底欄或頂欄裁掉。 */
+  useLayoutEffect(() => {
+    const box = previewBoxRef.current;
+    if (!box) return;
+    const measure = () => {
+      const rect = box.getBoundingClientRect();
+      const next = { width: Math.round(rect.width), height: Math.round(rect.height) };
+      setPreviewBoxSize(prev => prev.width === next.width && prev.height === next.height ? prev : next);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, []);
 
   /* 預覽的縮放／平移（雙指放大、拖動）。
      進遮色片時要把它「流暢地」推回原本的大小與位置：遮色片是畫在圖上的，
@@ -6907,7 +6925,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 style={{
                   maxHeight: hslFitNow
                     ? `${hslFitNow.mh}px`
-                    : 'calc(100vh - 340px)',
+                    : (previewBoxSize.height ? `${Math.max(1, previewBoxSize.height - 40)}px` : 'calc(100vh - 356px)'),
                   marginBottom: hslFitNow ? `${hslFitNow.mb}px` : undefined,
                   aspectRatio: previewAspect ? `${previewAspect.w}/${previewAspect.h}` : undefined,
                   width: previewAspect ? '100%' : 'auto',
@@ -6920,7 +6938,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   maxWidth: previewAspect
                     ? (hslFitNow
                         ? `min(calc(100% - 32px), ${(hslFitNow.mh * previewAspect.w) / previewAspect.h}px)`
-                        : `min(calc(100% - 32px), calc((100vh - 340px) * ${previewAspect.w} / ${previewAspect.h}))`)
+                        : (previewBoxSize.width && previewBoxSize.height
+                            ? `${Math.max(1, Math.min(previewBoxSize.width - 40, (previewBoxSize.height - 40) * previewAspect.w / previewAspect.h))}px`
+                            : `min(calc(100% - 32px), calc((100vh - 356px) * ${previewAspect.w} / ${previewAspect.h}))`))
                     : undefined,
                 }}
               >
@@ -7650,7 +7670,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           分頁列自己的上緣邊線，兩條 1px 疊在一起看起來就是一條比較粗的線
           （量到亮度剖面多一列：正常只有 29，疊到的時候是 29 + 26）。
           那種狀態下就把外框這一條收掉，留分頁列自己那條。 */}
-      <div className={`bg-[#111111] ${subStripHidden ? '' : 'border-t border-white/5'} flex flex-col shrink-0 pb-safe z-[55]`}>
+      <div className={`bg-[#111111] ${subStripHidden ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}>
         <div 
           className={`flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] ${fxPanel ? 'px-4' : 'px-8'}`}
           style={{
