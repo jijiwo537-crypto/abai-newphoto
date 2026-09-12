@@ -8036,16 +8036,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        {/* 底部只留 2px：比原本 6px 少 4px。整個底欄、上方滑桿列與預覽內的
-            前後對比鍵會因 flex 可用空間自然下移 4px，預覽也同步多出 4px。 */}
-        <div className="flex h-14 border-t border-white/10 bg-black box-content" style={{ paddingBottom: 2 }}>
-          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
+        {/* 48px 高並讓內容貼近底部：圖標尺寸不變，只收掉按鈕下方多餘空白；
+            空出的 8px 全數交還預覽區。 */}
+        <div className="flex h-12 border-t border-white/10 bg-black box-content" style={{ paddingBottom: 2 }}>
+          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-end pb-[2px] gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
           </button>
-          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-end pb-[2px] gap-1 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="tune" className="text-xl" fill={activeCategory === 'adjust'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">調節</span>
           </button>
-          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-end pb-[2px] gap-1 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
             <Icon name="magic_button" className="text-xl" fill={['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory)} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">特效</span>
           </button>
           <button onClick={() => {
@@ -8062,11 +8062,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               }
               setDraftGeo(geo);
               setActiveCategory('compose');
-            }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
+            }} className={`flex-1 flex flex-col items-center justify-end pb-[2px] gap-1 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
             {/* crop_rotate 兩側各有一支旋轉箭頭，改成單純的裁切符號 */}
             <Icon name="crop" className="text-xl" fill={activeCategory === 'compose'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">構圖</span>
           </button>
-          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-end pb-[2px] gap-1 transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="gradient" className="text-xl" fill={activeCategory === 'mask'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">遮色片</span>
           </button>
         </div>
