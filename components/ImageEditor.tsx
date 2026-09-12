@@ -6706,7 +6706,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       `}</style>
       
       {isEditorLoading && (
-        <div className="absolute inset-0 z-[120] flex items-center justify-center bg-[#080808]/80 backdrop-blur-md animate-in fade-in duration-300">
+        /* 首次解碼期間必須完全遮住預覽；半透明遮罩會把底下 canvas 從初始尺寸
+           切換到正確比例的那一幀透出來，看起來就像圖片上下抖了一下。 */
+        <div className="absolute inset-0 z-[120] flex items-center justify-center bg-[#080808]">
           <div className="flex flex-col items-center gap-4 text-white">
             <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
             <p className="text-[10px] font-black tracking-[0.2em] uppercase animate-pulse opacity-70">解析中...</p>
@@ -6920,12 +6922,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               {/* Sizing wrapper to ensure canvas and interactive overlay scale/move together perfectly */}
               <div
                 ref={previewFitRef}
-                /* 進出 HSL 不做動畫，所以那一次切換把過場關掉 */
-                className={`relative flex items-center justify-center ease-[cubic-bezier(0.2,0,0,1)] max-w-[calc(100%-32px)] ${hslSwitch ? 'transition-none' : 'transition-[max-height] duration-500'}`}
+                /* 預覽框尺寸是量測結果，不應該做補間；首次進頁若從暫存高度動畫到
+                   實際高度，圖片就會明顯上下抖動。HSL 原本也要求無進退場動畫。 */
+                className="relative flex items-center justify-center max-w-[calc(100%-32px)] transition-none"
                 style={{
                   /* 尺寸與比例尚未量完時不先畫錯誤位置；useLayoutEffect 會在首幀
                      顯示前完成量測，所以長圖不會再先抖一下才歸位。 */
-                  visibility: previewAspect && previewBoxSize.width && previewBoxSize.height ? 'visible' : 'hidden',
+                  visibility: !isEditorLoading && previewAspect && previewBoxSize.width && previewBoxSize.height ? 'visible' : 'hidden',
                   maxHeight: hslFitNow
                     ? `${hslFitNow.mh}px`
                     : (previewBoxSize.height ? `${Math.max(1, previewBoxSize.height - 40)}px` : 'calc(100vh - 356px)'),
