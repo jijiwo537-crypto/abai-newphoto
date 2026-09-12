@@ -16,4 +16,7 @@ export const SHAPE_IMG_LOVE333 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA
 /** 圖片形狀的圖案：id → 圖片。CollageTool 會照這張表建立對應的圖案。 */
 export const SHAPE_IMAGES: Record<string, string> = {
   pic333: SHAPE_IMG_LOVE333,
+  /* 主人提供的去背 ABAI 字樣。沿用圖片形狀管線，因此顏色、紋理、
+     描邊、發光、透明度與匯出都和 pic333 完全相同。 */
+  abai: './home-wordmark.png?v=20260912a',
 };

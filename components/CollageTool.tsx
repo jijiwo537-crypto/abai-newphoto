@@ -1983,6 +1983,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      所以「怎麼取 env」與「怎麼套回 env」都放在後面才填進這兩個 ref。 */
   const envSrcRef = useRef<any>({});
   const applyEnvRef = useRef<(e: any) => void>(() => {});
+  /* renderToCanvas 宣告在動畫 state 之前，圖案波浪的即時幅度因此走 ref；
+     拖滑桿時不重建龐大的繪圖函式，但下一格一定讀到最新數值。 */
+  const moShapeAmpRef = useRef(50);
   const envKey = (e: any) => {
     try {
       return JSON.stringify(e, (k, v) => (v instanceof HTMLImageElement ? v.src.slice(0, 96) : v));
@@ -4213,8 +4216,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!a) return { k: 1, x: h.x, y: h.y, rot: 0, a: 1, fx: 1, on: true, burst: 0 };
       const f = a.hole(h, holeOrder.get(h.id) ?? 0);
       const base = getHoleSize(h);
+      /* 圖案的波浪不能把整張遮罩切片重採樣：那會在半透明邊緣留下
+         一條一條橫向接縫。每顆圖案本來就是獨立單位，直接依它在遮罩中的
+         x 位置做同一條連續正弦位移，視覺仍是由左到右的波浪，同時完全
+         避免 Safari 動畫格上的切片縫與鋸齒。 */
+      const waveY = f.gridWave === undefined || (f.waveMix ?? 1) <= 1e-5
+        ? 0
+        : Math.sin((h.x / Math.max(1, maskW) - f.gridWave) * Math.PI * 2)
+          * Math.min(10, base * 0.065)
+          * Math.max(0.15, (moShapeAmpRef.current ?? 50) / 100)
+          * (f.waveMix ?? 1);
       return {
-        k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base, rot: f.rot, a: f.a, fx: f.fx,
+        k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base + waveY, rot: f.rot, a: f.a, fx: f.fx,
         burst: f.burst || 0,
         // 放射線還在的時候，就算圖案本身還沒亮起來也要留著這一格
         on: (f.k > 0.002 && f.a > 0.004) || (f.burst || 0) > 0.01,
@@ -6426,6 +6439,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 圖案是一整群：「進場耗時」給 3 秒才看得出一顆一顆冒出來，
      常駐維持上下飄（圖片與文字才是預設靜止）。 */
   const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: durFromSpeed(30), idle: 'float' });
+  moShapeAmpRef.current = moShape.amp;
   /** 連線：起始、畫完要多久、以及線往前長的曲線 */
   const [moLink, setMoLink] = useState({ delay: 0, dur: durFromSpeed(80), ease: 'linear' });
   /** 動畫頁上正在調哪一個元素：'shape' | 'link' | 物件 id */

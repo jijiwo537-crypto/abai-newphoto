@@ -1563,8 +1563,8 @@ export const HoleGlyph: React.FC<{ s: string; filled?: boolean }> = ({ s, filled
                           aria-hidden
                           style={{
                             display: 'block',
-                            width: 26,
-                            height: 26 / holeImgRatio(s),
+                            width: s === 'abai' ? 29 : 26,
+                            height: (s === 'abai' ? 29 : 26) / holeImgRatio(s),
                             backgroundColor: 'currentColor',
                             WebkitMaskImage: `url(${SHAPE_IMAGES[s]})`,
                             maskImage: `url(${SHAPE_IMAGES[s]})`,
