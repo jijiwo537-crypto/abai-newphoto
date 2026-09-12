@@ -1286,12 +1286,15 @@ export const HomePage: React.FC<HomePageProps> = ({
             onClick={e => e.stopPropagation()}
             className="absolute left-5 right-5 bottom-[7px] flex flex-col items-start select-none"
           >
-            <h1
-              className="abai-wordmark-enter font-serif leading-none tracking-tight font-medium"
-              style={{ fontSize: 'clamp(46px, 14.6vw, 62px)' }}
-            >
-              ABAI
-            </h1>
+            <img
+              src="./home-wordmark.png?v=20260912a"
+              alt="Abai"
+              draggable={false}
+              className="abai-wordmark-enter block h-auto select-none pointer-events-none"
+              /* 裁掉原檔透明留白後，以原本 ABAI 字樣的可視高度與左基準對齊；
+                 圖片不參與父層尺寸計算，所以主視覺和下方工具位置完全不動。 */
+              style={{ width: 'clamp(100px, 27vw, 116px)' }}
+            />
           </div>
         </div>
 

@@ -3245,6 +3245,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           d0: Math.max(1, Math.hypot(pts2[0].clientX - pts2[1].clientX, pts2[0].clientY - pts2[1].clientY)),
           a0: Math.atan2(pts2[1].clientY - pts2[0].clientY, pts2[1].clientX - pts2[0].clientX) * 180 / Math.PI,
           w0: oo.w, h0: oo.h, size0: oo.size || 0, rot0: oo.rot || 0,
+          /* 普通文字的 w/h 同時包含四邊擠壓比例；整體雙指縮放時基準盒也要
+             一起等比放大，否則字級放大一次、w/base 又放大一次，文字會以
+             k² 變大而選中框只有 k，兩者便愈縮放愈分離。 */
+          textStretchBaseW0: oo.type === 'text' && !oo.sym
+            ? ((oo as any).textStretchBaseW || oo.w) : 0,
+          textStretchBaseH0: oo.type === 'text' && !oo.sym
+            ? ((oo as any).textStretchBaseH || oo.h) : 0,
           textureBaseW0: (oo as any).textureBaseW || oo.w,
           textureBaseH0: (oo as any).textureBaseH || oo.h,
           rotOn: false, rotBias: 0,   // 旋轉的不動區：超過門檻才開始轉
@@ -3674,6 +3681,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         setGuides(pinchSnap.guides);
         setObjects(prev => prev.map(o => o.id === pin.id
           ? { ...o, w: nw, h: nh, size: pin.size0 ? pin.size0 * k : o.size,
+              ...(o.type === 'text' && !o.sym ? {
+                textStretchBaseW: pin.textStretchBaseW0 * k,
+                textStretchBaseH: pin.textStretchBaseH0 * k,
+              } : null),
               /* 整体缩放时纹理与图形一起缩放，网格数量保持不变；
                  四边挤压走另一条路径，不会改这两个基准。 */
               textureBaseW: pin.textureBaseW0 * k,

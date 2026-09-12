@@ -349,7 +349,11 @@
            時候就看得到，做成元件就一定會晚一步。 */
         #boot {
             position: fixed;
-            inset: 0;
+            left: 0;
+            top: 0;
+            width: 100vw;
+            height: 100vh;
+            height: 100lvh;
             z-index: 9998;
             background: #000;
             display: flex;
@@ -375,8 +379,8 @@
         }
         #boot img {
             /* 圖本身就是黑底，跟背景接得剛剛好，看不出邊 */
-            width: 168px;
-            height: 168px;
+            width: 252px;
+            height: 252px;
             animation: boot-breathe 2.4s ease-in-out infinite;
             transform: translateZ(0);
             transform-origin: 50% 50%;

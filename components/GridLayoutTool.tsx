@@ -5520,13 +5520,17 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const oldCx = d.x + d.width / 2, oldCy = d.y + d.height / 2;
     if (horizontal) {
       const width = Math.max(24, d.width + signed);
-      const shift = (width - d.width) * (image.scale || 1) / 2 * (d.side === 'r' ? 1 : -1);
+      /* x/y 儲存的是未縮放物件盒的左上角；pointer 位移在上面也已經除過
+         image.scale。這裡若再乘一次 scale，固定的對邊便會在擠壓時被推走，
+         而且倍率愈大偏得愈遠。中心只移動基礎尺寸差的一半，顯示、框與文字
+         就會永遠共用同一個固定對邊。 */
+      const shift = (width - d.width) / 2 * (d.side === 'r' ? 1 : -1);
       const cx = oldCx + shift * Math.cos(d.rotationRad), cy = oldCy + shift * Math.sin(d.rotationRad);
       const next = { width, height: d.height, x: cx - width / 2, y: cy - d.height / 2 };
       onChange(next);
     } else {
       const height = Math.max(24, d.height + signed);
-      const shift = (height - d.height) * (image.scale || 1) / 2 * (d.side === 'b' ? 1 : -1);
+      const shift = (height - d.height) / 2 * (d.side === 'b' ? 1 : -1);
       const cx = oldCx - shift * Math.sin(d.rotationRad), cy = oldCy + shift * Math.cos(d.rotationRad);
       const next = { width: d.width, height, x: cx - d.width / 2, y: cy - height / 2 };
       onChange(next);
