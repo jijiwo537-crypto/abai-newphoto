@@ -1165,7 +1165,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       </div>
 
       {/* 工具列。底部多留一點空間，避開 iPhone 的 home indicator */}
-      <div className="border-t border-white/10 bg-black shrink-0 pb-[calc(env(safe-area-inset-bottom,0px)+12px)]">
+      <div className="border-t border-white/10 bg-black shrink-0 pb-3">
       <div className="flex h-16">
         {BEAUTY_TOOLS.map(t => (
           <button

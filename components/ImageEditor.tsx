@@ -1,8052 +1,3735 @@
-
-import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
-import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
-import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
-import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
-import { LutGpu } from '../utils/lutGpu';
-import { FX_DEFS, FX_DEFAULTS, applyGlEffects, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
-import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity } from '../utils/compose';
-import { SaveButton } from './SaveButton';
-/* IG è²¼æ–‡é è¦½è·Ÿæ‹¼åœ–é‚£å…©å€‹å·¥å…·å…±ç”¨åŒä¸€é¡†å…ƒä»¶ */
-import { IgPreview } from './IgPreview';
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
-import { flushSync } from 'react-dom';
-import { saveDraft as saveToolDraft } from '../utils/toolDraft';
-import { addExport } from '../utils/exportHistory';
-import { canvasToUrl, revokeUrls } from '../utils/blobUrl';
-import { StuckEscape } from './StuckEscape';
-import { motion, AnimatePresence } from 'motion/react';
-import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
-import { ChevronLeft } from 'lucide-react';
-import ExifReader from 'exifreader';
-import { Icon } from './Icon';
-import type { ExitChoice } from '../types';
-
-import { pushHistory as pushHistoryEntry } from '../utils/history';
-interface Point { x: number; y: number; }
-
-interface Curves {
-  rgb: Point[];
-  r: Point[];
-  g: Point[];
-  b: Point[];
-}
-
-export interface EditorParams {
-  brightness: number;
-  exposure: number; contrast: number; highlights: number; shadows: number;
-  temp: number; tint: number; sat: number; vib: number;
-  sharpen: number; grain: number; soft: number; softThreshold: number;
-  softRadius: number; softColor: number; lutAmount: number;
-  vignette: number; blur: number; colorNoise: number; colorNoise2: number;
-  leakOpacity: number; leakAngle: number; leakHue: number;
-  fringeIntensity: number; fringeHue: number; fringeSize: number; fringeFeather: number;
-  curves: Curves;
-  hsl: HslAdjust;
-  maskExposure: number;
-  maskBrightness: number;
-  maskContrast: number;
-  maskHighlights: number;
-  maskShadows: number;
-  maskTemp: number;
-  maskTint: number;
-  maskSat: number;
-  maskVib: number;
-  maskCreated: boolean;
-  /* GLSL ç‰¹æ•ˆçš„åƒæ•¸ï¼ˆå¼·åº¦ + å„è‡ªçš„ç´°é …ï¼‰ï¼Œç”± utils/glEffects.ts çš„ FX_DEFS å®šç¾©ã€‚
-     ç”¨æ¨£æ¿å­—é¢å€¼çš„ç´¢å¼•ç°½ç« åªæ”¶ fx é–‹é ­çš„éµ â€”â€” å…¶ä»–æ¬„ä½æ‰“éŒ¯å­—ç…§æ¨£æœƒè¢«æŠ“å‡ºä¾†ã€‚ */
-  [fxKey: `fx${string}`]: number;
-  maskCx: number;
-  maskCy: number;
-  maskAngle: number;
-  maskD: number;
-  maskShowOverlay: boolean;
-}
-
-/* ---------------------------------------------------------------------------
-   HSLï¼ˆè‰²ç›¸ï¼é£½å’Œåº¦ï¼æ˜Žåº¦ï¼‰
-
-   å…«å€‹è‰²å¸¶çš„ä¸­å¿ƒï¼Œè·Ÿ Lightroomã€Camera Rawã€Capture One ç”¨çš„æ˜¯åŒä¸€çµ„
-   ï¼ˆHSL è‰²ç›¸è§’ï¼‰ã€‚å…«å€‹ä¸­å¿ƒçš„é–“è·åˆ»æ„ä¸å¹³å‡ â€”â€” ç´…æ©™é»ƒæ“ åœ¨ 0ï½ž60 åº¦ï¼Œ
-   æ˜¯å› ç‚ºè†šè‰²ã€å¤•é™½ã€æ¨¹è‘‰é€™äº›æœ€å¸¸è¢«å–®ç¨èª¿çš„æ±è¥¿éƒ½è½åœ¨é‚£ä¸€æ®µã€‚
-
-   æ¬Šé‡ç”¨ã€Œç›¸é„°å…©å€‹ä¸­å¿ƒä¹‹é–“å…§æ’ã€ç®—ï¼Œæ‰€ä»¥ä»»ä½•è‰²ç›¸çš„å…«å€‹æ¬Šé‡åŠ èµ·ä¾†ä¸€å®šæ˜¯ 1
-   ï¼ˆpartition of unityï¼‰ï¼Œä¸æœƒæœ‰æŸå€‹è‰²ç›¸è¢«é‡è¤‡èª¿åˆ°æˆ–æ¼æŽ‰ã€‚å…§æ’ç”¨ smoothstep
-   è€Œä¸æ˜¯ç·šæ€§ â€”â€” åœ¨ä¸­å¿ƒé»žä¸Šæ–œçŽ‡æ˜¯ 0ï¼Œè‰²ç›¸æ¼¸å±¤æŽƒéŽåŽ»æ™‚ä¸æœƒå‡ºç¾æŠ˜è§’ã€‚
-
-   å¦å¤–å½©åº¦æŽ¥è¿‘ 0 çš„åƒç´ è‰²ç›¸æ˜¯é›œè¨Šï¼ˆatan/max-min æœƒäº‚è·³ï¼‰ï¼Œæ‰€ä»¥ä½Žå½©åº¦æ™‚
-   æ¬Šé‡æ•´å€‹æ·¡å‡ºï¼Œä¸ç„¶ç°ç‰†ã€ç™½ç´™ä¸Šæœƒå†’å‡ºéš¨æ©Ÿçš„è‰²æ–‘ã€‚                        */
-export type HslBand = { h: number; s: number; l: number };
-export type HslAdjust = HslBand[];
-
-export const HSL_BANDS = [
-  { id: 'red', label: 'ç´…', hue: 0, swatch: '#ff3b30' },
-  { id: 'orange', label: 'æ©™', hue: 30, swatch: '#ff9500' },
-  { id: 'yellow', label: 'é»ƒ', hue: 60, swatch: '#ffd60a' },
-  { id: 'green', label: 'ç¶ ', hue: 120, swatch: '#34c759' },
-  { id: 'aqua', label: 'é’', hue: 180, swatch: '#32ade6' },
-  { id: 'blue', label: 'è—', hue: 240, swatch: '#0a84ff' },
-  { id: 'purple', label: 'ç´«', hue: 270, swatch: '#af52de' },
-  { id: 'magenta', label: 'æ´‹ç´…', hue: 300, swatch: '#ff2d70' },
-] as const;
-
-/* ä¸‰æ ¹æ»‘æ¡¿æŽ¨åˆ°åº•æ™‚å„è‡ªæœ€å¤šèƒ½å‹•å¤šå°‘ã€‚åˆ»æ„åšå¾—ä¿å®ˆ â€”â€”
-   HSL åªè¦ä¸€éŽé ­å°±æœƒå‡ºç¾è‰²å¡Šèˆ‡æ–·éšŽï¼Œå¯§å¯è®“ä½¿ç”¨è€…å¤šæŽ¨ä¸€é»žã€‚ */
-/** è‰²ç›¸æ»‘æ¡¿æŽ¨åˆ°åº•æ™‚ï¼Œè‰²ç›¸æœ€å¤šè½‰å¹¾åº¦ */
-const HSL_MAX_HUE_SHIFT = 15;
-/** é£½å’Œåº¦æ»‘æ¡¿æŽ¨åˆ°åº•æ™‚ï¼Œå½©åº¦æœ€å¤šä¹˜ï¼é™¤å¤šå°‘ */
-const HSL_MAX_SAT = 0.5;
-/** æ˜Žåº¦æ»‘æ¡¿æŽ¨åˆ°åº•æ™‚ï¼Œæœ€å¤šå¾€é»‘æˆ–ç™½é å¤šå°‘ */
-const HSL_MAX_LUM = 0.1;
-const HSL_CENTERS = Float32Array.from(HSL_BANDS.map(b => b.hue));
-/** HSL é¢æ¿çš„é«˜åº¦ï¼ˆé‡å‡ºä¾†çš„ï¼Œè¦‹ä¸Šé¢çš„èªªæ˜Žï¼‰ */
-const HSL_PANEL_H = 196;
-const HSL_SLIDERS = [
-  { key: 'h' as const, label: 'è‰²ç›¸' },
-  { key: 's' as const, label: 'é£½å’Œåº¦' },
-  { key: 'l' as const, label: 'æ˜Žåº¦' },
-];
-
-export const DEFAULT_HSL: HslAdjust = HSL_BANDS.map(() => ({ h: 0, s: 0, l: 0 }));
-
-export const isHslIdentity = (x: HslAdjust | undefined): boolean =>
-  !x || x.every(b => b.h === 0 && b.s === 0 && b.l === 0);
-
-const DEFAULT_CURVES: Curves = {
-  rgb: [{x:0,y:0}, {x:255,y:255}],
-  r: [{x:0,y:0}, {x:255,y:255}],
-  g: [{x:0,y:0}, {x:255,y:255}],
-  b: [{x:0,y:0}, {x:255,y:255}]
-};
-
-/** æ›²ç·šèˆ‡ HSL çš„è®Šæ›´ç°½ç« ã€‚å…©è€…éƒ½ä¸æ˜¯å–®ä¸€æ•¸å­—ï¼Œå¿«å–è¦é é€™å€‹å­—ä¸²åˆ¤æ–·æœ‰æ²’æœ‰è®Š */
-export const toneSig = (p: EditorParams): string =>
-  JSON.stringify(p.curves) + '#' + JSON.stringify(p.hsl ?? DEFAULT_HSL);
-
-export const DEFAULT_PARAMS: EditorParams = {
-  brightness: 0,
-  exposure: 0, contrast: 0, highlights: 0, shadows: 0,
-  temp: 0, tint: 0, sat: 0, vib: 0,
-  sharpen: 0, grain: 0, soft: 0, softThreshold: 70,
-  softRadius: 100, softColor: 0, lutAmount: 100,
-  vignette: 0, blur: 0, colorNoise: 0, colorNoise2: 0,
-  leakOpacity: 0, leakAngle: 45, leakHue: 15,
-  fringeIntensity: 0, fringeHue: 8, fringeSize: 10, fringeFeather: 100,
-  curves: JSON.parse(JSON.stringify(DEFAULT_CURVES)),
-  hsl: JSON.parse(JSON.stringify(DEFAULT_HSL)),
-  maskExposure: 0,
-  maskBrightness: 0,
-  maskContrast: 0,
-  maskHighlights: 0,
-  maskShadows: 0,
-  maskTemp: 0,
-  maskTint: 0,
-  maskSat: 0,
-  maskVib: 0,
-  maskCreated: false,
-  maskCx: 0.5,
-  maskCy: 0.5,
-  maskAngle: 0,
-  maskD: 0.25,
-  maskShowOverlay: true,
-  ...FX_DEFAULTS,
-};
-
-type Category = 'filter' | 'adjust' | 'effects' | 'leak' | 'soft' | 'grain' | 'halation' | 'mask' | 'compose' | 'fx';
-type CurveChannel = 'rgb' | 'r' | 'g' | 'b';
-
-interface ToolDef {
-  id: string; 
-  label: string;
-  icon: string;
-  min: number;
-  max: number;
-  step?: number;
-}
-
-const MASK_TOOLS: ToolDef[] = [
-  { id: 'maskBrightness', label: 'äº®åº¦', icon: 'light_mode', min: -100, max: 100 },
-  { id: 'maskExposure', label: 'æ›å…‰', icon: 'brightness_6', min: -100, max: 100 },
-  { id: 'maskContrast', label: 'å°æ¯”', icon: 'contrast', min: -100, max: 100 },
-  { id: 'maskHighlights', label: 'é«˜å…‰', icon: 'wb_sunny', min: -100, max: 100 },
-  { id: 'maskShadows', label: 'é™°å½±', icon: 'brightness_low', min: -100, max: 100 },
-  { id: 'maskTemp', label: 'è‰²æº«', icon: 'device_thermostat', min: -100, max: 100 },
-  { id: 'maskTint', label: 'è‰²èª¿', icon: 'colorize', min: -100, max: 100 },
-  { id: 'maskSat', label: 'é£½å’Œåº¦', icon: 'palette', min: -100, max: 100 },
-  { id: 'maskVib', label: 'è‡ªç„¶é£½å’Œåº¦', icon: 'color_lens', min: -100, max: 100 },
-];
-
-const ADJUST_TOOLS: ToolDef[] = [
-  { id: 'brightness', label: 'äº®åº¦', icon: 'light_mode', min: -100, max: 100 },
-  { id: 'exposure', label: 'æ›å…‰', icon: 'brightness_6', min: -100, max: 100 },
-  { id: 'contrast', label: 'å°æ¯”', icon: 'contrast', min: -100, max: 100 },
-  { id: 'highlights', label: 'é«˜å…‰', icon: 'wb_sunny', min: -100, max: 100 },
-  { id: 'shadows', label: 'é™°å½±', icon: 'brightness_low', min: -100, max: 100 },
-  { id: 'temp', label: 'è‰²æº«', icon: 'device_thermostat', min: -100, max: 100 },
-  { id: 'tint', label: 'è‰²èª¿', icon: 'colorize', min: -100, max: 100 },
-  { id: 'sat', label: 'é£½å’Œåº¦', icon: 'palette', min: -100, max: 100 },
-  { id: 'vib', label: 'è‡ªç„¶é£½å’Œåº¦', icon: 'color_lens', min: -100, max: 100 },
-  { id: 'curves', label: 'æ›²ç·š', icon: 'show_chart', min: 0, max: 0 }, // Curves tool
-  // ä¸èƒ½å†ç”¨ gradient â€”â€” é‚£æ˜¯ä¸‹é¢ã€Œé®è‰²ç‰‡ã€åˆ†é åœ¨ç”¨çš„åœ–æ¨™ï¼Œå…©å€‹é•·ä¸€æ¨£æœƒæ··æ·†
-  { id: 'hsl', label: 'HSL', icon: 'invert_colors', min: 0, max: 0 },   // HSL tool
-  /* éŠ³åŒ–æœ¬ä¾†åœ¨ç‰¹æ•ˆé‚£ä¸€æŽ’ï¼Œæ¬éŽä¾†æŽ’æœ€å¾Œã€‚å®ƒåº•å±¤é‚„æ˜¯ GLSL é‚£ä¸€å±¤ç®—çš„
-     ï¼ˆparams.fxSharpenï¼‰ï¼Œåªæ˜¯å…¥å£ç§»åˆ°èª¿ç¯€ï¼Œåœ–æ¨™ç”¨ç©ºå¿ƒä¸‰è§’å½¢ã€‚ */
-  { id: 'fxSharpen', label: 'éŠ³åŒ–', icon: 'change_history', min: 0, max: 100 },
-];
-
-const SOFT_LIGHT_TOOLS: ToolDef[] = [
-  { id: 'soft', label: 'å¼·åº¦', icon: 'blur_on', min: 0, max: 100 },
-  { id: 'softThreshold', label: 'ç¯„åœ', icon: 'tonality', min: 0, max: 95 },
-  { id: 'softRadius', label: 'æ“´æ•£', icon: 'flare', min: 20, max: 100 },
-  { id: 'softColor', label: 'è‰²ç›¸', icon: 'palette', min: 0, max: 100 },
-];
-
-const HALATION_TOOLS: ToolDef[] = [
-  { id: 'fringeIntensity', label: 'å¼·åº¦', icon: 'flare', min: 0, max: 100 },
-  { id: 'fringeSize', label: 'æ“´æ•£', icon: 'blur_on', min: 0, max: 100 },
-  { id: 'fringeFeather', label: 'ç¯„åœ', icon: 'tonality', min: 0, max: 100 },
-  { id: 'fringeHue', label: 'è‰²ç›¸', icon: 'palette', min: 0, max: 360 },
-];
-
-const GRAIN_TOOLS: ToolDef[] = [
-  { id: 'grain', label: 'é¡†ç²’', icon: 'grain', min: 0, max: 100 },
-  { id: 'colorNoise', label: 'å½©å™ªI', icon: 'texture', min: 0, max: 100 },
-  { id: 'colorNoise2', label: 'å½©å™ªII', icon: 'texture', min: 0, max: 100 },
-];
-
-/* ç‰¹æ•ˆçš„æŽ’åˆ—é †åºï¼š
-     å…ˆæ˜¯åŽŸæœ¬å°±æœ‰çš„åŸºæœ¬æ¬¾ï¼ˆæŸ”å…‰â†’å…‰æšˆâ†’æ¼å…‰â†’æ¨¡ç³Šâ†’å™ªé»žâ†’æš—è§’â†’äº®è§’ï¼‰ï¼Œ
-     å†ä¾æ€§è³ªåˆ†çµ„å¾€å¾ŒæŽ¥ï¼šæ¨¡ç³Šå‹•æ…‹ â†’ å…‰å­¸ â†’ å¾©å¤è³ªæ„Ÿ â†’ æ•…éšœ â†’ åœ–å½¢åŒ–ã€‚
-   æœ‰å¤šå€‹åƒæ•¸çš„ç‰¹æ•ˆï¼ˆå«æ–°åŠ çš„ï¼‰é»žä¸‹åŽ»æœƒåƒæŸ”å…‰é‚£æ¨£å±•é–‹è‡ªå·±çš„åƒæ•¸åˆ—ã€‚ */
-/** æŠŠæ‰€æœ‰ç‰¹æ•ˆéƒ½é—œæŽ‰çš„ä¸€çµ„è¦†å¯«å€¼ â€”â€” ç®—ç‰¹æ•ˆç¸®åœ–æ™‚ç”¨ï¼Œè®“æ¯ä¸€æ ¼åªæœ‰è‡ªå·±é‚£ä¸€å€‹æ•ˆæžœ */
-const NO_EFFECT_PARAMS: Record<string, number> = {
-  soft: 0, fringeIntensity: 0, leakOpacity: 0, blur: 0, colorNoise: 0, colorNoise2: 0,
-  grain: 0, vignette: 0,
-  ...Object.fromEntries(FX_DEFS.map(d => [d.id, 0])),
-};
-
-const EFFECT_TOOLS: ToolDef[] = [
-  /* é€™ä¸‰é¡†çš„å¼·åº¦å„è‡ªå°æ‡‰åˆ°è‡ªå·±çš„åƒæ•¸ï¼ˆè¦‹ EFFECT_AMOUNTï¼‰ï¼Œç¯„åœå°±æ˜¯ 0ï½ž100 */
-  { id: 'softLight', label: 'æŸ”å…‰', icon: 'blur_on', min: 0, max: 100 },
-  { id: 'halation', label: 'å…‰æšˆ', icon: 'flare', min: 0, max: 100 },
-  { id: 'lightLeak', label: 'æ¼å…‰', icon: 'leak_add', min: 0, max: 100 },
-  { id: 'colorNoise', label: 'å™ªé»ž', icon: 'grain', min: 0, max: 100 },
-  /* æœ¦æœ§ï¼ˆåŽŸæœ¬å«ã€Œæ¨¡ç³Šã€ï¼‰è·Ÿå¾Œé¢é‚£ä¸€çµ„æ¨¡ç³Šé¡žæŽ’åœ¨ä¸€èµ· */
-  { id: 'blur', label: 'æœ¦æœ§', icon: 'blur_linear', min: 0, max: 100 },
-  /* æš—è§’æ¬åˆ°ä¸‹é¢è·Ÿäº®è§’æ”¾ä¸€èµ·äº†ï¼ˆfxVignetteï¼‰ï¼Œé€™è£¡ä¸å†æ”¾å–®æ»‘æ¡¿é‚£é¡†ã€‚
-     èˆŠä½œå“è£¡çš„ params.vignette ä»ç„¶ç…§æ¨£ç®—å¾—å‡ºä¾†ï¼Œåªæ˜¯ä¸å†å¾žä»‹é¢èª¿æ•´ã€‚ */
-  /* éŠ³åŒ–å·²ç¶“æ¬åˆ°ã€Œèª¿ç¯€ã€çš„æœ€å¾Œé¢äº†ï¼Œé€™ä¸€æŽ’ä¸å†åˆ—å®ƒ */
-  ...FX_DEFS.filter(d => d.id !== 'fxSharpen')
-    .map(d => ({ id: d.id, label: d.label, icon: d.icon, min: 0, max: 100 })),
-];
-
-/* ç‰¹æ•ˆå¡ç‰‡æŒ‰ä¸‹åŽ»ä¹‹å¾Œï¼Œä¸Šé¢é‚£æ ¹æ»‘æ¡¿è¦èª¿çš„æ˜¯ã€Œé€™å€‹ç‰¹æ•ˆçš„å¼·åº¦ã€ã€‚
-   æŸ”å…‰ï¼å…‰æšˆï¼æ¼å…‰çš„å¼·åº¦ä¸æ˜¯å¡ç‰‡ id æœ¬èº«ï¼Œå„è‡ªå°æ‡‰åˆ°è‡ªå·±çš„åƒæ•¸ â€”â€”
-   æ²’æœ‰å°åˆ°çš„è©±é‚£æ ¹æ»‘æ¡¿çš„ç¯„åœæœƒæ˜¯ 0ï½ž0ï¼Œçœ‹èµ·ä¾†å°±æ˜¯ã€Œæ‹–ä¸å‹•ã€ã€‚ */
-const EFFECT_AMOUNT: Record<string, string> = {
-  softLight: 'soft',
-  halation: 'fringeIntensity',
-  lightLeak: 'leakOpacity',
-};
-const effectAmountId = (id: string) => EFFECT_AMOUNT[id] || id;
-
-/** åœ¨æ¸…å–®è£¡é»žä¸‹é€™é¡†ç‰¹æ•ˆæ™‚è¦å¥—çš„å¼·åº¦ï¼ˆå·²ç¶“é–‹è‘—çš„å°±ä¸å‹•å®ƒï¼‰ */
-const EFFECT_ON_AMOUNT: Record<string, number> = {
-  lightLeak: 100,
-  ...Object.fromEntries(FX_DEFS.map(d => [d.id, d.onAmount ?? 100])),
-};
-
-/** æ¯ä¸€å¼µç‰¹æ•ˆå¡ç‰‡ã€Œè‡ªå·±çš„ã€åƒæ•¸éµ â€”â€” ä¸€æ¬¡åªèƒ½å¥—ä¸€å€‹ï¼Œåˆ‡åˆ°åˆ¥é¡†æ™‚å…¶é¤˜çš„éƒ½è¦æ­¸é›¶ */
-const EFFECT_OWN_KEYS: Record<string, string[]> = {
-  softLight: ['soft'],
-  halation: ['fringeIntensity'],
-  lightLeak: ['leakOpacity'],
-  colorNoise: ['colorNoise', 'grain', 'colorNoise2'],
-  blur: ['blur'],
-  ...Object.fromEntries(FX_DEFS.map(d => [d.id, [d.id]])),
-};
-
-/** ç¾åœ¨ç•«é¢ä¸Šé‚„æœ‰æ²’æœ‰ã€Œé‚„æ²’åˆä½µã€çš„ç‰¹æ•ˆï¼ˆåˆä½µéŽçš„åƒæ•¸æ˜¯ 0ï¼Œæ‰€ä»¥è‡ªç„¶ä¸ç®—ï¼‰ */
-const hasLiveEffect = (p: any) => Object.keys(NO_EFFECT_PARAMS).some(k => (p?.[k] || 0) !== 0);
-
-/**
- * ç‰¹æ•ˆç‰½æ¶‰åˆ°çš„ã€Œæ‰€æœ‰ã€åƒæ•¸éµ â€”â€” å¼·åº¦ä¹‹å¤–ï¼Œé€£ç´°é …ä¹Ÿç®—é€²ä¾†
- * ï¼ˆæŸ”å…‰çš„é–€æª»ï¼åŠå¾‘ï¼è‰²èª¿ã€å…‰æšˆçš„è‰²ç›¸ï¼å¤§å°ï¼ç¾½åŒ–ã€æ¼å…‰çš„è§’åº¦ï¼è‰²ç›¸ï¼Œ
- *  ä»¥åŠæ¯ä¸€å€‹æ–°ç‰¹æ•ˆè‡ªå·±é‚£å¹¾æ ¹ï¼‰ã€‚
- *
- * é»žä¸€å¼µç‰¹æ•ˆå¡ç‰‡ï¼å¾žé ­ä¾†éŽï¼šæ•´çµ„å›žåˆ°é è¨­å€¼ï¼Œè€Œä¸æ˜¯åªæŠŠå¼·åº¦æ­¸ä½ â€”â€”
- * ä»¥å‰åªé‡è¨­å¼·åº¦ï¼Œä¸Šä¸€æ¬¡åœ¨ç´°é …é¢æ¿è£¡èª¿éŽçš„æ±è¥¿æœƒç•™è‘—ï¼Œ
- * æ–¼æ˜¯ã€ŒåŒä¸€é¡†ç‰¹æ•ˆé»žå…©æ¬¡ã€å¾—åˆ°çš„çµæžœä¸ä¸€æ¨£ã€‚
- */
-const EFFECT_ALL_KEYS: string[] = Array.from(new Set([
-  ...Object.keys(NO_EFFECT_PARAMS),
-  'softThreshold', 'softRadius', 'softColor',
-  'leakAngle', 'leakHue',
-  'fringeHue', 'fringeSize', 'fringeFeather',
-  ...FX_DEFS.flatMap(d => d.params.map(p => p.id)),
-]));
-
-/** æŠŠæ‰€æœ‰ç‰¹æ•ˆåƒæ•¸ï¼ˆå«ç´°é …ï¼‰æ•´çµ„æ‰“å›žé è¨­å€¼ */
-const resetAllEffectParams = (base: any) => {
-  const out = { ...base };
-  for (const k of EFFECT_ALL_KEYS) out[k] = (DEFAULT_PARAMS as any)[k] ?? 0;
-  return out;
-};
-
-/** å¡ç‰‡ â†’ å®ƒçš„ç´°é …é¢æ¿æ˜¯å“ªä¸€å€‹åˆ†é ï¼ˆæ²’æœ‰çš„å°±æ˜¯æ²’æœ‰ç´°é …å¯èª¿ï¼‰ */
-const EFFECT_DETAIL_CAT: Record<string, 'soft' | 'leak' | 'halation' | 'fx'> = {
-  softLight: 'soft',
-  lightLeak: 'leak',
-  halation: 'halation',
-};
-
-/** ä»»ä½•ä¸€å€‹ fx éµ â†’ å®ƒå±¬æ–¼å“ªå€‹ç‰¹æ•ˆï¼ˆå¼·åº¦éµæœ¬èº«ä¹Ÿå°æ‡‰åˆ°è‡ªå·±ï¼‰ */
-const FX_OWNER: Record<string, FxDef> = (() => {
-  const m: Record<string, FxDef> = {};
-  for (const d of FX_DEFS) {
-    m[d.id] = d;
-    for (const p of d.params) m[p.id] = d;
-  }
-  return m;
-})();
-
-/** æ–°ç‰¹æ•ˆè‡ªå·±çš„åƒæ•¸åˆ—ï¼ˆå¼·åº¦ + ç´°é …ï¼‰ï¼Œå°æ‡‰ FX_DEFS */
-const FX_TOOLS: Record<string, ToolDef[]> = Object.fromEntries(
-  FX_DEFS.map(d => [d.id, [
-    // å¼·åº¦ç”¨ percent â€”â€” tune æ˜¯ã€Œèª¿ç¯€ã€åˆ†é çš„åœ–æ¨™ï¼Œä¸èƒ½æ‹¿ä¾†é‡è¤‡ç”¨
-    { id: d.id, label: 'å¼·åº¦', icon: 'percent', min: 0, max: 100 },
-    // hidden çš„é‚£å¹¾æ ¹ä¸çµ¦èª¿æ•´ï¼ˆå€¼æ°¸é æ˜¯é è¨­ï¼‰ï¼Œä»‹é¢ä¸Šå°±ä¸è¦å‡ºç¾
-    ...d.params.filter(p => !p.hidden)
-      .map(p => ({ id: p.id, label: p.label, icon: p.icon, min: p.min, max: p.max, step: p.step })),
-  ] as ToolDef[]]),
-);
-
-/** æœ€å¤–å±¤é‚£æ ¹æ»‘æ¡¿è¦æ”¹èª¿å“ªä¸€å€‹åƒæ•¸ï¼ˆæ²’è¨­å°±æ˜¯èª¿ã€Œå¼·åº¦ã€ï¼‰ã€‚
-    ä¾†æºæ˜¯ FX_DEFS çš„ rootParamï¼Œè·Ÿæ‹¼åœ–é‚£é‚Šè®€åŒä¸€ä»½å®šç¾©ã€‚ */
-const FX_ROOT_PARAM: Record<string, ToolDef> = Object.fromEntries(
-  FX_DEFS.filter(d => d.rootParam).map(d => {
-    const p = d.params.find(x => x.id === d.rootParam)!;
-    return [d.id, { id: p.id, label: p.label, icon: p.icon, min: p.min, max: p.max, step: p.step } as ToolDef];
-  }),
-);
-
-const LEAK_TOOLS: ToolDef[] = [
-  { id: 'leakOpacity', label: 'å¼·åº¦', icon: 'opacity', min: 0, max: 100 },
-  { id: 'leakAngle', label: 'è§’åº¦', icon: 'rotate_right', min: 0, max: 360 },
-  { id: 'leakHue', label: 'è‰²ç›¸', icon: 'palette', min: 0, max: 360 },
-];
-
-// ... (helpers remain same)
-export function hslToRgb(h: number, s: number, l: number): [number, number, number] {
-  let r, g, b;
-  if (s === 0) {
-      r = g = b = l; 
-  } else {
-      const hue2rgb = (p: number, q: number, t: number) => {
-          if (t < 0) t += 1;
-          if (t > 1) t -= 1;
-          if (t < 1 / 6) return p + (q - p) * 6 * t;
-          if (t < 1 / 2) return q;
-          if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-          return p;
-      };
-      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-      const p = 2 * l - q;
-      r = hue2rgb(p, q, h + 1 / 3);
-      g = hue2rgb(p, q, h);
-      b = hue2rgb(p, q, h - 1 / 3);
-  }
-  return [(r * 255 + 0.5) | 0, (g * 255 + 0.5) | 0, (b * 255 + 0.5) | 0];
-}
-
-// ... (getSplineY, generateCurveLut, boxBlurH, boxBlurV, fastBlur, precomputeSharpenDetail, generateNoisePattern - no changes)
-// --- CURVE SPLINE MATH ---
-function getSplineY(x: number, points: Point[]): number {
-    const pts = [...points].sort((a,b)=>a.x-b.x);
-    const n = pts.length;
-    if (n === 2) {
-        if (x <= pts[0].x) return pts[0].y;
-        if (x >= pts[1].x) return pts[1].y;
-        return pts[0].y + (x-pts[0].x)/(pts[1].x-pts[0].x)*(pts[1].y-pts[0].y);
-    }
-    const dx = [], ms = [], c1s = [];
-    for(let i=0; i<n-1; i++) { 
-        dx[i] = pts[i+1].x - pts[i].x; 
-        ms[i] = (pts[i+1].y - pts[i].y) / dx[i]; 
-    }
-    c1s[0] = ms[0]; 
-    for(let i=0; i<n-2; i++) {
-        const m = ms[i], mNext = ms[i+1];
-        if (m*mNext <= 0) {
-            c1s.push(0);
-        } else {
-            c1s.push(3*(dx[i]+dx[i+1])/((dx[i]+2*dx[i+1])/m+(dx[i+1]+2*dx[i])/mNext));
-        }
-    }
-    c1s.push(ms[ms.length-1]);
-    
-    if(x <= pts[0].x) return pts[0].y; 
-    if(x >= pts[n-1].x) return pts[n-1].y;
-    
-    let k = 0; while(x > pts[k+1].x) k++;
-    const t = (x - pts[k].x) / dx[k];
-    const t2 = t*t;
-    const t3 = t2*t;
-    const h00 = 2*t3 - 3*t2 + 1;
-    const h10 = t3 - 2*t2 + t;
-    const h01 = -2*t3 + 3*t2;
-    const h11 = t3 - t2;
-    
-    return pts[k].y * h00 + dx[k] * c1s[k] * h10 + pts[k+1].y * h01 + dx[k] * c1s[k+1] * h11;
-}
-
-export function generateCurveLut(channelPoints: Point[]): Uint8Array {
-    const lut = new Uint8Array(256);
-    for (let i = 0; i < 256; i++) {
-        lut[i] = Math.max(0, Math.min(255, Math.round(getSplineY(i, channelPoints))));
-    }
-    return lut;
-}
-
-// 60FPS Optimization: Pre-calculate Exposure, Contrast, and Brightness into a single 1D LUT
-// Reuses the output buffer to prevent Garbage Collection stutter.
-export function generateBaseCorrectionLut(exposure: number, contrast: number, brightness: number, output: Uint8Array): void {
-    const exp = Math.pow(2, (exposure * 0.175) / 100);
-    // Standard contrast formula
-    const conFactor = (259 * ((contrast * 0.2975) + 255)) / (255 * (259 - (contrast * 0.2975)));
-    // Reduce effect amplitude by 50% (from 0.5 to 0.25)
-    const brightVal = brightness * 0.25;
-
-    for (let i = 0; i < 256; i++) {
-        let val = i;
-        // 1. Exposure
-        val *= exp;
-        // 2. Brightness
-        val += brightVal;
-        // 3. Contrast
-        val = conFactor * (val - 128) + 128;
-        // Clamp
-        output[i] = Math.max(0, Math.min(255, val + 0.5)) | 0;
-    }
-}
-
-function boxBlurH(s: Uint8ClampedArray, d: Uint8ClampedArray, w: number, h: number, r: number) {
-  const iarr = 1 / (r + r + 1);
-  for (let i = 0; i < h; i++) {
-    let ti = i * w, li = ti, ri = ti + r;
-    let fvR = s[ti * 4], fvG = s[ti * 4 + 1], fvB = s[ti * 4 + 2], fvA = s[ti * 4 + 3];
-    let lvR = s[(ti + w - 1) * 4], lvG = s[(ti + w - 1) * 4 + 1], lvB = s[(ti + w - 1) * 4 + 2], lvA = s[(ti + w - 1) * 4 + 3];
-    let vR = (r + 1) * fvR, vG = (r + 1) * fvG, vB = (r + 1) * fvB, vA = (r + 1) * fvA;
-    for (let j = 0; j < r; j++) { vR += s[(ti + j) * 4]; vG += s[(ti + j) * 4 + 1]; vB += s[(ti + j) * 4 + 2]; vA += s[(ti + j) * 4 + 3]; }
-    for (let j = 0; j <= r; j++) {
-      vR += s[ri * 4] - fvR; vG += s[ri * 4 + 1] - fvG; vB += s[ri * 4 + 2] - fvB; vA += s[ri * 4 + 3] - fvA;
-      d[ti * 4] = vR * iarr; d[ti * 4 + 1] = vG * iarr; d[ti * 4 + 2] = vB * iarr; d[ti * 4 + 3] = vA * iarr;
-      ri++; ti++;
-    }
-    for (let j = r + 1; j < w - r; j++) {
-      vR += s[ri * 4] - s[li * 4]; vG += s[ri * 4 + 1] - s[li * 4 + 1]; vB += s[ri * 4 + 2] - s[li * 4 + 2]; vA += s[ri * 4 + 3] - s[li * 4 + 3];
-      d[ti * 4] = vR * iarr; d[ti * 4 + 1] = vG * iarr; d[ti * 4 + 2] = vB * iarr; d[ti * 4 + 3] = vA * iarr;
-      ri++; li++; ti++;
-    }
-    for (let j = w - r; j < w; j++) {
-      vR += lvR - s[li * 4]; vG += lvG - s[li * 4 + 1]; vB += lvB - s[li * 4 + 2]; vA += lvA - s[li * 4 + 3];
-      d[ti * 4] = vR * iarr; d[ti * 4 + 1] = vG * iarr; d[ti * 4 + 2] = vB * iarr; d[ti * 4 + 3] = vA * iarr;
-      li++; ti++;
-    }
-  }
-}
-
-function boxBlurV(s: Uint8ClampedArray, d: Uint8ClampedArray, w: number, h: number, r: number) {
-  const iarr = 1 / (r + r + 1);
-  for (let i = 0; i < w; i++) {
-    let ti = i, li = ti, ri = ti + r * w;
-    let fvR = s[ti * 4], fvG = s[ti * 4 + 1], fvB = s[ti * 4 + 2], fvA = s[ti * 4 + 3];
-    let lvR = s[(ti + (h - 1) * w) * 4], lvG = s[(ti + (h - 1) * w) * 4 + 1], lvB = s[(ti + (h - 1) * w) * 4 + 2], lvA = s[(ti + (h - 1) * w) * 4 + 3];
-    let vR = (r + 1) * fvR, vG = (r + 1) * fvG, vB = (r + 1) * fvB, vA = (r + 1) * fvA;
-    for (let j = 0; j < r; j++) { vR += s[(ti + j * w) * 4]; vG += s[(ti + j * w) * 4 + 1]; vB += s[(ti + j * w) * 4 + 2]; vA += s[(ti + j * w) * 4 + 3]; }
-    for (let j = 0; j <= r; j++) {
-      vR += s[ri * 4] - fvR; vG += s[ri * 4 + 1] - fvG; vB += s[ri * 4 + 2] - fvB; vA += s[ri * 4 + 3] - fvA;
-      d[ti * 4] = vR * iarr; d[ti * 4 + 1] = vG * iarr; d[ti * 4 + 2] = vB * iarr; d[ti * 4 + 3] = vA * iarr;
-      ri += w; ti += w;
-    }
-    for (let j = r + 1; j < h - r; j++) {
-      vR += s[ri * 4] - s[li * 4]; vG += s[ri * 4 + 1] - s[li * 4 + 1]; vB += s[ri * 4 + 2] - s[li * 4 + 2]; vA += s[ri * 4 + 3] - s[li * 4 + 3];
-      d[ti * 4] = vR * iarr; d[ti * 4 + 1] = vG * iarr; d[ti * 4 + 2] = vB * iarr; d[ti * 4 + 3] = vA * iarr;
-      ri += w; li += w; ti += w;
-    }
-    for (let j = h - r; j < h; j++) {
-      vR += lvR - s[li * 4]; vG += lvG - s[li * 4 + 1]; vB += lvB - s[li * 4 + 2]; vA += lvA - s[li * 4 + 3];
-      d[ti * 4] = vR * iarr; d[ti * 4 + 1] = vG * iarr; d[ti * 4 + 2] = vB * iarr; d[ti * 4 + 3] = vA * iarr;
-      li += w; ti += w;
-    }
-  }
-}
-
-export function fastBlur(imageData: ImageData, width: number, height: number, radius: number, sharedBuffer: Uint8ClampedArray | null) {
-  if (radius < 1) return imageData;
-  const data = imageData.data;
-  const res = (sharedBuffer && sharedBuffer.length >= data.length) ? sharedBuffer : new Uint8ClampedArray(data.length);
-  const r = Math.floor(radius);
-  for (let pass = 0; pass < 2; pass++) {
-    boxBlurH(data, res, width, height, r);
-    boxBlurV(res, data, width, height, r);
-  }
-  return imageData;
-}
-
-function precomputeSharpenDetail(sourceData: Uint8ClampedArray, w: number, h: number): Int8Array {
-  const len = sourceData.length;
-  const detail = new Int8Array(len);
-  const stride = w * 4;
-  
-  for (let y = 1; y < h - 1; y++) {
-    const rowOffset = y * stride;
-    const upOffset = rowOffset - stride;
-    const downOffset = rowOffset + stride;
-
-    for (let x = 1; x < w - 1; x++) {
-      const i = rowOffset + (x * 4);
-      const left = i - 4; const right = i + 4;
-      const up = upOffset + (x * 4);
-      const down = downOffset + (x * 4);
-      
-      for (let c = 0; c < 3; c++) {
-         const val = sourceData[i + c];
-         const avg = (sourceData[up + c] + sourceData[down + c] + sourceData[left + c] + sourceData[right + c]) * 0.25;
-         detail[i + c] = (val - avg) >> 1; // Fit perfectly into Int8
-      }
-    }
-  }
-  return detail;
-}
-
-export function generateNoisePattern(type: 'grain' | 'color', size: number = 512): HTMLCanvasElement {
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = canvas.getContext('2d')!;
-    const imgData = ctx.createImageData(size, size);
-    const data = imgData.data;
-    const len = data.length;
-    
-    for (let i = 0; i < len; i += 4) {
-        if (type === 'grain') {
-            const v = (Math.random() * 255) | 0;
-            data[i] = v; data[i+1] = v; data[i+2] = v;
-        } else {
-            data[i] = (Math.random() * 255) | 0;
-            data[i+1] = (Math.random() * 255) | 0;
-            data[i+2] = (Math.random() * 255) | 0;
-        }
-        data[i+3] = 255;
-    }
-    ctx.putImageData(imgData, 0, 0);
-    return canvas;
-}
-
-const DITHER_SIZE = 4096;
-const ditherTable = new Float32Array(DITHER_SIZE);
-for (let i = 0; i < DITHER_SIZE; i++) {
-    ditherTable[i] = (Math.random() - 0.5) * 0.75;
-}
-
-const masterLUT_R = new Float32Array(32768);
-const masterLUT_G = new Float32Array(32768);
-const masterLUT_B = new Float32Array(32768);
-
-/**
- * æ¯ä¸€é¡†æ¿¾é¡é»žä¸‹åŽ»æ™‚çš„é è¨­å¼·åº¦ã€‚
- *
- * é€™ä»¶äº‹æœ¬ä¾†æ˜¯é æ¯”å°æª”åæ±ºå®šçš„ï¼ˆurl.includes('IMG_9026') ä¹‹é¡žï¼‰ã€‚
- * æ¿¾é¡æª”æ”¹åæˆ f1â€¦f23 ä¹‹å¾Œé‚£äº›æ¯”å°å°±é€šé€šå°ä¸ä¸Šï¼Œæ‰€æœ‰æ¿¾é¡éƒ½è®Šæˆ 100 â€”â€”
- * çœ‹èµ·ä¾†å°±æ˜¯ã€Œæ¯ä¸€é¡†éƒ½æ¯”ä»¥å‰æ¿ƒã€ã€‚æ”¹æˆç›´æŽ¥ç”¨æ¿¾é¡ id å°ç…§ï¼Œ
- * ä»¥å¾Œæ›æª”åã€æ›åœ–åºŠéƒ½ä¸æœƒå†å½±éŸ¿åˆ°å¼·åº¦ã€‚
- *
- * æ²’åˆ—åœ¨é€™è£¡çš„å°±æ˜¯ 100ã€‚
- */
-/* é€™ä»½è¡¨æ¬åˆ° utils/photoFx å…±ç”¨äº† â€”â€” æ‹¼åœ–é‚£é‚ŠæŒ‘åŒä¸€é¡†æ¿¾é¡è¦æœ‰åŒæ¨£çš„æ¿ƒæ·¡ã€‚
-   é€™è£¡æ²¿ç”¨åŒä¸€ä»½ï¼ˆè¦‹æª”é ­çš„ importï¼‰ï¼Œè¡Œç‚ºä¸€å€‹å­—éƒ½æ²’æœ‰è®Šã€‚ */
-
-export const processPixels = (
-  sourceData: Uint8ClampedArray,
-  destData: Uint8ClampedArray,
-  w: number,
-  h: number,
-  p: EditorParams,
-  lutData: Uint8ClampedArray | null,
-  lutSize: number,
-  baseCorrectionLut: Uint8Array, 
-  sharpenDetail: Int8Array | null,
-  useNearestLut: boolean,
-  curveLuts: { rgb: Uint8Array, r: Uint8Array, g: Uint8Array, b: Uint8Array }
-) => {
-  if (!sourceData || !destData || sourceData.length !== destData.length) return;
-
-  const cLutM = curveLuts.rgb;
-  const cLutR = curveLuts.r;
-  const cLutG = curveLuts.g;
-  const cLutB = curveLuts.b;
-  
-  const hasCurves = p.curves.rgb.length > 2 || p.curves.r.length > 2 || p.curves.g.length > 2 || p.curves.b.length > 2 ||
-                    p.curves.rgb.some((pt: any) => pt.y !== pt.x) || p.curves.r.some((pt: any) => pt.y !== pt.x) || 
-                    p.curves.g.some((pt: any) => pt.y !== pt.x) || p.curves.b.some((pt: any) => pt.y !== pt.x);
-
-  // Temperature & Tint Constants
-  const tempK = p.temp * 0.15 * 0.3;
-  const tintK = p.tint * 0.04 * 2 * 0.3;
-  let rAdj = 0, gAdj = 0, bAdj = 0;
-  if (tempK > 0) { rAdj = tempK * 1.2; gAdj = tempK * 0.4; bAdj = -tempK * 0.8; }
-  else { bAdj = Math.abs(tempK) * 1.2; rAdj = -Math.abs(tempK) * 0.5; }
-  gAdj += tintK;
-  
-  const hasTempTint = rAdj !== 0 || gAdj !== 0 || bAdj !== 0;
-
-  // Saturation & Vibrance Constants
-  const satMult = 1 + (p.sat * 0.5 / 100);
-  const vibVal = (p.vib * 0.5) / 100;
-  const hasVib = vibVal !== 0;
-
-  // Film LUT Constants
-  const lutAmount = p.lutAmount / 100;
-  const hasLut = !!lutData && lutAmount > 0;
-  const lutSizeSq = lutSize * lutSize;
-  const lutMax = lutSize - 1;
-  
-  // HSL Constants â€”â€” å…«å€‹è‰²å¸¶å…ˆæ”¤å¹³æˆä¸‰å€‹å°é™£åˆ—ï¼Œå…§è¿´åœˆå°±ä¸ç”¨ä¸€ç›´èµ°ç‰©ä»¶
-  const hslArr = p.hsl && p.hsl.length === 8 ? p.hsl : DEFAULT_HSL;
-  const hasHsl = !isHslIdentity(hslArr);
-  const hslCenters = HSL_CENTERS;
-  const hslH = new Float32Array(8), hslS = new Float32Array(8), hslL = new Float32Array(8);
-  for (let k = 0; k < 8; k++) {
-    hslH[k] = hslArr[k].h / 100;
-    hslS[k] = hslArr[k].s / 100 * HSL_MAX_SAT;
-    hslL[k] = hslArr[k].l / 100 * HSL_MAX_LUM;
-  }
-
-  // Sharpen Constants (Multiply amount since Int8 is halved)
-  const hasSharpen = p.sharpen > 0 && !!sharpenDetail;
-  const sharpenAmount = p.sharpen > 0 ? ((p.sharpen / 100) * 0.59) * 2.0 : 0;
-  
-  // Shadows / Highlights Constants - Professional Logarithmic Transition
-  const shadows = p.shadows / 100;
-  const highlights = p.highlights / 100;
-
-  const shLut = new Float32Array(256);
-  for (let i = 0; i < 256; i++) {
-      const luma = i / 255;
-      let offset = 0;
-      
-      // Professional Shadows: Rec.709 inspired toe correction
-      if (shadows !== 0) {
-          // Left (negative) should strengthen (brighten/lift)
-          // Right (positive) should reduce
-          const shadowMask = Math.pow(1.0 - luma, 3.0);
-          offset -= shadows * shadowMask * 17.5; 
-      }
-      
-      // Professional Highlights: Soft shoulder roll-off
-      if (highlights !== 0) {
-          // Left (negative) should strengthen (darken/compress)
-          // Right (positive) should reduce (brighten/boost)
-          const highlightMask = Math.pow(luma, 3.0);
-          offset += highlights * highlightMask * 35.0;
-      }
-      
-      shLut[i] = offset;
-  }
-
-  const protectLut = new Float32Array(256);
-  if (hasTempTint) {
-      for (let i = 0; i < 256; i++) {
-          let pr = (i - 5) * 0.02;
-          protectLut[i] = pr < 0 ? 0 : pr;
-      }
-  }
-
-  // --- SMART OPTIMIZATION: MASTER 3D LUT BAKING ---
-  // In order to process 2.56M pixels at 60fps within a single CPU thread without losing resolution,
-  // we adopt the DaVinci Resolve proxy pattern: we bake the ENTIRE math-heavy color pipeline 
-  // into an interim 32x32x32 3D Master LUT (takes < 2ms to generate).
-  
-  const MASTER_DIM = 32;
-  const MASTER_MAX = 31;
-  let masterIdx = 0;
-
-  for (let l_b = 0; l_b < MASTER_DIM; l_b++) {
-      for (let l_g = 0; l_g < MASTER_DIM; l_g++) {
-          for (let l_r = 0; l_r < MASTER_DIM; l_r++) {
-              let r = (l_r * 255.0) / 31.0;
-              let g = (l_g * 255.0) / 31.0;
-              let b = (l_b * 255.0) / 31.0;
-
-              // 1. Base Correction
-              const ri = r | 0; const gi = g | 0; const bi = b | 0;
-              r = baseCorrectionLut[ri];
-              g = baseCorrectionLut[gi];
-              b = baseCorrectionLut[bi];
-
-              // 2. Shadows & Highlights (Logarithmic roll-off)
-              const lumaKey = (r * 77 + g * 150 + b * 29) >> 8;
-              const shOffset = shLut[lumaKey];
-              r += shOffset; g += shOffset; b += shOffset;
-              r = r < 0 ? 0 : r > 255 ? 255 : r; g = g < 0 ? 0 : g > 255 ? 255 : g; b = b < 0 ? 0 : b > 255 ? 255 : b;
-
-              // 3. Temp & Tint
-              if (hasTempTint) {
-                  const protect = protectLut[(r * 77 + g * 150 + b * 29) >> 8];
-                  r += rAdj * protect; g += gAdj * protect; b += bAdj * protect;
-                  r = r < 0 ? 0 : r > 255 ? 255 : r; g = g < 0 ? 0 : g > 255 ? 255 : g; b = b < 0 ? 0 : b > 255 ? 255 : b;
-              }
-
-              // 4. Curves
-              if (hasCurves) {
-                  const ri2 = r | 0; const gi2 = g | 0; const bi2 = b | 0;
-                  const cr = cLutR[cLutM[ri2]]; const cg = cLutG[cLutM[gi2]]; const cb = cLutB[cLutM[bi2]];
-                  r = r + (cr - r) * 0.7; g = g + (cg - g) * 0.7; b = b + (cb - b) * 0.7;
-              }
-
-              // 5. Saturation
-              const avg = (r + g + b) * 0.33333;
-              if (satMult !== 1) {
-                  r = avg + (r - avg) * satMult; g = avg + (g - avg) * satMult; b = avg + (b - avg) * satMult;
-              }
-
-              // 6. Vibrance
-              if (hasVib) {
-                  let max = r > g ? (r > b ? r : b) : (g > b ? g : b);
-                  let min = r < g ? (r < b ? r : b) : (g < b ? g : b);
-                  const curSat = max === 0 ? 0 : (max - min) / max;
-                  const boost = vibVal > 0 ? vibVal * (1 - curSat * curSat) : vibVal;
-                  const b1 = 1 + boost;
-                  r = avg + (r - avg) * b1; g = avg + (g - avg) * b1; b = avg + (b - avg) * b1;
-              }
-
-              r = r < 0 ? 0 : r > 255 ? 255 : r; g = g < 0 ? 0 : g > 255 ? 255 : g; b = b < 0 ? 0 : b > 255 ? 255 : b;
-
-              // 7. LUT (Film)
-              if (hasLut && lutData) {
-                  const s = 0.00392156862 * lutMax;
-                  const rf = r * s; const gf = g * s; const bf = b * s;
-                  const r0 = rf | 0; const r1 = r0 + 1 > lutMax ? lutMax : r0 + 1;
-                  const g0 = gf | 0; const g1 = g0 + 1 > lutMax ? lutMax : g0 + 1;
-                  const b0 = bf | 0; const b1 = b0 + 1 > lutMax ? lutMax : b0 + 1;
-                  const dr = rf - r0; const dg = gf - g0; const db = bf - b0;
-                  const b0sz = b0 * lutSizeSq; const b1sz = b1 * lutSizeSq;
-                  const g0sz = g0 * lutSize; const g1sz = g1 * lutSize;
-                  const i000 = (b0sz + g0sz + r0) * 3; const i100 = (b0sz + g0sz + r1) * 3;
-                  const i010 = (b0sz + g1sz + r0) * 3; const i110 = (b0sz + g1sz + r1) * 3;
-                  const i001 = (b1sz + g0sz + r0) * 3; const i101 = (b1sz + g0sz + r1) * 3;
-                  const i011 = (b1sz + g1sz + r0) * 3; const i111 = (b1sz + g1sz + r1) * 3;
-                  const r_00 = lutData[i000] + (lutData[i100] - lutData[i000]) * dr;
-                  const r_01 = lutData[i001] + (lutData[i101] - lutData[i001]) * dr;
-                  const r_10 = lutData[i010] + (lutData[i110] - lutData[i010]) * dr;
-                  const r_11 = lutData[i011] + (lutData[i111] - lutData[i011]) * dr;
-                  const r_0 = r_00 + (r_10 - r_00) * dg; const r_1 = r_01 + (r_11 - r_01) * dg;
-                  const lr = r_0 + (r_1 - r_0) * db;
-                  const g_00 = lutData[i000+1] + (lutData[i100+1] - lutData[i000+1]) * dr;
-                  const g_01 = lutData[i001+1] + (lutData[i101+1] - lutData[i001+1]) * dr;
-                  const g_10 = lutData[i010+1] + (lutData[i110+1] - lutData[i010+1]) * dr;
-                  const g_11 = lutData[i011+1] + (lutData[i111+1] - lutData[i011+1]) * dr;
-                  const g_0 = g_00 + (g_10 - g_00) * dg; const g_1 = g_01 + (g_11 - g_01) * dg;
-                  const lg = g_0 + (g_1 - g_0) * db;
-                  const b_00 = lutData[i000+2] + (lutData[i100+2] - lutData[i000+2]) * dr;
-                  const b_01 = lutData[i001+2] + (lutData[i101+2] - lutData[i001+2]) * dr;
-                  const b_10 = lutData[i010+2] + (lutData[i110+2] - lutData[i010+2]) * dr;
-                  const b_11 = lutData[i011+2] + (lutData[i111+2] - lutData[i011+2]) * dr;
-                  const b_0 = b_00 + (b_10 - b_00) * dg; const b_1 = b_01 + (b_11 - b_01) * dg;
-                  const lb = b_0 + (b_1 - b_0) * db;
-                  r += (lr - r) * lutAmount; g += (lg - g) * lutAmount; b += (lb - b) * lutAmount;
-              }
-
-              // 8. HSL â€”â€” æ”¾åœ¨æœ€å¾Œï¼Œæ‰€ä»¥ä½¿ç”¨è€…çœ‹åˆ°ä»€éº¼é¡è‰²å°±æ˜¯åœ¨èª¿ä»€éº¼é¡è‰²
-              if (hasHsl) {
-                  const mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
-                  const mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
-                  const chroma = mx - mn;
-                  // å½©åº¦å¤ªä½Žçš„æ™‚å€™è‰²ç›¸æ˜¯é›œè¨Šï¼Œæ¬Šé‡æ·¡å‡ºï¼Œç°ç‰†æ‰ä¸æœƒå†’å‡ºè‰²æ–‘
-                  const gt = chroma * 0.00392156862;   // /255
-                  const tg = gt <= 0.03 ? 0 : gt >= 0.12 ? 1 : (gt - 0.03) / 0.09;
-                  const gate = tg * tg * (3 - 2 * tg);
-                  if (gate > 0) {
-                      let hue: number;
-                      if (mx === r) hue = 60 * (((g - b) / chroma) % 6);
-                      else if (mx === g) hue = 60 * ((b - r) / chroma + 2);
-                      else hue = 60 * ((r - g) / chroma + 4);
-                      if (hue < 0) hue += 360;
-                      const lgt = (mx + mn) * 0.00196078431;   // /2/255
-                      const sat = chroma / (255 - Math.abs(mx + mn - 255));
-
-                      // è½åœ¨å“ªå…©å€‹è‰²å¸¶ä¸­å¿ƒä¹‹é–“ï¼Œç”¨ smoothstep å…§æ’ï¼ˆå…©é¡†æ¬Šé‡åŠ èµ·ä¾† = 1ï¼‰
-                      let i0 = 7;
-                      for (let k = 0; k < 7; k++) { if (hue < hslCenters[k + 1]) { i0 = k; break; } }
-                      const c0 = hslCenters[i0];
-                      const c1 = i0 === 7 ? 360 : hslCenters[i0 + 1];
-                      const i1 = i0 === 7 ? 0 : i0 + 1;
-                      const tt = c1 === c0 ? 0 : (hue - c0) / (c1 - c0);
-                      const wb = tt * tt * (3 - 2 * tt);
-                      const wa = 1 - wb;
-
-                      const dh = (hslH[i0] * wa + hslH[i1] * wb) * gate;
-                      const ds = (hslS[i0] * wa + hslS[i1] * wb) * gate;
-                      const dl = (hslL[i0] * wa + hslL[i1] * wb) * gate;
-
-                      let h2 = hue + dh * HSL_MAX_HUE_SHIFT;
-                      if (h2 < 0) h2 += 360; else if (h2 >= 360) h2 -= 360;
-                      let s2 = sat * (1 + ds);
-                      s2 = s2 < 0 ? 0 : s2 > 1 ? 1 : s2;
-                      let l2 = dl >= 0 ? lgt + (1 - lgt) * dl : lgt * (1 + dl);
-                      l2 = l2 < 0 ? 0 : l2 > 1 ? 1 : l2;
-
-                      // HSL â†’ RGB
-                      const cc = (1 - Math.abs(2 * l2 - 1)) * s2;
-                      const hp = h2 / 60;
-                      const xx = cc * (1 - Math.abs((hp % 2) - 1));
-                      let r2 = 0, g2 = 0, b2 = 0;
-                      if (hp < 1) { r2 = cc; g2 = xx; }
-                      else if (hp < 2) { r2 = xx; g2 = cc; }
-                      else if (hp < 3) { g2 = cc; b2 = xx; }
-                      else if (hp < 4) { g2 = xx; b2 = cc; }
-                      else if (hp < 5) { r2 = xx; b2 = cc; }
-                      else { r2 = cc; b2 = xx; }
-                      const mm = l2 - cc * 0.5;
-                      r = (r2 + mm) * 255; g = (g2 + mm) * 255; b = (b2 + mm) * 255;
-                      r = r < 0 ? 0 : r > 255 ? 255 : r;
-                      g = g < 0 ? 0 : g > 255 ? 255 : g;
-                      b = b < 0 ? 0 : b > 255 ? 255 : b;
-                  }
-              }
-
-              masterLUT_R[masterIdx] = r; masterLUT_G[masterIdx] = g; masterLUT_B[masterIdx] = b;
-              masterIdx++;
-          }
-      }
-  }
-
-  // --- APPLY MASTER LUT TO PIXELS ---
-  const len = sourceData.length;
-  const sLUT = 0.12156862745; // 31 / 255
-  let ditherIdx = 0;
-
-  // Split into explicit loops to guarantee CPU JIT vectorization and no block de-opts
-  if (useNearestLut) {
-      // Nearest-neighbor sampling: extremely fast for high-res previews during interaction (~60fps)
-      for (let i = 0; i < len; i += 4) {
-          const r = sourceData[i], g = sourceData[i+1], b = sourceData[i+2];
-
-          // Quantize to 32x32x32 master LUT index (branchless)
-          const r_idx = (r * 0.12156862745 + 0.5) | 0;
-          const g_idx = (g * 0.12156862745 + 0.5) | 0;
-          const b_idx = (b * 0.12156862745 + 0.5) | 0;
-
-          const masterIdx = (b_idx << 10) | (g_idx << 5) | r_idx;
-
-          const dither = ditherTable[ditherIdx & 4095];
-          ditherIdx++;
-
-          destData[i] = masterLUT_R[masterIdx] + dither;
-          destData[i+1] = masterLUT_G[masterIdx] + dither;
-          destData[i+2] = masterLUT_B[masterIdx] + dither;
-          destData[i+3] = 255;
-      }
-  } else if (hasSharpen) {
-      for (let i = 0; i < len; i += 4) {
-          let r = sourceData[i], g = sourceData[i+1], b = sourceData[i+2];
-
-          const rf = r * sLUT; const gf = g * sLUT; const bf = b * sLUT;
-          const r0 = rf | 0; const g0 = gf | 0; const b0 = bf | 0;
-          const r1 = r0 === 31 ? 31 : r0 + 1;
-          const g1 = g0 === 31 ? 31 : g0 + 1;
-          const b1 = b0 === 31 ? 31 : b0 + 1;
-          
-          const dr = rf - r0; const dg = gf - g0; const db = bf - b0;
-
-          const b0_O = b0 << 10; const b1_O = b1 << 10;
-          const g0_O = g0 << 5; const g1_O = g1 << 5;
-
-          const i000 = b0_O | g0_O | r0;
-          const i111 = b1_O | g1_O | r1;
-          let iA, iB, w0, w1, w2, w3;
-
-          if (dr > dg) {
-              if (dg > db) {
-                  iA = b0_O | g0_O | r1; iB = b0_O | g1_O | r1; w0 = 1.0 - dr; w1 = dr - dg; w2 = dg - db; w3 = db;
-              } else if (dr > db) {
-                  iA = b0_O | g0_O | r1; iB = b1_O | g0_O | r1; w0 = 1.0 - dr; w1 = dr - db; w2 = db - dg; w3 = dg;
-              } else {
-                  iA = b1_O | g0_O | r0; iB = b1_O | g0_O | r1; w0 = 1.0 - db; w1 = db - dr; w2 = dr - dg; w3 = dg;
-              }
-          } else {
-              if (db > dg) {
-                  iA = b1_O | g0_O | r0; iB = b1_O | g1_O | r0; w0 = 1.0 - db; w1 = db - dg; w2 = dg - dr; w3 = dr;
-              } else if (db > dr) {
-                  iA = b0_O | g1_O | r0; iB = b1_O | g1_O | r0; w0 = 1.0 - dg; w1 = dg - db; w2 = db - dr; w3 = dr;
-              } else {
-                  iA = b0_O | g1_O | r0; iB = b0_O | g1_O | r1; w0 = 1.0 - dg; w1 = dg - dr; w2 = dr - db; w3 = db;
-              }
-          }
-
-          r = masterLUT_R[i000] * w0 + masterLUT_R[iA] * w1 + masterLUT_R[iB] * w2 + masterLUT_R[i111] * w3;
-          g = masterLUT_G[i000] * w0 + masterLUT_G[iA] * w1 + masterLUT_G[iB] * w2 + masterLUT_G[i111] * w3;
-          b = masterLUT_B[i000] * w0 + masterLUT_B[iA] * w1 + masterLUT_B[iB] * w2 + masterLUT_B[i111] * w3;
-
-          const detail = sharpenDetail![i]; 
-          r += detail * sharpenAmount; g += detail * sharpenAmount; b += detail * sharpenAmount;
-
-          const dither = ditherTable[ditherIdx & 4095];
-          ditherIdx++;
-
-          destData[i] = r + dither; destData[i+1] = g + dither; destData[i+2] = b + dither; destData[i+3] = 255;
-      }
-  } else {
-      for (let i = 0; i < len; i += 4) {
-          let r = sourceData[i], g = sourceData[i+1], b = sourceData[i+2];
-
-          const rf = r * sLUT; const gf = g * sLUT; const bf = b * sLUT;
-          const r0 = rf | 0; const g0 = gf | 0; const b0 = bf | 0;
-          const r1 = r0 === 31 ? 31 : r0 + 1;
-          const g1 = g0 === 31 ? 31 : g0 + 1;
-          const b1 = b0 === 31 ? 31 : b0 + 1;
-          
-          const dr = rf - r0; const dg = gf - g0; const db = bf - b0;
-
-          const b0_O = b0 << 10; const b1_O = b1 << 10;
-          const g0_O = g0 << 5; const g1_O = g1 << 5;
-
-          const i000 = b0_O | g0_O | r0;
-          const i111 = b1_O | g1_O | r1;
-          let iA, iB, w0, w1, w2, w3;
-
-          if (dr > dg) {
-              if (dg > db) {
-                  iA = b0_O | g0_O | r1; iB = b0_O | g1_O | r1; w0 = 1.0 - dr; w1 = dr - dg; w2 = dg - db; w3 = db;
-              } else if (dr > db) {
-                  iA = b0_O | g0_O | r1; iB = b1_O | g0_O | r1; w0 = 1.0 - dr; w1 = dr - db; w2 = db - dg; w3 = dg;
-              } else {
-                  iA = b1_O | g0_O | r0; iB = b1_O | g0_O | r1; w0 = 1.0 - db; w1 = db - dr; w2 = dr - dg; w3 = dg;
-              }
-          } else {
-              if (db > dg) {
-                  iA = b1_O | g0_O | r0; iB = b1_O | g1_O | r0; w0 = 1.0 - db; w1 = db - dg; w2 = dg - dr; w3 = dr;
-              } else if (db > dr) {
-                  iA = b0_O | g1_O | r0; iB = b1_O | g1_O | r0; w0 = 1.0 - dg; w1 = dg - db; w2 = db - dr; w3 = dr;
-              } else {
-                  iA = b0_O | g1_O | r0; iB = b0_O | g1_O | r1; w0 = 1.0 - dg; w1 = dg - dr; w2 = dr - db; w3 = db;
-              }
-          }
-
-          r = masterLUT_R[i000] * w0 + masterLUT_R[iA] * w1 + masterLUT_R[iB] * w2 + masterLUT_R[i111] * w3;
-          g = masterLUT_G[i000] * w0 + masterLUT_G[iA] * w1 + masterLUT_G[iB] * w2 + masterLUT_G[i111] * w3;
-          b = masterLUT_B[i000] * w0 + masterLUT_B[iA] * w1 + masterLUT_B[iB] * w2 + masterLUT_B[i111] * w3;
-
-          const dither = ditherTable[ditherIdx & 4095];
-          ditherIdx++;
-
-          destData[i] = r + dither; destData[i+1] = g + dither; destData[i+2] = b + dither; destData[i+3] = 255;
-      }
-  }
-};
-
-// ... (ImageEditorProps and BufferSet interfaces remain same)
-interface ImageEditorProps {
-  /** å¾žæ­·å²ç´€éŒ„é»žé–‹ä¾†çš„é‚£ä¸€ç­†çš„ keyã€‚å†è¨˜ä¸€æ¬¡çš„æ™‚å€™æ²¿ç”¨å®ƒï¼æ›´æ–°åŒä¸€ç­† */
-  histKey?: string | null;
-  imageSrc: string;
-  /** æ‰¹é‡ç·¨è¼¯ï¼šé€™æ¬¡åŒ¯å…¥çš„æ‰€æœ‰ç…§ç‰‡ã€‚æ²’çµ¦æˆ–åªæœ‰ä¸€å¼µæ™‚ï¼Œä»‹é¢è·Ÿä»¥å‰å®Œå…¨ä¸€æ¨£ã€‚ */
-  batchSrcs?: string[];
-  /** æ‰¹é‡ç·¨è¼¯è£¡æŒ‰ã€Œæ–°å¢žã€ï¼šå†æŒ‘ç…§ç‰‡æŽ¥é€²ä¾† */
-  onAddPhotos?: () => void;
-  lutList: { id: string, name: string, url: string }[];
-  onSave: (newSrc: string) => void;
-  onCancel: (keepDraft?: boolean) => void;
-  onHome?: () => void;
-  onRequestExit?: () => Promise<ExitChoice>;
-  onImportNew?: () => void;
-  originalFile?: File | null;
-  /** æŽ¥çºŒä¸Šæ¬¡æ™‚æŠŠå­˜ä¸‹ä¾†çš„åƒæ•¸é¤µå›žä¾†ï¼ˆè·³å‡ºæ‡‰ç”¨å†å›žä¾†ç”¨çš„ï¼‰ */
-  initialState?: { params?: EditorParams; geo?: GeoParams; selectedLutIdx?: number } | null;
-}
-
-interface HistoryItem {
-  params: EditorParams;
-  selectedLutIdx: number;
-  /** æ§‹åœ–æ˜¯å¹¾ä½•æ“ä½œï¼Œè·Ÿè‰²å½©åƒæ•¸åˆ†é–‹å­˜ï¼Œæ’¤éŠ·æ™‚æ‰ä¸æœƒåªå›žå¾©ä¸€åŠ */
-  geo?: GeoParams;
-  /** é€™ä¸€æ­¥ç•¶ä¸‹çš„ä¾†æºåœ–æ¸…å–®ã€‚åˆä½µæœƒæŠŠçƒ¤å¥½çš„åœ–æ›æˆæ–°ä¾†æºï¼Œ
-      æ’¤éŠ·æ™‚è¦é€£ä¾†æºä¸€èµ·æ›å›žåŽ»ï¼Œä¸ç„¶åªå›žå¾©åƒæ•¸ï¼é‚£ä¸€å±¤æ°¸é ç•™åœ¨åœ–ä¸Šã€‚ */
-  srcs?: string[];
-  isSoftActive: boolean;
-  isBlurActive: boolean;
-  isGrainActive: boolean;
-  isHalationActive: boolean;
-  softManuallyAdjusted: boolean;
-  blurManuallyAdjusted: boolean;
-  grainManuallyAdjusted: boolean;
-  halationManuallyAdjusted: boolean;
-}
-
-interface BufferSet {
-    source: Uint8ClampedArray | null;
-    dest: Uint8ClampedArray | null;
-    shared: Uint8ClampedArray | null;
-    lutted: Uint8ClampedArray | null;
-    lut0: Uint8ClampedArray | null;
-    lut100: Uint8ClampedArray | null;
-    temp: Uint8ClampedArray | null;
-    sharpenDetail: Int8Array | null;
-    w: number;
-    h: number;
-}
-
-interface FastSliderProps {
-    value: number; min: number; max: number; step: number; 
-    toolId: string; label: string; snapZero: boolean;
-    onUpdate: (id: string, val: number) => void;
-    onInteractStart: () => void;
-    onInteractEnd: () => void;
-    onReset: (e: any, id: string) => void;
-    onValueClick?: (id: string) => void;
-    disabled?: boolean;
-    softActive?: boolean;
-    onToggleSoft?: () => void;
-    blurActive?: boolean;
-    onToggleBlur?: () => void;
-    grainActive?: boolean;
-    onToggleGrain?: () => void;
-    halationActive?: boolean;
-    onToggleHalation?: () => void;
-    maskShowOverlay?: boolean;
-    onToggleMaskOverlay?: () => void;
-    onClearMask?: () => void;
-    isMaskCategory?: boolean;
-    /** é®è‰²ç‰‡é‚„æ²’å»ºç«‹ï¼šæŒ‰éˆ•ç…§æ¨£é¡¯ç¤ºï¼Œä½†ä¸èƒ½æŒ‰ */
-    maskLocked?: boolean;
-    /** æŽ’å¾—ç·Šä¸€é»žï¼šHSL ä¸€æ¬¡è¦æ”¾ä¸‰æ ¹ï¼Œç”¨åŽŸæœ¬çš„é–“è·æœƒæŠŠä¸‹é¢çš„å·¥å…·åˆ—æ“ å‡ºç•«é¢ */
-    compact?: boolean;
-    /** æœ‰ç´°é …å¯ä»¥èª¿çš„è©±ï¼Œæ•¸å€¼å³é‚Šæœƒå¤šä¸€é¡†ç·¨è¼¯éµï¼ŒæŒ‰äº†å±•é–‹é‚£å€‹ç‰¹æ•ˆçš„å…¨éƒ¨æ»‘æ¡¿ */
-    onEdit?: () => void;
-    /** æ›´ç·Šï¼šç‰¹æ•ˆç´°é …ä¸€æ¬¡è¦æŽ’åˆ°å››æŽ’ã€è€Œä¸”å…©æ ¹ä¸¦æŽ’ã€‚
-        é™¤äº†å­—ç´šèˆ‡è»Œé“é«˜åº¦å†æ”¶ä¸€é»žï¼Œæœ€é‡è¦çš„æ˜¯å·¦å³ä¸å¤–æ“´ â€”â€”
-        ä¸€èˆ¬çš„æ»‘æ¡¿åˆ»æ„å‘å¤–å¤šé•· 32px è®“æ‰‹æŒ‡å¯ä»¥æŒ‰åˆ°èž¢å¹•é‚Šç·£ï¼Œ
-        å…©æ ¹ä¸¦æŽ’æ™‚é‚£å€‹å¤–æ“´æœƒäº’ç›¸é‡ç–Šï¼Œä¸­é–“å°±æœƒæŒ‰éŒ¯æ ¹ã€‚ */
-    dense?: boolean;
-}
-
-const FastSlider = React.memo(({ 
-    value, min, max, step, toolId, label, snapZero, 
-    onUpdate, onInteractStart, onInteractEnd, onReset, onValueClick, disabled,
-    softActive, onToggleSoft, blurActive, onToggleBlur, grainActive, onToggleGrain,
-    halationActive, onToggleHalation, maskShowOverlay, onToggleMaskOverlay, onClearMask, isMaskCategory, maskLocked, compact, dense, onEdit
-}: FastSliderProps) => {
-    const inputRef = useRef<HTMLInputElement>(null);
-    const valueTextRef = useRef<HTMLSpanElement>(null);
-
-    useEffect(() => {
-        if (inputRef.current) {
-            inputRef.current.value = value.toString();
-        }
-        if (valueTextRef.current) {
-            valueTextRef.current.textContent = value.toFixed(0);
-        }
-    }, [value, toolId]);
-
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        let val = parseFloat(e.target.value);
-        if (snapZero && min < 0 && Math.abs(val) < 2) {
-            val = 0;
-            if (inputRef.current) {
-                inputRef.current.value = "0";
-            }
-        }
-        if (valueTextRef.current) {
-            valueTextRef.current.textContent = val.toFixed(0);
-        }
-        onUpdate(toolId, val);
-    };
-
-    const isLutAmount = toolId === 'lutAmount';
-
-    return (
-        <div className={`w-full ${disabled ? 'opacity-50 pointer-events-none' : ''}`}>
-            <div className={`flex justify-between items-center cursor-pointer select-none ${compact ? 'leading-none' : 'mb-1 translate-y-2'}`} onDoubleClick={(e) => onReset(e, toolId)} title="é›™æ“Šé‡ç½®">
-                {isLutAmount ? (
-                    <>
-                        {/* é€™è£¡æœ¬ä¾†æ˜¯æŸ”å…‰ï¼æœ¦æœ§ï¼å…‰æšˆï¼å™ªé»žå››é¡†ç‰¹æ•ˆéˆ•ã€‚
-                            å®ƒå€‘å‹•åˆ°çš„æ˜¯è·Ÿã€Œç‰¹æ•ˆã€åˆ†é åŒä¸€çµ„åƒæ•¸ï¼Œå…©é‚Šäº’ç›¸ç‰½å‹•å¾ˆå®¹æ˜“æžæ··ï¼Œ
-                            æ‰€ä»¥æ•´çµ„æ‹¿æŽ‰äº† â€”â€” ç‰¹æ•ˆä¸€å¾‹å¾žç‰¹æ•ˆåˆ†é é–‹ã€‚
-                            å·¦ä¸Šè§’æ”¹æˆè·Ÿå…¶ä»–æ»‘æ¡¿ä¸€è‡´çš„æ¨™é¡Œæ–‡å­—ã€‚ */}
-                        <span className="font-black text-white/40 uppercase pointer-events-none text-[10px] tracking-[0.2em]">å¼·åº¦</span>
-                        <span 
-                            ref={valueTextRef}
-                            className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2.5 py-0.5 rounded active:bg-white/20 transition-colors cursor-pointer select-none"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                if (onValueClick) onValueClick(toolId);
-                                else onReset(e, toolId);
-                            }}
-                            onTouchEnd={(e) => {
-                                e.stopPropagation();
-                                if (onValueClick) onValueClick(toolId);
-                            }}
-                        >
-                            {value.toFixed(0)}
-                        </span>
-                    </>
-                ) : isMaskCategory ? (
-                    <>
-                        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-[calc(100%-3.5rem)] py-1">
-                            {onToggleMaskOverlay && (
-                                <button 
-                                    disabled={maskLocked}
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (maskLocked) return;
-                                        onToggleMaskOverlay();
-                                        e.currentTarget.blur();
-                                    }}
-                                    className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase transition-colors border shrink-0 ${maskLocked ? 'opacity-30' : ''} ${
-                                        maskShowOverlay 
-                                            ? 'bg-white text-black border-white shadow-lg font-black' 
-                                            : 'bg-white/5 text-white/40 border-white/10 hover:text-white/60 hover:border-white/25'
-                                    }`}
-                                >
-                                    <Icon name="visibility" className="text-[10px] shrink-0" fill={maskShowOverlay} />
-                                    <span>é¡¯ç¤ºé®ç½©</span>
-                                </button>
-                            )}
-                            {onToggleMaskOverlay && onClearMask && (
-                                <button 
-                                    disabled={maskLocked}
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (maskLocked) return;
-                                        onClearMask();
-                                        e.currentTarget.blur();
-                                    }}
-                                    className={`flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase transition-colors border shrink-0 bg-white/5 text-red-400 border-white/10 hover:bg-red-500 hover:text-white hover:border-red-500 ${maskLocked ? 'opacity-30' : ''}`}
-                                >
-                                    <Icon name="delete" className="text-[10px] shrink-0" />
-                                    <span>æ¸…é™¤é®è‰²ç‰‡</span>
-                                </button>
-                            )}
-                        </div>
-                        <span 
-                            ref={valueTextRef}
-                            className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2.5 py-0.5 rounded active:bg-white/20 transition-colors cursor-pointer select-none"
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                if (onValueClick) onValueClick(toolId);
-                                else onReset(e, toolId);
-                            }}
-                            onTouchEnd={(e) => {
-                                e.stopPropagation();
-                                if (onValueClick) onValueClick(toolId);
-                            }}
-                        >
-                            {value.toFixed(0)}
-                        </span>
-                    </>
-                ) : (
-                    <>
-                        <span className={`font-black text-white/40 uppercase pointer-events-none ${dense ? 'text-[9px] tracking-[0.12em] truncate' : 'text-[10px] tracking-[0.2em]'}`}>{label}</span>
-                        {/* æ•¸å€¼èˆ‡ç·¨è¼¯éµä¸€èµ·é å³ï¼Œæ‰ä¸æœƒè¢« justify-between æ‹†åˆ°ä¸‰å€‹åœ°æ–¹ */}
-                        <span className="shrink-0 flex items-center gap-2">
-                            <span 
-                                ref={valueTextRef}
-                                className={`font-sans tabular-nums font-bold bg-white/10 rounded active:bg-white/20 transition-colors ${dense ? 'text-[10px] leading-none px-1.5 py-[4px]' : 'text-xs px-2 py-0.5'}`}
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (onValueClick) onValueClick(toolId);
-                                    else onReset(e, toolId); // Fallback to onReset if onValueClick not provided
-                                }}
-                                onTouchEnd={(e) => {
-                                    e.stopPropagation();
-                                    if (onValueClick) onValueClick(toolId);
-                                }}
-                            >
-                                {value.toFixed(0)}
-                            </span>
-                            {onEdit && (
-                                <button
-                                    aria-label="èª¿æ•´ç´°é …"
-                                    onClick={(e) => { e.stopPropagation(); onEdit(); }}
-                                    className="shrink-0 w-7 h-7 -my-1 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 active:scale-95 transition-[background-color,transform] text-white/80"
-                                >
-                                    <Icon name="edit" className="text-[15px]" />
-                                </button>
-                            )}
-                        </span>
-                    </>
-                )}
-            </div>
-
-            <div className={`relative flex items-center justify-center touch-none ${dense ? 'h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
-                <input 
-                    ref={inputRef}
-                    type="range" min={min} max={max} step={step}
-                    defaultValue={value}
-                    disabled={disabled}
-                    onChange={handleChange}
-                    onPointerDown={onInteractStart}
-                    onPointerUp={onInteractEnd}
-                    onPointerCancel={onInteractEnd}
-                    onKeyDown={onInteractStart}
-                    onKeyUp={onInteractEnd}
-                    className={dense ? 'custom-range dense' : compact ? 'custom-range compact' : 'custom-range'}
-                />
-            </div>
-        </div>
-    );
-});
-
-const formatExifDate = (rawDateStr: string): string => {
-  if (!rawDateStr || rawDateStr === 'æœªçŸ¥' || rawDateStr === '-') return '-';
-  // Standard EXIF date format is YYYY:MM:DD HH:MM:SS or similar
-  const regex = /^(\d{4})[-:](\d{2})[-:](\d{2})\s+(\d{2}):(\d{2})/;
-  const match = rawDateStr.trim().match(regex);
-  if (match) {
-    const year = parseInt(match[1], 10);
-    const month = parseInt(match[2], 10);
-    const day = parseInt(match[3], 10);
-    const hour = parseInt(match[4], 10);
-    const minute = match[5];
-    
-    let period = '';
-    let displayHour = hour;
-    if (hour === 0) {
-      period = 'å‡Œæ™¨';
-      displayHour = 12;
-    } else if (hour < 5) {
-      period = 'å‡Œæ™¨';
-      displayHour = hour;
-    } else if (hour < 8) {
-      period = 'æ—©ä¸Š';
-      displayHour = hour;
-    } else if (hour < 11) {
-      period = 'ä¸Šåˆ';
-      displayHour = hour;
-    } else if (hour < 13) {
-      period = 'ä¸­åˆ';
-      displayHour = hour;
-    } else if (hour < 18) {
-      period = 'ä¸‹åˆ';
-      displayHour = hour - 12;
-    } else {
-      period = 'æ™šä¸Š';
-      displayHour = hour - 12;
-    }
-    
-    return `${year}å¹´${month}æœˆ${day}æ—¥ ${period}${displayHour}:${minute}`;
-  }
-  
-  try {
-    const date = new Date(rawDateStr.replace(/:/g, (match, offset) => offset < 10 ? '-' : ':'));
-    if (!isNaN(date.getTime())) {
-      const year = date.getFullYear();
-      const month = date.getMonth() + 1;
-      const day = date.getDate();
-      const hour = date.getHours();
-      const minute = String(date.getMinutes()).padStart(2, '0');
-      
-      let period = '';
-      let displayHour = hour;
-      if (hour === 0) {
-        period = 'å‡Œæ™¨';
-        displayHour = 12;
-      } else if (hour < 5) {
-        period = 'å‡Œæ™¨';
-        displayHour = hour;
-      } else if (hour < 8) {
-        period = 'æ—©ä¸Š';
-        displayHour = hour;
-      } else if (hour < 11) {
-        period = 'ä¸Šåˆ';
-        displayHour = hour;
-      } else if (hour < 13) {
-        period = 'ä¸­åˆ';
-        displayHour = hour;
-      } else if (hour < 18) {
-        period = 'ä¸‹åˆ';
-        displayHour = hour - 12;
-      } else {
-        period = 'æ™šä¸Š';
-        displayHour = hour - 12;
-      }
-      return `${year}å¹´${month}æœˆ${day}æ—¥ ${period}${displayHour}:${minute}`;
-    }
-  } catch (e) {}
-
-  return rawDateStr;
-};
-
-/**
- * æ¿¾é¡è§£å¥½çš„ç«‹æ–¹é«”è³‡æ–™ï¼Œä»¥åŠæ­£åœ¨ä¸‹è¼‰ä¸­çš„é‚£å¹¾é¡†ã€‚
- *
- * ä¸€å®šè¦æ”¾åœ¨æ¨¡çµ„å±¤ã€ä¸èƒ½æ”¾åœ¨å…ƒä»¶çš„ useRef è£¡ï¼šç·¨è¼¯å™¨æ¯æ¬¡é–‹é—œéƒ½æ˜¯ä¸€å€‹æ–°çš„å…ƒä»¶å¯¦é«”ï¼Œ
- * æ”¾åœ¨è£¡é¢ç­‰æ–¼ã€Œæ¯é€²ä¸€æ¬¡ç·¨è¼¯å™¨å°±æŠŠ 24 é¡†æ¿¾é¡é‡æ–°ä¸‹è¼‰ï¼‹é‡æ–°è§£ä¸€æ¬¡ã€ã€‚
- * å…§å®¹åªè·Ÿæ¿¾é¡æª”æœ¬èº«æœ‰é—œï¼Œè·Ÿå“ªä¸€å¼µç…§ç‰‡ã€å“ªä¸€æ¬¡ç·¨è¼¯éƒ½ç„¡é—œï¼Œæ‰€ä»¥æ•´å€‹ App å…±ç”¨ä¸€ä»½å°±å¥½ã€‚
- */
-const LUT_CACHE: Record<string, { data: Uint8ClampedArray; size: number }> = {};
-const LUT_LOADING: Record<string, Promise<void>> = {};
-
-/* ---- æŒ‰éˆ•ç¸®åœ– -------------------------------------------------------------
-   ç¸®åœ–ä¸èµ° data URLï¼Œç›´æŽ¥æŠŠç•«å¸ƒç•«åˆ°ç•«å¸ƒä¸Šï¼š
-     - å°‘ä¸€æ¬¡ PNG ç·¨ç¢¼ï¼ˆé‡åˆ° 25 å¼µ 128Ã—152 è¦ 22msï¼‰
-     - æ›´é‡è¦çš„æ˜¯å°‘ä¸€æ¬¡è§£ç¢¼ â€”â€” <img> æ› src ä¹‹å¾Œè¦ç­‰ç€è¦½å™¨æŠŠæ–°åœ–è§£å¥½æ‰æœƒæ›ä¸ŠåŽ»ï¼Œ
-       ä¸­é–“é‚£ä¸€ä¸‹å°±æ˜¯ã€Œç¸®åœ–çªç„¶æŠ–ä¸€ä¸‹ã€ã€‚ç•«å¸ƒæ˜¯åŒä¸€å€‹ç¯€é»žæ”¹å…§å®¹ï¼Œä¸æœƒæœ‰é€™å€‹ç©ºæª”ã€‚
-   çœä¸‹ä¾†çš„æˆæœ¬å…¨éƒ¨æ‹¿åŽ»æé«˜è§£æžåº¦ã€‚                                          */
-
-/** ç¸®åœ–çš„å€çŽ‡ï¼šè·Ÿè‘—èž¢å¹•çš„å¯¦éš›åƒç´ å¯†åº¦èµ°ï¼Œæœ€å¤š 3 å€ï¼ˆæ‰‹æ©Ÿå¹¾ä¹Žéƒ½æ˜¯ 2 æˆ– 3ï¼‰ */
-const THUMB_DPR = (() => {
-  const d = typeof window !== 'undefined' ? (window.devicePixelRatio || 2) : 2;
-  return Math.min(3, Math.max(2, Math.round(d)));
-})();
-
-/** sigï¼šé€™ä¸€æ ¼æ˜¯ç…§å“ªä¸€çµ„æ¢ä»¶ç®—å‡ºä¾†çš„ï¼Œä¸€æ¨£å°±ä¸ç”¨é‡ç®— */
-type ThumbEntry = { cvs: HTMLCanvasElement; v: number; sig: string };
-type ThumbStore = React.MutableRefObject<Record<string, ThumbEntry>>;
-
-/** æŠŠä¸€å¼µç®—å¥½çš„ç¸®åœ–æ”¶é€²å€‰åº«ï¼ˆé‡è¤‡ä½¿ç”¨åŒä¸€å¼µç•«å¸ƒï¼Œä¸è¦ä¸€ç›´ç”Ÿæ–°çš„ï¼‰ */
-function putThumb(store: ThumbStore, id: string, src: HTMLCanvasElement, sig = ''): void {
-  if (!src.width || !src.height) return;
-  let e = store.current[id];
-  if (!e) e = store.current[id] = { cvs: document.createElement('canvas'), v: 0, sig: '' };
-  const c = e.cvs;
-  if (c.width !== src.width || c.height !== src.height) { c.width = src.width; c.height = src.height; }
-  const cx = c.getContext('2d')!;
-  cx.save();
-  cx.setTransform(1, 0, 0, 1, 0, 0);
-  cx.globalAlpha = 1;
-  cx.filter = 'none';
-  cx.globalCompositeOperation = 'copy';
-  cx.drawImage(src, 0, 0);
-  cx.restore();
-  /* å…§å®¹å®Œæ•´è¤‡è£½æˆåŠŸå¾Œæ‰ç™¼å¸ƒç‰ˆæœ¬ï¼Œç•«é¢ç«¯ä¸æœƒè®€åˆ°åªç•«äº†ä¸€åŠçš„å…±ç”¨ç•«å¸ƒã€‚ */
-  e.sig = sig;
-  e.v++;
-}
-
-/** å·²ç¶“æŽ›åœ¨ç•«é¢ä¸Šçš„ç¸®åœ–æ ¼å­ï¼Œç®—å¥½ä¸€å¼µå°±ç›´æŽ¥å«å®ƒå€‘è‡ªå·±é‡ç•« */
-type ThumbPainters = React.MutableRefObject<Set<() => void>>;
-
-/**
- * å¡ç‰‡ä¸Šçš„é‚£ä¸€æ ¼ç¸®åœ–ã€‚è‡ªå·±å¾žå€‰åº«æŠŠç•«å¸ƒç•«éŽä¾† â€”â€”
- * é›¢é–‹åˆ†é å†å›žä¾†æ™‚é€™å€‹ç¯€é»žæœƒé‡å»ºï¼ˆå…§å®¹æ˜¯ç©ºçš„ï¼‰ï¼Œé€™è£¡è² è²¬è£œç•«å›žåŽ»ã€‚
- * é‚„æ²’ç®—åˆ°è‡ªå·±é‚£ä¸€æ ¼å°±å…ˆç•« fallbackï¼ˆæ¿¾é¡æ˜¯ã€ŒåŽŸå§‹ã€ã€ç‰¹æ•ˆæ˜¯æ²’å¥—ç‰¹æ•ˆçš„åº•åœ–ï¼‰ï¼Œ
- * æ•´æŽ’æ‰ä¸æœƒæœ‰ç©ºæ´žã€‚
- *
- * åˆ»æ„ä¸èµ° React stateï¼šç¸®åœ–æ˜¯ç•«å¸ƒï¼Œå…§å®¹æ›äº†ä¸éœ€è¦é‡æ–° renderã€‚
- * ä¹‹å‰æ¯é€ä¸€æ‰¹å°± setState ä¸€æ¬¡ï¼Œç­‰æ–¼æŠŠæ•´å€‹ç·¨è¼¯å™¨é‡ç•«åå¹¾éï¼Œ
- * å…‰æ˜¯é‚£äº›é‡ç•«å°±ä½”æŽ‰æ•´è¼ªçš„ä¸‰åˆ†ä¹‹äºŒï¼ˆé‡åˆ°ç‰¹æ•ˆæ•´æŽ’ 2292ms â†’ æ”¹æˆç›´æŽ¥ç•«ä¹‹å¾Œ 780msï¼‰ã€‚
- */
-const ThumbCanvas: React.FC<{
-  store: ThumbStore; id: string; fallbackId?: string; painters: ThumbPainters; attr: string; name: string;
-}> = ({ store, id, fallbackId, painters, attr, name }) => {
-  const ref = useRef<HTMLCanvasElement>(null);
-  const drawn = useRef('');
-  const paint = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    const own = store.current[id];
-    const e = own || (fallbackId ? store.current[fallbackId] : undefined);
-    // å…©ä»½éƒ½é‚„æ²’æœ‰æ™‚æ¸…æŽ‰èˆŠç…§ç‰‡ï¼Œä¸èƒ½æŠŠä¸Šä¸€å¼µï¼ä¸Šä¸€é¡†æ¿¾é¡çš„æ®˜ç‰‡å†’å……æ–°ç¸®åœ–ã€‚
-    if (!e) {
-      if (el.width && el.height) el.getContext('2d')?.clearRect(0, 0, el.width, el.height);
-      drawn.current = '';
-      el.dataset.thumbReady = '0';
-      return;
-    }
-    const key = `${own ? id : fallbackId}#${e.v}`;
-    if (drawn.current === key) return;      // æ²’æ›å…§å®¹å°±ä¸è¦é‡ç•«
-    drawn.current = key;
-    const cx = el.getContext('2d')!;
-    /* ç•«ä¹‹å‰ä¸€å®šè¦å…ˆæ¸…ç©ºã€‚
-       drawImage æ˜¯ã€Œç–Šä¸ŠåŽ»ã€ä¸æ˜¯ã€Œæ›æŽ‰ã€ï¼šæ–°çš„ç¸®åœ–åªè¦æœ‰ä»»ä½•ä¸€å¡Šä¸æ˜¯å®Œå…¨
-       ä¸é€æ˜Žï¼ˆåƒç´ ç®¡ç·šç®—å‡ºä¾†çš„ alpha ä¸è¦‹å¾—æ¯ä¸€æ ¼éƒ½å‰›å¥½ 255ï¼‰ï¼Œä¸Šä¸€å¼µç•™åœ¨
-       é€™å¡Šç•«å¸ƒä¸Šçš„å…§å®¹å°±æœƒå¾žé‚£äº›åœ°æ–¹é€å‡ºä¾†ï¼Œè·Ÿæ–°çš„æ··åœ¨ä¸€èµ· â€”â€” çœ‹èµ·ä¾†å°±æ˜¯
-       ã€Œç¸®åœ–æœ‰ä¸€éƒ¨åˆ†æ€ªæ€ªçš„ã€ï¼Œè€Œä¸”é›¢é–‹åˆ†é å†å›žä¾†ï¼ˆç•«å¸ƒé‡å»ºã€å…§å®¹æ˜¯ç©ºçš„ï¼‰
-       å°±æ¢å¾©æ­£å¸¸ã€‚é€™æ­£æ˜¯ä¸»äººæè¿°çš„é‚£å€‹ç¾è±¡ã€‚
-       é‡è¨­ widthï¼height æœ¬ä¾†å°±æœƒé †ä¾¿æ¸…ç©ºï¼Œä½†å°ºå¯¸æ²’è®Šæ™‚ä¸æœƒèµ°é‚£æ¢è·¯ï¼Œ
-       æ‰€ä»¥é€™è£¡æ˜Žç¢ºæ¸…ä¸€æ¬¡ã€‚ */
-    if (el.width !== e.cvs.width || el.height !== e.cvs.height) { el.width = e.cvs.width; el.height = e.cvs.height; }
-    cx.save();
-    cx.setTransform(1, 0, 0, 1, 0, 0);
-    cx.globalAlpha = 1;
-    cx.filter = 'none';
-    cx.globalCompositeOperation = 'copy';
-    cx.drawImage(e.cvs, 0, 0);
-    cx.restore();
-    el.dataset.thumbReady = own ? '1' : '0';
-  }, [store, id, fallbackId]);
-  /* useLayoutEffectï¼šå¡ç‰‡æ˜¯æ¯æ¬¡é€²é æ‰æŽ›ä¸Šä¾†çš„ï¼ŒæŽ’åœ¨ useEffect çš„è©±
-     ç€è¦½å™¨æœƒå…ˆç•«ä¸€å¹€ç©ºç™½ç•«å¸ƒï¼Œä¸‹ä¸€å¹€æ‰è£œä¸Šåœ– â€”â€” é‚£å°±æ˜¯ã€Œä¸€é€²ç‰¹æ•ˆé é–ƒä¸€ä¸‹ã€ã€‚ */
-  useLayoutEffect(() => {
-    const set = painters.current;
-    set.add(paint);
-    paint();                                 // å‰›æŽ›ä¸Šä¾†ï¼ˆæˆ–æ›ç…§ç‰‡ï¼‰å…ˆè£œç•«ä¸€æ¬¡
-    return () => { set.delete(paint); };
-  }, [painters, paint]);
-  const props: any = { [attr]: name };
-  return <canvas ref={ref} {...props} className="absolute inset-0 w-full h-full object-cover" />;
-};
-
-/**
- * ä¸€æ ¼ä¸€æ ¼æŠŠç¸®åœ–ç®—å‡ºä¾†ï¼Œæ¯åšæ»¿ç´„ 14ms å°±è®“ç€è¦½å™¨å–˜ä¸€å£æ°£ï¼Œæ•´æŽ’ç®—å®Œæ‰å‘¼å« doneã€‚
- * make å›žå‚³ false ä»£è¡¨é€™ä¸€æ ¼é€™è¼ªå…ˆè·³éŽï¼ˆä¾‹å¦‚æ¿¾é¡æª”é‚„æ²’ä¸‹è¼‰å®Œï¼‰ã€‚
- * emit æ˜¯ã€ŒæŠŠå·²ç¶“ç®—å¥½çš„è²¼ä¸Šç•«é¢ã€ï¼Œä¸€æ‰¹åšå®Œå°±å«ä¸€æ¬¡ï¼ˆå¾ˆä¾¿å®œï¼Œåªæ˜¯å¹¾å€‹ drawImageï¼‰ã€‚
- */
-function runThumbChunks<T>(
-  items: T[],
-  make: (item: T) => boolean,
-  emit: () => void,
-  cancelled: () => boolean,
-  done: () => void,
-): void {
-  let i = 0;
-  let dirty = false;
-  const flush = () => { if (dirty) { emit(); dirty = false; } };
-  const step = () => {
-    if (cancelled()) return;
-    const deadline = performance.now() + 14;
-    while (i < items.length) {
-      if (make(items[i])) dirty = true;
-      i++;
-      if (performance.now() >= deadline) break;
-    }
-    flush();
-    if (i >= items.length) { done(); return; }
-    setTimeout(step, 0);
-  };
-  step();
-}
-
-export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState }) => {
-  /* â”€â”€ æ‰¹é‡ç·¨è¼¯ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-     ä¸€æ¬¡åŒ¯å…¥å¤šå¼µæ™‚ï¼Œç·¨è¼¯å™¨æœ¬èº«å®Œå…¨ä¸è®Š â€”â€” ç•«é¢ä¸Šæ°¸é åªæœ‰ã€Œç›®å‰é€™ä¸€å¼µã€ï¼Œ
-     å…¶ä»–å¼µçš„åƒæ•¸å„è‡ªæ”¶åœ¨æ—é‚Šã€‚é€£çµä¸­çš„ç…§ç‰‡å…±ç”¨åŒä¸€ä»½åƒæ•¸ï¼ˆæ”¹ä¸€å¼µï¼å…¨éƒ¨ä¸€èµ·æ”¹ï¼‰ï¼Œ
-     è§£é™¤é€£çµçš„ç…§ç‰‡æœ‰è‡ªå·±çš„ä¸€ä»½ï¼Œä¹‹å¾Œæ€Žéº¼èª¿éƒ½ä¸æœƒå†äº’ç›¸å½±éŸ¿ã€‚            */
-  const incoming = (batchSrcs && batchSrcs.length ? batchSrcs : [imageSrc]).filter(Boolean);
-  /** æ¸…å–®è‡ªå·±ç•™ä¸€ä»½ï¼šç¸®åœ–åˆ—ä¸Šå¯ä»¥åˆªç…§ç‰‡ï¼ŒåˆªæŽ‰ä¸å¿…å›žé ­æ”¹ä¸Šå±¤çš„ç‹€æ…‹ */
-  const [srcList, setSrcList] = useState<string[]>(incoming);
-  /** çµ¦ addToHistoryï¼æ’¤éŠ·ç”¨çš„æœ€æ–°ä¾†æºæ¸…å–®ï¼ˆcallback è£¡è®€ state æœƒæ˜¯èˆŠçš„ï¼‰ */
-  const srcListRef = useRef<string[]>(incoming);
-  srcListRef.current = srcList;
-  useEffect(() => { setSrcList(incoming); }, [batchSrcs, imageSrc]);
-  const [batchIdx, setBatchIdx] = useState(0);
-  /** å†é»žä¸€æ¬¡å·²ç¶“é¸ä¸­çš„é‚£å¼µæ‰æœƒè·³å‡ºçš„å°é¸å–® */
-  const [batchMenu, setBatchMenu] = useState<number | null>(null);
-  const safeIdx = Math.min(batchIdx, Math.max(0, srcList.length - 1));
-  const activeSrc = srcList[safeIdx] || imageSrc;
-  /** å“ªå¹¾å¼µé‚„è·Ÿè‘—ä¸€èµ·é€£å‹•ï¼ˆé è¨­å…¨éƒ¨é€£å‹•ï¼‰ */
-  const [linked, setLinked] = useState<boolean[]>(() => srcList.map(() => true));
-  useEffect(() => {
-    setLinked(prev => (prev.length === srcList.length ? prev : srcList.map((_, i) => prev[i] ?? true)));
-  }, [srcList.length]);
-  useEffect(() => { setBatchMenu(null); }, [srcList.length]);
-  const [params, setParams] = useState<EditorParams>(DEFAULT_PARAMS);
-  const [activeCategory, setActiveCategory] = useState<Category>('filter');
-  /** ç›®å‰å±•é–‹çš„æ˜¯å“ªä¸€å€‹æ–°ç‰¹æ•ˆï¼ˆactiveCategory === 'fx' æ™‚æ‰æœ‰æ„ç¾©ï¼‰ */
-  const [activeFxId, setActiveFxId] = useState<string>(FX_DEFS[0].id);
-  const [activeToolId, setActiveToolId] = useState<string>('filter_select');
-  /* ç¹ªåœ–è¿´åœˆæ˜¯æŽ›åœ¨ ref ä¸Šçš„ï¼ˆä¸éš¨æ¯æ¬¡ render é‡å»ºï¼‰ï¼Œæ‰€ä»¥å®ƒè¦çŸ¥é“ã€Œç¾åœ¨é¸çš„æ˜¯
-     å“ªä¸€æ ¹æ»‘æ¡¿ã€åªèƒ½é€éŽ refã€‚æ¯æ¬¡ render ç›´æŽ¥æŒ‡æ´¾ï¼Œæ°¸é æ˜¯æœ€æ–°çš„ã€‚ */
-  const activeToolIdRef = useRef(activeToolId);
-  activeToolIdRef.current = activeToolId;
-  const [selectedLutIdx, setSelectedLutIdx] = useState(0);
-  const [isSoftActive, setIsSoftActive] = useState(false);
-  const [isBlurActive, setIsBlurActive] = useState(false);
-  const [isGrainActive, setIsGrainActive] = useState(false);
-  const [isHalationActive, setIsHalationActive] = useState(false);
-  
-  const [softManuallyAdjusted, setSoftManuallyAdjusted] = useState(false);
-  const [blurManuallyAdjusted, setBlurManuallyAdjusted] = useState(false);
-  const [grainManuallyAdjusted, setGrainManuallyAdjusted] = useState(false);
-  const [halationManuallyAdjusted, setHalationManuallyAdjusted] = useState(false);
-
-  const userSoftRef = useRef<number>(50);
-  const userBlurRef = useRef<number>(40);
-  const userGrainRef = useRef({ grain: 0, colorNoise: 40, colorNoise2: 0 });
-  const userHalationRef = useRef<number>(50);
-  const [showOriginal, setShowOriginal] = useState(false);
-  const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
-  const [isInteracting, setIsInteracting] = useState(false);
-  const [isInitialCreatingMask, setIsInitialCreatingMask] = useState(false);
-  const [dismissedMaskHint, setDismissedMaskHint] = useState(false);
-
-  useEffect(() => {
-    setDismissedMaskHint(false);
-  }, [imageSrc]);
-
-  // EXIF Metadata State
-  const [showExifPanel, setShowExifPanel] = useState(false);
-  /* é»žé¢æ¿ä»¥å¤–çš„ä»»ä½•åœ°æ–¹å°±æ”¶èµ·ä¾†ã€‚
-     å…‰é é‚£ç‰‡ fixed inset-0 çš„é®ç½©ä¸ä¿éšª â€”â€” åªè¦ç¥–å…ˆæœ‰ backdrop-filterï¼
-     transformï¼Œfixed å°±æœƒè¢«é—œé€²é‚£å€‹ç¥–å…ˆè£¡ã€è“‹ä¸æ»¿æ•´å€‹ç•«é¢ã€‚
-     é–‹è‘—çš„æ™‚å€™åœ¨ document ä¸Šè½ä¸€æ¬¡æŒ‰ä¸‹ï¼ˆæ•ç²éšŽæ®µï¼‰ï¼Œä¸æ˜¯æŒ‰åœ¨é¢æ¿æˆ–é‚£é¡†
-     è³‡è¨Šéµä¸Šå°±é—œæŽ‰ã€‚ */
-  const exifPanelRef = useRef<HTMLDivElement>(null);
-  const exifBtnRef = useRef<HTMLButtonElement>(null);
-  /** é‚£ç‰‡ã€Œé»žå¤–é¢å°±æ”¶èµ·ä¾†ã€çš„é€æ˜Žé®ç½©æœ¬äºº */
-  const exifShieldRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!showExifPanel) return;
-    const onDown = (ev: Event) => {
-      const t = ev.target;
-      if (!(t instanceof Node)) return;
-      if (exifPanelRef.current?.contains(t) || exifBtnRef.current?.contains(t)) return;
-      /* æŒ‰åœ¨é‚£ç‰‡é®ç½©ä¸Šå°±äº¤çµ¦å®ƒè‡ªå·±çš„ onClickï¼ˆé¬†æ‰‹æ‰é—œï¼‰â€”â€”
-         é€™è£¡å¦‚æžœæ¶è‘—åœ¨æŒ‰ä¸‹çš„ç•¶ä¸‹å°±é—œæŽ‰ï¼Œé®ç½©æœƒåœ¨é¬†æ‰‹å‰æ¶ˆå¤±ï¼Œ
-         ç€è¦½å™¨å°±æŠŠé‚£ä¸€æ¬¡ click é‡æ–°å‘½ä¸­åˆ°åº•ä¸‹çš„æ±è¥¿ä¸Šã€‚
-         é€™æ”¯ç›£è½ç•™çµ¦ã€Œé®ç½©è“‹ä¸åˆ°çš„åœ°æ–¹ã€ï¼ˆç¥–å…ˆæœ‰ backdrop-filterï¼transform
-         æ™‚ fixed æœƒè¢«é—œé€²åŽ»ï¼Œé‚£æ­£æ˜¯å®ƒå­˜åœ¨çš„ç†ç”±ï¼‰ã€‚ */
-      if (exifShieldRef.current === t) return;
-      setShowExifPanel(false);
-    };
-    document.addEventListener('pointerdown', onDown, true);
-    return () => document.removeEventListener('pointerdown', onDown, true);
-  }, [showExifPanel]);
-  /* â”€â”€ IG é è¦½ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-     ç”¨ã€Œç¾åœ¨é€™ä¸€ä»½åƒæ•¸ã€å¯¦éš›è¼¸å‡ºä¸€å¼µï¼Œå†äº¤çµ¦å…±ç”¨çš„ IgPreview å…ƒä»¶é¡¯ç¤ºï¼Œ
-     æ‰€ä»¥çœ‹åˆ°çš„å°±æ˜¯æŒ‰ä¸‹å„²å­˜æœƒæ‹¿åˆ°çš„é‚£ä¸€å¼µã€‚ */
-  const [igOpen, setIgOpen] = useState(false);
-  const [igShot, setIgShot] = useState<string>('');
-  const [igBusy, setIgBusy] = useState(false);
-  const [imageDimensions, setImageDimensions] = useState<string>('-');
-  const [exifData, setExifData] = useState<{
-    fileName: string;
-    fileFormat: string;
-    date: string;
-    cameraModel: string;
-    iso: string;
-    shutter: string;
-    focalLength: string;
-    aperture: string;
-  }>({
-    fileName: '-',
-    fileFormat: '-',
-    date: '-',
-    cameraModel: '-',
-    iso: '-',
-    shutter: '-',
-    focalLength: '-',
-    aperture: '-'
-  });
-
-  useEffect(() => {
-    let active = true;
-    const fetchMetadata = async () => {
-      let name = '-';
-      let format = '-';
-      let date = '-';
-      let model = '-';
-      let iso = '-';
-      let shutter = '-';
-      let focal = '-';
-      let aperture = '-';
-
-      if (originalFile) {
-        name = originalFile.name;
-        const ext = originalFile.name.split('.').pop()?.toUpperCase() || '';
-        format = ext;
-      } else if (imageSrc) {
-        if (imageSrc.startsWith('data:image/')) {
-          name = 'camera_capture.jpg';
-          format = 'JPEG';
-        } else if (imageSrc.startsWith('blob:')) {
-          name = 'photo_import.jpg';
-          format = 'JPEG';
-        } else {
-          const parts = imageSrc.split('/');
-          const filenamePart = parts[parts.length - 1] || 'photo.jpg';
-          name = filenamePart.split('?')[0];
-          const ext = name.split('.').pop()?.toUpperCase() || '';
-          format = ext || 'JPEG';
-        }
-      }
-
-      try {
-        let tags: any = null;
-        if (originalFile) {
-          tags = await ExifReader.load(originalFile);
-        } else if (imageSrc && !imageSrc.startsWith('data:')) {
-          tags = await ExifReader.load(imageSrc);
-        }
-
-        if (tags) {
-          const make = tags['Make']?.description || '';
-          const modelDesc = tags['Model']?.description || '';
-          if (modelDesc) {
-            if (make && !modelDesc.toLowerCase().includes(make.toLowerCase())) {
-              model = `${make} ${modelDesc}`;
-            } else {
-              model = modelDesc;
-            }
-          } else if (make) {
-            model = make;
-          }
-          if (model) {
-            const lower = model.toLowerCase().trim();
-            if (lower === 'unknown' || lower === 'æœªçŸ¥' || lower === 'none' || lower === '') {
-              model = '-';
-            }
-          }
-
-          const dt = tags['DateTimeOriginal']?.description || tags['DateTime']?.description || tags['ModifyDate']?.description;
-          if (dt) {
-            date = formatExifDate(dt);
-          }
-
-          const isoVal = tags['ISOSpeedRatings']?.description || tags['ISOSpeedRatings']?.value || tags['ISO']?.description;
-          if (isoVal) {
-            iso = `ISO ${isoVal}`;
-          }
-
-          const expTime = tags['ExposureTime']?.description || tags['ExposureTime']?.value;
-          if (expTime) {
-            shutter = typeof expTime === 'number' 
-              ? (expTime < 1 ? `1/${Math.round(1 / expTime)}s` : `${expTime}s`) 
-              : (String(expTime).endsWith('s') ? String(expTime) : `${expTime}s`);
-          }
-
-          const focalLen = tags['FocalLength']?.description || tags['FocalLength']?.value;
-          if (focalLen) {
-            focal = String(focalLen).endsWith('mm') ? String(focalLen) : `${focalLen}mm`;
-          }
-
-          const fNum = tags['FNumber']?.description || tags['FNumber']?.value;
-          if (fNum) {
-            aperture = typeof fNum === 'number' || !String(fNum).startsWith('f/') ? `f/${fNum}` : String(fNum);
-          }
-        }
-      } catch (err) {
-        console.warn("Error parsing EXIF metadata:", err);
-      }
-
-      if (active) {
-        if (originalImgRef.current) {
-          setImageDimensions(`${originalImgRef.current.naturalWidth}Ã—${originalImgRef.current.naturalHeight}`);
-        }
-        setExifData({
-          fileName: name,
-          fileFormat: format,
-          date: date,
-          cameraModel: model,
-          iso: iso,
-          shutter: shutter,
-          focalLength: focal,
-          aperture: aperture
-        });
-      }
-    };
-
-    fetchMetadata();
-    return () => { active = false; };
-  }, [imageSrc, originalFile]);
-  const [loadingLutId, setLoadingLutId] = useState<string | null>(null);
-  /* åˆæœ‰ä¸€é¡†æ¿¾é¡ä¸‹è¼‰è§£æžå¥½äº†ã€‚
-     ç¸®åœ–é‚£ä¸€æ”¯ effect é é€™å€‹çŸ¥é“ã€Œå¯ä»¥æŠŠé‚£ä¸€æ ¼é‡ç®—äº†ã€â€”â€”
-     èƒŒæ™¯é è¼‰ä¸æœƒå‹•åˆ° loadingLutIdï¼Œå°‘äº†é€™å€‹é€šçŸ¥ï¼Œé‚„æ²’è¼‰å®Œå°±å…ˆç®—éŽçš„é‚£å¹¾æ ¼
-     æœƒä¸€ç›´åœåœ¨æ²’å¥—æ¿¾é¡çš„å¢Šåº•åœ–ï¼Œç›´åˆ°ä½¿ç”¨è€…åŽ»é»žæŸä¸€é¡†æ¿¾é¡æ‰æ›´æ–°ã€‚ */
-  const [lutReadyTick, setLutReadyTick] = useState(0);
-  /** æ¿¾é¡æª”è¼‰å¥½äº†ï¼Œä½†ç•«é¢é‚„æ²’ç”¨å®ƒç®—éŽ â€”â€” è½‰åœˆè¦æ’åˆ°é‚£ä¸€è¼ªç•«å®Œ */
-  const pendingLutPaintRef = useRef<string | null>(null);
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  /* é™£åˆ—èˆ‡æ¸¸æ¨™å„è‡ªç”¨ setState æ›´æ–°çš„è©±ï¼ŒåŒä¸€æ‹è¢«å‘¼å«å…©æ¬¡ï¼ˆä¾‹å¦‚é»žæ¿¾é¡æ™‚
-     é¸å–èˆ‡è¼‰å…¥å®Œæˆå„è¨˜ä¸€æ¬¡ï¼‰å°±æœƒã€Œåªå¤šä¸€ç­†ã€æ¸¸æ¨™å»åŠ äº†å…©æ¬¡ã€â€”â€”
-     æ¸¸æ¨™æŒ‡åˆ°é™£åˆ—å¤–ï¼Œæ’¤éŠ·å°±æœƒå°‘é€€ä¸€æ­¥ã€é‡åšæ•´å€‹æŒ‰ä¸å‹•ã€‚
-     æ‰€ä»¥çœŸæ­£çš„å€¼æ”¾åœ¨ refï¼ŒsetState åªæ˜¯æ‹¿ä¾†é‡ç¹ªã€‚ */
-  const historyRef = useRef<HistoryItem[]>([]);
-  const historyIdxRef = useRef(-1);
-  const writeHistory = (arr: HistoryItem[], idx: number) => {
-    historyRef.current = arr;
-    historyIdxRef.current = idx;
-    setHistory(arr);
-    setHistoryIndex(idx);
-  };
-  const [finalImage, setFinalImage] = useState<string | null>(null);
-  /** æ‰¹é‡ç·¨è¼¯æ™‚ï¼Œä¸€æ¬¡å­˜å‡ºä¾†çš„æ‰€æœ‰æˆå“ */
-  const [finalImages, setFinalImages] = useState<string[]>([]);
-  /* æˆå“æ˜¯ blob ç¶²å€ï¼Œæ›æŽ‰èˆŠçš„ä¹‹å‰è¦å›žæ”¶ï¼Œä¸ç„¶æŒ‰ç¬¬äºŒæ¬¡å„²å­˜
-     ä¸Šä¸€è¼ªé‚£å¹¾å¼µæœƒä¸€ç›´ç•™åœ¨è¨˜æ†¶é«”è£¡ã€‚ */
-  const finalImagesRef = useRef<string[]>([]);
-  /* å°Žå‡ºç•«é¢é‚£ä¸€æŽ’æˆå“ã€‚
-     æˆå“æ˜¯ç…§ srcList çš„é †åºæŽ’çš„ï¼Œæ‰€ä»¥ç¬¬ä¸€å¼µæ°¸é åœ¨æœ€å·¦é‚Š â€”â€”
-     ä½†é€™ä¸€æŽ’æ˜¯åŽŸç”Ÿæ²å‹•å®¹å™¨ï¼Œæ²å‹•ä½ç½®æœƒè¢«ç€è¦½å™¨ä¿ç•™ï¼è¢« scroll-snap æŒ‘åˆ°
-     é›¢ç›®å‰ä½ç½®æœ€è¿‘çš„é‚£ä¸€å¼µï¼Œæ–¼æ˜¯å¸¸å¸¸ä¸€é€²ä¾†å°±åœåœ¨ã€Œå‰›å‰›åœ¨ç·¨è¼¯çš„é‚£ä¸€å¼µã€ã€‚
-     æ¯æ¬¡å‡ºç¾é€™å€‹ç•«é¢éƒ½æ˜Žç¢ºæ²å›žæœ€å·¦é‚Šï¼Œæ‰æœƒä¸€å®šå¾žç¬¬ä¸€å¼µé–‹å§‹çœ‹ã€‚ */
-  const finalStripRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    if (saveState !== 'success') return;
-    const el = finalStripRef.current;
-    if (!el) return;
-    // é€™ä¸€æ‹å°±æ­¸é›¶ï¼ˆä¸è¦ smoothï¼Œä¹Ÿä¸è¦ç­‰ä¸‹ä¸€å¹€ï¼‰â€”â€” ä½¿ç”¨è€…ä¸æœƒçœ‹åˆ°å®ƒå¾žä¸­é–“æ»‘å›žåŽ»
-    el.scrollLeft = 0;
-    // åœ–ç‰‡æ˜¯éžåŒæ­¥è§£ç¢¼çš„ï¼Œå¯¬åº¦é•·å‡ºä¾†ä¹‹å¾Œç€è¦½å™¨å¯èƒ½å†æŒ‘ä¸€æ¬¡å®šä½é»žï¼Œæ‰€ä»¥ä¸‹ä¸€å¹€å†å£“ä¸€æ¬¡
-    const id = requestAnimationFrame(() => { if (finalStripRef.current) finalStripRef.current.scrollLeft = 0; });
-    return () => cancelAnimationFrame(id);
-  }, [saveState, finalImages]);
-  /* é›¢é–‹æ™‚æ™šä¸€é»žå†å›žæ”¶ï¼šå°Žå‡ºç´€éŒ„çš„ç¸®åœ–èˆ‡åˆ†äº«ç”¨çš„æª”æ¡ˆéƒ½æ˜¯éžåŒæ­¥åŽ»è®€é€™å€‹
-     ç¶²å€çš„ï¼ŒæŒ‰ä¸‹å„²å­˜å¾Œé¦¬ä¸Šé›¢é–‹çš„è©±æœƒä¾†ä¸åŠè®€å®Œã€‚ */
-  useEffect(() => () => { const keep = finalImagesRef.current; setTimeout(() => revokeUrls(keep as any), 15000); }, []);
-  const [isPortrait, setIsPortrait] = useState(false);
-
-  // Curve Specific State
-  const [currentCurveChannel, setCurrentCurveChannel] = useState<CurveChannel>('rgb');
-  const [dragPointIdx, setDragPointIdx] = useState<number>(-1);
-  const lastCurveTapRef = useRef<number>(0);
-  const lastTapRef = useRef<Record<string, number>>({});
-  const lastCreatedIdxRef = useRef<number>(-1);
-  const lastCreatedTimeRef = useRef<number>(0);
-
-  const [canvasBounds, setCanvasBounds] = useState({ width: 0, height: 0, top: 0, left: 0 });
-  // é è¦½ç·©è¡çš„å¯¦éš›æ¯”ä¾‹ã€‚æ§‹åœ–è£åˆ‡ä¹‹å¾Œç•«é¢æ¯”ä¾‹æœƒè®Šï¼Œç‰ˆé¢å¿…é ˆè·Ÿè‘—èµ°ï¼Œ
-  // ä¸èƒ½å†å¾žå·²ç¶“è¢«èˆŠæ¯”ä¾‹æ’é–‹çš„ canvas é‡å›žä¾†ã€‚
-  const [previewAspect, setPreviewAspect] = useState<{ w: number; h: number } | null>(null);
-  /**
-   * å¤–æ¡†ï¼ˆè² è²¬éŽ–ä½é è¦½æ¯”ä¾‹çš„é‚£ä¸€å±¤ï¼‰ã€‚
-   *
-   * æ‰¹é‡ç·¨è¼¯æ›ç…§ç‰‡æ™‚ï¼Œç•«å¸ƒçš„å…§éƒ¨å°ºå¯¸æ˜¯ã€ŒåŒä¸€æ‹ã€ç›´æŽ¥æ”¹æŽ‰çš„ï¼ˆcvs.width = â€¦ï¼‰ï¼Œ
-   * ä½†å¤–æ¡†çš„æ¯”ä¾‹èµ°çš„æ˜¯ React state â€”â€” è¦ç­‰ä¸‹ä¸€æ¬¡ç¹ªè£½æ‰ç”Ÿæ•ˆã€‚
-   * ä¸­é–“é‚£ä¸€å…©å¹€ï¼Œæ–°ç…§ç‰‡å°±è¢«å¡žé€²ä¸Šä¸€å¼µçš„æ¯”ä¾‹æ¡†è£¡ï¼ˆç•«å¸ƒæ˜¯ objectFit: fillï¼‰ï¼Œ
-   * çœ‹èµ·ä¾†å°±æ˜¯ã€Œæ›ç…§ç‰‡æ™‚åœ–è¢«æ‹‰äº†ä¸€ä¸‹ã€ã€‚å…©å¼µå°ºå¯¸å·®è¶Šå¤šã€æ‹‰å¾—è¶Šæ˜Žé¡¯ã€‚
-   *
-   * æ‰€ä»¥æ”¹ç…§ç‰‡å°ºå¯¸çš„åŒä¸€æ‹ï¼Œå°±æŠŠæ¯”ä¾‹ç›´æŽ¥å¯«é€² DOMï¼Œå…©è€…æ°¸é åŒä¸€å¹€ã€‚
-   * state ç…§æ¨£æ›´æ–°ï¼ˆReact ä¹‹å¾Œé‡ç¹ªæœƒå¯«åŒä¸€å€‹å€¼ï¼‰ï¼Œå…¶ä»–åœ°æ–¹çš„é‚è¼¯å®Œå…¨ä¸ç”¨æ”¹ã€‚
-   */
-  const previewFitRef = useRef<HTMLDivElement>(null);
-  const applyPreviewAspect = useCallback((w: number, h: number) => {
-    if (!(w > 0 && h > 0)) return;
-    const el = previewFitRef.current;
-    if (el) {
-      el.style.aspectRatio = `${w}/${h}`;
-      el.style.width = '100%';
-    }
-    setPreviewAspect(prev => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
-  }, []);
-  // æ§‹åœ–åƒæ•¸ã€‚å¥—ç”¨ä¹‹å¾Œæ•´å€‹é è¦½ç·©è¡æœƒç”¨æ–°çš„å¹¾ä½•é‡å»ºï¼Œè‰²å½©æµç¨‹å®Œå…¨ä¸ç”¨çŸ¥é“å®ƒçš„å­˜åœ¨ã€‚
-  const [geo, setGeo] = useState<GeoParams>(() => ({ ...DEFAULT_GEO, crop: { ...FULL_CROP } }));
-  const [draftGeo, setDraftGeo] = useState<GeoParams | null>(null);
-  const composePreviewRef = useRef<HTMLCanvasElement | HTMLImageElement | null>(null);
-  const geoRef = useRef<GeoParams>({ ...DEFAULT_GEO, crop: { ...FULL_CROP } });
-  useEffect(() => { geoRef.current = geo; }, [geo]);
-
-  /* â”€â”€ æ‰¹é‡ç·¨è¼¯ï¼šæ¯ä¸€å¼µçš„åƒæ•¸æ€Žéº¼æ”¶ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-     é€£çµä¸­çš„ç…§ç‰‡å…±ç”¨ sharedSnapRef é€™ä¸€ä»½ï¼›è§£é™¤é€£çµçš„å„è‡ªæ”¶åœ¨ soloSnapsRefã€‚
-     ç•«é¢ä¸Šã€Œæ­£åœ¨ç·¨è¼¯çš„é‚£ä¸€ä»½ã€æ°¸é æ˜¯å…ƒä»¶æœ¬èº«çš„ stateï¼Œåˆ‡æ›ç…§ç‰‡æ™‚æ‰å­˜å›žåŽ»ï¼è®€å‡ºä¾†ã€‚ */
-  type BatchSnap = {
-    params: EditorParams; geo: GeoParams; selectedLutIdx: number;
-    isSoftActive: boolean; isBlurActive: boolean; isGrainActive: boolean; isHalationActive: boolean;
-    softManuallyAdjusted: boolean; blurManuallyAdjusted: boolean;
-    grainManuallyAdjusted: boolean; halationManuallyAdjusted: boolean;
-    /** å››é¡†é–‹é—œã€Œé—œæŽ‰å†é–‹è¦å›žåˆ°å¤šå°‘ã€çš„è¨˜æ†¶å€¼ï¼Œä¹Ÿè¦è·Ÿè‘—ä¸€èµ·èµ° */
-    userSoft: number; userBlur: number; userHalation: number;
-    userGrain: { grain: number; colorNoise: number; colorNoise2: number };
-  };
-  const liveRef = useRef<BatchSnap | null>(null);
-  liveRef.current = {
-    params, geo, selectedLutIdx,
-    isSoftActive, isBlurActive, isGrainActive, isHalationActive,
-    softManuallyAdjusted, blurManuallyAdjusted, grainManuallyAdjusted, halationManuallyAdjusted,
-    userSoft: userSoftRef.current, userBlur: userBlurRef.current,
-    userHalation: userHalationRef.current, userGrain: { ...userGrainRef.current },
-  };
-  const cloneSnap = (s: BatchSnap): BatchSnap => JSON.parse(JSON.stringify(s));
-  /** é®è‰²ç‰‡èˆ‡æ§‹åœ–æ˜¯ã€Œé€™å¼µç…§ç‰‡è‡ªå·±çš„äº‹ã€ï¼Œä¸è·Ÿè‘—é€£å‹• â€”â€” æ¯å¼µå„å­˜ä¸€ä»½ */
-  const ownGeoRef = useRef<Record<number, GeoParams>>({});
-  const ownMaskRef = useRef<Record<number, Partial<EditorParams>>>({});
-  const isOwnKey = (k: string) => k.startsWith('mask');
-  const pickMask = (p: EditorParams): Partial<EditorParams> => {
-    const out: any = {};
-    Object.keys(p).forEach(k => { if (isOwnKey(k)) out[k] = (p as any)[k]; });
-    return out;
-  };
-  const sharedSnapRef = useRef<BatchSnap | null>(null);
-  const soloSnapsRef = useRef<Record<number, BatchSnap>>({});
-  /** æ›ç…§ç‰‡æ™‚è¦å¥—ä¸ŠåŽ»çš„é‚£ä¸€ä»½ï¼Œä»¥åŠå®ƒæ˜¯çµ¦å“ªä¸€å¼µçš„ */
-  const pendingSnapRef = useRef<BatchSnap | null>(null);
-  const pendingSnapSrcRef = useRef<string | null>(null);
-  const pendingSnapIdxRef = useRef<number | null>(null);
-  const applySnap = (snap: BatchSnap, forIdx?: number) => {
-    const i = forIdx ?? safeIdx;
-    // é€£å‹•çš„åªæœ‰è‰²å½©ï¼æ¿¾é¡ï¼ç‰¹æ•ˆï¼›é®è‰²ç‰‡èˆ‡æ§‹åœ–ç”¨é€™å¼µè‡ªå·±çš„é‚£ä¸€ä»½ã€‚
-    // æ²’å‹•éŽçš„é‚£å¹¾å¼µå°±ç”¨é è¨­å€¼ â€”â€” ä¸èƒ½æ²¿ç”¨å¿«ç…§è£¡åˆ¥äººçš„é®è‰²ç‰‡ï¼æ§‹åœ–ã€‚
-    const ownMask = ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS);
-    const nextParams = { ...cloneSnap(snap).params, ...ownMask } as EditorParams;
-    setParams(nextParams);
-    const ownGeo = ownGeoRef.current[i]
-      ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
-      : { ...DEFAULT_GEO, crop: { ...FULL_CROP } };
-    geoRef.current = ownGeo;
-    setGeo(ownGeo);
-    setSelectedLutIdx(snap.selectedLutIdx);
-    setIsSoftActive(snap.isSoftActive);
-    setIsBlurActive(snap.isBlurActive);
-    setIsGrainActive(snap.isGrainActive);
-    setIsHalationActive(snap.isHalationActive);
-    setSoftManuallyAdjusted(snap.softManuallyAdjusted);
-    setBlurManuallyAdjusted(snap.blurManuallyAdjusted);
-    setGrainManuallyAdjusted(snap.grainManuallyAdjusted);
-    setHalationManuallyAdjusted(snap.halationManuallyAdjusted);
-    // èˆŠå¿«ç…§æ²’å­˜é€™å¹¾å€‹è¨˜æ†¶å€¼ï¼Œå–ä¸åˆ°å°±ç¶­æŒç¾åœ¨çš„
-    if (typeof snap.userSoft === 'number') userSoftRef.current = snap.userSoft;
-    if (typeof snap.userBlur === 'number') userBlurRef.current = snap.userBlur;
-    if (typeof snap.userHalation === 'number') userHalationRef.current = snap.userHalation;
-    if (snap.userGrain) userGrainRef.current = { ...snap.userGrain };
-  };
-  const applySnapRef = useRef(applySnap);
-  applySnapRef.current = applySnap;
-  /** æŠŠã€Œç¾åœ¨ç•«é¢ä¸Šé€™ä¸€ä»½ã€æ”¶å›žå®ƒè©²åŽ»çš„åœ°æ–¹ */
-  const stashCurrent = () => {
-    const live = liveRef.current;
-    if (!live) return;
-    // é®è‰²ç‰‡èˆ‡æ§‹åœ–å„ç•™å„çš„
-    ownGeoRef.current[safeIdx] = JSON.parse(JSON.stringify(live.geo));
-    ownMaskRef.current[safeIdx] = pickMask(live.params);
-    if (linked[safeIdx] === false) soloSnapsRef.current[safeIdx] = cloneSnap(live);
-    else sharedSnapRef.current = cloneSnap(live);
-  };
-  const snapFor = (i: number): BatchSnap | null =>
-    (linked[i] === false ? soloSnapsRef.current[i] : sharedSnapRef.current) ?? null;
-  /** åˆ‡æ›è¦é è¦½å“ªä¸€å¼µ */
-  const switchTo = (i: number) => {
-    if (i === safeIdx || i < 0 || i >= srcList.length) return;
-    setBatchMenu(null);
-    stashCurrent();
-    pendingSnapRef.current = snapFor(i);
-    pendingSnapSrcRef.current = srcList[i];
-    pendingSnapIdxRef.current = i;
-    setBatchIdx(i);
-    // èƒŒæ™¯å·²ç¶“ç®—å¥½çš„è©±ï¼Œç•¶ä¸‹å°±æŠŠèª¿æ•´å¾Œçš„ç•«é¢ç•«ä¸ŠåŽ» â€”â€” æ‰‹æŒ‡ä¸€é›¢é–‹å°±æ›å¥½äº†ï¼Œ
-    // ä¸ç”¨ç­‰åœ–ç‰‡é‡æ–°è§£ç¢¼ã€é‡æ–°ç®—ä¸€è¼ªã€‚ç®—ä¸åˆ°å°±å…ˆè“‹ä¸€å±¤ã€Œæ¸²æŸ“ä¸­ã€ï¼Œåˆ¥è®“ç•«é¢åœåœ¨ä¸Šä¸€å¼µã€‚
-    // ä½†å¦‚æžœé€™å¼µçš„åœ–æ—©å°±è§£ç¢¼éŽï¼ˆä¾†å›žåˆ‡æ›çš„æƒ…æ³ï¼‰ï¼Œé‡å»ºæ˜¯åŒä¸€æ‹åŒæ­¥åšå®Œçš„ï¼Œ
-    // è“‹ä¸€å±¤ã€Œæ¸²æŸ“ä¸­ã€åªæœƒé–ƒä¸€ä¸‹ï¼Œåè€Œæ›´åƒåœ¨ç­‰ â€”â€” é‚£å°±åˆ¥è“‹ã€‚
-    // è½‰åœˆåªåœ¨ã€ŒçœŸçš„è¦é‡è·‘ä¸€è¼ªã€æ™‚æ‰è“‹ã€‚é€™å¼µçš„åœ–å¦‚æžœæ—©å°±è§£å¥½äº†ï¼ˆä¾†å›žåˆ‡æ›çš„æƒ…æ³ï¼‰ï¼Œ
-    // é‡å»ºæ˜¯åŒä¸€æ‹åŒæ­¥åšå®Œçš„ï¼Œè“‹ä¸ŠåŽ»åªæœƒé–ƒä¸€ä¸‹ï¼Œçœ‹èµ·ä¾†åè€Œæ›´åƒåœ¨ç­‰ã€‚
-    // è¨»ï¼šé‡å»ºæ˜¯åŒæ­¥çš„ï¼Œæ‰€ä»¥ã€Œå…ˆç­‰ä¸€ä¸‹å†è“‹ã€è¡Œä¸é€š â€”â€” ä¸»åŸ·è¡Œç·’è¢«å¡ä½æ™‚è¨ˆæ™‚å™¨æ ¹æœ¬è¼ªä¸åˆ°ã€‚
-    const decoded = viewedImgRef.current.get(srcList[i]) || warmImgRef.current.get(srcList[i]);
-    const instant = !!(decoded && decoded.complete && decoded.naturalWidth);
-    if (!paintWarmNow(srcList[i], pendingSnapRef.current || liveRef.current) && !instant) setIsSwitching(true);
-  };
-  /* ---- ç¸®åœ–çš„é»žæŒ‰ ----------------------------------------------------------
-     ç”¨ pointerup è€Œä¸æ˜¯ clickï¼šæ‰‹æ©Ÿä¸Šå…©ä¸‹é»žå¾—å¿«æ™‚ï¼Œç¬¬äºŒä¸‹çš„ click å¸¸å¸¸è¢«ç€è¦½å™¨
-     ç•¶æˆé€£æ“Šæ‰‹å‹¢åžæŽ‰ï¼Œçœ‹èµ·ä¾†å°±æ˜¯ã€Œé»žå…©ä¸‹æ²’åæ‡‰ã€ã€‚é †ä¾¿è£œä¸€å€‹é•·æŒ‰ï¼Œ
-     ä¸æƒ³é€£é»žå…©ä¸‹çš„äººå¯ä»¥æŒ‰è‘—ä¸æ”¾å«å‡ºåŒä¸€å€‹é¸å–®ã€‚                            */
-  /* é¸å–®æ˜¯ç¸®åœ–è‡ªå·±çš„å­ç¯€é»žï¼Œæ‰€ä»¥æ²å‹•æ™‚å®ƒæœ¬ä¾†å°±è·Ÿè‘—ç¸®åœ–ä¸€èµ·èµ° â€”â€” ä¸ç”¨ rAF è¿½ã€
-     ä¹Ÿä¸æœƒæœ‰ä¸€æ ¼çš„å»¶é²ã€‚é€™è£¡åªè¨˜ã€Œç›¸å°ç¸®åœ–è¦åå¤šå°‘ã€ï¼Œç”¨ä¾†è®“é å³é‚Šçš„ç¸®åœ–
-     æŠŠé¸å–®å¾€å·¦æŒªä¸€é»žï¼Œä¸ç„¶æœƒè¢«æ²å‹•åˆ—çš„å³ç·£åˆ‡æŽ‰ã€‚ */
-  /** HSL ç›®å‰åœ¨èª¿å“ªä¸€å€‹è‰²å¸¶ */
-  const [hslBandIdx, setHslBandIdx] = useState(0);
-  const [batchMenuDx, setBatchMenuDx] = useState(0);
-  /** é¸å–®å¤§ç´„çš„å¯¬åº¦ï¼Œåªç”¨ä¾†æ±ºå®šè¦ä¸è¦å¾€å·¦æŒª */
-  const BATCH_MENU_W = 92;
-  /** åˆ‡éŽåŽ»äº†ä½†æ–°çš„é‚£å¼µé‚„åœ¨ç®— â€”â€” é è¦½ä¸Šè“‹ä¸€å±¤ã€Œæ¸²æŸ“ä¸­ã€ */
-  const [isSwitching, setIsSwitching] = useState(false);
-
-  const pressRef = useRef<{ i: number; x: number; y: number; moved: boolean; timer: number } | null>(null);
-  const openBatchMenu = (i: number) => {
-    const el = document.querySelector(`[data-batch-thumb="${i}"]`) as HTMLElement | null;
-    const row = el?.closest('[data-batch-row]') as HTMLElement | null;
-    if (el && row) {
-      const r = el.getBoundingClientRect(), rr = row.getBoundingClientRect();
-      setBatchMenuDx(Math.min(0, rr.right - (r.left + BATCH_MENU_W)));
-    } else {
-      setBatchMenuDx(0);
-    }
-    setBatchMenu(i);
-  };
-  const cancelThumbPress = () => {
-    if (pressRef.current) window.clearTimeout(pressRef.current.timer);
-    pressRef.current = null;
-  };
-  const beginThumbPress = (i: number, e: React.PointerEvent<HTMLElement>) => {
-    cancelThumbPress();
-    pressRef.current = {
-      i, x: e.clientX, y: e.clientY, moved: false,
-      timer: window.setTimeout(() => { if (pressRef.current && !pressRef.current.moved) { openBatchMenu(i); cancelThumbPress(); } }, 450),
-    };
-  };
-  const moveThumbPress = (e: React.PointerEvent<HTMLElement>) => {
-    const st = pressRef.current;
-    if (!st) return;
-    if (Math.abs(e.clientX - st.x) > 8 || Math.abs(e.clientY - st.y) > 8) { st.moved = true; window.clearTimeout(st.timer); }
-  };
-  const endThumbPress = (i: number, e: React.PointerEvent<HTMLElement>, active: boolean) => {
-    const st = pressRef.current;
-    cancelThumbPress();
-    if (!st || st.i !== i || st.moved) return;   // åœ¨æ²å‹•å°±ä¸ç®—é»žæ“Š
-    // å·²ç¶“é¸ä¸­çš„å†é»žä¸€ä¸‹ï¼é–‹é¸å–®ã€‚é€™è£¡åˆ»æ„ä¸åšé–‹é—œåˆ‡æ› â€”â€”
-    // é€£é»žå…©ä¸‹æ™‚æœƒè®Šæˆé–‹äº†åˆé—œï¼Œçœ‹èµ·ä¾†å°±åƒæ²’åæ‡‰ã€‚
-    if (active) openBatchMenu(i);
-    else { setBatchMenu(null); switchTo(i); }
-  };
-
-  /** å¾žç¸®åœ–åˆ—åˆªæŽ‰ä¸€å¼µï¼ˆè‡³å°‘ç•™ä¸€å¼µï¼‰ */
-  const removePhoto = (i: number) => {
-    if (srcList.length <= 1) return;
-    const nextIdx = i < safeIdx ? safeIdx - 1 : Math.min(safeIdx, srcList.length - 2);
-    // å„è‡ªé‚£ä»½åƒæ•¸çš„ç´¢å¼•è¦è·Ÿè‘—å¾€å‰æŒªï¼ˆå«é®è‰²ç‰‡èˆ‡æ§‹åœ–é‚£å…©ä»½ï¼‰
-    const reindex = <T,>(src: Record<number, T>): Record<number, T> => {
-      const out: Record<number, T> = {};
-      (Object.entries(src) as [string, T][]).forEach(([k, v]) => {
-        const n = Number(k);
-        if (n === i) return;
-        out[n > i ? n - 1 : n] = v;
-      });
-      return out;
-    };
-    soloSnapsRef.current = reindex(soloSnapsRef.current);
-    ownGeoRef.current = reindex(ownGeoRef.current);
-    ownMaskRef.current = reindex(ownMaskRef.current);
-    setLinked(prev => prev.filter((_, n) => n !== i));
-    if (nextIdx !== safeIdx) {
-      stashCurrent();
-      pendingSnapRef.current = snapFor(i < safeIdx ? safeIdx : nextIdx + (i <= nextIdx ? 1 : 0));
-      pendingSnapSrcRef.current = srcList.filter((_, n) => n !== i)[nextIdx] || null;
-    }
-    setSrcList(prev => prev.filter((_, n) => n !== i));
-    setBatchIdx(nextIdx);
-  };
-
-  /** é€£çµï¼è§£é™¤é€£çµã€‚è§£é™¤çš„ç•¶ä¸‹å…ˆæŠŠç¾åœ¨çš„æ¨£å­ç•™çµ¦å®ƒï¼Œä¹‹å¾Œå°±å„èµ°å„çš„ã€‚ */
-  const toggleLink = (i: number) => {
-    const live = liveRef.current;
-    setLinked(prev => {
-      const next = [...prev];
-      const on = next[i] !== false;
-      next[i] = !on;
-      if (on) {
-        soloSnapsRef.current[i] = cloneSnap((i === safeIdx ? live : sharedSnapRef.current) || live!);
-      } else {
-        delete soloSnapsRef.current[i];
-        if (i === safeIdx && sharedSnapRef.current) applySnap(sharedSnapRef.current);
-      }
-      return next;
-    });
-  };
-
-  // ---- è·³å‡ºæ‡‰ç”¨å†å›žä¾†é‚„åœ¨ ----
-  // èª¿æ•´éƒ½æ˜¯éžç ´å£žæ€§çš„åƒæ•¸ï¼Œæ‰€ä»¥å­˜ã€Œç…§ç‰‡ + åƒæ•¸ã€å°±èƒ½å®Œæ•´æŽ¥å›žä¸Šæ¬¡çš„ç‹€æ…‹ã€‚
-  // é‚„åŽŸçš„å‹•ä½œæ”¾åœ¨ä¸‹é¢é‚£å€‹ã€Œæ›ç…§ç‰‡å°±å…¨éƒ¨æ­¸é›¶ã€çš„ effect æœ€å¾Œé¢ â€”â€”
-  // é‚£å€‹ effect æœƒæŠŠ params/geo/æ¿¾é¡ å…¨éƒ¨æ‰“å›žé è¨­ï¼Œå…ˆé‚„åŽŸå°±æœƒè¢«å®ƒè“‹æŽ‰ã€‚
-  const initialStateRef = useRef(initialState);
-  /** æŽ¥çºŒçš„åƒæ•¸æ˜¯å±¬æ–¼å“ªä¸€å¼µç…§ç‰‡çš„ï¼ˆæ›ç…§ç‰‡ä¹‹å¾Œå°±ä¸è©²å†å¥—ï¼‰ */
-  const resumeSrcRef = useRef<string | null>(null);
-
-  // ç…§ç‰‡å…ˆå­˜ä¸€æ¬¡ï¼Œä¹‹å¾Œåªè¦åƒæ•¸è®Šäº†å°±ï¼ˆå»¶é²ï¼‰æ›´æ–°åƒæ•¸é‚£ä¸€ä»½
-  const draftSrcSavedRef = useRef<string | null>(null);
-  const latestEditorDraftRef = useRef({ params, geo, selectedLutIdx });
-  latestEditorDraftRef.current = { params, geo, selectedLutIdx };
-  useEffect(() => {
-    if (!imageSrc) return;
-    const timer = window.setInterval(() => {
-      const first = draftSrcSavedRef.current !== imageSrc;
-      draftSrcSavedRef.current = imageSrc;
-      const latest = latestEditorDraftRef.current;
-      const hasEditedContent =
-        Boolean(initialState) ||
-        historyIndex > 0 ||
-        JSON.stringify(latest.params) !== JSON.stringify(DEFAULT_PARAMS) ||
-        !isGeoIdentity(latest.geo) ||
-        latest.selectedLutIdx !== 0 ||
-        activeSrc !== imageSrc;
-      /* æœªç·¨è¼¯æ™‚ä»å¯é å­˜åŽŸåœ–ï¼Œä½†ä¸èƒ½å»ºç«‹é¦–é çš„ã€Œç¹¼çºŒç·¨è¼¯ã€æç¤ºã€‚ */
-      saveToolDraft('editor', first ? imageSrc : null, {
-        ...latest,
-        __histKey: histKey || initialState?.__histKey || null,
-      }, hasEditedContent);
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [imageSrc, activeSrc, historyIndex, initialState, histKey]);
-  const applyGeoRef = useRef<(g: GeoParams) => void>(() => {});
-  const activeDragRef = useRef<{
-    type: 'center' | 'start' | 'end' | 'rotate' | 'create';
-    startX: number;
-    startY: number;
-    initialCx: number;
-    initialCy: number;
-    initialAngle: number;
-    initialD: number;
-  } | null>(null);
-
-  const updateCanvasBounds = useCallback(() => {
-    const canvas = displayCanvasRef.current;
-    if (canvas) {
-      const parent = canvas.offsetParent as HTMLElement | null;
-      if (parent) {
-        // é®è‰²ç‰‡ SVG å’Œ canvas ä¸€èµ·ä½äºŽç¼©æ”¾å±‚å†…ï¼Œæ‰€ä»¥è¿™é‡Œå¿…é¡»ä¿å­˜ã€Œå±‚å†…åæ ‡ã€ï¼Œ
-        // ä¸èƒ½ç”¨ getBoundingClientRect()ï¼šåŽè€…åŒ…å«å½“å‰ç¼©æ”¾å€çŽ‡ï¼Œå¤ä½ transform åˆ
-        // ä¸ä¼šè§¦å‘ ResizeObserverï¼Œä¹‹åŽåˆ›å»ºçš„é®è‰²ç‰‡å°±ä¼šæ²¿ç”¨æ”¾å¤§åŽçš„é”™è¯¯å°ºå¯¸ã€‚
-        setCanvasBounds({
-          width: canvas.offsetWidth,
-          height: canvas.offsetHeight,
-          top: canvas.offsetTop,
-          left: canvas.offsetLeft,
-        });
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    const canvas = displayCanvasRef.current;
-    if (!canvas) return;
-    
-    // Initial measure
-    updateCanvasBounds();
-    
-    const observer = new ResizeObserver(() => {
-      updateCanvasBounds();
-    });
-    
-    observer.observe(canvas);
-    return () => {
-      observer.disconnect();
-    };
-  }, [updateCanvasBounds, activeCategory]);
-
-  const handleMaskPointerDown = (e: React.PointerEvent<SVGElement>, type: 'center' | 'start' | 'end' | 'rotate' | 'create') => {
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    } catch(err) {}
-
-    const canvasRect = displayCanvasRef.current?.getBoundingClientRect();
-    if (!canvasRect?.width || !canvasRect.height) return;
-    // æ‰‹åŠ¿åæ ‡å…ˆæŒ‰ç”»å¸ƒå½“å‰çš„å±å¹•çŸ©å½¢æ­£è§„åŒ–ï¼Œå†æ¢å›ž SVG çš„å±‚å†…å°ºå¯¸ã€‚
-    // å› æ­¤å³ä½¿å›¾ç‰‡ä»åœ¨ç¼©æ”¾å¤ä½åŠ¨ç”»ä¸­ï¼Œé®è‰²ç‰‡ä¹Ÿä¸ä¼šäº§ç”Ÿå€çŽ‡æˆ–ä½ç§»è¯¯å·®ã€‚
-    const canvasX = ((e.clientX - canvasRect.left) / canvasRect.width) * canvasBounds.width;
-    const canvasY = ((e.clientY - canvasRect.top) / canvasRect.height) * canvasBounds.height;
-
-    const p = paramsRef.current;
-
-    activeDragRef.current = {
-      type,
-      startX: canvasX,
-      startY: canvasY,
-      initialCx: p.maskCx * canvasBounds.width,
-      initialCy: p.maskCy * canvasBounds.height,
-      initialAngle: p.maskAngle,
-      initialD: p.maskD * canvasBounds.width,
-    };
-    
-    if (type === 'create') {
-      setIsInitialCreatingMask(true);
-    }
-
-    // æ–°çš„ä¸€æ¬¡æ‹–æ›³ï¼šé›¢å±é‚£å…©ä»½éƒ½é‡ç®—ä¸€æ¬¡ï¼Œä¸è¦æ²¿ç”¨ä¸Šä¸€æ¬¡ç•™ä¸‹ä¾†çš„
-    maskAdjKeyRef.current = '';
-    maskBaseKeyRef.current = '';
-
-    setIsInteracting(true);
-  };
-
-  const handleMaskPointerMove = (e: React.PointerEvent<SVGElement>) => {
-    if (!activeDragRef.current) return;
-    
-    const canvasRect = displayCanvasRef.current?.getBoundingClientRect();
-    if (!canvasRect?.width || !canvasRect.height) return;
-    const canvasX = ((e.clientX - canvasRect.left) / canvasRect.width) * canvasBounds.width;
-    const canvasY = ((e.clientY - canvasRect.top) / canvasRect.height) * canvasBounds.height;
-
-    const drag = activeDragRef.current;
-    const p = { ...paramsRef.current };
-
-    const cWidth = canvasBounds.width;
-    const cHeight = canvasBounds.height;
-
-    if (drag.type === 'create') {
-      const dx = canvasX - drag.startX;
-      const dy = canvasY - drag.startY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist > 5) {
-        p.maskCreated = true;
-        p.maskShowOverlay = true;
-        const absoluteCx = drag.startX + dx / 2;
-        const absoluteCy = drag.startY + dy / 2;
-        p.maskCx = absoluteCx / cWidth;
-        p.maskCy = absoluteCy / cHeight;
-        p.maskD = Math.max(8, dist / 2) / cWidth;
-        p.maskAngle = Math.atan2(dy, dx);
-      }
-    } else if (drag.type === 'center') {
-      const dx = canvasX - drag.startX;
-      const dy = canvasY - drag.startY;
-      const absoluteCx = drag.initialCx + dx;
-      const absoluteCy = drag.initialCy + dy;
-      p.maskCx = Math.max(0, Math.min(1, absoluteCx / cWidth));
-      p.maskCy = Math.max(0, Math.min(1, absoluteCy / cHeight));
-    } else if (drag.type === 'end' || drag.type === 'start') {
-      const dx = canvasX - drag.startX;
-      const dy = canvasY - drag.startY;
-      const cos0 = Math.cos(drag.initialAngle);
-      const sin0 = Math.sin(drag.initialAngle);
-      
-      const deltaNormal = dx * cos0 + dy * sin0;
-
-      let newD = drag.initialD;
-      if (drag.type === 'end') {
-        newD = Math.max(8, drag.initialD + deltaNormal);
-      } else {
-        newD = Math.max(8, drag.initialD - deltaNormal);
-      }
-      p.maskD = newD / cWidth;
-    } else if (drag.type === 'rotate') {
-      const initialMouseAngle = Math.atan2(drag.startY - drag.initialCy, drag.startX - drag.initialCx);
-      const currentMouseAngle = Math.atan2(canvasY - drag.initialCy, canvasX - drag.initialCx);
-      
-      let angleDiff = currentMouseAngle - initialMouseAngle;
-      angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
-      p.maskAngle = drag.initialAngle + angleDiff;
-    }
-
-    paramsRef.current = p;
-    isDirtyRef.current = true;
-    scheduleParamsSync();
-  };
-
-  const handleMaskPointerUp = (e: React.PointerEvent<SVGElement>) => {
-    if (!activeDragRef.current) return;
-
-    const drag = activeDragRef.current;
-    const p = { ...paramsRef.current };
-
-    if (drag.type === 'create') {
-      const currentD = p.maskD * canvasBounds.width;
-      if (currentD < 15) {
-        p.maskCreated = false;
-      }
-      setIsInitialCreatingMask(false);
-    }
-
-    try {
-      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-    } catch(err) {}
-
-    activeDragRef.current = null;
-    setIsInteracting(false);
-    paramsRef.current = p;
-    flushParamsSync();
-  };
-
-  // Single Canvas for all rendering
-  const displayCanvasRef = useRef<HTMLCanvasElement>(null);
-  const helperCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const originalImgRef = useRef<HTMLImageElement | null>(null);
-  
-  // Ref for showOriginal to be accessed inside loop
-  const showOriginalRef = useRef(false);
-
-  // Buffer management - full is now lazily allocated on save
-  const buffers = useRef<{ preview: BufferSet, fast: BufferSet }>({ 
-      preview: { source: null, dest: null, shared: null, lutted: null, lut0: null, lut100: null, temp: null, sharpenDetail: null, w: 0, h: 0 },
-      fast: { source: null, dest: null, shared: null, lutted: null, lut0: null, lut100: null, temp: null, sharpenDetail: null, w: 0, h: 0 }
-  });
-
-  // Reusable 1D LUT buffer to avoid GC stutter during slider interaction
-  const baseCorrectionLutRef = useRef<Uint8Array>(new Uint8Array(256));
-
-  // Patterns for Grain/Noise Overlay
-  const grainPatternRef = useRef<HTMLCanvasElement | null>(null);
-  const noisePatternRef = useRef<HTMLCanvasElement | null>(null);
-
-  /* æ¿¾é¡è§£å¥½çš„è³‡æ–™æŽ›åœ¨æ¨¡çµ„å±¤ï¼ˆè¦‹æª”æ¡ˆä¸Šæ–¹ LUT_CACHEï¼‰â€”â€”
-     ç·¨è¼¯å™¨æ˜¯ã€ŒcurrentView === 'editor' æ‰æŽ›ã€çš„å…ƒä»¶ï¼Œå›žé¦–é å†é€²ä¾†å°±æ˜¯å…¨æ–°çš„ä¸€ä»½ï¼Œ
-     å¿«å–å¦‚æžœæ”¾åœ¨ useRef è£¡ï¼Œ24 é¡†æ¿¾é¡æ¯æ¬¡é€²ç·¨è¼¯å™¨éƒ½è¦é‡æ–°ä¸‹è¼‰ï¼‹é‡æ–°è§£ä¸€æ¬¡ã€‚
-     é‚£å°±æ˜¯ã€Œæ¯æ¬¡é»žæ¿¾é¡éƒ½è¦åŠ è¼‰ã€ã€‚ */
-  const lutDataRef = useRef(LUT_CACHE);
-  const loadingPromisesRef = useRef(LUT_LOADING);
-  const toolsScrollRef = useRef<HTMLDivElement>(null);
-  /** æ˜¯ä¸æ˜¯ã€Œå¾žç‰¹æ•ˆç´°é …é€€å›žä¾†ã€â€”â€”åªæœ‰é€™å€‹æƒ…æ³æ‰æŠŠæŒ‰éˆ•å°å›žç•«é¢ä¸­é–“ */
-  const backFromFxRef = useRef(false);
-  const paramsRef = useRef(params);
-  const isDirtyRef = useRef(true);
-
-  // æ‹–æ›³é®è‰²ç‰‡èˆ‡æ›²ç·šæ™‚ï¼ŒåŽŸæœ¬æ¯ä¸€æ¬¡ pointermove éƒ½ç›´æŽ¥ setParamsï¼Œæœƒè®“æ•´å€‹
-  // ç·¨è¼¯å™¨å…ƒä»¶é‡ç¹ª â€”â€” é€™æ˜¯é‚£å…©å€‹åŠŸèƒ½å¡é “çš„ä¸»å› ï¼ˆæ»‘æ¡¿æ²’é€™å•é¡Œæ˜¯å› ç‚º
-  // FastSlider ç”¨ memo + ref ç¹žé–‹äº†ï¼‰ã€‚æ”¹ç‚ºç«‹å³å¯«å…¥ paramsRefï¼ˆç•«å¸ƒçš„æ¸²æŸ“
-  // è¿´åœˆæœ¬ä¾†å°±è®€é€™è£¡ï¼‰ï¼Œè€ŒæŠŠ React ç‹€æ…‹åŒæ­¥å£“åˆ°æ¯å€‹å‹•ç•«å½±æ ¼æœ€å¤šä¸€æ¬¡ã€‚
-  const paramsSyncRafRef = useRef<number | null>(null);
-  const scheduleParamsSync = useCallback(() => {
-    if (paramsSyncRafRef.current !== null) return;
-    paramsSyncRafRef.current = requestAnimationFrame(() => {
-      paramsSyncRafRef.current = null;
-      setParams({ ...paramsRef.current });
-    });
-  }, []);
-  const flushParamsSync = useCallback(() => {
-    if (paramsSyncRafRef.current !== null) {
-      cancelAnimationFrame(paramsSyncRafRef.current);
-      paramsSyncRafRef.current = null;
-    }
-    setParams({ ...paramsRef.current });
-  }, []);
-  useEffect(() => () => {
-    if (paramsSyncRafRef.current !== null) cancelAnimationFrame(paramsSyncRafRef.current);
-  }, []);
-  const lastRenderedShowOriginalRef = useRef(false);
-  const renderTimeoutRef = useRef<any>(null);
-  const lastSliderMoveTimeRef = useRef(0);
-  
-  // Optimize re-renders by caching the last processed pixels state with zero-cost primitive checks
-  /** b.lut0ï¼ˆåªæœ‰èª¿ç¯€ã€æ²’æœ‰æ¿¾é¡çš„é‚£ä¸€ä»½ï¼‰ä¸Šæ¬¡æ˜¯ç…§ä»€éº¼ç®—å‡ºä¾†çš„ */
-  /* lut0ï¼ˆåªæœ‰èª¿ç¯€ã€æ²’æœ‰æ¿¾é¡çš„é‚£ä¸€ä»½ï¼‰è·Ÿé¸å“ªé¡†æ¿¾é¡ç„¡é—œï¼Œæ‰€ä»¥åªè¦èª¿ç¯€æ²’å‹•å°±èƒ½ä¸€ç›´æ²¿ç”¨ã€‚
-     ä½†ç•«é¢æœƒåœ¨ã€Œä½Žè§£æžåº¦ä»£ç†ã€èˆ‡ã€Œå®Œæ•´é è¦½ã€å…©ç¨®å°ºå¯¸ä¹‹é–“äº¤æ›¿ï¼Œåªè¨˜ä¸€ä»½çš„è©±
-     æ¯æ¬¡æ›å°ºå¯¸å°±å¾—é‡ç®—ä¸€æ¬¡ â€”â€” å…©ç¨®å°ºå¯¸å„è¨˜ä¸€ä»½ï¼Œæ›ä¾†æ›åŽ»éƒ½ä¸ç”¨å†ç®—ã€‚ */
-  const lut0StateRef = useRef<Record<number, any>>({});
-  const lastProcessedParamsRef = useRef<{
-      brightness: number;
-      exposure: number;
-      contrast: number;
-      highlights: number;
-      shadows: number;
-      temp: number;
-      tint: number;
-      sat: number;
-      vib: number;
-      sharpen: number;
-      lutAmount: number;
-      selectedLutIdx: number;
-      bufferWidth: number;
-      lutSize: number;
-      curvesRef: Curves | null;
-      hslRef: HslAdjust | null;
-  }>({
-      brightness: 0, exposure: 0, contrast: 0, highlights: 0, shadows: 0,
-      temp: 0, tint: 0, sat: 0, vib: 0, sharpen: 0, lutAmount: 0,
-      selectedLutIdx: -1, bufferWidth: 0, lutSize: 0, curvesRef: null, hslRef: null
-  });
-
-  // Curve Cache
-  const lastCurveLutStrRef = useRef<string>('');
-  const curveLutsCacheRef = useRef<{ rgb: Uint8Array, r: Uint8Array, g: Uint8Array, b: Uint8Array } | null>(null);
-  
-  // Track user-set blur to restore it when switching away from filters that force blur (f16/f17)
-  const userManualBlurRef = useRef<number>(0);
-
-  // Buffer cache for fast highlights/shadows rendering during drag interaction
-  const extremeBuffersRef = useRef<{
-    activeToolId: string;
-    base: Uint8ClampedArray | null;
-    min: Uint8ClampedArray | null;
-    max: Uint8ClampedArray | null;
-  }>({
-    activeToolId: '',
-    base: null,
-    min: null,
-    max: null
-  });
-
-  // A cache for pixel processing results of each filter to make switching instantaneous
-  /** ç›®å‰ç·©è¡å€è£¡è£çš„æ˜¯å“ªä¸€å¼µç…§ç‰‡çš„åƒç´ ï¼ˆæ‰¹é‡ç·¨è¼¯æ›ç…§ç‰‡æ™‚æœƒè®Šï¼‰ */
-  const buffersSrcRef = useRef<string>('');
-  /** ç·©è¡å€æ›äººäº†ã€‚ç¸®åœ–é‚£å…©æ”¯ effect é é€™å€‹çŸ¥é“ã€Œå¯ä»¥é‡ç®—äº†ã€â€”â€”
-      é€£çµä¸­çš„ç…§ç‰‡åƒæ•¸ä¸€æ¨¡ä¸€æ¨£ï¼Œå…‰çœ‹ params æ˜¯çœ‹ä¸å‡ºæ›éŽç…§ç‰‡çš„ã€‚ */
-  const [buffersTick, setBuffersTick] = useState(0);
-  /** ç¾åœ¨è©²é¡¯ç¤ºå“ªä¸€å¼µ â€”â€” æ¯æ¬¡ render éƒ½æ›´æ–°ï¼Œç¹ªåœ–è¿´åœˆç”¨å®ƒæ“‹æŽ‰ã€Œç•«åˆ°èˆŠç…§ç‰‡ã€ */
-  const activeSrcRef = useRef<string>(activeSrc);
-  activeSrcRef.current = activeSrc;
-  const filterPixelCacheRef = useRef<Record<string, {
-    src: string;
-    lut0: Uint8ClampedArray;
-    lut100: Uint8ClampedArray | null;
-    width: number;
-    height: number;
-    brightness: number;
-    exposure: number;
-    contrast: number;
-    highlights: number;
-    shadows: number;
-    temp: number;
-    tint: number;
-    sat: number;
-    vib: number;
-    sharpen: number;
-    toneStr: string;
-  }>>({});
-
-  /* å¿«å–çš„éµè¦å¸¶ä¸Šè§£æžåº¦ã€‚ç•«é¢æœƒåœ¨ã€Œä½Žè§£æžåº¦ä»£ç†ã€èˆ‡ã€Œå®Œæ•´é è¦½ã€å…©ç¨®å°ºå¯¸ä¹‹é–“
-     äº¤æ›¿ï¼ˆå‰›æ›æ¿¾é¡å…ˆå‡ºä»£ç†é‚£å¼µã€ä¸‹ä¸€å¹€å†è£œå®Œæ•´çš„ï¼‰ï¼Œå…©è€…å…±ç”¨åŒä¸€å€‹éµçš„è©±
-     æœƒä¸€ç›´äº’ç›¸è¦†è“‹ â€”â€” çµæžœå°±æ˜¯æ¯é»žä¸€æ¬¡æ¿¾é¡éƒ½å¾—æ•´ä»½é‡ç®—ï¼Œ
-     é€£å‰›å‰›æ‰çœ‹éŽçš„é‚£ä¸€é¡†ä¹Ÿä¸€æ¨£ã€‚å¯¦æ¸¬æ˜¯ 100% æ²’å‘½ä¸­ã€‚ */
-  const cacheKeyOf = (lutId: string, w: number) => `${lutId}@${w}`;
-  const getCachedFilterPixels = useCallback((lutId: string, p: EditorParams, w: number, h: number) => {
-    const cached = filterPixelCacheRef.current[cacheKeyOf(lutId, w)];
-    if (!cached) return null;
-    // æ‰¹é‡ç·¨è¼¯æ™‚å…©å¼µç…§ç‰‡çš„å°ºå¯¸å¸¸å¸¸ä¸€æ¨¡ä¸€æ¨£ï¼Œåªæ¯”å°ºå¯¸æœƒæ‹¿åˆ°ã€Œå¦ä¸€å¼µçš„åƒç´ ã€â€”â€”
-    // ä¸€å®šè¦é€£ã€Œé€™ä»½æ˜¯å“ªä¸€å¼µçš„ã€ä¹Ÿå°å¾—ä¸Šæ‰æ•¢ç”¨ã€‚
-    if (cached.src !== buffersSrcRef.current) return null;
-    if (cached.width !== w || cached.height !== h) return null;
-    if (cached.brightness !== p.brightness) return null;
-    if (cached.exposure !== p.exposure) return null;
-    if (cached.contrast !== p.contrast) return null;
-    if (cached.highlights !== p.highlights) return null;
-    if (cached.shadows !== p.shadows) return null;
-    if (cached.temp !== p.temp) return null;
-    if (cached.tint !== p.tint) return null;
-    if (cached.sat !== p.sat) return null;
-    if (cached.vib !== p.vib) return null;
-    if (cached.sharpen !== p.sharpen) return null;
-    if (cached.toneStr !== toneSig(p)) return null;
-    return cached;
-  }, []);
-
-  /* ä¸€ä»½ lut0 + lut100 åœ¨ 1350Ã—1800 å°±è¦ 19 MBï¼Œæ‰‹æ©Ÿä¸Šç•™å¤ªå¤šä»½æœƒç›´æŽ¥æŠŠè¨˜æ†¶é«”åƒå…‰
-     ï¼ˆé€²è€Œè§¸ç™¼å›žæ”¶ã€è®Šå¾—æ›´å¡ï¼‰ã€‚åªç•™æœ€è¿‘ç”¨åˆ°çš„å¹¾ä»½ï¼Œå¤ æ¶µè“‹ã€Œå…©é¡†æ¿¾é¡ä¾†å›žæ¯”è¼ƒã€
-     é€™å€‹æœ€å¸¸è¦‹çš„æƒ…å¢ƒã€‚ */
-  const FILTER_CACHE_KEEP = 6;
-  const cacheOrderRef = useRef<string[]>([]);
-  const cacheFilterPixels = useCallback((lutId: string, p: EditorParams, w: number, h: number, lut0: Uint8ClampedArray, lut100: Uint8ClampedArray | null) => {
-    const key = cacheKeyOf(lutId, w);
-    const order = cacheOrderRef.current;
-    const at = order.indexOf(key);
-    if (at >= 0) order.splice(at, 1);
-    order.push(key);
-    while (order.length > FILTER_CACHE_KEEP) {
-      const drop = order.shift()!;
-      delete filterPixelCacheRef.current[drop];
-    }
-    filterPixelCacheRef.current[key] = {
-      src: buffersSrcRef.current,
-      lut0: new Uint8ClampedArray(lut0),
-      lut100: lut100 ? new Uint8ClampedArray(lut100) : null,
-      width: w,
-      height: h,
-      brightness: p.brightness,
-      exposure: p.exposure,
-      contrast: p.contrast,
-      highlights: p.highlights,
-      shadows: p.shadows,
-      temp: p.temp,
-      tint: p.tint,
-      sat: p.sat,
-      vib: p.vib,
-      sharpen: p.sharpen,
-      toneStr: toneSig(p)
-    };
-  }, []);
-
-  /* ---- èƒŒæ™¯é ç†± ----------------------------------------------------------
-     ç›®å‰é€™å¼µå¼„å¥½ã€ä½¿ç”¨è€…æ‰‹åœä¸‹ä¾†ä¹‹å¾Œï¼Œå°±åœ¨èƒŒæ™¯æŠŠå…¶ä»–é€£çµä¸­çš„ç…§ç‰‡å…ˆç®—å¥½ï¼š
-     å…ˆè§£ç¢¼ï¼Œå†æŠŠã€Œèª¿ç¯€ + æ¿¾é¡ã€é‚£å…©å¼µåƒç´ åœ–ï¼ˆlut0 / lut100ï¼‰ç®—å‡ºä¾†æ”¾è‘—ã€‚
-     åˆ‡éŽåŽ»çš„æ™‚å€™ render() ç›´æŽ¥æ‹¿ç¾æˆçš„ï¼Œä¸ç”¨ç•¶å ´é‡ç®— â€”â€” é€™æ˜¯åˆ‡æ›æ™‚æœ€èŠ±æ™‚é–“çš„ä¸€æ®µã€‚
-     ç‰¹æ•ˆï¼ˆé¡†ç²’ã€æŸ”ç„¦ã€å…‰æšˆé‚£äº›ï¼‰æ²’æœ‰å…ˆç®—ï¼šå®ƒå€‘åƒçš„æ˜¯ä¸€æ•´çµ„è·Ÿè‘—ç•«å¸ƒèµ°çš„å¿«å–ç•«å¸ƒï¼Œ
-     æ¬åˆ°èƒŒæ™¯æœƒå‹•åˆ°ç¾æœ‰çš„ç¹ªåœ–æµç¨‹ï¼Œæ‰€ä»¥ç•™åœ¨åˆ‡æ›å¾Œæ‰ç®—ã€‚
-     ä¸€æ¬¡åªåšä¸€å¼µã€æ¯ä¸€æ­¥ä¹‹é–“éƒ½è®“å‡ºä¸»åŸ·è¡Œç·’ï¼Œæ‰ä¸æœƒè·Ÿå‰æ™¯æ¶è³‡æºã€‚
-     è¨˜æ†¶é«”æœ‰é™ï¼Œæœ€å¤šåªç•™ WARM_MAX å¼µï¼Œå¤šçš„å°±ä¸ŸæŽ‰æœ€èˆŠçš„ã€‚                     */
-  type WarmPixels = {
-    w: number; h: number;
-    lutId: string;
-    p: EditorParams;
-    lut0: Uint8ClampedArray;
-    lut100: Uint8ClampedArray | null;
-  };
-  const WARM_MAX = 2;
-  const warmImgRef = useRef<Map<string, HTMLImageElement>>(new Map());
-  const warmPixelsRef = useRef<Map<string, WarmPixels>>(new Map());
-  /* ä½¿ç”¨è€…ã€ŒçœŸçš„çœ‹éŽã€çš„é‚£å¹¾å¼µï¼Œè§£å¥½çš„åœ–å¦å¤–æ”¶åœ¨é€™è£¡ã€‚
-     èƒŒæ™¯é ç†±é‚£ä»½ï¼ˆwarmImgRefï¼‰æœƒä¸€ç›´è¢«å¾Œé¢æŽ’éšŠçš„ç…§ç‰‡æ“ æŽ‰ â€”â€” ç…§ç‰‡ä¸€å¤šï¼Œ
-     æ“ æŽ‰çš„æ­£å¥½å°±æ˜¯ä½¿ç”¨è€…æ­£åœ¨ä¾†å›žåˆ‡çš„é‚£å…©å¼µï¼Œæ–¼æ˜¯åˆ‡å›žåŽ»åˆè¦é‡è§£ä¸€æ¬¡ç¢¼ã€‚
-     é€™ä¸€ä»½åªæœ‰åˆ‡æ›æ™‚æœƒå¯«ï¼Œé ç†±ç¢°ä¸åˆ°ï¼Œä¾†å›žåˆ‡æ‰æœƒæ˜¯å³æ™‚çš„ã€‚ */
-  const VIEWED_IMG_MAX = 5;
-  const viewedImgRef = useRef<Map<string, HTMLImageElement>>(new Map());
-
-  /* ---- åº•ä¸‹é‚£æ¢æ‰¹é‡ç¸®åœ–åˆ—çš„å°åœ– -----------------------------------------
-     æ ¼å­åªæœ‰ 36Ã—36ï¼Œä½†ä»¥å‰ <img> çš„ src ç›´æŽ¥æŽ›çš„æ˜¯åŽŸåœ– â€”â€”
-     ç€è¦½å™¨æœƒæŠŠæ¯ä¸€å¼µéƒ½å®Œæ•´è§£ç¢¼ã€è€Œä¸”åªè¦é‚£å€‹ <img> é‚„åœ¨ç•«é¢ä¸Šå°±ä¸€ç›´ç•™è‘—ã€‚
-     åå¼µ 1200 è¬åƒç´ çš„ç…§ç‰‡å°±æ˜¯å¥½å¹¾ç™¾ MB çš„é»žé™£åœ–é‡˜åœ¨è¨˜æ†¶é«”è£¡ï¼Œ
-     æ‹–æ»‘æ¡¿æ™‚çš„å¡é “ã€ä»¥åŠç…§ç‰‡ä¸€å¤šå°±è®Šæ…¢ï¼Œéƒ½æ˜¯å¾žé€™è£¡ä¾†çš„ã€‚
-     é€™è£¡å…ˆæŠŠæ¯ä¸€å¼µç¸®æˆ 72Ã—72 å†çµ¦é‚£æ¢åˆ—ç”¨ï¼ŒåŽŸåœ–ç”¨å®Œå°±å¯ä»¥è¢«å›žæ”¶ã€‚ */
-  const STRIP_THUMB = 72;
-  const [stripThumbs, setStripThumbs] = useState<Record<string, string>>({});
-  useEffect(() => {
-    const missing = srcList.filter(s => s && !stripThumbs[s]);
-    if (!missing.length) return;
-    let alive = true;
-    const make = (s: string) => new Promise<void>(resolve => {
-      const finish = (img: HTMLImageElement) => {
-        if (!alive) return resolve();
-        try {
-          const c = document.createElement('canvas');
-          c.width = STRIP_THUMB; c.height = STRIP_THUMB;
-          const cx = c.getContext('2d')!;
-          cx.imageSmoothingQuality = 'high';
-          const sw = img.naturalWidth || img.width, sh = img.naturalHeight || img.height;
-          const k = Math.max(STRIP_THUMB / sw, STRIP_THUMB / sh);
-          cx.drawImage(img, (STRIP_THUMB - sw * k) / 2, (STRIP_THUMB - sh * k) / 2, sw * k, sh * k);
-          const url = c.toDataURL('image/jpeg', 0.82);
-          setStripThumbs(prev => (prev[s] ? prev : { ...prev, [s]: url }));
-        } catch { /* è·¨ä¾†æºä¹‹é¡žçš„å°±ç®—äº†ï¼Œé‚£ä¸€æ ¼ç•™åº•è‰² */ }
-        resolve();
-      };
-      const had = viewedImgRef.current.get(s) || warmImgRef.current.get(s);
-      if (had && had.complete && had.naturalWidth) return finish(had);
-      const im = new Image();
-      if (!s.startsWith('blob:') && !s.startsWith('data:')) im.crossOrigin = 'anonymous';
-      im.onload = () => finish(im);
-      im.onerror = () => resolve();
-      im.src = s;
-    });
-    (async () => { for (const s of missing) { if (!alive) return; await make(s); } })();
-    return () => { alive = false; };
-  }, [srcList, stripThumbs]);
-  /** é€™å¼µçš„åœ–å·²ç¶“è§£å¥½äº†å—Žï¼Ÿé †ä¾¿æŠŠå®ƒç§»åˆ°æœ€æ–°ï¼Œæ‰ä¸æœƒè¢«ä¸‹ä¸€å¼µæ“ æŽ‰ */
-  const takeDecoded = (src: string): HTMLImageElement | null => {
-    const im = viewedImgRef.current.get(src) || warmImgRef.current.get(src);
-    if (!im || !im.complete || !im.naturalWidth) return null;
-    viewedImgRef.current.delete(src);
-    viewedImgRef.current.set(src, im);
-    return im;
-  };
-  const rememberDecoded = (src: string, im: HTMLImageElement) => {
-    viewedImgRef.current.delete(src);
-    viewedImgRef.current.set(src, im);
-    while (viewedImgRef.current.size > VIEWED_IMG_MAX) {
-      const oldest = viewedImgRef.current.keys().next().value as string;
-      if (oldest === src) break;
-      viewedImgRef.current.delete(oldest);
-    }
-  };
-  /** é ç†±å‡ºä¾†çš„åƒç´ åœ–è·Ÿç¾åœ¨çš„åƒæ•¸é‚„å°å¾—ä¸Šå—Žï¼Ÿå°å¾—ä¸Šæ‰æ•¢ç”¨ */
-  const warmSigOf = (p: EditorParams, lutId: string, w: number, h: number) =>
-    [lutId, w, h, p.brightness, p.exposure, p.contrast, p.highlights, p.shadows,
-     p.temp, p.tint, p.sat, p.vib, p.sharpen, toneSig(p)].join('|');
-  const warmSigRef = useRef<Map<string, string>>(new Map());
-  useEffect(() => {
-    if (srcList.length <= 1) return;
-    // æ‰‹æŒ‡é‚„åœ¨æ»‘æ¡¿ä¸Šå°±å®Œå…¨ä¸åšã€‚é€™è£¡ä¸€å¼µç…§ç‰‡è¦è·‘å…©è¶Ÿ processPixelsã€
-    // æœ€å¤§åˆ° 1800pxï¼Œä¸€è¶Ÿå°±æ˜¯å¥½å¹¾åæ¯«ç§’çš„åŒæ­¥é‹ç®— â€”â€” æŽ’åœ¨æ‹–æ›³ä¸­é–“å°±æ˜¯ä¸€æ¬¡æŽ‰æ ¼ã€‚
-    // isInteracting ä¸€è®Šæˆ trueï¼Œæ¸…ç†å‡½å¼æœƒæŠŠæ­£åœ¨è·‘çš„é‚£ä¸€è¼ªä¹Ÿä¸€èµ·åœæŽ‰ã€‚
-    // ï¼ˆé‡åˆ° 3 å¼µç…§ç‰‡æ™‚ p99 ç•«æ ¼ 89.7msï¼Œå–®å¼µåªæœ‰ 20.3msï¼Œå·®è·å°±æ˜¯é€™å€‹ã€‚ï¼‰
-    if (isInteracting) return;
-    let cancelled = false;
-    const yieldTo = (fn: () => void) => { if (!cancelled) window.setTimeout(fn, 0); };
-    const t = window.setTimeout(() => {
-      // åªé ç†±ã€Œé€£çµä¸­ã€çš„ â€”â€” æ²’é€£çµçš„é‚£å¹¾å¼µåƒæ•¸å„èµ°å„çš„ï¼Œå…ˆç®—äº†ä¹Ÿæ˜¯ç™½ç®—
-      const queue = srcList.filter((u, i) => u !== activeSrc && linked[i] !== false);
-      const live = liveRef.current;
-      if (!live) return;
-      const lut = lutList[live.selectedLutIdx];
-      if (!lut) return;
-      const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
-      // æ¿¾é¡æª”é‚„æ²’ä¸‹è¼‰å®Œå°±å…ˆä¸ç®—ï¼Œç­‰ä¸‹ä¸€è¼ªï¼ˆåƒæ•¸æ²’è®Šçš„è©±ä¸‹ä¸€è¼ªè‡ªç„¶æœƒè£œä¸Šï¼‰
-      if (lut.url && !activeLut) return;
-      const p: EditorParams = JSON.parse(JSON.stringify(live.params));
-
-      const step = () => {
-        if (cancelled) return;
-        const src = queue.shift();
-        if (!src) return;
-
-        const PREVIEW_SIZE = 1800;
-        const done = () => yieldTo(step);
-        const withImg = (img: HTMLImageElement) => {
-          if (cancelled) return;
-          let pw = img.naturalWidth || img.width, ph = img.naturalHeight || img.height;
-          if (!pw || !ph) return done();
-          if (pw > PREVIEW_SIZE || ph > PREVIEW_SIZE) {
-            const r = Math.min(PREVIEW_SIZE / pw, PREVIEW_SIZE / ph);
-            pw = (pw * r) | 0; ph = (ph * r) | 0;
-          }
-          pw = Math.max(1, pw); ph = Math.max(1, ph);
-          const sig = warmSigOf(p, lut.id, pw, ph);
-          if (warmSigRef.current.get(src) === sig) return done(); // é€™å¼µå·²ç¶“æ˜¯æœ€æ–°çš„äº†
-          let source: Uint8ClampedArray;
-          try {
-            const c = document.createElement('canvas');
-            c.width = pw; c.height = ph;
-            const cx = c.getContext('2d', { willReadFrequently: true })!;
-            cx.imageSmoothingQuality = 'high';
-            cx.drawImage(img, 0, 0, pw, ph);
-            source = cx.getImageData(0, 0, pw, ph).data;
-          } catch { return done(); }
-          // è®“ä¸€æ¬¡ä¸»åŸ·è¡Œç·’ï¼Œå†é–‹å§‹ç®—åƒç´ 
-          yieldTo(() => {
-            if (cancelled) return;
-            let lut0: Uint8ClampedArray, lut100: Uint8ClampedArray | null = null;
-            const baseLut = new Uint8Array(256);
-            // è‡ªå·±ç®—ä¸€ä»½æ›²ç·šè¡¨ â€”â€” ä¸åŽ»ç¢°å‰æ™¯é‚£ä»½å…±ç”¨å¿«å–
-            const curveLuts = {
-              rgb: generateCurveLut(p.curves.rgb), r: generateCurveLut(p.curves.r),
-              g: generateCurveLut(p.curves.g), b: generateCurveLut(p.curves.b),
-            };
-            try {
-              generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseLut);
-              lut0 = new Uint8ClampedArray(source.length);
-              processPixels(source, lut0, pw, ph, p, null, 0, baseLut, null, false, curveLuts);
-            } catch { return done(); }
-            yieldTo(() => {
-              if (cancelled) return;
-              try {
-                if (activeLut) {
-                  lut100 = new Uint8ClampedArray(source.length);
-                  processPixels(source, lut100, pw, ph, { ...p, lutAmount: 100 }, activeLut.data, activeLut.size, baseLut, null, false, curveLuts);
-                }
-              } catch { lut100 = null; }
-              if (cancelled) return;
-              warmPixelsRef.current.set(src, { w: pw, h: ph, lutId: lut.id, p, lut0, lut100 });
-              warmSigRef.current.set(src, sig);
-              // è¶…éŽä¸Šé™å°±ä¸ŸæŽ‰æœ€èˆŠçš„ï¼ˆMap ä¾æ’å…¥é †åºï¼‰
-              while (warmPixelsRef.current.size > WARM_MAX) {
-                const oldest = warmPixelsRef.current.keys().next().value as string;
-                warmPixelsRef.current.delete(oldest);
-                warmSigRef.current.delete(oldest);
-              }
-              done();
-            });
-          });
-        };
-
-        // çœ‹éŽçš„é‚£å¹¾å¼µå·²ç¶“è§£å¥½äº†ï¼Œåˆ¥å†è§£ä¸€æ¬¡ï¼ˆåªè®€ä¸å‹•é †åºï¼Œå…å¾—é ç†±æŠŠå®ƒå€‘å¾€å‰æŽ¨ï¼‰
-        const cached = warmImgRef.current.get(src) || viewedImgRef.current.get(src);
-        if (cached && cached.complete && cached.naturalWidth) return withImg(cached);
-        const im = new Image();
-        if (!src.startsWith('blob:') && !src.startsWith('data:')) im.crossOrigin = 'anonymous';
-        im.onload = () => {
-          warmImgRef.current.set(src, im);
-          while (warmImgRef.current.size > WARM_MAX + 1) {
-            const oldest = warmImgRef.current.keys().next().value as string;
-            if (oldest === src) break;
-            warmImgRef.current.delete(oldest);
-          }
-          yieldTo(() => withImg(im));
-        };
-        im.onerror = done;
-        im.src = src;
-      };
-      step();
-    }, 900);
-    return () => { cancelled = true; window.clearTimeout(t); };
-  }, [activeSrc, srcList, linked, params, selectedLutIdx, lutList, isInteracting]);
-  /** åˆ‡éŽåŽ»æ™‚ï¼ŒæŠŠèƒŒæ™¯ç®—å¥½çš„é‚£ä»½ç›´æŽ¥å¡žé€² render() æœ¬ä¾†å°±åœ¨ç”¨çš„å¿«å– */
-  const seedWarmPixels = useCallback((src: string, w: number, h: number) => {
-    const warm = warmPixelsRef.current.get(src);
-    if (!warm || warm.w !== w || warm.h !== h) return;
-    const p = warm.p;
-    filterPixelCacheRef.current[cacheKeyOf(warm.lutId, warm.w)] = {
-      src,
-      lut0: warm.lut0,
-      lut100: warm.lut100,
-      width: w, height: h,
-      brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
-      highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
-      sat: p.sat, vib: p.vib, sharpen: p.sharpen,
-      toneStr: toneSig(p),
-    };
-    // å·²ç¶“äº¤æ£’çµ¦å‰æ™¯çš„å¿«å–äº†ï¼Œé ç†±å€å°±æŠŠä½å­è®“å‡ºä¾†çµ¦é‚„æ²’ç®—çš„é‚£å¹¾å¼µ
-    warmPixelsRef.current.delete(src);
-    warmSigRef.current.delete(src);
-  }, []);
-  /** æŠŠèƒŒæ™¯ç®—å¥½çš„é‚£å¼µç›´æŽ¥ç•«åˆ°ç•«å¸ƒä¸Šï¼ˆlut0 èˆ‡ lut100 ä¾æ¿¾é¡å¼·åº¦æ··åˆï¼‰ */
-  const paintWarmNow = (src: string, snap: BatchSnap | null): boolean => {
-    const warm = warmPixelsRef.current.get(src);
-    const cvs = displayCanvasRef.current;
-    if (!warm || !cvs) return false;
-    // é ç†±ä¹‹å¾Œåƒæ•¸åˆè¢«æ”¹éŽçš„è©±ï¼Œé‚£ä»½å°±ä¸èƒ½ç”¨äº† â€”â€” ç•«ä¸ŠåŽ»æœƒæ˜¯èˆŠçš„èª¿æ•´ã€‚
-    if (snap) {
-      const lut = lutList[snap.selectedLutIdx];
-      if (!lut || warmSigRef.current.get(src) !== warmSigOf(snap.params, lut.id, warm.w, warm.h)) return false;
-    }
-    const { w, h, lut0, lut100 } = warm;
-    const amt = Math.max(0, Math.min(100, warm.p.lutAmount ?? 0)) / 100;
-    const out = new Uint8ClampedArray(lut0.length);
-    if (lut100 && amt > 0) {
-      for (let i = 0; i < out.length; i++) out[i] = lut0[i] + (lut100[i] - lut0[i]) * amt;
-    } else {
-      out.set(lut0);
-    }
-    if (cvs.width !== w || cvs.height !== h) { cvs.width = w; cvs.height = h; }
-    const ctx = cvs.getContext('2d');
-    if (!ctx) return false;
-    ctx.putImageData(new ImageData(out, w, h), 0, 0);
-    cvs.style.filter = 'none';
-    warmPaintedSrcRef.current = src;
-    // æ¯”ä¾‹è·Ÿç•«å¸ƒå°ºå¯¸åŒä¸€æ‹å¯«é€²åŽ»ï¼Œæ›ç…§ç‰‡æ™‚æ‰ä¸æœƒæœ‰ä¸€å…©å¹€è¢«æ‹‰ä¼¸
-    applyPreviewAspect(w, h);
-    return true;
-  };
-  /** å·²ç¶“ç”¨é ç†±çš„ç•«é¢è£œéŽçš„é‚£ä¸€å¼µ â€”â€” å¾…æœƒå°±åˆ¥å†ç•«ä¸€æ¬¡ã€Œé‚„æ²’èª¿æ•´ã€çš„æ¨£å­ */
-  const warmPaintedSrcRef = useRef<string | null>(null);
-  const seedWarmPixelsRef = useRef(seedWarmPixels);
-  seedWarmPixelsRef.current = seedWarmPixels;
-  /** åƒç´ è¿´åœˆçš„ JIT æš–æ©Ÿï¼Œæ•´å€‹ç·¨è¼¯å™¨é–‹è‘—åªéœ€è¦åšä¸€æ¬¡ */
-  const pipelineWarmedRef = useRef(false);
-
-  const fastPreviewCacheRef = useRef<{
-      active: boolean;
-      toolId: string;
-      baseCanvas: HTMLCanvasElement | null;
-      minCanvas: HTMLCanvasElement | null;
-      maxCanvas: HTMLCanvasElement | null;
-  }>({ active: false, toolId: '', baseCanvas: null, minCanvas: null, maxCanvas: null });
-
-  const cachedBlurCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const cachedSoftCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const cachedNoise2CanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const cachedHalationCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const cachedVignetteCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const compiledGrainPatternRef = useRef<CanvasPattern | null>(null);
-  const compiledNoisePatternRef = useRef<CanvasPattern | null>(null);
-  /** ç‰¹æ•ˆæ‹–æ›³ç¾åœ¨ç”¨å…¨è§£æžåº¦å—Žï¼ˆè¦‹ render è£¡çš„èªªæ˜Žï¼Œæœƒç…§è€—æ™‚è‡ªå‹•åˆ‡æ›ï¼‰ */
-  const fxFullResRef = useRef(true);
-  /** å‰›æ›æ¿¾é¡ï¼šå…ˆç”¨ä½Žè§£æžåº¦ç•«ä¸€å¼µï¼Œä¸‹ä¸€å¹€å†è£œå…¨è§£æžåº¦ */
-  const quickFilterRef = useRef(false);
-  const lut0CanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const lut100CanvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  /* â”€â”€ é®è‰²ç‰‡ç”¨çš„å…©å¼µé›¢å±ç•«å¸ƒ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-     ä»¥å‰é€™å…©å¼µæ˜¯æ¯ä¸€å¹€ document.createElement å‡ºä¾†çš„ï¼Œ1800Ã—1350 å…©å¼µï¼Œ
-     æ‹–ä¸€æ¬¡é®è‰²ç‰‡å°±æ˜¯å¹¾ç™¾å¼µç•«å¸ƒçš„é…ç½®èˆ‡å›žæ”¶ã€‚æ”¹æˆæ•´å€‹ç·¨è¼¯éšŽæ®µå…±ç”¨åŒå…©å¼µã€‚
-     maskTempï¼šæ•´å¼µå¥—ä¸Šé®è‰²ç‰‡èª¿æ•´å¾Œçš„æ¨£å­ï¼ˆæ²’æœ‰åŽ»èƒŒï¼Œæ‰€ä»¥å¯ä»¥ç•™è‘—é‡è¤‡ç”¨ï¼‰
-     maskOut ï¼šæŠŠ maskTemp ç”¨æ¼¸å±¤åŽ»èƒŒä¹‹å¾Œã€çœŸæ­£è¦ç–Šå›žç•«é¢çš„é‚£å¼µ
-     maskAdjKeyï¼šmaskTemp ç›®å‰è£çš„æ˜¯ç…§ä»€éº¼åƒæ•¸ç®—çš„ï¼›ç©ºå­—ä¸²ä»£è¡¨ä¸å¯æ²¿ç”¨ */
-  const maskTempCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const maskOutCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const maskAdjKeyRef = useRef<string>('');
-  /* æ‹–é®è‰²ç‰‡æ»‘æ¡¿æ™‚ç•™ä¸‹ä¾†çš„åº•åœ–ï¼ˆé¡è‰²éˆèˆ‡ç‰¹æ•ˆéƒ½è·‘å®Œã€é‚„æ²’ä¸Šé®è‰²ç‰‡çš„æ¨£å­ï¼‰ã€‚
-     é‚£ä¸€æ•´æ®µæ™‚é–“å®ƒå®Œå…¨ä¸æœƒè®Šï¼Œæ‰€ä»¥åªå¾žä¸»ç•«å¸ƒå›žè®€ä¸€æ¬¡ã€‚
-     maskBaseDataï¼šç•™ä¸‹ä¾†çš„é‚£ä¸€ä»½ï¼›maskScratchï¼šæ¯ä¸€å¹€æ‹¿ä¾†ç®—çš„å·¥ä½œå€ï¼›
-     maskBaseKeyï¼šç•™çš„æ˜¯å“ªä¸€å¡Šï¼ˆç©ºå­—ä¸²ä»£è¡¨ä¸å¯æ²¿ç”¨ï¼‰ã€‚ */
-  const maskBaseDataRef = useRef<ImageData | null>(null);
-  const maskScratchRef = useRef<ImageData | null>(null);
-  const maskBaseKeyRef = useRef<string>('');
-  /** æ›å…‰ï¼‹äº®åº¦ï¼‹å°æ¯”åˆæˆçš„ä¸€ç¶­æŸ¥è‰²è¡¨ï¼ˆè¦‹é®è‰²ç‰‡é‚£æ®µçš„èªªæ˜Žï¼‰ã€‚
-      æµ®é»žé‚£å¼µçµ¦ã€Œå¾Œé¢é‚„æœ‰å…¶ä»–æ­¥é©Ÿã€æ™‚ç”¨ï¼ˆç²¾åº¦ä¸èƒ½å…ˆæŽ‰ï¼‰ï¼›
-      æ•´æ•¸é‚£å¼µçµ¦ã€Œåªæœ‰è‰²èª¿ã€çš„å¿«é€Ÿè·¯å¾‘ç”¨ã€‚ */
-  const maskToneLutRef = useRef<Float32Array>(new Float32Array(256));
-  const maskTone8Ref = useRef<Uint8ClampedArray>(new Uint8ClampedArray(256));
-
-  /* â”€â”€ å‰å¾Œå°æ¯”ï¼šæŒ‰ä¸‹åŽ»ä¹‹å‰é‚£å¼µå…ˆç•™ä¸€ä»½ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-     æ”¾é–‹æŒ‰éˆ•æ™‚ï¼Œç•«é¢è¦å›žåˆ°çš„å°±æ˜¯æŒ‰ä¸‹åŽ»ä¹‹å‰çš„é‚£ä¸€å¼µï¼Œä¸€å€‹åƒç´ éƒ½ä¸æœƒä¸ä¸€æ¨£ã€‚
-     æ‰€ä»¥èˆ‡å…¶æ•´æ¢ç®¡ç·šå†è·‘ä¸€æ¬¡ï¼ˆæœ‰é®è‰²ç‰‡æ•ˆæžœæ™‚é‡åˆ° 95msï¼ŒæŒ‰èµ·ä¾†å°±æ˜¯ã€Œé “ä¸€ä¸‹
-     æ‰å›žä¾†ã€ï¼‰ï¼Œä¸å¦‚æŒ‰ä¸‹åŽ»çš„æ™‚å€™å…ˆæŠŠç•«å¸ƒè¤‡è£½ä¸€ä»½ï¼Œæ”¾é–‹ç›´æŽ¥è²¼å›žåŽ» â€”â€” ä¸€æ¬¡
-     GPU æ¬ç§»ï¼Œè·Ÿç…§ç‰‡å¤šå¤§ã€é–‹äº†å¤šå°‘ç‰¹æ•ˆéƒ½ç„¡é—œã€‚
-     åªæœ‰ã€ŒæŒ‰è‘—çš„æœŸé–“ç•«é¢æ²’æœ‰ä»»ä½•å…¶ä»–è®ŠåŒ–ã€æ‰æ•¢è²¼ï¼ˆisDirtyRef æ²’è¢«èˆ‰èµ·ä¾†ï¼‰ï¼Œ
-     å¦å‰‡ç…§æ¨£èµ°å®Œæ•´é‡ç•«ã€‚ */
-  const compareSnapRef = useRef<HTMLCanvasElement | null>(null);
-  const compareSnapKeyRef = useRef<string>('');
-
-  /* â”€â”€ GPU é¡è‰²éˆ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-     æ•´æ¢é¡è‰²éˆæ˜¯ç´”ç²¹çš„ RGBâ†’RGB å‡½æ•¸ï¼Œæ‰€ä»¥å…ˆç”¨**ç¾æœ‰çš„ processPixels æœ¬èº«**
-     åœ¨ NÂ³ å€‹æ ¼é»žä¸Šç®—ä¸€æ¬¡ï¼ˆ33Â³ åªè¦ 2.2msï¼‰ï¼Œçƒ¤æˆä¸€é¡† 3D æŸ¥è‰²è¡¨ï¼Œ
-     å†è®“ GPU ç”¨ä¸€å€‹ draw call æŠŠæ•´å¼µåœ–æŸ¥å®Œï¼ˆå¯¦æ¸¬ 0.1msï¼Œå°ç…§ CPU é€åƒç´  70.8msï¼‰ã€‚
-     é¡è‰²å…¬å¼ä¸€è¡Œéƒ½æ²’æœ‰é‡å¯« â€”â€” çœŸç†ä¾†æºä»ç„¶æ˜¯é‚£ä»½ CPU ç¨‹å¼ç¢¼ã€‚
-
-     æ‹–æ›³ä¸­ç”¨ 33Â³ã€æ‰‹æ”¾é–‹ç”¨ 65Â³ï¼šå…©è€…çš„è‰²å·®åˆ†åˆ¥æ˜¯ 4 èˆ‡ 3 å€‹è‰²éšŽï¼ˆè‚‰çœ¼åˆ†è¾¨ä¸å‡ºï¼‰ï¼Œ
-     è€Œ**è§£æžåº¦å…¨ç¨‹éƒ½æ˜¯å…¨è§£æžåº¦**ï¼Œä¸å†é™ç´šæˆæ¨¡ç³Šçš„ä»£ç†ã€‚ */
-  const gpuRef = useRef<LutGpu | null | undefined>(undefined);
-  const gpuSrcKeyRef = useRef('');
-  /** ä¸Šä¸€è¼ªæœ‰æ²’æœ‰èµ° GPUã€‚åˆ‡æ›æ™‚è¦å¼·åˆ¶é‡ç®—ï¼Œå¦å‰‡ CPU é‚£ä»½åƒç´ æœƒåœåœ¨èˆŠçš„ã€‚ */
-  const lastGpuRef = useRef(false);
-  /* é€™å°è£ç½®çš„ GPU åˆ°åº•æ¯” CPU å¿«å—Žï¼Ÿâ€”â€” ä¸ç”¨çŒœçš„ï¼Œé–‹èµ·ä¾†å¯¦éš›é‡ã€‚
-     æœ‰çœŸæ­£é¡¯ç¤ºå¡çš„æ‰‹æ©Ÿä¸Šï¼ŒGPU æŸ¥è¡¨æ˜¯å£“å€’æ€§çš„å¿«ï¼›ä½†åœ¨æ²’æœ‰ç¡¬é«”åŠ é€Ÿçš„ç’°å¢ƒ
-     ï¼ˆæŸäº›æ¡Œæ©Ÿç€è¦½å™¨ã€ç„¡éšœç¤™æ¨¡å¼ã€è™›æ“¬æ©Ÿï¼‰GPU æ˜¯è»Ÿé«”æ¨¡æ“¬çš„ï¼Œåè€Œæ›´æ…¢ã€‚
-     æ‰€ä»¥ã€Œéœæ­¢æ™‚è¦ä¸è¦ç”¨ GPUã€ç”±å¯¦æ¸¬æ±ºå®šï¼š
-       Â· å…ˆå„è¨˜ä¸€æ¬¡å…©æ¢è·¯çš„è€—æ™‚
-       Â· GPU æ˜Žé¡¯æ¯”è¼ƒå¿«æ‰è®“å®ƒæŽ¥æ‰‹éœæ­¢æ™‚çš„ç¹ªè£½
-     æ‹–æ›³ä¸­å‰‡æ°¸é ç”¨ GPU â€”â€” é‚£ä¸æ˜¯ç‚ºäº†å¿«ï¼Œæ˜¯ç‚ºäº†**ä¸é™è§£æžåº¦**ï¼Œ
-     é‚£æ˜¯ä¸»äººæ˜Žç¢ºè¦æ±‚çš„ç•«è³ªï¼Œå³ä½¿æ…¢ä¸€é»žä¹Ÿå€¼å¾—ã€‚ */
-  const gpuMsRef = useRef(0);
-  const cpuMsRef = useRef(0);
-  const gpuWinsRef = useRef<boolean | null>(null);
-  const gpuWarmKeyRef = useRef('');
-  /* çƒ¤å¥½çš„ 3D æŸ¥è‰²è¡¨å¿«å–ã€‚éµï¼æ ¼é»žæ•¸ï½œé¡è‰²åƒæ•¸ï½œå“ªä¸€é¡†æ¿¾é¡ã€‚
-     è·Ÿåœ–ç‰‡ç„¡é—œï¼Œæ‰€ä»¥æ›ç…§ç‰‡ä¹Ÿä¸å¿…æ¸…ã€‚ */
-  const bakeCacheRef = useRef<Map<string, Uint8Array>>(new Map());
-  /* getCurveLuts å®£å‘Šåœ¨é€™ä¹‹å¾Œï¼Œé€™è£¡ç”¨ ref é–“æŽ¥å–ç”¨ï¼Œé¿å…æš«æ™‚æ­»å€ */
-  const curveLutsFnRef = useRef<(c: Curves) => { rgb: Uint8Array; r: Uint8Array; g: Uint8Array; b: Uint8Array }>(
-    () => ({ rgb: new Uint8Array(256), r: new Uint8Array(256), g: new Uint8Array(256), b: new Uint8Array(256) }));
-  /* åªæŠŠã€Œæœƒå½±éŸ¿é¡è‰²éˆã€çš„åƒæ•¸å¯«é€²éµã€‚éŠ³åŒ–ã€é¡†ç²’ã€æ¨¡ç³Šé‚£äº›ä¸åœ¨è£¡é¢ â€”â€”
-     å®ƒå€‘ä¸æ˜¯çƒ¤é€²è¡¨è£¡çš„æ±è¥¿ï¼Œæ”¾é€²åŽ»åªæœƒè®“å¿«å–ç™½ç™½å¤±æ•ˆã€‚ */
-  const bakeSigRef = useRef((p: EditorParams) =>
-    `${p.brightness},${p.exposure},${p.contrast},${p.highlights},${p.shadows},`
-    + `${p.temp},${p.tint},${p.sat},${p.vib},${p.lutAmount},`
-    + `${JSON.stringify(p.curves)},${JSON.stringify(p.hsl)}`);
-  const exportC0Ref = useRef<HTMLCanvasElement | null>(null);
-  const exportC100Ref = useRef<HTMLCanvasElement | null>(null);
-
-  /**
-   * å…ˆæŠŠ GPU æš–èµ·ä¾†ï¼šä¸Šå‚³æ•´å¼µåœ–çš„è²¼åœ–ã€å»ºç«‹ 3D æŸ¥è‰²è¡¨ã€è·‘ä¸€æ¬¡ç©ºçš„ drawã€‚
-   * é€™äº›æ˜¯ä¸€æ¬¡æ€§çš„æˆæœ¬ï¼ˆä¸€å¼µ 148 è¬åƒç´ çš„åœ–å…‰ä¸Šå‚³å°±è¦å¥½å¹¾æ¯«ç§’ï¼‰ï¼Œ
-   * ä¸å…ˆåšçš„è©±å®ƒå€‘æœƒå…¨éƒ¨è½åœ¨ã€Œæ‰‹æŒ‡å‰›æŒ‰ä¸Šæ»‘æ¡¿çš„é‚£ä¸€å¹€ã€ï¼Œ
-   * çœ‹èµ·ä¾†å°±æ˜¯ä¸»äººèªªçš„ã€Œé–‹å§‹æ‹–å‹•æ™‚æŠ–ä¸€ä¸‹ã€ã€‚
-   * åœ¨é–’ç½®æ™‚åšæŽ‰ï¼Œæ‹–æ›³çš„ç¬¬ä¸€å¹€å°±åªå‰©çƒ¤è¡¨ 2.2ms ï¼‹ ç•« 0.1msã€‚
-   */
-  /**
-   * é–’è‘—çš„æ™‚å€™ï¼ŒæŠŠã€Œé‚„æ²’çƒ¤éŽçš„æ¿¾é¡æŸ¥è‰²è¡¨ã€å…ˆçƒ¤èµ·ä¾†ã€‚
-   *
-   * é€™æ˜¯ã€Œé»žæ¿¾é¡é›¶å»¶é²ã€çœŸæ­£çš„é—œéµï¼šæœ‰å¿«å–åªè§£æ±ºäº†ã€Œå†é»žå›žåŽ»ã€ï¼Œ
-   * ç¬¬ä¸€æ¬¡é»žé‚„æ˜¯è¦ç¾çƒ¤ï¼ˆ65Â³ ç´„ 16msï¼‰ã€‚è¶ä½¿ç”¨è€…åœ¨çœ‹ç¸®åœ–ã€é‚„æ²’æŒ‰ä¸‹åŽ»çš„æ™‚å€™
-   * å…ˆæŠŠè¡¨å‚™å¥½ï¼ŒæŒ‰ä¸‹åŽ»å°±åªå‰©æ›ç¶ä¸€å¼µè²¼åœ– ï¼‹ ä¸€å€‹ draw callã€‚
-   *
-   * ä¸€æ¬¡åªçƒ¤ä¸€é¡†ï¼Œçƒ¤å®Œå°±æŠŠä¸»åŸ·è¡Œç·’é‚„å›žåŽ» â€”â€” ä¸èƒ½ç‚ºäº†é ç†±åè€Œè®“ä»‹é¢é “ã€‚
-   */
-  const warmBakes = useCallback((p: EditorParams) => {
-    if (!lutList.length) return false;
-    const sig = bakeSigRef.current(p);
-    for (const l of lutList) {
-      if (!l.url) continue;
-      const data = lutDataRef.current[l.id];
-      if (!data) continue;                       // é€™é¡†é‚„æ²’ä¸‹è¼‰è§£ç¢¼ï¼Œè·³éŽ
-      const key = `65|${sig}|${l.id}#${data.size}`;
-      if (bakeCacheRef.current.has(key)) continue;
-      const base = new Uint8Array(256);
-      generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, base);
-      const cl = curveLutsFnRef.current(p.curves);
-      const tex = bakedToTexture(bakeColorLut(
-        (bs, bd, bw, bh) => processPixels(bs, bd, bw, bh,
-          { ...p, lutAmount: 100 }, data.data, data.size, base, null, false, cl),
-        65,
-      ));
-      const cache = bakeCacheRef.current;
-      if (cache.size >= 40) {
-        const oldest = cache.keys().next().value;
-        if (oldest !== undefined) cache.delete(oldest);
-      }
-      cache.set(key, tex);
-      return true;                               // é€™ä¸€è¼ªåªçƒ¤ä¸€é¡†
-    }
-    return false;
-  }, [lutList]);
-
-  const warmGpu = useCallback((src: Uint8ClampedArray, w: number, h: number, key: string) => {
-    if (gpuWarmKeyRef.current === key) return;
-    const g = getGpu();
-    if (!g || !g.fits(w, h)) return;
-    try {
-      if (!g.setSource(src, w, h)) return;
-      gpuSrcKeyRef.current = key;
-      // ç”¨ä¸€é¡†ã€Œä»€éº¼éƒ½ä¸æ”¹ã€çš„è¡¨åšæš–æ©Ÿï¼Œç•«å‡ºä¾†å°±æ˜¯åŽŸåœ–ï¼Œä¸æœƒå½±éŸ¿ä»»ä½•ç‹€æ…‹
-      const n = 2;
-      const tex = new Uint8Array(n * n * n * 4);
-      for (let b2 = 0; b2 < n; b2++) for (let g2 = 0; g2 < n; g2++) for (let r2 = 0; r2 < n; r2++) {
-        const i = ((b2 * n + g2) * n + r2) * 4;
-        tex[i] = r2 * 255; tex[i + 1] = g2 * 255; tex[i + 2] = b2 * 255; tex[i + 3] = 255;
-      }
-      g.setLut(tex, n);
-      g.draw();
-      gpuWarmKeyRef.current = key;
-    } catch { /* æš–æ©Ÿå¤±æ•—ä¸å½±éŸ¿ä»»ä½•åŠŸèƒ½ï¼Œç…§å¸¸èµ°åŽŸæœ¬çš„è·¯ */ }
-  }, []);
-  const getGpu = (): LutGpu | null => {
-    if (gpuRef.current === undefined) {
-      try { gpuRef.current = LutGpu.create(); } catch { gpuRef.current = null; }
-    }
-    const g = gpuRef.current;
-    /* ä¸Šä¸‹æ–‡è¢«ç³»çµ±æ”¶èµ°ï¼ˆiOS è¨˜æ†¶é«”åƒç·Šã€åˆ‡åˆ°èƒŒæ™¯å›žä¾†ï¼‰ä¹‹å¾Œè¦èƒ½**é‡å»º**ã€‚
-       åŽŸæœ¬é€™è£¡åªæ˜¯å›ž nullï¼Œè€Œ gpuRef å·²ç¶“æœ‰å€¼ã€ä¸æœƒå†é€²ä¸Šé¢é‚£å€‹å»ºç«‹åˆ†æ”¯ â€”â€”
-       ç­‰æ–¼ä¸€æŽ‰å°±æ°¸ä¹…é€€å›ž CPUï¼Œæ•´å€‹å·¥ä½œéšŽæ®µéƒ½å›žä¸åŽ»ã€‚ */
-    if (g && g.lost) {
-      gpuRef.current = undefined;
-      gpuSrcKeyRef.current = '';
-      gpuWarmKeyRef.current = '';
-      bakeCacheRef.current.clear();   // è¡¨åœ¨èˆŠä¸Šä¸‹æ–‡è£¡ï¼Œé‡å»ºå¾Œè¦é‡æ–°ä¸Šå‚³
-      return null;                    // é€™ä¸€è¼ªå…ˆèµ° CPUï¼Œä¸‹ä¸€è¼ªå°±æœƒå»ºå¥½æ–°çš„
-    }
-    return g || null;
-  };
-  useEffect(() => () => { gpuRef.current?.dispose(); }, []);
-
-  /**
-   * çƒ¤è¡¨ â†’ GPU ç•« â†’ è¤‡è£½é€² target ç•«å¸ƒã€‚need æœ‰çµ¦å°±é †ä¾¿æŠŠåƒç´ è®€å›žä¾†ã€‚
-   * ä»»ä½•ä¸€æ­¥å¤±æ•—éƒ½å›žå‚³ falseï¼Œå‘¼å«ç«¯åŽŸå°ä¸å‹•èµ°å›ž CPU è·¯å¾‘ã€‚
-   */
-  const gpuPaint = (
-    target: HTMLCanvasElement, src: Uint8ClampedArray, w: number, h: number,
-    p: EditorParams, film: Uint8ClampedArray | null, filmSize: number,
-    grid: number, srcKey: string, need: Uint8ClampedArray | null,
-    filmKey = '',
-  ): boolean => {
-    const g = getGpu();
-    if (!g || !g.fits(w, h)) return false;
-    try {
-      if (gpuSrcKeyRef.current !== srcKey) {
-        if (!g.setSource(src, w, h)) return false;
-        gpuSrcKeyRef.current = srcKey;
-      }
-      /* çƒ¤å¥½çš„æŸ¥è‰²è¡¨å­˜èµ·ä¾† â€”â€” é€™æ˜¯ã€Œé»žæ¿¾é¡é›¶å»¶é²ã€çš„é—œéµã€‚
-         è¡¨åªè·Ÿã€Œé¡è‰²åƒæ•¸ ï¼‹ æ˜¯å“ªä¸€é¡†æ¿¾é¡ ï¼‹ æ ¼é»žæ•¸ã€æœ‰é—œï¼Œè·Ÿåœ–ç‰‡ä¸€é»žé—œä¿‚éƒ½æ²’æœ‰ã€‚
-         æ‰€ä»¥ï¼š
-           Â· èª¿ç¯€é‚£ä¸€ä»½ï¼ˆæ²’æœ‰æ¿¾é¡ï¼‰åœ¨åˆ‡æ›æ¿¾é¡æ™‚**æ ¹æœ¬ä¸æœƒè®Š**ï¼Œç¬¬ä¸€æ¬¡çƒ¤å®Œå°±ä¸€ç›´ç”¨
-           Â· æ¯é¡†æ¿¾é¡çš„é‚£ä¸€ä»½çƒ¤éŽä¸€æ¬¡å°±ç•™è‘—ï¼Œå†é»žå›žåŽ»æ˜¯é›¶æˆæœ¬
-         æ²’æœ‰é€™å±¤å¿«å–çš„è©±ï¼Œæ¯é»žä¸€æ¬¡æ¿¾é¡éƒ½è¦é‡çƒ¤å…©å¼µè¡¨ï¼ˆ65Â³ å„ 16msï¼‰ï¼Œ
-         é‚£å°±æ˜¯ä¸»äººæ„Ÿè¦ºåˆ°çš„å»¶é²ã€‚ */
-      const key = `${grid}|${bakeSigRef.current(p)}|${filmKey}`;
-      let tex = bakeCacheRef.current.get(key);
-      if (!tex) {
-        // ç”¨å€åŸŸè®Šæ•¸ï¼Œä¸è¦å‹•åˆ°å…±ç”¨çš„ baseCorrectionLutRefï¼ˆé‚£æ˜¯åˆ¥äººä¹Ÿåœ¨è®€çš„ï¼‰
-        const base = new Uint8Array(256);
-        generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, base);
-        const cl = getCurveLuts(p.curves);
-        tex = bakedToTexture(bakeColorLut(
-          (bs, bd, bw, bh) => processPixels(bs, bd, bw, bh, p, film, filmSize, base, null, false, cl),
-          grid,
-        ));
-        const cache = bakeCacheRef.current;
-        /* ä¸Šé™å››åä»½ï¼š24 é¡†æ¿¾é¡ Ã— å…©ç¨®æ ¼é»žé‚„æœ‰é¤˜è£•ã€‚æ»¿äº†å°±ä¸Ÿæœ€æ—©æ”¾é€²ä¾†çš„ã€‚ */
-        if (cache.size >= 40) {
-          const oldest = cache.keys().next().value;
-          if (oldest !== undefined) cache.delete(oldest);
-        }
-        cache.set(key, tex);
-      }
-      if (!g.setLut(tex, grid)) return false;
-      const out = g.draw();
-      if (!out) return false;
-      if (need && !g.readInto(need)) return false;
-      if (target.width !== w || target.height !== h) { target.width = w; target.height = h; }
-      const tctx = target.getContext('2d');
-      if (!tctx) return false;
-      tctx.clearRect(0, 0, w, h);
-      tctx.drawImage(out, 0, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  const pixelBufferCanvasRef = useRef<HTMLCanvasElement | null>(null);
-
-  const lazyCacheTimeoutRef = useRef<any>(null);
-  const forceRecalculateEffectsRef = useRef<boolean>(false);
-
-  const blurCacheStateRef = useRef<{
-    /** é€™ä»½å¿«å–æ˜¯ã€Œå“ªä¸€å¼µç…§ç‰‡ã€ç®—å‡ºä¾†çš„ã€‚
-        æ‰¹é‡ç·¨è¼¯æ™‚å…©å¼µç…§ç‰‡çš„å°ºå¯¸å¸¸å¸¸ä¸€æ¨¡ä¸€æ¨£ã€é€£çµä¸­çš„åƒæ•¸ä¹Ÿä¸€æ¨£ï¼Œ
-        å°‘äº†é€™ä¸€æ¬„å°±æœƒå‘½ä¸­åˆ¥å¼µçš„å¿«å– â€”â€” ç•«é¢ä¸Šå°±æœƒå‡ºç¾ä¸å±¬æ–¼é€™å¼µåœ–çš„
-        å…‰æšˆï¼æ¨¡ç³Šï¼é¡†ç²’ï¼ˆä½ç½®å®Œå…¨å°ä¸ä¸Šï¼Œå› ç‚ºé‚£æ˜¯å¦ä¸€å¼µçš„äº®éƒ¨ï¼‰ã€‚ */
-    src: string;
-    w: number;
-    h: number;
-    blur: number;
-    lutId: string;
-    brightness: number;
-    exposure: number;
-    contrast: number;
-    highlights: number;
-    shadows: number;
-    temp: number;
-    tint: number;
-    sat: number;
-    vib: number;
-    toneStr: string;
-  } | null>(null);
-
-  const softCacheStateRef = useRef<{
-    /** é€™ä»½å¿«å–æ˜¯ã€Œå“ªä¸€å¼µç…§ç‰‡ã€ç®—å‡ºä¾†çš„ã€‚
-        æ‰¹é‡ç·¨è¼¯æ™‚å…©å¼µç…§ç‰‡çš„å°ºå¯¸å¸¸å¸¸ä¸€æ¨¡ä¸€æ¨£ã€é€£çµä¸­çš„åƒæ•¸ä¹Ÿä¸€æ¨£ï¼Œ
-        å°‘äº†é€™ä¸€æ¬„å°±æœƒå‘½ä¸­åˆ¥å¼µçš„å¿«å– â€”â€” ç•«é¢ä¸Šå°±æœƒå‡ºç¾ä¸å±¬æ–¼é€™å¼µåœ–çš„
-        å…‰æšˆï¼æ¨¡ç³Šï¼é¡†ç²’ï¼ˆä½ç½®å®Œå…¨å°ä¸ä¸Šï¼Œå› ç‚ºé‚£æ˜¯å¦ä¸€å¼µçš„äº®éƒ¨ï¼‰ã€‚ */
-    src: string;
-    w: number;
-    h: number;
-    soft: number;
-    softThreshold: number;
-    softRadius: number;
-    softColor: number;
-    lutId: string;
-    brightness: number;
-    exposure: number;
-    contrast: number;
-    highlights: number;
-    shadows: number;
-    temp: number;
-    tint: number;
-    sat: number;
-    vib: number;
-    toneStr: string;
-  } | null>(null);
-
-  const noise2CacheStateRef = useRef<{
-    /** é€™ä»½å¿«å–æ˜¯ã€Œå“ªä¸€å¼µç…§ç‰‡ã€ç®—å‡ºä¾†çš„ã€‚
-        æ‰¹é‡ç·¨è¼¯æ™‚å…©å¼µç…§ç‰‡çš„å°ºå¯¸å¸¸å¸¸ä¸€æ¨¡ä¸€æ¨£ã€é€£çµä¸­çš„åƒæ•¸ä¹Ÿä¸€æ¨£ï¼Œ
-        å°‘äº†é€™ä¸€æ¬„å°±æœƒå‘½ä¸­åˆ¥å¼µçš„å¿«å– â€”â€” ç•«é¢ä¸Šå°±æœƒå‡ºç¾ä¸å±¬æ–¼é€™å¼µåœ–çš„
-        å…‰æšˆï¼æ¨¡ç³Šï¼é¡†ç²’ï¼ˆä½ç½®å®Œå…¨å°ä¸ä¸Šï¼Œå› ç‚ºé‚£æ˜¯å¦ä¸€å¼µçš„äº®éƒ¨ï¼‰ã€‚ */
-    src: string;
-    w: number;
-    h: number;
-    colorNoise2: number;
-    lutId: string;
-    brightness: number;
-    exposure: number;
-    contrast: number;
-    highlights: number;
-    shadows: number;
-    temp: number;
-    tint: number;
-    sat: number;
-    vib: number;
-    toneStr: string;
-  } | null>(null);
-
-  const halationCacheStateRef = useRef<{
-    /** é€™ä»½å¿«å–æ˜¯ã€Œå“ªä¸€å¼µç…§ç‰‡ã€ç®—å‡ºä¾†çš„ã€‚
-        æ‰¹é‡ç·¨è¼¯æ™‚å…©å¼µç…§ç‰‡çš„å°ºå¯¸å¸¸å¸¸ä¸€æ¨¡ä¸€æ¨£ã€é€£çµä¸­çš„åƒæ•¸ä¹Ÿä¸€æ¨£ï¼Œ
-        å°‘äº†é€™ä¸€æ¬„å°±æœƒå‘½ä¸­åˆ¥å¼µçš„å¿«å– â€”â€” ç•«é¢ä¸Šå°±æœƒå‡ºç¾ä¸å±¬æ–¼é€™å¼µåœ–çš„
-        å…‰æšˆï¼æ¨¡ç³Šï¼é¡†ç²’ï¼ˆä½ç½®å®Œå…¨å°ä¸ä¸Šï¼Œå› ç‚ºé‚£æ˜¯å¦ä¸€å¼µçš„äº®éƒ¨ï¼‰ã€‚ */
-    src: string;
-    w: number;
-    h: number;
-    fringeIntensity: number;
-    fringeSize: number;
-    fringeFeather: number;
-    fringeHue: number;
-    lutId: string;
-    brightness: number;
-    exposure: number;
-    contrast: number;
-    highlights: number;
-    shadows: number;
-    temp: number;
-    tint: number;
-    sat: number;
-    vib: number;
-    toneStr: string;
-  } | null>(null);
-
-
-  // ... (getCurveLuts, useEffect refs, addToHistory, undo, redo, loadLut - no changes)
-  const getCurveLuts = (curves: Curves) => {
-      const s = JSON.stringify(curves);
-      if (s !== lastCurveLutStrRef.current || !curveLutsCacheRef.current) {
-          curveLutsCacheRef.current = {
-              rgb: generateCurveLut(curves.rgb),
-              r: generateCurveLut(curves.r),
-              g: generateCurveLut(curves.g),
-              b: generateCurveLut(curves.b)
-          };
-          lastCurveLutStrRef.current = s;
-      }
-      return curveLutsCacheRef.current;
-  };
-
-  curveLutsFnRef.current = getCurveLuts;
-
-  // åˆä½µæœŸé–“ä»‹é¢çš„åƒæ•¸å·²ç¶“æ­¸é›¶ï¼Œä½†ç•«é¢è¦ç¶­æŒåŽŸæ¨£ï¼Œæ‰€ä»¥é€™æ™‚å€™ä¸è¦æŠŠå®ƒåŒæ­¥é€²ç¹ªåœ–ç”¨çš„ ref
-  useEffect(() => {
-    if (mergeFreezeRef.current) return;
-    paramsRef.current = params;
-    isDirtyRef.current = true;
-  }, [params]);
-  /* é€™è£¡ä»¥å‰é‚„æœƒé †æ‰‹æŠŠ isDirtyRef è¨­æˆ trueã€‚æ‹¿æŽ‰äº† â€”â€”
-     ç¹ªåœ–è¿´åœˆæœ¬ä¾†å°±æœƒå–®ç¨æ¯”å°ã€Œé€™ä¸€å¹€è¦é¡¯ç¤ºåŽŸåœ–å—Žã€è·Ÿä¸Šä¸€å¹€ä¸åŒå°±é‡ç•«ï¼Œ
-     ä¸éœ€è¦é é«’æ——æ¨™ã€‚è€Œä¸”æŽ›è‘—é«’æ——æ¨™æœƒè®“è¿´åœˆåˆ†ä¸å‡ºã€Œä½¿ç”¨è€…æŒ‰äº†å‰å¾Œå°æ¯”ã€
-     è·Ÿã€Œç•«é¢çœŸçš„æœ‰æ±è¥¿è®Šäº†ã€ï¼Œæ”¾é–‹æŒ‰éˆ•æ™‚å°±æ²’è¾¦æ³•ç›´æŽ¥æŠŠæŒ‰ä¸‹åŽ»ä¹‹å‰é‚£å¼µè²¼å›žä¾†
-     ï¼ˆè¦‹ä¸‹é¢ compareSnapRef é‚£ä¸€æ®µï¼‰ã€‚ */
-  useEffect(() => { showOriginalRef.current = showOriginal; }, [showOriginal]);
-
-  // Auto-scroll to selected filter when switching back to filter category
-  // ç”¨ useLayoutEffectï¼šåœ¨ç•«å‡ºä¾†ä¹‹å‰å°±æŠŠæ²å‹•ä½ç½®è¨­å¥½ï¼Œæ‰ä¸æœƒå…ˆé–ƒä¸€ä¸‹æœ€å‰é¢
-  useLayoutEffect(() => {
-    const container = toolsScrollRef.current;
-    if (container) {
-        if (activeCategory === 'filter') {
-            const itemWidth = 80; // w-20 (5rem)
-            const gap = 16; // gap-4 (1rem)
-            const padding = 16; // px-4 (1rem)
-
-            const itemCenter = padding + (itemWidth + gap) * selectedLutIdx + itemWidth / 2;
-            const scrollLeft = itemCenter - container.clientWidth / 2;
-
-            container.scrollTo({ left: scrollLeft, behavior: 'auto' });
-        } else if (activeCategory === 'effects' && backFromFxRef.current) {
-            backFromFxRef.current = false;
-            /* å¾žæŸå€‹ç‰¹æ•ˆçš„ç´°é …é€€å›žä¾†æ™‚ï¼ŒæŠŠã€Œå‰›å‰›åœ¨ç·¨è¼¯çš„é‚£ä¸€é¡†ã€æ“ºå›žç•«é¢ä¸­é–“ã€‚
-               ä¸ç›´æŽ¥é‚„åŽŸ scrollLeft â€”â€” é€€å›žä¾†çš„é‚£ä¸€çž¬é–“é‡åˆ°çš„å¯æ²è·é›¢é‚„æ˜¯ç´°é …åˆ—
-               ï¼ˆæ¯”è¼ƒçŸ­ï¼‰çš„ï¼Œè¨­é€²åŽ»æœƒè¢«å¤¾æˆ 43 ä¹‹é¡žçš„å€¼ï¼Œç­‰æ–¼é‚„æ˜¯è·³å›žæœ€å‰é¢ã€‚
-               å°æº–æŒ‰éˆ•æœ¬èº«å°±æ²’æœ‰é€™å€‹å•é¡Œï¼Œè€Œä¸”å›žä¾†æ™‚å‰›å¥½åœåœ¨ä½ å‰›ç·¨è¼¯çš„ç‰¹æ•ˆä¸Šã€‚ */
-            const target = container.querySelector<HTMLElement>(`[data-fx-tool="${activeToolId}"]`);
-            const center = () => {
-                const el = container.querySelector<HTMLElement>(`[data-fx-tool="${activeToolId}"]`);
-                if (!el) return;
-                container.scrollLeft = el.offsetLeft - container.clientWidth / 2 + el.offsetWidth / 2;
-            };
-            center();
-            if (!target) requestAnimationFrame(center);
-        } else {
-            container.scrollLeft = 0;
-        }
-    }
-  }, [activeCategory]); // Only trigger on category switch
-
-  // Force close or open the mask overlay depending on activeCategory
-  useEffect(() => {
-    if (activeCategory === 'mask') {
-      if (paramsRef.current.maskCreated && !paramsRef.current.maskShowOverlay) {
-        setParams(prev => ({ ...prev, maskShowOverlay: true }));
-      }
-    } else {
-      if (paramsRef.current.maskShowOverlay) {
-        setParams(prev => ({ ...prev, maskShowOverlay: false }));
-      }
-    }
-  }, [activeCategory]);
-
-  const addToHistory = useCallback((
-    p: EditorParams, 
-    idx: number, 
-    activeSoft?: boolean, 
-    activeBlur?: boolean, 
-    activeGrain?: boolean,
-    activeHalation?: boolean,
-    manSoft?: boolean,
-    manBlur?: boolean,
-    manGrain?: boolean,
-    manHalation?: boolean
-  ) => {
-    const sActive = activeSoft !== undefined ? activeSoft : isSoftActive;
-    const bActive = activeBlur !== undefined ? activeBlur : isBlurActive;
-    const gActive = activeGrain !== undefined ? activeGrain : isGrainActive;
-    const hActive = activeHalation !== undefined ? activeHalation : isHalationActive;
-    const sMan = manSoft !== undefined ? manSoft : softManuallyAdjusted;
-    const bMan = manBlur !== undefined ? manBlur : blurManuallyAdjusted;
-    const gMan = manGrain !== undefined ? manGrain : grainManuallyAdjusted;
-    const hMan = manHalation !== undefined ? manHalation : halationManuallyAdjusted;
-    
-    const currentItem = historyRef.current[historyIdxRef.current];
-    if (currentItem && 
-        currentItem.selectedLutIdx === idx && 
-        JSON.stringify(currentItem.params) === JSON.stringify(p) &&
-        currentItem.isSoftActive === sActive &&
-        currentItem.isBlurActive === bActive &&
-        currentItem.isGrainActive === gActive &&
-        currentItem.isHalationActive === hActive &&
-        currentItem.softManuallyAdjusted === sMan &&
-        currentItem.blurManuallyAdjusted === bMan &&
-        currentItem.grainManuallyAdjusted === gMan &&
-        currentItem.halationManuallyAdjusted === hMan &&
-        JSON.stringify(currentItem.geo || DEFAULT_GEO) === JSON.stringify(geoRef.current) &&
-        JSON.stringify(currentItem.srcs || srcListRef.current) === JSON.stringify(srcListRef.current)
-    ) {
-        return;
-    }
-    {
-      const pushed = pushHistoryEntry(historyRef.current, historyIdxRef.current, {
-        params: JSON.parse(JSON.stringify(p)),
-        selectedLutIdx: idx,
-        geo: JSON.parse(JSON.stringify(geoRef.current)),
-        isSoftActive: sActive,
-        isBlurActive: bActive,
-        isGrainActive: gActive,
-        isHalationActive: hActive,
-        softManuallyAdjusted: sMan,
-        blurManuallyAdjusted: bMan,
-        grainManuallyAdjusted: gMan,
-        halationManuallyAdjusted: hMan,
-        srcs: [...srcListRef.current]
-      });
-      /* ä¸Šé™äº¤çµ¦ pushHistoryEntry ç®¡ï¼šç•™åˆ° 500 æ ¼ï¼Œç¬¬ 0 æ ¼ï¼ˆåŽŸåœ–çš„æ¨£å­ï¼‰æ°¸é ç•™è‘—ã€‚
-         srcs æ˜¯å­—ä¸²é™£åˆ—çš„æ·ºæ‹·è²ï¼Œå­—ä¸²æœ¬èº«å…±ç”¨åŒä¸€ä»½ï¼Œæ‰€ä»¥ä¸€æ ¼å¾ˆä¾¿å®œã€‚ */
-      writeHistory(pushed.history, pushed.index);
-    }
-  }, [historyIndex, history, isSoftActive, isBlurActive, isGrainActive, isHalationActive, softManuallyAdjusted, blurManuallyAdjusted, grainManuallyAdjusted, halationManuallyAdjusted]);
-
-  const undo = () => {
-    if (historyIdxRef.current > 0) {
-      const prev = historyRef.current[historyIdxRef.current - 1];
-      setParams(JSON.parse(JSON.stringify(prev.params)));
-      setSelectedLutIdx(prev.selectedLutIdx);
-      if (prev.isSoftActive !== undefined) setIsSoftActive(prev.isSoftActive);
-      if (prev.isBlurActive !== undefined) setIsBlurActive(prev.isBlurActive);
-      if (prev.isGrainActive !== undefined) setIsGrainActive(prev.isGrainActive);
-      if (prev.isHalationActive !== undefined) setIsHalationActive(prev.isHalationActive);
-      if (prev.softManuallyAdjusted !== undefined) setSoftManuallyAdjusted(prev.softManuallyAdjusted);
-      if (prev.blurManuallyAdjusted !== undefined) setBlurManuallyAdjusted(prev.blurManuallyAdjusted);
-      if (prev.grainManuallyAdjusted !== undefined) setGrainManuallyAdjusted(prev.grainManuallyAdjusted);
-      if (prev.halationManuallyAdjusted !== undefined) setHalationManuallyAdjusted(prev.halationManuallyAdjusted);
-      /* åˆä½µé‚£ä¸€æ­¥æ›æŽ‰äº†ä¾†æºåœ–ï¼Œæ’¤éŠ·è¦é€£ä¾†æºä¸€èµ·é€€å›žåŽ» â€”â€”
-         åªå›žå¾©åƒæ•¸çš„è©±ï¼Œçƒ¤é€²åŽ»çš„é‚£ä¸€å±¤é‚„ç•™åœ¨åœ–ä¸Šã€‚
-         ä¾†æºæ›å›žåŽ»ä¹‹å¾Œå¹¾ä½•æ˜¯èˆŠé‚£å¼µè‡ªå·±çš„ï¼Œä¸ç”¨å†å¥—ä¸€æ¬¡æ§‹åœ–ã€‚ */
-      const prevSrcs = prev.srcs;
-      const swapped = !!prevSrcs && JSON.stringify(prevSrcs) !== JSON.stringify(srcListRef.current);
-      const prevGeo = prev.geo || DEFAULT_GEO;
-      if (swapped) {
-        /* æ›ä¾†æºæ™‚å¹¾ä½•è¦å…ˆæ“ºå¥½ï¼šç·©è¡å€æ˜¯ç…§ geoRef é‡å»ºçš„ï¼Œ
-           é †åºåéŽä¾†çš„è©±æœƒå…ˆé‡å»ºä¸€æ¬¡æ²’è£åˆ‡çš„ï¼Œå†é‡å»ºä¸€æ¬¡è£åˆ‡çš„ï¼ˆç•«é¢é–ƒå…©ä¸‹ï¼‰ã€‚ */
-        geoRef.current = JSON.parse(JSON.stringify(prevGeo));
-        setGeo(geoRef.current);
-        srcListRef.current = [...prevSrcs!];
-        swapToSrc([...prevSrcs!]);
-      } else if (JSON.stringify(prevGeo) !== JSON.stringify(geoRef.current)) {
-        applyGeoRef.current(prevGeo);
-      }
-      writeHistory(historyRef.current, historyIdxRef.current - 1);
-    }
-  };
-
-  const redo = () => {
-    if (historyIdxRef.current < historyRef.current.length - 1) {
-      const next = historyRef.current[historyIdxRef.current + 1];
-      setParams(JSON.parse(JSON.stringify(next.params)));
-      setSelectedLutIdx(next.selectedLutIdx);
-      if (next.isSoftActive !== undefined) setIsSoftActive(next.isSoftActive);
-      if (next.isBlurActive !== undefined) setIsBlurActive(next.isBlurActive);
-      if (next.isGrainActive !== undefined) setIsGrainActive(next.isGrainActive);
-      if (next.isHalationActive !== undefined) setIsHalationActive(next.isHalationActive);
-      if (next.softManuallyAdjusted !== undefined) setSoftManuallyAdjusted(next.softManuallyAdjusted);
-      if (next.blurManuallyAdjusted !== undefined) setBlurManuallyAdjusted(next.blurManuallyAdjusted);
-      if (next.grainManuallyAdjusted !== undefined) setGrainManuallyAdjusted(next.grainManuallyAdjusted);
-      if (next.halationManuallyAdjusted !== undefined) setHalationManuallyAdjusted(next.halationManuallyAdjusted);
-      const nextSrcs = next.srcs;
-      const swapped = !!nextSrcs && JSON.stringify(nextSrcs) !== JSON.stringify(srcListRef.current);
-      const nextGeo = next.geo || DEFAULT_GEO;
-      if (swapped) {
-        geoRef.current = JSON.parse(JSON.stringify(nextGeo));
-        setGeo(geoRef.current);
-        srcListRef.current = [...nextSrcs!];
-        swapToSrc([...nextSrcs!]);
-      } else if (JSON.stringify(nextGeo) !== JSON.stringify(geoRef.current)) {
-        applyGeoRef.current(nextGeo);
-      }
-      writeHistory(historyRef.current, historyIdxRef.current + 1);
-    }
-  };
-
-  /* æŠŠä¸€é¡†æ¿¾é¡çš„æŸ¥è‰²è¡¨æº–å‚™å¥½ï¼ˆä¸‹è¼‰ï¼è§£ç¢¼ï¼æ”¶é€²æœ¬æ©Ÿï¼‰ã€‚
-     é»žæ¿¾é¡è·ŸèƒŒæ™¯é è¼‰èµ°åŒä¸€æ”¯ â€”â€” å…©é‚Šå„å¯«ä¸€ä»½çš„è©±ï¼Œé è¼‰é‚£ä»½ä¸æœƒå•æœ¬æ©Ÿå¿«å–ï¼Œ
-     é‡é–‹ App å°±åˆæ•´æ‰¹é‡æ–°ä¸‹è¼‰ä¸€æ¬¡ã€‚ */
-  const ensureLutData = useCallback(async (lut: { id: string; url: string }) => {
-    if (!lut.url || lutDataRef.current[lut.id]) return;
-    if (!loadingPromisesRef.current[lut.id]) {
-      loadingPromisesRef.current[lut.id] = (async () => {
-        // å…ˆå•æœ¬æ©Ÿï¼šä»¥å‰è§£éŽçš„è¡¨ç›´æŽ¥è®€å›žä¾†ï¼Œä¸ç”¨ä¸‹è¼‰ä¹Ÿä¸ç”¨é‡æ–°è§£ç¢¼é‡æŽ’
-        const cached = await loadCachedLut(lut.id, lut.url);
-        if (cached) {
-          lutDataRef.current[lut.id] = cached;
-          setLutReadyTick(t => t + 1);
-          return;
-        }
-        return new Promise<void>((resolve) => {
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          img.onload = () => {
-            const size = img.width === img.height ? img.width / 8 : 64;
-            const size2 = size * size;
-            const c = document.createElement('canvas');
-            c.width = img.width; c.height = img.height;
-            const ctx = c.getContext('2d', { willReadFrequently: true })!;
-            ctx.drawImage(img, 0, 0);
-            const data = ctx.getImageData(0, 0, img.width, img.height).data;
-            const lutData = new Uint8ClampedArray(size * size * size * 3);
-            for (let b = 0; b < size; b++) {
-              for (let g = 0; g < size; g++) {
-                for (let r = 0; r < size; r++) {
-                  const blockX = (b % 8) * size; const blockY = (b / 8 | 0) * size;
-                  const pxIdx = ((blockY + g) * img.width + (blockX + r)) * 4;
-                  const lutIdx = (b * size2 + g * size + r) * 3;
-                  lutData[lutIdx] = data[pxIdx]; lutData[lutIdx + 1] = data[pxIdx + 1]; lutData[lutIdx + 2] = data[pxIdx + 2];
-                }
-              }
-            }
-            lutDataRef.current[lut.id] = { data: lutData, size };
-            setLutReadyTick(t => t + 1);
-            saveCachedLut(lut.id, lut.url, lutData, size);   // æ”¶é€²æœ¬æ©Ÿï¼Œä¸‹æ¬¡ä¸ç”¨å†è§£ä¸€æ¬¡
-            resolve();
-          };
-          img.onerror = () => resolve();
-          img.src = lut.url;
-        });
-      })();
-    }
-    await loadingPromisesRef.current[lut.id];
-  }, []);
-
-  const loadLut = useCallback(async (idx: number) => {
-    const lut = lutList[idx];
-    if (lut.url && !lutDataRef.current[lut.id]) {
-      setLoadingLutId(lut.id);
-      await ensureLutData(lut);
-      pendingLutPaintRef.current = lut.id;
-      isDirtyRef.current = true;
-    }
-  }, [lutList, ensureLutData]);
-
-  // Eagerly preload all LUTs in the background sequentially to ensure instant filter switching without clogging network
-  useEffect(() => {
-     // æ‰‹æŒ‡é‚„åœ¨æ»‘æ¡¿ä¸Šå°±å…ˆåœ â€”â€” è§£ä¸€é¡†æ¿¾é¡è¦è·‘ 64Â³ æ¬¡è¿´åœˆï¼Œæ˜¯ä¸€æ•´å¡ŠåŒæ­¥é‹ç®—ï¼Œ
-     // æŽ’åœ¨æ‹–æ›³ä¸­é–“å°±æ˜¯ä¸€æ¬¡æŽ‰æ ¼ã€‚æ”¾é–‹æ‰‹ä¹‹å¾Œé€™ä¸€è¼ªæœƒé‡è·‘ï¼Œè¼‰éŽçš„æœƒç›´æŽ¥è·³éŽï¼Œä¸æœƒç™½åšã€‚
-     if (isInteracting) return;
-     let active = true;
-     const preload = async () => {
-         for (let i = 0; i < lutList.length; i++) {
-             if (!active) break;
-             const lut = lutList[i];
-             if (!lut.url || lutDataRef.current[lut.id]) continue;
-             await ensureLutData(lut);
-             await new Promise(r => setTimeout(r, 50));   // è®“ä¸»åŸ·è¡Œç·’å–˜ä¸€å£æ°£
-         }
-     };
-     preload();
-     return () => { active = false; };
-  }, [lutList, isInteracting, ensureLutData]);
-
-  /* ---- æ¿¾é¡ç¸®åœ– -------------------------------------------------------------
-     æ¯ä¸€å¼µéƒ½æ˜¯ã€Œç›®å‰é€™å¼µé è¦½åœ–å¥—ä¸Šé‚£é¡†æ¿¾é¡ã€çš„æ¨£å­ï¼Œè€Œä¸æ˜¯ä¸€å€‹æŠ½è±¡çš„åœ–ç¤ºã€‚
-     ç¸®åœ–åªæœ‰ 72Ã—86ï¼Œä¸€é¡†æ¿¾é¡æ‰ 6 åƒå¤šå€‹åƒç´ ï¼Œæ‰€ä»¥æ•´æŽ’é‡ç®—ä¹Ÿå¾ˆå¿«ï¼›
-     çœŸæ­£èŠ±æ™‚é–“çš„æ˜¯æ¯é¡†æ¿¾é¡éƒ½è¦çƒ˜ä¸€æ¬¡ 32Â³ çš„ä¸» LUTï¼Œæ‰€ä»¥ï¼š
-       - åªæœ‰åœåœ¨ã€Œæ¿¾é¡ã€åˆ†é æ™‚æ‰ç®—
-       - åƒæ•¸åœä¸‹ä¾† 300ms ä¹‹å¾Œæ‰ç®—ï¼ˆæ‹–æ»‘æ¡¿çš„ç•¶ä¸‹ä¸ç®—ï¼‰
-     é›¢é–‹æ¿¾é¡åˆ†é å°±å®Œå…¨æ²’æœ‰æˆæœ¬ã€‚                                            */
-  /* å¡ç‰‡æ˜¯ 64Ã—76 CSS pxï¼Œç”¨èž¢å¹•çš„å¯¦éš›åƒç´ å¯†åº¦åŽ»ç®—ï¼ˆæ‰‹æ©Ÿæ˜¯ 2 æˆ– 3 å€ï¼‰ï¼Œ
-     è²¼ä¸ŠåŽ»å°±æ˜¯åŽŸç”Ÿè§£æžåº¦ï¼Œä¸æœƒç³Šã€‚ä»¥å‰ç‚ºäº†æ±‚å¿«åªç”¨ 2 å€ã€é‚„åˆ†æˆ
-     ã€Œå…ˆä½Žè§£æžé‹ªæ»¿ã€å†é«˜è§£æžè“‹ä¸ŠåŽ»ã€å…©è¼ªï¼Œé‚£å€‹è“‹ä¸ŠåŽ»çš„çž¬é–“å°±æ˜¯æœƒæŠ–ä¸€ä¸‹çš„åŽŸå› ã€‚
-     æ”¹æˆç•«å¸ƒç›´ç•«ï¼ˆå°‘æŽ‰ PNG ç·¨ç¢¼èˆ‡è§£ç¢¼ï¼‰ä¹‹å¾Œä¸€è¼ªå°±å¤ å¿«ï¼Œæ‰€ä»¥åªç®—ä¸€è¼ªã€
-     åªæœ‰æœ€çµ‚å“è³ªã€‚æ•´æŽ’ä¸æœƒç©ºç™½æ˜¯é  fallbackï¼šé‚„æ²’è¼ªåˆ°çš„æ ¼å­å…ˆç•«
-     ã€ŒåŽŸå§‹ã€é‚£ä¸€å¼µï¼ˆç‰¹æ•ˆæ˜¯æ²’å¥—ç‰¹æ•ˆçš„åº•åœ–ï¼‰ã€‚
-     é€™äº›éƒ½åªå½±éŸ¿æŒ‰éˆ•ä¸Šçš„ç¸®åœ–ï¼Œé è¦½èˆ‡è¼¸å‡ºçš„ç•«è³ªå®Œå…¨æ²’æœ‰ç¢°åˆ°ã€‚ */
-  const CARD_W = 64, CARD_H = 76;
-  const THUMB_W = CARD_W * THUMB_DPR, THUMB_H = CARD_H * THUMB_DPR;
-  /** ç¸®åœ–å€‰åº«ï¼šéµæ˜¯ã€Œç…§ç‰‡ + æŒ‰éˆ•ã€ï¼Œå€¼æ˜¯ç•«å¥½çš„é›¢å±ç•«å¸ƒã€‚å¡ç‰‡ä¸Šçš„ <canvas> å¾žé€™è£¡å–ã€‚ */
-  const filterThumbStore = useRef<Record<string, ThumbEntry>>({});
-  const fxThumbStore = useRef<Record<string, ThumbEntry>>({});
-  /** æŽ›åœ¨ç•«é¢ä¸Šçš„ç¸®åœ–æ ¼å­ï¼Œç®—å¥½ä¸€å¼µå°±ç›´æŽ¥å«å®ƒå€‘é‡ç•«ï¼ˆå®Œå…¨ä¸ç¶“éŽ React stateï¼‰ */
-  const thumbPainters = useRef<Set<() => void>>(new Set());
-  const repaintThumbs = useCallback(() => { thumbPainters.current.forEach(f => f()); }, []);
-  /* æ‰¹é‡ç·¨è¼¯æ™‚æ¯ä¸€å¼µç…§ç‰‡çš„ç¸®åœ–å„ç•™ä¸€ä»½ï¼Œä¾†å›žåˆ‡æ›å°±ä¸ç”¨é‡ç®—ï¼ˆåˆ‡å›žåŽ»æ˜¯çž¬é–“çš„ï¼‰ã€‚
-     åªç•™æœ€è¿‘å¹¾å¼µï¼Œè¨˜æ†¶é«”æ‰ä¸æœƒä¸€ç›´é•·å¤§ã€‚ */
-  const THUMB_CACHE_SRCS = 3;
-  const thumbSrcsRef = useRef<string[]>([]);
-  /** å€‰åº«çš„éµã€‚åˆ†éš”ç¬¦ç”¨ç©ºæ ¼ï¼šæŒ‰éˆ• id è·Ÿç…§ç‰‡çš„ URL éƒ½ä¸å¯èƒ½æœ‰ç©ºæ ¼ */
-  const THUMB_SEP = ' ';
-  /* æŒ‰éˆ•ç¸®åœ–æ°¸é ç•«ã€Œé€™å¼µç…§ç‰‡æœ€åˆçš„æ¨£å­ã€ã€‚
-     åˆä½µæœƒç”¢ç”Ÿä¸€å¼µæ–°çš„ä¾†æºåœ–ï¼Œä½†ç¸®åœ–ä¸è©²è·Ÿè‘—è®Šæˆåˆä½µå¾Œçš„æ¨£å­ â€”â€”
-     æ‰€ä»¥æ¯å¼µåˆä½µå‡ºä¾†çš„åœ–éƒ½è¨˜ä½å®ƒæ˜¯å¾žå“ªä¸€å¼µåŽŸåœ–ä¾†çš„ï¼Œç¸®åœ–ä¸€å¾‹èªé‚£ä¸€å¼µã€‚
-     é€™æ¨£åˆä½µæ™‚æ•´æŽ’ç¸®åœ–çš„ç°½ç« æ²’è®Šï¼Œä¸€æ ¼éƒ½ä¸ç”¨é‡ç®—ï¼ˆåˆä½µä¹Ÿå°±å¿«å¾—å¤šï¼‰ã€‚ */
-  const thumbOriginRef = useRef<Record<string, string>>({});
-  const thumbSrcOf = (src: string) => thumbOriginRef.current[src] || src;
-  /* å‰å¾Œå°æ¯”è¦çœ‹çš„æ˜¯ã€Œæœ€åŽŸå§‹é‚£å¼µã€ï¼Œä¸æ˜¯åˆä½µä¹‹å¾Œçš„ã€‚
-     åˆä½µæœƒæŠŠæ•ˆæžœçƒ¤é€²åœ–è£¡ã€æ›æˆä¸€å¼µæ–°çš„ä¾†æºåœ–ï¼Œä¹‹å¾Œç·©è¡å€è£¡çš„åŽŸåœ–
-     å°±å·²ç¶“æ˜¯åˆä½µéŽçš„äº†ï¼Œæ‰€ä»¥ç¬¬ä¸€æ¬¡è¼‰é€²ä¾†æ™‚å…ˆæŠŠé‚£å¼µç•™ä¸€ä»½ä¸‹ä¾†ã€‚ */
-  const pristineRef = useRef<{ key: string; canvas: HTMLCanvasElement }[]>([]);
-  const PRISTINE_KEEP = 3;   // æ‰¹é‡ç·¨è¼¯æ™‚æœ€å¤šç•™å¹¾å¼µï¼ˆä¸€å¼µé è¦½å°ºå¯¸å°±å¥½å¹¾ MBï¼Œä¸èƒ½ç„¡é™ç•™ï¼‰
-  const pristineOf = (src: string) => pristineRef.current.find(x => x.key === src)?.canvas || null;
-  const thumbKey = (src: string, id: string) => thumbSrcOf(src) + THUMB_SEP + id;
-  const noteThumbSrc = (src: string) => {
-    const list = thumbSrcsRef.current;
-    const at = list.indexOf(src);
-    if (at >= 0) list.splice(at, 1);
-    list.unshift(src);
-    const drop = list.splice(THUMB_CACHE_SRCS);
-    if (!drop.length) return;
-    for (const store of [filterThumbStore, fxThumbStore]) {
-      for (const k of Object.keys(store.current)) {
-        if (drop.indexOf(k.slice(0, k.indexOf(THUMB_SEP))) >= 0) delete store.current[k];
-      }
-    }
-  };
-  const thumbSigRef = useRef('');
-  useEffect(() => {
-    if (activeCategory !== 'filter') return;
-    let cancelled = false;
-    // é‚„æ²’æœ‰é€™å¼µç…§ç‰‡çš„ç¸®åœ–æ™‚ä¸ç­‰ï¼ˆé‚£æ­£æ˜¯ã€Œæ•´æŽ’éƒ½é‚„æ˜¯ä¸Šä¸€å¼µã€çš„é‚£ä¸€åˆ»ï¼‰ï¼Œ
-    // å·²ç¶“å°å¾—ä¸Šäº†æ‰ç”¨é˜²æŠ–ï¼Œæ‹–æ»‘æ¡¿æ™‚å°±ä¸æœƒä¸€ç›´é‡ç®—ã€‚
-    const fresh = thumbSigRef.current.split('|')[0] !== thumbSrcOf(buffersSrcRef.current);
-    const t = window.setTimeout(() => {
-      const b = buffers.current.preview;
-      if (!b || !b.source || !b.w || !b.h) return;
-      // é€™ä¸€æ‰¹ç¸®åœ–æ˜¯ç‚ºäº†å“ªä¸€çµ„ã€Œç…§ç‰‡ + èª¿æ•´ã€ç®—çš„
-      // æ¯ä¸€æ ¼å…±é€šçš„éƒ¨åˆ†ï¼ˆç…§ç‰‡ + èª¿æ•´ï¼‰ï¼›æ¯ä¸€é¡†æ¿¾é¡å†å„è‡ªåŠ ä¸Šã€Œæª”æ¡ˆè¼‰åˆ°äº†æ²’ã€
-      /* ç¸®åœ–å›ºå®šç•«ã€ŒåŽŸåœ–å¥—ä¸Šé€™é¡†æ¿¾é¡ã€çš„æ¨£å­ï¼Œä¸è·Ÿè‘—ç›®å‰çš„ç·¨è¼¯èµ° â€”â€”
-         æ¯å‹•ä¸€æ¬¡æ»‘æ¡¿å°±æŠŠæ•´æŽ’é‡ç®—ä¸€æ¬¡å¤ªæµªè²»ï¼Œè€Œä¸”æ¯”è¼ƒä¸å‡ºé€™é¡†æ¿¾é¡æœ¬èº«çš„æ¨£å­ã€‚ */
-      const baseSig = [thumbSrcOf(buffersSrcRef.current), b.w, b.h].join('|');
-      const sig = baseSig + '|' + lutList.map(l => (l.url && lutDataRef.current[l.id]) ? 1 : 0).join('');
-      if (sig === thumbSigRef.current) return;
-      const forSrc = thumbSrcOf(buffersSrcRef.current);
-      noteThumbSrc(forSrc);
-
-      const W = THUMB_W, H = THUMB_H;
-      const src = document.createElement('canvas');
-      src.width = b.w; src.height = b.h;
-      src.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(b.source), b.w, b.h), 0, 0);
-      const small = document.createElement('canvas');
-      small.width = W; small.height = H;
-      const sctx = small.getContext('2d', { willReadFrequently: true })!;
-      sctx.imageSmoothingQuality = 'high';
-      // ç½®ä¸­è£åˆ‡æˆç¸®åœ–çš„æ¯”ä¾‹ï¼Œæ‰ä¸æœƒè®Šå½¢
-      const scale = Math.max(W / b.w, H / b.h);
-      const dw = b.w * scale, dh = b.h * scale;
-      sctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
-      const thumbSrc = sctx.getImageData(0, 0, W, H).data;
-
-      const flat = DEFAULT_PARAMS;          // ä¸€å¾‹ç”¨é è¨­åƒæ•¸ï¼ˆï¼åŽŸåœ–ï¼‰
-      const baseLut = new Uint8Array(256);
-      generateBaseCorrectionLut(flat.exposure, flat.contrast, flat.brightness, baseLut);
-      const curveLuts = {
-        rgb: generateCurveLut(flat.curves.rgb), r: generateCurveLut(flat.curves.r),
-        g: generateCurveLut(flat.curves.g), b: generateCurveLut(flat.curves.b),
-      };
-      const cvs = document.createElement('canvas');
-      cvs.width = W; cvs.height = H;
-      const cctx = cvs.getContext('2d')!;
-
-      runThumbChunks(
-        lutList,
-        (lut: { id: string; name: string; url: string }) => {
-          const data = lut.url ? lutDataRef.current[lut.id] : null;
-          if (lut.url && !data) return false;    // æ¿¾é¡æª”é‚„æ²’ä¸‹è¼‰å®Œï¼Œç­‰ä¸‹ä¸€è¼ª
-          const key = thumbKey(forSrc, lut.id);
-          const itemSig = baseSig + '|' + lut.id;
-          /* ç¸®åœ–è¦ç…§é€™é¡†æ¿¾é¡ã€ŒæŒ‰ä¸‹åŽ»ä¹‹å¾ŒçœŸæ­£å¥—ç”¨çš„å¼·åº¦ã€ç•«ã€‚
-             ä»¥å‰ä¸€å¾‹ç”¨ 100%ï¼Œä½†æœ‰ 13 é¡†çš„é è¨­å¼·åº¦æ˜¯ 50ï¼70ï¼80ï¼Œ
-             ç¸®åœ–çœ‹èµ·ä¾†å°±æ¯”å¯¦éš›å¥—ä¸ŠåŽ»çš„æ¿ƒ â€”â€” é€™å°±æ˜¯ã€Œç¸®åœ–è·Ÿæ¿¾é¡å°ä¸ä¸Šã€ã€‚ */
-          const amount = lut.url ? (LUT_DEFAULT_AMOUNT[lut.id] ?? 100) : 100;
-          // èƒŒæ™¯é è¼‰æ¯è¼‰å¥½ä¸€é¡†å°±æœƒå†è·‘ä¸€è¼ªï¼Œé€™è£¡è·³éŽå·²ç¶“æ˜¯æœ€æ–°çš„é‚£äº›æ ¼å­ï¼Œ
-          // æ‰ä¸æœƒç‚ºäº†è£œä¸€æ ¼æŠŠæ•´æŽ’é‡ç®—ä¸€æ¬¡
-          if (filterThumbStore.current[key]?.sig === itemSig) return false;
-          /* å…ˆä»¥å®Œæ•´åŽŸåœ–å¡«æ»¿ï¼›å³ä½¿æŸå€‹æ¿¾é¡è³‡æ–™ç•°å¸¸ï¼Œä¹Ÿä¸å¯èƒ½ç•™ä¸‹æœªå¯«å…¥çš„å½©è‰²å€å¡Šã€‚ */
-          const dst = new Uint8ClampedArray(thumbSrc);
-          try {
-            processPixels(thumbSrc, dst, W, H,
-              { ...flat, lutAmount: amount }, data ? data.data : null, data ? data.size : 0,
-              baseLut, null, false, curveLuts);
-          } catch { return false; }
-          cctx.putImageData(new ImageData(dst, W, H), 0, 0);
-          putThumb(filterThumbStore, key, cvs, itemSig);
-          return true;
-        },
-        repaintThumbs,
-        () => cancelled,
-        () => { thumbSigRef.current = sig; },
-      );
-    }, fresh ? 0 : 300);
-    return () => { cancelled = true; window.clearTimeout(t); };
-  }, [activeCategory, lutList, previewAspect, loadingLutId, activeSrc, buffersTick, lutReadyTick]);
-
-  /* ç‰¹æ•ˆç¸®åœ–ï¼šè·Ÿæ¿¾é¡é‚£æŽ’åŒä¸€å¥— â€”â€” å…ˆæŠŠç›®å‰çš„é è¦½ç¸®æˆå°åœ–ï¼Œ
-     å†åˆ†åˆ¥å¥—ä¸Šæ¯ä¸€å€‹ç‰¹æ•ˆçš„é è¨­æ•ˆæžœã€‚GLSL é‚£äº›ç›´æŽ¥èµ° applyGlEffectsï¼Œ
-     åŽŸæœ¬å°±æœ‰çš„æŸ”å…‰ï¼å…‰æšˆï¼æ¼å…‰ï¼æ¨¡ç³Šï¼å™ªé»žå‰‡èµ° applyComplexEffectsã€‚ */
-  const FX_THUMB_DEMO: Record<string, Partial<EditorParams>> = {
-    softLight: { soft: 70, softThreshold: 60, softRadius: 100, softColor: 0 },
-    halation: { fringeIntensity: 80, fringeSize: 30, fringeFeather: 100, fringeHue: 8 },
-    lightLeak: { leakOpacity: 75, leakAngle: 45, leakHue: 15 },
-    blur: { blur: 45 },
-    colorNoise: { colorNoise: 70 },
-  };
-  /** ã€Œé‚„æ²’ç®—åˆ°é€™ä¸€æ ¼ã€æ™‚å…ˆé ‚è‘—çš„åº•åœ–ï¼ˆæ²’æœ‰å¥—ä»»ä½•ç‰¹æ•ˆçš„æ¨£å­ï¼‰çš„éµ */
-  const FX_THUMB_BASE = '__base';
-  /* applyComplexEffects å®£å‘Šåœ¨å¾Œé¢ï¼Œç”¨ ref å–ç”¨ï¼ˆå®ƒæ¯æ¬¡ render éƒ½æœƒæ›´æ–°ï¼‰ */
-  const applyComplexEffectsRef = useRef<any>(() => {});
-  const fxThumbSigRef = useRef('');
-  useEffect(() => {
-    if (activeCategory !== 'effects') return;
-    let cancelled = false;
-    const fresh = fxThumbSigRef.current.split('|')[0] !== thumbSrcOf(buffersSrcRef.current);
-    const t = window.setTimeout(() => {
-      const b = buffers.current.preview;
-      if (!b || !b.source || !b.w || !b.h) return;
-      const sig = [thumbSrcOf(buffersSrcRef.current), b.w, b.h].join('|');
-      if (sig === fxThumbSigRef.current) return;
-      const forSrc = thumbSrcOf(buffersSrcRef.current);
-      noteThumbSrc(forSrc);
-
-      const W = THUMB_W, H = THUMB_H;
-      const src = document.createElement('canvas');
-      src.width = b.w; src.height = b.h;
-      src.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(b.source), b.w, b.h), 0, 0);
-
-      // åº•åœ–å›ºå®šæ˜¯åŽŸåœ–ï¼šä¸å¥—æ¿¾é¡ä¹Ÿä¸å¥—èª¿æ•´
-      const flat = DEFAULT_PARAMS;
-      const baseLut = new Uint8Array(256);
-      generateBaseCorrectionLut(flat.exposure, flat.contrast, flat.brightness, baseLut);
-      const curveLuts = {
-        rgb: generateCurveLut(flat.curves.rgb), r: generateCurveLut(flat.curves.r),
-        g: generateCurveLut(flat.curves.g), b: generateCurveLut(flat.curves.b),
-      };
-
-      const small = document.createElement('canvas');
-      small.width = W; small.height = H;
-      const sctx = small.getContext('2d', { willReadFrequently: true })!;
-      sctx.imageSmoothingQuality = 'high';
-      const scale = Math.max(W / b.w, H / b.h);
-      const dw = b.w * scale, dh = b.h * scale;
-      sctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
-      const thumbSrc = sctx.getImageData(0, 0, W, H).data;
-      const baseData = new Uint8ClampedArray(thumbSrc.length);
-      try {
-        processPixels(thumbSrc, baseData, W, H,
-          { ...flat, ...NO_EFFECT_PARAMS } as EditorParams, null, 0,
-          baseLut, null, false, curveLuts);
-      } catch { return; }
-
-      const cvs = document.createElement('canvas');
-      cvs.width = W; cvs.height = H;
-      const cctx = cvs.getContext('2d', { willReadFrequently: true })!;
-      // å…ˆæŠŠã€Œæ²’å¥—ä»»ä½•ç‰¹æ•ˆã€çš„åº•åœ–æ”¶é€²å€‰åº« â€”â€” é‚„æ²’è¼ªåˆ°çš„æ ¼å­å…ˆç”¨å®ƒé ‚è‘—ï¼Œ
-      // ä¸€é€²ç‰¹æ•ˆåˆ†é æ•´æŽ’å°±æœ‰æ±è¥¿å¯çœ‹ï¼Œä¸æœƒæ˜¯ä¸€æŽ’ç©ºæ ¼ã€‚
-      cctx.putImageData(new ImageData(new Uint8ClampedArray(baseData), W, H), 0, 0);
-      putThumb(fxThumbStore, thumbKey(forSrc, FX_THUMB_BASE), cvs);
-      repaintThumbs();
-
-      runThumbChunks(
-        EFFECT_TOOLS,
-        (tool) => {
-          cctx.putImageData(new ImageData(new Uint8ClampedArray(baseData), W, H), 0, 0);
-          const demo: EditorParams = { ...flat, ...NO_EFFECT_PARAMS, ...(FX_THUMB_DEMO[tool.id] || {}) } as EditorParams;
-          if (FX_TOOLS[tool.id]) demo[tool.id as `fx${string}`] = 100;
-          try {
-            applyComplexEffectsRef.current(cctx, W, H, demo, Math.max(W, H) / 1080,
-              new Uint8ClampedArray(baseData.length), false, true, baseData);
-          } catch { /* å–®ä¸€æ ¼ç®—ä¸å‡ºä¾†å°±ç•™åŸºåº•åœ– */ }
-          putThumb(fxThumbStore, thumbKey(forSrc, tool.id), cvs);
-          return true;
-        },
-        repaintThumbs,
-        () => cancelled,
-        () => { fxThumbSigRef.current = sig; },
-      );
-    }, fresh ? 0 : 300);
-    return () => { cancelled = true; window.clearTimeout(t); };
-  }, [activeCategory, lutList, previewAspect, activeSrc, buffersTick]);
-
-  const handleFilterSelect = (idx: number) => {
-    quickFilterRef.current = true;   // å…ˆå‡ºä½Žè§£æžåº¦é‚£å¼µï¼Œç•«é¢æ‰æœƒé¦¬ä¸Šæœ‰åæ‡‰
-    if (idx > 0) {
-      loadLut(idx);
-    }
-    const lutId = lutList[idx].id;
-
-    const defaultAmount = LUT_DEFAULT_AMOUNT[lutId] ?? 100;
-
-    let targetSoft = 0;
-    let softThresholdVal = paramsRef.current.softThreshold;
-    if (isSoftActive) {
-      if (softManuallyAdjusted) {
-        targetSoft = userSoftRef.current;
-      } else {
-        targetSoft = 50;
-        if (lutId === 'f21') softThresholdVal = 60;
-        else if (lutId === 'f4') softThresholdVal = 75;
-        else softThresholdVal = 70;
-      }
-    }
-
-    let targetBlur = 0;
-    if (isBlurActive) {
-      if (blurManuallyAdjusted) {
-        targetBlur = userBlurRef.current;
-      } else {
-        targetBlur = (lutId === 'f22' || lutId === 'f23') ? 30 : 40;
-      }
-    }
-
-    let targetGrain = 0;
-    let targetGrainBW = paramsRef.current.grain;
-    let targetGrainNoise2 = paramsRef.current.colorNoise2;
-    if (isGrainActive) {
-      if (grainManuallyAdjusted) {
-        targetGrain = userGrainRef.current.colorNoise;
-        targetGrainBW = userGrainRef.current.grain;
-        targetGrainNoise2 = userGrainRef.current.colorNoise2;
-      } else {
-        targetGrain = 20;
-        targetGrainBW = 0;
-        targetGrainNoise2 = 0;
-      }
-    } else {
-      targetGrain = 0;
-      targetGrainBW = 0;
-      targetGrainNoise2 = 0;
-    }
-
-    const newParams = { 
-        ...paramsRef.current, 
-        lutAmount: defaultAmount,
-        soft: targetSoft,
-        softThreshold: softThresholdVal,
-        shadows: paramsRef.current.shadows,
-        highlights: paramsRef.current.highlights,
-        grain: targetGrainBW,
-        temp: paramsRef.current.temp,
-        exposure: paramsRef.current.exposure,
-        blur: targetBlur,
-        fringeIntensity: paramsRef.current.fringeIntensity,
-        fringeSize: paramsRef.current.fringeSize,
-        fringeHue: paramsRef.current.fringeHue,
-        colorNoise: targetGrain,
-        colorNoise2: targetGrainNoise2,
-        tint: paramsRef.current.tint
-    };
-    setParams(newParams);
-    setSelectedLutIdx(idx);
-    setActiveToolId('filter_select');
-    addToHistory(newParams, idx, isSoftActive, isBlurActive, isGrainActive, softManuallyAdjusted, blurManuallyAdjusted, grainManuallyAdjusted);
-  };
-
-  /* ã€Œæ‰“é–‹æŸ”å…‰ï¼æœ¦æœ§ï¼å™ªé»žï¼å…‰æšˆã€è¦å¥—çš„å€¼ã€‚
-     å››é¡†é–‹é—œèˆ‡ç‰¹æ•ˆæ¸…å–®çš„å¡ç‰‡å…±ç”¨åŒä¸€ä»½è¦å‰‡ â€”â€” å…©å€‹å…¥å£åˆ†é ­å¯«çš„è©±ï¼Œ
-     åŒä¸€å€‹ç‰¹æ•ˆå¾žæ¸…å–®é»žé–‹è·Ÿå¾žé–‹é—œæ‰“é–‹æœƒå¾—åˆ°ä¸ä¸€æ¨£çš„é è¨­å€¼ã€‚
-     patch æ˜¯è¦ç–Šä¸ŠåŽ»çš„åƒæ•¸ï¼Œmanual æ˜¯ã€Œä½¿ç”¨è€…è‡ªå·±èª¿éŽã€é‚£å€‹æ——æ¨™çš„æ–°å€¼ã€‚ */
-  /* fresh = true ä»£è¡¨ã€Œå¾žé ­ä¾†éŽã€ï¼šä¸ç†æœƒä½¿ç”¨è€…ä¸Šæ¬¡èª¿éŽçš„å€¼ï¼Œä¸€å¾‹çµ¦é è¨­ã€‚
-     ç‰¹æ•ˆå¡ç‰‡èµ°é€™æ¢ï¼ˆé»žä¸‹åŽ»å°±æ˜¯æ•´çµ„é‡ç½®ï¼‰ï¼Œå››é¡†é–‹é—œç¶­æŒåŽŸæœ¬çš„è¨˜æ†¶è¡Œç‚ºã€‚ */
-  const softOnPatch = (fresh = false) => {
-    if (!fresh && softManuallyAdjusted && userSoftRef.current !== 0) {
-      return { patch: { soft: userSoftRef.current }, manual: softManuallyAdjusted };
-    }
-    const lutId = lutList[selectedLutIdx]?.id || 'none';
-    const softThresholdVal = lutId === 'f21' ? 60 : lutId === 'f4' ? 75 : 70;
-    userSoftRef.current = 100;
-    return { patch: { soft: 100, softThreshold: softThresholdVal }, manual: false };
-  };
-  const blurOnPatch = (fresh = false) => {
-    if (!fresh && blurManuallyAdjusted && userBlurRef.current !== 0) {
-      return { patch: { blur: userBlurRef.current }, manual: blurManuallyAdjusted };
-    }
-    const lutId = lutList[selectedLutIdx]?.id || 'none';
-    const targetBlur = (lutId === 'f22' || lutId === 'f23') ? 30 : 40;
-    userBlurRef.current = targetBlur;
-    return { patch: { blur: targetBlur }, manual: false };
-  };
-  const grainOnPatch = (fresh = false) => {
-    const g = userGrainRef.current;
-    if (!fresh && grainManuallyAdjusted && !(g.grain === 0 && g.colorNoise === 0 && g.colorNoise2 === 0)) {
-      return { patch: { grain: g.grain, colorNoise: g.colorNoise, colorNoise2: g.colorNoise2 }, manual: grainManuallyAdjusted };
-    }
-    userGrainRef.current = { grain: 0, colorNoise: 40, colorNoise2: 0 };
-    return { patch: { colorNoise: 40, grain: 0, colorNoise2: 0 }, manual: false };
-  };
-  const halationOnPatch = (fresh = false) => {
-    if (!fresh && halationManuallyAdjusted && userHalationRef.current !== 0) {
-      return { patch: { fringeIntensity: userHalationRef.current }, manual: halationManuallyAdjusted };
-    }
-    userHalationRef.current = 100;
-    return { patch: { fringeIntensity: 100, fringeHue: 8, fringeSize: 10, fringeFeather: 100 }, manual: false };
-  };
-
-  const toggleSoftLight = () => {
-    const nextActive = !isSoftActive;
-    setIsSoftActive(nextActive);
-
-    let nextParams;
-    let nextSoftManual = softManuallyAdjusted;
-    if (nextActive) {
-      const on = softOnPatch();
-      nextParams = { ...paramsRef.current, ...on.patch };
-      nextSoftManual = on.manual;
-      if (!on.manual) setSoftManuallyAdjusted(false);
-    } else {
-      nextParams = {
-        ...paramsRef.current,
-        soft: 0
-      };
-    }
-
-    setParams(nextParams);
-    paramsRef.current = nextParams;
-    isDirtyRef.current = true;
-    addToHistory(nextParams, selectedLutIdx, nextActive, isBlurActive, isGrainActive, nextSoftManual, blurManuallyAdjusted, grainManuallyAdjusted);
-  };
-
-  const toggleBlur = () => {
-    const nextActive = !isBlurActive;
-    setIsBlurActive(nextActive);
-    
-    let nextParams;
-    let nextBlurManual = blurManuallyAdjusted;
-    if (nextActive) {
-      const on = blurOnPatch();
-      nextParams = { ...paramsRef.current, ...on.patch };
-      nextBlurManual = on.manual;
-      if (!on.manual) setBlurManuallyAdjusted(false);
-    } else {
-      nextParams = {
-        ...paramsRef.current,
-        blur: 0
-      };
-    }
-
-    setParams(nextParams);
-    paramsRef.current = nextParams;
-    isDirtyRef.current = true;
-    addToHistory(nextParams, selectedLutIdx, isSoftActive, nextActive, isGrainActive, softManuallyAdjusted, nextBlurManual, grainManuallyAdjusted);
-  };
-
-  const toggleGrain = () => {
-    const nextActive = !isGrainActive;
-    setIsGrainActive(nextActive);
-    
-    let nextParams;
-    let nextGrainManual = grainManuallyAdjusted;
-    if (nextActive) {
-      const on = grainOnPatch();
-      nextParams = { ...paramsRef.current, ...on.patch };
-      nextGrainManual = on.manual;
-      if (!on.manual) setGrainManuallyAdjusted(false);
-    } else {
-      nextParams = {
-        ...paramsRef.current,
-        grain: 0,
-        colorNoise: 0,
-        colorNoise2: 0
-      };
-    }
-
-    setParams(nextParams);
-    paramsRef.current = nextParams;
-    isDirtyRef.current = true;
-    addToHistory(nextParams, selectedLutIdx, isSoftActive, isBlurActive, nextActive, softManuallyAdjusted, blurManuallyAdjusted, nextGrainManual);
-  };
-
-  const toggleHalation = () => {
-    const nextActive = !isHalationActive;
-    setIsHalationActive(nextActive);
-    
-    let nextParams;
-    let nextHalationManual = halationManuallyAdjusted;
-    if (nextActive) {
-      const on = halationOnPatch();
-      nextParams = { ...paramsRef.current, ...on.patch };
-      nextHalationManual = on.manual;
-      if (!on.manual) setHalationManuallyAdjusted(false);
-    } else {
-      nextParams = {
-        ...paramsRef.current,
-        fringeIntensity: 0
-      };
-    }
-
-    setParams(nextParams);
-    paramsRef.current = nextParams;
-    isDirtyRef.current = true;
-    addToHistory(nextParams, selectedLutIdx, isSoftActive, isBlurActive, isGrainActive, nextActive, softManuallyAdjusted, blurManuallyAdjusted, grainManuallyAdjusted, nextHalationManual);
-  };
-
-  // ... (handleEffectToolSelect, applyComplexEffects)
-  /* ç‰¹æ•ˆçš„è‘—è‰²å™¨æ˜¯ã€Œç¬¬ä¸€æ¬¡ç”¨åˆ°æ‰ç·¨è­¯ã€ï¼Œ20 å¹¾æ”¯ä¸€èµ·ç·¨å°±æ˜¯é€²ç‰¹æ•ˆåˆ†é è¦ç­‰ä¸€ç§’çš„ä¸»å› 
-     ï¼ˆé‡åˆ°ç¬¬ä¸€æ¬¡é€²åŽ» 902msï¼Œç¬¬äºŒæ¬¡é€²åŽ» 25msï¼‰ã€‚ç·¨è¼¯å™¨é–‹å¥½ä¹‹å¾Œè¶ç©ºæª”ä¸€æ”¯ä¸€æ”¯å…ˆç·¨èµ·ä¾†ï¼Œ
-     çœŸçš„é»žé€²åŽ»æ™‚å°±å·²ç¶“æ˜¯ç†±çš„ã€‚æŽ’åœ¨ idle è£¡ï¼Œä¸è·Ÿé è¦½æ¶ä¸»åŸ·è¡Œç·’ã€‚ */
-  useEffect(() => {
-    let stop = false;
-    let i = 0;
-    const idle: (cb: () => void) => void =
-      (window as any).requestIdleCallback
-        ? (cb) => (window as any).requestIdleCallback(cb, { timeout: 2000 })
-        : (cb) => { window.setTimeout(cb, 120); };
-    const step = () => {
-      if (stop || i >= FX_DEFS.length) return;
-      warmFx(FX_DEFS[i++].id);
-      idle(step);
-    };
-    // é–‹å ´é‚£ä¸€ç§’è®“çµ¦ç¬¬ä¸€å¼µé è¦½ï¼Œä¸è¦è·Ÿå®ƒæ¶
-    const t = window.setTimeout(() => idle(step), 1200);
-    return () => { stop = true; window.clearTimeout(t); };
-  }, []);
-
-  /* é»žç‰¹æ•ˆå¡ç‰‡ï¼é¸ä¸­å®ƒï¼Œä¸Šé¢é‚£æ ¹æ»‘æ¡¿å°±æ˜¯å®ƒçš„å¼·åº¦ï¼ˆä¹Ÿåªæœ‰å¼·åº¦ï¼‰ï¼Œä¸æ›é ã€‚
-     é‚„æ²’é–‹çš„è©±é †æ‰‹ç”¨ã€Œé è¨­å¼·åº¦ã€å¥—ä¸ŠåŽ» â€”â€” é»žä¸‹åŽ»å°±çœ‹å¾—åˆ°æ•ˆæžœï¼Œä¸ç”¨å…ˆæŠŠæ»‘æ¡¿å¾ž 0 æ‹–å‡ºä¾†ã€‚
-     å·²ç¶“é–‹è‘—çš„å°±åªæ˜¯é¸ä¸­ï¼Œä¸æœƒæŠŠä½¿ç”¨è€…èª¿å¥½çš„å€¼è“‹æŽ‰ã€‚
-     è¦èª¿ç´°é …çš„è©±æŒ‰å¡ç‰‡å³ä¸Šè§’é‚£é¡†ç·¨è¼¯éµã€‚ */
-  /* æŒ‰ä¸‹åˆä½µä¹‹å¾Œï¼Œå¯¦éš›çš„çƒ¤åœ–ï¼ˆåŽŸå§‹è§£æžåº¦é‡ç•« + ç·¨ç¢¼ PNGï¼‰é‚„è¦è·‘ä¸€ä¸‹ï¼Œ
-     ä½†ä½¿ç”¨è€…ä¸éœ€è¦ç­‰å®ƒ â€”â€” é è¦½ç•«é¢æœ¬ä¾†å°±å·²ç¶“æ˜¯åˆä½µå¾Œçš„æ¨£å­äº†ã€‚
-     æ‰€ä»¥æŒ‰ä¸‹åŽ»å°±å…ˆæŠŠä»‹é¢åˆ‡æˆã€Œåˆä½µå®Œã€çš„ç‹€æ…‹ï¼šæŒ‰éˆ•é¦¬ä¸Šæ”¶èµ·ä¾†ã€
-     æ¿¾é¡ï¼ç‰¹æ•ˆå›žåˆ°ã€ŒåŽŸå§‹ã€ã€‚ä¾†æºåœ–ç­‰èƒŒæ™¯çƒ¤å¥½å†æ›ï¼ŒéŽç¨‹ä¸­ç•«é¢ä¸å‹•ã€‚ */
-  const [mergePending, setMergePending] = useState(false);
-  /* é€™ä¸€æ¬¡æ­£åœ¨çƒ¤çš„æ˜¯æ¿¾é¡é‚„æ˜¯ç‰¹æ•ˆã€‚çƒ¤å¥½ä¹‹å‰ä¾†æºåœ–é‚„æ²’æ›ï¼Œ
-     æ¬¡æ•¸è¡¨æŸ¥åˆ°çš„é‚„æ˜¯èˆŠçš„é‚£å¼µï¼ˆï¼é‚„æ²’åŠ ä¸Šé€™ä¸€æ¬¡ï¼‰ï¼Œ
-     æ‰€ä»¥é¡¯ç¤ºçš„æ™‚å€™è¦æŠŠå®ƒåŠ ä¸ŠåŽ»ï¼ŒæŒ‰éˆ•æ‰ä¸æœƒå…ˆæ¶ˆå¤±ä¸€ä¸‹å†è®Šæˆã€Œå·²åˆä½µNã€ã€‚ */
-  const mergePendingBakeRef = useRef<{ lut: number; fx: number }>({ lut: 0, fx: 0 });
-  /** åˆä½µæœŸé–“ç¹ªåœ–è¦ç”¨çš„é‚£ä¸€ä»½åƒæ•¸ï¼ˆä»‹é¢å·²ç¶“æ­¸é›¶äº†ï¼Œç•«é¢é‚„è¦ç¶­æŒåŽŸæ¨£ï¼‰ */
-  const mergeFreezeRef = useRef<{ params: EditorParams; lutIdx: number } | null>(null);
-  /* é€™å¼µåœ–è¢«åˆä½µéŽå¹¾æ¬¡ â€”â€” æ¿¾é¡èˆ‡ç‰¹æ•ˆåˆ†é–‹ç®—ï¼ˆåŒä¸€æ¬¡åˆä½µå¦‚æžœå…©é‚Šéƒ½æœ‰å¥—ï¼Œå…©é‚Šéƒ½åŠ ä¸€ï¼‰ã€‚
-     ç”¨ä¾†æºåœ–ç•¶éµï¼Œæ’¤éŠ·ï¼é‡åšæ›å›žèˆŠçš„ä¾†æºæ™‚æ•¸å­—è‡ªç„¶è·Ÿè‘—å›žåŽ»ã€‚ */
-  const mergeDepthRef = useRef<Record<string, { lut: number; fx: number }>>({});
-  const mergeDepthOf = (src: string) => mergeDepthRef.current[src] || { lut: 0, fx: 0 };
-
-  /* åˆä½µæŒ‰ä¸‹åŽ»çš„é‚£ä¸€æ‹åƒæ•¸å°±å·²ç¶“æ­¸é›¶äº†ï¼ˆè¦‹ mergeEffectsï¼‰ï¼Œ
-     æ‰€ä»¥é€™å¹¾å€‹ç…§è‘— state ç®—å°±æ˜¯ã€Œåˆä½µå®Œã€çš„æ¨£å­ï¼Œä¸ç”¨å¦å¤–åˆ¤æ–·åˆä½µä¸­ã€‚ */
-  const lutCardOn = (idx: number) => selectedLutIdx === idx;
-  const isEffectOn = (toolId: string) =>
-    (EFFECT_OWN_KEYS[toolId] || [toolId]).some(k => ((params as any)[k] || 0) !== 0);
-
-
-
-  /** ç¾åœ¨ä¸€å€‹ç‰¹æ•ˆéƒ½æ²’é–‹å—Žï¼ˆã€ŒåŽŸå§‹ã€é‚£å¼µå¡ç‰‡è¦ä¸è¦äº®ç™½æ¡†ï¼‰ */
-  const noEffectOn = !hasLiveEffect(params);
-
-  /**
-   * é€²ã€Œç‰¹æ•ˆã€åˆ†é ã€‚
-   *
-   * ç¾åœ¨çœŸçš„æœ‰é–‹è‘—çš„ç‰¹æ•ˆ â†’ é¸ä¸­å®ƒï¼Œä¸Šé¢é‚£æ ¹å¼·åº¦æ»‘æ¡¿è·Ÿè‘—å‡ºç¾ï¼›
-   * ä¸€å€‹éƒ½æ²’é–‹ï¼ˆï¼åœåœ¨ã€ŒåŽŸå§‹ã€ï¼‰â†’ èª°éƒ½ä¸é¸ï¼Œä¸Šé¢å°±ä¸è©²æœ‰æ»‘æ¡¿ã€‚
-   * ä»¥å‰æ˜¯ä¸€å¾‹é¸ç¬¬ä¸€é¡†ï¼ˆæŸ”å…‰ï¼‰çš„å¼·åº¦éµï¼Œæ‰€ä»¥æ˜Žæ˜Žåœåœ¨ã€ŒåŽŸå§‹ã€ï¼Œ
-   * ä¸Šé¢å»æŽ›è‘—ä¸€æ ¹èª¿ä¸åˆ°æ±è¥¿çš„æŸ”å…‰æ»‘æ¡¿ â€”â€” é‚£æ ¹æ‹–äº†ä¹Ÿçœ‹ä¸å‡ºè®ŠåŒ–ï¼Œ
-   * å› ç‚ºæŸ”å…‰æ ¹æœ¬æ²’é–‹ã€‚
-   */
-  const enterEffects = () => {
-    setActiveCategory('effects');
-    const on = EFFECT_TOOLS.find(t => isEffectOn(t.id));
-    setActiveFxId(on ? on.id : EFFECT_TOOLS[0].id);
-    // 'softLight' é€™å€‹å€¼æœ¬èº«å°±ä»£è¡¨ã€Œç‰¹æ•ˆé ä½†ä¸é¡¯ç¤ºæ»‘æ¡¿ã€ï¼ˆè¦‹æ»‘æ¡¿é‚£ä¸€æ®µçš„æŽ’é™¤æ¸…å–®ï¼‰
-    setActiveToolId(on ? effectAmountId(on.id) : 'softLight');
-  };
-
-  /** ã€ŒåŽŸå§‹ã€ï¼šæŠŠæ‰€æœ‰ç‰¹æ•ˆé—œæŽ‰ */
-  const clearAllEffects = () => {
-    const next = { ...paramsRef.current, ...NO_EFFECT_PARAMS } as EditorParams;
-    paramsRef.current = next;
-    isDirtyRef.current = true;
-    setParams(next);
-    setIsSoftActive(false); setIsBlurActive(false);
-    setIsGrainActive(false); setIsHalationActive(false);
-    setActiveToolId('softLight');
-    addToHistory(next, selectedLutIdx, false, false, false, false);
-  };
-
-  const handleEffectToolSelect = (toolId: string) => {
-    if (FX_TOOLS[toolId]) warmFx(toolId);   // å…ˆæŠŠè‘—è‰²å™¨ç·¨å¥½ï¼Œç¬¬ä¸€æ¬¡æ‹–æ‰ä¸æœƒå¡
-    setActiveFxId(toolId);
-    const amountId = effectAmountId(toolId);
-    setActiveToolId(amountId);
-
-    /* ä¸€æ¬¡åªèƒ½å¥—ä¸€å€‹ç‰¹æ•ˆï¼Œè€Œä¸”é»žä¸‹åŽ»å°±æ˜¯ã€Œå¾žé ­ä¾†éŽã€ï¼š
-       æ‰€æœ‰ç‰¹æ•ˆçš„åƒæ•¸ï¼ˆå«æ¯ä¸€é¡†çš„ç´°é …ï¼‰å…ˆå…¨éƒ¨æ‰“å›žé è¨­ï¼Œå†æŠŠé€™ä¸€é¡†æ‰“é–‹ã€‚
-       ä»¥å‰åªæŠŠåˆ¥é¡†çš„å¼·åº¦æ­¸é›¶ã€è€Œä¸”é€™ä¸€é¡†å·²ç¶“é–‹è‘—å°±æ•´å€‹ä¸å‹• â€”â€”
-       æ–¼æ˜¯ä¸Šä¸€æ¬¡åœ¨ç´°é …é¢æ¿èª¿éŽçš„é–€æª»ï¼åŠå¾‘ï¼è‰²ç›¸æœƒç•™è‘—ï¼Œ
-       åŒä¸€é¡†ç‰¹æ•ˆé»žå…©æ¬¡å¾—åˆ°çš„çµæžœä¸ä¸€æ¨£ã€‚ç¾åœ¨é»žä¸€ä¸‹å°±æ˜¯ä¹¾æ·¨çš„é è¨­ç‹€æ…‹ã€‚
-       å››é¡†é–‹é—œï¼ˆæŸ”å…‰ï¼æœ¦æœ§ï¼å™ªé»žï¼å…‰æšˆï¼‰çš„ç‹€æ…‹ä¹Ÿè¦è·Ÿè‘—é—œæŽ‰ï¼Œ
-       ä¸ç„¶åƒæ•¸æ˜¯ 0 ä½†æŒ‰éˆ•é‚„äº®è‘—ã€‚
-       æƒ³ç–Šç¬¬äºŒå€‹ç‰¹æ•ˆå°±è¦å…ˆæŒ‰ã€Œåˆä½µã€æŠŠç¾åœ¨é€™å€‹çƒ¤é€²åœ–å±¤ã€‚ */
-    const next = resetAllEffectParams(paramsRef.current) as EditorParams;
-
-    // ä¸€å¾‹å¥—é€™ä¸€é¡†çš„é è¨­å€¼ï¼ˆfresh = trueï¼šä¸ç†æœƒä¸Šæ¬¡èª¿éŽçš„è¨˜æ†¶ï¼‰
-    let manSoft = softManuallyAdjusted, manBlur = blurManuallyAdjusted;
-    let manGrain = grainManuallyAdjusted, manHalation = halationManuallyAdjusted;
-    if (toolId === 'softLight') { const on = softOnPatch(true); Object.assign(next, on.patch); manSoft = on.manual; }
-    else if (toolId === 'blur') { const on = blurOnPatch(true); Object.assign(next, on.patch); manBlur = on.manual; }
-    else if (toolId === 'colorNoise') { const on = grainOnPatch(true); Object.assign(next, on.patch); manGrain = on.manual; }
-    else if (toolId === 'halation') { const on = halationOnPatch(true); Object.assign(next, on.patch); manHalation = on.manual; }
-    else {
-      const on = EFFECT_ON_AMOUNT[toolId];
-      if (on) (next as any)[amountId] = on;
-    }
-
-    const sOn = toolId === 'softLight', bOn = toolId === 'blur';
-    const gOn = toolId === 'colorNoise', hOn = toolId === 'halation';
-    setIsSoftActive(sOn); setIsBlurActive(bOn);
-    setIsGrainActive(gOn); setIsHalationActive(hOn);
-    setSoftManuallyAdjusted(manSoft); setBlurManuallyAdjusted(manBlur);
-    setGrainManuallyAdjusted(manGrain); setHalationManuallyAdjusted(manHalation);
-
-    paramsRef.current = next;
-    isDirtyRef.current = true;
-    setParams(next);
-    addToHistory(next, selectedLutIdx, sOn, bOn, gOn, hOn, manSoft, manBlur, manGrain, manHalation);
-  };
-
-  /** æ‰“é–‹é€™é¡†ç‰¹æ•ˆçš„ç´°é …é¢æ¿ */
-  const openEffectDetail = (toolId: string) => {
-    const cat = EFFECT_DETAIL_CAT[toolId];
-    backFromFxRef.current = true;      // é€€å›žä¾†æ™‚æŠŠé€™ä¸€é¡†å°å›žç•«é¢ä¸­é–“
-    if (cat) {
-      setActiveCategory(cat);
-      const first = cat === 'soft' ? SOFT_LIGHT_TOOLS[0] : cat === 'leak' ? LEAK_TOOLS[0] : HALATION_TOOLS[0];
-      setActiveToolId(first.id);
-      return;
-    }
-    if (FX_TOOLS[toolId]) {
-      warmFx(toolId);
-      setActiveFxId(toolId);
-      setActiveCategory('fx');
-    }
-  };
-
-  /** é€™é¡†å¡ç‰‡æœ‰æ²’æœ‰ç´°é …å¯ä»¥èª¿ */
-  const effectHasDetail = (toolId: string) =>
-    !!EFFECT_DETAIL_CAT[toolId] || !!(FX_TOOLS[toolId] && FX_TOOLS[toolId].length > 1);
-
-  const applyComplexEffects = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number, p: EditorParams, scale: number, sharedBuf: Uint8ClampedArray | null, isInteracting: boolean, baking: boolean, sourcePixelData: Uint8ClampedArray | null) => {
-    const lut = lutList[selectedLutIdx];
-    const lutId = lut?.id || 'none';
-    const toneStr = toneSig(p);
-
-    let blurNeedsLazyRefine = false;
-    let softNeedsLazyRefine = false;
-    let noise2NeedsLazyRefine = false;
-    let halationNeedsLazyRefine = false;
-
-    // 1. GRAIN (Fast overlay, always run)
-    if (p.grain > 0 && grainPatternRef.current) {
-        ctx.save();
-        ctx.globalCompositeOperation = 'overlay';
-        ctx.globalAlpha = (p.grain / 100) * 0.42; 
-        if (!compiledGrainPatternRef.current) {
-            compiledGrainPatternRef.current = ctx.createPattern(grainPatternRef.current, 'repeat');
-        }
-        const pattern = compiledGrainPatternRef.current;
-        if (pattern) {
-            // Apply scale to make grain size resolution-independent (based on 1080p reference)
-            const grainScale = scale; 
-            ctx.scale(grainScale, grainScale);
-            ctx.fillStyle = pattern;
-            ctx.fillRect(0, 0, w / grainScale, h / grainScale);
-        }
-        ctx.restore();
-    }
-
-    // 2. COLOR NOISE (Fast overlay, always run)
-    if (p.colorNoise > 0 && noisePatternRef.current) {
-        ctx.save();
-        ctx.globalCompositeOperation = 'overlay';
-        ctx.globalAlpha = (p.colorNoise / 100) * 0.63;
-        if (!compiledNoisePatternRef.current) {
-            compiledNoisePatternRef.current = ctx.createPattern(noisePatternRef.current, 'repeat');
-        }
-        const pattern = compiledNoisePatternRef.current;
-        if (pattern) {
-            const noiseScale = scale;
-            ctx.scale(noiseScale, noiseScale);
-            ctx.fillStyle = pattern;
-            ctx.fillRect(0, 0, w / noiseScale, h / noiseScale);
-        }
-        ctx.restore();
-    }
-
-    // 3. COLOR NOISE II (Advanced masked, cache-supported)
-    let useNoise2Cache = false;
-    if (!baking && !forceRecalculateEffectsRef.current && cachedNoise2CanvasRef.current && noise2CacheStateRef.current) {
-        const c = noise2CacheStateRef.current;
-        // ä¸€å®šè¦æ˜¯ã€ŒåŒä¸€å¼µç…§ç‰‡ã€ç®—å‡ºä¾†çš„æ‰æ•¢ç”¨ï¼ˆè¦‹åž‹åˆ¥ä¸Šçš„è¨»è§£ï¼‰
-        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
-        const sameParams = c.colorNoise2 === p.colorNoise2;
-        
-        if (sameSize && sameParams) {
-            useNoise2Cache = true;
-            const sameBase = c.lutId === lutId &&
-                c.brightness === p.brightness &&
-                c.exposure === p.exposure &&
-                c.contrast === p.contrast &&
-                c.highlights === p.highlights &&
-                c.shadows === p.shadows &&
-                c.temp === p.temp &&
-                c.tint === p.tint &&
-                c.sat === p.sat &&
-                c.vib === p.vib &&
-                c.toneStr === toneStr;
-            if (!sameBase) {
-                noise2NeedsLazyRefine = true;
-            }
-        }
-    }
-
-    if (p.colorNoise2 > 0 && noisePatternRef.current && sourcePixelData) {
-        ctx.save();
-        ctx.globalCompositeOperation = 'overlay';
-
-        if (useNoise2Cache && cachedNoise2CanvasRef.current) {
-            ctx.drawImage(cachedNoise2CanvasRef.current, 0, 0, w, h);
-        } else {
-            const TARGET_PROC_SIZE = 800; 
-            const procScale = Math.min(1.0, TARGET_PROC_SIZE / Math.max(w, h));
-            const hw = (w * procScale) | 0;
-            const hh = (h * procScale) | 0;
-
-            if (!cachedNoise2CanvasRef.current) {
-                cachedNoise2CanvasRef.current = document.createElement('canvas');
-            }
-            const temp = cachedNoise2CanvasRef.current;
-            if (temp.width !== hw || temp.height !== hh) { 
-                temp.width = hw; 
-                temp.height = hh; 
-            }
-            const tCtx = temp.getContext('2d', { willReadFrequently: true })!;
-            
-            tCtx.drawImage(ctx.canvas, 0, 0, hw, hh);
-            const sImgData = tCtx.getImageData(0, 0, hw, hh);
-            const sData = sImgData.data;
-            
-            tCtx.save();
-            const noiseScale = scale * 2 * procScale; 
-            tCtx.scale(noiseScale, noiseScale);
-            tCtx.fillStyle = tCtx.createPattern(noisePatternRef.current, 'repeat')!;
-            tCtx.fillRect(0, 0, hw / noiseScale, hh / noiseScale);
-            tCtx.restore();
-            
-            const nImgData = tCtx.getImageData(0, 0, hw, hh);
-            const nData = nImgData.data;
-            const baseAlpha = (p.colorNoise2 / 100) * 0.756 * 255;
-            
-            const len = nData.length;
-            for (let i = 0; i < len; i += 4) {
-                const luma = (sData[i] * 0.299 + sData[i+1] * 0.587 + sData[i+2] * 0.114) / 255;
-                const mask = 1.0 - (luma * luma * luma); 
-                nData[i+3] = baseAlpha * mask;
-            }
-            tCtx.putImageData(nImgData, 0, 0);
-            
-            ctx.drawImage(temp, 0, 0, w, h);
-
-            if (!baking) {
-                noise2CacheStateRef.current = {
-                    src: buffersSrcRef.current, w, h, colorNoise2: p.colorNoise2, lutId,
-                    brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
-                    highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
-                    sat: p.sat, vib: p.vib, toneStr
-                };
-            }
-        }
-        ctx.restore();
-    }
-
-    // 4. BLUR (Cache-supported)
-    let useBlurCache = false;
-    if (!baking && !forceRecalculateEffectsRef.current && cachedBlurCanvasRef.current && blurCacheStateRef.current) {
-        const c = blurCacheStateRef.current;
-        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
-        const sameParams = c.blur === p.blur;
-        
-        if (sameSize && sameParams) {
-            useBlurCache = true;
-            const sameBase = c.lutId === lutId &&
-                c.brightness === p.brightness &&
-                c.exposure === p.exposure &&
-                c.contrast === p.contrast &&
-                c.highlights === p.highlights &&
-                c.shadows === p.shadows &&
-                c.temp === p.temp &&
-                c.tint === p.tint &&
-                c.sat === p.sat &&
-                c.vib === p.vib &&
-                c.toneStr === toneStr;
-            if (!sameBase) {
-                blurNeedsLazyRefine = true;
-            }
-        }
-    }
-
-    if (p.blur > 0) {
-        ctx.save();
-        ctx.globalAlpha = (p.blur / 240) * 1.5;
-
-        if (useBlurCache && cachedBlurCanvasRef.current) {
-            ctx.drawImage(cachedBlurCanvasRef.current, 0, 0, w, h);
-        } else {
-            const TARGET_PROC_SIZE = 800;
-            const procScale = Math.min(1.0, TARGET_PROC_SIZE / Math.max(w, h));
-            const tw = (w * procScale) | 0;
-            const th = (h * procScale) | 0;
-
-            if (!cachedBlurCanvasRef.current) {
-                cachedBlurCanvasRef.current = document.createElement('canvas');
-            }
-            const temp = cachedBlurCanvasRef.current;
-            if (temp.width !== tw || temp.height !== th) { 
-                temp.width = tw; 
-                temp.height = th; 
-            }
-            
-            const tCtx = temp.getContext('2d', { willReadFrequently: true })!;
-            tCtx.clearRect(0, 0, tw, th);
-            tCtx.drawImage(ctx.canvas, 0, 0, tw, th);
-            
-            const tImgData = tCtx.getImageData(0, 0, tw, th);
-            const r = (p.blur / 6) * scale * procScale * 1.5;
-            
-            fastBlur(tImgData, tw, th, r, sharedBuf);
-            tCtx.putImageData(tImgData, 0, 0);
-
-            ctx.drawImage(temp, 0, 0, w, h);
-
-            if (!baking) {
-                blurCacheStateRef.current = {
-                    src: buffersSrcRef.current, w, h, blur: p.blur, lutId,
-                    brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
-                    highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
-                    sat: p.sat, vib: p.vib, toneStr
-                };
-            }
-        }
-        ctx.restore();
-    }
-
-    // 5. SOFT LIGHT GLOW (Cache-supported)
-    let useSoftCache = false;
-    if (!baking && !forceRecalculateEffectsRef.current && cachedSoftCanvasRef.current && softCacheStateRef.current) {
-        const c = softCacheStateRef.current;
-        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
-        const sameParams = c.soft === p.soft &&
-            c.softThreshold === p.softThreshold &&
-            c.softRadius === p.softRadius &&
-            c.softColor === p.softColor;
-        
-        if (sameSize && sameParams) {
-            useSoftCache = true;
-            const sameBase = c.lutId === lutId &&
-                c.brightness === p.brightness &&
-                c.exposure === p.exposure &&
-                c.contrast === p.contrast &&
-                c.highlights === p.highlights &&
-                c.shadows === p.shadows &&
-                c.temp === p.temp &&
-                c.tint === p.tint &&
-                c.sat === p.sat &&
-                c.vib === p.vib &&
-                c.toneStr === toneStr;
-            if (!sameBase) {
-                softNeedsLazyRefine = true;
-            }
-        }
-    }
-
-    if (p.soft > 0) {
-      ctx.save(); 
-      ctx.globalCompositeOperation = 'screen'; 
-      ctx.globalAlpha = (p.soft / 100) * (p.softColor > 0 ? 3.0 : 1.5);
-
-      if (useSoftCache && cachedSoftCanvasRef.current) {
-        ctx.drawImage(cachedSoftCanvasRef.current, 0, 0, w, h);
-      } else {
-        const TARGET_PROC_SIZE = 800;
-        const procScale = Math.min(1.0, TARGET_PROC_SIZE / Math.max(w, h));
-        const mw = (w * procScale) | 0;
-        const mh = (h * procScale) | 0;
-
-        if (!cachedSoftCanvasRef.current) {
-            cachedSoftCanvasRef.current = document.createElement('canvas');
-        }
-        const maskCanvas = cachedSoftCanvasRef.current;
-        if (maskCanvas.width !== mw || maskCanvas.height !== mh) { maskCanvas.width = mw; maskCanvas.height = mh; }
-        const mCtx = maskCanvas.getContext('2d', { willReadFrequently: true })!;
-        mCtx.drawImage(ctx.canvas, 0, 0, mw, mh);
-        
-        const glowThreshold = (p.softThreshold / 100) * 255;
-        const currentData = mCtx.getImageData(0, 0, mw, mh).data;
-        const mImgData = mCtx.createImageData(mw, mh);
-        const mData = mImgData.data;
-        
-        let r_c = 0, g_c = 0, b_c = 0;
-        if (p.softColor > 0) {
-          const [tr, tg, tb] = hslToRgb(p.softColor / 100, 1.0, 0.5);
-          r_c = tr; g_c = tg; b_c = tb;
-        }
-        
-        for (let i = 0; i < currentData.length; i += 4) {
-          const r = currentData[i], g = currentData[i+1], b = currentData[i+2];
-          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-          mData[i] = p.softColor > 0 ? r_c : r; mData[i+1] = p.softColor > 0 ? g_c : g; mData[i+2] = p.softColor > 0 ? b_c : b;
-          
-          const diff = lum - glowThreshold;
-          mData[i+3] = diff > 0 ? Math.min(255, diff * 5) : 0;
-        }
-
-        const blurRadius = (p.softRadius / 100) * 80 * scale * procScale;
-        fastBlur(mImgData, mw, mh, blurRadius, sharedBuf);
-        mCtx.putImageData(mImgData, 0, 0);
-
-        ctx.drawImage(maskCanvas, 0, 0, w, h);
-
-        if (!baking) {
-            softCacheStateRef.current = {
-                src: buffersSrcRef.current, w, h, soft: p.soft, softThreshold: p.softThreshold, softRadius: p.softRadius, softColor: p.softColor, lutId,
-                brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
-                highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
-                sat: p.sat, vib: p.vib, toneStr
-            };
-        }
-      }
-      ctx.restore();
-    }
-
-    // 6. LIGHT LEAK (Always run, fast gradient overlay)
-    if (p.leakOpacity > 0) {
-        ctx.save();
-        ctx.globalCompositeOperation = 'screen';
-        const opacity = p.leakOpacity;
-        const angle = p.leakAngle;
-        const hue = p.leakHue;
-        const rad = (angle - 180) * (Math.PI / 180);
-        const r = Math.max(w, h) * 1.5;
-        const cx = w / 2;
-        const cy = h / 2;
-        const x1 = cx + Math.cos(rad) * r;
-        const y1 = cy + Math.sin(rad) * r;
-        const x2 = cx - Math.cos(rad) * r;
-        const y2 = cy - Math.sin(rad) * r;
-        const grad = ctx.createLinearGradient(x1, y1, x2, y2);
-        const [lr, lg, lb] = hslToRgb(hue / 360, 1.0, 0.5); 
-        grad.addColorStop(0, `rgba(${lr},${lg},${lb},${opacity/100})`);
-        grad.addColorStop(0.5, `rgba(${lr},${lg},${lb},0)`);
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, w, h);
-        ctx.restore();
-    }
-
-    // 7. HALATION / FRINGE (Cache-supported)
-    let useHalationCache = false;
-    if (!baking && !forceRecalculateEffectsRef.current && cachedHalationCanvasRef.current && halationCacheStateRef.current) {
-        const c = halationCacheStateRef.current;
-        const sameSize = c.src === buffersSrcRef.current && c.w === w && c.h === h;
-        const sameParams = c.fringeIntensity === p.fringeIntensity &&
-            c.fringeSize === p.fringeSize &&
-            c.fringeFeather === p.fringeFeather &&
-            c.fringeHue === p.fringeHue;
-        
-        if (sameSize && sameParams) {
-            useHalationCache = true;
-            const sameBase = c.lutId === lutId &&
-                c.brightness === p.brightness &&
-                c.exposure === p.exposure &&
-                c.contrast === p.contrast &&
-                c.highlights === p.highlights &&
-                c.shadows === p.shadows &&
-                c.temp === p.temp &&
-                c.tint === p.tint &&
-                c.sat === p.sat &&
-                c.vib === p.vib &&
-                c.toneStr === toneStr;
-            if (!sameBase) {
-                halationNeedsLazyRefine = true;
-            }
-        }
-    }
-
-    if (p.fringeIntensity > 0) {
-        ctx.save();
-        ctx.globalCompositeOperation = 'screen'; 
-
-        if (useHalationCache && cachedHalationCanvasRef.current) {
-            ctx.drawImage(cachedHalationCanvasRef.current, 0, 0, w, h);
-        } else {
-            const TARGET_PROC_SIZE = 800; 
-            const procScale = Math.min(1.0, TARGET_PROC_SIZE / Math.max(w, h));
-            const hw = (w * procScale) | 0;
-            const hh = (h * procScale) | 0;
-
-            if (!cachedHalationCanvasRef.current) {
-                cachedHalationCanvasRef.current = document.createElement('canvas');
-            }
-            const hCanvas = cachedHalationCanvasRef.current;
-            if (hCanvas.width !== hw || hCanvas.height !== hh) { hCanvas.width = hw; hCanvas.height = hh; }
-            const hCtx = hCanvas.getContext('2d', { willReadFrequently: true })!;
-            
-            hCtx.drawImage(ctx.canvas, 0, 0, hw, hh);
-            const srcImgData = hCtx.getImageData(0, 0, hw, hh);
-            const srcData = srcImgData.data;
-            const len = srcData.length;
-            
-            const highData = new Uint8ClampedArray(len);
-            const threshold = 160;
-            for (let i = 0; i < len; i += 4) {
-                const luma = srcData[i]*0.299 + srcData[i+1]*0.587 + srcData[i+2]*0.114;
-                if (luma > threshold) {
-                    const intensity = Math.pow((luma - threshold) / (255 - threshold), 1.5);
-                    highData[i] = 255;
-                    highData[i+1] = 255;
-                    highData[i+2] = 255;
-                    highData[i+3] = intensity * 255;
-                } else {
-                    highData[i+3] = 0;
-                }
-            }
-            
-            const highImgData = new ImageData(highData, hw, hh);
-            const maxBlur = hw * 0.08 * 0.8553125; 
-            const sizeMultiplier = p.fringeSize / 100;
-            const blurRadius = Math.max(1, maxBlur * sizeMultiplier);
-            
-            fastBlur(highImgData, hw, hh, blurRadius, sharedBuf); 
-            
-            const glowImgData = new ImageData(new Uint8ClampedArray(len), hw, hh);
-            const glowPixels = glowImgData.data;
-            const blurredPixels = highImgData.data;
-            
-            const hue = p.fringeHue;
-            const [fR, fG, fB] = hslToRgb(hue/360, 0.8, 0.35);
-            const globalIntensity = (p.fringeIntensity / 50) * 3.0;
-            const falloffCurve = 1.0 + ((100 - p.fringeFeather) / 100) * 4.0;
-            
-            for (let i = 0; i < len; i += 4) {
-                const alpha = blurredPixels[i+3] / 255; 
-                if (alpha > 0.005) {
-                    const luma = srcData[i]*0.299 + srcData[i+1]*0.587 + srcData[i+2]*0.114;
-                    const darkness = Math.max(0, 255 - luma) / 255;
-                    const darkMask = Math.pow(darkness, falloffCurve);
-                    const strength = Math.min(1.0, alpha * darkMask * globalIntensity);
-                    
-                    if (strength > 0.001) {
-                        glowPixels[i] = fR * strength;
-                        glowPixels[i+1] = fG * strength;
-                        glowPixels[i+2] = fB * strength;
-                        glowPixels[i+3] = 255;
-                    }
-                }
-            }
-            
-            hCtx.putImageData(glowImgData, 0, 0);
-            ctx.drawImage(hCanvas, 0, 0, w, h);
-
-            if (!baking) {
-                halationCacheStateRef.current = {
-                    src: buffersSrcRef.current, w, h, fringeIntensity: p.fringeIntensity, fringeSize: p.fringeSize, fringeFeather: p.fringeFeather, fringeHue: p.fringeHue, lutId,
-                    brightness: p.brightness, exposure: p.exposure, contrast: p.contrast,
-                    highlights: p.highlights, shadows: p.shadows, temp: p.temp, tint: p.tint,
-                    sat: p.sat, vib: p.vib, toneStr
-                };
-            }
-        }
-        ctx.restore();
-    }
-
-    // 8. VIGNETTE (Pre-calculated extreme state, slider controls opacity/strength)
-    if (p.vignette > 0) {
-      ctx.save(); 
-      ctx.globalCompositeOperation = 'multiply';
-      
-      // Calculate/cache the extreme vignette canvas only when dimensions change
-      if (!cachedVignetteCanvasRef.current || 
-          cachedVignetteCanvasRef.current.width !== w || 
-          cachedVignetteCanvasRef.current.height !== h) {
-          
-          if (!cachedVignetteCanvasRef.current) {
-              cachedVignetteCanvasRef.current = document.createElement('canvas');
-          }
-          const vCvs = cachedVignetteCanvasRef.current;
-          vCvs.width = w;
-          vCvs.height = h;
-          const vCtx = vCvs.getContext('2d')!;
-          vCtx.clearRect(0, 0, w, h);
-          
-          // Create extreme gradient (maximum vignette depth: fully black at corners)
-          const grad = vCtx.createRadialGradient(w/2, h/2, w/3, w/2, h/2, Math.max(w, h));
-          grad.addColorStop(0, "rgba(0,0,0,0)"); 
-          grad.addColorStop(1, "rgba(0,0,0,1.0)");
-          vCtx.fillStyle = grad; 
-          vCtx.fillRect(0, 0, w, h);
-      }
-      
-      const strength = p.vignette / 100;
-      ctx.globalAlpha = Math.min(1.0, strength * 0.8);
-      ctx.drawImage(cachedVignetteCanvasRef.current, 0, 0, w, h);
-      
-      if (strength > 1.25) {
-          ctx.globalAlpha = Math.min(1.0, (strength - 1.25) * 0.8);
-          ctx.drawImage(cachedVignetteCanvasRef.current, 0, 0, w, h);
-      }
-      ctx.restore();
-    }
-
-    // 9. LINEAR MASK (ç·šæ€§é®è‰²ç‰‡)
-    const hasMaskAdjustments = 
-      p.maskExposure !== 0 || 
-      p.maskBrightness !== 0 || 
-      p.maskContrast !== 0 || 
-      p.maskHighlights !== 0 || 
-      p.maskShadows !== 0 || 
-      p.maskTemp !== 0 || 
-      p.maskTint !== 0 || 
-      p.maskSat !== 0 || 
-      p.maskVib !== 0;
-
-    // ç´…è‰²é®ç½©åªæ˜¯ç·¨è¼¯æ™‚çœ‹å¾—åˆ°é®è‰²ç‰‡ç¯„åœç”¨çš„è¼”åŠ©é¡¯ç¤ºï¼Œ
-    // çƒ˜ç„™ï¼ˆå°Žå‡ºã€ç¸®åœ–ï¼‰å‡ºä¾†çš„åœ–ç‰‡çµ•å°ä¸èƒ½æœ‰å®ƒã€‚
-    const showOverlay = !baking && p.maskShowOverlay && activeCategory === 'mask' && !(isInteracting && !activeDragRef.current);
-
-    /* ä»€éº¼éƒ½ä¸ç”¨åšå°±ç›´æŽ¥è·³éŽã€‚
-       ä»¥å‰åªè¦ maskShowOverlay æ˜¯é–‹çš„å°±æœƒæ•´æ®µè·‘ä¸€é â€”â€” å³ä½¿æ²’æœ‰ä»»ä½•èª¿æ•´ã€
-       ç´…è‰²è¼”åŠ©ä¹Ÿä¸è©²ç•«ï¼ˆä¾‹å¦‚å°Žå‡ºæ™‚ï¼‰ã€‚é‚£ä¸€è¶Ÿæœƒç™½ç™½é–‹å…©å¼µæ•´å¼µå¤§å°çš„ç•«å¸ƒã€
-       æŠŠåƒç´ è®€å›žä¾†å†å¯«å›žåŽ»ï¼Œç­‰æ–¼æ¯ä¸€å¹€éƒ½ä»˜ä¸€æ¬¡å…¨è§£æžåº¦çš„ä¾†å›žã€‚ */
-    if (p.maskCreated && (hasMaskAdjustments || showOverlay)) {
-      const cos = Math.cos(p.maskAngle);
-      const sin = Math.sin(p.maskAngle);
-
-      const cx = p.maskCx * w;
-      const cy = p.maskCy * h;
-      const d = p.maskD * w;
-
-      const x1 = cx - d * cos;
-      const y1 = cy - d * sin;
-      const x2 = cx + d * cos;
-      const y2 = cy + d * sin;
-
-      const redR = 220, redG = 38, redB = 38, redAlpha = 0.5;
-
-      if (!hasMaskAdjustments) {
-        /* â”€â”€ åªæœ‰ç´…è‰²è¼”åŠ©é®ç½©ï¼šä¸€æ¬¡æ¼¸å±¤å¡«è‰²å°±åˆ°ä½ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-           é€™æ­£æ˜¯ã€Œæ‹–æ›³ç”Ÿæˆé®è‰²ç‰‡ã€é‚£æ®µæ™‚é–“çš„æƒ…æ³ï¼ˆé®è‰²ç‰‡å‰›ç•«å‡ºä¾†ï¼Œ
-           ä¹å€‹åƒæ•¸éƒ½é‚„æ˜¯ 0ï¼‰ï¼Œä¹Ÿæ˜¯å¡é “æœ€åš´é‡çš„åœ°æ–¹ã€‚
-
-           èˆŠå¯«æ³•æ˜¯æŠŠæ•´å¼µåœ–è¤‡è£½åˆ°é›¢å±ç•«å¸ƒã€getImageData è®€å›žä¾†ã€
-           ç”¨ JS è¿´åœˆé€åƒç´ æ··ç´…è‰²ã€putImageData å¯«å›žåŽ»ã€å†ç”¨ç¬¬äºŒå¼µç•«å¸ƒ
-           åšæ¼¸å±¤åŽ»èƒŒ â€”â€” 1800Ã—1350 å°±æ˜¯æ¯ä¸€å¹€ 240 è¬æ¬¡è¿´åœˆåŠ å…©è¶Ÿ
-           9.7MB çš„ä¾†å›žæ¬é‹ï¼Œé‡åˆ°å–®ä¸€é•·ä»»å‹™ 334msã€‚
-
-           ä½†é‚£ä¸²é‹ç®—çš„çµæžœå…¶å¯¦å¯ä»¥ç›´æŽ¥å¯«æˆå…¬å¼ï¼š
-             èˆŠï¼šä¸» =ä¸»Ã—(1-g) + (ä¸»Ã—0.5 + ç´…Ã—0.5)Ã—g = ä¸»Ã—(1-0.5g) + ç´…Ã—0.5g
-             æ–°ï¼šä¸» =ä¸»Ã—(1-a) + ç´…Ã—a          å…¶ä¸­ a = 0.5g
-           å…©è€…å®Œå…¨ç›¸åŒï¼Œæ‰€ä»¥æ”¹æˆã€Œç”¨ç´…è‰²ã€é€æ˜Žåº¦å¾ž 0.5 æ¼¸å±¤åˆ° 0ã€ç›´æŽ¥å¡«ä¸€æ¬¡ã€‚
-           ç•«å¸ƒæ¼¸å±¤æ˜¯ç…§é ä¹˜ alpha å…§æ’çš„ï¼Œå…©å€‹ç«¯é»žçš„ RGB ä¸€æ¨£ï¼ˆéƒ½æ˜¯é‚£å€‹ç´…ï¼‰ï¼Œ
-           å…§æ’å‡ºä¾†çš„é¡è‰²å°±æ˜¯å¸¸æ•¸ï¼Œè·ŸåŽŸæœ¬é€åƒç´ ç®—çš„åˆ†æ¯«ä¸å·®ã€‚
-           é›¶é…ç½®ã€é›¶åƒç´ è®€å–ï¼Œæ•´æ®µè®Šæˆä¸€æ¬¡ GPU å¡«è‰²ã€‚ */
-        ctx.save();
-        const grad = ctx.createLinearGradient(x1, y1, x2, y2);
-        grad.addColorStop(0, `rgba(${redR},${redG},${redB},${redAlpha})`);
-        grad.addColorStop(1, `rgba(${redR},${redG},${redB},0)`);
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, w, h);
-        ctx.restore();
-        maskAdjKeyRef.current = '';
-      } else {
-      ctx.save();
-
-      /* é›¢å±ç•«å¸ƒæ”¹æˆé‡è¤‡ä½¿ç”¨ï¼Œä¸è¦æ¯ä¸€å¹€ document.createElement å…©å¼µæ•´å¼µå¤§å°çš„
-         ç•«å¸ƒ â€”â€” é‚£æ˜¯ç´”ç²¹çš„é…ç½®èˆ‡å›žæ”¶æˆæœ¬ï¼Œé‡åˆ°çš„é•·ä»»å‹™æœ‰ä¸€åŠä¾†è‡ªé€™è£¡ã€‚ */
-      if (!maskTempCanvasRef.current) maskTempCanvasRef.current = document.createElement('canvas');
-      const tempCanvas = maskTempCanvasRef.current;
-      if (tempCanvas.width !== w || tempCanvas.height !== h) { tempCanvas.width = w; tempCanvas.height = h; }
-      const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true })!;
-
-      /* æ‹–é®è‰²ç‰‡ï¼ˆå»ºç«‹ï¼ç§»å‹•ï¼ç¸®æ”¾ï¼æ—‹è½‰ï¼‰æ™‚ï¼Œã€Œæ•´å¼µå¥—ä¸Šé®è‰²ç‰‡èª¿æ•´å¾Œçš„æ¨£å­ã€
-         è·Ÿé®è‰²ç‰‡çš„å½¢ç‹€å®Œå…¨ç„¡é—œ â€”â€” å½¢ç‹€åªå½±éŸ¿æœ€å¾Œé‚£é“æ¼¸å±¤ã€‚
-         æ‰€ä»¥ä¸€æ¬¡æ‹–æ›³è£¡é€™æ®µåƒç´ é‹ç®—åªè¦ç®—ç¬¬ä¸€å¹€ï¼Œå¾Œé¢æ¯ä¸€å¹€éƒ½æ²¿ç”¨ã€‚
-         åªåœ¨çœŸçš„æ‹–æ›³ä¸­æ‰æ•¢æ²¿ç”¨ï¼šé‚£æ®µæ™‚é–“æ»‘æ¡¿ä¸å¯èƒ½åŒæ™‚åœ¨å‹•ã€‚ */
-      const adjKey = `${w}x${h}|${showOverlay ? 1 : 0}|${p.maskExposure},${p.maskBrightness},${p.maskContrast},${p.maskHighlights},${p.maskShadows},${p.maskTemp},${p.maskTint},${p.maskSat},${p.maskVib}`;
-      const dragging = !!activeDragRef.current && !baking;
-      /* forceRecalculateEffects é‚£ä¸€å¹€ä»£è¡¨åº•ä¸‹çš„æ¨¡ç³Šï¼æŸ”å…‰ï¼é¡†ç²’å‰›é‡ç®—æˆç²¾ç´°ç‰ˆï¼Œ
-         åº•åœ–è·Ÿä¸Šä¸€å¹€ä¸ä¸€æ¨£äº† â€”â€” é€™ä¸€å¹€ä¸€å®šè¦é‡ç®—ï¼Œä¸èƒ½æ²¿ç”¨ã€‚ */
-      const reuseAdj = dragging && !forceRecalculateEffectsRef.current && maskAdjKeyRef.current === adjKey;
-
-      /* â”€â”€ åªç®—çœŸçš„çœ‹å¾—åˆ°çš„é‚£ä¸€å¡Š â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-         æ¼¸å±¤å¾žã€Œèµ·å§‹ç·šã€çš„ 1 æŽ‰åˆ°ã€ŒçµæŸç·šã€çš„ 0ï¼ŒçµæŸç·šä¹‹å¤–å…¨æ˜¯ 0 â€”â€”
-         é‚£ä¸€å¤§ç‰‡åƒç´ å°±ç®—é€ä¸€ç®—éŽï¼Œç­‰ä¸€ä¸‹ destination-in ä¹Ÿæœƒæ•´ç‰‡æ¸…æŽ‰ï¼Œ
-         ç­‰æ–¼ç™½ç®—ã€‚æ‰€ä»¥å…ˆæŠŠã€Œé‚„æœ‰ä¸€é»žä¸é€æ˜Žã€çš„ç¯„åœæ¡†å‡ºä¾†ï¼Œ
-         é€£ getImageDataï¼putImageData éƒ½åªæ¬é‚£ä¸€å¡Šã€‚
-
-         ç¯„åœæ˜¯ä¸€å€‹åŠå¹³é¢ï¼š(x-x1)Â·è»¸x + (y-y1)Â·è»¸y < è»¸é•·Â²ã€‚
-         åŠå¹³é¢åœ¨ç•«å¸ƒä¸Šçš„å¤–æŽ¥çŸ©å½¢åªè¦çœ‹é‚Šç•Œç·šåœ¨å››å€‹é‚Šä¸Šçš„è½é»žå°±å¤ äº†
-         ï¼ˆé‚Šç•Œæ˜¯ç›´ç·šï¼Œæ¥µå€¼ä¸€å®šç™¼ç”Ÿåœ¨ç•«å¸ƒçš„é‚Šä¸Šï¼‰ã€‚
-         å…©é‚Šå„ç•™ 2px é¤˜è£•ï¼Œå¯§å¯å¤šç®—å¹¾å€‹åƒç´ ä¹Ÿä¸è¦å°‘ç®—è€Œéœ²å‡ºæŽ¥ç¸«ã€‚ */
-      const axDx = x2 - x1, axDy = y2 - y1;
-      const axL2 = axDx * axDx + axDy * axDy;
-      let bx0 = 0, by0 = 0, bx1 = w, by1 = h;
-      /* æ‹–æ›³ä¸­è¦ç•™è‘—é‡è¤‡ç”¨çš„é‚£å¼µï¼Œå°±å¾—æ•´å¼µéƒ½æ˜¯ç®—å¥½çš„ â€”â€” å½¢ç‹€ä¸€ç›´åœ¨å‹•ï¼Œ
-         é€™ä¸€å¹€æ¡†å‡ºä¾†çš„ç¯„åœä¸‹ä¸€å¹€å°±ä¸å¤ ç”¨äº†ã€‚åæ­£æ‹–æ›³ä¸­æ•´æ®µæœ¬ä¾†å°±åªç®—ä¸€æ¬¡ï¼Œ
-         çœé€™å¡Šæ²’æœ‰æ„ç¾©ï¼Œæ‰€ä»¥åªæœ‰ã€Œä¸æ²¿ç”¨ã€çš„æ™‚å€™æ‰æ”¶ç¯„åœã€‚ */
-      if (axL2 > 1e-6 && !dragging) {
-        const M = 2;
-        if (axDx !== 0) {
-          const l0 = x1 + (axL2 - (0 - y1) * axDy) / axDx;
-          const l1 = x1 + (axL2 - (h - y1) * axDy) / axDx;
-          if (axDx > 0) bx1 = Math.min(w, Math.ceil(Math.max(l0, l1)) + M);
-          else bx0 = Math.max(0, Math.floor(Math.min(l0, l1)) - M);
-        }
-        if (axDy !== 0) {
-          const m0 = y1 + (axL2 - (0 - x1) * axDx) / axDy;
-          const m1 = y1 + (axL2 - (w - x1) * axDx) / axDy;
-          if (axDy > 0) by1 = Math.min(h, Math.ceil(Math.max(m0, m1)) + M);
-          else by0 = Math.max(0, Math.floor(Math.min(m0, m1)) - M);
-        }
-      }
-      // æ•´ç‰‡éƒ½æ˜¯é€æ˜Žçš„è©±é€™è£¡æœƒæ”¶æˆç©ºçš„ï¼›ç•™ 1px å…å¾— getImageData æ‹¿åˆ° 0 å°ºå¯¸
-      const bw = Math.max(1, Math.min(w - bx0, bx1 - bx0));
-      const bh = Math.max(1, Math.min(h - by0, by1 - by0));
-
-      if (!reuseAdj) {
-      /* â”€â”€ æ‹–é®è‰²ç‰‡æ»‘æ¡¿æ™‚ï¼Œåº•åœ–åªè®€ä¸€æ¬¡ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-         åº•ä¸‹é‚£å¼µåœ–ï¼ˆé¡è‰²éˆè·‘å®Œã€ç‰¹æ•ˆä¹Ÿä¸Šå®Œçš„çµæžœï¼‰åœ¨æ•´æ®µæ‹–æ›³è£¡å®Œå…¨ä¸æœƒè®Šï¼Œ
-         æœƒè®Šçš„åªæœ‰é®è‰²ç‰‡è‡ªå·±é‚£ä¹å€‹åƒæ•¸ã€‚
-         ä½† drawImage(ä¸»ç•«å¸ƒ â†’ é›¢å±) æ˜¯ä¸€æ¬¡ GPUâ†’CPU çš„å›žè®€ï¼Œ1800Ã—1350
-         ä¸€è¶Ÿå°±è¦å¹¾åæ¯«ç§’ â€”â€” æ¯ä¸€å¹€éƒ½åšä¸€æ¬¡ï¼Œå°±æ˜¯æ»‘æ¡¿å¡é “çš„ä¸»å› ã€‚
-         é€™è£¡åœ¨æ•´æ®µæ‹–æ›³çš„ç¬¬ä¸€å¹€æŠŠå®ƒè®€ä¸‹ä¾†ç•™ä¸€ä»½ï¼Œä¹‹å¾Œæ¯ä¸€å¹€åªè¦
-         æŠŠé‚£ä»½è¤‡è£½é€²å·¥ä½œå€ï¼ˆä¸€æ¬¡è¨˜æ†¶é«”æ¬ç§»ï¼‰å°±å¥½ã€‚
-
-         åªåœ¨ã€Œé®è‰²ç‰‡åˆ†é  ï¼‹ æ­£åœ¨äº’å‹• ï¼‹ ä¸æ˜¯åœ¨æ‹–å½¢ç‹€ã€æ™‚æ‰æ•¢ç•™ï¼š
-         é‚£å€‹ç‹€æ…‹ä¸‹å”¯ä¸€å‹•å¾—äº†çš„å°±æ˜¯é®è‰²ç‰‡çš„æ»‘æ¡¿ã€‚
-         æ¨¡ç³Šï¼æŸ”å…‰é‚£äº›å‰›é‡ç®—æˆç²¾ç´°ç‰ˆçš„é‚£ä¸€å¹€ï¼ˆforceRecalculateEffectsï¼‰
-         åº•åœ–çœŸçš„è®Šäº†ï¼Œæ‰€ä»¥é‚£ä¸€å¹€è¦é‡è®€ã€‚ */
-      const adjSession = isInteracting && !baking && activeCategory === 'mask'
-        && !activeDragRef.current && !forceRecalculateEffectsRef.current;
-      const baseKey = `${bx0},${by0},${bw},${bh}`;
-      let imgData: ImageData;
-      const cachedBase = maskBaseDataRef.current;
-      if (adjSession && maskBaseKeyRef.current === baseKey && cachedBase && maskScratchRef.current) {
-        imgData = maskScratchRef.current;
-        imgData.data.set(cachedBase.data);
-      } else {
-        // Draw the current state of main canvas onto temp canvas
-        tempCtx.globalCompositeOperation = 'copy';
-        tempCtx.drawImage(ctx.canvas, 0, 0);
-        tempCtx.globalCompositeOperation = 'source-over';
-        imgData = tempCtx.getImageData(bx0, by0, bw, bh);
-        if (adjSession) {
-          maskBaseDataRef.current = new ImageData(new Uint8ClampedArray(imgData.data), bw, bh);
-          maskScratchRef.current = imgData;
-          maskBaseKeyRef.current = baseKey;
-        } else {
-          maskBaseDataRef.current = null;
-          maskScratchRef.current = null;
-          maskBaseKeyRef.current = '';
-        }
-      }
-
-      const data = imgData.data;
-      const len = data.length;
-
-      // Pre-calculate mask adjustment constants (effects intensity increased by 150%, i.e. 2.5x multiplier)
-      const exp = Math.pow(2, (p.maskExposure * 0.175 * 2.5) / 100);
-      const brightVal = p.maskBrightness * 0.25 * 2.5;
-      const conFactor = (259 * ((p.maskContrast * 0.2975 * 2.5) + 255)) / (255 * (259 - (p.maskContrast * 0.2975 * 2.5)));
-      
-      const shadows = p.maskShadows / 100;
-      const highlights = p.maskHighlights / 100;
-      const shLut = new Float32Array(256);
-      if (p.maskShadows !== 0 || p.maskHighlights !== 0) {
-          for (let i = 0; i < 256; i++) {
-              const luma = i / 255;
-              let offset = 0;
-              if (shadows !== 0) {
-                  const shadowMask = Math.pow(1.0 - luma, 3.0);
-                  offset -= shadows * shadowMask * 17.5 * 2.5; 
-              }
-              if (highlights !== 0) {
-                  const highlightMask = Math.pow(luma, 3.0);
-                  offset += highlights * highlightMask * 35.0 * 2.5;
-              }
-              shLut[i] = offset;
-          }
-      }
-
-      const tempK = p.maskTemp * 0.15 * 0.3 * 2.5;
-      const tintK = p.maskTint * 0.04 * 2 * 0.3 * 2.5;
-      let rAdj = 0, gAdj = 0, bAdj = 0;
-      if (tempK > 0) { rAdj = tempK * 1.2; gAdj = tempK * 0.4; bAdj = -tempK * 0.8; }
-      else { bAdj = Math.abs(tempK) * 1.2; rAdj = -Math.abs(tempK) * 0.5; }
-      gAdj += tintK;
-      const hasTempTint = rAdj !== 0 || gAdj !== 0 || bAdj !== 0;
-
-      const protectLut = new Float32Array(256);
-      if (hasTempTint) {
-          for (let i = 0; i < 256; i++) {
-              let pr = (i - 5) * 0.02;
-              protectLut[i] = pr < 0 ? 0 : pr;
-          }
-      }
-
-      const satMult = Math.max(0, 1 + (p.maskSat * 0.5 * 2.5 / 100));
-      const vibVal = (p.maskVib * 0.5 * 2.5) / 100;
-      const hasVib = vibVal !== 0;
-
-      /* æ›å…‰ â†’ äº®åº¦ â†’ å°æ¯”é€™ä¸‰æ­¥ï¼Œå° Rã€Gã€B åšçš„æ˜¯åŒä¸€æ¢å¼å­ï¼Œè·Ÿé€šé“æ˜¯èª°ç„¡é—œï¼Œ
-         è€Œä¸”è¼¸å…¥ä¸€å®šæ˜¯ 0â€“255 çš„æ•´æ•¸ â€”â€” æ‰€ä»¥å…ˆåœ¨ 256 å€‹è¼¸å…¥å€¼ä¸Šç®—å¥½ï¼Œ
-         è¿´åœˆè£¡å°±åªå‰©ä¸€æ¬¡æŸ¥è¡¨ï¼Œæ¯å€‹åƒç´ å°‘æŽ‰ä¸‰çµ„ä¹˜ã€ä¸‰çµ„åŠ ã€ä¸‰æ¬¡å¤¾å–ã€‚
-         è¡¨ç”¨ Float32 å­˜çš„æ˜¯ã€Œå¤¾å–å¾Œçš„æµ®é»žå€¼ã€ï¼Œä¸æ˜¯å…ˆå››æ¨äº”å…¥æˆæ•´æ•¸ï¼Œ
-         æ‰€ä»¥å¾Œé¢é£½å’Œåº¦ï¼è‡ªç„¶é£½å’Œåº¦æŽ¥åˆ°çš„æ•¸å­—è·ŸåŽŸæœ¬é€åƒç´ ç®—çš„ä¸€æ¨¡ä¸€æ¨£ã€‚ */
-      const hasTone = p.maskExposure !== 0 || p.maskBrightness !== 0 || p.maskContrast !== 0;
-      const toneLut = maskToneLutRef.current;
-      if (hasTone) {
-          for (let i = 0; i < 256; i++) {
-              let v = i;
-              if (p.maskExposure !== 0) v *= exp;
-              if (p.maskBrightness !== 0) v += brightVal;
-              if (p.maskContrast !== 0) v = conFactor * (v - 128) + 128;
-              toneLut[i] = v < 0 ? 0 : v > 255 ? 255 : v;
-          }
-      }
-      const hasShHl = p.maskShadows !== 0 || p.maskHighlights !== 0;
-
-      /* â”€â”€ åªå‹•äº†æ›å…‰ï¼äº®åº¦ï¼å°æ¯”çš„è©±ï¼Œæ•´æ¢éˆå°±æ˜¯ä¸€å¼µ 256 æ ¼çš„è¡¨ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-         é€™æ˜¯æœ€å¸¸è¦‹çš„æƒ…æ³ï¼ˆå¤§å¤šæ•¸äººåªæ‹‰ä¸€å…©æ ¹ï¼‰ã€‚å¾Œé¢é‚£å¹¾æ­¥ï¼ˆé«˜å…‰é™°å½±ã€
-         è‰²æº«è‰²èª¿ã€é£½å’Œåº¦ã€è‡ªç„¶é£½å’Œåº¦ï¼‰å…¨éƒ½æ²’é–‹çš„æ™‚å€™ï¼Œã€Œè¼¸å…¥ 0â€“255 â†’ è¼¸å‡ºã€
-         ä¹‹é–“æ²’æœ‰ä»»ä½•è·¨é€šé“çš„é‹ç®—ï¼Œæ‰€ä»¥å¯ä»¥å…ˆæŠŠè¡¨å››æ¨äº”å…¥æˆæ•´æ•¸ï¼Œ
-         è¿´åœˆè£¡å°±åªå‰©ä¸‰æ¬¡æŸ¥è¡¨ã€å®Œå…¨æ²’æœ‰æµ®é»žæ•¸ã€‚
-         é‡åˆ° 243 è¬åƒç´ å¾ž 13.2ms é™åˆ° 8.1msï¼Œè€Œä¸”è¼¸å‡º**é€ä½å…ƒçµ„å®Œå…¨ç›¸åŒ**
-         ï¼ˆå¯«é€² Uint8ClampedArray æœ¬ä¾†å°±æœƒåšåŒä¸€å€‹å››æ¨äº”å…¥ï¼‰ã€‚ */
-      const toneOnly = hasTone && !hasShHl && !hasTempTint && satMult === 1 && !hasVib;
-      if (toneOnly) {
-          const t8 = maskTone8Ref.current;
-          for (let i = 0; i < 256; i++) t8[i] = toneLut[i];
-          for (let i = 0; i < len; i += 4) {
-              data[i] = t8[data[i]];
-              data[i + 1] = t8[data[i + 1]];
-              data[i + 2] = t8[data[i + 2]];
-          }
-          tempCtx.putImageData(imgData, bx0, by0);
-      } else {
-          for (let i = 0; i < len; i += 4) {
-              let r = data[i];
-              let g = data[i+1];
-              let b = data[i+2];
-
-              {
-                  // 1~3. Exposure / Brightness / Contrastï¼ˆæŸ¥è¡¨ï¼Œè¦‹ä¸Šé¢çš„èªªæ˜Žï¼‰
-                  if (hasTone) {
-                      r = toneLut[r];
-                      g = toneLut[g];
-                      b = toneLut[b];
-                  }
-
-                  // 4. Shadows & Highlights (Logarithmic roll-off)
-                  if (hasShHl) {
-                      const lumaKey = (r * 77 + g * 150 + b * 29) >> 8;
-                      const shOffset = shLut[lumaKey];
-                      r += shOffset; g += shOffset; b += shOffset;
-                      r = r < 0 ? 0 : r > 255 ? 255 : r;
-                      g = g < 0 ? 0 : g > 255 ? 255 : g;
-                      b = b < 0 ? 0 : b > 255 ? 255 : b;
-                  }
-
-                  // 5. Temp & Tint
-                  if (hasTempTint) {
-                      const protect = protectLut[(r * 77 + g * 150 + b * 29) >> 8];
-                      r += rAdj * protect;
-                      g += gAdj * protect;
-                      b += bAdj * protect;
-                      r = r < 0 ? 0 : r > 255 ? 255 : r;
-                      g = g < 0 ? 0 : g > 255 ? 255 : g;
-                      b = b < 0 ? 0 : b > 255 ? 255 : b;
-                  }
-
-                  // 6. Saturation
-                  const avg = (r + g + b) * 0.33333;
-                  if (satMult !== 1) {
-                      r = avg + (r - avg) * satMult;
-                      g = avg + (g - avg) * satMult;
-                      b = avg + (b - avg) * satMult;
-                  }
-
-                  // 7. Vibrance
-                  if (hasVib) {
-                      let max = r > g ? (r > b ? r : b) : (g > b ? g : b);
-                      let min = r < g ? (r < b ? r : b) : (g < b ? g : b);
-                      const curSat = max === 0 ? 0 : (max - min) / max;
-                      const boost = vibVal > 0 ? vibVal * (1 - curSat * curSat) : vibVal;
-                      const b1 = 1 + boost;
-                      r = avg + (r - avg) * b1;
-                      g = avg + (g - avg) * b1;
-                      b = avg + (b - avg) * b1;
-                  }
-
-                  r = r < 0 ? 0 : r > 255 ? 255 : r;
-                  g = g < 0 ? 0 : g > 255 ? 255 : g;
-                  b = b < 0 ? 0 : b > 255 ? 255 : b;
-              }
-
-              data[i] = r;
-              data[i+1] = g;
-              data[i+2] = b;
-          }
-          tempCtx.putImageData(imgData, bx0, by0);
-      }
-
-      /* ç´…è‰²è¼”åŠ©é®ç½©ä¸å¿…æ“ é€²ä¸Šé¢é‚£å€‹è¿´åœˆï¼šæ•´ç‰‡é‹ªä¸€å±¤ alpha 0.5 çš„ç´…ï¼Œ
-         ç®—å‡ºä¾†å°±æ˜¯ rÃ—0.5 + 220Ã—0.5ï¼Œè·Ÿé€åƒç´ æ··è‰²åˆ†æ¯«ä¸å·®ï¼Œä½†åªè¦ä¸€æ¬¡å¡«è‰²ã€‚ */
-      if (showOverlay) {
-          tempCtx.fillStyle = `rgba(${redR},${redG},${redB},${redAlpha})`;
-          tempCtx.fillRect(0, 0, w, h);
-      }
-
-      maskAdjKeyRef.current = dragging ? adjKey : '';
-      }
-
-      /* æ¼¸å±¤åŽ»èƒŒã€‚
-         æ‹–å½¢ç‹€çš„æ™‚å€™ tempCanvas è¦ç•™è‘—çµ¦ä¸‹ä¸€å¹€ç”¨ï¼ˆè¦‹ä¸Šé¢çš„ adjKeyï¼‰ï¼Œ
-         è¢«æ¼¸å±¤æŒ–éŽå°±ä¸èƒ½å†æ²¿ç”¨ï¼Œæ‰€ä»¥é‚£ç¨®æƒ…æ³å¾—å…ˆè¤‡è£½åˆ°ç¬¬äºŒå¼µå†æŒ–ã€‚
-         å…¶é¤˜æƒ…æ³ï¼ˆä¾‹å¦‚æ‹–æ»‘æ¡¿ï¼‰tempCanvas æœ¬ä¾†æ¯ä¸€å¹€å°±é‡ç•«ï¼Œç›´æŽ¥å°±åœ°æŒ–å°±å¥½ â€”â€”
-         çœä¸‹ä¸€æ•´å¼µå…¨è§£æžåº¦çš„ç•«å¸ƒæ¬ç§»ã€‚
-         å¦å¤–é€™è£¡ä¸å†é–‹ã€Œè£æ¼¸å±¤ç”¨ã€çš„ç¬¬ä¸‰å¼µç•«å¸ƒï¼šæ‹¿æ¼¸å±¤ç•¶å¡«è‰²é…
-         destination-in æ˜¯åŒä¸€ä»¶äº‹ã€‚ */
-      let masked = tempCanvas;
-      let maskedCtx = tempCtx;
-      if (dragging) {
-        if (!maskOutCanvasRef.current) maskOutCanvasRef.current = document.createElement('canvas');
-        const outCanvas = maskOutCanvasRef.current;
-        if (outCanvas.width !== w || outCanvas.height !== h) { outCanvas.width = w; outCanvas.height = h; }
-        const outCtx = outCanvas.getContext('2d')!;
-        outCtx.globalCompositeOperation = 'copy';
-        outCtx.drawImage(tempCanvas, 0, 0);
-        masked = outCanvas;
-        maskedCtx = outCtx;
-      }
-
-      const grad = maskedCtx.createLinearGradient(x1, y1, x2, y2);
-      grad.addColorStop(0, 'rgba(255,255,255,1.0)');
-      grad.addColorStop(1, 'rgba(255,255,255,0.0)');
-      maskedCtx.globalCompositeOperation = 'destination-in';
-      maskedCtx.fillStyle = grad;
-      maskedCtx.fillRect(0, 0, w, h);
-      maskedCtx.globalCompositeOperation = 'source-over';
-
-      // Draw the masked temp canvas onto the main canvas
-      ctx.drawImage(masked, 0, 0);
-      ctx.restore();
-      }
-    }
-
-    const needsRefinement = blurNeedsLazyRefine || softNeedsLazyRefine || noise2NeedsLazyRefine || halationNeedsLazyRefine;
-    if (needsRefinement && !baking) {
-        if (lazyCacheTimeoutRef.current) {
-            clearTimeout(lazyCacheTimeoutRef.current);
-        }
-        lazyCacheTimeoutRef.current = setTimeout(() => {
-            forceRecalculateEffectsRef.current = true;
-            isDirtyRef.current = true;
-        }, 150);
-    } else {
-        if (!needsRefinement && lazyCacheTimeoutRef.current) {
-            clearTimeout(lazyCacheTimeoutRef.current);
-            lazyCacheTimeoutRef.current = null;
-        }
-    }
-
-    /* 10. GLSL ç‰¹æ•ˆ â€”â€” æŽ¥åœ¨æ•´æ¢ 2D ç®¡ç·šçš„æœ€å¾Œé¢ã€‚
-           æŠŠç•«å¸ƒä¸Ÿé€² WebGL è·‘å®Œå†ç•«å›žä¾†ï¼Œæ‰€ä»¥ä¸Šé¢æ¯ä¸€æ®µéƒ½å®Œå…¨ä¸ç”¨æ”¹å‹•ï¼›
-           é è¦½èˆ‡å°Žå‡ºèµ°çš„æ˜¯åŒä¸€æ”¯å‡½å¼ï¼Œå…©é‚Šçœ‹åˆ°çš„çµæžœä¸€è‡´ã€‚
-           å…¨éƒ¨å¼·åº¦éƒ½æ˜¯ 0 çš„è©±é€™è£¡ç›´æŽ¥è·³éŽï¼Œä¸æœƒæœ‰ä»»ä½•é¡å¤–æˆæœ¬ã€‚ */
-    if (hasActiveFx(p)) {
-      applyGlEffects(ctx, w, h, p);
-    }
-
-    if (forceRecalculateEffectsRef.current) {
-        forceRecalculateEffectsRef.current = false;
-    }
-  }, [selectedLutIdx, lutList, activeCategory]);
-  useEffect(() => { applyComplexEffectsRef.current = applyComplexEffects; }, [applyComplexEffects]);
-
-  const renderParamsToCanvas = useCallback((p: EditorParams, targetCanvas: HTMLCanvasElement) => {
-    const b = buffers.current.preview;
-    if (!b.source) return;
-    
-    targetCanvas.width = b.w;
-    targetCanvas.height = b.h;
-    const ctx = targetCanvas.getContext('2d', { willReadFrequently: true })!;
-    
-    const currentIdx = selectedLutIdx;
-    const lut = lutList[currentIdx];
-    const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
-    const lutSize = activeLut ? activeLut.size : 0;
-    
-    const len = b.source.length;
-    
-    // Allocate local buffers for rendering this off-screen step
-    const tempDest = new Uint8ClampedArray(len);
-    const tempLut0 = new Uint8ClampedArray(len);
-    const tempLut100 = activeLut ? new Uint8ClampedArray(len) : null;
-    
-    /* â”€â”€ å…ˆè©¦ GPU â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-       è·Ÿé è¦½åŒä¸€å¥—ï¼šç”¨ç¾æœ‰çš„ processPixels åœ¨ 65Â³ å€‹æ ¼é»žä¸Šç®—ä¸€æ¬¡çƒ¤æˆæŸ¥è‰²è¡¨ï¼Œ
-       GPU ä¸€å€‹ draw call æŸ¥å®Œæ•´å¼µåœ–ï¼Œç„¶å¾Œç›´æŽ¥æŠŠå…©å¼µç•«å¸ƒç–Šä¸ŠåŽ»ã€‚
-       å®Œå…¨ä¸æŠŠåƒç´ è®€å›žä¾†ï¼ˆé‚£ä¸€æ­¥é‡éŽè¦ 61msï¼‰ã€‚
-
-       ä¸èƒ½èµ° GPU çš„æƒ…æ³è·Ÿé è¦½ä¸€è‡´ï¼š
-         Â· éŠ³åŒ– â€”â€” è¦çœ‹é„°å±…åƒç´ ï¼Œçƒ¤ä¸é€²æŸ¥è‰²è¡¨
-         Â· colorNoise2 â€”â€” å®ƒçš„é›œè¨Šé®ç½©è¦åƒ tempDest çš„åƒç´ 
-       ä»»ä½•ä¸€æ­¥å¤±æ•—éƒ½åŽŸå°ä¸å‹•èµ°å›žä¸‹é¢çš„ CPU è·¯å¾‘ã€‚ */
-    if (!p.sharpen && !p.colorNoise2) {
-      const srcKey = `${b.w}x${b.h}|${buffersSrcRef.current}`;
-      if (!exportC0Ref.current) exportC0Ref.current = document.createElement('canvas');
-      const ok0 = gpuPaint(exportC0Ref.current, b.source, b.w, b.h,
-        { ...p, lutAmount: 0 }, null, 0, 65, srcKey, null);
-      let ok = ok0;
-      if (ok0 && activeLut) {
-        if (!exportC100Ref.current) exportC100Ref.current = document.createElement('canvas');
-        ok = gpuPaint(exportC100Ref.current, b.source, b.w, b.h,
-          { ...p, lutAmount: 100 }, activeLut.data, lutSize, 65, srcKey, null);
-      }
-      if (ok) {
-        ctx.clearRect(0, 0, b.w, b.h);
-        ctx.drawImage(exportC0Ref.current, 0, 0);
-        if (activeLut && exportC100Ref.current) {
-          ctx.save();
-          ctx.globalAlpha = p.lutAmount / 100;
-          ctx.drawImage(exportC100Ref.current, 0, 0);
-          ctx.restore();
-        }
-        const scaleG = Math.max(b.w, b.h) / 1080;
-        // é€™æ¢è·¯æ²’æœ‰ tempDest çš„åƒç´ ï¼Œä½† colorNoise2 å·²ç¶“è¢«æŽ’é™¤ï¼Œç”¨ä¸åˆ°å®ƒ
-        applyComplexEffects(ctx, b.w, b.h, p, scaleG, new Uint8ClampedArray(len), true, false, null);
-        return;
-      }
-    }
-
-    const localBaseCorrectionLut = new Uint8Array(256);
-    generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, localBaseCorrectionLut);
-    
-    // 1. Generate tempLut0 with 0% LUT influence
-    processPixels(b.source, tempLut0, b.w, b.h, p, null, 0, localBaseCorrectionLut, b.sharpenDetail, false, getCurveLuts(p.curves));
-    
-    // 2. Generate tempLut100 with 100% LUT influence (if activeLut is present)
-    if (activeLut && tempLut100) {
-        const p100 = { ...p, lutAmount: 100 };
-        processPixels(b.source, tempLut100, b.w, b.h, p100, activeLut.data, lutSize, localBaseCorrectionLut, b.sharpenDetail, false, getCurveLuts(p.curves));
-    }
-    
-    // 3. Blend them based on lutAmount
-    if (activeLut && tempLut100) {
-        const amount = p.lutAmount / 100;
-        const invAmount = 1.0 - amount;
-        for (let i = 0; i < len; i += 4) {
-            tempDest[i]     = tempLut0[i] * invAmount + tempLut100[i] * amount;
-            tempDest[i + 1] = tempLut0[i + 1] * invAmount + tempLut100[i + 1] * amount;
-            tempDest[i + 2] = tempLut0[i + 2] * invAmount + tempLut100[i + 2] * amount;
-            tempDest[i + 3] = tempLut0[i + 3];
-        }
-    } else {
-        tempDest.set(tempLut0);
-    }
-    
-    ctx.putImageData(new ImageData(tempDest, b.w, b.h), 0, 0);
-    
-    const scale = Math.max(b.w, b.h) / 1080;
-    const tempShared = new Uint8ClampedArray(len);
-    applyComplexEffects(ctx, b.w, b.h, p, scale, tempShared, true, false, tempDest);
-  }, [selectedLutIdx, lutList, applyComplexEffects, getCurveLuts]);
-
-  /* â”€â”€ æ‹–æ›³ä¸­çš„æ¥µé€Ÿé è¦½ï¼šä¸‰ä»½å…¨è§£æžåº¦çš„ç•«é¢ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-     äº®åº¦é‚£ä¸€é¡žæ»‘æ¡¿æ‹–èµ·ä¾†ä¹‹æ‰€ä»¥æ˜¯æ»¿æ ¼çš„ï¼Œæ˜¯å› ç‚ºäº‹å…ˆæŠŠã€Œé€™æ ¹æ»‘æ¡¿è½‰åˆ° 0ï¼âˆ’100ï¼
-     ï¼‹100ã€ä¸‰å¼µç•«é¢å„ç®—ä¸€ä»½ï¼Œæ‹–æ›³ä¸­å°±åªæ˜¯åœ¨ä¸‰å¼µä¹‹é–“åš GPU æ··åˆã€‚
-
-     å•é¡Œæ˜¯é‚£ä¸‰ä»½ä»¥å‰æ˜¯**æ‰‹æŒ‡æŒ‰ä¸‹åŽ»çš„é‚£ä¸€çž¬é–“**æ‰åŒæ­¥ç®—çš„ï¼šå…¨è§£æžåº¦è·‘ä¸‰è¶Ÿ
-     processPixelsï¼Œé‡åˆ°æ‰‹ä¸€ç¢°æ»‘æ¡¿ä¸»åŸ·è¡Œç·’å°±è¢«ä½”ä½ 270ï½ž303msï¼ˆäº®åº¦ 303ã€
-     æ›å…‰ 289ã€å°æ¯” 270ï¼‰ï¼Œè€Œä¸”æ¯æŒ‰ä¸€æ¬¡å°±ä¾†ä¸€æ¬¡ã€‚
-
-     æ”¹æˆè¶é–’ç½®å…ˆç®—å¥½ï¼šä½¿ç”¨è€…æ˜¯å…ˆé»žå·¥å…·ã€å†åŽ»ç¢°æ»‘æ¡¿çš„ï¼Œä¸­é–“é‚£æ®µæ™‚é–“ç•«é¢
-     å®Œå…¨é–’è‘—ã€‚ç¹ªåœ–è¿´åœˆçš„é–’ç½®åˆ†æ”¯æ¯ä¸€è¼ªåªç®—ä¸‰ä»½è£¡çš„ä¸€ä»½ï¼ˆç´„ 95msï¼‰ï¼Œ
-     åˆ†ä¸‰è¼ªåšå®Œï¼ŒæŒ‰ä¸‹åŽ»çš„æ™‚å€™é€šå¸¸ä¸€æ­¥éƒ½ä¸ç”¨åšã€‚
-     æ²’å…ˆç®—å®Œä¹Ÿä¸æœƒå£ž â€”â€” setupFastPreview æœƒæŠŠç¼ºçš„è£œä¸Šï¼Œè¡Œç‚ºè·Ÿä»¥å‰ä¸€æ¨£ã€‚ */
-  const FAST_BLEND_TOOLS = ['brightness', 'exposure', 'contrast', 'highlights', 'shadows', 'temp', 'tint', 'sat', 'vib'];
-
-  /** å·²ç¶“å…ˆç®—å¥½çš„é‚£ä»½æ˜¯ã€Œçµ¦èª°ã€ç…§ä»€éº¼åƒæ•¸ã€ç®—çš„ï¼›stage æ˜¯ä¸‰ä»½è£¡ç®—åˆ°ç¬¬å¹¾ä»½ */
-  const fastWarmRef = useRef<{ sig: string; stage: number }>({ sig: '', stage: 0 });
-
-  /* é‚£ä¸‰ä»½æ˜¯æŠŠé€™æ ¹æ»‘æ¡¿å›ºå®šåœ¨ 0ï¼Â±100 ç®—å‡ºä¾†çš„ï¼Œæ‰€ä»¥ã€Œé€™æ ¹æ»‘æ¡¿ç¾åœ¨æ˜¯å¤šå°‘ã€
-     å®Œå…¨ä¸å½±éŸ¿çµæžœ â€”â€” ç°½ç« ä¸€å¾‹ç”¨æŠŠå®ƒæ­¸é›¶ä¹‹å¾Œçš„åƒæ•¸ï¼Œæ‹–æ›³ä¸­æ‰ä¸æœƒä¸€ç›´å¤±æ•ˆã€‚ */
-  const fastSig = useCallback((toolId: string) => {
-    const b = buffers.current.preview;
-    const pBase = { ...paramsRef.current, [toolId]: 0 } as EditorParams;
-    const lut = lutList[selectedLutIdx];
-    return `${toolId}|${b.w}x${b.h}|${buffersSrcRef.current}|${lut?.id || 'none'}|${pBase.sharpen}|${bakeSigRef.current(pBase)}`;
-  }, [lutList, selectedLutIdx]);
-
-  /** ç®—ä¸‰ä»½è£¡çš„ä¸‹ä¸€ä»½ã€‚å›žå‚³ true ä»£è¡¨é€™ä¸€æ¬¡çœŸçš„æœ‰åšäº‹ï¼ˆæ²’äº‹åšå°±å›ž falseï¼‰ã€‚ */
-  const buildFastStage = useCallback((toolId: string): boolean => {
-    const b = buffers.current.preview;
-    if (!b.source || !b.dest) return false;
-    const sig = fastSig(toolId);
-    if (fastWarmRef.current.sig !== sig) fastWarmRef.current = { sig, stage: 0 };
-    const st = fastWarmRef.current.stage;
-    if (st >= 3) return false;
-
-    const len = b.source.length;
-    const eb = extremeBuffersRef.current;
-    if (!eb.base || eb.base.length !== len) {
-      eb.base = new Uint8ClampedArray(len);
-      eb.min = new Uint8ClampedArray(len);
-      eb.max = new Uint8ClampedArray(len);
-    }
-    const lut = lutList[selectedLutIdx];
-    const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
-    const lutSize = activeLut ? activeLut.size : 0;
-    const activeLutData = activeLut ? activeLut.data : null;
-    const curveLuts = getCurveLuts(paramsRef.current.curves);
-
-    const val = st === 0 ? 0 : st === 1 ? -100 : 100;
-    const target = st === 0 ? eb.base! : st === 1 ? eb.min! : eb.max!;
-    const pS = { ...paramsRef.current, [toolId]: val } as EditorParams;
-    generateBaseCorrectionLut(pS.exposure, pS.contrast, pS.brightness, baseCorrectionLutRef.current);
-    processPixels(b.source, target, b.w, b.h, pS, activeLutData, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, curveLuts);
-
-    // åŒæ­¥åˆ°å°æ‡‰çš„é›¢å±ç•«å¸ƒï¼ˆæ‹–æ›³ä¸­æ˜¯é å®ƒå€‘åš GPU æ··åˆçš„ï¼‰
-    const cache = fastPreviewCacheRef.current;
-    const key = st === 0 ? 'baseCanvas' : st === 1 ? 'minCanvas' : 'maxCanvas';
-    if (!cache[key]) cache[key] = document.createElement('canvas');
-    const cv = cache[key]!;
-    if (cv.width !== b.w || cv.height !== b.h) { cv.width = b.w; cv.height = b.h; }
-    cv.getContext('2d')!.putImageData(new ImageData(target, b.w, b.h), 0, 0);
-
-    fastWarmRef.current = { sig, stage: st + 1 };
-    if (fastWarmRef.current.stage >= 3) eb.activeToolId = toolId;
-    return true;
-  }, [fastSig, lutList, selectedLutIdx, getCurveLuts]);
-
-  /** é–’ç½®æ™‚å‘¼å«ï¼šç›®å‰é¸çš„å·¥å…·å¦‚æžœåƒé€™å¥—ï¼Œå°±å¾€ä¸‹ç®—ä¸€ä»½ */
-  const warmFastPreview = useCallback(() => {
-    const t = activeToolIdRef.current;
-    if (!FAST_BLEND_TOOLS.includes(t)) return false;
-    return buildFastStage(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buildFastStage]);
-  const warmFastPreviewRef = useRef(warmFastPreview);
-  warmFastPreviewRef.current = warmFastPreview;
-
-  const setupFastPreview = useCallback((toolId: string) => {
-    setIsInteracting(true);
-    fastPreviewCacheRef.current.active = false;
-    isDirtyRef.current = true;
-    lastRenderDurationRef.current = 12; // Reset interaction timing to avoid carry-over throttles
-
-    if (!FAST_BLEND_TOOLS.includes(toolId)) return;
-
-    // é–’ç½®æ™‚æ²’ç®—å®Œçš„è£œä¸Šï¼ˆé€šå¸¸å·²ç¶“ç®—å®Œäº†ï¼Œé€™è£¡ä¸€æ­¥éƒ½ä¸ç”¨åšï¼‰
-    let guard = 4;
-    while (guard-- > 0 && buildFastStage(toolId)) { /* ä¸€æ¬¡ä¸€ä»½ */ }
-
-    const b = buffers.current.preview;
-    if (b.source && b.dest && fastWarmRef.current.stage >= 3) {
-      extremeBuffersRef.current.activeToolId = toolId;
-      const cache = fastPreviewCacheRef.current;
-      if (cache.baseCanvas && cache.minCanvas && cache.maxCanvas) {
-        cache.active = true;
-        cache.toolId = toolId;
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buildFastStage]);
-
-  const render = useCallback((p: EditorParams, overrideLutIdx?: number) => {
-    const cache = fastPreviewCacheRef.current;
-
-    // The extreme-blend proxy canvases are built at full preview resolution, so that path
-    // must keep using the preview buffer. Everything else drops to the low-res proxy while
-    // the user drags and snaps back to full resolution on release.
-    const FAST_BLEND_TOOLS = ['brightness', 'exposure', 'contrast', 'highlights', 'shadows', 'temp', 'tint', 'sat', 'vib'];
-    const isFastBlendActive = isInteracting &&
-        extremeBuffersRef.current.activeToolId === activeToolId &&
-        FAST_BLEND_TOOLS.includes(activeToolId) &&
-        cache.active && cache.toolId === activeToolId &&
-        !!(cache.baseCanvas && cache.minCanvas && cache.maxCanvas);
-
-    const proxy = buffers.current.fast;
-    /* æ‹–æ›³ã€Œæ–°ç‰¹æ•ˆã€çš„åƒæ•¸æ™‚ä¸è¦é™åˆ°ä½Žè§£æžåº¦ä»£ç†ã€‚
-       ä»£ç†åªæœ‰ â‰¤900pxï¼ŒGLSL ç‰¹æ•ˆåœ¨ä¸Šé¢ç®—å‡ºä¾†çš„çµæžœè·Ÿå…¨è§£æžåº¦æœ¬ä¾†å°±ä¸ä¸€æ¨£
-       ï¼ˆå–æ¨£åˆ°çš„ç´°ç¯€ä¸åŒï¼‰ï¼Œé€™æ˜¯æ‹–æ›³ä¸­èˆ‡é¬†æ‰‹çœ‹èµ·ä¾†ä¸ä¸€æ¨£çš„æœ€å¾Œä¸€å€‹ä¾†æºã€‚
-       é€™äº›åƒæ•¸ä¸æœƒæ”¹åˆ°åƒç´ ç®¡ç·šï¼Œæ‰€ä»¥ processPixels æœ¬ä¾†å°±æœƒè¢«è·³éŽï¼Œ
-       ç•™åœ¨å…¨è§£æžåº¦åªå¤šèŠ±ä¸€æ¬¡ applyComplexEffects + ä¸€æ¬¡ GPU passï¼Œåˆ’å¾—ä¾†ã€‚ */
-    /* æ‹–ç‰¹æ•ˆæ»‘æ¡¿æ™‚ç›¡é‡ç”¨å…¨è§£æžåº¦ç®— â€”â€” ä½Žè§£æžåº¦ä»£ç†å–æ¨£åˆ°çš„ç´°ç¯€ä¸ä¸€æ¨£ï¼Œ
-       æ›å¥è©±èªªã€Œæ‹–æ›³ä¸­ã€èˆ‡ã€Œé¬†æ‰‹ã€æœƒé•·å¾—ä¸ä¸€æ¨£ï¼Œé‚£æ˜¯ä½¿ç”¨è€…åæ‡‰éŽçš„å•é¡Œã€‚
-
-       ä½†å…¨è§£æžåº¦ä¸æ˜¯å…è²»çš„ï¼šç…§ç‰‡ä¸€å¤§ï¼Œä¸€æ¬¡å°±è¦å¹¾åç”šè‡³å¹¾ç™¾æ¯«ç§’ï¼Œ
-       æ‹–èµ·ä¾†æœƒåš´é‡æŽ‰æ ¼ï¼ˆé‡åˆ° 3000Ã—4000 çš„ç…§ç‰‡æ‹–éŠ³åŒ– p95 269msï¼‰ã€‚
-       æ‰€ä»¥ç…§å¯¦éš›ç®—å‡ºä¾†çš„è€—æ™‚è‡ªå·±åˆ‡æ›ï¼Œä¸¦ä¸”ç•™ä¸€æ®µé²æ»¯é¿å…åœ¨å…©ç¨®æ¨¡å¼ä¹‹é–“ä¾†å›žè·³ï¼š
-         ï¼ ä¸€æ¬¡è¶…éŽ 60ms å°±é™ç´šç”¨ä»£ç†ï¼ˆä¿é †æš¢ï¼‰
-         ï¼ å›žåˆ° 24ms ä»¥ä¸‹æ‰å‡å›žå…¨è§£æžåº¦ï¼ˆä¿ä¸€è‡´ï¼‰
-       é–€æª»æŠ“åœ¨ 60msï¼šé€™ä¹‹å…§ç•«é¢æ›´æ–°é›–ç„¶ä¸åˆ° 60fpsï¼Œä½†è¿´åœˆæœ¬ä¾†å°±æœƒç…§è€—æ™‚ç¯€æµã€
-       æ»‘æ¡¿æœ¬èº«é‚„æ˜¯é †çš„ï¼›çœŸæ­£æœƒè®“æ•´å€‹ä»‹é¢ä¸€é “ä¸€é “çš„æ˜¯é‚£ç¨®ä¸€æ¬¡å…©ä¸‰ç™¾æ¯«ç§’çš„ã€‚
-       å°åœ–ï¼å¿«çš„è£ç½®æœƒä¸€ç›´å¾…åœ¨å…¨è§£æžåº¦ï¼Œä¹Ÿå°±å®Œå…¨æ²’æœ‰è½å·®ã€‚ */
-    /* ã€Œæ‹–æ›³ä¸­ã€èˆ‡ã€Œé¬†æ‰‹ã€ä¸ä¸€æ¨£çš„æ ¹æœ¬åŽŸå› ï¼šæ‹–çš„æ™‚å€™ç•«çš„æ˜¯ â‰¤900px çš„ä»£ç†ï¼Œ
-       é¬†æ‰‹ç•«çš„æ˜¯å…¨è§£æžåº¦ã€‚å‡¡æ˜¯æœƒçœ‹é„°å±…åƒç´ çš„é‹ç®—ï¼ˆéŠ³åŒ–ã€æ¨¡ç³Šã€é¡†ç²’ã€æšˆå½±ã€
-       æ¸…æ™°åº¦â€¦ï¼‰åœ¨å…©ç¨®è§£æžåº¦ä¸Šç®—å‡ºä¾†å°±æ˜¯ä¸ä¸€æ¨£ï¼Œæ‰€ä»¥ä¸€æ”¾æ‰‹ç•«é¢å°±è·³ä¸€ä¸‹ã€‚
-
-       ä»¥å‰åªæœ‰ã€Œæ–°ç‰¹æ•ˆã€é‚£å¹¾å€‹å·¥å…·æœƒå˜—è©¦ç•™åœ¨å…¨è§£æžåº¦ã€‚ç¾åœ¨æ”¹æˆ**æ‰€æœ‰å·¥å…·éƒ½å…ˆ
-       è©¦è‘—ç”¨å…¨è§£æžåº¦**ï¼Œåªæœ‰çœŸçš„ç®—ä¸å‹•æ‰é™ç´šï¼Œè€Œä¸”ç•™ä¸€æ®µé²æ»¯é¿å…ä¾†å›žè·³ï¼š
-         Â· ä¸€æ¬¡è¶…éŽ 60ms â†’ é™åˆ°ä»£ç†ï¼ˆä¿é †æš¢ï¼‰
-         Â· å›žåˆ° 24ms ä»¥ä¸‹ â†’ å‡å›žå…¨è§£æžåº¦ï¼ˆä¿ä¸€è‡´ï¼‰
-       åœ¨æ‰‹æ©Ÿä¸Šæ‹çš„ä¸€èˆ¬ç…§ç‰‡ã€ä»¥åŠå¤§å¤šæ•¸è£ç½®ä¸Šï¼Œé€™ä»£è¡¨æ‹–æ›³ä¸­ç•«çš„å°±æ˜¯é¬†æ‰‹é‚£ä¸€å¼µï¼Œ
-       å®Œå…¨æ²’æœ‰è½å·®ï¼›åªæœ‰åˆå¤§åˆæ…¢çš„æƒ…æ³æ‰æœƒæš«æ™‚é™ç´šã€‚ */
-    /* æ‹–æ›³ä¸­**ä¸€å¾‹ç”¨å…¨è§£æžåº¦**ï¼Œä½Žè§£æžåº¦ä»£ç†å·²ç¶“å®Œå…¨ä¸ç”¨äº†ã€‚
-       ä»¥å‰é€™è£¡æœ‰ä¸€æ®µã€Œç®—å¤ªæ…¢å°±é™ç´šæˆ â‰¤900px çš„ä»£ç†ã€å¿«äº†å†å‡å›žä¾†ã€çš„è‡ªå‹•èª¿ç¯€ï¼Œ
-       ä½†é‚£æ­£æ˜¯ä¸»äººèªªçš„ã€Œæ‹–å‹•æ»‘æ¡¿æ™‚åœ–ç‰‡æœƒè®Šä½Žåƒç´ çš„æ„Ÿè¦ºã€â€”â€”
-       åªè¦æœ‰ä¸€å¹€è¶…éŽ 60ms å°±æœƒæŽ‰ä¸‹åŽ»ï¼ŒæŽ‰ä¸‹åŽ»çš„é‚£æ®µæ™‚é–“ç•«é¢å°±æ˜¯ç³Šçš„ã€‚
-       ä¸»äººæ˜Žç¢ºèªªéŽå¯§å¯æ…¢ä¸€é»žä¹Ÿä¸è¦ç•«è³ªé™ç´šï¼Œè€Œä¸”é¡è‰²éˆå·²ç¶“äº¤çµ¦ GPU
-       ï¼ˆçƒ¤è¡¨ 2.2ms ï¼‹ ç•« 0.1msï¼‰ï¼Œå…¨è§£æžåº¦æœ¬ä¾†å°±è·‘å¾—å‹•ã€‚ */
-    /* å‰›æ›æ¿¾é¡æ™‚å…ˆç”¨ä½Žè§£æžåº¦é‚£ä»½ç•«ä¸€å¼µï¼ˆé‹ç®—é‡åªæœ‰ 1/4ï¼ŒæŒ‰ä¸‹åŽ»é¦¬ä¸Šçœ‹å¾—åˆ°ï¼‰ï¼Œ
-       åŒä¸€æ‹å†æ¨™è¨˜ dirtyï¼Œä¸‹ä¸€å¹€ç”¨å…¨è§£æžåº¦é‡ç•«è“‹ä¸ŠåŽ» â€”â€” æœ€çµ‚ç•«è³ªæ²’æœ‰å¦¥å”ã€‚ */
-    const quickPass = quickFilterRef.current && !!proxy.source && !isInteracting;
-    const useProxy = quickPass;
-    const b = useProxy ? proxy : buffers.current.preview;
-
-    const cvs = displayCanvasRef.current;
-    if (!b.source || !b.dest || !cvs) return;
-    
-    if (cvs.width !== b.w || cvs.height !== b.h) { 
-        cvs.width = b.w; 
-        cvs.height = b.h; 
-    }
-    
-    const ctx = cvs.getContext('2d')!;
-
-    // Maintain offscreen pixel buffer canvas for putImageData with willReadFrequently
-    if (!pixelBufferCanvasRef.current) {
-        pixelBufferCanvasRef.current = document.createElement('canvas');
-    }
-    const pixelBufferCanvas = pixelBufferCanvasRef.current;
-    if (pixelBufferCanvas.width !== b.w || pixelBufferCanvas.height !== b.h) {
-        pixelBufferCanvas.width = b.w;
-        pixelBufferCanvas.height = b.h;
-    }
-    const pixelBufferCtx = pixelBufferCanvas.getContext('2d', { willReadFrequently: true })!;
-
-    const currentIdx = overrideLutIdx !== undefined ? overrideLutIdx : selectedLutIdx;
-    const pRender = { ...p };
-
-    // Check if we are at effectively original state (No edits)
-    const isNoEdits = currentIdx === 0 && 
-        pRender.brightness === 0 && pRender.exposure === 0 && pRender.contrast === 0 && 
-        pRender.highlights === 0 && pRender.shadows === 0 && pRender.temp === 0 && pRender.tint === 0 && 
-        pRender.sat === 0 && pRender.vib === 0 && pRender.sharpen === 0 && 
-        pRender.grain === 0 && pRender.soft === 0 && pRender.blur === 0 && pRender.colorNoise === 0 && 
-        pRender.colorNoise2 === 0 && pRender.vignette === 0 && pRender.leakOpacity === 0 && 
-        pRender.fringeIntensity === 0 &&
-        // æ–°çš„ GLSL ç‰¹æ•ˆä¹Ÿç®—ã€Œæœ‰ç·¨è¼¯ã€ï¼Œä¸ç„¶åªé–‹é€™äº›çš„æ™‚å€™æœƒè¢«ç•¶æˆæ²’å‹•éŽè€Œç•«å›žåŽŸåœ–
-        !hasActiveFx(pRender) &&
-        !pRender.maskCreated &&
-        pRender.curves.rgb.length === 2 && pRender.curves.rgb[0].y === 0 && pRender.curves.rgb[1].y === 255 &&
-        pRender.curves.r.length === 2 && pRender.curves.r[0].y === 0 && pRender.curves.r[1].y === 255 &&
-        pRender.curves.g.length === 2 && pRender.curves.g[0].y === 0 && pRender.curves.g[1].y === 255 &&
-        pRender.curves.b.length === 2 && pRender.curves.b[0].y === 0 && pRender.curves.b[1].y === 255 &&
-        isHslIdentity(pRender.hsl);
-
-    if (showOriginalRef.current || isNoEdits) {
-        /* é€™å¼µå·²ç¶“åˆä½µéŽäº† â€”â€” ç·©è¡å€è£¡çš„ã€ŒåŽŸåœ–ã€å…¶å¯¦æ˜¯åˆä½µå¾Œçš„çµæžœï¼Œ
-           æ‰€ä»¥å‰å¾Œå°æ¯”è¦æ”¹ç•«ä¸€é–‹å§‹ç•™ä¸‹ä¾†çš„é‚£å¼µæ‰æ˜¯çœŸçš„åŽŸåœ–ã€‚
-           è£åˆ‡éŽçš„è©±å…©è€…æ¯”ä¾‹æœƒä¸ä¸€æ¨£ï¼Œç­‰æ¯”ç¸®åˆ°ç•«é¢å…§ã€å…¶é¤˜ç•™é»‘ã€‚ */
-        const pristine = showOriginalRef.current && thumbOriginRef.current[buffersSrcRef.current]
-          ? pristineOf(thumbSrcOf(buffersSrcRef.current)) : null;
-        if (pristine) {
-            ctx.save();
-            ctx.fillStyle = '#000';
-            ctx.fillRect(0, 0, b.w, b.h);
-            const r = Math.min(b.w / pristine.width, b.h / pristine.height);
-            const dw = pristine.width * r, dh = pristine.height * r;
-            ctx.imageSmoothingQuality = 'high';
-            ctx.drawImage(pristine, (b.w - dw) / 2, (b.h - dh) / 2, dw, dh);
-            ctx.restore();
-        } else {
-            pixelBufferCtx.putImageData(new ImageData(b.source, b.w, b.h), 0, 0);
-            ctx.drawImage(pixelBufferCanvas, 0, 0);
-        }
-        cvs.style.filter = 'none';
-        return;
-    }
-
-    const lut = lutList[currentIdx];
-    const activeLut = lut.url ? lutDataRef.current[lut.id] : null;
-    const lutSize = activeLut ? activeLut.size : 0;
-
-    if (isFastBlendActive) {
-        // Fast proxy GPU-accelerated blending: handled entirely on the GPU in the drawing step below for maximum FPS.
-    } else {
-        // Zero-cost sub-microsecond check: Separate pixel processing params from composite effects
-        const lastP = lastProcessedParamsRef.current;
-        let shouldReprocessPixels =
-            pRender.brightness !== lastP.brightness ||
-            pRender.exposure !== lastP.exposure ||
-            pRender.contrast !== lastP.contrast ||
-            pRender.highlights !== lastP.highlights ||
-            pRender.shadows !== lastP.shadows ||
-            pRender.temp !== lastP.temp ||
-            pRender.tint !== lastP.tint ||
-            pRender.sat !== lastP.sat ||
-            pRender.vib !== lastP.vib ||
-            pRender.sharpen !== lastP.sharpen ||
-            currentIdx !== lastP.selectedLutIdx ||
-            b.w !== lastP.bufferWidth ||
-            lutSize !== lastP.lutSize ||
-            pRender.curves !== lastP.curvesRef ||
-            pRender.hsl !== lastP.hslRef;
-
-        /* â”€â”€ å…ˆè©¦ GPU â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-           æˆåŠŸçš„è©±å…©å¼µé›¢å±ç•«å¸ƒï¼ˆlut0ï¼lut100ï¼‰å°±å·²ç¶“ç•«å¥½ï¼Œ
-           ä¸‹é¢å…©æ¬¡å…¨è§£æžåº¦çš„ processPixels å®Œå…¨ä¸å¿…è·‘ã€‚
-           éŠ³åŒ–è¦çœ‹é„°å±…åƒç´ ã€ä¸æ˜¯ç´” RGBâ†’RGBï¼Œçƒ¤ä¸é€²æŸ¥è‰²è¡¨ï¼Œæ‰€ä»¥æœ‰éŠ³åŒ–å°±èµ° CPUã€‚
-           æ‹–æ›³ä¸­ç”¨ 33Â³ çš„è¡¨ï¼ˆçƒ¤ 2.2msï¼‰ï¼Œæ‰‹æ”¾é–‹æ”¹ç”¨ 65Â³ï¼ˆè‰²å·® 3 è‰²éšŽä»¥å…§ï¼‰ã€‚ */
-        /* â”€â”€ GPU é¡è‰²éˆ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-           **å®Œå…¨ä¸æŠŠåƒç´ å¾ž GPU è®€å›žä¾†**ï¼ˆé‡éŽï¼šè®€å›žè¦ 61msï¼Œæ¯”æ•´æ¢ CPU ç®¡ç·šé‚„è²´ï¼‰ã€‚
-           é‚£ä»½åƒç´ å…¶å¯¦åªæœ‰ä¸€å€‹åœ°æ–¹è¦ï¼šcolorNoise2 çš„é›œè¨Šé®ç½©ã€‚
-           æ‰€ä»¥åªè¦æ²’é–‹é‚£å€‹ç‰¹æ•ˆï¼Œå°±æ•´æ¢èµ° GPUï¼Œç•«é¢ç›´æŽ¥è²¼ GPU ç•«å¸ƒã€‚
-
-           ä¸èƒ½èµ° GPU çš„å…©ç¨®æƒ…æ³ï¼š
-             Â· éŠ³åŒ– â€”â€” è¦çœ‹é„°å±…åƒç´ ï¼Œä¸æ˜¯ç´” RGBâ†’RGBï¼Œçƒ¤ä¸é€²æŸ¥è‰²è¡¨
-             Â· colorNoise2 â€”â€” å®ƒéœ€è¦ b.dest çš„åƒç´ 
-           å…©è€…éƒ½è‡ªå‹•é€€å›žåŽŸæœ¬çš„ CPU è·¯å¾‘ï¼Œç•«é¢èˆ‡åŒ¯å‡ºå®Œå…¨ç…§èˆŠã€‚
-
-           æ ¼é»žï¼šæ‹–æ›³ä¸­ 33Â³ï¼ˆçƒ¤ 2.2msï¼‰ï¼Œå…¶é¤˜ 65Â³ï¼ˆçƒ¤ 16msã€è‰²å·® 3 è‰²éšŽä»¥å…§ï¼‰ã€‚ */
-        /* é€™è£¡æœ¬ä¾†é‚„æœ‰ä¸€å¥—ã€Œå…ˆå„é‡ä¸€æ¬¡ CPU èˆ‡ GPUã€æ…¢å°±ä¸ç”¨ GPUã€çš„æ ¡æº–ã€‚
-           æ‹¿æŽ‰äº†ï¼Œå› ç‚ºå®ƒè·Ÿ LutGpu.create() è£¡çš„ã€Œè»Ÿé«”æ¨¡æ“¬ GL ç›´æŽ¥ä¸çµ¦ç”¨ã€æ˜¯
-           åŒä¸€ä»¶äº‹çš„å…©ç¨®åšæ³•ï¼Œè€Œæ ¡æº–é‚£å¥—æœ‰å…©å€‹å¯¦éš›çš„å£žè™•ï¼š
-             Â· åªæ†‘ä¸€æ¬¡å–æ¨£å°±ä¸‹æ°¸ä¹…åˆ¤æ–·ï¼Œé‡åˆ°å‰›å¥½è¢«åˆ¥çš„å·¥ä½œå¡ä½çš„é‚£ä¸€å¹€å°±æœƒèª¤åˆ¤
-             Â· ä¸€æ—¦åˆ¤æˆã€Œä¸ç”¨ GPUã€ï¼Œæ•´å€‹å·¥ä½œéšŽæ®µéƒ½å›žä¸åŽ»ï¼ŒçœŸæ‰‹æ©Ÿä¹Ÿè¢«é—œæŽ‰
-           è»Ÿé«” GL çš„æƒ…æ³å·²ç¶“åœ¨å»ºç«‹æ™‚å°±æ“‹æŽ‰äº†ï¼Œé€™è£¡ä¸éœ€è¦å†çŒœä¸€æ¬¡ã€‚ */
-        const gpuAllowedNow = true;
-        const gpuEligible = !pRender.sharpen && !pRender.colorNoise2 && !!b.source && gpuAllowedNow;
-        /* åªæœ‰ã€Œä¸Šä¸€è¼ªèµ° GPUã€é€™ä¸€è¼ªè¦èµ° CPUã€æ™‚æ‰å¼·åˆ¶é‡ç®— â€”â€”
-           å› ç‚º GPU é‚£è¼ªæ²’æœ‰ç”¢ç”Ÿ b.dest çš„åƒç´ ï¼ŒCPU é€™è¼ªå¾—è£œä¸Šã€‚
-           åéŽä¾†ï¼ˆCPUâ†’GPUï¼Œä¹Ÿå°±æ˜¯æ‰‹æŒ‡å‰›æŒ‰ä¸Šæ»‘æ¡¿çš„é‚£ä¸€åˆ»ï¼‰ç•«å¸ƒå…§å®¹æœ¬ä¾†å°±æ˜¯å°çš„ï¼Œ
-           å¼·åˆ¶é‡ç•«ä¸€æ¬¡åªæœƒåœ¨æ‹–æ›³ç¬¬ä¸€å¹€å¤šå£“ä¸€æ¬¡å…¨è§£æžåº¦é‹ç®—ï¼Œçœ‹èµ·ä¾†å°±æ˜¯æŠ–ä¸€ä¸‹ã€‚ */
-        if (lastGpuRef.current && !gpuEligible) shouldReprocessPixels = true;
-        let gpuDone = false;
-        if (shouldReprocessPixels && gpuEligible) {
-            const tGpu = performance.now();
-            const grid = isInteracting ? 33 : 65;
-            const srcKey = `${b.w}x${b.h}|${buffersSrcRef.current}`;
-            if (!lut0CanvasRef.current) lut0CanvasRef.current = document.createElement('canvas');
-            /* èª¿ç¯€é‚£ä¸€ä»½å®Œå…¨ä¸çœ‹æ¿¾é¡ï¼Œæ‰€ä»¥æ¿¾é¡éµå›ºå®šæ˜¯ 'none' â€”â€”
-               æ›æ¿¾é¡æ™‚é€™å¼µè¡¨å°±æœƒç›´æŽ¥å‘½ä¸­å¿«å–ï¼Œä¸€æ¬¡éƒ½ä¸ç”¨é‡çƒ¤ã€‚ */
-            const okBase = gpuPaint(lut0CanvasRef.current, b.source, b.w, b.h,
-                { ...pRender, lutAmount: 0 }, null, 0, grid, srcKey, null, 'none');
-            if (okBase && activeLut) {
-                if (!lut100CanvasRef.current) lut100CanvasRef.current = document.createElement('canvas');
-                gpuDone = gpuPaint(lut100CanvasRef.current, b.source, b.w, b.h,
-                    { ...pRender, lutAmount: 100 }, activeLut.data, lutSize, grid, srcKey, null,
-                    `${lut.id}#${lutSize}`);
-            } else {
-                gpuDone = okBase;
-            }
-            if (gpuDone && !isInteracting) {
-                gpuMsRef.current = performance.now() - tGpu;
-                /* å…©é‚Šéƒ½é‡åˆ°äº†å°±ä¸‹åˆ¤æ–·ã€‚ç•™ 1.2 å€çš„é¤˜è£•ï¼š
-                   å·®ä¸å¤šå¿«çš„æ™‚å€™å¯§å¯ç”¨ GPUï¼Œå› ç‚ºå®ƒä¸ä½”ä¸»åŸ·è¡Œç·’ã€ä»‹é¢æ¯”è¼ƒä¸æœƒé “ã€‚ */
-                if (cpuMsRef.current > 0 && gpuWinsRef.current === null) {
-                    gpuWinsRef.current = gpuMsRef.current < cpuMsRef.current * 1.2;
-                }
-            }
-        }
-
-        lastGpuRef.current = gpuDone;
-        if (shouldReprocessPixels) {
-            const cached = gpuDone ? null : getCachedFilterPixels(lut.id, pRender, b.w, b.h);
-            if (cached && (activeLut ? cached.lut100 !== null : true)) {
-                // å‘½ä¸­çš„ä¹Ÿç®—ã€Œæœ€è¿‘ç”¨éŽã€ï¼Œä¸è¦è¢«ç•¶æˆæœ€èˆŠçš„è¸¢æŽ‰
-                const hitKey = cacheKeyOf(lut.id, b.w);
-                const ord = cacheOrderRef.current;
-                const hi = ord.indexOf(hitKey);
-                if (hi >= 0) { ord.splice(hi, 1); ord.push(hitKey); }
-                b.lut0!.set(cached.lut0);
-                if (activeLut && b.lut100 && cached.lut100) {
-                    b.lut100.set(cached.lut100);
-                }
-                
-                lastProcessedParamsRef.current = {
-                    brightness: pRender.brightness,
-                    exposure: pRender.exposure,
-                    contrast: pRender.contrast,
-                    highlights: pRender.highlights,
-                    shadows: pRender.shadows,
-                    temp: pRender.temp,
-                    tint: pRender.tint,
-                    sat: pRender.sat,
-                    vib: pRender.vib,
-                    sharpen: pRender.sharpen,
-                    lutAmount: pRender.lutAmount,
-                    selectedLutIdx: currentIdx,
-                    bufferWidth: b.w,
-                    lutSize: lutSize,
-                    curvesRef: pRender.curves,
-                    hslRef: pRender.hsl
-                };
-            } else if (gpuDone) {
-                /* GPU ç•«å¥½äº†ç•«é¢ï¼Œä½†æ²’æœ‰ç”¢ç”Ÿ b.lut0ï¼b.lut100 çš„åƒç´  â€”â€”
-                   æœ¬ä¾†å°±ä¸éœ€è¦ï¼ˆæ²’æœ‰äººè¦é‚£ä»½åƒç´ ï¼Œè¦‹ä¸Šé¢çš„èªªæ˜Žï¼‰ã€‚
-                   æŠŠé€™ä¸€è¼ªçš„åƒæ•¸è¨˜ä¸‹ä¾†ï¼Œéœæ­¢çš„ç•«é¢æ‰ä¸æœƒæ¯å¹€é‡ç•«ä¸€æ¬¡ã€‚ */
-                lastProcessedParamsRef.current = {
-                    brightness: pRender.brightness, exposure: pRender.exposure,
-                    contrast: pRender.contrast, highlights: pRender.highlights,
-                    shadows: pRender.shadows, temp: pRender.temp, tint: pRender.tint,
-                    sat: pRender.sat, vib: pRender.vib, sharpen: pRender.sharpen,
-                    lutAmount: pRender.lutAmount, selectedLutIdx: currentIdx,
-                    bufferWidth: b.w, lutSize: lutSize,
-                    curvesRef: pRender.curves, hslRef: pRender.hsl,
-                };
-            } else {
-                const tCpu = performance.now();
-                generateBaseCorrectionLut(pRender.exposure, pRender.contrast, pRender.brightness, baseCorrectionLutRef.current);
-                
-                /* b.lut0ï¼ã€Œåªæœ‰èª¿ç¯€ã€å®Œå…¨æ²’æœ‰æ¿¾é¡ã€çš„é‚£ä¸€ä»½ï¼Œè·Ÿé¸å“ªä¸€é¡†æ¿¾é¡ç„¡é—œã€‚
-                   åªæ›æ¿¾é¡æ™‚æ•´ä»½æ²¿ç”¨ â€”â€” åŽŸæœ¬æ¯é»žä¸€æ¬¡æ¿¾é¡éƒ½é€£å®ƒä¸€èµ·é‡ç®—ï¼Œ
-                   ç­‰æ–¼ç™½è·‘ä¸€è¶Ÿå…¨è§£æžåº¦çš„åƒç´ é‹ç®—ï¼ˆç­‰å¾…æ™‚é–“æœ‰ä¸€åŠåœ¨é€™è£¡ï¼‰ã€‚ */
-                const l0 = lut0StateRef.current[b.w] || {};
-                const canReuseLut0 =
-                    l0.buf === b.lut0 &&
-                    l0.w === b.w && l0.h === b.h && l0.src === buffersSrcRef.current &&
-                    l0.brightness === pRender.brightness && l0.exposure === pRender.exposure &&
-                    l0.contrast === pRender.contrast && l0.highlights === pRender.highlights &&
-                    l0.shadows === pRender.shadows && l0.temp === pRender.temp &&
-                    l0.tint === pRender.tint && l0.sat === pRender.sat &&
-                    l0.vib === pRender.vib && l0.sharpen === pRender.sharpen &&
-                    l0.curves === pRender.curves && l0.hsl === pRender.hsl &&
-                    l0.detail === b.sharpenDetail;
-                if (!canReuseLut0) {
-                    processPixels(b.source, b.lut0!, b.w, b.h, pRender, null, 0, baseCorrectionLutRef.current, b.sharpenDetail, false, getCurveLuts(pRender.curves));
-                    lut0StateRef.current[b.w] = {
-                        buf: b.lut0,
-                        w: b.w, h: b.h, src: buffersSrcRef.current,
-                        brightness: pRender.brightness, exposure: pRender.exposure, contrast: pRender.contrast,
-                        highlights: pRender.highlights, shadows: pRender.shadows, temp: pRender.temp,
-                        tint: pRender.tint, sat: pRender.sat, vib: pRender.vib, sharpen: pRender.sharpen,
-                        curves: pRender.curves, hsl: pRender.hsl, detail: b.sharpenDetail,
-                    };
-                }
-                
-                // 2. Generate b.lut100: Base adjustments applied with 100% LUT influence (if activeLut is present)
-                if (activeLut) {
-                    const p100 = { ...pRender, lutAmount: 100 };
-                    processPixels(b.source, b.lut100!, b.w, b.h, p100, activeLut.data, lutSize, baseCorrectionLutRef.current, b.sharpenDetail, false, getCurveLuts(pRender.curves));
-                }
-                
-                if (!isInteracting) cpuMsRef.current = performance.now() - tCpu;
-                if (!lut.url || activeLut) {
-                    cacheFilterPixels(lut.id, pRender, b.w, b.h, b.lut0!, activeLut ? b.lut100! : null);
-                }
-                
-                // Cache the processed parameters with zero allocations
-                lastProcessedParamsRef.current = {
-                    brightness: pRender.brightness,
-                    exposure: pRender.exposure,
-                    contrast: pRender.contrast,
-                    highlights: pRender.highlights,
-                    shadows: pRender.shadows,
-                    temp: pRender.temp,
-                    tint: pRender.tint,
-                    sat: pRender.sat,
-                    vib: pRender.vib,
-                    sharpen: pRender.sharpen,
-                    lutAmount: pRender.lutAmount,
-                    selectedLutIdx: currentIdx,
-                    bufferWidth: b.w,
-                    lutSize: lutSize,
-                    curvesRef: pRender.curves,
-                    hslRef: pRender.hsl
-                };
-            }
-
-            // Sync with GPU-backed offscreen canvases for instant rendering during slider adjustments
-            if (!lut0CanvasRef.current) {
-                lut0CanvasRef.current = document.createElement('canvas');
-            }
-            if (!gpuDone) {
-              if (lut0CanvasRef.current.width !== b.w || lut0CanvasRef.current.height !== b.h) {
-                  lut0CanvasRef.current.width = b.w;
-                  lut0CanvasRef.current.height = b.h;
-              }
-              lut0CanvasRef.current.getContext('2d')!.putImageData(new ImageData(b.lut0!, b.w, b.h), 0, 0);
-            }
-
-            if (activeLut) {
-                if (!lut100CanvasRef.current) {
-                    lut100CanvasRef.current = document.createElement('canvas');
-                }
-                if (!gpuDone) {
-                  if (lut100CanvasRef.current.width !== b.w || lut100CanvasRef.current.height !== b.h) {
-                      lut100CanvasRef.current.width = b.w;
-                      lut100CanvasRef.current.height = b.h;
-                  }
-                  lut100CanvasRef.current.getContext('2d')!.putImageData(new ImageData(b.lut100!, b.w, b.h), 0, 0);
-                }
-            }
-        }
-
-        // Perform linear blending between b.lut0 and b.lut100 on the CPU ONLY when idle
-        // to keep b.dest 100% accurate without any UI overhead during drag
-        if (!isInteracting && !gpuDone) {
-            if (activeLut) {
-                const len = b.source.length;
-                const amount = pRender.lutAmount / 100;
-                const invAmount = 1.0 - amount;
-                
-                const lut0 = b.lut0!;
-                const lut100 = b.lut100!;
-                const dest = b.dest!;
-                
-                for (let i = 0; i < len; i += 4) {
-                    dest[i]     = lut0[i] * invAmount + lut100[i] * amount;
-                    dest[i + 1] = lut0[i + 1] * invAmount + lut100[i + 1] * amount;
-                    dest[i + 2] = lut0[i + 2] * invAmount + lut100[i + 2] * amount;
-                    dest[i + 3] = lut0[i + 3];
-                }
-            } else {
-                b.dest!.set(b.lut0!);
-            }
-        }
-    }
-    
-    // Always put valid pixels to canvas before applying effects.
-    // If we are in interactive adjustment blend mode, blend the pre-calculated offscreen canvases on the GPU for 120 FPS.
-    // If we are adjusting filter strength (or anything else), draw the GPU-accelerated canvases for 120fps.
-    if (isFastBlendActive) {
-        const val = pRender[activeToolId as keyof EditorParams] as number;
-        const amount = val / 100;
-        
-        ctx.drawImage(cache.baseCanvas!, 0, 0);
-        
-        if (val > 0) {
-            ctx.save();
-            ctx.globalAlpha = amount;
-            ctx.drawImage(cache.maxCanvas!, 0, 0);
-            ctx.restore();
-        } else if (val < 0) {
-            ctx.save();
-            ctx.globalAlpha = -amount;
-            ctx.drawImage(cache.minCanvas!, 0, 0);
-            ctx.restore();
-        }
-    } else {
-        if (lut0CanvasRef.current) {
-            ctx.drawImage(lut0CanvasRef.current, 0, 0);
-        } else {
-            pixelBufferCtx.putImageData(new ImageData(b.lut0!, b.w, b.h), 0, 0);
-            ctx.drawImage(pixelBufferCanvas, 0, 0);
-        }
-
-        if (activeLut && lut100CanvasRef.current) {
-            ctx.save();
-            ctx.globalAlpha = pRender.lutAmount / 100;
-            ctx.drawImage(lut100CanvasRef.current, 0, 0);
-            ctx.restore();
-        }
-    }
-    cvs.style.filter = 'none';
-    
-    const scale = Math.max(b.w, b.h) / 1080;
-    // Pass b.dest as sourcePixelData for noise masking
-    applyComplexEffects(ctx, b.w, b.h, pRender, scale, b.shared, isInteracting, false, b.dest);
-
-    if (quickPass) {
-      quickFilterRef.current = false;
-      isDirtyRef.current = true;          // æŽ¥è‘—é¦¬ä¸ŠæŽ’ä¸€æ¬¡å…¨è§£æžåº¦çš„
-      lastRenderTimeRef.current = 0;
-    }
-
-  }, [isInteracting, selectedLutIdx, lutList, applyComplexEffects, activeToolId, getCurveLuts]);
-
-  useEffect(() => {
-    /* åˆä½µï¼æ’¤éŠ·åˆä½µä¹Ÿæ˜¯æ›ä¾†æºï¼ˆçƒ¤å¥½çš„é‚£å¼µè®Šæˆæ–°çš„åŽŸåœ–ï¼‰ï¼Œä½†é‚£ä¸æ˜¯ã€Œæ›ç…§ç‰‡ã€ï¼š
-       åƒæ•¸ã€æ­·å²ã€åˆ†é éƒ½ç”±é‚£é‚Šè‡ªå·±å®‰æŽ’å¥½äº†ï¼Œé€™è£¡åªè¦æŠŠç·©è¡å€æ›æˆæ–°çš„é‚£å¼µã€‚
-       èµ°å®Œæ•´çš„æ­¸é›¶åè€ŒæœƒæŠŠå‰›æŽ’å¥½çš„æ±è¥¿æ´—æŽ‰ï¼Œç•«é¢ä¹Ÿæœƒé–ƒä¸€ä¸‹ã€‚ */
-    if (srcSwapRef.current) {
-      srcSwapRef.current = false;
-      const ready = takeDecoded(activeSrc);
-      const install = (im: HTMLImageElement) => {
-        originalImgRef.current = im;
-        setImageDimensions(`${im.naturalWidth}Ã—${im.naturalHeight}`);
-        const g = geoRef.current;
-        const sw = im.naturalWidth, sh = im.naturalHeight;
-        // æ’¤éŠ·å›žåˆ°ã€Œæœ‰è£åˆ‡ã€çš„é‚£ä¸€æ­¥æ™‚ï¼Œç·©è¡å€è¦ç…§é‚£å€‹å¹¾ä½•é‡ç®—ï¼Œä¸ç„¶è£åˆ‡æœƒä¸è¦‹
-        const src: CanvasImageSource = isGeoIdentity(g) ? im : composeCanvas(im, sw, sh, g, 2400);
-        const w = isGeoIdentity(g) ? sw : (src as HTMLCanvasElement).width;
-        const h = isGeoIdentity(g) ? sh : (src as HTMLCanvasElement).height;
-        buildBuffersFromRef.current(src, w, h, false, activeSrc);
-      };
-      if (ready) install(ready);
-      else {
-        const im = new Image();
-        if (!activeSrc.startsWith('blob:') && !activeSrc.startsWith('data:')) im.crossOrigin = 'anonymous';
-        im.onload = () => { rememberDecoded(activeSrc, im); install(im); };
-        im.src = activeSrc;
-      }
-      return;
-    }
-    setParams(JSON.parse(JSON.stringify(DEFAULT_PARAMS)));
-    setActiveCategory('filter');
-    setActiveToolId('filter_select');
-    setSelectedLutIdx(0);
-    const freshGeo = { ...DEFAULT_GEO, crop: { ...FULL_CROP } };
-    geoRef.current = freshGeo;
-    setGeo(freshGeo);
-    setDraftGeo(null);
-    // æŽ¥çºŒä¸Šæ¬¡ï¼šä¸€å®šè¦åœ¨ä¸Šé¢é‚£äº›æ­¸é›¶ä¹‹å¾Œæ‰å¥—å›žåŽ»ã€‚
-    // é€™è£¡åˆ»æ„ä¸ç”¨ã€Œåªåšä¸€æ¬¡ã€çš„æ——æ¨™ â€”â€” StrictMode æœƒæŠŠ effect è·‘å…©æ¬¡ï¼Œ
-    // åªåšä¸€æ¬¡çš„è©±ç¬¬äºŒæ¬¡çš„æ­¸é›¶å°±æŠŠé‚„åŽŸè“‹æŽ‰äº†ã€‚æ”¹æˆã€ŒåŒä¸€å¼µç…§ç‰‡å°±ä¸€ç›´å¥—ã€ã€‚
-    if (resumeSrcRef.current === null) resumeSrcRef.current = activeSrc;
-    const resume = resumeSrcRef.current === activeSrc ? initialStateRef.current : null;
-    if (resume) {
-      if (resume.params) setParams(resume.params);
-      if (resume.geo) { geoRef.current = resume.geo; setGeo(resume.geo); }
-      if (typeof resume.selectedLutIdx === 'number') setSelectedLutIdx(resume.selectedLutIdx);
-    }
-    setSaveState('idle');
-    setFinalImage(null);
-    setShowOriginal(false);
-    lastRenderedShowOriginalRef.current = false;
-    filterPixelCacheRef.current = {}; cacheOrderRef.current = [];
-    extremeBuffersRef.current = {
-      activeToolId: '',
-      base: null,
-      min: null,
-      max: null
-    };
-    lastProcessedParamsRef.current = {
-      brightness: 0, exposure: 0, contrast: 0, highlights: 0, shadows: 0,
-      temp: 0, tint: 0, sat: 0, vib: 0, sharpen: 0, lutAmount: 0,
-      selectedLutIdx: -1, bufferWidth: 0, lutSize: 0, curvesRef: null, hslRef: null
-    };
-
-    cachedBlurCanvasRef.current = null;
-    cachedSoftCanvasRef.current = null;
-    cachedNoise2CanvasRef.current = null;
-    cachedHalationCanvasRef.current = null;
-    cachedVignetteCanvasRef.current = null;
-    compiledGrainPatternRef.current = null;
-    compiledNoisePatternRef.current = null;
-    lut0CanvasRef.current = null;
-    lut100CanvasRef.current = null;
-    pixelBufferCanvasRef.current = null;
-
-    if (lazyCacheTimeoutRef.current) {
-      clearTimeout(lazyCacheTimeoutRef.current);
-      lazyCacheTimeoutRef.current = null;
-    }
-    forceRecalculateEffectsRef.current = false;
-
-    blurCacheStateRef.current = null;
-    softCacheStateRef.current = null;
-    noise2CacheStateRef.current = null;
-    halationCacheStateRef.current = null;
-    
-    if (!grainPatternRef.current) grainPatternRef.current = generateNoisePattern('grain');
-    if (!noisePatternRef.current) noisePatternRef.current = generateNoisePattern('color');
-
-    setIsSoftActive(false);
-    setIsBlurActive(false);
-    setIsGrainActive(false);
-    setIsHalationActive(false);
-    setSoftManuallyAdjusted(false);
-    setBlurManuallyAdjusted(false);
-    setGrainManuallyAdjusted(false);
-    setHalationManuallyAdjusted(false);
-    userSoftRef.current = 50;
-    userBlurRef.current = 40;
-    userGrainRef.current = { grain: 0, colorNoise: 40, colorNoise2: 0 };
-    userHalationRef.current = 50;
-
-    const initialItem: HistoryItem = { 
-      params: JSON.parse(JSON.stringify(DEFAULT_PARAMS)), 
-      selectedLutIdx: 0,
-      isSoftActive: false,
-      isBlurActive: false,
-      isGrainActive: false,
-      isHalationActive: false,
-      softManuallyAdjusted: false,
-      blurManuallyAdjusted: false,
-      grainManuallyAdjusted: false,
-      halationManuallyAdjusted: false
-    };
-    writeHistory([initialItem], 0);
-
-    // æ‰¹é‡ç·¨è¼¯ï¼šæ›åˆ°å¦ä¸€å¼µæ™‚ï¼ŒæŠŠé‚£ä¸€å¼µè©²æœ‰çš„åƒæ•¸å¥—å›žä¾†ã€‚
-    // ä¸€å®šè¦æ”¾åœ¨æœ€å¾Œ â€”â€” ä¸Šé¢é‚£äº›æ­¸é›¶ï¼ˆå«æŸ”å…‰ï¼æœ¦æœ§ï¼å™ªé»žï¼å…‰æšˆå››é¡†é–‹é—œè·Ÿå®ƒå€‘çš„
-    // è¨˜æ†¶å€¼ï¼‰è·Ÿé€™è£¡æ˜¯åŒä¸€æ‰¹ setStateï¼Œå…ˆå¥—å¾Œæ­¸é›¶çš„è©±é–‹é—œæœƒè¢«é—œå›žåŽ»ï¼Œ
-    // ç•«é¢å¥—äº†æ•ˆæžœä½†æŒ‰éˆ•é¡¯ç¤ºæ˜¯é—œçš„ã€‚
-    // è·Ÿä¸Šé¢çš„ resume ä¸€æ¨£ç”¨ã€ŒåŒä¸€å¼µç…§ç‰‡å°±ä¸€ç›´å¥—ã€è€Œä¸æ˜¯ã€Œåªå¥—ä¸€æ¬¡ã€â€”â€”
-    // StrictMode æœƒæŠŠ effect è·‘å…©æ¬¡ï¼Œåªå¥—ä¸€æ¬¡çš„è©±ç¬¬äºŒæ¬¡çš„æ­¸é›¶å°±æŠŠå®ƒè“‹æŽ‰äº†ã€‚
-    if (pendingSnapRef.current && pendingSnapSrcRef.current === activeSrc) {
-      applySnapRef.current(pendingSnapRef.current, pendingSnapIdxRef.current ?? undefined);
-    }
-
-    const ready = (img: HTMLImageElement) => {
-      originalImgRef.current = img;
-      // è§£å¥½çš„åœ–ç•™è‘—ã€‚æ‰¹é‡ç·¨è¼¯ä¾†å›žåˆ‡åŒå¹¾å¼µæ™‚ï¼Œå›žé ­é‚£ä¸€æ¬¡å°±ä¸ç”¨å†è§£ç¢¼ä¸€é â€”â€”
-      // é‚£æ­£æ˜¯ã€Œç…§ç‰‡æ˜Žæ˜Žæ²’å‹•ï¼Œåˆ‡å›žåŽ»å»é‚„è¦ç­‰ã€çš„ä¾†æºã€‚
-      rememberDecoded(activeSrc, img);
-      setIsPortrait(img.height > img.width);
-
-      // Update dimensions dynamically
-      setImageDimensions(`${img.naturalWidth}Ã—${img.naturalHeight}`);
-
-      buildBuffersFromRef.current(img, img.width, img.height, true, activeSrc);
-      // é€™å¼µè‡ªå·±çš„è£åˆ‡ï¼æ—‹è½‰è¦åœ¨åœ–è§£å¥½ä¹‹å¾Œæ‰è£œå¾—å›žåŽ»ã€‚ä¸Šé¢ applySnap é‚£æ™‚å€™
-      // originalImgRef é‚„æ˜¯ç©ºçš„ï¼Œåªè¨­å¾—äº†ç‹€æ…‹ã€å¥—ä¸åˆ°ç•«å¸ƒä¸Š â€”â€” æ‰€ä»¥åˆ‡å›žä¸€å¼µ
-      // è£åˆ‡éŽçš„ç…§ç‰‡æœƒçœ‹åˆ°æœªè£åˆ‡çš„æ•´å¼µï¼Œçœ‹èµ·ä¾†å°±æ˜¯ã€Œå¿½ç„¶æ”¾å¤§äº†ä¸€ä¸‹ã€ã€‚
-      // å…©æ¬¡ buildBuffers éƒ½åœ¨åŒä¸€æ‹è£¡ï¼ŒReact åªæœƒæäº¤ä¸€æ¬¡ï¼Œä¸­é–“ä¸æœƒå‡ºç¾å…©ç¨®å°ºå¯¸ã€‚
-      const own = geoRef.current;
-      if (own && !isGeoIdentity(own)) applyGeoRef.current(own);
-      setIsSwitching(false);
-    };
-
-    // å·²ç¶“è§£å¥½çš„å°±ç›´æŽ¥ç”¨ï¼Œä¸è¦å†ç¹žä¸€æ¬¡ new Image()
-    const done = takeDecoded(activeSrc);
-    if (done) {
-      ready(done);
-    } else {
-      const img = new Image();
-      if (!activeSrc.startsWith('blob:') && !activeSrc.startsWith('data:')) {
-          img.crossOrigin = "anonymous";
-      }
-      img.onload = () => ready(img);
-      img.onerror = () => {
-        setIsSwitching(false);
-        console.error("Failed to load image in canvas:", activeSrc);
-        alert("ç„¡æ³•åœ¨ç•«å¸ƒä¸­è§£æžæ­¤åœ–ç‰‡ï¼Œé€™å¯èƒ½æ˜¯è¨˜æ†¶é«”ä¸è¶³æˆ–æ ¼å¼ææ¯€ã€‚");
-        setIsEditorLoading(false);
-        onCancel();
-      };
-      img.src = activeSrc;
-    }
-    return () => {
-      if (lazyCacheTimeoutRef.current) {
-        clearTimeout(lazyCacheTimeoutRef.current);
-      }
-    };
-  }, [activeSrc, onCancel]);
-
-  // Handle Loading State manually since it might take a second to build buffers
-  const [isEditorLoading, setIsEditorLoading] = useState(true);
-
-  // æ§‹åœ–æœƒæ”¹è®Šä¾†æºç•«é¢çš„å°ºå¯¸èˆ‡å…§å®¹ï¼Œæ‰€ä»¥ç·©è¡å€çš„å»ºç«‹å¿…é ˆèƒ½é‡è·‘ã€‚ç¬¬ä¸€æ¬¡è¼‰å…¥èˆ‡æ¯æ¬¡å¥—ç”¨
-  // æ§‹åœ–éƒ½èµ°é€™è£¡ï¼Œå·®åˆ¥åªåœ¨ initial æ±ºå®šè¦ä¸è¦åšæš–æ©Ÿèˆ‡è§£éŽ– UIã€‚
-  const buildBuffersFrom = useCallback((
-    source: CanvasImageSource,
-    srcW: number,
-    srcH: number,
-    initial: boolean,
-    warmKey?: string
-  ) => {
-      // Preview Size
-      const PREVIEW_SIZE = 1800;
-      let pw = srcW, ph = srcH;
-      if (pw > PREVIEW_SIZE || ph > PREVIEW_SIZE) { const r = Math.min(PREVIEW_SIZE / pw, PREVIEW_SIZE / ph); pw = (pw * r) | 0; ph = (ph * r) | 0; }
-      pw = Math.max(1, pw); ph = Math.max(1, ph);
-
-      const pc = document.createElement('canvas');
-      pc.width = pw; pc.height = ph;
-      const pctx = pc.getContext('2d', { willReadFrequently: true })!;
-      pctx.imageSmoothingQuality = 'high';
-      pctx.drawImage(source, 0, 0, pw, ph);
-      // åŒä¸Šï¼šæ¯”ä¾‹èˆ‡ç•«å¸ƒå°ºå¯¸å¿…é ˆåŒä¸€å¹€ç”Ÿæ•ˆ
-      applyPreviewAspect(pw, ph);
-      const pData = pctx.getImageData(0, 0, pw, ph).data;
-      const pLen = pData.length;
-
-      // Precalculate sharpen detail immediately in a fast async chunk to prevent locking the UI
-      const precalcSharpenAsync = async (data: Uint8ClampedArray, width: number, height: number): Promise<Int8Array> => {
-          return new Promise(resolve => {
-              setTimeout(() => {
-                  resolve(precomputeSharpenDetail(data, width, height));
-              }, 10);
-          });
-      };
-
-      buffers.current = {
-          preview: {
-              source: pData,
-              dest: new Uint8ClampedArray(pLen),
-              shared: new Uint8ClampedArray(pLen),
-              lutted: new Uint8ClampedArray(pLen),
-              lut0: new Uint8ClampedArray(pLen),
-              lut100: new Uint8ClampedArray(pLen),
-              temp: new Uint8ClampedArray(pLen),
-              sharpenDetail: null, 
-              w: pw, h: ph
-          },
-          fast: { // Built right below: low-res proxy used only while the user is actively dragging
-              source: null, dest: null, shared: null, lutted: null, lut0: null, lut100: null, temp: null, sharpenDetail: null, w: 0, h: 0
-          }
-      };
-
-      // Interactive proxy: a downscaled copy of the preview buffer. Tools that have to
-      // re-run the whole pixel pipeline on every pointer move (curves, mask, and every
-      // effect that is not in FAST_BLEND_TOOLS) render against this while dragging, then
-      // fall back to the full preview buffer the moment the finger lifts.
-      /* ä»£ç†çš„é•·å¯¬ä¸€å®šè¦è·Ÿé è¦½ã€Œå®Œå…¨åŒä¸€å€‹æ¯”ä¾‹ã€ã€‚
-         ä»¥å‰æ˜¯ (w*r)|0 ç›´æŽ¥æˆªæŽ‰å°æ•¸ï¼Œä¾‹å¦‚ 3024Ã—4032 æœƒè®Šæˆ 675Ã—900 â€”â€” æ¯”ä¾‹å·®äº†
-         åƒåˆ†ä¹‹ä¸€ã€‚ç•«å¸ƒæ˜¯ç”¨ object-contain æŽ’ç‰ˆçš„ï¼Œå®ƒæœƒç…§ç•«å¸ƒã€Œè‡ªå·±çš„ã€æ¯”ä¾‹åŽ»ç•™é»‘é‚Šï¼Œ
-         æ¯”ä¾‹ä¸€è®Šã€é»‘é‚Šå°±è®Šï¼Œåœ–ç‰‡å°±æ•´å€‹ä½ç§»äº†åŠå€‹åƒç´ å·¦å³ â€”â€”
-         é‚£å°±æ˜¯ä¸»äººèªªçš„ã€Œæ‹–æ¿¾é¡æ»‘æ¡¿æ™‚åœ–ç‰‡æœƒç•°å¸¸ä½ç§»ã€ã€‚
-         æ”¹æˆå…ˆæŠŠ w:h ç´„åˆ†ï¼Œå†å–ã€Œä¸è¶…éŽ PROXY_SIZE çš„æœ€å¤§æ•´æ•¸å€ã€ï¼Œ
-         æ¯”ä¾‹å°±è·ŸåŽŸåœ–ä¸€æ¨¡ä¸€æ¨£ï¼Œä½ç§»çš„ä¾†æºå¾žæ ¹æœ¬ä¸Šæ¶ˆå¤±ã€‚ */
-      const PROXY_SIZE = 900;
-      let fw = pw, fh = ph;
-      if (fw > PROXY_SIZE || fh > PROXY_SIZE) {
-        const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
-        const g = gcd(pw, ph) || 1;
-        const aw = pw / g, ah = ph / g;
-        const m = Math.floor(PROXY_SIZE / Math.max(aw, ah));
-        if (m >= 1) { fw = aw * m; fh = ah * m; }
-        else {
-          // ç´„åˆ†å¾Œé‚„æ˜¯æ¯” PROXY_SIZE å¤§ï¼ˆæ¥µç«¯é•·å¯¬æ¯”ï¼‰æ‰é€€å›žç­‰æ¯”ç¸®æ”¾
-          const r = Math.min(PROXY_SIZE / fw, PROXY_SIZE / fh);
-          fw = Math.max(1, Math.round(fw * r));
-          fh = Math.max(1, Math.round(fh * r));
-        }
-      }
-      if (fw < pw || fh < ph) {
-          const fc = document.createElement('canvas');
-          fc.width = fw; fc.height = fh;
-          const fctx = fc.getContext('2d', { willReadFrequently: true })!;
-          fctx.imageSmoothingQuality = 'high';
-          fctx.drawImage(pc, 0, 0, fw, fh);
-          const fData = fctx.getImageData(0, 0, fw, fh).data;
-          const fLen = fData.length;
-          buffers.current.fast = {
-              source: fData,
-              dest: new Uint8ClampedArray(fLen),
-              shared: new Uint8ClampedArray(fLen),
-              lutted: new Uint8ClampedArray(fLen),
-              lut0: new Uint8ClampedArray(fLen),
-              lut100: new Uint8ClampedArray(fLen),
-              temp: new Uint8ClampedArray(fLen),
-              sharpenDetail: null,
-              w: fw, h: fh
-          };
-      }
-
-      // ç·©è¡å€æ›äººäº†ï¼Œæ‰€æœ‰è·Ÿã€Œä¸Šä¸€ä»½åƒç´ ã€ç¶åœ¨ä¸€èµ·çš„å¿«å–ä¸€å¾‹ä½œå»¢ã€‚
-      // é€™ä»¶äº‹ä¸€å®šè¦åœ¨é€™è£¡åšï¼Œä¸èƒ½åªåœ¨è¼‰å…¥çš„ effect è£¡åš â€”â€” åœ–ç‰‡æ˜¯éžåŒæ­¥è§£ç¢¼çš„ï¼Œ
-      // ä¸­é–“å¯èƒ½å·²ç¶“ç”¨èˆŠç·©è¡å€ç•«éŽä¸€è¼ªï¼ŒæŠŠèˆŠç…§ç‰‡çš„åƒç´ å¯«å›žé‚£äº›å¿«å–è£¡ã€‚
-      if (initial) {
-        filterPixelCacheRef.current = {}; cacheOrderRef.current = [];
-        lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, curvesRef: null, hslRef: null, selectedLutIdx: -1 };
-        extremeBuffersRef.current = { activeToolId: '', base: null, min: null, max: null };
-        fastPreviewCacheRef.current.active = false;
-        lut0StateRef.current = {};
-        lut0CanvasRef.current = null;
-        lut100CanvasRef.current = null;
-      }
-      if (warmKey) { buffersSrcRef.current = warmKey; setBuffersTick(t => t + 1); }
-      /* é€™å¼µæ˜¯åŽŸåœ–ï¼ˆä¸æ˜¯åˆä½µå‡ºä¾†çš„ï¼‰æ‰ç•™åº•ï¼šç•™çš„æ˜¯é è¦½å°ºå¯¸é‚£ä¸€ä»½ï¼Œ
-         å‰å¾Œå°æ¯”åªæ˜¯æ‹¿ä¾†çœ‹çš„ï¼Œä¸éœ€è¦åŽŸå§‹è§£æžåº¦ã€‚ */
-      if (warmKey && !thumbOriginRef.current[warmKey] && !pristineOf(warmKey)) {
-        const keep = document.createElement('canvas');
-        keep.width = pw; keep.height = ph;
-        keep.getContext('2d')!.drawImage(pc, 0, 0);
-        pristineRef.current.unshift({ key: warmKey, canvas: keep });
-        pristineRef.current.length = Math.min(pristineRef.current.length, PRISTINE_KEEP);
-      }
-      // èƒŒæ™¯å…ˆç®—å¥½çš„ã€Œèª¿ç¯€ + æ¿¾é¡ã€åƒç´ åœ–ï¼Œå¡žå›ž render() æœ¬ä¾†å°±åœ¨ç”¨çš„å¿«å–ï¼Œ
-      // å¾…æœƒç¬¬ä¸€æ¬¡å¸¶è‘—åƒæ•¸ç¹ªè£½æ™‚å°±ç›´æŽ¥æ‹¿ä¾†ç”¨ï¼Œä¸ç”¨ç•¶å ´é‡ç®—ã€‚
-      if (initial && warmKey) seedWarmPixelsRef.current(warmKey, pw, ph);
-
-      const WARMUP_PARAMS = {
-        ...DEFAULT_PARAMS,
-        shadows: 1,
-        highlights: 1,
-        curves: {
-          rgb: [{x:0,y:0}, {x:127,y:127}, {x:255,y:255}],
-          r: [{x:0,y:0}, {x:255,y:255}],
-          g: [{x:0,y:0}, {x:255,y:255}],
-          b: [{x:0,y:0}, {x:255,y:255}]
-        }
-      };
-      const WARMUP_HSL_PARAMS: EditorParams = {
-        ...DEFAULT_PARAMS,
-        // èº«åˆ†å€¼æœƒç›´æŽ¥è·³éŽæ•´æ®µ HSLï¼›çµ¦ä¸€å€‹è‚‰çœ¼ç„¡é—œçš„å°å€¼ï¼Œè®“ç€è¦½å™¨åœ¨ä½¿ç”¨è€…
-        // ç¢°æ»‘æ¡¿å‰å°±å®Œæˆé€™æ¢ç†±è·¯å¾‘çš„ JIT ç·¨è­¯ã€‚
-        hsl: DEFAULT_HSL.map((band, i) => i === 0 ? { ...band, h: 1 } : { ...band }),
-      };
-      
-      // Warmup logic using shared buffer
-      generateBaseCorrectionLut(0,0,0, baseCorrectionLutRef.current);
-      if (initial) {
-        // é€™å…©è¶Ÿç©ºè·‘æ˜¯ç‚ºäº†è®“ JIT å…ˆæŠŠåƒç´ è¿´åœˆç·¨è­¯èµ·ä¾†ï¼Œæ•´å€‹ç·¨è¼¯å™¨é–‹è‘—åªéœ€è¦åšä¸€æ¬¡ã€‚
-        // æ‰¹é‡ç·¨è¼¯æ›ç…§ç‰‡æ™‚å†åšä¸€æ¬¡æ˜¯ç™½èŠ±æ™‚é–“ï¼ˆæ›ä¸€å¼µè¦å¤šç­‰ 0.15ï½ž0.27 ç§’ï¼‰ã€‚
-        if (!pipelineWarmedRef.current) {
-          processPixels(pData, buffers.current.preview.dest!, pw, ph, WARMUP_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, getCurveLuts(WARMUP_PARAMS.curves));
-          processPixels(pData, buffers.current.preview.dest!, pw, ph, DEFAULT_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, getCurveLuts(DEFAULT_PARAMS.curves));
-          // HSL åˆ†æ”¯ä»¥å‰æ²¡æœ‰è¢«ä¸Šé¢ä¸¤æ¬¡èº«åˆ†å‚æ•°è¦†ç›–ï¼Œé¦–æ¬¡æ‹–åŠ¨æ—¶æ‰è§¦å‘ JITï¼Œ
-          // å› è€Œåªåœ¨å‰å‡ æ¬¡æ‰‹åŠ¿å¡é¡¿ã€‚ç”¨æœ€å¤š 192Ã—192 çš„å·¥ä½œåŒºå…ˆè·‘ä¸¤æ¬¡ï¼Œè¶³ä»¥
-          // ä¼˜åŒ–çƒ­ç‚¹ï¼Œåˆä¸ä¼šæ‹¿æ•´å¼  1800px é¢„è§ˆåšæ— æ„ä¹‰çš„é‡è¿ç®—ã€‚
-          const hw = Math.min(pw, 192), hh = Math.min(ph, 192);
-          const hLen = hw * hh * 4;
-          const hSrc = pData.subarray(0, hLen);
-          const hDst = new Uint8ClampedArray(hLen);
-          const hCurves = getCurveLuts(WARMUP_HSL_PARAMS.curves);
-          processPixels(hSrc, hDst, hw, hh, WARMUP_HSL_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, hCurves);
-          processPixels(hSrc, hDst, hw, hh, WARMUP_HSL_PARAMS, null, 0, baseCorrectionLutRef.current, null, false, hCurves);
-          pipelineWarmedRef.current = true;
-        }
-        // å·²ç¶“ç”¨é ç†±çš„ç•«é¢è£œä¸Šèª¿æ•´å¾Œçš„æ¨£å­äº†ï¼Œå°±åˆ¥å†ç•«ä¸€æ¬¡åŽŸåœ– â€”â€” é‚£æœƒé–ƒä¸€ä¸‹ã€‚
-        if (warmPaintedSrcRef.current !== warmKey) render(DEFAULT_PARAMS, 0);
-        warmPaintedSrcRef.current = null;
-        // é€™ä¸€ç­†ç•«çš„æ˜¯ã€Œé‚„æ²’èª¿æ•´ã€çš„æ¨£å­ã€‚æ‰¹é‡ç·¨è¼¯æ›ç…§ç‰‡æ™‚ï¼Œåƒæ•¸å…¶å¯¦æ—©å°±å¥—å¥½äº†ï¼Œ
-        // åªæ˜¯åœ–ç‰‡è§£ç¢¼æ¯” React æ…¢ä¸€æ­¥ï¼Œé€™ä¸€ç­†å°±æœƒæŠŠèª¿æ•´å¾Œçš„ç•«é¢è“‹æŽ‰ â€”â€”
-        // ç•«é¢æ–¼æ˜¯åœåœ¨åŽŸåœ–ï¼Œè¦ç­‰ä½¿ç”¨è€…å†åŽ»å‹•ä¸€ä¸‹æ‰æœƒæ¢å¾©ã€‚
-        // æ¨™è¨˜æˆé«’çš„ï¼Œä¸‹ä¸€å€‹å½±æ ¼å°±æœƒç”¨ç¾åœ¨çš„åƒæ•¸é‡ç•«ä¸€æ¬¡ã€‚
-        isDirtyRef.current = true;
-        lastRenderTimeRef.current = 0;
-      } else {
-        // å¹¾ä½•æ”¹è®Šå¾Œæ‰€æœ‰å¿«å–éƒ½å°ä¸ä¸ŠèˆŠå°ºå¯¸ï¼Œå…¨éƒ¨ä½œå»¢å†é‡ç•«ä¸€æ¬¡
-        filterPixelCacheRef.current = {}; cacheOrderRef.current = [];
-        lastProcessedParamsRef.current = { ...lastProcessedParamsRef.current, bufferWidth: 0, curvesRef: null, hslRef: null };
-        extremeBuffersRef.current = { activeToolId: '', base: null, min: null, max: null };
-        fastPreviewCacheRef.current.active = false;
-        lut0StateRef.current = {};
-        lut0CanvasRef.current = null;
-        lut100CanvasRef.current = null;
-        pixelBufferCanvasRef.current = null;
-        cachedBlurCanvasRef.current = null;
-        cachedSoftCanvasRef.current = null;
-        cachedNoise2CanvasRef.current = null;
-        cachedHalationCanvasRef.current = null;
-        cachedVignetteCanvasRef.current = null;
-        blurCacheStateRef.current = null;
-        softCacheStateRef.current = null;
-        noise2CacheStateRef.current = null;
-        halationCacheStateRef.current = null;
-        isDirtyRef.current = true;
-        lastRenderTimeRef.current = 0;
-      }
-
-      // Instantly unlock UI, run sharp block async
-      if (initial) setIsEditorLoading(false);
-
-      precalcSharpenAsync(pData, pw, ph).then((pDetail) => {
-          if (buffers.current) {
-              buffers.current.preview.sharpenDetail = pDetail;
-          }
-          const f = buffers.current?.fast;
-          if (f && f.source) {
-              return precalcSharpenAsync(f.source, f.w, f.h).then((fDetail) => {
-                  if (buffers.current?.fast) buffers.current.fast.sharpenDetail = fDetail;
-              });
-          }
-      });
-  }, [render, getCurveLuts]);
-
-  // å¥—ç”¨æ§‹åœ–ï¼šç”¨æ–°çš„å¹¾ä½•æŠŠä¾†æºé‡æ–°ç®—ä¸€æ¬¡ï¼Œå†æ•´å€‹é‡å»ºé è¦½ç·©è¡ã€‚
-  const applyGeo = useCallback((g: GeoParams) => {
-    const img = originalImgRef.current;
-    if (!img) return;
-    const sw = img.naturalWidth || img.width;
-    const sh = img.naturalHeight || img.height;
-    const src = isGeoIdentity(g) ? img : composeCanvas(img, sw, sh, g, 2400);
-    const w = 'width' in src ? (src as HTMLCanvasElement).width : sw;
-    const h = 'height' in src ? (src as HTMLCanvasElement).height : sh;
-    buildBuffersFromRef.current(src, isGeoIdentity(g) ? sw : w, isGeoIdentity(g) ? sh : h, false);
-    geoRef.current = g;
-    setGeo(g);
-  }, []);
-
-  useEffect(() => { applyGeoRef.current = applyGeo; }, [applyGeo]);
-
-  const buildBuffersFromRef = useRef(buildBuffersFrom);
-  useEffect(() => { buildBuffersFromRef.current = buildBuffersFrom; }, [buildBuffersFrom]);
-
-
-  // ... (rest of the component, render loop, UI handlers, JSX remain same as previous version)
-  const isInteractingRef = useRef(isInteracting);
-  useEffect(() => {
-    isInteractingRef.current = isInteracting;
-    // Entering or leaving a drag swaps the render target between the low-res proxy and the
-    // full preview buffer, so force one render at the new resolution.
-    isDirtyRef.current = true;
-    lastRenderTimeRef.current = 0;
-  }, [isInteracting]);
-
-  const lastRenderTimeRef = useRef<number>(0);
-  const lastRenderDurationRef = useRef<number>(16); // Default 16ms
-
-  // Unified, high-performance continuous requestAnimationFrame scheduler
-  // Eliminates race conditions, enables 60fps renders, and processes before/after comparing cleanly
-  useEffect(() => {
-    let rafId: number;
-    let isActive = true;
-
-    /* å‰›è¼‰å¥½çš„æ¿¾é¡å·²ç¶“ç®—éŽä¸€è¼ªäº† â€”â€” é€™æ™‚å€™æ‰æ”¶æŽ‰é‚£é¡†æŒ‰éˆ•ä¸Šçš„è½‰åœˆã€‚
-       æ¯”å° id æ˜¯ç‚ºäº†ã€Œé€£é»žå…©é¡†éƒ½é‚„æ²’è¼‰çš„æ¿¾é¡ã€é‚£ç¨®æƒ…æ³ï¼š
-       å…ˆè¼‰å¥½çš„é‚£é¡†ä¸èƒ½æŠŠé‚„åœ¨è¼‰çš„é‚£é¡†çš„è½‰åœˆä¸€èµ·æ”¶æŽ‰ã€‚ */
-    const clearPendingLutPaint = () => {
-        const doneId = pendingLutPaintRef.current;
-        if (!doneId) return;
-        pendingLutPaintRef.current = null;
-        setLoadingLutId(cur => (cur === doneId ? null : cur));
-    };
-
-    const tick = () => {
-        if (!isActive) return;
-
-        const b = buffers.current.preview;
-        const cvs = displayCanvasRef.current;
-        /* é–’è‘—çš„æ™‚å€™å…ˆæŠŠ GPU æš–èµ·ä¾†ï¼ˆä¸Šå‚³è²¼åœ–ã€å»ºè¡¨ã€è·‘ä¸€æ¬¡ç©º drawï¼‰ã€‚
-           ä¸å…ˆåšçš„è©±é€™äº›ä¸€æ¬¡æ€§æˆæœ¬æœƒè½åœ¨æ‰‹æŒ‡æŒ‰ä¸‹æ»‘æ¡¿çš„ç¬¬ä¸€å¹€ï¼Œå°±æ˜¯ã€ŒæŠ–ä¸€ä¸‹ã€ã€‚ */
-        if (!isDirtyRef.current && !isInteractingRef.current && b?.source && b.w && b.h) {
-            warmGpu(b.source, b.w, b.h, `${b.w}x${b.h}|${buffersSrcRef.current}`);
-            /* è²¼åœ–æš–å¥½ä¹‹å¾Œï¼ŒæŽ¥è‘—ä¸€é¡†ä¸€é¡†æŠŠæ¿¾é¡çš„æŸ¥è‰²è¡¨ä¹Ÿçƒ¤èµ·ä¾†ã€‚
-               æ¯æ¬¡é–’ç½®åªçƒ¤ä¸€é¡†ï¼Œä¸»åŸ·è¡Œç·’é¦¬ä¸Šé‚„å›žåŽ»ã€‚ */
-            const baked = gpuWarmKeyRef.current ? warmBakes(paramsRef.current) : false;
-            /* æŸ¥è‰²è¡¨éƒ½çƒ¤å®Œäº†æ‰è¼ªåˆ°é€™å€‹ï¼šæŠŠã€Œæ‹–æ›³ä¸­è¦ç”¨çš„é‚£ä¸‰å¼µå…¨è§£æžåº¦ç•«é¢ã€
-               å…ˆç®—å¥½ï¼Œæ‰‹æŒ‡ç¢°åˆ°æ»‘æ¡¿é‚£ä¸€ä¸‹å°±ä¸ç”¨åœä¸‹ä¾†ç®—ï¼ˆåŽŸæœ¬æœƒå¡ 270ï½ž303msï¼‰ã€‚
-               ä¸€æ¨£ä¸€æ¬¡åªç®—ä¸€ä»½ï¼ˆé‡åˆ°ç´„ 85ï½ž115msï¼‰ï¼Œä¸æœƒä¸€å£æ°£ä½”ä½ä¸»åŸ·è¡Œç·’ã€‚
-
-               è€Œä¸”è¦ç­‰ç•«é¢ã€ŒçœŸçš„åœä¸‹ä¾† 250ms ä»¥ä¸Šã€æ‰é–‹å§‹ â€”â€” å‰›é»žå®Œå·¥å…·ã€
-               æˆ–æ­£åœ¨æ²å·¥å…·åˆ—çš„é‚£ä¸€å°æ®µæ™‚é–“åˆ¥åŽ»æ¶ä¸»åŸ·è¡Œç·’ï¼Œä¸ç„¶é ç†±æœ¬èº«
-               æœƒè®Šæˆæ–°çš„é “é»žã€‚ */
-            if (!baked && performance.now() - lastRenderTimeRef.current > 250) warmFastPreviewRef.current();
-        }
-        // æ›ç…§ç‰‡æ™‚ï¼Œæ–°åœ–é‚„åœ¨è§£ç¢¼ï¼Œç·©è¡å€è£¡è£çš„é‚„æ˜¯ä¸Šä¸€å¼µ â€”â€” é€™æ™‚å€™ç•«å‡ºåŽ»å°±æ˜¯èˆŠç…§ç‰‡ã€‚
-        // ç­‰ç·©è¡å€æ›æˆç¾åœ¨é€™ä¸€å¼µå†ç•«ã€‚
-        const buffersReady = buffersSrcRef.current === activeSrcRef.current;
-        if (cvs && b && b.source && b.dest && buffersReady) {
-            const currentParams = paramsRef.current;
-            const currentShowOriginal = showOriginalRef.current;
-            const interacting = isInteractingRef.current;
-            const now = performance.now();
-            
-            const flipped = currentShowOriginal !== lastRenderedShowOriginalRef.current;
-            /* â”€â”€ å‰å¾Œå°æ¯”ï¼šæŒ‰ä¸‹ï¼æ”¾é–‹éƒ½ä¸è¦å†è·‘ä¸€æ¬¡æ•´æ¢ç®¡ç·š â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-               æŒ‰ä¸‹åŽ»ï¼šå…ˆæŠŠç¾åœ¨ç•«å¸ƒä¸Šé‚£å¼µï¼ˆï¼ç·¨è¼¯å¾Œï¼‰è¤‡è£½ä¸€ä»½ç•™è‘—ã€‚
-               æ”¾é–‹  ï¼šæŒ‰è‘—çš„æœŸé–“å¦‚æžœä»€éº¼éƒ½æ²’è®Šï¼ˆisDirtyRef æ˜¯ä¹¾æ·¨çš„ï¼‰ï¼Œ
-                       ç›´æŽ¥æŠŠé‚£ä»½è²¼å›žä¾†å°±å¥½ï¼Œä¸€æ¬¡æ¬ç§»ï¼Œä¸å¿…é‡ç®—ã€‚ */
-            if (flipped) {
-                const snapKey = `${b.w}x${b.h}|${buffersSrcRef.current}`;
-                if (currentShowOriginal) {
-                    if (!compareSnapRef.current) compareSnapRef.current = document.createElement('canvas');
-                    const snap = compareSnapRef.current;
-                    if (snap.width !== b.w || snap.height !== b.h) { snap.width = b.w; snap.height = b.h; }
-                    const sctx = snap.getContext('2d')!;
-                    sctx.globalCompositeOperation = 'copy';
-                    sctx.drawImage(cvs, 0, 0);
-                    sctx.globalCompositeOperation = 'source-over';
-                    compareSnapKeyRef.current = isDirtyRef.current ? '' : snapKey;
-                } else if (!isDirtyRef.current && compareSnapRef.current && compareSnapKeyRef.current === snapKey) {
-                    const dctx = cvs.getContext('2d')!;
-                    dctx.globalCompositeOperation = 'copy';
-                    dctx.drawImage(compareSnapRef.current, 0, 0);
-                    dctx.globalCompositeOperation = 'source-over';
-                    cvs.style.filter = 'none';
-                    lastRenderedShowOriginalRef.current = false;
-                    lastRenderTimeRef.current = now;
-                    rafId = requestAnimationFrame(tick);
-                    return;
-                }
-            }
-
-            if (isDirtyRef.current || flipped) {
-                const elapsed = now - lastRenderTimeRef.current;
-
-                // Adaptive Throttle: If user is interacting, we decouple the slider visual UI from canvas renders
-                // by enforcing a healthy throttling rate during dragging. This leaves the main thread completely free
-                // to process mouse/touch events and paint the slider handle at a perfect, fluid, lag-free 120 FPS.
-                // If rendering is extremely fast (< 8ms, e.g. proxy extreme blends for brightness/exposure/contrast),
-                // we do NOT throttle to allow simultaneous high-framerate image rendering.
-                // With the low-res interactive proxy a full pipeline pass is now cheap enough
-                // that the old "at least 80ms between frames" floor became the bottleneck, so
-                // the gap is tied to the measured render cost instead of a fixed minimum.
-                const throttleMs = interacting
-                    ? (lastRenderDurationRef.current > 8
-                        ? Math.max(24, lastRenderDurationRef.current * 1.2)
-                        : 0)
-                    : 0;
-                
-                if (elapsed >= throttleMs) {
-                    isDirtyRef.current = false;
-                    lastRenderedShowOriginalRef.current = currentShowOriginal;
-                    lastRenderTimeRef.current = now;
-                    
-                    if (interacting) {
-                        // Defer the heavy render calculation to a setTimeout (macro-task)
-                        // so the browser can paint the UI (including the smooth slider handle and text)
-                        // at 120 FPS first before executing the heavy canvas image processing.
-                        if (renderTimeoutRef.current) {
-                            clearTimeout(renderTimeoutRef.current);
-                        }
-                        renderTimeoutRef.current = setTimeout(() => {
-                            const start = performance.now();
-                            render(currentParams, mergeFreezeRef.current?.lutIdx);
-                            const duration = performance.now() - start;
-                            lastRenderDurationRef.current = duration;
-                            renderTimeoutRef.current = null;
-                            clearPendingLutPaint();
-                        }, 0);
-                    } else {
-                        // For non-interactive/final renders, do it synchronously to ensure instant high-quality paint
-                        if (renderTimeoutRef.current) {
-                            clearTimeout(renderTimeoutRef.current);
-                            renderTimeoutRef.current = null;
-                        }
-                        const start = performance.now();
-                        render(currentParams, mergeFreezeRef.current?.lutIdx);
-                        const duration = performance.now() - start;
-                        lastRenderDurationRef.current = duration;
-                        clearPendingLutPaint();
-                    }
-                }
-            }
-        }
-        rafId = requestAnimationFrame(tick);
-    };
-    
-    tick();
-    return () => {
-        isActive = false;
-        cancelAnimationFrame(rafId);
-        if (renderTimeoutRef.current) {
-            clearTimeout(renderTimeoutRef.current);
-        }
-    };
-  }, [render]);
-
-  useEffect(() => {
-    isDirtyRef.current = true;
-  }, [selectedLutIdx, loadingLutId]);
-
-  const resetParam = (id: keyof EditorParams) => {
-    let defaultValue = DEFAULT_PARAMS[id];
-    
-    // Specific defaults based on current LUT
-    const url = lutList[selectedLutIdx]?.url || '';
-    const lutId = lutList[selectedLutIdx]?.id || 'none';
-    if (id === 'lutAmount') {
-        if (url.includes('IMG_3371') || url.includes('Untitled_grid') || url.includes('IMG_3328') || 
-            url.includes('IMG_3373') || url.includes('IMG_3374') || 
-            url.includes('IMG_9026') || url.includes('IMG_0214') || lutId === 'f4') defaultValue = 70;
-        else if (url.includes('IMG_0285') || url.includes('IMG_0286') || url.includes('IMG_8998') || url.includes('IMG_7932')) defaultValue = 50;
-        else if (url.includes('sample_colorscale') || url.includes('IMG_7936')) defaultValue = 80;
-        else if (url.includes('IMG_30222')) defaultValue = 50;
-        else if (url.includes('IMG_7938') || url.includes('IMG_7940') || url.includes('IMG_7211')) defaultValue = 100;
-    } else if (id === 'blur') {
-        defaultValue = isBlurActive ? (blurManuallyAdjusted ? userBlurRef.current : ((lutId === 'f22' || lutId === 'f23') ? 30 : 40)) : 0;
-    } else if (id === 'colorNoise') {
-        defaultValue = isGrainActive ? (grainManuallyAdjusted ? userGrainRef.current.colorNoise : 20) : 0;
-    }
-
-    const nextParams = { ...params, [id]: defaultValue };
-
-    // Update manually adjusted state and active toggles if resetting specific parameters
-    let nextSoftActive = isSoftActive;
-    let nextBlurActive = isBlurActive;
-    let nextGrainActive = isGrainActive;
-    let nextSoftManual = softManuallyAdjusted;
-    let nextBlurManual = blurManuallyAdjusted;
-    let nextGrainManual = grainManuallyAdjusted;
-
-    if (id === 'soft') {
-        nextSoftActive = defaultValue > 0;
-        nextSoftManual = false;
-        setSoftManuallyAdjusted(false);
-        setIsSoftActive(defaultValue > 0);
-    } else if (id === 'blur') {
-        nextBlurActive = defaultValue > 0;
-        nextBlurManual = false;
-        setBlurManuallyAdjusted(false);
-        setIsBlurActive(defaultValue > 0);
-    } else if (id === 'grain' || id === 'colorNoise' || id === 'colorNoise2') {
-        const nextP = { ...nextParams, [id]: defaultValue };
-        const hasGrain = nextP.grain > 0 || nextP.colorNoise > 0 || nextP.colorNoise2 > 0;
-        nextGrainActive = hasGrain;
-        nextGrainManual = false;
-        setGrainManuallyAdjusted(false);
-        setIsGrainActive(hasGrain);
-    }
-
-    setParams(nextParams);
-    paramsRef.current = nextParams;
-    addToHistory(nextParams, selectedLutIdx, nextSoftActive, nextBlurActive, nextGrainActive, nextSoftManual, nextBlurManual, nextGrainManual);
-  };
-
-  const handleDoubleTap = (e: React.MouseEvent | React.TouchEvent, id: keyof EditorParams) => {
-      const now = Date.now();
-      const last = lastTapRef.current[id as string] || 0;
-      if (now - last < 300) {
-          resetParam(id);
-          lastTapRef.current[id as string] = 0;
-          if (e.type === 'touchend') e.preventDefault();
-      } else {
-          lastTapRef.current[id as string] = now;
-      }
-  };
-
-  /** æŠŠä¸€å¼µç…§ç‰‡ç”¨æŒ‡å®šçš„ä¸€çµ„åƒæ•¸ç®—å‡ºæˆå“ï¼ˆå­˜æª”ç”¨çš„åŽŸå§‹è§£æžåº¦ï¼‰ */
-  const renderOneCanvas = (img: HTMLImageElement, snap: BatchSnap): HTMLCanvasElement => {
-    const g = snap.geo;
-    const p = snap.params;
-    const ow = img.naturalWidth || img.width;
-    const oh = img.naturalHeight || img.height;
-    // å­˜æª”ç”¨åŽŸå§‹è§£æžåº¦é‡è·‘ä¸€æ¬¡æ§‹åœ–ï¼Œé è¦½æ™‚çš„ 2400px ç‰ˆæœ¬åªæ˜¯çµ¦ç•«é¢çœ‹çš„
-    const geoSource: CanvasImageSource = isGeoIdentity(g) ? img : composeCanvas(img, ow, oh, g);
-    const w = isGeoIdentity(g) ? ow : (geoSource as HTMLCanvasElement).width;
-    const h = isGeoIdentity(g) ? oh : (geoSource as HTMLCanvasElement).height;
-    const c = document.createElement('canvas');
-    c.width = w; c.height = h;
-    const ctxOriginal = c.getContext('2d', { willReadFrequently: true })!;
-    ctxOriginal.drawImage(geoSource, 0, 0, w, h);
-    const sourceData = ctxOriginal.getImageData(0, 0, w, h).data;
-    const len = sourceData.length;
-    /* åƒç´ å·²ç¶“è®€å‡ºä¾†å¾Œç«‹å³é‡‹æ”¾ä¾†æºç•«å¸ƒã€‚12MP çš„ä¸€å¼µ RGBA ç•«å¸ƒç´„ 48MBï¼›
-       èˆŠç‰ˆåŒ¯å‡ºæ™‚åŒæ™‚ä¿ç•™å¤šä»½ï¼ŒiOS æœƒå› æ­¤æ”¶èµ° WebGL contextã€‚ */
-    c.width = 1; c.height = 1;
-    if (geoSource instanceof HTMLCanvasElement && geoSource !== c) {
-      geoSource.width = 1; geoSource.height = 1;
-    }
-
-    /* å¤§åž‹ç·©è¡åªåœ¨çœŸçš„éœ€è¦æ™‚å»ºç«‹ã€‚æ­£å¸¸ GPU åŒ¯å‡ºä¸å†é å…ˆå¤šä½”å…©å¼µå…¨å°ºå¯¸åœ–ï¼Œ
-       éŠ³åŒ–ç‚ºé›¶æ™‚ä¹Ÿä¸è¨ˆç®—å®Œå…¨ç”¨ä¸åˆ°çš„ detailã€‚ */
-    let destData: Uint8ClampedArray | null = null;
-    const sharpenDetail = p.sharpen > 0 ? precomputeSharpenDetail(sourceData, w, h) : null;
-
-    const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext('2d')!;
-    const lut = lutList[snap.selectedLutIdx];
-    const activeLut = lut && lut.url ? lutDataRef.current[lut.id] : null;
-    const lutSize = activeLut ? activeLut.size : 0;
-
-    generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseCorrectionLutRef.current);
-
-    /* â”€â”€ åŒ¯å‡ºä¹Ÿèµ° GPU â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-       é€™è£¡æ˜¯åŽŸå§‹è§£æžåº¦ï¼ˆå‹•è¼’ä¸€å…©åƒè¬åƒç´ ï¼‰ï¼ŒCPU é€åƒç´ æ˜¯æ•´å€‹å­˜æª”æœ€æ…¢çš„ä¸€æ­¥ã€‚
-       æ”¹æˆï¼šç”¨ç¾æœ‰çš„ processPixels åœ¨ 65Â³ å€‹æ ¼é»žä¸Šç®—ä¸€æ¬¡çƒ¤æˆæŸ¥è‰²è¡¨ï¼ˆ16msï¼‰ï¼Œ
-       GPU ä¸€å€‹ draw call æŸ¥å®Œæ•´å¼µåœ–ï¼Œç›´æŽ¥ç•«é€²ç•«å¸ƒ â€”â€” ä¸éœ€è¦æŠŠåƒç´ è®€å›žä¾†ï¼Œ
-       å› ç‚ºæŽ¥ä¸‹ä¾†å°±æ˜¯ç·¨ç¢¼æˆ PNGï¼Œç•«å¸ƒæœ¬èº«å°±æ˜¯è¦çš„æ±è¥¿ã€‚
-
-       ä¸èƒ½èµ° GPU çš„æƒ…æ³ï¼š
-         Â· éŠ³åŒ– â€”â€” è¦çœ‹é„°å±…åƒç´ ï¼ˆé€™è£¡æœ‰ sharpenDetailï¼‰ï¼Œçƒ¤ä¸é€²æŸ¥è‰²è¡¨
-         Â· colorNoise2 â€”â€” å®ƒçš„é›œè¨Šé®ç½©è¦åƒ destData çš„åƒç´ 
-         Â· åœ–ç‰‡è¶…éŽè£ç½®çš„è²¼åœ–ä¸Šé™ â€”â€” gpuPaint å…§éƒ¨æœƒæ“‹æŽ‰
-       ä»»ä½•ä¸€æ­¥å¤±æ•—éƒ½åŽŸå°ä¸å‹•èµ°ä¸‹é¢åŽŸæœ¬çš„ CPU è·¯å¾‘ï¼Œæˆå“å®Œå…¨ä¸€æ¨£ã€‚ */
-    let gpuOk = false;
-    if (!p.sharpen && !p.colorNoise2) {
-      const gc = document.createElement('canvas');
-      gpuOk = gpuPaint(gc, sourceData, w, h, p,
-        activeLut ? activeLut.data : null, lutSize, 65, `export|${w}x${h}|${Math.random()}`, null,
-        activeLut ? `${lut?.id}#${lutSize}` : 'none');
-      if (gpuOk) {
-        ctx.clearRect(0, 0, w, h);
-        ctx.drawImage(gc, 0, 0);
-        /* Safari è¨˜æ†¶é«”åƒç·Šæ™‚å¶çˆ¾ä¸å›ž WebGL éŒ¯èª¤ï¼Œå»åªäº¤å‡ºå…¨é»‘ drawing bufferã€‚
-           é©—è­‰çœŸå¯¦åƒç´ ï¼›åªæœ‰ä¾†æºæœ‰è‰²å½©è€Œè¼¸å‡ºå®Œå…¨ç‚ºé›¶æ™‚æ‰é€€å›ž CPUã€‚ */
-        const sourceHasColor = (() => {
-          const stride = Math.max(4, Math.floor(sourceData.length / (512 * 4)) * 4);
-          for (let i = 0; i < sourceData.length; i += stride) {
-            if (sourceData[i] || sourceData[i + 1] || sourceData[i + 2]) return true;
-          }
-          return false;
-        })();
-        if (sourceHasColor) {
-          try {
-            const probe = document.createElement('canvas');
-            probe.width = 16; probe.height = 16;
-            const probeCtx = probe.getContext('2d', { willReadFrequently: true });
-            probeCtx?.drawImage(canvas, 0, 0, 16, 16);
-            const px = probeCtx?.getImageData(0, 0, 16, 16).data;
-            let outputHasColor = false;
-            if (px) for (let i = 0; i < px.length; i += 4) {
-              if (px[i] || px[i + 1] || px[i + 2]) { outputHasColor = true; break; }
-            }
-            if (!outputHasColor) gpuOk = false;
-            probe.width = 1; probe.height = 1;
-          } catch { gpuOk = false; }
-        }
-      }
-      // è²¼åœ–å·²ç¶“è¢«æ›æˆåŒ¯å‡ºé‚£å¼µäº†ï¼Œè®“é è¦½ä¸‹æ¬¡é‡æ–°ä¸Šå‚³è‡ªå·±çš„
-      gpuSrcKeyRef.current = '';
-      gpuWarmKeyRef.current = '';
-    }
-    if (!gpuOk) {
-      destData = new Uint8ClampedArray(len);
-      processPixels(sourceData, destData, w, h, p, activeLut ? activeLut.data : null, lutSize, baseCorrectionLutRef.current, sharpenDetail, false, getCurveLuts(p.curves));
-      ctx.putImageData(new ImageData(destData, w, h), 0, 0);
-    }
-    const scale = Math.max(w, h) / 1080;
-    applyComplexEffects(ctx, w, h, p, scale, null, false, true, gpuOk ? null : destData);
-    return canvas;
-  };
-
-  /** å°Žå‡ºç”¨ï¼šè·Ÿåˆä½µèµ°åŒä¸€æ”¯å…¨è§£æžåº¦ç®¡ç·šï¼Œåªæ˜¯æœ€å¾Œè½‰æˆ PNGã€‚
-      æˆå“ç”¨ blob ç¶²å€ â€”â€” æ‰¹æ¬¡åå¼µçš„è©± dataURL æœƒæ˜¯å¥½å¹¾ç™¾ MB çš„å­—ä¸²ã€‚ */
-  const renderOne = (img: HTMLImageElement, snap: BatchSnap): Promise<string> =>
-    canvasToUrl(renderOneCanvas(img, snap));
-
-  const loadImg = (src: string) => new Promise<HTMLImageElement>((res, rej) => {
-    const im = new Image();
-    if (!src.startsWith('blob:') && !src.startsWith('data:')) im.crossOrigin = 'anonymous';
-    im.onload = () => res(im);
-    im.onerror = () => rej(new Error('load failed'));
-    im.src = src;
-  });
-
-  /** é›¢é–‹ç·¨è¼¯å™¨æ™‚ï¼Œå¦‚æžœèª¿æ•´éŽä½†æ²’å°Žå‡ºï¼Œä¹Ÿè¨˜ä¸€ç­†åˆ°æ­·å²ç´€éŒ„ã€‚
-      ç¸®åœ–ç›´æŽ¥ç”¨ç•«é¢ä¸Šçš„é è¦½ï¼ˆå·²ç¶“æ˜¯é¡¯ç¤ºè§£æžåº¦ï¼Œå¾ˆå°å¾ˆå®‰å…¨ï¼‰ã€‚ */
-  const recordProgress = useCallback(async () => {
-    /* æ˜¯å¦éœ€è¦è©¢å•å·²ç”± requestLeave æŒ‰å¯¦éš›æˆå“åˆ¤æ–·ã€‚
-       æ¢å¾©çš„å·²ç·¨è¼¯å°ˆæ¡ˆæœƒæŠŠç•¶å‰æˆå“è¨­æˆ history ç¬¬ 0 æ ¼ï¼Œå› æ­¤é€™è£¡ä¸èƒ½å†ç”¨
-       historyIndex <= 0 è·³éŽï¼›å¦åˆ™æŒ‰äº†ã€Œå„²å­˜ã€ä¹Ÿä¸æœƒå¯«å…¥æ­·å²ç´€éŒ„ã€‚ */
-    const cv = displayCanvasRef.current;
-    if (!cv || !cv.width || !cv.height) return;
-    try {
-      const p = paramsRef.current;
-      // ç•«é¢ä¸Šé€™ä¸€å¼µå¯èƒ½æ­£è“‹è‘—é®è‰²ç‰‡çš„ç´…è‰²é®ç½©ï¼ˆé‚£åªæ˜¯ç·¨è¼¯æ™‚çš„è¼”åŠ©é¡¯ç¤ºï¼‰ã€‚
-      // ç›´æŽ¥æŠ“çš„è©±é¦–é çš„æ­·å²ç¸®åœ–å°±æœƒæ˜¯ç´…çš„ â€”â€” å…ˆç”¨åŒä¸€æ”¯ render é‡ç•«ä¸€å¼µæ²’æœ‰é®ç½©çš„ã€‚
-      if (p.maskCreated && p.maskShowOverlay && activeCategory === 'mask') {
-        render({ ...p, maskShowOverlay: false });
-      }
-      await addExport('editor', cv.toDataURL('image/png'), srcList[safeIdx] || imageSrc, {
-        params: p, geo, selectedLutIdx,
-      }, histKey || undefined);
-    } catch { /* è¨˜éŒ„å¤±æ•—ä¸èƒ½å½±éŸ¿é›¢é–‹ */ }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [historyIndex, srcList, safeIdx, imageSrc, geo, selectedLutIdx, activeCategory, render]);
-
-  const requestLeave = useCallback(async () => {
-    /* æ˜¯å¦è¦è©¢å•ä¸èƒ½åªçœ‹ã€Œé€™æ¬¡é€²ä¾†å¾Œæœ‰æ²’æœ‰æ–°å¢ž historyã€ã€‚
-       å¾žè‡ªå‹•æš«å­˜æ¢å¾©æ™‚ history æœƒå¾ž 0 é‡æ–°é–‹å§‹ï¼Œä½†ç•«é¢æœ¬èº«å¯èƒ½æ—©å·²ä¸æ˜¯åŽŸåœ–ï¼›
-       é€™ç¨®æƒ…æ³ç›´æŽ¥è¿”å›žæœƒè®“ä½¿ç”¨è€…èª¤ä»¥ç‚ºç·¨è¼¯ä¸éœ€è¦ä¿å­˜ã€‚
-       å› æ­¤ä»¥å¯¦éš›æˆå“åˆ¤æ–·ï¼šåƒæ•¸ã€æ¿¾é¡ã€æ§‹åœ–ã€å·²çƒ¤é€²ä¾†æºçš„åˆä½µï¼Œä»»ä¸€ä¸åŒå³ç‚ºå·²ç·¨è¼¯ã€‚ */
-    const paramsChanged = JSON.stringify(paramsRef.current) !== JSON.stringify(DEFAULT_PARAMS);
-    const geoChanged = !isGeoIdentity(geo);
-    const sourceChanged = activeSrc !== imageSrc;
-    const hasEditedContent =
-      historyIndex > 0 || paramsChanged || geoChanged || selectedLutIdx !== 0 || sourceChanged;
-    if (!hasEditedContent) {
-      onCancel(Boolean(initialState));
-      return;
-    }
-    const choice = onRequestExit ? await onRequestExit() : 'discard';
-    if (choice === 'cancel') return;
-    if (choice === 'save') {
-      await saveToolDraft('editor', imageSrc, {
-        params: paramsRef.current, geo, selectedLutIdx,
-        __histKey: histKey || initialState?.__histKey || null,
-      });
-      await recordProgress();
-    }
-    onCancel(choice === 'save');
-  }, [historyIndex, initialState, onRequestExit, onCancel, imageSrc, activeSrc, geo, selectedLutIdx, recordProgress]);
-
-  /* ã€Œåˆä½µã€ï¼šæŠŠç¾åœ¨ç•«é¢ä¸Šçš„æ¨£å­ç”¨å…¨è§£æžåº¦çƒ¤æˆä¸€å¼µæ–°çš„åŽŸåœ–ï¼Œåƒæ•¸æ•´çµ„æ­¸é›¶ã€‚
-     ç‰¹æ•ˆä¸€æ¬¡åªèƒ½å¥—ä¸€å€‹ï¼Œåˆä½µéŽçš„é‚£ä¸€å±¤å·²ç¶“è®Šæˆé»žé™£åœ–çš„ä¸€éƒ¨åˆ†ï¼Œ
-     æ‰€ä»¥åˆä½µå®Œå°±å¯ä»¥å†ç–Šä¸‹ä¸€å€‹ç‰¹æ•ˆã€‚
-     çƒ¤é€²åŽ»çš„æ˜¯æ•´æ¢ç®¡ç·šçš„çµæžœï¼ˆæ¿¾é¡ï¼‹èª¿ç¯€ï¼‹ç‰¹æ•ˆï¼‰ï¼Œä¸æ˜¯åªæœ‰ç‰¹æ•ˆé‚£ä¸€æ®µ â€”â€”
-     ç‰¹æ•ˆæ˜¯æŽ¥åœ¨æœ€å¾Œé¢ç®—çš„ï¼ŒåªæŠ½ç‰¹æ•ˆå‡ºä¾†çƒ¤çš„è©±è·Ÿç•«é¢ä¸Šçœ‹åˆ°çš„ä¸æœƒä¸€æ¨£ã€‚ */
-  const mergingRef = useRef(false);
-  /* åˆä½µé€šå¸¸ä¸€çž¬é–“å°±å¥½ï¼Œé€™æ™‚å€™é–ƒä¸€ä¸‹è½‰åœˆåè€Œç¤™çœ¼ã€‚
-     åªæœ‰çœŸçš„ç­‰è¶…éŽ 200msï¼ˆè¦è¼‰åœ–ã€åœ–å¾ˆå¤§ï¼‰æ‰æŠŠè½‰åœˆæ”¾åˆ°é è¦½æ­£ä¸­å¤®ã€‚ */
-  /** æˆ‘å€‘è‡ªå·±æ›ä¾†æºï¼ˆåˆä½µï¼æ’¤éŠ·åˆä½µï¼‰æ™‚ç«‹èµ·ä¾†ï¼šæ›ç…§ç‰‡é‚£ä¸€æ•´å¥—æ­¸é›¶å°±è·³éŽ */
-  const srcSwapRef = useRef(false);
-  /** æ›ä¾†æºæ™‚æŠŠæ–°çš„é‚£å¼µåœ–å…ˆè§£å¥½ï¼Œç·©è¡å€æ‰èƒ½åœ¨åŒä¸€æ‹æ›éŽåŽ»ï¼ˆä¸ç„¶ç•«é¢æœƒé–ƒä¸€ä¸‹ï¼‰ */
-  const swapToSrc = (next: string[]) => {
-    srcSwapRef.current = true;
-    setSrcList(next);
-  };
-  /** è‡ªå·±é€ å‡ºä¾†çš„åˆä½µåœ–ç¶²å€ï¼Œæ›æŽ‰æˆ–é›¢é–‹æ™‚è¦æ”¶å›žåŽ» */
-  const mergedUrlsRef = useRef<string[]>([]);
-  useEffect(() => () => { mergedUrlsRef.current.forEach(u => { try { URL.revokeObjectURL(u); } catch {} }); }, []);
-
-  /** ç¾åœ¨æœ‰æ²’æœ‰æ±è¥¿å¯ä»¥åˆä½µï¼šç‰¹æ•ˆæˆ–æ¿¾é¡ä»»ä¸€å€‹æœ‰å¥—å°±ç®—ï¼ˆåˆä½µéŽçš„éƒ½å·²ç¶“æ­¸é›¶ï¼‰ */
-  const hasMergeable = hasLiveEffect(params) || (selectedLutIdx > 0 && (params.lutAmount ?? 100) > 0);
-  /** é€™å¼µåœ¨ç›®å‰é€™ä¸€é å·²ç¶“åˆä½µé€²åŽ»å¹¾å€‹äº†ï¼ˆæ’¤éŠ·æœƒè·Ÿè‘—å›žåŽ»ï¼‰ã€‚
-      æ­£åœ¨çƒ¤çš„é‚£ä¸€æ¬¡ä¹Ÿå…ˆç®—é€²åŽ» â€”â€” ä½¿ç”¨è€…æŒ‰ä¸‹åŽ»å°±è©²çœ‹åˆ°æ•¸å­—ï¼Œä¸ç”¨ç­‰èƒŒæ™¯ã€‚ */
-  const mergedCount = (() => {
-    const d = mergeDepthOf(activeSrc);
-    const p = mergePending ? mergePendingBakeRef.current : { lut: 0, fx: 0 };
-    return activeCategory === 'effects' ? d.fx + p.fx : d.lut + p.lut;
-  })();
-
-  const mergeEffects = () => {
-    if (!originalImgRef.current || mergingRef.current) return;
-    mergingRef.current = true;
-    if (isInteracting) setIsInteracting(false);
-
-    /* â”€â”€ æŒ‰ä¸‹çš„é€™ä¸€æ‹ï¼Œä»‹é¢å°±æ•´å€‹åˆ‡æˆã€Œåˆä½µå®Œã€çš„æ¨£å­ â”€â”€
-       æ¿¾é¡ï¼ç‰¹æ•ˆå›žåˆ°åŽŸå§‹ã€æ»‘æ¡¿æ”¶èµ·ä¾†ã€å››é¡†é–‹é—œé—œæŽ‰ã€åˆä½µéµè®Šæˆã€Œå·²åˆä½µNã€ã€‚
-       ç•«é¢ä¸Šçš„åœ–é‚„æ˜¯ç¶­æŒç¾åœ¨çš„æ¨£å­ï¼ˆæ•ˆæžœå·²ç¶“åœ¨ä¸Šé¢äº†ï¼‰ï¼Œç­‰èƒŒæ™¯çƒ¤å¥½ã€
-       æ–°çš„ä¾†æºåœ–è§£ç¢¼å®Œå†ç„¡ç¸«æ›æŽ‰ â€”â€” æ‰€ä»¥çœ‹èµ·ä¾†å°±æ˜¯ã€ŒæŒ‰ä¸‹åŽ»å°±å¥½äº†ã€ã€‚
-
-       ç•«é¢è¦èƒ½ç¹¼çºŒç…§èˆŠç•«ï¼Œé çš„æ˜¯æŠŠé€™ä¸€åˆ»çš„åƒæ•¸èˆ‡æ¿¾é¡ç·¨è™Ÿå‡åœ¨ mergeFreezeRefï¼š
-       ç¹ªåœ–è¿´åœˆèªå‡ä½çš„é‚£ä¸€ä»½ï¼Œä»‹é¢èªå·²ç¶“æ­¸é›¶çš„ stateï¼Œå…©é‚Šäº’ä¸å¹²æ“¾ã€‚ */
-    stashCurrent();
-    const live = cloneSnap(liveRef.current!);
-    mergePendingBakeRef.current = {
-      lut: selectedLutIdx > 0 && (paramsRef.current.lutAmount ?? 100) > 0 ? 1 : 0,
-      fx: hasLiveEffect(paramsRef.current) ? 1 : 0,
-    };
-    mergeFreezeRef.current = { params: paramsRef.current, lutIdx: selectedLutIdx };
-    setMergePending(true);
-
-    const uiFresh = JSON.parse(JSON.stringify(DEFAULT_PARAMS)) as EditorParams;
-    setParams(uiFresh);
-    setSelectedLutIdx(0);
-    setIsSoftActive(false); setIsBlurActive(false);
-    setIsGrainActive(false); setIsHalationActive(false);
-    setSoftManuallyAdjusted(false); setBlurManuallyAdjusted(false);
-    setGrainManuallyAdjusted(false); setHalationManuallyAdjusted(false);
-    /* å‰›å‰›é‚£å€‹ç‰¹æ•ˆï¼æ¿¾é¡å·²ç¶“ä¸åœ¨äº†ï¼Œå®ƒçš„æ»‘æ¡¿ä¹Ÿä¸è©²å†ç•™åœ¨ä¸‹é¢ã€‚
-       å›žåˆ°è·Ÿé»žã€ŒåŽŸå§‹ã€ä¸€æ¨£çš„ä½ç½®ï¼šç‰¹æ•ˆé‚£ä¸€æ—å›žæŸ”å…‰ã€æ¿¾é¡é å›žå¼·åº¦ã€‚
-       æ­£åœ¨çœ‹æŸå€‹ç‰¹æ•ˆçš„ç´°é …æ™‚å°±é€€å›žç‰¹æ•ˆæ¸…å–®ï¼ˆé‚£å€‹ç‰¹æ•ˆå·²ç¶“æ²’äº†ï¼‰ã€‚ */
-    if (['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory)) {
-      setActiveToolId('softLight');
-      if (activeCategory === 'fx') setActiveCategory('effects');
-    } else if (activeCategory === 'filter') {
-      setActiveToolId('filter_select');
-    }
-
-    /* ä¸æ”¾ä»»ä½•å‹•ç•«ä¹Ÿä¸å»¶é²ï¼šæŒ‰ä¸‹åŽ»å°±é–‹å§‹çƒ¤ã€‚
-       é€™ä¸€æ®µæœ¬ä¾†å°±æ˜¯åŒæ­¥é‹ç®—ï¼ŒæŽ’ setTimeout åªæ˜¯å¤šç­‰ä¸€è¼ªã€‚ */
-    (async () => {
-      try {
-        // é€™ä¸€æ¬¡çƒ¤é€²åŽ»çš„æ˜¯å“ªä¸€ç¨®ï¼ˆæŒ‰ä¸‹çš„ç•¶ä¸‹å°±è¨˜å¥½äº†ï¼Œå…©é‚Šéƒ½å¥—çš„è©±å…©é‚Šéƒ½ç®—ï¼‰
-        const { lut: bakedLut, fx: bakedFx } = mergePendingBakeRef.current;
-        const next = [...srcList];
-        const made: string[] = [];
-        for (let i = 0; i < srcList.length; i++) {
-          // æ²’é€£çµçš„é‚£å¹¾å¼µæœ‰è‡ªå·±çš„ä¸€ä»½åƒæ•¸ï¼Œé€™æ¬¡åˆä½µä¸é—œå®ƒå€‘çš„äº‹
-          if (linked[i] === false) continue;
-          const base = cloneSnap(live);
-          const snap: BatchSnap = {
-            ...base,
-            params: { ...base.params, ...(ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS)) } as EditorParams,
-            geo: ownGeoRef.current[i]
-              ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
-              : (i === safeIdx ? base.geo : { ...DEFAULT_GEO, crop: { ...FULL_CROP } }),
-          };
-          const img = i === safeIdx && originalImgRef.current
-            ? originalImgRef.current
-            : await loadImg(srcList[i]);
-          const cvs = renderOneCanvas(img, snap);
-          /* èµ° canvasToUrl ä¸ç›´æŽ¥å« toBlobï¼šiOS çš„ toBlob åœ¨ç•«å¸ƒå¾ˆå¤§åˆç¢°ä¸Š
-             è¨˜æ†¶é«”åƒç·Šæ™‚æœ‰æ©Ÿæœƒæ°¸é ä¸å›žä¾†ï¼ˆè¦‹ utils/blobUrl çš„çœ‹é–€ç‹—ï¼‰ï¼Œ
-             é‚£æœƒè®“æ•´æ‰¹çƒ¤åœ–åœåœ¨ã€Œæ­£åœ¨å­˜æª”ã€ï¼Œè€Œé‚£ä¸€å±¤è“‹è‘—è¿”å›žéµã€‚ */
-          const url = await canvasToUrl(cvs);
-          if (!url) continue;               // é€™ä¸€å¼µçƒ¤ä¸å‡ºä¾†å°±ç¶­æŒåŽŸæ¨£ï¼Œä¸è¦ç•™åŠæˆå“
-          made.push(url);
-          // ç¸®åœ–è¦ä¸€ç›´æ˜¯æœ€åˆé‚£å¼µçš„æ¨£å­ï¼Œæ‰€ä»¥æŠŠè¡€ç·£æŽ¥ä¸ŠåŽ»ï¼ˆå¯èƒ½å·²ç¶“åˆä½µéŽå¥½å¹¾æ¬¡ï¼‰
-          thumbOriginRef.current[url] = thumbSrcOf(srcList[i]);
-          const was = mergeDepthOf(srcList[i]);
-          mergeDepthRef.current[url] = { lut: was.lut + bakedLut, fx: was.fx + bakedFx };
-          next[i] = url;
-          // é€™ä¸€å¼µçš„é®è‰²ç‰‡èˆ‡æ§‹åœ–ä¹Ÿä¸€èµ·çƒ¤é€²åŽ»äº†ï¼Œç•™è‘—æœƒå†å¥—ä¸€æ¬¡
-          delete ownMaskRef.current[i];
-          delete ownGeoRef.current[i];
-        }
-        // å…±ç”¨çš„é‚£ä¸€ä»½åƒæ•¸å·²ç¶“è®Šæˆåœ–äº†ï¼Œä¸èƒ½å†å¥—å›žåŽ»
-        sharedSnapRef.current = null;
-        pendingSnapRef.current = null;
-        pendingSnapSrcRef.current = null;
-        mergedUrlsRef.current.push(...made);
-
-        /* å…ˆæŠŠçƒ¤å¥½çš„é‚£å¼µè§£ç¢¼å®Œå†æ›ä¾†æºã€‚
-           ä¸å…ˆè§£å¥½çš„è©±ï¼Œæ›ä¾†æºä¹‹å¾Œç·©è¡å€é‚„æ˜¯èˆŠçš„é‚£å¼µã€åƒæ•¸å»å·²ç¶“æ­¸é›¶ï¼Œ
-           ä¸­é–“å°±æœƒç•«å‡ºä¸€å¼µã€Œæ²’æœ‰ç‰¹æ•ˆçš„èˆŠåœ–ã€â€”â€” é‚£å°±æ˜¯åˆä½µæ™‚é–ƒçš„é‚£ä¸€ä¸‹ã€‚ */
-        const shownUrl = next[safeIdx];
-        if (shownUrl && shownUrl !== srcList[safeIdx]) {
-          await new Promise<void>(res => {
-            const im = new Image();
-            im.onload = () => { rememberDecoded(shownUrl, im); res(); };
-            im.onerror = () => res();
-            im.src = shownUrl;
-          });
-        }
-
-        // åƒæ•¸æ•´çµ„æ­¸é›¶ï¼ˆæ•ˆæžœéƒ½çƒ¤é€²åœ–è£¡äº†ï¼‰ï¼Œå››é¡†é–‹é—œèˆ‡æ¿¾é¡ä¹Ÿä¸€èµ·æ”¶ä¹¾æ·¨ã€‚
-        // ä»‹é¢æ—©å°±æ˜¯é€™å€‹æ¨£å­äº†ï¼Œé€™è£¡æ˜¯æŠŠç¹ªåœ–é‚£ä¸€å´ä¹Ÿä¸€èµ·è§£å‡ã€‚
-        const fresh = JSON.parse(JSON.stringify(DEFAULT_PARAMS)) as EditorParams;
-        const freshGeo = { ...DEFAULT_GEO, crop: { ...FULL_CROP } };
-        mergeFreezeRef.current = null;
-        paramsRef.current = fresh;
-        geoRef.current = freshGeo;
-        isDirtyRef.current = true;
-        swapToSrc(next);
-        setParams(fresh);
-        setGeo(freshGeo);
-        setSelectedLutIdx(0);
-        setIsSoftActive(false); setIsBlurActive(false);
-        setIsGrainActive(false); setIsHalationActive(false);
-        setSoftManuallyAdjusted(false); setBlurManuallyAdjusted(false);
-        setGrainManuallyAdjusted(false); setHalationManuallyAdjusted(false);
-        // åˆä½µæ˜¯ä¸€æ­¥æ“ä½œï¼Œæ’¤éŠ·è¦èƒ½æŠŠä¾†æºèˆ‡åƒæ•¸ä¸€èµ·é€€å›žåŽ»ï¼ˆsrcs å­˜åœ¨æ­·å²è£¡ï¼‰
-        srcListRef.current = next;
-        addToHistory(fresh, 0, false, false, false, false, false, false, false, false);
-      } catch (e) {
-        console.error('merge failed', e);
-        // çƒ¤å¤±æ•—å°±æŠŠå‡ä½çš„åƒæ•¸æ”¾å›žåŽ»ï¼Œç•«é¢èˆ‡ä»‹é¢é‡æ–°å°é½Š
-        const frozen = mergeFreezeRef.current;
-        mergeFreezeRef.current = null;
-        if (frozen) {
-          paramsRef.current = frozen.params;
-          setParams(frozen.params);
-          setSelectedLutIdx(frozen.lutIdx);
-          isDirtyRef.current = true;
-        }
-      } finally {
-        mergingRef.current = false;
-        setMergePending(false);
-      }
-    })();
-  };
-
-  /** çœ¼ç›ï¼šç”¨ç¾åœ¨çš„åƒæ•¸è¼¸å‡ºä¸€å¼µï¼Œç„¶å¾Œæ‰“é–‹ IG é è¦½ */
-  const openIgPreview = async () => {
-    if (!originalImgRef.current || igBusy) return;
-    setIgBusy(true);
-    try {
-      stashCurrent();
-      const live = liveRef.current!;
-      const snap: BatchSnap = {
-        ...cloneSnap(live),
-        params: { ...cloneSnap(live).params, ...(ownMaskRef.current[safeIdx] || pickMask(DEFAULT_PARAMS)) } as EditorParams,
-        geo: ownGeoRef.current[safeIdx]
-          ? JSON.parse(JSON.stringify(ownGeoRef.current[safeIdx]))
-          : cloneSnap(live).geo,
-      };
-      const url = await renderOne(originalImgRef.current, snap);
-      revokeUrls(igShot && igShot !== url ? [igShot] : []);
-      setIgShot(url);
-      setIgOpen(true);
-    } catch (e) { console.error('IG preview failed', e); }
-    setIgBusy(false);
-  };
-
-  const handleSave = () => {
-    if (!originalImgRef.current) return;
-    if (isInteracting) setIsInteracting(false);
-    setSaveState('processing');
-    setTimeout(async () => {
-        try {
-            // å…ˆæŠŠç¾åœ¨ç•«é¢ä¸Šé€™ä¸€ä»½æ”¶å›žåŽ»ï¼Œå…±ç”¨çš„é‚£ä¸€ä»½æ‰æœƒæ˜¯æœ€æ–°çš„ â€”â€”
-            // ä¸ç„¶ã€Œèª¿åˆ°ä¸€åŠç›´æŽ¥æŒ‰å„²å­˜ã€æ™‚ï¼Œå…¶ä»–é€£çµä¸­çš„ç…§ç‰‡æœƒæ‹¿åˆ°ä¸Šä¸€æ¬¡åˆ‡æ›æ™‚çš„èˆŠåƒæ•¸ã€‚
-            stashCurrent();
-            const live = liveRef.current!;
-            const out: string[] = [];
-            for (let i = 0; i < srcList.length; i++) {
-              // é€£çµä¸­çš„ä¸€å¾‹å¥—ç¾åœ¨é€™ä¸€ä»½ï¼›è§£é™¤é€£çµçš„ç”¨å®ƒè‡ªå·±ç•™ä¸‹ä¾†çš„é‚£ä¸€ä»½ã€‚
-              // æ²’æœ‰ç•™ä¸‹ä¾†çš„ï¼ˆä¾‹å¦‚å¾žé ­åˆ°å°¾æ²’è¢«åˆ‡éŽåŽ»éŽï¼‰å°±ç›´æŽ¥ç”¨ç¾åœ¨é€™ä¸€ä»½ï¼Œ
-              // ä¸èƒ½å› ç‚ºã€Œé‚„æ²’è¼‰å…¥éŽã€å°±è·³éŽä¸å¥— â€”â€” é‚£å°±è®Šæˆæ²’é€£çµäº†ã€‚
-              const base = linked[i] === false ? (soloSnapsRef.current[i] || live) : live;
-              // é®è‰²ç‰‡èˆ‡æ§‹åœ–ä¸é€£å‹•ï¼Œè¦ç”¨é€™ä¸€å¼µè‡ªå·±çš„
-              const snap: BatchSnap = {
-                ...cloneSnap(base),
-                params: { ...cloneSnap(base).params, ...(ownMaskRef.current[i] || pickMask(DEFAULT_PARAMS)) } as EditorParams,
-                geo: ownGeoRef.current[i]
-                  ? JSON.parse(JSON.stringify(ownGeoRef.current[i]))
-                  : (i === safeIdx ? cloneSnap(base).geo : { ...DEFAULT_GEO, crop: { ...FULL_CROP } }),
-              };
-              const img = i === safeIdx && originalImgRef.current
-                ? originalImgRef.current
-                : await loadImg(srcList[i]);
-              out.push(await renderOne(img, snap));
-            }
-            revokeUrls(finalImagesRef.current.filter(u => !out.includes(u)));
-            finalImagesRef.current = out;
-            setFinalImages(out);
-            setFinalImage(out[safeIdx] || out[0]);
-            setSaveState('success');
-            // é¦–é çš„ã€Œæœ€è¿‘è¼¸å‡ºã€ï¼šè¨˜ä¸‹æˆå“ç¸®åœ–ï¼‹é€™å¼µåœ–å°Žå‡ºç•¶ä¸‹çš„åŽŸåœ–èˆ‡åƒæ•¸
-            addExport('editor', out[safeIdx] || out[0], srcList[safeIdx] || imageSrc, {
-              params: paramsRef.current, geo, selectedLutIdx,
-            }, histKey || undefined);
-        } catch (e) { console.error("Save failed", e); setSaveState('idle'); }
-    }, 100);
-  };
-  
-  // ... (activeTool useMemo and remaining UI render logic is identical)
-  const activeTool = useMemo(() => {
-    if (activeToolId === 'filter_select') {
-      if (selectedLutIdx === 0) return null;
-      return { id: 'lutAmount' as keyof EditorParams, label: 'å¼·åº¦', min: 0, max: 100, step: 0.1 };
-    }
-    if (activeToolId === 'curves' || activeToolId === 'hsl') return null; 
-    let tool = [...ADJUST_TOOLS, ...EFFECT_TOOLS].find(t => t.id === activeToolId);
-    /* ç‰¹æ•ˆé‚£ä¸€é é¸ä¸­æŸ”å…‰ï¼å…‰æšˆï¼æ¼å…‰æ™‚ï¼Œå¤–å±¤é‚£æ ¹æ»‘æ¡¿èª¿çš„æ˜¯å®ƒå€‘å„è‡ªçš„å¼·åº¦åƒæ•¸
-       ï¼ˆsoftï¼fringeIntensityï¼leakOpacityï¼‰ã€‚ */
-    if (!tool && activeCategory === 'effects') {
-      const card = EFFECT_TOOLS.find(t => effectAmountId(t.id) === activeToolId);
-      const src = [...SOFT_LIGHT_TOOLS, ...HALATION_TOOLS, ...LEAK_TOOLS].find(t => t.id === activeToolId);
-      if (card && src) tool = { ...src };
-    }
-    /* æœ‰äº›ç‰¹æ•ˆçš„ã€Œå¼·åº¦ã€æ²’æœ‰æ„ç¾©ï¼ˆé¦¬è³½å…‹èª¿åˆ°ä¸€åŠåªæ˜¯æŠŠåŽŸåœ–ç–Šå›žä¾†ä¸€åŠï¼‰ï¼Œ
-       é‚£ç¨®åœ¨ FX_DEFS è£¡è¨­äº† rootParamï¼šæœ€å¤–å±¤é€™æ ¹ç›´æŽ¥æ”¹èª¿å®ƒæŒ‡å®šçš„åƒæ•¸ã€‚
-       æ“ºåœ¨æ”¹æ¨™ç±¤ä¹‹å‰ â€”â€” é€™ä¸€æ ¹çš„åå­—è¦æ˜¯ã€Œæ ¼æ•¸ã€ï¼Œä¸æ˜¯ã€Œå¼·åº¦ã€ã€‚ */
-    if (activeCategory === 'effects') {
-      const rootP = FX_ROOT_PARAM[activeToolId];
-      if (rootP) return rootP;
-    }
-    /* ç‰¹æ•ˆæœ€å¤–å±¤é‚£æ ¹æ»‘æ¡¿ä¸€å¾‹å«ã€Œå¼·åº¦ã€â€”â€”
-       é¸ä¸­å“ªä¸€é¡†å¡ç‰‡ï¼Œå¡ç‰‡è‡ªå·±å·²ç¶“æœ‰ç™½æ¡†è·Ÿåå­—äº†ï¼Œæ»‘æ¡¿ä¸Šå†å¯«ä¸€æ¬¡ç‰¹æ•ˆåå­—æ²’æœ‰æ„ç¾©ã€‚ */
-    if (tool && activeCategory === 'effects') tool = { ...tool, label: 'å¼·åº¦' };
-    if (!tool && activeCategory === 'leak') tool = LEAK_TOOLS.find(t => t.id === activeToolId);
-    if (!tool && activeCategory === 'soft') tool = SOFT_LIGHT_TOOLS.find(t => t.id === activeToolId);
-    if (!tool && activeCategory === 'halation') tool = HALATION_TOOLS.find(t => t.id === activeToolId);
-    if (!tool && activeCategory === 'grain') tool = GRAIN_TOOLS.find(t => t.id === activeToolId);
-    if (!tool && activeCategory === 'mask') tool = MASK_TOOLS.find(t => t.id === activeToolId);
-    if (!tool && activeCategory === 'fx') tool = (FX_TOOLS[activeFxId] || []).find(t => t.id === activeToolId);
-    return tool;
-  }, [activeToolId, selectedLutIdx, activeCategory, activeFxId]);
-
-  /* é€²å‡º HSL å®Œå…¨ä¸åšå‹•ç•«ã€‚é¢æ¿æœ¬èº«æ˜¯ç›´æŽ¥æŽ›ä¸Šï¼æ‹¿æŽ‰ï¼Œä½†æ»‘æ¡¿åˆ—æ”¶åˆæ˜¯ CSS
-     transitionï¼Œå¾—çŸ¥é“ã€Œé€™ä¸€æ¬¡ render æ˜¯ä¸æ˜¯è·Ÿ HSL æœ‰é—œã€æ‰èƒ½æŠŠæ™‚é–“é—œæŽ‰ï¼š
-     ref åœ¨ effect è£¡æ‰æ›´æ–°ï¼Œæ‰€ä»¥é›¢é–‹ HSL çš„é‚£ä¸€æ¬¡ render è®€åˆ°çš„é‚„æ˜¯èˆŠå€¼ã€‚ */
-  const prevToolIdRef = useRef(activeToolId);
-  const hslSwitch = activeToolId === 'hsl' || prevToolIdRef.current === 'hsl';
-  /* å¾ž HSL ç›´æŽ¥åˆ‡åˆ°æ›²ç·šæ™‚ï¼Œæ›²ç·šä¸åšå…¥å ´ â€”â€” HSL é‚£ä¸€å´æœ¬ä¾†å°±æ˜¯çž¬é–“æ”¶æŽ‰çš„ï¼Œ
-     æ›²ç·šå†æ…¢æ…¢é•·å‡ºä¾†æœƒåƒæ˜¯ã€Œé¢æ¿é–ƒäº†ä¸€ä¸‹åˆé‡ä¾†ã€ã€‚ref åœ¨ effect è£¡æ‰æ›´æ–°ï¼Œ
-     æ‰€ä»¥åˆ‡éŽåŽ»çš„é‚£ä¸€æ¬¡ render è®€åˆ°çš„é‚„æ˜¯ hslï¼Œå‰›å¥½å°±æ˜¯è¦é—œæŽ‰å‹•ç•«çš„é‚£ä¸€æ¬¡ã€‚ */
-  const curvesFromHsl = activeToolId === 'curves' && prevToolIdRef.current === 'hsl';
-  useEffect(() => { prevToolIdRef.current = activeToolId; }, [activeToolId]);
-
-  /* HSL çš„é¢æ¿æ˜¯è“‹åœ¨é è¦½ä¸Šçš„ï¼Œæœƒæ“‹æŽ‰åœ–ç‰‡ä¸‹åŠéƒ¨ï¼ˆé‡åˆ° 414Ã—896 é® 34%ã€
-     375Ã—667 é® 58%ï¼‰ã€‚é€² HSL æ™‚æŠŠåœ–ç¸®å°ä¸¦ä¸Šç§»ï¼Œè®“æ•´å¼µåœ–å‰›å¥½è½åœ¨é¢æ¿ä¸Šæ–¹ã€‚
-
-     ä¸å¯«æ­»æ•¸å­—ï¼šç›´æŽ¥é‡é è¦½å€èˆ‡é¢æ¿çš„å¯¦éš›ä½ç½®æ›ç®— â€”â€”
-       maxHeight   = é¢æ¿ä¸Šç·£ - å…§å®¹å€ä¸Šç·£      ï¼ˆç¸®åˆ°å¡žå¾—ä¸‹ï¼‰
-       marginBottom= å…§å®¹å€ä¸‹ç·£ - é¢æ¿ä¸Šç·£      ï¼ˆè¢«è“‹ä½çš„é‚£ä¸€æ®µï¼‰
-     marginBottom æœƒè¢« flex çš„ç½®ä¸­ä¸€èµ·ç®—é€²åŽ»ï¼Œç­‰æ–¼æŠŠåœ–æ”¹æˆåœ¨ã€Œæ²’è¢«è“‹ä½çš„
-     é‚£å¡Šå€åŸŸã€ç½®ä¸­ï¼Œè·Ÿåœ–å¤šé«˜ç„¡é—œã€‚ç”¨ useLayoutEffect æ˜¯ç‚ºäº†åœ¨åŒä¸€æ¬¡ç¹ªè£½å‰
-     å°±æŠŠå€¼ç®—å¥½ï¼Œä¸æœƒå…ˆé–ƒä¸€ä¸‹åŽŸå°ºå¯¸ã€‚ResizeObserver è² è²¬è½‰å‘ï¼è¦–çª—è®ŠåŒ–ã€‚ */
-  const previewBoxRef = useRef<HTMLDivElement>(null);
-
-  /* é è¦½çš„ç¸®æ”¾ï¼å¹³ç§»ï¼ˆé›™æŒ‡æ”¾å¤§ã€æ‹–å‹•ï¼‰ã€‚
-     é€²é®è‰²ç‰‡æ™‚è¦æŠŠå®ƒã€Œæµæš¢åœ°ã€æŽ¨å›žåŽŸæœ¬çš„å¤§å°èˆ‡ä½ç½®ï¼šé®è‰²ç‰‡æ˜¯ç•«åœ¨åœ–ä¸Šçš„ï¼Œ
-     ä½¿ç”¨è€…æ”¾å¤§éŽæˆ–æŽ¨åˆ°ä¸€é‚Šä¹‹å¾Œæ‰é€²ä¾†çš„è©±ï¼Œç•«é¢å°ä¸ä¸Šã€ä¹Ÿä¸å¥½ä¸‹ç­†ã€‚
-     resetTransform è‡ªå·±æœƒåˆ¤æ–·ã€Œæœ¬ä¾†å°±åœ¨åŽŸä½å°±ä¸å‹•ã€ï¼Œæ‰€ä»¥æ²’ç¸®æ”¾éŽçš„äºº
-     ä¸æœƒçœ‹åˆ°ä»»ä½•å‹•ç•«ã€‚ */
-  const zoomRef = useRef<ReactZoomPanPinchRef | null>(null);
-  useEffect(() => {
-    if (activeCategory !== 'mask') return;
-    // é€™ä¸€é çš„ç¸®æ”¾æ˜¯é—œæŽ‰çš„ï¼ˆdisabledï¼‰ï¼Œä½†é€™æ”¯ API ä¸çœ‹é‚£å€‹é–‹é—œï¼Œç…§æ¨£æŽ¨å¾—å›žåŽ»
-    zoomRef.current?.resetTransform(320, 'easeOut');
-  }, [activeCategory]);
-
-  const [hslFit, setHslFit] = useState<{ mb: number; mh: number } | null>(null);
-  const measureHslFit = useCallback(() => {
-    const box = previewBoxRef.current;
-    const panel = document.querySelector('[data-hsl-panel]') as HTMLElement | null;
-    if (!box || !panel) return;
-    const b = box.getBoundingClientRect();
-    const pn = panel.getBoundingClientRect();
-    const PAD = 16;   // TransformComponent çš„ p-4
-    const GAP = 8;    // åˆ¥è®“åœ–æ•´å€‹è²¼åœ¨é¢æ¿ä¸Šç·£ï¼Œè²¼è‘—çœ‹èµ·ä¾†åƒç ´åœ–
-    const mb = Math.max(0, Math.round(b.bottom - PAD - pn.top + GAP));
-    const mh = Math.max(120, Math.round(pn.top - GAP - (b.top + PAD)));
-    setHslFit(prev => (prev && prev.mb === mb && prev.mh === mh) ? prev : { mb, mh });
-  }, []);
-  useLayoutEffect(() => {
-    if (activeToolId !== 'hsl') { setHslFit(prev => (prev ? null : prev)); return; }
-    measureHslFit();
-    const box = previewBoxRef.current;
-    if (!box || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => measureHslFit());
-    ro.observe(box);
-    return () => ro.disconnect();
-  }, [activeToolId, measureHslFit]);
-  /* ç›´æŽ¥ç¶ activeToolId è€Œä¸æ˜¯ç­‰ state è¢«æ¸…æŽ‰ï¼šé›¢é–‹ HSL æ™‚ state è¦ä¸‹ä¸€æ¬¡
-     render æ‰æœƒè®Šæˆ nullï¼Œè€Œé‚£ä¸€æ¬¡ render çš„ hslSwitch å·²ç¶“ç¿»å›ž falseï¼Œ
-     å°ºå¯¸å°±æœƒç”¨ 500ms è£œé–“è·‘å›žåŽ»ã€‚ç”¨é€™å€‹å€¼çš„è©±åŒä¸€æ¬¡ render å°±é‚„åŽŸäº†ã€‚ */
-  const hslFitNow = activeToolId === 'hsl' ? hslFit : null;
-
-  /* åº•éƒ¨åŠŸèƒ½æ¬„å“ªå¹¾åˆ—è¦æ”¶èµ·ä¾†ã€‚æ§‹åœ–ç¾åœ¨ä¸å†æ˜¯å¦å¤–é–‹ä¸€é  â€”â€” ComposeStudio åªè“‹ä½
-     é è¦½å€ï¼Œåˆ†é åˆ—ç…§æ¨£ç•™åœ¨åŽŸä½ï¼Œæ‰€ä»¥æ»‘æ¡¿åˆ—èˆ‡å°åˆ†é¡žåˆ—éƒ½è®“çµ¦å®ƒè‡ªå·±é‚£å…©æŽ’ã€‚ */
-  /* é€²å‡ºæ§‹åœ–ä¸åšé«˜åº¦è£œé–“ã€‚ComposeStudio æ˜¯é è¦½å€çš„ absolute inset-0ï¼Œ
-     åº•éƒ¨æ¬„å¦‚æžœèŠ± 380ms æ…¢æ…¢æ”¶èµ·ä¾†ï¼Œé è¦½å€çš„ä¸‹ç·£å°±æœƒä¸€è·¯å¾€ä¸‹æ»‘ï¼ˆé‡åˆ° 17 å€‹
-     ä¸åŒé«˜åº¦ã€ä¸‹ç·£ 642â†’815ï¼‰ï¼Œçœ‹èµ·ä¾†å°±æ˜¯ã€Œå¾žä¸Šå¾€ä¸‹é•·å‡ºä¾†ã€ï¼›è€Œä¸” ComposeStudio
-     çš„ ResizeObserver æœƒè·Ÿè‘—é‡ç®—èˆžå°ï¼Œé‡åˆ° 18 ç¨®å°ºå¯¸ â€”â€” é‚£å°±æ˜¯æŠ–å‹•ã€‚
-     ä¸€æ­¥åˆ°ä½ä¹‹å¾Œé è¦½å€åªæœ‰ä¸€å€‹å°ºå¯¸ï¼Œèˆžå°ä¹Ÿåªé‡ä¸€æ¬¡ã€‚ */
-  const prevCategoryRef = useRef(activeCategory);
-  const composeSwitch = activeCategory === 'compose' || prevCategoryRef.current === 'compose';
-  useEffect(() => { prevCategoryRef.current = activeCategory; }, [activeCategory]);
-
-  /* é€²å‡ºç‰¹æ•ˆç´°é …ä¹Ÿå®Œå…¨ä¸åšå‹•ç•«ï¼ˆæŸ”å…‰ï¼å…‰æšˆï¼æ¼å…‰ï¼æ–°ç‰¹æ•ˆéƒ½ä¸€æ¨£ï¼‰ã€‚
-     è·Ÿ HSL åŒä¸€å€‹åšæ³•ï¼šref è¦ç­‰ effect æ‰æ›´æ–°ï¼Œæ‰€ä»¥ã€Œé›¢é–‹çš„é‚£ä¸€æ¬¡ renderã€
-     è®€åˆ°çš„é‚„æ˜¯èˆŠåˆ†é  â€”â€” å‰›å¥½å°±æ˜¯è¦æŠŠæ™‚é–“é—œæŽ‰çš„é‚£ä¸€æ¬¡ã€‚ */
-  const DETAIL_CATS = ['fx', 'soft', 'leak', 'halation'];
-  const detailSwitch = DETAIL_CATS.includes(activeCategory) || DETAIL_CATS.includes(prevCategoryRef.current);
-
-  /* é®è‰²ç‰‡è¿˜æ²¡å»ºç«‹æ—¶ï¼Œç‰ˆé¢è·Ÿå»ºç«‹åŽä¿æŒä¸€è‡´ï¼Œåªé”ä½æš‚æ—¶ä¸èƒ½ä½¿ç”¨çš„æŽ§åˆ¶é¡¹ã€‚ */
-  const maskLocked = activeCategory === 'mask' && !params.maskCreated;
-  const sliderRowHidden = activeToolId === 'curves' || activeToolId === 'hsl' || activeCategory === 'compose';
-  const subStripHidden = activeCategory === 'compose';
-
-  /* ---- æ–°ç‰¹æ•ˆçš„ç´°é …é¢æ¿ ------------------------------------------------------
-     ä»¥å‰æ˜¯å…©å±¤ï¼šå°åˆ†é¡žåˆ—æ”¾åƒæ•¸æŒ‰éˆ•ï¼Œæ»‘æ¡¿åˆ—ä¸€æ¬¡åªé¡¯ç¤ºæŒ‰åˆ°çš„é‚£ä¸€æ ¹ã€‚
-     ç¾åœ¨æŠŠé‚£ä¸€å€‹ç‰¹æ•ˆçš„æ»‘æ¡¿å…¨éƒ¨ä¸€æ¬¡æ”¤é–‹ï¼Œä¸ç”¨å†é»žç¬¬äºŒå±¤ã€‚
-
-     é«˜åº¦æ˜¯å€Ÿä¾†çš„ï¼Œä¸æ˜¯é•·å‡ºä¾†çš„ï¼šæ»‘æ¡¿åˆ—å¾ž 5rem æ’åˆ° 11remï¼Œå°åˆ†é¡žåˆ—åŒæ™‚æ”¶æˆ 0ï¼Œ
-     å…©è€…ç›¸åŠ é‚„æ˜¯ 5rem + 6rem â€”â€” åº•éƒ¨æ¬„ç¸½é«˜å®Œå…¨æ²’è®Šï¼Œæ‰€ä»¥é è¦½åœ–çš„å¤§å°ä¹Ÿæ²’è®Šã€‚ */
-  const fxPanel = activeCategory === 'fx';
-  const fxRows = useMemo(() => {
-    const tools = FX_TOOLS[activeFxId] || [];
-    if (!tools.length) return [] as ToolDef[][];
-    const out: ToolDef[][] = [];
-    // å‰›å¥½å…©æ ¹çš„æ™‚å€™ä¸Šä¸‹å„ç«™ä¸€è¡Œ â€”â€” å…©æ ¹æ“ åœ¨åŒä¸€æŽ’å·¦å³ä¸¦æŽ’æœƒå¤ªçª„ï¼Œå­—éƒ½å¿«è²¼åœ¨ä¸€èµ·äº†
-    if (tools.length === 2) return [[tools[0]], [tools[1]]];
-    // å¥‡æ•¸æ ¹çš„æ™‚å€™ã€Œå¼·åº¦ã€è‡ªå·±ç«™ä¸€è¡Œï¼Œå‰©ä¸‹çš„å…©å…©ä¸€æŽ’
-    const solo = tools.length % 2 === 1;
-    if (solo) out.push([tools[0]]);
-    const rest = tools.slice(solo ? 1 : 0);
-    for (let i = 0; i < rest.length; i += 2) out.push(rest.slice(i, i + 2));
-    return out;
-  }, [activeFxId]);
-  /** æ¯ä¸€æŽ’çš„é«˜åº¦ï¼šæŽ’æ•¸å°‘å°±æŽ’é¬†ä¸€é»žï¼Œæœ€å¤šå››æŽ’æ™‚å‰›å¥½å¡žå¾—ä¸‹ */
-  const fxRowH = fxRows.length ? Math.min(52, Math.floor(172 / fxRows.length)) : 52;
-
-  /* å¾žæ§‹åœ–ç›´æŽ¥åˆ‡åˆ°åˆ¥çš„åˆ†é  ï¼ ç­‰åŒæŒ‰äº†ã€Œå®Œæˆã€ï¼Œè£åˆ‡ç…§æ¨£å¥—ç”¨ã€‚
-     åªæœ‰æ˜Žç¢ºæŒ‰ã€Œå–æ¶ˆã€æ‰æœƒä¸ŸæŽ‰ï¼ˆonCancel æœƒå…ˆæŠŠ draftGeo æ¸…æˆ nullï¼Œ
-     æ‰€ä»¥é€™å€‹ effect ä¸æœƒé‡è¤‡å¥—ä¸€æ¬¡ï¼‰ã€‚ */
-  useEffect(() => {
-    if (activeCategory !== 'compose' && draftGeo) {
-      applyGeo(draftGeo);
-      addToHistory(paramsRef.current, selectedLutIdx);
-      setDraftGeo(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeCategory, draftGeo]);
-
-  /* é€²æ§‹åœ–ä¹‹å‰å¾…åœ¨å“ªä¸€é  â€”â€” æŒ‰å®Œæˆä¹‹å¾Œå›žåŽ»é‚£ä¸€é ï¼Œä¸è¦ä¸€å¾‹è·³å›žæ¿¾é¡ */
-  const beforeComposeRef = useRef<{ cat: Category; tool: string }>({ cat: 'filter', tool: 'filter_select' });
-
-  /** å·¦ä¸Šè¿”å›žä¸Žæž„å›¾å†…çš„å–æ¶ˆå…±ç”¨åŒä¸€æ¡â€œæ”¾å¼ƒè‰ç¨¿å‡ ä½•â€è·¯å¾„ã€‚
-      å…ˆåŒæ­¥æ¸…ç©º draftï¼Œå†åˆ‡å›žè¿›å…¥æž„å›¾å‰çš„åˆ†é¡µï¼Œé¿å…ç¦»å¼€æž„å›¾çš„è‡ªåŠ¨å¥—ç”¨ effect
-      åœ¨åŒä¸€æ‰¹æ›´æ–°ä¸­è¯»åˆ°æ—§ draftï¼Œå¹¶ç¡®ä¿å®ƒç»ä¸ä¼šç»§ç»­å†’æ³¡æˆé€€å‡ºæ•´ä¸ªç¼–è¾‘å™¨ã€‚ */
-  const cancelCompose = useCallback(() => {
-    const previous = beforeComposeRef.current;
-    composePreviewRef.current = null;
-    flushSync(() => setDraftGeo(null));
-    setActiveCategory(previous.cat);
-    setActiveToolId(previous.tool);
-  }, []);
-
-  const isParamAdjusted = useCallback((id: string): boolean => {
-    /* GLSL ç‰¹æ•ˆï¼šè·ŸæŸ”å…‰ï¼å…‰æšˆåŒä¸€å¥—è¦å‰‡ â€”â€” å¼·åº¦æ˜¯ 0 å°±æ•´çµ„éƒ½ä¸äº®ç™½é»žï¼Œ
-       ä¸ç®¡ç´°é …è¢«å‹•éŽæ²’æœ‰ã€‚ç´°é …æœ¬èº«å‰‡æ˜¯ã€Œè·Ÿé è¨­ä¸åŒæ‰ç®—ã€ï¼Œè€Œä¸”æœ€å°å€¼ä¸æ˜¯ 0 çš„
-       é‚£å¹¾å€‹ï¼ˆæ ¼æ•¸ä¹‹é¡žï¼Œ0 æœƒè®Šæˆé™¤ä»¥é›¶ï¼‰åœåœ¨æœ€å°å€¼æ™‚ä¹Ÿä¸ç®—èª¿æ•´éŽã€‚ */
-    const fxOwner = FX_OWNER[id];
-    if (fxOwner) {
-      if ((params[fxOwner.id] || 0) === 0) return false;
-      if (id === fxOwner.id) return true;
-      const pd = fxOwner.params.find(x => x.id === id);
-      if (!pd) return false;
-      const v = params[id];
-      if (v === pd.def) return false;
-      if (pd.min > 0 && v === pd.min) return false;
-      return true;
-    }
-    if (id === 'curves') {
-      return JSON.stringify(params.curves) !== JSON.stringify(DEFAULT_CURVES);
-    }
-    if (id === 'hsl') {
-      return !isHslIdentity(params.hsl);
-    }
-    if (id === 'softLight' || id === 'soft' || id === 'softThreshold' || id === 'softRadius' || id === 'softColor') {
-      if (params.soft === 0) return false;
-      if (id === 'softLight') {
-        return params.soft !== DEFAULT_PARAMS.soft || 
-               params.softThreshold !== DEFAULT_PARAMS.softThreshold ||
-               params.softRadius !== DEFAULT_PARAMS.softRadius ||
-               params.softColor !== DEFAULT_PARAMS.softColor;
-      }
-      const val = params[id as keyof EditorParams];
-      const def = DEFAULT_PARAMS[id as keyof EditorParams];
-      return val !== undefined && def !== undefined && val !== def;
-    }
-    if (id === 'halation' || id === 'fringeIntensity' || id === 'fringeHue' || id === 'fringeSize' || id === 'fringeFeather') {
-      if (params.fringeIntensity === 0) return false;
-      if (id === 'halation') {
-        return params.fringeIntensity !== DEFAULT_PARAMS.fringeIntensity ||
-               params.fringeHue !== DEFAULT_PARAMS.fringeHue ||
-               params.fringeSize !== DEFAULT_PARAMS.fringeSize ||
-               params.fringeFeather !== DEFAULT_PARAMS.fringeFeather;
-      }
-      const val = params[id as keyof EditorParams];
-      const def = DEFAULT_PARAMS[id as keyof EditorParams];
-      return val !== undefined && def !== undefined && val !== def;
-    }
-    if (id === 'lightLeak' || id === 'leakOpacity' || id === 'leakAngle' || id === 'leakHue') {
-      if (params.leakOpacity === 0) return false;
-      if (id === 'lightLeak') {
-        return params.leakOpacity !== DEFAULT_PARAMS.leakOpacity ||
-               params.leakAngle !== DEFAULT_PARAMS.leakAngle ||
-               params.leakHue !== DEFAULT_PARAMS.leakHue;
-      }
-      const val = params[id as keyof EditorParams];
-      const def = DEFAULT_PARAMS[id as keyof EditorParams];
-      return val !== undefined && def !== undefined && val !== def;
-    }
-    const val = params[id as keyof EditorParams];
-    const def = DEFAULT_PARAMS[id as keyof EditorParams];
-    if (val !== undefined && def !== undefined) {
-      return val !== def;
-    }
-    return false;
-  }, [params]);
-
-  const handleCurveStartDrag = (e: React.MouseEvent | React.TouchEvent, idx: number) => {
-      e.stopPropagation();
-      setDragPointIdx(idx);
-      setIsInteracting(true);
-      lastRenderDurationRef.current = 12; // Reset duration to prevent slow throttle carry-over
-  };
-  
-  const handleCurveMove = (e: React.MouseEvent | React.TouchEvent) => {
-    if (dragPointIdx === -1) return;
-    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
-    const svg = document.getElementById('curvesSvg');
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    let x = Math.max(0, Math.min(200, Math.round((clientX - rect.left) * (200 / rect.width))));
-    let y = Math.max(0, Math.min(200, Math.round(200 - (clientY - rect.top) * (200 / rect.height))));
-    const x255 = (x / 200) * 255;
-    const currentPoints = [...params.curves[currentCurveChannel]];
-    if (dragPointIdx > 0 && x255 <= currentPoints[dragPointIdx - 1].x) x = (currentPoints[dragPointIdx - 1].x / 255) * 200 + 1;
-    if (dragPointIdx < currentPoints.length - 1 && x255 >= currentPoints[dragPointIdx + 1].x) x = (currentPoints[dragPointIdx + 1].x / 255) * 200 - 1;
-    const newPoints = [...currentPoints];
-    newPoints[dragPointIdx] = { x: (x / 200) * 255, y: (y / 200) * 255 };
-    const newCurves = { ...params.curves, [currentCurveChannel]: newPoints };
-    paramsRef.current = { ...paramsRef.current, curves: newCurves };
-    isDirtyRef.current = true;
-    scheduleParamsSync();
-  };
-  
-  const handleCurveEndDrag = () => {
-      flushParamsSync();
-      setDragPointIdx(-1);
-      setIsInteracting(false);
-      addToHistory(paramsRef.current, selectedLutIdx);
-  };
-
-  const handlePointTap = (e: React.MouseEvent | React.TouchEvent, idx: number) => {
-      e.stopPropagation();
-      const now = Date.now();
-      const isRecentCreate = lastCreatedIdxRef.current === idx && (now - lastCreatedTimeRef.current < 350);
-      if (!isRecentCreate && (now - lastCurveTapRef.current < 300)) {
-          const currentPoints = [...params.curves[currentCurveChannel]];
-          if (currentPoints.length > 2 && idx > 0 && idx < currentPoints.length - 1) {
-              currentPoints.splice(idx, 1);
-              const newCurves = { ...params.curves, [currentCurveChannel]: currentPoints };
-              setParams(prev => ({ ...prev, curves: newCurves }));
-              addToHistory({ ...params, curves: newCurves }, selectedLutIdx);
-          }
-          lastCurveTapRef.current = 0;
-      } else {
-          lastCurveTapRef.current = now;
-          handleCurveStartDrag(e, idx);
-      }
-  };
-  
-  const handleCurveBgClick = (e: React.MouseEvent | React.TouchEvent) => {
-    const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
-    const svg = document.getElementById('curvesSvg');
-    if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const x = Math.max(0, Math.min(200, Math.round((clientX - rect.left) * (200 / rect.width))));
-    const y = Math.max(0, Math.min(200, Math.round(200 - (clientY - rect.top) * (200 / rect.height))));
-    const x255 = (x / 200) * 255;
-    const y255 = (y / 200) * 255;
-    const currentPoints = params.curves[currentCurveChannel];
-    let closestIdx = -1;
-    let minDist = 32; 
-    for (let i = 0; i < currentPoints.length; i++) {
-        const p = currentPoints[i];
-        const dist = Math.sqrt(Math.pow(p.x - x255, 2) + Math.pow(p.y - y255, 2));
-        if (dist < minDist) {
-            minDist = dist;
-            closestIdx = i;
-        }
-    }
-    if (closestIdx !== -1) {
-        handlePointTap(e, closestIdx);
-        return;
-    }
-    const curveY = getSplineY(x255, currentPoints);
-    if (Math.abs(y255 - curveY) < 32) {
-         if (currentPoints.some(p => Math.abs(p.x - x255) < 12)) return;
-         const newPoints = [...currentPoints, { x: x255, y: curveY }].sort((a,b) => a.x - b.x);
-         const newIdx = newPoints.findIndex(p => p.x === x255);
-         const newCurves = { ...params.curves, [currentCurveChannel]: newPoints };
-         setParams(prev => ({ ...prev, curves: newCurves }));
-         paramsRef.current = { ...paramsRef.current, curves: newCurves };
-         lastCreatedIdxRef.current = newIdx;
-         lastCreatedTimeRef.current = Date.now();
-         setDragPointIdx(newIdx);
-         setIsInteracting(true);
-         lastRenderDurationRef.current = 12; // Reset duration to prevent slow throttle carry-over
-    }
-  };
-
-  const resetAllCurves = () => {
-      const newCurves = JSON.parse(JSON.stringify(DEFAULT_CURVES));
-      setParams(prev => ({ ...prev, curves: newCurves }));
-      addToHistory({ ...params, curves: newCurves }, selectedLutIdx);
-  };
-
-  const getCurvePathD = () => {
-      const pts = [...params.curves[currentCurveChannel]].sort((a,b)=>a.x-b.x);
-      let pathD = `M ${pts[0].x/255*200} ${200 - (pts[0].y/255*200)}`;
-      for (let i = 0.5; i <= 200.5; i += 0.5) {
-          const x255 = (i/200)*255;
-          const y255 = getSplineY(Math.min(x255, 255), pts);
-          pathD += ` L ${i} ${200 - (y255/255*200)}`;
-      }
-      return pathD;
-  };
-  
-  const getCurveColor = () => {
-      switch(currentCurveChannel) {
-          case 'r': return '#ef4444';
-          case 'g': return '#22c55e';
-          case 'b': return '#3b82f6';
-          default: return '#fff';
-      }
-  };
-
-  return (
-    <div className="safe-top fixed inset-0 bg-[#080808] z-[60] flex flex-col animate-in slide-in-from-right duration-300 font-sans text-white overflow-hidden no-callout"
-         onMouseMove={dragPointIdx !== -1 ? (e) => handleCurveMove(e) : undefined}
-         onMouseUp={dragPointIdx !== -1 ? handleCurveEndDrag : undefined}
-         onTouchMove={dragPointIdx !== -1 ? (e) => handleCurveMove(e) : undefined}
-         onTouchEnd={dragPointIdx !== -1 ? handleCurveEndDrag : undefined}
-    >
-      <style>{`
-        .no-callout {
-            -webkit-touch-callout: none;
-            -webkit-user-select: none;
-            user-select: none;
-            touch-action: none;
-        }
-        .allow-callout {
-            -webkit-touch-callout: default !important;
-            -webkit-user-select: auto !important;
-            user-select: auto !important;
-            touch-action: auto !important;
-            pointer-events: auto !important;
-            cursor: context-menu;
-        }
-        .custom-range.compact { height: 30px; }
-        /* ç‰¹æ•ˆç´°é …é‚£ç¨®ä¸¦æŽ’çš„æ»‘æ¡¿ï¼š
-           1) ä¸èƒ½å‘å¤–å¤šé•· 32px â€”â€” å…©æ ¹ä¸¦æŽ’æ™‚è§¸æŽ§ç¯„åœæœƒé‡ç–Šï¼Œä¸­é–“æœƒæŒ‰éŒ¯æ ¹
-           2) è»Œé“çš„æ¼¸å±¤æœ¬ä¾†å·¦å³å„ç•™ 32px é€æ˜Žï¼ˆç”¨ä¾†è“‹æŽ‰å¤–æ“´çš„é‚£ä¸€æ®µï¼‰ï¼Œ
-              æ²’æœ‰å¤–æ“´å°±ä¸èƒ½ç•™ï¼Œä¸ç„¶ 147px çš„æ»‘æ¡¿åªå‰© 83px çœ‹å¾—åˆ°è»Œé“
-           3) æ‹‡æŒ‡å¤–æ¡†å¾ž 64px æ”¶åˆ° 40pxï¼Œ26px é«˜çš„æ»‘æ¡¿æ‰è£å¾—ä¸‹ */
-        .custom-range.dense { height: 26px; width: 100%; margin: 0; }
-        /* æ‹‡æŒ‡çš„ã€Œç›’å­ã€æœ‰å¤šå¯¬ï¼Œåœ“é»žå°±èµ°ä¸åˆ°å…©ç«¯å¤šå°‘ â€”â€” ç€è¦½å™¨è®“æ‹‡æŒ‡ä¸­å¿ƒåªèƒ½åœ¨
-           ç›’å¯¬/2 åˆ° å¯¬-ç›’å¯¬/2 ä¹‹é–“ç§»å‹•ã€‚ä¸€èˆ¬æ»‘æ¡¿æ˜¯é å‘å¤–å¤šé•· 32pxï¼ˆï¼ç›’å¯¬ä¸€åŠï¼‰
-           æŠŠé€™ä»¶äº‹è—èµ·ä¾†çš„ï¼Œä¸¦æŽ’çš„æ»‘æ¡¿ä¸èƒ½å¤–æ“´ï¼Œæ‰€ä»¥æ”¹æˆå…©é‚ŠåŒæ™‚è™•ç†ï¼š
-           ç›’å­æ”¶åˆ° 18pxï¼ˆå‰›å¥½åŒ…ä½ 15px çš„åœ“é»žï¼‰ï¼Œè»Œé“ä¹Ÿåªç•« 9px..å¯¬-9pxã€‚
-           å…©è€…å°é½Šä¹‹å¾Œï¼Œåœ“é»žå°±çœŸçš„èµ°å¾—åˆ°è»Œé“çš„é ­å°¾äº†ã€‚
-           ï¼ˆç›’å­è®Šå°ä¸å½±éŸ¿æ“ä½œ â€”â€” range æœ¬ä¾†å°±æ˜¯æŒ‰åœ¨è»Œé“ä¸Šä»»ä½•ä¸€é»žéƒ½æœƒè·³éŽåŽ»ã€‚ï¼‰ */
-        .custom-range.dense::-webkit-slider-runnable-track {
-          background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
-        }
-        .custom-range.dense::-moz-range-track {
-          background: linear-gradient(to right, rgba(0,0,0,0) 9px, #333 9px, #333 calc(100% - 9px), rgba(0,0,0,0) calc(100% - 9px));
-        }
-        .custom-range.dense::-webkit-slider-thumb { height: 26px; width: 18px; margin-top: -12px; }
-        .custom-range.dense::-moz-range-thumb { height: 26px; width: 18px; }
-        .custom-range { 
-          -webkit-appearance: none; 
-          width: calc(100% + 64px); 
-          height: 40px; 
-          background: rgba(0,0,0,0); 
-          outline: none; 
-          margin: 0 -32px; 
-          padding: 0;
-          touch-action: none;
-          -webkit-tap-highlight-color: rgba(0,0,0,0);
-        }
-        .custom-range:focus {
-          outline: none;
-        }
-        .custom-range::-webkit-slider-runnable-track { 
-          width: 100%; 
-          height: 2px; 
-          background: linear-gradient(to right, rgba(0,0,0,0) 32px, #333 32px, #333 calc(100% - 32px), rgba(0,0,0,0) calc(100% - 32px)); 
-          border-radius: 2px; 
-          cursor: pointer;
-        }
-        .custom-range::-webkit-slider-thumb { 
-          -webkit-appearance: none; 
-          height: 64px; 
-          width: 64px; 
-          background-color: rgba(0,0,0,0);
-          background-image: radial-gradient(circle at center, #ffffff 0, #ffffff 7.5px, rgba(255,255,255,0) 8px, rgba(255,255,255,0) 100%);
-          border: none;
-          outline: none;
-          cursor: pointer; 
-          margin-top: -31px; 
-          transition: transform 0.1s;
-          box-shadow: none;
-        }
-        .custom-range::-webkit-slider-thumb:active {
-          transform: scale(1.15);
-        }
-        .custom-range::-moz-range-track { 
-          width: 100%; 
-          height: 2px; 
-          background: linear-gradient(to right, rgba(0,0,0,0) 32px, #333 32px, #333 calc(100% - 32px), rgba(0,0,0,0) calc(100% - 32px)); 
-          border-radius: 2px; 
-          cursor: pointer;
-        }
-        .custom-range::-moz-range-thumb {
-          height: 64px; 
-          width: 64px; 
-          background-color: rgba(0,0,0,0);
-          background-image: radial-gradient(circle at center, #ffffff 0, #ffffff 7.5px, rgba(255,255,255,0) 8px, rgba(255,255,255,0) 100%);
-          border: none;
-          outline: none;
-          cursor: pointer; 
-          transition: transform 0.1s;
-          box-shadow: none;
-        }
-        .custom-range::-moz-range-thumb:active {
-          transform: scale(1.15);
-        }
-        .curve-point { 
-            fill: #fff; 
-            cursor: pointer; 
-            filter: drop-shadow(0 0 4px rgba(255,255,255,0.6)); 
-            transition: filter 0.2s; 
-        }
-        .curve-point.active { filter: drop-shadow(0 0 12px #fff); }
-        /* é€²å ´ã€é€€å ´éƒ½ç”¨é€™æ¢ easeOutQuintï¼šèµ·æ­¥å¿«ã€æ”¶å°¾å¾ˆæŸ”ã€‚
-           é€€å ´æ›¾ç¶“æ”¹æˆå®ƒçš„é¡å°„ï¼ˆeaseInï¼‰å¥½è®Šæˆã€Œé€²å ´çš„å€’æ”¾ã€ï¼Œä½† easeIn
-           é–‹é ­æ˜¯å¹³çš„ â€”â€” å‰ 190ms å¹¾ä¹Žé‚„æ˜¯å…¨ä¸é€æ˜Žï¼Œæ”¾é–‹æ‰‹æœƒè¦ºå¾—æ›²ç·šè³´è‘—ä¸èµ°ã€‚
-           è¦ã€Œä¸€æ”¾é–‹å°±é–‹å§‹æ¶ˆå¤±ã€å°±å¾—è®“é€€å ´ä¹Ÿå¾žå¿«çš„é‚£ä¸€ç«¯èµ·è·‘ã€‚ */
-        .panel-ease { transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1); }
-
-        /* ä¸€ç›´éƒ½æ˜¯å¯¦å¿ƒï¼›æ²’é¸ä¸­ç¶­æŒåŽŸå°ºå¯¸ï¼Œé¸ä¸­æ™‚æ•´é¡†ç¨å¾®æ”¾å¤§ã€‚
-           ç”¨ transform ä¸æœƒå‹•åˆ°ç‰ˆé¢ï¼ˆæ¬„è· 20pxï¼Œæ”¾å¤§ 3.2px ä¹Ÿä¸æœƒæ“ åˆ°éš”å£ï¼‰ï¼Œ
-           è€Œä¸”åªæœ‰ transform åœ¨è£œé–“ï¼Œæ²’æœ‰é¡è‰²å¯ä»¥é–ƒã€‚ */
-        .channel-dot {
-            width: 26px;
-            height: 26px;
-            border-radius: 50%;
-            cursor: pointer;
-            box-sizing: border-box;
-            background: currentColor;
-            transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
-        }
-        .channel-dot.active { transform: scale(1.1); }
-      `}</style>
-      
-      {isEditorLoading && (
-        <div className="absolute inset-0 z-[120] flex items-center justify-center bg-[#080808]/80 backdrop-blur-md animate-in fade-in duration-300">
-          <div className="flex flex-col items-center gap-4 text-white">
-            <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
-            <p className="text-[10px] font-black tracking-[0.2em] uppercase animate-pulse opacity-70">è§£æžä¸­...</p>
-          </div>
-        </div>
-      )}
-
-      {saveState === 'success' && finalImage && (
-          <div className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
-              <header className="h-14 flex items-center px-5 shrink-0 z-20 bg-black/40 backdrop-blur-xl">
-                <button 
-                  onClick={(e) => { e.stopPropagation(); recordProgress(); if(onHome) onHome(); }}
-                  className="p-2 -ml-2 text-[#888] hover:text-white transition-colors active:scale-90"
-                >
-                  <ChevronLeft size={22} />
-                </button>
-              </header>
-              <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
-                  {/* ä¸€æ¬¡å­˜å¤šå¼µæ™‚æŽ’æˆå¯ä»¥å·¦å³æ»‘çš„ä¸€æŽ’ï¼Œæ¯ä¸€å¼µéƒ½èƒ½é•·æŒ‰å„²å­˜ */}
-                  {/* items-centerï¼šæ©«å¼çš„ç…§ç‰‡è¦è·Ÿç›´å¼çš„ä¸€æ¨£åœåœ¨ä¸­é–“ï¼Œä¸ç„¶æœƒé»åœ¨ä¸Šç·£ */}
-                  <div
-                    ref={finalStripRef}
-                    className={`w-full flex flex-row items-center gap-4 ${finalImages.length > 1 ? 'overflow-x-auto no-scrollbar snap-x snap-mandatory px-[max(0px,calc(50%-40vw))]' : 'justify-center'}`}
-                  >
-                    {(finalImages.length ? finalImages : [finalImage!]).map((src, i) => (
-                      <div
-                        key={src}
-                        className="shrink-0 snap-center flex flex-col items-center gap-2"
-                        /* ä¸€æ¬¡åªå‡†æ»‘ä¸€å¼µã€‚
-                           snap-mandatory åªä¿è­‰ã€Œæœ€å¾Œæœƒåœåœ¨æŸå€‹å®šä½é»žã€ï¼Œæ…£æ€§æ»‘å‹•
-                           ç…§æ¨£æœƒè¡éŽå¥½å¹¾å¼µå†å¸ä½ â€”â€” é‚£å°±æ˜¯ã€Œæ˜Žæ˜Žåªæ»‘ä¸€æ¬¡å»è·³éŽä¸åªä¸€å¼µã€ã€‚
-                           scroll-snap-stop: always å°±æ˜¯å°ˆé–€ç®¡é€™ä»¶äº‹çš„ï¼š
-                           æ¯å€‹å®šä½é»žéƒ½å¿…é ˆåœä¸‹ä¾†ï¼Œå†å¿«çš„ä¸€ä¸‹ä¹Ÿåªå‰é€²ä¸€å¼µã€‚ */
-                        style={{ scrollSnapStop: 'always' }}
-                      >
-                        <div className="relative shadow-2xl rounded overflow-hidden max-h-[60vh]">
-                          <img
-                              src={src}
-                              alt={`Final Result ${i + 1}`}
-                              className="max-w-[80vw] max-h-[60vh] object-contain allow-callout relative z-10"
-                          />
-                          <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded"></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-              </div>
-              <div className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
-                   <SaveButton urls={finalImages.length ? finalImages : (finalImage ? [finalImage] : [])} />
-                   <div className="flex items-center justify-center gap-4">
-                   <button 
-                       onClick={() => { setSaveState('idle'); }}
-                       className="flex-1 h-14 rounded-full border border-white/20 bg-white/5 text-white font-bold tracking-widest uppercase hover:bg-white/10 active:scale-95 transition-all text-sm"
-                   >
-                       ç¹¼çºŒç·¨è¼¯
-                   </button>
-                   <button 
-                       onClick={() => { if (onImportNew) onImportNew(); }}
-                       className="flex-1 h-14 rounded-full border border-white/20 bg-white/5 text-white font-bold tracking-widest uppercase hover:bg-white/10 active:scale-95 transition-all text-sm"
-                   >
-                       ä¿®ä¸‹ä¸€å¼µ
-                   </button>
-                   </div>
-              </div>
-          </div>
-      )}
-
-      {/* é¢æ¿é–‹è‘—æ™‚æ¨™é¡Œåˆ—è¦åœ¨é‚£ç‰‡ z-[59] çš„é®ç½©**ä¸Šé¢**ï¼Œ
-          ä¸ç„¶æŒ‰è³‡è¨ŠéµæŒ‰åˆ°çš„æ˜¯é®ç½©ï¼Œä¸€æ¬¡é»žæ“Šæœƒè¢«ç®—æˆå…©æ¬¡ï¼ˆè¦‹ä¸‹é¢ EXIF é‚£ä¸€æ®µï¼‰ã€‚
-          é¢æ¿æ”¶èµ·ä¾†æ™‚å°±å›žåˆ°åŽŸæœ¬çš„ z-20ï¼Œå…¶é¤˜å®Œå…¨ä¸è®Šã€‚ */}
-      {saveState !== 'success' && (
-      <header className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl ${showExifPanel ? 'z-[60]' : 'z-20'}`}>
-        <div className="w-20">
-            {/* æž„å›¾ä¸­çš„è¿”å›žåªé€€å‡ºæž„å›¾å¹¶ä¸¢å¼ƒ draftGeoï¼›å…¶ä»–åˆ†é¡µæ‰ç¦»å¼€ç¼–è¾‘å™¨ã€‚ */}
-            <button
-              onClick={activeCategory === 'compose' ? cancelCompose : requestLeave}
-              aria-label={activeCategory === 'compose' ? 'é€€å‡ºæž„å›¾å¹¶æ”¾å¼ƒå˜æ›´' : 'è¿”å›ž'}
-              className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90"
-            >
-              <ChevronLeft size={22} />
-            </button>
-        </div>
-        {activeCategory !== 'compose' ? (
-        <div className="flex items-center gap-4">
-           <button onClick={undo} disabled={historyIndex <= 0} className={`p-2 transition-all ${historyIndex <= 0 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="undo" className="text-xl" /></button>
-           <button onClick={redo} disabled={historyIndex >= history.length - 1} className={`p-2 transition-all ${historyIndex >= history.length - 1 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="redo" className="text-xl" /></button>
-        </div>
-        ) : <div aria-hidden="true" />}
-        {activeCategory !== 'compose' ? (
-        <div className="w-28 flex justify-end items-center gap-1">
-            {/* çœ¼ç›ï¼šé€² IG è²¼æ–‡é è¦½ï¼ˆè·Ÿæ‹¼åœ–é‚£å…©å€‹å·¥å…·åŒä¸€é¡†å…ƒä»¶ï¼‰ */}
-            <button
-                onClick={openIgPreview}
-                className={`p-2 rounded-full transition-colors ${igBusy ? 'text-white/20 pointer-events-none' : 'text-white/40 hover:text-white'}`}
-                title="IG é è¦½"
-            >
-                <Icon name="visibility" className="text-xl" />
-            </button>
-            <button
-                ref={exifBtnRef}
-                /* è·Ÿå…¶ä»–æŒ‰éˆ•ä¸€æ¨£ï¼š**é¬†æ‰‹**æ‰ç®—ä¸€æ¬¡é»žæ“Šï¼ˆonClickï¼‰ã€‚
-                   ä¹‹å‰ç‚ºäº†è§£æ±ºã€Œé—œä¸æŽ‰ã€æ”¹æˆ onPointerDownï¼Œæ‰‹æŒ‡ä¸€ç¢°å°±è§¸ç™¼ï¼Œ
-                   æ‰‹æ„Ÿè·Ÿæ—é‚Šé‚£å¹¾é¡†ä¸ä¸€æ¨£ã€‚çœŸæ­£çš„åŽŸå› ä¸åœ¨é€™é¡†éµèº«ä¸Š â€”â€”
-                   æ˜¯é‚£ç‰‡ z-[59] çš„é€æ˜Žé®ç½©è“‹åœ¨æ¨™é¡Œåˆ—ï¼ˆz-20ï¼‰ä¸Šé¢ï¼Œ
-                   æ‰‹æŒ‡å…¶å¯¦æŒ‰åœ¨é®ç½©ä¸Šï¼Œæ–¼æ˜¯ä¸€æ¬¡é»žæ“Šè¢«ç®—æˆå…©æ¬¡ã€‚
-                   ç¾åœ¨æ”¹æˆã€Œé¢æ¿é–‹è‘—æ™‚æŠŠæ¨™é¡Œåˆ—æŠ¬åˆ°é®ç½©ä¸Šé¢ã€ï¼ˆè¦‹ä¸‹é¢ header çš„
-                   z-indexï¼‰ï¼Œé€™é¡†éµå°±ç›´æŽ¥æŽ¥å¾—åˆ°è‡ªå·±çš„é»žæ“Šï¼Œä¸€æ¬¡å°±æ˜¯ä¸€æ¬¡ã€‚ */
-                onClick={() => setShowExifPanel(prev => !prev)}
-                className={`p-2 rounded-full transition-colors ${showExifPanel ? 'text-white' : 'text-white/40 hover:text-white'}`}
-                title="ç…§ç‰‡è³‡è¨Š"
-            >
-                <Icon name="info" className="text-xl" />
-            </button>
-            <button onClick={handleSave} className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap">å„²å­˜</button>
-        </div>
-        ) : <div className="w-28" aria-hidden="true" />}
-      </header>
-      )}
-
-      {/* IG è²¼æ–‡é è¦½ï¼šè·Ÿå…©å€‹æ‹¼åœ–å·¥å…·å…±ç”¨åŒä¸€é¡†å…ƒä»¶ */}
-      {igOpen && igShot && (
-        <div
-          className="fixed inset-0 z-[120] bg-black overflow-y-auto animate-in fade-in duration-200"
-          style={{ overscrollBehavior: 'none', scrollbarWidth: 'none', paddingTop: 48, paddingBottom: 48 }}
-        >
-          <IgPreview
-            shots={[igShot]}
-            frame={(() => {
-              const im = originalImgRef.current;
-              return im ? { w: im.naturalWidth, h: im.naturalHeight } : { w: 1, h: 1 };
-            })()}
-            pageCount={1}
-            faces={[igShot]}
-            supported
-            slot="editor"
-            embedded
-            flow
-            onClose={() => setIgOpen(false)}
-          />
-          {/* é—œé–‰éµä¸å¦å¤–åŠ ï¼šIgPreview è‡ªå·±é‚£ä¸€é¡†å°±å¤ äº†ï¼ˆonClose å·²ç¶“æŽ¥ä¸ŠåŽ»ï¼‰ï¼Œ
-              å¤šä¸€é¡†åªæ˜¯å³ä¸Šè§’å¤šä¸€å€‹é‡è¤‡çš„æŒ‰éˆ•ã€‚ */}
-        </div>
-      )}
-
-      {/* EXIF panel overlayã€‚é»žé¢æ¿ä»¥å¤–çš„ä»»ä½•åœ°æ–¹å°±æ”¶èµ·ä¾† */}
-      {showExifPanel && (
-        /* é»žé¢æ¿å¤–é¢å°±æ”¶èµ·ä¾†ï¼Œè€Œä¸”**é¬†æ‰‹æ‰æ”¶**ï¼ˆonClickï¼‰â€”â€”
-           è·Ÿè³‡è¨Šéµé‚£ä¸€é¡†çš„æ‰‹æ„Ÿä¸€è‡´ã€‚
-           å®ƒåŒæ™‚ä¹ŸæŠŠé»žæ“Šæ“‹ä½ï¼Œæ‰€ä»¥åº•ä¸‹çš„æ»‘æ¡¿ã€åˆ†é ä¸æœƒè¢«é †æ‰‹æŒ‰åˆ°ã€‚
-           æ¨™é¡Œåˆ—åœ¨é¢æ¿é–‹è‘—æ™‚æœƒè¢«æŠ¬åˆ°é€™ä¸€å±¤ä¸Šé¢ï¼Œæ‰€ä»¥è³‡è¨Šéµä¸æœƒè¢«å®ƒè“‹ä½ã€‚ */
-        <div ref={exifShieldRef} className="fixed inset-0 z-[59]" onClick={() => setShowExifPanel(false)} />
-      )}
-      {showExifPanel && (
-        <div ref={exifPanelRef} className="absolute top-16 right-4 left-4 md:left-auto md:right-4 mx-auto md:mx-0 bg-black/90 border border-white/10 rounded-2xl p-5 shadow-2xl backdrop-blur-xl z-[70] w-[320px] max-w-[calc(100vw-2rem)] text-white/90 text-xs flex flex-col gap-3">
-          <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-1">
-            <span className="font-bold tracking-wider text-[11px] text-white/40 uppercase">EXIFè³‡è¨Š</span>
-          </div>
-          
-          <div className="grid grid-cols-[80px_1fr] gap-x-2 gap-y-2.5">
-            <span className="text-white/40">åç¨±</span>
-            <span className="font-mono truncate select-all text-white/90" title={exifData.fileName}>{exifData.fileName || '-'}</span>
-
-            <span className="text-white/40">æ ¼å¼</span>
-            <span className={`${(!exifData.fileFormat || exifData.fileFormat === '-') ? 'font-mono' : 'font-medium'} text-white/90`}>{exifData.fileFormat || '-'}</span>
-
-            <span className="text-white/40">å°ºå¯¸</span>
-            <span className="font-mono text-white/90">{imageDimensions || '-'}</span>
-
-            <span className="text-white/40">æ—¥æœŸ</span>
-            <span className="font-mono text-white/90">{exifData.date || '-'}</span>
-
-            <span className="text-white/40">åž‹è™Ÿ</span>
-            <span className={`${(!exifData.cameraModel || exifData.cameraModel === '-') ? 'font-mono' : 'font-medium'} text-white/90`}>{exifData.cameraModel || '-'}</span>
-
-            <span className="text-white/40">ISO</span>
-            <span className="font-mono text-white/90">{exifData.iso || '-'}</span>
-
-            <span className="text-white/40">å¿«é–€</span>
-            <span className="font-mono text-white/90">{exifData.shutter || '-'}</span>
-
-            <span className="text-white/40">ç„¦è·</span>
-            <span className="font-mono text-white/90">{exifData.focalLength || '-'}</span>
-
-            <span className="text-white/40">å…‰åœˆ</span>
-            <span className="font-mono text-white/90">{exifData.aperture || '-'}</span>
-          </div>
-        </div>
-      )}
-
-      <div
-        ref={previewBoxRef}
-        className={`flex-1 relative flex bg-[#080808]`}
-      >
-        <TransformWrapper
-          ref={zoomRef}
-          initialScale={1}
-          minScale={0.5} 
-          maxScale={5} 
-          doubleClick={{ disabled: true }}
-          wheel={{ step: 0.3 }}
-          pinch={{ step: 240 }}
-          panning={{ velocityDisabled: false }}
-          alignmentAnimation={{ sizeX: 0, sizeY: 0 }}
-          disabled={activeCategory === 'mask'}
-        >
-          <TransformComponent wrapperClass="!w-full !h-full absolute inset-0" contentClass="!w-full !h-full flex items-center justify-center p-4">
-            <div className="relative shadow-2xl transition-transform active:scale-[0.99] duration-300 w-full h-full flex items-center justify-center">
-              {/* Sizing wrapper to ensure canvas and interactive overlay scale/move together perfectly */}
-              <div
-                ref={previewFitRef}
-                /* é€²å‡º HSL ä¸åšå‹•ç•«ï¼Œæ‰€ä»¥é‚£ä¸€æ¬¡åˆ‡æ›æŠŠéŽå ´é—œæŽ‰ */
-                className={`relative flex items-center justify-center ease-[cubic-bezier(0.2,0,0,1)] max-w-[calc(100%-32px)] ${hslSwitch ? 'transition-none' : 'transition-[max-height] duration-500'}`}
-                style={{
-                  maxHeight: hslFitNow
-                    ? `${hslFitNow.mh}px`
-                    : 'calc(100vh - 340px)',
-                  marginBottom: hslFitNow ? `${hslFitNow.mb}px` : undefined,
-                  aspectRatio: previewAspect ? `${previewAspect.w}/${previewAspect.h}` : undefined,
-                  width: previewAspect ? '100%' : 'auto',
-                  /* é«˜åº¦çš„ä¸Šé™ä¹Ÿè¦æ›ç®—æˆå¯¬åº¦çš„ä¸Šé™ï¼Œä¸ç„¶æ¯”ä¾‹æœƒè¢«å£“æ‰ã€‚
-                     aspect-ratio åªæœ‰åœ¨ã€Œå¦ä¸€é‚Šè‡ªç”±ã€çš„æ™‚å€™æ‰æˆç«‹ï¼šé€™è£¡å¯¬åº¦è¢«å¯«æ­»
-                     100%ï¼Œä¸€é‡åˆ°å¾ˆé•·çš„åœ–ï¼Œé«˜åº¦è¢« max-height å¤¾ä½ã€å¯¬åº¦å»ä¸æœƒè·Ÿè‘—ç¸®ï¼Œ
-                     æ¡†å°±å¾ž 720:1560 è®Šæˆ 358:504ï¼Œè€Œç•«å¸ƒæ˜¯ objectFit:'fill'ï¼Œ
-                     æ•´å¼µåœ–å°±è¢«æ©«å‘æ‹‰é–‹ï¼ˆé‡åˆ° 53.9% è®Šå½¢ï¼‰ã€‚
-                     æŠŠåŒä¸€æ¢é«˜åº¦ä¸Šé™ä¹˜ä¸ŠåŽŸåœ–æ¯”ä¾‹ç•¶æˆå¯¬åº¦ä¸Šé™ï¼Œå…©å€‹æ–¹å‘å°±éƒ½å®ˆå¾—ä½ã€‚ */
-                  maxWidth: previewAspect
-                    ? (hslFitNow
-                        ? `min(calc(100% - 32px), ${(hslFitNow.mh * previewAspect.w) / previewAspect.h}px)`
-                        : `min(calc(100% - 32px), calc((100vh - 340px) * ${previewAspect.w} / ${previewAspect.h}))`)
-                    : undefined,
-                }}
-              >
-                {/* Single Canvas for Display and Compare */}
-                {/* objectFit:'fill' è€Œä¸æ˜¯ object-containï¼šå¤–é¢é‚£å±¤å·²ç¶“ç”¨ aspectRatio
-                    éŽ–æˆæ­£ç¢ºæ¯”ä¾‹äº†ï¼Œé€™è£¡å†è®“ç•«å¸ƒã€Œç…§è‡ªå·±çš„æ¯”ä¾‹ã€ç•™é»‘é‚Šï¼Œ
-                    åªè¦ç•«å¸ƒå°ºå¯¸æ›ä¸€ä¸‹ï¼ˆå…¨è§£æžåº¦â†”ä»£ç†ï¼‰é»‘é‚Šå°±æœƒè·Ÿè‘—è®Šã€åœ–ç‰‡å°±ä½ç§»ã€‚
-                    å¡«æ»¿ä¹‹å¾Œç•«å¸ƒå°ºå¯¸æ€Žéº¼æ›ï¼Œç•«é¢ä¸Šçš„ä½ç½®éƒ½å®Œå…¨ä¸å‹•ã€‚ */}
-                <canvas 
-                    ref={displayCanvasRef} 
-                    style={{ objectFit: 'fill' }}
-                    className={previewAspect ? "w-full h-full pointer-events-auto rounded-sm" : "max-w-full pointer-events-auto rounded-sm"} 
-                />
-
-                {/* æ›éŽåŽ»äº†ä½†é‚„åœ¨ç®—çš„æ™‚å€™ï¼Œå£“æš—ï¼‹è½‰åœˆï¼Œåˆ¥è®“äººä»¥ç‚ºæ²’åæ‡‰ã€‚
-                    åªç•™è½‰åœˆ â€”â€” ã€Œæ¸²æŸ“ä¸­ã€ä¸‰å€‹å­—åè€Œè®“äººè¦ºå¾—ç­‰å¾ˆä¹…ã€‚ */}
-                {isSwitching && (
-                  <div
-                    data-switch-overlay
-                    className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 rounded-sm pointer-events-none animate-in fade-in duration-150"
-                  >
-                    <div className="w-7 h-7 border-2 border-white/25 border-t-white rounded-full animate-spin" />
-                  </div>
-                )}
-
-              {/* Linear Mask Interactive Vector Overlay */}
-              {activeCategory === 'mask' && canvasBounds.width > 0 && (
-                <>
-                  <svg
-                    id="mask-svg-overlay"
-                    /* ä¸€å®šè¦ overflow-hiddenï¼šé‚£å…©æ¢ã€Œç„¡é™é•·ã€çš„é‚Šç•Œç·šæ˜¯ y=Â±10000 ç•«çš„ï¼Œ
-                       overflow-visible æœƒè®“å®ƒå€‘ä¸€è·¯ç•«åˆ°æ•´å€‹èž¢å¹•ä¸Šï¼ˆç…§ç‰‡å¤–é¢ã€
-                       é€£å·¥å…·åˆ—é‚£ä¸€å¸¶éƒ½æ˜¯ç·šï¼‰ï¼Œè€Œä¸”ç·šä¸Šçš„ 18px è§¸æŽ§å¸¶ä¹Ÿè·Ÿè‘—è·‘å‡ºåŽ»ã€‚
-                       SVG é è¨­å°±æ˜¯è£åˆ‡åˆ°è‡ªå·±çš„æ¡†ï¼Œé€™è£¡æŠŠå®ƒæ‹¿å›žä¾†ã€‚ */
-                    className="absolute inset-0 w-full h-full select-none pointer-events-auto overflow-hidden z-30"
-                    style={{
-                      touchAction: 'none',
-                    }}
-                    onPointerMove={handleMaskPointerMove}
-                    onPointerUp={handleMaskPointerUp}
-                    onPointerCancel={handleMaskPointerUp}
-                  >
-                  {/* Background hit area to create mask by dragging */}
-                  {!params.maskCreated && (
-                    <rect
-                      id="ui-bg-hit"
-                      width="100%"
-                      height="100%"
-                      fill="transparent"
-                      style={{ cursor: 'crosshair' }}
-                      onPointerDown={(e) => handleMaskPointerDown(e, 'create')}
-                    />
-                  )}
-
-                  <g transform={`translate(${canvasBounds.left}, ${canvasBounds.top})`}>
-                    {/* Vector guides */}
-                    {params.maskCreated && !(isInteracting && !activeDragRef.current) && (
-                      <g
-                        id="ui-guides"
-                      style={{
-                        willChange: 'transform',
-                      }}
-                      transform={`translate(${params.maskCx * canvasBounds.width}, ${params.maskCy * canvasBounds.height}) rotate(${(params.maskAngle * 180) / Math.PI})`}
-                    >
-                      {/* Connecting axis line */}
-                      <line
-                        className="pointer-events-none"
-                        x1={-params.maskD * canvasBounds.width}
-                        y1={0}
-                        x2={params.maskD * canvasBounds.width}
-                        y2={0}
-                        stroke="rgba(255, 255, 255, 0.5)"
-                        strokeWidth="1px"
-                        strokeDasharray="2,4"
-                      />
-
-                      {/* Rotator group */}
-                      <g
-                        id="ui-rotator-group"
-                        style={{
-                          display: activeDragRef.current?.type && activeDragRef.current.type !== 'rotate' ? 'none' : 'block',
-                          opacity: activeDragRef.current?.type && activeDragRef.current.type !== 'rotate' ? 0 : 1,
-                          pointerEvents: activeDragRef.current?.type && activeDragRef.current.type !== 'rotate' ? 'none' : 'auto',
-                        }}
-                        transform={`translate(${params.maskD * canvasBounds.width}, 0)`}
-                      >
-                        {/* Rotator Arm */}
-                        <line
-                          className="pointer-events-none"
-                          x1={0}
-                          y1={0}
-                          x2={35}
-                          y2={0}
-                          stroke="#000000"
-                          strokeWidth="2.1px"
-                          strokeLinecap="round"
-                        />
-                        <line
-                          className="pointer-events-none"
-                          x1={0}
-                          y1={0}
-                          x2={35}
-                          y2={0}
-                          stroke="#ffffff"
-                          strokeWidth="1.5px"
-                          strokeLinecap="round"
-                        />
-                        {/* Rotator handle */}
-                        <circle
-                          cx={35}
-                          cy={0}
-                          r={16}
-                          fill="transparent"
-                          style={{ cursor: 'alias' }}
-                          onPointerDown={(e) => handleMaskPointerDown(e, 'rotate')}
-                        />
-                        <circle
-                          className="pointer-events-none"
-                          cx={35}
-                          cy={0}
-                          r={6}
-                          fill="#ffffff"
-                          stroke="#000000"
-                          strokeWidth="0.5px"
-                          style={{
-                            filter: 'drop-shadow(0px 2px 4px rgba(0, 0, 0, 0.45))',
-                          }}
-                        />
-                      </g>
-
-                      {/* Start line (100% boundary) */}
-                      <g transform={`translate(${-params.maskD * canvasBounds.width}, 0)`}>
-                        <line
-                          x1={0}
-                          y1={-10000}
-                          x2={0}
-                          y2={10000}
-                          stroke="transparent"
-                          strokeWidth="18px"
-                          style={{ cursor: 'grab' }}
-                          onPointerDown={(e) => handleMaskPointerDown(e, 'start')}
-                        />
-                        <line
-                          className="pointer-events-none"
-                          x1={0}
-                          y1={-10000}
-                          x2={0}
-                          y2={10000}
-                          stroke="#000000"
-                          strokeWidth="2.1px"
-                          strokeLinecap="round"
-                        />
-                        <line
-                          className="pointer-events-none"
-                          x1={0}
-                          y1={-10000}
-                          x2={0}
-                          y2={10000}
-                          stroke="#ffffff"
-                          strokeWidth="1.5px"
-                          strokeLinecap="round"
-                        />
-                      </g>
-
-                      {/* End line (0% boundary) */}
-                      <g transform={`translate(${params.maskD * canvasBounds.width}, 0)`}>
-                        <line
-                          x1={0}
-                          y1={-10000}
-                          x2={0}
-                          y2={10000}
-                          stroke="transparent"
-                          strokeWidth="18px"
-                          style={{ cursor: 'grab' }}
-                          onPointerDown={(e) => handleMaskPointerDown(e, 'end')}
-                        />
-                        <line
-                          className="pointer-events-none"
-                          x1={0}
-                          y1={-10000}
-                          x2={0}
-                          y2={10000}
-                          stroke="#000000"
-                          strokeWidth="2.1px"
-                          strokeLinecap="round"
-                        />
-                        <line
-                          className="pointer-events-none"
-                          x1={0}
-                          y1={-10000}
-                          x2={0}
-                          y2={10000}
-                          stroke="#ffffff"
-                          strokeWidth="1.5px"
-                          strokeLinecap="round"
-                        />
-                      </g>
-
-                      {/* Center line */}
-                      <g>
-                        <line
-                          x1={0}
-                          y1={-10000}
-                          x2={0}
-                          y2={10000}
-                          stroke="transparent"
-                          strokeWidth="18px"
-                          style={{ cursor: 'grab' }}
-                          onPointerDown={(e) => handleMaskPointerDown(e, 'center')}
-                        />
-                        <line
-                          className="pointer-events-none"
-                          x1={0}
-                          y1={-10000}
-                          x2={0}
-                          y2={10000}
-                          stroke="#ffffff"
-                          strokeWidth="1.5px"
-                          strokeLinecap="round"
-                        />
-                      </g>
-
-                      {/* Center Positioning Pin */}
-                      <g>
-                        <rect
-                          x={-16}
-                          y={-16}
-                          width={32}
-                          height={32}
-                          fill="transparent"
-                          style={{ cursor: 'move' }}
-                          onPointerDown={(e) => handleMaskPointerDown(e, 'center')}
-                        />
-                        <rect
-                          className="pointer-events-none"
-                          x={-6}
-                          y={-6}
-                          width={12}
-                          height={12}
-                          fill="#ffffff"
-                          stroke="#000000"
-                          strokeWidth="0.5px"
-                          style={{
-                            filter: 'drop-shadow(0px 2px 4px rgba(0, 0, 0, 0.45))',
-                          }}
-                        />
-                      </g>
-                    </g>
-                  )}
-                  </g>
-                </svg>
-              </>
-              )}
-              </div>
-            </div>
-          </TransformComponent>
-        </TransformWrapper>
-
-        {/* Mask creation Hint/Instruction card */}
-        {activeCategory === 'mask' && (
-          <AnimatePresence>
-            {!params.maskCreated && !isInitialCreatingMask && !dismissedMaskHint && (
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.4, ease: [0.215, 0.61, 0.355, 1] }}
-                className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none z-20 select-none"
-              >
-                {/* å¡ç‰‡æœ¬èº«ä¸èƒ½åƒæ‰‹å‹¢ï¼šå®ƒå°±è“‹åœ¨ç…§ç‰‡æ­£ä¸­å¤®ï¼ŒåƒæŽ‰çš„è©±
-                    ã€Œè«‹åœ¨åœ–ç‰‡ä¸Šæ‹–æ›³ã€é€™å¥è©±ç­‰æ–¼é¨™äºº â€”â€” æ‹–éŽåŽ»æ ¹æœ¬ç•«ä¸å‡ºä¾†ã€‚
-                    åªæœ‰ä¸‹é¢é‚£é¡†ã€Œæˆ‘çŸ¥é“äº†ã€éœ€è¦é»žå¾—åˆ°ã€‚ */}
-                <div className="flex flex-col items-center gap-4 bg-[#111111] px-8 py-6 rounded-3xl border border-white/10 shadow-[0_24px_50px_-12px_rgba(0,0,0,0.8)] max-w-xs text-center pointer-events-none">
-                  {/* Animated Drawing Gesture Visual */}
-                  <div className="relative w-20 h-16 flex items-center justify-center mb-1">
-                    {/* Breathing circle 1 */}
-                    <motion.div 
-                      animate={{ 
-                        scale: [1, 1.8, 1],
-                        opacity: [0.15, 0.4, 0.15]
-                      }}
-                      transition={{
-                        duration: 2,
-                        repeat: Infinity,
-                        ease: "easeInOut"
-                      }}
-                      className="absolute w-10 h-10 rounded-full bg-white/20"
-                    />
-                    {/* Drawing pointer indicator */}
-                    <motion.div
-                      animate={{
-                        x: [-24, 24, -24],
-                        y: [-12, 12, -12],
-                        scale: [0.95, 1.1, 0.95],
-                      }}
-                      transition={{
-                        duration: 2.5,
-                        repeat: Infinity,
-                        ease: "easeInOut"
-                      }}
-                      className="relative z-10 flex items-center justify-center"
-                    >
-                      <div className="w-6 h-6 rounded-full bg-white flex items-center justify-center shadow-[0_0_15px_rgba(255,255,255,0.6)] border border-black/10">
-                        <Icon name="gesture" className="text-[12px] text-black" />
-                      </div>
-                      {/* Trailing dash line effect */}
-                      <svg className="absolute overflow-visible pointer-events-none w-24 h-12 -z-10" viewBox="0 0 100 50">
-                        <motion.path
-                          d="M 20 15 Q 50 35 80 15"
-                          fill="none"
-                          stroke="rgba(255,255,255,0.3)"
-                          strokeWidth="2"
-                          strokeDasharray="4 4"
-                          animate={{
-                            strokeDashoffset: [0, -20]
-                          }}
-                          transition={{
-                            duration: 2,
-                            repeat: Infinity,
-                            ease: "linear"
-                          }}
-                        />
-                      </svg>
-                    </motion.div>
-                  </div>
-                  
-                  <div className="space-y-1.5">
-                    <h4 className="text-[12px] font-black text-white uppercase tracking-[0.2em]">å»ºç«‹é®è‰²ç‰‡</h4>
-                    <p className="text-[10px] text-white/50 leading-relaxed font-medium">è«‹åœ¨åœ–ç‰‡ä¸Šæ‹–æ›³ï¼Œç¹ªè£½å‡ºé®è‰²ç‰‡</p>
-                  </div>
-
-                  <button
-                    onClick={() => setDismissedMaskHint(true)}
-                    className="pointer-events-auto w-full mt-2 py-2 px-4 bg-white/10 hover:bg-white/20 active:scale-95 text-white text-[11px] font-bold rounded-xl transition-all uppercase tracking-[0.1em]"
-                  >
-                    æˆ‘çŸ¥é“äº†
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        )}
-        
-      {/* æ‰¹é‡ç·¨è¼¯çš„ç¸®åœ–åˆ—ï¼šè·Ÿã€Œå‰å¾Œå°æ¯”ã€åŒä¸€æŽ’ï¼ˆç•«é¢åº•éƒ¨é‚£ä¸€æ¢ï¼‰ï¼Œ
-            åªæœ‰å¤šå¼µæ™‚æ‰å‡ºç¾ï¼Œæµ®åœ¨ç•«é¢ä¸Šä¸ä½”ç‰ˆé¢ â€”â€” å–®å¼µæ™‚çš„ç·¨è¼¯ä»‹é¢è·Ÿä»¥å‰ä¸€æ¨£ã€‚
-            é»žä¸€ä¸‹ï¼æ›æˆé è¦½é€™ä¸€å¼µï¼›å†é»žä¸€ä¸‹å·²é¸ä¸­çš„é‚£å¼µæ‰æœƒè·³å‡ºå°é¸å–®ã€‚ */}
-        {saveState !== 'success' && srcList.length > 1 && (
-          <div
-            data-batch-strip
-            className={`absolute bottom-2 left-[14px] right-[50px] ${activeToolId === 'curves' ? 'z-50' : 'z-30'}`}
-          >
-            {batchMenu !== null && (
-              <div
-                className="fixed inset-0 z-10"
-                onPointerDown={(e) => { e.stopPropagation(); setBatchMenu(null); }}
-              />
-            )}
-            {/* å·¦å³å„ç•™ 2pxï¼Œé¸ä¸­çš„ç™½æ¡†æ‰ä¸æœƒè¢«æ²å‹•åˆ—çš„é‚Šç·£åˆ‡æŽ‰ */}
-            {/* ç¸®åœ–åˆ—è¦å£“åœ¨é®ç½©ä¸Šé¢ â€”â€” ä¸ç„¶é¸å–®é–‹è‘—çš„æ™‚å€™ï¼Œé»žç¸®åœ–çš„é‚£ä¸€ä¸‹æœƒè¢«é®ç½©åƒæŽ‰ï¼Œ
-                ç¬¬äºŒä¸‹å°±è®Šæˆåªæ˜¯æŠŠé¸å–®é—œæŽ‰ï¼Œçœ‹èµ·ä¾†å°±æ˜¯ã€Œé»žå…©ä¸‹æ²’åæ‡‰ã€ã€‚
-                é¸å–®æ‰“é–‹æ™‚æ‰åœ¨ä¸Šé¢æ’ä¸€å¤§å¡Šç•™ç™½ï¼šæ²å‹•åˆ—æ˜¯ overflow-x-autoï¼Œç€è¦½å™¨æœƒæŠŠ
-                overflow-y ä¹Ÿä¸€èµ·è®Šæˆ autoï¼Œå¾€ä¸Šå½ˆçš„æ±è¥¿åªè¦è¶…å‡ºé€™å€‹æ¡†å°±æœƒè¢«è£æŽ‰ã€‚
-                ç•™ç™½ç®—åœ¨æ¡†è£¡é¢ï¼Œé¸å–®æ‰çœ‹å¾—åˆ°ï¼›å†ç”¨ç­‰é‡çš„è²  margin æ‹‰å›žä¾†ï¼Œç‰ˆé¢ä¸è®Š
-                ï¼ˆpt æ¯” mt å¤š 4pxï¼Œå°±æ˜¯åŽŸæœ¬çš„ pt-1ï¼‰ã€‚
-                ç•™ç™½æœƒè“‹åˆ°ä¸Šé¢çš„é è¦½ï¼Œæ‰€ä»¥åªåœ¨é¸å–®é–‹è‘—çš„æ™‚å€™æ‰æ’ â€”â€” å¹³å¸¸é€™æ¢åˆ—
-                å°±æ˜¯ä¸€æ¢æ™®é€šçš„æ²å‹•åˆ—ï¼Œæ‰‹æŒ‡ç…§æ¨£æ»‘å¾—å‹•ã€‚ */}
-            <div
-              data-batch-row
-              onPointerDown={(e) => { if (e.target === e.currentTarget) setBatchMenu(null); }}
-              className={`relative z-20 flex items-end gap-1.5 overflow-x-auto no-scrollbar px-[2px] pb-1 ${
-                batchMenu !== null ? 'pt-[100px] -mt-[96px]' : 'pt-1'
-              }`}
-            >
-              {srcList.map((src, i) => {
-                const on = linked[i] !== false;
-                const active = i === safeIdx;
-                return (
-                  <div key={src + i} className={`relative shrink-0 ${batchMenu === i ? 'z-10' : ''}`}>
-                    {/* é¸å–®å°±æŽ›åœ¨ç¸®åœ–åº•ä¸‹ â€”â€” åŒä¸€å€‹ DOM å­æ¨¹ï¼Œæ²å‹•æ™‚å®Œå…¨åŒæ­¥ï¼Œä¸€æ ¼éƒ½ä¸æœƒå·® */}
-                    {batchMenu === i && (
-                      <div
-                        className="absolute bottom-full mb-2 rounded-lg bg-[#1b1b1b] border border-white/10 shadow-[0_8px_24px_rgba(0,0,0,0.6)] overflow-hidden"
-                        style={{ left: batchMenuDx }}
-                      >
-                        <button
-                          onClick={() => { toggleLink(i); setBatchMenu(null); }}
-                          className="block w-full px-3 h-9 text-[11px] font-bold text-white/90 whitespace-nowrap text-left active:bg-white/10"
-                        >
-                          {on ? 'å–æ¶ˆé€£çµ' : 'é‡æ–°é€£çµ'}
-                        </button>
-                        <div className="h-px bg-white/10" />
-                        <button
-                          onClick={() => { removePhoto(i); setBatchMenu(null); }}
-                          className="block w-full px-3 h-9 text-[11px] font-bold text-white/90 whitespace-nowrap text-left active:bg-white/10"
-                        >
-                          åˆªé™¤
-                        </button>
-                      </div>
-                    )}
-                    <button
-                      onPointerDown={(e) => beginThumbPress(i, e)}
-                      onPointerMove={(e) => moveThumbPress(e)}
-                      onPointerUp={(e) => endThumbPress(i, e, active)}
-                      onPointerCancel={cancelThumbPress}
-                      onContextMenu={(e) => e.preventDefault()}
-                      title={`ç¬¬ ${i + 1} å¼µ`}
-                      data-batch-thumb={i}
-                      className={`block w-9 h-9 rounded-[4px] overflow-hidden bg-[#1a1a1a] transition-all active:scale-95 touch-manipulation select-none ${
-                        active ? 'ring-[length:1.5px] ring-white' : ''
-                      }`}
-                    >
-                      {/* æ²’é¸ä¸­çš„ä¸ç”¨åŠé€æ˜Ž â€”â€” å¯¦å¿ƒã€å£“æš—å°±å¥½ï¼Œæ‰ä¸æœƒé€å‡ºå¾Œé¢çš„ç•«é¢ã€‚
-                          src ä¸€å®šè¦ç”¨ç¸®å¥½çš„å°åœ–ï¼Œä¸èƒ½æŽ›åŽŸåœ–ï¼ˆè¦‹ä¸Šé¢ stripThumbs çš„èªªæ˜Žï¼‰ã€‚
-                          é‚„æ²’ç¸®å¥½ä¹‹å‰å°±ç•™åº•è‰²ï¼Œé€™ä¸€æ ¼æœ¬ä¾†å°±åªæœ‰ 36pxã€‚ */}
-                      {stripThumbs[src] && (
-                        <img
-                          src={stripThumbs[src]}
-                          alt=""
-                          draggable={false}
-                          className={`w-full h-full object-cover pointer-events-none transition-all ${active ? '' : 'filter brightness-[0.5]'}`}
-                        />
-                      )}
-                    </button>
-                    {/* é€£çµä¸­æ˜¯ç™½åº•é»‘ç·šçš„éŽ–éˆã€æ²’æœ‰æ–œç·šï¼›è§£é™¤é€£çµçš„ç¶­æŒé»‘åº•ç™½ç·šã€æ‰“å‰ */}
-                    <span className={`absolute -top-1 -right-1 w-[14px] h-[14px] rounded-full flex items-center justify-center pointer-events-none ${on ? 'bg-white' : 'bg-black'}`}>
-                      <Icon name={on ? 'link' : 'link_off'} className={`text-[9px] leading-none ${on ? 'text-black' : 'text-white/80'}`} />
-                    </span>
-                  </div>
-                );
-              })}
-              {onAddPhotos && (
-                <button
-                  onClick={() => { setBatchMenu(null); onAddPhotos(); }}
-                  title="æ–°å¢žç…§ç‰‡"
-                  data-batch-add
-                  className="shrink-0 w-9 h-9 rounded-[4px] bg-[#2e2e2e] flex items-center justify-center text-[#b9b9b9] active:scale-95 transition-all touch-manipulation"
-                >
-                  <Icon name="add" className="text-[16px] leading-none" />
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* åˆä½µï¼šæŠŠç¾åœ¨ç•«é¢ä¸Šçš„æ¨£å­çƒ¤é€²åœ–å±¤ï¼Œçƒ¤å®Œæ‰èƒ½å†ç–Šä¸‹ä¸€å€‹ç‰¹æ•ˆï¼æ¿¾é¡ã€‚
-             ä½ç½®è·Ÿå³ä¸‹è§’çš„å‰å¾Œå°æ¯”éµå·¦å³å°ç¨±ã€‚
-             åªæœ‰ã€Œç¾åœ¨çœŸçš„å¥—è‘—ç‰¹æ•ˆæˆ–æ¿¾é¡ã€æ™‚æ‰å‡ºç¾ â€”â€” åˆä½µéŽçš„åƒæ•¸å·²ç¶“æ­¸é›¶ï¼Œä¸ç®—ã€‚
-             é®è‰²ç‰‡èˆ‡èª¿ç¯€é€™å…©é ä¸å‡ºç¾ï¼šé‚£å…©é åœ¨èª¿çš„æ±è¥¿è·Ÿã€Œçƒ¤é€²åœ–å±¤ã€æ˜¯å…©å›žäº‹ï¼Œ
-             æŒ‰éˆ•æ“ºåœ¨é‚£è£¡åªæœƒè®“äººä»¥ç‚ºæ˜¯åœ¨åˆä½µé®è‰²ç‰‡ã€‚ */}
-        {(hasMergeable || mergedCount > 0)
-          && activeCategory !== 'mask' && activeCategory !== 'adjust' && (
-          <button
-            aria-label="åˆä½µç‰¹æ•ˆ"
-            onClick={hasMergeable ? mergeEffects : undefined}
-            disabled={!hasMergeable}
-            className="absolute bottom-2 left-2 px-2 py-2 flex flex-col items-center justify-center gap-1 select-none touch-none z-20 text-white"
-          >
-            {/* ç–Šåœ¨ä¸€èµ·çš„å…©å±¤ï¼ˆæ²’æœ‰ç®­é ­ï¼‰ï¼šæ‰ï¼Œå¯¬åº¦æ¯”å‰å¾Œå°æ¯”éµçª„ä¸€é»žã€‚
-                ç·šæ¢è¦è·Ÿå‰å¾Œå°æ¯”éµã€Œç•«åœ¨èž¢å¹•ä¸Šä¸€æ¨£ç²—ã€ï¼Œè€Œä¸æ˜¯å±¬æ€§å¯«ä¸€æ¨£çš„æ•¸å­—ï¼š
-                é‚£ä¸€é¡†æ˜¯ 24 çš„ viewBox ç•«æˆ 24pxï¼ˆ1:1ï¼‰ï¼Œé€™ä¸€é¡†æ˜¯ 34 çš„ viewBox
-                ç•«æˆ 28pxï¼ˆ0.824 å€ï¼‰ï¼Œæ‰€ä»¥ strokeWidth è¦é™¤å›žåŽ» â€”â€” 1.5 / (28/34)
-                â‰ˆ 1.82ï¼Œç•«å‡ºä¾†æ‰å‰›å¥½æ˜¯ 1.5pxã€‚ä»¥å‰å¯« 1.2 çš„å¯¦éš›ç²—åº¦åªæœ‰ 0.99pxï¼Œ
-                ä¸æ»¿ä¸€å€‹åƒç´ å°±æœƒè¢«æŠ—é‹¸é½’æ”¤æˆç°çš„ï¼Œçœ‹èµ·ä¾†å°±åƒåŠé€æ˜Žã€‚
-                é¡è‰²ä¹Ÿç›´æŽ¥å¯«æ­»ç™½è‰²ï¼Œä¸åƒ currentColorï¼ˆæŒ‰éˆ•åœç”¨æ™‚æœƒè¢«ç€è¦½å™¨èª¿æ·¡ï¼‰ã€‚ */}
-            <svg width="28" height="18" viewBox="0 0 34 22" fill="none" xmlns="http://www.w3.org/2000/svg"
-                 className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-              <path d="M17 2.5 30 8.5 17 14.5 4 8.5Z" stroke="#fff" strokeWidth="1.82" strokeLinejoin="round" />
-              <path d="M4 13 17 19 30 13" stroke="#fff" strokeWidth="1.82" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span className="text-[9px] leading-none font-medium tracking-wide whitespace-nowrap drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-              {hasMergeable
-                ? (activeCategory === 'effects' ? 'åˆä½µç‰¹æ•ˆ' : 'åˆä½µæ¿¾é¡')
-                : `å·²åˆä½µ${mergedCount}`}
-            </span>
-          </button>
-        )}
-
-        {/* Compare Button */}
-        <button
-            onPointerDown={(e) => { 
-                e.preventDefault(); 
-                try {
-                    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-                } catch(err) {}
-                setShowOriginal(true); 
-            }} 
-            onPointerUp={(e) => { 
-                e.preventDefault(); 
-                try {
-                    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-                } catch(err) {}
-                setShowOriginal(false); 
-            }} 
-            onPointerCancel={(e) => { 
-                setShowOriginal(false); 
-            }}
-            className={`absolute bottom-2 right-2 p-3 flex items-center justify-center select-none touch-none transition-all active:scale-90 ${showOriginal ? 'text-white' : 'text-white/40'} ${activeToolId === 'curves' ? 'z-50' : 'z-20'}`}
-        >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]">
-              <path d="M12 6H4.5C3.67157 6 3 6.67157 3 7.5V16.5C3 17.3284 3.67157 18 4.5 18H12" stroke="white" strokeWidth="1.5" />
-              <line x1="12" y1="3" x2="12" y2="21" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-              <path d="M12 6H19.5C20.3284 6 21 6.67157 21 7.5V16.5C21 17.3284 20.3284 18 19.5 18H12" stroke="currentColor" strokeWidth="1.5" />
-            </svg>
-        </button>
-
-        {/* --- HSL é¢æ¿ ---
-             è·Ÿæ›²ç·šä¸€æ¨£åšæˆè“‹åœ¨é è¦½ä¸Šçš„æµ®å±¤ï¼Œè€Œä¸æ˜¯æŠŠåº•éƒ¨åŠŸèƒ½æ¬„æ’é«˜ â€”â€”
-             åº•éƒ¨é‚£å…©åˆ—ï¼ˆå°åˆ†é¡žã€åˆ†é ï¼‰å› æ­¤å®Œå…¨ä¸æœƒè¢«æŽ¨å‹•ã€‚
-             é€²å‡ºä¸åšä»»ä½•å‹•ç•«ï¼šç›´æŽ¥æŽ›ä¸Šã€ç›´æŽ¥æ‹¿æŽ‰ã€‚ */}
-        {activeToolId === 'hsl' && (
-        <div
-           data-hsl-panel
-           className="absolute inset-x-0 bottom-0 z-40 px-8 pt-2 pb-2 bg-[#111]/95 backdrop-blur-xl border-t border-white/5"
-        >
-<div className="w-full flex flex-col">
-              {/* é€™ä¸€æŽ’ä¼¸é€²å¤–å±¤çš„å·¦å³å…§è·è£¡ï¼ˆw = 100%+4rem é… -mx-8ï¼‰ï¼Œæ‰æŽ’å¾—ä¸‹ã€‚
-                  å¤–å±¤çš„ border box æ˜¯æ•´å€‹ç•«é¢å¯¬ï¼Œæ‰€ä»¥ä¼¸å‡ºåŽ»ä¸æœƒè¢«è£æŽ‰ã€‚
-                  å…§å±¤ç”¨ w-max + mx-autoï¼šæŽ’å¾—ä¸‹çš„æ™‚å€™è‡ªå‹•ç½®ä¸­ï¼ŒæŽ’ä¸ä¸‹çš„æ™‚å€™
-                  margin è‡ªå·±è®Š 0 æ”¹æˆé å·¦æ² â€”â€” ç›´æŽ¥ç”¨ justify-center çš„è©±ï¼Œ
-                  å…§å®¹è¶…å‡ºæ™‚ç¬¬ä¸€é¡†æœƒè¢«åˆ‡æŽ‰è€Œä¸”æ²ä¸å›žä¾†ã€‚ */}
-              <div className="w-[calc(100%+4rem)] -mx-8 px-1 overflow-x-auto no-scrollbar">
-              <div className="flex items-center gap-2 w-max mx-auto py-1.5">
-                {HSL_BANDS.map((band, i) => {
-                  const on = hslBandIdx === i;
-                  const touched = params.hsl && params.hsl[i] && (params.hsl[i].h !== 0 || params.hsl[i].s !== 0 || params.hsl[i].l !== 0);
-                  return (
-                    <button
-                      key={band.id}
-                      data-hsl-band={i}
-                      onClick={() => setHslBandIdx(i)}
-                      title={band.label}
-                      className="shrink-0 flex flex-col items-center gap-1 group"
-                    >
-                      {/* æ²’é¸ä¸­ï¼ç©ºå¿ƒåœˆï¼ˆ4pxï¼Œå¤ ç²—çœ‹å¾—æ¸…æ¥šï¼‰ï¼›é¸ä¸­ï¼å¯¦å¿ƒã€‚
-                          é‚Šæ¡†æ°¸é å¯«æ­»åŒä¸€å€‹é¡è‰² â€”â€” åªç•™ background åœ¨è®Šã€‚
-                          ä¹‹å‰é¸ä¸­æ™‚æ²’å¯« borderï¼Œtransition-all æœƒæŠŠé‚Šæ¡†é¡è‰²å¾žè‰²ç¥¨è‰²
-                          è£œé–“åˆ° Tailwind çš„é è¨­ç°ç™½ï¼ŒæŒ‰ä¸‹åŽ»å°±é–ƒä¸€åœˆç™½é‚Šã€‚ */}
-                      <span
-                        className={`block w-8 h-8 rounded-full transition-colors ${on ? '' : 'group-hover:opacity-90'}`}
-                        style={{ border: `4px solid ${band.swatch}`, background: on ? band.swatch : 'transparent' }}
-                      />
-                      {/* æ”¹éŽçš„è¨˜è™Ÿæ”¾åœ¨æŒ‰éˆ•ä¸‹é¢ã€éš”ä¸€é»žé»žã€‚å›ºå®šä½”ä½åªåˆ‡æ›é€æ˜Žåº¦ï¼Œ
-                          é«˜åº¦æ‰ä¸æœƒè·³ï¼Œä¹Ÿä¸æœƒè¢«æ²å‹•åˆ—çš„é‚Šç·£è£æŽ‰ */}
-                      <span className={`w-1.5 h-1.5 rounded-full bg-white transition-opacity ${touched ? 'opacity-100' : 'opacity-0'}`} />
-                    </button>
-                  );
-                })}
-              </div>
-              </div>
-              {HSL_SLIDERS.map(sl => (
-                <FastSlider
-                  key={`${hslBandIdx}-${sl.key}`}
-                  value={(params.hsl && params.hsl[hslBandIdx] ? params.hsl[hslBandIdx][sl.key] : 0)}
-                  min={-100} max={100} step={1}
-                  toolId={`hsl.${hslBandIdx}.${sl.key}`}
-                  label={sl.label}
-                  snapZero
-                  compact
-                  onUpdate={(id, val) => {
-                    const [, bi, key] = id.split('.');
-                    const cur = paramsRef.current;
-                    const next = (cur.hsl || DEFAULT_HSL).map((b, i2) =>
-                      i2 === Number(bi) ? { ...b, [key]: val } : b);
-                    const p2 = { ...cur, hsl: next };
-                    paramsRef.current = p2;
-                    isDirtyRef.current = true;
-                    lastSliderMoveTimeRef.current = performance.now();
-                  }}
-                  onInteractStart={() => setupFastPreview('hsl')}
-                  onInteractEnd={() => {
-                    setIsInteracting(false);
-                    fastPreviewCacheRef.current.active = false;
-                    setParams({ ...paramsRef.current });
-                    addToHistory(paramsRef.current, selectedLutIdx);
-                  }}
-                  onReset={() => {
-                    const cur = paramsRef.current;
-                    const next = (cur.hsl || DEFAULT_HSL).map((b, i2) =>
-                      i2 === hslBandIdx ? { ...b, [sl.key]: 0 } : b);
-                    const p2 = { ...cur, hsl: next };
-                    paramsRef.current = p2;
-                    setParams(p2);
-                    isDirtyRef.current = true;
-                    addToHistory(p2, selectedLutIdx);
-                  }}
-                />
-              ))}
-            </div>
-        </div>
-        )}
-
-        {/* --- CURVE OVERLAY UI --- */}
-        <div 
-           /* æ”¶èµ·ä¾†æ™‚åªæ·¡å‡ºï¼‹ä»¥åº•éƒ¨ç‚ºåŽŸé»žç¸®å°ï¼Œä¸åšä½ç§»ï¼šåŽŸæœ¬ç”¨ translate-y-fullï¼Œ
-              æ•´å¡Šæ ¼ç·šèˆ‡é€šé“é»žæœƒå¾žä¸‹æ–¹åŠŸèƒ½æ¬„ã€Œç©¿éŽåŽ»ã€ï¼Œçœ‹èµ·ä¾†å°±æ˜¯é‚£ä¸€å¡Šæ·ºç°è‰²çš„æ±è¥¿
-              ï¼ˆé‡åˆ°é›¢é–‹å¾Œ 60ms é‚£ä¸€å¹€çœŸçš„ç–Šåœ¨äº®åº¦é‚£ä¸€åˆ—ä¸Šï¼‰ã€‚
-              origin-bottom + scale â‰¤ 1 ä¿è­‰å®ƒæ°¸é ä¸æœƒè¶…å‡ºåŽŸæœ¬çš„ç¯„åœï¼Œ
-              è¦–è¦ºä¸Šå°±æ˜¯ã€Œå¾žåº•éƒ¨é•·å‡ºä¾†ã€ã€‚
-              é€²é€€ç”¨åŒä¸€æ¢ easeOutï¼Œæ”¶èµ·ä¾†æ‰æœƒä¸€æŒ‰å°±é–‹å§‹æ·¡æŽ‰ï¼›é€€å ´å†çŸ­ä¸€é»žï¼Œ
-              æ‰‹æŒ‡é›¢é–‹æŒ‰éˆ•çš„ç•¶ä¸‹æ›²ç·šå°±å·²ç¶“çœ‹ä¸å¤ªåˆ°äº†ã€‚ */
-           className={`absolute left-0 right-0 z-40 flex flex-col items-center justify-end pb-2 origin-bottom panel-ease transition-[opacity,transform] ${
-             activeToolId === 'curves'
-               ? `${curvesFromHsl ? 'duration-0' : 'duration-[380ms]'} scale-100 opacity-100`
-               : 'duration-[260ms] scale-[0.96] opacity-0 pointer-events-none'
-           }`}
-           style={{ height: '250px', bottom: 0 }}
-        >
-           <div className="flex items-center justify-center w-full h-full relative pointer-events-none">
-               {/* Wrapper to center the box, with controls anchored relative to it. Enable pointer events for children. */}
-               {/* pointer-events ä¸æœƒè¢«ç¥–å…ˆçš„ none è“‹æŽ‰ï¼šåªè¦å­å­«è‡ªå·±å¯« autoï¼Œ
-                   å³ä½¿å¤–å±¤æ˜¯ none å®ƒç…§æ¨£åƒå¾—åˆ°è§¸æŽ§ã€‚æ›²ç·šæ”¶èµ·ä¾†çš„æ™‚å€™é€™ä¸€å¡Š
-                   ï¼ˆ240Ã—240 çš„æ ¼å­åŠ å·¦é‚Šé‚£æŽ’é€šé“é»žï¼‰æ˜¯çœ‹ä¸è¦‹ä½†é‚„åœ¨åŽŸåœ°çš„ï¼Œ
-                   æ–¼æ˜¯åœ¨é è¦½ä¸‹åŠéƒ¨æ‹–æ›³å°±æœƒè¢«å®ƒæ””èµ° â€”â€” å»ºç«‹é®è‰²ç‰‡ã€æ‹–é è¦½éƒ½æœƒæ€ªæ€ªçš„ã€‚
-                   æ‰€ä»¥é€™è£¡ä¹Ÿè¦è·Ÿè‘—é–‹é—œã€‚ */}
-               <div className={`relative ${activeToolId === 'curves' ? 'pointer-events-auto' : 'pointer-events-none'}`}>
-                   
-                   {/* Left Controls */}
-                   {/* è‰²é»žèˆ‡é‡ç½®éµéƒ½ç¸®æˆ 26pxï¼ˆåŽŸæœ¬ 32px çš„å…«æˆï¼‰ã€‚
-                        åŽŸæœ¬æ˜¯ justify-between æ’æ»¿ 242pxï¼Œè®Šå°ä¹‹å¾Œç©ºéš™æœƒè·Ÿè‘—è®Šå¤§ï¼Œ
-                        æ‰€ä»¥æ”¹æˆç½®ä¸­ï¼‹å›ºå®š 16px é–“è·ï¼ˆä¹Ÿæ˜¯åŽŸæœ¬ 20px çš„å…«æˆï¼‰ã€‚ */}
-                   <div className="absolute right-full top-0 h-[242px] flex flex-col justify-center items-center gap-4 pr-3">
-                       {([['rgb', '#ffffff'], ['r', '#ff3b30'], ['g', '#4cd964'], ['b', '#007aff']] as const).map(([ch, col]) => (
-                         <div
-                           key={ch}
-                           data-curve-channel={ch}
-                           onClick={() => setCurrentCurveChannel(ch)}
-                           className={`channel-dot ${currentCurveChannel === ch ? 'active' : ''}`}
-                           style={{ color: col }}
-                         />
-                       ))}
-
-                       {/* è·Ÿè‰²é»žä¸€æ¨£ 32pxï¼Œåœ–æ¨™è‡ªå·±ç•«ï¼šä¸€åœˆé–‹å£çš„ç®­é ­ï¼Œ
-                           ç·šç²—è·Ÿè‰²é»žçš„é‚Šæ¡†åŒæ¨£ 3pxï¼Œå››é¡†æŽ’ä¸‹ä¾†æ‰æ˜¯åŒä¸€å¥—æ±è¥¿ã€‚ */}
-                       {/* ç·šç”¨ä¸é€æ˜Žçš„ç´”ç™½ï¼štext-white/70 é‚£ç¨®å¸¶ alpha çš„é¡è‰²
-                           ç•«å‡ºä¾†æ˜¯åŠé€æ˜Žçš„ï¼Œåº•ä¸‹çš„ç…§ç‰‡æœƒé€ä¸Šä¾†ã€‚ */}
-                       <button onClick={resetAllCurves} className="w-[26px] h-[26px] shrink-0 flex items-center justify-center bg-transparent text-white active:scale-90 transition-transform" title="é‡ç½®å…¨éƒ¨">
-                           <svg viewBox="0 0 32 32" className="w-full h-full block" fill="none">
-                               <path d="M26 16a10 10 0 1 1-3.1-7.25" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
-                               {/* æŠ˜è§’ç¹žè‡ªå·±çš„é ‚é»ž (25.6,9.3) é€†æ™‚é‡è½‰ 15Â°ï¼šåŽŸæœ¬å…©è‡‚å‰›å¥½æ˜¯
-                                   æ­£ä¸Šèˆ‡æ­£å·¦ï¼Œå°–è§’æ˜¯è¦è¦çŸ©çŸ©çš„ 90Â° æœå³ä¸‹ï¼Œçœ‹èµ·ä¾†åƒéˆé‰¤ä¸åƒç®­é ­ã€‚
-                                   å¾€é€†æ™‚é‡è½‰å°–ç«¯æ‰æœƒæœè‘—å¼§ç·šè¡Œé€²çš„å¤–å´ï¼Œè®€èµ·ä¾†æ‰æ˜¯ç®­é ­ã€‚
-                                   æ•´å€‹æŠ˜è§’å†å¾€å·¦ 0.8ã€å¾€ä¸‹ 0.8ï¼Œå°–è§’æ‰ååœ¨å¼§ç·šæœ«ç«¯ä¸Šã€‚
-                                   å…©è‡‚é•·åº¦éƒ½é‚„æ˜¯ 5.4ã€‚ */}
-                               <path d="M23.4 4.88L24.8 10.1L19.58 11.5" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                           </svg>
-                       </button>
-                   </div>
-
-                   {/* Curve Box */}
-                   {/* å¤–æ¡†å°±æ˜¯æ ¼ç·šçš„æœ€å¤–é¢é‚£ä¸€åœˆï¼šè·Ÿè£¡é¢çš„ç·šåŒè‰²åŒç²—ï¼Œ
-                        æ•´å¡Šçœ‹èµ·ä¾†æ‰æ˜¯ä¸€å¼µå®Œæ•´çš„ 4Ã—4 æ ¼ç·šã€‚ */}
-                   <div className="relative w-[240px] h-[240px] bg-[#0c0c0c]/30 border border-white shrink-0 touch-none rounded-sm shadow-2xl"
-                        onMouseDown={handleCurveBgClick}
-                        onTouchStart={handleCurveBgClick}
-                   >
-                       <svg id="curvesSvg" viewBox="0 0 200 200" className="absolute top-[-1px] left-[-1px] w-[240px] h-[240px] overflow-visible cursor-crosshair">
-                           {/* ä¸ç”¨åŠé€æ˜Žï¼šåŠé€æ˜Žçš„ç·šæœƒé€å‡ºåº•ä¸‹çš„ç…§ç‰‡ï¼Œäº®çš„åœ°æ–¹çœ‹èµ·ä¾†
-                               å¿½éš±å¿½ç¾ï¼Œè€Œä¸”äº¤å‰é»žç–Šäº†å…©å±¤ alpha æœƒæ¯”åˆ¥è™•äº®ä¸€å¡Šã€‚
-                               æ”¹æˆä¸é€æ˜Žçš„å¯¦è‰²ï¼Œæ•´å¼µæ ¼ç·šåœ¨å“ªéƒ½æ˜¯åŒä¸€å€‹æ¨£å­ã€‚
-                               non-scaling-strokeï¼šviewBox æ˜¯ 200 ä½†ç•«å‡ºä¾†æ˜¯ 240pxï¼Œ
-                               ä¸åŠ çš„è©± strokeWidth=1 æœƒè¢«æ”¾å¤§æˆ 1.2pxï¼Œè·Ÿå¤–æ¡†çš„
-                               1px CSS border å°ä¸é½Šï¼Œç²—ç´°çœ‹å¾—å‡ºä¾†ä¸ä¸€æ¨£ã€‚ */}
-                           <g stroke="#fff" strokeWidth="1" shapeRendering="crispEdges" style={{ vectorEffect: 'non-scaling-stroke' }}>
-                             {[50, 100, 150].map(v => (
-                               <React.Fragment key={v}>
-                                 <line x1={v} y1="0" x2={v} y2="200" style={{ vectorEffect: 'non-scaling-stroke' }} />
-                                 <line x1="0" y1={v} x2="200" y2={v} style={{ vectorEffect: 'non-scaling-stroke' }} />
-                               </React.Fragment>
-                             ))}
-                           </g>
-                           <path 
-                               d={getCurvePathD()} 
-                               fill="none" 
-                               stroke={getCurveColor()} 
-                               strokeWidth="1.5" 
-                               strokeLinecap="round" 
-                               strokeLinejoin="round" 
-                               style={{ vectorEffect: 'non-scaling-stroke' }}
-                           />
-                           {params.curves[currentCurveChannel].map((p, i) => (
-                               <circle 
-                                   key={i}
-                                   cx={(p.x / 255) * 200} cy={200 - ((p.y / 255) * 200)} r={window.innerWidth < 768 ? 6 : 4}
-                                   className={`curve-point ${dragPointIdx === i ? 'active' : ''}`}
-                                   style={{ fill: getCurveColor() }}
-                                   onMouseDown={(e) => handlePointTap(e, i)}
-                                   onTouchStart={(e) => handlePointTap(e, i)}
-                               />
-                           ))}
-                       </svg>
-                   </div>
-               </div>
-           </div>
-        </div>
-
-        {/* åªæ˜¯æŽ›çµ¦ Tailwind çš„ç€è¦½å™¨ç‰ˆ JIT çœ‹çš„ï¼Œæœ¬èº«ä¸ç•«ä»»ä½•æ±è¥¿ â€”â€”
-             ç·¨è¼¯å™¨ä¸€é–‹å°±è®“å®ƒæŠŠæ§‹åœ–é‚£äº› class çš„è¦å‰‡å…ˆç”¢ç”Ÿå¥½ï¼Œ
-             ä½¿ç”¨è€…ç¬¬ä¸€æ¬¡é»žæ§‹åœ–æ™‚æ‰ä¸æœƒå…ˆçœ‹åˆ°ä¸€å¹€æ²’æœ‰æ¨£å¼çš„ç•«é¢ã€‚ */}
-        <div aria-hidden="true" className={COMPOSE_WARMUP_CLASSES} style={{ display: 'none' }} />
-        {/* æ¿¾é¡é æ»‘æ¡¿ä¸Šé¢é‚£å››é¡†é–‹é—œçš„ classï¼šå…ˆè®“ JIT ç”¢ç”Ÿè¦å‰‡ï¼Œ
-             ä¸ç„¶è¦å‰‡æ™šä¸€å¹€åˆ°ï¼Œé‚£å››é¡†æœƒå¾žã€Œæ²’æ¨£å¼ã€è£œé–“åˆ°ã€Œæœ‰æ¨£å¼ã€ï¼ˆçœ‹èµ·ä¾†åƒè‡ªå·±å‹•äº†ä¸€ä¸‹ï¼‰ã€‚ */}
-        <div aria-hidden="true" style={{ display: 'none' }}
-             className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase transition-colors border shrink-0 bg-white text-black border-white shadow-lg bg-white/5 text-white/40 border-white/10 hover:text-white/60 hover:border-white/25 gap-1.5 overflow-x-auto no-scrollbar py-1 max-w-[calc(100%-3.5rem)] flex-col px-2 py-2 text-[9px] font-medium whitespace-nowrap" />
-
-        {/* æ§‹åœ–ï¼šåªè“‹ä½é è¦½å€ï¼Œä¸å†æ˜¯å¦å¤–é–‹ä¸€æ•´é  â€”â€” ä¸‹æ–¹çš„åˆ†é åˆ—ç•™åœ¨åŽŸä½ã€‚
-             å®ƒè‡ªå·±çš„å°åˆ†é¡žï¼ˆè£åˆ‡ï¼è§’åº¦ï¼ç¿»è½‰ï¼æ¢¯å½¢ï¼‰å°±æŽ¥åœ¨åˆ†é åˆ—ä¸Šé¢ï¼Œ
-             ä½ç½®è·Ÿå…¶ä»–åŠŸèƒ½çš„å°åˆ†é¡žåˆ—ä¸€æ¨£ã€‚ */}
-        {activeCategory === 'compose' && draftGeo && (composePreviewRef.current || originalImgRef.current) && (
-          <ComposeStudio
-            image={composePreviewRef.current || originalImgRef.current!}
-            geo={draftGeo}
-            onChange={setDraftGeo}
-            onCancel={cancelCompose}
-            onApply={() => {
-              applyGeo(draftGeo);
-              addToHistory(paramsRef.current, selectedLutIdx);
-              setDraftGeo(null);
-              composePreviewRef.current = null;
-              setActiveCategory(beforeComposeRef.current.cat);
-              setActiveToolId(beforeComposeRef.current.tool);
-            }}
-          />
-        )}
-      </div>
-
-      {/* å°åˆ†é¡žåˆ—æ”¶èµ·ä¾†æ™‚ï¼ˆé®è‰²ç‰‡å»ºç«‹ä¸­ï¼æ§‹åœ–ï¼‰ï¼Œé€™å€‹å¤–æ¡†çš„ä¸Šç·£æœƒç›´æŽ¥è²¼åˆ°
-          åˆ†é åˆ—è‡ªå·±çš„ä¸Šç·£é‚Šç·šï¼Œå…©æ¢ 1px ç–Šåœ¨ä¸€èµ·çœ‹èµ·ä¾†å°±æ˜¯ä¸€æ¢æ¯”è¼ƒç²—çš„ç·š
-          ï¼ˆé‡åˆ°äº®åº¦å‰–é¢å¤šä¸€åˆ—ï¼šæ­£å¸¸åªæœ‰ 29ï¼Œç–Šåˆ°çš„æ™‚å€™æ˜¯ 29 + 26ï¼‰ã€‚
-          é‚£ç¨®ç‹€æ…‹ä¸‹å°±æŠŠå¤–æ¡†é€™ä¸€æ¢æ”¶æŽ‰ï¼Œç•™åˆ†é åˆ—è‡ªå·±é‚£æ¢ã€‚ */}
-      <div className={`bg-[#111111] ${subStripHidden ? '' : 'border-t border-white/5'} flex flex-col shrink-0 pb-safe z-[55]`}>
-        <div 
-          className={`flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] ${fxPanel ? 'px-4' : 'px-8'}`}
-          style={{
-              /* æ™‚é–“é•·åº¦èµ° inline styleï¼Œä¸è¦ç”¨ duration-0 / duration-[380ms] é€™ç¨® classã€‚
-                 é€™å€‹ App æŽ›çš„æ˜¯ Tailwind çš„ç€è¦½å™¨ç‰ˆ JITï¼Œè¦å‰‡æ˜¯ã€Œåœ¨ DOM çœ‹åˆ°é‚£å€‹ class
-                 æ‰ç”¢ç”Ÿã€çš„ï¼šduration-0 å‰›å¥½å°±æ˜¯é€²æ§‹åœ–çš„é‚£ä¸€åˆ»ç¬¬ä¸€æ¬¡å‡ºç¾ï¼Œè¦å‰‡æœƒæ™šä¸€å¹€ï¼Œ
-                 æ–¼æ˜¯ç¬¬ä¸€æ¬¡é€²æ§‹åœ–æ™‚é€™ä¸€åˆ—æ˜¯ç”¨ 380ms åœ¨æ”¶ï¼Œé è¦½å€é«˜åº¦é€£è‘—å‹• 20 å¹¾å¹€ï¼Œ
-                 ComposeStudio çš„ ResizeObserver æ¯ä¸€å¹€é‡ç®—èˆžå° â€”â€” é‚£å°±æ˜¯é–ƒçˆã€‚
-                 ç¬¬äºŒæ¬¡é€²ä¾†è¦å‰‡å·²ç¶“åœ¨äº†ï¼Œæ‰€ä»¥åªæœ‰ç¬¬ä¸€æ¬¡æœƒç™¼ç”Ÿã€‚inline style æ²’æœ‰é€™å€‹å•é¡Œã€‚ */
-              transitionDuration: hslSwitch || composeSwitch || detailSwitch ? '0ms' : '380ms',
-              /* HSL é¢æ¿å·²ç¶“æ¬åˆ°é è¦½å€ä¸Šé¢ç•¶æµ®å±¤äº†ï¼ˆè·Ÿæ›²ç·šåŒä¸€å€‹åšæ³•ï¼‰ï¼Œ
-                 æ‰€ä»¥é€™è£¡åªè¦è·Ÿæ›²ç·šä¸€æ¨£æŠŠæ»‘æ¡¿åˆ—æ”¶æˆ 0 å°±å¥½ã€‚
-                 é€™æ¨£åº•éƒ¨åŠŸèƒ½æ¬„çš„é«˜åº¦è®ŠåŒ–è·Ÿé–‹æ›²ç·šæ™‚å®Œå…¨ä¸€æ¨£ï¼Œ
-                 å°åˆ†é¡žåˆ—èˆ‡åˆ†é åˆ—éƒ½å¾…åœ¨åŽŸåœ°ä¸å‹•ã€‚ */
-              // ç‰¹æ•ˆç´°é …ï¼šæŠŠå°åˆ†é¡žåˆ—é‚£ 6rem å€ŸéŽä¾†ï¼ˆå®ƒåŒæ™‚æ”¶æˆ 0ï¼‰ï¼Œç¸½é«˜ä¸è®Š
-              height: sliderRowHidden ? '0px' : (fxPanel ? '11rem' : '5rem'),
-              opacity: sliderRowHidden ? 0 : 1,
-              /* æ”¶èµ·ä¾†æ™‚æ˜¯ 0px è€Œä¸æ˜¯ none â€”â€” å¯« none çš„è©± border-color æœƒé€€å›ž
-                 currentColorï¼ˆç™½çš„ï¼‰ï¼Œtransition å°±å¾žã€Œå¹¾ä¹Žä¸é€æ˜Žçš„ç™½ã€è£œé–“åˆ° 5% ç™½ï¼Œ
-                 é›¢é–‹æ›²ç·šçš„çž¬é–“åº•ä¸‹æœƒäº®å‡ºä¸€æ¢ç™½ç·šï¼ˆé‡åˆ°ç¬¬ä¸€å¹€æ˜¯ rgba(255,255,255,0.93)ï¼‰ã€‚
-                 å…©é‚Šå¯«åŒä¸€å€‹é¡è‰²ï¼Œåªè®“å¯¬åº¦å‹•ï¼Œå°±æ²’æœ‰æ±è¥¿å¯ä»¥äº®ã€‚ */
-              borderBottom: sliderRowHidden ? '0px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(255, 255, 255, 0.05)'
-          }}
-        >
-          {/* æ–°ç‰¹æ•ˆï¼šé‚£å€‹ç‰¹æ•ˆçš„æ»‘æ¡¿ä¸€æ¬¡å…¨éƒ¨æ”¤é–‹ï¼ˆå·¦é‚Šä¸€é¡†è¿”å›žï¼Œå³é‚Šå…©å…©ä¸€æŽ’ï¼‰ã€‚
-               å¥‡æ•¸æ ¹æ™‚ã€Œå¼·åº¦ã€è‡ªå·±ç«™ç¬¬ä¸€æŽ’ã€‚ */}
-          {fxPanel && (
-            <div className="w-full h-full flex items-center gap-3">
-              <button
-                onClick={() => { setActiveCategory('effects'); setActiveToolId(activeFxId); }}
-                aria-label="è¿”å›žç‰¹æ•ˆ"
-                className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-colors text-white"
-              >
-                <Icon name="arrow_back" className="text-xl" />
-              </button>
-              <div className="flex-1 min-w-0 flex flex-col justify-center">
-                {fxRows.map((row, ri) => (
-                  <div key={ri} className="flex items-center gap-4" style={{ height: fxRowH }}>
-                    {row.map(t => (
-                      <div key={t.id} className="flex-1 min-w-0">
-                        <FastSlider
-                          value={typeof params[t.id as keyof EditorParams] === 'number' ? params[t.id as keyof EditorParams] as number : 0}
-                          min={t.min} max={t.max} step={t.step || 0.1}
-                          toolId={t.id} label={t.label} snapZero={t.min < 0}
-                          compact dense
-                          onUpdate={(id, val) => {
-                            paramsRef.current = { ...paramsRef.current, [id]: val };
-                            isDirtyRef.current = true;
-                            lastSliderMoveTimeRef.current = performance.now();
-                          }}
-                          onInteractStart={() => { setActiveToolId(t.id); setupFastPreview(t.id); }}
-                          onInteractEnd={() => {
-                            setIsInteracting(false);
-                            fastPreviewCacheRef.current.active = false;
-                            setParams({ ...paramsRef.current });
-                            addToHistory(paramsRef.current, selectedLutIdx);
-                          }}
-                          onReset={handleDoubleTap}
-                          onValueClick={resetParam}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {!fxPanel && activeTool && !['lightLeak', 'softLight'].includes(activeToolId) && activeToolId !== 'curves' && activeToolId !== 'hsl' && (
-              <div className="w-full">
-                  <FastSlider 
-                      value={typeof params[activeTool.id as keyof EditorParams] === 'number' ? params[activeTool.id as keyof EditorParams] as number : 0}
-                      min={activeTool.min} max={activeTool.max} step={activeTool.step || 0.1}
-                      toolId={activeTool.id} label={activeToolId === 'filter_select' ? 'å¼·åº¦' : activeTool.label}
-                      snapZero={activeTool.min < 0}
-                      disabled={!!loadingLutId || maskLocked}
-                      isMaskCategory={activeCategory === 'mask'}
-                      maskLocked={maskLocked}
-                      maskShowOverlay={params.maskShowOverlay}
-                      onToggleMaskOverlay={activeCategory === 'mask' ? () => {
-                          const p = paramsRef.current;
-                          p.maskShowOverlay = !p.maskShowOverlay;
-                          setParams({ ...p });
-                          isDirtyRef.current = true;
-                      } : undefined}
-                      onClearMask={activeCategory === 'mask' ? () => {
-                          const p = paramsRef.current;
-                          p.maskCreated = false;
-                          p.maskBrightness = 0;
-                          p.maskExposure = 0;
-                          p.maskContrast = 0;
-                          p.maskHighlights = 0;
-                          p.maskShadows = 0;
-                          p.maskTemp = 0;
-                          p.maskTint = 0;
-                          p.maskSat = 0;
-                          p.maskVib = 0;
-                          p.maskCx = 0.5;
-                          p.maskCy = 0.5;
-                          p.maskAngle = 0;
-                          p.maskD = 0.25;
-                          setParams({ ...p });
-                          isDirtyRef.current = true;
-                      } : undefined}
-                      onUpdate={(id, val) => { 
-                          if (id === 'blur') userManualBlurRef.current = val;
-                          const nextParams = { ...paramsRef.current, [id]: val };
-                          paramsRef.current = nextParams; 
-                          isDirtyRef.current = true;
-                          lastSliderMoveTimeRef.current = performance.now();
-                      }}
-                      onInteractStart={() => setupFastPreview(activeTool.id)}
-                      onInteractEnd={() => { 
-                          setIsInteracting(false); 
-                          fastPreviewCacheRef.current.active = false; 
-                          
-                          // Check which parameters were modified and update states
-                          const p = paramsRef.current;
-                          const id = activeTool?.id;
-                          
-                          let activeS = isSoftActive;
-                          let activeB = isBlurActive;
-                          let activeG = isGrainActive;
-                          let activeH = isHalationActive;
-                          let manS = softManuallyAdjusted;
-                          let manB = blurManuallyAdjusted;
-                          let manG = grainManuallyAdjusted;
-                          let manH = halationManuallyAdjusted;
-
-                          if (id) {
-                              if (['soft', 'softThreshold', 'softRadius', 'softColor'].includes(id)) {
-                                  manS = true;
-                                  setSoftManuallyAdjusted(true);
-                                  userSoftRef.current = p.soft;
-                                  activeS = p.soft > 0;
-                                  setIsSoftActive(activeS);
-                              } else if (id === 'blur') {
-                                  manB = true;
-                                  setBlurManuallyAdjusted(true);
-                                  userBlurRef.current = p.blur;
-                                  activeB = p.blur > 0;
-                                  setIsBlurActive(activeB);
-                              } else if (['grain', 'colorNoise', 'colorNoise2'].includes(id)) {
-                                  manG = true;
-                                  setGrainManuallyAdjusted(true);
-                                  userGrainRef.current = {
-                                      grain: p.grain,
-                                      colorNoise: p.colorNoise,
-                                      colorNoise2: p.colorNoise2
-                                  };
-                                  activeG = p.grain > 0 || p.colorNoise > 0 || p.colorNoise2 > 0;
-                                  setIsGrainActive(activeG);
-                              } else if (['fringeIntensity', 'fringeHue', 'fringeSize', 'fringeFeather'].includes(id)) {
-                                  manH = true;
-                                  setHalationManuallyAdjusted(true);
-                                  userHalationRef.current = p.fringeIntensity;
-                                  activeH = p.fringeIntensity > 0;
-                                  setIsHalationActive(activeH);
-                              }
-                          }
-                          
-                          setParams({ ...p }); 
-                          addToHistory(p, selectedLutIdx, activeS, activeB, activeG, activeH, manS, manB, manG, manH); 
-                      }}
-                      onReset={handleDoubleTap}
-                      onValueClick={resetParam}
-                      softActive={isSoftActive}
-                      onToggleSoft={toggleSoftLight}
-                      blurActive={isBlurActive}
-                      onToggleBlur={toggleBlur}
-                      grainActive={isGrainActive}
-                      onToggleGrain={toggleGrain}
-                      halationActive={isHalationActive}
-                      onToggleHalation={toggleHalation}
-                  />
-              </div>
-          )}
-        </div>
-        <div 
-          ref={toolsScrollRef} 
-          className="flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808] panel-ease transition-all overflow-hidden"
-          style={{
-              // åŒä¸Šï¼šæ™‚é–“é•·åº¦ä¸èƒ½é  classï¼Œä¸ç„¶ç¬¬ä¸€æ¬¡é€²æ§‹åœ–æ™‚è¦å‰‡é‚„æ²’ç”¢ç”Ÿã€‚
-              transitionDuration: composeSwitch || detailSwitch ? '0ms' : '380ms',
-              // HSL é–‹è‘—çš„æ™‚å€™å°åˆ†é¡žåˆ—ç…§æ¨£ç•™è‘—ï¼ˆè·Ÿæ›²ç·šä¸€æ¨£ï¼‰ã€‚æ”¶èµ·ä¾†çš„è©±ï¼Œ
-              // é¢æ¿ä¸‹ç·£æœƒå¾€ä¸‹æŽ‰ 96pxï¼Œæ•´æ¢å·¥å…·åˆ—çœ‹èµ·ä¾†å°±æ˜¯å¾€ä¸‹æ²‰äº†ä¸€æ¬¡ã€‚
-              // æ§‹åœ–çš„å°åˆ†é¡žï¼ˆè£åˆ‡ï¼è§’åº¦ï¼ç¿»è½‰ï¼æ¢¯å½¢ï¼‰ç”± ComposeStudio è‡ªå·±ç•«åœ¨
-              // é è¦½å€åº•éƒ¨ï¼Œé€™ä¸€åˆ—å°±è®“çµ¦å®ƒï¼Œä¸ç„¶æœƒæœ‰å…©æŽ’å°åˆ†é¡žã€‚
-              // ç‰¹æ•ˆç´°é …æ™‚é€™ä¸€åˆ—è®“çµ¦ä¸Šé¢çš„æ»‘æ¡¿ç¾¤ï¼ˆé«˜åº¦å‰›å¥½å°èª¿ï¼Œç¸½é«˜ä¸è®Šï¼‰
-              height: (subStripHidden || fxPanel) ? '0px' : '6rem',
-              opacity: (subStripHidden || fxPanel) ? 0 : 1,
-          }}
-        >
-          {activeCategory === 'filter' && lutList.map((lut, idx) => (
-            <button key={lut.id} onClick={() => handleFilterSelect(idx)} data-filter-card={lut.id} className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
-              {/* æ²’é¸ä¸­æ™‚å®Œå…¨ä¸ç•«é‚Šæ¡† â€”â€” ä¹‹å‰ç”¨ border-2 border-transparentï¼Œ
-                  é‚£ 2px éœ²å‡ºçš„æ˜¯å¾Œé¢çš„åº•è‰²ï¼Œåœ¨ç¸®åœ–æ—é‚Šçœ‹èµ·ä¾†å°±æ˜¯ä¸€åœˆç°æ¡†ã€‚
-                  é¸ä¸­æ”¹ç”¨å…§æé‚Šçš„ ringï¼Œç•«åœ¨æ¡†å…§ï¼Œä¸æœƒå½±éŸ¿ç‰ˆé¢ä¹Ÿä¸æœƒæœ‰ä½ç§»ã€‚ */}
-              <div className={`relative w-full h-[76px] rounded-lg transition-all bg-[#111] overflow-hidden ${loadingLutId === lut.id ? 'opacity-50' : 'opacity-100'}`}>
-                {/* ç¸®åœ–ï¼ç›®å‰é€™å¼µé è¦½åœ–å¥—ä¸Šé€™é¡†æ¿¾é¡çš„æ¨£å­ã€‚
-                    é‚„æ²’ç®—åˆ°çš„ï¼ˆæˆ–æ¿¾é¡æª”é‚„åœ¨ä¸‹è¼‰çš„ï¼‰å…ˆç•«ã€ŒåŽŸå§‹ã€é‚£ä¸€å¼µï¼Œæ•´æŽ’æ‰ä¸æœƒæœ‰ç©ºæ´žã€‚ */}
-                <div className="absolute inset-0 bg-[#1a1a1a]" />
-                <ThumbCanvas store={filterThumbStore} id={thumbKey(activeSrc, lut.id)}
-                             fallbackId={thumbKey(activeSrc, lutList[0]?.id || '')}
-                             painters={thumbPainters} attr="data-filter-thumb" name={lut.id} />
-                {loadingLutId === lut.id && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  </div>
-                )}
-                {/* ä¸‹åŠéƒ¨å£“ä¸€æ¢æ·±è‰²å¸¶ï¼Œç·¨è™Ÿæ”¾åœ¨ä¸Šé¢æ‰è®€å¾—æ¸…æ¥š */}
-                {/* pb-[2px] æ˜¯æŠŠé¸ä¸­æ™‚é‚£æ¢ 2px ç™½ç·šè®“å‡ºä¾† â€”â€”
-                    æ–‡å­—æ‰æœƒç½®ä¸­åœ¨ã€Œé®ç½©ä¸Šç·£ã€èˆ‡ã€Œç™½ç·šã€ä¹‹é–“ï¼Œè€Œä¸æ˜¯æ•´æ¢å¸¶å­çš„æ­£ä¸­é–“ */}
-                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
-                  <span className={`text-[8px] font-black uppercase tracking-widest leading-none ${lutCardOn(idx) ? 'text-white' : 'text-white/60'}`}>
-                    {lut.url ? lut.name : 'åŽŸå§‹'}
-                  </span>
-                </div>
-                {lutCardOn(idx) && (
-                  <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />
-                )}
-              </div>
-            </button>
-          ))}
-          {activeCategory === 'adjust' && ADJUST_TOOLS.map(tool => (
-            <button key={tool.id} onClick={() => setActiveToolId(tool.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeToolId === tool.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}><Icon name={tool.icon} className="text-lg" fill={activeToolId === tool.id} /></div>
-              <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${activeToolId === tool.id ? 'text-white' : 'text-white/20'}`}>{tool.label}</span>
-              <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${isParamAdjusted(tool.id) ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
-            </button>
-          ))}
-          {/* ç‰¹æ•ˆæ”¹æˆè·Ÿæ¿¾é¡åŒä¸€ç¨®å¡ç‰‡ï¼šç¸®åœ–æ˜¯é€™å€‹ç‰¹æ•ˆçš„é è¨­æ•ˆæžœï¼Œåç¨±å£“åœ¨ä¸‹ç·£ã€‚
-               é¸ä¸­çš„é‚£ä¸€é¡†å³ä¸Šè§’æœƒå¤šä¸€é¡†ç·¨è¼¯éµï¼ˆè·Ÿã€Œèª¿ç¯€ã€åŒä¸€å€‹åœ–æ¨™ï¼‰ï¼ŒæŒ‰å®ƒæ‰å±•é–‹ç´°é …ã€‚ */}
-          {/* ã€ŒåŽŸå§‹ã€ï¼šæŽ’åœ¨æœ€å‰é¢ï¼Œé»žä¸‹åŽ»å°±æ˜¯æŠŠæ‰€æœ‰ç‰¹æ•ˆé—œæŽ‰ã€‚
-               ç¸®åœ–ç›´æŽ¥ç”¨é‚£å¼µã€Œæ²’å¥—ä»»ä½•ç‰¹æ•ˆã€çš„åº•åœ–ã€‚ */}
-          {activeCategory === 'effects' && (
-            <button data-fx-tool="fxNone" onClick={clearAllEffects}
-                    className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
-              <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
-                <div className="absolute inset-0 bg-[#1a1a1a]" />
-                <ThumbCanvas store={fxThumbStore} id={thumbKey(activeSrc, FX_THUMB_BASE)}
-                             painters={thumbPainters} attr="data-fx-thumb" name={FX_THUMB_BASE} />
-                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
-                  <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${noEffectOn ? 'text-white' : 'text-white/60'}`}>
-                    åŽŸå§‹
-                  </span>
-                </div>
-                {noEffectOn && (
-                  <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />
-                )}
-              </div>
-            </button>
-          )}
-          {activeCategory === 'effects' && EFFECT_TOOLS.map(tool => (
-            <button key={tool.id} data-fx-tool={tool.id} onClick={() => handleEffectToolSelect(tool.id)} className="flex flex-col items-center gap-2 shrink-0 group w-[64px]">
-              <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
-                {/* é€™ä¸€æ ¼é‚„æ²’ç®—åˆ°å°±å…ˆç•«æ²’å¥—ç‰¹æ•ˆçš„åº•åœ–ï¼Œæ•´æŽ’æ‰ä¸æœƒæœ‰ç©ºæ´ž */}
-                <div className="absolute inset-0 bg-[#1a1a1a]" />
-                <ThumbCanvas store={fxThumbStore} id={thumbKey(activeSrc, tool.id)}
-                             fallbackId={thumbKey(activeSrc, FX_THUMB_BASE)}
-                             painters={thumbPainters} attr="data-fx-thumb" name={tool.id} />
-                <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
-                  <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${isParamAdjusted(tool.id) ? 'text-white' : 'text-white/60'}`}>
-                    {tool.label}
-                  </span>
-                </div>
-                {/* é¸ä¸­çš„é‚£ä¸€é¡†æ²¿ç”¨æ¿¾é¡é‚£åœˆå…§æé‚Šï¼Œä¸ä½”ç‰ˆé¢ä¹Ÿä¸æœƒä½ç§» */}
-                {/* ç™½æ¡†ï¼é€™ä¸€é¡†æ­£åœ¨ç”Ÿæ•ˆã€‚åˆä½µå®Œåƒæ•¸å°±æ­¸é›¶ï¼Œé¸å–è‡ªç„¶å–æ¶ˆ â€”â€”
-                     ä½¿ç”¨è€…æ‰èƒ½æŠŠåŒä¸€é¡†æ¿¾é¡ï¼ç‰¹æ•ˆå†å¥—ä¸€æ¬¡ã€‚ */}
-                {isEffectOn(tool.id) && (
-                  <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />
-                )}
-                {/* ç·¨è¼¯éµï¼šé¸ä¸­è€Œä¸”çœŸçš„æœ‰ç´°é …å¯èª¿æ‰å‡ºç¾ã€‚
-                     ç”¨ span ä¸ç”¨ button â€”â€” é€™æ•´å¼µå¡ç‰‡æœ¬èº«å°±æ˜¯ä¸€é¡† buttonï¼Œ
-                     button è£¡é¢ä¸èƒ½å†æ”¾ buttonã€‚stopPropagation è®“å®ƒä¸æœƒé †ä¾¿é‡é¸å¡ç‰‡ã€‚ */}
-                {isEffectOn(tool.id) && effectHasDetail(tool.id) && (
-                  <span
-                    role="button"
-                    aria-label="èª¿æ•´ç´°é …"
-                    onClick={(e) => { e.stopPropagation(); openEffectDetail(tool.id); }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    /* ä½ç½®èˆ‡å°ºå¯¸èµ° inline styleï¼šé€™å¹¾å€‹æ˜¯å…¨ App å”¯ä¸€ç”¨åˆ°çš„ arbitrary classï¼Œ
-                       ç€è¦½å™¨ç‰ˆ Tailwind çš„ JIT è¦ç­‰çœ‹åˆ°æ‰ç”¢ç”Ÿè¦å‰‡ï¼Œç¬¬ä¸€æ¬¡æœƒå…ˆç•«éŒ¯ä¸€å¹€ */
-                    style={{ position: 'absolute', top: 3, right: 3, width: 22, height: 22 }}
-                    className="rounded-full flex items-center justify-center bg-black/55 border border-white/25 text-white active:scale-90 transition-transform"
-                  >
-                    <Icon name="tune" className="text-[13px]" />
-                  </span>
-                )}
-              </div>
-            </button>
-          ))}
-          {activeCategory === 'soft' && (
-             <div className="flex items-center gap-4">
-                <button 
-                    onClick={() => { setActiveCategory('effects'); setActiveToolId('softLight'); }}
-                    className="flex flex-col items-center justify-center gap-2 shrink-0 group w-12"
-                >
-                    <div className="w-10 h-10 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-all text-white">
-                        <Icon name="arrow_back" className="text-xl" />
-                    </div>
-                </button>
-                <div className="w-[1px] h-8 bg-white/10 mx-2"></div>
-                {SOFT_LIGHT_TOOLS.map(tool => (
-                    <button key={tool.id} onClick={() => setActiveToolId(tool.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeToolId === tool.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}><Icon name={tool.icon} className="text-lg" fill={activeToolId === tool.id} /></div>
-                        <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${activeToolId === tool.id ? 'text-white' : 'text-white/20'}`}>{tool.label}</span>
-                        <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${isParamAdjusted(tool.id) ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
-                    </button>
-                ))}
-             </div>
-          )}
-          {activeCategory === 'leak' && (
-             <div className="flex items-center gap-4">
-                <button 
-                    onClick={() => { setActiveCategory('effects'); setActiveToolId('lightLeak'); }}
-                    className="flex flex-col items-center justify-center gap-2 shrink-0 group w-12"
-                >
-                    <div className="w-10 h-10 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-all text-white">
-                        <Icon name="arrow_back" className="text-xl" />
-                    </div>
-                </button>
-                <div className="w-[1px] h-8 bg-white/10 mx-2"></div>
-                {LEAK_TOOLS.map(tool => (
-                    <button key={tool.id} onClick={() => setActiveToolId(tool.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeToolId === tool.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}><Icon name={tool.icon} className="text-lg" fill={activeToolId === tool.id} /></div>
-                        <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${activeToolId === tool.id ? 'text-white' : 'text-white/20'}`}>{tool.label}</span>
-                        <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${isParamAdjusted(tool.id) ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
-                    </button>
-                ))}
-             </div>
-          )}
-          {activeCategory === 'halation' && (
-             <div className="flex items-center gap-4">
-                <button 
-                    onClick={() => { setActiveCategory('effects'); setActiveToolId('halation'); }}
-                    className="flex flex-col items-center justify-center gap-2 shrink-0 group w-12"
-                >
-                    <div className="w-10 h-10 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-all text-white">
-                        <Icon name="arrow_back" className="text-xl" />
-                    </div>
-                </button>
-                <div className="w-[1px] h-8 bg-white/10 mx-2"></div>
-                {HALATION_TOOLS.map(tool => (
-                    <button key={tool.id} onClick={() => setActiveToolId(tool.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeToolId === tool.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}><Icon name={tool.icon} className="text-lg" fill={activeToolId === tool.id} /></div>
-                        <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${activeToolId === tool.id ? 'text-white' : 'text-white/20'}`}>{tool.label}</span>
-                        <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${isParamAdjusted(tool.id) ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
-                    </button>
-                ))}
-             </div>
-          )}
-          {/* æ–°ç‰¹æ•ˆçš„åƒæ•¸æŒ‰éˆ•åˆ—å·²ç¶“æ‹¿æŽ‰äº† â€”â€” é‚£å€‹ç‰¹æ•ˆçš„æ»‘æ¡¿ç¾åœ¨å…¨éƒ¨ç›´æŽ¥é¡¯ç¤ºåœ¨ä¸Šé¢é‚£ä¸€åˆ—ï¼Œ
-               ä¸ç”¨å†é»žç¬¬äºŒå±¤ã€‚é€™ä¸€åˆ—åœ¨ç‰¹æ•ˆç´°é …æ™‚æ˜¯æ”¶èµ·ä¾†çš„ï¼ˆé«˜åº¦è®“çµ¦æ»‘æ¡¿ç¾¤ï¼‰ã€‚ */}
-          {activeCategory === 'mask' && (
-             <div className={`flex items-center gap-2 ${maskLocked ? 'opacity-30' : ''}`}>
-                {MASK_TOOLS.map(tool => (
-                    <button key={tool.id} disabled={maskLocked} onClick={() => { if (!maskLocked) setActiveToolId(tool.id); }} className="flex flex-col items-center gap-1 shrink-0 group w-16">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeToolId === tool.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}><Icon name={tool.icon} className="text-lg" fill={activeToolId === tool.id} /></div>
-                        <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${activeToolId === tool.id ? 'text-white' : 'text-white/20'}`}>{tool.label}</span>
-                        <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${isParamAdjusted(tool.id) ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
-                    </button>
-                ))}
-             </div>
-          )}
-        </div>
-        <div className="flex h-16 border-t border-white/10 bg-black pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content">
-          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
-            <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">æ¿¾é¡</span>
-          </button>
-          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
-            <Icon name="tune" className="text-xl" fill={activeCategory === 'adjust'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">èª¿ç¯€</span>
-          </button>
-          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
-            <Icon name="magic_button" className="text-xl" fill={['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory)} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">ç‰¹æ•ˆ</span>
-          </button>
-          <button onClick={() => {
-              if (activeCategory !== 'compose') beforeComposeRef.current = { cat: activeCategory, tool: activeToolId };
-              const shown = displayCanvasRef.current;
-              if (shown && isGeoIdentity(geo)) {
-                const snapshot = document.createElement('canvas');
-                snapshot.width = shown.width;
-                snapshot.height = shown.height;
-                snapshot.getContext('2d')?.drawImage(shown, 0, 0);
-                composePreviewRef.current = snapshot;
-              } else {
-                composePreviewRef.current = originalImgRef.current;
-              }
-              setDraftGeo(geo);
-              setActiveCategory('compose');
-            }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
-            {/* crop_rotate å…©å´å„æœ‰ä¸€æ”¯æ—‹è½‰ç®­é ­ï¼Œæ”¹æˆå–®ç´”çš„è£åˆ‡ç¬¦è™Ÿ */}
-            <Icon name="crop" className="text-xl" fill={activeCategory === 'compose'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">æ§‹åœ–</span>
-          </button>
-          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
-            <Icon name="gradient" className="text-xl" fill={activeCategory === 'mask'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">é®è‰²ç‰‡</span>
-          </button>
-        </div>
-      </div>
-      {saveState === 'processing' && (
-        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
-          <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
-          <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">æ­£åœ¨å­˜æª”</p>
-          {/* é€™ä¸€å±¤è“‹ä½è¿”å›žéµï¼Œæ‰€ä»¥ä¸€å®šè¦æœ‰å‡ºå£ï¼ˆè¦‹ StuckEscapeï¼‰ */}
-          <StuckEscape onEscape={() => setSaveState('idle')} />
-        </div>
-      )}
-    </div>
-  );
-};
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éí×~õÓtèµ©hºÚn¶X§zÍBš[\ÜÈÛÛ\ÜÙTÝY[ËÓÓTÔÑWÕÐT“UTÐÓTÔÑTÈHœ›ÛH	Ë‹ÐÛÛ\ÜÙTÝY[ÉÎÂš[\ÜÈUÑQUSÐSSÕS•Hœ›ÛH	Ë‹‹Ý][ËÜÝÑž	ÎÂš[\ÜÈØYØXÚY]Ø]™PØXÚY]Hœ›ÛH	Ë‹‹Ý][ËÛ]ÝÜ™IÎÂš[\ÜÈ˜ZÙPÛÛÜ“]˜ZÙYÕ^\™HHœ›ÛH	Ë‹‹Ý][ËÛ]˜ZÙIÎÂš[\ÜÈ]ÜHHœ›ÛH	Ë‹‹Ý][ËÛ]ÜIÎÂš[\ÜÈ–ÑQ”Ë–ÑQUSË\QÛY™™XÝË\ÐXÝ]™QžØ\›Qž\HžYˆHœ›ÛH	Ë‹‹Ý][ËÙÛY™™XÝÉÎÂš[\ÜÈQUSÑÑSË•SÐÔ“ÔÙ[Ô\˜[\ËÛÛ\ÜÙPØ[˜\Ë\ÑÙ[ÒY[]HHœ›ÛH	Ë‹‹Ý][ËØÛÛ\ÜÙIÎÂš[\ÜÈØ]™P]ÛˆHœ›ÛH	Ë‹ÔØ]™P]Û‰ÎÂ‹ÊˆQÈ:,¯9¥¡úh$:)¯z-çù¢ï9g%º`¨ùajy`"ùméyamùalyå*9d#9. :ha¹a`ù.íˆ
+‹Âš[\ÜÈYÔ™]šY]ÈHœ›ÛH	Ë‹ÒYÔ™]šY]ÉÎÂš[\Ü™XXÝÈ\ÙTÝ]K\ÙT™Y‹\ÙQY™™XÝ\ÙS^[Ý]Y™™XÝ\ÙPØ[˜XÚË\ÙSY[[ÈHœ›ÛH	Ü™XXÝ	ÎÂš[\ÜÈ›\ÚÞ[˜ÈHœ›ÛH	Ü™XXÝYÛIÎÂš[\ÜÈØ]™Q˜Y\ÈØ]™UÛÛ˜YHœ›ÛH	Ë‹‹Ý][ËÝÛÛ˜Y	ÎÂš[\ÜÈY^ÜHœ›ÛH	Ë‹‹Ý][ËÙ^Ü\ÝÜžIÎÂš[\ÜÈØ[˜\ÕÕ\›™]›ÚÙU\›ÈHœ›ÛH	Ë‹‹Ý][ËØ›Ø•\›	ÎÂš[\ÜÈÝXÚÑ\ØØ\HHœ›ÛH	Ë‹ÔÝXÚÑ\ØØ\IÎÂš[\ÜÈ[Ý[Û‹[š[X]T™\Ù[˜ÙHHœ›ÛH	Û[Ý[Û‹Ü™XXÝ	ÎÂš[\ÜÈ˜[œÙ›Ü›UÜ˜\\‹˜[œÙ›Ü›PÛÛ\Û™[™XXÝ›ÛÛT[”[˜Ú™YˆHœ›ÛHœ™XXÝ^›ÛÛK\[‹\[˜ÚŽÂš[\ÜÈÚ]œ›Û“YHœ›ÛH	ÛXÚYK\™XXÝ	ÎÂš[\Ü^Y”™XY\ˆœ›ÛH	Ù^Yœ™XY\‰ÎÂš[\ÜÈXÛÛˆHœ›ÛH	Ë‹ÒXÛÛ‰ÎÂš[\Ü\HÈ^]ÚÚXÙHHœ›ÛH	Ë‹‹Ý\\ÉÎÂ‚š[\ÜÈ\Ú\ÝÜžH\È\Ú\ÝÜžQ[žHHœ›ÛH	Ë‹‹Ý][ËÚ\ÝÜžIÎÂš[\™˜XÙHÚ[Èˆ[X™\ŽÈNˆ[X™\ŽÈB‚š[\™˜XÙHÝ\™\ÈÂˆ™ØŽˆÚ[×NÂˆŽˆÚ[×NÂˆÎˆÚ[×NÂˆŽˆÚ[×NÂŸB‚™^Ü[\™˜XÙHY]Ü”\˜[\ÈÂˆœšYÚ™\ÜÎˆ[X™\ŽÂˆ^ÜÝ\™Nˆ[X™\ŽÈÛÛ˜\Ýˆ[X™\ŽÈYÚYÚÎˆ[X™\ŽÈÚYÝÜÎˆ[X™\ŽÂˆ[\ˆ[X™\ŽÈ[ˆ[X™\ŽÈØ]ˆ[X™\ŽÈšXŽˆ[X™\ŽÂˆÚ\œ[Žˆ[X™\ŽÈÜ˜Z[Žˆ[X™\ŽÈÛÙˆ[X™\ŽÈÛÙ™\ÚÛˆ[X™\ŽÂˆÛÙ˜Y]\Îˆ[X™\ŽÈÛÙÛÛÜŽˆ[X™\ŽÈ][[Ý[ˆ[X™\ŽÂˆšYÛ™]Nˆ[X™\ŽÈ›\Žˆ[X™\ŽÈÛÛÜ“›Ú\ÙNˆ[X™\ŽÈÛÛÜ“›Ú\ÙLŽˆ[X™\ŽÂˆXZÓÜXÚ]Nˆ[X™\ŽÈXZÐ[™ÛNˆ[X™\ŽÈXZÒYNˆ[X™\ŽÂˆœš[™ÙR[[œÚ]Nˆ[X™\ŽÈœš[™ÙRYNˆ[X™\ŽÈœš[™ÙTÚ^™Nˆ[X™\ŽÈœš[™ÙQ™X]\Žˆ[X™\ŽÂˆÝ\™\ÎˆÝ\™\ÎÂˆÛˆÛY\ÝÂˆX\ÚÑ^ÜÝ\™Nˆ[X™\ŽÂˆX\ÚÐœšYÚ™\ÜÎˆ[X™\ŽÂˆX\ÚÐÛÛ˜\Ýˆ[X™\ŽÂˆX\ÚÒYÚYÚÎˆ[X™\ŽÂˆX\ÚÔÚYÝÜÎˆ[X™\ŽÂˆX\ÚÕ[\ˆ[X™\ŽÂˆX\ÚÕ[ˆ[X™\ŽÂˆX\ÚÔØ]ˆ[X™\ŽÂˆX\ÚÕšXŽˆ[X™\ŽÂˆX\ÚÐÜ™X]Yˆ›ÛÛX[ŽÂˆÊˆÓÓ9âny¥b9æ¡9càù¥n;ï"9o-ùn©ˆ
+È9d!:!ê¹æ¡9í,:h!{ï"{ï#9å,H][ËÙÛY™™XÝËÈ9æ¡–ÑQ”È9k¦¹ïªxà ‚ˆ9å*9ª(ù§oùkeúgh¹`/9æ¡9í(¹o%yì/yêè9cê¹¥-ˆž:e¢úh+yæ¡:cmH8 %8 %9am¹.å¹«!9/cy¢dúc+ùkeùáiùª(ù§ ú(ªù¢¤ùaî¹/¡¸à ˆ
+‹ÂˆÙžÙ^Nˆž	ÜÝš[™ßXNˆ[X™\ŽÂˆX\ÚÐÞˆ[X™\ŽÂˆX\ÚÐÞNˆ[X™\ŽÂˆX\ÚÐ[™ÛNˆ[X™\ŽÂˆX\ÚÑˆ[X™\ŽÂˆX\ÚÔÚÝÓÝ™\›^Nˆ›ÛÛX[ŽÂŸB‚‹ÊˆKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKBˆÓ;ï":"l¹æî;ï#úhïyd£9n©»ï#ù¦#¹n©»ï"B‚ˆ9ajù`"ú"l¹n-¹æ¡9.+yoàûï#:-çÈYÚ›ÛÛxà PØ[Y\˜H˜]øà PØ\\™HÛ™H9å*9æ¡9¦+ùd#9. 9íaˆ;ï"Ó:"l¹æî:)ä»ï"xà ¹ajù`"ù.+yoàùæ¡:e¤ú-çyb.ù¡#ù.#ynlùgaÈ8 %8 %9í!yªfznàù¤è9g*;ïgŒ9n©»ï#ˆ9¦+ùfè9à®º!¦º"l¸à yi%zfoxà yª.z$bz`&y.¦ù§ 9n.:(ªùe«¹ãj:*¯ùæ¡9§lz)oú`ïz$/yg*:`¨ù. 9«­xà ‚‚ˆ9«"ºaãyå*8à#9æî:a,9ajy`"ù.+yoàù.búe¤ùaiù£ä¸à#yë¥ûï#9¢`9.éy.îù/ez"l¹æî9æ¡9ajù`"ù«"ºaãyb¨:-mù/¡¹. 9k¦¹¦+ÈBˆ;ï"\][ÛˆÙˆ[š]{ï"{ï#9.#y§ ù§"y§ä9`"ú"l¹æî:(ªúaãz)!ú*¯ùb,9¢%¹¯#ù£¢xà ¹aiù£ä¹å*Û[ÛÝÝ\ˆ: #9.#y¦+ùíæ¹ )È8 %8 %9g*9.+yoàúnç¹."¹¥§9ã¡ù¦+È;ï#:"l¹æî9¯.9li9£ ú`c¹c®ù¦`¹.#y§ ùaî¹ãï¹¢¦:)ä¸à ‚‚ˆ9cé¹i%¹ojyn©¹£©z/äH9æ¡9`ãùí(:"l¹æî9¦+úfç:*"»ï"][‹ÛX^[Z[ˆ9§ ù. º-ìûï"{ï#9¢`9.éy/c¹ojyn©¹¦`‚ˆ9«"ºaãy¥m9`"ù­èyaî»ï#9.#yá-¹àl9âa¸à yæoyí&y."¹§ ùa¤¹aîºfª9ªgùæ¡:"l¹¥¤xà ˆ
+‹Â™^Ü\HÛ˜[™HÈˆ[X™\ŽÈÎˆ[X™\ŽÈˆ[X™\ˆNÂ™^Ü\HÛY\ÝHÛ˜[™×NÂ‚™^ÜÛÛœÝÓÐS‘ÈHÂˆÈYˆ	Ü™Y	ËX™[ˆ	ùí!IËYNˆÝØ]Úˆ	ÈÙ™ŒØŒÌ	ÈKˆÈYˆ	ÛÜ˜[™ÙIËX™[ˆ	ùªfIËYNˆÌÝØ]Úˆ	ÈÙ™ŽML	ÈKˆÈYˆ	ÞY[ÝÉËX™[ˆ	únàÉËYNˆŒÝØ]Úˆ	ÈÙ™™ŒIÈKˆÈYˆ	ÙÜ™Y[‰ËX™[ˆ	ùí¨	ËYNˆLŒÝØ]Úˆ	ÈÌÍÍÍNIÈKˆÈYˆ	Ø\]XIËX™[ˆ	úgd‰ËYNˆNÝØ]Úˆ	ÈÌÌ˜YM‰ÈKˆÈYˆ	Ø›YIËX™[ˆ	ú%ãIËYNˆÝØ]Úˆ	ÈÌN™‰ÈKˆÈYˆ	Ü\œIËX™[ˆ	ùí*ÉËYNˆÌÝØ]Úˆ	ÈØYL™IÈKˆÈYˆ	ÛXYÙ[IËX™[ˆ	ù­"ùí!IËYNˆÌÝØ]Úˆ	ÈÙ™Œ™Ì	ÈK—H\ÈÛÛœÝÂ‚‹Êˆ9."y¨.y®äy¨où£ª9b,9n¥y¦`¹d!:!ê¹§ 9i&º ïybåyi&¹l$xà ¹b.ù¡#ù`f¹o¥ù/çyk¢8 %8 %ˆÓ9cêº) y. :`cºh+yl,y§ ùaî¹ãïº"l¹hbº"!ù¥­úf£»ï#9kéùcëú+¤ù/oùå*: !yi&¹£ª9. :nç¸à ˆ
+‹Â‹ÊŠˆ:"l¹æî9®äy¨où£ª9b,9n¥y¦`»ï#:"l¹æî9§ 9i&º/byno¹n©ˆ
+‹Â˜ÛÛœÝÓÓPVÒQWÔÒQ•HMNÂ‹ÊŠˆ:hïyd£9n©¹®äy¨où£ª9b,9n¥y¦`»ï#9ojyn©¹§ 9i&¹.f;ï#úfi9i&¹l$H
+‹Â˜ÛÛœÝÓÓPVÔÐUHNÂ‹ÊŠˆ9¦#¹n©¹®äy¨où£ª9b,9n¥y¦`»ï#9§ 9i&¹o :näy¢%¹æozgh9i&¹l$H
+‹Â˜ÛÛœÝÓÓPVÓSHHŒNÂ˜ÛÛœÝÓÐÑS•T”ÈH›Ø]Ì\œ˜^K™œ›ÛJÓÐS‘Ë›X\
+ˆOˆ‹šYJJNÂ‹ÊŠˆÓ:gh¹§oùæ¡:jæ9n©»ï":aãùaî¹/¡¹æ¡;ï#:)¢ù."ºgh¹æ¡:*ª¹¦#»ï"H
+‹Â˜ÛÛœÝÓÔS‘SÒHNMŽÂ˜ÛÛœÝÓÔÓQT”ÈHÂˆÈÙ^Nˆ	Ú	È\ÈÛÛœÝX™[ˆ	ú"l¹æî	ÈKˆÈÙ^Nˆ	ÜÉÈ\ÈÛÛœÝX™[ˆ	úhïyd£9n©‰ÈKˆÈÙ^Nˆ	Û	È\ÈÛÛœÝX™[ˆ	ù¦#¹n©‰ÈK—NÂ‚™^ÜÛÛœÝQUSÒÓˆÛY\ÝHÓÐS‘Ë›X\
+
+
+HOˆ
+ÈˆÎˆˆJJNÂ‚™^ÜÛÛœÝ\ÒÛY[]HH
+ˆÛY\Ý[™Yš[™Y
+Nˆ›ÛÛX[ˆO‚ˆ^™]™\žJˆOˆ‹šOOH	‰ˆ‹œÈOOH	‰ˆ‹›OOH
+NÂ‚˜ÛÛœÝQUSÐÕT•‘TÎˆÝ\™\ÈHÂˆ™ØŽˆÞÞŒNŒKÞŒMKNŒM_WKˆŽˆÞÞŒNŒKÞŒMKNŒM_WKˆÎˆÞÞŒNŒKÞŒMKNŒM_WKˆŽˆÞÞŒNŒKÞŒMKNŒM_WBŸNÂ‚‹ÊŠˆ9¦ì¹íæº"!ÈÓ9æ¡:+¢¹¦í9ì/yêè8à ¹ajz !z`ïy.#y¦+ùe«¹. 9¥n9keûï#9oêùcåº) zgh:`&y`"ùkeù.,¹b)9¥­ù§"y¬¤¹§"z+¢ˆ
+‹Â™^ÜÛÛœÝÛ™TÚYÈH
+ˆY]Ü”\˜[\ÊNˆÝš[™ÈO‚ˆ”ÓÓ‹œÝš[™ÚYžJ˜Ý\™\ÊH
+È	ÈÉÈ
+È”ÓÓ‹œÝš[™ÚYžJšÛÏÈQUSÒÓ
+NÂ‚™^ÜÛÛœÝQUSÔTSTÎˆY]Ü”\˜[\ÈHÂˆœšYÚ™\ÜÎˆˆ^ÜÝ\™NˆÛÛ˜\ÝˆYÚYÚÎˆÚYÝÜÎˆˆ[\ˆ[ˆØ]ˆšXŽˆˆÚ\œ[ŽˆÜ˜Z[ŽˆÛÙˆÛÙ™\ÚÛˆÌˆÛÙ˜Y]\ÎˆLÛÙÛÛÜŽˆ][[Ý[ˆLˆšYÛ™]Nˆ›\ŽˆÛÛÜ“›Ú\ÙNˆÛÛÜ“›Ú\ÙLŽˆˆXZÓÜXÚ]NˆXZÐ[™ÛNˆKXZÒYNˆMKˆœš[™ÙR[[œÚ]Nˆœš[™ÙRYNˆœš[™ÙTÚ^™NˆLœš[™ÙQ™X]\ŽˆLˆÝ\™\Îˆ”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJQUSÐÕT•‘TÊJKˆÛˆ”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJQUSÒÓ
+JKˆX\ÚÑ^ÜÝ\™NˆˆX\ÚÐœšYÚ™\ÜÎˆˆX\ÚÐÛÛ˜\ÝˆˆX\ÚÒYÚYÚÎˆˆX\ÚÔÚYÝÜÎˆˆX\ÚÕ[\ˆˆX\ÚÕ[ˆˆX\ÚÔØ]ˆˆX\ÚÕšXŽˆˆX\ÚÐÜ™X]Yˆ˜[ÙKˆX\ÚÐÞˆKˆX\ÚÐÞNˆKˆX\ÚÐ[™ÛNˆˆX\ÚÑˆŒKˆX\ÚÔÚÝÓÝ™\›^NˆYKˆ‹‹‘–ÑQUSËŸNÂ‚\HØ]YÛÜžHH	Ùš[\‰È	ØY\Ý	È	ÙY™™XÝÉÈ	ÛXZÉÈ	ÜÛÙ	È	ÙÜ˜Z[‰È	Ú[][Û‰È	ÛX\ÚÉÈ	ØÛÛ\ÜÙIÈ	Ùž	ÎÂ\HÝ\™PÚ[›™[H	Ü™Ø‰È	Ü‰È	ÙÉÈ	Ø‰ÎÂ‚š[\™˜XÙHÛÛYˆÂˆYˆÝš[™ÎÈˆX™[ˆÝš[™ÎÂˆXÛÛŽˆÝš[™ÎÂˆZ[Žˆ[X™\ŽÂˆX^ˆ[X™\ŽÂˆÝ\Îˆ[X™\ŽÂŸB‚˜ÛÛœÝPTÒ×ÕÓÓÎˆÛÛY–×HHÂˆÈYˆ	ÛX\ÚÐœšYÚ™\ÜÉËX™[ˆ	ù.«¹n©‰ËXÛÛŽˆ	ÛYÚÛ[ÙIËZ[ŽˆLLX^ˆLKˆÈYˆ	ÛX\ÚÑ^ÜÝ\™IËX™[ˆ	ù¦çyabIËXÛÛŽˆ	ØœšYÚ™\Ü×Í‰ËZ[ŽˆLLX^ˆLKˆÈYˆ	ÛX\ÚÐÛÛ˜\Ý	ËX™[ˆ	ùl#y«å	ËXÛÛŽˆ	ØÛÛ˜\Ý	ËZ[ŽˆLLX^ˆLKˆÈYˆ	ÛX\ÚÒYÚYÚÉËX™[ˆ	újæ9abIËXÛÛŽˆ	ÝØ—ÜÝ[›žIËZ[ŽˆLLX^ˆLKˆÈYˆ	ÛX\ÚÔÚYÝÜÉËX™[ˆ	úfl9olIËXÛÛŽˆ	ØœšYÚ™\Ü×ÛÝÉËZ[ŽˆLLX^ˆLKˆÈYˆ	ÛX\ÚÕ[\	ËX™[ˆ	ú"l¹®ªÉËXÛÛŽˆ	Ù]šXÙWÝ\›[ÜÝ]	ËZ[ŽˆLLX^ˆLKˆÈYˆ	ÛX\ÚÕ[	ËX™[ˆ	ú"lº*¯ÉËXÛÛŽˆ	ØÛÛÜš^™IËZ[ŽˆLLX^ˆLKˆÈYˆ	ÛX\ÚÔØ]	ËX™[ˆ	úhïyd£9n©‰ËXÛÛŽˆ	Ü[]IËZ[ŽˆLLX^ˆLKˆÈYˆ	ÛX\ÚÕšX‰ËX™[ˆ	ú!ê¹á-ºhïyd£9n©‰ËXÛÛŽˆ	ØÛÛÜ—Û[œÉËZ[ŽˆLLX^ˆLK—NÂ‚˜ÛÛœÝQ•TÕÕÓÓÎˆÛÛY–×HHÂˆÈYˆ	ØœšYÚ™\ÜÉËX™[ˆ	ù.«¹n©‰ËXÛÛŽˆ	ÛYÚÛ[ÙIËZ[ŽˆLLX^ˆLKˆÈYˆ	Ù^ÜÝ\™IËX™[ˆ	ù¦çyabIËXÛÛŽˆ	ØœšYÚ™\Ü×Í‰ËZ[ŽˆLLX^ˆLKˆÈYˆ	ØÛÛ˜\Ý	ËX™[ˆ	ùl#y«å	ËXÛÛŽˆ	ØÛÛ˜\Ý	ËZ[ŽˆLLX^ˆLKˆÈYˆ	ÚYÚYÚÉËX™[ˆ	újæ9abIËXÛÛŽˆ	ÝØ—ÜÝ[›žIËZ[ŽˆLLX^ˆLKˆÈYˆ	ÜÚYÝÜÉËX™[ˆ	úfl9olIËXÛÛŽˆ	ØœšYÚ™\Ü×ÛÝÉËZ[ŽˆLLX^ˆLKˆÈYˆ	Ý[\	ËX™[ˆ	ú"l¹®ªÉËXÛÛŽˆ	Ù]šXÙWÝ\›[ÜÝ]	ËZ[ŽˆLLX^ˆLKˆÈYˆ	Ý[	ËX™[ˆ	ú"lº*¯ÉËXÛÛŽˆ	ØÛÛÜš^™IËZ[ŽˆLLX^ˆLKˆÈYˆ	ÜØ]	ËX™[ˆ	úhïyd£9n©‰ËXÛÛŽˆ	Ü[]IËZ[ŽˆLLX^ˆLKˆÈYˆ	ÝšX‰ËX™[ˆ	ú!ê¹á-ºhïyd£9n©‰ËXÛÛŽˆ	ØÛÛÜ—Û[œÉËZ[ŽˆLLX^ˆLKˆÈYˆ	ØÝ\™\ÉËX™[ˆ	ù¦ì¹íæ‰ËXÛÛŽˆ	ÜÚÝ×ØÚ\	ËZ[ŽˆX^ˆKËÈÝ\™\ÈÛÛˆËÈ9.#z ïya£yå*Ü˜YY[8 %8 %:`¨ù¦+ù."úgh¸à#:`kº"l¹âaøà#yb!ºh yg*9å*9æ¡9g%¹ª&{ï#9ajy`"úemù. 9ª(ù§ ù­íù­á‚ˆÈYˆ	ÚÛ	ËX™[ˆ	ÒÓ	ËXÛÛŽˆ	Ú[™\ØÛÛÜœÉËZ[ŽˆX^ˆKËÈÓÛÛˆÊˆ:b¬ùc%¹§+9/¡¹g*9âny¥b:`¨ù. 9£¤»ï#9¤+:`c¹/¡¹£¤¹§ 9o£8à ¹k ùn¥yli:`¡9¦+ÈÓÓ:`¨ù. 9li9ë¥ùæ¡ˆ;ï"\˜[\Ë™žÚ\œ[»ï"{ï#9cê¹¦+ùaiycèùéîùb,:*¯ùëà;ï#9g%¹ª&yå*9ên¹oàù."z)ä¹oh¸à ˆ
+‹ÂˆÈYˆ	ÙžÚ\œ[‰ËX™[ˆ	úb¬ùc%‰ËXÛÛŽˆ	ØÚ[™ÙWÚ\ÝÜžIËZ[ŽˆX^ˆLK—NÂ‚˜ÛÛœÝÓÑ•ÓQÒÕÓÓÎˆÛÛY–×HHÂˆÈYˆ	ÜÛÙ	ËX™[ˆ	ùo-ùn©‰ËXÛÛŽˆ	Ø›\—ÛÛ‰ËZ[ŽˆX^ˆLKˆÈYˆ	ÜÛÙ™\ÚÛ	ËX™[ˆ	ùëá9g#IËXÛÛŽˆ	ÝÛ˜[]IËZ[ŽˆX^ˆMHKˆÈYˆ	ÜÛÙ˜Y]\ÉËX™[ˆ	ù¤í9¥hÉËXÛÛŽˆ	Ù›\™IËZ[ŽˆŒX^ˆLKˆÈYˆ	ÜÛÙÛÛÜ‰ËX™[ˆ	ú"l¹æî	ËXÛÛŽˆ	Ü[]IËZ[ŽˆX^ˆLK—NÂ‚˜ÛÛœÝSUSÓ—ÕÓÓÎˆÛÛY–×HHÂˆÈYˆ	Ùœš[™ÙR[[œÚ]IËX™[ˆ	ùo-ùn©‰ËXÛÛŽˆ	Ù›\™IËZ[ŽˆX^ˆLKˆÈYˆ	Ùœš[™ÙTÚ^™IËX™[ˆ	ù¤í9¥hÉËXÛÛŽˆ	Ø›\—ÛÛ‰ËZ[ŽˆX^ˆLKˆÈYˆ	Ùœš[™ÙQ™X]\‰ËX™[ˆ	ùëá9g#IËXÛÛŽˆ	ÝÛ˜[]IËZ[ŽˆX^ˆLKˆÈYˆ	Ùœš[™ÙRYIËX™[ˆ	ú"l¹æî	ËXÛÛŽˆ	Ü[]IËZ[ŽˆX^ˆÍŒK—NÂ‚˜ÛÛœÝÔRS—ÕÓÓÎˆÛÛY–×HHÂˆÈYˆ	ÙÜ˜Z[‰ËX™[ˆ	úha¹ì¤‰ËXÛÛŽˆ	ÙÜ˜Z[‰ËZ[ŽˆX^ˆLKˆÈYˆ	ØÛÛÜ“›Ú\ÙIËX™[ˆ	ùojyfj’IËXÛÛŽˆ	Ý^\™IËZ[ŽˆX^ˆLKˆÈYˆ	ØÛÛÜ“›Ú\ÙL‰ËX™[ˆ	ùojyfj’RIËXÛÛŽˆ	Ý^\™IËZ[ŽˆX^ˆLK—NÂ‚‹Êˆ9âny¥b9æ¡9£¤¹b%úh!¹n£ûï&‚ˆ9ab9¦+ùc§ù§+9l,y§"yæ¡9gî¹§+9«/»ï"9§å9abx¡¤¹aby¦¢8¡¤¹¯#ùabx¡¤¹ª(yìâ¸¡¤¹fjºnç¸¡¤¹¦¥ú)ä¸¡¤¹.«º)ä»ï"{ï#ˆ9a£y/§y )ú,ê¹b!¹ía9o 9o£9£©{ï&¹ª(yìâ¹båy¡bÈ8¡¤ˆ9abykn8¡¤ˆ9oªycé:,ê¹¡'È8¡¤ˆ9¥azf§8¡¤ˆ9g%¹oh¹c%¸à ‚ˆ9§"yi&¹`"ùcàù¥n9æ¡9âny¥b;ï"9d*ù¥¬9b¨9æ¡;ï"znç¹."ùc®ù§ ù`ãù§å9abz`¨ùª(ùleze¢ú!ê¹mìyæ¡9càù¥n9b%øà ˆ
+‹Â‹ÊŠˆ9¢¢¹¢`9§"yâny¥b:`ïzeç9£¢yæ¡9. 9ía:)¡¹kêù`/8 %8 %9ë¥ùâny¥b9î+¹g%¹¦`¹å*;ï#:+¤ù«ãù. 9¨/9cê¹§"z!ê¹mìz`¨ù. 9`"ù¥b9§§
+‹Â˜ÛÛœÝ“×ÑQ‘‘PÕÔTSTÎˆ™XÛÜ™Ýš[™Ë[X™\ˆHÂˆÛÙˆœš[™ÙR[[œÚ]NˆXZÓÜXÚ]Nˆ›\ŽˆÛÛÜ“›Ú\ÙNˆÛÛÜ“›Ú\ÙLŽˆˆÜ˜Z[ŽˆšYÛ™]Nˆˆ‹‹“Øš™XÝ™œ›ÛQ[šY\Ê–ÑQ”Ë›X\
+OˆÙšYJJKŸNÂ‚˜ÛÛœÝQ‘‘PÕÕÓÓÎˆÛÛY–×HHÂˆÊˆ:`&y."zha¹æ¡9o-ùn©¹d!:!ê¹l#y¡âyb,:!ê¹mìyæ¡9càù¥n;ï":)¢ÈQ‘‘PÕÐSSÕS•;ï"{ï#9ëá9g#yl,y¦+È;ïgŒL
+‹ÂˆÈYˆ	ÜÛÙYÚ	ËX™[ˆ	ù§å9abIËXÛÛŽˆ	Ø›\—ÛÛ‰ËZ[ŽˆX^ˆLKˆÈYˆ	Ú[][Û‰ËX™[ˆ	ùaby¦¢	ËXÛÛŽˆ	Ù›\™IËZ[ŽˆX^ˆLKˆÈYˆ	ÛYÚXZÉËX™[ˆ	ù¯#ùabIËXÛÛŽˆ	ÛXZ×ØY	ËZ[ŽˆX^ˆLKˆÈYˆ	ØÛÛÜ“›Ú\ÙIËX™[ˆ	ùfjºnç‰ËXÛÛŽˆ	ÙÜ˜Z[‰ËZ[ŽˆX^ˆLKˆÊˆ9§)¹§)ûï"9c§ù§+9cêøà#9ª(yìâ¸à#{ï"z-çùo£:ghº`¨ù. 9ía9ª(yìâºhg¹£¤¹g*9. :-mÈ
+‹ÂˆÈYˆ	Ø›\‰ËX™[ˆ	ù§)¹§)ÉËXÛÛŽˆ	Ø›\—Û[™X\‰ËZ[ŽˆX^ˆLKˆÊˆ9¦¥ú)ä¹¤+9b,9."úghº-çù.«º)ä¹¥/¹. :-mù.¡»ï"žšYÛ™]{ï"{ï#:`&z(èy.#ya£y¥/¹e«¹®äy¨oú`¨úha¸à ‚ˆ:""¹/g9dàz(èyæ¡\˜[\ËšYÛ™]H9.ãyá-¹áiùª(ùë¥ùo¥ùaî¹/¡»ï#9cê¹¦+ù.#ya£yo§¹.âúghº*¯ù¥m8à ˆ
+‹ÂˆÊˆ:b¬ùc%¹mì¹í¤ù¤+9b,8à#:*¯ùëà8à#yæ¡9§ 9o£:gh¹.¡»ï#:`&y. 9£¤¹.#ya£yb%ùk È
+‹Âˆ‹‹‘–ÑQ”Ë™š[\ŠOˆšYOOH	ÙžÚ\œ[‰ÊBˆ›X\
+Oˆ
+ÈYˆšYX™[ˆ›X™[XÛÛŽˆšXÛÛ‹Z[ŽˆX^ˆLJJK—NÂ‚‹Êˆ9âny¥b9chyâaù£"y."ùc®ù.bùo£;ï#9."ºghº`¨ù¨.y®äy¨oú) z*¯ùæ¡9¦+øà#:`&y`"ùâny¥b9æ¡9o-ùn©¸à#xà ‚ˆ9§å9ab{ï#ùaby¦¢;ï#ù¯#ùabyæ¡9o-ùn©¹.#y¦+ùchyâaÈY9§+:.ªûï#9d!:!ê¹l#y¡âyb,:!ê¹mìyæ¡9càù¥n8 %8 %ˆ9¬¤¹§"yl#yb,9æ¡:*lz`¨ù¨.y®äy¨oùæ¡9ëá9g#y§ ù¦+È;ïgŒ;ï#9ç"ú-mù/¡¹l,y¦+øà#9¢å¹.#ybåxà#xà ˆ
+‹Â˜ÛÛœÝQ‘‘PÕÐSSÕS•ˆ™XÛÜ™Ýš[™ËÝš[™ÏˆHÂˆÛÙYÚˆ	ÜÛÙ	Ëˆ[][ÛŽˆ	Ùœš[™ÙR[[œÚ]IËˆYÚXZÎˆ	ÛXZÓÜXÚ]IËŸNÂ˜ÛÛœÝY™™XÝ[[Ý[YH
+YˆÝš[™ÊHOˆQ‘‘PÕÐSSÕS•ÚYHYÂ‚‹ÊŠˆ9g*9®!ye«º(èznç¹."ú`&zha¹âny¥b9¦`º) yieùæ¡9o-ùn©»ï"9mì¹í¤úe¢ú$eùæ¡9l,y.#ybåyk ûï"H
+‹Â˜ÛÛœÝQ‘‘PÕÓÓ—ÐSSÕS•ˆ™XÛÜ™Ýš[™Ë[X™\ˆHÂˆYÚXZÎˆLˆ‹‹“Øš™XÝ™œ›ÛQ[šY\Ê–ÑQ”Ë›X\
+OˆÙšY›Û[[Ý[ÏÈLJJKŸNÂ‚‹ÊŠˆ9«ãù. 9o-yâny¥b9chyâaøà#:!ê¹mìyæ¡8à#ycàù¥n:cmH8 %8 %9. 9«(ycêº ïyieù. 9`"ûï#9b!ùb,9b)zha¹¦`¹amºi&9æ¡:`ïz) y«n:fíˆ
+‹Â˜ÛÛœÝQ‘‘PÕÓÕÓ—ÒÑVTÎˆ™XÛÜ™Ýš[™ËÝš[™Ö×OˆHÂˆÛÙYÚˆÉÜÛÙ	×Kˆ[][ÛŽˆÉÙœš[™ÙR[[œÚ]I×KˆYÚXZÎˆÉÛXZÓÜXÚ]I×KˆÛÛÜ“›Ú\ÙNˆÉØÛÛÜ“›Ú\ÙIË	ÙÜ˜Z[‰Ë	ØÛÛÜ“›Ú\ÙL‰×Kˆ›\ŽˆÉØ›\‰×Kˆ‹‹“Øš™XÝ™œ›ÛQ[šY\Ê–ÑQ”Ë›X\
+OˆÙšYÙšYWJJKŸNÂ‚‹ÊŠˆ9ãï¹g*9åjúgh¹."º`¡9§"y¬¤¹§"xà#:`¡9¬¤¹d"9/mxà#yæ¡9âny¥b;ï"9d"9/mz`c¹æ¡9càù¥n9¦+È;ï#9¢`9.éz!ê¹á-¹.#yë¥ûï"H
+‹Â˜ÛÛœÝ\Ó]™QY™™XÝH
+ˆ[žJHOˆØš™XÝšÙ^\Ê“×ÑQ‘‘PÕÔTSTÊKœÛÛYJÈOˆ
+Ë–Ú×H
+HOOH
+NÂ‚‹ÊŠ‚ˆ
+ˆ9âny¥b9âoy­¢yb,9æ¡8à#9¢`9§"xà#ycàù¥n:cmH8 %8 %9o-ùn©¹.bùi%»ï#:`(ùí,:h!y.gùë¥ú`,¹/¡‚ˆ
+ˆ;ï"9§å9abyæ¡:e 9ª®ûï#ùcb¹o¤{ï#ú"lº*¯øà yaby¦¢9æ¡:"l¹æî;ï#ùi)ùl#ûï#ùï¯yc%¸à y¯#ùabyæ¡:)ä¹n©»ï#ú"l¹æî;ï#ˆ
+ˆ9.éycâ¹«ãù. 9`"ù¥¬9âny¥b:!ê¹mìz`¨ùno¹¨.{ï"xà ‚ˆ
+‚ˆ
+ˆ:nç¹. 9o-yâny¥b9chyâaûï'yo§ºh+y/¡º`c»ï&¹¥m9ía9fç¹b,:h$:*+y`/;ï#: #9.#y¦+ùcê¹¢¢¹o-ùn©¹«n9/cH8 %8 %ˆ
+ˆ9.éybcycêºaãz*+yo-ùn©»ï#9."¹. 9«(yg*9í,:h!zgh¹§oú(èz*¯ú`c¹æ¡9§lz)où§ ùåfz$eûï#ˆ
+ˆ9¥¯9¦+øà#9d#9. :ha¹âny¥b:nç¹ajy«(xà#yo¥ùb,9æ¡9íd9§§9.#y. 9ª(øà ‚ˆ
+‹Â˜ÛÛœÝQ‘‘PÕÐSÒÑVTÎˆÝš[™Ö×HH\œ˜^K™œ›ÛJ™]ÈÙ]
+Âˆ‹‹“Øš™XÝšÙ^\Ê“×ÑQ‘‘PÕÔTSTÊKˆ	ÜÛÙ™\ÚÛ	Ë	ÜÛÙ˜Y]\ÉË	ÜÛÙÛÛÜ‰Ëˆ	ÛXZÐ[™ÛIË	ÛXZÒYIËˆ	Ùœš[™ÙRYIË	Ùœš[™ÙTÚ^™IË	Ùœš[™ÙQ™X]\‰Ëˆ‹‹‘–ÑQ”Ë™›]X\
+Oˆœ\˜[\Ë›X\
+OˆšY
+JK—JJNÂ‚‹ÊŠˆ9¢¢¹¢`9§"yâny¥b9càù¥n;ï"9d*ùí,:h!{ï"y¥m9ía9¢dùfçºh$:*+y`/
+‹Â˜ÛÛœÝ™\Ù][Y™™XÝ\˜[\ÈH
+˜\ÙNˆ[žJHOˆÂˆÛÛœÝÝ]HÈ‹‹˜˜\ÙHNÂˆ›Üˆ
+ÛÛœÝÈÙˆQ‘‘PÕÐSÒÑVTÊHÝ]Ú×HH
+QUSÔTSTÈ\È[žJVÚ×HÏÈÂˆ™]\›ˆÝ]ÂŸNÂ‚‹ÊŠˆ9chyâaÈ8¡¤ˆ9k ùæ¡9í,:h!zgh¹§où¦+ùdê¹. 9`"ùb!ºh {ï"9¬¤¹§"yæ¡9l,y¦+ù¬¤¹§"yí,:h!ycëú*¯ûï"H
+‹Â˜ÛÛœÝQ‘‘PÕÑURSÐÐUˆ™XÛÜ™Ýš[™Ë	ÜÛÙ	È	ÛXZÉÈ	Ú[][Û‰È	Ùž	ÏˆHÂˆÛÙYÚˆ	ÜÛÙ	ËˆYÚXZÎˆ	ÛXZÉËˆ[][ÛŽˆ	Ú[][Û‰ËŸNÂ‚‹ÊŠˆ9.îù/ey. 9`"Èž:cmH8¡¤ˆ9k ùlk9¥¯9dê¹`"ùâny¥b;ï"9o-ùn©ºcmy§+:.ªù.gùl#y¡âyb,:!ê¹mì{ï"H
+‹Â˜ÛÛœÝ–ÓÕÓ‘TŽˆ™XÛÜ™Ýš[™ËžYˆH
+
+
+HOˆÂˆÛÛœÝNˆ™XÛÜ™Ýš[™ËžYˆHßNÂˆ›Üˆ
+ÛÛœÝÙˆ–ÑQ”ÊHÂˆVÙšYHHÂˆ›Üˆ
+ÛÛœÝÙˆœ\˜[\ÊHVÜšYHHÂˆBˆ™]\›ˆNÂŸJJ
+NÂ‚‹ÊŠˆ9¥¬9âny¥b:!ê¹mìyæ¡9càù¥n9b%ûï"9o-ùn©ˆ
+È9í,:h!{ï"{ï#9l#y¡âH–ÑQ”È
+‹Â˜ÛÛœÝ–ÕÓÓÎˆ™XÛÜ™Ýš[™ËÛÛY–×OˆHØš™XÝ™œ›ÛQ[šY\Êˆ–ÑQ”Ë›X\
+OˆÙšYÂˆËÈ9o-ùn©¹å*\˜Ù[8 %8 %[™H9¦+øà#:*¯ùëà8à#yb!ºh yæ¡9g%¹ª&{ï#9.#z ïy¢ïù/¡ºaãz)!ùå*ˆÈYˆšYX™[ˆ	ùo-ùn©‰ËXÛÛŽˆ	Ü\˜Ù[	ËZ[ŽˆX^ˆLKˆËÈY[ˆ9æ¡:`¨ùno¹¨.y.#yíiº*¯ù¥m;ï"9`/9¬.:`h9¦+úh$:*+{ï"{ï#9.âúgh¹."¹l,y.#z) yaî¹ãï‚ˆ‹‹™œ\˜[\Ë™š[\ŠOˆ\šY[ŠBˆ›X\
+Oˆ
+ÈYˆšYX™[ˆ›X™[XÛÛŽˆšXÛÛ‹Z[Žˆ›Z[‹X^ˆ›X^Ý\ˆœÝ\JJKˆH\ÈÛÛY–×WJKŠNÂ‚‹ÊŠˆ9§ 9i%¹li:`¨ù¨.y®äy¨oú) y¥.z*¯ùdê¹. 9`"ùcàù¥n;ï"9¬¤º*+yl,y¦+ú*¯øà#9o-ùn©¸à#{ï"xà ‚ˆ9/¡¹®¤9¦+È–ÑQ”È9æ¡›ÛÝ\˜[{ï#:-çù¢ï9g%º`¨ú`¢º+ 9d#9. 9.ïyk¦¹ïªxà ˆ
+‹Â˜ÛÛœÝ–Ô“ÓÕÔTSNˆ™XÛÜ™Ýš[™ËÛÛYˆHØš™XÝ™œ›ÛQ[šY\Êˆ–ÑQ”Ë™š[\ŠOˆœ›ÛÝ\˜[JK›X\
+OˆÂˆÛÛœÝHœ\˜[\Ë™š[™
+OˆšYOOHœ›ÛÝ\˜[JHNÂˆ™]\›ˆÙšYÈYˆšYX™[ˆ›X™[XÛÛŽˆšXÛÛ‹Z[Žˆ›Z[‹X^ˆ›X^Ý\ˆœÝ\H\ÈÛÛY—NÂˆJKŠNÂ‚˜ÛÛœÝPR×ÕÓÓÎˆÛÛY–×HHÂˆÈYˆ	ÛXZÓÜXÚ]IËX™[ˆ	ùo-ùn©‰ËXÛÛŽˆ	ÛÜXÚ]IËZ[ŽˆX^ˆLKˆÈYˆ	ÛXZÐ[™ÛIËX™[ˆ	ú)ä¹n©‰ËXÛÛŽˆ	Ü›Ý]WÜšYÚ	ËZ[ŽˆX^ˆÍŒKˆÈYˆ	ÛXZÒYIËX™[ˆ	ú"l¹æî	ËXÛÛŽˆ	Ü[]IËZ[ŽˆX^ˆÍŒK—NÂ‚‹ËÈ‹‹ˆ
+[\œÈ™[XZ[ˆØ[YJB™^Ü[˜Ý[ÛˆÛÔ™ØŠˆ[X™\‹Îˆ[X™\‹ˆ[X™\ŠNˆÛ[X™\‹[X™\‹[X™\—HÂˆ]‹ËŽÂˆYˆ
+ÈOOH
+HÂˆˆHÈHˆHÈˆH[ÙHÂˆÛÛœÝYLœ™ØˆH
+ˆ[X™\‹Nˆ[X™\‹ˆ[X™\ŠHOˆÂˆYˆ
+
+H
+ÏHNÂˆYˆ
+ˆJHOHNÂˆYˆ
+HÈŠH™]\›ˆ
+È
+HH
+H
+ˆˆ
+ˆÂˆYˆ
+HÈŠH™]\›ˆNÂˆYˆ
+ˆÈÊH™]\›ˆ
+È
+HH
+H
+ˆ
+ˆÈÈH
+H
+ˆŽÂˆ™]\›ˆÂˆNÂˆÛÛœÝHHHÈ
+ˆ
+H
+ÈÊHˆ
+ÈÈH
+ˆÎÂˆÛÛœÝHˆ
+ˆHNÂˆˆHYLœ™ØŠK
+ÈHÈÊNÂˆÈHYLœ™ØŠK
+NÂˆˆHYLœ™ØŠKHHÈÊNÂˆBˆ™]\›ˆÊˆ
+ˆMH
+ÈJH
+È
+ˆMH
+ÈJH
+ˆ
+ˆMH
+ÈJHNÂŸB‚‹ËÈ‹‹ˆ
+Ù]Ü[™VKÙ[™\˜]PÝ\™S]›Þ›\’›Þ›\•‹˜\Ý›\‹™XÛÛ\]TÚ\œ[‘]Z[Ù[™\˜]S›Ú\ÙT]\›ˆH›ÈÚ[™Ù\ÊB‹ËÈKKHÕT•‘HÔS‘HPUKKB™[˜Ý[ÛˆÙ]Ü[™VJˆ[X™\‹Ú[ÎˆÚ[×JNˆ[X™\ˆÂˆÛÛœÝÈHË‹‹œÚ[×KœÛÜ
+
+KŠOO˜KžX‹ž
+NÂˆÛÛœÝˆHË›[™ÝÂˆYˆ
+ˆOOHŠHÂˆYˆ
+HÖÌKž
+H™]\›ˆÖÌKžNÂˆYˆ
+HÖÌWKž
+H™]\›ˆÖÌWKžNÂˆ™]\›ˆÖÌKžH
+È
+\ÖÌKž
+KÊÖÌWKž\ÖÌKž
+JŠÖÌWKžK\ÖÌKžJNÂˆBˆÛÛœÝH×K\ÈH×KÌ\ÈH×NÂˆ›ÜŠ]OLÈO‹LNÈJÊÊHÈˆÚWHHÖÚJÌWKžHÖÚWKžÈˆ\ÖÚWHH
+ÖÚJÌWKžHHÖÚWKžJHÈÚWNÈˆBˆÌ\ÖÌHH\ÖÌNÈˆ›ÜŠ]OLÈO‹LŽÈJÊÊHÂˆÛÛœÝHH\ÖÚWKS™^H\ÖÚJÌWNÂˆYˆ
+J›S™^H
+HÂˆÌ\Ëœ\Ú
+
+NÂˆH[ÙHÂˆÌ\Ëœ\Ú
+ÊŠÚWJÙÚJÌWJKÊ
+ÚWJÌŠ™ÚJÌWJKÛJÊÚJÌWJÌŠ™ÚWJKÛS™^
+JNÂˆBˆBˆÌ\Ëœ\Ú
+\ÖÛ\Ë›[™ÝLWJNÂˆˆYŠHÖÌKž
+H™]\›ˆÖÌKžNÈˆYŠHÖÛ‹LWKž
+H™]\›ˆÖÛ‹LWKžNÂˆˆ]ÈHÈÚ[JˆÖÚÊÌWKž
+HÊÊÎÂˆÛÛœÝH
+HÖÚ×Kž
+HÈÚ×NÂˆÛÛœÝˆH
+ÂˆÛÛœÝÈHŠÂˆÛÛœÝHŠÈHÊˆ
+ÈNÂˆÛÛœÝLHÈHŠˆ
+ÈÂˆÛÛœÝHHLŠÈ
+ÈÊŽÂˆÛÛœÝLHHÈHŽÂˆˆ™]\›ˆÖÚ×KžH
+ˆ
+ÈÚ×H
+ˆÌ\ÖÚ×H
+ˆL
+ÈÖÚÊÌWKžH
+ˆH
+ÈÚ×H
+ˆÌ\ÖÚÊÌWH
+ˆLNÂŸB‚™^Ü[˜Ý[ÛˆÙ[™\˜]PÝ\™S]
+Ú[›™[Ú[ÎˆÚ[×JNˆZ[\œ˜^HÂˆÛÛœÝ]H™]ÈZ[\œ˜^JMŠNÂˆ›Üˆ
+]HHÈHMŽÈJÊÊHÂˆ]ÚWHHX]›X^
+X]›Z[ŠMKX]œ›Ý[™
+Ù]Ü[™VJKÚ[›™[Ú[ÊJJJNÂˆBˆ™]\›ˆ]ÂŸB‚‹ËÈŒ”ÈÜ[Z^˜][ÛŽˆ™KXØ[Ý[]H^ÜÝ\™KÛÛ˜\Ý[™œšYÚ™\ÜÈ[ÈHÚ[™ÛHQU‹ËÈ™]\Ù\ÈHÝ]]Y™™\ˆÈ™]™[Ø\˜˜YÙHÛÛXÝ[ÛˆÝ]\‹‚™^Ü[˜Ý[ÛˆÙ[™\˜]P˜\ÙPÛÜœ™XÝ[Û“]
+^ÜÝ\™Nˆ[X™\‹ÛÛ˜\Ýˆ[X™\‹œšYÚ™\ÜÎˆ[X™\‹Ý]]ˆZ[\œ˜^JNˆ›ÚYÂˆÛÛœÝ^HX]œÝÊ‹
+^ÜÝ\™H
+ˆŒMÍJHÈL
+NÂˆËÈÝ[™\™ÛÛ˜\Ý›Ü›][BˆÛÛœÝÛÛ‘˜XÝÜˆH
+NH
+ˆ
+
+ÛÛ˜\Ý
+ˆŒŽMÍJH
+ÈMJJHÈ
+MH
+ˆ
+NHH
+ÛÛ˜\Ý
+ˆŒŽMÍJJJNÂˆËÈ™YXÙHY™™XÝ[\]YHžHL	H
+œ›ÛHHÈŒJBˆÛÛœÝœšYÚ˜[HœšYÚ™\ÜÈ
+ˆŒNÂ‚ˆ›Üˆ
+]HHÈHMŽÈJÊÊHÂˆ]˜[HNÂˆËÈKˆ^ÜÝ\™Bˆ˜[
+H^ÂˆËÈ‹ˆœšYÚ™\ÜÂˆ˜[
+ÏHœšYÚ˜[ÂˆËÈËˆÛÛ˜\Ýˆ˜[HÛÛ‘˜XÝÜˆ
+ˆ
+˜[HLŽ
+H
+ÈLŽÂˆËÈÛ[\ˆÝ]]ÚWHHX]›X^
+X]›Z[ŠMK˜[
+ÈJJHÂˆBŸB‚™[˜Ý[Ûˆ›Þ›\’
+ÎˆZ[Û[\Y\œ˜^KˆZ[Û[\Y\œ˜^KÎˆ[X™\‹ˆ[X™\‹Žˆ[X™\ŠHÂˆÛÛœÝX\œˆHHÈ
+ˆ
+Èˆ
+ÈJNÂˆ›Üˆ
+]HHÈHÈJÊÊHÂˆ]HHH
+ˆËHHKšHHH
+ÈŽÂˆ]”ˆHÖÝH
+ˆK‘ÈHÖÝH
+ˆ
+ÈWKˆHÖÝH
+ˆ
+È—KHHÖÝH
+ˆ
+È×NÂˆ]”ˆHÖÊH
+ÈÈHJH
+ˆK‘ÈHÖÊH
+ÈÈHJH
+ˆ
+ÈWKˆHÖÊH
+ÈÈHJH
+ˆ
+È—KHHÖÊH
+ÈÈHJH
+ˆ
+È×NÂˆ]”ˆH
+ˆ
+ÈJH
+ˆ”‹‘ÈH
+ˆ
+ÈJH
+ˆ‘ËˆH
+ˆ
+ÈJH
+ˆ‹HH
+ˆ
+ÈJH
+ˆNÂˆ›Üˆ
+]ˆHÈˆŽÈŠÊÊHÈ”ˆ
+ÏHÖÊH
+ÈŠH
+ˆNÈ‘È
+ÏHÖÊH
+ÈŠH
+ˆ
+ÈWNÈˆ
+ÏHÖÊH
+ÈŠH
+ˆ
+È—NÈH
+ÏHÖÊH
+ÈŠH
+ˆ
+È×NÈBˆ›Üˆ
+]ˆHÈˆHŽÈŠÊÊHÂˆ”ˆ
+ÏHÖÜšH
+ˆHH”ŽÈ‘È
+ÏHÖÜšH
+ˆ
+ÈWHH‘ÎÈˆ
+ÏHÖÜšH
+ˆ
+È—HHŽÈH
+ÏHÖÜšH
+ˆ
+È×HHNÂˆÝH
+ˆHH”ˆ
+ˆX\œŽÈÝH
+ˆ
+ÈWHH‘È
+ˆX\œŽÈÝH
+ˆ
+È—HHˆ
+ˆX\œŽÈÝH
+ˆ
+È×HHH
+ˆX\œŽÂˆšJÊÎÈJÊÎÂˆBˆ›Üˆ
+]ˆHˆ
+ÈNÈˆÈHŽÈŠÊÊHÂˆ”ˆ
+ÏHÖÜšH
+ˆHHÖÛH
+ˆNÈ‘È
+ÏHÖÜšH
+ˆ
+ÈWHHÖÛH
+ˆ
+ÈWNÈˆ
+ÏHÖÜšH
+ˆ
+È—HHÖÛH
+ˆ
+È—NÈH
+ÏHÖÜšH
+ˆ
+È×HHÖÛH
+ˆ
+È×NÂˆÝH
+ˆHH”ˆ
+ˆX\œŽÈÝH
+ˆ
+ÈWHH‘È
+ˆX\œŽÈÝH
+ˆ
+È—HHˆ
+ˆX\œŽÈÝH
+ˆ
+È×HHH
+ˆX\œŽÂˆšJÊÎÈJÊÎÈJÊÎÂˆBˆ›Üˆ
+]ˆHÈHŽÈˆÎÈŠÊÊHÂˆ”ˆ
+ÏH”ˆHÖÛH
+ˆNÈ‘È
+ÏH‘ÈHÖÛH
+ˆ
+ÈWNÈˆ
+ÏHˆHÖÛH
+ˆ
+È—NÈH
+ÏHHHÖÛH
+ˆ
+È×NÂˆÝH
+ˆHH”ˆ
+ˆX\œŽÈÝH
+ˆ
+ÈWHH‘È
+ˆX\œŽÈÝH
+ˆ
+È—HHˆ
+ˆX\œŽÈÝH
+ˆ
+È×HHH
+ˆX\œŽÂˆJÊÎÈJÊÎÂˆBˆBŸB‚™[˜Ý[Ûˆ›Þ›\•ŠÎˆZ[Û[\Y\œ˜^KˆZ[Û[\Y\œ˜^KÎˆ[X™\‹ˆ[X™\‹Žˆ[X™\ŠHÂˆÛÛœÝX\œˆHHÈ
+ˆ
+Èˆ
+ÈJNÂˆ›Üˆ
+]HHÈHÎÈJÊÊHÂˆ]HHKHHKšHHH
+Èˆ
+ˆÎÂˆ]”ˆHÖÝH
+ˆK‘ÈHÖÝH
+ˆ
+ÈWKˆHÖÝH
+ˆ
+È—KHHÖÝH
+ˆ
+È×NÂˆ]”ˆHÖÊH
+È
+HJH
+ˆÊH
+ˆK‘ÈHÖÊH
+È
+HJH
+ˆÊH
+ˆ
+ÈWKˆHÖÊH
+È
+HJH
+ˆÊH
+ˆ
+È—KHHÖÊH
+È
+HJH
+ˆÊH
+ˆ
+È×NÂˆ]”ˆH
+ˆ
+ÈJH
+ˆ”‹‘ÈH
+ˆ
+ÈJH
+ˆ‘ËˆH
+ˆ
+ÈJH
+ˆ‹HH
+ˆ
+ÈJH
+ˆNÂˆ›Üˆ
+]ˆHÈˆŽÈŠÊÊHÈ”ˆ
+ÏHÖÊH
+Èˆ
+ˆÊH
+ˆNÈ‘È
+ÏHÖÊH
+Èˆ
+ˆÊH
+ˆ
+ÈWNÈˆ
+ÏHÖÊH
+Èˆ
+ˆÊH
+ˆ
+È—NÈH
+ÏHÖÊH
+Èˆ
+ˆÊH
+ˆ
+È×NÈBˆ›Üˆ
+]ˆHÈˆHŽÈŠÊÊHÂˆ”ˆ
+ÏHÖÜšH
+ˆHH”ŽÈ‘È
+ÏHÖÜšH
+ˆ
+ÈWHH‘ÎÈˆ
+ÏHÖÜšH
+ˆ
+È—HHŽÈH
+ÏHÖÜšH
+ˆ
+È×HHNÂˆÝH
+ˆHH”ˆ
+ˆX\œŽÈÝH
+ˆ
+ÈWHH‘È
+ˆX\œŽÈÝH
+ˆ
+È—HHˆ
+ˆX\œŽÈÝH
+ˆ
+È×HHH
+ˆX\œŽÂˆšH
+ÏHÎÈH
+ÏHÎÂˆBˆ›Üˆ
+]ˆHˆ
+ÈNÈˆHŽÈŠÊÊHÂˆ”ˆ
+ÏHÖÜšH
+ˆHHÖÛH
+ˆNÈ‘È
+ÏHÖÜšH
+ˆ
+ÈWHHÖÛH
+ˆ
+ÈWNÈˆ
+ÏHÖÜšH
+ˆ
+È—HHÖÛH
+ˆ
+È—NÈH
+ÏHÖÜšH
+ˆ
+È×HHÖÛH
+ˆ
+È×NÂˆÝH
+ˆHH”ˆ
+ˆX\œŽÈÝH
+ˆ
+ÈWHH‘È
+ˆX\œŽÈÝH
+ˆ
+È—HHˆ
+ˆX\œŽÈÝH
+ˆ
+È×HHH
+ˆX\œŽÂˆšH
+ÏHÎÈH
+ÏHÎÈH
+ÏHÎÂˆBˆ›Üˆ
+]ˆHHŽÈˆÈŠÊÊHÂˆ”ˆ
+ÏH”ˆHÖÛH
+ˆNÈ‘È
+ÏH‘ÈHÖÛH
+ˆ
+ÈWNÈˆ
+ÏHˆHÖÛH
+ˆ
+È—NÈH
+ÏHHHÖÛH
+ˆ
+È×NÂˆÝH
+ˆHH”ˆ
+ˆX\œŽÈÝH
+ˆ
+ÈWHH‘È
+ˆX\œŽÈÝH
+ˆ
+È—HHˆ
+ˆX\œŽÈÝH
+ˆ
+È×HHH
+ˆX\œŽÂˆH
+ÏHÎÈH
+ÏHÎÂˆBˆBŸB‚™^Ü[˜Ý[Ûˆ˜\Ý›\Š[XYÙQ]Nˆ[XYÙQ]KÚYˆ[X™\‹ZYÚˆ[X™\‹˜Y]\Îˆ[X™\‹Ú\™YY™™\ŽˆZ[Û[\Y\œ˜^H[
+HÂˆYˆ
+˜Y]\ÈJH™]\›ˆ[XYÙQ]NÂˆÛÛœÝ]HH[XYÙQ]K™]NÂˆÛÛœÝ™\ÈH
+Ú\™YY™™\ˆ	‰ˆÚ\™YY™™\‹›[™ÝH]K›[™Ý
+HÈÚ\™YY™™\ˆˆ™]ÈZ[Û[\Y\œ˜^J]K›[™Ý
+NÂˆÛÛœÝˆHX]™›ÛÜŠ˜Y]\ÊNÂˆ›Üˆ
+]\ÜÈHÈ\ÜÈŽÈ\ÜÊÊÊHÂˆ›Þ›\’
+]K™\ËÚYZYÚŠNÂˆ›Þ›\•Š™\Ë]KÚYZYÚŠNÂˆBˆ™]\›ˆ[XYÙQ]NÂŸB‚™[˜Ý[Ûˆ™XÛÛ\]TÚ\œ[‘]Z[
+ÛÝ\˜ÙQ]NˆZ[Û[\Y\œ˜^KÎˆ[X™\‹ˆ[X™\ŠNˆ[\œ˜^HÂˆÛÛœÝ[ˆHÛÝ\˜ÙQ]K›[™ÝÂˆÛÛœÝ]Z[H™]È[\œ˜^J[ŠNÂˆÛÛœÝÝšYHHÈ
+ˆÂˆˆ›Üˆ
+]HHNÈHHNÈJÊÊHÂˆÛÛœÝ›ÝÓÙ™œÙ]HH
+ˆÝšYNÂˆÛÛœÝ\Ù™œÙ]H›ÝÓÙ™œÙ]HÝšYNÂˆÛÛœÝÝÛ“Ù™œÙ]H›ÝÓÙ™œÙ]
+ÈÝšYNÂ‚ˆ›Üˆ
+]HNÈÈHNÈ
+ÊÊHÂˆÛÛœÝHH›ÝÓÙ™œÙ]
+È
+
+ˆ
+NÂˆÛÛœÝYHHHÈÛÛœÝšYÚHH
+ÈÂˆÛÛœÝ\H\Ù™œÙ]
+È
+
+ˆ
+NÂˆÛÛœÝÝÛˆHÝÛ“Ù™œÙ]
+È
+
+ˆ
+NÂˆˆ›Üˆ
+]ÈHÈÈÎÈÊÊÊHÂˆÛÛœÝ˜[HÛÝ\˜ÙQ]VÚH
+È×NÂˆÛÛœÝ]™ÈH
+ÛÝ\˜ÙQ]VÝ\
+È×H
+ÈÛÝ\˜ÙQ]VÙÝÛˆ
+È×H
+ÈÛÝ\˜ÙQ]VÛY
+È×H
+ÈÛÝ\˜ÙQ]VÜšYÚ
+È×JH
+ˆŒNÂˆ]Z[ÚH
+È×HH
+˜[H]™ÊHˆNÈËÈš]\™™XÝH[È[ˆBˆBˆBˆ™]\›ˆ]Z[ÂŸB‚™^Ü[˜Ý[ÛˆÙ[™\˜]S›Ú\ÙT]\›Š\Nˆ	ÙÜ˜Z[‰È	ØÛÛÜ‰ËÚ^™Nˆ[X™\ˆHLLŠNˆSØ[˜\Ñ[[Y[ÂˆÛÛœÝØ[˜\ÈHØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊNÂˆØ[˜\ËÚYHÚ^™NÂˆØ[˜\ËšZYÚHÚ^™NÂˆÛÛœÝÝHØ[˜\Ë™Ù]ÛÛ^
+	Ì™	ÊHNÂˆÛÛœÝ[YÑ]HHÝ˜Ü™X]R[XYÙQ]JÚ^™KÚ^™JNÂˆÛÛœÝ]HH[YÑ]K™]NÂˆÛÛœÝ[ˆH]K›[™ÝÂˆˆ›Üˆ
+]HHÈH[ŽÈH
+ÏH
+HÂˆYˆ
+\HOOH	ÙÜ˜Z[‰ÊHÂˆÛÛœÝˆH
+X]œ˜[™ÛJ
+H
+ˆMJHÂˆ]VÚWHHŽÈ]VÚJÌWHHŽÈ]VÚJÌ—HHŽÂˆH[ÙHÂˆ]VÚWHH
+X]œ˜[™ÛJ
+H
+ˆMJHÂˆ]VÚJÌWHH
+X]œ˜[™ÛJ
+H
+ˆMJHÂˆ]VÚJÌ—HH
+X]œ˜[™ÛJ
+H
+ˆMJHÂˆBˆ]VÚJÌ×HHMNÂˆBˆÝœ][XYÙQ]J[YÑ]K
+NÂˆ™]\›ˆØ[˜\ÎÂŸB‚˜ÛÛœÝUT—ÔÒV‘HHMŽÂ˜ÛÛœÝ]\•X›HH™]È›Ø]Ì\œ˜^JUT—ÔÒV‘JNÂ™›Üˆ
+]HHÈHUT—ÔÒV‘NÈJÊÊHÂˆ]\•X›VÚWHH
+X]œ˜[™ÛJ
+HHJH
+ˆÍNÂŸB‚˜ÛÛœÝX\Ý\“UÔˆH™]È›Ø]Ì\œ˜^JÌÍŽ
+NÂ˜ÛÛœÝX\Ý\“UÑÈH™]È›Ø]Ì\œ˜^JÌÍŽ
+NÂ˜ÛÛœÝX\Ý\“UÐˆH™]È›Ø]Ì\œ˜^JÌÍŽ
+NÂ‚‹ÊŠ‚ˆ
+ˆ9«ãù. :ha¹¯ïºcèznç¹."ùc®ù¦`¹æ¡:h$:*+yo-ùn©¸à ‚ˆ
+‚ˆ
+ˆ:`&y.í¹.¢ù§+9/¡¹¦+úgh9«å9l#yª¥9d#y¬n¹k¦¹æ¡;ï"\›š[˜ÛY\Ê	ÒSQ×ÎL‰ÊH9.búhg»ï"xà ‚ˆ
+ˆ9¯ïºcèyª¥9¥.yd#y¢$Œx )™ŒŒÈ9.bùo£:`¨ù.¦ù«å9l#yl,z`&º`&¹l#y.#y."»ï#9¢`9§"y¯ïºcèz`ïz+¢¹¢$L8 %8 %ˆ
+ˆ9ç"ú-mù/¡¹l,y¦+øà#9«ãù. :haº`ïy«å9.éybcy¯àøà#xà ¹¥.y¢$9æí9£©yå*9¯ïºcèHY9l#yáiûï#ˆ
+ˆ9.éyo£9£æùª¥9d#xà y£æùg%¹n¢º`ïy.#y§ ùa£yolzgïùb,9o-ùn©¸à ‚ˆ
+‚ˆ
+ˆ9¬¤¹b%ùg*:`&z(èyæ¡9l,y¦+ÈL8à ‚ˆ
+‹Â‹Êˆ:`&y.ïz(j9¤+9b,][ËÜÝÑž9alyå*9.¡ˆ8 %8 %9¢ï9g%º`¨ú`¢¹£$yd#9. :ha¹¯ïºcèz) y§"yd#9ª(ùæ¡9¯àù­èxà ‚ˆ:`&z(èy¬¯ùå*9d#9. 9.ï{ï":)¢ùª¥:h+yæ¡[\Ü;ï"{ï#:(c9à®¹. 9`"ùkeú`ïy¬¤¹§"z+¢¸à ˆ
+‹Â‚™^ÜÛÛœÝ›ØÙ\ÜÔ^[ÈH
+ˆÛÝ\˜ÙQ]NˆZ[Û[\Y\œ˜^Kˆ\Ý]NˆZ[Û[\Y\œ˜^KˆÎˆ[X™\‹ˆˆ[X™\‹ˆˆY]Ü”\˜[\Ëˆ]]NˆZ[Û[\Y\œ˜^H[ˆ]Ú^™Nˆ[X™\‹ˆ˜\ÙPÛÜœ™XÝ[Û“]ˆZ[\œ˜^KˆÚ\œ[‘]Z[ˆ[\œ˜^H[ˆ\ÙS™X\™\Ý]ˆ›ÛÛX[‹ˆÝ\™S]ÎˆÈ™ØŽˆZ[\œ˜^KŽˆZ[\œ˜^KÎˆZ[\œ˜^KŽˆZ[\œ˜^HBŠHOˆÂˆYˆ
+\ÛÝ\˜ÙQ]HY\Ý]HÛÝ\˜ÙQ]K›[™ÝOOH\Ý]K›[™Ý
+H™]\›ŽÂ‚ˆÛÛœÝÓ]HHÝ\™S]Ëœ™ØŽÂˆÛÛœÝÓ]ˆHÝ\™S]ËœŽÂˆÛÛœÝÓ]ÈHÝ\™S]Ë™ÎÂˆÛÛœÝÓ]ˆHÝ\™S]Ë˜ŽÂˆˆÛÛœÝ\ÐÝ\™\ÈH˜Ý\™\Ëœ™Ø‹›[™Ýˆˆ˜Ý\™\Ëœ‹›[™Ýˆˆ˜Ý\™\Ë™Ë›[™Ýˆˆ˜Ý\™\Ë˜‹›[™Ýˆˆˆ˜Ý\™\Ëœ™Ø‹œÛÛYJ
+ˆ[žJHOˆžHOOHž
+H˜Ý\™\Ëœ‹œÛÛYJ
+ˆ[žJHOˆžHOOHž
+Hˆ˜Ý\™\Ë™ËœÛÛYJ
+ˆ[žJHOˆžHOOHž
+H˜Ý\™\Ë˜‹œÛÛYJ
+ˆ[žJHOˆžHOOHž
+NÂ‚ˆËÈ[\\˜]\™H	ˆ[ÛÛœÝ[ÂˆÛÛœÝ[\ÈH[\
+ˆŒMH
+ˆŒÎÂˆÛÛœÝ[ÈH[
+ˆŒ
+ˆˆ
+ˆŒÎÂˆ]YˆHÐYˆHYˆHÂˆYˆ
+[\Èˆ
+HÈYˆH[\È
+ˆKŒŽÈÐYˆH[\È
+ˆÈYˆH][\È
+ˆŽÈBˆ[ÙHÈYˆHX]˜XœÊ[\ÊH
+ˆKŒŽÈYˆHSX]˜XœÊ[\ÊH
+ˆNÈBˆÐYˆ
+ÏH[ÎÂˆˆÛÛœÝ\Õ[\[HYˆOOHÐYˆOOHYˆOOHÂ‚ˆËÈØ]\˜][Ûˆ	ˆšXœ˜[˜ÙHÛÛœÝ[ÂˆÛÛœÝØ]][HH
+È
+œØ]
+ˆHÈL
+NÂˆÛÛœÝšX•˜[H
+šXˆ
+ˆJHÈLÂˆÛÛœÝ\ÕšXˆHšX•˜[OOHÂ‚ˆËÈš[HUÛÛœÝ[ÂˆÛÛœÝ][[Ý[H›][[Ý[ÈLÂˆÛÛœÝ\Ó]HH[]]H	‰ˆ][[Ý[ˆÂˆÛÛœÝ]Ú^™TÜHH]Ú^™H
+ˆ]Ú^™NÂˆÛÛœÝ]X^H]Ú^™HHNÂˆˆËÈÓÛÛœÝ[È8 %8 %9ajù`"ú"l¹n-¹ab9¥)9nlù¢$9."y`"ùl#úfhùb%ûï#9aiú/í9g"9l,y.#yå*9. 9æí:-l9âjy.í‚ˆÛÛœÝÛ\œˆHšÛ	‰ˆšÛ›[™ÝOOHÈšÛˆQUSÒÓÂˆÛÛœÝ\ÒÛHZ\ÒÛY[]JÛ\œŠNÂˆÛÛœÝÛÙ[\œÈHÓÐÑS•T”ÎÂˆÛÛœÝÛH™]È›Ø]Ì\œ˜^J
+KÛÈH™]È›Ø]Ì\œ˜^J
+KÛH™]È›Ø]Ì\œ˜^J
+NÂˆ›Üˆ
+]ÈHÈÈÈÊÊÊHÂˆÛÚ×HHÛ\œ–Ú×KšÈLÂˆÛÖÚ×HHÛ\œ–Ú×KœÈÈL
+ˆÓÓPVÔÐUÂˆÛÚ×HHÛ\œ–Ú×K›ÈL
+ˆÓÓPVÓSNÂˆB‚ˆËÈÚ\œ[ˆÛÛœÝ[È
+][\H[[Ý[Ú[˜ÙH[\È[™Y
+BˆÛÛœÝ\ÔÚ\œ[ˆHœÚ\œ[ˆˆ	‰ˆH\Ú\œ[‘]Z[ÂˆÛÛœÝÚ\œ[[[Ý[HœÚ\œ[ˆˆÈ
+
+œÚ\œ[ˆÈL
+H
+ˆNJH
+ˆ‹ŒˆÂˆˆËÈÚYÝÜÈÈYÚYÚÈÛÛœÝ[ÈH›Ù™\ÜÚ[Û˜[ÙØ\š]ZXÈ˜[œÚ][Û‚ˆÛÛœÝÚYÝÜÈHœÚYÝÜÈÈLÂˆÛÛœÝYÚYÚÈHšYÚYÚÈÈLÂ‚ˆÛÛœÝÚ]H™]È›Ø]Ì\œ˜^JMŠNÂˆ›Üˆ
+]HHÈHMŽÈJÊÊHÂˆÛÛœÝ[XHHHÈMNÂˆ]Ù™œÙ]HÂˆˆËÈ›Ù™\ÜÚ[Û˜[ÚYÝÜÎˆ™XËÌH[œÜ\™YÙHÛÜœ™XÝ[Û‚ˆYˆ
+ÚYÝÜÈOOH
+HÂˆËÈY
+™YØ]]™JHÚÝ[Ý™[™Ý[ˆ
+œšYÚ[‹ÛY
+BˆËÈšYÚ
+ÜÚ]]™JHÚÝ[™YXÙBˆÛÛœÝÚYÝÓX\ÚÈHX]œÝÊKŒH[XKËŒ
+NÂˆÙ™œÙ]OHÚYÝÜÈ
+ˆÚYÝÓX\ÚÈ
+ˆMËNÈˆBˆˆËÈ›Ù™\ÜÚ[Û˜[YÚYÚÎˆÛÙÚÝ[\ˆ›Û[Ù™‚ˆYˆ
+YÚYÚÈOOH
+HÂˆËÈY
+™YØ]]™JHÚÝ[Ý™[™Ý[ˆ
+\šÙ[‹ØÛÛ\™\ÜÊBˆËÈšYÚ
+ÜÚ]]™JHÚÝ[™YXÙH
+œšYÚ[‹Ø›ÛÜÝ
+BˆÛÛœÝYÚYÚX\ÚÈHX]œÝÊ[XKËŒ
+NÂˆÙ™œÙ]
+ÏHYÚYÚÈ
+ˆYÚYÚX\ÚÈ
+ˆÍKŒÂˆBˆˆÚ]ÚWHHÙ™œÙ]ÂˆB‚ˆÛÛœÝ›ÝXÝ]H™]È›Ø]Ì\œ˜^JMŠNÂˆYˆ
+\Õ[\[
+HÂˆ›Üˆ
+]HHÈHMŽÈJÊÊHÂˆ]ˆH
+HHJH
+ˆŒŽÂˆ›ÝXÝ]ÚWHHˆÈˆŽÂˆBˆB‚ˆËÈKKHÓPT•ÔSRVUSÓŽˆPTÕTˆÑURÒS‘ÈKKBˆËÈ[ˆÜ™\ˆÈ›ØÙ\ÜÈ‹M“H^[È]ŒœÈÚ][ˆHÚ[™ÛHÔH™XYÚ]Ý]ÜÚ[™È™\ÛÛ][Û‹ˆËÈÙHYÜHUš[˜ÚH™\ÛÛ™H›ÞH]\›ŽˆÙH˜ZÙHHS•T‘HX]ZX]žHÛÛÜˆ\[[™HˆËÈ[È[ˆ[\š[HÌžÌžÌˆÑX\Ý\ˆU
+ZÙ\È›\ÈÈÙ[™\˜]JK‚ˆˆÛÛœÝPTÕT—ÑSHHÌŽÂˆÛÛœÝPTÕT—ÓPVHÌNÂˆ]X\Ý\’YHÂ‚ˆ›Üˆ
+]ØˆHÈØˆPTÕT—ÑSNÈØŠÊÊHÂˆ›Üˆ
+]ÙÈHÈÙÈPTÕT—ÑSNÈÙÊÊÊHÂˆ›Üˆ
+]ÜˆHÈÜˆPTÕT—ÑSNÈÜŠÊÊHÂˆ]ˆH
+Üˆ
+ˆMKŒ
+HÈÌKŒÂˆ]ÈH
+ÙÈ
+ˆMKŒ
+HÈÌKŒÂˆ]ˆH
+Øˆ
+ˆMKŒ
+HÈÌKŒÂ‚ˆËÈKˆ˜\ÙHÛÜœ™XÝ[Û‚ˆÛÛœÝšHHˆÈÛÛœÝÚHHÈÈÛÛœÝšHHˆÂˆˆH˜\ÙPÛÜœ™XÝ[Û“]ÜšWNÂˆÈH˜\ÙPÛÜœ™XÝ[Û“]ÙÚWNÂˆˆH˜\ÙPÛÜœ™XÝ[Û“]ØšWNÂ‚ˆËÈ‹ˆÚYÝÜÈ	ˆYÚYÚÈ
+ÙØ\š]ZXÈ›Û[Ù™ŠBˆÛÛœÝ[XRÙ^HH
+ˆ
+ˆÍÈ
+ÈÈ
+ˆML
+Èˆ
+ˆŽJHˆÂˆÛÛœÝÚÙ™œÙ]HÚ]Û[XRÙ^WNÂˆˆ
+ÏHÚÙ™œÙ]ÈÈ
+ÏHÚÙ™œÙ]Èˆ
+ÏHÚÙ™œÙ]ÂˆˆHˆÈˆˆˆMHÈMHˆŽÈÈHÈÈˆÈˆMHÈMHˆÎÈˆHˆÈˆˆˆMHÈMHˆŽÂ‚ˆËÈËˆ[\	ˆ[ˆYˆ
+\Õ[\[
+HÂˆÛÛœÝ›ÝXÝH›ÝXÝ]Êˆ
+ˆÍÈ
+ÈÈ
+ˆML
+Èˆ
+ˆŽJHˆNÂˆˆ
+ÏHYˆ
+ˆ›ÝXÝÈÈ
+ÏHÐYˆ
+ˆ›ÝXÝÈˆ
+ÏHYˆ
+ˆ›ÝXÝÂˆˆHˆÈˆˆˆMHÈMHˆŽÈÈHÈÈˆÈˆMHÈMHˆÎÈˆHˆÈˆˆˆMHÈMHˆŽÂˆB‚ˆËÈˆÝ\™\ÂˆYˆ
+\ÐÝ\™\ÊHÂˆÛÛœÝšLˆHˆÈÛÛœÝÚLˆHÈÈÛÛœÝšLˆHˆÂˆÛÛœÝÜˆHÓ]–ØÓ]VÜšL—WNÈÛÛœÝÙÈHÓ]ÖØÓ]VÙÚL—WNÈÛÛœÝØˆHÓ]–ØÓ]VØšL—WNÂˆˆHˆ
+È
+ÜˆHŠH
+ˆÎÈÈHÈ
+È
+ÙÈHÊH
+ˆÎÈˆHˆ
+È
+ØˆHŠH
+ˆÎÂˆB‚ˆËÈKˆØ]\˜][Û‚ˆÛÛœÝ]™ÈH
+ˆ
+ÈÈ
+ÈŠH
+ˆŒÌÌÌÌÎÂˆYˆ
+Ø]][OOHJHÂˆˆH]™È
+È
+ˆH]™ÊH
+ˆØ]][ÈÈH]™È
+È
+ÈH]™ÊH
+ˆØ]][ÈˆH]™È
+È
+ˆH]™ÊH
+ˆØ]][ÂˆB‚ˆËÈ‹ˆšXœ˜[˜ÙBˆYˆ
+\ÕšXŠHÂˆ]X^HˆˆÈÈ
+ˆˆˆÈˆˆŠHˆ
+ÈˆˆÈÈˆŠNÂˆ]Z[ˆHˆÈÈ
+ˆˆÈˆˆŠHˆ
+ÈˆÈÈˆŠNÂˆÛÛœÝÝ\”Ø]HX^OOHÈˆ
+X^HZ[ŠHÈX^ÂˆÛÛœÝ›ÛÜÝHšX•˜[ˆÈšX•˜[
+ˆ
+HHÝ\”Ø]
+ˆÝ\”Ø]
+HˆšX•˜[ÂˆÛÛœÝŒHHH
+È›ÛÜÝÂˆˆH]™È
+È
+ˆH]™ÊH
+ˆŒNÈÈH]™È
+È
+ÈH]™ÊH
+ˆŒNÈˆH]™È
+È
+ˆH]™ÊH
+ˆŒNÂˆB‚ˆˆHˆÈˆˆˆMHÈMHˆŽÈÈHÈÈˆÈˆMHÈMHˆÎÈˆHˆÈˆˆˆMHÈMHˆŽÂ‚ˆËÈËˆU
+š[JBˆYˆ
+\Ó]	‰ˆ]]JHÂˆÛÛœÝÈHŒÎLŒMMŽŒˆ
+ˆ]X^ÂˆÛÛœÝ™ˆHˆ
+ˆÎÈÛÛœÝÙˆHÈ
+ˆÎÈÛÛœÝ™ˆHˆ
+ˆÎÂˆÛÛœÝŒH™ˆÈÛÛœÝŒHHŒ
+ÈHˆ]X^È]X^ˆŒ
+ÈNÂˆÛÛœÝÌHÙˆÈÛÛœÝÌHHÌ
+ÈHˆ]X^È]X^ˆÌ
+ÈNÂˆÛÛœÝŒH™ˆÈÛÛœÝŒHHŒ
+ÈHˆ]X^È]X^ˆŒ
+ÈNÂˆÛÛœÝˆH™ˆHŒÈÛÛœÝÈHÙˆHÌÈÛÛœÝˆH™ˆHŒÂˆÛÛœÝŒÞˆHŒ
+ˆ]Ú^™TÜNÈÛÛœÝŒ\ÞˆHŒH
+ˆ]Ú^™TÜNÂˆÛÛœÝÌÞˆHÌ
+ˆ]Ú^™NÈÛÛœÝÌ\ÞˆHÌH
+ˆ]Ú^™NÂˆÛÛœÝLH
+ŒÞˆ
+ÈÌÞˆ
+ÈŒ
+H
+ˆÎÈÛÛœÝLLH
+ŒÞˆ
+ÈÌÞˆ
+ÈŒJH
+ˆÎÂˆÛÛœÝLLH
+ŒÞˆ
+ÈÌ\Þˆ
+ÈŒ
+H
+ˆÎÈÛÛœÝLLLH
+ŒÞˆ
+ÈÌ\Þˆ
+ÈŒJH
+ˆÎÂˆÛÛœÝLHH
+Œ\Þˆ
+ÈÌÞˆ
+ÈŒ
+H
+ˆÎÈÛÛœÝLLHH
+Œ\Þˆ
+ÈÌÞˆ
+ÈŒJH
+ˆÎÂˆÛÛœÝLLHH
+Œ\Þˆ
+ÈÌ\Þˆ
+ÈŒ
+H
+ˆÎÈÛÛœÝLLLHH
+Œ\Þˆ
+ÈÌ\Þˆ
+ÈŒJH
+ˆÎÂˆÛÛœÝ—ÌH]]VÚLH
+È
+]]VÚLLHH]]VÚLJH
+ˆŽÂˆÛÛœÝ—ÌHH]]VÚLWH
+È
+]]VÚLLWHH]]VÚLWJH
+ˆŽÂˆÛÛœÝ—ÌLH]]VÚLLH
+È
+]]VÚLLLHH]]VÚLLJH
+ˆŽÂˆÛÛœÝ—ÌLHH]]VÚLLWH
+È
+]]VÚLLLWHH]]VÚLLWJH
+ˆŽÂˆÛÛœÝ—ÌH—Ì
+È
+—ÌLH—Ì
+H
+ˆÎÈÛÛœÝ—ÌHH—ÌH
+È
+—ÌLHH—ÌJH
+ˆÎÂˆÛÛœÝˆH—Ì
+È
+—ÌHH—Ì
+H
+ˆŽÂˆÛÛœÝ×ÌH]]VÚL
+ÌWH
+È
+]]VÚLL
+ÌWHH]]VÚL
+ÌWJH
+ˆŽÂˆÛÛœÝ×ÌHH]]VÚLJÌWH
+È
+]]VÚLLJÌWHH]]VÚLJÌWJH
+ˆŽÂˆÛÛœÝ×ÌLH]]VÚLL
+ÌWH
+È
+]]VÚLLL
+ÌWHH]]VÚLL
+ÌWJH
+ˆŽÂˆÛÛœÝ×ÌLHH]]VÚLLJÌWH
+È
+]]VÚLLLJÌWHH]]VÚLLJÌWJH
+ˆŽÂˆÛÛœÝ×ÌH×Ì
+È
+×ÌLH×Ì
+H
+ˆÎÈÛÛœÝ×ÌHH×ÌH
+È
+×ÌLHH×ÌJH
+ˆÎÂˆÛÛœÝÈH×Ì
+È
+×ÌHH×Ì
+H
+ˆŽÂˆÛÛœÝ—ÌH]]VÚL
+Ì—H
+È
+]]VÚLL
+Ì—HH]]VÚL
+Ì—JH
+ˆŽÂˆÛÛœÝ—ÌHH]]VÚLJÌ—H
+È
+]]VÚLLJÌ—HH]]VÚLJÌ—JH
+ˆŽÂˆÛÛœÝ—ÌLH]]VÚLL
+Ì—H
+È
+]]VÚLLL
+Ì—HH]]VÚLL
+Ì—JH
+ˆŽÂˆÛÛœÝ—ÌLHH]]VÚLLJÌ—H
+È
+]]VÚLLLJÌ—HH]]VÚLLJÌ—JH
+ˆŽÂˆÛÛœÝ—ÌH—Ì
+È
+—ÌLH—Ì
+H
+ˆÎÈÛÛœÝ—ÌHH—ÌH
+È
+—ÌLHH—ÌJH
+ˆÎÂˆÛÛœÝˆH—Ì
+È
+—ÌHH—Ì
+H
+ˆŽÂˆˆ
+ÏH
+ˆHŠH
+ˆ][[Ý[ÈÈ
+ÏH
+ÈHÊH
+ˆ][[Ý[Èˆ
+ÏH
+ˆHŠH
+ˆ][[Ý[ÂˆB‚ˆËÈˆÓ8 %8 %9¥/¹g*9§ 9o£;ï#9¢`9.éy/oùå*: !yç"ùb,9.à:n¯:hcú"l¹l,y¦+ùg*:*¯ù.à:n¯:hcú"l‚ˆYˆ
+\ÒÛ
+HÂˆÛÛœÝ^HˆˆÈÈ
+ˆˆˆÈˆˆŠHˆ
+ÈˆˆÈÈˆŠNÂˆÛÛœÝ[ˆHˆÈÈ
+ˆˆÈˆˆŠHˆ
+ÈˆÈÈˆŠNÂˆÛÛœÝÚ›ÛXHH^H[ŽÂˆËÈ9ojyn©¹i*¹/c¹æ¡9¦`¹`&z"l¹æî9¦+úfç:*"»ï#9«"ºaãy­èyaî»ï#9àl9âa¹¢cy.#y§ ùa¤¹aîº"l¹¥¤BˆÛÛœÝÝHÚ›ÛXH
+ˆŒÎLŒMMŽŒŽÈËÈÌMBˆÛÛœÝÈHÝHŒÈÈˆÝHŒLˆÈHˆ
+ÝHŒÊHÈŒNÂˆÛÛœÝØ]HHÈ
+ˆÈ
+ˆ
+ÈHˆ
+ˆÊNÂˆYˆ
+Ø]Hˆ
+HÂˆ]YNˆ[X™\ŽÂˆYˆ
+^OOHŠHYHHŒ
+ˆ
+
+
+ÈHŠHÈÚ›ÛXJH	HŠNÂˆ[ÙHYˆ
+^OOHÊHYHHŒ
+ˆ
+
+ˆHŠHÈÚ›ÛXH
+ÈŠNÂˆ[ÙHYHHŒ
+ˆ
+
+ˆHÊHÈÚ›ÛXH
+È
+NÂˆYˆ
+YH
+HYH
+ÏHÍŒÂˆÛÛœÝÝH
+^
+È[ŠH
+ˆŒNMŒÎÌNÈËÈÌ‹ÌMBˆÛÛœÝØ]HÚ›ÛXHÈ
+MHHX]˜XœÊ^
+È[ˆHMJJNÂ‚ˆËÈ:$/yg*9dê¹ajy`"ú"l¹n-¹.+yoàù.búe¤ûï#9å*Û[ÛÝÝ\9aiù£ä»ï"9ajzha¹«"ºaãyb¨:-mù/¡ˆH{ï"Bˆ]LHÎÂˆ›Üˆ
+]ÈHÈÈÎÈÊÊÊHÈYˆ
+YHÛÙ[\œÖÚÈ
+ÈWJHÈLHÎÈœ™XZÎÈHBˆÛÛœÝÌHÛÙ[\œÖÚLNÂˆÛÛœÝÌHHLOOHÈÈÍŒˆÛÙ[\œÖÚL
+ÈWNÂˆÛÛœÝLHHLOOHÈÈˆL
+ÈNÂˆÛÛœÝHÌHOOHÌÈˆ
+YHHÌ
+HÈ
+ÌHHÌ
+NÂˆÛÛœÝØˆH
+ˆ
+ˆ
+ÈHˆ
+ˆ
+NÂˆÛÛœÝØHHHHØŽÂ‚ˆÛÛœÝH
+ÛÚLH
+ˆØH
+ÈÛÚLWH
+ˆØŠH
+ˆØ]NÂˆÛÛœÝÈH
+ÛÖÚLH
+ˆØH
+ÈÛÖÚLWH
+ˆØŠH
+ˆØ]NÂˆÛÛœÝH
+ÛÚLH
+ˆØH
+ÈÛÚLWH
+ˆØŠH
+ˆØ]NÂ‚ˆ]ˆHYH
+È
+ˆÓÓPVÒQWÔÒQ•ÂˆYˆ
+ˆ
+Hˆ
+ÏHÍŒÈ[ÙHYˆ
+ˆHÍŒ
+HˆOHÍŒÂˆ]ÌˆHØ]
+ˆ
+H
+ÈÊNÂˆÌˆHÌˆÈˆÌˆˆHÈHˆÌŽÂˆ]ˆHHÈÝ
+È
+HHÝ
+H
+ˆˆÝ
+ˆ
+H
+È
+NÂˆˆHˆÈˆˆˆHÈHˆŽÂ‚ˆËÈÓ8¡¤ˆ‘Ð‚ˆÛÛœÝØÈH
+HHX]˜XœÊˆ
+ˆˆHJJH
+ˆÌŽÂˆÛÛœÝHˆÈŒÂˆÛÛœÝHØÈ
+ˆ
+HHX]˜XœÊ
+	HŠHHJJNÂˆ]ŒˆHÌˆHŒˆHÂˆYˆ
+JHÈŒˆHØÎÈÌˆHÈBˆ[ÙHYˆ
+ŠHÈŒˆHÈÌˆHØÎÈBˆ[ÙHYˆ
+ÊHÈÌˆHØÎÈŒˆHÈBˆ[ÙHYˆ
+
+HÈÌˆHÈŒˆHØÎÈBˆ[ÙHYˆ
+JHÈŒˆHÈŒˆHØÎÈBˆ[ÙHÈŒˆHØÎÈŒˆHÈBˆÛÛœÝ[HHˆHØÈ
+ˆNÂˆˆH
+Œˆ
+È[JH
+ˆMNÈÈH
+Ìˆ
+È[JH
+ˆMNÈˆH
+Œˆ
+È[JH
+ˆMNÂˆˆHˆÈˆˆˆMHÈMHˆŽÂˆÈHÈÈˆÈˆMHÈMHˆÎÂˆˆHˆÈˆˆˆMHÈMHˆŽÂˆBˆB‚ˆX\Ý\“UÔ–ÛX\Ý\’YHHŽÈX\Ý\“UÑÖÛX\Ý\’YHHÎÈX\Ý\“UÐ–ÛX\Ý\’YHHŽÂˆX\Ý\’Y
+ÊÎÂˆBˆBˆB‚ˆËÈKKHTHPTÕTˆUÈVSÈKKBˆÛÛœÝ[ˆHÛÝ\˜ÙQ]K›[™ÝÂˆÛÛœÝÓUHŒLŒMMŽŒÍNÈËÈÌHÈMBˆ]]\’YHÂ‚ˆËÈÜ][È^XÚ]ÛÜÈÈÝX\˜[YHÔH’U™XÝÜš^˜][Ûˆ[™›È›ØÚÈK[ÜÂˆYˆ
+\ÙS™X\™\Ý]
+HÂˆËÈ™X\™\Ý[™ZYÚ›ÜˆØ[\[™Îˆ^™[Y[H˜\Ý›ÜˆYÚ\™\È™]šY]ÜÈ\š[™È[\˜XÝ[Ûˆ
+ŒœÊBˆ›Üˆ
+]HHÈH[ŽÈH
+ÏH
+HÂˆÛÛœÝˆHÛÝ\˜ÙQ]VÚWKÈHÛÝ\˜ÙQ]VÚJÌWKˆHÛÝ\˜ÙQ]VÚJÌ—NÂ‚ˆËÈ]X[^™HÈÌžÌžÌˆX\Ý\ˆU[™^
+œ˜[˜Ú\ÜÊBˆÛÛœÝ—ÚYH
+ˆ
+ˆŒLŒMMŽŒÍH
+ÈJHÂˆÛÛœÝ×ÚYH
+È
+ˆŒLŒMMŽŒÍH
+ÈJHÂˆÛÛœÝ—ÚYH
+ˆ
+ˆŒLŒMMŽŒÍH
+ÈJHÂ‚ˆÛÛœÝX\Ý\’YH
+—ÚYL
+H
+×ÚYJH—ÚYÂ‚ˆÛÛœÝ]\ˆH]\•X›VÙ]\’Y	ˆMWNÂˆ]\’Y
+ÊÎÂ‚ˆ\Ý]VÚWHHX\Ý\“UÔ–ÛX\Ý\’YH
+È]\ŽÂˆ\Ý]VÚJÌWHHX\Ý\“UÑÖÛX\Ý\’YH
+È]\ŽÂˆ\Ý]VÚJÌ—HHX\Ý\“UÐ–ÛX\Ý\’YH
+È]\ŽÂˆ\Ý]VÚJÌ×HHMNÂˆBˆH[ÙHYˆ
+\ÔÚ\œ[ŠHÂˆ›Üˆ
+]HHÈH[ŽÈH
+ÏH
+HÂˆ]ˆHÛÝ\˜ÙQ]VÚWKÈHÛÝ\˜ÙQ]VÚJÌWKˆHÛÝ\˜ÙQ]VÚJÌ—NÂ‚ˆÛÛœÝ™ˆHˆ
+ˆÓUÈÛÛœÝÙˆHÈ
+ˆÓUÈÛÛœÝ™ˆHˆ
+ˆÓUÂˆÛÛœÝŒH™ˆÈÛÛœÝÌHÙˆÈÛÛœÝŒH™ˆÂˆÛÛœÝŒHHŒOOHÌHÈÌHˆŒ
+ÈNÂˆÛÛœÝÌHHÌOOHÌHÈÌHˆÌ
+ÈNÂˆÛÛœÝŒHHŒOOHÌHÈÌHˆŒ
+ÈNÂˆˆÛÛœÝˆH™ˆHŒÈÛÛœÝÈHÙˆHÌÈÛÛœÝˆH™ˆHŒÂ‚ˆÛÛœÝŒÓÈHŒLÈÛÛœÝŒWÓÈHŒHLÂˆÛÛœÝÌÓÈHÌNÈÛÛœÝÌWÓÈHÌHNÂ‚ˆÛÛœÝLHŒÓÈÌÓÈŒÂˆÛÛœÝLLLHHŒWÓÈÌWÓÈŒNÂˆ]PKP‹ÌÌKÌ‹ÌÎÂ‚ˆYˆ
+ˆˆÊHÂˆYˆ
+ÈˆŠHÂˆPHHŒÓÈÌÓÈŒNÈPˆHŒÓÈÌWÓÈŒNÈÌHKŒHŽÈÌHHˆHÎÈÌˆHÈHŽÈÌÈHŽÂˆH[ÙHYˆ
+ˆˆŠHÂˆPHHŒÓÈÌÓÈŒNÈPˆHŒWÓÈÌÓÈŒNÈÌHKŒHŽÈÌHHˆHŽÈÌˆHˆHÎÈÌÈHÎÂˆH[ÙHÂˆPHHŒWÓÈÌÓÈŒÈPˆHŒWÓÈÌÓÈŒNÈÌHKŒHŽÈÌHHˆHŽÈÌˆHˆHÎÈÌÈHÎÂˆBˆH[ÙHÂˆYˆ
+ˆˆÊHÂˆPHHŒWÓÈÌÓÈŒÈPˆHŒWÓÈÌWÓÈŒÈÌHKŒHŽÈÌHHˆHÎÈÌˆHÈHŽÈÌÈHŽÂˆH[ÙHYˆ
+ˆˆŠHÂˆPHHŒÓÈÌWÓÈŒÈPˆHŒWÓÈÌWÓÈŒÈÌHKŒHÎÈÌHHÈHŽÈÌˆHˆHŽÈÌÈHŽÂˆH[ÙHÂˆPHHŒÓÈÌWÓÈŒÈPˆHŒÓÈÌWÓÈŒNÈÌHKŒHÎÈÌHHÈHŽÈÌˆHˆHŽÈÌÈHŽÂˆBˆB‚ˆˆHX\Ý\“UÔ–ÚLH
+ˆÌ
+ÈX\Ý\“UÔ–ÚPWH
+ˆÌH
+ÈX\Ý\“UÔ–ÚP—H
+ˆÌˆ
+ÈX\Ý\“UÔ–ÚLLLWH
+ˆÌÎÂˆÈHX\Ý\“UÑÖÚLH
+ˆÌ
+ÈX\Ý\“UÑÖÚPWH
+ˆÌH
+ÈX\Ý\“UÑÖÚP—H
+ˆÌˆ
+ÈX\Ý\“UÑÖÚLLLWH
+ˆÌÎÂˆˆHX\Ý\“UÐ–ÚLH
+ˆÌ
+ÈX\Ý\“UÐ–ÚPWH
+ˆÌH
+ÈX\Ý\“UÐ–ÚP—H
+ˆÌˆ
+ÈX\Ý\“UÐ–ÚLLLWH
+ˆÌÎÂ‚ˆÛÛœÝ]Z[HÚ\œ[‘]Z[VÚWNÈˆˆ
+ÏH]Z[
+ˆÚ\œ[[[Ý[ÈÈ
+ÏH]Z[
+ˆÚ\œ[[[Ý[Èˆ
+ÏH]Z[
+ˆÚ\œ[[[Ý[Â‚ˆÛÛœÝ]\ˆH]\•X›VÙ]\’Y	ˆMWNÂˆ]\’Y
+ÊÎÂ‚ˆ\Ý]VÚWHHˆ
+È]\ŽÈ\Ý]VÚJÌWHHÈ
+È]\ŽÈ\Ý]VÚJÌ—HHˆ
+È]\ŽÈ\Ý]VÚJÌ×HHMNÂˆBˆH[ÙHÂˆ›Üˆ
+]HHÈH[ŽÈH
+ÏH
+HÂˆ]ˆHÛÝ\˜ÙQ]VÚWKÈHÛÝ\˜ÙQ]VÚJÌWKˆHÛÝ\˜ÙQ]VÚJÌ—NÂ‚ˆÛÛœÝ™ˆHˆ
+ˆÓUÈÛÛœÝÙˆHÈ
+ˆÓUÈÛÛœÝ™ˆHˆ
+ˆÓUÂˆÛÛœÝŒH™ˆÈÛÛœÝÌHÙˆÈÛÛœÝŒH™ˆÂˆÛÛœÝŒHHŒOOHÌHÈÌHˆŒ
+ÈNÂˆÛÛœÝÌHHÌOOHÌHÈÌHˆÌ
+ÈNÂˆÛÛœÝŒHHŒOOHÌHÈÌHˆŒ
+ÈNÂˆˆÛÛœÝˆH™ˆHŒÈÛÛœÝÈHÙˆHÌÈÛÛœÝˆH™ˆHŒÂ‚ˆÛÛœÝŒÓÈHŒLÈÛÛœÝŒWÓÈHŒHLÂˆÛÛœÝÌÓÈHÌNÈÛÛœÝÌWÓÈHÌHNÂ‚ˆÛÛœÝLHŒÓÈÌÓÈŒÂˆÛÛœÝLLLHHŒWÓÈÌWÓÈŒNÂˆ]PKP‹ÌÌKÌ‹ÌÎÂ‚ˆYˆ
+ˆˆÊHÂˆYˆ
+ÈˆŠHÂˆPHHŒÓÈÌÓÈŒNÈPˆHŒÓÈÌWÓÈŒNÈÌHKŒHŽÈÌHHˆHÎÈÌˆHÈHŽÈÌÈHŽÂˆH[ÙHYˆ
+ˆˆŠHÂˆPHHŒÓÈÌÓÈŒNÈPˆHŒWÓÈÌÓÈŒNÈÌHKŒHŽÈÌHHˆHŽÈÌˆHˆHÎÈÌÈHÎÂˆH[ÙHÂˆPHHŒWÓÈÌÓÈŒÈPˆHŒWÓÈÌÓÈŒNÈÌHKŒHŽÈÌHHˆHŽÈÌˆHˆHÎÈÌÈHÎÂˆBˆH[ÙHÂˆYˆ
+ˆˆÊHÂˆPHHŒWÓÈÌÓÈŒÈPˆHŒWÓÈÌWÓÈŒÈÌHKŒHŽÈÌHHˆHÎÈÌˆHÈHŽÈÌÈHŽÂˆH[ÙHYˆ
+ˆˆŠHÂˆPHHŒÓÈÌWÓÈŒÈPˆHŒWÓÈÌWÓÈŒÈÌHKŒHÎÈÌHHÈHŽÈÌˆHˆHŽÈÌÈHŽÂˆH[ÙHÂˆPHHŒÓÈÌWÓÈŒÈPˆHŒÓÈÌWÓÈŒNÈÌHKŒHÎÈÌHHÈHŽÈÌˆHˆHŽÈÌÈHŽÂˆBˆB‚ˆˆHX\Ý\“UÔ–ÚLH
+ˆÌ
+ÈX\Ý\“UÔ–ÚPWH
+ˆÌH
+ÈX\Ý\“UÔ–ÚP—H
+ˆÌˆ
+ÈX\Ý\“UÔ–ÚLLLWH
+ˆÌÎÂˆÈHX\Ý\“UÑÖÚLH
+ˆÌ
+ÈX\Ý\“UÑÖÚPWH
+ˆÌH
+ÈX\Ý\“UÑÖÚP—H
+ˆÌˆ
+ÈX\Ý\“UÑÖÚLLLWH
+ˆÌÎÂˆˆHX\Ý\“UÐ–ÚLH
+ˆÌ
+ÈX\Ý\“UÐ–ÚPWH
+ˆÌH
+ÈX\Ý\“UÐ–ÚP—H
+ˆÌˆ
+ÈX\Ý\“UÐ–ÚLLLWH
+ˆÌÎÂ‚ˆÛÛœÝ]\ˆH]\•X›VÙ]\’Y	ˆMWNÂˆ]\’Y
+ÊÎÂ‚ˆ\Ý]VÚWHHˆ
+È]\ŽÈ\Ý]VÚJÌWHHÈ
+È]\ŽÈ\Ý]VÚJÌ—HHˆ
+È]\ŽÈ\Ý]VÚJÌ×HHMNÂˆBˆBŸNÂ‚‹ËÈ‹‹ˆ
+[XYÙQY]Ü”›ÜÈ[™Y™™\”Ù][\™˜XÙ\È™[XZ[ˆØ[YJBš[\™˜XÙH[XYÙQY]Ü”›ÜÈÂˆÊŠˆ9o§¹«mùcì¹í :c!:nçºe¢ù/¡¹æ¡:`¨ù. 9ëa¹æ¡Ù^xà ¹a£z*&9. 9«(yæ¡9¦`¹`&y¬¯ùå*9k ûï'y¦í9¥¬9d#9. 9ëaˆ
+‹Âˆ\ÝÙ^OÎˆÝš[™È[Âˆ[XYÙTÜ˜ÎˆÝš[™ÎÂˆÊŠˆ9¢nzaãùíê:/+ûï&º`&y«(yc+ùaiyæ¡9¢`9§"yáiùâaøà ¹¬¤¹íi¹¢%¹cê¹§"y. 9o-y¦`»ï#9.âúghº-çù.éybcyk£9aj9. 9ª(øà ˆ
+‹Âˆ˜]ÚÜ˜ÜÏÎˆÝš[™Ö×NÂˆÊŠˆ9¢nzaãùíê:/+ú(èy£"xà#9¥¬9h§¸à#{ï&¹a£y£$yáiùâaù£©z`,¹/¡ˆ
+‹ÂˆÛYÝÜÏÎˆ
+
+HOˆ›ÚYÂˆ]\ÝˆÈYˆÝš[™Ë˜[YNˆÝš[™Ë\›ˆÝš[™ÈV×NÂˆÛ”Ø]™Nˆ
+™]ÔÜ˜ÎˆÝš[™ÊHOˆ›ÚYÂˆÛØ[˜Ù[ˆ
+ÙY\˜YÎˆ›ÛÛX[ŠHOˆ›ÚYÂˆÛ’ÛYOÎˆ
+
+HOˆ›ÚYÂˆÛ”™\]Y\Ý^]Îˆ
+
+HOˆ›ÛZ\ÙO^]ÚÚXÙOŽÂˆÛ’[\Ü™]ÏÎˆ
+
+HOˆ›ÚYÂˆÜšYÚ[˜[š[OÎˆš[H[ÂˆÊŠˆ9£©yî£9."¹«(y¦`¹¢¢¹kf9."ù/¡¹æ¡9càù¥n:i-yfç¹/¡»ï":-ìùaî¹¡âyå*9a£yfç¹/¡¹å*9æ¡;ï"H
+‹Âˆ[š]X[Ý]OÎˆÈ\˜[\ÏÎˆY]Ü”\˜[\ÎÈÙ[ÏÎˆÙ[Ô\˜[\ÎÈÙ[XÝY]YÎˆ[X™\ˆH[ÂŸB‚š[\™˜XÙH\ÝÜžR][HÂˆ\˜[\ÎˆY]Ü”\˜[\ÎÂˆÙ[XÝY]Yˆ[X™\ŽÂˆÊŠˆ9©âùg%¹¦+ùno¹/ey¤ãy/g;ï#:-çú"l¹ojycàù¥n9b!ºe¢ùkf;ï#9¤©:b­ù¦`¹¢cy.#y§ ùcê¹fç¹oªy. 9cbˆ
+‹ÂˆÙ[ÏÎˆÙ[Ô\˜[\ÎÂˆÊŠˆ:`&y. 9«iyåm¹."ùæ¡9/¡¹®¤9g%¹®!ye«¸à ¹d"9/my§ ù¢¢¹àé9ioyæ¡9g%¹£æù¢$9¥¬9/¡¹®¤;ï#ˆ9¤©:b­ù¦`º) z`(ù/¡¹®¤9. :-mù£æùfç¹c®ûï#9.#yá-¹cê¹fç¹oªycàù¥n;ï'z`¨ù. 9li9¬.:`h9åfyg*9g%¹."¸à ˆ
+‹ÂˆÜ˜ÜÏÎˆÝš[™Ö×NÂˆ\ÔÛÙXÝ]™Nˆ›ÛÛX[ŽÂˆ\Ð›\XÝ]™Nˆ›ÛÛX[ŽÂˆ\ÑÜ˜Z[XÝ]™Nˆ›ÛÛX[ŽÂˆ\Ò[][ÛXÝ]™Nˆ›ÛÛX[ŽÂˆÛÙX[X[PY\ÝYˆ›ÛÛX[ŽÂˆ›\“X[X[PY\ÝYˆ›ÛÛX[ŽÂˆÜ˜Z[“X[X[PY\ÝYˆ›ÛÛX[ŽÂˆ[][Û“X[X[PY\ÝYˆ›ÛÛX[ŽÂŸB‚š[\™˜XÙHY™™\”Ù]ÂˆÛÝ\˜ÙNˆZ[Û[\Y\œ˜^H[Âˆ\ÝˆZ[Û[\Y\œ˜^H[ÂˆÚ\™YˆZ[Û[\Y\œ˜^H[Âˆ]YˆZ[Û[\Y\œ˜^H[Âˆ]ˆZ[Û[\Y\œ˜^H[Âˆ]LˆZ[Û[\Y\œ˜^H[Âˆ[\ˆZ[Û[\Y\œ˜^H[ÂˆÚ\œ[‘]Z[ˆ[\œ˜^H[ÂˆÎˆ[X™\ŽÂˆˆ[X™\ŽÂŸB‚š[\™˜XÙH˜\ÝÛY\”›ÜÈÂˆ˜[YNˆ[X™\ŽÈZ[Žˆ[X™\ŽÈX^ˆ[X™\ŽÈÝ\ˆ[X™\ŽÈˆÛÛYˆÝš[™ÎÈX™[ˆÝš[™ÎÈÛ˜\™\›Îˆ›ÛÛX[ŽÂˆÛ•\]Nˆ
+YˆÝš[™Ë˜[ˆ[X™\ŠHOˆ›ÚYÂˆÛ’[\˜XÝÝ\ˆ
+
+HOˆ›ÚYÂˆÛ’[\˜XÝ[™ˆ
+
+HOˆ›ÚYÂˆÛ”™\Ù]ˆ
+Nˆ[žKYˆÝš[™ÊHOˆ›ÚYÂˆÛ•˜[YPÛXÚÏÎˆ
+YˆÝš[™ÊHOˆ›ÚYÂˆ\ØX›YÎˆ›ÛÛX[ŽÂˆÛÙXÝ]™OÎˆ›ÛÛX[ŽÂˆÛ•ÙÙÛTÛÙÎˆ
+
+HOˆ›ÚYÂˆ›\XÝ]™OÎˆ›ÛÛX[ŽÂˆÛ•ÙÙÛP›\Îˆ
+
+HOˆ›ÚYÂˆÜ˜Z[XÝ]™OÎˆ›ÛÛX[ŽÂˆÛ•ÙÙÛQÜ˜Z[Îˆ
+
+HOˆ›ÚYÂˆ[][ÛXÝ]™OÎˆ›ÛÛX[ŽÂˆÛ•ÙÙÛR[][ÛÎˆ
+
+HOˆ›ÚYÂˆX\ÚÔÚÝÓÝ™\›^OÎˆ›ÛÛX[ŽÂˆÛ•ÙÙÛSX\ÚÓÝ™\›^OÎˆ
+
+HOˆ›ÚYÂˆÛÛX\“X\ÚÏÎˆ
+
+HOˆ›ÚYÂˆ\ÓX\ÚÐØ]YÛÜžOÎˆ›ÛÛX[ŽÂˆÊŠˆ:`kº"l¹âaú`¡9¬¤¹nî¹êâûï&¹£"zb%yáiùª(úhkùé.»ï#9/a¹.#z ïy£"H
+‹ÂˆX\ÚÓØÚÙYÎˆ›ÛÛX[ŽÂˆÊŠˆ9£¤¹o¥ùíâ¹. :nç»ï&’Ó9. 9«(z) y¥/¹."y¨.{ï#9å*9c§ù§+9æ¡:e¤ú-çy§ ù¢¢¹."úgh¹æ¡9méyamùb%ù¤è9aî¹åjúghˆ
+‹ÂˆÛÛ\XÝÎˆ›ÛÛX[ŽÂˆÊŠˆ9§"yí,:h!ycëù.éz*¯ùæ¡:*l{ï#9¥n9`/9cìú`¢¹§ ùi&¹. :ha¹íê:/+úcm{ï#9£"y.¡¹leze¢ú`¨ù`"ùâny¥b9æ¡9aj:`ê9®äy¨oÈ
+‹ÂˆÛ‘Y]Îˆ
+
+HOˆ›ÚYÂˆÊŠˆ9¦í9íâ»ï&¹âny¥b9í,:h!y. 9«(z) y£¤¹b,9fæù£¤¸à z #9.%9ajy¨.y.)¹£¤¸à ‚ˆ:fi9.¡¹keùí&º"!ú.ã:`dújæ9n©¹a£y¥-¹. :nç»ï#9§ :aãz) yæ¡9¦+ùmé¹cìù.#yi%¹¤í8 %8 %ˆ9. :"+9æ¡9®äy¨oùb.ù¡#ùd$yi%¹i&ºemÈÌœ:+¤ù¢bù£!ùcëù.éy£"yb,:'¨¹nez`¢¹íèûï#ˆ9ajy¨.y.)¹£¤¹¦`º`¨ù`"ùi%¹¤í9§ ù.¤¹æî:aãyå¢»ï#9.+ze¤ùl,y§ ù£"zc+ù¨.xà ˆ
+‹Âˆ[œÙOÎˆ›ÛÛX[ŽÂŸB‚˜ÛÛœÝ˜\ÝÛY\ˆH™XXÝ›Y[[Ê
+Èˆ˜[YKZ[‹X^Ý\ÛÛYX™[Û˜\™\›ËˆÛ•\]KÛ’[\˜XÝÝ\Û’[\˜XÝ[™Û”™\Ù]Û•˜[YPÛXÚË\ØX›YˆÛÙXÝ]™KÛ•ÙÙÛTÛÙ›\XÝ]™KÛ•ÙÙÛP›\‹Ü˜Z[XÝ]™KÛ•ÙÙÛQÜ˜Z[‹ˆ[][ÛXÝ]™KÛ•ÙÙÛR[][Û‹X\ÚÔÚÝÓÝ™\›^KÛ•ÙÙÛSX\ÚÓÝ™\›^KÛÛX\“X\ÚË\ÓX\ÚÐØ]YÛÜžKX\ÚÓØÚÙYÛÛ\XÝ[œÙKÛ‘Y]ŸNˆ˜\ÝÛY\”›ÜÊHOˆÂˆÛÛœÝ[œ]™YˆH\ÙT™YS[œ][[Y[Š[
+NÂˆÛÛœÝ˜[YU^™YˆH\ÙT™YSÜ[‘[[Y[Š[
+NÂ‚ˆ\ÙQY™™XÝ
+
+
+HOˆÂˆYˆ
+[œ]™Y‹˜Ý\œ™[
+HÂˆ[œ]™Y‹˜Ý\œ™[˜[YHH˜[YKÔÝš[™Ê
+NÂˆBˆYˆ
+˜[YU^™Y‹˜Ý\œ™[
+HÂˆ˜[YU^™Y‹˜Ý\œ™[^ÛÛ[H˜[YKÑš^Y
+
+NÂˆBˆKÝ˜[YKÛÛYJNÂ‚ˆÛÛœÝ[™PÚ[™ÙHH
+Nˆ™XXÝÚ[™ÙQ]™[S[œ][[Y[ŠHOˆÂˆ]˜[H\œÙQ›Ø]
+K\™Ù]˜[YJNÂˆYˆ
+Û˜\™\›È	‰ˆZ[ˆ	‰ˆX]˜XœÊ˜[
+HŠHÂˆ˜[HÂˆYˆ
+[œ]™Y‹˜Ý\œ™[
+HÂˆ[œ]™Y‹˜Ý\œ™[˜[YHHŒŽÂˆBˆBˆYˆ
+˜[YU^™Y‹˜Ý\œ™[
+HÂˆ˜[YU^™Y‹˜Ý\œ™[^ÛÛ[H˜[Ñš^Y
+
+NÂˆBˆÛ•\]JÛÛY˜[
+NÂˆNÂ‚ˆÛÛœÝ\Ó][[Ý[HÛÛYOOH	Û][[Ý[	ÎÂ‚ˆ™]\›ˆ
+ˆ]ˆÛ\ÜÓ˜[YO^ØËY[	Ù\ØX›YÈ	ÛÜXÚ]KMLÚ[\‹Y]™[Ë[›Û™IÈˆ	ÉßXO‚ˆ]ˆÛ\ÜÓ˜[YO^Ø›^\ÝYžKX™]ÙY[ˆ][\ËXÙ[\ˆÝ\œÛÜ‹\Ú[\ˆÙ[XÝ[›Û™H	ØÛÛ\XÝÈ	ÛXY[™Ë[›Û™IÈˆ	ÛX‹LH˜[œÛ]K^KL‰ßXHÛ‘ÝX›PÛXÚÏ^ÊJHOˆÛ”™\Ù]
+KÛÛY
+_H]OHºfæy¤âºaãyïkˆ‚ˆÚ\Ó][[Ý[È
+ˆ‚ˆËÊˆ:`&z(èy§+9/¡¹¦+ù§å9ab{ï#ù§)¹§)ûï#ùaby¦¢;ï#ùfjºnç¹fæúha¹âny¥b:b%xà ‚ˆ9k ù`$ybåyb,9æ¡9¦+ú-çøà#9âny¥b8à#yb!ºh yd#9. 9ía9càù¥n;ï#9ajz`¢¹.¤¹æî9âoybåyo¢9k®y¦$ù¤'¹­íûï#ˆ9¢`9.éy¥m9ía9¢ïù£¢y.¡ˆ8 %8 %9âny¥b9. 9o¢ùo§¹âny¥b9b!ºh ze¢øà ‚ˆ9mé¹."º)ä¹¥.y¢$:-çùam¹.å¹®äy¨où. :!í9æ¡9ª&zhc9¥¡ùkeøà ˆ
+‹ßBˆÜ[ˆÛ\ÜÓ˜[YOH™›ÛX›XÚÈ^]Ú]KÍ\\˜Ø\ÙHÚ[\‹Y]™[Ë[›Û™H^VÌLH˜XÚÚ[™ËVÌŒ™[WH¹o-ùn©ÜÜ[‚ˆÜ[ˆˆ™Y^Ý˜[YU^™YŸBˆÛ\ÜÓ˜[YOH^^È›Û\Ø[œÈX[\‹[[\È›ÛX›Û™Ë]Ú]KÌLL‹HKLH›Ý[™YXÝ]™N˜™Ë]Ú]KÌŒ˜[œÚ][Û‹XÛÛÜœÈÝ\œÛÜ‹\Ú[\ˆÙ[XÝ[›Û™H‚ˆÛÛXÚÏ^ÊJHOˆÂˆKœÝÜ›ÜYØ][ÛŠ
+NÂˆYˆ
+Û•˜[YPÛXÚÊHÛ•˜[YPÛXÚÊÛÛY
+NÂˆ[ÙHÛ”™\Ù]
+KÛÛY
+NÂˆ_BˆÛ•ÝXÚ[™^ÊJHOˆÂˆKœÝÜ›ÜYØ][ÛŠ
+NÂˆYˆ
+Û•˜[YPÛXÚÊHÛ•˜[YPÛXÚÊÛÛY
+NÂˆ_Bˆ‚ˆÝ˜[YKÑš^Y
+
+_BˆÜÜ[‚ˆÏ‚ˆ
+Hˆ\ÓX\ÚÐØ]YÛÜžHÈ
+ˆ‚ˆ]ˆÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆØ\LKHÝ™\™›ÝË^X]]È›Ë\ØÜ›Û˜\ˆX^]ËVØØ[ÊL	KLË\™[JWHKLH‚ˆÛÛ•ÙÙÛSX\ÚÓÝ™\›^H	‰ˆ
+ˆ]Ûˆˆ\ØX›Y^ÛX\ÚÓØÚÙYBˆÛÛXÚÏ^ÊJHOˆÂˆKœÝÜ›ÜYØ][ÛŠ
+NÂˆYˆ
+X\ÚÓØÚÙY
+H™]\›ŽÂˆÛ•ÙÙÛSX\ÚÓÝ™\›^J
+NÂˆK˜Ý\œ™[\™Ù]˜›\Š
+NÂˆ_BˆÛ\ÜÓ˜[YO^Ø›^][\ËXÙ[\ˆØ\LHL‹HKLH›Ý[™YY[^VÌLH›ÛX›Û˜XÚÚ[™Ë]ÚY\ˆ\\˜Ø\ÙH˜[œÚ][Û‹XÛÛÜœÈ›Ü™\ˆÚš[šËL	ÛX\ÚÓØÚÙYÈ	ÛÜXÚ]KLÌ	Èˆ	ÉßH	ÂˆX\ÚÔÚÝÓÝ™\›^HˆÈ	Ø™Ë]Ú]H^X›XÚÈ›Ü™\‹]Ú]HÚYÝË[È›ÛX›XÚÉÈˆˆ	Ø™Ë]Ú]KÍH^]Ú]KÍ›Ü™\‹]Ú]KÌLÝ™\Ž^]Ú]KÍŒÝ™\Ž˜›Ü™\‹]Ú]KÌIÂˆXBˆ‚ˆXÛÛˆ˜[YOHš\ÚXš[]HˆÛ\ÜÓ˜[YOH^VÌLHÚš[šËLˆš[^ÛX\ÚÔÚÝÓÝ™\›^_HÏ‚ˆÜ[ºhkùé.º`k¹ïjOÜÜ[‚ˆØ]Û‚ˆ
+_BˆÛÛ•ÙÙÛSX\ÚÓÝ™\›^H	‰ˆÛÛX\“X\ÚÈ	‰ˆ
+ˆ]Ûˆˆ\ØX›Y^ÛX\ÚÓØÚÙYBˆÛÛXÚÏ^ÊJHOˆÂˆKœÝÜ›ÜYØ][ÛŠ
+NÂˆYˆ
+X\ÚÓØÚÙY
+H™]\›ŽÂˆÛÛX\“X\ÚÊ
+NÂˆK˜Ý\œ™[\™Ù]˜›\Š
+NÂˆ_BˆÛ\ÜÓ˜[YO^Ø›^][\ËXÙ[\ˆØ\LHL‹HKLH›Ý[™YY[^VÌLH›ÛX›Û˜XÚÚ[™Ë]ÚY\ˆ\\˜Ø\ÙH˜[œÚ][Û‹XÛÛÜœÈ›Ü™\ˆÚš[šËL™Ë]Ú]KÍH^\™YM›Ü™\‹]Ú]KÌLÝ™\Ž˜™Ë\™YMLÝ™\Ž^]Ú]HÝ™\Ž˜›Ü™\‹\™YML	ÛX\ÚÓØÚÙYÈ	ÛÜXÚ]KLÌ	Èˆ	ÉßXBˆ‚ˆXÛÛˆ˜[YOH™[]HˆÛ\ÜÓ˜[YOH^VÌLHÚš[šËLˆÏ‚ˆÜ[¹®!zfi:`kº"l¹âaÏÜÜ[‚ˆØ]Û‚ˆ
+_BˆÙ]‚ˆÜ[ˆˆ™Y^Ý˜[YU^™YŸBˆÛ\ÜÓ˜[YOH^^È›Û\Ø[œÈX[\‹[[\È›ÛX›Û™Ë]Ú]KÌLL‹HKLH›Ý[™YXÝ]™N˜™Ë]Ú]KÌŒ˜[œÚ][Û‹XÛÛÜœÈÝ\œÛÜ‹\Ú[\ˆÙ[XÝ[›Û™H‚ˆÛÛXÚÏ^ÊJHOˆÂˆKœÝÜ›ÜYØ][ÛŠ
+NÂˆYˆ
+Û•˜[YPÛXÚÊHÛ•˜[YPÛXÚÊÛÛY
+NÂˆ[ÙHÛ”™\Ù]
+KÛÛY
+NÂˆ_BˆÛ•ÝXÚ[™^ÊJHOˆÂˆKœÝÜ›ÜYØ][ÛŠ
+NÂˆYˆ
+Û•˜[YPÛXÚÊHÛ•˜[YPÛXÚÊÛÛY
+NÂˆ_Bˆ‚ˆÝ˜[YKÑš^Y
+
+_BˆÜÜ[‚ˆÏ‚ˆ
+Hˆ
+ˆ‚ˆÜ[ˆÛ\ÜÓ˜[YO^Ø›ÛX›XÚÈ^]Ú]KÍ\\˜Ø\ÙHÚ[\‹Y]™[Ë[›Û™H	Ù[œÙHÈ	Ý^VÎ\H˜XÚÚ[™ËVÌŒL™[WH[˜Ø]IÈˆ	Ý^VÌLH˜XÚÚ[™ËVÌŒ™[WIßXOžÛX™[OÜÜ[‚ˆËÊˆ9¥n9`/:"!ùíê:/+úcmy. :-múgh9cìûï#9¢cy.#y§ ú(ªÈ\ÝYžKX™]ÙY[ˆ9¢á¹b,9."y`"ùg,9¥®H
+‹ßBˆÜ[ˆÛ\ÜÓ˜[YOHœÚš[šËL›^][\ËXÙ[\ˆØ\Lˆ‚ˆÜ[ˆˆ™Y^Ý˜[YU^™YŸBˆÛ\ÜÓ˜[YO^Ø›Û\Ø[œÈX[\‹[[\È›ÛX›Û™Ë]Ú]KÌL›Ý[™YXÝ]™N˜™Ë]Ú]KÌŒ˜[œÚ][Û‹XÛÛÜœÈ	Ù[œÙHÈ	Ý^VÌLHXY[™Ë[›Û™HLKHKVÍIÈˆ	Ý^^ÈLˆKLIßXBˆÛÛXÚÏ^ÊJHOˆÂˆKœÝÜ›ÜYØ][ÛŠ
+NÂˆYˆ
+Û•˜[YPÛXÚÊHÛ•˜[YPÛXÚÊÛÛY
+NÂˆ[ÙHÛ”™\Ù]
+KÛÛY
+NÈËÈ˜[˜XÚÈÈÛ”™\Ù]YˆÛ•˜[YPÛXÚÈ›Ý›ÝšYYˆ_BˆÛ•ÝXÚ[™^ÊJHOˆÂˆKœÝÜ›ÜYØ][ÛŠ
+NÂˆYˆ
+Û•˜[YPÛXÚÊHÛ•˜[YPÛXÚÊÛÛY
+NÂˆ_Bˆ‚ˆÝ˜[YKÑš^Y
+
+_BˆÜÜ[‚ˆÛÛ‘Y]	‰ˆ
+ˆ]Û‚ˆ\šXK[X™[Hº*¯ù¥m9í,:h!H‚ˆÛÛXÚÏ^ÊJHOˆÈKœÝÜ›ÜYØ][ÛŠ
+NÈÛ‘Y]
+
+NÈ_BˆÛ\ÜÓ˜[YOHœÚš[šËLËMÈMÈ[^KLH›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ™Ë]Ú]KÌLÝ™\Ž˜™Ë]Ú]KÌŒXÝ]™NœØØ[KNMH˜[œÚ][Û‹VØ˜XÚÙÜ›Ý[™XÛÛÜ‹˜[œÙ›Ü›WH^]Ú]KÎ‚ˆ‚ˆXÛÛˆ˜[YOH™Y]ˆÛ\ÜÓ˜[YOH^VÌM\HˆÏ‚ˆØ]Û‚ˆ
+_BˆÜÜ[‚ˆÏ‚ˆ
+_BˆÙ]‚‚ˆ]ˆÛ\ÜÓ˜[YO^Ø™[]]™H›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆÝXÚ[›Û™H	Ù[œÙHÈ	ÚVÌœIÈˆÛÛ\XÝÈ	ÚVÌÌIÈˆ	ÚLL‰ßXO‚ˆ[œ]ˆ™Y^Ú[œ]™YŸBˆ\OHœ˜[™ÙHˆZ[^ÛZ[ŸHX^^ÛX^HÝ\^ÜÝ\BˆY˜][˜[YO^Ý˜[Y_Bˆ\ØX›Y^Ù\ØX›YBˆÛÚ[™ÙO^Ú[™PÚ[™Ù_BˆÛ”Ú[\‘ÝÛ^ÛÛ’[\˜XÝÝ\BˆÛ”Ú[\•\^ÛÛ’[\˜XÝ[™BˆÛ”Ú[\Ø[˜Ù[^ÛÛ’[\˜XÝ[™BˆÛ’Ù^QÝÛ^ÛÛ’[\˜XÝÝ\BˆÛ’Ù^U\^ÛÛ’[\˜XÝ[™BˆÛ\ÜÓ˜[YO^Ù[œÙHÈ	ØÝ\ÝÛK\˜[™ÙH[œÙIÈˆÛÛ\XÝÈ	ØÝ\ÝÛK\˜[™ÙHÛÛ\XÝ	Èˆ	ØÝ\ÝÛK\˜[™ÙIßBˆÏ‚ˆÙ]‚ˆÙ]‚ˆ
+NÂŸJNÂ‚˜ÛÛœÝ›Ü›X]^Y‘]HH
+˜]Ñ]TÝŽˆÝš[™ÊNˆÝš[™ÈOˆÂˆYˆ
+\˜]Ñ]TÝˆ˜]Ñ]TÝˆOOH	ù§*¹çéIÈ˜]Ñ]TÝˆOOH	ËIÊH™]\›ˆ	ËIÎÂˆËÈÝ[™\™VQˆ]H›Ü›X]\ÈVVVN“SN‘“SN”ÔÈÜˆÚ[Z[\‚ˆÛÛœÝ™YÙ^H×ŠÍJVËN—JÌŸJVËN—JÌŸJWÊÊÌŸJNŠÌŸJKÎÂˆÛÛœÝX]ÚH˜]Ñ]TÝ‹š[J
+K›X]Ú
+™YÙ^
+NÂˆYˆ
+X]Ú
+HÂˆÛÛœÝYX\ˆH\œÙR[
+X]ÚÌWKL
+NÂˆÛÛœÝ[ÛH\œÙR[
+X]ÚÌ—KL
+NÂˆÛÛœÝ^HH\œÙR[
+X]ÚÌ×KL
+NÂˆÛÛœÝÝ\ˆH\œÙR[
+X]ÚÍKL
+NÂˆÛÛœÝZ[]HHX]ÚÍWNÂˆˆ]\š[ÙH	ÉÎÂˆ]\Ü^RÝ\ˆHÝ\ŽÂˆYˆ
+Ý\ˆOOH
+HÂˆ\š[ÙH	ùaã9¦j	ÎÂˆ\Ü^RÝ\ˆHLŽÂˆH[ÙHYˆ
+Ý\ˆJHÂˆ\š[ÙH	ùaã9¦j	ÎÂˆ\Ü^RÝ\ˆHÝ\ŽÂˆH[ÙHYˆ
+Ý\ˆ
+HÂˆ\š[ÙH	ù¥êy."‰ÎÂˆ\Ü^RÝ\ˆHÝ\ŽÂˆH[ÙHYˆ
+Ý\ˆLJHÂˆ\š[ÙH	ù."¹cb	ÎÂˆ\Ü^RÝ\ˆHÝ\ŽÂˆH[ÙHYˆ
+Ý\ˆLÊHÂˆ\š[ÙH	ù.+ycb	ÎÂˆ\Ü^RÝ\ˆHÝ\ŽÂˆH[ÙHYˆ
+Ý\ˆN
+HÂˆ\š[ÙH	ù."ùcb	ÎÂˆ\Ü^RÝ\ˆHÝ\ˆHLŽÂˆH[ÙHÂˆ\š[ÙH	ù¦f¹."‰ÎÂˆ\Ü^RÝ\ˆHÝ\ˆHLŽÂˆBˆˆ™]\›ˆ	ÞYX\Ÿynm	Û[Ûy§"	Ù^_y¥éH	Ü\š[ÙIÙ\Ü^RÝ\ŸN‰ÛZ[]_XÂˆBˆˆžHÂˆÛÛœÝ]HH™]È]J˜]Ñ]TÝ‹œ™\XÙJÎ‹ÙË
+X]ÚÙ™œÙ]
+HOˆÙ™œÙ]LÈ	ËIÈˆ	Î‰ÊJNÂˆYˆ
+Z\Ó˜SŠ]K™Ù][YJ
+JJHÂˆÛÛœÝYX\ˆH]K™Ù][YX\Š
+NÂˆÛÛœÝ[ÛH]K™Ù][Û
+
+H
+ÈNÂˆÛÛœÝ^HH]K™Ù]]J
+NÂˆÛÛœÝÝ\ˆH]K™Ù]Ý\œÊ
+NÂˆÛÛœÝZ[]HHÝš[™Ê]K™Ù]Z[]\Ê
+JKœYÝ\
+‹	Ì	ÊNÂˆˆ]\š[ÙH	ÉÎÂˆ]\Ü^RÝ\ˆHÝ\ŽÂˆYˆ
+Ý\ˆOOH
+HÂˆ\š[ÙH	ùaã9¦j	ÎÂˆ\Ü^RÝ\ˆHLŽÂˆH[ÙHYˆ
+Ý\ˆJHÂˆ\š[ÙH	ùaã9¦j	ÎÂˆ\Ü^RÝ\ˆHÝ\ŽÂˆH[ÙHYˆ
+Ý\ˆ
+HÂˆ\š[ÙH	ù¥êy."‰ÎÂˆ\Ü^RÝ\ˆHÝ\ŽÂˆH[ÙHYˆ
+Ý\ˆLJHÂˆ\š[ÙH	ù."¹cb	ÎÂˆ\Ü^RÝ\ˆHÝ\ŽÂˆH[ÙHYˆ
+Ý\ˆLÊHÂˆ\š[ÙH	ù.+ycb	ÎÂˆ\Ü^RÝ\ˆHÝ\ŽÂˆH[ÙHYˆ
+Ý\ˆN
+HÂˆ\š[ÙH	ù."ùcb	ÎÂˆ\Ü^RÝ\ˆHÝ\ˆHLŽÂˆH[ÙHÂˆ\š[ÙH	ù¦f¹."‰ÎÂˆ\Ü^RÝ\ˆHÝ\ˆHLŽÂˆBˆ™]\›ˆ	ÞYX\Ÿynm	Û[Ûy§"	Ù^_y¥éH	Ü\š[ÙIÙ\Ü^RÝ\ŸN‰ÛZ[]_XÂˆBˆHØ]Ú
+JHßB‚ˆ™]\›ˆ˜]Ñ]TÝŽÂŸNÂ‚‹ÊŠ‚ˆ
+ˆ9¯ïºcèz)èùioyæ¡9êâù¥®zjå:,áù¥¦{ï#9.éycâ¹«hùg*9."ú/"y.+yæ¡:`¨ùnoºha¸à ‚ˆ
+‚ˆ
+ˆ9. 9k¦º) y¥/¹g*9ª(yía9li8à y.#z ïy¥/¹g*9a`ù.í¹æ¡\ÙT™Yˆ:(è{ï&¹íê:/+ùfj9«ãù«(ze¢úeç:`ïy¦+ù. 9`"ù¥¬9æ¡9a`ù.í¹kéºjå;ï#ˆ
+ˆ9¥/¹g*:(èzgh¹ëby¥¯8à#9«ãú`,¹. 9«(yíê:/+ùfj9l,y¢¢ˆ:ha¹¯ïºcèzaãy¥¬9."ú/"{ï"úaãy¥¬:)èù. 9«(xà#xà ‚ˆ
+ˆ9aiùk®ycêº-çù¯ïºcèyª¥9§+:.ªù§"zeç;ï#:-çùdê¹. 9o-yáiùâaøà ydê¹. 9«(yíê:/+ú`ïyá(zeç;ï#9¢`9.éy¥m9`"È\9alyå*9. 9.ïyl,yioxà ‚ˆ
+‹Â˜ÛÛœÝUÐÐPÒNˆ™XÛÜ™Ýš[™ËÈ]NˆZ[Û[\Y\œ˜^NÈÚ^™Nˆ[X™\ˆOˆHßNÂ˜ÛÛœÝUÓÐQS‘Îˆ™XÛÜ™Ýš[™Ë›ÛZ\ÙO›ÚYˆHßNÂ‚‹ÊˆKKKH9£"zb%yî+¹g%ˆKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKBˆ9î+¹g%¹.#z-l]HT“;ï#9æí9£©y¢¢¹åjùn ùåjùb,9åjùn ù."»ï&‚ˆH9l$y. 9«(H‘È9íê9è¯;ï":aãùb,H9o-HLŽ0åÌMLˆ:) HŒ›\ûï"BˆH9¦í:aãz) yæ¡9¦+ùl$y. 9«(z)èùè¯8 %8 %[YÏˆ9£æÈÜ˜È9.bùo£:) yëbyà#ú)¯yfj9¢¢¹¥¬9g%º)èùioy¢cy§ ù£æù."¹c®ûï#ˆ9.+ze¤ú`¨ù. 9."ùl,y¦+øà#9î+¹g%¹ê yá-¹¢¥¹. 9."øà#xà ¹åjùn ù¦+ùd#9. 9`"ùëà:nç¹¥.yaiùk®{ï#9.#y§ ù§"z`&y`"ùên¹ª¥8à ‚ˆ9ç y."ù/¡¹æ¡9¢$9§+9aj:`ê9¢ïùc®ù£ä:jæ:)èù§¤9n©¸à ˆ
+‹Â‚‹ÊŠˆ9î+¹g%¹æ¡9`#yã¡ûï&º-çú$eú'¨¹neyæ¡9kéºf¦ù`ãùí(9ká¹n©º-l;ï#9§ 9i&ˆÈ9`#{ï"9¢bùªgùno¹.cº`ïy¦+Èˆ9¢%ˆûï"H
+‹Â˜ÛÛœÝSP—ÑˆH
+
+
+HOˆÂˆÛÛœÝH\[ÙˆÚ[™ÝÈOOH	Ý[™Yš[™Y	ÈÈ
+Ú[™ÝË™]šXÙT^[˜][ÈŠHˆŽÂˆ™]\›ˆX]›Z[ŠËX]›X^
+‹X]œ›Ý[™
+
+JJNÂŸJJ
+NÂ‚‹ÊŠˆÚYûï&º`&y. 9¨/9¦+ùáiùdê¹. 9ía9¨§y.í¹ë¥ùaî¹/¡¹æ¡;ï#9. 9ª(ùl,y.#yå*:aãyë¥È
+‹Â\H[X‘[žHHÈÝœÎˆSØ[˜\Ñ[[Y[ÈŽˆ[X™\ŽÈÚYÎˆÝš[™ÈNÂ\H[X”ÝÜ™HH™XXÝ“]]X›T™Y“Øš™XÝ™XÛÜ™Ýš[™Ë[X‘[žOŽÂ‚‹ÊŠˆ9¢¢¹. 9o-yë¥ùioyæ¡9î+¹g%¹¥-º`,¹`"ynªûï":aãz)!ù/oùå*9d#9. 9o-yåjùn ûï#9.#z) y. 9æí9å'ù¥¬9æ¡;ï"H
+‹Â™[˜Ý[Ûˆ][XŠÝÜ™Nˆ[X”ÝÜ™KYˆÝš[™ËÜ˜ÎˆSØ[˜\Ñ[[Y[ÚYÈH	ÉÊNˆ›ÚYÂˆYˆ
+\Ü˜ËÚY\Ü˜ËšZYÚ
+H™]\›ŽÂˆ]HHÝÜ™K˜Ý\œ™[ÚYNÂˆYˆ
+YJHHHÝÜ™K˜Ý\œ™[ÚYHHÈÝœÎˆØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊKŽˆÚYÎˆ	ÉÈNÂˆÛÛœÝÈHK˜ÝœÎÂˆYˆ
+ËÚYOOHÜ˜ËÚYËšZYÚOOHÜ˜ËšZYÚ
+HÈËÚYHÜ˜ËÚYÈËšZYÚHÜ˜ËšZYÚÈBˆÛÛœÝÞHË™Ù]ÛÛ^
+	Ì™	ÊHNÂˆÞœØ]™J
+NÂˆÞœÙ]˜[œÙ›Ü›JKK
+NÂˆÞ™ÛØ˜[[HHNÂˆÞ™š[\ˆH	Û›Û™IÎÂˆÞ™ÛØ˜[ÛÛ\ÜÚ]SÜ\˜][ÛˆH	ØÛÜIÎÂˆÞ™˜]Ò[XYÙJÜ˜Ë
+NÂˆÞœ™\ÝÜ™J
+NÂˆÊˆ9aiùk®yk£9¥m:)!ú(ïy¢$9b§ùo£9¢cyæo9n ùâb9§+;ï#9åjúgh¹êëù.#y§ ú+ 9b,9cê¹åjù.¡¹. 9cb¹æ¡9alyå*9åjùn øà ˆ
+‹ÂˆKœÚYÈHÚYÎÂˆKŠÊÎÂŸB‚‹ÊŠˆ9mì¹í¤ù£¦ùg*9åjúgh¹."¹æ¡9î+¹g%¹¨/9kd;ï#9ë¥ùioy. 9o-yl,yæí9£©ycêùk ù`$z!ê¹mìzaãyåjÈ
+‹Â\H[X”Z[\œÈH™XXÝ“]]X›T™Y“Øš™XÝÙ]
+
+HOˆ›ÚYŽÂ‚‹ÊŠ‚ˆ
+ˆ9chyâaù."¹æ¡:`¨ù. 9¨/9î+¹g%¸à º!ê¹mìyo§¹`"ynªù¢¢¹åjùn ùåjú`c¹/¡ˆ8 %8 %ˆ
+ˆ:fèºe¢ùb!ºh ya£yfç¹/¡¹¦`º`&y`"ùëà:nç¹§ úaãynî»ï"9aiùk®y¦+ùên¹æ¡;ï"{ï#:`&z(èz,¨:,«:(ç9åjùfç¹c®øà ‚ˆ
+ˆ:`¡9¬¤¹ë¥ùb,:!ê¹mìz`¨ù. 9¨/9l,yab9åjÈ˜[˜XÚûï"9¯ïºcèy¦+øà#9c§ùiâøà#xà yâny¥b9¦+ù¬¤¹ieùâny¥b9æ¡9n¥yg%»ï"{ï#ˆ
+ˆ9¥m9£¤¹¢cy.#y§ ù§"yên¹­'¸à ‚ˆ
+‚ˆ
+ˆ9b.ù¡#ù.#z-l™XXÝÝ]{ï&¹î+¹g%¹¦+ùåjùn ûï#9aiùk®y£æù.¡¹.#zg :) zaãy¥¬™[™\¸à ‚ˆ
+ˆ9.bùbcy«ãú` y. 9¢nyl,HÙ]Ý]H9. 9«({ï#9ëby¥¯9¢¢¹¥m9`"ùíê:/+ùfj:aãyåjùc`ynoº`c{ï#ˆ
+ˆ9aby¦+ú`¨ù.¦úaãyåjùl,y/e9£¢y¥m:/*¹æ¡9."yb!¹.bù.£;ï":aãùb,9âny¥b9¥m9£¤ˆŒŽL›\È8¡¤ˆ9¥.y¢$9æí9£©yåjù.bùo£Î\ûï"xà ‚ˆ
+‹Â˜ÛÛœÝ[XØ[˜\Îˆ™XXÝ‘ÏÂˆÝÜ™Nˆ[X”ÝÜ™NÈYˆÝš[™ÎÈ˜[˜XÚÒYÎˆÝš[™ÎÈZ[\œÎˆ[X”Z[\œÎÈ]ŽˆÝš[™ÎÈ˜[YNˆÝš[™ÎÂŸOˆH
+ÈÝÜ™KY˜[˜XÚÒYZ[\œË]‹˜[YHJHOˆÂˆÛÛœÝ™YˆH\ÙT™YSØ[˜\Ñ[[Y[Š[
+NÂˆÛÛœÝ˜]ÛˆH\ÙT™YŠ	ÉÊNÂˆÛÛœÝZ[H\ÙPØ[˜XÚÊ
+
+HOˆÂˆÛÛœÝ[H™Y‹˜Ý\œ™[ÂˆYˆ
+Y[
+H™]\›ŽÂˆÛÛœÝÝÛˆHÝÜ™K˜Ý\œ™[ÚYNÂˆÛÛœÝHHÝÛˆ
+˜[˜XÚÒYÈÝÜ™K˜Ý\œ™[Ù˜[˜XÚÒYHˆ[™Yš[™Y
+NÂˆËÈ9ajy.ïz`ïz`¡9¬¤¹§"y¦`¹®!y£¢z""¹áiùâaûï#9.#z ïy¢¢¹."¹. 9o-{ï#ù."¹. :ha¹¯ïºcèyæ¡9«¦9âaùa¤¹aay¥¬9î+¹g%¸à ‚ˆYˆ
+YJHÂˆYˆ
+[ÚY	‰ˆ[šZYÚ
+H[™Ù]ÛÛ^
+	Ì™	ÊOË˜ÛX\”™XÝ
+[ÚY[šZYÚ
+NÂˆ˜]Û‹˜Ý\œ™[H	ÉÎÂˆ[™]\Ù][X”™XYHH	Ì	ÎÂˆ™]\›ŽÂˆBˆÛÛœÝÙ^HH	ÛÝÛˆÈYˆ˜[˜XÚÒYHÉÙKŸXÂˆYˆ
+˜]Û‹˜Ý\œ™[OOHÙ^JH™]\›ŽÈËÈ9¬¤¹£æùaiùk®yl,y.#z) zaãyåjÂˆ˜]Û‹˜Ý\œ™[HÙ^NÂˆÛÛœÝÞH[™Ù]ÛÛ^
+	Ì™	ÊHNÂˆÊˆ9åjù.bùbcy. 9k¦º) yab9®!yên¸à ‚ˆ˜]Ò[XYÙH9¦+øà#9å¢¹."¹c®øà#y.#y¦+øà#9£æù£¢xà#{ï&¹¥¬9æ¡9î+¹g%¹cêº) y§"y.îù/ey. 9hb¹.#y¦+ùk£9ajˆ9.#z`#ù¦#»ï"9`ãùí(9ë¨yíæ¹ë¥ùaî¹/¡¹æ¡[H9.#z)¢ùo¥ù«ãù. 9¨/:`ïybfùioHM{ï"{ï#9."¹. 9o-yåfyg*ˆ:`&yhb¹åjùn ù."¹æ¡9aiùk®yl,y§ ùo§º`¨ù.¦ùg,9¥®z`#ùaî¹/¡»ï#:-çù¥¬9æ¡9­íùg*9. :-mÈ8 %8 %9ç"ú-mù/¡¹l,y¦+Âˆ8à#9î+¹g%¹§"y. :`ê9b!¹ *¹ *¹æ¡8à#{ï#: #9.%:fèºe¢ùb!ºh ya£yfç¹/¡»ï"9åjùn úaãynî¸à yaiùk®y¦+ùên¹æ¡;ï"Bˆ9l,y h¹oªy«hùn.8à º`&y«hù¦+ù..ù.®¹£ãú/ì9æ¡:`¨ù`"ùãïº,hxà ‚ˆ:aãz*+HÚY;ï#ÚZYÚ9§+9/¡¹l,y§ úh!¹/¯ù®!yên»ï#9/a¹l.¹kî9¬¤º+¢¹¦`¹.#y§ ú-l:`¨ù¨§z-ëûï#ˆ9¢`9.éz`&z(èy¦#¹è®¹®!y. 9«(xà ˆ
+‹ÂˆYˆ
+[ÚYOOHK˜ÝœËÚY[šZYÚOOHK˜ÝœËšZYÚ
+HÈ[ÚYHK˜ÝœËÚYÈ[šZYÚHK˜ÝœËšZYÚÈBˆÞœØ]™J
+NÂˆÞœÙ]˜[œÙ›Ü›JKK
+NÂˆÞ™ÛØ˜[[HHNÂˆÞ™š[\ˆH	Û›Û™IÎÂˆÞ™ÛØ˜[ÛÛ\ÜÚ]SÜ\˜][ÛˆH	ØÛÜIÎÂˆÞ™˜]Ò[XYÙJK˜ÝœË
+NÂˆÞœ™\ÝÜ™J
+NÂˆ[™]\Ù][X”™XYHHÝÛˆÈ	ÌIÈˆ	Ì	ÎÂˆKÜÝÜ™KY˜[˜XÚÒYJNÂˆÊˆ\ÙS^[Ý]Y™™XÝ;ï&¹chyâaù¦+ù«ãù«(z`,ºh y¢cy£¦ù."¹/¡¹æ¡;ï#9£¤¹g*\ÙQY™™XÝ9æ¡:*lBˆ9à#ú)¯yfj9§ ùab9åjù. 9n`9ên¹æoyåjùn ûï#9."ù. 9n`9¢cz(ç9."¹g%ˆ8 %8 %:`¨ùl,y¦+øà#9. :`,¹âny¥b:h ze ù. 9."øà#xà ˆ
+‹Âˆ\ÙS^[Ý]Y™™XÝ
+
+
+HOˆÂˆÛÛœÝÙ]HZ[\œË˜Ý\œ™[ÂˆÙ]˜Y
+Z[
+NÂˆZ[
+
+NÈËÈ9bfù£¦ù."¹/¡»ï"9¢%¹£æùáiùâaûï"yab:(ç9åjù. 9«(Bˆ™]\›ˆ
+
+HOˆÈÙ]™[]JZ[
+NÈNÂˆKÜZ[\œËZ[JNÂˆÛÛœÝ›ÜÎˆ[žHHÈØ]—Nˆ˜[YHNÂˆ™]\›ˆØ[˜\È™Y^Ü™YŸHË‹‹œ›ÜßHÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]LËY[Y[Øš™XÝXÛÝ™\ˆˆÏŽÂŸNÂ‚‹ÊŠ‚ˆ
+ˆ9. 9¨/9. 9¨/9¢¢¹î+¹g%¹ë¥ùaî¹/¡»ï#9«ãù`f¹®ïùí!M\È9l,z+¤ùà#ú)¯yfj9e¦9. 9cèù¬(ûï#9¥m9£¤¹ë¥ùk£9¢cydo9cêÈÛ™xà ‚ˆ
+ˆXZÙH9fç¹`¬È˜[ÙH9.èú(j:`&y. 9¨/:`&z/*¹ab:-ìú`c»ï"9/¢ùi ¹¯ïºcèyª¥:`¡9¬¤¹."ú/"yk£;ï"xà ‚ˆ
+ˆ[Z]9¦+øà#9¢¢¹mì¹í¤ùë¥ùioyæ¡:,¯9."¹åjúgh¸à#{ï#9. 9¢ny`f¹k£9l,ycêù. 9«({ï"9o¢9/¯ùk§;ï#9cê¹¦+ùno¹`"È˜]Ò[XYÙ{ï"xà ‚ˆ
+‹Â™[˜Ý[Ûˆ[•[XÚ[šÜÏŠˆ][\Îˆ×KˆXZÙNˆ
+][Nˆ
+HOˆ›ÛÛX[‹ˆ[Z]ˆ
+
+HOˆ›ÚYˆØ[˜Ù[Yˆ
+
+HOˆ›ÛÛX[‹ˆÛ™Nˆ
+
+HOˆ›ÚYŠNˆ›ÚYÂˆ]HHÂˆ]\HH˜[ÙNÂˆÛÛœÝ›\ÚH
+
+HOˆÈYˆ
+\JHÈ[Z]
+
+NÈ\HH˜[ÙNÈHNÂˆÛÛœÝÝ\H
+
+HOˆÂˆYˆ
+Ø[˜Ù[Y
+
+JH™]\›ŽÂˆÛÛœÝXY[™HH\™›Ü›X[˜ÙK››ÝÊ
+H
+ÈMÂˆÚ[H
+H][\Ë›[™Ý
+HÂˆYˆ
+XZÙJ][\ÖÚWJJH\HHYNÂˆJÊÎÂˆYˆ
+\™›Ü›X[˜ÙK››ÝÊ
+HHXY[™JHœ™XZÎÂˆBˆ›\Ú
+
+NÂˆYˆ
+HH][\Ë›[™Ý
+HÈÛ™J
+NÈ™]\›ŽÈBˆÙ][Y[Ý]
+Ý\
+NÂˆNÂˆÝ\
+
+NÂŸB‚™^ÜÛÛœÝ[XYÙQY]ÜŽˆ™XXÝ‘Ï[XYÙQY]Ü”›ÜÏˆH
+È\ÝÙ^K[XYÙTÜ˜Ë˜]ÚÜ˜ÜËÛYÝÜË]\ÝÛ”Ø]™KÛØ[˜Ù[Û’ÛYKÛ”™\]Y\Ý^]Û’[\Ü™]ËÜšYÚ[˜[š[K[š]X[Ý]HJHOˆÂˆÊˆ8¥ 8¥ 9¢nzaãùíê:/+È8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ˆ9. 9«(yc+ùaiyi&¹o-y¦`»ï#9íê:/+ùfj9§+:.ªùk£9aj9.#z+¢ˆ8 %8 %9åjúgh¹."¹¬.:`h9cê¹§"xà#9æë¹bcz`&y. 9o-xà#{ï#ˆ9am¹.å¹o-yæ¡9càù¥n9d!:!ê¹¥-¹g*9¥àz`¢¸à º`(ùíd9.+yæ¡9áiùâaùalyå*9d#9. 9.ïycàù¥n;ï"9¥.y. 9o-{ï'yaj:`ê9. :-mù¥.{ï"{ï#ˆ:)èúfi:`(ùíd9æ¡9áiùâaù§"z!ê¹mìyæ¡9. 9.ï{ï#9.bùo£9 #ºn¯:*¯ú`ïy.#y§ ùa£y.¤¹æî9olzgïøà ˆ
+‹ÂˆÛÛœÝ[˜ÛÛZ[™ÈH
+˜]ÚÜ˜ÜÈ	‰ˆ˜]ÚÜ˜ÜË›[™ÝÈ˜]ÚÜ˜ÜÈˆÚ[XYÙTÜ˜×JK™š[\Š›ÛÛX[ŠNÂˆÊŠˆ9®!ye«º!ê¹mìyåfy. 9.ï{ï&¹î+¹g%¹b%ù."¹cëù.éyb*¹áiùâaûï#9b*¹£¢y.#yoáyfçºh+y¥.y."¹li9æ¡9âà9¡bÈ
+‹ÂˆÛÛœÝÜÜ˜Ó\ÝÙ]Ü˜Ó\ÝHH\ÙTÝ]OÝš[™Ö×OŠ[˜ÛÛZ[™ÊNÂˆÊŠˆ9íiˆYÒ\ÝÜž{ï#ù¤©:b­ùå*9æ¡9§ 9¥¬9/¡¹®¤9®!ye«»ï"Ø[˜XÚÈ:(èz+ Ý]H9§ ù¦+ú""¹æ¡;ï"H
+‹ÂˆÛÛœÝÜ˜Ó\Ý™YˆH\ÙT™YÝš[™Ö×OŠ[˜ÛÛZ[™ÊNÂˆÜ˜Ó\Ý™Y‹˜Ý\œ™[HÜ˜Ó\ÝÂˆ\ÙQY™™XÝ
+
+
+HOˆÈÙ]Ü˜Ó\Ý
+[˜ÛÛZ[™ÊNÈKØ˜]ÚÜ˜ÜË[XYÙTÜ˜×JNÂˆÛÛœÝØ˜]ÚYÙ]˜]ÚYHH\ÙTÝ]J
+NÂˆÊŠˆ9a£znç¹. 9«(ymì¹í¤ú`n9.+yæ¡:`¨ùo-y¢cy§ ú-ìùaî¹æ¡9l#ú`n9e«ˆ
+‹ÂˆÛÛœÝØ˜]ÚY[KÙ]˜]ÚY[WHH\ÙTÝ]O[X™\ˆ[Š[
+NÂˆÛÛœÝØY™RYHX]›Z[Š˜]ÚYX]›X^
+Ü˜Ó\Ý›[™ÝHJJNÂˆÛÛœÝXÝ]™TÜ˜ÈHÜ˜Ó\ÝÜØY™RYH[XYÙTÜ˜ÎÂˆÊŠˆ9dê¹no¹o-z`¡:-çú$eù. :-mú`(ùbå{ï":h$:*+yaj:`ê:`(ùbå{ï"H
+‹ÂˆÛÛœÝÛ[šÙYÙ][šÙYHH\ÙTÝ]O›ÛÛX[–×OŠ
+
+HOˆÜ˜Ó\Ý›X\
+
+
+HOˆYJJNÂˆ\ÙQY™™XÝ
+
+
+HOˆÂˆÙ][šÙY
+™]ˆOˆ
+™]‹›[™ÝOOHÜ˜Ó\Ý›[™ÝÈ™]ˆˆÜ˜Ó\Ý›X\
+
+ËJHOˆ™]–ÚWHÏÈYJJJNÂˆKÜÜ˜Ó\Ý›[™ÝJNÂˆ\ÙQY™™XÝ
+
+
+HOˆÈÙ]˜]ÚY[J[
+NÈKÜÜ˜Ó\Ý›[™ÝJNÂˆÛÛœÝÜ\˜[\ËÙ]\˜[\×HH\ÙTÝ]OY]Ü”\˜[\ÏŠQUSÔTSTÊNÂˆÛÛœÝØXÝ]™PØ]YÛÜžKÙ]XÝ]™PØ]YÛÜžWHH\ÙTÝ]OØ]YÛÜžOŠ	Ùš[\‰ÊNÂˆÊŠˆ9æë¹bcyleze¢ùæ¡9¦+ùdê¹. 9`"ù¥¬9âny¥b;ï"XÝ]™PØ]YÛÜžHOOH	Ùž	È9¦`¹¢cy§"y¡#ùïª{ï"H
+‹ÂˆÛÛœÝØXÝ]™QžYÙ]XÝ]™QžYHH\ÙTÝ]OÝš[™ÏŠ–ÑQ”ÖÌKšY
+NÂˆÛÛœÝØXÝ]™UÛÛYÙ]XÝ]™UÛÛYHH\ÙTÝ]OÝš[™ÏŠ	Ùš[\—ÜÙ[XÝ	ÊNÂˆÊˆ9îj¹g%º/í9g"9¦+ù£¦ùg*™Yˆ9."¹æ¡;ï"9.#zfª9«ãù«(H™[™\ˆ:aãynî»ï"{ï#9¢`9.éyk ú) yçéz`døà#9ãï¹g*:`n9æ¡9¦+Âˆ9dê¹. 9¨.y®äy¨oøà#ycêº ïz`#ú`cˆ™Y¸à ¹«ãù«(H™[™\ˆ9æí9£©y£!ù­/»ï#9¬.:`h9¦+ù§ 9¥¬9æ¡8à ˆ
+‹ÂˆÛÛœÝXÝ]™UÛÛY™YˆH\ÙT™YŠXÝ]™UÛÛY
+NÂˆXÝ]™UÛÛY™Y‹˜Ý\œ™[HXÝ]™UÛÛYÂˆÛÛœÝÜÙ[XÝY]YÙ]Ù[XÝY]YHH\ÙTÝ]J
+NÂˆÛÛœÝÚ\ÔÛÙXÝ]™KÙ]\ÔÛÙXÝ]™WHH\ÙTÝ]J˜[ÙJNÂˆÛÛœÝÚ\Ð›\XÝ]™KÙ]\Ð›\XÝ]™WHH\ÙTÝ]J˜[ÙJNÂˆÛÛœÝÚ\ÑÜ˜Z[XÝ]™KÙ]\ÑÜ˜Z[XÝ]™WHH\ÙTÝ]J˜[ÙJNÂˆÛÛœÝÚ\Ò[][ÛXÝ]™KÙ]\Ò[][ÛXÝ]™WHH\ÙTÝ]J˜[ÙJNÂˆˆÛÛœÝÜÛÙX[X[PY\ÝYÙ]ÛÙX[X[PY\ÝYHH\ÙTÝ]J˜[ÙJNÂˆÛÛœÝØ›\“X[X[PY\ÝYÙ]›\“X[X[PY\ÝYHH\ÙTÝ]J˜[ÙJNÂˆÛÛœÝÙÜ˜Z[“X[X[PY\ÝYÙ]Ü˜Z[“X[X[PY\ÝYHH\ÙTÝ]J˜[ÙJNÂˆÛÛœÝÚ[][Û“X[X[PY\ÝYÙ][][Û“X[X[PY\ÝYHH\ÙTÝ]J˜[ÙJNÂ‚ˆÛÛœÝ\Ù\”ÛÙ™YˆH\ÙT™Y[X™\ŠL
+NÂˆÛÛœÝ\Ù\›\”™YˆH\ÙT™Y[X™\Š
+NÂˆÛÛœÝ\Ù\‘Ü˜Z[”™YˆH\ÙT™YŠÈÜ˜Z[ŽˆÛÛÜ“›Ú\ÙNˆÛÛÜ“›Ú\ÙLŽˆJNÂˆÛÛœÝ\Ù\’[][Û”™YˆH\ÙT™Y[X™\ŠL
+NÂˆÛÛœÝÜÚÝÓÜšYÚ[˜[Ù]ÚÝÓÜšYÚ[˜[HH\ÙTÝ]J˜[ÙJNÂˆÛÛœÝÜØ]™TÝ]KÙ]Ø]™TÝ]WHH\ÙTÝ]O	ÚYIÈ	Ü›ØÙ\ÜÚ[™ÉÈ	ÜÝXØÙ\ÜÉÏŠ	ÚYIÊNÂˆÛÛœÝÚ\Ò[\˜XÝ[™ËÙ]\Ò[\˜XÝ[™×HH\ÙTÝ]J˜[ÙJNÂˆÛÛœÝÚ\Ò[š]X[Ü™X][™ÓX\ÚËÙ]\Ò[š]X[Ü™X][™ÓX\Ú×HH\ÙTÝ]J˜[ÙJNÂˆÛÛœÝÙ\ÛZ\ÜÙYX\ÚÒ[Ù]\ÛZ\ÜÙYX\ÚÒ[HH\ÙTÝ]J˜[ÙJNÂ‚ˆ\ÙQY™™XÝ
+
+
+HOˆÂˆÙ]\ÛZ\ÜÙYX\ÚÒ[
+˜[ÙJNÂˆKÚ[XYÙTÜ˜×JNÂ‚ˆËÈVQˆY]Y]HÝ]BˆÛÛœÝÜÚÝÑ^Y”[™[Ù]ÚÝÑ^Y”[™[HH\ÙTÝ]J˜[ÙJNÂˆÊˆ:nçºgh¹§où.éyi%¹æ¡9.îù/eyg,9¥®yl,y¥-º-mù/¡¸à ‚ˆ9abzgh:`¨ùâaÈš^Y[œÙ]L9æ¡:`k¹ïjy.#y/çzfªˆ8 %8 %9cêº) yée¹ab9§"H˜XÚÙ›ÜYš[\»ï#Âˆ˜[œÙ›Ü›{ï#š^Y9l,y§ ú(ªúeç:`,º`¨ù`"ùée¹ab:(èxà z$âù.#y®ïù¥m9`"ùåjúgh¸à ‚ˆ:e¢ú$eùæ¡9¦`¹`&yg*ØÝ[Y[9."º oy. 9«(y£"y."ûï"9£eyãlºf£¹«­{ï"{ï#9.#y¦+ù£"yg*:gh¹§où¢%º`¨úha‚ˆ:,áú*"ºcmy."¹l,zeç9£¢xà ˆ
+‹ÂˆÛÛœÝ^Y”[™[™YˆH\ÙT™YS]‘[[Y[Š[
+NÂˆÛÛœÝ^Y”™YˆH\ÙT™YS]Û‘[[Y[Š[
+NÂˆÊŠˆ:`¨ùâaøà#:nç¹i%ºgh¹l,y¥-º-mù/¡¸à#yæ¡:`#ù¦#º`k¹ïjy§+9.®ˆ
+‹ÂˆÛÛœÝ^Y”ÚY[™YˆH\ÙT™YS]‘[[Y[Š[
+NÂˆ\ÙQY™™XÝ
+
+
+HOˆÂˆYˆ
+\ÚÝÑ^Y”[™[
+H™]\›ŽÂˆÛÛœÝÛ‘ÝÛˆH
+]Žˆ]™[
+HOˆÂˆÛÛœÝH]‹\™Ù]ÂˆYˆ
+J[œÝ[˜Ù[Ùˆ›ÙJJH™]\›ŽÂˆYˆ
+^Y”[™[™Y‹˜Ý\œ™[Ë˜ÛÛZ[œÊ
+H^Y”™Y‹˜Ý\œ™[Ë˜ÛÛZ[œÊ
+JH™]\›ŽÂˆÊˆ9£"yg*:`¨ùâaú`k¹ïjy."¹l,y.©9íi¹k ú!ê¹mìyæ¡ÛÛXÚûï":k!¹¢bù¢czeç;ï"x %8 %ˆ:`&z(èyi ¹§§9¤-º$eùg*9£"y."ùæ¡9åm¹."ùl,zeç9£¢{ï#:`k¹ïjy§ ùg*:k!¹¢bùbcy­¢9i,{ï#ˆ9à#ú)¯yfj9l,y¢¢º`¨ù. 9«(HÛXÚÈ:aãy¥¬9doy.+yb,9n¥y."ùæ¡9§lz)où."¸à ‚ˆ:`&y¥+ùæèú oyåfyíi¸à#:`k¹ïjz$âù.#yb,9æ¡9g,9¥®xà#{ï"9ée¹ab9§"H˜XÚÙ›ÜYš[\»ï#Ý˜[œÙ›Ü›Bˆ9¦`ˆš^Y9§ ú(ªúeç:`,¹c®ûï#:`¨ù«hù¦+ùk ùkf9g*9æ¡9ä!¹å,{ï"xà ˆ
+‹ÂˆYˆ
+^Y”ÚY[™Y‹˜Ý\œ™[OOH
+H™]\›ŽÂˆÙ]ÚÝÑ^Y”[™[
+˜[ÙJNÂˆNÂˆØÝ[Y[˜Y]™[\Ý[™\Š	ÜÚ[\™ÝÛ‰ËÛ‘ÝÛ‹YJNÂˆ™]\›ˆ
+
+HOˆØÝ[Y[œ™[[Ý™Q]™[\Ý[™\Š	ÜÚ[\™ÝÛ‰ËÛ‘ÝÛ‹YJNÂˆKÜÚÝÑ^Y”[™[JNÂˆÊˆ8¥ 8¥ QÈ:h$:)¯H8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ˆ9å*8à#9ãï¹g*:`&y. 9.ïycàù¥n8à#ykéºf¦ú/.9aî¹. 9o-{ï#9a£y.©9íi¹alyå*9æ¡YÔ™]šY]È9a`ù.íºhkùé.»ï#ˆ9¢`9.éyç"ùb,9æ¡9l,y¦+ù£"y."ùa,¹kf9§ ù¢ïùb,9æ¡:`¨ù. 9o-xà ˆ
+‹ÂˆÛÛœÝÚYÓÜ[‹Ù]YÓÜ[—HH\ÙTÝ]J˜[ÙJNÂˆÛÛœÝÚYÔÚÝÙ]YÔÚÝHH\ÙTÝ]OÝš[™ÏŠ	ÉÊNÂˆÛÛœÝÚYÐ\ÞKÙ]YÐ\ÞWHH\ÙTÝ]J˜[ÙJNÂˆÛÛœÝÚ[XYÙQ[Y[œÚ[ÛœËÙ][XYÙQ[Y[œÚ[Ûœ×HH\ÙTÝ]OÝš[™ÏŠ	ËIÊNÂˆÛÛœÝÙ^Y‘]KÙ]^Y‘]WHH\ÙTÝ]OÂˆš[S˜[YNˆÝš[™ÎÂˆš[Q›Ü›X]ˆÝš[™ÎÂˆ]NˆÝš[™ÎÂˆØ[Y\˜S[Ù[ˆÝš[™ÎÂˆ\ÛÎˆÝš[™ÎÂˆÚ]\ŽˆÝš[™ÎÂˆ›ØØ[[™ÝˆÝš[™ÎÂˆ\\\™NˆÝš[™ÎÂˆOŠÂˆš[S˜[YNˆ	ËIËˆš[Q›Ü›X]ˆ	ËIËˆ]Nˆ	ËIËˆØ[Y\˜S[Ù[ˆ	ËIËˆ\ÛÎˆ	ËIËˆÚ]\Žˆ	ËIËˆ›ØØ[[™Ýˆ	ËIËˆ\\\™Nˆ	ËIÂˆJNÂ‚ˆ\ÙQY™™XÝ
+
+
+HOˆÂˆ]XÝ]™HHYNÂˆÛÛœÝ™]ÚY]Y]HH\Þ[˜È
+
+HOˆÂˆ]˜[YHH	ËIÎÂˆ]›Ü›X]H	ËIÎÂˆ]]HH	ËIÎÂˆ][Ù[H	ËIÎÂˆ]\ÛÈH	ËIÎÂˆ]Ú]\ˆH	ËIÎÂˆ]›ØØ[H	ËIÎÂˆ]\\\™HH	ËIÎÂ‚ˆYˆ
+ÜšYÚ[˜[š[JHÂˆ˜[YHHÜšYÚ[˜[š[K›˜[YNÂˆÛÛœÝ^HÜšYÚ[˜[š[K›˜[YKœÜ]
+	Ë‰ÊKœÜ
+
+OËÕ\\Ø\ÙJ
+H	ÉÎÂˆ›Ü›X]H^ÂˆH[ÙHYˆ
+[XYÙTÜ˜ÊHÂˆYˆ
+[XYÙTÜ˜ËœÝ\ÕÚ]
+	Ù]Nš[XYÙKÉÊJHÂˆ˜[YHH	ØØ[Y\˜WØØ\\™KšœÉÎÂˆ›Ü›X]H	Ò”QÉÎÂˆH[ÙHYˆ
+[XYÙTÜ˜ËœÝ\ÕÚ]
+	Ø›ØŽ‰ÊJHÂˆ˜[YHH	ÜÝ×Ú[\ÜšœÉÎÂˆ›Ü›X]H	Ò”QÉÎÂˆH[ÙHÂˆÛÛœÝ\ÈH[XYÙTÜ˜ËœÜ]
+	ËÉÊNÂˆÛÛœÝš[[˜[YT\H\ÖÜ\Ë›[™ÝHWH	ÜÝËšœÉÎÂˆ˜[YHHš[[˜[YT\œÜ]
+	ÏÉÊVÌNÂˆÛÛœÝ^H˜[YKœÜ]
+	Ë‰ÊKœÜ
+
+OËÕ\\Ø\ÙJ
+H	ÉÎÂˆ›Ü›X]H^	Ò”QÉÎÂˆBˆB‚ˆžHÂˆ]YÜÎˆ[žHH[ÂˆYˆ
+ÜšYÚ[˜[š[JHÂˆYÜÈH]ØZ]^Y”™XY\‹›ØY
+ÜšYÚ[˜[š[JNÂˆH[ÙHYˆ
+[XYÙTÜ˜È	‰ˆZ[XYÙTÜ˜ËœÝ\ÕÚ]
+	Ù]N‰ÊJHÂˆYÜÈH]ØZ]^Y”™XY\‹›ØY
+[XYÙTÜ˜ÊNÂˆB‚ˆYˆ
+YÜÊHÂˆÛÛœÝXZÙHHYÜÖÉÓXZÙI×OË™\ØÜš\[Ûˆ	ÉÎÂˆÛÛœÝ[Ù[\ØÈHYÜÖÉÓ[Ù[	×OË™\ØÜš\[Ûˆ	ÉÎÂˆYˆ
+[Ù[\ØÊHÂˆYˆ
+XZÙH	‰ˆ[[Ù[\ØËÓÝÙ\Ø\ÙJ
+Kš[˜ÛY\ÊXZÙKÓÝÙ\Ø\ÙJ
+JJHÂˆ[Ù[H	ÛXZÙ_H	Û[Ù[\ØßXÂˆH[ÙHÂˆ[Ù[H[Ù[\ØÎÂˆBˆH[ÙHYˆ
+XZÙJHÂˆ[Ù[HXZÙNÂˆBˆYˆ
+[Ù[
+HÂˆÛÛœÝÝÙ\ˆH[Ù[ÓÝÙ\Ø\ÙJ
+Kš[J
+NÂˆYˆ
+ÝÙ\ˆOOH	Ý[šÛ›ÝÛ‰ÈÝÙ\ˆOOH	ù§*¹çéIÈÝÙ\ˆOOH	Û›Û™IÈÝÙ\ˆOOH	ÉÊHÂˆ[Ù[H	ËIÎÂˆBˆB‚ˆÛÛœÝHYÜÖÉÑ]U[YSÜšYÚ[˜[	×OË™\ØÜš\[ÛˆYÜÖÉÑ]U[YI×OË™\ØÜš\[ÛˆYÜÖÉÓ[ÙYžQ]I×OË™\ØÜš\[ÛŽÂˆYˆ
+
+HÂˆ]HH›Ü›X]^Y‘]J
+NÂˆB‚ˆÛÛœÝ\ÛÕ˜[HYÜÖÉÒTÓÔÜYY˜][™ÜÉ×OË™\ØÜš\[ÛˆYÜÖÉÒTÓÔÜYY˜][™ÜÉ×OË˜[YHYÜÖÉÒTÓÉ×OË™\ØÜš\[ÛŽÂˆYˆ
+\ÛÕ˜[
+HÂˆ\ÛÈHTÓÈ	Ú\ÛÕ˜[XÂˆB‚ˆÛÛœÝ^[YHHYÜÖÉÑ^ÜÝ\™U[YI×OË™\ØÜš\[ÛˆYÜÖÉÑ^ÜÝ\™U[YI×OË˜[YNÂˆYˆ
+^[YJHÂˆÚ]\ˆH\[Ùˆ^[YHOOH	Û[X™\‰ÈˆÈ
+^[YHHÈKÉÓX]œ›Ý[™
+HÈ^[YJ_\Øˆ	Ù^[Y_\Ø
+Hˆˆ
+Ýš[™Ê^[YJK™[™ÕÚ]
+	ÜÉÊHÈÝš[™Ê^[YJHˆ	Ù^[Y_\Ø
+NÂˆB‚ˆÛÛœÝ›ØØ[[ˆHYÜÖÉÑ›ØØ[[™Ý	×OË™\ØÜš\[ÛˆYÜÖÉÑ›ØØ[[™Ý	×OË˜[YNÂˆYˆ
+›ØØ[[ŠHÂˆ›ØØ[HÝš[™Ê›ØØ[[ŠK™[™ÕÚ]
+	Û[IÊHÈÝš[™Ê›ØØ[[ŠHˆ	Ù›ØØ[[Ÿ[[XÂˆB‚ˆÛÛœÝ“[HHYÜÖÉÑ“[X™\‰×OË™\ØÜš\[ÛˆYÜÖÉÑ“[X™\‰×OË˜[YNÂˆYˆ
+“[JHÂˆ\\\™HH\[Ùˆ“[HOOH	Û[X™\‰ÈTÝš[™Ê“[JKœÝ\ÕÚ]
+	Ù‹ÉÊHÈ‹ÉÙ“[_XˆÝš[™Ê“[JNÂˆBˆBˆHØ]Ú
+\œŠHÂˆÛÛœÛÛKØ\›Š‘\œ›Üˆ\œÚ[™ÈVQˆY]Y]Nˆ‹\œŠNÂˆB‚ˆYˆ
+XÝ]™JHÂˆYˆ
+ÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[
+HÂˆÙ][XYÙQ[Y[œÚ[ÛœÊ	ÛÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[›˜]\˜[ÚYpåÉÛÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[›˜]\˜[ZYÚX
+NÂˆBˆÙ]^Y‘]JÂˆš[S˜[YNˆ˜[YKˆš[Q›Ü›X]ˆ›Ü›X]ˆ]Nˆ]KˆØ[Y\˜S[Ù[ˆ[Ù[ˆ\ÛÎˆ\ÛËˆÚ]\ŽˆÚ]\‹ˆ›ØØ[[™Ýˆ›ØØ[ˆ\\\™Nˆ\\\™BˆJNÂˆBˆNÂ‚ˆ™]ÚY]Y]J
+NÂˆ™]\›ˆ
+
+HOˆÈXÝ]™HH˜[ÙNÈNÂˆKÚ[XYÙTÜ˜ËÜšYÚ[˜[š[WJNÂˆÛÛœÝÛØY[™Ó]YÙ]ØY[™Ó]YHH\ÙTÝ]OÝš[™È[Š[
+NÂˆÊˆ9câ9§"y. :ha¹¯ïºcèy."ú/"z)èù§¤9ioy.¡¸à ‚ˆ9î+¹g%º`¨ù. 9¥+ÈY™™XÝ:gh:`&y`"ùçéz`døà#9cëù.éy¢¢º`¨ù. 9¨/:aãyë¥ù.¡¸à#x %8 %ˆ: ã9¦kúh$:/"y.#y§ ùbåyb,ØY[™Ó]Y;ï#9l$y.¡º`&y`"ú`&¹çé{ï#:`¡9¬¤º/"yk£9l,yab9ë¥ú`c¹æ¡:`¨ùno¹¨/ˆ9§ ù. 9æí9`g9g*9¬¤¹ieù¯ïºcèyæ¡9h¢¹n¥yg%»ï#9æí9b,9/oùå*: !yc®únç¹§ä9. :ha¹¯ïºcèy¢cy¦í9¥¬8à ˆ
+‹ÂˆÛÛœÝÛ]™XYUXÚËÙ]]™XYUXÚ×HH\ÙTÝ]J
+NÂˆÊŠˆ9¯ïºcèyª¥:/"yioy.¡»ï#9/a¹åjúghº`¡9¬¤¹å*9k ùë¥ú`cˆ8 %8 %:/byg":) y¤¤9b,:`¨ù. :/*¹åjùk£
+‹ÂˆÛÛœÝ[™[™Ó]Z[™YˆH\ÙT™YÝš[™È[Š[
+NÂˆÛÛœÝÚ\ÝÜžKÙ]\ÝÜžWHH\ÙTÝ]O\ÝÜžR][V×OŠ×JNÂˆÛÛœÝÚ\ÝÜžR[™^Ù]\ÝÜžR[™^HH\ÙTÝ]JLJNÂˆÊˆ:fhùb%ú"!ù®.9ª&yd!:!ê¹å*Ù]Ý]H9¦í9¥¬9æ¡:*l{ï#9d#9. 9¢ãz(ªùdo9cêùajy«({ï"9/¢ùi ºnç¹¯ïºcèy¦`‚ˆ:`n9cåº"!ú/"yaiyk£9¢$9d!:*&9. 9«({ï"yl,y§ øà#9cê¹i&¹. 9ëa¸à y®.9ª&ycnùb¨9.¡¹ajy«(xà#x %8 %ˆ9®.9ª&y£!ùb,:fhùb%ùi%»ï#9¤©:b­ùl,y§ ùl$z` 9. 9«ixà zaãy`f¹¥m9`"ù£"y.#ybåxà ‚ˆ9¢`9.éyç'ù«hùæ¡9`/9¥/¹g*™Y»ï#Ù]Ý]H9cê¹¦+ù¢ïù/¡ºaãyîj¸à ˆ
+‹ÂˆÛÛœÝ\ÝÜžT™YˆH\ÙT™Y\ÝÜžR][V×OŠ×JNÂˆÛÛœÝ\ÝÜžRY™YˆH\ÙT™YŠLJNÂˆÛÛœÝÜš]R\ÝÜžHH
+\œŽˆ\ÝÜžR][V×KYˆ[X™\ŠHOˆÂˆ\ÝÜžT™Y‹˜Ý\œ™[H\œŽÂˆ\ÝÜžRY™Y‹˜Ý\œ™[HYÂˆÙ]\ÝÜžJ\œŠNÂˆÙ]\ÝÜžR[™^
+Y
+NÂˆNÂˆÛÛœÝÙš[˜[[XYÙKÙ]š[˜[[XYÙWHH\ÙTÝ]OÝš[™È[Š[
+NÂˆÊŠˆ9¢nzaãùíê:/+ù¦`»ï#9. 9«(ykf9aî¹/¡¹æ¡9¢`9§"y¢$9dàH
+‹ÂˆÛÛœÝÙš[˜[[XYÙ\ËÙ]š[˜[[XYÙ\×HH\ÙTÝ]OÝš[™Ö×OŠ×JNÂˆÊˆ9¢$9dày¦+È›Øˆ9í¬¹g`;ï#9£æù£¢z""¹æ¡9.bùbcz) yfç¹¥-»ï#9.#yá-¹£"yë+9.£9«(ya,¹kfˆ9."¹. :/*º`¨ùno¹o-y§ ù. 9æí9åfyg*:*&9¡­ºjå:(èxà ˆ
+‹ÂˆÛÛœÝš[˜[[XYÙ\Ô™YˆH\ÙT™YÝš[™Ö×OŠ×JNÂˆÊˆ9l#¹aî¹åjúghº`¨ù. 9£¤¹¢$9dàxà ‚ˆ9¢$9dày¦+ùáiÈÜ˜Ó\Ý9æ¡:h!¹n£ù£¤¹æ¡;ï#9¢`9.éyë+9. 9o-y¬.:`h9g*9§ 9méº`¢ˆ8 %8 %ˆ9/aº`&y. 9£¤¹¦+ùc§ùå'ù£l¹båyk®yfj;ï#9£l¹båy/cyïk¹§ ú(ªùà#ú)¯yfj9/çyåf{ï#ú(ªÈØÜ›Û\Û˜\9£$yb,ˆ:fè¹æë¹bcy/cyïk¹§ :/äyæ¡:`¨ù. 9o-{ï#9¥¯9¦+ùn.9n.9. :`,¹/¡¹l,y`g9g*8à#9bfùbfùg*9íê:/+ùæ¡:`¨ù. 9o-xà#xà ‚ˆ9«ãù«(yaî¹ãïº`&y`"ùåjúghº`ïy¦#¹è®¹£l¹fç¹§ 9méº`¢»ï#9¢cy§ ù. 9k¦¹o§¹ë+9. 9o-ze¢ùiâùç"øà ˆ
+‹ÂˆÛÛœÝš[˜[Ýš\™YˆH\ÙT™YS]‘[[Y[Š[
+NÂˆ\ÙS^[Ý]Y™™XÝ
+
+
+HOˆÂˆYˆ
+Ø]™TÝ]HOOH	ÜÝXØÙ\ÜÉÊH™]\›ŽÂˆÛÛœÝ[Hš[˜[Ýš\™Y‹˜Ý\œ™[ÂˆYˆ
+Y[
+H™]\›ŽÂˆËÈ:`&y. 9¢ãyl,y«n:fí»ï"9.#z) HÛ[ÛÝ;ï#9.gù.#z) yëby."ù. 9n`;ï"x %8 %9/oùå*: !y.#y§ ùç"ùb,9k ùo§¹.+ze¤ù®äyfç¹c®Âˆ[œØÜ›ÛYHÂˆËÈ9g%¹âaù¦+úgg¹d#9«iz)èùè¯9æ¡;ï#9kë9n©ºemùaî¹/¡¹.bùo£9à#ú)¯yfj9cëú ïya£y£$y. 9«(yk¦¹/cznç»ï#9¢`9.éy."ù. 9n`9a£yhäù. 9«(BˆÛÛœÝYH™\]Y\Ý[š[X][Û‘œ˜[YJ
+
+HOˆÈYˆ
+š[˜[Ýš\™Y‹˜Ý\œ™[
+Hš[˜[Ýš\™Y‹˜Ý\œ™[œØÜ›ÛYHÈJNÂˆ™]\›ˆ
+
+HOˆØ[˜Ù[[š[X][Û‘œ˜[YJY
+NÂˆKÜØ]™TÝ]Kš[˜[[XYÙ\×JNÂˆÊˆ:fèºe¢ù¦`¹¦f¹. :nç¹a£yfç¹¥-»ï&¹l#¹aî¹í :c!9æ¡9î+¹g%º"!ùb!¹.ªùå*9æ¡9ª¥9¨b:`ïy¦+úgg¹d#9«iyc®ú+ :`&y`"Âˆ9í¬¹g`9æ¡;ï#9£"y."ùa,¹kf9o£:i«9."ºfèºe¢ùæ¡:*ly§ ù/¡¹.#ycâº+ 9k£8à ˆ
+‹Âˆ\ÙQY™™XÝ
+
+
+HOˆ
+
+HOˆÈÛÛœÝÙY\Hš[˜[[XYÙ\Ô™Y‹˜Ý\œ™[ÈÙ][Y[Ý]
+
+
+HOˆ™]›ÚÙU\›ÊÙY\\È[žJKML
+NÈK×JNÂˆÛÛœÝÚ\ÔÜ˜Z]Ù]\ÔÜ˜Z]HH\ÙTÝ]J˜[ÙJNÂ‚ˆËÈÝ\™HÜXÚYšXÈÝ]BˆÛÛœÝØÝ\œ™[Ý\™PÚ[›™[Ù]Ý\œ™[Ý\™PÚ[›™[HH\ÙTÝ]OÝ\™PÚ[›™[Š	Ü™Ø‰ÊNÂˆÛÛœÝÙ˜YÔÚ[YÙ]˜YÔÚ[YHH\ÙTÝ]O[X™\ŠLJNÂˆÛÛœÝ\ÝÝ\™U\™YˆH\ÙT™Y[X™\Š
+NÂˆÛÛœÝ\Ý\™YˆH\ÙT™Y™XÛÜ™Ýš[™Ë[X™\ŠßJNÂˆÛÛœÝ\ÝÜ™X]YY™YˆH\ÙT™Y[X™\ŠLJNÂˆÛÛœÝ\ÝÜ™X]Y[YT™YˆH\ÙT™Y[X™\Š
+NÂ‚ˆÛÛœÝØØ[˜\Ð›Ý[™ËÙ]Ø[˜\Ð›Ý[™×HH\ÙTÝ]JÈÚYˆZYÚˆÜˆYˆJNÂˆËÈ:h$:)¯yíêz(gyæ¡9kéºf¦ù«å9/¢øà ¹©âùg%º(àyb!ù.bùo£9åjúgh¹«å9/¢ù§ ú+¢»ï#9âb:gh¹oázh":-çú$eú-l;ï#ˆËÈ9.#z ïya£yo§¹mì¹í¤ú(ªú""¹«å9/¢ù¤¤:e¢ùæ¡Ø[˜\È:aãùfç¹/¡¸à ‚ˆÛÛœÝÜ™]šY]Ð\ÜXÝÙ]™]šY]Ð\ÜXÝHH\ÙTÝ]OÈÎˆ[X™\ŽÈˆ[X™\ˆH[Š[
+NÂˆÊŠ‚ˆ
+ˆ9i%¹¨a»ï":,¨:,«:c¥¹/cúh$:)¯y«å9/¢ùæ¡:`¨ù. 9li;ï"xà ‚ˆ
+‚ˆ
+ˆ9¢nzaãùíê:/+ù£æùáiùâaù¦`»ï#9åjùn ùæ¡9aiú`ê9l.¹kî9¦+øà#9d#9. 9¢ãxà#yæí9£©y¥.y£¢yæ¡;ï"ÝœËÚYH8 )»ï"{ï#ˆ
+ˆ9/a¹i%¹¨a¹æ¡9«å9/¢ú-l9æ¡9¦+È™XXÝÝ]H8 %8 %:) yëby."ù. 9«(yîjº(ïy¢cyå'ù¥b8à ‚ˆ
+ˆ9.+ze¤ú`¨ù. 9ajyn`;ï#9¥¬9áiùâaùl,z(ªùhgº`,¹."¹. 9o-yæ¡9«å9/¢ù¨aº(è{ï"9åjùn ù¦+ÈØš™XÝš]ˆš[;ï"{ï#ˆ
+ˆ9ç"ú-mù/¡¹l,y¦+øà#9£æùáiùâaù¦`¹g%º(ªù¢ây.¡¹. 9."øà#xà ¹ajyo-yl.¹kî9mëº-¢¹i&¸à y¢âyo¥ú-¢¹¦#ºhkøà ‚ˆ
+‚ˆ
+ˆ9¢`9.éy¥.yáiùâaùl.¹kî9æ¡9d#9. 9¢ã{ï#9l,y¢¢¹«å9/¢ùæí9£©ykêú`,ˆÓ{ï#9ajz !y¬.:`h9d#9. 9n`8à ‚ˆ
+ˆÝ]H9áiùª(ù¦í9¥¬;ï"™XXÝ9.bùo£:aãyîj¹§ ùkêùd#9. 9`"ù`/;ï"{ï#9am¹.å¹g,9¥®yæ¡:`£ú/+ùk£9aj9.#yå*9¥.xà ‚ˆ
+‹ÂˆÛÛœÝ™]šY]Ñš]™YˆH\ÙT™YS]‘[[Y[Š[
+NÂˆÛÛœÝ\T™]šY]Ð\ÜXÝH\ÙPØ[˜XÚÊ
+Îˆ[X™\‹ˆ[X™\ŠHOˆÂˆYˆ
+JÈˆ	‰ˆˆ
+JH™]\›ŽÂˆÛÛœÝ[H™]šY]Ñš]™Y‹˜Ý\œ™[ÂˆYˆ
+[
+HÂˆ[œÝ[K˜\ÜXÝ˜][ÈH	ÝßKÉÚXÂˆ[œÝ[KÚYH	ÌL	IÎÂˆBˆÙ]™]šY]Ð\ÜXÝ
+™]ˆOˆ
+™]ˆ	‰ˆ™]‹ÈOOHÈ	‰ˆ™]‹šOOHÈ™]ˆˆÈËJJNÂˆK×JNÂˆËÈ9©âùg%¹càù¥n8à ¹ieùå*9.bùo£9¥m9`"úh$:)¯yíêz(gy§ ùå*9¥¬9æ¡9no¹/ezaãynî»ï#:"l¹ojy­`yê"ùk£9aj9.#yå*9çéz`dùk ùæ¡9kf9g*8à ‚ˆÛÛœÝÙÙ[ËÙ]Ù[×HH\ÙTÝ]OÙ[Ô\˜[\ÏŠ
+
+HOˆ
+È‹‹‘QUSÑÑSËÜ›ÜˆÈ‹‹‘•SÐÔ“ÔHJJNÂˆÛÛœÝÙ˜YÙ[ËÙ]˜YÙ[×HH\ÙTÝ]OÙ[Ô\˜[\È[Š[
+NÂˆÛÛœÝÛÛ\ÜÙT™]šY]Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[S[XYÙQ[[Y[[Š[
+NÂˆÛÛœÝÙ[Ô™YˆH\ÙT™YÙ[Ô\˜[\ÏŠÈ‹‹‘QUSÑÑSËÜ›ÜˆÈ‹‹‘•SÐÔ“ÔHJNÂˆ\ÙQY™™XÝ
+
+
+HOˆÈÙ[Ô™Y‹˜Ý\œ™[HÙ[ÎÈKÙÙ[×JNÂ‚ˆÊˆ8¥ 8¥ 9¢nzaãùíê:/+ûï&¹«ãù. 9o-yæ¡9càù¥n9 #ºn¯9¥-ˆ8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ˆ:`(ùíd9.+yæ¡9áiùâaùalyå*Ú\™YÛ˜\™Yˆ:`&y. 9.ï{ï&ú)èúfi:`(ùíd9æ¡9d!:!ê¹¥-¹g*ÛÛÔÛ˜\Ô™Y¸à ‚ˆ9åjúgh¹."¸à#9«hùg*9íê:/+ùæ¡:`¨ù. 9.ïxà#y¬.:`h9¦+ùa`ù.í¹§+:.ªùæ¡Ý]{ï#9b!ù£æùáiùâaù¦`¹¢cykf9fç¹c®ûï#ú+ 9aî¹/¡¸à ˆ
+‹Âˆ\H˜]ÚÛ˜\HÂˆ\˜[\ÎˆY]Ü”\˜[\ÎÈÙ[ÎˆÙ[Ô\˜[\ÎÈÙ[XÝY]Yˆ[X™\ŽÂˆ\ÔÛÙXÝ]™Nˆ›ÛÛX[ŽÈ\Ð›\XÝ]™Nˆ›ÛÛX[ŽÈ\ÑÜ˜Z[XÝ]™Nˆ›ÛÛX[ŽÈ\Ò[][ÛXÝ]™Nˆ›ÛÛX[ŽÂˆÛÙX[X[PY\ÝYˆ›ÛÛX[ŽÈ›\“X[X[PY\ÝYˆ›ÛÛX[ŽÂˆÜ˜Z[“X[X[PY\ÝYˆ›ÛÛX[ŽÈ[][Û“X[X[PY\ÝYˆ›ÛÛX[ŽÂˆÊŠˆ9fæúhaºe¢úeç8à#:eç9£¢ya£ze¢ú) yfç¹b,9i&¹l$xà#yæ¡:*&9¡­¹`/;ï#9.gú) z-çú$eù. :-mú-l
+‹Âˆ\Ù\”ÛÙˆ[X™\ŽÈ\Ù\›\Žˆ[X™\ŽÈ\Ù\’[][ÛŽˆ[X™\ŽÂˆ\Ù\‘Ü˜Z[ŽˆÈÜ˜Z[Žˆ[X™\ŽÈÛÛÜ“›Ú\ÙNˆ[X™\ŽÈÛÛÜ“›Ú\ÙLŽˆ[X™\ˆNÂˆNÂˆÛÛœÝ]™T™YˆH\ÙT™Y˜]ÚÛ˜\[Š[
+NÂˆ]™T™Y‹˜Ý\œ™[HÂˆ\˜[\ËÙ[ËÙ[XÝY]Yˆ\ÔÛÙXÝ]™K\Ð›\XÝ]™K\ÑÜ˜Z[XÝ]™K\Ò[][ÛXÝ]™KˆÛÙX[X[PY\ÝY›\“X[X[PY\ÝYÜ˜Z[“X[X[PY\ÝY[][Û“X[X[PY\ÝYˆ\Ù\”ÛÙˆ\Ù\”ÛÙ™Y‹˜Ý\œ™[\Ù\›\Žˆ\Ù\›\”™Y‹˜Ý\œ™[ˆ\Ù\’[][ÛŽˆ\Ù\’[][Û”™Y‹˜Ý\œ™[\Ù\‘Ü˜Z[ŽˆÈ‹‹\Ù\‘Ü˜Z[”™Y‹˜Ý\œ™[KˆNÂˆÛÛœÝÛÛ™TÛ˜\H
+Îˆ˜]ÚÛ˜\
+Nˆ˜]ÚÛ˜\Oˆ”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJÊJNÂˆÊŠˆ:`kº"l¹âaú"!ù©âùg%¹¦+øà#:`&yo-yáiùâaú!ê¹mìyæ¡9.¢øà#{ï#9.#z-çú$eú`(ùbåH8 %8 %9«ãùo-yd!9kf9. 9.ïH
+‹ÂˆÛÛœÝÝÛ‘Ù[Ô™YˆH\ÙT™Y™XÛÜ™[X™\‹Ù[Ô\˜[\ÏŠßJNÂˆÛÛœÝÝÛ“X\ÚÔ™YˆH\ÙT™Y™XÛÜ™[X™\‹\X[Y]Ü”\˜[\ÏŠßJNÂˆÛÛœÝ\ÓÝÛ’Ù^HH
+ÎˆÝš[™ÊHOˆËœÝ\ÕÚ]
+	ÛX\ÚÉÊNÂˆÛÛœÝXÚÓX\ÚÈH
+ˆY]Ü”\˜[\ÊNˆ\X[Y]Ü”\˜[\ÏˆOˆÂˆÛÛœÝÝ]ˆ[žHHßNÂˆØš™XÝšÙ^\Ê
+K™›Ü‘XXÚ
+ÈOˆÈYˆ
+\ÓÝÛ’Ù^JÊJHÝ]Ú×HH
+\È[žJVÚ×NÈJNÂˆ™]\›ˆÝ]ÂˆNÂˆÛÛœÝÚ\™YÛ˜\™YˆH\ÙT™Y˜]ÚÛ˜\[Š[
+NÂˆÛÛœÝÛÛÔÛ˜\Ô™YˆH\ÙT™Y™XÛÜ™[X™\‹˜]ÚÛ˜\ŠßJNÂˆÊŠˆ9£æùáiùâaù¦`º) yieù."¹c®ùæ¡:`¨ù. 9.ï{ï#9.éycâ¹k ù¦+ùíi¹dê¹. 9o-yæ¡
+‹ÂˆÛÛœÝ[™[™ÔÛ˜\™YˆH\ÙT™Y˜]ÚÛ˜\[Š[
+NÂˆÛÛœÝ[™[™ÔÛ˜\Ü˜Ô™YˆH\ÙT™YÝš[™È[Š[
+NÂˆÛÛœÝ[™[™ÔÛ˜\Y™YˆH\ÙT™Y[X™\ˆ[Š[
+NÂˆÛÛœÝ\TÛ˜\H
+Û˜\ˆ˜]ÚÛ˜\›Ü’YÎˆ[X™\ŠHOˆÂˆÛÛœÝHH›Ü’YÏÈØY™RYÂˆËÈ:`(ùbåyæ¡9cê¹§"z"l¹oj{ï#ù¯ïºcè{ï#ùâny¥b;ï&ú`kº"l¹âaú"!ù©âùg%¹å*:`&yo-z!ê¹mìyæ¡:`¨ù. 9.ïxà ‚ˆËÈ9¬¤¹båz`c¹æ¡:`¨ùno¹o-yl,yå*:h$:*+y`/8 %8 %9.#z ïy¬¯ùå*9oêùáiú(èyb)y.®¹æ¡:`kº"l¹âaûï#ù©âùg%¸à ‚ˆÛÛœÝÝÛ“X\ÚÈHÝÛ“X\ÚÔ™Y‹˜Ý\œ™[ÚWHXÚÓX\ÚÊQUSÔTSTÊNÂˆÛÛœÝ™^\˜[\ÈHÈ‹‹˜ÛÛ™TÛ˜\
+Û˜\
+Kœ\˜[\Ë‹‹›ÝÛ“X\ÚÈH\ÈY]Ü”\˜[\ÎÂˆÙ]\˜[\Ê™^\˜[\ÊNÂˆÛÛœÝÝÛ‘Ù[ÈHÝÛ‘Ù[Ô™Y‹˜Ý\œ™[ÚWBˆÈ”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJÝÛ‘Ù[Ô™Y‹˜Ý\œ™[ÚWJJBˆˆÈ‹‹‘QUSÑÑSËÜ›ÜˆÈ‹‹‘•SÐÔ“ÔHNÂˆÙ[Ô™Y‹˜Ý\œ™[HÝÛ‘Ù[ÎÂˆÙ]Ù[ÊÝÛ‘Ù[ÊNÂˆÙ]Ù[XÝY]Y
+Û˜\œÙ[XÝY]Y
+NÂˆÙ]\ÔÛÙXÝ]™JÛ˜\š\ÔÛÙXÝ]™JNÂˆÙ]\Ð›\XÝ]™JÛ˜\š\Ð›\XÝ]™JNÂˆÙ]\ÑÜ˜Z[XÝ]™JÛ˜\š\ÑÜ˜Z[XÝ]™JNÂˆÙ]\Ò[][ÛXÝ]™JÛ˜\š\Ò[][ÛXÝ]™JNÂˆÙ]ÛÙX[X[PY\ÝY
+Û˜\œÛÙX[X[PY\ÝY
+NÂˆÙ]›\“X[X[PY\ÝY
+Û˜\˜›\“X[X[PY\ÝY
+NÂˆÙ]Ü˜Z[“X[X[PY\ÝY
+Û˜\™Ü˜Z[“X[X[PY\ÝY
+NÂˆÙ][][Û“X[X[PY\ÝY
+Û˜\š[][Û“X[X[PY\ÝY
+NÂˆËÈ:""¹oêùáiù¬¤¹kf:`&yno¹`"ú*&9¡­¹`/;ï#9cå¹.#yb,9l,yí«y£ yãï¹g*9æ¡ˆYˆ
+\[ÙˆÛ˜\\Ù\”ÛÙOOH	Û[X™\‰ÊH\Ù\”ÛÙ™Y‹˜Ý\œ™[HÛ˜\\Ù\”ÛÙÂˆYˆ
+\[ÙˆÛ˜\\Ù\›\ˆOOH	Û[X™\‰ÊH\Ù\›\”™Y‹˜Ý\œ™[HÛ˜\\Ù\›\ŽÂˆYˆ
+\[ÙˆÛ˜\\Ù\’[][ÛˆOOH	Û[X™\‰ÊH\Ù\’[][Û”™Y‹˜Ý\œ™[HÛ˜\\Ù\’[][ÛŽÂˆYˆ
+Û˜\\Ù\‘Ü˜Z[ŠH\Ù\‘Ü˜Z[”™Y‹˜Ý\œ™[HÈ‹‹œÛ˜\\Ù\‘Ü˜Z[ˆNÂˆNÂˆÛÛœÝ\TÛ˜\™YˆH\ÙT™YŠ\TÛ˜\
+NÂˆ\TÛ˜\™Y‹˜Ý\œ™[H\TÛ˜\ÂˆÊŠˆ9¢¢¸à#9ãï¹g*9åjúgh¹."º`&y. 9.ïxà#y¥-¹fç¹k ú*l¹c®ùæ¡9g,9¥®H
+‹ÂˆÛÛœÝÝ\ÚÝ\œ™[H
+
+HOˆÂˆÛÛœÝ]™HH]™T™Y‹˜Ý\œ™[ÂˆYˆ
+[]™JH™]\›ŽÂˆËÈ:`kº"l¹âaú"!ù©âùg%¹d!9åfyd!9æ¡ˆÝÛ‘Ù[Ô™Y‹˜Ý\œ™[ÜØY™RYHH”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJ]™K™Ù[ÊJNÂˆÝÛ“X\ÚÔ™Y‹˜Ý\œ™[ÜØY™RYHHXÚÓX\ÚÊ]™Kœ\˜[\ÊNÂˆYˆ
+[šÙYÜØY™RYHOOH˜[ÙJHÛÛÔÛ˜\Ô™Y‹˜Ý\œ™[ÜØY™RYHHÛÛ™TÛ˜\
+]™JNÂˆ[ÙHÚ\™YÛ˜\™Y‹˜Ý\œ™[HÛÛ™TÛ˜\
+]™JNÂˆNÂˆÛÛœÝÛ˜\›ÜˆH
+Nˆ[X™\ŠNˆ˜]ÚÛ˜\[O‚ˆ
+[šÙYÚWHOOH˜[ÙHÈÛÛÔÛ˜\Ô™Y‹˜Ý\œ™[ÚWHˆÚ\™YÛ˜\™Y‹˜Ý\œ™[
+HÏÈ[ÂˆÊŠˆ9b!ù£æú) zh$:)¯ydê¹. 9o-H
+‹ÂˆÛÛœÝÝÚ]ÚÈH
+Nˆ[X™\ŠHOˆÂˆYˆ
+HOOHØY™RYHHHÜ˜Ó\Ý›[™Ý
+H™]\›ŽÂˆÙ]˜]ÚY[J[
+NÂˆÝ\ÚÝ\œ™[
+
+NÂˆ[™[™ÔÛ˜\™Y‹˜Ý\œ™[HÛ˜\›ÜŠJNÂˆ[™[™ÔÛ˜\Ü˜Ô™Y‹˜Ý\œ™[HÜ˜Ó\ÝÚWNÂˆ[™[™ÔÛ˜\Y™Y‹˜Ý\œ™[HNÂˆÙ]˜]ÚY
+JNÂˆËÈ: ã9¦kùmì¹í¤ùë¥ùioyæ¡:*l{ï#9åm¹."ùl,y¢¢º*¯ù¥m9o£9æ¡9åjúgh¹åjù."¹c®È8 %8 %9¢bù£!ù. :fèºe¢ùl,y£æùioy.¡»ï#ˆËÈ9.#yå*9ëbyg%¹âaúaãy¥¬:)èùè¯8à zaãy¥¬9ë¥ù. :/*¸à ¹ë¥ù.#yb,9l,yab:$âù. 9li8à#9®,¹§äù.+xà#{ï#9b)z+¤ùåjúgh¹`g9g*9."¹. 9o-xà ‚ˆËÈ9/a¹i ¹§§:`&yo-yæ¡9g%¹¥êyl,z)èùè¯:`c»ï"9/¡¹fç¹b!ù£æùæ¡9 áy¬à{ï"{ï#:aãynî¹¦+ùd#9. 9¢ãyd#9«iy`f¹k£9æ¡;ï#ˆËÈ:$âù. 9li8à#9®,¹§äù.+xà#ycê¹§ úe ù. 9."ûï#9cãz #9¦í9`ãùg*9ëbH8 %8 %:`¨ùl,yb)z$âøà ‚ˆËÈ:/byg"9cê¹g*8à#9ç'ùæ¡:) zaãz-äy. :/*¸à#y¦`¹¢cz$âøà º`&yo-yæ¡9g%¹i ¹§§9¥êyl,z)èùioy.¡»ï"9/¡¹fç¹b!ù£æùæ¡9 áy¬à{ï"{ï#ˆËÈ:aãynî¹¦+ùd#9. 9¢ãyd#9«iy`f¹k£9æ¡;ï#:$âù."¹c®ùcê¹§ úe ù. 9."ûï#9ç"ú-mù/¡¹cãz #9¦í9`ãùg*9ëbxà ‚ˆËÈ:*.ûï&ºaãynî¹¦+ùd#9«iyæ¡;ï#9¢`9.éxà#9ab9ëby. 9."ùa£z$âøà#z(c9.#z`&ˆ8 %8 %9..ùgíú(c9íäº(ªùchy/cù¦`º*"9¦`¹fj9¨.y§+:/*¹.#yb,8à ‚ˆÛÛœÝXÛÙYHšY]ÙY[YÔ™Y‹˜Ý\œ™[™Ù]
+Ü˜Ó\ÝÚWJHØ\›R[YÔ™Y‹˜Ý\œ™[™Ù]
+Ü˜Ó\ÝÚWJNÂˆÛÛœÝ[œÝ[HHJXÛÙY	‰ˆXÛÙY˜ÛÛ\]H	‰ˆXÛÙY›˜]\˜[ÚY
+NÂˆYˆ
+\Z[Ø\›S›ÝÊÜ˜Ó\ÝÚWK[™[™ÔÛ˜\™Y‹˜Ý\œ™[]™T™Y‹˜Ý\œ™[
+H	‰ˆZ[œÝ[
+HÙ]\ÔÝÚ]Ú[™ÊYJNÂˆNÂˆÊˆKKKH9î+¹g%¹æ¡:nç¹£"HKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKBˆ9å*Ú[\\: #9.#y¦+ÈÛXÚûï&¹¢bùªgù."¹ajy."únç¹o¥ùoêù¦`»ï#9ë+9.£9."ùæ¡ÛXÚÈ9n.9n.:(ªùà#ú)¯yfjˆ9åm¹¢$:`(ù¤â¹¢bùbè¹d'¹£¢{ï#9ç"ú-mù/¡¹l,y¦+øà#:nç¹ajy."ù¬¤¹cãy¡âxà#xà ºh!¹/¯ú(ç9. 9`"úemù£"{ï#ˆ9.#y ìú`(únç¹ajy."ùæ¡9.®¹cëù.éy£"z$eù.#y¥/¹cêùaî¹d#9. 9`"ú`n9e«¸à ˆ
+‹ÂˆÊˆ:`n9e«¹¦+ùî+¹g%º!ê¹mìyæ¡9kd9ëà:nç»ï#9¢`9.éy£l¹båy¦`¹k ù§+9/¡¹l,z-çú$eùî+¹g%¹. :-mú-l8 %8 %9.#yå*Qˆ:/ïxà Bˆ9.gù.#y§ ù§"y. 9¨/9æ¡9níº`l¸à º`&z(èycêº*&8à#9æî9l#yî+¹g%º) y`cùi&¹l$xà#{ï#9å*9/¡º+¤úgh9cìú`¢¹æ¡9î+¹g%‚ˆ9¢¢º`n9e«¹o 9mé¹£*¹. :nç»ï#9.#yá-¹§ ú(ªù£l¹båyb%ùæ¡9cìùíèùb!ù£¢xà ˆ
+‹ÂˆÊŠˆÓ9æë¹bcyg*:*¯ùdê¹. 9`"ú"l¹n-ˆ
+‹ÂˆÛÛœÝÚÛ˜[™YÙ]Û˜[™YHH\ÙTÝ]J
+NÂˆÛÛœÝØ˜]ÚY[QÙ]˜]ÚY[QHH\ÙTÝ]J
+NÂˆÊŠˆ:`n9e«¹i)ùí!9æ¡9kë9n©»ï#9cê¹å*9/¡¹¬n¹k¦º) y.#z) yo 9mé¹£*ˆ
+‹ÂˆÛÛœÝUÒÓQS•WÕÈHLŽÂˆÊŠˆ9b!ú`c¹c®ù.¡¹/a¹¥¬9æ¡:`¨ùo-z`¡9g*9ë¥È8 %8 %:h$:)¯y."º$âù. 9li8à#9®,¹§äù.+xà#H
+‹ÂˆÛÛœÝÚ\ÔÝÚ]Ú[™ËÙ]\ÔÝÚ]Ú[™×HH\ÙTÝ]J˜[ÙJNÂ‚ˆÛÛœÝ™\ÜÔ™YˆH\ÙT™YÈNˆ[X™\ŽÈˆ[X™\ŽÈNˆ[X™\ŽÈ[Ý™Yˆ›ÛÛX[ŽÈ[Y\Žˆ[X™\ˆH[Š[
+NÂˆÛÛœÝÜ[˜]ÚY[HH
+Nˆ[X™\ŠHOˆÂˆÛÛœÝ[HØÝ[Y[œ]Y\žTÙ[XÝÜŠÙ]KX˜]Ú][XH‰Ú_H—X
+H\ÈS[[Y[[ÂˆÛÛœÝ›ÝÈH[Ë˜ÛÜÙ\Ý
+	ÖÙ]KX˜]Ú\›Ý×IÊH\ÈS[[Y[[ÂˆYˆ
+[	‰ˆ›ÝÊHÂˆÛÛœÝˆH[™Ù]›Ý[™[™ÐÛY[™XÝ
+
+KœˆH›ÝË™Ù]›Ý[™[™ÐÛY[™XÝ
+
+NÂˆÙ]˜]ÚY[Q
+X]›Z[Šœ‹œšYÚH
+‹›Y
+ÈUÒÓQS•WÕÊJJNÂˆH[ÙHÂˆÙ]˜]ÚY[Q
+
+NÂˆBˆÙ]˜]ÚY[JJNÂˆNÂˆÛÛœÝØ[˜Ù[[X”™\ÜÈH
+
+HOˆÂˆYˆ
+™\ÜÔ™Y‹˜Ý\œ™[
+HÚ[™ÝË˜ÛX\•[Y[Ý]
+™\ÜÔ™Y‹˜Ý\œ™[[Y\ŠNÂˆ™\ÜÔ™Y‹˜Ý\œ™[H[ÂˆNÂˆÛÛœÝ™YÚ[•[X”™\ÜÈH
+Nˆ[X™\‹Nˆ™XXÝ”Ú[\‘]™[S[[Y[ŠHOˆÂˆØ[˜Ù[[X”™\ÜÊ
+NÂˆ™\ÜÔ™Y‹˜Ý\œ™[HÂˆKˆK˜ÛY[NˆK˜ÛY[K[Ý™Yˆ˜[ÙKˆ[Y\ŽˆÚ[™ÝËœÙ][Y[Ý]
+
+
+HOˆÈYˆ
+™\ÜÔ™Y‹˜Ý\œ™[	‰ˆ\™\ÜÔ™Y‹˜Ý\œ™[›[Ý™Y
+HÈÜ[˜]ÚY[JJNÈØ[˜Ù[[X”™\ÜÊ
+NÈHKL
+KˆNÂˆNÂˆÛÛœÝ[Ý™U[X”™\ÜÈH
+Nˆ™XXÝ”Ú[\‘]™[S[[Y[ŠHOˆÂˆÛÛœÝÝH™\ÜÔ™Y‹˜Ý\œ™[ÂˆYˆ
+\Ý
+H™]\›ŽÂˆYˆ
+X]˜XœÊK˜ÛY[HÝž
+HˆX]˜XœÊK˜ÛY[HHÝžJHˆ
+HÈÝ›[Ý™YHYNÈÚ[™ÝË˜ÛX\•[Y[Ý]
+Ý[Y\ŠNÈBˆNÂˆÛÛœÝ[™[X”™\ÜÈH
+Nˆ[X™\‹Nˆ™XXÝ”Ú[\‘]™[S[[Y[‹XÝ]™Nˆ›ÛÛX[ŠHOˆÂˆÛÛœÝÝH™\ÜÔ™Y‹˜Ý\œ™[ÂˆØ[˜Ù[[X”™\ÜÊ
+NÂˆYˆ
+\ÝÝšHOOHHÝ›[Ý™Y
+H™]\›ŽÈËÈ9g*9£l¹båyl,y.#yë¥únç¹¤â‚ˆËÈ9mì¹í¤ú`n9.+yæ¡9a£znç¹. 9."ûï'ze¢ú`n9e«¸à º`&z(èyb.ù¡#ù.#y`fºe¢úeç9b!ù£æÈ8 %8 %ˆËÈ:`(únç¹ajy."ù¦`¹§ ú+¢¹¢$:e¢ù.¡¹câ:eç;ï#9ç"ú-mù/¡¹l,y`ãù¬¤¹cãy¡âxà ‚ˆYˆ
+XÝ]™JHÜ[˜]ÚY[JJNÂˆ[ÙHÈÙ]˜]ÚY[J[
+NÈÝÚ]ÚÊJNÈBˆNÂ‚ˆÊŠˆ9o§¹î+¹g%¹b%ùb*¹£¢y. 9o-{ï":!ìùl$yåfy. 9o-{ï"H
+‹ÂˆÛÛœÝ™[[Ý™TÝÈH
+Nˆ[X™\ŠHOˆÂˆYˆ
+Ü˜Ó\Ý›[™ÝHJH™]\›ŽÂˆÛÛœÝ™^YHHØY™RYÈØY™RYHHˆX]›Z[ŠØY™RYÜ˜Ó\Ý›[™ÝHŠNÂˆËÈ9d!:!êº`¨ù.ïycàù¥n9æ¡9í(¹o%z) z-çú$eùo 9bcy£*»ï"9d*ú`kº"l¹âaú"!ù©âùg%º`¨ùajy.ï{ï"BˆÛÛœÝ™Z[™^HŠÜ˜Îˆ™XÛÜ™[X™\‹ŠNˆ™XÛÜ™[X™\‹ˆOˆÂˆÛÛœÝÝ]ˆ™XÛÜ™[X™\‹ˆHßNÂˆ
+Øš™XÝ™[šY\ÊÜ˜ÊH\ÈÜÝš[™ËV×JK™›Ü‘XXÚ
+
+ÚË—JHOˆÂˆÛÛœÝˆH[X™\ŠÊNÂˆYˆ
+ˆOOHJH™]\›ŽÂˆÝ]ÛˆˆHÈˆHHˆ—HHŽÂˆJNÂˆ™]\›ˆÝ]ÂˆNÂˆÛÛÔÛ˜\Ô™Y‹˜Ý\œ™[H™Z[™^
+ÛÛÔÛ˜\Ô™Y‹˜Ý\œ™[
+NÂˆÝÛ‘Ù[Ô™Y‹˜Ý\œ™[H™Z[™^
+ÝÛ‘Ù[Ô™Y‹˜Ý\œ™[
+NÂˆÝÛ“X\ÚÔ™Y‹˜Ý\œ™[H™Z[™^
+ÝÛ“X\ÚÔ™Y‹˜Ý\œ™[
+NÂˆÙ][šÙY
+™]ˆOˆ™]‹™š[\Š
+ËŠHOˆˆOOHJJNÂˆYˆ
+™^YOOHØY™RY
+HÂˆÝ\ÚÝ\œ™[
+
+NÂˆ[™[™ÔÛ˜\™Y‹˜Ý\œ™[HÛ˜\›ÜŠHØY™RYÈØY™RYˆ™^Y
+È
+HH™^YÈHˆ
+JNÂˆ[™[™ÔÛ˜\Ü˜Ô™Y‹˜Ý\œ™[HÜ˜Ó\Ý™š[\Š
+ËŠHOˆˆOOHJVÛ™^YH[ÂˆBˆÙ]Ü˜Ó\Ý
+™]ˆOˆ™]‹™š[\Š
+ËŠHOˆˆOOHJJNÂˆÙ]˜]ÚY
+™^Y
+NÂˆNÂ‚ˆÊŠˆ:`(ùíd;ï#ú)èúfi:`(ùíd8à º)èúfi9æ¡9åm¹."ùab9¢¢¹ãï¹g*9æ¡9ª(ùkd9åfyíi¹k ûï#9.bùo£9l,yd!:-l9d!9æ¡8à ˆ
+‹ÂˆÛÛœÝÙÙÛS[šÈH
+Nˆ[X™\ŠHOˆÂˆÛÛœÝ]™HH]™T™Y‹˜Ý\œ™[ÂˆÙ][šÙY
+™]ˆOˆÂˆÛÛœÝ™^HË‹‹œ™]—NÂˆÛÛœÝÛˆH™^ÚWHOOH˜[ÙNÂˆ™^ÚWHH[ÛŽÂˆYˆ
+ÛŠHÂˆÛÛÔÛ˜\Ô™Y‹˜Ý\œ™[ÚWHHÛÛ™TÛ˜\
+
+HOOHØY™RYÈ]™HˆÚ\™YÛ˜\™Y‹˜Ý\œ™[
+H]™HJNÂˆH[ÙHÂˆ[]HÛÛÔÛ˜\Ô™Y‹˜Ý\œ™[ÚWNÂˆYˆ
+HOOHØY™RY	‰ˆÚ\™YÛ˜\™Y‹˜Ý\œ™[
+H\TÛ˜\
+Ú\™YÛ˜\™Y‹˜Ý\œ™[
+NÂˆBˆ™]\›ˆ™^ÂˆJNÂˆNÂ‚ˆËÈKKKH:-ìùaî¹¡âyå*9a£yfç¹/¡º`¡9g*KKKBˆËÈ:*¯ù¥m:`ïy¦+úgg¹è-9hç¹ )ùæ¡9càù¥n;ï#9¢`9.éykf8à#9áiùâaÈ
+È9càù¥n8à#yl,z ïyk£9¥m9£©yfç¹."¹«(yæ¡9âà9¡bøà ‚ˆËÈ:`¡9c§ùæ¡9båy/g9¥/¹g*9."úghº`¨ù`"øà#9£æùáiùâaùl,yaj:`ê9«n:fí¸à#yæ¡Y™™XÝ9§ 9o£:ghˆ8 %8 %ˆËÈ:`¨ù`"ÈY™™XÝ9§ ù¢¢ˆ\˜[\ËÙÙ[Ëù¯ïºcèH9aj:`ê9¢dùfçºh$:*+{ï#9ab:`¡9c§ùl,y§ ú(ªùk ú$âù£¢xà ‚ˆÛÛœÝ[š]X[Ý]T™YˆH\ÙT™YŠ[š]X[Ý]JNÂˆÊŠˆ9£©yî£9æ¡9càù¥n9¦+ùlk9¥¯9dê¹. 9o-yáiùâaùæ¡;ï"9£æùáiùâaù.bùo£9l,y.#z*l¹a£yieûï"H
+‹ÂˆÛÛœÝ™\Ý[YTÜ˜Ô™YˆH\ÙT™YÝš[™È[Š[
+NÂ‚ˆËÈ9áiùâaùab9kf9. 9«({ï#9.bùo£9cêº) ycàù¥n:+¢¹.¡¹l,{ï"9níº`l»ï"y¦í9¥¬9càù¥n:`¨ù. 9.ïBˆÛÛœÝ˜YÜ˜ÔØ]™Y™YˆH\ÙT™YÝš[™È[Š[
+NÂˆÛÛœÝ]\ÝY]Ü‘˜Y™YˆH\ÙT™YŠÈ\˜[\ËÙ[ËÙ[XÝY]YJNÂˆ]\ÝY]Ü‘˜Y™Y‹˜Ý\œ™[HÈ\˜[\ËÙ[ËÙ[XÝY]YNÂˆ\ÙQY™™XÝ
+
+
+HOˆÂˆYˆ
+Z[XYÙTÜ˜ÊH™]\›ŽÂˆÛÛœÝ[Y\ˆHÚ[™ÝËœÙ][\˜[
+
+
+HOˆÂˆÛÛœÝš\œÝH˜YÜ˜ÔØ]™Y™Y‹˜Ý\œ™[OOH[XYÙTÜ˜ÎÂˆ˜YÜ˜ÔØ]™Y™Y‹˜Ý\œ™[H[XYÙTÜ˜ÎÂˆÛÛœÝ]\ÝH]\ÝY]Ü‘˜Y™Y‹˜Ý\œ™[ÂˆÛÛœÝ\ÑY]YÛÛ[Bˆ›ÛÛX[Š[š]X[Ý]JHˆ\ÝÜžR[™^ˆˆ”ÓÓ‹œÝš[™ÚYžJ]\Ýœ\˜[\ÊHOOH”ÓÓ‹œÝš[™ÚYžJQUSÔTSTÊHˆZ\ÑÙ[ÒY[]J]\Ý™Ù[ÊHˆ]\ÝœÙ[XÝY]YOOHˆXÝ]™TÜ˜ÈOOH[XYÙTÜ˜ÎÂˆÊˆ9§*¹íê:/+ù¦`¹.ãycëúh$9kf9c§ùg%»ï#9/a¹.#z ïynî¹êâúi¥ºh yæ¡8à#9îo9î£9íê:/+øà#y£ä9é.¸à ˆ
+‹ÂˆØ]™UÛÛ˜Y
+	ÙY]Ü‰Ëš\œÝÈ[XYÙTÜ˜Èˆ[Âˆ‹‹›]\Ýˆ×Ú\ÝÙ^Nˆ\ÝÙ^H[š]X[Ý]OË—×Ú\ÝÙ^H[ˆK\ÑY]YÛÛ[
+NÂˆKL
+NÂˆ™]\›ˆ
+
+HOˆÚ[™ÝË˜ÛX\’[\˜[
+[Y\ŠNÂˆKÚ[XYÙTÜ˜ËXÝ]™TÜ˜Ë\ÝÜžR[™^[š]X[Ý]K\ÝÙ^WJNÂˆÛÛœÝ\QÙ[Ô™YˆH\ÙT™Y
+ÎˆÙ[Ô\˜[\ÊHOˆ›ÚYŠ
+
+HOˆßJNÂˆÛÛœÝXÝ]™Q˜YÔ™YˆH\ÙT™YÂˆ\Nˆ	ØÙ[\‰È	ÜÝ\	È	Ù[™	È	Ü›Ý]IÈ	ØÜ™X]IÎÂˆÝ\ˆ[X™\ŽÂˆÝ\Nˆ[X™\ŽÂˆ[š]X[Þˆ[X™\ŽÂˆ[š]X[ÞNˆ[X™\ŽÂˆ[š]X[[™ÛNˆ[X™\ŽÂˆ[š]X[ˆ[X™\ŽÂˆH[Š[
+NÂ‚ˆÛÛœÝ\]PØ[˜\Ð›Ý[™ÈH\ÙPØ[˜XÚÊ
+
+HOˆÂˆÛÛœÝØ[˜\ÈH\Ü^PØ[˜\Ô™Y‹˜Ý\œ™[ÂˆYˆ
+Ø[˜\ÊHÂˆÛÛœÝ\™[HØ[˜\Ë›Ù™œÙ]\™[\ÈS[[Y[[ÂˆYˆ
+\™[
+HÂˆËÈ:`kº"l¹âaÈÕ‘È9d£Ø[˜\È9. :-mù/cy.£¹ï*y¥/¹l`¹a¡{ï#9¢`9.éz/æzaã9oázhnù/çykf8à#9l`¹a¡ygd9¨!øà#{ï#ˆËÈ9.#z ïyå*Ù]›Ý[™[™ÐÛY[™XÝ
+
+{ï&¹d#º !yc!yd*ùodùbcyï*y¥/¹`#yã¡ûï#9i#y/cH˜[œÙ›Ü›H9câˆËÈ9.#y/&º)é¹cäH™\Ú^™SØœÙ\™\»ï#9.bùd#¹b&ùnî¹æ¡:`kº"l¹âaùl,y/&¹¬¯ùå*9¥/¹i)ùd#¹æ¡:e&z+ëùl.¹kî8à ‚ˆÙ]Ø[˜\Ð›Ý[™ÊÂˆÚYˆØ[˜\Ë›Ù™œÙ]ÚYˆZYÚˆØ[˜\Ë›Ù™œÙ]ZYÚˆÜˆØ[˜\Ë›Ù™œÙ]ÜˆYˆØ[˜\Ë›Ù™œÙ]YˆJNÂˆBˆBˆK×JNÂ‚ˆ\ÙQY™™XÝ
+
+
+HOˆÂˆÛÛœÝØ[˜\ÈH\Ü^PØ[˜\Ô™Y‹˜Ý\œ™[ÂˆYˆ
+XØ[˜\ÊH™]\›ŽÂˆˆËÈ[š]X[YX\Ý\™Bˆ\]PØ[˜\Ð›Ý[™Ê
+NÂˆˆÛÛœÝØœÙ\™\ˆH™]È™\Ú^™SØœÙ\™\Š
+
+HOˆÂˆ\]PØ[˜\Ð›Ý[™Ê
+NÂˆJNÂˆˆØœÙ\™\‹›ØœÙ\™JØ[˜\ÊNÂˆ™]\›ˆ
+
+HOˆÂˆØœÙ\™\‹™\ØÛÛ›™XÝ
+
+NÂˆNÂˆKÝ\]PØ[˜\Ð›Ý[™ËXÝ]™PØ]YÛÜžWJNÂ‚ˆÛÛœÝ[™SX\ÚÔÚ[\‘ÝÛˆH
+Nˆ™XXÝ”Ú[\‘]™[Õ‘Ñ[[Y[‹\Nˆ	ØÙ[\‰È	ÜÝ\	È	Ù[™	È	Ü›Ý]IÈ	ØÜ™X]IÊHOˆÂˆKœ™]™[Y˜][
+
+NÂˆKœÝÜ›ÜYØ][ÛŠ
+NÂˆžHÂˆ
+K˜Ý\œ™[\™Ù]\ÈS[[Y[
+KœÙ]Ú[\Ø\\™JKœÚ[\’Y
+NÂˆHØ]Ú
+\œŠHßB‚ˆÛÛœÝØ[˜\Ô™XÝH\Ü^PØ[˜\Ô™Y‹˜Ý\œ™[Ë™Ù]›Ý[™[™ÐÛY[™XÝ
+
+NÂˆYˆ
+XØ[˜\Ô™XÝËÚYXØ[˜\Ô™XÝšZYÚ
+H™]\›ŽÂˆËÈ9¢bùb¯ùgd9¨!ùab9£"yå.ùn ùodùbcyæ¡9lcùneyçêyoh¹«hú)á9c%»ï#9a£y£h¹fçˆÕ‘È9æ¡9l`¹a¡yl.¹kî8à ‚ˆËÈ9fè9«i9clù/oùfï¹âaù.ãyg*9ï*y¥/¹i#y/cybª9å.ù.+{ï#:`kº"l¹âaù.gù.#y/&¹.©ùå'ù`#yã¡ù¢%¹/cyéîú+ëùmë¸à ‚ˆÛÛœÝØ[˜\ÖH
+
+K˜ÛY[HØ[˜\Ô™XÝ›Y
+HÈØ[˜\Ô™XÝÚY
+H
+ˆØ[˜\Ð›Ý[™ËÚYÂˆÛÛœÝØ[˜\ÖHH
+
+K˜ÛY[HHØ[˜\Ô™XÝÜ
+HÈØ[˜\Ô™XÝšZYÚ
+H
+ˆØ[˜\Ð›Ý[™ËšZYÚÂ‚ˆÛÛœÝH\˜[\Ô™Y‹˜Ý\œ™[Â‚ˆXÝ]™Q˜YÔ™Y‹˜Ý\œ™[HÂˆ\KˆÝ\ˆØ[˜\ÖˆÝ\NˆØ[˜\ÖKˆ[š]X[Þˆ›X\ÚÐÞ
+ˆØ[˜\Ð›Ý[™ËÚYˆ[š]X[ÞNˆ›X\ÚÐÞH
+ˆØ[˜\Ð›Ý[™ËšZYÚˆ[š]X[[™ÛNˆ›X\ÚÐ[™ÛKˆ[š]X[ˆ›X\ÚÑ
+ˆØ[˜\Ð›Ý[™ËÚYˆNÂˆˆYˆ
+\HOOH	ØÜ™X]IÊHÂˆÙ]\Ò[š]X[Ü™X][™ÓX\ÚÊYJNÂˆB‚ˆËÈ9¥¬9æ¡9. 9«(y¢å¹¦ìûï&ºfè¹lcú`¨ùajy.ïz`ïzaãyë¥ù. 9«({ï#9.#z) y¬¯ùå*9."¹. 9«(yåfy."ù/¡¹æ¡ˆX\ÚÐY’Ù^T™Y‹˜Ý\œ™[H	ÉÎÂˆX\ÚÐ˜\ÙRÙ^T™Y‹˜Ý\œ™[H	ÉÎÂ‚ˆÙ]\Ò[\˜XÝ[™ÊYJNÂˆNÂ‚ˆÛÛœÝ[™SX\ÚÔÚ[\“[Ý™HH
+Nˆ™XXÝ”Ú[\‘]™[Õ‘Ñ[[Y[ŠHOˆÂˆYˆ
+XXÝ]™Q˜YÔ™Y‹˜Ý\œ™[
+H™]\›ŽÂˆˆÛÛœÝØ[˜\Ô™XÝH\Ü^PØ[˜\Ô™Y‹˜Ý\œ™[Ë™Ù]›Ý[™[™ÐÛY[™XÝ
+
+NÂˆYˆ
+XØ[˜\Ô™XÝËÚYXØ[˜\Ô™XÝšZYÚ
+H™]\›ŽÂˆÛÛœÝØ[˜\ÖH
+
+K˜ÛY[HØ[˜\Ô™XÝ›Y
+HÈØ[˜\Ô™XÝÚY
+H
+ˆØ[˜\Ð›Ý[™ËÚYÂˆÛÛœÝØ[˜\ÖHH
+
+K˜ÛY[HHØ[˜\Ô™XÝÜ
+HÈØ[˜\Ô™XÝšZYÚ
+H
+ˆØ[˜\Ð›Ý[™ËšZYÚÂ‚ˆÛÛœÝ˜YÈHXÝ]™Q˜YÔ™Y‹˜Ý\œ™[ÂˆÛÛœÝHÈ‹‹œ\˜[\Ô™Y‹˜Ý\œ™[NÂ‚ˆÛÛœÝÕÚYHØ[˜\Ð›Ý[™ËÚYÂˆÛÛœÝÒZYÚHØ[˜\Ð›Ý[™ËšZYÚÂ‚ˆYˆ
+˜YË\HOOH	ØÜ™X]IÊHÂˆÛÛœÝHØ[˜\ÖH˜YËœÝ\ÂˆÛÛœÝHHØ[˜\ÖHH˜YËœÝ\NÂˆÛÛœÝ\ÝHX]œÜ\
+
+ˆ
+ÈH
+ˆJNÂ‚ˆYˆ
+\ÝˆJHÂˆ›X\ÚÐÜ™X]YHYNÂˆ›X\ÚÔÚÝÓÝ™\›^HHYNÂˆÛÛœÝXœÛÛ]PÞH˜YËœÝ\
+ÈÈŽÂˆÛÛœÝXœÛÛ]PÞHH˜YËœÝ\H
+ÈHÈŽÂˆ›X\ÚÐÞHXœÛÛ]PÞÈÕÚYÂˆ›X\ÚÐÞHHXœÛÛ]PÞHÈÒZYÚÂˆ›X\ÚÑHX]›X^
+\ÝÈŠHÈÕÚYÂˆ›X\ÚÐ[™ÛHHX]˜][ŒŠK
+NÂˆBˆH[ÙHYˆ
+˜YË\HOOH	ØÙ[\‰ÊHÂˆÛÛœÝHØ[˜\ÖH˜YËœÝ\ÂˆÛÛœÝHHØ[˜\ÖHH˜YËœÝ\NÂˆÛÛœÝXœÛÛ]PÞH˜YËš[š]X[Þ
+ÈÂˆÛÛœÝXœÛÛ]PÞHH˜YËš[š]X[ÞH
+ÈNÂˆ›X\ÚÐÞHX]›X^
+X]›Z[ŠKXœÛÛ]PÞÈÕÚY
+JNÂˆ›X\ÚÐÞHHX]›X^
+X]›Z[ŠKXœÛÛ]PÞHÈÒZYÚ
+JNÂˆH[ÙHYˆ
+˜YË\HOOH	Ù[™	È˜YË\HOOH	ÜÝ\	ÊHÂˆÛÛœÝHØ[˜\ÖH˜YËœÝ\ÂˆÛÛœÝHHØ[˜\ÖHH˜YËœÝ\NÂˆÛÛœÝÛÜÌHX]˜ÛÜÊ˜YËš[š]X[[™ÛJNÂˆÛÛœÝÚ[ŒHX]œÚ[Š˜YËš[š]X[[™ÛJNÂˆˆÛÛœÝ[S›Ü›X[H
+ˆÛÜÌ
+ÈH
+ˆÚ[ŒÂ‚ˆ]™]ÑH˜YËš[š]X[ÂˆYˆ
+˜YË\HOOH	Ù[™	ÊHÂˆ™]ÑHX]›X^
+˜YËš[š]X[
+È[S›Ü›X[
+NÂˆH[ÙHÂˆ™]ÑHX]›X^
+˜YËš[š]X[H[S›Ü›X[
+NÂˆBˆ›X\ÚÑH™]ÑÈÕÚYÂˆH[ÙHYˆ
+˜YË\HOOH	Ü›Ý]IÊHÂˆÛÛœÝ[š]X[[Ý\ÙP[™ÛHHX]˜][ŒŠ˜YËœÝ\HH˜YËš[š]X[ÞK˜YËœÝ\H˜YËš[š]X[Þ
+NÂˆÛÛœÝÝ\œ™[[Ý\ÙP[™ÛHHX]˜][ŒŠØ[˜\ÖHH˜YËš[š]X[ÞKØ[˜\ÖH˜YËš[š]X[Þ
+NÂˆˆ][™ÛQY™ˆHÝ\œ™[[Ý\ÙP[™ÛHH[š]X[[Ý\ÙP[™ÛNÂˆ[™ÛQY™ˆHX]˜][ŒŠX]œÚ[Š[™ÛQY™ŠKX]˜ÛÜÊ[™ÛQY™ŠJNÂˆ›X\ÚÐ[™ÛHH˜YËš[š]X[[™ÛH
+È[™ÛQY™ŽÂˆB‚ˆ\˜[\Ô™Y‹˜Ý\œ™[HÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆØÚY[T\˜[\ÔÞ[˜Ê
+NÂˆNÂ‚ˆÛÛœÝ[™SX\ÚÔÚ[\•\H
+Nˆ™XXÝ”Ú[\‘]™[Õ‘Ñ[[Y[ŠHOˆÂˆYˆ
+XXÝ]™Q˜YÔ™Y‹˜Ý\œ™[
+H™]\›ŽÂ‚ˆÛÛœÝ˜YÈHXÝ]™Q˜YÔ™Y‹˜Ý\œ™[ÂˆÛÛœÝHÈ‹‹œ\˜[\Ô™Y‹˜Ý\œ™[NÂ‚ˆYˆ
+˜YË\HOOH	ØÜ™X]IÊHÂˆÛÛœÝÝ\œ™[H›X\ÚÑ
+ˆØ[˜\Ð›Ý[™ËÚYÂˆYˆ
+Ý\œ™[MJHÂˆ›X\ÚÐÜ™X]YH˜[ÙNÂˆBˆÙ]\Ò[š]X[Ü™X][™ÓX\ÚÊ˜[ÙJNÂˆB‚ˆžHÂˆ
+K˜Ý\œ™[\™Ù]\ÈS[[Y[
+Kœ™[X\ÙTÚ[\Ø\\™JKœÚ[\’Y
+NÂˆHØ]Ú
+\œŠHßB‚ˆXÝ]™Q˜YÔ™Y‹˜Ý\œ™[H[ÂˆÙ]\Ò[\˜XÝ[™Ê˜[ÙJNÂˆ\˜[\Ô™Y‹˜Ý\œ™[HÂˆ›\Ú\˜[\ÔÞ[˜Ê
+NÂˆNÂ‚ˆËÈÚ[™ÛHØ[˜\È›Üˆ[™[™\š[™ÂˆÛÛœÝ\Ü^PØ[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[Š[
+NÂˆÛÛœÝ[\Ø[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝÜšYÚ[˜[[YÔ™YˆH\ÙT™YS[XYÙQ[[Y[[Š[
+NÂˆˆËÈ™Yˆ›ÜˆÚÝÓÜšYÚ[˜[È™HXØÙ\ÜÙY[œÚYHÛÜˆÛÛœÝÚÝÓÜšYÚ[˜[™YˆH\ÙT™YŠ˜[ÙJNÂ‚ˆËÈY™™\ˆX[˜YÙ[Y[H[\È›ÝÈ^š[H[ØØ]YÛˆØ]™BˆÛÛœÝY™™\œÈH\ÙT™YÈ™]šY]ÎˆY™™\”Ù]˜\ÝˆY™™\”Ù]OŠÈˆ™]šY]ÎˆÈÛÝ\˜ÙNˆ[\Ýˆ[Ú\™Yˆ[]Yˆ[]ˆ[]Lˆ[[\ˆ[Ú\œ[‘]Z[ˆ[ÎˆˆKˆ˜\ÝˆÈÛÝ\˜ÙNˆ[\Ýˆ[Ú\™Yˆ[]Yˆ[]ˆ[]Lˆ[[\ˆ[Ú\œ[‘]Z[ˆ[ÎˆˆBˆJNÂ‚ˆËÈ™]\ØX›HQUY™™\ˆÈ]›ÚYÐÈÝ]\ˆ\š[™ÈÛY\ˆ[\˜XÝ[Û‚ˆÛÛœÝ˜\ÙPÛÜœ™XÝ[Û“]™YˆH\ÙT™YZ[\œ˜^OŠ™]ÈZ[\œ˜^JMŠJNÂ‚ˆËÈ]\›œÈ›ÜˆÜ˜Z[‹Ó›Ú\ÙHÝ™\›^BˆÛÛœÝÜ˜Z[”]\›”™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝ›Ú\ÙT]\›”™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂ‚ˆÊˆ9¯ïºcèz)èùioyæ¡:,áù¥¦y£¦ùg*9ª(yía9li;ï":)¢ùª¥9¨b9."¹¥®HUÐÐPÒ{ï"x %8 %ˆ9íê:/+ùfj9¦+øà#Ý\œ™[šY]ÈOOH	ÙY]Ü‰È9¢cy£¦øà#yæ¡9a`ù.í»ï#9fçºi¥ºh ya£z`,¹/¡¹l,y¦+ùaj9¥¬9æ¡9. 9.ï{ï#ˆ9oêùcå¹i ¹§§9¥/¹g*\ÙT™Yˆ:(è{ï#:ha¹¯ïºcèy«ãù«(z`,¹íê:/+ùfj:`ïz) zaãy¥¬9."ú/"{ï"úaãy¥¬:)èù. 9«(xà ‚ˆ:`¨ùl,y¦+øà#9«ãù«(znç¹¯ïºcèz`ïz) yb¨:/"xà#xà ˆ
+‹ÂˆÛÛœÝ]]T™YˆH\ÙT™YŠUÐÐPÒJNÂˆÛÛœÝØY[™Ô›ÛZ\Ù\Ô™YˆH\ÙT™YŠUÓÐQS‘ÊNÂˆÛÛœÝÛÛÔØÜ›Û™YˆH\ÙT™YS]‘[[Y[Š[
+NÂˆÊŠˆ9¦+ù.#y¦+øà#9o§¹âny¥b9í,:h!z` 9fç¹/¡¸à#x %8 %9cê¹§"z`&y`"ù áy¬ày¢cy¢¢¹£"zb%yl#yfç¹åjúgh¹.+ze¤È
+‹ÂˆÛÛœÝ˜XÚÑœ›ÛQž™YˆH\ÙT™YŠ˜[ÙJNÂˆÛÛœÝ\˜[\Ô™YˆH\ÙT™YŠ\˜[\ÊNÂˆÛÛœÝ\Ñ\T™YˆH\ÙT™YŠYJNÂ‚ˆËÈ9¢å¹¦ìú`kº"l¹âaú"!ù¦ì¹íæ¹¦`»ï#9c§ù§+9«ãù. 9«(HÚ[\›[Ý™H:`ïyæí9£©HÙ]\˜[\ûï#9§ ú+¤ù¥m9`"ÂˆËÈ9íê:/+ùfj9a`ù.íºaãyîjˆ8 %8 %:`&y¦+ú`¨ùajy`"ùb§ú ïychzh$ùæ¡9..ùfè;ï"9®äy¨où¬¤º`&yecúhc9¦+ùfè9à®‚ˆËÈ˜\ÝÛY\ˆ9å*Y[[È
+È™Yˆ9îgºe¢ù.¡»ï"xà ¹¥.yà®¹êâùclùkêùaiH\˜[\Ô™Y»ï"9åjùn ùæ¡9®,¹§äÂˆËÈ:/í9g"9§+9/¡¹l,z+ :`&z(è{ï"{ï#: #9¢¢ˆ™XXÝ9âà9¡bùd#9«iyhäùb,9«ãù`"ùbåyåjùoly¨/9§ 9i&¹. 9«(xà ‚ˆÛÛœÝ\˜[\ÔÞ[˜Ô˜Y”™YˆH\ÙT™Y[X™\ˆ[Š[
+NÂˆÛÛœÝØÚY[T\˜[\ÔÞ[˜ÈH\ÙPØ[˜XÚÊ
+
+HOˆÂˆYˆ
+\˜[\ÔÞ[˜Ô˜Y”™Y‹˜Ý\œ™[OOH[
+H™]\›ŽÂˆ\˜[\ÔÞ[˜Ô˜Y”™Y‹˜Ý\œ™[H™\]Y\Ý[š[X][Û‘œ˜[YJ
+
+HOˆÂˆ\˜[\ÔÞ[˜Ô˜Y”™Y‹˜Ý\œ™[H[ÂˆÙ]\˜[\ÊÈ‹‹œ\˜[\Ô™Y‹˜Ý\œ™[JNÂˆJNÂˆK×JNÂˆÛÛœÝ›\Ú\˜[\ÔÞ[˜ÈH\ÙPØ[˜XÚÊ
+
+HOˆÂˆYˆ
+\˜[\ÔÞ[˜Ô˜Y”™Y‹˜Ý\œ™[OOH[
+HÂˆØ[˜Ù[[š[X][Û‘œ˜[YJ\˜[\ÔÞ[˜Ô˜Y”™Y‹˜Ý\œ™[
+NÂˆ\˜[\ÔÞ[˜Ô˜Y”™Y‹˜Ý\œ™[H[ÂˆBˆÙ]\˜[\ÊÈ‹‹œ\˜[\Ô™Y‹˜Ý\œ™[JNÂˆK×JNÂˆ\ÙQY™™XÝ
+
+
+HOˆ
+
+HOˆÂˆYˆ
+\˜[\ÔÞ[˜Ô˜Y”™Y‹˜Ý\œ™[OOH[
+HØ[˜Ù[[š[X][Û‘œ˜[YJ\˜[\ÔÞ[˜Ô˜Y”™Y‹˜Ý\œ™[
+NÂˆK×JNÂˆÛÛœÝ\Ý™[™\™YÚÝÓÜšYÚ[˜[™YˆH\ÙT™YŠ˜[ÙJNÂˆÛÛœÝ™[™\•[Y[Ý]™YˆH\ÙT™Y[žOŠ[
+NÂˆÛÛœÝ\ÝÛY\“[Ý™U[YT™YˆH\ÙT™YŠ
+NÂˆˆËÈÜ[Z^™H™K\™[™\œÈžHØXÚ[™ÈH\Ý›ØÙ\ÜÙY^[ÈÝ]HÚ]™\›ËXÛÜÝš[Z]]™HÚXÚÜÂˆÊŠˆ‹›];ï"9cê¹§"z*¯ùëà8à y¬¤¹§"y¯ïºcèyæ¡:`¨ù. 9.ï{ï"y."¹«(y¦+ùáiù.à:n¯9ë¥ùaî¹/¡¹æ¡
+‹ÂˆÊˆ];ï"9cê¹§"z*¯ùëà8à y¬¤¹§"y¯ïºcèyæ¡:`¨ù. 9.ï{ï"z-çú`n9dêºha¹¯ïºcèyá(zeç;ï#9¢`9.éycêº) z*¯ùëà9¬¤¹båyl,z ïy. 9æí9¬¯ùå*8à ‚ˆ9/a¹åjúgh¹§ ùg*8à#9/cº)èù§¤9n©¹.èùä!¸à#z"!øà#9k£9¥m:h$:)¯xà#yajyê+¹l.¹kî9.búe¤ù.©9¦ïûï#9cêº*&9. 9.ïyæ¡:*lBˆ9«ãù«(y£æùl.¹kî9l,yo¥úaãyë¥ù. 9«(H8 %8 %9ajyê+¹l.¹kî9d!:*&9. 9.ï{ï#9£æù/¡¹£æùc®ú`ïy.#yå*9a£yë¥øà ˆ
+‹ÂˆÛÛœÝ]Ý]T™YˆH\ÙT™Y™XÛÜ™[X™\‹[žOŠßJNÂˆÛÛœÝ\Ý›ØÙ\ÜÙY\˜[\Ô™YˆH\ÙT™YÂˆœšYÚ™\ÜÎˆ[X™\ŽÂˆ^ÜÝ\™Nˆ[X™\ŽÂˆÛÛ˜\Ýˆ[X™\ŽÂˆYÚYÚÎˆ[X™\ŽÂˆÚYÝÜÎˆ[X™\ŽÂˆ[\ˆ[X™\ŽÂˆ[ˆ[X™\ŽÂˆØ]ˆ[X™\ŽÂˆšXŽˆ[X™\ŽÂˆÚ\œ[Žˆ[X™\ŽÂˆ][[Ý[ˆ[X™\ŽÂˆÙ[XÝY]Yˆ[X™\ŽÂˆY™™\•ÚYˆ[X™\ŽÂˆ]Ú^™Nˆ[X™\ŽÂˆÝ\™\Ô™YŽˆÝ\™\È[ÂˆÛ™YŽˆÛY\Ý[ÂˆOŠÂˆœšYÚ™\ÜÎˆ^ÜÝ\™NˆÛÛ˜\ÝˆYÚYÚÎˆÚYÝÜÎˆˆ[\ˆ[ˆØ]ˆšXŽˆÚ\œ[Žˆ][[Ý[ˆˆÙ[XÝY]YˆLKY™™\•ÚYˆ]Ú^™NˆÝ\™\Ô™YŽˆ[Û™YŽˆ[ˆJNÂ‚ˆËÈÝ\™HØXÚBˆÛÛœÝ\ÝÝ\™S]Ý”™YˆH\ÙT™YÝš[™ÏŠ	ÉÊNÂˆÛÛœÝÝ\™S]ÐØXÚT™YˆH\ÙT™YÈ™ØŽˆZ[\œ˜^KŽˆZ[\œ˜^KÎˆZ[\œ˜^KŽˆZ[\œ˜^HH[Š[
+NÂˆˆËÈ˜XÚÈ\Ù\‹\Ù]›\ˆÈ™\ÝÜ™H]Ú[ˆÝÚ]Ú[™È]Ø^Hœ›ÛHš[\œÈ]›Ü˜ÙH›\ˆ
+ŒM‹ÙŒMÊBˆÛÛœÝ\Ù\“X[X[›\”™YˆH\ÙT™Y[X™\Š
+NÂ‚ˆËÈY™™\ˆØXÚH›Üˆ˜\ÝYÚYÚËÜÚYÝÜÈ™[™\š[™È\š[™È˜YÈ[\˜XÝ[Û‚ˆÛÛœÝ^™[YPY™™\œÔ™YˆH\ÙT™YÂˆXÝ]™UÛÛYˆÝš[™ÎÂˆ˜\ÙNˆZ[Û[\Y\œ˜^H[ÂˆZ[ŽˆZ[Û[\Y\œ˜^H[ÂˆX^ˆZ[Û[\Y\œ˜^H[ÂˆOŠÂˆXÝ]™UÛÛYˆ	ÉËˆ˜\ÙNˆ[ˆZ[Žˆ[ˆX^ˆ[ˆJNÂ‚ˆËÈHØXÚH›Üˆ^[›ØÙ\ÜÚ[™È™\Ý[ÈÙˆXXÚš[\ˆÈXZÙHÝÚ]Ú[™È[œÝ[[™[Ý\ÂˆÊŠˆ9æë¹bcyíêz(gyc`:(èz(çyæ¡9¦+ùdê¹. 9o-yáiùâaùæ¡9`ãùí(;ï"9¢nzaãùíê:/+ù£æùáiùâaù¦`¹§ ú+¢»ï"H
+‹ÂˆÛÛœÝY™™\œÔÜ˜Ô™YˆH\ÙT™YÝš[™ÏŠ	ÉÊNÂˆÊŠˆ9íêz(gyc`9£æù.®¹.¡¸à ¹î+¹g%º`¨ùajy¥+ÈY™™XÝ:gh:`&y`"ùçéz`døà#9cëù.ézaãyë¥ù.¡¸à#x %8 %ˆ:`(ùíd9.+yæ¡9áiùâaùcàù¥n9. 9ª(y. 9ª(ûï#9abyç"È\˜[\È9¦+ùç"ù.#yaî¹£æú`c¹áiùâaùæ¡8à ˆ
+‹ÂˆÛÛœÝØY™™\œÕXÚËÙ]Y™™\œÕXÚ×HH\ÙTÝ]J
+NÂˆÊŠˆ9ãï¹g*:*lºhkùé.¹dê¹. 9o-H8 %8 %9«ãù«(H™[™\ˆ:`ïy¦í9¥¬;ï#9îj¹g%º/í9g"9å*9k ù¤âù£¢xà#9åjùb,:""¹áiùâaøà#H
+‹ÂˆÛÛœÝXÝ]™TÜ˜Ô™YˆH\ÙT™YÝš[™ÏŠXÝ]™TÜ˜ÊNÂˆXÝ]™TÜ˜Ô™Y‹˜Ý\œ™[HXÝ]™TÜ˜ÎÂˆÛÛœÝš[\”^[ØXÚT™YˆH\ÙT™Y™XÛÜ™Ýš[™ËÂˆÜ˜ÎˆÝš[™ÎÂˆ]ˆZ[Û[\Y\œ˜^NÂˆ]LˆZ[Û[\Y\œ˜^H[ÂˆÚYˆ[X™\ŽÂˆZYÚˆ[X™\ŽÂˆœšYÚ™\ÜÎˆ[X™\ŽÂˆ^ÜÝ\™Nˆ[X™\ŽÂˆÛÛ˜\Ýˆ[X™\ŽÂˆYÚYÚÎˆ[X™\ŽÂˆÚYÝÜÎˆ[X™\ŽÂˆ[\ˆ[X™\ŽÂˆ[ˆ[X™\ŽÂˆØ]ˆ[X™\ŽÂˆšXŽˆ[X™\ŽÂˆÚ\œ[Žˆ[X™\ŽÂˆÛ™TÝŽˆÝš[™ÎÂˆOŠßJNÂ‚ˆÊˆ9oêùcå¹æ¡:cmz) yn-¹."º)èù§¤9n©¸à ¹åjúgh¹§ ùg*8à#9/cº)èù§¤9n©¹.èùä!¸à#z"!øà#9k£9¥m:h$:)¯xà#yajyê+¹l.¹kî9.búe¤Âˆ9.©9¦ïûï"9bfù£æù¯ïºcèyab9aî¹.èùä!º`¨ùo-xà y."ù. 9n`9a£z(ç9k£9¥m9æ¡;ï"{ï#9ajz !yalyå*9d#9. 9`"úcmyæ¡:*lBˆ9§ ù. 9æí9.¤¹æî:)¡º$âÈ8 %8 %9íd9§§9l,y¦+ù«ãúnç¹. 9«(y¯ïºcèz`ïyo¥ù¥m9.ïzaãyë¥ûï#ˆ:`(ùbfùbfù¢cyç"ú`c¹æ¡:`¨ù. :ha¹.gù. 9ª(øà ¹ké¹®+9¦+ÈL	H9¬¤¹doy.+xà ˆ
+‹ÂˆÛÛœÝØXÚRÙ^SÙˆH
+]YˆÝš[™ËÎˆ[X™\ŠHOˆ	Û]YP	ÝßXÂˆÛÛœÝÙ]ØXÚYš[\”^[ÈH\ÙPØ[˜XÚÊ
+]YˆÝš[™ËˆY]Ü”\˜[\ËÎˆ[X™\‹ˆ[X™\ŠHOˆÂˆÛÛœÝØXÚYHš[\”^[ØXÚT™Y‹˜Ý\œ™[ØØXÚRÙ^SÙŠ]YÊWNÂˆYˆ
+XØXÚY
+H™]\›ˆ[ÂˆËÈ9¢nzaãùíê:/+ù¦`¹ajyo-yáiùâaùæ¡9l.¹kî9n.9n.9. 9ª(y. 9ª(ûï#9cê¹«å9l.¹kî9§ ù¢ïùb,8à#9cé¹. 9o-yæ¡9`ãùí(8à#x %8 %ˆËÈ9. 9k¦º) z`(øà#:`&y.ïy¦+ùdê¹. 9o-yæ¡8à#y.gùl#yo¥ù."¹¢cy¥h¹å*8à ‚ˆYˆ
+ØXÚYœÜ˜ÈOOHY™™\œÔÜ˜Ô™Y‹˜Ý\œ™[
+H™]\›ˆ[ÂˆYˆ
+ØXÚYÚYOOHÈØXÚYšZYÚOOH
+H™]\›ˆ[ÂˆYˆ
+ØXÚY˜œšYÚ™\ÜÈOOH˜œšYÚ™\ÜÊH™]\›ˆ[ÂˆYˆ
+ØXÚY™^ÜÝ\™HOOH™^ÜÝ\™JH™]\›ˆ[ÂˆYˆ
+ØXÚY˜ÛÛ˜\ÝOOH˜ÛÛ˜\Ý
+H™]\›ˆ[ÂˆYˆ
+ØXÚYšYÚYÚÈOOHšYÚYÚÊH™]\›ˆ[ÂˆYˆ
+ØXÚYœÚYÝÜÈOOHœÚYÝÜÊH™]\›ˆ[ÂˆYˆ
+ØXÚY[\OOH[\
+H™]\›ˆ[ÂˆYˆ
+ØXÚY[OOH[
+H™]\›ˆ[ÂˆYˆ
+ØXÚYœØ]OOHœØ]
+H™]\›ˆ[ÂˆYˆ
+ØXÚYšXˆOOHšXŠH™]\›ˆ[ÂˆYˆ
+ØXÚYœÚ\œ[ˆOOHœÚ\œ[ŠH™]\›ˆ[ÂˆYˆ
+ØXÚYÛ™TÝˆOOHÛ™TÚYÊ
+JH™]\›ˆ[Âˆ™]\›ˆØXÚYÂˆK×JNÂ‚ˆÊˆ9. 9.ïH]
+È]L9g*LÍL0åÌN9l,z) HNHP»ï#9¢bùªgù."¹åfyi*¹i&¹.ïy§ ùæí9£©y¢¢º*&9¡­ºjå9d ùabBˆ;ï":`,º #:)î9æo9fç¹¥-¸à z+¢¹o¥ù¦í9ch{ï"xà ¹cê¹åfy§ :/äyå*9b,9æ¡9no¹.ï{ï#9i(9­­z$âøà#9ajzha¹¯ïºcèy/¡¹fç¹«å:/ øà#Bˆ:`&y`"ù§ 9n.:)¢ùæ¡9 áyh øà ˆ
+‹ÂˆÛÛœÝ’ST—ÐÐPÒWÒÑQTHŽÂˆÛÛœÝØXÚSÜ™\”™YˆH\ÙT™YÝš[™Ö×OŠ×JNÂˆÛÛœÝØXÚQš[\”^[ÈH\ÙPØ[˜XÚÊ
+]YˆÝš[™ËˆY]Ü”\˜[\ËÎˆ[X™\‹ˆ[X™\‹]ˆZ[Û[\Y\œ˜^K]LˆZ[Û[\Y\œ˜^H[
+HOˆÂˆÛÛœÝÙ^HHØXÚRÙ^SÙŠ]YÊNÂˆÛÛœÝÜ™\ˆHØXÚSÜ™\”™Y‹˜Ý\œ™[ÂˆÛÛœÝ]HÜ™\‹š[™^ÙŠÙ^JNÂˆYˆ
+]H
+HÜ™\‹œÜXÙJ]JNÂˆÜ™\‹œ\Ú
+Ù^JNÂˆÚ[H
+Ü™\‹›[™Ýˆ’ST—ÐÐPÒWÒÑQT
+HÂˆÛÛœÝ›ÜHÜ™\‹œÚY
+
+HNÂˆ[]Hš[\”^[ØXÚT™Y‹˜Ý\œ™[Ù›ÜNÂˆBˆš[\”^[ØXÚT™Y‹˜Ý\œ™[ÚÙ^WHHÂˆÜ˜ÎˆY™™\œÔÜ˜Ô™Y‹˜Ý\œ™[ˆ]ˆ™]ÈZ[Û[\Y\œ˜^J]
+Kˆ]Lˆ]LÈ™]ÈZ[Û[\Y\œ˜^J]L
+Hˆ[ˆÚYˆËˆZYÚˆˆœšYÚ™\ÜÎˆ˜œšYÚ™\ÜËˆ^ÜÝ\™Nˆ™^ÜÝ\™KˆÛÛ˜\Ýˆ˜ÛÛ˜\ÝˆYÚYÚÎˆšYÚYÚËˆÚYÝÜÎˆœÚYÝÜËˆ[\ˆ[\ˆ[ˆ[ˆØ]ˆœØ]ˆšXŽˆšX‹ˆÚ\œ[ŽˆœÚ\œ[‹ˆÛ™TÝŽˆÛ™TÚYÊ
+BˆNÂˆK×JNÂ‚ˆÊˆKKKH: ã9¦kúh$9á¬HKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKBˆ9æë¹bcz`&yo-yo!9ioxà y/oùå*: !y¢bù`g9."ù/¡¹.bùo£;ï#9l,yg*: ã9¦kù¢¢¹am¹.åº`(ùíd9.+yæ¡9áiùâaùab9ë¥ùio{ï&‚ˆ9ab:)èùè¯;ï#9a£y¢¢¸à#:*¯ùëà
+È9¯ïºcèxà#z`¨ùajyo-y`ãùí(9g%»ï"]È]L;ï"yë¥ùaî¹/¡¹¥/º$eøà ‚ˆ9b!ú`c¹c®ùæ¡9¦`¹`&H™[™\Š
+H9æí9£©y¢ïùãï¹¢$9æ¡;ï#9.#yå*9åm¹h-:aãyë¥È8 %8 %:`&y¦+ùb!ù£æù¦`¹§ :"¬y¦`ºe¤ùæ¡9. 9«­xà ‚ˆ9âny¥b;ï":ha¹ì¤¸à y§å9á)¸à yaby¦¢:`¨ù.¦ûï"y¬¤¹§"yab9ë¥ûï&¹k ù`$yd ùæ¡9¦+ù. 9¥m9ía:-çú$eùåjùn ú-l9æ¡9oêùcå¹åjùn ûï#ˆ9¤+9b,: ã9¦kù§ ùbåyb,9ãï¹§"yæ¡9îj¹g%¹­`yê"ûï#9¢`9.éyåfyg*9b!ù£æùo£9¢cyë¥øà ‚ˆ9. 9«(ycê¹`f¹. 9o-xà y«ãù. 9«iy.búe¤ú`ïz+¤ùaî¹..ùgíú(c9íä»ï#9¢cy.#y§ ú-çùbcy¦kù¤-º,áù®¤8à ‚ˆ:*&9¡­ºjå9§"zfd;ï#9§ 9i&¹cê¹åfHÐT“WÓPV9o-{ï#9i&¹æ¡9l,y.'ù£¢y§ :""¹æ¡8à ˆ
+‹Âˆ\HØ\›T^[ÈHÂˆÎˆ[X™\ŽÈˆ[X™\ŽÂˆ]YˆÝš[™ÎÂˆˆY]Ü”\˜[\ÎÂˆ]ˆZ[Û[\Y\œ˜^NÂˆ]LˆZ[Û[\Y\œ˜^H[ÂˆNÂˆÛÛœÝÐT“WÓPVHŽÂˆÛÛœÝØ\›R[YÔ™YˆH\ÙT™YX\Ýš[™ËS[XYÙQ[[Y[Š™]ÈX\
+
+JNÂˆÛÛœÝØ\›T^[Ô™YˆH\ÙT™YX\Ýš[™ËØ\›T^[ÏŠ™]ÈX\
+
+JNÂˆÊˆ9/oùå*: !xà#9ç'ùæ¡9ç"ú`c¸à#yæ¡:`¨ùno¹o-{ï#:)èùioyæ¡9g%¹cé¹i%¹¥-¹g*:`&z(èxà ‚ˆ: ã9¦kúh$9á¬z`¨ù.ï{ï"Ø\›R[YÔ™Y»ï"y§ ù. 9æí:(ªùo£:gh¹£¤ºf¢¹æ¡9áiùâaù¤è9£¢H8 %8 %9áiùâaù. 9i&»ï#ˆ9¤è9£¢yæ¡9«hùioyl,y¦+ù/oùå*: !y«hùg*9/¡¹fç¹b!ùæ¡:`¨ùajyo-{ï#9¥¯9¦+ùb!ùfç¹c®ùcâ:) zaãz)èù. 9«(yè¯8à ‚ˆ:`&y. 9.ïycê¹§"yb!ù£æù¦`¹§ ùkêûï#:h$9á¬yè¬9.#yb,;ï#9/¡¹fç¹b!ù¢cy§ ù¦+ùclù¦`¹æ¡8à ˆ
+‹ÂˆÛÛœÝ’QUÑQÒSQ×ÓPVHNÂˆÛÛœÝšY]ÙY[YÔ™YˆH\ÙT™YX\Ýš[™ËS[XYÙQ[[Y[Š™]ÈX\
+
+JNÂ‚ˆÊˆKKKH9n¥y."ú`¨ù¨§y¢nzaãùî+¹g%¹b%ùæ¡9l#ùg%ˆKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKBˆ9¨/9kd9cê¹§"HÍ°åÌÍ»ï#9/a¹.éybcH[YÏˆ9æ¡Ü˜È9æí9£©y£¦ùæ¡9¦+ùc§ùg%ˆ8 %8 %ˆ9à#ú)¯yfj9§ ù¢¢¹«ãù. 9o-z`ïyk£9¥m:)èùè¯8à z #9.%9cêº) z`¨ù`"È[YÏˆ:`¡9g*9åjúgh¹."¹l,y. 9æí9åfz$eøà ‚ˆ9c`yo-HLŒ:$+9`ãùí(9æ¡9áiùâaùl,y¦+ùioyno¹æoˆPˆ9æ¡:nçºfhùg%ºaæ9g*:*&9¡­ºjå:(è{ï#ˆ9¢å¹®äy¨où¦`¹æ¡9chzh$øà y.éycâ¹áiùâaù. 9i&¹l,z+¢¹¡h»ï#:`ïy¦+ùo§º`&z(èy/¡¹æ¡8à ‚ˆ:`&z(èyab9¢¢¹«ãù. 9o-yî+¹¢$Ì°åÍÌˆ9a£yíiº`¨ù¨§yb%ùå*;ï#9c§ùg%¹å*9k£9l,ycëù.éz(ªùfç¹¥-¸à ˆ
+‹ÂˆÛÛœÝÕ’TÕSPˆHÌŽÂˆÛÛœÝÜÝš\[XœËÙ]Ýš\[Xœ×HH\ÙTÝ]O™XÛÜ™Ýš[™ËÝš[™ÏŠßJNÂˆ\ÙQY™™XÝ
+
+
+HOˆÂˆÛÛœÝZ\ÜÚ[™ÈHÜ˜Ó\Ý™š[\ŠÈOˆÈ	‰ˆ\Ýš\[XœÖÜ×JNÂˆYˆ
+[Z\ÜÚ[™Ë›[™Ý
+H™]\›ŽÂˆ][]™HHYNÂˆÛÛœÝXZÙHH
+ÎˆÝš[™ÊHOˆ™]È›ÛZ\ÙO›ÚYŠ™\ÛÛ™HOˆÂˆÛÛœÝš[š\ÚH
+[YÎˆS[XYÙQ[[Y[
+HOˆÂˆYˆ
+X[]™JH™]\›ˆ™\ÛÛ™J
+NÂˆžHÂˆÛÛœÝÈHØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊNÂˆËÚYHÕ’TÕSPŽÈËšZYÚHÕ’TÕSPŽÂˆÛÛœÝÞHË™Ù]ÛÛ^
+	Ì™	ÊHNÂˆÞš[XYÙTÛ[ÛÝ[™Ô]X[]HH	ÚYÚ	ÎÂˆÛÛœÝÝÈH[YË›˜]\˜[ÚY[YËÚYÚH[YË›˜]\˜[ZYÚ[YËšZYÚÂˆÛÛœÝÈHX]›X^
+Õ’TÕSPˆÈÝËÕ’TÕSPˆÈÚ
+NÂˆÞ™˜]Ò[XYÙJ[YË
+Õ’TÕSPˆHÝÈ
+ˆÊHÈ‹
+Õ’TÕSPˆHÚ
+ˆÊHÈ‹ÝÈ
+ˆËÚ
+ˆÊNÂˆÛÛœÝ\›HËÑ]UT“
+	Ú[XYÙKÚœYÉËŽŠNÂˆÙ]Ýš\[XœÊ™]ˆOˆ
+™]–Ü×HÈ™]ˆˆÈ‹‹œ™]‹Ü×Nˆ\›JJNÂˆHØ]ÚÈÊˆ:-ê9/¡¹®¤9.búhg¹æ¡9l,yë¥ù.¡»ï#:`¨ù. 9¨/9åfyn¥z"lˆ
+‹ÈBˆ™\ÛÛ™J
+NÂˆNÂˆÛÛœÝYHšY]ÙY[YÔ™Y‹˜Ý\œ™[™Ù]
+ÊHØ\›R[YÔ™Y‹˜Ý\œ™[™Ù]
+ÊNÂˆYˆ
+Y	‰ˆY˜ÛÛ\]H	‰ˆY›˜]\˜[ÚY
+H™]\›ˆš[š\Ú
+Y
+NÂˆÛÛœÝ[HH™]È[XYÙJ
+NÂˆYˆ
+\ËœÝ\ÕÚ]
+	Ø›ØŽ‰ÊH	‰ˆ\ËœÝ\ÕÚ]
+	Ù]N‰ÊJH[K˜Ü›ÜÜÓÜšYÚ[ˆH	Ø[›Ûž[[Ý\ÉÎÂˆ[K›Û›ØYH
+
+HOˆš[š\Ú
+[JNÂˆ[K›Û™\œ›ÜˆH
+
+HOˆ™\ÛÛ™J
+NÂˆ[KœÜ˜ÈHÎÂˆJNÂˆ
+\Þ[˜È
+
+HOˆÈ›Üˆ
+ÛÛœÝÈÙˆZ\ÜÚ[™ÊHÈYˆ
+X[]™JH™]\›ŽÈ]ØZ]XZÙJÊNÈHJJ
+NÂˆ™]\›ˆ
+
+HOˆÈ[]™HH˜[ÙNÈNÂˆKÜÜ˜Ó\ÝÝš\[Xœ×JNÂˆÊŠˆ:`&yo-yæ¡9g%¹mì¹í¤ú)èùioy.¡¹eã»ï'úh!¹/¯ù¢¢¹k ùéîùb,9§ 9¥¬;ï#9¢cy.#y§ ú(ªù."ù. 9o-y¤è9£¢H
+‹ÂˆÛÛœÝZÙQXÛÙYH
+Ü˜ÎˆÝš[™ÊNˆS[XYÙQ[[Y[[OˆÂˆÛÛœÝ[HHšY]ÙY[YÔ™Y‹˜Ý\œ™[™Ù]
+Ü˜ÊHØ\›R[YÔ™Y‹˜Ý\œ™[™Ù]
+Ü˜ÊNÂˆYˆ
+Z[HZ[K˜ÛÛ\]HZ[K›˜]\˜[ÚY
+H™]\›ˆ[ÂˆšY]ÙY[YÔ™Y‹˜Ý\œ™[™[]JÜ˜ÊNÂˆšY]ÙY[YÔ™Y‹˜Ý\œ™[œÙ]
+Ü˜Ë[JNÂˆ™]\›ˆ[NÂˆNÂˆÛÛœÝ™[Y[X™\‘XÛÙYH
+Ü˜ÎˆÝš[™Ë[NˆS[XYÙQ[[Y[
+HOˆÂˆšY]ÙY[YÔ™Y‹˜Ý\œ™[™[]JÜ˜ÊNÂˆšY]ÙY[YÔ™Y‹˜Ý\œ™[œÙ]
+Ü˜Ë[JNÂˆÚ[H
+šY]ÙY[YÔ™Y‹˜Ý\œ™[œÚ^™Hˆ’QUÑQÒSQ×ÓPV
+HÂˆÛÛœÝÛ\ÝHšY]ÙY[YÔ™Y‹˜Ý\œ™[šÙ^\Ê
+K›™^
+
+K˜[YH\ÈÝš[™ÎÂˆYˆ
+Û\ÝOOHÜ˜ÊHœ™XZÎÂˆšY]ÙY[YÔ™Y‹˜Ý\œ™[™[]JÛ\Ý
+NÂˆBˆNÂˆÊŠˆ:h$9á¬yaî¹/¡¹æ¡9`ãùí(9g%º-çùãï¹g*9æ¡9càù¥n:`¡9l#yo¥ù."¹eã»ï'ùl#yo¥ù."¹¢cy¥h¹å*
+‹ÂˆÛÛœÝØ\›TÚYÓÙˆH
+ˆY]Ü”\˜[\Ë]YˆÝš[™ËÎˆ[X™\‹ˆ[X™\ŠHO‚ˆÛ]YË˜œšYÚ™\ÜË™^ÜÝ\™K˜ÛÛ˜\ÝšYÚYÚËœÚYÝÜËˆ[\[œØ]šX‹œÚ\œ[‹Û™TÚYÊ
+WKš›Ú[Š	ß	ÊNÂˆÛÛœÝØ\›TÚYÔ™YˆH\ÙT™YX\Ýš[™ËÝš[™ÏŠ™]ÈX\
+
+JNÂˆ\ÙQY™™XÝ
+
+
+HOˆÂˆYˆ
+Ü˜Ó\Ý›[™ÝHJH™]\›ŽÂˆËÈ9¢bù£!ú`¡9g*9®äy¨où."¹l,yk£9aj9.#y`f¸à º`&z(èy. 9o-yáiùâaú) z-äyajz-§È›ØÙ\ÜÔ^[øà BˆËÈ9§ 9i)ùb,N;ï#9. :-§ùl,y¦+ùioyno¹c`y«êùéä¹æ¡9d#9«iz`bùë¥È8 %8 %9£¤¹g*9¢å¹¦ìù.+ze¤ùl,y¦+ù. 9«(y£¢y¨/8à ‚ˆËÈ\Ò[\˜XÝ[™È9. :+¢¹¢$Y{ï#9®!yä!¹aïyo#ù§ ù¢¢¹«hùg*:-äyæ¡:`¨ù. :/*¹.gù. :-mù`g9£¢xà ‚ˆËÈ;ï":aãùb,È9o-yáiùâaù¦`ˆNH9åjù¨/KÛ\ûï#9e«¹o-ycê¹§"HŒŒÛ\ûï#9mëº-çyl,y¦+ú`&y`"øà »ï"BˆYˆ
+\Ò[\˜XÝ[™ÊH™]\›ŽÂˆ]Ø[˜Ù[YH˜[ÙNÂˆÛÛœÝZY[ÈH
+›Žˆ
+
+HOˆ›ÚY
+HOˆÈYˆ
+XØ[˜Ù[Y
+HÚ[™ÝËœÙ][Y[Ý]
+›‹
+NÈNÂˆÛÛœÝHÚ[™ÝËœÙ][Y[Ý]
+
+
+HOˆÂˆËÈ9cêºh$9á¬xà#:`(ùíd9.+xà#yæ¡8 %8 %9¬¤º`(ùíd9æ¡:`¨ùno¹o-ycàù¥n9d!:-l9d!9æ¡;ï#9ab9ë¥ù.¡¹.gù¦+ùæoyë¥ÂˆÛÛœÝ]Y]YHHÜ˜Ó\Ý™š[\Š
+KJHOˆHOOHXÝ]™TÜ˜È	‰ˆ[šÙYÚWHOOH˜[ÙJNÂˆÛÛœÝ]™HH]™T™Y‹˜Ý\œ™[ÂˆYˆ
+[]™JH™]\›ŽÂˆÛÛœÝ]H]\ÝÛ]™KœÙ[XÝY]YNÂˆYˆ
+[]
+H™]\›ŽÂˆÛÛœÝXÝ]™S]H]\›È]]T™Y‹˜Ý\œ™[Û]šYHˆ[ÂˆËÈ9¯ïºcèyª¥:`¡9¬¤¹."ú/"yk£9l,yab9.#yë¥ûï#9ëby."ù. :/*»ï"9càù¥n9¬¤º+¢¹æ¡:*ly."ù. :/*º!ê¹á-¹§ ú(ç9."»ï"BˆYˆ
+]\›	‰ˆXXÝ]™S]
+H™]\›ŽÂˆÛÛœÝˆY]Ü”\˜[\ÈH”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJ]™Kœ\˜[\ÊJNÂ‚ˆÛÛœÝÝ\H
+
+HOˆÂˆYˆ
+Ø[˜Ù[Y
+H™]\›ŽÂˆÛÛœÝÜ˜ÈH]Y]YKœÚY
+
+NÂˆYˆ
+\Ü˜ÊH™]\›ŽÂ‚ˆÛÛœÝ‘U’QU×ÔÒV‘HHNÂˆÛÛœÝÛ™HH
+
+HOˆZY[ÊÝ\
+NÂˆÛÛœÝÚ][YÈH
+[YÎˆS[XYÙQ[[Y[
+HOˆÂˆYˆ
+Ø[˜Ù[Y
+H™]\›ŽÂˆ]ÈH[YË›˜]\˜[ÚY[YËÚYH[YË›˜]\˜[ZYÚ[YËšZYÚÂˆYˆ
+\È\
+H™]\›ˆÛ™J
+NÂˆYˆ
+Èˆ‘U’QU×ÔÒV‘Hˆ‘U’QU×ÔÒV‘JHÂˆÛÛœÝˆHX]›Z[Š‘U’QU×ÔÒV‘HÈË‘U’QU×ÔÒV‘HÈ
+NÂˆÈH
+È
+ˆŠHÈH
+
+ˆŠHÂˆBˆÈHX]›X^
+KÊNÈHX]›X^
+K
+NÂˆÛÛœÝÚYÈHØ\›TÚYÓÙŠ]šYË
+NÂˆYˆ
+Ø\›TÚYÔ™Y‹˜Ý\œ™[™Ù]
+Ü˜ÊHOOHÚYÊH™]\›ˆÛ™J
+NÈËÈ:`&yo-ymì¹í¤ù¦+ù§ 9¥¬9æ¡9.¡‚ˆ]ÛÝ\˜ÙNˆZ[Û[\Y\œ˜^NÂˆžHÂˆÛÛœÝÈHØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊNÂˆËÚYHÎÈËšZYÚHÂˆÛÛœÝÞHË™Ù]ÛÛ^
+	Ì™	ËÈÚ[™XYœ™\]Y[NˆYHJHNÂˆÞš[XYÙTÛ[ÛÝ[™Ô]X[]HH	ÚYÚ	ÎÂˆÞ™˜]Ò[XYÙJ[YËË
+NÂˆÛÝ\˜ÙHHÞ™Ù][XYÙQ]JË
+K™]NÂˆHØ]ÚÈ™]\›ˆÛ™J
+NÈBˆËÈ:+¤ù. 9«(y..ùgíú(c9íä»ï#9a£ze¢ùiâùë¥ù`ãùí(ˆZY[Ê
+
+HOˆÂˆYˆ
+Ø[˜Ù[Y
+H™]\›ŽÂˆ]]ˆZ[Û[\Y\œ˜^K]LˆZ[Û[\Y\œ˜^H[H[ÂˆÛÛœÝ˜\ÙS]H™]ÈZ[\œ˜^JMŠNÂˆËÈ:!ê¹mìyë¥ù. 9.ïy¦ì¹íæº(j8 %8 %9.#yc®ùè¬9bcy¦kú`¨ù.ïyalyå*9oêùcå‚ˆÛÛœÝÝ\™S]ÈHÂˆ™ØŽˆÙ[™\˜]PÝ\™S]
+˜Ý\™\Ëœ™ØŠKŽˆÙ[™\˜]PÝ\™S]
+˜Ý\™\ËœŠKˆÎˆÙ[™\˜]PÝ\™S]
+˜Ý\™\Ë™ÊKŽˆÙ[™\˜]PÝ\™S]
+˜Ý\™\Ë˜ŠKˆNÂˆžHÂˆÙ[™\˜]P˜\ÙPÛÜœ™XÝ[Û“]
+™^ÜÝ\™K˜ÛÛ˜\Ý˜œšYÚ™\ÜË˜\ÙS]
+NÂˆ]H™]ÈZ[Û[\Y\œ˜^JÛÝ\˜ÙK›[™Ý
+NÂˆ›ØÙ\ÜÔ^[ÊÛÝ\˜ÙK]Ë[˜\ÙS][˜[ÙKÝ\™S]ÊNÂˆHØ]ÚÈ™]\›ˆÛ™J
+NÈBˆZY[Ê
+
+HOˆÂˆYˆ
+Ø[˜Ù[Y
+H™]\›ŽÂˆžHÂˆYˆ
+XÝ]™S]
+HÂˆ]LH™]ÈZ[Û[\Y\œ˜^JÛÝ\˜ÙK›[™Ý
+NÂˆ›ØÙ\ÜÔ^[ÊÛÝ\˜ÙK]LËÈ‹‹œ][[Ý[ˆLKXÝ]™S]™]KXÝ]™S]œÚ^™K˜\ÙS][˜[ÙKÝ\™S]ÊNÂˆBˆHØ]ÚÈ]LH[ÈBˆYˆ
+Ø[˜Ù[Y
+H™]\›ŽÂˆØ\›T^[Ô™Y‹˜Ý\œ™[œÙ]
+Ü˜ËÈÎˆËˆ]Yˆ]šY]]LJNÂˆØ\›TÚYÔ™Y‹˜Ý\œ™[œÙ]
+Ü˜ËÚYÊNÂˆËÈ:-¡z`c¹."ºfd9l,y.'ù£¢y§ :""¹æ¡;ï"X\9/§y£ä¹aizh!¹n£ûï"BˆÚ[H
+Ø\›T^[Ô™Y‹˜Ý\œ™[œÚ^™HˆÐT“WÓPV
+HÂˆÛÛœÝÛ\ÝHØ\›T^[Ô™Y‹˜Ý\œ™[šÙ^\Ê
+K›™^
+
+K˜[YH\ÈÝš[™ÎÂˆØ\›T^[Ô™Y‹˜Ý\œ™[™[]JÛ\Ý
+NÂˆØ\›TÚYÔ™Y‹˜Ý\œ™[™[]JÛ\Ý
+NÂˆBˆÛ™J
+NÂˆJNÂˆJNÂˆNÂ‚ˆËÈ9ç"ú`c¹æ¡:`¨ùno¹o-ymì¹í¤ú)èùioy.¡»ï#9b)ya£z)èù. 9«({ï"9cêº+ 9.#ybåzh!¹n£ûï#9acyo¥úh$9á¬y¢¢¹k ù`$yo 9bcy£ª;ï"BˆÛÛœÝØXÚYHØ\›R[YÔ™Y‹˜Ý\œ™[™Ù]
+Ü˜ÊHšY]ÙY[YÔ™Y‹˜Ý\œ™[™Ù]
+Ü˜ÊNÂˆYˆ
+ØXÚY	‰ˆØXÚY˜ÛÛ\]H	‰ˆØXÚY›˜]\˜[ÚY
+H™]\›ˆÚ][YÊØXÚY
+NÂˆÛÛœÝ[HH™]È[XYÙJ
+NÂˆYˆ
+\Ü˜ËœÝ\ÕÚ]
+	Ø›ØŽ‰ÊH	‰ˆ\Ü˜ËœÝ\ÕÚ]
+	Ù]N‰ÊJH[K˜Ü›ÜÜÓÜšYÚ[ˆH	Ø[›Ûž[[Ý\ÉÎÂˆ[K›Û›ØYH
+
+HOˆÂˆØ\›R[YÔ™Y‹˜Ý\œ™[œÙ]
+Ü˜Ë[JNÂˆÚ[H
+Ø\›R[YÔ™Y‹˜Ý\œ™[œÚ^™HˆÐT“WÓPV
+ÈJHÂˆÛÛœÝÛ\ÝHØ\›R[YÔ™Y‹˜Ý\œ™[šÙ^\Ê
+K›™^
+
+K˜[YH\ÈÝš[™ÎÂˆYˆ
+Û\ÝOOHÜ˜ÊHœ™XZÎÂˆØ\›R[YÔ™Y‹˜Ý\œ™[™[]JÛ\Ý
+NÂˆBˆZY[Ê
+
+HOˆÚ][YÊ[JJNÂˆNÂˆ[K›Û™\œ›ÜˆHÛ™NÂˆ[KœÜ˜ÈHÜ˜ÎÂˆNÂˆÝ\
+
+NÂˆKL
+NÂˆ™]\›ˆ
+
+HOˆÈØ[˜Ù[YHYNÈÚ[™ÝË˜ÛX\•[Y[Ý]
+
+NÈNÂˆKØXÝ]™TÜ˜ËÜ˜Ó\Ý[šÙY\˜[\ËÙ[XÝY]Y]\Ý\Ò[\˜XÝ[™×JNÂˆÊŠˆ9b!ú`c¹c®ù¦`»ï#9¢¢º ã9¦kùë¥ùioyæ¡:`¨ù.ïyæí9£©yhgº`,ˆ™[™\Š
+H9§+9/¡¹l,yg*9å*9æ¡9oêùcåˆ
+‹ÂˆÛÛœÝÙYYØ\›T^[ÈH\ÙPØ[˜XÚÊ
+Ü˜ÎˆÝš[™ËÎˆ[X™\‹ˆ[X™\ŠHOˆÂˆÛÛœÝØ\›HHØ\›T^[Ô™Y‹˜Ý\œ™[™Ù]
+Ü˜ÊNÂˆYˆ
+]Ø\›HØ\›KÈOOHÈØ\›KšOOH
+H™]\›ŽÂˆÛÛœÝHØ\›KœÂˆš[\”^[ØXÚT™Y‹˜Ý\œ™[ØØXÚRÙ^SÙŠØ\›K›]YØ\›KÊWHHÂˆÜ˜Ëˆ]ˆØ\›K›]ˆ]LˆØ\›K›]LˆÚYˆËZYÚˆˆœšYÚ™\ÜÎˆ˜œšYÚ™\ÜË^ÜÝ\™Nˆ™^ÜÝ\™KÛÛ˜\Ýˆ˜ÛÛ˜\ÝˆYÚYÚÎˆšYÚYÚËÚYÝÜÎˆœÚYÝÜË[\ˆ[\[ˆ[ˆØ]ˆœØ]šXŽˆšX‹Ú\œ[ŽˆœÚ\œ[‹ˆÛ™TÝŽˆÛ™TÚYÊ
+KˆNÂˆËÈ9mì¹í¤ù.©9¨ä¹íi¹bcy¦kùæ¡9oêùcå¹.¡»ï#:h$9á¬yc`9l,y¢¢¹/cykd:+¤ùaî¹/¡¹íiº`¡9¬¤¹ë¥ùæ¡:`¨ùno¹o-BˆØ\›T^[Ô™Y‹˜Ý\œ™[™[]JÜ˜ÊNÂˆØ\›TÚYÔ™Y‹˜Ý\œ™[™[]JÜ˜ÊNÂˆK×JNÂˆÊŠˆ9¢¢º ã9¦kùë¥ùioyæ¡:`¨ùo-yæí9£©yåjùb,9åjùn ù."»ï"]:"!È]L9/§y¯ïºcèyo-ùn©¹­íùd";ï"H
+‹ÂˆÛÛœÝZ[Ø\›S›ÝÈH
+Ü˜ÎˆÝš[™ËÛ˜\ˆ˜]ÚÛ˜\[
+Nˆ›ÛÛX[ˆOˆÂˆÛÛœÝØ\›HHØ\›T^[Ô™Y‹˜Ý\œ™[™Ù]
+Ü˜ÊNÂˆÛÛœÝÝœÈH\Ü^PØ[˜\Ô™Y‹˜Ý\œ™[ÂˆYˆ
+]Ø\›HXÝœÊH™]\›ˆ˜[ÙNÂˆËÈ:h$9á¬y.bùo£9càù¥n9câ:(ªù¥.z`c¹æ¡:*l{ï#:`¨ù.ïyl,y.#z ïyå*9.¡ˆ8 %8 %9åjù."¹c®ù§ ù¦+ú""¹æ¡:*¯ù¥m8à ‚ˆYˆ
+Û˜\
+HÂˆÛÛœÝ]H]\ÝÜÛ˜\œÙ[XÝY]YNÂˆYˆ
+[]Ø\›TÚYÔ™Y‹˜Ý\œ™[™Ù]
+Ü˜ÊHOOHØ\›TÚYÓÙŠÛ˜\œ\˜[\Ë]šYØ\›KËØ\›Kš
+JH™]\›ˆ˜[ÙNÂˆBˆÛÛœÝÈË]]LHHØ\›NÂˆÛÛœÝ[]HX]›X^
+X]›Z[ŠLØ\›Kœ›][[Ý[ÏÈ
+JHÈLÂˆÛÛœÝÝ]H™]ÈZ[Û[\Y\œ˜^J]›[™Ý
+NÂˆYˆ
+]L	‰ˆ[]ˆ
+HÂˆ›Üˆ
+]HHÈHÝ]›[™ÝÈJÊÊHÝ]ÚWHH]ÚWH
+È
+]LÚWHH]ÚWJH
+ˆ[]ÂˆH[ÙHÂˆÝ]œÙ]
+]
+NÂˆBˆYˆ
+ÝœËÚYOOHÈÝœËšZYÚOOH
+HÈÝœËÚYHÎÈÝœËšZYÚHÈBˆÛÛœÝÝHÝœË™Ù]ÛÛ^
+	Ì™	ÊNÂˆYˆ
+XÝ
+H™]\›ˆ˜[ÙNÂˆÝœ][XYÙQ]J™]È[XYÙQ]JÝ]Ë
+K
+NÂˆÝœËœÝ[K™š[\ˆH	Û›Û™IÎÂˆØ\›TZ[YÜ˜Ô™Y‹˜Ý\œ™[HÜ˜ÎÂˆËÈ9«å9/¢ú-çùåjùn ùl.¹kî9d#9. 9¢ãykêú`,¹c®ûï#9£æùáiùâaù¦`¹¢cy.#y§ ù§"y. 9ajyn`:(ªù¢ây/.ˆ\T™]šY]Ð\ÜXÝ
+Ë
+NÂˆ™]\›ˆYNÂˆNÂˆÊŠˆ9mì¹í¤ùå*:h$9á¬yæ¡9åjúghº(ç:`c¹æ¡:`¨ù. 9o-H8 %8 %9o¡y§ ùl,yb)ya£yåjù. 9«(xà#:`¡9¬¤º*¯ù¥m8à#yæ¡9ª(ùkd
+‹ÂˆÛÛœÝØ\›TZ[YÜ˜Ô™YˆH\ÙT™YÝš[™È[Š[
+NÂˆÛÛœÝÙYYØ\›T^[Ô™YˆH\ÙT™YŠÙYYØ\›T^[ÊNÂˆÙYYØ\›T^[Ô™Y‹˜Ý\œ™[HÙYYØ\›T^[ÎÂˆÊŠˆ9`ãùí(:/í9g"9æ¡’U9¦¥¹ªgûï#9¥m9`"ùíê:/+ùfj:e¢ú$eùcêºg :) y`f¹. 9«(H
+‹ÂˆÛÛœÝ\[[™UØ\›YY™YˆH\ÙT™YŠ˜[ÙJNÂ‚ˆÛÛœÝ˜\Ý™]šY]ÐØXÚT™YˆH\ÙT™YÂˆXÝ]™Nˆ›ÛÛX[ŽÂˆÛÛYˆÝš[™ÎÂˆ˜\ÙPØ[˜\ÎˆSØ[˜\Ñ[[Y[[ÂˆZ[Ø[˜\ÎˆSØ[˜\Ñ[[Y[[ÂˆX^Ø[˜\ÎˆSØ[˜\Ñ[[Y[[ÂˆOŠÈXÝ]™Nˆ˜[ÙKÛÛYˆ	ÉË˜\ÙPØ[˜\Îˆ[Z[Ø[˜\Îˆ[X^Ø[˜\Îˆ[JNÂ‚ˆÛÛœÝØXÚY›\Ø[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝØXÚYÛÙØ[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝØXÚY›Ú\ÙLØ[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝØXÚY[][ÛØ[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝØXÚYšYÛ™]PØ[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝÛÛ\[YÜ˜Z[”]\›”™YˆH\ÙT™YØ[˜\Ô]\›ˆ[Š[
+NÂˆÛÛœÝÛÛ\[Y›Ú\ÙT]\›”™YˆH\ÙT™YØ[˜\Ô]\›ˆ[Š[
+NÂˆÊŠˆ9âny¥b9¢å¹¦ìùãï¹g*9å*9aj:)èù§¤9n©¹eã»ï":)¢È™[™\ˆ:(èyæ¡:*ª¹¦#»ï#9§ ùáiú %ù¦`º!ê¹båyb!ù£æûï"H
+‹ÂˆÛÛœÝž[™\Ô™YˆH\ÙT™YŠYJNÂˆÊŠˆ9bfù£æù¯ïºcè{ï&¹ab9å*9/cº)èù§¤9n©¹åjù. 9o-{ï#9."ù. 9n`9a£z(ç9aj:)èù§¤9n©ˆ
+‹ÂˆÛÛœÝ]ZXÚÑš[\”™YˆH\ÙT™YŠ˜[ÙJNÂˆÛÛœÝ]Ø[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝ]LØ[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂ‚ˆÊˆ8¥ 8¥ :`kº"l¹âaùå*9æ¡9ajyo-zfè¹lcùåjùn È8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ˆ9.éybcz`&yajyo-y¦+ù«ãù. 9n`ØÝ[Y[˜Ü™X]Q[[Y[9aî¹/¡¹æ¡;ï#N0åÌLÍL9ajyo-{ï#ˆ9¢å¹. 9«(z`kº"l¹âaùl,y¦+ùno¹æo¹o-yåjùn ùæ¡:acyïkº"!ùfç¹¥-¸à ¹¥.y¢$9¥m9`"ùíê:/+úf£¹«­yalyå*9d#9ajyo-xà ‚ˆX\ÚÕ[\;ï&¹¥m9o-yieù."º`kº"l¹âaú*¯ù¥m9o£9æ¡9ª(ùkd;ï"9¬¤¹§"yc®ú ã;ï#9¢`9.éycëù.éyåfz$eúaãz)!ùå*;ï"BˆX\ÚÓÝ];ï&¹¢¢ˆX\ÚÕ[\9å*9¯.9li9c®ú ã9.bùo£8à yç'ù«hú) yå¢¹fç¹åjúgh¹æ¡:`¨ùo-BˆX\ÚÐY’Ù^{ï&›X\ÚÕ[\9æë¹bcz(çyæ¡9¦+ùáiù.à:n¯9càù¥n9ë¥ùæ¡;ï&ùên¹keù.,¹.èú(j9.#ycëù¬¯ùå*
+‹ÂˆÛÛœÝX\ÚÕ[\Ø[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝX\ÚÓÝ]Ø[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝX\ÚÐY’Ù^T™YˆH\ÙT™YÝš[™ÏŠ	ÉÊNÂˆÊˆ9¢åº`kº"l¹âaù®äy¨où¦`¹åfy."ù/¡¹æ¡9n¥yg%»ï":hcú"lºcâ:"!ùâny¥b:`ïz-äyk£8à z`¡9¬¤¹."º`kº"l¹âaùæ¡9ª(ùkd;ï"xà ‚ˆ:`¨ù. 9¥m9«­y¦`ºe¤ùk ùk£9aj9.#y§ ú+¢»ï#9¢`9.éycê¹o§¹..ùåjùn ùfçº+ 9. 9«(xà ‚ˆX\ÚÐ˜\ÙQ]{ï&¹åfy."ù/¡¹æ¡:`¨ù. 9.ï{ï&ÛX\ÚÔØÜ˜]Ú;ï&¹«ãù. 9n`9¢ïù/¡¹ë¥ùæ¡9méy/g9c`;ï&ÂˆX\ÚÐ˜\ÙRÙ^{ï&¹åfyæ¡9¦+ùdê¹. 9hb»ï"9ên¹keù.,¹.èú(j9.#ycëù¬¯ùå*;ï"xà ˆ
+‹ÂˆÛÛœÝX\ÚÐ˜\ÙQ]T™YˆH\ÙT™Y[XYÙQ]H[Š[
+NÂˆÛÛœÝX\ÚÔØÜ˜]Ú™YˆH\ÙT™Y[XYÙQ]H[Š[
+NÂˆÛÛœÝX\ÚÐ˜\ÙRÙ^T™YˆH\ÙT™YÝš[™ÏŠ	ÉÊNÂˆÊŠˆ9¦çyab{ï"ù.«¹n©»ï"ùl#y«å9d"9¢$9æ¡9. 9í«y§éz"lº(j;ï":)¢ú`kº"l¹âaú`¨ù«­yæ¡:*ª¹¦#»ï"xà ‚ˆ9­kºnçº`¨ùo-yíi¸à#9o£:ghº`¡9§"yam¹.å¹«izjgøà#y¦`¹å*;ï"9ì¯¹n©¹.#z ïyab9£¢{ï"{ï&Âˆ9¥m9¥n:`¨ùo-yíi¸à#9cê¹§"z"lº*¯øà#yæ¡9oêú`'ú-ëùo¤yå*8à ˆ
+‹ÂˆÛÛœÝX\ÚÕÛ™S]™YˆH\ÙT™Y›Ø]Ì\œ˜^OŠ™]È›Ø]Ì\œ˜^JMŠJNÂˆÛÛœÝX\ÚÕÛ™N™YˆH\ÙT™YZ[Û[\Y\œ˜^OŠ™]ÈZ[Û[\Y\œ˜^JMŠJNÂ‚ˆÊˆ8¥ 8¥ 9bcyo£9l#y«å;ï&¹£"y."ùc®ù.bùbcz`¨ùo-yab9åfy. 9.ïH8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ˆ9¥/ºe¢ù£"zb%y¦`»ï#9åjúghº) yfç¹b,9æ¡9l,y¦+ù£"y."ùc®ù.bùbcyæ¡:`¨ù. 9o-{ï#9. 9`"ù`ãùí(:`ïy.#y§ ù.#y. 9ª(øà ‚ˆ9¢`9.éz"!ùam¹¥m9¨§yë¨yíæ¹a£z-äy. 9«({ï"9§"z`kº"l¹âaù¥b9§§9¦`ºaãùb,M[\ûï#9£"z-mù/¡¹l,y¦+øà#:h$ù. 9."Âˆ9¢cyfç¹/¡¸à#{ï"{ï#9.#yi ¹£"y."ùc®ùæ¡9¦`¹`&yab9¢¢¹åjùn ú)!ú(ïy. 9.ï{ï#9¥/ºe¢ùæí9£©z,¯9fç¹c®È8 %8 %9. 9«(BˆÔH9¤+9éîûï#:-çùáiùâaùi&¹i)øà ze¢ù.¡¹i&¹l$yâny¥b:`ïyá(zeç8à ‚ˆ9cê¹§"xà#9£"z$eùæ¡9§'úe¤ùåjúgh¹¬¤¹§"y.îù/eyam¹.åº+¢¹c%¸à#y¢cy¥hº,¯;ï"\Ñ\T™Yˆ9¬¤º(ªú""z-mù/¡»ï"{ï#ˆ9d)¹baùáiùª(ú-l9k£9¥m:aãyåjøà ˆ
+‹ÂˆÛÛœÝÛÛ\\™TÛ˜\™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝÛÛ\\™TÛ˜\Ù^T™YˆH\ÙT™YÝš[™ÏŠ	ÉÊNÂ‚ˆÊˆ8¥ 8¥ ÔH:hcú"lºcâ8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ˆ9¥m9¨§zhcú"lºcâ9¦+ùí%9ì®yæ¡‘Ð¸¡¤”‘Ðˆ9aïy¥n;ï#9¢`9.éyab9å*
+Š¹ãï¹§"yæ¡›ØÙ\ÜÔ^[È9§+:.ªÊŠ‚ˆ9g*°¬È9`"ù¨/:nç¹."¹ë¥ù. 9«({ï"Ìð¬È9cêº) H‹Œ›\ûï"{ï#9àé9¢$9. :haˆÑ9§éz"lº(j;ï#ˆ9a£z+¤ÈÔH9å*9. 9`"È˜]ÈØ[9¢¢¹¥m9o-yg%¹§éyk£;ï"9ké¹®+Œ[\ûï#9l#yáiÈÔH:`$9`ãùí(ÌŽ\ûï"xà ‚ˆ:hcú"l¹ak9o#ù. :(c:`ïy¬¤¹§"zaãykêÈ8 %8 %9ç'ùä!¹/¡¹®¤9.ãyá-¹¦+ú`¨ù.ïHÔH9ê"ùo#ùè¯8à ‚‚ˆ9¢å¹¦ìù.+yå*Ìð¬øà y¢bù¥/ºe¢ùå*p¬ûï&¹ajz !yæ¡:"l¹më¹b!¹b)y¦+È:"!ÈÈ9`"ú"lºf£»ï": ¢yç/9b!º/ª9.#yaî»ï"{ï#ˆ: #
+Šº)èù§¤9n©¹aj9ê"ú`ïy¦+ùaj:)èù§¤9n©ŠŠ»ï#9.#ya£zfcyí&¹¢$9ª(yìâ¹æ¡9.èùä!¸à ˆ
+‹ÂˆÛÛœÝÜT™YˆH\ÙT™Y]ÜH[[™Yš[™YŠ[™Yš[™Y
+NÂˆÛÛœÝÜTÜ˜ÒÙ^T™YˆH\ÙT™YŠ	ÉÊNÂˆÊŠˆ9."¹. :/*¹§"y¬¤¹§"z-lÔxà ¹b!ù£æù¦`º) yo-ùb-ºaãyë¥ûï#9d)¹baÈÔH:`¨ù.ïy`ãùí(9§ ù`g9g*:""¹æ¡8à ˆ
+‹ÂˆÛÛœÝ\ÝÜT™YˆH\ÙT™YŠ˜[ÙJNÂˆÊˆ:`&ycì:(çyïk¹æ¡ÔH9b,9n¥y«åÔH9oêùeã»ï'ø %8 %9.#yå*9ã'9æ¡;ï#:e¢ú-mù/¡¹kéºf¦úaãøà ‚ˆ9§"yç'ù«húhkùé.¹chyæ¡9¢bùªgù."»ï#ÔH9§éz(j9¦+ùhäù`$¹ )ùæ¡9oêûï&ù/a¹g*9¬¤¹§"yèk:jå9b¨:`'ùæ¡9ä¬9h Âˆ;ï"9§ä9.¦ù¨c9ªgùà#ú)¯yfj8à yá(zf§9é&yª(yo#øà z&fù¤ë9ªgûï"QÔH9¦+ú.çújå9ª(y¤ë9æ¡;ï#9cãz #9¦í9¡h¸à ‚ˆ9¢`9.éxà#:gg9«h¹¦`º) y.#z) yå*Ôxà#yå,yké¹®+9¬n¹k¦»ï&‚ˆ0­È9ab9d!:*&9. 9«(yajy¨§z-ëùæ¡: %ù¦`‚ˆ0­ÈÔH9¦#ºhkù«å:/ ùoêù¢cz+¤ùk ù£©y¢búgg9«h¹¦`¹æ¡9îjº(ïBˆ9¢å¹¦ìù.+ybaù¬.:`h9å*ÔH8 %8 %:`¨ù.#y¦+ùà®¹.¡¹oêûï#9¦+ùà®¹.¡ŠŠ¹.#zfcz)èù§¤9n©ŠŠ»ï#ˆ:`¨ù¦+ù..ù.®¹¦#¹è®º) y¬`¹æ¡9åjú,ê»ï#9clù/où¡h¹. :nç¹.gù`/9o¥øà ˆ
+‹ÂˆÛÛœÝÜS\Ô™YˆH\ÙT™YŠ
+NÂˆÛÛœÝÜS\Ô™YˆH\ÙT™YŠ
+NÂˆÛÛœÝÜUÚ[œÔ™YˆH\ÙT™Y›ÛÛX[ˆ[Š[
+NÂˆÛÛœÝÜUØ\›RÙ^T™YˆH\ÙT™YŠ	ÉÊNÂˆÊˆ9àé9ioyæ¡Ñ9§éz"lº(j9oêùcå¸à ºcm{ï'y¨/:nç¹¥n;ïg:hcú"l¹càù¥n;ïg9dê¹. :ha¹¯ïºcèxà ‚ˆ:-çùg%¹âaùá(zeç;ï#9¢`9.éy£æùáiùâaù.gù.#yoáy®!xà ˆ
+‹ÂˆÛÛœÝ˜ZÙPØXÚT™YˆH\ÙT™YX\Ýš[™ËZ[\œ˜^OŠ™]ÈX\
+
+JNÂˆÊˆÙ]Ý\™S]È9k¨ùdb¹g*:`&y.bùo£;ï#:`&z(èyå*™Yˆ:e¤ù£©ycå¹å*;ï#:`oùacy¦ªù¦`¹«nùc`
+‹ÂˆÛÛœÝÝ\™S]Ñ›”™YˆH\ÙT™Y
+ÎˆÝ\™\ÊHOˆÈ™ØŽˆZ[\œ˜^NÈŽˆZ[\œ˜^NÈÎˆZ[\œ˜^NÈŽˆZ[\œ˜^HOŠˆ
+
+HOˆ
+È™ØŽˆ™]ÈZ[\œ˜^JMŠKŽˆ™]ÈZ[\œ˜^JMŠKÎˆ™]ÈZ[\œ˜^JMŠKŽˆ™]ÈZ[\œ˜^JMŠHJJNÂˆÊˆ9cê¹¢¢¸à#9§ ùolzgïúhcú"lºcâ8à#yæ¡9càù¥n9kêú`,ºcmxà ºb¬ùc%¸à zha¹ì¤¸à yª(yìâº`¨ù.¦ù.#yg*:(èzghˆ8 %8 %ˆ9k ù`$y.#y¦+ùàé:`,º(j:(èyæ¡9§lz)oûï#9¥/º`,¹c®ùcê¹§ ú+¤ùoêùcå¹æoyæoyi,y¥b8à ˆ
+‹ÂˆÛÛœÝ˜ZÙTÚYÔ™YˆH\ÙT™YŠ
+ˆY]Ü”\˜[\ÊHO‚ˆ	Ü˜œšYÚ™\ÜßK	Ü™^ÜÝ\™_K	Ü˜ÛÛ˜\ÝK	ÜšYÚYÚßK	ÜœÚYÝÜßKˆ
+È	Ü[\K	Ü[K	ÜœØ]K	ÜšXŸK	Ü›][[Ý[Kˆ
+È	Ò”ÓÓ‹œÝš[™ÚYžJ˜Ý\™\Ê_K	Ò”ÓÓ‹œÝš[™ÚYžJšÛ
+_X
+NÂˆÛÛœÝ^ÜÌ™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂˆÛÛœÝ^ÜÌL™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂ‚ˆÊŠ‚ˆ
+ˆ9ab9¢¢ˆÔH9¦¥º-mù/¡»ï&¹."¹`¬ù¥m9o-yg%¹æ¡:,¯9g%¸à ynî¹êâÈÑ9§éz"lº(j8à z-äy. 9«(yên¹æ¡˜]øà ‚ˆ
+ˆ:`&y.¦ù¦+ù. 9«(y )ùæ¡9¢$9§+;ï"9. 9o-HM:$+9`ãùí(9æ¡9g%¹aby."¹`¬ùl,z) yioyno¹«êùéä»ï"{ï#ˆ
+ˆ9.#yab9`f¹æ¡:*lyk ù`$y§ ùaj:`ê:$/yg*8à#9¢bù£!ùbfù£"y."¹®äy¨oùæ¡:`¨ù. 9n`8à#{ï#ˆ
+ˆ9ç"ú-mù/¡¹l,y¦+ù..ù.®º*ª¹æ¡8à#:e¢ùiâù¢å¹båy¦`¹¢¥¹. 9."øà#xà ‚ˆ
+ˆ9g*:e¤¹ïk¹¦`¹`f¹£¢{ï#9¢å¹¦ìùæ¡9ë+9. 9n`9l,ycê¹bjyàé:(j‹Œ›\È;ï"È9åjÈŒ[\øà ‚ˆ
+‹ÂˆÊŠ‚ˆ
+ˆ:e¤º$eùæ¡9¦`¹`&{ï#9¢¢¸à#:`¡9¬¤¹àé:`c¹æ¡9¯ïºcèy§éz"lº(j8à#yab9àé:-mù/¡¸à ‚ˆ
+‚ˆ
+ˆ:`&y¦+øà#:nç¹¯ïºcèzfí¹níº`l¸à#yç'ù«hùæ¡:eç:cm{ï&¹§"yoêùcå¹cêº)èù¬n¹.¡¸à#9a£znç¹fç¹c®øà#{ï#ˆ
+ˆ9ë+9. 9«(znçº`¡9¦+ú) yãï¹àé;ï"p¬È9í!M›\ûï"xà º- y/oùå*: !yg*9ç"ùî+¹g%¸à z`¡9¬¤¹£"y."ùc®ùæ¡9¦`¹`&Bˆ
+ˆ9ab9¢¢º(j9`¦yio{ï#9£"y."ùc®ùl,ycê¹bjy£æùí y. 9o-z,¯9g%ˆ;ï"È9. 9`"È˜]ÈØ[8à ‚ˆ
+‚ˆ
+ˆ9. 9«(ycê¹àé9. :ha»ï#9àé9k£9l,y¢¢¹..ùgíú(c9íäº`¡9fç¹c®È8 %8 %9.#z ïyà®¹.¡ºh$9á¬ycãz #:+¤ù.âúghºh$øà ‚ˆ
+‹ÂˆÛÛœÝØ\›P˜ZÙ\ÈH\ÙPØ[˜XÚÊ
+ˆY]Ü”\˜[\ÊHOˆÂˆYˆ
+[]\Ý›[™Ý
+H™]\›ˆ˜[ÙNÂˆÛÛœÝÚYÈH˜ZÙTÚYÔ™Y‹˜Ý\œ™[
+
+NÂˆ›Üˆ
+ÛÛœÝÙˆ]\Ý
+HÂˆYˆ
+[\›
+HÛÛ[YNÂˆÛÛœÝ]HH]]T™Y‹˜Ý\œ™[ÛšYNÂˆYˆ
+Y]JHÛÛ[YNÈËÈ:`&zhaº`¡9¬¤¹."ú/"z)èùè¯;ï#:-ìú`c‚ˆÛÛœÝÙ^HH_	ÜÚYß_	ÛšYHÉÙ]KœÚ^™_XÂˆYˆ
+˜ZÙPØXÚT™Y‹˜Ý\œ™[š\ÊÙ^JJHÛÛ[YNÂˆÛÛœÝ˜\ÙHH™]ÈZ[\œ˜^JMŠNÂˆÙ[™\˜]P˜\ÙPÛÜœ™XÝ[Û“]
+™^ÜÝ\™K˜ÛÛ˜\Ý˜œšYÚ™\ÜË˜\ÙJNÂˆÛÛœÝÛHÝ\™S]Ñ›”™Y‹˜Ý\œ™[
+˜Ý\™\ÊNÂˆÛÛœÝ^H˜ZÙYÕ^\™J˜ZÙPÛÛÜ“]
+ˆ
+œË™Ëš
+HOˆ›ØÙ\ÜÔ^[ÊœË™ËšˆÈ‹‹œ][[Ý[ˆLK]K™]K]KœÚ^™K˜\ÙK[˜[ÙKÛ
+KˆKˆ
+JNÂˆÛÛœÝØXÚHH˜ZÙPØXÚT™Y‹˜Ý\œ™[ÂˆYˆ
+ØXÚKœÚ^™HH
+HÂˆÛÛœÝÛ\ÝHØXÚKšÙ^\Ê
+K›™^
+
+K˜[YNÂˆYˆ
+Û\ÝOOH[™Yš[™Y
+HØXÚK™[]JÛ\Ý
+NÂˆBˆØXÚKœÙ]
+Ù^K^
+NÂˆ™]\›ˆYNÈËÈ:`&y. :/*¹cê¹àé9. :ha‚ˆBˆ™]\›ˆ˜[ÙNÂˆKÛ]\ÝJNÂ‚ˆÛÛœÝØ\›QÜHH\ÙPØ[˜XÚÊ
+Ü˜ÎˆZ[Û[\Y\œ˜^KÎˆ[X™\‹ˆ[X™\‹Ù^NˆÝš[™ÊHOˆÂˆYˆ
+ÜUØ\›RÙ^T™Y‹˜Ý\œ™[OOHÙ^JH™]\›ŽÂˆÛÛœÝÈHÙ]ÜJ
+NÂˆYˆ
+YÈYË™š]ÊË
+JH™]\›ŽÂˆžHÂˆYˆ
+YËœÙ]ÛÝ\˜ÙJÜ˜ËË
+JH™]\›ŽÂˆÜTÜ˜ÒÙ^T™Y‹˜Ý\œ™[HÙ^NÂˆËÈ9å*9. :ha¸à#9.à:n¯:`ïy.#y¥.xà#yæ¡:(j9`f¹¦¥¹ªgûï#9åjùaî¹/¡¹l,y¦+ùc§ùg%»ï#9.#y§ ùolzgïù.îù/eyâà9¡bÂˆÛÛœÝˆHŽÂˆÛÛœÝ^H™]ÈZ[\œ˜^Jˆ
+ˆˆ
+ˆˆ
+ˆ
+NÂˆ›Üˆ
+]ŒˆHÈŒˆŽÈŒŠÊÊH›Üˆ
+]ÌˆHÈÌˆŽÈÌŠÊÊH›Üˆ
+]ŒˆHÈŒˆŽÈŒŠÊÊHÂˆÛÛœÝHH
+
+Œˆ
+ˆˆ
+ÈÌŠH
+ˆˆ
+ÈŒŠH
+ˆÂˆ^ÚWHHŒˆ
+ˆMNÈ^ÚH
+ÈWHHÌˆ
+ˆMNÈ^ÚH
+È—HHŒˆ
+ˆMNÈ^ÚH
+È×HHMNÂˆBˆËœÙ]]
+^ŠNÂˆË™˜]Ê
+NÂˆÜUØ\›RÙ^T™Y‹˜Ý\œ™[HÙ^NÂˆHØ]ÚÈÊˆ9¦¥¹ªgùi,y¥eù.#yolzgïù.îù/eyb§ú ï{ï#9áiùn.:-l9c§ù§+9æ¡:-ëÈ
+‹ÈBˆK×JNÂˆÛÛœÝÙ]ÜHH
+
+Nˆ]ÜH[OˆÂˆYˆ
+ÜT™Y‹˜Ý\œ™[OOH[™Yš[™Y
+HÂˆžHÈÜT™Y‹˜Ý\œ™[H]ÜK˜Ü™X]J
+NÈHØ]ÚÈÜT™Y‹˜Ý\œ™[H[ÈBˆBˆÛÛœÝÈHÜT™Y‹˜Ý\œ™[ÂˆÊˆ9."¹."ù¥¡ú(ªùìîùíly¥-º-l;ï"SÔÈ:*&9¡­ºjå9d ùíâ¸à yb!ùb,: ã9¦kùfç¹/¡»ï"y.bùo£:) z ïJŠºaãynîŠŠ¸à ‚ˆ9c§ù§+:`&z(èycê¹¦+ùfçˆ[;ï#: #ÜT™Yˆ9mì¹í¤ù§"y`/8à y.#y§ ùa£z`,¹."ºghº`¨ù`"ùnî¹êâùb!¹¥+È8 %8 %ˆ9ëby¥¯9. 9£¢yl,y¬.9.az` 9fçˆÔ{ï#9¥m9`"ùméy/g:f£¹«­z`ïyfç¹.#yc®øà ˆ
+‹ÂˆYˆ
+È	‰ˆË›ÜÝ
+HÂˆÜT™Y‹˜Ý\œ™[H[™Yš[™YÂˆÜTÜ˜ÒÙ^T™Y‹˜Ý\œ™[H	ÉÎÂˆÜUØ\›RÙ^T™Y‹˜Ý\œ™[H	ÉÎÂˆ˜ZÙPØXÚT™Y‹˜Ý\œ™[˜ÛX\Š
+NÈËÈ:(j9g*:""¹."¹."ù¥¡ú(è{ï#:aãynî¹o£:) zaãy¥¬9."¹`¬Âˆ™]\›ˆ[ÈËÈ:`&y. :/*¹ab:-lÔ{ï#9."ù. :/*¹l,y§ ùnî¹ioy¥¬9æ¡ˆBˆ™]\›ˆÈ[ÂˆNÂˆ\ÙQY™™XÝ
+
+
+HOˆ
+
+HOˆÈÜT™Y‹˜Ý\œ™[Ë™\ÜÜÙJ
+NÈK×JNÂ‚ˆÊŠ‚ˆ
+ˆ9àé:(j8¡¤ˆÔH9åjÈ8¡¤ˆ:)!ú(ïz`,ˆ\™Ù]9åjùn øà ›™YY9§"yíi¹l,zh!¹/¯ù¢¢¹`ãùí(:+ 9fç¹/¡¸à ‚ˆ
+ˆ9.îù/ey. 9«iyi,y¥eú`ïyfç¹`¬È˜[Ù{ï#9do9cêùêëùc§ùl y.#ybåz-l9fçˆÔH:-ëùo¤xà ‚ˆ
+‹ÂˆÛÛœÝÜTZ[H
+ˆ\™Ù]ˆSØ[˜\Ñ[[Y[Ü˜ÎˆZ[Û[\Y\œ˜^KÎˆ[X™\‹ˆ[X™\‹ˆˆY]Ü”\˜[\Ëš[NˆZ[Û[\Y\œ˜^H[š[TÚ^™Nˆ[X™\‹ˆÜšYˆ[X™\‹Ü˜ÒÙ^NˆÝš[™Ë™YYˆZ[Û[\Y\œ˜^H[ˆš[RÙ^HH	ÉËˆ
+Nˆ›ÛÛX[ˆOˆÂˆÛÛœÝÈHÙ]ÜJ
+NÂˆYˆ
+YÈYË™š]ÊË
+JH™]\›ˆ˜[ÙNÂˆžHÂˆYˆ
+ÜTÜ˜ÒÙ^T™Y‹˜Ý\œ™[OOHÜ˜ÒÙ^JHÂˆYˆ
+YËœÙ]ÛÝ\˜ÙJÜ˜ËË
+JH™]\›ˆ˜[ÙNÂˆÜTÜ˜ÒÙ^T™Y‹˜Ý\œ™[HÜ˜ÒÙ^NÂˆBˆÊˆ9àé9ioyæ¡9§éz"lº(j9kf:-mù/¡ˆ8 %8 %:`&y¦+øà#:nç¹¯ïºcèzfí¹níº`l¸à#yæ¡:eç:cmxà ‚ˆ:(j9cêº-çøà#:hcú"l¹càù¥n;ï"È9¦+ùdê¹. :ha¹¯ïºcèH;ï"È9¨/:nç¹¥n8à#y§"zeç;ï#:-çùg%¹âaù. :nçºeç9/àº`ïy¬¤¹§"xà ‚ˆ9¢`9.é{ï&‚ˆ0­È:*¯ùëà:`¨ù. 9.ï{ï"9¬¤¹§"y¯ïºcè{ï"yg*9b!ù£æù¯ïºcèy¦`ŠŠ¹¨.y§+9.#y§ ú+¢ŠŠ»ï#9ë+9. 9«(yàé9k£9l,y. 9æí9å*ˆ0­È9«ãúha¹¯ïºcèyæ¡:`¨ù. 9.ïyàé:`c¹. 9«(yl,yåfz$eûï#9a£znç¹fç¹c®ù¦+úfí¹¢$9§+ˆ9¬¤¹§"z`&yli9oêùcå¹æ¡:*l{ï#9«ãúnç¹. 9«(y¯ïºcèz`ïz) zaãyàé9ajyo-z(j;ï"p¬È9d!M›\ûï"{ï#ˆ:`¨ùl,y¦+ù..ù.®¹¡'ú)®¹b,9æ¡9níº`l¸à ˆ
+‹ÂˆÛÛœÝÙ^HH	ÙÜšY_	Ø˜ZÙTÚYÔ™Y‹˜Ý\œ™[
+
+__	Ùš[RÙ^_XÂˆ]^H˜ZÙPØXÚT™Y‹˜Ý\œ™[™Ù]
+Ù^JNÂˆYˆ
+]^
+HÂˆËÈ9å*9c`9gçú+¢¹¥n;ï#9.#z) ybåyb,9alyå*9æ¡˜\ÙPÛÜœ™XÝ[Û“]™Y»ï":`¨ù¦+ùb)y.®¹.gùg*:+ 9æ¡;ï"BˆÛÛœÝ˜\ÙHH™]ÈZ[\œ˜^JMŠNÂˆÙ[™\˜]P˜\ÙPÛÜœ™XÝ[Û“]
+™^ÜÝ\™K˜ÛÛ˜\Ý˜œšYÚ™\ÜË˜\ÙJNÂˆÛÛœÝÛHÙ]Ý\™S]Ê˜Ý\™\ÊNÂˆ^H˜ZÙYÕ^\™J˜ZÙPÛÛÜ“]
+ˆ
+œË™Ëš
+HOˆ›ØÙ\ÜÔ^[ÊœË™Ëšš[Kš[TÚ^™K˜\ÙK[˜[ÙKÛ
+KˆÜšYˆ
+JNÂˆÛÛœÝØXÚHH˜ZÙPØXÚT™Y‹˜Ý\œ™[ÂˆÊˆ9."ºfd9fæùc`y.ï{ï&Œ:ha¹¯ïºcèH0åÈ9ajyê+¹¨/:nçº`¡9§"zi&:(åxà ¹®ïù.¡¹l,y.'ù§ 9¥êy¥/º`,¹/¡¹æ¡8à ˆ
+‹ÂˆYˆ
+ØXÚKœÚ^™HH
+HÂˆÛÛœÝÛ\ÝHØXÚKšÙ^\Ê
+K›™^
+
+K˜[YNÂˆYˆ
+Û\ÝOOH[™Yš[™Y
+HØXÚK™[]JÛ\Ý
+NÂˆBˆØXÚKœÙ]
+Ù^K^
+NÂˆBˆYˆ
+YËœÙ]]
+^ÜšY
+JH™]\›ˆ˜[ÙNÂˆÛÛœÝÝ]HË™˜]Ê
+NÂˆYˆ
+[Ý]
+H™]\›ˆ˜[ÙNÂˆYˆ
+™YY	‰ˆYËœ™XY[Ê™YY
+JH™]\›ˆ˜[ÙNÂˆYˆ
+\™Ù]ÚYOOHÈ\™Ù]šZYÚOOH
+HÈ\™Ù]ÚYHÎÈ\™Ù]šZYÚHÈBˆÛÛœÝÝH\™Ù]™Ù]ÛÛ^
+	Ì™	ÊNÂˆYˆ
+]Ý
+H™]\›ˆ˜[ÙNÂˆÝ˜ÛX\”™XÝ
+Ë
+NÂˆÝ™˜]Ò[XYÙJÝ]
+NÂˆ™]\›ˆYNÂˆHØ]ÚÂˆ™]\›ˆ˜[ÙNÂˆBˆNÂˆÛÛœÝ^[Y™™\Ø[˜\Ô™YˆH\ÙT™YSØ[˜\Ñ[[Y[[Š[
+NÂ‚ˆÛÛœÝ^žPØXÚU[Y[Ý]™YˆH\ÙT™Y[žOŠ[
+NÂˆÛÛœÝ›Ü˜ÙT™XØ[Ý[]QY™™XÝÔ™YˆH\ÙT™Y›ÛÛX[Š˜[ÙJNÂ‚ˆÛÛœÝ›\ØXÚTÝ]T™YˆH\ÙT™YÂˆÊŠˆ:`&y.ïyoêùcå¹¦+øà#9dê¹. 9o-yáiùâaøà#yë¥ùaî¹/¡¹æ¡8à ‚ˆ9¢nzaãùíê:/+ù¦`¹ajyo-yáiùâaùæ¡9l.¹kî9n.9n.9. 9ª(y. 9ª(øà z`(ùíd9.+yæ¡9càù¥n9.gù. 9ª(ûï#ˆ9l$y.¡º`&y. 9«!9l,y§ ùdoy.+yb)yo-yæ¡9oêùcåˆ8 %8 %9åjúgh¹."¹l,y§ ùaî¹ãï¹.#ylk9¥¯:`&yo-yg%¹æ¡ˆ9aby¦¢;ï#ùª(yìâ»ï#úha¹ì¤»ï"9/cyïk¹k£9aj9l#y.#y."»ï#9fè9à®º`¨ù¦+ùcé¹. 9o-yæ¡9.«º`ê;ï"xà ˆ
+‹ÂˆÜ˜ÎˆÝš[™ÎÂˆÎˆ[X™\ŽÂˆˆ[X™\ŽÂˆ›\Žˆ[X™\ŽÂˆ]YˆÝš[™ÎÂˆœšYÚ™\ÜÎˆ[X™\ŽÂˆ^ÜÝ\™Nˆ[X™\ŽÂˆÛÛ˜\Ýˆ[X™\ŽÂˆYÚYÚÎˆ[X™\ŽÂˆÚYÝÜÎˆ[X™\ŽÂˆ[\ˆ[X™\ŽÂˆ[ˆ[X™\ŽÂˆØ]ˆ[X™\ŽÂˆšXŽˆ[X™\ŽÂˆÛ™TÝŽˆÝš[™ÎÂˆH[Š[
+NÂ‚ˆÛÛœÝÛÙØXÚTÝ]T™YˆH\ÙT™YÂˆÊŠˆ:`&y.ïyoêùcå¹¦+øà#9dê¹. 9o-yáiùâaøà#yë¥ùaî¹/¡¹æ¡8à ‚ˆ9¢nzaãùíê:/+ù¦`¹ajyo-yáiùâaùæ¡9l.¹kî9n.9n.9. 9ª(y. 9ª(øà z`(ùíd9.+yæ¡9càù¥n9.gù. 9ª(ûï#ˆ9l$y.¡º`&y. 9«!9l,y§ ùdoy.+yb)yo-yæ¡9oêùcåˆ8 %8 %9åjúgh¹."¹l,y§ ùaî¹ãï¹.#ylk9¥¯:`&yo-yg%¹æ¡ˆ9aby¦¢;ï#ùª(yìâ»ï#úha¹ì¤»ï"9/cyïk¹k£9aj9l#y.#y."»ï#9fè9à®º`¨ù¦+ùcé¹. 9o-yæ¡9.«º`ê;ï"xà ˆ
+‹ÂˆÜ˜ÎˆÝš[™ÎÂˆÎˆ[X™\ŽÂˆˆ[X™\ŽÂˆÛÙˆ[X™\ŽÂˆÛÙ™\ÚÛˆ[X™\ŽÂˆÛÙ˜Y]\Îˆ[X™\ŽÂˆÛÙÛÛÜŽˆ[X™\ŽÂˆ]YˆÝš[™ÎÂˆœšYÚ™\ÜÎˆ[X™\ŽÂˆ^ÜÝ\™Nˆ[X™\ŽÂˆÛÛ˜\Ýˆ[X™\ŽÂˆYÚYÚÎˆ[X™\ŽÂˆÚYÝÜÎˆ[X™\ŽÂˆ[\ˆ[X™\ŽÂˆ[ˆ[X™\ŽÂˆØ]ˆ[X™\ŽÂˆšXŽˆ[X™\ŽÂˆÛ™TÝŽˆÝš[™ÎÂˆH[Š[
+NÂ‚ˆÛÛœÝ›Ú\ÙLØXÚTÝ]T™YˆH\ÙT™YÂˆÊŠˆ:`&y.ïyoêùcå¹¦+øà#9dê¹. 9o-yáiùâaøà#yë¥ùaî¹/¡¹æ¡8à ‚ˆ9¢nzaãùíê:/+ù¦`¹ajyo-yáiùâaùæ¡9l.¹kî9n.9n.9. 9ª(y. 9ª(øà z`(ùíd9.+yæ¡9càù¥n9.gù. 9ª(ûï#ˆ9l$y.¡º`&y. 9«!9l,y§ ùdoy.+yb)yo-yæ¡9oêùcåˆ8 %8 %9åjúgh¹."¹l,y§ ùaî¹ãï¹.#ylk9¥¯:`&yo-yg%¹æ¡ˆ9aby¦¢;ï#ùª(yìâ»ï#úha¹ì¤»ï"9/cyïk¹k£9aj9l#y.#y."»ï#9fè9à®º`¨ù¦+ùcé¹. 9o-yæ¡9.«º`ê;ï"xà ˆ
+‹ÂˆÜ˜ÎˆÝš[™ÎÂˆÎˆ[X™\ŽÂˆˆ[X™\ŽÂˆÛÛÜ“›Ú\ÙLŽˆ[X™\ŽÂˆ]YˆÝš[™ÎÂˆœšYÚ™\ÜÎˆ[X™\ŽÂˆ^ÜÝ\™Nˆ[X™\ŽÂˆÛÛ˜\Ýˆ[X™\ŽÂˆYÚYÚÎˆ[X™\ŽÂˆÚYÝÜÎˆ[X™\ŽÂˆ[\ˆ[X™\ŽÂˆ[ˆ[X™\ŽÂˆØ]ˆ[X™\ŽÂˆšXŽˆ[X™\ŽÂˆÛ™TÝŽˆÝš[™ÎÂˆH[Š[
+NÂ‚ˆÛÛœÝ[][ÛØXÚTÝ]T™YˆH\ÙT™YÂˆÊŠˆ:`&y.ïyoêùcå¹¦+øà#9dê¹. 9o-yáiùâaøà#yë¥ùaî¹/¡¹æ¡8à ‚ˆ9¢nzaãùíê:/+ù¦`¹ajyo-yáiùâaùæ¡9l.¹kî9n.9n.9. 9ª(y. 9ª(øà z`(ùíd9.+yæ¡9càù¥n9.gù. 9ª(ûï#ˆ9l$y.¡º`&y. 9«!9l,y§ ùdoy.+yb)yo-yæ¡9oêùcåˆ8 %8 %9åjúgh¹."¹l,y§ ùaî¹ãï¹.#ylk9¥¯:`&yo-yg%¹æ¡ˆ9aby¦¢;ï#ùª(yìâ»ï#úha¹ì¤»ï"9/cyïk¹k£9aj9l#y.#y."»ï#9fè9à®º`¨ù¦+ùcé¹. 9o-yæ¡9.«º`ê;ï"xà ˆ
+‹ÂˆÜ˜ÎˆÝš[™ÎÂˆÎˆ[X™\ŽÂˆˆ[X™\ŽÂˆœš[™ÙR[[œÚ]Nˆ[X™\ŽÂˆœš[™ÙTÚ^™Nˆ[X™\ŽÂˆœš[™ÙQ™X]\Žˆ[X™\ŽÂˆœš[™ÙRYNˆ[X™\ŽÂˆ]YˆÝš[™ÎÂˆœšYÚ™\ÜÎˆ[X™\ŽÂˆ^ÜÝ\™Nˆ[X™\ŽÂˆÛÛ˜\Ýˆ[X™\ŽÂˆYÚYÚÎˆ[X™\ŽÂˆÚYÝÜÎˆ[X™\ŽÂˆ[\ˆ[X™\ŽÂˆ[ˆ[X™\ŽÂˆØ]ˆ[X™\ŽÂˆšXŽˆ[X™\ŽÂˆÛ™TÝŽˆÝš[™ÎÂˆH[Š[
+NÂ‚‚ˆËÈ‹‹ˆ
+Ù]Ý\™S]Ë\ÙQY™™XÝ™YœËYÒ\ÝÜžK[™Ë™YËØY]H›ÈÚ[™Ù\ÊBˆÛÛœÝÙ]Ý\™S]ÈH
+Ý\™\ÎˆÝ\™\ÊHOˆÂˆÛÛœÝÈH”ÓÓ‹œÝš[™ÚYžJÝ\™\ÊNÂˆYˆ
+ÈOOH\ÝÝ\™S]Ý”™Y‹˜Ý\œ™[XÝ\™S]ÐØXÚT™Y‹˜Ý\œ™[
+HÂˆÝ\™S]ÐØXÚT™Y‹˜Ý\œ™[HÂˆ™ØŽˆÙ[™\˜]PÝ\™S]
+Ý\™\Ëœ™ØŠKˆŽˆÙ[™\˜]PÝ\™S]
+Ý\™\ËœŠKˆÎˆÙ[™\˜]PÝ\™S]
+Ý\™\Ë™ÊKˆŽˆÙ[™\˜]PÝ\™S]
+Ý\™\Ë˜ŠBˆNÂˆ\ÝÝ\™S]Ý”™Y‹˜Ý\œ™[HÎÂˆBˆ™]\›ˆÝ\™S]ÐØXÚT™Y‹˜Ý\œ™[ÂˆNÂ‚ˆÝ\™S]Ñ›”™Y‹˜Ý\œ™[HÙ]Ý\™S]ÎÂ‚ˆËÈ9d"9/my§'úe¤ù.âúgh¹æ¡9càù¥n9mì¹í¤ù«n:fí»ï#9/a¹åjúghº) yí«y£ yc§ùª(ûï#9¢`9.éz`&y¦`¹`&y.#z) y¢¢¹k ùd#9«iz`,¹îj¹g%¹å*9æ¡™Y‚ˆ\ÙQY™™XÝ
+
+
+HOˆÂˆYˆ
+Y\™ÙQœ™Y^™T™Y‹˜Ý\œ™[
+H™]\›ŽÂˆ\˜[\Ô™Y‹˜Ý\œ™[H\˜[\ÎÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆKÜ\˜[\×JNÂˆÊˆ:`&z(èy.éybcz`¡9§ úh!¹¢bù¢¢ˆ\Ñ\T™Yˆ:*+y¢$Yxà ¹¢ïù£¢y.¡ˆ8 %8 %ˆ9îj¹g%º/í9g"9§+9/¡¹l,y§ ùe«¹ãj9«å9l#xà#:`&y. 9n`:) zhkùé.¹c§ùg%¹eã¸à#z-çù."¹. 9n`9.#yd#9l,zaãyåjûï#ˆ9.#zg :) zgh:jä¹¥åùª&xà º #9.%9£¦ú$eújä¹¥åùª&y§ ú+¤ú/í9g"9b!¹.#yaî¸à#9/oùå*: !y£"y.¡¹bcyo£9l#y«å8à#Bˆ:-çøà#9åjúgh¹ç'ùæ¡9§"y§lz)oú+¢¹.¡¸à#{ï#9¥/ºe¢ù£"zb%y¦`¹l,y¬¤º/©¹¬åyæí9£©y¢¢¹£"y."ùc®ù.bùbcz`¨ùo-z,¯9fç¹/¡‚ˆ;ï":)¢ù."úghˆÛÛ\\™TÛ˜\™Yˆ:`¨ù. 9«­{ï"xà ˆ
+‹Âˆ\ÙQY™™XÝ
+
+
+HOˆÈÚÝÓÜšYÚ[˜[™Y‹˜Ý\œ™[HÚÝÓÜšYÚ[˜[ÈKÜÚÝÓÜšYÚ[˜[JNÂ‚ˆËÈ]]Ë\ØÜ›ÛÈÙ[XÝYš[\ˆÚ[ˆÝÚ]Ú[™È˜XÚÈÈš[\ˆØ]YÛÜžBˆËÈ9å*\ÙS^[Ý]Y™™XÝ;ï&¹g*9åjùaî¹/¡¹.bùbcyl,y¢¢¹£l¹båy/cyïkº*+yio{ï#9¢cy.#y§ ùab:e ù. 9."ù§ 9bczgh‚ˆ\ÙS^[Ý]Y™™XÝ
+
+
+HOˆÂˆÛÛœÝÛÛZ[™\ˆHÛÛÔØÜ›Û™Y‹˜Ý\œ™[ÂˆYˆ
+ÛÛZ[™\ŠHÂˆYˆ
+XÝ]™PØ]YÛÜžHOOH	Ùš[\‰ÊHÂˆÛÛœÝ][UÚYHÈËÈËLŒ
+\™[JBˆÛÛœÝØ\HMŽÈËÈØ\M
+\™[JBˆÛÛœÝY[™ÈHMŽÈËÈM
+\™[JB‚ˆÛÛœÝ][PÙ[\ˆHY[™È
+È
+][UÚY
+ÈØ\
+H
+ˆÙ[XÝY]Y
+È][UÚYÈŽÂˆÛÛœÝØÜ›ÛYH][PÙ[\ˆHÛÛZ[™\‹˜ÛY[ÚYÈŽÂ‚ˆÛÛZ[™\‹œØÜ›ÛÊÈYˆØÜ›ÛY™Z]š[ÜŽˆ	Ø]]ÉÈJNÂˆH[ÙHYˆ
+XÝ]™PØ]YÛÜžHOOH	ÙY™™XÝÉÈ	‰ˆ˜XÚÑœ›ÛQž™Y‹˜Ý\œ™[
+HÂˆ˜XÚÑœ›ÛQž™Y‹˜Ý\œ™[H˜[ÙNÂˆÊˆ9o§¹§ä9`"ùâny¥b9æ¡9í,:h!z` 9fç¹/¡¹¦`»ï#9¢¢¸à#9bfùbfùg*9íê:/+ùæ¡:`¨ù. :ha¸à#y¤î¹fç¹åjúgh¹.+ze¤øà ‚ˆ9.#yæí9£©z`¡9c§ÈØÜ›ÛY8 %8 %:` 9fç¹/¡¹æ¡:`¨ù. 9ç«:e¤úaãùb,9æ¡9cëù£lº-çzfèº`¡9¦+ùí,:h!yb%Âˆ;ï"9«å:/ ùçë{ï"yæ¡;ï#:*+z`,¹c®ù§ ú(ªùi/¹¢$È9.búhg¹æ¡9`/;ï#9ëby¥¯:`¡9¦+ú-ìùfç¹§ 9bczgh¸à ‚ˆ9l#y®¥¹£"zb%y§+:.ªùl,y¬¤¹§"z`&y`"ùecúhc;ï#: #9.%9fç¹/¡¹¦`¹bfùioy`g9g*9/h9bfùíê:/+ùæ¡9âny¥b9."¸à ˆ
+‹ÂˆÛÛœÝ\™Ù]HÛÛZ[™\‹œ]Y\žTÙ[XÝÜS[[Y[ŠÙ]KYž]ÛÛH‰ØXÝ]™UÛÛYH—X
+NÂˆÛÛœÝÙ[\ˆH
+
+HOˆÂˆÛÛœÝ[HÛÛZ[™\‹œ]Y\žTÙ[XÝÜS[[Y[ŠÙ]KYž]ÛÛH‰ØXÝ]™UÛÛYH—X
+NÂˆYˆ
+Y[
+H™]\›ŽÂˆÛÛZ[™\‹œØÜ›ÛYH[›Ù™œÙ]YHÛÛZ[™\‹˜ÛY[ÚYÈˆ
+È[›Ù™œÙ]ÚYÈŽÂˆNÂˆÙ[\Š
+NÂˆYˆ
+]\™Ù]
+H™\]Y\Ý[š[X][Û‘œ˜[YJÙ[\ŠNÂˆH[ÙHÂˆÛÛZ[™\‹œØÜ›ÛYHÂˆBˆBˆKØXÝ]™PØ]YÛÜžWJNÈËÈÛ›HšYÙÙ\ˆÛˆØ]YÛÜžHÝÚ]Ú‚ˆËÈ›Ü˜ÙHÛÜÙHÜˆÜ[ˆHX\ÚÈÝ™\›^H\[™[™ÈÛˆXÝ]™PØ]YÛÜžBˆ\ÙQY™™XÝ
+
+
+HOˆÂˆYˆ
+XÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÊHÂˆYˆ
+\˜[\Ô™Y‹˜Ý\œ™[›X\ÚÐÜ™X]Y	‰ˆ\\˜[\Ô™Y‹˜Ý\œ™[›X\ÚÔÚÝÓÝ™\›^JHÂˆÙ]\˜[\Ê™]ˆOˆ
+È‹‹œ™]‹X\ÚÔÚÝÓÝ™\›^NˆYHJJNÂˆBˆH[ÙHÂˆYˆ
+\˜[\Ô™Y‹˜Ý\œ™[›X\ÚÔÚÝÓÝ™\›^JHÂˆÙ]\˜[\Ê™]ˆOˆ
+È‹‹œ™]‹X\ÚÔÚÝÓÝ™\›^Nˆ˜[ÙHJJNÂˆBˆBˆKØXÝ]™PØ]YÛÜžWJNÂ‚ˆÛÛœÝYÒ\ÝÜžHH\ÙPØ[˜XÚÊ
+ˆˆY]Ü”\˜[\ËˆYˆ[X™\‹ˆXÝ]™TÛÙÎˆ›ÛÛX[‹ˆXÝ]™P›\Îˆ›ÛÛX[‹ˆXÝ]™QÜ˜Z[Îˆ›ÛÛX[‹ˆXÝ]™R[][ÛÎˆ›ÛÛX[‹ˆX[”ÛÙÎˆ›ÛÛX[‹ˆX[›\Îˆ›ÛÛX[‹ˆX[‘Ü˜Z[Îˆ›ÛÛX[‹ˆX[’[][ÛÎˆ›ÛÛX[‚ˆ
+HOˆÂˆÛÛœÝÐXÝ]™HHXÝ]™TÛÙOOH[™Yš[™YÈXÝ]™TÛÙˆ\ÔÛÙXÝ]™NÂˆÛÛœÝXÝ]™HHXÝ]™P›\ˆOOH[™Yš[™YÈXÝ]™P›\ˆˆ\Ð›\XÝ]™NÂˆÛÛœÝÐXÝ]™HHXÝ]™QÜ˜Z[ˆOOH[™Yš[™YÈXÝ]™QÜ˜Z[ˆˆ\ÑÜ˜Z[XÝ]™NÂˆÛÛœÝXÝ]™HHXÝ]™R[][ÛˆOOH[™Yš[™YÈXÝ]™R[][Ûˆˆ\Ò[][ÛXÝ]™NÂˆÛÛœÝÓX[ˆHX[”ÛÙOOH[™Yš[™YÈX[”ÛÙˆÛÙX[X[PY\ÝYÂˆÛÛœÝ“X[ˆHX[›\ˆOOH[™Yš[™YÈX[›\ˆˆ›\“X[X[PY\ÝYÂˆÛÛœÝÓX[ˆHX[‘Ü˜Z[ˆOOH[™Yš[™YÈX[‘Ü˜Z[ˆˆÜ˜Z[“X[X[PY\ÝYÂˆÛÛœÝX[ˆHX[’[][ÛˆOOH[™Yš[™YÈX[’[][Ûˆˆ[][Û“X[X[PY\ÝYÂˆˆÛÛœÝÝ\œ™[][HH\ÝÜžT™Y‹˜Ý\œ™[Ú\ÝÜžRY™Y‹˜Ý\œ™[NÂˆYˆ
+Ý\œ™[][H	‰ˆˆÝ\œ™[][KœÙ[XÝY]YOOHY	‰ˆˆ”ÓÓ‹œÝš[™ÚYžJÝ\œ™[][Kœ\˜[\ÊHOOH”ÓÓ‹œÝš[™ÚYžJ
+H	‰‚ˆÝ\œ™[][Kš\ÔÛÙXÝ]™HOOHÐXÝ]™H	‰‚ˆÝ\œ™[][Kš\Ð›\XÝ]™HOOHXÝ]™H	‰‚ˆÝ\œ™[][Kš\ÑÜ˜Z[XÝ]™HOOHÐXÝ]™H	‰‚ˆÝ\œ™[][Kš\Ò[][ÛXÝ]™HOOHXÝ]™H	‰‚ˆÝ\œ™[][KœÛÙX[X[PY\ÝYOOHÓX[ˆ	‰‚ˆÝ\œ™[][K˜›\“X[X[PY\ÝYOOH“X[ˆ	‰‚ˆÝ\œ™[][K™Ü˜Z[“X[X[PY\ÝYOOHÓX[ˆ	‰‚ˆÝ\œ™[][Kš[][Û“X[X[PY\ÝYOOHX[ˆ	‰‚ˆ”ÓÓ‹œÝš[™ÚYžJÝ\œ™[][K™Ù[ÈQUSÑÑSÊHOOH”ÓÓ‹œÝš[™ÚYžJÙ[Ô™Y‹˜Ý\œ™[
+H	‰‚ˆ”ÓÓ‹œÝš[™ÚYžJÝ\œ™[][KœÜ˜ÜÈÜ˜Ó\Ý™Y‹˜Ý\œ™[
+HOOH”ÓÓ‹œÝš[™ÚYžJÜ˜Ó\Ý™Y‹˜Ý\œ™[
+Bˆ
+HÂˆ™]\›ŽÂˆBˆÂˆÛÛœÝ\ÚYH\Ú\ÝÜžQ[žJ\ÝÜžT™Y‹˜Ý\œ™[\ÝÜžRY™Y‹˜Ý\œ™[Âˆ\˜[\Îˆ”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJ
+JKˆÙ[XÝY]YˆYˆÙ[Îˆ”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJÙ[Ô™Y‹˜Ý\œ™[
+JKˆ\ÔÛÙXÝ]™NˆÐXÝ]™Kˆ\Ð›\XÝ]™NˆXÝ]™Kˆ\ÑÜ˜Z[XÝ]™NˆÐXÝ]™Kˆ\Ò[][ÛXÝ]™NˆXÝ]™KˆÛÙX[X[PY\ÝYˆÓX[‹ˆ›\“X[X[PY\ÝYˆ“X[‹ˆÜ˜Z[“X[X[PY\ÝYˆÓX[‹ˆ[][Û“X[X[PY\ÝYˆX[‹ˆÜ˜ÜÎˆË‹‹œÜ˜Ó\Ý™Y‹˜Ý\œ™[BˆJNÂˆÊˆ9."ºfd9.©9íiˆ\Ú\ÝÜžQ[žH9ë¨{ï&¹åfyb,L9¨/;ï#9ë+9¨/;ï"9c§ùg%¹æ¡9ª(ùkd;ï"y¬.:`h9åfz$eøà ‚ˆÜ˜ÜÈ9¦+ùkeù.,ºfhùb%ùæ¡9­î¹¢íú,§{ï#9keù.,¹§+:.ªùalyå*9d#9. 9.ï{ï#9¢`9.éy. 9¨/9o¢9/¯ùk§8à ˆ
+‹ÂˆÜš]R\ÝÜžJ\ÚYš\ÝÜžK\ÚYš[™^
+NÂˆBˆKÚ\ÝÜžR[™^\ÝÜžK\ÔÛÙXÝ]™K\Ð›\XÝ]™K\ÑÜ˜Z[XÝ]™K\Ò[][ÛXÝ]™KÛÙX[X[PY\ÝY›\“X[X[PY\ÝYÜ˜Z[“X[X[PY\ÝY[][Û“X[X[PY\ÝYJNÂ‚ˆÛÛœÝ[™ÈH
+
+HOˆÂˆYˆ
+\ÝÜžRY™Y‹˜Ý\œ™[ˆ
+HÂˆÛÛœÝ™]ˆH\ÝÜžT™Y‹˜Ý\œ™[Ú\ÝÜžRY™Y‹˜Ý\œ™[HWNÂˆÙ]\˜[\Ê”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJ™]‹œ\˜[\ÊJJNÂˆÙ]Ù[XÝY]Y
+™]‹œÙ[XÝY]Y
+NÂˆYˆ
+™]‹š\ÔÛÙXÝ]™HOOH[™Yš[™Y
+HÙ]\ÔÛÙXÝ]™J™]‹š\ÔÛÙXÝ]™JNÂˆYˆ
+™]‹š\Ð›\XÝ]™HOOH[™Yš[™Y
+HÙ]\Ð›\XÝ]™J™]‹š\Ð›\XÝ]™JNÂˆYˆ
+™]‹š\ÑÜ˜Z[XÝ]™HOOH[™Yš[™Y
+HÙ]\ÑÜ˜Z[XÝ]™J™]‹š\ÑÜ˜Z[XÝ]™JNÂˆYˆ
+™]‹š\Ò[][ÛXÝ]™HOOH[™Yš[™Y
+HÙ]\Ò[][ÛXÝ]™J™]‹š\Ò[][ÛXÝ]™JNÂˆYˆ
+™]‹œÛÙX[X[PY\ÝYOOH[™Yš[™Y
+HÙ]ÛÙX[X[PY\ÝY
+™]‹œÛÙX[X[PY\ÝY
+NÂˆYˆ
+™]‹˜›\“X[X[PY\ÝYOOH[™Yš[™Y
+HÙ]›\“X[X[PY\ÝY
+™]‹˜›\“X[X[PY\ÝY
+NÂˆYˆ
+™]‹™Ü˜Z[“X[X[PY\ÝYOOH[™Yš[™Y
+HÙ]Ü˜Z[“X[X[PY\ÝY
+™]‹™Ü˜Z[“X[X[PY\ÝY
+NÂˆYˆ
+™]‹š[][Û“X[X[PY\ÝYOOH[™Yš[™Y
+HÙ][][Û“X[X[PY\ÝY
+™]‹š[][Û“X[X[PY\ÝY
+NÂˆÊˆ9d"9/mz`¨ù. 9«iy£æù£¢y.¡¹/¡¹®¤9g%»ï#9¤©:b­ú) z`(ù/¡¹®¤9. :-mú` 9fç¹c®È8 %8 %ˆ9cê¹fç¹oªycàù¥n9æ¡:*l{ï#9àé:`,¹c®ùæ¡:`¨ù. 9li:`¡9åfyg*9g%¹."¸à ‚ˆ9/¡¹®¤9£æùfç¹c®ù.bùo£9no¹/ey¦+ú""º`¨ùo-z!ê¹mìyæ¡;ï#9.#yå*9a£yieù. 9«(y©âùg%¸à ˆ
+‹ÂˆÛÛœÝ™]”Ü˜ÜÈH™]‹œÜ˜ÜÎÂˆÛÛœÝÝØ\YHH\™]”Ü˜ÜÈ	‰ˆ”ÓÓ‹œÝš[™ÚYžJ™]”Ü˜ÜÊHOOH”ÓÓ‹œÝš[™ÚYžJÜ˜Ó\Ý™Y‹˜Ý\œ™[
+NÂˆÛÛœÝ™]‘Ù[ÈH™]‹™Ù[ÈQUSÑÑSÎÂˆYˆ
+ÝØ\Y
+HÂˆÊˆ9£æù/¡¹®¤9¦`¹no¹/ez) yab9¤î¹io{ï&¹íêz(gyc`9¦+ùáiÈÙ[Ô™Yˆ:aãynî¹æ¡;ï#ˆ:h!¹n£ùcãz`c¹/¡¹æ¡:*ly§ ùab:aãynî¹. 9«(y¬¤º(àyb!ùæ¡;ï#9a£zaãynî¹. 9«(z(àyb!ùæ¡;ï"9åjúghºe ùajy."ûï"xà ˆ
+‹ÂˆÙ[Ô™Y‹˜Ý\œ™[H”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJ™]‘Ù[ÊJNÂˆÙ]Ù[ÊÙ[Ô™Y‹˜Ý\œ™[
+NÂˆÜ˜Ó\Ý™Y‹˜Ý\œ™[HË‹‹œ™]”Ü˜ÜÈWNÂˆÝØ\ÔÜ˜ÊË‹‹œ™]”Ü˜ÜÈWJNÂˆH[ÙHYˆ
+”ÓÓ‹œÝš[™ÚYžJ™]‘Ù[ÊHOOH”ÓÓ‹œÝš[™ÚYžJÙ[Ô™Y‹˜Ý\œ™[
+JHÂˆ\QÙ[Ô™Y‹˜Ý\œ™[
+™]‘Ù[ÊNÂˆBˆÜš]R\ÝÜžJ\ÝÜžT™Y‹˜Ý\œ™[\ÝÜžRY™Y‹˜Ý\œ™[HJNÂˆBˆNÂ‚ˆÛÛœÝ™YÈH
+
+HOˆÂˆYˆ
+\ÝÜžRY™Y‹˜Ý\œ™[\ÝÜžT™Y‹˜Ý\œ™[›[™ÝHJHÂˆÛÛœÝ™^H\ÝÜžT™Y‹˜Ý\œ™[Ú\ÝÜžRY™Y‹˜Ý\œ™[
+ÈWNÂˆÙ]\˜[\Ê”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJ™^œ\˜[\ÊJJNÂˆÙ]Ù[XÝY]Y
+™^œÙ[XÝY]Y
+NÂˆYˆ
+™^š\ÔÛÙXÝ]™HOOH[™Yš[™Y
+HÙ]\ÔÛÙXÝ]™J™^š\ÔÛÙXÝ]™JNÂˆYˆ
+™^š\Ð›\XÝ]™HOOH[™Yš[™Y
+HÙ]\Ð›\XÝ]™J™^š\Ð›\XÝ]™JNÂˆYˆ
+™^š\ÑÜ˜Z[XÝ]™HOOH[™Yš[™Y
+HÙ]\ÑÜ˜Z[XÝ]™J™^š\ÑÜ˜Z[XÝ]™JNÂˆYˆ
+™^š\Ò[][ÛXÝ]™HOOH[™Yš[™Y
+HÙ]\Ò[][ÛXÝ]™J™^š\Ò[][ÛXÝ]™JNÂˆYˆ
+™^œÛÙX[X[PY\ÝYOOH[™Yš[™Y
+HÙ]ÛÙX[X[PY\ÝY
+™^œÛÙX[X[PY\ÝY
+NÂˆYˆ
+™^˜›\“X[X[PY\ÝYOOH[™Yš[™Y
+HÙ]›\“X[X[PY\ÝY
+™^˜›\“X[X[PY\ÝY
+NÂˆYˆ
+™^™Ü˜Z[“X[X[PY\ÝYOOH[™Yš[™Y
+HÙ]Ü˜Z[“X[X[PY\ÝY
+™^™Ü˜Z[“X[X[PY\ÝY
+NÂˆYˆ
+™^š[][Û“X[X[PY\ÝYOOH[™Yš[™Y
+HÙ][][Û“X[X[PY\ÝY
+™^š[][Û“X[X[PY\ÝY
+NÂˆÛÛœÝ™^Ü˜ÜÈH™^œÜ˜ÜÎÂˆÛÛœÝÝØ\YHH[™^Ü˜ÜÈ	‰ˆ”ÓÓ‹œÝš[™ÚYžJ™^Ü˜ÜÊHOOH”ÓÓ‹œÝš[™ÚYžJÜ˜Ó\Ý™Y‹˜Ý\œ™[
+NÂˆÛÛœÝ™^Ù[ÈH™^™Ù[ÈQUSÑÑSÎÂˆYˆ
+ÝØ\Y
+HÂˆÙ[Ô™Y‹˜Ý\œ™[H”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJ™^Ù[ÊJNÂˆÙ]Ù[ÊÙ[Ô™Y‹˜Ý\œ™[
+NÂˆÜ˜Ó\Ý™Y‹˜Ý\œ™[HË‹‹›™^Ü˜ÜÈWNÂˆÝØ\ÔÜ˜ÊË‹‹›™^Ü˜ÜÈWJNÂˆH[ÙHYˆ
+”ÓÓ‹œÝš[™ÚYžJ™^Ù[ÊHOOH”ÓÓ‹œÝš[™ÚYžJÙ[Ô™Y‹˜Ý\œ™[
+JHÂˆ\QÙ[Ô™Y‹˜Ý\œ™[
+™^Ù[ÊNÂˆBˆÜš]R\ÝÜžJ\ÝÜžT™Y‹˜Ý\œ™[\ÝÜžRY™Y‹˜Ý\œ™[
+ÈJNÂˆBˆNÂ‚ˆÊˆ9¢¢¹. :ha¹¯ïºcèyæ¡9§éz"lº(j9®¥¹`¦yio{ï"9."ú/"{ï#ú)èùè¯;ï#ù¥-º`,¹§+9ªgûï"xà ‚ˆ:nç¹¯ïºcèz-çú ã9¦kúh$:/"z-l9d#9. 9¥+È8 %8 %9ajz`¢¹d!9kêù. 9.ïyæ¡:*l{ï#:h$:/"z`¨ù.ïy.#y§ ùecù§+9ªgùoêùcå»ï#ˆ:aãze¢È\9l,ycâ9¥m9¢nzaãy¥¬9."ú/"y. 9«(xà ˆ
+‹ÂˆÛÛœÝ[œÝ\™S]]HH\ÙPØ[˜XÚÊ\Þ[˜È
+]ˆÈYˆÝš[™ÎÈ\›ˆÝš[™ÈJHOˆÂˆYˆ
+[]\›]]T™Y‹˜Ý\œ™[Û]šYJH™]\›ŽÂˆYˆ
+[ØY[™Ô›ÛZ\Ù\Ô™Y‹˜Ý\œ™[Û]šYJHÂˆØY[™Ô›ÛZ\Ù\Ô™Y‹˜Ý\œ™[Û]šYHH
+\Þ[˜È
+
+HOˆÂˆËÈ9ab9ecù§+9ªgûï&¹.éybcz)èú`c¹æ¡:(j9æí9£©z+ 9fç¹/¡»ï#9.#yå*9."ú/"y.gù.#yå*:aãy¥¬:)èùè¯:aãy£¤‚ˆÛÛœÝØXÚYH]ØZ]ØYØXÚY]
+]šY]\›
+NÂˆYˆ
+ØXÚY
+HÂˆ]]T™Y‹˜Ý\œ™[Û]šYHHØXÚYÂˆÙ]]™XYUXÚÊOˆ
+ÈJNÂˆ™]\›ŽÂˆBˆ™]\›ˆ™]È›ÛZ\ÙO›ÚYŠ
+™\ÛÛ™JHOˆÂˆÛÛœÝ[YÈH™]È[XYÙJ
+NÂˆ[YË˜Ü›ÜÜÓÜšYÚ[ˆH˜[›Ûž[[Ý\ÈŽÂˆ[YË›Û›ØYH
+
+HOˆÂˆÛÛœÝÚ^™HH[YËÚYOOH[YËšZYÚÈ[YËÚYÈˆÂˆÛÛœÝÚ^™LˆHÚ^™H
+ˆÚ^™NÂˆÛÛœÝÈHØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊNÂˆËÚYH[YËÚYÈËšZYÚH[YËšZYÚÂˆÛÛœÝÝHË™Ù]ÛÛ^
+	Ì™	ËÈÚ[™XYœ™\]Y[NˆYHJHNÂˆÝ™˜]Ò[XYÙJ[YË
+NÂˆÛÛœÝ]HHÝ™Ù][XYÙQ]J[YËÚY[YËšZYÚ
+K™]NÂˆÛÛœÝ]]HH™]ÈZ[Û[\Y\œ˜^JÚ^™H
+ˆÚ^™H
+ˆÚ^™H
+ˆÊNÂˆ›Üˆ
+]ˆHÈˆÚ^™NÈŠÊÊHÂˆ›Üˆ
+]ÈHÈÈÚ^™NÈÊÊÊHÂˆ›Üˆ
+]ˆHÈˆÚ^™NÈŠÊÊHÂˆÛÛœÝ›ØÚÖH
+ˆ	H
+H
+ˆÚ^™NÈÛÛœÝ›ØÚÖHH
+ˆÈ
+H
+ˆÚ^™NÂˆÛÛœÝYH
+
+›ØÚÖH
+ÈÊH
+ˆ[YËÚY
+È
+›ØÚÖ
+ÈŠJH
+ˆÂˆÛÛœÝ]YH
+ˆ
+ˆÚ^™Lˆ
+ÈÈ
+ˆÚ^™H
+ÈŠH
+ˆÎÂˆ]]VÛ]YHH]VÜYNÈ]]VÛ]Y
+ÈWHH]VÜY
+ÈWNÈ]]VÛ]Y
+È—HH]VÜY
+È—NÂˆBˆBˆBˆ]]T™Y‹˜Ý\œ™[Û]šYHHÈ]Nˆ]]KÚ^™HNÂˆÙ]]™XYUXÚÊOˆ
+ÈJNÂˆØ]™PØXÚY]
+]šY]\›]]KÚ^™JNÈËÈ9¥-º`,¹§+9ªgûï#9."ù«(y.#yå*9a£z)èù. 9«(Bˆ™\ÛÛ™J
+NÂˆNÂˆ[YË›Û™\œ›ÜˆH
+
+HOˆ™\ÛÛ™J
+NÂˆ[YËœÜ˜ÈH]\›ÂˆJNÂˆJJ
+NÂˆBˆ]ØZ]ØY[™Ô›ÛZ\Ù\Ô™Y‹˜Ý\œ™[Û]šYNÂˆK×JNÂ‚ˆÛÛœÝØY]H\ÙPØ[˜XÚÊ\Þ[˜È
+Yˆ[X™\ŠHOˆÂˆÛÛœÝ]H]\ÝÚYNÂˆYˆ
+]\›	‰ˆ[]]T™Y‹˜Ý\œ™[Û]šYJHÂˆÙ]ØY[™Ó]Y
+]šY
+NÂˆ]ØZ][œÝ\™S]]J]
+NÂˆ[™[™Ó]Z[™Y‹˜Ý\œ™[H]šYÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆBˆKÛ]\Ý[œÝ\™S]]WJNÂ‚ˆËÈXYÙ\›H™[ØY[UÈ[ˆH˜XÚÙÜ›Ý[™Ù\]Y[X[HÈ[œÝ\™H[œÝ[š[\ˆÝÚ]Ú[™ÈÚ]Ý]ÛÙÙÚ[™È™]ÛÜšÂˆ\ÙQY™™XÝ
+
+
+HOˆÂˆËÈ9¢bù£!ú`¡9g*9®äy¨où."¹l,yab9`g8 %8 %:)èù. :ha¹¯ïºcèz) z-äH0¬È9«(z/í9g";ï#9¦+ù. 9¥m9hb¹d#9«iz`bùë¥ûï#ˆËÈ9£¤¹g*9¢å¹¦ìù.+ze¤ùl,y¦+ù. 9«(y£¢y¨/8à ¹¥/ºe¢ù¢bù.bùo£:`&y. :/*¹§ úaãz-ä{ï#:/"z`c¹æ¡9§ ùæí9£©z-ìú`c»ï#9.#y§ ùæoy`f¸à ‚ˆYˆ
+\Ò[\˜XÝ[™ÊH™]\›ŽÂˆ]XÝ]™HHYNÂˆÛÛœÝ™[ØYH\Þ[˜È
+
+HOˆÂˆ›Üˆ
+]HHÈH]\Ý›[™ÝÈJÊÊHÂˆYˆ
+XXÝ]™JHœ™XZÎÂˆÛÛœÝ]H]\ÝÚWNÂˆYˆ
+[]\›]]T™Y‹˜Ý\œ™[Û7ï]7¶‰žËkºwµçY˜]Ò[XYÙJËËš
+NÂˆÛÛœÝ‘]HH˜Ý™Ù][XYÙQ]JËš
+K™]NÂˆÛÛœÝ“[ˆH‘]K›[™ÝÂˆY™™\œË˜Ý\œ™[™˜\ÝHÂˆÛÝ\˜ÙNˆ‘]Kˆ\Ýˆ™]ÈZ[Û[\Y\œ˜^J“[ŠKˆÚ\™Yˆ™]ÈZ[Û[\Y\œ˜^J“[ŠKˆ]Yˆ™]ÈZ[Û[\Y\œ˜^J“[ŠKˆ]ˆ™]ÈZ[Û[\Y\œ˜^J“[ŠKˆ]Lˆ™]ÈZ[Û[\Y\œ˜^J“[ŠKˆ[\ˆ™]ÈZ[Û[\Y\œ˜^J“[ŠKˆÚ\œ[‘]Z[ˆ[ˆÎˆËˆšˆNÂˆB‚ˆËÈ9íêz(gyc`9£æù.®¹.¡»ï#9¢`9§"z-çøà#9."¹. 9.ïy`ãùí(8à#yí yg*9. :-mùæ¡9oêùcå¹. 9o¢ù/g9nè¸à ‚ˆËÈ:`&y.í¹.¢ù. 9k¦º) yg*:`&z(èy`f»ï#9.#z ïycê¹g*:/"yaiyæ¡Y™™XÝ:(èy`fˆ8 %8 %9g%¹âaù¦+úgg¹d#9«iz)èùè¯9æ¡;ï#ˆËÈ9.+ze¤ùcëú ïymì¹í¤ùå*:""¹íêz(gyc`9åjú`c¹. :/*»ï#9¢¢º""¹áiùâaùæ¡9`ãùí(9kêùfçº`¨ù.¦ùoêùcåº(èxà ‚ˆYˆ
+[š]X[
+HÂˆš[\”^[ØXÚT™Y‹˜Ý\œ™[HßNÈØXÚSÜ™\”™Y‹˜Ý\œ™[H×NÂˆ\Ý›ØÙ\ÜÙY\˜[\Ô™Y‹˜Ý\œ™[HÈ‹‹›\Ý›ØÙ\ÜÙY\˜[\Ô™Y‹˜Ý\œ™[Y™™\•ÚYˆÝ\™\Ô™YŽˆ[Û™YŽˆ[Ù[XÝY]YˆLHNÂˆ^™[YPY™™\œÔ™Y‹˜Ý\œ™[HÈXÝ]™UÛÛYˆ	ÉË˜\ÙNˆ[Z[Žˆ[X^ˆ[NÂˆ˜\Ý™]šY]ÐØXÚT™Y‹˜Ý\œ™[˜XÝ]™HH˜[ÙNÂˆ]Ý]T™Y‹˜Ý\œ™[HßNÂˆ]Ø[˜\Ô™Y‹˜Ý\œ™[H[Âˆ]LØ[˜\Ô™Y‹˜Ý\œ™[H[ÂˆBˆYˆ
+Ø\›RÙ^JHÈY™™\œÔÜ˜Ô™Y‹˜Ý\œ™[HØ\›RÙ^NÈÙ]Y™™\œÕXÚÊOˆ
+ÈJNÈBˆÊˆ:`&yo-y¦+ùc§ùg%»ï"9.#y¦+ùd"9/myaî¹/¡¹æ¡;ï"y¢cyåfyn¥{ï&¹åfyæ¡9¦+úh$:)¯yl.¹kî:`¨ù. 9.ï{ï#ˆ9bcyo£9l#y«å9cê¹¦+ù¢ïù/¡¹ç"ùæ¡;ï#9.#zg :) yc§ùiâú)èù§¤9n©¸à ˆ
+‹ÂˆYˆ
+Ø\›RÙ^H	‰ˆ][X“ÜšYÚ[”™Y‹˜Ý\œ™[ÝØ\›RÙ^WH	‰ˆ\š\Ý[™SÙŠØ\›RÙ^JJHÂˆÛÛœÝÙY\HØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊNÂˆÙY\ÚYHÎÈÙY\šZYÚHÂˆÙY\™Ù]ÛÛ^
+	Ì™	ÊHK™˜]Ò[XYÙJË
+NÂˆš\Ý[™T™Y‹˜Ý\œ™[[œÚY
+ÈÙ^NˆØ\›RÙ^KØ[˜\ÎˆÙY\JNÂˆš\Ý[™T™Y‹˜Ý\œ™[›[™ÝHX]›Z[Šš\Ý[™T™Y‹˜Ý\œ™[›[™Ý’TÕS‘WÒÑQT
+NÂˆBˆËÈ: ã9¦kùab9ë¥ùioyæ¡8à#:*¯ùëà
+È9¯ïºcèxà#y`ãùí(9g%»ï#9hg¹fçˆ™[™\Š
+H9§+9/¡¹l,yg*9å*9æ¡9oêùcå»ï#ˆËÈ9o¡y§ ùë+9. 9«(yn-º$eùcàù¥n9îjº(ïy¦`¹l,yæí9£©y¢ïù/¡¹å*;ï#9.#yå*9åm¹h-:aãyë¥øà ‚ˆYˆ
+[š]X[	‰ˆØ\›RÙ^JHÙYYØ\›T^[Ô™Y‹˜Ý\œ™[
+Ø\›RÙ^KË
+NÂ‚ˆÛÛœÝÐT“UTÔTSTÈHÂˆ‹‹‘QUSÔTSTËˆÚYÝÜÎˆKˆYÚYÚÎˆKˆÝ\™\ÎˆÂˆ™ØŽˆÞÞŒNŒKÞŒLËNŒLßKÞŒMKNŒM_WKˆŽˆÞÞŒNŒKÞŒMKNŒM_WKˆÎˆÞÞŒNŒKÞŒMKNŒM_WKˆŽˆÞÞŒNŒKÞŒMKNŒM_WBˆBˆNÂˆÛÛœÝÐT“UTÒÓÔTSTÎˆY]Ü”\˜[\ÈHÂˆ‹‹‘QUSÔTSTËˆËÈ:.ªùb!¹`/9§ ùæí9£©z-ìú`c¹¥m9«­HÓ;ï&ùíi¹. 9`"ú ¢yç/9á(zeç9æ¡9l#ù`/;ï#:+¤ùà#ú)¯yfj9g*9/oùå*: !BˆËÈ9è¬9®äy¨oùbcyl,yk£9¢$:`&y¨§yá¬z-ëùo¤yæ¡’U9íê:+køà ‚ˆÛˆQUSÒÓ›X\
+
+˜[™JHOˆHOOHÈÈ‹‹˜˜[™ˆHHˆÈ‹‹˜˜[™JKˆNÂˆˆËÈØ\›]\ÙÚXÈ\Ú[™ÈÚ\™YY™™\‚ˆÙ[™\˜]P˜\ÙPÛÜœ™XÝ[Û“]
+˜\ÙPÛÜœ™XÝ[Û“]™Y‹˜Ý\œ™[
+NÂˆYˆ
+[š]X[
+HÂˆËÈ:`&yajz-§ùênº-äy¦+ùà®¹.¡º+¤È’U9ab9¢¢¹`ãùí(:/í9g"9íê:+kú-mù/¡»ï#9¥m9`"ùíê:/+ùfj:e¢ú$eùcêºg :) y`f¹. 9«(xà ‚ˆËÈ9¢nzaãùíê:/+ù£æùáiùâaù¦`¹a£y`f¹. 9«(y¦+ùæoz"¬y¦`ºe¤ûï"9£æù. 9o-z) yi&¹ëbHŒM{ïgŒŒÈ9éä»ï"xà ‚ˆYˆ
+\\[[™UØ\›YY™Y‹˜Ý\œ™[
+HÂˆ›ØÙ\ÜÔ^[Ê]KY™™\œË˜Ý\œ™[œ™]šY]Ë™\ÝKËÐT“UTÔTSTË[˜\ÙPÛÜœ™XÝ[Û“]™Y‹˜Ý\œ™[[˜[ÙKÙ]Ý\™S]ÊÐT“UTÔTSTË˜Ý\™\ÊJNÂˆ›ØÙ\ÜÔ^[Ê]KY™™\œË˜Ý\œ™[œ™]šY]Ë™\ÝKËQUSÔTSTË[˜\ÙPÛÜœ™XÝ[Û“]™Y‹˜Ý\œ™[[˜[ÙKÙ]Ý\™S]ÊQUSÔTSTË˜Ý\™\ÊJNÂˆËÈÓ9b!¹¥+ù.éybcy¬¨y§"z(ªù."ºgh¹.)9«(z.ªùb!¹cà¹¥l:)¡¹æå»ï#:i¥¹«(y¢å¹bª9¥í¹¢cz)é¹cäH’U;ï#ˆËÈ9fè: #9cê¹g*9bcyaè9«(y¢bùb¯ùchzhoøà ¹å*9§ 9i&ˆNL°åÌNLˆ9æ¡9méy/g9c.¹ab:-äy.)9«({ï#:-¬ù.éBˆËÈ9/&9c%¹àëyà®{ï#9câ9.#y/&¹¢ïù¥m9o(N:h¡:)â9`f¹¥è9¡#ù.byæ¡:aãz/ä9ë¥øà ‚ˆÛÛœÝÈHX]›Z[ŠËNLŠKHX]›Z[ŠNLŠNÂˆÛÛœÝ[ˆHÈ
+ˆ
+ˆÂˆÛÛœÝÜ˜ÈH]KœÝX˜\œ˜^J[ŠNÂˆÛÛœÝÝH™]ÈZ[Û[\Y\œ˜^J[ŠNÂˆÛÛœÝÝ\™\ÈHÙ]Ý\™S]ÊÐT“UTÒÓÔTSTË˜Ý\™\ÊNÂˆ›ØÙ\ÜÔ^[ÊÜ˜ËÝËÐT“UTÒÓÔTSTË[˜\ÙPÛÜœ™XÝ[Û“]™Y‹˜Ý\œ™[[˜[ÙKÝ\™\ÊNÂˆ›ØÙ\ÜÔ^[ÊÜ˜ËÝËÐT“UTÒÓÔTSTË[˜\ÙPÛÜœ™XÝ[Û“]™Y‹˜Ý\œ™[[˜[ÙKÝ\™\ÊNÂˆ\[[™UØ\›YY™Y‹˜Ý\œ™[HYNÂˆBˆËÈ9mì¹í¤ùå*:h$9á¬yæ¡9åjúghº(ç9."º*¯ù¥m9o£9æ¡9ª(ùkd9.¡»ï#9l,yb)ya£yåjù. 9«(yc§ùg%ˆ8 %8 %:`¨ù§ úe ù. 9."øà ‚ˆYˆ
+Ø\›TZ[YÜ˜Ô™Y‹˜Ý\œ™[OOHØ\›RÙ^JH™[™\ŠQUSÔTSTË
+NÂˆØ\›TZ[YÜ˜Ô™Y‹˜Ý\œ™[H[ÂˆËÈ:`&y. 9ëa¹åjùæ¡9¦+øà#:`¡9¬¤º*¯ù¥m8à#yæ¡9ª(ùkd8à ¹¢nzaãùíê:/+ù£æùáiùâaù¦`»ï#9càù¥n9am¹ké¹¥êyl,yieùioy.¡»ï#ˆËÈ9cê¹¦+ùg%¹âaú)èùè¯9«å™XXÝ9¡h¹. 9«i{ï#:`&y. 9ëa¹l,y§ ù¢¢º*¯ù¥m9o£9æ¡9åjúghº$âù£¢H8 %8 %ˆËÈ9åjúgh¹¥¯9¦+ù`g9g*9c§ùg%»ï#:) yëby/oùå*: !ya£yc®ùbåy. 9."ù¢cy§ ù h¹oªxà ‚ˆËÈ9ª&z*&9¢$:jä¹æ¡;ï#9."ù. 9`"ùoly¨/9l,y§ ùå*9ãï¹g*9æ¡9càù¥n:aãyåjù. 9«(xà ‚ˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆ\Ý™[™\•[YT™Y‹˜Ý\œ™[HÂˆH[ÙHÂˆËÈ9no¹/ey¥.z+¢¹o£9¢`9§"yoêùcåº`ïyl#y.#y."º""¹l.¹kî;ï#9aj:`ê9/g9nè¹a£zaãyåjù. 9«(Bˆš[\”^[ØXÚT™Y‹˜Ý\œ™[HßNÈØXÚSÜ™\”™Y‹˜Ý\œ™[H×NÂˆ\Ý›ØÙ\ÜÙY\˜[\Ô™Y‹˜Ý\œ™[HÈ‹‹›\Ý›ØÙ\ÜÙY\˜[\Ô™Y‹˜Ý\œ™[Y™™\•ÚYˆÝ\™\Ô™YŽˆ[Û™YŽˆ[NÂˆ^™[YPY™™\œÔ™Y‹˜Ý\œ™[HÈXÝ]™UÛÛYˆ	ÉË˜\ÙNˆ[Z[Žˆ[X^ˆ[NÂˆ˜\Ý™]šY]ÐØXÚT™Y‹˜Ý\œ™[˜XÝ]™HH˜[ÙNÂˆ]Ý]T™Y‹˜Ý\œ™[HßNÂˆ]Ø[˜\Ô™Y‹˜Ý\œ™[H[Âˆ]LØ[˜\Ô™Y‹˜Ý\œ™[H[Âˆ^[Y™™\Ø[˜\Ô™Y‹˜Ý\œ™[H[ÂˆØXÚY›\Ø[˜\Ô™Y‹˜Ý\œ™[H[ÂˆØXÚYÛÙØ[˜\Ô™Y‹˜Ý\œ™[H[ÂˆØXÚY›Ú\ÙLØ[˜\Ô™Y‹˜Ý\œ™[H[ÂˆØXÚY[][ÛØ[˜\Ô™Y‹˜Ý\œ™[H[ÂˆØXÚYšYÛ™]PØ[˜\Ô™Y‹˜Ý\œ™[H[Âˆ›\ØXÚTÝ]T™Y‹˜Ý\œ™[H[ÂˆÛÙØXÚTÝ]T™Y‹˜Ý\œ™[H[Âˆ›Ú\ÙLØXÚTÝ]T™Y‹˜Ý\œ™[H[Âˆ[][ÛØXÚTÝ]T™Y‹˜Ý\œ™[H[Âˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆ\Ý™[™\•[YT™Y‹˜Ý\œ™[HÂˆB‚ˆËÈ[œÝ[H[›ØÚÈRK[ˆÚ\œ›ØÚÈ\Þ[˜ÂˆYˆ
+[š]X[
+HÙ]\ÑY]Ü“ØY[™Ê˜[ÙJNÂ‚ˆ™XØ[ÔÚ\œ[\Þ[˜Ê]KË
+K[Š
+]Z[
+HOˆÂˆYˆ
+Y™™\œË˜Ý\œ™[
+HÂˆY™™\œË˜Ý\œ™[œ™]šY]ËœÚ\œ[‘]Z[H]Z[ÂˆBˆÛÛœÝˆHY™™\œË˜Ý\œ™[Ë™˜\ÝÂˆYˆ
+ˆ	‰ˆ‹œÛÝ\˜ÙJHÂˆ™]\›ˆ™XØ[ÔÚ\œ[\Þ[˜Ê‹œÛÝ\˜ÙK‹Ë‹š
+K[Š
+‘]Z[
+HOˆÂˆYˆ
+Y™™\œË˜Ý\œ™[Ë™˜\Ý
+HY™™\œË˜Ý\œ™[™˜\ÝœÚ\œ[‘]Z[H‘]Z[ÂˆJNÂˆBˆJNÂˆKÜ™[™\‹Ù]Ý\™S]×JNÂ‚ˆËÈ9ieùå*9©âùg%»ï&¹å*9¥¬9æ¡9no¹/ey¢¢¹/¡¹®¤:aãy¥¬9ë¥ù. 9«({ï#9a£y¥m9`"úaãynîºh$:)¯yíêz(gxà ‚ˆÛÛœÝ\QÙ[ÈH\ÙPØ[˜XÚÊ
+ÎˆÙ[Ô\˜[\ÊHOˆÂˆÛÛœÝ[YÈHÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[ÂˆYˆ
+Z[YÊH™]\›ŽÂˆÛÛœÝÝÈH[YË›˜]\˜[ÚY[YËÚYÂˆÛÛœÝÚH[YË›˜]\˜[ZYÚ[YËšZYÚÂˆÛÛœÝÜ˜ÈH\ÑÙ[ÒY[]JÊHÈ[YÈˆÛÛ\ÜÙPØ[˜\Ê[YËÝËÚË
+NÂˆÛÛœÝÈH	ÝÚY	È[ˆÜ˜ÈÈ
+Ü˜È\ÈSØ[˜\Ñ[[Y[
+KÚYˆÝÎÂˆÛÛœÝH	ÚZYÚ	È[ˆÜ˜ÈÈ
+Ü˜È\ÈSØ[˜\Ñ[[Y[
+KšZYÚˆÚÂˆZ[Y™™\œÑœ›ÛT™Y‹˜Ý\œ™[
+Ü˜Ë\ÑÙ[ÒY[]JÊHÈÝÈˆË\ÑÙ[ÒY[]JÊHÈÚˆ˜[ÙJNÂˆÙ[Ô™Y‹˜Ý\œ™[HÎÂˆÙ]Ù[ÊÊNÂˆK×JNÂ‚ˆ\ÙQY™™XÝ
+
+
+HOˆÈ\QÙ[Ô™Y‹˜Ý\œ™[H\QÙ[ÎÈKØ\QÙ[×JNÂ‚ˆÛÛœÝZ[Y™™\œÑœ›ÛT™YˆH\ÙT™YŠZ[Y™™\œÑœ›ÛJNÂˆ\ÙQY™™XÝ
+
+
+HOˆÈZ[Y™™\œÑœ›ÛT™Y‹˜Ý\œ™[HZ[Y™™\œÑœ›ÛNÈKØZ[Y™™\œÑœ›ÛWJNÂ‚‚ˆËÈ‹‹ˆ
+™\ÝÙˆHÛÛ\Û™[™[™\ˆÛÜRH[™\œË”Ö™[XZ[ˆØ[YH\È™]š[Ý\È™\œÚ[ÛŠBˆÛÛœÝ\Ò[\˜XÝ[™Ô™YˆH\ÙT™YŠ\Ò[\˜XÝ[™ÊNÂˆ\ÙQY™™XÝ
+
+
+HOˆÂˆ\Ò[\˜XÝ[™Ô™Y‹˜Ý\œ™[H\Ò[\˜XÝ[™ÎÂˆËÈ[\š[™ÈÜˆX]š[™ÈH˜YÈÝØ\ÈH™[™\ˆ\™Ù]™]ÙY[ˆHÝË\™\È›ÞH[™BˆËÈ[™]šY]ÈY™™\‹ÛÈ›Ü˜ÙHÛ™H™[™\ˆ]H™]È™\ÛÛ][Û‹‚ˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆ\Ý™[™\•[YT™Y‹˜Ý\œ™[HÂˆKÚ\Ò[\˜XÝ[™×JNÂ‚ˆÛÛœÝ\Ý™[™\•[YT™YˆH\ÙT™Y[X™\Š
+NÂˆÛÛœÝ\Ý™[™\‘\˜][Û”™YˆH\ÙT™Y[X™\ŠMŠNÈËÈY˜][M›\Â‚ˆËÈ[šYšYYYÚ\\™›Ü›X[˜ÙHÛÛ[[Ý\È™\]Y\Ý[š[X][Û‘œ˜[YHØÚY[\‚ˆËÈ[[Z[˜]\È˜XÙHÛÛ™][ÛœË[˜X›\ÈŒœÈ™[™\œË[™›ØÙ\ÜÙ\È™Y›Ü™KØY\ˆÛÛ\\š[™ÈÛX[›Bˆ\ÙQY™™XÝ
+
+
+HOˆÂˆ]˜Y’Yˆ[X™\ŽÂˆ]\ÐXÝ]™HHYNÂ‚ˆÊˆ9bfú/"yioyæ¡9¯ïºcèymì¹í¤ùë¥ú`c¹. :/*¹.¡ˆ8 %8 %:`&y¦`¹`&y¢cy¥-¹£¢z`¨úha¹£"zb%y."¹æ¡:/byg"8à ‚ˆ9«å9l#HY9¦+ùà®¹.¡¸à#:`(únç¹ajzhaº`ïz`¡9¬¤º/"yæ¡9¯ïºcèxà#z`¨ùê+¹ áy¬à{ï&‚ˆ9ab:/"yioyæ¡:`¨úha¹.#z ïy¢¢º`¡9g*:/"yæ¡:`¨úha¹æ¡:/byg"9. :-mù¥-¹£¢xà ˆ
+‹ÂˆÛÛœÝÛX\”[™[™Ó]Z[H
+
+HOˆÂˆÛÛœÝÛ™RYH[™[™Ó]Z[™Y‹˜Ý\œ™[ÂˆYˆ
+YÛ™RY
+H™]\›ŽÂˆ[™[™Ó]Z[™Y‹˜Ý\œ™[H[ÂˆÙ]ØY[™Ó]Y
+Ý\ˆOˆ
+Ý\ˆOOHÛ™RYÈ[ˆÝ\ŠJNÂˆNÂ‚ˆÛÛœÝXÚÈH
+
+HOˆÂˆYˆ
+Z\ÐXÝ]™JH™]\›ŽÂ‚ˆÛÛœÝˆHY™™\œË˜Ý\œ™[œ™]šY]ÎÂˆÛÛœÝÝœÈH\Ü^PØ[˜\Ô™Y‹˜Ý\œ™[ÂˆÊˆ:e¤º$eùæ¡9¦`¹`&yab9¢¢ˆÔH9¦¥º-mù/¡»ï"9."¹`¬ú,¯9g%¸à ynîº(j8à z-äy. 9«(yênˆ˜]ûï"xà ‚ˆ9.#yab9`f¹æ¡:*lz`&y.¦ù. 9«(y )ù¢$9§+9§ ú$/yg*9¢bù£!ù£"y."ù®äy¨oùæ¡9ë+9. 9n`;ï#9l,y¦+øà#9¢¥¹. 9."øà#xà ˆ
+‹ÂˆYˆ
+Z\Ñ\T™Y‹˜Ý\œ™[	‰ˆZ\Ò[\˜XÝ[™Ô™Y‹˜Ý\œ™[	‰ˆËœÛÝ\˜ÙH	‰ˆ‹È	‰ˆ‹š
+HÂˆØ\›QÜJ‹œÛÝ\˜ÙK‹Ë‹š	Ø‹ß^	Ø‹š_	ØY™™\œÔÜ˜Ô™Y‹˜Ý\œ™[X
+NÂˆÊˆ:,¯9g%¹¦¥¹ioy.bùo£;ï#9£©z$eù. :ha¹. :ha¹¢¢¹¯ïºcèyæ¡9§éz"lº(j9.gùàé:-mù/¡¸à ‚ˆ9«ãù«(ze¤¹ïk¹cê¹àé9. :ha»ï#9..ùgíú(c9íäºi«9."º`¡9fç¹c®øà ˆ
+‹ÂˆÛÛœÝ˜ZÙYHÜUØ\›RÙ^T™Y‹˜Ý\œ™[ÈØ\›P˜ZÙ\Ê\˜[\Ô™Y‹˜Ý\œ™[
+Hˆ˜[ÙNÂˆÊˆ9§éz"lº(j:`ïyàé9k£9.¡¹¢cz/*¹b,:`&y`"ûï&¹¢¢¸à#9¢å¹¦ìù.+z) yå*9æ¡:`¨ù."yo-yaj:)èù§¤9n©¹åjúgh¸à#Bˆ9ab9ë¥ùio{ï#9¢bù£!ùè¬9b,9®äy¨oú`¨ù. 9."ùl,y.#yå*9`g9."ù/¡¹ë¥ûï"9c§ù§+9§ ùchHÌ;ïgŒÌÛ\ûï"xà ‚ˆ9. 9ª(ù. 9«(ycê¹ë¥ù. 9.ï{ï":aãùb,9í!{ïgŒLM[\ûï"{ï#9.#y§ ù. 9cèù¬(ù/e9/cù..ùgíú(c9íä¸à ‚‚ˆ: #9.%:) yëbyåjúgh¸à#9ç'ùæ¡9`g9."ù/¡ˆL\È9.éy."¸à#y¢cze¢ùiâÈ8 %8 %9bfúnç¹k£9méyamøà Bˆ9¢%¹«hùg*9£l¹méyamùb%ùæ¡:`¨ù. 9l#ù«­y¦`ºe¤ùb)yc®ù¤-¹..ùgíú(c9íä»ï#9.#yá-ºh$9á¬y§+:.ªÂˆ9§ ú+¢¹¢$9¥¬9æ¡:h$únç¸à ˆ
+‹ÂˆYˆ
+X˜ZÙY	‰ˆ\™›Ü›X[˜ÙK››ÝÊ
+HH\Ý™[™\•[YT™Y‹˜Ý\œ™[ˆL
+HØ\›Q˜\Ý™]šY]Ô™Y‹˜Ý\œ™[
+
+NÂˆBˆËÈ9£æùáiùâaù¦`»ï#9¥¬9g%º`¡9g*:)èùè¯;ï#9íêz(gyc`:(èz(çyæ¡:`¡9¦+ù."¹. 9o-H8 %8 %:`&y¦`¹`&yåjùaî¹c®ùl,y¦+ú""¹áiùâaøà ‚ˆËÈ9ëbyíêz(gyc`9£æù¢$9ãï¹g*:`&y. 9o-ya£yåjøà ‚ˆÛÛœÝY™™\œÔ™XYHHY™™\œÔÜ˜Ô™Y‹˜Ý\œ™[OOHXÝ]™TÜ˜Ô™Y‹˜Ý\œ™[ÂˆYˆ
+ÝœÈ	‰ˆˆ	‰ˆ‹œÛÝ\˜ÙH	‰ˆ‹™\Ý	‰ˆY™™\œÔ™XYJHÂˆÛÛœÝÝ\œ™[\˜[\ÈH\˜[\Ô™Y‹˜Ý\œ™[ÂˆÛÛœÝÝ\œ™[ÚÝÓÜšYÚ[˜[HÚÝÓÜšYÚ[˜[™Y‹˜Ý\œ™[ÂˆÛÛœÝ[\˜XÝ[™ÈH\Ò[\˜XÝ[™Ô™Y‹˜Ý\œ™[ÂˆÛÛœÝ›ÝÈH\™›Ü›X[˜ÙK››ÝÊ
+NÂˆˆÛÛœÝ›\YHÝ\œ™[ÚÝÓÜšYÚ[˜[OOH\Ý™[™\™YÚÝÓÜšYÚ[˜[™Y‹˜Ý\œ™[ÂˆÊˆ8¥ 8¥ 9bcyo£9l#y«å;ï&¹£"y."ûï#ù¥/ºe¢ú`ïy.#z) ya£z-äy. 9«(y¥m9¨§yë¨yíæˆ8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ˆ9£"y."ùc®ûï&¹ab9¢¢¹ãï¹g*9åjùn ù."º`¨ùo-{ï";ï'yíê:/+ùo£;ï"z)!ú(ïy. 9.ïyåfz$eøà ‚ˆ9¥/ºe¢È;ï&¹£"z$eùæ¡9§'úe¤ùi ¹§§9.à:n¯:`ïy¬¤º+¢»ï"\Ñ\T™Yˆ9¦+ù.o¹­ê9æ¡;ï"{ï#ˆ9æí9£©y¢¢º`¨ù.ïz,¯9fç¹/¡¹l,yio{ï#9. 9«(y¤+9éîûï#9.#yoázaãyë¥øà ˆ
+‹ÂˆYˆ
+›\Y
+HÂˆÛÛœÝÛ˜\Ù^HH	Ø‹ß^	Ø‹š_	ØY™™\œÔÜ˜Ô™Y‹˜Ý\œ™[XÂˆYˆ
+Ý\œ™[ÚÝÓÜšYÚ[˜[
+HÂˆYˆ
+XÛÛ\\™TÛ˜\™Y‹˜Ý\œ™[
+HÛÛ\\™TÛ˜\™Y‹˜Ý\œ™[HØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊNÂˆÛÛœÝÛ˜\HÛÛ\\™TÛ˜\™Y‹˜Ý\œ™[ÂˆYˆ
+Û˜\ÚYOOH‹ÈÛ˜\šZYÚOOH‹š
+HÈÛ˜\ÚYH‹ÎÈÛ˜\šZYÚH‹šÈBˆÛÛœÝØÝHÛ˜\™Ù]ÛÛ^
+	Ì™	ÊHNÂˆØÝ™ÛØ˜[ÛÛ\ÜÚ]SÜ\˜][ÛˆH	ØÛÜIÎÂˆØÝ™˜]Ò[XYÙJÝœË
+NÂˆØÝ™ÛØ˜[ÛÛ\ÜÚ]SÜ\˜][ÛˆH	ÜÛÝ\˜ÙK[Ý™\‰ÎÂˆÛÛ\\™TÛ˜\Ù^T™Y‹˜Ý\œ™[H\Ñ\T™Y‹˜Ý\œ™[È	ÉÈˆÛ˜\Ù^NÂˆH[ÙHYˆ
+Z\Ñ\T™Y‹˜Ý\œ™[	‰ˆÛÛ\\™TÛ˜\™Y‹˜Ý\œ™[	‰ˆÛÛ\\™TÛ˜\Ù^T™Y‹˜Ý\œ™[OOHÛ˜\Ù^JHÂˆÛÛœÝÝHÝœË™Ù]ÛÛ^
+	Ì™	ÊHNÂˆÝ™ÛØ˜[ÛÛ\ÜÚ]SÜ\˜][ÛˆH	ØÛÜIÎÂˆÝ™˜]Ò[XYÙJÛÛ\\™TÛ˜\™Y‹˜Ý\œ™[
+NÂˆÝ™ÛØ˜[ÛÛ\ÜÚ]SÜ\˜][ÛˆH	ÜÛÝ\˜ÙK[Ý™\‰ÎÂˆÝœËœÝ[K™š[\ˆH	Û›Û™IÎÂˆ\Ý™[™\™YÚÝÓÜšYÚ[˜[™Y‹˜Ý\œ™[H˜[ÙNÂˆ\Ý™[™\•[YT™Y‹˜Ý\œ™[H›ÝÎÂˆ˜Y’YH™\]Y\Ý[š[X][Û‘œ˜[YJXÚÊNÂˆ™]\›ŽÂˆBˆB‚ˆYˆ
+\Ñ\T™Y‹˜Ý\œ™[›\Y
+HÂˆÛÛœÝ[\ÙYH›ÝÈH\Ý™[™\•[YT™Y‹˜Ý\œ™[Â‚ˆËÈY\]™H›ÝNˆYˆ\Ù\ˆ\È[\˜XÝ[™ËÙHXÛÝ\HHÛY\ˆš\ÝX[RHœ›ÛHØ[˜\È™[™\œÂˆËÈžH[™›Ü˜Ú[™ÈHX[H›Ý[™È˜]H\š[™È˜YÙÚ[™Ëˆ\ÈX]™\ÈHXZ[ˆ™XYÛÛ\][Hœ™YBˆËÈÈ›ØÙ\ÜÈ[Ý\ÙKÝÝXÚ]™[È[™Z[HÛY\ˆ[™H]H\™™XÝ›ZYYËYœ™YHLŒ”Ë‚ˆËÈYˆ™[™\š[™È\È^™[Y[H˜\Ý
+\ËK™Ëˆ›ÞH^™[YH›[™È›ÜˆœšYÚ™\ÜËÙ^ÜÝ\™KØÛÛ˜\Ý
+KˆËÈÙHÈ“Õ›ÝHÈ[ÝÈÚ[][[™[Ý\ÈYÚYœ˜[Y\˜]H[XYÙH™[™\š[™Ë‚ˆËÈÚ]HÝË\™\È[\˜XÝ]™H›ÞHH[\[[™H\ÜÈ\È›ÝÈÚX\[›ÝYÚˆËÈ]HÛ˜]X\Ý\È™]ÙY[ˆœ˜[Y\Èˆ›ÛÜˆ™XØ[YHH›Ý[™XÚËÛÂˆËÈHØ\\ÈYYÈHYX\Ý\™Y™[™\ˆÛÜÝ[œÝXYÙˆHš^YZ[š[][K‚ˆÛÛœÝ›ÝS\ÈH[\˜XÝ[™ÂˆÈ
+\Ý™[™\‘\˜][Û”™Y‹˜Ý\œ™[ˆˆÈX]›X^
+\Ý™[™\‘\˜][Û”™Y‹˜Ý\œ™[
+ˆKŒŠBˆˆ
+BˆˆÂˆˆYˆ
+[\ÙYH›ÝS\ÊHÂˆ\Ñ\T™Y‹˜Ý\œ™[H˜[ÙNÂˆ\Ý™[™\™YÚÝÓÜšYÚ[˜[™Y‹˜Ý\œ™[HÝ\œ™[ÚÝÓÜšYÚ[˜[Âˆ\Ý™[™\•[YT™Y‹˜Ý\œ™[H›ÝÎÂˆˆYˆ
+[\˜XÝ[™ÊHÂˆËÈY™\ˆHX]žH™[™\ˆØ[Ý[][ÛˆÈHÙ][Y[Ý]
+XXÜ›Ë]\ÚÊBˆËÈÛÈHœ›ÝÜÙ\ˆØ[ˆZ[HRH
+[˜ÛY[™ÈHÛ[ÛÝÛY\ˆ[™H[™^
+BˆËÈ]LŒ”Èš\œÝ™Y›Ü™H^XÝ][™ÈHX]žHØ[˜\È[XYÙH›ØÙ\ÜÚ[™Ë‚ˆYˆ
+™[™\•[Y[Ý]™Y‹˜Ý\œ™[
+HÂˆÛX\•[Y[Ý]
+™[™\•[Y[Ý]™Y‹˜Ý\œ™[
+NÂˆBˆ™[™\•[Y[Ý]™Y‹˜Ý\œ™[HÙ][Y[Ý]
+
+
+HOˆÂˆÛÛœÝÝ\H\™›Ü›X[˜ÙK››ÝÊ
+NÂˆ™[™\ŠÝ\œ™[\˜[\ËY\™ÙQœ™Y^™T™Y‹˜Ý\œ™[Ë›]Y
+NÂˆÛÛœÝ\˜][ÛˆH\™›Ü›X[˜ÙK››ÝÊ
+HHÝ\Âˆ\Ý™[™\‘\˜][Û”™Y‹˜Ý\œ™[H\˜][ÛŽÂˆ™[™\•[Y[Ý]™Y‹˜Ý\œ™[H[ÂˆÛX\”[™[™Ó]Z[
+
+NÂˆK
+NÂˆH[ÙHÂˆËÈ›Üˆ›Û‹Z[\˜XÝ]™KÙš[˜[™[™\œËÈ]Þ[˜Ú›Û›Ý\ÛHÈ[œÝ\™H[œÝ[YÚ\]X[]HZ[ˆYˆ
+™[™\•[Y[Ý]™Y‹˜Ý\œ™[
+HÂˆÛX\•[Y[Ý]
+™[™\•[Y[Ý]™Y‹˜Ý\œ™[
+NÂˆ™[™\•[Y[Ý]™Y‹˜Ý\œ™[H[ÂˆBˆÛÛœÝÝ\H\™›Ü›X[˜ÙK››ÝÊ
+NÂˆ™[™\ŠÝ\œ™[\˜[\ËY\™ÙQœ™Y^™T™Y‹˜Ý\œ™[Ë›]Y
+NÂˆÛÛœÝ\˜][ÛˆH\™›Ü›X[˜ÙK››ÝÊ
+HHÝ\Âˆ\Ý™[™\‘\˜][Û”™Y‹˜Ý\œ™[H\˜][ÛŽÂˆÛX\”[™[™Ó]Z[
+
+NÂˆBˆBˆBˆBˆ˜Y’YH™\]Y\Ý[š[X][Û‘œ˜[YJXÚÊNÂˆNÂˆˆXÚÊ
+NÂˆ™]\›ˆ
+
+HOˆÂˆ\ÐXÝ]™HH˜[ÙNÂˆØ[˜Ù[[š[X][Û‘œ˜[YJ˜Y’Y
+NÂˆYˆ
+™[™\•[Y[Ý]™Y‹˜Ý\œ™[
+HÂˆÛX\•[Y[Ý]
+™[™\•[Y[Ý]™Y‹˜Ý\œ™[
+NÂˆBˆNÂˆKÜ™[™\—JNÂ‚ˆ\ÙQY™™XÝ
+
+
+HOˆÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆKÜÙ[XÝY]YØY[™Ó]YJNÂ‚ˆÛÛœÝ™\Ù]\˜[HH
+YˆÙ^[ÙˆY]Ü”\˜[\ÊHOˆÂˆ]Y˜][˜[YHHQUSÔTSTÖÚYNÂˆˆËÈÜXÚYšXÈY˜][È˜\ÙYÛˆÝ\œ™[UˆÛÛœÝ\›H]\ÝÜÙ[XÝY]YOË\›	ÉÎÂˆÛÛœÝ]YH]\ÝÜÙ[XÝY]YOËšY	Û›Û™IÎÂˆYˆ
+YOOH	Û][[Ý[	ÊHÂˆYˆ
+\›š[˜ÛY\Ê	ÒSQ×ÌÌÍÌIÊH\›š[˜ÛY\Ê	Õ[]YÙÜšY	ÊH\›š[˜ÛY\Ê	ÒSQ×ÌÌÌŽ	ÊHˆ\›š[˜ÛY\Ê	ÒSQ×ÌÌÍÌÉÊH\›š[˜ÛY\Ê	ÒSQ×ÌÌÍÍ	ÊHˆ\›š[˜ÛY\Ê	ÒSQ×ÎL‰ÊH\›š[˜ÛY\Ê	ÒSQ×ÌŒM	ÊH]YOOH	Ù	ÊHY˜][˜[YHHÌÂˆ[ÙHYˆ
+\›š[˜ÛY\Ê	ÒSQ×ÌŽIÊH\›š[˜ÛY\Ê	ÒSQ×ÌŽ‰ÊH\›š[˜ÛY\Ê	ÒSQ×ÎNN	ÊH\›š[˜ÛY\Ê	ÒSQ×ÍÎLÌ‰ÊJHY˜][˜[YHHLÂˆ[ÙHYˆ
+\›š[˜ÛY\Ê	ÜØ[\WØÛÛÜœØØ[IÊH\›š[˜ÛY\Ê	ÒSQ×ÍÎLÍ‰ÊJHY˜][˜[YHHÂˆ[ÙHYˆ
+\›š[˜ÛY\Ê	ÒSQ×ÌÌŒŒ‰ÊJHY˜][˜[YHHLÂˆ[ÙHYˆ
+\›š[˜ÛY\Ê	ÒSQ×ÍÎLÎ	ÊH\›š[˜ÛY\Ê	ÒSQ×ÍÎM	ÊH\›š[˜ÛY\Ê	ÒSQ×ÍÌŒLIÊJHY˜][˜[YHHLÂˆH[ÙHYˆ
+YOOH	Ø›\‰ÊHÂˆY˜][˜[YHH\Ð›\XÝ]™HÈ
+›\“X[X[PY\ÝYÈ\Ù\›\”™Y‹˜Ý\œ™[ˆ
+
+]YOOH	ÙŒŒ‰È]YOOH	ÙŒŒÉÊHÈÌˆ
+JHˆÂˆH[ÙHYˆ
+YOOH	ØÛÛÜ“›Ú\ÙIÊHÂˆY˜][˜[YHH\ÑÜ˜Z[XÝ]™HÈ
+Ü˜Z[“X[X[PY\ÝYÈ\Ù\‘Ü˜Z[”™Y‹˜Ý\œ™[˜ÛÛÜ“›Ú\ÙHˆŒ
+HˆÂˆB‚ˆÛÛœÝ™^\˜[\ÈHÈ‹‹œ\˜[\ËÚYNˆY˜][˜[YHNÂ‚ˆËÈ\]HX[X[HY\ÝYÝ]H[™XÝ]™HÙÙÛ\ÈYˆ™\Ù][™ÈÜXÚYšXÈ\˜[Y]\œÂˆ]™^ÛÙXÝ]™HH\ÔÛÙXÝ]™NÂˆ]™^›\XÝ]™HH\Ð›\XÝ]™NÂˆ]™^Ü˜Z[XÝ]™HH\ÑÜ˜Z[XÝ]™NÂˆ]™^ÛÙX[X[HÛÙX[X[PY\ÝYÂˆ]™^›\“X[X[H›\“X[X[PY\ÝYÂˆ]™^Ü˜Z[“X[X[HÜ˜Z[“X[X[PY\ÝYÂ‚ˆYˆ
+YOOH	ÜÛÙ	ÊHÂˆ™^ÛÙXÝ]™HHY˜][˜[YHˆÂˆ™^ÛÙX[X[H˜[ÙNÂˆÙ]ÛÙX[X[PY\ÝY
+˜[ÙJNÂˆÙ]\ÔÛÙXÝ]™JY˜][˜[YHˆ
+NÂˆH[ÙHYˆ
+YOOH	Ø›\‰ÊHÂˆ™^›\XÝ]™HHY˜][˜[YHˆÂˆ™^›\“X[X[H˜[ÙNÂˆÙ]›\“X[X[PY\ÝY
+˜[ÙJNÂˆÙ]\Ð›\XÝ]™JY˜][˜[YHˆ
+NÂˆH[ÙHYˆ
+YOOH	ÙÜ˜Z[‰ÈYOOH	ØÛÛÜ“›Ú\ÙIÈYOOH	ØÛÛÜ“›Ú\ÙL‰ÊHÂˆÛÛœÝ™^HÈ‹‹›™^\˜[\ËÚYNˆY˜][˜[YHNÂˆÛÛœÝ\ÑÜ˜Z[ˆH™^™Ü˜Z[ˆˆ™^˜ÛÛÜ“›Ú\ÙHˆ™^˜ÛÛÜ“›Ú\ÙLˆˆÂˆ™^Ü˜Z[XÝ]™HH\ÑÜ˜Z[ŽÂˆ™^Ü˜Z[“X[X[H˜[ÙNÂˆÙ]Ü˜Z[“X[X[PY\ÝY
+˜[ÙJNÂˆÙ]\ÑÜ˜Z[XÝ]™J\ÑÜ˜Z[ŠNÂˆB‚ˆÙ]\˜[\Ê™^\˜[\ÊNÂˆ\˜[\Ô™Y‹˜Ý\œ™[H™^\˜[\ÎÂˆYÒ\ÝÜžJ™^\˜[\ËÙ[XÝY]Y™^ÛÙXÝ]™K™^›\XÝ]™K™^Ü˜Z[XÝ]™K™^ÛÙX[X[™^›\“X[X[™^Ü˜Z[“X[X[
+NÂˆNÂ‚ˆÛÛœÝ[™QÝX›U\H
+Nˆ™XXÝ“[Ý\ÙQ]™[™XXÝ•ÝXÚ]™[YˆÙ^[ÙˆY]Ü”\˜[\ÊHOˆÂˆÛÛœÝ›ÝÈH]K››ÝÊ
+NÂˆÛÛœÝ\ÝH\Ý\™Y‹˜Ý\œ™[ÚY\ÈÝš[™×HÂˆYˆ
+›ÝÈH\ÝÌ
+HÂˆ™\Ù]\˜[JY
+NÂˆ\Ý\™Y‹˜Ý\œ™[ÚY\ÈÝš[™×HHÂˆYˆ
+K\HOOH	ÝÝXÚ[™	ÊHKœ™]™[Y˜][
+
+NÂˆH[ÙHÂˆ\Ý\™Y‹˜Ý\œ™[ÚY\ÈÝš[™×HH›ÝÎÂˆBˆNÂ‚ˆÊŠˆ9¢¢¹. 9o-yáiùâaùå*9£!ùk¦¹æ¡9. 9ía9càù¥n9ë¥ùaî¹¢$9dà{ï"9kf9ª¥9å*9æ¡9c§ùiâú)èù§¤9n©»ï"H
+‹ÂˆÛÛœÝ™[™\“Û™PØ[˜\ÈH
+[YÎˆS[XYÙQ[[Y[Û˜\ˆ˜]ÚÛ˜\
+NˆSØ[˜\Ñ[[Y[OˆÂˆÛÛœÝÈHÛ˜\™Ù[ÎÂˆÛÛœÝHÛ˜\œ\˜[\ÎÂˆÛÛœÝÝÈH[YË›˜]\˜[ÚY[YËÚYÂˆÛÛœÝÚH[YË›˜]\˜[ZYÚ[YËšZYÚÂˆËÈ9kf9ª¥9å*9c§ùiâú)èù§¤9n©ºaãz-äy. 9«(y©âùg%»ï#:h$:)¯y¦`¹æ¡9âb9§+9cê¹¦+ùíi¹åjúgh¹ç"ùæ¡ˆÛÛœÝÙ[ÔÛÝ\˜ÙNˆØ[˜\Ò[XYÙTÛÝ\˜ÙHH\ÑÙ[ÒY[]JÊHÈ[YÈˆÛÛ\ÜÙPØ[˜\Ê[YËÝËÚÊNÂˆÛÛœÝÈH\ÑÙ[ÒY[]JÊHÈÝÈˆ
+Ù[ÔÛÝ\˜ÙH\ÈSØ[˜\Ñ[[Y[
+KÚYÂˆÛÛœÝH\ÑÙ[ÒY[]JÊHÈÚˆ
+Ù[ÔÛÝ\˜ÙH\ÈSØ[˜\Ñ[[Y[
+KšZYÚÂˆÛÛœÝÈHØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊNÂˆËÚYHÎÈËšZYÚHÂˆÛÛœÝÝÜšYÚ[˜[HË™Ù]ÛÛ^
+	Ì™	ËÈÚ[™XYœ™\]Y[NˆYHJHNÂˆÝÜšYÚ[˜[™˜]Ò[XYÙJÙ[ÔÛÝ\˜ÙKË
+NÂˆÛÛœÝÛÝ\˜ÙQ]HHÝÜšYÚ[˜[™Ù][XYÙQ]JË
+K™]NÂˆÛÛœÝ[ˆHÛÝ\˜ÙQ]K›[™ÝÂˆÊˆ9`ãùí(9mì¹í¤ú+ 9aî¹/¡¹o£9êâùclúaâù¥/¹/¡¹®¤9åjùn øà ŒL“T9æ¡9. 9o-H‘ÐH9åjùn ùí!P»ï&Âˆ:""¹âb9c+ùaî¹¦`¹d#9¦`¹/çyåfyi&¹.ï{ï#SÔÈ9§ ùfè9«i9¥-º-lÙX‘ÓÛÛ^8à ˆ
+‹ÂˆËÚYHNÈËšZYÚHNÂˆYˆ
+Ù[ÔÛÝ\˜ÙH[œÝ[˜Ù[ÙˆSØ[˜\Ñ[[Y[	‰ˆÙ[ÔÛÝ\˜ÙHOOHÊHÂˆÙ[ÔÛÝ\˜ÙKÚYHNÈÙ[ÔÛÝ\˜ÙKšZYÚHNÂˆB‚ˆÊˆ9i)ùg¢ùíêz(gycê¹g*9ç'ùæ¡:g :) y¦`¹nî¹êâøà ¹«hùn.ÔH9c+ùaî¹.#ya£zh$9ab9i&¹/e9ajyo-yaj9l.¹kî9g%»ï#ˆ:b¬ùc%¹à®ºfí¹¦`¹.gù.#z*"9ë¥ùk£9aj9å*9.#yb,9æ¡]Z[8à ˆ
+‹Âˆ]\Ý]NˆZ[Û[\Y\œ˜^H[H[ÂˆÛÛœÝÚ\œ[‘]Z[HœÚ\œ[ˆˆÈ™XÛÛ\]TÚ\œ[‘]Z[
+ÛÝ\˜ÙQ]KË
+Hˆ[Â‚ˆÛÛœÝØ[˜\ÈHØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊNÈØ[˜\ËÚYHÎÈØ[˜\ËšZYÚHÂˆÛÛœÝÝHØ[˜\Ë™Ù]ÛÛ^
+	Ì™	ÊHNÂˆÛÛœÝ]H]\ÝÜÛ˜\œÙ[XÝY]YNÂˆÛÛœÝXÝ]™S]H]	‰ˆ]\›È]]T™Y‹˜Ý\œ™[Û]šYHˆ[ÂˆÛÛœÝ]Ú^™HHXÝ]™S]ÈXÝ]™S]œÚ^™HˆÂ‚ˆÙ[™\˜]P˜\ÙPÛÜœ™XÝ[Û“]
+™^ÜÝ\™K˜ÛÛ˜\Ý˜œšYÚ™\ÜË˜\ÙPÛÜœ™XÝ[Û“]™Y‹˜Ý\œ™[
+NÂ‚ˆÊˆ8¥ 8¥ 9c+ùaî¹.gú-lÔH8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ 8¥ ˆ:`&z(èy¦+ùc§ùiâú)èù§¤9n©»ï"9båz/$¹. 9ajyc`ú$+9`ãùí(;ï"{ï#ÔH:`$9`ãùí(9¦+ù¥m9`"ùkf9ª¥9§ 9¡h¹æ¡9. 9«ixà ‚ˆ9¥.y¢$;ï&¹å*9ãï¹§"yæ¡›ØÙ\ÜÔ^[È9g*p¬È9`"ù¨/:nç¹."¹ë¥ù. 9«(yàé9¢$9§éz"lº(j;ï"M›\ûï"{ï#ˆÔH9. 9`"È˜]ÈØ[9§éyk£9¥m9o-yg%»ï#9æí9£©yåjú`,¹åjùn È8 %8 %9.#zg :) y¢¢¹`ãùí(:+ 9fç¹/¡»ï#ˆ9fè9à®¹£©y."ù/¡¹l,y¦+ùíê9è¯9¢$‘ûï#9åjùn ù§+:.ªùl,y¦+ú) yæ¡9§lz)oøà ‚‚ˆ9.#z ïz-lÔH9æ¡9 áy¬à{ï&‚ˆ0­È:b¬ùc%ˆ8 %8 %:) yç"úa,9lay`ãùí(;ï":`&z(èy§"HÚ\œ[‘]Z[;ï"{ï#9àé9.#z`,¹§éz"lº(jˆ0­ÈÛÛÜ“›Ú\ÙLˆ8 %8 %9k ùæ¡:fç:*"º`k¹ïjz) yd È\Ý]H9æ¡9`ãùí(ˆ0­È9g%¹âaú-¡z`cº(çyïk¹æ¡:,¯9g%¹."ºfd8 %8 %ÜTZ[9aiú`ê9§ ù¤âù£¢Bˆ9.îù/ey. 9«iyi,y¥eú`ïyc§ùl y.#ybåz-l9."úgh¹c§ù§+9æ¡ÔH:-ëùo¤{ï#9¢$9dàyk£9aj9. 9ª(øà ˆ
+‹Âˆ]ÜSÚÈH˜[ÙNÂˆYˆ
+\œÚ\œ[ˆ	‰ˆ\˜ÛÛÜ“›Ú\ÙLŠHÂˆÛÛœÝØÈHØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊNÂˆÜSÚÈHÜTZ[
+ØËÛÝ\˜ÙQ]KËˆXÝ]™S]ÈXÝ]™S]™]Hˆ[]Ú^™KK^Ü	Ýß^	Ú_	ÓX]œ˜[™ÛJ
+_X[ˆXÝ]™S]È	Û]ËšYHÉÛ]Ú^™_Xˆ	Û›Û™IÊNÂˆYˆ
+ÜSÚÊHÂˆÝ˜ÛX\”™XÝ
+Ë
+NÂˆÝ™˜]Ò[XYÙJØË
+NÂˆÊˆØY˜\šH:*&9¡­ºjå9d ùíâ¹¦`¹`m¹â/¹.#yfçˆÙX‘Ó:c+ú*©;ï#9cnùcê¹.©9aî¹aj:näH˜]Ú[™ÈY™™\¸à ‚ˆ:jeú+byç'ùké¹`ãùí(;ï&ùcê¹§"y/¡¹®¤9§"z"l¹ojz #:/.9aî¹k£9aj9à®ºfí¹¦`¹¢cz` 9fçˆÔxà ˆ
+‹ÂˆÛÛœÝÛÝ\˜ÙR\ÐÛÛÜˆH
+
+
+HOˆÂˆÛÛœÝÝšYHHX]›X^
+X]™›ÛÜŠÛÝ\˜ÙQ]K›[™ÝÈ
+LLˆ
+ˆ
+JH
+ˆ
+NÂˆ›Üˆ
+]HHÈHÛÝ\˜ÙQ]K›[™ÝÈH
+ÏHÝšYJHÂˆYˆ
+ÛÝ\˜ÙQ]VÚWHÛÝ\˜ÙQ]VÚH
+ÈWHÛÝ\˜ÙQ]VÚH
+È—JH™]\›ˆYNÂˆBˆ™]\›ˆ˜[ÙNÂˆJJ
+NÂˆYˆ
+ÛÝ\˜ÙR\ÐÛÛÜŠHÂˆžHÂˆÛÛœÝ›Ø™HHØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊNÂˆ›Ø™KÚYHMŽÈ›Ø™KšZYÚHMŽÂˆÛÛœÝ›Ø™PÝH›Ø™K™Ù]ÛÛ^
+	Ì™	ËÈÚ[™XYœ™\]Y[NˆYHJNÂˆ›Ø™PÝË™˜]Ò[XYÙJØ[˜\ËM‹MŠNÂˆÛÛœÝH›Ø™PÝË™Ù][XYÙQ]JM‹MŠK™]NÂˆ]Ý]]\ÐÛÛÜˆH˜[ÙNÂˆYˆ
+
+H›Üˆ
+]HHÈH›[™ÝÈH
+ÏH
+HÂˆYˆ
+ÚWHÚH
+ÈWHÚH
+È—JHÈÝ]]\ÐÛÛÜˆHYNÈœ™XZÎÈBˆBˆYˆ
+[Ý]]\ÐÛÛÜŠHÜSÚÈH˜[ÙNÂˆ›Ø™KÚYHNÈ›Ø™KšZYÚHNÂˆHØ]ÚÈÜSÚÈH˜[ÙNÈBˆBˆBˆËÈ:,¯9g%¹mì¹í¤ú(ªù£æù¢$9c+ùaîº`¨ùo-y.¡»ï#:+¤úh$:)¯y."ù«(zaãy¥¬9."¹`¬ú!ê¹mìyæ¡ˆÜTÜ˜ÒÙ^T™Y‹˜Ý\œ™[H	ÉÎÂˆÜUØ\›RÙ^T™Y‹˜Ý\œ™[H	ÉÎÂˆBˆYˆ
+YÜSÚÊHÂˆ\Ý]HH™]ÈZ[Û[\Y\œ˜^J[ŠNÂˆ›ØÙ\ÜÔ^[ÊÛÝ\˜ÙQ]K\Ý]KËXÝ]™S]ÈXÝ]™S]™]Hˆ[]Ú^™K˜\ÙPÛÜœ™XÝ[Û“]™Y‹˜Ý\œ™[Ú\œ[‘]Z[˜[ÙKÙ]Ý\™S]Ê˜Ý\™\ÊJNÂˆÝœ][XYÙQ]J™]È[XYÙQ]J\Ý]KË
+K
+NÂˆBˆÛÛœÝØØ[HHX]›X^
+Ë
+HÈLÂˆ\PÛÛ\^Y™™XÝÊÝËØØ[K[˜[ÙKYKÜSÚÈÈ[ˆ\Ý]JNÂˆ™]\›ˆØ[˜\ÎÂˆNÂ‚ˆÊŠˆ9l#¹aî¹å*;ï&º-çùd"9/mz-l9d#9. 9¥+ùaj:)èù§¤9n©¹ë¨yíæ»ï#9cê¹¦+ù§ 9o£:/by¢$‘øà ‚ˆ9¢$9dàyå*›Øˆ9í¬¹g`8 %8 %9¢ny«(yc`yo-yæ¡:*lH]UT“9§ ù¦+ùioyno¹æoˆPˆ9æ¡9keù.,¸à ˆ
+‹ÂˆÛÛœÝ™[™\“Û™HH
+[YÎˆS[XYÙQ[[Y[Û˜\ˆ˜]ÚÛ˜\
+Nˆ›ÛZ\ÙOÝš[™ÏˆO‚ˆØ[˜\ÕÕ\›
+™[™\“Û™PØ[˜\Ê[YËÛ˜\
+JNÂ‚ˆÛÛœÝØY[YÈH
+Ü˜ÎˆÝš[™ÊHOˆ™]È›ÛZ\ÙOS[XYÙQ[[Y[Š
+™\Ë™ZŠHOˆÂˆÛÛœÝ[HH™]È[XYÙJ
+NÂˆYˆ
+\Ü˜ËœÝ\ÕÚ]
+	Ø›ØŽ‰ÊH	‰ˆ\Ü˜ËœÝ\ÕÚ]
+	Ù]N‰ÊJH[K˜Ü›ÜÜÓÜšYÚ[ˆH	Ø[›Ûž[[Ý\ÉÎÂˆ[K›Û›ØYH
+
+HOˆ™\Ê[JNÂˆ[K›Û™\œ›ÜˆH
+
+HOˆ™ZŠ™]È\œ›ÜŠ	ÛØY˜Z[Y	ÊJNÂˆ[KœÜ˜ÈHÜ˜ÎÂˆJNÂ‚ˆÊŠˆ:fèºe¢ùíê:/+ùfj9¦`»ï#9i ¹§§:*¯ù¥m:`c¹/a¹¬¤¹l#¹aî»ï#9.gú*&9. 9ëa¹b,9«mùcì¹í :c!8à ‚ˆ9î+¹g%¹æí9£©yå*9åjúgh¹."¹æ¡:h$:)¯{ï"9mì¹í¤ù¦+úhkùé.º)èù§¤9n©»ï#9o¢9l#ùo¢9k¢yaj;ï"xà ˆ
+‹ÂˆÛÛœÝ™XÛÜ™›ÙÜ™\ÜÈH\ÙPØ[˜XÚÊ\Þ[˜È
+
+HOˆÂˆÊˆ9¦+ùd)ºg :) z*h¹ecùmì¹å,H™\]Y\ÝX]™H9£"ykéºf¦ù¢$9dàyb)9¥­øà ‚ˆ9 h¹oªyæ¡9mì¹íê:/+ùl"9¨b9§ ù¢¢¹åm¹bcy¢$9dàz*+y¢$\ÝÜžH9ë+9¨/;ï#9fè9«i:`&z(èy.#z ïya£yå*ˆ\ÝÜžR[™^H:-ìú`c»ï&ùd)¹b&y£"y.¡¸à#9a,¹kf8à#y.gù.#y§ ùkêùaiy«mùcì¹í :c!8à ˆ
+‹ÂˆÛÛœÝÝˆH\Ü^PØ[˜\Ô™Y‹˜Ý\œ™[ÂˆYˆ
+XÝˆXÝ‹ÚYXÝ‹šZYÚ
+H™]\›ŽÂˆžHÂˆÛÛœÝH\˜[\Ô™Y‹˜Ý\œ™[ÂˆËÈ9åjúgh¹."º`&y. 9o-ycëú ïy«hú$âú$eú`kº"l¹âaùæ¡9í!z"lº`k¹ïj{ï":`¨ùcê¹¦+ùíê:/+ù¦`¹æ¡:/%9bªzhkùé.»ï"xà ‚ˆËÈ9æí9£©y¢¤ùæ¡:*lzi¥ºh yæ¡9«mùcì¹î+¹g%¹l,y§ ù¦+ùí!yæ¡8 %8 %9ab9å*9d#9. 9¥+È™[™\ˆ:aãyåjù. 9o-y¬¤¹§"z`k¹ïjyæ¡8à ‚ˆYˆ
+›X\ÚÐÜ™X]Y	‰ˆ›X\ÚÔÚÝÓÝ™\›^H	‰ˆXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÊHÂˆ™[™\ŠÈ‹‹œX\ÚÔÚÝÓÝ™\›^Nˆ˜[ÙHJNÂˆBˆ]ØZ]Y^Ü
+	ÙY]Ü‰ËÝ‹Ñ]UT“
+	Ú[XYÙKÜ™ÉÊKÜ˜Ó\ÝÜØY™RYH[XYÙTÜ˜ËÂˆ\˜[\ÎˆÙ[ËÙ[XÝY]YˆK\ÝÙ^H[™Yš[™Y
+NÂˆHØ]ÚÈÊˆ:*&:c!9i,y¥eù.#z ïyolzgïúfèºe¢È
+‹ÈBˆËÈ\Û[Y\ØX›K[™^[[™H™XXÝZÛÚÜËÙ^]\Ý]™KY\ÂˆKÚ\ÝÜžR[™^Ü˜Ó\ÝØY™RY[XYÙTÜ˜ËÙ[ËÙ[XÝY]YXÝ]™PØ]YÛÜžK™[™\—JNÂ‚ˆÛÛœÝ™\]Y\ÝX]™HH\ÙPØ[˜XÚÊ\Þ[˜È
+
+HOˆÂˆÊˆ9¦+ùd)º) z*h¹ecù.#z ïycê¹ç"øà#:`&y«(z`,¹/¡¹o£9§"y¬¤¹§"y¥¬9h§ˆ\ÝÜžxà#xà ‚ˆ9o§º!ê¹båy¦ªùkf9 h¹oªy¦`ˆ\ÝÜžH9§ ùo§ˆ:aãy¥¬:e¢ùiâûï#9/a¹åjúgh¹§+:.ªùcëú ïy¥êymì¹.#y¦+ùc§ùg%»ï&Âˆ:`&yê+¹ áy¬àyæí9£©z/å9fç¹§ ú+¤ù/oùå*: !z*©9.éyà®¹íê:/+ù.#zg :) y/çykf8à ‚ˆ9fè9«i9.éykéºf¦ù¢$9dàyb)9¥­ûï&¹càù¥n8à y¯ïºcèxà y©âùg%¸à ymì¹àé:`,¹/¡¹®¤9æ¡9d"9/m{ï#9.îù. 9.#yd#9clùà®¹mì¹íê:/+øà ˆ
+‹ÂˆÛÛœÝ\˜[\ÐÚ[™ÙYH”ÓÓ‹œÝš[™ÚYžJ\˜[\Ô™Y‹˜Ý\œ™[
+HOOH”ÓÓ‹œÝš[™ÚYžJQUSÔTSTÊNÂˆÛÛœÝÙ[ÐÚ[™ÙYHZ\ÑÙ[ÒY[]JÙ[ÊNÂˆÛÛœÝÛÝ\˜ÙPÚ[™ÙYHXÝ]™TÜ˜ÈOOH[XYÙTÜ˜ÎÂˆÛÛœÝ\ÑY]YÛÛ[Bˆ\ÝÜžR[™^ˆ\˜[\ÐÚ[™ÙYÙ[ÐÚ[™ÙYÙ[XÝY]YOOHÛÝ\˜ÙPÚ[™ÙYÂˆYˆ
+Z\ÑY]YÛÛ[
+HÂˆÛØ[˜Ù[
+›ÛÛX[Š[š]X[Ý]JJNÂˆ™]\›ŽÂˆBˆÛÛœÝÚÚXÙHHÛ”™\]Y\Ý^]È]ØZ]Û”™\]Y\Ý^]
+
+Hˆ	Ù\ØØ\™	ÎÂˆYˆ
+ÚÚXÙHOOH	ØØ[˜Ù[	ÊH™]\›ŽÂˆYˆ
+ÚÚXÙHOOH	ÜØ]™IÊHÂˆ]ØZ]Ø]™UÛÛ˜Y
+	ÙY]Ü‰Ë[XYÙTÜ˜ËÂˆ\˜[\Îˆ\˜[\Ô™Y‹˜Ý\œ™[Ù[ËÙ[XÝY]Yˆ×Ú\ÝÙ^Nˆ\ÝÙ^H[š]X[Ý]OË—×Ú\ÝÙ^H[ˆJNÂˆ]ØZ]™XÛÜ™›ÙÜ™\ÜÊ
+NÂˆBˆÛØ[˜Ù[
+ÚÚXÙHOOH	ÜØ]™IÊNÂˆKÚ\ÝÜžR[™^[š]X[Ý]KÛ”™\]Y\Ý^]ÛØ[˜Ù[[XYÙTÜ˜ËXÝ]™TÜ˜ËÙ[ËÙ[XÝY]Y™XÛÜ™›ÙÜ™\Ü×JNÂ‚ˆÊˆ8à#9d"9/mxà#{ï&¹¢¢¹ãï¹g*9åjúgh¹."¹æ¡9ª(ùkd9å*9aj:)èù§¤9n©¹àé9¢$9. 9o-y¥¬9æ¡9c§ùg%»ï#9càù¥n9¥m9ía9«n:fí¸à ‚ˆ9âny¥b9. 9«(ycêº ïyieù. 9`"ûï#9d"9/mz`c¹æ¡:`¨ù. 9li9mì¹í¤ú+¢¹¢$:nçºfhùg%¹æ¡9. :`ê9b!»ï#ˆ9¢`9.éyd"9/myk£9l,ycëù.éya£yå¢¹."ù. 9`"ùâny¥b8à ‚ˆ9àé:`,¹c®ùæ¡9¦+ù¥m9¨§yë¨yíæ¹æ¡9íd9§§;ï"9¯ïºcè{ï"ú*¯ùëà;ï"ùâny¥b;ï"{ï#9.#y¦+ùcê¹§"yâny¥b:`¨ù. 9«­H8 %8 %ˆ9âny¥b9¦+ù£©yg*9§ 9o£:gh¹ë¥ùæ¡;ï#9cê¹¢¯yâny¥b9aî¹/¡¹àé9æ¡:*lz-çùåjúgh¹."¹ç"ùb,9æ¡9.#y§ ù. 9ª(øà ˆ
+‹ÂˆÛÛœÝY\™Ú[™Ô™YˆH\ÙT™YŠ˜[ÙJNÂˆÊˆ9d"9/mz`&¹n.9. 9ç«:e¤ùl,yio{ï#:`&y¦`¹`&ze ù. 9."ú/byg"9cãz #9é&yç/8à ‚ˆ9cê¹§"yç'ùæ¡9ëbz-¡z`cˆŒ\ûï":) z/"yg%¸à yg%¹o¢9i)ûï"y¢cy¢¢º/byg"9¥/¹b,:h$:)¯y«hù.+yi+¸à ˆ
+‹ÂˆÊŠˆ9¢$y`$z!ê¹mìy£æù/¡¹®¤;ï"9d"9/m{ï#ù¤©:b­ùd"9/m{ï"y¦`¹êâú-mù/¡»ï&¹£æùáiùâaú`¨ù. 9¥m9ieù«n:fí¹l,z-ìú`cˆ
+‹ÂˆÛÛœÝÜ˜ÔÝØ\™YˆH\ÙT™YŠ˜[ÙJNÂˆÊŠˆ9£æù/¡¹®¤9¦`¹¢¢¹¥¬9æ¡:`¨ùo-yg%¹ab:)èùio{ï#9íêz(gyc`9¢cz ïyg*9d#9. 9¢ãy£æú`c¹c®ûï"9.#yá-¹åjúgh¹§ úe ù. 9."ûï"H
+‹ÂˆÛÛœÝÝØ\ÔÜ˜ÈH
+™^ˆÝš[™Ö×JHOˆÂˆÜ˜ÔÝØ\™Y‹˜Ý\œ™[HYNÂˆÙ]Ü˜Ó\Ý
+™^
+NÂˆNÂˆÊŠˆ:!ê¹mìz`(9aî¹/¡¹æ¡9d"9/myg%¹í¬¹g`;ï#9£æù£¢y¢%ºfèºe¢ù¦`º) y¥-¹fç¹c®È
+‹ÂˆÛÛœÝY\™ÙY\›Ô™YˆH\ÙT™YÝš[™Ö×OŠ×JNÂˆ\ÙQY™™XÝ
+
+
+HOˆ
+
+HOˆÈY\™ÙY\›Ô™Y‹˜Ý\œ™[™›Ü‘XXÚ
+HOˆÈžHÈT“œ™]›ÚÙSØš™XÝT“
+JNÈHØ]ÚßHJNÈK×JNÂ‚ˆÊŠˆ9ãï¹g*9§"y¬¤¹§"y§lz)oùcëù.éyd"9/m{ï&¹âny¥b9¢%¹¯ïºcèy.îù. 9`"ù§"yieùl,yë¥ûï"9d"9/mz`c¹æ¡:`ïymì¹í¤ù«n:fí»ï"H
+‹ÂˆÛÛœÝ\ÓY\™ÙXX›HH\Ó]™QY™™XÝ
+\˜[\ÊH
+Ù[XÝY]Yˆ	‰ˆ
+\˜[\Ë›][[Ý[ÏÈL
+Hˆ
+NÂˆÊŠˆ:`&yo-yg*9æë¹bcz`&y. :h ymì¹í¤ùd"9/mz`,¹c®ùno¹`"ù.¡»ï"9¤©:b­ù§ ú-çú$eùfç¹c®ûï"xà ‚ˆ9«hùg*9àé9æ¡:`¨ù. 9«(y.gùab9ë¥ú`,¹c®È8 %8 %9/oùå*: !y£"y."ùc®ùl,z*l¹ç"ùb,9¥n9keûï#9.#yå*9ëbz ã9¦køà ˆ
+‹ÂˆÛÛœÝY\™ÙYÛÝ[H
+
+
+HOˆÂˆÛÛœÝHY\™ÙQ\ÙŠXÝ]™TÜ˜ÊNÂˆÛÛœÝHY\™ÙT[™[™ÈÈY\™ÙT[™[™Ð˜ZÙT™Y‹˜Ý\œ™[ˆÈ]ˆžˆNÂˆ™]\›ˆXÝ]™PØ]YÛÜžHOOH	ÙY™™XÝÉÈÈ™ž
+È™žˆ›]
+È›]ÂˆJJ
+NÂ‚ˆÛÛœÝY\™ÙQY™™XÝÈH
+
+HOˆÂˆYˆ
+[ÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[Y\™Ú[™Ô™Y‹˜Ý\œ™[
+H™]\›ŽÂˆY\™Ú[™Ô™Y‹˜Ý\œ™[HYNÂˆYˆ
+\Ò[\˜XÝ[™ÊHÙ]\Ò[\˜XÝ[™Ê˜[ÙJNÂ‚ˆÊˆ8¥ 8¥ 9£"y."ùæ¡:`&y. 9¢ã{ï#9.âúgh¹l,y¥m9`"ùb!ù¢$8à#9d"9/myk£8à#yæ¡9ª(ùkd8¥ 8¥ ˆ9¯ïºcè{ï#ùâny¥b9fç¹b,9c§ùiâøà y®äy¨où¥-º-mù/¡¸à yfæúhaºe¢úeç:eç9£¢xà yd"9/mzcmz+¢¹¢$8à#9mì¹d"9/mS¸à#xà ‚ˆ9åjúgh¹."¹æ¡9g%º`¡9¦+ùí«y£ yãï¹g*9æ¡9ª(ùkd;ï"9¥b9§§9mì¹í¤ùg*9."ºgh¹.¡»ï"{ï#9ëbz ã9¦kùàé9ioxà Bˆ9¥¬9æ¡9/¡¹®¤9g%º)èùè¯9k£9a£yá(yî*ù£æù£¢H8 %8 %9¢`9.éyç"ú-mù/¡¹l,y¦+øà#9£"y."ùc®ùl,yioy.¡¸à#xà ‚‚ˆ9åjúghº) z ïyîo9î£9áiú""¹åjûï#:gh9æ¡9¦+ù¢¢º`&y. 9b.ùæ¡9càù¥n:"!ù¯ïºcèyíê:&gùaãyg*Y\™ÙQœ™Y^™T™Y»ï&‚ˆ9îj¹g%º/í9g":*£yaãy/cùæ¡:`¨ù. 9.ï{ï#9.âúghº*£ymì¹í¤ù«n:fí¹æ¡Ý]{ï#9ajz`¢¹.¤¹.#ynl¹¤ï¸à ˆ
+‹ÂˆÝ\ÚÝ\œ™[
+
+NÂˆÛÛœÝ]™HHÛÛ™TÛ˜\
+]™T™Y‹˜Ý\œ™[JNÂˆY\™ÙT[™[™Ð˜ZÙT™Y‹˜Ý\œ™[HÂˆ]ˆÙ[XÝY]Yˆ	‰ˆ
+\˜[\Ô™Y‹˜Ý\œ™[›][[Ý[ÏÈL
+HˆÈHˆˆžˆ\Ó]™QY™™XÝ
+\˜[\Ô™Y‹˜Ý\œ™[
+HÈHˆˆNÂˆY\™ÙQœ™Y^™T™Y‹˜Ý\œ™[HÈ\˜[\Îˆ\˜[\Ô™Y‹˜Ý\œ™[]YˆÙ[XÝY]YNÂˆÙ]Y\™ÙT[™[™ÊYJNÂ‚ˆÛÛœÝZQœ™\ÚH”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJQUSÔTSTÊJH\ÈY]Ü”\˜[\ÎÂˆÙ]\˜[\ÊZQœ™\Ú
+NÂˆÙ]Ù[XÝY]Y
+
+NÂˆÙ]\ÔÛÙXÝ]™J˜[ÙJNÈÙ]\Ð›\XÝ]™J˜[ÙJNÂˆÙ]\ÑÜ˜Z[XÝ]™J˜[ÙJNÈÙ]\Ò[][ÛXÝ]™J˜[ÙJNÂˆÙ]ÛÙX[X[PY\ÝY
+˜[ÙJNÈÙ]›\“X[X[PY\ÝY
+˜[ÙJNÂˆÙ]Ü˜Z[“X[X[PY\ÝY
+˜[ÙJNÈÙ][][Û“X[X[PY\ÝY
+˜[ÙJNÂˆÊˆ9bfùbfú`¨ù`"ùâny¥b;ï#ù¯ïºcèymì¹í¤ù.#yg*9.¡»ï#9k ùæ¡9®äy¨où.gù.#z*l¹a£yåfyg*9."úgh¸à ‚ˆ9fç¹b,:-çúnç¸à#9c§ùiâøà#y. 9ª(ùæ¡9/cyïk»ï&¹âny¥b:`¨ù. 9¥ãùfç¹§å9abxà y¯ïºcèzh yfç¹o-ùn©¸à ‚ˆ9«hùg*9ç"ù§ä9`"ùâny¥b9æ¡9í,:h!y¦`¹l,z` 9fç¹âny¥b9®!ye«»ï":`¨ù`"ùâny¥b9mì¹í¤ù¬¤¹.¡»ï"xà ˆ
+‹ÂˆYˆ
+ÉÙY™™XÝÉË	ÛXZÉË	ÜÛÙ	Ë	Ú[][Û‰Ë	Ùž	×Kš[˜ÛY\ÊXÝ]™PØ]YÛÜžJJHÂˆÙ]XÝ]™UÛÛY
+	ÜÛÙYÚ	ÊNÂˆYˆ
+XÝ]™PØ]YÛÜžHOOH	Ùž	ÊHÙ]XÝ]™PØ]YÛÜžJ	ÙY™™XÝÉÊNÂˆH[ÙHYˆ
+XÝ]™PØ]YÛÜžHOOH	Ùš[\‰ÊHÂˆÙ]XÝ]™UÛÛY
+	Ùš[\—ÜÙ[XÝ	ÊNÂˆB‚ˆÊˆ9.#y¥/¹.îù/eybåyåjù.gù.#yníº`l»ï&¹£"y."ùc®ùl,ze¢ùiâùàé8à ‚ˆ:`&y. 9«­y§+9/¡¹l,y¦+ùd#9«iz`bùë¥ûï#9£¤ˆÙ][Y[Ý]9cê¹¦+ùi&¹ëby. :/*¸à ˆ
+‹Âˆ
+\Þ[˜È
+
+HOˆÂˆžHÂˆËÈ:`&y. 9«(yàé:`,¹c®ùæ¡9¦+ùdê¹. 9ê+»ï"9£"y."ùæ¡9åm¹."ùl,z*&9ioy.¡»ï#9ajz`¢º`ïyieùæ¡:*lyajz`¢º`ïyë¥ûï"BˆÛÛœÝÈ]ˆ˜ZÙY]žˆ˜ZÙYžHHY\™ÙT[™[™Ð˜ZÙT™Y‹˜Ý\œ™[ÂˆÛÛœÝ™^HË‹‹œÜ˜Ó\ÝNÂˆÛÛœÝXYNˆÝš[™Ö×HH×NÂˆ›Üˆ
+]HHÈHÜ˜Ó\Ý›[™ÝÈJÊÊHÂˆËÈ9¬¤º`(ùíd9æ¡:`¨ùno¹o-y§"z!ê¹mìyæ¡9. 9.ïycàù¥n;ï#:`&y«(yd"9/my.#zeç9k ù`$yæ¡9.¢ÂˆYˆ
+[šÙYÚWHOOH˜[ÙJHÛÛ[YNÂˆÛÛœÝ˜\ÙHHÛÛ™TÛ˜\
+]™JNÂˆÛÛœÝÛ˜\ˆ˜]ÚÛ˜\HÂˆ‹‹˜˜\ÙKˆ\˜[\ÎˆÈ‹‹˜˜\ÙKœ\˜[\Ë‹‹ŠÝÛ“X\ÚÔ™Y‹˜Ý\œ™[ÚWHXÚÓX\ÚÊQUSÔTSTÊJHH\ÈY]Ü”\˜[\ËˆÙ[ÎˆÝÛ‘Ù[Ô™Y‹˜Ý\œ™[ÚWBˆÈ”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJÝÛ‘Ù[Ô™Y‹˜Ý\œ™[ÚWJJBˆˆ
+HOOHØY™RYÈ˜\ÙK™Ù[ÈˆÈ‹‹‘QUSÑÑSËÜ›ÜˆÈ‹‹‘•SÐÔ“ÔHJKˆNÂˆÛÛœÝ[YÈHHOOHØY™RY	‰ˆÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[ˆÈÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[ˆˆ]ØZ]ØY[YÊÜ˜Ó\ÝÚWJNÂˆÛÛœÝÝœÈH™[™\“Û™PØ[˜\Ê[YËÛ˜\
+NÂˆÊˆ:-lØ[˜\ÕÕ\›9.#yæí9£©ycêÈÐ›Ø»ï&šSÔÈ9æ¡Ð›Øˆ9g*9åjùn ùo¢9i)ùcâ9è¬9."‚ˆ:*&9¡­ºjå9d ùíâ¹¦`¹§"yªgù§ ù¬.:`h9.#yfç¹/¡»ï":)¢È][ËØ›Ø•\›9æ¡9ç"úe 9âåûï"{ï#ˆ:`¨ù§ ú+¤ù¥m9¢nyàé9g%¹`g9g*8à#9«hùg*9kf9ª¥8à#{ï#: #:`¨ù. 9li:$âú$eú/å9fçºcmxà ˆ
+‹ÂˆÛÛœÝ\›H]ØZ]Ø[˜\ÕÕ\›
+ÝœÊNÂˆYˆ
+]\›
+HÛÛ[YNÈËÈ:`&y. 9o-yàé9.#yaî¹/¡¹l,yí«y£ yc§ùª(ûï#9.#z) yåfycb¹¢$9dàBˆXYKœ\Ú
+\›
+NÂˆËÈ9î+¹g%º) y. 9æí9¦+ù§ 9b'z`¨ùo-yæ¡9ª(ùkd;ï#9¢`9.éy¢¢º(`9íèù£©y."¹c®ûï"9cëú ïymì¹í¤ùd"9/mz`c¹ioyno¹«({ï"Bˆ[X“ÜšYÚ[”™Y‹˜Ý\œ™[Ý\›HH[X”Ü˜ÓÙŠÜ˜Ó\ÝÚWJNÂˆÛÛœÝØ\ÈHY\™ÙQ\ÙŠÜ˜Ó\ÝÚWJNÂˆY\™ÙQ\™Y‹˜Ý\œ™[Ý\›HHÈ]ˆØ\Ë›]
+È˜ZÙY]žˆØ\Ë™ž
+È˜ZÙYžNÂˆ™^ÚWHH\›ÂˆËÈ:`&y. 9o-yæ¡:`kº"l¹âaú"!ù©âùg%¹.gù. :-mùàé:`,¹c®ù.¡»ï#9åfz$eù§ ùa£yieù. 9«(Bˆ[]HÝÛ“X\ÚÔ™Y‹˜Ý\œ™[ÚWNÂˆ[]HÝÛ‘Ù[Ô™Y‹˜Ý\œ™[ÚWNÂˆBˆËÈ9alyå*9æ¡:`¨ù. 9.ïycàù¥n9mì¹í¤ú+¢¹¢$9g%¹.¡»ï#9.#z ïya£yieùfç¹c®ÂˆÚ\™YÛ˜\™Y‹˜Ý\œ™[H[Âˆ[™[™ÔÛ˜\™Y‹˜Ý\œ™[H[Âˆ[™[™ÔÛ˜\Ü˜Ô™Y‹˜Ý\œ™[H[ÂˆY\™ÙY\›Ô™Y‹˜Ý\œ™[œ\Ú
+‹‹›XYJNÂ‚ˆÊˆ9ab9¢¢¹àé9ioyæ¡:`¨ùo-z)èùè¯9k£9a£y£æù/¡¹®¤8à ‚ˆ9.#yab:)èùioyæ¡:*l{ï#9£æù/¡¹®¤9.bùo£9íêz(gyc`:`¡9¦+ú""¹æ¡:`¨ùo-xà ycàù¥n9cnùmì¹í¤ù«n:fí»ï#ˆ9.+ze¤ùl,y§ ùåjùaî¹. 9o-xà#9¬¤¹§"yâny¥b9æ¡:""¹g%¸à#x %8 %:`¨ùl,y¦+ùd"9/my¦`ºe ùæ¡:`¨ù. 9."øà ˆ
+‹ÂˆÛÛœÝÚÝÛ•\›H™^ÜØY™RYNÂˆYˆ
+ÚÝÛ•\›	‰ˆÚÝÛ•\›OOHÜ˜Ó\ÝÜØY™RYJHÂˆ]ØZ]™]È›ÛZ\ÙO›ÚYŠ™\ÈOˆÂˆÛÛœÝ[HH™]È[XYÙJ
+NÂˆ[K›Û›ØYH
+
+HOˆÈ™[Y[X™\‘XÛÙY
+ÚÝÛ•\›[JNÈ™\Ê
+NÈNÂˆ[K›Û™\œ›ÜˆH
+
+HOˆ™\Ê
+NÂˆ[KœÜ˜ÈHÚÝÛ•\›ÂˆJNÂˆB‚ˆËÈ9càù¥n9¥m9ía9«n:fí»ï"9¥b9§§:`ïyàé:`,¹g%º(èy.¡»ï"{ï#9fæúhaºe¢úeç:"!ù¯ïºcèy.gù. :-mù¥-¹.o¹­ê8à ‚ˆËÈ9.âúgh¹¥êyl,y¦+ú`&y`"ùª(ùkd9.¡»ï#:`&z(èy¦+ù¢¢¹îj¹g%º`¨ù. 9`m9.gù. :-mú)èùaãxà ‚ˆÛÛœÝœ™\ÚH”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJQUSÔTSTÊJH\ÈY]Ü”\˜[\ÎÂˆÛÛœÝœ™\ÚÙ[ÈHÈ‹‹‘QUSÑÑSËÜ›ÜˆÈ‹‹‘•SÐÔ“ÔHNÂˆY\™ÙQœ™Y^™T™Y‹˜Ý\œ™[H[Âˆ\˜[\Ô™Y‹˜Ý\œ™[Hœ™\ÚÂˆÙ[Ô™Y‹˜Ý\œ™[Hœ™\ÚÙ[ÎÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆÝØ\ÔÜ˜Ê™^
+NÂˆÙ]\˜[\Êœ™\Ú
+NÂˆÙ]Ù[Êœ™\ÚÙ[ÊNÂˆÙ]Ù[XÝY]Y
+
+NÂˆÙ]\ÔÛÙXÝ]™J˜[ÙJNÈÙ]\Ð›\XÝ]™J˜[ÙJNÂˆÙ]\ÑÜ˜Z[XÝ]™J˜[ÙJNÈÙ]\Ò[][ÛXÝ]™J˜[ÙJNÂˆÙ]ÛÙX[X[PY\ÝY
+˜[ÙJNÈÙ]›\“X[X[PY\ÝY
+˜[ÙJNÂˆÙ]Ü˜Z[“X[X[PY\ÝY
+˜[ÙJNÈÙ][][Û“X[X[PY\ÝY
+˜[ÙJNÂˆËÈ9d"9/my¦+ù. 9«iy¤ãy/g;ï#9¤©:b­ú) z ïy¢¢¹/¡¹®¤:"!ùcàù¥n9. :-mú` 9fç¹c®ûï"Ü˜ÜÈ9kf9g*9«mùcìº(è{ï"BˆÜ˜Ó\Ý™Y‹˜Ý\œ™[H™^ÂˆYÒ\ÝÜžJœ™\Ú˜[ÙK˜[ÙK˜[ÙK˜[ÙK˜[ÙK˜[ÙK˜[ÙK˜[ÙJNÂˆHØ]Ú
+JHÂˆÛÛœÛÛK™\œ›ÜŠ	ÛY\™ÙH˜Z[Y	ËJNÂˆËÈ9àé9i,y¥eùl,y¢¢¹aãy/cùæ¡9càù¥n9¥/¹fç¹c®ûï#9åjúghº"!ù.âúghºaãy¥¬9l#zob‚ˆÛÛœÝœ›Þ™[ˆHY\™ÙQœ™Y^™T™Y‹˜Ý\œ™[ÂˆY\™ÙQœ™Y^™T™Y‹˜Ý\œ™[H[ÂˆYˆ
+œ›Þ™[ŠHÂˆ\˜[\Ô™Y‹˜Ý\œ™[Hœ›Þ™[‹œ\˜[\ÎÂˆÙ]\˜[\Êœ›Þ™[‹œ\˜[\ÊNÂˆÙ]Ù[XÝY]Y
+œ›Þ™[‹›]Y
+NÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆBˆHš[˜[HÂˆY\™Ú[™Ô™Y‹˜Ý\œ™[H˜[ÙNÂˆÙ]Y\™ÙT[™[™Ê˜[ÙJNÂˆBˆJJ
+NÂˆNÂ‚ˆÊŠˆ9ç/9çfûï&¹å*9ãï¹g*9æ¡9càù¥n:/.9aî¹. 9o-{ï#9á-¹o£9¢dúe¢ÈQÈ:h$:)¯H
+‹ÂˆÛÛœÝÜ[’YÔ™]šY]ÈH\Þ[˜È
+
+HOˆÂˆYˆ
+[ÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[YÐ\ÞJH™]\›ŽÂˆÙ]YÐ\ÞJYJNÂˆžHÂˆÝ\ÚÝ\œ™[
+
+NÂˆÛÛœÝ]™HH]™T™Y‹˜Ý\œ™[NÂˆÛÛœÝÛ˜\ˆ˜]ÚÛ˜\HÂˆ‹‹˜ÛÛ™TÛ˜\
+]™JKˆ\˜[\ÎˆÈ‹‹˜ÛÛ™TÛ˜\
+]™JKœ\˜[\Ë‹‹ŠÝÛ“X\ÚÔ™Y‹˜Ý\œ™[ÜØY™RYHXÚÓX\ÚÊQUSÔTSTÊJHH\ÈY]Ü”\˜[\ËˆÙ[ÎˆÝÛ‘Ù[Ô™Y‹˜Ý\œ™[ÜØY™RYBˆÈ”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJÝÛ‘Ù[Ô™Y‹˜Ý\œ™[ÜØY™RYJJBˆˆÛÛ™TÛ˜\
+]™JK™Ù[ËˆNÂˆÛÛœÝ\›H]ØZ]™[™\“Û™JÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[Û˜\
+NÂˆ™]›ÚÙU\›ÊYÔÚÝ	‰ˆYÔÚÝOOH\›ÈÚYÔÚÝHˆ×JNÂˆÙ]YÔÚÝ
+\›
+NÂˆÙ]YÓÜ[ŠYJNÂˆHØ]Ú
+JHÈÛÛœÛÛK™\œ›ÜŠ	ÒQÈ™]šY]È˜Z[Y	ËJNÈBˆÙ]YÐ\ÞJ˜[ÙJNÂˆNÂ‚ˆÛÛœÝ[™TØ]™HH
+
+HOˆÂˆYˆ
+[ÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[
+H™]\›ŽÂˆYˆ
+\Ò[\˜XÝ[™ÊHÙ]\Ò[\˜XÝ[™Ê˜[ÙJNÂˆÙ]Ø]™TÝ]J	Ü›ØÙ\ÜÚ[™ÉÊNÂˆÙ][Y[Ý]
+\Þ[˜È
+
+HOˆÂˆžHÂˆËÈ9ab9¢¢¹ãï¹g*9åjúgh¹."º`&y. 9.ïy¥-¹fç¹c®ûï#9alyå*9æ¡:`¨ù. 9.ïy¢cy§ ù¦+ù§ 9¥¬9æ¡8 %8 %ˆËÈ9.#yá-¸à#:*¯ùb,9. 9cb¹æí9£©y£"ya,¹kf8à#y¦`»ï#9am¹.åº`(ùíd9.+yæ¡9áiùâaù§ ù¢ïùb,9."¹. 9«(yb!ù£æù¦`¹æ¡:""¹càù¥n8à ‚ˆÝ\ÚÝ\œ™[
+
+NÂˆÛÛœÝ]™HH]™T™Y‹˜Ý\œ™[NÂˆÛÛœÝÝ]ˆÝš[™Ö×HH×NÂˆ›Üˆ
+]HHÈHÜ˜Ó\Ý›[™ÝÈJÊÊHÂˆËÈ:`(ùíd9.+yæ¡9. 9o¢ùieùãï¹g*:`&y. 9.ï{ï&ú)èúfi:`(ùíd9æ¡9å*9k ú!ê¹mìyåfy."ù/¡¹æ¡:`¨ù. 9.ïxà ‚ˆËÈ9¬¤¹§"yåfy."ù/¡¹æ¡;ï"9/¢ùi ¹o§ºh+yb,9l/¹¬¤º(ªùb!ú`c¹c®ú`c»ï"yl,yæí9£©yå*9ãï¹g*:`&y. 9.ï{ï#ˆËÈ9.#z ïyfè9à®¸à#:`¡9¬¤º/"yaiz`c¸à#yl,z-ìú`c¹.#yieÈ8 %8 %:`¨ùl,z+¢¹¢$9¬¤º`(ùíd9.¡¸à ‚ˆÛÛœÝ˜\ÙHH[šÙYÚWHOOH˜[ÙHÈ
+ÛÛÔÛ˜\Ô™Y‹˜Ý\œ™[ÚWH]™JHˆ]™NÂˆËÈ:`kº"l¹âaú"!ù©âùg%¹.#z`(ùbå{ï#:) yå*:`&y. 9o-z!ê¹mìyæ¡ˆÛÛœÝÛ˜\ˆ˜]ÚÛ˜\HÂˆ‹‹˜ÛÛ™TÛ˜\
+˜\ÙJKˆ\˜[\ÎˆÈ‹‹˜ÛÛ™TÛ˜\
+˜\ÙJKœ\˜[\Ë‹‹ŠÝÛ“X\ÚÔ™Y‹˜Ý\œ™[ÚWHXÚÓX\ÚÊQUSÔTSTÊJHH\ÈY]Ü”\˜[\ËˆÙ[ÎˆÝÛ‘Ù[Ô™Y‹˜Ý\œ™[ÚWBˆÈ”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJÝÛ‘Ù[Ô™Y‹˜Ý\œ™[ÚWJJBˆˆ
+HOOHØY™RYÈÛÛ™TÛ˜\
+˜\ÙJK™Ù[ÈˆÈ‹‹‘QUSÑÑSËÜ›ÜˆÈ‹‹‘•SÐÔ“ÔHJKˆNÂˆÛÛœÝ[YÈHHOOHØY™RY	‰ˆÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[ˆÈÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[ˆˆ]ØZ]ØY[YÊÜ˜Ó\ÝÚWJNÂˆÝ]œ\Ú
+]ØZ]™[™\“Û™J[YËÛ˜\
+JNÂˆBˆ™]›ÚÙU\›Êš[˜[[XYÙ\Ô™Y‹˜Ý\œ™[™š[\ŠHOˆ[Ý]š[˜ÛY\ÊJJJNÂˆš[˜[[XYÙ\Ô™Y‹˜Ý\œ™[HÝ]ÂˆÙ]š[˜[[XYÙ\ÊÝ]
+NÂˆÙ]š[˜[[XYÙJÝ]ÜØY™RYHÝ]ÌJNÂˆÙ]Ø]™TÝ]J	ÜÝXØÙ\ÜÉÊNÂˆËÈ:i¥ºh yæ¡8à#9§ :/äz/.9aî¸à#{ï&º*&9."ù¢$9dàyî+¹g%»ï"ú`&yo-yg%¹l#¹aî¹åm¹."ùæ¡9c§ùg%º"!ùcàù¥nˆY^Ü
+	ÙY]Ü‰ËÝ]ÜØY™RYHÝ]ÌKÜ˜Ó\ÝÜØY™RYH[XYÙTÜ˜ËÂˆ\˜[\Îˆ\˜[\Ô™Y‹˜Ý\œ™[Ù[ËÙ[XÝY]YˆK\ÝÙ^H[™Yš[™Y
+NÂˆHØ]Ú
+JHÈÛÛœÛÛK™\œ›ÜŠ”Ø]™H˜Z[Y‹JNÈÙ]Ø]™TÝ]J	ÚYIÊNÈBˆKL
+NÂˆNÂˆˆËÈ‹‹ˆ
+XÝ]™UÛÛ\ÙSY[[È[™™[XZ[š[™ÈRH™[™\ˆÙÚXÈ\ÈY[XØ[
+BˆÛÛœÝXÝ]™UÛÛH\ÙSY[[Ê
+
+HOˆÂˆYˆ
+XÝ]™UÛÛYOOH	Ùš[\—ÜÙ[XÝ	ÊHÂˆYˆ
+Ù[XÝY]YOOH
+H™]\›ˆ[Âˆ™]\›ˆÈYˆ	Û][[Ý[	È\ÈÙ^[ÙˆY]Ü”\˜[\ËX™[ˆ	ùo-ùn©‰ËZ[ŽˆX^ˆLÝ\ˆŒHNÂˆBˆYˆ
+XÝ]™UÛÛYOOH	ØÝ\™\ÉÈXÝ]™UÛÛYOOH	ÚÛ	ÊH™]\›ˆ[Èˆ]ÛÛHË‹‹Q•TÕÕÓÓË‹‹‘Q‘‘PÕÕÓÓ×K™š[™
+OˆšYOOHXÝ]™UÛÛY
+NÂˆÊˆ9âny¥b:`¨ù. :h z`n9.+y§å9ab{ï#ùaby¦¢;ï#ù¯#ùaby¦`»ï#9i%¹li:`¨ù¨.y®äy¨oú*¯ùæ¡9¦+ùk ù`$yd!:!ê¹æ¡9o-ùn©¹càù¥nˆ;ï"ÛÙ;ï#Ùœš[™ÙR[[œÚ]{ï#ÛXZÓÜXÚ]{ï"xà ˆ
+‹ÂˆYˆ
+]ÛÛ	‰ˆXÝ]™PØ]YÛÜžHOOH	ÙY™™XÝÉÊHÂˆÛÛœÝØ\™HQ‘‘PÕÕÓÓË™š[™
+OˆY™™XÝ[[Ý[Y
+šY
+HOOHXÝ]™UÛÛY
+NÂˆÛÛœÝÜ˜ÈHË‹‹”ÓÑ•ÓQÒÕÓÓË‹‹’SUSÓ—ÕÓÓË‹‹“PR×ÕÓÓ×K™š[™
+OˆšYOOHXÝ]™UÛÛY
+NÂˆYˆ
+Ø\™	‰ˆÜ˜ÊHÛÛHÈ‹‹œÜ˜ÈNÂˆBˆÊˆ9§"y.¦ùâny¥b9æ¡8à#9o-ùn©¸à#y¬¤¹§"y¡#ùïª{ï":i«:,ïyabú*¯ùb,9. 9cb¹cê¹¦+ù¢¢¹c§ùg%¹å¢¹fç¹/¡¹. 9cb»ï"{ï#ˆ:`¨ùê+¹g*–ÑQ”È:(èz*+y.¡ˆ›ÛÝ\˜[{ï&¹§ 9i%¹li:`&y¨.yæí9£©y¥.z*¯ùk ù£!ùk¦¹æ¡9càù¥n8à ‚ˆ9¤î¹g*9¥.yª&yìi9.bùbcH8 %8 %:`&y. 9¨.yæ¡9d#ykeú) y¦+øà#9¨/9¥n8à#{ï#9.#y¦+øà#9o-ùn©¸à#xà ˆ
+‹ÂˆYˆ
+XÝ]™PØ]YÛÜžHOOH	ÙY™™XÝÉÊHÂˆÛÛœÝ›ÛÝH–Ô“ÓÕÔTSVØXÝ]™UÛÛYNÂˆYˆ
+›ÛÝ
+H™]\›ˆ›ÛÝÂˆBˆÊˆ9âny¥b9§ 9i%¹li:`¨ù¨.y®äy¨où. 9o¢ùcêøà#9o-ùn©¸à#x %8 %ˆ:`n9.+ydê¹. :ha¹chyâaûï#9chyâaú!ê¹mìymì¹í¤ù§"yæoy¨aº-çùd#ykeù.¡»ï#9®äy¨où."¹a£ykêù. 9«(yâny¥b9d#ykeù¬¤¹§"y¡#ùïªxà ˆ
+‹ÂˆYˆ
+ÛÛ	‰ˆXÝ]™PØ]YÛÜžHOOH	ÙY™™XÝÉÊHÛÛHÈ‹‹ÛÛX™[ˆ	ùo-ùn©‰ÈNÂˆYˆ
+]ÛÛ	‰ˆXÝ]™PØ]YÛÜžHOOH	ÛXZÉÊHÛÛHPR×ÕÓÓË™š[™
+OˆšYOOHXÝ]™UÛÛY
+NÂˆYˆ
+]ÛÛ	‰ˆXÝ]™PØ]YÛÜžHOOH	ÜÛÙ	ÊHÛÛHÓÑ•ÓQÒÕÓÓË™š[™
+OˆšYOOHXÝ]™UÛÛY
+NÂˆYˆ
+]ÛÛ	‰ˆXÝ]™PØ]YÛÜžHOOH	Ú[][Û‰ÊHÛÛHSUSÓ—ÕÓÓË™š[™
+OˆšYOOHXÝ]™UÛÛY
+NÂˆYˆ
+]ÛÛ	‰ˆXÝ]™PØ]YÛÜžHOOH	ÙÜ˜Z[‰ÊHÛÛHÔRS—ÕÓÓË™š[™
+OˆšYOOHXÝ]™UÛÛY
+NÂˆYˆ
+]ÛÛ	‰ˆXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÊHÛÛHPTÒ×ÕÓÓË™š[™
+OˆšYOOHXÝ]™UÛÛY
+NÂˆYˆ
+]ÛÛ	‰ˆXÝ]™PØ]YÛÜžHOOH	Ùž	ÊHÛÛH
+–ÕÓÓÖØXÝ]™QžYH×JK™š[™
+OˆšYOOHXÝ]™UÛÛY
+NÂˆ™]\›ˆÛÛÂˆKØXÝ]™UÛÛYÙ[XÝY]YXÝ]™PØ]YÛÜžKXÝ]™QžYJNÂ‚ˆÊˆ:`,¹aîˆÓ9k£9aj9.#y`f¹båyåjøà ºgh¹§où§+:.ªù¦+ùæí9£©y£¦ù."»ï#ù¢ïù£¢{ï#9/a¹®äy¨oùb%ù¥-¹d"9¦+ÈÔÔÂˆ˜[œÚ][Û»ï#9o¥ùçéz`døà#:`&y. 9«(H™[™\ˆ9¦+ù.#y¦+ú-çÈÓ9§"zeç8à#y¢cz ïy¢¢¹¦`ºe¤úeç9£¢{ï&‚ˆ™Yˆ9g*Y™™XÝ:(èy¢cy¦í9¥¬;ï#9¢`9.ézfèºe¢ÈÓ9æ¡:`¨ù. 9«(H™[™\ˆ:+ 9b,9æ¡:`¡9¦+ú""¹`/8à ˆ
+‹ÂˆÛÛœÝ™]•ÛÛY™YˆH\ÙT™YŠXÝ]™UÛÛY
+NÂˆÛÛœÝÛÝÚ]ÚHXÝ]™UÛÛYOOH	ÚÛ	È™]•ÛÛY™Y‹˜Ý\œ™[OOH	ÚÛ	ÎÂˆÊˆ9o§ˆÓ9æí9£©yb!ùb,9¦ì¹íæ¹¦`»ï#9¦ì¹íæ¹.#y`f¹aiyh-8 %8 %Ó:`¨ù. 9`m9§+9/¡¹l,y¦+ùç«:e¤ù¥-¹£¢yæ¡;ï#ˆ9¦ì¹íæ¹a£y¡h¹¡hºemùaî¹/¡¹§ ù`ãù¦+øà#:gh¹§oúe ù.¡¹. 9."ùcâ:aãy/¡¸à#xà œ™Yˆ9g*Y™™XÝ:(èy¢cy¦í9¥¬;ï#ˆ9¢`9.éyb!ú`c¹c®ùæ¡:`¨ù. 9«(H™[™\ˆ:+ 9b,9æ¡:`¡9¦+ÈÛ;ï#9bfùioyl,y¦+ú) zeç9£¢ybåyåjùæ¡:`¨ù. 9«(xà ˆ
+‹ÂˆÛÛœÝÝ\™\Ñœ›ÛRÛHXÝ]™UÛÛYOOH	ØÝ\™\ÉÈ	‰ˆ™]•ÛÛY™Y‹˜Ý\œ™[OOH	ÚÛ	ÎÂˆ\ÙQY™™XÝ
+
+
+HOˆÈ™]•ÛÛY™Y‹˜Ý\œ™[HXÝ]™UÛÛYÈKØXÝ]™UÛÛYJNÂ‚ˆÊˆÓ9æ¡:gh¹§où¦+ú$âùg*:h$:)¯y."¹æ¡;ï#9§ ù¤âù£¢yg%¹âaù."ùcbº`ê;ï":aãùb,M0åÎMˆ:`kˆÍ	xà BˆÍÍpåÍÈ:`kˆN	{ï"xà º`,ˆÓ9¦`¹¢¢¹g%¹î+¹l#ù.)¹."¹éîûï#:+¤ù¥m9o-yg%¹bfùioz$/yg*:gh¹§où."¹¥®xà ‚‚ˆ9.#ykêù«nù¥n9keûï&¹æí9£©zaãúh$:)¯yc`:"!úgh¹§oùæ¡9kéºf¦ù/cyïk¹£æùë¥È8 %8 %ˆX^ZYÚH:gh¹§où."¹íèÈH9aiùk®yc`9."¹íèÈ;ï"9î+¹b,9hg¹o¥ù."ûï"BˆX\™Ú[›ÝÛOH9aiùk®yc`9."ùíèÈH:gh¹§où."¹íèÈ;ï":(ªú$âù/cùæ¡:`¨ù. 9«­{ï"BˆX\™Ú[›ÝÛH9§ ú(ªÈ›^9æ¡9ïk¹.+y. :-mùë¥ú`,¹c®ûï#9ëby¥¯9¢¢¹g%¹¥.y¢$9g*8à#9¬¤º(ªú$âù/cùæ¡ˆ:`¨ùhb¹c`9gçøà#yïk¹.+{ï#:-çùg%¹i&ºjæ9á(zeç8à ¹å*\ÙS^[Ý]Y™™XÝ9¦+ùà®¹.¡¹g*9d#9. 9«(yîjº(ïybcBˆ9l,y¢¢¹`/9ë¥ùio{ï#9.#y§ ùab:e ù. 9."ùc§ùl.¹kî8à ”™\Ú^™SØœÙ\™\ˆ:,¨:,«:/byd${ï#ú)¥¹ê¥ú+¢¹c%¸à ˆ
+‹ÂˆÛÛœÝ™]šY]Ð›Þ™YˆH\ÙT™YS]‘[[Y[Š[
+NÂ‚ˆÊˆ:h$:)¯yæ¡9î+¹¥/»ï#ùnlùéîûï":fæy£!ù¥/¹i)øà y¢å¹bå{ï"xà ‚ˆ:`,º`kº"l¹âaù¦`º) y¢¢¹k øà#9­`y¦¨¹g,8à#y£ª9fç¹c§ù§+9æ¡9i)ùl#ú"!ù/cyïk»ï&º`kº"l¹âaù¦+ùåjùg*9g%¹."¹æ¡;ï#ˆ9/oùå*: !y¥/¹i)ú`c¹¢%¹£ª9b,9. :`¢¹.bùo£9¢cz`,¹/¡¹æ¡:*l{ï#9åjúgh¹l#y.#y."¸à y.gù.#yioy."ùëa¸à ‚ˆ™\Ù]˜[œÙ›Ü›H:!ê¹mìy§ ùb)9¥­øà#9§+9/¡¹l,yg*9c§ù/cyl,y.#ybåxà#{ï#9¢`9.éy¬¤¹î+¹¥/º`c¹æ¡9.®‚ˆ9.#y§ ùç"ùb,9.îù/eybåyåjøà ˆ
+‹ÂˆÛÛœÝ›ÛÛT™YˆH\ÙT™Y™XXÝ›ÛÛT[”[˜Ú™Yˆ[Š[
+NÂˆ\ÙQY™™XÝ
+
+
+HOˆÂˆYˆ
+XÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÊH™]\›ŽÂˆËÈ:`&y. :h yæ¡9î+¹¥/¹¦+úeç9£¢yæ¡;ï"\ØX›Y;ï"{ï#9/aº`&y¥+ÈTH9.#yç"ú`¨ù`"úe¢úeç;ï#9áiùª(ù£ª9o¥ùfç¹c®Âˆ›ÛÛT™Y‹˜Ý\œ™[Ëœ™\Ù]˜[œÙ›Ü›JÌŒ	ÙX\ÙSÝ]	ÊNÂˆKØXÝ]™PØ]YÛÜžWJNÂ‚ˆÛÛœÝÚÛš]Ù]Ûš]HH\ÙTÝ]OÈXŽˆ[X™\ŽÈZˆ[X™\ˆH[Š[
+NÂˆÛÛœÝYX\Ý\™RÛš]H\ÙPØ[˜XÚÊ
+
+HOˆÂˆÛÛœÝ›ÞH™]šY]Ð›Þ™Y‹˜Ý\œ™[ÂˆÛÛœÝ[™[HØÝ[Y[œ]Y\žTÙ[XÝÜŠ	ÖÙ]KZÛ\[™[IÊH\ÈS[[Y[[ÂˆYˆ
+X›Þ\[™[
+H™]\›ŽÂˆÛÛœÝˆH›Þ™Ù]›Ý[™[™ÐÛY[™XÝ
+
+NÂˆÛÛœÝˆH[™[™Ù]›Ý[™[™ÐÛY[™XÝ
+
+NÂˆÛÛœÝQHMŽÈËÈ˜[œÙ›Ü›PÛÛ\Û™[9æ¡MˆÛÛœÝÐTHÈËÈ9b)z+¤ùg%¹¥m9`"ú,¯9g*:gh¹§où."¹íèûï#:,¯:$eùç"ú-mù/¡¹`ãùè-9g%‚ˆÛÛœÝXˆHX]›X^
+X]œ›Ý[™
+‹˜›ÝÛHHQH‹Ü
+ÈÐT
+JNÂˆÛÛœÝZHX]›X^
+LŒX]œ›Ý[™
+‹ÜHÐTH
+‹Ü
+ÈQ
+JJNÂˆÙ]Ûš]
+™]ˆOˆ
+™]ˆ	‰ˆ™]‹›XˆOOHXˆ	‰ˆ™]‹›ZOOHZ
+HÈ™]ˆˆÈX‹ZJNÂˆK×JNÂˆ\ÙS^[Ý]Y™™XÝ
+
+
+HOˆÂˆYˆ
+XÝ]™UÛÛYOOH	ÚÛ	ÊHÈÙ]Ûš]
+™]ˆOˆ
+™]ˆÈ[ˆ™]ŠJNÈ™]\›ŽÈBˆYX\Ý\™RÛš]
+
+NÂˆÛÛœÝ›ÞH™]šY]Ð›Þ™Y‹˜Ý\œ™[ÂˆYˆ
+X›Þ\[Ùˆ™\Ú^™SØœÙ\™\ˆOOH	Ý[™Yš[™Y	ÊH™]\›ŽÂˆÛÛœÝ›ÈH™]È™\Ú^™SØœÙ\™\Š
+
+HOˆYX\Ý\™RÛš]
+
+JNÂˆ›Ë›ØœÙ\™J›Þ
+NÂˆ™]\›ˆ
+
+HOˆ›Ë™\ØÛÛ›™XÝ
+
+NÂˆKØXÝ]™UÛÛYYX\Ý\™RÛš]JNÂˆÊˆ9æí9£©yí HXÝ]™UÛÛY: #9.#y¦+ùëbHÝ]H:(ªù®!y£¢{ï&ºfèºe¢ÈÓ9¦`ˆÝ]H:) y."ù. 9«(Bˆ™[™\ˆ9¢cy§ ú+¢¹¢$[;ï#: #:`¨ù. 9«(H™[™\ˆ9æ¡ÛÝÚ]Ú9mì¹í¤ùïîùfçˆ˜[Ù{ï#ˆ9l.¹kî9l,y§ ùå*L\È:(ç:e¤ú-äyfç¹c®øà ¹å*:`&y`"ù`/9æ¡:*lyd#9. 9«(H™[™\ˆ9l,z`¡9c§ù.¡¸à ˆ
+‹ÂˆÛÛœÝÛš]›ÝÈHXÝ]™UÛÛYOOH	ÚÛ	ÈÈÛš]ˆ[Â‚ˆÊˆ9n¥z`ê9b§ú ïy«!9dê¹no¹b%ú) y¥-º-mù/¡¸à ¹©âùg%¹ãï¹g*9.#ya£y¦+ùcé¹i%ºe¢ù. :h H8 %8 %ÛÛ\ÜÙTÝY[È9cêº$âù/cÂˆ:h$:)¯yc`;ï#9b!ºh yb%ùáiùª(ùåfyg*9c§ù/c{ï#9¢`9.éy®äy¨oùb%ú"!ùl#ùb!ºhg¹b%ú`ïz+¤ùíi¹k ú!ê¹mìz`¨ùajy£¤¸à ˆ
+‹ÂˆÊˆ:`,¹aî¹©âùg%¹.#y`fºjæ9n©º(ç:e¤øà ÛÛ\ÜÙTÝY[È9¦+úh$:)¯yc`9æ¡XœÛÛ]H[œÙ]L;ï#ˆ9n¥z`ê9«!9i ¹§§:"¬HÎ\È9¡h¹¡h¹¥-º-mù/¡»ï#:h$:)¯yc`9æ¡9."ùíèùl,y§ ù. :-ëùo 9."ù®ä{ï":aãùb,MÈ9`"Âˆ9.#yd#:jæ9n©¸à y."ùíèÈ¸¡¤ŽM{ï"{ï#9ç"ú-mù/¡¹l,y¦+øà#9o§¹."¹o 9."úemùaî¹/¡¸à#{ï&ú #9.%ÛÛ\ÜÙTÝY[Âˆ9æ¡™\Ú^™SØœÙ\™\ˆ9§ ú-çú$eúaãyë¥ú"'¹cì;ï#:aãùb,N9ê+¹l.¹kî8 %8 %:`¨ùl,y¦+ù¢¥¹båxà ‚ˆ9. 9«iyb,9/cy.bùo£:h$:)¯yc`9cê¹§"y. 9`"ùl.¹kî;ï#:"'¹cì9.gùcêºaãù. 9«(xà ˆ
+‹ÂˆÛÛœÝ™]Ø]YÛÜžT™YˆH\ÙT™YŠXÝ]™PØ]YÛÜžJNÂˆÛÛœÝÛÛ\ÜÙTÝÚ]ÚHXÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIÈ™]Ø]YÛÜžT™Y‹˜Ý\œ™[OOH	ØÛÛ\ÜÙIÎÂˆ\ÙQY™™XÝ
+
+
+HOˆÈ™]Ø]YÛÜžT™Y‹˜Ý\œ™[HXÝ]™PØ]YÛÜžNÈKØXÝ]™PØ]YÛÜžWJNÂ‚ˆÊˆ:`,¹aî¹âny¥b9í,:h!y.gùk£9aj9.#y`f¹båyåjûï"9§å9ab{ï#ùaby¦¢;ï#ù¯#ùab{ï#ù¥¬9âny¥b:`ïy. 9ª(ûï"xà ‚ˆ:-çÈÓ9d#9. 9`"ù`f¹¬å{ï&œ™Yˆ:) yëbHY™™XÝ9¢cy¦í9¥¬;ï#9¢`9.éxà#:fèºe¢ùæ¡:`¨ù. 9«(H™[™\¸à#Bˆ:+ 9b,9æ¡:`¡9¦+ú""¹b!ºh H8 %8 %9bfùioyl,y¦+ú) y¢¢¹¦`ºe¤úeç9£¢yæ¡:`¨ù. 9«(xà ˆ
+‹ÂˆÛÛœÝURSÐÐUÈHÉÙž	Ë	ÜÛÙ	Ë	ÛXZÉË	Ú[][Û‰×NÂˆÛÛœÝ]Z[ÝÚ]ÚHURSÐÐUËš[˜ÛY\ÊXÝ]™PØ]YÛÜžJHURSÐÐUËš[˜ÛY\Ê™]Ø]YÛÜžT™Y‹˜Ý\œ™[
+NÂ‚ˆÊˆ:`kº"l¹âaú/æ9¬¨ynî¹êâù¥í»ï#9âb:ghº-çùnî¹êâùd#¹/çy£ y. :!í;ï#9cêºe y/cù¦ ¹¥í¹.#z ïy/oùå*9æ¡9£©ùb-ºhnxà ˆ
+‹ÂˆÛÛœÝX\ÚÓØÚÙYHXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÈ	‰ˆ\\˜[\Ë›X\ÚÐÜ™X]YÂˆÛÛœÝÛY\”›ÝÒY[ˆHXÝ]™UÛÛYOOH	ØÝ\™\ÉÈXÝ]™UÛÛYOOH	ÚÛ	ÈXÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIÎÂˆÛÛœÝÝX”Ýš\Y[ˆHXÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIÎÂ‚ˆÊˆKKKH9¥¬9âny¥b9æ¡9í,:h!zgh¹§oÈKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKBˆ9.éybcy¦+ùajyli;ï&¹l#ùb!ºhg¹b%ù¥/¹càù¥n9£"zb%{ï#9®äy¨oùb%ù. 9«(ycêºhkùé.¹£"yb,9æ¡:`¨ù. 9¨.xà ‚ˆ9ãï¹g*9¢¢º`¨ù. 9`"ùâny¥b9æ¡9®äy¨oùaj:`ê9. 9«(y¥):e¢ûï#9.#yå*9a£znç¹ë+9.£9li8à ‚‚ˆ:jæ9n©¹¦+ù`'ù/¡¹æ¡;ï#9.#y¦+úemùaî¹/¡¹æ¡;ï&¹®äy¨oùb%ùo§ˆ\™[H9¤¤9b,L\™[{ï#9l#ùb!ºhg¹b%ùd#9¦`¹¥-¹¢$;ï#ˆ9ajz !yæî9b¨:`¡9¦+È\™[H
+Èœ™[H8 %8 %9n¥z`ê9«!9î/zjæ9k£9aj9¬¤º+¢»ï#9¢`9.ézh$:)¯yg%¹æ¡9i)ùl#ù.gù¬¤º+¢¸à ˆ
+‹ÂˆÛÛœÝž[™[HXÝ]™PØ]YÛÜžHOOH	Ùž	ÎÂˆÛÛœÝž›ÝÜÈH\ÙSY[[Ê
+
+HOˆÂˆÛÛœÝÛÛÈH–ÕÓÓÖØXÝ]™QžYH×NÂˆYˆ
+]ÛÛË›[™Ý
+H™]\›ˆ×H\ÈÛÛY–×V×NÂˆÛÛœÝÝ]ˆÛÛY–×V×HH×NÂˆËÈ9bfùioyajy¨.yæ¡9¦`¹`&y."¹."ùd!9êæy. :(c8 %8 %9ajy¨.y¤è9g*9d#9. 9£¤¹mé¹cìù.)¹£¤¹§ ùi*¹ê¡;ï#9keú`ïyoêú,¯9g*9. :-mù.¡‚ˆYˆ
+ÛÛË›[™ÝOOHŠH™]\›ˆÖÝÛÛÖÌWKÝÛÛÖÌWWWNÂˆËÈ9iaù¥n9¨.yæ¡9¦`¹`&xà#9o-ùn©¸à#z!ê¹mìyêæy. :(c;ï#9bjy."ùæ¡9ajyajy. 9£¤‚ˆÛÛœÝÛÛÈHÛÛË›[™Ý	HˆOOHNÂˆYˆ
+ÛÛÊHÝ]œ\Ú
+ÝÛÛÖÌWJNÂˆÛÛœÝ™\ÝHÛÛËœÛXÙJÛÛÈÈHˆ
+NÂˆ›Üˆ
+]HHÈH™\Ý›[™ÝÈH
+ÏHŠHÝ]œ\Ú
+™\ÝœÛXÙJKH
+ÈŠJNÂˆ™]\›ˆÝ]ÂˆKØXÝ]™QžYJNÂˆÊŠˆ9«ãù. 9£¤¹æ¡:jæ9n©»ï&¹£¤¹¥n9l$yl,y£¤ºk!¹. :nç»ï#9§ 9i&¹fæù£¤¹¦`¹bfùioyhg¹o¥ù."È
+‹ÂˆÛÛœÝž›ÝÒHž›ÝÜË›[™ÝÈX]›Z[ŠL‹X]™›ÛÜŠMÌˆÈž›ÝÜË›[™Ý
+JHˆLŽÂ‚ˆÊˆ9o§¹©âùg%¹æí9£©yb!ùb,9b)yæ¡9b!ºh H;ï'H9ëbyd#9£"y.¡¸à#9k£9¢$8à#{ï#:(àyb!ùáiùª(ùieùå*8à ‚ˆ9cê¹§"y¦#¹è®¹£"xà#9cå¹­¢8à#y¢cy§ ù.'ù£¢{ï"ÛØ[˜Ù[9§ ùab9¢¢ˆ˜YÙ[È9®!y¢$[;ï#ˆ9¢`9.éz`&y`"ÈY™™XÝ9.#y§ úaãz)!ùieù. 9«({ï"xà ˆ
+‹Âˆ\ÙQY™™XÝ
+
+
+HOˆÂˆYˆ
+XÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIÈ	‰ˆ˜YÙ[ÊHÂˆ\QÙ[Ê˜YÙ[ÊNÂˆYÒ\ÝÜžJ\˜[\Ô™Y‹˜Ý\œ™[Ù[XÝY]Y
+NÂˆÙ]˜YÙ[Ê[
+NÂˆBˆËÈ\Û[Y\ØX›K[™^[[™H™XXÝZÛÚÜËÙ^]\Ý]™KY\ÂˆKØXÝ]™PØ]YÛÜžK˜YÙ[×JNÂ‚ˆÊˆ:`,¹©âùg%¹.bùbcyo¡yg*9dê¹. :h H8 %8 %9£"yk£9¢$9.bùo£9fç¹c®ú`¨ù. :h {ï#9.#z) y. 9o¢ú-ìùfç¹¯ïºcèH
+‹ÂˆÛÛœÝ™Y›Ü™PÛÛ\ÜÙT™YˆH\ÙT™YÈØ]ˆØ]YÛÜžNÈÛÛˆÝš[™ÈOŠÈØ]ˆ	Ùš[\‰ËÛÛˆ	Ùš[\—ÜÙ[XÝ	ÈJNÂ‚ˆÊŠˆ9mé¹."º/å9fç¹.#¹§¡9fï¹a¡yæ¡9cå¹­¢9alyå*9d#9. 9§hx '9¥/¹o ú#byê/ùaè9/ex 'z-ëùo¡8à ‚ˆ9ab9d#9«iy®!yênˆ˜Y;ï#9a£yb!ùfçº/æùaiy§¡9fï¹bcyæ¡9b!ºhm{ï#:`oùacyé®ùo 9§¡9fï¹æ¡:!ê¹bª9ieùå*Y™™XÝˆ9g*9d#9. 9¢ny¦í9¥¬9.+z+îùb,9¥éÈ˜Y;ï#9nm¹èk¹/çyk ùîçy.#y/&¹îéùîëya¤¹¬èy¢$:` 9aî¹¥m9.*¹ï%º/¤yfj8à ˆ
+‹ÂˆÛÛœÝØ[˜Ù[ÛÛ\ÜÙHH\ÙPØ[˜XÚÊ
+
+HOˆÂˆÛÛœÝ™]š[Ý\ÈH™Y›Ü™PÛÛ\ÜÙT™Y‹˜Ý\œ™[ÂˆÛÛ\ÜÙT™]šY]Ô™Y‹˜Ý\œ™[H[Âˆ›\ÚÞ[˜Ê
+
+HOˆÙ]˜YÙ[Ê[
+JNÂˆÙ]XÝ]™PØ]YÛÜžJ™]š[Ý\Ë˜Ø]
+NÂˆÙ]XÝ]™UÛÛY
+™]š[Ý\ËÛÛ
+NÂˆK×JNÂ‚ˆÛÛœÝ\Ô\˜[PY\ÝYH\ÙPØ[˜XÚÊ
+YˆÝš[™ÊNˆ›ÛÛX[ˆOˆÂˆÊˆÓÓ9âny¥b;ï&º-çù§å9ab{ï#ùaby¦¢9d#9. 9ieú)£ùbaÈ8 %8 %9o-ùn©¹¦+È9l,y¥m9ía:`ïy.#y.«¹æoznç»ï#ˆ9.#yë¨yí,:h!z(ªùbåz`c¹¬¤¹§"xà ¹í,:h!y§+:.ªùbaù¦+øà#:-çúh$:*+y.#yd#9¢cyë¥øà#{ï#: #9.%9§ 9l#ù`/9.#y¦+È9æ¡ˆ:`¨ùno¹`"ûï"9¨/9¥n9.búhg»ï#9§ ú+¢¹¢$:fi9.ézfí»ï"y`g9g*9§ 9l#ù`/9¦`¹.gù.#yë¥ú*¯ù¥m:`c¸à ˆ
+‹ÂˆÛÛœÝžÝÛ™\ˆH–ÓÕÓ‘T–ÚYNÂˆYˆ
+žÝÛ™\ŠHÂˆYˆ
+
+\˜[\ÖÙžÝÛ™\‹šYH
+HOOH
+H™]\›ˆ˜[ÙNÂˆYˆ
+YOOHžÝÛ™\‹šY
+H™]\›ˆYNÂˆÛÛœÝHžÝÛ™\‹œ\˜[\Ë™š[™
+OˆšYOOHY
+NÂˆYˆ
+\
+H™]\›ˆ˜[ÙNÂˆÛÛœÝˆH\˜[\ÖÚYNÂˆYˆ
+ˆOOH™YŠH™]\›ˆ˜[ÙNÂˆYˆ
+›Z[ˆˆ	‰ˆˆOOH›Z[ŠH™]\›ˆ˜[ÙNÂˆ™]\›ˆYNÂˆBˆYˆ
+YOOH	ØÝ\™\ÉÊHÂˆ™]\›ˆ”ÓÓ‹œÝš[™ÚYžJ\˜[\Ë˜Ý\™\ÊHOOH”ÓÓ‹œÝš[™ÚYžJQUSÐÕT•‘TÊNÂˆBˆYˆ
+YOOH	ÚÛ	ÊHÂˆ™]\›ˆZ\ÒÛY[]J\˜[\ËšÛ
+NÂˆBˆYˆ
+YOOH	ÜÛÙYÚ	ÈYOOH	ÜÛÙ	ÈYOOH	ÜÛÙ™\ÚÛ	ÈYOOH	ÜÛÙ˜Y]\ÉÈYOOH	ÜÛÙÛÛÜ‰ÊHÂˆYˆ
+\˜[\ËœÛÙOOH
+H™]\›ˆ˜[ÙNÂˆYˆ
+YOOH	ÜÛÙYÚ	ÊHÂˆ™]\›ˆ\˜[\ËœÛÙOOHQUSÔTSTËœÛÙˆ\˜[\ËœÛÙ™\ÚÛOOHQUSÔTSTËœÛÙ™\ÚÛˆ\˜[\ËœÛÙ˜Y]\ÈOOHQUSÔTSTËœÛÙ˜Y]\Èˆ\˜[\ËœÛÙÛÛÜˆOOHQUSÔTSTËœÛÙÛÛÜŽÂˆBˆÛÛœÝ˜[H\˜[\ÖÚY\ÈÙ^[ÙˆY]Ü”\˜[\×NÂˆÛÛœÝYˆHQUSÔTSTÖÚY\ÈÙ^[ÙˆY]Ü”\˜[\×NÂˆ™]\›ˆ˜[OOH[™Yš[™Y	‰ˆYˆOOH[™Yš[™Y	‰ˆ˜[OOHYŽÂˆBˆYˆ
+YOOH	Ú[][Û‰ÈYOOH	Ùœš[™ÙR[[œÚ]IÈYOOH	Ùœš[™ÙRYIÈYOOH	Ùœš[™ÙTÚ^™IÈYOOH	Ùœš[™ÙQ™X]\‰ÊHÂˆYˆ
+\˜[\Ë™œš[™ÙR[[œÚ]HOOH
+H™]\›ˆ˜[ÙNÂˆYˆ
+YOOH	Ú[][Û‰ÊHÂˆ™]\›ˆ\˜[\Ë™œš[™ÙR[[œÚ]HOOHQUSÔTSTË™œš[™ÙR[[œÚ]Hˆ\˜[\Ë™œš[™ÙRYHOOHQUSÔTSTË™œš[™ÙRYHˆ\˜[\Ë™œš[™ÙTÚ^™HOOHQUSÔTSTË™œš[™ÙTÚ^™Hˆ\˜[\Ë™œš[™ÙQ™X]\ˆOOHQUSÔTSTË™œš[™ÙQ™X]\ŽÂˆBˆÛÛœÝ˜[H\˜[\ÖÚY\ÈÙ^[ÙˆY]Ü”\˜[\×NÂˆÛÛœÝYˆHQUSÔTSTÖÚY\ÈÙ^[ÙˆY]Ü”\˜[\×NÂˆ™]\›ˆ˜[OOH[™Yš[™Y	‰ˆYˆOOH[™Yš[™Y	‰ˆ˜[OOHYŽÂˆBˆYˆ
+YOOH	ÛYÚXZÉÈYOOH	ÛXZÓÜXÚ]IÈYOOH	ÛXZÐ[™ÛIÈYOOH	ÛXZÒYIÊHÂˆYˆ
+\˜[\Ë›XZÓÜXÚ]HOOH
+H™]\›ˆ˜[ÙNÂˆYˆ
+YOOH	ÛYÚXZÉÊHÂˆ™]\›ˆ\˜[\Ë›XZÓÜXÚ]HOOHQUSÔTSTË›XZÓÜXÚ]Hˆ\˜[\Ë›XZÐ[™ÛHOOHQUSÔTSTË›XZÐ[™ÛHˆ\˜[\Ë›XZÒYHOOHQUSÔTSTË›XZÒYNÂˆBˆÛÛœÝ˜[H\˜[\ÖÚY\ÈÙ^[ÙˆY]Ü”\˜[\×NÂˆÛÛœÝYˆHQUSÔTSTÖÚY\ÈÙ^[ÙˆY]Ü”\˜[\×NÂˆ™]\›ˆ˜[OOH[™Yš[™Y	‰ˆYˆOOH[™Yš[™Y	‰ˆ˜[OOHYŽÂˆBˆÛÛœÝ˜[H\˜[\ÖÚY\ÈÙ^[ÙˆY]Ü”\˜[\×NÂˆÛÛœÝYˆHQUSÔTSTÖÚY\ÈÙ^[ÙˆY]Ü”\˜[\×NÂˆYˆ
+˜[OOH[™Yš[™Y	‰ˆYˆOOH[™Yš[™Y
+HÂˆ™]\›ˆ˜[OOHYŽÂˆBˆ™]\›ˆ˜[ÙNÂˆKÜ\˜[\×JNÂ‚ˆÛÛœÝ[™PÝ\™TÝ\˜YÈH
+Nˆ™XXÝ“[Ý\ÙQ]™[™XXÝ•ÝXÚ]™[Yˆ[X™\ŠHOˆÂˆKœÝÜ›ÜYØ][ÛŠ
+NÂˆÙ]˜YÔÚ[Y
+Y
+NÂˆÙ]\Ò[\˜XÝ[™ÊYJNÂˆ\Ý™[™\‘\˜][Û”™Y‹˜Ý\œ™[HLŽÈËÈ™\Ù]\˜][ÛˆÈ™]™[ÛÝÈ›ÝHØ\œžK[Ý™\‚ˆNÂˆˆÛÛœÝ[™PÝ\™S[Ý™HH
+Nˆ™XXÝ“[Ý\ÙQ]™[™XXÝ•ÝXÚ]™[
+HOˆÂˆYˆ
+˜YÔÚ[YOOHLJH™]\›ŽÂˆÛÛœÝÛY[H	ÝÝXÚ\ÉÈ[ˆHÈKÝXÚ\ÖÌK˜ÛY[ˆ
+H\È™XXÝ“[Ý\ÙQ]™[
+K˜ÛY[ÂˆÛÛœÝÛY[HH	ÝÝXÚ\ÉÈ[ˆHÈKÝXÚ\ÖÌK˜ÛY[Hˆ
+H\È™XXÝ“[Ý\ÙQ]™[
+K˜ÛY[NÂˆÛÛœÝÝ™ÈHØÝ[Y[™Ù][[Y[žRY
+	ØÝ\™\ÔÝ™ÉÊNÂˆYˆ
+\Ý™ÊH™]\›ŽÂˆÛÛœÝ™XÝHÝ™Ë™Ù]›Ý[™[™ÐÛY[™XÝ
+
+NÂˆ]HX]›X^
+X]›Z[ŠŒX]œ›Ý[™
+
+ÛY[H™XÝ›Y
+H
+ˆ
+ŒÈ™XÝÚY
+JJJNÂˆ]HHX]›X^
+X]›Z[ŠŒX]œ›Ý[™
+ŒH
+ÛY[HH™XÝÜ
+H
+ˆ
+ŒÈ™XÝšZYÚ
+JJJNÂˆÛÛœÝMHH
+ÈŒ
+H
+ˆMNÂˆÛÛœÝÝ\œ™[Ú[ÈHË‹‹œ\˜[\Ë˜Ý\™\ÖØÝ\œ™[Ý\™PÚ[›™[WNÂˆYˆ
+˜YÔÚ[Yˆ	‰ˆMHHÝ\œ™[Ú[ÖÙ˜YÔÚ[YHWKž
+HH
+Ý\œ™[Ú[ÖÙ˜YÔÚ[YHWKžÈMJH
+ˆŒ
+ÈNÂˆYˆ
+˜YÔÚ[YÝ\œ™[Ú[Ë›[™ÝHH	‰ˆMHHÝ\œ™[Ú[ÖÙ˜YÔÚ[Y
+ÈWKž
+HH
+Ý\œ™[Ú[ÖÙ˜YÔÚ[Y
+ÈWKžÈMJH
+ˆŒHNÂˆÛÛœÝ™]ÔÚ[ÈHË‹‹˜Ý\œ™[Ú[×NÂˆ™]ÔÚ[ÖÙ˜YÔÚ[YHHÈˆ
+ÈŒ
+H
+ˆMKNˆ
+HÈŒ
+H
+ˆMHNÂˆÛÛœÝ™]ÐÝ\™\ÈHÈ‹‹œ\˜[\Ë˜Ý\™\ËØÝ\œ™[Ý\™PÚ[›™[Nˆ™]ÔÚ[ÈNÂˆ\˜[\Ô™Y‹˜Ý\œ™[HÈ‹‹œ\˜[\Ô™Y‹˜Ý\œ™[Ý\™\Îˆ™]ÐÝ\™\ÈNÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆØÚY[T\˜[\ÔÞ[˜Ê
+NÂˆNÂˆˆÛÛœÝ[™PÝ\™Q[™˜YÈH
+
+HOˆÂˆ›\Ú\˜[\ÔÞ[˜Ê
+NÂˆÙ]˜YÔÚ[Y
+LJNÂˆÙ]\Ò[\˜XÝ[™Ê˜[ÙJNÂˆYÒ\ÝÜžJ\˜[\Ô™Y‹˜Ý\œ™[Ù[XÝY]Y
+NÂˆNÂ‚ˆÛÛœÝ[™TÚ[\H
+Nˆ™XXÝ“[Ý\ÙQ]™[™XXÝ•ÝXÚ]™[Yˆ[X™\ŠHOˆÂˆKœÝÜ›ÜYØ][ÛŠ
+NÂˆÛÛœÝ›ÝÈH]K››ÝÊ
+NÂˆÛÛœÝ\Ô™XÙ[Ü™X]HH\ÝÜ™X]YY™Y‹˜Ý\œ™[OOHY	‰ˆ
+›ÝÈH\ÝÜ™X]Y[YT™Y‹˜Ý\œ™[ÍL
+NÂˆYˆ
+Z\Ô™XÙ[Ü™X]H	‰ˆ
+›ÝÈH\ÝÝ\™U\™Y‹˜Ý\œ™[Ì
+JHÂˆÛÛœÝÝ\œ™[Ú[ÈHË‹‹œ\˜[\Ë˜Ý\™\ÖØÝ\œ™[Ý\™PÚ[›™[WNÂˆYˆ
+Ý\œ™[Ú[Ë›[™Ýˆˆ	‰ˆYˆ	‰ˆYÝ\œ™[Ú[Ë›[™ÝHJHÂˆÝ\œ™[Ú[ËœÜXÙJYJNÂˆÛÛœÝ™]ÐÝ\™\ÈHÈ‹‹œ\˜[\Ë˜Ý\™\ËØÝ\œ™[Ý\™PÚ[›™[NˆÝ\œ™[Ú[ÈNÂˆÙ]\˜[\Ê™]ˆOˆ
+È‹‹œ™]‹Ý\™\Îˆ™]ÐÝ\™\ÈJJNÂˆYÒ\ÝÜžJÈ‹‹œ\˜[\ËÝ\™\Îˆ™]ÐÝ\™\ÈKÙ[XÝY]Y
+NÂˆBˆ\ÝÝ\™U\™Y‹˜Ý\œ™[HÂˆH[ÙHÂˆ\ÝÝ\™U\™Y‹˜Ý\œ™[H›ÝÎÂˆ[™PÝ\™TÝ\˜YÊKY
+NÂˆBˆNÂˆˆÛÛœÝ[™PÝ\™P™ÐÛXÚÈH
+Nˆ™XXÝ“[Ý\ÙQ]™[™XXÝ•ÝXÚ]™[
+HOˆÂˆÛÛœÝÛY[H	ÝÝXÚ\ÉÈ[ˆHÈKÝXÚ\ÖÌK˜ÛY[ˆ
+H\È™XXÝ“[Ý\ÙQ]™[
+K˜ÛY[ÂˆÛÛœÝÛY[HH	ÝÝXÚ\ÉÈ[ˆHÈKÝXÚ\ÖÌK˜ÛY[Hˆ
+H\È™XXÝ“[Ý\ÙQ]™[
+K˜ÛY[NÂˆÛÛœÝÝ™ÈHØÝ[Y[™Ù][[Y[žRY
+	ØÝ\™\ÔÝ™ÉÊNÂˆYˆ
+\Ý™ÊH™]\›ŽÂˆÛÛœÝ™XÝHÝ™Ë™Ù]›Ý[™[™ÐÛY[™XÝ
+
+NÂˆÛÛœÝHX]›X^
+X]›Z[ŠŒX]œ›Ý[™
+
+ÛY[H™XÝ›Y
+H
+ˆ
+ŒÈ™XÝÚY
+JJJNÂˆÛÛœÝHHX]›X^
+X]›Z[ŠŒX]œ›Ý[™
+ŒH
+ÛY[HH™XÝÜ
+H
+ˆ
+ŒÈ™XÝšZYÚ
+JJJNÂˆÛÛœÝMHH
+ÈŒ
+H
+ˆMNÂˆÛÛœÝLMHH
+HÈŒ
+H
+ˆMNÂˆÛÛœÝÝ\œ™[Ú[ÈH\˜[\Ë˜Ý\™\ÖØÝ\œ™[Ý\™PÚ[›™[NÂˆ]ÛÜÙ\ÝYHLNÂˆ]Z[‘\ÝHÌŽÈˆ›Üˆ
+]HHÈHÝ\œ™[Ú[Ë›[™ÝÈJÊÊHÂˆÛÛœÝHÝ\œ™[Ú[ÖÚWNÂˆÛÛœÝ\ÝHX]œÜ\
+X]œÝÊžHMKŠH
+ÈX]œÝÊžHHLMKŠJNÂˆYˆ
+\ÝZ[‘\Ý
+HÂˆZ[‘\ÝH\ÝÂˆÛÜÙ\ÝYHNÂˆBˆBˆYˆ
+ÛÜÙ\ÝYOOHLJHÂˆ[™TÚ[\
+KÛÜÙ\ÝY
+NÂˆ™]\›ŽÂˆBˆÛÛœÝÝ\™VHHÙ]Ü[™VJMKÝ\œ™[Ú[ÊNÂˆYˆ
+X]˜XœÊLMHHÝ\™VJHÌŠHÂˆYˆ
+Ý\œ™[Ú[ËœÛÛYJOˆX]˜XœÊžHMJHLŠJH™]\›ŽÂˆÛÛœÝ™]ÔÚ[ÈHË‹‹˜Ý\œ™[Ú[ËÈˆMKNˆÝ\™VHWKœÛÜ
+
+KŠHOˆKžH‹ž
+NÂˆÛÛœÝ™]ÒYH™]ÔÚ[Ë™š[™[™^
+OˆžOOHMJNÂˆÛÛœÝ™]ÐÝ\™\ÈHÈ‹‹œ\˜[\Ë˜Ý\™\ËØÝ\œ™[Ý\™PÚ[›™[Nˆ™]ÔÚ[ÈNÂˆÙ]\˜[\Ê™]ˆOˆ
+È‹‹œ™]‹Ý\™\Îˆ™]ÐÝ\™\ÈJJNÂˆ\˜[\Ô™Y‹˜Ý\œ™[HÈ‹‹œ\˜[\Ô™Y‹˜Ý\œ™[Ý\™\Îˆ™]ÐÝ\™\ÈNÂˆ\ÝÜ™X]YY™Y‹˜Ý\œ™[H™]ÒYÂˆ\ÝÜ™X]Y[YT™Y‹˜Ý\œ™[H]K››ÝÊ
+NÂˆÙ]˜YÔÚ[Y
+™]ÒY
+NÂˆÙ]\Ò[\˜XÝ[™ÊYJNÂˆ\Ý™[™\‘\˜][Û”™Y‹˜Ý\œ™[HLŽÈËÈ™\Ù]\˜][ÛˆÈ™]™[ÛÝÈ›ÝHØ\œžK[Ý™\‚ˆBˆNÂ‚ˆÛÛœÝ™\Ù][Ý\™\ÈH
+
+HOˆÂˆÛÛœÝ™]ÐÝ\™\ÈH”ÓÓ‹œ\œÙJ”ÓÓ‹œÝš[™ÚYžJQUSÐÕT•‘TÊJNÂˆÙ]\˜[\Ê™]ˆOˆ
+È‹‹œ™]‹Ý\™\Îˆ™]ÐÝ\™\ÈJJNÂˆYÒ\ÝÜžJÈ‹‹œ\˜[\ËÝ\™\Îˆ™]ÐÝ\™\ÈKÙ[XÝY]Y
+NÂˆNÂ‚ˆÛÛœÝÙ]Ý\™T]H
+
+HOˆÂˆÛÛœÝÈHË‹‹œ\˜[\Ë˜Ý\™\ÖØÝ\œ™[Ý\™PÚ[›™[WKœÛÜ
+
+KŠOO˜KžX‹ž
+NÂˆ]]HH	ÜÖÌKžÌMJŒŒH	ÌŒH
+ÖÌKžKÌMJŒŒ
+_XÂˆ›Üˆ
+]HHNÈHHŒNÈH
+ÏHJHÂˆÛÛœÝMHH
+KÌŒ
+JŒMNÂˆÛÛœÝLMHHÙ]Ü[™VJX]›Z[ŠMKMJKÊNÂˆ]
+ÏH	Ú_H	ÌŒH
+LMKÌMJŒŒ
+_XÂˆBˆ™]\›ˆ]ÂˆNÂˆˆÛÛœÝÙ]Ý\™PÛÛÜˆH
+
+HOˆÂˆÝÚ]Ú
+Ý\œ™[Ý\™PÚ[›™[
+HÂˆØ\ÙH	Ü‰Îˆ™]\›ˆ	ÈÙY	ÎÂˆØ\ÙH	ÙÉÎˆ™]\›ˆ	ÈÌŒ˜ÍMYIÎÂˆØ\ÙH	Ø‰Îˆ™]\›ˆ	ÈÌØŽ™‰ÎÂˆY˜][ˆ™]\›ˆ	ÈÙ™™‰ÎÂˆBˆNÂ‚ˆ™]\›ˆ
+ˆ]ˆÛ\ÜÓ˜[YOHœØY™K]Üš^Y[œÙ]L™ËVÈÌH‹VÍŒH›^›^XÛÛ[š[X]KZ[ˆÛYKZ[‹Yœ›ÛK\šYÚ\˜][Û‹LÌ›Û\Ø[œÈ^]Ú]HÝ™\™›ÝËZY[ˆ›ËXØ[Ý]‚ˆÛ“[Ý\ÙS[Ý™O^Ù˜YÔÚ[YOOHLHÈ
+JHOˆ[™PÝ\™S[Ý™JJHˆ[™Yš[™YBˆÛ“[Ý\ÙU\^Ù˜YÔÚ[YOOHLHÈ[™PÝ\™Q[™˜YÈˆ[™Yš[™YBˆÛ•ÝXÚ[Ý™O^Ù˜YÔÚ[YOOHLHÈ
+JHOˆ[™PÝ\™S[Ý™JJHˆ[™Yš[™YBˆÛ•ÝXÚ[™^Ù˜YÔÚ[YOOHLHÈ[™PÝ\™Q[™˜YÈˆ[™Yš[™YBˆ‚ˆÝ[OžØˆ››ËXØ[Ý]Âˆ]ÙXšÚ]]ÝXÚXØ[Ý]ˆ›Û™NÂˆ]ÙXšÚ]]\Ù\‹\Ù[XÝˆ›Û™NÂˆ\Ù\‹\Ù[XÝˆ›Û™NÂˆÝXÚXXÝ[ÛŽˆ›Û™NÂˆBˆ˜[ÝËXØ[Ý]Âˆ]ÙXšÚ]]ÝXÚXØ[Ý]ˆY˜][Z[\Ü[Âˆ]ÙXšÚ]]\Ù\‹\Ù[XÝˆ]]ÈZ[\Ü[Âˆ\Ù\‹\Ù[XÝˆ]]ÈZ[\Ü[ÂˆÝXÚXXÝ[ÛŽˆ]]ÈZ[\Ü[ÂˆÚ[\‹Y]™[Îˆ]]ÈZ[\Ü[ÂˆÝ\œÛÜŽˆÛÛ^[Y[NÂˆBˆ˜Ý\ÝÛK\˜[™ÙK˜ÛÛ\XÝÈZYÚˆÌÈBˆÊˆ9âny¥b9í,:h!z`¨ùê+¹.)¹£¤¹æ¡9®äy¨oûï&‚ˆJH9.#z ïyd$yi%¹i&ºemÈÌœ8 %8 %9ajy¨.y.)¹£¤¹¦`º)î9£©ùëá9g#y§ úaãyå¢»ï#9.+ze¤ù§ ù£"zc+ù¨.BˆŠH:.ã:`dùæ¡9¯.9li9§+9/¡¹mé¹cìùd!9åfHÌœ:`#ù¦#»ï"9å*9/¡º$âù£¢yi%¹¤í9æ¡:`¨ù. 9«­{ï"{ï#ˆ9¬¤¹§"yi%¹¤í9l,y.#z ïyåf{ï#9.#yá-ˆMÜ9æ¡9®äy¨oùcê¹bjHÜ9ç"ùo¥ùb,:.ã:`dÂˆÊH9¢áù£!ùi%¹¨a¹o§ˆ9¥-¹b,;ï#œ:jæ9æ¡9®äy¨où¢cz(çyo¥ù."È
+‹Âˆ˜Ý\ÝÛK\˜[™ÙK™[œÙHÈZYÚˆœÈÚYˆL	NÈX\™Ú[ŽˆÈBˆÊˆ9¢áù£!ùæ¡8à#9æä¹kd8à#y§"yi&¹kë;ï#9g$únç¹l,z-l9.#yb,9ajyêëùi&¹l$H8 %8 %9à#ú)¯yfj:+¤ù¢áù£!ù.+yoàùcêº ïyg*ˆ9æä¹këÌˆ9b,9këyæä¹këÌˆ9.búe¤ùéîùbåxà ¹. :"+9®äy¨où¦+úgh9d$yi%¹i&ºemÈÌœ;ï";ï'yæä¹kë9. 9cb»ï"Bˆ9¢¢º`&y.í¹.¢ú%ãú-mù/¡¹æ¡;ï#9.)¹£¤¹æ¡9®äy¨où.#z ïyi%¹¤í;ï#9¢`9.éy¥.y¢$9ajz`¢¹d#9¦`º&eyä!»ï&‚ˆ9æä¹kd9¥-¹b,N;ï"9bfùioyc!y/cÈM\9æ¡9g$únç»ï"{ï#:.ã:`dù.gùcê¹åjÈ\‹¹këN\8à ‚ˆ9ajz !yl#zob¹.bùo£;ï#9g$únç¹l,yç'ùæ¡:-l9o¥ùb,:.ã:`dùæ¡:h+yl/¹.¡¸à ‚ˆ;ï"9æä¹kd:+¢¹l#ù.#yolzgïù¤ãy/g8 %8 %˜[™ÙH9§+9/¡¹l,y¦+ù£"yg*:.ã:`dù."¹.îù/ey. :nçº`ïy§ ú-ìú`c¹c®øà »ï"H
+‹Âˆ˜Ý\ÝÛK\˜[™ÙK™[œÙNŽ‹]ÙXšÚ]\ÛY\‹\[›˜X›K]˜XÚÈÂˆ˜XÚÙÜ›Ý[™ˆ[™X\‹YÜ˜YY[
+ÈšYÚ™Ø˜J
+H\ÌÌÌÈ\ÌÌÌÈØ[ÊL	HH\
+K™Ø˜J
+HØ[ÊL	HH\
+JNÂˆBˆ˜Ý\ÝÛK\˜[™ÙK™[œÙNŽ‹[[Þ‹\˜[™ÙK]˜XÚÈÂˆ˜XÚÙÜ›Ý[™ˆ[™X\‹YÜ˜YY[
+ÈšYÚ™Ø˜J
+H\ÌÌÌÈ\ÌÌÌÈØ[ÊL	HH\
+K™Ø˜J
+HØ[ÊL	HH\
+JNÂˆBˆ˜Ý\ÝÛK\˜[™ÙK™[œÙNŽ‹]ÙXšÚ]\ÛY\‹][XˆÈZYÚˆœÈÚYˆNÈX\™Ú[‹]ÜˆLLœÈBˆ˜Ý\ÝÛK\˜[™ÙK™[œÙNŽ‹[[Þ‹\˜[™ÙK][XˆÈZYÚˆœÈÚYˆNÈBˆ˜Ý\ÝÛK\˜[™ÙHÈˆ]ÙXšÚ]X\X\˜[˜ÙNˆ›Û™NÈˆÚYˆØ[ÊL	H
+È
+NÈˆZYÚˆÈˆ˜XÚÙÜ›Ý[™ˆ™Ø˜J
+NÈˆÝ][™Nˆ›Û™NÈˆX\™Ú[ŽˆLÌœÈˆY[™ÎˆÂˆÝXÚXXÝ[ÛŽˆ›Û™NÂˆ]ÙXšÚ]]\ZYÚYÚXÛÛÜŽˆ™Ø˜J
+NÂˆBˆ˜Ý\ÝÛK\˜[™ÙN™›ØÝ\ÈÂˆÝ][™Nˆ›Û™NÂˆBˆ˜Ý\ÝÛK\˜[™ÙNŽ‹]ÙXšÚ]\ÛY\‹\[›˜X›K]˜XÚÈÈˆÚYˆL	NÈˆZYÚˆœÈˆ˜XÚÙÜ›Ý[™ˆ[™X\‹YÜ˜YY[
+ÈšYÚ™Ø˜J
+HÌœÌÌÌÈÌœÌÌÌÈØ[ÊL	HHÌœ
+K™Ø˜J
+HØ[ÊL	HHÌœ
+JNÈˆ›Ü™\‹\˜Y]\ÎˆœÈˆÝ\œÛÜŽˆÚ[\ŽÂˆBˆ˜Ý\ÝÛK\˜[™ÙNŽ‹]ÙXšÚ]\ÛY\‹][XˆÈˆ]ÙXšÚ]X\X\˜[˜ÙNˆ›Û™NÈˆZYÚˆÈˆÚYˆÈˆ˜XÚÙÜ›Ý[™XÛÛÜŽˆ™Ø˜J
+NÂˆ˜XÚÙÜ›Ý[™Z[XYÙNˆ˜YX[YÜ˜YY[
+Ú\˜ÛH]Ù[\‹Ù™™™™™ˆÙ™™™™™ˆË\™Ø˜JMKMKMK
+H™Ø˜JMKMKMK
+HL	JNÂˆ›Ü™\Žˆ›Û™NÂˆÝ][™Nˆ›Û™NÂˆÝ\œÛÜŽˆÚ[\ŽÈˆX\™Ú[‹]ÜˆLÌ\Èˆ˜[œÚ][ÛŽˆ˜[œÙ›Ü›HŒ\ÎÂˆ›Þ\ÚYÝÎˆ›Û™NÂˆBˆ˜Ý\ÝÛK\˜[™ÙNŽ‹]ÙXšÚ]\ÛY\‹][XŽ˜XÝ]™HÂˆ˜[œÙ›Ü›NˆØØ[JKŒMJNÂˆBˆ˜Ý\ÝÛK\˜[™ÙNŽ‹[[Þ‹\˜[™ÙK]˜XÚÈÈˆÚYˆL	NÈˆZYÚˆœÈˆ˜XÚÙÜ›Ý[™ˆ[™X\‹YÜ˜YY[
+ÈšYÚ™Ø˜J
+HÌœÌÌÌÈÌœÌÌÌÈØ[ÊL	HHÌœ
+K™Ø˜J
+HØ[ÊL	HHÌœ
+JNÈˆ›Ü™\‹\˜Y]\ÎˆœÈˆÝ\œÛÜŽˆÚ[\ŽÂˆBˆ˜Ý\ÝÛK\˜[™ÙNŽ‹[[Þ‹\˜[™ÙK][XˆÂˆZYÚˆÈˆÚYˆÈˆ˜XÚÙÜ›Ý[™XÛÛÜŽˆ™Ø˜J
+NÂˆ˜XÚÙÜ›Ý[™Z[XYÙNˆ˜YX[YÜ˜YY[
+Ú\˜ÛH]Ù[\‹Ù™™™™™ˆÙ™™™™™ˆË\™Ø˜JMKMKMK
+H™Ø˜JMKMKMK
+HL	JNÂˆ›Ü™\Žˆ›Û™NÂˆÝ][™Nˆ›Û™NÂˆÝ\œÛÜŽˆÚ[\ŽÈˆ˜[œÚ][ÛŽˆ˜[œÙ›Ü›HŒ\ÎÂˆ›Þ\ÚYÝÎˆ›Û™NÂˆBˆ˜Ý\ÝÛK\˜[™ÙNŽ‹[[Þ‹\˜[™ÙK][XŽ˜XÝ]™HÂˆ˜[œÙ›Ü›NˆØØ[JKŒMJNÂˆBˆ˜Ý\™K\Ú[Èˆš[ˆÙ™™ŽÈˆÝ\œÛÜŽˆÚ[\ŽÈˆš[\Žˆ›Ü\ÚYÝÊ™Ø˜JMKMKMKŠJNÈˆ˜[œÚ][ÛŽˆš[\ˆŒœÎÈˆBˆ˜Ý\™K\Ú[˜XÝ]™HÈš[\Žˆ›Ü\ÚYÝÊLœÙ™™ŠNÈBˆÊˆ:`,¹h-8à z` 9h-:`ïyå*:`&y¨§HX\ÙSÝ]]Z[;ï&º-mù«iyoêøà y¥-¹l/¹o¢9§å8à ‚ˆ:` 9h-9¦ï¹í¤ù¥.y¢$9k ùæ¡:cèyl!;ï"X\ÙR[»ï"yioz+¢¹¢$8à#:`,¹h-9æ¡9`$¹¥/¸à#{ï#9/aˆX\ÙR[‚ˆ:e¢úh+y¦+ùnlùæ¡8 %8 %9bcHNL\È9no¹.cº`¡9¦+ùaj9.#z`#ù¦#»ï#9¥/ºe¢ù¢bù§ ú)®¹o¥ù¦ì¹íæº,í:$eù.#z-l8à ‚ˆ:) xà#9. 9¥/ºe¢ùl,ze¢ùiâù­¢9i,xà#yl,yo¥ú+¤ú` 9h-9.gùo§¹oêùæ¡:`¨ù. 9êëú-mú-äxà ˆ
+‹Âˆœ[™[YX\ÙHÈ˜[œÚ][Û‹][Z[™ËY[˜Ý[ÛŽˆÝXšXËX™^šY\ŠŒŒ‹KŒÍ‹JNÈB‚ˆÊˆ9. 9æí:`ïy¦+ùké¹oàûï&ù¬¤º`n9.+yí«y£ yc§ùl.¹kî;ï#:`n9.+y¦`¹¥m:ha¹ê#yo«¹¥/¹i)øà ‚ˆ9å*˜[œÙ›Ü›H9.#y§ ùbåyb,9âb:gh»ï"9«!:-çHŒ;ï#9¥/¹i)ÈËŒœ9.gù.#y§ ù¤è9b,:f¥9hà{ï"{ï#ˆ: #9.%9cê¹§"H˜[œÙ›Ü›H9g*:(ç:e¤ûï#9¬¤¹§"zhcú"l¹cëù.éze øà ˆ
+‹Âˆ˜Ú[›™[YÝÂˆÚYˆœÂˆZYÚˆœÂˆ›Ü™\‹\˜Y]\ÎˆL	NÂˆÝ\œÛÜŽˆÚ[\ŽÂˆ›Þ\Ú^š[™Îˆ›Ü™\‹X›ÞÂˆ˜XÚÙÜ›Ý[™ˆÝ\œ™[ÛÛÜŽÂˆ˜[œÚ][ÛŽˆ˜[œÙ›Ü›HŒœÈÝXšXËX™^šY\ŠŒŒ‹KŒÍ‹JNÂˆBˆ˜Ú[›™[YÝ˜XÝ]™HÈ˜[œÙ›Ü›NˆØØ[JKŒJNÈBˆOÜÝ[O‚ˆˆÚ\ÑY]Ü“ØY[™È	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]L‹VÌLŒH›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ™ËVÈÌKÎ˜XÚÙ›ÜX›\‹[Y[š[X]KZ[ˆ˜YKZ[ˆ\˜][Û‹LÌ‚ˆ]ˆÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆØ\M^]Ú]H‚ˆ]ˆÛ\ÜÓ˜[YOHËLLLL›Ü™\‹M›Ü™\‹]Ú]KÌŒ›Ü™\‹]]Ú]H›Ý[™YY[[š[X]K\Ü[ˆÙ]‚ˆÛ\ÜÓ˜[YOH^VÌLH›ÛX›XÚÈ˜XÚÚ[™ËVÌŒ™[WH\\˜Ø\ÙH[š[X]K\[ÙHÜXÚ]KMÌº)èù§¤9.+K‹‹Ü‚ˆÙ]‚ˆÙ]‚ˆ
+_B‚ˆÜØ]™TÝ]HOOH	ÜÝXØÙ\ÜÉÈ	‰ˆš[˜[[XYÙH	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]L‹VÌLLH™ËX›XÚÈ›^›^XÛÛ[š[X]KZ[ˆ˜YKZ[ˆ\˜][Û‹ML‚ˆXY\ˆÛ\ÜÓ˜[YOHšLM›^][\ËXÙ[\ˆMHÚš[šËL‹LŒ™ËX›XÚËÍ˜XÚÙ›ÜX›\‹^‚ˆ]ÛˆˆÛÛXÚÏ^ÊJHOˆÈKœÝÜ›ÜYØ][ÛŠ
+NÈ™XÛÜ™›ÙÜ™\ÜÊ
+NÈYŠÛ’ÛYJHÛ’ÛYJ
+NÈ_BˆÛ\ÜÓ˜[YOHœLˆ[[Lˆ^VÈÎHÝ™\Ž^]Ú]H˜[œÚ][Û‹XÛÛÜœÈXÝ]™NœØØ[KNL‚ˆ‚ˆÚ]œ›Û“YÚ^™O^ÌŒŸHÏ‚ˆØ]Û‚ˆÚXY\‚ˆ]ˆÛ\ÜÓ˜[YOH™›^LH›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆMˆ™[]]™H‚ˆËÊˆ9. 9«(ykf9i&¹o-y¦`¹£¤¹¢$9cëù.éymé¹cìù®äyæ¡9. 9£¤»ï#9«ãù. 9o-z`ïz ïzemù£"ya,¹kf
+‹ßBˆËÊˆ][\ËXÙ[\»ï&¹ªjùo#ùæ¡9áiùâaú) z-çùæí9o#ùæ¡9. 9ª(ù`g9g*9.+ze¤ûï#9.#yá-¹§ únãùg*9."¹íèÈ
+‹ßBˆ]‚ˆ™Y^Ùš[˜[Ýš\™YŸBˆÛ\ÜÓ˜[YO^ØËY[›^›^\›ÝÈ][\ËXÙ[\ˆØ\M	Ùš[˜[[XYÙ\Ë›[™ÝˆHÈ	ÛÝ™\™›ÝË^X]]È›Ë\ØÜ›Û˜\ˆÛ˜\^Û˜\[X[™]ÜžHVÛX^
+Ø[ÊL	KMÊJWIÈˆ	Ú\ÝYžKXÙ[\‰ßXBˆ‚ˆÊš[˜[[XYÙ\Ë›[™ÝÈš[˜[[XYÙ\ÈˆÙš[˜[[XYÙHWJK›X\
+
+Ü˜ËJHOˆ
+ˆ]‚ˆÙ^O^ÜÜ˜ßBˆÛ\ÜÓ˜[YOHœÚš[šËLÛ˜\XÙ[\ˆ›^›^XÛÛ][\ËXÙ[\ˆØ\Lˆ‚ˆÊˆ9. 9«(ycê¹aá¹®äy. 9o-xà ‚ˆÛ˜\[X[™]ÜžH9cê¹/çz+bxà#9§ 9o£9§ ù`g9g*9§ä9`"ùk¦¹/cznç¸à#{ï#9¡hù )ù®äybåBˆ9áiùª(ù§ ú(gz`c¹ioyno¹o-ya£yd.9/cÈ8 %8 %:`¨ùl,y¦+øà#9¦#¹¦#¹cê¹®äy. 9«(ycnú-ìú`c¹.#ycê¹. 9o-xà#xà ‚ˆØÜ›Û\Û˜\\ÝÜˆ[Ø^\È9l,y¦+ùl":e 9ë¨z`&y.í¹.¢ùæ¡;ï&‚ˆ9«ãù`"ùk¦¹/cznçº`ïyoázh"9`g9."ù/¡»ï#9a£yoêùæ¡9. 9."ù.gùcê¹bcz`,¹. 9o-xà ˆ
+‹ÂˆÝ[O^ÞÈØÜ›ÛÛ˜\ÝÜˆ	Ø[Ø^\ÉÈ_Bˆ‚ˆ]ˆÛ\ÜÓ˜[YOHœ™[]]™HÚYÝËLž›Ý[™YÝ™\™›ÝËZY[ˆX^ZVÍŒšH‚ˆ[YÂˆÜ˜Ï^ÜÜ˜ßBˆ[^Øš[˜[™\Ý[	ÚH
+È_XBˆÛ\ÜÓ˜[YOH›X^]ËVÎ×HX^ZVÍŒšHØš™XÝXÛÛZ[ˆ[ÝËXØ[Ý]™[]]™H‹LL‚ˆÏ‚ˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]LÚ[\‹Y]™[Ë[›Û™Hš[™ËLHš[™Ë]Ú]KÌL›Ý[™YÙ]‚ˆÙ]‚ˆÙ]‚ˆ
+J_BˆÙ]‚ˆÙ]‚ˆ]ˆÛ\ÜÓ˜[YOH˜™ËX›XÚÈ›^›^XÛÛØ\LÈMˆ‹MˆLˆ‚ˆØ]™P]Ûˆ\›Ï^Ùš[˜[[XYÙ\Ë›[™ÝÈš[˜[[XYÙ\Èˆ
+š[˜[[XYÙHÈÙš[˜[[XYÙWHˆ×J_HÏ‚ˆ]ˆÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆØ\M‚ˆ]ÛˆˆÛÛXÚÏ^Ê
+HOˆÈÙ]Ø]™TÝ]J	ÚYIÊNÈ_BˆÛ\ÜÓ˜[YOH™›^LHLM›Ý[™YY[›Ü™\ˆ›Ü™\‹]Ú]KÌŒ™Ë]Ú]KÍH^]Ú]H›ÛX›Û˜XÚÚ[™Ë]ÚY\Ý\\˜Ø\ÙHÝ™\Ž˜™Ë]Ú]KÌLXÝ]™NœØØ[KNMH˜[œÚ][Û‹X[^\ÛH‚ˆ‚ˆ9îo9î£9íê:/+ÂˆØ]Û‚ˆ]ÛˆˆÛÛXÚÏ^Ê
+HOˆÈYˆ
+Û’[\Ü™]ÊHÛ’[\Ü™]Ê
+NÈ_BˆÛ\ÜÓ˜[YOH™›^LHLM›Ý[™YY[›Ü™\ˆ›Ü™\‹]Ú]KÌŒ™Ë]Ú]KÍH^]Ú]H›ÛX›Û˜XÚÚ[™Ë]ÚY\Ý\\˜Ø\ÙHÝ™\Ž˜™Ë]Ú]KÌLXÝ]™NœØØ[KNMH˜[œÚ][Û‹X[^\ÛH‚ˆ‚ˆ9/ë¹."ù. 9o-BˆØ]Û‚ˆÙ]‚ˆÙ]‚ˆÙ]‚ˆ
+_B‚ˆËÊˆ:gh¹§oúe¢ú$eù¦`¹ª&zhc9b%ú) yg*:`¨ùâaÈ‹VÍNWH9æ¡:`k¹ïjJŠ¹."ºghŠŠ»ï#ˆ9.#yá-¹£"z,áú*"ºcmy£"yb,9æ¡9¦+ú`k¹ïj{ï#9. 9«(znç¹¤â¹§ ú(ªùë¥ù¢$9ajy«({ï":)¢ù."úghˆVQˆ:`¨ù. 9«­{ï"xà ‚ˆ:gh¹§où¥-º-mù/¡¹¦`¹l,yfç¹b,9c§ù§+9æ¡‹LŒ;ï#9amºi&9k£9aj9.#z+¢¸à ˆ
+‹ßBˆÜØ]™TÝ]HOOH	ÜÝXØÙ\ÜÉÈ	‰ˆ
+ˆXY\ˆÛ\ÜÓ˜[YO^ØLM™[]]™H›^][\ËXÙ[\ˆ\ÝYžKX™]ÙY[ˆMÚš[šËL™ËX›XÚËÍ˜XÚÙ›ÜX›\‹^	ÜÚÝÑ^Y”[™[È	Þ‹VÍŒIÈˆ	Þ‹LŒ	ßXO‚ˆ]ˆÛ\ÜÓ˜[YOHËLŒ‚ˆËÊˆ9§¡9fï¹.+yæ¡:/å9fç¹cêº` 9aî¹§¡9fï¹nm¹.(¹o È˜YÙ[ûï&ùam¹.å¹b!ºhmy¢cyé®ùo 9ï%º/¤yfj8à ˆ
+‹ßBˆ]Û‚ˆÛÛXÚÏ^ØXÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIÈÈØ[˜Ù[ÛÛ\ÜÙHˆ™\]Y\ÝX]™_Bˆ\šXK[X™[^ØXÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIÈÈ	ú` 9aî¹§¡9fï¹nm¹¥/¹o ùcæ9¦í	Èˆ	ú/å9fç‰ßBˆÛ\ÜÓ˜[YOHœLˆ[[Lˆ^VÈØXXWHÝ™\Ž^]Ú]H˜[œÚ][Û‹XÛÛÜœÈXÝ]™NœØØ[KNL‚ˆ‚ˆÚ]œ›Û“YÚ^™O^ÌŒŸHÏ‚ˆØ]Û‚ˆÙ]‚ˆØXÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIÈÈ
+ˆ]ˆÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆØ\M‚ˆ]ÛˆÛÛXÚÏ^Ý[™ßH\ØX›Y^Ú\ÝÜžR[™^HHÛ\ÜÓ˜[YO^ØLˆ˜[œÚ][Û‹X[	Ú\ÝÜžR[™^HÈ	ÛÜXÚ]KLŒÚ[\‹Y]™[Ë[›Û™IÈˆ	ÛÜXÚ]KLLXÝ]™NœØØ[KNL	ßXOXÛÛˆ˜[YOH[™ÈˆÛ\ÜÓ˜[YOH^^ˆÏØ]Û‚ˆ]ÛˆÛÛXÚÏ^Ü™YßH\ØX›Y^Ú\ÝÜžR[™^H\ÝÜžK›[™ÝH_HÛ\ÜÓ˜[YO^ØLˆ˜[œÚ][Û‹X[	Ú\ÝÜžR[™^H\ÝÜžK›[™ÝHHÈ	ÛÜXÚ]KLŒÚ[\‹Y]™[Ë[›Û™IÈˆ	ÛÜXÚ]KLLXÝ]™NœØØ[KNL	ßXOXÛÛˆ˜[YOHœ™YÈˆÛ\ÜÓ˜[YOH^^ˆÏØ]Û‚ˆÙ]‚ˆ
+Hˆ]ˆ\šXKZY[HYHˆÏŸBˆØXÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIÈÈ
+ˆ]ˆÛ\ÜÓ˜[YOHËLŽ›^\ÝYžKY[™][\ËXÙ[\ˆØ\LH‚ˆËÊˆ9ç/9çfûï&º`,ˆQÈ:,¯9¥¡úh$:)¯{ï":-çù¢ï9g%º`¨ùajy`"ùméyamùd#9. :ha¹a`ù.í»ï"H
+‹ßBˆ]Û‚ˆÛÛXÚÏ^ÛÜ[’YÔ™]šY]ßBˆÛ\ÜÓ˜[YO^ØLˆ›Ý[™YY[˜[œÚ][Û‹XÛÛÜœÈ	ÚYÐ\ÞHÈ	Ý^]Ú]KÌŒÚ[\‹Y]™[Ë[›Û™IÈˆ	Ý^]Ú]KÍÝ™\Ž^]Ú]IßXBˆ]OH’QÈ:h$:)¯H‚ˆ‚ˆXÛÛˆ˜[YOHš\ÚXš[]HˆÛ\ÜÓ˜[YOH^^ˆÏ‚ˆØ]Û‚ˆ]Û‚ˆ™Y^Ù^Y”™YŸBˆÊˆ:-çùam¹.å¹£"zb%y. 9ª(ûï&ŠŠºk!¹¢bÊŠ¹¢cyë¥ù. 9«(znç¹¤â»ï"ÛÛXÚûï"xà ‚ˆ9.bùbcyà®¹.¡º)èù¬n¸à#:eç9.#y£¢xà#y¥.y¢$Û”Ú[\‘ÝÛ»ï#9¢bù£!ù. 9è¬9l,z)î9æo;ï#ˆ9¢bù¡'ú-çù¥àz`¢º`¨ùnoºha¹.#y. 9ª(øà ¹ç'ù«hùæ¡9c§ùfè9.#yg*:`&zhaºcmz.ªù."ˆ8 %8 %ˆ9¦+ú`¨ùâaÈ‹VÍNWH9æ¡:`#ù¦#º`k¹ïjz$âùg*9ª&zhc9b%ûï"‹LŒ;ï"y."ºgh»ï#ˆ9¢bù£!ùam¹ké¹£"yg*:`k¹ïjy."»ï#9¥¯9¦+ù. 9«(znç¹¤âº(ªùë¥ù¢$9ajy«(xà ‚ˆ9ãï¹g*9¥.y¢$8à#:gh¹§oúe¢ú$eù¦`¹¢¢¹ª&zhc9b%ù¢«9b,:`k¹ïjy."ºgh¸à#{ï":)¢ù."úghˆXY\ˆ9æ¡ˆ‹Z[™^;ï"{ï#:`&zhaºcmyl,yæí9£©y£©yo¥ùb,:!ê¹mìyæ¡:nç¹¤â»ï#9. 9«(yl,y¦+ù. 9«(xà ˆ
+‹ÂˆÛÛXÚÏ^Ê
+HOˆÙ]ÚÝÑ^Y”[™[
+™]ˆOˆ\™]Š_BˆÛ\ÜÓ˜[YO^ØLˆ›Ý[™YY[˜[œÚ][Û‹XÛÛÜœÈ	ÜÚÝÑ^Y”[™[È	Ý^]Ú]IÈˆ	Ý^]Ú]KÍÝ™\Ž^]Ú]IßXBˆ]OH¹áiùâaú,áú*"ˆ‚ˆ‚ˆXÛÛˆ˜[YOHš[™›ÈˆÛ\ÜÓ˜[YOH^^ˆÏ‚ˆØ]Û‚ˆ]ÛˆÛÛXÚÏ^Ú[™TØ]™_HÛ\ÜÓ˜[YOH˜™Ë]Ú]H^X›XÚÈMKLKH›Ý[™YY[^VÌL\H›ÛX›XÚÈ\\˜Ø\ÙH˜XÚÚ[™Ë]ÚY\ˆÚYÝË[ÈXÝ]™NœØØ[KNMH˜[œÚ][Û‹]˜[œÙ›Ü›HÚ]\ÜXÙK[›ÝÜ˜\¹a,¹kfØ]Û‚ˆÙ]‚ˆ
+Hˆ]ˆÛ\ÜÓ˜[YOHËLŽˆ\šXKZY[HYHˆÏŸBˆÚXY\‚ˆ
+_B‚ˆËÊˆQÈ:,¯9¥¡úh$:)¯{ï&º-çùajy`"ù¢ï9g%¹méyamùalyå*9d#9. :ha¹a`ù.íˆ
+‹ßBˆÚYÓÜ[ˆ	‰ˆYÔÚÝ	‰ˆ
+ˆ]‚ˆÛ\ÜÓ˜[YOH™š^Y[œÙ]L‹VÌLŒH™ËX›XÚÈÝ™\™›ÝË^KX]]È[š[X]KZ[ˆ˜YKZ[ˆ\˜][Û‹LŒ‚ˆÝ[O^ÞÈÝ™\œØÜ›Û™Z]š[ÜŽˆ	Û›Û™IËØÜ›Û˜\•ÚYˆ	Û›Û™IËY[™ÕÜˆY[™Ð›ÝÛNˆ_Bˆ‚ˆYÔ™]šY]ÂˆÚÝÏ^ÖÚYÔÚÝ_Bˆœ˜[YO^Ê
+
+HOˆÂˆÛÛœÝ[HHÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[Âˆ™]\›ˆ[HÈÈÎˆ[K›˜]\˜[ÚYˆ[K›˜]\˜[ZYÚHˆÈÎˆKˆHNÂˆJJ
+_BˆYÙPÛÝ[^Ì_Bˆ˜XÙ\Ï^ÖÚYÔÚÝ_BˆÝ\ÜYˆÛÝH™Y]Üˆ‚ˆ[X™YYˆ›ÝÂˆÛÛÜÙO^Ê
+HOˆÙ]YÓÜ[Š˜[ÙJ_BˆÏ‚ˆËÊˆ:eç:e¢zcmy.#ycé¹i%¹b¨;ï&’YÔ™]šY]È:!ê¹mìz`¨ù. :ha¹l,yi(9.¡»ï"ÛÛÜÙH9mì¹í¤ù£©y."¹c®ûï"{ï#ˆ9i&¹. :ha¹cê¹¦+ùcìù."º)ä¹i&¹. 9`"úaãz)!ùæ¡9£"zb%xà ˆ
+‹ßBˆÙ]‚ˆ
+_B‚ˆËÊˆVQˆ[™[Ý™\›^xà ºnçºgh¹§où.éyi%¹æ¡9.îù/eyg,9¥®yl,y¥-º-mù/¡ˆ
+‹ßBˆÜÚÝÑ^Y”[™[	‰ˆ
+ˆÊˆ:nçºgh¹§oùi%ºgh¹l,y¥-º-mù/¡»ï#: #9.%
+Šºk!¹¢bù¢cy¥-ŠŠ»ï"ÛÛXÚûï"x %8 %ˆ:-çú,áú*"ºcmz`¨ù. :ha¹æ¡9¢bù¡'ù. :!í8à ‚ˆ9k ùd#9¦`¹.gù¢¢ºnç¹¤â¹¤âù/cûï#9¢`9.éyn¥y."ùæ¡9®äy¨oøà yb!ºh y.#y§ ú(ªúh!¹¢bù£"yb,8à ‚ˆ9ª&zhc9b%ùg*:gh¹§oúe¢ú$eù¦`¹§ ú(ªù¢«9b,:`&y. 9li9."ºgh»ï#9¢`9.éz,áú*"ºcmy.#y§ ú(ªùk ú$âù/cøà ˆ
+‹Âˆ]ˆ™Y^Ù^Y”ÚY[™YŸHÛ\ÜÓ˜[YOH™š^Y[œÙ]L‹VÍNWHˆÛÛXÚÏ^Ê
+HOˆÙ]ÚÝÑ^Y”[™[
+˜[ÙJ_HÏ‚ˆ
+_BˆÜÚÝÑ^Y”[™[	‰ˆ
+ˆ]ˆ™Y^Ù^Y”[™[™YŸHÛ\ÜÓ˜[YOH˜XœÛÛ]HÜLMˆšYÚMYMY›YX]]ÈYœšYÚM^X]]ÈY›^L™ËX›XÚËÎL›Ü™\ˆ›Ü™\‹]Ú]KÌL›Ý[™YLžMHÚYÝËLž˜XÚÙ›ÜX›\‹^‹VÍÌHËVÌÌŒHX^]ËVØØ[ÊLËLœ™[JWH^]Ú]KÎL^^È›^›^XÛÛØ\LÈ‚ˆ]ˆÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆ\ÝYžKX™]ÙY[ˆ›Ü™\‹Xˆ›Ü™\‹]Ú]KÌL‹LˆX‹LH‚ˆÜ[ˆÛ\ÜÓ˜[YOH™›ÛX›Û˜XÚÚ[™Ë]ÚY\ˆ^VÌL\H^]Ú]KÍ\\˜Ø\ÙH‘VQº,áú*"ÜÜ[‚ˆÙ]‚ˆˆ]ˆÛ\ÜÓ˜[YOH™ÜšYÜšYXÛÛËVÎÌYœ—HØ\^LˆØ\^KL‹H‚ˆÜ[ˆÛ\ÜÓ˜[YOH^]Ú]KÍ¹d#yê,OÜÜ[‚ˆÜ[ˆÛ\ÜÓ˜[YOH™›Û[[Û›È[˜Ø]HÙ[XÝX[^]Ú]KÎLˆ]O^Ù^Y‘]K™š[S˜[Y_OžÙ^Y‘]K™š[S˜[YH	ËIßOÜÜ[‚‚ˆÜ[ˆÛ\ÜÓ˜[YOH^]Ú]KÍ¹¨/9o#ÏÜÜ[‚ˆÜ[ˆÛ\ÜÓ˜[YO^Ø	ÊY^Y‘]K™š[Q›Ü›X]^Y‘]K™š[Q›Ü›X]OOH	ËIÊHÈ	Ù›Û[[Û›ÉÈˆ	Ù›Û[YY][IßH^]Ú]KÎLOžÙ^Y‘]K™š[Q›Ü›X]	ËIßOÜÜ[‚‚ˆÜ[ˆÛ\ÜÓ˜[YOH^]Ú]KÍ¹l.¹kîÜÜ[‚ˆÜ[ˆÛ\ÜÓ˜[YOH™›Û[[Û›È^]Ú]KÎLžÚ[XYÙQ[Y[œÚ[ÛœÈ	ËIßOÜÜ[‚‚ˆÜ[ˆÛ\ÜÓ˜[YOH^]Ú]KÍ¹¥éy§'ÏÜÜ[‚ˆÜ[ˆÛ\ÜÓ˜[YOH™›Û[[Û›È^]Ú]KÎLžÙ^Y‘]K™]H	ËIßOÜÜ[‚‚ˆÜ[ˆÛ\ÜÓ˜[YOH^]Ú]KÍ¹g¢ú&gÏÜÜ[‚ˆÜ[ˆÛ\ÜÓ˜[YO^Ø	ÊY^Y‘]K˜Ø[Y\˜S[Ù[^Y‘]K˜Ø[Y\˜S[Ù[OOH	ËIÊHÈ	Ù›Û[[Û›ÉÈˆ	Ù›Û[YY][IßH^]Ú]KÎLOžÙ^Y‘]K˜Ø[Y\˜S[Ù[	ËIßOÜÜ[‚‚ˆÜ[ˆÛ\ÜÓ˜[YOH^]Ú]KÍ’TÓÏÜÜ[‚ˆÜ[ˆÛ\ÜÓ˜[YOH™›Û[[Û›È^]Ú]KÎLžÙ^Y‘]Kš\ÛÈ	ËIßOÜÜ[‚‚ˆÜ[ˆÛ\ÜÓ˜[YOH^]Ú]KÍ¹oêúe ÜÜ[‚ˆÜ[ˆÛ\ÜÓ˜[YOH™›Û[[Û›È^]Ú]KÎLžÙ^Y‘]KœÚ]\ˆ	ËIßOÜÜ[‚‚ˆÜ[ˆÛ\ÜÓ˜[YOH^]Ú]KÍ¹á)º-çOÜÜ[‚ˆÜ[ˆÛ\ÜÓ˜[YOH™›Û[[Û›È^]Ú]KÎLžÙ^Y‘]K™›ØØ[[™Ý	ËIßOÜÜ[‚‚ˆÜ[ˆÛ\ÜÓ˜[YOH^]Ú]KÍ¹abyg"ÜÜ[‚ˆÜ[ˆÛ\ÜÓ˜[YOH™›Û[[Û›È^]Ú]KÎLžÙ^Y‘]K˜\\\™H	ËIßOÜÜ[‚ˆÙ]‚ˆÙ]‚ˆ
+_B‚ˆ]‚ˆ™Y^Ü™]šY]Ð›Þ™YŸBˆÛ\ÜÓ˜[YO^Ø›^LH™[]]™H›^™ËVÈÌXBˆ‚ˆ˜[œÙ›Ü›UÜ˜\\‚ˆ™Y^Þ›ÛÛT™YŸBˆ[š]X[ØØ[O^Ì_BˆZ[”ØØ[O^Ì_HˆX^ØØ[O^Í_HˆÝX›PÛXÚÏ^ÞÈ\ØX›YˆYH_BˆÚY[^ÞÈÝ\ˆŒÈ_Bˆ[˜Ú^ÞÈÝ\ˆ_Bˆ[›š[™Ï^ÞÈ™[ØÚ]Q\ØX›Yˆ˜[ÙH_Bˆ[YÛ›Y[[š[X][Û^ÞÈÚ^™VˆÚ^™VNˆ_Bˆ\ØX›Y^ØXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉßBˆ‚ˆ˜[œÙ›Ü›PÛÛ\Û™[Ü˜\\Û\ÜÏHˆ]ËY[ZY[XœÛÛ]H[œÙ]LˆÛÛ[Û\ÜÏHˆ]ËY[ZY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆM‚ˆ]ˆÛ\ÜÓ˜[YOHœ™[]]™HÚYÝËLž˜[œÚ][Û‹]˜[œÙ›Ü›HXÝ]™NœØØ[KVÌŽNWH\˜][Û‹LÌËY[Y[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ‚ˆËÊˆÚ^š[™ÈÜ˜\\ˆÈ[œÝ\™HØ[˜\È[™[\˜XÝ]™HÝ™\›^HØØ[KÛ[Ý™HÙÙ]\ˆ\™™XÝH
+‹ßBˆ]‚ˆ™Y^Ü™]šY]Ñš]™YŸBˆÊˆ:`,¹aîˆÓ9.#y`f¹båyåjûï#9¢`9.éz`¨ù. 9«(yb!ù£æù¢¢º`c¹h-:eç9£¢H
+‹ÂˆÛ\ÜÓ˜[YO^Ø™[]]™H›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆX\ÙKVØÝXšXËX™^šY\ŠŒ‹JWHX^]ËVØØ[ÊL	KLÌœ
+WH	ÚÛÝÚ]ÚÈ	Ý˜[œÚ][Û‹[›Û™IÈˆ	Ý˜[œÚ][Û‹VÛX^ZZYÚH\˜][Û‹ML	ßXBˆÝ[O^ÞÂˆX^ZYÚˆÛš]›ÝÂˆÈ	ÚÛš]›ÝË›Z\ˆˆ	ØØ[ÊLšHÍ
+IËˆX\™Ú[›ÝÛNˆÛš]›ÝÈÈ	ÚÛš]›ÝË›XŸ\ˆ[™Yš[™Yˆ\ÜXÝ˜][Îˆ™]šY]Ð\ÜXÝÈ	Ü™]šY]Ð\ÜXÝßKÉÜ™]šY]Ð\ÜXÝšXˆ[™Yš[™YˆÚYˆ™]šY]Ð\ÜXÝÈ	ÌL	IÈˆ	Ø]]ÉËˆÊˆ:jæ9n©¹æ¡9."ºfd9.gú) y£æùë¥ù¢$9kë9n©¹æ¡9."ºfd;ï#9.#yá-¹«å9/¢ù§ ú(ªùhäù¢`xà ‚ˆ\ÜXÝ\˜][È9cê¹§"yg*8à#9cé¹. :`¢º!ê¹å,xà#yæ¡9¦`¹`&y¢cy¢$9êâûï&º`&z(èykë9n©º(ªùkêù«nÂˆL	{ï#9. :`aùb,9o¢:emùæ¡9g%»ï#:jæ9n©º(ªÈX^ZZYÚ9i/¹/cøà ykë9n©¹cnù.#y§ ú-çú$eùî+»ï#ˆ9¨a¹l,yo§ˆÌŒŒMMŒ:+¢¹¢$ÍNL;ï#: #9åjùn ù¦+ÈØš™XÝš]‰Ùš[	ûï#ˆ9¥m9o-yg%¹l,z(ªùªjùd$y¢âze¢ûï":aãùb,LËŽIH:+¢¹oh»ï"xà ‚ˆ9¢¢¹d#9. 9¨§zjæ9n©¹."ºfd9.f9."¹c§ùg%¹«å9/¢ùåm¹¢$9kë9n©¹."ºfd;ï#9ajy`"ù¥®yd$yl,z`ïyk¢9o¥ù/cøà ˆ
+‹ÂˆX^ÚYˆ™]šY]Ð\ÜXÝˆÈ
+Ûš]›ÝÂˆÈZ[ŠØ[ÊL	HHÌœ
+K	ÊÛš]›ÝË›Z
+ˆ™]šY]Ð\ÜXÝÊHÈ™]šY]Ð\ÜXÝš\
+XˆˆZ[ŠØ[ÊL	HHÌœ
+KØ[Ê
+LšHÍ
+H
+ˆ	Ü™]šY]Ð\ÜXÝßHÈ	Ü™]šY]Ð\ÜXÝšJJX
+Bˆˆ[™Yš[™Yˆ_Bˆ‚ˆËÊˆÚ[™ÛHØ[˜\È›Üˆ\Ü^H[™ÛÛ\\™H
+‹ßBˆËÊˆØš™XÝš]‰Ùš[	È: #9.#y¦+ÈØš™XÝXÛÛZ[»ï&¹i%ºghº`¨ùli9mì¹í¤ùå*\ÜXÝ˜][Âˆ:c¥¹¢$9«hùè®¹«å9/¢ù.¡»ï#:`&z(èya£z+¤ùåjùn øà#9áiú!ê¹mìyæ¡9«å9/¢øà#yåfznäz`¢»ï#ˆ9cêº) yåjùn ùl.¹kî9£æù. 9."ûï"9aj:)èù§¤9n©¸¡¥9.èùä!»ï"znäz`¢¹l,y§ ú-çú$eú+¢¸à yg%¹âaùl,y/cyéîøà ‚ˆ9hjù®ïù.bùo£9åjùn ùl.¹kî9 #ºn¯9£æûï#9åjúgh¹."¹æ¡9/cyïkº`ïyk£9aj9.#ybåxà ˆ
+‹ßBˆØ[˜\Èˆ™Y^Ù\Ü^PØ[˜\Ô™YŸHˆÝ[O^ÞÈØš™XÝš]ˆ	Ùš[	È_BˆÛ\ÜÓ˜[YO^Ü™]šY]Ð\ÜXÝÈËY[Y[Ú[\‹Y]™[ËX]]È›Ý[™Y\ÛHˆˆ›X^]ËY[Ú[\‹Y]™[ËX]]È›Ý[™Y\ÛHŸHˆÏ‚‚ˆËÊˆ9£æú`c¹c®ù.¡¹/aº`¡9g*9ë¥ùæ¡9¦`¹`&{ï#9häù¦¥ûï"ú/byg";ï#9b)z+¤ù.®¹.éyà®¹¬¤¹cãy¡âxà ‚ˆ9cê¹åfz/byg"8 %8 %8à#9®,¹§äù.+xà#y."y`"ùkeùcãz #:+¤ù.®º)®¹o¥ùëbyo¢9.axà ˆ
+‹ßBˆÚ\ÔÝÚ]Ú[™È	‰ˆ
+ˆ]‚ˆ]K\ÝÚ]Ú[Ý™\›^BˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]L‹LÌ›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ™ËX›XÚËÍH›Ý[™Y\ÛHÚ[\‹Y]™[Ë[›Û™H[š[X]KZ[ˆ˜YKZ[ˆ\˜][Û‹LML‚ˆ‚ˆ]ˆÛ\ÜÓ˜[YOHËMÈMÈ›Ü™\‹Lˆ›Ü™\‹]Ú]KÌH›Ü™\‹]]Ú]H›Ý[™YY[[š[X]K\Ü[ˆˆÏ‚ˆÙ]‚ˆ
+_B‚ˆËÊˆ[™X\ˆX\ÚÈ[\˜XÝ]™H™XÝÜˆÝ™\›^H
+‹ßBˆØXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÈ	‰ˆØ[˜\Ð›Ý[™ËÚYˆ	‰ˆ
+ˆ‚ˆÝ™ÂˆYH›X\ÚË\Ý™Ë[Ý™\›^H‚ˆÊˆ9. 9k¦º) HÝ™\™›ÝËZY[»ï&º`¨ùajy¨§xà#9á(zfd:emøà#yæ¡:`¢¹åc9íæ¹¦+ÈOp¬LL9åjùæ¡;ï#ˆÝ™\™›ÝË]š\ÚX›H9§ ú+¤ùk ù`$y. :-ëùåjùb,9¥m9`"ú'¨¹ney."»ï"9áiùâaùi%ºgh¸à Bˆ:`(ùméyamùb%ú`¨ù. 9n-º`ïy¦+ùíæ»ï"{ï#: #9.%9íæ¹."¹æ¡N:)î9£©ùn-¹.gú-çú$eú-äyaî¹c®øà ‚ˆÕ‘È:h$:*+yl,y¦+ú(àyb!ùb,:!ê¹mìyæ¡9¨a»ï#:`&z(èy¢¢¹k ù¢ïùfç¹/¡¸à ˆ
+‹ÂˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]LËY[Y[Ù[XÝ[›Û™HÚ[\‹Y]™[ËX]]ÈÝ™\™›ÝËZY[ˆ‹LÌ‚ˆÝ[O^ÞÂˆÝXÚXÝ[ÛŽˆ	Û›Û™IËˆ_BˆÛ”Ú[\“[Ý™O^Ú[™SX\ÚÔÚ[\“[Ý™_BˆÛ”Ú[\•\^Ú[™SX\ÚÔÚ[\•\BˆÛ”Ú[\Ø[˜Ù[^Ú[™SX\ÚÔÚ[\•\Bˆ‚ˆËÊˆ˜XÚÙÜ›Ý[™]\™XHÈÜ™X]HX\ÚÈžH˜YÙÚ[™È
+‹ßBˆÈ\\˜[\Ë›X\ÚÐÜ™X]Y	‰ˆ
+ˆ™XÝˆYHZKX™ËZ]‚ˆÚYHŒL	H‚ˆZYÚHŒL	H‚ˆš[H˜[œÜ\™[‚ˆÝ[O^ÞÈÝ\œÛÜŽˆ	ØÜ›ÜÜÚZ\‰È_BˆÛ”Ú[\‘ÝÛ^ÊJHOˆ[™SX\ÚÔÚ[\‘ÝÛŠK	ØÜ™X]IÊ_BˆÏ‚ˆ
+_B‚ˆÈ˜[œÙ›Ü›O^Ø˜[œÛ]J	ØØ[˜\Ð›Ý[™Ë›YK	ØØ[˜\Ð›Ý[™ËÜJXO‚ˆËÊˆ™XÝÜˆÝZY\È
+‹ßBˆÜ\˜[\Ë›X\ÚÐÜ™X]Y	‰ˆJ\Ò[\˜XÝ[™È	‰ˆXXÝ]™Q˜YÔ™Y‹˜Ý\œ™[
+H	‰ˆ
+ˆÂˆYHZKYÝZY\È‚ˆÝ[O^ÞÂˆÚ[Ú[™ÙNˆ	Ý˜[œÙ›Ü›IËˆ_Bˆ˜[œÙ›Ü›O^Ø˜[œÛ]J	Ü\˜[\Ë›X\ÚÐÞ
+ˆØ[˜\Ð›Ý[™ËÚYK	Ü\˜[\Ë›X\ÚÐÞH
+ˆØ[˜\Ð›Ý[™ËšZYÚJH›Ý]J	Ê\˜[\Ë›X\ÚÐ[™ÛH
+ˆN
+HÈX]”_JXBˆ‚ˆËÊˆÛÛ›™XÝ[™È^\È[™H
+‹ßBˆ[™BˆÛ\ÜÓ˜[YOHœÚ[\‹Y]™[Ë[›Û™H‚ˆO^Ë\\˜[\Ë›X\ÚÑ
+ˆØ[˜\Ð›Ý[™ËÚYBˆLO^ÌBˆ^Ü\˜[\Ë›X\ÚÑ
+ˆØ[˜\Ð›Ý[™ËÚYBˆL^ÌBˆÝ›ÚÙOHœ™Ø˜JMKMKMKJH‚ˆÝ›ÚÙUÚYHŒ\‚ˆÝ›ÚÙQ\Ú\œ˜^OHŒ‹‚ˆÏ‚‚ˆËÊˆ›Ý]ÜˆÜ›Ý\
+‹ßBˆÂˆYHZK\›Ý]Ü‹YÜ›Ý\‚ˆÝ[O^ÞÂˆ\Ü^NˆXÝ]™Q˜YÔ™Y‹˜Ý\œ™[Ë\H	‰ˆXÝ]™Q˜YÔ™Y‹˜Ý\œ™[\HOOH	Ü›Ý]IÈÈ	Û›Û™IÈˆ	Ø›ØÚÉËˆÜXÚ]NˆXÝ]™Q˜YÔ™Y‹˜Ý\œ™[Ë\H	‰ˆXÝ]™Q˜YÔ™Y‹˜Ý\œ™[\HOOH	Ü›Ý]IÈÈˆKˆÚ[\‘]™[ÎˆXÝ]™Q˜YÔ™Y‹˜Ý\œ™[Ë\H	‰ˆXÝ]™Q˜YÔ™Y‹˜Ý\œ™[\HOOH	Ü›Ý]IÈÈ	Û›Û™IÈˆ	Ø]]ÉËˆ_Bˆ˜[œÙ›Ü›O^Ø˜[œÛ]J	Ü\˜[\Ë›X\ÚÑ
+ˆØ[˜\Ð›Ý[™ËÚYK
+XBˆ‚ˆËÊˆ›Ý]Üˆ\›H
+‹ßBˆ[™BˆÛ\ÜÓ˜[YOHœÚ[\‹Y]™[Ë[›Û™H‚ˆO^ÌBˆLO^ÌBˆ^ÌÍ_BˆL^ÌBˆÝ›ÚÙOHˆÌ‚ˆÝ›ÚÙUÚYHŒ‹Œ\‚ˆÝ›ÚÙS[™XØ\Hœ›Ý[™‚ˆÏ‚ˆ[™BˆÛ\ÜÓ˜[YOHœÚ[\‹Y]™[Ë[›Û™H‚ˆO^ÌBˆLO^ÌBˆ^ÌÍ_BˆL^ÌBˆÝ›ÚÙOHˆÙ™™™™™ˆ‚ˆÝ›ÚÙUÚYHŒK\‚ˆÝ›ÚÙS[™XØ\Hœ›Ý[™‚ˆÏ‚ˆËÊˆ›Ý]Üˆ[™H
+‹ßBˆÚ\˜ÛBˆÞ^ÌÍ_BˆÞO^ÌBˆ^ÌMŸBˆš[H˜[œÜ\™[‚ˆÝ[O^ÞÈÝ\œÛÜŽˆ	Ø[X\ÉÈ_BˆÛ”Ú[\‘ÝÛ^ÊJHOˆ[™SX\ÚÔÚ[\‘ÝÛŠK	Ü›Ý]IÊ_BˆÏ‚ˆÚ\˜ÛBˆÛ\ÜÓ˜[YOHœÚ[\‹Y]™[Ë[›Û™H‚ˆÞ^ÌÍ_BˆÞO^ÌBˆ^ÍŸBˆš[HˆÙ™™™™™ˆ‚ˆÝ›ÚÙOHˆÌ‚ˆÝ›ÚÙUÚYHŒ\‚ˆÝ[O^ÞÂˆš[\Žˆ	Ù›Ü\ÚYÝÊœ™Ø˜JJJIËˆ_BˆÏ‚ˆÙÏ‚‚ˆËÊˆÝ\[™H
+L	H›Ý[™\žJH
+‹ßBˆÈ˜[œÙ›Ü›O^Ø˜[œÛ]J	Ë\\˜[\Ë›X\ÚÑ
+ˆØ[˜\Ð›Ý[™ËÚYK
+XO‚ˆ[™BˆO^ÌBˆLO^ËLLBˆ^ÌBˆL^ÌLBˆÝ›ÚÙOH˜[œÜ\™[‚ˆÝ›ÚÙUÚYHŒN‚ˆÝ[O^ÞÈÝ\œÛÜŽˆ	ÙÜ˜X‰È_BˆÛ”Ú[\‘ÝÛ^ÊJHOˆ[™SX\ÚÔÚ[\‘ÝÛŠK	ÜÝ\	Ê_BˆÏ‚ˆ[™BˆÛ\ÜÓ˜[YOHœÚ[\‹Y]™[Ë[›Û™H‚ˆO^ÌBˆLO^ËLLBˆ^ÌBˆL^ÌLBˆÝ›ÚÙOHˆÌ‚ˆÝ›ÚÙUÚYHŒ‹Œ\‚ˆÝ›ÚÙS[™XØ\Hœ›Ý[™‚ˆÏ‚ˆ[™BˆÛ\ÜÓ˜[YOHœÚ[\‹Y]™[Ë[›Û™H‚ˆO^ÌBˆLO^ËLLBˆ^ÌBˆL^ÌLBˆÝ›ÚÙOHˆÙ™™™™™ˆ‚ˆÝ›ÚÙUÚYHŒK\‚ˆÝ›ÚÙS[™XØ\Hœ›Ý[™‚ˆÏ‚ˆÙÏ‚‚ˆËÊˆ[™[™H
+	H›Ý[™\žJH
+‹ßBˆÈ˜[œÙ›Ü›O^Ø˜[œÛ]J	Ü\˜[\Ë›X\ÚÑ
+ˆØ[˜\Ð›Ý[™ËÚYK
+XO‚ˆ[™BˆO^ÌBˆLO^ËLLBˆ^ÌBˆL^ÌLBˆÝ›ÚÙOH˜[œÜ\™[‚ˆÝ›ÚÙUÚYHŒN‚ˆÝ[O^ÞÈÝ\œÛÜŽˆ	ÙÜ˜X‰È_BˆÛ”Ú[\‘ÝÛ^ÊJHOˆ[™SX\ÚÔÚ[\‘ÝÛŠK	Ù[™	Ê_BˆÏ‚ˆ[™BˆÛ\ÜÓ˜[YOHœÚ[\‹Y]™[Ë[›Û™H‚ˆO^ÌBˆLO^ËLLBˆ^ÌBˆL^ÌLBˆÝ›ÚÙOHˆÌ‚ˆÝ›ÚÙUÚYHŒ‹Œ\‚ˆÝ›ÚÙS[™XØ\Hœ›Ý[™‚ˆÏ‚ˆ[™BˆÛ\ÜÓ˜[YOHœÚ[\‹Y]™[Ë[›Û™H‚ˆO^ÌBˆLO^ËLLBˆ^ÌBˆL^ÌLBˆÝ›ÚÙOHˆÙ™™™™™ˆ‚ˆÝ›ÚÙUÚYHŒK\‚ˆÝ›ÚÙS[™XØ\Hœ›Ý[™‚ˆÏ‚ˆÙÏ‚‚ˆËÊˆÙ[\ˆ[™H
+‹ßBˆÏ‚ˆ[™BˆO^ÌBˆLO^ËLLBˆ^ÌBˆL^ÌLBˆÝ›ÚÙOH˜[œÜ\™[‚ˆÝ›ÚÙUÚYHŒN‚ˆÝ[O^ÞÈÝ\œÛÜŽˆ	ÙÜ˜X‰È_BˆÛ”Ú[\‘ÝÛ^ÊJHOˆ[™SX\ÚÔÚ[\‘ÝÛŠK	ØÙ[\‰Ê_BˆÏ‚ˆ[™BˆÛ\ÜÓ˜[YOHœÚ[\‹Y]™[Ë[›Û™H‚ˆO^ÌBˆLO^ËLLBˆ^ÌBˆL^ÌLBˆÝ›ÚÙOHˆÙ™™™™™ˆ‚ˆÝ›ÚÙUÚYHŒK\‚ˆÝ›ÚÙS[™XØ\Hœ›Ý[™‚ˆÏ‚ˆÙÏ‚‚ˆËÊˆÙ[\ˆÜÚ][Ûš[™È[ˆ
+‹ßBˆÏ‚ˆ™XÝˆ^ËLMŸBˆO^ËLMŸBˆÚY^ÌÌŸBˆZYÚ^ÌÌŸBˆš[H˜[œÜ\™[‚ˆÝ[O^ÞÈÝ\œÛÜŽˆ	Û[Ý™IÈ_BˆÛ”Ú[\‘ÝÛ^ÊJHOˆ[™SX\ÚÔÚ[\‘ÝÛŠK	ØÙ[\‰Ê_BˆÏ‚ˆ™XÝˆÛ\ÜÓ˜[YOHœÚ[\‹Y]™[Ë[›Û™H‚ˆ^ËMŸBˆO^ËMŸBˆÚY^ÌLŸBˆZYÚ^ÌLŸBˆš[HˆÙ™™™™™ˆ‚ˆÝ›ÚÙOHˆÌ‚ˆÝ›ÚÙUÚYHŒ\‚ˆÝ[O^ÞÂˆš[\Žˆ	Ù›Ü\ÚYÝÊœ™Ø˜JJJIËˆ_BˆÏ‚ˆÙÏ‚ˆÙÏ‚ˆ
+_BˆÙÏ‚ˆÜÝ™Ï‚ˆÏ‚ˆ
+_BˆÙ]‚ˆÙ]‚ˆÕ˜[œÙ›Ü›PÛÛ\Û™[‚ˆÕ˜[œÙ›Ü›UÜ˜\\‚‚ˆËÊˆX\ÚÈÜ™X][Ûˆ[Ò[œÝXÝ[ÛˆØ\™
+‹ßBˆØXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÈ	‰ˆ
+ˆ[š[X]T™\Ù[˜ÙO‚ˆÈ\\˜[\Ë›X\ÚÐÜ™X]Y	‰ˆZ\Ò[š]X[Ü™X][™ÓX\ÚÈ	‰ˆY\ÛZ\ÜÙYX\ÚÒ[	‰ˆ
+ˆ[Ý[Û‹™]ˆˆ[š]X[^ÞÈÜXÚ]NˆØØ[NˆŽMH_Bˆ[š[X]O^ÞÈÜXÚ]NˆKØØ[NˆH_Bˆ^]^ÞÈÜXÚ]NˆØØ[NˆŽMH_Bˆ˜[œÚ][Û^ÞÈ\˜][ÛŽˆX\ÙNˆÌŒŒMKŒKŒÍMKWH_BˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]L›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆÚ[\‹Y]™[Ë[›Û™H‹LŒÙ[XÝ[›Û™H‚ˆ‚ˆËÊˆ9chyâaù§+:.ªù.#z ïyd ù¢bùbè»ï&¹k ùl,z$âùg*9áiùâaù«hù.+yi+»ï#9d ù£¢yæ¡:*lBˆ8à#:*âùg*9g%¹âaù."¹¢å¹¦ìøà#z`&ycéz*lyëby¥¯:j&y.®ˆ8 %8 %9¢åº`c¹c®ù¨.y§+9åjù.#yaî¹/¡¸à ‚ˆ9cê¹§"y."úghº`¨úha¸à#9¢$yçéz`dù.¡¸à#zg :) znç¹o¥ùb,8à ˆ
+‹ßBˆ]ˆÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆØ\M™ËVÈÌLLLLLWHNKMˆ›Ý[™YLÞ›Ü™\ˆ›Ü™\‹]Ú]KÌLÚYÝËVÌÌÍLËLLœÜ™Ø˜JŽ
+WHX^]Ë^È^XÙ[\ˆÚ[\‹Y]™[Ë[›Û™H‚ˆËÊˆ[š[X]Y˜]Ú[™ÈÙ\Ý\™Hš\ÝX[
+‹ßBˆ]ˆÛ\ÜÓ˜[YOHœ™[]]™HËLŒLMˆ›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆX‹LH‚ˆËÊˆœ™X][™ÈÚ\˜ÛHH
+‹ßBˆ[Ý[Û‹™]ˆˆ[š[X]O^ÞÈˆØØ[NˆÌKKŽWKˆÜXÚ]NˆÌŒMKŒMWBˆ_Bˆ˜[œÚ][Û^ÞÂˆ\˜][ÛŽˆ‹ˆ™\X]ˆ[™š[š]KˆX\ÙNˆ™X\ÙR[“Ý]‚ˆ_BˆÛ\ÜÓ˜[YOH˜XœÛÛ]HËLLLL›Ý[™YY[™Ë]Ú]KÌŒ‚ˆÏ‚ˆËÊˆ˜]Ú[™ÈÚ[\ˆ[™XØ]Üˆ
+‹ßBˆ[Ý[Û‹™]‚ˆ[š[X]O^ÞÂˆˆËLLKˆNˆËLL‹L‹LL—KˆØØ[NˆÌŽMKKŒKŽMWKˆ_Bˆ˜[œÚ][Û^ÞÂˆ\˜][ÛŽˆ‹Kˆ™\X]ˆ[™š[š]KˆX\ÙNˆ™X\ÙR[“Ý]‚ˆ_BˆÛ\ÜÓ˜[YOHœ™[]]™H‹LL›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ‚ˆ‚ˆ]ˆÛ\ÜÓ˜[YOHËMˆMˆ›Ý[™YY[™Ë]Ú]H›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆÚYÝËVÌÌÌM\Ü™Ø˜JMKMKMKŠWH›Ü™\ˆ›Ü™\‹X›XÚËÌL‚ˆXÛÛˆ˜[YOH™Ù\Ý\™HˆÛ\ÜÓ˜[YOH^VÌLœH^X›XÚÈˆÏ‚ˆÙ]‚ˆËÊˆ˜Z[[™È\Ú[™HY™™XÝ
+‹ßBˆÝ™ÈÛ\ÜÓ˜[YOH˜XœÛÛ]HÝ™\™›ÝË]š\ÚX›HÚ[\‹Y]™[Ë[›Û™HËLLLˆ^‹LLˆšY]Ð›ÞHŒLL‚ˆ[Ý[Û‹œ]ˆH“HŒMHHLÍHMH‚ˆš[H››Û™H‚ˆÝ›ÚÙOHœ™Ø˜JMKMKMKŒÊH‚ˆÝ›ÚÙUÚYHŒˆ‚ˆÝ›ÚÙQ\Ú\œ˜^OH‚ˆ[š[X]O^ÞÂˆÝ›ÚÙQ\ÚÙ™œÙ]ˆÌLŒBˆ_Bˆ˜[œÚ][Û^ÞÂˆ\˜][ÛŽˆ‹ˆ™\X]ˆ[™š[š]KˆX\ÙNˆ›[™X\ˆ‚ˆ_BˆÏ‚ˆÜÝ™Ï‚ˆÛ[Ý[Û‹™]‚ˆÙ]‚ˆˆ]ˆÛ\ÜÓ˜[YOHœÜXÙK^KLKH‚ˆÛ\ÜÓ˜[YOH^VÌLœH›ÛX›XÚÈ^]Ú]H\\˜Ø\ÙH˜XÚÚ[™ËVÌŒ™[WH¹nî¹êâú`kº"l¹âaÏÚ‚ˆÛ\ÜÓ˜[YOH^VÌLH^]Ú]KÍLXY[™Ë\™[^Y›Û[YY][Hº*âùg*9g%¹âaù."¹¢å¹¦ìûï#9îjº(ïyaîº`kº"l¹âaÏÜ‚ˆÙ]‚‚ˆ]Û‚ˆÛÛXÚÏ^Ê
+HOˆÙ]\ÛZ\ÜÙYX\ÚÒ[
+YJ_BˆÛ\ÜÓ˜[YOHœÚ[\‹Y]™[ËX]]ÈËY[]LˆKLˆM™Ë]Ú]KÌLÝ™\Ž˜™Ë]Ú]KÌŒXÝ]™NœØØ[KNMH^]Ú]H^VÌL\H›ÛX›Û›Ý[™Y^˜[œÚ][Û‹X[\\˜Ø\ÙH˜XÚÚ[™ËVÌŒY[WH‚ˆ‚ˆ9¢$yçéz`dù.¡‚ˆØ]Û‚ˆÙ]‚ˆÛ[Ý[Û‹™]‚ˆ
+_BˆÐ[š[X]T™\Ù[˜ÙO‚ˆ
+_BˆˆËÊˆ9¢nzaãùíê:/+ùæ¡9î+¹g%¹b%ûï&º-çøà#9bcyo£9l#y«å8à#yd#9. 9£¤»ï"9åjúgh¹n¥z`ê:`¨ù. 9¨§{ï"{ï#ˆ9cê¹§"yi&¹o-y¦`¹¢cyaî¹ãï»ï#9­k¹g*9åjúgh¹."¹.#y/e9âb:ghˆ8 %8 %9e«¹o-y¦`¹æ¡9íê:/+ù.âúghº-çù.éybcy. 9ª(øà ‚ˆ:nç¹. 9."ûï'y£æù¢$:h$:)¯z`&y. 9o-{ï&ùa£znç¹. 9."ùmìº`n9.+yæ¡:`¨ùo-y¢cy§ ú-ìùaî¹l#ú`n9e«¸à ˆ
+‹ßBˆÜØ]™TÝ]HOOH	ÜÝXØÙ\ÜÉÈ	‰ˆÜ˜Ó\Ý›[™ÝˆH	‰ˆ
+ˆ]‚ˆ]KX˜]Ú\Ýš\ˆÛ\ÜÓ˜[YO^ØXœÛÛ]H›ÝÛKLˆYVÌMHšYÚVÍLH	ØXÝ]™UÛÛYOOH	ØÝ\™\ÉÈÈ	Þ‹ML	Èˆ	Þ‹LÌ	ßXBˆ‚ˆØ˜]ÚY[HOOH[	‰ˆ
+ˆ]‚ˆÛ\ÜÓ˜[YOH™š^Y[œÙ]L‹LL‚ˆÛ”Ú[\‘ÝÛ^ÊJHOˆÈKœÝÜ›ÜYØ][ÛŠ
+NÈÙ]˜]ÚY[J[
+NÈ_BˆÏ‚ˆ
+_BˆËÊˆ9mé¹cìùd!9åfHœ;ï#:`n9.+yæ¡9æoy¨a¹¢cy.#y§ ú(ªù£l¹båyb%ùæ¡:`¢¹íèùb!ù£¢H
+‹ßBˆËÊˆ9î+¹g%¹b%ú) yhäùg*:`k¹ïjy."ºghˆ8 %8 %9.#yá-º`n9e«ºe¢ú$eùæ¡9¦`¹`&{ï#:nç¹î+¹g%¹æ¡:`¨ù. 9."ù§ ú(ªú`k¹ïjyd ù£¢{ï#ˆ9ë+9.£9."ùl,z+¢¹¢$9cê¹¦+ù¢¢º`n9e«ºeç9£¢{ï#9ç"ú-mù/¡¹l,y¦+øà#:nç¹ajy."ù¬¤¹cãy¡âxà#xà ‚ˆ:`n9e«¹¢dúe¢ù¦`¹¢cyg*9."ºgh¹¤¤9. 9i)ùhb¹åfyæo{ï&¹£l¹båyb%ù¦+ÈÝ™\™›ÝË^X]]ûï#9à#ú)¯yfj9§ ù¢¢‚ˆÝ™\™›ÝË^H9.gù. :-mú+¢¹¢$]]ûï#9o 9."¹ob9æ¡9§lz)oùcêº) z-¡yaîº`&y`"ù¨a¹l,y§ ú(ªú(ày£¢xà ‚ˆ9åfyæoyë¥ùg*9¨aº(èzgh»ï#:`n9e«¹¢cyç"ùo¥ùb,;ï&ùa£yå*9ëbzaãùæ¡:,¨X\™Ú[ˆ9¢âyfç¹/¡»ï#9âb:gh¹.#z+¢‚ˆ;ï"9«å]9i&ˆ;ï#9l,y¦+ùc§ù§+9æ¡L{ï"xà ‚ˆ9åfyæoy§ ú$âùb,9."ºgh¹æ¡:h$:)¯{ï#9¢`9.éycê¹g*:`n9e«ºe¢ú$eùæ¡9¦`¹`&y¢cy¤¤8 %8 %9nlùn.:`&y¨§yb%Âˆ9l,y¦+ù. 9¨§y¦kº`&¹æ¡9£l¹båyb%ûï#9¢bù£!ùáiùª(ù®äyo¥ùbåxà ˆ
+‹ßBˆ]‚ˆ]KX˜]Ú\›ÝÂˆÛ”Ú[\‘ÝÛ^ÊJHOˆÈYˆ
+K\™Ù]OOHK˜Ý\œ™[\™Ù]
+HÙ]˜]ÚY[J[
+NÈ_BˆÛ\ÜÓ˜[YO^Ø™[]]™H‹LŒ›^][\ËY[™Ø\LKHÝ™\™›ÝË^X]]È›Ë\ØÜ›Û˜\ˆVÌœH‹LH	Âˆ˜]ÚY[HOOH[È	ÜVÌLH[]VÎMœIÈˆ	ÜLIÂˆXBˆ‚ˆÜÜ˜Ó\Ý›X\
+
+Ü˜ËJHOˆÂˆÛÛœÝÛˆH[šÙYÚWHOOH˜[ÙNÂˆÛÛœÝXÝ]™HHHOOHØY™RYÂˆ™]\›ˆ
+ˆ]ˆÙ^O^ÜÜ˜È
+È_HÛ\ÜÓ˜[YO^Ø™[]]™HÚš[šËL	Ø˜]ÚY[HOOHHÈ	Þ‹LL	Èˆ	ÉßXO‚ˆËÊˆ:`n9e«¹l,y£¦ùg*9î+¹g%¹n¥y."È8 %8 %9d#9. 9`"ÈÓH9kd9ª.{ï#9£l¹båy¦`¹k£9aj9d#9«i{ï#9. 9¨/:`ïy.#y§ ùmëˆ
+‹ßBˆØ˜]ÚY[HOOHH	‰ˆ
+ˆ]‚ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H›ÝÛKY[X‹Lˆ›Ý[™Y[È™ËVÈÌXŒXŒX—H›Ü™\ˆ›Ü™\‹]Ú]KÌLÚYÝËVÌÎÌÜ™Ø˜JŠWHÝ™\™›ÝËZY[ˆ‚ˆÝ[O^ÞÈYˆ˜]ÚY[Q_Bˆ‚ˆ]Û‚ˆÛÛXÚÏ^Ê
+HOˆÈÙÙÛS[šÊJNÈÙ]˜]ÚY[J[
+NÈ_BˆÛ\ÜÓ˜[YOH˜›ØÚÈËY[LÈNH^VÌL\H›ÛX›Û^]Ú]KÎLÚ]\ÜXÙK[›ÝÜ˜\^[YXÝ]™N˜™Ë]Ú]KÌL‚ˆ‚ˆÛÛˆÈ	ùcå¹­¢:`(ùíd	Èˆ	úaãy¥¬:`(ùíd	ßBˆØ]Û‚ˆ]ˆÛ\ÜÓ˜[YOHš\™Ë]Ú]KÌLˆÏ‚ˆ]Û‚ˆÛÛXÚÏ^Ê
+HOˆÈ™[[Ý™TÝÊJNÈÙ]˜]ÚY[J[
+NÈ_BˆÛ\ÜÓ˜[YOH˜›ØÚÈËY[LÈNH^VÌL\H›ÛX›Û^]Ú]KÎLÚ]\ÜXÙK[›ÝÜ˜\^[YXÝ]™N˜™Ë]Ú]KÌL‚ˆ‚ˆ9b*ºfiˆØ]Û‚ˆÙ]‚ˆ
+_Bˆ]Û‚ˆÛ”Ú[\‘ÝÛ^ÊJHOˆ™YÚ[•[X”™\ÜÊKJ_BˆÛ”Ú[\“[Ý™O^ÊJHOˆ[Ý™U[X”™\ÜÊJ_BˆÛ”Ú[\•\^ÊJHOˆ[™[X”™\ÜÊKKXÝ]™J_BˆÛ”Ú[\Ø[˜Ù[^ØØ[˜Ù[[X”™\ÜßBˆÛÛÛ^Y[O^ÊJHOˆKœ™]™[Y˜][
+
+_Bˆ]O^Ø9ë+	ÚH
+È_H9o-XBˆ]KX˜]Ú][X^Ú_BˆÛ\ÜÓ˜[YO^Ø›ØÚÈËNHNH›Ý[™YVÍHÝ™\™›ÝËZY[ˆ™ËVÈÌXLXLXWH˜[œÚ][Û‹X[XÝ]™NœØØ[KNMHÝXÚ[X[š\[][ÛˆÙ[XÝ[›Û™H	ÂˆXÝ]™HÈ	Üš[™ËVÛ[™ÝŒK\Hš[™Ë]Ú]IÈˆ	ÉÂˆXBˆ‚ˆËÊˆ9¬¤º`n9.+yæ¡9.#yå*9cbº`#ù¦#ˆ8 %8 %9ké¹oàøà yhäù¦¥ùl,yio{ï#9¢cy.#y§ ú`#ùaî¹o£:gh¹æ¡9åjúgh¸à ‚ˆÜ˜È9. 9k¦º) yå*9î+¹ioyæ¡9l#ùg%»ï#9.#z ïy£¦ùc§ùg%»ï":)¢ù."ºghˆÝš\[XœÈ9æ¡:*ª¹¦#»ï"xà ‚ˆ:`¡9¬¤¹î+¹ioy.bùbcyl,yåfyn¥z"l»ï#:`&y. 9¨/9§+9/¡¹l,ycê¹§"HÍœ8à ˆ
+‹ßBˆÜÝš\[XœÖÜÜ˜×H	‰ˆ
+ˆ[YÂˆÜ˜Ï^ÜÝš\[XœÖÜÜ˜×_Bˆ[Hˆ‚ˆ˜YÙØX›O^Ù˜[Ù_BˆÛ\ÜÓ˜[YO^ØËY[Y[Øš™XÝXÛÝ™\ˆÚ[\‹Y]™[Ë[›Û™H˜[œÚ][Û‹X[	ØXÝ]™HÈ	ÉÈˆ	Ùš[\ˆœšYÚ™\ÜËVÌWIßXBˆÏ‚ˆ
+_BˆØ]Û‚ˆËÊˆ:`(ùíd9.+y¦+ùæoyn¥znäyíæ¹æ¡:c¥ºcâ8à y¬¤¹§"y¥§9íæ»ï&ú)èúfi:`(ùíd9æ¡9í«y£ znäyn¥yæoyíæ¸à y¢dùcâH
+‹ßBˆÜ[ˆÛ\ÜÓ˜[YO^ØXœÛÛ]H]ÜLH\šYÚLHËVÌMHVÌMH›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆÚ[\‹Y]™[Ë[›Û™H	ÛÛˆÈ	Ø™Ë]Ú]IÈˆ	Ø™ËX›XÚÉßXO‚ˆXÛÛˆ˜[YO^ÛÛˆÈ	Û[šÉÈˆ	Û[š×ÛÙ™‰ßHÛ\ÜÓ˜[YO^Ø^VÎ\HXY[™Ë[›Û™H	ÛÛˆÈ	Ý^X›XÚÉÈˆ	Ý^]Ú]KÎ	ßXHÏ‚ˆÜÜ[‚ˆÙ]‚ˆ
+NÂˆJ_BˆÛÛYÝÜÈ	‰ˆ
+ˆ]Û‚ˆÛÛXÚÏ^Ê
+HOˆÈÙ]˜]ÚY[J[
+NÈÛYÝÜÊ
+NÈ_Bˆ]OH¹¥¬9h§¹áiùâaÈ‚ˆ]KX˜]ÚXYˆÛ\ÜÓ˜[YOHœÚš[šËLËNHNH›Ý[™YVÍH™ËVÈÌ™L™L™WH›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ^VÈØŽXŽXŽWHXÝ]™NœØØ[KNMH˜[œÚ][Û‹X[ÝXÚ[X[š\[][Ûˆ‚ˆ‚ˆXÛÛˆ˜[YOH˜YˆÛ\ÜÓ˜[YOH^VÌMœHXY[™Ë[›Û™HˆÏ‚ˆØ]Û‚ˆ
+_BˆÙ]‚ˆÙ]‚ˆ
+_B‚ˆËÊˆ9d"9/m{ï&¹¢¢¹ãï¹g*9åjúgh¹."¹æ¡9ª(ùkd9àé:`,¹g%¹li;ï#9àé9k£9¢cz ïya£yå¢¹."ù. 9`"ùâny¥b;ï#ù¯ïºcèxà ‚ˆ9/cyïkº-çùcìù."ú)ä¹æ¡9bcyo£9l#y«å:cmymé¹cìùl#yê,xà ‚ˆ9cê¹§"xà#9ãï¹g*9ç'ùæ¡9ieú$eùâny¥b9¢%¹¯ïºcèxà#y¦`¹¢cyaî¹ãïˆ8 %8 %9d"9/mz`c¹æ¡9càù¥n9mì¹í¤ù«n:fí»ï#9.#yë¥øà ‚ˆ:`kº"l¹âaú"!ú*¯ùëà:`&yajzh y.#yaî¹ãï»ï&º`¨ùajzh yg*:*¯ùæ¡9§lz)oú-çøà#9àé:`,¹g%¹li8à#y¦+ùajyfç¹.¢ûï#ˆ9£"zb%y¤î¹g*:`¨ú(èycê¹§ ú+¤ù.®¹.éyà®¹¦+ùg*9d"9/mz`kº"l¹âaøà ˆ
+‹ßBˆÊ\ÓY\™ÙXX›HY\™ÙYÛÝ[ˆ
+Bˆ	‰ˆXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÈ	‰ˆXÝ]™PØ]YÛÜžHOOH	ØY\Ý	È	‰ˆ
+ˆ]Û‚ˆ\šXK[X™[H¹d"9/myâny¥b‚ˆÛÛXÚÏ^Ú\ÓY\™ÙXX›HÈY\™ÙQY™™XÝÈˆ[™Yš[™YBˆ\ØX›Y^ÈZ\ÓY\™ÙXX›_BˆÛ\ÜÓ˜[YOH˜XœÛÛ]H›ÝÛKLˆYLˆLˆKLˆ›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆØ\LHÙ[XÝ[›Û™HÝXÚ[›Û™H‹LŒ^]Ú]H‚ˆ‚ˆËÊˆ9å¢¹g*9. :-mùæ¡9ajyli;ï"9¬¤¹§"yë«zh+{ï"{ï&¹¢`{ï#9kë9n©¹«å9bcyo£9l#y«å:cmyê¡9. :nç¸à ‚ˆ9íæ¹¨§z) z-çùbcyo£9l#y«å:cmxà#9åjùg*:'¨¹ney."¹. 9ª(ùì¥øà#{ï#: #9.#y¦+ùlk9 )ùkêù. 9ª(ùæ¡9¥n9keûï&‚ˆ:`¨ù. :ha¹¦+È9æ¡šY]Ð›Þ9åjù¢$;ï"NŒ{ï"{ï#:`&y. :ha¹¦+ÈÍ9æ¡šY]Ð›Þˆ9åjù¢$Ž;ï"Ž9`#{ï"{ï#9¢`9.éHÝ›ÚÙUÚY:) zfi9fç¹c®È8 %8 %KHÈ
+ŽÌÍ
+Bˆ8¢bKŽ»ï#9åjùaî¹/¡¹¢cybfùioy¦+ÈK\8à ¹.éybcykêÈKŒˆ9æ¡9kéºf¦ùì¥ùn©¹cê¹§"HŽN\;ï#ˆ9.#y®ïù. 9`"ù`ãùí(9l,y§ ú(ªù¢¥úbî:od¹¥)9¢$9àl9æ¡;ï#9ç"ú-mù/¡¹l,y`ãùcbº`#ù¦#¸à ‚ˆ:hcú"l¹.gùæí9£©ykêù«nùæoz"l»ï#9.#yd ÈÝ\œ™[ÛÛÜ»ï"9£"zb%y`g9å*9¦`¹§ ú(ªùà#ú)¯yfj:*¯ù­è{ï"xà ˆ
+‹ßBˆÝ™ÈÚYHŒŽˆZYÚHŒNˆšY]Ð›ÞHŒÍŒˆˆš[H››Û™Hˆ[œÏHš‹ËÝÝÝËÌË›Ü™ËÌŒÜÝ™È‚ˆÛ\ÜÓ˜[YOH™›Ü\ÚYÝËVÌÌœÎÜ™Ø˜JŽ
+WH‚ˆ]H“LMÈ‹HÌHMÈMHVˆˆÝ›ÚÙOHˆÙ™™ˆˆÝ›ÚÙUÚYHŒKŽˆˆÝ›ÚÙS[™Z›Ú[Hœ›Ý[™ˆÏ‚ˆ]H“MLÈMÈNHÌLÈˆÝ›ÚÙOHˆÙ™™ˆˆÝ›ÚÙUÚYHŒKŽˆˆÝ›ÚÙS[™XØ\Hœ›Ý[™ˆÝ›ÚÙS[™Z›Ú[Hœ›Ý[™ˆÏ‚ˆÜÝ™Ï‚ˆÜ[ˆÛ\ÜÓ˜[YOH^VÎ\HXY[™Ë[›Û™H›Û[YY][H˜XÚÚ[™Ë]ÚYHÚ]\ÜXÙK[›ÝÜ˜\›Ü\ÚYÝËVÌÌœÎÜ™Ø˜JŽ
+WH‚ˆÚ\ÓY\™ÙXX›BˆÈ
+XÝ]™PØ]YÛÜžHOOH	ÙY™™XÝÉÈÈ	ùd"9/myâny¥b	Èˆ	ùd"9/my¯ïºcèIÊBˆˆ9mì¹d"9/mIÛY\™ÙYÛÝ[XBˆÜÜ[‚ˆØ]Û‚ˆ
+_B‚ˆËÊˆÛÛ\\™H]Ûˆ
+‹ßBˆ]Û‚ˆÛ”Ú[\‘ÝÛ^ÊJHOˆÈˆKœ™]™[Y˜][
+
+NÈˆžHÂˆ
+K˜Ý\œ™[\™Ù]\ÈS[[Y[
+KœÙ]Ú[\Ø\\™JKœÚ[\’Y
+NÂˆHØ]Ú
+\œŠHßBˆÙ]ÚÝÓÜšYÚ[˜[
+YJNÈˆ_HˆÛ”Ú[\•\^ÊJHOˆÈˆKœ™]™[Y˜][
+
+NÈˆžHÂˆ
+K˜Ý\œ™[\™Ù]\ÈS[[Y[
+Kœ™[X\ÙTÚ[\Ø\\™JKœÚ[\’Y
+NÂˆHØ]Ú
+\œŠHßBˆÙ]ÚÝÓÜšYÚ[˜[
+˜[ÙJNÈˆ_HˆÛ”Ú[\Ø[˜Ù[^ÊJHOˆÈˆÙ]ÚÝÓÜšYÚ[˜[
+˜[ÙJNÈˆ_BˆÛ\ÜÓ˜[YO^ØXœÛÛ]H›ÝÛKLˆšYÚLˆLÈ›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆÙ[XÝ[›Û™HÝXÚ[›Û™H˜[œÚ][Û‹X[XÝ]™NœØØ[KNL	ÜÚÝÓÜšYÚ[˜[È	Ý^]Ú]IÈˆ	Ý^]Ú]KÍ	ßH	ØXÝ]™UÛÛYOOH	ØÝ\™\ÉÈÈ	Þ‹ML	Èˆ	Þ‹LŒ	ßXBˆ‚ˆÝ™ÈÚYHŒˆZYÚHŒˆšY]Ð›ÞHŒˆš[H››Û™Hˆ[œÏHš‹ËÝÝÝËÌË›Ü™ËÌŒÜÝ™ÈˆÛ\ÜÓ˜[YOH™›Ü\ÚYÝËVÌÌœÎÜ™Ø˜JŽ
+WH‚ˆ]H“LLˆ’PÌËÌMMÈˆÈ‹ÌMMÈÈËUŒM‹PÌÈMËŒÌŽËÌMMÈNHNLˆˆÝ›ÚÙOHÚ]HˆÝ›ÚÙUÚYHŒKHˆÏ‚ˆ[™HOHŒLˆˆLOHŒÈˆHŒLˆˆLHŒŒHˆÝ›ÚÙOHÚ]HˆÝ›ÚÙUÚYHŒKHˆÝ›ÚÙS[™XØ\Hœ›Ý[™ˆÏ‚ˆ]H“LLˆ’NKPÌŒŒÌŽˆŒH‹ÌMMÈŒHËUŒM‹PÌŒHMËŒÌŽŒŒÌŽNNKHNLˆˆÝ›ÚÙOH˜Ý\œ™[ÛÛÜˆˆÝ›ÚÙUÚYHŒKHˆÏ‚ˆÜÝ™Ï‚ˆØ]Û‚‚ˆËÊˆKKHÓ:gh¹§oÈKKBˆ:-çù¦ì¹íæ¹. 9ª(ù`f¹¢$:$âùg*:h$:)¯y."¹æ¡9­k¹li;ï#: #9.#y¦+ù¢¢¹n¥z`ê9b§ú ïy«!9¤¤:jæ8 %8 %ˆ9n¥z`ê:`¨ùajyb%ûï"9l#ùb!ºhg¸à yb!ºh {ï"yfè9«i9k£9aj9.#y§ ú(ªù£ª9båxà ‚ˆ:`,¹aî¹.#y`f¹.îù/eybåyåjûï&¹æí9£©y£¦ù."¸à yæí9£©y¢ïù£¢xà ˆ
+‹ßBˆØXÝ]™UÛÛYOOH	ÚÛ	È	‰ˆ
+ˆ]‚ˆ]KZÛ\[™[ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]^L›ÝÛKL‹MNLˆ‹Lˆ™ËVÈÌLLWKÎMH˜XÚÙ›ÜX›\‹^›Ü™\‹]›Ü™\‹]Ú]KÍH‚ˆ‚]ˆÛ\ÜÓ˜[YOHËY[›^›^XÛÛ‚ˆËÊˆ:`&y. 9£¤¹/.:`,¹i%¹li9æ¡9mé¹cìùaiú-çz(è{ï"ÈHL	JÍ™[H:acH[^N;ï"{ï#9¢cy£¤¹o¥ù."øà ‚ˆ9i%¹li9æ¡›Ü™\ˆ›Þ9¦+ù¥m9`"ùåjúgh¹kë;ï#9¢`9.éy/.9aî¹c®ù.#y§ ú(ªú(ày£¢xà ‚ˆ9aiùli9å*Ë[X^
+È^X]]ûï&¹£¤¹o¥ù."ùæ¡9¦`¹`&z!ê¹båyïk¹.+{ï#9£¤¹.#y."ùæ¡9¦`¹`&BˆX\™Ú[ˆ:!ê¹mìz+¢ˆ9¥.y¢$:gh9mé¹£lˆ8 %8 %9æí9£©yå*\ÝYžKXÙ[\ˆ9æ¡:*l{ï#ˆ9aiùk®z-¡yaî¹¦`¹ë+9. :ha¹§ ú(ªùb!ù£¢z #9.%9£l¹.#yfç¹/¡¸à ˆ
+‹ßBˆ]ˆÛ\ÜÓ˜[YOHËVØØ[ÊL	JÍ™[JWH[^NLHÝ™\™›ÝË^X]]È›Ë\ØÜ›Û˜\ˆ‚ˆ]ˆÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆØ\LˆË[X^^X]]ÈKLKH‚ˆÒÓÐS‘Ë›X\
+
+˜[™JHOˆÂˆÛÛœÝÛˆHÛ˜[™YOOHNÂˆÛÛœÝÝXÚYH\˜[\ËšÛ	‰ˆ\˜[\ËšÛÚWH	‰ˆ
+\˜[\ËšÛÚWKšOOH\˜[\ËšÛÚWKœÈOOH\˜[\ËšÛÚWK›OOH
+NÂˆ™]\›ˆ
+ˆ]Û‚ˆÙ^O^Ø˜[™šYBˆ]KZÛX˜[™^Ú_BˆÛÛXÚÏ^Ê
+HOˆÙ]Û˜[™Y
+J_Bˆ]O^Ø˜[™›X™[BˆÛ\ÜÓ˜[YOHœÚš[šËL›^›^XÛÛ][\ËXÙ[\ˆØ\LHÜ›Ý\‚ˆ‚ˆËÊˆ9¬¤º`n9.+{ï'yên¹oàùg";ï";ï#9i(9ì¥ùç"ùo¥ù®!y©f»ï"{ï&ú`n9.+{ï'yké¹oàøà ‚ˆ:`¢¹¨a¹¬.:`h9kêù«nùd#9. 9`"úhcú"lˆ8 %8 %9cê¹åfH˜XÚÙÜ›Ý[™9g*:+¢¸à ‚ˆ9.bùbcz`n9.+y¦`¹¬¤¹kêÈ›Ü™\»ï#˜[œÚ][Û‹X[9§ ù¢¢º`¢¹¨aºhcú"l¹o§º"l¹éj:"l‚ˆ:(ç:e¤ùb,Z[Ú[™9æ¡:h$:*+yàl9æo{ï#9£"y."ùc®ùl,ze ù. 9g"9æoz`¢¸à ˆ
+‹ßBˆÜ[‚ˆÛ\ÜÓ˜[YO^Ø›ØÚÈËNN›Ý[™YY[˜[œÚ][Û‹XÛÛÜœÈ	ÛÛˆÈ	ÉÈˆ	ÙÜ›Ý\ZÝ™\Ž›ÜXÚ]KNL	ßXBˆÝ[O^ÞÈ›Ü™\ŽˆÛÛY	Ø˜[™œÝØ]ÚX˜XÚÙÜ›Ý[™ˆÛˆÈ˜[™œÝØ]Úˆ	Ý˜[œÜ\™[	È_BˆÏ‚ˆËÊˆ9¥.z`c¹æ¡:*&:&gù¥/¹g*9£"zb%y."úgh¸à zf¥9. :nçºnç¸à ¹fî¹k¦¹/e9/cycê¹b!ù£æú`#ù¦#¹n©»ï#ˆ:jæ9n©¹¢cy.#y§ ú-ìûï#9.gù.#y§ ú(ªù£l¹båyb%ùæ¡:`¢¹íèú(ày£¢H
+‹ßBˆÜ[ˆÛ\ÜÓ˜[YO^ØËLKHLKH›Ý[™YY[™Ë]Ú]H˜[œÚ][Û‹[ÜXÚ]H	ÝÝXÚYÈ	ÛÜXÚ]KLL	Èˆ	ÛÜXÚ]KL	ßXHÏ‚ˆØ]Û‚ˆ
+NÂˆJ_BˆÙ]‚ˆÙ]‚ˆÒÓÔÓQT”Ë›X\
+ÛOˆ
+ˆ˜\ÝÛY\‚ˆÙ^O^Ø	ÚÛ˜[™YKIÜÛšÙ^_XBˆ˜[YO^Ê\˜[\ËšÛ	‰ˆ\˜[\ËšÛÚÛ˜[™YHÈ\˜[\ËšÛÚÛ˜[™YVÜÛšÙ^WHˆ
+_BˆZ[^ËLLHX^^ÌLHÝ\^Ì_BˆÛÛY^ØÛ‰ÚÛ˜[™YK‰ÜÛšÙ^_XBˆX™[^ÜÛ›X™[BˆÛ˜\™\›ÂˆÛÛ\XÝˆÛ•\]O^ÊY˜[
+HOˆÂˆÛÛœÝËšKÙ^WHHYœÜ]
+	Ë‰ÊNÂˆÛÛœÝÝ\ˆH\˜[\Ô™Y‹˜Ý\œ™[ÂˆÛÛœÝ™^H
+Ý\‹šÛQUSÒÓ
+K›X\
+
+‹LŠHO‚ˆLˆOOH[X™\ŠšJHÈÈ‹‹˜‹ÚÙ^WNˆ˜[HˆŠNÂˆÛÛœÝˆHÈ‹‹˜Ý\‹Ûˆ™^NÂˆ\˜[\Ô™Y‹˜Ý\œ™[HŽÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆ\ÝÛY\“[Ý™U[YT™Y‹˜Ý\œ™[H\™›Ü›X[˜ÙK››ÝÊ
+NÂˆ_BˆÛ’[\˜XÝÝ\^Ê
+HOˆÙ]\˜\Ý™]šY]Ê	ÚÛ	Ê_BˆÛ’[\˜XÝ[™^Ê
+HOˆÂˆÙ]\Ò[\˜XÝ[™Ê˜[ÙJNÂˆ˜\Ý™]šY]ÐØXÚT™Y‹˜Ý\œ™[˜XÝ]™HH˜[ÙNÂˆÙ]\˜[\ÊÈ‹‹œ\˜[\Ô™Y‹˜Ý\œ™[JNÂˆYÒ\ÝÜžJ\˜[\Ô™Y‹˜Ý\œ™[Ù[XÝY]Y
+NÂˆ_BˆÛ”™\Ù]^Ê
+HOˆÂˆÛÛœÝÝ\ˆH\˜[\Ô™Y‹˜Ý\œ™[ÂˆÛÛœÝ™^H
+Ý\‹šÛQUSÒÓ
+K›X\
+
+‹LŠHO‚ˆLˆOOHÛ˜[™YÈÈ‹‹˜‹ÜÛšÙ^WNˆHˆŠNÂˆÛÛœÝˆHÈ‹‹˜Ý\‹Ûˆ™^NÂˆ\˜[\Ô™Y‹˜Ý\œ™[HŽÂˆÙ]\˜[\ÊŠNÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆYÒ\ÝÜžJ‹Ù[XÝY]Y
+NÂˆ_BˆÏ‚ˆ
+J_BˆÙ]‚ˆÙ]‚ˆ
+_B‚ˆËÊˆKKHÕT•‘HÕ‘T“VHRHKKH
+‹ßBˆ]ˆˆÊˆ9¥-º-mù/¡¹¦`¹cê¹­èyaî»ï"ù.éyn¥z`ê9à®¹c§únç¹î+¹l#ûï#9.#y`f¹/cyéîûï&¹c§ù§+9å*˜[œÛ]K^KY[;ï#ˆ9¥m9hb¹¨/9íæº"!ú`&º`dúnç¹§ ùo§¹."ù¥®yb§ú ïy«!8à#9êoú`c¹c®øà#{ï#9ç"ú-mù/¡¹l,y¦+ú`¨ù. 9hb¹­î¹àl:"l¹æ¡9§lz)oÂˆ;ï":aãùb,:fèºe¢ùo£Œ\È:`¨ù. 9n`9ç'ùæ¡9å¢¹g*9.«¹n©º`¨ù. 9b%ù."»ï"xà ‚ˆÜšYÚ[‹X›ÝÛH
+ÈØØ[H8¢iH9/çz+byk ù¬.:`h9.#y§ ú-¡yaî¹c§ù§+9æ¡9ëá9g#{ï#ˆ:)¥º)®¹."¹l,y¦+øà#9o§¹n¥z`ê:emùaî¹/¡¸à#xà ‚ˆ:`,º` 9å*9d#9. 9¨§HX\ÙSÝ];ï#9¥-º-mù/¡¹¢cy§ ù. 9£"yl,ze¢ùiâù­èy£¢{ï&ú` 9h-9a£yçëy. :nç»ï#ˆ9¢bù£!úfèºe¢ù£"zb%yæ¡9åm¹."ù¦ì¹íæ¹l,ymì¹í¤ùç"ù.#yi*¹b,9.¡¸à ˆ
+‹ÂˆÛ\ÜÓ˜[YO^ØXœÛÛ]HYLšYÚL‹M›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKY[™‹LˆÜšYÚ[‹X›ÝÛH[™[YX\ÙH˜[œÚ][Û‹VÛÜXÚ]K˜[œÙ›Ü›WH	ÂˆXÝ]™UÛÛYOOH	ØÝ\™\ÉÂˆÈ	ØÝ\™\Ñœ›ÛRÛÈ	Ù\˜][Û‹L	Èˆ	Ù\˜][Û‹VÌÎ\×IßHØØ[KLLÜXÚ]KLLˆˆ	Ù\˜][Û‹VÌŒ\×HØØ[KVÌŽM—HÜXÚ]KLÚ[\‹Y]™[Ë[›Û™IÂˆXBˆÝ[O^ÞÈZYÚˆ	ÌL	Ë›ÝÛNˆ_Bˆ‚ˆ]ˆÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆËY[Y[™[]]™HÚ[\‹Y]™[Ë[›Û™H‚ˆËÊˆÜ˜\\ˆÈÙ[\ˆH›ÞÚ]ÛÛ›ÛÈ[˜ÚÜ™Y™[]]™HÈ]ˆ[˜X›HÚ[\ˆ]™[È›ÜˆÚ[™[‹ˆ
+‹ßBˆËÊˆÚ[\‹Y]™[È9.#y§ ú(ªùée¹ab9æ¡›Û™H:$âù£¢{ï&¹cêº) ykd9kjú!ê¹mìykêÈ]]ûï#ˆ9clù/oùi%¹li9¦+È›Û™H9k ùáiùª(ùd ùo¥ùb,:)î9£©øà ¹¦ì¹íæ¹¥-º-mù/¡¹æ¡9¦`¹`&z`&y. 9hb‚ˆ;ï"0åÌ9æ¡9¨/9kd9b¨9méº`¢º`¨ù£¤º`&º`dúnç»ï"y¦+ùç"ù.#z)¢ù/aº`¡9g*9c§ùg,9æ¡;ï#ˆ9¥¯9¦+ùg*:h$:)¯y."ùcbº`ê9¢å¹¦ìùl,y§ ú(ªùk ù¥%:-l8 %8 %9nî¹êâú`kº"l¹âaøà y¢åºh$:)¯z`ïy§ ù *¹ *¹æ¡8à ‚ˆ9¢`9.éz`&z(èy.gú) z-çú$eúe¢úeç8à ˆ
+‹ßBˆ]ˆÛ\ÜÓ˜[YO^Ø™[]]™H	ØXÝ]™UÛÛYOOH	ØÝ\™\ÉÈÈ	ÜÚ[\‹Y]™[ËX]]ÉÈˆ	ÜÚ[\‹Y]™[Ë[›Û™IßXO‚ˆˆËÊˆYÛÛ›ÛÈ
+‹ßBˆËÊˆ:"lºnçº"!úaãyïkºcmz`ïyî+¹¢$œ;ï"9c§ù§+Ìœ9æ¡9ajù¢$;ï"xà ‚ˆ9c§ù§+9¦+È\ÝYžKX™]ÙY[ˆ9¤¤9®ïÈœ;ï#:+¢¹l#ù.bùo£9ênºf¦y§ ú-çú$eú+¢¹i)ûï#ˆ9¢`9.éy¥.y¢$9ïk¹.+{ï"ùfî¹k¦ˆMœ:e¤ú-ç{ï"9.gù¦+ùc§ù§+Œ9æ¡9ajù¢$;ï"xà ˆ
+‹ßBˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]HšYÚY[ÜLVÌœH›^›^XÛÛ\ÝYžKXÙ[\ˆ][\ËXÙ[\ˆØ\M‹LÈ‚ˆÊÖÉÜ™Ø‰Ë	ÈÙ™™™™™‰×KÉÜ‰Ë	ÈÙ™ŒØŒÌ	×KÉÙÉË	ÈÍÙM	×KÉØ‰Ë	ÈÌØY™‰×WH\ÈÛÛœÝ
+K›X\
+
+ØÚÛÛJHOˆ
+ˆ]‚ˆÙ^O^ØÚBˆ]KXÝ\™KXÚ[›™[^ØÚBˆÛÛXÚÏ^Ê
+HOˆÙ]Ý\œ™[Ý\™PÚ[›™[
+Ú
+_BˆÛ\ÜÓ˜[YO^ØÚ[›™[YÝ	ØÝ\œ™[Ý\™PÚ[›™[OOHÚÈ	ØXÝ]™IÈˆ	ÉßXBˆÝ[O^ÞÈÛÛÜŽˆÛÛ_BˆÏ‚ˆ
+J_B‚ˆËÊˆ:-çú"lºnç¹. 9ª(ÈÌœ;ï#9g%¹ª&z!ê¹mìyåjûï&¹. 9g":e¢ùcèùæ¡9ë«zh+{ï#ˆ9íæ¹ì¥ú-çú"lºnç¹æ¡:`¢¹¨a¹d#9ª(ÈÜ;ï#9fæúha¹£¤¹."ù/¡¹¢cy¦+ùd#9. 9ieù§lz)oøà ˆ
+‹ßBˆËÊˆ9íæ¹å*9.#z`#ù¦#¹æ¡9í%9æo{ï&^]Ú]KÍÌ:`¨ùê+¹n-ˆ[H9æ¡:hcú"l‚ˆ9åjùaî¹/¡¹¦+ùcbº`#ù¦#¹æ¡;ï#9n¥y."ùæ¡9áiùâaù§ ú`#ù."¹/¡¸à ˆ
+‹ßBˆ]ÛˆÛÛXÚÏ^Ü™\Ù][Ý\™\ßHÛ\ÜÓ˜[YOHËVÌœHVÌœHÚš[šËL›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ™Ë]˜[œÜ\™[^]Ú]HXÝ]™NœØØ[KNL˜[œÚ][Û‹]˜[œÙ›Ü›Hˆ]OHºaãyïk¹aj:`ê‚ˆÝ™ÈšY]Ð›ÞHŒÌˆÌˆˆÛ\ÜÓ˜[YOHËY[Y[›ØÚÈˆš[H››Û™H‚ˆ]H“LˆM˜LLLHKLËŒKMËŒHˆÝ›ÚÙOHˆÙ™™ˆˆÝ›ÚÙUÚYHŒˆˆÝ›ÚÙS[™XØ\Hœ›Ý[™ˆÏ‚ˆËÊˆ9¢¦:)ä¹îgº!ê¹mìyæ¡:h ºnçˆ
+K‹KŒÊH:`!¹¦`ºaçz/bHMp¬;ï&¹c§ù§+9ajz!à¹bfùioy¦+Âˆ9«hù."º"!ù«hùmé»ï#9l%º)ä¹¦+ú)£ú)£ùçêyçêyæ¡L0¬9§'ycìù."ûï#9ç"ú-mù/¡¹`ãúb#zbi9.#y`ãùë«zh+xà ‚ˆ9o :`!¹¦`ºaçz/byl%¹êëù¢cy§ ù§'z$eùo)ùíæº(c:`,¹æ¡9i%¹`m;ï#:+ :-mù/¡¹¢cy¦+ùë«zh+xà ‚ˆ9¥m9`"ù¢¦:)ä¹a£yo 9méˆŽ8à yo 9."ÈŽ;ï#9l%º)ä¹¢cygd9g*9o)ùíæ¹§*ùêëù."¸à ‚ˆ9ajz!àºemùn©º`ïz`¡9¦+ÈK8à ˆ
+‹ßBˆ]H“LŒËŽŽLŒSNKNLKHˆÝ›ÚÙOHˆÙ™™ˆˆÝ›ÚÙUÚYHŒˆˆÝ›ÚÙS[™XØ\Hœ›Ý[™ˆÝ›ÚÙS[™Z›Ú[Hœ›Ý[™ˆÏ‚ˆÜÝ™Ï‚ˆØ]Û‚ˆÙ]‚‚ˆËÊˆÝ\™H›Þ
+‹ßBˆËÊˆ9i%¹¨a¹l,y¦+ù¨/9íæ¹æ¡9§ 9i%ºghº`¨ù. 9g";ï&º-çú(èzgh¹æ¡9íæ¹d#:"l¹d#9ì¥ûï#ˆ9¥m9hb¹ç"ú-mù/¡¹¢cy¦+ù. 9o-yk£9¥m9æ¡0åÍ9¨/9íæ¸à ˆ
+‹ßBˆ]ˆÛ\ÜÓ˜[YOHœ™[]]™HËVÌHVÌH™ËVÈÌÌÌ×KÌÌ›Ü™\ˆ›Ü™\‹]Ú]HÚš[šËLÝXÚ[›Û™H›Ý[™Y\ÛHÚYÝËLž‚ˆÛ“[Ý\ÙQÝÛ^Ú[™PÝ\™P™ÐÛXÚßBˆÛ•ÝXÚÝ\^Ú[™PÝ\™P™ÐÛXÚßBˆ‚ˆÝ™ÈYH˜Ý\™\ÔÝ™ÈˆšY]Ð›ÞHŒŒŒˆÛ\ÜÓ˜[YOH˜XœÛÛ]HÜVËL\HYVËL\HËVÌHVÌHÝ™\™›ÝË]š\ÚX›HÝ\œÛÜ‹XÜ›ÜÜÚZ\ˆ‚ˆËÊˆ9.#yå*9cbº`#ù¦#»ï&¹cbº`#ù¦#¹æ¡9íæ¹§ ú`#ùaî¹n¥y."ùæ¡9áiùâaûï#9.«¹æ¡9g,9¥®yç"ú-mù/¡‚ˆ9oïzf¬yoïyãï»ï#: #9.%9.©9câznç¹å¢¹.¡¹ajyli[H9§ ù«å9b)z&ey.«¹. 9hb¸à ‚ˆ9¥.y¢$9.#z`#ù¦#¹æ¡9kéº"l»ï#9¥m9o-y¨/9íæ¹g*9dêº`ïy¦+ùd#9. 9`"ùª(ùkd8à ‚ˆ›Û‹\ØØ[[™Ë\Ý›ÚÙ{ï&šY]Ð›Þ9¦+ÈŒ9/a¹åjùaî¹/¡¹¦+È;ï#ˆ9.#yb¨9æ¡:*lHÝ›ÚÙUÚYLH9§ ú(ªù¥/¹i)ù¢$KŒœ;ï#:-çùi%¹¨a¹æ¡ˆ\ÔÔÈ›Ü™\ˆ9l#y.#zob»ï#9ì¥ùí,9ç"ùo¥ùaî¹/¡¹.#y. 9ª(øà ˆ
+‹ßBˆÈÝ›ÚÙOHˆÙ™™ˆˆÝ›ÚÙUÚYHŒHˆÚ\T™[™\š[™ÏH˜Üš\ÜYÙ\ÈˆÝ[O^ÞÈ™XÝÜ‘Y™™XÝˆ	Û›Û‹\ØØ[[™Ë\Ý›ÚÙIÈ_O‚ˆÖÍLLMLK›X\
+ˆOˆ
+ˆ™XXÝ‘œ˜YÛY[Ù^O^ÝŸO‚ˆ[™HO^ÝŸHLOHŒˆ^ÝŸHLHŒŒˆÝ[O^ÞÈ™XÝÜ‘Y™™XÝˆ	Û›Û‹\ØØ[[™Ë\Ý›ÚÙIÈ_HÏ‚ˆ[™HOHŒˆLO^ÝŸHHŒŒˆL^ÝŸHÝ[O^ÞÈ™XÝÜ‘Y™™XÝˆ	Û›Û‹\ØØ[[™Ë\Ý›ÚÙIÈ_HÏ‚ˆÔ™XXÝ‘œ˜YÛY[‚ˆ
+J_BˆÙÏ‚ˆ]ˆ^ÙÙ]Ý\™T]
+
+_Hˆš[H››Û™HˆˆÝ›ÚÙO^ÙÙ]Ý\™PÛÛÜŠ
+_HˆÝ›ÚÙUÚYHŒKHˆˆÝ›ÚÙS[™XØ\Hœ›Ý[™ˆˆÝ›ÚÙS[™Z›Ú[Hœ›Ý[™ˆˆÝ[O^ÞÈ™XÝÜ‘Y™™XÝˆ	Û›Û‹\ØØ[[™Ë\Ý›ÚÙIÈ_BˆÏ‚ˆÜ\˜[\Ë˜Ý\™\ÖØÝ\œ™[Ý\™PÚ[›™[K›X\
+
+JHOˆ
+ˆÚ\˜ÛHˆÙ^O^Ú_BˆÞ^ÊžÈMJH
+ˆŒHÞO^ÌŒH
+
+žHÈMJH
+ˆŒ
+_H^ÝÚ[™ÝËš[›™\•ÚYÍŽÈˆˆBˆÛ\ÜÓ˜[YO^ØÝ\™K\Ú[	Ù˜YÔÚ[YOOHHÈ	ØXÝ]™IÈˆ	ÉßXBˆÝ[O^ÞÈš[ˆÙ]Ý\™PÛÛÜŠ
+H_BˆÛ“[Ý\ÙQÝÛ^ÊJHOˆ[™TÚ[\
+KJ_BˆÛ•ÝXÚÝ\^ÊJHOˆ[™TÚ[\
+KJ_BˆÏ‚ˆ
+J_BˆÜÝ™Ï‚ˆÙ]‚ˆÙ]‚ˆÙ]‚ˆÙ]‚‚ˆËÊˆ9cê¹¦+ù£¦ùíiˆZ[Ú[™9æ¡9à#ú)¯yfj9âb’U9ç"ùæ¡;ï#9§+:.ªù.#yåjù.îù/ey§lz)oÈ8 %8 %ˆ9íê:/+ùfj9. :e¢ùl,z+¤ùk ù¢¢¹©âùg%º`¨ù.¦ÈÛ\ÜÈ9æ¡:)£ùbaùab9å(¹å'ùio{ï#ˆ9/oùå*: !yë+9. 9«(znç¹©âùg%¹¦`¹¢cy.#y§ ùab9ç"ùb,9. 9n`9¬¤¹§"yª(ùo#ùæ¡9åjúgh¸à ˆ
+‹ßBˆ]ˆ\šXKZY[HYHˆÛ\ÜÓ˜[YO^ÐÓÓTÔÑWÕÐT“UTÐÓTÔÑTßHÝ[O^ÞÈ\Ü^Nˆ	Û›Û™IÈ_HÏ‚ˆËÊˆ9¯ïºcèzh y®äy¨où."ºghº`¨ùfæúhaºe¢úeç9æ¡Û\Üûï&¹ab:+¤È’U9å(¹å'ú)£ùbaûï#ˆ9.#yá-º)£ùbaù¦f¹. 9n`9b,;ï#:`¨ùfæúha¹§ ùo§¸à#9¬¤¹ª(ùo#øà#z(ç:e¤ùb,8à#9§"yª(ùo#øà#{ï"9ç"ú-mù/¡¹`ãú!ê¹mìybåy.¡¹. 9."ûï"xà ˆ
+‹ßBˆ]ˆ\šXKZY[HYHˆÝ[O^ÞÈ\Ü^Nˆ	Û›Û™IÈ_BˆÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆØ\LHL‹HKLH›Ý[™YY[^VÌLH›ÛX›Û˜XÚÚ[™Ë]ÚY\ˆ\\˜Ø\ÙH˜[œÚ][Û‹XÛÛÜœÈ›Ü™\ˆÚš[šËL™Ë]Ú]H^X›XÚÈ›Ü™\‹]Ú]HÚYÝË[È™Ë]Ú]KÍH^]Ú]KÍ›Ü™\‹]Ú]KÌLÝ™\Ž^]Ú]KÍŒÝ™\Ž˜›Ü™\‹]Ú]KÌHØ\LKHÝ™\™›ÝË^X]]È›Ë\ØÜ›Û˜\ˆKLHX^]ËVØØ[ÊL	KLË\™[JWH›^XÛÛLˆKLˆ^VÎ\H›Û[YY][HÚ]\ÜXÙK[›ÝÜ˜\ˆÏ‚‚ˆËÊˆ9©âùg%»ï&¹cêº$âù/cúh$:)¯yc`;ï#9.#ya£y¦+ùcé¹i%ºe¢ù. 9¥m:h H8 %8 %9."ù¥®yæ¡9b!ºh yb%ùåfyg*9c§ù/cxà ‚ˆ9k ú!ê¹mìyæ¡9l#ùb!ºhg»ï":(àyb!ûï#ú)ä¹n©»ï#ùïîú/b{ï#ù¨«ùoh»ï"yl,y£©yg*9b!ºh yb%ù."ºgh»ï#ˆ9/cyïkº-çùam¹.å¹b§ú ïyæ¡9l#ùb!ºhg¹b%ù. 9ª(øà ˆ
+‹ßBˆØXÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIÈ	‰ˆ˜YÙ[È	‰ˆ
+ÛÛ\ÜÙT™]šY]Ô™Y‹˜Ý\œ™[ÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[
+H	‰ˆ
+ˆÛÛ\ÜÙTÝY[Âˆ[XYÙO^ØÛÛ\ÜÙT™]šY]Ô™Y‹˜Ý\œ™[ÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[_BˆÙ[Ï^Ù˜YÙ[ßBˆÛÚ[™ÙO^ÜÙ]˜YÙ[ßBˆÛØ[˜Ù[^ØØ[˜Ù[ÛÛ\ÜÙ_BˆÛ\O^Ê
+HOˆÂˆ\QÙ[Ê˜YÙ[ÊNÂˆYÒ\ÝÜžJ\˜[\Ô™Y‹˜Ý\œ™[Ù[XÝY]Y
+NÂˆÙ]˜YÙ[Ê[
+NÂˆÛÛ\ÜÙT™]šY]Ô™Y‹˜Ý\œ™[H[ÂˆÙ]XÝ]™PØ]YÛÜžJ™Y›Ü™PÛÛ\ÜÙT™Y‹˜Ý\œ™[˜Ø]
+NÂˆÙ]XÝ]™UÛÛY
+™Y›Ü™PÛÛ\ÜÙT™Y‹˜Ý\œ™[ÛÛ
+NÂˆ_BˆÏ‚ˆ
+_BˆÙ]‚‚ˆËÊˆ9l#ùb!ºhg¹b%ù¥-º-mù/¡¹¦`»ï":`kº"l¹âaùnî¹êâù.+{ï#ù©âùg%»ï"{ï#:`&y`"ùi%¹¨a¹æ¡9."¹íèù§ ùæí9£©z,¯9b,ˆ9b!ºh yb%ú!ê¹mìyæ¡9."¹íèú`¢¹íæ»ï#9ajy¨§H\9å¢¹g*9. :-mùç"ú-mù/¡¹l,y¦+ù. 9¨§y«å:/ ùì¥ùæ¡9íæ‚ˆ;ï":aãùb,9.«¹n©¹beºgh¹i&¹. 9b%ûï&¹«hùn.9cê¹§"HŽ{ï#9å¢¹b,9æ¡9¦`¹`&y¦+ÈŽH
+È»ï"xà ‚ˆ:`¨ùê+¹âà9¡bù."ùl,y¢¢¹i%¹¨aº`&y. 9¨§y¥-¹£¢{ï#9åfyb!ºh yb%ú!ê¹mìz`¨ù¨§xà ˆ
+‹ßBˆ]ˆÛ\ÜÓ˜[YO^Ø™ËVÈÌLLLLLWH	ÜÝX”Ýš\Y[ˆÈ	ÉÈˆ	Ø›Ü™\‹]›Ü™\‹]Ú]KÍIßH›^›^XÛÛÚš[šËL‹\ØY™H‹VÍMWXO‚ˆ]ˆˆÛ\ÜÓ˜[YO^Ø›^›^XÛÛ\ÝYžKXÙ[\ˆ[™[YX\ÙH˜[œÚ][Û‹X[Ý™\™›ÝËZY[ˆ™ËVÈÌLLWH	Ùž[™[È	ÜM	Èˆ	ÜN	ßXBˆÝ[O^ÞÂˆÊˆ9¦`ºe¤úemùn©º-l[›[™HÝ[{ï#9.#z) yå*\˜][Û‹LÈ\˜][Û‹VÌÎ\×H:`&yê+ˆÛ\Üøà ‚ˆ:`&y`"È\9£¦ùæ¡9¦+ÈZ[Ú[™9æ¡9à#ú)¯yfj9âb’U;ï#:)£ùbaù¦+øà#9g*ÓH9ç"ùb,:`¨ù`"ÈÛ\ÜÂˆ9¢cyå(¹å'øà#yæ¡;ï&™\˜][Û‹L9bfùioyl,y¦+ú`,¹©âùg%¹æ¡:`¨ù. 9b.ùë+9. 9«(yaî¹ãï»ï#:)£ùbaù§ ù¦f¹. 9n`;ï#ˆ9¥¯9¦+ùë+9. 9«(z`,¹©âùg%¹¦`º`&y. 9b%ù¦+ùå*Î\È9g*9¥-»ï#:h$:)¯yc`:jæ9n©º`(ú$eùbåHŒ9no¹n`;ï#ˆÛÛ\ÜÙTÝY[È9æ¡™\Ú^™SØœÙ\™\ˆ9«ãù. 9n`:aãyë¥ú"'¹cì8 %8 %:`¨ùl,y¦+úe ùâ#xà ‚ˆ9ë+9.£9«(z`,¹/¡º)£ùbaùmì¹í¤ùg*9.¡»ï#9¢`9.éycê¹§"yë+9. 9«(y§ ùæo9å'øà š[›[™HÝ[H9¬¤¹§"z`&y`"ùecúhc8à ˆ
+‹Âˆ˜[œÚ][Û‘\˜][ÛŽˆÛÝÚ]ÚÛÛ\ÜÙTÝÚ]Ú]Z[ÝÚ]ÚÈ	Ì\ÉÈˆ	ÌÎ\ÉËˆÊˆÓ:gh¹§oùmì¹í¤ù¤+9b,:h$:)¯yc`9."ºgh¹åm¹­k¹li9.¡»ï":-çù¦ì¹íæ¹d#9. 9`"ù`f¹¬å{ï"{ï#ˆ9¢`9.éz`&z(èycêº) z-çù¦ì¹íæ¹. 9ª(ù¢¢¹®äy¨oùb%ù¥-¹¢$9l,yioxà ‚ˆ:`&yª(ùn¥z`ê9b§ú ïy«!9æ¡:jæ9n©º+¢¹c%º-çúe¢ù¦ì¹íæ¹¦`¹k£9aj9. 9ª(ûï#ˆ9l#ùb!ºhg¹b%ú"!ùb!ºh yb%ú`ïyo¡yg*9c§ùg,9.#ybåxà ˆ
+‹ÂˆËÈ9âny¥b9í,:h!{ï&¹¢¢¹l#ùb!ºhg¹b%ú`¨Èœ™[H9`'ú`c¹/¡»ï"9k ùd#9¦`¹¥-¹¢$;ï"{ï#9î/zjæ9.#z+¢‚ˆZYÚˆÛY\”›ÝÒY[ˆÈ	Ì	Èˆ
+ž[™[È	ÌL\™[IÈˆ	Í\™[IÊKˆÜXÚ]NˆÛY\”›ÝÒY[ˆÈˆKˆÊˆ9¥-º-mù/¡¹¦`¹¦+È: #9.#y¦+È›Û™H8 %8 %9kêÈ›Û™H9æ¡:*lH›Ü™\‹XÛÛÜˆ9§ ú` 9fç‚ˆÝ\œ™[ÛÛÜ»ï"9æoyæ¡;ï"{ï#˜[œÚ][Ûˆ9l,yo§¸à#9no¹.c¹.#z`#ù¦#¹æ¡9æoxà#z(ç:e¤ùb,IH9æo{ï#ˆ:fèºe¢ù¦ì¹íæ¹æ¡9ç«:e¤ùn¥y."ù§ ù.«¹aî¹. 9¨§yæoyíæ»ï":aãùb,9ë+9. 9n`9¦+È™Ø˜JMKMKMKŽLÊ{ï"xà ‚ˆ9ajz`¢¹kêùd#9. 9`"úhcú"l»ï#9cêº+¤ùkë9n©¹bå{ï#9l,y¬¤¹§"y§lz)oùcëù.éy.«¸à ˆ
+‹Âˆ›Ü™\›ÝÛNˆÛY\”›ÝÒY[ˆÈ	ÌÛÛY™Ø˜JMKMKMKŒJIÈˆ	Ì\ÛÛY™Ø˜JMKMKMKŒJIÂˆ_Bˆ‚ˆËÊˆ9¥¬9âny¥b;ï&º`¨ù`"ùâny¥b9æ¡9®äy¨où. 9«(yaj:`ê9¥):e¢ûï"9méº`¢¹. :haº/å9fç»ï#9cìú`¢¹ajyajy. 9£¤»ï"xà ‚ˆ9iaù¥n9¨.y¦`¸à#9o-ùn©¸à#z!ê¹mìyêæyë+9. 9£¤¸à ˆ
+‹ßBˆÙž[™[	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOHËY[Y[›^][\ËXÙ[\ˆØ\LÈ‚ˆ]Û‚ˆÛÛXÚÏ^Ê
+HOˆÈÙ]XÝ]™PØ]YÛÜžJ	ÙY™™XÝÉÊNÈÙ]XÝ]™UÛÛY
+XÝ]™QžY
+NÈ_Bˆ\šXK[X™[Hº/å9fç¹âny¥b‚ˆÛ\ÜÓ˜[YOHœÚš[šËLËNHNH›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ™Ë]Ú]KÌLÝ™\Ž˜™Ë]Ú]KÌŒ˜[œÚ][Û‹XÛÛÜœÈ^]Ú]H‚ˆ‚ˆXÛÛˆ˜[YOH˜\œ›Ý×Ø˜XÚÈˆÛ\ÜÓ˜[YOH^^ˆÏ‚ˆØ]Û‚ˆ]ˆÛ\ÜÓ˜[YOH™›^LHZ[‹]ËL›^›^XÛÛ\ÝYžKXÙ[\ˆ‚ˆÙž›ÝÜË›X\
+
+›ÝËšJHOˆ
+ˆ]ˆÙ^O^Üš_HÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆØ\MˆÝ[O^ÞÈZYÚˆž›ÝÒ_O‚ˆÜ›ÝË›X\
+Oˆ
+ˆ]ˆÙ^O^ÝšYHÛ\ÜÓ˜[YOH™›^LHZ[‹]ËL‚ˆ˜\ÝÛY\‚ˆ˜[YO^Ý\[Ùˆ\˜[\ÖÝšY\ÈÙ^[ÙˆY]Ü”\˜[\×HOOH	Û[X™\‰ÈÈ\˜[\ÖÝšY\ÈÙ^[ÙˆY]Ü”\˜[\×H\È[X™\ˆˆBˆZ[^Ý›Z[ŸHX^^Ý›X^HÝ\^ÝœÝ\Œ_BˆÛÛY^ÝšYHX™[^Ý›X™[HÛ˜\™\›Ï^Ý›Z[ˆBˆÛÛ\XÝ[œÙBˆÛ•\]O^ÊY˜[
+HOˆÂˆ\˜[\Ô™Y‹˜Ý\œ™[HÈ‹‹œ\˜[\Ô™Y‹˜Ý\œ™[ÚYNˆ˜[NÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆ\ÝÛY\“[Ý™U[YT™Y‹˜Ý\œ™[H\™›Ü›X[˜ÙK››ÝÊ
+NÂˆ_BˆÛ’[\˜XÝÝ\^Ê
+HOˆÈÙ]XÝ]™UÛÛY
+šY
+NÈÙ]\˜\Ý™]šY]ÊšY
+NÈ_BˆÛ’[\˜XÝ[™^Ê
+HOˆÂˆÙ]\Ò[\˜XÝ[™Ê˜[ÙJNÂˆ˜\Ý™]šY]ÐØXÚT™Y‹˜Ý\œ™[˜XÝ]™HH˜[ÙNÂˆÙ]\˜[\ÊÈ‹‹œ\˜[\Ô™Y‹˜Ý\œ™[JNÂˆYÒ\ÝÜžJ\˜[\Ô™Y‹˜Ý\œ™[Ù[XÝY]Y
+NÂˆ_BˆÛ”™\Ù]^Ú[™QÝX›U\BˆÛ•˜[YPÛXÚÏ^Ü™\Ù]\˜[_BˆÏ‚ˆÙ]‚ˆ
+J_BˆÙ]‚ˆ
+J_BˆÙ]‚ˆÙ]‚ˆ
+_BˆÈYž[™[	‰ˆXÝ]™UÛÛ	‰ˆVÉÛYÚXZÉË	ÜÛÙYÚ	×Kš[˜ÛY\ÊXÝ]™UÛÛY
+H	‰ˆXÝ]™UÛÛYOOH	ØÝ\™\ÉÈ	‰ˆXÝ]™UÛÛYOOH	ÚÛ	È	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOHËY[‚ˆ˜\ÝÛY\ˆˆ˜[YO^Ý\[Ùˆ\˜[\ÖØXÝ]™UÛÛšY\ÈÙ^[ÙˆY]Ü”\˜[\×HOOH	Û[X™\‰ÈÈ\˜[\ÖØXÝ]™UÛÛšY\ÈÙ^[ÙˆY]Ü”\˜[\×H\È[X™\ˆˆBˆZ[^ØXÝ]™UÛÛ›Z[ŸHX^^ØXÝ]™UÛÛ›X^HÝ\^ØXÝ]™UÛÛœÝ\Œ_BˆÛÛY^ØXÝ]™UÛÛšYHX™[^ØXÝ]™UÛÛYOOH	Ùš[\—ÜÙ[XÝ	ÈÈ	ùo-ùn©‰ÈˆXÝ]™UÛÛ›X™[BˆÛ˜\™\›Ï^ØXÝ]™UÛÛ›Z[ˆBˆ\ØX›Y^ÈH[ØY[™Ó]YX\ÚÓØÚÙYBˆ\ÓX\ÚÐØ]YÛÜžO^ØXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉßBˆX\ÚÓØÚÙY^ÛX\ÚÓØÚÙYBˆX\ÚÔÚÝÓÝ™\›^O^Ü\˜[\Ë›X\ÚÔÚÝÓÝ™\›^_BˆÛ•ÙÙÛSX\ÚÓÝ™\›^O^ØXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÈÈ
+
+HOˆÂˆÛÛœÝH\˜[\Ô™Y‹˜Ý\œ™[Âˆ›X\ÚÔÚÝÓÝ™\›^HH\›X\ÚÔÚÝÓÝ™\›^NÂˆÙ]\˜[\ÊÈ‹‹œJNÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆHˆ[™Yš[™YBˆÛÛX\“X\ÚÏ^ØXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÈÈ
+
+HOˆÂˆÛÛœÝH\˜[\Ô™Y‹˜Ý\œ™[Âˆ›X\ÚÐÜ™X]YH˜[ÙNÂˆ›X\ÚÐœšYÚ™\ÜÈHÂˆ›X\ÚÑ^ÜÝ\™HHÂˆ›X\ÚÐÛÛ˜\ÝHÂˆ›X\ÚÒYÚYÚÈHÂˆ›X\ÚÔÚYÝÜÈHÂˆ›X\ÚÕ[\HÂˆ›X\ÚÕ[HÂˆ›X\ÚÔØ]HÂˆ›X\ÚÕšXˆHÂˆ›X\ÚÐÞHNÂˆ›X\ÚÐÞHHNÂˆ›X\ÚÐ[™ÛHHÂˆ›X\ÚÑHŒNÂˆÙ]\˜[\ÊÈ‹‹œJNÂˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆHˆ[™Yš[™YBˆÛ•\]O^ÊY˜[
+HOˆÈˆYˆ
+YOOH	Ø›\‰ÊH\Ù\“X[X[›\”™Y‹˜Ý\œ™[H˜[ÂˆÛÛœÝ™^\˜[\ÈHÈ‹‹œ\˜[\Ô™Y‹˜Ý\œ™[ÚYNˆ˜[NÂˆ\˜[\Ô™Y‹˜Ý\œ™[H™^\˜[\ÎÈˆ\Ñ\T™Y‹˜Ý\œ™[HYNÂˆ\ÝÛY\“[Ý™U[YT™Y‹˜Ý\œ™[H\™›Ü›X[˜ÙK››ÝÊ
+NÂˆ_BˆÛ’[\˜XÝÝ\^Ê
+HOˆÙ]\˜\Ý™]šY]ÊXÝ]™UÛÛšY
+_BˆÛ’[\˜XÝ[™^Ê
+HOˆÈˆÙ]\Ò[\˜XÝ[™Ê˜[ÙJNÈˆ˜\Ý™]šY]ÐØXÚT™Y‹˜Ý\œ™[˜XÝ]™HH˜[ÙNÈˆˆËÈÚXÚÈÚXÚ\˜[Y]\œÈÙ\™H[ÙYšYY[™\]HÝ]\ÂˆÛÛœÝH\˜[\Ô™Y‹˜Ý\œ™[ÂˆÛÛœÝYHXÝ]™UÛÛËšYÂˆˆ]XÝ]™TÈH\ÔÛÙXÝ]™NÂˆ]XÝ]™PˆH\Ð›\XÝ]™NÂˆ]XÝ]™QÈH\ÑÜ˜Z[XÝ]™NÂˆ]XÝ]™RH\Ò[][ÛXÝ]™NÂˆ]X[”ÈHÛÙX[X[PY\ÝYÂˆ]X[ˆH›\“X[X[PY\ÝYÂˆ]X[‘ÈHÜ˜Z[“X[X[PY\ÝYÂˆ]X[’H[][Û“X[X[PY\ÝYÂ‚ˆYˆ
+Y
+HÂˆYˆ
+ÉÜÛÙ	Ë	ÜÛÙ™\ÚÛ	Ë	ÜÛÙ˜Y]\ÉË	ÜÛÙÛÛÜ‰×Kš[˜ÛY\ÊY
+JHÂˆX[”ÈHYNÂˆÙ]ÛÙX[X[PY\ÝY
+YJNÂˆ\Ù\”ÛÙ™Y‹˜Ý\œ™[HœÛÙÂˆXÝ]™TÈHœÛÙˆÂˆÙ]\ÔÛÙXÝ]™JXÝ]™TÊNÂˆH[ÙHYˆ
+YOOH	Ø›\‰ÊHÂˆX[ˆHYNÂˆÙ]›\“X[X[PY\ÝY
+YJNÂˆ\Ù\›\”™Y‹˜Ý\œ™[H˜›\ŽÂˆXÝ]™PˆH˜›\ˆˆÂˆÙ]\Ð›\XÝ]™JXÝ]™PŠNÂˆH[ÙHYˆ
+ÉÙÜ˜Z[‰Ë	ØÛÛÜ“›Ú\ÙIË	ØÛÛÜ“›Ú\ÙL‰×Kš[˜ÛY\ÊY
+JHÂˆX[‘ÈHYNÂˆÙ]Ü˜Z[“X[X[PY\ÝY
+YJNÂˆ\Ù\‘Ü˜Z[”™Y‹˜Ý\œ™[HÂˆÜ˜Z[Žˆ™Ü˜Z[‹ˆÛÛÜ“›Ú\ÙNˆ˜ÛÛÜ“›Ú\ÙKˆÛÛÜ“›Ú\ÙLŽˆ˜ÛÛÜ“›Ú\ÙL‚ˆNÂˆXÝ]™QÈH™Ü˜Z[ˆˆ˜ÛÛÜ“›Ú\ÙHˆ˜ÛÛÜ“›Ú\ÙLˆˆÂˆÙ]\ÑÜ˜Z[XÝ]™JXÝ]™QÊNÂˆH[ÙHYˆ
+ÉÙœš[™ÙR[[œÚ]IË	Ùœš[™ÙRYIË	Ùœš[™ÙTÚ^™IË	Ùœš[™ÙQ™X]\‰×Kš[˜ÛY\ÊY
+JHÂˆX[’HYNÂˆÙ][][Û“X[X[PY\ÝY
+YJNÂˆ\Ù\’[][Û”™Y‹˜Ý\œ™[H™œš[™ÙR[[œÚ]NÂˆXÝ]™RH™œš[™ÙR[[œÚ]HˆÂˆÙ]\Ò[][ÛXÝ]™JXÝ]™R
+NÂˆBˆBˆˆÙ]\˜[\ÊÈ‹‹œJNÈˆYÒ\ÝÜžJÙ[XÝY]YXÝ]™TËXÝ]™P‹XÝ]™QËXÝ]™RX[”ËX[‹X[‘ËX[’
+NÈˆ_BˆÛ”™\Ù]^Ú[™QÝX›U\BˆÛ•˜[YPÛXÚÏ^Ü™\Ù]\˜[_BˆÛÙXÝ]™O^Ú\ÔÛÙXÝ]™_BˆÛ•ÙÙÛTÛÙ^ÝÙÙÛTÛÙYÚBˆ›\XÝ]™O^Ú\Ð›\XÝ]™_BˆÛ•ÙÙÛP›\^ÝÙÙÛP›\ŸBˆÜ˜Z[XÝ]™O^Ú\ÑÜ˜Z[XÝ]™_BˆÛ•ÙÙÛQÜ˜Z[^ÝÙÙÛQÜ˜Z[ŸBˆ[][ÛXÝ]™O^Ú\Ò[][ÛXÝ]™_BˆÛ•ÙÙÛR[][Û^ÝÙÙÛR[][ÛŸBˆÏ‚ˆÙ]‚ˆ
+_BˆÙ]‚ˆ]ˆˆ™Y^ÝÛÛÔØÜ›Û™YŸHˆÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆMÝ™\™›ÝË^X]]È›Ë\ØÜ›Û˜\ˆØ\Lˆ™ËVÈÌH[™[YX\ÙH˜[œÚ][Û‹X[Ý™\™›ÝËZY[ˆ‚ˆÝ[O^ÞÂˆËÈ9d#9."»ï&¹¦`ºe¤úemùn©¹.#z ïzghÛ\Üûï#9.#yá-¹ë+9. 9«(z`,¹©âùg%¹¦`º)£ùbaú`¡9¬¤¹å(¹å'øà ‚ˆ˜[œÚ][Û‘\˜][ÛŽˆÛÛ\ÜÙTÝÚ]Ú]Z[ÝÚ]ÚÈ	Ì\ÉÈˆ	ÌÎ\ÉËˆËÈÓ:e¢ú$eùæ¡9¦`¹`&yl#ùb!ºhg¹b%ùáiùª(ùåfz$eûï":-çù¦ì¹íæ¹. 9ª(ûï"xà ¹¥-º-mù/¡¹æ¡:*l{ï#ˆËÈ:gh¹§où."ùíèù§ ùo 9."ù£¢HMœ;ï#9¥m9¨§yméyamùb%ùç"ú-mù/¡¹l,y¦+ùo 9."ù¬¢y.¡¹. 9«(xà ‚ˆËÈ9©âùg%¹æ¡9l#ùb!ºhg»ï":(àyb!ûï#ú)ä¹n©»ï#ùïîú/b{ï#ù¨«ùoh»ï"yå,HÛÛ\ÜÙTÝY[È:!ê¹mìyåjùg*ˆËÈ:h$:)¯yc`9n¥z`ê;ï#:`&y. 9b%ùl,z+¤ùíi¹k ûï#9.#yá-¹§ ù§"yajy£¤¹l#ùb!ºhg¸à ‚ˆËÈ9âny¥b9í,:h!y¦`º`&y. 9b%ú+¤ùíi¹."ºgh¹æ¡9®äy¨oùï©;ï":jæ9n©¹bfùioyl#z*¯ûï#9î/zjæ9.#z+¢»ï"BˆZYÚˆ
+ÝX”Ýš\Y[ˆž[™[
+HÈ	Ì	Èˆ	Íœ™[IËˆÜXÚ]Nˆ
+ÝX”Ýš\Y[ˆž[™[
+HÈˆKˆ_Bˆ‚ˆØXÝ]™PØ]YÛÜžHOOH	Ùš[\‰È	‰ˆ]\Ý›X\
+
+]Y
+HOˆ
+ˆ]ÛˆÙ^O^Û]šYHÛÛXÚÏ^Ê
+HOˆ[™Qš[\”Ù[XÝ
+Y
+_H]KYš[\‹XØ\™^Û]šYHÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆØ\LˆÚš[šËLÜ›Ý\ËVÍH‚ˆËÊˆ9¬¤º`n9.+y¦`¹k£9aj9.#yåjú`¢¹¨aˆ8 %8 %9.bùbcyå*›Ü™\‹Lˆ›Ü™\‹]˜[œÜ\™[;ï#ˆ:`¨Èœ:g,¹aî¹æ¡9¦+ùo£:gh¹æ¡9n¥z"l»ï#9g*9î+¹g%¹¥àz`¢¹ç"ú-mù/¡¹l,y¦+ù. 9g"9àl9¨a¸à ‚ˆ:`n9.+y¥.yå*9aiù£ãú`¢¹æ¡š[™ûï#9åjùg*9¨a¹aiûï#9.#y§ ùolzgïùâb:gh¹.gù.#y§ ù§"y/cyéîøà ˆ
+‹ßBˆ]ˆÛ\ÜÓ˜[YO^Ø™[]]™HËY[VÍÍœH›Ý[™Y[È˜[œÚ][Û‹X[™ËVÈÌLLWHÝ™\™›ÝËZY[ˆ	ÛØY[™Ó]YOOH]šYÈ	ÛÜXÚ]KML	Èˆ	ÛÜXÚ]KLL	ßXO‚ˆËÊˆ9î+¹g%»ï'yæë¹bcz`&yo-zh$:)¯yg%¹ieù."º`&zha¹¯ïºcèyæ¡9ª(ùkd8à ‚ˆ:`¡9¬¤¹ë¥ùb,9æ¡;ï"9¢%¹¯ïºcèyª¥:`¡9g*9."ú/"yæ¡;ï"yab9åjøà#9c§ùiâøà#z`¨ù. 9o-{ï#9¥m9£¤¹¢cy.#y§ ù§"yên¹­'¸à ˆ
+‹ßBˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]L™ËVÈÌXLXLXWHˆÏ‚ˆ[XØ[˜\ÈÝÜ™O^Ùš[\•[X”ÝÜ™_HY^Ý[X’Ù^JXÝ]™TÜ˜Ë]šY
+_Bˆ˜[˜XÚÒY^Ý[X’Ù^JXÝ]™TÜ˜Ë]\ÝÌOËšY	ÉÊ_BˆZ[\œÏ^Ý[X”Z[\œßH]H™]KYš[\‹][Xˆˆ˜[YO^Û]šYHÏ‚ˆÛØY[™Ó]YOOH]šY	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]L›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ™ËX›XÚËÍ‚ˆ]ˆÛ\ÜÓ˜[YOHËMHMH›Ü™\‹Lˆ›Ü™\‹]Ú]KÌÌ›Ü™\‹]]Ú]H›Ý[™YY[[š[X]K\Ü[ˆˆÏ‚ˆÙ]‚ˆ
+_BˆËÊˆ9."ùcbº`ê9häù. 9¨§y­ìz"l¹n-»ï#9íê:&gù¥/¹g*9."ºgh¹¢cz+ 9o¥ù®!y©fˆ
+‹ßBˆËÊˆ‹VÌœH9¦+ù¢¢º`n9.+y¦`º`¨ù¨§Hœ9æoyíæº+¤ùaî¹/¡ˆ8 %8 %ˆ9¥¡ùkeù¢cy§ ùïk¹.+yg*8à#:`k¹ïjy."¹íèøà#z"!øà#9æoyíæ¸à#y.búe¤ûï#: #9.#y¦+ù¥m9¨§yn-¹kd9æ¡9«hù.+ze¤È
+‹ßBˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]^L›ÝÛKLVÌMœH™ËVÈÌŒŒ—KÎL›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ‹VÌœH‚ˆÜ[ˆÛ\ÜÓ˜[YO^Ø^VÎH›ÛX›XÚÈ\\˜Ø\ÙH˜XÚÚ[™Ë]ÚY\ÝXY[™Ë[›Û™H	Û]Ø\™ÛŠY
+HÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÍŒ	ßXO‚ˆÛ]\›È]›˜[YHˆ	ùc§ùiâÉßBˆÜÜ[‚ˆÙ]‚ˆÛ]Ø\™ÛŠY
+H	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]L›Ý[™Y[Èš[™ËLˆš[™ËZ[œÙ]š[™Ë]Ú]HÚ[\‹Y]™[Ë[›Û™HˆÏ‚ˆ
+_BˆÙ]‚ˆØ]Û‚ˆ
+J_BˆØXÝ]™PØ]YÛÜžHOOH	ØY\Ý	È	‰ˆQ•TÕÕÓÓË›X\
+ÛÛOˆ
+ˆ]ÛˆÙ^O^ÝÛÛšYHÛÛXÚÏ^Ê
+HOˆÙ]XÝ]™UÛÛY
+ÛÛšY
+_HÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆØ\LHÚš[šËLÜ›Ý\ËLMˆ‚ˆ]ˆÛ\ÜÓ˜[YO^ØËLLLL›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ˜[œÚ][Û‹X[	ØXÝ]™UÛÛYOOHÛÛšYÈ	Ø™Ë]Ú]H^X›XÚÈØØ[KLLL	Èˆ	Ø™Ë]Ú]KÍH^]Ú]KÍÜ›Ý\ZÝ™\Ž˜™Ë]Ú]KÌL	ßXOXÛÛˆ˜[YO^ÝÛÛšXÛÛŸHÛ\ÜÓ˜[YOH^[Èˆš[^ØXÝ]™UÛÛYOOHÛÛšYHÏÙ]‚ˆÜ[ˆÛ\ÜÓ˜[YO^Ø^VÎ\H›ÛX›Û\\˜Ø\ÙH˜XÚÚ[™Ë]YÚ\ˆÚ]\ÜXÙK[›ÝÜ˜\	ØXÝ]™UÛÛYOOHÛÛšYÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÌŒ	ßXOžÝÛÛ›X™[OÜÜ[‚ˆ]ˆÛ\ÜÓ˜[YO^ØËLHLH›Ý[™YY[]LH˜[œÚ][Û‹X[\˜][Û‹LŒ	Ú\Ô\˜[PY\ÝY
+ÛÛšY
+HÈ	Ø™Ë]Ú]HÜXÚ]KLLØØ[KLL	Èˆ	Ø™Ë]˜[œÜ\™[ÜXÚ]KLØØ[KML	ßXHÏ‚ˆØ]Û‚ˆ
+J_BˆËÊˆ9âny¥b9¥.y¢$:-çù¯ïºcèyd#9. 9ê+¹chyâaûï&¹î+¹g%¹¦+ú`&y`"ùâny¥b9æ¡:h$:*+y¥b9§§;ï#9d#yê,yhäùg*9."ùíèøà ‚ˆ:`n9.+yæ¡:`¨ù. :ha¹cìù."º)ä¹§ ùi&¹. :ha¹íê:/+úcm{ï":-çøà#:*¯ùëà8à#yd#9. 9`"ùg%¹ª&{ï"{ï#9£"yk ù¢cyleze¢ùí,:h!xà ˆ
+‹ßBˆËÊˆ8à#9c§ùiâøà#{ï&¹£¤¹g*9§ 9bczgh»ï#:nç¹."ùc®ùl,y¦+ù¢¢¹¢`9§"yâny¥b:eç9£¢xà ‚ˆ9î+¹g%¹æí9£©yå*:`¨ùo-xà#9¬¤¹ieù.îù/eyâny¥b8à#yæ¡9n¥yg%¸à ˆ
+‹ßBˆØXÝ]™PØ]YÛÜžHOOH	ÙY™™XÝÉÈ	‰ˆ
+ˆ]Ûˆ]KYž]ÛÛH™ž›Û™HˆÛÛXÚÏ^ØÛX\[Y™™XÝßBˆÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆØ\LˆÚš[šËLÜ›Ý\ËVÍH‚ˆ]ˆÛ\ÜÓ˜[YOHœ™[]]™HËY[VÍÍœH›Ý[™Y[È™ËVÈÌLLWHÝ™\™›ÝËZY[ˆ‚ˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]L™ËVÈÌXLXLXWHˆÏ‚ˆ[XØ[˜\ÈÝÜ™O^Ùž[X”ÝÜ™_HY^Ý[X’Ù^JXÝ]™TÜ˜Ë–ÕSP—ÐTÑJ_BˆZ[\œÏ^Ý[X”Z[\œßH]H™]KYž][Xˆˆ˜[YO^Ñ–ÕSP—ÐTÑ_HÏ‚ˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]^L›ÝÛKLVÌMœH™ËVÈÌŒŒ—KÎL›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ‹VÌœH‚ˆÜ[ˆÛ\ÜÓ˜[YO^Ø^VÎH›ÛX›XÚÈ\\˜Ø\ÙH˜XÚÚ[™Ë]ÚY\ÝXY[™Ë[›Û™HÚ]\ÜXÙK[›ÝÜ˜\	Û›ÑY™™XÝÛˆÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÍŒ	ßXO‚ˆ9c§ùiâÂˆÜÜ[‚ˆÙ]‚ˆÛ›ÑY™™XÝÛˆ	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]L›Ý[™Y[Èš[™ËLˆš[™ËZ[œÙ]š[™Ë]Ú]HÚ[\‹Y]™[Ë[›Û™HˆÏ‚ˆ
+_BˆÙ]‚ˆØ]Û‚ˆ
+_BˆØXÝ]™PØ]YÛÜžHOOH	ÙY™™XÝÉÈ	‰ˆQ‘‘PÕÕÓÓË›X\
+ÛÛOˆ
+ˆ]ÛˆÙ^O^ÝÛÛšYH]KYž]ÛÛ^ÝÛÛšYHÛÛXÚÏ^Ê
+HOˆ[™QY™™XÝÛÛÙ[XÝ
+ÛÛšY
+_HÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆØ\LˆÚš[šËLÜ›Ý\ËVÍH‚ˆ]ˆÛ\ÜÓ˜[YOHœ™[]]™HËY[VÍÍœH›Ý[™Y[È™ËVÈÌLLWHÝ™\™›ÝËZY[ˆ‚ˆËÊˆ:`&y. 9¨/:`¡9¬¤¹ë¥ùb,9l,yab9åjù¬¤¹ieùâny¥b9æ¡9n¥yg%»ï#9¥m9£¤¹¢cy.#y§ ù§"yên¹­'ˆ
+‹ßBˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]L™ËVÈÌXLXLXWHˆÏ‚ˆ[XØ[˜\ÈÝÜ™O^Ùž[X”ÝÜ™_HY^Ý[X’Ù^JXÝ]™TÜ˜ËÛÛšY
+_Bˆ˜[˜XÚÒY^Ý[X’Ù^JXÝ]™TÜ˜Ë–ÕSP—ÐTÑJ_BˆZ[\œÏ^Ý[X”Z[\œßH]H™]KYž][Xˆˆ˜[YO^ÝÛÛšYHÏ‚ˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]^L›ÝÛKLVÌMœH™ËVÈÌŒŒ—KÎL›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ‹VÌœH‚ˆÜ[ˆÛ\ÜÓ˜[YO^Ø^VÎH›ÛX›XÚÈ\\˜Ø\ÙH˜XÚÚ[™Ë]ÚY\ÝXY[™Ë[›Û™HÚ]\ÜXÙK[›ÝÜ˜\	Ú\Ô\˜[PY\ÝY
+ÛÛšY
+HÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÍŒ	ßXO‚ˆÝÛÛ›X™[BˆÜÜ[‚ˆÙ]‚ˆËÊˆ:`n9.+yæ¡:`¨ù. :ha¹¬¯ùå*9¯ïºcèz`¨ùg"9aiù£ãú`¢»ï#9.#y/e9âb:gh¹.gù.#y§ ù/cyéîÈ
+‹ßBˆËÊˆ9æoy¨a»ï'z`&y. :ha¹«hùg*9å'ù¥b8à ¹d"9/myk£9càù¥n9l,y«n:fí»ï#:`n9cåº!ê¹á-¹cå¹­¢8 %8 %ˆ9/oùå*: !y¢cz ïy¢¢¹d#9. :ha¹¯ïºcè{ï#ùâny¥b9a£yieù. 9«(xà ˆ
+‹ßBˆÚ\ÑY™™XÝÛŠÛÛšY
+H	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOH˜XœÛÛ]H[œÙ]L›Ý[™Y[Èš[™ËLˆš[™ËZ[œÙ]š[™Ë]Ú]HÚ[\‹Y]™[Ë[›Û™HˆÏ‚ˆ
+_BˆËÊˆ9íê:/+úcm{ï&º`n9.+z #9.%9ç'ùæ¡9§"yí,:h!ycëú*¯ù¢cyaî¹ãï¸à ‚ˆ9å*Ü[ˆ9.#yå*]Ûˆ8 %8 %:`&y¥m9o-ychyâaù§+:.ªùl,y¦+ù. :haˆ]Û»ï#ˆ]Ûˆ:(èzgh¹.#z ïya£y¥/ˆ]Û¸à œÝÜ›ÜYØ][Ûˆ:+¤ùk ù.#y§ úh!¹/¯úaãz`n9chyâaøà ˆ
+‹ßBˆÚ\ÑY™™XÝÛŠÛÛšY
+H	‰ˆY™™XÝ\Ñ]Z[
+ÛÛšY
+H	‰ˆ
+ˆÜ[‚ˆ›ÛOH˜]Ûˆ‚ˆ\šXK[X™[Hº*¯ù¥m9í,:h!H‚ˆÛÛXÚÏ^ÊJHOˆÈKœÝÜ›ÜYØ][ÛŠ
+NÈÜ[‘Y™™XÝ]Z[
+ÛÛšY
+NÈ_BˆÛ”Ú[\‘ÝÛ^ÊJHOˆKœÝÜ›ÜYØ][ÛŠ
+_BˆÊˆ9/cyïkº"!ùl.¹kî:-l[›[™HÝ[{ï&º`&yno¹`"ù¦+ùaj\9e+ù. 9å*9b,9æ¡\˜š]˜\žHÛ\Üûï#ˆ9à#ú)¯yfj9âbZ[Ú[™9æ¡’U:) yëbyç"ùb,9¢cyå(¹å'ú)£ùbaûï#9ë+9. 9«(y§ ùab9åjúc+ù. 9n`
+‹ÂˆÝ[O^ÞÈÜÚ][ÛŽˆ	ØXœÛÛ]IËÜˆËšYÚˆËÚYˆŒ‹ZYÚˆŒˆ_BˆÛ\ÜÓ˜[YOHœ›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ™ËX›XÚËÍMH›Ü™\ˆ›Ü™\‹]Ú]KÌH^]Ú]HXÝ]™NœØØ[KNL˜[œÚ][Û‹]˜[œÙ›Ü›H‚ˆ‚ˆXÛÛˆ˜[YOH[™HˆÛ\ÜÓ˜[YOH^VÌLÜHˆÏ‚ˆÜÜ[‚ˆ
+_BˆÙ]‚ˆØ]Û‚ˆ
+J_BˆØXÝ]™PØ]YÛÜžHOOH	ÜÛÙ	È	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆØ\M‚ˆ]ÛˆˆÛÛXÚÏ^Ê
+HOˆÈÙ]XÝ]™PØ]YÛÜžJ	ÙY™™XÝÉÊNÈÙ]XÝ]™UÛÛY
+	ÜÛÙYÚ	ÊNÈ_BˆÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆØ\LˆÚš[šËLÜ›Ý\ËLLˆ‚ˆ‚ˆ]ˆÛ\ÜÓ˜[YOHËLLLL›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ™Ë]Ú]KÌLÝ™\Ž˜™Ë]Ú]KÌŒ˜[œÚ][Û‹X[^]Ú]H‚ˆXÛÛˆ˜[YOH˜\œ›Ý×Ø˜XÚÈˆÛ\ÜÓ˜[YOH^^ˆÏ‚ˆÙ]‚ˆØ]Û‚ˆ]ˆÛ\ÜÓ˜[YOHËVÌ\HN™Ë]Ú]KÌL^LˆÙ]‚ˆÔÓÑ•ÓQÒÕÓÓË›X\
+ÛÛOˆ
+ˆ]ÛˆÙ^O^ÝÛÛšYHÛÛXÚÏ^Ê
+HOˆÙ]XÝ]™UÛÛY
+ÛÛšY
+_HÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆØ\LHÚš[šËLÜ›Ý\ËLMˆ‚ˆ]ˆÛ\ÜÓ˜[YO^ØËLLLL›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ˜[œÚ][Û‹X[	ØXÝ]™UÛÛYOOHÛÛšYÈ	Ø™Ë]Ú]H^X›XÚÈØØ[KLLL	Èˆ	Ø™Ë]Ú]KÍH^]Ú]KÍÜ›Ý\ZÝ™\Ž˜™Ë]Ú]KÌL	ßXOXÛÛˆ˜[YO^ÝÛÛšXÛÛŸHÛ\ÜÓ˜[YOH^[Èˆš[^ØXÝ]™UÛÛYOOHÛÛšYHÏÙ]‚ˆÜ[ˆÛ\ÜÓ˜[YO^Ø^VÎ\H›ÛX›Û\\˜Ø\ÙH˜XÚÚ[™Ë]YÚ\ˆÚ]\ÜXÙK[›ÝÜ˜\	ØXÝ]™UÛÛYOOHÛÛšYÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÌŒ	ßXOžÝÛÛ›X™[OÜÜ[‚ˆ]ˆÛ\ÜÓ˜[YO^ØËLHLH›Ý[™YY[]LH˜[œÚ][Û‹X[\˜][Û‹LŒ	Ú\Ô\˜[PY\ÝY
+ÛÛšY
+HÈ	Ø™Ë]Ú]HÜXÚ]KLLØØ[KLL	Èˆ	Ø™Ë]˜[œÜ\™[ÜXÚ]KLØØ[KML	ßXHÏ‚ˆØ]Û‚ˆ
+J_BˆÙ]‚ˆ
+_BˆØXÝ]™PØ]YÛÜžHOOH	ÛXZÉÈ	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆØ\M‚ˆ]ÛˆˆÛÛXÚÏ^Ê
+HOˆÈÙ]XÝ]™PØ]YÛÜžJ	ÙY™™XÝÉÊNÈÙ]XÝ]™UÛÛY
+	ÛYÚXZÉÊNÈ_BˆÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆØ\LˆÚš[šËLÜ›Ý\ËLLˆ‚ˆ‚ˆ]ˆÛ\ÜÓ˜[YOHËLLLL›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ™Ë]Ú]KÌLÝ™\Ž˜™Ë]Ú]KÌŒ˜[œÚ][Û‹X[^]Ú]H‚ˆXÛÛˆ˜[YOH˜\œ›Ý×Ø˜XÚÈˆÛ\ÜÓ˜[YOH^^ˆÏ‚ˆÙ]‚ˆØ]Û‚ˆ]ˆÛ\ÜÓ˜[YOHËVÌ\HN™Ë]Ú]KÌL^LˆÙ]‚ˆÓPR×ÕÓÓË›X\
+ÛÛOˆ
+ˆ]ÛˆÙ^O^ÝÛÛšYHÛÛXÚÏ^Ê
+HOˆÙ]XÝ]™UÛÛY
+ÛÛšY
+_HÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆØ\LHÚš[šËLÜ›Ý\ËLMˆ‚ˆ]ˆÛ\ÜÓ˜[YO^ØËLLLL›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ˜[œÚ][Û‹X[	ØXÝ]™UÛÛYOOHÛÛšYÈ	Ø™Ë]Ú]H^X›XÚÈØØ[KLLL	Èˆ	Ø™Ë]Ú]KÍH^]Ú]KÍÜ›Ý\ZÝ™\Ž˜™Ë]Ú]KÌL	ßXOXÛÛˆ˜[YO^ÝÛÛšXÛÛŸHÛ\ÜÓ˜[YOH^[Èˆš[^ØXÝ]™UÛÛYOOHÛÛšYHÏÙ]‚ˆÜ[ˆÛ\ÜÓ˜[YO^Ø^VÎ\H›ÛX›Û\\˜Ø\ÙH˜XÚÚ[™Ë]YÚ\ˆÚ]\ÜXÙK[›ÝÜ˜\	ØXÝ]™UÛÛYOOHÛÛšYÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÌŒ	ßXOžÝÛÛ›X™[OÜÜ[‚ˆ]ˆÛ\ÜÓ˜[YO^ØËLHLH›Ý[™YY[]LH˜[œÚ][Û‹X[\˜][Û‹LŒ	Ú\Ô\˜[PY\ÝY
+ÛÛšY
+HÈ	Ø™Ë]Ú]HÜXÚ]KLLØØ[KLL	Èˆ	Ø™Ë]˜[œÜ\™[ÜXÚ]KLØØ[KML	ßXHÏ‚ˆØ]Û‚ˆ
+J_BˆÙ]‚ˆ
+_BˆØXÝ]™PØ]YÛÜžHOOH	Ú[][Û‰È	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOH™›^][\ËXÙ[\ˆØ\M‚ˆ]ÛˆˆÛÛXÚÏ^Ê
+HOˆÈÙ]XÝ]™PØ]YÛÜžJ	ÙY™™XÝÉÊNÈÙ]XÝ]™UÛÛY
+	Ú[][Û‰ÊNÈ_BˆÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆØ\LˆÚš[šËLÜ›Ý\ËLLˆ‚ˆ‚ˆ]ˆÛ\ÜÓ˜[YOHËLLLL›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ™Ë]Ú]KÌLÝ™\Ž˜™Ë]Ú]KÌŒ˜[œÚ][Û‹X[^]Ú]H‚ˆXÛÛˆ˜[YOH˜\œ›Ý×Ø˜XÚÈˆÛ\ÜÓ˜[YOH^^ˆÏ‚ˆÙ]‚ˆØ]Û‚ˆ]ˆÛ\ÜÓ˜[YOHËVÌ\HN™Ë]Ú]KÌL^LˆÙ]‚ˆÒSUSÓ—ÕÓÓË›X\
+ÛÛOˆ
+ˆ]ÛˆÙ^O^ÝÛÛšYHÛÛXÚÏ^Ê
+HOˆÙ]XÝ]™UÛÛY
+ÛÛšY
+_HÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆØ\LHÚš[šËLÜ›Ý\ËLMˆ‚ˆ]ˆÛ\ÜÓ˜[YO^ØËLLLL›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ˜[œÚ][Û‹X[	ØXÝ]™UÛÛYOOHÛÛšYÈ	Ø™Ë]Ú]H^X›XÚÈØØ[KLLL	Èˆ	Ø™Ë]Ú]KÍH^]Ú]KÍÜ›Ý\ZÝ™\Ž˜™Ë]Ú]KÌL	ßXOXÛÛˆ˜[YO^ÝÛÛšXÛÛŸHÛ\ÜÓ˜[YOH^[Èˆš[^ØXÝ]™UÛÛYOOHÛÛšYHÏÙ]‚ˆÜ[ˆÛ\ÜÓ˜[YO^Ø^VÎ\H›ÛX›Û\\˜Ø\ÙH˜XÚÚ[™Ë]YÚ\ˆÚ]\ÜXÙK[›ÝÜ˜\	ØXÝ]™UÛÛYOOHÛÛšYÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÌŒ	ßXOžÝÛÛ›X™[OÜÜ[‚ˆ]ˆÛ\ÜÓ˜[YO^ØËLHLH›Ý[™YY[]LH˜[œÚ][Û‹X[\˜][Û‹LŒ	Ú\Ô\˜[PY\ÝY
+ÛÛšY
+HÈ	Ø™Ë]Ú]HÜXÚ]KLLØØ[KLL	Èˆ	Ø™Ë]˜[œÜ\™[ÜXÚ]KLØØ[KML	ßXHÏ‚ˆØ]Û‚ˆ
+J_BˆÙ]‚ˆ
+_BˆËÊˆ9¥¬9âny¥b9æ¡9càù¥n9£"zb%yb%ùmì¹í¤ù¢ïù£¢y.¡ˆ8 %8 %:`¨ù`"ùâny¥b9æ¡9®äy¨oùãï¹g*9aj:`ê9æí9£©zhkùé.¹g*9."ºghº`¨ù. 9b%ûï#ˆ9.#yå*9a£znç¹ë+9.£9li8à º`&y. 9b%ùg*9âny¥b9í,:h!y¦`¹¦+ù¥-º-mù/¡¹æ¡;ï":jæ9n©º+¤ùíi¹®äy¨oùï©;ï"xà ˆ
+‹ßBˆØXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÈ	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YO^Ø›^][\ËXÙ[\ˆØ\Lˆ	ÛX\ÚÓØÚÙYÈ	ÛÜXÚ]KLÌ	Èˆ	ÉßXO‚ˆÓPTÒ×ÕÓÓË›X\
+ÛÛOˆ
+ˆ]ÛˆÙ^O^ÝÛÛšYH\ØX›Y^ÛX\ÚÓØÚÙYHÛÛXÚÏ^Ê
+HOˆÈYˆ
+[X\ÚÓØÚÙY
+HÙ]XÝ]™UÛÛY
+ÛÛšY
+NÈ_HÛ\ÜÓ˜[YOH™›^›^XÛÛ][\ËXÙ[\ˆØ\LHÚš[šËLÜ›Ý\ËLMˆ‚ˆ]ˆÛ\ÜÓ˜[YO^ØËLLLL›Ý[™YY[›^][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ˜[œÚ][Û‹X[	ØXÝ]™UÛÛYOOHÛÛšYÈ	Ø™Ë]Ú]H^X›XÚÈØØ[KLLL	Èˆ	Ø™Ë]Ú]KÍH^]Ú]KÍÜ›Ý\ZÝ™\Ž˜™Ë]Ú]KÌL	ßXOXÛÛˆ˜[YO^ÝÛÛšXÛÛŸHÛ\ÜÓ˜[YOH^[Èˆš[^ØXÝ]™UÛÛYOOHÛÛšYHÏÙ]‚ˆÜ[ˆÛ\ÜÓ˜[YO^Ø^VÎ\H›ÛX›Û\\˜Ø\ÙH˜XÚÚ[™Ë]YÚ\ˆÚ]\ÜXÙK[›ÝÜ˜\	ØXÝ]™UÛÛYOOHÛÛšYÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÌŒ	ßXOžÝÛÛ›X™[OÜÜ[‚ˆ]ˆÛ\ÜÓ˜[YO^ØËLHLH›Ý[™YY[]LH˜[œÚ][Û‹X[\˜][Û‹LŒ	Ú\Ô\˜[PY\ÝY
+ÛÛšY
+HÈ	Ø™Ë]Ú]HÜXÚ]KLLØØ[KLL	Èˆ	Ø™Ë]˜[œÜ\™[ÜXÚ]KLØØ[KML	ßXHÏ‚ˆØ]Û‚ˆ
+J_BˆÙ]‚ˆ
+_BˆÙ]‚ˆ]ˆÛ\ÜÓ˜[YOH™›^LMˆ›Ü™\‹]›Ü™\‹]Ú]KÌL™ËX›XÚÈ‹LÈ›ÞXÛÛ[‚ˆ]ÛˆÛÛXÚÏ^Ê
+HOˆÈÙ]XÝ]™PØ]YÛÜžJ	Ùš[\‰ÊNÈÙ]XÝ]™UÛÛY
+	Ùš[\—ÜÙ[XÝ	ÊNÈ_HÛ\ÜÓ˜[YO^Ø›^LH›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆØ\LH˜[œÚ][Û‹X[	ØXÝ]™PØ]YÛÜžHOOH	Ùš[\‰ÈÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÌŒ	ßXO‚ˆXÛÛˆ˜[YOHœ[]HˆÛ\ÜÓ˜[YOH^^ˆš[^ØXÝ]™PØ]YÛÜžHOOH	Ùš[\‰ßHÏÜ[ˆÛ\ÜÓ˜[YOH^VÎ\H›ÛX›XÚÈ\\˜Ø\ÙH˜XÚÚ[™ËVÌŒ™[WH¹¯ïºcèOÜÜ[‚ˆØ]Û‚ˆ]ÛˆÛÛXÚÏ^Ê
+HOˆÈÙ]XÝ]™PØ]YÛÜžJ	ØY\Ý	ÊNÈÙ]XÝ]™UÛÛY
+Q•TÕÕÓÓÖÌKšY
+NÈ_HÛ\ÜÓ˜[YO^Ø›^LH›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆØ\LH˜[œÚ][Û‹X[	ØXÝ]™PØ]YÛÜžHOOH	ØY\Ý	ÈÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÌŒ	ßXO‚ˆXÛÛˆ˜[YOH[™HˆÛ\ÜÓ˜[YOH^^ˆš[^ØXÝ]™PØ]YÛÜžHOOH	ØY\Ý	ßHÏÜ[ˆÛ\ÜÓ˜[YOH^VÎ\H›ÛX›XÚÈ\\˜Ø\ÙH˜XÚÚ[™ËVÌŒ™[WHº*¯ùëàÜÜ[‚ˆØ]Û‚ˆ]ÛˆÛÛXÚÏ^Ù[\‘Y™™XÝßHÛ\ÜÓ˜[YO^Ø›^LH›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆØ\LH˜[œÚ][Û‹X[	ÖÉÙY™™XÝÉË	ÛXZÉË	ÜÛÙ	Ë	Ú[][Û‰Ë	Ùž	×Kš[˜ÛY\ÊXÝ]™PØ]YÛÜžJHÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÌŒ	ßXO‚ˆXÛÛˆ˜[YOH›XYÚX×Ø]ÛˆˆÛ\ÜÓ˜[YOH^^ˆš[^ÖÉÙY™™XÝÉË	ÛXZÉË	ÜÛÙ	Ë	Ú[][Û‰Ë	Ùž	×Kš[˜ÛY\ÊXÝ]™PØ]YÛÜžJ_HÏÜ[ˆÛ\ÜÓ˜[YOH^VÎ\H›ÛX›XÚÈ\\˜Ø\ÙH˜XÚÚ[™ËVÌŒ™[WH¹âny¥bÜÜ[‚ˆØ]Û‚ˆ]ÛˆÛÛXÚÏ^Ê
+HOˆÂˆYˆ
+XÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIÊH™Y›Ü™PÛÛ\ÜÙT™Y‹˜Ý\œ™[HÈØ]ˆXÝ]™PØ]YÛÜžKÛÛˆXÝ]™UÛÛYNÂˆÛÛœÝÚÝÛˆH\Ü^PØ[˜\Ô™Y‹˜Ý\œ™[ÂˆYˆ
+ÚÝÛˆ	‰ˆ\ÑÙ[ÒY[]JÙ[ÊJHÂˆÛÛœÝÛ˜\ÚÝHØÝ[Y[˜Ü™X]Q[[Y[
+	ØØ[˜\ÉÊNÂˆÛ˜\ÚÝÚYHÚÝÛ‹ÚYÂˆÛ˜\ÚÝšZYÚHÚÝÛ‹šZYÚÂˆÛ˜\ÚÝ™Ù]ÛÛ^
+	Ì™	ÊOË™˜]Ò[XYÙJÚÝÛ‹
+NÂˆÛÛ\ÜÙT™]šY]Ô™Y‹˜Ý\œ™[HÛ˜\ÚÝÂˆH[ÙHÂˆÛÛ\ÜÙT™]šY]Ô™Y‹˜Ý\œ™[HÜšYÚ[˜[[YÔ™Y‹˜Ý\œ™[ÂˆBˆÙ]˜YÙ[ÊÙ[ÊNÂˆÙ]XÝ]™PØ]YÛÜžJ	ØÛÛ\ÜÙIÊNÂˆ_HÛ\ÜÓ˜[YO^Ø›^LH›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆØ\LH˜[œÚ][Û‹X[	ØXÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIÈÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÌŒ	ßXO‚ˆËÊˆÜ›ÜÜ›Ý]H9ajy`m9d!9§"y. 9¥+ù¥âú/byë«zh+{ï#9¥.y¢$9e«¹í%9æ¡:(àyb!ùë)º&gÈ
+‹ßBˆXÛÛˆ˜[YOH˜Ü›ÜˆÛ\ÜÓ˜[YOH^^ˆš[^ØXÝ]™PØ]YÛÜžHOOH	ØÛÛ\ÜÙIßHÏÜ[ˆÛ\ÜÓ˜[YOH^VÎ\H›ÛX›XÚÈ\\˜Ø\ÙH˜XÚÚ[™ËVÌŒ™[WH¹©âùg%ÜÜ[‚ˆØ]Û‚ˆ]ÛˆÛÛXÚÏ^Ê
+HOˆÈÙ]XÝ]™PØ]YÛÜžJ	ÛX\ÚÉÊNÈÙ]XÝ]™UÛÛY
+PTÒ×ÕÓÓÖÌKšY
+NÈ_HÛ\ÜÓ˜[YO^Ø›^LH›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆØ\LH˜[œÚ][Û‹X[	ØXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉÈÈ	Ý^]Ú]IÈˆ	Ý^]Ú]KÌŒ	ßXO‚ˆXÛÛˆ˜[YOH™Ü˜YY[ˆÛ\ÜÓ˜[YOH^^ˆš[^ØXÝ]™PØ]YÛÜžHOOH	ÛX\ÚÉßHÏÜ[ˆÛ\ÜÓ˜[YOH^VÎ\H›ÛX›XÚÈ\\˜Ø\ÙH˜XÚÚ[™ËVÌŒ™[WHº`kº"l¹âaÏÜÜ[‚ˆØ]Û‚ˆÙ]‚ˆÙ]‚ˆÜØ]™TÝ]HOOH	Ü›ØÙ\ÜÚ[™ÉÈ	‰ˆ
+ˆ]ˆÛ\ÜÓ˜[YOH™š^Y[œÙ]L‹VÌLH™ËX›XÚËÎL˜XÚÙ›ÜX›\‹[Y›^›^XÛÛ][\ËXÙ[\ˆ\ÝYžKXÙ[\ˆ[š[X]KZ[ˆ˜YKZ[ˆ\˜][Û‹LÌ‚ˆ]ˆÛ\ÜÓ˜[YOHËLLˆLLˆ›Ü™\‹M›Ü™\‹]Ú]KÌL›Ü™\‹]]Ú]H›Ý[™YY[[š[X]K\Ü[ˆX‹MˆÙ]‚ˆÛ\ÜÓ˜[YOH^[È›ÛX›XÚÈ\\˜Ø\ÙH˜XÚÚ[™ËVÌŒÙ[WH[š[X]K\[ÙH^]Ú]H¹«hùg*9kf9ª¥Ü‚ˆËÊˆ:`&y. 9li:$âù/cú/å9fçºcm{ï#9¢`9.éy. 9k¦º) y§"yaî¹cèûï":)¢ÈÝXÚÑ\ØØ\{ï"H
+‹ßBˆÝXÚÑ\ØØ\HÛ‘\ØØ\O^Ê
+HOˆÙ]Ø]™TÝ]J	ÚYIÊ_HÏ‚ˆÙ]‚ˆ
+_BˆÙ]‚ˆ
+NÂŸNÂ
