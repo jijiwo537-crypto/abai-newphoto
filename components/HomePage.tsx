@@ -945,7 +945,8 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   /** 修圖首頁的推薦：五格直式 3:4，每格都能自行上傳圖片預覽。 */
   const recommendationSection = (
-    <div>
+    /* 高度維持原本兩排歷史紀錄所佔的空間，首頁其餘內容不會因換區塊而下移。 */
+    <div className="h-[159px]">
       <div className="flex items-center justify-between mb-2">
         <span className="text-[12px] font-bold tracking-[0.14em] text-white/55">為您推薦</span>
         <button
@@ -956,8 +957,9 @@ export const HomePage: React.FC<HomePageProps> = ({
           {pillArrow}
         </button>
       </div>
-      {/* 原歷史格距是 8px；縮小三分之一後是 5.33px。直式比例以寬:高 3:4 呈現。 */}
-      <div className="grid grid-cols-5 gap-[5.333px]">
+      {/* 固定卡片寬度，不把五張硬擠進一屏；第五張自然被右側遮住，整列可左右滑。 */}
+      <div className="-mr-5 overflow-x-auto no-scrollbar overscroll-x-contain">
+      <div className="flex w-max gap-[5.333px] pr-5">
         {HOME_RECOMMENDATIONS.map(item => {
           const img = previews[item.key];
           return (
@@ -965,7 +967,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               key={item.key}
               onClick={() => pickPreview(item.key)}
               aria-label={`${item.name}：上傳預覽圖片`}
-              className={`relative overflow-hidden rounded-[10px] flex items-center justify-center active:scale-[0.97] transition-transform duration-300 ${img ? 'border border-white/10' : 'border border-dashed border-white/15 text-white/25'}`}
+              className={`relative w-[82px] shrink-0 overflow-hidden rounded-[10px] flex items-center justify-center active:scale-[0.97] transition-transform duration-300 ${img ? 'border border-white/10' : 'border border-dashed border-white/15 text-white/25'}`}
               style={{ aspectRatio: TILE_RATIO }}
             >
               {img
@@ -974,6 +976,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             </button>
           );
         })}
+      </div>
       </div>
     </div>
   );

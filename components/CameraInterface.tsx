@@ -17,7 +17,7 @@ declare global {
   }
 }
 
-type AspectRatio = '16:9' | '3:2';
+type AspectRatio = '16:9' | '4:3' | '3:2';
 type TimerMode = 0 | 3 | 10;
 type ActiveControl = 'none' | 'kelvin' | 'exposure' | 'filters' | 'effects';
 
@@ -38,10 +38,30 @@ const ZOOM_STEPS: { label: string; factor: number; mm: string }[] = [
   { label: '3.0x', factor: 3.0, mm: '77mm' },
 ];
 
-/** 把畫布存成無損 PNG 的 Blob 網址 —— dataURL 字串會把記憶體吃光 */
-const canvasToBlobUrl = (cvs: HTMLCanvasElement): Promise<string> =>
+/**
+ * 相機照片用高品質 JPEG：相同解析度的記憶體與編碼時間都遠低於 PNG，iOS 不會
+ * 因第二張仍在主執行緒壓 PNG 而整個介面卡住。Safari 偶爾不回呼 toBlob，必須
+ * 自己截止；逾時後讓 finally 解鎖快門，不能永遠停在「拍攝中」。
+ */
+const canvasToBlobUrl = (cvs: HTMLCanvasElement, timeoutMs = 2500): Promise<string> =>
   new Promise((resolve, reject) => {
-    cvs.toBlob(b => (b ? resolve(URL.createObjectURL(b)) : reject(new Error('toBlob failed'))), 'image/png');
+    let settled = false;
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
+    const timer = setTimeout(() => finish(() => reject(new Error('toBlob timeout'))), timeoutMs);
+    try {
+      cvs.toBlob(
+        b => finish(() => b ? resolve(URL.createObjectURL(b)) : reject(new Error('toBlob failed'))),
+        'image/jpeg',
+        0.95,
+      );
+    } catch (error) {
+      finish(() => reject(error));
+    }
   });
 
 interface CameraInterfaceProps {
@@ -592,7 +612,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             }
           } catch { /* 拿不到能力表就用預設設定拍 */ }
           const blob: any = await withLimit<any>(ic.takePhoto(opts), 3000);
-          if (blob) bmp = await createImageBitmap(blob);
+          if (blob) bmp = await withLimit<ImageBitmap>(createImageBitmap(blob), 1800);
         } catch {
           // takePhoto 在部分裝置上不穩，退一步用預覽那一幀
           try { bmp = await withLimit<any>(ic.grabFrame(), 800); } catch { bmp = null; }
@@ -621,18 +641,32 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       } catch { return false; }
     };
     if (usedStill && webglCanvas && looksBlank(webglCanvas)) {
-      vf.releaseStill?.();
+      try { vf.releaseStill?.(); } catch {}
       usedStill = false;
       webglCanvas = viewfinderRef.current.getCanvas();
     }
 
-    if (webglCanvas) {
+    /* Safari 偶爾會交回一張尺寸正常、內容卻全黑的 WebGL drawing buffer。
+       這時不要把黑畫面存進相簿，直接用仍在播放的 video 當可靠備援。 */
+    let captureSource: HTMLCanvasElement | HTMLVideoElement | null = webglCanvas;
+    let sourceIsMirrored = true;
+    if (!captureSource || (webglCanvas && looksBlank(webglCanvas))) {
+      if (videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+        captureSource = videoEl;
+        sourceIsMirrored = false;
+      } else {
+        captureSource = null;
+      }
+    }
+
+    if (captureSource) {
       // Crop logic based on aspectRatio
       let targetRatio = 2/3; // Default 3:2 (Portrait 2:3)
       if (aspectRatio === '16:9') targetRatio = 9/16;
+      if (aspectRatio === '4:3') targetRatio = 3/4;
       
-      const srcW = webglCanvas.width;
-      const srcH = webglCanvas.height;
+      const srcW = captureSource instanceof HTMLVideoElement ? captureSource.videoWidth : captureSource.width;
+      const srcH = captureSource instanceof HTMLVideoElement ? captureSource.videoHeight : captureSource.height;
       const srcRatio = srcW / srcH;
       
       let cropW = srcW;
@@ -653,27 +687,30 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         offsetY = (srcH - cropH) / 2;
       }
 
+      /* 4096px PNG 在 iPhone 上一次就可能佔掉數十 MB；長邊限制 2560，仍有
+         足夠的照片細節，卻能穩定連拍並避免第二張把 WebKit 壓到無回應。 */
+      const outputScale = Math.min(1, 2560 / Math.max(cropW, cropH));
+      const outW = Math.max(1, Math.round(cropW * outputScale));
+      const outH = Math.max(1, Math.round(cropH * outputScale));
       const tempCvs = document.createElement('canvas');
-      tempCvs.width = cropW;
-      tempCvs.height = cropH;
+      tempCvs.width = outW;
+      tempCvs.height = outH;
       const ctx = tempCvs.getContext('2d');
       if (ctx) {
         /* 前鏡頭的預覽是鏡像的（照鏡子的感覺），但存下來要是正常方向，
            不然字會反過來 —— 這裡把它翻回去。 */
-        if (visualFacingMode === 'user') {
-          ctx.translate(cropW, 0);
+        if (sourceIsMirrored && visualFacingMode === 'user') {
+          ctx.translate(outW, 0);
           ctx.scale(-1, 1);
         }
-        ctx.drawImage(webglCanvas, offsetX, offsetY, cropW, cropH, 0, 0, cropW, cropH);
+        ctx.drawImage(captureSource, offsetX, offsetY, cropW, cropH, 0, 0, outW, outH);
         // 裁完就把觀景窗畫布還原，那份幾十 MB 的緩衝區不要多留
         if (usedStill) vf.releaseStill?.();
         try {
           const url = await canvasToBlobUrl(tempCvs);
           ownedUrlsRef.current.add(url);
           setPhotos(prev => [url, ...prev]);
-        } catch (e) {
-          setPhotos(prev => [tempCvs.toDataURL('image/png'), ...prev]);
-        }
+        } catch (e) { /* 編碼失敗就保持原相簿；finally 仍會立刻解鎖所有按鈕 */ }
       }
     }
     } finally {
@@ -762,6 +799,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         // 16:9 (Portrait 9:16) - Requirement: Height matches 3:2 height
         targetH = h32;
         targetW = targetH * (9/16);
+        break;
+      case '4:3':
+        // 4:3（直式 3:4）同樣維持與 3:2 相同高度，只調整寬度
+        targetH = h32;
+        targetW = targetH * (3/4);
+        if (targetW > maxW) { targetW = maxW; targetH = targetW * (4/3); }
         break;
       case '3:2':
       default:
@@ -1041,8 +1084,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         </div>
       </main>
 
-      {/* 下方留白加倍（40→80px），整組觀景窗與控制列會一起自然往上。 */}
-      <section className="flex flex-col px-6 pt-4 pb-20">
+      {/* 比上一版下移 16px；仍比最初多留 24px，底部不會再顯得擁擠。 */}
+      <section className="flex flex-col px-6 pt-4 pb-16">
         <div className={`flex justify-center relative mb-2 transition-all duration-300 ${activeControl === 'filters' || activeControl === 'effects' ? 'h-30' : 'h-14'}`}>
           {activeControl === 'none' ? (
             <div className="flex items-center justify-between w-full max-sm px-0 animate-in h-full gap-1 overflow-x-auto no-scrollbar">
@@ -1055,7 +1098,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               </button>
 
               <button 
-                onClick={() => setAspectRatio(prev => prev === '3:2' ? '16:9' : '3:2')} 
+                onClick={() => setAspectRatio(prev => prev === '3:2' ? '16:9' : prev === '16:9' ? '4:3' : '3:2')}
                 className="p-3 active:scale-90 transition-transform flex flex-col items-center shrink-0"
               >
                 <div className="w-8 h-8 border-[2px] border-white rounded-[6px] flex items-center justify-center">
