@@ -7651,27 +7651,28 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         <div aria-hidden="true" style={{ display: 'none' }}
              className="flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase transition-colors border shrink-0 bg-white text-black border-white shadow-lg bg-white/5 text-white/40 border-white/10 hover:text-white/60 hover:border-white/25 gap-1.5 overflow-x-auto no-scrollbar py-1 max-w-[calc(100%-3.5rem)] flex-col px-2 py-2 text-[9px] font-medium whitespace-nowrap" />
 
-        {/* 構圖：只蓋住預覽區，不再是另外開一整頁 —— 下方的分頁列留在原位。
-             它自己的小分類（裁切／角度／翻轉／梯形）就接在分頁列上面，
-             位置跟其他功能的小分類列一樣。 */}
-        {activeCategory === 'compose' && draftGeo && (composePreviewRef.current || originalImgRef.current) && (
-          <ComposeStudio
-            image={composePreviewRef.current || originalImgRef.current!}
-            geo={draftGeo}
-            onChange={setDraftGeo}
-            footerHeight={38}
-            onCancel={cancelCompose}
-            onApply={() => {
-              applyGeo(draftGeo);
-              addToHistory(paramsRef.current, selectedLutIdx);
-              setDraftGeo(null);
-              composePreviewRef.current = null;
-              setActiveCategory(beforeComposeRef.current.cat);
-              setActiveToolId(beforeComposeRef.current.tool);
-            }}
-          />
-        )}
       </div>
+
+      {/* 構圖不能放在上面的 overflow-hidden 預覽盒裡：iOS 會連 fixed 子層一起裁切，
+          造成後方的前後對比鍵露出、控制列斷開，舞台也被錯誤縮小。
+          移成 safe-top 的直屬覆蓋層後，仍只覆蓋標題列與底部分頁列之間。 */}
+      {activeCategory === 'compose' && draftGeo && (composePreviewRef.current || originalImgRef.current) && (
+        <ComposeStudio
+          image={composePreviewRef.current || originalImgRef.current!}
+          geo={draftGeo}
+          onChange={setDraftGeo}
+          footerHeight={38}
+          onCancel={cancelCompose}
+          onApply={() => {
+            applyGeo(draftGeo);
+            addToHistory(paramsRef.current, selectedLutIdx);
+            setDraftGeo(null);
+            composePreviewRef.current = null;
+            setActiveCategory(beforeComposeRef.current.cat);
+            setActiveToolId(beforeComposeRef.current.tool);
+          }}
+        />
+      )}
 
       {/* 小分類列收起來時（遮色片建立中／構圖），這個外框的上緣會直接貼到
           分頁列自己的上緣邊線，兩條 1px 疊在一起看起來就是一條比較粗的線
@@ -8053,13 +8054,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             明確採 38px 且不再加 safe-area；進一步收掉按鈕下方殘留空隙，
             這只作用於主頁進入的獨立編輯器。 */}
         <div className="flex border-t border-white/10 bg-black shrink-0 mt-auto" style={{ height: 38, paddingBottom: 0 }}>
-          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-0.5 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
           </button>
-          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-0.5 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="tune" className="text-xl" fill={activeCategory === 'adjust'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">調節</span>
           </button>
-          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-0.5 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
             <Icon name="magic_button" className="text-xl" fill={['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory)} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">特效</span>
           </button>
           <button onClick={() => {
@@ -8076,11 +8077,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               }
               setDraftGeo(geo);
               setActiveCategory('compose');
-            }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
+            }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-0.5 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
             {/* crop_rotate 兩側各有一支旋轉箭頭，改成單純的裁切符號 */}
             <Icon name="crop" className="text-xl" fill={activeCategory === 'compose'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">構圖</span>
           </button>
-          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-0.5 transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="gradient" className="text-xl" fill={activeCategory === 'mask'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">遮色片</span>
           </button>
         </div>
