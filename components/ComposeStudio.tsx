@@ -507,7 +507,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
            那 15px 是原本讓中心跟一般預覽對齊的固定偏移，照舊加在後面。 */}
       <div
         className="flex-1 min-h-0 px-5 md:px-10"
-        style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 15px)' }}
+        style={{ paddingTop: '15px' }}
       >
         {/* 高度用跟一般預覽同一條上限夾住，兩邊算出來的尺寸才會一模一樣
              （不夾的話 flex-1 的可用高會因為底部欄的小數而差 1px） */}
@@ -526,7 +526,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
              另外 100vh 在手機瀏覽器是「網址列收起來時」的高度（偏大），
              改用 100dvh 才是當下真正看得到的高度。 */
           style={{
-            maxHeight: 'calc(100dvh - 340px - env(safe-area-inset-top, 0px))',
+            maxHeight: 'calc(100dvh - 340px)',
             touchAction: 'none',
           }}
           onTouchStart={onStageTouchStart}

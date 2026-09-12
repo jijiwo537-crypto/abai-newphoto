@@ -865,6 +865,64 @@ export const HomePage: React.FC<HomePageProps> = ({
       現在沒匯入就是空的（點下去挑一張），存檔再也不會動到它。 */
   const heroSrc = previews.hero || null;
 
+  /* 透明狀態列露出的是 html/body；只填入主視覺頂邊的實際顏色。
+     這段不更動 viewport，也不參與首頁內容排版。 */
+  const [homeBarColor, setHomeBarColor] = useState('#000000');
+  useEffect(() => {
+    if (!heroSrc) { setHomeBarColor('#000000'); return; }
+    let alive = true;
+    const image = new Image();
+    if (!heroSrc.startsWith('blob:') && !heroSrc.startsWith('data:')) image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      if (!alive) return;
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 32; canvas.height = 2;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return;
+        const sw = image.naturalWidth || 1;
+        const sh = image.naturalHeight || 1;
+        const art = artRef.current;
+        const frame = art?.parentElement;
+        if (art && frame) {
+          const ar = art.getBoundingClientRect();
+          const fr = frame.getBoundingClientRect();
+          const scale = Math.max(ar.width / sw, ar.height / sh);
+          const cropX = Math.max(0, (sw * scale - ar.width) / 2);
+          const cropY = Math.max(0, (sh * scale - ar.height) / 2);
+          const sx = Math.max(0, (cropX + fr.left - ar.left) / scale);
+          const sy = Math.max(0, (cropY + fr.top - ar.top) / scale);
+          ctx.drawImage(image, sx, sy, Math.max(1, Math.min(sw - sx, fr.width / scale)), Math.max(1, 3 / scale), 0, 0, 32, 2);
+        } else {
+          ctx.drawImage(image, 0, sh * 0.4, sw, Math.max(1, sh * 0.02), 0, 0, 32, 2);
+        }
+        const pixels = ctx.getImageData(0, 0, 32, 2).data;
+        let red = 0, green = 0, blue = 0, count = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          red += pixels[i]; green += pixels[i + 1]; blue += pixels[i + 2]; count++;
+        }
+        const hex = (value: number) => Math.round(value / Math.max(1, count)).toString(16).padStart(2, '0');
+        setHomeBarColor(`#${hex(red)}${hex(green)}${hex(blue)}`);
+      } catch { setHomeBarColor('#000000'); }
+    };
+    image.onerror = () => { if (alive) setHomeBarColor('#000000'); };
+    image.src = heroSrc;
+    return () => { alive = false; };
+  }, [heroSrc]);
+
+  useLayoutEffect(() => {
+    const html = document.documentElement;
+    const previousHtml = html.style.backgroundColor;
+    const previousBody = document.body.style.backgroundColor;
+    const color = nav === 'home' ? homeBarColor : '#000000';
+    html.style.backgroundColor = color;
+    document.body.style.backgroundColor = color;
+    return () => {
+      html.style.backgroundColor = previousHtml;
+      document.body.style.backgroundColor = previousBody;
+    };
+  }, [homeBarColor, nav]);
+
   /** 整頁共用的那顆檔案選擇器（掛在最外層，見 return 最下面） */
   const previewInput = (
     <input
@@ -979,7 +1037,13 @@ export const HomePage: React.FC<HomePageProps> = ({
   );
 
   return (
-    <div className="w-full h-screen bg-black text-white font-sans flex flex-col overflow-hidden relative">
+    <div
+      className="w-full bg-black text-white font-sans flex flex-col overflow-hidden relative"
+      style={{
+        height: 'calc(100dvh - env(safe-area-inset-top, 0px))',
+        marginTop: 'env(safe-area-inset-top, 0px)',
+      }}
+    >
       {/* 主視覺搬到捲動區裡面去了（見下面）。標題列整個拿掉了 ——
            品牌字與聯絡鈕都在首頁那一頁裡，所以主視覺上面不再壓著任何一條。 */}
 
@@ -1002,7 +1066,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             transition: 'transform 560ms cubic-bezier(0.22,1,0.36,1)',
             willChange: 'transform',
           }}
-          className={`no-scrollbar absolute inset-0 z-[6] overflow-y-auto px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+62px)] box-border bg-black ${nav === 'me' ? '' : 'pointer-events-none'}`}
+          className={`no-scrollbar absolute inset-0 z-[6] overflow-y-auto px-6 pb-4 pt-[62px] box-border bg-black ${nav === 'me' ? '' : 'pointer-events-none'}`}
         >
           {/* 登入入口。
               整列不再是一顆大按鈕 —— 只有右邊那顆箭頭會有反應，
@@ -1209,7 +1273,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             aria-label="聯絡方式"
             className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
             /* 14 → 11：整頁往上 3px，這一顆也跟著（見下面那一疊的說明） */
-            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 11px)' }}
+            style={{ top: '11px' }}
           >
             <Icon name="mail" className="text-[16px]" />
           </button>
@@ -1331,7 +1395,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             夾掉之後可捲長度從頭到尾都是同一個數字。被夾掉的是模板最下面那一截，
             那時候它離畫面還很遠；等你真的捲到下面，位移早就收回 0 了，什麼都不會少。 */}
       <div ref={libBoxRef} style={{ marginTop: 'calc(var(--lib-lift, 0px) * -1)', overflow: 'clip' }}>
-      <div ref={libRef} className="home-lib relative z-[1] px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+14px)]">
+      <div ref={libRef} className="home-lib relative z-[1] px-6 pb-4 pt-[14px]">
         {/* 模板這一段的底：一整片黑，往下滑的時候修圖那一屏就不會透過來重疊。
              上緣要羽化 43px（照 smoothstep 每 3px 取一站，曲線兩端都是平的、
              中間沒有折角，所以看不到帶狀邊）。往上多長 34px，
@@ -1351,7 +1415,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                搜尋欄上方 12px，不管有沒有瀏海都一樣近。
                以前寫死 -34，在有瀏海的手機上羽化會停在搜尋欄上面 50 幾 px，
                中間隔著一大段純黑，那就是「遮罩離搜尋欄太遠」。 */
-            top: 'calc(env(safe-area-inset-top, 0px) - 41px)',
+            top: '-41px',
             background:
               'linear-gradient(to bottom,'
               + 'rgba(0,0,0,0) 0px,rgba(0,0,0,.014) 3px,rgba(0,0,0,.053) 6px,rgba(0,0,0,.113) 9px,'
@@ -1420,7 +1484,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       {/* --- 底部分頁 ---
            首頁／靈感是同一條捲軸的兩個位置，點下去就捲過去；「我」才是換頁。 */}
       <div
-        className="relative z-[5] flex px-6 pt-2.5 pb-[calc(env(safe-area-inset-bottom,0px)+20px)] border-t border-white/[0.08] shrink-0"
+        className="relative z-[5] flex px-6 pt-2.5 pb-5 border-t border-white/[0.08] shrink-0"
         style={{ background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
       >
         {NAV_ITEMS.map(n => {
@@ -1463,7 +1527,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               exit={{ y: '100%' }}
               transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
               onClick={e => e.stopPropagation()}
-              className="w-full max-w-[430px] rounded-t-[24px] bg-[#141414] border-t border-x border-white/10 px-6 pt-5 pb-[calc(env(safe-area-inset-bottom,0px)+44px)]"
+              className="w-full max-w-[430px] rounded-t-[24px] bg-[#141414] border-t border-x border-white/10 px-6 pt-5 pb-[44px]"
             >
               {/* 標題列：只有一顆關閉／返回，標題留白讓版面乾淨 */}
               <div className="flex items-start justify-between mb-6">
@@ -1643,7 +1707,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             className="absolute inset-0 z-[65] bg-black flex flex-col"
           >
             {/* 標題列：返回鍵跟「我的」那一頁的內距對齊 */}
-            <div className="shrink-0 flex items-center gap-2 px-4 pt-[calc(env(safe-area-inset-top,0px)+14px)] pb-3">
+            <div className="shrink-0 flex items-center gap-2 px-4 pt-[14px] pb-3">
               <button
                 onClick={() => setAcctOpen(false)}
                 aria-label="返回"
