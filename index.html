@@ -33,6 +33,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap">
+    <link rel="preload" as="image" href="./home-wordmark.png?v=20260912a" fetchpriority="high">
     <script>
         /* 字型還沒好之前先把畫面壓著，避免「先用系統字型畫一次、字型到了再跳一次」。
 
@@ -118,7 +119,12 @@
             }
             function whenReady() {
                 var r = document.getElementById('root');
-                if (root.classList.contains('fonts-loaded') && r && r.childElementCount > 0) { tryHide(); return; }
+                var brand = document.querySelector('img[data-home-wordmark]');
+                var brandReady = !brand || (brand.complete && brand.naturalWidth > 0);
+                /* 開場遮罩收掉前，首頁字標也必須已經解碼完成。這張圖在 head 已
+                   高優先預載，通常不增加等待；網路較慢時則寧可多留一下開場，
+                   不讓使用者先看到空位、下一幀才突然補出品牌字。 */
+                if (root.classList.contains('fonts-loaded') && r && r.childElementCount > 0 && brandReady) { tryHide(); return; }
                 setTimeout(whenReady, 50);
             }
             whenReady();

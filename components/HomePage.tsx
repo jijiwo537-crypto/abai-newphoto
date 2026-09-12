@@ -1289,6 +1289,9 @@ export const HomePage: React.FC<HomePageProps> = ({
             <img
               src="./home-wordmark.png?v=20260912a"
               alt="Abai"
+              data-home-wordmark
+              fetchPriority="high"
+              decoding="sync"
               draggable={false}
               className="abai-wordmark-enter block h-auto select-none pointer-events-none"
               /* 裁掉原檔透明留白後，以原本 ABAI 字樣的可視高度與左基準對齊；

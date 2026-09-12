@@ -1302,7 +1302,7 @@ const THUMB_DPR = (() => {
 })();
 
 /** sig：這一格是照哪一組條件算出來的，一樣就不用重算 */
-type ThumbEntry = { cvs: HTMLCanvasElement; v: number; sig: string };
+type ThumbEntry = { cvs: HTMLCanvasElement; pixels?: ImageData; v: number; sig: string };
 type ThumbStore = React.MutableRefObject<Record<string, ThumbEntry>>;
 
 /** 把一張算好的縮圖收進倉庫（重複使用同一張畫布，不要一直生新的） */
@@ -1312,15 +1312,17 @@ function putThumb(store: ThumbStore, id: string, src: HTMLCanvasElement, sig = '
   if (!e) e = store.current[id] = { cvs: document.createElement('canvas'), v: 0, sig: '' };
   const c = e.cvs;
   if (c.width !== src.width || c.height !== src.height) { c.width = src.width; c.height = src.height; }
-  const cx = c.getContext('2d')!;
-  cx.save();
-  cx.setTransform(1, 0, 0, 1, 0, 0);
-  cx.globalAlpha = 1;
-  cx.filter = 'none';
-  cx.globalCompositeOperation = 'copy';
-  cx.drawImage(src, 0, 0);
-  cx.restore();
-  /* 內容完整複製成功後才發布版本，畫面端不會讀到只畫了一半的共用畫布。 */
+  const sx = src.getContext('2d', { willReadFrequently: true });
+  if (!sx) return;
+  /* WebKit 偶爾會在兩張 GPU Canvas 用 drawImage 互拷時，先提交一部分紋理；
+     使用者看到的就是縮圖半邊已套濾鏡、半邊仍是奇怪顏色。先讀成一張完整的
+     CPU ImageData，再以單次 putImageData 發布，顯示端永遠只會拿到完整一幀。 */
+  let frame: ImageData;
+  try { frame = sx.getImageData(0, 0, src.width, src.height); }
+  catch { return; }
+  c.getContext('2d')!.putImageData(frame, 0, 0);
+  e.pixels = frame;
+  /* 像素與備援畫布都完整寫完後才發布版本。 */
   e.sig = sig;
   e.v++;
 }
@@ -1368,13 +1370,17 @@ const ThumbCanvas: React.FC<{
        重設 width／height 本來就會順便清空，但尺寸沒變時不會走那條路，
        所以這裡明確清一次。 */
     if (el.width !== e.cvs.width || el.height !== e.cvs.height) { el.width = e.cvs.width; el.height = e.cvs.height; }
-    cx.save();
-    cx.setTransform(1, 0, 0, 1, 0, 0);
-    cx.globalAlpha = 1;
-    cx.filter = 'none';
-    cx.globalCompositeOperation = 'copy';
-    cx.drawImage(e.cvs, 0, 0);
-    cx.restore();
+    /* 跟倉庫同樣以完整 CPU 幀一次提交；若是舊快取沒有 pixels 才退回 canvas。 */
+    if (e.pixels) cx.putImageData(e.pixels, 0, 0);
+    else {
+      cx.save();
+      cx.setTransform(1, 0, 0, 1, 0, 0);
+      cx.globalAlpha = 1;
+      cx.filter = 'none';
+      cx.globalCompositeOperation = 'copy';
+      cx.drawImage(e.cvs, 0, 0);
+      cx.restore();
+    }
     el.dataset.thumbReady = own ? '1' : '0';
   }, [store, id, fallbackId]);
   /* useLayoutEffect：卡片是每次進頁才掛上來的，排在 useEffect 的話
@@ -6552,7 +6558,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   return (
-    <div className="safe-top fixed inset-0 bg-[#080808] z-[60] flex flex-col animate-in slide-in-from-right duration-300 font-sans text-white overflow-hidden no-callout"
+    <div className="safe-top fixed inset-0 bg-[#080808] z-[60] flex flex-col font-sans text-white overflow-hidden no-callout"
          onMouseMove={dragPointIdx !== -1 ? (e) => handleCurveMove(e) : undefined}
          onMouseUp={dragPointIdx !== -1 ? handleCurveEndDrag : undefined}
          onTouchMove={dragPointIdx !== -1 ? (e) => handleCurveMove(e) : undefined}
