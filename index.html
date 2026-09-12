@@ -5,9 +5,9 @@
     <meta name="abai-build" content="20260912-layout-baseline-verified" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
     <title>ABAI</title>
-    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png" />
-    <link rel="icon" type="image/png" sizes="64x64" href="./favicon-64.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png?v=20260912b" />
+    <link rel="icon" type="image/png" sizes="64x64" href="./favicon-64.png?v=20260912b" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./icon-180.png?v=20260912b" />
     <!-- 「加到主畫面」之後就是一支獨立的 App：全螢幕、黑底、而且鎖直向。
          manifest 裡的 orientation 只有 Android 的安裝檔會真的照做，iOS 完全不理，
          所以底下還有一層自己畫的橫置擋板，兩邊才都擋得住。 -->
@@ -23,7 +23,7 @@
          CSS 才會發現它們，等於多繞一趟。先 preload 就會跟 CSS 同時開始下載，
          開場那一下不會先用系統字型畫一次再換過來。 -->
     <!-- 開場畫面那張圖：先下載，不然它自己也要等一趟 -->
-    <link rel="preload" as="image" href="./icon-512.png">
+    <link rel="preload" as="image" href="./icon-512.png?v=20260912b">
     <link rel="preload" as="font" type="font/woff2" href="/fonts/Inter.woff2" crossorigin>
     <link rel="preload" as="font" type="font/woff2" href="/fonts/PlayfairDisplay.woff2" crossorigin>
     <link rel="preload" as="font" type="font/woff2" href="/fonts/MaterialSymbolsOutlined.woff2" crossorigin>
@@ -355,10 +355,11 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            /* 標誌放在「視覺中心」而不是幾何正中間 —— 幾何正中間看起來會偏低。
-               底下墊掉 14% 的高度，標誌的中心就落在整個畫面的 43% 左右，
-               跟一般 App 的開場畫面同一個位置。 */
-            padding-bottom: 14vh;
+            /* 與 iOS 原生啟動畫面使用相同的固定幾何中心。舊版靠 14vh padding
+               推位置，WebKit 在 safe-area 初始化時會重算內容高度，Logo 便會
+               由上往下跳一下。固定盒模型後全程不再重排。 */
+            padding: 0;
+            box-sizing: border-box;
             opacity: 1;
             transition: opacity 0.45s ease;
             /* 開場畫面**要接手勢**（以前是 pointer-events:none）。
@@ -378,7 +379,9 @@
             height: 168px;
             animation: boot-breathe 2.4s ease-in-out infinite;
             transform: translateZ(0);
+            transform-origin: 50% 50%;
             backface-visibility: hidden;
+            contain: strict;
         }
         @keyframes boot-breathe {
             0%, 100% { opacity: 0.82; }
@@ -403,7 +406,7 @@
 </head>
 <body class="bg-black text-white antialiased">
     <!-- 開場畫面：字型與程式都就緒之前先擋著，就不會是一片沒有東西的黑 -->
-    <div id="boot" aria-hidden="true"><img src="./icon-512.png" alt="" draggable="false" /></div>
+    <div id="boot" aria-hidden="true"><img src="./icon-512.png?v=20260912b" alt="" draggable="false" /></div>
     <div id="root"></div>
     <!-- 橫置擋板。故意寫在 HTML 裡而不是做成 React 元件：
          它要能蓋住每一頁（首頁、編輯、拼圖…），而且不管 App 當下是什麼狀態

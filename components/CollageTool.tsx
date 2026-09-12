@@ -7993,7 +7993,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   <div key={side} data-stretch-handle className={`absolute ${pos} ${size} pointer-events-auto flex items-center justify-center touch-none no-pointer-events`}
                     style={{ transform: tx }} onPointerDown={(e) => beginObjStretch(e, o, side, k)}
                     onPointerMove={moveObjStretch} onPointerUp={endObjStretch} onPointerCancel={endObjStretch}>
-                    {o.type === 'shape' ? (
+                    {o.type === 'shape' || (o.type === 'text' && !o.sym) ? (
                       <span className={`w-[5px] h-[5px] rounded-full block bg-white ${objStretching ? 'invisible' : ''}`} />
                     ) : (
                       <span className={`${side === 't' || side === 'b' ? 'w-4 h-1' : 'w-1 h-4'} block bg-white shadow-[0_2px_5px_rgba(0,0,0,0.5)] ${objStretching ? 'invisible' : ''}`} />

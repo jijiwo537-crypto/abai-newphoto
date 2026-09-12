@@ -6404,17 +6404,18 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         ] as const).map(([side, pos, tx, size]) => {
           // 圖形的選取框依可見墨水縮過，控制點也必須使用同一個 frameRect，
           // 才會確實落在四邊中央而不是停在物件原始方框上。
-          const shapeHandleStyle = image.shape ? {
+          const preciseHandle = !!image.shape || (image.text !== undefined && !image.sym);
+          const shapeHandleStyle = preciseHandle ? {
             left: side === 'l' ? frameRect.left : side === 'r' ? frameRect.left + frameRect.width : frameRect.left + frameRect.width / 2,
             top: side === 't' ? frameRect.top : side === 'b' ? frameRect.top + frameRect.height : frameRect.top + frameRect.height / 2,
           } : undefined;
           // 圖形四邊已經直接給「框線上的中心座標」，四個方向都只需把
           // 觸控盒自身的中心搬回該座標。舊的右／下 +50% 是搭配 right/bottom
           // 定位使用的，留在精確座標模式會多推出半個觸控盒。
-          const handleTransform = image.shape ? 'translate(-50%, -50%)' : tx;
+          const handleTransform = preciseHandle ? 'translate(-50%, -50%)' : tx;
           const horizontalHandle = side === 't' || side === 'b';
           return (
-          <div key={side} data-stretch-handle className={`absolute ${image.shape ? '' : pos} z-50 pointer-events-auto touch-none flex items-center justify-center`}
+          <div key={side} data-stretch-handle className={`absolute ${preciseHandle ? '' : pos} z-50 pointer-events-auto touch-none flex items-center justify-center`}
             style={{
               width: (horizontalHandle ? 24 : 8) * previewInv,
               height: (horizontalHandle ? 8 : 24) * previewInv,
@@ -6422,7 +6423,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               ...shapeHandleStyle,
             }} onPointerDown={(e) => handleStretchPointerDown(e, side)}
             onPointerMove={handleStretchPointerMove} onPointerUp={handleStretchPointerUp} onPointerCancel={handleStretchPointerUp}>
-            {image.shape ? (
+            {image.shape || (image.text !== undefined && !image.sym) ? (
               <span className="rounded-full block bg-white" style={{
                 width: 5 * previewInv, height: 5 * previewInv,
                 boxShadow: `0 ${previewInv}px ${3 * previewInv}px rgba(0,0,0,0.5)`,
@@ -6524,7 +6525,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
                   </filter>
                 </defs>
               ) : null}
-              <g transform={`translate(${vectorCssW / 2} ${vectorCssH / 2}) rotate(${image.rotation}) scale(${image.scale})`}>
+              <g transform={`translate(${vectorCssW / 2} ${vectorCssH / 2}) rotate(${image.rotation}) scale(${image.scale * (image.width / Math.max(1, image.textStretchBaseW || image.width))} ${image.scale * (image.height / Math.max(1, image.textStretchBaseH || image.height))})`}>
                 <text
                   ref={vectorGlyphRef}
                   data-vector-glyph={image.id}
