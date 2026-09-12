@@ -78,6 +78,12 @@ const LIB_TEMPLATES: { name: string; ratio: string }[] = Array.from({ length: 12
   ratio: TILE_RATIO,
 }));
 
+/** 修圖首頁只放五張直式推薦預覽；歷史專案完整留在「我的」。 */
+const HOME_RECOMMENDATIONS = Array.from({ length: 5 }, (_, i) => ({
+  name: `推薦 ${String(i + 1).padStart(2, '0')}`,
+  key: `recommend${i}`,
+}));
+
 /* 驗證碼長度。
    OTP_LEN ＝ Supabase 後台設定的位數（預設 6）。打滿這個數字就自動送出，
              使用者不用再按一次「登入」。
@@ -795,7 +801,11 @@ export const HomePage: React.FC<HomePageProps> = ({
   useEffect(() => {
     try {
       const next: Record<string, string> = {};
-      const keys = ['hero', 'promo', ...Array.from({ length: LIB_TEMPLATES.length }, (_, i) => `lib${i}`)];
+      const keys = [
+        'hero', 'promo',
+        ...HOME_RECOMMENDATIONS.map(item => item.key),
+        ...Array.from({ length: LIB_TEMPLATES.length }, (_, i) => `lib${i}`),
+      ];
       for (const k of keys) {
         const v = localStorage.getItem(PREVIEW_KEY(k));
         if (v) next[k] = v;
@@ -933,23 +943,38 @@ export const HomePage: React.FC<HomePageProps> = ({
     </div>
   );
 
-  /** 首頁那一排：標題 ＋「查看全部」＋ 5 格 */
-  const historySection = (
+  /** 修圖首頁的推薦：五格直式 3:4，每格都能自行上傳圖片預覽。 */
+  const recommendationSection = (
     <div>
-      {/* 標題那一排：右邊多一顆「查看全部」。
-           標題本身收斂一點 —— 它只是一行分區標籤，主角是下面那排縮圖，
-           字級 14→12、字重 black→bold、白色降到 55%，不要壓過作品。 */}
       <div className="flex items-center justify-between mb-2">
-        <span className="text-[12px] font-bold tracking-[0.14em] text-white/55">歷史紀錄</span>
+        <span className="text-[12px] font-bold tracking-[0.14em] text-white/55">為您推薦</span>
         <button
-          onClick={() => goNav('me')}
+          onClick={() => goNav('lib')}
           className="flex items-center gap-0.5 text-[11px] tracking-[0.08em] text-white/35 active:scale-95 transition-transform"
         >
           查看全部
           {pillArrow}
         </button>
       </div>
-      {historyGrid(10)}
+      {/* 原歷史格距是 8px；縮小三分之一後是 5.33px。直式比例以寬:高 3:4 呈現。 */}
+      <div className="grid grid-cols-5 gap-[5.333px]">
+        {HOME_RECOMMENDATIONS.map(item => {
+          const img = previews[item.key];
+          return (
+            <button
+              key={item.key}
+              onClick={() => pickPreview(item.key)}
+              aria-label={`${item.name}：上傳預覽圖片`}
+              className={`relative overflow-hidden rounded-[10px] flex items-center justify-center active:scale-[0.97] transition-transform duration-300 ${img ? 'border border-white/10' : 'border border-dashed border-white/15 text-white/25'}`}
+              style={{ aspectRatio: TILE_RATIO }}
+            >
+              {img
+                ? <img src={img} alt="" className="absolute inset-0 w-full h-full object-cover" draggable={false} />
+                : <Icon name="add" className="text-[19px]" />}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 
@@ -1288,13 +1313,8 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
         </div>
 
-        {/* 歷史紀錄 —— 點一張就回到它導出當下的編輯狀態。
-             照參考圖：標題放大、右邊多一顆「查看全部」，格子改成直式，
-             還沒導出過的位子改成虛線框加一個加號。 */}
-        {/* 這一格的 mt 與上面那個 pb 是一組的（加起來 48）：
-             mt 加多少，pb 就要減多少，歷史紀錄才會單純上下移動，
-             不會把上半屏連帶拉高或壓扁。 */}
-        <div className="relative z-10 mt-[12px] shrink-0">{historySection}</div>
+        {/* 首頁只顯示推薦；歷史紀錄集中在「我的」。 */}
+        <div className="relative z-10 mt-[12px] shrink-0">{recommendationSection}</div>
       </div>
 
       {/* --- 靈感 ---

@@ -219,6 +219,12 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   const drawRef = useRef<((src: TexImageSource, w: number, h: number, out: HTMLCanvasElement | null) => void) | null>(null);
   /** 拍靜態照時暫存預覽的畫布尺寸，拍完還原 */
   const stillSizeRef = useRef<{ w: number; h: number } | null>(null);
+  /**
+   * 全解析度靜態照與每幀預覽共用同一張 WebGL canvas。擷取期間若預覽迴圈
+   * 又把 canvas 改回影片尺寸，Safari 會清空 drawing buffer；第一張偶爾還能
+   * 存到，第二張就很容易只剩黑畫面。這個旗標讓兩條繪製路徑確實互斥。
+   */
+  const stillActiveRef = useRef(false);
   /* 曝光／色溫／濾鏡也一律走 ref。以前它們在 render loop 的依賴裡，
      滑桿每動一格（色溫是 50K 一格）就把整個迴圈拆掉重建一次，
      拉起來就是一頓一頓的。現在迴圈只建立一次，每一幀讀最新值。 */
@@ -226,7 +232,18 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   paramRef.current = { exposure, kelvin, isUserFacing };
 
   useImperativeHandle(ref, () => ({
-    getCanvas: () => canvasRef.current,
+    getCanvas: () => {
+      const cv = canvasRef.current;
+      /* 快門按下的當下先同步補畫最新一幀。這不只避免剛恢復尺寸時讀到
+         被清空的 drawing buffer，也讓連拍第二張永遠不會沿用第一張的殘幀。 */
+      if (cv && !stillActiveRef.current && video && video.readyState >= 2 && drawRef.current) {
+        const w = video.videoWidth || cv.width;
+        const h = video.videoHeight || cv.height;
+        if (w && h && (cv.width !== w || cv.height !== h)) { cv.width = w; cv.height = h; }
+        drawRef.current(video, cv.width, cv.height, null);
+      }
+      return cv;
+    },
     /** GPU 能吃的最大貼圖邊長 —— 拍照時用來夾住靜態照的尺寸 */
     maxTextureSize: () => {
       const gl = glRef.current;
@@ -244,14 +261,25 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       const cv = canvasRef.current;
       if (!drawRef.current || !cv || !w || !h) return null;
       stillSizeRef.current = { w: cv.width, h: cv.height };
+      stillActiveRef.current = true;
       cv.width = w; cv.height = h;
       drawRef.current(src, w, h, null);
       return cv;
     },
-    /** 把畫布尺寸還原成預覽用的大小 */
+    /** 把畫布尺寸還原，並立刻補畫預覽；不能留一幀清空後的黑畫面。 */
     releaseStill: () => {
       const cv = canvasRef.current, prev = stillSizeRef.current;
-      if (cv && prev) { cv.width = prev.w; cv.height = prev.h; stillSizeRef.current = null; }
+      stillActiveRef.current = false;
+      if (cv && prev) {
+        cv.width = prev.w;
+        cv.height = prev.h;
+        stillSizeRef.current = null;
+        if (video && video.readyState >= 2 && drawRef.current) {
+          /* iOS 在 takePhoto 剛交還相機的極短時間內，video texture 偶爾仍不可讀。
+             預覽迴圈下一幀會再補畫；這裡不能讓一次 GPU 例外阻斷快門解鎖。 */
+          try { drawRef.current(video, prev.w, prev.h, null); } catch { /* next RAF retries */ }
+        }
+      }
     },
   }));
 
@@ -482,7 +510,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     };
 
     const tick = () => {
-      if (video && video.readyState >= 2) {
+      if (!stillActiveRef.current && video && video.readyState >= 2) {
         if (canvasRef.current && (canvasRef.current.width !== video.videoWidth)) {
           canvasRef.current.width = video.videoWidth;
           canvasRef.current.height = video.videoHeight;

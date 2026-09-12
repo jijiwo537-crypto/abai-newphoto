@@ -154,7 +154,12 @@ const CameraTickScale: React.FC<CameraTickScaleProps> = ({
 export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutList, onImportNew }) => {
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const viewfinderRef = useRef<{ getCanvas: () => HTMLCanvasElement | null }>(null);
+  const viewfinderRef = useRef<{
+    getCanvas: () => HTMLCanvasElement | null;
+    maxTextureSize?: () => number;
+    renderStill?: (src: TexImageSource, w: number, h: number) => HTMLCanvasElement | null;
+    releaseStill?: () => void;
+  }>(null);
   
   // Logic facing mode vs Visual facing mode (to prevent flip glitch)
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
@@ -564,7 +569,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
        解析度跟原本一樣，不會變差。 */
     let webglCanvas: HTMLCanvasElement | null = null;
     let usedStill = false;
-    const vf = viewfinderRef.current as any;
+    const vf = viewfinderRef.current;
     const liveW = videoEl?.videoWidth || 0;
     try {
       const IC = (window as any).ImageCapture;
@@ -672,7 +677,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       }
     }
     } finally {
-      /* 不管中間哪一步出錯，手電筒一定要熄、快門一定要恢復 */
+      /* 不管解碼、裁切或 PNG 編碼在哪一步失敗，都要把全解析度畫布還原。
+         舊版只有成功取得 2D context 才釋放，失敗後第二次快門就會留在黑畫布。 */
+      try { vf.releaseStill?.(); } catch { /* 預覽下一幀仍會自行恢復 */ }
       setTorch(false);
       capturingRef.current = false;
       setIsCapturing(false);
@@ -1034,8 +1041,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         </div>
       </main>
 
-      {/* Toolbar section: pt-4 pb-10 */}
-      <section className="flex flex-col px-6 pt-4 pb-10">
+      {/* 下方留白加倍（40→80px），整組觀景窗與控制列會一起自然往上。 */}
+      <section className="flex flex-col px-6 pt-4 pb-20">
         <div className={`flex justify-center relative mb-2 transition-all duration-300 ${activeControl === 'filters' || activeControl === 'effects' ? 'h-30' : 'h-14'}`}>
           {activeControl === 'none' ? (
             <div className="flex items-center justify-between w-full max-sm px-0 animate-in h-full gap-1 overflow-x-auto no-scrollbar">
@@ -1190,6 +1197,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
           <div className="flex justify-center">
             <button 
+              aria-label="拍照"
               disabled={countdown !== null || isCapturing}
               className={`relative w-[72px] h-[72px] flex items-center justify-center transition-all ${countdown !== null || isCapturing ? 'opacity-50' : 'active:scale-95'}`}
               onClick={handleShutterClick}
