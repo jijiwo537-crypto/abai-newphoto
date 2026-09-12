@@ -1164,9 +1164,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         </div>
       </div>
 
-      {/* 工具列。底部多留一點空間，避開 iPhone 的 home indicator */}
+      {/* 工具列縮短 16px：按鈕仍完整位於安全區內，下方視覺空位約減半。 */}
       <div className="border-t border-white/10 bg-black shrink-0">
-      <div className="flex h-16">
+      <div className="flex h-12">
         {BEAUTY_TOOLS.map(t => (
           <button
             key={t.id}

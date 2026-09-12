@@ -3341,6 +3341,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (o.type === 'shape' && (!o.textureBaseW || !o.textureBaseH)) {
       setObjects(prev => prev.map(z => z.id === o.id ? { ...z, textureBaseW: o.w, textureBaseH: o.h } : z));
     }
+    if (o.type === 'text' && !o.sym && (!o.textStretchBaseW || !o.textStretchBaseH)) {
+      setObjects(prev => prev.map(z => z.id === o.id ? { ...z, textStretchBaseW: o.w, textStretchBaseH: o.h } : z));
+    }
   };
   const moveObjStretch = (e: React.PointerEvent) => {
     const d = objStretchRef.current; if (!d || d.pointerId !== e.pointerId) return;
@@ -5258,6 +5261,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 文字的每一項屬性都跟經典拼圖對齊：字體、粗體／斜體、字距、描邊、發光。
            面板本身就是那邊那顆元件，所以這裡只要照著畫。 */
         const fam = o.sym ? SYMBOL_FONT : (o.fontFamily || DEFAULT_FONT);
+        /* 文字四邊擠壓只改目前拖動的軸；字級、字距與另一邊保持不動。 */
+        if (!o.sym) ctx.scale(
+          o.w / Math.max(1, o.textStretchBaseW || o.w),
+          o.h / Math.max(1, o.textStretchBaseH || o.h),
+        );
         const weight = o.bold ? 800 : 400;
         const style = o.italic ? 'italic ' : '';
         ctx.font = `${style}${weight} ${o.size * s}px ${fontStack(fam)}`;
@@ -7969,7 +7977,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             setObjects(prev => [...prev, { ...o, id, x: o.x + o.w * 0.08, y: o.y + o.h * 0.08 }]);
             setSelectedObj(id);
           };
-          const canStretch = !shapeMode && o.type !== 'text' && !o.sym && !isVideoEl(o.img)
+          const canStretch = !shapeMode && !o.sym && !isVideoEl(o.img)
             && (o.type !== 'shape' || shapeSupportsStretch(o.kind, o.filled, o.hole));
           return (<>
             {canStretch && (
@@ -8429,6 +8437,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const addText = () => {
                   const offs2 = getLayoutOffsets();
                   if (!offs2) return;
+                  /* 預設字身在開場已暖好；先同步認領再建立物件，第一幀就使用
+                     最終字體與最終度量，不會生成後才像換字體一樣跳一下。 */
+                  ensureFont(DEFAULT_FONT);
                   const id = Math.random().toString(36).slice(2, 9);
                   const size = Math.round(Math.min(offs2.cw, offs2.ch) * 0.09);
                   const w = size * 4, h = size * 1.3;
@@ -8441,7 +8452,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
-                  ensureFont(DEFAULT_FONT);
                   setActiveTab('objedit');   // 新增完直接進編輯頁，跟經典拼圖一樣
                 };
                 /**

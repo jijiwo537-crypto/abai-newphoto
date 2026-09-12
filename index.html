@@ -27,6 +27,12 @@
     <link rel="preload" as="font" type="font/woff2" href="/fonts/Inter.woff2" crossorigin>
     <link rel="preload" as="font" type="font/woff2" href="/fonts/PlayfairDisplay.woff2" crossorigin>
     <link rel="preload" as="font" type="font/woff2" href="/fonts/MaterialSymbolsOutlined.woff2" crossorigin>
+    <!-- 預設文字字體在開場畫面期間就載妥。以前要等使用者第一次新增文字才
+         開始請求，第一幀會先用 iOS fallback，完成後再換成 Noto Sans TC，
+         看起來就是文字剛生成時抖一下。 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap">
     <script>
         /* 字型還沒好之前先把畫面壓著，避免「先用系統字型畫一次、字型到了再跳一次」。
 
@@ -39,6 +45,12 @@
             var root = document.documentElement;
             if (!document.fonts) return;
             root.classList.add('fonts-loading');
+            /* 主畫面不會自然用到 Noto Sans TC，所以只等 fonts.ready 並不會
+               下載它；主動要求預設文字的兩個字重，開場的三秒同時完成暖機。 */
+            try {
+                document.fonts.load('400 40px "Noto Sans TC"');
+                document.fonts.load('700 40px "Noto Sans TC"');
+            } catch (e) { /* 舊版 WebKit 沒有完整 FontFaceSet 時照常啟動 */ }
             var done = false;
             function reveal() {
                 if (done) return;
@@ -365,10 +377,12 @@
             width: 168px;
             height: 168px;
             animation: boot-breathe 2.4s ease-in-out infinite;
+            transform: translateZ(0);
+            backface-visibility: hidden;
         }
         @keyframes boot-breathe {
-            0%, 100% { opacity: 0.82; transform: scale(1); }
-            50%      { opacity: 1;    transform: scale(1.045); }
+            0%, 100% { opacity: 0.82; }
+            50%      { opacity: 1; }
         }
         @media (prefers-reduced-motion: reduce) {
             #boot img { animation: none; opacity: 1; }

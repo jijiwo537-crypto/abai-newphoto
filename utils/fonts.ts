@@ -204,6 +204,15 @@ const cssDone = new Set<string>();
 export function ensureFont(family: string): Promise<void> {
   if (family === SYMBOL_FONT) { cssDone.add(family); return Promise.resolve(); }
   if (typeof document === 'undefined') return Promise.resolve();
+  /* Noto Sans TC 已由 index.html 在開場畫面期間載完。App 解鎖之後直接認領
+     那份字身，避免第一次新增文字又插入同一張 Google Fonts 樣式表，導致
+     量測延後一格、文字和選中框看起來抖一下。 */
+  if (family === DEFAULT_FONT
+      && document.documentElement.classList.contains('fonts-loaded')
+      && document.fonts?.check(`400 40px "${family}"`)) {
+    cssDone.add(family);
+    return Promise.resolve();
+  }
   const hit = requested.get(family);
   if (hit) return hit;
   const p = new Promise<void>(resolve => {
