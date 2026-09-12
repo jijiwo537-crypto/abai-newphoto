@@ -1171,7 +1171,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           <button
             key={t.id}
             onClick={() => setTool(t.id)}
-            className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${tool === t.id ? 'text-white' : 'text-white/20'}`}
+            /* 只增加上內距，內容中心會下移 3px；分隔線與整個底欄高度不變。 */
+            className={`flex-1 flex flex-col items-center justify-center gap-1 pt-[6px] transition-all ${tool === t.id ? 'text-white' : 'text-white/20'}`}
           >
             <Icon name={t.icon} className="text-xl" fill={tool === t.id} />
             <span className="text-[9px] font-black uppercase tracking-[0.15em]">{t.label}</span>

@@ -74,12 +74,24 @@ import { pushHistory as pushHistoryEntry } from '../utils/history';
 const AROUND = 'mask-around';
 /** 滿版：只有底圖，不繪製遮罩、遮罩圖案或連線。 */
 const FULL = 'image-full';
-const CANVAS_RATIOS = [
-  ['1:1', 1], ['3:4', 3 / 4], ['2:3', 2 / 3], ['4:5', 4 / 5], ['16:9', 16 / 9],
+/* 按鈕仍只顯示五種比例；每顆內部各有直式／橫式兩個實際方向。
+   16:9 的第一次點擊也依需求是直式 9:16，第二次才是橫式 16:9。 */
+const CANVAS_RATIO_BUTTONS = [
+  ['1:1', '1:1', '1:1'],
+  ['3:4', '3:4', '4:3'],
+  ['2:3', '2:3', '3:2'],
+  ['4:5', '4:5', '5:4'],
+  ['16:9', '9:16', '16:9'],
 ] as const;
-type CanvasRatio = typeof CANVAS_RATIOS[number][0];
-const canvasRatioValue = (ratio?: string) =>
-  CANVAS_RATIOS.find(([name]) => name === ratio)?.[1] ?? 1;
+type CanvasRatio = '1:1' | '3:4' | '4:3' | '2:3' | '3:2' | '4:5' | '5:4' | '9:16' | '16:9';
+const CANVAS_RATIO_VALUES: Record<CanvasRatio, number> = {
+  '1:1': 1, '3:4': 3 / 4, '4:3': 4 / 3, '2:3': 2 / 3, '3:2': 3 / 2,
+  '4:5': 4 / 5, '5:4': 5 / 4, '9:16': 9 / 16, '16:9': 16 / 9,
+};
+const isCanvasRatio = (ratio?: string): ratio is CanvasRatio => !!ratio && ratio in CANVAS_RATIO_VALUES;
+const canvasRatioValue = (ratio?: string) => isCanvasRatio(ratio) ? CANVAS_RATIO_VALUES[ratio] : 1;
+const ratioButtonActive = (ratio: CanvasRatio, portrait: CanvasRatio, landscape: CanvasRatio) =>
+  ratio === portrait || ratio === landscape;
 
 /** 保留原排版中心，以指定比例中央裁切整張成品；內容本身不拉伸。 */
 const cropSizeToRatio = (w: number, h: number, ratio?: string) => {
@@ -2138,7 +2150,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     if (st.layout !== undefined) setLayout(st.layout);
     if (st.maskScale !== undefined) setMaskScale(st.maskScale);
-    if (CANVAS_RATIOS.some(([name]) => name === st.canvasRatio)) setCanvasRatio(st.canvasRatio);
+    if (isCanvasRatio(st.canvasRatio)) setCanvasRatio(st.canvasRatio);
     if (st.holeType !== undefined) setHoleType(st.holeType);
     if (st.customText !== undefined) setCustomText(st.customText);
     if (st.holeSize !== undefined) setHoleSize(st.holeSize);
@@ -6919,7 +6931,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (!e) return;
     setBaseSelected(false);
     setLayout(e.layout); setMaskScale(e.maskScale);
-    if (CANVAS_RATIOS.some(([name]) => name === e.canvasRatio)) setCanvasRatio(e.canvasRatio);
+    if (isCanvasRatio(e.canvasRatio)) setCanvasRatio(e.canvasRatio);
     setMaskColor(e.maskColor); setPatternType(e.patternType);
     setDotColor(e.dotColor); setDotSize(e.dotSize); setDotGap(e.dotGap);
     if (e.stripeN !== undefined) setStripeN(e.stripeN);
@@ -8344,10 +8356,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       <span>比例</span>
                     </div>
                     <div className="h-9 grid grid-cols-5 gap-1 bg-[#111] border border-[#222] p-1 rounded-[6px]">
-                      {CANVAS_RATIOS.map(([name]) => (
-                        <button key={name} onClick={() => setCanvasRatio(name)}
-                          className={`min-w-0 rounded-[3px] text-[9px] font-bold tabular-nums transition-colors ${canvasRatio === name ? 'bg-white text-black' : 'text-[#777] hover:text-white'}`}>
-                          {name}
+                      {CANVAS_RATIO_BUTTONS.map(([label, portrait, landscape]) => (
+                        <button key={label} onClick={() => setCanvasRatio(current => {
+                          /* 換到另一顆時一定先直式；連按同一顆才在直／橫之間切換。 */
+                          if (!ratioButtonActive(current, portrait, landscape)) return portrait;
+                          if (portrait === landscape) return portrait;
+                          return current === portrait ? landscape : portrait;
+                        })}
+                          className={`min-w-0 rounded-[3px] text-[9px] font-bold tabular-nums transition-colors ${ratioButtonActive(canvasRatio, portrait, landscape) ? 'bg-white text-black' : 'text-[#777] hover:text-white'}`}>
+                          {label}
                         </button>
                       ))}
                     </div>

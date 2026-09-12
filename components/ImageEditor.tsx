@@ -8015,7 +8015,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        <div className="flex h-14 border-t border-white/10 bg-black pb-[calc(env(safe-area-inset-bottom,0px)+6px)] box-content">
+        {/* 底部只留 2px：比原本 6px 少 4px。整個底欄、上方滑桿列與預覽內的
+            前後對比鍵會因 flex 可用空間自然下移 4px，預覽也同步多出 4px。 */}
+        <div className="flex h-14 border-t border-white/10 bg-black box-content" style={{ paddingBottom: 2 }}>
           <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
           </button>
