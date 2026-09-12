@@ -1021,7 +1021,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               key={item.key}
               onClick={() => pickPreview(item.key)}
               aria-label={`${item.name}：上傳預覽圖片`}
-              className={`relative w-[94px] shrink-0 overflow-hidden rounded-[10px] flex items-center justify-center active:scale-[0.97] transition-transform duration-300 ${img ? 'border border-white/10' : 'border border-dashed border-white/15 text-white/25'}`}
+              className={`relative w-[110px] shrink-0 overflow-hidden rounded-[10px] flex items-center justify-center active:scale-[0.97] transition-transform duration-300 ${img ? 'border border-white/10' : 'border border-dashed border-white/15 text-white/25'}`}
               style={{ aspectRatio: TILE_RATIO }}
             >
               {img
@@ -1220,7 +1220,10 @@ export const HomePage: React.FC<HomePageProps> = ({
            結果：ABAI／主視覺／下緣漸層的位置一個像素都沒變（13px 剛好被
            「立即使用」上下間距各縮三分之一省下來的量抵銷掉），
            下面那一疊只往上 13px。 */
-        className="home-hero relative z-0 min-h-[calc(100%_+_59px)] px-5 pb-[55px] flex flex-col box-border"
+        /* 修圖頁內容整體上移 25px（正好是 75px 編輯鍵高度的三分之一）。
+           relative top 只改這一屏的視覺位置，不改捲動長度，也不會推動下面的
+           模板頁或旁邊的「我的」。右上聯絡鈕在自身 top 補回同樣的 25px。 */
+        className="home-hero relative top-[-25px] z-0 min-h-[calc(100%_+_59px)] px-5 pb-[55px] flex flex-col box-border"
       >
         {/* --- 上半屏 ---
              參考圖上半是一整塊主視覺，品牌字壓在它的左下角。
@@ -1273,7 +1276,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             aria-label="聯絡方式"
             className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
             /* 14 → 11：整頁往上 3px，這一顆也跟著（見下面那一疊的說明） */
-            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 11px)' }}
+            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 36px)' }}
           >
             <Icon name="mail" className="text-[16px]" />
           </button>
