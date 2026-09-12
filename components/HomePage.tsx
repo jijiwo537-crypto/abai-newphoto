@@ -865,6 +865,63 @@ export const HomePage: React.FC<HomePageProps> = ({
       現在沒匯入就是空的（點下去挑一張），存檔再也不會動到它。 */
   const heroSrc = previews.hero || null;
 
+  /* iOS 主畫面 Web App 的不透明狀態列會固定畫成黑色。viewport 在啟動時
+     宣告為 cover 後，首頁只需補上狀態列背後的主視覺；所有實際內容仍留在
+     WebKit 原來配置的位置，沒有用 transform 或 padding 去推動畫面。 */
+  const standalone = typeof window !== 'undefined' && (
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+    (window.navigator as Navigator & { standalone?: boolean }).standalone === true
+  );
+  const [homeBarColor, setHomeBarColor] = useState('#000000');
+
+  useEffect(() => {
+    if (!heroSrc) {
+      setHomeBarColor('#000000');
+      return;
+    }
+    let active = true;
+    const image = new Image();
+    image.onload = () => {
+      if (!active) return;
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 32;
+        canvas.height = 2;
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        if (!context) return;
+        const width = image.naturalWidth || 1;
+        const height = image.naturalHeight || 1;
+        context.drawImage(image, 0, 0, width, Math.max(1, height * 0.08), 0, 0, 32, 2);
+        const pixels = context.getImageData(0, 0, 32, 2).data;
+        let red = 0, green = 0, blue = 0, count = 0;
+        for (let i = 0; i < pixels.length; i += 4) {
+          red += pixels[i]; green += pixels[i + 1]; blue += pixels[i + 2]; count++;
+        }
+        const hex = (value: number) => Math.round(value / Math.max(1, count)).toString(16).padStart(2, '0');
+        setHomeBarColor(`#${hex(red)}${hex(green)}${hex(blue)}`);
+      } catch { setHomeBarColor('#000000'); }
+    };
+    image.onerror = () => {
+      if (!active) return;
+      setHomeBarColor('#000000');
+    };
+    image.src = heroSrc;
+    return () => { active = false; };
+  }, [heroSrc]);
+
+  useLayoutEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const previousHtml = html.style.backgroundColor;
+    const previousBody = body.style.backgroundColor;
+    html.style.backgroundColor = homeBarColor;
+    body.style.backgroundColor = homeBarColor;
+    return () => {
+      html.style.backgroundColor = previousHtml;
+      body.style.backgroundColor = previousBody;
+    };
+  }, [homeBarColor]);
+
   /** 整頁共用的那顆檔案選擇器（掛在最外層，見 return 最下面） */
   const previewInput = (
     <input
@@ -979,7 +1036,14 @@ export const HomePage: React.FC<HomePageProps> = ({
   );
 
   return (
-    <div className="w-full h-screen bg-black text-white font-sans flex flex-col overflow-hidden relative">
+    <div
+      className="w-full h-screen bg-black text-white font-sans flex flex-col overflow-hidden relative"
+      /* cover 讓 CSS 視窗多出底部安全區；首頁原本已把分頁列排在舊視窗底端，
+         所以只在主畫面 Web App 把這一項維持為修改前實際取得的 0px。 */
+      style={standalone ? {
+        '--abai-home-safe-bottom': '0px',
+      } as React.CSSProperties : undefined}
+    >
       {/* 主視覺搬到捲動區裡面去了（見下面）。標題列整個拿掉了 ——
            品牌字與聯絡鈕都在首頁那一頁裡，所以主視覺上面不再壓著任何一條。 */}
 
@@ -1420,7 +1484,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       {/* --- 底部分頁 ---
            首頁／靈感是同一條捲軸的兩個位置，點下去就捲過去；「我」才是換頁。 */}
       <div
-        className="relative z-[5] flex px-6 pt-2.5 pb-[calc(env(safe-area-inset-bottom,0px)+20px)] border-t border-white/[0.08] shrink-0"
+        className="relative z-[5] flex px-6 pt-2.5 pb-[calc(var(--abai-home-safe-bottom,env(safe-area-inset-bottom,0px))+20px)] border-t border-white/[0.08] shrink-0"
         style={{ background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
       >
         {NAV_ITEMS.map(n => {
@@ -1463,7 +1527,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               exit={{ y: '100%' }}
               transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
               onClick={e => e.stopPropagation()}
-              className="w-full max-w-[430px] rounded-t-[24px] bg-[#141414] border-t border-x border-white/10 px-6 pt-5 pb-[calc(env(safe-area-inset-bottom,0px)+44px)]"
+              className="w-full max-w-[430px] rounded-t-[24px] bg-[#141414] border-t border-x border-white/10 px-6 pt-5 pb-[calc(var(--abai-home-safe-bottom,env(safe-area-inset-bottom,0px))+44px)]"
             >
               {/* 標題列：只有一顆關閉／返回，標題留白讓版面乾淨 */}
               <div className="flex items-start justify-between mb-6">
