@@ -1986,6 +1986,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* renderToCanvas 宣告在動畫 state 之前，圖案波浪的即時幅度因此走 ref；
      拖滑桿時不重建龐大的繪圖函式，但下一格一定讀到最新數值。 */
   const moShapeAmpRef = useRef(50);
+  const moShapeCfgRef = useRef<MoCfg>({ ...MO_DEFAULT, dur: durFromSpeed(30), idle: 'float' });
   const envKey = (e: any) => {
     try {
       return JSON.stringify(e, (k, v) => (v instanceof HTMLImageElement ? v.src.slice(0, 96) : v));
@@ -4220,12 +4221,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          一條一條橫向接縫。每顆圖案本來就是獨立單位，直接依它在遮罩中的
          x 位置做同一條連續正弦位移，視覺仍是由左到右的波浪，同時完全
          避免 Safari 動畫格上的切片縫與鋸齒。 */
-      const waveY = f.gridWave === undefined || (f.waveMix ?? 1) <= 1e-5
+      const shapeMo = moShapeCfgRef.current;
+      /* 常駐波浪是一整群小圖案共用的同一條時間軸。以前 composeMo 為每顆
+         圖案加入 hash phase，加上每顆進場結束時間不同，結果相鄰兩顆也在
+         不同波形上，看起來像亂飄。現在只讓 x 位置決定波峰／波谷；每顆仍
+         是獨立單位、輪廓完全不變，只做自己的垂直位移。 */
+      const groupIdleAt = shapeMo.in === 'none' ? 0 : shapeMo.delay + shapeMo.dur;
+      const groupIdleT = Math.max(0, (a.t ?? 0) - groupIdleAt);
+      const groupAttackP = Math.max(0, Math.min(1, groupIdleT / 0.72));
+      /* 進場本身也是波浪時，結尾的 phase=1 與新循環 phase=0 是同一幀，
+         不需要再把幅度降回 0；其餘進場才用柔和 attack 接入。 */
+      const groupWaveMix = shapeMo.in === 'grid-wave'
+        ? 1
+        : groupAttackP * groupAttackP * (3 - 2 * groupAttackP);
+      const isGroupIdleWave = shapeMo.idle === 'grid-wave' && (a.t ?? 0) >= groupIdleAt;
+      const wavePhase = isGroupIdleWave
+        ? groupIdleT * shapeMo.speed * 0.22
+        : f.gridWave;
+      const waveMix = isGroupIdleWave ? groupWaveMix : (f.waveMix ?? 1);
+      const waveY = wavePhase === undefined || waveMix <= 1e-5
         ? 0
-        : Math.sin((h.x / Math.max(1, maskW) - f.gridWave) * Math.PI * 2)
+        : Math.sin((h.x / Math.max(1, maskW) - wavePhase) * Math.PI * 2)
           * Math.min(10, base * 0.065)
           * Math.max(0.15, (moShapeAmpRef.current ?? 50) / 100)
-          * (f.waveMix ?? 1);
+          * waveMix;
       return {
         k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base + waveY, rot: f.rot, a: f.a, fx: f.fx,
         burst: f.burst || 0,
@@ -6453,6 +6472,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      常駐維持上下飄（圖片與文字才是預設靜止）。 */
   const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: durFromSpeed(30), idle: 'float' });
   moShapeAmpRef.current = moShape.amp;
+  moShapeCfgRef.current = moShape;
   /** 連線：起始、畫完要多久、以及線往前長的曲線 */
   const [moLink, setMoLink] = useState({ delay: 0, dur: durFromSpeed(80), ease: 'linear' });
   /** 動畫頁上正在調哪一個元素：'shape' | 'link' | 物件 id */

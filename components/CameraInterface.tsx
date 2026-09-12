@@ -193,7 +193,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [capabilities, setCapabilities] = useState<MediaTrackCapabilities | null>(null);
 
   const [settings, setSettings] = useState<CameraSettings>({
-    kelvin: 5200,
+    kelvin: 5500,
     focalLength: '1.0x',
     exposure: '0.0'
   });
