@@ -332,15 +332,18 @@ select:focus, select:focus-visible {
   .home-scroll { --lib-lift: 0px; }
 }
 
-/* 狀態列改成 black-translucent 之後，畫面會鋪到瀏海底下。
-   首頁刻意要這個效果（主視覺頂到最上面），但其他全螢幕工具的標題列不能被蓋住 ——
-   它們在最外層掛這個 class，補回瀏海的高度，排版就跟以前一模一樣。 */
+/* 首頁使用透明狀態列，但所有工具頁仍必須保有修改前的獨立 viewport。
+   用實際的位置與高度重建舊 viewport，並建立 fixed containing block：如此美顏、
+   仿色、編輯器與導出流程內再深的 fixed inset-0 都只會鋪滿工具頁，不會跑進
+   首頁專用的狀態列區。首頁沒有掛 safe-top，因此完全不受這段影響。 */
 .safe-top {
-  padding-top: env(safe-area-inset-top, 0px);
-  /* 舊版不使用 viewport-fit=cover 時，工具頁的 layout viewport 本來就一路到
-     螢幕底部；cover 開啟後若再補一次 bottom inset，整個 flex 介面會被往上
-     擠 34px。這裡維持 0，工具頁的每一個控制項便仍停在原本座標。 */
+  height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px)) !important;
+  margin-top: env(safe-area-inset-top, 0px);
+  padding-top: 0;
   padding-bottom: 0;
+  transform: translateZ(0);
+  box-sizing: border-box;
 }
 
 /* 非首頁工具沿用透明 viewport 時，原本潛伏的 bottom env() 會突然多算一次。
