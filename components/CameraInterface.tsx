@@ -43,7 +43,7 @@ const ZOOM_STEPS: { label: string; factor: number; mm: string }[] = [
  * 因第二張仍在主執行緒壓 PNG 而整個介面卡住。Safari 偶爾不回呼 toBlob，必須
  * 自己截止；逾時後讓 finally 解鎖快門，不能永遠停在「拍攝中」。
  */
-const canvasToBlobUrl = (cvs: HTMLCanvasElement, timeoutMs = 2500): Promise<string> =>
+const canvasToBlobUrl = (cvs: HTMLCanvasElement, timeoutMs = 4500): Promise<string> =>
   new Promise((resolve, reject) => {
     let settled = false;
     const finish = (fn: () => void) => {
@@ -57,7 +57,7 @@ const canvasToBlobUrl = (cvs: HTMLCanvasElement, timeoutMs = 2500): Promise<stri
       cvs.toBlob(
         b => finish(() => b ? resolve(URL.createObjectURL(b)) : reject(new Error('toBlob failed'))),
         'image/jpeg',
-        0.95,
+        0.98,
       );
     } catch (error) {
       finish(() => reject(error));
@@ -273,11 +273,17 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       
       try {
         const constraints: MediaStreamConstraints = {
-          video: { 
-            facingMode: { exact: facingMode },
-            width: { ideal: 3840 }, 
-            height: { ideal: 2160 } 
-          },
+          video: {
+            /* 先向瀏覽器要求感光元件最接近原生照片的 4:3、高解析度串流。
+               ideal 不是硬性條件：舊 iPhone／WebView 做不到時會自動給裝置最高可用值，
+               不會像 exact 那樣直接讓相機啟動失敗。限制 30fps 是把頻寬優先留給解析度。 */
+            facingMode: { ideal: facingMode },
+            width: { ideal: 4096 },
+            height: { ideal: 3072 },
+            aspectRatio: { ideal: 4 / 3 },
+            frameRate: { ideal: 30, max: 30 },
+            resizeMode: { ideal: 'none' },
+          } as MediaTrackConstraints,
           audio: false
         };
 
@@ -287,7 +293,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         } catch (e) {
            mediaStream = await navigator.mediaDevices.getUserMedia({
              ...constraints,
-             video: { facingMode, width: { ideal: 1920 }, height: { ideal: 1080 } }
+             video: { facingMode, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: { ideal: 30, max: 30 } }
            });
         }
 
@@ -364,40 +370,13 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, [facingMode, videoEl]);
 
   /* ---------- 閃光燈 ----------
-     瀏覽器上真正能控制閃光燈的只有兩條路，優先用第一條：
-
-     ① ImageCapture.takePhoto({ fillLightMode: 'flash' })
-        這才是「相機閃光燈」—— 由系統把 LED 的觸發跟曝光同步，
-        跟原生相機 app 拍出來的一樣。要先問 getPhotoCapabilities()
-        的 fillLightMode 有沒有列出 'flash'。
-     ② torch 約束（手電筒常亮）
-        沒有 ① 的裝置退而求其次：按下快門前點亮、等自動曝光跟上、
-        拍完立刻熄掉。亮度與白平衡不如 ①，但至少是真的補光。
-
-     兩條都沒有就是這台裝置／這顆鏡頭沒有閃光燈（多數前鏡頭、
-     以及目前所有 iOS Safari 都是這樣）。這時按鈕直接停用 ——
-     不會假裝有，也不會用白螢幕充數。 */
+     網頁連拍管線只使用不會暫停串流的 torch 約束。ImageCapture.takePhoto
+     雖然有裝置能同步硬體閃光，但也正是部分行動 WebView 拍第二張會鎖死的來源；
+     所以沒有 torch 就明確停用，不顯示一顆實際不會補光的按鈕。 */
   /* 注意是比對「值」不是「有沒有這個鍵」：部分裝置會列出 torch 但值是 false，
      只看鍵存不存在的話會誤判成有閃光燈，按下去卻什麼都不會發生。 */
   const hasTorch = (capabilities as any)?.torch === true;
-  /** 這顆鏡頭支不支援真正的閃光燈（takePhoto 的 fillLightMode） */
-  const [hasPhotoFlash, setHasPhotoFlash] = useState(false);
-  const flashAvailable = hasPhotoFlash || hasTorch;
-
-  useEffect(() => {
-    let alive = true;
-    setHasPhotoFlash(false);
-    const IC = (window as any).ImageCapture;
-    if (!IC || !videoTrack) return;
-    (async () => {
-      try {
-        const caps: any = await new IC(videoTrack).getPhotoCapabilities();
-        const modes: string[] = caps?.fillLightMode || [];
-        if (alive) setHasPhotoFlash(Array.isArray(modes) && modes.includes('flash'));
-      } catch { /* 問不到就當作沒有 */ }
-    })();
-    return () => { alive = false; };
-  }, [videoTrack]);
+  const flashAvailable = hasTorch;
 
   /* 沒有閃光燈的鏡頭就把開關關掉，不然按鈕亮著卻不會亮燈 */
   useEffect(() => { if (!flashAvailable && flashOn) setFlashOn(false); }, [flashAvailable, flashOn]);
@@ -593,10 +572,17 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   }, []);
 
   const capturingRef = useRef(false);
+  /* 編碼高解析照片時若使用者又按快門，不丟掉那次操作：排進短佇列，上一張完成
+     就立刻取下一張新幀。上限 3 是避免極端連點在手機上累積無限工作。 */
+  const captureQueueRef = useRef(0);
+  const capturePhotoRef = useRef<() => void>(() => {});
   const capturePhoto = useCallback(async () => {
     const video = videoEl;
     if (!video || !videoTrack || videoTrack.readyState === 'ended') return;
-    if (capturingRef.current) return;      // 上一張還沒拍完就不要再進來
+    if (capturingRef.current) {
+      captureQueueRef.current = Math.min(3, captureQueueRef.current + 1);
+      return;
+    }
     capturingRef.current = true;
     setIsCapturing(true);
 
@@ -612,8 +598,21 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       await waitForCameraFrame(video);
       if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
 
-      const srcW = video.videoWidth;
-      const srcH = video.videoHeight;
+      /* Viewfinder 的 WebGL 畫布本來就以 videoWidth × videoHeight 繪製，
+         所以直接取它能同時保留最高可用像素，以及畫面上看到的曝光、色溫、
+         LUT、柔光、朦朧與數位變焦。若 GPU 當下尚未交出有效幀，才退回原始影片。 */
+      let captureSource: HTMLCanvasElement | HTMLVideoElement = video;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const rendered = viewfinderRef.current?.getCanvas();
+        if (rendered && rendered.width > 0 && rendered.height > 0 && canvasHasFrame(rendered)) {
+          captureSource = rendered;
+          break;
+        }
+        await waitForCameraFrame(video, 600);
+      }
+
+      const srcW = captureSource instanceof HTMLVideoElement ? captureSource.videoWidth : captureSource.width;
+      const srcH = captureSource instanceof HTMLVideoElement ? captureSource.videoHeight : captureSource.height;
       let targetRatio = 2/3; // Default 3:2 (Portrait 2:3)
       if (aspectRatio === '16:9') targetRatio = 9/16;
       const srcRatio = srcW / srcH;
@@ -630,9 +629,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         offsetY = (srcH - cropH) / 2;
       }
 
-      /* 固定使用獨立的 2D 拍照畫布，不再讀／改即時預覽的 WebGL 畫布。
-         長邊 2560 在手機上兼顧細節與穩定記憶體，連拍也不會逐張膨脹。 */
-      const outputScale = Math.min(1, 2560 / Math.max(cropW, cropH));
+      /* 輸出保留來源的完整可用解析度；只在極少數超過 WebGL 常見安全上限的
+         串流才夾到 4096。畫布固定重用、相簿只持有壓縮後的 Blob，因此連拍不會
+         每張多留一份未壓縮像素，也不會重現第二張耗盡記憶體的問題。 */
+      const outputScale = Math.min(1, 4096 / Math.max(cropW, cropH));
       const outW = Math.max(1, Math.round(cropW * outputScale));
       const outH = Math.max(1, Math.round(cropH * outputScale));
       const photoCanvas = canvasRef.current || document.createElement('canvas');
@@ -640,16 +640,21 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       photoCanvas.height = outH;
       const ctx = photoCanvas.getContext('2d', { alpha: false });
       if (!ctx) return;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
 
       const draw = () => {
         ctx.save();
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.clearRect(0, 0, outW, outH);
-        /* 曝光仍直接烘焙進照片；其餘即時預覽效果不參與硬體幀取得，
-           避免任何濾鏡資源載入失敗拖垮快門。 */
-        const exposure = parseFloat(settings.exposure) || 0;
-        ctx.filter = `brightness(${Math.max(0.25, Math.min(4, Math.pow(2, exposure)))})`;
-        ctx.drawImage(video, offsetX, offsetY, cropW, cropH, 0, 0, outW, outH);
+        ctx.filter = 'none';
+        /* GPU 畫布已包含所有即時效果；只有 GPU 尚未就緒而退回 video 時，
+           才在 2D 備援裡補上曝光，確保任何情況至少都能得到清楚、非黑的照片。 */
+        if (captureSource instanceof HTMLVideoElement) {
+          const exposure = parseFloat(settings.exposure) || 0;
+          ctx.filter = `brightness(${Math.max(0.25, Math.min(4, Math.pow(2, exposure)))})`;
+        }
+        ctx.drawImage(captureSource, offsetX, offsetY, cropW, cropH, 0, 0, outW, outH);
         ctx.restore();
       };
 
@@ -659,6 +664,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         draw();
         if (canvasHasFrame(photoCanvas)) break;
         await waitForCameraFrame(video, 600);
+        const rendered = viewfinderRef.current?.getCanvas();
+        if (rendered && canvasHasFrame(rendered)) captureSource = rendered;
       }
       if (!canvasHasFrame(photoCanvas)) return;
 
@@ -672,8 +679,14 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       setTorch(false);
       capturingRef.current = false;
       setIsCapturing(false);
+      if (captureQueueRef.current > 0) {
+        captureQueueRef.current -= 1;
+        requestAnimationFrame(() => capturePhotoRef.current());
+      }
     }
   }, [aspectRatio, canvasHasFrame, flashOn, hasTorch, setTorch, settings.exposure, videoTrack, videoEl, waitForCameraFrame]);
+  capturePhotoRef.current = capturePhoto;
+  useEffect(() => () => { captureQueueRef.current = 0; }, []);
 
   /* 倒數用的計時器要抓在 ref 上：離開相機時一定要取消，
      不然頁面關掉之後它還會跳出來呼叫拍照。 */
@@ -1032,7 +1045,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
       {/* 比上一版下移 16px；仍比最初多留 24px，底部不會再顯得擁擠。 */}
       <section className="flex flex-col px-6 pt-4 pb-16">
-        <div className={`flex justify-center relative mb-2 transition-all duration-300 ${activeControl === 'filters' || activeControl === 'effects' ? 'h-30' : 'h-14'}`}>
+        <div className={`flex justify-center relative mb-2 transition-all duration-300 ${activeControl === 'filters' ? 'h-30' : 'h-14'}`}>
           {activeControl === 'none' ? (
             <div className="flex items-center justify-between w-full max-sm px-0 animate-in h-full gap-1 overflow-x-auto no-scrollbar">
               <button onClick={() => setActiveControl('exposure')} className="p-3 active:scale-90 transition-transform shrink-0">
@@ -1100,7 +1113,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                </div>
             </div>
           ) : activeControl === 'effects' ? (
-            <div className="w-full flex flex-col items-center animate-in h-full justify-center gap-3 px-4">
+            /* 特效與曝光／白平衡共用同一個 56px 控制列高度，打開時觀景窗不會上移。 */
+            <div className="w-full flex items-center animate-in h-full justify-center px-10 relative">
               <div className="flex items-center justify-center gap-3">
                 {FX_ITEMS.map(it => {
                   const on = fx[it.id] > 0;
@@ -1108,7 +1122,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                     <button
                       key={it.id}
                       onClick={() => { triggerHaptic(); setFx(prev => ({ ...prev, [it.id]: on ? 0 : it.on })); }}
-                      className={`px-5 h-10 rounded-full text-[12px] font-bold tracking-[0.12em] border transition-all active:scale-90 ${
+                      className={`px-5 h-10 rounded-full text-[12px] font-bold tracking-[0.12em] border transition-all active:scale-95 ${
                         on ? 'bg-white text-black border-white' : 'bg-white/5 text-white/60 border-white/15'
                       }`}
                     >
@@ -1117,8 +1131,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                   );
                 })}
               </div>
-              <button onClick={() => { triggerHaptic(); setActiveControl('none'); }} className="w-7 h-7 bg-white/5 hover:bg-white/15 text-white/40 hover:text-white rounded-full flex items-center justify-center active:scale-90 transition-all border border-white/5 backdrop-blur-lg">
-                <Icon name="expand_more" className="text-base" />
+              <button
+                onClick={() => { triggerHaptic(); setActiveControl('none'); }}
+                aria-label="收合特效"
+                className="absolute right-5 top-1/2 -translate-y-1/2 w-7 h-9 text-white/45 hover:text-white flex items-center justify-center active:scale-90 transition-all"
+              >
+                <Icon name="expand_more" className="text-lg" />
               </button>
             </div>
           ) : (
@@ -1187,8 +1205,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           <div className="flex justify-center">
             <button 
               aria-label="拍照"
-              disabled={countdown !== null || isCapturing}
-              className={`relative w-[72px] h-[72px] flex items-center justify-center transition-all ${countdown !== null || isCapturing ? 'opacity-50' : 'active:scale-95'}`}
+              disabled={countdown !== null}
+              aria-busy={isCapturing}
+              className={`relative w-[72px] h-[72px] flex items-center justify-center transition-all ${countdown !== null ? 'opacity-50' : 'active:scale-95'}`}
               onClick={handleShutterClick}
             >
               <div className="absolute inset-0 rounded-full border-[2.5px] border-white/30"></div>
