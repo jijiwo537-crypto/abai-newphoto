@@ -17,7 +17,7 @@ declare global {
   }
 }
 
-type AspectRatio = '16:9' | '4:3' | '3:2';
+type AspectRatio = '16:9' | '3:2';
 type TimerMode = 0 | 3 | 10;
 type ActiveControl = 'none' | 'kelvin' | 'exposure' | 'filters' | 'effects';
 
@@ -553,175 +553,127 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     }
   };
 
-  /* 有些裝置的 takePhoto／applyConstraints 會卡住不回來，
-     整個拍照流程就停在半路 —— 白畫面收不掉、快門也一直是停用的。
-     所有會跟相機硬體打交道的呼叫一律加上時限，逾時就走下一條路。 */
+  /* 所有會跟相機硬體打交道的呼叫一律有截止時間；裝置不回應也不能鎖死介面。 */
   const withLimit = <T,>(p: Promise<T>, ms: number): Promise<T> =>
     Promise.race([p, new Promise<T>((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))]);
 
+  /** 等下一個真正的影片幀，而不是在兩幀之間重複讀同一張 drawing buffer。 */
+  const waitForCameraFrame = useCallback(async (video: HTMLVideoElement, ms = 900) => {
+    if (video.paused) {
+      try { await withLimit(video.play(), 700); } catch { /* loadeddata 後再試 */ }
+    }
+    if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+      await withLimit(new Promise<void>((resolve) => {
+        const done = () => { video.removeEventListener('loadeddata', done); resolve(); };
+        video.addEventListener('loadeddata', done, { once: true });
+      }), ms).catch(() => {});
+    }
+    const requestFrame = (video as any).requestVideoFrameCallback as undefined | ((cb: () => void) => number);
+    if (requestFrame) {
+      await withLimit(new Promise<void>(resolve => requestFrame.call(video, () => resolve())), ms).catch(() => {});
+    } else {
+      await withLimit(new Promise<void>(resolve => requestAnimationFrame(() => resolve())), ms).catch(() => {});
+    }
+  }, []);
+
+  /** 只把「完全沒有任何色彩資料」視為壞幀；真正的夜景仍會保留。 */
+  const canvasHasFrame = useCallback((canvas: HTMLCanvasElement) => {
+    try {
+      const probe = document.createElement('canvas');
+      probe.width = 12; probe.height = 12;
+      const p = probe.getContext('2d', { willReadFrequently: true });
+      if (!p) return false;
+      p.drawImage(canvas, 0, 0, 12, 12);
+      const px = p.getImageData(0, 0, 12, 12).data;
+      for (let i = 0; i < px.length; i += 4) {
+        if (px[i] !== 0 || px[i + 1] !== 0 || px[i + 2] !== 0) return true;
+      }
+      return false;
+    } catch { return false; }
+  }, []);
+
   const capturingRef = useRef(false);
   const capturePhoto = useCallback(async () => {
-    if (!viewfinderRef.current) return;
+    const video = videoEl;
+    if (!video || !videoTrack || videoTrack.readyState === 'ended') return;
     if (capturingRef.current) return;      // 上一張還沒拍完就不要再進來
     capturingRef.current = true;
-
-    try {
     setIsCapturing(true);
 
-    /* 走 ① 真閃光的話，燈是由 takePhoto 自己在曝光那一瞬間打的，
-       這裡什麼都不用做；走 ② 手電筒才需要先點亮、等自動曝光跟上。 */
-    const useFillLight = flashOn && hasPhotoFlash;
-    let torchOn = false;
-    if (flashOn && !useFillLight && hasTorch) {
-      try { torchOn = await withLimit(setTorch(true), 800); } catch { torchOn = false; }
-      if (torchOn) await new Promise(r => setTimeout(r, 300));   // 等 AE 收斂
-    }
-
-    /* 跟相機要一張「完整感光元件解析度」的靜態照，再走跟預覽同一條 GPU
-       管線 —— 顏色、濾鏡、特效完全一致，但畫素比預覽影像多好幾倍。
-
-       要用 takePhoto()：grabFrame() 取的只是「預覽影像」那一幀，解析度
-       跟預覽一模一樣，換了等於沒換。takePhoto 才會真的按下感光元件那一張，
-       而且要自己把 imageWidth/imageHeight 指定成裝置支援的最大值，
-       不指定的話多數裝置只會給預設（通常還是預覽大小）。
-
-       iOS Safari 至今沒有 ImageCapture，會自動落到下面的退路，
-       解析度跟原本一樣，不會變差。 */
-    let webglCanvas: HTMLCanvasElement | null = null;
-    let usedStill = false;
-    const vf = viewfinderRef.current;
-    const liveW = videoEl?.videoWidth || 0;
     try {
-      const IC = (window as any).ImageCapture;
-      if (IC && videoTrack && vf.renderStill) {
-        const ic = new IC(videoTrack);
-        let bmp: ImageBitmap | null = null;
-        try {
-          const opts: any = {};
-          if (useFillLight) opts.fillLightMode = 'flash';
-          try {
-            const caps: any = await withLimit<any>(ic.getPhotoCapabilities(), 800);
-            if (caps?.imageWidth?.max && caps?.imageHeight?.max) {
-              /* 不要無腦要最大值：48MP 那種一張就要好幾秒，而且解碼＋上傳貼圖
-                 很容易把手機記憶體吃爆 —— 那正是「拍完常常什麼都沒出來」的原因。
-                 夾在 GPU 貼圖上限與 4096 之間，畫質已經遠高於預覽影像。 */
-              const cap = Math.min(4096, vf.maxTextureSize?.() || 4096);
-              const k = Math.min(1, cap / Math.max(caps.imageWidth.max, caps.imageHeight.max));
-              opts.imageWidth = Math.round(caps.imageWidth.max * k);
-              opts.imageHeight = Math.round(caps.imageHeight.max * k);
-            }
-          } catch { /* 拿不到能力表就用預設設定拍 */ }
-          const blob: any = await withLimit<any>(ic.takePhoto(opts), 3000);
-          if (blob) bmp = await withLimit<ImageBitmap>(createImageBitmap(blob), 1800);
-        } catch {
-          // takePhoto 在部分裝置上不穩，退一步用預覽那一幀
-          try { bmp = await withLimit<any>(ic.grabFrame(), 800); } catch { bmp = null; }
-        }
-        if (bmp && bmp.width > liveW) {
-          webglCanvas = vf.renderStill(bmp, bmp.width, bmp.height);
-          usedStill = !!webglCanvas;
-        }
-        if (bmp && (bmp as any).close) (bmp as any).close();
+      /* 補光只走持續的 torch 約束；ImageCapture.takePhoto 在行動 WebView 上會暫停
+         串流或讓第二次呼叫永久等待，所以新的連拍管線完全不再依賴它。 */
+      let torchOn = false;
+      if (flashOn && hasTorch) {
+        try { torchOn = await withLimit(setTorch(true), 700); } catch { torchOn = false; }
+        if (torchOn) await new Promise(resolve => setTimeout(resolve, 220));
       }
-    } catch (e) { /* 不支援就用預覽畫布，畫質跟原本一樣 */ }
-    if (!webglCanvas) webglCanvas = viewfinderRef.current.getCanvas();
 
-    if (torchOn) setTorch(false);
+      await waitForCameraFrame(video);
+      if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
 
-    /* 手機上把幾千萬像素塞進畫布有時會靜靜地失敗（不丟錯，就是一片黑）。
-       抽樣檢查一下，真的空白就退回預覽畫布，至少一定拍得到東西。
-       一定要在算裁切尺寸之前做，換了來源尺寸也會跟著換。 */
-    const looksBlank = (cv: HTMLCanvasElement) => {
-      try {
-        const t = document.createElement('canvas'); t.width = 16; t.height = 16;
-        const g = t.getContext('2d')!; g.drawImage(cv, 0, 0, 16, 16);
-        const d = g.getImageData(0, 0, 16, 16).data;
-        for (let i = 0; i < d.length; i += 4) if (d[i] > 8 || d[i + 1] > 8 || d[i + 2] > 8) return false;
-        return true;
-      } catch { return false; }
-    };
-    if (usedStill && webglCanvas && looksBlank(webglCanvas)) {
-      try { vf.releaseStill?.(); } catch {}
-      usedStill = false;
-      webglCanvas = viewfinderRef.current.getCanvas();
-    }
-
-    /* Safari 偶爾會交回一張尺寸正常、內容卻全黑的 WebGL drawing buffer。
-       這時不要把黑畫面存進相簿，直接用仍在播放的 video 當可靠備援。 */
-    let captureSource: HTMLCanvasElement | HTMLVideoElement | null = webglCanvas;
-    let sourceIsMirrored = true;
-    if (!captureSource || (webglCanvas && looksBlank(webglCanvas))) {
-      if (videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
-        captureSource = videoEl;
-        sourceIsMirrored = false;
-      } else {
-        captureSource = null;
-      }
-    }
-
-    if (captureSource) {
-      // Crop logic based on aspectRatio
+      const srcW = video.videoWidth;
+      const srcH = video.videoHeight;
       let targetRatio = 2/3; // Default 3:2 (Portrait 2:3)
       if (aspectRatio === '16:9') targetRatio = 9/16;
-      if (aspectRatio === '4:3') targetRatio = 3/4;
-      
-      const srcW = captureSource instanceof HTMLVideoElement ? captureSource.videoWidth : captureSource.width;
-      const srcH = captureSource instanceof HTMLVideoElement ? captureSource.videoHeight : captureSource.height;
       const srcRatio = srcW / srcH;
-      
+
       let cropW = srcW;
       let cropH = srcH;
       let offsetX = 0;
       let offsetY = 0;
-
-      // Calculate crop dimensions to center the crop
       if (srcRatio > targetRatio) {
-        // Source is wider than target, crop width
         cropW = srcH * targetRatio;
-        cropH = srcH;
         offsetX = (srcW - cropW) / 2;
       } else {
-        // Source is taller than target (or same), crop height (if needed)
-        cropW = srcW;
         cropH = srcW / targetRatio;
         offsetY = (srcH - cropH) / 2;
       }
 
-      /* 4096px PNG 在 iPhone 上一次就可能佔掉數十 MB；長邊限制 2560，仍有
-         足夠的照片細節，卻能穩定連拍並避免第二張把 WebKit 壓到無回應。 */
+      /* 固定使用獨立的 2D 拍照畫布，不再讀／改即時預覽的 WebGL 畫布。
+         長邊 2560 在手機上兼顧細節與穩定記憶體，連拍也不會逐張膨脹。 */
       const outputScale = Math.min(1, 2560 / Math.max(cropW, cropH));
       const outW = Math.max(1, Math.round(cropW * outputScale));
       const outH = Math.max(1, Math.round(cropH * outputScale));
-      const tempCvs = document.createElement('canvas');
-      tempCvs.width = outW;
-      tempCvs.height = outH;
-      const ctx = tempCvs.getContext('2d');
-      if (ctx) {
-        /* 前鏡頭的預覽是鏡像的（照鏡子的感覺），但存下來要是正常方向，
-           不然字會反過來 —— 這裡把它翻回去。 */
-        if (sourceIsMirrored && visualFacingMode === 'user') {
-          ctx.translate(outW, 0);
-          ctx.scale(-1, 1);
-        }
-        ctx.drawImage(captureSource, offsetX, offsetY, cropW, cropH, 0, 0, outW, outH);
-        // 裁完就把觀景窗畫布還原，那份幾十 MB 的緩衝區不要多留
-        if (usedStill) vf.releaseStill?.();
-        try {
-          const url = await canvasToBlobUrl(tempCvs);
-          ownedUrlsRef.current.add(url);
-          setPhotos(prev => [url, ...prev]);
-        } catch (e) { /* 編碼失敗就保持原相簿；finally 仍會立刻解鎖所有按鈕 */ }
+      const photoCanvas = canvasRef.current || document.createElement('canvas');
+      photoCanvas.width = outW;
+      photoCanvas.height = outH;
+      const ctx = photoCanvas.getContext('2d', { alpha: false });
+      if (!ctx) return;
+
+      const draw = () => {
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, outW, outH);
+        /* 曝光仍直接烘焙進照片；其餘即時預覽效果不參與硬體幀取得，
+           避免任何濾鏡資源載入失敗拖垮快門。 */
+        const exposure = parseFloat(settings.exposure) || 0;
+        ctx.filter = `brightness(${Math.max(0.25, Math.min(4, Math.pow(2, exposure)))})`;
+        ctx.drawImage(video, offsetX, offsetY, cropW, cropH, 0, 0, outW, outH);
+        ctx.restore();
+      };
+
+      /* 第一幀若剛好是相機切換／回前景產生的全黑幀，就等下一幀重畫；
+         最多三次，每次都有時限，永遠不會把黑圖加進相簿。 */
+      for (let attempt = 0; attempt < 3; attempt++) {
+        draw();
+        if (canvasHasFrame(photoCanvas)) break;
+        await waitForCameraFrame(video, 600);
       }
-    }
+      if (!canvasHasFrame(photoCanvas)) return;
+
+      const url = await canvasToBlobUrl(photoCanvas);
+      ownedUrlsRef.current.add(url);
+      setPhotos(prev => [url, ...prev]);
+    } catch {
+      /* 相機或編碼器失敗時不要把 rejection 丟到全域；不新增黑圖，直接恢復快門。 */
     } finally {
-      /* 不管解碼、裁切或 PNG 編碼在哪一步失敗，都要把全解析度畫布還原。
-         舊版只有成功取得 2D context 才釋放，失敗後第二次快門就會留在黑畫布。 */
-      try { vf.releaseStill?.(); } catch { /* 預覽下一幀仍會自行恢復 */ }
+      /* 任一步驟失敗或逾時都會走到這裡：熄燈、解鎖快門與整個介面。 */
       setTorch(false);
       capturingRef.current = false;
       setIsCapturing(false);
     }
-  }, [aspectRatio, flashOn, hasPhotoFlash, hasTorch, setTorch, videoTrack, videoEl, visualFacingMode]);
+  }, [aspectRatio, canvasHasFrame, flashOn, hasTorch, setTorch, settings.exposure, videoTrack, videoEl, waitForCameraFrame]);
 
   /* 倒數用的計時器要抓在 ref 上：離開相機時一定要取消，
      不然頁面關掉之後它還會跳出來呼叫拍照。 */
@@ -799,12 +751,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         // 16:9 (Portrait 9:16) - Requirement: Height matches 3:2 height
         targetH = h32;
         targetW = targetH * (9/16);
-        break;
-      case '4:3':
-        // 4:3（直式 3:4）同樣維持與 3:2 相同高度，只調整寬度
-        targetH = h32;
-        targetW = targetH * (3/4);
-        if (targetW > maxW) { targetW = maxW; targetH = targetW * (4/3); }
         break;
       case '3:2':
       default:
@@ -1098,7 +1044,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
               </button>
 
               <button 
-                onClick={() => setAspectRatio(prev => prev === '3:2' ? '16:9' : prev === '16:9' ? '4:3' : '3:2')}
+                onClick={() => setAspectRatio(prev => prev === '3:2' ? '16:9' : '3:2')}
                 className="p-3 active:scale-90 transition-transform flex flex-col items-center shrink-0"
               >
                 <div className="w-8 h-8 border-[2px] border-white rounded-[6px] flex items-center justify-center">

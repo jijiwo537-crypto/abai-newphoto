@@ -486,34 +486,31 @@ export const HomePage: React.FC<HomePageProps> = ({
     const sc = scrollRef.current;
     const fromMe = nav === 'me';
 
-    /* 「我的」右边藏着的是同一条首页／模板捲轴。返回修图时必须趁它仍在
-       画面外先复位，否则横向滑回来后才做 smooth scroll，会把模板往上滑的
-       整段过程露给使用者。这个复位不可见，也不会影响首页内点击分页的动画。 */
-    if (fromMe && id === 'home' && sc) {
-      navLockRef.current = 'home';
-      sc.scrollTop = 0;
+    /* 從「我的」切回修圖／模板時，捲軸仍藏在畫面外，先直接放到目標位置。
+       這樣點模板只會看到橫向切頁，不會先露出修圖頁再往下滑一整段。 */
+    if (fromMe && id !== 'me' && sc) {
+      navLockRef.current = id;
+      sc.scrollTop = id === 'lib' ? libScrollTop(sc) : 0;
       applyRef.current();
     }
 
     navRef.current = id;
     setNav(id);
     if (id === 'me' || !sc) return;
-    if (fromMe && id === 'home') return;
+    if (fromMe) return;
 
     navLockRef.current = id;
     const target = id === 'lib' ? libScrollTop(sc) : 0;
     let reduce = false;
     try { reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch {}
 
-    /* 首页与模板之间交给浏览器原生捲轴补间，视差由既有 onScroll 同步更新。
-       从「我的」进入模板则等横向页面开始回来后再启动，避免隐藏页动画被取消。 */
+    /* 修圖與模板都在同一頁時，仍保留原生平滑捲動。 */
     const run = () => {
       if (navRef.current !== id) return;
       sc.scrollTo({ top: target, behavior: reduce ? 'auto' : 'smooth' });
       if (reduce) applyRef.current();
     };
-    if (fromMe) requestAnimationFrame(run);
-    else run();
+    run();
   }, [nav]);
 
   /* 使用者自己碰捲軸就立刻解鎖 */
@@ -967,7 +964,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               key={item.key}
               onClick={() => pickPreview(item.key)}
               aria-label={`${item.name}：上傳預覽圖片`}
-              className={`relative w-[82px] shrink-0 overflow-hidden rounded-[10px] flex items-center justify-center active:scale-[0.97] transition-transform duration-300 ${img ? 'border border-white/10' : 'border border-dashed border-white/15 text-white/25'}`}
+              className={`relative w-[94px] shrink-0 overflow-hidden rounded-[10px] flex items-center justify-center active:scale-[0.97] transition-transform duration-300 ${img ? 'border border-white/10' : 'border border-dashed border-white/15 text-white/25'}`}
               style={{ aspectRatio: TILE_RATIO }}
             >
               {img
