@@ -1164,9 +1164,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         </div>
       </div>
 
-      {/* 工具列縮短 16px：按鈕仍完整位於安全區內，下方視覺空位約減半。 */}
+      {/* 再收掉底部多餘空位；44px 仍完整容納圖標與標籤，不會在矮螢幕裁字。 */}
       <div className="border-t border-white/10 bg-black shrink-0">
-      <div className="flex h-12">
+      <div className="flex h-11">
         {BEAUTY_TOOLS.map(t => (
           <button
             key={t.id}

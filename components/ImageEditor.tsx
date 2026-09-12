@@ -6873,7 +6873,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
       <div
         ref={previewBoxRef}
-        className={`flex-1 relative flex bg-[#080808]`}
+        /* min-h-0 是長圖的關鍵：flex 子項預設 min-height:auto，會拿內容高度
+           撐開自己，把下面工具列推出 viewport。預覽只能使用剩餘空間，長圖
+           由內層等比例 contain；工具列因此永遠留在螢幕內。 */
+        className={`flex-1 min-h-0 relative flex overflow-hidden bg-[#080808]`}
       >
         <TransformWrapper
           ref={zoomRef}
@@ -8006,7 +8009,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        <div className="flex h-16 border-t border-white/10 bg-black pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content">
+        <div className="flex h-14 border-t border-white/10 bg-black pb-[calc(env(safe-area-inset-bottom,0px)+6px)] box-content">
           <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
           </button>
