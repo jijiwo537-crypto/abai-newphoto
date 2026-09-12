@@ -1158,7 +1158,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         {tool === 'makeup' && (
           <>
             {sliderRow('筆刷', brush.makeup, BRUSH_RANGE.makeup[0], BRUSH_RANGE.makeup[1], (v) => setBrush(b => ({ ...b, makeup: v })))}
-            {sliderRow('濃度', intensity, 5, 100, setIntensity)}
+            {/* 介面維持 0～100 的細緻刻度，實際筆刷濃度限制在原本的 0～50。 */}
+            {sliderRow('濃度', Math.round(intensity * 2), 0, 100, (v) => setIntensity(v / 2))}
           </>
         )}
         </div>
@@ -1171,8 +1172,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
           <button
             key={t.id}
             onClick={() => setTool(t.id)}
-            /* 只增加上內距，內容中心會下移 3px；分隔線與整個底欄高度不變。 */
-            className={`flex-1 flex flex-col items-center justify-center gap-1 pt-[6px] transition-all ${tool === t.id ? 'text-white' : 'text-white/20'}`}
+            /* 只調整內容位置；分隔線與整個底欄高度維持不變。 */
+            className={`flex-1 flex flex-col items-center justify-center gap-1 pt-[10px] transition-all ${tool === t.id ? 'text-white' : 'text-white/20'}`}
           >
             <Icon name={t.icon} className="text-xl" fill={tool === t.id} />
             <span className="text-[9px] font-black uppercase tracking-[0.15em]">{t.label}</span>
