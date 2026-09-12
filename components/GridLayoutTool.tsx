@@ -2236,8 +2236,8 @@ export const ShapeEditorPanel: React.FC<{
           </div>
           <div className="flex items-center gap-3 px-2 order-2 w-full">
             <div className="flex-1 min-w-0">
-              {slider('描邊', Math.round((layer.shapeStrokeW ?? 0) * 10), 0, 100,
-                v => onChange({ shapeStrokeW: v / 10 }))}
+              {slider('描邊', Math.round(Math.min(4, layer.shapeStrokeW ?? 0) * 25), 0, 100,
+                v => onChange({ shapeStrokeW: v / 25 }))}
             </div>
             <ColorPick compact label="顏色" value={layer.shapeStrokeColor || '#000000'}
               onPick={c => onChange({ shapeStrokeColor: c })}
@@ -5643,7 +5643,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     return {
       lw,
       /** 外描邊的寬度（單邊）。跟框線同一個道理，也要除掉 scale */
-      outer: (image.shapeStrokeW || 0) * (lineBase / 160) / s,
+      outer: Math.min(4, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160) / s,
       dashArray: dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined,
       // 一律平頭：線條的兩端要是切齊的，不要圓角
       cap: 'butt' as const,
@@ -5710,7 +5710,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       ? Math.max(...shapeGlowBlurs(image.width, image.height), 0) * image.scale * glowAmount(image.shapeGlow as any)
       : Math.min(12, image.glow || 0) / 20 * 42 * image.scale;
     const stroke = image.shape
-      ? (image.shapeStrokeW || 0) * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
+      ? Math.min(4, Math.max(0, image.shapeStrokeW || 0))
+          * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
       : (image.strokeWidth || 0) * 2 * image.scale;
     const p = Math.ceil(Math.max(3, glow * 1.5, stroke) + 3);
     /* 泡泡／縮放 II 會讓單一小單位暫時超出靜止墨水外框；Canvas 留白若只
@@ -5925,7 +5926,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         const lw = GRID_SHAPE_KINDS.has(image.shape)
           ? 1.5
           : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
-        const outer = (image.shapeStrokeW || 0) * (lineBase / 160);
+        const outer = Math.min(4, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160);
         ctx.lineJoin = image.shape === 'line' ? 'round' : 'miter';
         ctx.lineCap = 'butt';
         ctx.miterLimit = 4;
@@ -12309,6 +12310,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     ctx: CanvasRenderingContext2D,
     fImg: FloatingImage,
     scaleFactor: number,
+    alphaFlattened = false,
   ) => {
     // 扣掉預覽裡每頁之間那 1px 的間隔（跟圖片同一套）
     const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
@@ -12317,8 +12319,40 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const fw = fImg.width * scaleFactor;
     const fh = fImg.height * scaleFactor;
 
+    /* 匯出也必須跟預覽一樣，先把本體、紋理、外描邊與發光合成成一張，
+       再對結果只套一次透明度。直接在主 Canvas 上逐層套 alpha，半透明時
+       重疊處會變深，還可能顯出發光暫存層的矩形邊緣。只建立物件附近的
+       小畫布，避免 iPhone 匯出高解析圖片時多配置一張完整大畫布。 */
+    const shapeAlpha = Math.max(0, Math.min(1, (fImg.opacity ?? 100) / 100));
+    if (!alphaFlattened && shapeAlpha < .999) {
+      const scaledW = fw * Math.max(.01, fImg.scale || 1);
+      const scaledH = fh * Math.max(.01, fImg.scale || 1);
+      const rr = (fImg.rotation || 0) * Math.PI / 180;
+      const aabbW = Math.abs(Math.cos(rr)) * scaledW + Math.abs(Math.sin(rr)) * scaledH;
+      const aabbH = Math.abs(Math.sin(rr)) * scaledW + Math.abs(Math.cos(rr)) * scaledH;
+      const pad = Math.max(24 * scaleFactor, Math.max(scaledW, scaledH) * .75);
+      const cx = fx + fw / 2, cy = fy + fh / 2;
+      const left = Math.floor(Math.max(0, cx - aabbW / 2 - pad));
+      const top = Math.floor(Math.max(0, cy - aabbH / 2 - pad));
+      const right = Math.ceil(Math.min(ctx.canvas.width, cx + aabbW / 2 + pad));
+      const bottom = Math.ceil(Math.min(ctx.canvas.height, cy + aabbH / 2 + pad));
+      const tmp = document.createElement('canvas');
+      tmp.width = Math.max(1, right - left); tmp.height = Math.max(1, bottom - top);
+      const tc = tmp.getContext('2d');
+      if (tc) {
+        tc.translate(-left, -top);
+        drawShapeLayer(tc, { ...fImg, opacity: 100 }, scaleFactor, true);
+        ctx.save();
+        ctx.globalAlpha *= shapeAlpha;
+        ctx.drawImage(tmp, left, top);
+        ctx.restore();
+        tmp.width = 1; tmp.height = 1;
+        return;
+      }
+    }
+
     ctx.save();
-    ctx.globalAlpha *= (fImg.opacity ?? 100) / 100;
+    ctx.globalAlpha *= alphaFlattened ? 1 : shapeAlpha;
     // CSS 的 scale 以未縮放框的中心為原點，所以先搬到中心再縮放，最後推回左上角
     ctx.translate(fx + fw / 2, fy + fh / 2);
     ctx.rotate((fImg.rotation * Math.PI) / 180);
@@ -12398,7 +12432,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.restore();
     }
     /* 外描邊：畫在本體底下、寬度加倍，跟預覽那一條 path 同一套 */
-    const strokeW = (fImg.shapeStrokeW || 0) * (Math.max(fw, fh) / 160) / sScale;
+    const strokeW = Math.min(4, Math.max(0, fImg.shapeStrokeW || 0))
+      * (Math.max(fw, fh) / 160) / sScale;
     if (strokeW > 0) {
       ctx.save();
       ctx.setLineDash([]);

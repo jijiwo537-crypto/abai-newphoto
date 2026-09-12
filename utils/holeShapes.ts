@@ -496,7 +496,9 @@ export const drawHoleShape = (
   const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
   const solid = o.filled !== false;
   const gcol = o.glowColor || col;
-  const sw = (o.strokeW || 0) * unit;
+  /* 圖形描邊的實際上限固定為舊滑桿 40%（內部值 4）。面板仍顯示
+     0～100，舊草稿若存過更大的數值也在繪製端安全收斂。 */
+  const sw = Math.min(4, Math.max(0, o.strokeW || 0)) * unit;
 
   if (isTextHole(o.hole)) {
     const gly = holeGlyph(o.hole, o.text || '', o);
@@ -600,7 +602,7 @@ export const holeOverflow = (
   const size = Math.min(bw, bh);
   const unit = (o.lineUnit && o.lineUnit > 0) ? o.lineUnit : Math.max(bw, bh) / 160;
   const lw = Math.max(0.4, (o.lineW ?? 6) * unit);
-  const sw = (o.strokeW || 0) * unit;
+  const sw = Math.min(4, Math.max(0, o.strokeW || 0)) * unit;
   /* 發光是 canvas 的 shadowBlur：模糊半徑 r 大約散到 1.5r 才看不見 */
   const glow = o.glow ? Math.max(0, ...blurs) * 1.5 : 0;
   // 中心到墨水外緣：字符／去背圖量墨水，路徑類的半徑就是 size/2

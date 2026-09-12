@@ -5003,13 +5003,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const internalWave = f?.gridWave !== undefined
         && (f.waveMix === undefined || f.waveMix > 1e-5)
         && !(o.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind));
-      const layer = internalWave ? waveLayer() : null;
-      const paintObject = (ctx: CanvasRenderingContext2D) => {
+      const objectAlpha = ((o.opacity ?? ((o.alpha ?? 1) * 100)) / 100) * (f ? f.a : 1);
+      /* 半透明圖形必須先以不透明狀態合成完整本體、紋理、描邊與三層光，
+         最後整張只套一次 alpha。若直接讓每一道筆畫各自半透明，重疊處會
+         累加變深，甚至看見暫存畫布的矩形邊界。 */
+      const flattenShapeAlpha = o.type === 'shape' && objectAlpha < 0.999;
+      const layer = (internalWave || flattenShapeAlpha) ? waveLayer() : null;
+      const paintObject = (ctx: CanvasRenderingContext2D, flattened = false) => {
       ctx.save();
       ctx.translate((o.x + o.w / 2 + (f ? f.dx * o.w : 0)) * s, (o.y + o.h / 2 + (f ? f.dy * o.h : 0)) * s);
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
       if (f && (f.k !== 1 || f.fx !== 1)) ctx.scale(f.k * f.fx, f.k);
-      ctx.globalAlpha = ((o.opacity ?? ((o.alpha ?? 1) * 100)) / 100) * (f ? f.a : 1);
+      ctx.globalAlpha = flattened ? 1 : objectAlpha;
       if (o.type === 'image' && o.img) {
         /* 虛線描邊有常駐動畫時，描邊不能烤進快取那張（快取是靠參數當 key 的，
            每一帧都變等於每一帧重算整張圖）。改成：快取那張不畫描邊，
@@ -5250,7 +5255,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 描邊：畫在本體「底下」、寬度加倍 —— 本體會蓋住內半邊，
            留在外面的就是乾淨的一圈外描邊（跟文字的描邊同一種做法）。
            虛線只屬於本體，描邊那一圈一律是實線。 */
-        const sw = (o.strokeW || 0) * unit;
+        const sw = Math.min(4, Math.max(0, o.strokeW || 0)) * unit;
         if (sw > 0) {
           ctx.save();
           ctx.setLineDash([]);
@@ -5562,11 +5567,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       ctx.restore();
       };
-      if (!layer || !f || f.gridWave === undefined) {
+      if (!layer) {
         paintObject(ctx);
         return;
       }
-      paintObject(layer.ctx);
+      paintObject(layer.ctx, true);
+      if (!f || f.gridWave === undefined) {
+        ctx.save();
+        ctx.globalAlpha = objectAlpha;
+        ctx.drawImage(layer.canvas, 0, 0);
+        ctx.restore();
+        return;
+      }
       const cx = (o.x + o.w / 2 + f.dx * o.w) * s;
       const cy = (o.y + o.h / 2 + f.dy * o.h) * s;
       const rotated = aabbOf((o.w || 1) * (f.k || 1), (o.h || 1) * (f.k || 1), (o.rot || 0) + (f.rot || 0));
@@ -5583,6 +5595,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         * Math.max(.15, (moOf(o).amp ?? 50) / 100) * (f.waveMix ?? 1);
       ctx.save();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = objectAlpha;
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
       /* 以連續斜率近似正弦，而不是把每條直片整片平移。每個交界的 y 完全
@@ -8750,8 +8763,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </div>
                           <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
-                              {shapeSlider('描邊', Math.round((sel.strokeW ?? 0) * 10), 0, 100,
-                                (v: number) => patch({ strokeW: v / 10 }))}
+                              {shapeSlider('描邊', Math.round(Math.min(4, sel.strokeW ?? 0) * 25), 0, 100,
+                                (v: number) => patch({ strokeW: v / 25 }))}
                             </div>
                             <ColorPick compact label="顏色" value={sel.strokeColor || '#000000'}
                               onPick={(c: string) => patch({ strokeColor: c })}
