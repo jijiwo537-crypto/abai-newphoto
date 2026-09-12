@@ -6320,6 +6320,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      尺寸就會用 500ms 補間跑回去。用這個值的話同一次 render 就還原了。 */
   const hslFitNow = activeToolId === 'hsl' ? hslFit : null;
 
+  /* iOS WebKit 對「width:100% + aspect-ratio + max-width + max-height」會做兩次
+     constraint pass。長圖特別明顯：先按寬度放大，再被高度上限夾小。
+     先算成唯一的整數像素尺寸，瀏覽器從第一幀到最後一幀都只拿到同一個盒子。 */
+  const previewFitSize = useMemo(() => {
+    if (!previewAspect || !previewBoxSize.width || !previewBoxSize.height) return null;
+    const maxW = Math.max(1, previewBoxSize.width - 40);
+    const maxH = Math.max(1, hslFitNow ? hslFitNow.mh : previewBoxSize.height - 40);
+    const scale = Math.min(maxW / previewAspect.w, maxH / previewAspect.h);
+    return {
+      width: Math.max(1, Math.round(previewAspect.w * scale)),
+      height: Math.max(1, Math.round(previewAspect.h * scale)),
+    };
+  }, [previewAspect, previewBoxSize, hslFitNow]);
+
   /* 底部功能欄哪幾列要收起來。構圖現在不再是另外開一頁 —— ComposeStudio 只蓋住
      預覽區，分頁列照樣留在原位，所以滑桿列與小分類列都讓給它自己那兩排。 */
   /* 進出構圖不做高度補間。ComposeStudio 是預覽區的 absolute inset-0，
@@ -6929,25 +6943,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   /* 尺寸與比例尚未量完時不先畫錯誤位置；useLayoutEffect 會在首幀
                      顯示前完成量測，所以長圖不會再先抖一下才歸位。 */
                   visibility: !isEditorLoading && previewAspect && previewBoxSize.width && previewBoxSize.height ? 'visible' : 'hidden',
-                  maxHeight: hslFitNow
-                    ? `${hslFitNow.mh}px`
-                    : (previewBoxSize.height ? `${Math.max(1, previewBoxSize.height - 40)}px` : 'calc(100vh - 356px)'),
+                  width: previewFitSize ? `${previewFitSize.width}px` : undefined,
+                  height: previewFitSize ? `${previewFitSize.height}px` : undefined,
+                  maxHeight: 'none',
                   marginBottom: hslFitNow ? `${hslFitNow.mb}px` : undefined,
-                  aspectRatio: previewAspect ? `${previewAspect.w}/${previewAspect.h}` : undefined,
-                  width: previewAspect ? '100%' : 'auto',
-                  /* 高度的上限也要換算成寬度的上限，不然比例會被壓扁。
-                     aspect-ratio 只有在「另一邊自由」的時候才成立：這裡寬度被寫死
-                     100%，一遇到很長的圖，高度被 max-height 夾住、寬度卻不會跟著縮，
-                     框就從 720:1560 變成 358:504，而畫布是 objectFit:'fill'，
-                     整張圖就被橫向拉開（量到 53.9% 變形）。
-                     把同一條高度上限乘上原圖比例當成寬度上限，兩個方向就都守得住。 */
-                  maxWidth: previewAspect
-                    ? (hslFitNow
-                        ? `min(calc(100% - 32px), ${(hslFitNow.mh * previewAspect.w) / previewAspect.h}px)`
-                        : (previewBoxSize.width && previewBoxSize.height
-                            ? `${Math.max(1, Math.min(previewBoxSize.width - 40, (previewBoxSize.height - 40) * previewAspect.w / previewAspect.h))}px`
-                            : `min(calc(100% - 32px), calc((100vh - 356px) * ${previewAspect.w} / ${previewAspect.h}))`))
-                    : undefined,
+                  aspectRatio: undefined,
+                  maxWidth: 'none',
                 }}
               >
                 {/* Single Canvas for Display and Compare */}
@@ -7661,7 +7662,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           image={composePreviewRef.current || originalImgRef.current!}
           geo={draftGeo}
           onChange={setDraftGeo}
-          footerHeight={38}
+          footerHeight={44}
           onCancel={cancelCompose}
           onApply={() => {
             applyGeo(draftGeo);
@@ -7682,7 +7683,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         className={`bg-[#111111] ${subStripHidden ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
         /* 一般、曲線、HSL 與特效細項都佔相同的總控制區高度；內容較少時只在
            內部留位，預覽區不再跟著分頁切換反覆變高變矮。構圖由自己的三列接管。 */
-        style={{ height: activeCategory === 'compose' ? 38 : 'calc(11rem + 38px)' }}
+        style={{ height: 'calc(11rem + 44px)' }}
       >
         <div 
           className={`flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] ${fxPanel ? 'px-4' : 'px-8'}`}
@@ -8051,9 +8052,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         </div>
         {/* 獨立編輯器的 safe-top 已經把可用 viewport 鎖在安全區內，這裡若再讀一次
             env(safe-area-inset-bottom) 就會在安裝版 Web App 底部多出一整塊黑帶。
-            明確採 38px 且不再加 safe-area；進一步收掉按鈕下方殘留空隙，
+            明確採 44px 且不再加 safe-area；上下各留一點安全距離，
             這只作用於主頁進入的獨立編輯器。 */}
-        <div className="flex border-t border-white/10 bg-black shrink-0 mt-auto" style={{ height: 38, paddingBottom: 0 }}>
+        <div className="flex border-t border-white/10 bg-black shrink-0 mt-auto" style={{ height: 44, paddingBottom: 0 }}>
           <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-0.5 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
           </button>
