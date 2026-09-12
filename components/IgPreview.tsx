@@ -1681,7 +1681,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                主畫面指示條（那條小橫線）所在的位置，內容擺到那裡就會被壓住。
                env() 只有在 viewport-fit=cover 時才會回報真實數值，所以再給一個
                24px 的保底，兩者取大的。 */
-            paddingBottom: (embedded || flow) ? 0 : '24px',
+            paddingBottom: (embedded || flow) ? 0 : 'max(env(safe-area-inset-bottom, 0px), 24px)',
             boxSizing: 'border-box',
           }}
         >
@@ -1964,7 +1964,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                      absolute 會貼到那條長容器的最底下。 */
                   bottom: 0,
                   height: '93dvh',
-                  paddingBottom: 0,
+                  paddingBottom: 'env(safe-area-inset-bottom, 0px)',
                 }}
               >
                 {/* 上緣的小握把 */}

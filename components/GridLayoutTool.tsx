@@ -2865,7 +2865,7 @@ return (
     </div>
 
     {/* 3. 分類列：跟編輯一樣的 h-16、上方細線、黑底、底部安全區空隙 */}
-    <div className="flex h-16 border-t border-white/10 bg-black pb-3 box-content shrink-0">
+    <div className="flex h-16 border-t border-white/10 bg-black pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content shrink-0">
       {CATS.map(([id, icon, label]) => (
         <button
           key={id}

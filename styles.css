@@ -345,7 +345,7 @@ select:focus, select:focus-visible {
      其他排的相對位置一個像素都不會變。
      首頁不掛這個 class：它的主視覺要頂到最上面，而它自己的分頁列
      本來就寫了 pb-[calc(env(safe-area-inset-bottom,0px)+20px)]。 */
-  padding-bottom: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 /* 捲到最頂／最底就停住，不要再多滑一段又彈回來（iOS 的橡皮筋），
