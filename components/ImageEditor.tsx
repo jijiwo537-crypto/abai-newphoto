@@ -7659,6 +7659,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             image={composePreviewRef.current || originalImgRef.current!}
             geo={draftGeo}
             onChange={setDraftGeo}
+            footerHeight={38}
             onCancel={cancelCompose}
             onApply={() => {
               applyGeo(draftGeo);
@@ -7676,7 +7677,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           分頁列自己的上緣邊線，兩條 1px 疊在一起看起來就是一條比較粗的線
           （量到亮度剖面多一列：正常只有 29，疊到的時候是 29 + 26）。
           那種狀態下就把外框這一條收掉，留分頁列自己那條。 */}
-      <div className={`bg-[#111111] ${subStripHidden ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}>
+      <div
+        className={`bg-[#111111] ${subStripHidden ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
+        /* 一般、曲線、HSL 與特效細項都佔相同的總控制區高度；內容較少時只在
+           內部留位，預覽區不再跟著分頁切換反覆變高變矮。構圖由自己的三列接管。 */
+        style={{ height: activeCategory === 'compose' ? 38 : 'calc(11rem + 38px)' }}
+      >
         <div 
           className={`flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] ${fxPanel ? 'px-4' : 'px-8'}`}
           style={{
@@ -8044,9 +8050,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         </div>
         {/* 獨立編輯器的 safe-top 已經把可用 viewport 鎖在安全區內，這裡若再讀一次
             env(safe-area-inset-bottom) 就會在安裝版 Web App 底部多出一整塊黑帶。
-            明確採 40px 且不再加 safe-area；進一步收掉按鈕下方殘留空隙，
+            明確採 38px 且不再加 safe-area；進一步收掉按鈕下方殘留空隙，
             這只作用於主頁進入的獨立編輯器。 */}
-        <div className="flex h-10 border-t border-white/10 bg-black shrink-0" style={{ paddingBottom: 0 }}>
+        <div className="flex border-t border-white/10 bg-black shrink-0 mt-auto" style={{ height: 38, paddingBottom: 0 }}>
           <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
           </button>

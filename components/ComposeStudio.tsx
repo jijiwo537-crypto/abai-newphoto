@@ -62,6 +62,8 @@ interface ComposeStudioProps {
    * 所以影片這邊不提供梯形，其餘操作跟照片一模一樣。
    */
   hideKeystone?: boolean;
+  /** 所在工具最底部分頁列的實際高度；拼圖維持原本 77px，獨立編輯器可單獨覆寫。 */
+  footerHeight?: number;
 }
 
 const HANDLES = [
@@ -107,7 +109,7 @@ export const COMPOSE_WARMUP_CLASSES =
   'transition-[background-color,color,border-color] transition-colors uppercase w-12 w-14 ' +
   'w-full w-px';
 
-export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone }) => {
+export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone, footerHeight = FOOTER_H }) => {
   const [tab, setTab] = useState<Tab>('crop');
   const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h' | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
@@ -490,7 +492,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
        跟「編輯」的行為一致。 */
     <div
       className="fixed left-0 right-0 bg-black flex flex-col"
-      style={{ zIndex, top: HEADER_H, bottom: FOOTER_H }}
+      style={{ zIndex, top: HEADER_H, bottom: footerHeight }}
     >
       <style>{`
       `}</style>
@@ -526,7 +528,9 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
              另外 100vh 在手機瀏覽器是「網址列收起來時」的高度（偏大），
              改用 100dvh 才是當下真正看得到的高度。 */
           style={{
-            maxHeight: 'calc(100dvh - 340px)',
+            /* 340 = 固定內容 263 + 舊底欄 77。獨立編輯器底欄較短時必須用
+               實際高度重算，否則構圖舞台下方會憑空留下舊版空位。 */
+            maxHeight: `calc(100dvh - ${263 + footerHeight}px)`,
             touchAction: 'none',
           }}
           onTouchStart={onStageTouchStart}
