@@ -1709,25 +1709,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   // 預覽緩衝的實際比例。構圖裁切之後畫面比例會變，版面必須跟著走，
   // 不能再從已經被舊比例撐開的 canvas 量回來。
   const [previewAspect, setPreviewAspect] = useState<{ w: number; h: number } | null>(null);
-  /**
-   * 外框（負責鎖住預覽比例的那一層）。
-   *
-   * 批量編輯換照片時，畫布的內部尺寸是「同一拍」直接改掉的（cvs.width = …），
-   * 但外框的比例走的是 React state —— 要等下一次繪製才生效。
-   * 中間那一兩幀，新照片就被塞進上一張的比例框裡（畫布是 objectFit: fill），
-   * 看起來就是「換照片時圖被拉了一下」。兩張尺寸差越多、拉得越明顯。
-   *
-   * 所以改照片尺寸的同一拍，就把比例直接寫進 DOM，兩者永遠同一幀。
-   * state 照樣更新（React 之後重繪會寫同一個值），其他地方的邏輯完全不用改。
-   */
+  /** 外框比例只由 React 的單一尺寸計算控制。舊程式會在繪圖途中直接把 DOM
+   *  width 改回 100%，與固定像素高度衝突，iOS 上就會偶發把長圖壓扁。 */
   const previewFitRef = useRef<HTMLDivElement>(null);
   const applyPreviewAspect = useCallback((w: number, h: number) => {
     if (!(w > 0 && h > 0)) return;
-    const el = previewFitRef.current;
-    if (el) {
-      el.style.aspectRatio = `${w}/${h}`;
-      el.style.width = '100%';
-    }
     setPreviewAspect(prev => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
   }, []);
   // 構圖參數。套用之後整個預覽緩衝會用新的幾何重建，色彩流程完全不用知道它的存在。
