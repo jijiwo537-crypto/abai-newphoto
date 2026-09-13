@@ -1429,9 +1429,10 @@ function runThumbChunks<T>(
 }
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false }) => {
-  /* 主頁獨立編輯器與拼圖圖片編輯必須共用完全相同的 48px 分頁列。
-     這裡刻意不再依入口增加高度或 safe-area，避免五個按鈕下方多出黑色空格。 */
-  const footerHeight = 48;
+  /* 主頁獨立編輯器必須逐像素沿用拼圖圖片編輯（ImageAdjustPanel）的分類列：
+     64px 內容高度 + 12px 底部留白。footerHeight 同時參與控制區總高度與構圖
+     舞台計算，不能只改最下面的 DOM，否則外框仍會保留另一套高度而產生黑塊。 */
+  const footerHeight = compactBottomBar ? 76 : 48;
   /* ── 批量編輯 ───────────────────────────────────────────────────────────
      一次匯入多張時，編輯器本身完全不變 —— 畫面上永遠只有「目前這一張」，
      其他張的參數各自收在旁邊。連結中的照片共用同一份參數（改一張＝全部一起改），
@@ -8054,10 +8055,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        {/* 兩種入口直接共用同一份 48px 幾何與 padding，視覺位置不可分叉。 */}
+        {/* 主頁入口直接使用 ImageAdjustPanel 的原始 class；不另加 translate、負
+            margin 或獨立 safe-area，確保圖標、文字與底部空間都落在同一座標。 */}
         <div
-          className="flex border-t border-white/10 bg-black shrink-0 mt-auto"
-          style={{ height: footerHeight, paddingBottom: 0 }}
+          className={`flex border-t border-white/10 bg-black shrink-0 mt-auto ${compactBottomBar ? 'h-16 pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content' : ''}`}
+          style={compactBottomBar ? undefined : { height: footerHeight, paddingBottom: 0 }}
         >
           <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
