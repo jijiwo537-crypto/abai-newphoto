@@ -9109,6 +9109,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 這樣操作欄滑下去的動畫、左右捲動、換頁數都跟得上。
    */
   const pageCtlRefs = useRef(new Map<string, HTMLDivElement>());
+  const seamOverlayRefs = useRef(new Map<string, HTMLDivElement>());
   /** 頁面控制鍵與畫布共用的定位根；不能使用 viewport-fixed，否則瀏覽器
       縮放／iOS visualViewport 改變時兩者會落在不同座標系。 */
   const gridRootRef = useRef<HTMLDivElement>(null);
@@ -9217,7 +9218,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /* 一般模式永遠以工作區的垂直中心縮放。這裡不能把負值夾成 0：
        放大到高於工作區時，夾成 0 會把上緣釘死，視覺上就不是中心放大。 */
     const targetTop = nowMotion ? 0 :
-      (containerSize.height - previewHRef.current * pagesScale) / 2 - 8;
+      (containerSize.height - previewHRef.current * pagesScale) / 2;
     if (Math.abs(kRef.current - pagesScale) < 0.0001
         && Math.abs(stripTopRef.current - targetTop) < .01) {
       /* 手勢結束的 setUserZoom 會讓 React 再 commit 一次。Safari 在那次 commit
@@ -9277,7 +9278,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const i = pagesRef.current.findIndex(pg => pg.id === id);
       if (i < 0) return;
       node.style.transform =
-        `translate3d(${left0 + k * (i * stride + previewWRef.current / 2) - rootLeft}px, ${bottom + 0.25 - rootTop}px, 0) translateX(-50%)`;
+        `translate3d(${left0 + k * (i * stride + previewWRef.current / 2) - rootLeft}px, ${bottom + 2 - rootTop}px, 0) translateX(-50%)`;
+      node.style.visibility = 'visible';
+    });
+    /* 分割線放在縮放容器外，以真實螢幕 1px 繪製。若留在 col 裡再用反向
+       width 抵銷 zoom，WebKit 仍會在相鄰幀做不同的次像素取整，視覺上就會
+       忽粗忽細甚至閃動。這層只追蹤接縫中心與頁面實際高度。 */
+    seamOverlayRefs.current.forEach((node, id) => {
+      const i = pagesRef.current.findIndex(pg => pg.id === id);
+      if (i <= 0) return;
+      const seamCenter = colRect.left + k * (i * stride - 0.5);
+      node.style.transform =
+        `translate3d(${seamCenter - rootLeft - 0.5}px, ${colRect.top - rootTop}px, 0)`;
+      node.style.height = `${colRect.height}px`;
       node.style.visibility = 'visible';
     });
     // 「新增一頁」貼在最後一頁原本的位置旁邊 —— 用算的，才不會被拖曳中的
@@ -9824,7 +9837,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /* 放大後高度超過工作區時 target 會是負值，這正是保持中心縮放所需的
        上移量。不能夾成 0，否則 state 提交後又會把畫布強制貼回頂部。 */
     stripTopRef.current = motionModeRef.current ? 0 :
-      (containerSize.height - previewH * pagesScale) / 2 - 8;
+      (containerSize.height - previewH * pagesScale) / 2;
     applyStripGeometry(pagesScale);
     /* 首次量到真正畫布尺寸時，幾何會由預設值再更新一次；加號也必須在
        同一輪 layout 後重新定位，不能沿用第一次量測留下的 Y 位移。 */
@@ -11764,7 +11777,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       kRef.current = z;
       // 垂直方向也鎖住工作區中心；不能只校正水平、把畫布上緣留在原處。
       stripTopRef.current =
-        (containerSize.height - previewHRef.current * z) / 2 - 8;
+        (containerSize.height - previewHRef.current * z) / 2;
       // 尺寸先寫（scrollWidth 才是對的），再把「捏住的那個點」放回原位
       applyStripGeometry(z, true);
       const cont = containerRef.current;
@@ -14007,15 +14020,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     }}
                   >
                     {pages.map((page, pageIdx) => {
-                      const isPageActive = pageIdx === activePageIndex;
-                      const previewScale = Math.max(0.0001, kRef.current || 1);
-                      /* 頁縫本身也同步呈現對齊狀態，避免原本的深色 1px 分割線
-                         從藍色導引線中央透出，造成頁與頁之間看起來特別細。 */
-                      const seamGuideX = pageIdx * (previewW + 1) - 0.5;
-                      const isSeamGuideActive = pageIdx > 0 && activeGuidelines.some(
-                        guide => guide.type === 'vertical'
-                          && Math.abs(guide.coord - seamGuideX) <= 0.75 / previewScale
-                      );
                       return (
                         <React.Fragment key={page.id}>
                           {pageIdx > 0 && (
@@ -14032,34 +14036,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               style={{
                                 /* 分隔線永遠使用同一個不透明墨色；拖頁與回彈期间也
                                    不再临时变透明，否则那几帧看起来就像被页面盖住。 */
-                                /* 這個 1px 槽位只負責維持既有頁面座標；左右各補成
-                                   相鄰頁底色，真正的分割線由內層反向抵銷 zoom，
-                                   所以任何預覽倍率與頁面順序模式下都固定為 1 螢幕像素。 */
+                                /* 這個槽位只維持既有頁面座標並補成右頁底色；真正的
+                                   1px 分割線在縮放容器外繪製，這裡不能再有描邊或陰影。 */
                                 backgroundColor: page.bgColor,
                                 /* 它必须高于拖起的页面与自由图层。再用同色半像素阴影
                                    覆盖 fractional zoom 在两侧产生的抗锯齿浅边，最终只
                                    留下一条颜色一致的接缝，不会多出旁边那条淡线。 */
                                 position: 'relative',
-                                zIndex: isSeamGuideActive ? 300001 : 200000,
                                 boxShadow: 'none',
-                                transform: 'translateZ(0)',
-                                /* 排序時頁面內容會離開原位置；固定在舊位置的接縫必須
-                                   同步隱藏，否則 Safari 會在旁邊留下那條白色殘線。 */
-                                visibility: pageDragIdx !== null || dragSettle ? 'hidden' : 'visible',
                               }}
-                            >
-                              <div
-                                className="seam-fixed-px absolute inset-y-0 left-0"
-                                style={{
-                                  width: isSeamGuideActive
-                                    ? 'calc(2px / var(--preview-scale, 1))'
-                                    : 'calc(1px / var(--preview-scale, 1))',
-                                  backgroundColor: isSeamGuideActive
-                                    ? 'rgb(59 130 246)'
-                                    : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
-                                }}
-                              />
-                            </div>
+                            />
                           )}
 
                           <div
@@ -14074,9 +14060,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             }}
                             // 這裡刻意不裁切也不自成堆疊環境：佈局才能被拖出這一頁、
                             // 並和一般圖片互相穿插圖層（裁切改由整條頁面容器負責）
-                            className={`relative flex-shrink-0 cursor-pointer transition-[ring-color] duration-200 ${
-                              isPageActive && pages.length === 1 && !pagesMode && !pagesVisual ? 'ring-2 ring-white/20' : ''
-                            } opacity-100`}
+                            className="relative flex-shrink-0 cursor-pointer opacity-100"
                             // 排頁面拖曳：整張頁面（含裡面的佈局）一起跟著手指走。
                             // 被拿起來的那一張微微放大＋加陰影，其他張平順讓開。
                             style={(() => {
@@ -16202,6 +16186,35 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           </div>
         </div>
       </footer>
+
+      {/* 頁與頁之間的分割線：刻意放在 native zoom 容器外，固定為螢幕像素。
+          位置與高度由 positionPageCtls 在縮放、捲動、排序的同一幀更新。 */}
+      {pages.slice(1).map((pg, idx) => {
+        const pageIdx = idx + 1;
+        const previewScale = Math.max(0.0001, kRef.current || 1);
+        const seamGuideX = pageIdx * (previewW + 1) - 0.5;
+        const active = activeGuidelines.some(
+          guide => guide.type === 'vertical'
+            && Math.abs(guide.coord - seamGuideX) <= 0.75 / previewScale
+        );
+        return (
+          <div
+            key={`seam-overlay-${pg.id}`}
+            ref={(el) => {
+              if (el) seamOverlayRefs.current.set(pg.id, el);
+              else seamOverlayRefs.current.delete(pg.id);
+            }}
+            className="absolute left-0 top-0 pointer-events-none"
+            style={{
+              width: active ? '2px' : '1px',
+              height: 0,
+              visibility: 'hidden',
+              backgroundColor: active ? 'rgb(59 130 246)' : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+              zIndex: active ? 300001 : 45,
+            }}
+          />
+        );
+      })}
 
       {/* 頁面順序模式：每一頁正下方的握把與刪除鍵（貼在畫面上，不受畫布裁切影響） */}
       {pagesMode && pages.map((pg, ctlIdx) => {
