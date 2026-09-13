@@ -64,6 +64,8 @@ interface ComposeStudioProps {
   hideKeystone?: boolean;
   /** 所在工具最底部分頁列的實際高度；拼圖維持原本 77px，獨立編輯器可單獨覆寫。 */
   footerHeight?: number;
+  /** 進入構圖前預覽框的實際尺寸上限；有提供時構圖只能等大或更小，不能放大。 */
+  stageLimit?: { width: number; height: number } | null;
 }
 
 const HANDLES = [
@@ -109,7 +111,7 @@ export const COMPOSE_WARMUP_CLASSES =
   'transition-[background-color,color,border-color] transition-colors uppercase w-12 w-14 ' +
   'w-full w-px';
 
-export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone, footerHeight = FOOTER_H }) => {
+export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone, footerHeight = FOOTER_H, stageLimit }) => {
   const [tab, setTab] = useState<Tab>('crop');
   const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h' | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
@@ -149,7 +151,12 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     const fit = () => {
       const box = wrap.getBoundingClientRect();
       if (box.width <= 0 || box.height <= 0) return;
-      const s = Math.min(box.width / baseCanvas.width, box.height / baseCanvas.height);
+      const s = Math.min(
+        box.width / baseCanvas.width,
+        box.height / baseCanvas.height,
+        stageLimit ? stageLimit.width / baseCanvas.width : Number.POSITIVE_INFINITY,
+        stageLimit ? stageLimit.height / baseCanvas.height : Number.POSITIVE_INFINITY,
+      );
       // round 而不是 floor：floor 會比一般預覽算出來的少 1px
       const w = Math.max(1, Math.round(baseCanvas.width * s));
       const h = Math.max(1, Math.round(baseCanvas.height * s));
@@ -165,7 +172,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     const ro = new ResizeObserver(fit);
     ro.observe(wrap);
     return () => ro.disconnect();
-  }, [baseCanvas]);
+  }, [baseCanvas, stageLimit]);
 
   const activeRatio = useMemo(() => {
     const p = ASPECT_PRESETS.find(a => a.id === geo.aspect);

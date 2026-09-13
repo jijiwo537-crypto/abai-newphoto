@@ -6249,22 +6249,34 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      就把值算好，不會先閃一下原尺寸。ResizeObserver 負責轉向／視窗變化。 */
   const previewBoxRef = useRef<HTMLDivElement>(null);
   const [previewBoxSize, setPreviewBoxSize] = useState({ width: 0, height: 0 });
+  const [previewLayoutReady, setPreviewLayoutReady] = useState(false);
 
   /* 以預覽區「實際剩餘尺寸」限制圖片，而不是用 100vh 猜工具列高度。
      這樣超長直圖也一定完整落在上下安全距離內，不會被底欄或頂欄裁掉。 */
   useLayoutEffect(() => {
     const box = previewBoxRef.current;
     if (!box) return;
+    let settleTimer = 0;
+    let lastW = -1;
+    let lastH = -1;
     const measure = () => {
       const rect = box.getBoundingClientRect();
       const next = { width: Math.round(rect.width), height: Math.round(rect.height) };
+      if (next.width === lastW && next.height === lastH) return;
+      lastW = next.width;
+      lastH = next.height;
+      setPreviewLayoutReady(false);
       setPreviewBoxSize(prev => prev.width === next.width && prev.height === next.height ? prev : next);
+      window.clearTimeout(settleTimer);
+      /* iOS 安裝版會在 safe-area 與動態樣式套妥後再送一次 ResizeObserver。
+         連續 80ms 沒再改尺寸才發布預覽，兩次量測都只發生在全黑解析層後面。 */
+      settleTimer = window.setTimeout(() => setPreviewLayoutReady(true), 80);
     };
     measure();
     if (typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(measure);
     ro.observe(box);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); window.clearTimeout(settleTimer); };
   }, []);
 
   /* 預覽的縮放／平移（雙指放大、拖動）。
@@ -6311,8 +6323,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      先算成唯一的整數像素尺寸，瀏覽器從第一幀到最後一幀都只拿到同一個盒子。 */
   const previewFitSize = useMemo(() => {
     if (!previewAspect || !previewBoxSize.width || !previewBoxSize.height) return null;
-    const maxW = Math.max(1, previewBoxSize.width - 40);
-    const maxH = Math.max(1, hslFitNow ? hslFitNow.mh : previewBoxSize.height - 40);
+    const maxW = Math.max(1, previewBoxSize.width - 32);
+    const maxH = Math.max(1, hslFitNow ? hslFitNow.mh : previewBoxSize.height - 32);
     const scale = Math.min(maxW / previewAspect.w, maxH / previewAspect.h);
     return {
       width: Math.max(1, Math.round(previewAspect.w * scale)),
@@ -6705,7 +6717,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         .channel-dot.active { transform: scale(1.1); }
       `}</style>
       
-      {isEditorLoading && (
+      {(isEditorLoading || !previewLayoutReady) && (
         /* 首次解碼期間必須完全遮住預覽；半透明遮罩會把底下 canvas 從初始尺寸
            切換到正確比例的那一幀透出來，看起來就像圖片上下抖了一下。 */
         <div className="absolute inset-0 z-[120] flex items-center justify-center bg-[#080808]">
@@ -6928,7 +6940,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 style={{
                   /* 尺寸與比例尚未量完時不先畫錯誤位置；useLayoutEffect 會在首幀
                      顯示前完成量測，所以長圖不會再先抖一下才歸位。 */
-                  visibility: !isEditorLoading && previewAspect && previewBoxSize.width && previewBoxSize.height ? 'visible' : 'hidden',
+                  visibility: !isEditorLoading && previewLayoutReady && previewAspect && previewBoxSize.width && previewBoxSize.height ? 'visible' : 'hidden',
                   width: previewFitSize ? `${previewFitSize.width}px` : undefined,
                   height: previewFitSize ? `${previewFitSize.height}px` : undefined,
                   maxHeight: 'none',
@@ -7648,7 +7660,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           image={composePreviewRef.current || originalImgRef.current!}
           geo={draftGeo}
           onChange={setDraftGeo}
-          footerHeight={44}
+          footerHeight={48}
+          stageLimit={previewFitSize}
           onCancel={cancelCompose}
           onApply={() => {
             applyGeo(draftGeo);
@@ -7669,7 +7682,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         className={`bg-[#111111] ${subStripHidden ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
         /* 一般、曲線、HSL 與特效細項都佔相同的總控制區高度；內容較少時只在
            內部留位，預覽區不再跟著分頁切換反覆變高變矮。構圖由自己的三列接管。 */
-        style={{ height: 'calc(11rem + 44px)' }}
+        style={{ height: 'calc(11rem + 48px)' }}
       >
         <div 
           className={`flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] ${fxPanel ? 'px-4' : 'px-8'}`}
@@ -8038,16 +8051,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         </div>
         {/* 獨立編輯器的 safe-top 已經把可用 viewport 鎖在安全區內，這裡若再讀一次
             env(safe-area-inset-bottom) 就會在安裝版 Web App 底部多出一整塊黑帶。
-            明確採 44px 且不再加 safe-area；上下各留一點安全距離，
+            明確採 48px 且不再加 safe-area；先保留完整安全高度再把內容下移，
             這只作用於主頁進入的獨立編輯器。 */}
-        <div className="flex border-t border-white/10 bg-black shrink-0 mt-auto" style={{ height: 44, paddingBottom: 0 }}>
-          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-0.5 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
+        <div className="flex border-t border-white/10 bg-black shrink-0 mt-auto" style={{ height: 48, paddingBottom: 0 }}>
+          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
           </button>
-          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-0.5 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-1 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="tune" className="text-xl" fill={activeCategory === 'adjust'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">調節</span>
           </button>
-          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-0.5 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-1 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
             <Icon name="magic_button" className="text-xl" fill={['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory)} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">特效</span>
           </button>
           <button onClick={() => {
@@ -8064,11 +8077,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               }
               setDraftGeo(geo);
               setActiveCategory('compose');
-            }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-0.5 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
+            }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-1 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
             {/* crop_rotate 兩側各有一支旋轉箭頭，改成單純的裁切符號 */}
             <Icon name="crop" className="text-xl" fill={activeCategory === 'compose'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">構圖</span>
           </button>
-          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-0.5 transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-1 transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="gradient" className="text-xl" fill={activeCategory === 'mask'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">遮色片</span>
           </button>
         </div>
