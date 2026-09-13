@@ -1430,9 +1430,10 @@ function runThumbChunks<T>(
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false }) => {
   /* 主頁獨立編輯器本身已經完整落在 safe-top viewport 內，不能再套用
-     拼圖內嵌面板那層額外 12px padding；iOS PWA 會把兩份安全距離疊起來，
-     形成按鈕下方的大黑塊。保留相同的 64px 內容列即可。 */
-  const footerHeight = compactBottomBar ? 64 : 48;
+     拼圖內嵌面板那層額外 12px padding；iOS PWA 會把兩份安全距離疊起來。
+     直接把獨立入口的實際分類列收成 56px，讓內容自然貼近底部，而不是用
+     transform 把文字推到 viewport 外造成裁切。 */
+  const footerHeight = compactBottomBar ? 56 : 48;
   /* ── 批量編輯 ───────────────────────────────────────────────────────────
      一次匯入多張時，編輯器本身完全不變 —— 畫面上永遠只有「目前這一張」，
      其他張的參數各自收在旁邊。連結中的照片共用同一份參數（改一張＝全部一起改），
@@ -8055,10 +8056,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        {/* 圖標、文字與拼圖圖片編輯同為 h-16 / gap-1；主頁入口不重複加入
-            內嵌面板專用的 bottom padding，文字仍完整包含在 64px 內。 */}
+        {/* 主頁入口不用內嵌面板專用的底部 padding；56px 讓底部黑區縮短，
+            圖標與文字仍由 flex 自然置中，不靠位移硬塞。 */}
         <div
-          className={`flex border-t border-white/10 bg-black shrink-0 mt-auto ${compactBottomBar ? 'h-16' : ''}`}
+          className={`flex border-t border-white/10 bg-black shrink-0 mt-auto ${compactBottomBar ? 'h-14' : ''}`}
           style={compactBottomBar ? undefined : { height: footerHeight, paddingBottom: 0 }}
         >
           <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>

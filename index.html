@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-Hant" class="dark">
+<html lang="zh-Hant" class="dark booting">
 <head>
     <meta charset="utf-8"/>
     <meta name="abai-build" content="20260912-layout-baseline-verified" />
@@ -109,7 +109,13 @@
                     var sc = document.querySelector('.home-scroll');
                     if (sc && sc.scrollTop) sc.scrollTop = 0;
                 } catch (err) { /* 沒有就算了 */ }
-                setTimeout(function () { el.remove(); }, 500);
+                /* 首頁在 logo 完全退場以前維持 visibility:hidden。否則 iOS 的
+                   viewport 偶爾比 #boot 多出底部安全區，修圖／模板／我的會從
+                   那一截先露出來。等遮罩移除的同一幀才發布完整首頁。 */
+                setTimeout(function () {
+                    el.remove();
+                    root.classList.remove('booting');
+                }, 500);
             }
             function tryHide() {
                 var wait = BOOT_MIN_MS - (Date.now() - bootT0);
@@ -253,6 +259,12 @@
             opacity: 1 !important;
             transition: opacity 0.25s ease-in-out;
         }
+        /* 開場遮罩尚未完整退場时，首頁本體連版面都不發布；這層比單純
+           opacity 更可靠，能擋住 iOS PWA 偶發露出的底部安全區。 */
+        html.booting #root {
+            opacity: 0 !important;
+            visibility: hidden !important;
+        }
         /* ─────────────────────────────────────────────
            電腦版：直接照手機的樣子顯示
            ─────────────────────────────────────────────
@@ -387,15 +399,12 @@
             /* 圖本身就是黑底，跟背景接得剛剛好，看不出邊 */
             width: 252px;
             height: 252px;
-            animation: boot-breathe 2.4s ease-in-out infinite;
+            animation: none;
+            opacity: 1;
             transform: translateZ(0);
             transform-origin: 50% 50%;
             backface-visibility: hidden;
             contain: strict;
-        }
-        @keyframes boot-breathe {
-            0%, 100% { opacity: 0.82; }
-            50%      { opacity: 1; }
         }
         @media (prefers-reduced-motion: reduce) {
             #boot img { animation: none; opacity: 1; }
