@@ -9211,8 +9211,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /* 工作區固定使用 top 對齊；一般頁面的垂直置中改由同一條 rAF 幾何動畫
        算出。舊版在退出動畫頁的第一幀直接把 flex 從 items-start 切成
        items-center，畫面會先往下跳，再一邊放大一邊往回走。 */
-    const targetTop = nowMotion ? 0 : Math.max(0,
-      (containerSize.height - previewHRef.current * pagesScale) / 2 - 8);
+    /* 一般模式永遠以工作區的垂直中心縮放。這裡不能把負值夾成 0：
+       放大到高於工作區時，夾成 0 會把上緣釘死，視覺上就不是中心放大。 */
+    const targetTop = nowMotion ? 0 :
+      (containerSize.height - previewHRef.current * pagesScale) / 2 - 8;
     if (Math.abs(kRef.current - pagesScale) < 0.0001
         && Math.abs(stripTopRef.current - targetTop) < .01) return;
     /* 記下動畫開始時「畫面正中央對到的那個內容座標」（未縮放單位），
@@ -9260,7 +9262,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const i = pagesRef.current.findIndex(pg => pg.id === id);
       if (i < 0) return;
       node.style.transform =
-        `translate3d(${left0 + k * (i * stride + previewWRef.current / 2)}px, ${bottom + 8}px, 0) translateX(-50%)`;
+        `translate3d(${left0 + k * (i * stride + previewWRef.current / 2)}px, ${bottom + 4}px, 0) translateX(-50%)`;
       node.style.visibility = 'visible';
     });
     // 「新增一頁」貼在最後一頁原本的位置旁邊 —— 用算的，才不會被拖曳中的
@@ -11743,6 +11745,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       cz.lastZoom = z;
       userZoomRef.current = z;
       kRef.current = z;
+      // 垂直方向也鎖住工作區中心；不能只校正水平、把畫布上緣留在原處。
+      stripTopRef.current =
+        (containerSize.height - previewHRef.current * z) / 2 - 8;
       // 尺寸先寫（scrollWidth 才是對的），再把「捏住的那個點」放回原位
       applyStripGeometry(z, true);
       const cont = containerRef.current;
@@ -14022,6 +14027,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   ? `0 0 0 ${seamGuideSpread}px rgb(59 130 246)`
                                   : `0 0 0 0.5px ${shadeHex(WORKSPACE_BG, PAGE_SEAM_INK)}`,
                                 transform: 'translateZ(0)',
+                                /* 排序時頁面內容會離開原位置；固定在舊位置的接縫必須
+                                   同步隱藏，否則 Safari 會在旁邊留下那條白色殘線。 */
+                                visibility: pageDragIdx !== null || dragSettle ? 'hidden' : 'visible',
                               }}
                             />
                           )}
@@ -15404,8 +15412,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     if (id === 'add') setAddSub('root');
                     if (id === 'color') setColorPickerActive(true);
                   }} 
-                  className={`flex-1 min-w-[70px] py-4 border-b-2 transition-all duration-150 flex flex-col items-center justify-center gap-1 ${
-                    isActive ? 'text-white border-white scale-105' : 'text-[#444] border-transparent hover:text-[#777]'
+                  className={`flex-1 min-w-[70px] py-4 border-b-2 transition-colors duration-150 flex flex-col items-center justify-center gap-1 ${
+                    isActive ? 'text-white border-white' : 'text-[#444] border-transparent hover:text-[#777]'
                   }`}
                   title={titleText}
                 >
