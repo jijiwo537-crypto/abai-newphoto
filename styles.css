@@ -346,6 +346,18 @@ select:focus, select:focus-visible {
   box-sizing: border-box;
 }
 
+/* 主頁直接開啟的 ImageEditor 是 position: fixed；若同時沿用上面的「指定高度
+   + margin-top」，iOS 安裝版會把狀態列高度重複扣掉，編輯器底部因此停在 Home
+   Indicator 上方，留下整塊黑色空位。用 fixed 元素自己的 top/bottom 決定範圍，
+   頂部座標完全不變，底部則真正貼齊 viewport；此 class 只掛在主頁入口。 */
+.safe-top.direct-editor-viewport {
+  top: env(safe-area-inset-top, 0px);
+  bottom: 0;
+  height: auto !important;
+  max-height: none !important;
+  margin-top: 0;
+}
+
 /* 非首頁工具沿用透明 viewport 時，原本潛伏的 bottom env() 會突然多算一次。
    只把既有 12px 工具列內距鎖回原值，首頁沒有使用這個 class，因此不受影響。 */
 .safe-top .pb-\[calc\(env\(safe-area-inset-bottom\,0px\)\+12px\)\] {
