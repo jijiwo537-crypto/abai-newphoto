@@ -1429,10 +1429,10 @@ function runThumbChunks<T>(
 }
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false }) => {
-  /* 主頁獨立編輯器的分類列，逐項沿用 ImageAdjustPanel（拼圖圖片編輯）
-     的 64px 內容高度 + 12px 底部安全留白。這個數字也會參與上方控制區
-     的總高度，不能只改 DOM 高度，否則最下面會被 fixed viewport 裁掉。 */
-  const footerHeight = compactBottomBar ? 76 : 48;
+  /* 主頁獨立編輯器本身已經完整落在 safe-top viewport 內，不能再套用
+     拼圖內嵌面板那層額外 12px padding；iOS PWA 會把兩份安全距離疊起來，
+     形成按鈕下方的大黑塊。保留相同的 64px 內容列即可。 */
+  const footerHeight = compactBottomBar ? 64 : 48;
   /* ── 批量編輯 ───────────────────────────────────────────────────────────
      一次匯入多張時，編輯器本身完全不變 —— 畫面上永遠只有「目前這一張」，
      其他張的參數各自收在旁邊。連結中的照片共用同一份參數（改一張＝全部一起改），
@@ -8055,10 +8055,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        {/* 主頁入口直接複製拼圖圖片編輯的分類列幾何：h-16、gap-1、底部 12px。
-            圖標／文字因此共享同一條中心線，也不再靠縮短高度或位移硬塞。 */}
+        {/* 圖標、文字與拼圖圖片編輯同為 h-16 / gap-1；主頁入口不重複加入
+            內嵌面板專用的 bottom padding，文字仍完整包含在 64px 內。 */}
         <div
-          className={`flex border-t border-white/10 bg-black shrink-0 mt-auto ${compactBottomBar ? 'h-16 pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content' : ''}`}
+          className={`flex border-t border-white/10 bg-black shrink-0 mt-auto ${compactBottomBar ? 'h-16' : ''}`}
           style={compactBottomBar ? undefined : { height: footerHeight, paddingBottom: 0 }}
         >
           <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
