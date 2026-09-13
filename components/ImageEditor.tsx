@@ -8055,11 +8055,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        {/* 主頁入口直接使用 ImageAdjustPanel 的原始 class；不另加 translate、負
-            margin 或獨立 safe-area，確保圖標、文字與底部空間都落在同一座標。 */}
+        {/* iOS PWA 不能在這裡再用 env(safe-area-inset-bottom)：Safari 會把底部
+            Home Indicator 的高度再加一次，形成截圖中那整塊黑色空位。拼圖頁
+            最終實際值是 64px + 12px，這裡直接鎖定同一組像素，不再依賴容易被
+            WebKit 解析失敗的 arbitrary-class 覆寫。 */}
         <div
-          className={`flex border-t border-white/10 bg-black shrink-0 mt-auto ${compactBottomBar ? 'h-16 pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content' : ''}`}
-          style={compactBottomBar ? undefined : { height: footerHeight, paddingBottom: 0 }}
+          className="flex border-t border-white/10 bg-black shrink-0 mt-auto"
+          style={compactBottomBar
+            ? { height: 64, paddingBottom: 12, boxSizing: 'content-box' }
+            : { height: footerHeight, paddingBottom: 0 }}
         >
           <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
