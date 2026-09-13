@@ -9109,6 +9109,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 這樣操作欄滑下去的動畫、左右捲動、換頁數都跟得上。
    */
   const pageCtlRefs = useRef(new Map<string, HTMLDivElement>());
+  /** 頁面控制鍵與畫布共用的定位根；不能使用 viewport-fixed，否則瀏覽器
+      縮放／iOS visualViewport 改變時兩者會落在不同座標系。 */
+  const gridRootRef = useRef<HTMLDivElement>(null);
   const pagesColRef = useRef<HTMLDivElement>(null);
   /** 整排頁面的外殼（尺寸＝縮放後真正佔的大小）與右邊的留白 */
   const stripShellRef = useRef<HTMLDivElement>(null);
@@ -9216,7 +9219,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const targetTop = nowMotion ? 0 :
       (containerSize.height - previewHRef.current * pagesScale) / 2 - 8;
     if (Math.abs(kRef.current - pagesScale) < 0.0001
-        && Math.abs(stripTopRef.current - targetTop) < .01) return;
+        && Math.abs(stripTopRef.current - targetTop) < .01) {
+      /* 手勢結束的 setUserZoom 會讓 React 再 commit 一次。Safari 在那次 commit
+         會把手勢期間直接寫入的負 margin-top 清成 0；ref 仍是正確值，舊邏輯
+         卻因此提早 return，畫布便瞬間跳回頂部安全距離。即使數值相同也要把
+         幾何重新貼回 DOM，鬆手前後才會是完全同一幀位置。 */
+      kRef.current = pagesScale;
+      stripTopRef.current = targetTop;
+      applyStripGeometry(pagesScale, false);
+      return;
+    }
     /* 記下動畫開始時「畫面正中央對到的那個內容座標」（未縮放單位），
        整段動畫都把同一個座標擺回正中央 —— 也就是原地縮放。
        以前記的是「最接近中央的那一頁」再把那一頁擺到正中間：只要中心
@@ -9251,6 +9263,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const col = pagesColRef.current;
     if (!cont || !col) return;
     const rc = cont.getBoundingClientRect();
+    const rootRect = gridRootRef.current?.getBoundingClientRect();
+    const rootLeft = rootRect?.left || 0;
+    const rootTop = rootRect?.top || 0;
     const colRect = col.getBoundingClientRect();
     const m = parseFloat((col.parentElement as HTMLElement).style.marginLeft) || 0;
     const stride = previewWRef.current + 1;
@@ -9262,7 +9277,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const i = pagesRef.current.findIndex(pg => pg.id === id);
       if (i < 0) return;
       node.style.transform =
-        `translate3d(${left0 + k * (i * stride + previewWRef.current / 2)}px, ${bottom + 1}px, 0) translateX(-50%)`;
+        `translate3d(${left0 + k * (i * stride + previewWRef.current / 2) - rootLeft}px, ${bottom + 0.25 - rootTop}px, 0) translateX(-50%)`;
       node.style.visibility = 'visible';
     });
     // 「新增一頁」貼在最後一頁原本的位置旁邊 —— 用算的，才不會被拖曳中的
@@ -13428,7 +13443,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   return (
-    <div className="safe-top flex flex-col w-full h-screen bg-black text-white relative font-sans overflow-hidden">
+    <div ref={gridRootRef} className="safe-top flex flex-col w-full h-screen bg-black text-white relative font-sans overflow-hidden">
       <style>{`
         /* 圓球跟「佈局調整」的滑桿一致：沿用原生 thumb + accent-color，不自己畫 */
         /* 顏色滑桿：回到原本那一版 —— 漸層畫在元件上、圓點用瀏覽器原生的
@@ -14018,7 +14033,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 /* 這個 1px 槽位只負責維持既有頁面座標；左右各補成
                                    相鄰頁底色，真正的分割線由內層反向抵銷 zoom，
                                    所以任何預覽倍率與頁面順序模式下都固定為 1 螢幕像素。 */
-                                background: `linear-gradient(to right, ${pages[pageIdx - 1]?.bgColor || WORKSPACE_BG} 0 50%, ${page.bgColor} 50% 100%)`,
+                                backgroundColor: page.bgColor,
                                 /* 它必须高于拖起的页面与自由图层。再用同色半像素阴影
                                    覆盖 fractional zoom 在两侧产生的抗锯齿浅边，最终只
                                    留下一条颜色一致的接缝，不会多出旁边那条淡线。 */
@@ -14032,7 +14047,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               }}
                             >
                               <div
-                                className="absolute inset-y-0 left-1/2 -translate-x-1/2"
+                                className="seam-fixed-px absolute inset-y-0 left-0"
                                 style={{
                                   width: isSeamGuideActive
                                     ? 'calc(2px / var(--preview-scale, 1))'
@@ -16210,7 +16225,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               else pageCtlRefs.current.delete(ctl.id);
             }}
             // 外層位置每一帧由 rAF 貼著頁框寫（捲動、進出模式的動畫）
-            className="fixed left-0 top-0 z-[46]"
+            className="absolute left-0 top-0 z-[46]"
             style={{ visibility: 'hidden' }}
           >
             <div
