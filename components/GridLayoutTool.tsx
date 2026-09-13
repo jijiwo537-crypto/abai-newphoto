@@ -9262,7 +9262,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const i = pagesRef.current.findIndex(pg => pg.id === id);
       if (i < 0) return;
       node.style.transform =
-        `translate3d(${left0 + k * (i * stride + previewWRef.current / 2)}px, ${bottom + 4}px, 0) translateX(-50%)`;
+        `translate3d(${left0 + k * (i * stride + previewWRef.current / 2)}px, ${bottom + 1}px, 0) translateX(-50%)`;
       node.style.visibility = 'visible';
     });
     // 「新增一頁」貼在最後一頁原本的位置旁邊 —— 用算的，才不會被拖曳中的
@@ -11727,9 +11727,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 放開任何一根手指就結束這次縮放並提交 —— 留著等 touchend 的話，
          剩下那根手指接著滑會變成「一邊縮放一邊捲頁」，正是要避免的情況。 */
       if (e.touches.length < 2) {
-        canvasZoomRef.current = null;
-        applyStripGeometry(userZoomRef.current, false);
-        setUserZoom(userZoomRef.current);
+        /* 第一根手指先離開時先維持最後一幀，不要提早提交 state。
+           iOS 會在「還有一根手指按著」時重算 scrollLeft，造成鬆手瞬間跑位；
+           等兩根都離開後由 touchend 一次完成收尾。 */
         return;
       }
       const d = Math.hypot(
@@ -12016,7 +12016,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     positionPageCtls();
   };
 
-  const handleWorkspaceTouchEnd = () => {
+  const handleWorkspaceTouchEnd = (e?: React.TouchEvent<HTMLDivElement>) => {
+    // 雙指縮放必須等最後一根手指也離開才收尾，避免中途重排造成畫面跳動。
+    if (canvasZoomRef.current && e && e.touches.length > 0) return;
     flushInteractionNow();
     setSelectionDragging(false);
     setPinchFloatingId(null);
@@ -13997,8 +13999,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         guide => guide.type === 'vertical'
                           && Math.abs(guide.coord - seamGuideX) <= 0.75 / previewScale
                       );
-                      const seamGuideSpread = Math.max(0, (2 / previewScale - 1) / 2);
-
                       return (
                         <React.Fragment key={page.id}>
                           {pageIdx > 0 && (
@@ -14015,23 +14015,34 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               style={{
                                 /* 分隔線永遠使用同一個不透明墨色；拖頁與回彈期间也
                                    不再临时变透明，否则那几帧看起来就像被页面盖住。 */
-                                backgroundColor: isSeamGuideActive
-                                  ? 'rgb(59 130 246)'
-                                  : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                                /* 這個 1px 槽位只負責維持既有頁面座標；左右各補成
+                                   相鄰頁底色，真正的分割線由內層反向抵銷 zoom，
+                                   所以任何預覽倍率與頁面順序模式下都固定為 1 螢幕像素。 */
+                                background: `linear-gradient(to right, ${pages[pageIdx - 1]?.bgColor || WORKSPACE_BG} 0 50%, ${page.bgColor} 50% 100%)`,
                                 /* 它必须高于拖起的页面与自由图层。再用同色半像素阴影
                                    覆盖 fractional zoom 在两侧产生的抗锯齿浅边，最终只
                                    留下一条颜色一致的接缝，不会多出旁边那条淡线。 */
                                 position: 'relative',
                                 zIndex: isSeamGuideActive ? 300001 : 200000,
-                                boxShadow: isSeamGuideActive
-                                  ? `0 0 0 ${seamGuideSpread}px rgb(59 130 246)`
-                                  : `0 0 0 0.5px ${shadeHex(WORKSPACE_BG, PAGE_SEAM_INK)}`,
+                                boxShadow: 'none',
                                 transform: 'translateZ(0)',
                                 /* 排序時頁面內容會離開原位置；固定在舊位置的接縫必須
                                    同步隱藏，否則 Safari 會在旁邊留下那條白色殘線。 */
                                 visibility: pageDragIdx !== null || dragSettle ? 'hidden' : 'visible',
                               }}
-                            />
+                            >
+                              <div
+                                className="absolute inset-y-0 left-1/2 -translate-x-1/2"
+                                style={{
+                                  width: isSeamGuideActive
+                                    ? 'calc(2px / var(--preview-scale, 1))'
+                                    : 'calc(1px / var(--preview-scale, 1))',
+                                  backgroundColor: isSeamGuideActive
+                                    ? 'rgb(59 130 246)'
+                                    : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                                }}
+                              />
+                            </div>
                           )}
 
                           <div

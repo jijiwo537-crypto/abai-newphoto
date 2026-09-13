@@ -423,7 +423,8 @@
             height: 252px;
             animation: none;
             opacity: 1;
-            transform: translateZ(0);
+            /* 視覺中心要比幾何中心略高；固定像素位移不會受 safe-area 重算影響。 */
+            transform: translate3d(0, -10px, 0);
             transform-origin: 50% 50%;
             backface-visibility: hidden;
             contain: strict;
