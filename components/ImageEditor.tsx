@@ -1429,9 +1429,9 @@ function runThumbChunks<T>(
 }
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false }) => {
-  /* 分類列本身維持原本的 48px。主頁入口在 iOS 的底部空位是 fixed viewport
-     範圍算錯，不是工具列太矮；把這裡加高只會將整個編輯介面往上擠。 */
-  const footerHeight = 48;
+  /* 主頁入口逐層沿用 ImageAdjustPanel 的 64px 內容 + 12px 底距；相機內的
+     非 compact 編輯器維持既有 48px。這個值也同步參與控制區與構圖舞台計算。 */
+  const footerHeight = compactBottomBar ? 76 : 48;
   /* ── 批量編輯 ───────────────────────────────────────────────────────────
      一次匯入多張時，編輯器本身完全不變 —— 畫面上永遠只有「目前這一張」，
      其他張的參數各自收在旁邊。連結中的照片共用同一份參數（改一張＝全部一起改），
@@ -6594,7 +6594,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   return (
-    <div className={`safe-top ${compactBottomBar ? 'direct-editor-viewport' : ''} fixed inset-0 bg-[#080808] z-[60] flex flex-col font-sans text-white overflow-hidden no-callout`}
+    <div className={`safe-top ${compactBottomBar ? 'relative w-full h-[100dvh]' : 'fixed inset-0'} bg-[#080808] z-[60] flex flex-col font-sans text-white overflow-hidden no-callout`}
          onMouseMove={dragPointIdx !== -1 ? (e) => handleCurveMove(e) : undefined}
          onMouseUp={dragPointIdx !== -1 ? handleCurveEndDrag : undefined}
          onTouchMove={dragPointIdx !== -1 ? (e) => handleCurveMove(e) : undefined}
@@ -8054,11 +8054,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        {/* 分類列不自行加 safe-area；主頁入口的底部範圍由 direct-editor-viewport
-            負責貼齊螢幕，這裡只保留原本的內容高度，避免介面再次往上移。 */}
+        {/* compact 主頁入口與 ImageAdjustPanel 使用完全相同的分類列 class；
+            根容器也已改成相同的 normal-flow 100dvh，因此三條分隔線不再偏移。 */}
         <div
-          className="flex border-t border-white/10 bg-black shrink-0 mt-auto"
-          style={{ height: footerHeight, paddingBottom: 0 }}
+          className={`flex border-t border-white/10 bg-black shrink-0 mt-auto ${compactBottomBar ? 'h-16 pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content' : ''}`}
+          style={compactBottomBar ? undefined : { height: footerHeight, paddingBottom: 0 }}
         >
           <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
