@@ -5315,7 +5315,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       applySnapRef.current(pendingSnapRef.current, pendingSnapIdxRef.current ?? undefined);
     }
 
+    let loadIsCurrent = true;
     const ready = (img: HTMLImageElement) => {
+      if (!loadIsCurrent) return;
       originalImgRef.current = img;
       // 解好的圖留著。批量編輯來回切同幾張時，回頭那一次就不用再解碼一遍 ——
       // 那正是「照片明明沒動，切回去卻還要等」的來源。
@@ -5344,8 +5346,28 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       if (!activeSrc.startsWith('blob:') && !activeSrc.startsWith('data:')) {
           img.crossOrigin = "anonymous";
       }
-      img.onload = () => ready(img);
+      let committed = false;
+      const commitDecodedImage = async () => {
+        if (committed) return;
+        committed = true;
+        /* iOS WebKit 的 load 事件只代表檔案已經讀到，不保證像素已經能畫進
+           canvas。若在這裡立刻 drawImage，偶爾會先提交一張透明 canvas；之後
+           使用者點一下畫面觸發重新合成，照片才突然出現。
+
+           先等 decode()，再跨一個 animation frame 才建立緩衝，第一個可見幀
+           就一定已經有完整像素。舊版 WebKit 沒有 decode 或 decode 拒絕時，
+           仍使用已成功 onload 的圖片，不會因此卡住。 */
+        try {
+          if (typeof img.decode === 'function') await img.decode();
+        } catch { /* onload 已成功，仍可安全使用這張圖 */ }
+        if (!loadIsCurrent) return;
+        requestAnimationFrame(() => {
+          if (loadIsCurrent) ready(img);
+        });
+      };
+      img.onload = commitDecodedImage;
       img.onerror = () => {
+        if (!loadIsCurrent) return;
         setIsSwitching(false);
         console.error("Failed to load image in canvas:", activeSrc);
         alert("無法在畫布中解析此圖片，這可能是記憶體不足或格式損毀。");
@@ -5353,8 +5375,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         onCancel();
       };
       img.src = activeSrc;
+      /* blob/data URL 在快取命中時可能在綁定 onload 前後立刻完成；補查一次，
+         但用 committed 保證只會建立一次緩衝。 */
+      if (img.complete && img.naturalWidth > 0) void commitDecodedImage();
     }
     return () => {
+      loadIsCurrent = false;
       if (lazyCacheTimeoutRef.current) {
         clearTimeout(lazyCacheTimeoutRef.current);
       }
@@ -5559,7 +5585,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       }
 
       // Instantly unlock UI, run sharp block async
-      if (initial) setIsEditorLoading(false);
+      if (initial) {
+        setIsEditorLoading(false);
+        /* 解析遮罩收起來後再明確排一個完整畫質繪製幀。這不是等互動重畫：
+           即使 iOS 把前一幀 canvas 合成延後，下一幀也會主動提交照片。 */
+        requestAnimationFrame(() => {
+          isDirtyRef.current = true;
+          lastRenderTimeRef.current = 0;
+        });
+      }
 
       precalcSharpenAsync(pData, pw, ph).then((pDetail) => {
           if (buffers.current) {

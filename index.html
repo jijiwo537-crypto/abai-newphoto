@@ -99,23 +99,38 @@
                 var el = document.getElementById('boot');
                 if (!el || el.dataset.going) return;
                 el.dataset.going = '1';
+                /* 主頁要先完整放在開場遮罩後面，接著才把黑色遮罩淡掉。
+
+                   舊邏輯直到 0.5 秒淡出結束仍保留 html.booting，因此 #root 一直是
+                   visibility:hidden；畫面上雖然在跑 opacity，下面其實只有黑底，
+                   遮罩刪除的最後一幀才硬切出主頁。字型完成時間不同時，偶爾又會
+                   剛好吃到 #root 自己的 transition，才造成「有時漸顯、有時硬切」。
+
+                   boot-revealing 會取消 #root 自己那條不確定時序的 transition，
+                   讓已完成的主頁先穩定停在後面；使用者看到的漸顯只由 #boot 這一條
+                   0.5 秒動畫負責，所以每一次啟動都完全一致。 */
+                root.classList.add('boot-revealing');
+                root.classList.remove('booting');
                 /* 淡出的這 0.5 秒它還蓋在上面，這時候就要放行了，
                    不然看得到首頁卻按不動，那半秒會以為 App 當掉。 */
                 el.style.pointerEvents = 'none';
-                el.style.opacity = '0';
                 /* 保險：萬一開場那段仍有東西把頁面捲下去了，收掉之前歸零。
                    首頁那條捲軸是 .home-scroll（見 HomePage）。 */
                 try {
                     var sc = document.querySelector('.home-scroll');
                     if (sc && sc.scrollTop) sc.scrollTop = 0;
                 } catch (err) { /* 沒有就算了 */ }
-                /* 首頁在 logo 完全退場以前維持 visibility:hidden。否則 iOS 的
-                   viewport 偶爾比 #boot 多出底部安全區，修圖／模板／我的會從
-                   那一截先露出來。等遮罩移除的同一幀才發布完整首頁。 */
-                setTimeout(function () {
-                    el.remove();
-                    root.classList.remove('booting');
-                }, 500);
+                /* 先讓瀏覽器提交一幀「主頁已在遮罩後方、遮罩仍完全不透明」，
+                   下一幀才開始淡出。這可避免 WebKit 把兩次樣式改動合併成硬切。 */
+                requestAnimationFrame(function () {
+                    requestAnimationFrame(function () {
+                        el.style.opacity = '0';
+                        setTimeout(function () {
+                            el.remove();
+                            root.classList.remove('boot-revealing');
+                        }, 500);
+                    });
+                });
             }
             function tryHide() {
                 var wait = BOOT_MIN_MS - (Date.now() - bootT0);
@@ -264,6 +279,13 @@
         html.booting #root {
             opacity: 0 !important;
             visibility: hidden !important;
+        }
+        /* 開場退場時，首頁已經完整放在遮罩後方；漸顯只交給 #boot 的 opacity，
+           不再讓字型載入完成時間決定 #root 是否另外跑一次動畫。 */
+        html.boot-revealing #root {
+            opacity: 1 !important;
+            visibility: visible !important;
+            transition: none !important;
         }
         /* ─────────────────────────────────────────────
            電腦版：直接照手機的樣子顯示
