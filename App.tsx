@@ -719,6 +719,7 @@ const App: React.FC = () => {
       {currentView === 'editor' && editorImage && (
         <ImageEditor 
           key={editorKey}
+          compactBottomBar
           imageSrc={editorImage}
           batchSrcs={editorImages}
           onAddPhotos={handleAddPhotosClick}

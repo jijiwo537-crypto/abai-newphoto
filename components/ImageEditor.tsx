@@ -965,6 +965,8 @@ interface ImageEditorProps {
   originalFile?: File | null;
   /** 接續上次時把存下來的參數餵回來（跳出應用再回來用的） */
   initialState?: { params?: EditorParams; geo?: GeoParams; selectedLutIdx?: number } | null;
+  /** 只有主頁直接進入的獨立編輯器使用：縮短底部分頁列的空白，但保留完整圖標與文字。 */
+  compactBottomBar?: boolean;
 }
 
 interface HistoryItem {
@@ -1426,7 +1428,8 @@ function runThumbChunks<T>(
   step();
 }
 
-export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState }) => {
+export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false }) => {
+  const footerHeight = compactBottomBar ? 40 : 48;
   /* ── 批量編輯 ───────────────────────────────────────────────────────────
      一次匯入多張時，編輯器本身完全不變 —— 畫面上永遠只有「目前這一張」，
      其他張的參數各自收在旁邊。連結中的照片共用同一份參數（改一張＝全部一起改），
@@ -7660,7 +7663,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           image={composePreviewRef.current || originalImgRef.current!}
           geo={draftGeo}
           onChange={setDraftGeo}
-          footerHeight={48}
+          footerHeight={footerHeight}
           stageLimit={previewFitSize}
           onCancel={cancelCompose}
           onApply={() => {
@@ -7682,7 +7685,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         className={`bg-[#111111] ${subStripHidden ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
         /* 一般、曲線、HSL 與特效細項都佔相同的總控制區高度；內容較少時只在
            內部留位，預覽區不再跟著分頁切換反覆變高變矮。構圖由自己的三列接管。 */
-        style={{ height: 'calc(11rem + 48px)' }}
+        style={{ height: `calc(11rem + ${footerHeight}px)` }}
       >
         <div 
           className={`flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] ${fxPanel ? 'px-4' : 'px-8'}`}
@@ -8049,11 +8052,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        {/* 獨立編輯器的 safe-top 已經把可用 viewport 鎖在安全區內，這裡若再讀一次
-            env(safe-area-inset-bottom) 就會在安裝版 Web App 底部多出一整塊黑帶。
-            明確採 48px 且不再加 safe-area；先保留完整安全高度再把內容下移，
-            這只作用於主頁進入的獨立編輯器。 */}
-        <div className="flex border-t border-white/10 bg-black shrink-0 mt-auto" style={{ height: 48, paddingBottom: 0 }}>
+        {/* 主頁入口只縮短底欄本身，讓視覺安全距離接近拼圖圖片編輯；圖標與文字
+            維持原本的排列，40px 是安裝版實測仍可完整顯示的最小安全高度。 */}
+        <div className="flex border-t border-white/10 bg-black shrink-0 mt-auto" style={{ height: footerHeight, paddingBottom: 0 }}>
           <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-0 translate-y-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
           </button>
