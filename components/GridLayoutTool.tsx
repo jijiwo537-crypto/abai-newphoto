@@ -9821,8 +9821,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     // 手指還在畫布上捏合時，倍率由手勢每一帧直接寫，這裡不要插手
     if (canvasZoomRef.current) return;
     kRef.current = pagesScale;
-    stripTopRef.current = motionModeRef.current ? 0 : Math.max(0,
-      (containerSize.height - previewH * pagesScale) / 2 - 8);
+    /* 放大後高度超過工作區時 target 會是負值，這正是保持中心縮放所需的
+       上移量。不能夾成 0，否則 state 提交後又會把畫布強制貼回頂部。 */
+    stripTopRef.current = motionModeRef.current ? 0 :
+      (containerSize.height - previewH * pagesScale) / 2 - 8;
     applyStripGeometry(pagesScale);
     /* 首次量到真正畫布尺寸時，幾何會由預設值再更新一次；加號也必須在
        同一輪 layout 後重新定位，不能沿用第一次量測留下的 Y 位移。 */
