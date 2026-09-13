@@ -1429,7 +1429,10 @@ function runThumbChunks<T>(
 }
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false }) => {
-  const footerHeight = compactBottomBar ? 32 : 48;
+  /* 主頁獨立編輯器的分類列，逐項沿用 ImageAdjustPanel（拼圖圖片編輯）
+     的 64px 內容高度 + 12px 底部安全留白。這個數字也會參與上方控制區
+     的總高度，不能只改 DOM 高度，否則最下面會被 fixed viewport 裁掉。 */
+  const footerHeight = compactBottomBar ? 76 : 48;
   /* ── 批量編輯 ───────────────────────────────────────────────────────────
      一次匯入多張時，編輯器本身完全不變 —— 畫面上永遠只有「目前這一張」，
      其他張的參數各自收在旁邊。連結中的照片共用同一份參數（改一張＝全部一起改），
@@ -8052,17 +8055,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              </div>
           )}
         </div>
-        {/* 主頁入口的可視底界比一般 ImageEditor 更早結束；不能縮短底欄後仍把內容
-            往下 translate，否則文字下半部會落到祖先的 overflow-hidden 外而被切掉。
-            32px 搭配緊湊行高，把上緣移到與拼圖圖片編輯相近的位置，同時完整收住內容。 */}
-        <div className="flex border-t border-white/10 bg-black shrink-0 mt-auto" style={{ height: footerHeight, paddingBottom: 0 }}>
-          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-0 ${compactBottomBar ? 'leading-none' : 'translate-y-1'} transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
+        {/* 主頁入口直接複製拼圖圖片編輯的分類列幾何：h-16、gap-1、底部 12px。
+            圖標／文字因此共享同一條中心線，也不再靠縮短高度或位移硬塞。 */}
+        <div
+          className={`flex border-t border-white/10 bg-black shrink-0 mt-auto ${compactBottomBar ? 'h-16 pb-[calc(env(safe-area-inset-bottom,0px)+12px)] box-content' : ''}`}
+          style={compactBottomBar ? undefined : { height: footerHeight, paddingBottom: 0 }}
+        >
+          <button onClick={() => { setActiveCategory('filter'); setActiveToolId('filter_select'); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'filter' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="palette" className="text-xl" fill={activeCategory === 'filter'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">濾鏡</span>
           </button>
-          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-0 ${compactBottomBar ? 'leading-none' : 'translate-y-1'} transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={() => { setActiveCategory('adjust'); setActiveToolId(ADJUST_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'adjust' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="tune" className="text-xl" fill={activeCategory === 'adjust'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">調節</span>
           </button>
-          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-center gap-0 ${compactBottomBar ? 'leading-none' : 'translate-y-1'} transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={enterEffects} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory) ? 'text-white' : 'text-white/20'}`}>
             <Icon name="magic_button" className="text-xl" fill={['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory)} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">特效</span>
           </button>
           <button onClick={() => {
@@ -8079,11 +8084,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               }
               setDraftGeo(geo);
               setActiveCategory('compose');
-            }} className={`flex-1 flex flex-col items-center justify-center gap-0 ${compactBottomBar ? 'leading-none' : 'translate-y-1'} transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
+            }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'compose' ? 'text-white' : 'text-white/20'}`}>
             {/* crop_rotate 兩側各有一支旋轉箭頭，改成單純的裁切符號 */}
             <Icon name="crop" className="text-xl" fill={activeCategory === 'compose'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">構圖</span>
           </button>
-          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-0 ${compactBottomBar ? 'leading-none' : 'translate-y-1'} transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
+          <button onClick={() => { setActiveCategory('mask'); setActiveToolId(MASK_TOOLS[0].id); }} className={`flex-1 flex flex-col items-center justify-center gap-1 transition-all ${activeCategory === 'mask' ? 'text-white' : 'text-white/20'}`}>
             <Icon name="gradient" className="text-xl" fill={activeCategory === 'mask'} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">遮色片</span>
           </button>
         </div>
