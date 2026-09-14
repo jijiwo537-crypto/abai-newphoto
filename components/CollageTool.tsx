@@ -8073,8 +8073,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               </div>
             )}
             {!objStretching && <div
-              className="absolute z-[70] flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto"
-              style={{ left: cx, top: by, transform: 'translateX(-50%)', touchAction: 'none' }}
+              className="absolute z-[70] flex items-center gap-0.5 bg-white rounded-full p-0.5 pointer-events-auto"
+              style={{
+                left: cx,
+                top: by,
+                transform: 'translateX(-50%)',
+                touchAction: 'none',
+                boxShadow: '0 3px 10px rgba(0,0,0,0.22), 0 0 0 0.5px rgba(0,0,0,0.06)',
+              }}
               onPointerDown={(e) => e.stopPropagation()}
               onTouchStart={(e) => e.stopPropagation()}
             >

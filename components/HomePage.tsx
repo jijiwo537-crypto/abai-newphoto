@@ -596,6 +596,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   /** 把「一屏有多高」寫給 CSS 動畫用。值沒變就不要寫 ——
       改動這個變數會讓兩支捲動動畫重新計算範圍，能省就省。 */
   const rangeWritten = useRef(-1);
+  const rangeWidthWritten = useRef(-1);
   /** 捲動中不改 --hero-range，把這件事押後到停下來再做（見下面的說明） */
   const scrollingUntil = useRef(0);
   const rangePending = useRef(false);
@@ -603,7 +604,19 @@ export const HomePage: React.FC<HomePageProps> = ({
     const sc = scrollRef.current;
     if (!sc) return;
     const h = sc.clientHeight;
-    if (h === rangeWritten.current) { rangePending.current = false; return; }
+    const w = sc.clientWidth;
+    /* iOS 快速回顶时，状态栏／浏览器栏可能只改变可视高度几像素。
+       这不是版面真的改尺寸，却会让 scroll-timeline 的范围重算并把整屏
+       瞬间贴到另一个进度。宽度没变就锁住本次会话的纵向基准；真正旋转
+       屏幕时宽度会改变，仍会正常重算。 */
+    if (rangeWritten.current > 0 && Math.abs(w - rangeWidthWritten.current) < 1) {
+      rangePending.current = false;
+      return;
+    }
+    if (h === rangeWritten.current && w === rangeWidthWritten.current) {
+      rangePending.current = false;
+      return;
+    }
     /* 捲動途中先不要寫。
        iOS 在快速滑動時會收起／展開網址列，那一下 clientHeight 會變 ——
        --hero-range 一改，兩支捲動動畫的範圍、每一格的位移、還有模板那個
@@ -615,6 +628,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     }
     rangePending.current = false;
     rangeWritten.current = h;
+    rangeWidthWritten.current = w;
     libLiftRef.current = h * 0.35;
     resetNavThresh();                 // 一屏高度變了 → 模板的位置跟門檻都要重算
     sc.style.setProperty('--hero-range', `${h}px`);

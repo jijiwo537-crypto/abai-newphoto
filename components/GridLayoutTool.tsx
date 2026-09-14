@@ -6141,12 +6141,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const d = dir * (halfSpan + 26 * previewInv);
       return (
       <div
-        className="absolute left-1/2 top-1/2 flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto z-50"
+        className="absolute left-1/2 top-1/2 flex items-center gap-0.5 bg-white rounded-full p-0.5 pointer-events-auto z-50"
         style={{
           transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-image.rotation}deg)`,
           gap: 2 * previewInv,
           padding: 2 * previewInv,
-          boxShadow: `0 ${10 * previewInv}px ${24 * previewInv}px rgba(0,0,0,0.35)`,
+          boxShadow: `0 ${3 * previewInv}px ${10 * previewInv}px rgba(0,0,0,0.22), 0 0 0 ${0.5 * previewInv}px rgba(0,0,0,0.06)`,
         }}
         onPointerDown={(e) => e.stopPropagation()}
         onTouchStart={(e) => e.stopPropagation()}
@@ -8458,13 +8458,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 正在拖的是哪一頁（拖的就是畫布上真正的那一頁） */
   const [pageDragIdx, setPageDragIdx] = useState<number | null>(null);
   /** 放手後的收尾：內容從「放手時看起來的位置」平順滑回新定位 */
-  const [dragSettle, setDragSettle] = useState<{
-    page: number; x: number; ease: boolean;
-    /** 交换过程中需要暂时隐藏的页缝编号范围（页缝编号＝右侧页面 index）。 */
-    seamFrom: number; seamTo: number;
-  } | null>(null);
-  const dragSettleRef = useRef(dragSettle);
-  dragSettleRef.current = dragSettle;
+  const [dragSettle, setDragSettle] = useState<{ page: number; x: number; ease: boolean } | null>(null);
   const settleTimerRef = useRef(0);
 
   /**
@@ -8722,23 +8716,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const remainder = liveDx - (to - from) * (previewW + 1);
         if (from !== to) handleMovePage(from, to);
         window.clearTimeout(settleTimerRef.current);
-        const nextSettle = {
-          page: to,
-          x: remainder,
-          ease: false,
-          seamFrom: Math.min(from, to) + 1,
-          seamTo: Math.max(from, to),
-        };
-        /* ref 同步写，避免 pointerup 到 React commit 之间短暂闪回旧分割线。 */
-        dragSettleRef.current = nextSettle;
-        setDragSettle(nextSettle);
+        setDragSettle({ page: to, x: remainder, ease: false });
         requestAnimationFrame(() => requestAnimationFrame(() => {
           setDragSettle(prev => (prev && !prev.ease ? { ...prev, x: 0, ease: true } : prev));
         }));
-        settleTimerRef.current = window.setTimeout(() => {
-          dragSettleRef.current = null;
-          setDragSettle(null);
-        }, 260);
+        settleTimerRef.current = window.setTimeout(() => setDragSettle(null), 260);
       }
     };
     window.addEventListener('pointermove', onMove);
@@ -9130,23 +9112,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const pageCtlRefs = useRef(new Map<string, HTMLDivElement>());
   const seamOverlayRefs = useRef(new Map<string, HTMLDivElement>());
   const embeddedSeamsRef = useRef(false);
-  const embeddedSeams = pageDragIdx !== null
+  const embeddedSeams = pagesMode || pageDragIdx !== null
     || selectedFloatingId !== null || selectedBrushId !== null
     || selectedIndex !== null || selectedLayoutId !== null;
   embeddedSeamsRef.current = embeddedSeams;
-  /** 页面交换时，受影响的页缝不能停在原槽位。拖动与 FLIP 定位完成前先隐藏，
-      完成后再一次出现在新的正确位置。pageIdx 是页缝右侧页面的 index。 */
-  const isReorderingSeam = (pageIdx: number) => {
-    const from = dragIdxRef.current;
-    const to = pageDragToRef.current;
-    if (from !== null && to !== null && from !== to) {
-      const lo = Math.min(from, to) + 1;
-      const hi = Math.max(from, to);
-      if (pageIdx >= lo && pageIdx <= hi) return true;
-    }
-    const settle = dragSettleRef.current;
-    return !!settle && pageIdx >= settle.seamFrom && pageIdx <= settle.seamTo;
-  };
   /** 頁面控制鍵與畫布共用的定位根；不能使用 viewport-fixed，否則瀏覽器
       縮放／iOS visualViewport 改變時兩者會落在不同座標系。 */
   const gridRootRef = useRef<HTMLDivElement>(null);
@@ -9340,7 +9309,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       node.style.transform =
         `translate3d(${seamCenter - rootLeft - 0.5}px, ${colRect.top - rootTop - 0.5}px, 0)`;
       node.style.height = `${colRect.height + 1}px`;
-      node.style.visibility = embeddedSeamsRef.current || isReorderingSeam(i) ? 'hidden' : 'visible';
+      node.style.visibility = embeddedSeamsRef.current ? 'hidden' : 'visible';
     });
     // 「新增一頁」貼在最後一頁原本的位置旁邊 —— 用算的，才不會被拖曳中的
     // 最後一頁拖著跑（看起來像跟那一頁黏在一起）
@@ -14135,7 +14104,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         guide => guide.type === 'vertical'
                           && Math.abs(guide.coord - seamGuideX) <= 0.75 / previewScale
                       );
-                      const hideSeamWhileReordering = pageIdx > 0 && isReorderingSeam(pageIdx);
+                      /* 排序模式的分隔线挂在右侧页面本体上，和页面共用同一个
+                         transform／transition；不再留在静止的 1px flex 槽里。 */
+                      const pageMove = pageContentShift(pageIdx);
+                      const pageMoveScale = pageMove?.s || 1;
                       return (
                         <React.Fragment key={page.id}>
                           {pageIdx > 0 && (
@@ -14162,7 +14134,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 boxShadow: 'none',
                               }}
                             >
-                              {embeddedSeamsRef.current && !hideSeamWhileReordering && (
+                              {embeddedSeamsRef.current && !pagesMode && (
                                 <div
                                   className="absolute left-0 pointer-events-none"
                                   style={{
@@ -14197,7 +14169,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             style={(() => {
                               // 跟頁面上的自由圖層共用同一支（含放手後的收尾），
                               // 兩邊才會一起動、一起停
-                              const mv = pageContentShift(pageIdx);
+                              const mv = pageMove;
                               const lifted = !!mv && mv.s !== 1;
                               return {
                                 width: `${previewW}px`,
@@ -14214,6 +14186,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               };
                             })()}
                           >
+                            {pagesMode && pageIdx > 0 && (
+                              <div
+                                className="absolute left-0 pointer-events-none"
+                                style={{
+                                  top: `${-0.5 / (previewScale * pageMoveScale)}px`,
+                                  height: `calc(100% + ${1 / (previewScale * pageMoveScale)}px)`,
+                                  /* 被拿起的页面会额外放大 1.05；再反向除掉这层倍率，
+                                     分隔线在移动、让位与回弹期间仍然是屏幕 1px。 */
+                                  width: `${1 / (previewScale * pageMoveScale)}px`,
+                                  backgroundColor: isSeamGuideActive
+                                    ? 'rgb(59 130 246)'
+                                    : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                                  zIndex: 200,
+                                }}
+                              />
+                            )}
                             <div className="absolute inset-0" style={{ backgroundColor: page.bgColor }} />
                             {/* 背景紋理：疊在底色上、所有內容之下，不影響點選與拖曳 */}
                             <PatternLayer w={previewW} h={previewH} opts={pagePattern(page)} />
@@ -14619,7 +14607,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                                const common = {
                                                  gap: 4 * inv,
                                                  padding: 4 * inv,
-                                                 boxShadow: `0 ${10 * inv}px ${24 * inv}px rgba(0,0,0,0.35)`,
+                                                 boxShadow: `0 ${3 * inv}px ${10 * inv}px rgba(0,0,0,0.22), 0 0 0 ${0.5 * inv}px rgba(0,0,0,0.06)`,
                                                };
                                                return lTop + t0 + cellHeight + 46 * inv > previewH
                                                  ? { ...common, bottom: '100%', marginBottom: 8 * inv, transform: 'translate(-50%, 0)', transformOrigin: 'bottom center' }
@@ -14810,7 +14798,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         推到轉完外接框的外面，再反向轉回來 —— 佈局轉了，
                                         按鈕仍然是正的（只有選取框跟角球跟著轉）。 */}
                                     <div
-                                      className="absolute left-1/2 top-1/2 flex items-center gap-0.5 bg-white rounded-full p-0.5 shadow-xl pointer-events-auto z-[60]"
+                                      className="absolute left-1/2 top-1/2 flex items-center gap-0.5 bg-white rounded-full p-0.5 pointer-events-auto z-[60]"
                                       style={(() => {
                                         const lrot = layout.t?.rot || 0;
                                         const rad = (lrot * Math.PI) / 180;
@@ -14823,7 +14811,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           transform: `translate(-50%, -50%) translate(${d * Math.sin(rad)}px, ${d * Math.cos(rad)}px) rotate(${-lrot}deg)`,
                                           gap: 2 * layoutUiInv,
                                           padding: 2 * layoutUiInv,
-                                          boxShadow: `0 ${10 * layoutUiInv}px ${24 * layoutUiInv}px rgba(0,0,0,0.35)`,
+                                          boxShadow: `0 ${3 * layoutUiInv}px ${10 * layoutUiInv}px rgba(0,0,0,0.22), 0 0 0 ${0.5 * layoutUiInv}px rgba(0,0,0,0.06)`,
                                         };
                                       })()}
                                       onPointerDown={(e) => e.stopPropagation()}
@@ -15343,7 +15331,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         <div data-brush-id={stroke.id} className="absolute pointer-events-none border border-dashed border-white/95"
                           style={{ left: b.x, top: b.y, width: b.w, height: b.h, zIndex: 100050,
                             boxShadow: '0 1px 3px rgba(0,0,0,.42)' }}>
-                          <div className="absolute left-1/2 top-full mt-2 -translate-x-1/2 h-9 px-1 rounded-full bg-white text-black flex items-center shadow-lg pointer-events-auto">
+                          <div
+                            className="absolute left-1/2 top-full mt-2 -translate-x-1/2 h-9 px-1 rounded-full bg-white text-black flex items-center pointer-events-auto"
+                            style={{ boxShadow: `0 ${3 / Math.max(0.0001, kRef.current)}px ${10 / Math.max(0.0001, kRef.current)}px rgba(0,0,0,0.22)` }}
+                          >
                             <button className="w-8 h-8 rounded-full flex items-center justify-center" title="下移一層"
                               onClick={() => setBrushStrokes(v => v.map(x => x.id===stroke.id ? {...x,z:Math.max(0,x.z-1)} : x))}><MoveDown size={14}/></button>
                             <button className="w-8 h-8 rounded-full flex items-center justify-center" title="上移一層"

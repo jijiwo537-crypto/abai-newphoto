@@ -1497,18 +1497,21 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
      手指拖到哪就到哪，放手當下立刻決定翻或不翻，一次只翻一頁，
      220ms 直接就位，中途不再飄。所以這裡自己接指標事件、自己搬位置。 */
   /** 把軌道移到某個位置；animate=false 是跟著手指走，不能有過場 */
-  const igMoveTrack = (px: number, animate: boolean) => {
+  const igMoveTrack = (px: number, animate: boolean, duration = 300) => {
     const el = igTrackRef.current;
     if (!el) return;
-    /* 340ms＋前段快後段緩的曲線：220ms 那組太衝，放手幾乎是瞬移過去。
-       這一條起步就有速度、越靠近定位越慢，看得出「滑過去」的過程。 */
-    el.style.transition = animate ? 'transform 340ms cubic-bezier(0.32, 0.72, 0, 1)' : 'none';
+    /* IG 的翻页不是固定慢滑：甩得快时较快落位，慢拖则柔和收尾。
+       这条曲线保留释放瞬间的速度，再平顺减速到定位，不会先顿一下。 */
+    el.style.transition = animate
+      ? `transform ${duration}ms cubic-bezier(0.22, 0.74, 0.16, 1)`
+      : 'none';
     el.style.transform = `translate3d(${px}px, 0, 0)`;
   };
-  // 頁數或框寬改變時（換頁、旋轉、重新量框）把軌道對回正確的位置
+  // 框寬或頁數改變時才校正位置。igPage 是手勢放開前已經先移動好的；
+  // 若 state 更新後又下第二次 transition 指令，iOS 會重啟收尾、手感就會忽快忽慢。
   useEffect(() => {
     igMoveTrack(-igPage * igBox.w, !igDragRef.current);
-  }, [igPage, igBox.w, pageCount]);
+  }, [igBox.w, pageCount]);
 
   const onIgPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (pageCount < 2) return;
@@ -1548,7 +1551,14 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     let next = igPage;
     if (d.dx < -w * 0.18 || v < -0.35) next = Math.min(pageCount - 1, igPage + 1);
     else if (d.dx > w * 0.18 || v > 0.35) next = Math.max(0, igPage - 1);
-    igMoveTrack(-next * w, true);              // 先動，再更新狀態，才不會等一拍
+    const targetX = -next * w;
+    const currentX = -igPage * w + d.dx;
+    const remaining = Math.abs(targetX - currentX);
+    /* 依据手指释放速度决定余下动画时长，限制在 190–310ms：
+       快甩不会拖泥带水，慢拖也不会硬切。 */
+    const duration = Math.max(190, Math.min(310,
+      remaining / Math.max(0.9, Math.abs(v) * 1.15)));
+    igMoveTrack(targetX, true, duration);       // 先動，再更新狀態，才不會等一拍
     if (next !== igPage) setIgPage(next);
   };
 
@@ -1806,13 +1816,31 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
               >
                 {/* flex-1 + min-h-0（在外層）：圖片區「拿剩下的空間」，不用 aspect-ratio
                     撐固定高度 —— 那樣直式頁面算出來會超過畫面，多的部分被裁掉。 */}
-                <div ref={igTrackRef} className="h-full flex will-change-transform">
+                <div
+                  ref={igTrackRef}
+                  className="h-full flex will-change-transform"
+                  style={{
+                    width: `${Math.max(1, pageCount) * igBox.w}px`,
+                    backfaceVisibility: 'hidden',
+                    WebkitBackfaceVisibility: 'hidden',
+                    contain: 'layout paint',
+                  }}
+                >
                   {Array.from({ length: pageCount }).map((_, idx) => (
                     <div
                       key={`ig-${idx}`}
                       // 寬度用整數的 px（不是 100%）：小數寬度會讓隔壁那一頁露出一條白線
                       className="h-full shrink-0 flex items-center justify-center bg-black overflow-hidden"
-                      style={{ width: `${igBox.w}px` }}
+                      style={{
+                        /* 每张向右多画 1px、再用负 margin 抵消版面宽度：轨道步长仍
+                           是 igBox.w，但 GPU 次像素取整时不会露出两页间的黑缝。 */
+                        width: `${igBox.w + 1}px`,
+                        marginRight: '-1px',
+                        transform: 'translateZ(0)',
+                        backfaceVisibility: 'hidden',
+                        WebkitBackfaceVisibility: 'hidden',
+                        contain: 'paint',
+                      }}
                     >
                       {/* 直接顯示匯出的那一張。object-contain 保證完整顯示、絕不裁切 */}
                       {mediaNode
