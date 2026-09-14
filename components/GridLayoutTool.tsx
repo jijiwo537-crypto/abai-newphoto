@@ -14033,7 +14033,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   // 右邊的留白就不算進 scrollWidth，最後一頁永遠捲不到正中間。
                   width: 'max-content',
                   minWidth: '100%',
-                  opacity: containerMeasured ? 1 : 0,
+                  /* 接續未完成專案時，IndexedDB 內容、頁面比例與方向會在同一輪
+                     還原。還原完成前若先畫出預設 3:4 頁面，下一幀真正比例套上
+                     後整排就會向下跳一下。等草稿與實際容器尺寸都準備好才顯示，
+                     並讓下方既有的淡入接手；正常新專案的顯示時機不變。 */
+                  opacity: containerMeasured && draftReady ? 1 : 0,
                 }}
               >
                 {/* 只做縮放（以左上角為原點）—— 外層已經是縮放後的尺寸了 */}
