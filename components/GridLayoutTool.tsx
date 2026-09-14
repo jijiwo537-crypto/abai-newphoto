@@ -9580,6 +9580,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   // Mobile Touch States
   const [touchDraggedIndex, setTouchDraggedIndex] = useState<number | null>(null);
+  /* 長按成立前就把縮圖放進 DOM 解碼。iOS 第一次建立 <img> 與合成層時會先畫
+     一幀父層背景；等到長按成立才 mount，使用者看到的就是那一下黑閃。 */
+  const [cellDragPreview, setCellDragPreview] = useState<{
+    src: string;
+    rotation: number;
+  } | null>(null);
   const [touchDragOverIndex, setTouchDragOverIndex] = useState<number | null>(null);
 
   const touchDragState = useRef<{
@@ -9619,6 +9625,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const swapOverRef = useRef<SwapTarget | null>(null);
   const [swapOver, setSwapOver] = useState<SwapTarget | null>(null);
   const [floatDragSrc, setFloatDragSrc] = useState<string | null>(null);
+  const [floatDragPreloadSrc, setFloatDragPreloadSrc] = useState<string | null>(null);
   useEffect(() => () => { if (floatSwapTimerRef.current) clearTimeout(floatSwapTimerRef.current); }, []);
 
   const setSwapOverTarget = (t: SwapTarget | null) => {
@@ -10228,27 +10235,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       isLongPressedRef.current = false;
       pendingLongPressPosRef.current = null;
       setTouchDraggedIndex(null);
+      setCellDragPreview(null);
       setTouchDragOverIndex(null);
       setSwapOverTarget(null);
-      // 整組佈局被選取時，雙指是要縮放「整組」；手指剛好落在某一格上面
-      // 不代表要縮那一格裡的照片，這裡直接讓給佈局自己的處理器
-      if (selectedIndex === null) {
-        touchZoomState.current = null;
-        touchDragState.current = null;
-        return;
-      }
+      /* 雙指一律交給最外層 workspace 的單一手勢控制器。之前格子、佈局與
+         workspace 會依第二根手指落點互相搶事件；WebKit 最後常把整段取消，
+         看起來就是物件完全不能縮放。子層只負責取消長按，不再另開 pinch。 */
       wasZoomingRef.current = true;
+      touchZoomState.current = null;
       touchDragState.current = null;
-      // Pinch-to-zoom start
-      const dist = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      touchZoomState.current = {
-        startDist: dist,
-        startZoom: images[idx]?.zoom || 1.0,
-      };
-      // Cancel pointer panning
       pointerState.current.isDraggingContent = false;
     } else if (e.touches.length === 1) {
       wasZoomingRef.current = false;
@@ -10261,6 +10256,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
 
       const touch = e.touches[0];
+      const previewCell = thisLayout?.images[idx];
+      setCellDragPreview(previewCell?.url
+        ? { src: previewCell.url, rotation: previewCell.rotation || 0 }
+        : null);
       touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
       pendingLongPressPosRef.current = { x: touch.clientX, y: touch.clientY };
       cellSwipeRef.current = { lastX: touch.clientX, active: false };
@@ -10488,6 +10487,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
 
     isLongPressedRef.current = false;
+    setCellDragPreview(null);
     touchStartPosRef.current = null;
     pendingLongPressPosRef.current = null;
     cellSwipeRef.current = null;
@@ -11089,11 +11089,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (e.touches.length !== 1) {
       if (floatSwapTimerRef.current) { clearTimeout(floatSwapTimerRef.current); floatSwapTimerRef.current = null; }
       setFloatDragSrc(null);
+      setFloatDragPreloadSrc(null);
       setSwapOverTarget(null);
       floatSwapRef.current = null;
       return;
     }
     const t = e.touches[0];
+    // 先解碼、先建立合成層；長按成立時只切可見度，不臨時建立黑色方塊。
+    setFloatDragPreloadSrc(fImg.src);
     floatSwapRef.current = {
       id: fImg.id, src: fImg.src,
       startX: t.clientX, startY: t.clientY, lastX: t.clientX, lastY: t.clientY,
@@ -11142,6 +11145,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const dy = t.clientY - s.startY;
     if (Math.hypot(dx, dy) > 10) {
       if (floatSwapTimerRef.current) { clearTimeout(floatSwapTimerRef.current); floatSwapTimerRef.current = null; }
+      setFloatDragPreloadSrc(null);
     }
   };
 
@@ -11149,6 +11153,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (floatSwapTimerRef.current) { clearTimeout(floatSwapTimerRef.current); floatSwapTimerRef.current = null; }
     const s = floatSwapRef.current;
     floatSwapRef.current = null;
+    setFloatDragPreloadSrc(null);
     if (!s) return;
     if (s.dragging) {
       const target = swapOverRef.current;
@@ -11365,16 +11370,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (t.closest('.cursor-nwse-resize') || t.closest('.cursor-nesw-resize')) return;
     const base = activeLayout?.t || { x: 0, y: 0, scale: 1 };
     if (e.touches.length >= 2) {
-      const d = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      ) || 1;
-      layoutGestureRef.current = {
-        mode: 'pinch',
-        startX: (e.touches[0].clientX + e.touches[1].clientX) / 2,
-        startY: (e.touches[0].clientY + e.touches[1].clientY) / 2,
-        baseX: base.x, baseY: base.y, baseScale: base.scale, startDist: d,
-      };
+      // 只讓 workspace 建立一個 pinch；事件照常冒泡，不能 stopPropagation。
+      layoutGestureRef.current = null;
+      return;
     } else {
       layoutGestureRef.current = {
         mode: 'drag',
@@ -11686,12 +11684,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       isLongPressedRef.current = false;
       touchDragState.current = null;
       pendingLongPressPosRef.current = null;
+      setCellDragPreview(null);
       floatSwapRef.current = null;
       if (hadCellSwap) {
         setTouchDraggedIndex(null);
         setTouchDragOverIndex(null);
       }
       if (hadFloatSwap) setFloatDragSrc(null);
+      setFloatDragPreloadSrc(null);
       if (hadCellSwap || hadFloatSwap) setSwapOverTarget(null);
     }
     if (isLongPressedRef.current || touchDragState.current) return;
@@ -11721,14 +11721,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /* 第二根手指很容易刚好落在选中框控制点或透明交互层上；这些元素会让
        gestureScope 回 none。单指仍然必须尊重它，但已选中的自由物件遇到双指时
        要无条件交给缩放／旋转，不能因为第二根手指的位置而整次失效。 */
-    const selectedFloatingPinch = e.touches.length >= 2 && !!selectedFloatingId;
-    if (scope === 'none' && !selectedFloatingPinch) return;
+    const selectedObjectPinch = e.touches.length >= 2
+      && (!!selectedFloatingId || selectedIndex !== null || layoutSelected);
+    if (scope === 'none' && !selectedObjectPinch) return;
     const gestureFloatingId = selectedFloatingId;
 
     // 雙指縮放不會跟捲頁衝突，所以不管手指落在哪裡都拿來縮放選中的物件
     const twoFingerOnSelection = e.touches.length >= 2 && (selectedFloatingId || selectedIndex !== null || layoutSelected);
     const kind: 'floating' | 'cell' | 'layout' | null =
-      selectedFloatingPinch ? 'floating'
+      selectedObjectPinch ? (selectedFloatingId ? 'floating' : selectedIndex !== null ? 'cell' : 'layout')
       : scope === 'floating' ? 'floating'
       : scope === 'layout' ? 'layout'
       : twoFingerOnSelection ? (selectedFloatingId ? 'floating' : selectedIndex !== null ? 'cell' : 'layout')
@@ -16493,10 +16494,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       )}
 
       {/* Thumbnail following the finger while a free-standing image is long-press dragged */}
-      {floatDragSrc && (
+      {(floatDragPreloadSrc || floatDragSrc) && (
         <div
           id="float-drag-thumbnail"
-          className="fixed pointer-events-none z-[9999] border-2 border-white/80 overflow-hidden bg-neutral-900 flex items-center justify-center will-change-transform"
+          className="fixed pointer-events-none z-[9999] border-2 border-white/80 overflow-hidden bg-transparent flex items-center justify-center will-change-transform"
           style={{
             left: 0,
             top: 0,
@@ -16508,17 +16509,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             })(),
             borderRadius: '8px',
             boxShadow: '0 4px 14px rgba(0,0,0,0.34)',
+            opacity: floatDragSrc ? 1 : 0,
           }}
         >
-          <img src={floatDragSrc} alt="dragging" className="w-full h-full object-cover" />
+          <img src={floatDragPreloadSrc || floatDragSrc || ''} alt="dragging" className="w-full h-full object-cover" />
         </div>
       )}
 
       {/* Floating cell thumbnail following user's finger on mobile - Square design */}
-      {touchDraggedIndex !== null && images[touchDraggedIndex]?.url && (
+      {cellDragPreview && (
         <div
           id="mobile-drag-floating-thumbnail"
-          className="fixed pointer-events-none z-[9999] border-2 border-white/80 overflow-hidden bg-neutral-900 flex items-center justify-center will-change-transform"
+          className="fixed pointer-events-none z-[9999] border-2 border-white/80 overflow-hidden bg-transparent flex items-center justify-center will-change-transform"
           style={{
             left: 0,
             top: 0,
@@ -16530,14 +16532,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             })(),
             borderRadius: '8px', // Square design
             boxShadow: '0 4px 14px rgba(0,0,0,0.34)',
+            opacity: touchDraggedIndex !== null ? 1 : 0,
           }}
         >
           <img
-            src={images[touchDraggedIndex].url}
+            src={cellDragPreview.src}
             alt="dragging"
             className="w-full h-full object-cover"
             style={{
-              transform: `rotate(${images[touchDraggedIndex].rotation || 0}deg)`
+              transform: `rotate(${cellDragPreview.rotation}deg)`
             }}
           />
         </div>
