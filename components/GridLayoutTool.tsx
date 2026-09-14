@@ -4272,7 +4272,7 @@ const VideoLayer: React.FC<{
   /* ── 圖片在形狀裡的位置與縮放（imgShapeX／Y／Zoom）──────────────────
      照片那條路是 drawImgBase 在畫的時候套上去的；影片沒有經過那一支，
      所以以前「套了形狀之後怎麼拖都不會動」。這裡用完全同一條算式，
-     只是換成 CSS：先開一個「形狀視窗」把影片按那個位置與大小擺好，
+     只是換成 CSS：先開一個「形狀視窗」把影片按那個位置��大小擺好，
      外面那層再用形狀遮罩切出來。倍率 1、沒位移時，這個視窗剛好等於整個框。 */
   const shaped = isImgShaped(shapeKind);
   const shapeZoom = shaped ? clampImgZoom((image as any).imgShapeZoom) : 1;
@@ -6526,9 +6526,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
               viewBox={`0 0 ${vectorCssW} ${vectorCssH}`}
               preserveAspectRatio="none"
               style={{
-                position: 'absolute', left: '50%', top: '50%',
+                /* 不再用 50% + translate(-50%) 做第二次置中。iOS WebKit 在外層
+                   native zoom 連續變化時，百分比位置與 translate 會分開取整，
+                   圖片不會抖、但這三種向量層會在相鄰像素間跳。直接寫同一座標
+                   系裡的數值偏移，視覺中心完全相同，縮放時只剩外層一次取樣。 */
+                position: 'absolute',
+                left: `${(boxW - vectorCssW) / 2}px`,
+                top: `${(boxH - vectorCssH) / 2}px`,
                 width: `${vectorCssW}px`, height: `${vectorCssH}px`,
-                transform: 'translate3d(-50%, -50%, 0)',
                 overflow: 'visible', pointerEvents: 'none',
               }}
               aria-hidden
@@ -6586,10 +6591,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             ref={vectorCanvasRef}
             data-vector-canvas={image.id}
             style={{
-              position: 'absolute', left: '50%', top: '50%',
+              /* 與上面的 SVG 共用單一數值座標；避免 WebKit 對 50% 與
+                 translate(-50%) 各自取整而造成預覽縮放時的細微抖動。 */
+              position: 'absolute',
+              left: `${(boxW - vectorCssW) / 2}px`,
+              top: `${(boxH - vectorCssH) / 2}px`,
               width: `${vectorCssW}px`,
               height: `${vectorCssH}px`,
-              transform: 'translate3d(-50%, -50%, 0)',
               pointerEvents: 'none',
             }}
           />
@@ -7062,7 +7070,17 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         <img
           src={image.src}
           alt="floating-item"
-          style={{ width: '100%', height: '100%', objectFit: 'fill', pointerEvents: 'none' }}
+          style={{
+            /* 邏輯外框與吸附座標仍是精確貼邊；可見點陣只向外多取樣半個
+               螢幕像素，再由整張畫布的 overflow 邊界裁回。這能覆蓋 Safari
+               在小數 zoom 下把最外一列混成透明色所產生的髮絲白框，且不會
+               改變選中框、跨頁範圍或匯出座標。 */
+            position: 'absolute',
+            inset: 'calc(-1 * var(--preview-inverse-half, 0.5px))',
+            width: 'calc(100% + 2 * var(--preview-inverse-half, 0.5px))',
+            height: 'calc(100% + 2 * var(--preview-inverse-half, 0.5px))',
+            objectFit: 'fill', pointerEvents: 'none',
+          }}
         />
       )}
 
@@ -13146,7 +13164,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           ctx.save();
           if (lt.x !== 0 || lt.y !== 0 || ltScale !== 1 || ltRot !== 0) {
             ctx.translate(pageOffsetX + targetW / 2 + lt.x * scaleFactor, targetH / 2 + lt.y * scaleFactor);
-            // 旋轉與縮放都以佈局中心為軸，跟預覽的 transform-origin: center 一致
+            // 旋轉與縮���都以佈局中心為軸，跟預覽的 transform-origin: center 一致
             if (ltRot !== 0) ctx.rotate((ltRot * Math.PI) / 180);
             ctx.scale(ltScale, ltScale);
             ctx.translate(-(pageOffsetX + targetW / 2), -targetH / 2);
@@ -14322,18 +14340,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               };
                             })()}
                           >
-                            <div
-                              className="absolute top-0 bottom-0"
-                              /* 页面逻辑仍保留原本的 1px 分隔坐标，但两侧底色各延伸
-                                 半格在分割线正中央相接。这样把可见线减为 1px 后，
-                                 任意预览倍率也不会从线旁露出透明／白色缝隙；图片
-                                 已有的 seamBleed 吸附坐标完全不需要改变。 */
-                              style={{
-                                left: pageIdx > 0 ? -0.5 : 0,
-                                right: pageIdx < pages.length - 1 ? -0.5 : 0,
-                                backgroundColor: page.bgColor,
-                              }}
-                            />
+                            <div className="absolute inset-0" style={{ backgroundColor: page.bgColor }} />
                             {/* 背景紋理：疊在底色上、所有內容之下，不影響點選與拖曳 */}
                             <PatternLayer w={previewW} h={previewH} opts={pagePattern(page)} />
                             {page.layouts.map((layout) => {
@@ -15532,10 +15539,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                          同一條 compositor transform，拖頁時便不會慢一幀或飄離。 */
                       const seamDx = (move?.dx || 0) + previewW * (1 - moveScale) / 2;
                       const seamDy = previewH * (1 - moveScale) / 2;
-                      const seamCoord = pageIdx * (previewW + 1) - 0.5;
-                      const seamTolerance = 0.75 / Math.max(0.0001, kRef.current || 1);
-                      const active = activeGuidelines.some(g => g.type === 'vertical'
-                        && Math.abs(g.coord - seamCoord) <= seamTolerance);
                       return (
                         <div
                           key={`page-seam-overlay-${pageIdx}`}
@@ -15544,8 +15547,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           style={{
                             left: baseSeamLeft,
                             top: 0,
-                            /* 整體粗度由 2px 降為 1px，但仍只有這一份線；吸附只
-                               改顏色，不再切換另一種線寬，因此不會重現兩條線。 */
+                            /* 分割線固定是 1px；藍色吸附線由下方獨立的 2px
+                               guideline layer 負責，兩者不再共用粗細或狀態。 */
                             width: 'var(--preview-inverse-scale, 1px)',
                             height: previewH,
                             transform: `translateX(-50%) translate3d(${seamDx}px, ${seamDy}px, 0) scaleY(${moveScale})`,
@@ -15553,9 +15556,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             transition: move
                               ? (move.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
                               : undefined,
-                            backgroundColor: active
-                              ? 'rgb(59 130 246)'
-                              : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                            backgroundColor: shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
                             zIndex: 400000,
                           }}
                         />
@@ -15599,18 +15600,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       const guideHalf = guidePx / 2;
 
                       return activeGuidelines.map((guideline, idx) => {
-                        /* 页缝本身已经会切成蓝色来表示吸附。这里若再画一条通用
-                           2px 对齐线，就会叠在 1px 分割线上，视觉上异常变粗；
-                           而且这层 z-index 还会压过选中框。页缝命中时只保留
-                           那条固定 1px 的蓝色分割线即可。 */
-                        if (guideline.type === 'vertical') {
-                          const seamTolerance = 0.75 / Math.max(0.0001, kRef.current || 1);
-                          const isPageSeamGuide = pages.slice(1).some((_, seamIdx) => {
-                            const seamCoord = (seamIdx + 1) * (previewW + 1) - 0.5;
-                            return Math.abs(guideline.coord - seamCoord) <= seamTolerance;
-                          });
-                          if (isPageSeamGuide) return null;
-                        }
+                        /* 對齊線與分割線是兩個獨立圖層。即使座標剛好落在頁縫，
+                           仍照常畫完整 2px 藍線，放開後才露出底下固定 1px 分割線。 */
                         let leftStyle = '0';
                         let topStyle = '0';
                         let widthStyle = '100%';
@@ -15640,8 +15631,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                看起來比其他邊的線細。 */
                             className="absolute pointer-events-none bg-blue-500"
                             style={{
-                              /* 页间分割线是 200000；对齐线必须稳定盖在它上面。 */
-                              zIndex: 300000,
+                              /* 高於分割線、低於選中框；藍線不會再被 1px 黑線
+                                 從中央切開而看起來忽粗忽細。 */
+                              zIndex: 475000,
                               left: leftStyle,
                               top: topStyle,
                               width: widthStyle,
@@ -15704,7 +15696,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           })()}
         </div>
 
-        {/* 與創意拼圖同款播放列：從工具列下方滑入，預覽同時平順縮小讓位。 */}
+        {/* ���創意拼圖同款播放列：從工具列下方滑入，預覽同時平順縮小讓位。 */}
         {motionBarMounted && (
           <div
             ref={motionBarRef}
