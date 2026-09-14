@@ -7617,9 +7617,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* DOM 合成的透明邊在 Safari 會混入一小條底色；輸出 canvas 沒有這層
          抗鋸齒，所以才會出現「輸出無縫、預覽有髮絲縫」。只在真正貼頁面
          外緣時向裁切區多蓋 0.35 個螢幕像素，內部物件互相對齊完全不動。 */
-      /* Safari 會同時對物件邊與頁縫各做一次抗鋸齒，半像素仍可能混入一列白底。
-         預覽層向接縫覆蓋 1 個螢幕像素才可完整吃掉；資料與匯出完全不受影響。 */
-      const bleed = 1 / Math.max(.0001, kRef.current || 1);
+      /* 頁與頁之間本身有 1 個「畫布座標」的分隔槽；物件貼到頁緣後，距離
+         分隔線中心仍有半格。只覆蓋 1 個螢幕像素在高倍率下會不夠，留下白縫。
+         先跨過半格，再多蓋 1 個螢幕像素吃掉 Safari 抗鋸齒。這只改預覽位置，
+         匯出仍使用原始幾何。 */
+      const bleed = .5 + 1 / Math.max(.0001, kRef.current || 1);
       const isPageLeft = pageRects.some(pr => Math.abs(pr.left - bestGuidelineX!) < .51);
       const isPageRight = pageRects.some(pr => Math.abs(pr.right - bestGuidelineX!) < .51);
       if (isPageLeft && Math.abs(leftEdge - bestGuidelineX!) < .8) snappedX -= bleed;
@@ -9313,8 +9315,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const i = pagesRef.current.findIndex(pg => pg.id === id);
       if (i <= 0) return;
       const seamCenter = colRect.left + k * (i * stride - 0.5);
+      const seamW = Math.max(1, parseFloat(node.style.width) || 1);
       node.style.transform =
-        `translate3d(${seamCenter - rootLeft - 0.5}px, ${colRect.top - rootTop - 0.5}px, 0)`;
+        `translate3d(${seamCenter - rootLeft - seamW / 2}px, ${colRect.top - rootTop - 0.5}px, 0)`;
       node.style.height = `${colRect.height + 1}px`;
       node.style.visibility = embeddedSeamsRef.current ? 'hidden' : 'visible';
     });
@@ -9411,7 +9414,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [pagesMode, pagesScale, positionPageCtls, applyStripGeometry]);
+  }, [pagesMode, pagesScale, activeTab, positionPageCtls, applyStripGeometry]);
 
   // 進到濾鏡分頁才在背景把濾鏡一個一個載進來，載好一個就重畫一次
   useEffect(() => {
@@ -14150,7 +14153,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   style={{
                                     top: `${-0.5 / previewScale}px`,
                                     height: `calc(100% + ${1 / previewScale}px)`,
-                                    width: `${1 / previewScale}px`,
+                                    /* 命中頁縫時與一般 2px 對齊線同粗；未命中仍是固定 1px。 */
+                                    width: `${(isSeamGuideActive ? 2 : 1) / previewScale}px`,
                                     backgroundColor: isSeamGuideActive
                                       ? 'rgb(59 130 246)'
                                       : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
@@ -16350,8 +16354,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             }}
             className="absolute left-0 top-0 pointer-events-none"
             style={{
-              /* 对齐触发只换成蓝色，粗度始终保持 1px。 */
-              width: '1px',
+              /* 藍色吸附線與其他對齊線一樣是螢幕 2px；一般分隔線仍固定 1px。 */
+              width: active ? '2px' : '1px',
               height: 0,
               visibility: 'hidden',
               backgroundColor: active ? 'rgb(59 130 246)' : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
