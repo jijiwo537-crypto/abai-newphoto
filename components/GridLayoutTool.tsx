@@ -4880,8 +4880,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      Math.round，物件中心會在相鄰像素間跳。手勢期間保留連續幾何，放手後才
      一次吸回實體像素格，兼顧操作穩定與靜止清晰度。 */
   const liveGeometry = stretching || isScaling || isDragging || hideChrome;
-  const boxW = liveGeometry ? image.width * image.scale : snapPx2(image.width * image.scale);
-  const boxH = liveGeometry ? image.height * image.scale : snapPx2(image.height * image.scale);
+  /* 对齐线出现时，物件边缘必须严格使用吸附后的逻辑坐标；若再用 snapPx/snapPx2
+     二次取整，本体会相对页面移动半个像素，产生白缝或越过蓝线。 */
+  const exactAlignedGeometry = liveGeometry || hasActiveGuidelines;
+  const boxW = exactAlignedGeometry ? image.width * image.scale : snapPx2(image.width * image.scale);
+  const boxH = exactAlignedGeometry ? image.height * image.scale : snapPx2(image.height * image.scale);
   const renderScale = Math.max(
     boxW / Math.max(1, image.width),
     boxH / Math.max(1, image.height),
@@ -5570,8 +5573,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const w = boxW;
       const h = boxH;
       return {
-        left: `${liveGeometry ? cx - w / 2 : snapPx(cx - w / 2)}px`,
-        top: `${liveGeometry ? cy - h / 2 : snapPx(cy - h / 2)}px`,
+        left: `${exactAlignedGeometry ? cx - w / 2 : snapPx(cx - w / 2)}px`,
+        top: `${exactAlignedGeometry ? cy - h / 2 : snapPx(cy - h / 2)}px`,
         width: `${w}px`,
         height: `${h}px`,
       };
@@ -5610,8 +5613,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const h = boxH;
     return {
       position: 'absolute',
-      left: `${liveGeometry ? cx - w / 2 : snapPx(cx - w / 2)}px`,
-      top: `${liveGeometry ? cy - h / 2 : snapPx(cy - h / 2)}px`,
+      left: `${exactAlignedGeometry ? cx - w / 2 : snapPx(cx - w / 2)}px`,
+      top: `${exactAlignedGeometry ? cy - h / 2 : snapPx(cy - h / 2)}px`,
       width: `${w}px`, height: `${h}px`,
       transformOrigin: 'center center',
       transform: (dragShift || (image.rotation % 360) !== 0)
@@ -7600,32 +7603,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          而且是往外捨入，最多差一整個實體像素。現在改成就近捨入（最多差半個），
          而且**把對齊線一起挪過去** —— 線畫在哪裡，邊緣就在哪裡，
          看到的是 100% 重合。 */
-      const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
-      /* leftEdge/rightEdge 是畫布座標，真正落到螢幕像素前還會乘 previewScale。
-         只乘 dpr 會在縮放預覽時量錯像素格，正是放大後仍看得到白髮絲的原因。 */
-      const screenDensity = dpr * Math.max(.0001, kRef.current || 1);
-      const leftEdge = snappedX + imgWidth / 2 - scaledW / 2;
-      const rightEdge = leftEdge + scaledW;
-      let gx: number = bestGuidelineX;
-      if (Math.abs(leftEdge - gx) < 0.51) {
-        const q = Math.round(leftEdge * screenDensity) / screenDensity;
-        snappedX += q - leftEdge; gx = q;
-      } else if (Math.abs(rightEdge - gx) < 0.51) {
-        const q = Math.round(rightEdge * screenDensity) / screenDensity;
-        snappedX += q - rightEdge; gx = q;
-      }
-      /* DOM 合成的透明邊在 Safari 會混入一小條底色；輸出 canvas 沒有這層
-         抗鋸齒，所以才會出現「輸出無縫、預覽有髮絲縫」。只在真正貼頁面
-         外緣時向裁切區多蓋 0.35 個螢幕像素，內部物件互相對齊完全不動。 */
-      /* 頁與頁之間本身有 1 個「畫布座標」的分隔槽；物件貼到頁緣後，距離
-         分隔線中心仍有半格。只覆蓋 1 個螢幕像素在高倍率下會不夠，留下白縫。
-         先跨過半格，再多蓋 1 個螢幕像素吃掉 Safari 抗鋸齒。這只改預覽位置，
-         匯出仍使用原始幾何。 */
-      const bleed = .5 + 1 / Math.max(.0001, kRef.current || 1);
-      const isPageLeft = pageRects.some(pr => Math.abs(pr.left - bestGuidelineX!) < .51);
-      const isPageRight = pageRects.some(pr => Math.abs(pr.right - bestGuidelineX!) < .51);
-      if (isPageLeft && Math.abs(leftEdge - bestGuidelineX!) < .8) snappedX -= bleed;
-      else if (isPageRight && Math.abs(rightEdge - bestGuidelineX!) < .8) snappedX += bleed;
+      const gx: number = bestGuidelineX;
+      /* 不再做第二次像素取整或向外覆边。吸附公式已经让边缘与 guideline
+         完全相等；这里再移动一次就会变成用户看到的“已经超过蓝线”。 */
       guidelines.push({ type: 'vertical', coord: gx });
     }
     /* 圖層比頁面「幾乎一樣寬」時，左緣貼齊與右緣貼齊是兩個相差零點幾 px 的位置，
@@ -7635,9 +7615,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const w = pr.right - pr.left;
       if (Math.abs(scaledW - w) < 2 && Math.abs((snappedX + imgWidth / 2) - pr.centerX) < 4) {
         snappedX = pr.centerX - imgWidth / 2;
-        /* 四边同时贴页时也必须至少多盖 1 个屏幕像素，不能继续用旧的 .35px。 */
-        const bleed = 1 / Math.max(.0001, kRef.current || 1);
-        fitScale = Math.max(fitScale || imgScale, imgScale * (w + bleed * 2) / Math.max(.001, scaledW));
+        fitScale = Math.max(fitScale || imgScale, imgScale * w / Math.max(.001, scaledW));
       }
     });
     /* 圖層已經「幾乎剛好等於整頁」時，光把位置對準還不夠 —— 只要比頁面窄零點幾
@@ -7730,31 +7708,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (bestGuidelineY !== null) {
       snappedY = bestSnapY;
       // 跟上面 X 那一段完全同一套（說明見那裡）
-      const dprY = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
-      const screenDensityY = dprY * Math.max(.0001, kRef.current || 1);
-      const topEdge = snappedY + imgHeight / 2 - scaledH / 2;
-      const bottomEdge = topEdge + scaledH;
-      let gy: number = bestGuidelineY;
-      if (Math.abs(topEdge - gy) < 0.51) {
-        const q = Math.round(topEdge * screenDensityY) / screenDensityY;
-        snappedY += q - topEdge; gy = q;
-      } else if (Math.abs(bottomEdge - gy) < 0.51) {
-        const q = Math.round(bottomEdge * screenDensityY) / screenDensityY;
-        snappedY += q - bottomEdge; gy = q;
-      }
-      const bleed = 1 / Math.max(.0001, kRef.current || 1);
-      const isPageTop = pageRects.some(pr => Math.abs(pr.top - bestGuidelineY!) < .51);
-      const isPageBottom = pageRects.some(pr => Math.abs(pr.bottom - bestGuidelineY!) < .51);
-      if (isPageTop && Math.abs(topEdge - bestGuidelineY!) < .8) snappedY -= bleed;
-      else if (isPageBottom && Math.abs(bottomEdge - bestGuidelineY!) < .8) snappedY += bleed;
+      const gy: number = bestGuidelineY;
       guidelines.push({ type: 'horizontal', coord: gy });
     }
     ownPageRectsForFit.forEach(pr => {
       const h = pr.bottom - pr.top;
       if (Math.abs(scaledH - h) < 2 && Math.abs((snappedY + imgHeight / 2) - pr.centerY) < 4) {
         snappedY = pr.centerY - imgHeight / 2;
-        const bleed = 1 / Math.max(.0001, kRef.current || 1);
-        fitScale = Math.max(fitScale || imgScale, imgScale * (h + bleed * 2) / Math.max(.001, scaledH));
+        fitScale = Math.max(fitScale || imgScale, imgScale * h / Math.max(.001, scaledH));
       }
     });
 
@@ -9324,7 +9285,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       node.style.transform =
         `translate3d(${seamCenter - rootLeft - seamW / 2}px, ${colRect.top - rootTop - 0.5}px, 0)`;
       node.style.height = `${colRect.height + 1}px`;
-      node.style.visibility = embeddedSeamsRef.current ? 'hidden' : 'visible';
+      /* 命中页缝时蓝线改在页面内部绘制，那里和选中框属于同一个堆叠环境；
+         外层这条旧线必须隐藏，否则会压过选中框并产生双重粗细。 */
+      node.style.visibility = (embeddedSeamsRef.current || node.dataset.active === '1') ? 'hidden' : 'visible';
     });
     // 「新增一頁」貼在最後一頁原本的位置旁邊 —— 用算的，才不會被拖曳中的
     // 最後一頁拖著跑（看起來像跟那一頁黏在一起）
@@ -14170,13 +14133,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 boxShadow: 'none',
                               }}
                             >
-                              {embeddedSeamsRef.current && !pagesMode && (
+                              {(embeddedSeamsRef.current || isSeamGuideActive) && !pagesMode && (
                                 <div
                                   className="absolute left-0 pointer-events-none"
                                   style={{
                                     top: `${-0.5 / previewScale}px`,
                                     height: `calc(100% + ${1 / previewScale}px)`,
-                                    /* 命中頁縫時與一般 2px 對齊線同粗；未命中仍是固定 1px。 */
+                                    /* 蓝线只往当前页面内部画：左页命中就向左，右页命中
+                                       就向右。宽度是固定屏幕 2px，与其他对齐线一致。 */
+                                    left: isSeamGuideActive
+                                      ? `${0.5 - (activePageIndex < pageIdx ? 2 / previewScale : 0)}px`
+                                      : 0,
                                     width: `${(isSeamGuideActive ? 2 : 1) / previewScale}px`,
                                     backgroundColor: isSeamGuideActive
                                       ? 'rgb(59 130 246)'
@@ -16373,6 +16340,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         return (
           <div
             key={`seam-overlay-${pg.id}`}
+            data-active={active ? '1' : '0'}
             ref={(el) => {
               if (el) seamOverlayRefs.current.set(pg.id, el);
               else seamOverlayRefs.current.delete(pg.id);
