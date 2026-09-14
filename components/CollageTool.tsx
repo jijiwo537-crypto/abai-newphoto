@@ -2468,7 +2468,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         id: Math.random().toString(36).substr(2, 9), x: hx, y: hy,
         randomFactor: Math.random() * 2 - 1, randomNumber: Math.floor(Math.random() * 10),
         /* 對稱關閉時不再全部堆在圖片上 —— 兩邊隨機各半，遮罩上也會有圖案 */
-        side: around ? 'mask' : (symmetryEnabled ? 'both' : (Math.random() < 0.5 ? 'image' : 'mask')),
+        /* 滿版沒有遮罩側，八顆圖案全部屬於底圖；不能沿用隨機 image/mask，
+           否則資料裡雖然是 8，實際最多只看得到其中一半。 */
+        side: lay === FULL
+          ? 'image'
+          : around ? 'mask' : (symmetryEnabled ? 'both' : (Math.random() < 0.5 ? 'image' : 'mask')),
       });
     }
     setHoles(newHoles);
@@ -3112,7 +3116,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
         // 有沒有點到圖案（圖案疊在 below 物件之上）
         let holeUnder = false;
-        if (layout !== FULL) for (let i = holesRef.current.length - 1; i >= 0; i--) {
+        for (let i = holesRef.current.length - 1; i >= 0; i--) {
           if (checkHitHole(x, y, holesRef.current[i], gs, offs, clickedSide)) { holeUnder = true; break; }
         }
         if (!holeUnder) {
@@ -3202,7 +3206,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
 
       let hitHole = null;
-      if (layout !== FULL) for (let i = holesRef.current.length - 1; i >= 0; i--) {
+      for (let i = holesRef.current.length - 1; i >= 0; i--) {
         const h = holesRef.current[i];
         if (checkHitHole(x, y, h, gs, offs, clickedSide)) { hitHole = h; break; }
       }
@@ -5941,10 +5945,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
 
     if (layout === FULL) {
-      /* 滿版只保留底圖與使用者另外加入的物件；遮罩、紋理、圖案及連線
-         全部不進繪製流程，確保不是把遮罩設透明來假裝滿版。 */
+      /* 滿版本身沒有遮罩區，但仍保留「圖案」層。圖案直接使用圖片側既有
+         的同一支繪製器覆在底圖上，數量、位置、動畫、發光與其他排版一致；
+         只是不再建立或顯示任何遮罩色塊。 */
       drawCentreImage();
       drawObjects(belowObjs);
+      drawImageSideHoles();
     } else if (layout === AROUND) {
       drawBackdrop();
       drawMaskLayer();
@@ -8448,7 +8454,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           if (t === AROUND && layout !== AROUND) setHoleSize(v => Math.min(100, v + 10));
                           else if (t !== AROUND && layout === AROUND) setHoleSize(v => Math.max(0, v - 10));
                           setSelectedTarget(null);
-                          if (t !== FULL) generateRandomHoles(true, t, 'none', restoredCount);
+                          /* 滿版同樣要真的建立八顆圖案，而不是只把數字改成 8。
+                             其他排版仍恢復進滿版前的數量。 */
+                          /* holeCount 從別的數字改成 8 時，下方既有 effect 會在同一
+                             次 commit 後重灑；這裡不能再先灑一次，否則使用者會
+                             看見圖案出現後又跳位。原本就已是 8 才由按鈕直接建立。 */
+                          const desiredCount = t === FULL ? 8 : restoredCount;
+                          if (holeCount === desiredCount) {
+                            generateRandomHoles(true, t, 'none', desiredCount);
+                          }
                         }} className="focus:outline-none" aria-label={t === FULL ? '滿版' : `遮罩排版 ${t}`} title={t === FULL ? '滿版' : undefined}>
                           <LayoutIcon type={t} active={layout === t} />
                         </button>
