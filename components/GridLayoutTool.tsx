@@ -9111,6 +9111,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    */
   const pageCtlRefs = useRef(new Map<string, HTMLDivElement>());
   const seamOverlayRefs = useRef(new Map<string, HTMLDivElement>());
+  const embeddedSeamsRef = useRef(false);
+  const embeddedSeams = pageDragIdx !== null
+    || selectedFloatingId !== null || selectedBrushId !== null
+    || selectedIndex !== null || selectedLayoutId !== null;
+  embeddedSeamsRef.current = embeddedSeams;
   /** 頁面控制鍵與畫布共用的定位根；不能使用 viewport-fixed，否則瀏覽器
       縮放／iOS visualViewport 改變時兩者會落在不同座標系。 */
   const gridRootRef = useRef<HTMLDivElement>(null);
@@ -9291,9 +9296,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (i <= 0) return;
       const seamCenter = colRect.left + k * (i * stride - 0.5);
       node.style.transform =
-        `translate3d(${seamCenter - rootLeft - 0.5}px, ${colRect.top - rootTop}px, 0)`;
-      node.style.height = `${colRect.height}px`;
-      node.style.visibility = 'visible';
+        `translate3d(${seamCenter - rootLeft - 0.5}px, ${colRect.top - rootTop - 0.5}px, 0)`;
+      node.style.height = `${colRect.height + 1}px`;
+      node.style.visibility = embeddedSeamsRef.current ? 'hidden' : 'visible';
     });
     // 「新增一頁」貼在最後一頁原本的位置旁邊 —— 用算的，才不會被拖曳中的
     // 最後一頁拖著跑（看起來像跟那一頁黏在一起）
@@ -9325,6 +9330,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       plus.style.transition = 'none';
     }
   }, []);
+
+  /* 选中／取消选中与拖起／放下页面时，立即在外层固定线和内层线之间交棒。 */
+  useLayoutEffect(() => {
+    positionPageCtls();
+  }, [embeddedSeams, positionPageCtls]);
 
   useEffect(() => {
     let raf = 0;
@@ -14073,6 +14083,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     }}
                   >
                     {pages.map((page, pageIdx) => {
+                      const previewScale = Math.max(0.0001, kRef.current || 1);
+                      const seamGuideX = pageIdx * (previewW + 1) - 0.5;
+                      const isSeamGuideActive = pageIdx > 0 && activeGuidelines.some(
+                        guide => guide.type === 'vertical'
+                          && Math.abs(guide.coord - seamGuideX) <= 0.75 / previewScale
+                      );
                       return (
                         <React.Fragment key={page.id}>
                           {pageIdx > 0 && (
@@ -14098,7 +14114,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 position: 'relative',
                                 boxShadow: 'none',
                               }}
-                            />
+                            >
+                              {embeddedSeamsRef.current && (
+                                <div
+                                  className="absolute left-0 pointer-events-none"
+                                  style={{
+                                    top: `${-0.5 / previewScale}px`,
+                                    height: `calc(100% + ${1 / previewScale}px)`,
+                                    width: `${1 / previewScale}px`,
+                                    backgroundColor: isSeamGuideActive
+                                      ? 'rgb(59 130 246)'
+                                      : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                                    zIndex: 200,
+                                  }}
+                                />
+                              )}
+                            </div>
                           )}
 
                           <div
@@ -16259,7 +16290,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             }}
             className="absolute left-0 top-0 pointer-events-none"
             style={{
-              width: active ? '2px' : '1px',
+              /* 对齐触发只换成蓝色，粗度始终保持 1px。 */
+              width: '1px',
               height: 0,
               visibility: 'hidden',
               backgroundColor: active ? 'rgb(59 130 246)' : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
