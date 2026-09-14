@@ -9121,9 +9121,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const pageCtlRefs = useRef(new Map<string, HTMLDivElement>());
   const seamOverlayRefs = useRef(new Map<string, HTMLDivElement>());
   const embeddedSeamsRef = useRef(false);
-  const embeddedSeams = pagesMode || pageDragIdx !== null
-    || selectedFloatingId !== null || selectedBrushId !== null
-    || selectedIndex !== null || selectedLayoutId !== null;
+  /* 一般预览、选中物件与动画页都只使用外层那条固定屏幕像素分隔线。
+     以前选中时会在「外层线／页面槽内线」之间交棒：两层坐标并非同一套，
+     过渡帧便会露出白槽，动画缩放时也像有一条线停在原地。
+     只有页面排序真的会把单页移走，才需要绑定在页面上的分隔线。 */
+  const embeddedSeams = pagesMode || pageDragIdx !== null;
   embeddedSeamsRef.current = embeddedSeams;
   /** 頁面控制鍵與畫布共用的定位根；不能使用 viewport-fixed，否則瀏覽器
       縮放／iOS visualViewport 改變時兩者會落在不同座標系。 */
