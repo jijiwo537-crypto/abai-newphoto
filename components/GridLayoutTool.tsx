@@ -7635,7 +7635,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const w = pr.right - pr.left;
       if (Math.abs(scaledW - w) < 2 && Math.abs((snappedX + imgWidth / 2) - pr.centerX) < 4) {
         snappedX = pr.centerX - imgWidth / 2;
-        const bleed = .35 / Math.max(.0001, kRef.current || 1);
+        /* 四边同时贴页时也必须至少多盖 1 个屏幕像素，不能继续用旧的 .35px。 */
+        const bleed = 1 / Math.max(.0001, kRef.current || 1);
         fitScale = Math.max(fitScale || imgScale, imgScale * (w + bleed * 2) / Math.max(.001, scaledW));
       }
     });
@@ -7730,17 +7731,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       snappedY = bestSnapY;
       // 跟上面 X 那一段完全同一套（說明見那裡）
       const dprY = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+      const screenDensityY = dprY * Math.max(.0001, kRef.current || 1);
       const topEdge = snappedY + imgHeight / 2 - scaledH / 2;
       const bottomEdge = topEdge + scaledH;
       let gy: number = bestGuidelineY;
       if (Math.abs(topEdge - gy) < 0.51) {
-        const q = Math.round(topEdge * dprY) / dprY;
+        const q = Math.round(topEdge * screenDensityY) / screenDensityY;
         snappedY += q - topEdge; gy = q;
       } else if (Math.abs(bottomEdge - gy) < 0.51) {
-        const q = Math.round(bottomEdge * dprY) / dprY;
+        const q = Math.round(bottomEdge * screenDensityY) / screenDensityY;
         snappedY += q - bottomEdge; gy = q;
       }
-      const bleed = .35 / Math.max(.0001, kRef.current || 1);
+      const bleed = 1 / Math.max(.0001, kRef.current || 1);
       const isPageTop = pageRects.some(pr => Math.abs(pr.top - bestGuidelineY!) < .51);
       const isPageBottom = pageRects.some(pr => Math.abs(pr.bottom - bestGuidelineY!) < .51);
       if (isPageTop && Math.abs(topEdge - bestGuidelineY!) < .8) snappedY -= bleed;
@@ -7751,7 +7753,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const h = pr.bottom - pr.top;
       if (Math.abs(scaledH - h) < 2 && Math.abs((snappedY + imgHeight / 2) - pr.centerY) < 4) {
         snappedY = pr.centerY - imgHeight / 2;
-        const bleed = .35 / Math.max(.0001, kRef.current || 1);
+        const bleed = 1 / Math.max(.0001, kRef.current || 1);
         fitScale = Math.max(fitScale || imgScale, imgScale * (h + bleed * 2) / Math.max(.001, scaledH));
       }
     });
@@ -13815,7 +13817,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       )}
 
       {/* Top Header */}
-      <header className="h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-50 bg-black/90 backdrop-blur-md">
+      <header
+        className="h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-50 bg-black/90 backdrop-blur-md"
+        /* IG 预览是独立全屏页面，编辑器 header 不能只被黑底盖住，必须从 flex
+           布局中完全移除，否则它仍占 56px，把整篇 IG 内容向下推。 */
+        style={{ display: igPreview ? 'none' : undefined }}
+      >
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -15459,7 +15466,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   <div
                     ref={setChromeLayer}
                     className="absolute left-0 top-0 w-full h-full pointer-events-none"
-                    style={{ zIndex: 100000 }}
+                    /* 选中框、控制点、白色药丸与其按钮是一整个 UI 层，必须高于
+                       普通分隔线、蓝色分隔线及所有对齐线。 */
+                    style={{ zIndex: 500000 }}
                   />
 
                 </div>
