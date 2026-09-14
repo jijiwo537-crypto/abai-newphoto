@@ -7601,20 +7601,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          而且**把對齊線一起挪過去** —— 線畫在哪裡，邊緣就在哪裡，
          看到的是 100% 重合。 */
       const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
+      /* leftEdge/rightEdge 是畫布座標，真正落到螢幕像素前還會乘 previewScale。
+         只乘 dpr 會在縮放預覽時量錯像素格，正是放大後仍看得到白髮絲的原因。 */
+      const screenDensity = dpr * Math.max(.0001, kRef.current || 1);
       const leftEdge = snappedX + imgWidth / 2 - scaledW / 2;
       const rightEdge = leftEdge + scaledW;
       let gx: number = bestGuidelineX;
       if (Math.abs(leftEdge - gx) < 0.51) {
-        const q = Math.round(leftEdge * dpr) / dpr;
+        const q = Math.round(leftEdge * screenDensity) / screenDensity;
         snappedX += q - leftEdge; gx = q;
       } else if (Math.abs(rightEdge - gx) < 0.51) {
-        const q = Math.round(rightEdge * dpr) / dpr;
+        const q = Math.round(rightEdge * screenDensity) / screenDensity;
         snappedX += q - rightEdge; gx = q;
       }
       /* DOM 合成的透明邊在 Safari 會混入一小條底色；輸出 canvas 沒有這層
          抗鋸齒，所以才會出現「輸出無縫、預覽有髮絲縫」。只在真正貼頁面
          外緣時向裁切區多蓋 0.35 個螢幕像素，內部物件互相對齊完全不動。 */
-      const bleed = .35 / Math.max(.0001, kRef.current || 1);
+      /* 覆蓋半個實體螢幕像素，剛好吃掉合成器的抗鋸齒邊，不會肉眼改變位置。 */
+      const bleed = .5 / Math.max(.0001, kRef.current || 1);
       const isPageLeft = pageRects.some(pr => Math.abs(pr.left - bestGuidelineX!) < .51);
       const isPageRight = pageRects.some(pr => Math.abs(pr.right - bestGuidelineX!) < .51);
       if (isPageLeft && Math.abs(leftEdge - bestGuidelineX!) < .8) snappedX -= bleed;
@@ -14126,7 +14130,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                    不再临时变透明，否则那几帧看起来就像被页面盖住。 */
                                 /* 這個槽位只維持既有頁面座標並補成右頁底色；真正的
                                    1px 分割線在縮放容器外繪製，這裡不能再有描邊或陰影。 */
-                                backgroundColor: page.bgColor,
+                                /* 排序模式的真正分隔线已经绑定在右侧页面上。
+                                   这个固定 flex 槽若继续填右页底色，A 页被拖开时就会
+                                   原地露出一条极细白线；排序时必须完全透明。 */
+                                backgroundColor: pagesMode ? 'transparent' : page.bgColor,
                                 /* 它必须高于拖起的页面与自由图层。再用同色半像素阴影
                                    覆盖 fractional zoom 在两侧产生的抗锯齿浅边，最终只
                                    留下一条颜色一致的接缝，不会多出旁边那条淡线。 */

@@ -531,39 +531,28 @@ export const HomePage: React.FC<HomePageProps> = ({
   useEffect(() => {
     const sc = scrollRef.current;
     if (!sc) return;
-    let y0 = 0, atTop = false, atBottom = false, armed = false;
+    let lastY = 0;
 
     const block = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;      // 雙指縮放之類的不要碰
-      const dy = (e.touches[0]?.clientY ?? 0) - y0;
-      if ((atTop && dy > 0) || (atBottom && dy < 0)) e.preventDefault();
-    };
-    const disarm = () => {
-      if (!armed) return;
-      armed = false;
-      sc.removeEventListener('touchmove', block as any);
+      const y = e.touches[0]?.clientY ?? lastY;
+      const dy = y - lastY;
+      lastY = y;
+      /* 不能只記 touchstart 時是否在頂部：從模板區快速甩回頂部的同一個
+         手勢會在途中抵達 0，後半段正是 Safari 產生橡皮筋的地方。每一格
+         都看當下邊界，抵達後的第一個向外位移便直接攔掉。 */
+      const atTopNow = sc.scrollTop <= 0.5;
+      const atBottomNow = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 0.5;
+      if ((atTopNow && dy > 0) || (atBottomNow && dy < 0)) e.preventDefault();
     };
     const down = (e: TouchEvent) => {
-      y0 = e.touches[0]?.clientY ?? 0;
-      atTop = sc.scrollTop <= 0;
-      atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
-      /* 關鍵：**只有這一下真的從最上／最下開始**，才掛那個非被動的監聽器。
-         非被動的 touchmove 會讓瀏覽器每一格都要先等 JS 回話，捲動就從
-         合成執行緒被拉回主執行緒 —— 快速滑動時的頓挫多半是這樣來的。
-         中間任何位置起手都不掛，捲動就走原本最快的那條路。 */
-      if (atTop || atBottom) {
-        armed = true;
-        sc.addEventListener('touchmove', block, { passive: false });
-      }
+      lastY = e.touches[0]?.clientY ?? 0;
     };
     sc.addEventListener('touchstart', down, { passive: true });
-    sc.addEventListener('touchend', disarm, { passive: true });
-    sc.addEventListener('touchcancel', disarm, { passive: true });
+    sc.addEventListener('touchmove', block, { passive: false });
     return () => {
-      disarm();
       sc.removeEventListener('touchstart', down);
-      sc.removeEventListener('touchend', disarm);
-      sc.removeEventListener('touchcancel', disarm);
+      sc.removeEventListener('touchmove', block);
     };
   }, []);
 
@@ -757,6 +746,11 @@ export const HomePage: React.FC<HomePageProps> = ({
   useEffect(() => () => { if (scrollIdle.current) clearTimeout(scrollIdle.current); }, []);
 
   const onScroll = useCallback(() => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    /* iOS 偶爾會在手指放開後才把慣性橡皮筋套進來；觸控事件已結束時
+       touchmove 攔不到，因此在 scroll 的第一格把負值立即歸零。 */
+    if (sc.scrollTop < 0) sc.scrollTop = 0;
     // 標記「現在正在捲」，這段時間內不准改動任何會影響幾何的 CSS 變數
     scrollingUntil.current = performance.now() + 260;
     if (scrollIdle.current) clearTimeout(scrollIdle.current);
@@ -768,8 +762,6 @@ export const HomePage: React.FC<HomePageProps> = ({
        下一個畫面更新才會反映，等於固定慢一格。 */
     applyParallax();
     kickPump();
-    const sc = scrollRef.current;
-    if (!sc) return;
     if (navRef.current === 'me') return;
     const next = sc.scrollTop >= navThresh(sc) ? 'lib' : 'home';
     // 捲動途中不要跟著跳，捲到目標了才解鎖交還控制權
