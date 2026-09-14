@@ -8458,7 +8458,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 正在拖的是哪一頁（拖的就是畫布上真正的那一頁） */
   const [pageDragIdx, setPageDragIdx] = useState<number | null>(null);
   /** 放手後的收尾：內容從「放手時看起來的位置」平順滑回新定位 */
-  const [dragSettle, setDragSettle] = useState<{ page: number; x: number; ease: boolean } | null>(null);
+  const [dragSettle, setDragSettle] = useState<{
+    page: number; x: number; ease: boolean;
+    /** 交换过程中需要暂时隐藏的页缝编号范围（页缝编号＝右侧页面 index）。 */
+    seamFrom: number; seamTo: number;
+  } | null>(null);
+  const dragSettleRef = useRef(dragSettle);
+  dragSettleRef.current = dragSettle;
   const settleTimerRef = useRef(0);
 
   /**
@@ -8716,11 +8722,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const remainder = liveDx - (to - from) * (previewW + 1);
         if (from !== to) handleMovePage(from, to);
         window.clearTimeout(settleTimerRef.current);
-        setDragSettle({ page: to, x: remainder, ease: false });
+        const nextSettle = {
+          page: to,
+          x: remainder,
+          ease: false,
+          seamFrom: Math.min(from, to) + 1,
+          seamTo: Math.max(from, to),
+        };
+        /* ref 同步写，避免 pointerup 到 React commit 之间短暂闪回旧分割线。 */
+        dragSettleRef.current = nextSettle;
+        setDragSettle(nextSettle);
         requestAnimationFrame(() => requestAnimationFrame(() => {
-          setDragSettle(prev => (prev && !prev.ease ? { page: prev.page, x: 0, ease: true } : prev));
+          setDragSettle(prev => (prev && !prev.ease ? { ...prev, x: 0, ease: true } : prev));
         }));
-        settleTimerRef.current = window.setTimeout(() => setDragSettle(null), 260);
+        settleTimerRef.current = window.setTimeout(() => {
+          dragSettleRef.current = null;
+          setDragSettle(null);
+        }, 260);
       }
     };
     window.addEventListener('pointermove', onMove);
@@ -9116,6 +9134,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     || selectedFloatingId !== null || selectedBrushId !== null
     || selectedIndex !== null || selectedLayoutId !== null;
   embeddedSeamsRef.current = embeddedSeams;
+  /** 页面交换时，受影响的页缝不能停在原槽位。拖动与 FLIP 定位完成前先隐藏，
+      完成后再一次出现在新的正确位置。pageIdx 是页缝右侧页面的 index。 */
+  const isReorderingSeam = (pageIdx: number) => {
+    const from = dragIdxRef.current;
+    const to = pageDragToRef.current;
+    if (from !== null && to !== null && from !== to) {
+      const lo = Math.min(from, to) + 1;
+      const hi = Math.max(from, to);
+      if (pageIdx >= lo && pageIdx <= hi) return true;
+    }
+    const settle = dragSettleRef.current;
+    return !!settle && pageIdx >= settle.seamFrom && pageIdx <= settle.seamTo;
+  };
   /** 頁面控制鍵與畫布共用的定位根；不能使用 viewport-fixed，否則瀏覽器
       縮放／iOS visualViewport 改變時兩者會落在不同座標系。 */
   const gridRootRef = useRef<HTMLDivElement>(null);
@@ -9309,7 +9340,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       node.style.transform =
         `translate3d(${seamCenter - rootLeft - 0.5}px, ${colRect.top - rootTop - 0.5}px, 0)`;
       node.style.height = `${colRect.height + 1}px`;
-      node.style.visibility = embeddedSeamsRef.current ? 'hidden' : 'visible';
+      node.style.visibility = embeddedSeamsRef.current || isReorderingSeam(i) ? 'hidden' : 'visible';
     });
     // 「新增一頁」貼在最後一頁原本的位置旁邊 —— 用算的，才不會被拖曳中的
     // 最後一頁拖著跑（看起來像跟那一頁黏在一起）
@@ -14104,6 +14135,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         guide => guide.type === 'vertical'
                           && Math.abs(guide.coord - seamGuideX) <= 0.75 / previewScale
                       );
+                      const hideSeamWhileReordering = pageIdx > 0 && isReorderingSeam(pageIdx);
                       return (
                         <React.Fragment key={page.id}>
                           {pageIdx > 0 && (
@@ -14130,7 +14162,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 boxShadow: 'none',
                               }}
                             >
-                              {embeddedSeamsRef.current && (
+                              {embeddedSeamsRef.current && !hideSeamWhileReordering && (
                                 <div
                                   className="absolute left-0 pointer-events-none"
                                   style={{
