@@ -4882,7 +4882,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   const liveGeometry = stretching || isScaling || isDragging || hideChrome;
   /* 对齐线出现时，物件边缘必须严格使用吸附后的逻辑坐标；若再用 snapPx/snapPx2
      二次取整，本体会相对页面移动半个像素，产生白缝或越过蓝线。 */
-  const exactAlignedGeometry = liveGeometry || hasActiveGuidelines;
+  /* 照片本体不能在放手后再各自取整位置与尺寸。页面与照片处于同一个逻辑
+     坐标系，吸附后的边本来已经严格相等；二次取整会让两者相差半个设备像素，
+     预览就露出白缝。文字／图形仍保留既有静止取整以维持锐利。 */
+  const isPlainRaster = image.text === undefined && !image.shape;
+  const exactAlignedGeometry = liveGeometry || hasActiveGuidelines || isPlainRaster;
   const boxW = exactAlignedGeometry ? image.width * image.scale : snapPx2(image.width * image.scale);
   const boxH = exactAlignedGeometry ? image.height * image.scale : snapPx2(image.height * image.scale);
   const renderScale = Math.max(
@@ -7725,7 +7729,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        如果高度也剛好跟畫布同高，上下兩條邊界線也要一起顯示。
        這裡在「已經吸附完的位置」上把畫布的中線與四個邊界重新對一次，全部符合的
        都加進去。跟其他物件的對齊線不列入（那是另一回事，維持原本只顯示吸附到的那一條）。 */
-    guidelines.push(...pageGuidelinesAt(snappedX, snappedY, imgWidth, imgHeight, imgScale, edgeOnly, rot));
+    guidelines.push(...pageGuidelinesAt(
+      snappedX, snappedY, imgWidth, imgHeight, fitScale ?? imgScale, edgeOnly, rot,
+    ));
 
     return { snappedX, snappedY, fitScale, guidelines: dedupeGuidelines(guidelines, snappedX + imgWidth / 2) };
   };
@@ -9089,7 +9095,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      以前选中时会在「外层线／页面槽内线」之间交棒：两层坐标并非同一套，
      过渡帧便会露出白槽，动画缩放时也像有一条线停在原地。
      只有页面排序真的会把单页移走，才需要绑定在页面上的分隔线。 */
-  const embeddedSeams = pagesMode || pageDragIdx !== null;
+  /* 有选中物件时，分割线必须和物件处在同一个画布堆叠上下文，才能确定压在
+     chrome layer 下面。外层固定线即使写再小的 z-index，也可能因为父层建立了
+     stacking context 而盖住传送出来的选中框、控制点和白色药丸。 */
+  const embeddedSeams = pagesMode || pageDragIdx !== null || anySelected;
   embeddedSeamsRef.current = embeddedSeams;
   /** 頁面控制鍵與畫布共用的定位根；不能使用 viewport-fixed，否則瀏覽器
       縮放／iOS visualViewport 改變時兩者會落在不同座標系。 */
@@ -9336,7 +9345,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /* 选中／取消选中与拖起／放下页面时，立即在外层固定线和内层线之间交棒。 */
   useLayoutEffect(() => {
     positionPageCtls();
-  }, [embeddedSeams, positionPageCtls]);
+  }, [embeddedSeams, activeGuidelines, positionPageCtls]);
 
   useEffect(() => {
     let raf = 0;
@@ -11930,7 +11939,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           // 吸入／離開臨界值即使有遲滯，仍會形成肉眼可見的一格跳動；圖片保留
           // 原本的貼邊吸附，向量物件則維持連續的一對一縮放。
           if (target && enableSnapping && !isVectorObject) {
-            const SNAP_IN = 3, SNAP_OUT = 8;
+            /* 门槛统一用屏幕像素。之前这里把内容坐标误当成屏幕像素；预览缩放后
+               会提早／延后吸附。现在无论画布倍率多少，都是离边缘 4px 才锁定。 */
+            const previewK = Math.max(.0001, kRef.current || 1);
+            const SNAP_IN = 4, SNAP_OUT = 7;
             const cx = target.x + target.width / 2;
             const cy = target.y + target.height / 2;
             let best = Infinity, bestScale = ns;
@@ -11949,14 +11961,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               cands.forEach(cand => {
                 if (!(cand > 0.1)) return;
                 // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
-                const px = Math.abs(cand - ns) * Math.max(ext.bw, ext.bh) / 2;
+                const px = Math.abs(cand - ns) * Math.max(ext.bw, ext.bh) / 2 * previewK;
                 if (px < SNAP_IN && px < best) { best = px; bestScale = cand; }
               });
             });
             /* 吸住後使用较宽的离开门槛。没有迟滞时，手指的微小噪声会让倍率
                在 raw/snap 两个值之间逐帧切换，视觉上就是图形与符号抖动。 */
             if (g.snapScale !== undefined) {
-              const px = Math.abs(ns - g.snapScale) * Math.max(ext.bw, ext.bh) / 2;
+              const px = Math.abs(ns - g.snapScale) * Math.max(ext.bw, ext.bh) / 2 * previewK;
               if (px <= SNAP_OUT) ns = g.snapScale;
               else g.snapScale = undefined;
             }
@@ -11964,6 +11976,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               g.snapScale = bestScale;
               ns = bestScale;
             }
+            /* 后续低通与当前真正画出的倍率使用同一个基准，不能让 lastScale 还停在
+               吸附前的值，否则下一帧会先向外漂再被迟滞拉回，边缘会细微抖动。 */
+            g.lastScale = ns;
           }
           let nextGuidelines: AlignmentGuideline[] | null = null;
           if (target) {
@@ -14137,10 +14152,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 <div
                                   className="absolute left-0 pointer-events-none"
                                   style={{
-                                    top: `${-0.5 / previewScale}px`,
-                                    height: `calc(100% + ${1 / previewScale}px)`,
-                                    /* 蓝线只往当前页面内部画：左页命中就向左，右页命中
-                                       就向右。宽度是固定屏幕 2px，与其他对齐线一致。 */
+                                    /* 不超出页面上下边界。旧写法上下各延长半个屏幕像素，
+                                       放大后就会清楚看到直线凸出画布。 */
+                                    top: 0,
+                                    height: '100%',
+                                    /* 蓝线只往当前页面内部画。分隔线坐标在槽中央，
+                                       线宽固定为屏幕 2px，并且只占其中一侧，不和外层线
+                                       重叠，视觉粗细才会与其他蓝色对齐线完全一致。 */
                                     left: isSeamGuideActive
                                       ? `${0.5 - (activePageIndex < pageIdx ? 2 / previewScale : 0)}px`
                                       : 0,
