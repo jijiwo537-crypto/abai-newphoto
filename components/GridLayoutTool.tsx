@@ -9093,10 +9093,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const motionFitScale = Math.max(.24, Math.min(
     1,
     (Math.max(120, containerSize.width - 32)) / Math.max(1, previewW),
-    /* 頂端固定保留工作區既有的 8px；底端再保留 8px，另扣掉播放列越過
-       工作區底線的 14px。这样畫布上下到兩條橫線的距離才真正一致。
+    /* containerSize 已经扣除了工作区上下各 8px 的 py-2，不能重复再扣一遍。
+       这里只扣播放列侵入内容区的 14px，画布上下到两条横线才真正等距。
        不再使用 userZoom：不論進入前把預覽放多大／多小，動畫頁尺寸都固定。 */
-    (Math.max(100, containerSize.height - 30)) / Math.max(1, previewH),
+    (Math.max(100, containerSize.height - 14)) / Math.max(1, previewH),
   ));
   const pagesScale = pagesMode ? PAGES_MODE_SCALE : activeTab === 'motion' ? motionFitScale : userZoom;
   /** 整排頁面左邊要留的空白（讓第一頁置中） */
@@ -9337,7 +9337,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const linearProgress = Math.max(0, Math.min(1,
           (performance.now() - kAnimRef.current.t0) / 300));
         transitionProgress = 1 - Math.pow(1 - linearProgress, 3);
-        alpha = transition.kind === 'enter' ? 1 - transitionProgress : transitionProgress;
+        alpha = transition.kind === 'enter'
+          ? 1 - transitionProgress
+          /* 退出刚开始是位移最快的一段，先保持不可见；进入缓和段后再一次渐显，
+             用户不会看到加号先跳一下、随后又跟版面归位的“两段抖动”。 */
+          : Math.max(0, Math.min(1, (transitionProgress - .22) / .78));
       }
       const animateWithPreview = !!transition || motionModeRef.current;
       /* 一般模式的加号始终是屏幕 1 倍。退出时直接从动画倍率平顺回到 1，
