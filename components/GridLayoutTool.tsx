@@ -728,7 +728,8 @@ interface ColorPickerProps {
 
 /** 文字圖層的編輯面板：內容、字體、顏色、字距、粗體、邊緣發光。 */
 /** 長按多久才算「要拖去交換」。150ms 太容易誤觸，拉長到 250ms。 */
-const LONG_PRESS_MS = 250;
+/* 圖片交換需要明確長按；250ms 很容易在準備第二根手指縮放時誤觸。 */
+const LONG_PRESS_MS = 380;
 
 
 /**
@@ -9278,7 +9279,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const i = pagesRef.current.findIndex(pg => pg.id === id);
       if (i < 0) return;
       node.style.transform =
-        `translate3d(${left0 + k * (i * stride + previewWRef.current / 2) - rootLeft}px, ${bottom + 2 - rootTop}px, 0) translateX(-50%)`;
+        /* 与两个灰色按钮彼此的 gap-1.5 完全相同：页面下缘到按钮也是 6px。 */
+        `translate3d(${left0 + k * (i * stride + previewWRef.current / 2) - rootLeft}px, ${bottom + 6 - rootTop}px, 0) translateX(-50%)`;
       node.style.visibility = 'visible';
     });
     /* 分割線放在縮放容器外，以真實螢幕 1px 繪製。若留在 col 裡再用反向
@@ -9549,6 +9551,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const longPressTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isLongPressedRef = useRef<boolean>(false);
   const touchStartPosRef = useRef<{ x: number; y: number } | null>(null);
+  /** 长按成立前持续记录手指真实位置，缩图出现时才会正好以手指为中心。 */
+  const pendingLongPressPosRef = useRef<{ x: number; y: number } | null>(null);
   // Cells keep touch-action:none so long-press reordering can own the gesture, which also
   // killed the native horizontal scroll everywhere a photo covers the canvas. While no
   // long-press is in flight we drive that scroll ourselves from the raw touch delta.
@@ -9558,7 +9562,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   // used by both the cell drag and this one.
   const floatSwapRef = useRef<{
     id: string; src: string; startX: number; startY: number;
-    lastX: number; swiping: boolean; dragging: boolean;
+    lastX: number; lastY: number; swiping: boolean; dragging: boolean;
   } | null>(null);
   const floatSwapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const swapOverRef = useRef<SwapTarget | null>(null);
@@ -10161,6 +10165,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     //     但長按 150ms 之後就切換成「拖曳交換這一格的照片」。
 
     if (e.touches.length >= 2) {
+      /* 第二根手指代表缩放，不论长按计时是否刚好已经成立，都立刻完整取消
+         图片交换状态，不能只清 timer 却把已经画出的缩图留在画面上。 */
+      touchDragState.current = null;
+      isLongPressedRef.current = false;
+      pendingLongPressPosRef.current = null;
+      setTouchDraggedIndex(null);
+      setTouchDragOverIndex(null);
+      setSwapOverTarget(null);
       // 整組佈局被選取時，雙指是要縮放「整組」；手指剛好落在某一格上面
       // 不代表要縮那一格裡的照片，這裡直接讓給佈局自己的處理器
       if (selectedIndex === null) {
@@ -10193,12 +10205,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
       const touch = e.touches[0];
       touchStartPosRef.current = { x: touch.clientX, y: touch.clientY };
+      pendingLongPressPosRef.current = { x: touch.clientX, y: touch.clientY };
       cellSwipeRef.current = { lastX: touch.clientX, active: false };
 
       /* 長按門檻。原本 150ms 太短，手指稍微停一下就被判定成「要拖去交換」，
          滑動與點選都很容易誤觸。250ms 是拖曳排序常見的手感：還是立即，
          但已經過了「手指剛放上去那一瞬間」。 */
       longPressTimeoutRef.current = setTimeout(() => {
+        const point = pendingLongPressPosRef.current || { x: touch.clientX, y: touch.clientY };
         isLongPressedRef.current = true;
 
         // Ensure pointer content dragging is fully disabled when long-press triggers
@@ -10216,10 +10230,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         }
 
         // Initialize custom touch drag state
-        touchPosRef.current = { x: touch.clientX, y: touch.clientY };
+        touchPosRef.current = point;
         touchDragState.current = {
-          startX: touch.clientX,
-          startY: touch.clientY,
+          startX: point.x,
+          startY: point.y,
           currentIndex: idx,
           hasMoved: true, // Started with long-press, mark as moved so the floating preview shows up!
         };
@@ -10290,6 +10304,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         return;
       }
       const touch = e.touches[0];
+      pendingLongPressPosRef.current = { x: touch.clientX, y: touch.clientY };
       
       if (touchStartPosRef.current) {
         const dx = touch.clientX - touchStartPosRef.current.x;
@@ -10416,6 +10431,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
     isLongPressedRef.current = false;
     touchStartPosRef.current = null;
+    pendingLongPressPosRef.current = null;
     cellSwipeRef.current = null;
     touchHandledAtRef.current = Date.now();
   };
@@ -11014,19 +11030,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (fImg.text !== undefined || fImg.shape) return;
     if (e.touches.length !== 1) {
       if (floatSwapTimerRef.current) { clearTimeout(floatSwapTimerRef.current); floatSwapTimerRef.current = null; }
+      setFloatDragSrc(null);
+      setSwapOverTarget(null);
       floatSwapRef.current = null;
       return;
     }
     const t = e.touches[0];
     floatSwapRef.current = {
       id: fImg.id, src: fImg.src,
-      startX: t.clientX, startY: t.clientY, lastX: t.clientX,
+      startX: t.clientX, startY: t.clientY, lastX: t.clientX, lastY: t.clientY,
       swiping: false, dragging: false,
     };
     if (floatSwapTimerRef.current) clearTimeout(floatSwapTimerRef.current);
     floatSwapTimerRef.current = setTimeout(() => {
       const s = floatSwapRef.current;
       if (!s || s.swiping) return;
+      // 使用计时结束这一刻的真实触点，不沿用刚按下时可能已有漂移的旧坐标。
+      s.startX = s.lastX;
+      s.startY = s.lastY;
       s.dragging = true;
       // A swap drag wins over the free-move drag the canvas handler would otherwise run.
       globalFloatingTouchState.current = null;
@@ -11044,6 +11065,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const s = floatSwapRef.current;
     if (!s || e.touches.length !== 1) return;
     const t = e.touches[0];
+    s.lastX = t.clientX;
+    s.lastY = t.clientY;
 
     if (s.dragging) {
       // 擋原生捲動的是那個非 passive 的 document 監聽器（React 這層是 passive 的）
@@ -13903,6 +13926,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         {/* Left/Top Collage Preview Area */}
         <div 
           className={`flex-1 flex items-start ${activeTab === 'motion' ? 'touch-pan-x' : 'touch-none'} justify-start py-2 bg-[#070707] relative overflow-x-auto overflow-y-hidden select-none no-scrollbar overscroll-x-contain`}
+          /* 拖起的页面必须位于屏幕坐标分割线之上；平时不建立额外层级。 */
+          style={{ zIndex: pageDragIdx !== null ? 50 : undefined }}
           ref={containerRef}
           data-grid-preview-viewport="1"
           onScroll={(e) => {
@@ -14015,7 +14040,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                          清掉舊範圍，於是圖形邊緣一路留下殘影；各子層分別合成時也會
                          因小數座標取整不同而互相抖動。把整排內容設成同一個 paint
                          containment，瀏覽器每幀會以這個完整區域失效與合成。 */
-                      contain: 'paint',
+                      /* 排序时页面会离开原来的整排边界，paint containment 会像
+                         左右黑色遮罩一样把浮起的页面切掉，因此此模式必须关闭；
+                         一般编辑仍保留 paint containment 来避免互动残影。 */
+                      contain: pagesMode ? 'none' : 'paint',
                       isolation: 'isolate',
                     }}
                   >
