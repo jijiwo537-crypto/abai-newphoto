@@ -92,6 +92,8 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
   const igStripRef = useRef<HTMLDivElement>(null);
   const igTrackRef = useRef<HTMLDivElement>(null);
   const igDragRef = useRef<{ x0: number; y0: number; t0: number; dx: number; id: number; lock: '' | 'x' | 'y' } | null>(null);
+  const igDragRafRef = useRef(0);
+  const igPendingXRef = useRef(0);
   const [igPage, setIgPage] = useState(0);
   const [igBox, setIgBox] = useState({ w: 360, h: 450 });
   /* 是不是「加到主畫面」的全螢幕模式（PWA）。
@@ -1507,6 +1509,21 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
       : 'none';
     el.style.transform = `translate3d(${px}px, 0, 0)`;
   };
+  /* PointerEvent 在 iPhone 上可能一秒送出 100 多次。每次都寫 transition 與
+     transform 會讓 WebKit 重複提交合成層，肉眼看起來反而低於 60fps。
+     拖曳期間只在下一個顯示幀寫一次 transform，且永遠採用最新座標。 */
+  const igQueueDragTrack = (px: number) => {
+    igPendingXRef.current = px;
+    if (igDragRafRef.current) return;
+    igDragRafRef.current = requestAnimationFrame(() => {
+      igDragRafRef.current = 0;
+      const el = igTrackRef.current;
+      if (el) el.style.transform = `translate3d(${igPendingXRef.current}px, 0, 0)`;
+    });
+  };
+  useEffect(() => () => {
+    if (igDragRafRef.current) cancelAnimationFrame(igDragRafRef.current);
+  }, []);
   // 框寬或頁數改變時才校正位置。igPage 是手勢放開前已經先移動好的；
   // 若 state 更新後又下第二次 transition 指令，iOS 會重啟收尾、手感就會忽快忽慢。
   useEffect(() => {
@@ -1519,6 +1536,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     /* 這裡刻意「先不」setPointerCapture ——
        一按下去就捕捉的話，瀏覽器會把這一串當成我們的手勢，
        直向的捲動就永遠不會發生。等確定是橫向再捕捉。 */
+    if (igDragRafRef.current) { cancelAnimationFrame(igDragRafRef.current); igDragRafRef.current = 0; }
     igMoveTrack(-igPage * igBox.w, false);
   };
   const onIgPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -1538,12 +1556,15 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     if (igPage === 0 && dx > 0) dx = 0;
     if (igPage === pageCount - 1 && dx < 0) dx = 0;
     d.dx = dx;
-    igMoveTrack(-igPage * igBox.w + dx, false);
+    igQueueDragTrack(-igPage * igBox.w + dx);
   };
   const onIgPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = igDragRef.current;
     if (!d || d.id !== e.pointerId) return;
     igDragRef.current = null;
+    /* 未送出的 pointermove 不再補寫；直接從螢幕上已顯示的最後一幀收尾，
+       避免放手同一幀先跳到新座標、再開始吸附。 */
+    if (igDragRafRef.current) { cancelAnimationFrame(igDragRafRef.current); igDragRafRef.current = 0; }
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* 已經放開了 */ }
     const w = igBox.w || 1;
     const dt = Math.max(1, e.timeStamp - d.t0);

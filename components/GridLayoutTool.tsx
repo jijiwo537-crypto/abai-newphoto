@@ -7617,8 +7617,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* DOM 合成的透明邊在 Safari 會混入一小條底色；輸出 canvas 沒有這層
          抗鋸齒，所以才會出現「輸出無縫、預覽有髮絲縫」。只在真正貼頁面
          外緣時向裁切區多蓋 0.35 個螢幕像素，內部物件互相對齊完全不動。 */
-      /* 覆蓋半個實體螢幕像素，剛好吃掉合成器的抗鋸齒邊，不會肉眼改變位置。 */
-      const bleed = .5 / Math.max(.0001, kRef.current || 1);
+      /* Safari 會同時對物件邊與頁縫各做一次抗鋸齒，半像素仍可能混入一列白底。
+         預覽層向接縫覆蓋 1 個螢幕像素才可完整吃掉；資料與匯出完全不受影響。 */
+      const bleed = 1 / Math.max(.0001, kRef.current || 1);
       const isPageLeft = pageRects.some(pr => Math.abs(pr.left - bestGuidelineX!) < .51);
       const isPageRight = pageRects.some(pr => Math.abs(pr.right - bestGuidelineX!) < .51);
       if (isPageLeft && Math.abs(leftEdge - bestGuidelineX!) < .8) snappedX -= bleed;
