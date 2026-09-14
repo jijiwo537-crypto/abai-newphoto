@@ -324,6 +324,15 @@ select:focus, select:focus-visible {
   }
 }
 
+/* 手機首頁使用 24px 隱形 scroll guard 阻止 iOS 橡皮筋。原生 scroll timeline
+   會把這 24px 誤當動畫進度，讓首屏即使視覺仍在頂部也先下移 13.2px；guarded
+   模式固定交由 HomePage 的逐幀邏輯（它會扣除 guard），因此關掉這三支 CSS 動畫。 */
+.home-scroll-guarded .home-hero,
+.home-scroll-guarded .home-hero-art,
+.home-scroll-guarded .home-lib {
+  animation-name: none !important;
+}
+
 /* 使用者要求減少動態時：整套關掉，模板那一段也不要預先往下藏
    （不然負的 margin-top 會把它往上拉，跟修圖那一屏疊在一起）。 */
 @media (prefers-reduced-motion: reduce) {

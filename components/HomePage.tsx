@@ -12,6 +12,10 @@ import { loadAvatar, saveAvatarFromFile, removeAvatar } from '../utils/avatar';
 const CONTACT_EMAIL = 'chi888969930522@gmail.com';
 const CONTACT_IG = 'abai_is.perfect';
 const CONTACT_IG_URL = 'https://www.instagram.com/abai_is.perfect/';
+/* iOS 的慣性捲動只有真正撞到 scrollTop=0 才會啟動橡皮筋。
+   手機首頁在內容前保留一小段不可見的緩衝，靜止時捲到同樣距離抵銷它，
+   畫面位置完全不變，但快速回頂時可以在碰到 Safari 邊界前停住。 */
+const HOME_TOP_SCROLL_GUARD = 24;
 
 interface HomePageProps {
   onOpenCamera: () => void;
@@ -189,6 +193,9 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
   const scrollRef = useRef<HTMLDivElement>(null);
+  const guardedHomeScroll = typeof window !== 'undefined'
+    && (window.matchMedia?.('(pointer: coarse)').matches || window.innerWidth < 768);
+  const homeTop = guardedHomeScroll ? HOME_TOP_SCROLL_GUARD : 0;
   const lastHomeScrollYRef = useRef(0);
   const topMomentumClampRef = useRef(0);
   const libRef = useRef<HTMLDivElement>(null);
@@ -492,7 +499,7 @@ export const HomePage: React.FC<HomePageProps> = ({
        這樣點模板只會看到橫向切頁，不會先露出修圖頁再往下滑一整段。 */
     if (fromMe && id !== 'me' && sc) {
       navLockRef.current = id;
-      sc.scrollTop = id === 'lib' ? libScrollTop(sc) : 0;
+      sc.scrollTop = id === 'lib' ? libScrollTop(sc) : homeTop;
       applyRef.current();
     }
 
@@ -502,7 +509,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (fromMe) return;
 
     navLockRef.current = id;
-    const target = id === 'lib' ? libScrollTop(sc) : 0;
+    const target = id === 'lib' ? libScrollTop(sc) : homeTop;
     let reduce = false;
     try { reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch {}
 
@@ -513,7 +520,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       if (reduce) applyRef.current();
     };
     run();
-  }, [nav]);
+  }, [nav, homeTop]);
 
   /* 使用者自己碰捲軸就立刻解鎖 */
   const releaseNavLock = useCallback(() => { navLockRef.current = null; }, []);
@@ -543,7 +550,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       /* 不能只記 touchstart 時是否在頂部：從模板區快速甩回頂部的同一個
          手勢會在途中抵達 0，後半段正是 Safari 產生橡皮筋的地方。每一格
          都看當下邊界，抵達後的第一個向外位移便直接攔掉。 */
-      const atTopNow = sc.scrollTop <= 0.5;
+      const atTopNow = sc.scrollTop <= homeTop + 0.5;
       const atBottomNow = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 0.5;
       if ((atTopNow && dy > 0) || (atBottomNow && dy < 0)) e.preventDefault();
     };
@@ -556,7 +563,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       sc.removeEventListener('touchstart', down);
       sc.removeEventListener('touchmove', block);
     };
-  }, []);
+  }, [homeTop]);
 
   /* ── 往下滑的視差 ────────────────────────────────────────────────
      模板那一段照捲軸原速往上，修圖這一屏只走 45% 的速度 ——
@@ -579,10 +586,13 @@ export const HomePage: React.FC<HomePageProps> = ({
   const reduceMotion = useRef(false);
   useEffect(() => {
     try {
-      cssTimeline.current = typeof CSS !== 'undefined' && CSS.supports('animation-timeline: scroll()');
+      /* 手機走下面逐幀讀值的版本，才能扣掉頂部 guard；桌面仍使用原生
+         scroll timeline，兩邊的視覺曲線相同。 */
+      cssTimeline.current = !guardedHomeScroll
+        && typeof CSS !== 'undefined' && CSS.supports('animation-timeline: scroll()');
       reduceMotion.current = matchMedia('(prefers-reduced-motion: reduce)').matches;
     } catch { /* 舊瀏覽器 */ }
-  }, []);
+  }, [guardedHomeScroll]);
 
   /** 把「一屏有多高」寫給 CSS 動畫用。值沒變就不要寫 ——
       改動這個變數會讓兩支捲動動畫重新計算範圍，能省就省。 */
@@ -639,7 +649,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     const h = sc.clientHeight || 1;
     // 夾在 0～可捲上限之間：iOS 橡皮筋期間讀到的值可能超出範圍，
     // 直接拿去算會讓圖案往回彈一下。
-    const y = Math.max(0, sc.scrollTop);
+    const y = Math.max(0, sc.scrollTop - homeTop);
     /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。
        0.55＝修圖那一屏走 45% 的速度。試過 0.26（走 74%，太淡看不出視差）
        跟 0.70（走 30%，太重），0.55 是兩者中間。
@@ -680,7 +690,7 @@ export const HomePage: React.FC<HomePageProps> = ({
        整段都留著（透明度 0）合成層就一直在，沒有那一格。
        透明度 0 的層不必畫內容，成本可以忽略；擋點擊已經由 pointer-events 做了。 */
     if (el.style.visibility) el.style.visibility = '';
-  }, []);
+  }, [homeTop]);
   applyRef.current = applyParallax;
 
   /* ── JS 版專用：捲動期間改用每一格自己去讀捲動位置 ──────────────────
@@ -713,6 +723,13 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (pumpRaf.current != null) cancelAnimationFrame(pumpRaf.current);
     if (pumpIdle.current) clearTimeout(pumpIdle.current);
   }, []);
+
+  /* guard 的 padding 與 scrollTop 在繪製前同時套上，所以首頁內容仍精準留在
+     原本的 y=0；使用者不會看到先下移 24px 再歸位的第一幀。 */
+  useLayoutEffect(() => {
+    const sc = scrollRef.current;
+    if (sc && homeTop && sc.scrollTop < homeTop) sc.scrollTop = homeTop;
+  }, [homeTop]);
 
   /* 只在「第一次畫出來」與「尺寸變了」時重算。
      原本連分頁切換也重算 —— 那會在剛滑到頂的那一刻多寫一次 CSS 變數，
@@ -752,14 +769,15 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (!sc) return;
     /* iOS 偶爾會在手指放開後才把慣性橡皮筋套進來；觸控事件已結束時
        touchmove 攔不到，因此在 scroll 的第一格把負值立即歸零。 */
-    if (sc.scrollTop < 0) sc.scrollTop = 0;
+    if (sc.scrollTop < homeTop) sc.scrollTop = homeTop;
     /* 快速甩回頂部時，手指通常已經放開，Safari 的慣性會在 touchmove 結束後
        才撞上 0 並啟動橡皮筋。抵達頂部的那一格短暫關掉 overflow，可真正取消
        這段慣性；下一幀立即恢復，正常捲動與版面尺寸都不會改變。 */
-    const reachedTopWithMomentum = sc.scrollTop <= .5 && lastHomeScrollYRef.current > .5;
-    lastHomeScrollYRef.current = Math.max(0, sc.scrollTop);
+    const reachedTopWithMomentum = sc.scrollTop <= homeTop + .5
+      && lastHomeScrollYRef.current > homeTop + .5;
+    lastHomeScrollYRef.current = Math.max(homeTop, sc.scrollTop);
     if (reachedTopWithMomentum && !topMomentumClampRef.current) {
-      sc.scrollTop = 0;
+      sc.scrollTop = homeTop;
       sc.style.overflowY = 'hidden';
       topMomentumClampRef.current = requestAnimationFrame(() => {
         topMomentumClampRef.current = requestAnimationFrame(() => {
@@ -780,7 +798,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     applyParallax();
     kickPump();
     if (navRef.current === 'me') return;
-    const next = sc.scrollTop >= navThresh(sc) ? 'lib' : 'home';
+    const next = sc.scrollTop - homeTop >= navThresh(sc) ? 'lib' : 'home';
     // 捲動途中不要跟著跳，捲到目標了才解鎖交還控制權
     if (navLockRef.current) {
       if (next === navLockRef.current) navLockRef.current = null;
@@ -792,7 +810,7 @@ export const HomePage: React.FC<HomePageProps> = ({
        就是它。門檻本身是個確定的位置，越過去的那一格就該亮。 */
     if (next === navRef.current) return;
     setNav(next);
-  }, [kickPump, applyParallax, syncRange]);
+  }, [kickPump, applyParallax, syncRange, homeTop]);
 
   const copyEmail = async () => {
     try {
@@ -1215,8 +1233,12 @@ export const HomePage: React.FC<HomePageProps> = ({
           transition: 'transform 560ms cubic-bezier(0.22,1,0.36,1)',
           willChange: 'transform',
         }}
-        className={`home-scroll no-scrollbar absolute inset-0 z-[5] overflow-y-auto box-border pb-[21px] ${nav === 'me' ? 'pointer-events-none' : ''}`}
+        className={`home-scroll ${homeTop ? 'home-scroll-guarded' : ''} no-scrollbar absolute inset-0 z-[5] overflow-y-auto box-border pb-[21px] ${nav === 'me' ? 'pointer-events-none' : ''}`}
       >
+      {/* 真機專用的慣性緩衝是捲動內容，不是 padding：padding 會壓縮 h-full 的
+          首頁首屏，讓所有東西位置改變。現在 scrollTop 與這個 spacer 同為 24px，
+          視覺座標完全抵銷，首屏高度與修改前逐像素一致。 */}
+      {homeTop > 0 && <div aria-hidden className="shrink-0" style={{ height: homeTop }} />}
       {/* 這一疊是靠上半屏的 flex-1 撐著、貼著下緣排的，底部留白加大就等於整組一起往上。
            用 min-h 而不是 h：矮的機型內容會比這個高度還高，寫死高度會被切掉；
            撐開的話最多就是搜尋欄再往下一點，反正它本來就要在第一屏外面。 */}

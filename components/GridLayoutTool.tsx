@@ -7428,6 +7428,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const pageGuidelinesAt = (
     x: number, y: number, imgWidth: number, imgHeight: number, scale: number, edgeOnly = false, rot = 0,
+    seamBleed = 0,
   ): AlignmentGuideline[] => {
     const out: AlignmentGuideline[] = [];
     // 轉過的圖要用外接矩形去比，不然線會亮在離邊緣半個身子的地方
@@ -7442,9 +7443,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        「線亮了、圖卻沒真的貼上去」的落差。 */
     const EPS_E = 0.6;
     pageRectsNear(getAllPageRects(), cx).forEach(pr => {
+      /* 頁與頁之間保留 1 個內容座標作為分隔槽。照片若只停在頁面的數學邊界，
+         預覽放大後這個槽也會一起放大，而固定為螢幕 1px 的分割線蓋不滿它，
+         於是露出只有高倍率才看得見的白縫。純照片貼內側頁緣時延伸到分隔槽的
+         另一側，分割線再畫在它上面；頁面輸出裁切範圍完全不變。 */
+      const visualLeft = pr.left - (seamBleed && pr.pageIdx > 0 ? seamBleed : 0);
+      const visualRight = pr.right + (seamBleed && pr.pageIdx < pages.length - 1 ? seamBleed : 0);
       if (!edgeOnly && Math.abs(cx - pr.centerX) < EPS_C) out.push({ type: 'vertical', coord: pr.centerX });
-      if (Math.abs(left - pr.left) < EPS_E) out.push({ type: 'vertical', coord: pr.left });
-      if (Math.abs(right - pr.right) < EPS_E) out.push({ type: 'vertical', coord: pr.right });
+      if (Math.abs(left - visualLeft) < EPS_E) out.push({
+        type: 'vertical',
+        coord: pr.pageIdx > 0 && seamBleed ? pr.left - seamBleed / 2 : pr.left,
+      });
+      if (Math.abs(right - visualRight) < EPS_E) out.push({
+        type: 'vertical',
+        coord: pr.pageIdx < pages.length - 1 && seamBleed ? pr.right + seamBleed / 2 : pr.right,
+      });
       if (!edgeOnly && Math.abs(cy - pr.centerY) < EPS_C) out.push({ type: 'horizontal', coord: pr.centerY });
       if (Math.abs(top - pr.top) < EPS_E) out.push({ type: 'horizontal', coord: pr.top });
       if (Math.abs(bottom - pr.bottom) < EPS_E) out.push({ type: 'horizontal', coord: pr.bottom });
@@ -7480,6 +7493,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        預覽無論放大或縮小，吸附手感都保持一致。 */
     const SNAP_THRESHOLD = 4 / Math.max(0.0001, kRef.current || 1);
     const ownPageRectsForFit = pageRects;
+    const movingItem = floatingImages.find(item => item.id === imgId);
+    const seamBleed = movingItem && movingItem.text === undefined && !movingItem.shape
+      && Math.abs(((rot % 180) + 180) % 180) < 0.01 ? 1 : 0;
     // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
     const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
 
@@ -7516,22 +7532,26 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
 
       // Page left edge
+      const visualLeft = pageRect.left - (seamBleed && pageRect.pageIdx > 0 ? seamBleed : 0);
       const diffLeft = rawLeft - pageRect.left;
       if (Math.abs(diffLeft) < SNAP_THRESHOLD && Math.abs(diffLeft) < Math.abs(minDiffX)) {
         minDiffX = diffLeft;
         /* 往外多半個像素：剛好貼齊時邊緣落在非整數像素上，抗鋸齒會讓最外面
            那一列露出底下的頁面白色，看起來就是一條髮絲白縫。半個像素肉眼看不
            出來，也不會像原本的 1px 那樣溢到隔壁頁。 */
-        bestSnapX = pageRect.left - imgWidth / 2 + scaledW / 2;
-        bestGuidelineX = pageRect.left;
+        bestSnapX = visualLeft - imgWidth / 2 + scaledW / 2;
+        bestGuidelineX = pageRect.pageIdx > 0 && seamBleed
+          ? pageRect.left - seamBleed / 2 : pageRect.left;
       }
 
       // Page right edge
+      const visualRight = pageRect.right + (seamBleed && pageRect.pageIdx < pages.length - 1 ? seamBleed : 0);
       const diffRight = rawRight - pageRect.right;
       if (Math.abs(diffRight) < SNAP_THRESHOLD && Math.abs(diffRight) < Math.abs(minDiffX)) {
         minDiffX = diffRight;
-        bestSnapX = pageRect.right - imgWidth / 2 - scaledW / 2;
-        bestGuidelineX = pageRect.right;
+        bestSnapX = visualRight - imgWidth / 2 - scaledW / 2;
+        bestGuidelineX = pageRect.pageIdx < pages.length - 1 && seamBleed
+          ? pageRect.right + seamBleed / 2 : pageRect.right;
       }
     });
 
@@ -7616,9 +7636,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        從哪一邊靠過去就吸到哪一個 —— 那就是「由外而內沒縫、由內而外有縫」。
        這種情況直接把圖擺成「兩邊都不露白」：以較寬的那一側為準置中對齊。 */
     ownPageRectsForFit.forEach(pr => {
-      const w = pr.right - pr.left;
+      const coverLeft = pr.left - (seamBleed && pr.pageIdx > 0 ? seamBleed : 0);
+      const coverRight = pr.right + (seamBleed && pr.pageIdx < pages.length - 1 ? seamBleed : 0);
+      const w = coverRight - coverLeft;
       if (Math.abs(scaledW - w) < 2 && Math.abs((snappedX + imgWidth / 2) - pr.centerX) < 4) {
-        snappedX = pr.centerX - imgWidth / 2;
+        snappedX = (coverLeft + coverRight) / 2 - imgWidth / 2;
         fitScale = Math.max(fitScale || imgScale, imgScale * w / Math.max(.001, scaledW));
       }
     });
@@ -7730,7 +7752,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        這裡在「已經吸附完的位置」上把畫布的中線與四個邊界重新對一次，全部符合的
        都加進去。跟其他物件的對齊線不列入（那是另一回事，維持原本只顯示吸附到的那一條）。 */
     guidelines.push(...pageGuidelinesAt(
-      snappedX, snappedY, imgWidth, imgHeight, fitScale ?? imgScale, edgeOnly, rot,
+      snappedX, snappedY, imgWidth, imgHeight, fitScale ?? imgScale, edgeOnly, rot, seamBleed,
     ));
 
     return { snappedX, snappedY, fitScale, guidelines: dedupeGuidelines(guidelines, snappedX + imgWidth / 2) };
@@ -9318,9 +9340,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       node.style.transform =
         `translate3d(${seamCenter - rootLeft - seamW / 2}px, ${colRect.top - rootTop - 0.5}px, 0)`;
       node.style.height = `${colRect.height + 1}px`;
-      /* 命中页缝时蓝线改在页面内部绘制，那里和选中框属于同一个堆叠环境；
-         外层这条旧线必须隐藏，否则会压过选中框并产生双重粗细。 */
-      node.style.visibility = (embeddedSeamsRef.current || node.dataset.active === '1') ? 'hidden' : 'visible';
+      /* 一般預覽永遠只使用這一條螢幕座標分割線。舊版選中物件時會在外層線與
+         頁內線之間交棒，兩條線的次像素取整不同，選中的那一格就會抖／偏半格。
+         排序模式才隱藏，因為那裡的線必須跟著被拖起的頁面本身移動。 */
+      node.style.visibility = pagesModeRef.current ? 'hidden' : 'visible';
     });
     // 「新增一頁」貼在最後一頁原本的位置旁邊 —— 用算的，才不會被拖曳中的
     // 最後一頁拖著跑（看起來像跟那一頁黏在一起）
@@ -11970,13 +11993,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const cx = target.x + target.width / 2;
             const cy = target.y + target.height / 2;
             let best = Infinity, bestScale = ns;
+            const rasterSeamBleed = target.text === undefined && !target.shape
+              && Math.abs(((rot % 180) + 180) % 180) < 0.01 ? 1 : 0;
             // 倍率吸附也要用轉過的外框，不然轉 90 度之後貼齊的位置會差半個身子
             const ext = rotExtent(target.width, target.height, rot);
             pageRectsNear(getAllPageRects(), cx).forEach(pr => {
               const cands: number[] = [];
               if (ext.bw > 1) {
-                cands.push((2 * (cx - pr.left)) / ext.bw);
-                cands.push((2 * (pr.right - cx)) / ext.bw);
+                const coverLeft = pr.left - (rasterSeamBleed && pr.pageIdx > 0 ? rasterSeamBleed : 0);
+                const coverRight = pr.right + (rasterSeamBleed && pr.pageIdx < pages.length - 1 ? rasterSeamBleed : 0);
+                cands.push((2 * (cx - coverLeft)) / ext.bw);
+                cands.push((2 * (coverRight - cx)) / ext.bw);
               }
               if (ext.bh > 1) {
                 cands.push((2 * (cy - pr.top)) / ext.bh);    // 上邊貼齊
@@ -12007,7 +12034,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           let nextGuidelines: AlignmentGuideline[] | null = null;
           if (target) {
             // 同樣只畫「邊」的線：捏合時中心不動，中線會整趟亮著（見 scaleLayoutSnapped）
-            const pageLines = pageGuidelinesAt(target.x, target.y, target.width, target.height, ns, true, rot);
+            const pageLines = pageGuidelinesAt(
+              target.x, target.y, target.width, target.height, ns, true, rot, rasterSeamBleed,
+            );
             /* 中心的那兩條線是「轉正了」的回饋，只有真的在轉的時候才該出現。
                原本只看 straight —— 沒轉過的物件角度本來就是 0，等於一整趟
                純縮放都掛著那兩條線，看起來莫名其妙。加上 g.rotOn：
@@ -13838,10 +13867,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           
           {!composeState && (
           <div className="flex items-center gap-2">
+            {/* 不能用 transition-all：IG 預覽把 header 設為 visibility:hidden 時，
+                WebKit 會把 visibility 也當成離散過場，導致復原／重做比儲存鍵
+                晚一拍才消失。只過場 opacity／transform。 */}
             <button 
               onClick={(e) => { e.stopPropagation(); undo(); }} 
               disabled={historyState.index <= 0} 
-              className={`p-2 text-white transition-all ${historyState.index <= 0 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
+              className={`p-2 text-white transition-[opacity,transform] ${historyState.index <= 0 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
               title="復原"
             >
               <Icon name="undo" className="text-xl" />
@@ -13849,7 +13881,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             <button 
               onClick={(e) => { e.stopPropagation(); redo(); }} 
               disabled={historyState.index >= historyState.history.length - 1 || historyState.index === -1} 
-              className={`p-2 text-white transition-all ${historyState.index >= historyState.history.length - 1 || historyState.index === -1 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
+              className={`p-2 text-white transition-[opacity,transform] ${historyState.index >= historyState.history.length - 1 || historyState.index === -1 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}
               title="重做"
             >
               <Icon name="redo" className="text-xl" />
@@ -14172,11 +14204,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 /* 逻辑上保留 1px 页间槽，但可见底色必须就是分割线色。
                                    放大后槽宽会超过固定的屏幕 1px；若这里用页面白底，
                                    未被线覆盖的次像素就会成为放大后才看得到的白缝。 */
-                                backgroundColor: pagesMode
-                                  ? 'transparent'
-                                  : isSeamGuideActive
-                                    ? shadeHex(WORKSPACE_BG, PAGE_SEAM_INK)
-                                    : page.bgColor,
+                                backgroundColor: pagesMode ? 'transparent' : page.bgColor,
                                 /* 它必须高于拖起的页面与自由图层。再用同色半像素阴影
                                    覆盖 fractional zoom 在两侧产生的抗锯齿浅边，最终只
                                    留下一条颜色一致的接缝，不会多出旁边那条淡线。 */
@@ -14184,7 +14212,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 boxShadow: 'none',
                               }}
                             >
-                              {(embeddedSeamsRef.current || isSeamGuideActive) && !pagesMode && (
+                              {false && !pagesMode && (
                                 <div
                                   className="absolute left-0 pointer-events-none"
                                   style={{
@@ -16417,7 +16445,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               height: 0,
               visibility: 'hidden',
               backgroundColor: active ? 'rgb(59 130 246)' : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
-              zIndex: active ? 300001 : 45,
+              /* 高於實際物件，分割線才不會被延伸進槽內的照片吃掉；低於獨立的
+                 chromeLayer（100000+），所以選中框、控制點、白藥丸永遠在上面。 */
+              zIndex: 5000,
             }}
           />
         );
