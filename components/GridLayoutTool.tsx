@@ -9091,11 +9091,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /* 動畫頁的縮小也走既有的頁面倍率管線。不要 transform 整個可捲動 viewport：
      iPhone Safari 會把超寬頁帶光柵化成一張 GPU 貼圖，超過紋理上限就整塊黑掉。 */
   const motionFitScale = Math.max(.24, Math.min(
-    userZoom,
+    1,
     (Math.max(120, containerSize.width - 32)) / Math.max(1, previewW),
-    /* 頂部位置不動，只把下方讓給播放列的保留量縮短：畫布下緣到循環間隔
-       上方橫線，會與畫布上緣到 header 下方橫線保持同樣的視覺距離。 */
-    (Math.max(100, containerSize.height - 8)) / Math.max(1, previewH),
+    /* 頂端固定保留工作區既有的 8px；底端再保留 8px，另扣掉播放列越過
+       工作區底線的 14px。这样畫布上下到兩條橫線的距離才真正一致。
+       不再使用 userZoom：不論進入前把預覽放多大／多小，動畫頁尺寸都固定。 */
+    (Math.max(100, containerSize.height - 30)) / Math.max(1, previewH),
   ));
   const pagesScale = pagesMode ? PAGES_MODE_SCALE : activeTab === 'motion' ? motionFitScale : userZoom;
   /** 整排頁面左邊要留的空白（讓第一頁置中） */
@@ -9329,14 +9330,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (plus) {
       const transition = plusMotionTransitionRef.current;
       let alpha = motionModeRef.current ? 0 : 1;
+      let transitionProgress = 1;
       if (transition && kAnimRef.current) {
-        const span = transition.to - transition.from;
-        const progress = Math.max(0, Math.min(1,
-          Math.abs(span) < 1e-5 ? 1 : (k - transition.from) / span));
-        alpha = transition.kind === 'enter' ? 1 - progress : progress;
+        /* 用跟画布同一条 300ms 时间轴，不再用倍率反推进度。若进出前后倍率
+           恰好相同，倍率差是 0，旧逻辑会直接跳到终点，形成第一下闪／抖。 */
+        const linearProgress = Math.max(0, Math.min(1,
+          (performance.now() - kAnimRef.current.t0) / 300));
+        transitionProgress = 1 - Math.pow(1 - linearProgress, 3);
+        alpha = transition.kind === 'enter' ? 1 - transitionProgress : transitionProgress;
       }
       const animateWithPreview = !!transition || motionModeRef.current;
-      const plusScale = animateWithPreview ? k : 1;
+      /* 一般模式的加号始终是屏幕 1 倍。退出时直接从动画倍率平顺回到 1，
+         不会先跟着 userZoom 到终点、下一帧又跳回 1，造成两段抖动。 */
+      const plusScale = transition
+        ? (transition.kind === 'enter'
+            ? 1 + (transition.to - 1) * transitionProgress
+            : transition.from + (1 - transition.from) * transitionProgress)
+        : (animateWithPreview ? k : 1);
       /* X 完全交還 flex 版面：加號永遠自然接在最後一頁右側，不再於一般模式
          另外算一組螢幕座標。外殼寬度本來就逐幀跟著 k 改變，因此進退動畫時
          它仍會平順跟著最後一頁移動；這裡只補上垂直置中與等比例縮放。 */
