@@ -8782,10 +8782,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     else if (selectedRatio === '2:3') { ratioW = isLandscape ? 3 : 2; ratioH = isLandscape ? 2 : 3; }
     else if (selectedRatio === '9:16') { ratioW = isLandscape ? 16 : 9; ratioH = isLandscape ? 9 : 16; }
     else if (selectedRatio === '4:5') { ratioW = isLandscape ? 5 : 4; ratioH = isLandscape ? 4 : 5; }
-    const w = maxW;
-    const h = w * ratioH / ratioW;
-    const scale = Math.min(maxW / w, maxH / h);
-    return { width: Math.round(w * scale), height: Math.round(h * scale) };
+    /* 画布尺寸必须是比例的整数倍。以前宽、高各自 Math.round，标示为 3:4 的
+       画布实际会变成 341×454（不是 3:4）；一张严格 600×800 的照片无论怎么
+       等比缩放，都不可能同时贴齐四边，预览与导出自然会留下次像素白缝。
+       用同一个整数单位生成两边，页面与同长宽比照片才能数学上完全重合。 */
+    const unit = Math.max(1, Math.floor(Math.min(maxW / ratioW, maxH / ratioH)));
+    return { width: ratioW * unit, height: ratioH * unit };
   };
   const { width: previewW, height: previewH } = getRatioDimensions();
 
