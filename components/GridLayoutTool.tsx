@@ -6488,7 +6488,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           top: wrapGeo.top,
           width: `${boxW}px`,
           height: `${boxH}px`,
-          zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
+          /* 排序時被手指拿起的頁面內容必須整組高於唯一分割線（400000）。 */
+          zIndex: (dragShift?.live ? 450100 : 60) + stackIndex * 2,
           opacity: (image.text !== undefined && isTextEditing ? 0 : 1) * ((image.opacity ?? 100) / 100) * (motionFrame?.a ?? 1),
           transformOrigin: 'center center',
           transform: [
@@ -6498,10 +6499,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           transition: dragShift
             ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
             : undefined,
-          /* 在第一次拖動前就建立合成層，避免首個 pointermove 才上傳
-             圖片／符號貼圖到 GPU 而漏掉一幀。 */
-          willChange: 'transform',
-          backfaceVisibility: 'hidden',
+          /* 預覽縮放時不要把每個文字／符號／圖形拆成獨立合成層。iOS 會讓
+             各層在小數 zoom 下分別取整而輕微抖動；維持在 pagesCol 的同一張
+             繪製表面上，與創意拼圖的單一 Canvas 合成方式一致。只有物件自身
+             動畫或頁面排序真的改 transform 時才暫時升層。 */
+          willChange: dragShift || motionFrame ? 'transform' : undefined,
+          backfaceVisibility: dragShift || motionFrame ? 'hidden' : undefined,
         }}
       >
         {image.text !== undefined && !image.sym && !usesUnitMotion ? (() => {
@@ -6603,7 +6606,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         // 要疊在選取時出現的透明拖曳層（z-40）之上，直接碰圖片才拖得動
         // 一般圖片用偶數層，佈局用奇數層，兩者才能互相穿插
         // 被拖的那一頁整組（頁面 900、上面的東西 1000+）要蓋過其他頁
-        zIndex: (dragShift?.live ? 1000 : 60) + stackIndex * 2,
+        zIndex: (dragShift?.live ? 450100 : 60) + stackIndex * 2,
         touchAction: touchMode,
         opacity: (isCanvasVector ? 1 : (image.opacity ?? 100) / 100) * (motionFrame?.a ?? 1),
         /* 圖片同樣預先建立移動用合成層；第一次拖動不再臨時升層。 */
@@ -14313,11 +14316,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 transformOrigin: 'center center',
                                 transition: mv ? (mv.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
                                 boxShadow: lifted ? '0 18px 40px rgba(0,0,0,0.55)' : undefined,
-                                zIndex: lifted ? 900 : undefined,
+                                /* 唯一分割線是 400000；被長按拿起的整頁必須連同
+                                   背景、佈局一起越過它，視覺上才真的是被拿起。 */
+                                zIndex: lifted ? 450000 : undefined,
                               };
                             })()}
                           >
-                            <div className="absolute inset-0" style={{ backgroundColor: page.bgColor }} />
+                            <div
+                              className="absolute top-0 bottom-0"
+                              /* 页面逻辑仍保留原本的 1px 分隔坐标，但两侧底色各延伸
+                                 半格在分割线正中央相接。这样把可见线减为 1px 后，
+                                 任意预览倍率也不会从线旁露出透明／白色缝隙；图片
+                                 已有的 seamBleed 吸附坐标完全不需要改变。 */
+                              style={{
+                                left: pageIdx > 0 ? -0.5 : 0,
+                                right: pageIdx < pages.length - 1 ? -0.5 : 0,
+                                backgroundColor: page.bgColor,
+                              }}
+                            />
                             {/* 背景紋理：疊在底色上、所有內容之下，不影響點選與拖曳 */}
                             <PatternLayer w={previewW} h={previewH} opts={pagePattern(page)} />
                             {page.layouts.map((layout) => {
@@ -15503,16 +15519,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     {/*
                       唯一的頁面分割線層。它位於圖片／影片／佈局／文字／符號／
                       圖形／筆畫之上，選中框專用 chromeLayer 之下。一般狀態與
-                      對齊狀態都沿用同一個 2px 螢幕線寬，避免跨過物件時因不同
+                      對齊狀態都沿用同一個 1px 螢幕線寬，避免跨過物件時因不同
                       合成表面取樣而看成另一條較細的線。
                     */}
                     {pages.slice(1).map((_page, seamIndex) => {
                       const pageIdx = seamIndex + 1;
                       const move = pageContentShift(pageIdx);
                       const moveScale = move?.s || 1;
-                      const rightPageLeft = pageIdx * (previewW + 1)
-                        + (move?.dx || 0)
-                        + previewW * (1 - moveScale) / 2;
+                      const baseSeamLeft = pageIdx * (previewW + 1) - 0.5;
+                      /* 和右頁 transform: translateX(dx) scale(s)（中心原點）完全
+                         等價的左邊緣位移。分割線不再每幀改 left/top/height，改走
+                         同一條 compositor transform，拖頁時便不會慢一幀或飄離。 */
+                      const seamDx = (move?.dx || 0) + previewW * (1 - moveScale) / 2;
+                      const seamDy = previewH * (1 - moveScale) / 2;
                       const seamCoord = pageIdx * (previewW + 1) - 0.5;
                       const seamTolerance = 0.75 / Math.max(0.0001, kRef.current || 1);
                       const active = activeGuidelines.some(g => g.type === 'vertical'
@@ -15523,16 +15542,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           data-page-seam-overlay={pageIdx}
                           className="absolute pointer-events-none"
                           style={{
-                            left: rightPageLeft - 0.5,
-                            top: previewH * (1 - moveScale) / 2,
-                            /* 分割線只有這一份，而且無論是否吸附都維持同一個
-                               螢幕 2px 粗度；反倍率讓預覽縮放不改變視覺線寬。 */
-                            width: 'var(--preview-guide-scale, 2px)',
-                            height: previewH * moveScale,
-                            transform: `translateX(-50%) scaleX(${1 / moveScale})`,
-                            transformOrigin: 'center center',
+                            left: baseSeamLeft,
+                            top: 0,
+                            /* 整體粗度由 2px 降為 1px，但仍只有這一份線；吸附只
+                               改顏色，不再切換另一種線寬，因此不會重現兩條線。 */
+                            width: 'var(--preview-inverse-scale, 1px)',
+                            height: previewH,
+                            transform: `translateX(-50%) translate3d(${seamDx}px, ${seamDy}px, 0) scaleY(${moveScale})`,
+                            transformOrigin: 'center top',
                             transition: move
-                              ? (move.live ? 'none' : 'left 220ms cubic-bezier(0.2,0,0,1), top 220ms cubic-bezier(0.2,0,0,1), height 220ms cubic-bezier(0.2,0,0,1)')
+                              ? (move.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
                               : undefined,
                             backgroundColor: active
                               ? 'rgb(59 130 246)'
