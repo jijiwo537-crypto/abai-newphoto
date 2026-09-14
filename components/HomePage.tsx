@@ -189,6 +189,8 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
   const scrollRef = useRef<HTMLDivElement>(null);
+  const lastHomeScrollYRef = useRef(0);
+  const topMomentumClampRef = useRef(0);
   const libRef = useRef<HTMLDivElement>(null);
   /** 模板那一段的「排版盒」（外層，不會動）—— 量位置要看它，不能看會位移的那層 */
   const libBoxRef = useRef<HTMLDivElement>(null);
@@ -751,6 +753,21 @@ export const HomePage: React.FC<HomePageProps> = ({
     /* iOS 偶爾會在手指放開後才把慣性橡皮筋套進來；觸控事件已結束時
        touchmove 攔不到，因此在 scroll 的第一格把負值立即歸零。 */
     if (sc.scrollTop < 0) sc.scrollTop = 0;
+    /* 快速甩回頂部時，手指通常已經放開，Safari 的慣性會在 touchmove 結束後
+       才撞上 0 並啟動橡皮筋。抵達頂部的那一格短暫關掉 overflow，可真正取消
+       這段慣性；下一幀立即恢復，正常捲動與版面尺寸都不會改變。 */
+    const reachedTopWithMomentum = sc.scrollTop <= .5 && lastHomeScrollYRef.current > .5;
+    lastHomeScrollYRef.current = Math.max(0, sc.scrollTop);
+    if (reachedTopWithMomentum && !topMomentumClampRef.current) {
+      sc.scrollTop = 0;
+      sc.style.overflowY = 'hidden';
+      topMomentumClampRef.current = requestAnimationFrame(() => {
+        topMomentumClampRef.current = requestAnimationFrame(() => {
+          topMomentumClampRef.current = 0;
+          if (scrollRef.current === sc) sc.style.overflowY = 'auto';
+        });
+      });
+    }
     // 標記「現在正在捲」，這段時間內不准改動任何會影響幾何的 CSS 變數
     scrollingUntil.current = performance.now() + 260;
     if (scrollIdle.current) clearTimeout(scrollIdle.current);

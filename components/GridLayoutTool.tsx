@@ -9091,7 +9091,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const motionFitScale = Math.max(.24, Math.min(
     userZoom,
     (Math.max(120, containerSize.width - 32)) / Math.max(1, previewW),
-    (Math.max(100, containerSize.height - 84)) / Math.max(1, previewH),
+    /* 頂部位置不動，只把下方讓給播放列的保留量縮短：畫布下緣到循環間隔
+       上方橫線，會與畫布上緣到 header 下方橫線保持同樣的視覺距離。 */
+    (Math.max(100, containerSize.height - 60)) / Math.max(1, previewH),
   ));
   const pagesScale = pagesMode ? PAGES_MODE_SCALE : activeTab === 'motion' ? motionFitScale : userZoom;
   /** 整排頁面左邊要留的空白（讓第一頁置中） */
