@@ -9150,6 +9150,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 動畫期間繞著哪一頁縮放（就是動畫開始時停在畫面正中間的那一頁） */
   const kAnchorRef = useRef(0);
   const prevPagesScaleRef = useRef(pagesScale);
+  /** 第一次挂载只是建立真实画布几何，不是一次模式切换；若也跑 300ms 动画，
+      继续编辑时恢复画面会从旧的默认位置向下滑到正确中心。 */
+  const scaleLayoutInitializedRef = useRef(false);
   const containerWRef = useRef(0);
   const plusVisibleRef = useRef(true);
   plusVisibleRef.current = pages.length - 1 < 24;
@@ -9225,6 +9228,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        放大到高於工作區時，夾成 0 會把上緣釘死，視覺上就不是中心放大。 */
     const targetTop = nowMotion ? 0 :
       (containerSize.height - previewHRef.current * pagesScale) / 2;
+    if (!scaleLayoutInitializedRef.current) {
+      scaleLayoutInitializedRef.current = true;
+      kAnimRef.current = null;
+      kRef.current = pagesScale;
+      stripTopRef.current = targetTop;
+      applyStripGeometry(pagesScale, false);
+      return;
+    }
     if (Math.abs(kRef.current - pagesScale) < 0.0001
         && Math.abs(stripTopRef.current - targetTop) < .01) {
       /* 手勢結束的 setUserZoom 會讓 React 再 commit 一次。Safari 在那次 commit
