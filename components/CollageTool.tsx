@@ -7366,18 +7366,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            但白點是用漸層畫在正中央的 14px —— 看起來一模一樣，
            手指落在白點左右一段距離內都抓得到。元件的高度、外距一律不動，
            所以版面（上下間距、跟旁邊按鈕的對齊）完全不受影響。 */
-        .premium-slider { --thumb-w: 28px; -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+        .premium-slider { --thumb-w: 14px; -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .premium-slider::-webkit-slider-runnable-track { height: 2px; border-radius: 2px;
           background: linear-gradient(to right, rgba(0,0,0,0) 7px, #333 7px, #333 calc(100% - 7px), rgba(0,0,0,0) calc(100% - 7px)); }
         /* 圓點的框＝白點的兩倍（28px），白點還是畫在正中央的 14px。
            框寬 28 = 2×外擴(7) + 白點(14)，所以白點的行程一點都沒變：
            拉到底時白點邊緣照樣貼齊軌道兩端，只是左右各多 7px 抓得到。 */
-        .premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 14px; border: none; margin-top: -6px; cursor: pointer;
-          background: radial-gradient(circle at center, #fff 0, #fff 7px, rgba(255,255,255,0) 7.5px, rgba(255,255,255,0) 100%); }
+        .premium-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border: none; border-radius: 50%; margin-top: -6px; cursor: pointer; background: #fff; }
         .premium-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
         .premium-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
-        .slim-slider { --thumb-w: 28px; -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+        .slim-slider { --thumb-w: 14px; -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .slim-slider::-webkit-slider-runnable-track { height: 2px; background: #333; border-radius: 2px; }
         /* 同上：框拉寬到 32px，白點還是畫在正中央的 16px */
         .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #fff; border: none; margin-top: -6px; cursor: pointer; }

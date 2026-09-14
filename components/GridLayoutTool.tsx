@@ -8962,6 +8962,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const [motionBarMounted, setMotionBarMounted] = useState(false);
   const [motionBarIn, setMotionBarIn] = useState(false);
+  const motionBarRef = useRef<HTMLDivElement>(null);
+  /* 手機上這列實際是 57px。先用實測值作首幀，掛載後再以 ResizeObserver
+     取得真正高度；如此不會先用過大的畫布蓋住按鈕、下一幀才突然縮小。 */
+  const [motionBarHeight, setMotionBarHeight] = useState(57);
   useEffect(() => {
     if (activeTab === 'motion') {
       setMotionBarMounted(true);
@@ -8973,6 +8977,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const timer = window.setTimeout(() => setMotionBarMounted(false), 460);
     return () => window.clearTimeout(timer);
   }, [activeTab]);
+  useLayoutEffect(() => {
+    if (!motionBarMounted || !motionBarRef.current) return;
+    const bar = motionBarRef.current;
+    const measure = () => {
+      const next = bar.getBoundingClientRect().height;
+      if (next > 0) setMotionBarHeight(prev => Math.abs(prev - next) < .25 ? prev : next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, [motionBarMounted]);
 
   const wasMotionTabRef = useRef(false);
   useEffect(() => {
@@ -9064,10 +9080,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const motionFitScale = Math.max(.24, Math.min(
     1,
     (Math.max(120, containerSize.width - 32)) / Math.max(1, previewW),
-    /* containerSize 已经扣除了工作区上下各 8px 的 py-2，不能重复再扣一遍。
-       这里只扣播放列侵入内容区的 14px，画布上下到两条横线才真正等距。
+    /* containerSize 已经扣除了工作区上下各 8px 的 py-2。播放列是 absolute，
+       所以必须扣掉它的真实高度与 bottom-3 的 12px；这样画布下缘到播放列
+       顶部会保留 8px，刚好等于画布上缘到工作区顶部的 8px。
        不再使用 userZoom：不論進入前把預覽放多大／多小，動畫頁尺寸都固定。 */
-    (Math.max(100, containerSize.height - 14)) / Math.max(1, previewH),
+    (Math.max(100, containerSize.height - motionBarHeight - 12)) / Math.max(1, previewH),
   ));
   const pagesScale = pagesMode ? PAGES_MODE_SCALE : activeTab === 'motion' ? motionFitScale : userZoom;
   /** 整排頁面左邊要留的空白（讓第一頁置中） */
@@ -13627,12 +13644,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           box-shadow: none;
         }
         /* 細軌道 ＋ 大圓點：軌道跟「編輯」的濾鏡滑桿一樣細，圓點取畫面上最大的那一顆 */
-        .slim-slider { --thumb-w: 28px; -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+        .slim-slider { --thumb-w: 14px; -webkit-appearance: none; appearance: none; width: 100%; height: 16px; background: transparent; outline: none; touch-action: pan-y; cursor: pointer; -webkit-tap-highlight-color: rgba(0,0,0,0); }
         .slim-slider::-webkit-slider-runnable-track { height: 2px; border-radius: 2px;
           background: linear-gradient(to right, rgba(0,0,0,0) 7px, #333 7px, #333 calc(100% - 7px), rgba(0,0,0,0) calc(100% - 7px)); }
         /* 圓點的框＝白點的兩倍（28px），白點還是正中央那 14px，行程完全不變 */
-        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 28px; height: 14px; border: none; margin-top: -6px; cursor: pointer;
-          background: radial-gradient(circle at center, #fff 0, #fff 7px, rgba(255,255,255,0) 7.5px, rgba(255,255,255,0) 100%); }
+        .slim-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border: none; border-radius: 50%; margin-top: -6px; cursor: pointer; background: #fff; }
         .slim-slider::-moz-range-track { height: 2px; background: #333; border-radius: 2px; }
         .slim-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; cursor: pointer; }
         .custom-range::-webkit-slider-thumb:active { transform: scale(1.15); }
@@ -13990,6 +14006,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           ref={containerRef}
           data-grid-preview-viewport="1"
           onScroll={(e) => {
+            /* 分割線在縮放容器外，必須跟 scroll 事件同一幀重定位。只靠
+               activePageIndex 的 React 更新會等到滑動停下才移動。 */
+            positionPageCtls();
             if (!containerRef.current || pages.length <= 1) return;
             const scrollLeft = e.currentTarget.scrollLeft;
             const initialLeftOffset = stripOffset(containerSize.width, pagesScale);
@@ -14161,9 +14180,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     /* 蓝线只往当前页面内部画。分隔线坐标在槽中央，
                                        线宽固定为屏幕 2px，并且只占其中一侧，不和外层线
                                        重叠，视觉粗细才会与其他蓝色对齐线完全一致。 */
+                                    /* 外層的一般分割線以 1px 槽的中心繪製；選中物件時
+                                       切到這個頁內層也必須沿用同一個像素中心，否則選中
+                                       的瞬間線會偏移。藍色對齊線則完整畫在目前頁面內：
+                                       左頁停在槽左緣、右頁從槽右緣開始，絕不佔到白槽。 */
                                     left: isSeamGuideActive
-                                      ? `${0.5 - (activePageIndex < pageIdx ? 2 / previewScale : 0)}px`
-                                      : 0,
+                                      ? (activePageIndex < pageIdx ? `${-2 / previewScale}px` : '1px')
+                                      : `${0.5 - 0.5 / previewScale}px`,
                                     width: `${(isSeamGuideActive ? 2 : 1) / previewScale}px`,
                                     backgroundColor: isSeamGuideActive
                                       ? 'rgb(59 130 246)'
@@ -15492,6 +15515,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         {/* 與創意拼圖同款播放列：從工具列下方滑入，預覽同時平順縮小讓位。 */}
         {motionBarMounted && (
           <div
+            ref={motionBarRef}
             data-classic-motion-time={motionTime.toFixed(3)}
             className="absolute left-3 right-3 bottom-3 z-40 flex items-center gap-2 rounded-2xl bg-black/55 backdrop-blur-md border border-white/10 px-3 py-2 shadow-[0_8px_24px_rgba(0,0,0,0.5)]"
             style={{
