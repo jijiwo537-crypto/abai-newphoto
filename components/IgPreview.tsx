@@ -1497,15 +1497,15 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
      不用瀏覽器的捲動＋scroll-snap：那個放手之後還會自己滑一段再吸過去，
      就是那股「緩衝感」，而且滑太快還會一次跳過好幾頁。IG 不是這樣 ——
      手指拖到哪就到哪，放手當下立刻決定翻或不翻，一次只翻一頁，
-     220ms 直接就位，中途不再飄。所以這裡自己接指標事件、自己搬位置。 */
+   以接近原生 IG 的减速时间直接就位，中途不再飘。所以这里自己接指针事件、自己搬位置。 */
   /** 把軌道移到某個位置；animate=false 是跟著手指走，不能有過場 */
   const igMoveTrack = (px: number, animate: boolean, duration = 300) => {
     const el = igTrackRef.current;
     if (!el) return;
-    /* IG 的翻页不是固定慢滑：甩得快时较快落位，慢拖则柔和收尾。
-       这条曲线保留释放瞬间的速度，再平顺减速到定位，不会先顿一下。 */
+    /* 保留释放瞬间的方向，但减速段不能短到像甩卡片。曲线前段不暴冲、
+       后段柔和收住，手感更接近 IG 多图贴文。 */
     el.style.transition = animate
-      ? `transform ${duration}ms cubic-bezier(0.22, 0.74, 0.16, 1)`
+      ? `transform ${duration}ms cubic-bezier(0.24, 0.68, 0.22, 1)`
       : 'none';
     el.style.transform = `translate3d(${px}px, 0, 0)`;
   };
@@ -1575,10 +1575,10 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     const targetX = -next * w;
     const currentX = -igPage * w + d.dx;
     const remaining = Math.abs(targetX - currentX);
-    /* 依据手指释放速度决定余下动画时长，限制在 190–310ms：
-       快甩不会拖泥带水，慢拖也不会硬切。 */
-    const duration = Math.max(190, Math.min(310,
-      remaining / Math.max(0.9, Math.abs(v) * 1.15)));
+    /* iPhone 上原本的 190ms 下限会像瞬间甩过去；放慢为 290–430ms，
+       快甩仍然比慢拖快，但不会产生不舒服的突然加速。 */
+    const duration = Math.max(290, Math.min(430,
+      remaining / Math.max(0.72, Math.abs(v) * 0.92)));
     igMoveTrack(targetX, true, duration);       // 先動，再更新狀態，才不會等一拍
     if (next !== igPage) setIgPage(next);
   };
@@ -1699,7 +1699,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
             ? 'relative w-full bg-black flex flex-col'
             : embedded
             ? 'relative w-full h-full bg-black flex flex-col'
-            : 'safe-top fixed inset-0 z-[120] bg-black flex flex-col animate-in fade-in duration-200'}
+            : 'safe-top fixed inset-0 z-[120] bg-black flex flex-col'}
           style={{
             fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Noto Sans TC", "PingFang TC", sans-serif',
             /* inset-0 用的是「版面視窗」，但 iOS Safari 的底部工具列是蓋在網頁上面、
@@ -1894,7 +1894,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
               </div>
               {/* 多圖貼文右上角的頁碼膠囊：上緣與右緣留一樣的空隙 */}
               {pageCount > 1 && (
-                <div className="absolute top-[18px] right-[14px] h-[26px] px-[10px] rounded-full bg-black/60 flex items-center pointer-events-none">
+                <div className="absolute top-[14px] right-[14px] h-[26px] px-[10px] rounded-full bg-black/60 flex items-center pointer-events-none">
                   <span className="text-white text-[12px] font-medium leading-none tabular-nums">
                     {igPage + 1}/{pageCount}
                   </span>
