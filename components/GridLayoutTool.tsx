@@ -9272,12 +9272,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     // 右邊剛好留到「最後一頁停在正中間」為止；加號按鈕已經佔掉 ml-3 + 40
     if (pad) pad.style.width = `${Math.max(0, m - (plusVisibleRef.current ? 52 : 0))}px`;
     if (col) {
-      /* Safari 上不能在手勢開始／結束時於 zoom 與 transform 之間切換。
-         transform 會先把整頁光柵化成貼圖再反覆取樣；頁面上的細字、圖形與符號
-         即使中心座標完全不動，邊緣仍會像在左右抖。創意拼圖一直改畫布的實際
-         顯示尺寸、不做貼圖縮放；這裡用原生 zoom 做同一件事，整段手勢只保留
-         一套座標與光柵化方式。 */
-      const nativeZoom = typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2');
+      /* 跟創意拼圖一樣，整個預覽只保留一個 transform 座標系。Safari 的 CSS
+         zoom 會讓每個 absolute/canvas/SVG 子層各自重新 layout 與取整；圖片、
+         文字、符號、圖形和分割線因此可能在不同幀落到不同實體像素。整排只做
+         一次 scale 後，所有內容先在同一座標系合成，再一起縮放，彼此不可能抖開。 */
       col.style.setProperty('--preview-scale', String(k));
       /* 页面内分割线每一帧直接读取反倍率，不等待 React 重绘。 */
       col.style.setProperty('--preview-inverse-scale', `${1 / Math.max(0.0001, k)}px`);
@@ -9286,17 +9284,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
       col.style.setProperty('--layout-grid-stroke', `${1 / Math.max(0.0001, k)}px`);
-      if (nativeZoom) {
-        (col.style as any).zoom = String(k);
-        const sub = stripSubpixelXRef.current;
-        col.style.transform = Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0)` : '';
-        col.style.willChange = '';
-      } else {
-        (col.style as any).zoom = '';
-        col.style.transform = k === 1 ? '' : `scale(${k})`;
-        col.style.transformOrigin = '0 0';
-        col.style.willChange = liveTransform ? 'transform' : '';
-      }
+      (col.style as any).zoom = '';
+      const sub = stripSubpixelXRef.current;
+      /* sub 保存的是內容座標，translate 寫在 scale 左側時使用螢幕座標，故乘 k。
+         縮放與尾數補償在同一個 matrix、同一幀提交，不再讓 WebKit 分兩層取整。 */
+      col.style.transform = `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * k}px, 0, 0) ` : ''}scale(${k})`;
+      col.style.transformOrigin = '0 0';
+      col.style.willChange = liveTransform ? 'transform' : '';
       /* 固定在萤幕坐标层的空格提示收到通知后才量中心点。
          事件只排一个 rAF，不在手势处理内同步读取版面。 */
       col.dispatchEvent(new Event('abai-preview-transform'));
@@ -9483,7 +9477,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           const col = pagesColRef.current;
           if (col) {
             const sub = stripSubpixelXRef.current;
-            col.style.transform = Math.abs(sub) > .0001 ? `translate3d(${sub}px, 0, 0)` : '';
+            col.style.transform = `${Math.abs(sub) > .0001 ? `translate3d(${sub * k}px, 0, 0) ` : ''}scale(${k})`;
           }
         }
       }
@@ -11990,7 +11984,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const col = pagesColRef.current;
         if (col) {
           const sub = stripSubpixelXRef.current;
-          col.style.transform = Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0)` : '';
+          col.style.transform = `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * z}px, 0, 0) ` : ''}scale(${z})`;
         }
       }
       positionPageCtls();
@@ -15545,13 +15539,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           data-page-seam-overlay={pageIdx}
                           className="absolute pointer-events-none"
                           style={{
-                            left: baseSeamLeft,
+                            /* 用實際左緣定位，不再用 translateX(-50%)。百分比位移
+                               會在 WebKit 中成為另一個取整步驟，縮放時線心可能跳
+                               半個實體像素。反倍率半寬讓線永遠以 seam 座標為中心。 */
+                            left: `calc(${baseSeamLeft}px - var(--preview-inverse-half, 0.5px))`,
                             top: 0,
                             /* 分割線固定是 1px；藍色吸附線由下方獨立的 2px
                                guideline layer 負責，兩者不再共用粗細或狀態。 */
                             width: 'var(--preview-inverse-scale, 1px)',
                             height: previewH,
-                            transform: `translateX(-50%) translate3d(${seamDx}px, ${seamDy}px, 0) scaleY(${moveScale})`,
+                            transform: `translate3d(${seamDx}px, ${seamDy}px, 0) scaleY(${moveScale})`,
                             transformOrigin: 'center top',
                             transition: move
                               ? (move.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
