@@ -6243,8 +6243,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
          推的是「看得到的框」而已，物件本身的大小、拖曳的範圍都沒有變。 */
   const framePad = (() => {
         const sc = image.scale || 1;
-        // 螢幕上固定留 2px 的空隙（除掉預覽倍率）
-        const gap = 2 / kNow;
+        /* 框線本身約 1.05 個螢幕像素且以路徑為中心繪製。保留略大於半根框線
+           的距離，就能讓框緊貼墨水外緣、又不會有任何一半壓到圖形；原本固定
+           2px 會讓愛心、星形等內容內縮的圖形看起來隔著一圈空白。 */
+        const gap = 0.65 / kNow;
         if (image.shape === 'hole') {
           /* 借來的圖案：拿畫預覽時同一支算「會超出多少」，但把發光關掉 ——
              發光是散開的光暈，框不需要連光一起框進去。 */
@@ -7452,20 +7454,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        「線亮了、圖卻沒真的貼上去」的落差。 */
     const EPS_E = 0.6;
     pageRectsNear(getAllPageRects(), cx).forEach(pr => {
-      /* 頁與頁之間保留 1 個內容座標作為分隔槽。照片若只停在頁面的數學邊界，
-         預覽放大後這個槽也會一起放大，而固定為螢幕 1px 的分割線蓋不滿它，
-         於是露出只有高倍率才看得見的白縫。純照片貼內側頁緣時延伸到分隔槽的
-         另一側，分割線再畫在它上面；頁面輸出裁切範圍完全不變。 */
+      /* 頁與頁之間有 1 個內容座標的分隔槽。照片只延伸到槽的正中央（0.5），
+         也就是分割線真正所在的位置；不可再延伸整整 1px 到下一頁的邊界，
+         否則高倍率下會明顯看成圖片越過分割線。 */
       const visualLeft = pr.left - (seamBleed && pr.pageIdx > 0 ? seamBleed : 0);
       const visualRight = pr.right + (seamBleed && pr.pageIdx < pages.length - 1 ? seamBleed : 0);
       if (!edgeOnly && Math.abs(cx - pr.centerX) < EPS_C) out.push({ type: 'vertical', coord: pr.centerX });
       if (Math.abs(left - visualLeft) < EPS_E) out.push({
         type: 'vertical',
-        coord: pr.pageIdx > 0 && seamBleed ? pr.left - seamBleed / 2 : pr.left,
+        coord: pr.pageIdx > 0 && seamBleed ? pr.left - seamBleed : pr.left,
       });
       if (Math.abs(right - visualRight) < EPS_E) out.push({
         type: 'vertical',
-        coord: pr.pageIdx < pages.length - 1 && seamBleed ? pr.right + seamBleed / 2 : pr.right,
+        coord: pr.pageIdx < pages.length - 1 && seamBleed ? pr.right + seamBleed : pr.right,
       });
       if (!edgeOnly && Math.abs(cy - pr.centerY) < EPS_C) out.push({ type: 'horizontal', coord: pr.centerY });
       if (Math.abs(top - pr.top) < EPS_E) out.push({ type: 'horizontal', coord: pr.top });
@@ -7504,7 +7505,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const ownPageRectsForFit = pageRects;
     const movingItem = floatingImages.find(item => item.id === imgId);
     const seamBleed = movingItem && movingItem.text === undefined && !movingItem.shape
-      && Math.abs(((rot % 180) + 180) % 180) < 0.01 ? 1 : 0;
+      && Math.abs(((rot % 180) + 180) % 180) < 0.01 ? 0.5 : 0;
     // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
     const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
 
@@ -7550,7 +7551,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
            出來，也不會像原本的 1px 那樣溢到隔壁頁。 */
         bestSnapX = visualLeft - imgWidth / 2 + scaledW / 2;
         bestGuidelineX = pageRect.pageIdx > 0 && seamBleed
-          ? pageRect.left - seamBleed / 2 : pageRect.left;
+          ? pageRect.left - seamBleed : pageRect.left;
       }
 
       // Page right edge
@@ -7560,7 +7561,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         minDiffX = diffRight;
         bestSnapX = visualRight - imgWidth / 2 - scaledW / 2;
         bestGuidelineX = pageRect.pageIdx < pages.length - 1 && seamBleed
-          ? pageRect.right + seamBleed / 2 : pageRect.right;
+          ? pageRect.right + seamBleed : pageRect.right;
       }
     });
 
@@ -9227,6 +9228,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 页面内分割线每一帧直接读取反倍率，不等待 React 重绘。 */
       col.style.setProperty('--preview-inverse-scale', `${1 / Math.max(0.0001, k)}px`);
       col.style.setProperty('--preview-inverse-half', `${0.5 / Math.max(0.0001, k)}px`);
+      col.style.setProperty('--preview-guide-scale', `${2 / Math.max(0.0001, k)}px`);
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
       col.style.setProperty('--layout-grid-stroke', `${1 / Math.max(0.0001, k)}px`);
@@ -10238,22 +10240,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     //     但長按 150ms 之後就切換成「拖曳交換這一格的照片」。
 
     if (e.touches.length >= 2) {
-      /* 第二根手指代表缩放，不论长按计时是否刚好已经成立，都立刻完整取消
-         图片交换状态，不能只清 timer 却把已经画出的缩图留在画面上。 */
-      touchDragState.current = null;
+      /* 第二根手指交由最外层 workspace 判断是缩放物件或缩放预览。
+         这里只取消这张格子自己的长按计时，不再重设画布、pointer、zoom 等
+         全域状态；先前那种整批接管正是 iOS 上双指手势被吃掉的原因。 */
+      if (longPressTimeoutRef.current) {
+        clearTimeout(longPressTimeoutRef.current);
+        longPressTimeoutRef.current = null;
+      }
       isLongPressedRef.current = false;
       pendingLongPressPosRef.current = null;
-      setTouchDraggedIndex(null);
-      setCellDragPreview(null);
-      setTouchDragOverIndex(null);
-      setSwapOverTarget(null);
-      /* 雙指一律交給最外層 workspace 的單一手勢控制器。之前格子、佈局與
-         workspace 會依第二根手指落點互相搶事件；WebKit 最後常把整段取消，
-         看起來就是物件完全不能縮放。子層只負責取消長按，不再另開 pinch。 */
-      wasZoomingRef.current = true;
-      touchZoomState.current = null;
-      touchDragState.current = null;
-      pointerState.current.isDraggingContent = false;
+      return;
     } else if (e.touches.length === 1) {
       wasZoomingRef.current = false;
       // Prevent dragging empty cells
@@ -11516,7 +11512,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 與尚未 commit 的 selection state 判斷，整次 pinch 就會被誤認成畫布手勢。
    */
   const wsTouchTargetRef = useRef<{
-    kind: 'floating' | 'cell' | 'layout';
+    kind: 'floating' | 'cell' | 'layout' | 'canvas';
     floatingId?: string | null;
     cellIdx?: number;
     layoutId?: string | null;
@@ -11688,53 +11684,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     panRef.current = null;
     wsGestureRef.current = null;
     if (e.touches.length === 1) {
-      /* 選中狀態優先：選中物件後從畫布任何位置開始捏，都仍然縮放它。
-         沒有選中狀態時才從真正按到的 DOM 補抓，避免第一次選中後緊接著
-         放下第二指的那一幀 React state 尚未完成而失去手勢。 */
-      const target = e.target as Element | null;
-      const directFloating = target?.closest('[data-floating-id]')?.getAttribute('data-floating-id') || null;
-      const directCell = target?.closest('[data-cell-id]');
-      const directLayout = target?.closest('[data-layout-id]');
+      /* 第一根手指落下時只記錄「當下已經選中的目標」。沒有選中任何東西就
+         明確鎖成 canvas；不能因為手指剛好碰到一個未選中的 DOM 物件，就把
+         隨後的雙指手勢誤判為縮放該物件。這樣兩指碰在圖片／文字／圖形上，
+         只要起手前沒選中它們，仍然能穩定縮放整個預覽。 */
       wsTouchTargetRef.current = selectedFloatingId
         ? { kind: 'floating', floatingId: selectedFloatingId }
         : selectedIndex !== null
           ? { kind: 'cell', cellIdx: selectedIndex, layoutId: selectedLayoutId }
           : layoutSelected
             ? { kind: 'layout', layoutId: selectedLayoutId }
-            : directFloating
-              ? { kind: 'floating', floatingId: directFloating }
-              : directCell && directLayout
-                ? { kind: 'cell', cellIdx: Number(directCell.getAttribute('data-cell-id')), layoutId: directLayout.getAttribute('data-layout-id') }
-                : directLayout
-                  ? { kind: 'layout', layoutId: directLayout.getAttribute('data-layout-id') }
-                  : null;
-    }
-    /* 第二根手指可能落在原图片外面，因此只在图片自己的 touchstart 取消不够。
-       在整个预览层统一截获：只要成为双指手势，任何尚未成立或已经出现的
-       长按交换缩图都立刻撤销，再把手势完整交给缩放。 */
-    if (e.touches.length >= 2) {
-      if (longPressTimeoutRef.current) {
-        clearTimeout(longPressTimeoutRef.current);
-        longPressTimeoutRef.current = null;
-      }
-      if (floatSwapTimerRef.current) {
-        clearTimeout(floatSwapTimerRef.current);
-        floatSwapTimerRef.current = null;
-      }
-      const hadCellSwap = isLongPressedRef.current || !!touchDragState.current;
-      const hadFloatSwap = !!floatSwapRef.current;
-      isLongPressedRef.current = false;
-      touchDragState.current = null;
-      pendingLongPressPosRef.current = null;
-      setCellDragPreview(null);
-      floatSwapRef.current = null;
-      if (hadCellSwap) {
-        setTouchDraggedIndex(null);
-        setTouchDragOverIndex(null);
-      }
-      if (hadFloatSwap) setFloatDragSrc(null);
-      setFloatDragPreloadSrc(null);
-      if (hadCellSwap || hadFloatSwap) setSwapOverTarget(null);
+            : { kind: 'canvas' };
     }
     if (isLongPressedRef.current || touchDragState.current) return;
 
@@ -11765,15 +11725,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        要无条件交给缩放／旋转，不能因为第二根手指的位置而整次失效。 */
     const lockedTarget = wsTouchTargetRef.current;
     const selectedObjectPinch = e.touches.length >= 2
-      && (!!lockedTarget || !!selectedFloatingId || selectedIndex !== null || layoutSelected);
+      && !!lockedTarget && lockedTarget.kind !== 'canvas';
     if (scope === 'none' && !selectedObjectPinch) return;
     const gestureFloatingId = lockedTarget?.kind === 'floating'
       ? (lockedTarget.floatingId || null)
       : selectedFloatingId;
 
     // 雙指縮放不會跟捲頁衝突，所以不管手指落在哪裡都拿來縮放選中的物件
-    const twoFingerOnSelection = e.touches.length >= 2
-      && (!!lockedTarget || !!selectedFloatingId || selectedIndex !== null || layoutSelected);
+    const twoFingerOnSelection = selectedObjectPinch;
     const kind: 'floating' | 'cell' | 'layout' | null =
       selectedObjectPinch ? (lockedTarget?.kind || (selectedFloatingId ? 'floating' : selectedIndex !== null ? 'cell' : 'layout'))
       : scope === 'floating' ? 'floating'
@@ -11861,7 +11820,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        會重跑一次，開頭已經 panRef = null，所以不可能同時在捲頁。 */
     if (
       e.touches.length >= 2 && !pagesMode
-      && !selectedFloatingId && selectedIndex === null && !layoutSelected
+      && (lockedTarget?.kind === 'canvas'
+        || (!lockedTarget && !selectedFloatingId && selectedIndex === null && !layoutSelected))
       // 頁面已經被拖到一半了就不接手 —— 這一次手勢從頭到尾都是捲頁
       && !panMovedRef.current
     ) {
@@ -12042,7 +12002,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const cy = target.y + target.height / 2;
             let best = Infinity, bestScale = ns;
             const rasterSeamBleed = target.text === undefined && !target.shape
-              && Math.abs(((rot % 180) + 180) % 180) < 0.01 ? 1 : 0;
+              && Math.abs(((rot % 180) + 180) % 180) < 0.01 ? 0.5 : 0;
             // 倍率吸附也要用轉過的外框，不然轉 90 度之後貼齊的位置會差半個身子
             const ext = rotExtent(target.width, target.height, rot);
             pageRectsNear(getAllPageRects(), cx).forEach(pr => {
@@ -14121,10 +14081,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               setActivePageIndex(closestIdx);
             }
           }}
-          onTouchStart={activeTab === 'motion' ? undefined : handleWorkspaceTouchStart}
-          onTouchMove={activeTab === 'motion' ? undefined : handleWorkspaceTouchMove}
-          onTouchEnd={activeTab === 'motion' ? undefined : handleWorkspaceTouchEnd}
-          onTouchCancel={activeTab === 'motion' ? undefined : handleWorkspaceTouchEnd}
+          /* iOS WebKit 會先把 touchstart 送給格子／文字等子層。改在 capture 階段
+             先決定手勢歸屬，子層仍可處理單指長按，但再也不能搶走雙指縮放。 */
+          onTouchStartCapture={activeTab === 'motion' ? undefined : handleWorkspaceTouchStart}
+          onTouchMoveCapture={activeTab === 'motion' ? undefined : handleWorkspaceTouchMove}
+          onTouchEndCapture={activeTab === 'motion' ? undefined : handleWorkspaceTouchEnd}
+          onTouchCancelCapture={activeTab === 'motion' ? undefined : handleWorkspaceTouchEnd}
           onPointerDown={(e) => {
             if (activeTab === 'motion') return;
             workspacePointerDown.current = {
@@ -15519,7 +15481,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           style={{
                             left: rightPageLeft - 0.5,
                             top: previewH * (1 - moveScale) / 2,
-                            width: 'var(--preview-inverse-scale, 1px)',
+                            /* 一般分割線維持螢幕 1px；觸發吸附時改成與其他藍色
+                               對齊線完全相同的 2px，避免只有被圖片壓到的區段
+                               看起來突然變細。兩種粗細都由反倍率變數抵銷預覽 zoom。 */
+                            width: active
+                              ? 'var(--preview-guide-scale, 2px)'
+                              : 'var(--preview-inverse-scale, 1px)',
                             height: previewH * moveScale,
                             transform: `translateX(-50%) scaleX(${1 / moveScale})`,
                             transformOrigin: 'center center',
