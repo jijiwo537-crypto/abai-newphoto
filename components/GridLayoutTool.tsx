@@ -3980,6 +3980,12 @@ interface FloatingImageComponentProps {
     oppositeLocalX?: number,
     oppositeLocalY?: number
   ) => void;
+  /** 四邊擠壓的候選幾何；外層負責吸附並回寫，固定對邊的基準一併傳出。 */
+  onStretchMove?: (
+    next: Partial<FloatingImage>,
+    side: 't' | 'r' | 'b' | 'l',
+    base: { x: number; y: number; width: number; height: number; rotationRad: number }
+  ) => void;
   onScaleEnd?: () => void;
   isSwapTarget?: boolean;
   isSwapSource?: boolean;
@@ -4635,6 +4641,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   onDragEnd,
   onScaleStart,
   onScaleMove,
+  onStretchMove,
   onScaleEnd,
   isSwapTarget = false,
   isSwapSource = false,
@@ -5535,13 +5542,15 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const shift = (width - d.width) / 2 * (d.side === 'r' ? 1 : -1);
       const cx = oldCx + shift * Math.cos(d.rotationRad), cy = oldCy + shift * Math.sin(d.rotationRad);
       const next = { width, height: d.height, x: cx - width / 2, y: cy - d.height / 2 };
-      onChange(next);
+      if (onStretchMove) onStretchMove(next, d.side, d);
+      else onChange(next);
     } else {
       const height = Math.max(24, d.height + signed);
       const shift = (height - d.height) / 2 * (d.side === 'b' ? 1 : -1);
       const cx = oldCx - shift * Math.sin(d.rotationRad), cy = oldCy + shift * Math.cos(d.rotationRad);
       const next = { width: d.width, height, x: cx - d.width / 2, y: cy - height / 2 };
-      onChange(next);
+      if (onStretchMove) onStretchMove(next, d.side, d);
+      else onChange(next);
     }
   };
   const handleStretchPointerUp = (e: React.PointerEvent) => {
@@ -15164,7 +15173,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               getAllPageRects(),
                               fImg.x + fImg.width / 2,
                             );
-                            const SNAP_THRESHOLD = 1; // 外框實際貼線才吸附；僅容許次像素誤差
+                            /* 4px 是兩套拼圖統一的手機吸附範圍。座標在內容空間，
+                               所以要除掉預覽倍率；固定支點公式仍在下面，沒有搬整張圖。 */
+                            const SNAP_THRESHOLD = 4 / Math.max(0.001, kRef.current || 1);
                             
                             // Unsnapped position of the dragged corner
                             const rawCornerX = pivotContainerX + newScale * K_x;
@@ -15381,6 +15392,66 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               ? { ...item, x: newX, y: newY, scale: newScale }
                               : item)));
                           }
+                        }}
+                        onStretchMove={(rawNext, side, base) => {
+                          const horizontal = side === 'l' || side === 'r';
+                          const oldCx = base.x + base.width / 2;
+                          const oldCy = base.y + base.height / 2;
+                          const geometryAt = (size: number) => {
+                            if (horizontal) {
+                              const width = Math.max(24, size);
+                              const shift = (width - base.width) / 2 * (side === 'r' ? 1 : -1);
+                              const cx = oldCx + shift * Math.cos(base.rotationRad);
+                              const cy = oldCy + shift * Math.sin(base.rotationRad);
+                              return { width, height: base.height, x: cx - width / 2, y: cy - base.height / 2 };
+                            }
+                            const height = Math.max(24, size);
+                            const shift = (height - base.height) / 2 * (side === 'b' ? 1 : -1);
+                            const cx = oldCx - shift * Math.sin(base.rotationRad);
+                            const cy = oldCy + shift * Math.cos(base.rotationRad);
+                            return { width: base.width, height, x: cx - base.width / 2, y: cy - height / 2 };
+                          };
+                          let next = rawNext as { x: number; y: number; width: number; height: number };
+                          let nextGuidelines: AlignmentGuideline[] = [];
+                          if (enableSnapping) {
+                            const bounds = (g: typeof next) => {
+                              const ext = rotExtent(g.width * fImg.scale, g.height * fImg.scale, fImg.rotation || 0);
+                              const cx = g.x + g.width / 2, cy = g.y + g.height / 2;
+                              return { l: cx - ext.bw / 2, r: cx + ext.bw / 2, t: cy - ext.bh / 2, b: cy + ext.bh / 2 };
+                            };
+                            const q = horizontal ? next.width : next.height;
+                            const b0 = bounds(next), b1 = bounds(geometryAt(q + 1));
+                            const moving = [
+                              { axis: 'x' as const, at: b0.l, dv: b1.l - b0.l },
+                              { axis: 'x' as const, at: b0.r, dv: b1.r - b0.r },
+                              { axis: 'y' as const, at: b0.t, dv: b1.t - b0.t },
+                              { axis: 'y' as const, at: b0.b, dv: b1.b - b0.b },
+                            ].filter(v => Math.abs(v.dv) > 1e-5)
+                              .sort((a, b) => Math.abs(b.dv) - Math.abs(a.dv))[0];
+                            if (moving) {
+                              /* 擠壓只認頁面的最外框，不跟其他物件互吸。多頁時每一頁
+                                 都是自己的畫布，因此取目前物件附近頁面的四邊。 */
+                              const nearby = pageRectsNear(getAllPageRects(), next.x + next.width / 2);
+                              const lines = moving.axis === 'x'
+                                ? nearby.flatMap(p => [p.left, p.right])
+                                : nearby.flatMap(p => [p.top, p.bottom]);
+                              const threshold = 4 / Math.max(0.001, kRef.current || 1);
+                              const line = lines.slice().sort((a, b) => Math.abs(a - moving.at) - Math.abs(b - moving.at))[0];
+                              if (line !== undefined && Math.abs(line - moving.at) < threshold) {
+                                const snapQ = q + (line - moving.at) / moving.dv;
+                                if (snapQ >= 24) {
+                                  next = geometryAt(snapQ);
+                                  nextGuidelines = [{ type: moving.axis === 'x' ? 'vertical' : 'horizontal', coord: line }];
+                                }
+                              }
+                            }
+                          }
+                          queueInteraction(() => {
+                            setActiveGuidelines(nextGuidelines);
+                            setFloatingImages(prev => prev.map(item => item.id === fImg.id
+                              ? { ...item, ...next }
+                              : item));
+                          });
                         }}
                         onScaleEnd={() => {
                           flushInteractionNow();
