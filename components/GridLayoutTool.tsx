@@ -5846,15 +5846,26 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         4096 / Math.max(cssW, cssH),
         Math.sqrt((gestureRendering ? 4_194_304 : 8_388_608) / Math.max(1, cssW * cssH)),
       );
-      const W = Math.max(1, Math.ceil(cssW * backingScale));
-      const H = Math.max(1, Math.ceil(cssH * backingScale));
+      /* 一般圖形的 backing store 必須完整對應 CSS 盒子的四條邊。舊版用 ceil
+         後仍以原 backingScale 畫圖，ceil 多出來的尾數全部堆在右／下；外層
+         縮放重新取樣時，右邊與下邊因此最容易像在抖。改成偶數實體像素，並
+         以實際 W/cssW、H/cssH 各自建立矩陣，四邊都沒有未使用的尾數。 */
+      const exactShapeBacking = !!image.shape && image.shape !== 'hole';
+      const W = Math.max(1, exactShapeBacking
+        ? Math.ceil(cssW * backingScale / 2) * 2
+        : Math.ceil(cssW * backingScale));
+      const H = Math.max(1, exactShapeBacking
+        ? Math.ceil(cssH * backingScale / 2) * 2
+        : Math.ceil(cssH * backingScale));
+      const backingScaleX = exactShapeBacking ? W / cssW : backingScale;
+      const backingScaleY = exactShapeBacking ? H / cssH : backingScale;
       if (canvas.width !== W) canvas.width = W;
       if (canvas.height !== H) canvas.height = H;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      ctx.setTransform(backingScale, 0, 0, backingScale, 0, 0);
+      ctx.setTransform(backingScaleX, 0, 0, backingScaleY, 0, 0);
       ctx.clearRect(0, 0, cssW, cssH);
       /* 經典拼圖的波浪與創意拼圖共用同一種做法：本體先完整畫好，再把
          成品分成連續斜率的小直片。這個收尾函式只改像素，不動物件根節點、
@@ -9280,6 +9291,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 页面内分割线每一帧直接读取反倍率，不等待 React 重绘。 */
       col.style.setProperty('--preview-inverse-scale', `${1 / Math.max(0.0001, k)}px`);
       col.style.setProperty('--preview-inverse-half', `${0.5 / Math.max(0.0001, k)}px`);
+      /* 只補四分之一個實體像素的抗鋸齒保護帶。它不是第二條分割線，
+         只負責讓線穿過深色／彩色物件時仍保持與白底上相同的視覺重量。 */
+      col.style.setProperty('--preview-seam-guard', `${0.125 / Math.max(0.0001, k)}px`);
       col.style.setProperty('--preview-guide-scale', `${2 / Math.max(0.0001, k)}px`);
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
@@ -15554,6 +15568,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               ? (move.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
                               : undefined,
                             backgroundColor: shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                            /* fractional transform 落在像素中間時，單純 1px 的兩側
+                               會各自混色，疊在物件上便看成較細；極小同色保護帶同時
+                               蓋掉圖片邊緣偶發露出的髮絲白線。 */
+                            boxShadow: `0 0 0 var(--preview-seam-guard, 0.125px) ${shadeHex(WORKSPACE_BG, PAGE_SEAM_INK)}`,
                             zIndex: 400000,
                           }}
                         />
