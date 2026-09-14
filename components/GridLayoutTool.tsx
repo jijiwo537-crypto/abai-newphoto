@@ -11608,6 +11608,31 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     stopInertia();
     panRef.current = null;
     wsGestureRef.current = null;
+    /* 第二根手指可能落在原图片外面，因此只在图片自己的 touchstart 取消不够。
+       在整个预览层统一截获：只要成为双指手势，任何尚未成立或已经出现的
+       长按交换缩图都立刻撤销，再把手势完整交给缩放。 */
+    if (e.touches.length >= 2) {
+      if (longPressTimeoutRef.current) {
+        clearTimeout(longPressTimeoutRef.current);
+        longPressTimeoutRef.current = null;
+      }
+      if (floatSwapTimerRef.current) {
+        clearTimeout(floatSwapTimerRef.current);
+        floatSwapTimerRef.current = null;
+      }
+      const hadCellSwap = isLongPressedRef.current || !!touchDragState.current;
+      const hadFloatSwap = !!floatSwapRef.current;
+      isLongPressedRef.current = false;
+      touchDragState.current = null;
+      pendingLongPressPosRef.current = null;
+      floatSwapRef.current = null;
+      if (hadCellSwap) {
+        setTouchDraggedIndex(null);
+        setTouchDragOverIndex(null);
+      }
+      if (hadFloatSwap) setFloatDragSrc(null);
+      if (hadCellSwap || hadFloatSwap) setSwapOverTarget(null);
+    }
     if (isLongPressedRef.current || touchDragState.current) return;
 
     /* 先算「這一下是不是按在選中那張圖的形狀裡面」——
