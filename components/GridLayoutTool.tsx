@@ -8028,7 +8028,1291 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (st.cell) {
       const sw = (st.img as any).naturalWidth || st.img.width;
       const sh = (st.img as any).naturalHeight || st.img.height;
- �����z�&��^t?.left || 0;
+      if (isGeoIdentity(st.geo)) { setComposeState(null); return; }
+      const baked = composeCanvas(st.img, sw, sh, st.geo, 2400);
+      baked.toBlob(blob => {
+        if (!blob) { setComposeState(null); return; }
+        const url = URL.createObjectURL(blob);
+        setPages(prev => prev.map(p => ({
+          ...p,
+          layouts: p.layouts.map(l => l.id !== st.cell!.layoutId ? l : {
+            ...l,
+            images: l.images.map((cell, i) => i !== st.cell!.index ? cell : {
+              ...cell,
+              url,
+              file: undefined as any,
+              naturalWidth: baked.width,
+              naturalHeight: baked.height,
+              zoom: 1,
+              offsetX: 0,
+              offsetY: 0,
+              rotation: 0,
+            }),
+          }),
+        })));
+        setComposeState(null);
+      }, 'image/png');
+      return;
+    }
+    const layer = floatingImages.find(f => f.id === st.id);
+    if (!layer) { setComposeState(null); return; }
+    const srcUrl = layer.origSrc || layer.src;
+    const finish = (newSrc: string, aspect: number) => {
+      setFloatingImages(prev => prev.map(f => {
+        if (f.id !== st.id) return f;
+        const newH = Math.max(24, Math.round(f.width / aspect));
+        return {
+          ...f,
+          src: newSrc,
+          origSrc: srcUrl,
+          geo: st.geo,
+          // 高度變了讓中心留在原地
+          y: f.y + (f.height - newH) / 2,
+          height: newH,
+        };
+      }));
+      setComposeState(null);
+    };
+    const sw = (st.img as any).naturalWidth || (st.img as any).videoWidth || st.img.width;
+    const sh = (st.img as any).naturalHeight || (st.img as any).videoHeight || st.img.height;
+    /* 影片：只留 geo，不烤圖（理由見 openComposeFor）。
+       預覽是把同一個矩陣寫成 CSS transform，匯出是同一個矩陣畫在畫布上，
+       所以兩邊看到的一定一樣。這裡只要把框的高度換成裁切後的長寬比。 */
+    if (layer.isVideo) {
+      const q = ((st.geo.quarter % 4) + 4) % 4;
+      const swap = q === 1 || q === 3;
+      const bw = swap ? sh : sw, bh = swap ? sw : sh;
+      const c = st.geo.crop;
+      const aspect = (bw * c.w) / Math.max(1e-6, bh * c.h);
+      setFloatingImages(prev => prev.map(f => {
+        if (f.id !== st.id) return f;
+        const newH = Math.max(24, Math.round(f.width / aspect));
+        return { ...f, geo: st.geo, y: f.y + (f.height - newH) / 2, height: newH };
+      }));
+      // 構圖用的那個 <video> 是臨時開的，用完就收
+      if (isVideoEl(st.img)) { try { st.img.pause(); st.img.remove(); } catch { /* 收不掉算了 */ } }
+      setComposeState(null);
+      return;
+    }
+    if (isGeoIdentity(st.geo)) {
+      finish(srcUrl, sw / sh);
+      return;
+    }
+    const baked = composeCanvas(st.img, sw, sh, st.geo, 2400);
+    baked.toBlob(blob => {
+      if (!blob) { setComposeState(null); return; }
+      finish(URL.createObjectURL(blob), baked.width / baked.height);
+    }, 'image/png');
+  };
+  /** 濾鏡每載好一個就 +1，讓已經套用的圖層重畫 */
+  const [lutRevision, setLutRevision] = useState(0);
+
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
+  /** 第一次點佈局是選整個佈局（等同一張圖片被選取），再點一次才會選到裡面的格子 */
+  const [selectedLayoutId, setSelectedLayoutId] = useState<string | null>(null);
+
+  const activePage = pages[activePageIndex] || pages[0];
+  /** 被選取的佈局可能不在目前捲到的那一頁上（選好之後滑到別頁），所以一律用 id 全域找。 */
+  const selectedLayoutPageIdx = selectedLayoutId
+    ? pages.findIndex(p => p.layouts.some(l => l.id === selectedLayoutId))
+    : -1;
+  // 目前正在編輯的佈局：優先用被選取的那個，沒選就退回這一頁的第一個
+  const activeLayout: LayoutItem | null =
+    (selectedLayoutPageIdx >= 0
+      ? pages[selectedLayoutPageIdx].layouts.find(l => l.id === selectedLayoutId)
+      : undefined) || activePage.layouts[0] || null;
+  const images = activeLayout?.images ?? EMPTY_CELLS;
+  const templateIndex = activeLayout?.templateIndex ?? 0;
+  const gap = activeLayout?.gap ?? 0;
+  const radius = activeLayout?.radius ?? 0;
+  /** 目前選中的佈局自己的長寬比（沒設就跟整頁一樣） */
+  const layoutRatio = activeLayout?.ratio ?? '';
+  const layoutLandscape = !!activeLayout?.landscape;
+  /** 改「這個佈局」的比例；不影響整頁，也不影響其他佈局 */
+  const patchLayoutShape = (patch: { ratio?: string; landscape?: boolean }) => {
+    const id = selectedLayoutId;
+    if (!id) return;
+    setPages(prev => prev.map(p => p.layouts.some(l => l.id === id) ? ({
+      ...p,
+      layouts: p.layouts.map(l => l.id === id ? { ...l, ...patch } : l),
+    }) : p));
+  };
+  const bgColor = activePage.bgColor;
+  /* 背景紋理。跟創意拼圖的遮罩紋理同一套參數，畫法共用 utils/pattern.ts。
+     每一頁各存一份：改紋理時只會動到「現在停在畫面正中央的那一頁」
+     （activePageIndex 就是捲動時算出來、離中心最近的那一頁）。 */
+  const patternOpts: PatternOpts = pagePattern(activePage);
+  const patchPattern = (patch: Partial<PatternOpts>) => setPages(prev => prev.map((p, i) =>
+    i === activePageIndex ? { ...p, pattern: { ...pagePattern(p), ...patch } } : p));
+  const patternType = patternOpts.type;
+  const patternColor = patternOpts.color;
+  const setPatternType = (t: string) => patchPattern({ type: t });
+  const setPatternColor = (c: string) => patchPattern({ color: c });
+  /* 顏色分頁的子頁面：'bg' 是原本的底色挑色器，'pattern' 是點了紋理旁邊那顆
+     色塊之後進去的紋理專屬調色頁（跟創意拼圖同一套操作）。 */
+  const [colorSub, setColorSub] = useState<'bg' | 'pattern' | 'stripeA' | 'stripeB'>('bg');
+  /** 顏色分頁的捲動容器：換子頁時要捲回最上面 */
+  const colorTabRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { if (colorTabRef.current) colorTabRef.current.scrollTop = 0; }, [colorSub]);
+  const patternSize = patternOpts.size;
+  const patternGap = patternOpts.gap;
+  const setPatternSize = (v: number) => patchPattern({ size: v });
+  const setPatternGap = (v: number) => patchPattern({ gap: v });
+  /* 條紋：粗細、方向、兩個顏色。跟點點／星星／愛心共用同一個「紋理」選單，
+     但參數不一樣（沒有間距，改成粗細＋方向）。 */
+  const stripeN = patternOpts.stripeN ?? STRIPE_N_DEFAULT;
+  const stripeDir: 'h' | 'v' = patternOpts.stripeDir === 'h' ? 'h' : 'v';
+  // 第一個顏色沒挑過就跟著「紋理當下的顏色」走，第二個從純白開始
+  const stripeA = patternOpts.stripeA || patternColor;
+  const stripeB = patternOpts.stripeB || '#FFFFFF';
+
+  /* 紋理的兩根滑桿。其他面板那幾支同名 helper 都關在各自的元件裡，
+     主元件拿不到，所以就近寫一支。軌道用全域的 .premium-slider。 */
+  const patternSlider = (label: string, value: number, onVal: (v: number) => void, max = 100) => (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex justify-between items-center text-[9px] font-bold text-[#666] tracking-tighter uppercase">
+        <span>{label}</span>
+        <span className="text-white/70 tabular-nums">{value}</span>
+      </div>
+      {/* 圓點用「寬的那一種」（跟特效細項的並排滑桿同一顆） */}
+      <div className="slider-wrap" style={{ height: 16 }}>
+        <input type="range" min={0} max={max} step={1} value={value}
+          onChange={e => onVal(parseInt(e.target.value))} className="slim-slider w-full" />
+      </div>
+    </div>
+  );
+  const layoutSelected = selectedLayoutId !== null;
+
+  /** 只改動「正在編輯的那個佈局」，不管它現在在哪一頁。 */
+  const patchActiveLayout = (fn: (l: LayoutItem) => LayoutItem) => {
+    setPages(prev => prev.map((p, idx) => {
+      if (selectedLayoutId) {
+        if (!p.layouts.some(l => l.id === selectedLayoutId)) return p;
+        return { ...p, layouts: p.layouts.map(l => (l.id === selectedLayoutId ? fn(l) : l)) };
+      }
+      if (idx !== activePageIndex || p.layouts.length === 0) return p;
+      return { ...p, layouts: p.layouts.map((l, i) => (i === 0 ? fn(l) : l)) };
+    }));
+  };
+
+  const setImages = (newImages: ImageCell[] | ((prev: ImageCell[]) => ImageCell[])) => {
+    patchActiveLayout(l => ({ ...l, images: typeof newImages === 'function' ? newImages(l.images) : newImages }));
+  };
+
+  const setTemplateIndex = (newTmplIdx: number | ((prev: number) => number)) => {
+    patchActiveLayout(l => ({ ...l, templateIndex: typeof newTmplIdx === 'function' ? newTmplIdx(l.templateIndex) : newTmplIdx }));
+  };
+
+  const setGap = (v: number) => patchActiveLayout(l => ({ ...l, gap: v }));
+  const setRadius = (v: number) => patchActiveLayout(l => ({ ...l, radius: v }));
+
+  /* 底色跟紋理一樣，只改「現在停在畫面正中央的那一頁」
+     （activePageIndex 就是捲動時算出來、離中心最近的那一頁）。 */
+  const setBgColor = (newColor: string | ((prev: string) => string)) => {
+    setPages(prev => prev.map((p, idx) => {
+      if (idx !== activePageIndex) return p;
+      const updatedColor = typeof newColor === 'function' ? newColor(p.bgColor) : newColor;
+      return { ...p, bgColor: updatedColor };
+    }));
+  };
+
+  const addedPagesCount = pages.length - 1;
+
+  const setAddedPagesCount = (newCountOrFn: number | ((prev: number) => number)) => {
+    setPages(prev => {
+      const currentCount = prev.length - 1;
+      const targetCount = typeof newCountOrFn === 'function' ? newCountOrFn(currentCount) : newCountOrFn;
+      
+      if (targetCount > currentCount) {
+        const newPages = [...prev];
+        const currentBgColor = prev[activePageIndex]?.bgColor || prev[0]?.bgColor || '#ffffff';
+        for (let i = currentCount; i < targetCount; i++) {
+          newPages.push({
+            id: `page-${Math.random().toString(36).substring(2, 9)}`,
+            bgColor: currentBgColor,
+            layouts: [],
+          });
+        }
+        return newPages;
+      } else if (targetCount < currentCount) {
+        return prev.slice(0, targetCount + 1);
+      }
+      return prev;
+    });
+  };
+
+  const handleSwitchPage = (targetIdx: number) => {
+    if (targetIdx >= 0 && targetIdx < pages.length) {
+      setActivePageIndex(targetIdx);
+    }
+  };
+
+  /** 在指定頁面「再加一個」佈局，不動既有的。 */
+  /** 在目前這一頁的中央加一個文字圖層，並直接打開編輯面板。 */
+  const handleAddTextLayer = (init?: Partial<FloatingImage>) => {
+    const rect = getClosestPageRect();
+    const w = Math.round((rect?.width ?? previewW) * 0.7);
+    const h = 96;
+    const id = `text-${Math.random().toString(36).substring(2, 9)}`;
+    ensureFont(DEFAULT_FONT);
+    const item: FloatingImage = {
+      id, src: '',
+      x: (rect ? rect.centerX : previewW / 2) - w / 2,
+      y: (rect ? rect.centerY : previewH / 2) - h / 2,
+      width: w, height: h, scale: 1, rotation: 0,
+      text: TEXT_PLACEHOLDER,
+      fontFamily: DEFAULT_FONT,
+      fontSize: 20,
+      // 頁面底色預設是白的，文字也用白色的話新增完會看不到
+      color: '#1C1C1C',
+      bold: false,
+      italic: false,
+      letterSpacing: 0,
+      // 描邊沒設過就是黑的 —— 第一次把描邊拉出來就該看得到
+      strokeColor: '#000000',
+      glow: 0,
+      glowColor: '#FFFFFF',
+      ...init,
+    };
+    setFloatingImages(prev => [...prev, item]);
+    setSelectedFloatingId(id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setEditingTextId(id);
+    // 新增完直接進文字編輯頁，省掉「再按一次工具列的編輯」那一步
+    setActiveTab('adjust');
+  };
+
+  /**
+   * 新增一顆符號。
+   *
+   * 符號就是文字圖層，所以位置、縮放、旋轉、圖層順序、直接在畫布上改字
+   * 全部跟文字共用同一套；差別只在 sym 有值，面板會換成符號那一組。
+   * 字級照長度回推：符號長短差很多（最長的接近一百個字），字級寫死的話
+   * 長的會直接戳出頁面 —— 用「大約佔頁寬七成」回推，挑哪一顆加進來的
+   * 份量都差不多。刻意留在這一頁、也不進入打字狀態，可以連著加好幾顆。
+   */
+  const prepareAddSymbolLayer = (txt: string) => {
+    const rect = getClosestPageRect();
+    const pw = rect?.width ?? previewW;
+    const ph = rect?.height ?? previewH;
+    const geometry = prepareClassicSymbolPlacement(txt, pw);
+    return { rect, pw, ph, ...geometry };
+  };
+
+  const handleAddSymbolLayer = (txt: string) => {
+    /* pointerdown 已先準備這顆的幾何；即使由鍵盤觸發，這裡也只計算該顆，
+       不等待字體 Promise、更不清掉整份快取。setState 能在同一個 click 提交。 */
+    const { rect, fontSize, w, h } = prepareAddSymbolLayer(txt);
+    const id = `text-${Math.random().toString(36).substring(2, 9)}`;
+    const item: FloatingImage = {
+      id, src: '',
+      x: (rect ? rect.centerX : previewW / 2) - w / 2,
+      y: (rect ? rect.centerY : previewH / 2) - h / 2,
+      width: w, height: h, scale: 1, rotation: 0,
+      text: txt, sym: txt,
+      fontFamily: SYMBOL_FONT,
+      fontSize,
+      color: '#FFFFFF',
+      bold: false, italic: false, letterSpacing: 0,
+      strokeColor: '#000000',
+      glow: 0, glowColor: '#FFFFFF',
+      // 經典拼圖的所有新物件預設都是「無／靜止」。
+      mo: { ...CLASSIC_OBJECT_MOTION_DEFAULT },
+    };
+    setFloatingImages(prev => [...prev, item]);
+    setSelectedFloatingId(id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+  };
+
+  /**
+   * 新增一個圖形圖層。
+   * 大小預設佔頁面短邊的三成；線條類壓成細長條（高度只有寬度的 8%）。
+   * 顏色跟文字一樣預設墨黑 —— 頁面底色預設是白的，白色圖形會看不到。
+   */
+  const handleAddShapeLayer = (it: typeof ADD_SHAPE_ITEMS[number] | HoleShapeItem) => {
+    const rect = getClosestPageRect();
+    const short = Math.min(rect?.width ?? previewW, rect?.height ?? previewH);
+    const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
+    const h = (it as any).ratio ? Math.max(4, Math.round(w * (it as any).ratio)) : w;
+    const id = `shape-${Math.random().toString(36).substring(2, 9)}`;
+    const item: FloatingImage = {
+      id, src: '',
+      x: (rect ? rect.centerX : previewW / 2) - w / 2,
+      y: (rect ? rect.centerY : previewH / 2) - h / 2,
+      width: w, height: h, scale: 1, rotation: (it as any).rot || 0,
+      shape: it.kind,
+      shapeItemId: it.id,
+      // 借來的圖案：kind 一律是 'hole'，真正畫哪一顆看 holeType
+      holeType: (it as HoleShapeItem).hole,
+      shapeFilled: it.filled,
+      shapeLineW: SHAPE_DEFAULT_LINEW(it.kind),
+      shapeLineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')
+        ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
+      shapeTextureBaseW: w,
+      shapeTextureBaseH: h,
+      shapeDash: 0,
+      shapeGlow: false,
+      shapeGlowColor: SHAPE_DEFAULT_COLOR,
+      color: SHAPE_DEFAULT_COLOR,
+    };
+    setFloatingImages(prev => [...prev, item]);
+    setSelectedFloatingId(id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+    /* 刻意留在這一頁、不跳去編輯 —— 常常是要連著加好幾個，
+       每加一個就被丟去編輯頁的話還得自己按回來。 */
+  };
+
+  /** 複製一份圖片／文字圖層，稍微錯開一點放在原件上面，並直接選中新的那一份。 */
+  const handleDuplicateFloating = (id: string) => {
+    const src = floatingImages.find(f => f.id === id);
+    if (!src) return;
+    const copy: FloatingImage = {
+      ...src,
+      id: `${src.text !== undefined ? 'text' : src.shape ? 'shape' : 'img'}-${Math.random().toString(36).substring(2, 9)}`,
+      x: src.x + 16,
+      y: src.y + 16,
+    };
+    setFloatingImages(prev => {
+      const i = prev.findIndex(f => f.id === id);
+      const next = [...prev];
+      next.splice(i + 1, 0, copy);   // 疊在原件正上方
+      return next;
+    });
+    setSelectedFloatingId(copy.id);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+  };
+
+  const patchTextLayer = (id: string, patch: Partial<FloatingImage>) => {
+    setFloatingImages(prev => prev.map(f => (f.id === id ? { ...f, ...patch } : f)));
+  };
+
+  const handleAddLayoutToPage = (pageIdx: number, templateIdx = 0, count = 4) => {
+    const item = makeLayout(templateIdx, count);
+    setPages(prev => prev.map((p, idx) => idx === pageIdx ? { ...p, layouts: [...p.layouts, item] } : p));
+    setActivePageIndex(pageIdx);
+    // 刻意不自動選中新佈局：選中＝進入編輯，會讓下一次點版型變成「換版型」而不是「再加一個」
+    setSelectedLayoutId(null);
+    setSelectedIndex(null);
+    setSelectedFloatingId(null);
+  };
+
+  /**
+   * 自由圖層的 x 是整條頁面帶的座標，所以「第幾頁」是用中心點除以一頁的寬度算出來的
+   * （每頁之間還有預覽裡那 1px 的縫）。搬頁面或刪頁面時，這些圖層都要跟著處理。
+   */
+  const pageOfFloating = (f: FloatingImage, stride: number, count: number) =>
+    Math.max(0, Math.min(count - 1, Math.floor((f.x + f.width / 2) / stride)));
+
+  const handleDeletePage = (pageIdx: number) => {
+    if (pages.length <= 1) return;
+    const stride = previewW + 1;
+    const count = pages.length;
+    // 這一頁上的自由圖層一起刪掉；後面幾頁的圖層往前挪一頁
+    setFloatingImages(prev => prev
+      .filter(f => pageOfFloating(f, stride, count) !== pageIdx)
+      .map(f => {
+        const p = pageOfFloating(f, stride, count);
+        return p > pageIdx ? { ...f, x: f.x - stride } : f;
+      }));
+    setSelectedFloatingId(prev => {
+      const sel = floatingImages.find(f => f.id === prev);
+      return sel && pageOfFloating(sel, stride, count) === pageIdx ? null : prev;
+    });
+    setPages(prev => prev.filter((_, idx) => idx !== pageIdx));
+    setActivePageIndex(prev => {
+      if (pageIdx === prev) {
+        return Math.max(0, pageIdx - 1);
+      } else if (pageIdx < prev) {
+        return prev - 1;
+      }
+      return prev;
+    });
+  };
+
+  /* ---- 頁面順序模式 ---- */
+  /**
+   * 進這個模式時整條操作欄往下滑，只留最上面那排分頁鍵；空出來的高度
+   * 讓畫布往下滑一半，看起來就是頁面平順地移到畫面中央。
+   * 每一頁下面會出現一顆握把與刪除鍵，拖握把就是直接在拖真正的那一頁。
+   */
+  /**
+   * 頁面順序模式：操作欄留在原位，畫布縮成一半 ——
+   * 一次看得到前後好幾頁，排起來才知道自己在排什麼。
+   * 用 transform 縮，不動 previewW/H，圖層的座標才不會跟著跑掉。
+   */
+  const PAGES_MODE_SCALE = 0.4;
+  /** 握把要按住這麼久才算開始拖（太短會誤觸） */
+  const PAGE_DRAG_HOLD_MS = 260;
+  /** 拖曳中被拿起來的那一頁：微微放大＋陰影，看起來像被拿離桌面（專業排序介面的做法） */
+  const PAGE_DRAG_SCALE = 1.05;
+
+  /** 正在拖的是哪一頁（拖的就是畫布上真正的那一頁） */
+  const [pageDragIdx, setPageDragIdx] = useState<number | null>(null);
+  /** 放手後的收尾：內容從「放手時看起來的位置」平順滑回新定位 */
+  const [dragSettle, setDragSettle] = useState<{ page: number; x: number; ease: boolean } | null>(null);
+  const settleTimerRef = useRef(0);
+
+  /**
+   * 拖曳中，每一頁該往哪邊讓開：
+   * 被拖的那一頁跟著手指；夾在「原本位置」與「目標位置」之間的頁面各讓一格。
+   */
+  const pageDragOffset = (idx: number) => {
+    const from = pageDragIdx;
+    const to = pageDragTo;
+    if (from === null || to === null) return { x: 0, live: false };
+    if (idx === from) return { x: pageDragShift / Math.max(0.01, pagesScale), live: true };
+    const stride = previewW + 1;
+    if (from < to && idx > from && idx <= to) return { x: -stride, live: false };
+    if (to < from && idx >= to && idx < from) return { x: stride, live: false };
+    return { x: 0, live: false };
+  };
+
+  /**
+   * 排頁面時「畫布不動、動的是上面的東西」。
+   *
+   * 被拖的那一頁：整組跟著手指、而且統一縮到 80%（一眼就知道自己在搬哪一頁）。
+   * 其他頁：讓開一格。縮放是以「那一頁的中心」為原點的群組縮放，但**每個元素
+   * 各自算一個位移**、不包成一個容器 —— 包起來會多一個堆疊環境，佈局與圖層
+   * 之間的前後關係就會跑掉。
+   *
+   * cx/cy 是那一頁的中心、ex/ey 是元素自己的中心，兩者要在同一個座標系裡
+   * （佈局用頁內座標，自由圖層用整條頁面的座標）。
+   */
+  const pageContentShift = (pageIdx: number) => {
+    if (!pagesMode) return null;
+    if (pageDragIdx === null) {
+      // 放手瞬間的收尾（FLIP）：換完順序後內容先停在「看起來的位置」，
+      // 下一帧再平順滑回定位 —— 不做這一段的話會先閃回再跳走
+      if (dragSettle && pageIdx === dragSettle.page) {
+        return { dx: dragSettle.x, s: 1, live: !dragSettle.ease };
+      }
+      return null;
+    }
+    // 拖曳中每一頁都回傳位移（包含 0）：讓開再讓回來時 transition 才接得上，
+    // 不會從「有 transform」直接跳成「沒 transform」閃一下
+    const off = pageDragOffset(pageIdx);
+    const s = off.live ? PAGE_DRAG_SCALE : 1;
+    return { dx: off.x, s, live: off.live };
+  };
+  const groupShift = (
+    shift: { dx: number; s: number; live: boolean },
+    cx: number, cy: number, ex: number, ey: number,
+  ) => ({
+    tx: shift.dx + (1 - shift.s) * (cx - ex),
+    ty: (1 - shift.s) * (cy - ey),
+    s: shift.s,
+    live: shift.live,
+  });
+  /** 自由圖層：中心就是 x + 寬/2（外框的 left 已經把縮放算進去了） */
+  const floatingDragShift = (f: FloatingImage) => {
+    const stride = previewW + 1;
+    const idx = pageOfFloating(f, stride, pages.length);
+    const shift = pageContentShift(idx);
+    if (!shift) return null;
+    return groupShift(shift, idx * stride + previewW / 2, previewH / 2, f.x + f.width / 2, f.y + f.height / 2);
+  };
+
+  /** 手指位置落在畫布上第幾頁（用每一頁真正的位置判斷） */
+  const pageUnder = (clientX: number) => {
+    const els = [...document.querySelectorAll('[id^="grid-preview-container"]')] as HTMLElement[];
+    let best: number | null = null;
+    let bestD = Infinity;
+    els.forEach((el, i) => {
+      const r = el.getBoundingClientRect();
+      const d = Math.abs(clientX - (r.left + r.width / 2));
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    return best;
+  };
+
+  const dragIdxRef = useRef<number | null>(null);
+  /** 這次拖曳手指真的移動過了嗎（沒動過就不啟動邊緣自動捲動） */
+  const dragMovedRef = useRef(false);
+  /** 邊緣自動捲動「這個方向已經到底了」的鎖，手指離開感應範圍才鬆開 */
+  const edgeScrollDoneRef = useRef({ left: false, right: false });
+  const dragXRef = useRef(0);
+  const dragStartXRef = useRef(0);
+  const dragRafRef = useRef(0);
+  /**
+   * 拖曳中的位移：被拖的那一頁直接跟著手指走（不加動畫），
+   * 被讓開的那幾頁用 200ms 平順地滑到新位置。放手時才真的改順序。
+   */
+  const [pageDragShift, setPageDragShift] = useState(0);
+  /** 每一帧要用（按鈕跟著那一頁的東西走），所以另外留一份 ref */
+  const pageDragShiftRef = useRef(0);
+  const [pageDragTo, setPageDragTo] = useState<number | null>(null);
+  const pageDragToRef = useRef<number | null>(null);
+  useEffect(() => { pageDragToRef.current = pageDragTo; }, [pageDragTo]);
+
+  /** 手指移動多少＝往前／往後幾頁（一頁的寬度就是一格） */
+  const settlePageDrag = () => {
+    const from = dragIdxRef.current;
+    if (from === null) return;
+    const stride = (previewW + 1) * pagesScale;
+    // 頭尾之外再多給「半格」：拖到第一頁之前／最後一頁之後時會露出一小塊黑，
+    // 知道自己已經到底了，但不會整個甩出去（放手仍然只會落在有效的頁次上）
+    const slack = stride / 2;
+    const raw = Math.max(
+      (0 - from) * stride - slack,
+      Math.min((pagesCountRef.current - 1 - from) * stride + slack, dragXRef.current - dragStartXRef.current),
+    );
+    pageDragShiftRef.current = raw;
+    setPageDragShift(raw);
+    const slots = Math.round(raw / Math.max(1, stride));
+    const to = Math.max(0, Math.min(pagesCountRef.current - 1, from + slots));
+    // ref 當場就寫（自動捲動的煞車同一帧要用），state 慢一帧沒關係
+    pageDragToRef.current = to;
+    setPageDragTo(prev => (prev === to ? prev : to));
+  };
+
+  /**
+   * 一頁差不多就跟螢幕一樣寬，所以隔壁那一頁通常在畫面外。
+   * 手指靠近左右邊緣時就自動捲動，捲到隔壁那一頁就換過去。
+   */
+  const dragTick = () => {
+    const el = containerRef.current;
+    if (el && dragIdxRef.current !== null) {
+      const r = el.getBoundingClientRect();
+      // 手指還沒真的移動過就不捲：不然原地長按時，握把本來就落在感應範圍裡，
+      // 頁面會自己往一邊飄走
+      const EDGE = 80, SPEED = 13;
+      if (!dragMovedRef.current) { settlePageDrag(); dragRafRef.current = requestAnimationFrame(dragTick); return; }
+      let dir = 0;
+      if (dragXRef.current < r.left + EDGE) dir = -1;
+      else if (dragXRef.current > r.right - EDGE) dir = 1;
+      let dx = dir === -1
+        ? -SPEED * Math.min(1, (r.left + EDGE - dragXRef.current) / EDGE)
+        : dir === 1
+          ? SPEED * Math.min(1, (dragXRef.current - (r.right - EDGE)) / EDGE)
+          : 0;
+      if (dir === -1 && edgeScrollDoneRef.current.left) dx = 0;
+      if (dir === 1 && edgeScrollDoneRef.current.right) dx = 0;
+      /*
+        什麼時候「這個方向捲到底了」：
+
+        自動捲動會回頭把 dragStartX 補掉，所以「捲了多少」也會算進拖曳位移裡。
+        以前的煞車是看那個位移有沒有到頂 —— 那會變成棘輪：一到頂就停，手指
+        往回一點位移就掉下來、又開始捲，捲又把位移推回頂端⋯⋯在最邊邊來回晃
+        就等於一直往那邊捲個不停。
+
+        改成兩個條件，而且踩下去之後會「鎖住」，要真的往反方向捲過才鬆開
+        （鎖在手指離開感應範圍時就放掉的話，手指再靠過來又會多捲一小段 ——
+        「第二次頂到底又滑一下」就是這樣來的）：
+        1) 容器已經捲到底：再捲也沒有新的畫面可看。
+        2) 被拖的那一頁已經走到可以走的極限（最後一頁再多半格）：再捲的話
+           頁面的位移被夾住、整排卻還在跑，那一頁就會被帶著離開手指。
+      */
+      if (dx) {
+        const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+        const from = dragIdxRef.current;
+        const stride = (previewWRef.current + 1) * PAGES_MODE_SCALE;
+        const shift = pageDragShiftRef.current;
+        const atEnd = dx > 0
+          ? el.scrollLeft >= maxScroll - 0.5
+            || shift >= (pagesCountRef.current - 1 - from) * stride + stride / 2 - 0.5
+          : el.scrollLeft <= 0.5
+            || shift <= (0 - from) * stride - stride / 2 + 0.5;
+        if (atEnd) {
+          dx = 0;
+          if (dir === 1) edgeScrollDoneRef.current.right = true;
+          else if (dir === -1) edgeScrollDoneRef.current.left = true;
+        }
+      }
+      if (dx) {
+        // 捲動等於手指相對頁面又多移動了一點。捲動已經是一比一（捲 1px 畫面就走
+        // 1px），所以補的量就是「真的捲了多少」—— 捲到頭時瀏覽器會夾住，
+        // 這時一點都不能補，不然被拖的那一頁會愈跑愈離開手指。
+        const before = el.scrollLeft;
+        el.scrollLeft = before + dx;
+        const applied = el.scrollLeft - before;
+        dragStartXRef.current -= applied;
+        // 往反方向捲過了＝另一邊又有東西可以捲出來，那邊的鎖就鬆開
+        if (applied > 0) edgeScrollDoneRef.current.left = false;
+        if (applied < 0) edgeScrollDoneRef.current.right = false;
+      }
+      settlePageDrag();
+    }
+    dragRafRef.current = requestAnimationFrame(dragTick);
+  };
+
+  /**
+   * 拖曳中的事件掛在 window 上，不用 setPointerCapture ——
+   * 換順序時握把在 DOM 裡會被搬位置，指標捕捉會因此掉掉，
+   * 那樣就收不到放手事件（握把會一直停在按下的樣子）。
+   */
+  const handlePageDragStart = (e: React.PointerEvent, idx: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // 先按住一下下才算開始拖：手指剛碰到就跟著跑的話很容易誤觸
+    const downX = e.clientX, downY = e.clientY;
+    let armed = false;
+    let hold: number | undefined = window.setTimeout(() => {
+      hold = undefined;
+      armed = true;
+      dragMovedRef.current = false;
+      edgeScrollDoneRef.current = { left: false, right: false };
+      dragIdxRef.current = idx;
+      dragXRef.current = downX;
+      dragStartXRef.current = downX;
+      setPageDragIdx(idx);
+      setPageDragTo(idx);
+      pageDragShiftRef.current = 0;
+      setPageDragShift(0);
+      if (!dragRafRef.current) dragRafRef.current = requestAnimationFrame(dragTick);
+    }, PAGE_DRAG_HOLD_MS);
+    const onMove = (ev: PointerEvent) => {
+      if (!armed) {
+        // 還沒按滿時間就滑走＝不是要拖，取消
+        if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 12) {
+          if (hold !== undefined) { clearTimeout(hold); hold = undefined; }
+          window.removeEventListener('pointermove', onMove);
+          window.removeEventListener('pointerup', onUp);
+          window.removeEventListener('pointercancel', onUp);
+        }
+        return;
+      }
+      if (Math.abs(ev.clientX - downX) > 6) dragMovedRef.current = true;
+      dragXRef.current = ev.clientX;
+      settlePageDrag();
+    };
+    const onUp = () => {
+      if (hold !== undefined) { clearTimeout(hold); hold = undefined; }
+      if (!armed) {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        return;
+      }
+      return onUpReal();
+    };
+    const onUpReal = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
+      const from = dragIdxRef.current;
+      const to = pageDragToRef.current;
+      // 放手那一刻的位移要先抄下來 —— 下面就要清掉了，
+      // 收尾動畫的起點就是它（先清再讀會變成從原位起跑＝瞬移回去再滑過來）
+      const releasedShift = pageDragShiftRef.current;
+      dragIdxRef.current = null;
+      setPageDragIdx(null);
+      pageDragShiftRef.current = 0;
+      setPageDragShift(0);
+      setPageDragTo(null);
+      if (dragRafRef.current) { cancelAnimationFrame(dragRafRef.current); dragRafRef.current = 0; }
+      // 放手才真的改順序。畫面不捲動：內容本來就停在使用者放手的位置，
+      // 只要讓它從那裡平順滑回新定位就好（FLIP），不會先閃回再跳走
+      if (from !== null && to !== null) {
+        const liveDx = releasedShift / Math.max(0.01, PAGES_MODE_SCALE);
+        const remainder = liveDx - (to - from) * (previewW + 1);
+        if (from !== to) handleMovePage(from, to);
+        window.clearTimeout(settleTimerRef.current);
+        setDragSettle({ page: to, x: remainder, ease: false });
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          setDragSettle(prev => (prev && !prev.ease ? { ...prev, x: 0, ease: true } : prev));
+        }));
+        settleTimerRef.current = window.setTimeout(() => setDragSettle(null), 260);
+      }
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
+
+  useEffect(() => () => { if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); }, []);
+
+  /**
+   * React 的 onTouchMove 是 passive 的 —— 裡面的 e.preventDefault() 完全不會生效
+   * （console 會一直噴 "Unable to preventDefault inside passive event listener"）。
+   * 結果就是：操作物件（縮放佈局、平移格內照片）的時候，瀏覽器的原生捲動
+   * 還是照跑，手勢被搶走、甚至被瀏覽器中斷，縮放做到一半就被打斷還原。
+   * 這裡自己補一個「非 passive」的監聽器，真正把原生捲動擋掉。
+   */
+  useEffect(() => {
+    const block = (e: TouchEvent) => {
+      const busy = wsGestureRef.current || layoutGestureRef.current
+        || layoutCornerRef.current || pointerState.current.isDraggingContent
+        || floatSwapRef.current?.dragging || touchDragState.current
+        // 雙指縮放畫布時也要擋掉原生捲動，不然會邊縮放邊被瀏覽器捲走
+        || canvasZoomRef.current;
+      if (busy && e.cancelable) e.preventDefault();
+    };
+    document.addEventListener('touchmove', block, { passive: false });
+    return () => document.removeEventListener('touchmove', block);
+  }, []);
+
+  /* IG 預覽的翻頁已經改成自己搬位置（見 igMoveTrack），容器完全不捲動，
+     所以「第一張再往左滑就擋掉」那個非 passive 的 touchmove 監聽器不用了 ——
+     頭尾拖不出去的判斷直接寫在 onIgPointerMove 裡。 */
+
+  /**
+   * 換頁面順序：頁面裡的佈局本來就跟著頁面走，頁面上的自由圖層要自己搬過去。
+   *
+   * 「舊頁碼 → 新頁碼」用純算式算（搬一個項目的位移），不依賴當下的 pages，
+   * 這樣拖曳過程中連續換好幾次也不會用到過期的狀態。
+   */
+  const pagesCountRef = useRef(pages.length);
+  // render 當下就更新：整排的版面是在 useLayoutEffect 裡用這個值算的，
+  // 放到 useEffect 才寫的話會晚一步，新增／刪除頁面那一帧會用到舊的頁數
+  pagesCountRef.current = pages.length;
+  /** 每一帧要照頁碼找元素，用 ref 拿最新的 pages（rAF 迴圈不跟著 pages 重掛） */
+  const pagesRef = useRef(pages);
+  useEffect(() => { pagesRef.current = pages; }, [pages]);
+
+  const handleMovePage = (from: number, to: number) => {
+    const count = pagesCountRef.current;
+    if (from === to || from < 0 || to < 0 || from >= count || to >= count) return;
+    const stride = previewW + 1;
+    const remap = (p: number) => {
+      if (p === from) return to;
+      if (from < to) return p > from && p <= to ? p - 1 : p;
+      return p >= to && p < from ? p + 1 : p;
+    };
+    setPages(prev => {
+      const next = [...prev];
+      next.splice(to, 0, next.splice(from, 1)[0]);
+      return next;
+    });
+    /* 這裡一定要用 pageOfFloating（跟畫面上判斷「這個圖層屬於哪一頁」是同一支）。
+       以前是自己再算一次、而且只夾了下界沒夾上界：中心點落在最後一頁右緣外面的
+       圖層會算出 count（不存在的頁），remap 原封不動回傳，於是拖曳中它跟著最後
+       一頁走、放手卻留在原地 —— 那就是「圖片跟頁面沒有完全同步」。 */
+    setFloatingImages(prev => prev.map(f => {
+      const p = pageOfFloating(f, stride, count);
+      const np = remap(p);
+      return np === p ? f : { ...f, x: f.x + (np - p) * stride };
+    }));
+    setActivePageIndex(prev => remap(prev));
+  };
+
+  const [selectedRatio, setSelectedRatio] = useState('3:4');
+  const [isLandscape, setIsLandscape] = useState(false);
+  const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
+  const getRatioDimensions = () => {
+    const pad = 8;
+    const maxW = Math.min(450, Math.max(200, containerSize.width - pad));
+    const maxH = Math.max(200, containerSize.height - pad);
+    let ratioW = 1, ratioH = 1;
+    if (selectedRatio === '3:4') { ratioW = isLandscape ? 4 : 3; ratioH = isLandscape ? 3 : 4; }
+    else if (selectedRatio === '2:3') { ratioW = isLandscape ? 3 : 2; ratioH = isLandscape ? 2 : 3; }
+    else if (selectedRatio === '9:16') { ratioW = isLandscape ? 16 : 9; ratioH = isLandscape ? 9 : 16; }
+    else if (selectedRatio === '4:5') { ratioW = isLandscape ? 5 : 4; ratioH = isLandscape ? 4 : 5; }
+    /* 画布尺寸必须是比例的整数倍。以前宽、高各自 Math.round，标示为 3:4 的
+       画布实际会变成 341×454（不是 3:4）；一张严格 600×800 的照片无论怎么
+       等比缩放，都不可能同时贴齐四边，预览与导出自然会留下次像素白缝。
+       用同一个整数单位生成两边，页面与同长宽比照片才能数学上完全重合。 */
+    const unit = Math.max(1, Math.floor(Math.min(maxW / ratioW, maxH / ratioH)));
+    return { width: ratioW * unit, height: ratioH * unit };
+  };
+  const { width: previewW, height: previewH } = getRatioDimensions();
+
+  /** 觸控結束後瀏覽器還會補送一次 click，兩邊都處理的話一次點擊會被算成兩次 */
+  const touchHandledAtRef = useRef(0);
+  /** 有東西被選取時，畫布就進入編輯狀態：手勢全部給選取物，不再左右滑動 */
+  const anySelected = selectedIndex !== null || selectedFloatingId !== null || layoutSelected;
+  const [exportState, setExportState] = useState<'idle' | 'processing' | 'success'>('idle');
+  /* 匯出時的進度。整批共用一個畫面（不是每頁各跑一次）：
+       videoProg  —— 0～1；只有「這批裡有影片」才會有值，純圖片是 null
+       videoLabel —— 每頁都是影片就是「正在匯出影片」，混到圖片就是「正在匯出成品」 */
+  const [videoProg, setVideoProg] = useState<number | null>(null);
+  /** 匯出被使用者中止（忙碌畫面上那顆出口鍵按下去）—— 錄影迴圈看到就收工 */
+  const videoAbortRef = useRef(false);
+  /* 「取消匯出」按下去要**真的**取消。
+     只把錄影迴圈叫停是不夠的：那一輪 handleExport 還在往下跑，收完尾就照樣
+     setExportState('success') —— 使用者明明按了取消，畫面卻跳到成品頁，
+     那正是主人回報的那件事。
+     這裡給每一次「使用者按下匯出」發一個號碼，取消時把號碼往前推一格；
+     那一輪回頭看到號碼變了就知道自己已經被作廢，安安靜靜收工。
+     背景那些 silent 的匯出（IG 預覽、歷史紀錄縮圖）不吃這個號碼，
+     所以取消一次不會順手把背景的工作也殺掉。 */
+  const exportRunRef = useRef(0);
+  const [videoLabel, setVideoLabel] = useState('正在匯出成品');
+  // One exported file per page. The object URLs are mirrored into a ref so they can be
+  // revoked without making every consumer depend on the state value.
+  const [finalImages, setFinalImages] = useState<string[]>([]);
+  /** 每一頁匯出的是圖片還是影片（有影片圖層的那一頁會輸出影片） */
+  const [finalKinds, setFinalKinds] = useState<('image' | 'video')[]>([]);
+  const finalImagesRef = useRef<string[]>([]);
+  const resultStripRef = useRef<HTMLDivElement>(null);
+
+  /** 匯出完成的預覽一定要從第一頁開始，不要停在剛才編輯的那一頁。 */
+  const [resultIdx, setResultIdx] = useState(0);
+  useEffect(() => {
+    if (finalImages.length === 0) return;
+    const el = resultStripRef.current;
+    if (!el) return;
+    el.scrollLeft = 0;
+    setResultIdx(0);
+    const t = setTimeout(() => { if (resultStripRef.current) resultStripRef.current.scrollLeft = 0; }, 60);
+    return () => clearTimeout(t);
+  }, [finalImages]);
+  /* 頁數只放一個，固定在圖片下面 —— 跟著捲到中間的那一頁走，
+     不用每張圖底下都掛一個。用 rAF 跟捲動，慣性滑完也對得上。 */
+  useEffect(() => {
+    const el = resultStripRef.current;
+    if (!el || finalImages.length < 2) return;
+    let raf = 0;
+    const pick = () => {
+      raf = 0;
+      const r = el.getBoundingClientRect();
+      const mid = r.left + r.width / 2;
+      let best = 0, bestD = Infinity;
+      Array.from(el.children).forEach((ch: Element, i: number) => {
+        const c = ch.getBoundingClientRect();
+        const d = Math.abs((c.left + c.width / 2) - mid);
+        if (d < bestD) { bestD = d; best = i; }
+      });
+      setResultIdx(best);
+    };
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(pick); };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    pick();
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [finalImages, exportState]);
+
+  const clearFinalImages = useCallback(() => {
+    finalImagesRef.current.forEach(u => URL.revokeObjectURL(u));
+    finalImagesRef.current = [];
+    setFinalImages([]);
+    setFinalKinds([]);
+  }, []);
+  useEffect(() => () => { finalImagesRef.current.forEach(u => URL.revokeObjectURL(u)); }, []);
+  const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
+  /** 頁面順序模式：操作欄往下滑、畫布往下移到中央、每一頁下面出現握把與刪除鍵 */
+  const pagesMode = activeTab === 'pages';
+
+  /** 動畫目標只看目前這一頁，而且影片永遠不是動畫目標。 */
+  const motionItems = useMemo(() => floatingImages.filter(item =>
+    !item.isVideo && pageOfFloating(item, previewW + 1, pages.length) === activePageIndex,
+  ), [floatingImages, previewW, pages.length, activePageIndex]);
+  const pageVideoItems = useMemo(() => floatingImages.filter(item =>
+    item.isVideo && pageOfFloating(item, previewW + 1, pages.length) === activePageIndex,
+  ), [floatingImages, previewW, pages.length, activePageIndex]);
+  const motionHold = activePage.motionHold ?? 4;
+  const setMotionHold = useCallback((seconds: number) => {
+    setPages(prev => prev.map((page, index) => index === activePageIndex
+      ? { ...page, motionHold: seconds }
+      : page));
+  }, [activePageIndex]);
+  const hasConfiguredMotion = useCallback((item: FloatingImage) => {
+    const cfg = classicObjectMotionOf(item.mo);
+    return !item.isVideo && (cfg.in !== 'none' || cfg.idle !== 'none');
+  }, []);
+  /** 泡泡的每個小單位都保留完整果凍時間；符號越長，整段自然越長。
+      相位也沿用創意拼圖的 id 雜湊，預覽、重播與匯出才會完全一致。 */
+  const timedMotionConfig = useCallback((item: FloatingImage) => {
+    const cfg = classicObjectMotionOf(item.mo);
+    if (!item.sym || cfg.in !== 'bubble') return cfg;
+    const units = Math.max(1, countSymbolAnimationBeats(item.text || item.sym));
+    return units > 1 ? { ...cfg, dur: cfg.dur * (1 + (units - 1) * .2) } : cfg;
+  }, []);
+  const motionPhase = useCallback((item: FloatingImage, index: number) => {
+    let hash = 0;
+    for (let i = 0; i < item.id.length; i++) hash = (hash * 31 + item.id.charCodeAt(i)) >>> 0;
+    return (hash % 628) / 100 + index * .7;
+  }, []);
+  const frameForItem = useCallback((item: FloatingImage, index: number, time: number) =>
+    objectMotionFrame(timedMotionConfig(item), time, motionPhase(item, index)),
+  [timedMotionConfig, motionPhase]);
+  const anyClassicMotion = useMemo(
+    () => floatingImages.some(hasConfiguredMotion),
+    [floatingImages, hasConfiguredMotion],
+  );
+  const [pageVideoDuration, setPageVideoDuration] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    if (!pageVideoItems.length) { setPageVideoDuration(0); return; }
+    const videos = pageVideoItems.map(item => getPreviewVideo(item.src));
+    const update = () => {
+      if (!alive) return;
+      const duration = Math.max(0, ...videos.map(v => Number.isFinite(v.duration) ? v.duration : 0));
+      if (duration > 0) setPageVideoDuration(duration);
+    };
+    videos.forEach(v => v.addEventListener('loadedmetadata', update));
+    update();
+    return () => {
+      alive = false;
+      videos.forEach(v => v.removeEventListener('loadedmetadata', update));
+    };
+  }, [pageVideoItems]);
+
+  /** 跟創意拼圖相同：最後一個物件完成進場後，再停留指定秒數才循環。 */
+  const motionTotal = useMemo(() => {
+    if (pageVideoItems.length && pageVideoDuration > 0) return pageVideoDuration;
+    let end = 1.2;
+    motionItems.forEach((item) => {
+      const cfg = timedMotionConfig(item);
+      if (cfg.in !== 'none') end = Math.max(end, cfg.delay + Math.max(.01, cfg.dur));
+    });
+    return end + Math.max(0, motionHold);
+  }, [motionItems, motionHold, pageVideoItems.length, pageVideoDuration, timedMotionConfig]);
+
+  const replayMotion = useCallback(() => {
+    motionClockRef.current = 0;
+    setMotionTime(0);
+    setMotionPlaying(true);
+    setMotionRunSeq(n => n + 1);
+    pageVideoItems.forEach(item => {
+      const video = getPreviewVideo(item.src);
+      try { video.currentTime = 0; } catch { /* metadata 還沒完成時下一次播放會自己從頭 */ }
+      video.play().catch(() => {});
+    });
+  }, [pageVideoItems]);
+
+  const chooseMotionTarget = useCallback((id: string) => {
+    if (!motionItems.some(item => item.id === id)) return;
+    setMotionTargetId(id);
+    setMotionFlash({ id, nonce: Date.now() });
+    if (motionFlashTimerRef.current) window.clearTimeout(motionFlashTimerRef.current);
+    motionFlashTimerRef.current = window.setTimeout(() => setMotionFlash(null), 850);
+  }, [motionItems]);
+  useEffect(() => () => {
+    if (motionFlashTimerRef.current) window.clearTimeout(motionFlashTimerRef.current);
+  }, []);
+
+  const [motionBarMounted, setMotionBarMounted] = useState(false);
+  const [motionBarIn, setMotionBarIn] = useState(false);
+  const motionBarRef = useRef<HTMLDivElement>(null);
+  /* 手機上這列實際是 57px。先用實測值作首幀，掛載後再以 ResizeObserver
+     取得真正高度；如此不會先用過大的畫布蓋住按鈕、下一幀才突然縮小。 */
+  const [motionBarHeight, setMotionBarHeight] = useState(57);
+  useEffect(() => {
+    if (activeTab === 'motion') {
+      setMotionBarMounted(true);
+      let inner = 0;
+      const outer = requestAnimationFrame(() => { inner = requestAnimationFrame(() => setMotionBarIn(true)); });
+      return () => { cancelAnimationFrame(outer); if (inner) cancelAnimationFrame(inner); };
+    }
+    setMotionBarIn(false);
+    const timer = window.setTimeout(() => setMotionBarMounted(false), 460);
+    return () => window.clearTimeout(timer);
+  }, [activeTab]);
+  useLayoutEffect(() => {
+    if (!motionBarMounted || !motionBarRef.current) return;
+    const bar = motionBarRef.current;
+    const measure = () => {
+      const next = bar.getBoundingClientRect().height;
+      if (next > 0) setMotionBarHeight(prev => Math.abs(prev - next) < .25 ? prev : next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, [motionBarMounted]);
+
+  const wasMotionTabRef = useRef(false);
+  useEffect(() => {
+    const entering = activeTab === 'motion' && !wasMotionTabRef.current;
+    if (entering) {
+      motionClockRef.current = 0;
+      setMotionTime(0);
+      setMotionRunSeq(n => n + 1);
+    }
+    // 離開動畫頁後不重設時鐘；已套用的動畫從同一格繼續。
+    if (activeTab === 'motion' || anyClassicMotion) setMotionPlaying(true);
+    wasMotionTabRef.current = activeTab === 'motion';
+  }, [activeTab, anyClassicMotion]);
+
+  /* 經典拼圖動畫使用與創意拼圖相同的「進場結束後 0.72 秒平順交棒」時間函式。
+     每格只更新一個輕量時間值；照片／文字／符號都不改寫幾何資料，因此動畫
+     不會污染草稿，也不會在停止後留下偏移。 */
+  useEffect(() => {
+    if ((!anyClassicMotion && activeTab !== 'motion') || !motionPlaying) return;
+    let raf = 0, last = -1;
+    const started = performance.now() - motionClockRef.current * 1000;
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      if (last >= 0 && now - last < 1000 / 30) return;
+      last = now;
+      const t = ((now - started) / 1000) % motionTotal;
+      motionClockRef.current = t;
+      setMotionTime(t);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [activeTab, motionPlaying, motionTotal, motionRunSeq, anyClassicMotion]);
+  useEffect(() => {
+    if (activeTab !== 'motion') return;
+    setSelectedFloatingId(null);
+    setSelectedBrushId(null);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    setInlineEditId(null);
+    if (!motionTargetId || !motionItems.some(f => f.id === motionTargetId)) {
+      setMotionTargetId(motionItems[0]?.id || null);
+    }
+  }, [activeTab, activePageIndex, motionItems, motionTargetId]);
+
+  /* 每一頁有自己的動畫時間軸。滑到另一頁時從該頁第 0 幀開始，避免沿用
+     上一頁的循環位置；影片也一起歸零，畫面與下方播放鍵保持同一時間。 */
+  useEffect(() => {
+    motionClockRef.current = 0;
+    setMotionTime(0);
+    setMotionRunSeq(n => n + 1);
+    pageVideoItems.forEach(item => {
+      const video = getPreviewVideo(item.src);
+      try { video.currentTime = 0; } catch { /* metadata 未完成時維持待播 */ }
+    });
+  }, [activePageIndex]);
+
+  /* 動畫頁的播放／暫停也控制該頁影片；離開動畫頁則恢復影片正常播放。 */
+  useEffect(() => {
+    const videos = pageVideoItems.map(item => getPreviewVideo(item.src));
+    videos.forEach(video => {
+      if (activeTab === 'motion' && !motionPlaying) video.pause();
+      else video.play().catch(() => {});
+    });
+  }, [activeTab, motionPlaying, pageVideoItems]);
+  const pagesModeRef = useRef(false);
+  pagesModeRef.current = pagesMode;
+  /** 排頁面時整排頁面縮成一半（用 transform，不動 previewW/H） */
+  /* --- 雙指縮放預覽 ---
+     整排頁面本來就有一套縮放機制（排頁面模式用的 k），這裡沿用同一套：
+     使用者的倍率就是「沒有在排頁面時的 k」。這樣捲動幾何、頁面置中、
+     底下那排按鈕的定位全部自動跟著對，不必再開一條平行的邏輯。 */
+  const [userZoom, setUserZoom] = useState(1);
+  /* 手勢期間倍率是直接寫進 DOM 的（不經過 state，才不會每一帧重繪整棵樹），
+     所以這個 ref 是「現在真正的倍率」。千萬不要在 render 裡把它蓋回 state ——
+     捏合中如果剛好有別的原因重繪一次，就會把手勢的值抹掉。 */
+  const userZoomRef = useRef(1);
+  useEffect(() => { userZoomRef.current = userZoom; }, [userZoom]);
+  const ZOOM_MIN = 0.4, ZOOM_MAX = 3;
+  /** 正在雙指縮放畫布。有值的時候不准任何其他手勢介入 */
+  /** 雙指縮放整個預覽：起手的兩指距離、起手倍率，以及「捏住的那個內容座標」與它在螢幕上的位置 */
+  const canvasZoomRef = useRef<{ startDist: number; baseZoom: number; anchorC: number; anchorPx: number; lastZoom: number } | null>(null);
+  /* 手指已經開始把頁面拖著走了。
+     第二根手指落下時 handleWorkspaceTouchStart 會重跑一次、把 panRef 清掉，
+     所以光看 panRef 分不出「剛按下去」跟「拖到一半」——另外用這個旗標記著，
+     拖到一半再放第二根手指就不會突然變成縮放（放開全部手指才解除）。 */
+  const panMovedRef = useRef(false);
+  /* 動畫頁的縮小也走既有的頁面倍率管線。不要 transform 整個可捲動 viewport：
+     iPhone Safari 會把超寬頁帶光柵化成一張 GPU 貼圖，超過紋理上限就整塊黑掉。 */
+  const motionFitScale = Math.max(.24, Math.min(
+    1,
+    (Math.max(120, containerSize.width - 32)) / Math.max(1, previewW),
+    /* containerSize 已经扣除了工作区上下各 8px 的 py-2。播放列是 absolute，
+       所以必须扣掉它的真实高度与 bottom-3 的 12px；这样画布下缘到播放列
+       顶部会保留 8px，刚好等于画布上缘到工作区顶部的 8px。
+       不再使用 userZoom：不論進入前把預覽放多大／多小，動畫頁尺寸都固定。 */
+    (Math.max(100, containerSize.height - motionBarHeight - 12)) / Math.max(1, previewH),
+  ));
+  const pagesScale = pagesMode ? PAGES_MODE_SCALE : activeTab === 'motion' ? motionFitScale : userZoom;
+  /** 整排頁面左邊要留的空白（讓第一頁置中） */
+  const stripOffset = (w: number, k: number) => Math.max(16, (w - previewW * k) / 2);
+  /** 第 i 頁置中時的捲動位置 */
+  const pageScrollLeft = (i: number, w: number, k: number) =>
+    stripOffset(w, k) + k * (i * (previewW + 1) + previewW / 2) - w / 2;
+  // 這個模式是在排頁面，先把選取取消掉，免得順手拖到圖層
+  useEffect(() => {
+    if (!pagesMode) return;
+    setSelectedFloatingId(null);
+    setSelectedIndex(null);
+    setSelectedLayoutId(null);
+    // 正在畫布上打字也要一併收掉，不然鍵盤跟輸入框會留在畫面上
+    setInlineEditId(null);
+  }, [pagesMode]);
+
+  /**
+   * 握把與刪除鍵要長在「真正那一頁」的正下方，但畫布容器會裁切也會位移，
+   * 所以控制項放在容器外面、用固定定位貼上去。位置每一帧量一次：
+   * 這樣操作欄滑下去的動畫、左右捲動、換頁數都跟得上。
+   */
+  const pageCtlRefs = useRef(new Map<string, HTMLDivElement>());
+  const seamOverlayRefs = useRef(new Map<string, HTMLDivElement>());
+  const embeddedSeamsRef = useRef(false);
+  /* 一般预览、选中物件与动画页都只使用外层那条固定屏幕像素分隔线。
+     以前选中时会在「外层线／页面槽内线」之间交棒：两层坐标并非同一套，
+     过渡帧便会露出白槽，动画缩放时也像有一条线停在原地。
+     只有页面排序真的会把单页移走，才需要绑定在页面上的分隔线。 */
+  /* 有选中物件时，分割线必须和物件处在同一个画布堆叠上下文，才能确定压在
+     chrome layer 下面。外层固定线即使写再小的 z-index，也可能因为父层建立了
+     stacking context 而盖住传送出来的选中框、控制点和白色药丸。 */
+  /* 影片页的分割线直接绑在滚动的页面带上，不再由外层量位置追赶。
+     手指移动多少，分割线就会在同一帧移动多少。 */
+  const embeddedSeams = pagesMode || pageDragIdx !== null || anySelected || activeTab === 'motion';
+  embeddedSeamsRef.current = embeddedSeams;
+  /** 頁面控制鍵與畫布共用的定位根；不能使用 viewport-fixed，否則瀏覽器
+      縮放／iOS visualViewport 改變時兩者會落在不同座標系。 */
+  const gridRootRef = useRef<HTMLDivElement>(null);
+  const pagesColRef = useRef<HTMLDivElement>(null);
+  /** 整排頁面的外殼（尺寸＝縮放後真正佔的大小）與右邊的留白 */
+  const stripShellRef = useRef<HTMLDivElement>(null);
+  const stripPadRef = useRef<HTMLDivElement>(null);
+  const addPageBtnRef = useRef<HTMLButtonElement>(null);
+  /**
+   * 縮放與「補回縮放造成的位移」必須是同一帧算出來的同一個值。
+   * 之前縮放交給 CSS transition、位移自己每一帧補，兩邊差一帧 ——
+   * 位移量又跟捲動位置成正比（可以到一百多 px），進出這個模式就會抖。
+   * 所以動畫自己跑：每一帧算出 k，縮放與位移一起寫進同一個 transform。
+   */
+  /** 縮放動畫還沒結束前，視覺上仍然當作在排頁面（接縫、外框、陰影） */
+  const [pagesVisual, setPagesVisual] = useState(false);
+  const pagesVisualTimerRef = useRef(0);
+  const kRef = useRef(1);
+  /** scrollLeft 在 WebKit 只會落在離散像素；保留不足一像素的尾數，用純平移補回。
+      這跟創意拼圖的 viewT.tx 一樣，只負責位置，不參與縮放與光柵化。 */
+  const stripSubpixelXRef = useRef(0);
+  const kAnimRef = useRef<{
+    from: number; to: number; t0: number; fromTop: number; toTop: number;
+  } | null>(null);
+  const stripTopRef = useRef(0);
+  const plusMotionTransitionRef = useRef<{
+    kind: 'enter' | 'exit'; from: number; to: number;
+  } | null>(null);
+  const lastMotionModeRef = useRef(activeTab === 'motion');
+  const motionModeRef = useRef(activeTab === 'motion');
+  motionModeRef.current = activeTab === 'motion';
+  /** 動畫期間繞著哪一頁縮放（就是動畫開始時停在畫面正中間的那一頁） */
+  const kAnchorRef = useRef(0);
+  const prevPagesScaleRef = useRef(pagesScale);
+  /** 第一次挂载只是建立真实画布几何，不是一次模式切换；若也跑 300ms 动画，
+      继续编辑时恢复画面会从旧的默认位置向下滑到正确中心。 */
+  const scaleLayoutInitializedRef = useRef(false);
+  const containerWRef = useRef(0);
+  const plusVisibleRef = useRef(true);
+  plusVisibleRef.current = pages.length - 1 < 24;
+
+  /**
+   * 整排頁面在縮放倍率 k 之下該有的版面。**尺寸、留白、捲動位置全部由 k 算出來**，
+   * 動畫每一帧重算一次 —— 這樣縮放的過程中版面本身永遠是對的，
+   * 不會像以前那樣「外殼的大小和位置瞬間換成新的、只有縮放在慢慢跑」，
+   * 一進去整排就先瞬移一百多 px 再縮小。
+   */
+  const applyStripGeometry = useCallback((k: number, liveTransform = false) => {
+    const n = Math.max(1, pagesCountRef.current);
+    const pw = previewWRef.current;
+    const w = containerWRef.current;
+    const shell = stripShellRef.current;
+    const col = pagesColRef.current;
+    const pad = stripPadRef.current;
+    // 跟 stripOffset 同一條式子，但頁寬取自 ref —— 這支是 useCallback([])，
+    // 直接用外面的 stripOffset 會一直沿用第一次 render 那時候的頁寬
+    const m = Math.max(16, (w - pw * k) / 2);
+    if (shell) {
+      shell.style.marginLeft = `${m}px`;
+      shell.style.marginTop = `${stripTopRef.current}px`;
+      shell.style.width = `${(n * pw + (n - 1)) * k}px`;
+      shell.style.height = `${previewHRef.current * k}px`;
+    }
+    // 右邊剛好留到「最後一頁停在正中間」為止；加號按鈕已經佔掉 ml-3 + 40
+    if (pad) pad.style.width = `${Math.max(0, m - (plusVisibleRef.current ? 52 : 0))}px`;
+    if (col) {
+      /* Safari 上不能在手勢開始／結束時於 zoom 與 transform 之間切換。
+         transform 會先把整頁光柵化成貼圖再反覆取樣；頁面上的細字、圖形與符號
+         即使中心座標完全不動，邊緣仍會像在左右抖。創意拼圖一直改畫布的實際
+         顯示尺寸、不做貼圖縮放；這裡用原生 zoom 做同一件事，整段手勢只保留
+         一套座標與光柵化方式。 */
+      const nativeZoom = typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2');
+      col.style.setProperty('--preview-scale', String(k));
+      /* 页面内分割线每一帧直接读取反倍率，不等待 React 重绘。 */
+      col.style.setProperty('--preview-inverse-scale', `${1 / Math.max(0.0001, k)}px`);
+      col.style.setProperty('--preview-inverse-half', `${0.5 / Math.max(0.0001, k)}px`);
+      /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
+         每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
+      col.style.setProperty('--layout-grid-stroke', `${1 / Math.max(0.0001, k)}px`);
+      if (nativeZoom) {
+        (col.style as any).zoom = String(k);
+        const sub = stripSubpixelXRef.current;
+        col.style.transform = Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0)` : '';
+        col.style.willChange = '';
+      } else {
+        (col.style as any).zoom = '';
+        col.style.transform = k === 1 ? '' : `scale(${k})`;
+        col.style.transformOrigin = '0 0';
+        col.style.willChange = liveTransform ? 'transform' : '';
+      }
+      /* 固定在萤幕坐标层的空格提示收到通知后才量中心点。
+         事件只排一个 rAF，不在手势处理内同步读取版面。 */
+      col.dispatchEvent(new Event('abai-preview-transform'));
+    }
+  }, []);
+
+  // 要在「把版面貼成目標倍率」那個 useLayoutEffect 之前先把動畫排好，
+  // 不然版面會先一步跳到目標值，動畫就整段被跳過了
+  useLayoutEffect(() => {
+    const prev = prevPagesScaleRef.current;
+    prevPagesScaleRef.current = pagesScale;
+    const nowMotion = activeTab === 'motion';
+    if (nowMotion !== lastMotionModeRef.current) {
+      plusMotionTransitionRef.current = {
+        kind: nowMotion ? 'enter' : 'exit', from: kRef.current, to: pagesScale,
+      };
+      lastMotionModeRef.current = nowMotion;
+    }
+    /* 工作區固定使用 top 對齊；一般頁面的垂直置中改由同一條 rAF 幾何動畫
+       算出。舊版在退出動畫頁的第一幀直接把 flex 從 items-start 切成
+       items-center，畫面會先往下跳，再一邊放大一邊往回走。 */
+    /* 一般模式永遠以工作區的垂直中心縮放。這裡不能把負值夾成 0：
+       放大到高於工作區時，夾成 0 會把上緣釘死，視覺上就不是中心放大。 */
+    const targetTop = nowMotion ? 0 :
+      (containerSize.height - previewHRef.current * pagesScale) / 2;
+    if (!scaleLayoutInitializedRef.current) {
+      scaleLayoutInitializedRef.current = true;
+      kAnimRef.current = null;
+      kRef.current = pagesScale;
+      stripTopRef.current = targetTop;
+      applyStripGeometry(pagesScale, false);
+      return;
+    }
+    if (Math.abs(kRef.current - pagesScale) < 0.0001
+        && Math.abs(stripTopRef.current - targetTop) < .01) {
+      /* 手勢結束的 setUserZoom 會讓 React 再 commit 一次。Safari 在那次 commit
+         會把手勢期間直接寫入的負 margin-top 清成 0；ref 仍是正確值，舊邏輯
+         卻因此提早 return，畫布便瞬間跳回頂部安全距離。即使數值相同也要把
+         幾何重新貼回 DOM，鬆手前後才會是完全同一幀位置。 */
+      kRef.current = pagesScale;
+      stripTopRef.current = targetTop;
+      applyStripGeometry(pagesScale, false);
+      return;
+    }
+    /* 記下動畫開始時「畫面正中央對到的那個內容座標」（未縮放單位），
+       整段動畫都把同一個座標擺回正中央 —— 也就是原地縮放。
+       以前記的是「最接近中央的那一頁」再把那一頁擺到正中間：只要中心
+       不是剛好落在某一頁正中央，第一帧就會被硬拉過去，那就是「一開始就跳」。 */
+    const el = containerRef.current;
+    if (el && containerSize.width > 0) {
+      kAnchorRef.current =
+        (el.scrollLeft + containerSize.width / 2 - stripOffset(containerSize.width, prev)) / (prev || 1);
+    } else {
+      kAnchorRef.current = 0;
+    }
+    kAnimRef.current = {
+      from: kRef.current, to: pagesScale, t0: performance.now(),
+      fromTop: stripTopRef.current, toTop: targetTop,
+    };
+    // 縮放動畫還在跑的時候，維持排頁面的樣子（接縫、外框、陰影都先不要回來），
+    // 不然退出的瞬間會先閃一排線條再縮回去
+    setPagesVisual(true);
+    window.clearTimeout(pagesVisualTimerRef.current);
+    pagesVisualTimerRef.current = window.setTimeout(() => setPagesVisual(pagesModeRef.current), 340);
+  }, [pagesScale, activeTab]);
+
+  /**
+   * 把握把／刪除鍵／加號貼到目前的捲動位置上。
+   * 除了每一帧跑一次，手動捲頁時「寫完 scrollLeft 立刻」也要再跑一次 ——
+   * 頁面是被 scrollLeft 直接帶著走的，按鈕是 transform，
+   * 兩者不在同一帧寫就會差一帧，看起來就是按鈕跟不上頁面。
+   */
+  const positionPageCtls = useCallback(() => {
+    const k = kRef.current;
+    const cont = containerRef.current;
+    const col = pagesColRef.current;
+    if (!cont || !col) return;
+    const rc = cont.getBoundingClientRect();
+    const rootRect = gridRootRef.current?.getBoundingClientRect();
+    const rootLeft = rootRect?.left || 0;
     const rootTop = rootRect?.top || 0;
     const colRect = col.getBoundingClientRect();
     const m = parseFloat((col.parentElement as HTMLElement).style.marginLeft) || 0;
