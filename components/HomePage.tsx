@@ -196,7 +196,6 @@ export const HomePage: React.FC<HomePageProps> = ({
   const guardedHomeScroll = typeof window !== 'undefined'
     && (window.matchMedia?.('(pointer: coarse)').matches || window.innerWidth < 768);
   const homeTop = guardedHomeScroll ? HOME_TOP_SCROLL_GUARD : 0;
-  const lastHomeScrollYRef = useRef(0);
   const libRef = useRef<HTMLDivElement>(null);
   /** 模板那一段的「排版盒」（外層，不會動）—— 量位置要看它，不能看會位移的那層 */
   const libBoxRef = useRef<HTMLDivElement>(null);
@@ -528,41 +527,87 @@ export const HomePage: React.FC<HomePageProps> = ({
       主視覺不用在這裡動 —— 它現在就在捲動內容裡，瀏覽器自己會捲，
       跟品牌字與其他東西完全同一拍。捲過第一屏它就自然離開畫面了，
       所以也不需要再淡出。 */
-  /* ── 到頂／到底就不要再拖 ────────────────────────────────────────
-     iOS 的橡皮筋是 Safari 自己在做的，`overscroll-behavior: none` 只擋得住
-     「把捲動傳給外層」，擋不了這一格自己彈 —— 所以只能自己攔：
-     已經在最上面還想往下拉、或已經在最下面還想往上推，就不讓那一下生效。
-     中間任何位置都不管，正常捲動的手感一個字都沒動到。
-
-     必須用原生的 addEventListener 並指定 passive: false ——
-     React 掛的 touchmove 是被動的，被動的 listener 呼叫 preventDefault 沒有用。 */
+  /* ── iOS 首頁無回彈捲動 ───────────────────────────────────────────
+     Safari／Home Screen PWA 沒有公開關閉 UIScrollView rubber-band 的可靠開關；
+     overscroll-behavior 在部分 iOS 情況仍會回彈。手機首頁因此由這裡接管「垂直」
+     手勢：位置硬限制在內容邊界內，放手後使用 rAF 延續慣性。水平手勢完全放行，
+     為您推薦等橫向列表仍由原生捲動。這樣不必在頂部藏 spacer，也不會有被拉出來
+     再彈回去的畫面。 */
   useEffect(() => {
     const sc = scrollRef.current;
-    if (!sc) return;
-    let lastY = 0;
-
-    const block = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;      // 雙指縮放之類的不要碰
-      const y = e.touches[0]?.clientY ?? lastY;
-      const dy = y - lastY;
-      lastY = y;
-      /* 不能只記 touchstart 時是否在頂部：從模板區快速甩回頂部的同一個
-         手勢會在途中抵達 0，後半段正是 Safari 產生橡皮筋的地方。每一格
-         都看當下邊界，抵達後的第一個向外位移便直接攔掉。 */
-      const atTopNow = sc.scrollTop <= homeTop + 0.5;
-      const atBottomNow = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 0.5;
-      if ((atTopNow && dy > 0) || (atBottomNow && dy < 0)) e.preventDefault();
+    if (!sc || !guardedHomeScroll) return;
+    let inertia = 0;
+    let gesture: null | {
+      x: number; y: number; startScroll: number; lastY: number; lastT: number;
+      velocity: number; axis: 'pending' | 'x' | 'y';
+    } = null;
+    const stop = () => {
+      if (inertia) cancelAnimationFrame(inertia);
+      inertia = 0;
     };
     const down = (e: TouchEvent) => {
-      lastY = e.touches[0]?.clientY ?? 0;
+      stop();
+      if (e.touches.length !== 1) { gesture = null; return; }
+      const t = e.touches[0];
+      gesture = {
+        x: t.clientX, y: t.clientY, startScroll: sc.scrollTop,
+        lastY: t.clientY, lastT: performance.now(), velocity: 0, axis: 'pending',
+      };
     };
+    const move = (e: TouchEvent) => {
+      if (!gesture || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const dx = t.clientX - gesture.x;
+      const dy = t.clientY - gesture.y;
+      if (gesture.axis === 'pending' && Math.max(Math.abs(dx), Math.abs(dy)) >= 3) {
+        gesture.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      }
+      if (gesture.axis !== 'y') return;
+      if (e.cancelable) e.preventDefault();
+      const max = Math.max(homeTop, sc.scrollHeight - sc.clientHeight);
+      const next = Math.max(homeTop, Math.min(max, gesture.startScroll - dy));
+      const now = performance.now();
+      const dt = Math.max(1, now - gesture.lastT);
+      const sample = (gesture.lastY - t.clientY) / dt;
+      gesture.velocity = gesture.velocity * .68 + sample * .32;
+      gesture.lastY = t.clientY;
+      gesture.lastT = now;
+      sc.scrollTop = next;
+    };
+    const finish = (cancelled = false) => {
+      const g = gesture;
+      gesture = null;
+      if (!g || cancelled || g.axis !== 'y') return;
+      let v = Math.max(-3.2, Math.min(3.2, g.velocity));
+      let pos = sc.scrollTop;
+      let before = performance.now();
+      const tick = (now: number) => {
+        const dt = Math.min(32, Math.max(1, now - before));
+        before = now;
+        const max = Math.max(homeTop, sc.scrollHeight - sc.clientHeight);
+        const raw = pos + v * dt;
+        pos = Math.max(homeTop, Math.min(max, raw));
+        sc.scrollTop = pos;
+        v *= Math.pow(.96, dt / 16.667);
+        if (Math.abs(v) < .012 || pos !== raw) { inertia = 0; return; }
+        inertia = requestAnimationFrame(tick);
+      };
+      if (Math.abs(v) >= .012) inertia = requestAnimationFrame(tick);
+    };
+    const up = () => finish(false);
+    const cancel = () => finish(true);
     sc.addEventListener('touchstart', down, { passive: true });
-    sc.addEventListener('touchmove', block, { passive: false });
+    sc.addEventListener('touchmove', move, { passive: false });
+    sc.addEventListener('touchend', up, { passive: true });
+    sc.addEventListener('touchcancel', cancel, { passive: true });
     return () => {
+      stop();
       sc.removeEventListener('touchstart', down);
-      sc.removeEventListener('touchmove', block);
+      sc.removeEventListener('touchmove', move);
+      sc.removeEventListener('touchend', up);
+      sc.removeEventListener('touchcancel', cancel);
     };
-  }, [homeTop]);
+  }, [homeTop, guardedHomeScroll]);
 
   /* ── 往下滑的視差 ────────────────────────────────────────────────
      模板那一段照捲軸原速往上，修圖這一屏只走 45% 的速度 ——
@@ -769,21 +814,6 @@ export const HomePage: React.FC<HomePageProps> = ({
     /* iOS 偶爾會在手指放開後才把慣性橡皮筋套進來；觸控事件已結束時
        touchmove 攔不到，因此在 scroll 的第一格把負值立即歸零。 */
     if (sc.scrollTop < homeTop) sc.scrollTop = homeTop;
-    /* WebKit 在程式寫入 scrollTop 時會終止 UIScrollView 正在跑的 inertia／rubber-band。
-       不等它撞上邊界才處理：依這一幀往上的速度預測下一幀，若下一格會越過頂部，
-       就直接精準停在頂端。這不切換 overflow；WebKit 對 fixed overflow 容器已有
-       切換後短暫無法再捲的已知問題。 */
-    const previousY = Math.max(homeTop, lastHomeScrollYRef.current);
-    const currentY = Math.max(homeTop, sc.scrollTop);
-    const upwardStep = Math.max(0, previousY - currentY);
-    /* 只在最後 12px 內截停；若依大幅度的單幀速度從更遠處直接跳到頂端，
-       反而會讓使用者看到內容突然少滑一截。1px guard 已確保漏過一幀時也不會
-       露出可見空白。 */
-    const willCrossTop = upwardStep > 0 && currentY <= homeTop + 12;
-    if (willCrossTop) {
-      sc.scrollTop = homeTop;
-    }
-    lastHomeScrollYRef.current = willCrossTop ? homeTop : currentY;
     // 標記「現在正在捲」，這段時間內不准改動任何會影響幾何的 CSS 變數
     scrollingUntil.current = performance.now() + 260;
     if (scrollIdle.current) clearTimeout(scrollIdle.current);

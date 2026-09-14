@@ -9130,7 +9130,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 這樣操作欄滑下去的動畫、左右捲動、換頁數都跟得上。
    */
   const pageCtlRefs = useRef(new Map<string, HTMLDivElement>());
-  const seamOverlayRefs = useRef(new Map<string, HTMLDivElement>());
   const embeddedSeamsRef = useRef(false);
   /* 一般预览、选中物件与动画页都只使用外层那条固定屏幕像素分隔线。
      以前选中时会在「外层线／页面槽内线」之间交棒：两层坐标并非同一套，
@@ -9328,25 +9327,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         /* 与两个灰色按钮彼此的 gap-1.5 完全相同：页面下缘到按钮也是 6px。 */
         `translate3d(${left0 + k * (i * stride + previewWRef.current / 2) - rootLeft}px, ${bottom + 6 - rootTop}px, 0) translateX(-50%)`;
       node.style.visibility = 'visible';
-    });
-    /* 分割線放在縮放容器外，但寬度必須完整覆蓋畫布中的 1 個內容座標頁縫。
-       預覽放大 k 倍時，那個頁縫實際就是 k 個螢幕像素；若仍只畫 1px，
-       線旁必然露出 (k - 1)px 的頁面底色，形成只有放大才看得到的白縫。
-       縮小時再用最少 1px 保證清晰。 */
-    seamOverlayRefs.current.forEach((node, id) => {
-      const i = pagesRef.current.findIndex(pg => pg.id === id);
-      if (i <= 0) return;
-      const seamCenter = colRect.left + k * (i * stride - 0.5);
-      const active = node.dataset.active === '1';
-      const seamW = active ? Math.max(2, k) : Math.max(1, k);
-      node.style.width = `${seamW}px`;
-      node.style.transform =
-        `translate3d(${seamCenter - rootLeft - seamW / 2}px, ${colRect.top - rootTop - 0.5}px, 0)`;
-      node.style.height = `${colRect.height + 1}px`;
-      /* 一般預覽永遠只使用這一條螢幕座標分割線。舊版選中物件時會在外層線與
-         頁內線之間交棒，兩條線的次像素取整不同，選中的那一格就會抖／偏半格。
-         排序模式才隱藏，因為那裡的線必須跟著被拖起的頁面本身移動。 */
-      node.style.visibility = pagesModeRef.current ? 'hidden' : 'visible';
     });
     // 「新增一頁」貼在最後一頁原本的位置旁邊 —— 用算的，才不會被拖曳中的
     // 最後一頁拖著跑（看起來像跟那一頁黏在一起）
@@ -11738,13 +11718,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
 
     const scope = gestureScope(e.target as Element);
-    if (scope === 'none') return;
+    /* 第二根手指很容易刚好落在选中框控制点或透明交互层上；这些元素会让
+       gestureScope 回 none。单指仍然必须尊重它，但已选中的自由物件遇到双指时
+       要无条件交给缩放／旋转，不能因为第二根手指的位置而整次失效。 */
+    const selectedFloatingPinch = e.touches.length >= 2 && !!selectedFloatingId;
+    if (scope === 'none' && !selectedFloatingPinch) return;
     const gestureFloatingId = selectedFloatingId;
 
     // 雙指縮放不會跟捲頁衝突，所以不管手指落在哪裡都拿來縮放選中的物件
     const twoFingerOnSelection = e.touches.length >= 2 && (selectedFloatingId || selectedIndex !== null || layoutSelected);
     const kind: 'floating' | 'cell' | 'layout' | null =
-      scope === 'floating' ? 'floating'
+      selectedFloatingPinch ? 'floating'
+      : scope === 'floating' ? 'floating'
       : scope === 'layout' ? 'layout'
       : twoFingerOnSelection ? (selectedFloatingId ? 'floating' : selectedIndex !== null ? 'cell' : 'layout')
       : null;
@@ -14217,7 +14202,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 /* 逻辑上保留 1px 页间槽，但可见底色必须就是分割线色。
                                    放大后槽宽会超过固定的屏幕 1px；若这里用页面白底，
                                    未被线覆盖的次像素就会成为放大后才看得到的白缝。 */
-                                backgroundColor: pagesMode ? 'transparent' : page.bgColor,
+                                /* 正常模式直接让真实 1 内容像素页缝成为分割线。它与
+                                   页面共用 native zoom 和 transform，不需要外层 DOM
+                                   每帧追位置，因此缩放时不会错一帧、抖一下或露白。
+                                   排序模式仍透明，由绑定在右页上的线负责。 */
+                                backgroundColor: pagesMode
+                                  ? 'transparent'
+                                  : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
                                 /* 它必须高于拖起的页面与自由图层。再用同色半像素阴影
                                    覆盖 fractional zoom 在两侧产生的抗锯齿浅边，最终只
                                    留下一条颜色一致的接缝，不会多出旁边那条淡线。 */
@@ -14225,7 +14216,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 boxShadow: 'none',
                               }}
                             >
-                              {false && !pagesMode && (
+                              {!pagesMode && isSeamGuideActive && (
                                 <div
                                   className="absolute left-0 pointer-events-none"
                                   style={{
@@ -14240,17 +14231,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                        切到這個頁內層也必須沿用同一個像素中心，否則選中
                                        的瞬間線會偏移。藍色對齊線則完整畫在目前頁面內：
                                        左頁停在槽左緣、右頁從槽右緣開始，絕不佔到白槽。 */
-                                    left: isSeamGuideActive
-                                      ? (activePageIndex < pageIdx
-                                          ? 'calc(0px - var(--preview-inverse-scale, 1px) - var(--preview-inverse-scale, 1px))'
-                                          : '1px')
-                                      : 'calc(0.5px - var(--preview-inverse-half, 0.5px))',
-                                    width: isSeamGuideActive
-                                      ? 'calc(var(--preview-inverse-scale, 1px) + var(--preview-inverse-scale, 1px))'
-                                      : 'var(--preview-inverse-scale, 1px)',
-                                    backgroundColor: isSeamGuideActive
-                                      ? 'rgb(59 130 246)'
-                                      : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                                    left: 'calc(0.5px - var(--preview-inverse-scale, 1px))',
+                                    width: 'calc(var(--preview-inverse-scale, 1px) + var(--preview-inverse-scale, 1px))',
+                                    backgroundColor: 'rgb(59 130 246)',
                                     zIndex: 200,
                                   }}
                                 />
@@ -16432,39 +16415,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           </div>
         </div>
       </footer>
-
-      {/* 頁與頁之間的分割線：刻意放在 native zoom 容器外，固定為螢幕像素。
-          位置與高度由 positionPageCtls 在縮放、捲動、排序的同一幀更新。 */}
-      {pages.slice(1).map((pg, idx) => {
-        const pageIdx = idx + 1;
-        const previewScale = Math.max(0.0001, kRef.current || 1);
-        const seamGuideX = pageIdx * (previewW + 1) - 0.5;
-        const active = activeGuidelines.some(
-          guide => guide.type === 'vertical'
-            && Math.abs(guide.coord - seamGuideX) <= 0.75 / previewScale
-        );
-        return (
-          <div
-            key={`seam-overlay-${pg.id}`}
-            data-active={active ? '1' : '0'}
-            ref={(el) => {
-              if (el) seamOverlayRefs.current.set(pg.id, el);
-              else seamOverlayRefs.current.delete(pg.id);
-            }}
-            className="absolute left-0 top-0 pointer-events-none"
-            style={{
-              /* 藍色吸附線與其他對齊線一樣是螢幕 2px；一般分隔線仍固定 1px。 */
-              width: active ? '2px' : '1px',
-              height: 0,
-              visibility: 'hidden',
-              backgroundColor: active ? 'rgb(59 130 246)' : shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
-              /* 高於實際物件，分割線才不會被延伸進槽內的照片吃掉；低於獨立的
-                 chromeLayer（100000+），所以選中框、控制點、白藥丸永遠在上面。 */
-              zIndex: 5000,
-            }}
-          />
-        );
-      })}
 
       {/* 頁面順序模式：每一頁正下方的握把與刪除鍵（貼在畫面上，不受畫布裁切影響） */}
       {pagesMode && pages.map((pg, ctlIdx) => {
