@@ -7276,39 +7276,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      所以要讓開的高度 ＝ 12（下） ＋ 播放列高度 ＋ 12（上）。 */
   const MOTION_CLEAR = 12 + 54 + 12;
   const motionUiOn = activeTab === 'motion' && !!imageState;
-  const randomButtonRef = useRef<HTMLDivElement>(null);
-  /* 重置／隨機鍵仍待在畫布右下角，但優先放到圖片外側；空間不足時只讓按鈕
-     約三分之一壓住角落，不再整顆蓋住圖片。直接量實際 canvas，比例與縮放皆正確。 */
-  useLayoutEffect(() => {
-    const btn = randomButtonRef.current;
-    const cv = canvasRef.current;
-    const parent = btn?.offsetParent as HTMLElement | null;
-    if (!btn || !cv || !parent || !imageState) return;
-    const place = () => {
-      const pr = parent.getBoundingClientRect();
-      const cr = cv.getBoundingClientRect();
-      const bw = btn.offsetWidth || 44, bh = btn.offsetHeight || 44, gap = 8;
-      const roomRight = pr.right - cr.right;
-      const roomBottom = pr.bottom - cr.bottom;
-      let x: number, y: number;
-      if (roomRight >= bw + gap) {
-        x = cr.right - pr.left + gap;
-        y = cr.bottom - pr.top - bh;
-      } else if (roomBottom >= bh + gap) {
-        x = cr.right - pr.left - bw;
-        y = cr.bottom - pr.top + gap;
-      } else {
-        x = cr.right - pr.left - bw * .34;
-        y = cr.bottom - pr.top - bh * .34;
-      }
-      btn.style.left = `${Math.max(6, Math.min(pr.width - bw - 6, x))}px`;
-      btn.style.top = `${Math.max(6, Math.min(pr.height - bh - 6, y))}px`;
-    };
-    place();
-    const ro = new ResizeObserver(place);
-    ro.observe(parent); ro.observe(cv);
-    return () => ro.disconnect();
-  }, [imageState, viewT.k, viewT.tx, viewT.ty, activeTab]);
   const { mLift, mScale } = (() => {
     if (!motionUiOn || !baseCss || !stageSize.h) return { mLift: 0, mScale: 1 };
     const Hc = baseCss.h * viewT.k;                    // 圖在畫面上的高度
@@ -8206,14 +8173,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
         {imageState && (
           <div
-            ref={randomButtonRef}
-            className="absolute z-[60]"
+            className="absolute right-6 z-[60]"
             /* 動畫頁時往上讓開播放列，並跟著圖片一起平滑移動。
                鍵盤叫出來時整顆淡掉（打字時不需要它，而且會擋到）。 */
             style={{
+              bottom: motionUiOn ? 86 : 24,
               opacity: kbInset ? 0 : 1,
               pointerEvents: kbInset ? 'none' : undefined,
-              transition: `left 180ms ${MOTION_EASE}, top 180ms ${MOTION_EASE}, opacity 220ms ease-out`,
+              transition: `bottom 420ms ${MOTION_EASE}, opacity 220ms ease-out`,
             }}
             onPointerDown={(e) => e.stopPropagation()}
           >

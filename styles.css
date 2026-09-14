@@ -324,15 +324,6 @@ select:focus, select:focus-visible {
   }
 }
 
-/* 手機首頁使用 1px 隱形 scroll guard，並在下一幀會越界前用 scrollTop 終止慣性。
-   原生 scroll timeline 即使只把這 1px 誤當動畫進度也可能產生首幀偏移；guarded
-   模式固定交由 HomePage 的逐幀邏輯（它會扣除 guard），因此關掉這三支 CSS 動畫。 */
-.home-scroll-guarded .home-hero,
-.home-scroll-guarded .home-hero-art,
-.home-scroll-guarded .home-lib {
-  animation-name: none !important;
-}
-
 /* 使用者要求減少動態時：整套關掉，模板那一段也不要預先往下藏
    （不然負的 margin-top 會把它往上拉，跟修圖那一屏疊在一起）。 */
 @media (prefers-reduced-motion: reduce) {
