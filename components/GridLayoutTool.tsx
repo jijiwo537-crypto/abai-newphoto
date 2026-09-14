@@ -5822,10 +5822,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   }, [image.shape, image.holeType]);
 
   useLayoutEffect(() => {
-    /* 圖形、符號、一般文字全部走同一套 Canvas。不可再讓一般文字單獨走 SVG：
-       iOS 在外層預覽 zoom 時會分別量化 SVG、Canvas 與 DOM 的小數座標，三者
-       即使資料座標相同也會相差一個實體像素，視覺上便不停抖動。 */
-    if (!isCanvasVector) return;
+    /* 一般文字維持 SVG；符號则与创意拼图一样走 Canvas 的同一套墨水测量与
+       fillText。这样预览缩放只是在移动一张预先超取样的紧凑位图，不会每一帧
+       让 WebKit 重建大型复合 Unicode SVG，解决有符号时的明显掉帧。 */
+    if (!isCanvasVector || (image.text !== undefined && !image.sym && !usesUnitMotion)) return;
     const canvas = vectorCanvasRef.current;
     if (!canvas) return;
     let alive = true;
@@ -6374,8 +6374,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           visibility: showChrome ? 'visible' : 'hidden',
           opacity: showChrome ? 1 : 0,
           transform: 'translateZ(0)',
-          willChange: gestureRendering || !!dragShift?.live || !!motionFrame ? 'transform' : undefined,
-          backfaceVisibility: gestureRendering || !!dragShift?.live || !!motionFrame ? 'hidden' : undefined,
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
         }}
       >
         {shapeOutline ? shapeOutline : isPhoto ? (
@@ -6498,13 +6498,13 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           transition: dragShift
             ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
             : undefined,
-          /* 平常不把每顆向量永久拆成獨立 GPU layer。整體預覽捏合時，所有
-             向量因此由 pagesCol 的同一個父層合成，彼此的座標不會各自取整。 */
-          willChange: gestureRendering || !!dragShift?.live || !!motionFrame ? 'transform' : undefined,
-          backfaceVisibility: gestureRendering || !!dragShift?.live || !!motionFrame ? 'hidden' : undefined,
+          /* 在第一次拖動前就建立合成層，避免首個 pointermove 才上傳
+             圖片／符號貼圖到 GPU 而漏掉一幀。 */
+          willChange: 'transform',
+          backfaceVisibility: 'hidden',
         }}
       >
-        {false ? (() => {
+        {image.text !== undefined && !image.sym && !usesUnitMotion ? (() => {
           /* 固定字級、字距與字形度量，只讓 SVG 的連續矩陣負責縮放。SVG 會在
              當下顯示倍率直接重建向量輪廓，不像獨立 Canvas 先變點陣再被頁面
              zoom 一次；文字和複合 Unicode 符號因此共用同一個穩定中心。 */
@@ -6607,8 +6607,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         touchAction: touchMode,
         opacity: (isCanvasVector ? 1 : (image.opacity ?? 100) / 100) * (motionFrame?.a ?? 1),
         /* 圖片同樣預先建立移動用合成層；第一次拖動不再臨時升層。 */
-        willChange: isSelected || gestureRendering || !!dragShift?.live || !!motionFrame ? 'transform' : undefined,
-        backfaceVisibility: isSelected || gestureRendering || !!dragShift?.live || !!motionFrame ? 'hidden' : undefined,
+        willChange: 'transform',
+        backfaceVisibility: 'hidden',
       }}
       onTouchStart={motionPickOnly ? undefined : onSwapTouchStart}
       onTouchMove={motionPickOnly ? undefined : onSwapTouchMove}
@@ -9232,8 +9232,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 不會像以前那樣「外殼的大小和位置瞬間換成新的、只有縮放在慢慢跑」，
    * 一進去整排就先瞬移一百多 px 再縮小。
    */
-  const canvasCompositePinchRef = useRef(false);
-  const applyStripGeometry = useCallback((k: number, liveTransform = false, compositePinch = false) => {
+  const applyStripGeometry = useCallback((k: number, liveTransform = false) => {
     const n = Math.max(1, pagesCountRef.current);
     const pw = previewWRef.current;
     const w = containerWRef.current;
@@ -9266,15 +9265,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
       col.style.setProperty('--layout-grid-stroke', `${1 / Math.max(0.0001, k)}px`);
-      if (nativeZoom && !compositePinch) {
+      if (nativeZoom) {
         (col.style as any).zoom = String(k);
         const sub = stripSubpixelXRef.current;
         col.style.transform = Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0)` : '';
         col.style.willChange = '';
       } else {
         (col.style as any).zoom = '';
-        const sub = stripSubpixelXRef.current * k;
-        col.style.transform = `${Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0) ` : ''}${k === 1 ? '' : `scale(${k})`}`.trim();
+        col.style.transform = k === 1 ? '' : `scale(${k})`;
         col.style.transformOrigin = '0 0';
         col.style.willChange = liveTransform ? 'transform' : '';
       }
@@ -11559,32 +11557,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   } | null>(null);
   const inertiaRef = useRef<number | null>(null);
 
-  /* iOS WebView 有些版本在第二根手指落下時不會可靠地重送同一個 React
-     TouchEvent target。Pointer Events 則會替每根手指保留獨立 pointerId；用它
-     做一條只負責「已選中物件雙指縮放」的保底通道，避免手勢被子層長按或
-     pointer capture 吃掉。畫布縮放與單指拖曳仍由原本控制器處理。 */
-  const objectPointersRef = useRef(new Map<number, { x: number; y: number }>());
-  const objectPointerOwnerRef = useRef<{
-    kind: 'floating' | 'cell' | 'layout';
-    floatingId?: string | null;
-    cellIdx?: number;
-    layoutId?: string | null;
-  } | null>(null);
-  const objectPointerPinchRef = useRef<{
-    kind: 'floating' | 'cell' | 'layout';
-    floatingId: string | null;
-    cellIdx: number;
-    layoutId: string | null;
-    startDist: number;
-    startAngle: number;
-    baseScale: number;
-    baseRotation: number;
-    baseZoom: number;
-    baseShapeZoom: number;
-    baseShapeX: number;
-    baseShapeY: number;
-  } | null>(null);
-
   const stopInertia = () => {
     if (inertiaRef.current !== null) {
       cancelAnimationFrame(inertiaRef.current);
@@ -11741,7 +11713,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const handleWorkspaceTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (objectPointerPinchRef.current) return;
+    /* 長按尚在等待期間，只要第二根手指落下就確定是雙指手勢。無論第二根
+       手指落在同一張圖或畫布其他位置，都立即取消格子圖與自由圖片的長按
+       計時；只保留原本的單指長按門檻，不再讓它稍後突然搶走縮放。 */
+    if (e.touches.length >= 2) {
+      if (longPressTimeoutRef.current && !isLongPressedRef.current) {
+        clearTimeout(longPressTimeoutRef.current);
+        longPressTimeoutRef.current = null;
+        pendingLongPressPosRef.current = null;
+      }
+      if (floatSwapTimerRef.current && !floatSwapRef.current?.dragging) {
+        clearTimeout(floatSwapTimerRef.current);
+        floatSwapTimerRef.current = null;
+      }
+    }
     stopInertia();
     panRef.current = null;
     wsGestureRef.current = null;
@@ -11911,11 +11896,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
          連續捏兩次時，第二次一定要從第一次的結果接著算。 */
       canvasZoomRef.current = { startDist: d, baseZoom: k0, anchorC, anchorPx, lastZoom: k0 };
-      /* 預覽捏合期間整排頁面只使用一個父層 transform。圖片、Canvas 文字、
-         符號與圖形因此被鎖在同一張合成表面上，不再由 CSS zoom 對每個子層
-         分別做小數取整。 */
-      canvasCompositePinchRef.current = true;
-      applyStripGeometry(k0, true, true);
+      applyStripGeometry(k0, true);
       return;
     }
 
@@ -11933,7 +11914,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const handleWorkspaceTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
-    if (objectPointerPinchRef.current) return;
     // 長按拖曳圖片時，任何捲頁 / 物件位移都不該發生
     if (isLongPressedRef.current || touchDragState.current || floatSwapRef.current?.dragging) {
       panRef.current = null;
@@ -11970,7 +11950,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       stripTopRef.current =
         (containerSize.height - previewHRef.current * z) / 2;
       // 尺寸先寫（scrollWidth 才是對的），再把「捏住的那個點」放回原位
-      applyStripGeometry(z, true, true);
+      applyStripGeometry(z, true);
       const cont = containerRef.current;
       const w = containerSize.width;
       if (cont && w > 0) {
@@ -11989,7 +11969,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const col = pagesColRef.current;
         if (col) {
           const sub = stripSubpixelXRef.current;
-          col.style.transform = `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * z}px, 0, 0) ` : ''}${z === 1 ? '' : `scale(${z})`}`.trim();
+          col.style.transform = Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0)` : '';
         }
       }
       positionPageCtls();
@@ -12247,7 +12227,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const handleWorkspaceTouchEnd = (e?: React.TouchEvent<HTMLDivElement>) => {
-    if (objectPointerPinchRef.current) return;
     // 雙指縮放必須等最後一根手指也離開才收尾，避免中途重排造成畫面跳動。
     if (canvasZoomRef.current && e && e.touches.length > 0) return;
     flushInteractionNow();
@@ -12262,7 +12241,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (canvasZoomRef.current) {
       canvasZoomRef.current = null;
       panRef.current = null;
-      canvasCompositePinchRef.current = false;
       applyStripGeometry(userZoomRef.current, false);
       setUserZoom(userZoomRef.current);
       return;
@@ -12298,118 +12276,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     inertiaRef.current = requestAnimationFrame(step);
   };
 
-  const handleObjectPointerDownCapture = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.pointerType !== 'touch' || activeTab === 'motion') return;
-    objectPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (objectPointersRef.current.size === 1) {
-      objectPointerOwnerRef.current = selectedFloatingId
-        ? { kind: 'floating', floatingId: selectedFloatingId }
-        : selectedIndex !== null
-          ? { kind: 'cell', cellIdx: selectedIndex, layoutId: selectedLayoutId }
-          : layoutSelected
-            ? { kind: 'layout', layoutId: selectedLayoutId }
-            : null;
-      /* 第一根手指也由工作區持有。iOS 在第二根手指落到另一個 DOM 圖層時，
-         若第一根仍留在子層，兩個 pointermove 會落到不同的 React 根，看起來
-         就像完全沒有縮放。兩根都交給同一個工作區，整段手勢只有一個座標系。 */
-      try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* WebKit 舊版可不支援 */ }
-      return;
-    }
-    if (objectPointersRef.current.size !== 2 || objectPointerPinchRef.current) return;
-    const owner = objectPointerOwnerRef.current;
-    if (!owner) return;
-    const pts = Array.from(objectPointersRef.current.values());
-    const startDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
-    const startAngle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180 / Math.PI;
-    const f = owner.kind === 'floating'
-      ? floatingImages.find(item => item.id === owner.floatingId) : null;
-    const cellIdx = owner.kind === 'cell' ? (owner.cellIdx ?? -1) : -1;
-    const cell = cellIdx >= 0 ? images[cellIdx] : null;
-    const lay = owner.kind === 'layout'
-      ? pages.flatMap(page => page.layouts).find(item => item.id === owner.layoutId) : null;
-    if ((owner.kind === 'floating' && !f) || (owner.kind === 'cell' && !cell?.url) || (owner.kind === 'layout' && !lay)) return;
-    objectPointerPinchRef.current = {
-      kind: owner.kind,
-      floatingId: f?.id || null,
-      cellIdx,
-      layoutId: owner.layoutId || null,
-      startDist,
-      startAngle,
-      baseScale: f?.scale ?? lay?.t?.scale ?? 1,
-      baseRotation: f?.rotation ?? 0,
-      baseZoom: cell?.zoom ?? 1,
-      baseShapeZoom: clampImgZoom((f as any)?.imgShapeZoom),
-      baseShapeX: (f as any)?.imgShapeX ?? 0,
-      baseShapeY: (f as any)?.imgShapeY ?? 0,
-    };
-    panRef.current = null;
-    wsGestureRef.current = null;
-    if (floatSwapTimerRef.current) {
-      clearTimeout(floatSwapTimerRef.current);
-      floatSwapTimerRef.current = null;
-    }
-    floatSwapRef.current = null;
-    setFloatDragPreloadSrc(null);
-    setFloatDragSrc(null);
-    setSwapOverTarget(null);
-    if (f) setPinchFloatingId(f.id);
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* WebKit 可不支援跨 target capture */ }
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const handleObjectPointerMoveCapture = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.pointerType !== 'touch') return;
-    if (objectPointersRef.current.has(e.pointerId)) {
-      objectPointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    }
-    const pinch = objectPointerPinchRef.current;
-    if (!pinch || objectPointersRef.current.size < 2) return;
-    const pts = Array.from(objectPointersRef.current.values());
-    const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
-    const factor = dist / pinch.startDist;
-    e.preventDefault();
-    e.stopPropagation();
-    if (pinch.kind === 'floating' && pinch.floatingId) {
-      const current = floatingImages.find(item => item.id === pinch.floatingId);
-      if (!current) return;
-      if (shapeSelRef.current === current.id && isImgShaped((current as any).imgShape)) {
-        const nz = clampImgZoom(pinch.baseShapeZoom * factor);
-        const n = zoomAboutShapeCenter(current.width, current.height, pinch.baseShapeZoom, nz,
-          pinch.baseShapeX, pinch.baseShapeY);
-        queueInteraction(() => setFloatingImages(prev => prev.map(item => item.id === pinch.floatingId
-          ? { ...item, imgShapeZoom: nz, imgShapeX: n.x, imgShapeY: n.y } : item)));
-        return;
-      }
-      const angle = Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) * 180 / Math.PI;
-      const delta = ((angle - pinch.startAngle + 540) % 360) - 180;
-      const scale = Math.max(0.1, pinch.baseScale * factor);
-      const rotation = ((pinch.baseRotation + delta) % 360 + 360) % 360;
-      queueInteraction(() => setFloatingImages(prev => prev.map(item => item.id === pinch.floatingId
-        ? { ...item, scale, rotation } : item)));
-    } else if (pinch.kind === 'layout') {
-      scaleLayoutSnapped(Math.max(0.1, pinch.baseScale * factor), pinch.layoutId);
-    } else if (pinch.kind === 'cell' && pinch.cellIdx >= 0) {
-      applyCellZoom(pinch.cellIdx, Math.max(1, Math.min(5, pinch.baseZoom * factor)));
-    }
-  };
-
-  const handleObjectPointerEndCapture = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (e.pointerType !== 'touch') return;
-    const wasPinching = !!objectPointerPinchRef.current;
-    objectPointersRef.current.delete(e.pointerId);
-    if (wasPinching && objectPointersRef.current.size < 2) {
-      flushInteractionNow();
-      objectPointerPinchRef.current = null;
-      objectPointerOwnerRef.current = null;
-      setPinchFloatingId(null);
-      setActiveGuidelines([]);
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    if (objectPointersRef.current.size === 0) objectPointerOwnerRef.current = null;
-  };
-
   /* React 的 onTouchEnd 在 Safari 重建合成层的同一帧偶尔收不到。用 window 捕获
      最后一根手指离开的事件，并延后到本轮事件结束后检查；正常收尾已执行时这
      是无操作，漏掉时则统一清掉所有会隐藏外框／药丸的旗标与手势引用。 */
@@ -12432,12 +12298,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         pointerState.current.pointerId = -1;
         panRef.current = null;
         panMovedRef.current = false;
-        objectPointersRef.current.clear();
-        objectPointerPinchRef.current = null;
-        objectPointerOwnerRef.current = null;
         if (canvasZoomRef.current) {
           canvasZoomRef.current = null;
-          canvasCompositePinchRef.current = false;
           applyStripGeometry(userZoomRef.current, false);
           setUserZoom(userZoomRef.current);
         }
@@ -14269,10 +14131,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           onTouchMoveCapture={activeTab === 'motion' ? undefined : handleWorkspaceTouchMove}
           onTouchEndCapture={activeTab === 'motion' ? undefined : handleWorkspaceTouchEnd}
           onTouchCancelCapture={activeTab === 'motion' ? undefined : handleWorkspaceTouchEnd}
-          onPointerDownCapture={handleObjectPointerDownCapture}
-          onPointerMoveCapture={handleObjectPointerMoveCapture}
-          onPointerUpCapture={handleObjectPointerEndCapture}
-          onPointerCancelCapture={handleObjectPointerEndCapture}
           onPointerDown={(e) => {
             if (activeTab === 'motion') return;
             workspacePointerDown.current = {
@@ -15644,9 +15502,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
                     {/*
                       唯一的頁面分割線層。它位於圖片／影片／佈局／文字／符號／
-                      圖形／筆畫之上，選中框專用 chromeLayer 之下。分割線不再
-                      分散在頁縫槽與頁面內各畫一次，因此排序、跨頁與縮放時都只
-                      會有同一條線；寬度用預覽反倍率，螢幕上永遠恰好 1px。
+                      圖形／筆畫之上，選中框專用 chromeLayer 之下。一般狀態與
+                      對齊狀態都沿用同一個 2px 螢幕線寬，避免跨過物件時因不同
+                      合成表面取樣而看成另一條較細的線。
                     */}
                     {pages.slice(1).map((_page, seamIndex) => {
                       const pageIdx = seamIndex + 1;
@@ -15667,18 +15525,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           style={{
                             left: rightPageLeft - 0.5,
                             top: previewH * (1 - moveScale) / 2,
-                            /* 一般分割線維持螢幕 1px；觸發吸附時改成與其他藍色
-                               對齊線完全相同的 2px，避免只有被圖片壓到的區段
-                               看起來突然變細。兩種粗細都由反倍率變數抵銷預覽 zoom。 */
-                            width: active
-                              ? 'var(--preview-guide-scale, 2px)'
-                              : 'var(--preview-inverse-scale, 1px)',
+                            /* 分割線只有這一份，而且無論是否吸附都維持同一個
+                               螢幕 2px 粗度；反倍率讓預覽縮放不改變視覺線寬。 */
+                            width: 'var(--preview-guide-scale, 2px)',
                             height: previewH * moveScale,
                             transform: `translateX(-50%) scaleX(${1 / moveScale})`,
                             transformOrigin: 'center center',
-                            willChange: 'transform',
-                            backfaceVisibility: 'hidden',
-                            contain: 'strict',
                             transition: move
                               ? (move.live ? 'none' : 'left 220ms cubic-bezier(0.2,0,0,1), top 220ms cubic-bezier(0.2,0,0,1), height 220ms cubic-bezier(0.2,0,0,1)')
                               : undefined,
