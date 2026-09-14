@@ -728,7 +728,18 @@ export const HomePage: React.FC<HomePageProps> = ({
      等於在最不該打擾的時間點去動兩支捲動動畫的範圍。 */
   useLayoutEffect(() => { syncRange(); applyParallax(); }, [syncRange, applyParallax]);
   useEffect(() => {
-    const on = () => { resetNavThresh(); syncRange(); applyParallax(); };
+    const on = () => {
+      const sc = scrollRef.current;
+      /* 只有真正改变横向版面（旋转／分屏）才重算模板门槛。iOS 快速回顶
+         时状态栏造成的纯高度 resize 不应该清空门槛，否则下一次 scroll
+         会在惯性途中同步读取整页高度并产生一次跳帧。 */
+      if (sc && (rangeWidthWritten.current < 0
+        || Math.abs(sc.clientWidth - rangeWidthWritten.current) >= 1)) {
+        resetNavThresh();
+      }
+      syncRange();
+      applyParallax();
+    };
     window.addEventListener('resize', on);
     window.addEventListener('orientationchange', on);
     return () => {
