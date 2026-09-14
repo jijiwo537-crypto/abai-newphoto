@@ -4272,7 +4272,7 @@ const VideoLayer: React.FC<{
   /* ── 圖片在形狀裡的位置與縮放（imgShapeX／Y／Zoom）──────────────────
      照片那條路是 drawImgBase 在畫的時候套上去的；影片沒有經過那一支，
      所以以前「套了形狀之後怎麼拖都不會動」。這裡用完全同一條算式，
-     只是換成 CSS：先開一個「形狀視窗」把影片按那個位置��大小擺好，
+     只是換成 CSS：先開一個「形狀視窗」把影片按那個位置與大小擺好，
      外面那層再用形狀遮罩切出來。倍率 1、沒位移時，這個視窗剛好等於整個框。 */
   const shaped = isImgShaped(shapeKind);
   const shapeZoom = shaped ? clampImgZoom((image as any).imgShapeZoom) : 1;
@@ -13164,7 +13164,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           ctx.save();
           if (lt.x !== 0 || lt.y !== 0 || ltScale !== 1 || ltRot !== 0) {
             ctx.translate(pageOffsetX + targetW / 2 + lt.x * scaleFactor, targetH / 2 + lt.y * scaleFactor);
-            // 旋轉與縮���都以佈局中心為軸，跟預覽的 transform-origin: center 一致
+            // 旋轉與縮放都以佈局中心為軸，跟預覽的 transform-origin: center 一致
             if (ltRot !== 0) ctx.rotate((ltRot * Math.PI) / 180);
             ctx.scale(ltScale, ltScale);
             ctx.translate(-(pageOffsetX + targetW / 2), -targetH / 2);
@@ -15696,7 +15696,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           })()}
         </div>
 
-        {/* ���創意拼圖同款播放列：從工具列下方滑入，預覽同時平順縮小讓位。 */}
+        {/* 與創意拼圖同款播放列：從工具列下方滑入，預覽同時平順縮小讓位。 */}
         {motionBarMounted && (
           <div
             ref={motionBarRef}
