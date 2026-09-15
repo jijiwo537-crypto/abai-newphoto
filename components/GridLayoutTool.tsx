@@ -1967,7 +1967,9 @@ export const TextEditorPanel: React.FC<{
   onPickColor?: (which: 'stroke' | 'glow') => void;
   /** 這一層是「符號」：可以調的東西比一般文字少，只留顏色、大小、發光 */
   symbol?: boolean;
-}> = ({ layer, onChange, onPickColor, symbol }) => {
+  /** 滑桿正在連續拖動；經典拼圖用它暫停昂貴的最終快照編碼。 */
+  onTuningChange?: (active: boolean) => void;
+}> = ({ layer, onChange, onPickColor, symbol, onTuningChange }) => {
   const [sub, setSub] = useState<'style' | 'font'>('style');
   /* 顏色改成「點進去有一頁」：這裡存的是那一頁要調哪個顏色。 */
   const [colorPage, setColorPage] = useState<
@@ -2052,7 +2054,14 @@ export const TextEditorPanel: React.FC<{
   };
 
   return (
-    <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
+    <div
+      className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300"
+      onPointerDownCapture={e => {
+        if ((e.target as HTMLElement).matches?.('input[type="range"]')) onTuningChange?.(true);
+      }}
+      onPointerUpCapture={() => onTuningChange?.(false)}
+      onPointerCancelCapture={() => onTuningChange?.(false)}
+    >
       {/* 左側細長分頁列，跟「新增佈局」同一種版型：只有圖示、
           沒有中間那條分隔線，選中也不畫指示條。
           符號沒有「換字體」這件事（字體換了那些符號也還是靠系統字型畫的），
@@ -2225,7 +2234,9 @@ export const TextEditorPanel: React.FC<{
 export const ShapeEditorPanel: React.FC<{
   layer: FloatingImage;
   onChange: (patch: Partial<FloatingImage>) => void;
-}> = ({ layer, onChange }) => {
+  /** 滑桿正在連續拖動；經典拼圖用它暫停昂貴的最終快照編碼。 */
+  onTuningChange?: (active: boolean) => void;
+}> = ({ layer, onChange, onTuningChange }) => {
   const isLine = SPECIAL_LINE_KINDS.has(layer.shape || '');
   const isGridShape = GRID_SHAPE_KINDS.has(layer.shape || '');
   const hasOutline = (!layer.shapeFilled || isLine) && !isGridShape;
@@ -2252,7 +2263,14 @@ export const ShapeEditorPanel: React.FC<{
   );
 
   return (
-    <div className="max-w-md mx-auto h-full animate-in fade-in duration-300">
+    <div
+      className="max-w-md mx-auto h-full animate-in fade-in duration-300"
+      onPointerDownCapture={e => {
+        if ((e.target as HTMLElement).matches?.('input[type="range"]')) onTuningChange?.(true);
+      }}
+      onPointerUpCapture={() => onTuningChange?.(false)}
+      onPointerCancelCapture={() => onTuningChange?.(false)}
+    >
       <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-2">
         {colorPage && (
           <ColorPickerPage
@@ -4059,6 +4077,8 @@ interface FloatingImageComponentProps {
   hideToolbar?: boolean;
   /** 文字／符號／圖形正在雙指縮放：改用固定畫布、逐幀重畫內容。 */
   gestureRendering?: boolean;
+  /** 編輯滑桿正在拖動：即時預覽維持螢幕級高清，放手才建立最終超取樣快照。 */
+  liveTuning?: boolean;
   /** 正在拖形狀的滑桿：選取框、四角圓球、工具列全部收起來，邊緣的效果才看得清楚 */
   hideChrome?: boolean;
   /** 濾鏡載完會 +1，用來讓已經套用濾鏡的圖層重畫 */
@@ -4677,7 +4697,7 @@ const GlCanvasHost: React.FC<{ canvas: HTMLCanvasElement; style: React.CSSProper
   return <div ref={host} style={style} />;
 };
 
-const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
+const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   image,
   isSelected,
   shapeSelected,
@@ -4709,6 +4729,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   onTextEditEnd,
   hideToolbar = false,
   gestureRendering = false,
+  liveTuning = false,
   hideChrome = false,
   lutRevision = 0,
   touchMode = 'none',
@@ -5901,6 +5922,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     const revision = ++shapeSnapshotRevisionRef.current;
     const canFreezeShape = !!image.shape && image.shape !== 'hole'
       && !gestureRendering
+      && !liveTuning
       && motionFrame?.gridWave === undefined
       && motionFrame?.gridReveal === undefined;
     /* 舊快照的尺寸／顏色一旦失效便立刻退回剛畫好的 canvas，不讓舊圖形閃一幀。 */
@@ -5953,7 +5975,12 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       const previewRasterScale = exactShapeBacking ? shapeDetailBoost : Math.max(1, canvasScale);
       /* 手勢中與靜止時使用完全相同的高密度 backing store。先前捏合時把倍率
          降半、面積砍到 4MP，正是物件縮小過程突然糊掉、放手才恢復的來源。 */
-      const dpr = Math.max(2, geoDpr * previewRasterScale * 4);
+      /* 滑桿拖動中每一幀都重畫。最終模式最高可到數千萬像素，逐格重建會
+         阻塞主執行緒；拖動中改用仍高於螢幕實體像素的即時倍率，松手后只
+         进行一次完整超取样。视觉保持清楚，交互成本则从几十倍像素降下来。 */
+      const dpr = liveTuning
+        ? Math.max(2, geoDpr * 1.5)
+        : Math.max(2, geoDpr * previewRasterScale * 4);
       /* 尺寸上限與面積上限同時守住；手勢與靜止都保留 8MP。 */
       const backingScale = Math.min(
         dpr,
@@ -6255,7 +6282,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     image.scale, image.rotation, image.mo,
     /* 圖形的預覽倍率不參與 backing-store 依賴；整頁 zoom 不會再觸發重畫。 */
     (image.shape && image.shape !== 'hole') ? 1 : canvasScale,
-    gestureRendering, holeAssetRevision,
+    gestureRendering, liveTuning, holeAssetRevision,
     motionFrame?.seq, motionFrame?.idleT, motionFrame?.waveMix,
     motionFrame?.gridWave, motionFrame?.gridReveal,
   ]);
@@ -7294,6 +7321,48 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
   );
 };
 
+/* 一顆物件移動或調滑桿時，父層的 floatingImages 會每幀換一次陣列；沒有
+   memo 的話畫面上每一顆圖形都會重新跑路徑、字形量測與 Canvas 配置准备。
+   这正是「只要画面上有图形，所有东西都变卡」的共同原因。物件数据采用
+   immutable 更新，所以 image 参考没变就代表该物件完全没变；函数 props
+   仅是父层行内包装，不应迫使未变化物件重绘。被选取／拖动的物件本身仍会
+   正常逐帧更新，切换选择、图层、动画与页面倍率也都明确列入比较。 */
+const sameDragShift = (
+  a: FloatingImageComponentProps['dragShift'],
+  b: FloatingImageComponentProps['dragShift'],
+) => a === b || (!!a && !!b && a.tx === b.tx && a.ty === b.ty && a.s === b.s && a.live === b.live);
+
+const FloatingImageComponent = React.memo(FloatingImageComponentBase, (a, b) =>
+  a.image === b.image
+  && a.isSelected === b.isSelected
+  && a.shapeSelected === b.shapeSelected
+  && a.pagesContainerRef === b.pagesContainerRef
+  && a.canvasKRef === b.canvasKRef
+  && a.canvasScale === b.canvasScale
+  && (a.isSelected || b.isSelected ? a.hasActiveGuidelines === b.hasActiveGuidelines : true)
+  && a.isSwapTarget === b.isSwapTarget
+  && a.isSwapSource === b.isSwapSource
+  && a.stackIndex === b.stackIndex
+  && a.canLayerUp === b.canLayerUp
+  && a.canLayerDown === b.canLayerDown
+  && a.toolbarAbove === b.toolbarAbove
+  && a.maxTextWidth === b.maxTextWidth
+  && a.canvasHeight === b.canvasHeight
+  && a.isTextEditing === b.isTextEditing
+  && a.hideToolbar === b.hideToolbar
+  && a.gestureRendering === b.gestureRendering
+  && a.liveTuning === b.liveTuning
+  && a.hideChrome === b.hideChrome
+  && a.lutRevision === b.lutRevision
+  && a.touchMode === b.touchMode
+  && sameDragShift(a.dragShift, b.dragShift)
+  && a.chromeLayer === b.chromeLayer
+  && a.motionFrame === b.motionFrame
+  && a.motionPickOnly === b.motionPickOnly
+  && a.motionTargetFlash === b.motionTargetFlash
+  && a.videoPaused === b.videoPaused
+);
+
 interface GridLayoutToolProps {
   /** 從歷史紀錄點開來的那一筆的 key。再記一次的時候沿用它＝更新同一筆 */
   histKey?: string | null;
@@ -7364,6 +7433,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const motionFlashTimerRef = useRef<number | null>(null);
   /** 手指正在移动任一已选物件；期间统一隐藏选中框与白色药丸 */
   const [selectionDragging, setSelectionDragging] = useState(false);
+  const selectionDraggingRef = useRef(false);
   /* iPhone 的觸控事件頻率可能高於螢幕更新率。把同一畫面幀內的中間狀態全部
      丟棄，只提交最新幾何，避免 React 依序畫出已過期倍率造成縮放往返抖動。 */
   const interactionRafRef = useRef<number | null>(null);
@@ -8146,6 +8216,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [inlineEditId, setInlineEditId] = useState<string | null>(null);
   /** 正在被雙指縮放／旋轉的圖層：這段期間工具列先收起來 */
   const [pinchFloatingId, setPinchFloatingId] = useState<string | null>(null);
+  /** 文字／符號／圖形面板中正在拖動滑桿的圖層。 */
+  const [vectorTuningId, setVectorTuningId] = useState<string | null>(null);
   /** 「圖片調整」的子分頁 */
   const [adjustSub, setAdjustSub] = useState<'shape' | 'tune' | 'filter' | 'effect'>('filter');
   /** 調節分頁目前選中的工具 */
@@ -8179,9 +8251,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 正在下載的濾鏡：那張卡片上要有轉圈動畫 */
   const [loadingLut, setLoadingLut] = useState<string | null>(null);
 
-  /* 換一張圖層就把特效的選取收乾淨 —— 不然細項面板還開著上一張選的那顆，
-     滑桿卻已經接到新這張的參數上了。 */
-  useEffect(() => { setEffectCard(''); setEffectDetail(false); }, [selectedFloatingId]);
+  /* 切換編輯目標時一律回到各自最外層。圖片回到「濾鏡」，不能把上一張
+     圖片停留的造型／特效細頁直接套到新目標；文字與圖形面板另外用 layer.id
+     当 key，切回去也会重新建立自己的最外层页面。 */
+  useEffect(() => {
+    setAdjustSub('filter');
+    setTuneTool('brightness');
+    setShapeTool('');
+    setShapeMenu('root');
+    setEffectCard('');
+    setEffectDetail(false);
+    setTuningEdge(false);
+    setVectorTuningId(null);
+  }, [selectedFloatingId]);
   /** 構圖中的圖層：跟「編輯」共用同一個 ComposeStudio */
   const [composeState, setComposeState] = useState<{
     id: string;
@@ -8322,6 +8404,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   /** 第一次點佈局是選整個佈局（等同一張圖片被選取），再點一次才會選到裡面的格子 */
   const [selectedLayoutId, setSelectedLayoutId] = useState<string | null>(null);
+  useEffect(() => {
+    setAdjustSub('filter');
+    setTuneTool('brightness');
+    setShapeTool('');
+    setShapeMenu('root');
+    setEffectCard('');
+    setEffectDetail(false);
+    setTuningEdge(false);
+    setVectorTuningId(null);
+  }, [selectedIndex, selectedLayoutId]);
 
   const activePage = pages[activePageIndex] || pages[0];
   /** 被選取的佈局可能不在目前捲到的那一頁上（選好之後滑到別頁），所以一律用 id 全域找。 */
@@ -8602,7 +8694,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const patchTextLayer = (id: string, patch: Partial<FloatingImage>) => {
-    setFloatingImages(prev => prev.map(f => (f.id === id ? { ...f, ...patch } : f)));
+    /* iPhone 的 range 一秒可送出 100 多笔 input；画面最多只显示 60/120 格。
+       同一显示帧只提交最后一笔，避免 React 依序重画已经过期的中间值。 */
+    queueInteraction(() => setFloatingImages(prev =>
+      prev.map(f => (f.id === id ? { ...f, ...patch } : f))));
   };
 
   const handleAddLayoutToPage = (pageIdx: number, templateIdx = 0, count = 4) => {
@@ -12348,7 +12443,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           applyCellZoom(g.cellIdx, Math.max(1.0, Math.min(5.0, g.baseZoom * k)));
         }
       } else if (g.mode === 'drag' && e.touches.length === 1) {
-        if (!selectionDragging) setSelectionDragging(true);
+        const firstDragFrame = !selectionDraggingRef.current;
+        if (firstDragFrame) {
+          selectionDraggingRef.current = true;
+          setSelectionDragging(true);
+        }
         // 手指是螢幕像素、物件座標是內容單位：除以畫布倍率，
         // 縮小預覽時拖東西才不會變得又慢又不跟手
         const kd = kRef.current || 1;
@@ -12379,6 +12478,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const py = ry > 0.5 ? cl((g.baseShapeY || 0) + ly / ry) : (g.baseShapeY || 0);
             queueInteraction(() => setFloatingImages(prev => prev.map(img =>
               img.id === g.floatingId ? { ...img, imgShapeX: px, imgShapeY: py } : img)));
+            if (firstDragFrame) flushInteractionNow();
             return;
           }
           if (selectedImg) {
@@ -12396,6 +12496,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 img.id === g.floatingId ? { ...img, x: snappedX, y: snappedY } : img
               ));
             });
+            if (firstDragFrame) flushInteractionNow();
           }
         } else if (g.kind === 'layout') {
           moveLayoutTo(g.baseX + dx, g.baseY + dy);
@@ -12436,6 +12537,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     flushInteractionNow();
     if (!e || e.touches.length === 0) wsTouchTargetRef.current = null;
     setSelectionDragging(false);
+    selectionDraggingRef.current = false;
     setPinchFloatingId(null);
     // 手指全部離開了，下一次手勢才能重新決定是捲頁還是縮放
     panMovedRef.current = false;
@@ -12490,6 +12592,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       timer = window.setTimeout(() => {
         flushInteractionNow();
         setSelectionDragging(false);
+        selectionDraggingRef.current = false;
         setPinchFloatingId(null);
         setActiveGuidelines([]);
         setActiveCollisions({ left: false, right: false, top: false, bottom: false });
@@ -15295,6 +15398,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         hideToolbar={pinchFloatingId === fImg.id || (selectionDragging && selectedFloatingId === fImg.id)}
                         hideChrome={(tuningEdge || selectionDragging || pinchFloatingId === fImg.id) && selectedFloatingId === fImg.id}
                         gestureRendering={pinchFloatingId === fImg.id && (!!fImg.shape || fImg.text !== undefined)}
+                        liveTuning={vectorTuningId === fImg.id}
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}
                         lutRevision={lutRevision}
@@ -16144,9 +16248,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               if (layer.text !== undefined) {
                 return (
                   <TextEditorPanel
+                    key={`text-editor-${layer.id}`}
                     layer={layer}
                     symbol={!!layer.sym}
                     onChange={patch => patchTextLayer(layer.id, withGlowInit(layer, patch))}
+                    onTuningChange={active => {
+                      if (!active) flushInteractionNow();
+                      setVectorTuningId(active ? layer.id : null);
+                    }}
                   />
                 );
               }
@@ -16155,8 +16264,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               if (layer.shape) {
                 return (
                   <ShapeEditorPanel
+                    key={`shape-editor-${layer.id}`}
                     layer={layer}
                     onChange={patch => patchTextLayer(layer.id, withGlowInit(layer, patch))}
+                    onTuningChange={active => {
+                      if (!active) flushInteractionNow();
+                      setVectorTuningId(active ? layer.id : null);
+                    }}
                   />
                 );
               }
