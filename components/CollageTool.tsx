@@ -1131,8 +1131,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     obj: (o: any, i: number) => MoFrame & { fx: number };
   } | null>(null);
   const [holeCount, setHoleCount] = useState(11);
-  /** 滿版本身沒有遮罩圖案，但數量欄不能被重設成 0；離開滿版時精準還原。 */
-  const holeCountBeforeFullRef = useRef(11);
   const [holes, setHoles] = useState<any[]>([]); 
   /* 浮動物件：疊在拼圖最上層的圖片與文字。
      跟「挖洞」完全分開 —— 洞是把遮罩打穿，這些是貼上去的圖層。
@@ -2433,8 +2431,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      （換排版走 'none'：排版與圖案是同一個動作，交給下面那個防抖的
        env 監看器一起記成「一格」，不然一次操作會佔掉兩格上一步） */
   const generateRandomHoles = useCallback((isInitial: boolean = false, layoutOverride?: string,
-                                           record: 'reset' | 'push' | 'none' = isInitial ? 'reset' : 'push',
-                                           countOverride?: number) => {
+                                           record: 'reset' | 'push' | 'none' = isInitial ? 'reset' : 'push') => {
     if (!imageState) return;
     const { baseW, baseH, globalScale: gs } = imageState;
     const mappedHoleSize = 25 + (holeSize / 100) * 125;
@@ -2456,8 +2453,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const fieldH = around ? geo.mh : geo.ih;
 
     const newHoles = [];
-    const count = countOverride ?? holeCount;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < holeCount; i++) {
       let att = 0, valid = false, hx = 0, hy = 0;
       while (!valid && att < 500) {
         hx = p + Math.random() * (fieldW - p * 2); hy = p + Math.random() * (fieldH - p * 2); valid = true;
@@ -2468,11 +2464,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         id: Math.random().toString(36).substr(2, 9), x: hx, y: hy,
         randomFactor: Math.random() * 2 - 1, randomNumber: Math.floor(Math.random() * 10),
         /* 對稱關閉時不再全部堆在圖片上 —— 兩邊隨機各半，遮罩上也會有圖案 */
-        /* 滿版沒有遮罩側，八顆圖案全部屬於底圖；不能沿用隨機 image/mask，
-           否則資料裡雖然是 8，實際最多只看得到其中一半。 */
-        side: lay === FULL
-          ? 'image'
-          : around ? 'mask' : (symmetryEnabled ? 'both' : (Math.random() < 0.5 ? 'image' : 'mask')),
+        side: around ? 'mask' : (symmetryEnabled ? 'both' : (Math.random() < 0.5 ? 'image' : 'mask')),
       });
     }
     setHoles(newHoles);
@@ -2956,9 +2948,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (!imageState || !canvasRef.current) return;
-    /* 手指一落下就暫停背景濾鏡／縮圖工作，不要等第一個 move 才暫停；
-       否則排隊中的同步工作剛好撞上拖曳首幀，之後每一幀反而都正常。 */
-    deferHeavyWork();
     /* 動畫頁是「純預覽」：這時候元素都在動，點下去等於在動畫的某一格上
        抓東西，位置根本對不上。所以整片工作區都不接手勢。 */
     if (motionLockRef.current) return;
@@ -2976,8 +2965,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     } catch (err) {
       // Just ignore if capture fails, some environments are strict
     }
-    /* activePointers 全部都在 ref 裡使用，不需要為了「記住按下」就同步重畫
-       整個編輯器。iPhone 第一次拖圖片的第一幀卡頓，正是這次無效重畫。 */
+    setForceRender(p => p + 1);
     
     const rect = canvasRef.current.getBoundingClientRect();
     if (!rect || !rect.width || !rect.height) return;
@@ -3068,8 +3056,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             /* 已經選中的再點一次 → 進編輯頁（跟經典拼圖同樣的手感）；這一下也可以拖。
                但正在調動態時不換頁 —— 那邊本來就是「一邊看預覽一邊調」，
                被踢去編輯頁反而要一直切回來。 */
-            /* 進編輯面板一定要等到放開、而且確認沒有拖動才做。原本 pointerdown
-               就切頁，等於每次開始拖都先重建下方整個面板，第一幀必然卡住。 */
+            setActiveTab(t => (t === 'motion' ? t : 'objedit'));
             /* 文字／符號：再點一次就直接在畫布上改字。
                但要等到「放開」才真的打開輸入框 —— 在按下去的當下就開的話，
                輸入框一冒出來就自動聚焦，接著同一下的放開又落在畫布上，
@@ -3080,7 +3067,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               /* 只有一般文字可以點進去改字；符號的內容是固定的，
                  再點一次不進入編輯（所以也不會有剪下／複製／貼上）。 */
               moved: false, editIfTap: o.type === 'text' && !o.sym,
-              openPanelIfTap: true,
               /* 圖片有形狀、而且這一下**點在圖案裡面**，放開沒拖動就進到「選中形狀」。
                  一定要判斷「在圖案裡面」：只看方框的話，點愛心旁邊那塊空白角落
                  會變成「按下去先退出、放開又立刻進去」，等於永遠退不出來。
@@ -3088,8 +3074,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  變成在調形狀裡的位置。 */
               shapeIfTap: !!o.img && isImgShaped(o.imgShape) && hitShapeOf(o, x, y),
             };
-            objDraggingRef.current = true;
-            setObjDragging(true);
             return;
           }
           const cur0 = selId ? list.find(z => z.id === selId) : null;
@@ -3102,8 +3086,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               id: cur0.id, startX: x, startY: y, ox: cur0.x, oy: cur0.y,
               selectOnly: true, pickId: o.id, moved: false,
             };
-            objDraggingRef.current = true;
-            setObjDragging(true);
             return;
           }
           /* 什麼都還沒選：這一下只能「點選」，不能順手拖走。
@@ -3116,7 +3098,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
         // 有沒有點到圖案（圖案疊在 below 物件之上）
         let holeUnder = false;
-        for (let i = holesRef.current.length - 1; i >= 0; i--) {
+        if (layout !== FULL) for (let i = holesRef.current.length - 1; i >= 0; i--) {
           if (checkHitHole(x, y, holesRef.current[i], gs, offs, clickedSide)) { holeUnder = true; break; }
         }
         if (!holeUnder) {
@@ -3130,8 +3112,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           e.stopPropagation();
           // fromBlank：這一下沒點在物件身上。放開時若完全沒移動，就當成「點旁邊」取消選取。
           objDragRef.current = { id: cur.id, startX: x, startY: y, ox: cur.x, oy: cur.y, fromBlank: true, moved: false };
-          objDraggingRef.current = true;
-          setObjDragging(true);
           return;
         }
       }
@@ -3206,7 +3186,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
 
       let hitHole = null;
-      for (let i = holesRef.current.length - 1; i >= 0; i--) {
+      if (layout !== FULL) for (let i = holesRef.current.length - 1; i >= 0; i--) {
         const h = holesRef.current[i];
         if (checkHitHole(x, y, h, gs, offs, clickedSide)) { hitHole = h; break; }
       }
@@ -3398,59 +3378,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const horizontal = d.side === 'l' || d.side === 'r';
     const signed = horizontal ? (d.side === 'r' ? lx : -lx) : (d.side === 'b' ? ly : -ly);
     const oldCx = d.x + d.w / 2, oldCy = d.y + d.h / 2;
-    const geometryAt = (size: number) => {
-      if (horizontal) {
-        const w = Math.max(24, size);
-        const shift = (w - d.w) / 2 * (d.side === 'r' ? 1 : -1);
-        const cx = oldCx + shift * Math.cos(d.rot), cy = oldCy + shift * Math.sin(d.rot);
-        return { w, h: d.h, x: cx - w / 2, y: cy - d.h / 2 };
-      }
-      const h = Math.max(24, size);
+    let next: any;
+    if (horizontal) {
+      const w = Math.max(24, d.w + signed);
+      const shift = (w - d.w) / 2 * (d.side === 'r' ? 1 : -1);
+      const cx = oldCx + shift * Math.cos(d.rot), cy = oldCy + shift * Math.sin(d.rot);
+      next = { w, h: d.h, x: cx - w / 2, y: cy - d.h / 2 };
+    } else {
+      const h = Math.max(24, d.h + signed);
       const shift = (h - d.h) / 2 * (d.side === 'b' ? 1 : -1);
       const cx = oldCx - shift * Math.sin(d.rot), cy = oldCy + shift * Math.cos(d.rot);
-      return { w: d.w, h, x: cx - d.w / 2, y: cy - h / 2 };
-    };
-    let next: any = geometryAt(horizontal ? d.w + signed : d.h + signed);
-    let nextGuides: any[] = [];
-    /* 擠壓只吸附最外框與圖片／遮罩交界，不跟其他物件互吸。用「尺寸再加 1」
-       算邊界的導數，再反解剛好貼線的尺寸；因此被拖的邊會吸過去，對邊支點
-       完全不動，旋轉過的物件也使用同一套精確幾何。 */
-    const offs = getLayoutOffsetsRef.current?.();
-    if (offs && enableSnappingRef.current) {
-      const bounds = (g: any) => {
-        const a = aabbOf(g.w, g.h, d.rot * 180 / Math.PI);
-        const cx = g.x + g.w / 2, cy = g.y + g.h / 2;
-        return { l: cx - a.bw / 2, r: cx + a.bw / 2, t: cy - a.bh / 2, b: cy + a.bh / 2 };
-      };
-      const q = horizontal ? next.w : next.h;
-      const b0 = bounds(next), b1 = bounds(geometryAt(q + 1));
-      const choices = [
-        { axis: 'x', at: b0.l, dv: b1.l - b0.l }, { axis: 'x', at: b0.r, dv: b1.r - b0.r },
-        { axis: 'y', at: b0.t, dv: b1.t - b0.t }, { axis: 'y', at: b0.b, dv: b1.b - b0.b },
-      ].filter(z => Math.abs(z.dv) > 1e-5)
-        .sort((a, b) => Math.abs(b.dv) - Math.abs(a.dv));
-      const moving = choices[0];
-      if (moving) {
-        const seams = seamLinesRef.current();
-        const lines = moving.axis === 'x' ? [0, offs.cw, ...seams.xs] : [0, offs.ch, ...seams.ys];
-        const threshold = 4 / Math.max(0.001, d.k);
-        const line = lines.slice().sort((a, b) => Math.abs(a - moving.at) - Math.abs(b - moving.at))[0];
-        if (line !== undefined && Math.abs(line - moving.at) < threshold) {
-          const snapQ = q + (line - moving.at) / moving.dv;
-          if (snapQ >= 24) {
-            next = geometryAt(snapQ);
-            nextGuides = [moving.axis === 'x' ? { x: line } : { y: line }];
-          }
-        }
-      }
+      next = { w: d.w, h, x: cx - d.w / 2, y: cy - h / 2 };
     }
     // 高更新率觸控一個畫面幀可能送數筆事件；只提交該幀最後的位置，避免
     // React 排隊重畫過期的中間尺寸而造成物件與固定邊來回抖動。
-    guidesRef.current = nextGuides;
-    queueMove(() => {
-      setGuides(nextGuides);
-      setObjects(prev => prev.map(o => o.id === d.id ? { ...o, ...next } : o));
-    });
+    queueMove(() => setObjects(prev => prev.map(o => o.id === d.id ? { ...o, ...next } : o)));
   };
   const endObjStretch = (e: React.PointerEvent) => {
     if (objStretchRef.current?.pointerId !== e.pointerId) return;
@@ -3458,8 +3400,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     flushMoveNow();
     objStretchRef.current = null;
     setObjStretching(false);
-    guidesRef.current = [];
-    setGuides([]);
   };
 
   /* ---- 預覽縮放 ------------------------------------------------------------
@@ -3932,9 +3872,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (objDragRef.current?.editIfTap && !objDragRef.current.moved) {
       textOpenAtRef.current = performance.now();
       setEditingTextId(objDragRef.current.id);
-    }
-    if (objDragRef.current?.openPanelIfTap && !objDragRef.current.moved) {
-      setActiveTab(t => (t === 'motion' ? t : 'objedit'));
     }
     // 已選中的圖片再點一下（沒有拖動）→ 進到「選中形狀」
     if (objDragRef.current?.shapeIfTap && !objDragRef.current.moved) {
@@ -5945,12 +5882,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
 
     if (layout === FULL) {
-      /* 滿版本身沒有遮罩區，但仍保留「圖案」層。圖案直接使用圖片側既有
-         的同一支繪製器覆在底圖上，數量、位置、動畫、發光與其他排版一致；
-         只是不再建立或顯示任何遮罩色塊。 */
+      /* 滿版只保留底圖與使用者另外加入的物件；遮罩、紋理、圖案及連線
+         全部不進繪製流程，確保不是把遮罩設透明來假裝滿版。 */
       drawCentreImage();
       drawObjects(belowObjs);
-      drawImageSideHoles();
     } else if (layout === AROUND) {
       drawBackdrop();
       drawMaskLayer();
@@ -7276,6 +7211,39 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      所以要讓開的高度 ＝ 12（下） ＋ 播放列高度 ＋ 12（上）。 */
   const MOTION_CLEAR = 12 + 54 + 12;
   const motionUiOn = activeTab === 'motion' && !!imageState;
+  const randomButtonRef = useRef<HTMLDivElement>(null);
+  /* 重置／隨機鍵仍待在畫布右下角，但優先放到圖片外側；空間不足時只讓按鈕
+     約三分之一壓住角落，不再整顆蓋住圖片。直接量實際 canvas，比例與縮放皆正確。 */
+  useLayoutEffect(() => {
+    const btn = randomButtonRef.current;
+    const cv = canvasRef.current;
+    const parent = btn?.offsetParent as HTMLElement | null;
+    if (!btn || !cv || !parent || !imageState) return;
+    const place = () => {
+      const pr = parent.getBoundingClientRect();
+      const cr = cv.getBoundingClientRect();
+      const bw = btn.offsetWidth || 44, bh = btn.offsetHeight || 44, gap = 8;
+      const roomRight = pr.right - cr.right;
+      const roomBottom = pr.bottom - cr.bottom;
+      let x: number, y: number;
+      if (roomRight >= bw + gap) {
+        x = cr.right - pr.left + gap;
+        y = cr.bottom - pr.top - bh;
+      } else if (roomBottom >= bh + gap) {
+        x = cr.right - pr.left - bw;
+        y = cr.bottom - pr.top + gap;
+      } else {
+        x = cr.right - pr.left - bw * .34;
+        y = cr.bottom - pr.top - bh * .34;
+      }
+      btn.style.left = `${Math.max(6, Math.min(pr.width - bw - 6, x))}px`;
+      btn.style.top = `${Math.max(6, Math.min(pr.height - bh - 6, y))}px`;
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(parent); ro.observe(cv);
+    return () => ro.disconnect();
+  }, [imageState, viewT.k, viewT.tx, viewT.ty, activeTab]);
   const { mLift, mScale } = (() => {
     if (!motionUiOn || !baseCss || !stageSize.h) return { mLift: 0, mScale: 1 };
     const Hc = baseCss.h * viewT.k;                    // 圖在畫面上的高度
@@ -8173,14 +8141,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
         {imageState && (
           <div
-            className="absolute right-6 z-[60]"
+            ref={randomButtonRef}
+            className="absolute z-[60]"
             /* 動畫頁時往上讓開播放列，並跟著圖片一起平滑移動。
                鍵盤叫出來時整顆淡掉（打字時不需要它，而且會擋到）。 */
             style={{
-              bottom: motionUiOn ? 86 : 24,
               opacity: kbInset ? 0 : 1,
               pointerEvents: kbInset ? 'none' : undefined,
-              transition: `bottom 420ms ${MOTION_EASE}, opacity 220ms ease-out`,
+              transition: `left 180ms ${MOTION_EASE}, top 180ms ${MOTION_EASE}, opacity 220ms ease-out`,
             }}
             onPointerDown={(e) => e.stopPropagation()}
           >
@@ -8398,14 +8366,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       {[FULL, 'mask-bottom', 'mask-top', 'mask-left', 'mask-right', AROUND].map(t => (
                         <button key={t} onClick={() => {
                           if (t === layout) return;
-                          const leavingFull = layout === FULL && t !== FULL;
-                          const restoredCount = leavingFull ? holeCountBeforeFullRef.current : holeCount;
-                          if (t === FULL) {
-                            holeCountBeforeFullRef.current = holeCount;
-                            setHoleCount(8);
-                          } else if (leavingFull) {
-                            setHoleCount(restoredCount);
-                          }
                           // 排版、比例、圖案在同一批更新裡一起換，中間不會露出半舊半新的那一格
                           setLayout(t);
                           if (t === AROUND) setMaskScale(AROUND_SCALE);
@@ -8421,15 +8381,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           if (t === AROUND && layout !== AROUND) setHoleSize(v => Math.min(100, v + 10));
                           else if (t !== AROUND && layout === AROUND) setHoleSize(v => Math.max(0, v - 10));
                           setSelectedTarget(null);
-                          /* 滿版同樣要真的建立八顆圖案，而不是只把數字改成 8。
-                             其他排版仍恢復進滿版前的數量。 */
-                          /* holeCount 從別的數字改成 8 時，下方既有 effect 會在同一
-                             次 commit 後重灑；這裡不能再先灑一次，否則使用者會
-                             看見圖案出現後又跳位。原本就已是 8 才由按鈕直接建立。 */
-                          const desiredCount = t === FULL ? 8 : restoredCount;
-                          if (holeCount === desiredCount) {
-                            generateRandomHoles(true, t, 'none', desiredCount);
-                          }
+                          if (t !== FULL) generateRandomHoles(true, t, 'none');
                         }} className="focus:outline-none" aria-label={t === FULL ? '滿版' : `遮罩排版 ${t}`} title={t === FULL ? '滿版' : undefined}>
                           <LayoutIcon type={t} active={layout === t} />
                         </button>

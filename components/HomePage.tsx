@@ -12,6 +12,10 @@ import { loadAvatar, saveAvatarFromFile, removeAvatar } from '../utils/avatar';
 const CONTACT_EMAIL = 'chi888969930522@gmail.com';
 const CONTACT_IG = 'abai_is.perfect';
 const CONTACT_IG_URL = 'https://www.instagram.com/abai_is.perfect/';
+/* 只留 1px 讓 iOS 維持真正可捲動的內層容器。舊版 24px guard 一旦 Safari
+   的合成捲動比 JS 快一幀，這 24px 本身就會被露出，看起來正是頂部被多拉
+   下來再彈回去。現在 guard 肉眼不可見，慣性由 onScroll 在到達它之前終止。 */
+const HOME_TOP_SCROLL_GUARD = 1;
 
 interface HomePageProps {
   onOpenCamera: () => void;
@@ -189,6 +193,9 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
   const scrollRef = useRef<HTMLDivElement>(null);
+  const guardedHomeScroll = typeof window !== 'undefined'
+    && (window.matchMedia?.('(pointer: coarse)').matches || window.innerWidth < 768);
+  const homeTop = guardedHomeScroll ? HOME_TOP_SCROLL_GUARD : 0;
   const libRef = useRef<HTMLDivElement>(null);
   /** 模板那一段的「排版盒」（外層，不會動）—— 量位置要看它，不能看會位移的那層 */
   const libBoxRef = useRef<HTMLDivElement>(null);
@@ -490,7 +497,7 @@ export const HomePage: React.FC<HomePageProps> = ({
        這樣點模板只會看到橫向切頁，不會先露出修圖頁再往下滑一整段。 */
     if (fromMe && id !== 'me' && sc) {
       navLockRef.current = id;
-      sc.scrollTop = id === 'lib' ? libScrollTop(sc) : 0;
+      sc.scrollTop = id === 'lib' ? libScrollTop(sc) : homeTop;
       applyRef.current();
     }
 
@@ -500,7 +507,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (fromMe) return;
 
     navLockRef.current = id;
-    const target = id === 'lib' ? libScrollTop(sc) : 0;
+    const target = id === 'lib' ? libScrollTop(sc) : homeTop;
     let reduce = false;
     try { reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch {}
 
@@ -511,7 +518,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       if (reduce) applyRef.current();
     };
     run();
-  }, [nav]);
+  }, [nav, homeTop]);
 
   /* 使用者自己碰捲軸就立刻解鎖 */
   const releaseNavLock = useCallback(() => { navLockRef.current = null; }, []);
@@ -520,42 +527,87 @@ export const HomePage: React.FC<HomePageProps> = ({
       主視覺不用在這裡動 —— 它現在就在捲動內容裡，瀏覽器自己會捲，
       跟品牌字與其他東西完全同一拍。捲過第一屏它就自然離開畫面了，
       所以也不需要再淡出。 */
-  /* ── 到頂／到底就不要再拖 ────────────────────────────────────────
-     只在手勢本來就從邊界開始時攔住向外拖曳；中途的原生慣性完全交回 WebKit，
-     避免用 JS 模擬捲動造成快速回頂時的位移與回彈。 */
+  /* ── iOS 首頁無回彈捲動 ───────────────────────────────────────────
+     Safari／Home Screen PWA 沒有公開關閉 UIScrollView rubber-band 的可靠開關；
+     overscroll-behavior 在部分 iOS 情況仍會回彈。手機首頁因此由這裡接管「垂直」
+     手勢：位置硬限制在內容邊界內，放手後使用 rAF 延續慣性。水平手勢完全放行，
+     為您推薦等橫向列表仍由原生捲動。這樣不必在頂部藏 spacer，也不會有被拉出來
+     再彈回去的畫面。 */
   useEffect(() => {
     const sc = scrollRef.current;
-    if (!sc) return;
-    let y0 = 0, atTop = false, atBottom = false, armed = false;
-    const block = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      const dy = (e.touches[0]?.clientY ?? 0) - y0;
-      if ((atTop && dy > 0) || (atBottom && dy < 0)) e.preventDefault();
-    };
-    const disarm = () => {
-      if (!armed) return;
-      armed = false;
-      sc.removeEventListener('touchmove', block as any);
+    if (!sc || !guardedHomeScroll) return;
+    let inertia = 0;
+    let gesture: null | {
+      x: number; y: number; startScroll: number; lastY: number; lastT: number;
+      velocity: number; axis: 'pending' | 'x' | 'y';
+    } = null;
+    const stop = () => {
+      if (inertia) cancelAnimationFrame(inertia);
+      inertia = 0;
     };
     const down = (e: TouchEvent) => {
-      y0 = e.touches[0]?.clientY ?? 0;
-      atTop = sc.scrollTop <= 0;
-      atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
-      if (atTop || atBottom) {
-        armed = true;
-        sc.addEventListener('touchmove', block, { passive: false });
+      stop();
+      if (e.touches.length !== 1) { gesture = null; return; }
+      const t = e.touches[0];
+      gesture = {
+        x: t.clientX, y: t.clientY, startScroll: sc.scrollTop,
+        lastY: t.clientY, lastT: performance.now(), velocity: 0, axis: 'pending',
+      };
+    };
+    const move = (e: TouchEvent) => {
+      if (!gesture || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const dx = t.clientX - gesture.x;
+      const dy = t.clientY - gesture.y;
+      if (gesture.axis === 'pending' && Math.max(Math.abs(dx), Math.abs(dy)) >= 3) {
+        gesture.axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
       }
+      if (gesture.axis !== 'y') return;
+      if (e.cancelable) e.preventDefault();
+      const max = Math.max(homeTop, sc.scrollHeight - sc.clientHeight);
+      const next = Math.max(homeTop, Math.min(max, gesture.startScroll - dy));
+      const now = performance.now();
+      const dt = Math.max(1, now - gesture.lastT);
+      const sample = (gesture.lastY - t.clientY) / dt;
+      gesture.velocity = gesture.velocity * .68 + sample * .32;
+      gesture.lastY = t.clientY;
+      gesture.lastT = now;
+      sc.scrollTop = next;
     };
+    const finish = (cancelled = false) => {
+      const g = gesture;
+      gesture = null;
+      if (!g || cancelled || g.axis !== 'y') return;
+      let v = Math.max(-3.2, Math.min(3.2, g.velocity));
+      let pos = sc.scrollTop;
+      let before = performance.now();
+      const tick = (now: number) => {
+        const dt = Math.min(32, Math.max(1, now - before));
+        before = now;
+        const max = Math.max(homeTop, sc.scrollHeight - sc.clientHeight);
+        const raw = pos + v * dt;
+        pos = Math.max(homeTop, Math.min(max, raw));
+        sc.scrollTop = pos;
+        v *= Math.pow(.96, dt / 16.667);
+        if (Math.abs(v) < .012 || pos !== raw) { inertia = 0; return; }
+        inertia = requestAnimationFrame(tick);
+      };
+      if (Math.abs(v) >= .012) inertia = requestAnimationFrame(tick);
+    };
+    const up = () => finish(false);
+    const cancel = () => finish(true);
     sc.addEventListener('touchstart', down, { passive: true });
-    sc.addEventListener('touchend', disarm, { passive: true });
-    sc.addEventListener('touchcancel', disarm, { passive: true });
+    sc.addEventListener('touchmove', move, { passive: false });
+    sc.addEventListener('touchend', up, { passive: true });
+    sc.addEventListener('touchcancel', cancel, { passive: true });
     return () => {
-      disarm();
+      stop();
       sc.removeEventListener('touchstart', down);
-      sc.removeEventListener('touchend', disarm);
-      sc.removeEventListener('touchcancel', disarm);
+      sc.removeEventListener('touchmove', move);
+      sc.removeEventListener('touchend', up);
+      sc.removeEventListener('touchcancel', cancel);
     };
-  }, []);
+  }, [homeTop, guardedHomeScroll]);
 
   /* ── 往下滑的視差 ────────────────────────────────────────────────
      模板那一段照捲軸原速往上，修圖這一屏只走 45% 的速度 ——
@@ -578,10 +630,13 @@ export const HomePage: React.FC<HomePageProps> = ({
   const reduceMotion = useRef(false);
   useEffect(() => {
     try {
-      cssTimeline.current = typeof CSS !== 'undefined' && CSS.supports('animation-timeline: scroll()');
+      /* 手機走下面逐幀讀值的版本，才能扣掉頂部 guard；桌面仍使用原生
+         scroll timeline，兩邊的視覺曲線相同。 */
+      cssTimeline.current = !guardedHomeScroll
+        && typeof CSS !== 'undefined' && CSS.supports('animation-timeline: scroll()');
       reduceMotion.current = matchMedia('(prefers-reduced-motion: reduce)').matches;
     } catch { /* 舊瀏覽器 */ }
-  }, []);
+  }, [guardedHomeScroll]);
 
   /** 把「一屏有多高」寫給 CSS 動畫用。值沒變就不要寫 ——
       改動這個變數會讓兩支捲動動畫重新計算範圍，能省就省。 */
@@ -638,7 +693,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     const h = sc.clientHeight || 1;
     // 夾在 0～可捲上限之間：iOS 橡皮筋期間讀到的值可能超出範圍，
     // 直接拿去算會讓圖案往回彈一下。
-    const y = Math.max(0, sc.scrollTop);
+    const y = Math.max(0, sc.scrollTop - homeTop);
     /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。
        0.55＝修圖那一屏走 45% 的速度。試過 0.26（走 74%，太淡看不出視差）
        跟 0.70（走 30%，太重），0.55 是兩者中間。
@@ -679,7 +734,7 @@ export const HomePage: React.FC<HomePageProps> = ({
        整段都留著（透明度 0）合成層就一直在，沒有那一格。
        透明度 0 的層不必畫內容，成本可以忽略；擋點擊已經由 pointer-events 做了。 */
     if (el.style.visibility) el.style.visibility = '';
-  }, []);
+  }, [homeTop]);
   applyRef.current = applyParallax;
 
   /* ── JS 版專用：捲動期間改用每一格自己去讀捲動位置 ──────────────────
@@ -712,6 +767,13 @@ export const HomePage: React.FC<HomePageProps> = ({
     if (pumpRaf.current != null) cancelAnimationFrame(pumpRaf.current);
     if (pumpIdle.current) clearTimeout(pumpIdle.current);
   }, []);
+
+  /* guard 的 padding 與 scrollTop 在繪製前同時套上，所以首頁內容仍精準留在
+     原本的 y=0；使用者不會看到先下移 24px 再歸位的第一幀。 */
+  useLayoutEffect(() => {
+    const sc = scrollRef.current;
+    if (sc && homeTop && sc.scrollTop < homeTop) sc.scrollTop = homeTop;
+  }, [homeTop]);
 
   /* 只在「第一次畫出來」與「尺寸變了」時重算。
      原本連分頁切換也重算 —— 那會在剛滑到頂的那一刻多寫一次 CSS 變數，
@@ -747,6 +809,11 @@ export const HomePage: React.FC<HomePageProps> = ({
   useEffect(() => () => { if (scrollIdle.current) clearTimeout(scrollIdle.current); }, []);
 
   const onScroll = useCallback(() => {
+    const sc = scrollRef.current;
+    if (!sc) return;
+    /* iOS 偶爾會在手指放開後才把慣性橡皮筋套進來；觸控事件已結束時
+       touchmove 攔不到，因此在 scroll 的第一格把負值立即歸零。 */
+    if (sc.scrollTop < homeTop) sc.scrollTop = homeTop;
     // 標記「現在正在捲」，這段時間內不准改動任何會影響幾何的 CSS 變數
     scrollingUntil.current = performance.now() + 260;
     if (scrollIdle.current) clearTimeout(scrollIdle.current);
@@ -758,10 +825,8 @@ export const HomePage: React.FC<HomePageProps> = ({
        下一個畫面更新才會反映，等於固定慢一格。 */
     applyParallax();
     kickPump();
-    const sc = scrollRef.current;
-    if (!sc) return;
     if (navRef.current === 'me') return;
-    const next = sc.scrollTop >= navThresh(sc) ? 'lib' : 'home';
+    const next = sc.scrollTop - homeTop >= navThresh(sc) ? 'lib' : 'home';
     // 捲動途中不要跟著跳，捲到目標了才解鎖交還控制權
     if (navLockRef.current) {
       if (next === navLockRef.current) navLockRef.current = null;
@@ -773,7 +838,7 @@ export const HomePage: React.FC<HomePageProps> = ({
        就是它。門檻本身是個確定的位置，越過去的那一格就該亮。 */
     if (next === navRef.current) return;
     setNav(next);
-  }, [kickPump, applyParallax, syncRange]);
+  }, [kickPump, applyParallax, syncRange, homeTop]);
 
   const copyEmail = async () => {
     try {
@@ -1196,8 +1261,12 @@ export const HomePage: React.FC<HomePageProps> = ({
           transition: 'transform 560ms cubic-bezier(0.22,1,0.36,1)',
           willChange: 'transform',
         }}
-        className={`home-scroll no-scrollbar absolute inset-0 z-[5] overflow-y-auto box-border pb-[21px] ${nav === 'me' ? 'pointer-events-none' : ''}`}
+        className={`home-scroll ${homeTop ? 'home-scroll-guarded' : ''} no-scrollbar absolute inset-0 z-[5] overflow-y-auto box-border pb-[21px] ${nav === 'me' ? 'pointer-events-none' : ''}`}
       >
+      {/* 真機專用的慣性緩衝是捲動內容，不是 padding：padding 會壓縮 h-full 的
+          首頁首屏，讓所有東西位置改變。現在 scrollTop 與這個 spacer 同為 1px，
+          視覺座標完全抵銷，首屏高度與修改前逐像素一致。 */}
+      {homeTop > 0 && <div aria-hidden className="shrink-0" style={{ height: homeTop }} />}
       {/* 這一疊是靠上半屏的 flex-1 撐著、貼著下緣排的，底部留白加大就等於整組一起往上。
            用 min-h 而不是 h：矮的機型內容會比這個高度還高，寫死高度會被切掉；
            撐開的話最多就是搜尋欄再往下一點，反正它本來就要在第一屏外面。 */}
