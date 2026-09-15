@@ -69,6 +69,7 @@ import { SaveButton } from './SaveButton';
 import type { ExitChoice } from '../types';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
+import { preferredVideoFrameRate } from '../utils/videoFrameRate';
 
 /** 四周包圍：遮罩把原圖整圈包起來 */
 const AROUND = 'mask-around';
@@ -740,6 +741,10 @@ export const IDLE_KINDS: { id: string; name: string }[] = [
   { id: 'jitter', name: '抖動' },
 ];
 const GRID_IDLE_KINDS = IDLE_KINDS;
+/* 圖案是一群遮罩圖案，不再提供位置波浪；改成每顆各自錯開時間的透明度呼吸。 */
+const PATTERN_IDLE_KINDS = IDLE_KINDS.map(k =>
+  k.id === 'grid-wave' ? { id: 'pattern-breathe', name: '呼吸' } : k
+);
 const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'grid-wave').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 /* 一般文字不再提供旋轉，原位置換成符號同款的縮放 II。 */
 const TEXT_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'spin')
@@ -4296,7 +4301,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          一條一條橫向接縫。每顆圖案本來就是獨立單位，直接依它在遮罩中的
          x 位置做同一條連續正弦位移，視覺仍是由左到右的波浪，同時完全
          避免 Safari 動畫格上的切片縫與鋸齒。 */
-      const shapeMo = moShapeCfgRef.current;
+      const rawShapeMo = moShapeCfgRef.current;
+      /* 舊草稿曾經選過圖案波浪時直接遷移成呼吸，不讓已儲存專案又跑回舊效果。 */
+      const shapeMo = rawShapeMo.idle === 'grid-wave'
+        ? { ...rawShapeMo, idle: 'pattern-breathe' }
+        : rawShapeMo;
       /* 常駐波浪是一整群小圖案共用的同一條時間軸。以前 composeMo 為每顆
          圖案加入 hash phase，加上每顆進場結束時間不同，結果相鄰兩顆也在
          不同波形上，看起來像亂飄。現在只讓 x 位置決定波峰／波谷；每顆仍
@@ -4320,8 +4329,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           * Math.min(10, base * 0.065)
           * Math.max(0.15, (moShapeAmpRef.current ?? 50) / 100)
           * waveMix;
+      /* 呼吸只改透明度，不位移、不縮放輪廓。每顆以 id 取得固定相位與些微
+         不同節奏，畫面每次重播都一致，但相鄰圖案不會一起亮滅。交棒前
+         0.72 秒由全亮平滑接入，第一幀和進場最後一幀完全相同。 */
+      let patternAlpha = 1;
+      if (shapeMo.idle === 'pattern-breathe' && f.idleT !== undefined) {
+        const phase = (hashId(h.id) % 10000) / 10000 * Math.PI * 2;
+        const rate = 0.84 + ((hashId(`${h.id}:breath`) % 1000) / 1000) * 0.32;
+        const cycle = Math.max(0.35, shapeMo.speed) * 1.75 * rate;
+        const pulse = (Math.sin(f.idleT * cycle + phase - Math.PI / 2) + 1) / 2;
+        const strength = Math.max(0, Math.min(1, shapeMo.amp / 100));
+        const attackP = Math.max(0, Math.min(1, f.idleT / 0.72));
+        const attack = attackP * attackP * (3 - 2 * attackP);
+        patternAlpha = 1 + ((1 - strength * (1 - pulse)) - 1) * attack;
+      }
       return {
-        k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base + waveY, rot: f.rot, a: f.a, fx: f.fx,
+        k: f.k, x: h.x + f.dx * base, y: h.y + f.dy * base + waveY, rot: f.rot, a: f.a * patternAlpha, fx: f.fx,
         burst: f.burst || 0,
         // 放射線還在的時候，就算圖案本身還沒亮起來也要留著這一格
         on: (f.k > 0.002 && f.a > 0.004) || (f.burst || 0) > 0.01,
@@ -6689,7 +6712,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 圖案是一群，進場要在 moShape.dur 之內一顆一顆錯開
     const POP = Math.min(0.5, moShape.dur * 0.45);
     const stepH = nHole > 1 ? Math.max(0, (moShape.dur - POP) / (nHole - 1)) : 0;
-    const shapeCfg = (i: number): MoCfg => ({ ...moShape, delay: moShape.delay + i * stepH, dur: POP });
+      const shapeCfg = (i: number): MoCfg => ({
+        ...moShape,
+        idle: moShape.idle === 'grid-wave' ? 'pattern-breathe' : moShape.idle,
+        delay: moShape.delay + i * stepH,
+        dur: POP,
+      });
     /** 第 i 顆圖案「已經看得出來」的時間（POP 的兩成）——線從這一刻就能接上去 */
     const holeUpAt = (i: number) => moShape.in === 'none'
       ? 0 : moShape.delay + i * stepH + POP * 0.2;
@@ -7165,9 +7193,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       renderToCanvas(cv, scale);          // 先畫第一格，不然開頭會錄到黑畫面
       const mime = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm']
         .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || '';
-      /* 跟經典拼圖一致以 30fps 餵給編碼器；避免 60fps 下繪圖追不上時，
-         編碼器收到半更新畫面，看起來像物件在幀間跳位。 */
-      const stream = (cv as any).captureStream(30);
+      /* 動態成品至少 50fps；高幀率影片素材則保留其來源幀率。 */
+      const stream = (cv as any).captureStream(preferredVideoFrameRate(vids));
       const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 40_000_000 } : undefined);
       const chunks: Blob[] = [];
       rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
@@ -9083,7 +9110,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 // 舊版把發光獨立成一頁，現在併回本體那一頁；殘留的舊選取要導回去
                 if (moTarget.startsWith('glow')) setTimeout(() => setMoTarget('shape'), 0);
                 const selObj = objects.find(o => o.id === moTarget) || null;
-                const cur: MoCfg = moTarget === 'shape' ? moShape : selObj ? moOf(selObj) : MO_DEFAULT;
+                const cur: MoCfg = moTarget === 'shape'
+                  ? (moShape.idle === 'grid-wave' ? { ...moShape, idle: 'pattern-breathe' } : moShape)
+                  : selObj ? moOf(selObj) : MO_DEFAULT;
                 const setCur = (d: Partial<MoCfg>) => {
                   if (moTarget === 'shape') setMoShape(m => ({ ...m, ...d }));
                   else if (selObj) patchMo(selObj.id, d);
@@ -9095,6 +9124,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   else if (d.idle === 'breathe' && selObj?.sym) setCur({ ...d, amp: 30 });
                   /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
                      就共用同一套，切換種類時也不能沿用上一個動畫的怪速度。 */
+                  else if (d.idle === 'pattern-breathe' && moTarget === 'shape') setCur({ ...d, amp: 70, speed: 0.9 });
                   else if (d.idle === 'grid-wave') setCur({
                     ...d,
                     ...(isGridTarget ? GRID_WAVE_DEFAULT : NON_GRID_WAVE_DEFAULT),
@@ -9244,7 +9274,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {(isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : IDLE_KINDS).map(k => (
+                          {(moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : IDLE_KINDS).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>

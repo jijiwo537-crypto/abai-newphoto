@@ -40,6 +40,7 @@ import {
   SYMBOL_OBJECT_IN_KINDS, OBJECT_IDLE_KINDS, classicObjectMotionOf, objectMotionFrame,
   motionDurationFromUi, motionUiFromDuration,
 } from '../utils/objectMotion';
+import { preferredVideoFrameRate } from '../utils/videoFrameRate';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
 
@@ -9398,16 +9399,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 页面内分割线每一帧直接读取反倍率，不等待 React 重绘。 */
       col.style.setProperty('--preview-inverse-scale', `${1 / Math.max(0.0001, k)}px`);
       col.style.setProperty('--preview-inverse-half', `${0.5 / Math.max(0.0001, k)}px`);
-      /* 分割線跟頁面使用相同的內容座標粗度。不要再除以預覽倍率：Safari 會
-         把反向縮窄後的線取樣到不足一個實體像素，放大時肉眼反而看成變細。
-         現在放大整張頁面時分割線也自然等比例放大，絕不會愈放愈細。 */
-      const seamScreenPx = 1.30;
-      const seamContentPx = seamScreenPx;
+      /* 分割線必須在任何預覽倍率下看起來都跟預設倍率完全同粗。
+         線位於 pagesCol 的 scale 裡，因此內容線寬要反除 k；同時先把目標
+         CSS 線寬吸附到整數個實體像素，避免 iPhone Safari 將 0.x 實體像素
+         反覆取整，造成縮放途中忽粗忽細或偶爾閃出一條白縫。 */
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const seamScreenPx = Math.max(1 / dpr, Math.round(1.30 * dpr) / dpr);
+      const seamContentPx = seamScreenPx / Math.max(0.0001, k);
       col.style.setProperty('--preview-seam-width', `${seamContentPx}px`);
       col.style.setProperty('--preview-seam-half', `${seamContentPx / 2}px`);
-      /* 同色抗鋸齒保護帶與線一起縮放，不再另外套反倍率造成雙重取樣。 */
-      const seamGuardScreenPx = 0.10;
-      col.style.setProperty('--preview-seam-guard', `${seamGuardScreenPx}px`);
+      /* 線寬已經精準落在實體像素，不再疊加半透明保護帶；疊兩條線正是
+         先前放大後看見兩種粗度與白色毛邊的來源。 */
+      col.style.setProperty('--preview-seam-guard', '0px');
       col.style.setProperty('--preview-guide-scale', `${2 / Math.max(0.0001, k)}px`);
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
@@ -13651,7 +13654,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
         const mime = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm']
           .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || '';
-        const stream = rc.captureStream(30);
+        const stream = rc.captureStream(preferredVideoFrameRate(vids));
         const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 12_000_000 } : undefined);
         const chunks: Blob[] = [];
         rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
