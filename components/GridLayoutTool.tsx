@@ -5734,6 +5734,18 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      的同一套 path、紋理、描邊與字體度量，所以預覽與成品也會一致。 */
   const vectorCanvasRef = useRef<HTMLCanvasElement>(null);
   const vectorWaveCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  /* Safari 會把每一張可見 canvas 各自提升成合成層；外面的整頁 transform
+     縮放時，各層會分別對齊裝置像素。小圖形因此會相對頁面跳動，即使 backing
+     store 已經很大也一樣。靜止圖形完成高解析繪製後凍結成 Image，便會走和
+     相片完全相同的合成路徑；只有圖形本身正在變形或逐幀波浪時才顯示 canvas。 */
+  const [shapeSnapshotUrl, setShapeSnapshotUrl] = useState<string | null>(null);
+  const shapeSnapshotUrlRef = useRef<string | null>(null);
+  const shapeSnapshotRevisionRef = useRef(0);
+  useEffect(() => () => {
+    shapeSnapshotRevisionRef.current += 1;
+    if (shapeSnapshotUrlRef.current) URL.revokeObjectURL(shapeSnapshotUrlRef.current);
+    shapeSnapshotUrlRef.current = null;
+  }, []);
   const isCanvasVector = !!image.shape || image.text !== undefined;
   const usesUnitMotion = image.text !== undefined && (
     motionFrame?.seq !== undefined
@@ -5859,6 +5871,38 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
     if (!canvas) return;
     let alive = true;
     let raf = 0;
+    const revision = ++shapeSnapshotRevisionRef.current;
+    const canFreezeShape = !!image.shape && image.shape !== 'hole'
+      && !gestureRendering
+      && motionFrame?.gridWave === undefined
+      && motionFrame?.gridReveal === undefined;
+    /* 舊快照的尺寸／顏色一旦失效便立刻退回剛畫好的 canvas，不讓舊圖形閃一幀。 */
+    if (shapeSnapshotUrlRef.current) {
+      const stale = shapeSnapshotUrlRef.current;
+      shapeSnapshotUrlRef.current = null;
+      setShapeSnapshotUrl(null);
+      requestAnimationFrame(() => URL.revokeObjectURL(stale));
+    }
+    const freezeShape = () => {
+      if (!canFreezeShape || !alive || revision !== shapeSnapshotRevisionRef.current) return;
+      canvas.toBlob(blob => {
+        if (!blob || !alive || revision !== shapeSnapshotRevisionRef.current) return;
+        const url = URL.createObjectURL(blob);
+        const probe = new Image();
+        probe.onload = () => {
+          if (!alive || revision !== shapeSnapshotRevisionRef.current) {
+            URL.revokeObjectURL(url);
+            return;
+          }
+          const previous = shapeSnapshotUrlRef.current;
+          shapeSnapshotUrlRef.current = url;
+          setShapeSnapshotUrl(url);
+          if (previous && previous !== url) requestAnimationFrame(() => URL.revokeObjectURL(previous));
+        };
+        probe.onerror = () => URL.revokeObjectURL(url);
+        probe.src = url;
+      }, 'image/png');
+    };
     const draw = () => {
       if (!alive) return;
       /* 跟創意拼圖一樣以「畫面實體像素＋超取樣」決定解析度。只配置墨水範圍，
@@ -6049,6 +6093,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         }
         ctx.restore();
         applyVectorWave();
+        freezeShape();
         return;
       }
 
@@ -6165,7 +6210,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       waitForFont((image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)), image.bold ? 700 : 400, !!image.italic)
         .then(() => { if (alive) raf = requestAnimationFrame(draw); });
     }
-    return () => { alive = false; if (raf) cancelAnimationFrame(raf); };
+    return () => {
+      alive = false;
+      shapeSnapshotRevisionRef.current += 1;
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, [
     isCanvasVector, usesUnitMotion, boxW, boxH, vectorPad.x, vectorPad.y, vectorCssW, vectorCssH,
     image.shape, image.holeType, image.shapeFilled, image.shapeLineW, image.shapeDash,
@@ -6694,6 +6743,27 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         {/* 一般圖形與圖片共用同一個 wrapper、同一個中心及同一次頁面縮放。
             Canvas 本身只是一張高解析圖形貼圖，不再另外 Portal 到整頁座標；
             因此預覽縮放時不可能在 Y 軸和物件盒分別取整而上下跳動。 */}
+        {shapeSnapshotUrl && !gestureRendering
+          && motionFrame?.gridWave === undefined
+          && motionFrame?.gridReveal === undefined ? (
+        <img
+          src={shapeSnapshotUrl}
+          data-classic-shape-snapshot={image.id}
+          draggable={false}
+          decoding="sync"
+          style={{
+            position: 'absolute',
+            left: `${(boxW - vectorCssW) / 2}px`,
+            top: `${(boxH - vectorCssH) / 2}px`,
+            width: `${vectorCssW}px`,
+            height: `${vectorCssH}px`,
+            opacity: (image.opacity ?? 100) / 100,
+            objectFit: 'fill',
+            pointerEvents: 'none',
+            userSelect: 'none',
+          }}
+        />
+        ) : null}
         <canvas
           ref={vectorCanvasRef}
           data-classic-shape-raster={image.id}
@@ -6704,6 +6774,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             width: `${vectorCssW}px`,
             height: `${vectorCssH}px`,
             opacity: (image.opacity ?? 100) / 100,
+            visibility: shapeSnapshotUrl && !gestureRendering
+              && motionFrame?.gridWave === undefined
+              && motionFrame?.gridReveal === undefined ? 'hidden' : 'visible',
             pointerEvents: 'none',
           }}
         />
