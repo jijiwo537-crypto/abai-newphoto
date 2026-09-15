@@ -3760,9 +3760,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         return;
       }
       const pinchedObject = objectsRef.current.find(o => o.id === pin.id);
-      /* 圖片／影片最小縮放由原本單次手勢的 0.15 提高兩倍到 0.30；文字、
-         符號與圖形維持原手感。 */
-      const pinchMin = pinchedObject?.type === 'image' ? 0.30 : 0.15;
+      /* 圖片／影片使用「絕對尺寸」下限，不能再用單次手勢倍率當下限：
+         單次最低 0.30 仍可藉由多次手勢一直縮小。現在以畫布面積的 1/25
+         為圖片最小面積；在 1:1 畫布與 1:1 圖片上，正好等於邊長的 1/5。
+         每次手勢都從當前 w0/h0 反推可縮倍率，因此無論捏幾次都不能突破。 */
+      const layoutNow = getLayoutOffsetsRef.current?.();
+      const imageAreaFloor = layoutNow
+        ? Math.max(1, layoutNow.cw * layoutNow.ch) / 25
+        : 1;
+      const absoluteImageMinK = Math.sqrt(
+        imageAreaFloor / Math.max(1, pin.w0 * pin.h0),
+      );
+      const pinchMin = pinchedObject?.type === 'image' ? absoluteImageMinK : 0.15;
       let k = Math.max(pinchMin, Math.min(8, dist / pin.d0));
       /* 旋轉有一段「不動區」：兩指轉不到 ROT_START 度就當成純縮放。
          超過之後把門檻扣掉再開始轉，所以不會在跨過門檻那一瞬間跳一下。
