@@ -6655,53 +6655,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       onTouchCancel={motionPickOnly ? undefined : onSwapTouchEnd}
     >
       {image.shape === 'hole' ? null : image.shape ? (
-        /* 從「圖案」借過來的那幾顆：它們不是 SVG 路徑（有的是系統字型的字、
-           有的是去背 PNG），所以預覽直接畫在 canvas 上、用的就是匯出那一支
-           drawHoleShape —— 預覽跟成品是同一段程式碼畫的，不可能對不起來。
-           畫布開 dpr 倍再用 CSS 縮回去，放大時邊緣才不會糊。 */
-        <canvas
-          ref={el => {
-            if (!el) return;
-            // 只在跨過整數倍率時提高 backing store，兼顧清晰度與連續縮放效能。
-            const dpr = Math.min(8, (window.devicePixelRatio || 1) * Math.max(1, canvasK()));
-            // 外框現在直接使用放大後的實際尺寸；backing store 也跟著使用同一尺寸，
-            // 不再把一張較小的點陣 canvas 交給 CSS 拉大。
-            const bw = Math.max(1, boxW * dpr);
-            const bh = Math.max(1, boxH * dpr);
-            const blurs = shapeGlowBlurs(bw, bh);
-            /* 交給 drawHoleShape 的是畫布像素，線寬的單位也要換到同一個座標系
-               （holeOpts 裡那個是內容單位，兩邊都是「長邊/160 再除掉 scale」）。 */
-            const opts = { ...holeOpts!, lineUnit: Math.max(bw, bh) / 160 / renderScale };
-            /* 畫布要比外框大一圈：好幾種圖案的墨水本來就比框大
-               （`<333` 有 2.9 倍寬），描邊與發光也長在框外面 ——
-               畫布只開外框那麼大的話，超出去的全部被切掉。
-               撐開的是畫布，畫的內容一個像素都沒動（原點還是框心、
-               交給 drawHoleShape 的還是原本的外框）。 */
-            const w = Math.max(1, Math.round(bw + holeOv.x * (boxW / Math.max(1, image.width)) * dpr * 2));
-            const h = Math.max(1, Math.round(bh + holeOv.y * (boxH / Math.max(1, image.height)) * dpr * 2));
-            if (el.width !== w) el.width = w;
-            if (el.height !== h) el.height = h;
-            const c = el.getContext('2d');
-            if (!c) return;
-            c.setTransform(1, 0, 0, 1, 0, 0);
-            c.clearRect(0, 0, w, h);
-            c.translate(w / 2, h / 2);
-            drawHoleShape(c, opts, bw, bh, blurs);
-          }}
-          key={`${image.holeType}|${image.color}|${image.shapeFilled}|${image.shapeLineW}|${image.shapeGlow}|${image.shapeGlowColor}|${image.shapeStrokeW}|${image.shapeStrokeColor}|${image.shapeDots}|${image.shapeDotSize}|${image.shapeDotGap}|${image.shapeDotColor}|${image.shapeTex}|${image.shapeStripeN}|${image.shapeStripeDir}|${image.shapeStripeA}|${image.shapeStripeB}|${Math.round(image.width)}|${Math.round(image.height)}`}
-          style={{
-            /* 用百分比而不是 px：外框的寬高會被吸到整數實體像素（見 wrapGeo），
-               百分比才會跟著一起吸，畫布的中心才不會跟外框的中心差半個像素。 */
-            position: 'absolute',
-            left: `${-holeOv.x / image.width * 100}%`,
-            top: `${-holeOv.y / image.height * 100}%`,
-            width: `${(1 + 2 * holeOv.x / image.width) * 100}%`,
-            height: `${(1 + 2 * holeOv.y / image.height) * 100}%`,
-            pointerEvents: 'none',
-            visibility: 'visible',
-          }}
-        />
-      ) : image.shape ? (
         /* 圖形圖層。預覽是 SVG、匯出是 Path2D，吃的是同一條 d 字串。
            viewBox 用「沒有縮放前」的尺寸，外框是 width×scale ——
            兩軸的倍率一樣，所以描邊是等比例放大、不會被拉扁。
