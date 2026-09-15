@@ -1157,6 +1157,10 @@ export const shapePathD = (
       // 兩段半橢圓弧接成一圈（單一 A 指令畫不了整圈）
       return `M ${P(0, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(w, cy)} A ${r3(a)} ${r3(b)} 0 1 1 ${P(0, cy)} Z`;
     case 'square':
+    case 'square-star-dual':
+    case 'square-heart-dual':
+    case 'square-star-cutout':
+    case 'square-heart-cutout':
       return poly([[0, 0], [w, 0], [w, h], [0, h]]);
     case 'rounded': {
       const r = Math.min(a, b) * 0.28;
@@ -1177,7 +1181,8 @@ export const shapePathD = (
       return poly([[cx, 0], [cx + w * 0.28, cy], [cx, h], [cx - w * 0.28, cy]]);
     case 'pentagon': return reg(5, -Math.PI / 2);
     case 'hexagon': return reg(6, -Math.PI / 2);
-    case 'star': {
+    case 'star':
+    case 'star-double': {
       const n = 5, inner = 0.42;
       const pts: [number, number][] = [];
       for (let i = 0; i < n * 2; i++) {
@@ -1217,6 +1222,7 @@ export const shapePathD = (
       return d + ' Z';
     }
     case 'heart':
+    case 'heart-double':
       return `M ${P(cx, cy - b * 0.25)} `
         + `C ${P(cx + a * 0.6, cy - b)} ${P(cx + a * 1.3, cy - b * 0.1)} ${P(cx, cy + b * 0.9)} `
         + `C ${P(cx - a * 1.3, cy - b * 0.1)} ${P(cx - a * 0.6, cy - b)} ${P(cx, cy - b * 0.25)} Z`;
@@ -1378,6 +1384,12 @@ export const GRID_SHAPE_KINDS = new Set([
   'grid-h', 'grid-cross', 'grid-frame', 'grid-dots', 'grid-dots-fade', 'grid-diag',
 ]);
 export const GRID_DOT_KINDS = new Set(['grid-dots', 'grid-dots-fade']);
+export const DUAL_COLOR_SHAPE_KINDS = new Set(['square-star-dual', 'square-heart-dual']);
+export const CUTOUT_SHAPE_KINDS = new Set(['square-star-cutout', 'square-heart-cutout']);
+export const DOUBLE_CONTOUR_SHAPE_KINDS = new Set(['heart-double', 'star-double']);
+export const COMPOSITE_SHAPE_KINDS = new Set([
+  ...DUAL_COLOR_SHAPE_KINDS, ...CUTOUT_SHAPE_KINDS, ...DOUBLE_CONTOUR_SHAPE_KINDS,
+]);
 export const SHAPE_DEFAULT_LINEW = (kind: string) =>
   (kind === 'wave' || kind === 'lightning-wave') ? 2.5 : (kind === 'line' ? 4 : 6);
 /** 生成時佔頁面短邊的比例。線條保持原本的長度，其餘一律減半。 */
@@ -1390,6 +1402,8 @@ export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 const STRETCH_SOLID_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
   'pentagon', 'hexagon', 'star', 'heart',
+  'square-star-dual', 'square-heart-dual', 'square-star-cutout', 'square-heart-cutout',
+  'heart-double', 'star-double',
 ]);
 const STRETCH_OUTLINE_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
@@ -1413,7 +1427,9 @@ export const drawFeatheredShapeBody = (
   kind: string, w: number, h: number, _feather: number | undefined,
   color: string,
   paintTexture?: (ctx: CanvasRenderingContext2D, path: Path2D) => void,
+  innerColor = '#FFFFFF',
 ) => {
+  if (drawCompositeShapeBody(target, kind, w, h, color, innerColor, paintTexture)) return;
   // 圖形羽化已移除；保留同一個繪製入口以相容既有草稿資料。
   const path = new Path2D(shapePathD(kind, w, h));
   target.fillStyle = color;
@@ -1435,6 +1451,14 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'hexagon-f', kind: 'hexagon', filled: true },
   { id: 'star-f', kind: 'star', filled: true },
   { id: 'heart-f', kind: 'heart', filled: true },
+  /* 最後一排複合實心圖形。前兩顆是雙色實心、接著兩顆挖空，最後兩顆
+     是原本愛心／星星外面再加一圈同形細線。 */
+  { id: 'square-star-dual-f', kind: 'square-star-dual', filled: true },
+  { id: 'square-heart-dual-f', kind: 'square-heart-dual', filled: true },
+  { id: 'square-star-cutout-f', kind: 'square-star-cutout', filled: true },
+  { id: 'square-heart-cutout-f', kind: 'square-heart-cutout', filled: true },
+  { id: 'heart-double-f', kind: 'heart-double', filled: true },
+  { id: 'star-double-f', kind: 'star-double', filled: true },
   // 細框
   { id: 'circle-o', kind: 'circle', filled: false },
   { id: 'square-o', kind: 'square', filled: false },
@@ -1503,6 +1527,82 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   'grid-dots': [0, 0, 1, 1],
   'grid-dots-fade': [0, 0, 1, 1],
   'grid-diag': [0, 0, 1, 1],
+  'square-star-dual': [0, 0, 1, 1],
+  'square-heart-dual': [0, 0, 1, 1],
+  'square-star-cutout': [0, 0, 1, 1],
+  'square-heart-cutout': [0, 0, 1, 1],
+  'heart-double': [0, 0, 1, 1],
+  'star-double': [0, 0, 1, 1],
+};
+
+const compositeInnerKind = (kind: string): 'star' | 'heart' | null =>
+  kind.includes('star') ? 'star' : kind.includes('heart') ? 'heart' : null;
+
+/** 把既有愛心／星星的「實際墨水」置中並縮進指定比例，完全沿用原路徑。 */
+export const insetShapePath = (
+  kind: 'star' | 'heart', w: number, h: number, inkFraction: number,
+) => {
+  const srcSize = 100;
+  const fit = SHAPE_FIT[kind];
+  const sx = (w * inkFraction) / (fit[2] * srcSize);
+  const sy = (h * inkFraction) / (fit[3] * srcSize);
+  const inkCx = (fit[0] + fit[2] / 2) * srcSize;
+  const inkCy = (fit[1] + fit[3] / 2) * srcSize;
+  const matrix = new DOMMatrix([sx, 0, 0, sy, w / 2 - inkCx * sx, h / 2 - inkCy * sy]);
+  const out = new Path2D();
+  out.addPath(new Path2D(shapePathD(kind, srcSize, srcSize)), matrix);
+  return out;
+};
+
+/**
+ * 六顆複合圖形的本體。回傳 true 代表已完成繪製：
+ * - 雙色款：紋理只鋪外方形，再以純色內層完整蓋住。
+ * - 挖空款：真正清除 alpha，不是假裝塗成背景色。
+ * - 雙輪廓款：內層仍是原本實心路徑，外圈只是一條同形細線。
+ */
+export const drawCompositeShapeBody = (
+  target: CanvasRenderingContext2D,
+  kind: string, w: number, h: number,
+  color: string, innerColor = '#FFFFFF',
+  paintTexture?: (ctx: CanvasRenderingContext2D, path: Path2D) => void,
+) => {
+  if (!COMPOSITE_SHAPE_KINDS.has(kind)) return false;
+  const innerKind = compositeInnerKind(kind)!;
+  if (DUAL_COLOR_SHAPE_KINDS.has(kind) || CUTOUT_SHAPE_KINDS.has(kind)) {
+    const outer = new Path2D(shapePathD('square', w, h));
+    const inner = insetShapePath(innerKind, w, h, 0.64);
+    target.fillStyle = color;
+    if (DUAL_COLOR_SHAPE_KINDS.has(kind)) {
+      target.fill(outer);
+      paintTexture?.(target, outer);
+      target.fillStyle = innerColor;
+      target.fill(inner);
+    } else {
+      const punched = new Path2D();
+      punched.addPath(outer);
+      punched.addPath(inner);
+      target.fill(punched, 'evenodd');
+      if (paintTexture) {
+        target.save();
+        target.clip(punched, 'evenodd');
+        paintTexture(target, outer);
+        target.restore();
+      }
+    }
+    return true;
+  }
+  const body = insetShapePath(innerKind, w, h, 0.72);
+  const ring = insetShapePath(innerKind, w, h, 0.96);
+  target.fillStyle = color;
+  target.fill(body);
+  paintTexture?.(target, body);
+  target.save();
+  target.strokeStyle = color;
+  target.lineWidth = Math.max(1, Math.min(w, h) * 0.024);
+  target.lineJoin = 'round';
+  target.stroke(ring);
+  target.restore();
+  return true;
 };
 
 /** 個別圖案的加大倍率。星形是實心面積最少的一個，稍微放大一點才看得清楚。
@@ -1522,12 +1622,44 @@ const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval
  * 縮放並平移到 24×24 的正中央 —— 所以每一顆按鈕的圖案都在正中心。
  */
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
+  const maskId = React.useId().replace(/:/g, '');
   const isLine = item.kind === 'line';
   const isGridGlyph = GRID_SHAPE_KINDS.has(item.kind);
   /* viewBox 與圖案的框一樣大 —— 每一顆圖案的長邊都剛好等於 size（預設 20px），
      所以不管哪一種形狀，看起來都一樣大。 */
   const VB = 24;
   const BOX = VB;
+  if (COMPOSITE_SHAPE_KINDS.has(item.kind)) {
+    const innerKind = compositeInnerKind(item.kind)!;
+    const fit = SHAPE_FIT[innerKind];
+    const tf = (fraction: number) => {
+      const sx = (VB * fraction) / (fit[2] * 100);
+      const sy = (VB * fraction) / (fit[3] * 100);
+      const cx = (fit[0] + fit[2] / 2) * 100;
+      const cy = (fit[1] + fit[3] / 2) * 100;
+      return `matrix(${r3(sx)} 0 0 ${r3(sy)} ${r3(VB / 2 - cx * sx)} ${r3(VB / 2 - cy * sy)})`;
+    };
+    const innerD = shapePathD(innerKind, 100, 100);
+    if (DUAL_COLOR_SHAPE_KINDS.has(item.kind)) return (
+      <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} aria-hidden>
+        <rect width={VB} height={VB} fill="currentColor" />
+        <path d={innerD} transform={tf(0.64)} fill="#fff" />
+      </svg>
+    );
+    if (CUTOUT_SHAPE_KINDS.has(item.kind)) return (
+      <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} aria-hidden>
+        <defs><mask id={maskId}><rect width={VB} height={VB} fill="#fff" /><path d={innerD} transform={tf(0.64)} fill="#000" /></mask></defs>
+        <rect width={VB} height={VB} fill="currentColor" mask={`url(#${maskId})`} />
+      </svg>
+    );
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
+        <path d={innerD} transform={tf(0.72)} fill="currentColor" />
+        <path d={innerD} transform={tf(0.96)} fill="none" stroke="currentColor"
+          strokeWidth={0.58} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+      </svg>
+    );
+  }
   /* 有指定比例的（3:4、2:3… 那種邊框、橢圓）要照比例畫，
      不然按鈕上會全部變成正方形、看不出差別。 */
   const ratio = isLine ? 0 : ((item as any).glyphRatio ?? (item as any).ratio ?? 0);
@@ -1565,6 +1697,66 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
         />
       </g>
     </svg>
+  );
+};
+
+/**
+ * iOS 的 range 在手指移動時可能一秒送出上百筆事件。受控 input 會等 React
+ * 畫完整個預覽後才把圓點推到新位置，因此圖形愈複雜，滑桿本人反而愈卡。
+ * 這顆讓瀏覽器原生滑塊先即時移動，預覽更新則合併成每個螢幕幀最後一筆；
+ * 放手時一定同步送出最終值，不會漏掉最後一格。
+ */
+export const SmoothRange: React.FC<{
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  onValue: (value: number) => void;
+  className?: string;
+  style?: React.CSSProperties;
+}> = ({ value, min, max, step = 1, onValue, className = '', style }) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const draggingRef = useRef(false);
+  const pendingRef = useRef(value);
+  const rafRef = useRef(0);
+  const onValueRef = useRef(onValue);
+  onValueRef.current = onValue;
+
+  useLayoutEffect(() => {
+    if (!draggingRef.current && inputRef.current) inputRef.current.value = String(value);
+  }, [value]);
+  useEffect(() => () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); }, []);
+
+  const queue = (next: number) => {
+    pendingRef.current = next;
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0;
+      onValueRef.current(pendingRef.current);
+    });
+  };
+  const finish = () => {
+    draggingRef.current = false;
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    rafRef.current = 0;
+    const next = Number(inputRef.current?.value ?? pendingRef.current);
+    pendingRef.current = next;
+    onValueRef.current(next);
+  };
+  return (
+    <input
+      ref={inputRef}
+      type="range"
+      min={min} max={max} step={step}
+      defaultValue={value}
+      onPointerDown={() => { draggingRef.current = true; }}
+      onInput={e => queue(Number((e.currentTarget as HTMLInputElement).value))}
+      onPointerUp={finish}
+      onPointerCancel={finish}
+      onBlur={() => { if (draggingRef.current) finish(); }}
+      className={className}
+      style={style}
+    />
   );
 };
 
@@ -2043,9 +2235,9 @@ export const TextEditorPanel: React.FC<{
           <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value.toFixed(digits)}{suffix}</span>
         </div>
         <div className="slider-wrap" style={{ height: 16 }}>
-          <input
-            type="range" min={min} max={max} step={step} value={value}
-            onChange={e => onVal(digits ? parseFloat(e.target.value) : parseInt(e.target.value))}
+          <SmoothRange
+            min={min} max={max} step={step} value={value}
+            onValue={v => onVal(digits ? v : Math.round(v))}
             className="premium-slider w-full"
           />
         </div>
@@ -2253,9 +2445,9 @@ export const ShapeEditorPanel: React.FC<{
         <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded text-white">{value}</span>
       </div>
       <div className="slider-wrap" style={{ height: 16 }}>
-        <input
-          type="range" min={min} max={max} step={1} value={value}
-          onChange={e => onVal(parseInt(e.target.value))}
+        <SmoothRange
+          min={min} max={max} step={1} value={value}
+          onValue={v => onVal(Math.round(v))}
           className="premium-slider w-full"
         />
       </div>
@@ -2287,6 +2479,12 @@ export const ShapeEditorPanel: React.FC<{
               換圖形顏色時發光也一起換成同一個色 —— 發光本來就是圖形自己的光暈。
               反過來不成立：單獨挑發光的顏色時，圖形的顏色不會被動到。 */}
           {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c, shapeGlowColor: c }), true)}
+          {DUAL_COLOR_SHAPE_KINDS.has(layer.shape || '') && (
+            <div className="pt-0.5">
+              {swatchStrip(layer.shapeInnerColor || '#FFFFFF', SOFT_COLORS,
+                c => onChange({ shapeInnerColor: c }), true)}
+            </div>
+          )}
           {isLine && (
             <div className="px-2">
               {slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
@@ -3925,6 +4123,8 @@ interface FloatingImage {
   shapeItemId?: string;
   /** 實心（填色）還是細框（只描邊） */
   shapeFilled?: boolean;
+  /** 雙色複合圖形的內層顏色；未設定時固定為純白。 */
+  shapeInnerColor?: string;
   /** shape === 'hole' 時，真正要畫哪一顆圖案（跟創意拼圖同一份清單） */
   holeType?: string;
   /** 線寬，1 個單位 = 外框長邊的 1/160（滑桿顯示成 1~100，存進來是 ÷10） */
@@ -5910,6 +6110,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     };
   }, [image.shape, image.holeType]);
 
+  const vectorLiveSvg = !!liveTuning && !!image.shape && image.shape !== 'hole'
+    && !COMPOSITE_SHAPE_KINDS.has(image.shape);
+
   useLayoutEffect(() => {
     /* 一般文字維持 SVG；符號则与创意拼图一样走 Canvas 的同一套墨水测量与
        fillText。这样预览缩放只是在移动一张预先超取样的紧凑位图，不会每一帧
@@ -5917,6 +6120,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     if (!isCanvasVector || (image.text !== undefined && !image.sym && !usesUnitMotion)) return;
     const canvas = vectorCanvasRef.current;
     if (!canvas) return;
+    /* 一般路徑圖形拖滑桿時直接顯示下面那張 SVG 向量層。它不需要重建大型
+       backing store，而且任何倍率都是真向量清晰度；放手後才重畫一次最終
+       Canvas／快照。這比降低拖動中的畫質更快，也完全不會出現清晰度跳變。 */
+    if (vectorLiveSvg) return;
     let alive = true;
     let raf = 0;
     const revision = ++shapeSnapshotRevisionRef.current;
@@ -5978,9 +6185,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       /* 滑桿拖動中每一幀都重畫。最終模式最高可到數千萬像素，逐格重建會
          阻塞主執行緒；拖動中改用仍高於螢幕實體像素的即時倍率，松手后只
          进行一次完整超取样。视觉保持清楚，交互成本则从几十倍像素降下来。 */
-      const dpr = liveTuning
-        ? Math.max(2, geoDpr * 1.5)
-        : Math.max(2, geoDpr * previewRasterScale * 4);
+      const dpr = Math.max(2, geoDpr * previewRasterScale * 4);
       /* 尺寸上限與面積上限同時守住；手勢與靜止都保留 8MP。 */
       const backingScale = Math.min(
         dpr,
@@ -6113,7 +6318,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           for (const r of shapeGlowBlurs(image.width, image.height)) {
             // shadowBlur 不吃目前的 CTM；補上 backingScale，縮回 CSS 尺寸後才是正確強度。
             ctx.shadowBlur = r * image.scale * gAmt * backingScale;
-            solid ? ctx.fill(path) : ctx.stroke(path);
+            if (solid && COMPOSITE_SHAPE_KINDS.has(image.shape)) {
+              drawCompositeShapeBody(ctx, image.shape, boxW, boxH, color,
+                image.shapeInnerColor || '#FFFFFF');
+            } else if (solid) ctx.fill(path); else ctx.stroke(path);
           }
           ctx.restore();
         }
@@ -6142,7 +6350,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             else paintStripes(tc, boxW, boxH, boxW, boxH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
               image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
             tc.restore();
-          });
+          }, image.shapeInnerColor || '#FFFFFF');
         } else {
           ctx.stroke(path);
         }
@@ -6272,7 +6480,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     };
   }, [
     isCanvasVector, usesUnitMotion, boxW, boxH, vectorPad.x, vectorPad.y, vectorCssW, vectorCssH,
-    image.shape, image.holeType, image.shapeFilled, image.shapeLineW, image.shapeDash,
+    image.shape, image.holeType, image.shapeFilled, image.shapeInnerColor, image.shapeLineW, image.shapeDash,
     image.shapeGlow, image.shapeGlowColor, image.shapeStrokeW, image.shapeStrokeColor,
     image.shapeTex, image.shapeDots, image.shapeDotSize, image.shapeDotGap, image.shapeDotColor,
     image.shapeStripeN, image.shapeStripeDir, image.shapeStripeA, image.shapeStripeB,
@@ -6820,6 +7028,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             objectFit: 'fill',
             pointerEvents: 'none',
             userSelect: 'none',
+            visibility: vectorLiveSvg ? 'hidden' : 'visible',
           }}
         />
         ) : null}
@@ -6833,9 +7042,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             width: `${vectorCssW}px`,
             height: `${vectorCssH}px`,
             opacity: (image.opacity ?? 100) / 100,
-            visibility: shapeSnapshotUrl && !gestureRendering
+            visibility: vectorLiveSvg || (shapeSnapshotUrl && !gestureRendering
               && motionFrame?.gridWave === undefined
-              && motionFrame?.gridReveal === undefined ? 'hidden' : 'visible',
+              && motionFrame?.gridReveal === undefined) ? 'hidden' : 'visible',
             pointerEvents: 'none',
           }}
         />
@@ -6870,7 +7079,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             backfaceVisibility: 'hidden',
             WebkitBackfaceVisibility: 'hidden',
             isolation: 'isolate',
-            visibility: 'hidden',
+            visibility: vectorLiveSvg ? 'visible' : 'hidden',
           }}
         >
           {/* 點點：用一塊 pattern 疊在圖形上，範圍就是圖形的填色區域 ——
@@ -8661,6 +8870,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       shapeGlow: false,
       shapeGlowColor: SHAPE_DEFAULT_COLOR,
       color: SHAPE_DEFAULT_COLOR,
+      ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: '#FFFFFF' } : {}),
     };
     setFloatingImages(prev => [...prev, item]);
     setSelectedFloatingId(id);
@@ -8694,10 +8904,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const patchTextLayer = (id: string, patch: Partial<FloatingImage>) => {
-    /* iPhone 的 range 一秒可送出 100 多笔 input；画面最多只显示 60/120 格。
-       同一显示帧只提交最后一笔，避免 React 依序重画已经过期的中间值。 */
-    queueInteraction(() => setFloatingImages(prev =>
-      prev.map(f => (f.id === id ? { ...f, ...patch } : f))));
+    /* SmoothRange 已在輸入端把事件合併到螢幕幀；這裡直接提交，避免再排一次
+       requestAnimationFrame 造成兩幀延遲。 */
+    setFloatingImages(prev => prev.map(f => (f.id === id ? { ...f, ...patch } : f)));
   };
 
   const handleAddLayoutToPage = (pageIdx: number, templateIdx = 0, count = 4) => {
@@ -12952,7 +13161,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.shadowColor = fImg.shapeGlowColor || color;
       for (const r of shapeGlowBlurs(fw, fh)) {
         ctx.shadowBlur = r * gAmt;
-        if (solid) ctx.fill(path); else ctx.stroke(path);
+        if (solid && COMPOSITE_SHAPE_KINDS.has(fImg.shape!)) {
+          drawCompositeShapeBody(ctx, fImg.shape!, fw, fh, color, fImg.shapeInnerColor || '#FFFFFF');
+        } else if (solid) ctx.fill(path); else ctx.stroke(path);
       }
       ctx.restore();
     }
@@ -12972,27 +13183,31 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     ctx.save();
     const featherBlur = solid ? shapeFeatherBlur(fw, fh, fImg.shapeFeather) : 0;
     if (featherBlur > 0) ctx.filter = `blur(${featherBlur}px)`;
-    if (solid) ctx.fill(path); else ctx.stroke(path);
-    /* 紋理：剪裁在圖形裡面再鋪一層，跟預覽那塊 pattern 是同一塊區域、
-       同一組參數，所以預覽跟匯出對得起來。 */
-    {
+    const paintShapeTexture = (tc: CanvasRenderingContext2D, bodyPath: Path2D) => {
       const tx = texOf({ tex: fImg.shapeTex, dots: fImg.shapeDots });
       if (tx !== 'none') {
-        ctx.save();
-        ctx.clip(path);
-        ctx.translate(fw / 2, fh / 2);   // 紋理那兩支都是以圖形中心為原點
-        if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(ctx, fw, fh, fw, fh, {
+        tc.save();
+        tc.clip(bodyPath);
+        tc.translate(fw / 2, fh / 2);   // 紋理那兩支都是以圖形中心為原點
+        if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, fw, fh, fw, fh, {
           tex: tx,
           dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotColor: fImg.shapeDotColor,
           textureBaseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
           textureBaseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
         });
-        else paintStripes(ctx, fw, fh, fw, fh,
+        else paintStripes(tc, fw, fh, fw, fh,
           fImg.shapeStripeN ?? STRIPE_N_DEFAULT, fImg.shapeStripeDir === 'h' ? 'h' : 'v',
           fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR, fImg.shapeStripeB || '#FFFFFF');
-        ctx.restore();
+        tc.restore();
       }
-    }
+    };
+    if (solid) {
+      if (!drawCompositeShapeBody(ctx, fImg.shape!, fw, fh, color,
+        fImg.shapeInnerColor || '#FFFFFF', paintShapeTexture)) {
+        ctx.fill(path);
+        paintShapeTexture(ctx, path);
+      }
+    } else ctx.stroke(path);
     ctx.setLineDash([]);
     ctx.restore();
   };
@@ -14087,7 +14302,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {composeState && (
         <ComposeStudio
           image={composeState.img}
-          /* 影片不給梯形（見 ComposeStudio 的 hideKeystone），其餘完全一樣 */
+          /* 影片不給梯形（見 ComposeStudio 的 hideKeystone），其餘完���一樣 */
           hideKeystone={!!composeState.vid}
           geo={composeState.geo}
           onChange={g => setComposeState(st => (st ? { ...st, geo: g } : st))}
@@ -16428,9 +16643,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         n.splice(Math.max(0, m - 1), 0, x);
                         return n;
                       };
-                      const solidList = moveTo(
-                        [...ins(ADD_SHAPE_ITEMS.filter(i => i.filled), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
-                        'heart-f', 9);
+                      const compositeItems = ADD_SHAPE_ITEMS.filter(i => i.filled && COMPOSITE_SHAPE_KINDS.has(i.kind));
+                      const solidList = [
+                        ...moveTo(
+                          [...ins(ADD_SHAPE_ITEMS.filter(i => i.filled && !COMPOSITE_SHAPE_KINDS.has(i.kind)), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
+                          'heart-f', 9),
+                        ...compositeItems,
+                      ];
                       /* 邊框那排的順序跟實心那排對齊：第 6 顆窄菱形、第 9 顆愛心、
                          第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
                       const lineList = moveTo(moveTo(moveTo(moveTo(
