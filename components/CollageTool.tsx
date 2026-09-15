@@ -3759,7 +3759,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         })));
         return;
       }
-      let k = Math.max(0.15, Math.min(8, dist / pin.d0));
+      const pinchedObject = objectsRef.current.find(o => o.id === pin.id);
+      /* 圖片／影片最小縮放由原本單次手勢的 0.15 提高兩倍到 0.30；文字、
+         符號與圖形維持原手感。 */
+      const pinchMin = pinchedObject?.type === 'image' ? 0.30 : 0.15;
+      let k = Math.max(pinchMin, Math.min(8, dist / pin.d0));
       /* 旋轉有一段「不動區」：兩指轉不到 ROT_START 度就當成純縮放。
          超過之後把門檻扣掉再開始轉，所以不會在跨過門檻那一瞬間跳一下。
          另外靠近 0/90/180/270 就吸過去 —— 想轉正只要大概轉回去就會自己歸位。 */
@@ -3778,7 +3782,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 倍率也吸一下：讓外接框的某一邊剛好落在畫布邊界／遮罩交界上。
          置中放大時左右算出來的倍率一樣，所以兩條邊會同時貼上、兩條線一起亮。 */
       const pinchSnap = snapPinchScale(k, pin.w0, pin.h0, pin.cx0, pin.cy0, nrot, pin.id);
-      k = pinchSnap.k;
+      k = Math.max(pinchMin, pinchSnap.k);
       const nw = pin.w0 * k, nh = pin.h0 * k;
       const sx0 = pin.cx0 - nw / 2, sy0 = pin.cy0 - nh / 2;
       guidesRef.current = pinchSnap.guides;

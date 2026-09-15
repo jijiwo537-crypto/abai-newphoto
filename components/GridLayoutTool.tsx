@@ -287,6 +287,11 @@ const MIN_LAYOUT_SCALE = 0.4;
 /* 浮動照片、影片、圖形、符號與文字共用同一個最小倍率。0.1 會把 160px
    的預設物件壓到約 16px，任何螢幕都只剩幾顆實體像素，不可能保留細節。 */
 const MIN_FLOATING_SCALE = 0.2;
+const MIN_FLOATING_IMAGE_SCALE = MIN_FLOATING_SCALE * 2;
+const floatingScaleFloor = (item: Partial<FloatingImage> | null | undefined) =>
+  item && item.text === undefined && !item.shape
+    ? MIN_FLOATING_IMAGE_SCALE
+    : MIN_FLOATING_SCALE;
 
 /** 新增佈局時預設佔頁面七分滿 */
 const NEW_LAYOUT_SCALE = 0.7;
@@ -5505,7 +5510,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 
       const L_projected = v_px * u_x + v_py * u_y;
 
-      const newScale = Math.max(MIN_FLOATING_SCALE, Math.min(10, L_projected / L_local));
+      const newScale = Math.max(floatingScaleFloor(image), Math.min(10, L_projected / L_local));
 
       const oppositeOffsetRotX = oppositeLocalX * Math.cos(R) - oppositeLocalY * Math.sin(R);
       const oppositeOffsetRotY = oppositeLocalX * Math.sin(R) + oppositeLocalY * Math.cos(R);
@@ -8100,7 +8105,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (!selectedImg) return;
 
       const factor = 1 - e.deltaY * 0.01;
-      const newScale = Math.max(MIN_FLOATING_SCALE, Math.min(10.0, selectedImg.scale * factor));
+      const newScale = Math.max(floatingScaleFloor(selectedImg), Math.min(10.0, selectedImg.scale * factor));
 
       setFloatingImages(prev => prev.map(img => {
         if (img.id === selectedFloatingId) {
@@ -12227,7 +12232,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
              才有，捏合完全沒有，很難把圖縮到剛好貼齊畫布。
              中心點在捏合時不動，所以只有「四個邊界」會隨倍率移動：把倍率解成
              「這條邊剛好落在畫布邊界上」的值，最近的那一個在門檻內就吸附過去。 */
-          const rawScale = Math.max(MIN_FLOATING_SCALE, g.baseScale * k);
+          const targetScaleFloor = floatingScaleFloor(target);
+          const rawScale = Math.max(targetScaleFloor, g.baseScale * k);
           // 距離感測會在相鄰事件間抖動零點幾 px；創意拼圖是一幀只採最後一筆，
           // DOM 版再加輕量低通，避免這些高頻雜訊直接變成盒子尺寸。
           let ns = g.lastScale === undefined || Math.abs(rawScale - g.lastScale) < 0.0005
@@ -12263,7 +12269,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 cands.push((2 * (pr.bottom - cy)) / ext.bh); // 下邊貼齊
               }
               cands.forEach(cand => {
-                if (!(cand >= MIN_FLOATING_SCALE)) return;
+                if (!(cand >= targetScaleFloor)) return;
                 // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
                 const px = Math.abs(cand - ns) * Math.max(ext.bw, ext.bh) / 2 * previewK;
                 if (px < SNAP_IN && px < best) { best = px; bestScale = cand; }
@@ -12302,7 +12308,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 ]
               : pageLines, target.x + target.width / 2);
           }
-          const finalNs = Math.max(MIN_FLOATING_SCALE, ns), finalRot = rot;
+          const finalNs = Math.max(targetScaleFloor, ns), finalRot = rot;
           queueInteraction(() => {
             setFloatingImages(prev => prev.map(img =>
               img.id === g.floatingId
@@ -15602,7 +15608,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             }
 
                             // 吸附候選也不能繞過共用最小倍率。
-                            finalScale = Math.max(MIN_FLOATING_SCALE, finalScale);
+                            finalScale = Math.max(floatingScaleFloor(fImg), finalScale);
                             // Calculate the final (newX, newY) based on finalScale to keep pivot fixed
                             const R = (fImg.rotation * Math.PI) / 180;
                             const oppositeOffsetRotX = oppositeLocalX * Math.cos(R) - oppositeLocalY * Math.sin(R);
