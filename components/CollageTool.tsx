@@ -3117,8 +3117,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  變成在調形狀裡的位置。 */
               shapeIfTap: !!o.img && isImgShaped(o.imgShape) && hitShapeOf(o, x, y),
             };
-            objDraggingRef.current = true;
-            setObjDragging(true);
+            /* pointerdown 只是按下，不代表已经拖动。真正超过移动门槛时，
+               handlePointerMove 才会隐藏框；轻点同一物件不再闪一下。 */
             return;
           }
           const cur0 = selId ? list.find(z => z.id === selId) : null;
@@ -3131,8 +3131,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               id: cur0.id, startX: x, startY: y, ox: cur0.x, oy: cur0.y,
               selectOnly: true, pickId: o.id, moved: false,
             };
-            objDraggingRef.current = true;
-            setObjDragging(true);
             return;
           }
           /* 什麼都還沒選：這一下只能「點選」，不能順手拖走。
@@ -3159,8 +3157,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           e.stopPropagation();
           // fromBlank：這一下沒點在物件身上。放開時若完全沒移動，就當成「點旁邊」取消選取。
           objDragRef.current = { id: cur.id, startX: x, startY: y, ox: cur.x, oy: cur.y, fromBlank: true, moved: false };
-          objDraggingRef.current = true;
-          setObjDragging(true);
           return;
         }
       }
