@@ -6678,9 +6678,11 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         zIndex: (dragShift?.live ? 450100 : 60) + stackIndex * 2,
         touchAction: touchMode,
         opacity: (isCanvasVector ? 1 : (image.opacity ?? 100) / 100) * (motionFrame?.a ?? 1),
-        /* 圖片同樣預先建立移動用合成層；第一次拖動不再臨時升層。 */
-        willChange: 'transform',
-        backfaceVisibility: 'hidden',
+        /* 照片可以預先升成移動用合成層；Canvas／SVG 圖形則必須和頁面留在
+           同一個 paint surface。否則 iOS 會讓小圖形的獨立貼圖與頁面在不同
+           實體像素上取整，預覽捏合時就會上下或左右跳一格。 */
+        willChange: isCanvasVector ? undefined : 'transform',
+        backfaceVisibility: isCanvasVector ? undefined : 'hidden',
       }}
       onTouchStart={motionPickOnly ? undefined : onSwapTouchStart}
       onTouchMove={motionPickOnly ? undefined : onSwapTouchMove}
@@ -7883,6 +7885,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * ref 不會觸發重新渲染，第一次渲染時子層拿到的還是 null。
    */
   const [chromeLayer, setChromeLayer] = useState<HTMLDivElement | null>(null);
+  /* 選中框層不再放在 pagesCol 的 transform:scale 裡。它是 stripShell 的直接
+     子層，使用 CSS zoom 以最終顯示尺寸重新排版 SVG、圖示與文字；Safari
+     因此不會把低倍率時的操作 UI 當作一張貼圖放大。ref 供每一幀的預覽
+     縮放直接同步，不等待 React render。 */
+  const chromeLayerRef = useRef<HTMLDivElement | null>(null);
+  const setChromeLayerNode = useCallback((node: HTMLDivElement | null) => {
+    chromeLayerRef.current = node;
+    setChromeLayer(node);
+  }, []);
 
   // Workspace-wide interaction for selected floating images
   const wsDragStart = useRef<{
@@ -9340,6 +9351,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 固定在萤幕坐标层的空格提示收到通知后才量中心点。
          事件只排一个 rAF，不在手势处理内同步读取版面。 */
       col.dispatchEvent(new Event('abai-preview-transform'));
+    }
+    const chrome = chromeLayerRef.current;
+    if (chrome) {
+      /* pagesCol 用 transform 做即時手勢；操作 UI 則用 layout zoom 在目標倍率
+         重新光柵化。left 使用內容座標，zoom 後剛好補回 scrollLeft 的次像素
+         尾數，兩層中心仍完全重合，但框線／圓點／藥丸／Lucide 圖示保持銳利。 */
+      (chrome.style as any).zoom = String(k);
+      chrome.style.left = `${stripSubpixelXRef.current}px`;
+      chrome.style.top = '0px';
+      chrome.style.width = `${n * pw + (n - 1)}px`;
+      chrome.style.height = `${previewHRef.current}px`;
     }
   }, []);
 
@@ -15701,27 +15723,25 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     })()}
                   </div>
 
-                  {/*
-                    外框層：選取框、四個角的圓球、那排按鈕都畫在這裡。
-
-                    它跟上面那個頁面容器是兄弟、共用同一個父層，位置與大小也一模一樣
-                    （父層的寬高就是整排頁面的寬高），所以座標完全不用換算 ——
-                    子層原本怎麼擺，搬過來就還是擺在同一個地方。
-                    差別只有一個：這一層不在 overflow-hidden 底下，
-                    所以物件被拖出畫布時，框跟按鈕不會被邊緣的黑色切掉。
-
-                    本身 pointer-events: none，只有圓球與按鈕自己開 —— 框裡面的空白處
-                    仍然是穿透下去打到底下那個物件，拖曳手感一點都沒變。
-                  */}
-                  <div
-                    ref={setChromeLayer}
-                    className="absolute left-0 top-0 w-full h-full pointer-events-none"
-                    /* 选中框、控制点、白色药丸与其按钮是一整个 UI 层，必须高于
-                       普通分隔线、蓝色分隔线及所有对齐线。 */
-                    style={{ zIndex: 500000 }}
-                  />
-
                 </div>
+                {/*
+                  螢幕解析度外框層。刻意放在 pagesCol（transform: scale）外面、
+                  stripShell 裡面：物件內容仍由單一矩陣平順縮放，操作 UI 則用
+                  CSS zoom 直接以最後尺寸排版，不會把低倍率框線與圖示點陣放大。
+                  座標仍是同一套未縮放頁面座標，所以不需要維護第二份幾何。
+                */}
+                <div
+                  ref={setChromeLayerNode}
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: stripSubpixelXRef.current,
+                    top: 0,
+                    width: `${pages.length * previewW + (pages.length - 1)}px`,
+                    height: `${previewH}px`,
+                    zoom: pagesScale,
+                    zIndex: 500000,
+                  } as React.CSSProperties}
+                />
                 </div>
 
                 {/* Plus Button to add more pages (Maximum 25 pages total, i.e., addedPagesCount < 24) */}
