@@ -12263,7 +12263,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 cands.push((2 * (pr.bottom - cy)) / ext.bh); // 下邊貼齊
               }
               cands.forEach(cand => {
-                if (!(cand > 0.1)) return;
+                if (!(cand >= MIN_FLOATING_SCALE)) return;
                 // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
                 const px = Math.abs(cand - ns) * Math.max(ext.bw, ext.bh) / 2 * previewK;
                 if (px < SNAP_IN && px < best) { best = px; bestScale = cand; }
@@ -12302,7 +12302,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 ]
               : pageLines, target.x + target.width / 2);
           }
-          const finalNs = ns, finalRot = rot;
+          const finalNs = Math.max(MIN_FLOATING_SCALE, ns), finalRot = rot;
           queueInteraction(() => {
             setFloatingImages(prev => prev.map(img =>
               img.id === g.floatingId
@@ -15601,6 +15601,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               finalGuidelines = [{ type: 'horizontal', coord: bestGuidelineY! }];
                             }
 
+                            // 吸附候選也不能繞過共用最小倍率。
+                            finalScale = Math.max(MIN_FLOATING_SCALE, finalScale);
                             // Calculate the final (newX, newY) based on finalScale to keep pivot fixed
                             const R = (fImg.rotation * Math.PI) / 180;
                             const oppositeOffsetRotX = oppositeLocalX * Math.cos(R) - oppositeLocalY * Math.sin(R);
