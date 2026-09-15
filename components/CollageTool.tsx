@@ -9120,8 +9120,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   else if (d.idle === 'breathe' && selObj?.sym) setCur({ ...d, amp: 30 });
                   /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
                      就共用同一套，切換種類時也不能沿用上一個動畫的怪速度。 */
-                  else if (d.idle === 'pattern-breathe' && moTarget === 'shape') setCur({ ...d, amp: 100, speed: 0.7 });
-                  else if (d.idle === 'image-breathe' && selObj?.type === 'image') setCur({ ...d, amp: 100, speed: 0.7 });
+                  else if (d.idle === 'pattern-breathe' && moTarget === 'shape') setCur({ ...d, amp: 100, speed: patternBreathSpeedFromUi(70) });
+                  else if (d.idle === 'image-breathe' && selObj?.type === 'image') setCur({ ...d, amp: 100, speed: patternBreathSpeedFromUi(70) });
                   else if (d.idle === 'grid-wave') setCur({
                     ...d,
                     ...(isGridTarget ? GRID_WAVE_DEFAULT : NON_GRID_WAVE_DEFAULT),
@@ -9280,7 +9280,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         </div>
                         {cur.idle !== 'none' && (
                           <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                            <CompactSlider label="幅度"
+                            <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-amp`} label="幅度"
                               value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                 ? patternBreathAmpToUi(cur.amp) : cur.amp}
                               min={0} max={100} step={1}
@@ -9288,7 +9288,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 amp: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                   ? patternBreathAmpFromUi(v) : v,
                               })} />
-                            <CompactSlider label="速度"
+                            <CompactSlider key={`${moTarget}-${selObj?.id || 'pattern'}-${cur.idle}-speed`} label="速度"
                               value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                 ? patternBreathSpeedToUi(cur.speed)
                                 : cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
@@ -9541,7 +9541,11 @@ const useRafOnChange = (onChange: (v: number) => void) => {
   const raf = React.useRef(0);
   const cb = React.useRef(onChange);
   cb.current = onChange;
-  React.useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
+  React.useEffect(() => () => {
+    if (raf.current) cancelAnimationFrame(raf.current);
+    raf.current = 0;
+    pending.current = null;
+  }, []);
   const push = React.useCallback((v: number) => {
     pending.current = v;
     if (raf.current) return;
@@ -9582,18 +9586,23 @@ const RafRange = ({ min, max, step, value, onChange }: any) => {
 const CompactSlider = ({ label, value, min, max, onChange, step = "any", decimals = 0, fixedDecimals = false, onCommit, wide = false }: any) => {
   const { push, flush } = useRafOnChange(onChange);
   const done = () => { flush(); onCommit && onCommit(); };
+  const safeMin = Number.isFinite(Number(min)) ? Number(min) : 0;
+  const requestedMax = Number.isFinite(Number(max)) ? Number(max) : 100;
+  const safeMax = Math.max(safeMin, requestedMax);
+  const numericValue = Number(value);
+  const safeValue = Math.max(safeMin, Math.min(safeMax, Number.isFinite(numericValue) ? numericValue : safeMin));
   return (
   <div className="flex flex-col">
     <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
       <span>{label}</span>
       {/* 小數位要能顯示出來，不然 1.25 跟 1.5 在畫面上都是 1，看起來就像滑桿沒作用 */}
       <span className="text-white font-sans tabular-nums">
-        {decimals > 0 ? (fixedDecimals ? Number(value).toFixed(decimals) : Number(value).toFixed(decimals).replace(/\.?0+$/, '') || '0') : Math.round(value)}
+        {decimals > 0 ? (fixedDecimals ? safeValue.toFixed(decimals) : safeValue.toFixed(decimals).replace(/\.?0+$/, '') || '0') : Math.round(safeValue)}
       </span>
     </div>
     {/* onCommit：手指／滑鼠放開時才觸發（動畫頁拿它來自動重播） */}
     <div className="slider-wrap" style={{ height: 16 }}>
-      <input type="range" min={min} max={max} step={step} value={value}
+      <input type="range" min={safeMin} max={safeMax} step={step} value={safeValue}
         onChange={e => push(Number(e.target.value))}
         onPointerUp={done}
         onTouchEnd={done}

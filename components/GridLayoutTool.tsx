@@ -80,20 +80,29 @@ const CompactSlider = ({ label, value, min, max, onChange, step = 'any', decimal
     queued.current = null;
     onCommit?.();
   };
-  useEffect(() => () => { if (raf.current) cancelAnimationFrame(raf.current); }, []);
+  useEffect(() => () => {
+    if (raf.current) cancelAnimationFrame(raf.current);
+    raf.current = 0;
+    queued.current = null;
+  }, []);
+  const safeMin = Number.isFinite(Number(min)) ? Number(min) : 0;
+  const requestedMax = Number.isFinite(Number(max)) ? Number(max) : 100;
+  const safeMax = Math.max(safeMin, requestedMax);
+  const numericValue = Number(value);
+  const safeValue = Math.max(safeMin, Math.min(safeMax, Number.isFinite(numericValue) ? numericValue : safeMin));
   return (
     <div className={`flex flex-col ${disabled ? 'opacity-45' : ''}`}>
       <div className="flex justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
         <span>{label}</span>
         <span className="text-white font-sans tabular-nums">
           {decimals > 0
-            ? (fixedDecimals ? Number(value).toFixed(decimals) : Number(value).toFixed(decimals).replace(/\.?0+$/, '') || '0')
-            : Math.round(value)}
+            ? (fixedDecimals ? safeValue.toFixed(decimals) : safeValue.toFixed(decimals).replace(/\.?0+$/, '') || '0')
+            : Math.round(safeValue)}
         </span>
       </div>
       <div className="slider-wrap" style={{ height: 16 }}>
         <input
-          type="range" min={min} max={max} step={step} value={value}
+          type="range" min={safeMin} max={safeMax} step={step} value={safeValue}
           disabled={disabled}
           onChange={e => push(Number(e.target.value))}
           onPointerUp={finish} onTouchEnd={finish} onKeyUp={finish}
@@ -4905,7 +4914,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
        shapeDpr —— 只決定 canvas 內部要開幾個像素（上限 2 是記憶體考量）。 */
   const geoDpr = Math.min(4, Math.max(1, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1));
   // 預覽放大後也按實際螢幕像素重畫，而不是把原本的低解析畫布硬拉大。
-  const shapeDpr = Math.min(4, geoDpr * Math.max(1, canvasK()));
+  /* 不能以「手勢開始那一刻」的倍率建立低解析畫布，再讓整頁 transform 把它
+     放大。固定按經典拼圖允許的最高預覽倍率預留實體像素，縮放前、中、後都
+     使用同一份高解析 backing store，照片特效與影片不會先糊再補清楚。 */
+  const shapeDpr = Math.min(8, geoDpr * 3);
   /** 把長度吸到整數個實體像素（見 wrapGeo 的說明） */
   const snapPx = (v: number) => Math.round(v * geoDpr) / geoDpr;
   /** 吸到「偶數個」實體像素 —— 這樣一半也還落在格線上（見 wrapGeo） */
@@ -5019,8 +5031,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
      以前固定 720，比實際顯示的像素少一大截，所以一套上濾鏡或特效，
      照片就明顯變糊。上限 1400 是為了不讓超大格子把一次重算拖太久。 */
   const fxFullMax = () => {
-    const dpr = Math.min(2, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1);
-    return Math.min(1400, Math.max(720, Math.round(Math.max(boxW, boxH) * dpr)));
+    const dpr = Math.min(4, typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1);
+    return Math.min(4096, Math.max(1080, Math.round(Math.max(boxW, boxH) * dpr * Math.max(1, canvasK()))));
   };
   const fxCacheRef = useRef<{ key: string; canvas: HTMLCanvasElement } | null>(null);
   const fxFastRef = useRef(false);
@@ -5937,8 +5949,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       /* 尺寸上限與面積上限同時守住；手勢與靜止都保留 8MP。 */
       const backingScale = Math.min(
         dpr,
-        4096 / Math.max(cssW, cssH),
-        Math.sqrt(8_388_608 / Math.max(1, cssW * cssH)),
+        8192 / Math.max(cssW, cssH),
+        Math.sqrt(33_554_432 / Math.max(1, cssW * cssH)),
       );
       /* 一般圖形的 backing store 必須完整對應 CSS 盒子的四條邊。舊版用 ceil
          後仍以原 backingScale 畫圖，ceil 多出來的尾數全部堆在右／下；外層
@@ -14405,7 +14417,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       /* 排序时页面会离开原来的整排边界，paint containment 会像
                          左右黑色遮罩一样把浮起的页面切掉，因此此模式必须关闭；
                          一般编辑仍保留 paint containment 来避免互动残影。 */
-                      contain: pagesMode ? 'none' : 'paint',
+                      /* `contain: paint` 會讓 iOS WebKit 先把整排頁面拍成一張
+                         當下倍率的點陣合成層；之後捏合只是拉伸那張快照，所以
+                         照片、影片、文字、符號與圖形會一起變糊。頁面本來已有
+                         overflow 邊界，不需要再用 paint containment 裁切。 */
+                      contain: 'none',
                       isolation: 'isolate',
                     }}
                   >
@@ -16015,7 +16031,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               };
               const pickIdle = (id: string) => {
                 if (id === 'symbol-breathe2') patchMotion({ idle: id, amp: 60, speed: 1.2 });
-                else if (id === 'image-breathe' && targetIsImage) patchMotion({ idle: id, amp: 100, speed: .7 });
+                else if (id === 'image-breathe' && targetIsImage) patchMotion({ idle: id, amp: 100, speed: imageBreathSpeedFromUi(70) });
                 else if (id === 'breathe' && target.sym) patchMotion({ idle: id, amp: 30 });
                 else if (id === 'grid-wave') patchMotion(isGridTarget
                   ? { idle: id, amp: 50, speed: .9 }
@@ -16056,11 +16072,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     <p className="text-[10px] font-bold text-[#666] tracking-widest mb-2 mt-4">常駐動畫</p>
                     <div className="grid grid-cols-4 gap-2">{idleKinds.map(([id,name]) => <button key={id} className={cell(cfg.idle===id)} onClick={()=>pickIdle(id)}>{name}</button>)}</div>
                     {cfg.idle !== 'none' && <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                      <CompactSlider label="幅度"
+                      <CompactSlider key={`${target.id}-${cfg.idle}-amp`} label="幅度"
                         value={cfg.idle === 'image-breathe' && targetIsImage ? imageBreathAmpToUi(cfg.amp) : cfg.amp}
                         min={0} max={100} step={1} onCommit={replayMotion}
                         onChange={(v:number)=>patchMotion({amp:cfg.idle === 'image-breathe' && targetIsImage ? imageBreathAmpFromUi(v) : v})}/>
-                      <CompactSlider label="速度"
+                      <CompactSlider key={`${target.id}-${cfg.idle}-speed`} label="速度"
                         value={cfg.idle === 'image-breathe' && targetIsImage
                           ? imageBreathSpeedToUi(cfg.speed)
                           : cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget)
