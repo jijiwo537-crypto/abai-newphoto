@@ -14302,7 +14302,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {composeState && (
         <ComposeStudio
           image={composeState.img}
-          /* 影片不給梯形（見 ComposeStudio 的 hideKeystone），其餘完���一樣 */
+          /* 影片不給梯形（見 ComposeStudio 的 hideKeystone），其餘完全一樣 */
           hideKeystone={!!composeState.vid}
           geo={composeState.geo}
           onChange={g => setComposeState(st => (st ? { ...st, geo: g } : st))}
