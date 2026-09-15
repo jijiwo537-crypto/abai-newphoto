@@ -9398,16 +9398,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 页面内分割线每一帧直接读取反倍率，不等待 React 重绘。 */
       col.style.setProperty('--preview-inverse-scale', `${1 / Math.max(0.0001, k)}px`);
       col.style.setProperty('--preview-inverse-half', `${0.5 / Math.max(0.0001, k)}px`);
-      /* 分割線的視覺粗細使用一條連續曲線：縮小時保留使用者喜歡的稍粗感，
-         放大時最低仍有 1 個螢幕 CSS px，不會細到消失。寬度與中心偏移在同一幀
-         由同一個浮點值寫入，不經 round／斷點，因此捏合過程沒有跳級斷層。 */
-      const seamScreenPx = 1.18 + 0.18 * Math.tanh((1 - k) * 1.25);
+      /* 分割線固定為同一個螢幕粗度。內容座標仍除以 k，所以不論預覽放大或
+         縮小，最後合成到螢幕都精確是 1.30 CSS px；不再有放大後變細、縮放
+         過程粗細漂移或跨過某個倍率突然跳級的情況。 */
+      const seamScreenPx = 1.30;
       const seamContentPx = seamScreenPx / Math.max(0.0001, k);
       col.style.setProperty('--preview-seam-width', `${seamContentPx}px`);
       col.style.setProperty('--preview-seam-half', `${seamContentPx / 2}px`);
-      /* 同色保護帶也連續變化，僅補抗鋸齒，不形成第二條可辨識的線。 */
-      const seamGuardScreenPx = 0.10 + 0.04 * Math.tanh((1 - k) * 1.25);
-      col.style.setProperty('--preview-seam-guard', `${Math.max(0.055, seamGuardScreenPx) / Math.max(0.0001, k)}px`);
+      /* 同色抗鋸齒保護帶也固定，避免縮放時出現另一條忽明忽暗的細線。 */
+      const seamGuardScreenPx = 0.10;
+      col.style.setProperty('--preview-seam-guard', `${seamGuardScreenPx / Math.max(0.0001, k)}px`);
       col.style.setProperty('--preview-guide-scale', `${2 / Math.max(0.0001, k)}px`);
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
@@ -13569,7 +13569,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           j.maxX > pageLeft + 0.5 && j.minX < pageLeft + targetW - 0.5);
         const videoJobs = pageJobs.filter(j => j.isVideo);
         const animated = pageJobs.filter(j => j.motionItem && hasConfiguredMotion(j.motionItem));
-        const k = Math.min(1, 1280 / Math.max(targetW, targetH));
+        /* 正式錄影仍維持長邊 1280，避免 iOS 即時編碼耗盡記憶體；IG 的 live
+           預覽不經編碼，必須保留 Retina 所需的實體像素。舊版把兩者一起壓到
+           1280，3:4 頁實際只剩 960px 寬，細字、符號與小圖形必然被放糊。 */
+        const longEdgeCap = opts?.live ? 2160 : 1280;
+        const k = Math.min(1, longEdgeCap / Math.max(targetW, targetH));
         // 編碼器要求偶數邊長
         const VW = Math.max(2, Math.round(targetW * k / 2) * 2);
         const VH = Math.max(2, Math.round(targetH * k / 2) * 2);
@@ -13577,6 +13581,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const rc = document.createElement('canvas');
         rc.width = VW; rc.height = VH;
         const rg = rc.getContext('2d')!;
+        rg.imageSmoothingEnabled = true;
+        rg.imageSmoothingQuality = 'high';
 
         // 有影片時循環長度只能等於影片；純動畫頁則用該頁最晚完成的進場＋停留。
         const vids = videoJobs.map(j => getPreviewVideo(j.src!));
