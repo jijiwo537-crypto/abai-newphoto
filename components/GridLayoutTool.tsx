@@ -9213,12 +9213,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      不會污染草稿，也不會在停止後留下偏移。 */
   useEffect(() => {
     if ((!anyClassicMotion && activeTab !== 'motion') || !motionPlaying) return;
-    let raf = 0, last = -1;
+    let raf = 0;
     const started = performance.now() - motionClockRef.current * 1000;
     const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
-      if (last >= 0 && now - last < 1000 / 30) return;
-      last = now;
+      /* 預覽不再鎖 30fps，每一個螢幕刷新都更新：一般 iPhone 為 60fps，
+         ProMotion 與高幀影片所在裝置則可跟到 120fps。 */
       const t = ((now - started) / 1000) % motionTotal;
       motionClockRef.current = t;
       setMotionTime(t);
@@ -9399,18 +9399,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 页面内分割线每一帧直接读取反倍率，不等待 React 重绘。 */
       col.style.setProperty('--preview-inverse-scale', `${1 / Math.max(0.0001, k)}px`);
       col.style.setProperty('--preview-inverse-half', `${0.5 / Math.max(0.0001, k)}px`);
-      /* 分割線必須在任何預覽倍率下看起來都跟預設倍率完全同粗。
-         線位於 pagesCol 的 scale 裡，因此內容線寬要反除 k；同時先把目標
-         CSS 線寬吸附到整數個實體像素，避免 iPhone Safari 將 0.x 實體像素
-         反覆取整，造成縮放途中忽粗忽細或偶爾閃出一條白縫。 */
+      /* 分割線改由 SVG non-scaling-stroke 固定螢幕粗度。這裡只算一次最接近
+         1.30 CSS px 的完整實體像素，不再逐幀反算內容線寬；iPhone Safari
+         因此不會在捏合時不停重排 0.x px 的 div，線也不會抖動或突然變細。 */
       const dpr = Math.max(1, window.devicePixelRatio || 1);
       const seamScreenPx = Math.max(1 / dpr, Math.round(1.30 * dpr) / dpr);
-      const seamContentPx = seamScreenPx / Math.max(0.0001, k);
-      col.style.setProperty('--preview-seam-width', `${seamContentPx}px`);
-      col.style.setProperty('--preview-seam-half', `${seamContentPx / 2}px`);
-      /* 線寬已經精準落在實體像素，不再疊加半透明保護帶；疊兩條線正是
-         先前放大後看見兩種粗度與白色毛邊的來源。 */
-      col.style.setProperty('--preview-seam-guard', '0px');
+      col.style.setProperty('--preview-seam-screen', `${seamScreenPx}px`);
       col.style.setProperty('--preview-guide-scale', `${2 / Math.max(0.0001, k)}px`);
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
@@ -15695,33 +15689,31 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       const seamDx = (move?.dx || 0) + previewW * (1 - moveScale) / 2;
                       const seamDy = previewH * (1 - moveScale) / 2;
                       return (
-                        <div
+                        <svg
                           key={`page-seam-overlay-${pageIdx}`}
                           data-page-seam-overlay={pageIdx}
                           className="absolute pointer-events-none"
                           style={{
-                            /* 用實際左緣定位，不再用 translateX(-50%)。百分比位移
-                               會在 WebKit 中成為另一個取整步驟，縮放時線心可能跳
-                               半個實體像素。反倍率半寬讓線永遠以 seam 座標為中心。 */
-                            left: `calc(${baseSeamLeft}px - var(--preview-seam-half, 0.59px))`,
+                            left: baseSeamLeft,
                             top: 0,
-                            /* 分割線固定是 1px；藍色吸附線由下方獨立的 2px
-                               guideline layer 負責，兩者不再共用粗細或狀態。 */
-                            width: 'var(--preview-seam-width, 1.18px)',
+                            width: 1,
                             height: previewH,
+                            overflow: 'visible',
                             transform: `translate3d(${seamDx}px, ${seamDy}px, 0) scaleY(${moveScale})`,
                             transformOrigin: 'center top',
                             transition: move
                               ? (move.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
                               : undefined,
-                            backgroundColor: shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
-                            /* fractional transform 落在像素中間時，單純 1px 的兩側
-                               會各自混色，疊在物件上便看成較細；極小同色保護帶同時
-                               蓋掉圖片邊緣偶發露出的髮絲白線。 */
-                            boxShadow: `0 0 0 var(--preview-seam-guard, 0.125px) ${shadeHex(WORKSPACE_BG, PAGE_SEAM_INK)}`,
                             zIndex: 400000,
                           }}
-                        />
+                          aria-hidden
+                        >
+                          <line x1="0" y1="0" x2="0" y2={previewH}
+                            stroke={shadeHex(WORKSPACE_BG, PAGE_SEAM_INK)}
+                            style={{ strokeWidth: 'var(--preview-seam-screen, 1.333px)' }}
+                            vectorEffect="non-scaling-stroke"
+                            shapeRendering="geometricPrecision" />
+                        </svg>
                       );
                     })}
 

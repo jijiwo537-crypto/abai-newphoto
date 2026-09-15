@@ -745,6 +745,12 @@ const GRID_IDLE_KINDS = IDLE_KINDS;
 const PATTERN_IDLE_KINDS = IDLE_KINDS.map(k =>
   k.id === 'grid-wave' ? { id: 'pattern-breathe', name: '呼吸' } : k
 );
+/* 圖案呼吸的面板仍顯示 0～100，但實際有效範圍依設計鎖在：
+   幅度 50～100、速度 70～250。 */
+const patternBreathAmpToUi = (amp: number) => Math.round(Math.max(0, Math.min(100, (amp - 50) * 2)));
+const patternBreathAmpFromUi = (ui: number) => 50 + Math.max(0, Math.min(100, ui)) * 0.5;
+const patternBreathSpeedToUi = (speed: number) => Math.round(Math.max(0, Math.min(100, (speed * 100 - 70) / 1.8)));
+const patternBreathSpeedFromUi = (ui: number) => (70 + Math.max(0, Math.min(100, ui)) * 1.8) / 100;
 const SYMBOL_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'grid-wave').flatMap(k => k.id === 'breathe' ? [{ ...k, name: '縮放I' }, { id: 'symbol-breathe2', name: '縮放II' }] : [k]);
 /* 一般文字不再提供旋轉，原位置換成符號同款的縮放 II。 */
 const TEXT_IDLE_KINDS = IDLE_KINDS.filter(k => k.id !== 'spin')
@@ -6757,11 +6763,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
   }, [moShape, moLink, hasLink, linkStart, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText]);
 
-  /* 播放迴圈。時鐘存在 ref 裡，所以「換個參數 / 拖一下物件」讓這個 effect
-     重跑時，動畫是接著走的，不會每動一下就跳回第一格。
-     動畫每一格都要重烤整張圖，60Hz 跑滿的話手機的畫布記憶體會被系統回收
-     （就是「播一播突然回到主畫面」），所以這裡壓到 30fps 就好 ——
-     肉眼看起來一樣順，但每秒少烤一半的圖。 */
+  /* 播放迴圈。時鐘存在 ref 裡，所以換參數時會接著走、不跳回第一格。
+     不再做人為 30fps 閘門；跟著裝置原生刷新更新，一般 iPhone 是 60fps，
+     ProMotion 可到 120fps，因此預覽穩定高於要求的 50fps。 */
   const motionClockRef = useRef(0);
   /* 拖滑桿時 holes 每一格都是新陣列 → renderToCanvas 的身分跟著換 →
      播放迴圈會被拆掉重建幾十次。走 ref 就不會，rAF 從頭到尾只有一個。 */
@@ -6786,35 +6790,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => {
     if (!motionOn || !motionPlaying || !imageState || videoProg !== null) return;
     let raf = 0;
-    let last = -1;
-    const FRAME = 1000 / 30;
     const t0 = performance.now() - motionClockRef.current * 1000;
-    /* 自適應保險絲。閃退的成因永遠是同一件事：一格還沒畫完就又排下一格，
-       工作愈積愈多、記憶體與 GC 一路堆到被系統回收。
-       這裡只調「每秒畫幾格」，完全不動解析度 —— 畫面該多細就是多細，
-       只是在跟不上的機器上改成 20fps／12fps，把每一格之間的空檔讓出來。 */
-    let slow = 0, fast = 0;
-    let interval = FRAME;
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const now = performance.now();
-      if (last >= 0 && now - last < interval) return;
-      last = now;
       try {
         motionClockRef.current = ((now - t0) / 1000) % motionTotal;
         animRef.current = buildAnim(motionClockRef.current);
-        const t1 = performance.now();
         if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, motionScaleRef.current);
-        const cost = performance.now() - t1;
-        // 一格畫超過「一格的時間」就是追不上了，連續幾次就把格數降一階
-        if (cost > interval * 0.9) { slow++; fast = 0; } else if (cost < interval * 0.45) { fast++; slow = 0; }
-        if (slow >= 5 && interval < 1000 / 12) {
-          interval = interval < 1000 / 20 ? 1000 / 20 : 1000 / 12;
-          slow = 0;
-        } else if (fast >= 90 && interval > FRAME) {
-          interval = interval > 1000 / 20 ? 1000 / 20 : FRAME;
-          fast = 0;
-        }
       } catch (err) {
         // 單一格畫壞不該把整個工具帶走 —— 停下來、收回靜態就好
         console.error('動畫這一格畫不出來', err);
@@ -7119,14 +7102,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const next = Math.max(0.35, Math.round(want * 20) / 20);
       if (Math.abs(next - scale) > 0.02) scale = next;
     };
-    let raf = 0, last = -1, fitTick = 0;
-    const FRAME = 1000 / 30;
+    let raf = 0, fitTick = 0;
     const t0 = performance.now();
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const now = performance.now();
-      if (last >= 0 && now - last < FRAME) return;
-      last = now;
       const cv = igCanvasRef.current;
       if (!cv) return;
       try {
@@ -9124,7 +9104,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   else if (d.idle === 'breathe' && selObj?.sym) setCur({ ...d, amp: 30 });
                   /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
                      就共用同一套，切換種類時也不能沿用上一個動畫的怪速度。 */
-                  else if (d.idle === 'pattern-breathe' && moTarget === 'shape') setCur({ ...d, amp: 70, speed: 0.9 });
+                  else if (d.idle === 'pattern-breathe' && moTarget === 'shape') setCur({ ...d, amp: 100, speed: 2 });
                   else if (d.idle === 'grid-wave') setCur({
                     ...d,
                     ...(isGridTarget ? GRID_WAVE_DEFAULT : NON_GRID_WAVE_DEFAULT),
@@ -9282,21 +9262,33 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         </div>
                         {cur.idle !== 'none' && (
                           <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                            <CompactSlider label="幅度" value={cur.amp} min={0} max={100} step={1}
-                              onChange={(v: number) => setCur({ amp: v })} />
+                            <CompactSlider label="幅度"
+                              value={cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                                ? patternBreathAmpToUi(cur.amp) : cur.amp}
+                              min={0} max={100} step={1}
+                              onChange={(v: number) => setCur({
+                                amp: cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                                  ? patternBreathAmpFromUi(v) : v,
+                              })} />
                             <CompactSlider label="速度"
-                              value={cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
+                              value={cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                                ? patternBreathSpeedToUi(cur.speed)
+                                : cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                 ? symbolBreathe2SpeedToUi(cur.speed)
                                 : cur.idle === 'grid-wave' && !isGridTarget
                                   ? nonGridWaveSpeedToUi(cur.speed)
                                   : Math.round(cur.speed * 100)}
-                              min={cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
+                              min={cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                                || cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                 || cur.idle === 'grid-wave' && !isGridTarget ? 0 : 20}
-                              max={cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
+                              max={cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                                || cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                 || cur.idle === 'grid-wave' && !isGridTarget ? 100 : 180}
                               step={1}
                               onChange={(v: number) => setCur({
-                                speed: cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
+                                speed: cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                                  ? patternBreathSpeedFromUi(v)
+                                  : cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                   ? symbolBreathe2SpeedFromUi(v)
                                   : cur.idle === 'grid-wave' && !isGridTarget
                                     ? nonGridWaveSpeedFromUi(v)
