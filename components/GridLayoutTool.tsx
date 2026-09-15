@@ -5921,10 +5921,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
          固定貼圖，但尺寸愈小就提高一次性的超取樣密度。倍率只由物件本身尺寸
          決定，不含預覽 zoom，因此捏合畫布期間 backing store 仍完全不變。 */
       const shapeDetailBoost = exactShapeBacking
-        ? Math.max(1.25, Math.min(2, 180 / Math.max(1, cssW, cssH)))
+        ? Math.max(1.5, Math.min(3.5, 280 / Math.max(1, cssW, cssH)))
         : 1;
       const previewRasterScale = exactShapeBacking ? shapeDetailBoost : Math.max(1, canvasScale);
-      const dpr = Math.max(2, geoDpr * previewRasterScale * (gestureRendering ? 1.5 : 3));
+      const dpr = Math.max(2, geoDpr * previewRasterScale * (gestureRendering ? 2 : 4));
       /* 尺寸上限與面積上限要同時守住：手勢期間以 4MP 維持每幀流暢，靜止時
          回到 8MP；窄長文字也不會只因長邊較長就過早失去 Retina 密度。 */
       const backingScale = Math.min(
@@ -9398,16 +9398,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 页面内分割线每一帧直接读取反倍率，不等待 React 重绘。 */
       col.style.setProperty('--preview-inverse-scale', `${1 / Math.max(0.0001, k)}px`);
       col.style.setProperty('--preview-inverse-half', `${0.5 / Math.max(0.0001, k)}px`);
-      /* 分割線固定為同一個螢幕粗度。內容座標仍除以 k，所以不論預覽放大或
-         縮小，最後合成到螢幕都精確是 1.30 CSS px；不再有放大後變細、縮放
-         過程粗細漂移或跨過某個倍率突然跳級的情況。 */
+      /* 分割線跟頁面使用相同的內容座標粗度。不要再除以預覽倍率：Safari 會
+         把反向縮窄後的線取樣到不足一個實體像素，放大時肉眼反而看成變細。
+         現在放大整張頁面時分割線也自然等比例放大，絕不會愈放愈細。 */
       const seamScreenPx = 1.30;
-      const seamContentPx = seamScreenPx / Math.max(0.0001, k);
+      const seamContentPx = seamScreenPx;
       col.style.setProperty('--preview-seam-width', `${seamContentPx}px`);
       col.style.setProperty('--preview-seam-half', `${seamContentPx / 2}px`);
-      /* 同色抗鋸齒保護帶也固定，避免縮放時出現另一條忽明忽暗的細線。 */
+      /* 同色抗鋸齒保護帶與線一起縮放，不再另外套反倍率造成雙重取樣。 */
       const seamGuardScreenPx = 0.10;
-      col.style.setProperty('--preview-seam-guard', `${seamGuardScreenPx / Math.max(0.0001, k)}px`);
+      col.style.setProperty('--preview-seam-guard', `${seamGuardScreenPx}px`);
       col.style.setProperty('--preview-guide-scale', `${2 / Math.max(0.0001, k)}px`);
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
@@ -13128,8 +13128,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          390pt 寬螢幕只有約 2.3 倍，細小圖形會先被壓成低解析再放大。
          1440px 足以覆蓋 3x 顯示，同時仍遠低於正式匯出的記憶體成本。 */
       const opts = needsLivePreview
-        ? { silent: true as const, previewWidth: 1440, live: true }
-        : { silent: true as const, previewWidth: 1440, stillOnly: true };
+        ? { silent: true as const, previewWidth: 1800, live: true }
+        : { silent: true as const, previewWidth: 1800, stillOnly: true };
       let r = await handleExport(opts);
       let urls = (r && 'urls' in r) ? r.urls : [];
       // 偶爾第一次會算不出來（圖還沒解碼完之類），隔一下再試一次
@@ -13572,7 +13572,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         /* 正式錄影仍維持長邊 1280，避免 iOS 即時編碼耗盡記憶體；IG 的 live
            預覽不經編碼，必須保留 Retina 所需的實體像素。舊版把兩者一起壓到
            1280，3:4 頁實際只剩 960px 寬，細字、符號與小圖形必然被放糊。 */
-        const longEdgeCap = opts?.live ? 2160 : 1280;
+        const longEdgeCap = opts?.live ? 2400 : 1280;
         const k = Math.min(1, longEdgeCap / Math.max(targetW, targetH));
         // 編碼器要求偶數邊長
         const VW = Math.max(2, Math.round(targetW * k / 2) * 2);

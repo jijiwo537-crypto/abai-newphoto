@@ -236,6 +236,13 @@ export const drawTextShape = (
     : holeType === 'love3' ? '<333'
     : (GLYPH_HOLES[holeType] ?? text);
   const ink = glyphInk(holeType, str, sz);
+  /* 這支會先把字符畫到暫存 Canvas，再貼回真正畫布。匯出與 IG 預覽若在
+     外層還有 scale，舊版暫存圖只按邏輯尺寸建立，貼回後才被放大，特殊字符
+     與圖片型圖形便會比一般向量 Path 模糊。按最終 CTM 的實際倍率建立 backing
+     store，字形會直接以成品所需的實體像素渲染，幾何與選中框則完全不變。 */
+  const tm = targetCtx.getTransform();
+  const density = Math.max(1, Math.min(8,
+    Math.max(Math.hypot(tm.a, tm.b), Math.hypot(tm.c, tm.d))));
   /* 暫存畫布只要「這個字轉一圈都還在裡面」就夠了。以前一律開 sz×3 見方，
      像 ᯽ 這種字有九成面積是空的，卻每一顆、每一格都要被 drawImage 合成一次
      （實測合成佔掉拖曳字符圖案時將近三成的時間）。
@@ -245,13 +252,13 @@ export const drawTextShape = (
   const pad = ink.r > 0.5
     ? Math.max(2, Math.min(oldPad, Math.ceil(ink.r) + 2))
     : oldPad;
-  const side = Math.max(2, pad * 2);
+  const logicalSide = Math.max(2, pad * 2);
+  const side = Math.max(2, Math.ceil(logicalSide * density));
+  const rasterScale = side / logicalSide;
   let tempCanvas: HTMLCanvasElement | undefined;
-  let reused = false;
   if (side <= TEXT_TMP_MAX) {
     tempCanvas = textTmpPool.get(side);
-    if (tempCanvas) reused = true;
-    else {
+    if (!tempCanvas) {
       tempCanvas = document.createElement('canvas');
       tempCanvas.width = side; tempCanvas.height = side;
       textTmpPool.set(side, tempCanvas);
@@ -266,13 +273,13 @@ export const drawTextShape = (
     tempCanvas.width = side; tempCanvas.height = side;
   }
   const tempCtx = tempCanvas.getContext('2d')!;
-  if (reused) {
-    /* 剛開的畫布狀態本來就是乾淨的；重複用的就得自己收乾淨。 */
-    tempCtx.setTransform(1, 0, 0, 1, 0, 0);
-    tempCtx.globalAlpha = 1;
-    tempCtx.globalCompositeOperation = 'source-over';
-    tempCtx.clearRect(0, 0, side, side);
-  }
+  /* 不論是否來自池子都完整重設。所有繪圖座標仍沿用原本的邏輯尺寸，只有
+     backing store 增密，所以紋理、墨水中心與物件位置不會被這次修正改動。 */
+  tempCtx.setTransform(1, 0, 0, 1, 0, 0);
+  tempCtx.globalAlpha = 1;
+  tempCtx.globalCompositeOperation = 'source-over';
+  tempCtx.clearRect(0, 0, side, side);
+  tempCtx.setTransform(rasterScale, 0, 0, rasterScale, 0, 0);
 
   // 1. 在 tempCanvas 上畫純黑色的文字形狀
   tempCtx.fillStyle = '#000000';
@@ -303,7 +310,7 @@ export const drawTextShape = (
     tempCtx.globalCompositeOperation = 'source-in';
     tempCtx.fillStyle = fillStyle;
     tempCtx.translate(pad - cx, pad - cy);
-    tempCtx.fillRect(cx - pad, cy - pad, side, side);
+    tempCtx.fillRect(cx - pad, cy - pad, logicalSide, logicalSide);
     tempCtx.restore();
   }
 
@@ -312,7 +319,10 @@ export const drawTextShape = (
   if (isDestinationOut) {
     targetCtx.globalCompositeOperation = 'destination-out';
   }
-  targetCtx.drawImage(tempCanvas, cx - pad, cy - pad);
+  targetCtx.imageSmoothingEnabled = true;
+  targetCtx.imageSmoothingQuality = 'high';
+  targetCtx.drawImage(tempCanvas, 0, 0, side, side,
+    cx - pad, cy - pad, logicalSide, logicalSide);
   targetCtx.restore();
 };
 
