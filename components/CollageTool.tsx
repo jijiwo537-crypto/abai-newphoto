@@ -817,7 +817,10 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
     /* 圖片呼吸只改透明度。正弦的亮→暗與暗→亮各佔完全相同的半週期，
        不套 ease、不停頓，因此不會有子彈時間的忽快忽慢。 */
     case 'image-breathe': {
-      const pulse = (Math.sin(t * speed * 1.75 + phase - Math.PI / 2) + 1) / 2;
+      /* 呼吸第一幀必須承接靜止狀態的全亮，再完整淡到 0。若混入物件的
+         隨機 phase，第一個最低點可能在交接尚未完成前就經過，幅度 100
+         看起來也只會半透明。從 cos(0)=1 起步便沒有跳幀，也不會漏掉首輪。 */
+      const pulse = (Math.cos(t * speed * 1.75) + 1) / 2;
       return { k: 1, dx: 0, dy: 0, rot: 0, a: 1 - A * (1 - pulse) };
     }
     /* 旋轉是「累積量」不是「來回擺」，所以不能吃 phase ——
@@ -915,7 +918,9 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
   return {
     k: 1 + (g.k - 1) * blend,
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
-    a: 1 + (g.a - 1) * blend, fx: 1, burst: 0,
+    /* 圖片呼吸本身從 a=1 起步，不需要再套第二層 attack。直接採用其 alpha
+       才能讓幅度 100 的第一個低點真正到 0；其他動畫維持既有交接。 */
+    a: cfg.idle === 'image-breathe' ? g.a : 1 + (g.a - 1) * blend, fx: 1, burst: 0,
     gridWave: g.gridWave, waveMix: blend,
     /* 常駐的本地時間明確交給符號分單位動畫；進場期間不存在，交棒第一幀為 0。 */
     idleT: after,
@@ -4356,12 +4361,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 每顆依自己的隨機 id 取得獨立相位與速度，不再按照相鄰順序刻意
            排列。數值固定於 id，重播時不跳；單顆仍是對稱正弦，因此它自己的
            淡出、淡入時間完全相等。 */
-        const phase = (hashId(`${h.id}:phase`) % 10000) / 10000 * Math.PI * 2;
         const rate = 0.82 + (hashId(`${h.id}:rate`) % 3600) / 10000;
         const cycle = Math.max(0.35, shapeMo.speed) * 1.75 * rate;
-        const pulse = (Math.sin(f.idleT * cycle + phase - Math.PI / 2) + 1) / 2;
+        /* 每顆速度仍依 id 隨機，但全部從「完整顯示」開始；第一輪便會由 1
+           平滑走到 0，而不是從任意相位切進半輪呼吸。 */
+        const pulse = (Math.cos(f.idleT * cycle) + 1) / 2;
         const strength = Math.max(0, Math.min(1, shapeMo.amp / 100));
-        const attackP = Math.max(0, Math.min(1, f.idleT / 0.72));
+        const attackP = Math.max(0, Math.min(1, f.idleT / 0.28));
         const attack = attackP * attackP * (3 - 2 * attackP);
         patternAlpha = 1 + ((1 - strength * (1 - pulse)) - 1) * attack;
       }

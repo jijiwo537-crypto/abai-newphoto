@@ -148,7 +148,7 @@ export const objectMotionFrame = (
   /* 圖片呼吸與創意拼圖的圖案呼吸相同，只改透明度；正弦兩個半週期
      完全對稱，所以淡出與淡入時間一致。 */
   else if (cfg.idle === 'image-breathe') {
-    const pulse = (Math.sin(t * cfg.speed * 1.75 + phase - Math.PI / 2) + 1) / 2;
+    const pulse = (Math.cos(t * cfg.speed * 1.75) + 1) / 2;
     idle = { ...flat, a: 1 - A * (1 - pulse) };
   }
   else if (cfg.idle === 'spin') idle = { ...flat, rot: t * cfg.speed * A * 90 };
@@ -166,7 +166,7 @@ export const objectMotionFrame = (
     dx: idle.dx * blend,
     dy: idle.dy * blend,
     rot: idle.rot * blend,
-    a: 1 + (idle.a - 1) * blend,
+    a: cfg.idle === 'image-breathe' ? idle.a : 1 + (idle.a - 1) * blend,
     idleT: idle.idleT,
     waveMix: blend,
     gridWave: idle.gridWave,

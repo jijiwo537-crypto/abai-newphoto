@@ -284,6 +284,9 @@ const EMPTY_CELLS: ImageCell[] = [];
 
 /** 佈局最小縮放：再小就很難點得到 */
 const MIN_LAYOUT_SCALE = 0.4;
+/* 浮動照片、影片、圖形、符號與文字共用同一個最小倍率。0.1 會把 160px
+   的預設物件壓到約 16px，任何螢幕都只剩幾顆實體像素，不可能保留細節。 */
+const MIN_FLOATING_SCALE = 0.2;
 
 /** 新增佈局時預設佔頁面七分滿 */
 const NEW_LAYOUT_SCALE = 0.7;
@@ -5502,7 +5505,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 
       const L_projected = v_px * u_x + v_py * u_y;
 
-      const newScale = Math.max(0.1, Math.min(10, L_projected / L_local));
+      const newScale = Math.max(MIN_FLOATING_SCALE, Math.min(10, L_projected / L_local));
 
       const oppositeOffsetRotX = oppositeLocalX * Math.cos(R) - oppositeLocalY * Math.sin(R);
       const oppositeOffsetRotY = oppositeLocalX * Math.sin(R) + oppositeLocalY * Math.cos(R);
@@ -8097,7 +8100,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (!selectedImg) return;
 
       const factor = 1 - e.deltaY * 0.01;
-      const newScale = Math.max(0.1, Math.min(10.0, selectedImg.scale * factor));
+      const newScale = Math.max(MIN_FLOATING_SCALE, Math.min(10.0, selectedImg.scale * factor));
 
       setFloatingImages(prev => prev.map(img => {
         if (img.id === selectedFloatingId) {
@@ -9437,17 +9440,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
       col.style.setProperty('--layout-grid-stroke', `${1 / Math.max(0.0001, k)}px`);
-      (col.style as any).zoom = '';
       const sub = stripSubpixelXRef.current;
-      /* sub 保存的是內容座標，translate 寫在 scale 左側時使用螢幕座標，故乘 k。
-         縮放與尾數補償在同一個 matrix、同一幀提交，不再讓 WebKit 分兩層取整。 */
-      col.style.transform = `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * k}px, 0, 0) ` : ''}scale(${k})`;
-      col.style.transformOrigin = '0 0';
-      /* 不強制把整排預覽預先點陣化。Safari 若在 pinch 開始時依舊倍率建立
-         will-change 合成層，之後放大看到的選中框、控制點、藥丸與圖標只是
-         同一張低解析貼圖。保留單一 transform 座標系，但交給瀏覽器在最終
-         倍率重新光柵化 SVG／文字；圖片與固定超取樣圖形仍由 GPU 合成。 */
-      col.style.willChange = '';
+      /* iOS 的 transform:scale 會先把整頁以手勢開始時的尺寸光柵化，再把該
+         貼圖放大／縮小；因此所有物件都會隨預覽倍率忽清忽糊。WebKit 支援
+         原生 CSS zoom 時改用真正的顯示倍率，照片、影片、SVG、文字與 Canvas
+         都會按當前倍率重新取樣。只有不支援 zoom 的瀏覽器才退回 transform。 */
+      const nativeZoom = typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2');
+      if (nativeZoom) {
+        (col.style as any).zoom = String(k);
+        col.style.transform = Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0)` : '';
+        col.style.transformOrigin = '0 0';
+        col.style.willChange = '';
+      } else {
+        (col.style as any).zoom = '';
+        col.style.transform = `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * k}px, 0, 0) ` : ''}scale(${k})`;
+        col.style.transformOrigin = '0 0';
+        col.style.willChange = liveTransform ? 'transform' : '';
+      }
       /* 固定在萤幕坐标层的空格提示收到通知后才量中心点。
          事件只排一个 rAF，不在手势处理内同步读取版面。 */
       col.dispatchEvent(new Event('abai-preview-transform'));
@@ -9645,7 +9654,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           const col = pagesColRef.current;
           if (col) {
             const sub = stripSubpixelXRef.current;
-            col.style.transform = `${Math.abs(sub) > .0001 ? `translate3d(${sub * k}px, 0, 0) ` : ''}scale(${k})`;
+            const nativeZoom = !!(col.style as any).zoom;
+            col.style.transform = nativeZoom
+              ? (Math.abs(sub) > .0001 ? `translate3d(${sub}px, 0, 0)` : '')
+              : `${Math.abs(sub) > .0001 ? `translate3d(${sub * k}px, 0, 0) ` : ''}scale(${k})`;
           }
         }
       }
@@ -12152,7 +12164,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const col = pagesColRef.current;
         if (col) {
           const sub = stripSubpixelXRef.current;
-          col.style.transform = `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * z}px, 0, 0) ` : ''}scale(${z})`;
+          const nativeZoom = !!(col.style as any).zoom;
+          col.style.transform = nativeZoom
+            ? (Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0)` : '')
+            : `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * z}px, 0, 0) ` : ''}scale(${z})`;
         }
       }
       positionPageCtls();
@@ -12212,7 +12227,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
              才有，捏合完全沒有，很難把圖縮到剛好貼齊畫布。
              中心點在捏合時不動，所以只有「四個邊界」會隨倍率移動：把倍率解成
              「這條邊剛好落在畫布邊界上」的值，最近的那一個在門檻內就吸附過去。 */
-          const rawScale = Math.max(0.1, g.baseScale * k);
+          const rawScale = Math.max(MIN_FLOATING_SCALE, g.baseScale * k);
           // 距離感測會在相鄰事件間抖動零點幾 px；創意拼圖是一幀只採最後一筆，
           // DOM 版再加輕量低通，避免這些高頻雜訊直接變成盒子尺寸。
           let ns = g.lastScale === undefined || Math.abs(rawScale - g.lastScale) < 0.0005
