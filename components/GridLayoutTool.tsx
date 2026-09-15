@@ -6328,13 +6328,6 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           const previous = shapeSnapshotUrlRef.current;
           shapeSnapshotUrlRef.current = url;
           setShapeSnapshotUrl(url);
-          /* 文字／符號快照已完整載入後釋放大型 backing store，避免 iPhone 因
-             多張高解析透明 Canvas 超過記憶體而把某些文字清成空白。下一次
-             內容或效果變更時，layout effect 會先同步恢復尺寸並重畫。 */
-          if (canFreezeText) {
-            canvas.width = 1;
-            canvas.height = 1;
-          }
           if (previous && previous !== url) requestAnimationFrame(() => URL.revokeObjectURL(previous));
         };
         probe.onerror = () => URL.revokeObjectURL(url);
@@ -7411,19 +7404,49 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         </svg>
         </>
       ) : image.text !== undefined ? (
-        <canvas
-          ref={vectorCanvasRef}
-          data-classic-text-raster={image.id}
-          style={{
-            position: 'absolute',
-            left: `${(boxW - vectorCssW) / 2}px`,
-            top: `${(boxH - vectorCssH) / 2}px`,
-            width: `${vectorCssW}px`,
-            height: `${vectorCssH}px`,
-            opacity: isTextEditing ? 0 : (image.opacity ?? 100) / 100,
-            pointerEvents: 'none',
-          }}
-        />
+        <>
+          {/* 文字／符號的靜止快照必須真的掛在文字分支裡。上一版只有產生
+              Blob，顯示它的 img 卻留在圖形分支，接著又把 Canvas 清成 1×1，
+              因此只看得到第一幀。快照與 Canvas 使用完全相同的 CSS 幾何，
+              切換時不會位移；整頁縮放時則像照片一樣只縮放固定影像。 */}
+          {shapeSnapshotUrl && !gestureRendering && !liveTuning && !motionFrame ? (
+            <img
+              src={shapeSnapshotUrl}
+              data-classic-text-snapshot={image.id}
+              draggable={false}
+              decoding="sync"
+              style={{
+                position: 'absolute',
+                left: `${(boxW - vectorCssW) / 2}px`,
+                top: `${(boxH - vectorCssH) / 2}px`,
+                width: `${vectorCssW}px`,
+                height: `${vectorCssH}px`,
+                maxWidth: 'none',
+                maxHeight: 'none',
+                objectFit: 'fill',
+                imageRendering: 'auto',
+                opacity: isTextEditing ? 0 : (image.opacity ?? 100) / 100,
+                pointerEvents: 'none',
+                userSelect: 'none',
+              }}
+            />
+          ) : null}
+          <canvas
+            ref={vectorCanvasRef}
+            data-classic-text-raster={image.id}
+            style={{
+              position: 'absolute',
+              left: `${(boxW - vectorCssW) / 2}px`,
+              top: `${(boxH - vectorCssH) / 2}px`,
+              width: `${vectorCssW}px`,
+              height: `${vectorCssH}px`,
+              opacity: isTextEditing ? 0 : (image.opacity ?? 100) / 100,
+              visibility: shapeSnapshotUrl && !gestureRendering && !liveTuning && !motionFrame
+                ? 'hidden' : 'visible',
+              pointerEvents: 'none',
+            }}
+          />
+        </>
       ) : image.text !== undefined ? (
         <div
           ref={textRef}
