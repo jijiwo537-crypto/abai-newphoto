@@ -5233,14 +5233,32 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       });
       return () => { alive = false; };
     }
-    const el = textMeasureRef.current;
-    if (!el) return;
     const measure = () => {
-      const w = el.offsetWidth;
-      const h = el.offsetHeight;
+      /* 可见文字现在走 Canvas／快照，旧的隐藏 DOM span 位于已经不会进入的
+         fallback 分支，因此 textMeasureRef 永远是 null，文字便一直保留新增时
+         70% 页宽的大盒。直接用最终绘制引擎的 measureText 量同一套字体、字号
+         与字距，框只包真正排版宽高；尺寸改变时同时守住中心。 */
+      const c = document.createElement('canvas');
+      const g = c.getContext('2d');
+      if (!g) return;
+      const size = image.fontSize || 40;
+      g.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(fam)}`;
+      const spacing = image.letterSpacing || 0;
+      const lines = (image.text === '' ? TEXT_PLACEHOLDER : (image.text || TEXT_PLACEHOLDER)).split('\n');
+      const w = Math.max(6, ...lines.map(line => {
+        const glyphs = Array.from(line);
+        return g.measureText(line).width + Math.max(0, glyphs.length - 1) * spacing;
+      })) + 8;
+      const h = Math.max(6, lines.length * size * 1.12) + 8;
       const patch: Partial<FloatingImage> = {};
-      if (Math.abs(w - dimsRef.current.w) > 1) patch.width = Math.round(w);
-      if (Math.abs(h - dimsRef.current.h) > 1) patch.height = Math.round(h);
+      if (Math.abs(w - dimsRef.current.w) > 1) {
+        patch.width = w;
+        patch.x = image.x + (dimsRef.current.w - w) / 2;
+      }
+      if (Math.abs(h - dimsRef.current.h) > 1) {
+        patch.height = h;
+        patch.y = image.y + (dimsRef.current.h - h) / 2;
+      }
       if (patch.width !== undefined || patch.height !== undefined) onChangeRef.current(patch);
     };
     /* 換字體／換斜體會抖一下，是因為新的字身還沒下載完。這時候量到的是
@@ -6287,6 +6305,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     if (!isCanvasVector) return;
     const canvas = vectorCanvasRef.current;
     if (!canvas) return;
+    /* 双指缩放只改变外层几何，和照片完全相同：沿用手势开始前已经完成的
+       高解析快照，不在每一帧销毁／重建 Canvas。这样既没有噪点与清晰度跳变，
+       大物件也不会因连续配置数千万像素而卡顿。 */
+    if (gestureRendering && shapeSnapshotUrlRef.current && !motionFrame) return;
     /* 一般路徑圖形拖滑桿時直接顯示下面那張 SVG 向量層。它不需要重建大型
        backing store，而且任何倍率都是真向量清晰度；放手後才重畫一次最終
        Canvas／快照。這比降低拖動中的畫質更快，也完全不會出現清晰度跳變。 */
@@ -6307,8 +6329,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       && !gestureRendering
       && !liveTuning
       && !motionFrame;
-    /* 舊快照的尺寸／顏色一旦失效便立刻退回剛畫好的 canvas，不讓舊圖形閃一幀。 */
-    if (shapeSnapshotUrlRef.current) {
+    /* 静止向量更新时保留旧快照，直到新快照完成解码后再原子替换；不能先撤掉
+       快照露出另一种解析度的 Canvas，否则缩放松手会明显变清楚／变模糊一次。 */
+    if (shapeSnapshotUrlRef.current && !canFreezeShape && !canFreezeText) {
       const stale = shapeSnapshotUrlRef.current;
       shapeSnapshotUrlRef.current = null;
       setShapeSnapshotUrl(null);
@@ -6443,7 +6466,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       /* 一般圖形的 Canvas 現在直接掛在跟圖片相同的物件 wrapper 裡，旋轉由
          wrapper 統一處理；這裡若再旋轉一次會重複套用。hole／符號仍在獨立
          顯示層，維持原本的內部旋轉。 */
-      ctx.rotate(((image.shape && image.shape !== 'hole' ? 0 : image.rotation) * Math.PI) / 180);
+      /* 所有一般物件的旋转都由 wrapGeo 统一执行。文字／符号若在 Canvas 内再
+         旋转一次就会成为双重旋转，选中框当然包不住；只有独立 portal 绘制的
+         hole 图案没有使用 wrapGeo 的旋转，因此保留内部角度。 */
+      ctx.rotate(((image.shape === 'hole' ? image.rotation : 0) * Math.PI) / 180);
 
       if (image.shape === 'hole') {
         /* 字符／去背圖片型圖形會在 drawHoleShape 裡先畫到暫存 Canvas。
@@ -6804,7 +6830,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         /* 框線本身約 1.05 個螢幕像素且以路徑為中心繪製。保留略大於半根框線
            的距離，就能讓框緊貼墨水外緣、又不會有任何一半壓到圖形；原本固定
            2px 會讓愛心、星形等內容內縮的圖形看起來隔著一圈空白。 */
-        const gap = 0.65 / kNow;
+        /* 图形框若只离墨水 0.65px，框线内半边会与抗锯齿边缘混在一起，静止时
+           看起来像图形自带一条杂色细边；双指缩放时框隐藏，所以细边又突然
+           消失。图形多留一个屏幕像素级的净空，框仍紧贴但绝不覆盖本体。 */
+        const gap = (image.shape ? 1.25 : 0.65) / kNow;
         if (image.shape === 'hole') {
           /* 借來的圖案：拿畫預覽時同一支算「會超出多少」，但把發光關掉 ——
              發光是散開的光暈，框不需要連光一起框進去。 */
@@ -7198,7 +7227,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         {/* 一般圖形與圖片共用同一個 wrapper、同一個中心及同一次頁面縮放。
             Canvas 本身只是一張高解析圖形貼圖，不再另外 Portal 到整頁座標；
             因此預覽縮放時不可能在 Y 軸和物件盒分別取整而上下跳動。 */}
-        {shapeSnapshotUrl && !gestureRendering
+        {shapeSnapshotUrl
           && motionFrame?.gridWave === undefined
           && motionFrame?.gridReveal === undefined ? (
         <img
@@ -7232,7 +7261,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             width: `${vectorCssW}px`,
             height: `${vectorCssH}px`,
             opacity: (image.opacity ?? 100) / 100,
-            visibility: vectorLiveSvg || (shapeSnapshotUrl && !gestureRendering
+            visibility: vectorLiveSvg || (shapeSnapshotUrl
               && motionFrame?.gridWave === undefined
               && motionFrame?.gridReveal === undefined) ? 'hidden' : 'visible',
             pointerEvents: 'none',
@@ -7409,7 +7438,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               Blob，顯示它的 img 卻留在圖形分支，接著又把 Canvas 清成 1×1，
               因此只看得到第一幀。快照與 Canvas 使用完全相同的 CSS 幾何，
               切換時不會位移；整頁縮放時則像照片一樣只縮放固定影像。 */}
-          {shapeSnapshotUrl && !gestureRendering && !liveTuning && !motionFrame ? (
+          {shapeSnapshotUrl && !liveTuning && !motionFrame ? (
             <img
               src={shapeSnapshotUrl}
               data-classic-text-snapshot={image.id}
@@ -7441,7 +7470,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               width: `${vectorCssW}px`,
               height: `${vectorCssH}px`,
               opacity: isTextEditing ? 0 : (image.opacity ?? 100) / 100,
-              visibility: shapeSnapshotUrl && !gestureRendering && !liveTuning && !motionFrame
+              visibility: shapeSnapshotUrl && !liveTuning && !motionFrame
                 ? 'hidden' : 'visible',
               pointerEvents: 'none',
             }}
