@@ -9405,6 +9405,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const dpr = Math.max(1, window.devicePixelRatio || 1);
       const seamScreenPx = Math.max(1 / dpr, Math.round(1.30 * dpr) / dpr);
       col.style.setProperty('--preview-seam-screen', `${seamScreenPx}px`);
+      col.style.setProperty('--preview-seam-half-screen', `${seamScreenPx / 2}px`);
+      /* 寬度補償只交給 compositor 的 scaleX，不再每幀重做 layout。 */
+      col.style.setProperty('--preview-seam-inverse', String(1 / Math.max(0.0001, k)));
       col.style.setProperty('--preview-guide-scale', `${2 / Math.max(0.0001, k)}px`);
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
@@ -15680,6 +15683,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     */}
                     {pages.slice(1).map((_page, seamIndex) => {
                       const pageIdx = seamIndex + 1;
+                      /* 被長按提起的頁面左右兩側都不畫分割線；放下後再跟著頁面
+                         一次回來，拖動中的頁面本身不會被線切過。 */
+                      if (pageDragIdx !== null && (pageIdx === pageDragIdx || pageIdx === pageDragIdx + 1)) return null;
                       const move = pageContentShift(pageIdx);
                       const moveScale = move?.s || 1;
                       const baseSeamLeft = pageIdx * (previewW + 1) - 0.5;
@@ -15689,31 +15695,29 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       const seamDx = (move?.dx || 0) + previewW * (1 - moveScale) / 2;
                       const seamDy = previewH * (1 - moveScale) / 2;
                       return (
-                        <svg
+                        <div
                           key={`page-seam-overlay-${pageIdx}`}
                           data-page-seam-overlay={pageIdx}
                           className="absolute pointer-events-none"
                           style={{
-                            left: baseSeamLeft,
+                            left: `calc(${baseSeamLeft}px - var(--preview-seam-half-screen, 0.6665px))`,
                             top: 0,
-                            width: 1,
+                            width: 'var(--preview-seam-screen, 1.333px)',
                             height: previewH,
-                            overflow: 'visible',
-                            transform: `translate3d(${seamDx}px, ${seamDy}px, 0) scaleY(${moveScale})`,
+                            /* 外層 scale(k) × 本層 scaleX(1/k)＝固定螢幕粗度。
+                               這是純 compositor transform，不會像改 width 那樣在
+                               Safari 捏合期間反覆取整而閃動。 */
+                            transform: `translate3d(${seamDx}px, ${seamDy}px, 0) scaleY(${moveScale}) scaleX(var(--preview-seam-inverse, 1))`,
                             transformOrigin: 'center top',
                             transition: move
                               ? (move.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
                               : undefined,
+                            backgroundColor: shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
+                            willChange: 'transform',
                             zIndex: 400000,
                           }}
                           aria-hidden
-                        >
-                          <line x1="0" y1="0" x2="0" y2={previewH}
-                            stroke={shadeHex(WORKSPACE_BG, PAGE_SEAM_INK)}
-                            style={{ strokeWidth: 'var(--preview-seam-screen, 1.333px)' }}
-                            vectorEffect="non-scaling-stroke"
-                            shapeRendering="geometricPrecision" />
-                        </svg>
+                        />
                       );
                     })}
 

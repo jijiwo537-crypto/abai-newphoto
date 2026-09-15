@@ -745,6 +745,10 @@ const GRID_IDLE_KINDS = IDLE_KINDS;
 const PATTERN_IDLE_KINDS = IDLE_KINDS.map(k =>
   k.id === 'grid-wave' ? { id: 'pattern-breathe', name: '呼吸' } : k
 );
+/* 圖片的原「旋轉」位置改成和圖案同款的透明度呼吸。 */
+const IMAGE_IDLE_KINDS = IDLE_KINDS.map(k =>
+  k.id === 'spin' ? { id: 'image-breathe', name: '呼吸' } : k
+);
 /* 圖案呼吸的面板仍顯示 0～100，但實際有效範圍依設計鎖在：
    幅度 50～100、速度 70～250。 */
 const patternBreathAmpToUi = (amp: number) => Math.round(Math.max(0, Math.min(100, (amp - 50) * 2)));
@@ -810,6 +814,12 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
       const rate = 1 + (((phase * 0.6180339887) % 1) - 0.5) * 0.34;   // 0.83 ~ 1.17
       return { k: 1 + Math.sin(t * speed * 1.9 * rate + phase) * A * 0.44, dx: 0, dy: 0, rot: 0, a: 1 };
     }
+    /* 圖片呼吸只改透明度。正弦的亮→暗與暗→亮各佔完全相同的半週期，
+       不套 ease、不停頓，因此不會有子彈時間的忽快忽慢。 */
+    case 'image-breathe': {
+      const pulse = (Math.sin(t * speed * 1.75 + phase - Math.PI / 2) + 1) / 2;
+      return { k: 1, dx: 0, dy: 0, rot: 0, a: 1 - A * (1 - pulse) };
+    }
     /* 旋轉是「累積量」不是「來回擺」，所以不能吃 phase ——
        phase 最大 6.28，乘上去等於一開場就先轉掉大半圈，
        那正是主人看到的「開頭莫名其妙轉很多圈」。這裡一律從 0 開始轉。 */
@@ -866,6 +876,9 @@ export const moOf = (o: any): MoCfg => {
   if (cfg.idle === 'sway') cfg.idle = 'grid-wave';
   /* 符號不提供波浪；舊草稿若曾選過，恢復為靜止，其他物件維持原設定。 */
   if (o?.sym && cfg.idle === 'grid-wave') cfg.idle = 'none';
+  /* 圖片原本的旋轉已由透明度呼吸取代；舊專案也直接遷移，不留下選單中
+     看不到、但背景仍偷偷旋轉的舊狀態。 */
+  if (o?.type === 'image' && cfg.idle === 'spin') cfg.idle = 'image-breathe';
   if (o?.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind) && cfg.in === 'spring') cfg.in = 'grid-wave';
   return cfg;
 };
@@ -902,7 +915,7 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
   return {
     k: 1 + (g.k - 1) * blend,
     dx: g.dx * blend, dy: g.dy * blend, rot: g.rot * blend,
-    a: 1, fx: 1, burst: 0,
+    a: 1 + (g.a - 1) * blend, fx: 1, burst: 0,
     gridWave: g.gridWave, waveMix: blend,
     /* 常駐的本地時間明確交給符號分單位動畫；進場期間不存在，交棒第一幀為 0。 */
     idleT: after,
@@ -4340,9 +4353,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          0.72 秒由全亮平滑接入，第一幀和進場最後一幀完全相同。 */
       let patternAlpha = 1;
       if (shapeMo.idle === 'pattern-breathe' && f.idleT !== undefined) {
-        const phase = (hashId(h.id) % 10000) / 10000 * Math.PI * 2;
-        const rate = 0.84 + ((hashId(`${h.id}:breath`) % 1000) / 1000) * 0.32;
-        const cycle = Math.max(0.35, shapeMo.speed) * 1.75 * rate;
+        const order = holeOrder.get(h.id) ?? 0;
+        /* 黃金比例相位：任何兩顆相鄰圖案都不會拿到相同或近似時間線，
+           但所有圖案週期相同，所以淡出與淡入的時間仍精確相等。 */
+        const phase = ((order * 0.61803398875) % 1) * Math.PI * 2;
+        const cycle = Math.max(0.35, shapeMo.speed) * 1.75;
         const pulse = (Math.sin(f.idleT * cycle + phase - Math.PI / 2) + 1) / 2;
         const strength = Math.max(0, Math.min(1, shapeMo.amp / 100));
         const attackP = Math.max(0, Math.min(1, f.idleT / 0.72));
@@ -9104,7 +9119,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   else if (d.idle === 'breathe' && selObj?.sym) setCur({ ...d, amp: 30 });
                   /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來
                      就共用同一套，切換種類時也不能沿用上一個動畫的怪速度。 */
-                  else if (d.idle === 'pattern-breathe' && moTarget === 'shape') setCur({ ...d, amp: 100, speed: 2 });
+                  else if (d.idle === 'pattern-breathe' && moTarget === 'shape') setCur({ ...d, amp: 100, speed: 0.7 });
+                  else if (d.idle === 'image-breathe' && selObj?.type === 'image') setCur({ ...d, amp: 100, speed: 0.7 });
                   else if (d.idle === 'grid-wave') setCur({
                     ...d,
                     ...(isGridTarget ? GRID_WAVE_DEFAULT : NON_GRID_WAVE_DEFAULT),
@@ -9176,6 +9192,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   <p className="text-[10px] font-bold text-[#666] uppercase tracking-widest mb-2 mt-4">{t}</p>;
                 const isSymbolTarget = !!selObj?.sym;
                 const isTextTarget = selObj?.type === 'text' && !selObj.sym;
+                const isImageTarget = selObj?.type === 'image';
                 const isSpecialLineTarget = !!selObj && selObj.type === 'shape' && SPECIAL_LINE_KINDS.has(selObj.kind);
                 const isGridTarget = !!selObj && selObj.type === 'shape' && GRID_SHAPE_KINDS.has(selObj.kind);
                 const kinds = moTarget === 'shape' ? IN_KINDS.filter(k => k.id !== 'flip') : isSymbolTarget ? SYMBOL_IN_KINDS.filter(k => k.id !== 'bounce') : isGridTarget ? GRID_IN_KINDS.filter(k => k.id !== 'bounce') : isSpecialLineTarget ? LINE_IN_KINDS.filter(k => k.id !== 'bounce') : IN_KINDS.filter(k => k.id !== 'bounce');
@@ -9254,7 +9271,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {(moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : IDLE_KINDS).map(k => (
+                          {(moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : IDLE_KINDS).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>
@@ -9263,30 +9280,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         {cur.idle !== 'none' && (
                           <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                             <CompactSlider label="幅度"
-                              value={cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                              value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                 ? patternBreathAmpToUi(cur.amp) : cur.amp}
                               min={0} max={100} step={1}
                               onChange={(v: number) => setCur({
-                                amp: cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                                amp: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                   ? patternBreathAmpFromUi(v) : v,
                               })} />
                             <CompactSlider label="速度"
-                              value={cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                              value={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                 ? patternBreathSpeedToUi(cur.speed)
                                 : cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                 ? symbolBreathe2SpeedToUi(cur.speed)
                                 : cur.idle === 'grid-wave' && !isGridTarget
                                   ? nonGridWaveSpeedToUi(cur.speed)
                                   : Math.round(cur.speed * 100)}
-                              min={cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                              min={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                 || cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                 || cur.idle === 'grid-wave' && !isGridTarget ? 0 : 20}
-                              max={cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                              max={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                 || cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                 || cur.idle === 'grid-wave' && !isGridTarget ? 100 : 180}
                               step={1}
                               onChange={(v: number) => setCur({
-                                speed: cur.idle === 'pattern-breathe' && moTarget === 'shape'
+                                speed: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                   ? patternBreathSpeedFromUi(v)
                                   : cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                   ? symbolBreathe2SpeedFromUi(v)
