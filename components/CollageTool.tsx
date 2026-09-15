@@ -21,7 +21,7 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady,
-  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
+  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -5425,7 +5425,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ctx.miterLimit = 2;
           ctx.strokeStyle = o.strokeColor || '#000000';
           ctx.lineWidth = solid ? sw * 2 : lw + sw * 2;
-          paintShapePath(false);
+          if (!strokeCompositeShape(ctx, o.kind, bw, bh)) paintShapePath(false);
           ctx.restore();
         }
         if (solid) {

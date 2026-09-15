@@ -1605,6 +1605,23 @@ export const drawCompositeShapeBody = (
   return true;
 };
 
+/** 複合圖形的描邊路徑；讓描邊跟真正可見的每一層輪廓一致。 */
+export const strokeCompositeShape = (
+  target: CanvasRenderingContext2D, kind: string, w: number, h: number,
+) => {
+  if (!COMPOSITE_SHAPE_KINDS.has(kind)) return false;
+  const innerKind = compositeInnerKind(kind)!;
+  if (DUAL_COLOR_SHAPE_KINDS.has(kind) || CUTOUT_SHAPE_KINDS.has(kind)) {
+    target.stroke(new Path2D(shapePathD('square', w, h)));
+    /* 挖空款的孔洞也是實際邊緣；雙色款的內層不是外描邊，不額外套黑框。 */
+    if (CUTOUT_SHAPE_KINDS.has(kind)) target.stroke(insetShapePath(innerKind, w, h, 0.64));
+    return true;
+  }
+  target.stroke(insetShapePath(innerKind, w, h, 0.72));
+  target.stroke(insetShapePath(innerKind, w, h, 0.96));
+  return true;
+};
+
 /** 個別圖案的加大倍率。星形是實心面積最少的一個，稍微放大一點才看得清楚。
     1.1 ＝ 長邊從 20px 變成 22px。 */
 const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval': 1.3 };
@@ -6330,7 +6347,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           ctx.setLineDash([]);
           ctx.strokeStyle = image.shapeStrokeColor || '#000000';
           ctx.lineWidth = (solid ? 0 : lw) + outer * 2;
-          ctx.stroke(path);
+          if (!strokeCompositeShape(ctx, image.shape, boxW, boxH)) ctx.stroke(path);
           ctx.restore();
         }
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
@@ -13177,7 +13194,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.miterLimit = 2;
       ctx.strokeStyle = fImg.shapeStrokeColor || '#000000';
       ctx.lineWidth = (solid ? 0 : lw) + strokeW * 2;
-      ctx.stroke(path);
+      if (!strokeCompositeShape(ctx, fImg.shape!, fw, fh)) ctx.stroke(path);
       ctx.restore();
     }
     ctx.save();
