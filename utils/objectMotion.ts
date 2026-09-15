@@ -145,6 +145,12 @@ export const objectMotionFrame = (
     idle = { ...flat, k: 1 + Math.sin(t * cfg.speed * 1.9 * rate + phase) * A * .44 };
   }
   else if (cfg.idle === 'symbol-breathe2') idle = { ...flat, idleT: t };
+  /* 圖片呼吸與創意拼圖的圖案呼吸相同，只改透明度；正弦兩個半週期
+     完全對稱，所以淡出與淡入時間一致。 */
+  else if (cfg.idle === 'image-breathe') {
+    const pulse = (Math.sin(t * cfg.speed * 1.75 + phase - Math.PI / 2) + 1) / 2;
+    idle = { ...flat, a: 1 - A * (1 - pulse) };
+  }
   else if (cfg.idle === 'spin') idle = { ...flat, rot: t * cfg.speed * A * 90 };
   else if (cfg.idle === 'wobble') idle = { ...flat, rot: Math.sin(w * 2.4) * A * 22 };
   else if (cfg.idle === 'orbit') idle = { ...flat, dx: Math.cos(w * 1.6) * A * .2, dy: Math.sin(w * 1.6) * A * .2 };
@@ -160,7 +166,7 @@ export const objectMotionFrame = (
     dx: idle.dx * blend,
     dy: idle.dy * blend,
     rot: idle.rot * blend,
-    a: 1,
+    a: 1 + (idle.a - 1) * blend,
     idleT: idle.idleT,
     waveMix: blend,
     gridWave: idle.gridWave,

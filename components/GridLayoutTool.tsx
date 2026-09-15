@@ -52,6 +52,12 @@ const ReplayIcon: React.FC<{ size?: number }> = ({ size = 15 }) => (
   </svg>
 );
 
+/* 圖片呼吸的實際參數是幅度 50～100、速度 70～250；面板仍顯示 0～100。 */
+const imageBreathAmpToUi = (amp: number) => Math.round(Math.max(0, Math.min(100, (amp - 50) * 2)));
+const imageBreathAmpFromUi = (ui: number) => 50 + Math.max(0, Math.min(100, ui)) * .5;
+const imageBreathSpeedToUi = (speed: number) => Math.round(Math.max(0, Math.min(100, (speed * 100 - 70) / 1.8)));
+const imageBreathSpeedFromUi = (ui: number) => (70 + Math.max(0, Math.min(100, ui)) * 1.8) / 100;
+
 /* 經典拼圖動畫頁原先直接使用了創意拼圖檔案內的區域元件；那個元件沒有
    export，桌面開發環境有時直到點進動畫才報錯，iPhone WebKit 則會直接把
    整個 React 畫面清成黑色。這裡保留同款外觀，但讓經典拼圖自己持有元件。 */
@@ -5925,13 +5931,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         ? Math.max(1.5, Math.min(3.5, 280 / Math.max(1, cssW, cssH)))
         : 1;
       const previewRasterScale = exactShapeBacking ? shapeDetailBoost : Math.max(1, canvasScale);
-      const dpr = Math.max(2, geoDpr * previewRasterScale * (gestureRendering ? 2 : 4));
-      /* 尺寸上限與面積上限要同時守住：手勢期間以 4MP 維持每幀流暢，靜止時
-         回到 8MP；窄長文字也不會只因長邊較長就過早失去 Retina 密度。 */
+      /* 手勢中與靜止時使用完全相同的高密度 backing store。先前捏合時把倍率
+         降半、面積砍到 4MP，正是物件縮小過程突然糊掉、放手才恢復的來源。 */
+      const dpr = Math.max(2, geoDpr * previewRasterScale * 4);
+      /* 尺寸上限與面積上限同時守住；手勢與靜止都保留 8MP。 */
       const backingScale = Math.min(
         dpr,
         4096 / Math.max(cssW, cssH),
-        Math.sqrt((gestureRendering ? 4_194_304 : 8_388_608) / Math.max(1, cssW * cssH)),
+        Math.sqrt(8_388_608 / Math.max(1, cssW * cssH)),
       );
       /* 一般圖形的 backing store 必須完整對應 CSS 盒子的四條邊。舊版用 ceil
          後仍以原 backingScale 畫圖，ceil 多出來的尾數全部堆在右／下；外層
@@ -6731,8 +6738,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         /* 照片可以預先升成移動用合成層；Canvas／SVG 圖形則必須和頁面留在
            同一個 paint surface。否則 iOS 會讓小圖形的獨立貼圖與頁面在不同
            實體像素上取整，預覽捏合時就會上下或左右跳一格。 */
-        willChange: isCanvasVector ? undefined : 'transform',
-        backfaceVisibility: isCanvasVector ? undefined : 'hidden',
+        /* 不把照片／影片預先凍結成低解析 compositor 貼圖。頁面縮放期間讓它
+           和頁面一起重新取樣，縮小後也不會沿用手勢開始時的模糊快照。 */
+        willChange: undefined,
+        backfaceVisibility: undefined,
       }}
       onTouchStart={motionPickOnly ? undefined : onSwapTouchStart}
       onTouchMove={motionPickOnly ? undefined : onSwapTouchMove}
@@ -9096,7 +9105,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 泡泡的每個小單位都保留完整果凍時間；符號越長，整段自然越長。
       相位也沿用創意拼圖的 id 雜湊，預覽、重播與匯出才會完全一致。 */
   const timedMotionConfig = useCallback((item: FloatingImage) => {
-    const cfg = classicObjectMotionOf(item.mo);
+    const raw = classicObjectMotionOf(item.mo);
+    /* 圖片原本的旋轉已改為透明度呼吸；舊草稿也直接遷移。 */
+    const cfg = item.text === undefined && !item.shape && raw.idle === 'spin'
+      ? { ...raw, idle: 'image-breathe' }
+      : raw;
     if (!item.sym || cfg.in !== 'bubble') return cfg;
     const units = Math.max(1, countSymbolAnimationBeats(item.text || item.sym));
     return units > 1 ? { ...cfg, dur: cfg.dur * (1 + (units - 1) * .2) } : cfg;
@@ -15964,7 +15977,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
             {activeTab === 'motion' && (() => {
               const target = motionItems.find(f => f.id === motionTargetId) || null;
-              const cfg = classicObjectMotionOf(target?.mo);
+              const targetIsImage = !!target && target.text === undefined && !target.shape;
+              const rawCfg = classicObjectMotionOf(target?.mo);
+              const cfg = targetIsImage && rawCfg.idle === 'spin'
+                ? { ...rawCfg, idle: 'image-breathe' }
+                : rawCfg;
               const patchMotion = (d: Partial<ObjectMotionConfig>) => {
                 if (!target) return;
                 setFloatingImages(v => v.map(f => f.id === target.id ? { ...f, mo: { ...cfg, ...d } } : f));
@@ -15989,13 +16006,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 : isTextTarget
                   ? baseIdle.filter(([id]) => id !== 'spin').flatMap(([id, name]) =>
                       id === 'breathe' ? [[id, '縮放'] as const, ['symbol-breathe2', '縮放II'] as const] : [[id, name] as const])
-                  : baseIdle;
+                  : targetIsImage
+                    ? baseIdle.map(([id, name]) => id === 'spin' ? ['image-breathe', '呼吸'] as const : [id, name] as const)
+                    : baseIdle;
               const pickIntro = (id: string) => {
                 patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) } : { in: id });
                 replayMotion();
               };
               const pickIdle = (id: string) => {
                 if (id === 'symbol-breathe2') patchMotion({ idle: id, amp: 60, speed: 1.2 });
+                else if (id === 'image-breathe' && targetIsImage) patchMotion({ idle: id, amp: 100, speed: .7 });
                 else if (id === 'breathe' && target.sym) patchMotion({ idle: id, amp: 30 });
                 else if (id === 'grid-wave') patchMotion(isGridTarget
                   ? { idle: id, amp: 50, speed: .9 }
@@ -16036,18 +16056,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     <p className="text-[10px] font-bold text-[#666] tracking-widest mb-2 mt-4">常駐動畫</p>
                     <div className="grid grid-cols-4 gap-2">{idleKinds.map(([id,name]) => <button key={id} className={cell(cfg.idle===id)} onClick={()=>pickIdle(id)}>{name}</button>)}</div>
                     {cfg.idle !== 'none' && <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
-                      <CompactSlider label="幅度" value={cfg.amp} min={0} max={100} step={1} onCommit={replayMotion} onChange={(v:number)=>patchMotion({amp:v})}/>
+                      <CompactSlider label="幅度"
+                        value={cfg.idle === 'image-breathe' && targetIsImage ? imageBreathAmpToUi(cfg.amp) : cfg.amp}
+                        min={0} max={100} step={1} onCommit={replayMotion}
+                        onChange={(v:number)=>patchMotion({amp:cfg.idle === 'image-breathe' && targetIsImage ? imageBreathAmpFromUi(v) : v})}/>
                       <CompactSlider label="速度"
-                        value={cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget)
+                        value={cfg.idle === 'image-breathe' && targetIsImage
+                          ? imageBreathSpeedToUi(cfg.speed)
+                          : cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget)
                           ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 70) / 1.1)))
                           : cfg.idle === 'grid-wave' && !isGridTarget
                             ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 100) / 1.5)))
                             : Math.round(cfg.speed*100)}
-                        min={cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !isGridTarget ? 0 : 20}
-                        max={cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !isGridTarget ? 100 : 180}
+                        min={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !isGridTarget ? 0 : 20}
+                        max={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !isGridTarget ? 100 : 180}
                         step={1} onCommit={replayMotion}
-                        onChange={(v:number)=>patchMotion({speed: cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget)
-                          ? (70 + v * 1.1) / 100
+                        onChange={(v:number)=>patchMotion({speed: cfg.idle === 'image-breathe' && targetIsImage
+                          ? imageBreathSpeedFromUi(v)
+                          : cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) ? (70 + v * 1.1) / 100
                           : cfg.idle === 'grid-wave' && !isGridTarget ? (100 + v * 1.5) / 100 : v/100})}/>
                     </div>}
                   </>}

@@ -4353,11 +4353,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          0.72 秒由全亮平滑接入，第一幀和進場最後一幀完全相同。 */
       let patternAlpha = 1;
       if (shapeMo.idle === 'pattern-breathe' && f.idleT !== undefined) {
-        const order = holeOrder.get(h.id) ?? 0;
-        /* 黃金比例相位：任何兩顆相鄰圖案都不會拿到相同或近似時間線，
-           但所有圖案週期相同，所以淡出與淡入的時間仍精確相等。 */
-        const phase = ((order * 0.61803398875) % 1) * Math.PI * 2;
-        const cycle = Math.max(0.35, shapeMo.speed) * 1.75;
+        /* 每顆依自己的隨機 id 取得獨立相位與速度，不再按照相鄰順序刻意
+           排列。數值固定於 id，重播時不跳；單顆仍是對稱正弦，因此它自己的
+           淡出、淡入時間完全相等。 */
+        const phase = (hashId(`${h.id}:phase`) % 10000) / 10000 * Math.PI * 2;
+        const rate = 0.82 + (hashId(`${h.id}:rate`) % 3600) / 10000;
+        const cycle = Math.max(0.35, shapeMo.speed) * 1.75 * rate;
         const pulse = (Math.sin(f.idleT * cycle + phase - Math.PI / 2) + 1) / 2;
         const strength = Math.max(0, Math.min(1, shapeMo.amp / 100));
         const attackP = Math.max(0, Math.min(1, f.idleT / 0.72));
