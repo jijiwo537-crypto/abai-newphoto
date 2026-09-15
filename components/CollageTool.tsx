@@ -18,10 +18,10 @@ import {
   isImgShaped, withImgOutline, drawImgBase, IMG_SHAPES, isPointInImgShape, imgShapeBox, imgShapeInk, imgShapePan, clampImgZoom, zoomAboutShapeCenter,
   /* 「新增圖形」整套跟經典拼圖共用：同一份清單、同一支路徑、同一顆色票元件，
      兩邊的圖形不可能長得不一樣。 */
-  ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
+  ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady,
-  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS,
+  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -424,9 +424,9 @@ const shapeSlider = (label: string, value: number, min: number, max: number, onV
     </div>
     {/* 全 App 的滑桿軌道統一成同一種細度（跟「編輯」的濾鏡滑桿一樣） */}
     <div className="slider-wrap" style={{ height: 16 }}>
-      <input
-        type="range" min={min} max={max} step={1} value={value}
-        onChange={e => onVal(Number(e.target.value))}
+      <SmoothRange
+        min={min} max={max} step={1} value={value}
+        onValue={v => onVal(Math.round(v))}
         className="premium-slider w-full"
         style={{ touchAction: 'none' }}
       />
@@ -2639,6 +2639,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         textureBaseW: w, textureBaseH: h,
         lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
         color: SHAPE_DEFAULT_COLOR, glow: 0, glowColor: SHAPE_DEFAULT_COLOR,
+        ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: '#FFFFFF' } : null),
         x: cx - w / 2, y: cy - h / 2, w, h, rot: it.rot || 0,
         ...(SPECIAL_LINE_KINDS.has(it.kind)
           ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(15), amp: 20 } }
@@ -5406,7 +5407,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           // 半徑乘上強度（面板那根 0～100 的滑桿）
           for (const r of shapeGlowBlurs(bw, bh)) {
             ctx.shadowBlur = r * gAmt;
-            paintShapePath(!!solid);
+            if (solid && COMPOSITE_SHAPE_KINDS.has(o.kind)) {
+              drawFeatheredShapeBody(ctx, o.kind, bw, bh, o.shapeFeather, col,
+                undefined, o.innerColor || '#FFFFFF');
+            } else paintShapePath(!!solid);
           }
           ctx.restore();
         }
@@ -5437,7 +5441,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               textureBaseH: ((o as any).textureBaseH || o.h) * s,
             });
             tc.restore();
-          });
+          }, o.innerColor || '#FFFFFF');
         } else paintShapePath(false);
         ctx.setLineDash([]);
         ctx.restore();
@@ -8725,6 +8729,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
                     color: SHAPE_DEFAULT_COLOR,
                     glow: 0, glowColor: SHAPE_DEFAULT_COLOR,
+                    ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: '#FFFFFF' } : {}),
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,
                     ...(SPECIAL_LINE_KINDS.has(it.kind) ? { mo: { ...MO_DEFAULT, in: 'draw', dur: durFromSpeed(15), amp: 20 } } : {}),
@@ -8834,9 +8839,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             a.splice(Math.max(0, m - 1), 0, x);
                             return a;
                           };
-                          const solidList = moveTo(
-                            [...ins(ADD_SHAPE_ITEMS.filter(i2 => i2.filled), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
-                            'heart-f', 9);
+                          const compositeItems = ADD_SHAPE_ITEMS.filter(i2 => i2.filled && COMPOSITE_SHAPE_KINDS.has(i2.kind));
+                          const solidList = [
+                            ...moveTo(
+                              [...ins(ADD_SHAPE_ITEMS.filter(i2 => i2.filled && !COMPOSITE_SHAPE_KINDS.has(i2.kind)), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
+                              'heart-f', 9),
+                            ...compositeItems,
+                          ];
                           /* 邊框那排的順序跟實心那排對齊：第 6 顆窄菱形、第 9 顆愛心、
                              第 11 顆十字星，後面才接新加的橢圓／各種比例的框／雲朵／對話框。 */
                           const lineList = moveTo(moveTo(moveTo(moveTo(
@@ -8905,6 +8914,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         <div className="flex flex-col gap-3.5 pt-1 pb-14">
                           {/* 最上面就是圖形自己的顏色，色票直接攤開（不再放「顏色」標題） */}
                           {swatchStrip(sel.color || SHAPE_DEFAULT_COLOR, SOFT_COLORS, (c: string) => patch({ color: c, glowColor: c }), true)}
+                          {DUAL_COLOR_SHAPE_KINDS.has(sel.kind || '') && (
+                            <div className="pt-0.5">
+                              {swatchStrip(sel.innerColor || '#FFFFFF', SOFT_COLORS,
+                                (c: string) => patch({ innerColor: c }), true)}
+                            </div>
+                          )}
                           {isLine && (
                             <div className="px-2">
                               {shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100,
