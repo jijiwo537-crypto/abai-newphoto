@@ -129,6 +129,7 @@ const prepareClassicSymbolPlacement = (text: string, pageWidth: number): Prepare
 
 /* 符號頁不能在打開後才開始下載字體。模組載入時就在背景把清單會用到的
    字形預熱；使用者點進頁面時，按鈕與新增物件便直接使用最終字身。 */
+let symbolFontDidSettle = typeof document === 'undefined';
 export const symbolFontReady: Promise<void> = typeof document === 'undefined'
   ? Promise.resolve()
   : ensureFont(SYMBOL_FONT)
@@ -140,7 +141,8 @@ export const symbolFontReady: Promise<void> = typeof document === 'undefined'
         clearSymbolInkCache();
         classicSymbolPlacementCache.clear();
       })
-      .catch(() => {});
+      .catch(() => {})
+      .then(() => { symbolFontDidSettle = true; });
 interface CellRect {
   x: number;
   y: number;
@@ -1700,6 +1702,16 @@ export const SymbolPicker: React.FC<{
   onPickRef.current = onPick;
   const onPrepareRef = useRef(onPrepare);
   onPrepareRef.current = onPrepare;
+  /* Mobile Safari 會先用 fallback 字體畫第一幀，再於正式字體完成後整片換字。
+     按鈕尺寸照常立即建立，但字形只在預熱完成後一次顯示，避免看見錯誤字身
+     跳到正確位置。通常模組載入時的預熱早已完成，所以不會增加進頁延遲。 */
+  const [symbolFaceReady, setSymbolFaceReady] = useState(symbolFontDidSettle);
+  useLayoutEffect(() => {
+    if (symbolFontDidSettle) { setSymbolFaceReady(true); return; }
+    let alive = true;
+    symbolFontReady.then(() => { if (alive) setSymbolFaceReady(true); });
+    return () => { alive = false; };
+  }, []);
   const symbolButtons = useMemo(() => SYMBOLS.map((symbol, index) => (
     <button
       key={index}
@@ -1709,9 +1721,11 @@ export const SymbolPicker: React.FC<{
       aria-pressed={selected === symbol}
       className={`min-h-11 px-3 py-1 max-w-full overflow-visible rounded-[10px] bg-white/5 border ${selected === symbol ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-[0.98] transition-[border-color,background-color,transform] inline-flex items-center justify-center text-white/85`}
     >
-      <SymbolGlyph text={symbol} />
+      <span style={{ opacity: symbolFaceReady ? 1 : 0 }}>
+        <SymbolGlyph text={symbol} />
+      </span>
     </button>
-  )), [selected]);
+  )), [selected, symbolFaceReady]);
 
   return (
     <div className="pt-1">
@@ -6484,7 +6498,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
 
   return (
     <>
-    {isCanvasVector && pagesContainerRef.current && createPortal(
+    {/* 一般圖形直接由 wrapper 裡的 SVG 畫向量輪廓。先畫成獨立 Canvas 再讓
+        整頁縮放，會讓 WebKit 對 Canvas 的右／下邊界各自重採樣，形成使用者
+        看到的抖動。hole 圖案仍需專用 Canvas；文字／符號維持既有穩定路徑。 */}
+    {isCanvasVector && (!image.shape || image.shape === 'hole') && pagesContainerRef.current && createPortal(
       <div
         data-vector-surface={image.id}
         aria-hidden
@@ -6637,7 +6654,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       onTouchEnd={motionPickOnly ? undefined : onSwapTouchEnd}
       onTouchCancel={motionPickOnly ? undefined : onSwapTouchEnd}
     >
-      {isCanvasVector && image.shape ? null : image.shape === 'hole' ? (
+      {image.shape === 'hole' ? null : image.shape ? (
         /* 從「圖案」借過來的那幾顆：它們不是 SVG 路徑（有的是系統字型的字、
            有的是去背 PNG），所以預覽直接畫在 canvas 上、用的就是匯出那一支
            drawHoleShape —— 預覽跟成品是同一段程式碼畫的，不可能對不起來。
@@ -6681,7 +6698,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             width: `${(1 + 2 * holeOv.x / image.width) * 100}%`,
             height: `${(1 + 2 * holeOv.y / image.height) * 100}%`,
             pointerEvents: 'none',
-            visibility: 'hidden',
+            visibility: 'visible',
           }}
         />
       ) : image.shape ? (
