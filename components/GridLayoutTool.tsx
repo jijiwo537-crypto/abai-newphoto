@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
@@ -1537,10 +1537,11 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
 
 const compositeInnerKind = (kind: string): 'star' | 'heart' | null =>
   kind.includes('star') ? 'star' : kind.includes('heart') ? 'heart' : null;
+let doubleContourScratch: HTMLCanvasElement | null = null;
 
 /** 把既有愛心／星星的「實際墨水」置中並縮進指定比例，完全沿用原路徑。 */
 export const insetShapePath = (
-  kind: 'star' | 'heart', w: number, h: number, inkFraction: number,
+  kind: 'star' | 'heart', w: number, h: number, inkFraction: number, offsetYFraction = 0,
 ) => {
   const srcSize = 100;
   const fit = SHAPE_FIT[kind];
@@ -1548,7 +1549,7 @@ export const insetShapePath = (
   const sy = (h * inkFraction) / (fit[3] * srcSize);
   const inkCx = (fit[0] + fit[2] / 2) * srcSize;
   const inkCy = (fit[1] + fit[3] / 2) * srcSize;
-  const matrix = new DOMMatrix([sx, 0, 0, sy, w / 2 - inkCx * sx, h / 2 - inkCy * sy]);
+  const matrix = new DOMMatrix([sx, 0, 0, sy, w / 2 - inkCx * sx, h / 2 - inkCy * sy + h * offsetYFraction]);
   const out = new Path2D();
   out.addPath(new Path2D(shapePathD(kind, srcSize, srcSize)), matrix);
   return out;
@@ -1570,6 +1571,8 @@ export const drawCompositeShapeBody = (
   const innerKind = compositeInnerKind(kind)!;
   if (DUAL_COLOR_SHAPE_KINDS.has(kind) || CUTOUT_SHAPE_KINDS.has(kind)) {
     const outer = new Path2D(shapePathD('square', w, h));
+    /* insetShapePath 以實際墨水邊界（不是字框）置中，因此愛心尖底與頂部
+       到方形的距離會精確相等。 */
     const inner = insetShapePath(innerKind, w, h, 0.64);
     target.fillStyle = color;
     if (DUAL_COLOR_SHAPE_KINDS.has(kind)) {
@@ -1592,16 +1595,31 @@ export const drawCompositeShapeBody = (
     return true;
   }
   const body = insetShapePath(innerKind, w, h, 0.72);
-  const ring = insetShapePath(innerKind, w, h, 0.96);
-  target.fillStyle = color;
-  target.fill(body);
-  paintTexture?.(target, body);
-  target.save();
-  target.strokeStyle = color;
-  target.lineWidth = Math.max(1, Math.min(w, h) * 0.024);
-  target.lineJoin = 'round';
-  target.stroke(ring);
-  target.restore();
+  const matrix = target.getTransform();
+  const physicalScale = Math.min(6, Math.max(2,
+    Math.hypot(matrix.a, matrix.b), Math.hypot(matrix.c, matrix.d)));
+  const layer = doubleContourScratch || document.createElement('canvas');
+  doubleContourScratch = layer;
+  layer.width = Math.max(1, Math.ceil(w * physicalScale));
+  layer.height = Math.max(1, Math.ceil(h * physicalScale));
+  const g = layer.getContext('2d');
+  if (!g) return true;
+  g.setTransform(physicalScale, 0, 0, physicalScale, 0, 0);
+  const gap = Math.min(w, h) * 0.052;
+  const ringWidth = Math.min(w, h) * 0.024;
+  g.strokeStyle = color;
+  g.lineJoin = 'round';
+  g.lineCap = 'round';
+  g.lineWidth = (gap + ringWidth) * 2;
+  g.stroke(body);
+  g.globalCompositeOperation = 'destination-out';
+  g.lineWidth = gap * 2;
+  g.stroke(body);
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = color;
+  g.fill(body);
+  paintTexture?.(g, body);
+  target.drawImage(layer, 0, 0, layer.width, layer.height, 0, 0, w, h);
   return true;
 };
 
@@ -1649,12 +1667,12 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
   if (COMPOSITE_SHAPE_KINDS.has(item.kind)) {
     const innerKind = compositeInnerKind(item.kind)!;
     const fit = SHAPE_FIT[innerKind];
-    const tf = (fraction: number) => {
+    const tf = (fraction: number, offsetYFraction = 0) => {
       const sx = (VB * fraction) / (fit[2] * 100);
       const sy = (VB * fraction) / (fit[3] * 100);
       const cx = (fit[0] + fit[2] / 2) * 100;
       const cy = (fit[1] + fit[3] / 2) * 100;
-      return `matrix(${r3(sx)} 0 0 ${r3(sy)} ${r3(VB / 2 - cx * sx)} ${r3(VB / 2 - cy * sy)})`;
+      return `matrix(${r3(sx)} 0 0 ${r3(sy)} ${r3(VB / 2 - cx * sx)} ${r3(VB / 2 - cy * sy + VB * offsetYFraction)})`;
     };
     const innerD = shapePathD(innerKind, 100, 100);
     if (DUAL_COLOR_SHAPE_KINDS.has(item.kind)) return (
@@ -1671,9 +1689,16 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
     );
     return (
       <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
-        <path d={innerD} transform={tf(0.72)} fill="currentColor" />
-        <path d={innerD} transform={tf(0.96)} fill="none" stroke="currentColor"
-          strokeWidth={0.58} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+        <defs>
+          <mask id={maskId}>
+            <path d={innerD} transform={tf(0.72)} fill="#fff" stroke="#fff"
+              strokeWidth={3.65} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+            <path d={innerD} transform={tf(0.72)} fill="none" stroke="#000"
+              strokeWidth={2.5} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+            <path d={innerD} transform={tf(0.72)} fill="#fff" />
+          </mask>
+        </defs>
+        <rect width={VB} height={VB} fill="currentColor" mask={`url(#${maskId})`} />
       </svg>
     );
   }
@@ -2178,7 +2203,20 @@ export const TextEditorPanel: React.FC<{
   symbol?: boolean;
   /** 滑桿正在連續拖動；經典拼圖用它暫停昂貴的最終快照編碼。 */
   onTuningChange?: (active: boolean) => void;
-}> = ({ layer, onChange, onPickColor, symbol, onTuningChange }) => {
+}> = ({ layer: committedLayer, onChange: commitChange, onPickColor, symbol, onTuningChange }) => {
+  const [layer, setLayer] = useState(committedLayer);
+  const tuningRef = useRef(false);
+  useEffect(() => {
+    if (!tuningRef.current) setLayer(committedLayer);
+  }, [committedLayer]);
+  const onChange = useCallback((patch: Partial<FloatingImage>) => {
+    setLayer(prev => ({ ...prev, ...patch }));
+    commitChange(patch);
+  }, [commitChange]);
+  const setTuning = (active: boolean) => {
+    tuningRef.current = active;
+    onTuningChange?.(active);
+  };
   const [sub, setSub] = useState<'style' | 'font'>('style');
   /* 顏色改成「點進去有一頁」：這裡存的是那一頁要調哪個顏色。 */
   const [colorPage, setColorPage] = useState<
@@ -2266,10 +2304,10 @@ export const TextEditorPanel: React.FC<{
     <div
       className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300"
       onPointerDownCapture={e => {
-        if ((e.target as HTMLElement).matches?.('input[type="range"]')) onTuningChange?.(true);
+        if ((e.target as HTMLElement).matches?.('input[type="range"]')) setTuning(true);
       }}
-      onPointerUpCapture={() => onTuningChange?.(false)}
-      onPointerCancelCapture={() => onTuningChange?.(false)}
+      onPointerUpCapture={() => setTuning(false)}
+      onPointerCancelCapture={() => setTuning(false)}
     >
       {/* 左側細長分頁列，跟「新增佈局」同一種版型：只有圖示、
           沒有中間那條分隔線，選中也不畫指示條。
@@ -2445,7 +2483,20 @@ export const ShapeEditorPanel: React.FC<{
   onChange: (patch: Partial<FloatingImage>) => void;
   /** 滑桿正在連續拖動；經典拼圖用它暫停昂貴的最終快照編碼。 */
   onTuningChange?: (active: boolean) => void;
-}> = ({ layer, onChange, onTuningChange }) => {
+}> = ({ layer: committedLayer, onChange: commitChange, onTuningChange }) => {
+  const [layer, setLayer] = useState(committedLayer);
+  const tuningRef = useRef(false);
+  useEffect(() => {
+    if (!tuningRef.current) setLayer(committedLayer);
+  }, [committedLayer]);
+  const onChange = useCallback((patch: Partial<FloatingImage>) => {
+    setLayer(prev => ({ ...prev, ...patch }));
+    commitChange(patch);
+  }, [commitChange]);
+  const setTuning = (active: boolean) => {
+    tuningRef.current = active;
+    onTuningChange?.(active);
+  };
   const isLine = SPECIAL_LINE_KINDS.has(layer.shape || '');
   const isGridShape = GRID_SHAPE_KINDS.has(layer.shape || '');
   const hasOutline = (!layer.shapeFilled || isLine) && !isGridShape;
@@ -2475,10 +2526,10 @@ export const ShapeEditorPanel: React.FC<{
     <div
       className="max-w-md mx-auto h-full animate-in fade-in duration-300"
       onPointerDownCapture={e => {
-        if ((e.target as HTMLElement).matches?.('input[type="range"]')) onTuningChange?.(true);
+        if ((e.target as HTMLElement).matches?.('input[type="range"]')) setTuning(true);
       }}
-      onPointerUpCapture={() => onTuningChange?.(false)}
-      onPointerCancelCapture={() => onTuningChange?.(false)}
+      onPointerUpCapture={() => setTuning(false)}
+      onPointerCancelCapture={() => setTuning(false)}
     >
       <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-2">
         {colorPage && (
@@ -4187,6 +4238,34 @@ interface FloatingImage {
   mo?: ObjectMotionConfig;
 }
 
+/* 經典拼圖的向量參數即時預覽。
+ *
+ * 滑桿拖動時若每一格都改 floatingImages，會令包含所有頁面、分割線、圖層與
+ * 操作框的 GridLayoutTool 整棵重新 render；iPhone 上即使 input 本身已經用
+ * rAF 合併，仍然會明顯掉幀。這個小型 external store 只通知正在調整的那一顆
+ * FloatingImageComponent。放手才一次提交正式資料，因此不降低畫質，也不會
+ * 讓未選中的物件或整張畫布陪著重畫。 */
+const classicVectorDrafts = new Map<string, Partial<FloatingImage>>();
+const classicVectorListeners = new Map<string, Set<() => void>>();
+const classicVectorDraft = (id: string) => classicVectorDrafts.get(id) || null;
+const publishClassicVectorDraft = (id: string, patch: Partial<FloatingImage>) => {
+  classicVectorDrafts.set(id, { ...(classicVectorDrafts.get(id) || {}), ...patch });
+  classicVectorListeners.get(id)?.forEach(notify => notify());
+};
+const clearClassicVectorDraft = (id: string) => {
+  if (!classicVectorDrafts.delete(id)) return;
+  classicVectorListeners.get(id)?.forEach(notify => notify());
+};
+const subscribeClassicVectorDraft = (id: string, notify: () => void) => {
+  let listeners = classicVectorListeners.get(id);
+  if (!listeners) classicVectorListeners.set(id, (listeners = new Set()));
+  listeners.add(notify);
+  return () => {
+    listeners!.delete(notify);
+    if (!listeners!.size) classicVectorListeners.delete(id);
+  };
+};
+
 type ClassicBrushKind = 'normal' | 'pencil' | 'crayon' | 'dash' | 'highlight';
 type ClassicBrushPoint = { x: number; y: number };
 interface ClassicBrushStroke {
@@ -4915,7 +4994,7 @@ const GlCanvasHost: React.FC<{ canvas: HTMLCanvasElement; style: React.CSSProper
 };
 
 const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
-  image,
+  image: committedImage,
   isSelected,
   shapeSelected,
   onShapeTap,
@@ -4960,6 +5039,13 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   motionTargetFlash = null,
   videoPaused = false,
 }) => {
+  const liveDraft = useSyncExternalStore(
+    useCallback(notify => subscribeClassicVectorDraft(committedImage.id, notify), [committedImage.id]),
+    useCallback(() => classicVectorDraft(committedImage.id), [committedImage.id]),
+    () => null,
+  );
+  /* 只有本物件會因 draft 改變而 render；父層與其他頁面完全不參與。 */
+  const image = liveDraft ? { ...committedImage, ...liveDraft } : committedImage;
   const imageRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isScaling, setIsScaling] = useState(false);
@@ -8444,6 +8530,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [pinchFloatingId, setPinchFloatingId] = useState<string | null>(null);
   /** 文字／符號／圖形面板中正在拖動滑桿的圖層。 */
   const [vectorTuningId, setVectorTuningId] = useState<string | null>(null);
+  const vectorTuningIdRef = useRef<string | null>(null);
+  const vectorTuningPatchRef = useRef<Partial<FloatingImage>>({});
   /** 「圖片調整」的子分頁 */
   const [adjustSub, setAdjustSub] = useState<'shape' | 'tune' | 'filter' | 'effect'>('filter');
   /** 調節分頁目前選中的工具 */
@@ -8481,6 +8569,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      圖片停留的造型／特效細頁直接套到新目標；文字與圖形面板另外用 layer.id
      当 key，切回去也会重新建立自己的最外层页面。 */
   useEffect(() => {
+    if (vectorTuningIdRef.current) clearClassicVectorDraft(vectorTuningIdRef.current);
+    vectorTuningIdRef.current = null;
+    vectorTuningPatchRef.current = {};
     setAdjustSub('filter');
     setTuneTool('brightness');
     setShapeTool('');
@@ -8921,9 +9012,38 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const patchTextLayer = (id: string, patch: Partial<FloatingImage>) => {
-    /* SmoothRange 已在輸入端把事件合併到螢幕幀；這裡直接提交，避免再排一次
-       requestAnimationFrame 造成兩幀延遲。 */
+    /* 連續拖動期間只更新該物件的 external preview store。這裡若寫回父層，
+       整個經典拼圖（所有頁面與物件）仍會逐幀 render，正是手機卡頓來源。 */
+    if (vectorTuningIdRef.current === id) {
+      vectorTuningPatchRef.current = { ...vectorTuningPatchRef.current, ...patch };
+      publishClassicVectorDraft(id, patch);
+      return;
+    }
     setFloatingImages(prev => prev.map(f => (f.id === id ? { ...f, ...patch } : f)));
+  };
+
+  const handleVectorTuning = (id: string, active: boolean) => {
+    if (active) {
+      if (vectorTuningIdRef.current && vectorTuningIdRef.current !== id) {
+        clearClassicVectorDraft(vectorTuningIdRef.current);
+      }
+      vectorTuningIdRef.current = id;
+      vectorTuningPatchRef.current = {};
+      setVectorTuningId(id);
+      return;
+    }
+    if (vectorTuningIdRef.current !== id) return;
+    const patch = vectorTuningPatchRef.current;
+    vectorTuningIdRef.current = null;
+    vectorTuningPatchRef.current = {};
+    if (Object.keys(patch).length) {
+      setFloatingImages(prev => prev.map(f => (f.id === id ? { ...f, ...patch } : f)));
+    }
+    setVectorTuningId(null);
+    requestAnimationFrame(() => {
+      clearClassicVectorDraft(id);
+      flushInteractionNow();
+    });
   };
 
   const handleAddLayoutToPage = (pageIdx: number, templateIdx = 0, count = 4) => {
@@ -16484,10 +16604,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     layer={layer}
                     symbol={!!layer.sym}
                     onChange={patch => patchTextLayer(layer.id, withGlowInit(layer, patch))}
-                    onTuningChange={active => {
-                      if (!active) flushInteractionNow();
-                      setVectorTuningId(active ? layer.id : null);
-                    }}
+                    onTuningChange={active => handleVectorTuning(layer.id, active)}
                   />
                 );
               }
@@ -16499,10 +16616,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     key={`shape-editor-${layer.id}`}
                     layer={layer}
                     onChange={patch => patchTextLayer(layer.id, withGlowInit(layer, patch))}
-                    onTuningChange={active => {
-                      if (!active) flushInteractionNow();
-                      setVectorTuningId(active ? layer.id : null);
-                    }}
+                    onTuningChange={active => handleVectorTuning(layer.id, active)}
                   />
                 );
               }
