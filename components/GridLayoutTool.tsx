@@ -129,7 +129,9 @@ const prepareClassicSymbolPlacement = (text: string, pageWidth: number): Prepare
 
   const M = 100;
   const w100 = measureSymbolAdvance(text, SYMBOL_FONT, M);
-  const fontSize = Math.max(12, Math.min(72, Math.round((pw * 0.7) * M / w100)));
+  /* 經典拼圖新符號的視覺尺寸改為原本的一半。字級與墨水框一起等比縮小，
+     不能只縮外框，否則新增後第一幀符號仍會撐出框外。 */
+  const fontSize = Math.max(6, Math.min(36, Math.round((pw * 0.35) * M / w100)));
   /* 新增時直接量「最後真正畫到畫布上的符號貼圖」。Mobile Safari 對部分
      VS15／fallback 字形的原生文字量測不同；若外框量 raw text、動畫畫貼圖，
      一進動畫頁就必然會偏移。 */
@@ -6297,6 +6299,14 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       && !liveTuning
       && motionFrame?.gridWave === undefined
       && motionFrame?.gridReveal === undefined;
+    /* 照片不會在整頁 pinch 時抖，是因為 Safari 只需縮放一張固定影像；文字與
+       符號原本各自保留可見 Canvas，WebKit 會逐張把它們吸到不同實體像素，
+       於是相對畫布上下左右跳。字體完成後把靜止結果凍結成 Image，讓它與照片
+       走完全相同的合成路徑。動畫、物件手勢與滑桿互動仍即時使用 Canvas。 */
+    const canFreezeText = image.text !== undefined
+      && !gestureRendering
+      && !liveTuning
+      && !motionFrame;
     /* 舊快照的尺寸／顏色一旦失效便立刻退回剛畫好的 canvas，不讓舊圖形閃一幀。 */
     if (shapeSnapshotUrlRef.current) {
       const stale = shapeSnapshotUrlRef.current;
@@ -6304,8 +6314,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       setShapeSnapshotUrl(null);
       requestAnimationFrame(() => URL.revokeObjectURL(stale));
     }
-    const freezeShape = () => {
-      if (!canFreezeShape || !alive || revision !== shapeSnapshotRevisionRef.current) return;
+    const freezeVector = () => {
+      if ((!canFreezeShape && !canFreezeText) || !alive || revision !== shapeSnapshotRevisionRef.current) return;
       canvas.toBlob(blob => {
         if (!blob || !alive || revision !== shapeSnapshotRevisionRef.current) return;
         const url = URL.createObjectURL(blob);
@@ -6318,6 +6328,13 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           const previous = shapeSnapshotUrlRef.current;
           shapeSnapshotUrlRef.current = url;
           setShapeSnapshotUrl(url);
+          /* 文字／符號快照已完整載入後釋放大型 backing store，避免 iPhone 因
+             多張高解析透明 Canvas 超過記憶體而把某些文字清成空白。下一次
+             內容或效果變更時，layout effect 會先同步恢復尺寸並重畫。 */
+          if (canFreezeText) {
+            canvas.width = 1;
+            canvas.height = 1;
+          }
           if (previous && previous !== url) requestAnimationFrame(() => URL.revokeObjectURL(previous));
         };
         probe.onerror = () => URL.revokeObjectURL(url);
@@ -6528,7 +6545,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         }
         ctx.restore();
         applyVectorWave();
-        freezeShape();
+        freezeVector();
         return;
       }
 
@@ -6643,7 +6660,13 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
        會比圖形多畫近一倍，在 iPhone 上掉幀後便像是仍在抖動。 */
     if (image.text !== undefined && !gestureRendering) {
       waitForFont((image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)), image.bold ? 700 : 400, !!image.italic)
-        .then(() => { if (alive) raf = requestAnimationFrame(draw); });
+        .then(() => {
+          if (alive) raf = requestAnimationFrame(() => {
+            draw();
+            /* 只凍結字體已確定後的最終字形，避免先顯示 fallback 快照再跳一次。 */
+            freezeVector();
+          });
+        });
     }
     return () => {
       alive = false;
