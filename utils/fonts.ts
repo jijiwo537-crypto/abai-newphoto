@@ -300,12 +300,5 @@ export async function waitForFont(family: string, weight = 400, italic = false) 
 
 /** 預覽與匯出要用同一組 font shorthand，文字才會落在同一個位置。 */
 export function fontStack(family?: string) {
-  /* 符號必須從第一幀就使用 iOS 內建字身。若在 PingFang 後面放網路下載的
-     Noto Sans TC，較少見的星號／弧線會先由 Apple 系統 fallback 畫出，Noto
-     完成後又被換一次；新增符號頁整片圖標便會像換字體般抖動。符號專用
-     stack 只包含同步存在的系統字體，量測、按鈕與畫布繪製也會完全一致。 */
-  if (family === SYMBOL_FONT) {
-    return `"${SYMBOL_FONT}", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif`;
-  }
   return `"${family || DEFAULT_FONT}", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif`;
 }

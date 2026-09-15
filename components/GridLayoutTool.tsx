@@ -5870,7 +5870,14 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
          在新舊畫布間交替取樣，尤其 Y 軸最容易上下跳。固定以 3 倍超取樣建立
          圖形貼圖；只有真正縮放物件本身時，boxW/boxH 才會改變並重畫。 */
       const exactShapeBacking = !!image.shape && image.shape !== 'hole';
-      const previewRasterScale = exactShapeBacking ? 1 : Math.max(1, canvasScale);
+      /* 小圖形的銳利邊緣在少量像素內移動時最容易被次像素抗鋸齒誤認成上下
+         抖動。創意拼圖是在一張高解析主 Canvas 內重畫；經典拼圖保持每顆圖形
+         固定貼圖，但尺寸愈小就提高一次性的超取樣密度。倍率只由物件本身尺寸
+         決定，不含預覽 zoom，因此捏合畫布期間 backing store 仍完全不變。 */
+      const shapeDetailBoost = exactShapeBacking
+        ? Math.max(1.25, Math.min(2, 180 / Math.max(1, cssW, cssH)))
+        : 1;
+      const previewRasterScale = exactShapeBacking ? shapeDetailBoost : Math.max(1, canvasScale);
       const dpr = Math.max(2, geoDpr * previewRasterScale * (gestureRendering ? 1.5 : 3));
       const cssW = vectorCssW;
       const cssH = vectorCssH;
@@ -9325,7 +9332,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          縮放與尾數補償在同一個 matrix、同一幀提交，不再讓 WebKit 分兩層取整。 */
       col.style.transform = `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * k}px, 0, 0) ` : ''}scale(${k})`;
       col.style.transformOrigin = '0 0';
-      col.style.willChange = liveTransform ? 'transform' : '';
+      /* 不強制把整排預覽預先點陣化。Safari 若在 pinch 開始時依舊倍率建立
+         will-change 合成層，之後放大看到的選中框、控制點、藥丸與圖標只是
+         同一張低解析貼圖。保留單一 transform 座標系，但交給瀏覽器在最終
+         倍率重新光柵化 SVG／文字；圖片與固定超取樣圖形仍由 GPU 合成。 */
+      col.style.willChange = '';
       /* 固定在萤幕坐标层的空格提示收到通知后才量中心点。
          事件只排一个 rAF，不在手势处理内同步读取版面。 */
       col.dispatchEvent(new Event('abai-preview-transform'));
@@ -13016,9 +13027,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* IG 預覽不只影片要持續重畫；頁面上只要有經典拼圖動畫，也必須走
          同一張即時合成 Canvas。否則預覽拿到的只是動畫第 0 幀靜態 PNG。 */
       const needsLivePreview = pages.some((_p, i) => igPageHasVideoRef.current(i)) || anyClassicMotion;
+      /* IG 圖片區在 iPhone Retina 上約需 3 倍實體像素。舊的 900px 成品在
+         390pt 寬螢幕只有約 2.3 倍，細小圖形會先被壓成低解析再放大。
+         1440px 足以覆蓋 3x 顯示，同時仍遠低於正式匯出的記憶體成本。 */
       const opts = needsLivePreview
-        ? { silent: true as const, previewWidth: 900, live: true }
-        : { silent: true as const, previewWidth: 900, stillOnly: true };
+        ? { silent: true as const, previewWidth: 1440, live: true }
+        : { silent: true as const, previewWidth: 1440, stillOnly: true };
       let r = await handleExport(opts);
       let urls = (r && 'urls' in r) ? r.urls : [];
       // 偶爾第一次會算不出來（圖還沒解碼完之類），隔一下再試一次
