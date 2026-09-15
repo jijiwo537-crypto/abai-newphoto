@@ -1199,20 +1199,21 @@ export const shapePathD = (
         const k = i % 2 ? 0.42 : 1;
         pts.push([cx + Math.cos(t) * a * k, cy + Math.sin(t) * b * k]);
       }
-      /* 每個角用相同的邊長比例做圓角；外五角仍然清楚，但不會像
-         原本星星那樣完全尖銳。路徑本身就是圓角，不靠 stroke-linejoin 假裝。 */
-      /* 圓角要在新增清單的小尺寸也明顯可辨；0.28 仍保留五角星輪廓，
-         但不會只像尖角上磨掉一個幾乎看不見的小點。 */
+      /* 只磨圓向外凸出的五個尖角；凹進去的五個轉折仍直接穿過原始頂點，
+         因此保持銳利，不會變成十個角都圓的軟星星。 */
       const cut = 0.38;
       const toward = (from: [number, number], to: [number, number]) =>
         [from[0] + (to[0] - from[0]) * cut, from[1] + (to[1] - from[1]) * cut] as [number, number];
       const first = toward(pts[0], pts[pts.length - 1]);
       let d = `M ${P(first[0], first[1])}`;
-      for (let i = 0; i < pts.length; i++) {
-        const v = pts[i], next = pts[(i + 1) % pts.length];
-        const after = toward(v, next);
-        const beforeNext = toward(next, v);
-        d += ` Q ${P(v[0], v[1])} ${P(after[0], after[1])} L ${P(beforeNext[0], beforeNext[1])}`;
+      for (let i = 0; i < pts.length; i += 2) {
+        const tip = pts[i];
+        const inner = pts[(i + 1) % pts.length];
+        const nextTip = pts[(i + 2) % pts.length];
+        const afterTip = toward(tip, inner);
+        const beforeNextTip = toward(nextTip, inner);
+        d += ` Q ${P(tip[0], tip[1])} ${P(afterTip[0], afterTip[1])}`;
+        d += ` L ${P(inner[0], inner[1])} L ${P(beforeNextTip[0], beforeNextTip[1])}`;
       }
       return `${d} Z`;
     }
@@ -2416,8 +2417,8 @@ export const TextEditorPanel: React.FC<{
                     所以不會有「拉到 1 的瞬間欄位冒出來閃一下」。 */}
                 <div className="flex items-center gap-3 px-2">
                   <div className="flex-1 min-w-0">
-                    {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / 12) * 100)), 0, 100,
-                      v => onChange({ glow: (v / 100) * 12 }), '', 1)}
+                    {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / 15) * 100)), 0, 100,
+                      v => onChange({ glow: (v / 100) * 15 }), '', 1)}
                   </div>
                   <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
                     onPick={c => onChange({ glowColor: c })}
@@ -2476,8 +2477,8 @@ export const TextEditorPanel: React.FC<{
             </div>
             <div className="flex items-center gap-3 px-2">
               <div className="flex-1 min-w-0">
-                {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / 12) * 100)), 0, 100,
-                      v => onChange({ glow: (v / 100) * 12 }), '', 1)}
+                {slider('發光', Math.round(Math.min(100, ((layer.glow || 0) / 15) * 100)), 0, 100,
+                      v => onChange({ glow: (v / 100) * 15 }), '', 1)}
               </div>
               <ColorPick compact label="顏色" value={layer.glowColor || '#FFFFFF'} colors={GLOW_COLORS}
                 onPick={c => onChange({ glowColor: c })}
@@ -6173,7 +6174,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
        重畫內容，外層定位盒從 0 到最大值都完全不變。 */
     const glow = image.shape
       ? Math.max(...shapeGlowBlurs(image.width, image.height), 0) * image.scale
-      : 42 * image.scale;
+      : 63 * image.scale;
     const stroke = image.shape
       ? 4 * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
       : Math.max(10, image.strokeWidth || 0) * 2 * image.scale;
@@ -6619,7 +6620,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         ctx.shadowColor = image.glowColor || '#FFFFFF';
         for (const k of [1, 2, 3]) {
           // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
-          ctx.shadowBlur = (Math.min(12, image.glow) / 20) * 14 * k * image.scale * backingScale;
+          ctx.shadowBlur = (Math.min(15, image.glow) / 20) * 14 * k * image.scale * backingScale;
           fill();
         }
         ctx.shadowBlur = 0;
@@ -7065,7 +7066,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           const dx = vectorGlyphCorrection.x;
           const dy = vectorGlyphCorrection.y;
           const glowId = `vector-text-glow-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-          const glowUnit = Math.min(12, image.glow || 0) / 20 * 14;
+          const glowUnit = Math.min(15, image.glow || 0) / 20 * 14;
           return (
             <svg
               data-vector-text={image.id}
@@ -13242,7 +13243,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          算進發光裡；發光與描邊要各自獨立，所以這一段不描邊。 */
       // 疊三層，跟預覽那一層的三段 text-shadow 對齊
       for (const k of [1, 2, 3]) {
-        ctx.shadowBlur = (Math.min(12, fImg.glow) / 20) * 14 * k * scaleFactor * fImg.scale;
+        ctx.shadowBlur = (Math.min(15, fImg.glow) / 20) * 14 * k * scaleFactor * fImg.scale;
         drawLines();
       }
       ctx.shadowBlur = 0;
