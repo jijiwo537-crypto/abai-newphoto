@@ -5927,7 +5927,10 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       };
       ctx.save();
       ctx.translate(cssW / 2, cssH / 2);
-      ctx.rotate((image.rotation * Math.PI) / 180);
+      /* 一般圖形的 Canvas 現在直接掛在跟圖片相同的物件 wrapper 裡，旋轉由
+         wrapper 統一處理；這裡若再旋轉一次會重複套用。hole／符號仍在獨立
+         顯示層，維持原本的內部旋轉。 */
+      ctx.rotate(((image.shape && image.shape !== 'hole' ? 0 : image.rotation) * Math.PI) / 180);
 
       if (image.shape === 'hole') {
         /* 字符／去背圖片型圖形會在 drawHoleShape 裡先畫到暫存 Canvas。
@@ -6398,9 +6401,9 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
           ...(chromeBox || null),
           visibility: showChrome ? 'visible' : 'hidden',
           opacity: showChrome ? 1 : 0,
-          transform: 'translateZ(0)',
-          willChange: 'transform',
-          backfaceVisibility: 'hidden',
+          /* 這是固定螢幕像素的操作 UI，不能先升成小型點陣合成層再讓外層
+             預覽放大；否則高倍率時框、圓點、圖示與文字都會一起模糊。
+             保留一般繪製，瀏覽器會在最終倍率重新光柵化 SVG 與文字。 */
         }}
       >
         {shapeOutline ? shapeOutline : isPhoto ? (
@@ -6655,10 +6658,27 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
       onTouchCancel={motionPickOnly ? undefined : onSwapTouchEnd}
     >
       {image.shape === 'hole' ? null : image.shape ? (
-        /* 圖形圖層。預覽是 SVG、匯出是 Path2D，吃的是同一條 d 字串。
+        <>
+        {/* 一般圖形與圖片共用同一個 wrapper、同一個中心及同一次頁面縮放。
+            Canvas 本身只是一張高解析圖形貼圖，不再另外 Portal 到整頁座標；
+            因此預覽縮放時不可能在 Y 軸和物件盒分別取整而上下跳動。 */}
+        <canvas
+          ref={vectorCanvasRef}
+          data-classic-shape-raster={image.id}
+          style={{
+            position: 'absolute',
+            left: `${(boxW - vectorCssW) / 2}px`,
+            top: `${(boxH - vectorCssH) / 2}px`,
+            width: `${vectorCssW}px`,
+            height: `${vectorCssH}px`,
+            opacity: (image.opacity ?? 100) / 100,
+            pointerEvents: 'none',
+          }}
+        />
+        {/* 舊 SVG 僅保留作為路徑實作的對照，不參與顯示。
            viewBox 用「沒有縮放前」的尺寸，外框是 width×scale ——
            兩軸的倍率一樣，所以描邊是等比例放大、不會被拉扁。
-           overflow: visible 是因為描邊有一半長在框外面，不放行就會被切掉。 */
+           overflow: visible 是因為描邊有一半長在框外面，不放行就會被切掉。 */}
         <svg
           viewBox={`0 0 ${image.width} ${image.height}`}
           preserveAspectRatio="none"
@@ -6686,7 +6706,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             backfaceVisibility: 'hidden',
             WebkitBackfaceVisibility: 'hidden',
             isolation: 'isolate',
-            visibility: 'visible',
+            visibility: 'hidden',
           }}
         >
           {/* 點點：用一塊 pattern 疊在圖形上，範圍就是圖形的填色區域 ——
@@ -6814,6 +6834,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             );
           })()}
         </svg>
+        </>
       ) : image.sym ? null : image.text !== undefined ? (
         <div
           ref={textRef}
@@ -14270,7 +14291,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                    分割線統一在所有內容之上的 seam overlay 畫一次；
                                    槽本身不能再上色，否則排序模式與跨頁圖片會同時
                                    看到兩條不同取樣粗細的線。 */
-                                backgroundColor: 'transparent',
+                                /* 一般預覽不可讓 1 個內容像素的透明槽露出工作區黑底。
+                                   預覽放大後透明槽會被放成 k px；物件蓋住槽時卻只剩
+                                   上方固定 1px 分割線，於是同一條線看起來有兩種粗度。
+                                   用右頁底色補滿座標槽，畫面上只留下唯一 seam overlay。
+                                   排頁面時仍透明，避免頁面拿起後原地留下色條。 */
+                                backgroundColor: pagesMode ? 'transparent' : page.bgColor,
                                 /* 它必须高于拖起的页面与自由图层。再用同色半像素阴影
                                    覆盖 fractional zoom 在两侧产生的抗锯齿浅边，最终只
                                    留下一条颜色一致的接缝，不会多出旁边那条淡线。 */
@@ -14690,7 +14716,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                               borderRadius: `${radius}px`,
                                               borderWidth: 0.75 / Math.max(0.0001, kRef.current),
                                               boxShadow: `0 0 ${3 / Math.max(0.0001, kRef.current)}px rgba(0,0,0,0.28)`,
-                                              transform: 'translateZ(0)',
                                               ...(radius > 0 ? { WebkitMaskImage: '-webkit-radial-gradient(white, black)' } : null),
                                             }}
                                           />
@@ -14997,12 +15022,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                          有時候不會把它讓出來的那塊重畫 —— 畫面上就留著一個已經不存在的
                                          選取框。讓這一層自己就是一個合成層（跟圖片那邊同一招），
                                          拆掉時整層一起消失，不會有殘影留在別人的圖層上。 */
-                                      transform: [
-                                        mvChrome ? `translateX(${mvChrome.dx}px)${liftedChrome ? ` scale(${mvChrome.s})` : ''}` : '',
-                                        'translateZ(0)',
-                                      ].filter(Boolean).join(' '),
-                                      willChange: 'transform',
-                                      backfaceVisibility: 'hidden',
+                                      /* 靜止選中 UI 不建立點陣合成層，否則再被整個預覽
+                                         放大時，框、控制點和藥丸都會拿低解析貼圖硬拉。
+                                         只有頁面真的在拖曳時才短暫使用 transform。 */
+                                      transform: mvChrome
+                                        ? `translateX(${mvChrome.dx}px)${liftedChrome ? ` scale(${mvChrome.s})` : ''}`
+                                        : undefined,
+                                      willChange: mvChrome?.live ? 'transform' : undefined,
+                                      backfaceVisibility: mvChrome ? 'hidden' : undefined,
                                     }}
                                   >
                                     {/* 裡面這層＝佈局自己的框。尺寸跟真正那個 wrapper 一模一樣，
