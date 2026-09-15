@@ -172,6 +172,22 @@ export const installSliderTouch = () => {
     let live = false;   // 已經認定是在拖滑桿（認定之後就再也不會反悔）
     let dead = false;   // 已經認定使用者是在捲面板，這一下從頭到尾不關滑桿的事
     let done = false;
+    let notifiedStart = false;
+
+    /* input 本體是 pointer-events:none，iPhone 上真正接到按下的是
+       .slider-wrap。經典拼圖的「只重畫當前物件」模式原本等在 input
+       的 pointerdown，因此手機上根本從未開啟，每一格還是重畫整個專案。
+       當這支代理真正判定為橫向拖曳時，補送一個只用來通知
+       React 的 pointerdown；放手時原本就會補送 pointerup。所有滑桿的
+       當前手感與透明觸控區都不變。 */
+    const notifyStart = (cx: number, cy: number) => {
+      if (notifiedStart) return;
+      notifiedStart = true;
+      el.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, pointerId: id,
+        pointerType: e.pointerType, clientX: cx, clientY: cy,
+      }));
+    };
 
     /** 手指移到 (cx, cy)：回傳 true 代表「這一下是滑桿的，別讓瀏覽器拿去捲」 */
     const advance = (cx: number, cy: number): boolean => {
@@ -187,6 +203,7 @@ export const installSliderTouch = () => {
            這段期間什麼都不做，所以不會誤動到任何東西。 */
         if (dx > DRAG_SLOP && dx * 2 >= dy) {
           live = true;
+          notifyStart(cx, cy);
           /* 抓住這根指頭：接下來不管手指飄到哪一顆按鈕、哪一根滑桿上面，
              事件都只會送到這裡，別人不會亮起來、也不會被按到。 */
           try { wrap.setPointerCapture(id); } catch { /* 抓不到就算了，事件還是收得到 */ }
@@ -227,7 +244,7 @@ export const installSliderTouch = () => {
       // 手指明顯在直向滑、或整段被取消：這一下跟滑桿無關
       if (dead || (cancelled && !live)) return;
       // 沒拖過、又是按在看得見的那一條上：跟原生一樣，值跳到手指的位置
-      if (!live && inCore) { live = true; setValue(el, valueAt(el, cx)); }
+      if (!live && inCore) { live = true; notifyStart(cx, cy); setValue(el, valueAt(el, cx)); }
       if (live) {
         /* 有些滑桿是「手放開才算數」的（動畫頁放開後自動重播）——
            它們掛的是滑桿本人的 onPointerUp／onTouchEnd，補一顆給它們。 */

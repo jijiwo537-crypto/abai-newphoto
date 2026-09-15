@@ -21,7 +21,7 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady,
-  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
+  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -8839,10 +8839,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             a.splice(Math.max(0, m - 1), 0, x);
                             return a;
                           };
-                          const compositeItems = ADD_SHAPE_ITEMS.filter(i2 => i2.filled && COMPOSITE_SHAPE_KINDS.has(i2.kind));
+                          const compositeItems = ADD_SHAPE_ITEMS.filter(i2 => i2.filled
+                            && COMPOSITE_SHAPE_KINDS.has(i2.kind) && i2.kind !== 'star-double');
                           const solidList = [
                             ...moveTo(
-                              [...ins(ADD_SHAPE_ITEMS.filter(i2 => i2.filled && !COMPOSITE_SHAPE_KINDS.has(i2.kind)), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
+                              [...ins(ADD_SHAPE_ITEMS.filter(i2 => i2.filled
+                                && (!COMPOSITE_SHAPE_KINDS.has(i2.kind) || i2.kind === 'star-double')), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
                               'heart-f', 9),
                             ...compositeItems,
                           ];
@@ -8904,6 +8906,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 );
                 if (sel.type === 'shape') {
                   const isLine = SPECIAL_LINE_KINDS.has(sel.kind || '');
+                  const isDoubleContour = DOUBLE_CONTOUR_SHAPE_KINDS.has(sel.kind || '');
                   /* 圖形調整：欄位與經典拼圖那顆 ShapeEditorPanel 一致。
                      圖層上下不放這裡 —— 選中時畫面上那排工具列本來就有。 */
                   return (
@@ -8941,7 +8944,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>
-                          <div className="flex items-center gap-3 px-2 order-2 w-full">
+                          {!isDoubleContour && <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('描邊', Math.round(Math.min(4, sel.strokeW ?? 0) * 25), 0, 100,
                                 (v: number) => patch({ strokeW: v / 25 }))}
@@ -8949,7 +8952,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             <ColorPick compact label="顏色" value={sel.strokeColor || '#000000'}
                               onPick={(c: string) => patch({ strokeColor: c })}
                               onOpen={() => setColorPickerTarget('shapeStroke')} />
-                          </div>
+                          </div>}
+                          {isDoubleContour && (
+                            <div className="px-2 order-2 w-full">
+                              {shapeSlider('透明度', sel.opacity ?? 100, 0, 100,
+                                (v: number) => patch({ opacity: v }))}
+                            </div>
+                          )}
                           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
                               （跟經典拼圖的「背景紋理」同一種排法）。顏色常駐。
                               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
@@ -9033,10 +9042,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </div>
                             );
                           })()}
-                          <div className="px-2 order-4 w-full">
+                          {!isDoubleContour && <div className="px-2 order-4 w-full">
                             {shapeSlider('透明度', sel.opacity ?? 100, 0, 100,
                               (v: number) => patch({ opacity: v }))}
-                          </div>
+                          </div>}
                           {shapeSupportsFeather(sel.kind, sel.filled, sel.hole) && (
                             <div className="px-2 order-5 w-full">
                               {shapeSlider('羽化', sel.shapeFeather || 0, 0, 100,

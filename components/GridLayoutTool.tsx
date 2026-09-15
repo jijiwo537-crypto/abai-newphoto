@@ -1192,6 +1192,28 @@ export const shapePathD = (
       }
       return poly(pts);
     }
+    case 'star-rounded': {
+      const pts: [number, number][] = [];
+      for (let i = 0; i < 10; i++) {
+        const t = -Math.PI / 2 + (i / 10) * Math.PI * 2;
+        const k = i % 2 ? 0.42 : 1;
+        pts.push([cx + Math.cos(t) * a * k, cy + Math.sin(t) * b * k]);
+      }
+      /* 每個角用相同的邊長比例做圓角；外五角仍然清楚，但不會像
+         原本星星那樣完全尖銳。路徑本身就是圓角，不靠 stroke-linejoin 假裝。 */
+      const cut = 0.105;
+      const toward = (from: [number, number], to: [number, number]) =>
+        [from[0] + (to[0] - from[0]) * cut, from[1] + (to[1] - from[1]) * cut] as [number, number];
+      const first = toward(pts[0], pts[pts.length - 1]);
+      let d = `M ${P(first[0], first[1])}`;
+      for (let i = 0; i < pts.length; i++) {
+        const v = pts[i], next = pts[(i + 1) % pts.length];
+        const after = toward(v, next);
+        const beforeNext = toward(next, v);
+        d += ` Q ${P(v[0], v[1])} ${P(after[0], after[1])} L ${P(beforeNext[0], beforeNext[1])}`;
+      }
+      return `${d} Z`;
+    }
     case 'star8': {
       const pts: [number, number][] = [];
       for (let i = 0; i < 16; i++) {
@@ -1401,7 +1423,7 @@ export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
 /** 四邊擠壓白名單：實心前 11 顆、邊框前 16 顆。 */
 const STRETCH_SOLID_KINDS = new Set([
   'circle', 'square', 'rounded', 'triangle', 'diamond', 'diamond-n',
-  'pentagon', 'hexagon', 'star', 'heart',
+  'pentagon', 'hexagon', 'star', 'star-rounded', 'heart',
   'square-star-dual', 'square-heart-dual', 'square-star-cutout', 'square-heart-cutout',
   'heart-double', 'star-double',
 ]);
@@ -1450,6 +1472,8 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'pentagon-f', kind: 'pentagon', filled: true },
   { id: 'hexagon-f', kind: 'hexagon', filled: true },
   { id: 'star-f', kind: 'star', filled: true },
+  { id: 'star-rounded-f', kind: 'star-rounded', filled: true },
+  { id: 'star-double-f', kind: 'star-double', filled: true },
   { id: 'heart-f', kind: 'heart', filled: true },
   /* 最後一排複合實心圖形。前兩顆是雙色實心、接著兩顆挖空，最後兩顆
      是原本愛心／星星外面再加一圈同形細線。 */
@@ -1457,8 +1481,6 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'square-heart-dual-f', kind: 'square-heart-dual', filled: true },
   { id: 'square-star-cutout-f', kind: 'square-star-cutout', filled: true },
   { id: 'square-heart-cutout-f', kind: 'square-heart-cutout', filled: true },
-  { id: 'heart-double-f', kind: 'heart-double', filled: true },
-  { id: 'star-double-f', kind: 'star-double', filled: true },
   // 細框
   { id: 'circle-o', kind: 'circle', filled: false },
   { id: 'square-o', kind: 'square', filled: false },
@@ -1511,6 +1533,7 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
   pentagon: [0.0245, 0, 0.9511, 0.9045],
   hexagon: [0.067, 0, 0.866, 1],
   star: [0.0245, 0, 0.9511, 0.9045],
+  'star-rounded': [0.0245, 0, 0.9511, 0.9045],
   heart: [0.1324, 0.2362, 0.7352, 0.7138],
   ellipse: [0, 0, 1, 1],
   cloud: [0, 0, 1, 1],
@@ -1555,6 +1578,18 @@ export const insetShapePath = (
   return out;
 };
 
+/** 與 insetShapePath 完全同一組幾何，供預覽的 SVG 直接使用。 */
+const insetShapeSvgTransform = (
+  kind: 'star' | 'heart', w: number, h: number, inkFraction: number, offsetYFraction = 0,
+) => {
+  const fit = SHAPE_FIT[kind];
+  const sx = (w * inkFraction) / (fit[2] * 100);
+  const sy = (h * inkFraction) / (fit[3] * 100);
+  const inkCx = (fit[0] + fit[2] / 2) * 100;
+  const inkCy = (fit[1] + fit[3] / 2) * 100;
+  return `matrix(${r3(sx)} 0 0 ${r3(sy)} ${r3(w / 2 - inkCx * sx)} ${r3(h / 2 - inkCy * sy + h * offsetYFraction)})`;
+};
+
 /**
  * 六顆複合圖形的本體。回傳 true 代表已完成繪製：
  * - 雙色款：紋理只鋪外方形，再以純色內層完整蓋住。
@@ -1573,7 +1608,9 @@ export const drawCompositeShapeBody = (
     const outer = new Path2D(shapePathD('square', w, h));
     /* insetShapePath 以實際墨水邊界（不是字框）置中，因此愛心尖底與頂部
        到方形的距離會精確相等。 */
-    const inner = insetShapePath(innerKind, w, h, 0.64);
+    /* 愛心的視覺重心比幾何外接框稍高；只在方形複合款往下補 1%，
+       讓上下看起來的留白一致，星星與所有其他圖形完全不動。 */
+    const inner = insetShapePath(innerKind, w, h, 0.64, innerKind === 'heart' ? 0.01 : 0);
     target.fillStyle = color;
     if (DUAL_COLOR_SHAPE_KINDS.has(kind)) {
       target.fill(outer);
@@ -1608,8 +1645,10 @@ export const drawCompositeShapeBody = (
   const gap = Math.min(w, h) * 0.052;
   const ringWidth = Math.min(w, h) * 0.024;
   g.strokeStyle = color;
-  g.lineJoin = 'round';
-  g.lineCap = 'round';
+  /* 外圈要沿星星的五個尖角延伸，不能用 round join 把角磨平。 */
+  g.lineJoin = innerKind === 'star' ? 'miter' : 'round';
+  g.lineCap = innerKind === 'star' ? 'butt' : 'round';
+  g.miterLimit = 12;
   g.lineWidth = (gap + ringWidth) * 2;
   g.stroke(body);
   g.globalCompositeOperation = 'destination-out';
@@ -1678,12 +1717,12 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
     if (DUAL_COLOR_SHAPE_KINDS.has(item.kind)) return (
       <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} aria-hidden>
         <rect width={VB} height={VB} fill="currentColor" />
-        <path d={innerD} transform={tf(0.64)} fill="#fff" />
+        <path d={innerD} transform={tf(0.64, innerKind === 'heart' ? 0.01 : 0)} fill="#fff" />
       </svg>
     );
     if (CUTOUT_SHAPE_KINDS.has(item.kind)) return (
       <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} aria-hidden>
-        <defs><mask id={maskId}><rect width={VB} height={VB} fill="#fff" /><path d={innerD} transform={tf(0.64)} fill="#000" /></mask></defs>
+        <defs><mask id={maskId}><rect width={VB} height={VB} fill="#fff" /><path d={innerD} transform={tf(0.64, innerKind === 'heart' ? 0.01 : 0)} fill="#000" /></mask></defs>
         <rect width={VB} height={VB} fill="currentColor" mask={`url(#${maskId})`} />
       </svg>
     );
@@ -1692,9 +1731,9 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
         <defs>
           <mask id={maskId}>
             <path d={innerD} transform={tf(0.72)} fill="#fff" stroke="#fff"
-              strokeWidth={3.65} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+              strokeWidth={3.65} vectorEffect="non-scaling-stroke" strokeLinejoin={innerKind === 'star' ? 'miter' : 'round'} />
             <path d={innerD} transform={tf(0.72)} fill="none" stroke="#000"
-              strokeWidth={2.5} vectorEffect="non-scaling-stroke" strokeLinejoin="round" />
+              strokeWidth={2.5} vectorEffect="non-scaling-stroke" strokeLinejoin={innerKind === 'star' ? 'miter' : 'round'} />
             <path d={innerD} transform={tf(0.72)} fill="#fff" />
           </mask>
         </defs>
@@ -2499,6 +2538,7 @@ export const ShapeEditorPanel: React.FC<{
   };
   const isLine = SPECIAL_LINE_KINDS.has(layer.shape || '');
   const isGridShape = GRID_SHAPE_KINDS.has(layer.shape || '');
+  const isDoubleContour = DOUBLE_CONTOUR_SHAPE_KINDS.has(layer.shape || '');
   const hasOutline = (!layer.shapeFilled || isLine) && !isGridShape;
   const canFeather = shapeSupportsFeather(layer.shape, layer.shapeFilled, layer.holeType);
   /* 顏色改成「點進去有一頁」（跟文字那一頁同一顆元件） */
@@ -2572,7 +2612,7 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>
-          <div className="flex items-center gap-3 px-2 order-2 w-full">
+          {!isDoubleContour && <div className="flex items-center gap-3 px-2 order-2 w-full">
             <div className="flex-1 min-w-0">
               {slider('描邊', Math.round(Math.min(4, layer.shapeStrokeW ?? 0) * 25), 0, 100,
                 v => onChange({ shapeStrokeW: v / 25 }))}
@@ -2583,7 +2623,12 @@ export const ShapeEditorPanel: React.FC<{
                 value: layer.shapeStrokeColor || '#000000',
                 onPick: c => onChange({ shapeStrokeColor: c }),
               })} />
-          </div>
+          </div>}
+          {isDoubleContour && (
+            <div className="px-2 order-2 w-full">
+              {slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
+            </div>
+          )}
           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
               （跟「背景紋理」那一格同一種排法）。顏色常駐，關著也能先挑好。
               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
@@ -2677,9 +2722,9 @@ export const ShapeEditorPanel: React.FC<{
           </div>
             );
           })()}
-          <div className="px-2 order-4 w-full">
+          {!isDoubleContour && <div className="px-2 order-4 w-full">
             {slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
-          </div>
+          </div>}
           {canFeather && (
             <div className="px-2 order-5 w-full">
               {slider('羽化', layer.shapeFeather || 0, 0, 100, v => onChange({ shapeFeather: v }))}
@@ -6047,6 +6092,24 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       join: (image.shape === 'line' ? 'round' : 'miter') as 'round' | 'miter',
     };
   })();
+  /* 一般圖形與雙輪廓星星都用 SVG 直接顯示。這些值與 Canvas
+     版本吃同一條路徑與內縮矩陣，所以外觀不變；差別只是拖滑桿、
+     拖物件或縮放預覽時，不再反覆產生幾百萬像素的點陣快取。 */
+  const vectorDoubleKind = image.shape && DOUBLE_CONTOUR_SHAPE_KINDS.has(image.shape)
+    ? compositeInnerKind(image.shape) : null;
+  const vectorShapeD = vectorDoubleKind
+    ? shapePathD(vectorDoubleKind, 100, 100)
+    : image.shape ? shapePathD(
+        image.shape, image.width, image.height,
+        image.shapeTextureBaseW || image.width,
+        image.shapeTextureBaseH || image.height,
+        ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
+          / Math.pow(Math.max(0.01, renderScale), 0.65),
+      ) : '';
+  const vectorShapeTransform = vectorDoubleKind
+    ? insetShapeSvgTransform(vectorDoubleKind, image.width, image.height, 0.72)
+    : undefined;
+  const vectorDoubleMaskId = `double-shape-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
   /* 借來的圖案：畫的參數與「它會超出外框多少」。
      兩個地方要用到（畫布的像素尺寸、畫布在版面上的位置），
@@ -6213,8 +6276,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     };
   }, [image.shape, image.holeType]);
 
-  const vectorLiveSvg = !!liveTuning && !!image.shape && image.shape !== 'hole'
-    && !COMPOSITE_SHAPE_KINDS.has(image.shape);
+  const vectorLiveSvg = !!image.shape && image.shape !== 'hole'
+    && (!COMPOSITE_SHAPE_KINDS.has(image.shape) || !!vectorDoubleKind)
+    /* 波浪／畫筆進場必須把完整成品切成連續小片變形；這兩種逐幀效果
+       維持 Canvas，靜止與一般互動才走不會重建點陣的 SVG。 */
+    && motionFrame?.gridWave === undefined
+    && motionFrame?.gridReveal === undefined;
 
   useLayoutEffect(() => {
     /* 一般文字維持 SVG；符號则与创意拼图一样走 Canvas 的同一套墨水测量与
@@ -7183,8 +7250,33 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             WebkitBackfaceVisibility: 'hidden',
             isolation: 'isolate',
             visibility: vectorLiveSvg ? 'visible' : 'hidden',
+            opacity: (image.opacity ?? 100) / 100,
           }}
         >
+          {vectorDoubleKind && (() => {
+            const gap = Math.min(image.width, image.height) * 0.052;
+            const ring = Math.min(image.width, image.height) * 0.024;
+            return (
+              <>
+                <defs>
+                  <mask id={vectorDoubleMaskId} maskUnits="userSpaceOnUse"
+                    x={-image.width} y={-image.height} width={image.width * 3} height={image.height * 3}>
+                    <path d={vectorShapeD} transform={vectorShapeTransform}
+                      fill="#fff" stroke="#fff" strokeWidth={(gap + ring) * 2}
+                      strokeLinejoin={vectorDoubleKind === 'star' ? 'miter' : 'round'}
+                      strokeLinecap={vectorDoubleKind === 'star' ? 'butt' : 'round'} />
+                    <path d={vectorShapeD} transform={vectorShapeTransform}
+                      fill="none" stroke="#000" strokeWidth={gap * 2}
+                      strokeLinejoin={vectorDoubleKind === 'star' ? 'miter' : 'round'}
+                      strokeLinecap={vectorDoubleKind === 'star' ? 'butt' : 'round'} />
+                    <path d={vectorShapeD} transform={vectorShapeTransform} fill="#fff" />
+                  </mask>
+                </defs>
+                <rect x={-image.width} y={-image.height} width={image.width * 3} height={image.height * 3}
+                  fill={image.color || SHAPE_DEFAULT_COLOR} mask={`url(#${vectorDoubleMaskId})`} />
+              </>
+            );
+          })()}
           {/* 點點：用一塊 pattern 疊在圖形上，範圍就是圖形的填色區域 ——
               跟匯出那邊「剪裁在圖形裡面再鋪點點」是同一塊區域。
               tile 是交錯三角格的一個週期（寬 dx、高 2dy，裡面兩顆），
@@ -7194,15 +7286,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           {/* 外描邊：畫在本體「底下」、寬度加倍 —— 本體會蓋住內半邊，
               留在外面的就是乾淨的一圈外描邊（跟文字的描邊同一種做法）。
               虛線只屬於本體，描邊那一圈一律是實線。 */}
-          {!!image.shapeStrokeW && (
+          {!!image.shapeStrokeW && !vectorDoubleKind && (
             <path
-              d={shapePathD(
-                image.shape, image.width, image.height,
-                image.shapeTextureBaseW || image.width,
-                image.shapeTextureBaseH || image.height,
-                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.pow(Math.max(0.01, renderScale), 0.65),
-              )}
+              d={vectorShapeD}
+              transform={vectorShapeTransform}
               fill="none"
               stroke={image.shapeStrokeColor || '#000000'}
               strokeWidth={((image.shapeFilled && image.shape !== 'line') ? 0 : (shapeStroke?.lw || 0))
@@ -7212,13 +7299,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             />
           )}
           <path
-            d={shapePathD(
-                image.shape, image.width, image.height,
-                image.shapeTextureBaseW || image.width,
-                image.shapeTextureBaseH || image.height,
-                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.pow(Math.max(0.01, renderScale), 0.65),
-              )}
+            d={vectorShapeD}
+            transform={vectorShapeTransform}
             fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
             stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || SHAPE_DEFAULT_COLOR)}
             strokeWidth={shapeStroke?.lw}
@@ -7255,13 +7337,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
                   </pattern>
                 </defs>
                 <path
-                  d={shapePathD(
-                image.shape, image.width, image.height,
-                image.shapeTextureBaseW || image.width,
-                image.shapeTextureBaseH || image.height,
-                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.pow(Math.max(0.01, renderScale), 0.65),
-              )}
+                  d={vectorShapeD}
+                  transform={vectorShapeTransform}
                   fill={`url(#${id})`}
                   stroke="none"
                 />
@@ -7296,13 +7373,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
                   </pattern>
                 </defs>
                 <path
-                  d={shapePathD(
-                image.shape, image.width, image.height,
-                image.shapeTextureBaseW || image.width,
-                image.shapeTextureBaseH || image.height,
-                ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-                  / Math.pow(Math.max(0.01, renderScale), 0.65),
-              )}
+                  d={vectorShapeD}
+                  transform={vectorShapeTransform}
                   fill={`url(#${id})`}
                   stroke="none"
                 />
@@ -16774,10 +16846,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         n.splice(Math.max(0, m - 1), 0, x);
                         return n;
                       };
-                      const compositeItems = ADD_SHAPE_ITEMS.filter(i => i.filled && COMPOSITE_SHAPE_KINDS.has(i.kind));
+                      /* 外圈星星是使用者指定的第二排星星序列之一，不跟其餘
+                         複合圖形一起搬到清單尾端。舊草稿中的外圈愛心仍可讀取，
+                         但新增清單已移除。 */
+                      const compositeItems = ADD_SHAPE_ITEMS.filter(i => i.filled
+                        && COMPOSITE_SHAPE_KINDS.has(i.kind) && i.kind !== 'star-double');
                       const solidList = [
                         ...moveTo(
-                          [...ins(ADD_SHAPE_ITEMS.filter(i => i.filled && !COMPOSITE_SHAPE_KINDS.has(i.kind)), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
+                          [...ins(ADD_SHAPE_ITEMS.filter(i => i.filled
+                            && (!COMPOSITE_SHAPE_KINDS.has(i.kind) || i.kind === 'star-double')), HOLE_ITEM_CROSS), ...HOLE_ITEMS_EXTRA],
                           'heart-f', 9),
                         ...compositeItems,
                       ];

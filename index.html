@@ -75,13 +75,13 @@
 
             /* ── 開場畫面 ────────────────────────────────────────────────
                ① 一點開就在（它是寫死在 HTML 裡的，第一次繪製就有）。
-               ② **至少停 3 秒**，就算什麼都秒載完也一樣 —— 不然快取熱的時候
-                  會閃一下就消失，比沒有還怪。
-               ③ 3 秒到了還沒就緒就繼續等，等到字型好、而且 React 真的畫出
+               ② **至少停 0.9 秒**，讓品牌動畫有完整的起承轉合，但不再於動畫
+                  完成後白等兩秒多。
+               ③ 0.9 秒到了還沒就緒就繼續等，等到字型好、而且 React 真的畫出
                   東西了才掀開（只等字型會在 App 還沒畫出來時掀開，中間閃一格空白）。
                ④ 這 3 秒不是白等的：底下的 warmUp() 會趁機把後面才要用到的
                   東西先弄好，之後進工具時就不會卡在那裡。 */
-            var BOOT_MIN_MS = 3000;
+            var BOOT_MIN_MS = 900;
             var bootT0 = Date.now();
 
             /* 開場畫面在的時候，手勢一律吃掉：不捲動、不縮放、不傳下去。
@@ -134,7 +134,7 @@
             }
             function tryHide() {
                 var wait = BOOT_MIN_MS - (Date.now() - bootT0);
-                if (wait > 0) { setTimeout(tryHide, wait); return; }   // 3 秒還沒到就再等
+                if (wait > 0) { setTimeout(tryHide, wait); return; }
                 // 收掉之前先讓瀏覽器畫兩格，確定首頁那一屏已經在畫面上了
                 requestAnimationFrame(function () { requestAnimationFrame(hideBoot); });
             }
@@ -149,8 +149,8 @@
                 setTimeout(whenReady, 50);
             }
             whenReady();
-            // 最後一道保險：不管發生什麼事，8 秒一定掀開，不會把人卡在開場畫面
-            setTimeout(hideBoot, 8000);
+            // 最後一道保險：慢網路也不能讓動畫播完後仍長時間停在開場畫面。
+            setTimeout(hideBoot, 3500);
 
             /* ── 趁開場那幾秒先暖機 ──────────────────────────────────────
                這幾樣都是「第一次用的時候特別慢，之後就順了」的東西。
