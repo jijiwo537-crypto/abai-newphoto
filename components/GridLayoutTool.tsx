@@ -6757,6 +6757,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             top: `${(boxH - vectorCssH) / 2}px`,
             width: `${vectorCssW}px`,
             height: `${vectorCssH}px`,
+            maxWidth: 'none',
+            maxHeight: 'none',
             opacity: (image.opacity ?? 100) / 100,
             objectFit: 'fill',
             pointerEvents: 'none',
