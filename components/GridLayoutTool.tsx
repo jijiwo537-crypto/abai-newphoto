@@ -1637,7 +1637,7 @@ export const drawCompositeShapeBody = (
   }
   /* 外圈維持原本大小，只縮小內層本體，兩者不再由同一條粗描邊切割；
      因此間距會確實加大，外圈尺寸與按鈕整體大小完全不變。 */
-  const body = insetShapePath(innerKind, w, h, 0.52);
+  const body = insetShapePath(innerKind, w, h, 0.52, innerKind === 'star' ? 0.018 : 0);
   const ring = insetShapePath(innerKind, w, h, 0.93);
   target.fillStyle = color;
   target.fill(body);
@@ -1665,7 +1665,7 @@ export const strokeCompositeShape = (
     if (CUTOUT_SHAPE_KINDS.has(kind)) target.stroke(insetShapePath(innerKind, w, h, 0.64));
     return true;
   }
-  target.stroke(insetShapePath(innerKind, w, h, 0.52));
+  target.stroke(insetShapePath(innerKind, w, h, 0.52, innerKind === 'star' ? 0.018 : 0));
   target.stroke(insetShapePath(innerKind, w, h, 0.93));
   return true;
 };
@@ -1720,7 +1720,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
     return (
       <svg width={size} height={size} viewBox={`-1 -1 ${VB + 2} ${VB + 2}`}
         style={{ overflow: 'visible', display: 'block' }} aria-hidden>
-        <path d={innerD} transform={tf(0.52)} fill="currentColor" />
+        <path d={innerD} transform={tf(0.52, innerKind === 'star' ? 0.018 : 0)} fill="currentColor" />
         <path d={innerD} transform={tf(0.93)} fill="none" stroke="currentColor"
           strokeWidth={0.58} vectorEffect="non-scaling-stroke"
           strokeLinejoin={innerKind === 'star' ? 'miter' : 'round'}
@@ -5305,7 +5305,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      坐标系，吸附后的边本来已经严格相等；二次取整会让两者相差半个设备像素，
      预览就露出白缝。文字／图形仍保留既有静止取整以维持锐利。 */
   const isPlainRaster = image.text === undefined && !image.shape;
-  const exactAlignedGeometry = liveGeometry || hasActiveGuidelines || isPlainRaster;
+  /* 向量物件也始終保留連續幾何。舊做法在第一次拖動時才從 snapPx2 切到
+     浮點尺寸，光是切換模式就會重建一次 Canvas，因此圖形第一下會黏住；
+     而預覽縮放時，各物件跨越取整門檻的時機不同，也會看起來互相抖動。 */
+  const exactAlignedGeometry = liveGeometry || hasActiveGuidelines || isPlainRaster
+    || image.text !== undefined || !!image.shape;
   const boxW = exactAlignedGeometry ? image.width * image.scale : snapPx2(image.width * image.scale);
   const boxH = exactAlignedGeometry ? image.height * image.scale : snapPx2(image.height * image.scale);
   const renderScale = Math.max(
@@ -6165,13 +6169,14 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         y: Math.max(3, holeOv.y * boxH / Math.max(1, image.height)),
       };
     }
+    /* 留白使用控制項允許的最大效果，而不是目前數值。調整發光／描邊時只
+       重畫內容，外層定位盒從 0 到最大值都完全不變。 */
     const glow = image.shape
-      ? Math.max(...shapeGlowBlurs(image.width, image.height), 0) * image.scale * glowAmount(image.shapeGlow as any)
-      : Math.min(12, image.glow || 0) / 20 * 42 * image.scale;
+      ? Math.max(...shapeGlowBlurs(image.width, image.height), 0) * image.scale
+      : 42 * image.scale;
     const stroke = image.shape
-      ? Math.min(4, Math.max(0, image.shapeStrokeW || 0))
-          * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
-      : (image.strokeWidth || 0) * 2 * image.scale;
+      ? 4 * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
+      : Math.max(10, image.strokeWidth || 0) * 2 * image.scale;
     const p = Math.ceil(Math.max(3, glow * 1.5, stroke) + 3);
     /* 泡泡／縮放 II 會讓單一小單位暫時超出靜止墨水外框；Canvas 留白若只
        按描邊計算，最外側單位放大時會被切掉。只擴透明工作區，不改物件盒、
@@ -6276,7 +6281,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     /* 一般文字維持 SVG；符號则与创意拼图一样走 Canvas 的同一套墨水测量与
        fillText。这样预览缩放只是在移动一张预先超取样的紧凑位图，不会每一帧
        让 WebKit 重建大型复合 Unicode SVG，解决有符号时的明显掉帧。 */
-    if (!isCanvasVector || (image.text !== undefined && !image.sym && !usesUnitMotion)) return;
+    if (!isCanvasVector) return;
     const canvas = vectorCanvasRef.current;
     if (!canvas) return;
     /* 一般路徑圖形拖滑桿時直接顯示下面那張 SVG 向量層。它不需要重建大型
@@ -6338,7 +6343,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       const shapeDetailBoost = exactShapeBacking
         ? Math.max(1.5, Math.min(3.5, 280 / Math.max(1, cssW, cssH)))
         : 1;
-      const previewRasterScale = exactShapeBacking ? shapeDetailBoost : Math.max(1, canvasScale);
+      /* 整頁預覽 zoom 只由 pagesCol 的單一矩陣處理；絕不能拿 zoom 回頭改
+         每顆文字／符號自己的 backing store，否則每幀會重建並重新取整中心。 */
+      const previewRasterScale = exactShapeBacking ? shapeDetailBoost : 1;
       /* 手勢中與靜止時使用完全相同的高密度 backing store。先前捏合時把倍率
          降半、面積砍到 4MP，正是物件縮小過程突然糊掉、放手才恢復的來源。 */
       /* 滑桿拖動中每一幀都重畫。最終模式最高可到數千萬像素，逐格重建會
@@ -6652,8 +6659,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
     image.letterSpacing, image.strokeWidth, image.strokeColor, image.glow, image.glowColor,
     image.scale, image.rotation, image.mo,
-    /* 圖形的預覽倍率不參與 backing-store 依賴；整頁 zoom 不會再觸發重畫。 */
-    (image.shape && image.shape !== 'hole') ? 1 : canvasScale,
+    /* 所有向量物件的預覽倍率都不參與 backing-store 依賴。 */
+    1,
     gestureRendering, liveTuning, holeAssetRevision,
     motionFrame?.seq, motionFrame?.idleT, motionFrame?.waveMix,
     motionFrame?.gridWave, motionFrame?.gridReveal,
@@ -7010,7 +7017,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     {/* 一般圖形直接由 wrapper 裡的 SVG 畫向量輪廓。先畫成獨立 Canvas 再讓
         整頁縮放，會讓 WebKit 對 Canvas 的右／下邊界各自重採樣，形成使用者
         看到的抖動。hole 圖案仍需專用 Canvas；文字／符號維持既有穩定路徑。 */}
-    {isCanvasVector && (!image.shape || image.shape === 'hole') && pagesContainerRef.current && createPortal(
+    {/* 只有借用圖片型圖案仍需要跨層工作區；文字與符號已放回自己的 wrapper，
+        和圖形／照片一起接受同一個頁面矩陣，不再各自在 Portal 中取整。 */}
+    {isCanvasVector && image.shape === 'hole' && pagesContainerRef.current && createPortal(
       <div
         data-vector-surface={image.id}
         aria-hidden
@@ -7377,7 +7386,21 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           })()}
         </svg>
         </>
-      ) : image.sym ? null : image.text !== undefined ? (
+      ) : image.text !== undefined ? (
+        <canvas
+          ref={vectorCanvasRef}
+          data-classic-text-raster={image.id}
+          style={{
+            position: 'absolute',
+            left: `${(boxW - vectorCssW) / 2}px`,
+            top: `${(boxH - vectorCssH) / 2}px`,
+            width: `${vectorCssW}px`,
+            height: `${vectorCssH}px`,
+            opacity: isTextEditing ? 0 : (image.opacity ?? 100) / 100,
+            pointerEvents: 'none',
+          }}
+        />
+      ) : image.text !== undefined ? (
         <div
           ref={textRef}
           style={{
