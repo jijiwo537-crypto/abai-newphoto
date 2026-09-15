@@ -21,7 +21,7 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady,
-  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
+  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -2629,6 +2629,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     if (choice.type === 'shape') {
       const it = choice.item;
+      const initialColor = shapeDefaultColorFor(it.kind);
       const short = Math.min(off.cw, off.ch);
       const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
       const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
@@ -2638,7 +2639,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
         textureBaseW: w, textureBaseH: h,
         lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
-        color: SHAPE_DEFAULT_COLOR, glow: 0, glowColor: SHAPE_DEFAULT_COLOR,
+        color: initialColor, glow: 0, glowColor: initialColor,
         ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: '#FFFFFF' } : null),
         x: cx - w / 2, y: cy - h / 2, w, h, rot: it.rot || 0,
         ...(SPECIAL_LINE_KINDS.has(it.kind)
@@ -8719,6 +8720,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   const w = Math.max(8, Math.round(short * SHAPE_DEFAULT_RATIO(it.kind)));
                   const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
                   const id = Math.random().toString(36).slice(2, 9);
+                  const initialColor = shapeDefaultColorFor(it.kind);
                   setObjects(prev => [...prev, {
                     id, type: 'shape',
                     kind: it.kind, hole: it.hole, filled: it.filled, shapeItemId: it.id,
@@ -8727,8 +8729,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
                     textureBaseW: w, textureBaseH: h,
                     lineW: SHAPE_DEFAULT_LINEW(it.kind), dash: 0,
-                    color: SHAPE_DEFAULT_COLOR,
-                    glow: 0, glowColor: SHAPE_DEFAULT_COLOR,
+                    color: initialColor,
+                    glow: 0, glowColor: initialColor,
                     ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { innerColor: '#FFFFFF' } : {}),
                     x: offs2.cw / 2 - w / 2, y: offs2.ch / 2 - h / 2,
                     w, h, rot: it.rot || 0,

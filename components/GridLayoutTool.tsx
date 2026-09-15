@@ -1201,7 +1201,9 @@ export const shapePathD = (
       }
       /* 每個角用相同的邊長比例做圓角；外五角仍然清楚，但不會像
          原本星星那樣完全尖銳。路徑本身就是圓角，不靠 stroke-linejoin 假裝。 */
-      const cut = 0.105;
+      /* 圓角要在新增清單的小尺寸也明顯可辨；0.28 仍保留五角星輪廓，
+         但不會只像尖角上磨掉一個幾乎看不見的小點。 */
+      const cut = 0.28;
       const toward = (from: [number, number], to: [number, number]) =>
         [from[0] + (to[0] - from[0]) * cut, from[1] + (to[1] - from[1]) * cut] as [number, number];
       const first = toward(pts[0], pts[pts.length - 1]);
@@ -1419,6 +1421,9 @@ export const SHAPE_DEFAULT_RATIO = (kind: string) =>
   (kind === 'wave' || kind === 'lightning-wave') ? 0.576 : (kind === 'line' ? 0.24 : 0.15);
 /** 新圖形的預設顏色。 */
 export const SHAPE_DEFAULT_COLOR = '#DCE7DB';
+/** 雙色方形的外層略深，白色內圖案在新增後與小按鈕上都能一眼辨認。 */
+export const shapeDefaultColorFor = (kind: string) =>
+  DUAL_COLOR_SHAPE_KINDS.has(kind) ? '#C4D1C6' : SHAPE_DEFAULT_COLOR;
 
 /** 四邊擠壓白名單：實心前 11 顆、邊框前 16 顆。 */
 const STRETCH_SOLID_KINDS = new Set([
@@ -1560,7 +1565,6 @@ export const SHAPE_FIT: Record<string, [number, number, number, number]> = {
 
 const compositeInnerKind = (kind: string): 'star' | 'heart' | null =>
   kind.includes('star') ? 'star' : kind.includes('heart') ? 'heart' : null;
-let doubleContourScratch: HTMLCanvasElement | null = null;
 
 /** 把既有愛心／星星的「實際墨水」置中並縮進指定比例，完全沿用原路徑。 */
 export const insetShapePath = (
@@ -1631,34 +1635,21 @@ export const drawCompositeShapeBody = (
     }
     return true;
   }
-  const body = insetShapePath(innerKind, w, h, 0.72);
-  const matrix = target.getTransform();
-  const physicalScale = Math.min(6, Math.max(2,
-    Math.hypot(matrix.a, matrix.b), Math.hypot(matrix.c, matrix.d)));
-  const layer = doubleContourScratch || document.createElement('canvas');
-  doubleContourScratch = layer;
-  layer.width = Math.max(1, Math.ceil(w * physicalScale));
-  layer.height = Math.max(1, Math.ceil(h * physicalScale));
-  const g = layer.getContext('2d');
-  if (!g) return true;
-  g.setTransform(physicalScale, 0, 0, physicalScale, 0, 0);
-  const gap = Math.min(w, h) * 0.052;
-  const ringWidth = Math.min(w, h) * 0.024;
-  g.strokeStyle = color;
-  /* 外圈要沿星星的五個尖角延伸，不能用 round join 把角磨平。 */
-  g.lineJoin = innerKind === 'star' ? 'miter' : 'round';
-  g.lineCap = innerKind === 'star' ? 'butt' : 'round';
-  g.miterLimit = 12;
-  g.lineWidth = (gap + ringWidth) * 2;
-  g.stroke(body);
-  g.globalCompositeOperation = 'destination-out';
-  g.lineWidth = gap * 2;
-  g.stroke(body);
-  g.globalCompositeOperation = 'source-over';
-  g.fillStyle = color;
-  g.fill(body);
-  paintTexture?.(g, body);
-  target.drawImage(layer, 0, 0, layer.width, layer.height, 0, 0, w, h);
+  /* 外圈維持原本大小，只縮小內層本體，兩者不再由同一條粗描邊切割；
+     因此間距會確實加大，外圈尺寸與按鈕整體大小完全不變。 */
+  const body = insetShapePath(innerKind, w, h, 0.60);
+  const ring = insetShapePath(innerKind, w, h, 0.93);
+  target.fillStyle = color;
+  target.fill(body);
+  paintTexture?.(target, body);
+  target.save();
+  target.strokeStyle = color;
+  target.lineWidth = Math.max(1, Math.min(w, h) * 0.024);
+  target.lineJoin = innerKind === 'star' ? 'miter' : 'round';
+  target.lineCap = innerKind === 'star' ? 'butt' : 'round';
+  target.miterLimit = 12;
+  target.stroke(ring);
+  target.restore();
   return true;
 };
 
@@ -1674,8 +1665,8 @@ export const strokeCompositeShape = (
     if (CUTOUT_SHAPE_KINDS.has(kind)) target.stroke(insetShapePath(innerKind, w, h, 0.64));
     return true;
   }
-  target.stroke(insetShapePath(innerKind, w, h, 0.72));
-  target.stroke(insetShapePath(innerKind, w, h, 0.96));
+  target.stroke(insetShapePath(innerKind, w, h, 0.60));
+  target.stroke(insetShapePath(innerKind, w, h, 0.93));
   return true;
 };
 
@@ -1716,7 +1707,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
     const innerD = shapePathD(innerKind, 100, 100);
     if (DUAL_COLOR_SHAPE_KINDS.has(item.kind)) return (
       <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} aria-hidden>
-        <rect width={VB} height={VB} fill="currentColor" />
+        <rect width={VB} height={VB} fill="#C4D1C6" />
         <path d={innerD} transform={tf(0.64, innerKind === 'heart' ? 0.01 : 0)} fill="#fff" />
       </svg>
     );
@@ -1727,17 +1718,13 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
       </svg>
     );
     return (
-      <svg width={size} height={size} viewBox={`0 0 ${VB} ${VB}`} style={{ overflow: 'visible' }} aria-hidden>
-        <defs>
-          <mask id={maskId}>
-            <path d={innerD} transform={tf(0.72)} fill="#fff" stroke="#fff"
-              strokeWidth={3.65} vectorEffect="non-scaling-stroke" strokeLinejoin={innerKind === 'star' ? 'miter' : 'round'} />
-            <path d={innerD} transform={tf(0.72)} fill="none" stroke="#000"
-              strokeWidth={2.5} vectorEffect="non-scaling-stroke" strokeLinejoin={innerKind === 'star' ? 'miter' : 'round'} />
-            <path d={innerD} transform={tf(0.72)} fill="#fff" />
-          </mask>
-        </defs>
-        <rect width={VB} height={VB} fill="currentColor" mask={`url(#${maskId})`} />
+      <svg width={size} height={size} viewBox={`-1 -1 ${VB + 2} ${VB + 2}`}
+        style={{ overflow: 'visible', display: 'block' }} aria-hidden>
+        <path d={innerD} transform={tf(0.60)} fill="currentColor" />
+        <path d={innerD} transform={tf(0.93)} fill="none" stroke="currentColor"
+          strokeWidth={0.58} vectorEffect="non-scaling-stroke"
+          strokeLinejoin={innerKind === 'star' ? 'miter' : 'round'}
+          strokeLinecap={innerKind === 'star' ? 'butt' : 'round'} />
       </svg>
     );
   }
@@ -6222,12 +6209,13 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      重新開始，肉眼看到的就是抖動。手勢開始時只擴一次工作畫布，之後只 clear
      與重畫內容；放手才縮回內容範圍。 */
   const gestureCanvasLock = useRef<{ w: number; h: number } | null>(null);
-  if (gestureRendering && !gestureCanvasLock.current) {
+  const lockVectorSurface = gestureRendering || liveTuning;
+  if (lockVectorSurface && !gestureCanvasLock.current) {
     gestureCanvasLock.current = {
       w: snapPx2(Math.min(vectorSurfaceW, Math.max(256, vectorContentW * 3))),
       h: snapPx2(Math.min(vectorSurfaceH, Math.max(256, vectorContentH * 3))),
     };
-  } else if (!gestureRendering && gestureCanvasLock.current) {
+  } else if (!lockVectorSurface && gestureCanvasLock.current) {
     gestureCanvasLock.current = null;
   }
   const vectorCssW = gestureCanvasLock.current?.w ?? vectorContentW;
@@ -6276,12 +6264,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     };
   }, [image.shape, image.holeType]);
 
-  const vectorLiveSvg = !!image.shape && image.shape !== 'hole'
-    && (!COMPOSITE_SHAPE_KINDS.has(image.shape) || !!vectorDoubleKind)
-    /* 波浪／畫筆進場必須把完整成品切成連續小片變形；這兩種逐幀效果
-       維持 Canvas，靜止與一般互動才走不會重建點陣的 SVG。 */
-    && motionFrame?.gridWave === undefined
-    && motionFrame?.gridReveal === undefined;
+  /* 這次只保留「滑桿不重畫整個專案」的效能修復。可見本體維持原本穩定的
+     Canvas／快照管線，避免 iOS 在頁面 pinch 或發光、描邊調整時，把 SVG
+     filter 與外層畫布分開量化而產生物件抖動。 */
+  const vectorLiveSvg = false;
 
   useLayoutEffect(() => {
     /* 一般文字維持 SVG；符號则与创意拼图一样走 Canvas 的同一套墨水测量与
@@ -6355,7 +6341,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       /* 滑桿拖動中每一幀都重畫。最終模式最高可到數千萬像素，逐格重建會
          阻塞主執行緒；拖動中改用仍高於螢幕實體像素的即時倍率，松手后只
          进行一次完整超取样。视觉保持清楚，交互成本则从几十倍像素降下来。 */
-      const dpr = Math.max(2, geoDpr * previewRasterScale * 4);
+      /* 拖滑桿時只重畫當前物件，並使用高於實際螢幕密度的 2x 超取樣；
+         肉眼解析度不變，但不再為每一格參數建立 12x、數千萬像素的畫布。
+         放手後仍以完整密度精繪一次並凍結快照。 */
+      const dpr = liveTuning
+        ? Math.max(2, geoDpr * previewRasterScale * 2)
+        : Math.max(2, geoDpr * previewRasterScale * 4);
       /* 尺寸上限與面積上限同時守住；手勢與靜止都保留 8MP。 */
       const backingScale = Math.min(
         dpr,
@@ -8948,6 +8939,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const h = 96;
     const id = `text-${Math.random().toString(36).substring(2, 9)}`;
     ensureFont(DEFAULT_FONT);
+    const initialColor = shapeDefaultColorFor(it.kind);
     const item: FloatingImage = {
       id, src: '',
       x: (rect ? rect.centerX : previewW / 2) - w / 2,
@@ -9048,8 +9040,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       shapeTextureBaseH: h,
       shapeDash: 0,
       shapeGlow: false,
-      shapeGlowColor: SHAPE_DEFAULT_COLOR,
-      color: SHAPE_DEFAULT_COLOR,
+      shapeGlowColor: initialColor,
+      color: initialColor,
       ...(DUAL_COLOR_SHAPE_KINDS.has(it.kind) ? { shapeInnerColor: '#FFFFFF' } : {}),
     };
     setFloatingImages(prev => [...prev, item]);

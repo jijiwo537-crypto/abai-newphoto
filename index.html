@@ -75,13 +75,12 @@
 
             /* ── 開場畫面 ────────────────────────────────────────────────
                ① 一點開就在（它是寫死在 HTML 裡的，第一次繪製就有）。
-               ② **至少停 0.9 秒**，讓品牌動畫有完整的起承轉合，但不再於動畫
-                  完成後白等兩秒多。
-               ③ 0.9 秒到了還沒就緒就繼續等，等到字型好、而且 React 真的畫出
+               ② **至少停 3 秒**，保留原本完整的品牌動畫節奏。
+               ③ 3 秒到了還沒就緒就繼續顯示 Logo，等到 React 真的畫出
                   東西了才掀開（只等字型會在 App 還沒畫出來時掀開，中間閃一格空白）。
                ④ 這 3 秒不是白等的：底下的 warmUp() 會趁機把後面才要用到的
                   東西先弄好，之後進工具時就不會卡在那裡。 */
-            var BOOT_MIN_MS = 900;
+            var BOOT_MIN_MS = 3000;
             var bootT0 = Date.now();
 
             /* 開場畫面在的時候，手勢一律吃掉：不捲動、不縮放、不傳下去。
@@ -149,8 +148,19 @@
                 setTimeout(whenReady, 50);
             }
             whenReady();
-            // 最後一道保險：慢網路也不能讓動畫播完後仍長時間停在開場畫面。
-            setTimeout(hideBoot, 3500);
+            /* 舊版在 3.5 秒直接 hideBoot：若新版 JS 尚未下載完成，Logo 先被
+               移除、#root 又仍是空的，使用者就只會看到一段黑畫面。保險機制
+               現在只略過字型／首頁字標等待，**絕不在 App 尚未掛載時掀開**。 */
+            setTimeout(function forceRevealWhenMounted() {
+                var r = document.getElementById('root');
+                if (r && r.childElementCount > 0) {
+                    root.classList.remove('fonts-loading');
+                    root.classList.add('fonts-loaded');
+                    tryHide();
+                    return;
+                }
+                setTimeout(forceRevealWhenMounted, 100);
+            }, 3500);
 
             /* ── 趁開場那幾秒先暖機 ──────────────────────────────────────
                這幾樣都是「第一次用的時候特別慢，之後就順了」的東西。
