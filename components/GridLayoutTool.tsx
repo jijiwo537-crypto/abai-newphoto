@@ -5870,6 +5870,8 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
          在新舊畫布間交替取樣，尤其 Y 軸最容易上下跳。固定以 3 倍超取樣建立
          圖形貼圖；只有真正縮放物件本身時，boxW/boxH 才會改變並重畫。 */
       const exactShapeBacking = !!image.shape && image.shape !== 'hole';
+      const cssW = vectorCssW;
+      const cssH = vectorCssH;
       /* 小圖形的銳利邊緣在少量像素內移動時最容易被次像素抗鋸齒誤認成上下
          抖動。創意拼圖是在一張高解析主 Canvas 內重畫；經典拼圖保持每顆圖形
          固定貼圖，但尺寸愈小就提高一次性的超取樣密度。倍率只由物件本身尺寸
@@ -5879,8 +5881,6 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
         : 1;
       const previewRasterScale = exactShapeBacking ? shapeDetailBoost : Math.max(1, canvasScale);
       const dpr = Math.max(2, geoDpr * previewRasterScale * (gestureRendering ? 1.5 : 3));
-      const cssW = vectorCssW;
-      const cssH = vectorCssH;
       /* 尺寸上限與面積上限要同時守住：手勢期間以 4MP 維持每幀流暢，靜止時
          回到 8MP；窄長文字也不會只因長邊較長就過早失去 Retina 密度。 */
       const backingScale = Math.min(
