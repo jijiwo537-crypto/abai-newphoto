@@ -6733,7 +6733,7 @@ const FloatingImageComponent: React.FC<FloatingImageComponentProps> = ({
             backfaceVisibility: 'hidden',
             WebkitBackfaceVisibility: 'hidden',
             isolation: 'isolate',
-            visibility: 'hidden',
+            visibility: 'visible',
           }}
         >
           {/* 點點：用一塊 pattern 疊在圖形上，範圍就是圖形的填色區域 ——
