@@ -12340,6 +12340,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     rotOn?: boolean; rotBias?: number;
     /** 低通後的連續倍率與帶遲滯的吸附倍率；避免臨界點反覆吸入／跳出。 */
     lastScale?: number; snapScale?: number;
+    /** 第二指落下不等於手勢已開始；超過微小移動門檻後才允許改幾何。 */
+    gestureStarted?: boolean;
     baseX: number; baseY: number; baseScale: number;
     /** 整組佈局當下的角度（佈局的雙指旋轉用） */
     baseLayoutRot: number;
@@ -12629,8 +12631,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (kind === 'cell' && !cell?.url) return;
       const lt = activeLayout?.t || { x: 0, y: 0, scale: 1 };
 
-      // 雙指操作時先把圖層工具列收起來，放開才依旋轉後的方向重新擺
-      setPinchFloatingId(kind === 'floating' && twoFinger ? gestureFloatingId : null);
+      /* 第二根手指剛落下時完全不改任何可見狀態。等 touchmove 真正超過
+         手勢門檻後才收起工具列；否則光是 gestureRendering 的切換就會讓
+         文字／符號／圖形換一張工作畫布，看起來像瞬間放大或變形。 */
+      setPinchFloatingId(null);
       wsGestureLayoutIdRef.current = lockedTarget?.layoutId ?? selectedLayoutId;
       wsGestureRef.current = {
         kind,
@@ -12644,6 +12648,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         baseY: kind === 'floating' ? (fImg?.y ?? 0) : lt.y,
         baseScale: kind === 'floating' ? (fImg?.scale ?? 1) : lt.scale,
         lastScale: kind === 'floating' ? (fImg?.scale ?? 1) : lt.scale,
+        gestureStarted: !twoFinger,
         baseLayoutRot: lt.rot || 0,
         cellIdx: gestureCellIdx,
         baseOffsetX: cell?.offsetX ?? 0,
@@ -12657,10 +12662,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
            按下去要照舊搬動整個物件，所以在這裡先算好、整段拖曳都用同一個答案。 */
         startInShape: kind === 'floating' ? hitFloatingShape(fImg, cx, cy) : false,
       };
-      // 物件雙指縮放期間也暫時把整頁鎖成同一個合成層。頁面若仍使用 CSS
-      // zoom，物件尺寸每幀改變時其文字／SVG 與選取幾何會各自做小數取整，
-      // 即使資料本身很平滑，畫面上仍會左右抖一個像素。
-      if (twoFinger) applyStripGeometry(kRef.current, true);
       return;
     }
 
@@ -12794,6 +12795,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           e.touches[0].clientX - e.touches[1].clientX,
           e.touches[0].clientY - e.touches[1].clientY
         );
+        const angleNow = Math.atan2(
+          e.touches[1].clientY - e.touches[0].clientY,
+          e.touches[1].clientX - e.touches[0].clientX
+        ) * 180 / Math.PI;
+        const angleTravel = ((angleNow - g.startAngle + 180) % 360 + 360) % 360 - 180;
+        /* 跟創意拼圖相同：第二指落下後的感測雜訊不算縮放。未超過 2px／2°
+           之前倍率嚴格維持 1，連工具列、快照與選中框都不切換。 */
+        if (!g.gestureStarted) {
+          if (Math.abs(d - g.startDist) < 2 && Math.abs(angleTravel) < 2) return;
+          g.gestureStarted = true;
+          if (g.kind === 'floating') setPinchFloatingId(g.floatingId);
+        }
         const k = d / g.startDist;
         if (g.kind === 'floating') {
           const target = floatingImages.find(img => img.id === g.floatingId);
@@ -13065,7 +13078,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
     if (wsGestureRef.current) {
       wsGestureRef.current = null;
-      applyStripGeometry(kRef.current, false);
       setActiveGuidelines([]);
       setActiveCollisions({ left: false, right: false, top: false, bottom: false });
       return;
@@ -15915,7 +15927,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         touchMode={activeTab === 'motion' ? 'pan-x' : 'none'}
                         hideToolbar={pinchFloatingId === fImg.id || (selectionDragging && selectedFloatingId === fImg.id)}
                         hideChrome={(tuningEdge || selectionDragging || pinchFloatingId === fImg.id) && selectedFloatingId === fImg.id}
-                        gestureRendering={pinchFloatingId === fImg.id && (!!fImg.shape || fImg.text !== undefined)}
+                        /* 創意拼圖在物件捏合時持續使用同一條即時繪製路徑；不能
+                           在第二指落下後切到三倍固定工作畫布。舊的快照鎖定會把
+                           原內容直接撐大，而且後續框與本體使用不同尺寸基準。 */
+                        gestureRendering={false}
                         liveTuning={vectorTuningId === fImg.id}
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}
