@@ -6238,7 +6238,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   /* 滑桿調整只改顏色／描邊／發光，不可在 pointerdown 時把外層畫布突然
      擴成三倍。那會讓 WebKit 重新量出定位盒，視覺上像文字、符號與圖形
      在第一格參數時跳了一下。物件手勢仍鎖尺寸；滑桿沿用原本穩定盒子。 */
-  const lockVectorSurface = gestureRendering;
+  /* 手勢期間沿用已完成的高解析快照，但 CSS 顯示盒仍必須跟著 image.scale
+     連續變化。舊版把工作面一次鎖成三倍大，第二指才落下內容就被撐成三倍；
+     上一版為避開它而完全關掉快照，又變成每一格重畫大型 Canvas，造成嚴重
+     卡頓與非同步重畫時偶發只剩選中框。正確做法是：快照鎖住、幾何不鎖。 */
+  const lockVectorSurface = false;
   if (lockVectorSurface && !gestureCanvasLock.current) {
     gestureCanvasLock.current = {
       w: snapPx2(Math.min(vectorSurfaceW, Math.max(256, vectorContentW * 3))),
@@ -15927,10 +15931,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         touchMode={activeTab === 'motion' ? 'pan-x' : 'none'}
                         hideToolbar={pinchFloatingId === fImg.id || (selectionDragging && selectedFloatingId === fImg.id)}
                         hideChrome={(tuningEdge || selectionDragging || pinchFloatingId === fImg.id) && selectedFloatingId === fImg.id}
-                        /* 創意拼圖在物件捏合時持續使用同一條即時繪製路徑；不能
-                           在第二指落下後切到三倍固定工作畫布。舊的快照鎖定會把
-                           原內容直接撐大，而且後續框與本體使用不同尺寸基準。 */
-                        gestureRendering={false}
+                        /* 真正開始捏合後沿用手勢開始前已完成的高解析快照，僅讓
+                           外盒尺寸連續變化；不重畫 Canvas，也不切三倍工作畫布。
+                           因此和照片一樣只做合成缩放，文字／符號／圖形都能穩定
+                           跑滿畫面刷新率，放手後再原子替換成最終高解析結果。 */
+                        gestureRendering={pinchFloatingId === fImg.id && (!!fImg.shape || fImg.text !== undefined)}
                         liveTuning={vectorTuningId === fImg.id}
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}
