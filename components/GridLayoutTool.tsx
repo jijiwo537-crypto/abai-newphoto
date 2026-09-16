@@ -6186,6 +6186,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      縮放時，各層會分別對齊裝置像素。小圖形因此會相對頁面跳動，即使 backing
      store 已經很大也一樣。靜止圖形完成高解析繪製後凍結成 Image，便會走和
      相片完全相同的合成路徑；只有圖形本身正在變形或逐幀波浪時才顯示 canvas。 */
+  /* 經典拼圖以前會在 live canvas、PNG snapshot 與 SVG 之間切換。這正是
+     物件在手勢開始／結束、動畫開始／結束時跳動的根源。現在跟創意拼圖一樣，
+     可見內容永遠由同一張 canvas 負責；不再建立另一份可見快照。 */
   const [shapeSnapshotUrl, setShapeSnapshotUrl] = useState<string | null>(null);
   const shapeSnapshotUrlRef = useRef<string | null>(null);
   const shapeSnapshotRevisionRef = useRef(0);
@@ -6355,6 +6358,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   ]) : '';
   const staticVectorContentKeyRef = useRef('');
   const staticVectorPendingRef = useRef(false);
+  const staticVectorCanvasNodeRef = useRef<HTMLCanvasElement | null>(null);
 
   useLayoutEffect(() => {
     /* 一般文字維持 SVG；符號则与创意拼图一样走 Canvas 的同一套墨水测量与
@@ -6365,12 +6369,16 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     if (!canvas) return;
     /* 位置、倍率與旋轉都由外層處理；內容 key 沒變就沿用同一張已解碼影像。
        這一條同時杜絕逐幀重畫、鬆手換圖與非同步 Blob 競爭。 */
-    if (stableVectorSurface && staticVectorContentKeyRef.current === staticVectorContentKey
-      && (shapeSnapshotUrlRef.current || staticVectorPendingRef.current)) return;
+    if (stableVectorSurface
+      && staticVectorCanvasNodeRef.current === canvas
+      && staticVectorContentKeyRef.current === staticVectorContentKey
+      && !motionFrame) return;
     /* 双指缩放只改变外层几何，和照片完全相同：沿用手势开始前已经完成的
        高解析快照，不在每一帧销毁／重建 Canvas。这样既没有噪点与清晰度跳变，
        大物件也不会因连续配置数千万像素而卡顿。 */
-    if (gestureRendering && shapeSnapshotUrlRef.current && !motionFrame) return;
+    /* 手勢只改外層物件矩陣；內容沒有變就直接沿用同一張 canvas。 */
+    if (gestureRendering && stableVectorSurface && !motionFrame
+      && staticVectorCanvasNodeRef.current === canvas) return;
     /* 一般路徑圖形拖滑桿時直接顯示下面那張 SVG 向量層。它不需要重建大型
        backing store，而且任何倍率都是真向量清晰度；放手後才重畫一次最終
        Canvas／快照。這比降低拖動中的畫質更快，也完全不會出現清晰度跳變。 */
@@ -6378,19 +6386,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     let alive = true;
     let raf = 0;
     const revision = ++shapeSnapshotRevisionRef.current;
-    const canFreezeShape = !!image.shape && image.shape !== 'hole'
-      && !gestureRendering
-      && !liveTuning
-      && motionFrame?.gridWave === undefined
-      && motionFrame?.gridReveal === undefined;
+    const canFreezeShape = false;
     /* 照片不會在整頁 pinch 時抖，是因為 Safari 只需縮放一張固定影像；文字與
        符號原本各自保留可見 Canvas，WebKit 會逐張把它們吸到不同實體像素，
        於是相對畫布上下左右跳。字體完成後把靜止結果凍結成 Image，讓它與照片
        走完全相同的合成路徑。動畫、物件手勢與滑桿互動仍即時使用 Canvas。 */
-    const canFreezeText = image.text !== undefined
-      && !gestureRendering
-      && !liveTuning
-      && !motionFrame;
+    const canFreezeText = false;
     if (stableVectorSurface && (canFreezeShape || canFreezeText)) {
       staticVectorContentKeyRef.current = staticVectorContentKey;
       staticVectorPendingRef.current = true;
@@ -6404,31 +6405,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       requestAnimationFrame(() => URL.revokeObjectURL(stale));
     }
     const freezeVector = () => {
-      if ((!canFreezeShape && !canFreezeText) || !alive || revision !== shapeSnapshotRevisionRef.current) return;
-      canvas.toBlob(blob => {
-        if (!blob || !alive || revision !== shapeSnapshotRevisionRef.current) {
-          if (revision === shapeSnapshotRevisionRef.current) staticVectorPendingRef.current = false;
-          return;
-        }
-        const url = URL.createObjectURL(blob);
-        const probe = new Image();
-        probe.onload = () => {
-          if (!alive || revision !== shapeSnapshotRevisionRef.current) {
-            URL.revokeObjectURL(url);
-            return;
-          }
-          staticVectorPendingRef.current = false;
-          const previous = shapeSnapshotUrlRef.current;
-          shapeSnapshotUrlRef.current = url;
-          setShapeSnapshotUrl(url);
-          if (previous && previous !== url) requestAnimationFrame(() => URL.revokeObjectURL(previous));
-        };
-        probe.onerror = () => {
-          if (revision === shapeSnapshotRevisionRef.current) staticVectorPendingRef.current = false;
-          URL.revokeObjectURL(url);
-        };
-        probe.src = url;
-      }, 'image/png');
+      /* 刻意不做 Canvas -> Blob -> Image。創意拼圖沒有這個顯示路徑切換，
+         經典拼圖也不再切換，避免 iOS 解碼後重新取整中心與邊界。 */
     };
     const draw = () => {
       if (!alive) return;
@@ -6493,6 +6471,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       ctx.imageSmoothingQuality = 'high';
       ctx.setTransform(backingScaleX, 0, 0, backingScaleY, 0, 0);
       ctx.clearRect(0, 0, cssW, cssH);
+      if (stableVectorSurface && !motionFrame) {
+        staticVectorCanvasNodeRef.current = canvas;
+        staticVectorContentKeyRef.current = staticVectorContentKey;
+      }
       /* 經典拼圖的波浪與創意拼圖共用同一種做法：本體先完整畫好，再把
          成品分成連續斜率的小直片。這個收尾函式只改像素，不動物件根節點、
          外框或中心座標，因此不可能退化成整顆上下漂移。 */
