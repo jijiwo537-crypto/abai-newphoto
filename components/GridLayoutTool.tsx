@@ -3,6 +3,7 @@ import { createPortal, flushSync } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
+import { ClassicVectorScene } from './ClassicVectorScene';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
@@ -4350,6 +4351,7 @@ type SwapSource = { kind: 'cell'; idx: number; src: string } | { kind: 'floating
 type SwapTarget = { kind: 'cell'; idx: number; layoutId?: string } | { kind: 'floating'; id: string };
 
 interface FloatingImageComponentProps {
+  scene?: ClassicVectorScene;
   image: FloatingImage;
   isSelected: boolean;
   /** 第二段選取：選中的是「形狀」而不是整張圖片（外框改成貼著形狀、角球收起來） */
@@ -5028,7 +5030,225 @@ const GlCanvasHost: React.FC<{ canvas: HTMLCanvasElement; style: React.CSSProper
   return <div ref={host} style={style} />;
 };
 
+
+const classicScenePaths = new Map<string, Path2D>();
+const classicScenePath = (image: FloatingImage) => {
+  const key = [image.shape, image.width, image.height, image.shapeTextureBaseW,
+    image.shapeTextureBaseH, image.shapeLineBase].join('|');
+  let path = classicScenePaths.get(key);
+  if (!path) {
+    path = new Path2D(shapePathD(image.shape!, image.width, image.height,
+      image.shapeTextureBaseW || image.width, image.shapeTextureBaseH || image.height,
+      ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325));
+    classicScenePaths.set(key, path);
+    if (classicScenePaths.size > 128) classicScenePaths.delete(classicScenePaths.keys().next().value!);
+  }
+  return path;
+};
+
+/** Scene painter: fixed local geometry, one scene transform, no DOM measurements. */
+const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
+  motionFrame: ObjectMotionFrame | null | undefined, backingScale: number) => {
+  const drawW = image.width, drawH = image.height, contentScale = 1;
+  const usesUnitMotion = image.text !== undefined && (motionFrame?.seq !== undefined
+    || (image.mo?.idle === 'symbol-breathe2' && motionFrame?.idleT !== undefined));
+  ctx.save();
+  if (image.shape === 'hole') {
+    // This helper owns an internal bitmap. Feed it actual display pixels, not
+    // logical object pixels, so glyph/image-backed shapes stay sharp during pinch.
+    const rasterScale = Math.max(1, backingScale);
+    ctx.scale(1 / rasterScale, 1 / rasterScale);
+    drawHoleShape(ctx, {
+      hole: image.holeType || 'circle', filled: image.shapeFilled,
+      color: image.color || SHAPE_DEFAULT_COLOR,
+      lineW: image.shapeLineW, glow: image.shapeGlow as any,
+      glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW,
+      strokeColor: image.shapeStrokeColor, dots: image.shapeDots,
+      dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
+      tex: image.shapeTex, stripeN: image.shapeStripeN, stripeDir: image.shapeStripeDir,
+      stripeA: image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR,
+      stripeB: image.shapeStripeB || '#FFFFFF', id: image.id,
+      lineUnit: Math.max(drawW, drawH) / 160 * rasterScale,
+    }, drawW * rasterScale, drawH * rasterScale,
+      shapeGlowBlurs(drawW, drawH).map(r => r * rasterScale * glowAmount(image.shapeGlow as any)));
+    ctx.restore();
+    return;
+  }
+      if (image.shape) {
+        ctx.translate(-drawW / 2, -drawH / 2);
+        const path = classicScenePath(image);
+        const color = image.color || SHAPE_DEFAULT_COLOR;
+        const solid = !!image.shapeFilled && image.shape !== 'line';
+        const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
+        const lw = GRID_SHAPE_KINDS.has(image.shape)
+          ? 1.5
+          : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
+        const outer = Math.min(4, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160);
+        ctx.lineJoin = image.shape === 'line' ? 'round' : 'miter';
+        ctx.lineCap = 'butt';
+        ctx.miterLimit = 4;
+        ctx.fillStyle = color;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lw;
+        const dash = image.shapeDash || 0;
+        ctx.setLineDash(dash > 0 ? [lw * (0.6 + dash / 100 * 4), lw * (0.6 + dash / 100 * 4) * 0.85] : []);
+        const gAmt = glowAmount(image.shapeGlow as any);
+        if (gAmt > 0) {
+          ctx.save();
+          ctx.shadowColor = image.shapeGlowColor || color;
+          for (const r of shapeGlowBlurs(image.width, image.height)) {
+            // shadowBlur 不吃目前的 CTM；補上 backingScale，縮回 CSS 尺寸後才是正確強度。
+            ctx.shadowBlur = r * contentScale * gAmt * backingScale;
+            if (solid && COMPOSITE_SHAPE_KINDS.has(image.shape)) {
+              drawCompositeShapeBody(ctx, image.shape, drawW, drawH, color,
+                image.shapeInnerColor || '#FFFFFF');
+            } else if (solid) ctx.fill(path); else ctx.stroke(path);
+          }
+          ctx.restore();
+        }
+        if (outer > 0) {
+          ctx.save();
+          ctx.setLineDash([]);
+          ctx.strokeStyle = image.shapeStrokeColor || '#000000';
+          ctx.lineWidth = (solid ? 0 : lw) + outer * 2;
+          if (!strokeCompositeShape(ctx, image.shape, drawW, drawH)) ctx.stroke(path);
+          ctx.restore();
+        }
+        const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
+        if (solid) {
+          if (GRID_DOT_KINDS.has(image.shape)) {
+            /* 點陣必須使用上面已帶入固定 base／固定半徑的 path。
+               一般實心函式會用當前寬高重建路徑，會把點距重新平均並放大點徑。 */
+            ctx.fill(path);
+          } else drawFeatheredShapeBody(ctx, image.shape, drawW, drawH, image.shapeFeather, color, (tc, bodyPath) => {
+            if (tx === 'none') return;
+            tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
+            if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
+              tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
+              textureBaseW: (image.shapeTextureBaseW || image.width) * contentScale,
+              textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale,
+            });
+            else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
+              image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
+            tc.restore();
+          }, image.shapeInnerColor || '#FFFFFF');
+        } else {
+          ctx.stroke(path);
+        }
+        ctx.restore();
+
+
+        return;
+      }
+
+      const family = (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT));
+      const size = image.fontSize || 40;
+      const spacing = image.letterSpacing || 0;
+      /* Safari 會依每一個 font-size 重新 hint 字形、再各自取整 baseline。之前
+         捏合的每一幀都改 font-size，畫布中心雖然固定，真正的文字墨水中心卻
+         會在相鄰像素間跳；符號的複合字形尤其明顯。固定基礎字級與字形度量，
+         將連續倍率只套在 Canvas 矩陣上，與創意拼圖在固定主畫布裡變換物件
+         座標的結構相同，也不會觸發 DOM／字型引擎重新排版。 */
+      const textStretchX = !image.sym ? image.width / Math.max(1, image.textStretchBaseW || image.width) : 1;
+      const textStretchY = !image.sym ? image.height / Math.max(1, image.textStretchBaseH || image.height) : 1;
+      ctx.scale(contentScale * textStretchX, contentScale * textStretchY);
+      ctx.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      (ctx as any).letterSpacing = `${spacing}px`;
+      const lines = (image.text || '').split('\n');
+      const lineH = size * 1.12;
+      const startY = -((lines.length - 1) * lineH) / 2;
+      const ink = image.sym ? measureSymbolStickerInk(image.text || image.sym, family) : null;
+      const dx = ink ? -ink.cx * size : 0;
+      const dy = ink ? -ink.cy * size : 0;
+      const unitMotionFrame = usesUnitMotion && lines.length === 1 ? motionFrame : null;
+      const drawAnimatedUnits = (stroke = false) => {
+        if (!unitMotionFrame && !image.sym) {
+          lines.forEach((line, i) => stroke
+            ? ctx.strokeText(line, dx, startY + i * lineH + dy)
+            : ctx.fillText(line, dx, startY + i * lineH + dy));
+          return;
+        }
+        const raster = rasterizeSymbolAnimationLayers(
+          image.text || '', family, size, stroke ? 'stroke' : 'fill',
+          stroke ? (image.strokeColor || '#000000') : (image.color || '#FFFFFF'),
+          stroke ? (image.strokeWidth || 0) * 2 : 0,
+          Math.max(4, Math.min(8, 2 ** Math.ceil(Math.log2(Math.max(1, backingScale))))),
+          image.sym ? undefined : {
+            plainText: true,
+            fontWeight: image.bold ? 700 : 400,
+            fontStyle: image.italic ? 'italic' : 'normal',
+            letterSpacing: spacing,
+          },
+        );
+        if (!raster) {
+          lines.forEach((line, i) => stroke
+            ? ctx.strokeText(line, dx, startY + i * lineH + dy)
+            : ctx.fillText(line, dx, startY + i * lineH + dy));
+          return;
+        }
+        /* 符號靜止時也畫動畫所使用的同一張完整 raster，而不是切回 raw
+           fillText。這是消除 iPhone 上「剛生成正常、進動畫就整串偏移」的
+           關鍵：靜止、泡泡、縮放 II 現在共用同一個 anchor 與同一批像素。 */
+        if (!unitMotionFrame) {
+          ctx.drawImage(raster.fullCanvas,
+            raster.fullSX, raster.fullSY, raster.fullSW, raster.fullSH,
+            dx + raster.fullX, dy + raster.fullY, raster.fullW, raster.fullH);
+          return;
+        }
+        const count = raster.layers.length;
+        const bubbleSpan = 1 + Math.max(0, count - 1) * .2;
+        const seq = unitMotionFrame.seq;
+        raster.layers.forEach((layer, index) => {
+          const q = seq === undefined ? 1 : Math.max(0, Math.min(1, seq * bubbleSpan - index * .2));
+          if (seq !== undefined && q <= .001) return;
+          const backQ = (() => {
+            const c1 = 1.70158, c3 = c1 + 1, z = q - 1;
+            return 1 + c3 * z * z * z + c1 * z * z;
+          })();
+          const scale = image.mo?.idle === 'symbol-breathe2' && unitMotionFrame.idleT !== undefined
+            ? 1 + (symbolBreatheScale(index, unitMotionFrame.idleT, image.mo.amp, image.mo.speed) - 1)
+                * (unitMotionFrame.waveMix ?? 1)
+            : backQ;
+          ctx.save();
+          if (seq !== undefined) ctx.globalAlpha *= Math.min(1, q * 3);
+          /* 每層只繞自己固定的墨水重心縮放；完整字串的 dx/dy 永遠不變，
+             因此動畫與靜止共用同一個中心，不會向左漂移或重排組合字。 */
+          ctx.translate(dx + layer.pivotX, dy + layer.pivotY);
+          ctx.scale(scale, scale);
+          ctx.drawImage(layer.canvas,
+            layer.x - layer.pivotX, layer.y - layer.pivotY,
+            layer.w, layer.h);
+          ctx.restore();
+        });
+      };
+      const fill = () => drawAnimatedUnits(false);
+      ctx.fillStyle = image.color || '#FFFFFF';
+      if (image.glow) {
+        ctx.shadowColor = image.glowColor || '#FFFFFF';
+        for (const k of [1, 2, 3]) {
+          // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
+          ctx.shadowBlur = (Math.min(15, image.glow) / 20) * 14 * k * contentScale * backingScale;
+          fill();
+        }
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
+      }
+      if (image.strokeWidth) {
+        // lineWidth 會跟著目前的 CTM 一起縮放，這裡維持基礎值即可。
+        ctx.lineWidth = image.strokeWidth * 2;
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = image.strokeColor || '#000000';
+        drawAnimatedUnits(true);
+      }
+      fill();
+      ctx.restore();
+
+};
+
 const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
+  scene,
   image: committedImage,
   isSelected,
   shapeSelected,
@@ -6127,27 +6347,6 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       join: (image.shape === 'line' ? 'round' : 'miter') as 'round' | 'miter',
     };
   })();
-  /* 一般圖形與雙輪廓星星都用 SVG 直接顯示。這些值與 Canvas
-     版本吃同一條路徑與內縮矩陣，所以外觀不變；差別只是拖滑桿、
-     拖物件或縮放預覽時，不再反覆產生幾百萬像素的點陣快取。 */
-  const vectorDoubleKind = image.shape && DOUBLE_CONTOUR_SHAPE_KINDS.has(image.shape)
-    ? compositeInnerKind(image.shape) : null;
-  const vectorShapeD = vectorDoubleKind
-    ? shapePathD(vectorDoubleKind, 100, 100)
-    : image.shape ? shapePathD(
-        image.shape, image.width, image.height,
-        image.shapeTextureBaseW || image.width,
-        image.shapeTextureBaseH || image.height,
-        ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-          / Math.pow(Math.max(0.01, renderScale), 0.65),
-      ) : '';
-  const vectorShapeTransform = vectorDoubleKind
-    /* 與 drawCompositeShapeBody 的 0.44 完全相同。上一版 SVG 誤用 0.72，
-       所以切到向量預覽後內層實心星星無故放大，與匯出／按鈕都不一致。 */
-    ? insetShapeSvgTransform(vectorDoubleKind, image.width, image.height, 0.44,
-        vectorDoubleKind === 'star' ? 0.018 : 0)
-    : undefined;
-  const vectorDoubleMaskId = `double-shape-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
   /* 借來的圖案：畫的參數與「它會超出外框多少」。
      兩個地方要用到（畫布的像素尺寸、畫布在版面上的位置），
@@ -6175,156 +6374,70 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     ? holeOverflow(holeOpts, image.width, image.height, shapeGlowBlurs(image.width, image.height))
     : { x: 0, y: 0 };
 
-  /* ── 經典拼圖的向量物件改用 Canvas 預覽 ────────────────────────────
-     創意拼圖之所以移動、縮放時不抖也不留殘影，關鍵不是多加一層 CSS，
-     而是每一幀都在同一張 canvas 上先 clearRect、再用同一組中心座標重畫。
-     經典拼圖原本卻讓圖形走 SVG、文字走 DOM 行盒、符號又走另一張 SVG；
-     三種引擎的小數取整與失效範圍不同，任何外層縮放都可能互相錯一格。
-
-     這裡把圖形／符號／文字的「可見本體」全部收斂到 Canvas。原本的 DOM
-     仍留著做精確字形量測與文字輸入，但平常不再顯示。繪圖參數沿用匯出
-     的同一套 path、紋理、描邊與字體度量，所以預覽與成品也會一致。 */
-  const vectorCanvasRef = useRef<HTMLCanvasElement>(null);
-  const vectorWaveCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  /* Safari 會把每一張可見 canvas 各自提升成合成層；外面的整頁 transform
-     縮放時，各層會分別對齊裝置像素。小圖形因此會相對頁面跳動，即使 backing
-     store 已經很大也一樣。靜止圖形完成高解析繪製後凍結成 Image，便會走和
-     相片完全相同的合成路徑；只有圖形本身正在變形或逐幀波浪時才顯示 canvas。 */
-  /* 經典拼圖以前會在 live canvas、PNG snapshot 與 SVG 之間切換。這正是
-     物件在手勢開始／結束、動畫開始／結束時跳動的根源。現在跟創意拼圖一樣，
-     可見內容永遠由同一張 canvas 負責；不再建立另一份可見快照。 */
-  const [shapeSnapshotUrl, setShapeSnapshotUrl] = useState<string | null>(null);
-  const shapeSnapshotUrlRef = useRef<string | null>(null);
-  const shapeSnapshotRevisionRef = useRef(0);
-  useEffect(() => () => {
-    shapeSnapshotRevisionRef.current += 1;
-    if (shapeSnapshotUrlRef.current) URL.revokeObjectURL(shapeSnapshotUrlRef.current);
-    shapeSnapshotUrlRef.current = null;
-  }, []);
   const isCanvasVector = !!image.shape || image.text !== undefined;
-  const usesUnitMotion = image.text !== undefined && (
-    motionFrame?.seq !== undefined
-    || (image.mo?.idle === 'symbol-breathe2' && motionFrame?.idleT !== undefined)
-    || motionFrame?.gridWave !== undefined
-  );
-  /* 外層只負責固定物件中心；真正配置像素的內層只包住墨水。
-     上一版每個物件都開一張最高 3072² 的「整頁透明畫布」，iOS/Safari 很快
-     就會超過 Canvas 記憶體額度，後建立的畫布會被清空，看起來就是物件偶發
-     消失。創意拼圖只有一張主畫布，不會浪費這些透明像素；經典拼圖在保留
-     DOM 圖層順序的前提下，也只配置實際內容範圍。 */
-  const vectorPad = (() => {
-    if (image.shape === 'hole') {
-      return {
-        x: Math.max(3, holeOv.x * boxW / Math.max(1, image.width)),
-        y: Math.max(3, holeOv.y * boxH / Math.max(1, image.height)),
-      };
-    }
-    /* 留白使用控制項允許的最大效果，而不是目前數值。調整發光／描邊時只
-       重畫內容，外層定位盒從 0 到最大值都完全不變。 */
-    const glow = image.shape
-      ? Math.max(...shapeGlowBlurs(image.width, image.height), 0) * image.scale
-      : 63 * image.scale;
-    const stroke = image.shape
-      ? 4 * (image.shapeLineBase || Math.max(image.width, image.height)) / 160
-      : Math.max(10, image.strokeWidth || 0) * 2 * image.scale;
-    const p = Math.ceil(Math.max(3, glow * 1.5, stroke) + 3);
-    /* 泡泡／縮放 II 會讓單一小單位暫時超出靜止墨水外框；Canvas 留白若只
-       按描邊計算，最外側單位放大時會被切掉。只擴透明工作區，不改物件盒、
-       選中框或中心，因此原本正常的符號不會被推移。 */
-    const unitMotionPad = image.sym && usesUnitMotion
-      ? Math.ceil((image.fontSize || 40) * (image.scale || 1) * .3)
-      : 0;
-    return { x: p + unitMotionPad, y: p + unitMotionPad };
-  })();
-  const vectorSurfaceW = Math.max(256, (maxTextWidth || image.width || 1) * 2);
-  const vectorSurfaceH = Math.max(256, (canvasHeight || image.height || 1) * 2);
-  /* WebKit 會把 translate(-50%) 的「半個奇數實體像素」交替往兩側取整，
-     即使資料中心完全不動，畫面仍會來回約 0.16px。內層寬高固定吸到偶數個
-     裝置像素後，一半仍落在同一條像素格線上，中心不再隨尺寸變化漂移。 */
-  /* 舊草稿裡的長符號可能仍保存著早期算得過小的 width/height。
-     可見 Canvas 與選中框都以目前真正墨水範圍為下限，右半邊不會先被內層
-     Canvas 裁掉；物件中心與既有位置資料完全不變。 */
-  const symbolVectorInk = image.sym ? (() => {
-    const size = image.fontSize || 40;
-    const ink = measureSymbolStickerInk(image.text || image.sym!, (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)));
-    return { w: ink.w * size * (image.scale || 1), h: ink.h * size * (image.scale || 1) };
-  })() : null;
-  const vectorInkW = Math.max(1, boxW, symbolVectorInk?.w || 0) + vectorPad.x * 2;
-  const vectorInkH = Math.max(1, boxH, symbolVectorInk?.h || 0) + vectorPad.y * 2;
-  const vectorRotRad = (image.rotation * Math.PI) / 180;
-  /* 畫布本身不旋轉、內容在裡面旋轉，因此要配置旋轉後的外接矩形；否則窄長
-     文字或圖形轉到 45° 時四個角會被 Canvas 邊界切掉，看起來像偶發消失。 */
-  const vectorContentW = snapPx2(Math.max(1,
-    vectorInkW * Math.abs(Math.cos(vectorRotRad)) + vectorInkH * Math.abs(Math.sin(vectorRotRad))));
-  const vectorContentH = snapPx2(Math.max(1,
-    vectorInkW * Math.abs(Math.sin(vectorRotRad)) + vectorInkH * Math.abs(Math.cos(vectorRotRad))));
-  /* 靜止向量的可見貼圖使用固定的一倍座標與最大品質 backing store。它的 CSS
-     尺寸不含 image.scale，外層 matrix 才是唯一倍率來源；因此捏合物件或整頁
-     時都和照片一樣只變一條矩陣，不重配畫布、不重新量字、不換中心。 */
-  const fixedVectorPad = 100;
-  const fixedSymbolInkW = image.sym
-    ? measureSymbolStickerInk(image.text || image.sym, SYMBOL_FONT).w * (image.fontSize || 40)
-    : 0;
-  const fixedSymbolInkH = image.sym
-    ? measureSymbolStickerInk(image.text || image.sym, SYMBOL_FONT).h * (image.fontSize || 40)
-    : 0;
-  const fixedVectorCssW = Math.max(1, image.width, fixedSymbolInkW) + fixedVectorPad * 2;
-  const fixedVectorCssH = Math.max(1, image.height, fixedSymbolInkH) + fixedVectorPad * 2;
-  const stableVectorSurface = ((!!image.shape && image.shape !== 'hole') || image.text !== undefined) && !motionFrame;
-  /* 創意拼圖縮放物件時，物件是在一張尺寸固定的主 Canvas 裡重畫；經典拼圖
-     以前卻讓每顆物件自己的 Canvas 跟著內容每幀改尺寸。Safari 每次重設
-     canvas.width/height 都會銷毀再建立 backing store，中心與邊緣的取整也會
-     重新開始，肉眼看到的就是抖動。手勢開始時只擴一次工作畫布，之後只 clear
-     與重畫內容；放手才縮回內容範圍。 */
-  const gestureCanvasLock = useRef<{ w: number; h: number } | null>(null);
-  /* 滑桿調整只改顏色／描邊／發光，不可在 pointerdown 時把外層畫布突然
-     擴成三倍。那會讓 WebKit 重新量出定位盒，視覺上像文字、符號與圖形
-     在第一格參數時跳了一下。物件手勢仍鎖尺寸；滑桿沿用原本穩定盒子。 */
-  /* 手勢期間沿用已完成的高解析快照，但 CSS 顯示盒仍必須跟著 image.scale
-     連續變化。舊版把工作面一次鎖成三倍大，第二指才落下內容就被撐成三倍；
-     上一版為避開它而完全關掉快照，又變成每一格重畫大型 Canvas，造成嚴重
-     卡頓與非同步重畫時偶發只剩選中框。正確做法是：快照鎖住、幾何不鎖。 */
-  const lockVectorSurface = false;
-  if (lockVectorSurface && !gestureCanvasLock.current) {
-    gestureCanvasLock.current = {
-      w: snapPx2(Math.min(vectorSurfaceW, Math.max(256, vectorContentW * 3))),
-      h: snapPx2(Math.min(vectorSurfaceH, Math.max(256, vectorContentH * 3))),
-    };
-  } else if (!lockVectorSurface && gestureCanvasLock.current) {
-    gestureCanvasLock.current = null;
-  }
-  const vectorCssW = gestureCanvasLock.current?.w ?? vectorContentW;
-  const vectorCssH = gestureCanvasLock.current?.h ?? vectorContentH;
-  const displayVectorCssW = stableVectorSurface ? fixedVectorCssW : vectorCssW;
-  const displayVectorCssH = stableVectorSurface ? fixedVectorCssH : vectorCssH;
-  const vectorGlyphRef = useRef<SVGTextElement>(null);
-  const [vectorGlyphCorrection, setVectorGlyphCorrection] = useState({ x: 0, y: 0 });
-  /* 不猜不同引擎的 baseline：直接读取最终负责显示的 SVG 字形范围，再把它的
-     实际中心校回物件中心。getBBox 是未套外层 scale 的固定向量座标，所以只需
-     在文字内容或字体样式改变时量一次，缩放期间完全不会触发布局或重新校正。 */
+  const sceneShift = useRef({ tx: 0, ty: 0, s: 1, fromX: 0, fromY: 0, fromS: 1, at: 0 });
   useLayoutEffect(() => {
-    if (image.text === undefined) return;
-    let alive = true;
-    let raf = 0;
-    let passes = 0;
-    const centerGlyph = () => {
-      if (!alive) return;
-      const node = vectorGlyphRef.current;
-      if (!node) return;
-      const b = node.getBBox();
-      const ex = b.x + b.width / 2;
-      const ey = b.y + b.height / 2;
-      if (Math.abs(ex) < 0.01 && Math.abs(ey) < 0.01) return;
-      setVectorGlyphCorrection(prev => ({ x: prev.x - ex, y: prev.y - ey }));
-      /* 字体首次进入 SVG 时，WebKit 偶尔会在下一次 layout 才换掉 fallback。
-         连续校验至多三帧只发生在新增／换字体之后，不参与任何缩放手势。 */
-      if (++passes < 3) raf = requestAnimationFrame(centerGlyph);
-    };
-    waitForFont((image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)), image.bold ? 700 : 400, !!image.italic)
-      .then(() => { if (alive) raf = requestAnimationFrame(centerGlyph); });
-    return () => { alive = false; if (raf) cancelAnimationFrame(raf); };
-  }, [image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
-      image.letterSpacing, image.strokeWidth]);
+    if (!scene || !isCanvasVector || isTextEditing) {
+      scene?.remove(image.id);
+      return;
+    }
+    const nextShift = { tx: dragShift?.tx ?? 0, ty: dragShift?.ty ?? 0, s: dragShift?.s ?? 1 };
+    const previous = sceneShift.current;
+    if (nextShift.tx !== previous.tx || nextShift.ty !== previous.ty || nextShift.s !== previous.s) {
+      const t = Math.min(1, (performance.now() - previous.at) / 220);
+      const q = 1 - Math.pow(1 - t, 3);
+      sceneShift.current = { ...nextShift,
+        fromX: previous.fromX + (previous.tx - previous.fromX) * q,
+        fromY: previous.fromY + (previous.ty - previous.fromY) * q,
+        fromS: previous.fromS + (previous.s - previous.fromS) * q,
+        at: dragShift?.live ? 0 : performance.now() };
+    }
+    const shift = sceneShift.current;
+    scene.set(image.id, {
+      z: (dragShift?.live ? 450100 : 60) + stackIndex * 2,
+      opacity: ((image.opacity ?? 100) / 100) * (motionFrame?.a ?? 1),
+      animateUntil: shift.at + 220,
+      paint: (ctx, density) => {
+        const t = Math.min(1, (performance.now() - shift.at) / 220);
+        const q = 1 - Math.pow(1 - t, 3);
+        const shiftX = shift.fromX + (shift.tx - shift.fromX) * q;
+        const shiftY = shift.fromY + (shift.ty - shift.fromY) * q;
+        const shiftS = shift.fromS + (shift.s - shift.fromS) * q;
+        const scale = image.scale * shiftS * (motionFrame?.k ?? 1);
+        if (Math.abs(scale) < 1e-5) return;
+        ctx.translate(image.x + image.width / 2 + shiftX
+          + (motionFrame?.dx ?? 0) * image.width * image.scale,
+          image.y + image.height / 2 + shiftY
+          + (motionFrame?.dy ?? 0) * image.height * image.scale);
+        ctx.rotate((image.rotation + (motionFrame?.rot ?? 0)) * Math.PI / 180);
+        ctx.scale(scale * (motionFrame?.fx ?? 1), scale);
+        const phase = motionFrame?.gridWave;
+        const mix = motionFrame?.waveMix ?? 1;
+        if (phase === undefined || mix <= 1e-5) {
+          paintClassicSceneVector(ctx, image, motionFrame, density * Math.abs(scale));
+          return;
+        }
+        // Wave deforms the same local painter, never a differently positioned DOM layer.
+        const amp = Math.min(10, image.height * .065) * Math.max(.15, (image.mo?.amp ?? 50) / 100) * mix;
+        const pad = 100, span = image.width + pad * 2;
+        const reveal = Math.max(0, Math.min(1, motionFrame?.gridReveal ?? 1));
+        const step = span / 64;
+        for (let i = 0; i < 64; i++) {
+          const x = -span / 2 + i * step;
+          if (x > -image.width / 2 + image.width * reveal) break;
+          const y0 = Math.sin(((x + image.width / 2) / image.width - phase) * Math.PI * 2) * amp;
+          const y1 = Math.sin(((x + step + image.width / 2) / image.width - phase) * Math.PI * 2) * amp;
+          const slope = (y1 - y0) / step;
+          ctx.save();
+          ctx.beginPath(); ctx.rect(x, -image.height / 2 - pad, step + .1, image.height + pad * 2); ctx.clip();
+          ctx.transform(1, slope, 0, 1, 0, y0 - slope * x);
+          paintClassicSceneVector(ctx, image, motionFrame, density * Math.abs(scale));
+          ctx.restore();
+        }
+      },
+    });
+  });
+  useLayoutEffect(() => () => scene?.remove(image.id), [scene, image.id]);
   const [holeAssetRevision, setHoleAssetRevision] = useState(0);
   useEffect(() => {
     if (image.shape !== 'hole' || !image.holeType || !isImageHole(image.holeType)) return;
@@ -6341,452 +6454,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     };
   }, [image.shape, image.holeType]);
 
-  /* 靜止的圖形、文字與符號始終使用同一份真向量畫面。以前它們在
-     Canvas → PNG 快照 → 鬆手後的新 PNG 快照之間切換；即使三者理論座標
-     相同，WebKit 的字形取整與圖片解碼仍會讓鬆手前後差一格，非同步 Blob
-     競爭時甚至只剩選中框。SVG 不需要等待「鬆手補高清」，任何倍率都由
-     瀏覽器直接重建輪廓。只有逐幀動畫才回到 Canvas 動畫管線。 */
-  /* 能由瀏覽器直接重建輪廓的內容一律維持真向量：這與創意拼圖把向量資料
-     留到最後一刻才光柵化的原則相同。只有複合／挖空圖形，以及必須逐單位
-     動畫的符號，才使用同一張固定 Canvas。 */
-  const vectorLiveSvg = !!image.shape
-    && image.shape !== 'hole'
-    && !COMPOSITE_SHAPE_KINDS.has(image.shape)
-    && motionFrame?.gridWave === undefined
-    && motionFrame?.gridReveal === undefined;
-  const vectorLiveTextSvg = image.text !== undefined
-    && !usesUnitMotion
-    && motionFrame?.gridWave === undefined
-    && motionFrame?.gridReveal === undefined;
-  const staticVectorContentKey = stableVectorSurface ? JSON.stringify([
-    image.shape, image.holeType, image.shapeFilled, image.shapeInnerColor,
-    image.shapeLineW, image.shapeDash, image.shapeGlow, image.shapeGlowColor,
-    image.shapeStrokeW, image.shapeStrokeColor, image.shapeTex, image.shapeDots,
-    image.shapeDotSize, image.shapeDotGap, image.shapeDotColor, image.shapeStripeN,
-    image.shapeStripeDir, image.shapeStripeA, image.shapeStripeB,
-    image.shapeTextureBaseW, image.shapeTextureBaseH, image.shapeFeather,
-    image.color, image.text, image.sym, image.fontFamily, image.fontSize,
-    image.bold, image.italic, image.letterSpacing, image.strokeWidth,
-    image.strokeColor, image.glow, image.glowColor, image.width, image.height,
-    image.textStretchBaseW, image.textStretchBaseH,
-  ]) : '';
-  const staticVectorContentKeyRef = useRef('');
-  const staticVectorPendingRef = useRef(false);
-  const staticVectorCanvasNodeRef = useRef<HTMLCanvasElement | null>(null);
 
-  useLayoutEffect(() => {
-    /* 一般文字維持 SVG；符號则与创意拼图一样走 Canvas 的同一套墨水测量与
-       fillText。这样预览缩放只是在移动一张预先超取样的紧凑位图，不会每一帧
-       让 WebKit 重建大型复合 Unicode SVG，解决有符号时的明显掉帧。 */
-    if (!isCanvasVector) return;
-    const canvas = vectorCanvasRef.current;
-    if (!canvas) return;
-    /* 位置、倍率與旋轉都由外層處理；內容 key 沒變就沿用同一張已解碼影像。
-       這一條同時杜絕逐幀重畫、鬆手換圖與非同步 Blob 競爭。 */
-    if (stableVectorSurface
-      && staticVectorCanvasNodeRef.current === canvas
-      && staticVectorContentKeyRef.current === staticVectorContentKey
-      && !motionFrame) return;
-    /* 双指缩放只改变外层几何，和照片完全相同：沿用手势开始前已经完成的
-       高解析快照，不在每一帧销毁／重建 Canvas。这样既没有噪点与清晰度跳变，
-       大物件也不会因连续配置数千万像素而卡顿。 */
-    /* 手勢只改外層物件矩陣；內容沒有變就直接沿用同一張 canvas。 */
-    if (gestureRendering && stableVectorSurface && !motionFrame
-      && staticVectorCanvasNodeRef.current === canvas) return;
-    /* 一般路徑圖形拖滑桿時直接顯示下面那張 SVG 向量層。它不需要重建大型
-       backing store，而且任何倍率都是真向量清晰度；放手後才重畫一次最終
-       Canvas／快照。這比降低拖動中的畫質更快，也完全不會出現清晰度跳變。 */
-    if (vectorLiveSvg || vectorLiveTextSvg) return;
-    let alive = true;
-    let raf = 0;
-    const revision = ++shapeSnapshotRevisionRef.current;
-    const canFreezeShape = false;
-    /* 照片不會在整頁 pinch 時抖，是因為 Safari 只需縮放一張固定影像；文字與
-       符號原本各自保留可見 Canvas，WebKit 會逐張把它們吸到不同實體像素，
-       於是相對畫布上下左右跳。字體完成後把靜止結果凍結成 Image，讓它與照片
-       走完全相同的合成路徑。動畫、物件手勢與滑桿互動仍即時使用 Canvas。 */
-    const canFreezeText = false;
-    if (stableVectorSurface && (canFreezeShape || canFreezeText)) {
-      staticVectorContentKeyRef.current = staticVectorContentKey;
-      staticVectorPendingRef.current = true;
-    }
-    /* 静止向量更新时保留旧快照，直到新快照完成解码后再原子替换；不能先撤掉
-       快照露出另一种解析度的 Canvas，否则缩放松手会明显变清楚／变模糊一次。 */
-    if (shapeSnapshotUrlRef.current && !canFreezeShape && !canFreezeText) {
-      const stale = shapeSnapshotUrlRef.current;
-      shapeSnapshotUrlRef.current = null;
-      setShapeSnapshotUrl(null);
-      requestAnimationFrame(() => URL.revokeObjectURL(stale));
-    }
-    const freezeVector = () => {
-      /* 刻意不做 Canvas -> Blob -> Image。創意拼圖沒有這個顯示路徑切換，
-         經典拼圖也不再切換，避免 iOS 解碼後重新取整中心與邊界。 */
-    };
-    const draw = () => {
-      if (!alive) return;
-      /* 跟創意拼圖一樣以「畫面實體像素＋超取樣」決定解析度。只配置墨水範圍，
-         因此可以在同樣記憶體內保留更高密度，同時避開 Safari 回收畫布。 */
-      /* 手勢中鎖定同一塊 Canvas，僅清除並重畫內容，避免每幀改變 backing
-         store 尺寸造成抖動與殘影；放手後再以完整密度精繪一次。 */
-      /* 一般圖形要像創意拼圖中的物件一樣，預覽縮放時只改最外層畫布矩陣，
-         不能讓每顆圖形自己的 backing store 跟著倍率每幀重建。後者會令 WebKit
-         在新舊畫布間交替取樣，尤其 Y 軸最容易上下跳。固定以 3 倍超取樣建立
-         圖形貼圖；只有真正縮放物件本身時，boxW/boxH 才會改變並重畫。 */
-      const exactShapeBacking = !!image.shape && image.shape !== 'hole';
-      const cssW = displayVectorCssW;
-      const cssH = displayVectorCssH;
-      const drawW = stableVectorSurface ? image.width : boxW;
-      const drawH = stableVectorSurface ? image.height : boxH;
-      const contentScale = stableVectorSurface ? 1 : image.scale;
-      /* 小圖形的銳利邊緣在少量像素內移動時最容易被次像素抗鋸齒誤認成上下
-         抖動。創意拼圖是在一張高解析主 Canvas 內重畫；經典拼圖保持每顆圖形
-         固定貼圖，但尺寸愈小就提高一次性的超取樣密度。倍率只由物件本身尺寸
-         決定，不含預覽 zoom，因此捏合畫布期間 backing store 仍完全不變。 */
-      const shapeDetailBoost = exactShapeBacking
-        ? Math.max(1.5, Math.min(3.5, 280 / Math.max(1, cssW, cssH)))
-        : 1;
-      /* 整頁預覽 zoom 只由 pagesCol 的單一矩陣處理；絕不能拿 zoom 回頭改
-         每顆文字／符號自己的 backing store，否則每幀會重建並重新取整中心。 */
-      const previewRasterScale = exactShapeBacking ? shapeDetailBoost : 1;
-      /* 手勢中與靜止時使用完全相同的高密度 backing store。先前捏合時把倍率
-         降半、面積砍到 4MP，正是物件縮小過程突然糊掉、放手才恢復的來源。 */
-      /* 滑桿拖動中每一幀都重畫。最終模式最高可到數千萬像素，逐格重建會
-         阻塞主執行緒；拖動中改用仍高於螢幕實體像素的即時倍率，松手后只
-         进行一次完整超取样。视觉保持清楚，交互成本则从几十倍像素降下来。 */
-      /* 拖滑桿時只重畫當前物件，並使用高於實際螢幕密度的 2x 超取樣；
-         肉眼解析度不變，但不再為每一格參數建立 12x、數千萬像素的畫布。
-         放手後仍以完整密度精繪一次並凍結快照。 */
-      const dpr = liveTuning
-        ? Math.max(2, geoDpr * previewRasterScale * 2)
-        : Math.max(2, geoDpr * previewRasterScale * 4);
-      /* 尺寸上限與面積上限同時守住；手勢與靜止都保留 8MP。 */
-      const backingScale = Math.min(
-        dpr,
-        8192 / Math.max(cssW, cssH),
-        Math.sqrt(33_554_432 / Math.max(1, cssW * cssH)),
-      );
-      /* 一般圖形的 backing store 必須完整對應 CSS 盒子的四條邊。舊版用 ceil
-         後仍以原 backingScale 畫圖，ceil 多出來的尾數全部堆在右／下；外層
-         縮放重新取樣時，右邊與下邊因此最容易像在抖。改成偶數實體像素，並
-         以實際 W/cssW、H/cssH 各自建立矩陣，四邊都沒有未使用的尾數。 */
-      const W = Math.max(1, exactShapeBacking
-        ? Math.ceil(cssW * backingScale / 2) * 2
-        : Math.ceil(cssW * backingScale));
-      const H = Math.max(1, exactShapeBacking
-        ? Math.ceil(cssH * backingScale / 2) * 2
-        : Math.ceil(cssH * backingScale));
-      const backingScaleX = exactShapeBacking ? W / cssW : backingScale;
-      const backingScaleY = exactShapeBacking ? H / cssH : backingScale;
-      if (canvas.width !== W) canvas.width = W;
-      if (canvas.height !== H) canvas.height = H;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.setTransform(backingScaleX, 0, 0, backingScaleY, 0, 0);
-      ctx.clearRect(0, 0, cssW, cssH);
-      if (stableVectorSurface && !motionFrame) {
-        staticVectorCanvasNodeRef.current = canvas;
-        staticVectorContentKeyRef.current = staticVectorContentKey;
-      }
-      /* 經典拼圖的波浪與創意拼圖共用同一種做法：本體先完整畫好，再把
-         成品分成連續斜率的小直片。這個收尾函式只改像素，不動物件根節點、
-         外框或中心座標，因此不可能退化成整顆上下漂移。 */
-      const applyVectorWave = () => {
-        const phase = motionFrame?.gridWave;
-        const mix = motionFrame?.waveMix ?? 1;
-        if (phase === undefined || mix <= 1e-5) return;
-        const scratch = vectorWaveCanvasRef.current || document.createElement('canvas');
-        vectorWaveCanvasRef.current = scratch;
-        if (scratch.width !== W) scratch.width = W;
-        if (scratch.height !== H) scratch.height = H;
-        const sg = scratch.getContext('2d');
-        if (!sg) return;
-        sg.setTransform(1, 0, 0, 1, 0, 0);
-        sg.clearRect(0, 0, W, H);
-        sg.drawImage(canvas, 0, 0);
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.clearRect(0, 0, W, H);
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        const reveal = motionFrame?.gridReveal === undefined
-          ? 1 : Math.max(0, Math.min(1, motionFrame.gridReveal));
-        const shownW = W * reveal;
-        const span = Math.max(1, drawW * backingScale);
-        const left = W / 2 - span / 2;
-        const amp = Math.min(10 * backingScale, drawH * backingScale * .065)
-          * Math.max(.15, (image.mo?.amp ?? 50) / 100) * mix;
-        const segments = Math.max(32, Math.min(128, Math.ceil(shownW / 8)));
-        const sw = shownW / segments;
-        for (let i = 0; i < segments; i++) {
-          const x = i * sw;
-          const x1 = i + 1 === segments ? shownW : x + sw;
-          const dy0 = Math.sin(((x - left) / span - phase) * Math.PI * 2) * amp;
-          const dy1 = Math.sin(((x1 - left) / span - phase) * Math.PI * 2) * amp;
-          const slope = (dy1 - dy0) / Math.max(.001, x1 - x);
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(x - .5, -amp - 2, x1 - x + 1, H + amp * 2 + 4);
-          ctx.clip();
-          ctx.transform(1, slope, 0, 1, 0, dy0 - slope * x);
-          ctx.drawImage(scratch, x - 1, 0, x1 - x + 2, H, x - 1, 0, x1 - x + 2, H);
-          ctx.restore();
-        }
-      };
-      ctx.save();
-      ctx.translate(cssW / 2, cssH / 2);
-      /* 一般圖形的 Canvas 現在直接掛在跟圖片相同的物件 wrapper 裡，旋轉由
-         wrapper 統一處理；這裡若再旋轉一次會重複套用。hole／符號仍在獨立
-         顯示層，維持原本的內部旋轉。 */
-      /* 所有一般物件的旋转都由 wrapGeo 统一执行。文字／符号若在 Canvas 内再
-         旋转一次就会成为双重旋转，选中框当然包不住；只有独立 portal 绘制的
-         hole 图案没有使用 wrapGeo 的旋转，因此保留内部角度。 */
-      ctx.rotate(((image.shape === 'hole' ? image.rotation : 0) * Math.PI) / 180);
-
-      if (image.shape === 'hole') {
-        /* 字符／去背圖片型圖形會在 drawHoleShape 裡先畫到暫存 Canvas。
-           外層 CTM 不會傳進那張暫存 Canvas；以前因此先生成低解析字，再整張
-           放大 backingScale 倍，文字型圖形縮小時就糊。這一支改用實體像素
-           座標直接畫，暫存 Canvas 也會得到相同的高解析度。 */
-        ctx.restore();
-        ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.translate(cssW / 2 * backingScale, cssH / 2 * backingScale);
-        ctx.rotate((image.rotation * Math.PI) / 180);
-        const holeFeather = shapeSupportsFeather(image.shape, image.shapeFilled, image.holeType)
-          ? shapeFeatherBlur(drawW, drawH, image.shapeFeather) * backingScale : 0;
-        if (holeFeather > 0) ctx.filter = `blur(${holeFeather}px)`;
-        drawHoleShape(ctx, {
-          ...holeOpts!,
-          lineUnit: Math.max(image.width, image.height) / 160 * backingScale,
-        }, drawW * backingScale, drawH * backingScale,
-        shapeGlowBlurs(image.width, image.height)
-          .map(r => r * contentScale * glowAmount(image.shapeGlow as any) * backingScale));
-        ctx.restore();
-        applyVectorWave();
-        return;
-      }
-
-      if (image.shape) {
-        ctx.translate(-drawW / 2, -drawH / 2);
-        const path = new Path2D(shapePathD(
-          image.shape, drawW, drawH,
-          (image.shapeTextureBaseW || image.width) * contentScale,
-          (image.shapeTextureBaseH || image.height) * contentScale,
-          ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-            * Math.pow(Math.max(0.01, contentScale), 0.35),
-        ));
-        const color = image.color || SHAPE_DEFAULT_COLOR;
-        const solid = !!image.shapeFilled && image.shape !== 'line';
-        const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
-        const lw = GRID_SHAPE_KINDS.has(image.shape)
-          ? 1.5
-          : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
-        const outer = Math.min(4, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160);
-        ctx.lineJoin = image.shape === 'line' ? 'round' : 'miter';
-        ctx.lineCap = 'butt';
-        ctx.miterLimit = 4;
-        ctx.fillStyle = color;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = lw;
-        const dash = image.shapeDash || 0;
-        ctx.setLineDash(dash > 0 ? [lw * (0.6 + dash / 100 * 4), lw * (0.6 + dash / 100 * 4) * 0.85] : []);
-        const gAmt = glowAmount(image.shapeGlow as any);
-        if (gAmt > 0) {
-          ctx.save();
-          ctx.shadowColor = image.shapeGlowColor || color;
-          for (const r of shapeGlowBlurs(image.width, image.height)) {
-            // shadowBlur 不吃目前的 CTM；補上 backingScale，縮回 CSS 尺寸後才是正確強度。
-            ctx.shadowBlur = r * contentScale * gAmt * backingScale;
-            if (solid && COMPOSITE_SHAPE_KINDS.has(image.shape)) {
-              drawCompositeShapeBody(ctx, image.shape, drawW, drawH, color,
-                image.shapeInnerColor || '#FFFFFF');
-            } else if (solid) ctx.fill(path); else ctx.stroke(path);
-          }
-          ctx.restore();
-        }
-        if (outer > 0) {
-          ctx.save();
-          ctx.setLineDash([]);
-          ctx.strokeStyle = image.shapeStrokeColor || '#000000';
-          ctx.lineWidth = (solid ? 0 : lw) + outer * 2;
-          if (!strokeCompositeShape(ctx, image.shape, drawW, drawH)) ctx.stroke(path);
-          ctx.restore();
-        }
-        const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
-        if (solid) {
-          if (GRID_DOT_KINDS.has(image.shape)) {
-            /* 點陣必須使用上面已帶入固定 base／固定半徑的 path。
-               一般實心函式會用當前寬高重建路徑，會把點距重新平均並放大點徑。 */
-            ctx.fill(path);
-          } else drawFeatheredShapeBody(ctx, image.shape, drawW, drawH, image.shapeFeather, color, (tc, bodyPath) => {
-            if (tx === 'none') return;
-            tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
-            if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
-              tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
-              textureBaseW: (image.shapeTextureBaseW || image.width) * contentScale,
-              textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale,
-            });
-            else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
-              image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
-            tc.restore();
-          }, image.shapeInnerColor || '#FFFFFF');
-        } else {
-          ctx.stroke(path);
-        }
-        ctx.restore();
-        applyVectorWave();
-        freezeVector();
-        return;
-      }
-
-      const family = (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT));
-      const size = image.fontSize || 40;
-      const spacing = image.letterSpacing || 0;
-      /* Safari 會依每一個 font-size 重新 hint 字形、再各自取整 baseline。之前
-         捏合的每一幀都改 font-size，畫布中心雖然固定，真正的文字墨水中心卻
-         會在相鄰像素間跳；符號的複合字形尤其明顯。固定基礎字級與字形度量，
-         將連續倍率只套在 Canvas 矩陣上，與創意拼圖在固定主畫布裡變換物件
-         座標的結構相同，也不會觸發 DOM／字型引擎重新排版。 */
-      const textStretchX = !image.sym ? image.width / Math.max(1, image.textStretchBaseW || image.width) : 1;
-      const textStretchY = !image.sym ? image.height / Math.max(1, image.textStretchBaseH || image.height) : 1;
-      ctx.scale(contentScale * textStretchX, contentScale * textStretchY);
-      ctx.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      (ctx as any).letterSpacing = `${spacing}px`;
-      const lines = (image.text || '').split('\n');
-      const lineH = size * 1.12;
-      const startY = -((lines.length - 1) * lineH) / 2;
-      const ink = image.sym ? measureSymbolStickerInk(image.text || image.sym, family) : null;
-      const dx = ink ? -ink.cx * size : 0;
-      const dy = ink ? -ink.cy * size : 0;
-      const unitMotionFrame = usesUnitMotion && lines.length === 1 ? motionFrame : null;
-      const drawAnimatedUnits = (stroke = false) => {
-        if (!unitMotionFrame && !image.sym) {
-          lines.forEach((line, i) => stroke
-            ? ctx.strokeText(line, dx, startY + i * lineH + dy)
-            : ctx.fillText(line, dx, startY + i * lineH + dy));
-          return;
-        }
-        const raster = rasterizeSymbolAnimationLayers(
-          image.text || '', family, size, stroke ? 'stroke' : 'fill',
-          stroke ? (image.strokeColor || '#000000') : (image.color || '#FFFFFF'),
-          stroke ? (image.strokeWidth || 0) * 2 : 0,
-          Math.max(2.5, Math.min(7, backingScale * Math.max(1, contentScale))),
-          image.sym ? undefined : {
-            plainText: true,
-            fontWeight: image.bold ? 700 : 400,
-            fontStyle: image.italic ? 'italic' : 'normal',
-            letterSpacing: spacing,
-          },
-        );
-        if (!raster) {
-          lines.forEach((line, i) => stroke
-            ? ctx.strokeText(line, dx, startY + i * lineH + dy)
-            : ctx.fillText(line, dx, startY + i * lineH + dy));
-          return;
-        }
-        /* 符號靜止時也畫動畫所使用的同一張完整 raster，而不是切回 raw
-           fillText。這是消除 iPhone 上「剛生成正常、進動畫就整串偏移」的
-           關鍵：靜止、泡泡、縮放 II 現在共用同一個 anchor 與同一批像素。 */
-        if (!unitMotionFrame) {
-          ctx.drawImage(raster.fullCanvas,
-            raster.fullSX, raster.fullSY, raster.fullSW, raster.fullSH,
-            dx + raster.fullX, dy + raster.fullY, raster.fullW, raster.fullH);
-          return;
-        }
-        const count = raster.layers.length;
-        const bubbleSpan = 1 + Math.max(0, count - 1) * .2;
-        const seq = unitMotionFrame.seq;
-        raster.layers.forEach((layer, index) => {
-          const q = seq === undefined ? 1 : Math.max(0, Math.min(1, seq * bubbleSpan - index * .2));
-          if (seq !== undefined && q <= .001) return;
-          const backQ = (() => {
-            const c1 = 1.70158, c3 = c1 + 1, z = q - 1;
-            return 1 + c3 * z * z * z + c1 * z * z;
-          })();
-          const scale = image.mo?.idle === 'symbol-breathe2' && unitMotionFrame.idleT !== undefined
-            ? 1 + (symbolBreatheScale(index, unitMotionFrame.idleT, image.mo.amp, image.mo.speed) - 1)
-                * (unitMotionFrame.waveMix ?? 1)
-            : backQ;
-          ctx.save();
-          if (seq !== undefined) ctx.globalAlpha *= Math.min(1, q * 3);
-          /* 每層只繞自己固定的墨水重心縮放；完整字串的 dx/dy 永遠不變，
-             因此動畫與靜止共用同一個中心，不會向左漂移或重排組合字。 */
-          ctx.translate(dx + layer.pivotX, dy + layer.pivotY);
-          ctx.scale(scale, scale);
-          ctx.drawImage(layer.canvas,
-            layer.x - layer.pivotX, layer.y - layer.pivotY,
-            layer.w, layer.h);
-          ctx.restore();
-        });
-      };
-      const fill = () => drawAnimatedUnits(false);
-      ctx.fillStyle = image.color || '#FFFFFF';
-      if (image.glow) {
-        ctx.shadowColor = image.glowColor || '#FFFFFF';
-        for (const k of [1, 2, 3]) {
-          // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
-          ctx.shadowBlur = (Math.min(15, image.glow) / 20) * 14 * k * contentScale * backingScale;
-          fill();
-        }
-        ctx.shadowBlur = 0;
-        ctx.shadowColor = 'transparent';
-      }
-      if (image.strokeWidth) {
-        // lineWidth 會跟著目前的 CTM 一起縮放，這裡維持基礎值即可。
-        ctx.lineWidth = image.strokeWidth * 2;
-        ctx.lineJoin = 'round';
-        ctx.strokeStyle = image.strokeColor || '#000000';
-        drawAnimatedUnits(true);
-      }
-      fill();
-      ctx.restore();
-      applyVectorWave();
-    };
-    draw();
-    /* 字體完成後補畫只需要用在靜止狀態。手勢中每次 state 更新已經由上面的
-       layout effect 同步畫過；若每一幀又排一個 font promise + RAF，文字／符號
-       會比圖形多畫近一倍，在 iPhone 上掉幀後便像是仍在抖動。 */
-    if (image.text !== undefined && !gestureRendering) {
-      waitForFont((image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT)), image.bold ? 700 : 400, !!image.italic)
-        .then(() => {
-          if (alive) raf = requestAnimationFrame(() => {
-            draw();
-            /* 只凍結字體已確定後的最終字形，避免先顯示 fallback 快照再跳一次。 */
-            freezeVector();
-          });
-        });
-    }
-    return () => {
-      alive = false;
-      shapeSnapshotRevisionRef.current += 1;
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, [
-    isCanvasVector, usesUnitMotion,
-    stableVectorSurface ? image.width : boxW,
-    stableVectorSurface ? image.height : boxH,
-    stableVectorSurface ? fixedVectorPad : vectorPad.x,
-    stableVectorSurface ? fixedVectorPad : vectorPad.y,
-    displayVectorCssW, displayVectorCssH,
-    image.shape, image.holeType, image.shapeFilled, image.shapeInnerColor, image.shapeLineW, image.shapeDash,
-    image.shapeGlow, image.shapeGlowColor, image.shapeStrokeW, image.shapeStrokeColor,
-    image.shapeTex, image.shapeDots, image.shapeDotSize, image.shapeDotGap, image.shapeDotColor,
-    image.shapeStripeN, image.shapeStripeDir, image.shapeStripeA, image.shapeStripeB,
-    image.shapeTextureBaseW, image.shapeTextureBaseH, image.color,
-    image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
-    image.letterSpacing, image.strokeWidth, image.strokeColor, image.glow, image.glowColor,
-    stableVectorSurface ? 1 : image.scale,
-    stableVectorSurface ? 0 : image.rotation,
-    image.mo,
-    /* 所有向量物件的預覽倍率都不參與 backing-store 依賴。 */
-    1,
-    gestureRendering, liveTuning, holeAssetRevision, vectorLiveSvg, vectorLiveTextSvg,
-    motionFrame?.seq, motionFrame?.idleT, motionFrame?.waveMix,
-    motionFrame?.gridWave, motionFrame?.gridReveal,
-  ]);
 
   /* 操作 UI 掛在整頁的縮放容器裡，但視覺尺寸必須維持螢幕 px。
      選取後一定會重新 render，所以這裡讀到的是當下真正的預覽倍率。 */
@@ -7144,141 +6812,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         看到的抖動。hole 圖案仍需專用 Canvas；文字／符號維持既有穩定路徑。 */}
     {/* 只有借用圖片型圖案仍需要跨層工作區；文字與符號已放回自己的 wrapper，
         和圖形／照片一起接受同一個頁面矩陣，不再各自在 Portal 中取整。 */}
-    {isCanvasVector && image.shape === 'hole' && pagesContainerRef.current && createPortal(
-      <div
-        data-vector-surface={image.id}
-        aria-hidden
-        className="absolute pointer-events-none"
-        style={{
-          /* 可見向量與本體／選中框共用完全相同的外盒。舊版另外建立一個
-             vectorSurfaceW 大盒再用 translate3d 推到物件中心；WebKit 在 native
-             zoom 下会分别取整 absolute box 和 transform translation，连续缩放时
-             两个取整相位不同，符号便会相对页面左右乱动。现在只保留一套
-             left/top/width/height，内部的大 SVG 仍以中心向外延伸，不会被裁切。 */
-          left: wrapGeo.left,
-          top: wrapGeo.top,
-          width: `${boxW}px`,
-          height: `${boxH}px`,
-          /* 排序時被手指拿起的頁面內容必須整組高於唯一分割線（400000）。 */
-          zIndex: (dragShift?.live ? 450100 : 60) + stackIndex * 2,
-          opacity: (image.text !== undefined && isTextEditing ? 0 : 1) * ((image.opacity ?? 100) / 100) * (motionFrame?.a ?? 1),
-          transformOrigin: 'center center',
-          transform: [
-            dragShift ? `translate3d(${dragShift.tx}px, ${dragShift.ty}px, 0) scale(${dragShift.s})` : '',
-            motionFrame ? `translate3d(${motionFrame.dx * boxW}px, ${motionFrame.dy * boxH}px, 0) scale(${motionFrame.k * (motionFrame.fx ?? 1)}, ${motionFrame.k}) rotate(${motionFrame.rot}deg)` : '',
-          ].filter(Boolean).join(' ') || undefined,
-          transition: dragShift
-            ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
-            : undefined,
-          /* 預覽縮放時不要把每個文字／符號／圖形拆成獨立合成層。iOS 會讓
-             各層在小數 zoom 下分別取整而輕微抖動；維持在 pagesCol 的同一張
-             繪製表面上，與創意拼圖的單一 Canvas 合成方式一致。只有物件自身
-             動畫或頁面排序真的改 transform 時才暫時升層。 */
-          willChange: dragShift || motionFrame ? 'transform' : undefined,
-          backfaceVisibility: dragShift || motionFrame ? 'hidden' : undefined,
-        }}
-      >
-        {image.text !== undefined && !image.sym && !usesUnitMotion ? (() => {
-          /* 固定字級、字距與字形度量，只讓 SVG 的連續矩陣負責縮放。SVG 會在
-             當下顯示倍率直接重建向量輪廓，不像獨立 Canvas 先變點陣再被頁面
-             zoom 一次；文字和複合 Unicode 符號因此共用同一個穩定中心。 */
-          const family = (image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT));
-          const size = image.fontSize || 40;
-          const lines = (image.text || '').split('\n');
-          const lineH = size * 1.12;
-          const startY = -((lines.length - 1) * lineH) / 2;
-          const dx = vectorGlyphCorrection.x;
-          const dy = vectorGlyphCorrection.y;
-          const glowId = `vector-text-glow-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-          const glowUnit = Math.min(15, image.glow || 0) / 20 * 14;
-          return (
-            <svg
-              data-vector-text={image.id}
-              viewBox={`0 0 ${vectorCssW} ${vectorCssH}`}
-              preserveAspectRatio="none"
-              style={{
-                /* 不再用 50% + translate(-50%) 做第二次置中。iOS WebKit 在外層
-                   native zoom 連續變化時，百分比位置與 translate 會分開取整，
-                   圖片不會抖、但這三種向量層會在相鄰像素間跳。直接寫同一座標
-                   系裡的數值偏移，視覺中心完全相同，縮放時只剩外層一次取樣。 */
-                position: 'absolute',
-                left: `${(boxW - vectorCssW) / 2}px`,
-                top: `${(boxH - vectorCssH) / 2}px`,
-                width: `${vectorCssW}px`, height: `${vectorCssH}px`,
-                overflow: 'visible', pointerEvents: 'none',
-              }}
-              aria-hidden
-            >
-              {image.glow ? (
-                <defs>
-                  <filter id={glowId} x={-vectorCssW} y={-vectorCssH}
-                    width={vectorCssW * 3} height={vectorCssH * 3}
-                    filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
-                    <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit} result="blur1" />
-                    <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit * 2} result="blur2" />
-                    <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit * 3} result="blur3" />
-                    <feFlood floodColor={image.glowColor || '#FFFFFF'} result="glowColor" />
-                    <feComposite in="glowColor" in2="blur1" operator="in" result="glow1" />
-                    <feComposite in="glowColor" in2="blur2" operator="in" result="glow2" />
-                    <feComposite in="glowColor" in2="blur3" operator="in" result="glow3" />
-                    <feMerge>
-                      <feMergeNode in="glow3" /><feMergeNode in="glow2" />
-                      <feMergeNode in="glow1" /><feMergeNode in="SourceGraphic" />
-                    </feMerge>
-                  </filter>
-                </defs>
-              ) : null}
-              <g transform={`translate(${vectorCssW / 2} ${vectorCssH / 2}) rotate(${image.rotation}) scale(${image.scale * (image.width / Math.max(1, image.textStretchBaseW || image.width))} ${image.scale * (image.height / Math.max(1, image.textStretchBaseH || image.height))})`}>
-                <text
-                  ref={vectorGlyphRef}
-                  data-vector-glyph={image.id}
-                  x={dx}
-                  y={startY + dy}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontFamily={fontStack(family)}
-                  fontSize={size}
-                  fontWeight={image.bold ? 700 : 400}
-                  fontStyle={image.italic ? 'italic' : 'normal'}
-                  letterSpacing={image.letterSpacing || 0}
-                  fill={image.color || '#FFFFFF'}
-                  stroke={image.strokeWidth ? (image.strokeColor || '#000000') : 'none'}
-                  strokeWidth={image.strokeWidth ? image.strokeWidth * 2 : 0}
-                  paintOrder="stroke fill"
-                  filter={image.glow ? `url(#${glowId})` : undefined}
-                  style={{ textRendering: 'geometricPrecision' }}
-                >
-                  {image.sym || lines.length === 1
-                    ? image.text
-                    : lines.map((line, i) => (
-                        <tspan key={i} x={dx} y={startY + i * lineH + dy}>{line || ' '}</tspan>
-                      ))}
-                </text>
-              </g>
-            </svg>
-          );
-        })() : (
-          <canvas
-            ref={vectorCanvasRef}
-            data-vector-canvas={image.id}
-            style={{
-              /* 與上面的 SVG 共用單一數值座標；避免 WebKit 對 50% 與
-                 translate(-50%) 各自取整而造成預覽縮放時的細微抖動。 */
-              position: 'absolute',
-              left: `${(boxW - vectorCssW) / 2}px`,
-              top: `${(boxH - vectorCssH) / 2}px`,
-              width: `${vectorCssW}px`,
-              height: `${vectorCssH}px`,
-              pointerEvents: 'none',
-            }}
-          />
-        )}
-      </div>,
-      pagesContainerRef.current,
-    )}
     <div
       ref={imageRef}
       data-floating-id={image.id}
+      data-classic-scene-hit={scene && isCanvasVector ? '1' : undefined}
       className="floating-image-wrapper group/floating"
       style={{
         ...wrapGeo,
@@ -7301,360 +6838,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       onTouchEnd={motionPickOnly ? undefined : onSwapTouchEnd}
       onTouchCancel={motionPickOnly ? undefined : onSwapTouchEnd}
     >
-      {image.shape === 'hole' ? null : image.shape ? (
-        <>
-        {/* 一般圖形與圖片共用同一個 wrapper、同一個中心及同一次頁面縮放。
-            Canvas 本身只是一張高解析圖形貼圖，不再另外 Portal 到整頁座標；
-            因此預覽縮放時不可能在 Y 軸和物件盒分別取整而上下跳動。 */}
-        {shapeSnapshotUrl
-          && motionFrame?.gridWave === undefined
-          && motionFrame?.gridReveal === undefined ? (
-        <img
-          src={shapeSnapshotUrl}
-          data-classic-shape-snapshot={image.id}
-          draggable={false}
-          decoding="sync"
-          style={{
-            position: 'absolute',
-            left: `${(boxW - displayVectorCssW) / 2}px`,
-            top: `${(boxH - displayVectorCssH) / 2}px`,
-            width: `${displayVectorCssW}px`,
-            height: `${displayVectorCssH}px`,
-            maxWidth: 'none',
-            maxHeight: 'none',
-            opacity: (image.opacity ?? 100) / 100,
-            objectFit: 'fill',
-            pointerEvents: 'none',
-            userSelect: 'none',
-            transform: stableVectorSurface ? `scale(${image.scale})` : undefined,
-            transformOrigin: 'center center',
-            visibility: vectorLiveSvg ? 'hidden' : 'visible',
-          }}
-        />
-        ) : null}
-        <canvas
-          ref={vectorCanvasRef}
-          data-classic-shape-raster={image.id}
-          style={{
-            position: 'absolute',
-            left: `${(boxW - displayVectorCssW) / 2}px`,
-            top: `${(boxH - displayVectorCssH) / 2}px`,
-            width: `${displayVectorCssW}px`,
-            height: `${displayVectorCssH}px`,
-            opacity: (image.opacity ?? 100) / 100,
-            visibility: vectorLiveSvg || (shapeSnapshotUrl
-              && motionFrame?.gridWave === undefined
-              && motionFrame?.gridReveal === undefined) ? 'hidden' : 'visible',
-            pointerEvents: 'none',
-            transform: stableVectorSurface ? `scale(${image.scale})` : undefined,
-            transformOrigin: 'center center',
-          }}
-        />
-        {/* 舊 SVG 僅保留作為路徑實作的對照，不參與顯示。
-           viewBox 用「沒有縮放前」的尺寸，外框是 width×scale ——
-           兩軸的倍率一樣，所以描邊是等比例放大、不會被拉扁。
-           overflow: visible 是因為描邊有一半長在框外面，不放行就會被切掉。 */}
-        <svg
-          viewBox={`0 0 ${image.width} ${image.height}`}
-          preserveAspectRatio="none"
-          style={{
-            position: 'absolute',
-            /* SVG 每一幀直接按目前顯示尺寸重畫向量輪廓，不縮放舊的點陣快取；
-               所以手指還沒放開時也和最終畫面一樣清楚。 */
-            left: 0, top: 0, width: '100%', height: '100%',
-            transform: undefined,
-            transformOrigin: 'center center',
-            overflow: 'visible', pointerEvents: 'none',
-            /* 發光：三段 drop-shadow 疊起來，跟文字／圖片的光同一套濃淡。
-               半徑寫在「沒有縮放前」的座標系上，外框放大時光會跟著一起放大。 */
-            filter: glowAmount(image.shapeGlow as any) > 0
-              ? shapeGlowBlurs(image.width, image.height)
-                  .map(r => `drop-shadow(0 0 ${r3(r * image.scale * glowAmount(image.shapeGlow as any))}px ${image.shapeGlowColor || image.color || SHAPE_DEFAULT_COLOR})`)
-                  .join(' ')
-              : undefined,
-            /* 有發光時把這一層推上自己的合成層。
-               drop-shadow 的光會長到圖形框外面，而 WebKit 在元素被拖動／縮放時
-               只會重畫「框以內」那一塊 —— 框外那圈光就留在原地變成殘影
-               （拖一次留一道，看起來像一路拉出來的影子）。
-               自己一層之後整層一起重畫，就不會有殘留。 */
-            willChange: glowAmount(image.shapeGlow as any) > 0 ? 'filter' : undefined,
-            backfaceVisibility: 'hidden',
-            WebkitBackfaceVisibility: 'hidden',
-            isolation: 'isolate',
-            visibility: vectorLiveSvg ? 'visible' : 'hidden',
-            opacity: (image.opacity ?? 100) / 100,
-          }}
-        >
-          {vectorDoubleKind && (() => {
-            const gap = Math.min(image.width, image.height) * 0.052;
-            const ring = Math.min(image.width, image.height) * 0.024;
-            return (
-              <>
-                <defs>
-                  <mask id={vectorDoubleMaskId} maskUnits="userSpaceOnUse"
-                    x={-image.width} y={-image.height} width={image.width * 3} height={image.height * 3}>
-                    <path d={vectorShapeD} transform={vectorShapeTransform}
-                      fill="#fff" stroke="#fff" strokeWidth={(gap + ring) * 2}
-                      strokeLinejoin={vectorDoubleKind === 'star' ? 'miter' : 'round'}
-                      strokeLinecap={vectorDoubleKind === 'star' ? 'butt' : 'round'} />
-                    <path d={vectorShapeD} transform={vectorShapeTransform}
-                      fill="none" stroke="#000" strokeWidth={gap * 2}
-                      strokeLinejoin={vectorDoubleKind === 'star' ? 'miter' : 'round'}
-                      strokeLinecap={vectorDoubleKind === 'star' ? 'butt' : 'round'} />
-                    <path d={vectorShapeD} transform={vectorShapeTransform} fill="#fff" />
-                  </mask>
-                </defs>
-                <rect x={-image.width} y={-image.height} width={image.width * 3} height={image.height * 3}
-                  fill={image.color || SHAPE_DEFAULT_COLOR} mask={`url(#${vectorDoubleMaskId})`} />
-              </>
-            );
-          })()}
-          {/* 點點：用一塊 pattern 疊在圖形上，範圍就是圖形的填色區域 ——
-              跟匯出那邊「剪裁在圖形裡面再鋪點點」是同一塊區域。
-              tile 是交錯三角格的一個週期（寬 dx、高 2dy，裡面兩顆），
-              patternTransform 把 tile 的原點移到圖形正中心，所以正中央
-              一定有一顆點 —— 這樣才跟 canvas 那邊逐顆對得起來。
-              四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
-          {/* 外描邊：畫在本體「底下」、寬度加倍 —— 本體會蓋住內半邊，
-              留在外面的就是乾淨的一圈外描邊（跟文字的描邊同一種做法）。
-              虛線只屬於本體，描邊那一圈一律是實線。 */}
-          {!!image.shapeStrokeW && !vectorDoubleKind && (
-            <path
-              d={vectorShapeD}
-              transform={vectorShapeTransform}
-              fill="none"
-              stroke={image.shapeStrokeColor || '#000000'}
-              strokeWidth={((image.shapeFilled && image.shape !== 'line') ? 0 : (shapeStroke?.lw || 0))
-                + (shapeStroke?.outer || 0) * 2}
-              strokeLinejoin="round"
-              strokeLinecap="butt"
-            />
-          )}
-          <path
-            d={vectorShapeD}
-            transform={vectorShapeTransform}
-            fill={image.shapeFilled && image.shape !== 'line' ? (image.color || SHAPE_DEFAULT_COLOR) : 'none'}
-            stroke={image.shapeFilled && image.shape !== 'line' ? 'none' : (image.color || SHAPE_DEFAULT_COLOR)}
-            strokeWidth={shapeStroke?.lw}
-            strokeDasharray={shapeStroke?.dashArray}
-            strokeLinecap={shapeStroke?.cap}
-            strokeLinejoin={shapeStroke?.join}
-          />
-          {/* 點點：疊在圖形上面的一塊 pattern，範圍就是圖形的填色區域 ——
-              跟匯出那邊「剪裁在圖形裡面再鋪點點」是同一塊區域。
-              tile 是交錯三角格的一個週期（寬 dx、高 2dy，裡面兩顆），
-              patternTransform 把 tile 的原點移到圖形正中心，所以正中央
-              一定有一顆點 —— 這樣才跟 canvas 那邊逐顆對得起來。
-              四個角上的點要各補一顆，不然會被 tile 的邊界切掉。 */}
-          {isGridTex(texOf({ tex: image.shapeTex, dots: image.shapeDots })) && (() => {
-            const tex = texOf({ tex: image.shapeTex, dots: image.shapeDots }) as 'dot' | 'star' | 'heart';
-            const baseW = image.shapeTextureBaseW || image.width;
-            const baseH = image.shapeTextureBaseH || image.height;
-            const { r, dx, dy, color } = shapeDotGrid(baseW, baseH, image);
-            const id = `sgrid-${tex}-${image.id}`;
-            const glyphs: [number, number][] = [[0, 0], [dx, 0], [0, dy * 2], [dx, dy * 2], [dx / 2, dy]];
-            return (
-              <>
-                <defs>
-                  <pattern
-                    id={id} patternUnits="userSpaceOnUse"
-                    width={r3(dx)} height={r3(dy * 2)}
-                    patternTransform={`translate(${r3(image.width / 2)} ${r3(image.height / 2)})`}
-                  >
-                    {glyphs.map(([cx, cy], i) => tex === 'dot'
-                      ? <circle key={i} cx={r3(cx)} cy={r3(cy)} r={r3(r)} fill={color} />
-                      : <g key={i} transform={`translate(${r3(cx)} ${r3(cy)})`}>
-                          <path d={textureGlyphD(tex, 0, 0, r)} fill={color} />
-                        </g>)}
-                  </pattern>
-                </defs>
-                <path
-                  d={vectorShapeD}
-                  transform={vectorShapeTransform}
-                  fill={`url(#${id})`}
-                  stroke="none"
-                />
-              </>
-            );
-          })()}
-          {/* 條紋：一樣是疊在圖形填色區上的 pattern。
-              一個週期是「兩條」（各一個顏色），patternTransform 把原點移到
-              圖形正中心 —— 跟 canvas 那支 paintStripes 的起算點一致，
-              所以預覽跟匯出出來的條紋位置完全對得上。 */}
-          {texOf({ tex: image.shapeTex, dots: image.shapeDots }) === 'stripe' && (() => {
-            const vert = image.shapeStripeDir !== 'h';   // 預設直式
-            const span = vert ? image.width : image.height;
-            /* 條數就是滑桿的值 —— 跟 canvas 那支 paintStripes 同一支 stripeBand，
-               所以預覽跟匯出的條數與寬度完全一樣，頭尾也都是完整的一條。 */
-            const { band } = stripeBand(span, image.shapeStripeN ?? STRIPE_N_DEFAULT);
-            const a = image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR;
-            const b = image.shapeStripeB || '#FFFFFF';
-            const id = `sstripe-${image.id}`;
-            return (
-              <>
-                <defs>
-                  <pattern
-                    id={id} patternUnits="userSpaceOnUse"
-                    width={r3(vert ? band * 2 : band)} height={r3(vert ? band : band * 2)}
-                  >
-                    <rect x="0" y="0" width={r3(band)} height={r3(band)} fill={a} />
-                    <rect
-                      x={r3(vert ? band : 0)} y={r3(vert ? 0 : band)}
-                      width={r3(band)} height={r3(band)}
-                      fill={b} />
-                  </pattern>
-                </defs>
-                <path
-                  d={vectorShapeD}
-                  transform={vectorShapeTransform}
-                  fill={`url(#${id})`}
-                  stroke="none"
-                />
-              </>
-            );
-          })()}
-        </svg>
-        </>
-      ) : image.text !== undefined && !isTextEditing ? (
-        <>
-          {vectorLiveTextSvg ? (() => {
-            const family = image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT);
-            const size = image.fontSize || 40;
-            const spacing = image.letterSpacing || 0;
-            const lines = (image.text || '').split('\n');
-            const lineH = size * 1.12;
-            const startY = -((lines.length - 1) * lineH) / 2;
-            const ink = image.sym ? measureSymbolStickerInk(image.text || image.sym, family) : null;
-            const dx = ink ? -ink.cx * size : vectorGlyphCorrection.x;
-            const dy = ink ? -ink.cy * size : vectorGlyphCorrection.y;
-            const stretchX = image.sym ? 1
-              : image.width / Math.max(1, image.textStretchBaseW || image.width);
-            const stretchY = image.sym ? 1
-              : image.height / Math.max(1, image.textStretchBaseH || image.height);
-            /* 外層已用一條 matrix 套用 image.scale；SVG viewport 永遠留在一倍
-               基礎座標。若這裡再讓 viewport 與字形一起乘 scale，縮放每一格
-               都會重新排版，且內容會被套兩次倍率。 */
-            const fixedVectorPad = 100;
-            const svgW = Math.max(image.width, ink ? ink.w * size : image.width) + fixedVectorPad * 2;
-            const svgH = Math.max(image.height, ink ? ink.h * size : image.height) + fixedVectorPad * 2;
-            const glowId = `classic-vector-text-glow-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-            const glowUnit = Math.min(15, image.glow || 0) / 20 * 14;
-            return (
-              <svg
-                data-classic-text-vector={image.id}
-                viewBox={`0 0 ${svgW} ${svgH}`}
-                preserveAspectRatio="none"
-                aria-hidden
-                style={{
-                  position: 'absolute',
-                  left: `${(boxW - svgW) / 2}px`,
-                  top: `${(boxH - svgH) / 2}px`,
-                  width: `${svgW}px`,
-                  height: `${svgH}px`,
-                  overflow: 'visible',
-                  pointerEvents: 'none',
-                  opacity: (image.opacity ?? 100) / 100,
-                }}
-              >
-                {image.glow ? (
-                  <defs>
-                    <filter id={glowId} x={-svgW} y={-svgH}
-                      width={svgW * 3} height={svgH * 3}
-                      filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
-                      <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit} result="blur1" />
-                      <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit * 2} result="blur2" />
-                      <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit * 3} result="blur3" />
-                      <feFlood floodColor={image.glowColor || '#FFFFFF'} result="glowColor" />
-                      <feComposite in="glowColor" in2="blur1" operator="in" result="glow1" />
-                      <feComposite in="glowColor" in2="blur2" operator="in" result="glow2" />
-                      <feComposite in="glowColor" in2="blur3" operator="in" result="glow3" />
-                      <feMerge>
-                        <feMergeNode in="glow3" /><feMergeNode in="glow2" />
-                        <feMergeNode in="glow1" /><feMergeNode in="SourceGraphic" />
-                      </feMerge>
-                    </filter>
-                  </defs>
-                ) : null}
-                <g transform={`translate(${svgW / 2} ${svgH / 2}) scale(${stretchX} ${stretchY})`}>
-                  <text
-                    ref={vectorGlyphRef}
-                    x={dx}
-                    y={startY + dy}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fontFamily={fontStack(family)}
-                    fontSize={size}
-                    fontWeight={image.bold ? 700 : 400}
-                    fontStyle={image.italic ? 'italic' : 'normal'}
-                    letterSpacing={spacing}
-                    fill={image.color || '#FFFFFF'}
-                    stroke={image.strokeWidth ? (image.strokeColor || '#000000') : 'none'}
-                    strokeWidth={image.strokeWidth ? image.strokeWidth * 2 : 0}
-                    strokeLinejoin="round"
-                    paintOrder="stroke fill"
-                    filter={image.glow ? `url(#${glowId})` : undefined}
-                    style={{ textRendering: 'geometricPrecision' }}
-                  >
-                    {lines.length === 1
-                      ? (image.text || '')
-                      : lines.map((line, i) => (
-                          <tspan key={i} x={dx} y={startY + i * lineH + dy}>{line || ' '}</tspan>
-                        ))}
-                  </text>
-                </g>
-              </svg>
-            );
-          })() : (
-          <>
-          {/* 文字／符號的靜止快照必須真的掛在文字分支裡。上一版只有產生
-              Blob，顯示它的 img 卻留在圖形分支，接著又把 Canvas 清成 1×1，
-              因此只看得到第一幀。快照與 Canvas 使用完全相同的 CSS 幾何，
-              切換時不會位移；整頁縮放時則像照片一樣只縮放固定影像。 */}
-          {shapeSnapshotUrl && !liveTuning && !motionFrame ? (
-            <img
-              src={shapeSnapshotUrl}
-              data-classic-text-snapshot={image.id}
-              draggable={false}
-              decoding="sync"
-              style={{
-                position: 'absolute',
-                left: `${(boxW - displayVectorCssW) / 2}px`,
-                top: `${(boxH - displayVectorCssH) / 2}px`,
-                width: `${displayVectorCssW}px`,
-                height: `${displayVectorCssH}px`,
-                maxWidth: 'none',
-                maxHeight: 'none',
-                objectFit: 'fill',
-                imageRendering: 'auto',
-                opacity: isTextEditing ? 0 : (image.opacity ?? 100) / 100,
-                pointerEvents: 'none',
-                userSelect: 'none',
-                transform: stableVectorSurface ? `scale(${image.scale})` : undefined,
-                transformOrigin: 'center center',
-              }}
-            />
-          ) : null}
-          <canvas
-            ref={vectorCanvasRef}
-            data-classic-text-raster={image.id}
-            style={{
-              position: 'absolute',
-              left: `${(boxW - displayVectorCssW) / 2}px`,
-              top: `${(boxH - displayVectorCssH) / 2}px`,
-              width: `${displayVectorCssW}px`,
-              height: `${displayVectorCssH}px`,
-              opacity: isTextEditing ? 0 : (image.opacity ?? 100) / 100,
-              visibility: shapeSnapshotUrl && !liveTuning && !motionFrame
-                ? 'hidden' : 'visible',
-              pointerEvents: 'none',
-              transform: stableVectorSurface ? `scale(${image.scale})` : undefined,
-              transformOrigin: 'center center',
-            }}
-          />
-          </>
-          )}
-        </>
-      ) : image.text !== undefined ? (
+      {image.text !== undefined && isTextEditing ? (
         <div
           ref={textRef}
           style={{
@@ -7741,7 +6925,6 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               style={{
                 position: 'absolute', left: 0, top: 0, right: 0, bottom: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                transform: image.sym ? `translate(${renderedSymbolShift.x}px, ${renderedSymbolShift.y}px)` : undefined,
                 pointerEvents: 'none', whiteSpace: 'pre', textAlign: 'center',
                 color: image.color || '#FFFFFF',
                 // 這一層絕對不描邊，光才不會算到描邊的部分
@@ -7765,7 +6948,6 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               display: 'inline-block',
               // 主層要蓋在發光層上面
               position: 'relative', zIndex: 1,
-              transform: image.sym ? `translate(${renderedSymbolShift.x}px, ${renderedSymbolShift.y}px)` : undefined,
               // width: max-content 才能不受外框寬度限制地量到真正需要的寬度，
               // 否則框被縮到上一次的寬度之後，文字就會一直卡在那個寬度換行
               width: 'max-content',
@@ -7842,7 +7024,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             />
           )}
         </div>
-      ) : needsShapeCanvas ? (
+      ) : isCanvasVector ? null : needsShapeCanvas ? (
         // 圓角／羽化／發光都畫在 canvas 上。用 CSS 遮罩的話每動一格滑桿就要
         // 重新解碼一張遮罩圖，畫面會一閃一閃；canvas 是同一格畫完才送出，不會閃。
         // 發光也才能跟文字一樣「同一個來源疊三層」，而不是一層陰影再套一層。
@@ -10694,6 +9876,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const vidInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const vectorScene = useMemo(() => new ClassicVectorScene(), []);
+  useLayoutEffect(() => {
+    if (!pagesContainerRef.current || !containerRef.current) return;
+    return vectorScene.attach(pagesContainerRef.current, containerRef.current, () => kRef.current || 1);
+  }, [vectorScene]);
+  useLayoutEffect(() => { vectorScene.flush(); });
 
   // Measure container size dynamically
   useEffect(() => {
@@ -16089,6 +15277,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                      {floatingImages.map((fImg, fIdx) => (
                       <FloatingImageComponent
                         key={fImg.id}
+                        scene={vectorScene}
                         image={fImg}
                         motionFrame={!fImg.isVideo && hasConfiguredMotion(fImg)
                           ? frameForItem(fImg, fIdx, motionTime)
