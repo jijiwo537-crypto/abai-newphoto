@@ -15298,7 +15298,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         scene={vectorScene}
                         sceneMotionFrame={sceneMotionFrame}
                         image={fImg}
-                        motionFrame={!fImg.isVideo && hasConfiguredMotion(fImg)
+                        // Vector ink animates in the scene. Its invisible hit
+                        // wrapper must keep the stable logical object bounds.
+                        motionFrame={!fImg.shape && fImg.text === undefined && !fImg.isVideo && hasConfiguredMotion(fImg)
                           ? frameForItem(fImg, fIdx, motionTime)
                           : null}
                         motionPickOnly={activeTab === 'motion'}
