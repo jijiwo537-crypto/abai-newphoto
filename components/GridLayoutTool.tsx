@@ -5218,7 +5218,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
            有快取，這裡仍會正常量一次。 */
         const size = image.fontSize || 40;
         const ink = measureSymbolStickerInk(image.text || image.sym!, fam);
-        const bounds = { w: Math.max(6, ink.w * size + 8), h: Math.max(6, ink.h * size + 8) };
+        /* alpha 墨水的四邊各保留 6px；框以這個真正墨水盒為準，不再使用
+           Unicode 字串的 advance width（長符號右側被截掉就是兩者混用）。 */
+        const bounds = { w: Math.max(6, ink.w * size + 12), h: Math.max(6, ink.h * size + 12) };
         const patch: Partial<FloatingImage> = {};
         const nw = bounds.w, nh = bounds.h;
         if (Math.abs(nw - dimsRef.current.w) > 0.1) {
@@ -5245,11 +5247,16 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       g.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(fam)}`;
       const spacing = image.letterSpacing || 0;
       const lines = (image.text === '' ? TEXT_PLACEHOLDER : (image.text || TEXT_PLACEHOLDER)).split('\n');
-      const w = Math.max(6, ...lines.map(line => {
+      const metrics = lines.map(line => g.measureText(line || ' '));
+      const w = Math.max(6, ...lines.map((line, index) => {
         const glyphs = Array.from(line);
-        return g.measureText(line).width + Math.max(0, glyphs.length - 1) * spacing;
+        return metrics[index].width + Math.max(0, glyphs.length - 1) * spacing;
       })) + 8;
-      const h = Math.max(6, lines.length * size * 1.12) + 8;
+      const ascent = Math.max(size * .7, ...metrics.map(m => m.actualBoundingBoxAscent || 0));
+      const descent = Math.max(size * .15, ...metrics.map(m => m.actualBoundingBoxDescent || 0));
+      /* 行盒不再用整個 font-size × 1.12 當成字形高度。真正選中框只包住
+         actualBoundingBox 的頂／底，再加對稱 4px，所以下方不會多留一截。 */
+      const h = Math.max(6, (lines.length - 1) * size * 1.12 + ascent + descent) + 8;
       const patch: Partial<FloatingImage> = {};
       if (Math.abs(w - dimsRef.current.w) > 1) {
         patch.width = w;
@@ -5999,6 +6006,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   /* 外框的幾何：選取框那一組要搬到另一層去畫（見 chromeLayer），
      搬過去之後必須落在完全一樣的位置，所以位置／大小／旋轉抽成同一份，
      兩邊共用 —— 不是各算一次，才不會有任何一格的偏差。 */
+  /* 靜止向量物件維持一個永遠不改尺寸的基礎盒，倍率只存在於同一條 CSS
+     matrix。這跟創意拼圖「固定主畫布＋物件矩陣」同構：縮放不再逐格改
+     SVG viewport、left/top/width/height，iPhone 也就沒有四次取整與 reflow。
+     動畫幀仍沿用動畫 Canvas 的既有幾何，避免改動其時間線。 */
+  const stableVectorTransform = (!!image.shape || image.text !== undefined) && !motionFrame;
   const wrapGeo: React.CSSProperties = {
     position: 'absolute',
     // 大小直接寫進版面而不是靠 transform: scale()。用 scale 放大時瀏覽器會沿用
@@ -6018,6 +6030,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
        中心點推出左上角。這樣中心不再隨縮放跳動（來回 0 次），四個邊也仍然
        都落在整數實體像素上，殘影的防治沒有變。 */
     ...(() => {
+      if (stableVectorTransform) {
+        return {
+          left: `${image.x}px`, top: `${image.y}px`,
+          width: `${image.width}px`, height: `${image.height}px`,
+        };
+      }
       const cx = image.x + image.width / 2;
       const cy = image.y + image.height / 2;
       const w = boxW;
@@ -6043,8 +6061,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
        改走一般繪製，讓出來的區域一定會被重畫。
        （原本留著它是為了讓邊緣吸到整數像素，那件事現在由 snapPx 用「真正的」
        實體像素密度做掉了，不必再靠合成層。） */
-    transform: (motionFrame || dragShift || (image.rotation % 360) !== 0)
-      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}${motionFrame ? `translate3d(${motionFrame.dx * boxW}px, ${motionFrame.dy * boxH}px, 0) scale(${motionFrame.k * (motionFrame.fx ?? 1)}, ${motionFrame.k}) ` : ''}rotate(${image.rotation + (motionFrame?.rot || 0)}deg)`
+    transform: (stableVectorTransform || motionFrame || dragShift || (image.rotation % 360) !== 0)
+      ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}${motionFrame ? `translate3d(${motionFrame.dx * boxW}px, ${motionFrame.dy * boxH}px, 0) scale(${motionFrame.k * (motionFrame.fx ?? 1)}, ${motionFrame.k}) ` : ''}${stableVectorTransform ? `scale(${image.scale}) ` : ''}rotate(${image.rotation + (motionFrame?.rot || 0)}deg)`
       : undefined,
     /* 過場一定要跟頁面容器那邊「一模一樣」（220ms、同一條曲線）。
        以前這裡是 200ms ease-out、那邊是 220ms cubic-bezier(0.2,0,0,1)：
@@ -6056,7 +6074,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   /* 圖形本體用固定 backing store + scale() 才不會重建畫布；操作 UI 不能跟著
      scale，否則選中框、控制條與白色藥丸都會一起變粗變大。外框因此使用等價的
      已縮放幾何，尺寸跟圖形完全重合，但 UI 自己維持螢幕上的固定大小。 */
-  const chromeWrapGeo: React.CSSProperties = image.shape ? (() => {
+  const chromeWrapGeo: React.CSSProperties = (image.shape || image.text !== undefined) ? (() => {
     const cx = image.x + image.width / 2;
     const cy = image.y + image.height / 2;
     const w = boxW;
@@ -6119,7 +6137,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           / Math.pow(Math.max(0.01, renderScale), 0.65),
       ) : '';
   const vectorShapeTransform = vectorDoubleKind
-    ? insetShapeSvgTransform(vectorDoubleKind, image.width, image.height, 0.72)
+    /* 與 drawCompositeShapeBody 的 0.52 完全相同。上一版 SVG 誤用 0.72，
+       所以切到向量預覽後內層實心星星無故放大，與匯出／按鈕都不一致。 */
+    ? insetShapeSvgTransform(vectorDoubleKind, image.width, image.height, 0.52,
+        vectorDoubleKind === 'star' ? 0.018 : 0)
     : undefined;
   const vectorDoubleMaskId = `double-shape-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
@@ -7439,7 +7460,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           })()}
         </svg>
         </>
-      ) : image.text !== undefined ? (
+      ) : image.text !== undefined && !isTextEditing ? (
         <>
           {vectorLiveTextSvg ? (() => {
             const family = image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT);
@@ -7449,26 +7470,32 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             const lineH = size * 1.12;
             const startY = -((lines.length - 1) * lineH) / 2;
             const ink = image.sym ? measureSymbolStickerInk(image.text || image.sym, family) : null;
-            const dx = ink ? -ink.cx * size : 0;
-            const dy = ink ? -ink.cy * size : 0;
+            const dx = ink ? -ink.cx * size : vectorGlyphCorrection.x;
+            const dy = ink ? -ink.cy * size : vectorGlyphCorrection.y;
             const stretchX = image.sym ? 1
               : image.width / Math.max(1, image.textStretchBaseW || image.width);
             const stretchY = image.sym ? 1
               : image.height / Math.max(1, image.textStretchBaseH || image.height);
+            /* 外層已用一條 matrix 套用 image.scale；SVG viewport 永遠留在一倍
+               基礎座標。若這裡再讓 viewport 與字形一起乘 scale，縮放每一格
+               都會重新排版，且內容會被套兩次倍率。 */
+            const fixedVectorPad = 100;
+            const svgW = Math.max(image.width, ink ? ink.w * size : image.width) + fixedVectorPad * 2;
+            const svgH = Math.max(image.height, ink ? ink.h * size : image.height) + fixedVectorPad * 2;
             const glowId = `classic-vector-text-glow-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
             const glowUnit = Math.min(15, image.glow || 0) / 20 * 14;
             return (
               <svg
                 data-classic-text-vector={image.id}
-                viewBox={`0 0 ${vectorCssW} ${vectorCssH}`}
+                viewBox={`0 0 ${svgW} ${svgH}`}
                 preserveAspectRatio="none"
                 aria-hidden
                 style={{
                   position: 'absolute',
-                  left: `${(boxW - vectorCssW) / 2}px`,
-                  top: `${(boxH - vectorCssH) / 2}px`,
-                  width: `${vectorCssW}px`,
-                  height: `${vectorCssH}px`,
+                  left: `${(image.width - svgW) / 2}px`,
+                  top: `${(image.height - svgH) / 2}px`,
+                  width: `${svgW}px`,
+                  height: `${svgH}px`,
                   overflow: 'visible',
                   pointerEvents: 'none',
                   opacity: (image.opacity ?? 100) / 100,
@@ -7476,8 +7503,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               >
                 {image.glow ? (
                   <defs>
-                    <filter id={glowId} x={-vectorCssW} y={-vectorCssH}
-                      width={vectorCssW * 3} height={vectorCssH * 3}
+                    <filter id={glowId} x={-svgW} y={-svgH}
+                      width={svgW * 3} height={svgH * 3}
                       filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
                       <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit} result="blur1" />
                       <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit * 2} result="blur2" />
@@ -7493,7 +7520,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
                     </filter>
                   </defs>
                 ) : null}
-                <g transform={`translate(${vectorCssW / 2} ${vectorCssH / 2}) scale(${image.scale * stretchX} ${image.scale * stretchY})`}>
+                <g transform={`translate(${svgW / 2} ${svgH / 2}) scale(${stretchX} ${stretchY})`}>
                   <text
                     ref={vectorGlyphRef}
                     x={dx}
