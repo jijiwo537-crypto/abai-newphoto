@@ -6011,7 +6011,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      matrix。這跟創意拼圖「固定主畫布＋物件矩陣」同構：縮放不再逐格改
      SVG viewport、left/top/width/height，iPhone 也就沒有四次取整與 reflow。
      動畫幀仍沿用動畫 Canvas 的既有幾何，避免改動其時間線。 */
-  const stableVectorTransform = (!!image.shape || image.text !== undefined) && !motionFrame;
+  /* 所有物件都使用和圖片相同的「已換算完成外框」。不能再讓文字／符號／
+     圖形把 scale 掛在外層 wrapper：父層預覽倍率或動畫倍率一變，WebKit 會
+     分別量 wrapper transform 與選中框實際尺寸，兩者便會在相鄰實體像素間
+     來回取整。創意拼圖只有一份最終外框；經典拼圖現在也遵守同一契約。 */
+  const stableVectorTransform = false;
   const wrapGeo: React.CSSProperties = {
     position: 'absolute',
     // 大小直接寫進版面而不是靠 transform: scale()。用 scale 放大時瀏覽器會沿用
@@ -6266,7 +6270,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     : 0;
   const fixedVectorCssW = Math.max(1, image.width, fixedSymbolInkW) + fixedVectorPad * 2;
   const fixedVectorCssH = Math.max(1, image.height, fixedSymbolInkH) + fixedVectorPad * 2;
-  const stableVectorSurface = (!!image.shape || image.text !== undefined) && !motionFrame;
+  const stableVectorSurface = ((!!image.shape && image.shape !== 'hole') || image.text !== undefined) && !motionFrame;
   /* 創意拼圖縮放物件時，物件是在一張尺寸固定的主 Canvas 裡重畫；經典拼圖
      以前卻讓每顆物件自己的 Canvas 跟著內容每幀改尺寸。Safari 每次重設
      canvas.width/height 都會銷毀再建立 backing store，中心與邊緣的取整也會
@@ -6342,8 +6346,18 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      相同，WebKit 的字形取整與圖片解碼仍會讓鬆手前後差一格，非同步 Blob
      競爭時甚至只剩選中框。SVG 不需要等待「鬆手補高清」，任何倍率都由
      瀏覽器直接重建輪廓。只有逐幀動畫才回到 Canvas 動畫管線。 */
-  const vectorLiveSvg = false;
-  const vectorLiveTextSvg = false;
+  /* 能由瀏覽器直接重建輪廓的內容一律維持真向量：這與創意拼圖把向量資料
+     留到最後一刻才光柵化的原則相同。只有複合／挖空圖形，以及必須逐單位
+     動畫的符號，才使用同一張固定 Canvas。 */
+  const vectorLiveSvg = !!image.shape
+    && image.shape !== 'hole'
+    && !COMPOSITE_SHAPE_KINDS.has(image.shape)
+    && motionFrame?.gridWave === undefined
+    && motionFrame?.gridReveal === undefined;
+  const vectorLiveTextSvg = image.text !== undefined
+    && !usesUnitMotion
+    && motionFrame?.gridWave === undefined
+    && motionFrame?.gridReveal === undefined;
   const staticVectorContentKey = stableVectorSurface ? JSON.stringify([
     image.shape, image.holeType, image.shapeFilled, image.shapeInnerColor,
     image.shapeLineW, image.shapeDash, image.shapeGlow, image.shapeGlowColor,
@@ -7302,8 +7316,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           decoding="sync"
           style={{
             position: 'absolute',
-            left: `${(image.width - displayVectorCssW) / 2}px`,
-            top: `${(image.height - displayVectorCssH) / 2}px`,
+            left: `${(boxW - displayVectorCssW) / 2}px`,
+            top: `${(boxH - displayVectorCssH) / 2}px`,
             width: `${displayVectorCssW}px`,
             height: `${displayVectorCssH}px`,
             maxWidth: 'none',
@@ -7312,6 +7326,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             objectFit: 'fill',
             pointerEvents: 'none',
             userSelect: 'none',
+            transform: stableVectorSurface ? `scale(${image.scale})` : undefined,
+            transformOrigin: 'center center',
             visibility: vectorLiveSvg ? 'hidden' : 'visible',
           }}
         />
@@ -7321,8 +7337,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           data-classic-shape-raster={image.id}
           style={{
             position: 'absolute',
-            left: `${(image.width - displayVectorCssW) / 2}px`,
-            top: `${(image.height - displayVectorCssH) / 2}px`,
+            left: `${(boxW - displayVectorCssW) / 2}px`,
+            top: `${(boxH - displayVectorCssH) / 2}px`,
             width: `${displayVectorCssW}px`,
             height: `${displayVectorCssH}px`,
             opacity: (image.opacity ?? 100) / 100,
@@ -7330,6 +7346,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               && motionFrame?.gridWave === undefined
               && motionFrame?.gridReveal === undefined) ? 'hidden' : 'visible',
             pointerEvents: 'none',
+            transform: stableVectorSurface ? `scale(${image.scale})` : undefined,
+            transformOrigin: 'center center',
           }}
         />
         {/* 舊 SVG 僅保留作為路徑實作的對照，不參與顯示。
@@ -7529,8 +7547,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
                 aria-hidden
                 style={{
                   position: 'absolute',
-                  left: `${(image.width - svgW) / 2}px`,
-                  top: `${(image.height - svgH) / 2}px`,
+                  left: `${(boxW - svgW) / 2}px`,
+                  top: `${(boxH - svgH) / 2}px`,
                   width: `${svgW}px`,
                   height: `${svgH}px`,
                   overflow: 'visible',
@@ -7600,8 +7618,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               decoding="sync"
               style={{
                 position: 'absolute',
-                left: `${(image.width - displayVectorCssW) / 2}px`,
-                top: `${(image.height - displayVectorCssH) / 2}px`,
+                left: `${(boxW - displayVectorCssW) / 2}px`,
+                top: `${(boxH - displayVectorCssH) / 2}px`,
                 width: `${displayVectorCssW}px`,
                 height: `${displayVectorCssH}px`,
                 maxWidth: 'none',
@@ -7611,6 +7629,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
                 opacity: isTextEditing ? 0 : (image.opacity ?? 100) / 100,
                 pointerEvents: 'none',
                 userSelect: 'none',
+                transform: stableVectorSurface ? `scale(${image.scale})` : undefined,
+                transformOrigin: 'center center',
               }}
             />
           ) : null}
@@ -7619,14 +7639,16 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             data-classic-text-raster={image.id}
             style={{
               position: 'absolute',
-              left: `${(image.width - displayVectorCssW) / 2}px`,
-              top: `${(image.height - displayVectorCssH) / 2}px`,
+              left: `${(boxW - displayVectorCssW) / 2}px`,
+              top: `${(boxH - displayVectorCssH) / 2}px`,
               width: `${displayVectorCssW}px`,
               height: `${displayVectorCssH}px`,
               opacity: isTextEditing ? 0 : (image.opacity ?? 100) / 100,
               visibility: shapeSnapshotUrl && !liveTuning && !motionFrame
                 ? 'hidden' : 'visible',
               pointerEvents: 'none',
+              transform: stableVectorSurface ? `scale(${image.scale})` : undefined,
+              transformOrigin: 'center center',
             }}
           />
           </>
