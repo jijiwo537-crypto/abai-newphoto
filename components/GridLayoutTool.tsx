@@ -1640,7 +1640,7 @@ export const drawCompositeShapeBody = (
   }
   /* 外圈維持原本大小，只縮小內層本體，兩者不再由同一條粗描邊切割；
      因此間距會確實加大，外圈尺寸與按鈕整體大小完全不變。 */
-  const body = insetShapePath(innerKind, w, h, 0.52, innerKind === 'star' ? 0.018 : 0);
+  const body = insetShapePath(innerKind, w, h, 0.44, innerKind === 'star' ? 0.018 : 0);
   const ring = insetShapePath(innerKind, w, h, 0.93);
   target.fillStyle = color;
   target.fill(body);
@@ -1668,7 +1668,7 @@ export const strokeCompositeShape = (
     if (CUTOUT_SHAPE_KINDS.has(kind)) target.stroke(insetShapePath(innerKind, w, h, 0.64));
     return true;
   }
-  target.stroke(insetShapePath(innerKind, w, h, 0.52, innerKind === 'star' ? 0.018 : 0));
+  target.stroke(insetShapePath(innerKind, w, h, 0.44, innerKind === 'star' ? 0.018 : 0));
   target.stroke(insetShapePath(innerKind, w, h, 0.93));
   return true;
 };
@@ -5218,9 +5218,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
            有快取，這裡仍會正常量一次。 */
         const size = image.fontSize || 40;
         const ink = measureSymbolStickerInk(image.text || image.sym!, fam);
-        /* alpha 墨水的四邊各保留 6px；框以這個真正墨水盒為準，不再使用
+        /* 與創意拼圖相同：alpha 墨水的四邊各保留 4px；框以這個真正墨水盒
+           為準，不再使用
            Unicode 字串的 advance width（長符號右側被截掉就是兩者混用）。 */
-        const bounds = { w: Math.max(6, ink.w * size + 12), h: Math.max(6, ink.h * size + 12) };
+        const bounds = { w: Math.max(6, ink.w * size + 8), h: Math.max(6, ink.h * size + 8) };
         const patch: Partial<FloatingImage> = {};
         const nw = bounds.w, nh = bounds.h;
         if (Math.abs(nw - dimsRef.current.w) > 0.1) {
@@ -6137,9 +6138,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           / Math.pow(Math.max(0.01, renderScale), 0.65),
       ) : '';
   const vectorShapeTransform = vectorDoubleKind
-    /* 與 drawCompositeShapeBody 的 0.52 完全相同。上一版 SVG 誤用 0.72，
+    /* 與 drawCompositeShapeBody 的 0.44 完全相同。上一版 SVG 誤用 0.72，
        所以切到向量預覽後內層實心星星無故放大，與匯出／按鈕都不一致。 */
-    ? insetShapeSvgTransform(vectorDoubleKind, image.width, image.height, 0.52,
+    ? insetShapeSvgTransform(vectorDoubleKind, image.width, image.height, 0.44,
         vectorDoubleKind === 'star' ? 0.018 : 0)
     : undefined;
   const vectorDoubleMaskId = `double-shape-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
@@ -6250,6 +6251,19 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     vectorInkW * Math.abs(Math.cos(vectorRotRad)) + vectorInkH * Math.abs(Math.sin(vectorRotRad))));
   const vectorContentH = snapPx2(Math.max(1,
     vectorInkW * Math.abs(Math.sin(vectorRotRad)) + vectorInkH * Math.abs(Math.cos(vectorRotRad))));
+  /* 靜止向量的可見貼圖使用固定的一倍座標與最大品質 backing store。它的 CSS
+     尺寸不含 image.scale，外層 matrix 才是唯一倍率來源；因此捏合物件或整頁
+     時都和照片一樣只變一條矩陣，不重配畫布、不重新量字、不換中心。 */
+  const fixedVectorPad = 100;
+  const fixedSymbolInkW = image.sym
+    ? measureSymbolStickerInk(image.text || image.sym, SYMBOL_FONT).w * (image.fontSize || 40)
+    : 0;
+  const fixedSymbolInkH = image.sym
+    ? measureSymbolStickerInk(image.text || image.sym, SYMBOL_FONT).h * (image.fontSize || 40)
+    : 0;
+  const fixedVectorCssW = Math.max(1, image.width, fixedSymbolInkW) + fixedVectorPad * 2;
+  const fixedVectorCssH = Math.max(1, image.height, fixedSymbolInkH) + fixedVectorPad * 2;
+  const stableVectorSurface = (!!image.shape || image.text !== undefined) && !motionFrame;
   /* 創意拼圖縮放物件時，物件是在一張尺寸固定的主 Canvas 裡重畫；經典拼圖
      以前卻讓每顆物件自己的 Canvas 跟著內容每幀改尺寸。Safari 每次重設
      canvas.width/height 都會銷毀再建立 backing store，中心與邊緣的取整也會
@@ -6274,6 +6288,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   }
   const vectorCssW = gestureCanvasLock.current?.w ?? vectorContentW;
   const vectorCssH = gestureCanvasLock.current?.h ?? vectorContentH;
+  const displayVectorCssW = stableVectorSurface ? fixedVectorCssW : vectorCssW;
+  const displayVectorCssH = stableVectorSurface ? fixedVectorCssH : vectorCssH;
   const vectorGlyphRef = useRef<SVGTextElement>(null);
   const [vectorGlyphCorrection, setVectorGlyphCorrection] = useState({ x: 0, y: 0 });
   /* 不猜不同引擎的 baseline：直接读取最终负责显示的 SVG 字形范围，再把它的
@@ -6323,8 +6339,22 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      相同，WebKit 的字形取整與圖片解碼仍會讓鬆手前後差一格，非同步 Blob
      競爭時甚至只剩選中框。SVG 不需要等待「鬆手補高清」，任何倍率都由
      瀏覽器直接重建輪廓。只有逐幀動畫才回到 Canvas 動畫管線。 */
-  const vectorLiveSvg = !!image.shape && image.shape !== 'hole' && !motionFrame;
-  const vectorLiveTextSvg = image.text !== undefined && !motionFrame && !isTextEditing;
+  const vectorLiveSvg = false;
+  const vectorLiveTextSvg = false;
+  const staticVectorContentKey = stableVectorSurface ? JSON.stringify([
+    image.shape, image.holeType, image.shapeFilled, image.shapeInnerColor,
+    image.shapeLineW, image.shapeDash, image.shapeGlow, image.shapeGlowColor,
+    image.shapeStrokeW, image.shapeStrokeColor, image.shapeTex, image.shapeDots,
+    image.shapeDotSize, image.shapeDotGap, image.shapeDotColor, image.shapeStripeN,
+    image.shapeStripeDir, image.shapeStripeA, image.shapeStripeB,
+    image.shapeTextureBaseW, image.shapeTextureBaseH, image.shapeFeather,
+    image.color, image.text, image.sym, image.fontFamily, image.fontSize,
+    image.bold, image.italic, image.letterSpacing, image.strokeWidth,
+    image.strokeColor, image.glow, image.glowColor, image.width, image.height,
+    image.textStretchBaseW, image.textStretchBaseH,
+  ]) : '';
+  const staticVectorContentKeyRef = useRef('');
+  const staticVectorPendingRef = useRef(false);
 
   useLayoutEffect(() => {
     /* 一般文字維持 SVG；符號则与创意拼图一样走 Canvas 的同一套墨水测量与
@@ -6333,6 +6363,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     if (!isCanvasVector) return;
     const canvas = vectorCanvasRef.current;
     if (!canvas) return;
+    /* 位置、倍率與旋轉都由外層處理；內容 key 沒變就沿用同一張已解碼影像。
+       這一條同時杜絕逐幀重畫、鬆手換圖與非同步 Blob 競爭。 */
+    if (stableVectorSurface && staticVectorContentKeyRef.current === staticVectorContentKey
+      && (shapeSnapshotUrlRef.current || staticVectorPendingRef.current)) return;
     /* 双指缩放只改变外层几何，和照片完全相同：沿用手势开始前已经完成的
        高解析快照，不在每一帧销毁／重建 Canvas。这样既没有噪点与清晰度跳变，
        大物件也不会因连续配置数千万像素而卡顿。 */
@@ -6357,6 +6391,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       && !gestureRendering
       && !liveTuning
       && !motionFrame;
+    if (stableVectorSurface && (canFreezeShape || canFreezeText)) {
+      staticVectorContentKeyRef.current = staticVectorContentKey;
+      staticVectorPendingRef.current = true;
+    }
     /* 静止向量更新时保留旧快照，直到新快照完成解码后再原子替换；不能先撤掉
        快照露出另一种解析度的 Canvas，否则缩放松手会明显变清楚／变模糊一次。 */
     if (shapeSnapshotUrlRef.current && !canFreezeShape && !canFreezeText) {
@@ -6368,7 +6406,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     const freezeVector = () => {
       if ((!canFreezeShape && !canFreezeText) || !alive || revision !== shapeSnapshotRevisionRef.current) return;
       canvas.toBlob(blob => {
-        if (!blob || !alive || revision !== shapeSnapshotRevisionRef.current) return;
+        if (!blob || !alive || revision !== shapeSnapshotRevisionRef.current) {
+          if (revision === shapeSnapshotRevisionRef.current) staticVectorPendingRef.current = false;
+          return;
+        }
         const url = URL.createObjectURL(blob);
         const probe = new Image();
         probe.onload = () => {
@@ -6376,12 +6417,16 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             URL.revokeObjectURL(url);
             return;
           }
+          staticVectorPendingRef.current = false;
           const previous = shapeSnapshotUrlRef.current;
           shapeSnapshotUrlRef.current = url;
           setShapeSnapshotUrl(url);
           if (previous && previous !== url) requestAnimationFrame(() => URL.revokeObjectURL(previous));
         };
-        probe.onerror = () => URL.revokeObjectURL(url);
+        probe.onerror = () => {
+          if (revision === shapeSnapshotRevisionRef.current) staticVectorPendingRef.current = false;
+          URL.revokeObjectURL(url);
+        };
         probe.src = url;
       }, 'image/png');
     };
@@ -6396,8 +6441,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
          在新舊畫布間交替取樣，尤其 Y 軸最容易上下跳。固定以 3 倍超取樣建立
          圖形貼圖；只有真正縮放物件本身時，boxW/boxH 才會改變並重畫。 */
       const exactShapeBacking = !!image.shape && image.shape !== 'hole';
-      const cssW = vectorCssW;
-      const cssH = vectorCssH;
+      const cssW = displayVectorCssW;
+      const cssH = displayVectorCssH;
+      const drawW = stableVectorSurface ? image.width : boxW;
+      const drawH = stableVectorSurface ? image.height : boxH;
+      const contentScale = stableVectorSurface ? 1 : image.scale;
       /* 小圖形的銳利邊緣在少量像素內移動時最容易被次像素抗鋸齒誤認成上下
          抖動。創意拼圖是在一張高解析主 Canvas 內重畫；經典拼圖保持每顆圖形
          固定貼圖，但尺寸愈小就提高一次性的超取樣密度。倍率只由物件本身尺寸
@@ -6468,9 +6516,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         const reveal = motionFrame?.gridReveal === undefined
           ? 1 : Math.max(0, Math.min(1, motionFrame.gridReveal));
         const shownW = W * reveal;
-        const span = Math.max(1, boxW * backingScale);
+        const span = Math.max(1, drawW * backingScale);
         const left = W / 2 - span / 2;
-        const amp = Math.min(10 * backingScale, boxH * backingScale * .065)
+        const amp = Math.min(10 * backingScale, drawH * backingScale * .065)
           * Math.max(.15, (image.mo?.amp ?? 50) / 100) * mix;
         const segments = Math.max(32, Math.min(128, Math.ceil(shownW / 8)));
         const sw = shownW / segments;
@@ -6510,27 +6558,27 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         ctx.translate(cssW / 2 * backingScale, cssH / 2 * backingScale);
         ctx.rotate((image.rotation * Math.PI) / 180);
         const holeFeather = shapeSupportsFeather(image.shape, image.shapeFilled, image.holeType)
-          ? shapeFeatherBlur(boxW, boxH, image.shapeFeather) * backingScale : 0;
+          ? shapeFeatherBlur(drawW, drawH, image.shapeFeather) * backingScale : 0;
         if (holeFeather > 0) ctx.filter = `blur(${holeFeather}px)`;
         drawHoleShape(ctx, {
           ...holeOpts!,
           lineUnit: Math.max(image.width, image.height) / 160 * backingScale,
-        }, boxW * backingScale, boxH * backingScale,
+        }, drawW * backingScale, drawH * backingScale,
         shapeGlowBlurs(image.width, image.height)
-          .map(r => r * image.scale * glowAmount(image.shapeGlow as any) * backingScale));
+          .map(r => r * contentScale * glowAmount(image.shapeGlow as any) * backingScale));
         ctx.restore();
         applyVectorWave();
         return;
       }
 
       if (image.shape) {
-        ctx.translate(-boxW / 2, -boxH / 2);
+        ctx.translate(-drawW / 2, -drawH / 2);
         const path = new Path2D(shapePathD(
-          image.shape, boxW, boxH,
-          (image.shapeTextureBaseW || image.width) * renderScale,
-          (image.shapeTextureBaseH || image.height) * renderScale,
+          image.shape, drawW, drawH,
+          (image.shapeTextureBaseW || image.width) * contentScale,
+          (image.shapeTextureBaseH || image.height) * contentScale,
           ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325
-            * Math.pow(Math.max(0.01, renderScale), 0.35),
+            * Math.pow(Math.max(0.01, contentScale), 0.35),
         ));
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const solid = !!image.shapeFilled && image.shape !== 'line';
@@ -6553,9 +6601,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           ctx.shadowColor = image.shapeGlowColor || color;
           for (const r of shapeGlowBlurs(image.width, image.height)) {
             // shadowBlur 不吃目前的 CTM；補上 backingScale，縮回 CSS 尺寸後才是正確強度。
-            ctx.shadowBlur = r * image.scale * gAmt * backingScale;
+            ctx.shadowBlur = r * contentScale * gAmt * backingScale;
             if (solid && COMPOSITE_SHAPE_KINDS.has(image.shape)) {
-              drawCompositeShapeBody(ctx, image.shape, boxW, boxH, color,
+              drawCompositeShapeBody(ctx, image.shape, drawW, drawH, color,
                 image.shapeInnerColor || '#FFFFFF');
             } else if (solid) ctx.fill(path); else ctx.stroke(path);
           }
@@ -6566,7 +6614,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           ctx.setLineDash([]);
           ctx.strokeStyle = image.shapeStrokeColor || '#000000';
           ctx.lineWidth = (solid ? 0 : lw) + outer * 2;
-          if (!strokeCompositeShape(ctx, image.shape, boxW, boxH)) ctx.stroke(path);
+          if (!strokeCompositeShape(ctx, image.shape, drawW, drawH)) ctx.stroke(path);
           ctx.restore();
         }
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
@@ -6575,15 +6623,15 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             /* 點陣必須使用上面已帶入固定 base／固定半徑的 path。
                一般實心函式會用當前寬高重建路徑，會把點距重新平均並放大點徑。 */
             ctx.fill(path);
-          } else drawFeatheredShapeBody(ctx, image.shape, boxW, boxH, image.shapeFeather, color, (tc, bodyPath) => {
+          } else drawFeatheredShapeBody(ctx, image.shape, drawW, drawH, image.shapeFeather, color, (tc, bodyPath) => {
             if (tx === 'none') return;
-            tc.save(); tc.clip(bodyPath); tc.translate(boxW / 2, boxH / 2);
-            if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, boxW, boxH, boxW, boxH, {
+            tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
+            if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
               tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
-              textureBaseW: (image.shapeTextureBaseW || image.width) * image.scale,
-              textureBaseH: (image.shapeTextureBaseH || image.height) * image.scale,
+              textureBaseW: (image.shapeTextureBaseW || image.width) * contentScale,
+              textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale,
             });
-            else paintStripes(tc, boxW, boxH, boxW, boxH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
+            else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
               image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
             tc.restore();
           }, image.shapeInnerColor || '#FFFFFF');
@@ -6606,7 +6654,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
          座標的結構相同，也不會觸發 DOM／字型引擎重新排版。 */
       const textStretchX = !image.sym ? image.width / Math.max(1, image.textStretchBaseW || image.width) : 1;
       const textStretchY = !image.sym ? image.height / Math.max(1, image.textStretchBaseH || image.height) : 1;
-      ctx.scale(image.scale * textStretchX, image.scale * textStretchY);
+      ctx.scale(contentScale * textStretchX, contentScale * textStretchY);
       ctx.font = `${image.italic ? 'italic ' : ''}${image.bold ? 700 : 400} ${size}px ${fontStack(family)}`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -6629,7 +6677,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           image.text || '', family, size, stroke ? 'stroke' : 'fill',
           stroke ? (image.strokeColor || '#000000') : (image.color || '#FFFFFF'),
           stroke ? (image.strokeWidth || 0) * 2 : 0,
-          Math.max(2.5, Math.min(7, backingScale * Math.max(1, image.scale))),
+          Math.max(2.5, Math.min(7, backingScale * Math.max(1, contentScale))),
           image.sym ? undefined : {
             plainText: true,
             fontWeight: image.bold ? 700 : 400,
@@ -6684,7 +6732,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         ctx.shadowColor = image.glowColor || '#FFFFFF';
         for (const k of [1, 2, 3]) {
           // shadowBlur 不吃目前的 CTM；高解析 backing store 必須手動換成實體像素。
-          ctx.shadowBlur = (Math.min(15, image.glow) / 20) * 14 * k * image.scale * backingScale;
+          ctx.shadowBlur = (Math.min(15, image.glow) / 20) * 14 * k * contentScale * backingScale;
           fill();
         }
         ctx.shadowBlur = 0;
@@ -6721,7 +6769,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       if (raf) cancelAnimationFrame(raf);
     };
   }, [
-    isCanvasVector, usesUnitMotion, boxW, boxH, vectorPad.x, vectorPad.y, vectorCssW, vectorCssH,
+    isCanvasVector, usesUnitMotion,
+    stableVectorSurface ? image.width : boxW,
+    stableVectorSurface ? image.height : boxH,
+    stableVectorSurface ? fixedVectorPad : vectorPad.x,
+    stableVectorSurface ? fixedVectorPad : vectorPad.y,
+    displayVectorCssW, displayVectorCssH,
     image.shape, image.holeType, image.shapeFilled, image.shapeInnerColor, image.shapeLineW, image.shapeDash,
     image.shapeGlow, image.shapeGlowColor, image.shapeStrokeW, image.shapeStrokeColor,
     image.shapeTex, image.shapeDots, image.shapeDotSize, image.shapeDotGap, image.shapeDotColor,
@@ -6729,7 +6782,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     image.shapeTextureBaseW, image.shapeTextureBaseH, image.color,
     image.text, image.sym, image.fontFamily, image.fontSize, image.bold, image.italic,
     image.letterSpacing, image.strokeWidth, image.strokeColor, image.glow, image.glowColor,
-    image.scale, image.rotation, image.mo,
+    stableVectorSurface ? 1 : image.scale,
+    stableVectorSurface ? 0 : image.rotation,
+    image.mo,
     /* 所有向量物件的預覽倍率都不參與 backing-store 依賴。 */
     1,
     gestureRendering, liveTuning, holeAssetRevision, vectorLiveSvg, vectorLiveTextSvg,
@@ -7265,10 +7320,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           decoding="sync"
           style={{
             position: 'absolute',
-            left: `${(boxW - vectorCssW) / 2}px`,
-            top: `${(boxH - vectorCssH) / 2}px`,
-            width: `${vectorCssW}px`,
-            height: `${vectorCssH}px`,
+            left: `${(image.width - displayVectorCssW) / 2}px`,
+            top: `${(image.height - displayVectorCssH) / 2}px`,
+            width: `${displayVectorCssW}px`,
+            height: `${displayVectorCssH}px`,
             maxWidth: 'none',
             maxHeight: 'none',
             opacity: (image.opacity ?? 100) / 100,
@@ -7284,10 +7339,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           data-classic-shape-raster={image.id}
           style={{
             position: 'absolute',
-            left: `${(boxW - vectorCssW) / 2}px`,
-            top: `${(boxH - vectorCssH) / 2}px`,
-            width: `${vectorCssW}px`,
-            height: `${vectorCssH}px`,
+            left: `${(image.width - displayVectorCssW) / 2}px`,
+            top: `${(image.height - displayVectorCssH) / 2}px`,
+            width: `${displayVectorCssW}px`,
+            height: `${displayVectorCssH}px`,
             opacity: (image.opacity ?? 100) / 100,
             visibility: vectorLiveSvg || (shapeSnapshotUrl
               && motionFrame?.gridWave === undefined
@@ -7563,10 +7618,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               decoding="sync"
               style={{
                 position: 'absolute',
-                left: `${(boxW - vectorCssW) / 2}px`,
-                top: `${(boxH - vectorCssH) / 2}px`,
-                width: `${vectorCssW}px`,
-                height: `${vectorCssH}px`,
+                left: `${(image.width - displayVectorCssW) / 2}px`,
+                top: `${(image.height - displayVectorCssH) / 2}px`,
+                width: `${displayVectorCssW}px`,
+                height: `${displayVectorCssH}px`,
                 maxWidth: 'none',
                 maxHeight: 'none',
                 objectFit: 'fill',
@@ -7582,10 +7637,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             data-classic-text-raster={image.id}
             style={{
               position: 'absolute',
-              left: `${(boxW - vectorCssW) / 2}px`,
-              top: `${(boxH - vectorCssH) / 2}px`,
-              width: `${vectorCssW}px`,
-              height: `${vectorCssH}px`,
+              left: `${(image.width - displayVectorCssW) / 2}px`,
+              top: `${(image.height - displayVectorCssH) / 2}px`,
+              width: `${displayVectorCssW}px`,
+              height: `${displayVectorCssH}px`,
               opacity: isTextEditing ? 0 : (image.opacity ?? 100) / 100,
               visibility: shapeSnapshotUrl && !liveTuning && !motionFrame
                 ? 'hidden' : 'visible',
@@ -16057,7 +16112,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         /* 一般圖形、文字、符號在手勢前中後都使用同一份 SVG，
                            不再切換 PNG 快照。只有必須用 Canvas 畫的借用圖案保留
                            手勢旗標；它也不會影響一般向量物件的幾何或選中框。 */
-                        gestureRendering={pinchFloatingId === fImg.id && fImg.shape === 'hole'}
+                        gestureRendering={pinchFloatingId === fImg.id && (!!fImg.shape || fImg.text !== undefined)}
                         liveTuning={vectorTuningId === fImg.id}
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}
