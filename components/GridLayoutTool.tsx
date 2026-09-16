@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
@@ -6297,10 +6297,13 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     };
   }, [image.shape, image.holeType]);
 
-  /* 這次只保留「滑桿不重畫整個專案」的效能修復。可見本體維持原本穩定的
-     Canvas／快照管線，避免 iOS 在頁面 pinch 或發光、描邊調整時，把 SVG
-     filter 與外層畫布分開量化而產生物件抖動。 */
-  const vectorLiveSvg = false;
+  /* 靜止的圖形、文字與符號始終使用同一份真向量畫面。以前它們在
+     Canvas → PNG 快照 → 鬆手後的新 PNG 快照之間切換；即使三者理論座標
+     相同，WebKit 的字形取整與圖片解碼仍會讓鬆手前後差一格，非同步 Blob
+     競爭時甚至只剩選中框。SVG 不需要等待「鬆手補高清」，任何倍率都由
+     瀏覽器直接重建輪廓。只有逐幀動畫才回到 Canvas 動畫管線。 */
+  const vectorLiveSvg = !!image.shape && image.shape !== 'hole' && !motionFrame;
+  const vectorLiveTextSvg = image.text !== undefined && !motionFrame && !isTextEditing;
 
   useLayoutEffect(() => {
     /* 一般文字維持 SVG；符號则与创意拼图一样走 Canvas 的同一套墨水测量与
@@ -6316,7 +6319,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     /* 一般路徑圖形拖滑桿時直接顯示下面那張 SVG 向量層。它不需要重建大型
        backing store，而且任何倍率都是真向量清晰度；放手後才重畫一次最終
        Canvas／快照。這比降低拖動中的畫質更快，也完全不會出現清晰度跳變。 */
-    if (vectorLiveSvg) return;
+    if (vectorLiveSvg || vectorLiveTextSvg) return;
     let alive = true;
     let raf = 0;
     const revision = ++shapeSnapshotRevisionRef.current;
@@ -6708,7 +6711,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     image.scale, image.rotation, image.mo,
     /* 所有向量物件的預覽倍率都不參與 backing-store 依賴。 */
     1,
-    gestureRendering, liveTuning, holeAssetRevision,
+    gestureRendering, liveTuning, holeAssetRevision, vectorLiveSvg, vectorLiveTextSvg,
     motionFrame?.seq, motionFrame?.idleT, motionFrame?.waveMix,
     motionFrame?.gridWave, motionFrame?.gridReveal,
   ]);
@@ -7438,6 +7441,89 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         </>
       ) : image.text !== undefined ? (
         <>
+          {vectorLiveTextSvg ? (() => {
+            const family = image.sym ? SYMBOL_FONT : (image.fontFamily || DEFAULT_FONT);
+            const size = image.fontSize || 40;
+            const spacing = image.letterSpacing || 0;
+            const lines = (image.text || '').split('\n');
+            const lineH = size * 1.12;
+            const startY = -((lines.length - 1) * lineH) / 2;
+            const ink = image.sym ? measureSymbolStickerInk(image.text || image.sym, family) : null;
+            const dx = ink ? -ink.cx * size : 0;
+            const dy = ink ? -ink.cy * size : 0;
+            const stretchX = image.sym ? 1
+              : image.width / Math.max(1, image.textStretchBaseW || image.width);
+            const stretchY = image.sym ? 1
+              : image.height / Math.max(1, image.textStretchBaseH || image.height);
+            const glowId = `classic-vector-text-glow-${String(image.id).replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+            const glowUnit = Math.min(15, image.glow || 0) / 20 * 14;
+            return (
+              <svg
+                data-classic-text-vector={image.id}
+                viewBox={`0 0 ${vectorCssW} ${vectorCssH}`}
+                preserveAspectRatio="none"
+                aria-hidden
+                style={{
+                  position: 'absolute',
+                  left: `${(boxW - vectorCssW) / 2}px`,
+                  top: `${(boxH - vectorCssH) / 2}px`,
+                  width: `${vectorCssW}px`,
+                  height: `${vectorCssH}px`,
+                  overflow: 'visible',
+                  pointerEvents: 'none',
+                  opacity: (image.opacity ?? 100) / 100,
+                }}
+              >
+                {image.glow ? (
+                  <defs>
+                    <filter id={glowId} x={-vectorCssW} y={-vectorCssH}
+                      width={vectorCssW * 3} height={vectorCssH * 3}
+                      filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
+                      <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit} result="blur1" />
+                      <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit * 2} result="blur2" />
+                      <feGaussianBlur in="SourceAlpha" stdDeviation={glowUnit * 3} result="blur3" />
+                      <feFlood floodColor={image.glowColor || '#FFFFFF'} result="glowColor" />
+                      <feComposite in="glowColor" in2="blur1" operator="in" result="glow1" />
+                      <feComposite in="glowColor" in2="blur2" operator="in" result="glow2" />
+                      <feComposite in="glowColor" in2="blur3" operator="in" result="glow3" />
+                      <feMerge>
+                        <feMergeNode in="glow3" /><feMergeNode in="glow2" />
+                        <feMergeNode in="glow1" /><feMergeNode in="SourceGraphic" />
+                      </feMerge>
+                    </filter>
+                  </defs>
+                ) : null}
+                <g transform={`translate(${vectorCssW / 2} ${vectorCssH / 2}) scale(${image.scale * stretchX} ${image.scale * stretchY})`}>
+                  <text
+                    ref={vectorGlyphRef}
+                    x={dx}
+                    y={startY + dy}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontFamily={fontStack(family)}
+                    fontSize={size}
+                    fontWeight={image.bold ? 700 : 400}
+                    fontStyle={image.italic ? 'italic' : 'normal'}
+                    letterSpacing={spacing}
+                    fill={image.color || '#FFFFFF'}
+                    stroke={image.strokeWidth ? (image.strokeColor || '#000000') : 'none'}
+                    strokeWidth={image.strokeWidth ? image.strokeWidth * 2 : 0}
+                    strokeLinejoin="round"
+                    paintOrder="stroke fill"
+                    filter={image.glow ? `url(#${glowId})` : undefined}
+                    style={{ textRendering: 'geometricPrecision' }}
+                  >
+                    {lines.length === 1
+                      ? (image.text || '')
+                      : lines.map((line, i) => (
+                          <tspan key={i} x={dx} y={startY + i * lineH + dy}>{line || ' '}</tspan>
+                        ))}
+                  </text>
+                </g>
+              </svg>
+            );
+          })() : (
+          <>
           {/* 文字／符號的靜止快照必須真的掛在文字分支裡。上一版只有產生
               Blob，顯示它的 img 卻留在圖形分支，接著又把 Canvas 清成 1×1，
               因此只看得到第一幀。快照與 Canvas 使用完全相同的 CSS 幾何，
@@ -7479,6 +7565,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               pointerEvents: 'none',
             }}
           />
+          </>
+          )}
         </>
       ) : image.text !== undefined ? (
         <div
@@ -12864,13 +12952,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             ? (g.lastScale ?? rawScale)
             : g.lastScale + (rawScale - g.lastScale) * 0.72;
           g.lastScale = ns;
-          const isVectorObject = !!target && (!!target.shape || target.text !== undefined);
           const rasterSeamBleed = target && target.text === undefined && !target.shape
             && Math.abs(((rot % 180) + 180) % 180) < 0.01 ? 0.5 : 0;
-          // 圖形、符號與文字縮放時不做邊界倍率吸附。它們的尺寸會即時改寫，
-          // 吸入／離開臨界值即使有遲滯，仍會形成肉眼可見的一格跳動；圖片保留
-          // 原本的貼邊吸附，向量物件則維持連續的一對一縮放。
-          if (target && enableSnapping && !isVectorObject) {
+          /* 圖片、圖形、符號、文字共用完全相同的邊緣倍率吸附。舊版刻意把
+             向量物件排除，卻仍然替它們畫對齊線，於是看得到藍線但手指沒有
+             真正吸住，鬆手位置也像差了一格。現在候選倍率、4px 進入門檻、
+             7px 離開遲滯與固定中心都只走這一條路。 */
+          if (target && enableSnapping) {
             /* 门槛统一用屏幕像素。之前这里把内容坐标误当成屏幕像素；预览缩放后
                会提早／延后吸附。现在无论画布倍率多少，都是离边缘 4px 才锁定。 */
             const previewK = Math.max(.0001, kRef.current || 1);
@@ -13063,11 +13151,21 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const handleWorkspaceTouchEnd = (e?: React.TouchEvent<HTMLDivElement>) => {
     // 雙指縮放必須等最後一根手指也離開才收尾，避免中途重排造成畫面跳動。
     if (canvasZoomRef.current && e && e.touches.length > 0) return;
-    flushInteractionNow();
+    const endingObjectGesture = !!wsGestureRef.current;
+    /* 最後一筆幾何與操作框在同一次同步提交中完成。若讓 React 分成兩次畫，
+       第一幀會是「物件已到終點、框仍隱藏」，下一幀框才回來；更糟的是舊的
+       PNG 管線會趁這一格切圖。同步提交後鬆手當幀就以同一座標恢復外框。 */
+    flushSync(() => {
+      flushInteractionNow();
+      setSelectionDragging(false);
+      setPinchFloatingId(null);
+      if (endingObjectGesture) {
+        setActiveGuidelines([]);
+        setActiveCollisions({ left: false, right: false, top: false, bottom: false });
+      }
+    });
     if (!e || e.touches.length === 0) wsTouchTargetRef.current = null;
-    setSelectionDragging(false);
     selectionDraggingRef.current = false;
-    setPinchFloatingId(null);
     // 手指全部離開了，下一次手勢才能重新決定是捲頁還是縮放
     panMovedRef.current = false;
     /* 畫布縮放收尾：把手勢期間直接寫進 DOM 的倍率同步回 state。
@@ -13082,8 +13180,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
     if (wsGestureRef.current) {
       wsGestureRef.current = null;
-      setActiveGuidelines([]);
-      setActiveCollisions({ left: false, right: false, top: false, bottom: false });
       return;
     }
     const p = panRef.current;
@@ -15931,11 +16027,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         touchMode={activeTab === 'motion' ? 'pan-x' : 'none'}
                         hideToolbar={pinchFloatingId === fImg.id || (selectionDragging && selectedFloatingId === fImg.id)}
                         hideChrome={(tuningEdge || selectionDragging || pinchFloatingId === fImg.id) && selectedFloatingId === fImg.id}
-                        /* 真正開始捏合後沿用手勢開始前已完成的高解析快照，僅讓
-                           外盒尺寸連續變化；不重畫 Canvas，也不切三倍工作畫布。
-                           因此和照片一樣只做合成缩放，文字／符號／圖形都能穩定
-                           跑滿畫面刷新率，放手後再原子替換成最終高解析結果。 */
-                        gestureRendering={pinchFloatingId === fImg.id && (!!fImg.shape || fImg.text !== undefined)}
+                        /* 一般圖形、文字、符號在手勢前中後都使用同一份 SVG，
+                           不再切換 PNG 快照。只有必須用 Canvas 畫的借用圖案保留
+                           手勢旗標；它也不會影響一般向量物件的幾何或選中框。 */
+                        gestureRendering={pinchFloatingId === fImg.id && fImg.shape === 'hole'}
                         liveTuning={vectorTuningId === fImg.id}
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}
