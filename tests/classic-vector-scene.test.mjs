@@ -13,10 +13,12 @@ globalThis.requestAnimationFrame = () => ++nextFrame;
 globalThis.cancelAnimationFrame = () => {};
 globalThis.window = {devicePixelRatio:3};
 globalThis.ResizeObserver = class {observe(){} disconnect(){}};
+let actualRect={left:-32,top:48,width:454,height:564};
 class Canvas {
   dataset={};style={};width=0;height=0;
   ctx={save(){},restore(){},clearRect(){},drawImage(){},setTransform(...args){this.matrix=args;}};
   getContext(){return this.ctx;}
+  getBoundingClientRect(){return actualRect;}
   remove(){host.children=host.children.filter(v=>v!==this);}
 }
 globalThis.HTMLCanvasElement=Canvas;
@@ -36,21 +38,37 @@ scene.set('text',{z:60,paint:(ctx,density)=>matrices.push({matrix:ctx.matrix,den
 scene.set('symbol',{z:62,paint:noop});
 scene.flush();
 assert.equal(host.children.length,1,'adjacent vectors share one scene canvas');
-assert.equal(host.children[0].width,454*3);
-assert.equal(host.children[0].height,564*3);
+assert.equal(host.children[0].width,454*4.5);
+assert.equal(host.children[0].height,564*4.5);
 for(const value of [.25,.75,1,1.5,3,6]){
   zoom=value; scene.flush();
   const last=matrices.at(-1);
-  assert.equal(last.density,3*value);
-  assert.equal(last.matrix[0],3*value);
-  assert.equal(last.matrix[4],156,'screen origin stays exact at every zoom');
-  assert.equal(host.children[0].width,454*3,'pinch never reallocates an object bitmap');
+  assert.equal(last.density,4.5*value);
+  assert.equal(last.matrix[0],4.5*value);
+  assert.equal(last.matrix[4],234,'screen origin stays exact at every zoom');
+  assert.equal(host.children[0].width,454*4.5,'pinch never reallocates an object bitmap');
   assert.equal(parseFloat(host.children[0].style.width)*value,454,'layout cancels parent zoom without a second transform');
   assert.equal(host.children[0].style.transform,'none');
 }
 zoom=2;
 listeners.get('abai-preview-transform')();
-assert.equal(matrices.at(-1).density,6,'geometry event repaints synchronously, not one animation frame later');
+assert.equal(matrices.at(-1).density,9,'geometry event repaints synchronously, not one animation frame later');
+actualRect={left:-32.0078125,top:48.015625,width:454.015625,height:563.984375};
+for(const value of [.25,.75,1,1.5,3,6]){
+  zoom=value;scene.flush();const m=matrices.at(-1).matrix,c=host.children[0];
+  const screenX=actualRect.left+(m[0]*85+m[4])*actualRect.width/c.width;
+  const screenY=actualRect.top+(m[3]*60+m[5])*actualRect.height/c.height;
+  assert.ok(Math.abs(screenX-(20+85*value))<1e-9,'fractional CSS width cannot shift ink horizontally');
+  assert.ok(Math.abs(screenY-(100+60*value))<1e-9,'fractional CSS height cannot shift ink vertically');
+}
+actualRect={left:-32,top:48,width:454,height:564};
+let animationTime=0,paintedTime=-1,opacityReads=0;
+scene.set('clock',{z:64,opacity:()=>{opacityReads++;return .5;},paint:()=>{paintedTime=animationTime;}});
+for(const t of [0,.016,.033,.5,.5,0]){
+  animationTime=t;scene.flush();assert.equal(paintedTime,t,'paint reads current clock, including pause and replay, without re-registering');
+}
+assert.equal(opacityReads,6,'opacity follows the same live frame as geometry');
+scene.remove('clock');
 const photo={style:{zIndex:'61'},dataset:{}};
 host.children.push(photo);scene.flush();
 assert.equal(host.children.filter(v=>v instanceof Canvas).length,2,'photo between vectors keeps its layer position');

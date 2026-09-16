@@ -4352,6 +4352,7 @@ type SwapTarget = { kind: 'cell'; idx: number; layoutId?: string } | { kind: 'fl
 
 interface FloatingImageComponentProps {
   scene?: ClassicVectorScene;
+  sceneMotionFrame?: (image: FloatingImage, index: number) => ObjectMotionFrame | null;
   image: FloatingImage;
   isSelected: boolean;
   /** 第二段選取：選中的是「形狀」而不是整張圖片（外框改成貼著形狀、角球收起來） */
@@ -5174,7 +5175,8 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           image.text || '', family, size, stroke ? 'stroke' : 'fill',
           stroke ? (image.strokeColor || '#000000') : (image.color || '#FFFFFF'),
           stroke ? (image.strokeWidth || 0) * 2 : 0,
-          Math.max(4, Math.min(8, 2 ** Math.ceil(Math.log2(Math.max(1, backingScale))))),
+          // Stable high-density masks: preview zoom must not swap raster bounds.
+          7,
           image.sym ? undefined : {
             plainText: true,
             fontWeight: image.bold ? 700 : 400,
@@ -5249,6 +5251,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
 
 const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   scene,
+  sceneMotionFrame,
   image: committedImage,
   isSelected,
   shapeSelected,
@@ -6393,11 +6396,16 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         at: dragShift?.live ? 0 : performance.now() };
     }
     const shift = sceneShift.current;
+    const registeredMotionFrame = motionFrame;
     scene.set(image.id, {
       z: (dragShift?.live ? 450100 : 60) + stackIndex * 2,
-      opacity: ((image.opacity ?? 100) / 100) * (motionFrame?.a ?? 1),
+      opacity: () => ((image.opacity ?? 100) / 100)
+        * ((sceneMotionFrame ? sceneMotionFrame(image, stackIndex) : motionFrame)?.a ?? 1),
       animateUntil: shift.at + 220,
       paint: (ctx, density) => {
+        // Read the shared clock at paint time, not a React render from an
+        // earlier animation frame. The image geometry remains immutable.
+        const motionFrame = sceneMotionFrame ? sceneMotionFrame(image, stackIndex) : registeredMotionFrame;
         const t = Math.min(1, (performance.now() - shift.at) / 220);
         const q = 1 - Math.pow(1 - t, 3);
         const shiftX = shift.fromX + (shift.tx - shift.fromX) * q;
@@ -7195,6 +7203,7 @@ const FloatingImageComponent = React.memo(FloatingImageComponentBase, (a, b) =>
   && sameDragShift(a.dragShift, b.dragShift)
   && a.chromeLayer === b.chromeLayer
   && a.motionFrame === b.motionFrame
+  && a.sceneMotionFrame === b.sceneMotionFrame
   && a.motionPickOnly === b.motionPickOnly
   && a.motionTargetFlash === b.motionTargetFlash
   && a.videoPaused === b.videoPaused
@@ -7265,6 +7274,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [motionTime, setMotionTime] = useState(0);
   const [motionRunSeq, setMotionRunSeq] = useState(0);
   const motionClockRef = useRef(0);
+  const vectorScene = useMemo(() => new ClassicVectorScene(), []);
   const [motionTargetId, setMotionTargetId] = useState<string | null>(null);
   const [motionFlash, setMotionFlash] = useState<{ id: string; nonce: number } | null>(null);
   const motionFlashTimerRef = useRef<number | null>(null);
@@ -9113,6 +9123,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     () => floatingImages.some(hasConfiguredMotion),
     [floatingImages, hasConfiguredMotion],
   );
+  const sceneMotionFrame = useCallback((item: FloatingImage, index: number) =>
+    hasConfiguredMotion(item) ? frameForItem(item, index, motionClockRef.current) : null,
+  [hasConfiguredMotion, frameForItem]);
+  const hasDomMotion = useMemo(() => floatingImages.some(item =>
+    !item.shape && item.text === undefined && hasConfiguredMotion(item)),
+  [floatingImages, hasConfiguredMotion]);
   const [pageVideoDuration, setPageVideoDuration] = useState(0);
   useEffect(() => {
     let alive = true;
@@ -9221,11 +9237,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          ProMotion 與高幀影片所在裝置則可跟到 120fps。 */
       const t = ((now - started) / 1000) % motionTotal;
       motionClockRef.current = t;
-      setMotionTime(t);
+      // Canvas-only animation follows the same direct clock-to-paint path as
+      // creative collage. Do not rebuild the whole editor for every unit pulse.
+      vectorScene.flush();
+      if (hasDomMotion) setMotionTime(t);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [activeTab, motionPlaying, motionTotal, motionRunSeq, anyClassicMotion]);
+  }, [activeTab, motionPlaying, motionTotal, motionRunSeq, anyClassicMotion, hasDomMotion, vectorScene]);
   useEffect(() => {
     if (activeTab !== 'motion') return;
     setSelectedFloatingId(null);
@@ -9876,7 +9895,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const vidInputRef = useRef<HTMLInputElement>(null);
   const replaceInputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const vectorScene = useMemo(() => new ClassicVectorScene(), []);
   useLayoutEffect(() => {
     if (!pagesContainerRef.current || !containerRef.current) return;
     return vectorScene.attach(pagesContainerRef.current, containerRef.current, () => kRef.current || 1);
@@ -15278,6 +15296,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       <FloatingImageComponent
                         key={fImg.id}
                         scene={vectorScene}
+                        sceneMotionFrame={sceneMotionFrame}
                         image={fImg}
                         motionFrame={!fImg.isVideo && hasConfiguredMotion(fImg)
                           ? frameForItem(fImg, fIdx, motionTime)

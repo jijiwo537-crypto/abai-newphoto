@@ -4,7 +4,7 @@
  */
 export type SceneEntry = {
   z: number;
-  opacity?: number;
+  opacity?: number | (() => number);
   animateUntil?: number;
   paint: (ctx: CanvasRenderingContext2D, pixelsPerUnit: number) => void;
 };
@@ -72,7 +72,8 @@ export class ClassicVectorScene {
     if (!host || !viewport) return;
     const k = Math.max(.0001, this.scale());
     const hr = host.getBoundingClientRect(), vr = viewport.getBoundingClientRect();
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    // Keep the same supersampling during gestures, animation and at rest.
+    const dpr = Math.max(1, window.devicePixelRatio || 1) * 1.5;
     // Constant screen-sized backing stores, never object-sized textures. A large
     // object therefore does not allocate a huge bitmap or change resolution on up.
     const w = Math.max(1, Math.ceil(vr.width + 64));
@@ -115,14 +116,22 @@ export class ClassicVectorScene {
       const pw = Math.ceil(w * dpr), ph = Math.ceil(h * dpr);
       if (canvas.width !== pw) canvas.width = pw;
       if (canvas.height !== ph) canvas.height = ph;
+      // CSS layout is rounded by WebKit; map the actual surface rectangle back
+      // onto scene coordinates instead of assuming requested CSS values stuck.
+      const rect = canvas.getBoundingClientRect();
+      const sx = pw / Math.max(.0001, rect.width);
+      const sy = ph / Math.max(.0001, rect.height);
+      const matrix: [number, number, number, number, number, number] =
+        [sx * k, 0, 0, sy * k, (hr.left - rect.left) * sx, (hr.top - rect.top) * sy];
       const ctx = canvas.getContext('2d')!;
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, pw, ph);
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      ctx.setTransform(dpr * k, 0, 0, dpr * k, -x * dpr * k, -y * dpr * k);
+      ctx.setTransform(...matrix);
       for (const entry of run) {
-        const opacity = Math.max(0, Math.min(1, entry.opacity ?? 1));
+        const opacity = Math.max(0, Math.min(1,
+          typeof entry.opacity === 'function' ? entry.opacity() : entry.opacity ?? 1));
         if (opacity === 0) continue;
         ctx.save();
         if (opacity < 1) {
@@ -132,7 +141,7 @@ export class ClassicVectorScene {
           const sg = scratch.getContext('2d')!;
           sg.setTransform(1, 0, 0, 1, 0, 0); sg.clearRect(0, 0, pw, ph);
           sg.save();
-          sg.setTransform(dpr * k, 0, 0, dpr * k, -x * dpr * k, -y * dpr * k);
+          sg.setTransform(...matrix);
           entry.paint(sg, dpr * k);
           sg.restore();
           ctx.setTransform(1, 0, 0, 1, 0, 0);
