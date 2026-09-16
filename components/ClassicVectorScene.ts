@@ -25,7 +25,9 @@ export class ClassicVectorScene {
     this.viewport = viewport;
     this.scale = scale;
     viewport.addEventListener('scroll', this.invalidate, { passive: true });
-    host.parentElement?.addEventListener('abai-preview-transform', this.invalidate);
+    // Geometry changes must repaint before the same frame is composited. Queuing
+    // another rAF here leaves the old inverse scale visible for one frame.
+    host.parentElement?.addEventListener('abai-preview-transform', this.flush);
     this.observer = new ResizeObserver(this.invalidate);
     this.observer.observe(viewport);
     this.invalidate();
@@ -55,7 +57,7 @@ export class ClassicVectorScene {
     if (this.frame) cancelAnimationFrame(this.frame);
     this.frame = 0;
     this.viewport?.removeEventListener('scroll', this.invalidate);
-    this.host?.parentElement?.removeEventListener('abai-preview-transform', this.invalidate);
+    this.host?.parentElement?.removeEventListener('abai-preview-transform', this.flush);
     this.observer?.disconnect();
     this.surfaces.forEach(canvas => { canvas.remove(); canvas.width = canvas.height = 1; });
     this.surfaces = [];
@@ -103,9 +105,12 @@ export class ClassicVectorScene {
       }
       canvas.style.left = `${x}px`;
       canvas.style.top = `${y}px`;
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
-      canvas.style.transform = `scale(${1 / k})`;
+      // Give the bitmap its final on-screen dimensions through layout, not a
+      // second compositing transform. In WebKit, zoom + inverse transform can
+      // rasterize the bitmap at the intermediate (especially smaller) size.
+      canvas.style.width = `${w / k}px`;
+      canvas.style.height = `${h / k}px`;
+      canvas.style.transform = 'none';
       canvas.style.zIndex = String(run[0].z);
       const pw = Math.ceil(w * dpr), ph = Math.ceil(h * dpr);
       if (canvas.width !== pw) canvas.width = pw;
