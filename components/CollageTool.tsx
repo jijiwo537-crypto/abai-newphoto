@@ -901,8 +901,15 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
   /* 進場與常駐都選波浪時共用同一條 phase：進場跑完一個完整週期，
      接著直接循環，不會同時疊上兩個波形。 */
   if (cfg.in === 'grid-wave' && cfg.idle === 'grid-wave') {
-    const q = Math.max(0, p);
-    return { ...FLAT, fx: 1, burst: 0, gridWave: q, ...(q < 1 ? { gridReveal: easeOutCubic(q) } : null) };
+    /* 進場波浪走到 phase=1 後，常駐波浪必須從同一幀接著走，不能繼續
+       沿用進場的 dur。舊寫法直接回傳 p，因此常駐速度永遠被「進場速度」
+       綁死，面板上的速度滑桿看似有變、實際畫面卻完全不理它。 */
+    const introP = Math.max(0, p);
+    if (introP < 1) {
+      return { ...FLAT, fx: 1, burst: 0, gridWave: introP, gridReveal: easeOutCubic(introP) };
+    }
+    const after = Math.max(0, t - introEnd);
+    return { ...FLAT, fx: 1, burst: 0, gridWave: 1 + after * cfg.speed * 0.22, waveMix: 1 };
   }
   const f = inFrame(cfg.in, Math.max(0, Math.min(1, p)));
   const fx = inFlipX(cfg.in, Math.max(0, Math.min(1, p)));
@@ -2029,7 +2036,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* renderToCanvas 宣告在動畫 state 之前，圖案波浪的即時幅度因此走 ref；
      拖滑桿時不重建龐大的繪圖函式，但下一格一定讀到最新數值。 */
   const moShapeAmpRef = useRef(50);
-  const moShapeCfgRef = useRef<MoCfg>({ ...MO_DEFAULT, dur: durFromSpeed(30), idle: 'float' });
+  const moShapeCfgRef = useRef<MoCfg>({
+    ...MO_DEFAULT,
+    dur: durFromSpeed(30),
+    idle: 'pattern-breathe',
+    amp: 100,
+    speed: patternBreathSpeedFromUi(70),
+  });
   const envKey = (e: any) => {
     try {
       return JSON.stringify(e, (k, v) => (v instanceof HTMLImageElement ? v.src.slice(0, 96) : v));
@@ -3325,6 +3338,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           z0: clampImgZoom(oo.imgShapeZoom),
           // 放大要以形狀的中心為基準，所以要記住捏之前的位移
           sx0: Number(oo.imgShapeX) || 0, sy0: Number(oo.imgShapeY) || 0,
+          /* 第二根手指剛落下時 pointermove 仍可能帶著不到一像素的雜訊。
+             在真的形成捏合／旋轉手勢前，尺寸必須逐像素維持原值，也不能
+             提前跑吸附（否則靠近畫布邊時會在尚未拖動前突然放大）。 */
+          gestureStarted: false,
         };
         setObjPinching(true);
       }
@@ -3745,6 +3762,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const pin = objPinchRef.current;
       const dist = Math.max(1, Math.hypot(pts2[0].clientX - pts2[1].clientX, pts2[0].clientY - pts2[1].clientY));
       const ang = Math.atan2(pts2[1].clientY - pts2[0].clientY, pts2[1].clientX - pts2[0].clientX) * 180 / Math.PI;
+      const initialAngleDelta = ((ang - pin.a0 + 180) % 360 + 360) % 360 - 180;
+      if (!pin.gestureStarted) {
+        const distanceTravel = Math.abs(dist - pin.d0);
+        if (distanceTravel < 2 && Math.abs(initialAngleDelta) < 2) return;
+        pin.gestureStarted = true;
+      }
       /* 「選中形狀」時兩指捏的是圖片在形狀裡的大小 —— 物件的大小與角度都不動。
          縮回 1 倍以下沒有意義（圖就蓋不滿形狀了），所以下限就是 1。
          倍率變小時位移要跟著夾回可拖的範圍，不然圖會被推出去露出空隙。 */
@@ -6616,7 +6639,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 圖案這一群的動畫設定；每顆圖案再依序錯開 */
   /* 圖案是一整群：「進場耗時」給 3 秒才看得出一顆一顆冒出來，
      常駐維持上下飄（圖片與文字才是預設靜止）。 */
-  const [moShape, setMoShape] = useState<MoCfg>({ ...MO_DEFAULT, dur: durFromSpeed(30), idle: 'float' });
+  const [moShape, setMoShape] = useState<MoCfg>({
+    ...MO_DEFAULT,
+    dur: durFromSpeed(30),
+    idle: 'pattern-breathe',
+    amp: 100,
+    speed: patternBreathSpeedFromUi(70),
+  });
   moShapeAmpRef.current = moShape.amp;
   moShapeCfgRef.current = moShape;
   /** 連線：起始、畫完要多久、以及線往前長的曲線 */
