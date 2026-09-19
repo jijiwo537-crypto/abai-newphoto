@@ -57,7 +57,7 @@ const canvasToBlobUrl = (cvs: HTMLCanvasElement, timeoutMs = 4500): Promise<stri
       cvs.toBlob(
         b => finish(() => b ? resolve(URL.createObjectURL(b)) : reject(new Error('toBlob failed'))),
         'image/jpeg',
-        0.98,
+        1,
       );
     } catch (error) {
       finish(() => reject(error));
@@ -173,9 +173,16 @@ const CameraTickScale: React.FC<CameraTickScaleProps> = ({
 
 export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutList, onImportNew }) => {
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
+  const [captureNotice, setCaptureNotice] = useState('');
+  useEffect(() => {
+    if (!captureNotice) return;
+    const timer = window.setTimeout(() => setCaptureNotice(''), 3500);
+    return () => window.clearTimeout(timer);
+  }, [captureNotice]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewfinderRef = useRef<{
     getCanvas: () => HTMLCanvasElement | null;
+    isLutReady?: () => boolean;
     maxTextureSize?: () => number;
     renderStill?: (src: TexImageSource, w: number, h: number) => HTMLCanvasElement | null;
     releaseStill?: () => void;
@@ -585,6 +592,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
     }
     capturingRef.current = true;
     setIsCapturing(true);
+    setCaptureNotice('');
 
     try {
       /* 補光只走持續的 torch 約束；ImageCapture.takePhoto 在行動 WebView 上會暫停
@@ -604,11 +612,17 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       let captureSource: HTMLCanvasElement | HTMLVideoElement = video;
       for (let attempt = 0; attempt < 3; attempt++) {
         const rendered = viewfinderRef.current?.getCanvas();
-        if (rendered && rendered.width > 0 && rendered.height > 0 && canvasHasFrame(rendered)) {
+        if (viewfinderRef.current?.isLutReady?.() && rendered && rendered.width > 0 && rendered.height > 0 && canvasHasFrame(rendered)) {
           captureSource = rendered;
           break;
         }
         await waitForCameraFrame(video, 600);
+      }
+      // Never silently save the raw camera frame when the chosen processing
+      // pipeline is unavailable: it would discard both the LUT and effects.
+      if (captureSource === video) {
+        setCaptureNotice('相機影像尚未就緒，請再拍一次');
+        return;
       }
 
       const srcW = captureSource instanceof HTMLVideoElement ? captureSource.videoWidth : captureSource.width;
@@ -629,10 +643,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         offsetY = (srcH - cropH) / 2;
       }
 
-      /* 輸出保留來源的完整可用解析度；只在極少數超過 WebGL 常見安全上限的
-         串流才夾到 4096。畫布固定重用、相簿只持有壓縮後的 Blob，因此連拍不會
-         每張多留一份未壓縮像素，也不會重現第二張耗盡記憶體的問題。 */
-      const outputScale = Math.min(1, 4096 / Math.max(cropW, cropH));
+      /* 保留相機實際提供的完整像素；畫布重用，相簿只持有編碼後的 Blob。 */
+      const outputScale = 1;
       const outW = Math.max(1, Math.round(cropW * outputScale));
       const outH = Math.max(1, Math.round(cropH * outputScale));
       const photoCanvas = canvasRef.current || document.createElement('canvas');
@@ -674,6 +686,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       setPhotos(prev => [url, ...prev]);
     } catch {
       /* 相機或編碼器失敗時不要把 rejection 丟到全域；不新增黑圖，直接恢復快門。 */
+      setCaptureNotice('未能儲存照片，請再拍一次');
     } finally {
       /* 任一步驟失敗或逾時都會走到這裡：熄燈、解鎖快門與整個介面。 */
       setTorch(false);
@@ -863,6 +876,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
   return (
     <div className="safe-top flex flex-col h-screen max-h-screen justify-end pb-6 overflow-hidden select-none bg-black font-sans text-white animate-in fade-in duration-300">
+      {captureNotice && <div role="status" className="fixed top-20 left-1/2 -translate-x-1/2 z-[300] rounded-full bg-black/85 px-4 py-2 text-xs whitespace-nowrap pointer-events-none">{captureNotice}</div>}
       
       {isImportingLocal && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">

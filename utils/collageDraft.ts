@@ -16,9 +16,12 @@ const FLAG_KEY = 'abai:collage-draft';
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface CollageDraft {
+  coordinateVersion?: number;
+  pageWidth?: number;
   savedAt: number;
   pages: any[];
   floatingImages: any[];
+  brushStrokes?: any[];
   selectedRatio: string;
   isLandscape: boolean;
 }

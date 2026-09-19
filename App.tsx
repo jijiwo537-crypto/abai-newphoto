@@ -7,6 +7,7 @@ import { CollageTool } from './components/CollageTool';
 import { GridLayoutTool } from './components/GridLayoutTool';
 import { BeautyStudio } from './components/BeautyStudio';
 import { ColorMatchStudio } from './components/ColorMatchStudio';
+import { warmCameraLuts } from './utils/cameraLuts';
 
 type AppView = 'home' | 'camera' | 'editor' | 'collage' | 'layout' | 'beauty' | 'match';
 
@@ -96,6 +97,7 @@ const preloadHistoryImage = async (src?: string | null) => {
 };
 
 const App: React.FC = () => {
+  useEffect(() => { void warmCameraLuts(LUT_LIST.map(lut => lut.url)); }, []);
   // 上次沒做完的東西一律先問過再接回去，不要一開 App 就直接跳進去。
   // 兩份草稿（經典拼圖／其他工具）取比較新的那一份。
   /* 首頁的「接續上次」卡要顯示時間，所以順便把草稿的時間戳一起記著 */

@@ -104,14 +104,25 @@ export class ClassicVectorScene {
         host.appendChild(canvas);
         this.surfaces[i] = canvas;
       }
-      canvas.style.left = `${x}px`;
-      canvas.style.top = `${y}px`;
+      const nativeZoom = !!(host.parentElement?.style as any)?.zoom;
+      // Cancel native layout zoom on the framebuffer itself. Repeatedly changing
+      // width / k made WebKit round its layout width differently at each pinch
+      // step, then resample that framebuffer a second time in the compositor.
+      (canvas.style as any).zoom = nativeZoom ? String(1 / k) : '';
+      canvas.style.left = nativeZoom ? '0px' : `${x}px`;
+      canvas.style.top = nativeZoom ? '0px' : `${y}px`;
       // Give the bitmap its final on-screen dimensions through layout, not a
       // second compositing transform. In WebKit, zoom + inverse transform can
       // rasterize the bitmap at the intermediate (especially smaller) size.
-      canvas.style.width = `${w / k}px`;
-      canvas.style.height = `${h / k}px`;
+      canvas.style.width = `${nativeZoom ? w : w / k}px`;
+      canvas.style.height = `${nativeZoom ? h : h / k}px`;
       canvas.style.transform = 'none';
+      if (nativeZoom) {
+        const origin = canvas.getBoundingClientRect();
+        const localToScreen = origin.width / w;
+        canvas.style.left = `${(vr.left - 32 - origin.left) / localToScreen}px`;
+        canvas.style.top = `${(vr.top - 32 - origin.top) / localToScreen}px`;
+      }
       canvas.style.zIndex = String(run[0].z);
       const pw = Math.ceil(w * dpr), ph = Math.ceil(h * dpr);
       if (canvas.width !== pw) canvas.width = pw;

@@ -1832,6 +1832,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, []);
   const objFileInputRef = useRef<HTMLInputElement>(null);
   const [selectedTarget, setSelectedTarget] = useState<string | null>(null);
+  const [selectedPatternSide, setSelectedPatternSide] = useState<'image' | 'mask'>('image');
   const [colorPickerTarget, setColorPickerTarget] = useState<string | null>(null); 
   const [maskImageState, setMaskImageState] = useState<any>(null);
   /** 自訂遮罩的網址要活到草稿真正寫入；过早 revoke 会让下一次自动保存读不到。 */
@@ -2873,6 +2874,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [holeSize, sizeJitter, imageState?.globalScale, layout]);
 
   const isHoleFullyInsideMask = useCallback((h: any, s: number, maskW: number, maskH: number) => {
+    // Generated patterns retain the inset rule. A manually placed pattern is
+    // clipped at the canvas boundary, never removed as a whole on contact.
+    if (h.manuallyPlaced) return true;
     const sz = getHoleSize(h) * s;
     const hx = h.x * s;
     const hy = h.y * s;
@@ -3253,6 +3257,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
       if (hitHole) {
         e.stopPropagation();
+        if (clickedSide) setSelectedPatternSide(clickedSide);
         const curSel = selectedTarget ? holesRef.current.find(h => h.id === selectedTarget) : null;
         if (selectedTarget === hitHole.id) {
           // 已經選中的圖案：這一下就可以直接拖
@@ -3975,7 +3980,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const limY = layout === AROUND ? fld.mh : fld.ih;
       const nx = Math.max(0, Math.min(limX, intr.initX + dx));
       const ny = Math.max(0, Math.min(limY, intr.initY + dy));
-      setHoles(prev => prev.map(h => h.id === intr.id ? { ...h, x: nx, y: ny } : h));
+      setHoles(prev => prev.map(h => h.id === intr.id ? { ...h, x: nx, y: ny, manuallyPlaced: true } : h));
     } else if (intr.type === 'pinch_hole') {
       const pts: any[] = Array.from(activePointers.current.values());
       if (pts.length < 2) return;
@@ -4661,7 +4666,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       g.lineWidth = Math.max(0.75, fringe);
       drawShapePath(g, holeType, 0, 0, sz);
       g.fill();
-      g.stroke();
       g.restore();
     };
 
@@ -6212,7 +6216,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const A = hA(h);
         const sz = getHoleSize(h) * A.k * s;
         const currentAngle = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
-        const hSide = h.side || 'both';
+        const hSide = !h.side || h.side === 'both' ? selectedPatternSide : h.side;
 
         ctx.save(); 
         ctx.strokeStyle = '#FFFFFF'; 
@@ -6278,7 +6282,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
   }, [imageState, layout, canvasRatio, baseSelected, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
-      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, selectedTarget, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
+      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, selectedTarget, selectedPatternSide, holeAngle, maskScale, isHoleFullyInsideMask, objects, selectedObj, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
      離開創意拼圖時記一筆。key 用「這一次拼圖」的 id（從歷史紀錄點進來的話

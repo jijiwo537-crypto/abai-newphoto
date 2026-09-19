@@ -9,6 +9,7 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, 
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
+import { CLASSIC_COORDINATE_VERSION, joinLegacyPages } from '../utils/classicPageCoordinates';
 import { addExport } from '../utils/exportHistory';
 // 匯出成品一律走這一支（內建 toBlob 的看門狗，見那個檔案的說明）
 import { canvasToUrl } from '../utils/blobUrl';
@@ -5249,6 +5250,33 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
 
 };
 
+/** Shared local animation painter for the preview and exported frames. */
+const paintClassicAnimatedVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
+  motionFrame: ObjectMotionFrame | null | undefined, density: number) => {
+  const phase = motionFrame?.gridWave;
+  const mix = motionFrame?.waveMix ?? 1;
+  if (phase === undefined || mix <= 1e-5) {
+    paintClassicSceneVector(ctx, image, motionFrame, density);
+    return;
+  }
+  const amp = Math.min(10, image.height * .065) * Math.max(.15, (image.mo?.amp ?? 50) / 100) * mix;
+  const pad = 100, span = image.width + pad * 2;
+  const reveal = Math.max(0, Math.min(1, motionFrame?.gridReveal ?? 1));
+  const step = span / 64;
+  for (let i = 0; i < 64; i++) {
+    const x = -span / 2 + i * step;
+    if (x > -image.width / 2 + image.width * reveal) break;
+    const y0 = Math.sin(((x + image.width / 2) / image.width - phase) * Math.PI * 2) * amp;
+    const y1 = Math.sin(((x + step + image.width / 2) / image.width - phase) * Math.PI * 2) * amp;
+    const slope = (y1 - y0) / step;
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x, -image.height / 2 - pad, step + .1, image.height + pad * 2); ctx.clip();
+    ctx.transform(1, slope, 0, 1, 0, y0 - slope * x);
+    paintClassicSceneVector(ctx, image, motionFrame, density);
+    ctx.restore();
+  }
+};
+
 const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   scene,
   sceneMotionFrame,
@@ -6419,29 +6447,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           + (motionFrame?.dy ?? 0) * image.height * image.scale);
         ctx.rotate((image.rotation + (motionFrame?.rot ?? 0)) * Math.PI / 180);
         ctx.scale(scale * (motionFrame?.fx ?? 1), scale);
-        const phase = motionFrame?.gridWave;
-        const mix = motionFrame?.waveMix ?? 1;
-        if (phase === undefined || mix <= 1e-5) {
-          paintClassicSceneVector(ctx, image, motionFrame, density * Math.abs(scale));
-          return;
-        }
-        // Wave deforms the same local painter, never a differently positioned DOM layer.
-        const amp = Math.min(10, image.height * .065) * Math.max(.15, (image.mo?.amp ?? 50) / 100) * mix;
-        const pad = 100, span = image.width + pad * 2;
-        const reveal = Math.max(0, Math.min(1, motionFrame?.gridReveal ?? 1));
-        const step = span / 64;
-        for (let i = 0; i < 64; i++) {
-          const x = -span / 2 + i * step;
-          if (x > -image.width / 2 + image.width * reveal) break;
-          const y0 = Math.sin(((x + image.width / 2) / image.width - phase) * Math.PI * 2) * amp;
-          const y1 = Math.sin(((x + step + image.width / 2) / image.width - phase) * Math.PI * 2) * amp;
-          const slope = (y1 - y0) / step;
-          ctx.save();
-          ctx.beginPath(); ctx.rect(x, -image.height / 2 - pad, step + .1, image.height + pad * 2); ctx.clip();
-          ctx.transform(1, slope, 0, 1, 0, y0 - slope * x);
-          paintClassicSceneVector(ctx, image, motionFrame, density * Math.abs(scale));
-          ctx.restore();
-        }
+        paintClassicAnimatedVector(ctx, image, motionFrame, density * Math.abs(scale));
       },
     });
   });
@@ -7409,7 +7415,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return pages.map((page, pageIdx) => {
       const pageEl = document.getElementById(pageIdx === 0 ? "grid-preview-container" : `grid-preview-container-${pageIdx}`);
       if (!pageEl) {
-        const left = pageIdx * (previewW + 1);
+        const left = pageIdx * (previewW);
         return {
           left,
           top: 0,
@@ -7444,7 +7450,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /**
    * 只回傳「物件目前所在的那一頁」的邊界。
    *
-   * 相鄰兩頁中間留了 1px 的分隔（stride = previewW + 1），所以上一頁的右緣和
+   * 相鄰兩頁中間留了 1px 的分隔（stride = previewW），所以上一頁的右緣和
    * 下一頁的左緣是兩個相差 1px 的獨立吸附點 —— 拖過去時會亮一次、再往前 1px
    * 又亮一次，看起來就像同一條邊觸發了兩次。改成只跟自己這一頁對齊之後，
    * 一條邊就只有一個吸附位置。
@@ -7581,8 +7587,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const SNAP_THRESHOLD = 4 / Math.max(0.0001, kRef.current || 1);
     const ownPageRectsForFit = pageRects;
     const movingItem = floatingImages.find(item => item.id === imgId);
-    const seamBleed = movingItem && movingItem.text === undefined && !movingItem.shape
-      && Math.abs(((rot % 180) + 180) % 180) < 0.01 ? 0.5 : 0;
+    const seamBleed = 0;
     // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
     const { bw: scaledW, bh: scaledH } = rotExtent(imgWidth * imgScale, imgHeight * imgScale, rot);
 
@@ -8601,7 +8606,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const handleDeletePage = (pageIdx: number) => {
     if (pages.length <= 1) return;
-    const stride = previewW + 1;
+    const stride = previewW;
     const count = pages.length;
     // 這一頁上的自由圖層一起刪掉；後面幾頁的圖層往前挪一頁
     setFloatingImages(prev => prev
@@ -8657,7 +8662,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const to = pageDragTo;
     if (from === null || to === null) return { x: 0, live: false };
     if (idx === from) return { x: pageDragShift / Math.max(0.01, pagesScale), live: true };
-    const stride = previewW + 1;
+    const stride = previewW;
     if (from < to && idx > from && idx <= to) return { x: -stride, live: false };
     if (to < from && idx >= to && idx < from) return { x: stride, live: false };
     return { x: 0, live: false };
@@ -8701,7 +8706,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   });
   /** 自由圖層：中心就是 x + 寬/2（外框的 left 已經把縮放算進去了） */
   const floatingDragShift = (f: FloatingImage) => {
-    const stride = previewW + 1;
+    const stride = previewW;
     const idx = pageOfFloating(f, stride, pages.length);
     const shift = pageContentShift(idx);
     if (!shift) return null;
@@ -8744,7 +8749,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const settlePageDrag = () => {
     const from = dragIdxRef.current;
     if (from === null) return;
-    const stride = (previewW + 1) * pagesScale;
+    const stride = (previewW) * pagesScale;
     // 頭尾之外再多給「半格」：拖到第一頁之前／最後一頁之後時會露出一小塊黑，
     // 知道自己已經到底了，但不會整個甩出去（放手仍然只會落在有效的頁次上）
     const slack = stride / 2;
@@ -8801,7 +8806,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (dx) {
         const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
         const from = dragIdxRef.current;
-        const stride = (previewWRef.current + 1) * PAGES_MODE_SCALE;
+        const stride = (previewWRef.current) * PAGES_MODE_SCALE;
         const shift = pageDragShiftRef.current;
         const atEnd = dx > 0
           ? el.scrollLeft >= maxScroll - 0.5
@@ -8900,7 +8905,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 只要讓它從那裡平順滑回新定位就好（FLIP），不會先閃回再跳走
       if (from !== null && to !== null) {
         const liveDx = releasedShift / Math.max(0.01, PAGES_MODE_SCALE);
-        const remainder = liveDx - (to - from) * (previewW + 1);
+        const remainder = liveDx - (to - from) * (previewW);
         if (from !== to) handleMovePage(from, to);
         window.clearTimeout(settleTimerRef.current);
         setDragSettle({ page: to, x: remainder, ease: false });
@@ -8958,7 +8963,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const handleMovePage = (from: number, to: number) => {
     const count = pagesCountRef.current;
     if (from === to || from < 0 || to < 0 || from >= count || to >= count) return;
-    const stride = previewW + 1;
+    const stride = previewW;
     const remap = (p: number) => {
       if (p === from) return to;
       if (from < to) return p > from && p <= to ? p - 1 : p;
@@ -8984,15 +8989,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [selectedRatio, setSelectedRatio] = useState('3:4');
   const [isLandscape, setIsLandscape] = useState(false);
   const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
-  const getRatioDimensions = () => {
+  const getRatioDimensions = (ratio = selectedRatio, landscape = isLandscape) => {
     const pad = 8;
     const maxW = Math.min(450, Math.max(200, containerSize.width - pad));
     const maxH = Math.max(200, containerSize.height - pad);
     let ratioW = 1, ratioH = 1;
-    if (selectedRatio === '3:4') { ratioW = isLandscape ? 4 : 3; ratioH = isLandscape ? 3 : 4; }
-    else if (selectedRatio === '2:3') { ratioW = isLandscape ? 3 : 2; ratioH = isLandscape ? 2 : 3; }
-    else if (selectedRatio === '9:16') { ratioW = isLandscape ? 16 : 9; ratioH = isLandscape ? 9 : 16; }
-    else if (selectedRatio === '4:5') { ratioW = isLandscape ? 5 : 4; ratioH = isLandscape ? 4 : 5; }
+    if (ratio === '3:4') { ratioW = landscape ? 4 : 3; ratioH = landscape ? 3 : 4; }
+    else if (ratio === '2:3') { ratioW = landscape ? 3 : 2; ratioH = landscape ? 2 : 3; }
+    else if (ratio === '9:16') { ratioW = landscape ? 16 : 9; ratioH = landscape ? 9 : 16; }
+    else if (ratio === '4:5') { ratioW = landscape ? 5 : 4; ratioH = landscape ? 4 : 5; }
     /* 画布尺寸必须是比例的整数倍。以前宽、高各自 Math.round，标示为 3:4 的
        画布实际会变成 341×454（不是 3:4）；一张严格 600×800 的照片无论怎么
        等比缩放，都不可能同时贴齐四边，预览与导出自然会留下次像素白缝。
@@ -9001,6 +9006,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return { width: ratioW * unit, height: ratioH * unit };
   };
   const { width: previewW, height: previewH } = getRatioDimensions();
+  const previewDimensionsRef = useRef(getRatioDimensions);
+  previewDimensionsRef.current = getRatioDimensions;
 
   /** 觸控結束後瀏覽器還會補送一次 click，兩邊都處理的話一次點擊會被算成兩次 */
   const touchHandledAtRef = useRef(0);
@@ -9084,10 +9091,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   /** 動畫目標只看目前這一頁，而且影片永遠不是動畫目標。 */
   const motionItems = useMemo(() => floatingImages.filter(item =>
-    !item.isVideo && pageOfFloating(item, previewW + 1, pages.length) === activePageIndex,
+    !item.isVideo && pageOfFloating(item, previewW, pages.length) === activePageIndex,
   ), [floatingImages, previewW, pages.length, activePageIndex]);
   const pageVideoItems = useMemo(() => floatingImages.filter(item =>
-    item.isVideo && pageOfFloating(item, previewW + 1, pages.length) === activePageIndex,
+    item.isVideo && pageOfFloating(item, previewW, pages.length) === activePageIndex,
   ), [floatingImages, previewW, pages.length, activePageIndex]);
   const motionHold = activePage.motionHold ?? 4;
   const setMotionHold = useCallback((seconds: number) => {
@@ -9315,7 +9322,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const stripOffset = (w: number, k: number) => Math.max(16, (w - previewW * k) / 2);
   /** 第 i 頁置中時的捲動位置 */
   const pageScrollLeft = (i: number, w: number, k: number) =>
-    stripOffset(w, k) + k * (i * (previewW + 1) + previewW / 2) - w / 2;
+    stripOffset(w, k) + k * (i * (previewW) + previewW / 2) - w / 2;
   // 這個模式是在排頁面，先把選取取消掉，免得順手拖到圖層
   useEffect(() => {
     if (!pagesMode) return;
@@ -9404,7 +9411,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (shell) {
       shell.style.marginLeft = `${m}px`;
       shell.style.marginTop = `${stripTopRef.current}px`;
-      shell.style.width = `${(n * pw + (n - 1)) * k}px`;
+      shell.style.width = `${(n * pw) * k}px`;
       shell.style.height = `${previewHRef.current * k}px`;
     }
     // 右邊剛好留到「最後一頁停在正中間」為止；加號按鈕已經佔掉 ml-3 + 40
@@ -9450,7 +9457,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       }
       /* 固定在萤幕坐标层的空格提示收到通知后才量中心点。
          事件只排一个 rAF，不在手势处理内同步读取版面。 */
-      col.dispatchEvent(new Event('abai-preview-transform'));
+      if (!liveTransform) col.dispatchEvent(new Event('abai-preview-transform'));
     }
     const chrome = chromeLayerRef.current;
     if (chrome) {
@@ -9460,7 +9467,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       (chrome.style as any).zoom = String(k);
       chrome.style.left = `${stripSubpixelXRef.current}px`;
       chrome.style.top = '0px';
-      chrome.style.width = `${n * pw + (n - 1)}px`;
+      chrome.style.width = `${n * pw}px`;
       chrome.style.height = `${previewHRef.current}px`;
     }
   }, []);
@@ -9542,7 +9549,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const rootTop = rootRect?.top || 0;
     const colRect = col.getBoundingClientRect();
     const m = parseFloat((col.parentElement as HTMLElement).style.marginLeft) || 0;
-    const stride = previewWRef.current + 1;
+    const stride = previewWRef.current;
     // 這裡拿到的是「那一頁沒被拖走時」該在的位置。
     // 不去量頁框本身：頁框拖曳時會被移走、還會放大，量它會把位移算兩次。
     const left0 = rc.left - cont.scrollLeft + m;
@@ -9656,6 +9663,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 所以這層只跟捲動與模式動畫有關。拖曳的位移放在「內層」、由 React
       // 跟內容用同一次 render 寫出來，兩邊永遠同一帧、速度不可能不一樣。
       positionPageCtls();
+      // Paint only after scroll rounding and its subpixel compensation are final.
+      pagesColRef.current?.dispatchEvent(new Event('abai-preview-transform'));
       // 離開這個模式後還要再跑到動畫結束，位移才有東西補
       /* 原本是寫死的 k === 1；有了使用者縮放之後，目標值不一定是 1，
          改成「沒有動畫、而且已經到達目標倍率」就收工，不會一直空轉。 */
@@ -9978,7 +9987,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const root = pagesContainerRef.current;
     if (!root) return null;
     const r = root.getBoundingClientRect();
-    const totalW = pages.length * previewW + Math.max(0, pages.length - 1);
+    const totalW = pages.length * previewW;
     const kx = r.width / Math.max(1, totalW);
     const ky = r.height / Math.max(1, previewH);
     const p = { x: (clientX - r.left) / Math.max(.0001, kx), y: (clientY - r.top) / Math.max(.0001, ky) };
@@ -10865,9 +10874,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       if (initialState && Array.isArray(initialState.pages)) {
         await clearDraft();
         if (!alive) return;
-        setPages(initialState.pages);
-        setFloatingImages(initialState.floatingImages || []);
-        setBrushStrokes(initialState.brushStrokes || []);
+        const restored = joinLegacyPages(initialState,
+          previewDimensionsRef.current(initialState.selectedRatio || '3:4', !!initialState.isLandscape).width);
+        setPages(restored.pages);
+        setFloatingImages(restored.floatingImages || []);
+        setBrushStrokes(restored.brushStrokes || []);
         if (initialState.selectedRatio) setSelectedRatio(initialState.selectedRatio);
         if (initialState.isLandscape !== undefined) setIsLandscape(initialState.isLandscape);
         setActivePageIndex(0);
@@ -10883,9 +10894,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const draft = await loadDraft();
       if (!alive) return;
       if (draft) {
-        setPages(draft.pages);
-        setFloatingImages(draft.floatingImages);
-        setBrushStrokes(draft.brushStrokes || []);
+        const restored = joinLegacyPages(draft,
+          previewDimensionsRef.current(draft.selectedRatio, draft.isLandscape).width);
+        setPages(restored.pages);
+        setFloatingImages(restored.floatingImages);
+        setBrushStrokes(restored.brushStrokes || []);
         setSelectedRatio(draft.selectedRatio);
         setIsLandscape(draft.isLandscape);
         setActivePageIndex(0);
@@ -10915,7 +10928,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const recordProgress = async () => {
     const empty = floatingImages.length === 0 && brushStrokes.length === 0 && pages.every(p => p.layouts.length === 0);
     if (empty) return;
-    const state = { pages, floatingImages, brushStrokes, selectedRatio, isLandscape };
+    const state = { pages, floatingImages, brushStrokes, selectedRatio, isLandscape,
+      coordinateVersion: CLASSIC_COORDINATE_VERSION, pageWidth: previewW };
     const sig = JSON.stringify(state);
     if (recordedRef.current === sig) return;
     recordedRef.current = sig;
@@ -10966,7 +10980,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (choice === 'save') {
       await Promise.all([
         recordProgress(),
-        saveDraft({ pages, floatingImages, brushStrokes, selectedRatio, isLandscape }),
+        saveDraft({ pages, floatingImages, brushStrokes, selectedRatio, isLandscape,
+          coordinateVersion: CLASSIC_COORDINATE_VERSION, pageWidth: previewW }),
       ]);
     } else {
       await clearDraft();
@@ -10974,8 +10989,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     onHome();
   };
 
-  const latestDraftRef = useRef({ pages, floatingImages, brushStrokes, selectedRatio, isLandscape });
-  latestDraftRef.current = { pages, floatingImages, brushStrokes, selectedRatio, isLandscape };
+  const latestDraftRef = useRef({ pages, floatingImages, brushStrokes, selectedRatio, isLandscape,
+    coordinateVersion: CLASSIC_COORDINATE_VERSION, pageWidth: previewW });
+  latestDraftRef.current = { pages, floatingImages, brushStrokes, selectedRatio, isLandscape,
+    coordinateVersion: CLASSIC_COORDINATE_VERSION, pageWidth: previewW };
   useEffect(() => {
     if (!draftReady) return;
     const timer = window.setInterval(() => {
@@ -11042,11 +11059,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         initialWidth = initialHeight * aspect;
       }
       
-      const baseX = activePageIndex * (previewW + 1) + (previewW - initialWidth) / 2;
+      const baseX = activePageIndex * (previewW) + (previewW - initialWidth) / 2;
       const baseY = (previewH - initialHeight) / 2;
       
-      const minX = activePageIndex * (previewW + 1) + margin;
-      const maxX = Math.max(minX, activePageIndex * (previewW + 1) + previewW - margin - initialWidth);
+      const minX = activePageIndex * (previewW) + margin;
+      const maxX = Math.max(minX, activePageIndex * (previewW) + previewW - margin - initialWidth);
       const minY = margin;
       const maxY = Math.max(margin, previewH - margin - initialHeight);
       
@@ -12168,6 +12185,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         }
       }
       positionPageCtls();
+      pagesColRef.current?.dispatchEvent(new Event('abai-preview-transform'));
       return;
     }
 
@@ -12244,8 +12262,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             ? (g.lastScale ?? rawScale)
             : g.lastScale + (rawScale - g.lastScale) * 0.72;
           g.lastScale = ns;
-          const rasterSeamBleed = target && target.text === undefined && !target.shape
-            && Math.abs(((rot % 180) + 180) % 180) < 0.01 ? 0.5 : 0;
+          const rasterSeamBleed = 0;
           /* 圖片、圖形、符號、文字共用完全相同的邊緣倍率吸附。舊版刻意把
              向量物件排除，卻仍然替它們畫對齊線，於是看得到藍線但手指沒有
              真正吸住，鬆手位置也像差了一格。現在候選倍率、4px 進入門檻、
@@ -12653,7 +12670,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const family = fImg.fontFamily || DEFAULT_FONT;
     await waitForFont(family, fImg.bold ? 700 : 400, !!fImg.italic);
 
-    const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
+    const adjustedX = fImg.x;
     const fw = fImg.width * scaleFactor;
     const fh = fImg.height * scaleFactor;
     const cx = adjustedX * scaleFactor + fw / 2;
@@ -12754,7 +12771,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     alphaFlattened = false,
   ) => {
     // 扣掉預覽裡每頁之間那 1px 的間隔（跟圖片同一套）
-    const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
+    const adjustedX = fImg.x;
     const fx = adjustedX * scaleFactor;
     const fy = fImg.y * scaleFactor;
     const fw = fImg.width * scaleFactor;
@@ -12941,12 +12958,48 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     };
     for (const fImg of layers) {
       const frame = fImg.isVideo ? null : motionFrame;
+      if (fImg.shape || fImg.text !== undefined) {
+        // Compose in physical target coordinates. Object-local scratch bounds
+        // cannot be compared to page-local canvas dimensions after translation
+        // or animation; doing so clipped later-page objects and leaked layers.
+        const opacity = ((fImg.opacity ?? 100) / 100) * (frame?.a ?? 1);
+        if (opacity <= 0) continue;
+        const off = opacity < 1 ? scratch('vector-frame', ctx.canvas.width, ctx.canvas.height) : null;
+        const g = off ? get2dWide(off)! : ctx;
+        if (off) {
+          g.setTransform(1, 0, 0, 1, 0, 0);
+          g.globalAlpha = 1;
+          g.globalCompositeOperation = 'source-over';
+          g.clearRect(0, 0, off.width, off.height);
+        }
+        g.save();
+        try {
+          g.setTransform(ctx.getTransform());
+          g.scale(scaleFactor, scaleFactor);
+          const adjustedX = fImg.x;
+          const scale = fImg.scale * (frame?.k ?? 1);
+          g.translate(adjustedX + fImg.width / 2 + (frame?.dx ?? 0) * fImg.width * fImg.scale,
+            fImg.y + fImg.height / 2 + (frame?.dy ?? 0) * fImg.height * fImg.scale);
+          g.rotate((fImg.rotation + (frame?.rot ?? 0)) * Math.PI / 180);
+          g.scale(scale * (frame?.fx ?? 1), scale);
+          if (Math.abs(scale) > 1e-5) paintClassicAnimatedVector(g, fImg, frame, scaleFactor * q * Math.abs(scale));
+        } finally { g.restore(); }
+        if (off) {
+          ctx.save();
+          try {
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.globalAlpha *= opacity;
+            ctx.drawImage(off, 0, 0);
+          } finally { ctx.restore(); }
+        }
+        continue;
+      }
       /* 匯出與 IG 即時預覽也要畫真正的波浪。DOM 預覽是把物件切成直條後
          做正弦位移；Canvas 若只忽略 gridWave，IG 預覽就會停在靜態第 0 幀。
          先把單一物件完整畫進有安全邊界的離屏畫布，再用相同切片邏輯貼回，
          文字、圖形與圖片都共用這條路，根節點座標完全不會被搬動。 */
       if (frame?.gridWave !== undefined) {
-        const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
+        const adjustedX = fImg.x;
         const fw = fImg.width * scaleFactor;
         const fh = fImg.height * scaleFactor;
         const cx = adjustedX * scaleFactor + fw / 2;
@@ -12990,7 +13043,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         continue;
       }
       if (frame) {
-        const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
+        const adjustedX = fImg.x;
         const fw = fImg.width * scaleFactor;
         const fh = fImg.height * scaleFactor;
         const cx = adjustedX * scaleFactor + fw / 2;
@@ -13023,7 +13076,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.save();
       ctx.globalAlpha *= (fImg.opacity ?? 100) / 100;
       // 扣掉預覽裡每頁之間那 1px 的間隔
-      const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
+      const adjustedX = fImg.x;
       const fx = adjustedX * scaleFactor;
       const fy = fImg.y * scaleFactor;
       const fw = fImg.width * scaleFactor;
@@ -13254,7 +13307,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   })();
   /** 這一頁有沒有影片 */
   const igPageHasVideo = (pageIdx: number) =>
-    floatingImages.some(f => f.isVideo && f.src && pageOfFloating(f, previewW + 1, pages.length) === pageIdx);
+    floatingImages.some(f => f.isVideo && f.src && pageOfFloating(f, previewW, pages.length) === pageIdx);
   /* 上面那支 IG 預覽的 effect 只在「打開預覽」時跑一次，相依裡不放 floatingImages
      （放了的話拖一下圖層就整個重算一次）。所以用 ref 拿到最新的那一份。 */
   const igPageHasVideoRef = useRef(igPageHasVideo);
@@ -13320,6 +13373,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         }
       }
       for (const f of floatingImages) {
+        if (f.text !== undefined) {
+          const family = f.sym ? SYMBOL_FONT : f.fontFamily || DEFAULT_FONT;
+          ensureFont(family);
+          await waitForFont(family, f.bold ? 700 : 400, !!f.italic);
+          continue;
+        }
+        if (f.shape) continue;
         const d = f.isVideo ? await getVideoDimensions(f.src) : await getImageDimensions(f.src);
         // 圖層在版面上只佔一部分寬度，換算回整頁需要的解析度
         const frac = Math.max(0.05, (f.width * f.scale) / previewW);
@@ -13520,7 +13580,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         });
       });
       floatingImages.forEach((fImg, i) => {
-        const adjustedX = fImg.x - Math.floor(fImg.x / (previewW + 1));
+        const adjustedX = fImg.x;
         const fw = fImg.width * scaleFactor;
         const cx = adjustedX * scaleFactor + fw / 2;
         /*
@@ -13584,7 +13644,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       brushStrokes.forEach((stroke, i) => {
         if (!stroke.points.length) return;
         const exportPoint = (p: ClassicBrushPoint) => ({
-          x: (p.x - Math.floor(p.x / (previewW + 1))) * scaleFactor,
+          x: p.x * scaleFactor,
           y: p.y * scaleFactor,
         });
         const ep = stroke.points.map(exportPoint);
@@ -13697,21 +13757,31 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
            z 順序一起合成，才不會因拆成上下兩張底圖而讓動畫物件穿層。 */
         const live: LiveDraw = { k: VW / targetW, cache: new Map() };
         const composite = async (motionAt = 0) => {
+          rg.setTransform(1, 0, 0, 1, 0, 0);
+          rg.globalAlpha = 1;
+          rg.globalCompositeOperation = 'source-over';
           rg.clearRect(0, 0, VW, VH);
           rg.fillStyle = pages[pageIdx].bgColor || '#ffffff';
           rg.fillRect(0, 0, VW, VH);
           paintPattern(rg, VW, VH, pagePattern(pages[pageIdx]));
           rg.save();
-          rg.scale(VW / targetW, VH / targetH);
-          rg.translate(-pageLeft, 0);
-          for (const job of pageJobs) await job.run(rg, live, motionAt);
-          rg.restore();
+          try {
+            rg.scale(VW / targetW, VH / targetH);
+            rg.translate(-pageLeft, 0);
+            for (const job of pageJobs) await job.run(rg, live, motionAt);
+          } finally {
+            rg.restore();
+          }
         };
         /*
           先把第一帧合成上去再開始錄。captureStream 會把「開始錄的當下」畫布上
           的內容當成第一帧 —— 畫布還是空的就會錄到一段黑畫面，而第一次合成又
           特別慢（要載入影片、解碼、套濾鏡），黑掉的那段就更長。
         */
+        // Warm glyph masks / effect surfaces before starting the recording clock.
+        // Otherwise a transparent entry frame postpones all first-use work to
+        // the first visible frame, leaving the recorded opening blank too long.
+        await composite(Math.min(dur * .5, 1.2));
         await composite(0);
 
         return { rc, composite, dur, vids };
@@ -14352,7 +14422,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             let closestIdx = 0;
             let minDistance = Infinity;
             for (let i = 0; i < pages.length; i++) {
-              const pageCenter = initialLeftOffset + pagesScale * (i * (previewW + 1) + previewW / 2);
+              const pageCenter = initialLeftOffset + pagesScale * (i * (previewW) + previewW / 2);
               const distance = Math.abs(center - pageCenter);
               if (distance < minDistance) {
                 minDistance = distance;
@@ -14440,7 +14510,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   style={{
                     // 外殼是「縮放後」的尺寸，這一層要自己撐住「縮放前」的尺寸，
                     // 不然會被外殼壓小、整排頁面就排不開（捲動範圍也會不夠）
-                    width: `${pages.length * previewW + (pages.length - 1)}px`,
+                    width: `${pages.length * previewW}px`,
                     height: `${previewH}px`,
                     transformOrigin: 'left top',
                     // 這個模式只用來排頁面：頁面上的東西一律不能碰
@@ -14473,7 +14543,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   >
                     {pages.map((page, pageIdx) => {
                       const previewScale = Math.max(0.0001, kRef.current || 1);
-                      const seamGuideX = pageIdx * (previewW + 1) - 0.5;
+                      const seamGuideX = pageIdx * previewW;
                       const isSeamGuideActive = pageIdx > 0 && activeGuidelines.some(
                         guide => guide.type === 'vertical'
                           && Math.abs(guide.coord - seamGuideX) <= 0.75 / previewScale
@@ -14483,51 +14553,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       const pageMove = pageContentShift(pageIdx);
                       return (
                         <React.Fragment key={page.id}>
-                          {pageIdx > 0 && (
-                            <div
-                              className="w-[1px] flex-shrink-0 self-stretch pointer-events-none"
-                              /*
-                                排頁面時的分隔線：粗細跟著整排一起等比例縮小
-                                （不另外補回來），顏色則直接取一般模式那條線的顏色
-                                （工作區底色再壓深 15%）並改成「不透明」——
-                                半透明的話相鄰兩頁各自做次像素抗鋸齒，底下透出來多少
-                                看那條縫落在像素格的哪，每條深淺就會不一樣。
-                                另外疊在頁面上面，不然右邊那一頁會把它蓋掉半條。
-                              */
-                              style={{
-                                /* 分隔線永遠使用同一個不透明墨色；拖頁與回彈期间也
-                                   不再临时变透明，否则那几帧看起来就像被页面盖住。 */
-                                /* 這個槽位只維持既有頁面座標並補成右頁底色；真正的
-                                   1px 分割線在縮放容器外繪製，這裡不能再有描邊或陰影。 */
-                                /* 排序模式的真正分隔线已经绑定在右侧页面上。
-                                   这个固定 flex 槽若继续填右页底色，A 页被拖开时就会
-                                   原地露出一条极细白线；排序时必须完全透明。 */
-                                /* 逻辑上保留 1px 页间槽，但可见底色必须就是分割线色。
-                                   放大后槽宽会超过固定的屏幕 1px；若这里用页面白底，
-                                   未被线覆盖的次像素就会成为放大后才看得到的白缝。 */
-                                /* 正常模式直接让真实 1 内容像素页缝成为分割线。它与
-                                   页面共用 native zoom 和 transform，不需要外层 DOM
-                                   每帧追位置，因此缩放时不会错一帧、抖一下或露白。
-                                   排序模式仍透明，由绑定在右页上的线负责。 */
-                                /* 這一格只保留 1 個內容 px 的頁面座標。真正可見的
-                                   分割線統一在所有內容之上的 seam overlay 畫一次；
-                                   槽本身不能再上色，否則排序模式與跨頁圖片會同時
-                                   看到兩條不同取樣粗細的線。 */
-                                /* 一般預覽不可讓 1 個內容像素的透明槽露出工作區黑底。
-                                   預覽放大後透明槽會被放成 k px；物件蓋住槽時卻只剩
-                                   上方固定 1px 分割線，於是同一條線看起來有兩種粗度。
-                                   用右頁底色補滿座標槽，畫面上只留下唯一 seam overlay。
-                                   排頁面時仍透明，避免頁面拿起後原地留下色條。 */
-                                backgroundColor: pagesMode ? 'transparent' : page.bgColor,
-                                /* 它必须高于拖起的页面与自由图层。再用同色半像素阴影
-                                   覆盖 fractional zoom 在两侧产生的抗锯齿浅边，最终只
-                                   留下一条颜色一致的接缝，不会多出旁边那条淡线。 */
-                                position: 'relative',
-                                boxShadow: 'none',
-                              }}
-                            >
-                            </div>
-                          )}
+                          {/* Pages share an edge; the seam is ink, never a layout gap. */}
 
                           <div
                             id={pageIdx === 0 ? "grid-preview-container" : `grid-preview-container-${pageIdx}`}
@@ -15019,7 +15045,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           <div
                                             className="absolute pointer-events-none"
                                             style={{
-                                              left: pageIdx * (previewW + 1),
+                                              left: pageIdx * (previewW),
                                               top: 0,
                                               width: previewW,
                                               height: previewH,
@@ -15233,7 +15259,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   <div
                                     className="absolute pointer-events-none"
                                     style={{
-                                      left: `${pageIdx * (previewW + 1)}px`,
+                                      left: `${pageIdx * (previewW)}px`,
                                       top: 0,
                                       width: `${previewW}px`,
                                       height: `${previewH}px`,
@@ -15738,8 +15764,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     {brushStrokes.map(s => (
                       <svg key={s.id}
                         className="absolute left-0 top-0 pointer-events-none overflow-visible"
-                        width={pages.length * previewW + Math.max(0, pages.length - 1)} height={previewH}
-                        viewBox={`0 0 ${pages.length * previewW + Math.max(0, pages.length - 1)} ${previewH}`}
+                        width={pages.length * previewW} height={previewH}
+                        viewBox={`0 0 ${pages.length * previewW} ${previewH}`}
                         style={{ zIndex: 60 + s.z * 2 }}>
                         <defs>
                           <filter id={`classic-crayon-${s.id}`} x="-20%" y="-20%" width="140%" height="140%">
@@ -15773,7 +15799,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       if (pageDragIdx !== null && (pageIdx === pageDragIdx || pageIdx === pageDragIdx + 1)) return null;
                       const move = pageContentShift(pageIdx);
                       const moveScale = move?.s || 1;
-                      const baseSeamLeft = pageIdx * (previewW + 1) - 0.5;
+                      const baseSeamLeft = pageIdx * previewW;
                       /* 和右頁 transform: translateX(dx) scale(s)（中心原點）完全
                          等價的左邊緣位移。分割線不再每幀改 left/top/height，改走
                          同一條 compositor transform，拖頁時便不會慢一幀或飄離。 */
@@ -15835,7 +15861,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
                     {/* Alignment Guidelines Overlay */}
                     {(() => {
-                      const totalContainerWidth = pages.length * previewW + (pages.length - 1) * 1;
+                      const totalContainerWidth = pages.length * previewW;
                       const totalContainerHeight = previewH;
                       /* 對齊線在縮放容器裡，因此其內容座標粗細要除以預覽倍率，
                          畫到螢幕上才會永遠維持 2px，不會跟著預覽一起變粗／變細。 */
@@ -15901,7 +15927,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   style={{
                     left: stripSubpixelXRef.current,
                     top: 0,
-                    width: `${pages.length * previewW + (pages.length - 1)}px`,
+                    width: `${pages.length * previewW}px`,
                     height: `${previewH}px`,
                     zoom: pagesScale,
                     zIndex: 500000,

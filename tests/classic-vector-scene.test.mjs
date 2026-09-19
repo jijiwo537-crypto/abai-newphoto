@@ -18,7 +18,14 @@ class Canvas {
   dataset={};style={};width=0;height=0;
   ctx={save(){},restore(){},clearRect(){},drawImage(){},setTransform(...args){this.matrix=args;}};
   getContext(){return this.ctx;}
-  getBoundingClientRect(){return actualRect;}
+  getBoundingClientRect(){
+    if(host.parentElement.style?.zoom){
+      const k=Number(host.parentElement.style.zoom)*Number(this.style.zoom||1);
+      return {left:20+parseFloat(this.style.left||0)*k,top:100+parseFloat(this.style.top||0)*k,
+        width:parseFloat(this.style.width)*k,height:parseFloat(this.style.height)*k};
+    }
+    return actualRect;
+  }
   remove(){host.children=host.children.filter(v=>v!==this);}
 }
 globalThis.HTMLCanvasElement=Canvas;
@@ -62,6 +69,15 @@ for(const value of [.25,.75,1,1.5,3,6]){
   assert.ok(Math.abs(screenY-(100+60*value))<1e-9,'fractional CSS height cannot shift ink vertically');
 }
 actualRect={left:-32,top:48,width:454,height:564};
+host.parentElement.style={};
+for(const value of [.25,.75,1,1.5,3,6]){
+  zoom=value;host.parentElement.style.zoom=String(value);scene.flush();
+  const canvas=host.children[0],r=canvas.getBoundingClientRect();
+  assert.ok(Math.abs(r.left+32)<1e-9,'native-zoom framebuffer stays at viewport origin');
+  assert.ok(Math.abs(r.width-454)<1e-9,'native-zoom framebuffer has constant physical width');
+  assert.equal(parseFloat(canvas.style.width),454,'pinch does not resize CSS bitmap layout');
+}
+host.parentElement.style={};
 let animationTime=0,paintedTime=-1,opacityReads=0;
 scene.set('clock',{z:64,opacity:()=>{opacityReads++;return .5;},paint:()=>{paintedTime=animationTime;}});
 for(const t of [0,.016,.033,.5,.5,0]){

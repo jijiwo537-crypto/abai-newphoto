@@ -1,5 +1,6 @@
 
 import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState } from 'react';
+import { loadCameraLut, readyCameraLut } from '../utils/cameraLuts';
 
 /** 拍照時可以即時看到的特效，跟編輯頁同款、數值都是 0–100 */
 export interface ViewfinderFx {
@@ -26,8 +27,8 @@ interface ViewfinderProps {
 }
 
 const VS_SOURCE = `#version 300 es
-in vec2 a_position;
-in vec2 a_texCoord;
+layout(location = 0) in vec2 a_position;
+layout(location = 1) in vec2 a_texCoord;
 out vec2 v_texCoord;
 void main() {
     gl_Position = vec4(a_position, 0, 1);
@@ -195,6 +196,19 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   const videoTexRef = useRef<WebGLTexture | null>(null);
   const lutTexRef = useRef<WebGLTexture | null>(null);
   const [lutLoaded, setLutLoaded] = useState(false);
+  const [gpuEpoch, setGpuEpoch] = useState(0);
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const lost = (event: Event) => event.preventDefault();
+    const restored = () => setGpuEpoch(value => value + 1);
+    canvas.addEventListener('webglcontextlost', lost);
+    canvas.addEventListener('webglcontextrestored', restored);
+    return () => {
+      canvas.removeEventListener('webglcontextlost', lost);
+      canvas.removeEventListener('webglcontextrestored', restored);
+    };
+  }, []);
 
   /** 場景（調整＋濾鏡之後）與兩張乒乓用的模糊暫存 */
   const rtRef = useRef<{
@@ -232,6 +246,8 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   paramRef.current = { exposure, kelvin, isUserFacing };
 
   useImperativeHandle(ref, () => ({
+    isLutReady: () => !!glRef.current && !glRef.current.isContextLost()
+      && (!lutUrl || (lutCacheRef.current.get(lutUrl) === lutTexRef.current && !!lutTexRef.current)),
     getCanvas: () => {
       const cv = canvasRef.current;
       /* 快門按下的當下先同步補畫最新一幀。這不只避免剛恢復尺寸時讀到
@@ -351,8 +367,13 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       if (blurProgRef.current) gl.deleteProgram(blurProgRef.current);
       if (compProgRef.current) gl.deleteProgram(compProgRef.current);
       gl.deleteTexture(videoTexRef.current);
+      lutCacheRef.current.forEach(tex => gl.deleteTexture(tex));
+      lutCacheRef.current.clear();
+      lutTexRef.current = null;
+      gl.deleteBuffer(buf);
+      gl.deleteBuffer(uvBuf);
     };
-  }, []);
+  }, [gpuEpoch]);
 
   // Render Loop
   useEffect(() => {
@@ -511,7 +532,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
     const tick = () => {
       if (!stillActiveRef.current && video && video.readyState >= 2) {
-        if (canvasRef.current && (canvasRef.current.width !== video.videoWidth)) {
+        if (canvasRef.current && (canvasRef.current.width !== video.videoWidth || canvasRef.current.height !== video.videoHeight)) {
           canvasRef.current.width = video.videoWidth;
           canvasRef.current.height = video.videoHeight;
         }
@@ -522,7 +543,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
     tick();
     return () => { cancelAnimationFrame(rafId); drawRef.current = null; };
-  }, [video]);
+  }, [video, gpuEpoch]);
 
   // Handle LUT Loading
   /* 換濾鏡時會閃一下白（其實是閃「沒有濾鏡的原樣」），原因是一按下去就把
@@ -542,25 +563,32 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     if (cached) { lutTexRef.current = cached; setLutLoaded(true); return; }
 
     let cancelled = false;
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
+    const upload = (img: HTMLImageElement) => {
       const gl = glRef.current;
       if (!gl || cancelled) return;
       const tex = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE1);
       gl.bindTexture(gl.TEXTURE_2D, tex);
+      const conversion = gl.getParameter(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL);
+      gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, conversion);
       if (tex) lutCacheRef.current.set(lutUrl, tex);
       lutTexRef.current = tex;
       setLutLoaded(true);
+      if (video && video.readyState >= 2 && canvasRef.current && drawRef.current) {
+        drawRef.current(video, canvasRef.current.width, canvasRef.current.height, null);
+      }
     };
-    img.src = lutUrl;
+    const ready = readyCameraLut(lutUrl);
+    if (ready) upload(ready);
+    else void loadCameraLut(lutUrl).then(upload).catch(error => console.error(error));
     return () => { cancelled = true; };
-  }, [lutUrl]);
+  }, [lutUrl, gpuEpoch]);
 
   return (
     <div className="w-full h-full relative" onClick={onClick}
