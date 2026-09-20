@@ -5,6 +5,19 @@
     <style>html,body{background:#000;margin:0}#boot{background:#000}</style>
     <meta name="abai-build" content="20260912-layout-baseline-verified" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
+    <script id="boot-geometry">
+        /* Set the logo's coordinates before its first paint. On iOS standalone,
+           viewport height can settle in multiple steps while launching. The
+           screen size is already stable; never recenter the logo on resize. */
+        (function () {
+            var standalone = navigator.standalone === true ||
+                window.matchMedia('(display-mode: standalone)').matches;
+            var h = standalone && screen.height > 0 ? screen.height : window.innerHeight;
+            var w = standalone && screen.width > 0 ? screen.width : window.innerWidth;
+            if (h > 0) document.documentElement.style.setProperty('--boot-logo-top', (h / 2 - 126 - 18) + 'px');
+            if (w > 0) document.documentElement.style.setProperty('--boot-logo-left', (w / 2 - 126) + 'px');
+        })();
+    </script>
     <title>ABAI</title>
     <link rel="icon" type="image/png" sizes="32x32" href="./favicon-32.png?v=20260912b" />
     <link rel="icon" type="image/png" sizes="64x64" href="./favicon-64.png?v=20260912b" />
@@ -406,12 +419,8 @@
             height: 100lvh;
             z-index: 9998;
             background: #000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            /* 與 iOS 原生啟動畫面使用相同的固定幾何中心。舊版靠 14vh padding
-               推位置，WebKit 在 safe-area 初始化時會重算內容高度，Logo 便會
-               由上往下跳一下。固定盒模型後全程不再重排。 */
+            /* Only the black cover follows viewport changes. The image has its
+               own fixed pixel coordinate, not this box's live flex center. */
             padding: 0;
             box-sizing: border-box;
             opacity: 1;
@@ -429,12 +438,18 @@
         }
         #boot img {
             /* 圖本身就是黑底，跟背景接得剛剛好，看不出邊 */
+            position: absolute;
+            display: block;
+            left: var(--boot-logo-left, calc(50vw - 126px));
+            top: var(--boot-logo-top, calc(50vh - 144px));
             width: 252px;
             height: 252px;
+            max-width: none;
+            box-sizing: border-box;
             animation: none;
             opacity: 1;
-            /* 視覺中心要比幾何中心略高；固定像素位移不會受 safe-area 重算影響。 */
-            transform: translate3d(0, -18px, 0);
+            transform: none;
+            transition: none;
             transform-origin: 50% 50%;
             backface-visibility: hidden;
             contain: strict;

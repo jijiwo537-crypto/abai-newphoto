@@ -1,569 +1,570 @@
-繁體中文	English	日本語	한국어
-中文	Chinese	中国語	중국어
-英文	English	英語	영어
-日文	Japanese	日本語	일본어
-韓文	Korean	韓国語	한국어
-{0}張: {1}	{0} photos: {1}	{0}枚：{1}	{0}장: {1}
-設定	Settings	設定	설정
-App 語言	App language	アプリの言語	앱 언어
-切換語言後會重新載入介面，不會更改作品內容。	Changing the language reloads the app. Your projects stay unchanged.	言語を変更すると画面が再読み込みされます。作品の内容は変わりません。	언어를 변경하면 앱이 새로고침됩니다. 작품 내용은 변경되지 않습니다.
-修圖	Edit	編集	편집
-模板	Templates	テンプレート	템플릿
-我的	My space	マイページ	마이페이지
-編輯	Edit	編集	편집
-相機	Camera	カメラ	카메라
-創意拼圖	Creative collage	フリーコラージュ	자유 콜라주
-經典拼圖	Classic collage	グリッドコラージュ	그리드 콜라주
-美顏	Retouch	レタッチ	뷰티
-仿色	Color match	色合わせ	색감 매칭
-濾鏡	Filters	フィルター	필터
-調節	Adjust	調整	조정
-特效	Effects	エフェクト	효과
-造型	Style	スタイル	스타일
-構圖	Crop	切り抜き	자르기
-遮色片	Mask	マスク	마스크
-儲存	Save	保存	저장
-儲存中	Saving	保存中	저장 중
-儲存圖片	Save image	画像を保存	이미지 저장
-儲存影片	Save video	動画を保存	동영상 저장
-正在儲存草稿	Saving draft	下書きを保存中	초안 저장 중
-是否儲存為草稿	Save as a draft?	下書きとして保存しますか？	초안으로 저장할까요?
-放棄	Discard	破棄	저장 안 함
-取消	Cancel	キャンセル	취소
-取消儲存	Cancel saving	保存をキャンセル	저장 취소
-取消匯出	Cancel export	書き出しをキャンセル	내보내기 취소
-取消，回到編輯	Cancel and return to editing	キャンセルして編集に戻る	취소하고 편집으로 돌아가기
-完成	Done	完了	완료
-返回	Back	戻る	뒤로
-返回主頁	Back to home	ホームに戻る	홈으로 돌아가기
-返回圖片編輯	Back to photo editing	画像編集に戻る	사진 편집으로 돌아가기
-返回特效	Back to effects	エフェクトに戻る	효과로 돌아가기
-返回梯形方向选择	Back to perspective options	遠近補正の方向選択に戻る	원근 보정 방향으로 돌아가기
-退出構圖並放棄變更	Cancel crop changes	切り抜きの変更を破棄して戻る	자르기 변경 취소
-退出构图并放弃变更	Cancel crop changes	切り抜きの変更を破棄して戻る	자르기 변경 취소
-復原	Undo	元に戻す	실행 취소
-重做	Redo	やり直す	다시 실행
-還原	Reset	リセット	초기화
-重設	Reset	リセット	초기화
-重置全部	Reset all	すべてリセット	모두 초기화
-雙擊重置	Double-tap to reset	ダブルタップでリセット	두 번 탭하여 초기화
-原始	Original	オリジナル	원본
-按住看原圖	Hold to see original	長押しで元画像を表示	길게 눌러 원본 보기
-載入中	Loading	読み込み中	불러오는 중
-載入中...	Loading…	読み込み中…	불러오는 중…
-載入中…	Loading…	読み込み中…	불러오는 중…
-準備中…	Preparing…	準備中…	준비 중…
-請稍候	Please wait	しばらくお待ちください	잠시만 기다려 주세요
-正在匯出影片	Exporting video	動画を書き出し中	동영상 내보내는 중
-正在匯出成品	Exporting	書き出し中	내보내는 중
-正在存檔	Saving	保存中	저장 중
-已儲存	Saved	保存済み	저장됨
-繼續編輯	Continue editing	編集を続ける	계속 편집
-繼續調整	Keep adjusting	調整を続ける	계속 조정
-修下一張	Edit next photo	次の写真を編集	다음 사진 편집
-拼下一張	Next collage	次のコラージュ	다음 콜라주
-拼下一組	New collage	新しいコラージュ	새 콜라주
-要繼續上次的編輯嗎？	Resume your last edit?	前回の編集を続けますか？	이전 편집을 계속할까요?
-上次在「	Unfinished edit in 	前回の未完了の編集：	완료하지 않은 편집: 
-」還有沒完成的內容	 is ready to resume.	を再開できます。	 작업을 이어서 할 수 있습니다.
-重新開始	Start fresh	最初から始める	새로 시작
-歷史紀錄	Projects	編集履歴	작업 내역
-匯入照片	Import photos	写真を読み込む	사진 가져오기
-匯入圖片	Import image	画像を読み込む	이미지 가져오기
-匯入影片	Import video	動画を読み込む	동영상 가져오기
-選擇相片	Choose photo	写真を選択	사진 선택
-請選一張圖片	Choose an image	画像を選んでください	이미지를 선택해 주세요
-上傳	Upload	アップロード	업로드
-為您推薦	For you	おすすめ	추천
-為你推薦	For you	おすすめ	추천
-查看全部	See all	すべて見る	전체 보기
-立即使用	Try now	使ってみる	지금 사용하기
-全新濾鏡上線	New filters are here	新しいフィルターが登場	새로운 필터 출시
-一鍵調出質感氛圍	Set the mood in one tap	ワンタップで雰囲気のある一枚に	한 번의 터치로 완성하는 감성
-聯絡方式	Contact	お問い合わせ	문의
-換一張主視覺	Change cover image	メイン画像を変更	메인 이미지 변경
-換一張橫幅底圖	Change banner image	バナー画像を変更	배너 이미지 변경
-搜尋模板	Search templates	テンプレートを検索	템플릿 검색
-搜尋......	Search…	検索…	검색…
-亮度	Brightness	明るさ	밝기
-曝光	Exposure	露出	노출
-對比	Contrast	コントラスト	대비
-高光	Highlights	ハイライト	하이라이트
-陰影	Shadows	シャドウ	그림자
-色溫	Temperature	色温度	색온도
-暖度	Warmth	暖かみ	따뜻함
-色調	Tint	色かぶり補正	색조
-飽和度	Saturation	彩度	채도
-自然飽和度	Vibrance	自然な彩度	생동감
-銳化	Sharpen	シャープ	선명하게
-顆粒	Grain	粒子	그레인
-雜訊	Noise	ノイズ	노이즈
-噪點	Noise	ノイズ	노이즈
-柔光	Bloom	ソフトグロー	소프트 글로우
-朦朧	Haze	かすみ	헤이즈
-暗角	Vignette	周辺減光	비네팅
-光暈	Halo	ハロー	후광
-漏光	Light leak	光漏れ	빛샘
-色散	Dispersion	分散	분산
-色差	Chromatic aberration	色収差	색수차
-曲線	Curves	トーンカーブ	커브
-色相	Hue	色相	색상
-明度	Luminance	輝度	명도
-色相 A	Hue A	色相 A	색상 A
-色相 B	Hue B	色相 B	색상 B
-紅	Red	赤	빨강
-橙	Orange	オレンジ	주황
-黃	Yellow	黄	노랑
-綠	Green	緑	초록
-青	Cyan	シアン	청록
-藍	Blue	青	파랑
-紫	Purple	紫	보라
-洋紅	Magenta	マゼンタ	마젠타
-強度	Intensity	強さ	강도
-力度	Strength	強さ	강도
-強弱	Strength	強弱	강도
-透明度	Opacity	不透明度	불투명도
-濃度	Amount	濃度	농도
-大小	Size	サイズ	크기
-範圍	Range	範囲	범위
-密度	Density	密度	밀도
-粗細	Thickness	太さ	두께
-間距	Spacing	間隔	간격
-間隙	Gap	すき間	간격
-長度	Length	長さ	길이
-方向	Direction	方向	방향
-數量	Count	数	개수
-參數	Parameters	パラメーター	매개변수
-顏色	Color	色	색상
-自訂顏色	Custom color	カスタムカラー	사용자 지정 색상
-自選顏色	Choose color	色を選択	색상 선택
-色號	Hex color	カラーコード	색상 코드
-背景顏色	Background color	背景色	배경색
-複製	Duplicate	複製	복제
-已複製	Copied	コピーしました	복사됨
-刪除	Delete	削除	삭제
-上移一層	Bring forward	前面へ	앞으로 한 단계
-下移一層	Send backward	背面へ	뒤로 한 단계
-新增內容	Add	追加	추가
-新增照片	Add photo	写真を追加	사진 추가
-新增文字	Add text	テキストを追加	텍스트 추가
-新增符號	Add symbols	シンボルを追加	기호 추가
-新增圖形	Add shape	図形を追加	도형 추가
-圖形	Shapes	図形	도형
-符號	Symbols	シンボル	기호
-文字	Text	テキスト	텍스트
-圖片	Image	画像	이미지
-影片	Video	動画	동영상
-圖案	Patterns	モチーフ	패턴
-圖形調整	Shape settings	図形の調整	도형 조정
-圖片調整	Image settings	画像の調整	이미지 조정
-編輯文字	Edit text	テキストを編集	텍스트 편집
-編輯符號	Edit symbols	シンボルを編集	기호 편집
-輸入文字	Enter text	テキストを入力	텍스트 입력
-輸入文字...	Enter text…	テキストを入力…	텍스트 입력…
-字體	Font	フォント	글꼴
-字距	Letter spacing	文字間隔	자간
-粗體	Bold	太字	굵게
-斜體	Italic	斜体	기울임
-對齊	Align	配置	정렬
-描邊	Outline	縁取り	테두리
-描邊顏色	Outline color	縁取りの色	테두리 색상
-發光	Glow	グロー	글로우
-發光顏色	Glow color	グローの色	글로우 색상
-發光動畫	Glow animation	グローのアニメーション	글로우 애니메이션
-紋理	Texture	テクスチャ	텍스처
-紋理顏色	Texture color	テクスチャの色	텍스처 색상
-羽化	Feather	境界のぼかし	페더
-形狀	Shape	形	모양
-實心	Solid	塗りつぶし	채움
-邊框	Outline	輪郭	윤곽선
-線條	Lines	線	선
-網格	Grids	グリッド	그리드
-圓形	Circle	円	원
-方形	Square	正方形	정사각형
-星型	Star	星	별
-星星	Stars	星	별
-愛心	Hearts	ハート	하트
-圓角	Round corners	角丸	둥근 모서리
-圓弧度	Curvature	曲率	곡률
-圖形顏色	Shape color	図形の色	도형 색상
-條紋	Stripes	ストライプ	줄무늬
-條紋顏色一	Stripe color 1	ストライプの色 1	줄무늬 색상 1
-條紋顏色二	Stripe color 2	ストライプの色 2	줄무늬 색상 2
-點點	Dots	ドット	도트
-點點顏色	Dot color	ドットの色	도트 색상
-實線	Solid line	実線	실선
-虛線	Dashed line	破線	점선
-虛線動畫	Dash animation	破線アニメーション	점선 애니메이션
-動畫	Animation	アニメーション	애니메이션
-進場動畫	Entrance	登場アニメーション	등장 애니메이션
-常駐動畫	Loop	ループアニメーション	반복 애니메이션
-無	None	なし	없음
-靜止	Still	静止	정지
-淡入	Fade in	フェードイン	페이드 인
-升起	Rise	上へスライド	올라오기
-落下	Fall	下へスライド	내려오기
-果凍	Jelly	ぷるぷる	젤리
-泡泡	Bubble	ポップイン	팝인
-彈跳	Bounce	バウンド	바운스
-旋轉	Spin	回転	회전
-縮放	Scale	拡大・縮小	확대·축소
-縮放I	Scale I	拡大・縮小 I	확대·축소 I
-縮放II	Scale II	拡大・縮小 II	확대·축소 II
-波浪	Wave	ウェーブ	물결
-呼吸	Breathe	明滅	숨쉬기
-呼吸I	Breathe I	明滅 I	숨쉬기 I
-呼吸II	Breathe II	明滅 II	숨쉬기 II
-呼吸III	Breathe III	明滅 III	숨쉬기 III
-搖擺	Sway	スイング	흔들기
-漂浮	Float	フロート	떠다니기
-繞圈	Orbit	周回	궤도
-流星	Meteor	流星	유성
-畫筆	Draw	描画	그리기
-閃爍	Flicker	点滅	깜박임
-故障	Glitch	グリッチ	글리치
-幅度	Amount	振幅	진폭
-速度	Speed	速度	속도
-起始	Delay	開始までの時間	시작 지연
-循環間隔	Loop interval	ループ間隔	반복 간격
-播放	Play	再生	재생
-暫停	Pause	一時停止	일시 정지
-從頭播	Replay	最初から再生	다시 재생
-沒有可編輯項目	Nothing to animate	アニメーション可能な項目がありません	애니메이션을 적용할 항목이 없습니다
-排版	Layout	レイアウト	레이아웃
-佔比	Mask coverage	マスクの割合	마스크 비율
-比例	Aspect ratio	縦横比	화면 비율
-版型比例	Layout ratio	レイアウトの縦横比	레이아웃 비율
-直式	Portrait	縦向き	세로
-橫式	Landscape	横向き	가로
-滿版	Full image	全面	전체 이미지
-自由	Free	自由	자유
-自訂遮罩	Custom mask	カスタムマスク	사용자 지정 마스크
-遮罩顏色	Mask color	マスクの色	마스크 색상
-更換圖片	Replace image	画像を差し替え	이미지 교체
-替換原始圖片	Replace original image	元画像を差し替え	원본 이미지 교체
-隨機圖形	Shuffle patterns	モチーフをシャッフル	패턴 섞기
-對稱	Symmetry	対称	대칭
-對稱鎖定：已解除	Symmetry unlocked	対称ロック解除	대칭 잠금 해제됨
-對稱鎖定：開啟中	Symmetry locked	対称ロック中	대칭 잠김
-連線	Connect	接続線	연결선
-連線顏色	Connector color	接続線の色	연결선 색상
-這個圖案不支援連線	This pattern cannot be connected	このモチーフは接続線に対応していません	이 패턴은 연결선을 지원하지 않습니다
-不發光	No glow	グローなし	글로우 없음
-兩側的圖案都發光	Glow on both sides	両側のモチーフを光らせる	양쪽 패턴에 글로우 적용
-只有落在圖片上的那一段發光	Glow only over the image	画像に重なる部分だけ光らせる	이미지 위의 부분에만 글로우 적용
-裁切	Crop	切り抜き	자르기
-角度	Straighten	傾き	기울기
-翻轉	Flip	反転	뒤집기
-梯形	Perspective	遠近補正	원근 보정
-垂直	Vertical	垂直	세로
-水平	Horizontal	水平	가로
-水平翻轉	Flip horizontal	左右反転	좌우 뒤집기
-垂直翻轉	Flip vertical	上下反転	상하 뒤집기
-逆時針旋轉 90 度	Rotate 90° left	左に90°回転	왼쪽으로 90° 회전
-順時針旋轉 90 度	Rotate 90° right	右に90°回転	오른쪽으로 90° 회전
-建立遮色片	Create mask	マスクを作成	마스크 만들기
-清除遮色片	Clear mask	マスクを消去	마스크 지우기
-顯示遮罩	Show mask	マスクを表示	마스크 표시
-請在圖片上拖曳，繪製出遮色片	Drag on the image to paint a mask	画像をなぞってマスクを描いてください	이미지를 드래그하여 마스크를 그려 주세요
-清除	Clear	クリア	지우기
-筆刷	Brush	ブラシ	브러시
-橡皮擦模式（再按關閉）	Eraser mode (tap to turn off)	消しゴム（もう一度タップで解除）	지우개 모드(다시 탭하여 끄기)
-畫筆模式（再按切換為橡皮擦）	Brush mode (tap for eraser)	ブラシ（もう一度タップで消しゴム）	브러시 모드(다시 탭하여 지우개로 전환)
-大眼	Enlarge eyes	目を大きく	눈 확대
-去痘	Blemish removal	ニキビ消し	잡티 제거
-去皺	Smooth wrinkles	しわ補正	주름 보정
-修容	Contour	輪郭補正	윤곽 보정
-瘦身	Reshape	スリム	슬림
-豐胸	Enhance	バスト補正	볼륨 보정
-液化	Liquify	ゆがみ補正	픽셀 유동화
-柔和度	Softness	ソフトさ	부드러움
-美顏結果	Retouched photo	レタッチ結果	뷰티 보정 결과
-仿色結果	Color-matched photo	色合わせ結果	색감 매칭 결과
-導入參考圖片	Import reference	参考画像を読み込む	참조 이미지 가져오기
-分析色彩中	Analyzing colors	色を解析中	색상 분석 중
-直方圖對齊	Histogram matching	ヒストグラムを合わせる	히스토그램 매칭
-膚色保護	Protect skin tones	肌色を保護	피부색 보호
-接著調色	Continue color editing	色調整を続ける	색감 조정 계속하기
-快門	Shutter	シャッター	셔터
-拍照	Take photo	撮影	촬영
-白平衡	White balance	ホワイトバランス	화이트 밸런스
-閃光燈	Flash	フラッシュ	플래시
-定時	Timer	タイマー	타이머
-構圖線	Grid	グリッド	격자
-AE/AF 鎖定	AE/AF lock	AE/AFロック	AE/AF 잠금
-這顆鏡頭沒有閃光燈	Flash is unavailable for this lens	このレンズではフラッシュを使えません	이 렌즈는 플래시를 지원하지 않습니다
-相機影像尚未就緒，請再拍一次	Camera not ready. Please try again.	カメラの準備ができていません。もう一度撮影してください。	카메라가 준비되지 않았습니다. 다시 촬영해 주세요.
-未能儲存照片，請再拍一次	Could not save the photo. Please try again.	写真を保存できませんでした。もう一度撮影してください。	사진을 저장하지 못했습니다. 다시 촬영해 주세요.
-尚未拍攝或導入任何照片	No photos yet	写真がありません	아직 사진이 없습니다
-相簿 (	Photos (	写真（	사진 (
-照片資訊	Photo info	写真情報	사진 정보
-EXIF資訊	EXIF data	Exif情報	EXIF 정보
-型號	Camera model	機種	기종
-焦距	Focal length	焦点距離	초점 거리
-光圈	Aperture	絞り	조리개
-日期	Date	日付	날짜
-尺寸	Dimensions	サイズ	크기
-格式	Format	形式	형식
-未知	Unknown	不明	알 수 없음
-佈局	Layout	レイアウト	레이아웃
-新增佈局	Add layout	レイアウトを追加	레이아웃 추가
-刪除佈局	Delete layout	レイアウトを削除	레이아웃 삭제
-佈局調整	Layout settings	レイアウト調整	레이아웃 조정
-格數	Cells	コマ数	칸 수
-新增一頁	Add page	ページを追加	페이지 추가
-頁面順序	Page order	ページの並べ替え	페이지 순서
-拖曳調整順序	Drag to reorder	ドラッグして並べ替え	드래그하여 순서 변경
-請先新增格子以選擇格局。	Add cells to choose a layout.	コマを追加してレイアウトを選んでください。	칸을 추가한 후 레이아웃을 선택해 주세요.
-先點擊一下要調整的佈局	Select a layout to adjust	調整するレイアウトを選んでください	조정할 레이아웃을 선택해 주세요
-請選中要編輯的物件	Select an object to edit	編集するオブジェクトを選んでください	편집할 개체를 선택해 주세요
-請先選中圖片或文字	Select an image or text first	画像またはテキストを選んでください	먼저 이미지나 텍스트를 선택해 주세요
-IG 預覽	Instagram preview	Instagramプレビュー	Instagram 미리보기
-預覽	Preview	プレビュー	미리보기
-更多	More	その他	더 보기
-開啟	On	オン	켜기
-關閉	Off	オフ	끄기
-關閉視窗	Close	閉じる	닫기
-開啟對齊	Enable snapping	スナップをオン	스냅 켜기
-關閉對齊	Disable snapping	スナップをオフ	스냅 끄기
-開啟畫筆	Enable stamp brush	スタンプブラシをオン	스탬프 브러시 켜기
-備援	Fallback	代替	대체
-標準	Standard	標準	표준
-預設	Default	デフォルト	기본값
-經典	Classic	クラシック	클래식
-樣式	Style	スタイル	스타일
-螢幕	Screen	画面	화면
-僅圖片	Image only	画像のみ	이미지만
-還原素色	Reset to solid color	単色に戻す	단색으로 초기화
-登入	Sign in	ログイン	로그인
-立即登入	Sign in	ログイン	로그인
-登入中	Signing in	ログイン中	로그인 중
-登出	Sign out	ログアウト	로그아웃
-帳號	Account	アカウント	계정
-帳號設定	Account settings	アカウント設定	계정 설정
-名稱	Name	名前	이름
-電子郵件	Email	メールアドレス	이메일
-使用 Apple 帳號登入	Continue with Apple	Appleで続ける	Apple로 계속하기
-使用 Google 帳號登入	Continue with Google	Googleで続ける	Google로 계속하기
-使用電子郵件登入	Continue with email	メールで続ける	이메일로 계속하기
-登入後可同步你的作品與偏好	Sign in to sync your projects and preferences	ログインして作品と設定を同期	로그인하여 작품과 설정 동기화
-修改帳號名稱	Change account name	アカウント名を変更	계정 이름 변경
-更換頭貼	Change profile photo	プロフィール画像を変更	프로필 사진 변경
-確認登出帳號	Sign out of your account?	ログアウトしますか？	로그아웃할까요?
-刪除帳號	Delete account	アカウントを削除	계정 삭제
-刪除中	Deleting	削除中	삭제 중
-確認刪除帳號	Delete your account?	アカウントを削除しますか？	계정을 삭제할까요?
-刪除後會員資料無法復原	Your account data cannot be recovered after deletion.	削除したアカウント情報は復元できません。	삭제한 계정 정보는 복구할 수 없습니다.
-沒有帳號	No account yet?	アカウントをお持ちでない方	계정이 없으신가요?
-寄送驗證碼	Send code	認証コードを送信	인증 코드 보내기
-重新取得驗證碼	Resend code	認証コードを再送	인증 코드 재전송
-輸入驗證碼	Enter verification code	認証コードを入力	인증 코드 입력
-驗證碼寄到	Code sent to	認証コードの送信先：	인증 코드 전송 주소:
-請先輸入你的電子郵件	Enter your email first	メールアドレスを入力してください	먼저 이메일을 입력해 주세요
-請輸入正確的電子郵件	Enter a valid email address	有効なメールアドレスを入力してください	올바른 이메일 주소를 입력해 주세요
-密碼至少要 6 個字	Use at least 6 characters for your password	パスワードは6文字以上にしてください	비밀번호는 6자 이상이어야 합니다
-驗證碼不對	Incorrect verification code	認証コードが違います	인증 코드가 올바르지 않습니다
-驗證碼過期了，請重新取得	Code expired. Request a new one.	認証コードの有効期限が切れました。再送してください。	인증 코드가 만료되었습니다. 다시 요청해 주세요.
-帳號或密碼不對	Incorrect email or password	メールアドレスまたはパスワードが違います	이메일 또는 비밀번호가 올바르지 않습니다
-這個信箱已經註冊過了，直接登入吧	This email is already registered. Please sign in.	このメールアドレスは登録済みです。ログインしてください。	이미 등록된 이메일입니다. 로그인해 주세요.
-請先到信箱點開驗證信	Check your inbox to verify your email first	受信したメールから認証を完了してください	먼저 받은 메일에서 이메일 인증을 완료해 주세요
-驗證信寄出去了，去信箱點一下就完成註冊	Check your inbox to finish signing up	メールのリンクを開くと登録が完了します	메일의 링크를 열어 가입을 완료해 주세요
-重設密碼的信寄出去了	Password reset email sent	パスワード再設定メールを送信しました	비밀번호 재설정 메일을 보냈습니다
-太頻繁了，等一下再試	Too many attempts. Try again shortly.	しばらく待ってからもう一度お試しください。	시도 횟수가 너무 많습니다. 잠시 후 다시 시도해 주세요.
-連不上伺服器，檢查一下網路	Cannot connect. Check your internet connection.	接続できません。通信環境をご確認ください。	연결할 수 없습니다. 인터넷 연결을 확인해 주세요.
-連線好像卡住了，再試一次看看	Connection timed out. Please try again.	接続がタイムアウトしました。もう一度お試しください。	연결 시간이 초과되었습니다. 다시 시도해 주세요.
-出了點問題，請再試一次	Something went wrong. Please try again.	エラーが発生しました。もう一度お試しください。	문제가 발생했습니다. 다시 시도해 주세요.
-這次登入沒有完成，再試一次看看	Sign-in was not completed. Please try again.	ログインが完了しませんでした。もう一度お試しください。	로그인이 완료되지 않았습니다. 다시 시도해 주세요.
-沒有取得授權網址	Could not start authorization	認証を開始できませんでした	인증을 시작하지 못했습니다
-登入回傳的網址裡沒有授權資訊	No authorization information was returned	認証情報を取得できませんでした	인증 정보를 받지 못했습니다
-尚未設定後端	Service is not configured yet	サービスはまだ設定されていません	서비스가 아직 설정되지 않았습니다
-後端尚未設定	Service is not configured yet	サービスはまだ設定されていません	서비스가 아직 설정되지 않았습니다
-我知道了	Got it	OK	확인
-重試	Try again	再試行	다시 시도
-錯誤	Error	エラー	오류
-敬請期待	Coming soon	近日公開	출시 예정
-無法讀取紀錄	Cannot load projects	履歴を読み込めません	작업 내역을 불러올 수 없습니다
-這台裝置的儲存空間不足	Not enough storage on this device	端末の空き容量が不足しています	기기의 저장 공간이 부족합니다
-存檔失敗，請重試	Save failed. Please try again.	保存できませんでした。もう一度お試しください。	저장하지 못했습니다. 다시 시도해 주세요.
-讀檔失敗	Could not read the file	ファイルを読み込めませんでした	파일을 읽지 못했습니다
-無法載入此圖片	Could not load this image	この画像を読み込めませんでした	이 이미지를 불러오지 못했습니다
-讀不到這張圖片	Could not read this image	この画像を読み取れませんでした	이 이미지를 읽지 못했습니다
-這張圖片讀不進來	Could not load this image	この画像を読み込めませんでした	이 이미지를 불러오지 못했습니다
-無法處理此圖片格式	Unsupported image format	この画像形式には対応していません	지원하지 않는 이미지 형식입니다
-無法在畫布中解析此圖片，這可能是記憶體不足或格式損毀。	Cannot render this image. Memory may be low or the file may be damaged.	画像を描画できません。メモリ不足、またはファイルが破損している可能性があります。	이미지를 표시할 수 없습니다. 메모리가 부족하거나 파일이 손상되었을 수 있습니다.
-無法解析此圖片格式，抱歉！核心模組不支援該特殊編碼或檔案已損毀。	Cannot decode this image. Its encoding is unsupported or the file is damaged.	画像を読み込めません。未対応の形式、または破損したファイルです。	이미지를 디코딩할 수 없습니다. 지원하지 않는 인코딩이거나 파일이 손상되었습니다.
-沒有可用的來源	No source available	利用できる素材がありません	사용 가능한 소스가 없습니다
-這段影片讀不進來，換一個格式試試（MP4 最穩）	Cannot load this video. Try an MP4 file.	動画を読み込めません。MP4形式をお試しください。	동영상을 불러올 수 없습니다. MP4 파일을 사용해 보세요.
-導出的圖轉不出來	Could not create the exported image	書き出し画像を作成できませんでした	내보낼 이미지를 만들지 못했습니다
-動態影片做不出來	Could not create the animation video	アニメーション動画を作成できませんでした	애니메이션 동영상을 만들지 못했습니다
-動畫這一格畫不出來	Could not render an animation frame	アニメーションのフレームを描画できませんでした	애니메이션 프레임을 렌더링하지 못했습니다
-影片預覽影格畫不出來	Could not render the video preview	動画のプレビューを描画できませんでした	동영상 미리보기를 렌더링하지 못했습니다
-預覽的動畫畫不出來	Could not render the animation preview	アニメーションのプレビューを描画できませんでした	애니메이션 미리보기를 렌더링하지 못했습니다
-解析中...	Decoding…	解析中…	디코딩 중…
-儲存全部 {0} 個	Save all {0} items	{0}件すべて保存	{0}개 모두 저장
-儲存全部 {0} 張	Save all {0} photos	{0}枚すべて保存	사진 {0}장 모두 저장
-第 {0} 張	Photo {0}	{0}枚目	사진 {0}
-刪除第 {0} 頁	Delete page {0}	{0}ページ目を削除	{0}페이지 삭제
-圖片{0}	Image {0}	画像{0}	이미지 {0}
-圖形{0}	Shape {0}	図形{0}	도형 {0}
-圖案之間的連線：{0}	Pattern connectors: {0}	モチーフの接続線：{0}	패턴 연결선: {0}
-遮罩排版 {0}	Mask layout {0}	マスクレイアウト {0}	마스크 레이아웃 {0}
-推薦 {0}	Pick {0}	おすすめ {0}	추천 {0}
-模板 {0}	Template {0}	テンプレート {0}	템플릿 {0}
-{0}：上傳預覽圖片	{0}: upload preview image	{0}：プレビュー画像をアップロード	{0}: 미리보기 이미지 업로드
-{0}：換一張示意圖	{0}: change preview image	{0}：見本画像を変更	{0}: 예시 이미지 변경
-已存 {0} 筆	{0} saved	{0}件保存済み	{0}개 저장됨
-已存 {0} 筆・{1} 筆缺原圖	{0} saved · {1} missing originals	{0}件保存済み・{1}件の元画像がありません	{0}개 저장됨 · 원본 없는 항목 {1}개
-已合併{0}	Combined {0}	合成済み：{0}	병합된 {0}
-{0} 分鐘前	{0} minutes ago	{0}分前	{0}분 전
-{0} 小時前	{0} hours ago	{0}時間前	{0}시간 전
-{0} 天前	{0} days ago	{0}日前	{0}일 전
-剛剛	Just now	たった今	방금
-{0}年{1}月{2}日 {3}{4}:{5}	{0}/{1}/{2} {4}:{5} {3}	{0}年{1}月{2}日 {3}{4}:{5}	{0}년 {1}월 {2}일 {3} {4}:{5}
-上午	AM	午前	오전
-下午	PM	午後	오후
-早上	Morning	朝	아침
-中午	Noon	昼	정오
-晚上	Evening	夜	저녁
-凌晨	Early morning	深夜	새벽
-請輸入信裡的 {0} 位數驗證碼	Enter the {0}-digit code from your email	メールに届いた{0}桁の認証コードを入力してください	메일의 {0}자리 인증 코드를 입력해 주세요
-重新取得（{0}）	Resend ({0})	再送（{0}）	재전송 ({0})
-上一步	Previous	前へ	이전
-合併濾鏡	Combine filters	フィルターを合成	필터 합치기
-合併特效	Combine effects	エフェクトを合成	효과 합치기
-收合特效	Collapse effects	エフェクトを折りたたむ	효과 접기
-調整	Adjust	調整	조정
-調整細項	Fine adjustments	詳細調整	세부 조정
-中心 X	Center X	中心 X	중심 X
-中心 Y	Center Y	中心 Y	중심 Y
-位移	Offset	オフセット	오프셋
-取樣距離	Sample distance	サンプル間隔	샘플 간격
-徑向指數	Radial falloff	放射状の減衰	방사형 감쇠
-相位	Phase	位相	위상
-空間變化	Spatial variation	空間変化	공간 변화
-發生比例	Frequency	発生率	발생 빈도
-變化	Variation	変化	변화
-擴散	Spread	拡散	확산
-收縮	Contract	収縮	수축
-描繪	Trace	トレース	트레이스
-光罩	Light veil	光のベール	빛 장막
-亮角	Bright corners	周辺増光	모서리 밝게
-動態模糊	Motion blur	モーションブラー	모션 블러
-放射模糊	Radial blur	放射状ぼかし	방사형 흐림
-旋轉模糊	Spin blur	回転ぼかし	회전 흐림
-區塊錯位	Block shift	ブロックずれ	블록 이동
-抖動	Jitter	ジッター	지터
-折射	Refraction	屈折	굴절
-彩噪I	Color noise I	カラーノイズ I	컬러 노이즈 I
-彩噪II	Color noise II	カラーノイズ II	컬러 노이즈 II
-掃描切片	Scan slices	スキャンスライス	스캔 슬라이스
-掃描密度	Scan density	スキャン密度	스캔 밀도
-掃描線	Scanlines	走査線	주사선
-玻璃暗角	Glass vignette	ガラスビネット	유리 비네팅
-玻璃磚	Glass blocks	ガラスブロック	유리 블록
-珍珠光澤	Pearlescence	パール光沢	진주 광택
-磷光暈	Phosphor glow	燐光	인광
-結晶化	Crystallize	結晶化	결정화
-胞壁寬	Cell border width	セル境界の幅	셀 경계 너비
-胞壁深	Cell border depth	セル境界の深さ	셀 경계 깊이
-色度偏移	Chroma shift	色ずれ	색차 이동
-色度糊化	Chroma blur	色ぼかし	색차 흐림
-變形光斑	Warped bokeh	変形ボケ	왜곡 보케
-通道分離	Channel split	チャンネル分離	채널 분리
-邊緣反光	Edge highlights	エッジの反射	가장자리 반사
-霓虹	Neon	ネオン	네온
-馬賽克	Mosaic	モザイク	모자이크
-錯位九宮	Offset tiles	タイルずれ	타일 어긋남
-等速	Linear	等速	일정 속도
-子彈時間	Bullet time	バレットタイム	불릿 타임
-跑馬燈	Marquee	スクロール	흐르는 글자
-不規則	Irregular	不規則	불규칙
-上下對分	Top and bottom	上下二分割	상하 분할
-左右對分	Side by side	左右二分割	좌우 분할
-三橫欄	Three rows	横3分割	가로 3분할
-三直欄	Three columns	縦3分割	세로 3분할
-四格棋盤	2 × 2 grid	2 × 2グリッド	2 × 2 그리드
-九格棋盤	3 × 3 grid	3 × 3グリッド	3 × 3 그리드
-五橫欄	Five rows	横5分割	가로 5분할
-三列二欄	3 rows × 2 columns	3行 × 2列	3행 × 2열
-兩列三欄	2 rows × 3 columns	2行 × 3列	2행 × 3열
-四直兩列	2 rows × 4 columns	2行 × 4列	2행 × 4열
-2x5 網格	2 × 5 grid	2 × 5グリッド	2 × 5 그리드
-5x2 網格	5 × 2 grid	5 × 2グリッド	5 × 2 그리드
-3-4-3 交錯	3–4–3 staggered	3–4–3千鳥配置	3–4–3 교차 배열
-一上四下	1 above, 4 below	上1・下4	위 1칸·아래 4칸
-一下四上	4 above, 1 below	上4・下1	위 4칸·아래 1칸
-三上四下	3 above, 4 below	上3・下4	위 3칸·아래 4칸
-四上三下	4 above, 3 below	上4・下3	위 4칸·아래 3칸
-上大下雙	Large top, two below	上に大1・下に2	위 큰 1칸·아래 2칸
-下大上雙	Two above, large bottom	上に2・下に大1	위 2칸·아래 큰 1칸
-左大右雙	Large left, two right	左に大1・右に2	왼쪽 큰 1칸·오른쪽 2칸
-右大左雙	Two left, large right	左に2・右に大1	왼쪽 2칸·오른쪽 큰 1칸
-左三右二	Three left, two right	左3・右2	왼쪽 3칸·오른쪽 2칸
-左二右三	Two left, three right	左2・右3	왼쪽 2칸·오른쪽 3칸
-一大三小	One large, three small	大1・小3	큰 1칸·작은 3칸
-三小一大	Three small, one large	小3・大1	작은 3칸·큰 1칸
-一大五小	One large, five small	大1・小5	큰 1칸·작은 5칸
-五小一大	Five small, one large	小5・大1	작은 5칸·큰 1칸
-兩大六小	Two large, six small	大2・小6	큰 2칸·작은 6칸
-大左六小	Large left, six small	左に大1・小6	왼쪽 큰 1칸·작은 6칸
-左大右疊	Large left, stacked right	左に大1・右に積み重ね	왼쪽 큰 칸·오른쪽 겹침
-右大左疊	Stacked left, large right	左に積み重ね・右に大1	왼쪽 겹침·오른쪽 큰 칸
-大角拼貼	Large corner collage	コーナーコラージュ	큰 모서리 콜라주
-黃金右分割	Golden ratio, right	黄金比・右	황금비·오른쪽
-黃金左分割	Golden ratio, left	黄金比・左	황금비·왼쪽
-按讚	Like	いいね	좋아요
-收回讚	Unlike	いいねを取り消す	좋아요 취소
-和其他人都說讚	and others liked this	ほかの人が「いいね！」しました	님 외 여러 명이 좋아합니다
-改分享數	Edit share count	シェア数を編集	공유 수 수정
-改留言數	Edit comment count	コメント数を編集	댓글 수 수정
-改讚數	Edit like count	いいね数を編集	좋아요 수 수정
-改轉發數	Edit repost count	リポスト数を編集	리포스트 수 수정
-原創音訊 · {0}	Original audio · {0}	オリジナル音源 · {0}	원본 오디오 · {0}
-歌曲	Songs	曲	곡
-歌手	Artists	アーティスト	아티스트
-歌手全曲	All songs by artist	アーティストのすべての曲	아티스트의 모든 곡
-全部歌曲 ·	All songs ·	すべての曲 ·	모든 곡 ·
-專輯 ·	Album ·	アルバム ·	앨범 ·
- · {0} 首	 · {0} songs	 · {0}曲	 · {0}곡
-曲風榜	Genre charts	ジャンル別ランキング	장르별 차트
-榜	Charts	ランキング	차트
-榜{0}	Chart {0}	ランキング {0}	차트 {0}
-榜單內	In charts	ランキング内	차트 내
-舊榜	Previous charts	過去のランキング	이전 차트
-超夯	Trending	人気	인기
-收藏	Saved	お気に入り	즐겨찾기
-試聽	Preview track	試聴	미리 듣기
-快取	Cached	キャッシュ済み	캐시됨
-試聽快取	Cached previews	試聴キャッシュ	미리 듣기 캐시
-取消連結	Unlink	リンクを解除	연결 해제
-重新連結	Relink	再リンク	다시 연결
-找不到歌曲	No songs found	曲が見つかりません	곡을 찾을 수 없습니다
-還沒有收藏的音樂，點歌曲右邊的書籤就會收進來	No saved music yet. Tap the bookmark beside a song to save it.	お気に入りの曲はまだありません。曲の右側のブックマークで追加できます。	즐겨찾는 음악이 없습니다. 곡 오른쪽의 북마크를 눌러 추가해 보세요.
-台灣商店	Taiwan store	台湾ストア	대만 스토어
-日本商店	Japan store	日本ストア	일본 스토어
-美國商店	US store	米国ストア	미국 스토어
-搜tw	Search Taiwan	台湾で検索	대만 검색
-搜jp	Search Japan	日本で検索	일본 검색
-搜us	Search US	米国で検索	미국 검색
-華語	Mandarin	中国語	중국어
-日語	Japanese	日本語	일본어
-韓語	Korean	韓国語	한국어
-{0}全曲	All {0} songs	{0}のすべての曲	{0}의 모든 곡
-{0}專輯	{0} albums	{0}のアルバム	{0} 앨범
-{0}歌手	{0} artists	{0}のアーティスト	{0} 아티스트
-{0}曲目	{0} tracks	{0}の曲	{0} 트랙
-{0}曲風榜	{0} genre charts	{0}ジャンル別ランキング	{0} 장르별 차트
-{0}導出	{0} export	{0}の書き出し	{0} 내보내기
-拿不到歌單，請確認網路後重試\n（{0}）	Couldn't load music. Check your connection and try again.\n({0})	曲を読み込めませんでした。通信状況を確認して、もう一度お試しください。\n（{0}）	음악을 불러오지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.\n({0})
-{0}{1}:0筆	{0}{1}: no results	{0}{1}：0件	{0}{1}: 결과 없음
-{0}新榜:{1}	{0} new chart: {1}	{0}新着ランキング：{1}	{0} 최신 차트: {1}
-{0}查	{0} search	{0}検索	{0} 검색
-{0}:0筆	{0}: no results	{0}：0件	{0}: 결과 없음
-備援{0}:{1}	Backup {0}: {1}	予備の取得先{0}：{1}	대체 소스 {0}: {1}
-{0}轉{1}:0筆	{0} → {1}: no results	{0} → {1}：0件	{0} → {1}: 결과 없음
-{0}轉{1}:{2}	{0} → {1}: {2}	{0} → {1}：{2}	{0} → {1}: {2}
-{0}試聽:0筆	{0} previews: none	{0}試聴：0件	{0} 미리듣기: 없음
-{0}曲風榜:{1}筆	{0} genre chart: {1} results	{0}ジャンル別ランキング：{1}件	{0} 장르별 차트: {1}개
-{0}每日+曲風	{0} daily + genre	{0}デイリー＋ジャンル	{0} 일간 + 장르
-曲風{0}:都拿不到	Genre {0}: no sources available	ジャンル{0}：取得できるデータがありません	장르 {0}: 사용 가능한 소스 없음
+繁體中文	English	日本語	한국어	日文中文回譯
+語言	Language	言語	언어	語言
+中文	Chinese	中国語	중국어	中文
+英文	English	英語	영어	英文
+日文	Japanese	日本語	일본어	日文
+韓文	Korean	韓国語	한국어	韓文
+{0}張: {1}	{0} photos: {1}	{0}枚：{1}	{0}장: {1}	{0}張: {1}
+設定	Settings	設定	설정	設定
+App 語言	App language	アプリの言語	앱 언어	App 語言
+切換語言後會重新載入介面，不會更改作品內容。	Changing the language reloads the app. Your projects stay unchanged.	言語の変更後に再読み込みします。作品は変更されません。	언어를 변경하면 앱이 새로고침됩니다. 작품 내용은 변경되지 않습니다.	切換語言後會重新載入，作品不會被更改。
+修圖	Edit	編集	편집	修圖
+模板	Templates	テンプレート	템플릿	模板
+我的	My space	マイページ	마이페이지	我的
+編輯	Edit	編集	편집	編輯
+相機	Camera	カメラ	카메라	相機
+創意拼圖	Creative collage	フリー	자유 콜라주	自由編排拼貼
+經典拼圖	Classic collage	グリッド	그리드 콜라주	格線拼貼
+美顏	Retouch	レタッチ	뷰티	美顏
+仿色	Color match	色合わせ	색감 매칭	仿色
+濾鏡	Filters	フィルター	필터	濾鏡
+調節	Adjust	調整	조정	調節
+特效	Effects	効果	효과	效果
+造型	Style	スタイル	스타일	造型
+構圖	Crop	切り取り	자르기	裁切／調整構圖
+遮色片	Mask	マスク	마스크	遮色片
+儲存	Save	保存	저장	儲存
+儲存中	Saving	保存中	저장 중	儲存中
+儲存圖片	Save image	画像を保存	이미지 저장	儲存圖片
+儲存影片	Save video	動画を保存	동영상 저장	儲存影片
+正在儲存草稿	Saving draft	下書きを保存中	초안 저장 중	正在儲存草稿
+是否儲存為草稿	Save as a draft?	下書きを保存しますか？	초안으로 저장할까요?	是否儲存草稿？
+放棄	Discard	保存しない	저장 안 함	不要儲存
+取消	Cancel	キャンセル	취소	取消
+取消儲存	Cancel saving	保存を中止	저장 취소	中止儲存
+取消匯出	Cancel export	出力を中止	내보내기 취소	中止匯出
+取消，回到編輯	Cancel and return to editing	編集に戻る	취소하고 편집으로 돌아가기	取消並返回編輯
+完成	Done	完了	완료	完成
+返回	Back	戻る	뒤로	返回
+返回主頁	Back to home	ホームへ	홈으로 돌아가기	返回主頁
+返回圖片編輯	Back to photo editing	画像編集へ	사진 편집으로 돌아가기	返回圖片編輯
+返回特效	Back to effects	効果に戻る	효과로 돌아가기	返回特效
+返回梯形方向选择	Back to perspective options	方向選択へ	원근 보정 방향으로 돌아가기	返回遠近補正的方向選擇
+退出構圖並放棄變更	Cancel crop changes	変更を破棄して戻る	자르기 변경 취소	放棄本次構圖變更並返回
+退出构图并放弃变更	Cancel crop changes	変更を破棄して戻る	자르기 변경 취소	放棄本次構圖變更並返回
+復原	Undo	元に戻す	실행 취소	復原
+重做	Redo	やり直す	다시 실행	重做
+還原	Reset	リセット	초기화	還原
+重設	Reset	リセット	초기화	重設
+重置全部	Reset all	全てリセット	모두 초기화	全部重設
+雙擊重置	Double-tap to reset	ダブルタップでリセット	두 번 탭하여 초기화	雙擊重置
+原始	Original	元画像	원본	原始圖片
+按住看原圖	Hold to see original	長押しで元画像を表示	길게 눌러 원본 보기	按住看原圖
+載入中	Loading	読み込み中	불러오는 중	載入中
+載入中...	Loading…	読み込み中…	불러오는 중…	載入中...
+載入中…	Loading…	読み込み中…	불러오는 중…	載入中…
+準備中…	Preparing…	準備中…	준비 중…	準備中…
+請稍候	Please wait	しばらくお待ちください	잠시만 기다려 주세요	請稍候
+正在匯出影片	Exporting video	動画を書き出し中	동영상 내보내는 중	正在匯出影片
+正在匯出成品	Exporting	書き出し中	내보내는 중	正在匯出成品
+正在存檔	Saving	保存中	저장 중	正在存檔
+已儲存	Saved	保存済み	저장됨	已儲存
+繼續編輯	Continue editing	編集を続ける	계속 편집	繼續編輯
+繼續調整	Keep adjusting	調整を続ける	계속 조정	繼續調整
+修下一張	Edit next photo	次の写真へ	다음 사진 편집	編輯下一張照片
+拼下一張	Next collage	次の作品へ	다음 콜라주	開始下一張拼貼作品
+拼下一組	New collage	新しく作る	새 콜라주	建立新的拼貼作品
+要繼續上次的編輯嗎？	Resume your last edit?	前回の編集を続けますか？	이전 편집을 계속할까요?	要繼續上次的編輯嗎？
+上次在「	Unfinished edit in 	前回の未完了の編集：	완료하지 않은 편집: 	上次在「
+」還有沒完成的內容	 is ready to resume.	を再開できます。	 작업을 이어서 할 수 있습니다.	」還有沒完成的內容
+重新開始	Start fresh	やり直す	새로 시작	重新開始
+歷史紀錄	Projects	編集履歴	작업 내역	歷史紀錄
+匯入照片	Import photos	写真を追加	사진 가져오기	匯入照片
+匯入圖片	Import image	画像を追加	이미지 가져오기	匯入圖片
+匯入影片	Import video	動画を追加	동영상 가져오기	匯入影片
+選擇相片	Choose photo	写真を選択	사진 선택	選擇相片
+請選一張圖片	Choose an image	画像を選んでください	이미지를 선택해 주세요	請選一張圖片
+上傳	Upload	アップロード	업로드	上傳
+為您推薦	For you	おすすめ	추천	為您推薦
+為你推薦	For you	おすすめ	추천	為你推薦
+查看全部	See all	すべて見る	전체 보기	查看全部
+立即使用	Try now	使ってみる	지금 사용하기	立即使用
+全新濾鏡上線	New filters are here	新フィルター登場	새로운 필터 출시	新濾鏡登場
+一鍵調出質感氛圍	Set the mood in one tap	ワンタップで雰囲気アップ	한 번의 터치로 완성하는 감성	一鍵提升照片氛圍
+聯絡方式	Contact	お問い合わせ	문의	聯絡與詢問
+換一張主視覺	Change cover image	メイン画像を変更	메인 이미지 변경	換一張主視覺
+換一張橫幅底圖	Change banner image	バナー画像を変更	배너 이미지 변경	換一張橫幅底圖
+搜尋模板	Search templates	テンプレートを検索	템플릿 검색	搜尋模板
+搜尋......	Search…	検索…	검색…	搜尋......
+亮度	Brightness	明るさ	밝기	亮度
+曝光	Exposure	露出	노출	曝光
+對比	Contrast	コントラスト	대비	對比
+高光	Highlights	ハイライト	하이라이트	高光
+陰影	Shadows	シャドウ	그림자	陰影
+色溫	Temperature	色温度	색온도	色溫
+暖度	Warmth	暖かみ	따뜻함	暖度
+色調	Tint	色かぶり	색조	色偏調整
+飽和度	Saturation	彩度	채도	飽和度
+自然飽和度	Vibrance	自然な彩度	생동감	自然飽和度
+銳化	Sharpen	シャープ	선명하게	銳化
+顆粒	Grain	粒子	그레인	顆粒
+雜訊	Noise	ノイズ	노이즈	雜訊
+噪點	Noise	ノイズ	노이즈	噪點
+柔光	Bloom	ソフトグロー	소프트 글로우	柔光
+朦朧	Haze	かすみ	헤이즈	朦朧
+暗角	Vignette	周辺減光	비네팅	暗角
+光暈	Halo	ハロー	후광	光暈
+漏光	Light leak	光漏れ	빛샘	漏光
+色散	Dispersion	分散	분산	色散
+色差	Chromatic aberration	色収差	색수차	色差
+曲線	Curves	トーンカーブ	커브	曲線
+色相	Hue	色相	색상	色相
+明度	Luminance	輝度	명도	明度
+色相 A	Hue A	色相 A	색상 A	色相 A
+色相 B	Hue B	色相 B	색상 B	色相 B
+紅	Red	赤	빨강	紅
+橙	Orange	オレンジ	주황	橙
+黃	Yellow	黄	노랑	黃
+綠	Green	緑	초록	綠
+青	Cyan	シアン	청록	青
+藍	Blue	青	파랑	藍
+紫	Purple	紫	보라	紫
+洋紅	Magenta	マゼンタ	마젠타	洋紅
+強度	Intensity	強さ	강도	強度
+力度	Strength	強さ	강도	力度
+強弱	Strength	強弱	강도	強弱
+透明度	Opacity	不透明度	불투명도	透明度
+濃度	Amount	濃度	농도	濃度
+大小	Size	サイズ	크기	大小
+範圍	Range	範囲	범위	範圍
+密度	Density	密度	밀도	密度
+粗細	Thickness	太さ	두께	粗細
+間距	Spacing	間隔	간격	間距
+間隙	Gap	すき間	간격	間隙
+長度	Length	長さ	길이	長度
+方向	Direction	方向	방향	方向
+數量	Count	数	개수	數量
+參數	Parameters	設定値	매개변수	參數設定值
+顏色	Color	色	색상	顏色
+自訂顏色	Custom color	自由色	사용자 지정 색상	自訂色彩
+自選顏色	Choose color	色を選択	색상 선택	自選顏色
+色號	Hex color	HEX	색상 코드	十六進位色碼
+背景顏色	Background color	背景色	배경색	背景顏色
+複製	Duplicate	複製	복제	複製
+已複製	Copied	コピー済み	복사됨	已複製
+刪除	Delete	削除	삭제	刪除
+上移一層	Bring forward	前面へ	앞으로 한 단계	上移一層
+下移一層	Send backward	背面へ	뒤로 한 단계	下移一層
+新增內容	Add	追加	추가	新增內容
+新增照片	Add photo	写真追加	사진 추가	新增照片
+新增文字	Add text	文字追加	텍스트 추가	新增文字
+新增符號	Add symbols	記号追加	기호 추가	新增符號
+新增圖形	Add shape	図形追加	도형 추가	新增圖形
+圖形	Shapes	図形	도형	圖形
+符號	Symbols	記号	기호	符號
+文字	Text	文字	텍스트	文字
+圖片	Image	画像	이미지	圖片
+影片	Video	動画	동영상	影片
+圖案	Patterns	モチーフ	패턴	圖案
+圖形調整	Shape settings	図形調整	도형 조정	圖形調整
+圖片調整	Image settings	画像調整	이미지 조정	圖片調整
+編輯文字	Edit text	文字編集	텍스트 편집	編輯文字
+編輯符號	Edit symbols	記号編集	기호 편집	編輯符號
+輸入文字	Enter text	文字を入力	텍스트 입력	輸入文字
+輸入文字...	Enter text…	文字を入力…	텍스트 입력…	輸入文字…
+字體	Font	フォント	글꼴	字體
+字距	Letter spacing	字間	자간	字元間距
+粗體	Bold	太字	굵게	粗體
+斜體	Italic	斜体	기울임	斜體
+對齊	Align	整列	정렬	物件對齊
+描邊	Outline	縁取り	테두리	描邊
+描邊顏色	Outline color	縁の色	테두리 색상	描邊的顏色
+發光	Glow	グロー	글로우	發光
+發光顏色	Glow color	光の色	글로우 색상	發光的顏色
+發光動畫	Glow animation	光の動き	글로우 애니메이션	發光的動態效果
+紋理	Texture	質感	텍스처	紋理質感
+紋理顏色	Texture color	質感の色	텍스처 색상	紋理的顏色
+羽化	Feather	境界ぼかし	페더	邊緣柔化
+形狀	Shape	形	모양	形狀
+實心	Solid	塗り	채움	實心填色
+邊框	Outline	輪郭	윤곽선	輪廓框線
+線條	Lines	線	선	線條
+網格	Grids	グリッド	그리드	網格
+圓形	Circle	円	원	圓形
+方形	Square	正方形	정사각형	方形
+星型	Star	星	별	星型
+星星	Stars	星	별	星星
+愛心	Hearts	ハート	하트	愛心
+圓角	Round corners	角丸	둥근 모서리	圓角
+圓弧度	Curvature	曲率	곡률	圓弧度
+圖形顏色	Shape color	図形の色	도형 색상	圖形顏色
+條紋	Stripes	縞模様	줄무늬	條紋圖樣
+條紋顏色一	Stripe color 1	縞の色1	줄무늬 색상 1	條紋的第一種顏色
+條紋顏色二	Stripe color 2	縞の色2	줄무늬 색상 2	條紋的第二種顏色
+點點	Dots	ドット	도트	點點
+點點顏色	Dot color	ドットの色	도트 색상	點點顏色
+實線	Solid line	実線	실선	實線
+虛線	Dashed line	破線	점선	虛線
+虛線動畫	Dash animation	線の動き	점선 애니메이션	虛線的動態效果
+動畫	Animation	アニメ	애니메이션	動畫
+進場動畫	Entrance	登場	등장 애니메이션	登場效果
+常駐動畫	Loop	ループ	반복 애니메이션	循環播放效果
+無	None	なし	없음	無
+靜止	Still	静止	정지	靜止
+淡入	Fade in	フェード	페이드 인	淡入（登場效果）
+升起	Rise	上昇	올라오기	上升
+落下	Fall	下降	내려오기	下降
+果凍	Jelly	ぷるぷる	젤리	柔軟彈動
+泡泡	Bubble	ポップ	팝인	逐個彈出
+彈跳	Bounce	バウンド	바운스	彈跳
+旋轉	Spin	回転	회전	旋轉
+縮放	Scale	ズーム	확대·축소	放大縮小
+縮放I	Scale I	ズームI	확대·축소 I	放大縮小 I
+縮放II	Scale II	ズームII	확대·축소 II	放大縮小 II
+波浪	Wave	ウェーブ	물결	波浪變形
+呼吸	Breathe	明滅	숨쉬기	漸亮漸暗／漸顯漸隱
+呼吸I	Breathe I	明滅I	숨쉬기 I	明滅 I
+呼吸II	Breathe II	明滅II	숨쉬기 II	明滅 II
+呼吸III	Breathe III	明滅III	숨쉬기 III	明滅 III
+搖擺	Sway	ゆらゆら	흔들기	輕輕搖晃
+漂浮	Float	浮遊	떠다니기	漂浮
+繞圈	Orbit	周回	궤도	繞圈運動
+流星	Meteor	流星	유성	流星
+畫筆	Draw	描画	그리기	畫出線條
+閃爍	Flicker	点滅	깜박임	閃爍
+故障	Glitch	グリッチ	글리치	故障
+幅度	Amount	振幅	진폭	變化幅度
+速度	Speed	速度	속도	速度
+起始	Delay	開始待ち	시작 지연	開始前的等待時間
+循環間隔	Loop interval	ループ間隔	반복 간격	循環間隔
+播放	Play	再生	재생	播放
+暫停	Pause	一時停止	일시 정지	暫停
+從頭播	Replay	リプレイ	다시 재생	從頭重播
+沒有可編輯項目	Nothing to animate	対象がありません	애니메이션을 적용할 항목이 없습니다	沒有可編輯的目標
+排版	Layout	レイアウト	레이아웃	排版
+佔比	Mask coverage	マスク比率	마스크 비율	遮罩所佔比例
+比例	Aspect ratio	縦横比	화면 비율	比例
+版型比例	Layout ratio	縦横比	레이아웃 비율	版型的長寬比
+直式	Portrait	縦向き	세로	直式
+橫式	Landscape	横向き	가로	橫式
+滿版	Full image	全面	전체 이미지	滿版
+自由	Free	自由	자유	自由
+自訂遮罩	Custom mask	画像マスク	사용자 지정 마스크	使用圖片製作遮罩
+遮罩顏色	Mask color	マスク色	마스크 색상	遮罩顏色
+更換圖片	Replace image	画像変更	이미지 교체	更換圖片
+替換原始圖片	Replace original image	元画像を変更	원본 이미지 교체	替換最初匯入的圖片
+隨機圖形	Shuffle patterns	シャッフル	패턴 섞기	重新隨機排列圖案
+對稱	Symmetry	対称	대칭	對稱
+對稱鎖定：已解除	Symmetry unlocked	対称ロック解除	대칭 잠금 해제됨	對稱鎖定：已解除
+對稱鎖定：開啟中	Symmetry locked	対称ロック中	대칭 잠김	對稱鎖定：開啟中
+連線	Connect	連結線	연결선	連接圖案的線
+連線顏色	Connector color	連結線の色	연결선 색상	連接線的顏色
+這個圖案不支援連線	This pattern cannot be connected	この図柄は連結できません	이 패턴은 연결선을 지원하지 않습니다	這個圖案無法連線
+不發光	No glow	発光なし	글로우 없음	不發光
+兩側的圖案都發光	Glow on both sides	両側を発光	양쪽 패턴에 글로우 적용	兩側的圖案都發光
+只有落在圖片上的那一段發光	Glow only over the image	画像上だけ発光	이미지 위의 부분에만 글로우 적용	只讓位於圖片上的部分發光
+裁切	Crop	切り取り	자르기	裁切
+角度	Straighten	傾き	기울기	角度
+翻轉	Flip	反転	뒤집기	翻轉
+梯形	Perspective	遠近補正	원근 보정	梯形
+垂直	Vertical	垂直	세로	垂直
+水平	Horizontal	水平	가로	水平
+水平翻轉	Flip horizontal	左右反転	좌우 뒤집기	水平翻轉
+垂直翻轉	Flip vertical	上下反転	상하 뒤집기	垂直翻轉
+逆時針旋轉 90 度	Rotate 90° left	左に90°回転	왼쪽으로 90° 회전	逆時針旋轉 90 度
+順時針旋轉 90 度	Rotate 90° right	右に90°回転	오른쪽으로 90° 회전	順時針旋轉 90 度
+建立遮色片	Create mask	マスクを作成	마스크 만들기	建立遮色片
+清除遮色片	Clear mask	マスクを消去	마스크 지우기	清除遮色片
+顯示遮罩	Show mask	マスクを表示	마스크 표시	顯示遮罩
+請在圖片上拖曳，繪製出遮色片	Drag on the image to paint a mask	画像をなぞってマスクを描いてください	이미지를 드래그하여 마스크를 그려 주세요	請在圖片上拖曳，繪製出遮色片
+清除	Clear	クリア	지우기	清除
+筆刷	Brush	ブラシ	브러시	筆刷
+橡皮擦模式（再按關閉）	Eraser mode (tap to turn off)	消しゴム（もう一度タップで解除）	지우개 모드(다시 탭하여 끄기)	橡皮擦模式（再按關閉）
+畫筆模式（再按切換為橡皮擦）	Brush mode (tap for eraser)	ブラシ（もう一度タップで消しゴム）	브러시 모드(다시 탭하여 지우개로 전환)	畫筆模式（再按切換為橡皮擦）
+大眼	Enlarge eyes	目を大きく	눈 확대	大眼
+去痘	Blemish removal	ニキビ消し	잡티 제거	去痘
+去皺	Smooth wrinkles	しわ補正	주름 보정	去皺
+修容	Contour	輪郭補正	윤곽 보정	修容
+瘦身	Reshape	スリム	슬림	瘦身
+豐胸	Enhance	バスト補正	볼륨 보정	豐胸
+液化	Liquify	ゆがみ補正	픽셀 유동화	液化
+柔和度	Softness	ソフトさ	부드러움	柔和度
+美顏結果	Retouched photo	レタッチ結果	뷰티 보정 결과	美顏結果
+仿色結果	Color-matched photo	色合わせ結果	색감 매칭 결과	仿色結果
+導入參考圖片	Import reference	参考画像を追加	참조 이미지 가져오기	匯入參考圖片
+分析色彩中	Analyzing colors	色を解析中	색상 분석 중	分析色彩中
+直方圖對齊	Histogram matching	ヒストグラム	히스토그램 매칭	直方圖匹配
+膚色保護	Protect skin tones	肌色保護	피부색 보호	保護膚色
+接著調色	Continue color editing	色調整へ	색감 조정 계속하기	接著進入調色
+快門	Shutter	シャッター	셔터	快門
+拍照	Take photo	撮影	촬영	拍照
+白平衡	White balance	WB	화이트 밸런스	白平衡
+閃光燈	Flash	フラッシュ	플래시	閃光燈
+定時	Timer	タイマー	타이머	定時
+構圖線	Grid	グリッド	격자	構圖線
+AE/AF 鎖定	AE/AF lock	AE/AFロック	AE/AF 잠금	AE/AF 鎖定
+這顆鏡頭沒有閃光燈	Flash is unavailable for this lens	このレンズではフラッシュを使えません	이 렌즈는 플래시를 지원하지 않습니다	這顆鏡頭沒有閃光燈
+相機影像尚未就緒，請再拍一次	Camera not ready. Please try again.	カメラの準備ができていません。もう一度撮影してください。	카메라가 준비되지 않았습니다. 다시 촬영해 주세요.	相機影像尚未就緒，請再拍一次
+未能儲存照片，請再拍一次	Could not save the photo. Please try again.	写真を保存できませんでした。もう一度撮影してください。	사진을 저장하지 못했습니다. 다시 촬영해 주세요.	未能儲存照片，請再拍一次
+尚未拍攝或導入任何照片	No photos yet	写真がありません	아직 사진이 없습니다	尚未拍攝或導入任何照片
+相簿 (	Photos (	写真（	사진 (	相簿 (
+照片資訊	Photo info	写真情報	사진 정보	照片資訊
+EXIF資訊	EXIF data	Exif情報	EXIF 정보	EXIF資訊
+型號	Camera model	機種	기종	型號
+焦距	Focal length	焦点距離	초점 거리	焦距
+光圈	Aperture	絞り	조리개	光圈
+日期	Date	日付	날짜	日期
+尺寸	Dimensions	サイズ	크기	尺寸
+格式	Format	形式	형식	格式
+未知	Unknown	不明	알 수 없음	未知
+佈局	Layout	レイアウト	레이아웃	佈局
+新增佈局	Add layout	レイアウト追加	레이아웃 추가	新增布局
+刪除佈局	Delete layout	レイアウト削除	레이아웃 삭제	刪除布局
+佈局調整	Layout settings	レイアウト調整	레이아웃 조정	佈局調整
+格數	Cells	コマ数	칸 수	格數
+新增一頁	Add page	ページを追加	페이지 추가	新增一頁
+頁面順序	Page order	並べ替え	페이지 순서	重新排列頁面
+拖曳調整順序	Drag to reorder	ドラッグして並べ替え	드래그하여 순서 변경	拖曳調整順序
+請先新增格子以選擇格局。	Add cells to choose a layout.	コマを追加してください	칸을 추가한 후 레이아웃을 선택해 주세요.	請先新增格子
+先點擊一下要調整的佈局	Select a layout to adjust	レイアウトを選択	조정할 레이아웃을 선택해 주세요	選取要調整的布局
+請選中要編輯的物件	Select an object to edit	編集する素材を選択	편집할 개체를 선택해 주세요	選取要編輯的素材
+請先選中圖片或文字	Select an image or text first	画像か文字を選択	먼저 이미지나 텍스트를 선택해 주세요	請先選取圖片或文字
+IG 預覽	Instagram preview	IGプレビュー	Instagram 미리보기	Instagram 預覽
+預覽	Preview	プレビュー	미리보기	預覽
+更多	More	その他	더 보기	更多
+開啟	On	オン	켜기	開啟
+關閉	Off	オフ	끄기	關閉
+關閉視窗	Close	閉じる	닫기	關閉視窗
+開啟對齊	Enable snapping	スナップON	스냅 켜기	開啟對齊吸附
+關閉對齊	Disable snapping	スナップOFF	스냅 끄기	關閉對齊吸附
+開啟畫筆	Enable stamp brush	スタンプON	스탬프 브러시 켜기	開啟連續蓋印模式
+備援	Fallback	代替	대체	備援
+標準	Standard	標準	표준	標準
+預設	Default	デフォルト	기본값	預設
+經典	Classic	クラシック	클래식	經典
+樣式	Style	スタイル	스타일	樣式
+螢幕	Screen	画面	화면	螢幕
+僅圖片	Image only	画像のみ	이미지만	僅圖片
+還原素色	Reset to solid color	単色に戻す	단색으로 초기화	還原素色
+登入	Sign in	ログイン	로그인	登入
+立即登入	Sign in	ログイン	로그인	立即登入
+登入中	Signing in	ログイン中	로그인 중	登入中
+登出	Sign out	ログアウト	로그아웃	登出
+帳號	Account	アカウント	계정	帳號
+帳號設定	Account settings	アカウント	계정 설정	帳號設定
+名稱	Name	名前	이름	名稱
+電子郵件	Email	メール	이메일	電子郵件
+使用 Apple 帳號登入	Continue with Apple	Appleで続ける	Apple로 계속하기	使用 Apple 帳號登入
+使用 Google 帳號登入	Continue with Google	Googleで続ける	Google로 계속하기	使用 Google 帳號登入
+使用電子郵件登入	Continue with email	メールで続ける	이메일로 계속하기	使用電子郵件登入
+登入後可同步你的作品與偏好	Sign in to sync your projects and preferences	ログインして作品と設定を同期	로그인하여 작품과 설정 동기화	登入後可同步你的作品與偏好
+修改帳號名稱	Change account name	名前を変更	계정 이름 변경	更改帳號名稱
+更換頭貼	Change profile photo	アイコン変更	프로필 사진 변경	更換個人頭像
+確認登出帳號	Sign out of your account?	ログアウトしますか？	로그아웃할까요?	確認登出帳號
+刪除帳號	Delete account	アカウントを削除	계정 삭제	刪除帳號
+刪除中	Deleting	削除中	삭제 중	刪除中
+確認刪除帳號	Delete your account?	アカウントを削除しますか？	계정을 삭제할까요?	確認刪除帳號
+刪除後會員資料無法復原	Your account data cannot be recovered after deletion.	削除したアカウント情報は復元できません。	삭제한 계정 정보는 복구할 수 없습니다.	刪除後會員資料無法復原
+沒有帳號	No account yet?	未登録の方	계정이 없으신가요?	尚未註冊的使用者
+寄送驗證碼	Send code	コード送信	인증 코드 보내기	寄送驗證碼
+重新取得驗證碼	Resend code	コード再送	인증 코드 재전송	重新寄送驗證碼
+輸入驗證碼	Enter verification code	コード入力	인증 코드 입력	輸入驗證碼
+驗證碼寄到	Code sent to	送信先：	인증 코드 전송 주소:	驗證碼寄送地址：
+請先輸入你的電子郵件	Enter your email first	メールアドレスを入力してください	먼저 이메일을 입력해 주세요	請先輸入你的電子郵件
+請輸入正確的電子郵件	Enter a valid email address	有効なメールアドレスを入力してください	올바른 이메일 주소를 입력해 주세요	請輸入正確的電子郵件
+密碼至少要 6 個字	Use at least 6 characters for your password	パスワードは6文字以上にしてください	비밀번호는 6자 이상이어야 합니다	密碼至少要 6 個字
+驗證碼不對	Incorrect verification code	認証コードが違います	인증 코드가 올바르지 않습니다	驗證碼不對
+驗證碼過期了，請重新取得	Code expired. Request a new one.	認証コードの有効期限が切れました。再送してください。	인증 코드가 만료되었습니다. 다시 요청해 주세요.	驗證碼過期了，請重新取得
+帳號或密碼不對	Incorrect email or password	メールアドレスまたはパスワードが違います	이메일 또는 비밀번호가 올바르지 않습니다	帳號或密碼不對
+這個信箱已經註冊過了，直接登入吧	This email is already registered. Please sign in.	このメールアドレスは登録済みです。ログインしてください。	이미 등록된 이메일입니다. 로그인해 주세요.	這個信箱已經註冊過了，直接登入吧
+請先到信箱點開驗證信	Check your inbox to verify your email first	受信したメールから認証を完了してください	먼저 받은 메일에서 이메일 인증을 완료해 주세요	請先到信箱點開驗證信
+驗證信寄出去了，去信箱點一下就完成註冊	Check your inbox to finish signing up	メールのリンクを開くと登録が完了します	메일의 링크를 열어 가입을 완료해 주세요	驗證信寄出去了，去信箱點一下就完成註冊
+重設密碼的信寄出去了	Password reset email sent	パスワード再設定メールを送信しました	비밀번호 재설정 메일을 보냈습니다	重設密碼的信寄出去了
+太頻繁了，等一下再試	Too many attempts. Try again shortly.	しばらく待ってからもう一度お試しください。	시도 횟수가 너무 많습니다. 잠시 후 다시 시도해 주세요.	太頻繁了，等一下再試
+連不上伺服器，檢查一下網路	Cannot connect. Check your internet connection.	接続できません。通信環境をご確認ください。	연결할 수 없습니다. 인터넷 연결을 확인해 주세요.	連不上伺服器，檢查一下網路
+連線好像卡住了，再試一次看看	Connection timed out. Please try again.	接続がタイムアウトしました。もう一度お試しください。	연결 시간이 초과되었습니다. 다시 시도해 주세요.	連線好像卡住了，再試一次看看
+出了點問題，請再試一次	Something went wrong. Please try again.	エラーが発生しました。もう一度お試しください。	문제가 발생했습니다. 다시 시도해 주세요.	出了點問題，請再試一次
+這次登入沒有完成，再試一次看看	Sign-in was not completed. Please try again.	ログインが完了しませんでした。もう一度お試しください。	로그인이 완료되지 않았습니다. 다시 시도해 주세요.	這次登入沒有完成，再試一次看看
+沒有取得授權網址	Could not start authorization	認証を開始できませんでした	인증을 시작하지 못했습니다	沒有取得授權網址
+登入回傳的網址裡沒有授權資訊	No authorization information was returned	認証情報を取得できませんでした	인증 정보를 받지 못했습니다	登入回傳的網址裡沒有授權資訊
+尚未設定後端	Service is not configured yet	サービスはまだ設定されていません	서비스가 아직 설정되지 않았습니다	尚未設定後端
+後端尚未設定	Service is not configured yet	サービスはまだ設定されていません	서비스가 아직 설정되지 않았습니다	後端尚未設定
+我知道了	Got it	OK	확인	知道了／確認
+重試	Try again	再試行	다시 시도	重試
+錯誤	Error	エラー	오류	錯誤
+敬請期待	Coming soon	近日公開	출시 예정	敬請期待
+無法讀取紀錄	Cannot load projects	履歴を読み込めません	작업 내역을 불러올 수 없습니다	無法讀取紀錄
+這台裝置的儲存空間不足	Not enough storage on this device	端末の空き容量が不足しています	기기의 저장 공간이 부족합니다	這台裝置的儲存空間不足
+存檔失敗，請重試	Save failed. Please try again.	保存できませんでした。もう一度お試しください。	저장하지 못했습니다. 다시 시도해 주세요.	存檔失敗，請重試
+讀檔失敗	Could not read the file	ファイルを読み込めませんでした	파일을 읽지 못했습니다	讀檔失敗
+無法載入此圖片	Could not load this image	この画像を読み込めませんでした	이 이미지를 불러오지 못했습니다	無法載入此圖片
+讀不到這張圖片	Could not read this image	この画像を読み取れませんでした	이 이미지를 읽지 못했습니다	讀不到這張圖片
+這張圖片讀不進來	Could not load this image	この画像を読み込めませんでした	이 이미지를 불러오지 못했습니다	這張圖片讀不進來
+無法處理此圖片格式	Unsupported image format	この画像形式には対応していません	지원하지 않는 이미지 형식입니다	無法處理此圖片格式
+無法在畫布中解析此圖片，這可能是記憶體不足或格式損毀。	Cannot render this image. Memory may be low or the file may be damaged.	画像を描画できません。メモリ不足、またはファイルが破損している可能性があります。	이미지를 표시할 수 없습니다. 메모리가 부족하거나 파일이 손상되었을 수 있습니다.	無法在畫布中解析此圖片，這可能是記憶體不足或格式損毀。
+無法解析此圖片格式，抱歉！核心模組不支援該特殊編碼或檔案已損毀。	Cannot decode this image. Its encoding is unsupported or the file is damaged.	画像を読み込めません。未対応の形式、または破損したファイルです。	이미지를 디코딩할 수 없습니다. 지원하지 않는 인코딩이거나 파일이 손상되었습니다.	無法解析此圖片格式，抱歉！核心模組不支援該特殊編碼或檔案已損毀。
+沒有可用的來源	No source available	利用できる素材がありません	사용 가능한 소스가 없습니다	沒有可用的來源
+這段影片讀不進來，換一個格式試試（MP4 最穩）	Cannot load this video. Try an MP4 file.	動画を読み込めません。MP4形式をお試しください。	동영상을 불러올 수 없습니다. MP4 파일을 사용해 보세요.	這段影片讀不進來，換一個格式試試（MP4 最穩）
+導出的圖轉不出來	Could not create the exported image	書き出し画像を作成できませんでした	내보낼 이미지를 만들지 못했습니다	導出的圖轉不出來
+動態影片做不出來	Could not create the animation video	アニメーション動画を作成できませんでした	애니메이션 동영상을 만들지 못했습니다	動態影片做不出來
+動畫這一格畫不出來	Could not render an animation frame	アニメーションのフレームを描画できませんでした	애니메이션 프레임을 렌더링하지 못했습니다	動畫這一格畫不出來
+影片預覽影格畫不出來	Could not render the video preview	動画のプレビューを描画できませんでした	동영상 미리보기를 렌더링하지 못했습니다	影片預覽影格畫不出來
+預覽的動畫畫不出來	Could not render the animation preview	アニメーションのプレビューを描画できませんでした	애니메이션 미리보기를 렌더링하지 못했습니다	預覽的動畫畫不出來
+解析中...	Decoding…	解析中…	디코딩 중…	解析中...
+儲存全部 {0} 個	Save all {0} items	{0}件すべて保存	{0}개 모두 저장	儲存全部 {0} 個
+儲存全部 {0} 張	Save all {0} photos	{0}枚すべて保存	사진 {0}장 모두 저장	儲存全部 {0} 張
+第 {0} 張	Photo {0}	{0}枚目	사진 {0}	第 {0} 張
+刪除第 {0} 頁	Delete page {0}	{0}ページ目を削除	{0}페이지 삭제	刪除第 {0} 頁
+圖片{0}	Image {0}	画像{0}	이미지 {0}	圖片{0}
+圖形{0}	Shape {0}	図形{0}	도형 {0}	圖形{0}
+圖案之間的連線：{0}	Pattern connectors: {0}	モチーフの接続線：{0}	패턴 연결선: {0}	圖案之間的連線：{0}
+遮罩排版 {0}	Mask layout {0}	マスクレイアウト {0}	마스크 레이아웃 {0}	遮罩排版 {0}
+推薦 {0}	Pick {0}	おすすめ {0}	추천 {0}	推薦 {0}
+模板 {0}	Template {0}	テンプレート {0}	템플릿 {0}	模板 {0}
+{0}：上傳預覽圖片	{0}: upload preview image	{0}：プレビュー画像をアップロード	{0}: 미리보기 이미지 업로드	{0}：上傳預覽圖片
+{0}：換一張示意圖	{0}: change preview image	{0}：見本画像を変更	{0}: 예시 이미지 변경	{0}：換一張示意圖
+已存 {0} 筆	{0} saved	{0}件保存済み	{0}개 저장됨	已存 {0} 筆
+已存 {0} 筆・{1} 筆缺原圖	{0} saved · {1} missing originals	{0}件保存済み・{1}件の元画像がありません	{0}개 저장됨 · 원본 없는 항목 {1}개	已存 {0} 筆・{1} 筆缺原圖
+已合併{0}	Combined {0}	合成済み：{0}	병합된 {0}	已合併{0}
+{0} 分鐘前	{0} minutes ago	{0}分前	{0}분 전	{0} 分鐘前
+{0} 小時前	{0} hours ago	{0}時間前	{0}시간 전	{0} 小時前
+{0} 天前	{0} days ago	{0}日前	{0}일 전	{0} 天前
+剛剛	Just now	たった今	방금	剛剛
+{0}年{1}月{2}日 {3}{4}:{5}	{0}/{1}/{2} {4}:{5} {3}	{0}年{1}月{2}日 {3}{4}:{5}	{0}년 {1}월 {2}일 {3} {4}:{5}	{0}年{1}月{2}日 {3}{4}:{5}
+上午	AM	午前	오전	上午
+下午	PM	午後	오후	下午
+早上	Morning	朝	아침	早上
+中午	Noon	昼	정오	中午
+晚上	Evening	夜	저녁	晚上
+凌晨	Early morning	深夜	새벽	凌晨
+請輸入信裡的 {0} 位數驗證碼	Enter the {0}-digit code from your email	メールに届いた{0}桁の認証コードを入力してください	메일의 {0}자리 인증 코드를 입력해 주세요	請輸入信裡的 {0} 位數驗證碼
+重新取得（{0}）	Resend ({0})	再送（{0}）	재전송 ({0})	重新取得（{0}）
+上一步	Previous	前へ	이전	上一步
+合併濾鏡	Combine filters	フィルター合成	필터 합치기	合併濾鏡
+合併特效	Combine effects	効果を合成	효과 합치기	合併特效
+收合特效	Collapse effects	閉じる	효과 접기	收合特效清單
+調整	Adjust	調整	조정	調整
+調整細項	Fine adjustments	詳細調整	세부 조정	調整細項
+中心 X	Center X	中心 X	중심 X	中心 X
+中心 Y	Center Y	中心 Y	중심 Y	中心 Y
+位移	Offset	オフセット	오프셋	位移
+取樣距離	Sample distance	サンプル間隔	샘플 간격	取樣間隔
+徑向指數	Radial falloff	放射減衰	방사형 감쇠	沿放射方向衰減的程度
+相位	Phase	位相	위상	相位
+空間變化	Spatial variation	空間変化	공간 변화	空間變化
+發生比例	Frequency	発生率	발생 빈도	發生比例
+變化	Variation	変化	변화	變化
+擴散	Spread	拡散	확산	擴散
+收縮	Contract	収縮	수축	收縮
+描繪	Trace	トレース	트레이스	描繪
+光罩	Light veil	光の幕	빛 장막	光幕效果
+亮角	Bright corners	周辺増光	모서리 밝게	亮角
+動態模糊	Motion blur	流しぼかし	모션 블러	沿移動方向的模糊
+放射模糊	Radial blur	放射ぼかし	방사형 흐림	放射狀模糊
+旋轉模糊	Spin blur	回転ぼかし	회전 흐림	旋轉模糊
+區塊錯位	Block shift	ブロックずれ	블록 이동	區塊位移
+抖動	Jitter	ジッター	지터	抖動
+折射	Refraction	屈折	굴절	折射
+彩噪I	Color noise I	色ノイズI	컬러 노이즈 I	彩色雜訊 I
+彩噪II	Color noise II	色ノイズII	컬러 노이즈 II	彩色雜訊 II
+掃描切片	Scan slices	スライス	스캔 슬라이스	掃描切片效果
+掃描密度	Scan density	走査密度	스캔 밀도	掃描密度
+掃描線	Scanlines	走査線	주사선	掃描線
+玻璃暗角	Glass vignette	ガラス枠	유리 비네팅	玻璃邊緣暗角效果
+玻璃磚	Glass blocks	ガラス	유리 블록	玻璃磚效果
+珍珠光澤	Pearlescence	パール	진주 광택	珍珠光澤
+磷光暈	Phosphor glow	燐光	인광	磷光光暈
+結晶化	Crystallize	結晶化	결정화	結晶化
+胞壁寬	Cell border width	境界幅	셀 경계 너비	結晶單元邊界的寬度
+胞壁深	Cell border depth	境界の深さ	셀 경계 깊이	結晶單元邊界的深度
+色度偏移	Chroma shift	色ずれ	색차 이동	色彩通道偏移
+色度糊化	Chroma blur	色ぼかし	색차 흐림	色彩模糊
+變形光斑	Warped bokeh	変形ボケ	왜곡 보케	變形光斑
+通道分離	Channel split	RGB分離	채널 분리	分離 RGB 色彩通道
+邊緣反光	Edge highlights	縁の反射	가장자리 반사	邊緣反光
+霓虹	Neon	ネオン	네온	霓虹
+馬賽克	Mosaic	モザイク	모자이크	馬賽克
+錯位九宮	Offset tiles	タイルずれ	타일 어긋남	錯位九宮
+等速	Linear	等速	일정 속도	等速
+子彈時間	Bullet time	スロー	불릿 타임	慢速時間效果
+跑馬燈	Marquee	スクロール	흐르는 글자	連續捲動
+不規則	Irregular	不規則	불규칙	不規則
+上下對分	Top and bottom	上下二分割	상하 분할	上下對分
+左右對分	Side by side	左右二分割	좌우 분할	左右對分
+三橫欄	Three rows	横3分割	가로 3분할	三橫欄
+三直欄	Three columns	縦3分割	세로 3분할	三直欄
+四格棋盤	2 × 2 grid	2×2分割	2 × 2 그리드	2×2 格分割
+九格棋盤	3 × 3 grid	3×3分割	3 × 3 그리드	3×3 格分割
+五橫欄	Five rows	横5分割	가로 5분할	五橫欄
+三列二欄	3 rows × 2 columns	3行 × 2列	3행 × 2열	三列二欄
+兩列三欄	2 rows × 3 columns	2行 × 3列	2행 × 3열	兩列三欄
+四直兩列	2 rows × 4 columns	2行 × 4列	2행 × 4열	四直兩列
+2x5 網格	2 × 5 grid	2×5分割	2 × 5 그리드	2×5 格分割
+5x2 網格	5 × 2 grid	5×2分割	5 × 2 그리드	5×2 格分割
+3-4-3 交錯	3–4–3 staggered	3–4–3交互	3–4–3 교차 배열	3–4–3 交錯排列
+一上四下	1 above, 4 below	上1・下4	위 1칸·아래 4칸	一上四下
+一下四上	4 above, 1 below	上4・下1	위 4칸·아래 1칸	一下四上
+三上四下	3 above, 4 below	上3・下4	위 3칸·아래 4칸	三上四下
+四上三下	4 above, 3 below	上4・下3	위 4칸·아래 3칸	四上三下
+上大下雙	Large top, two below	上に大1・下に2	위 큰 1칸·아래 2칸	上大下雙
+下大上雙	Two above, large bottom	上に2・下に大1	위 2칸·아래 큰 1칸	下大上雙
+左大右雙	Large left, two right	左に大1・右に2	왼쪽 큰 1칸·오른쪽 2칸	左大右雙
+右大左雙	Two left, large right	左に2・右に大1	왼쪽 2칸·오른쪽 큰 1칸	右大左雙
+左三右二	Three left, two right	左3・右2	왼쪽 3칸·오른쪽 2칸	左三右二
+左二右三	Two left, three right	左2・右3	왼쪽 2칸·오른쪽 3칸	左二右三
+一大三小	One large, three small	大1・小3	큰 1칸·작은 3칸	一大三小
+三小一大	Three small, one large	小3・大1	작은 3칸·큰 1칸	三小一大
+一大五小	One large, five small	大1・小5	큰 1칸·작은 5칸	一大五小
+五小一大	Five small, one large	小5・大1	작은 5칸·큰 1칸	五小一大
+兩大六小	Two large, six small	大2・小6	큰 2칸·작은 6칸	兩大六小
+大左六小	Large left, six small	左に大1・小6	왼쪽 큰 1칸·작은 6칸	大左六小
+左大右疊	Large left, stacked right	左大・右重ね	왼쪽 큰 칸·오른쪽 겹침	左側大格、右側堆疊
+右大左疊	Stacked left, large right	左重ね・右大	왼쪽 겹침·오른쪽 큰 칸	左側堆疊、右側大格
+大角拼貼	Large corner collage	角組み	큰 모서리 콜라주	角落拼貼布局
+黃金右分割	Golden ratio, right	黄金比・右	황금비·오른쪽	黃金右分割
+黃金左分割	Golden ratio, left	黄金比・左	황금비·왼쪽	黃金左分割
+按讚	Like	いいね	좋아요	按讚
+收回讚	Unlike	いいねを取り消す	좋아요 취소	收回讚
+和其他人都說讚	and others liked this	ほかの人が「いいね！」しました	님 외 여러 명이 좋아합니다	和其他人都說讚
+改分享數	Edit share count	シェア数を編集	공유 수 수정	改分享數
+改留言數	Edit comment count	コメント数を編集	댓글 수 수정	改留言數
+改讚數	Edit like count	いいね数を編集	좋아요 수 수정	改讚數
+改轉發數	Edit repost count	リポスト数を編集	리포스트 수 수정	改轉發數
+原創音訊 · {0}	Original audio · {0}	オリジナル音源 · {0}	원본 오디오 · {0}	原創音訊 · {0}
+歌曲	Songs	曲	곡	歌曲
+歌手	Artists	アーティスト	아티스트	歌手／音樂創作者
+歌手全曲	All songs by artist	全曲	아티스트의 모든 곡	該歌手的全部歌曲
+全部歌曲 ·	All songs ·	すべての曲 ·	모든 곡 ·	全部歌曲 ·
+專輯 ·	Album ·	アルバム ·	앨범 ·	專輯 ·
+ · {0} 首	 · {0} songs	 · {0}曲	 · {0}곡	 · {0} 首
+曲風榜	Genre charts	ジャンル別	장르별 차트	依曲風分類的排行榜
+榜	Charts	ランキング	차트	排行榜
+榜{0}	Chart {0}	ランキング {0}	차트 {0}	榜{0}
+榜單內	In charts	ランキング内	차트 내	榜單內
+舊榜	Previous charts	過去の順位	이전 차트	過去的排行榜
+超夯	Trending	人気	인기	熱門
+收藏	Saved	お気に入り	즐겨찾기	收藏／我的最愛
+試聽	Preview track	試聴	미리 듣기	試聽
+快取	Cached	キャッシュ済み	캐시됨	快取
+試聽快取	Cached previews	試聴キャッシュ	미리 듣기 캐시	試聽快取
+取消連結	Unlink	解除	연결 해제	解除音樂連結
+重新連結	Relink	再リンク	다시 연결	重新連結
+找不到歌曲	No songs found	曲が見つかりません	곡을 찾을 수 없습니다	找不到歌曲
+還沒有收藏的音樂，點歌曲右邊的書籤就會收進來	No saved music yet. Tap the bookmark beside a song to save it.	お気に入りの曲はまだありません。曲の右側のブックマークで追加できます。	즐겨찾는 음악이 없습니다. 곡 오른쪽의 북마크를 눌러 추가해 보세요.	還沒有收藏的音樂，點歌曲右邊的書籤就會收進來
+台灣商店	Taiwan store	台湾ストア	대만 스토어	台灣商店
+日本商店	Japan store	日本ストア	일본 스토어	日本商店
+美國商店	US store	米国ストア	미국 스토어	美國商店
+搜tw	Search Taiwan	台湾で検索	대만 검색	搜tw
+搜jp	Search Japan	日本で検索	일본 검색	搜jp
+搜us	Search US	米国で検索	미국 검색	搜us
+華語	Mandarin	中国語	중국어	華語
+日語	Japanese	日本語	일본어	日語
+韓語	Korean	韓国語	한국어	韓語
+{0}全曲	All {0} songs	{0}のすべての曲	{0}의 모든 곡	{0}全曲
+{0}專輯	{0} albums	{0}のアルバム	{0} 앨범	{0}專輯
+{0}歌手	{0} artists	{0}のアーティスト	{0} 아티스트	{0}歌手
+{0}曲目	{0} tracks	{0}の曲	{0} 트랙	{0}曲目
+{0}曲風榜	{0} genre charts	{0}ジャンル別	{0} 장르별 차트	{0}曲風分類排行
+{0}導出	{0} export	{0}の書き出し	{0} 내보내기	{0}導出
+拿不到歌單，請確認網路後重試\n（{0}）	Couldn't load music. Check your connection and try again.\n({0})	曲を読み込めませんでした。通信状況を確認して、もう一度お試しください。\n（{0}）	음악을 불러오지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.\n({0})	拿不到歌單，請確認網路後重試\n（{0}）
+{0}{1}:0筆	{0}{1}: no results	{0}{1}：0件	{0}{1}: 결과 없음	{0}{1}:0筆
+{0}新榜:{1}	{0} new chart: {1}	{0}新着ランキング：{1}	{0} 최신 차트: {1}	{0}新榜:{1}
+{0}查	{0} search	{0}検索	{0} 검색	{0}查
+{0}:0筆	{0}: no results	{0}：0件	{0}: 결과 없음	{0}:0筆
+備援{0}:{1}	Backup {0}: {1}	予備の取得先{0}：{1}	대체 소스 {0}: {1}	備援{0}:{1}
+{0}轉{1}:0筆	{0} → {1}: no results	{0} → {1}：0件	{0} → {1}: 결과 없음	{0}轉{1}:0筆
+{0}轉{1}:{2}	{0} → {1}: {2}	{0} → {1}：{2}	{0} → {1}: {2}	{0}轉{1}:{2}
+{0}試聽:0筆	{0} previews: none	{0}試聴：0件	{0} 미리듣기: 없음	{0}試聽:0筆
+{0}曲風榜:{1}筆	{0} genre chart: {1} results	{0}ジャンル別ランキング：{1}件	{0} 장르별 차트: {1}개	{0}曲風榜:{1}筆
+{0}每日+曲風	{0} daily + genre	{0}デイリー＋ジャンル	{0} 일간 + 장르	{0}每日+曲風
+曲風{0}:都拿不到	Genre {0}: no sources available	ジャンル{0}：取得できるデータがありません	장르 {0}: 사용 가능한 소스 없음	曲風{0}:都拿不到

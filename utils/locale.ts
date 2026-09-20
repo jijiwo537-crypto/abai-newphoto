@@ -5,14 +5,22 @@ export const LOCALES = [
 ] as const;
 export type Locale = typeof LOCALES[number]['id'];
 let cachedLocale: Locale | undefined;
+const restartCover = typeof document !== 'undefined' ? document.getElementById('boot')?.cloneNode(true) as HTMLElement | undefined : undefined;
 export function getLocale(): Locale {
   if (cachedLocale) return cachedLocale;
   try { const s = localStorage.getItem('abai.language'); if (LOCALES.some(l => l.id === s)) return cachedLocale = s as Locale; } catch {}
   return cachedLocale = 'zh-Hant';
 }
 export function changeLocale(locale: Locale) {
-  if (locale === getLocale()) return;
   try { localStorage.setItem('abai.language', locale); } catch { return; }
+  // Show the restart immediately, even while the navigation waits for a response.
+  const cover = restartCover?.cloneNode(true) as HTMLElement | undefined;
+  if (cover) {
+  cover.setAttribute('role', 'status');
+  cover.style.opacity = '1';
+  cover.style.transition = 'none';
+  document.body.appendChild(cover);
+  }
   // Language changes are only exposed on Home. Reload static option catalogs
   // together; never translate or modify project text, IDs, symbols, or artwork.
   location.reload();

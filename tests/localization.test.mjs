@@ -6,6 +6,41 @@ import path from 'node:path';
 import ts from 'typescript';
 const catalog=JSON.parse(fs.readFileSync('utils/translations.json','utf8'));
 const transpile=p=>ts.transpileModule(fs.readFileSync(p,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,esModuleInterop:true,target:ts.ScriptTarget.ES2022}}).outputText;
+test('Japanese table includes source, localized copy and Chinese meaning for every entry',()=>{
+ const rows=fs.readFileSync('locales/copy.tsv','utf8').trim().split('\n').slice(1).map(l=>l.split('\t'));
+ for(const row of rows){assert.equal(row.length,5);assert.ok(row[4]);}
+ const table=fs.readFileSync('public/translations/ja.md','utf8');
+ assert.match(table,/原本繁體中文 \| 日文 \| 日文的中文意思/);
+ assert.equal(table.split('\n').filter(l=>l.startsWith('| ')).length,rows.length+1);
+});
+test('startup position is captured before paint and is not tied to live flex centering',()=>{
+ const html=fs.readFileSync('index.html','utf8');
+ const code=html.match(/<script id="boot-geometry">([\s\S]*?)<\/script>/)[1];
+ const vars={};const sandbox={navigator:{standalone:true},screen:{width:393,height:852},window:{innerHeight:700,innerWidth:393,matchMedia:()=>({matches:false})},document:{documentElement:{style:{setProperty:(k,v)=>vars[k]=v}}}};
+ vm.runInNewContext(code,sandbox);
+ assert.equal(vars['--boot-logo-top'],'282px');
+ sandbox.window.innerHeight=820;
+ assert.equal(vars['--boot-logo-top'],'282px');
+ assert.match(html,/top: var\(--boot-logo-top/);
+});
+test('language dialog contains only the title and language choices',()=>{
+ const source=fs.readFileSync('components/HomePage.tsx','utf8');
+ const dialog=source.slice(source.indexOf('{settingsOpen &&'),source.indexOf('{/* --- 聯絡方式'));
+ assert.match(dialog,/aria-label="語言"/);
+ assert.doesNotMatch(dialog,/<h3|<p /);
+ const locale=fs.readFileSync('utils/locale.ts','utf8');
+ assert.doesNotMatch(locale,/locale === getLocale\(\).*return/);
+ assert.match(locale,/location.reload\(\)/);
+});
+test('font samples start before opening picker and export awaits font CSS',()=>{
+ const app=fs.readFileSync('App.tsx','utf8'),fonts=fs.readFileSync('utils/fonts.ts','utf8');
+ assert.match(app,/warmFontSamples\(\)/);
+ assert.match(fonts,/async function waitForFont[^]*?await ensureFont\(family\)/);
+ const panel=fs.readFileSync('components/GridLayoutTool.tsx','utf8');
+ const card=panel.slice(panel.indexOf('const FontCard:'),panel.indexOf('/* ── 新增符號'));
+ assert.doesNotMatch(card,/IntersectionObserver/);
+ assert.match(panel,/warmTextFonts\(layer.text/);
+});
 test('all locales cover every key and preserve all interpolation placeholders',()=>{
  assert.ok(Object.keys(catalog).length>500);
  for(const [key,row] of Object.entries(catalog)) for(const lang of ['en','ja','ko','zh-Hans']){

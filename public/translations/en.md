@@ -4,6 +4,7 @@
 
 | 繁體中文 | 英文 |
 |---|---|
+| 語言 | Language |
 | 中文 | Chinese |
 | 英文 | English |
 | 日文 | Japanese |

@@ -360,3 +360,15 @@ select:focus, select:focus-visible {
 .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; overscroll-behavior: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
 .custom-scrollbar { overscroll-behavior: none; }
+
+/* Japanese labels may wrap inside their own control, never across its neighbour.
+   Keep icon ligatures and numeric values intact; other languages are unchanged. */
+html:lang(ja) button { overflow-wrap: anywhere; }
+html:lang(ja) button span:not(.material-symbols-outlined):not(.material-icons) {
+  min-width: 0;
+  max-width: 100%;
+  letter-spacing: 0;
+}
+html:lang(ja) button .whitespace-nowrap:not(.material-symbols-outlined):not(.material-icons) {
+  white-space: normal;
+}

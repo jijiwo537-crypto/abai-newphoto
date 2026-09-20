@@ -1,9 +1,8 @@
 /**
  * 文字圖層可用的字體。
  *
- * Google Fonts 與附有開源授權的官方字體來源，**不會**一次載入 —— CJK 字體一個就好幾 MB，
- * 全部預載會直接讓 app 卡死。改成用到哪一個才插入那一個 <link>，
- * 字體選單則靠 IntersectionObserver 捲到哪裡載到哪裡。
+ * 首頁背景預載範例字元，文字編輯器再提前載入目前文字的字元子集。
+ * 有限併發避免 CJK 字體下載搶走開場動畫及操作的資源。
  *
  * 每一類都把最常用的排在前面，並盡量避開長得幾乎一樣的家族。
  */
@@ -314,7 +313,7 @@ export function knownItalic(family: string) {
 
 /** 匯出前要確定字體真的下載完了，否則 canvas 會用退回字體畫出去。 */
 export async function waitForFont(family: string, weight = 400, italic = false) {
-  ensureFont(family);
+  await ensureFont(family);
   if (italic) await ensureItalic(family);
   if (typeof document === 'undefined' || !document.fonts) return;
   try {
@@ -323,6 +322,45 @@ export async function waitForFont(family: string, weight = 400, italic = false) 
   } catch {
     /* 載不到就讓瀏覽器自己退回預設字體 */
   }
+}
+
+const sampleLoads = new Map<string, Promise<void>>();
+export function prepareFontSample(font: FontDef): Promise<void> {
+  const cached = sampleLoads.get(font.name);
+  if (cached) return cached;
+  const pending = ensureFont(font.name).then(async () => {
+    await document.fonts.load(`400 40px "${font.name}"`, FONT_SAMPLE[font.category]);
+  }).catch(() => { sampleLoads.delete(font.name); });
+  sampleLoads.set(font.name, pending);
+  return pending;
+}
+
+let warmingSamples = false;
+/** Start on app mount, not when the font menu is opened. Limit concurrent downloads. */
+export function warmFontSamples() {
+  if (warmingSamples || typeof document === 'undefined') return;
+  warmingSamples = true;
+  const queue = [...FONTS];
+  const worker = async () => {
+    while (queue.length) await prepareFontSample(queue.shift()!);
+  };
+  void Promise.all(Array.from({ length: 4 }, worker));
+}
+
+/** Warm the actual document characters too; CJK fonts use unicode-range subsets. */
+export function warmTextFonts(text: string) {
+  const queue = [...FONTS];
+  let cancelled = false;
+  const worker = async () => {
+    while (queue.length && !cancelled) {
+      const font = queue.shift()!;
+      await prepareFontSample(font);
+      if (cancelled) return;
+      await document.fonts.load(`400 40px "${font.name}"`, text || FONT_SAMPLE[font.category]).catch(() => {});
+    }
+  };
+  void Promise.all(Array.from({ length: 3 }, worker));
+  return () => { cancelled = true; };
 }
 
 /** 預覽與匯出要用同一組 font shorthand，文字才會落在同一個位置。 */

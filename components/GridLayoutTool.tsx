@@ -4,7 +4,7 @@ import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene } from './ClassicVectorScene';
-import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack } from '../utils/fonts';
+import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
@@ -1945,18 +1945,12 @@ const FontCard: React.FC<{
   onPick: () => void;
 }> = ({ font, active, onPick }) => {
   const ref = useRef<HTMLButtonElement>(null);
-  const [visible, setVisible] = useState(false);
+  const [ready, setReady] = useState(false);
   useEffect(() => {
-    const el = ref.current;
-    if (!el || visible) return;
-    // 捲到才載入，否則一次要抓上百個 CJK 字體
-    const io = new IntersectionObserver(entries => {
-      if (entries.some(e => e.isIntersecting)) { setVisible(true); io.disconnect(); }
-    }, { rootMargin: '200px' });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [visible]);
-  useEffect(() => { if (visible) ensureFont(font.name); }, [visible, font.name]);
+    let alive = true;
+    prepareFontSample(font).then(() => { if (alive) setReady(true); });
+    return () => { alive = false; };
+  }, [font.name]);
 
   return (
     <button
@@ -1973,11 +1967,11 @@ const FontCard: React.FC<{
           放到 1.6 em 讓任何字體都放得下；卡片是 62px 高、內容加起來 48px，還有餘裕。 */}
       <span
         className="text-[19px] leading-[1.6] text-white truncate max-w-full"
-        style={{ fontFamily: visible ? fontStack(font.name) : undefined }}
+        style={{ fontFamily: fontStack(font.name), visibility: ready ? 'visible' : 'hidden' }}
       >
         {FONT_SAMPLE[font.category]}
       </span>
-      <span className="text-[9px] font-bold tracking-wider text-white/40 truncate max-w-full">{font.label}</span>
+      <span className="text-[9px] leading-[10px] h-5 flex items-center justify-center text-center font-bold text-white/40 max-w-full break-words">{font.label}</span>
     </button>
   );
 };
@@ -2289,6 +2283,18 @@ export const TextEditorPanel: React.FC<{
     onTuningChange?.(active);
   };
   const [sub, setSub] = useState<'style' | 'font'>('style');
+  useEffect(() => {
+    if (!symbol) return warmTextFonts(layer.text || '');
+  }, [symbol, layer.text]);
+  const fontPickVersion = useRef(0);
+  useEffect(() => () => { fontPickVersion.current++; }, [layer.id]);
+  const pickFont = async (name: string) => {
+    const version = ++fontPickVersion.current;
+    await ensureFont(name);
+    if (layer.italic) await ensureItalic(name);
+    await document.fonts.load(`${layer.italic ? 'italic ' : ''}${layer.bold ? 700 : 400} 40px "${name}"`, layer.text || ' ');
+    if (version === fontPickVersion.current) onChange({ fontFamily: name });
+  };
   /* 顏色改成「點進去有一頁」：這裡存的是那一頁要調哪個顏色。 */
   const [colorPage, setColorPage] = useState<
     { value: string; colors?: string[]; onPick: (c: string) => void } | null
@@ -2436,7 +2442,7 @@ export const TextEditorPanel: React.FC<{
                   key={f.name + f.category}
                   font={f}
                   active={(layer.fontFamily || DEFAULT_FONT) === f.name}
-                  onPick={() => onChange({ fontFamily: f.name })}
+                  onPick={() => { void pickFont(f.name).catch(() => {}); }}
                 />
               ))}
             </div>

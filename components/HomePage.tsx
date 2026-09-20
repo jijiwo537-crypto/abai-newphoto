@@ -1841,16 +1841,14 @@ export const HomePage: React.FC<HomePageProps> = ({
       </AnimatePresence>
 
       {settingsOpen && <div className="fixed inset-0 z-[250] bg-black/70 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
-        <section role="dialog" aria-modal="true" aria-label="設定" className="w-full max-w-sm bg-[#141414] border border-white/15 rounded-3xl p-5" onClick={e => e.stopPropagation()}>
-          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-bold">設定</h2>
+        <section role="dialog" aria-modal="true" aria-label="語言" className="w-full max-w-sm bg-[#141414] border border-white/15 rounded-3xl p-5" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-bold">語言</h2>
             <button aria-label="關閉視窗" className="w-9 h-9 rounded-full border border-white/20" onClick={() => setSettingsOpen(false)}><Icon name="close" /></button>
           </div>
-          <h3 className="text-sm text-white/60 mb-3">App 語言</h3>
           <div className="flex flex-col gap-2">{LOCALES.map(l => <button key={l.id} lang={l.id} onClick={() => changeLocale(l.id)} aria-pressed={getLocale() === l.id}
             className={`min-h-12 px-4 py-3 rounded-xl flex justify-between items-center border ${getLocale() === l.id ? 'border-white bg-white/10' : 'border-white/10'}`}>
             <span>{l.name}</span>{getLocale() === l.id && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>}
           </button>)}</div>
-          <p className="text-xs text-white/45 mt-4 leading-relaxed">切換語言後會重新載入介面，不會更改作品內容。</p>
         </section>
       </div>}
       {/* --- 聯絡方式 --- */}

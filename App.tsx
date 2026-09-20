@@ -8,6 +8,7 @@ import { GridLayoutTool } from './components/GridLayoutTool';
 import { BeautyStudio } from './components/BeautyStudio';
 import { ColorMatchStudio } from './components/ColorMatchStudio';
 import { warmCameraLuts } from './utils/cameraLuts';
+import { warmFontSamples } from './utils/fonts';
 
 type AppView = 'home' | 'camera' | 'editor' | 'collage' | 'layout' | 'beauty' | 'match';
 
@@ -97,6 +98,15 @@ const preloadHistoryImage = async (src?: string | null) => {
 };
 
 const App: React.FC = () => {
+  useEffect(() => {
+    // Optional font downloads must never join the startup font-ready barrier.
+    if (!document.getElementById('boot')) { warmFontSamples(); return; }
+    const observer = new MutationObserver(() => {
+      if (!document.getElementById('boot')) { observer.disconnect(); warmFontSamples(); }
+    });
+    observer.observe(document.body, { childList: true });
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => { void warmCameraLuts(LUT_LIST.map(lut => lut.url)); }, []);
   // 上次沒做完的東西一律先問過再接回去，不要一開 App 就直接跳進去。
   // 兩份草稿（經典拼圖／其他工具）取比較新的那一份。
