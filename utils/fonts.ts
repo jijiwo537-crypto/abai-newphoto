@@ -1,20 +1,21 @@
 /**
  * 文字圖層可用的字體。
  *
- * 全部走 Google Fonts，但**不會**一次載入 —— CJK 字體一個就好幾 MB，
+ * Google Fonts 與附有開源授權的官方字體來源，**不會**一次載入 —— CJK 字體一個就好幾 MB，
  * 全部預載會直接讓 app 卡死。改成用到哪一個才插入那一個 <link>，
  * 字體選單則靠 IntersectionObserver 捲到哪裡載到哪裡。
  *
  * 每一類都把最常用的排在前面，並盡量避開長得幾乎一樣的家族。
  */
 
+import { t } from './locale';
 export type FontCategory = 'zh' | 'en' | 'ja' | 'ko';
 
 export const FONT_CATEGORIES: { id: FontCategory; label: string }[] = [
-  { id: 'zh', label: '中文' },
-  { id: 'en', label: '英文' },
-  { id: 'ja', label: '日文' },
-  { id: 'ko', label: '韓文' },
+  { id: 'zh', label: t('中文') },
+  { id: 'en', label: t('英文') },
+  { id: 'ja', label: t('日文') },
+  { id: 'ko', label: t('韓文') },
 ];
 
 /** 每個字體要預覽的範例字，用該語言自己的字才看得出差別。 */
@@ -47,6 +48,9 @@ const zh: [string, string][] = [
   // 可愛的圓體。字身是日系的，常用漢字都有；
   // 極少數只有繁體才會用到的字會退回思源黑體。
   ['Zen Maru Gothic', '圓體'],
+  ['Cubic 11', '俐方體 11 號'],
+  ['ChenYuluoyan', '辰宇落雁'],
+  ['GenWanMin TC', '源雲明體'],
 ];
 
 const en: [string, string][] = [
@@ -104,6 +108,12 @@ const en: [string, string][] = [
   ['Courier Prime', 'Courier Prime'],
   ['JetBrains Mono', 'JetBrains Mono'],
   ['IBM Plex Mono', 'IBM Plex Mono'],
+  ['Rubik Glitch', 'Rubik Glitch'],
+  ['Rubik Pixels', 'Rubik Pixels'],
+  ['UnifrakturMaguntia', 'UnifrakturMaguntia'],
+  ['Plaster', 'Plaster'],
+  ['Megrim', 'Megrim'],
+  ['Black Ops One', 'Black Ops One'],
 ];
 
 const ja: [string, string][] = [
@@ -145,6 +155,10 @@ const ja: [string, string][] = [
   ['Yuji Syuku', '佑字 肅'],
   ['Yuji Boku', '佑字 木'],
   ['Hina Mincho', 'ひな明朝'],
+  ['Dela Gothic One', 'デラゴシック'],
+  ['Yomogi', 'よもぎ'],
+  ['Zen Kurenaido', 'ゼン紅道'],
+  ['Darumadrop One', 'だるまドロップ'],
 ];
 
 const ko: [string, string][] = [
@@ -194,6 +208,12 @@ export const SYMBOL_FONT = 'PingFang TC';
 const requested = new Map<string, Promise<void>>();
 /** CSS 已經下載完的家族。要「同步」知道能不能直接量字寬時用。 */
 const cssDone = new Set<string>();
+const EXTRA_FONT_URLS: Record<string, string> = {
+  'Cubic 11': 'https://cdn.jsdelivr.net/gh/ACh-K/Cubic-11@main/fonts/web/Cubic_11.woff2',
+  'ChenYuluoyan': 'https://cdn.jsdelivr.net/gh/Chenyu-otf/chenyuluoyan_thin@main/ChenYuluoyan-2.0-Thin.ttf',
+  'GenWanMin TC': 'https://raw.githubusercontent.com/ButTaiwan/genwan-font/master/otf/TC/GenWanMin2TC-R.otf',
+};
+const SINGLE_WEIGHT_FONTS = new Set(['Rubik Glitch','Rubik Pixels','UnifrakturMaguntia','Plaster','Megrim','Black Ops One','Dela Gothic One','Yomogi','Zen Kurenaido','Darumadrop One']);
 
 /**
  * 需要時才把某個字體的 <link> 塞進 head。重複呼叫不會重複載入。
@@ -215,13 +235,20 @@ export function ensureFont(family: string): Promise<void> {
   }
   const hit = requested.get(family);
   if (hit) return hit;
+  if (EXTRA_FONT_URLS[family]) {
+    const p = new FontFace(family, `url("${EXTRA_FONT_URLS[family]}")`).load().then(face => {
+      document.fonts.add(face); cssDone.add(family);
+    }).catch(() => { requested.delete(family); });
+    requested.set(family, p);
+    return p;
+  }
   const p = new Promise<void>(resolve => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href =
       'https://fonts.googleapis.com/css2?family=' +
       encodeURIComponent(family).replace(/%20/g, '+') +
-      ':wght@400;700&display=swap';
+      (SINGLE_WEIGHT_FONTS.has(family) ? ':wght@400&display=swap' : ':wght@400;700&display=swap');
     const done = () => { cssDone.add(family); resolve(); };
     link.onload = done;
     link.onerror = done;

@@ -1318,6 +1318,8 @@ export const shapePathD = (
       return d;
     }
     case 'grid-dots':
+    case 'grid-dots-staggered':
+    case 'grid-dots-fade-diagonal':
     case 'grid-dots-fade': {
       /* 初始固定 8×8。縮放時 w 與 base 同比例變化，數量維持 8×8；
          單邊變形只改 w/h，才會自然增加或減少行列。 */
@@ -1328,14 +1330,17 @@ export const shapePathD = (
       for (let row = 0; row < rows; row++) {
         const y = rows === 1 ? h / 2 : (row + 0.5) * stepY;
         for (let col = 0; col < cols; col++) {
-          const x = cols === 1 ? w / 2 : (col + 0.5) * stepX;
-          const fade = kind === 'grid-dots-fade' ? (1 - 0.68 * (x / Math.max(1, w))) : 1;
+          const x = cols === 1 ? w / 2 : (col + 0.5 + (kind === 'grid-dots-staggered' && row % 2 ? .5 : 0)) * stepX;
+          if (x + gridDotRadius > w) continue;
+          const fade = kind === 'grid-dots-fade' ? (1 - 0.68 * (x / Math.max(1, w)))
+            : kind === 'grid-dots-fade-diagonal' ? 1 - .68 * ((x / Math.max(1, w) + y / Math.max(1, h)) / 2) : 1;
           const rr = gridDotRadius * fade;
           d += `M ${r3(x - rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x + rr)} ${r3(y)} A ${r3(rr)} ${r3(rr)} 0 1 0 ${r3(x - rr)} ${r3(y)} Z `;
         }
       }
       return d;
     }
+    case 'grid-diag-cross':
     case 'grid-diag': {
       /* 預設斜線數量加倍；變形才在兩端增減完整線段。 */
       const step = Math.max(gbw, gbh) / 4;
@@ -1345,11 +1350,39 @@ export const shapePathD = (
         const x2 = Math.min(w, q + h), y2 = Math.min(h, w - q);
         if (Math.hypot(x2 - x1, y2 - y1) > 0.5) {
           d += `M ${r3(x1)} ${r3(y1)} L ${r3(x2)} ${r3(y2)} `;
+          if (kind === 'grid-diag-cross') d += `M ${r3(w-x1)} ${r3(y1)} L ${r3(w-x2)} ${r3(y2)} `;
         }
       }
       if (d) return d;
       const q = (w - h) / 2;
       return `M ${r3(Math.max(0, q))} ${r3(Math.max(0, -q))} L ${r3(Math.min(w, q + h))} ${r3(Math.min(h, w - q))}`;
+    }
+    case 'grid-plus': {
+      const sx = gbw / 6, sy = gbh / 6, arm = Math.min(sx, sy) * .36;
+      let d = '';
+      for (let y = sy / 2; y < h; y += sy) for (let x = sx / 2; x < w; x += sx) {
+        d += `M ${P(Math.max(0,x-arm),y)} H ${r3(Math.min(w,x+arm))} M ${P(x,Math.max(0,y-arm))} V ${r3(Math.min(h,y+arm))} `;
+      }
+      return d;
+    }
+    case 'grid-orbits': {
+      const step = Math.min(gbw,gbh) / 12;
+      let d = '';
+      for (let r = step; r <= Math.min(w,h)/2; r += step) {
+        d += `M ${P(cx-r,cy)} A ${r3(r)} ${r3(r)} 0 1 0 ${P(cx+r,cy)} A ${r3(r)} ${r3(r)} 0 1 0 ${P(cx-r,cy)} `;
+      }
+      return d;
+    }
+    case 'grid-chevron': {
+      const sx = gbw / 4, sy = gbh / 6;
+      let d = '';
+      for (let y = sy/2; y < h; y += sy) {
+        d += `M 0 ${r3(y)} `;
+        for (let x = 0; x < w; x += sx) {
+          d += `L ${P(Math.min(w,x+sx/2),Math.min(h,y+sy*.3))} L ${P(Math.min(w,x+sx),y)} `;
+        }
+      }
+      return d;
     }
     case 'wave': {
       // 波長跟高度綁定；只增加寬度時會加入完整波峰，而不是把既有波形拉扁。
@@ -1411,8 +1444,9 @@ export const shapeGlowBlurs = (w: number, h: number) =>
 export const SPECIAL_LINE_KINDS = new Set(['line', 'wave', 'lightning-wave']);
 export const GRID_SHAPE_KINDS = new Set([
   'grid-h', 'grid-cross', 'grid-frame', 'grid-dots', 'grid-dots-fade', 'grid-diag',
+  'grid-dots-staggered', 'grid-dots-fade-diagonal', 'grid-diag-cross', 'grid-plus', 'grid-orbits', 'grid-chevron',
 ]);
-export const GRID_DOT_KINDS = new Set(['grid-dots', 'grid-dots-fade']);
+export const GRID_DOT_KINDS = new Set(['grid-dots', 'grid-dots-fade', 'grid-dots-staggered', 'grid-dots-fade-diagonal']);
 export const DUAL_COLOR_SHAPE_KINDS = new Set(['square-star-dual', 'square-heart-dual']);
 export const CUTOUT_SHAPE_KINDS = new Set(['square-star-cutout', 'square-heart-cutout']);
 export const DOUBLE_CONTOUR_SHAPE_KINDS = new Set(['heart-double', 'star-double']);
@@ -1520,9 +1554,15 @@ export const ADD_SHAPE_ITEMS: ShapeItem[] = [
   { id: 'grid-horizontal', kind: 'grid-h', filled: false },
   { id: 'grid-cross', kind: 'grid-cross', filled: false },
   { id: 'grid-frame', kind: 'grid-frame', filled: false },
+  { id: 'grid-dots-staggered', kind: 'grid-dots-staggered', filled: true },
   { id: 'grid-dots', kind: 'grid-dots', filled: true },
   { id: 'grid-dots-fade', kind: 'grid-dots-fade', filled: true },
+  { id: 'grid-dots-fade-diagonal', kind: 'grid-dots-fade-diagonal', filled: true },
   { id: 'grid-diagonal', kind: 'grid-diag', filled: false },
+  { id: 'grid-diag-cross', kind: 'grid-diag-cross', filled: false },
+  { id: 'grid-plus', kind: 'grid-plus', filled: false },
+  { id: 'grid-orbits', kind: 'grid-orbits', filled: false },
+  { id: 'grid-chevron', kind: 'grid-chevron', filled: false },
 ];
 
 /**
@@ -1764,7 +1804,7 @@ export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item,
           d={src}
           fill={solid ? 'currentColor' : 'none'}
           stroke={solid ? 'none' : 'currentColor'}
-          strokeWidth={(isGridGlyph ? 1.5 : (isLine ? 1.9 : 1.6)) / k}
+          strokeWidth={(item.kind === 'grid-plus' ? .7 : isGridGlyph ? 1.5 : (isLine ? 1.9 : 1.6)) / k}
           strokeLinecap="butt"
           strokeLinejoin={isLine ? 'round' : 'miter'}
         />
@@ -7096,6 +7136,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             inset: 'calc(-1 * var(--preview-inverse-half, 0.5px))',
             width: 'calc(100% + 2 * var(--preview-inverse-half, 0.5px))',
             height: 'calc(100% + 2 * var(--preview-inverse-half, 0.5px))',
+            // Tailwind's img max-width:100% clipped the extra sampling column
+            // but retained the negative left inset, leaving the right edge short.
+            maxWidth: 'none',
             objectFit: 'fill', pointerEvents: 'none',
           }}
         />
@@ -9908,7 +9951,31 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (!pagesContainerRef.current || !containerRef.current) return;
     return vectorScene.attach(pagesContainerRef.current, containerRef.current, () => kRef.current || 1);
   }, [vectorScene]);
-  useLayoutEffect(() => { vectorScene.flush(); });
+  useLayoutEffect(() => {
+    vectorScene.set('__page-seams', {
+      z: 400000,
+      animateUntil: performance.now() + 240,
+      paint: ctx => {
+        const host = pagesContainerRef.current;
+        if (!host || pages.length < 2) return;
+        const base = host.getBoundingClientRect();
+        const k = Math.max(.0001, kRef.current || 1);
+        const dpr = Math.max(1, window.devicePixelRatio || 1);
+        const width = Math.round(1.3 * dpr) / dpr / k;
+        ctx.fillStyle = shadeHex(WORKSPACE_BG, PAGE_SEAM_INK);
+        // Read the same rendered page edge during reordering; no second CSS
+        // transform, inverse scale or independent compositor animation.
+        const nodes = host.querySelectorAll<HTMLElement>(':scope > [data-page-id]');
+        nodes.forEach((node, i) => {
+          if (!i || (pageDragIdx !== null && (i === pageDragIdx || i === pageDragIdx + 1))) return;
+          const r = node.getBoundingClientRect();
+          ctx.fillRect((r.left - base.left) / k - width / 2,
+            (r.top - base.top) / k, width, r.height / k);
+        });
+      },
+    });
+    vectorScene.flush();
+  });
 
   // Measure container size dynamically
   useEffect(() => {
@@ -15792,45 +15859,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       對齊狀態都沿用同一個 1px 螢幕線寬，避免跨過物件時因不同
                       合成表面取樣而看成另一條較細的線。
                     */}
-                    {pages.slice(1).map((_page, seamIndex) => {
-                      const pageIdx = seamIndex + 1;
-                      /* 被長按提起的頁面左右兩側都不畫分割線；放下後再跟著頁面
-                         一次回來，拖動中的頁面本身不會被線切過。 */
-                      if (pageDragIdx !== null && (pageIdx === pageDragIdx || pageIdx === pageDragIdx + 1)) return null;
-                      const move = pageContentShift(pageIdx);
-                      const moveScale = move?.s || 1;
-                      const baseSeamLeft = pageIdx * previewW;
-                      /* 和右頁 transform: translateX(dx) scale(s)（中心原點）完全
-                         等價的左邊緣位移。分割線不再每幀改 left/top/height，改走
-                         同一條 compositor transform，拖頁時便不會慢一幀或飄離。 */
-                      const seamDx = (move?.dx || 0) + previewW * (1 - moveScale) / 2;
-                      const seamDy = previewH * (1 - moveScale) / 2;
-                      return (
-                        <div
-                          key={`page-seam-overlay-${pageIdx}`}
-                          data-page-seam-overlay={pageIdx}
-                          className="absolute pointer-events-none"
-                          style={{
-                            left: `calc(${baseSeamLeft}px - var(--preview-seam-half-screen, 0.6665px))`,
-                            top: 0,
-                            width: 'var(--preview-seam-screen, 1.333px)',
-                            height: previewH,
-                            /* 外層 scale(k) × 本層 scaleX(1/k)＝固定螢幕粗度。
-                               這是純 compositor transform，不會像改 width 那樣在
-                               Safari 捏合期間反覆取整而閃動。 */
-                            transform: `translate3d(${seamDx}px, ${seamDy}px, 0) scaleY(${moveScale}) scaleX(var(--preview-seam-inverse, 1))`,
-                            transformOrigin: 'center top',
-                            transition: move
-                              ? (move.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)')
-                              : undefined,
-                            backgroundColor: shadeHex(WORKSPACE_BG, PAGE_SEAM_INK),
-                            willChange: 'transform',
-                            zIndex: 400000,
-                          }}
-                          aria-hidden
-                        />
-                      );
-                    })}
+                    {/* Seam ink is painted once by the screen-density scene. */}
 
                     {selectedBrushId && (() => {
                       const stroke = brushStrokes.find(s => s.id === selectedBrushId);

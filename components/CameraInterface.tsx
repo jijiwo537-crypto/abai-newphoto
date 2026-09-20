@@ -5,6 +5,7 @@ import { CameraSettings } from '../types';
 import { GalleryOverlay } from './GalleryOverlay';
 import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
 import { ImageEditor } from './ImageEditor';
+import { createPortal } from 'react-dom';
 import { processImageFile } from '../utils/imageLoader';
 
 // Extend MediaStream types to support zoom
@@ -1277,8 +1278,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         />
       )}
 
-      {editingPhoto && (
+      {editingPhoto && createPortal(
+        <div className="fixed inset-0 z-[300] bg-black" data-camera-editor>
         <ImageEditor 
+          compactBottomBar
           key={editorId}
           imageSrc={editingPhoto.src}
           lutList={lutList}
@@ -1287,6 +1290,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           onHome={onHome}
           onImportNew={() => localFileInputRef.current?.click()}
         />
+        </div>, document.body
       )}
     </div>
   );

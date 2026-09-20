@@ -28,6 +28,7 @@
     "three": "^0.185.1"
   },
   "devDependencies": {
+    "opencc-js": "1.4.2",
     "@capacitor/cli": "^7.6.8",
     "@capacitor/ios": "^7.6.8",
     "@tailwindcss/container-queries": "^0.1.1",

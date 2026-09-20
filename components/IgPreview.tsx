@@ -1802,7 +1802,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
               <button
                 onClick={() => onClose()}
                 className="w-10 h-10 shrink-0 flex items-center justify-center text-white active:opacity-60"
-                title="關閉"
+                title="關閉視窗"
               >
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
                   <path d="M5 9.5h14M5 15h14" />

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Icon } from './Icon';
+import { LOCALES, changeLocale, getLocale } from '../utils/locale';
 import { exportsStatus, subscribeExports, type ExportMeta } from '../utils/exportHistory';
 import {
   type AuthUser, isAuthReady, authErrText, getUser, onAuthChange,
@@ -185,6 +186,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [nav, setNav] = useState<string>('home');
   const [libQuery, setLibQuery] = useState('');
   const [contactOpen, setContactOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [copied, setCopied] = useState(false);
 
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
@@ -949,17 +951,6 @@ export const HomePage: React.FC<HomePageProps> = ({
     />
   );
 
-  /* 「立即訂閱」還沒接金流，按下去淡入一行「敬請期待」再淡出。
-     用一個遞增的 key 讓連按也會重新播一次動畫，不會卡在原地。 */
-  const [soonKey, setSoonKey] = useState(0);
-  const soonTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (soonTimer.current) clearTimeout(soonTimer.current); }, []);
-  const showSoon = () => {
-    setSoonKey(k => k + 1);
-    if (soonTimer.current) clearTimeout(soonTimer.current);
-    soonTimer.current = setTimeout(() => { soonTimer.current = null; setSoonKey(0); }, 1500);
-  };
-
   /** 「立即使用」「查看全部」右邊那顆小箭頭，兩處共用 */
   const pillArrow = (
     <span
@@ -1083,6 +1074,11 @@ export const HomePage: React.FC<HomePageProps> = ({
           }}
           className={`no-scrollbar absolute inset-0 z-[6] overflow-y-auto px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+62px)] box-border bg-black ${nav === 'me' ? '' : 'pointer-events-none'}`}
         >
+          <button aria-label="設定" onClick={() => setSettingsOpen(true)}
+            className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
+            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 36px)' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true"><path d="m9 3-.7 2.5-2 .9L4 5.7 2 9l1.8 1.8v2.4L2 15l2 3.3 2.3-.7 2 .9L9 21h6l.7-2.5 2-.9 2.3.7 2-3.3-1.8-1.8v-2.4L22 9l-2-3.3-2.3.7-2-.9L15 3Z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
           {/* 登入入口。
               整列不再是一顆大按鈕 —— 只有右邊那顆箭頭會有反應，
               點頭貼或名字都不會誤觸（登入前後都是同一顆，長相也一樣）。 */}
@@ -1111,47 +1107,6 @@ export const HomePage: React.FC<HomePageProps> = ({
             </button>
           </div>
 
-          {/* 會員方案。還沒接金流 —— 按下去淡入一行「敬請期待」再淡出。
-               外層加 relative，那行字用絕對定位掛在卡片下面：
-               走版面流的話它一出現就會把下面的東西往下頂一下。 */}
-          <div className="relative">
-          <div
-            className="rounded-[16px] overflow-hidden border border-white/[0.14] px-5 pt-[18px] pb-4 flex items-center gap-3"
-            style={{ background: 'linear-gradient(120deg,#2b2b2b 0%,#1a1a1a 46%,#242424 100%)' }}
-          >
-            <span className="flex-1 min-w-0 flex flex-col gap-1.5">
-              <span className="flex items-center gap-2">
-                <Icon name="diamond" className="text-[20px] text-white/90" />
-                <span className="font-serif text-[22px] leading-none tracking-tight">ABAI PRO</span>
-              </span>
-              <span className="text-[11px] text-white/45">
-                {account ? '解鎖全部權益' : '登入即可解鎖全部權益'}
-              </span>
-            </span>
-            <button
-              onClick={showSoon}
-              className="shrink-0 h-9 px-5 rounded-full bg-white text-black text-[12px] font-black tracking-[0.08em] flex items-center active:scale-95 transition-transform duration-300"
-            >
-              立即訂閱
-            </button>
-          </div>
-
-          {/* 淡入 → 停一下 → 淡出。key 每按一次就換，連按也會重新播 */}
-          <AnimatePresence>
-            {soonKey > 0 && (
-              <motion.p
-                key={soonKey}
-                initial={{ opacity: 0, y: -3 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -2 }}
-                transition={{ duration: 0.34, ease: [0.16, 1, 0.3, 1] }}
-                className="absolute top-full left-0 right-0 mt-3 text-center text-[12px] tracking-[0.22em] text-white/55 pointer-events-none"
-              >
-                敬請期待
-              </motion.p>
-            )}
-          </AnimatePresence>
-          </div>
 
           {/* 歷史紀錄（完整版）——首頁那一排的「查看全部」就是跳到這裡。
                20 格、每排五個（四排）；還沒導出過的位子留空格，點下去直接去挑照片。
@@ -1574,7 +1529,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                     if (emailOpen) { setEmailOpen(false); setLoginErr(''); setLoginNote(''); return; }
                     setLoginOpen(false);
                   }}
-                  aria-label={(step === 'code' || emailOpen) ? '上一步' : '關閉'}
+                  aria-label={(step === 'code' || emailOpen) ? '上一步' : '關閉視窗'}
                   className="shrink-0 w-8 h-8 -mr-1 -mt-0.5 rounded-full flex items-center justify-center text-white/35 hover:text-white hover:bg-white/[0.06] active:scale-90 transition-[color,background-color,transform] disabled:opacity-30"
                 >
                   <Icon name={(step === 'code' || emailOpen) ? 'arrow_back' : 'close'} className="text-[18px]" />
@@ -1885,6 +1840,19 @@ export const HomePage: React.FC<HomePageProps> = ({
         )}
       </AnimatePresence>
 
+      {settingsOpen && <div className="fixed inset-0 z-[250] bg-black/70 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
+        <section role="dialog" aria-modal="true" aria-label="設定" className="w-full max-w-sm bg-[#141414] border border-white/15 rounded-3xl p-5" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-bold">設定</h2>
+            <button aria-label="關閉視窗" className="w-9 h-9 rounded-full border border-white/20" onClick={() => setSettingsOpen(false)}><Icon name="close" /></button>
+          </div>
+          <h3 className="text-sm text-white/60 mb-3">App 語言</h3>
+          <div className="flex flex-col gap-2">{LOCALES.map(l => <button key={l.id} lang={l.id} onClick={() => changeLocale(l.id)} aria-pressed={getLocale() === l.id}
+            className={`min-h-12 px-4 py-3 rounded-xl flex justify-between items-center border ${getLocale() === l.id ? 'border-white bg-white/10' : 'border-white/10'}`}>
+            <span>{l.name}</span>{getLocale() === l.id && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>}
+          </button>)}</div>
+          <p className="text-xs text-white/45 mt-4 leading-relaxed">切換語言後會重新載入介面，不會更改作品內容。</p>
+        </section>
+      </div>}
       {/* --- 聯絡方式 --- */}
       <AnimatePresence>
         {contactOpen && (
@@ -1910,7 +1878,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 <span className="text-[10px] font-bold tracking-[0.24em] text-white/40 ml-2.5">聯絡方式</span>
                 <button
                   onClick={() => setContactOpen(false)}
-                  aria-label="關閉"
+                  aria-label="關閉視窗"
                   className="w-7 h-7 -mr-1 rounded-full flex items-center justify-center text-white/40 hover:text-white active:scale-90 transition-transform"
                 >
                   <Icon name="close" className="text-[18px]" />
