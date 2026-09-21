@@ -1,0 +1,21 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const creative=readFileSync(new URL('../components/CollageTool.tsx',import.meta.url),'utf8');
+const classic=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
+test('grid stroke controls are excluded in both editors',()=>{
+  assert.ok(creative.includes('!isDoubleContour && !isGrid &&'));
+  assert.ok(classic.includes('!isDoubleContour && !isGridShape &&'));
+});
+test('animation tab locks preview gestures, not object gestures',()=>{
+  assert.ok(creative.includes("motionLockRef.current = activeTab === 'motion'"));
+  assert.ok(creative.includes('if (motionLockRef.current) { viewPinchRef.current = null; return; }'));
+  assert.ok(creative.includes('if (motionLockRef.current) return;'));
+});
+test('animation translation and size transitions share duration and easing',()=>{
+  assert.ok(creative.includes('motionUiOn ? `transform 420ms ${MOTION_EASE}`'));
+  assert.ok(creative.includes('motionUiOn ? `width 420ms ${MOTION_EASE}, height 420ms ${MOTION_EASE}`'));
+});
+test('adding a selected shape does not reset palette scrolling',()=>{
+  assert.ok(creative.includes('}, [activeTab, shapeSub, colorPickerTarget]);'));
+});

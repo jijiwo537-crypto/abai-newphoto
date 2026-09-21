@@ -399,7 +399,15 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
       h: (o.kind === 'line' ? 0 : Math.max(1, bh * fit[3])) + edge * 2,
     };
   }
-  if (o.type === 'shape') return { x: -gap, y: -gap, w: bw + gap * 2, h: bh + gap * 2 };
+  if (o.type === 'shape') {
+    const size = Math.min(bw, bh);
+    const ink = isTextHole(o.hole)
+      ? (() => { const b = glyphInk(o.hole, holeGlyph(o.hole, o.text || '', o), size); return {x:-b.w/2,y:-b.h/2,w:b.w,h:b.h}; })()
+      : patternPathBounds(o.hole, size);
+    const unit = ((o as any).lineBase || Math.max(o.w, o.h)) * scale / 160;
+    const edge = gap + (o.filled === false ? (o.lineW ?? 6)*unit/2 : 0) + Math.min(4,o.strokeW || 0)*unit;
+    return {x:bw/2+ink.x-edge,y:bh/2+ink.y-edge,w:ink.w+2*edge,h:ink.h+2*edge};
+  }
   const ink = imgShapeInk(o.imgShape, bw, bh);
   return { x: ink.x - gap, y: ink.y - gap, w: ink.w + gap * 2, h: ink.h + gap * 2 };
 };
@@ -1981,6 +1989,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const aroundBdRef = useRef<{ key: string; img: any; cv: HTMLCanvasElement } | null>(null);
   /** 遮罩底稿的快取鑰匙：參數沒變就不重畫那兩張全尺寸畫布 */
   const maskCacheKeyRef = useRef('');
+  const cutMaskCacheKeyRef = useRef('');
   /** 拿遮罩底稿做的 pattern（圖片側的圖案填色用）。底稿沒變就沿用同一顆 */
   const basePatRef = useRef<{ key: string; pat: CanvasPattern | null }>({ key: '', pat: null });
   const activePointers = useRef<Map<number, any>>(new Map());
@@ -2031,7 +2040,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useLayoutEffect(() => {
     if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
     if (patternPanelRef.current) patternPanelRef.current.scrollTop = 0;
-  }, [activeTab, shapeSub, colorPickerTarget, selectedObj]);
+  }, [activeTab, shapeSub, colorPickerTarget]);
 
   // 選中「自訂文字」時，自動把下方的輸入框捲進視野，並在底下留一點空隙
   useEffect(() => {
@@ -3438,6 +3447,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       interactionRef.current = null;
       lastDrawPosRef.current = null;
+      if (motionLockRef.current) { viewPinchRef.current = null; return; }
       const pts: any[] = Array.from(activePointers.current.values());
       const c = stageBox();
       const v = viewTRef.current;
@@ -3596,6 +3606,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
   };
   const applyView = useCallback((k: number, tx: number, ty: number) => {
+    if (motionLockRef.current) return;
     const c = stageBox();
     const kk = Math.max(1, Math.min(maxZoomRef.current, k));
     // 限制平移範圍，免得把圖拖出畫面找不回來
@@ -4501,26 +4512,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     const glowOn = (side: 'image' | 'mask') =>
       glowMode === 'both' || (glowMode === 'mask' && side === 'mask') || (glowMode === 'image' && side === 'image');
-    /* ── 遮罩側的光為什麼看不到 ────────────────────────────────────
-       發光顏色預設就是遮罩的顏色（換遮罩色時還會一起換）。圖片側沒問題
-       —— 光是散在照片上的，對比很清楚；但遮罩側的圖案是「挖穿」的，
-       光散在遮罩本身上面，同一個顏色等於整圈都看不見。實測光其實有畫，
-       只是跟底色一模一樣。
-       所以遮罩側在「光跟遮罩幾乎同色」時改用純白 —— 洞裡透出來的光本來
-       就該比遮罩亮。使用者自己挑過對比色的話這一條不會成立，照他挑的畫。 */
-    const hexRgb = (hex: string) => {
-      const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
-      if (!m) return null;
-      const v = parseInt(m[1], 16);
-      return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
-    };
-    const glowColorOf = (side: 'image' | 'mask') => {
-      if (side !== 'mask') return holeGlowColor;
-      const a = hexRgb(holeGlowColor), b = hexRgb(maskColor);
-      if (!a || !b) return holeGlowColor;
-      const d = Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2]);
-      return d < 40 ? '#FFFFFF' : holeGlowColor;
-    };
+    // 與圖形一致，保留使用者選定的光暈色，不按背景改成白色。
+    const glowColorOf = (_side: 'image' | 'mask') => holeGlowColor;
     /* 三層疊起來的濃度不等於一層的濃度：0.2 疊三次會變成 0.49。
        把每一層開三次方根回去，疊完剛好等於本來要的那個值。 */
     const layerAlpha = (a: number) => (a >= 1 ? 1 : 1 - Math.pow(1 - Math.max(0, a), 1 / 3));
@@ -4612,7 +4605,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       g.setTransform(1, 0, 0, 1, 0, 0);
       g.globalAlpha = 1;
       g.shadowBlur = 0;
-      g.globalCompositeOperation = 'screen';
+      g.globalCompositeOperation = 'source-over';
       g.drawImage(lay, 0, 0, rw, rh, rx, ry, rw, rh);
       g.restore();
       return { rx, ry, rw, rh, lay };
@@ -4737,8 +4730,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const k = sz / ((tmp as any).__sz || sz);      // ≤ 1，只會縮不會放
       gg.save();
       gg.globalAlpha = Math.max(0, Math.min(1, a));
-      // 光暈只能增加亮度，不能用深色半透明像素覆蓋底圖。
-      gg.globalCompositeOperation = 'screen';
+      // 與圖形使用相同的 alpha 合成，避免 screen 混色把色相沖淡。
+      gg.globalCompositeOperation = 'source-over';
       /* 只縮不放、而且最多縮 12%，用預設的雙線性就夠了 ——
          'high' 在手機上會走比較貴的重取樣路徑，這裡不需要。 */
       gg.imageSmoothingEnabled = true;
@@ -4857,7 +4850,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         g.setTransform(1, 0, 0, 1, 0, 0);
         g.globalAlpha = 1;
         g.shadowBlur = 0;
-        g.globalCompositeOperation = 'screen';
+        g.globalCompositeOperation = 'source-over';
         g.drawImage(cached.c, 0, 0, cached.rw, cached.rh, cached.rx, cached.ry, cached.rw, cached.rh);
         g.restore();
         return;
@@ -5065,6 +5058,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        maskW×maskH 那一塊，貼回去時也只貼那一塊。
        尺寸不再每格重配，畫出來的像素完全一樣。 */
     const lmW = maskW | 0, lmH = maskH | 0;
+    const cutMaskKey = isMain ? JSON.stringify([maskKey, layout, iw, ih, s, holeType, customText, holeAngle, linkMode, linkColor, glowMode, holeGlowColor,
+      linkMode !== 'none' ? animRef.current?.t : null,
+      holes.map(h => [h.id,h.side,h.manuallyPlaced,h.randomNumber,getHoleSize(h),h.angle,hA(h),glowBeat(h),glowBeatLink(h)])]) : '';
+    if (isMain && cutMaskKey === cutMaskCacheKeyRef.current && lmc.width >= lmW && lmc.height >= lmH) {
+      ctx.drawImage(lmc, 0, 0, lmW, lmH, offs.mx, offs.my, lmW, lmH);
+      return;
+    }
     if (lmc.width < lmW || lmc.height < lmH) {
       lmc.width = Math.max(lmc.width, lmW);
       lmc.height = Math.max(lmc.height, lmH);
@@ -5153,6 +5153,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     // 只貼「這一格真正用到」的那一塊（畫布可能比它大，見上面的說明）
     ctx.drawImage(lmc, 0, 0, lmW, lmH, offs.mx, offs.my, lmW, lmH);
+    if (isMain) cutMaskCacheKeyRef.current = cutMaskKey;
     };
 
     /* 一般四邊那四種是「圖跟遮罩並排」，誰先誰後都蓋不到對方；
@@ -7208,8 +7209,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   /* 一進動畫頁就從頭播並回到最小預覽；播放中仍可選取與操作物件。 */
   useLayoutEffect(() => {
-    motionLockRef.current = false;
+    motionLockRef.current = activeTab === 'motion';
     if (activeTab !== 'motion') return;
+    viewPinchRef.current = null;
     setViewT({ k: 1, tx: 0, ty: 0 });
     setBaseSelected(false);
     setSelectedTarget(null);
@@ -7989,7 +7991,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  也救不回來，那就是圖案與遮罩邊緣一直有鋸齒的根本原因。 */
               style={{
                 transform: `translate(${viewT.tx}px, ${viewT.ty}px)`,
-                transition: viewPinchRef.current ? 'none' : 'transform 90ms linear',
+                transition: viewPinchRef.current ? 'none' : motionUiOn ? `transform 420ms ${MOTION_EASE}` : 'transform 90ms linear',
               }}
             >
               {/* 畫布外面包一層「位置基準」，影片才有東西可以對齊。
@@ -7999,7 +8001,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   所以這裡照抄畫布那一組尺寸規則。 */}
               <div style={{
                 position: 'relative', lineHeight: 0, flexShrink: 0,
-                transition: motionUiOn ? 'width 420ms ease-out, height 420ms ease-out'
+                transition: motionUiOn ? `width 420ms ${MOTION_EASE}, height 420ms ${MOTION_EASE}`
                   : (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? 'none' : 'width 90ms linear, height 90ms linear',
                 ...(baseCss
                   ? { width: baseCss.w * viewT.k, height: baseCss.h * viewT.k }
@@ -8023,7 +8025,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   /* 尺寸過場只在「正在縮放」時才有意義。換排版時畫布形狀會整個換掉，
                      這時候讓寬高做動畫就會看到那種果凍般的伸縮（桌機用滾輪縮放特別明顯）。 */
                   transition: [
-                    motionUiOn ? 'width 420ms ease-out, height 420ms ease-out' : (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? '' : 'width 90ms linear, height 90ms linear',
+                    motionUiOn ? `width 420ms ${MOTION_EASE}, height 420ms ${MOTION_EASE}` : (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? '' : 'width 90ms linear, height 90ms linear',
                     `transform 420ms ${MOTION_EASE}`,
                   ].filter(Boolean).join(', '),
                   cursor: brushMode === 'pen' ? 'crosshair' : brushMode === 'eraser' ? 'pointer' : 'default' 
@@ -9038,7 +9040,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}
                               onOpen={() => setColorPickerTarget('shapeGlow')} />
                           </div>
-                          {!isDoubleContour && <div className="flex items-center gap-3 px-2 order-2 w-full">
+                          {!isDoubleContour && !isGrid && <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
                               {shapeSlider('描邊', Math.round(Math.min(8, sel.strokeW ?? 0) * 12.5), 0, 100,
                                 (v: number) => patch({ strokeW: v / 12.5 }))}

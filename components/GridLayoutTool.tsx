@@ -2670,7 +2670,7 @@ export const ShapeEditorPanel: React.FC<{
                 onPick: c => onChange({ shapeGlowColor: c }),
               })} />
           </div>
-          {!isDoubleContour && <div className="flex items-center gap-3 px-2 order-2 w-full">
+          {!isDoubleContour && !isGridShape && <div className="flex items-center gap-3 px-2 order-2 w-full">
             <div className="flex-1 min-w-0">
               {slider('描邊', Math.round(Math.min(8, layer.shapeStrokeW ?? 0) * 12.5), 0, 100,
                 v => onChange({ shapeStrokeW: v / 12.5 }))}
