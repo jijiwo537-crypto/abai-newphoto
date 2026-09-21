@@ -1370,12 +1370,13 @@ export const shapePathD = (
     }
     case 'grid-orbits': {
       const step = Math.min(gbw,gbh) / 12;
-      const count = Math.max(1, Math.floor(Math.max(w,h) / 2 / step));
+      // A ring is a complete unit. Stretching reveals additional complete rings,
+      // never the clipped arcs of a circle larger than the available short side.
+      const count = Math.max(1, Math.floor(Math.min(w,h) / 2 / step));
       let d = '';
       for (let i = 0; i < count; i++) {
-        const growth = Math.max(0, Math.min(1, ringReveal * count - i));
-        if (growth <= 0) continue;
-        const r = step * (i + 1) * growth;
+        if (i >= Math.ceil(Math.max(0, Math.min(1, ringReveal)) * count)) continue;
+        const r = Math.min(Math.min(w,h)/2, step * (i + 1));
         const angles = [0, Math.PI, Math.PI * 2];
         if (w / 2 < r) { const a = Math.acos(w / 2 / r); angles.push(a, Math.PI-a, Math.PI+a, 2*Math.PI-a); }
         if (h / 2 < r) { const a = Math.asin(h / 2 / r); angles.push(a, Math.PI-a, Math.PI+a, 2*Math.PI-a); }
@@ -2593,6 +2594,8 @@ export const ShapeEditorPanel: React.FC<{
   const isGridShape = GRID_SHAPE_KINDS.has(layer.shape || '');
   const isDoubleContour = DOUBLE_CONTOUR_SHAPE_KINDS.has(layer.shape || '');
   const hasOutline = (!layer.shapeFilled || isLine) && !isGridShape;
+  const hasWidth = hasOutline || isGridShape;
+  const hasDash = !layer.shapeFilled && (!isLine || layer.shape === 'line') && layer.shape !== 'grid-plus';
   const canFeather = shapeSupportsFeather(layer.shape, layer.shapeFilled, layer.holeType);
   /* 顏色改成「點進去有一頁」（跟文字那一頁同一顆元件） */
   const [colorPage, setColorPage] = useState<
@@ -2646,16 +2649,14 @@ export const ShapeEditorPanel: React.FC<{
                 c => onChange({ shapeInnerColor: c }), true)}
             </div>
           )}
-          {isGridShape && <div className="px-2 pr-[52px]">
-            {slider(GRID_DOT_KINDS.has(layer.shape!) ? '大小' : '粗細', Math.round(((layer.shapeLineW ?? 6) - 6) / 12 * 100), 0, 100,
-              v => onChange({ shapeLineW: 6 + v * .12 }))}
+          {hasWidth && <div className="grid grid-cols-2 gap-5 px-2">
+            {isGridShape ? slider(GRID_DOT_KINDS.has(layer.shape!) ? '大小' : '粗細', Math.round(((layer.shapeLineW ?? 6) - 6) / 12 * 100), 0, 100,
+              v => onChange({ shapeLineW: 6 + v * .12 }))
+              : slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100, v => onChange({ shapeLineW: v / 10 }))}
+            {hasDash ? slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))
+              : slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
           </div>}
-          {isLine && (
-            <div className="px-2">
-              {slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
-                v => onChange({ shapeLineW: v / 10 }))}
-            </div>
-          )}
+          {hasDash && <div className="px-2">{slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}</div>}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
           <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
@@ -2682,7 +2683,7 @@ export const ShapeEditorPanel: React.FC<{
               })} />
           </div>}
           {isDoubleContour && (
-            <div className="px-2 pr-[52px] order-2 w-full">
+            <div className="px-2 order-2 w-full">
               {slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
             </div>
           )}
@@ -2779,7 +2780,7 @@ export const ShapeEditorPanel: React.FC<{
           </div>
             );
           })()}
-          {!isDoubleContour && <div className="px-2 pr-[52px] order-4 w-full">
+          {!isDoubleContour && !hasWidth && <div className="px-2 order-4 w-full">
             {slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
           </div>}
           {canFeather && (
@@ -2788,13 +2789,6 @@ export const ShapeEditorPanel: React.FC<{
             </div>
           )}
           {/* 粗細與虛線只有細框／線條才有，放在最後面 */}
-          {hasOutline && (!isLine || layer.shape === 'line') && (
-            <div className="order-6 flex flex-col gap-3.5">
-              {!isLine && slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
-                v => onChange({ shapeLineW: v / 10 }))}
-              {slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
-            </div>
-          )}
         </div>
         )}
       </div>
@@ -6302,14 +6296,16 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
          就會永遠共用同一個固定對邊。 */
       const shift = (width - d.width) / 2 * (d.side === 'r' ? 1 : -1);
       const cx = oldCx + shift * Math.cos(d.rotationRad), cy = oldCy + shift * Math.sin(d.rotationRad);
-      const next = { width, height: d.height, x: cx - width / 2, y: cy - d.height / 2 };
+      const height = image.shape === 'grid-orbits' ? width : d.height;
+      const next = { width, height, x: cx - width / 2, y: cy - height / 2 };
       if (onStretchMove) onStretchMove(next, d.side, d);
       else onChange(next);
     } else {
       const height = Math.max(24, d.height + signed);
       const shift = (height - d.height) / 2 * (d.side === 'b' ? 1 : -1);
       const cx = oldCx - shift * Math.sin(d.rotationRad), cy = oldCy + shift * Math.cos(d.rotationRad);
-      const next = { width: d.width, height, x: cx - d.width / 2, y: cy - height / 2 };
+      const width = image.shape === 'grid-orbits' ? height : d.width;
+      const next = { width, height, x: cx - width / 2, y: cy - height / 2 };
       if (onStretchMove) onStretchMove(next, d.side, d);
       else onChange(next);
     }
@@ -9889,6 +9885,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   // Mobile Touch States
   const [touchDraggedIndex, setTouchDraggedIndex] = useState<number | null>(null);
+  const [cellThumbReady, setCellThumbReady] = useState('');
+  const [floatThumbReady, setFloatThumbReady] = useState('');
+  const decodeDragThumb = (img: HTMLImageElement, ready: (src: string) => void) => {
+    const src = img.getAttribute('src') || '';
+    const finish = () => { if (img.isConnected && img.getAttribute('src') === src && img.naturalWidth) ready(src); };
+    if (img.decode) img.decode().then(finish, () => {}); else finish();
+  };
   /* 長按成立前就把縮圖放進 DOM 解碼。iOS 第一次建立 <img> 與合成層時會先畫
      一幀父層背景；等到長按成立才 mount，使用者看到的就是那一下黑閃。 */
   const [cellDragPreview, setCellDragPreview] = useState<{
@@ -12714,7 +12717,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const allTemplatesFlattened: { count: number, idx: number, tmpl: any, isCurrentCount: boolean }[] = [];
   const C = layoutSortBase;
-  const availableCounts = [3, 1, 2, 4, 5, 6, 7, 8, 9, 10].filter(c => c !== 1 || allowSingleLayout);
+  const availableCounts = [2, 3, 1, 4, 5, 6, 7, 8, 9, 10].filter(c => c !== 1 || allowSingleLayout);
   
   const orderedCounts = availableCounts;
 
@@ -16233,14 +16236,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 70) / 1.1)))
                           : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget
                             ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 100) / 1.5)))
+                            : cfg.idle === 'grid-wave' ? Math.round(Math.max(0, Math.min(100, (cfg.speed - .2) / 1.8 * 100)))
                             : Math.round(cfg.speed*100)}
-                        min={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? 0 : 20}
-                        max={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? 100 : cfg.idle === 'grid-wave' && target.shape ? 200 : 180}
+                        min={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' ? 0 : 20}
+                        max={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' ? 100 : 180}
                         step={1} onCommit={replayMotion}
                         onChange={(v:number)=>patchMotion({speed: cfg.idle === 'image-breathe' && targetIsImage
                           ? imageBreathSpeedFromUi(v)
                           : cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) ? (70 + v * 1.1) / 100
-                          : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? (100 + v * 1.5) / 100 : v/100})}/>
+                          : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? (100 + v * 1.5) / 100 : cfg.idle === 'grid-wave' ? .2 + v * .018 : v/100})}/>
                     </div>}
                   </>}
                 </div>
@@ -16626,7 +16630,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       <div className="space-y-1.5">
                         {/* 這一排只放名稱。右邊本來會再寫一次目前的比例，
                             但下面那五顆按鈕自己就會反白標示，寫兩次是重複的。 */}
-                        <div className="text-[11px] font-bold text-white/70">比例</div>
                         <div className="grid grid-cols-5 gap-1.5">
                           {RATIOS.map((item) => (
                             <button
@@ -16687,12 +16690,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             <span className={`block w-4 h-4 rounded-full transition-transform ${activeLayout?.seamless ? 'translate-x-4 bg-black' : 'bg-white'}`} />
                           </button>
                         </div>
-                        {activeLayout?.seamless && <div className="space-y-1.5">
+                      </div>
+                      <div className="grid grid-cols-2 gap-5">
+                        {activeLayout?.seamless && <div className="space-y-1.5 col-span-2">
                           <div className="flex justify-between text-[11px] font-bold text-white/70"><span>融合程度</span><span className="font-mono text-white">{activeLayout.seamlessAmount ?? 0}</span></div>
                           <input aria-label="融合程度" type="range" min="0" max="100" step="1" value={activeLayout.seamlessAmount ?? 0} className="premium-slider w-full"
                             onChange={e => patchActiveLayout(l => ({...l,seamlessAmount:Number(e.target.value)}))} />
                         </div>}
-                      </div>
                       {!activeLayout?.seamless && <>
                       <div className="space-y-1.5">
                         <div className="flex justify-between text-[11px] font-bold text-white/70">
@@ -16733,6 +16737,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         />
                       </div>
                       </>}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -17030,10 +17035,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             })(),
             borderRadius: '8px',
             boxShadow: '0 4px 14px rgba(0,0,0,0.34)',
-            opacity: floatDragSrc ? 1 : 0,
+            opacity: floatDragSrc && floatThumbReady === floatDragSrc ? 1 : 0,
           }}
         >
-          <img src={floatDragPreloadSrc || floatDragSrc || ''} alt="dragging" className="w-full h-full object-cover" />
+          <img src={floatDragPreloadSrc || floatDragSrc || ''} decoding="sync" onLoad={e => decodeDragThumb(e.currentTarget, setFloatThumbReady)} alt="dragging" className="w-full h-full object-cover" />
         </div>
       )}
 
@@ -17053,11 +17058,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             })(),
             borderRadius: '8px', // Square design
             boxShadow: '0 4px 14px rgba(0,0,0,0.34)',
-            opacity: touchDraggedIndex !== null ? 1 : 0,
+            opacity: touchDraggedIndex !== null && cellThumbReady === cellDragPreview.src ? 1 : 0,
           }}
         >
           <img
             src={cellDragPreview.src}
+            decoding="sync"
+            onLoad={e => decodeDragThumb(e.currentTarget, setCellThumbReady)}
             alt="dragging"
             className="w-full h-full object-cover"
             style={{

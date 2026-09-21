@@ -7,12 +7,13 @@ export function SeamlessLayout({ cells, rects, width, height, amount, revision }
     let cancelled=false;
     const raf=requestAnimationFrame(()=>{
       const ratio=window.devicePixelRatio || 1;
-      renderSeamlessLayout(cells,rects,width*ratio,height*ratio,amount,revision).then(frame=>{
+      renderSeamlessLayout(cells,rects,width*ratio,height*ratio,amount,revision,()=>cancelled).then(frame=>{
         if(cancelled || !ref.current) return;
         const canvas=ref.current; canvas.width=frame.width; canvas.height=frame.height;
         canvas.getContext('2d')!.drawImage(frame,0,0);
         canvas.dataset.ready='true';
       }).catch(error=>{
+        if(cancelled || error?.name === 'AbortError') return;
         if(!cancelled && ref.current) delete ref.current.dataset.ready;
         console.error('Seamless layout:',error);
       });

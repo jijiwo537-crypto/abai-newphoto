@@ -10,15 +10,18 @@ const start = grid.indexOf('export const shapePathD =');
 const scope = {exports:{},r3:n=>Math.round(n*1000)/1000};
 vm.runInNewContext(compile(grid.slice(start,grid.indexOf('\n};',start)+3)),scope);
 const path = scope.exports.shapePathD;
-test('orbit grid adds outer rings when either edge is extended',()=>{
+test('orbit grid keeps complete rings inside the stretched frame',()=>{
   const radii = d => [...d.matchAll(/A\s*([\d.]+)/g)].map(m=>Number(m[1]));
   const base=Math.max(...radii(path('grid-orbits',160,160,160,160)));
   for(const [w,h] of [[320,160],[160,320]]){
     const d=path('grid-orbits',w,h,160,160);
-    assert.ok(Math.max(...radii(d))>base);
+    assert.ok(Math.max(...radii(d))<=Math.min(w,h)/2);
     assert.doesNotMatch(d,/NaN|Infinity/);
   }
   assert.equal(path('grid-orbits',160,160,160,160,2.325,0),'');
+  assert.ok(Math.max(...radii(path('grid-orbits',320,320,160,160)))>base);
+  const full=new Set(radii(path('grid-orbits',160,160,160,160)));
+  for(const p of [.01,.25,.51,.99]) for(const r of radii(path('grid-orbits',160,160,160,160,2.325,p))) assert.ok(full.has(r),'signal must reveal fixed rings, not scale them');
 });
 test('signal reveals circles progressively and joins its loop continuously',()=>{
   const context={exports:{}};

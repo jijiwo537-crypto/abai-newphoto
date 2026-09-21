@@ -210,6 +210,26 @@ export const glyphInk = (holeType: string, str: string, sz: number) => {
   return { w: b.w * k, h: b.h * k, ox: b.ox * k, oy: b.oy * k, r: b.r * k, ok: b.ok };
 };
 
+const patternBoundsCache = new Map<string, {x:number;y:number;w:number;h:number}>();
+/** Measure the very same path used for painting, once at a fixed reference size.
+ * Size/angle sliders only scale this box; they never read canvas pixels. */
+export function patternPathBounds(type: string, size: number) {
+  let box = patternBoundsCache.get(type);
+  if (!box) {
+    const c=document.createElement('canvas'); c.width=c.height=768;
+    const g=c.getContext('2d', {willReadFrequently:true})!;
+    drawShapePath(g,type,384,384,256); g.fill();
+    const p=g.getImageData(0,0,768,768).data;
+    let l=768,t=768,r=-1,b=-1;
+    for(let y=0;y<768;y++) for(let x=0;x<768;x++) if(p[(y*768+x)*4+3]) {
+      l=Math.min(l,x);r=Math.max(r,x);t=Math.min(t,y);b=Math.max(b,y);
+    }
+    box=r<0 ? {x:-.5,y:-.5,w:1,h:1} : {x:(l-384)/256,y:(t-384)/256,w:(r-l+1)/256,h:(b-t+1)/256};
+    patternBoundsCache.set(type,box);
+  }
+  return {x:box.x*size,y:box.y*size,w:box.w*size,h:box.h*size};
+}
+
 
 /* 字符圖案的暫存畫布池。以前每畫一顆就開一張新的 —— 一格畫面裡幾十顆、
    左右兩側都要畫，實測拖一顆字符圖案時每秒開 398 張畫布。

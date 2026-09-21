@@ -18,8 +18,9 @@ function load(url: string) {
 
 /** Shared preview/export renderer. Complementary separable weights form a partition
  * of unity, including T junctions: photos blend into each other, never into the page. */
-export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[], width: number, height: number, amount = 0, revision = 0) {
+export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[], width: number, height: number, amount = 0, revision = 0, cancelled = () => false) {
   const sources = await Promise.all(cells.map(c => c.url ? load(c.url) : null));
+  if (cancelled()) throw new DOMException('Superseded render', 'AbortError');
   const out = document.createElement('canvas'); out.width = Math.max(1, Math.round(width)); out.height = Math.max(1, Math.round(height));
   const ctx = out.getContext('2d')!;
   const layer = document.createElement('canvas'); layer.width = out.width; layer.height = out.height;
@@ -29,8 +30,12 @@ export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[]
   // Even the minimum is a subtle blend; no additional image zoom beyond covering
   // the expanded cell. Exterior edges stay sharp and at their original positions.
   const band = smallest * (.012 + Math.max(0, Math.min(100, amount)) / 100 * .238);
-  rects.forEach((r, i) => {
-    const c = cells[i], img = sources[i]; if (!c) return;
+  for (let i=0; i<rects.length; i++) {
+    // Yield between photos: switching the feature off must not wait for the
+    // remaining full-resolution layers of a now-obsolete render.
+    if (i) await new Promise<void>(resolve => setTimeout(resolve, 0));
+    if (cancelled()) throw new DOMException('Superseded render', 'AbortError');
+    const r = rects[i], c = cells[i], img = sources[i]; if (!c) continue;
     const x = r.x*w, y = r.y*h, rw = r.w*w, rh = r.h*h;
     const left = r.x > .00001 ? band : 0, top = r.y > .00001 ? band : 0;
     const right = r.x+r.w < .99999 ? band : 0, bottom = r.y+r.h < .99999 ? band : 0;
@@ -55,19 +60,32 @@ export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[]
     }
     lc.restore(); lc.globalCompositeOperation='destination-in';
     const gx=lc.createLinearGradient(ex,0,ex+ew,0);
-    gx.addColorStop(0,left ? 'transparent':'white'); if(left) gx.addColorStop(2*left/ew,'white');
-    if(right) gx.addColorStop(1-2*right/ew,'white'); gx.addColorStop(1,right ? 'transparent':'white');
+    featherStops(gx, left / ew, right / ew);
     lc.fillStyle=gx; lc.fillRect(0,0,w,h);
     const gy=lc.createLinearGradient(0,ey,0,ey+eh);
-    gy.addColorStop(0,top ? 'transparent':'white'); if(top) gy.addColorStop(2*top/eh,'white');
-    if(bottom) gy.addColorStop(1-2*bottom/eh,'white'); gy.addColorStop(1,bottom ? 'transparent':'white');
+    featherStops(gy, top / eh, bottom / eh);
     lc.fillStyle=gy; lc.fillRect(0,0,w,h); lc.globalCompositeOperation='source-over';
     ctx.globalCompositeOperation='lighter'; ctx.drawImage(layer,0,0);
-  });
+  }
   // Canvas alpha is quantized to 8 bits. Normalize its rounding residue so even
   // high-contrast page backgrounds cannot show through a junction.
   const pixels=ctx.getImageData(0,0,w,h);
   for(let i=3;i<pixels.data.length;i+=4) if(pixels.data[i]) pixels.data[i]=255;
   ctx.putImageData(pixels,0,0); ctx.globalCompositeOperation='source-over';
   return out;
+}
+
+// Complementary smoothstep ramps have zero slope at both ends. The outermost
+// image edge is fully transparent, with no abrupt linear-ramp shoulder.
+function featherStops(g: CanvasGradient, start: number, end: number) {
+  g.addColorStop(0, start ? 'rgba(255,255,255,0)' : '#fff');
+  if (start) for (let n=1;n<=32;n++) {
+    const t=n/32, a=t*t*(3-2*t);
+    g.addColorStop(2*start*t, `rgba(255,255,255,${a})`);
+  }
+  if (end) for (let n=0;n<32;n++) {
+    const t=n/32, a=1-t*t*(3-2*t);
+    g.addColorStop(1-2*end+2*end*t, `rgba(255,255,255,${a})`);
+  }
+  g.addColorStop(1, end ? 'rgba(255,255,255,0)' : '#fff');
 }
