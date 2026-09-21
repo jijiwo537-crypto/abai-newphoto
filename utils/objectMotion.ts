@@ -16,6 +16,7 @@ export type ObjectMotionFrame = {
   gridWave?: number;
   /** 波浪進場由左至右的揭露量。 */
   gridReveal?: number;
+  ringReveal?: number;
 };
 
 export type ObjectMotionConfig = {
@@ -117,6 +118,7 @@ export const objectMotionFrame = (
     else if (cfg.in === 'fade') intro = { ...flat, a: p };
     else if (cfg.in === 'rise') intro = { ...flat, dy: (1 - e) * .9, a: fade };
     else if (cfg.in === 'drop') intro = { ...flat, dy: -(1 - e) * .9, a: fade };
+    else if (cfg.in === 'signal') intro = { ...flat, ringReveal: p };
     else if (cfg.in === 'spin') intro = { ...flat, k: e, rot: -(1 - e) * 200, a: fade };
     else if (cfg.in === 'flip') intro = { ...flat, fx: Math.max(.02, Math.abs(Math.cos((1 - e) * Math.PI))), a: fade };
     else if (cfg.in === 'bounce') intro = { ...flat, dy: -(1 - bounce(p)) * 1.1, a: clamp(p * 4) };
@@ -151,6 +153,7 @@ export const objectMotionFrame = (
     const pulse = (Math.cos(t * cfg.speed * 1.75) + 1) / 2;
     idle = { ...flat, a: 1 - A * (1 - pulse) };
   }
+  else if (cfg.idle === 'signal') idle = { ...flat, ringReveal: (1 + Math.cos(t * cfg.speed * Math.PI / 2)) / 2 };
   else if (cfg.idle === 'spin') idle = { ...flat, rot: t * cfg.speed * A * 90 };
   else if (cfg.idle === 'wobble') idle = { ...flat, rot: Math.sin(w * 2.4) * A * 22 };
   else if (cfg.idle === 'orbit') idle = { ...flat, dx: Math.cos(w * 1.6) * A * .2, dy: Math.sin(w * 1.6) * A * .2 };
@@ -171,6 +174,7 @@ export const objectMotionFrame = (
     waveMix: blend,
     gridWave: idle.gridWave,
     gridReveal: idle.gridReveal,
+    ringReveal: idle.ringReveal,
   };
 };
 

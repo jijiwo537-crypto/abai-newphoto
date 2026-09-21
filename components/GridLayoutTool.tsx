@@ -1139,6 +1139,7 @@ export const shapePathD = (
   kind: string, w: number, h: number,
   gridBaseW = w, gridBaseH = h,
   gridDotRadius = Math.min(gridBaseW, gridBaseH) / 160 * 2.325,
+  ringReveal = 1,
 ): string => {
   const a = w / 2, b = h / 2, cx = a, cy = b;
   /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
@@ -1367,9 +1368,21 @@ export const shapePathD = (
     }
     case 'grid-orbits': {
       const step = Math.min(gbw,gbh) / 12;
+      const count = Math.max(1, Math.floor(Math.max(w,h) / 2 / step));
       let d = '';
-      for (let r = step; r <= Math.min(w,h)/2; r += step) {
-        d += `M ${P(cx-r,cy)} A ${r3(r)} ${r3(r)} 0 1 0 ${P(cx+r,cy)} A ${r3(r)} ${r3(r)} 0 1 0 ${P(cx-r,cy)} `;
+      for (let i = 0; i < count; i++) {
+        const growth = Math.max(0, Math.min(1, ringReveal * count - i));
+        if (growth <= 0) continue;
+        const r = step * (i + 1) * growth;
+        const angles = [0, Math.PI, Math.PI * 2];
+        if (w / 2 < r) { const a = Math.acos(w / 2 / r); angles.push(a, Math.PI-a, Math.PI+a, 2*Math.PI-a); }
+        if (h / 2 < r) { const a = Math.asin(h / 2 / r); angles.push(a, Math.PI-a, Math.PI+a, 2*Math.PI-a); }
+        angles.sort((a,b)=>a-b);
+        for (let j=1;j<angles.length;j++) {
+          const a=angles[j-1], b=angles[j], m=(a+b)/2;
+          if (Math.abs(r*Math.cos(m))>w/2+.001 || Math.abs(r*Math.sin(m))>h/2+.001) continue;
+          d += `M ${P(cx+r*Math.cos(a),cy+r*Math.sin(a))} A ${r3(r)} ${r3(r)} 0 0 1 ${P(cx+r*Math.cos(b),cy+r*Math.sin(b))} `;
+        }
       }
       return d;
     }
@@ -2631,6 +2644,10 @@ export const ShapeEditorPanel: React.FC<{
                 c => onChange({ shapeInnerColor: c }), true)}
             </div>
           )}
+          {isGridShape && <div className="px-2 pr-[52px]">
+            {slider(GRID_DOT_KINDS.has(layer.shape!) ? '大小' : '粗細', Math.round(((layer.shapeLineW ?? 6) - 6) / 12 * 100), 0, 100,
+              v => onChange({ shapeLineW: 6 + v * .12 }))}
+          </div>}
           {isLine && (
             <div className="px-2">
               {slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100,
@@ -2652,8 +2669,8 @@ export const ShapeEditorPanel: React.FC<{
           </div>
           {!isDoubleContour && <div className="flex items-center gap-3 px-2 order-2 w-full">
             <div className="flex-1 min-w-0">
-              {slider('描邊', Math.round(Math.min(4, layer.shapeStrokeW ?? 0) * 25), 0, 100,
-                v => onChange({ shapeStrokeW: v / 25 }))}
+              {slider('描邊', Math.round(Math.min(8, layer.shapeStrokeW ?? 0) * 12.5), 0, 100,
+                v => onChange({ shapeStrokeW: v / 12.5 }))}
             </div>
             <ColorPick compact label="顏色" value={layer.shapeStrokeColor || '#000000'}
               onPick={c => onChange({ shapeStrokeColor: c })}
@@ -2663,14 +2680,14 @@ export const ShapeEditorPanel: React.FC<{
               })} />
           </div>}
           {isDoubleContour && (
-            <div className="px-2 order-2 w-full">
+            <div className="px-2 pr-[52px] order-2 w-full">
               {slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
             </div>
           )}
           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
               （跟「背景紋理」那一格同一種排法）。顏色常駐，關著也能先挑好。
               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-          {!isLine && (() => {
+          {!isLine && !isGridShape && (() => {
             const tex = texOf({ tex: layer.shapeTex, dots: layer.shapeDots });
             return (
           <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3 w-full">
@@ -2760,7 +2777,7 @@ export const ShapeEditorPanel: React.FC<{
           </div>
             );
           })()}
-          {!isDoubleContour && <div className="px-2 order-4 w-full">
+          {!isDoubleContour && <div className="px-2 pr-[52px] order-4 w-full">
             {slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
           </div>}
           {canFeather && (
@@ -5080,14 +5097,14 @@ const GlCanvasHost: React.FC<{ canvas: HTMLCanvasElement; style: React.CSSProper
 
 
 const classicScenePaths = new Map<string, Path2D>();
-const classicScenePath = (image: FloatingImage) => {
+const classicScenePath = (image: FloatingImage, ringReveal = 1) => {
   const key = [image.shape, image.width, image.height, image.shapeTextureBaseW,
-    image.shapeTextureBaseH, image.shapeLineBase].join('|');
+    image.shapeTextureBaseH, image.shapeLineBase, image.shapeLineW, ringReveal].join('|');
   let path = classicScenePaths.get(key);
   if (!path) {
     path = new Path2D(shapePathD(image.shape!, image.width, image.height,
       image.shapeTextureBaseW || image.width, image.shapeTextureBaseH || image.height,
-      ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325));
+      ((image.shapeLineBase || Math.max(image.width, image.height)) / 160) * 2.325 * (GRID_DOT_KINDS.has(image.shape!) ? Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6)) : 1), ringReveal));
     classicScenePaths.set(key, path);
     if (classicScenePaths.size > 128) classicScenePaths.delete(classicScenePaths.keys().next().value!);
   }
@@ -5124,14 +5141,14 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
   }
       if (image.shape) {
         ctx.translate(-drawW / 2, -drawH / 2);
-        const path = classicScenePath(image);
+        const path = classicScenePath(image, motionFrame?.ringReveal ?? 1);
         const color = image.color || SHAPE_DEFAULT_COLOR;
         const solid = !!image.shapeFilled && image.shape !== 'line';
         const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
         const lw = GRID_SHAPE_KINDS.has(image.shape)
-          ? 1.5
+          ? 1.5 * Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6))
           : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
-        const outer = Math.min(4, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160);
+        const outer = Math.min(8, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160);
         ctx.lineJoin = image.shape === 'line' ? 'round' : 'miter';
         ctx.lineCap = 'butt';
         ctx.miterLimit = 4;
@@ -6410,14 +6427,14 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     const s = renderScale;
     const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
     const lw = GRID_SHAPE_KINDS.has(image.shape)
-      ? 1.5 / s
+      ? 1.5 / s * Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6))
       : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160)) / s;
     const dash = image.shapeDash || 0;
     const seg = lw * (0.6 + (dash / 100) * 4);
     return {
       lw,
       /** 外描邊的寬度（單邊）。跟框線同一個道理，也要除掉 scale */
-      outer: Math.min(4, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160) / s,
+      outer: Math.min(8, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160) / s,
       dashArray: dash > 0 ? `${r3(seg)} ${r3(seg * 0.85)}` : undefined,
       // 一律平頭：線條的兩端要是切齊的，不要圓角
       cap: 'butt' as const,
@@ -7651,9 +7668,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const fit = SHAPE_FIT[movingItem.shape] || [0, 0, 1, 1];
       const lineBase = movingItem.shapeLineBase || Math.max(imgWidth, imgHeight);
       const lw = GRID_SHAPE_KINDS.has(movingItem.shape)
-        ? 1.5
+        ? 1.5 * Math.max(1, Math.min(3, (movingItem.shapeLineW ?? 6) / 6))
         : Math.max(0.4, (movingItem.shapeLineW ?? 6) * (lineBase / 160));
-      const outer = Math.min(4, Math.max(0, movingItem.shapeStrokeW || 0)) * (lineBase / 160);
+      const outer = Math.min(8, Math.max(0, movingItem.shapeStrokeW || 0)) * (lineBase / 160);
       const inkPad = ((movingItem.shapeFilled && movingItem.shape !== 'line') ? 0 : lw / 2) + outer;
       /* 圖形本體會隨 scale 放大，但線寬刻意維持固定（上方 Canvas draw 的
          lineUnit / renderScale 正是這個規則）。這裡若再把線寬乘一次 scale，
@@ -12842,6 +12859,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     fImg: FloatingImage,
     scaleFactor: number,
     alphaFlattened = false,
+    ringReveal = 1,
   ) => {
     // 扣掉預覽裡每頁之間那 1px 的間隔（跟圖片同一套）
     const adjustedX = fImg.x;
@@ -12872,7 +12890,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const tc = tmp.getContext('2d');
       if (tc) {
         tc.translate(-left, -top);
-        drawShapeLayer(tc, { ...fImg, opacity: 100 }, scaleFactor, true);
+        drawShapeLayer(tc, { ...fImg, opacity: 100 }, scaleFactor, true, ringReveal);
         ctx.save();
         ctx.globalAlpha *= shapeAlpha;
         ctx.drawImage(tmp, left, top);
@@ -12923,7 +12941,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
       (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
       ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor / 160) * 2.325
-        / Math.pow(Math.max(0.01, fImg.scale || 1), 0.65),
+        / Math.pow(Math.max(0.01, fImg.scale || 1), 0.65) * (GRID_DOT_KINDS.has(fImg.shape!) ? Math.max(1, Math.min(3, (fImg.shapeLineW ?? 6) / 6)) : 1),
+      ringReveal,
     ));
     const color = fImg.color || SHAPE_DEFAULT_COLOR;
     const solid = fImg.shapeFilled && fImg.shape !== 'line';
@@ -12932,7 +12951,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const sScale = fImg.scale || 1;
     const exportLineBase = (fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor;
     const lw = GRID_SHAPE_KINDS.has(fImg.shape!)
-      ? 1.5 * scaleFactor / sScale
+      ? 1.5 * scaleFactor / sScale * Math.max(1, Math.min(3, (fImg.shapeLineW ?? 6) / 6))
       : Math.max(0.4 * scaleFactor, (fImg.shapeLineW ?? 6) * (exportLineBase / 160)) / sScale;
     if (!solid) {
       const dash = fImg.shapeDash || 0;
@@ -12965,7 +12984,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.restore();
     }
     /* 外描邊：畫在本體底下、寬度加倍，跟預覽那一條 path 同一套 */
-    const strokeW = Math.min(4, Math.max(0, fImg.shapeStrokeW || 0))
+    const strokeW = Math.min(8, Math.max(0, fImg.shapeStrokeW || 0))
       * (Math.max(fw, fh) / 160) / sScale;
     if (strokeW > 0) {
       ctx.save();
@@ -13134,7 +13153,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         continue;
       }
       if (fImg.shape) {
-        drawShapeLayer(ctx, fImg, scaleFactor);
+        drawShapeLayer(ctx, fImg, scaleFactor, false, frame?.ringReveal ?? 1);
         if (frame) ctx.restore();
         continue;
       }
@@ -16126,7 +16145,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               const introKinds = target?.sym
                 ? SYMBOL_OBJECT_IN_KINDS.filter(([id]) => id !== 'bounce')
                 : isGridTarget
-                  ? baseIntro.map(([id, name]) => id === 'spring' ? ['grid-wave', '波浪'] as const : [id, name] as const)
+                  ? baseIntro.map(([id, name]) => id === 'spin' && target.shape === 'grid-orbits' ? ['signal', '信號'] as const : id === 'spring' ? ['grid-wave', '波浪'] as const : [id, name] as const)
                   : isSpecialLineTarget
                     ? [...baseIntro.filter(([id]) => id !== 'spring'), ['draw', '畫筆'] as const]
                     : baseIntro;
@@ -16141,7 +16160,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       id === 'breathe' ? [[id, '縮放'] as const, ['symbol-breathe2', '縮放II'] as const] : [[id, name] as const])
                   : targetIsImage
                     ? baseIdle.map(([id, name]) => id === 'spin' ? ['image-breathe', '呼吸'] as const : [id, name] as const)
-                    : baseIdle;
+                    : baseIdle.map(([id, name]) => id === 'spin' && target?.shape === 'grid-orbits' ? ['signal', '信號'] as const : [id, name] as const);
               const pickIntro = (id: string) => {
                 patchMotion(id === 'bubble' ? { in: id, dur: motionDurationFromUi(80) } : { in: id });
                 replayMotion();
@@ -16151,8 +16170,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 else if (id === 'image-breathe' && targetIsImage) patchMotion({ idle: id, amp: 100, speed: imageBreathSpeedFromUi(70) });
                 else if (id === 'breathe' && target.sym) patchMotion({ idle: id, amp: 30 });
                 else if (id === 'grid-wave') patchMotion(isGridTarget
-                  ? { idle: id, amp: 50, speed: .9 }
-                  : { idle: id, amp: 30, speed: 1.75 });
+                  ? { idle: id, amp: 50, speed: 1.8 }
+                  : { idle: id, amp: 30, speed: target?.shape ? 1.8 : 1.75 });
                 else if (isSpecialLineTarget) patchMotion({ idle: id, amp: 20 });
                 else patchMotion({ idle: id });
                 replayMotion();
@@ -16198,16 +16217,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           ? imageBreathSpeedToUi(cfg.speed)
                           : cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget)
                           ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 70) / 1.1)))
-                          : cfg.idle === 'grid-wave' && !isGridTarget
+                          : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget
                             ? Math.round(Math.max(0, Math.min(100, (cfg.speed * 100 - 100) / 1.5)))
                             : Math.round(cfg.speed*100)}
-                        min={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !isGridTarget ? 0 : 20}
-                        max={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !isGridTarget ? 100 : 180}
+                        min={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? 0 : 20}
+                        max={cfg.idle === 'image-breathe' && targetIsImage || cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) || cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? 100 : cfg.idle === 'grid-wave' && target.shape ? 200 : 180}
                         step={1} onCommit={replayMotion}
                         onChange={(v:number)=>patchMotion({speed: cfg.idle === 'image-breathe' && targetIsImage
                           ? imageBreathSpeedFromUi(v)
                           : cfg.idle === 'symbol-breathe2' && (target.sym || isTextTarget) ? (70 + v * 1.1) / 100
-                          : cfg.idle === 'grid-wave' && !isGridTarget ? (100 + v * 1.5) / 100 : v/100})}/>
+                          : cfg.idle === 'grid-wave' && !target.shape && !isGridTarget ? (100 + v * 1.5) / 100 : v/100})}/>
                     </div>}
                   </>}
                 </div>

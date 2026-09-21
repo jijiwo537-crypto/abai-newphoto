@@ -21,7 +21,7 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady,
-  shapePathD, shapeGlowBlurs, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
+  shapePathD, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -294,11 +294,21 @@ const objKeyOf = (list: any[]) =>
  * **一定**是同一個形狀，不可能各自走鐘。
  * 路徑的座標是「左上角 (0,0) 到 (w,h)」，呼叫端負責搬到框心。
  */
+const shapePathCache = new Map<string, Path2D>();
 export const shapePathBox = (
   kind: string, w: number, h: number,
   gridBaseW = w, gridBaseH = h,
   gridDotRadius = Math.min(gridBaseW, gridBaseH) / 160 * 2.325,
-) => new Path2D(shapePathD(kind, w, h, gridBaseW, gridBaseH, gridDotRadius));
+  ringReveal = 1,
+) => {
+  const key = [kind, w, h, gridBaseW, gridBaseH, gridDotRadius, ringReveal].join('|');
+  const cached = shapePathCache.get(key);
+  if (cached) return cached;
+  const path = new Path2D(shapePathD(kind, w, h, gridBaseW, gridBaseH, gridDotRadius, ringReveal));
+  shapePathCache.set(key, path);
+  if (shapePathCache.size > 128) shapePathCache.delete(shapePathCache.keys().next().value!);
+  return path;
+};
 
 /* 圖形上的紋理（點點／條紋）已經整組搬到共用模組去了 —— 見 utils/holeShapes.ts
    的 paintTex：兩個拼圖工具吃同一份，畫出來一定一樣。 */
@@ -490,7 +500,7 @@ const hashId = (id: string) => {
 
 /** 動畫的一格：k=縮放倍率，dx/dy=位移（單位是元素自己的大小），rot=角度，a=透明度 */
 /** burst：泡泡破掉的那一圈放射線畫到幾成（0＝沒有、1＝剛破）。只有「泡泡」會用到。 */
-export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; waveMix?: number; idleT?: number };
+export type MoFrame = { k: number; dx: number; dy: number; rot: number; a: number; burst?: number; draw?: number; seq?: number; gridWave?: number; gridReveal?: number; ringReveal?: number; waveMix?: number; idleT?: number };
 const FLAT: MoFrame = { k: 1, dx: 0, dy: 0, rot: 0, a: 1 };
 const GONE: MoFrame = { k: 0, dx: 0, dy: 0, rot: 0, a: 0 };
 
@@ -767,6 +777,7 @@ const inFrame = (kind: string, p: number): MoFrame => {
   const fade = Math.max(0, Math.min(1, p * 1.6));
   const e = easeOutCubic(p);
   switch (kind) {
+    case 'signal': return { ...FLAT, ringReveal: p };
     case 'grid-wave': return { ...FLAT, gridWave: p, gridReveal: easeOutCubic(p) };
     case 'fade':   return { k: 1, dx: 0, dy: 0, rot: 0, a: p };
     case 'rise':   return { k: 1, dx: 0, dy: (1 - e) * 0.9, rot: 0, a: fade };
@@ -800,6 +811,7 @@ const idleFrame = (kind: string, t: number, amp: number, speed: number, phase: n
   switch (kind) {
     case 'float':   return { k: 1, dx: 0, dy: Math.sin(w * 2.0) * A * 0.28, rot: 0, a: 1 };
     case 'sway':    return { k: 1, dx: Math.sin(w * 1.7) * A * 0.28, dy: 0, rot: 0, a: 1 };
+    case 'signal': return { ...FLAT, ringReveal: (1 + Math.cos(t * speed * Math.PI / 2)) / 2 };
     case 'grid-wave': return { ...FLAT, gridWave: (t * speed * 0.22 + phase / (Math.PI * 2)) };
     /* 縮放：單純一顆正弦，大…小…大…小，在兩個固定大小之間來回。
        （以前是兩個不同週期的正弦疊起來，所以每一次的最大最小都不一樣 ——
@@ -928,7 +940,7 @@ const composeMo = (cfg: MoCfg, t: number, phase: number): MoFrame & { fx: number
     /* 圖片呼吸本身從 a=1 起步，不需要再套第二層 attack。直接採用其 alpha
        才能讓幅度 100 的第一個低點真正到 0；其他動畫維持既有交接。 */
     a: cfg.idle === 'image-breathe' ? g.a : 1 + (g.a - 1) * blend, fx: 1, burst: 0,
-    gridWave: g.gridWave, waveMix: blend,
+    gridWave: g.gridWave, waveMix: blend, ringReveal: g.ringReveal,
     /* 常駐的本地時間明確交給符號分單位動畫；進場期間不存在，交棒第一幀為 0。 */
     idleT: after,
   };
@@ -1807,8 +1819,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* pointer capture 在 iOS 被系統手勢中斷時，元件偶爾收不到最後一個 cancel，
      互動旗標便會卡住，選中框看起來像永久消失。全域收尾只在已沒有手指時執行。 */
   useEffect(() => {
-    const finish = () => setTimeout(() => {
+    const finish = (event: Event) => setTimeout(() => {
+      if (event.type === 'blur' || event.type === 'pointercancel'
+          || (event.type === 'touchend' && !(event as TouchEvent).touches.length)) {
+        activePointers.current.clear();
+      } else if ('pointerId' in event) {
+        activePointers.current.delete((event as PointerEvent).pointerId);
+      }
+      if (activePointers.current.size < 2) viewPinchRef.current = null;
       if (activePointers.current.size !== 0) return;
+      interactionRef.current = null;
+      strokeStartHolesRef.current = null;
+      lastDrawPosRef.current = null;
       objDragRef.current = null;
       objPinchRef.current = null;
       objStretchRef.current = null;
@@ -1821,12 +1843,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       setObjStretching(false);
       setGuides([]);
     }, 0);
-    window.addEventListener('pointerup', finish);
-    window.addEventListener('pointercancel', finish);
+    window.addEventListener('pointerup', finish, true);
+    window.addEventListener('pointercancel', finish, true);
+    window.addEventListener('touchend', finish, true);
     window.addEventListener('blur', finish);
     return () => {
-      window.removeEventListener('pointerup', finish);
-      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('pointerup', finish, true);
+      window.removeEventListener('pointercancel', finish, true);
+      window.removeEventListener('touchend', finish, true);
       window.removeEventListener('blur', finish);
     };
   }, []);
@@ -1938,6 +1962,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (colorPickerTarget && scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
   }, [colorPickerTarget]);
   const textInputWrapRef = useRef<HTMLDivElement>(null);
+  const patternPanelRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const replaceFileInputRef = useRef<HTMLInputElement>(null);
   const maskFileInputRef = useRef<HTMLInputElement>(null);
@@ -2003,24 +2028,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [glowMoText, setGlowMoText] = useState({ idle: 'none', amp: 100, speed: GLOW_SPEED_DEFAULT.none });
   const lastDrawPosRef = useRef<{ x: number, y: number } | null>(null);
 
-  useEffect(() => {
-    if (patternType === 'none' && scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = 0;
-    }
-  }, [patternType]);
+  useLayoutEffect(() => {
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0;
+    if (patternPanelRef.current) patternPanelRef.current.scrollTop = 0;
+  }, [activeTab, shapeSub, colorPickerTarget, selectedObj]);
 
   // 選中「自訂文字」時，自動把下方的輸入框捲進視野，並在底下留一點空隙
   useEffect(() => {
     if (activeTab !== 'shape' || shapeSub !== 'shape' || holeType !== 'text') return;
-    const el = scrollContainerRef.current;
+    const el = patternPanelRef.current;
     if (!el) return;
     const id = requestAnimationFrame(() => {
       const target = textInputWrapRef.current;
       if (!target) return;
-      // 只捲到「輸入框完整露出」為止，不是一路捲到底 ——
-      // 捲過頭的話上面那排形狀會整個跑掉，手指要再撥回來
-      const need = target.offsetTop + target.offsetHeight - el.clientHeight;
-      if (need > el.scrollTop) el.scrollTo({ top: need, behavior: 'smooth' });
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     });
     return () => cancelAnimationFrame(id);
   }, [activeTab, shapeSub, holeType]);
@@ -2214,7 +2235,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (st.stripeB !== undefined) setStripeB(st.stripeB);
     if (st.symmetryEnabled !== undefined) setSymmetryEnabled(st.symmetryEnabled);
     // 'mask' 是舊版才有的選項，讀到就當「開啟」
-    if (st.glowMode !== undefined) setGlowMode(st.glowMode === 'mask' ? 'both' : st.glowMode);
+    if (st.glowMode !== undefined) setGlowMode(st.glowMode === 'off' ? 'off' : 'image');
     if (st.holeGlowColor !== undefined) setHoleGlowColor(st.holeGlowColor);
     if (st.glowIdle !== undefined) setGlowIdle(st.glowIdle);
     if (st.glowAmp !== undefined) setGlowAmp(st.glowAmp);
@@ -2422,6 +2443,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
 
   const handleShapeClick = (id: string) => {
+    if (id === 'text') requestAnimationFrame(() => {
+      const panel = patternPanelRef.current;
+      panel?.scrollTo({ top: panel.scrollHeight, behavior: 'smooth' });
+    });
     let nextSize = holeSize;
     if (id === 'cross-star') {
       nextSize = 30;
@@ -2515,7 +2540,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            否則資料裡雖然是 8，實際最多只看得到其中一半。 */
         side: lay === FULL
           ? 'image'
-          : around ? 'mask' : (symmetryEnabled ? 'both' : (Math.random() < 0.5 ? 'image' : 'mask')),
+          : around ? 'mask' : 'both',
       });
     }
     setHoles(newHoles);
@@ -3007,9 +3032,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* 手指一落下就暫停背景濾鏡／縮圖工作，不要等第一個 move 才暫停；
        否則排隊中的同步工作剛好撞上拖曳首幀，之後每一幀反而都正常。 */
     deferHeavyWork();
-    /* 動畫頁是「純預覽」：這時候元素都在動，點下去等於在動畫的某一格上
-       抓東西，位置根本對不上。所以整片工作區都不接手勢。 */
-    if (motionLockRef.current) return;
+    // 動畫與靜態編輯共用手勢生命週期；命中位置使用當前動畫影格。
     const target = e.target as HTMLElement;
     if (!target || target.closest('.no-pointer-events')) return;
     
@@ -3036,6 +3059,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const sx = canvasRef.current.width / rect.width / ps, sy = canvasRef.current.height / rect.height / ps;
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState.globalScale || 1, offs = getLayoutOffsets();
+    const animatedOrder = animRef.current
+      ? new Map([...holesRef.current].sort((a,b)=>(a.x-b.x)||(a.y-b.y)).map((h,i)=>[h.id,i])) : null;
+    const hitCurrentHole = (h: any, side?: 'image' | 'mask') => {
+      const f = animRef.current?.hole(h, animatedOrder?.get(h.id) ?? 0);
+      if (f && (f.k <= .002 || f.a <= .004)) return false;
+      const size = getHoleSize(h);
+      const visible = f ? { ...h, x: h.x + f.dx * size, y: h.y + f.dy * size,
+        localScale: (h.localScale || 1) * f.k,
+        angle: (h.angle ?? holeAngle) + f.rot } : h;
+      return checkHitHole(x, y, visible, gs, offs, side);
+    };
 
     /* 「選中形狀」只在手指按在那個圖案裡面時才留著 ——
        點到形狀外面（旁邊的空白角落、別的物件、空畫布都算）就退回「只選中圖片」。
@@ -3085,11 +3119,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           for (let i = list.length - 1; i >= 0; i--) {
             const o = list[i];
             if (!!o.below !== wantBelow) continue;
-            const cxo = o.x + o.w / 2, cyo = o.y + o.h / 2;
-            const rad = -(o.rot || 0) * Math.PI / 180;
+            const f: any = animRef.current?.obj(o, i);
+            if (f && (f.k <= .002 || f.a <= .004)) continue;
+            const kx = Math.max(.002, Math.abs((f?.k ?? 1) * (f?.fx ?? 1)));
+            const ky = Math.max(.002, Math.abs(f?.k ?? 1));
+            const cxo = o.x + o.w / 2 + (f?.dx ?? 0) * o.w;
+            const cyo = o.y + o.h / 2 + (f?.dy ?? 0) * o.h;
+            const rad = -((o.rot || 0) + (f?.rot ?? 0)) * Math.PI / 180;
             const dx0 = x - cxo, dy0 = y - cyo;
-            const lx = dx0 * Math.cos(rad) - dy0 * Math.sin(rad);
-            const ly = dx0 * Math.sin(rad) + dy0 * Math.cos(rad);
+            const lx = (dx0 * Math.cos(rad) - dy0 * Math.sin(rad)) / kx;
+            const ly = (dx0 * Math.sin(rad) + dy0 * Math.cos(rad)) / ky;
             if (Math.abs(lx) <= o.w / 2 && Math.abs(ly) <= o.h / 2) return o;
           }
           return null;
@@ -3163,7 +3202,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 有沒有點到圖案（圖案疊在 below 物件之上）
         let holeUnder = false;
         for (let i = holesRef.current.length - 1; i >= 0; i--) {
-          if (checkHitHole(x, y, holesRef.current[i], gs, offs, clickedSide)) { holeUnder = true; break; }
+          if (hitCurrentHole(holesRef.current[i], clickedSide)) { holeUnder = true; break; }
         }
         if (!holeUnder) {
           const below = hitObj(true);
@@ -3225,7 +3264,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 y: localY,
                 randomFactor: Math.random() * 2 - 1,
                 randomNumber: Math.floor(Math.random() * 10),
-                side: layout === AROUND ? clickedSide : (symmetryEnabled ? 'both' : clickedSide)
+                side: layout === AROUND ? clickedSide : 'both'
               };
               const nextHoles = [...holesRef.current, newHole];
               holesRef.current = nextHoles;
@@ -3252,7 +3291,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       let hitHole = null;
       for (let i = holesRef.current.length - 1; i >= 0; i--) {
         const h = holesRef.current[i];
-        if (checkHitHole(x, y, h, gs, offs, clickedSide)) { hitHole = h; break; }
+        if (hitCurrentHole(h, clickedSide)) { hitHole = h; break; }
       }
 
       if (hitHole) {
@@ -3534,6 +3573,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const drawnScaleRef = useRef(1);
   /** 主畫布上一次重畫的時間（不分是誰畫的）—— 影片那支迴圈用它避免重複畫 */
   const lastMainDrawRef = useRef(0);
+  const animationOwnsPaintRef = useRef(false);
   /** 正在離開這個工具。立起來之後所有重畫迴圈下一格就收工，把主執行緒讓出來 */
   const leavingRef = useRef(false);
   /** 這一次重畫不要畫選取框／對齊線那一組。只有「離開前拍縮圖」那一下會立起來。 */
@@ -3938,7 +3978,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               x: localX,
               y: localY,
               randomFactor: Math.random() * 2 - 1,
-              side: layout === AROUND ? intr.clickedSide : (symmetryEnabled ? 'both' : intr.clickedSide)
+              side: layout === AROUND ? intr.clickedSide : 'both'
             };
             const nextHoles = [...holesRef.current, newHole];
             holesRef.current = nextHoles;
@@ -3980,14 +4020,28 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const limY = layout === AROUND ? fld.mh : fld.ih;
       const nx = Math.max(0, Math.min(limX, intr.initX + dx));
       const ny = Math.max(0, Math.min(limY, intr.initY + dy));
-      setHoles(prev => prev.map(h => h.id === intr.id ? { ...h, x: nx, y: ny, manuallyPlaced: true } : h));
+      setHoles(prev => prev.flatMap(h => {
+        if (h.id !== intr.id) return [h];
+        const side = h.side && h.side !== 'both' ? h.side : intr.clickedSide || selectedPatternSide;
+        const moved = { ...h, side, x: nx, y: ny, manuallyPlaced: true };
+        return !h.side || h.side === 'both'
+          ? [moved, { ...h, id: h.id + '_paired', side: side === 'image' ? 'mask' : 'image' }]
+          : [moved];
+      }));
     } else if (intr.type === 'pinch_hole') {
       const pts: any[] = Array.from(activePointers.current.values());
       if (pts.length < 2) return;
       const p1 = { x: (pts[0].clientX - rect.left) * sx, y: (pts[0].clientY - rect.top) * sy };
       const p2 = { x: (pts[1].clientX - rect.left) * sx, y: (pts[1].clientY - rect.top) * sy };
       const scale = Math.hypot(p1.x - p2.x, p1.y - p2.y) / intr.startDist;
-      setHoles(prev => prev.map(h => h.id === intr.id ? { ...h, localScale: Math.max(0.2, Math.min(10, (h.localScale || 1) * scale)) } : h));
+      setHoles(prev => prev.flatMap(h => {
+        if (h.id !== intr.id) return [h];
+        const side = h.side && h.side !== 'both' ? h.side : selectedPatternSide;
+        const resized = { ...h, side, localScale: Math.max(0.2, Math.min(10, (h.localScale || 1) * scale)) };
+        return !h.side || h.side === 'both'
+          ? [resized, { ...h, id: h.id + '_paired', side: side === 'image' ? 'mask' : 'image' }]
+          : [resized];
+      }));
       // Update start distance to allow continuous pinch
       intr.startDist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
     }
@@ -4562,6 +4616,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       g.setTransform(1, 0, 0, 1, 0, 0);
       g.globalAlpha = 1;
       g.shadowBlur = 0;
+      g.globalCompositeOperation = 'screen';
       g.drawImage(lay, 0, 0, rw, rh, rx, ry, rw, rh);
       g.restore();
       return { rx, ry, rw, rh, lay };
@@ -4632,7 +4687,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!tg) return null;
       tg.shadowColor = gcol;
       for (const kk of [1, 2, 3]) {
-        tg.shadowBlur = szQ * 0.1 * kk;
+        tg.shadowBlur = szQ * 0.045 * 0.5 * kk;
         strokeHoleShape(tg, h, szQ, 0, side / 2, side / 2, gcol);
       }
       /* 本體在這裡就先挖掉（滿透明度），剩下的才是純粹的一圈光暈。
@@ -4682,6 +4737,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const k = sz / ((tmp as any).__sz || sz);      // ≤ 1，只會縮不會放
       gg.save();
       gg.globalAlpha = Math.max(0, Math.min(1, a));
+      // 光暈只能增加亮度，不能用深色半透明像素覆蓋底圖。
+      gg.globalCompositeOperation = 'screen';
       /* 只縮不放、而且最多縮 12%，用預設的雙線性就夠了 ——
          'high' 在手機上會走比較貴的重取樣路徑，這裡不需要。 */
       gg.imageSmoothingEnabled = true;
@@ -4800,6 +4857,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         g.setTransform(1, 0, 0, 1, 0, 0);
         g.globalAlpha = 1;
         g.shadowBlur = 0;
+        g.globalCompositeOperation = 'screen';
         g.drawImage(cached.c, 0, 0, cached.rw, cached.rh, cached.rx, cached.ry, cached.rw, cached.rh);
         g.restore();
         return;
@@ -5318,7 +5376,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            的算法（跟著現在的大小走），行為不會突然變。 */
         const unit = ((o as any).lineBase || Math.max(o.w, o.h)) * s / 160;
         const lw = GRID_SHAPE_KINDS.has(o.kind)
-          ? 1.5 * s
+          ? 1.5 * s * Math.max(1, Math.min(3, (o.lineW ?? 6) / 6))
           : Math.max(0.4, (o.lineW ?? 6) * unit);
         const col = o.color || SHAPE_DEFAULT_COLOR;
         const solid = o.filled && o.kind !== 'line';
@@ -5381,7 +5439,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 / Math.max(1, (o as any).lineBase || Math.max(o.w, o.h))
               ),
               0.35,
-            ),
+            ) * (GRID_DOT_KINDS.has(o.kind) ? Math.max(1, Math.min(3, (o.lineW ?? 6) / 6)) : 1),
+          f?.ringReveal ?? 1,
         );
         if (solid) ctx.fillStyle = col;
         else { ctx.strokeStyle = col; ctx.lineWidth = lw; }
@@ -5445,7 +5504,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 描邊：畫在本體「底下」、寬度加倍 —— 本體會蓋住內半邊，
            留在外面的就是乾淨的一圈外描邊（跟文字的描邊同一種做法）。
            虛線只屬於本體，描邊那一圈一律是實線。 */
-        const sw = Math.min(4, Math.max(0, o.strokeW || 0)) * unit;
+        const sw = Math.min(8, Math.max(0, o.strokeW || 0)) * unit;
         if (sw > 0) {
           ctx.save();
           ctx.setLineDash([]);
@@ -6086,7 +6145,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        0.4 秒才留一次，播影片時多出來的成本可以忽略（實測一次約 2 毫秒）。 */
     if (isMain) {
       const nowT = performance.now();
-      if (nowT - thumbAtRef.current > 400) {
+      // 手勢期間不額外縮製歷史縮圖；畫面仍以原解析度繪製。
+      if (activePointers.current.size === 0 && nowT - thumbAtRef.current > 400) {
         thumbAtRef.current = nowT;
         try {
           let tc = thumbRef.current;
@@ -6209,7 +6269,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
        改用 animRef 擋掉動畫頁：那邊本來就鎖住所有互動，
        虛線框留在畫面上只會被錄進預覽裡。 */
-    if (isMain && !hideChromeRef.current && selectedTarget && !animRef.current) {
+    if (isMain && !hideChromeRef.current && selectedTarget) {
       const selectedHole = holes.find(hx => hx.id === selectedTarget);
       if (selectedHole) {
         const h = selectedHole;
@@ -6252,6 +6312,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // 右側選取框 (帶旋轉, 只有在 mask 側且完全在裡面時才顯示)
         if ((hSide === 'both' || hSide === 'mask') && isHoleFullyInsideMask(h, 1, maskW, maskH)) {
           ctx.save();
+          ctx.beginPath();
+          ctx.rect(offs.mx, offs.my, maskW, maskH);
+          ctx.clip();
+          ctx.beginPath();
+          ctx.rect(0, 0, offs.cw, offs.ch);
+          ctx.rect(offs.ix, offs.iy, iw, ih);
+          ctx.clip('evenodd');
           ctx.translate(A.x * s + offs.mx, A.y * s + offs.my);
           ctx.rotate(currentAngle * Math.PI / 180);
           if (isTextHole(holeType)) {
@@ -6430,7 +6497,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       && syncDrawnRef.current.fn === renderToCanvas
       && Math.abs(syncDrawnRef.current.ps - previewScaleRef.current) < 0.01;
     syncDrawnRef.current = null;
-    if (!alreadyDrawn) renderToCanvas(canvasRef.current, previewScaleRef.current);
+    if (!alreadyDrawn && !animationOwnsPaintRef.current) renderToCanvas(canvasRef.current, previewScaleRef.current);
     // 記住 1 倍時的 CSS 寬度（畫布是 max-w-full 等比縮放，換算全靠它）
     const r = canvasRef.current.getBoundingClientRect();
     if (r.width > 0 && imageState) {
@@ -6675,6 +6742,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setMotionTargetFlashSeq(n => n + 1);
   }, [hasLink]);
 
+  useEffect(() => {
+    if (activeTab !== 'motion') return;
+    if (selectedObj) chooseMotionTarget(selectedObj);
+    else if (selectedTarget) chooseMotionTarget('shape');
+  }, [activeTab, selectedObj, selectedTarget, chooseMotionTarget]);
+
   /* 動畫目標若被刪除（或連線被關閉），直接安全回到圖案，不再留下失效 id
      讓面板顯示「物件已經不在了」。 */
   useEffect(() => {
@@ -6753,6 +6826,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   /** 畫布現在要不要照動畫來畫（暫停時也算：停在那一格） */
   const motionOn = activeTab === 'motion' && saveState === 'idle' && !igPreview;
+  animationOwnsPaintRef.current = motionOn && motionPlaying;
 
   /** 一圈跑多久。最晚結束的那個元素跑完，再加上停留時間。 */
   /* 線是「以顆為單位」等的：某一條線的兩端都冒出來之後，那條線才開始長。
@@ -6841,7 +6915,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const renderToCanvasRef = useRef(renderToCanvas);
   renderToCanvasRef.current = renderToCanvas;
   useEffect(() => {
-    if (!motionTargetFlashSeq || !imageState) return;
+    if (!motionTargetFlashSeq || !imageState || (motionOn && motionPlaying)) return;
     let raf = 0;
     const tick = () => {
       const flash = motionTargetFlashRef.current;
@@ -6855,7 +6929,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [motionTargetFlashSeq, imageState]);
+  }, [motionTargetFlashSeq, imageState, motionOn, motionPlaying]);
   useEffect(() => {
     if (!motionOn || !motionPlaying || !imageState || videoProg !== null) return;
     let raf = 0;
@@ -7093,7 +7167,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setHoleSize(e.holeSize); setSizeJitter(e.sizeJitter);
     setHoleAngle(e.holeAngle); setHoleCount(e.holeCount);
     setSymmetryEnabled(e.symmetryEnabled);
-    setGlowMode(e.glowMode === 'mask' ? 'both' : (e.glowMode || 'off')); setHoleGlowColor(e.holeGlowColor || GLOW_BASE);
+    setGlowMode(e.glowMode && e.glowMode !== 'off' ? 'image' : 'off'); setHoleGlowColor(e.holeGlowColor || GLOW_BASE);
     setGlowIdle(e.glowIdle || 'none');
     setGlowAmp(e.glowAmp ?? 100); setGlowSpeed(e.glowSpeed ?? 100);
     setGlowMoImg(e.glowMoImg || { idle: 'none', amp: 100, speed: 100 });
@@ -7135,10 +7209,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setMotionSeq(n => n + 1);
   }, []);
 
-  /* 一進動畫頁就從頭播，同時把選取清掉、鎖住畫布上的互動 */
+  /* 一進動畫頁就從頭播並回到最小預覽；播放中仍可選取與操作物件。 */
   useEffect(() => {
-    motionLockRef.current = activeTab === 'motion';
+    motionLockRef.current = false;
     if (activeTab !== 'motion') return;
+    setViewT({ k: 1, tx: 0, ty: 0 });
     setBaseSelected(false);
     setSelectedTarget(null);
     setSelectedObj(null);
@@ -7799,28 +7874,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         <div className="h-px bg-white/10" />
                       </>
                     )}
-                    {/* 四周包圍是一整片場、沒有「左右兩塊要對稱」的概念，那個排版下就不出現 */}
-                    {layout !== AROUND && (
-                      <>
-                        <div className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90">
-                          <span>對稱</span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); toggleSymmetry(); }}
-                            role="switch"
-                            aria-checked={symmetryEnabled}
-                            title={symmetryEnabled ? '對稱鎖定：開啟中' : '對稱鎖定：已解除'}
-                            className={`ml-auto relative shrink-0 w-[38px] h-[22px] rounded-full transition-colors duration-200 ${
-                              symmetryEnabled ? 'bg-white' : 'bg-white/[0.14]'
-                            }`}
-                          >
-                            <span className={`absolute top-[3px] left-[3px] w-4 h-4 rounded-full transition-transform duration-200 ease-out ${
-                              symmetryEnabled ? 'translate-x-4 bg-black' : 'translate-x-0 bg-white/45'
-                            }`} />
-                          </button>
-                        </div>
-                        <div className="h-px bg-white/10" />
-                      </>
-                    )}
                     <div className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90">
                       <span>對齊</span>
                       <button
@@ -7919,7 +7972,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             /* 手勢掛在整個工作區上，不是只有畫布：選中物件之後，
                畫布外面那片黑底也能拖、也能兩指縮放。挖洞／筆刷本來就會
                檢查座標落在哪一塊，落在黑底上就自然什麼都不做。 */
-            onPointerDown={activeTab === 'motion' ? handleMotionTargetPointerDown : handlePointerDown}
+            onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
@@ -7948,7 +8001,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   對到一個比畫布小的框 —— 影片於是愈放大偏得愈多。
                   所以這裡照抄畫布那一組尺寸規則。 */}
               <div style={{
-                position: 'relative', lineHeight: 0,
+                position: 'relative', lineHeight: 0, flexShrink: 0,
+                transition: motionUiOn ? 'width 420ms ease-out, height 420ms ease-out'
+                  : (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? 'none' : 'width 90ms linear, height 90ms linear',
                 ...(baseCss
                   ? { width: baseCss.w * viewT.k, height: baseCss.h * viewT.k }
                   : { maxWidth: '100%', maxHeight: '100%' }),
@@ -7971,7 +8026,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   /* 尺寸過場只在「正在縮放」時才有意義。換排版時畫布形狀會整個換掉，
                      這時候讓寬高做動畫就會看到那種果凍般的伸縮（桌機用滾輪縮放特別明顯）。 */
                   transition: [
-                    (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? '' : 'width 90ms linear, height 90ms linear',
+                    motionUiOn ? 'width 420ms ease-out, height 420ms ease-out' : (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? '' : 'width 90ms linear, height 90ms linear',
                     `transform 420ms ${MOTION_EASE}`,
                   ].filter(Boolean).join(', '),
                   cursor: brushMode === 'pen' ? 'crosshair' : brushMode === 'eraser' ? 'pointer' : 'default' 
@@ -7980,14 +8035,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               {/* 選中框是純介面，不再烘進畫布。SVG 疊在所有畫布內容之上，
                   overflow:visible 讓線條即使跨到旁邊的黑色遮罩或畫布外側也完整顯示；
                   vector-effect 則確保預覽放大縮小後仍維持相同粗細。 */}
-              {activeTab !== 'motion' && !composeState && (() => {
+              {!composeState && (() => {
                 const off = getLayoutOffsets();
                 if (!off) return null;
                 const o = selectedObj && !objDragging && !objPinching && !objStretching && !tuningEdge
                   ? objects.find(z => z.id === selectedObj) : null;
                 const shaped = !!(o && shapeSel === o.id && isImgShaped(o.imgShape));
                 if (!baseSelected && (!o || shaped)) return null;
-                const logicalPerCssPx = off.cw / Math.max(1, (baseCss?.w || off.cw) * viewT.k);
+                const logicalPerCssPx = off.cw / Math.max(1, (baseCss?.w || off.cw) * viewT.k * mScale);
                 const ink = o && !shaped
                   ? objectSelectionInk(o, 1, (o.type === 'image' ? 0.375 : 2) * logicalPerCssPx)
                   : null;
@@ -8000,7 +8055,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     viewBox={`0 0 ${off.cw} ${off.ch}`}
                     preserveAspectRatio="none"
                     className="absolute inset-0 pointer-events-none"
-                    style={{ width: '100%', height: '100%', zIndex: 6, overflow: 'visible' }}
+                    style={{ width: '100%', height: '100%', zIndex: 6, overflow: 'visible',
+                      transformOrigin: 'top center',
+                      transform: (mLift || mScale !== 1) ? `translateY(${-mLift}px) scale(${mScale})` : 'none',
+                      transition: `transform 420ms ${MOTION_EASE}` }}
                   >
                     {baseSelected && (
                       <rect
@@ -8384,7 +8442,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           (activeTab === 'setting' && !colorPickerTarget) ||
           (activeTab === 'add' && !colorPickerTarget) ||
           (activeTab === 'objedit' && !colorPickerTarget) ||
-          (activeTab === 'shape' && !colorPickerTarget) ||
           (activeTab === 'motion' && !colorPickerTarget)
             ? 'overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]' 
             : 'overflow-hidden'
@@ -8958,6 +9015,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 (c: string) => patch({ innerColor: c }), true)}
                             </div>
                           )}
+                          {GRID_SHAPE_KINDS.has(sel.kind) && <div className="px-2 pr-[52px]">
+                            {shapeSlider(GRID_DOT_KINDS.has(sel.kind) ? '大小' : '粗細', Math.round(((sel.lineW ?? 6) - 6) / 12 * 100), 0, 100,
+                              (v: number) => patch({ lineW: 6 + v * .12 }))}
+                          </div>}
                           {isLine && (
                             <div className="px-2">
                               {shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100,
@@ -8981,15 +9042,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </div>
                           {!isDoubleContour && <div className="flex items-center gap-3 px-2 order-2 w-full">
                             <div className="flex-1 min-w-0">
-                              {shapeSlider('描邊', Math.round(Math.min(4, sel.strokeW ?? 0) * 25), 0, 100,
-                                (v: number) => patch({ strokeW: v / 25 }))}
+                              {shapeSlider('描邊', Math.round(Math.min(8, sel.strokeW ?? 0) * 12.5), 0, 100,
+                                (v: number) => patch({ strokeW: v / 12.5 }))}
                             </div>
                             <ColorPick compact label="顏色" value={sel.strokeColor || '#000000'}
                               onPick={(c: string) => patch({ strokeColor: c })}
                               onOpen={() => setColorPickerTarget('shapeStroke')} />
                           </div>}
                           {isDoubleContour && (
-                            <div className="px-2 order-2 w-full">
+                            <div className="px-2 pr-[52px] order-2 w-full">
                               {shapeSlider('透明度', sel.opacity ?? 100, 0, 100,
                                 (v: number) => patch({ opacity: v }))}
                             </div>
@@ -8997,7 +9058,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
                               （跟經典拼圖的「背景紋理」同一種排法）。顏色常駐。
                               點點是一個顏色＋大小／間距；條紋是兩個顏色＋粗細／方向。 */}
-                          {!isLine && (() => {
+                          {!isLine && !GRID_SHAPE_KINDS.has(sel.kind) && (() => {
                             const tex = texOf(sel);
                             return (
                           <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden order-3">
@@ -9077,7 +9138,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </div>
                             );
                           })()}
-                          {!isDoubleContour && <div className="px-2 order-4 w-full">
+                          {!isDoubleContour && <div className="px-2 pr-[52px] order-4 w-full">
                             {shapeSlider('透明度', sel.opacity ?? 100, 0, 100,
                               (v: number) => patch({ opacity: v }))}
                           </div>}
@@ -9199,6 +9260,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   else if (d.idle === 'grid-wave') setCur({
                     ...d,
                     ...(isGridTarget ? GRID_WAVE_DEFAULT : NON_GRID_WAVE_DEFAULT),
+                    ...(selObj?.type === 'shape' ? { speed: 1.8 } : {}),
                   });
                   else if (d.idle && isSpecialLineTarget) setCur({ ...d, amp: 20 });
                   else setCur(d);
@@ -9327,7 +9389,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       <>
                         {label('進場動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {kinds.map(k => (
+                          {kinds.map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
                             <button key={k.id} onClick={() => pickKind({ in: k.id })} className={cell(cur.in === k.id)}>
                               {k.name}
                             </button>
@@ -9346,7 +9408,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
                         {label('常駐動畫')}
                         <div className="grid grid-cols-4 gap-2">
-                          {(moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : IDLE_KINDS).map(k => (
+                          {(moTarget === 'shape' ? PATTERN_IDLE_KINDS : isSymbolTarget ? SYMBOL_IDLE_KINDS : isTextTarget ? TEXT_IDLE_KINDS : isImageTarget ? IMAGE_IDLE_KINDS : isGridTarget ? GRID_IDLE_KINDS : IDLE_KINDS).map(k => selObj?.kind === 'grid-orbits' && k.id === 'spin' ? { id: 'signal', name: '信號' } : k).map(k => (
                             <button key={k.id} onClick={() => pickKind({ idle: k.id })} className={cell(cur.idle === k.id)}>
                               {k.name}
                             </button>
@@ -9367,22 +9429,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 ? patternBreathSpeedToUi(cur.speed)
                                 : cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                 ? symbolBreathe2SpeedToUi(cur.speed)
-                                : cur.idle === 'grid-wave' && !isGridTarget
+                                : cur.idle === 'grid-wave' && selObj?.type !== 'shape' && !isGridTarget
                                   ? nonGridWaveSpeedToUi(cur.speed)
                                   : Math.round(cur.speed * 100)}
                               min={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                 || cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
-                                || cur.idle === 'grid-wave' && !isGridTarget ? 0 : 20}
+                                || cur.idle === 'grid-wave' && selObj?.type !== 'shape' && !isGridTarget ? 0 : 20}
                               max={(cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                 || cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
-                                || cur.idle === 'grid-wave' && !isGridTarget ? 100 : 180}
+                                || cur.idle === 'grid-wave' && selObj?.type !== 'shape' && !isGridTarget ? 100 : cur.idle === 'grid-wave' && selObj?.type === 'shape' ? 200 : 180}
                               step={1}
                               onChange={(v: number) => setCur({
                                 speed: (cur.idle === 'pattern-breathe' && moTarget === 'shape') || (cur.idle === 'image-breathe' && isImageTarget)
                                   ? patternBreathSpeedFromUi(v)
                                   : cur.idle === 'symbol-breathe2' && (isSymbolTarget || isTextTarget)
                                   ? symbolBreathe2SpeedFromUi(v)
-                                  : cur.idle === 'grid-wave' && !isGridTarget
+                                  : cur.idle === 'grid-wave' && selObj?.type !== 'shape' && !isGridTarget
                                     ? nonGridWaveSpeedFromUi(v)
                                     : v / 100,
                               })} />
@@ -9451,7 +9513,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <SlidersHorizontal size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'style' ? 'scale-110' : 'scale-100'}`} />
                   </button>
                 </div>
-                <div className="flex-1 min-w-0 no-scrollbar pl-3 pr-2 h-full overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                <div ref={patternPanelRef} className="flex-1 min-w-0 no-scrollbar pl-3 pr-2 h-full overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
                   {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'snow', 'burst', 'love', 'love3', 'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'zzz', 'text'].map(s => (
@@ -9565,12 +9627,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <span className="text-[10px] font-bold text-[#888]">發光</span>
                     <div className="flex items-center gap-2">
                       <div className="flex bg-[#0a0a0a] border border-[#222] p-0.5 rounded-[4px]">
-                        {([['off', '關閉'], ['both', '開啟'], ['image', '僅圖片']] as const).map(([mode, name]) => (
+                        {([['off', '關閉'], ['image', '開啟']] as const).map(([mode, name]) => (
                           <button
                             key={mode}
                             onClick={() => setGlowMode(mode)}
-                            title={mode === 'both' ? '兩側的圖案都發光'
-                              : mode === 'image' ? '只有落在圖片上的那一段發光' : '不發光'}
+                            title={mode === 'image' ? '只有落在圖片上的那一段發光' : '不發光'}
                             className={`px-2.5 h-6 text-[10px] font-bold rounded-[2px] transition-all ${
                               glowMode === mode ? 'bg-[#333] text-white shadow-sm' : 'text-[#555] hover:text-[#888]'
                             }`}
