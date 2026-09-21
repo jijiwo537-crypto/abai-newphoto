@@ -1,4 +1,6 @@
 {
+  "無縫拼圖": {"zh-Hans":"无缝拼图","ja":"境界ぼかし","ko":"경계 블렌딩","en":"Seamless collage"},
+  "融合程度": {"zh-Hans":"融合程度","ja":"ぼかし量","ko":"블렌딩 강도","en":"Blend strength"},
   "語言": {
     "zh-Hans": "语言",
     "ja": "言語",

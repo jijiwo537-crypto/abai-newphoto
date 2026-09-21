@@ -4,6 +4,8 @@ import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene } from './ClassicVectorScene';
+import { SeamlessLayout } from './SeamlessLayout';
+import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
@@ -7312,6 +7314,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /** 間距與圓角都是各佈局自己的設定，調整不會影響之後新增的佈局。 */
     gap: number;
     radius: number;
+    seamless?: boolean;
+    seamlessAmount?: number;
   }
 
   interface PageConfig {
@@ -13542,6 +13546,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
           const loadedImages = await Promise.all(imageLoaders);
 
+          if (layout.seamless) {
+            const box = layoutBox(layout, targetW, targetH);
+            const merged = await renderSeamlessLayout(layout.images, pageActiveTemplate.rects, box.w, box.h, layout.seamlessAmount ?? 0, lutRevision);
+            ctx.drawImage(merged, pageOffsetX + (targetW-box.w)/2, (targetH-box.h)/2, box.w, box.h);
+            ctx.restore();
+            return;
+          }
+
           pageActiveTemplate.rects.forEach((rect, idx) => {
             const cell = layout.images[idx];
             const img = loadedImages[idx];
@@ -14699,8 +14711,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               const lbox = layoutBox(layout, previewW, previewH);
                               const lw = lbox.w * ls;
                               const lh = lbox.h * ls;
-                              const gap = layout.gap * ls;
-                              const radius = layout.radius * ls;
+                              const gap = layout.seamless ? 0 : layout.gap * ls;
+                              const radius = layout.seamless ? 0 : layout.radius * ls;
                               const lLeft = (previewW - lw) / 2 + (layout.t?.x || 0);
                               const lTop = (previewH - lh) / 2 + (layout.t?.y || 0);
                               return (
@@ -14709,6 +14721,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 data-layout-wrapper={pageIdx}
                                 data-layout-id={layout.id}
                                 data-layout-z={layout.z ?? 0}
+                                data-seamless={layout.seamless ? 'true' : undefined}
                                 className="absolute"
                                 style={{
                                   left: `${lLeft}px`,
@@ -14736,6 +14749,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 onTouchEnd={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                                 onTouchCancel={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                               >
+                              {layout.seamless && <SeamlessLayout cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
                               {(() => {
                                 const layoutTransition = 'none';
                                 const imageTransition = 'none';
@@ -15013,7 +15027,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         style={{
                                           backgroundColor: '#121212',
                                           // 這一格自己設了圓角就蓋掉佈局那根共用滑桿
-                                          borderRadius: cell.imgRadius
+                                          borderRadius: !layout.seamless && cell.imgRadius
                                             ? `${cornerR(cell.imgRadius, cellWidth, cellHeight)}px`
                                             : `${radius}px`,
                                           touchAction: 'none',
@@ -15034,7 +15048,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             opacity: (cell.opacity ?? 100) / 100,
                                             pointerEvents: 'none',
                                           };
-                                          return hasPhotoFx(cell.fx)
+                                          return <div className="layout-photo-content" style={{display:'contents'}}>{hasPhotoFx(cell.fx)
                                             ? (
                                               <CellFxImage
                                                 url={cell.url}
@@ -15045,7 +15059,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                                 boxH={cellHeight}
                                               />
                                             )
-                                            : <img src={cell.url} alt="cell" style={photoStyle} />;
+                                            : <img src={cell.url} alt="cell" style={photoStyle} />}</div>;
                                         })()}
 
                                         {/* Thin solid outline on top of the image */}
@@ -16664,6 +16678,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       </div>
 
                       {/* Gap slider */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-white/70">
+                          <span>無縫拼圖</span>
+                          <button role="switch" aria-label="無縫拼圖" aria-checked={!!activeLayout?.seamless}
+                            onClick={() => patchActiveLayout(l => ({...l, seamless: !l.seamless, seamlessAmount: l.seamlessAmount ?? 0}))}
+                            className={`w-10 h-6 rounded-full p-1 transition-colors ${activeLayout?.seamless ? 'bg-white' : 'bg-white/20'}`}>
+                            <span className={`block w-4 h-4 rounded-full transition-transform ${activeLayout?.seamless ? 'translate-x-4 bg-black' : 'bg-white'}`} />
+                          </button>
+                        </div>
+                        {activeLayout?.seamless && <div className="space-y-1.5">
+                          <div className="flex justify-between text-[11px] font-bold text-white/70"><span>融合程度</span><span className="font-mono text-white">{activeLayout.seamlessAmount ?? 0}</span></div>
+                          <input aria-label="融合程度" type="range" min="0" max="100" step="1" value={activeLayout.seamlessAmount ?? 0} className="premium-slider w-full"
+                            onChange={e => patchActiveLayout(l => ({...l,seamlessAmount:Number(e.target.value)}))} />
+                        </div>}
+                      </div>
+                      {!activeLayout?.seamless && <>
                       <div className="space-y-1.5">
                         <div className="flex justify-between text-[11px] font-bold text-white/70">
                           <span>間距</span>
@@ -16702,7 +16732,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           className="premium-slider w-full"
                         />
                       </div>
-
+                      </>}
                     </div>
                   )}
                 </div>

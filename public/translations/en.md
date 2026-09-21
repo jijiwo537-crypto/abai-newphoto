@@ -5,6 +5,8 @@
 | 繁體中文 | 英文 |
 |---|---|
 | 語言 | Language |
+| 無縫拼圖 | Seamless collage |
+| 融合程度 | Blend strength |
 | 信號 | Signal |
 | 中文 | Chinese |
 | 英文 | English |

@@ -3248,16 +3248,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
 
           if (localX >= 0 && localY >= 0) {
-            const mappedHoleSize = 25 + (holeSize / 100) * 125;
-            /* 連續拖動畫筆時保留一個完整圖案以上的呼吸距離；0.75 倍會讓
-               相鄰圖案大量重疊，看起來像密度失控。 */
-            const minDistance = mappedHoleSize * 1.08;
-            const tooClose = holesRef.current.some(h => {
-              const side = h.side || 'both';
-              if (side !== 'both' && side !== clickedSide) return false;
-              return Math.hypot(localX - h.x, localY - h.y) < minDistance;
-            });
-            if (!tooClose) {
+            // A new stroke may overlap any existing pattern, including its centre.
+            {
               const newHole = {
                 id: Math.random().toString(36).substr(2, 9),
                 x: localX,
@@ -3965,14 +3957,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         }
 
         if (localX >= 0 && localY >= 0) {
-          const mappedHoleSize = 25 + (holeSize / 100) * 125;
-          const minDistance = mappedHoleSize * 1.08;
-          const tooClose = holesRef.current.some(h => {
-            const side = h.side || 'both';
-            if (side !== 'both' && side !== intr.clickedSide) return false;
-            return Math.hypot(localX - h.x, localY - h.y) < minDistance;
-          });
-          if (!tooClose) {
+          // Suppress only duplicate stationary events, not nearby/overlapping motifs.
+          if (localX !== lastDrawPosRef.current.x || localY !== lastDrawPosRef.current.y) {
             const newHole = {
               id: Math.random().toString(36).substr(2, 9),
               x: localX,
