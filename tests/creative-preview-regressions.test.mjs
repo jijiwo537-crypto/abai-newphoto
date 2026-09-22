@@ -8,13 +8,13 @@ test('grid stroke controls are excluded in both editors',()=>{
   assert.ok(classic.includes('!isDoubleContour && !isGridShape &&'));
 });
 test('animation tab locks preview gestures, not object gestures',()=>{
-  assert.ok(creative.includes("motionLockRef.current = activeTab === 'motion'"));
+  assert.ok(creative.includes('motionLockRef.current = entering;'));
   assert.ok(creative.includes('if (motionLockRef.current) { viewPinchRef.current = null; return; }'));
   assert.ok(creative.includes('if (motionLockRef.current) return;'));
 });
 test('animation translation and size transitions share duration and easing',()=>{
-  assert.ok(creative.includes('motionUiOn ? `transform 420ms ${MOTION_EASE}`'));
-  assert.ok(creative.includes('motionUiOn ? `width 420ms ${MOTION_EASE}, height 420ms ${MOTION_EASE}`'));
+  assert.ok(creative.includes('(motionUiOn || motionTransitioning) ? `transform 420ms ${MOTION_EASE}`'));
+  assert.ok(creative.includes('(motionUiOn || motionTransitioning) ? `width 420ms ${MOTION_EASE}, height 420ms ${MOTION_EASE}`'));
 });
 test('adding a selected shape does not reset palette scrolling',()=>{
   assert.ok(creative.includes('}, [activeTab, shapeSub, colorPickerTarget]);'));
@@ -33,12 +33,10 @@ test('motion uses one size endpoint without a nested scale transition',()=>{
   assert.ok(!creative.includes('scale(${mScale})'));
   assert.ok(creative.includes("width: '100%', height: '100%'"));
 });
-test('zoomed painting clips work, not resolution, and invalidates partial thumbnails',()=>{
-  assert.ok(creative.includes('targetCanvas === canvasRef.current && !motionLockRef.current && viewTRef.current.k > 1.25'));
-  assert.ok(creative.includes('JSON.stringify([maskKey, visiblePaint,'));
-  assert.ok(creative.includes('if (isMain && visiblePaint) thumbRef.current = null;'));
-  assert.ok(creative.includes('if (isMain && !visiblePaint)'));
-  assert.ok(creative.includes('maxPreviewScale, viewT.k, viewT.tx, viewT.ty]'));
+test('preview gestures do not request a full content repaint on every move',()=>{
+  assert.ok(!creative.includes('visiblePaint'));
+  assert.ok(!creative.includes('maxPreviewScale, viewT.k, viewT.tx, viewT.ty]'));
+  assert.ok(creative.includes('cached.scale === s'));
 });
 test('entry transition keeps its bitmap until geometry has settled',()=>{
   assert.ok(creative.includes('motionTransitionUntilRef.current = performance.now() + 420;'));

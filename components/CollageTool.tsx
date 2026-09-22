@@ -44,10 +44,12 @@ import { countSymbolAnimationBeats, measureSymbolInk, measureSymbolStickerInk, m
    這裡只是把它接回來，畫出來的東西跟搬家前一模一樣。 */
 import {
   getHoleNumber, GLYPH_HOLES, GLYPH_BTN, getHoleImg, isImageHole, holeImgRatio,
-  isTextHole, holeGlyph, glyphFont, glyphInk, drawTextShape, drawShapePath, patternPathBounds,
+  isTextHole, holeGlyph, glyphFont, glyphInk, drawTextShape as drawTextShapeRaw, drawShapePath, patternPathBounds,
   drawHoleShape, paintDots, paintTex, texOf, glowAmount,
   HoleShapeItem, HOLE_ITEM_CROSS, HOLE_ITEM_CROSS_O, HOLE_ITEMS_EXTRA,
 } from '../utils/holeShapes';
+const drawTextShape: typeof drawTextShapeRaw = (ctx,type,text,x,y,size,fill,out=false,angle=0) =>
+  drawTextShapeRaw(ctx,type,text,x,y,size,fill,out,angle,true);
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
 import { patternGlyph, paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
   STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
@@ -1981,6 +1983,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 常駐波浪的透明中繼層。預覽動畫每格沿用同一張，避免一秒建立數十張
      全尺寸 Canvas；匯出則使用自己的暫存層，不會與畫面互相覆寫。 */
   const waveObjectCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
+  const staticObjectTilesRef = useRef(new Map<string, {
+    model: any; scale: number; fx: number; tile: HTMLCanvasElement; x: number; y: number;
+  }>());
+  useEffect(() => () => {
+    staticObjectTilesRef.current.forEach(v => { v.tile.width = v.tile.height = 0; });
+    staticObjectTilesRef.current.clear();
+  }, []);
   /** 挖穿的洞裡看到的那張底圖。跟上面幾張一樣重複使用，播動畫時才不會一直配置記憶體 */
   const holeBackdropCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
   /* 四周包圍那張「墊在遮罩底下、放大到整張畫布」的底圖。
@@ -3580,6 +3589,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const lastMainDrawRef = useRef(0);
   const animationOwnsPaintRef = useRef(false);
   const motionTransitionUntilRef = useRef(0);
+  const [motionTransitioning, setMotionTransitioning] = useState(false);
+  const previousMotionTabRef = useRef(false);
   /** 正在離開這個工具。立起來之後所有重畫迴圈下一格就收工，把主執行緒讓出來 */
   const leavingRef = useRef(false);
   /** 這一次重畫不要畫選取框／對齊線那一組。只有「離開前拍縮圖」那一下會立起來。 */
@@ -4124,6 +4135,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1) => {
     if (!imageState) return;
+    // All painting routes share this guard, including pause/selection effects.
+    // Resizing a canvas clears it immediately, so never resize during the tween.
+    if (targetCanvas === canvasRef.current && performance.now() < motionTransitionUntilRef.current) return;
     const { baseW, baseH, globalScale: gs } = imageState;
     /* alpha:true —— 拼圖的畫布本來就會被底圖與遮罩鋪滿，
        所以留不留 alpha 看起來一樣；留著是為了遮罩以外那圈不要被填成黑色。 */
@@ -4169,22 +4183,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
 
-    // Only rasterize the visible workspace (plus a pan guard band), at the same
-    // full backing resolution. Export and animation transitions always paint all.
-    let visiblePaint: {x:number;y:number;w:number;h:number} | null = null;
     ctx.save();
-    if (targetCanvas === canvasRef.current && !motionLockRef.current && viewTRef.current.k > 1.25) {
-      const stage = stageRef.current?.getBoundingClientRect();
-      if (stage && uiRect.width > 0 && uiRect.height > 0) {
-        const sx = tW / uiRect.width, sy = tH / uiRect.height;
-        const x = Math.max(0, (stage.left - 64 - uiRect.left) * sx);
-        const y = Math.max(0, (stage.top - 64 - uiRect.top) * sy);
-        const right = Math.min(tW, (stage.right + 64 - uiRect.left) * sx);
-        const bottom = Math.min(tH, (stage.bottom + 64 - uiRect.top) * sy);
-        visiblePaint = {x,y,w:Math.max(0,right-x),h:Math.max(0,bottom-y)};
-        ctx.beginPath(); ctx.rect(x, y, visiblePaint.w, visiblePaint.h); ctx.clip();
-      }
-    }
     ctx.fillStyle = '#0A0A0A'; ctx.fillRect(0, 0, offs.cw, offs.ch);
     ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, iw, ih); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
 
@@ -4990,7 +4989,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
     const drawImageSideHoles = () => {
     ctx.save(); ctx.translate(offs.ix, offs.iy);
-    const basePat = basePatCached || ctx.createPattern(bCanvas, 'repeat');
+    const basePat = plainMask ? maskColor : basePatCached || ctx.createPattern(bCanvas, 'repeat');
     if (basePat) {
       ctx.fillStyle = basePat;
       /* 圖片側的圖案要顯示「遮罩上同一個相對位置」的那一塊。
@@ -5075,7 +5074,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        maskW×maskH 那一塊，貼回去時也只貼那一塊。
        尺寸不再每格重配，畫出來的像素完全一樣。 */
     const lmW = maskW | 0, lmH = maskH | 0;
-    const cutMaskKey = isMain ? JSON.stringify([maskKey, visiblePaint, layout, iw, ih, s, holeType, customText, holeAngle, linkMode, linkColor, glowMode, holeGlowColor,
+    const cutMaskKey = isMain ? JSON.stringify([maskKey, layout, iw, ih, s, holeType, customText, holeAngle, linkMode, linkColor, glowMode, holeGlowColor,
       linkMode !== 'none' ? animRef.current?.t : null,
       holes.map(h => [h.id,h.side,h.manuallyPlaced,h.randomNumber,getHoleSize(h),h.angle,hA(h),glowBeat(h),glowBeatLink(h)])]) : '';
     if (isMain && cutMaskKey === cutMaskCacheKeyRef.current && lmc.width >= lmW && lmc.height >= lmH) {
@@ -5089,11 +5088,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const lmx = get2dWide(lmc)!;
     lmx.setTransform(1, 0, 0, 1, 0, 0);
     lmx.save();
-    if (visiblePaint) {
-      lmx.beginPath();
-      lmx.rect(visiblePaint.x-offs.mx, visiblePaint.y-offs.my, visiblePaint.w, visiblePaint.h);
-      lmx.clip();
-    }
     lmx.globalAlpha = 1;
     lmx.globalCompositeOperation = 'copy';
     // 純色的底稿只有 8×8（見上面 plainMask），這裡直接填色，不要把小塊拉大
@@ -5842,6 +5836,44 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.restore();
       };
       if (!layer) {
+        // Reuse unchanged, unselected vector/text objects at their exact backing
+        // resolution. The moving object remains live; exports and animations
+        // always use the original painter. No lower-resolution interaction tier.
+        const eligible = isMain && !f && o.type !== 'image' && o.id !== selectedObj
+          && o.id !== editingTextId && !motionTargetFlashRef.current;
+        const tiles = staticObjectTilesRef.current;
+        const cached = eligible ? tiles.get(o.id) : null;
+        if (cached && cached.model === o && cached.scale === s && cached.fx === fxTick) {
+          ctx.drawImage(cached.tile,cached.x,cached.y);
+          return;
+        }
+        if (eligible) {
+          const ink = objectSelectionInk(o,s,0);
+          const rad = (o.rot || 0)*Math.PI/180, c = Math.cos(rad), sn = Math.sin(rad);
+          const corners = [[ink.x,ink.y],[ink.x+ink.w,ink.y],[ink.x,ink.y+ink.h],[ink.x+ink.w,ink.y+ink.h]]
+            .map(([x,y]) => { const dx=x-o.w*s/2, dy=y-o.h*s/2;
+              return [(o.x+o.w/2)*s+c*dx-sn*dy,(o.y+o.h/2)*s+sn*dx+c*dy]; });
+          const pad = Math.max(o.w,o.h)*s*.8+20*s;
+          const x = Math.floor(Math.min(...corners.map(p=>p[0]))-pad);
+          const y = Math.floor(Math.min(...corners.map(p=>p[1]))-pad);
+          const w = Math.ceil(Math.max(...corners.map(p=>p[0]))+pad)-x;
+          const h = Math.ceil(Math.max(...corners.map(p=>p[1]))+pad)-y;
+          if (w > 0 && h > 0 && w*h <= 1_000_000) {
+            const tile=document.createElement('canvas'); tile.width=w; tile.height=h;
+            const tc=get2dWide(tile);
+            if (tc) {
+              tc.translate(-x,-y); paintObject(tc);
+              const old=tiles.get(o.id); if(old) old.tile.width=old.tile.height=0;
+              tiles.delete(o.id); tiles.set(o.id,{model:o,scale:s,fx:fxTick,tile,x,y});
+              let pixels=0; tiles.forEach(v=>{pixels+=v.tile.width*v.tile.height;});
+              while(pixels>4_000_000) {
+                const key=tiles.keys().next().value!;const v=tiles.get(key)!;
+                pixels-=v.tile.width*v.tile.height; tiles.delete(key); v.tile.width=v.tile.height=0;
+              }
+              ctx.drawImage(tile,x,y); return;
+            }
+          }
+        }
         paintObject(ctx);
         return;
       }
@@ -6168,8 +6200,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        所以底圖愈大等愈久。現在畫面每畫一次就順手留一張，返回鍵那一下
        手上已經有圖了，一格都不用再算。
        0.4 秒才留一次，播影片時多出來的成本可以忽略（實測一次約 2 毫秒）。 */
-    if (isMain && visiblePaint) thumbRef.current = null;
-    if (isMain && !visiblePaint) {
+    if (isMain) {
       const nowT = performance.now();
       // 手勢期間不額外縮製歷史縮圖；畫面仍以原解析度繪製。
       if (activePointers.current.size === 0 && nowT - thumbAtRef.current > 400) {
@@ -6556,7 +6587,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          任何倍率下都保證 1 個畫布像素 ≥ 1 個裝置像素。 */
       maxZoomRef.current = Math.max(1, Math.min(6, Math.floor(z * 20) / 20));
     }
-  }, [imageState, renderToCanvas, previewScale, layout, maskScale, canvasRatio, maxPreviewScale, viewT.k, viewT.tx, viewT.ty]);
+  }, [imageState, renderToCanvas, previewScale, layout, maskScale, canvasRatio, maxPreviewScale]);
 
   useEffect(() => { 
     if (saveState !== 'idle') return;
@@ -6564,16 +6595,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return () => cancelAnimationFrame(id); 
   }, [renderCanvas, saveState]);
 
-  // Wheel pans have a short CSS interpolation. Repaint its final visible region
-  // as well as the pointer-driven frames, without changing backing resolution.
-  useEffect(() => {
-    if (motionLockRef.current) return;
-    const id = window.setTimeout(() => {
-      if (canvasRef.current && !motionLockRef.current)
-        renderToCanvasRef.current(canvasRef.current, previewScaleRef.current);
-    }, 120);
-    return () => window.clearTimeout(id);
-  }, [viewT.k, viewT.tx, viewT.ty]);
 
   /* 圖片形狀的圖要先解碼好。雖然是內嵌的（不用連網），解碼還是非同步的 ——
      解完再重畫一次，第一次選到它才不會是空的。 */
@@ -7248,13 +7269,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   /* 一進動畫頁就從頭播並回到最小預覽；播放中仍可選取與操作物件。 */
   useLayoutEffect(() => {
-    motionLockRef.current = activeTab === 'motion';
-    if (activeTab !== 'motion') { motionTransitionUntilRef.current = 0; return; }
-    // Finish the entire source image before shrinking reveals previously clipped
-    // areas. Keep this bitmap intact for the complete geometry transition.
-    if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, previewScaleRef.current);
+    const entering = activeTab === 'motion';
+    const changed = previousMotionTabRef.current !== entering;
+    previousMotionTabRef.current = entering;
+    motionLockRef.current = entering;
+    if (!changed) return;
     motionTransitionUntilRef.current = performance.now() + 420;
+    setMotionTransitioning(true);
     if (previewTimer.current) window.clearTimeout(previewTimer.current);
+    const finish = window.setTimeout(() => {
+      motionTransitionUntilRef.current = 0;
+      setMotionTransitioning(false);
+      if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, previewScaleRef.current);
+    }, 440);
+    if (!entering) return () => window.clearTimeout(finish);
     viewPinchRef.current = null;
     setViewT({ k: 1, tx: 0, ty: 0 });
     setBaseSelected(false);
@@ -7263,7 +7291,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     motionClockRef.current = 0;
     setMotionPlaying(true);
     setMotionSeq(n => n + 1);
-  }, [activeTab]);
+    return () => window.clearTimeout(finish);
+  }, [activeTab === 'motion']);
 
   /* 第二篇貼文的動畫：直接在一張 canvas 上「當場播」。
      以前是先用 MediaRecorder 錄成影片再放 —— 錄影是即時的，一圈幾秒就要等幾秒，
@@ -7491,15 +7520,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const displayScale = motionUiOn ? mScale : viewT.k;
   const displayY = motionUiOn ? -mLift - (baseCss?.h || 0) * (1 - mScale) / 2 : viewT.ty;
 
-  const selectedHole = holes.find(hx => hx.id === selectedTarget);
-  const displayAngle = selectedHole ? (selectedHole.angle ?? holeAngle) : holeAngle;
+  const displayAngle = holeAngle;
 
   const handleAngleChange = (val: number) => {
-    if (selectedTarget) {
-      setHoles(prev => prev.map(h => h.id === selectedTarget ? { ...h, angle: val } : h));
-    } else {
-      setHoleAngle(val);
-    }
+    const delta = val - holeAngle;
+    setHoles(prev => prev.map(h => h.angle === undefined ? h : {
+      ...h, angle: ((h.angle + delta) % 360 + 360) % 360,
+    }));
+    setHoleAngle(val);
   };
 
   return (
@@ -8038,7 +8066,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  也救不回來，那就是圖案與遮罩邊緣一直有鋸齒的根本原因。 */
               style={{
                 transform: `translate(${motionUiOn ? 0 : viewT.tx}px, ${displayY}px)`,
-                transition: viewPinchRef.current ? 'none' : motionUiOn ? `transform 420ms ${MOTION_EASE}` : 'transform 90ms linear',
+                transition: viewPinchRef.current ? 'none' : (motionUiOn || motionTransitioning) ? `transform 420ms ${MOTION_EASE}` : 'transform 90ms linear',
               }}
             >
               {/* 畫布外面包一層「位置基準」，影片才有東西可以對齊。
@@ -8049,7 +8077,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               <div style={{
                 position: 'relative', lineHeight: 0, flexShrink: 0,
                 boxShadow: '0 20px 50px rgba(255,255,255,0.05)',
-                transition: motionUiOn ? `width 420ms ${MOTION_EASE}, height 420ms ${MOTION_EASE}`
+                transition: (motionUiOn || motionTransitioning) ? `width 420ms ${MOTION_EASE}, height 420ms ${MOTION_EASE}`
                   : (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? 'none' : 'width 90ms linear, height 90ms linear',
                 ...(baseCss
                   ? { width: baseCss.w * displayScale, height: baseCss.h * displayScale }
