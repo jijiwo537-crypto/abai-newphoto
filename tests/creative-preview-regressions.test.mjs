@@ -33,3 +33,16 @@ test('motion uses one size endpoint without a nested scale transition',()=>{
   assert.ok(!creative.includes('scale(${mScale})'));
   assert.ok(creative.includes("width: '100%', height: '100%'"));
 });
+test('zoomed painting clips work, not resolution, and invalidates partial thumbnails',()=>{
+  assert.ok(creative.includes('targetCanvas === canvasRef.current && !motionLockRef.current && viewTRef.current.k > 1.25'));
+  assert.ok(creative.includes('JSON.stringify([maskKey, visiblePaint,'));
+  assert.ok(creative.includes('if (isMain && visiblePaint) thumbRef.current = null;'));
+  assert.ok(creative.includes('if (isMain && !visiblePaint)'));
+  assert.ok(creative.includes('maxPreviewScale, viewT.k, viewT.tx, viewT.ty]'));
+});
+test('entry transition keeps its bitmap until geometry has settled',()=>{
+  assert.ok(creative.includes('motionTransitionUntilRef.current = performance.now() + 420;'));
+  assert.ok(creative.includes('Math.max(90, motionTransitionUntilRef.current - performance.now() + 32)'));
+  assert.ok(creative.includes('if (now < motionTransitionUntilRef.current) return;'));
+  assert.ok(creative.includes('if (performance.now() < motionTransitionUntilRef.current) return;'));
+});

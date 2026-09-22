@@ -3579,6 +3579,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 主畫布上一次重畫的時間（不分是誰畫的）—— 影片那支迴圈用它避免重複畫 */
   const lastMainDrawRef = useRef(0);
   const animationOwnsPaintRef = useRef(false);
+  const motionTransitionUntilRef = useRef(0);
   /** 正在離開這個工具。立起來之後所有重畫迴圈下一格就收工，把主執行緒讓出來 */
   const leavingRef = useRef(false);
   /** 這一次重畫不要畫選取框／對齊線那一組。只有「離開前拍縮圖」那一下會立起來。 */
@@ -3679,7 +3680,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          不是降解析度。 */
       motionScaleCapRef.current = snapped;
       motionScaleRef.current = snapped;
-    }, 90);
+    }, Math.max(90, motionTransitionUntilRef.current - performance.now() + 32));
     return () => { if (previewTimer.current) window.clearTimeout(previewTimer.current); };
     /* baseCss 一定要進依賴：第一次算出基準尺寸之前這個 effect 會直接 return，
        而 viewT.k 不會再變 —— 少了它就會永遠停在 previewScale = 1，
@@ -4168,6 +4169,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
 
+    // Only rasterize the visible workspace (plus a pan guard band), at the same
+    // full backing resolution. Export and animation transitions always paint all.
+    let visiblePaint: {x:number;y:number;w:number;h:number} | null = null;
+    ctx.save();
+    if (targetCanvas === canvasRef.current && !motionLockRef.current && viewTRef.current.k > 1.25) {
+      const stage = stageRef.current?.getBoundingClientRect();
+      if (stage && uiRect.width > 0 && uiRect.height > 0) {
+        const sx = tW / uiRect.width, sy = tH / uiRect.height;
+        const x = Math.max(0, (stage.left - 64 - uiRect.left) * sx);
+        const y = Math.max(0, (stage.top - 64 - uiRect.top) * sy);
+        const right = Math.min(tW, (stage.right + 64 - uiRect.left) * sx);
+        const bottom = Math.min(tH, (stage.bottom + 64 - uiRect.top) * sy);
+        visiblePaint = {x,y,w:Math.max(0,right-x),h:Math.max(0,bottom-y)};
+        ctx.beginPath(); ctx.rect(x, y, visiblePaint.w, visiblePaint.h); ctx.clip();
+      }
+    }
     ctx.fillStyle = '#0A0A0A'; ctx.fillRect(0, 0, offs.cw, offs.ch);
     ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, iw, ih); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
 
@@ -5058,7 +5075,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        maskW×maskH 那一塊，貼回去時也只貼那一塊。
        尺寸不再每格重配，畫出來的像素完全一樣。 */
     const lmW = maskW | 0, lmH = maskH | 0;
-    const cutMaskKey = isMain ? JSON.stringify([maskKey, layout, iw, ih, s, holeType, customText, holeAngle, linkMode, linkColor, glowMode, holeGlowColor,
+    const cutMaskKey = isMain ? JSON.stringify([maskKey, visiblePaint, layout, iw, ih, s, holeType, customText, holeAngle, linkMode, linkColor, glowMode, holeGlowColor,
       linkMode !== 'none' ? animRef.current?.t : null,
       holes.map(h => [h.id,h.side,h.manuallyPlaced,h.randomNumber,getHoleSize(h),h.angle,hA(h),glowBeat(h),glowBeatLink(h)])]) : '';
     if (isMain && cutMaskKey === cutMaskCacheKeyRef.current && lmc.width >= lmW && lmc.height >= lmH) {
@@ -5071,6 +5088,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     const lmx = get2dWide(lmc)!;
     lmx.setTransform(1, 0, 0, 1, 0, 0);
+    lmx.save();
+    if (visiblePaint) {
+      lmx.beginPath();
+      lmx.rect(visiblePaint.x-offs.mx, visiblePaint.y-offs.my, visiblePaint.w, visiblePaint.h);
+      lmx.clip();
+    }
     lmx.globalAlpha = 1;
     lmx.globalCompositeOperation = 'copy';
     // 純色的底稿只有 8×8（見上面 plainMask），這裡直接填色，不要把小塊拉大
@@ -5152,6 +5175,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       strokeLinks(lmx, maskPairs);
     }
     // 只貼「這一格真正用到」的那一塊（畫布可能比它大，見上面的說明）
+    lmx.restore();
     ctx.drawImage(lmc, 0, 0, lmW, lmH, offs.mx, offs.my, lmW, lmH);
     if (isMain) cutMaskCacheKeyRef.current = cutMaskKey;
     };
@@ -6144,7 +6168,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        所以底圖愈大等愈久。現在畫面每畫一次就順手留一張，返回鍵那一下
        手上已經有圖了，一格都不用再算。
        0.4 秒才留一次，播影片時多出來的成本可以忽略（實測一次約 2 毫秒）。 */
-    if (isMain) {
+    if (isMain && visiblePaint) thumbRef.current = null;
+    if (isMain && !visiblePaint) {
       const nowT = performance.now();
       // 手勢期間不額外縮製歷史縮圖；畫面仍以原解析度繪製。
       if (activePointers.current.size === 0 && nowT - thumbAtRef.current > 400) {
@@ -6339,6 +6364,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     }
     
+    ctx.restore();
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
@@ -6485,6 +6511,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   const renderCanvas = useCallback(() => {
     if (!canvasRef.current || !imageState) return;
+    if (performance.now() < motionTransitionUntilRef.current) return;
     /* 換排版／拉比例時，底下那個 useLayoutEffect 為了不露出「果凍」的那一格，
        已經在同一次 commit 裡用完全一樣的參數同步畫過一次了。
        這裡再畫一次畫出來的是同一張 —— 拉比例滑桿時等於每一格都白畫一次
@@ -6529,13 +6556,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          任何倍率下都保證 1 個畫布像素 ≥ 1 個裝置像素。 */
       maxZoomRef.current = Math.max(1, Math.min(6, Math.floor(z * 20) / 20));
     }
-  }, [imageState, renderToCanvas, previewScale, layout, maskScale, canvasRatio, maxPreviewScale]);
+  }, [imageState, renderToCanvas, previewScale, layout, maskScale, canvasRatio, maxPreviewScale, viewT.k, viewT.tx, viewT.ty]);
 
   useEffect(() => { 
     if (saveState !== 'idle') return;
     let id = requestAnimationFrame(() => renderCanvas()); 
     return () => cancelAnimationFrame(id); 
   }, [renderCanvas, saveState]);
+
+  // Wheel pans have a short CSS interpolation. Repaint its final visible region
+  // as well as the pointer-driven frames, without changing backing resolution.
+  useEffect(() => {
+    if (motionLockRef.current) return;
+    const id = window.setTimeout(() => {
+      if (canvasRef.current && !motionLockRef.current)
+        renderToCanvasRef.current(canvasRef.current, previewScaleRef.current);
+    }, 120);
+    return () => window.clearTimeout(id);
+  }, [viewT.k, viewT.tx, viewT.ty]);
 
   /* 圖片形狀的圖要先解碼好。雖然是內嵌的（不用連網），解碼還是非同步的 ——
      解完再重畫一次，第一次選到它才不會是空的。 */
@@ -6931,10 +6969,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => {
     if (!motionOn || !motionPlaying || !imageState || videoProg !== null) return;
     let raf = 0;
-    const t0 = performance.now() - motionClockRef.current * 1000;
+    const t0 = Math.max(performance.now(), motionTransitionUntilRef.current) - motionClockRef.current * 1000;
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const now = performance.now();
+      if (now < motionTransitionUntilRef.current) return;
       try {
         motionClockRef.current = ((now - t0) / 1000) % motionTotal;
         animRef.current = buildAnim(motionClockRef.current);
@@ -7210,7 +7249,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 一進動畫頁就從頭播並回到最小預覽；播放中仍可選取與操作物件。 */
   useLayoutEffect(() => {
     motionLockRef.current = activeTab === 'motion';
-    if (activeTab !== 'motion') return;
+    if (activeTab !== 'motion') { motionTransitionUntilRef.current = 0; return; }
+    // Finish the entire source image before shrinking reveals previously clipped
+    // areas. Keep this bitmap intact for the complete geometry transition.
+    if (canvasRef.current) renderToCanvasRef.current(canvasRef.current, previewScaleRef.current);
+    motionTransitionUntilRef.current = performance.now() + 420;
+    if (previewTimer.current) window.clearTimeout(previewTimer.current);
     viewPinchRef.current = null;
     setViewT({ k: 1, tx: 0, ty: 0 });
     setBaseSelected(false);
