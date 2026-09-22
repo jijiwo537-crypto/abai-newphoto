@@ -2231,7 +2231,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (st.holeSize !== undefined) setHoleSize(st.holeSize);
     if (st.sizeJitter !== undefined) setSizeJitter(st.sizeJitter);
     if (st.holeAngle !== undefined) setHoleAngle(st.holeAngle);
-    if (st.holeCount !== undefined) setHoleCount(st.holeCount);
+    if (st.holeCount !== undefined) setHoleCount(Math.min(30, Math.max(0, st.holeCount)));
     if (Array.isArray(st.holes)) setHoles(st.holes);
     if (st.maskColor !== undefined) setMaskColor(st.maskColor);
     if (st.patternType !== undefined) setPatternType(st.patternType);
@@ -2533,7 +2533,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const fieldH = around ? geo.mh : geo.ih;
 
     const newHoles = [];
-    const count = countOverride ?? holeCount;
+    const count = Math.min(30, Math.max(0, countOverride ?? holeCount));
     for (let i = 0; i < count; i++) {
       let att = 0, valid = false, hx = 0, hy = 0;
       while (!valid && att < 500) {
@@ -7163,7 +7163,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setMaskTransform(e.maskTransform); setImageTransform(e.imageTransform);
     setHoleType(e.holeType); setCustomText(e.customText);
     setHoleSize(e.holeSize); setSizeJitter(e.sizeJitter);
-    setHoleAngle(e.holeAngle); setHoleCount(e.holeCount);
+    setHoleAngle(e.holeAngle); setHoleCount(Math.min(30, Math.max(0, e.holeCount)));
     setSymmetryEnabled(e.symmetryEnabled);
     setGlowMode(e.glowMode && e.glowMode !== 'off' ? 'image' : 'off'); setHoleGlowColor(e.holeGlowColor || GLOW_BASE);
     setGlowIdle(e.glowIdle || 'none');
@@ -7432,7 +7432,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const motionUiOn = activeTab === 'motion' && !!imageState;
   const { mLift, mScale } = (() => {
     if (!motionUiOn || !baseCss || !stageSize.h) return { mLift: 0, mScale: 1 };
-    const Hc = baseCss.h * viewT.k;                    // 圖在畫面上的高度
+    const Hc = baseCss.h; // 動畫目的地只依 1 倍畫布計算，與出發倍率無關。
     /* 圖是以「舞台中心」為準置中的（外面那層有 p-4，但上下對稱所以中心不變），
        所以圖的下緣＝舞台中心 ＋ Hc/2，而播放列的上緣＝舞台底部 − MOTION_CLEAR。 */
     const overlap = Hc / 2 - stageSize.h / 2 + MOTION_CLEAR;
@@ -7443,6 +7443,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return { mLift: lift, mScale: remain > 0 ? Math.max(0.5, (Hc - remain) / Hc) : 1 };
   })();
   const MOTION_EASE = 'cubic-bezier(0.22, 0.61, 0.36, 1)';
+  // 一個幾何終點：不要同時對寬高與子層 scale 做插值（兩者相乘會造成二段加速）。
+  const displayScale = motionUiOn ? mScale : viewT.k;
+  const displayY = motionUiOn ? -mLift - (baseCss?.h || 0) * (1 - mScale) / 2 : viewT.ty;
 
   const selectedHole = holes.find(hx => hx.id === selectedTarget);
   const displayAngle = selectedHole ? (selectedHole.angle ?? holeAngle) : holeAngle;
@@ -7990,7 +7993,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  先把畫布用「版面尺寸」光柵化成一張貼圖再拉大，畫布內部畫得再細
                  也救不回來，那就是圖案與遮罩邊緣一直有鋸齒的根本原因。 */
               style={{
-                transform: `translate(${viewT.tx}px, ${viewT.ty}px)`,
+                transform: `translate(${motionUiOn ? 0 : viewT.tx}px, ${displayY}px)`,
                 transition: viewPinchRef.current ? 'none' : motionUiOn ? `transform 420ms ${MOTION_EASE}` : 'transform 90ms linear',
               }}
             >
@@ -8001,33 +8004,31 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   所以這裡照抄畫布那一組尺寸規則。 */}
               <div style={{
                 position: 'relative', lineHeight: 0, flexShrink: 0,
+                boxShadow: '0 20px 50px rgba(255,255,255,0.05)',
                 transition: motionUiOn ? `width 420ms ${MOTION_EASE}, height 420ms ${MOTION_EASE}`
                   : (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? 'none' : 'width 90ms linear, height 90ms linear',
                 ...(baseCss
-                  ? { width: baseCss.w * viewT.k, height: baseCss.h * viewT.k }
+                  ? { width: baseCss.w * displayScale, height: baseCss.h * displayScale }
                   : { maxWidth: '100%', maxHeight: '100%' }),
               }}>
               <canvas 
                 ref={canvasRef} 
-                className={`block drop-shadow-[0_20px_50px_rgba(255,255,255,0.05)] pointer-events-auto ${baseCss ? '' : 'max-w-full max-h-full'}`}
+                className={`block pointer-events-auto ${baseCss ? '' : 'max-w-full max-h-full'}`}
                 style={{ 
                   touchAction: 'none',
                   /* 畫布要壓在影片上面（影片是絕對定位、預設會蓋過來） */
                   position: 'relative', zIndex: 1,
                   // 1 倍時交給 max-w/max-h 自己貼合；放大之後直接寫死尺寸，
                   // 畫布就是實打實地被排版成那麼大，不經過任何貼圖拉伸
-                  ...(baseCss ? { width: baseCss.w * viewT.k, height: baseCss.h * viewT.k } : null),
+                  ...(baseCss ? { width: '100%', height: '100%' } : null),
                   /* 動畫頁的讓位：從頂部往上收，所以頂部位置不動。
                      用 transform 而不是改版面尺寸 —— 改尺寸會重新算圖、會頓，
                      transform 是純合成，整段都很順。 */
                   transformOrigin: 'top center',
-                  transform: (mLift || mScale !== 1) ? `translateY(${-mLift}px) scale(${mScale})` : 'none',
+                  transform: 'none',
                   /* 尺寸過場只在「正在縮放」時才有意義。換排版時畫布形狀會整個換掉，
                      這時候讓寬高做動畫就會看到那種果凍般的伸縮（桌機用滾輪縮放特別明顯）。 */
-                  transition: [
-                    motionUiOn ? `width 420ms ${MOTION_EASE}, height 420ms ${MOTION_EASE}` : (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? '' : 'width 90ms linear, height 90ms linear',
-                    `transform 420ms ${MOTION_EASE}`,
-                  ].filter(Boolean).join(', '),
+                  transition: 'none',
                   cursor: brushMode === 'pen' ? 'crosshair' : brushMode === 'eraser' ? 'pointer' : 'default' 
                 }}
               />
@@ -8041,7 +8042,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   ? objects.find(z => z.id === selectedObj) : null;
                 const shaped = !!(o && shapeSel === o.id && isImgShaped(o.imgShape));
                 if (!baseSelected && (!o || shaped)) return null;
-                const logicalPerCssPx = off.cw / Math.max(1, (baseCss?.w || off.cw) * viewT.k * mScale);
+                const logicalPerCssPx = off.cw / Math.max(1, (baseCss?.w || off.cw) * displayScale);
                 const ink = o && !shaped
                   ? objectSelectionInk(o, 1, (o.type === 'image' ? 0.375 : 2) * logicalPerCssPx)
                   : null;
@@ -8056,8 +8057,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     className="absolute inset-0 pointer-events-none"
                     style={{ width: '100%', height: '100%', zIndex: 6, overflow: 'visible',
                       transformOrigin: 'top center',
-                      transform: (mLift || mScale !== 1) ? `translateY(${-mLift}px) scale(${mScale})` : 'none',
-                      transition: `transform 420ms ${MOTION_EASE}` }}
+                      transform: 'none' }}
                   >
                     {baseSelected && (
                       <rect
@@ -9572,7 +9572,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       中間留 7px 誰都不管的空白。左右維持 gap-4，寬度完全沒變。 */}
                   <div className="grid grid-cols-2 gap-x-7 gap-y-6">
                     <CompactSlider wide label="大小" value={holeSize} min={0} max={100} onChange={setHoleSize} />
-                    <CompactSlider wide label="數量" value={holeCount} min={0} max={50} onChange={setHoleCount} step={1} />
+                    <CompactSlider wide label="數量" value={holeCount} min={0} max={30} onChange={setHoleCount} step={1} />
                     <CompactSlider wide label="變化" value={sizeJitter} min={0} max={50} onChange={setSizeJitter} />
                     <CompactSlider wide label="角度" value={displayAngle} min={0} max={360} onChange={handleAngleChange} step={1} />
                   </div>

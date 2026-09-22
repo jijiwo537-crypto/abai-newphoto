@@ -19,3 +19,17 @@ test('animation translation and size transitions share duration and easing',()=>
 test('adding a selected shape does not reset palette scrolling',()=>{
   assert.ok(creative.includes('}, [activeTab, shapeSub, colorPickerTarget]);'));
 });
+test('pattern count is capped for controls and generation',()=>{
+  assert.ok(creative.includes('value={holeCount} min={0} max={30}'));
+  assert.ok(creative.includes('Math.min(30, Math.max(0, countOverride ?? holeCount))'));
+});
+test('preview content does not use a full-surface CSS blur filter',()=>{
+  assert.ok(!creative.includes('drop-shadow-[0_20px_50px'));
+  assert.ok(creative.includes("boxShadow: '0 20px 50px rgba(255,255,255,0.05)'"));
+});
+test('motion uses one size endpoint without a nested scale transition',()=>{
+  assert.ok(creative.includes('const displayScale = motionUiOn ? mScale : viewT.k;'));
+  assert.ok(creative.includes('const Hc = baseCss.h;'));
+  assert.ok(!creative.includes('scale(${mScale})'));
+  assert.ok(creative.includes("width: '100%', height: '100%'"));
+});
