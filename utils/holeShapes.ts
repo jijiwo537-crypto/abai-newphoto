@@ -240,9 +240,9 @@ export function patternPathBounds(type: string, size: number) {
 const TEXT_TMP_MAX = 1024;
 const TEXT_TMP_KEEP = 48;
 const textTmpPool = new Map<number, HTMLCanvasElement>();
-// Exact-resolution immutable tiles, opt-in for the creative pattern renderer.
+// Ceiling-resolution immutable tiles, opt-in for the creative pattern renderer.
 // Unlike the scratch pool, hits skip font rasterization and color compositing.
-const patternRasterCache = new Map<string, HTMLCanvasElement>();
+const patternRasterCache = new Map<string, {canvas:HTMLCanvasElement; size:number; pad:number}>();
 let patternRasterBytes = 0;
 const PATTERN_RASTER_BUDGET = 24 * 1024 * 1024;
 
@@ -269,6 +269,43 @@ export const drawTextShape = (
   const tm = targetCtx.getTransform();
   const density = Math.max(1, Math.min(8,
     Math.max(Math.hypot(tm.a, tm.b), Math.hypot(tm.c, tm.d))));
+  const image = isImageHole(holeType) ? getHoleImg(holeType) : null;
+  if (reuseRaster && sz > 0 && (isDestinationOut || typeof fillStyle === 'string')
+      && (!image || (image.complete && image.naturalWidth > 0))) {
+    // Always round resolution UP. Rotation and requested dimensions are applied
+    // when compositing, so adjusting either does not rerasterize every pattern.
+    const resolution = Math.pow(1.12, Math.ceil(Math.log(Math.max(1,sz*density))/Math.log(1.12)));
+    const bounds = glyphInk(holeType,str,resolution);
+    const p = Math.max(2, Math.ceil(bounds.r)+3);
+    const tileSide = p*2;
+    const key = JSON.stringify([holeType,str,resolution,bounds.w,bounds.h,bounds.ox,bounds.oy,
+      isDestinationOut ? 'cutout' : fillStyle]);
+    if (tileSide*tileSide*4 <= PATTERN_RASTER_BUDGET/4) {
+      let tile = patternRasterCache.get(key);
+      if (!tile) {
+        const canvas=document.createElement('canvas');canvas.width=tileSide;canvas.height=tileSide;
+        drawTextShape(canvas.getContext('2d')!,holeType,text,p,p,resolution,
+          isDestinationOut ? '#000000' : fillStyle,false,0,false);
+        tile={canvas,size:resolution,pad:p};
+        patternRasterBytes+=tileSide*tileSide*4;
+        patternRasterCache.set(key,tile);
+        while(patternRasterBytes>PATTERN_RASTER_BUDGET){
+          const first=patternRasterCache.keys().next().value!;
+          const old=patternRasterCache.get(first)!;patternRasterCache.delete(first);
+          patternRasterBytes-=old.canvas.width*old.canvas.height*4;
+          old.canvas.width=old.canvas.height=0;
+        }
+      } else { patternRasterCache.delete(key);patternRasterCache.set(key,tile); }
+      const ratio=sz/tile.size, extent=tile.canvas.width*ratio;
+      targetCtx.save();
+      if(isDestinationOut) targetCtx.globalCompositeOperation='destination-out';
+      targetCtx.imageSmoothingEnabled=true;targetCtx.imageSmoothingQuality='high';
+      targetCtx.translate(cx,cy);targetCtx.rotate(holeAngle*Math.PI/180);
+      targetCtx.drawImage(tile.canvas,0,0,tile.canvas.width,tile.canvas.height,
+        -tile.pad*ratio,-tile.pad*ratio,extent,extent);
+      targetCtx.restore();return;
+    }
+  }
   /* 暫存畫布只要「這個字轉一圈都還在裡面」就夠了。以前一律開 sz×3 見方，
      像 ᯽ 這種字有九成面積是空的，卻每一顆、每一格都要被 drawImage 合成一次
      （實測合成佔掉拖曳字符圖案時將近三成的時間）。
@@ -281,22 +318,6 @@ export const drawTextShape = (
   const logicalSide = Math.max(2, pad * 2);
   const side = Math.max(2, Math.ceil(logicalSide * density));
   const rasterScale = side / logicalSide;
-  const image = isImageHole(holeType) ? getHoleImg(holeType) : null;
-  const cacheKey = reuseRaster && (isDestinationOut || typeof fillStyle === 'string')
-    && (!image || (image.complete && image.naturalWidth > 0))
-    ? JSON.stringify([holeType,str,sz,side,holeAngle,ink.w,ink.h,ink.ox,ink.oy,
-      isDestinationOut ? 'cutout' : fillStyle]) : null;
-  const cached = cacheKey ? patternRasterCache.get(cacheKey) : null;
-  if (cached) {
-    patternRasterCache.delete(cacheKey!); patternRasterCache.set(cacheKey!, cached);
-    targetCtx.save();
-    if (isDestinationOut) targetCtx.globalCompositeOperation = 'destination-out';
-    targetCtx.imageSmoothingEnabled = true;
-    targetCtx.imageSmoothingQuality = 'high';
-    targetCtx.drawImage(cached,0,0,side,side,cx-pad,cy-pad,logicalSide,logicalSide);
-    targetCtx.restore();
-    return;
-  }
   let tempCanvas: HTMLCanvasElement | undefined;
   if (side <= TEXT_TMP_MAX) {
     tempCanvas = textTmpPool.get(side);
@@ -356,20 +377,6 @@ export const drawTextShape = (
     tempCtx.restore();
   }
 
-  if (cacheKey && side * side * 4 <= PATTERN_RASTER_BUDGET / 4) {
-    const tile = document.createElement('canvas');
-    tile.width = side; tile.height = side;
-    tile.getContext('2d')!.drawImage(tempCanvas,0,0);
-    patternRasterCache.set(cacheKey,tile);
-    patternRasterBytes += side * side * 4;
-    while (patternRasterBytes > PATTERN_RASTER_BUDGET) {
-      const first = patternRasterCache.keys().next().value!;
-      const evicted = patternRasterCache.get(first)!;
-      patternRasterCache.delete(first);
-      patternRasterBytes -= evicted.width * evicted.height * 4;
-      evicted.width = evicted.height = 0;
-    }
-  }
   // 3. 繪製到 targetCtx
   targetCtx.save();
   if (isDestinationOut) {

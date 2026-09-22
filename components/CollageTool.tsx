@@ -1873,7 +1873,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const maskDraftUrlRef = useRef<string | null>(null);
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
   const [maskTransform, setMaskTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
-  const [activeTab, setActiveTab] = useState('setting');
+  const motionFrameRef = useRef<HTMLDivElement>(null);
+  const motionStartRectRef = useRef<DOMRect | null>(null);
+  const motionFrameAnimationRef = useRef<Animation | null>(null);
+  const [activeTab, setActiveTabState] = useState('setting');
+  const setActiveTab = useCallback((next: React.SetStateAction<string>) => {
+    motionStartRectRef.current = motionFrameRef.current?.getBoundingClientRect() || null;
+    setActiveTabState(next);
+  }, []);
   useEffect(() => {
     if (selectedObj || selectedTarget) setBaseSelected(false);
   }, [selectedObj, selectedTarget]);
@@ -7185,13 +7192,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => {
     if (activeTab === 'motion') {
       setBarMounted(true);
-      const r = requestAnimationFrame(() => requestAnimationFrame(() => setBarIn(true)));
-      return () => cancelAnimationFrame(r);
+      let r2 = 0;
+      const r = requestAnimationFrame(() => { r2=requestAnimationFrame(() => setBarIn(true)); });
+      return () => { cancelAnimationFrame(r);cancelAnimationFrame(r2); };
     }
     setBarIn(false);
     const t = window.setTimeout(() => setBarMounted(false), 460);
     return () => window.clearTimeout(t);
-  }, [activeTab]);
+  }, [activeTab === 'motion']);
 
   /* ── 上一步／下一步：把「其他所有會改變畫面的設定」接上 ──────────
      這裡才有辦法一次拿到全部狀態（動畫那幾個是上面才宣告的）。
@@ -7274,6 +7282,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     previousMotionTabRef.current = entering;
     motionLockRef.current = entering;
     if (!changed) return;
+    const frame = motionFrameRef.current;
+    const first = motionStartRectRef.current;
+    motionFrameAnimationRef.current?.cancel();
+    if (frame && first && first.width > 0 && first.height > 0) {
+      const last = frame.getBoundingClientRect();
+      if (last.width > 0 && last.height > 0) {
+        motionFrameAnimationRef.current = frame.animate([
+          {transform:`translate(${first.left-last.left}px,${first.top-last.top}px) scale(${first.width/last.width},${first.height/last.height})`},
+          {transform:'translate(0px,0px) scale(1,1)'},
+        ],{duration:420,easing:'cubic-bezier(0.42, 0, 0.58, 1)'});
+      }
+    }
     motionTransitionUntilRef.current = performance.now() + 420;
     setMotionTransitioning(true);
     if (previewTimer.current) window.clearTimeout(previewTimer.current);
@@ -8066,7 +8086,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                  也救不回來，那就是圖案與遮罩邊緣一直有鋸齒的根本原因。 */
               style={{
                 transform: `translate(${motionUiOn ? 0 : viewT.tx}px, ${displayY}px)`,
-                transition: viewPinchRef.current ? 'none' : (motionUiOn || motionTransitioning) ? `transform 420ms ${MOTION_EASE}` : 'transform 90ms linear',
+                transition: (motionUiOn || previousMotionTabRef.current || motionTransitioning || viewPinchRef.current) ? 'none' : 'transform 90ms linear',
               }}
             >
               {/* 畫布外面包一層「位置基準」，影片才有東西可以對齊。
@@ -8074,10 +8094,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   放大之後畫布會超過 100%，外框卻被夾住，裡面的百分比就會
                   對到一個比畫布小的框 —— 影片於是愈放大偏得愈多。
                   所以這裡照抄畫布那一組尺寸規則。 */}
-              <div style={{
+              <div ref={motionFrameRef} style={{
                 position: 'relative', lineHeight: 0, flexShrink: 0,
+                transformOrigin: 'top left',
                 boxShadow: '0 20px 50px rgba(255,255,255,0.05)',
-                transition: (motionUiOn || motionTransitioning) ? `width 420ms ${MOTION_EASE}, height 420ms ${MOTION_EASE}`
+                transition: (motionUiOn || previousMotionTabRef.current || motionTransitioning) ? 'none'
                   : (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? 'none' : 'width 90ms linear, height 90ms linear',
                 ...(baseCss
                   ? { width: baseCss.w * displayScale, height: baseCss.h * displayScale }
@@ -8416,8 +8437,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             style={{
               /* 進出場跟預覽圖同一段時間、同一條曲線，兩個看起來就是一起動的 */
               opacity: barIn ? 1 : 0,
-              transform: barIn ? 'translateY(0)' : 'translateY(130px)',
-              transition: `transform 420ms ${MOTION_EASE}, opacity 420ms ${MOTION_EASE}`,
+              transform: barIn ? 'translateY(0)' : 'translateY(12px)',
+              transition: 'transform 420ms ease-in-out, opacity 420ms linear',
               pointerEvents: barIn ? 'auto' : 'none',
             }}
             onPointerDown={e => e.stopPropagation()}

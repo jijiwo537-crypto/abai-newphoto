@@ -8,21 +8,26 @@ test('special pattern tiles reuse exact-resolution pixels without rerasterizing 
   const source=fs.readFileSync('utils/holeShapes.ts','utf8');
   let rasterCalls=0,imageCalls=0,density=1;const draws=[];
   const sourceImage={complete:true,naturalWidth:100,naturalHeight:100};
-  const context=()=>({setTransform(){},clearRect(){},save(){},restore(){},translate(){},rotate(){},fillRect(){},
-    fillText(){rasterCalls++;},drawImage(...args){draws.push(args);if(args[0]===sourceImage)imageCalls++;},getTransform(){return {a:density,b:0,c:0,d:density};}});
-  const scope={exports:{},document:{createElement(){return {width:0,height:0,getContext:context};}},
+  const context=(main=false)=>({setTransform(){},clearRect(){},save(){},restore(){},translate(){},rotate(){},fillRect(){},
+    fillText(){rasterCalls++;},drawImage(...args){draws.push(args);if(args[0]===sourceImage)imageCalls++;},getTransform(){return {a:main?density:1,b:0,c:0,d:main?density:1};}});
+  const scope={exports:{},document:{createElement(){return {width:0,height:0,getContext:()=>context()};}},
     GLYPH_HOLES:{aster:'᯽'},glyphInk:(_,__,sz)=>({w:sz,h:sz,r:sz/2,ox:0,oy:0}),
     glyphFont:()=>'',isImageHole:t=>t==='pic333',getHoleImg:()=>sourceImage};
   vm.runInNewContext(compile(source.slice(source.indexOf('const TEXT_TMP_MAX'),source.indexOf('export const drawShapePath'))),scope);
-  const draw=scope.exports.drawTextShape,ctx=context();
+  const draw=scope.exports.drawTextShape,ctx=context(true);
   for(let i=0;i<30;i++)draw(ctx,'aster','',i*20,80,160,'#ffffff',false,0,true);
   assert.equal(rasterCalls,1);
-  const firstSide=draws.at(-1)[3];
   density=2;draw(ctx,'aster','',0,80,160,'#ffffff',false,0,true);
-  assert.equal(rasterCalls,2);assert.equal(draws.at(-1)[3],firstSide*2);
-  draw(ctx,'aster','',0,80,160,'#ffffff',false,45,true);assert.equal(rasterCalls,3);
-  draw(ctx,'aster','',0,80,160,'#000000',false,45,true);assert.equal(rasterCalls,4);
-  draw(ctx,'aster','',0,80,160,'#000000',false,45,false);assert.equal(rasterCalls,5,'non-opt-in renderers are unchanged');
+  assert.equal(rasterCalls,2);assert.ok(draws.at(-1)[3]>=draws.at(-1)[7]*density);
+  draw(ctx,'aster','',0,80,160,'#ffffff',false,45,true);assert.equal(rasterCalls,2);
+  draw(ctx,'aster','',0,80,160,'#000000',false,45,true);assert.equal(rasterCalls,3);
+  draw(ctx,'aster','',0,80,160,'#000000',false,45,false);assert.equal(rasterCalls,4,'non-opt-in renderers are unchanged');
+  const before=rasterCalls;
+  for(let frame=0;frame<100;frame++)for(let i=0;i<30;i++){
+    draw(ctx,'aster','',i*20,80,160+frame/10,'#ffffff',false,frame*3,true);
+    assert.ok(draws.at(-1)[3]>=draws.at(-1)[7]*density,'tile never undersamples requested physical size');
+  }
+  assert.ok(rasterCalls-before<=2,'3000 changing size/angle copies share resolution buckets');
   for(let i=0;i<30;i++)draw(ctx,'pic333','',i*20,80,160,'#ffffff',false,0,true);
   assert.equal(imageCalls,1,'third-row first pattern is decoded/composited once for identical copies');
 });
