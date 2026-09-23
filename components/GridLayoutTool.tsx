@@ -4527,6 +4527,7 @@ interface FloatingImageComponentProps {
    * live = 正在被手指拖的那一頁（不加動畫），其餘是讓開的頁面（200ms 滑過去）。
    */
   dragShift?: { tx: number; ty: number; s: number; live: boolean } | null;
+  sortPage?: { index: number; width: number; height: number; totalWidth: number; clipLeft: number } | null;
   onSwapTouchStart?: (e: React.TouchEvent) => void;
   onSwapTouchMove?: (e: React.TouchEvent) => void;
   onSwapTouchEnd?: (e: React.TouchEvent) => void;
@@ -5418,6 +5419,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   lutRevision = 0,
   touchMode = 'none',
   dragShift = null,
+  sortPage = null,
   onSwapTouchStart,
   onSwapTouchMove,
   onSwapTouchEnd,
@@ -6540,9 +6542,28 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         const motionFrame = sceneMotionFrame ? sceneMotionFrame(image, stackIndex) : registeredMotionFrame;
         const t = Math.min(1, (performance.now() - shift.at) / 220);
         const q = 1 - Math.pow(1 - t, 3);
-        const shiftX = shift.fromX + (shift.tx - shift.fromX) * q;
-        const shiftY = shift.fromY + (shift.ty - shift.fromY) * q;
-        const shiftS = shift.fromS + (shift.s - shift.fromS) * q;
+        let shiftX = shift.fromX + (shift.tx - shift.fromX) * q;
+        let shiftY = shift.fromY + (shift.ty - shift.fromY) * q;
+        let shiftS = shift.fromS + (shift.s - shift.fromS) * q;
+        if (sortPage) {
+          // Sorting ink follows the actual page compositor, not a second easing
+          // clock. In particular, release must not start a new cubic-out tween.
+          const page = pagesContainerRef.current?.querySelectorAll<HTMLElement>(
+            ':scope > [data-page-id]')[sortPage.index];
+          const transform = page ? getComputedStyle(page).transform : 'none';
+          const matrix = new DOMMatrixReadOnly(transform === 'none' ? undefined : transform);
+          shiftS = matrix.a;
+          const cx = (sortPage.index + .5) * sortPage.width;
+          const cy = sortPage.height / 2;
+          shiftX = matrix.e + (1 - shiftS) * (cx - image.x - image.width / 2);
+          shiftY = matrix.f + (1 - shiftS) * (cy - image.y - image.height / 2);
+          // Keep precisely the original strip's visible extent as it travels
+          // with this page. Never reveal previously masked oversized content.
+          ctx.beginPath();
+          ctx.rect(sortPage.clipLeft * shiftS + matrix.e + (1 - shiftS) * cx, matrix.f + (1 - shiftS) * cy,
+            sortPage.totalWidth * shiftS, sortPage.height * shiftS);
+          ctx.clip();
+        }
         const scale = image.scale * shiftS * (motionFrame?.k ?? 1);
         if (Math.abs(scale) < 1e-5) return;
         ctx.translate(image.x + image.width / 2 + shiftX
@@ -6938,6 +6959,18 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       className="floating-image-wrapper group/floating"
       style={{
         ...wrapGeo,
+        ...(sortPage ? { clipPath: (() => {
+          const rad = -image.rotation * Math.PI / 180;
+          const cx = image.x + image.width / 2, cy = image.y + image.height / 2;
+          const localScale = stableVectorTransform ? image.scale : 1;
+          const w = stableVectorTransform ? image.width : boxW;
+          const h = stableVectorTransform ? image.height : boxH;
+          const left = sortPage.clipLeft, right = left + sortPage.totalWidth;
+          return `polygon(${[[left, 0], [right, 0], [right, sortPage.height], [left, sortPage.height]].map(([x, y]) => {
+            const dx = x - cx, dy = y - cy;
+            return `${(dx * Math.cos(rad) - dy * Math.sin(rad)) / localScale + w / 2}px ${(dx * Math.sin(rad) + dy * Math.cos(rad)) / localScale + h / 2}px`;
+          }).join(',')})`;
+        })() } : {}),
         // 要疊在選取時出現的透明拖曳層（z-40）之上，直接碰圖片才拖得動
         // 一般圖片用偶數層，佈局用奇數層，兩者才能互相穿插
         // 被拖的那一頁整組（頁面 900、上面的東西 1000+）要蓋過其他頁
@@ -7315,6 +7348,11 @@ const FloatingImageComponent = React.memo(FloatingImageComponentBase, (a, b) =>
   && a.lutRevision === b.lutRevision
   && a.touchMode === b.touchMode
   && sameDragShift(a.dragShift, b.dragShift)
+  && a.sortPage?.index === b.sortPage?.index
+  && a.sortPage?.width === b.sortPage?.width
+  && a.sortPage?.height === b.sortPage?.height
+  && a.sortPage?.totalWidth === b.sortPage?.totalWidth
+  && a.sortPage?.clipLeft === b.sortPage?.clipLeft
   && a.chromeLayer === b.chromeLayer
   && a.motionFrame === b.motionFrame
   && a.sceneMotionFrame === b.sceneMotionFrame
@@ -8759,9 +8797,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   /** 正在拖的是哪一頁（拖的就是畫布上真正的那一頁） */
   const [pageDragIdx, setPageDragIdx] = useState<number | null>(null);
+  // Preserve the pre-sort outer-mask footprint even when a boundary page moves
+  // into the middle. Hidden portions must not reappear on release.
+  const sortOriginalIndices = useRef<Map<string, number> | null>(null);
+  const sortObjectOwners = useRef<Map<string, string> | null>(null);
+  const sortingPageOf = (f: FloatingImage, stride: number, count: number) => {
+    const owner = sortObjectOwners.current?.get(f.id);
+    const index = owner ? pages.findIndex(p => p.id === owner) : -1;
+    return index >= 0 ? index : pageOfFloating(f, stride, count);
+  };
   /** 放手後的收尾：內容從「放手時看起來的位置」平順滑回新定位 */
   const [dragSettle, setDragSettle] = useState<{ page: number; x: number; ease: boolean } | null>(null);
   const settleTimerRef = useRef(0);
+  const seamRevealRef = useRef({ hidden: new Set<number>(), revealAt: 0 });
 
   /**
    * 拖曳中，每一頁該往哪邊讓開：
@@ -8817,7 +8865,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 自由圖層：中心就是 x + 寬/2（外框的 left 已經把縮放算進去了） */
   const floatingDragShift = (f: FloatingImage) => {
     const stride = previewW;
-    const idx = pageOfFloating(f, stride, pages.length);
+    const idx = sortingPageOf(f, stride, pages.length);
     const shift = pageContentShift(idx);
     if (!shift) return null;
     return groupShift(shift, idx * stride + previewW / 2, previewH / 2, f.x + f.width / 2, f.y + f.height / 2);
@@ -9021,8 +9069,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         setDragSettle({ page: to, x: remainder, ease: false });
         requestAnimationFrame(() => requestAnimationFrame(() => {
           setDragSettle(prev => (prev && !prev.ease ? { ...prev, x: 0, ease: true } : prev));
+          settleTimerRef.current = window.setTimeout(() => setDragSettle(null), 270);
         }));
-        settleTimerRef.current = window.setTimeout(() => setDragSettle(null), 260);
       }
     };
     window.addEventListener('pointermove', onMove);
@@ -9089,7 +9137,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        圖層會算出 count（不存在的頁），remap 原封不動回傳，於是拖曳中它跟著最後
        一頁走、放手卻留在原地 —— 那就是「圖片跟頁面沒有完全同步」。 */
     setFloatingImages(prev => prev.map(f => {
-      const p = pageOfFloating(f, stride, count);
+      const p = sortingPageOf(f, stride, count);
       const np = remap(p);
       return np === p ? f : { ...f, x: f.x + (np - p) * stride };
     }));
@@ -9198,6 +9246,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
   /** 頁面順序模式：操作欄往下滑、畫布往下移到中央、每一頁下面出現握把與刪除鍵 */
   const pagesMode = activeTab === 'pages';
+  if (!pagesMode) {
+    sortOriginalIndices.current = null;
+    sortObjectOwners.current = null;
+  } else if (!sortOriginalIndices.current) {
+    sortOriginalIndices.current = new Map(pages.map((p, i) => [p.id, i]));
+    sortObjectOwners.current = new Map(floatingImages.map(f =>
+      [f.id, pages[pageOfFloating(f, previewW, pages.length)].id]));
+  }
 
   /** 動畫目標只看目前這一頁，而且影片永遠不是動畫目標。 */
   const motionItems = useMemo(() => floatingImages.filter(item =>
@@ -10026,6 +10082,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return vectorScene.attach(pagesContainerRef.current, containerRef.current, () => kRef.current || 1);
   }, [vectorScene]);
   useLayoutEffect(() => {
+    const reveal = seamRevealRef.current;
+    if (pageDragIdx !== null || dragSettle) {
+      const index = pageDragIdx ?? dragSettle!.page;
+      reveal.hidden.add(index);
+      reveal.hidden.add(index + 1);
+      reveal.revealAt = 0;
+    } else if (reveal.hidden.size && !reveal.revealAt) {
+      reveal.revealAt = performance.now();
+    }
     vectorScene.set('__page-seams', {
       z: 400000,
       animateUntil: performance.now() + 240,
@@ -10041,11 +10106,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         // transform, inverse scale or independent compositor animation.
         const nodes = host.querySelectorAll<HTMLElement>(':scope > [data-page-id]');
         nodes.forEach((node, i) => {
-          if (!i || (pageDragIdx !== null && (i === pageDragIdx || i === pageDragIdx + 1))) return;
+          if (!i) return;
+          let alpha = 1;
+          if (reveal.hidden.has(i)) {
+            if (!reveal.revealAt) return;
+            const t = Math.min(1, (performance.now() - reveal.revealAt) / 160);
+            alpha = t * t * (3 - 2 * t);
+            if (t === 1) reveal.hidden.delete(i);
+          }
           const r = node.getBoundingClientRect();
+          ctx.globalAlpha = alpha;
           ctx.fillRect((r.left - base.left) / k - width / 2,
             (r.top - base.top) / k, width, r.height / k);
         });
+        ctx.globalAlpha = 1;
       },
     });
     vectorScene.flush();
@@ -14709,6 +14783,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           <div
                             id={pageIdx === 0 ? "grid-preview-container" : `grid-preview-container-${pageIdx}`}
                             data-page-id={page.id}
+                            onTransitionEnd={e => {
+                              if (e.target === e.currentTarget && e.propertyName === 'transform'
+                                && dragSettle?.ease && dragSettle.page === pageIdx) {
+                                window.clearTimeout(settleTimerRef.current);
+                                setDragSettle(null);
+                              }
+                            }}
                             onPointerDown={(e) => {
                               handleSwitchPage(pageIdx);
                             }}
@@ -14775,6 +14856,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   top: `${lTop}px`,
                                   width: `${lw}px`,
                                   height: `${lh}px`,
+                                  clipPath: pagesMode ? (() => {
+                                    const original = sortOriginalIndices.current?.get(page.id) ?? pageIdx;
+                                    const left = -original * previewW, right = (pages.length - original) * previewW;
+                                    const cx = lLeft + lw / 2, cy = lTop + lh / 2;
+                                    const rad = -(layout.t?.rot || 0) * Math.PI / 180;
+                                    return `polygon(${[[left, 0], [right, 0], [right, previewH], [left, previewH]].map(([x, y]) => {
+                                      const dx = x - cx, dy = y - cy;
+                                      return `${dx * Math.cos(rad) - dy * Math.sin(rad) + lw / 2}px ${dx * Math.sin(rad) + dy * Math.cos(rad) + lh / 2}px`;
+                                    }).join(',')})`;
+                                  })() : undefined,
                                   transition: 'none',
                                   zIndex: 59 + (layout.z ?? 0) * 2,
                                   /* native zoom 不能让每个格子各自成为取整／合成单位。
@@ -15509,6 +15600,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         liveTuning={vectorTuningId === fImg.id}
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}
+                        sortPage={pagesMode ? (() => {
+                          const index = sortingPageOf(fImg, previewW, pages.length);
+                          const original = sortOriginalIndices.current?.get(pages[index]?.id) ?? index;
+                          return { index, width: previewW, height: previewH, totalWidth: pages.length * previewW,
+                            clipLeft: (index - original) * previewW };
+                        })() : null}
                         lutRevision={lutRevision}
                         toolbarAbove={(() => {
                           // 旋轉之後外接框會變高，要用轉過的高度判斷下面還有沒有位置
