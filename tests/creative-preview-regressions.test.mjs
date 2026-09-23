@@ -18,9 +18,9 @@ test('animation captures the actual starting rectangle and uses one transform an
   assert.ok(creative.includes('first.width/last.width'));
   assert.ok(creative.includes("{transform:'translate(0px,0px) scale(1,1)'}"));
 });
-test('playback block retains a full visible fade before unmounting',()=>{
-  assert.ok(creative.includes("transform: barIn ? 'translateY(0)' : 'translateY(12px)'"));
-  assert.ok(creative.includes('opacity 420ms linear'));
+test('playback block restores sliding entry with equal shorter entry/exit timing',()=>{
+  assert.ok(creative.includes("transform: barIn ? 'translateY(0)' : 'translateY(130px)'"));
+  assert.ok(creative.includes('transform 240ms ${MOTION_EASE}, opacity 240ms ${MOTION_EASE}'));
   assert.ok(creative.includes('setBarMounted(false), 460'));
 });
 test('adding a selected shape does not reset palette scrolling',()=>{

@@ -44,7 +44,7 @@ test('group rotation retains individually edited offsets and local size ratios',
   const source=fs.readFileSync('components/CollageTool.tsx','utf8');
   const start=source.indexOf('const handleAngleChange =');
   let holes=[{id:'a',localScale:2},{id:'b',angle:350,localScale:.5}];
-  const scope={holeAngle:20,setHoles(fn){holes=fn(holes);},setHoleAngle(v){scope.holeAngle=v;}};
+  const scope={selectedPattern:null,holeAngle:20,setHoles(fn){holes=fn(holes);},setHoleAngle(v){scope.holeAngle=v;}};
   vm.runInNewContext(compile(source.slice(start,source.indexOf('\n  };',start)+5)+'\nglobalThis.adjust=handleAngleChange;'),scope);
   scope.adjust(50);
   assert.equal(holes[0].angle,undefined);assert.equal(holes[1].angle,20);

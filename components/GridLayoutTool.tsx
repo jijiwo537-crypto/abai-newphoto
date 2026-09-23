@@ -1510,8 +1510,9 @@ export const drawFeatheredShapeBody = (
   color: string,
   paintTexture?: (ctx: CanvasRenderingContext2D, path: Path2D) => void,
   innerColor = '#FFFFFF',
+  compositeStyle: { innerSize?: number; outlineWidth?: number } = {},
 ) => {
-  if (drawCompositeShapeBody(target, kind, w, h, color, innerColor, paintTexture)) return;
+  if (drawCompositeShapeBody(target, kind, w, h, color, innerColor, paintTexture, compositeStyle)) return;
   // 圖形羽化已移除；保留同一個繪製入口以相容既有草稿資料。
   const path = new Path2D(shapePathD(kind, w, h));
   target.fillStyle = color;
@@ -1661,11 +1662,33 @@ const insetShapeSvgTransform = (
  * - 挖空款：真正清除 alpha，不是假裝塗成背景色。
  * - 雙輪廓款：內層仍是原本實心路徑，外圈只是一條同形細線。
  */
+export const compositeOutlineInk = (kind: string, w: number, h: number, amount = 0) => {
+  if (kind !== 'star-double') return null;
+  const fit = SHAPE_FIT.star;
+  const pts = Array.from({length:10}, (_,i) => {
+    const t=-Math.PI/2+i*Math.PI/5, r=i%2?.42:1;
+    return {x:w/2+((.5+Math.cos(t)*.5*r)-(fit[0]+fit[2]/2))*w*.93/fit[2],
+      y:h/2+((.5+Math.sin(t)*.5*r)-(fit[1]+fit[3]/2))*h*.93/fit[3]};
+  });
+  const half=Math.max(1,Math.min(w,h)*.024)*(.5+2*Math.max(0,Math.min(100,amount))/100);
+  const corners=pts.flatMap((p,i)=>{
+    const a=pts[(i+9)%10], b=pts[(i+1)%10];
+    const al=Math.hypot(p.x-a.x,p.y-a.y), bl=Math.hypot(b.x-p.x,b.y-p.y);
+    const n1={x:-(p.y-a.y)/al,y:(p.x-a.x)/al}, n2={x:-(b.y-p.y)/bl,y:(b.x-p.x)/bl};
+    const den=1+n1.x*n2.x+n1.y*n2.y;
+    const dx=(n1.x+n2.x)*half/den,dy=(n1.y+n2.y)*half/den;
+    return [{x:p.x+dx,y:p.y+dy},{x:p.x-dx,y:p.y-dy}];
+  });
+  const x=Math.min(...corners.map(p=>p.x)), y=Math.min(...corners.map(p=>p.y));
+  return {x,y,w:Math.max(...corners.map(p=>p.x))-x,h:Math.max(...corners.map(p=>p.y))-y};
+};
+
 export const drawCompositeShapeBody = (
   target: CanvasRenderingContext2D,
   kind: string, w: number, h: number,
   color: string, innerColor = '#FFFFFF',
   paintTexture?: (ctx: CanvasRenderingContext2D, path: Path2D) => void,
+  style: { innerSize?: number; outlineWidth?: number } = {},
 ) => {
   if (!COMPOSITE_SHAPE_KINDS.has(kind)) return false;
   const innerKind = compositeInnerKind(kind)!;
@@ -1675,7 +1698,7 @@ export const drawCompositeShapeBody = (
        到方形的距離會精確相等。 */
     /* 愛心的視覺重心比幾何外接框稍高；只在方形複合款往下補 1%，
        讓上下看起來的留白一致，星星與所有其他圖形完全不動。 */
-    const inner = insetShapePath(innerKind, w, h, 0.64, innerKind === 'heart' ? 0.01 : 0);
+    const inner = insetShapePath(innerKind, w, h, Math.max(.1, Math.min(.9, (style.innerSize ?? 64) / 100)), innerKind === 'heart' ? 0.01 : 0);
     target.fillStyle = color;
     if (DUAL_COLOR_SHAPE_KINDS.has(kind)) {
       target.fill(outer);
@@ -1710,6 +1733,16 @@ export const drawCompositeShapeBody = (
   target.lineCap = innerKind === 'star' ? 'butt' : 'round';
   target.miterLimit = 12;
   target.stroke(ring);
+  const extra = Math.max(0, Math.min(100, style.outlineWidth || 0)) / 100 * target.lineWidth * 2;
+  if (extra > 0) {
+    // Preserve the original inner edge; add ink only outside the ring centreline.
+    const outside = new Path2D();
+    outside.rect(-w * 2, -h * 2, w * 5, h * 5);
+    outside.addPath(ring);
+    target.clip(outside, 'evenodd');
+    target.lineWidth += extra * 2;
+    target.stroke(ring);
+  }
   target.restore();
   return true;
 };
@@ -1717,13 +1750,14 @@ export const drawCompositeShapeBody = (
 /** 複合圖形的描邊路徑；讓描邊跟真正可見的每一層輪廓一致。 */
 export const strokeCompositeShape = (
   target: CanvasRenderingContext2D, kind: string, w: number, h: number,
+  innerSize = 64,
 ) => {
   if (!COMPOSITE_SHAPE_KINDS.has(kind)) return false;
   const innerKind = compositeInnerKind(kind)!;
   if (DUAL_COLOR_SHAPE_KINDS.has(kind) || CUTOUT_SHAPE_KINDS.has(kind)) {
     target.stroke(new Path2D(shapePathD('square', w, h)));
     /* 挖空款的孔洞也是實際邊緣；雙色款的內層不是外描邊，不額外套黑框。 */
-    if (CUTOUT_SHAPE_KINDS.has(kind)) target.stroke(insetShapePath(innerKind, w, h, 0.64));
+    if (CUTOUT_SHAPE_KINDS.has(kind)) target.stroke(insetShapePath(innerKind, w, h, Math.max(.1, Math.min(.9, innerSize / 100)), innerKind === 'heart' ? .01 : 0));
     return true;
   }
   target.stroke(insetShapePath(innerKind, w, h, 0.44, innerKind === 'star' ? 0.018 : 0));
@@ -2643,10 +2677,15 @@ export const ShapeEditorPanel: React.FC<{
               換圖形顏色時發光也一起換成同一個色 —— 發光本來就是圖形自己的光暈。
               反過來不成立：單獨挑發光的顏色時，圖形的顏色不會被動到。 */}
           {swatchStrip(layer.color, SOFT_COLORS, c => onChange({ color: c, shapeGlowColor: c }), true)}
-          {DUAL_COLOR_SHAPE_KINDS.has(layer.shape || '') && (
-            <div className="pt-0.5">
-              {swatchStrip(layer.shapeInnerColor || '#FFFFFF', SOFT_COLORS,
-                c => onChange({ shapeInnerColor: c }), true)}
+          {(DUAL_COLOR_SHAPE_KINDS.has(layer.shape || '') || CUTOUT_SHAPE_KINDS.has(layer.shape || '')) && (
+            <div className="flex items-center gap-3 px-2">
+              <div className="flex-1 min-w-0">{slider('圖案大小', layer.shapeInnerSize ?? 64, 10, 90,
+                v => onChange({ shapeInnerSize: v }))}</div>
+              {DUAL_COLOR_SHAPE_KINDS.has(layer.shape || '') && <button
+                title="圖案顏色" className="w-8 h-6 rounded-[4px] shrink-0 border border-white/10"
+                style={{ backgroundColor: layer.shapeInnerColor || '#FFFFFF' }}
+                onClick={() => setColorPage({value:layer.shapeInnerColor || '#FFFFFF', colors:TEX_SWATCHES,
+                  onPick:c=>onChange({shapeInnerColor:c})})} />}
             </div>
           )}
           {hasWidth && <div className="grid grid-cols-2 gap-5 px-2">
@@ -2684,6 +2723,8 @@ export const ShapeEditorPanel: React.FC<{
           </div>}
           {isDoubleContour && (
             <div className="px-2 order-2 w-full">
+              {slider('外框粗細', layer.shapeOutlineWidth ?? 0, 0, 100, v => onChange({ shapeOutlineWidth: v }))}
+              <div className="h-3.5" />
               {slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
             </div>
           )}
@@ -4289,6 +4330,8 @@ interface FloatingImage {
   shapeFilled?: boolean;
   /** 雙色複合圖形的內層顏色；未設定時固定為純白。 */
   shapeInnerColor?: string;
+  shapeInnerSize?: number;
+  shapeOutlineWidth?: number;
   /** shape === 'hole' 時，真正要畫哪一顆圖案（跟創意拼圖同一份清單） */
   holeType?: string;
   /** 線寬，1 個單位 = 外框長邊的 1/160（滑桿顯示成 1~100，存進來是 ÷10） */
@@ -5162,7 +5205,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             ctx.shadowBlur = r * contentScale * gAmt * backingScale;
             if (solid && COMPOSITE_SHAPE_KINDS.has(image.shape)) {
               drawCompositeShapeBody(ctx, image.shape, drawW, drawH, color,
-                image.shapeInnerColor || '#FFFFFF');
+                image.shapeInnerColor || '#FFFFFF', undefined, { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth });
             } else if (solid) ctx.fill(path); else ctx.stroke(path);
           }
           ctx.restore();
@@ -5172,7 +5215,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           ctx.setLineDash([]);
           ctx.strokeStyle = image.shapeStrokeColor || '#000000';
           ctx.lineWidth = (solid ? 0 : lw) + outer * 2;
-          if (!strokeCompositeShape(ctx, image.shape, drawW, drawH)) ctx.stroke(path);
+          if (!strokeCompositeShape(ctx, image.shape, drawW, drawH, image.shapeInnerSize)) ctx.stroke(path);
           ctx.restore();
         }
         const tx = texOf({ tex: image.shapeTex, dots: image.shapeDots });
@@ -5192,7 +5235,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             else paintStripes(tc, drawW, drawH, drawW, drawH, image.shapeStripeN ?? STRIPE_N_DEFAULT,
               image.shapeStripeDir === 'h' ? 'h' : 'v', image.shapeStripeA || color, image.shapeStripeB || '#FFFFFF');
             tc.restore();
-          }, image.shapeInnerColor || '#FFFFFF');
+          }, image.shapeInnerColor || '#FFFFFF', { innerSize: image.shapeInnerSize, outlineWidth: image.shapeOutlineWidth });
         } else {
           ctx.stroke(path);
         }
@@ -6674,7 +6717,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       })();
       const starTopGap = (image.shape === 'star' || (image.shape === 'hole' && image.holeType === 'cross-star'))
         ? 3 / kNow : 0;
-      const frameInk = image.shape && image.shape !== 'hole'
+      const contourInk = compositeOutlineInk(image.shape || '', image.width, image.height, image.shapeOutlineWidth);
+      const frameInk = contourInk ? [contourInk.x/image.width,contourInk.y/image.height,contourInk.w/image.width,contourInk.h/image.height] : image.shape && image.shape !== 'hole'
         ? (SHAPE_FIT[image.shape] || [0, 0, 1, 1])
         : null;
       /* 跟創意拼圖的 objectSelectionInk 完全相同：使用共用的 symInk、字号、
@@ -12985,7 +13029,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       for (const r of shapeGlowBlurs(fw, fh)) {
         ctx.shadowBlur = r * gAmt;
         if (solid && COMPOSITE_SHAPE_KINDS.has(fImg.shape!)) {
-          drawCompositeShapeBody(ctx, fImg.shape!, fw, fh, color, fImg.shapeInnerColor || '#FFFFFF');
+          drawCompositeShapeBody(ctx, fImg.shape!, fw, fh, color, fImg.shapeInnerColor || '#FFFFFF', undefined, { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth });
         } else if (solid) ctx.fill(path); else ctx.stroke(path);
       }
       ctx.restore();
@@ -13000,7 +13044,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       ctx.miterLimit = 2;
       ctx.strokeStyle = fImg.shapeStrokeColor || '#000000';
       ctx.lineWidth = (solid ? 0 : lw) + strokeW * 2;
-      if (!strokeCompositeShape(ctx, fImg.shape!, fw, fh)) ctx.stroke(path);
+      if (!strokeCompositeShape(ctx, fImg.shape!, fw, fh, fImg.shapeInnerSize)) ctx.stroke(path);
       ctx.restore();
     }
     ctx.save();
@@ -13026,7 +13070,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     };
     if (solid) {
       if (!drawCompositeShapeBody(ctx, fImg.shape!, fw, fh, color,
-        fImg.shapeInnerColor || '#FFFFFF', paintShapeTexture)) {
+        fImg.shapeInnerColor || '#FFFFFF', paintShapeTexture, { innerSize: fImg.shapeInnerSize, outlineWidth: fImg.shapeOutlineWidth })) {
         ctx.fill(path);
         paintShapeTexture(ctx, path);
       }

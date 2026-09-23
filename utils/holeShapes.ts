@@ -242,7 +242,7 @@ const TEXT_TMP_KEEP = 48;
 const textTmpPool = new Map<number, HTMLCanvasElement>();
 // Ceiling-resolution immutable tiles, opt-in for the creative pattern renderer.
 // Unlike the scratch pool, hits skip font rasterization and color compositing.
-const patternRasterCache = new Map<string, {canvas:HTMLCanvasElement; size:number; pad:number}>();
+const patternRasterCache = new Map<string, {canvas:HTMLCanvasElement; size:number; pad:number; family:string}>();
 let patternRasterBytes = 0;
 const PATTERN_RASTER_BUDGET = 24 * 1024 * 1024;
 
@@ -280,13 +280,23 @@ export const drawTextShape = (
     const tileSide = p*2;
     const key = JSON.stringify([holeType,str,resolution,bounds.w,bounds.h,bounds.ox,bounds.oy,
       isDestinationOut ? 'cutout' : fillStyle]);
-    if (tileSide*tileSide*4 <= PATTERN_RASTER_BUDGET/4) {
+    const family=JSON.stringify([holeType,str,isDestinationOut?'cutout':fillStyle,
+      ...[bounds.w,bounds.h,bounds.ox,bounds.oy].map(v=>(v/resolution).toFixed(6))]);
+    if (tileSide*tileSide*4 <= PATTERN_RASTER_BUDGET) {
       let tile = patternRasterCache.get(key);
+      // A larger existing tile is also valid for a smaller instance. Variation
+      // must not allocate one bitmap per pattern when all share the same artwork.
+      let hitKey=key;
+      if (!tile) for (const [candidateKey,candidate] of patternRasterCache) {
+        if(candidate.family===family && candidate.size>=resolution && (!tile || candidate.size<tile.size)) {
+          tile=candidate;hitKey=candidateKey;
+        }
+      }
       if (!tile) {
         const canvas=document.createElement('canvas');canvas.width=tileSide;canvas.height=tileSide;
         drawTextShape(canvas.getContext('2d')!,holeType,text,p,p,resolution,
           isDestinationOut ? '#000000' : fillStyle,false,0,false);
-        tile={canvas,size:resolution,pad:p};
+        tile={canvas,size:resolution,pad:p,family};
         patternRasterBytes+=tileSide*tileSide*4;
         patternRasterCache.set(key,tile);
         while(patternRasterBytes>PATTERN_RASTER_BUDGET){
@@ -295,7 +305,7 @@ export const drawTextShape = (
           patternRasterBytes-=old.canvas.width*old.canvas.height*4;
           old.canvas.width=old.canvas.height=0;
         }
-      } else { patternRasterCache.delete(key);patternRasterCache.set(key,tile); }
+      } else { patternRasterCache.delete(hitKey);patternRasterCache.set(hitKey,tile); }
       const ratio=sz/tile.size, extent=tile.canvas.width*ratio;
       targetCtx.save();
       if(isDestinationOut) targetCtx.globalCompositeOperation='destination-out';
