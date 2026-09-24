@@ -18,7 +18,14 @@ test('seams retain their stacking order and reveal only after settle, with a fad
   assert.match(seams, /if \(!reveal\.revealAt\) return/);
   assert.match(seams, /alpha = t \* t \* \(3 - 2 \* t\)/);
   assert.match(seams, /z: 400000/);
-  assert.match(source, /e\.propertyName === 'transform'[\s\S]{0,250}setDragSettle\(null\)/);
+  assert.match(source, /flushSync\(\(\) => setDragSettle\(t < 1/);
+  assert.match(source, /dx: dragSettle\.x, s: 1, live: true/);
+});
+
+test('sorting clips survive exit until normal strip clipping resumes', () => {
+  assert.match(source, /if \(!pagesMode && !pagesVisual\)/);
+  assert.match(source, /sortPage=\{pagesMode \|\| \(pagesVisual && !!sortOriginalIndices\.current\)/);
+  assert.match(source, /clipPath: pagesMode \|\| \(pagesVisual && !!sortOriginalIndices\.current\)/);
 });
 
 test('sorting preserves object owners and original outer-mask bounds after exchange', () => {

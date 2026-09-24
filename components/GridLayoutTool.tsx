@@ -8797,6 +8797,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   /** 正在拖的是哪一頁（拖的就是畫布上真正的那一頁） */
   const [pageDragIdx, setPageDragIdx] = useState<number | null>(null);
+  const [pagesVisual, setPagesVisual] = useState(false);
   // Preserve the pre-sort outer-mask footprint even when a boundary page moves
   // into the middle. Hidden portions must not reappear on release.
   const sortOriginalIndices = useRef<Map<string, number> | null>(null);
@@ -8809,6 +8810,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 放手後的收尾：內容從「放手時看起來的位置」平順滑回新定位 */
   const [dragSettle, setDragSettle] = useState<{ page: number; x: number; ease: boolean } | null>(null);
   const settleTimerRef = useRef(0);
+  const settleFrameRef = useRef(0);
   const seamRevealRef = useRef({ hidden: new Set<number>(), revealAt: 0 });
 
   /**
@@ -8843,7 +8845,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 放手瞬間的收尾（FLIP）：換完順序後內容先停在「看起來的位置」，
       // 下一帧再平順滑回定位 —— 不做這一段的話會先閃回再跳走
       if (dragSettle && pageIdx === dragSettle.page) {
-        return { dx: dragSettle.x, s: 1, live: !dragSettle.ease };
+        return { dx: dragSettle.x, s: 1, live: true };
       }
       return null;
     }
@@ -9067,9 +9069,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         if (from !== to) handleMovePage(from, to);
         window.clearTimeout(settleTimerRef.current);
         setDragSettle({ page: to, x: remainder, ease: false });
+        cancelAnimationFrame(settleFrameRef.current);
         requestAnimationFrame(() => requestAnimationFrame(() => {
-          setDragSettle(prev => (prev && !prev.ease ? { ...prev, x: 0, ease: true } : prev));
-          settleTimerRef.current = window.setTimeout(() => setDragSettle(null), 270);
+          // A single frame clock drives the page, photo wrappers and vector ink.
+          // Independent compositor transitions can run a frame ahead of Canvas.
+          const start = performance.now();
+          const tick = (now: number) => {
+            const t = Math.min(1, (now - start) / 220);
+            flushSync(() => setDragSettle(t < 1
+              ? { page: to, x: remainder * Math.pow(1 - t, 3), ease: true } : null));
+            if (t < 1) settleFrameRef.current = requestAnimationFrame(tick);
+            else settleFrameRef.current = 0;
+          };
+          settleFrameRef.current = requestAnimationFrame(tick);
         }));
       }
     };
@@ -9078,7 +9090,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     window.addEventListener('pointercancel', onUp);
   };
 
-  useEffect(() => () => { if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current); }, []);
+  useEffect(() => () => {
+    if (dragRafRef.current) cancelAnimationFrame(dragRafRef.current);
+    cancelAnimationFrame(settleFrameRef.current);
+    clearTimeout(settleTimerRef.current);
+  }, []);
 
   /**
    * React 的 onTouchMove 是 passive 的 —— 裡面的 e.preventDefault() 完全不會生效
@@ -9246,10 +9262,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
   /** 頁面順序模式：操作欄往下滑、畫布往下移到中央、每一頁下面出現握把與刪除鍵 */
   const pagesMode = activeTab === 'pages';
-  if (!pagesMode) {
+  if (!pagesMode && !pagesVisual) {
     sortOriginalIndices.current = null;
     sortObjectOwners.current = null;
-  } else if (!sortOriginalIndices.current) {
+  } else if (pagesMode && !sortOriginalIndices.current) {
     sortOriginalIndices.current = new Map(pages.map((p, i) => [p.id, i]));
     sortObjectOwners.current = new Map(floatingImages.map(f =>
       [f.id, pages[pageOfFloating(f, previewW, pages.length)].id]));
@@ -9532,7 +9548,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 所以動畫自己跑：每一帧算出 k，縮放與位移一起寫進同一個 transform。
    */
   /** 縮放動畫還沒結束前，視覺上仍然當作在排頁面（接縫、外框、陰影） */
-  const [pagesVisual, setPagesVisual] = useState(false);
   const pagesVisualTimerRef = useRef(0);
   const kRef = useRef(1);
   /** scrollLeft 在 WebKit 只會落在離散像素；保留不足一像素的尾數，用純平移補回。
@@ -14783,13 +14798,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           <div
                             id={pageIdx === 0 ? "grid-preview-container" : `grid-preview-container-${pageIdx}`}
                             data-page-id={page.id}
-                            onTransitionEnd={e => {
-                              if (e.target === e.currentTarget && e.propertyName === 'transform'
-                                && dragSettle?.ease && dragSettle.page === pageIdx) {
-                                window.clearTimeout(settleTimerRef.current);
-                                setDragSettle(null);
-                              }
-                            }}
                             onPointerDown={(e) => {
                               handleSwitchPage(pageIdx);
                             }}
@@ -14856,7 +14864,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   top: `${lTop}px`,
                                   width: `${lw}px`,
                                   height: `${lh}px`,
-                                  clipPath: pagesMode ? (() => {
+                                  clipPath: pagesMode || (pagesVisual && !!sortOriginalIndices.current) ? (() => {
                                     const original = sortOriginalIndices.current?.get(page.id) ?? pageIdx;
                                     const left = -original * previewW, right = (pages.length - original) * previewW;
                                     const cx = lLeft + lw / 2, cy = lTop + lh / 2;
@@ -15600,7 +15608,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         liveTuning={vectorTuningId === fImg.id}
                         // 排頁面拖曳時，圖層要跟著自己那一頁一起移動
                         dragShift={floatingDragShift(fImg)}
-                        sortPage={pagesMode ? (() => {
+                        sortPage={pagesMode || (pagesVisual && !!sortOriginalIndices.current) ? (() => {
                           const index = sortingPageOf(fImg, previewW, pages.length);
                           const original = sortOriginalIndices.current?.get(pages[index]?.id) ?? index;
                           return { index, width: previewW, height: previewH, totalWidth: pages.length * previewW,
@@ -17096,7 +17104,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             return { x: off.x * pagesScale, live: off.live, lift: off.live };
           }
           if (dragSettle && ctl.idx === dragSettle.page) {
-            return { x: dragSettle.x * pagesScale, live: !dragSettle.ease, lift: false };
+            return { x: dragSettle.x * pagesScale, live: true, lift: false };
           }
           return null;
         })();

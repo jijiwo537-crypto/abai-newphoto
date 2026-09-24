@@ -4041,14 +4041,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const limY = layout === AROUND ? fld.mh : fld.ih;
       const nx = Math.max(0, Math.min(limX, intr.initX + dx));
       const ny = Math.max(0, Math.min(limY, intr.initY + dy));
-      setHoles(prev => prev.flatMap(h => {
+      queueMove(() => setHoles(prev => prev.flatMap(h => {
         if (h.id !== intr.id) return [h];
         const side = h.side && h.side !== 'both' ? h.side : intr.clickedSide || selectedPatternSide;
         const moved = { ...h, side, x: nx, y: ny, manuallyPlaced: true };
         return !h.side || h.side === 'both'
           ? [moved, { ...h, id: h.id + '_paired', side: side === 'image' ? 'mask' : 'image' }]
           : [moved];
-      }));
+      })));
     } else if (intr.type === 'pinch_hole') {
       const pts: any[] = Array.from(activePointers.current.values());
       if (pts.length < 2) return;
@@ -4147,7 +4147,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   const chromeSelectionRef = useRef({selectedTarget, selectedPatternSide, selectedObj, baseSelected});
   chromeSelectionRef.current = {selectedTarget, selectedPatternSide, selectedObj, baseSelected};
+  const patternSceneIdentity = useMemo(() => ({}), [imageState, layout, canvasRatio, imageTransform,
+    maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
+    stripeN, stripeDir, stripeA, stripeB, holeType, customText, getHoleSize, holeAngle, maskScale,
+    objects, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching,
+    fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
+  const lastPatternPaintRef = useRef<{identity:object;holes:any[];scale:number}|null>(null);
   const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1) => {
+    const debugPaintStart = import.meta.env.DEV ? performance.now() : 0;
     const {selectedTarget, selectedPatternSide, selectedObj, baseSelected} = chromeSelectionRef.current;
     if (!imageState) return;
     // All painting routes share this guard, including pause/selection effects.
@@ -4198,11 +4205,42 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
 
+    const isMain = targetCanvas === canvasRef.current;
+    const priorPatternPaint = lastPatternPaintRef.current;
+    const canRetain = isMain && !animRef.current && !motionTargetFlashRef.current && !hideChromeRef.current
+      && linkMode === 'none' && glowIdle === 'none' && !guides.length
+      && !isVideoEl(imageState.img) && !objects.some(o => isVideoEl(o.img));
+    let dirtyPatternRect: {x:number;y:number;w:number;h:number}|null = null;
+    if (canRetain && priorPatternPaint?.identity === patternSceneIdentity && priorPatternPaint.scale === s) {
+      const previousById = new Map(priorPatternPaint.holes.map(h => [h.id, h]));
+      const changed = holes.flatMap((h,i) => previousById.has(h.id) && h !== previousById.get(h.id) ? [i] : []);
+      const added = holes.filter(h => !previousById.has(h.id));
+      const retained = priorPatternPaint.holes.every(h => holes.some(next => next.id === h.id));
+      if (retained && changed.length === 1 && (added.length === 0 ||
+          (added.length === 1 && added[0].id === holes[changed[0]].id + '_paired'))) {
+        const i=changed[0], next=holes[i], old=previousById.get(next.id);
+        if(old.id===next.id){
+          const rects=[old,next,...added].flatMap(h=>{
+            const size=getHoleSize(h)*s;
+            const radius=(isTextHole(holeType) ? Math.max(size,glyphInk(holeType,holeGlyph(holeType,customText,h),size).r) : size)*1.5+32*sgs;
+            const side=h.side || 'both';
+            return [side!=='mask'?{x:h.x*s+offs.ix,y:h.y*s+offs.iy}:null,
+              side!=='image'?{x:h.x*s+offs.mx,y:h.y*s+offs.my}:null].filter(Boolean)
+              .map(p=>({x:p!.x-radius,y:p!.y-radius,right:p!.x+radius,bottom:p!.y+radius}));
+          });
+          const x=Math.max(0,Math.floor(Math.min(...rects.map(r=>r.x))));
+          const y=Math.max(0,Math.floor(Math.min(...rects.map(r=>r.y))));
+          const right=Math.min(tW,Math.ceil(Math.max(...rects.map(r=>r.right))));
+          const bottom=Math.min(tH,Math.ceil(Math.max(...rects.map(r=>r.bottom))));
+          if(right>x && bottom>y) dirtyPatternRect={x,y,w:right-x,h:bottom-y};
+        }
+      }
+    }
     ctx.save();
+    if(dirtyPatternRect){const r=dirtyPatternRect;ctx.beginPath();ctx.rect(r.x,r.y,r.w,r.h);ctx.clip();}
     ctx.fillStyle = '#0A0A0A'; ctx.fillRect(0, 0, offs.cw, offs.ch);
     ctx.fillStyle = '#1A1A1A'; ctx.fillRect(offs.ix, offs.iy, iw, ih); ctx.fillRect(offs.mx, offs.my, maskW, maskH);
 
-    const isMain = targetCanvas === canvasRef.current;
     /* 中間那塊交給底下的 <video> 時，畫布這一層要把它挖成透明。
        上面剛用 #1A1A1A 鋪過底色，所以一定要挖，不然影片被蓋住。
        只有主畫布會這樣 —— 匯出、縮圖那些離屏畫布（isMain 為 false）
@@ -5104,6 +5142,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const lmx = get2dWide(lmc)!;
     lmx.setTransform(1, 0, 0, 1, 0, 0);
     lmx.save();
+    if(dirtyPatternRect){const r=dirtyPatternRect;lmx.beginPath();lmx.rect(r.x-offs.mx,r.y-offs.my,r.w,r.h);lmx.clip();}
     lmx.globalAlpha = 1;
     lmx.globalCompositeOperation = 'copy';
     // 純色的底稿只有 8×8（見上面 plainMask），這裡直接填色，不要把小塊拉大
@@ -6412,6 +6451,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     
     ctx.restore();
+    if(isMain) lastPatternPaintRef.current=canRetain?{identity:patternSceneIdentity,holes,scale:s}:null;
+    if(import.meta.env.DEV && isMain){
+      targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount || 0)+1);
+      targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);
+      targetCanvas.dataset.dirtyRatio=String(dirtyPatternRect ? dirtyPatternRect.w*dirtyPatternRect.h/(tW*tH) : 1);
+    }
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
     }
@@ -6420,7 +6465,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
   }, [imageState, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
-      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
+      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle, patternSceneIdentity]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
      離開創意拼圖時記一筆。key 用「這一次拼圖」的 id（從歷史紀錄點進來的話
@@ -6987,6 +7032,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      播放迴圈會被拆掉重建幾十次。走 ref 就不會，rAF 從頭到尾只有一個。 */
   const renderToCanvasRef = useRef(renderToCanvas);
   renderToCanvasRef.current = renderToCanvas;
+  useEffect(()=>{
+    if(!import.meta.env.DEV) return;
+    const check=()=>{lastPatternPaintRef.current=null;if(canvasRef.current) renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);};
+    window.addEventListener('qa-full-repaint',check);
+    return ()=>window.removeEventListener('qa-full-repaint',check);
+  },[]);
   useEffect(() => {
     if (!motionTargetFlashSeq || !imageState || (motionOn && motionPlaying)) return;
     let raf = 0;
