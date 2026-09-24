@@ -28,17 +28,25 @@ test('sorting clips survive exit until normal strip clipping resumes', () => {
   assert.match(source, /clipPath: pagesMode \|\| \(pagesVisual && !!sortOriginalIndices\.current\)/);
 });
 
-test('sorting preserves object owners and original outer-mask bounds after exchange', () => {
+test('sorting preserves whole-object owners and clips to the destination canvas after exchange', () => {
   assert.match(source, /sortObjectOwners\.current\?\.get\(f\.id\)/);
   assert.match(source, /const p = sortingPageOf\(f, stride, count\)/);
-  assert.match(source, /clipLeft: \(index - original\) \* previewW/);
+  assert.match(source, /clipLeft: 0/);
   assert.match(source, /const left = sortPage\.clipLeft, right = left \+ sortPage\.totalWidth/);
-  // Translation of the page and of its original clip must agree for every move.
+  // Only the object moves. The destination canvas must not inherit the old
+  // outer mask, otherwise a previously hidden left edge can never reappear.
   for (const width of [171, 309, 450]) for (const original of [0, 1, 2]) for (const index of [0, 1, 2]) {
     const delta = (index - original) * width;
-    for (const x of [-10, 0, 150, 900, 1400]) {
-      assert.equal(x >= 0 && x <= width * 3,
-        x + delta >= delta && x + delta <= delta + width * 3);
-    }
+    const destinationLeft = -index * width;
+    assert.equal(destinationLeft + index * width, 0);
+    assert.equal(destinationLeft + width * 3 + index * width, width * 3);
+    assert.equal(delta, index * width - original * width);
   }
+  assert.match(source, /const left = -pageIdx \* previewW/);
+});
+
+test('mode transitions anchor the actual visible pose and ignore their own scroll callbacks', () => {
+  assert.match(source, /viewport.left \+ el.clientWidth \/ 2 - rendered.left/);
+  assert.match(source, /canvasZoomRef.current \|\| kAnimRef.current/);
+  assert.match(source, /overflowAnchor: 'none'/);
 });

@@ -6557,8 +6557,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           const cy = sortPage.height / 2;
           shiftX = matrix.e + (1 - shiftS) * (cx - image.x - image.width / 2);
           shiftY = matrix.f + (1 - shiftS) * (cy - image.y - image.height / 2);
-          // Keep precisely the original strip's visible extent as it travels
-          // with this page. Never reveal previously masked oversized content.
+          // Clip against the current canvas before applying the page's lift.
+          // After reordering, hidden source pixels can become visible inside
+          // the destination canvas; never bake the old outer mask into an object.
           ctx.beginPath();
           ctx.rect(sortPage.clipLeft * shiftS + matrix.e + (1 - shiftS) * cx, matrix.f + (1 - shiftS) * cy,
             sortPage.totalWidth * shiftS, sortPage.height * shiftS);
@@ -9656,7 +9657,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   // 要在「把版面貼成目標倍率」那個 useLayoutEffect 之前先把動畫排好，
   // 不然版面會先一步跳到目標值，動畫就整段被跳過了
   useLayoutEffect(() => {
-    const prev = prevPagesScaleRef.current;
     prevPagesScaleRef.current = pagesScale;
     const nowMotion = activeTab === 'motion';
     if (nowMotion !== lastMotionModeRef.current) {
@@ -9696,9 +9696,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        以前記的是「最接近中央的那一頁」再把那一頁擺到正中間：只要中心
        不是剛好落在某一頁正中央，第一帧就會被硬拉過去，那就是「一開始就跳」。 */
     const el = containerRef.current;
-    if (el && containerSize.width > 0) {
-      kAnchorRef.current =
-        (el.scrollLeft + containerSize.width / 2 - stripOffset(containerSize.width, prev)) / (prev || 1);
+    const column = pagesColRef.current;
+    if (el && column && containerSize.width > 0) {
+      // Capture the visible frame, not the previous target scale. A transition
+      // can be interrupted before that target is reached, and scroll rounding
+      // compensation is already included in the column's rendered position.
+      const viewport = el.getBoundingClientRect();
+      const rendered = column.getBoundingClientRect();
+      kAnchorRef.current = (viewport.left + el.clientWidth / 2 - rendered.left)
+        / Math.max(.0001, kRef.current);
     } else {
       kAnchorRef.current = 0;
     }
@@ -14643,7 +14649,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         <div 
           className={`flex-1 flex items-start ${activeTab === 'motion' ? 'touch-pan-x' : 'touch-none'} justify-start py-2 bg-[#070707] relative overflow-x-auto overflow-y-hidden select-none no-scrollbar overscroll-x-contain`}
           /* 拖起的页面必须位于屏幕坐标分割线之上；平时不建立额外层级。 */
-          style={{ zIndex: pageDragIdx !== null ? 50 : undefined }}
+          style={{ zIndex: pageDragIdx !== null ? 50 : undefined, overflowAnchor: 'none' }}
           ref={containerRef}
           data-grid-preview-viewport="1"
           onScroll={(e) => {
@@ -14654,7 +14660,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                只會迫使 React 重算所有向量畫布；圖片本身沒變，文字／符號／
                圖形卻被重新配置 backing store，視覺上就會抖動甚至偏一格。
                手勢結束後再由既有收尾決定頁面即可。 */
-            if (canvasZoomRef.current) return;
+            if (canvasZoomRef.current || kAnimRef.current) return;
             if (!containerRef.current || pages.length <= 1) return;
             const scrollLeft = e.currentTarget.scrollLeft;
             const initialLeftOffset = stripOffset(containerSize.width, pagesScale);
@@ -14865,8 +14871,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   width: `${lw}px`,
                                   height: `${lh}px`,
                                   clipPath: pagesMode || (pagesVisual && !!sortOriginalIndices.current) ? (() => {
-                                    const original = sortOriginalIndices.current?.get(page.id) ?? pageIdx;
-                                    const left = -original * previewW, right = (pages.length - original) * previewW;
+                                    const left = -pageIdx * previewW, right = (pages.length - pageIdx) * previewW;
                                     const cx = lLeft + lw / 2, cy = lTop + lh / 2;
                                     const rad = -(layout.t?.rot || 0) * Math.PI / 180;
                                     return `polygon(${[[left, 0], [right, 0], [right, previewH], [left, previewH]].map(([x, y]) => {
@@ -15610,9 +15615,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         dragShift={floatingDragShift(fImg)}
                         sortPage={pagesMode || (pagesVisual && !!sortOriginalIndices.current) ? (() => {
                           const index = sortingPageOf(fImg, previewW, pages.length);
-                          const original = sortOriginalIndices.current?.get(pages[index]?.id) ?? index;
                           return { index, width: previewW, height: previewH, totalWidth: pages.length * previewW,
-                            clipLeft: (index - original) * previewW };
+                            clipLeft: 0 };
                         })() : null}
                         lutRevision={lutRevision}
                         toolbarAbove={(() => {
