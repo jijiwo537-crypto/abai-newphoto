@@ -6430,7 +6430,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
        以前這裡是 200ms ease-out、那邊是 220ms cubic-bezier(0.2,0,0,1)：
        兩者同時起跑卻走不同的速度、也不同時到，排頁面時就會看到圖層跟頁面
        分家 —— 那就是「圖片跟頁面沒有完全同步」的另一半。 */
-    transition: dragShift ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
+    transition: sortPage ? 'none' : dragShift ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
   };
 
   /* 圖形本體用固定 backing store + scale() 才不會重建畫布；操作 UI 不能跟著
@@ -6450,7 +6450,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       transform: (dragShift || (image.rotation % 360) !== 0)
         ? `${dragShift ? `translate(${dragShift.tx}px, ${dragShift.ty}px) scale(${dragShift.s}) ` : ''}rotate(${image.rotation}deg)`
         : undefined,
-      transition: dragShift ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
+      transition: sortPage ? 'none' : dragShift ? (dragShift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
     };
   })() : wrapGeo;
 
@@ -6967,6 +6967,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           const w = stableVectorTransform ? image.width : boxW;
           const h = stableVectorTransform ? image.height : boxH;
           const left = sortPage.clipLeft, right = left + sortPage.totalWidth;
+          const halfX = (Math.abs(Math.cos(rad)) * boxW + Math.abs(Math.sin(rad)) * boxH) / 2;
+          const halfY = (Math.abs(Math.sin(rad)) * boxW + Math.abs(Math.cos(rad)) * boxH) / 2;
+          // Do not antialias the same aligned image edge a second time with a
+          // coincident clip polygon. That exposes a hairline of page background.
+          if (cx - halfX >= left - .000001 && cx + halfX <= right + .000001
+            && cy - halfY >= -.000001 && cy + halfY <= sortPage.height + .000001) return undefined;
           return `polygon(${[[left, 0], [right, 0], [right, sortPage.height], [left, sortPage.height]].map(([x, y]) => {
             const dx = x - cx, dy = y - cy;
             return `${(dx * Math.cos(rad) - dy * Math.sin(rad)) / localScale + w / 2}px ${(dx * Math.sin(rad) + dy * Math.cos(rad)) / localScale + h / 2}px`;
@@ -8813,6 +8819,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const settleTimerRef = useRef(0);
   const settleFrameRef = useRef(0);
   const seamRevealRef = useRef({ hidden: new Set<number>(), revealAt: 0 });
+  const seamDragHasSwapped = useRef(false);
+  const [sortShiftFrame, setSortShiftFrame] = useState<Record<number, number>>({});
+  const sortShiftFrameRef = useRef<Record<number, number>>({});
 
   /**
    * 拖曳中，每一頁該往哪邊讓開：
@@ -8823,10 +8832,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const to = pageDragTo;
     if (from === null || to === null) return { x: 0, live: false };
     if (idx === from) return { x: pageDragShift / Math.max(0.01, pagesScale), live: true };
-    const stride = previewW;
-    if (from < to && idx > from && idx <= to) return { x: -stride, live: false };
-    if (to < from && idx >= to && idx < from) return { x: stride, live: false };
-    return { x: 0, live: false };
+    return { x: sortShiftFrame[idx] ?? 0, live: false };
   };
 
   /**
@@ -9263,6 +9269,38 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
   /** 頁面順序模式：操作欄往下滑、畫布往下移到中央、每一頁下面出現握把與刪除鍵 */
   const pagesMode = activeTab === 'pages';
+  // One pose per frame for displaced pages, photos and vector ink. Independent
+  // CSS transitions otherwise start on different commits/compositor frames.
+  useLayoutEffect(() => {
+    if (!pagesMode || pageDragIdx === null) {
+      sortShiftFrameRef.current = {};
+      setSortShiftFrame({});
+      return;
+    }
+    const from = { ...sortShiftFrameRef.current };
+    const target: Record<number, number> = {};
+    for (let i = 0; i < pages.length; i++) {
+      target[i] = pageDragTo !== null && pageDragIdx < pageDragTo && i > pageDragIdx && i <= pageDragTo
+        ? -previewW : pageDragTo !== null && pageDragTo < pageDragIdx && i >= pageDragTo && i < pageDragIdx
+          ? previewW : 0;
+    }
+    const start = performance.now();
+    let raf = 0;
+    const tick = () => {
+      const t = Math.min(1, (performance.now() - start) / 220);
+      const q = 1 - Math.pow(1 - t, 3);
+      const pose: Record<number, number> = {};
+      for (const key of Object.keys(target)) {
+        const i = Number(key);
+        pose[i] = (from[i] ?? 0) + (target[i] - (from[i] ?? 0)) * q;
+      }
+      sortShiftFrameRef.current = pose;
+      flushSync(() => setSortShiftFrame(pose));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [pagesMode, pageDragIdx, pageDragTo, previewW, pages.length]);
   if (!pagesMode && !pagesVisual) {
     sortOriginalIndices.current = null;
     sortObjectOwners.current = null;
@@ -10104,7 +10142,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   }, [vectorScene]);
   useLayoutEffect(() => {
     const reveal = seamRevealRef.current;
-    if (pageDragIdx !== null || dragSettle) {
+    if (pageDragIdx !== null && pageDragTo !== null && pageDragTo !== pageDragIdx) {
+      seamDragHasSwapped.current = true;
+    }
+    if ((pageDragIdx !== null || dragSettle) && seamDragHasSwapped.current) {
+      reveal.hidden.clear();
+      reveal.revealAt = 0;
+    } else if (pageDragIdx !== null || dragSettle) {
       const index = pageDragIdx ?? dragSettle!.page;
       reveal.hidden.add(index);
       reveal.hidden.add(index + 1);
@@ -10112,6 +10156,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     } else if (reveal.hidden.size && !reveal.revealAt) {
       reveal.revealAt = performance.now();
     }
+    if (pageDragIdx === null && !dragSettle) seamDragHasSwapped.current = false;
     vectorScene.set('__page-seams', {
       z: 400000,
       animateUntil: performance.now() + 240,
@@ -10126,8 +10171,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         // Read the same rendered page edge during reordering; no second CSS
         // transform, inverse scale or independent compositor animation.
         const nodes = host.querySelectorAll<HTMLElement>(':scope > [data-page-id]');
+        const drawnEdges = new Set<number>();
         nodes.forEach((node, i) => {
-          if (!i) return;
+          const reordering = pageDragIdx !== null && seamDragHasSwapped.current;
+          if (reordering ? i === pageDragIdx : !i) return;
           let alpha = 1;
           if (reveal.hidden.has(i)) {
             if (!reveal.revealAt) return;
@@ -10137,8 +10184,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           }
           const r = node.getBoundingClientRect();
           ctx.globalAlpha = alpha;
-          ctx.fillRect((r.left - base.left) / k - width / 2,
-            (r.top - base.top) / k, width, r.height / k);
+          const edges = reordering ? [r.left, r.right] : [r.left];
+          for (const edge of edges) {
+            const x = (edge - base.left) / k;
+            if (reordering && (x <= .001 || x >= pages.length * previewW - .001)) continue;
+            const key = Math.round(x * k * dpr);
+            if (drawnEdges.has(key)) continue;
+            drawnEdges.add(key);
+            ctx.fillRect(x - width / 2, (r.top - base.top) / k, width, r.height / k);
+          }
         });
         ctx.globalAlpha = 1;
       },
@@ -14830,7 +14884,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   ? `translateX(${mv.dx}px)${lifted ? ` scale(${mv.s})` : ''}`
                                   : undefined,
                                 transformOrigin: 'center center',
-                                transition: mv ? (mv.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
+                                transition: pagesMode ? 'none' : undefined,
                                 boxShadow: lifted ? '0 18px 40px rgba(0,0,0,0.55)' : undefined,
                                 /* 唯一分割線是 400000；被長按拿起的整頁必須連同
                                    背景、佈局一起越過它，視覺上才真的是被拿起。 */
@@ -15521,7 +15575,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                       width: `${previewW}px`,
                                       height: `${previewH}px`,
                                       transformOrigin: 'center center',
-                                      transition: mvChrome ? (mvChrome.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
+                                      transition: pagesMode ? 'none' : undefined,
                                       zIndex: 100000 + (layout.z ?? 0) * 2 + 1,
                                       /* 取消選取時這一整層是被拆掉的，而被 transform 提升過的相鄰圖層
                                          有時候不會把它讓出來的那塊重畫 —— 畫面上就留著一個已經不存在的
@@ -17129,7 +17183,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 transform: shift
                   ? `translate(${shift.x}px, ${shift.lift ? (PAGE_DRAG_SCALE - 1) * pagesScale * previewH / 2 : 0}px)`
                   : undefined,
-                transition: shift ? (shift.live ? 'none' : 'transform 220ms cubic-bezier(0.2,0,0,1)') : undefined,
+                transition: pagesMode ? 'none' : undefined,
               }}
             >
             <div

@@ -1499,7 +1499,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
      手指拖到哪就到哪，放手當下立刻決定翻或不翻，一次只翻一頁，
    以接近原生 IG 的减速时间直接就位，中途不再飘。所以这里自己接指针事件、自己搬位置。 */
   /** 把軌道移到某個位置；animate=false 是跟著手指走，不能有過場 */
-  const igMoveTrack = (px: number, animate: boolean, duration = 300) => {
+  const igMoveTrack = (px: number, animate: boolean, duration = 600) => {
     const el = igTrackRef.current;
     if (!el) return;
     /* 保留释放瞬间的方向，但减速段不能短到像甩卡片。曲线前段不暴冲、
@@ -1575,9 +1575,9 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     const targetX = -next * w;
     const currentX = -igPage * w + d.dx;
     const remaining = Math.abs(targetX - currentX);
-    /* iPhone 上原本的 190ms 下限会像瞬间甩过去；放慢为 290–430ms，
-       快甩仍然比慢拖快，但不会产生不舒服的突然加速。 */
-    const duration = Math.max(290, Math.min(430,
+    /* Keep direct finger tracking; only the release transition takes twice as
+       long as before (580–860ms), including distance/velocity interpolation. */
+    const duration = 2 * Math.max(290, Math.min(430,
       remaining / Math.max(0.72, Math.abs(v) * 0.92)));
     igMoveTrack(targetX, true, duration);       // 先動，再更新狀態，才不會等一拍
     if (next !== igPage) setIgPage(next);

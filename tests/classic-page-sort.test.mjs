@@ -50,3 +50,20 @@ test('mode transitions anchor the actual visible pose and ignore their own scrol
   assert.match(source, /canvasZoomRef.current \|\| kAnimRef.current/);
   assert.match(source, /overflowAnchor: 'none'/);
 });
+
+test('displaced pages and object wrappers consume one animation pose without CSS catch-up', () => {
+  assert.match(source, /flushSync\(\(\) => setSortShiftFrame\(pose\)\)/);
+  assert.match(source, /x: sortShiftFrame\[idx\] \?\? 0/);
+  assert.match(source, /transition: sortPage \? 'none'/);
+  assert.match(source, /transition: pagesMode \? 'none'/);
+});
+
+test('seams return after crossing a slot and do not draw on the lifted page', () => {
+  assert.match(source, /pageDragTo !== pageDragIdx/);
+  assert.match(source, /reveal.hidden.clear\(\)/);
+  assert.match(source, /reordering \? i === pageDragIdx : !i/);
+});
+
+test('aligned photos avoid a second antialiased clipping edge', () => {
+  assert.match(source, /cy \+ halfY <= sortPage.height \+ .000001\) return undefined/);
+});
