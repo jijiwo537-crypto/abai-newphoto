@@ -5,6 +5,7 @@ import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, Slid
 import { Icon } from './Icon';
 import { ClassicVectorScene } from './ClassicVectorScene';
 import { settledSortSeams } from '../utils/sortSeams';
+import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessLayout } from './SeamlessLayout';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
@@ -230,16 +231,26 @@ const isVideoFile = (f: File) => f.type.startsWith('video/') || /\.(mp4|mov|m4v|
  * 烤一張 PNG 當卡片的來源，卡片就跟圖片圖層長得一模一樣。
  * 真正畫到畫面上的仍然是影片本人，這張只給卡片看。
  */
-const getVideoDimensions = (url: string): Promise<{ width: number; height: number; poster?: string }> => {
+const pendingVideoPosters = new Map<string, Promise<string | undefined>>();
+const getVideoDimensions = (url: string): Promise<{ width: number; height: number; poster?: string; posterReady: Promise<string | undefined> }> => {
   return new Promise((resolve) => {
     const v = document.createElement('video');
     v.preload = 'auto';
     v.muted = true;
     (v as any).playsInline = true;
     let done = false;
+    let resolvePoster: (value?: string) => void;
+    const posterReady = new Promise<string | undefined>(r => { resolvePoster = r; });
+    pendingVideoPosters.set(url, posterReady);
+    const dimensions = () => ({ width: v.videoWidth || 800, height: v.videoHeight || 600, posterReady });
+    // Metadata is sufficient to place the layer; decoding its thumbnail must
+    // not hold the import queue (especially on iOS with large HEVC files).
+    v.onloadedmetadata = () => resolve(dimensions());
     const finish = (poster?: string) => {
       if (done) return; done = true;
-      resolve({ width: v.videoWidth || 800, height: v.videoHeight || 600, poster });
+      clearTimeout(timeout);
+      resolve({ ...dimensions(), poster });
+      resolvePoster(poster);
       try { v.removeAttribute('src'); v.load(); } catch { /* 收不掉算了 */ }
     };
     const bake = () => {
@@ -259,7 +270,7 @@ const getVideoDimensions = (url: string): Promise<{ width: number; height: numbe
     v.onloadeddata = bake;
     v.onerror = () => finish();
     // 第一格一直等不到也不能卡住匯入
-    setTimeout(() => finish(), 4000);
+    const timeout = setTimeout(() => finish(), 4000);
     v.src = url;
   });
 };
@@ -4330,6 +4341,7 @@ interface FloatingImage {
   /** 圖片邊緣發光強度 0~20 */
   /** 這一層是影片（預覽用 <video> 播、匯出取當下那一格） */
   isVideo?: boolean;
+  poster?: string;
   imgGlow?: number;
   imgGlowColor?: string;
   /** 濾鏡與調節，跟「編輯」共用同一套像素管線 */
@@ -4798,6 +4810,22 @@ const VideoLayer: React.FC<{
     (ref as any).current = el;
     if (videoRef) videoRef.current = el;
   };
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    // The animation controls and live renderer must share the visible decoder.
+    // Previously getPreviewVideo created a second autoplaying video per URL.
+    const previous = previewVideos.get(image.src);
+    if (previous && previous !== video && !previous.isConnected) {
+      previous.pause();
+      previous.removeAttribute('src');
+      previous.load();
+    }
+    previewVideos.set(image.src, video);
+    return () => {
+      if (previewVideos.get(image.src) === video) previewVideos.delete(image.src);
+    };
+  }, [image.src]);
   useEffect(() => {
     const video = ref.current;
     if (!video) return;
@@ -7523,6 +7551,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   ]);
   const [activePageIndex, setActivePageIndex] = useState<number>(0);
   const [floatingImages, setFloatingImages] = useState<FloatingImage[]>([]);
+  useEffect(() => {
+    floatingImages.forEach(item => {
+      const pending = pendingVideoPosters.get(item.src);
+      if (!item.isVideo || !pending) return;
+      pendingVideoPosters.delete(item.src);
+      void pending.then(poster => {
+        if (poster) setFloatingImages(items => items.map(current =>
+          current.isVideo && current.src === item.src ? { ...current, poster } : current));
+      });
+    });
+  }, [floatingImages]);
   const [selectedFloatingId, setSelectedFloatingId] = useState<string | null>(null);
   const [brushStrokes, setBrushStrokes] = useState<ClassicBrushStroke[]>([]);
   const [selectedBrushId, setSelectedBrushId] = useState<string | null>(null);
@@ -11606,11 +11645,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 只有真正的自由图片能成为交换目标。
          图形与文字都不接收拖入：经过图形时不高亮、不选中，也不触发任何交换反馈。 */
       const target = id ? floatingImages.find(f => f.id === id) : null;
-      if (id && target && !target.shape && target.text === undefined) return { kind: 'floating', id };
+      if (id && target && !target.shape && target.text === undefined) {
+        if (target.isVideo && touchDragState.current) return null;
+        return { kind: 'floating', id };
+      }
       if (id) return null;
     }
     const cEl = elem.closest('[data-cell-id]');
     if (cEl) {
+      if (floatingImages.find(f => f.id === floatSwapRef.current?.id)?.isVideo) return null;
       // 拖放不需要先選中佈局，任何佈局的格子都可以接收
       const idAttr = cEl.getAttribute('data-cell-id');
       const layEl = cEl.closest('[data-layout-id]');
@@ -11655,19 +11698,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
 
     if (source.kind === 'floating' && target.kind === 'floating') {
-      if (source.id === target.id) return;
-      const a = floatingImages.find(f => f.id === source.id);
-      const b = floatingImages.find(f => f.id === target.id);
-      if (!a || !b) return;
-      const [boxA, boxB] = await Promise.all([
-        reframeFloating(a, b.src),
-        reframeFloating(b, a.src),
-      ]);
-      setFloatingImages(prev => prev.map(f => {
-        if (f.id === a.id) return { ...f, src: b.src, ...boxA };
-        if (f.id === b.id) return { ...f, src: a.src, ...boxB };
-        return f;
-      }));
+      setFloatingImages(prev => swapFloatingMedia(prev, source.id, target.id));
       return;
     }
 
@@ -11689,6 +11720,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const cell = cellImages[cellIdx];
     const float = floatingImages.find(f => f.id === floatId);
     if (!cell || !float) return;
+    // Layout cells render still images only. Never move a video into a cell
+    // and delete its playable layer; leave both layers intact instead.
+    if (float.isVideo) return;
     // 格子必須拿到新圖的原始長寬，否則 cover 會用上一張圖的比例算，畫面就被拉扁了
     const incoming = await getImageDimensions(float.src);
 
@@ -11724,7 +11758,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
     const t = e.touches[0];
     // 先解碼、先建立合成層；長按成立時只切可見度，不臨時建立黑色方塊。
-    setFloatDragPreloadSrc(fImg.src);
+    const dragPoster = fImg.isVideo ? (fImg.poster || fImg.src) : fImg.src;
+    setFloatDragPreloadSrc(dragPoster);
     floatSwapRef.current = {
       id: fImg.id, src: fImg.src,
       startX: t.clientX, startY: t.clientY, lastX: t.clientX, lastY: t.clientY,
@@ -11746,7 +11781,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       wsGestureRef.current = null;
       setActiveGuidelines([]);
       if (navigator.vibrate) navigator.vibrate(40);
-      setFloatDragSrc(s.src);
+      setFloatDragSrc(dragPoster);
     }, LONG_PRESS_MS);
   };
 
