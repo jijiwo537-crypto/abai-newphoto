@@ -3534,17 +3534,20 @@ interface AlignmentGuideline {
  * 就是「邊上突然多一個角」。正圓角走的是四分之一圓，接到直邊的曲率
  * 變化平順，也才是修圖軟體的做法。
  */
-export const cornerR = (pct: number, w: number, h: number) => (pct / 100) * Math.min(w, h);
+export const cornerR = (pct: number, w: number, h: number) => Math.max(0, Math.min(.5, pct / 100)) * Math.min(w, h);
 
 /** 圓角矩形路徑（rx/ry 可不同，但呼叫端一律傳同一個值 → 正圓角）。 */
 export const roundRectPath = (
   g: CanvasRenderingContext2D,
   x: number, y: number, w: number, h: number, rx: number, ry: number,
 ) => {
-  rx = Math.max(0, Math.min(rx, w / 2));
-  ry = Math.max(0, Math.min(ry, h / 2));
+  rx = Math.max(0, rx);
+  ry = Math.max(0, ry);
+  const radiusScale = Math.min(1, rx > 0 ? w / (2 * rx) : 1, ry > 0 ? h / (2 * ry) : 1);
+  rx *= radiusScale;
+  ry *= radiusScale;
   g.beginPath();
-  if (rx < 0.5 || ry < 0.5) { g.rect(x, y, w, h); return; }
+  if (rx === 0 || ry === 0) { g.rect(x, y, w, h); return; }
   const Q = Math.PI / 2;
   g.ellipse(x + rx, y + ry, rx, ry, 0, Math.PI, Math.PI + Q);
   g.lineTo(x + w - rx, y);
@@ -6513,9 +6516,15 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     : { x: 0, y: 0 };
 
   const isCanvasVector = !!image.shape || image.text !== undefined;
+  // Plain photos share the screen-density scene with vectors. Native zoom on
+  // nested <img> boxes rounds their edges independently from the page geometry.
+  const isScenePhoto = !isCanvasVector && !image.isVideo && shapeImgReady
+    && !plainImageWave && !image.feather && !image.imgGlow && !image.imgStrokeWidth
+    && !isImgShaped(image.imgShape) && !hasPhotoFx(image.fx);
+  const isSceneInk = isCanvasVector || isScenePhoto;
   const sceneShift = useRef({ tx: 0, ty: 0, s: 1, fromX: 0, fromY: 0, fromS: 1, at: 0 });
   useLayoutEffect(() => {
-    if (!scene || !isCanvasVector || isTextEditing) {
+    if (!scene || !isSceneInk || isTextEditing) {
       scene?.remove(image.id);
       return;
     }
@@ -6574,7 +6583,22 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           + (motionFrame?.dy ?? 0) * image.height * image.scale);
         ctx.rotate((image.rotation + (motionFrame?.rot ?? 0)) * Math.PI / 180);
         ctx.scale(scale * (motionFrame?.fx ?? 1), scale);
-        paintClassicAnimatedVector(ctx, image, motionFrame, density * Math.abs(scale));
+        if (isScenePhoto) {
+          const source = getPreviewImg(image.src);
+          if (source.complete && source.naturalWidth) {
+            if (image.imgRadius) {
+              const radius = cornerR(image.imgRadius, image.width, image.height);
+              roundRectPath(ctx, -image.width / 2, -image.height / 2,
+                image.width, image.height, radius, radius);
+              ctx.clip();
+            }
+            ctx.drawImage(source, -image.width / 2, -image.height / 2, image.width, image.height);
+            if (isSwapTarget || isSwapSource) {
+              ctx.fillStyle = isSwapTarget ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.3)';
+              ctx.fillRect(-image.width / 2, -image.height / 2, image.width, image.height);
+            }
+          }
+        } else paintClassicAnimatedVector(ctx, image, motionFrame, density * Math.abs(scale));
       },
     });
   });
@@ -6957,7 +6981,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     <div
       ref={imageRef}
       data-floating-id={image.id}
-      data-classic-scene-hit={scene && isCanvasVector ? '1' : undefined}
+      data-classic-scene-hit={scene && isSceneInk ? '1' : undefined}
       className="floating-image-wrapper group/floating"
       style={{
         ...wrapGeo,
@@ -7184,7 +7208,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             />
           )}
         </div>
-      ) : isCanvasVector ? null : needsShapeCanvas ? (
+      ) : isSceneInk && scene ? null : needsShapeCanvas ? (
         // 圓角／羽化／發光都畫在 canvas 上。用 CSS 遮罩的話每動一格滑桿就要
         // 重新解碼一張遮罩圖，畫面會一閃一閃；canvas 是同一格畫完才送出，不會閃。
         // 發光也才能跟文字一樣「同一個來源疊三層」，而不是一層陰影再套一層。
@@ -7254,7 +7278,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           變暗的那一塊要跟圖層現在的形狀一樣 —— 圓角、羽化、愛心、星星…
           都跟著走（以前不管形狀怎麼改，暗下去的永遠是一個方塊）。
           用的是跟影片圖層同一支 shapeParts，所以兩邊不可能長得不一樣。 */}
-      {(isSwapTarget || isSwapSource) && (
+      {(isSwapTarget || isSwapSource) && !(scene && isScenePhoto) && (
         <div
           data-dim-overlay="1"
           className="absolute inset-0 pointer-events-none z-40"
@@ -7692,7 +7716,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        超過就代表真的有縫（或真的超出去），那就不該畫線 —— 不然會出現
        「線亮了、圖卻沒真的貼上去」的落差。 */
     const EPS_E = 0.6;
-    pageRectsNear(getAllPageRects(), cx).forEach(pr => {
+    getAllPageRects().forEach(pr => {
       /* 頁與頁之間有 1 個內容座標的分隔槽。照片只延伸到槽的正中央（0.5），
          也就是分割線真正所在的位置；不可再延伸整整 1px 到下一頁的邊界，
          否則高倍率下會明顯看成圖片越過分割線。 */
@@ -7731,17 +7755,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (!enableSnapping) {
       return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
     }
-    // 只跟自己所在的那一頁對齊：隔壁頁的邊界只差 1px，兩個都留著會讓同一條邊
-    // 出現兩個吸附位置（拖過去亮一次、再往前 1px 又亮一次）
-    const pageRects = pageRectsNear(getAllPageRects(), rawX + imgWidth / 2);
+    // Pages now share exact boundaries (the seam is only ink). Large objects
+    // can reach a boundary several pages away from their centre.
+    const pageRects = getAllPageRects();
     if (pageRects.length === 0) {
       return { snappedX: rawX, snappedY: rawY, fitScale: undefined, guidelines: [] };
     }
 
-    /* 經典／創意拼圖共用 8 個螢幕像素的吸附距離。換算回內容座標，
+    /* 經典／創意拼圖共用 4 個螢幕像素的吸附距離。換算回內容座標，
        預覽無論放大或縮小，吸附手感都保持一致。 */
     const SNAP_THRESHOLD = 4 / Math.max(0.0001, kRef.current || 1);
-    const ownPageRectsForFit = pageRects;
+    const ownPageRectsForFit = pageRectsNear(pageRects, rawX + imgWidth / 2);
     const movingItem = floatingImages.find(item => item.id === imgId);
     const seamBleed = 0;
     // 轉過的圖一律用外接矩形判定（跟創意拼圖同一套）
@@ -7801,7 +7825,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     // Check ALL pages' boundaries (centerX, left edge, right edge)
     pageRects.forEach(pageRect => {
       // Page centerX (only if not edgeOnly)
-      if (!edgeOnly) {
+      if (!edgeOnly && ownPageRectsForFit.includes(pageRect)) {
         const diffCenterX = rawCenterX - pageRect.centerX;
         if (Math.abs(diffCenterX) < SNAP_THRESHOLD && Math.abs(diffCenterX) < Math.abs(minDiffX)) {
           minDiffX = diffCenterX;
@@ -11739,20 +11763,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (enableSnapping) {
       const SNAP = 4;
       let best = Infinity, bestScale = ns;
-      pageRectsNear(getAllPageRects(), cx).forEach(pr => {
-        const cands: number[] = [];
+      getAllPageRects().forEach(pr => {
+        const cands: { scale: number; extent: number }[] = [];
         if (ext1.bw > 1) {
-          cands.push((2 * (cx - pr.left)) / ext1.bw);    // 左邊貼齊
-          cands.push((2 * (pr.right - cx)) / ext1.bw);   // 右邊貼齊
+          cands.push({ scale: (2 * (cx - pr.left)) / ext1.bw, extent: ext1.bw });
+          cands.push({ scale: (2 * (pr.right - cx)) / ext1.bw, extent: ext1.bw });
         }
         if (ext1.bh > 1) {
-          cands.push((2 * (cy - pr.top)) / ext1.bh);     // 上邊貼齊
-          cands.push((2 * (pr.bottom - cy)) / ext1.bh);  // 下邊貼齊
+          cands.push({ scale: (2 * (cy - pr.top)) / ext1.bh, extent: ext1.bh });
+          cands.push({ scale: (2 * (pr.bottom - cy)) / ext1.bh, extent: ext1.bh });
         }
-        cands.forEach(cand => {
+        cands.forEach(({ scale: cand, extent }) => {
           if (!(cand > MIN_LAYOUT_SCALE) || cand > 4) return;
           // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
-          const px = Math.abs(cand - ns) * Math.max(ext1.bw, ext1.bh) / 2;
+          const px = Math.abs(cand - ns) * extent / 2 * Math.max(.0001, kRef.current);
           if (px < SNAP && px < best) { best = px; bestScale = cand; }
         });
       });
@@ -12019,7 +12043,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     /** 旋轉的不動區：轉超過門檻才開始轉，rotBias 是要扣掉的那一段 */
     rotOn?: boolean; rotBias?: number;
     /** 低通後的連續倍率與帶遲滯的吸附倍率；避免臨界點反覆吸入／跳出。 */
-    lastScale?: number; snapScale?: number;
+    lastScale?: number; snapScale?: number; snapExtent?: number;
     /** 第二指落下不等於手勢已開始；超過微小移動門檻後才允許改幾何。 */
     gestureStarted?: boolean;
     baseX: number; baseY: number; baseScale: number;
@@ -12553,37 +12577,38 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const SNAP_IN = 4, SNAP_OUT = 7;
             const cx = target.x + target.width / 2;
             const cy = target.y + target.height / 2;
-            let best = Infinity, bestScale = ns;
+            let best = Infinity, bestScale = ns, bestExtent = 0;
             // 倍率吸附也要用轉過的外框，不然轉 90 度之後貼齊的位置會差半個身子
             const ext = rotExtent(target.width, target.height, rot);
-            pageRectsNear(getAllPageRects(), cx).forEach(pr => {
-              const cands: number[] = [];
+            getAllPageRects().forEach(pr => {
+              const cands: { scale: number; extent: number }[] = [];
               if (ext.bw > 1) {
                 const coverLeft = pr.left - (rasterSeamBleed && pr.pageIdx > 0 ? rasterSeamBleed : 0);
                 const coverRight = pr.right + (rasterSeamBleed && pr.pageIdx < pages.length - 1 ? rasterSeamBleed : 0);
-                cands.push((2 * (cx - coverLeft)) / ext.bw);
-                cands.push((2 * (coverRight - cx)) / ext.bw);
+                cands.push({ scale: (2 * (cx - coverLeft)) / ext.bw, extent: ext.bw });
+                cands.push({ scale: (2 * (coverRight - cx)) / ext.bw, extent: ext.bw });
               }
               if (ext.bh > 1) {
-                cands.push((2 * (cy - pr.top)) / ext.bh);    // 上邊貼齊
-                cands.push((2 * (pr.bottom - cy)) / ext.bh); // 下邊貼齊
+                cands.push({ scale: (2 * (cy - pr.top)) / ext.bh, extent: ext.bh });
+                cands.push({ scale: (2 * (pr.bottom - cy)) / ext.bh, extent: ext.bh });
               }
-              cands.forEach(cand => {
+              cands.forEach(({ scale: cand, extent }) => {
                 if (!(cand >= targetScaleFloor)) return;
                 // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
-                const px = Math.abs(cand - ns) * Math.max(ext.bw, ext.bh) / 2 * previewK;
-                if (px < SNAP_IN && px < best) { best = px; bestScale = cand; }
+                const px = Math.abs(cand - ns) * extent / 2 * previewK;
+                if (px < SNAP_IN && px < best) { best = px; bestScale = cand; bestExtent = extent; }
               });
             });
             /* 吸住後使用较宽的离开门槛。没有迟滞时，手指的微小噪声会让倍率
                在 raw/snap 两个值之间逐帧切换，视觉上就是图形与符号抖动。 */
             if (g.snapScale !== undefined) {
-              const px = Math.abs(ns - g.snapScale) * Math.max(ext.bw, ext.bh) / 2 * previewK;
+              const px = Math.abs(ns - g.snapScale) * (g.snapExtent ?? Math.max(ext.bw, ext.bh)) / 2 * previewK;
               if (px <= SNAP_OUT) ns = g.snapScale;
               else g.snapScale = undefined;
             }
             if (g.snapScale === undefined && best < SNAP_IN) {
               g.snapScale = bestScale;
+              g.snapExtent = bestExtent;
               ns = bestScale;
             }
             /* 后续低通与当前真正画出的倍率使用同一个基准，不能让 lastScale 还停在
@@ -15771,10 +15796,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             oppositeLocalX !== undefined &&
                             oppositeLocalY !== undefined
                           ) {
-                            const pageRects = pageRectsNear(
-                              getAllPageRects(),
-                              fImg.x + fImg.width / 2,
-                            );
+                            const pageRects = getAllPageRects();
                             /* 4px 是兩套拼圖統一的手機吸附範圍。座標在內容空間，
                                所以要除掉預覽倍率；固定支點公式仍在下面，沒有搬整張圖。 */
                             const SNAP_THRESHOLD = 4 / Math.max(0.001, kRef.current || 1);
@@ -16035,7 +16057,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             if (moving) {
                               /* 擠壓只認頁面的最外框，不跟其他物件互吸。多頁時每一頁
                                  都是自己的畫布，因此取目前物件附近頁面的四邊。 */
-                              const nearby = pageRectsNear(getAllPageRects(), next.x + next.width / 2);
+                              const nearby = getAllPageRects();
                               const lines = moving.axis === 'x'
                                 ? nearby.flatMap(p => [p.left, p.right])
                                 : nearby.flatMap(p => [p.top, p.bottom]);
