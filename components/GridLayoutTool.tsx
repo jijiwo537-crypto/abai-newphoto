@@ -9977,7 +9977,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return () => { alive = false; };
   }, [activeTab, adjustSub, lutList]);
 
-  const [layoutSubTab, setLayoutSubTab] = useState<'layout' | 'adjust'>('layout');
+  const layoutEditMode = activeTab === 'adjust' && selectedLayoutId !== null
+    && selectedIndex === null && !selectedFloatingId;
   /** 「新增」分頁：root＝三顆大按鈕，shape＝點進「新增圖形」之後的圖案清單 */
   const [addSub, setAddSub] = useState<'root' | 'shape' | 'symbol'>('root');
   /* 離開「新增」分頁就回到最外層：下次再進來看到的是那幾顆大按鈕，
@@ -12507,9 +12508,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const rawZ = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, cz.baseZoom * (d / cz.startDist)));
       // 觸控距離會在相鄰事件間抖動零點幾個像素；直接把每一筆噪聲寫入 zoom
       // 會讓整張預覽反覆放大縮小。輕量低通只濾掉這種高頻抖動，手勢方向與範圍不變。
-      const z = Math.abs(rawZ - cz.lastZoom) < 0.001
-        ? cz.lastZoom
-        : cz.lastZoom + (rawZ - cz.lastZoom) * 0.72;
+      // Preserve continuous motion at slow pinch speeds. A dead zone here
+      // accumulates sub-threshold movement and then jumps the whole canvas.
+      const z = cz.lastZoom + (rawZ - cz.lastZoom) * 0.72;
       cz.lastZoom = z;
       userZoomRef.current = z;
       kRef.current = z;
@@ -15299,11 +15300,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           isSelected ? 'z-20' : ''
                                         }`}
                                         style={{
-                                          backgroundColor: '#121212',
+                                          // One rounded clip only: a dark backing under the
+                                          // antialiased photo edge creates a visible dark rim.
+                                          backgroundColor: 'transparent',
                                           // 這一格自己設了圓角就蓋掉佈局那根共用滑桿
                                           borderRadius: !layout.seamless && cell.imgRadius
-                                            ? `${cornerR(cell.imgRadius, cellWidth, cellHeight)}px`
-                                            : `${radius}px`,
+                                            ? `${cornerR(cell.imgRadius, Math.max(0, cellWidth - gap), Math.max(0, cellHeight - gap))}px`
+                                            : `${Math.min(radius, Math.max(0, cellWidth - gap) / 2, Math.max(0, cellHeight - gap) / 2)}px`,
                                           touchAction: 'none',
                                         }}
                                       >
@@ -15615,7 +15618,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         );
                                       })()}
                                       <button
-                                        onClick={(e) => { e.stopPropagation(); setActiveTab('layout'); setLayoutSubTab('adjust'); }}
+                                        onClick={(e) => { e.stopPropagation(); setActiveTab('adjust'); }}
                                         title="佈局調整"
                                         style={{ width: 28 * layoutUiInv, height: 28 * layoutUiInv }}
                                         className="rounded-full hover:bg-black/10 flex items-center justify-center text-black"
@@ -16525,7 +16528,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               );
             })()}
 
-            {activeTab === 'adjust' && (() => {
+            {activeTab === 'adjust' && !layoutEditMode && (() => {
               /* 佈局裡的格子也走同一套面板：把格子包成跟浮動圖片一樣的形狀，
                  面板本身完全不用改，寫回去的時候再導到格子上。 */
               const selCell = selectedFloatingId ? null
@@ -16627,7 +16630,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   <div className="flex justify-center gap-1.5">
                   <button
                     onClick={() => {
-                      setLayoutSubTab('layout');
                       setActiveTab('layout');
                     }}
                     className="flex flex-col items-center justify-center py-4 px-1 bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 rounded-2xl transition-all gap-2 active:scale-95 flex-1 max-w-[130px]"
@@ -16776,87 +16778,23 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               </div>
             )}
 
-            {activeTab === 'layout' && (
+            {(activeTab === 'layout' || layoutEditMode) && (
               <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
-                {/* Left side: 2 small icon-only sub-buttons separated by a line directly connected from left edge to right border */}
-                <div className="flex flex-col shrink-0 w-11 -mt-4 -mb-4 -ml-4 border-r border-white/10 select-none">
-                  {/* Top half: Layout button */}
-                  <button
-                    onClick={() => setLayoutSubTab('layout')}
-                    title="佈局"
-                    aria-label="佈局"
-                    className={`w-full flex-1 flex items-center justify-center transition-all ${
-                      layoutSubTab === 'layout'
-                        ? 'text-white'
-                        : 'text-[#5a5a5a]'
-                    }`}
-                  >
-                    <LayoutGrid size={18} className={`transition-transform ${layoutSubTab === 'layout' ? 'scale-110' : ''}`} />
-                  </button>
-
-                  {/* Divider line exactly in the middle connecting left wall to vertical border */}
-                  <div className="w-full h-[1px] bg-white/10 shrink-0" />
-
-                  {/* Bottom half: Adjust button */}
-                  <button
-                    onClick={() => setLayoutSubTab('adjust')}
-                    title="調整"
-                    aria-label="調整"
-                    className={`w-full flex-1 flex items-center justify-center transition-all ${
-                      layoutSubTab === 'adjust'
-                        ? 'text-white'
-                        : 'text-[#5a5a5a]'
-                    }`}
-                  >
-                    <Sliders size={18} className={`transition-transform ${layoutSubTab === 'adjust' ? 'scale-110' : ''}`} />
-                  </button>
-                </div>
-
-                {/* Right side content */}
                 <div
-                  className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar pl-3 pr-2 h-full"
-                  /* 到頂了再往上拉、到底了再往下拉都不要有那一下橡皮筋
-                     （contain 只擋「把捲動傳給外層」，自己還是會彈，所以用 none） */
+                  className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar pr-2 h-full"
                   style={{ overscrollBehavior: 'none' }}
                 >
-                  {layoutSubTab === 'layout' ? (
+                  {activeTab === 'layout' ? (
                     allTemplatesFlattened.length > 0 ? (
                       <div className="grid grid-cols-4 sm:grid-cols-5 gap-2 pb-10">
-                        {allTemplatesFlattened.map(({ count, idx, tmpl, isCurrentCount }) => {
-                          // 只有「真的被選取」的佈局才算目前這個；沒選中就一律視為新增
-                          const editing = selectedLayoutId ? activePage.layouts.find(l => l.id === selectedLayoutId) : null;
-                          const isSelected = !!editing && isCurrentCount && editing.templateIndex === idx;
+                        {allTemplatesFlattened.map(({ count, idx, tmpl }) => {
                           return (
                             <button
-                              id={isSelected ? 'active-layout-button' : undefined}
                               key={`${count}-${idx}-${tmpl.name}`}
                               onClick={() => {
-                                isLayoutChangeRef.current = true;
-                                // 只有「完全沒選中佈局」時才會新增；有選中就是換掉那個佈局的版型
-                                if (!editing) {
-                                  handleAddLayoutToPage(activePageIndex, idx, count);
-                                  return;
-                                }
-                                // 點別的版型 → 換掉目前選中的這個佈局
-                                if (count !== images.length) {
-                                  setImages(prev => {
-                                    if (count > prev.length) {
-                                      const newCells = Array.from({ length: count - prev.length }).map((_, i) => ({
-                                        id: `empty-${Date.now()}-${i}`,
-                                        url: '', file: undefined, zoom: 1.0, offsetX: 0, offsetY: 0, rotation: 0
-                                      }));
-                                      return [...prev, ...newCells];
-                                    }
-                                    return prev.slice(0, count);
-                                  });
-                                }
-                                setTemplateIndex(idx);
+                                handleAddLayoutToPage(activePageIndex, idx, count);
                               }}
-                              className={`p-1.5 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all text-center aspect-square ${
-                                isSelected
-                                  ? 'bg-white/[0.02] border-white shadow-[0_0_12px_rgba(255,255,255,0.05)] opacity-100'
-                                  : 'bg-white/[0.02] border-white/5 hover:border-white/15 hover:bg-white/[0.04] ' + (isCurrentCount ? 'opacity-90' : 'opacity-40')
-                              }`}
+                              className="p-1.5 rounded-xl border flex flex-col items-center justify-center gap-1.5 transition-all text-center aspect-square bg-white/[0.02] border-white/5 hover:border-white/15 hover:bg-white/[0.04] opacity-90"
                               title={`${count}張: ${tmpl.name}`}
                             >
                               <svg viewBox="0 0 100 100" className="w-full h-full text-white/60">
