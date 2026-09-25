@@ -13,13 +13,12 @@ test('page sorting vector ink uses the page CSS matrix, not its own easing clock
 });
 
 test('seams retain their stacking order and reveal only after settle, with a fade', () => {
-  const seams = source.slice(source.indexOf('const reveal = seamRevealRef.current;'), source.indexOf('// Measure container size dynamically'));
-  assert.match(seams, /pageDragIdx !== null \|\| dragSettle/);
-  assert.match(seams, /if \(!reveal\.revealAt\) return/);
-  assert.match(seams, /alpha = t \* t \* \(3 - 2 \* t\)/);
+  const seams = source.slice(source.indexOf("vectorScene.set('__page-seams'"), source.indexOf('// Measure container size dynamically'));
+  assert.match(seams, /settledSortSeams/);
+  assert.match(seams, /globalAlpha = t \* t \* \(3 - 2 \* t\)/);
   assert.match(seams, /z: 400000/);
   assert.match(source, /flushSync\(\(\) => setDragSettle\(t < 1/);
-  assert.match(source, /dx: dragSettle\.x, s: 1, live: true/);
+  assert.match(source, /dx: dragSettle\.x, s: dragSettle.s, live: true/);
 });
 
 test('sorting clips survive exit until normal strip clipping resumes', () => {
@@ -58,10 +57,16 @@ test('displaced pages and object wrappers consume one animation pose without CSS
   assert.match(source, /transition: pagesMode \? 'none'/);
 });
 
-test('seams return after crossing a slot and do not draw on the lifted page', () => {
-  assert.match(source, /pageDragTo !== pageDragIdx/);
-  assert.match(source, /reveal.hidden.clear\(\)/);
-  assert.match(source, /reordering \? i === pageDragIdx : !i/);
+test('sorting seams use fixed slots, not moving page edges', () => {
+  assert.match(source, /ctx.fillRect\(slot \* previewW - width \/ 2, 0, width, previewH\)/);
+  assert.match(source, /pageDragIdx \?\? dragSettle\?\.page \?\? null/);
+});
+
+test('sorting preserves normal minimum scale, logical size and idle clipping', () => {
+  assert.match(source, /PAGES_MODE_SCALE = PREVIEW_MIN_SCALE/);
+  assert.match(source, /ZOOM_MIN = PREVIEW_MIN_SCALE/);
+  assert.match(source, /activeTab === 'pages' && normalPreviewSize.current/);
+  assert.match(source, /pageDragIdx !== null \|\| dragSettle \? '' : 'shadow/);
 });
 
 test('aligned photos avoid a second antialiased clipping edge', () => {

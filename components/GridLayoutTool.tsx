@@ -4,6 +4,7 @@ import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene } from './ClassicVectorScene';
+import { settledSortSeams } from '../utils/sortSeams';
 import { SeamlessLayout } from './SeamlessLayout';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
@@ -8796,7 +8797,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 一次看得到前後好幾頁，排起來才知道自己在排什麼。
    * 用 transform 縮，不動 previewW/H，圖層的座標才不會跟著跑掉。
    */
-  const PAGES_MODE_SCALE = 0.4;
+  const PREVIEW_MIN_SCALE = 0.4;
+  const PAGES_MODE_SCALE = PREVIEW_MIN_SCALE;
   /** 握把要按住這麼久才算開始拖（太短會誤觸） */
   const PAGE_DRAG_HOLD_MS = 260;
   /** 拖曳中被拿起來的那一頁：微微放大＋陰影，看起來像被拿離桌面（專業排序介面的做法） */
@@ -8815,11 +8817,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return index >= 0 ? index : pageOfFloating(f, stride, count);
   };
   /** 放手後的收尾：內容從「放手時看起來的位置」平順滑回新定位 */
-  const [dragSettle, setDragSettle] = useState<{ page: number; x: number; ease: boolean } | null>(null);
+  const [dragSettle, setDragSettle] = useState<{ page: number; x: number; s: number; ease: boolean } | null>(null);
   const settleTimerRef = useRef(0);
   const settleFrameRef = useRef(0);
-  const seamRevealRef = useRef({ hidden: new Set<number>(), revealAt: 0 });
-  const seamDragHasSwapped = useRef(false);
+  const sortSeamVisibleSince = useRef(new Map<number, number>());
   const [sortShiftFrame, setSortShiftFrame] = useState<Record<number, number>>({});
   const sortShiftFrameRef = useRef<Record<number, number>>({});
 
@@ -8852,7 +8853,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       // 放手瞬間的收尾（FLIP）：換完順序後內容先停在「看起來的位置」，
       // 下一帧再平順滑回定位 —— 不做這一段的話會先閃回再跳走
       if (dragSettle && pageIdx === dragSettle.page) {
-        return { dx: dragSettle.x, s: 1, live: true };
+        return { dx: dragSettle.x, s: dragSettle.s, live: true };
       }
       return null;
     }
@@ -9075,7 +9076,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const remainder = liveDx - (to - from) * (previewW);
         if (from !== to) handleMovePage(from, to);
         window.clearTimeout(settleTimerRef.current);
-        setDragSettle({ page: to, x: remainder, ease: false });
+        setDragSettle({ page: to, x: remainder, s: PAGE_DRAG_SCALE, ease: false });
         cancelAnimationFrame(settleFrameRef.current);
         requestAnimationFrame(() => requestAnimationFrame(() => {
           // A single frame clock drives the page, photo wrappers and vector ink.
@@ -9084,7 +9085,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           const tick = (now: number) => {
             const t = Math.min(1, (now - start) / 220);
             flushSync(() => setDragSettle(t < 1
-              ? { page: to, x: remainder * Math.pow(1 - t, 3), ease: true } : null));
+              ? { page: to, x: remainder * Math.pow(1 - t, 3), s: 1 + (PAGE_DRAG_SCALE - 1) * Math.pow(1 - t, 3), ease: true } : null));
             if (t < 1) settleFrameRef.current = requestAnimationFrame(tick);
             else settleFrameRef.current = 0;
           };
@@ -9170,7 +9171,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const [selectedRatio, setSelectedRatio] = useState('3:4');
   const [isLandscape, setIsLandscape] = useState(false);
   const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
+  const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
+  const normalPreviewSize = useRef<{ width: number; height: number } | null>(null);
   const getRatioDimensions = (ratio = selectedRatio, landscape = isLandscape) => {
+    if (activeTab === 'pages' && normalPreviewSize.current) return normalPreviewSize.current;
     const pad = 8;
     const maxW = Math.min(450, Math.max(200, containerSize.width - pad));
     const maxH = Math.max(200, containerSize.height - pad);
@@ -9187,6 +9191,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return { width: ratioW * unit, height: ratioH * unit };
   };
   const { width: previewW, height: previewH } = getRatioDimensions();
+  if (activeTab !== 'pages' && activeTab !== 'motion') normalPreviewSize.current = { width: previewW, height: previewH };
   const previewDimensionsRef = useRef(getRatioDimensions);
   previewDimensionsRef.current = getRatioDimensions;
 
@@ -9266,7 +9271,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     setFinalKinds([]);
   }, []);
   useEffect(() => () => { finalImagesRef.current.forEach(u => URL.revokeObjectURL(u)); }, []);
-  const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
   /** 頁面順序模式：操作欄往下滑、畫布往下移到中央、每一頁下面出現握把與刪除鍵 */
   const pagesMode = activeTab === 'pages';
   // One pose per frame for displaced pages, photos and vector ink. Independent
@@ -9518,7 +9522,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
      捏合中如果剛好有別的原因重繪一次，就會把手勢的值抹掉。 */
   const userZoomRef = useRef(1);
   useEffect(() => { userZoomRef.current = userZoom; }, [userZoom]);
-  const ZOOM_MIN = 0.4, ZOOM_MAX = 3;
+  const ZOOM_MIN = PREVIEW_MIN_SCALE, ZOOM_MAX = 3;
   /** 正在雙指縮放畫布。有值的時候不准任何其他手勢介入 */
   /** 雙指縮放整個預覽：起手的兩指距離、起手倍率，以及「捏住的那個內容座標」與它在螢幕上的位置 */
   const canvasZoomRef = useRef<{ startDist: number; baseZoom: number; anchorC: number; anchorPx: number; lastZoom: number } | null>(null);
@@ -10141,22 +10145,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     return vectorScene.attach(pagesContainerRef.current, containerRef.current, () => kRef.current || 1);
   }, [vectorScene]);
   useLayoutEffect(() => {
-    const reveal = seamRevealRef.current;
-    if (pageDragIdx !== null && pageDragTo !== null && pageDragTo !== pageDragIdx) {
-      seamDragHasSwapped.current = true;
-    }
-    if ((pageDragIdx !== null || dragSettle) && seamDragHasSwapped.current) {
-      reveal.hidden.clear();
-      reveal.revealAt = 0;
-    } else if (pageDragIdx !== null || dragSettle) {
-      const index = pageDragIdx ?? dragSettle!.page;
-      reveal.hidden.add(index);
-      reveal.hidden.add(index + 1);
-      reveal.revealAt = 0;
-    } else if (reveal.hidden.size && !reveal.revealAt) {
-      reveal.revealAt = performance.now();
-    }
-    if (pageDragIdx === null && !dragSettle) seamDragHasSwapped.current = false;
     vectorScene.set('__page-seams', {
       z: 400000,
       animateUntil: performance.now() + 240,
@@ -10168,31 +10156,32 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const dpr = Math.max(1, window.devicePixelRatio || 1);
         const width = Math.round(1.3 * dpr) / dpr / k;
         ctx.fillStyle = shadeHex(WORKSPACE_BG, PAGE_SEAM_INK);
+        if (pagesMode) {
+          const poses = pages.map((_, index) => {
+            const move = pageContentShift(index);
+            return { index, x: index * previewW + (move?.dx ?? 0), scale: move?.s ?? 1 };
+          });
+          const visible = new Set(settledSortSeams(poses, previewW, pageDragIdx ?? dragSettle?.page ?? null));
+          const since = sortSeamVisibleSince.current;
+          for (const slot of since.keys()) if (!visible.has(slot)) since.delete(slot);
+          for (const slot of visible) {
+            if (!since.has(slot)) since.set(slot, performance.now());
+            const t = Math.min(1, (performance.now() - since.get(slot)!) / 160);
+            ctx.globalAlpha = t * t * (3 - 2 * t);
+            // Slots do not move. Moving pages never carry a separator with them.
+            ctx.fillRect(slot * previewW - width / 2, 0, width, previewH);
+          }
+          ctx.globalAlpha = 1;
+          return;
+        }
+        sortSeamVisibleSince.current.clear();
         // Read the same rendered page edge during reordering; no second CSS
         // transform, inverse scale or independent compositor animation.
         const nodes = host.querySelectorAll<HTMLElement>(':scope > [data-page-id]');
-        const drawnEdges = new Set<number>();
         nodes.forEach((node, i) => {
-          const reordering = pageDragIdx !== null && seamDragHasSwapped.current;
-          if (reordering ? i === pageDragIdx : !i) return;
-          let alpha = 1;
-          if (reveal.hidden.has(i)) {
-            if (!reveal.revealAt) return;
-            const t = Math.min(1, (performance.now() - reveal.revealAt) / 160);
-            alpha = t * t * (3 - 2 * t);
-            if (t === 1) reveal.hidden.delete(i);
-          }
+          if (!i) return;
           const r = node.getBoundingClientRect();
-          ctx.globalAlpha = alpha;
-          const edges = reordering ? [r.left, r.right] : [r.left];
-          for (const edge of edges) {
-            const x = (edge - base.left) / k;
-            if (reordering && (x <= .001 || x >= pages.length * previewW - .001)) continue;
-            const key = Math.round(x * k * dpr);
-            if (drawnEdges.has(key)) continue;
-            drawnEdges.add(key);
-            ctx.fillRect(x - width / 2, (r.top - base.top) / k, width, r.height / k);
-          }
+          ctx.fillRect((r.left - base.left) / k - width / 2, (r.top - base.top) / k, width, r.height / k);
         });
         ctx.globalAlpha = 1;
       },
@@ -14822,7 +14811,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     ref={pagesContainerRef}
                     // 排頁面時不裁切也不打陰影：被拖到最邊邊的那一頁才不會被黑色蓋掉
                     className={`flex flex-row flex-nowrap relative ${
-                      pagesMode || pagesVisual ? '' : 'shadow-[0_25px_60px_rgba(0,0,0,0.8)] overflow-hidden'
+                      pageDragIdx !== null || dragSettle ? '' : 'shadow-[0_25px_60px_rgba(0,0,0,0.8)] overflow-hidden'
                     }`}
                     style={{
                       /* 所有頁面內容共用一個明確的繪製邊界。Safari 對 overflow:visible
@@ -17159,10 +17148,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const shift = (() => {
           if (pageDragIdx !== null) {
             const off = pageDragOffset(ctl.idx);
-            return { x: off.x * pagesScale, live: off.live, lift: off.live };
+            return { x: off.x * pagesScale, live: off.live, scale: off.live ? PAGE_DRAG_SCALE : 1 };
           }
           if (dragSettle && ctl.idx === dragSettle.page) {
-            return { x: dragSettle.x * pagesScale, live: true, lift: false };
+            return { x: dragSettle.x * pagesScale, live: true, scale: dragSettle.s };
           }
           return null;
         })();
@@ -17181,7 +17170,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               className="flex items-center gap-1.5"
               style={{
                 transform: shift
-                  ? `translate(${shift.x}px, ${shift.lift ? (PAGE_DRAG_SCALE - 1) * pagesScale * previewH / 2 : 0}px)`
+                  ? `translate(${shift.x}px, ${(shift.scale - 1) * pagesScale * previewH / 2}px)`
                   : undefined,
                 transition: pagesMode ? 'none' : undefined,
               }}
