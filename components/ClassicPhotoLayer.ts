@@ -15,7 +15,7 @@ function originalEdgeSources(source: HTMLImageElement) {
 }
 export type PhotoClip = { x: number; y: number; width: number; height: number } | null;
 export type PhotoPaint = { source: HTMLImageElement; width: number; height: number;
-  radius: number; pad: number; edges: boolean[]; clip: PhotoClip; dim: number };
+  radius: number; pad: number; edgePads?: number[]; edges: boolean[]; clip: PhotoClip; dim: number };
 
 /** A photo keeps its original decoded texture. SVG coordinates, unlike nested
  * HTML layout boxes, retain fractional geometry throughout native zoom. No
@@ -77,11 +77,12 @@ export class ClassicPhotoLayer {
       const urls = originalEdgeSources(source);
       this.images.forEach((image,i)=>attr(image,{href:urls[i]}));
     }
+    const leftPad=photo.edgePads?.[0] ?? pad, rightPad=photo.edgePads?.[1] ?? pad;
     const boxes = [
-      [-w / 2 - pad, -h / 2, pad * 2, h, `0 0 1 ${sh}`],
-      [w / 2 - pad, -h / 2, pad * 2, h, `0 0 1 ${sh}`],
-      [-w / 2 - pad, -h / 2 - pad, w + pad * 2, pad * 2, `0 0 ${sw} 1`],
-      [-w / 2 - pad, h / 2 - pad, w + pad * 2, pad * 2, `0 0 ${sw} 1`],
+      [-w / 2 - leftPad, -h / 2, leftPad * 2, h, `0 0 1 ${sh}`],
+      [w / 2 - rightPad, -h / 2, rightPad * 2, h, `0 0 1 ${sh}`],
+      [-w / 2 - leftPad, -h / 2 - pad, w + leftPad + rightPad, pad * 2, `0 0 ${sw} 1`],
+      [-w / 2 - leftPad, h / 2 - pad, w + leftPad + rightPad, pad * 2, `0 0 ${sw} 1`],
     ];
     this.strips.forEach((strip, i) => {
       strip.style.display = edges[i] && !radius ? '' : 'none';

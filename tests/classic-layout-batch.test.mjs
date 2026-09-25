@@ -31,6 +31,19 @@ test('layout panel fills available width, without the removed sidebar width cap'
   assert.match(panel,/strokeWidth="2.5"/);
   assert.match(panel,/key=\{activeTab === 'layout' \? 'layout-create'/);
 });
+test('inset size defaults to eighty percent of previous size and has a stable center', () => {
+  const raw=TEMPLATE_MAP[4].at(-1).rects[2];
+  for(const value of [0,50,100]) {
+    const r=resolveLayoutRect(raw,300,400,value);
+    assert.ok(Math.abs(r.x+r.w/2-.5)<1e-10);
+    assert.ok(Math.abs(r.y+r.h/2-.25)<1e-10);
+    assert.ok(Math.abs(r.w*300-r.h*400)<1e-10);
+  }
+  assert.equal(resolveLayoutRect(raw,300,400).w,.32*.8);
+  assert.match(source,/data-inset-photo-layer/);
+  assert.match(source,/!insetLayout && <LayoutEmptyPromptLayer/);
+  assert.match(source,/aria-label="大小" type="range" min="0" max="100"/);
+});
 test('batch import caps decoding at cell count and commits to original layout id', () => {
   const body=source.slice(source.indexOf('const handleReplaceFileChange'),source.indexOf('const handleRemoveImage'));
   assert.match(body,/slice\(0, targetLayout.images.length\)/);

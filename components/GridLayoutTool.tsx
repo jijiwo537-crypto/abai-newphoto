@@ -190,12 +190,14 @@ interface CellRect {
 }
 
 // Keep inset photos genuinely square, including portrait/landscape layouts.
-const resolveLayoutRect = (rect: CellRect, width: number, height: number): CellRect => {
+const resolveLayoutRect = (rect: CellRect, width: number, height: number, size = 50): CellRect => {
   if (!rect.squareOverlay) return rect;
-  const side = Math.min(width, height) * .32;
+  const side = Math.min(width, height) * .256 * (.5 + Math.max(0, Math.min(100, size)) / 100);
   const w = side / width, h = side / height;
   return {...rect, x: rect.x + (rect.w - w) / 2, y: rect.y + (rect.h - h) / 2, w, h};
 };
+const isInsetLayout = (layout: {images: unknown[]; templateIndex: number} | null | undefined) =>
+  !!layout && !!TEMPLATE_MAP[layout.images.length]?.[layout.templateIndex]?.rects.some(rect => rect.squareOverlay);
 
 export interface ImageCell {
   id: string;
@@ -6623,13 +6625,19 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             // snap range. Guard all four aligned edges, including single pages.
             const tolerance = Math.max(1e-6, Math.min(.05, image.width * image.scale / source.naturalWidth / 2));
             const atX = (x: number) => !!maxTextWidth && Math.abs(x - Math.round(x / maxTextWidth) * maxTextWidth) <= tolerance;
+            const coverage = 2 * Math.max(1, window.devicePixelRatio || 1) * 1.5 / Math.max(.001, density * Math.abs(scale));
+            const stripWidth = (maxTextWidth || 0) * (pagesContainerRef.current?.querySelectorAll(':scope > [data-page-id]').length || 1);
             const still = !motionFrame || ((motionFrame.k ?? 1) === 1 && !(motionFrame.dx || motionFrame.dy || motionFrame.rot));
             if (scene.paintPhoto(ctx, { source, width: image.width, height: image.height,
               radius: image.imgRadius ? cornerR(image.imgRadius, image.width, image.height) : 0,
-              // The native image and its edge texels form one immutable SVG.
-              // Changing four nested SVG viewports on every zoom forces WebKit
-              // to rerasterize the entire photograph even though it did not edit.
-              pad: 1 / Math.max(.001, Math.abs(scale)),
+              // Only the tiny cached edge textures change their coverage;
+              // the original photograph and its logical rectangle stay intact.
+              // A logical-pixel guard becomes subpixel at minimum zoom. Keep
+              // two screen pixels of source-edge coverage, including while the
+              // compositor rounds the background and SVG clip independently.
+              pad: coverage,
+              edgePads: [Math.abs(cx-hw)<=tolerance ? coverage : 1/Math.max(.001, Math.abs(scale)),
+                Math.abs(cx+hw-stripWidth)<=tolerance ? coverage : 1/Math.max(.001, Math.abs(scale))],
               edges: image.rotation % 360 === 0 && still
                 ? [atX(cx - hw), atX(cx + hw), Math.abs(cy - hh) <= tolerance, Math.abs(cy + hh - canvasHeight) <= tolerance]
                 : [false, false, false, false],
@@ -7494,6 +7502,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     radius: number;
     seamless?: boolean;
     seamlessAmount?: number;
+    overlaySize?: number;
   }
 
   interface PageConfig {
@@ -10332,7 +10341,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const clamped = images.map((cell, idx) => {
       if (!cell || !cell.url) return cell;
       const rawRect = activeTmpl.rects[idx];
-      const rect = rawRect && resolveLayoutRect(rawRect, previewW, previewH);
+      const rect = rawRect && resolveLayoutRect(rawRect, previewW, previewH, activeLayout?.overlaySize);
       if (!rect) return cell;
  
       const cellWidth = rect.w * previewW;
@@ -10617,7 +10626,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (!activeTmpl) return;
 
     const rawRect = activeTmpl.rects[cellIdx];
-    const rect = rawRect && resolveLayoutRect(rawRect, previewW, previewH);
+    const rect = rawRect && resolveLayoutRect(rawRect, previewW, previewH, activeLayout?.overlaySize);
     if (!rect) return;
 
     const cellWidth = rect.w * previewW * layoutScale;
@@ -10952,7 +10961,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         const templates = TEMPLATE_MAP[prev.length] || [];
         const activeTmpl = templates[templateIndex] || templates[0];
         const rawRect = activeTmpl?.rects[i];
-        const rect = rawRect && resolveLayoutRect(rawRect, previewW, previewH);
+        const rect = rawRect && resolveLayoutRect(rawRect, previewW, previewH, activeLayout?.overlaySize);
         if (!rect) return { ...cell, zoom: newZoom };
 
         const cellWidth = rect.w * previewW;
@@ -12057,7 +12066,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const templates = TEMPLATE_MAP[images.length] || [];
     const activeTmpl = templates[templateIndex] || templates[0];
     const rawRect = activeTmpl?.rects[idx];
-    const rect = rawRect && resolveLayoutRect(rawRect, previewW, previewH);
+    const rect = rawRect && resolveLayoutRect(rawRect, previewW, previewH, activeLayout?.overlaySize);
     const cell = images[idx];
     if (!rect || !cell) return null;
     const cellWidth = rect.w * previewW * layoutScale;
@@ -13819,8 +13828,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const drawPageLayout = async (ctx: CanvasRenderingContext2D, pageIdx: number, layout: LayoutItem) => {
         const pageOffsetX = pageIdx * targetW;
         {
-          const gap = layout.gap;
-          const radius = layout.radius;
+          const gap = isInsetLayout(layout) ? 0 : layout.gap;
+          const radius = isInsetLayout(layout) ? 0 : layout.radius;
           const canvasGap = gap * scaleFactor;
           const canvasRadius = radius * scaleFactor;
           // 整組佈局可能被移動或縮放過，匯出時套用同一個變形
@@ -13845,9 +13854,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
           const loadedImages = await Promise.all(imageLoaders);
 
-          if (layout.seamless) {
+          if (layout.seamless && !isInsetLayout(layout)) {
             const box = layoutBox(layout, targetW, targetH);
-            const merged = await renderSeamlessLayout(layout.images, pageActiveTemplate.rects.map(r => resolveLayoutRect(r, box.w, box.h)), box.w, box.h, layout.seamlessAmount ?? 0, lutRevision);
+            const merged = await renderSeamlessLayout(layout.images, pageActiveTemplate.rects.map(r => resolveLayoutRect(r, box.w, box.h, layout.overlaySize)), box.w, box.h, layout.seamlessAmount ?? 0, lutRevision);
             ctx.drawImage(merged, pageOffsetX + (targetW-box.w)/2, (targetH-box.h)/2, box.w, box.h);
             ctx.restore();
             return;
@@ -13867,7 +13876,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const boxY = (targetH - lbox.h) / 2;
             const areaW = Math.max(1, lbox.w - inset * 2);
             const areaH = Math.max(1, lbox.h - inset * 2);
-            const rect = resolveLayoutRect(rawRect, areaW, areaH);
+            const rect = resolveLayoutRect(rawRect, areaW, areaH, layout.overlaySize);
             const leftPx = boxX + inset + Math.round(rect.x * areaW);
             const rightPx = boxX + inset + Math.round((rect.x + rect.w) * areaW);
             const topPx = boxY + inset + Math.round(rect.y * areaH);
@@ -15011,8 +15020,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               const lbox = layoutBox(layout, previewW, previewH);
                               const lw = lbox.w * ls;
                               const lh = lbox.h * ls;
-                              const gap = layout.seamless ? 0 : layout.gap * ls;
-                              const radius = layout.seamless ? 0 : layout.radius * ls;
+                              const insetLayout = isInsetLayout(layout);
+                              const nativeInset = insetLayout && layout.images.every(c => !hasPhotoFx(c.fx));
+                              const gap = layout.seamless || insetLayout ? 0 : layout.gap * ls;
+                              const radius = layout.seamless || insetLayout ? 0 : layout.radius * ls;
                               const lLeft = (previewW - lw) / 2 + (layout.t?.x || 0);
                               const lTop = (previewH - lh) / 2 + (layout.t?.y || 0);
                               return (
@@ -15021,7 +15032,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 data-layout-wrapper={pageIdx}
                                 data-layout-id={layout.id}
                                 data-layout-z={layout.z ?? 0}
-                                data-seamless={layout.seamless ? 'true' : undefined}
+                                data-seamless={layout.seamless && !insetLayout ? 'true' : undefined}
                                 className="absolute"
                                 style={{
                                   left: `${lLeft}px`,
@@ -15058,7 +15069,33 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 onTouchEnd={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                                 onTouchCancel={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                               >
-                              {layout.seamless && <SeamlessLayout cells={layout.images} rects={pageActiveTemplate.rects.some(r => r.squareOverlay) ? pageActiveTemplate.rects.map(r => resolveLayoutRect(r, lw, lh)) : pageActiveTemplate.rects} width={lw} height={lh} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
+                              {layout.seamless && !insetLayout && <SeamlessLayout cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
+                              {nativeInset && <svg data-inset-photo-layer="1" width={lw} height={lh} viewBox={`0 0 ${lw} ${lh}`}
+                                className="absolute inset-0 pointer-events-none" style={{zIndex: 15, overflow: 'visible'}}>
+                                {pageActiveTemplate.rects.map((raw, idx) => {
+                                  const r = resolveLayoutRect(raw, lw, lh, layout.overlaySize), c = layout.images[idx];
+                                  const x=r.x*lw, y=r.y*lh, w=r.w*lw, h=r.h*lh;
+                                  const iw=c?.naturalWidth || 800, ih=c?.naturalHeight || 600;
+                                  const turn=!!(c?.rotation % 180);
+                                  const s=Math.max(w/(turn?ih:iw),h/(turn?iw:ih))*1.02*(c?.zoom || 1);
+                                  const clip=`inset-${layout.id}-${idx}`;
+                                  return <g key={idx}>
+                                    <defs><clipPath id={clip}><rect x={x} y={y} width={w} height={h}/></clipPath></defs>
+                                    {c?.url ? <g clipPath={`url(#${clip})`}>
+                                      <image href={c.url} x={-iw/2} y={-ih/2} width={iw} height={ih}
+                                        opacity={(c.opacity ?? 100)/100} preserveAspectRatio="none"
+                                        transform={`translate(${x+w/2+(c.offsetX||0)*w} ${y+h/2+(c.offsetY||0)*h}) rotate(${c.rotation||0}) scale(${s})`}/>
+                                    </g> : <rect x={x} y={y} width={w} height={h} fill="#0c0c0c"/>}
+                                    {isThisLayoutSelected && selectedIndex===idx && !selectionDragging && <rect x={x} y={y} width={w} height={h} fill="none" stroke="white" style={{strokeWidth:'var(--layout-grid-stroke, 1px)'}}/>}
+                                  </g>;
+                                })}
+                                {layout.images.some(c=>!c.url) && <path
+                                  d={pageActiveTemplate.rects.map((raw,i)=> {
+                                    if (layout.images[i]?.url) return '';
+                                    const r=resolveLayoutRect(raw,lw,lh,layout.overlaySize);
+                                    return i<2 ? (i===0?`M0 ${lh/2}H${lw}`:'') : `M${r.x*lw} ${r.y*lh}h${r.w*lw}v${r.h*lh}h${-r.w*lw}Z`;
+                                  }).join(' ')} fill="none" stroke="rgba(255,255,255,0.3)" style={{strokeWidth:'var(--layout-grid-stroke, 1px)'}}/>}
+                              </svg>}
                               {(() => {
                                 const layoutTransition = 'none';
                                 const imageTransition = 'none';
@@ -15081,7 +15118,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   const inset = gap / 2;
                                   const areaW = Math.max(1, lw - inset * 2);
                                   const areaH = Math.max(1, lh - inset * 2);
-                                  const rect = resolveLayoutRect(rawRect, areaW, areaH);
+                                  const rect = resolveLayoutRect(rawRect, areaW, areaH, layout.overlaySize);
                                   const leftPx = inset + rect.x * areaW;
                                   const rightPx = inset + (rect.x + rect.w) * areaW;
                                   const topPx = inset + rect.y * areaH;
@@ -15364,7 +15401,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             opacity: (cell.opacity ?? 100) / 100,
                                             pointerEvents: 'none',
                                           };
-                                          return <div className="layout-photo-content" style={{display:'contents'}}>{hasPhotoFx(cell.fx)
+                                          return <div className="layout-photo-content" style={{display:nativeInset ? 'none' : 'contents'}}>{hasPhotoFx(cell.fx)
                                             ? (
                                               <CellFxImage
                                                 url={cell.url}
@@ -15511,14 +15548,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                   dashed border，相邻边会重叠成两个独立合成层；native zoom
                                   时两层取整不同便会闪烁或有一层暂时消失。单一向量层共享
                                   坐标，non-scaling-stroke 则让线宽不随预览放大缩小。 */}
-                              {layout.images.some(cell => !cell || cell.url === '') && (() => {
+                              {!nativeInset && layout.images.some(cell => !cell || cell.url === '') && (() => {
                                 const emptyRects = pageActiveTemplate.rects.flatMap((rawRect, idx) => {
                                   const cell = layout.images[idx];
                                   if (cell && cell.url !== '') return [];
                                   const inset = gap / 2;
                                   const areaW = Math.max(1, lw - inset * 2);
                                   const areaH = Math.max(1, lh - inset * 2);
-                                  const rect = resolveLayoutRect(rawRect, areaW, areaH);
+                                  const rect = resolveLayoutRect(rawRect, areaW, areaH, layout.overlaySize);
                                   const x = inset + rect.x * areaW + gap / 2;
                                   const y = inset + rect.y * areaH + gap / 2;
                                   const w = Math.max(0, rect.w * areaW - gap);
@@ -15557,7 +15594,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     />
                                   )}
                                 </svg>
-                                <LayoutEmptyPromptLayer cells={emptyRects} hidden={pagesMode || pagesVisual} />
+                                {!insetLayout && <LayoutEmptyPromptLayer cells={emptyRects} hidden={pagesMode || pagesVisual} />}
                                 </>
                                 );
                               })()}
@@ -16935,6 +16972,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       </div>
 
                       {/* Gap slider */}
+                      {isInsetLayout(activeLayout) ? <div className="space-y-1.5">
+                        <div className="flex justify-between text-[11px] font-bold text-white/70"><span>大小</span><span className="font-mono text-white">{activeLayout?.overlaySize ?? 50}</span></div>
+                        <input aria-label="大小" type="range" min="0" max="100" step="1" value={activeLayout?.overlaySize ?? 50}
+                          className="premium-slider w-full" onChange={e => patchActiveLayout(l => ({...l, overlaySize: Number(e.target.value)}))} />
+                      </div> : <>
                       <div className="space-y-3">
                         <div className="flex items-center justify-between text-[11px] font-bold text-white/70">
                           <span>無縫拼圖</span>
@@ -16992,6 +17034,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       </div>
                       </>}
                       </div>
+                      </>}
                     </div>
                   )}
                 </div>
