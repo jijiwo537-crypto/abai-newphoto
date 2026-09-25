@@ -3,7 +3,8 @@ import { createPortal, flushSync } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
-import { ClassicVectorScene } from './ClassicVectorScene';
+import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
+import { paintCachedClassicGlow } from './ClassicGlowCache';
 import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessLayout } from './SeamlessLayout';
@@ -2191,38 +2192,36 @@ const LayoutEmptyPromptLayer: React.FC<{
     const scaledColumn = layer?.closest('[data-grid-pages-column]') as HTMLElement | null;
     if (!layer || !scaledColumn) return;
 
-    const columnWidth = scaledColumn.offsetWidth;
-    const screenWidth = scaledColumn.getBoundingClientRect().width;
-    const previewScale = columnWidth > 0 ? screenWidth / columnWidth : 1;
+    // Use the exact shared matrix, not offsetWidth (which rounds CSS pixels).
+    const previewScale = Number(scaledColumn.style.getPropertyValue('--preview-scale')) || 1;
     const k = Math.max(0.0001, previewScale);
     const points = layer.querySelectorAll<HTMLElement>('[data-layout-empty-prompt-anchor]');
 
     points.forEach(point => {
       const prompt = point.querySelector<HTMLElement>('[data-layout-empty-prompt]');
       if (!prompt) return;
-      const cellScreenW = point.offsetWidth * k;
-      const cellScreenH = point.offsetHeight * k;
+      const cellScreenW = parseFloat(point.style.width) * k;
+      const cellScreenH = parseFloat(point.style.height) * k;
       const fit = Math.max(0.18, Math.min(1, cellScreenW / 92, cellScreenH / 60));
       const ui = fit / k;
 
-      /* 不再把一份 9px 字与 16px SVG 先点阵化、再用 transform 放大抵销
-         预览缩放；那会让 WebKit 沿用低解析度合成贴图，预览越小越模糊。
-         直接把 DOM 的实际字号与 SVG 版面建立在需要的解析度，再由外层预览
-         缩回萤幕尺寸。最终视觉大小相同，但每一帧都从向量／字体轮廓栅格化。 */
-      prompt.style.width = `${76 * ui}px`;
-      prompt.style.height = `${44 * ui}px`;
-      prompt.style.transform = 'translate3d(-50%, -50%, 0)';
+      // Keep font metrics fixed. Changing fontSize each pinch frame reshapes and
+      // hints the label at different sizes before the parent scales it back.
+      // The combined ancestor/child transform retains the final screen size.
+      prompt.style.width = '76px';
+      prompt.style.height = '44px';
+      prompt.style.transform = `translate(-50%, -50%) scale(${ui})`;
       const plus = prompt.querySelector<SVGElement>('[data-layout-empty-plus]');
       if (plus) {
-        plus.style.width = `${16 * ui}px`;
-        plus.style.height = `${16 * ui}px`;
-        plus.style.top = `${3 * ui}px`;
+        plus.style.width = '16px';
+        plus.style.height = '16px';
+        plus.style.top = '3px';
       }
       const label = prompt.querySelector<HTMLElement>('[data-layout-empty-label]');
       if (label) {
-        label.style.top = `${28.5 * ui}px`;
-        label.style.fontSize = `${9 * ui}px`;
-        label.style.letterSpacing = `${1.2 * ui}px`;
+        label.style.top = '28.5px';
+        label.style.fontSize = '9px';
+        label.style.letterSpacing = '1.2px';
       }
     });
   }, []);
@@ -2238,11 +2237,13 @@ const LayoutEmptyPromptLayer: React.FC<{
       raf = requestAnimationFrame(() => { raf = 0; place(); });
     };
     place();
-    scaledColumn.addEventListener('abai-preview-transform', schedule);
+    // This event is sent after the final pinch/scroll matrix is committed.
+    // Deferring to another frame briefly shows the previous inverse size.
+    scaledColumn.addEventListener('abai-preview-transform', place);
     window.addEventListener('resize', schedule);
     return () => {
       if (raf) cancelAnimationFrame(raf);
-      scaledColumn.removeEventListener('abai-preview-transform', schedule);
+      scaledColumn.removeEventListener('abai-preview-transform', place);
       window.removeEventListener('resize', schedule);
     };
   }, [cells, hidden, place]);
@@ -2733,8 +2734,8 @@ export const ShapeEditorPanel: React.FC<{
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
           <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
-              {slider('發光', Math.round(glowAmount(layer.shapeGlow as any) * 100), 0, 100,
-                v => onChange({ shapeGlow: v } as any))}
+              {slider('發光', Math.min(100, Math.round(glowAmount(layer.shapeGlow as any) * 200)), 0, 100,
+                v => onChange({ shapeGlow: v / 2 } as any))}
             </div>
             <ColorPick compact label="顏色" value={layer.shapeGlowColor || layer.color || SHAPE_DEFAULT_COLOR}
               colors={GLOW_COLORS} onPick={c => onChange({ shapeGlowColor: c })}
@@ -5209,7 +5210,7 @@ const classicScenePath = (image: FloatingImage, ringReveal = 1) => {
 
 /** Scene painter: fixed local geometry, one scene transform, no DOM measurements. */
 const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
-  motionFrame: ObjectMotionFrame | null | undefined, backingScale: number) => {
+  motionFrame: ObjectMotionFrame | null | undefined, backingScale: number, cacheGlow = false) => {
   const drawW = image.width, drawH = image.height, contentScale = 1;
   const usesUnitMotion = image.text !== undefined && (motionFrame?.seq !== undefined
     || (image.mo?.idle === 'symbol-breathe2' && motionFrame?.idleT !== undefined));
@@ -5255,6 +5256,16 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         ctx.setLineDash(dash > 0 ? [lw * (0.6 + dash / 100 * 4), lw * (0.6 + dash / 100 * 4) * 0.85] : []);
         const gAmt = glowAmount(image.shapeGlow as any);
         if (gAmt > 0) {
+          const blurs = shapeGlowBlurs(image.width,image.height).map(r=>r*gAmt);
+          const glowKey = [image.shape,image.width,image.height,image.shapeTextureBaseW,image.shapeTextureBaseH,
+            lw,dash,image.shapeGlowColor||color,...blurs].join('|');
+          const cached = cacheGlow && image.shape === 'grid-orbits' && !solid
+            && paintCachedClassicGlow(ctx,path,glowKey,drawW,drawH,lw,ctx.getLineDash(),image.shapeGlowColor||color,blurs);
+          if (cached) {
+            // Preserve the three source-stroke passes from the shadow renderer.
+            // These remain actual vector strokes, including during object pinch.
+            for (let i=0;i<3;i++) ctx.stroke(path);
+          } else {
           ctx.save();
           ctx.shadowColor = image.shapeGlowColor || color;
           for (const r of shapeGlowBlurs(image.width, image.height)) {
@@ -5266,6 +5277,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             } else if (solid) ctx.fill(path); else ctx.stroke(path);
           }
           ctx.restore();
+          }
         }
         if (outer > 0) {
           ctx.save();
@@ -5411,11 +5423,11 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
 
 /** Shared local animation painter for the preview and exported frames. */
 const paintClassicAnimatedVector = (ctx: CanvasRenderingContext2D, image: FloatingImage,
-  motionFrame: ObjectMotionFrame | null | undefined, density: number) => {
+  motionFrame: ObjectMotionFrame | null | undefined, density: number, cacheGlow = false) => {
   const phase = motionFrame?.gridWave;
   const mix = motionFrame?.waveMix ?? 1;
   if (phase === undefined || mix <= 1e-5) {
-    paintClassicSceneVector(ctx, image, motionFrame, density);
+    paintClassicSceneVector(ctx, image, motionFrame, density, cacheGlow);
     return;
   }
   const amp = Math.min(10, image.height * .065) * Math.max(.15, (image.mo?.amp ?? 50) / 100) * mix;
@@ -6600,7 +6612,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       z: (dragShift?.live ? 450100 : 60) + stackIndex * 2,
       opacity: () => ((image.opacity ?? 100) / 100)
         * ((sceneMotionFrame ? sceneMotionFrame(image, stackIndex) : motionFrame)?.a ?? 1),
-      animateUntil: shift.at + 220,
+      // Sorting is driven by the page's shared frame clock, not a second loop.
+      animateUntil: sortPage ? 0 : shift.at + 220,
       paint: (ctx, density) => {
         let photoClip: { x: number; y: number; width: number; height: number } | null = null;
         // Read the shared clock at paint time, not a React render from an
@@ -6614,10 +6627,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         if (sortPage) {
           // Sorting ink follows the actual page compositor, not a second easing
           // clock. In particular, release must not start a new cubic-out tween.
-          const page = pagesContainerRef.current?.querySelectorAll<HTMLElement>(
-            ':scope > [data-page-id]')[sortPage.index];
-          const transform = page ? getComputedStyle(page).transform : 'none';
-          const matrix = new DOMMatrixReadOnly(transform === 'none' ? undefined : transform);
+          const matrix = scene.pageTransform(sortPage.index);
+          if (!matrix) return;
           shiftS = matrix.a;
           const cx = (sortPage.index + .5) * sortPage.width;
           const cy = sortPage.height / 2;
@@ -6675,7 +6686,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               edges: image.rotation % 360 === 0 && still
                 ? [atX(cx - hw), atX(cx + hw), Math.abs(cy - hh) <= tolerance, Math.abs(cy + hh - canvasHeight) <= tolerance]
                 : [false, false, false, false],
-              clip: photoClip, dim: isSwapTarget ? .45 : isSwapSource ? .3 : 0 })) return;
+              // Edge-texel coverage must never enlarge the visible canvas.
+              // Clip in the same SVG coordinate system as the photograph,
+              // rather than relying on a separately rounded HTML mask.
+              clip: photoClip || (!sortPage && stripWidth > 0 && canvasHeight
+                ? { x: 0, y: 0, width: stripWidth, height: canvasHeight } : null),
+              dim: isSwapTarget ? .45 : isSwapSource ? .3 : 0 })) return;
             if (image.imgRadius) {
               const radius = cornerR(image.imgRadius, image.width, image.height);
               roundRectPath(ctx, -image.width / 2, -image.height / 2,
@@ -6708,7 +6724,17 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               ctx.fillRect(-image.width / 2, -image.height / 2, image.width, image.height);
             }
           }
-        } else paintClassicAnimatedVector(ctx, image, motionFrame, density * Math.abs(scale));
+        } else {
+          paintClassicAnimatedVector(ctx, image, motionFrame, density * Math.abs(scale), !liveTuning && !motionFrame);
+          if (image.shape === 'grid-orbits' && !motionFrame) {
+            const lineBase=image.shapeLineBase || Math.max(image.width,image.height);
+            const localPad=lineBase / 160 * (12 + 4 * Math.max(0,image.shapeStrokeW || 0));
+            const glowPad=3 * Math.max(...shapeGlowBlurs(image.width,image.height))
+              * glowAmount(image.shapeGlow as any) * density * Math.abs(scale);
+            return sceneRectBounds(ctx,-image.width/2-localPad,-image.height/2-localPad,
+              image.width+localPad*2,image.height+localPad*2,glowPad+3);
+          }
+        }
       },
     });
   });
@@ -6866,8 +6892,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         }
         if (!image.shape || !shapeStroke) return { x: gap, y: gap };
         // shapeStroke 是 viewBox 單位，乘回 scale 才是外框那一層的 px
-        const lwPx = shapeStroke.lw * sc;
-        const outPx = shapeStroke.outer * sc;
+        // The scene paints the original path with object scale, whereas the
+        // legacy DOM stroke descriptor divides by renderScale. Undo that
+        // compensation when measuring actual scene ink (not the UI stroke).
+        const lwPx = shapeStroke.lw * renderScale * sc;
+        const outPx = shapeStroke.outer * renderScale * sc;
         const half = (image.shapeFilled && image.shape !== 'line') ? 0 : lwPx / 2;
         const pad = half + outPx + gap;
         return { x: pad, y: pad };
@@ -7095,6 +7124,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       className="floating-image-wrapper group/floating"
       style={{
         ...wrapGeo,
+        // Sorting uses the scene's shared page matrix for visible vector ink.
+        // Its normal-edit hit target is inactive until sorting finishes; keeping
+        // it hidden lets the page move without rebuilding every vector's editor.
+        visibility: scene && sortPage && isCanvasVector ? 'hidden' : undefined,
         ...(sortPage ? { clipPath: (() => {
           const rad = -image.rotation * Math.PI / 180;
           const cx = image.x + image.width / 2, cy = image.y + image.height / 2;
@@ -7466,6 +7499,14 @@ const sameDragShift = (
   b: FloatingImageComponentProps['dragShift'],
 ) => a === b || (!!a && !!b && a.tx === b.tx && a.ty === b.ty && a.s === b.s && a.live === b.live);
 
+const sameSortSceneShift = (a: FloatingImageComponentProps, b: FloatingImageComponentProps) =>
+  !!a.scene && a.scene === b.scene && !!a.sortPage && !!b.sortPage
+  && (!!a.image.shape || a.image.text !== undefined)
+  && !a.isSelected && !b.isSelected && !a.isTextEditing && !b.isTextEditing
+  // Lift/drop still changes stacking order. Position and scale are sampled
+  // directly from the page by ClassicVectorScene on every parent commit.
+  && !!a.dragShift?.live === !!b.dragShift?.live;
+
 const FloatingImageComponent = React.memo(FloatingImageComponentBase, (a, b) =>
   a.image === b.image
   && a.isSelected === b.isSelected
@@ -7489,7 +7530,7 @@ const FloatingImageComponent = React.memo(FloatingImageComponentBase, (a, b) =>
   && a.hideChrome === b.hideChrome
   && a.lutRevision === b.lutRevision
   && a.touchMode === b.touchMode
-  && sameDragShift(a.dragShift, b.dragShift)
+  && (sameSortSceneShift(a, b) || sameDragShift(a.dragShift, b.dragShift))
   && a.sortPage?.index === b.sortPage?.index
   && a.sortPage?.width === b.sortPage?.width
   && a.sortPage?.height === b.sortPage?.height
@@ -10310,14 +10351,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
     vectorScene.set('__page-seams', {
       z: 400000,
-      animateUntil: performance.now() + 240,
+      // Only revealed seams need autonomous fade frames. Page motion already
+      // commits the complete scene synchronously; a perpetual 240 ms timer
+      // rendered it a second time during every drag/pinch frame.
+      animateUntil: () => pagesMode
+        ? Math.max(0, ...sortSeamVisibleSince.current.values()) + 160 : 0,
       paint: ctx => {
         const host = pagesContainerRef.current;
         if (!host || pages.length < 2) return;
-        const base = host.getBoundingClientRect();
         const k = Math.max(.0001, kRef.current || 1);
         const dpr = Math.max(1, window.devicePixelRatio || 1);
         const width = Math.round(1.3 * dpr) / dpr / k;
+        let bounds: SceneBounds = {x:0,y:0,width:0,height:0};
+        const seam = (x: number,y: number,h: number) => {
+          ctx.fillRect(x,y,width,h);
+          bounds=unionSceneBounds(bounds,sceneRectBounds(ctx,x,y,width,h));
+        };
         ctx.fillStyle = shadeHex(WORKSPACE_BG, PAGE_SEAM_INK);
         if (pagesMode) {
           const poses = pages.map((_, index) => {
@@ -10332,10 +10381,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             const t = Math.min(1, (performance.now() - since.get(slot)!) / 160);
             ctx.globalAlpha = t * t * (3 - 2 * t);
             // Slots do not move. Moving pages never carry a separator with them.
-            ctx.fillRect(slot * previewW - width / 2, 0, width, previewH);
+            seam(slot * previewW - width / 2, 0, previewH);
           }
           ctx.globalAlpha = 1;
-          return;
+          return bounds;
         }
         // Normal-mode seams are already visible. Preserve that visibility when
         // entering sorting; only seams actually hidden by a drag should fade in.
@@ -10344,13 +10393,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         }
         // Read the same rendered page edge during reordering; no second CSS
         // transform, inverse scale or independent compositor animation.
-        const nodes = host.querySelectorAll<HTMLElement>(':scope > [data-page-id]');
-        nodes.forEach((node, i) => {
+        vectorScene.pageBounds().forEach((r, i) => {
           if (!i) return;
-          const r = node.getBoundingClientRect();
-          ctx.fillRect((r.left - base.left) / k - width / 2, (r.top - base.top) / k, width, r.height / k);
+          seam(r.x - width / 2, r.y, r.height);
         });
         ctx.globalAlpha = 1;
+        return bounds;
       },
     });
     vectorScene.flush();
@@ -15069,6 +15117,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               const lh = lbox.h * ls;
                               const insetLayout = isInsetLayout(layout);
                               const nativeInset = insetLayout && layout.images.every(c => !hasPhotoFx(c.fx));
+                              const nativeLayout = !insetLayout && !layout.seamless
+                                && layout.images.every(c => !hasPhotoFx(c.fx));
                               const gap = layout.seamless || insetLayout ? 0 : layout.gap * ls;
                               const radius = layout.seamless || insetLayout ? 0 : layout.radius * ls;
                               const lLeft = (previewW - lw) / 2 + (layout.t?.x || 0);
@@ -15117,6 +15167,37 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 onTouchCancel={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                               >
                               {layout.seamless && !insetLayout && <SeamlessLayout cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
+                              {nativeLayout && <svg data-layout-photo-layer="1" width={lw} height={lh}
+                                className="absolute inset-0 pointer-events-none" style={{zIndex: 0, overflow: 'visible'}}>
+                                {pageActiveTemplate.rects.map((raw, idx) => {
+                                  const c = layout.images[idx];
+                                  if (!c?.url) return null;
+                                  // All cell clips and source images share one SVG user space.
+                                  // Separate HTML percent centers/padding/transforms otherwise
+                                  // round independently while the ancestor preview is scaled.
+                                  const inset = gap / 2;
+                                  const aw = Math.max(1, lw - gap), ah = Math.max(1, lh - gap);
+                                  const r = resolveLayoutRect(raw, aw, ah, layout.overlaySize);
+                                  const x = inset + r.x * aw, y = inset + r.y * ah;
+                                  const w = Math.max(1, r.w * aw), h = Math.max(1, r.h * ah);
+                                  const cw = Math.max(0, w - gap), ch = Math.max(0, h - gap);
+                                  const cr = c.imgRadius ? cornerR(c.imgRadius, cw, ch) : Math.min(radius, cw / 2, ch / 2);
+                                  const iw = c.naturalWidth || 800, ih = c.naturalHeight || 600;
+                                  const turn = !!(c.rotation % 180);
+                                  const s = Math.max(w / (turn ? ih : iw), h / (turn ? iw : ih)) * 1.02 * c.zoom;
+                                  const clip = `layout-photo-${layout.id}-${idx}`;
+                                  return <g key={c.id}>
+                                    <defs><clipPath id={clip} clipPathUnits="userSpaceOnUse">
+                                      <rect x={x + gap / 2} y={y + gap / 2} width={cw} height={ch} rx={cr}/>
+                                    </clipPath></defs>
+                                    <g clipPath={`url(#${clip})`}>
+                                      <image href={c.url} x={-iw / 2} y={-ih / 2} width={iw} height={ih}
+                                        opacity={(c.opacity ?? 100) / 100} preserveAspectRatio="none"
+                                        transform={`translate(${x + w / 2 + c.offsetX * w} ${y + h / 2 + c.offsetY * h}) rotate(${c.rotation}) scale(${s})`}/>
+                                    </g>
+                                  </g>;
+                                })}
+                              </svg>}
                               {nativeInset && <svg data-inset-photo-layer="1" width={lw} height={lh}
                                 className="absolute inset-0 pointer-events-none" style={{zIndex: 15, overflow: 'visible'}}>
                                 {pageActiveTemplate.rects.map((raw, idx) => {
@@ -15448,7 +15529,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             opacity: (cell.opacity ?? 100) / 100,
                                             pointerEvents: 'none',
                                           };
-                                          return <div className="layout-photo-content" style={{display:nativeInset ? 'none' : 'contents'}}>{hasPhotoFx(cell.fx)
+                                          return <div className="layout-photo-content" style={{display:nativeInset || nativeLayout ? 'none' : 'contents'}}>{hasPhotoFx(cell.fx)
                                             ? (
                                               <CellFxImage
                                                 url={cell.url}

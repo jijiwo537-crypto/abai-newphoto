@@ -9235,11 +9235,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                               不會有欄位突然冒出來閃一下。 */}
                           <div className="flex items-center gap-3 px-2 order-1 w-full">
                             <div className="flex-1 min-w-0">
-                              {shapeSlider('發光', Math.round(glowAmount(sel.glow) * 100), 0, 100,
+                              {shapeSlider('發光', Math.min(100, Math.round(glowAmount(sel.glow) * 200)), 0, 100,
                                 (v: number) => patch(v > 0 && !sel.glowInit
                                   /* 第一次拉起來：發光顏色預設用這個圖形自己的顏色 */
-                                  ? { glow: v, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
-                                  : { glow: v }))}
+                                  ? { glow: v / 2, glowColor: sel.color || SHAPE_DEFAULT_COLOR, glowInit: true }
+                                  : { glow: v / 2 }))}
                             </div>
                             <ColorPick compact label="顏色" value={sel.glowColor || sel.color || SHAPE_DEFAULT_COLOR}
                               colors={GLOW_SWATCH_COLORS} onPick={(c: string) => patch({ glowColor: c })}

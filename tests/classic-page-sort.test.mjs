@@ -6,7 +6,8 @@ const source = readFileSync(new URL('../components/GridLayoutTool.tsx', import.m
 
 test('page sorting vector ink uses the page CSS matrix, not its own easing clock', () => {
   const paint = source.slice(source.indexOf('if (sortPage) {'), source.indexOf('const scale = image.scale * shiftS'));
-  assert.match(paint, /getComputedStyle\(page\)\.transform/);
+  assert.match(paint, /scene\.pageTransform\(sortPage\.index\)/);
+  assert.doesNotMatch(paint, /getComputedStyle|querySelectorAll/);
   assert.match(paint, /shiftS = matrix\.a/);
   assert.match(paint, /shiftX = matrix\.e/);
   assert.match(paint, /ctx\.clip\(\)/);
@@ -58,7 +59,8 @@ test('displaced pages and object wrappers consume one animation pose without CSS
 });
 
 test('sorting seams use fixed slots, not moving page edges', () => {
-  assert.match(source, /ctx.fillRect\(slot \* previewW - width \/ 2, 0, width, previewH\)/);
+  assert.match(source, /seam\(slot \* previewW - width \/ 2, 0, previewH\)/);
+  assert.match(source, /ctx.fillRect\(x,y,width,h\)/);
   assert.match(source, /pageDragIdx \?\? dragSettle\?\.page \?\? null/);
 });
 

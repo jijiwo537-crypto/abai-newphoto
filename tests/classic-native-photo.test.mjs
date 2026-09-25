@@ -5,12 +5,12 @@ import { transform } from 'esbuild';
 const code = fs.readFileSync(new URL('../components/ClassicPhotoLayer.ts', import.meta.url),'utf8');
 const compiled = await transform(code,{loader:'ts',format:'esm'});
 const {ClassicPhotoLayer}=await import(`data:text/javascript;base64,${Buffer.from(compiled.code).toString('base64')}`);
-let crops=0;
+let crops=0, mutations=0;
 class Node {
   style={};dataset={};children=[];attrs=new Map();parentElement=null;
   append(...nodes){for(const n of nodes){n.parentElement=this;this.children.push(n)}}
-  setAttribute(k,v){this.attrs.set(k,String(v))}getAttribute(k){return this.attrs.get(k)??null}
-  removeAttribute(k){this.attrs.delete(k)}remove(){}
+  setAttribute(k,v){mutations++;this.attrs.set(k,String(v))}getAttribute(k){return this.attrs.get(k)??null}
+  removeAttribute(k){mutations++;this.attrs.delete(k)}remove(){}
   getContext(){return {drawImage(){crops++}}}toDataURL(){return 'data:image/png;base64,edge'}
 }
 globalThis.document={createElementNS:()=>new Node(),createElement:()=>new Node()};
@@ -45,4 +45,17 @@ test('native photos preserve stacking barriers and bypass 2D photo painting',()=
  assert.match(tool,/if \(pages.length < 2\) \{[\s\S]*?vectorScene.remove\('__page-seams'\);[\s\S]*?vectorScene.flush\(\);[\s\S]*?return;/);
  assert.ok(tool.includes('if (!anim) { raf = requestAnimationFrame(tick); return; }'));
  assert.ok(tool.includes('nativePhoto: isScenePhoto ? image.id : undefined'));
+});
+test('unchanged rounded and canvas clips do not invalidate SVG on every frame',()=>{
+ const column=new Node();column.style={width:'900px',height:'400px'};const host=new Node();column.append(host);
+ const layer=new ClassicPhotoLayer(host), matrix={a:1,b:0,c:0,d:1,e:150,f:200};
+ const photo={source:{src:'blob:stable',naturalWidth:300,naturalHeight:400},width:300,height:400,radius:20,pad:1,edges:[true,true,true,true],clip:{x:0,y:0,width:900,height:400},dim:0};
+ layer.update(matrix,photo);mutations=0;
+ for(let i=0;i<240;i++)layer.update(matrix,photo);
+ assert.equal(mutations,0,'stable clips and image geometry produce no attribute writes');
+ layer.update({...matrix,e:151},photo);
+ assert.equal(mutations,1,'movement changes only the shared transform');
+ layer.update(matrix,{...photo,radius:0,clip:null});
+ assert.equal(layer.root.children[1].getAttribute('clip-path'),null);
+ assert.equal(layer.root.children[1].children[0].getAttribute('clip-path'),null);
 });

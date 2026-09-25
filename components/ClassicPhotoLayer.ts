@@ -63,11 +63,11 @@ export class ClassicPhotoLayer {
     const column = this.root.parentElement?.parentElement;
     attr(this.root, { width: parseFloat(column?.style.width || '1'), height: parseFloat(column?.style.height || '1') });
     attr(this.content, { transform: `matrix(${matrix.a} ${matrix.b} ${matrix.c} ${matrix.d} ${matrix.e} ${matrix.f})` });
-    if (clip) { attr(this.clipRect, clip); this.clipped.setAttribute('clip-path', `url(#${this.clipId})`); }
-    else this.clipped.removeAttribute('clip-path');
+    if (clip) { attr(this.clipRect, clip); attr(this.clipped, { 'clip-path': `url(#${this.clipId})` }); }
+    else if (this.clipped.getAttribute('clip-path') !== null) this.clipped.removeAttribute('clip-path');
     attr(this.roundRect, { x: -w / 2, y: -h / 2, width: w, height: h, rx: radius });
-    if (radius) this.content.setAttribute('clip-path', `url(#${this.roundId})`);
-    else this.content.removeAttribute('clip-path');
+    if (radius) attr(this.content, { 'clip-path': `url(#${this.roundId})` });
+    else if (this.content.getAttribute('clip-path') !== null) this.content.removeAttribute('clip-path');
     attr(this.image, { x: -w / 2, y: -h / 2, width: w, height: h });
     attr(this.shade, { x: -w / 2, y: -h / 2, width: w, height: h, opacity: dim });
     const sw = source.naturalWidth, sh = source.naturalHeight;
@@ -85,7 +85,8 @@ export class ClassicPhotoLayer {
       [-w / 2 - leftPad, h / 2 - pad, w + leftPad + rightPad, pad * 2, `0 0 ${sw} 1`],
     ];
     this.strips.forEach((strip, i) => {
-      strip.style.display = edges[i] && !radius ? '' : 'none';
+      const display = edges[i] && !radius ? '' : 'none';
+      if (strip.style.display !== display) strip.style.display = display;
       const [x,y,width,height,viewBox] = boxes[i]; attr(strip, { x,y,width,height,viewBox });
       attr(this.images[i], { width: i < 2 ? 1 : sw, height: i < 2 ? sh : 1 });
     });
