@@ -5450,7 +5450,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            的算法（跟著現在的大小走），行為不會突然變。 */
         const unit = ((o as any).lineBase || Math.max(o.w, o.h)) * s / 160;
         const lw = GRID_SHAPE_KINDS.has(o.kind)
-          ? 1.5 * s * Math.max(1, Math.min(3, (o.lineW ?? 6) / 6))
+          ? 1.5 * unit * Math.max(1, Math.min(3, (o.lineW ?? 6) / 6))
           : Math.max(0.4, (o.lineW ?? 6) * unit);
         const col = o.color || SHAPE_DEFAULT_COLOR;
         const solid = o.filled && o.kind !== 'line';
@@ -6308,7 +6308,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* 有造型的圖片仍沿著造型本身描框；一般矩形框與底圖虛線框改由畫布上方
        的獨立 SVG overlay 顯示。overlay 不受畫布裁切，因此靠著黑色遮罩或
        畫布邊緣時也不會被吃掉。這裡只留下不能用矩形取代的造型外框。 */
-    if (isMain && selectedObj && !hideChromeRef.current && !objDragging && !objPinching
+    if (isMain && !motionLockRef.current && selectedObj && !hideChromeRef.current && !objDragging && !objPinching
         && !objStretching && !tuningEdge && !animRef.current) {
       const o = objects.find(z => z.id === selectedObj);
       if (o && shapeSel === o.id && isImgShaped(o.imgShape)) {
@@ -6380,7 +6380,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
        改用 animRef 擋掉動畫頁：那邊本來就鎖住所有互動，
        虛線框留在畫面上只會被錄進預覽裡。 */
-    if (isMain && !hideChromeRef.current && selectedTarget && animRef.current) {
+    if (isMain && !motionLockRef.current && !hideChromeRef.current && selectedTarget && animRef.current) {
       const selectedHole = holes.find(hx => hx.id === selectedTarget);
       if (selectedHole) {
         const h = selectedHole;
@@ -8209,7 +8209,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               {/* 選中框是純介面，不再烘進畫布。SVG 疊在所有畫布內容之上，
                   overflow:visible 讓線條即使跨到旁邊的黑色遮罩或畫布外側也完整顯示；
                   vector-effect 則確保預覽放大縮小後仍維持相同粗細。 */}
-              {selectedPattern && !animRef.current && !composeState && (() => {
+              {activeTab !== 'motion' && selectedPattern && !animRef.current && !composeState && (() => {
                 const off=getLayoutOffsets(); if(!off) return null;
                 const h=selectedPattern, size=getHoleSize(h);
                 const px=off.cw/Math.max(1,(baseCss?.w || off.cw)*displayScale);
@@ -8231,7 +8231,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </g>
                 </svg>;
               })()}
-              {!composeState && (() => {
+              {activeTab !== 'motion' && !composeState && (() => {
                 const off = getLayoutOffsets();
                 if (!off) return null;
                 const o = selectedObj && !objDragging && !objPinching && !objStretching && !tuningEdge
@@ -8373,7 +8373,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             位置是用畫布的螢幕矩形換算的（畫布內部座標 → CSS 座標）。 */}
         {/* 構圖那一頁是全螢幕的，這排白色鍵不能浮在它上面 */}
         {/* 對齊線亮著、或正在拖形狀滑桿時，這排鍵也要一起讓開 */}
-        {imageState && selectedObj && !objDragging && !composeState && !tuningEdge && !objPinching && (() => {
+        {activeTab !== 'motion' && imageState && selectedObj && !objDragging && !composeState && !tuningEdge && !objPinching && (() => {
           const o = objects.find(z => z.id === selectedObj);
           const cvsEl = canvasRef.current;
           if (!o || !cvsEl) return null;

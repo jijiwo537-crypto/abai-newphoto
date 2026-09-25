@@ -191,9 +191,9 @@ interface CellRect {
 }
 
 // Keep inset photos genuinely square, including portrait/landscape layouts.
-const resolveLayoutRect = (rect: CellRect, width: number, height: number, size = 50): CellRect => {
+const resolveLayoutRect = (rect: CellRect, width: number, height: number, size = 80): CellRect => {
   if (!rect.squareOverlay) return rect;
-  const side = Math.min(width, height) * .256 * (.5 + Math.max(0, Math.min(100, size)) / 100);
+  const side = Math.min(width, height) * .256 * (.5 + Math.max(50, Math.min(100, size)) / 100);
   const w = side / width, h = side / height;
   return {...rect, x: rect.x + (rect.w - w) / 2, y: rect.y + (rect.h - h) / 2, w, h};
 };
@@ -1934,7 +1934,9 @@ export const SmoothRange: React.FC<{
     draggingRef.current = false;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
-    const next = Number(inputRef.current?.value ?? pendingRef.current);
+    // Parent pointer-up capture may re-render the old controlled value before
+    // this handler runs. Commit the last actual input sample, not that DOM value.
+    const next = pendingRef.current;
     pendingRef.current = next;
     onValueRef.current(next);
   };
@@ -1944,7 +1946,7 @@ export const SmoothRange: React.FC<{
       type="range"
       min={min} max={max} step={step}
       defaultValue={value}
-      onPointerDown={() => { draggingRef.current = true; }}
+      onPointerDown={() => { draggingRef.current = true; pendingRef.current = Number(inputRef.current?.value ?? value); }}
       onInput={e => queue(Number((e.currentTarget as HTMLInputElement).value))}
       onPointerUp={finish}
       onPointerCancel={finish}
@@ -5168,7 +5170,9 @@ const useVideoFxGl = (
       } catch { /* 收不掉就算了 */ }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [on, fxKey, lutRevision, boxW, boxH, dpr, videoRef]);
+  // The frame loop reads its mounted host size itself. Object pinch only changes
+  // geometry; restarting the decoder callback on every scale sample drops frames.
+  }, [on, fxKey, lutRevision, dpr, videoRef]);
   return { glCanvas: on ? glCanvas : null, glLive, glDead };
 };
 
@@ -5238,7 +5242,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         const solid = !!image.shapeFilled && image.shape !== 'line';
         const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
         const lw = GRID_SHAPE_KINDS.has(image.shape)
-          ? 1.5 * Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6))
+          ? 1.5 * (lineBase / 160) * Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6))
           : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160));
         const outer = Math.min(8, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160);
         ctx.lineJoin = image.shape === 'line' ? 'round' : 'miter';
@@ -6424,7 +6428,9 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      圖形把 scale 掛在外層 wrapper：父層預覽倍率或動畫倍率一變，WebKit 會
      分別量 wrapper transform 與選中框實際尺寸，兩者便會在相鄰實體像素間
      來回取整。創意拼圖只有一份最終外框；經典拼圖現在也遵守同一契約。 */
-  const stableVectorTransform = false;
+  // Keep the decoder's CSS box fixed throughout an object pinch. Only its
+  // transform changes, just as the native photo layer's geometry does.
+  const stableVectorTransform = !!image.isVideo;
   const wrapGeo: React.CSSProperties = {
     position: 'absolute',
     // 大小直接寫進版面而不是靠 transform: scale()。用 scale 放大時瀏覽器會沿用
@@ -6488,7 +6494,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   /* 圖形本體用固定 backing store + scale() 才不會重建畫布；操作 UI 不能跟著
      scale，否則選中框、控制條與白色藥丸都會一起變粗變大。外框因此使用等價的
      已縮放幾何，尺寸跟圖形完全重合，但 UI 自己維持螢幕上的固定大小。 */
-  const chromeWrapGeo: React.CSSProperties = (image.shape || image.text !== undefined) ? (() => {
+  const chromeWrapGeo: React.CSSProperties = (image.shape || image.text !== undefined || image.isVideo) ? (() => {
     const cx = image.x + image.width / 2;
     const cy = image.y + image.height / 2;
     const w = boxW;
@@ -6522,7 +6528,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     const s = renderScale;
     const lineBase = image.shapeLineBase || Math.max(image.width, image.height);
     const lw = GRID_SHAPE_KINDS.has(image.shape)
-      ? 1.5 / s * Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6))
+      ? 1.5 * (lineBase / 160) / s * Math.max(1, Math.min(3, (image.shapeLineW ?? 6) / 6))
       : Math.max(0.4, (image.shapeLineW ?? 6) * (lineBase / 160)) / s;
     const dash = image.shapeDash || 0;
     const seg = lw * (0.6 + (dash / 100) * 4);
@@ -6664,8 +6670,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               // two screen pixels of source-edge coverage, including while the
               // compositor rounds the background and SVG clip independently.
               pad: coverage,
-              edgePads: [Math.abs(cx-hw)<=tolerance ? coverage : 1/Math.max(.001, Math.abs(scale)),
-                Math.abs(cx+hw-stripWidth)<=tolerance ? coverage : 1/Math.max(.001, Math.abs(scale))],
+              edgePads: [Math.abs(cx-hw)<=tolerance ? coverage : 0,
+                Math.abs(cx+hw-stripWidth)<=tolerance ? coverage : 0],
               edges: image.rotation % 360 === 0 && still
                 ? [atX(cx - hw), atX(cx + hw), Math.abs(cy - hh) <= tolerance, Math.abs(cy + hh - canvasHeight) <= tolerance]
                 : [false, false, false, false],
@@ -7349,8 +7355,8 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
            **版面與變換兩者共用同一份**，所以套不套濾鏡都不會跑位。 */
         <VideoLayer
           image={image}
-          boxW={boxW}
-          boxH={boxH}
+          boxW={image.width}
+          boxH={image.height}
           videoRef={glVideoRef}
           onReady={() => setVidReady(true)}
           hidden={glLive}
@@ -7898,7 +7904,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const fit = SHAPE_FIT[movingItem.shape] || [0, 0, 1, 1];
       const lineBase = movingItem.shapeLineBase || Math.max(imgWidth, imgHeight);
       const lw = GRID_SHAPE_KINDS.has(movingItem.shape)
-        ? 1.5 * Math.max(1, Math.min(3, (movingItem.shapeLineW ?? 6) / 6))
+        ? 1.5 * (lineBase / 160) * Math.max(1, Math.min(3, (movingItem.shapeLineW ?? 6) / 6))
         : Math.max(0.4, (movingItem.shapeLineW ?? 6) * (lineBase / 160));
       const outer = Math.min(8, Math.max(0, movingItem.shapeStrokeW || 0)) * (lineBase / 160);
       const inkPad = ((movingItem.shapeFilled && movingItem.shape !== 'line') ? 0 : lw / 2) + outer;
@@ -9498,9 +9504,18 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const sceneMotionFrame = useCallback((item: FloatingImage, index: number) =>
     hasConfiguredMotion(item) ? frameForItem(item, index, motionClockRef.current) : null,
   [hasConfiguredMotion, frameForItem]);
-  const hasDomMotion = useMemo(() => floatingImages.some(item =>
-    !item.shape && item.text === undefined && hasConfiguredMotion(item)),
-  [floatingImages, hasConfiguredMotion]);
+  const needsDomMotion = useCallback((item: FloatingImage) => {
+    if (item.shape || item.text !== undefined || !hasConfiguredMotion(item)) return false;
+    const cfg = classicObjectMotionOf(item.mo);
+    // Unfiltered photographs already animate directly in ClassicVectorScene.
+    // Re-rendering the entire editor for these frames duplicates that work and
+    // makes a page containing video + animated photos expensive to pan.
+    return cfg.in === 'grid-wave' || cfg.idle === 'grid-wave'
+      || !!item.feather || !!item.imgGlow || !!item.imgStrokeWidth
+      || isImgShaped(item.imgShape) || hasPhotoFx(item.fx);
+  }, [hasConfiguredMotion]);
+  const hasDomMotion = useMemo(() => floatingImages.some(needsDomMotion),
+    [floatingImages, needsDomMotion]);
   const [pageVideoDuration, setPageVideoDuration] = useState(0);
   useEffect(() => {
     let alive = true;
@@ -9804,22 +9819,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
       col.style.setProperty('--layout-grid-stroke', `${1 / Math.max(0.0001, k)}px`);
       const sub = stripSubpixelXRef.current;
-      /* iOS 的 transform:scale 會先把整頁以手勢開始時的尺寸光柵化，再把該
-         貼圖放大／縮小；因此所有物件都會隨預覽倍率忽清忽糊。WebKit 支援
-         原生 CSS zoom 時改用真正的顯示倍率，照片、影片、SVG、文字與 Canvas
-         都會按當前倍率重新取樣。只有不支援 zoom 的瀏覽器才退回 transform。 */
-      const nativeZoom = typeof CSS !== 'undefined' && CSS.supports?.('zoom', '2');
-      if (nativeZoom) {
-        (col.style as any).zoom = String(k);
-        col.style.transform = Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0)` : '';
-        col.style.transformOrigin = '0 0';
-        col.style.willChange = '';
-      } else {
-        (col.style as any).zoom = '';
-        col.style.transform = `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * k}px, 0, 0) ` : ''}scale(${k})`;
-        col.style.transformOrigin = '0 0';
-        col.style.willChange = liveTransform ? 'transform' : '';
-      }
+      // CSS zoom relayouts every descendant, rounding each media box separately.
+      // One affine transform keeps backgrounds, native SVG photos and video on
+      // the same geometry. ClassicVectorScene still paints at display density;
+      // do not promote/cache the whole strip as a low-resolution bitmap.
+      (col.style as any).zoom = '';
+      col.style.transform = `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * k}px, 0, 0) ` : ''}scale(${k})`;
+      col.style.transformOrigin = '0 0';
+      col.style.willChange = '';
       /* 固定在萤幕坐标层的空格提示收到通知后才量中心点。
          事件只排一个 rAF，不在手势处理内同步读取版面。 */
       if (!liveTransform) col.dispatchEvent(new Event('abai-preview-transform'));
@@ -11983,22 +11990,26 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const handleLayoutCornerDown = (e: React.PointerEvent, corner: 'tl' | 'tr' | 'bl' | 'br') => {
     e.stopPropagation();
     const wrapper = (e.currentTarget as HTMLElement).closest('[data-layout-wrapper]') as HTMLElement | null;
-    if (!wrapper) return;
+    if (!wrapper || !activeLayout) return;
     const r = wrapper.getBoundingClientRect();
-    // 拖角球＝單純等比縮放，跟在空白畫布上雙指縮放完全一樣：
-    // 以「佈局中心」為原點，只看手指離中心多遠，位置完全不動。
-    const pivotX = r.left + r.width / 2;
-    const pivotY = r.top + r.height / 2;
+    const base = activeLayout.t;
+    const box = layoutBox(activeLayout, previewW, previewH);
+    const angle = (base.rot || 0) * Math.PI / 180;
+    const dx = (corner.endsWith('l') ? -1 : 1) * box.w * base.scale / 2;
+    const dy = (corner.startsWith('t') ? -1 : 1) * box.h * base.scale / 2;
+    const ox = dx * Math.cos(angle) - dy * Math.sin(angle);
+    const oy = dx * Math.sin(angle) + dy * Math.cos(angle);
+    const pivotX = r.left + r.width / 2 - ox * kRef.current;
+    const pivotY = r.top + r.height / 2 - oy * kRef.current;
     const dist = Math.hypot(e.clientX - pivotX, e.clientY - pivotY);
     if (dist < 1) return;
-    const base = activeLayout?.t || { x: 0, y: 0, scale: 1 };
     try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch (err) {}
     layoutCornerRef.current = {
       pointerId: e.pointerId,
       layoutId: wrapper.getAttribute('data-layout-id') || selectedLayoutId,
       pivotX, pivotY, startDist: dist,
       baseScale: base.scale || 1, baseX: base.x, baseY: base.y,
-      ox: 0, oy: 0,
+      ox, oy,
     };
   };
 
@@ -12006,11 +12017,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const g = layoutCornerRef.current;
     if (!g || g.pointerId !== e.pointerId) return;
     e.stopPropagation();
-    // 單純等比：手指離中心的距離變幾倍，佈局就變幾倍。
-    // （這裡刻意不做「角吸附頁緣」—— 佈局在 scale 1 時剛好等於整頁，
-    //   四個邊會同時對齊，吸附就會一直把尺寸拉回 1，放大到一半就縮回去。）
     const dist = Math.hypot(e.clientX - g.pivotX, e.clientY - g.pivotY);
-    scaleLayout(g.baseScale * (dist / g.startDist), g.layoutId);
+    const scale = Math.max(MIN_LAYOUT_SCALE, Math.min(4, g.baseScale * dist / g.startDist));
+    const ratio = scale / g.baseScale;
+    patchLayoutT({ scale, x: g.baseX + g.ox * (ratio - 1), y: g.baseY + g.oy * (ratio - 1) }, g.layoutId);
   };
 
   const handleLayoutCornerUp = (e: React.PointerEvent) => {
@@ -13298,7 +13308,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const sScale = fImg.scale || 1;
     const exportLineBase = (fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor;
     const lw = GRID_SHAPE_KINDS.has(fImg.shape!)
-      ? 1.5 * scaleFactor / sScale * Math.max(1, Math.min(3, (fImg.shapeLineW ?? 6) / 6))
+      ? 1.5 * (exportLineBase / 160) / sScale * Math.max(1, Math.min(3, (fImg.shapeLineW ?? 6) / 6))
       : Math.max(0.4 * scaleFactor, (fImg.shapeLineW ?? 6) * (exportLineBase / 160)) / sScale;
     if (!solid) {
       const dash = fImg.shapeDash || 0;
@@ -14950,7 +14960,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   進出這個模式時，版面要跟著縮放倍率一起連續變化才會絲滑，
                   交給 React 寫的話尺寸會一次跳到目標值、只有縮放在慢慢跑。
                 */}
-                <div ref={stripShellRef} className="flex-shrink-0 relative">
+                {/* Keep the workspace shadow in screen units. Scaling its blur
+                    with the entire strip needlessly enlarges WebKit's offscreen
+                    surface; media resolution and page geometry stay unchanged. */}
+                <div ref={stripShellRef} className={`flex-shrink-0 relative ${pageDragIdx !== null || dragSettle ? '' : 'shadow-[0_25px_60px_rgba(0,0,0,0.8)]'}`}>
                 <div
                   ref={pagesColRef}
                   data-grid-pages-column="1"
@@ -14970,7 +14983,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     ref={pagesContainerRef}
                     // 排頁面時不裁切也不打陰影：被拖到最邊邊的那一頁才不會被黑色蓋掉
                     className={`flex flex-row flex-nowrap relative ${
-                      pageDragIdx !== null || dragSettle ? '' : 'shadow-[0_25px_60px_rgba(0,0,0,0.8)] overflow-hidden'
+                      pageDragIdx !== null || dragSettle ? '' : 'overflow-hidden'
                     }`}
                     style={{
                       /* 所有頁面內容共用一個明確的繪製邊界。Safari 對 overflow:visible
@@ -15040,7 +15053,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               };
                             })()}
                           >
-                            <div className="absolute inset-0" style={{ backgroundColor: page.bgColor }} />
                             {/* 背景紋理：疊在底色上、所有內容之下，不影響點選與拖曳 */}
                             <PatternLayer w={previewW} h={previewH} opts={pagePattern(page)} />
                             {page.layouts.map((layout) => {
@@ -15105,7 +15117,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 onTouchCancel={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                               >
                               {layout.seamless && !insetLayout && <SeamlessLayout cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
-                              {nativeInset && <svg data-inset-photo-layer="1" width={lw} height={lh} viewBox={`0 0 ${lw} ${lh}`}
+                              {nativeInset && <svg data-inset-photo-layer="1" width={lw} height={lh}
                                 className="absolute inset-0 pointer-events-none" style={{zIndex: 15, overflow: 'visible'}}>
                                 {pageActiveTemplate.rects.map((raw, idx) => {
                                   const r = resolveLayoutRect(raw, lw, lh, layout.overlaySize), c = layout.images[idx];
@@ -15671,7 +15683,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     <div
                                       className="absolute inset-0 pointer-events-none z-[55] border-solid border-white/95"
                                       style={{
-                                        borderWidth: 0.75 * layoutUiInv,
+                                        borderWidth: 0,
+                                        outline: `${0.75 * layoutUiInv}px solid rgba(255,255,255,0.95)`,
                                         boxShadow: `0 0 ${4 * layoutUiInv}px rgba(0,0,0,0.3)`,
                                       }}
                                     />
@@ -15822,7 +15835,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         image={fImg}
                         // Vector ink animates in the scene. Its invisible hit
                         // wrapper must keep the stable logical object bounds.
-                        motionFrame={!fImg.shape && fImg.text === undefined && !fImg.isVideo && hasConfiguredMotion(fImg)
+                        motionFrame={needsDomMotion(fImg)
                           ? frameForItem(fImg, fIdx, motionTime)
                           : null}
                         motionPickOnly={activeTab === 'motion'}
@@ -17008,9 +17021,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
                       {/* Gap slider */}
                       {isInsetLayout(activeLayout) ? <div className="space-y-1.5">
-                        <div className="flex justify-between text-[11px] font-bold text-white/70"><span>大小</span><span className="font-mono text-white">{activeLayout?.overlaySize ?? 50}</span></div>
-                        <input aria-label="大小" type="range" min="0" max="100" step="1" value={activeLayout?.overlaySize ?? 50}
-                          className="premium-slider w-full" onChange={e => patchActiveLayout(l => ({...l, overlaySize: Number(e.target.value)}))} />
+                        <div className="flex justify-between text-[11px] font-bold text-white/70"><span>大小</span><span className="font-mono text-white">{Math.round((Math.max(50, activeLayout?.overlaySize ?? 80) - 50) * 2)}</span></div>
+                        <input aria-label="大小" type="range" min="0" max="100" step="1" value={(Math.max(50, activeLayout?.overlaySize ?? 80) - 50) * 2}
+                          className="premium-slider w-full" onChange={e => patchActiveLayout(l => ({...l, overlaySize: 50 + Number(e.target.value) / 2}))} />
                       </div> : <>
                       <div className="space-y-3">
                         <div className="flex items-center justify-between text-[11px] font-bold text-white/70">
