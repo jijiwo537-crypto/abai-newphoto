@@ -2,7 +2,10 @@
  * Interaction DOM is deliberately not used to measure or place object ink.
  * Pinch, scroll and animation all repaint the same logical scene coordinates.
  */
+import { ClassicPhotoLayer, type PhotoPaint } from './ClassicPhotoLayer';
+
 export type SceneEntry = {
+  nativePhoto?: string;
   z: number;
   opacity?: number | (() => number);
   animateUntil?: number;
@@ -18,6 +21,15 @@ export class ClassicVectorScene {
   private alphaSurface: HTMLCanvasElement | null = null;
   private observer: ResizeObserver | null = null;
   private scale = () => 1;
+  private photos = new Map<string, ClassicPhotoLayer>();
+  private photoContext: CanvasRenderingContext2D | null = null;
+  private activePhoto: ClassicPhotoLayer | null = null;
+
+  paintPhoto(ctx: CanvasRenderingContext2D, photo: PhotoPaint) {
+    if (!this.activePhoto) return false;
+    this.activePhoto.update(ctx.getTransform(), photo);
+    return true;
+  }
 
   attach(host: HTMLElement, viewport: HTMLElement, scale: () => number) {
     this.detach();
@@ -61,6 +73,8 @@ export class ClassicVectorScene {
     this.observer?.disconnect();
     this.surfaces.forEach(canvas => { canvas.remove(); canvas.width = canvas.height = 1; });
     this.surfaces = [];
+    this.photos.forEach(photo => photo.remove()); this.photos.clear();
+    this.photoContext = null; this.activePhoto = null;
     if (this.alphaSurface) this.alphaSurface.width = this.alphaSurface.height = 1;
     this.alphaSurface = null;
     this.host = this.viewport = null;
@@ -81,12 +95,34 @@ export class ClassicVectorScene {
     const x = (vr.left - hr.left - 32) / k;
     const y = (vr.top - hr.top - 32) / k;
     const entries = [...this.entries.values()].sort((a, b) => a.z - b.z);
+    const photoIds = new Set(entries.map(e => e.nativePhoto).filter(Boolean));
+    for (const [id, photo] of this.photos) if (!photoIds.has(id)) { photo.remove(); this.photos.delete(id); }
     const barriers = [...host.children, ...host.querySelectorAll('[data-layout-wrapper]')]
       .filter(node => !(node instanceof HTMLCanvasElement && node.dataset.classicScene))
+      .filter(node => !(node as SVGSVGElement).dataset.classicPhoto)
       .filter(node => !(node as HTMLElement).dataset.classicSceneHit)
       .map(node => Number((node as HTMLElement).style.zIndex)).filter(Number.isFinite);
+    // Native photographs are stacking barriers, not pixels in a 2D framebuffer.
+    barriers.push(...entries.filter(e => e.nativePhoto).map(e => e.z));
+    for (const entry of entries) if (entry.nativePhoto) {
+      let photo = this.photos.get(entry.nativePhoto);
+      if (!photo) { photo = new ClassicPhotoLayer(host); this.photos.set(entry.nativePhoto, photo); }
+      photo.root.dataset.classicPhoto = entry.nativePhoto;
+      photo.root.style.zIndex = String(entry.z);
+      photo.root.style.opacity = String(typeof entry.opacity === 'function' ? entry.opacity() : entry.opacity ?? 1);
+      // This 1x1 context is only an affine-transform stack; no image is painted
+      // into it. Sorting and motion use exactly the existing scene transforms.
+      if (!this.photoContext) {
+        const scratch = document.createElement('canvas'); scratch.width = scratch.height = 1;
+        this.photoContext = scratch.getContext('2d')!;
+      }
+      const ctx = this.photoContext; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
+      this.activePhoto = photo;
+      try { entry.paint(ctx, dpr * k); } finally { this.activePhoto = null; ctx.restore(); }
+    }
     const runs: SceneEntry[][] = [];
     for (const entry of entries) {
+      if (entry.nativePhoto) continue;
       const run = runs[runs.length - 1];
       if (!run || barriers.some(z => z > run[run.length - 1].z && z <= entry.z)) runs.push([entry]);
       else run.push(entry);

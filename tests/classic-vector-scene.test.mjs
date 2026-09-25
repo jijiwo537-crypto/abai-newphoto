@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import ts from 'typescript';
+import {build} from 'esbuild';
 
 // Geometry/layer regression tests without a browser GPU. Visual QA additionally
-// runs grid-qa.html in iOS Safari and a Home Screen web app.
-const compiled = ts.transpileModule(fs.readFileSync(new URL('../components/ClassicVectorScene.ts', import.meta.url), 'utf8'), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 },
-}).outputText;
+// runs grid-qa.html in iOS Simulator Safari.
+const compiled = (await build({entryPoints:[new URL('../components/ClassicVectorScene.ts', import.meta.url).pathname],bundle:true,write:false,format:'esm',platform:'node',target:'es2022'})).outputFiles[0].text;
 const {ClassicVectorScene} = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 let nextFrame = 0;
 globalThis.requestAnimationFrame = () => ++nextFrame;
