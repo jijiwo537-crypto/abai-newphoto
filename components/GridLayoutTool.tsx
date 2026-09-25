@@ -6570,10 +6570,19 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           // Clip against the current canvas before applying the page's lift.
           // After reordering, hidden source pixels can become visible inside
           // the destination canvas; never bake the old outer mask into an object.
-          ctx.beginPath();
-          ctx.rect(sortPage.clipLeft * shiftS + matrix.e + (1 - shiftS) * cx, matrix.f + (1 - shiftS) * cy,
-            sortPage.totalWidth * shiftS, sortPage.height * shiftS);
-          ctx.clip();
+          const halfW = image.width * image.scale / 2;
+          const halfH = image.height * image.scale / 2;
+          const imageCx = image.x + image.width / 2, imageCy = image.y + image.height / 2;
+          const containedPhoto = isScenePhoto && image.rotation % 360 === 0
+            && imageCx - halfW >= sortPage.clipLeft - 1e-6
+            && imageCx + halfW <= sortPage.clipLeft + sortPage.totalWidth + 1e-6
+            && imageCy - halfH >= -1e-6 && imageCy + halfH <= sortPage.height + 1e-6;
+          if (!containedPhoto) {
+            ctx.beginPath();
+            ctx.rect(sortPage.clipLeft * shiftS + matrix.e + (1 - shiftS) * cx, matrix.f + (1 - shiftS) * cy,
+              sortPage.totalWidth * shiftS, sortPage.height * shiftS);
+            ctx.clip();
+          }
         }
         const scale = image.scale * shiftS * (motionFrame?.k ?? 1);
         if (Math.abs(scale) < 1e-5) return;
@@ -6591,6 +6600,25 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               roundRectPath(ctx, -image.width / 2, -image.height / 2,
                 image.width, image.height, radius, radius);
               ctx.clip();
+            }
+            if (!image.imgRadius && image.rotation % 360 === 0 && !motionFrame) {
+              // Extend only the outermost source texel at an exactly aligned
+              // page edge. Do not resize the photo or change snap/export geometry.
+              // Separate DOM-background / canvas-ink antialiasing otherwise lets
+              // a fraction of the background through, especially during page lift.
+              const pageWidth = maxTextWidth, pageHeight = canvasHeight;
+              if (pageWidth && pageHeight) {
+                const cx = image.x + image.width / 2, cy = image.y + image.height / 2;
+                const hw = image.width * image.scale / 2, hh = image.height * image.scale / 2;
+                const edgeX = (x: number) => Math.abs(x / pageWidth - Math.round(x / pageWidth)) < 1e-6;
+                const pad = 1.5 / Math.max(.001, density * Math.abs(scale));
+                const l = -image.width / 2, t = -image.height / 2;
+                const w = image.width, h = image.height, sw = source.naturalWidth, sh = source.naturalHeight;
+                if (edgeX(cx - hw)) ctx.drawImage(source, 0, 0, 1, sh, l - pad, t, pad * 2, h);
+                if (edgeX(cx + hw)) ctx.drawImage(source, sw - 1, 0, 1, sh, l + w - pad, t, pad * 2, h);
+                if (Math.abs(cy - hh) < 1e-6) ctx.drawImage(source, 0, 0, sw, 1, l, t - pad, w, pad * 2);
+                if (Math.abs(cy + hh - pageHeight) < 1e-6) ctx.drawImage(source, 0, sh - 1, sw, 1, l, t + h - pad, w, pad * 2);
+              }
             }
             ctx.drawImage(source, -image.width / 2, -image.height / 2, image.width, image.height);
             if (isSwapTarget || isSwapSource) {
@@ -9632,6 +9660,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   motionModeRef.current = activeTab === 'motion';
   /** 動畫期間繞著哪一頁縮放（就是動畫開始時停在畫面正中間的那一頁） */
   const kAnchorRef = useRef(0);
+  const pendingModeAnchorRef = useRef<number | null>(null);
   const prevPagesScaleRef = useRef(pagesScale);
   /** 第一次挂载只是建立真实画布几何，不是一次模式切换；若也跑 300ms 动画，
       继续编辑时恢复画面会从旧的默认位置向下滑到正确中心。 */
@@ -9748,6 +9777,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
     if (Math.abs(kRef.current - pagesScale) < 0.0001
         && Math.abs(stripTopRef.current - targetTop) < .01) {
+      pendingModeAnchorRef.current = null;
       /* 手勢結束的 setUserZoom 會讓 React 再 commit 一次。Safari 在那次 commit
          會把手勢期間直接寫入的負 margin-top 清成 0；ref 仍是正確值，舊邏輯
          卻因此提早 return，畫布便瞬間跳回頂部安全距離。即使數值相同也要把
@@ -9763,7 +9793,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
        不是剛好落在某一頁正中央，第一帧就會被硬拉過去，那就是「一開始就跳」。 */
     const el = containerRef.current;
     const column = pagesColRef.current;
-    if (el && column && containerSize.width > 0) {
+    if (pendingModeAnchorRef.current !== null) {
+      kAnchorRef.current = pendingModeAnchorRef.current;
+      pendingModeAnchorRef.current = null;
+    } else if (el && column && containerSize.width > 0) {
       // Capture the visible frame, not the previous target scale. A transition
       // can be interrupted before that target is reached, and scroll rounding
       // compensation is already included in the column's rendered position.
@@ -10198,7 +10231,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           ctx.globalAlpha = 1;
           return;
         }
-        sortSeamVisibleSince.current.clear();
+        // Normal-mode seams are already visible. Preserve that visibility when
+        // entering sorting; only seams actually hidden by a drag should fade in.
+        for (let slot = 1; slot < pages.length; slot++) {
+          sortSeamVisibleSince.current.set(slot, performance.now() - 160);
+        }
         // Read the same rendered page edge during reordering; no second CSS
         // transform, inverse scale or independent compositor animation.
         const nodes = host.querySelectorAll<HTMLElement>(':scope > [data-page-id]');
@@ -12075,6 +12112,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       cancelAnimationFrame(inertiaRef.current);
       inertiaRef.current = null;
     }
+  };
+
+  const stopPreviewForModeChange = () => {
+    stopInertia();
+    panRef.current = null;
+    const el = containerRef.current, column = pagesColRef.current;
+    if (!el || !column) return;
+    // Capture BEFORE React changes the tab's layout. The mode animation owns
+    // all subsequent positioning; the previous pan must never resume on up.
+    const viewport = el.getBoundingClientRect();
+    pendingModeAnchorRef.current = (viewport.left + el.clientWidth / 2
+      - column.getBoundingClientRect().left) / Math.max(.0001, kRef.current);
+    const left = el.scrollLeft;
+    el.style.overflowX = 'hidden';
+    el.scrollLeft = left;
+    void el.offsetWidth;
+    el.style.overflowX = '';
+    el.scrollLeft = left;
   };
 
   useEffect(() => () => stopInertia(), []);
@@ -16342,6 +16397,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 <button 
                   key={id} 
                   onClick={() => {
+                    if (id !== activeTab) stopPreviewForModeChange();
                     setActiveTab(id as any);
                     /* 已經點進「新增符號／新增圖形」的時候再點一次加號，
                        就回到新增的主頁 —— 不必特地去按左上角的返回鍵。 */
