@@ -53,5 +53,5 @@ test('shape slider owns its interaction lifecycle rather than unrelated panel ca
 });
 
 test('sorting hides selection ink before the deferred selection reset', () => {
-  assert.match(grid,/ref=\{setChromeLayerNode\}[\s\S]*?visibility: pagesMode \|\| pagesVisual \? 'hidden' : undefined/);
+  assert.match(grid,/ref=\{setChromeLayerNode\}[\s\S]*?display: pagesMode \|\| pagesVisual \? 'none' : undefined/);
 });

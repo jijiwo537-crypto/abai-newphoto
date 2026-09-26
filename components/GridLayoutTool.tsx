@@ -5265,7 +5265,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
           const blurs = shapeGlowBlurs(image.width,image.height).map(r=>r*gAmt);
           const glowKey = [image.shape,image.width,image.height,image.shapeTextureBaseW,image.shapeTextureBaseH,
             lw,dash,image.shapeGlowColor||color,...blurs].join('|');
-          const cached = cacheGlow && image.shape === 'grid-orbits' && !solid
+          const cached = cacheGlow && GRID_SHAPE_KINDS.has(image.shape) && !solid
             && paintCachedClassicGlow(ctx,path,glowKey,drawW,drawH,lw,ctx.getLineDash(),image.shapeGlowColor||color,blurs);
           if (cached) {
             // Preserve the three source-stroke passes from the shadow renderer.
@@ -6738,7 +6738,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             }
           }
         } else {
-          paintClassicAnimatedVector(ctx, image, motionFrame, density * Math.abs(scale), !liveTuning && !motionFrame);
+          paintClassicAnimatedVector(ctx, image, motionFrame, density * Math.abs(scale), !motionFrame);
           if (image.shape === 'grid-orbits' && !motionFrame) {
             const lineBase=image.shapeLineBase || Math.max(image.width,image.height);
             const localPad=lineBase / 160 * (12 + 4 * Math.max(0,image.shapeStrokeW || 0));
@@ -16507,7 +16507,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     // effect that clears selection runs later; a page-filling
                     // photo's white selection stroke must not flash around the
                     // page while the content starts its transition.
-                    visibility: pagesMode || pagesVisual ? 'hidden' : undefined,
+                    // Descendants explicitly set visibility:visible, which
+                    // overrides an inherited hidden value. Remove this entire
+                    // UI paint subtree during the mode transition instead.
+                    display: pagesMode || pagesVisual ? 'none' : undefined,
                     left: stripSubpixelXRef.current,
                     top: 0,
                     width: `${pages.length * previewW}px`,

@@ -24,9 +24,10 @@ test('soft glow is computed once while preview/object transforms retain vector i
  assert.equal(paintCachedClassicGlow(ctx,{},'huge',10000,10000,10,[],'#fff',[500]),false);
  assert.equal(allocations,before,'oversized cache falls back to original full-quality painter without allocating');
 });
-test('cache is confined to non-tuning, non-animated preview and keeps source strokes vector',()=>{
+test('grid glow keeps the same renderer while tuning and at rest; source strokes stay vector',()=>{
  const grid=fs.readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
- assert.match(grid,/density \* Math.abs\(scale\), !liveTuning && !motionFrame/);
+  assert.match(grid,/density \* Math.abs\(scale\), !motionFrame/);
+  assert.match(grid,/cacheGlow && GRID_SHAPE_KINDS.has\(image.shape\) && !solid/);
  assert.match(grid,/for \(let i=0;i<3;i\+\+\) ctx.stroke\(path\)/);
  assert.match(grid,/density: number, cacheGlow = false/);
 });
