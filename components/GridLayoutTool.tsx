@@ -6610,11 +6610,18 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     scene.set(image.id, {
       nativePhoto: isScenePhoto ? image.id : undefined,
       z: (dragShift?.live ? 450100 : 60) + stackIndex * 2,
-      opacity: () => ((image.opacity ?? 100) / 100)
-        * ((sceneMotionFrame ? sceneMotionFrame(image, stackIndex) : motionFrame)?.a ?? 1),
+      opacity: () => {
+        const current = { ...committedImage, ...classicVectorDraft(committedImage.id) };
+        return ((current.opacity ?? 100) / 100)
+          * ((sceneMotionFrame ? sceneMotionFrame(current, stackIndex) : motionFrame)?.a ?? 1);
+      },
       // Sorting is driven by the page's shared frame clock, not a second loop.
       animateUntil: sortPage ? 0 : shift.at + 220,
       paint: (ctx, density) => {
+        // Live slider values belong to the renderer too, not only the React
+        // editor. Read the latest draft at paint time so a queued scene frame
+        // cannot replay the pre-drag glow/style while React is committing.
+        const image = { ...committedImage, ...classicVectorDraft(committedImage.id) };
         let photoClip: { x: number; y: number; width: number; height: number } | null = null;
         // Read the shared clock at paint time, not a React render from an
         // earlier animation frame. The image geometry remains immutable.
@@ -6686,11 +6693,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
               edges: image.rotation % 360 === 0 && still
                 ? [atX(cx - hw), atX(cx + hw), Math.abs(cy - hh) <= tolerance, Math.abs(cy + hh - canvasHeight) <= tolerance]
                 : [false, false, false, false],
-              // Edge-texel coverage must never enlarge the visible canvas.
-              // Clip in the same SVG coordinate system as the photograph,
-              // rather than relying on a separately rounded HTML mask.
-              clip: photoClip || (!sortPage && stripWidth > 0 && canvasHeight
-                ? { x: 0, y: 0, width: stripWidth, height: canvasHeight } : null),
+              // Normal mode already clips the complete strip once. Clipping
+              // each SVG again at that same fractional edge multiplies edge
+              // coverage, and switches antialiasing when sorting starts/ends.
+              // Only a lifted page needs its independent sorting footprint.
+              clip: photoClip,
               dim: isSwapTarget ? .45 : isSwapSource ? .3 : 0 })) return;
             if (image.imgRadius) {
               const radius = cornerR(image.imgRadius, image.width, image.height);
@@ -6738,6 +6745,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       },
     });
   });
+  useLayoutEffect(() => {
+    if (!scene || !isSceneInk || isTextEditing) return;
+    // SmoothRange coalesces samples per frame. A style draft can invalidate the
+    // existing painter directly, without waiting for the whole React commit.
+    return subscribeClassicVectorDraft(committedImage.id, () => scene.invalidate());
+  }, [scene, isSceneInk, isTextEditing, committedImage.id]);
   useLayoutEffect(() => () => scene?.remove(image.id), [scene, image.id]);
   const [holeAssetRevision, setHoleAssetRevision] = useState(0);
   useEffect(() => {

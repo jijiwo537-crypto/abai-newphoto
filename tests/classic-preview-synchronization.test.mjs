@@ -32,6 +32,13 @@ test('selection bounds use scene stroke scale rather than legacy DOM compensatio
   assert.match(grid, /shapeStroke\.outer \* renderScale \* sc/);
 });
 
-test('source edge coverage is clipped at the actual canvas boundary', () => {
-  assert.match(grid, /clip: photoClip \|\| \(!sortPage && stripWidth > 0 && canvasHeight\s*\? \{ x: 0, y: 0, width: stripWidth, height: canvasHeight \}/);
+test('normal photos share the strip clip rather than multiplying fractional edge coverage', () => {
+  assert.match(grid, /clip: photoClip,/);
+  assert.doesNotMatch(grid, /clip: photoClip \|\| \(!sortPage/);
+  assert.match(grid, /pageDragIdx !== null \|\| dragSettle \? '' : 'overflow-hidden'/);
+});
+
+test('scene style and opacity read the current slider draft at paint time', () => {
+  assert.match(grid, /paint: \(ctx, density\) => \{[\s\S]*?const image = \{ \.\.\.committedImage, \.\.\.classicVectorDraft\(committedImage.id\) \}/);
+  assert.match(grid, /return subscribeClassicVectorDraft\(committedImage.id, \(\) => scene.invalidate\(\)\)/);
 });
