@@ -27,7 +27,7 @@ test('seams already visible in normal mode do not restart their fade on entering
 });
 
 test('exactly aligned photos avoid double clipping and retain their original geometry', () => {
-  assert.match(source,/if \(!containedPhoto\) \{\s+ctx.beginPath/);
+  assert.match(source,/if \(sortPage.clipContents && !containedPhoto\) \{\s+ctx.beginPath/);
   assert.match(source,/ctx.drawImage\(source, -image.width \/ 2, -image.height \/ 2, image.width, image.height\)/);
   assert.match(source,/source, sw - 1, 0, 1, sh, l \+ w - pad, t, pad \* 2, h/);
   assert.match(source,/source, 0, sh - 1, sw, 1, l, t \+ h - pad, w, pad \* 2/);

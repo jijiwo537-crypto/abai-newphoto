@@ -73,3 +73,10 @@ test('alignment guides use a separate two-screen-pixel scene entry above seams',
   assert.match(guide, /ctx.fillRect\(x, y, w, h\)/);
   assert.doesNotMatch(grid, /return activeGuidelines.map/);
 });
+
+test('oversized sorting objects are clipped once until the strip clip is suspended', () => {
+  assert.match(grid, /if \(sortPage.clipContents && !containedPhoto\)/);
+  assert.match(grid, /sortPage\?\.clipContents \? \{ clipPath:/);
+  assert.match(grid, /clipLeft: 0, clipContents: pageDragIdx !== null \|\| !!dragSettle/);
+  assert.match(grid, /a.sortPage\?\.clipContents === b.sortPage\?\.clipContents/);
+});

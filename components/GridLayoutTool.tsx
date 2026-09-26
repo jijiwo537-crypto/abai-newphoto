@@ -4572,7 +4572,7 @@ interface FloatingImageComponentProps {
    * live = 正在被手指拖的那一頁（不加動畫），其餘是讓開的頁面（200ms 滑過去）。
    */
   dragShift?: { tx: number; ty: number; s: number; live: boolean } | null;
-  sortPage?: { index: number; width: number; height: number; totalWidth: number; clipLeft: number } | null;
+  sortPage?: { index: number; width: number; height: number; totalWidth: number; clipLeft: number; clipContents: boolean } | null;
   onSwapTouchStart?: (e: React.TouchEvent) => void;
   onSwapTouchMove?: (e: React.TouchEvent) => void;
   onSwapTouchEnd?: (e: React.TouchEvent) => void;
@@ -6657,7 +6657,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             && imageCx - halfW >= sortPage.clipLeft - 1e-6
             && imageCx + halfW <= sortPage.clipLeft + sortPage.totalWidth + 1e-6
             && imageCy - halfH >= -1e-6 && imageCy + halfH <= sortPage.height + 1e-6;
-          if (!containedPhoto) {
+          // The strip owns clipping until a page is lifted. Applying the same
+          // fractional boundary again in SVG multiplies antialias coverage and
+          // changes the edge when entering/leaving sorting, especially for
+          // oversized photos. Independent clips are needed only while the
+          // strip's overflow clip is disabled for drag/settle.
+          if (sortPage.clipContents && !containedPhoto) {
             ctx.beginPath();
             photoClip = { x: sortPage.clipLeft * shiftS + matrix.e + (1 - shiftS) * cx,
               y: matrix.f + (1 - shiftS) * cy, width: sortPage.totalWidth * shiftS, height: sortPage.height * shiftS };
@@ -7150,7 +7155,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         // Its normal-edit hit target is inactive until sorting finishes; keeping
         // it hidden lets the page move without rebuilding every vector's editor.
         visibility: scene && sortPage && isCanvasVector ? 'hidden' : undefined,
-        ...(sortPage ? { clipPath: (() => {
+        ...(sortPage?.clipContents ? { clipPath: (() => {
           const rad = -image.rotation * Math.PI / 180;
           const cx = image.x + image.width / 2, cy = image.y + image.height / 2;
           const localScale = stableVectorTransform ? image.scale : 1;
@@ -7558,6 +7563,7 @@ const FloatingImageComponent = React.memo(FloatingImageComponentBase, (a, b) =>
   && a.sortPage?.height === b.sortPage?.height
   && a.sortPage?.totalWidth === b.sortPage?.totalWidth
   && a.sortPage?.clipLeft === b.sortPage?.clipLeft
+  && a.sortPage?.clipContents === b.sortPage?.clipContents
   && a.chromeLayer === b.chromeLayer
   && a.motionFrame === b.motionFrame
   && a.sceneMotionFrame === b.sceneMotionFrame
@@ -16013,7 +16019,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         sortPage={pagesMode || (pagesVisual && !!sortOriginalIndices.current) ? (() => {
                           const index = sortingPageOf(fImg, previewW, pages.length);
                           return { index, width: previewW, height: previewH, totalWidth: pages.length * previewW,
-                            clipLeft: 0 };
+                            clipLeft: 0, clipContents: pageDragIdx !== null || !!dragSettle };
                         })() : null}
                         lutRevision={lutRevision}
                         toolbarAbove={(() => {
