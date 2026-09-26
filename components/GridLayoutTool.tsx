@@ -7041,6 +7041,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         {shapeOutline ? shapeOutline : isPhoto ? (
           /* Active border matching layout style（深色那一圈是往外畫的，跟原本一樣） */
           <div
+            data-classic-selection-frame={image.id}
             className="absolute pointer-events-none z-30 border-solid border-white/95"
             style={{
               inset: -previewInv,
@@ -9811,7 +9812,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * 所以動畫自己跑：每一帧算出 k，縮放與位移一起寫進同一個 transform。
    */
   /** 縮放動畫還沒結束前，視覺上仍然當作在排頁面（接縫、外框、陰影） */
-  const pagesVisualTimerRef = useRef(0);
   const kRef = useRef(1);
   /** scrollLeft 在 WebKit 只會落在離散像素；保留不足一像素的尾數，用純平移補回。
       這跟創意拼圖的 viewT.tx 一樣，只負責位置，不參與縮放與光柵化。 */
@@ -9930,6 +9930,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (!scaleLayoutInitializedRef.current) {
       scaleLayoutInitializedRef.current = true;
       kAnimRef.current = null;
+      setPagesVisual(pagesMode);
       kRef.current = pagesScale;
       stripTopRef.current = targetTop;
       applyStripGeometry(pagesScale, false);
@@ -9938,6 +9939,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (Math.abs(kRef.current - pagesScale) < 0.0001
         && Math.abs(stripTopRef.current - targetTop) < .01) {
       pendingModeAnchorRef.current = null;
+      kAnimRef.current = null;
+      plusMotionTransitionRef.current = null;
+      setPagesVisual(pagesMode);
       /* 手勢結束的 setUserZoom 會讓 React 再 commit 一次。Safari 在那次 commit
          會把手勢期間直接寫入的負 margin-top 清成 0；ref 仍是正確值，舊邏輯
          卻因此提早 return，畫布便瞬間跳回頂部安全距離。即使數值相同也要把
@@ -9974,8 +9978,6 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     // 縮放動畫還在跑的時候，維持排頁面的樣子（接縫、外框、陰影都先不要回來），
     // 不然退出的瞬間會先閃一排線條再縮回去
     setPagesVisual(true);
-    window.clearTimeout(pagesVisualTimerRef.current);
-    pagesVisualTimerRef.current = window.setTimeout(() => setPagesVisual(pagesModeRef.current), 340);
   }, [pagesScale, activeTab]);
 
   /**
@@ -10073,6 +10075,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           kRef.current = anim.to;
           kAnimRef.current = null;
           plusMotionTransitionRef.current = null;
+          setPagesVisual(pagesModeRef.current);
         }
       }
       const k = kRef.current;
@@ -10427,6 +10430,38 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     });
     vectorScene.flush();
   });
+
+  // Guides use the same frame transform as seams, with an independent width.
+  useLayoutEffect(() => {
+    if (!activeGuidelines.length) {
+      vectorScene.remove('__alignment-guides');
+      vectorScene.flush();
+      return;
+    }
+    vectorScene.set('__alignment-guides', {
+      z: 475000,
+      paint: ctx => {
+        const k = Math.max(.0001, kRef.current || 1);
+        const width = 2 / k;
+        const totalWidth = pages.length * previewW;
+        let bounds: SceneBounds = { x: 0, y: 0, width: 0, height: 0 };
+        ctx.fillStyle = '#3b82f6';
+        for (const guide of activeGuidelines) {
+          const vertical = guide.type === 'vertical';
+          const x = vertical
+            ? Math.max(0, Math.min(totalWidth - width, guide.coord - width / 2))
+            : guide.x0 ?? 0;
+          const y = vertical ? 0 : Math.max(0, Math.min(previewH - width, guide.coord - width / 2));
+          const w = vertical ? width : (guide.x1 ?? totalWidth) - x;
+          const h = vertical ? previewH : width;
+          ctx.fillRect(x, y, w, h);
+          bounds = unionSceneBounds(bounds, sceneRectBounds(ctx, x, y, w, h));
+        }
+        return bounds;
+      },
+    });
+    vectorScene.flush();
+  }, [activeGuidelines, pages.length, previewW, previewH, vectorScene]);
 
   // Measure container size dynamically
   useEffect(() => {
@@ -12623,6 +12658,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* 基準倍率取「現在畫面上真正套用的」那個（kRef），不是 state ——
          連續捏兩次時，第二次一定要從第一次的結果接著算。 */
       canvasZoomRef.current = { startDist: d, baseZoom: k0, anchorC, anchorPx, lastZoom: k0 };
+      // The gesture takes ownership of the current pose. A still-running mode
+      // tween must never write a second pose between touch samples.
+      kAnimRef.current = null;
+      plusMotionTransitionRef.current = null;
+      setPagesVisual(false);
       applyStripGeometry(k0, true);
       return;
     }
@@ -16437,59 +16477,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         「從任何地方都能拖」的代價是畫布完全不能左右滑。已移除 ——
                         要移動圖片直接拖那張圖即可，點空白處仍然是取消選取。 */}
 
-                    {/* Alignment Guidelines Overlay */}
-                    {(() => {
-                      const totalContainerWidth = pages.length * previewW;
-                      const totalContainerHeight = previewH;
-                      /* 對齊線在縮放容器裡，因此其內容座標粗細要除以預覽倍率，
-                         畫到螢幕上才會永遠維持 2px，不會跟著預覽一起變粗／變細。 */
-                      const guidePx = 2 / Math.max(0.0001, kRef.current || 1);
-                      const guideHalf = guidePx / 2;
-
-                      return activeGuidelines.map((guideline, idx) => {
-                        /* 對齊線與分割線是兩個獨立圖層。即使座標剛好落在頁縫，
-                           仍照常畫完整 2px 藍線，放開後才露出底下固定 1px 分割線。 */
-                        let leftStyle = '0';
-                        let topStyle = '0';
-                        let widthStyle = '100%';
-                        let heightStyle = '100%';
-
-                        /* 邊界上的線不能有一半落進 overflow 裁切區，否則看起來會比
-                           中間線細。最外側改為完整貼在畫布內，其餘仍跨在座標上。 */
-                        if (guideline.type === 'vertical') {
-                          widthStyle = `${guidePx}px`;
-                          leftStyle = `${Math.max(0, Math.min(totalContainerWidth - guidePx, guideline.coord - guideHalf))}px`;
-                        } else {
-                          heightStyle = `${guidePx}px`;
-                          topStyle = `${Math.max(0, Math.min(totalContainerHeight - guidePx, guideline.coord - guideHalf))}px`;
-                          /* 橫線只畫在物件自己那一頁：對齊的是這一頁的上下緣／中線，
-                             跨到隔壁頁去沒有意義（也會蓋到別頁的內容）。 */
-                          if (guideline.x0 != null && guideline.x1 != null) {
-                            leftStyle = `${guideline.x0}px`;
-                            widthStyle = `${Math.max(0, guideline.x1 - guideline.x0)}px`;
-                          }
-                        }
-
-                        return (
-                          <div
-                            key={idx}
-                            /* z 要高過頁與頁之間那條分割線（200），
-                               不然對齊線壓在接縫上時會被分割線切掉一半、
-                               看起來比其他邊的線細。 */
-                            className="absolute pointer-events-none bg-blue-500"
-                            style={{
-                              /* 高於分割線、低於選中框；藍線不會再被 1px 黑線
-                                 從中央切開而看起來忽粗忽細。 */
-                              zIndex: 475000,
-                              left: leftStyle,
-                              top: topStyle,
-                              width: widthStyle,
-                              height: heightStyle,
-                            }}
-                          />
-                        );
-                      });
-                    })()}
+                    {/* Alignment guides share the screen-density scene; no scaled DOM duplicate. */}
                   </div>
 
                 </div>

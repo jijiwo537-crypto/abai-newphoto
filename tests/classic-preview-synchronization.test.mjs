@@ -55,3 +55,21 @@ test('shape slider owns its interaction lifecycle rather than unrelated panel ca
 test('sorting hides selection ink before the deferred selection reset', () => {
   assert.match(grid,/ref=\{setChromeLayerNode\}[\s\S]*?display: pagesMode \|\| pagesVisual \? 'none' : undefined/);
 });
+
+test('transition UI lifetime follows the actual pose, including equal-size mode changes', () => {
+  assert.doesNotMatch(grid, /pagesVisualTimerRef/);
+  const settled = grid.slice(grid.indexOf('if (Math.abs(kRef.current - pagesScale)'), grid.indexOf('kAnimRef.current = {', grid.indexOf('if (Math.abs(kRef.current - pagesScale)')));
+  assert.match(settled, /kAnimRef.current = null/);
+  assert.match(settled, /setPagesVisual\(pagesMode\)/);
+  const pinch = grid.slice(grid.indexOf('canvasZoomRef.current = { startDist:'), grid.indexOf('canvasZoomRef.current = { startDist:') + 650);
+  assert.match(pinch, /kAnimRef.current = null/);
+  assert.match(pinch, /setPagesVisual\(false\)/);
+});
+
+test('alignment guides use a separate two-screen-pixel scene entry above seams', () => {
+  const guide = grid.slice(grid.indexOf("vectorScene.set('__alignment-guides'"), grid.indexOf('// Measure container size dynamically', grid.indexOf("vectorScene.set('__alignment-guides'")));
+  assert.match(guide, /z: 475000/);
+  assert.match(guide, /const width = 2 \/ k/);
+  assert.match(guide, /ctx.fillRect\(x, y, w, h\)/);
+  assert.doesNotMatch(grid, /return activeGuidelines.map/);
+});
