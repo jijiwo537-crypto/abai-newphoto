@@ -40,5 +40,18 @@ test('normal photos share the strip clip rather than multiplying fractional edge
 
 test('scene style and opacity read the current slider draft at paint time', () => {
   assert.match(grid, /paint: \(ctx, density\) => \{[\s\S]*?const image = \{ \.\.\.committedImage, \.\.\.classicVectorDraft\(committedImage.id\) \}/);
-  assert.match(grid, /return subscribeClassicVectorDraft\(committedImage.id, \(\) => scene.invalidate\(\)\)/);
+  assert.match(grid, /return subscribeClassicVectorDraft\(committedImage.id, \(\) => scene.flush\(\)\)/);
+  assert.match(grid, /if \(vectorTuningIdRef.current === id\) return;/);
+});
+
+test('shape slider owns its interaction lifecycle rather than unrelated panel cancellation', () => {
+  const panel=grid.slice(grid.indexOf('export const ShapeEditorPanel'),grid.indexOf('export const ShapeEditorPanel')+18000);
+  assert.match(panel,/onInteractionChange=\{setTuning\}/);
+  assert.doesNotMatch(panel,/onPointer(?:Up|Cancel)Capture=\{\(\) => setTuning\(false\)\}/);
+  const range=grid.slice(grid.indexOf('export const SmoothRange'),grid.indexOf('export const CrossStarIcon'));
+  assert.match(range,/onValueRef.current\(next\);[\s\S]*?onInteractionRef.current\?\.\(false\)/);
+});
+
+test('sorting hides selection ink before the deferred selection reset', () => {
+  assert.match(grid,/ref=\{setChromeLayerNode\}[\s\S]*?visibility: pagesMode \|\| pagesVisual \? 'hidden' : undefined/);
 });

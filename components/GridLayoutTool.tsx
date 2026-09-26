@@ -1908,15 +1908,18 @@ export const SmoothRange: React.FC<{
   max: number;
   step?: number;
   onValue: (value: number) => void;
+  onInteractionChange?: (active: boolean) => void;
   className?: string;
   style?: React.CSSProperties;
-}> = ({ value, min, max, step = 1, onValue, className = '', style }) => {
+}> = ({ value, min, max, step = 1, onValue, onInteractionChange, className = '', style }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const draggingRef = useRef(false);
   const pendingRef = useRef(value);
   const rafRef = useRef(0);
   const onValueRef = useRef(onValue);
   onValueRef.current = onValue;
+  const onInteractionRef = useRef(onInteractionChange);
+  onInteractionRef.current = onInteractionChange;
 
   useLayoutEffect(() => {
     if (!draggingRef.current && inputRef.current) inputRef.current.value = String(value);
@@ -1932,6 +1935,7 @@ export const SmoothRange: React.FC<{
     });
   };
   const finish = () => {
+    const wasDragging = draggingRef.current;
     draggingRef.current = false;
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
@@ -1940,6 +1944,8 @@ export const SmoothRange: React.FC<{
     const next = pendingRef.current;
     pendingRef.current = next;
     onValueRef.current(next);
+    // Finish the draft only after its final input sample has been delivered.
+    if (wasDragging) onInteractionRef.current?.(false);
   };
   return (
     <input
@@ -1947,7 +1953,11 @@ export const SmoothRange: React.FC<{
       type="range"
       min={min} max={max} step={step}
       defaultValue={value}
-      onPointerDown={() => { draggingRef.current = true; pendingRef.current = Number(inputRef.current?.value ?? value); }}
+      onPointerDown={() => {
+        if (!draggingRef.current) onInteractionRef.current?.(true);
+        draggingRef.current = true;
+        pendingRef.current = Number(inputRef.current?.value ?? value);
+      }}
       onInput={e => queue(Number((e.currentTarget as HTMLInputElement).value))}
       onPointerUp={finish}
       onPointerCancel={finish}
@@ -2681,6 +2691,7 @@ export const ShapeEditorPanel: React.FC<{
         <SmoothRange
           min={min} max={max} step={1} value={value}
           onValue={v => onVal(Math.round(v))}
+          onInteractionChange={setTuning}
           className="premium-slider w-full"
         />
       </div>
@@ -2690,11 +2701,6 @@ export const ShapeEditorPanel: React.FC<{
   return (
     <div
       className="max-w-md mx-auto h-full animate-in fade-in duration-300"
-      onPointerDownCapture={e => {
-        if ((e.target as HTMLElement).matches?.('input[type="range"]')) setTuning(true);
-      }}
-      onPointerUpCapture={() => setTuning(false)}
-      onPointerCancelCapture={() => setTuning(false)}
     >
       <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-2">
         {colorPage && (
@@ -6747,9 +6753,11 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
   });
   useLayoutEffect(() => {
     if (!scene || !isSceneInk || isTextEditing) return;
-    // SmoothRange coalesces samples per frame. A style draft can invalidate the
-    // existing painter directly, without waiting for the whole React commit.
-    return subscribeClassicVectorDraft(committedImage.id, () => scene.invalidate());
+    // SmoothRange already delivers one sample per animation frame. Paint that
+    // sample in the same frame rather than scheduling a second frame behind
+    // React/gesture commits. The painter reads the draft directly, so this does
+    // not depend on a parent render or on the pointer-up commit.
+    return subscribeClassicVectorDraft(committedImage.id, () => scene.flush());
   }, [scene, isSceneInk, isTextEditing, committedImage.id]);
   useLayoutEffect(() => () => scene?.remove(image.id), [scene, image.id]);
   const [holeAssetRevision, setHoleAssetRevision] = useState(0);
@@ -8921,6 +8929,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const handleVectorTuning = (id: string, active: boolean) => {
     if (active) {
+      // The touch proxy and the input can both announce the same gesture.
+      // Never discard the already-published draft on a repeated start.
+      if (vectorTuningIdRef.current === id) return;
       if (vectorTuningIdRef.current && vectorTuningIdRef.current !== id) {
         clearClassicVectorDraft(vectorTuningIdRef.current);
       }
@@ -16492,6 +16503,11 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   ref={setChromeLayerNode}
                   className="absolute pointer-events-none"
                   style={{
+                    // Hide selection ink in the very first sorting frame. The
+                    // effect that clears selection runs later; a page-filling
+                    // photo's white selection stroke must not flash around the
+                    // page while the content starts its transition.
+                    visibility: pagesMode || pagesVisual ? 'hidden' : undefined,
                     left: stripSubpixelXRef.current,
                     top: 0,
                     width: `${pages.length * previewW}px`,
