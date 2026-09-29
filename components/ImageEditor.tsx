@@ -2884,6 +2884,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     toneStr: string;
   } | null>(null);
 
+  const halationPreparedRef = useRef<{ key: string; source: Uint8ClampedArray; blurred: ImageData } | null>(null);
   const halationCacheStateRef = useRef<{
     /** 這份快取是「哪一張照片」算出來的。
         批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
@@ -4122,9 +4123,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             if (hCanvas.width !== hw || hCanvas.height !== hh) { hCanvas.width = hw; hCanvas.height = hh; }
             const hCtx = hCanvas.getContext('2d', { willReadFrequently: true })!;
             
+            const { fringeIntensity: _strength, fringeHue: _hue, fringeFeather: _feather, ...sourceParams } = p;
+            const preparationKey = JSON.stringify([buffersSrcRef.current, w, h, hw, hh, lutId, toneStr, sourceParams]);
+            const prepared = !baking && !forceRecalculateEffectsRef.current && halationPreparedRef.current?.key === preparationKey
+              ? halationPreparedRef.current : null;
+            let srcData: Uint8ClampedArray;
+            let highImgData: ImageData;
+            if (prepared) {
+              srcData = prepared.source;
+              highImgData = prepared.blurred;
+            } else {
             hCtx.drawImage(ctx.canvas, 0, 0, hw, hh);
-            const srcImgData = hCtx.getImageData(0, 0, hw, hh);
-            const srcData = srcImgData.data;
+            srcData = hCtx.getImageData(0, 0, hw, hh).data;
             const len = srcData.length;
             
             const highData = new Uint8ClampedArray(len);
@@ -4142,12 +4152,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 }
             }
             
-            const highImgData = new ImageData(highData, hw, hh);
+            highImgData = new ImageData(highData, hw, hh);
             const maxBlur = hw * 0.08 * 0.8553125; 
             const sizeMultiplier = p.fringeSize / 100;
             const blurRadius = Math.max(1, maxBlur * sizeMultiplier);
             
             fastBlur(highImgData, hw, hh, blurRadius, sharedBuf); 
+            if (!baking) halationPreparedRef.current = { key: preparationKey, source: srcData, blurred: highImgData };
+            }
+            const len = srcData.length;
             
             const glowImgData = new ImageData(new Uint8ClampedArray(len), hw, hh);
             const glowPixels = glowImgData.data;
@@ -6819,6 +6832,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       {/* 面板開著時標題列要在那片 z-[59] 的遮罩**上面**，
           不然按資訊鍵按到的是遮罩，一次點擊會被算成兩次（見下面 EXIF 那一段）。
           面板收起來時就回到原本的 z-20，其餘完全不變。 */}
+      {exportMenuOpen && <button aria-label="關閉匯出選項" className="absolute inset-0 z-[80]" onClick={() => setExportMenuOpen(false)} />}
       {saveState !== 'success' && (
       <header className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl ${showExifPanel || exportMenuOpen ? 'z-[90]' : 'z-20'}`}>
         <div className="w-20">
@@ -6832,36 +6846,20 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             </button>
         </div>
         {activeCategory !== 'compose' ? (
-        <div className="flex items-center gap-4">
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-4">
            <button onClick={undo} disabled={historyIndex <= 0} className={`p-2 transition-all ${historyIndex <= 0 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="undo" className="text-xl" /></button>
            <button onClick={redo} disabled={historyIndex >= history.length - 1} className={`p-2 transition-all ${historyIndex >= history.length - 1 ? 'opacity-20 pointer-events-none' : 'opacity-100 active:scale-90'}`}><Icon name="redo" className="text-xl" /></button>
         </div>
         ) : <div aria-hidden="true" />}
         {activeCategory !== 'compose' ? (
-        <div className="relative flex justify-end items-center gap-1">
-            <button
-                ref={exifBtnRef}
-                /* 跟其他按鈕一樣：**鬆手**才算一次點擊（onClick）。
-                   之前為了解決「關不掉」改成 onPointerDown，手指一碰就觸發，
-                   手感跟旁邊那幾顆不一樣。真正的原因不在這顆鍵身上 ——
-                   是那片 z-[59] 的透明遮罩蓋在標題列（z-20）上面，
-                   手指其實按在遮罩上，於是一次點擊被算成兩次。
-                   現在改成「面板開著時把標題列抬到遮罩上面」（見下面 header 的
-                   z-index），這顆鍵就直接接得到自己的點擊，一次就是一次。 */
-                onClick={() => setShowExifPanel(prev => !prev)}
-                className={`p-2 rounded-full transition-colors ${showExifPanel ? 'text-white' : 'text-white/40 hover:text-white'}`}
-                title="照片資訊"
-            >
-                <Icon name="info" className="text-xl" />
-            </button>
-            <div className="flex items-center bg-white text-black rounded-full overflow-hidden">
+        <div className="flex justify-end items-center gap-1">
+            <div className="h-8 flex items-center bg-white text-black rounded-full overflow-hidden">
               <button onClick={handleSave} className="px-4 py-1.5 text-[11px] font-black whitespace-nowrap">儲存</button>
               <span aria-hidden="true" className="w-px h-4 bg-black/20" />
-              <button aria-label="匯出選項" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(v => !v)} className="px-2 py-1.5 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
+              <button aria-label="匯出選項" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(v => !v)} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
             </div>
             {exportMenuOpen && <>
-              <button aria-label="關閉匯出選項" className="fixed inset-0 z-[80]" onClick={() => setExportMenuOpen(false)} />
-              <div role="dialog" aria-label="匯出選項" className="absolute right-0 top-full mt-2 z-[81] rounded-xl bg-[#202020] border border-white/10 p-3 shadow-xl" style={{ width: 210 }}>
+              <div role="dialog" aria-label="匯出選項" className="absolute left-4 right-4 top-full mt-2 z-[81] rounded-xl bg-[#202020] border border-white/10 p-3 shadow-xl">
                 <div className="text-xs text-white/50 mb-2">匯出格式</div>
                 <div className="flex gap-2">
                   {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : 'bg-white/10'}`}>{format.toUpperCase()}</button>)}
@@ -6964,7 +6962,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           disabled={activeCategory === 'mask'}
         >
           <TransformComponent wrapperClass="!w-full !h-full absolute inset-0" contentClass="!w-full !h-full flex items-center justify-center p-4">
-            <div className="relative shadow-2xl transition-transform active:scale-[0.99] duration-300 w-full h-full flex items-center justify-center">
+            <div className="relative shadow-2xl w-full h-full flex items-center justify-center">
               {/* Sizing wrapper to ensure canvas and interactive overlay scale/move together perfectly */}
               <div
                 ref={previewFitRef}
@@ -6972,14 +6970,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                    實際高度，圖片就會明顯上下抖動。HSL 原本也要求無進退場動畫。 */
                 className="relative flex items-center justify-center max-w-[calc(100%-32px)]"
                 style={{
-                  transition: hslSwitch && activeCategory !== 'compose' ? 'width 260ms ease, height 260ms ease, margin-bottom 260ms ease' : 'none',
+                  transition: hslSwitch && activeCategory !== 'compose' ? 'width 260ms cubic-bezier(.22,1,.36,1), height 260ms cubic-bezier(.22,1,.36,1), margin-bottom 260ms cubic-bezier(.22,1,.36,1)' : 'none',
                   /* 尺寸與比例尚未量完時不先畫錯誤位置；useLayoutEffect 會在首幀
                      顯示前完成量測，所以長圖不會再先抖一下才歸位。 */
                   visibility: !isEditorLoading && previewLayoutReady && previewAspect && previewBoxSize.width && previewBoxSize.height ? 'visible' : 'hidden',
                   width: previewFitSize ? `${previewFitSize.width}px` : undefined,
                   height: previewFitSize ? `${previewFitSize.height}px` : undefined,
                   maxHeight: 'none',
-                  marginBottom: hslFitNow ? `${hslFitNow.mb}px` : undefined,
+                  marginBottom: hslFitNow ? `${hslFitNow.mb}px` : '0px',
                   aspectRatio: undefined,
                   maxWidth: 'none',
                 }}
@@ -7459,8 +7457,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         )}
 
         {/* Compare Button */}
+        {(() => {
+        const compareButton = (
         <button
-            style={{ bottom: (activeToolId === 'curves' || activeToolId === 'hsl') && hslFit ? hslFit.mb + 16 : 8, transition: 'bottom 260ms ease' }}
+            aria-label="前後對比"
+            style={{ bottom: activeToolId === 'curves' ? 270 : activeToolId === 'hsl' && hslFit ? hslFit.mb + 16 : 8, transition: 'bottom 260ms ease' }}
             onPointerDown={(e) => { 
                 e.preventDefault(); 
                 try {
@@ -7485,7 +7486,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <line x1="12" y1="3" x2="12" y2="21" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
               <path d="M12 6H19.5C20.3284 6 21 6.67157 21 7.5V16.5C21 17.3284 20.3284 18 19.5 18H12" stroke="currentColor" strokeWidth="1.5" />
             </svg>
-        </button>
+        </button>);
+        return activeToolId === 'curves' && detailPanelHost ? createPortal(compareButton, detailPanelHost) : compareButton;
+        })()}
 
         {/* --- HSL 面板 ---
              跟曲線一樣做成蓋在預覽上的浮層，而不是把底部功能欄撐高 ——
@@ -7579,7 +7582,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {activeToolId === 'curves' && <motion.div key="curves" data-curves-panel
            initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
            className="absolute left-0 right-0 z-40 flex flex-col items-center justify-end pb-2"
-           style={{ height: '250px', bottom: 12, background: '#111' }}
+           style={{ height: '250px', bottom: 12, background: 'rgba(100,100,100,.28)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
         >
            <div className="flex items-center justify-center w-full h-full relative pointer-events-none">
                {/* Wrapper to center the box, with controls anchored relative to it. Enable pointer events for children. */}

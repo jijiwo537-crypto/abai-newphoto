@@ -1,6 +1,7 @@
 
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
+import { KeyboardSafeInput } from './KeyboardSafeInput';
 import { idleDefaults } from '../utils/animationDefaults';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
@@ -1071,7 +1072,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
           <ArrowLeft size={14} />
           <span className="text-[10px] font-bold tracking-widest uppercase">返回</span>
         </button>
-        <input
+        <KeyboardSafeInput
           type="text"
           value={hexInput}
           onChange={handleHexInputChange}
@@ -2038,6 +2039,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const glowLayerCacheRef = useRef<Record<string, {
     key: string; c: HTMLCanvasElement; rx: number; ry: number; rw: number; rh: number;
   } | null>>({ image: null, mask: null });
+  const linkGlowScratchRef = useRef<HTMLCanvasElement | null>(null);
   /** 一顆圖案的光暈成品，鍵＝真正決定長相的那幾項（見 glowInto） */
   const glowBmpRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const [brushMode, setBrushMode] = useState<'off' | 'pen' | 'eraser'>('off');
@@ -4928,7 +4930,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         g.restore();
         return;
       }
-      if (isMain) cacheSlot[side] = null;
+      if (isMain) {
+        // Return the expired layer to the scratch pool instead of allocating/copying it.
+        if (cached) glowLayerRef.current = cached.c;
+        cacheSlot[side] = null;
+      }
 
       /* ── 快路徑：沒有連線、而且每顆圖案都已經完全不透明 ──────────────
          暫存層存在的理由只有一個：把本體從光裡挖掉。
@@ -4961,8 +4967,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             });
             if (buckets.size) {
               const W2 = gg.canvas.width, H2 = gg.canvas.height;
-              const lt = document.createElement('canvas');
-              lt.width = W2; lt.height = H2;
+              const lt = isMain
+                ? (linkGlowScratchRef.current ||= document.createElement('canvas'))
+                : document.createElement('canvas');
+              if (lt.width !== W2 || lt.height !== H2) { lt.width = W2; lt.height = H2; }
               const lg = lt.getContext('2d');
               if (lg) {
                 const tf2 = (gg as any).getTransform ? (gg as any).getTransform() : null;
@@ -4995,7 +5003,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         gg => {
           // 本體一律用滿透明度挖掉，剩下的才是純粹的光暈
           // 挖除仍照「全部的本體」來，互相挖除的結果才跟以前一致
-          items.forEach(it => eraseGlowBody(gg, it.h, it.sz, it.ang, it.x, it.y, Math.max(1, s)));
+          // Image masks already have fractional alpha at their silhouette. A
+          // second destination-out pass multiplies that coverage by (1-alpha),
+          // cutting an unlit rim out of the halo. Keep the shadow continuous
+          // underneath the image; the visible image (or mask cutout) is composed
+          // once afterwards. Vector-pattern behavior is intentionally unchanged.
+          if (!isImageHole(holeType)) {
+            items.forEach(it => eraseGlowBody(gg, it.h, it.sz, it.ang, it.x, it.y, Math.max(1, s)));
+          }
           if (pairs.length) {
             gg.save();
             linkStyle(gg);
@@ -5004,16 +5019,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             gg.restore();
           }
         }, box);
-      /* 畫好的那一層留一份下來，下一格如果簽名一樣就直接貼。
-         暫存層本身是共用的，會被下一趟蓋掉，所以要複製到自己的畫布上。 */
-      if (isMain && done && done.rw > 0 && done.rh > 0 && done.rw * done.rh <= 12_000_000) {
-        const keep = document.createElement('canvas');
-        keep.width = done.rw; keep.height = done.rh;
-        const kg = keep.getContext('2d');
-        if (kg) {
-          kg.drawImage(done.lay, 0, 0, done.rw, done.rh, 0, 0, done.rw, done.rh);
-          cacheSlot[side] = { key: sig, c: keep, rx: done.rx, ry: done.ry, rw: done.rw, rh: done.rh };
-        }
+      /* 保留這張完整解析度圖層並移交所有權；下次內容變動再收回重用。
+         避免大倍率超過舊快取上限後，每次無關操作都重新計算發光。 */
+      if (isMain && done && done.rw > 0 && done.rh > 0) {
+        // Transfer ownership; no second full-resolution copy or large-zoom cache cutoff.
+        cacheSlot[side] = { key: sig, c: done.lay, rx: done.rx, ry: done.ry, rw: done.rw, rh: done.rh };
+        if (glowLayerRef.current === done.lay) glowLayerRef.current = null;
       }
     };
 
@@ -9766,7 +9777,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 </div>
                 {holeType === 'text' && (
                   <div ref={textInputWrapRef} className="pb-1">
-                    <input 
+                    <KeyboardSafeInput
                       type="text" 
                       maxLength={15} 
                       value={customText} 

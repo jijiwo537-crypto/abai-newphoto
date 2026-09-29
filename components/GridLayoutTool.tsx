@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMe
 import { createPortal, flushSync } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
+import { KeyboardSafeInput } from './KeyboardSafeInput';
 import { idleDefaults } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
@@ -3478,7 +3479,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
   /* 色號欄。沒有頂列時跟色票並排（原本的樣子）；
      有頂列時搬上去跟返回鍵平行，色票就能佔滿整排。 */
   const hexBox = (
-    <input
+    <KeyboardSafeInput
       type="text"
       value={hexInput}
       onChange={handleHexInputChange}

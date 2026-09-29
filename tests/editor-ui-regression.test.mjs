@@ -29,5 +29,21 @@ test('home owns vertical overshoot without intercepting the recommendation carou
   const guard = readFileSync(new URL('../utils/homeScroll.ts', import.meta.url), 'utf8');
   assert.match(home, /installHomeScroll\(sc\)/);
   assert.match(guard, /axis === 'y' && e.cancelable/);
-  assert.match(guard, /clampHomeScroll\(raw/);
+  assert.match(guard, /el.scrollTop <= 0 && dy > 0/);
+  assert.doesNotMatch(guard, /requestAnimationFrame|velocity/);
+});
+test('keyboard fields edit in a viewport-top portal rather than panning bottom toolbars', () => {
+  const field = readFileSync(new URL('../components/KeyboardSafeInput.tsx', import.meta.url), 'utf8');
+  assert.match(field, /createPortal/);
+  assert.match(field, /focus\(\{ preventScroll: true \}\)/);
+  assert.match(field, /fontSize: 16/);
+  for (const name of ['CollageTool', 'GridLayoutTool']) {
+    const tool = readFileSync(new URL(`../components/${name}.tsx`, import.meta.url), 'utf8');
+    assert.match(tool, /<KeyboardSafeInput/);
+  }
+});
+test('halation retains exact precomputed pixels and blur for strength/hue changes', () => {
+  assert.match(editor, /fringeIntensity: _strength, fringeHue: _hue, fringeFeather: _feather/);
+  assert.match(editor, /halationPreparedRef.current = \{ key: preparationKey, source: srcData, blurred: highImgData \}/);
+  assert.match(editor, /TARGET_PROC_SIZE = 800/);
 });
