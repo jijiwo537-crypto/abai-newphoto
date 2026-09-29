@@ -4966,6 +4966,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               if (arr) arr.push(pr); else buckets.set(key, [pr]);
             });
             if (buckets.size) {
+              // Fully opaque links need no group-opacity isolation. Source-over
+              // is associative here, so paint the exact same three shadow passes
+              // directly instead of clearing/copying another zoom-sized canvas.
+              // Animated/fading groups retain the isolated compositing below.
+              if (buckets.size === 1 && buckets.has(1)) {
+                gg.save();
+                gg.globalAlpha = 1;
+                linkStyle(gg);
+                gg.strokeStyle = linkGlowColor;
+                gg.shadowColor = linkGlowColor;
+                for (const kk of [1, 2, 3]) {
+                  gg.shadowBlur = LINK_W * 3 * kk * .9;
+                  linkPath(gg, buckets.get(1)!);
+                }
+                gg.restore();
+                return;
+              }
               const W2 = gg.canvas.width, H2 = gg.canvas.height;
               const lt = isMain
                 ? (linkGlowScratchRef.current ||= document.createElement('canvas'))

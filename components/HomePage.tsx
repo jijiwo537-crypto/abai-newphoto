@@ -14,6 +14,7 @@ import { installHomeScroll } from '../utils/homeScroll';
 const CONTACT_EMAIL = 'chi888969930522@gmail.com';
 const CONTACT_IG = 'abai_is.perfect';
 const CONTACT_IG_URL = 'https://www.instagram.com/abai_is.perfect/';
+const SETTINGS_GLASS = { background: 'rgba(35,35,39,.76)', backdropFilter: 'blur(24px) saturate(135%)', WebkitBackdropFilter: 'blur(24px) saturate(135%)' };
 
 interface HomePageProps {
   onOpenCamera: () => void;
@@ -556,11 +557,14 @@ export const HomePage: React.FC<HomePageProps> = ({
   /** 主視覺裡的照片。它比整屏再慢一層，JS 那條路也要跟著畫 */
   const artRef = useRef<HTMLDivElement>(null);
   const cssTimeline = useRef(false);
-  const reduceMotion = useRef(false);
+  // Touch scrolling is compositor-driven. Do not counter-translate the same
+  // content on the JS thread: during a fast fling its last frame can arrive
+  // after native scrolling has already reached the top.
+  const reduceMotion = useRef(typeof matchMedia !== 'undefined' && (matchMedia('(pointer: coarse)').matches || matchMedia('(prefers-reduced-motion: reduce)').matches));
   useEffect(() => {
     try {
       cssTimeline.current = typeof CSS !== 'undefined' && CSS.supports('animation-timeline: scroll()');
-      reduceMotion.current = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      reduceMotion.current = matchMedia('(pointer: coarse)').matches || matchMedia('(prefers-reduced-motion: reduce)').matches;
     } catch { /* 舊瀏覽器 */ }
   }, []);
 
@@ -600,7 +604,7 @@ export const HomePage: React.FC<HomePageProps> = ({
     rangePending.current = false;
     rangeWritten.current = h;
     rangeWidthWritten.current = w;
-    libLiftRef.current = h * 0.35;
+    libLiftRef.current = reduceMotion.current ? 0 : h * 0.35;
     resetNavThresh();                 // 一屏高度變了 → 模板的位置跟門檻都要重算
     sc.style.setProperty('--hero-range', `${h}px`);
   }, []);
@@ -608,7 +612,6 @@ export const HomePage: React.FC<HomePageProps> = ({
   const applyParallax = useCallback(() => {
     const sc = scrollRef.current, el = heroRef.current;
     if (!sc || !el) return;
-    if (cssTimeline.current) return;          // 交給 CSS，JS 一個字都不用寫
     if (reduceMotion.current) {
       el.style.transform = ''; el.style.opacity = '';
       el.style.pointerEvents = ''; el.style.visibility = '';
@@ -616,6 +619,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       if (artRef.current) artRef.current.style.transform = '';
       return;
     }
+    if (cssTimeline.current) return;
     const h = sc.clientHeight || 1;
     // 夾在 0～可捲上限之間：iOS 橡皮筋期間讀到的值可能超出範圍，
     // 直接拿去算會讓圖案往回彈一下。
@@ -1812,7 +1816,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       <AnimatePresence>
       {settingsOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.26 }} className="fixed inset-0 z-[250] bg-black/70 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
-        <section role="dialog" aria-modal="true" aria-label={settingsPage === 'language' ? '語言' : '設定'} className="w-full max-w-sm bg-[#141414] border border-white/15 rounded-3xl p-5" onClick={e => e.stopPropagation()}>
+        <section role="dialog" aria-modal="true" aria-label={settingsPage === 'language' ? '語言' : '設定'} className="w-full max-w-sm border border-white/15 rounded-3xl p-5" style={SETTINGS_GLASS} onClick={e => e.stopPropagation()}>
           <div className="flex items-center justify-between mb-5"><h2 className="text-base font-bold">{settingsPage === 'language' ? '語言' : '設定'}</h2>
             <button aria-label="關閉視窗" className="w-9 h-9 rounded-full border border-white/20" onClick={() => setSettingsOpen(false)}><Icon name="close" /></button>
           </div>
@@ -1847,7 +1851,8 @@ export const HomePage: React.FC<HomePageProps> = ({
               exit={{ opacity: 0, scale: 0.97, y: 4 }}
               transition={{ duration: 0.26, ease: [0.16, 1, 0.3, 1] }}
               onClick={e => e.stopPropagation()}
-              className="w-full rounded-[24px] bg-[#141414] border border-white/10 shadow-2xl overflow-hidden"
+              className="w-full rounded-[24px] border border-white/10 shadow-2xl overflow-hidden"
+              style={SETTINGS_GLASS}
             >
               <div className="flex items-center justify-between px-5 pt-5 pb-3">
                 <span className="text-[10px] font-bold tracking-[0.24em] text-white/40 ml-2.5">聯絡方式</span>

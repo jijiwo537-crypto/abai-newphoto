@@ -44,3 +44,20 @@ test('drag-to-pinch preserves the committed position; thumbnails are keyed to th
   assert.doesNotMatch(branch, /initX|initY|setHoles/);
   assert.match(source('components/GridLayoutTool.tsx'), /paintedKey === cacheKey \? 'visible' : 'hidden'/);
 });
+
+test('curves float without a panel or grid backdrop and retain their established geometry', () => {
+  const editor = source('components/ImageEditor.tsx');
+  const curves = editor.slice(editor.indexOf('<motion.div key="curves"'), editor.indexOf('id="curvesSvg"'));
+  assert.match(curves, /height: '250px', bottom: 12, background: 'transparent'/);
+  assert.match(curves, /w-\[240px\] h-\[240px\] bg-transparent/);
+  assert.doesNotMatch(curves, /backdropFilter|shadow-2xl|bg-\[#0c0c0c\]/);
+  assert.match(editor, /transparent 5rem, #111111 5rem/);
+});
+
+test('coarse-pointer home scrolling does not race native scrolling with parallax', () => {
+  const home = source('components/HomePage.tsx');
+  assert.match(home, /libLiftRef\.current = reduceMotion\.current \? 0/);
+  const css = source('styles.css');
+  assert.match(css, /@media\s*\(pointer:\s*coarse\)/);
+  assert.match(css, /animation:\s*none\s*!important/);
+});

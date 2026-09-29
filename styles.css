@@ -330,6 +330,13 @@ select:focus, select:focus-visible {
   .home-scroll { --lib-lift: 0px; }
 }
 
+/* A single native scrolling surface on touch devices. No second, delayed
+   parallax transform can pull the header down after a fast fling has stopped. */
+@media (pointer: coarse) {
+  .home-scroll { --lib-lift: 0px; overscroll-behavior-y: none; }
+  .home-hero, .home-hero-art, .home-lib { animation: none !important; }
+}
+
 /* 首頁使用透明狀態列，但所有工具頁仍必須保有修改前的獨立 viewport。
    用實際的位置與高度重建舊 viewport，並建立 fixed containing block：如此美顏、
    仿色、編輯器與導出流程內再深的 fixed inset-0 都只會鋪滿工具頁，不會跑進

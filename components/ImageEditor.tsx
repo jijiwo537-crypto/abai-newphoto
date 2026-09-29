@@ -6859,7 +6859,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <button aria-label="匯出選項" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(v => !v)} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
             </div>
             {exportMenuOpen && <>
-              <div role="dialog" aria-label="匯出選項" className="absolute left-4 right-4 top-full mt-2 z-[81] rounded-xl bg-[#202020] border border-white/10 p-3 shadow-xl">
+              <div role="dialog" aria-label="匯出選項" className="absolute left-4 right-4 top-full mt-2 z-[81] rounded-xl border border-white/15 p-3 shadow-xl" style={{ background: 'rgba(35,35,39,.76)', backdropFilter: 'blur(24px) saturate(135%)', WebkitBackdropFilter: 'blur(24px) saturate(135%)' }}>
                 <div className="text-xs text-white/50 mb-2">匯出格式</div>
                 <div className="flex gap-2">
                   {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : 'bg-white/10'}`}>{format.toUpperCase()}</button>)}
@@ -7582,7 +7582,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         {activeToolId === 'curves' && <motion.div key="curves" data-curves-panel
            initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
            className="absolute left-0 right-0 z-40 flex flex-col items-center justify-end pb-2"
-           style={{ height: '250px', bottom: 12, background: 'rgba(100,100,100,.28)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)' }}
+           style={{ height: '250px', bottom: 12, background: 'transparent', pointerEvents: 'none' }}
         >
            <div className="flex items-center justify-center w-full h-full relative pointer-events-none">
                {/* Wrapper to center the box, with controls anchored relative to it. Enable pointer events for children. */}
@@ -7628,7 +7628,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                    {/* Curve Box */}
                    {/* 外框就是格線的最外面那一圈：跟裡面的線同色同粗，
                         整塊看起來才是一張完整的 4×4 格線。 */}
-                   <div className="relative w-[240px] h-[240px] bg-[#0c0c0c]/30 border border-white shrink-0 touch-none rounded-sm shadow-2xl"
+                   <div className="relative w-[240px] h-[240px] bg-transparent border border-white shrink-0 touch-none rounded-sm"
                         onMouseDown={handleCurveBgClick}
                         onTouchStart={handleCurveBgClick}
                    >
@@ -7716,10 +7716,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           那種狀態下就把外框這一條收掉，留分頁列自己那條。 */}
       <div
         onPointerDownCapture={() => { lastUiInputRef.current = performance.now(); }}
-        className={`relative bg-[#111111] ${subStripHidden ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
+        className={`relative ${subStripHidden || activeToolId === 'curves' ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
         /* 一般、曲線、HSL 與特效細項都佔相同的總控制區高度；內容較少時只在
            內部留位，預覽區不再跟著分頁切換反覆變高變矮。構圖由自己的三列接管。 */
-        style={{ height: `calc(11rem + ${footerHeight}px)` }}
+        style={{ height: `calc(11rem + ${footerHeight}px)`, background: activeToolId === 'curves' ? 'linear-gradient(to bottom, transparent 5rem, #111111 5rem)' : '#111111' }}
       >
         <div ref={setDetailPanelHost} style={{ position: 'absolute', left: 0, right: 0, top: '5rem', height: 0, zIndex: 60 }} />
         <div 
