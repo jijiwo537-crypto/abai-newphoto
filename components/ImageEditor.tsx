@@ -10,7 +10,7 @@ import { SaveButton } from './SaveButton';
 /* IG 貼文預覽跟拼圖那兩個工具共用同一顆元件 */
 import { IgPreview } from './IgPreview';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
-import { flushSync } from 'react-dom';
+import { flushSync, createPortal } from 'react-dom';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { canvasToUrl, revokeUrls } from '../utils/blobUrl';
@@ -1432,6 +1432,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 主頁入口逐層沿用 ImageAdjustPanel 的 64px 內容 + 12px 底距；相機內的
      非 compact 編輯器維持既有 48px。這個值也同步參與控制區與構圖舞台計算。 */
   const footerHeight = compactBottomBar ? 76 : 48;
+  const [detailPanelHost, setDetailPanelHost] = useState<HTMLDivElement | null>(null);
+  const lastUiInputRef = useRef(0);
   /* ── 批量編輯 ───────────────────────────────────────────────────────────
      一次匯入多張時，編輯器本身完全不變 —— 畫面上永遠只有「目前這一張」，
      其他張的參數各自收在旁邊。連結中的照片共用同一份參數（改一張＝全部一起改），
@@ -1480,6 +1482,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const userHalationRef = useRef<number>(50);
   const [showOriginal, setShowOriginal] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<'png' | 'jpg'>('png');
   const [isInteracting, setIsInteracting] = useState(false);
   const [isInitialCreatingMask, setIsInitialCreatingMask] = useState(false);
   const [dismissedMaskHint, setDismissedMaskHint] = useState(false);
@@ -4787,6 +4791,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, [buildFastStage]);
 
   const render = useCallback((p: EditorParams, overrideLutIdx?: number) => {
+    const activeToolId = activeToolIdRef.current;
     const cache = fastPreviewCacheRef.current;
 
     // The extreme-blend proxy canvases are built at full preview resolution, so that path
@@ -5189,7 +5194,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       lastRenderTimeRef.current = 0;
     }
 
-  }, [isInteracting, selectedLutIdx, lutList, applyComplexEffects, activeToolId, getCurveLuts]);
+  }, [isInteracting, selectedLutIdx, lutList, applyComplexEffects, getCurveLuts]);
 
   useEffect(() => {
     /* 合併／撤銷合併也是換來源（烤好的那張變成新的原圖），但那不是「換照片」：
@@ -5664,7 +5669,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const cvs = displayCanvasRef.current;
         /* 閒著的時候先把 GPU 暖起來（上傳貼圖、建表、跑一次空 draw）。
            不先做的話這些一次性成本會落在手指按下滑桿的第一幀，就是「抖一下」。 */
-        if (!isDirtyRef.current && !isInteractingRef.current && b?.source && b.w && b.h) {
+        if (!isDirtyRef.current && !isInteractingRef.current && performance.now() - lastUiInputRef.current > 800 && b?.source && b.w && b.h) {
             warmGpu(b.source, b.w, b.h, `${b.w}x${b.h}|${buffersSrcRef.current}`);
             /* 貼圖暖好之後，接著一顆一顆把濾鏡的查色表也烤起來。
                每次閒置只烤一顆，主執行緒馬上還回去。 */
@@ -5771,7 +5776,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         rafId = requestAnimationFrame(tick);
     };
     
-    tick();
+    rafId = requestAnimationFrame(tick);
     return () => {
         isActive = false;
         cancelAnimationFrame(rafId);
@@ -6217,7 +6222,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               const img = i === safeIdx && originalImgRef.current
                 ? originalImgRef.current
                 : await loadImg(srcList[i]);
-              out.push(await renderOne(img, snap));
+              out.push(await canvasToUrl(renderOneCanvas(img, snap), exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
             }
             revokeUrls(finalImagesRef.current.filter(u => !out.includes(u)));
             finalImagesRef.current = out;
@@ -6333,7 +6338,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const [hslFit, setHslFit] = useState<{ mb: number; mh: number } | null>(null);
   const measureHslFit = useCallback(() => {
     const box = previewBoxRef.current;
-    const panel = document.querySelector('[data-hsl-panel]') as HTMLElement | null;
+    const panel = detailPanelHost?.querySelector('[data-hsl-panel], [data-curves-panel]') as HTMLElement | null;
     if (!box || !panel) return;
     const b = box.getBoundingClientRect();
     const pn = panel.getBoundingClientRect();
@@ -6342,9 +6347,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const mb = Math.max(0, Math.round(b.bottom - PAD - pn.top + GAP));
     const mh = Math.max(120, Math.round(pn.top - GAP - (b.top + PAD)));
     setHslFit(prev => (prev && prev.mb === mb && prev.mh === mh) ? prev : { mb, mh });
-  }, []);
+  }, [detailPanelHost]);
   useLayoutEffect(() => {
-    if (activeToolId !== 'hsl') { setHslFit(prev => (prev ? null : prev)); return; }
+    if (activeToolId !== 'hsl' && activeToolId !== 'curves') { setHslFit(prev => (prev ? null : prev)); return; }
     measureHslFit();
     const box = previewBoxRef.current;
     if (!box || typeof ResizeObserver === 'undefined') return;
@@ -6355,7 +6360,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 直接綁 activeToolId 而不是等 state 被清掉：離開 HSL 時 state 要下一次
      render 才會變成 null，而那一次 render 的 hslSwitch 已經翻回 false，
      尺寸就會用 500ms 補間跑回去。用這個值的話同一次 render 就還原了。 */
-  const hslFitNow = activeToolId === 'hsl' ? hslFit : null;
+  const hslFitNow = activeToolId === 'hsl' || activeToolId === 'curves' ? hslFit : null;
 
   /* iOS WebKit 對「width:100% + aspect-ratio + max-width + max-height」會做兩次
      constraint pass。長圖特別明顯：先按寬度放大，再被高度上限夾小。
@@ -6831,7 +6836,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           不然按資訊鍵按到的是遮罩，一次點擊會被算成兩次（見下面 EXIF 那一段）。
           面板收起來時就回到原本的 z-20，其餘完全不變。 */}
       {saveState !== 'success' && (
-      <header className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl ${showExifPanel ? 'z-[60]' : 'z-20'}`}>
+      <header className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl ${showExifPanel || exportMenuOpen ? 'z-[90]' : 'z-20'}`}>
         <div className="w-20">
             {/* 构图中的返回只退出构图并丢弃 draftGeo；其他分页才离开编辑器。 */}
             <button
@@ -6849,15 +6854,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         </div>
         ) : <div aria-hidden="true" />}
         {activeCategory !== 'compose' ? (
-        <div className="w-28 flex justify-end items-center gap-1">
-            {/* 眼睛：進 IG 貼文預覽（跟拼圖那兩個工具同一顆元件） */}
-            <button
-                onClick={openIgPreview}
-                className={`p-2 rounded-full transition-colors ${igBusy ? 'text-white/20 pointer-events-none' : 'text-white/40 hover:text-white'}`}
-                title="IG 預覽"
-            >
-                <Icon name="visibility" className="text-xl" />
-            </button>
+        <div className="relative flex justify-end items-center gap-1">
             <button
                 ref={exifBtnRef}
                 /* 跟其他按鈕一樣：**鬆手**才算一次點擊（onClick）。
@@ -6874,6 +6871,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 <Icon name="info" className="text-xl" />
             </button>
             <button onClick={handleSave} className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap">儲存</button>
+            <button aria-label="匯出選項" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(v => !v)} className="p-2 text-white/70"><Icon name="more_horiz" className="text-xl" /></button>
+            {exportMenuOpen && <>
+              <button aria-label="關閉匯出選項" className="fixed inset-0 z-[80]" onClick={() => setExportMenuOpen(false)} />
+              <div role="dialog" aria-label="匯出選項" className="absolute right-0 top-full mt-2 z-[81] rounded-xl bg-[#202020] border border-white/10 p-3 shadow-xl" style={{ width: 210 }}>
+                <div className="text-xs text-white/50 mb-2">匯出格式</div>
+                <div className="flex gap-2">
+                  {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : 'bg-white/10'}`}>{format.toUpperCase()}</button>)}
+                  <button disabled className="flex-1 py-2 rounded-lg text-xs opacity-35 bg-white/10">HEIC</button>
+                </div>
+                <p className="text-[11px] text-white/50 mt-2">目前網頁版未支援 HEIC 編碼</p>
+                <button disabled={igBusy} onClick={() => { setExportMenuOpen(false); void openIgPreview(); }} className="mt-3 py-2 w-full border-t border-white/10 text-sm">IG 預覽</button>
+              </div>
+            </>}
         </div>
         ) : <div className="w-28" aria-hidden="true" />}
       </header>
@@ -7494,7 +7504,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              跟曲線一樣做成蓋在預覽上的浮層，而不是把底部功能欄撐高 ——
              底部那兩列（小分類、分頁）因此完全不會被推動。
              進出不做任何動畫：直接掛上、直接拿掉。 */}
-        {activeToolId === 'hsl' && (
+        {activeToolId === 'hsl' && detailPanelHost && createPortal(
         <div
            data-hsl-panel
            className="absolute inset-x-0 bottom-0 z-40 px-8 pt-2 pb-2 bg-[#111]/95 backdrop-blur-xl border-t border-white/5"
@@ -7574,10 +7584,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               ))}
             </div>
         </div>
-        )}
+        , detailPanelHost)}
 
         {/* --- CURVE OVERLAY UI --- */}
-        <div 
+        {activeToolId === 'curves' && detailPanelHost && createPortal(
+        <div data-curves-panel
            /* 收起來時只淡出＋以底部為原點縮小，不做位移：原本用 translate-y-full，
               整塊格線與通道點會從下方功能欄「穿過去」，看起來就是那一塊淺灰色的東西
               （量到離開後 60ms 那一幀真的疊在亮度那一列上）。
@@ -7679,6 +7690,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                </div>
            </div>
         </div>
+        , detailPanelHost)}
 
         {/* 只是掛給 Tailwind 的瀏覽器版 JIT 看的，本身不畫任何東西 ——
              編輯器一開就讓它把構圖那些 class 的規則先產生好，
@@ -7700,6 +7712,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           geo={draftGeo}
           onChange={setDraftGeo}
           footerHeight={footerHeight}
+          showFooterDivider
           stageLimit={previewFitSize}
           onCancel={cancelCompose}
           onApply={() => {
@@ -7718,11 +7731,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           （量到亮度剖面多一列：正常只有 29，疊到的時候是 29 + 26）。
           那種狀態下就把外框這一條收掉，留分頁列自己那條。 */}
       <div
-        className={`bg-[#111111] ${subStripHidden ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
+        onPointerDownCapture={() => { lastUiInputRef.current = performance.now(); }}
+        className={`relative bg-[#111111] ${subStripHidden ? '' : 'border-t border-white/5'} flex flex-col shrink-0 z-[55]`}
         /* 一般、曲線、HSL 與特效細項都佔相同的總控制區高度；內容較少時只在
            內部留位，預覽區不再跟著分頁切換反覆變高變矮。構圖由自己的三列接管。 */
         style={{ height: `calc(11rem + ${footerHeight}px)` }}
       >
+        <div ref={setDetailPanelHost} style={{ position: 'absolute', left: 0, right: 0, top: '5rem', height: 0, zIndex: 60 }} />
         <div 
           className={`flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] ${fxPanel ? 'px-4' : 'px-8'}`}
           style={{
@@ -7732,13 +7747,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                  於是第一次進構圖時這一列是用 380ms 在收，預覽區高度連著動 20 幾幀，
                  ComposeStudio 的 ResizeObserver 每一幀重算舞台 —— 那就是閃爍。
                  第二次進來規則已經在了，所以只有第一次會發生。inline style 沒有這個問題。 */
-              transitionDuration: hslSwitch || composeSwitch || detailSwitch ? '0ms' : '380ms',
+              transitionDuration: '0ms',
               /* HSL 面板已經搬到預覽區上面當浮層了（跟曲線同一個做法），
                  所以這裡只要跟曲線一樣把滑桿列收成 0 就好。
                  這樣底部功能欄的高度變化跟開曲線時完全一樣，
                  小分類列與分頁列都待在原地不動。 */
               // 特效細項：把小分類列那 6rem 借過來（它同時收成 0），總高不變
-              height: sliderRowHidden ? '0px' : (fxPanel ? '11rem' : '5rem'),
+              height: activeCategory === 'compose' ? '0px' : (fxPanel ? '11rem' : '5rem'),
+              pointerEvents: sliderRowHidden ? 'none' : undefined,
               opacity: sliderRowHidden ? 0 : 1,
               /* 收起來時是 0px 而不是 none —— 寫 none 的話 border-color 會退回
                  currentColor（白的），transition 就從「幾乎不透明的白」補間到 5% 白，
@@ -7905,7 +7921,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           className="flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808] panel-ease transition-all overflow-hidden"
           style={{
               // 同上：時間長度不能靠 class，不然第一次進構圖時規則還沒產生。
-              transitionDuration: composeSwitch || detailSwitch ? '0ms' : '380ms',
+              transitionDuration: '0ms',
               // HSL 開著的時候小分類列照樣留著（跟曲線一樣）。收起來的話，
               // 面板下緣會往下掉 96px，整條工具列看起來就是往下沉了一次。
               // 構圖的小分類（裁切／角度／翻轉／梯形）由 ComposeStudio 自己畫在

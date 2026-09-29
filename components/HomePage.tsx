@@ -528,34 +528,24 @@ export const HomePage: React.FC<HomePageProps> = ({
   useEffect(() => {
     const sc = scrollRef.current;
     if (!sc) return;
-    let y0 = 0, atTop = false, atBottom = false, armed = false;
+    let y0 = 0;
     const block = (e: TouchEvent) => {
       if (e.touches.length !== 1) return;
-      const dy = (e.touches[0]?.clientY ?? 0) - y0;
-      if ((atTop && dy > 0) || (atBottom && dy < 0)) e.preventDefault();
-    };
-    const disarm = () => {
-      if (!armed) return;
-      armed = false;
-      sc.removeEventListener('touchmove', block as any);
+      const y = e.touches[0].clientY;
+      const dy = y - y0;
+      y0 = y;
+      const atTop = sc.scrollTop <= 0;
+      const atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
+      if (((atTop && dy > 0) || (atBottom && dy < 0)) && e.cancelable) e.preventDefault();
     };
     const down = (e: TouchEvent) => {
       y0 = e.touches[0]?.clientY ?? 0;
-      atTop = sc.scrollTop <= 0;
-      atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
-      if (atTop || atBottom) {
-        armed = true;
-        sc.addEventListener('touchmove', block, { passive: false });
-      }
     };
     sc.addEventListener('touchstart', down, { passive: true });
-    sc.addEventListener('touchend', disarm, { passive: true });
-    sc.addEventListener('touchcancel', disarm, { passive: true });
+    sc.addEventListener('touchmove', block, { passive: false });
     return () => {
-      disarm();
       sc.removeEventListener('touchstart', down);
-      sc.removeEventListener('touchend', disarm);
-      sc.removeEventListener('touchcancel', disarm);
+      sc.removeEventListener('touchmove', block);
     };
   }, []);
 
@@ -1246,7 +1236,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             aria-label="聯絡方式"
             className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
             /* 14 → 11：整頁往上 3px，這一顆也跟著（見下面那一疊的說明） */
-            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 36px)' }}
+            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 20px)' }}
           >
             <Icon name="mail" className="text-[16px]" />
           </button>

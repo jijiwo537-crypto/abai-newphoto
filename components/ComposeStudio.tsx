@@ -64,6 +64,7 @@ interface ComposeStudioProps {
   hideKeystone?: boolean;
   /** 所在工具最底部分頁列的實際高度；拼圖維持原本 77px，獨立編輯器可單獨覆寫。 */
   footerHeight?: number;
+  showFooterDivider?: boolean;
   /** 進入構圖前預覽框的實際尺寸上限；有提供時構圖只能等大或更小，不能放大。 */
   stageLimit?: { width: number; height: number } | null;
 }
@@ -111,7 +112,7 @@ export const COMPOSE_WARMUP_CLASSES =
   'transition-[background-color,color,border-color] transition-colors uppercase w-12 w-14 ' +
   'w-full w-px';
 
-export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone, footerHeight = FOOTER_H, stageLimit }) => {
+export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone, footerHeight = FOOTER_H, stageLimit, showFooterDivider = false }) => {
   const [tab, setTab] = useState<Tab>('crop');
   const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h' | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
@@ -499,7 +500,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
        跟「編輯」的行為一致。 */
     <div
       className="fixed left-0 right-0 bg-black flex flex-col"
-      style={{ zIndex, top: HEADER_H, bottom: footerHeight }}
+      style={{ zIndex, top: HEADER_H, bottom: footerHeight, borderBottom: showFooterDivider ? '1px solid rgba(255,255,255,0.1)' : undefined }}
     >
       <style>{`
       `}</style>
