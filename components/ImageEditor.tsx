@@ -14,6 +14,7 @@ import { flushSync, createPortal } from 'react-dom';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { canvasToUrl, revokeUrls } from '../utils/blobUrl';
+import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { StuckEscape } from './StuckEscape';
 import { motion, AnimatePresence } from 'motion/react';
 import { TransformWrapper, TransformComponent, ReactZoomPanPinchRef } from "react-zoom-pan-pinch";
@@ -1483,7 +1484,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const [showOriginal, setShowOriginal] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const [exportFormat, setExportFormat] = useState<'png' | 'jpg'>('png');
+  const [exportFormat, setExportFormat] = useState<'png' | 'jpg' | 'heic'>('png');
+  const [encodedExports, setEncodedExports] = useState<string[]>([]);
+  const encodedExportsRef = useRef<string[]>([]);
+  useEffect(() => () => revokeUrls(encodedExportsRef.current), []);
   const [isInteracting, setIsInteracting] = useState(false);
   const [isInitialCreatingMask, setIsInitialCreatingMask] = useState(false);
   const [dismissedMaskHint, setDismissedMaskHint] = useState(false);
@@ -5724,41 +5728,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             if (isDirtyRef.current || flipped) {
                 const elapsed = now - lastRenderTimeRef.current;
 
-                // Adaptive Throttle: If user is interacting, we decouple the slider visual UI from canvas renders
-                // by enforcing a healthy throttling rate during dragging. This leaves the main thread completely free
-                // to process mouse/touch events and paint the slider handle at a perfect, fluid, lag-free 120 FPS.
-                // If rendering is extremely fast (< 8ms, e.g. proxy extreme blends for brightness/exposure/contrast),
-                // we do NOT throttle to allow simultaneous high-framerate image rendering.
-                // With the low-res interactive proxy a full pipeline pass is now cheap enough
-                // that the old "at least 80ms between frames" floor became the bottleneck, so
-                // the gap is tied to the measured render cost instead of a fixed minimum.
-                const throttleMs = interacting
-                    ? (lastRenderDurationRef.current > 8
-                        ? Math.max(24, lastRenderDurationRef.current * 1.2)
-                        : 0)
-                    : 0;
+                // Consume the latest parameters once per display frame; do not add
+                // a timer after slider input or defer the visible effect until release.
+                const throttleMs = 0;
                 
                 if (elapsed >= throttleMs) {
                     isDirtyRef.current = false;
                     lastRenderedShowOriginalRef.current = currentShowOriginal;
                     lastRenderTimeRef.current = now;
                     
-                    if (interacting) {
-                        // Defer the heavy render calculation to a setTimeout (macro-task)
-                        // so the browser can paint the UI (including the smooth slider handle and text)
-                        // at 120 FPS first before executing the heavy canvas image processing.
-                        if (renderTimeoutRef.current) {
-                            clearTimeout(renderTimeoutRef.current);
-                        }
-                        renderTimeoutRef.current = setTimeout(() => {
-                            const start = performance.now();
-                            render(currentParams, mergeFreezeRef.current?.lutIdx);
-                            const duration = performance.now() - start;
-                            lastRenderDurationRef.current = duration;
-                            renderTimeoutRef.current = null;
-                            clearPendingLutPaint();
-                        }, 0);
-                    } else {
+                    {
                         // For non-interactive/final renders, do it synchronously to ensure instant high-quality paint
                         if (renderTimeoutRef.current) {
                             clearTimeout(renderTimeoutRef.current);
@@ -6206,6 +6185,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             stashCurrent();
             const live = liveRef.current!;
             const out: string[] = [];
+            const encoded: string[] = [];
             for (let i = 0; i < srcList.length; i++) {
               // 連結中的一律套現在這一份；解除連結的用它自己留下來的那一份。
               // 沒有留下來的（例如從頭到尾沒被切過去過）就直接用現在這一份，
@@ -6222,10 +6202,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               const img = i === safeIdx && originalImgRef.current
                 ? originalImgRef.current
                 : await loadImg(srcList[i]);
-              out.push(await canvasToUrl(renderOneCanvas(img, snap), exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
+              const canvas = renderOneCanvas(img, snap);
+              out.push(await canvasToUrl(canvas, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
+              if (exportFormat === 'heic') encoded.push(await exportHeic(canvas));
             }
             revokeUrls(finalImagesRef.current.filter(u => !out.includes(u)));
             finalImagesRef.current = out;
+            revokeUrls(encodedExportsRef.current);
+            encodedExportsRef.current = encoded;
+            setEncodedExports(encoded);
             setFinalImages(out);
             setFinalImage(out[safeIdx] || out[0]);
             setSaveState('success');
@@ -6279,7 +6264,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 從 HSL 直接切到曲線時，曲線不做入場 —— HSL 那一側本來就是瞬間收掉的，
      曲線再慢慢長出來會像是「面板閃了一下又重來」。ref 在 effect 裡才更新，
      所以切過去的那一次 render 讀到的還是 hsl，剛好就是要關掉動畫的那一次。 */
-  const curvesFromHsl = activeToolId === 'curves' && prevToolIdRef.current === 'hsl';
   useEffect(() => { prevToolIdRef.current = activeToolId; }, [activeToolId]);
 
   /* HSL 的面板是蓋在預覽上的，會擋掉圖片下半部（量到 414×896 遮 34%、
@@ -6338,14 +6322,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const [hslFit, setHslFit] = useState<{ mb: number; mh: number } | null>(null);
   const measureHslFit = useCallback(() => {
     const box = previewBoxRef.current;
-    const panel = detailPanelHost?.querySelector('[data-hsl-panel], [data-curves-panel]') as HTMLElement | null;
+    const panel = detailPanelHost?.querySelector(activeToolIdRef.current === 'hsl' ? '[data-hsl-panel]' : '[data-curves-panel]') as HTMLElement | null;
     if (!box || !panel) return;
     const b = box.getBoundingClientRect();
-    const pn = panel.getBoundingClientRect();
+    const panelTop = detailPanelHost!.getBoundingClientRect().top - panel.offsetHeight - (activeToolIdRef.current === 'curves' ? 12 : 0);
     const PAD = 16;   // TransformComponent 的 p-4
     const GAP = 8;    // 別讓圖整個貼在面板上緣，貼著看起來像破圖
-    const mb = Math.max(0, Math.round(b.bottom - PAD - pn.top + GAP));
-    const mh = Math.max(120, Math.round(pn.top - GAP - (b.top + PAD)));
+    const mb = Math.max(0, Math.round(b.bottom - PAD - panelTop + GAP));
+    const mh = Math.max(120, Math.round(panelTop - GAP - (b.top + PAD)));
     setHslFit(prev => (prev && prev.mb === mb && prev.mh === mh) ? prev : { mb, mh });
   }, [detailPanelHost]);
   useLayoutEffect(() => {
@@ -6360,7 +6344,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 直接綁 activeToolId 而不是等 state 被清掉：離開 HSL 時 state 要下一次
      render 才會變成 null，而那一次 render 的 hslSwitch 已經翻回 false，
      尺寸就會用 500ms 補間跑回去。用這個值的話同一次 render 就還原了。 */
-  const hslFitNow = activeToolId === 'hsl' || activeToolId === 'curves' ? hslFit : null;
+  const hslFitNow = activeToolId === 'hsl' ? hslFit : null;
 
   /* iOS WebKit 對「width:100% + aspect-ratio + max-width + max-height」會做兩次
      constraint pass。長圖特別明顯：先按寬度放大，再被高度上限夾小。
@@ -6813,7 +6797,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                   </div>
               </div>
               <div className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
-                   <SaveButton urls={finalImages.length ? finalImages : (finalImage ? [finalImage] : [])} />
+                   <SaveButton urls={encodedExports.length ? encodedExports : finalImages.length ? finalImages : (finalImage ? [finalImage] : [])} />
                    <div className="flex items-center justify-center gap-4">
                    <button 
                        onClick={() => { setSaveState('idle'); }}
@@ -6870,18 +6854,19 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             >
                 <Icon name="info" className="text-xl" />
             </button>
-            <button onClick={handleSave} className="bg-white text-black px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap">儲存</button>
-            <button aria-label="匯出選項" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(v => !v)} className="p-2 text-white/70"><Icon name="more_horiz" className="text-xl" /></button>
+            <div className="flex items-center bg-white text-black rounded-full overflow-hidden">
+              <button onClick={handleSave} className="px-4 py-1.5 text-[11px] font-black whitespace-nowrap">儲存</button>
+              <span aria-hidden="true" className="w-px h-4 bg-black/20" />
+              <button aria-label="匯出選項" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(v => !v)} className="px-2 py-1.5 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
+            </div>
             {exportMenuOpen && <>
               <button aria-label="關閉匯出選項" className="fixed inset-0 z-[80]" onClick={() => setExportMenuOpen(false)} />
               <div role="dialog" aria-label="匯出選項" className="absolute right-0 top-full mt-2 z-[81] rounded-xl bg-[#202020] border border-white/10 p-3 shadow-xl" style={{ width: 210 }}>
                 <div className="text-xs text-white/50 mb-2">匯出格式</div>
                 <div className="flex gap-2">
                   {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : 'bg-white/10'}`}>{format.toUpperCase()}</button>)}
-                  <button disabled className="flex-1 py-2 rounded-lg text-xs opacity-35 bg-white/10">HEIC</button>
+                  <button disabled={!canExportHeic()} aria-pressed={exportFormat === 'heic'} onClick={() => setExportFormat('heic')} className={`flex-1 py-2 rounded-lg text-xs disabled:opacity-35 ${exportFormat === 'heic' ? 'bg-white text-black' : 'bg-white/10'}`}>HEIC</button>
                 </div>
-                <p className="text-[11px] text-white/50 mt-2">目前網頁版未支援 HEIC 編碼</p>
-                <button disabled={igBusy} onClick={() => { setExportMenuOpen(false); void openIgPreview(); }} className="mt-3 py-2 w-full border-t border-white/10 text-sm">IG 預覽</button>
               </div>
             </>}
         </div>
@@ -6985,8 +6970,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 ref={previewFitRef}
                 /* 預覽框尺寸是量測結果，不應該做補間；首次進頁若從暫存高度動畫到
                    實際高度，圖片就會明顯上下抖動。HSL 原本也要求無進退場動畫。 */
-                className="relative flex items-center justify-center max-w-[calc(100%-32px)] transition-none"
+                className="relative flex items-center justify-center max-w-[calc(100%-32px)]"
                 style={{
+                  transition: hslSwitch && activeCategory !== 'compose' ? 'width 260ms ease, height 260ms ease, margin-bottom 260ms ease' : 'none',
                   /* 尺寸與比例尚未量完時不先畫錯誤位置；useLayoutEffect 會在首幀
                      顯示前完成量測，所以長圖不會再先抖一下才歸位。 */
                   visibility: !isEditorLoading && previewLayoutReady && previewAspect && previewBoxSize.width && previewBoxSize.height ? 'visible' : 'hidden',
@@ -7474,6 +7460,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
         {/* Compare Button */}
         <button
+            style={{ bottom: (activeToolId === 'curves' || activeToolId === 'hsl') && hslFit ? hslFit.mb + 16 : 8, transition: 'bottom 260ms ease' }}
             onPointerDown={(e) => { 
                 e.preventDefault(); 
                 try {
@@ -7504,8 +7491,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
              跟曲線一樣做成蓋在預覽上的浮層，而不是把底部功能欄撐高 ——
              底部那兩列（小分類、分頁）因此完全不會被推動。
              進出不做任何動畫：直接掛上、直接拿掉。 */}
-        {activeToolId === 'hsl' && detailPanelHost && createPortal(
-        <div
+        {detailPanelHost && createPortal(<AnimatePresence>
+        {activeToolId === 'hsl' && <motion.div key="hsl"
+           initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
            data-hsl-panel
            className="absolute inset-x-0 bottom-0 z-40 px-8 pt-2 pb-2 bg-[#111]/95 backdrop-blur-xl border-t border-white/5"
         >
@@ -7583,25 +7571,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 />
               ))}
             </div>
-        </div>
-        , detailPanelHost)}
+        </motion.div>}
+        </AnimatePresence>, detailPanelHost)}
 
         {/* --- CURVE OVERLAY UI --- */}
-        {activeToolId === 'curves' && detailPanelHost && createPortal(
-        <div data-curves-panel
-           /* 收起來時只淡出＋以底部為原點縮小，不做位移：原本用 translate-y-full，
-              整塊格線與通道點會從下方功能欄「穿過去」，看起來就是那一塊淺灰色的東西
-              （量到離開後 60ms 那一幀真的疊在亮度那一列上）。
-              origin-bottom + scale ≤ 1 保證它永遠不會超出原本的範圍，
-              視覺上就是「從底部長出來」。
-              進退用同一條 easeOut，收起來才會一按就開始淡掉；退場再短一點，
-              手指離開按鈕的當下曲線就已經看不太到了。 */
-           className={`absolute left-0 right-0 z-40 flex flex-col items-center justify-end pb-2 origin-bottom panel-ease transition-[opacity,transform] ${
-             activeToolId === 'curves'
-               ? `${curvesFromHsl ? 'duration-0' : 'duration-[380ms]'} scale-100 opacity-100`
-               : 'duration-[260ms] scale-[0.96] opacity-0 pointer-events-none'
-           }`}
-           style={{ height: '250px', bottom: 0 }}
+        {detailPanelHost && createPortal(<AnimatePresence>
+        {activeToolId === 'curves' && <motion.div key="curves" data-curves-panel
+           initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 18 }} transition={{ duration: .26, ease: [.22, 1, .36, 1] }}
+           className="absolute left-0 right-0 z-40 flex flex-col items-center justify-end pb-2"
+           style={{ height: '250px', bottom: 12, background: '#111' }}
         >
            <div className="flex items-center justify-center w-full h-full relative pointer-events-none">
                {/* Wrapper to center the box, with controls anchored relative to it. Enable pointer events for children. */}
@@ -7689,8 +7667,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                    </div>
                </div>
            </div>
-        </div>
-        , detailPanelHost)}
+        </motion.div>}
+        </AnimatePresence>, detailPanelHost)}
 
         {/* 只是掛給 Tailwind 的瀏覽器版 JIT 看的，本身不畫任何東西 ——
              編輯器一開就讓它把構圖那些 class 的規則先產生好，
@@ -7713,7 +7691,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           onChange={setDraftGeo}
           footerHeight={footerHeight}
           showFooterDivider
-          stageLimit={previewFitSize}
+          stageLimit={previewAspect && previewBoxSize.width && previewBoxSize.height ? (() => {
+            const h = Math.min(previewBoxSize.height - 32, (previewBoxSize.width - 32) / previewAspect);
+            return { width: h * previewAspect, height: h };
+          })() : previewFitSize}
           onCancel={cancelCompose}
           onApply={() => {
             applyGeo(draftGeo);

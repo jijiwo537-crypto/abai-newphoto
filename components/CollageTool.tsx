@@ -1,5 +1,7 @@
 
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
+import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
+import { idleDefaults } from '../utils/animationDefaults';
 import { get2dWide } from '../utils/colorSpace';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
@@ -1075,6 +1077,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
           onChange={handleHexInputChange}
           maxLength={7}
           aria-label="色號"
+          style={{ fontSize: 16 }}
           className="shrink-0 h-8 w-[86px] bg-[#1A1A1A] border border-[#333] rounded-[7px] px-2 text-white font-mono text-xs outline-none focus:border-white/50"
         />
       </div>
@@ -1158,6 +1161,7 @@ interface CollageToolProps {
 }
 
 export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [] }) => {
+  useKeyboardRecovery();
   const [imageState, setImageState] = useState<any>(null);
   const [layout, setLayout] = useState('mask-bottom');
   const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
@@ -3410,28 +3414,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     } else if (activePointers.current.size === 2 && selectedTarget) {
       e.stopPropagation();
-      /* ── 兩指縮放前，先把第一根手指順手拖走的那一小段收回來 ──────────
-         兩根手指不可能真的同時落地。第一根先到、第二根還沒到的那幾十毫秒裡，
-         程式看到的是「單指拖曳」—— 而圖案一旦選中，整個畫布都是它的操作區，
-         所以那幾十毫秒的手指抖動會把圖案整個搬走一段。第二根手指一到，
-         縮放接手、位置就停在那裡不動了 —— 看起來就是「一捏，圖案閃一下」。
-
-         這裡把它挪回第一根手指按下去時的位置。跟下面筆刷那邊
-         「第二根手指跟上時，把剛剛畫的那一下收回去」是同一件事。 */
-      const prevIntr = interactionRef.current;
-      if (prevIntr && prevIntr.type === 'move_hole' && prevIntr.id === selectedTarget
-          && (prevIntr.initX !== undefined) && (prevIntr.initY !== undefined)) {
-        const back = holesRef.current.map((h: any) =>
-          h.id === prevIntr.id ? { ...h, x: prevIntr.initX, y: prevIntr.initY } : h);
-        holesRef.current = back;
-        setHoles(back);
-      }
+      // Preserve the latest drag position when a second finger joins the gesture.
+      flushMoveNow();
       const pts: any[] = Array.from(activePointers.current.values());
       const p1 = { x: (pts[0].clientX - rect.left) * sx, y: (pts[0].clientY - rect.top) * sy };
       const p2 = { x: (pts[1].clientX - rect.left) * sx, y: (pts[1].clientY - rect.top) * sy };
       const hole = holesRef.current.find(h => h.id === selectedTarget);
       // 捏不是點擊：isClick 留著的話放開時會被當成「點了旁邊」而取消選取
-      if (hole) interactionRef.current = { type: 'pinch_hole', id: selectedTarget, isClick: false, hitItself: true, startDist: Math.hypot(p1.x - p2.x, p1.y - p2.y) };
+      if (hole) interactionRef.current = { type: 'pinch_hole', id: selectedTarget, isClick: false, hitItself: true, startDist: Math.max(1, Math.hypot(p1.x - p2.x, p1.y - p2.y)) };
     } else if (activePointers.current.size === 2 && baseSelectedRef.current) {
       e.stopPropagation();
       const pts: any[] = Array.from(activePointers.current.values());
@@ -3626,6 +3616,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const r = el.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
   };
+  const pendingViewRef = useRef<{ k: number; tx: number; ty: number } | null>(null);
+  const viewFrameRef = useRef(0);
+  const flushView = useCallback(() => {
+    if (viewFrameRef.current) cancelAnimationFrame(viewFrameRef.current);
+    viewFrameRef.current = 0;
+    const next = pendingViewRef.current;
+    pendingViewRef.current = null;
+    if (next) setViewT(next);
+  }, []);
+  useEffect(() => () => { if (viewFrameRef.current) cancelAnimationFrame(viewFrameRef.current); }, []);
   const applyView = useCallback((k: number, tx: number, ty: number) => {
     if (motionLockRef.current) return;
     const c = stageBox();
@@ -3633,8 +3633,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 限制平移範圍，免得把圖拖出畫面找不回來
     const mx = Math.max(0, (kk - 1) * c.w * 0.5);
     const my = Math.max(0, (kk - 1) * c.h * 0.5);
-    setViewT({ k: kk, tx: Math.max(-mx, Math.min(mx, tx)), ty: Math.max(-my, Math.min(my, ty)) });
-  }, []);
+    const next = { k: kk, tx: Math.max(-mx, Math.min(mx, tx)), ty: Math.max(-my, Math.min(my, ty)) };
+    pendingViewRef.current = next;
+    viewTRef.current = next;
+    if (!viewFrameRef.current) viewFrameRef.current = requestAnimationFrame(flushView);
+  }, [flushView]);
   /* 「還能放大到幾倍而不糊」的上限 —— 由記憶體預算反推。
      算不到那麼細就不讓你再放大，所以任何倍率下都是清楚的，
      而且畫布總量永遠壓在預算內（分頁不會被系統回收）。
@@ -4072,6 +4075,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
+    flushView();
     // 還沒送出的那一格先補上，物件才不會停在上一格的位置
     flushMoveNow();
     // 已選中的文字／符號，點一下（沒有拖動）→ 直接在畫布上改字
@@ -5085,11 +5089,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const mxp = hx * rx, myp = hy * ry;     // 遮罩上的對應點
         ctx.save();
         ctx.globalAlpha = A.a;
+        // Stable per-pattern assignment: changing zoom or redrawing must not reroll colors.
+        const stripeSeed = String(h.id).split('').reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 0);
+        const patternFill = patternType === 'stripe' && !maskImageState ? (stripeSeed % 2 ? stripeA : stripeB) : basePat;
+        ctx.fillStyle = patternFill;
         // pattern 錨在目前的原點，所以先位移，讓遮罩上的 (mxp,myp) 正好落在圖案位置
         ctx.translate(hx - mxp, hy - myp);
         if (isTextHole(holeType)) {
           const tText = holeGlyph(holeType, customText, h);
-          drawTextShape(ctx, holeType, tText, mxp, myp, sz, basePat, false, currentAngle);
+          drawTextShape(ctx, holeType, tText, mxp, myp, sz, patternFill, false, currentAngle);
         } else {
           // 以圖案自己的中心為軸旋轉，但不動到 pattern 的錨點
           ctx.translate(mxp, myp);
@@ -5098,7 +5106,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           drawShapePath(ctx, holeType, mxp, myp, sz);
           ctx.fill();
         }
-        drawBurst(ctx, h, sz, mxp, myp, A.burst, basePat);
+        drawBurst(ctx, h, sz, mxp, myp, A.burst, patternFill);
         ctx.restore();
       });
     }
@@ -8841,17 +8849,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   <span className="text-[10px] font-bold text-[#888] shrink-0">自訂遮罩</span>
                   <div className="flex items-center gap-1.5 min-w-0">
                     <div className="flex items-center gap-1">
-                      {maskImageState && (
-                        <button onClick={(e) => { e.stopPropagation(); setMaskImageState(null); }} className="flex items-center justify-center p-1.5 text-[10px] bg-[#222] text-white font-bold rounded-[4px] border border-[#333] hover:bg-[#333] transition-all" title="還原素色">
-                          <ReplayIcon size={12} />
-                        </button>
-                      )}
                       <button onClick={(e) => { e.stopPropagation(); maskFileInputRef.current?.click(); }} className="px-2 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-wider whitespace-nowrap">
                         上傳
                       </button>
                     </div>
-                    <button className="w-7 h-6 shrink-0 rounded-[4px] shadow-inner border border-white/10 hover:ring-1 hover:ring-white/30 transition-shadow"
-                      aria-label="遮罩顏色" onClick={() => setColorPickerTarget('mask')} style={{ backgroundColor: maskColor }} />
+                    {maskImageState ? <button className="w-7 h-6 shrink-0 rounded-[4px] border border-white/10 flex items-center justify-center" aria-label="還原素色" onClick={() => setMaskImageState(null)}><ReplayIcon size={12} /></button>
+                      : <button className="w-7 h-6 shrink-0 rounded-[4px] shadow-inner border border-white/10 hover:ring-1 hover:ring-white/30 transition-shadow"
+                      aria-label="遮罩顏色" onClick={() => setColorPickerTarget('mask')} style={{ backgroundColor: maskColor }} />}
                   </div>
                 </div>
                 <div className="min-w-0 h-[47px] flex items-center justify-between gap-2 bg-[#111] px-2.5 border border-[#222] rounded-[6px]">
@@ -8863,7 +8867,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 </div>
                 {/* 紋理整組收在同一格：選項、顏色、兩根滑桿全部在同一個框裡
                     （跟經典拼圖那一頁排法一致）。 */}
-                <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden col-span-2 order-3 w-full">
+                <div hidden={!!maskImageState} className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden col-span-2 order-3 w-full">
                   <div className="h-[47px] flex items-center justify-between px-3">
                     <span className="text-[10px] font-bold text-[#888]">紋理</span>
                     <div className="flex items-center gap-2">
@@ -9451,7 +9455,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 };
                 // 換動畫種類 → 從頭播一次，不用自己等一圈
                 const pickKind = (d: Partial<MoCfg>) => {
-                  if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
+                  if (d.idle && selObj) setCur({ ...d, ...idleDefaults(d.idle, { symbol: !!selObj.sym, text: selObj.type === 'text', image: selObj.type === 'image', shape: selObj.type === 'shape', grid: isGridTarget, line: isSpecialLineTarget }) });
+                  else if (d.in === 'bubble' && selObj?.sym) setCur({ ...d, dur: durFromSpeed(80) });
                   else if (d.idle === 'symbol-breathe2' && selObj?.type === 'text') setCur({ ...d, amp: 60, speed: 1.2 });
                   else if (d.idle === 'breathe' && selObj?.sym) setCur({ ...d, amp: 30 });
                   /* 非網格物件也使用網格波浪的同一組預設參數；滑桿範圍本來

@@ -10,8 +10,8 @@ test('tool selection does not restart the pixel renderer', () => {
   assert.match(editor, /performance.now\(\) - lastUiInputRef.current > 800/);
 });
 test('HSL and curves share a control-strip anchored portal', () => {
-  assert.match(editor, /activeToolId === 'hsl' && detailPanelHost && createPortal/);
-  assert.match(editor, /activeToolId === 'curves' && detailPanelHost && createPortal/);
+  assert.match(editor, /data-hsl-panel/);
+  assert.match(editor, /data-curves-panel/);
   assert.match(editor, /ref={setDetailPanelHost}/);
   assert.match(editor, /height: activeCategory === 'compose' \? '0px' : \(fxPanel \? '11rem' : '5rem'\)/);
 });
@@ -22,11 +22,12 @@ test('compose divider is opt-in, preserving other callers', () => {
 });
 test('export uses real MIME encoding and does not fake HEIC', () => {
   assert.match(editor, /exportFormat === 'jpg' \? 'image\/jpeg' : 'image\/png', 1/);
-  assert.match(editor, /<button disabled[^>]*>HEIC<\/button>/);
+  assert.match(editor, /canExportHeic\(\)/);
+  assert.match(editor, /exportHeic\(/);
 });
-test('home edge guard checks the current boundary during each move', () => {
-  const guard = home.slice(home.indexOf('const block = (e: TouchEvent)'), home.indexOf('const down = (e: TouchEvent)'));
-  assert.match(guard, /const atTop = sc.scrollTop <= 0/);
-  assert.match(guard, /e.cancelable/);
-  assert.doesNotMatch(home, /if \(atTop \|\| atBottom\)/);
+test('home owns vertical overshoot without intercepting the recommendation carousel', () => {
+  const guard = readFileSync(new URL('../utils/homeScroll.ts', import.meta.url), 'utf8');
+  assert.match(home, /installHomeScroll\(sc\)/);
+  assert.match(guard, /axis === 'y' && e.cancelable/);
+  assert.match(guard, /clampHomeScroll\(raw/);
 });

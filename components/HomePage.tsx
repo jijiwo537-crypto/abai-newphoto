@@ -9,6 +9,7 @@ import {
   sendEmailOtp, verifyEmailOtp, signInWithProvider, signOut, deleteAccount,
 } from '../utils/auth';
 import { loadAvatar, saveAvatarFromFile, removeAvatar } from '../utils/avatar';
+import { installHomeScroll } from '../utils/homeScroll';
 
 const CONTACT_EMAIL = 'chi888969930522@gmail.com';
 const CONTACT_IG = 'abai_is.perfect';
@@ -187,10 +188,12 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [libQuery, setLibQuery] = useState('');
   const [contactOpen, setContactOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsPage, setSettingsPage] = useState<'menu' | 'language'>('menu');
   const [copied, setCopied] = useState(false);
 
   /* 首頁與靈感是同一條捲軸的上下兩段：往下滑就到靈感，搜尋欄剛好在第一屏外面。 */
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stopHomeScroll = useRef(() => {});
   const libRef = useRef<HTMLDivElement>(null);
   /** 模板那一段的「排版盒」（外層，不會動）—— 量位置要看它，不能看會位移的那層 */
   const libBoxRef = useRef<HTMLDivElement>(null);
@@ -485,6 +488,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
   /** 分頁列：首頁／模板是同一條捲軸的兩個位置，「我」才是橫向換頁。 */
   const goNav = useCallback((id: string) => {
+    stopHomeScroll.current();
     const sc = scrollRef.current;
     const fromMe = nav === 'me';
 
@@ -522,30 +526,15 @@ export const HomePage: React.FC<HomePageProps> = ({
       主視覺不用在這裡動 —— 它現在就在捲動內容裡，瀏覽器自己會捲，
       跟品牌字與其他東西完全同一拍。捲過第一屏它就自然離開畫面了，
       所以也不需要再淡出。 */
-  /* ── 到頂／到底就不要再拖 ────────────────────────────────────────
-     只在手勢本來就從邊界開始時攔住向外拖曳；中途的原生慣性完全交回 WebKit，
-     避免用 JS 模擬捲動造成快速回頂時的位移與回彈。 */
+  /* 首頁縱向慣性逐幀限制在內容範圍；橫向推薦列表仍使用原生捲動。 */
   useEffect(() => {
     const sc = scrollRef.current;
     if (!sc) return;
-    let y0 = 0;
-    const block = (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
-      const y = e.touches[0].clientY;
-      const dy = y - y0;
-      y0 = y;
-      const atTop = sc.scrollTop <= 0;
-      const atBottom = sc.scrollTop + sc.clientHeight >= sc.scrollHeight - 1;
-      if (((atTop && dy > 0) || (atBottom && dy < 0)) && e.cancelable) e.preventDefault();
-    };
-    const down = (e: TouchEvent) => {
-      y0 = e.touches[0]?.clientY ?? 0;
-    };
-    sc.addEventListener('touchstart', down, { passive: true });
-    sc.addEventListener('touchmove', block, { passive: false });
+    const scrolling = installHomeScroll(sc);
+    stopHomeScroll.current = scrolling.stop;
     return () => {
-      sc.removeEventListener('touchstart', down);
-      sc.removeEventListener('touchmove', block);
+      scrolling.destroy();
+      stopHomeScroll.current = () => {};
     };
   }, []);
 
@@ -1064,15 +1053,15 @@ export const HomePage: React.FC<HomePageProps> = ({
           }}
           className={`no-scrollbar absolute inset-0 z-[6] overflow-y-auto px-6 pb-4 pt-[calc(env(safe-area-inset-top,0px)+62px)] box-border bg-black ${nav === 'me' ? '' : 'pointer-events-none'}`}
         >
-          <button aria-label="設定" onClick={() => setSettingsOpen(true)}
+          <button aria-label="設定" onClick={() => { setSettingsPage('menu'); setSettingsOpen(true); }}
             className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
-            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 36px)' }}>
+            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 20px)' }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" aria-hidden="true"><path d="m9 3-.7 2.5-2 .9L4 5.7 2 9l1.8 1.8v2.4L2 15l2 3.3 2.3-.7 2 .9L9 21h6l.7-2.5 2-.9 2.3.7 2-3.3-1.8-1.8v-2.4L22 9l-2-3.3-2.3.7-2-.9L15 3Z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
           {/* 登入入口。
               整列不再是一顆大按鈕 —— 只有右邊那顆箭頭會有反應，
               點頭貼或名字都不會誤觸（登入前後都是同一顆，長相也一樣）。 */}
-          <div className="w-full flex items-center gap-4 pt-3 pb-5 text-left">
+          <div className="w-full flex items-center gap-4 pt-3 pb-5 text-left" style={{ transform: 'translateY(12px)' }}>
             <span className="w-[68px] h-[68px] shrink-0 rounded-full overflow-hidden bg-white/[0.05] border border-white/[0.14] flex items-center justify-center text-white/30">
               <AvatarView local={avatar} account={account} size={68} />
             </span>
@@ -1231,15 +1220,6 @@ export const HomePage: React.FC<HomePageProps> = ({
                只有聯絡鈕跟著往上補回原來的高度（本來是讓給那排字才往下的）。 */}
 
           {/* 聯絡鈕：圖示沒換，只是照參考圖改成細框的小圓。 */}
-          <button
-            onClick={e => { e.stopPropagation(); setContactOpen(true); }}
-            aria-label="聯絡方式"
-            className="absolute right-5 z-20 w-[34px] h-[34px] rounded-full border border-white/25 flex items-center justify-center text-white/75 hover:border-white/45 active:scale-95 transition-[border-color,transform] duration-300"
-            /* 14 → 11：整頁往上 3px，這一顆也跟著（見下面那一疊的說明） */
-            style={{ top: 'calc(env(safe-area-inset-top, 0px) + 20px)' }}
-          >
-            <Icon name="mail" className="text-[16px]" />
-          </button>
 
           {/* 品牌字：靠左、貼在主視覺左下角。
                字級與間距也照參考圖的比例縮到位（以前置中、而且大了快一倍）。
@@ -1830,17 +1810,24 @@ export const HomePage: React.FC<HomePageProps> = ({
         )}
       </AnimatePresence>
 
-      {settingsOpen && <div className="fixed inset-0 z-[250] bg-black/70 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
-        <section role="dialog" aria-modal="true" aria-label="語言" className="w-full max-w-sm bg-[#141414] border border-white/15 rounded-3xl p-5" onClick={e => e.stopPropagation()}>
-          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-bold">語言</h2>
+      <AnimatePresence>
+      {settingsOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.26 }} className="fixed inset-0 z-[250] bg-black/70 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
+        <section role="dialog" aria-modal="true" aria-label={settingsPage === 'language' ? '語言' : '設定'} className="w-full max-w-sm bg-[#141414] border border-white/15 rounded-3xl p-5" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-bold">{settingsPage === 'language' ? '語言' : '設定'}</h2>
             <button aria-label="關閉視窗" className="w-9 h-9 rounded-full border border-white/20" onClick={() => setSettingsOpen(false)}><Icon name="close" /></button>
           </div>
-          <div className="flex flex-col gap-2">{LOCALES.map(l => <button key={l.id} lang={l.id} onClick={() => changeLocale(l.id)} aria-pressed={getLocale() === l.id}
+          <AnimatePresence mode="wait" initial={false}><motion.div key={settingsPage} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+          {settingsPage === 'menu' ? <div className="flex flex-col gap-2">
+            <button className="min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left" onClick={() => { setSettingsOpen(false); setContactOpen(true); }}>聯絡資訊</button>
+            <button className="min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left" onClick={() => setSettingsPage('language')}>語言</button>
+          </div> : <div className="flex flex-col gap-2">{LOCALES.map(l => <button key={l.id} lang={l.id} onClick={() => changeLocale(l.id)} aria-pressed={getLocale() === l.id}
             className={`min-h-12 px-4 py-3 rounded-xl flex justify-between items-center border ${getLocale() === l.id ? 'border-white bg-white/10' : 'border-white/10'}`}>
             <span>{l.name}</span>{getLocale() === l.id && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>}
-          </button>)}</div>
+          </button>)}</div>}
+          </motion.div></AnimatePresence>
         </section>
-      </div>}
+      </motion.div>}
+      </AnimatePresence>
       {/* --- 聯絡方式 --- */}
       <AnimatePresence>
         {contactOpen && (

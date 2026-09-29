@@ -26,7 +26,8 @@ test('startup position is captured before paint and is not tied to live flex cen
 test('language dialog contains only the title and language choices',()=>{
  const source=fs.readFileSync('components/HomePage.tsx','utf8');
  const dialog=source.slice(source.indexOf('{settingsOpen &&'),source.indexOf('{/* --- 聯絡方式'));
- assert.match(dialog,/aria-label="語言"/);
+ assert.match(dialog,/aria-label=\{settingsPage === 'language' \? '語言' : '設定'\}/);
+ assert.match(dialog,/setSettingsPage\('language'\)/);
  assert.doesNotMatch(dialog,/<h3|<p /);
  const locale=fs.readFileSync('utils/locale.ts','utf8');
  assert.doesNotMatch(locale,/locale === getLocale\(\).*return/);

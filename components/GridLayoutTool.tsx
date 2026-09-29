@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
+import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
+import { idleDefaults } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
@@ -3482,6 +3484,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
       onChange={handleHexInputChange}
       maxLength={7}
       aria-label="色號"
+      style={{ fontSize: 16 }}
       className="shrink-0 h-8 w-[86px] bg-[#1A1A1A] border border-[#333] rounded-[7px] px-2 text-white font-mono text-xs outline-none focus:border-white/50"
     />
   );
@@ -4202,6 +4205,7 @@ const makeCardThumb = (img: HTMLImageElement, fx: PhotoFx): HTMLCanvasElement | 
 /** 濾鏡／特效卡片上的那張縮圖。算好之前先畫底圖，不會有空洞。 */
 const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: number }> = ({ src, cacheKey, fx, delay = 0 }) => {
   const ref = useRef<HTMLCanvasElement | null>(null);
+  const [paintedKey, setPaintedKey] = useState('');
   useEffect(() => {
     let dead = false;
     const paint = () => {
@@ -4232,12 +4236,16 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
       ctx.globalCompositeOperation = 'copy';
       ctx.drawImage(thumb, 0, 0);
       ctx.restore();
+      setPaintedKey(cacheKey);
     };
     // 一次算 20 幾張會卡住主執行緒，錯開一點點就順了
     const t = setTimeout(paint, delay);
     return () => { dead = true; clearTimeout(t); };
   }, [src, cacheKey, delay]);
-  return <canvas ref={ref} className="absolute inset-0 w-full h-full object-cover" />;
+  return <>
+    <img src={src} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover" />
+    <canvas ref={ref} className="absolute inset-0 w-full h-full object-cover" style={{ visibility: paintedKey === cacheKey ? 'visible' : 'hidden' }} />
+  </>;
 };
 
 /** 預覽重畫時要馬上有圖可以畫，所以原圖載過一次就留著。 */
@@ -5887,12 +5895,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
      這張局部 Canvas；原圖、濾鏡來源與外框幾何都不改，結束後立刻回原本的
      <img> 路徑。 */
   const plainImageWave = image.text === undefined && !image.shape && !image.isVideo
-    && !needsShapeCanvas && motionFrame?.gridWave !== undefined
+    && motionFrame?.gridWave !== undefined
     && (motionFrame.waveMix ?? 1) > 1e-5;
   const waveImagePad = plainImageWave
-    ? Math.ceil(Math.min(10, boxH * .065) * Math.max(.15, (image.mo?.amp ?? 50) / 100) + 2)
+    ? glowPad + Math.ceil(Math.min(10, boxH * .065) * Math.max(.15, (image.mo?.amp ?? 50) / 100) + 2)
     : 0;
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!plainImageWave) return;
     const canvas = waveImageCanvasRef.current;
     if (!canvas) return;
@@ -5901,7 +5909,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     const draw = () => {
       if (!alive || !img.naturalWidth) return;
       const dpr = Math.max(2, Math.min(4, geoDpr * Math.max(1, canvasK())));
-      const W = Math.max(1, Math.round(boxW * dpr));
+      const W = Math.max(1, Math.round((boxW + glowPad * 2) * dpr));
       const pad = waveImagePad * dpr;
       const bodyH = Math.max(1, Math.round(boxH * dpr));
       const H = Math.max(1, Math.round(bodyH + pad * 2));
@@ -5918,7 +5926,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       sg.clearRect(0, 0, W, H);
       sg.imageSmoothingEnabled = true;
       sg.imageSmoothingQuality = 'high';
-      sg.drawImage(fxSourceFor(img), 0, pad, W, bodyH);
+      const composed = needsShapeCanvas ? shapeCanvasRef.current : null;
+      if (composed && composed.width && composed.height) {
+        sg.drawImage(composed, 0, pad - glowPad * dpr, W, (boxH + glowPad * 2) * dpr);
+      } else {
+        sg.drawImage(fxSourceFor(img), glowPad * dpr, pad, boxW * dpr, bodyH);
+      }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, W, H);
       ctx.imageSmoothingEnabled = true;
@@ -5947,7 +5960,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     if (img.complete && img.naturalWidth) draw();
     else img.addEventListener('load', draw, { once: true });
     return () => { alive = false; img.removeEventListener('load', draw); };
-  }, [plainImageWave, image.src, image.fx, lutRevision, boxW, boxH, waveImagePad,
+  }, [plainImageWave, image.src, image.fx, lutRevision, boxW, boxH, waveImagePad, glowPad, needsShapeCanvas,
       motionFrame?.gridWave, motionFrame?.gridReveal, motionFrame?.waveMix, image.mo?.amp]);
 
   useLayoutEffect(() => {
@@ -7378,13 +7391,12 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             />
           )}
         </div>
-      ) : isSceneInk && scene ? null : needsShapeCanvas ? (
-        // 圓角／羽化／發光都畫在 canvas 上。用 CSS 遮罩的話每動一格滑桿就要
-        // 重新解碼一張遮罩圖，畫面會一閃一閃；canvas 是同一格畫完才送出，不會閃。
-        // 發光也才能跟文字一樣「同一個來源疊三層」，而不是一層陰影再套一層。
+      ) : isSceneInk && scene ? null : needsShapeCanvas ? (<>
+        {/* 圓角、羽化、發光先完成同一張來源，再進行波浪形變。 */}
         <canvas
           ref={shapeCanvasRef}
           style={{
+            visibility: plainImageWave ? 'hidden' : undefined,
             position: 'absolute',
             left: `${-glowPad}px`,
             top: `${-glowPad}px`,
@@ -7398,13 +7410,15 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
             pointerEvents: 'none',
           }}
         />
+        {plainImageWave && <canvas ref={waveImageCanvasRef} data-classic-wave-canvas={image.id} style={{ position: 'absolute', left: -glowPad, top: -waveImagePad, width: boxW + glowPad * 2, height: boxH + waveImagePad * 2, pointerEvents: 'none' }} />}
+        </>
       ) : plainImageWave ? (
         <canvas
           ref={waveImageCanvasRef}
           data-classic-wave-canvas={image.id}
           style={{
-            position: 'absolute', left: 0, top: `${-waveImagePad}px`,
-            width: '100%', height: `${boxH + waveImagePad * 2}px`,
+            position: 'absolute', left: -glowPad, top: `${-waveImagePad}px`,
+            width: boxW + glowPad * 2, height: `${boxH + waveImagePad * 2}px`,
             pointerEvents: 'none',
           }}
         />
@@ -7586,6 +7600,7 @@ interface GridLayoutToolProps {
 }
 
 export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome, onRequestExit, onImportNew, initialFiles, initialState, lutList = [] }) => {
+  useKeyboardRecovery();
   const openedFromDraftRef = useRef(!initialState && !(initialFiles && initialFiles.length) && hasDraft());
   /** 一頁上可以放多個佈局，每個佈局都是一個獨立物件（跟一般圖片一樣）。 */
   interface LayoutItem {
@@ -16693,14 +16708,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 replayMotion();
               };
               const pickIdle = (id: string) => {
-                if (id === 'symbol-breathe2') patchMotion({ idle: id, amp: 60, speed: 1.2 });
-                else if (id === 'image-breathe' && targetIsImage) patchMotion({ idle: id, amp: 100, speed: imageBreathSpeedFromUi(70) });
-                else if (id === 'breathe' && target.sym) patchMotion({ idle: id, amp: 30 });
-                else if (id === 'grid-wave') patchMotion(isGridTarget
-                  ? { idle: id, amp: 50, speed: 1.8 }
-                  : { idle: id, amp: 30, speed: target?.shape ? 1.8 : 1.75 });
-                else if (isSpecialLineTarget) patchMotion({ idle: id, amp: 20 });
-                else patchMotion({ idle: id });
+                patchMotion({ idle: id, ...idleDefaults(id, { symbol: !!target.sym, text: isTextTarget, image: targetIsImage, shape: !!target.shape, grid: isGridTarget, line: isSpecialLineTarget }) });
                 replayMotion();
               };
               const chip = (on: boolean) => `px-3 h-8 shrink-0 rounded-[8px] border text-[11px] font-bold tracking-wider transition-all flex items-center gap-1.5 ${on ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`;
