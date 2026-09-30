@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
+test('range controls retain detection semantics in the requested order',()=>{
+ const s=read('components/ArtStudio.tsx');
+ assert.match(s,/\['亮部','暗部','邊緣','色彩'\]/);
+ assert.match(s,/metric:\[0,3,1,2\]\[index\],high:100/);
+ assert.match(s,/range\('範圍','low',0,99\)/);
+ assert.doesNotMatch(s,/range\('上限'|range\('下限'|偵測/);
+});
 test('ASCII starts with white characters over the photo',()=>{
  const s=read('utils/asciiRenderer.ts');assert.match(s,/color:false,background:true,glow:0/);
 });
