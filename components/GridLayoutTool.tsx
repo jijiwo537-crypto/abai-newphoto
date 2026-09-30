@@ -7386,7 +7386,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
                 font: 'inherit', fontFamily: 'inherit', fontSize: 'inherit',
                 fontWeight: 'inherit', letterSpacing: 'inherit', lineHeight: 'inherit',
                 color: 'inherit', textAlign: 'center', whiteSpace: 'pre',
-                caretColor: image.color || '#FFFFFF',
+                caretColor: '#FFFFFF',
                 zIndex: 45,
               }}
             />

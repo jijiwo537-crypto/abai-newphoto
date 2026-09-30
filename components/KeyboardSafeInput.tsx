@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal, flushSync } from 'react-dom';
 
 /** Edit low toolbar fields above the keyboard, without moving the editor itself. */
@@ -6,6 +6,25 @@ export function KeyboardSafeInput(props: React.InputHTMLAttributes<HTMLInputElem
   const [open, setOpen] = useState(false);
   const field = useRef<HTMLInputElement>(null);
   const origin = useRef({ x: 0, y: 0 });
+  const panel = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (!open) return;
+    const vv = window.visualViewport;
+    const place = () => {
+      if (!panel.current) return;
+      const bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+      panel.current.style.top = `${Math.max(8, bottom - panel.current.offsetHeight - 12)}px`;
+    };
+    place();
+    vv?.addEventListener('resize', place);
+    vv?.addEventListener('scroll', place);
+    window.addEventListener('resize', place);
+    return () => {
+      vv?.removeEventListener('resize', place);
+      vv?.removeEventListener('scroll', place);
+      window.removeEventListener('resize', place);
+    };
+  }, [open]);
   const close = () => {
     field.current?.blur();
     setOpen(false);
@@ -21,10 +40,9 @@ export function KeyboardSafeInput(props: React.InputHTMLAttributes<HTMLInputElem
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); show(); } }} />
     {open && createPortal(<div className="fixed inset-0 z-[1000]" role="dialog" aria-label={props['aria-label'] || props.placeholder}>
       <button className="absolute inset-0 bg-black/30" aria-label="完成" onClick={close} />
-      <div className="absolute left-4 right-4 flex items-center gap-3 rounded-xl bg-[#242424] p-3 shadow-xl"
-        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 64px)' }}>
+      <div ref={panel} className="absolute left-4 right-4 flex items-center gap-3 rounded-xl bg-[#242424] p-3 shadow-xl">
         <input {...props} ref={field} readOnly={false} className="min-w-0 flex-1 rounded-lg bg-black/30 px-3 py-2 text-white outline-none"
-          style={{ fontSize: 16 }} onBlur={() => setOpen(false)}
+          style={{ fontSize: 16, caretColor: '#fff', border: '1px solid #fff', outline: 'none', boxShadow: 'none', accentColor: '#fff' }} onBlur={() => setOpen(false)}
           onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); close(); } }} />
         <button className="shrink-0 px-2 py-2 text-sm text-white" onPointerDown={e => e.preventDefault()} onClick={close}>完成</button>
       </div>

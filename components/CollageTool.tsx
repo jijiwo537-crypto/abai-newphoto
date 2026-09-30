@@ -1902,6 +1902,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       原生鍵盤與游標交給它，打的內容即時寫回物件。 */
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const editingTextRef = useRef<string | null>(null);
+  const editingFieldRef = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    if (editingTextId) editingFieldRef.current?.focus({ preventScroll: true });
+  }, [editingTextId]);
   editingTextRef.current = editingTextId;
   /* 輸入框是「手指放開」那一刻才打開的，而瀏覽器在 touchend 之後還會補送
      一輪滑鼠事件（mousedown/click）到畫布上 —— 那一下會把焦點從剛冒出來的
@@ -2040,6 +2044,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     key: string; c: HTMLCanvasElement; rx: number; ry: number; rw: number; rh: number;
   } | null>>({ image: null, mask: null });
   const linkGlowScratchRef = useRef<HTMLCanvasElement | null>(null);
+  // Link light is independent of pattern rotation and size. Cache it before
+  // knocking out the current pattern silhouettes, not after that dynamic step.
+  const linkLightCacheRef = useRef<Record<string, { key: string; canvas: HTMLCanvasElement }>>({});
   /** 一顆圖案的光暈成品，鍵＝真正決定長相的那幾項（見 glowInto） */
   const glowBmpRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const [brushMode, setBrushMode] = useState<'off' | 'pen' | 'eraser'>('off');
@@ -4766,8 +4773,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       tg.globalCompositeOperation = 'source-over';
       (tmp as any).__sz = szQ;
       cache.set(key, tmp);
-      // 只留最近用到的 24 張；階梯化之後同一次拖動只會用到兩三張
-      while (cache.size > 24) { const k0 = cache.keys().next().value; if (k0 === undefined) break; cache.delete(k0); }
+      // Count bytes, not just entries: a zoomed glyph can be several megapixels.
+      // Eviction changes reuse only; never changes the pixels being rendered.
+      let cachedPixels = 0;
+      for (const bitmap of cache.values()) cachedPixels += bitmap.width * bitmap.height;
+      while (cache.size > 1 && (cache.size > 24 || cachedPixels > 12_000_000)) {
+        const k0 = cache.keys().next().value;
+        if (k0 === undefined) break;
+        const bitmap = cache.get(k0)!;
+        cachedPixels -= bitmap.width * bitmap.height;
+        cache.delete(k0);
+        bitmap.width = bitmap.height = 1;
+      }
       return tmp;
     };
     /* 光暈裡的本體要比可見本體多擦除一個畫布像素。
@@ -4971,16 +4988,47 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               // directly instead of clearing/copying another zoom-sized canvas.
               // Animated/fading groups retain the isolated compositing below.
               if (buckets.size === 1 && buckets.has(1)) {
-                gg.save();
-                gg.globalAlpha = 1;
-                linkStyle(gg);
-                gg.strokeStyle = linkGlowColor;
-                gg.shadowColor = linkGlowColor;
-                for (const kk of [1, 2, 3]) {
-                  gg.shadowBlur = LINK_W * 3 * kk * .9;
-                  linkPath(gg, buckets.get(1)!);
+                const matrix = gg.getTransform();
+                const lightKey = `${linkMode}|${linkGlowColor}|${LINK_W}|${gg.canvas.width}|${gg.canvas.height}|${matrix.a},${matrix.b},${matrix.c},${matrix.d},${matrix.e},${matrix.f}|`
+                  + buckets.get(1)!.map(([a,b]) => {
+                    const pa=hA(a),pb=hA(b);
+                    return `${pa.x},${pa.y},${pb.x},${pb.y}`;
+                  }).join(';');
+                // Never retain another full zoom-sized framebuffer. This cache
+                // is an optimization, so bypass it when its memory cost is high.
+                const retainLight = isMain && gg.canvas.width * gg.canvas.height <= 4_000_000;
+                if (!retainLight && linkLightCacheRef.current[side]) {
+                  const expired = linkLightCacheRef.current[side].canvas;
+                  delete linkLightCacheRef.current[side];
+                  expired.width = expired.height = 1;
                 }
-                gg.restore();
+                const cache = retainLight ? linkLightCacheRef.current[side] : null;
+                if (cache?.key === lightKey) {
+                  gg.save(); gg.resetTransform(); gg.globalAlpha=1;
+                  gg.drawImage(cache.canvas,0,0); gg.restore();
+                  return;
+                }
+                const light = retainLight ? (cache?.canvas || document.createElement('canvas')) : null;
+                if (light) {
+                  if(light.width!==gg.canvas.width)light.width=gg.canvas.width;
+                  if(light.height!==gg.canvas.height)light.height=gg.canvas.height;
+                }
+                const lg = light?.getContext('2d') || gg;
+                if(light){lg.resetTransform();lg.clearRect(0,0,light.width,light.height);lg.setTransform(matrix);}
+                lg.save();
+                lg.globalAlpha = 1;
+                linkStyle(lg);
+                lg.strokeStyle = linkGlowColor;
+                lg.shadowColor = linkGlowColor;
+                for (const kk of [1, 2, 3]) {
+                  lg.shadowBlur = LINK_W * 3 * kk * .9;
+                  linkPath(lg, buckets.get(1)!);
+                }
+                lg.restore();
+                if(light){
+                  linkLightCacheRef.current[side]={key:lightKey,canvas:light};
+                  gg.save();gg.resetTransform();gg.globalAlpha=1;gg.drawImage(light,0,0);gg.restore();
+                }
                 return;
               }
               const W2 = gg.canvas.width, H2 = gg.canvas.height;
@@ -8334,6 +8382,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const boxH = o.sym ? Math.max(o.h, (o.size || 40) * 1.6) : o.h;
           const left = r.left - sr.left + (o.x + o.w / 2 - boxW / 2) * k;
           const top = r.top - sr.top + (o.y + o.h / 2 - boxH / 2) * k;
+          // Safari auto-zooms small native text fields. Keep the native font at
+          // least 16px, then scale the field around its unchanged visual centre.
+          const inputScale = Math.min(1, ((o.size || 40) * k) / 16);
           /* 收工時如果整段被刪光了就把東西放回去，不然會留下一個看不見的空框：
              一般文字放回預設的「輸入文字」，符號放回它自己那一顆。 */
           const done = () => {
@@ -8355,7 +8406,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           };
           return (
             <textarea
-              autoFocus
+              ref={editingFieldRef}
               /* 預設那四個字只是佔位，點進來打字時不該真的要自己刪掉；
                  符號則是實際內容，要原封不動讓人改。 */
               value={(!o.sym && o.text === TEXT_PLACEHOLDER) ? '' : (o.text || '')}
@@ -8383,20 +8434,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               onTouchMove={e => { if (e.touches.length < 2) e.stopPropagation(); }}
               style={{
                 position: 'absolute',
-                left, top,
-                width: boxW * k, height: boxH * k,
-                transform: `rotate(${o.rot || 0}deg)`,
+                left: left - boxW * k * (1 / inputScale - 1) / 2,
+                top: top - boxH * k * (1 / inputScale - 1) / 2,
+                width: boxW * k / inputScale, height: boxH * k / inputScale,
+                transform: `rotate(${o.rot || 0}deg) scale(${inputScale})`,
                 transformOrigin: '50% 50%',
                 margin: 0, padding: 0, border: 'none', outline: 'none', resize: 'none',
                 background: 'transparent', overflow: 'hidden',
                 fontFamily: fontStack(o.fontFamily || DEFAULT_FONT),
                 fontWeight: o.bold ? 800 : 400,
                 fontStyle: o.italic ? 'italic' : 'normal',
-                fontSize: (o.size || 40) * k,
-                letterSpacing: `${(o.letterSpacing || 0) * k}px`,
-                lineHeight: `${boxH * k}px`,
+                fontSize: (o.size || 40) * k / inputScale,
+                letterSpacing: `${(o.letterSpacing || 0) * k / inputScale}px`,
+                lineHeight: `${boxH * k / inputScale}px`,
                 color: o.color || '#FFFFFF',
-                caretColor: o.color || '#FFFFFF',
+                caretColor: '#FFFFFF',
                 textAlign: 'center',
                 whiteSpace: 'pre',
                 zIndex: 55,
