@@ -318,7 +318,7 @@ const FX_OWNER: Record<string, FxDef> = (() => {
 const FX_TOOLS: Record<string, ToolDef[]> = Object.fromEntries(
   FX_DEFS.map(d => [d.id, [
     // 強度用 percent —— tune 是「調節」分頁的圖標，不能拿來重複用
-    { id: d.id, label: d.id === 'fxLowfi' ? '整體強度' : '強度', icon: 'percent', min: 0, max: 100 },
+    { id: d.id, label: '強度', icon: 'percent', min: 0, max: 100 },
     // hidden 的那幾根不給調整（值永遠是預設），介面上就不要出現
     ...d.params.filter(p => !p.hidden)
       .map(p => ({ id: p.id, label: p.label, icon: p.icon, min: p.min, max: p.max, step: p.step })),
@@ -7002,7 +7002,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 <canvas 
                     ref={displayCanvasRef} 
                     style={{ objectFit: 'fill' }}
-                    className={previewAspect ? "w-full h-full pointer-events-auto rounded-sm" : "max-w-full pointer-events-auto rounded-sm"} 
+                    className="absolute inset-0 w-full h-full pointer-events-auto rounded-sm"
                 />
                 <canvas ref={fxSurfaceRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
 
@@ -7999,7 +7999,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                              fallbackId={thumbKey(activeSrc, FX_THUMB_BASE)}
                              painters={thumbPainters} attr="data-fx-thumb" name={tool.id} />
                 <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
-                  <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${isParamAdjusted(tool.id) ? 'text-white' : 'text-white/60'}`}>
+                  <span className={`text-[8px] font-black tracking-widest leading-none whitespace-nowrap ${isParamAdjusted(tool.id) ? 'text-white' : 'text-white/60'}`} style={{textTransform:'none'}}>
                     {tool.label}
                   </span>
                 </div>

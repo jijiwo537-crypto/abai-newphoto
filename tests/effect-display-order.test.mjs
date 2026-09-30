@@ -26,7 +26,7 @@ test('saved IDs and chosen lowfi defaults are retained with the new names', () =
   const source = fs.readFileSync('utils/glEffects.ts','utf8');
   assert.match(source, /id:'fxLowfi',label:'低保真',icon:'grain',onAmount:50/);
   assert.match(source, /id:'fxExposureSpill',label:'柔光ll'/);
-  for (const [id,value] of [['Grain',70],['Aberration',100],['Contrast',55]]) {
+  for (const [id,value] of [['Grain',60],['Aberration',50],['Contrast',55]]) {
     assert.match(source,new RegExp(`id:'fxLowfi${id}'[^\\n]+def:${value}`));
   }
   for (const file of ['components/ImageEditor.tsx','components/GridLayoutTool.tsx']) {

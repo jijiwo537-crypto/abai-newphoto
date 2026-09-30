@@ -166,8 +166,8 @@ export const FX_DEFS: FxDef[] = [
   {
     id:'fxLowfi',label:'低保真',icon:'grain',onAmount:50,
     params:[
-      {id:'fxLowfiGrain',label:'彩色顆粒',icon:'grain',min:0,max:100,def:70},
-      {id:'fxLowfiAberration',label:'色差',icon:'filter',min:0,max:100,def:100},
+      {id:'fxLowfiGrain',label:'顆粒',icon:'grain',min:0,max:100,def:60},
+      {id:'fxLowfiAberration',label:'色差',icon:'filter',min:0,max:100,def:50},
       {id:'fxLowfiContrast',label:'對比',icon:'contrast',min:0,max:100,def:55},
     ],
     passes:[{body:`

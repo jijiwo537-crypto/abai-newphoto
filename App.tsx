@@ -138,6 +138,8 @@ const App: React.FC = () => {
   const [layoutKey, setLayoutKey] = useState(0);
   const [beautyImage, setBeautyImage] = useState<string | null>(null);
   const [matchImage, setMatchImage] = useState<string | null>(null);
+  const [artImage, setArtImage] = useState<string | null>(null);
+  const artFileInputRef = useRef<HTMLInputElement>(null);
   const [matchRef, setMatchRef] = useState<string | null>(null);
   const [beautyKey, setBeautyKey] = useState(0);
   /* 從歷史紀錄點開來的那一筆是誰。工具再存一次的時候要沿用同一個 key，
@@ -647,13 +649,22 @@ const App: React.FC = () => {
           }}
           onOpenBeauty={handleBeautyImportClick}
           onOpenMatch={handleMatchImportClick}
-          onOpenArt={() => setCurrentView('art')}
+          onOpenArt={() => artFileInputRef.current?.click()}
           recent={recentExports}
           onOpenRecent={handleOpenRecent}
         />
       )}
 
-      {currentView === 'art' && <ArtStudio onClose={() => setCurrentView('home')} />}
+      <input ref={artFileInputRef} hidden type="file" accept={RAW_ACCEPT} onChange={async e => {
+        const file=e.target.files?.[0];e.target.value='';if(!file)return;
+        setIsImporting(true);setImportPreviewUrl(null);
+        try {
+          setArtImage(await processImageFile(file,u=>setImportPreviewUrl(u)));
+          setCurrentView('art');
+        } catch { alert('無法處理此圖片格式'); }
+        finally { setIsImporting(false);setImportPreviewUrl(null); }
+      }}/>
+      {currentView === 'art' && artImage && <ArtStudio initialSrc={artImage} onClose={() => setCurrentView('home')} />}
       {currentView === 'match' && matchImage && (
         <ColorMatchStudio
           imageSrc={matchImage}

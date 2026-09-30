@@ -23,7 +23,26 @@ if(query.has('creative')){
  const c=document.createElement('canvas');c.width=1200;c.height=1600;const g=c.getContext('2d')!;
  const grad=g.createLinearGradient(0,0,1200,1600);grad.addColorStop(0,'#173959');grad.addColorStop(1,'#dfae96');g.fillStyle=grad;g.fillRect(0,0,1200,1600);g.fillStyle='white';g.fillRect(350,150,100,900);g.beginPath();g.arc(800,800,200,0,Math.PI*2);g.fill();
  createRoot(document.getElementById('root')!).render(<ImageEditor imageSrc={c.toDataURL()} lutList={[{id:'none',name:'原始',url:''}]} onSave={()=>{}} onCancel={()=>{}}/>);
-}else createRoot(document.getElementById('root')!).render(<ArtStudio onClose={()=>{}}/>);
+}else {
+ const c=document.createElement('canvas');c.width=600;c.height=800;
+ const g=c.getContext('2d')!;const gradient=g.createLinearGradient(0,0,600,800);gradient.addColorStop(0,'#34547f');gradient.addColorStop(1,'#d7ac94');g.fillStyle=gradient;g.fillRect(0,0,600,800);g.fillStyle='white';g.font='90px sans-serif';g.fillText('ABAI',80,400);
+ createRoot(document.getElementById('root')!).render(<ArtStudio initialSrc={query.has('fixture')?c.toDataURL():''} onClose={()=>{}}/>);
+}
+
+if(query.has('alignbench')) void (async()=>{
+ const frame=()=>new Promise<void>(r=>requestAnimationFrame(()=>r()));
+ const click=(text:string)=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.includes(text))?.click();
+ while(!document.querySelector('canvas[aria-hidden=true]'))await frame();
+ for(let i=0;i<30;i++)await frame();click('特效');await frame();
+ const samples:any[]=[];
+ for(let round=0;round<3;round++)for(const id of ['fxNone','fxExposureSpill']){
+  (document.querySelector(`[data-fx-tool=${id}]`) as HTMLElement).click();
+  for(let i=0;i<20;i++){await frame();const b=document.querySelector('canvas[aria-hidden=true]')!;const a=b.previousElementSibling!;const r=a.getBoundingClientRect(),s=b.getBoundingClientRect();samples.push({x:r.x,y:r.y,w:r.width,h:r.height,dx:s.x-r.x,dy:s.y-r.y,dw:s.width-r.width,dh:s.height-r.height});}
+ }
+ const report={kind:'fx-alignment',samples};
+ const out=document.createElement('pre');out.textContent=JSON.stringify({kind:report.kind,sampleCount:samples.length,unique:[...new Set(samples.map(s=>JSON.stringify(s)))]},null,2);Object.assign(out.style,{position:'fixed',inset:'60px 10px auto',zIndex:'99999',background:'#111',color:'white',fontSize:'11px'});document.body.append(out);
+ await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify(report)}).catch(()=>{});
+})();
 
 // Development-only WebKit/Chromium benchmark. It uses the real mounted controls
 // and leaves results visible; synthetic events are not a substitute for touch QA.
