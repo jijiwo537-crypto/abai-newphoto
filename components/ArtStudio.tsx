@@ -15,22 +15,20 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  const standalone=(navigator as Navigator & {standalone?:boolean}).standalone===true;
  const root=useRef<HTMLDivElement>(null);
  useLayoutEffect(()=>{
-  // iOS Home Screen apps can leave a native bottom strip with viewport-fit=cover
-  // (WebKit 301994). Let iOS contain this editor; never extend DOM beneath an
-  // unreachable native strip. Restore the exact app viewport on exit.
+  // Keep the application's viewport metadata untouched. An absolute editor
+  // participates in WebKit's document bounds (unlike the stale fixed viewport
+  // in Home Screen apps), keeping bottom controls visible and hit-testable.
   if(!(navigator as Navigator & {standalone?:boolean}).standalone)return;
-  const viewport=document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
-  if(!viewport)return;
-  const previous=viewport.content;
   const visual=window.visualViewport;
   const align=()=>{
    if(document.activeElement?.matches('input,textarea,[contenteditable=true]'))return;
    root.current?.style.setProperty('--art-native-offset',`${visual?.offsetTop||0}px`);
   };
   visual?.addEventListener('resize',align);visual?.addEventListener('scroll',align);
-  viewport.content=previous.replace(/viewport-fit\s*=\s*cover/,'viewport-fit=contain');
   align();const frame=requestAnimationFrame(align);
-  return()=>{cancelAnimationFrame(frame);visual?.removeEventListener('resize',align);visual?.removeEventListener('scroll',align);viewport.content=previous;};
+  return()=>{
+   cancelAnimationFrame(frame);visual?.removeEventListener('resize',align);visual?.removeEventListener('scroll',align);
+  };
  },[]);
  const [src,setSrc]=useState(initialSrc),[settings,setSettings]=useState(ASCII_DEFAULTS);
  const [effect,setEffect]=useState<EffectId>('ascii'),[tab,setTab]=useState('效果'),[section,setSection]=useState('偵測');

@@ -19,6 +19,7 @@ test('iOS standalone sizing is scoped to art, not shared tool CSS',()=>{
  assert.match(s,/\.art-studio\.safe-top\{[^}]*height:auto!important/);
  assert.doesNotMatch(s,/art-screen-height|art-ios-standalone/);
  const component=readFileSync(new URL('../components/ArtStudio.tsx',import.meta.url),'utf8');
- assert.match(component,/viewport-fit=contain/);
- assert.match(component,/removeEventListener\('scroll',align\);viewport.content=previous;/);
+ assert.doesNotMatch(component,/viewport\.content\s*=/);
+ assert.match(s,/art-contained\{position:absolute/);
+ assert.match(component,/visual\?\.removeEventListener\('scroll',align\)/);
 });

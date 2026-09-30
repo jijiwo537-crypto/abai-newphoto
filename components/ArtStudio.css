@@ -2,7 +2,7 @@
 /* Anchor both physical edges. Do not subtract the status bar from a viewport
    that iOS standalone may already have reduced. Scope to this editor only. */
 .art-studio.safe-top{top:env(safe-area-inset-top,0px);bottom:0;margin-top:0;height:auto!important;max-height:none!important;padding:0;transform:none}
-.art-studio.safe-top.art-contained{position:absolute;top:var(--art-native-offset,0px);bottom:calc(-1 * var(--art-native-offset,0px))}
+.art-studio.safe-top.art-contained{position:absolute;top:calc(env(safe-area-inset-top,0px) + var(--art-native-offset,0px));bottom:calc(-1 * (env(safe-area-inset-top,0px) + var(--art-native-offset,0px)))}
 .art-header{height:56px;flex:none;display:flex;align-items:center;gap:16px;padding:0 16px;border-bottom:1px solid #ffffff12}
 .art-header>button:first-child{width:38px;height:38px;padding:8px;margin-left:-8px;color:#aaa;display:grid;place-items:center}
 .art-header .art-replace{margin-left:auto;width:38px;height:38px;display:grid;place-items:center;color:#aaa}
