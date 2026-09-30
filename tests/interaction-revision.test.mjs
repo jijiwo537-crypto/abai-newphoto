@@ -65,3 +65,16 @@ test('touch devices retain parallax while overscroll remains contained', () => {
   assert.match(touchRules, /overscroll-behavior-y:\s*none/);
   assert.match(home, /const h = rangeWritten\.current > 0 \? rangeWritten\.current/);
 });
+
+test('parallax has one property owner from first layout and neutral black panels', () => {
+ const home=source('components/HomePage.tsx');
+ assert.match(home,/const cssTimeline = useRef\(typeof CSS/);
+ assert.match(home,/const y = rawY \* edge \* edge \* \(3 - 2 \* edge\)/);
+ for(const file of ['components/HomePage.tsx','components/ImageEditor.tsx']){
+  assert.match(source(file),/background: 'rgba\(0,0,0,.92\)'/);
+  assert.doesNotMatch(source(file),/rgba\(30,32,37,.84\)/);
+ }
+ const h=800;const f=y=>{const q=Math.min(1,Math.max(0,y)/(h*.12));return Math.max(0,y)*q*q*(3-2*q)};
+ assert.equal(f(0),0);assert.ok(f(.1)<.00001);assert.equal(f(96),96);
+ let last=0;for(let y=0;y<=800;y+=.1){const v=f(y);assert.ok(v>=last);last=v;}
+});

@@ -6851,7 +6851,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <button aria-label="匯出選項" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(v => !v)} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
             </div>
             {exportMenuOpen && <>
-              <div role="dialog" aria-label="匯出選項" className="absolute left-4 right-4 top-full mt-2 z-[81] rounded-xl border border-white/15 p-3 shadow-xl" style={{ background: 'linear-gradient(135deg,rgba(255,255,255,.07),rgba(255,255,255,0)),rgba(30,32,37,.84)', backdropFilter: 'blur(32px) saturate(145%)', WebkitBackdropFilter: 'blur(32px) saturate(145%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.08),0 12px 36px rgba(0,0,0,.24)' }}>
+              <div role="dialog" aria-label="匯出選項" className="absolute left-4 right-4 top-full mt-2 z-[81] rounded-xl border border-white/15 p-3 shadow-xl" style={{ background: 'rgba(0,0,0,.92)', backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.04),0 12px 36px rgba(0,0,0,.3)' }}>
                 <div className="text-xs text-white/50 mb-2">匯出格式</div>
                 <div className="flex gap-2">
                   {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : 'bg-white/10'}`}>{format.toUpperCase()}</button>)}

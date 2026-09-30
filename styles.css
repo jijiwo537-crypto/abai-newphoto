@@ -268,7 +268,10 @@ select:focus, select:focus-visible {
   /* opacity 的每一站是 JS 那條路的 smoothstep 取樣點（起點 6%、終點 46%），
      兩條路的節奏才會完全一樣。直線淡出在頭尾會有「開關感」。 */
   0%   { transform: translate3d(0, 0, 0); opacity: 1; }
-  6%   { opacity: 1; }
+  3%   { transform: translate3d(0, calc(var(--hero-range) * .002578125), 0); }
+  6%   { transform: translate3d(0, calc(var(--hero-range) * .0165), 0); opacity: 1; }
+  9%   { transform: translate3d(0, calc(var(--hero-range) * .041765625), 0); }
+  12%  { transform: translate3d(0, calc(var(--hero-range) * .066), 0); }
   10%  { opacity: 0.972; }
   15%  { opacity: 0.874; }
   20%  { opacity: 0.692; }
@@ -298,12 +301,20 @@ select:focus, select:focus-visible {
    scale 反過來只會讓照片更大、蓋得更滿，所以要更明顯就是加 scale。 */
 @keyframes home-hero-art-scroll {
   from { transform: translate3d(0, 0, 0) scale(1); }
+  3% { transform: translate3d(0, calc(var(--hero-range) * .00028125), 0) scale(1.000421875); }
+  6% { transform: translate3d(0, calc(var(--hero-range) * .0018), 0) scale(1.0027); }
+  9% { transform: translate3d(0, calc(var(--hero-range) * .00455625), 0) scale(1.006834375); }
+  12% { transform: translate3d(0, calc(var(--hero-range) * .0072), 0) scale(1.0108); }
   to   { transform: translate3d(0, calc(var(--hero-range, 100vh) * 0.06), 0) scale(1.09); }
 }
 
 /* 模板那一段：一開始往下藏 --lib-lift，隨捲動收回 0 */
 @keyframes home-lib-scroll {
   from { transform: translate3d(0, var(--lib-lift, 0px), 0); }
+  3% { transform: translate3d(0, calc(var(--lib-lift) * .9953125), 0); }
+  6% { transform: translate3d(0, calc(var(--lib-lift) * .97), 0); }
+  9% { transform: translate3d(0, calc(var(--lib-lift) * .9240625), 0); }
+  12% { transform: translate3d(0, calc(var(--lib-lift) * .88), 0); }
   to   { transform: translate3d(0, 0, 0); }
 }
 

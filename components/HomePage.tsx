@@ -14,7 +14,7 @@ import { installHomeScroll } from '../utils/homeScroll';
 const CONTACT_EMAIL = 'chi888969930522@gmail.com';
 const CONTACT_IG = 'abai_is.perfect';
 const CONTACT_IG_URL = 'https://www.instagram.com/abai_is.perfect/';
-const SETTINGS_GLASS = { background: 'linear-gradient(135deg,rgba(255,255,255,.07),rgba(255,255,255,0)),rgba(30,32,37,.84)', backdropFilter: 'blur(32px) saturate(145%)', WebkitBackdropFilter: 'blur(32px) saturate(145%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.08),0 12px 36px rgba(0,0,0,.24)' };
+const SETTINGS_GLASS = { background: 'rgba(0,0,0,.92)', backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.04),0 12px 36px rgba(0,0,0,.3)' };
 
 interface HomePageProps {
   onOpenCamera: () => void;
@@ -556,7 +556,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   const heroRef = useRef<HTMLDivElement>(null);
   /** 主視覺裡的照片。它比整屏再慢一層，JS 那條路也要跟著畫 */
   const artRef = useRef<HTMLDivElement>(null);
-  const cssTimeline = useRef(false);
+  const cssTimeline = useRef(typeof CSS !== 'undefined' && CSS.supports('animation-timeline: scroll()'));
   // Touch input is not a request to disable parallax. Prefer the native scroll
   // timeline on capable browsers; only the accessibility preference disables it.
   const reduceMotion = useRef(typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -618,11 +618,22 @@ export const HomePage: React.FC<HomePageProps> = ({
       if (artRef.current) artRef.current.style.transform = '';
       return;
     }
-    if (cssTimeline.current) return;
+    if (cssTimeline.current) {
+      // A property must have exactly one owner, including the first layout pass.
+      el.style.transform = ''; el.style.opacity = '';
+      if (artRef.current) artRef.current.style.transform = '';
+      if (libRef.current) libRef.current.style.transform = '';
+      return;
+    }
     const h = rangeWritten.current > 0 ? rangeWritten.current : sc.clientHeight || 1;
     // 夾在 0～可捲上限之間：iOS 橡皮筋期間讀到的值可能超出範圍，
     // 直接拿去算會讓圖案往回彈一下。
-    const y = Math.max(0, sc.scrollTop);
+    const rawY = Math.max(0, sc.scrollTop);
+    // Fade the compensation velocity to zero at the top. WebKit's asynchronous
+    // scroll position may lag the compositor by a frame; a zero endpoint slope
+    // prevents a visible last-frame correction without changing native momentum.
+    const edge = Math.min(1, rawY / (h * 0.12));
+    const y = rawY * edge * edge * (3 - 2 * edge);
     /* 位移在「捲滿一屏」就封頂，跟 CSS 那一版的 animation-range 完全一致。
        0.55＝修圖那一屏走 45% 的速度。試過 0.26（走 74%，太淡看不出視差）
        跟 0.70（走 30%，太重），0.55 是兩者中間。
