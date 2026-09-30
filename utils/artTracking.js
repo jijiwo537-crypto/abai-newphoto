@@ -63,7 +63,7 @@ export function renderTracking(c,source,strength=.6,options={}){
  }
  if(o.rasterOnly){c.restore();return;}
  c.strokeStyle=c.fillStyle=o.palette;c.globalAlpha=alpha;c.lineWidth=o.lineWeight*k;
- if(o.links>0){c.beginPath();for(const [a,b] of makeLinks(nodes,o.linkMode,o.links*k)){c.moveTo(a.x,a.y);if(o.linkMode==='circuit'){c.lineTo((a.x+b.x)/2,a.y);c.lineTo((a.x+b.x)/2,b.y);}c.lineTo(b.x,b.y);}c.stroke();}
+ if(o.linkMode!=='none'){c.beginPath();for(const [a,b] of makeLinks(nodes,o.linkMode,o.links*k)){c.moveTo(a.x,a.y);if(o.linkMode==='circuit'){c.lineTo((a.x+b.x)/2,a.y);c.lineTo((a.x+b.x)/2,b.y);}c.lineTo(b.x,b.y);}c.stroke();}
  c.lineWidth=o.stroke*k;
  for(const n of chain){c.beginPath();c.arc(n.x,n.y,n.radius,0,Math.PI*2);c.stroke();}
  if(o.intersections)for(let i=1;i<chain.length;i++)for(const p of circleIntersections(chain[i-1],chain[i])){c.beginPath();c.arc(p.x,p.y,o.markerSize*k/2,0,Math.PI*2);c.fill();}

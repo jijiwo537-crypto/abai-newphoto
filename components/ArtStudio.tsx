@@ -76,7 +76,7 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  const updateTracking=(key:string,value:any)=>setTracking(s=>({...s,[key]:value}));
  const slider=(name:string,value:number,min:number,max:number,change:(v:number)=>void,step=1)=><label className="art-range"><span>{name}<output>{Number(value.toFixed(2))}</output></span><input aria-label={name} type="range" min={min} max={max} step={step} value={value} onChange={e=>change(+e.target.value)}/></label>;
  const range=(name:string,key:'columns'|'low',min:number,max:number)=>slider(name,settings[key],min,max,v=>setSettings(s=>({...s,[key]:v,high:100})));
- const tr=(name:string,key:string,min:number,max:number,step=1)=>slider(name,Number(tracking[key]),min,max,v=>updateTracking(key,v),step);
+ const tr=(name:string,key:string,min:number,max:number,step=1)=>max===1?slider(name,Math.round(Number(tracking[key])*100),min*100,100,v=>updateTracking(key,v/100)):slider(name,Number(tracking[key]),min,max,v=>updateTracking(key,v),step);
  const toggle=(name:string,on:boolean,change:()=>void)=><button className="art-toggle" role="switch" aria-checked={on} onClick={change}>{name}<i/></button>;
  const tt=(name:string,key:string)=>toggle(name,!!tracking[key],()=>updateTracking(key,!tracking[key]));
  const groups=(names:string[])=><div className="art-subtabs">{names.map(name=><button key={name} aria-pressed={section===name} onClick={()=>setSection(name)}>{name}</button>)}</div>;
@@ -111,7 +111,7 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
    {effect==='tracking'&&tab==='節點'&&<>{groups(['偵測','輪廓','連線'])}
     {section==='偵測'&&<><div className="art-presets">{[['combined','綜合'],['bright','亮部'],['dark','暗部'],['contrast','邊緣']].map(([key,name])=><button key={key} aria-pressed={tracking.detection===key} onClick={()=>updateTracking('detection',key)}>{name}</button>)}</div>{tr('範圍','threshold',0,80)}{tr('數量','circles',5,150)}</>}
     {section==='輪廓'&&<><div className="art-presets art-scroll">{[['circle','圓形'],['square','方形'],['diamond','菱形'],['spark','星芒'],['bracket','定位角']].map(([key,name])=><button key={key} aria-pressed={tracking.shape===key} onClick={()=>updateTracking('shape',key)}>{name}</button>)}</div>{tr('大小','maxRadius',10,80)}{tr('粗細','stroke',.3,3,.1)}</>}
-    {section==='連線'&&<><div className="art-presets art-scroll">{[['tree','最短路徑'],['radial','放射'],['circuit','折線'],['network','鄰近'],['none','無']].map(([key,name])=><button key={key} aria-pressed={tracking.linkMode===key} onClick={()=>updateTracking('linkMode',key)}>{name}</button>)}</div>{tr('距離','links',0,400)}{tr('粗細','lineWeight',.2,2,.1)}</>}
+    {section==='連線'&&<><div className="art-presets art-scroll">{[['tree','最短路徑'],['radial','放射'],['circuit','折線'],['network','鄰近'],['none','無']].map(([key,name])=><button key={key} aria-pressed={tracking.linkMode===key} onClick={()=>updateTracking('linkMode',key)}>{name}</button>)}</div>{tracking.linkMode!=='none'&&<>{['tree','radial'].includes(tracking.linkMode)?tr('節點間距','minDistance',10,100):tr('距離','links',0,400)}{tr('粗細','lineWeight',.2,2,.1)}</>}</>}
    </>}
    {effect==='tracking'&&tab==='構圖'&&<>{groups(['外觀','取景框','圓圈鏈','文字'])}
     {section==='圓圈鏈'&&<>{tt('圓圈鏈','chain')}{tr('大小','baseRadius',30,400)}{tr('角度','angle',0,180)}</>}
