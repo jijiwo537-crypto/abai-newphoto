@@ -2143,7 +2143,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const fxSurfaceRef=useRef<HTMLCanvasElement>(null);
   const fxSurfaceShownRef=useRef(false);
   const fxInputKeyRef=useRef('');
-  const showFxSurface=(shown:boolean)=>{fxSurfaceShownRef.current=shown;if(fxSurfaceRef.current)fxSurfaceRef.current.style.visibility=shown?'visible':'hidden';};
+  const showFxSurface=(shown:boolean)=>{
+    // One presentation surface for both original and effects. Separate DOM GPU
+    // layers can receive different subpixel compositor sampling on iOS.
+    fxSurfaceShownRef.current=false;
+    const surface=fxSurfaceRef.current,display=displayCanvasRef.current;
+    if(surface)surface.style.visibility='hidden';
+    if(shown&&surface&&display){const ctx=display.getContext('2d');if(ctx){ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=1;ctx.globalCompositeOperation='copy';ctx.drawImage(surface,0,0,display.width,display.height);ctx.restore();}}
+  };
   const visibleEditorCanvas=()=>fxSurfaceShownRef.current ? fxSurfaceRef.current : displayCanvasRef.current;
   useEffect(()=>{const surface=fxSurfaceRef.current;return()=>{if(surface)disposeFxSurface(surface);};},[]);
   useLayoutEffect(()=>{showFxSurface(false);fxInputKeyRef.current='';},[activeSrc]);
