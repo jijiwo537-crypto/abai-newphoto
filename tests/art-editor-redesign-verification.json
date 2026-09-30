@@ -1,0 +1,33 @@
+{
+  "date": "2026-10-01",
+  "scope": "ArtStudio only; no shared safe-area, homepage, camera, collage or editor changes",
+  "tests": {"passed": 134, "failed": 0, "productionBuild": "passed"},
+  "browser": {
+    "engine": "Chromium, mobile viewport, DPR 3",
+    "widths": [320, 375, 402],
+    "historyCenterErrorPx": 0,
+    "bottomButtonGapPx": 14,
+    "materialMultiSelection": ["mosaic", "glass", "negative"],
+    "outlineMultiSelection": ["circle", "square", "star"],
+    "undoRedoAndNone": "passed",
+    "originalColorDensitySliderMs": {"p50": 16.8, "p95": 17.8, "max": 18.6},
+    "exportJpeg": {"mime": "image/jpeg", "signature": [255, 216, 255], "dimensions": [2401, 3200]},
+    "exportPng": {"mime": "image/png", "signature": [137, 80, 78, 71, 13, 10, 26, 10], "dimensions": [2401, 3200], "nonBlackPixels": 868405}
+  },
+  "nativeStandalone": {
+    "device": "iPhone 17 simulator, iOS 26.5, installed Home Screen web app",
+    "input": "synthetic events on actual mounted controls, not physical touch",
+    "viewport": [402, 874],
+    "slidersCovered": 21,
+    "historyCenterPx": 201,
+    "bottomButtonGapPx": 14,
+    "whiteDensityP95Ms": 17,
+    "whiteGlowDensityP95Ms": 18,
+    "trackingTypicalP95Ms": [17, 19],
+    "glassBlurP95Ms": 27,
+    "originalColorBaselineP95Ms": 51,
+    "originalColorFix": "Replaced full-screen Canvas2D GPU upload with screen-density glyph atlas and reusable vertex buffer after measuring this baseline",
+    "latestOriginalColorNativeRetest": "Blocked by screen automation reporting Mac locked, after user reported unlocked; desktop test passed",
+    "limitations": "No physical iPhone, native HEIC encoder or all-device 60 fps guarantee"
+  }
+}

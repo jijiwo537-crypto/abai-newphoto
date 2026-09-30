@@ -3,25 +3,32 @@
    that iOS standalone may already have reduced. Scope to this editor only. */
 .art-studio.safe-top{top:env(safe-area-inset-top,0px);bottom:0;margin-top:0;height:auto!important;max-height:none!important;padding:0;transform:none}
 .art-studio.safe-top.art-contained{position:absolute;top:calc(env(safe-area-inset-top,0px) + var(--art-native-offset,0px));bottom:calc(-1 * (env(safe-area-inset-top,0px) + var(--art-native-offset,0px)))}
-.art-header{height:56px;flex:none;display:flex;align-items:center;gap:16px;padding:0 16px;border-bottom:1px solid #ffffff12}
+.art-header{height:56px;flex:none;display:flex;align-items:center;gap:8px;padding:0 16px;border-bottom:1px solid #ffffff12;position:relative;z-index:5}
 .art-header>button:first-child{width:38px;height:38px;padding:8px;margin-left:-8px;color:#aaa;display:grid;place-items:center}
-.art-header .art-replace{margin-left:auto;width:38px;height:38px;display:grid;place-items:center;color:#aaa}
-.art-header .art-save{height:32px;padding:0 21px;border-radius:30px;background:white;color:#111;font-size:12px;font-weight:700}
+.art-save-menu{margin-left:auto}
+.art-save-pill{height:32px;border-radius:999px;background:#fff;color:#111;display:flex;align-items:center;overflow:hidden}
+.art-save-pill button{height:32px;display:grid;place-items:center;padding:0 8px}
+.art-save-pill .art-save{padding:0 16px;font-size:11px;font-weight:900}
+.art-save-pill i{width:1px;height:16px;background:#0003}
+.art-format{position:absolute;top:calc(100% + 8px);left:16px;right:16px;padding:16px;border:1px solid #ffffff16;border-radius:14px;background:rgba(0,0,0,.92);backdrop-filter:blur(28px);-webkit-backdrop-filter:blur(28px);box-shadow:0 8px 32px #0005}
+.art-format>span{display:block;font-size:11px;color:#999;margin-bottom:12px}
+.art-format>div{display:flex;gap:8px}.art-format button{flex:1;height:36px;border-radius:8px;background:#ffffff0d;color:#aaa;font-size:12px;font-weight:600}
+.art-format button[aria-pressed=true]{background:white;color:black}
 .art-studio button:disabled{opacity:.35}
 .art-preview{min-height:0;flex:1;position:relative;overflow:hidden;isolation:isolate;container-type:size}
 .art-zoom{position:absolute;inset:0;touch-action:none}
 .art-surface{position:relative;flex:none;max-width:100%;max-height:100%}
 .art-zoom .art-surface canvas,.art-vectors{position:absolute;inset:0;display:block;width:100%;height:100%;max-width:none;max-height:none}
 .art-vectors{pointer-events:none;overflow:visible;shape-rendering:geometricPrecision;text-rendering:geometricPrecision}
-.art-history{display:flex;gap:12px;margin:auto}.art-history button{display:grid;place-items:center;width:32px;height:38px;color:#aaa}
-.art-header{gap:8px}.art-header .art-replace{margin-left:0}
+.art-ink{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.art-history{display:flex;gap:16px;position:absolute;left:50%;transform:translateX(-50%)}.art-history button{display:grid;place-items:center;width:32px;height:38px;color:#aaa}
 .art-import{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;font-size:13px;color:#aaa}
 .art-compare{position:absolute;right:8px;bottom:8px;padding:12px;color:#ffffff66;z-index:2;display:flex;touch-action:none}
 .art-panel{flex:none;background:#101010;border-top:1px solid #ffffff12;display:flex;flex-direction:column}
 .art-controls{height:206px;box-sizing:border-box;overflow:hidden;padding:14px 22px}
 .art-panel nav{display:flex;flex:none;border-top:1px solid #ffffff12;background:#080808;height:64px;padding:3px 12px 13px;box-sizing:border-box;gap:6px}
-.art-panel nav button{flex:1;height:46px;position:relative;display:grid;place-items:center;font-size:14px;font-weight:500;letter-spacing:.1em;color:#777;border-radius:8px}
-.art-panel nav button[aria-pressed=true]{color:white;background:#ffffff08}
+.art-panel nav button{flex:1;height:46px;position:relative;display:grid;place-items:center;font-size:14px;font-weight:500;letter-spacing:.04em;color:#777}
+.art-panel nav button[aria-pressed=true]{color:white}
 .art-panel nav button[aria-pressed=true]:after{content:'';position:absolute;bottom:3px;width:14px;height:2px;background:#eee;border-radius:3px}
 .art-chars{display:flex;align-items:center;gap:16px;font-size:12px}.art-chars input{flex:1;min-width:0;background:#1c1c1c;border:1px solid #ffffff16;border-radius:6px;padding:7px 10px;color:white;caret-color:white;font-family:monospace;font-size:16px}.art-chars input:focus{outline:1px solid white}
 .art-presets{display:flex;gap:8px;margin:12px 0}.art-presets button{flex:1;min-width:0;border:1px solid #ffffff16;border-radius:6px;padding:7px 8px;font-size:12px;white-space:nowrap}.art-presets button[aria-pressed=true]{background:#eee;color:#111}
@@ -36,25 +43,11 @@
 .art-export footer{display:flex;flex-direction:column;gap:12px;padding:8px 24px 24px}
 .art-export footer>div{display:flex;gap:16px}
 .art-export footer>div>button{flex:1;height:56px;border-radius:999px;border:1px solid #fff3;background:#ffffff0d;font-size:14px;font-weight:700}
-.art-effect-list{display:flex;gap:12px;align-items:center;height:100%;overflow-x:auto;padding:0 1px;scrollbar-width:none}
-.art-effect-card{flex:1;min-width:136px;display:flex;flex-direction:column;gap:11px;align-items:flex-start;font-size:13px;letter-spacing:.12em;color:#888}
-.art-effect-sample{height:120px;width:100%;border:1px solid #ffffff16;border-radius:3px;display:grid;place-items:center;background:#1b1b1b;color:#bbb;position:relative;overflow:hidden}
-.art-effect-card[aria-pressed=true]{color:white}.art-effect-card[aria-pressed=true] .art-effect-sample{border-color:#e7e7e7;color:#fff}
-.art-effect-card[aria-pressed=true]>span:last-child:after{content:'●';font-size:6px;margin-left:9px;vertical-align:middle}
-.art-effect-sample.ascii{font:34px/1 monospace;text-align:center;background:radial-gradient(circle,#ffffff12 1px,transparent 1px) 0 0/5px 5px,#161616}.art-effect-sample small{font-size:17px;letter-spacing:5px}
-.art-effect-sample.tracking{background:linear-gradient(120deg,#111 45%,#343434 45%,#343434 46%,#181818 46%)}
-.art-effect-sample svg{width:100%;height:100%}
+.art-effect-list{align-items:center;height:100%;margin:0;gap:16px}
+.art-effect-list button{height:44px;font-size:13px}
 .art-subtabs{display:flex;gap:22px;overflow-x:auto;white-space:nowrap;height:33px;flex:none;scrollbar-width:none;margin-bottom:5px}.art-subtabs button{font-size:12px;letter-spacing:.04em;color:#888;padding-bottom:8px;flex:none}.art-subtabs button[aria-pressed=true]{color:white;border-bottom:1px solid #fff}
 .art-tracking-controls .art-range{margin:6px 0;line-height:14px}.art-tracking-controls .art-range input{display:block;margin:3px 0 0;height:22px}.art-tracking-controls .art-toggle{min-height:32px}.art-tracking-controls .art-presets{margin:7px 0}.art-tracking-controls .art-presets button{padding:6px 8px;border-radius:5px}
 .art-scroll{overflow-x:auto;scrollbar-width:none}.art-scroll button{flex:none}
-.art-materials{display:flex;gap:12px;overflow-x:auto;scrollbar-width:none;padding:3px 1px 5px}.art-materials button{flex:0 0 59px;text-align:left;font-size:10px;color:#999;letter-spacing:.03em}.art-materials i{display:block;width:59px;height:51px;margin-bottom:6px;border:1px solid #ffffff16;border-radius:4px;background-color:#555}.art-materials button[aria-pressed=true]{color:white}.art-materials button[aria-pressed=true] i{outline:1px solid white;outline-offset:2px}
-.art-materials .material-mosaic{background:conic-gradient(#555 25%,#bbb 0 50%,#222 0 75%,#888 0) 0 0/17px 17px}
-.art-materials .material-glass{background:radial-gradient(ellipse at 20% 70%,#ddd,transparent 70%),linear-gradient(120deg,#222,#777)}
-.art-materials .material-negative{background:linear-gradient(130deg,#f0e2b4 48%,#242c58 49%)}
-.art-materials .material-prism{background:repeating-linear-gradient(110deg,#496f99,#e1bdce 8px,#555873 14px)}
-.art-materials .material-glitch{background:repeating-linear-gradient(0deg,#3d1d5b 0 8px,#9de1db 8px 11px,#c682a8 11px 14px,#191919 14px 20px)}
-.art-materials .material-duotone{background:linear-gradient(140deg,#3f1659,#bda270)}
-.art-materials .material-scan{background:repeating-linear-gradient(0deg,#142c26 0 2px,#749c8a 2px 3px)}
-.art-materials .material-dream{background:radial-gradient(ellipse at 30% 30%,#edc5dc,#9daccb 60%,#554c71)}
+.art-detail-ranges{display:grid;grid-template-columns:1fr 1fr;column-gap:18px}
 .art-text-fields{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px}.art-text-fields label{font-size:10px;line-height:14px;color:#999}.art-text-fields input{display:block;min-width:0;width:100%;height:30px;font-size:16px;background:#202020;border-radius:4px;padding:2px 4px;color:white;caret-color:white}
 .art-placement-hint{position:absolute;left:50%;top:12px;transform:translateX(-50%);padding:6px 12px;background:#0009;border-radius:20px;color:#ddd;font-size:11px;pointer-events:none;white-space:nowrap}

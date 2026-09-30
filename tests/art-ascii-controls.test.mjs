@@ -5,7 +5,8 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 test('art uses the editor viewport and shared save control with fixed text-only tabs',()=>{
  const s=read('components/ArtStudio.tsx'),css=read('components/ArtStudio.css');
  assert.match(s,/art-studio safe-top/);assert.match(s,/<SaveButton urls=/);
- assert.match(s,/className="art-replace"/);assert.match(s,/\['效果','字符','範圍','外觀'\]/);
+ assert.doesNotMatch(s,/className="art-replace"|EffectArtwork/);assert.match(s,/\['效果','字符','範圍','外觀'\]/);
+ assert.match(s,/art-save-pill/);assert.match(s,/aria-label="匯出選項"/);assert.match(s,/canExportHeic/);
  assert.match(css,/art-controls\{[^}]*overflow:hidden/);
  assert.match(css,/art-zoom\{[^}]*inset:0/);
  assert.doesNotMatch(s,/作品已準備好|Icon size/);
