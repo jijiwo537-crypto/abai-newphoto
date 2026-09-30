@@ -1,0 +1,35 @@
+{
+  "date": "2026-09-30",
+  "scope": ["ASCII art studio", "lowfi", "exposure spill", "creative viewport performance"],
+  "environment": "Mac M1; iPhone 17 Simulator, iOS 26.5 Safari; Chromium mobile viewport 393x852 DPR 3",
+  "limitations": ["Simulator is not a physical iPhone", "Frame timings use real mounted controls driven by synthetic input events", "Results are for the recorded fixtures, not a guarantee for every device or project"],
+  "automatedTests": {"passed":116,"failed":0},
+  "creativeStress": {
+    "fixture":"30 pic333 patterns with glow and solid links",
+    "baseSizeMs":{"p50":17,"p95":17,"max":18},
+    "zoomSizeMs":{"p50":17,"p95":17,"max":22},
+    "zoomAngleMs":{"p50":17,"p95":17,"max":17},
+    "zoomVariationMs":{"p50":17,"p95":17,"max":17},
+    "fullRaster":[5627,5627],"visibleRaster":[2439,2201],
+    "quality":"Visible crop uses unchanged source pixel density; no interaction downsampling",
+    "cropVsFullReference":{"maxChannelError":2,"meanChannelError":0.000494}
+  },
+  "editorEffects": {
+    "fixture":[1200,1600],
+    "lowfiMs":{"p50":17,"p95":17,"max":18},
+    "exposureSpillMs":{"p50":17,"p95":17,"max":17},
+    "cachedVsUncachedMaxChannelError":0,
+    "visibleSurfaceVsFullRendererMaxChannelError":0,
+    "compareRestoresExactPixels":true,
+    "composeRoundTrip":true,
+    "exportPreviewCreated":true
+  },
+  "ascii": {
+    "samePhotoReimportCount":3,
+    "pngDimensions":[1154,1538],
+    "shareUserActivation":true,
+    "shareTest":"Prepared PNG passed to stubbed native share API; no external upload",
+    "customCharactersAndDetectionModes":true,
+    "homeEntry":true
+  }
+}

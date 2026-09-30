@@ -23,6 +23,7 @@ interface HomePageProps {
   onOpenLayout: () => void;
   onOpenBeauty: () => void;
   onOpenMatch: () => void;
+  onOpenArt: () => void;
   /** 導出紀錄，新的在前面 */
   recent?: ExportMeta[];
   onOpenRecent?: (id: string) => void;
@@ -182,7 +183,7 @@ const NAV_ITEMS = [
 ] as const;
 
 export const HomePage: React.FC<HomePageProps> = ({
-  onOpenCamera, onImportPhoto, onImportToCollage, onOpenLayout, onOpenBeauty, onOpenMatch,
+  onOpenCamera, onImportPhoto, onImportToCollage, onOpenLayout, onOpenBeauty, onOpenMatch, onOpenArt,
   recent = [], onOpenRecent,
 }) => {
   const [nav, setNav] = useState<string>('home');
@@ -1302,8 +1303,10 @@ export const HomePage: React.FC<HomePageProps> = ({
              （狀態、input、卡片上的 onClick）拿掉就行，其他部分不用動。 */}
         <div
           role="button"
-          aria-label="換一張橫幅底圖"
-          onClick={() => pickPreview('promo')}
+          aria-label="開啟藝術效果"
+          tabIndex={0}
+          onKeyDown={e => { if(e.key==='Enter'||e.key===' '){e.preventDefault();onOpenArt();} }}
+          onClick={onOpenArt}
           className="relative z-10 mt-[14px] shrink-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
           style={{ background: previews.promo ? undefined : 'rgba(255,255,255,.03)' }}
         >
@@ -1327,11 +1330,11 @@ export const HomePage: React.FC<HomePageProps> = ({
             </>
           )}
           <div className="relative px-[18px] py-4">
-            <p className="text-[16px] font-black tracking-[0.04em] text-white">全新濾鏡上線</p>
-            <p className="mt-1.5 text-[11px] tracking-[0.14em] text-white/45">一鍵調出質感氛圍</p>
+            <p className="text-[16px] font-black tracking-[0.04em] text-white">藝術效果</p>
+            <p className="mt-1.5 text-[11px] tracking-[0.14em] text-white/45">把影像，寫成自己的風格</p>
             <button
               /* 這顆在卡片裡面，要擋住冒泡 —— 不然按它會順便叫出換圖 */
-              onClick={e => { e.stopPropagation(); onImportPhoto(); }}
+              onClick={e => { e.stopPropagation(); onOpenArt(); }}
               className="mt-3 h-[26px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
             >
               立即使用

@@ -7,10 +7,11 @@ import { CollageTool } from './components/CollageTool';
 import { GridLayoutTool } from './components/GridLayoutTool';
 import { BeautyStudio } from './components/BeautyStudio';
 import { ColorMatchStudio } from './components/ColorMatchStudio';
+import { ArtStudio } from './components/ArtStudio';
 import { warmCameraLuts } from './utils/cameraLuts';
 import { warmFontSamples } from './utils/fonts';
 
-type AppView = 'home' | 'camera' | 'editor' | 'collage' | 'layout' | 'beauty' | 'match';
+type AppView = 'home' | 'camera' | 'editor' | 'collage' | 'layout' | 'beauty' | 'match' | 'art';
 
 const LUT_LIST = [
   { id: 'none', name: '原始', url: '' },
@@ -646,11 +647,13 @@ const App: React.FC = () => {
           }}
           onOpenBeauty={handleBeautyImportClick}
           onOpenMatch={handleMatchImportClick}
+          onOpenArt={() => setCurrentView('art')}
           recent={recentExports}
           onOpenRecent={handleOpenRecent}
         />
       )}
 
+      {currentView === 'art' && <ArtStudio onClose={() => setCurrentView('home')} />}
       {currentView === 'match' && matchImage && (
         <ColorMatchStudio
           imageSrc={matchImage}

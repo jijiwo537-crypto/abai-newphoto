@@ -148,6 +148,7 @@ export class VideoGl {
   private fxParams: any = null;
   private fbo: WebGLFramebuffer | null = null;
   private fxTex: WebGLTexture[] = [];
+  private fxAux: WebGLTexture | null = null;
   private fxW = 0;
   private fxH = 0;
   private fxProgs = new Map<string, WebGLProgram>();
@@ -426,6 +427,7 @@ export class VideoGl {
   private fxPool(W: number, H: number): boolean {
     const gl = this.gl;
     if (this.fbo && this.fxW === W && this.fxH === H && this.fxTex.length === 3) return true;
+    if(this.fxAux){gl.deleteTexture(this.fxAux);this.fxAux=null;}
     for (const t of this.fxTex) gl.deleteTexture(t);
     this.fxTex = [];
     if (!this.fbo) this.fbo = gl.createFramebuffer();
@@ -553,7 +555,9 @@ export class VideoGl {
           let to = 0;
           while (to === from || to === layerIn) to++;
           gl.useProgram(prog);
-          this.fxBind(prog, T[from], T[layerIn], W, H);
+          this.fxBind(prog, T[pass.fromSource ? layerIn : from], T[layerIn], W, H);
+          gl.uniform1f(gl.getUniformLocation(prog,'uEffectAmount'),Math.max(0,Math.min(1,(this.fxParams?.[d.id]||0)/100)));
+          if(this.fxAux){gl.activeTexture(gl.TEXTURE6);gl.bindTexture(gl.TEXTURE_2D,this.fxAux);gl.uniform1i(gl.getUniformLocation(prog,'uAux'),6);}
           gl.uniform2f(gl.getUniformLocation(prog, 'uDir'),
             pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
           for (const pp of d.params) {
@@ -562,6 +566,11 @@ export class VideoGl {
             gl.uniform1f(gl.getUniformLocation(prog, pp.id), v);
           }
           this.fxDrawTo(T[to]);
+          if(pass.preserveOutput){
+            gl.activeTexture(gl.TEXTURE6);
+            if(!this.fxAux){this.fxAux=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,this.fxAux);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,W,H,0,gl.RGBA,gl.UNSIGNED_BYTE,null);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);}
+            gl.bindTexture(gl.TEXTURE_2D,this.fxAux);gl.copyTexSubImage2D(gl.TEXTURE_2D,0,0,0,0,0,W,H);
+          }
           from = to;
         }
         const blend = this.fxProg('__blend', FX_BLEND_FS);
@@ -571,7 +580,7 @@ export class VideoGl {
         gl.useProgram(blend);
         this.fxBind(blend, T[from], T[layerIn], W, H);
         const amt = Math.max(0, Math.min(1, ((this.fxParams?.[d.id]) || 0) / 100));
-        gl.uniform1f(gl.getUniformLocation(blend, 'uAmount'), amt);
+        gl.uniform1f(gl.getUniformLocation(blend, 'uAmount'), d.handlesAmount ? 1 : amt);
         this.fxDrawTo(T[to]);
         cur = to;
       }
@@ -608,6 +617,7 @@ export class VideoGl {
       const gl = this.gl;
       for (const t of this.fxTex) gl.deleteTexture(t);
       this.fxTex = [];
+      if(this.fxAux){gl.deleteTexture(this.fxAux);this.fxAux=null;}
       if (this.fbo) gl.deleteFramebuffer(this.fbo);
       this.fbo = null;
       for (const p of this.fxProgs.values()) gl.deleteProgram(p);

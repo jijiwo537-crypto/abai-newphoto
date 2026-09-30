@@ -16,6 +16,7 @@ import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
+import { orderEffectCards } from '../utils/effectDisplayOrder';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
 import { CLASSIC_COORDINATE_VERSION, joinLegacyPages } from '../utils/classicPageCoordinates';
 import { addExport } from '../utils/exportHistory';
@@ -880,14 +881,14 @@ const TUNE_TOOLS: [string, string, string, number, number, number][] = [
 /* 特效清單跟「編輯」完全一致（順序、名稱、圖標、預設強度都是同一份），
    後面 16 顆直接從 FX_DEFS 長出來，不再自己維護第二份表。
    銳化在編輯那邊是「調節」的最後一顆，拼圖這裡的調節沒有它，所以也不列。 */
-const FX_ROOT_TOOLS: [string, string, string][] = [
+const FX_ROOT_TOOLS: [string, string, string][] = orderEffectCards<[string, string, string]>([
   ['softLight', '柔光', 'blur_on'],
   ['halation', '光暈', 'flare'],
   ['lightLeak', '漏光', 'leak_add'],
   ['colorNoise', '噪點', 'grain'],
   ['blur', '朦朧', 'blur_linear'],
   ...FX_DEFS.filter(d => d.id !== 'fxSharpen').map(d => [d.id, d.label, d.icon] as [string, string, string]),
-];
+], item => item[0]);
 
 /** 卡片 → 外層那根「強度」滑桿實際調的參數（柔光／光暈／漏光的強度不是卡片 id 本身） */
 const FX_AMOUNT: Record<string, string> = {
@@ -920,7 +921,7 @@ const FX_ROOT_PARAM: Record<string, { id: string; label: string; min: number; ma
 /** 這一顆卡片的細項滑桿（第一根是強度，hidden 的不出現），跟編輯同一套 */
 const FX_DETAIL: Record<string, [string, string, number, number, number][]> = {
   ...Object.fromEntries(FX_DEFS.map(d => [d.id, [
-    [d.id, '強度', 0, 100, 0] as [string, string, number, number, number],
+    [d.id, d.id === 'fxLowfi' ? '整體強度' : '強度', 0, 100, 0] as [string, string, number, number, number],
     ...d.params.filter(p => !p.hidden).map(p =>
       [p.id, p.label, p.min, p.max, p.def] as [string, string, number, number, number]),
   ]])),

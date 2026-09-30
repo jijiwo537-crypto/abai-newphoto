@@ -5,7 +5,8 @@ import { isIdentityCurve, boundedCurvePath } from '../utils/editorCurveGeometry'
 import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
 import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
-import { FX_DEFS, FX_DEFAULTS, applyGlEffects, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
+import { FX_DEFS, FX_DEFAULTS, applyGlEffects, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
+import { orderEffectCards } from '../utils/effectDisplayOrder';
 import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity } from '../utils/compose';
 import { SaveButton } from './SaveButton';
 /* IG 貼文預覽跟拼圖那兩個工具共用同一顆元件 */
@@ -227,7 +228,7 @@ const NO_EFFECT_PARAMS: Record<string, number> = {
   ...Object.fromEntries(FX_DEFS.map(d => [d.id, 0])),
 };
 
-const EFFECT_TOOLS: ToolDef[] = [
+const EFFECT_TOOLS: ToolDef[] = orderEffectCards<ToolDef>([
   /* 這三顆的強度各自對應到自己的參數（見 EFFECT_AMOUNT），範圍就是 0～100 */
   { id: 'softLight', label: '柔光', icon: 'blur_on', min: 0, max: 100 },
   { id: 'halation', label: '光暈', icon: 'flare', min: 0, max: 100 },
@@ -241,7 +242,7 @@ const EFFECT_TOOLS: ToolDef[] = [
   /* 最後三項（馬賽克／結晶化／玻璃磚）不再顯示；底層定義保留，確保舊作品仍可正確還原。 */
   ...FX_DEFS.filter(d => d.id !== 'fxSharpen').slice(0, -3)
     .map(d => ({ id: d.id, label: d.label, icon: d.icon, min: 0, max: 100 })),
-];
+], item => item.id);
 
 /* 特效卡片按下去之後，上面那根滑桿要調的是「這個特效的強度」。
    柔光／光暈／漏光的強度不是卡片 id 本身，各自對應到自己的參數 ——
@@ -317,7 +318,7 @@ const FX_OWNER: Record<string, FxDef> = (() => {
 const FX_TOOLS: Record<string, ToolDef[]> = Object.fromEntries(
   FX_DEFS.map(d => [d.id, [
     // 強度用 percent —— tune 是「調節」分頁的圖標，不能拿來重複用
-    { id: d.id, label: '強度', icon: 'percent', min: 0, max: 100 },
+    { id: d.id, label: d.id === 'fxLowfi' ? '整體強度' : '強度', icon: 'percent', min: 0, max: 100 },
     // hidden 的那幾根不給調整（值永遠是預設），介面上就不要出現
     ...d.params.filter(p => !p.hidden)
       .map(p => ({ id: p.id, label: p.label, icon: p.icon, min: p.min, max: p.max, step: p.step })),
@@ -2139,6 +2140,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
   // Single Canvas for all rendering
   const displayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const fxSurfaceRef=useRef<HTMLCanvasElement>(null);
+  const fxSurfaceShownRef=useRef(false);
+  const fxInputKeyRef=useRef('');
+  const showFxSurface=(shown:boolean)=>{fxSurfaceShownRef.current=shown;if(fxSurfaceRef.current)fxSurfaceRef.current.style.visibility=shown?'visible':'hidden';};
+  const visibleEditorCanvas=()=>fxSurfaceShownRef.current ? fxSurfaceRef.current : displayCanvasRef.current;
+  useEffect(()=>{const surface=fxSurfaceRef.current;return()=>{if(surface)disposeFxSurface(surface);};},[]);
+  useLayoutEffect(()=>{showFxSurface(false);fxInputKeyRef.current='';},[activeSrc]);
   const helperCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const originalImgRef = useRef<HTMLImageElement | null>(null);
   
@@ -2547,6 +2555,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   }, []);
   /** 把背景算好的那張直接畫到畫布上（lut0 與 lut100 依濾鏡強度混合） */
   const paintWarmNow = (src: string, snap: BatchSnap | null): boolean => {
+    showFxSurface(false);fxInputKeyRef.current='';
     const warm = warmPixelsRef.current.get(src);
     const cvs = displayCanvasRef.current;
     if (!warm || !cvs) return false;
@@ -3761,6 +3770,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const effectHasDetail = (toolId: string) =>
     !!EFFECT_DETAIL_CAT[toolId] || !!(FX_TOOLS[toolId] && FX_TOOLS[toolId].length > 1);
 
+  const fxInputKey=(p:EditorParams)=>`${buffersSrcRef.current}|${selectedLutIdx}|${!!lutDataRef.current[lutList[selectedLutIdx]?.id]}|${activeCategory}|${JSON.stringify(Object.fromEntries(Object.entries(p).filter(([key])=>!key.startsWith('fx'))))}|${forceRecalculateEffectsRef.current}`;
   const applyComplexEffects = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number, p: EditorParams, scale: number, sharedBuf: Uint8ClampedArray | null, isInteracting: boolean, baking: boolean, sourcePixelData: Uint8ClampedArray | null) => {
     const lut = lutList[selectedLutIdx];
     const lutId = lut?.id || 'none';
@@ -4610,7 +4620,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
            預覽與導出走的是同一支函式，兩邊看到的結果一致。
            全部強度都是 0 的話這裡直接跳過，不會有任何額外成本。 */
     if (hasActiveFx(p)) {
-      applyGlEffects(ctx, w, h, p);
+      // GLSL-only slider changes do not change this pipeline's input pixels.
+      // Retain the upload and highlight convolution at their full resolution.
+      const sourceKey=!baking && !needsRefinement ? fxInputKey(p) : undefined;
+      const surface=!baking && ctx.canvas===displayCanvasRef.current && (p.fxLowfi>0 || p.fxExposureSpill>0) ? fxSurfaceRef.current : null;
+      const painted=applyGlEffects(ctx,w,h,p,sourceKey,surface||undefined);
+      if(surface){showFxSurface(!!painted);fxInputKeyRef.current=painted&&sourceKey ? `${w}x${h}|${sourceKey}` : '';if(!painted)applyGlEffects(ctx,w,h,p);}
     }
 
     if (forceRecalculateEffectsRef.current) {
@@ -4871,6 +4886,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     
     const ctx = cvs.getContext('2d')!;
+    const fastKey=`${b.w}x${b.h}|${fxInputKey(p)}`;
+    if(!showOriginalRef.current && (p.fxLowfi>0||p.fxExposureSpill>0) && fxInputKeyRef.current===fastKey && fxSurfaceRef.current){
+      if(applyGlEffects(ctx,b.w,b.h,p,fxInputKey(p),fxSurfaceRef.current)){showFxSurface(true);return;}
+    }
+    showFxSurface(false);fxInputKeyRef.current='';
 
     // Maintain offscreen pixel buffer canvas for putImageData with willReadFrequently
     if (!pixelBufferCanvasRef.current) {
@@ -5721,7 +5741,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     if (snap.width !== b.w || snap.height !== b.h) { snap.width = b.w; snap.height = b.h; }
                     const sctx = snap.getContext('2d')!;
                     sctx.globalCompositeOperation = 'copy';
-                    sctx.drawImage(cvs, 0, 0);
+                    sctx.drawImage(visibleEditorCanvas() || cvs, 0, 0);
                     sctx.globalCompositeOperation = 'source-over';
                     compareSnapKeyRef.current = isDirtyRef.current ? '' : snapKey;
                 } else if (!isDirtyRef.current && compareSnapRef.current && compareSnapKeyRef.current === snapKey) {
@@ -5961,7 +5981,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     /* 是否需要詢問已由 requestLeave 按實際成品判斷。
        恢復的已編輯專案會把當前成品設成 history 第 0 格，因此這裡不能再用
        historyIndex <= 0 跳過；否则按了「儲存」也不會寫入歷史紀錄。 */
-    const cv = displayCanvasRef.current;
+    const cv = visibleEditorCanvas();
     if (!cv || !cv.width || !cv.height) return;
     try {
       const p = paramsRef.current;
@@ -6984,6 +7004,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     style={{ objectFit: 'fill' }}
                     className={previewAspect ? "w-full h-full pointer-events-auto rounded-sm" : "max-w-full pointer-events-auto rounded-sm"} 
                 />
+                <canvas ref={fxSurfaceRef} aria-hidden="true" className="absolute inset-0 w-full h-full pointer-events-none rounded-sm" style={{visibility:'hidden',objectFit:'fill'}} />
 
                 {/* 換過去了但還在算的時候，壓暗＋轉圈，別讓人以為沒反應。
                     只留轉圈 —— 「渲染中」三個字反而讓人覺得等很久。 */}
@@ -8099,7 +8120,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           </button>
           <button onClick={() => {
               if (activeCategory !== 'compose') beforeComposeRef.current = { cat: activeCategory, tool: activeToolId };
-              const shown = displayCanvasRef.current;
+              const shown = visibleEditorCanvas();
               if (shown && isGeoIdentity(geo)) {
                 const snapshot = document.createElement('canvas');
                 snapshot.width = shown.width;

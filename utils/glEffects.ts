@@ -35,6 +35,8 @@ export const FX_GLSL_HEADER = `precision highp float;
 varying vec2 vUv;
 uniform sampler2D uTex;
 uniform sampler2D uSrc;
+uniform sampler2D uAux;
+uniform float uEffectAmount;
 uniform vec2  uRes;
 uniform vec2  uTexel;   // 基準像素（與實際解析度無關）
 uniform vec2  uRefRes;  // 基準解析度，只給需要像素格線的效果用
@@ -118,6 +120,8 @@ export interface FxPass {
   body: string;
   /** 可分離卷積的方向 */
   dir?: [number, number];
+  fromSource?: boolean;
+  preserveOutput?: boolean;
 }
 
 export interface FxDef {
@@ -138,16 +142,51 @@ export interface FxDef {
    * 要關掉就點特效列最前面的「無」。
    */
   rootParam?: string;
+  handlesAmount?: boolean;
   passes: FxPass[];
 }
 
 const amount = (id: string, def = 0): FxParamDef =>
   ({ id, label: '強度', icon: 'percent', min: 0, max: 100, def });
 
+// The lab's F-12: squared highlight isolation, three box-blur pairs,
+// a broad neutral bloom and 25 vertically offset narrow highlight exposures.
+const spillHighlight:FxPass={fromSource:true,body:`vec3 c=texture2D(uTex,uv).rgb;float m=clamp((dot(c,vec3(1./3.))-.55)/.45,0.,1.);return vec4(c*m*m,1.);`};
+const spillBlur=(radius:number):FxPass[]=>Array.from({length:6},(_,i)=>({
+ dir:(i%2?[0,1]:[1,0]) as [number,number],
+ body:`vec3 sum=vec3(0.);for(int i=-${radius};i<=${radius};i++){sum+=texture2D(uTex,uv+uDir*float(i)/400.).rgb;}return vec4(sum/${radius*2+1}.,1.);`,
+}));
+const spillWide=spillBlur(18);spillWide[5].preserveOutput=true;
+export const LOWFI_FIXED = Object.freeze({softness:0,bloom:0,exposure:10,grainSize:50,halo:0,haloSize:31,haloFeather:50,haloHue:73});
+
 /* ================================================================
    特效清單。順序：模糊動態 → 光學 → 復古質感 → 故障 → 圖形化
    ================================================================ */
 export const FX_DEFS: FxDef[] = [
+  {
+    id:'fxLowfi',label:'低保真',icon:'grain',onAmount:50,
+    params:[
+      {id:'fxLowfiGrain',label:'彩色顆粒',icon:'grain',min:0,max:100,def:70},
+      {id:'fxLowfiAberration',label:'色差',icon:'filter',min:0,max:100,def:100},
+      {id:'fxLowfiContrast',label:'對比',icon:'contrast',min:0,max:100,def:55},
+    ],
+    passes:[{body:`
+      vec2 delta=uv-.5;float rad=dot(delta,delta);vec2 shift=delta*fxLowfiAberration*.00008*(.15+rad*3.);
+      vec3 c=vec3(texture2D(uTex,uv+shift).r,texture2D(uTex,uv).g,texture2D(uTex,uv-shift).b);
+      float l=luma(texture2D(uTex,uv).rgb);vec2 cell=floor(uv*vec2(1200.,1200.*uRes.y/uRes.x)/${.5+LOWFI_FIXED.grainSize*.025});
+      float mono=hash21(cell+731.)-.5;vec3 noise=vec3(hash21(cell+1949.),hash21(cell+2896.),hash21(cell+3843.))-.5;
+      c=((c-.5)*(1.+fxLowfiContrast*.004)+.5)*exp2(${LOWFI_FIXED.exposure*.008});
+      c+=fxLowfiGrain*1.6*(.55+.45*(1.-l))*(mono*.55+noise*.85)/255.;
+      return vec4(clamp(c,0.,1.),1.);`
+    }],
+  },
+  {
+    id:'fxExposureSpill',label:'柔光ll',icon:'flare',onAmount:60,params:[],handlesAmount:true,
+    passes:[spillHighlight,...spillWide,spillHighlight,...spillBlur(5),{body:`
+      vec3 c=blendScreen(texture2D(uSrc,uv).rgb,texture2D(uAux,uv).rgb*uEffectAmount*.9);
+      for(int i=-12;i<=12;i++){c=blendScreen(c,texture2D(uTex,uv+vec2(0.,float(i)*3./1200.)).rgb*uEffectAmount*.05);}
+      return vec4(c,1.);`}],
+  },
   {
     id: 'fxMotion', label: '動態模糊', icon: 'speed',
     onAmount: 40,
@@ -623,6 +662,9 @@ interface Pool {
   src: WebGLTexture;
   texs: WebGLTexture[];
   fb: WebGLFramebuffer;
+  aux?: WebGLTexture;
+  narrow?: WebGLTexture;
+  spillKey?: string;
 }
 
 interface Ctx {
@@ -634,28 +676,39 @@ interface Ctx {
   /* 貼圖與 framebuffer 留著重複用。每一幀重新配置／釋放是拖曳一開始
      會卡住的主因之一（配置 4 張全尺寸貼圖不便宜），尺寸沒變就不要動它。 */
   pool: Pool | null;
+  uploadKey?: string;
 }
 
 let ctxCache: Ctx | null = null;
 let ctxFailed = false;
+const surfaces=new WeakMap<HTMLCanvasElement,Ctx>();
 
-function getCtx(): Ctx | null {
-  if (ctxFailed) return null;
-  if (ctxCache) return ctxCache;
+function getCtx(surface?:HTMLCanvasElement): Ctx | null {
+  if(surface && surfaces.has(surface))return surfaces.get(surface)!;
+  if (!surface && ctxFailed) return null;
+  if (!surface && ctxCache) return ctxCache;
   try {
-    const canvas = document.createElement('canvas');
+    const canvas = surface || document.createElement('canvas');
     const gl = (canvas.getContext('webgl', { premultipliedAlpha: false, preserveDrawingBuffer: true })
       || canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
-    if (!gl) { ctxFailed = true; return null; }
+    if (!gl) { if(!surface)ctxFailed = true; return null; }
     const quad = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    ctxCache = { gl, canvas, quad, progs: new Map(), maxTex: gl.getParameter(gl.MAX_TEXTURE_SIZE), pool: null };
-    return ctxCache;
+    const context = { gl, canvas, quad, progs: new Map(), maxTex: gl.getParameter(gl.MAX_TEXTURE_SIZE), pool: null };
+    if(surface)surfaces.set(surface,context);else ctxCache=context;
+    return context;
   } catch {
-    ctxFailed = true;
+    if(!surface)ctxFailed = true;
     return null;
   }
+}
+
+
+export function disposeFxSurface(canvas:HTMLCanvasElement){
+ const c=surfaces.get(canvas);if(!c)return;const {gl,pool}=c;
+ if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);gl.deleteFramebuffer(pool.fb);}
+ c.progs.forEach(p=>gl.deleteProgram(p));gl.deleteBuffer(c.quad);surfaces.delete(canvas);canvas.width=canvas.height=1;
 }
 
 function compile(c: Ctx, key: string, fs: string): WebGLProgram | null {
@@ -713,6 +766,8 @@ function getPool(c: Ctx, w: number, h: number): Pool {
   if (c.pool) {
     gl.deleteFramebuffer(c.pool.fb);
     gl.deleteTexture(c.pool.src);
+    if(c.pool.aux)gl.deleteTexture(c.pool.aux);
+    if(c.pool.narrow)gl.deleteTexture(c.pool.narrow);
     for (const t of c.pool.texs) gl.deleteTexture(t);
   }
   c.pool = {
@@ -749,18 +804,20 @@ export function applyGlEffects(
   w: number,
   h: number,
   params: any,
-): void {
+  sourceKey?: string,
+  surface?: HTMLCanvasElement,
+): HTMLCanvasElement | undefined {
   const active = FX_DEFS.filter(d => fxActive(params, d));
   if (!active.length || w < 2 || h < 2) return;
 
-  const c = getCtx();
+  const c = getCtx(surface);
   if (!c) return;
   const { gl } = c;
   // 超過這台裝置的貼圖上限就放棄（導出超大圖時可能發生），不要畫出壞掉的結果
   if (w > c.maxTex || h > c.maxTex) return;
 
-  c.canvas.width = w;
-  c.canvas.height = h;
+  if(c.canvas.width!==w)c.canvas.width = w;
+  if(c.canvas.height!==h)c.canvas.height = h;
   gl.viewport(0, 0, w, h);
 
   // 貼圖與 framebuffer 都是重複使用的，尺寸沒變就不重配
@@ -768,10 +825,14 @@ export function applyGlEffects(
   const { src: srcTex, texs, fb } = pool;
 
   // 來源：把 2D 畫布上傳進來源貼圖
-  gl.bindTexture(gl.TEXTURE_2D, srcTex);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ctx2d.canvas);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+  const uploadKey=sourceKey ? `${w}x${h}|${sourceKey}` : undefined;
+  if(!uploadKey || c.uploadKey!==uploadKey){
+    gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D, srcTex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ctx2d.canvas);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+    c.uploadKey=uploadKey;
+  }
 
   const cleanup = () => { gl.bindFramebuffer(gl.FRAMEBUFFER, null); };
 
@@ -817,7 +878,11 @@ export function applyGlEffects(
     for (const d of active) {
       const layerIn = cur;                       // 本層輸入（uSrc）
       let from = cur;
+      const spillKey=d.id==='fxExposureSpill' && uploadKey
+        ? uploadKey+'|'+JSON.stringify(active.slice(0,active.indexOf(d)).map(x=>[x.id,params[x.id],...x.params.map(p=>params[p.id]??p.def)])) : undefined;
+      if(d.id==='fxExposureSpill' && pool.spillKey!==spillKey)pool.spillKey=undefined;
       for (let i = 0; i < d.passes.length; i++) {
+        if(spillKey && pool.spillKey===spillKey && pool.narrow && i<d.passes.length-1)continue;
         const pass = d.passes[i];
         const prog = compile(c, `${d.id}#${i}`, fxPassSource(d, pass));
         if (!prog) { cleanup(); return; }
@@ -825,7 +890,10 @@ export function applyGlEffects(
         let to = 0;
         while (to === from || to === layerIn) to++;
         gl.useProgram(prog);
-        bind(prog, texs[from], texs[layerIn]);
+        bind(prog, spillKey && pool.spillKey===spillKey && pool.narrow && i===d.passes.length-1
+          ? pool.narrow : texs[pass.fromSource ? layerIn : from], texs[layerIn]);
+        gl.uniform1f(gl.getUniformLocation(prog,'uEffectAmount'),Math.max(0,Math.min(1,(params[d.id]||0)/100)));
+        if(pool.aux){gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,pool.aux);gl.uniform1i(gl.getUniformLocation(prog,'uAux'),2);}
         gl.uniform2f(gl.getUniformLocation(prog, 'uDir'), pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
         for (const p of d.params) {
           const raw = params[p.id];
@@ -833,6 +901,17 @@ export function applyGlEffects(
           gl.uniform1f(gl.getUniformLocation(prog, p.id), v);
         }
         drawTo(texs[to]);
+        if(pass.preserveOutput){
+          gl.activeTexture(gl.TEXTURE2);
+          pool.aux ||= makeTex(gl,w,h);
+          gl.bindTexture(gl.TEXTURE_2D,pool.aux);
+          gl.copyTexSubImage2D(gl.TEXTURE_2D,0,0,0,0,0,w,h);
+        }
+        if(spillKey && i===d.passes.length-2){
+          gl.activeTexture(gl.TEXTURE3);pool.narrow ||= makeTex(gl,w,h);
+          gl.bindTexture(gl.TEXTURE_2D,pool.narrow);gl.copyTexSubImage2D(gl.TEXTURE_2D,0,0,0,0,0,w,h);
+          pool.spillKey=spillKey;
+        }
         from = to;
       }
       // 跟本層輸入按強度插值
@@ -842,7 +921,7 @@ export function applyGlEffects(
       while (to === from || to === layerIn) to++;
       gl.useProgram(blend);
       bind(blend, texs[from], texs[layerIn]);
-      gl.uniform1f(gl.getUniformLocation(blend, 'uAmount'), Math.max(0, Math.min(1, (params[d.id] || 0) / 100)));
+      gl.uniform1f(gl.getUniformLocation(blend, 'uAmount'), d.handlesAmount ? 1 : Math.max(0, Math.min(1, (params[d.id] || 0) / 100)));
       drawTo(texs[to]);
       cur = to;
     }
@@ -853,11 +932,11 @@ export function applyGlEffects(
     drawTo(null);
     gl.flush();
 
-    ctx2d.save();
-    ctx2d.globalCompositeOperation = 'copy';
-    ctx2d.globalAlpha = 1;
-    ctx2d.drawImage(c.canvas, 0, 0, w, h);
-    ctx2d.restore();
+    if(!surface){
+      ctx2d.save();ctx2d.globalCompositeOperation = 'copy';ctx2d.globalAlpha = 1;
+      ctx2d.drawImage(c.canvas, 0, 0, w, h);ctx2d.restore();
+    }
+    return c.canvas;
   } catch (e) {
     console.warn('[glEffects] failed:', e);
   } finally {

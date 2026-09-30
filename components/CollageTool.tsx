@@ -1,5 +1,7 @@
 
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
+import { previewViewport } from '../utils/previewViewport';
+import { LinkGlowTiles } from '../utils/linkGlowTiles';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import { idleDefaults } from '../utils/animationDefaults';
@@ -3090,13 +3092,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* activePointers 全部都在 ref 裡使用，不需要為了「記住按下」就同步重畫
        整個編輯器。iPhone 第一次拖圖片的第一幀卡頓，正是這次無效重畫。 */
     
-    const rect = canvasRef.current.getBoundingClientRect();
+    const rect = (motionFrameRef.current || canvasRef.current).getBoundingClientRect();
     if (!rect || !rect.width || !rect.height) return;
     
     /* 除掉預覽倍率：畫布可能被畫得比工作解析度更細，但挖洞的座標一律是
        工作解析度，換算時要還原回去，不然放大之後點擊位置會整個偏掉。 */
     const ps = drawnScaleRef.current;
-    const sx = canvasRef.current.width / rect.width / ps, sy = canvasRef.current.height / rect.height / ps;
+    const geometry = getLayoutOffsets();
+    const sx = (geometry?.cw || canvasRef.current.width / ps) / rect.width, sy = (geometry?.ch || canvasRef.current.height / ps) / rect.height;
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState.globalScale || 1, offs = getLayoutOffsets();
     const animatedOrder = animRef.current
@@ -3787,9 +3790,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        見 utils/photoFx.ts 的 deferHeavyWork。 */
     deferHeavyWork();
     activePointers.current.set(e.pointerId, e);
-    const rect = canvasRef.current.getBoundingClientRect();
+    const rect = (motionFrameRef.current || canvasRef.current).getBoundingClientRect();
     const ps = drawnScaleRef.current;
-    const sx = canvasRef.current.width / rect.width / ps, sy = canvasRef.current.height / rect.height / ps;
+    const geometry = getLayoutOffsets();
+    const sx = (geometry?.cw || canvasRef.current.width / ps) / rect.width, sy = (geometry?.ch || canvasRef.current.height / ps) / rect.height;
     const x = (e.clientX - rect.left) * sx, y = (e.clientY - rect.top) * sy;
     const gs = imageState?.globalScale || 1;
     // 雙指縮放預覽時完全不碰筆刷與拖曳
@@ -4166,6 +4170,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     objects, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching,
     fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
   const lastPatternPaintRef = useRef<{identity:object;holes:any[];scale:number}|null>(null);
+  const forceFullPreviewRef = useRef(false);
+  const linkGlowTilesRef = useRef<LinkGlowTiles|null>(null);
+  useEffect(()=>()=>linkGlowTilesRef.current?.dispose(),[]);
   const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1) => {
     const debugPaintStart = import.meta.env.DEV ? performance.now() : 0;
     const {selectedTarget, selectedPatternSide, selectedObj, baseSelected} = chromeSelectionRef.current;
@@ -4183,13 +4190,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* 1 個 CSS 像素等於幾個畫布像素。
        選取的虛線一律用它換算 —— 畫布是「預覽放多大就多畫多少像素」，
        線寬若照畫布像素寫死，放大預覽時看起來就會跟著變粗。 */
-    const uiRect = targetCanvas.getBoundingClientRect();
-    const uiPx = uiRect.width > 0 ? targetCanvas.width / uiRect.width : 1;
+    const isMain = targetCanvas === canvasRef.current;
+    const uiRect = (isMain ? motionFrameRef.current || targetCanvas : targetCanvas).getBoundingClientRect();
     const sw = baseW * s;
     const sh = baseH * s;
     const sgs = gs * s;
 
     const offs = layoutGeometry(layout, sw, sh, maskScale, canvasRatio);
+    const uiPx = uiRect.width > 0 ? offs.cw / uiRect.width : 1;
     const maskW = offs.mw;
     const maskH = offs.mh;
     const iw = offs.iw;
@@ -4208,19 +4216,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        iOS 的畫布記憶體一碰到上限就把整頁收掉 —— 那就是閃退。
        截成整數之後畫出來的尺寸跟以前一模一樣（setter 本來就是這樣截的）。 */
     const tW = Math.max(1, offs.cw | 0), tH = Math.max(1, offs.ch | 0);
-    if (targetCanvas.width !== tW || targetCanvas.height !== tH) {
-      targetCanvas.width = tW;
-      targetCanvas.height = tH;
+    // Static layers use full-scene coordinates but rasterize only the viewport.
+    // Animations and exports retain their existing full-frame renderer.
+    const canWindow = isMain && !forceFullPreviewRef.current && !animRef.current
+      && !motionLockRef.current && stageRef.current && uiRect.width > 0;
+    const vp = canWindow ? previewViewport(tW,tH,uiRect,stageRef.current!.getBoundingClientRect()) : {x:0,y:0,w:tW,h:tH};
+    const windowed = vp.x!==0 || vp.y!==0 || vp.w!==tW || vp.h!==tH;
+    if(windowed && thumbRef.current){thumbRef.current.width=thumbRef.current.height=1;thumbRef.current=null;}
+    if (isMain) {
+      Object.assign(targetCanvas.style,windowed
+        ? {position:'absolute',left:`${vp.x/offs.cw*100}%`,top:`${vp.y/offs.ch*100}%`,width:`${vp.w/offs.cw*100}%`,height:`${vp.h/offs.ch*100}%`}
+        : {position:'relative',left:'0px',top:'0px',width:'100%',height:'100%'});
+    }
+    if (targetCanvas.width !== vp.w || targetCanvas.height !== vp.h) {
+      targetCanvas.width = vp.w;
+      targetCanvas.height = vp.h;
     }
     /* 指派寬高會順便把 context 狀態全部重置；現在尺寸沒變就不指派了，
        所以 transform／透明度／合成模式要自己歸位，免得上一格的狀態殘留。 */
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, -vp.x, -vp.y);
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
 
-    const isMain = targetCanvas === canvasRef.current;
     const priorPatternPaint = lastPatternPaintRef.current;
-    const canRetain = isMain && !animRef.current && !motionTargetFlashRef.current && !hideChromeRef.current
+    const canRetain = isMain && !windowed && !animRef.current && !motionTargetFlashRef.current && !hideChromeRef.current
       && linkMode === 'none' && glowIdle === 'none' && !guides.length
       && !isVideoEl(imageState.img) && !objects.some(o => isVideoEl(o.img));
     let dirtyPatternRect: {x:number;y:number;w:number;h:number}|null = null;
@@ -4739,8 +4758,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           現在**只有跨過階梯的那一格才算一次**，中間十幾格全部是現成的。
           刻意只往「上」取：小圖永遠比要用的大，縮下去不會糊。 */
     const SZ_STEP = 1.12;
+    // All instances of one shape share a high-resolution glow master per side.
+    // Variable-size patterns previously cycled through >24 large bitmaps and
+    // evicted one another within the same frame, recomputing blur continuously.
+    // The master is always at least as large as the largest drawn instance.
+    let glowRasterSize = 0;
     const glowBmp = (h: any, sz: number, gcol: string) => {
-      const szQ = Math.pow(SZ_STEP, Math.ceil(Math.log(sz) / Math.log(SZ_STEP)));
+      const szQ = Math.pow(SZ_STEP, Math.ceil(Math.log(Math.max(sz, glowRasterSize)) / Math.log(SZ_STEP)));
       const key = `${holeType}|${isTextHole(holeType) ? holeGlyph(holeType, customText, h) : ''}|${szQ.toFixed(3)}|${gcol}`;
       const cache = glowBmpRef.current;
       const hit = cache.get(key);
@@ -4885,6 +4909,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       pairs: [any, any][],
     ) => {
       if (!glowOn(side) || (!items.length && !pairs.length)) return;
+      glowRasterSize = items.reduce((largest,it)=>Math.max(largest,it.sz),0);
       const a0 = animRef.current;
       const linkGlowColor = linkColor ? nearestGlowSwatch(linkColor) : holeGlowColor;
       const linkAlpha = ([a, b]: [any, any]) =>
@@ -4926,7 +4951,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          圖案真的動了（大小／數量／角度）簽名才會變，那時候本來就該重算。 */
       const sig = `${side}|${glowMode}|${glowColorOf(side)}|${linkMode}|${linkColor || ''}|${linkGlowColor}`
         + `|${LINK_W.toFixed(3)}|${holeType}|${isTextHole(holeType) ? customText : ''}|${s.toFixed(4)}`
-        + `|${g.canvas.width}x${g.canvas.height}`
+        + `|${g.canvas.width}x${g.canvas.height}|${g.getTransform().e},${g.getTransform().f}`
         + '|I' + items.map(it => `${it.x.toFixed(1)},${it.y.toFixed(1)},${it.sz.toFixed(1)},${it.ang.toFixed(1)},${(it.a * glowBeat(it.h)).toFixed(3)}`).join(';')
         + '|P' + pairs.map(pr => {
           const pa = hA(pr[0]), pb = hA(pr[1]);
@@ -4988,6 +5013,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               // directly instead of clearing/copying another zoom-sized canvas.
               // Animated/fading groups retain the isolated compositing below.
               if (buckets.size === 1 && buckets.has(1)) {
+                // For static solid links, shadow three narrow strips per unique
+                // length once. Object-size changes no longer reblur megapixels.
+                if(!a0 && linkMode==='solid'){
+                  const tiles=linkGlowTilesRef.current ||= new LinkGlowTiles();
+                  gg.save();gg.globalAlpha=1;
+                  for(const [a,b] of buckets.get(1)!){const pa=hA(a),pb=hA(b);tiles.draw(gg,pa.x*s,pa.y*s,pb.x*s,pb.y*s,LINK_W,linkGlowColor,false);}
+                  gg.restore();return;
+                }
                 const matrix = gg.getTransform();
                 const lightKey = `${linkMode}|${linkGlowColor}|${LINK_W}|${gg.canvas.width}|${gg.canvas.height}|${matrix.a},${matrix.b},${matrix.c},${matrix.d},${matrix.e},${matrix.f}|`
                   + buckets.get(1)!.map(([a,b]) => {
@@ -5210,21 +5243,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        改成「只長不縮」：畫布保持在看過的最大尺寸，每一格只用左上角
        maskW×maskH 那一塊，貼回去時也只貼那一塊。
        尺寸不再每格重配，畫出來的像素完全一樣。 */
-    const lmW = maskW | 0, lmH = maskH | 0;
-    const cutMaskKey = isMain ? JSON.stringify([maskKey, layout, iw, ih, s, holeType, customText, holeAngle, linkMode, linkColor, glowMode, holeGlowColor,
+    const maskX = windowed ? Math.max(0, vp.x-offs.mx) : 0;
+    const maskY = windowed ? Math.max(0, vp.y-offs.my) : 0;
+    const lmW = windowed ? Math.max(0,Math.ceil(Math.min(maskW,vp.x+vp.w-offs.mx)-maskX)) : maskW | 0;
+    const lmH = windowed ? Math.max(0,Math.ceil(Math.min(maskH,vp.y+vp.h-offs.my)-maskY)) : maskH | 0;
+    if(lmW<1 || lmH<1) return;
+    const cutMaskKey = isMain ? JSON.stringify([maskKey, maskX,maskY,lmW,lmH,layout, iw, ih, s, holeType, customText, holeAngle, linkMode, linkColor, glowMode, holeGlowColor,
       linkMode !== 'none' ? animRef.current?.t : null,
       holes.filter(h => !h.side || h.side === 'both' || h.side === 'mask')
         .map(h => [h.id,h.side,h.manuallyPlaced,h.randomNumber,getHoleSize(h),h.angle,hA(h),glowBeat(h),glowBeatLink(h)])]) : '';
     if (isMain && cutMaskKey === cutMaskCacheKeyRef.current && lmc.width >= lmW && lmc.height >= lmH) {
-      ctx.drawImage(lmc, 0, 0, lmW, lmH, offs.mx, offs.my, lmW, lmH);
+      ctx.drawImage(lmc, 0, 0, lmW, lmH, offs.mx+maskX, offs.my+maskY, lmW, lmH);
       return;
     }
-    if (lmc.width < lmW || lmc.height < lmH) {
-      lmc.width = Math.max(lmc.width, lmW);
-      lmc.height = Math.max(lmc.height, lmH);
+    if (lmc.width !== lmW || lmc.height !== lmH) {
+      lmc.width = lmW;
+      lmc.height = lmH;
     }
     const lmx = get2dWide(lmc)!;
-    lmx.setTransform(1, 0, 0, 1, 0, 0);
+    lmx.setTransform(1, 0, 0, 1, -maskX, -maskY);
     lmx.save();
     if(dirtyPatternRect){const r=dirtyPatternRect;lmx.beginPath();lmx.rect(r.x-offs.mx,r.y-offs.my,r.w,r.h);lmx.clip();}
     lmx.globalAlpha = 1;
@@ -5309,7 +5346,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     // 只貼「這一格真正用到」的那一塊（畫布可能比它大，見上面的說明）
     lmx.restore();
-    ctx.drawImage(lmc, 0, 0, lmW, lmH, offs.mx, offs.my, lmW, lmH);
+    ctx.drawImage(lmc, 0, 0, lmW, lmH, offs.mx+maskX, offs.my+maskY, lmW, lmH);
     if (isMain) cutMaskCacheKeyRef.current = cutMaskKey;
     };
 
@@ -5393,6 +5430,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!waveObjectCtx || !waveObjectCanvas) return null;
       waveObjectCtx.setTransform(1, 0, 0, 1, 0, 0);
       waveObjectCtx.clearRect(0, 0, waveObjectCanvas.width, waveObjectCanvas.height);
+      waveObjectCtx.translate(-vp.x,-vp.y);
       return { canvas: waveObjectCanvas, ctx: waveObjectCtx };
     };
     const drawObjects = (list: any[]) => list.forEach(o => {
@@ -6020,7 +6058,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!f || f.gridWave === undefined) {
         ctx.save();
         ctx.globalAlpha = objectAlpha;
-        ctx.drawImage(layer.canvas, 0, 0);
+        ctx.drawImage(layer.canvas, vp.x, vp.y);
         ctx.restore();
         return;
       }
@@ -6121,7 +6159,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const hit = isMain ? holeTopCacheRef.current : null;
       if (hit && hit.key === sigTop) {
         ctx.save();
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.setTransform(1, 0, 0, 1, -vp.x, -vp.y);
         ctx.globalAlpha = 1;
         ctx.drawImage(hit.c, 0, 0, hit.rw, hit.rh, hit.rx, hit.ry, hit.rw, hit.rh);
         ctx.restore();
@@ -6253,7 +6291,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            (rx0, ry0) —— 剪裁範圍還在原位，所以幾乎什麼都貼不進去，
            整層等於空的。那正是「物件怎麼往下移都壓不到遮罩區的圖案下面」的原因：
            補畫這一層根本沒畫出東西。要還原成「這一層自己的原點」。 */
-        ctx2.setTransform(1, 0, 0, 1, useLayer ? -rx0 : 0, useLayer ? -ry0 : 0);
+        ctx2.setTransform(1, 0, 0, 1, useLayer ? -rx0 : -vp.x, useLayer ? -ry0 : -vp.y);
         /* 只貼這個洞蓋得到的那一小塊。以前是整張貼（幾百萬像素）再靠 clip 蓋掉，
            一個洞一次、十幾個洞就是十幾次。剪裁範圍本來就把外面擋掉了，
            所以貼出來的像素完全一樣。 */
@@ -6284,7 +6322,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (useLayer && topCv) {
         ctx2.setTransform(1, 0, 0, 1, 0, 0);
         ctx0.save();
-        ctx0.setTransform(1, 0, 0, 1, 0, 0);
+        ctx0.setTransform(1, 0, 0, 1, -vp.x, -vp.y);
         ctx0.globalAlpha = 1;
         ctx0.drawImage(topCv, 0, 0, rw0, rh0, rx0, ry0, rw0, rh0);
         ctx0.restore();
@@ -6339,7 +6377,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        所以底圖愈大等愈久。現在畫面每畫一次就順手留一張，返回鍵那一下
        手上已經有圖了，一格都不用再算。
        0.4 秒才留一次，播影片時多出來的成本可以忽略（實測一次約 2 毫秒）。 */
-    if (isMain) {
+    if (isMain && !windowed) {
       const nowT = performance.now();
       // 手勢期間不額外縮製歷史縮圖；畫面仍以原解析度繪製。
       if (activePointers.current.size === 0 && nowT - thumbAtRef.current > 400) {
@@ -6540,6 +6578,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount || 0)+1);
       targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);
       targetCanvas.dataset.dirtyRatio=String(dirtyPatternRect ? dirtyPatternRect.w*dirtyPatternRect.h/(tW*tH) : 1);
+      targetCanvas.dataset.viewport=JSON.stringify(vp);
+      targetCanvas.dataset.fullSize=JSON.stringify([tW,tH]);
     }
     if (!isMain) {
       bCanvas.width = 0; if (fCanvas !== bCanvas) fCanvas.width = 0; lmc.width = 0;
@@ -6700,7 +6740,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     syncDrawnRef.current = null;
     if (!alreadyDrawn && !animationOwnsPaintRef.current) renderToCanvas(canvasRef.current, previewScaleRef.current);
     // 記住 1 倍時的 CSS 寬度（畫布是 max-w-full 等比縮放，換算全靠它）
-    const r = canvasRef.current.getBoundingClientRect();
+    const r = (motionFrameRef.current || canvasRef.current).getBoundingClientRect();
     if (r.width > 0 && imageState) {
       /* 基準尺寸用「舞台大小 ＋ 拼圖長寬比」直接算（contain 貼合），
          不去量畫布 —— 畫布的尺寸是我們自己寫死的，量它會跟自己打架。 */
@@ -7116,11 +7156,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      播放迴圈會被拆掉重建幾十次。走 ref 就不會，rAF 從頭到尾只有一個。 */
   const renderToCanvasRef = useRef(renderToCanvas);
   renderToCanvasRef.current = renderToCanvas;
+  useLayoutEffect(()=>{
+    if(!imageState || !baseCss || motionLockRef.current || !canvasRef.current) return;
+    const cs=collageSizeOf(layout,imageState.baseW,imageState.baseH,maskScale,canvasRatio);
+    const scale=fitScale(baseCss.w,cs.w,viewT.k);
+    previewScaleRef.current=scale;
+    setPreviewScale(prev=>Math.abs(prev-scale)<.001?prev:scale);
+    renderToCanvasRef.current(canvasRef.current,scale);
+    syncDrawnRef.current={fn:renderToCanvasRef.current,ps:scale};
+  },[viewT,baseCss]);
   useEffect(()=>{
     if(!import.meta.env.DEV) return;
     const check=()=>{lastPatternPaintRef.current=null;if(canvasRef.current) renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);};
+    const reference=(event:Event)=>{
+      const c=document.createElement('canvas');
+      renderToCanvasRef.current(c,drawnScaleRef.current);
+      (event as CustomEvent).detail?.(c);
+      c.width=c.height=1;
+    };
     window.addEventListener('qa-full-repaint',check);
-    return ()=>window.removeEventListener('qa-full-repaint',check);
+    window.addEventListener('qa-render-reference',reference);
+    return ()=>{window.removeEventListener('qa-full-repaint',check);window.removeEventListener('qa-render-reference',reference);};
   },[]);
   useEffect(() => {
     if (!motionTargetFlashSeq || !imageState || (motionOn && motionPlaying)) return;
@@ -7426,6 +7482,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     previousMotionTabRef.current = entering;
     motionLockRef.current = entering;
     if (!changed) return;
+    // The FLIP transition must start with a complete scene, never a viewport tile.
+    forceFullPreviewRef.current=true;
+    if(canvasRef.current)renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);
+    forceFullPreviewRef.current=false;
     const frame = motionFrameRef.current;
     const first = motionStartRectRef.current;
     motionFrameAnimationRef.current?.cancel();
@@ -8370,11 +8430,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const o = objects.find(z => z.id === editingTextId);
           const cvsEl = canvasRef.current;
           if (!o || o.type !== 'text' || !cvsEl) return null;
-          const r = cvsEl.getBoundingClientRect();
+          const r = (motionFrameRef.current || cvsEl).getBoundingClientRect();
           const stEl = stageRef.current;
           const sr = stEl ? stEl.getBoundingClientRect() : { left: 0, top: 0 } as DOMRect;
           const ps = drawnScaleRef.current;
-          const k = r.width / Math.max(1, cvsEl.width / ps);   // 畫布內部單位 → CSS
+          const k = r.width / Math.max(1, getLayoutOffsets()?.cw || cvsEl.width / ps);   // 畫布內部單位 → CSS
           /* 符號的框是「剛好包住墨水」的，常常比 em 方框小一大截 ——
              輸入框照那個框開的話字會被裁掉。所以符號的輸入框至少要有
              一個字級的高度與寬度，並且以框心為中心攤開。一般文字不變。 */
@@ -8465,11 +8525,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const o = objects.find(z => z.id === selectedObj);
           const cvsEl = canvasRef.current;
           if (!o || !cvsEl) return null;
-          const r = cvsEl.getBoundingClientRect();
+          const r = (motionFrameRef.current || cvsEl).getBoundingClientRect();
           const stEl = stageRef.current;
           const sr = stEl ? stEl.getBoundingClientRect() : { left: 0, top: 0 };
           const ps = drawnScaleRef.current;
-          const k = r.width / Math.max(1, cvsEl.width / ps);   // 畫布內部單位 → CSS
+          const k = r.width / Math.max(1, getLayoutOffsets()?.cw || cvsEl.width / ps);   // 畫布內部單位 → CSS
           /* ── 這排鍵要貼著「畫面上真的看得到的那個選取框」 ──────────────────
              以前是拿 o.x / o.y / o.w / o.h 直接算，也就是物件的「原始方框」。
              但畫出來的框有兩件事會讓它跟原始方框不一樣：
