@@ -330,11 +330,9 @@ select:focus, select:focus-visible {
   .home-scroll { --lib-lift: 0px; }
 }
 
-/* A single native scrolling surface on touch devices. No second, delayed
-   parallax transform can pull the header down after a fast fling has stopped. */
+/* Contain edge overscroll without disabling the scroll-linked visual effects. */
 @media (pointer: coarse) {
-  .home-scroll { --lib-lift: 0px; overscroll-behavior-y: none; }
-  .home-hero, .home-hero-art, .home-lib { animation: none !important; }
+  .home-scroll { overscroll-behavior-y: none; }
 }
 
 /* 首頁使用透明狀態列，但所有工具頁仍必須保有修改前的獨立 viewport。

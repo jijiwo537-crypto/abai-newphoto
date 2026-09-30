@@ -1,6 +1,7 @@
 
 import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
+import { isIdentityCurve, boundedCurvePath } from '../utils/editorCurveGeometry';
 import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
 import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
@@ -1430,6 +1431,7 @@ function runThumbChunks<T>(
 }
 
 export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, batchSrcs, onAddPhotos, lutList, onSave, onCancel, onHome, onRequestExit, onImportNew, originalFile, initialState, compactBottomBar = false }) => {
+  const curveClipId = React.useId();
   /* 主頁入口逐層沿用 ImageAdjustPanel 的 64px 內容 + 12px 底距；相機內的
      非 compact 編輯器維持既有 48px。這個值也同步參與控制區與構圖舞台計算。 */
   const footerHeight = compactBottomBar ? 76 : 48;
@@ -4895,10 +4897,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         // 新的 GLSL 特效也算「有編輯」，不然只開這些的時候會被當成沒動過而畫回原圖
         !hasActiveFx(pRender) &&
         !pRender.maskCreated &&
-        pRender.curves.rgb.length === 2 && pRender.curves.rgb[0].y === 0 && pRender.curves.rgb[1].y === 255 &&
-        pRender.curves.r.length === 2 && pRender.curves.r[0].y === 0 && pRender.curves.r[1].y === 255 &&
-        pRender.curves.g.length === 2 && pRender.curves.g[0].y === 0 && pRender.curves.g[1].y === 255 &&
-        pRender.curves.b.length === 2 && pRender.curves.b[0].y === 0 && pRender.curves.b[1].y === 255 &&
+        Object.values(pRender.curves).every(isIdentityCurve) &&
         isHslIdentity(pRender.hsl);
 
     if (showOriginalRef.current || isNoEdits) {
@@ -6525,12 +6524,12 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     let x = Math.max(0, Math.min(200, Math.round((clientX - rect.left) * (200 / rect.width))));
     let y = Math.max(0, Math.min(200, Math.round(200 - (clientY - rect.top) * (200 / rect.height))));
     const x255 = (x / 200) * 255;
-    const currentPoints = [...params.curves[currentCurveChannel]];
+    const currentPoints = [...paramsRef.current.curves[currentCurveChannel]];
     if (dragPointIdx > 0 && x255 <= currentPoints[dragPointIdx - 1].x) x = (currentPoints[dragPointIdx - 1].x / 255) * 200 + 1;
     if (dragPointIdx < currentPoints.length - 1 && x255 >= currentPoints[dragPointIdx + 1].x) x = (currentPoints[dragPointIdx + 1].x / 255) * 200 - 1;
     const newPoints = [...currentPoints];
     newPoints[dragPointIdx] = { x: (x / 200) * 255, y: (y / 200) * 255 };
-    const newCurves = { ...params.curves, [currentCurveChannel]: newPoints };
+    const newCurves = { ...paramsRef.current.curves, [currentCurveChannel]: newPoints };
     paramsRef.current = { ...paramsRef.current, curves: newCurves };
     isDirtyRef.current = true;
     scheduleParamsSync();
@@ -6610,14 +6609,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   const getCurvePathD = () => {
-      const pts = [...params.curves[currentCurveChannel]].sort((a,b)=>a.x-b.x);
-      let pathD = `M ${pts[0].x/255*200} ${200 - (pts[0].y/255*200)}`;
-      for (let i = 0.5; i <= 200.5; i += 0.5) {
-          const x255 = (i/200)*255;
-          const y255 = getSplineY(Math.min(x255, 255), pts);
-          pathD += ` L ${i} ${200 - (y255/255*200)}`;
-      }
-      return pathD;
+      return boundedCurvePath(params.curves[currentCurveChannel], getSplineY);
   };
   
   const getCurveColor = () => {
@@ -6834,7 +6826,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           面板收起來時就回到原本的 z-20，其餘完全不變。 */}
       {exportMenuOpen && <button aria-label="關閉匯出選項" className="absolute inset-0 z-[80]" onClick={() => setExportMenuOpen(false)} />}
       {saveState !== 'success' && (
-      <header className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl ${showExifPanel || exportMenuOpen ? 'z-[90]' : 'z-20'}`}>
+      <header className={`h-14 relative flex items-center justify-between px-4 shrink-0 bg-black/40 ${exportMenuOpen ? '' : 'backdrop-blur-xl'} ${showExifPanel || exportMenuOpen ? 'z-[90]' : 'z-20'}`}>
         <div className="w-20">
             {/* 构图中的返回只退出构图并丢弃 draftGeo；其他分页才离开编辑器。 */}
             <button
@@ -6859,7 +6851,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <button aria-label="匯出選項" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(v => !v)} className="h-8 px-2 flex items-center"><Icon name="more_horiz" className="text-xl" /></button>
             </div>
             {exportMenuOpen && <>
-              <div role="dialog" aria-label="匯出選項" className="absolute left-4 right-4 top-full mt-2 z-[81] rounded-xl border border-white/15 p-3 shadow-xl" style={{ background: 'rgba(35,35,39,.76)', backdropFilter: 'blur(24px) saturate(135%)', WebkitBackdropFilter: 'blur(24px) saturate(135%)' }}>
+              <div role="dialog" aria-label="匯出選項" className="absolute left-4 right-4 top-full mt-2 z-[81] rounded-xl border border-white/15 p-3 shadow-xl" style={{ background: 'linear-gradient(135deg,rgba(255,255,255,.07),rgba(255,255,255,0)),rgba(30,32,37,.84)', backdropFilter: 'blur(32px) saturate(145%)', WebkitBackdropFilter: 'blur(32px) saturate(145%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.08),0 12px 36px rgba(0,0,0,.24)' }}>
                 <div className="text-xs text-white/50 mb-2">匯出格式</div>
                 <div className="flex gap-2">
                   {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : 'bg-white/10'}`}>{format.toUpperCase()}</button>)}
@@ -7633,6 +7625,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                         onTouchStart={handleCurveBgClick}
                    >
                        <svg id="curvesSvg" viewBox="0 0 200 200" className="absolute top-[-1px] left-[-1px] w-[240px] h-[240px] overflow-visible cursor-crosshair">
+                           <defs><clipPath id={curveClipId}><rect width="200" height="200" /></clipPath></defs>
                            {/* 不用半透明：半透明的線會透出底下的照片，亮的地方看起來
                                忽隱忽現，而且交叉點疊了兩層 alpha 會比別處亮一塊。
                                改成不透明的實色，整張格線在哪都是同一個樣子。
@@ -7648,7 +7641,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                              ))}
                            </g>
                            <path 
-                               d={getCurvePathD()} 
+                               d={getCurvePathD()}
+                               clipPath={`url(#${curveClipId})`}
                                fill="none" 
                                stroke={getCurveColor()} 
                                strokeWidth="1.5" 

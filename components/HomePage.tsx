@@ -14,7 +14,7 @@ import { installHomeScroll } from '../utils/homeScroll';
 const CONTACT_EMAIL = 'chi888969930522@gmail.com';
 const CONTACT_IG = 'abai_is.perfect';
 const CONTACT_IG_URL = 'https://www.instagram.com/abai_is.perfect/';
-const SETTINGS_GLASS = { background: 'rgba(35,35,39,.76)', backdropFilter: 'blur(24px) saturate(135%)', WebkitBackdropFilter: 'blur(24px) saturate(135%)' };
+const SETTINGS_GLASS = { background: 'linear-gradient(135deg,rgba(255,255,255,.07),rgba(255,255,255,0)),rgba(30,32,37,.84)', backdropFilter: 'blur(32px) saturate(145%)', WebkitBackdropFilter: 'blur(32px) saturate(145%)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.08),0 12px 36px rgba(0,0,0,.24)' };
 
 interface HomePageProps {
   onOpenCamera: () => void;
@@ -557,14 +557,13 @@ export const HomePage: React.FC<HomePageProps> = ({
   /** 主視覺裡的照片。它比整屏再慢一層，JS 那條路也要跟著畫 */
   const artRef = useRef<HTMLDivElement>(null);
   const cssTimeline = useRef(false);
-  // Touch scrolling is compositor-driven. Do not counter-translate the same
-  // content on the JS thread: during a fast fling its last frame can arrive
-  // after native scrolling has already reached the top.
-  const reduceMotion = useRef(typeof matchMedia !== 'undefined' && (matchMedia('(pointer: coarse)').matches || matchMedia('(prefers-reduced-motion: reduce)').matches));
+  // Touch input is not a request to disable parallax. Prefer the native scroll
+  // timeline on capable browsers; only the accessibility preference disables it.
+  const reduceMotion = useRef(typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches);
   useEffect(() => {
     try {
       cssTimeline.current = typeof CSS !== 'undefined' && CSS.supports('animation-timeline: scroll()');
-      reduceMotion.current = matchMedia('(pointer: coarse)').matches || matchMedia('(prefers-reduced-motion: reduce)').matches;
+      reduceMotion.current = matchMedia('(prefers-reduced-motion: reduce)').matches;
     } catch { /* 舊瀏覽器 */ }
   }, []);
 
@@ -620,7 +619,7 @@ export const HomePage: React.FC<HomePageProps> = ({
       return;
     }
     if (cssTimeline.current) return;
-    const h = sc.clientHeight || 1;
+    const h = rangeWritten.current > 0 ? rangeWritten.current : sc.clientHeight || 1;
     // 夾在 0～可捲上限之間：iOS 橡皮筋期間讀到的值可能超出範圍，
     // 直接拿去算會讓圖案往回彈一下。
     const y = Math.max(0, sc.scrollTop);
@@ -1815,17 +1814,17 @@ export const HomePage: React.FC<HomePageProps> = ({
       </AnimatePresence>
 
       <AnimatePresence>
-      {settingsOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.26 }} className="fixed inset-0 z-[250] bg-black/70 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
+      {settingsOpen && <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.26 }} className="fixed inset-0 z-[250] bg-black/35 flex items-center justify-center px-6" onClick={() => setSettingsOpen(false)}>
         <section role="dialog" aria-modal="true" aria-label={settingsPage === 'language' ? '語言' : '設定'} className="w-full max-w-sm border border-white/15 rounded-3xl p-5" style={SETTINGS_GLASS} onClick={e => e.stopPropagation()}>
-          <div className="flex items-center justify-between mb-5"><h2 className="text-base font-bold">{settingsPage === 'language' ? '語言' : '設定'}</h2>
-            <button aria-label="關閉視窗" className="w-9 h-9 rounded-full border border-white/20" onClick={() => setSettingsOpen(false)}><Icon name="close" /></button>
+          <div className="flex items-center justify-between mb-4"><h2 className="pl-2 text-sm font-medium tracking-[.06em] text-white/90">{settingsPage === 'language' ? '語言' : '設定'}</h2>
+            <button aria-label="關閉視窗" className="w-9 h-9 flex items-center justify-center text-white/65" onClick={() => setSettingsOpen(false)}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button>
           </div>
           <AnimatePresence mode="wait" initial={false}><motion.div key={settingsPage} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
           {settingsPage === 'menu' ? <div className="flex flex-col gap-2">
-            <button className="min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left" onClick={() => { setSettingsOpen(false); setContactOpen(true); }}>聯絡資訊</button>
-            <button className="min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left" onClick={() => setSettingsPage('language')}>語言</button>
+            <button className="min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => { setSettingsOpen(false); setContactOpen(true); }}>聯絡資訊</button>
+            <button className="min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('language')}>語言</button>
           </div> : <div className="flex flex-col gap-2">{LOCALES.map(l => <button key={l.id} lang={l.id} onClick={() => changeLocale(l.id)} aria-pressed={getLocale() === l.id}
-            className={`min-h-12 px-4 py-3 rounded-xl flex justify-between items-center border ${getLocale() === l.id ? 'border-white bg-white/10' : 'border-white/10'}`}>
+            className={`min-h-12 px-4 py-3 rounded-xl text-[13px] font-normal flex justify-between items-center border ${getLocale() === l.id ? 'border-white bg-white/10' : 'border-white/10'}`}>
             <span>{l.name}</span>{getLocale() === l.id && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>}
           </button>)}</div>}
           </motion.div></AnimatePresence>
@@ -1842,7 +1841,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
             onClick={() => setContactOpen(false)}
-            className="absolute inset-0 z-[60] flex items-center justify-center px-8 bg-black/75 backdrop-blur-sm"
+            className="absolute inset-0 z-[60] flex items-center justify-center px-8 bg-black/35"
           >
             <div className="relative w-full max-w-[320px] flex flex-col items-center">
             <motion.div
@@ -1855,7 +1854,7 @@ export const HomePage: React.FC<HomePageProps> = ({
               style={SETTINGS_GLASS}
             >
               <div className="flex items-center justify-between px-5 pt-5 pb-3">
-                <span className="text-[10px] font-bold tracking-[0.24em] text-white/40 ml-2.5">聯絡方式</span>
+                <span className="text-sm font-medium tracking-[.06em] text-white/90 ml-2">聯絡資訊</span>
                 <button
                   onClick={() => setContactOpen(false)}
                   aria-label="關閉視窗"

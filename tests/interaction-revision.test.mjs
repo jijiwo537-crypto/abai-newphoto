@@ -54,10 +54,14 @@ test('curves float without a panel or grid backdrop and retain their established
   assert.match(editor, /transparent 5rem, #111111 5rem/);
 });
 
-test('coarse-pointer home scrolling does not race native scrolling with parallax', () => {
+test('touch devices retain parallax while overscroll remains contained', () => {
   const home = source('components/HomePage.tsx');
   assert.match(home, /libLiftRef\.current = reduceMotion\.current \? 0/);
   const css = source('styles.css');
   assert.match(css, /@media\s*\(pointer:\s*coarse\)/);
-  assert.match(css, /animation:\s*none\s*!important/);
+  assert.doesNotMatch(home, /matchMedia\('\(pointer: coarse\)'\)/);
+  const touchRules = css.slice(css.indexOf('@media (pointer: coarse)'), css.indexOf('/* 首頁使用透明狀態列'));
+  assert.doesNotMatch(touchRules, /animation:\s*none|--lib-lift:\s*0/);
+  assert.match(touchRules, /overscroll-behavior-y:\s*none/);
+  assert.match(home, /const h = rangeWritten\.current > 0 \? rangeWritten\.current/);
 });
