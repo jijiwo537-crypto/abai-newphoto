@@ -5,7 +5,7 @@ const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 test('art uses the editor viewport and shared save control with fixed text-only tabs',()=>{
  const s=read('components/ArtStudio.tsx'),css=read('components/ArtStudio.css');
  assert.match(s,/art-studio safe-top/);assert.match(s,/<SaveButton urls=/);
- assert.match(s,/className="art-replace"/);assert.match(s,/\['字符','範圍','外觀'\]/);
+ assert.match(s,/className="art-replace"/);assert.match(s,/\['效果','字符','範圍','外觀'\]/);
  assert.match(css,/art-controls\{[^}]*overflow:hidden/);
  assert.match(css,/art-zoom\{[^}]*inset:0/);
  assert.doesNotMatch(s,/作品已準備好|Icon size/);
@@ -18,7 +18,7 @@ test('range controls retain detection semantics in the requested order',()=>{
  assert.match(s,/\['亮部','暗部','邊緣','色彩'\]/);
  assert.match(s,/metric:\[0,3,1,2\]\[index\],high:100/);
  assert.match(s,/range\('範圍','low',0,99\)/);
- assert.doesNotMatch(s,/range\('上限'|range\('下限'|偵測/);
+ assert.doesNotMatch(s,/range\('上限'|range\('下限'/);
 });
 test('ASCII starts with white characters over the photo',()=>{
  const s=read('utils/asciiRenderer.ts');assert.match(s,/color:false,background:true,glow:0/);

@@ -7,6 +7,8 @@ import {installSliderTouch} from '../utils/sliderTouch';
 import '../styles.css';
 installSliderTouch();
 const query=new URLSearchParams(location.search);
+function ArtFixture({src}:{src:string}){const [open,setOpen]=React.useState(true);return open?<ArtStudio initialSrc={src} onClose={()=>setOpen(false)}/>:<button style={{position:'fixed',top:100,color:'white'}} onClick={()=>setOpen(true)}>重新進入藝術效果</button>;}
+if(query.has('geometry')){let lastTap='';document.addEventListener('pointerup',e=>{lastTap=(e.target as HTMLElement).closest('button')?.textContent?.slice(0,16)||'canvas';});setInterval(()=>{let el=document.querySelector<HTMLElement>('.art-studio');if(!el)return;let out=document.getElementById('art-geometry');if(!out){out=document.createElement('pre');out.id='art-geometry';Object.assign(out.style,{position:'fixed',top:'120px',left:'8px',zIndex:'9999',fontSize:'10px',background:'#000b',color:'#0f0',pointerEvents:'none'});document.body.append(out);}const r=el.getBoundingClientRect(),nav=el.querySelector('nav')?.getBoundingClientRect();out.textContent=JSON.stringify({standalone:(navigator as any).standalone,tap:lastTap,screen:screen.height,inner:innerHeight,width:innerWidth,visual:visualViewport?.height,scale:visualViewport?.scale,offset:visualViewport?.offsetTop,top:r.top,bottom:r.bottom,height:r.height,navBottom:nav?.bottom,margin:getComputedStyle(el).marginTop},null,2);},500);}
 if(query.has('creative')){
  const c=document.createElement('canvas');c.width=600;c.height=800;
  const g=c.getContext('2d')!;const grad=g.createLinearGradient(0,0,600,800);grad.addColorStop(0,'#1b527f');grad.addColorStop(1,'#bd9670');g.fillStyle=grad;g.fillRect(0,0,600,800);
@@ -26,7 +28,7 @@ if(query.has('creative')){
 }else {
  const c=document.createElement('canvas');c.width=600;c.height=800;
  const g=c.getContext('2d')!;const gradient=g.createLinearGradient(0,0,600,800);gradient.addColorStop(0,'#34547f');gradient.addColorStop(1,'#d7ac94');g.fillStyle=gradient;g.fillRect(0,0,600,800);g.fillStyle='white';g.font='90px sans-serif';g.fillText('ABAI',80,400);
- createRoot(document.getElementById('root')!).render(<ArtStudio initialSrc={query.has('fixture')?c.toDataURL():''} onClose={()=>{}}/>);
+ createRoot(document.getElementById('root')!).render(<ArtFixture src={query.has('fixture')?c.toDataURL():''}/>);
 }
 
 if(query.has('alignbench')) void (async()=>{
