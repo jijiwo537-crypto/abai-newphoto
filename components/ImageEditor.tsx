@@ -8,6 +8,7 @@ import { LutGpu } from '../utils/lutGpu';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
 import {effectControlValue,effectStoredValue,effectControlMin} from '../utils/effectControlValues';
+import {effectDetailIcon} from '../utils/effectDetailIcons';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from '../utils/highlightSelection';
 import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
 import { SaveButton } from './SaveButton';
@@ -319,11 +320,10 @@ const FX_OWNER: Record<string, FxDef> = (() => {
 /** 新特效自己的參數列（強度 + 細項），對應 FX_DEFS */
 const FX_TOOLS: Record<string, ToolDef[]> = Object.fromEntries(
   FX_DEFS.map(d => [d.id, [
-    // 強度用 percent —— tune 是「調節」分頁的圖標，不能拿來重複用
-    { id: d.id, label: '強度', icon: 'percent', min: 0, max: 100 },
+    { id: d.id, label: '強度', icon: effectDetailIcon('強度', d.icon), min: 0, max: 100 },
     // hidden 的那幾根不給調整（值永遠是預設），介面上就不要出現
     ...d.params.filter(p => !p.hidden)
-      .map(p => ({ id: p.id, label: p.label, icon: p.icon, min: p.min, max: p.max, step: p.step })),
+      .map(p => ({ id: p.id, label: p.label, icon: effectDetailIcon(p.label, p.icon), min: p.min, max: p.max, step: p.step })),
   ] as ToolDef[]]),
 );
 

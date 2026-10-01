@@ -17,6 +17,7 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, 
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
 import {effectControlValue,effectStoredValue,effectControlMin} from '../utils/effectControlValues';
+import {effectDetailIcon} from '../utils/effectDetailIcons';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
 import { CLASSIC_COORDINATE_VERSION, joinLegacyPages } from '../utils/classicPageCoordinates';
@@ -3225,8 +3226,11 @@ return (
         </button>
         <div className="w-[1px] h-8 bg-white/10 mx-2 shrink-0" />
         {detailTools.map(([key,label,,,dflt])=>{
-          const icon=FX_DEFS.find(d=>d.id===effectCard)?.params.find(p=>p.id===key)?.icon
-            || FX_SUB_TOOLS[effectCard]?.find(t=>t[0]===key)?.[2] || 'percent';
+          const definition=FX_DEFS.find(d=>d.id===effectCard);
+          const existingIcon=definition?.params.find(p=>p.id===key)?.icon || definition?.icon;
+          // Preserve the original soft-light/halation/light-leak icon sets.
+          const icon=FX_SUB_TOOLS[effectCard]?.find(t=>t[0]===key)?.[2]
+            || effectDetailIcon(label,existingIcon || 'blur_on');
           return toolBtn(key,label,icon,detailActive?.[0]===key,fxVal(key,dflt)!==dflt,()=>setDetailTool(key));
         })}
       </>}
