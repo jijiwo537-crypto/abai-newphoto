@@ -1,7 +1,7 @@
 // ABAI original image-analysis renderer. No third-party code or visual assets.
 // Derived from our own effects-lab implementation, with an independent app composition.
 import {blurredSource,makeLinks} from './artMaterials.js';
-export const trackingDefaults={mode:'mosaic',detection:'combined',threshold:30,count:0,size:100,pixels:16,blur:20,circles:55,minDistance:55,block:16,minRadius:4,maxRadius:24,stroke:1,labelSize:8,opacity:1,imageOpacity:1,links:125,lineWeight:.8,chain:false,chainCount:7,angle:30,baseRadius:170,ratio:.83,intersections:true,markerSize:5,frame:false,frameSize:68,dash:8,frameStroke:1,starSize:40,starPoints:4,textSize:12,topLeft:'ABAI / VISION',topRight:'IMAGE ANALYSIS',bottomLeft:'SIGNAL / 001',bottomRight:'OBSERVATION',labels:false,palette:'#ffffff',background:'#111111',shape:'circle',format:'1200x1600',noise:false,textureOpacity:.5,texture:null,zones:[],zoneStroke:true,seed:42};
+export const trackingDefaults={mode:'mosaic',detection:'combined',threshold:30,count:0,size:100,pixels:16,blur:20,circles:55,minDistance:55,block:16,minRadius:4,maxRadius:24,stroke:1,labelSize:8,opacity:1,imageOpacity:1,links:125,lineWeight:.8,chain:false,chainCount:11,angle:30,baseRadius:170,ratio:.83,intersections:true,markerSize:5,frame:false,frameSize:68,dash:8,frameStroke:1,starSize:40,starPoints:4,textSize:12,topLeft:'ABAI / VISION',topRight:'IMAGE ANALYSIS',bottomLeft:'SIGNAL / 001',bottomRight:'OBSERVATION',labels:false,palette:'#ffffff',background:'#111111',shape:'circle',format:'1200x1600',noise:false,textureOpacity:.5,texture:null,zones:[],zoneStroke:true,seed:42};
 let cache=null;
 trackingDefaults.linkMode='tree';trackingDefaults.materialStrength=100;trackingDefaults.shapes=['circle'];trackingDefaults.materials=['mosaic'];
 Object.assign(trackingDefaults,{nodeSeed:42,variation:80,sizeVariation:0,golden:false,goldenSize:76,goldenAngle:0});
@@ -15,6 +15,13 @@ export function trackingZones(o){
  return zones.map(point=>({...point,scale:1-Math.max(0,Math.min(1,o.sizeVariation/100))*rng()*.8}));
 }
 export function redistributeRegions(o){const seed=o.seed+1,rng=random(seed^0x9e3779b9);return{...o,seed,zones:(o.zones||[]).map(()=>({x:.1+rng()*.8,y:.1+rng()*.8}))};}
+export function trackingCircleChain(o,w,h){
+ const chain=[];if(!o.chain)return chain;
+ const k=Math.min(w,h)/1200;let left={x:w/2,y:h/2,radius:o.baseRadius*k},right={...left};chain.push(left);
+ const a=o.angle*Math.PI/180,dx=Math.sin(a),dy=-Math.cos(a);
+ for(let i=1;i<=Math.ceil((o.chainCount-1)/2);i++){const radius=o.baseRadius*k*Math.pow(o.ratio,i),dist=(left.radius+radius)*.68;left={x:left.x-dx*dist,y:left.y-dy*dist,radius};right={x:right.x+dx*dist,y:right.y+dy*dist,radius};chain.unshift(left);if(chain.length<o.chainCount)chain.push(right);}
+ return chain.slice(0,o.chainCount);
+}
 function prepare(source){
  if(cache?.source===source)return cache;
  const sample=canvas(Math.max(1,Math.round(source.width/4)),Math.max(1,Math.round(source.height/4))),g=sample.getContext('2d',{willReadFrequently:true});g.drawImage(source,0,0,sample.width,sample.height);const data=g.getImageData(0,0,sample.width,sample.height).data,lum=new Float32Array(sample.width*sample.height);
@@ -49,9 +56,7 @@ export function renderTracking(c,source,strength=.6,options={}){
  const o={...trackingDefaults,...options},w=source.width,h=source.height,k=Math.min(w,h)/1200,p=prepare(source),nodes=detect(p,o,w,h,k).map(n=>({...n,radius:trackingRadius(o,n.radiusRand,k)})),alpha=Math.min(1,strength/.6)*o.opacity;
  c.save();if(!o.vectorOnly){c.fillStyle=o.background;c.fillRect(0,0,w,h);c.globalAlpha=o.imageOpacity;c.drawImage(source,0,0);}c.globalAlpha=1;
  if(strength<=0){c.drawImage(source,0,0);c.restore();return;}
- const chain=[];
- if(o.chain){let left={x:w/2,y:h/2,radius:o.baseRadius*k},right={...left};chain.push(left);const a=o.angle*Math.PI/180,dx=Math.sin(a),dy=-Math.cos(a);
- for(let i=1;i<=Math.ceil((o.chainCount-1)/2);i++){const r=o.baseRadius*k*Math.pow(o.ratio,i),dist=(left.radius+r)*.68;left={x:left.x-dx*dist,y:left.y-dy*dist,radius:r};right={x:right.x+dx*dist,y:right.y+dy*dist,radius:r};chain.unshift(left);if(chain.length<o.chainCount)chain.push(right);}chain.splice(o.chainCount);}
+ const chain=trackingCircleChain(o,w,h);
  const zones=trackingZones(o);
  for(let i=0;i<zones.length;i++){
  const materials=o.materials||[o.mode];if(!materials.length)continue;const mode=materials[i%materials.length];
@@ -76,10 +81,12 @@ export function renderTracking(c,source,strength=.6,options={}){
  if(o.intersections)for(let i=1;i<chain.length;i++)for(const p of circleIntersections(chain[i-1],chain[i])){c.beginPath();c.arc(p.x,p.y,o.markerSize*k/2,0,Math.PI*2);c.fill();}
  c.font=o.labelSize*k+'px monospace';
  nodes.forEach((n,index)=>{c.beginPath();const r=n.radius,shape=o.shapes[index%o.shapes.length];if(!shape)return;
- if(shape==='square')c.rect(n.x-r,n.y-r,r*2,r*2);
+ if(shape==='square'||shape==='selection'||shape==='cross'){c.rect(n.x-r,n.y-r,r*2,r*2);if(shape==='cross'){c.moveTo(n.x-r,n.y-r);c.lineTo(n.x+r,n.y+r);c.moveTo(n.x+r,n.y-r);c.lineTo(n.x-r,n.y+r);}}
  else if(shape==='spark'||shape==='star'){const tips=shape==='star'?5:4;for(let i=0;i<=tips*2;i++){const a=i*Math.PI/tips-Math.PI/2,d=i%2?r*(shape==='star'?.42:.2):r;const x=n.x+Math.cos(a)*d,y=n.y+Math.sin(a)*d;if(!i)c.moveTo(x,y);else c.lineTo(x,y);}}
  else if(shape==='bracket'){for(const sx of [-1,1])for(const sy of [-1,1]){c.moveTo(n.x+sx*r*.5,n.y+sy*r);c.lineTo(n.x+sx*r,n.y+sy*r);c.lineTo(n.x+sx*r,n.y+sy*r*.5);}}
- else c.arc(n.x,n.y,r,0,Math.PI*2);c.stroke();if(o.labelSize>0){const text=Math.round(n.x)+','+Math.round(n.y),width=c.measureText(text).width;c.fillText(text,Math.min(w-width-4*k,n.x+n.radius+3*k),Math.max(o.labelSize*k,n.y-3*k));}});
+ else c.arc(n.x,n.y,r,0,Math.PI*2);c.stroke();
+ if(shape==='selection'){const size=Math.min(5*k,Math.max(1.5*k,r*.2));c.save();c.fillStyle='#ffffff';c.beginPath();for(const sx of [-1,1])for(const sy of [-1,1])c.rect(n.x+sx*r-size/2,n.y+sy*r-size/2,size,size);c.fill();c.restore();}
+ if(o.labelSize>0){const text=Math.round(n.x)+','+Math.round(n.y),width=c.measureText(text).width;c.fillText(text,Math.min(w-width-4*k,n.x+n.radius+3*k),Math.max(o.labelSize*k,n.y-3*k));}});
  if(o.frame){const size=Math.min(w,h)*o.frameSize/100,x=(w-size)/2,y=(h-size)/2;c.lineWidth=o.frameStroke*k;c.setLineDash([o.dash*k,o.dash*k]);c.strokeRect(x,y,size,size);c.beginPath();c.moveTo(w/2,y);c.lineTo(w/2,y+size);c.moveTo(x,h/2);c.lineTo(x+size,h/2);c.stroke();c.setLineDash([]);c.beginPath();for(let i=0;i<o.starPoints;i++){const a=i*Math.PI/o.starPoints,dx=Math.cos(a)*o.starSize*k/2,dy=Math.sin(a)*o.starSize*k/2;c.moveTo(w/2-dx,h/2-dy);c.lineTo(w/2+dx,h/2+dy);}c.stroke();}
  if(o.golden){
   // Nested golden rectangles with true quarter-circle arcs, expressed as

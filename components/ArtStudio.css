@@ -51,11 +51,14 @@
 .art-detail-ranges{display:grid;grid-template-columns:1fr 1fr;column-gap:18px}
 .art-detail-ranges>.art-range:last-child:nth-child(odd){grid-column:1/-1}
 .art-elements button{display:flex;align-items:center;justify-content:center;gap:7px;min-width:0}
-.art-elements i{width:4px;height:4px;border-radius:50%;background:#555;flex-shrink:0}
-.art-elements button[data-enabled=true] i{background:#ddd}
-.art-elements button[aria-pressed=true] i{background:#aaa}
-.art-elements button[aria-pressed=true][data-enabled=true] i{background:#181818}
 .art-element-ranges{margin-top:4px}
+.art-angle-caption{display:flex;align-items:center;justify-content:space-between;gap:4px;min-height:26px}
+.art-angle-values{display:flex;align-items:center;gap:3px;min-width:0}
+.art-angle-values button{font-size:10px;line-height:20px;padding:0 3px;border-radius:3px;color:#aaa;background:#ffffff09}
+.art-angle-values button[aria-pressed=true]{background:#eee;color:#111}
+.art-range .art-angle-value{appearance:textfield;display:block;flex:none;width:37px;height:26px;margin:0;padding:2px;border:1px solid #ffffff20;border-radius:3px;background:#202020;color:white;font-size:10px;text-align:center;touch-action:manipulation}
+.art-angle-value::-webkit-inner-spin-button,.art-angle-value::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+.art-element-ranges:has(.art-angle)>.art-range:first-child>span{min-height:26px}
 .art-character-presets button{padding-inline:3px;font-size:clamp(10px,3vw,12px)}
 .art-text-fields{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px}.art-text-fields label{font-size:10px;line-height:14px;color:#999}.art-text-fields input{display:block;min-width:0;width:100%;height:30px;font-size:16px;background:#202020;border-radius:4px;padding:2px 4px;color:white;caret-color:white}
 .art-placement-hint{position:absolute;left:50%;top:28px;transform:translateX(-50%);padding:8px 16px;background:rgba(0,0,0,.76);border:1px solid #ffffff12;backdrop-filter:blur(20px) saturate(.7);-webkit-backdrop-filter:blur(20px) saturate(.7);border-radius:999px;color:#ddd;font-size:11px;line-height:16px;pointer-events:none;white-space:nowrap}
