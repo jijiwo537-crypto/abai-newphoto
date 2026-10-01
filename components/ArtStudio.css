@@ -49,5 +49,6 @@
 .art-tracking-controls .art-range{margin:6px 0;line-height:14px}.art-tracking-controls .art-range input{display:block;margin:3px 0 0;height:22px}.art-tracking-controls .art-toggle{min-height:32px}.art-tracking-controls .art-presets{margin:7px 0}.art-tracking-controls .art-presets button{padding:6px 8px;border-radius:5px}
 .art-scroll{overflow-x:auto;scrollbar-width:none}.art-scroll button{flex:none}
 .art-detail-ranges{display:grid;grid-template-columns:1fr 1fr;column-gap:18px}
+.art-character-presets button{padding-inline:3px;font-size:clamp(10px,3vw,12px)}
 .art-text-fields{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px}.art-text-fields label{font-size:10px;line-height:14px;color:#999}.art-text-fields input{display:block;min-width:0;width:100%;height:30px;font-size:16px;background:#202020;border-radius:4px;padding:2px 4px;color:white;caret-color:white}
 .art-placement-hint{position:absolute;left:50%;top:12px;transform:translateX(-50%);padding:6px 12px;background:#0009;border-radius:20px;color:#ddd;font-size:11px;pointer-events:none;white-space:nowrap}
