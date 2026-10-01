@@ -67,6 +67,8 @@ interface ComposeStudioProps {
   showFooterDivider?: boolean;
   /** 進入構圖前預覽框的實際尺寸上限；有提供時構圖只能等大或更小，不能放大。 */
   stageLimit?: { width: number; height: number } | null;
+  /** 獨立編輯器與原預覽共用內距；未指定時維持拼圖的既有配置。 */
+  stageInset?: number;
 }
 
 const HANDLES = [
@@ -112,7 +114,7 @@ export const COMPOSE_WARMUP_CLASSES =
   'transition-[background-color,color,border-color] transition-colors uppercase w-12 w-14 ' +
   'w-full w-px';
 
-export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone, footerHeight = FOOTER_H, stageLimit, showFooterDivider = false }) => {
+export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChange, onApply, onCancel, zIndex = 70, hideKeystone, footerHeight = FOOTER_H, stageLimit, stageInset, showFooterDivider = false }) => {
   const [tab, setTab] = useState<Tab>('crop');
   const [keystoneAxis, setKeystoneAxis] = useState<'v' | 'h' | null>(null);
   const audioRef = useRef<AudioContext | null>(null);
@@ -152,21 +154,26 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     const fit = () => {
       const box = wrap.getBoundingClientRect();
       if (box.width <= 0 || box.height <= 0) return;
+      const finiteLimit = stageLimit && Number.isFinite(stageLimit.width) && Number.isFinite(stageLimit.height) && stageLimit.width > 0 && stageLimit.height > 0 ? stageLimit : null;
       const s = Math.min(
         box.width / baseCanvas.width,
         box.height / baseCanvas.height,
-        stageLimit ? stageLimit.width / baseCanvas.width : Number.POSITIVE_INFINITY,
-        stageLimit ? stageLimit.height / baseCanvas.height : Number.POSITIVE_INFINITY,
+        finiteLimit ? finiteLimit.width / baseCanvas.width : Number.POSITIVE_INFINITY,
+        finiteLimit ? finiteLimit.height / baseCanvas.height : Number.POSITIVE_INFINITY,
       );
       // round 而不是 floor：floor 會比一般預覽算出來的少 1px
-      const w = Math.max(1, Math.round(baseCanvas.width * s));
-      const h = Math.max(1, Math.round(baseCanvas.height * s));
+      // 長圖的寬度四捨五入 1px，若再把它當作倍率上限，會把高度
+      // 額外縮小好幾 px。比例相同時直接保留原先已呈現的整個框。
+      const preserveFit = finiteLimit && finiteLimit.width <= box.width + .5 && finiteLimit.height <= box.height + .5 &&
+        Math.abs(finiteLimit.width - finiteLimit.height * baseCanvas.width / baseCanvas.height) <= 1;
+      const w = Math.max(1, Math.round(preserveFit ? finiteLimit.width : baseCanvas.width * s));
+      const h = Math.max(1, Math.round(preserveFit ? finiteLimit.height : baseCanvas.height * s));
       cvs.width = baseCanvas.width;
       cvs.height = baseCanvas.height;
       const ctx = cvs.getContext('2d')!;
       ctx.clearRect(0, 0, cvs.width, cvs.height);
       ctx.drawImage(baseCanvas, 0, 0);
-      setStageSize({ w, h });
+      setStageSize(prev => prev.w === w && prev.h === h ? prev : { w, h });
     };
 
     fit();
@@ -233,7 +240,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
 
   const onHandleMove = (e: React.PointerEvent) => {
     const d = dragRef.current;
-    if (!d || stageSize.w === 0 || stageSize.h === 0) return;
+    if (!d || !Number.isFinite(stageSize.w) || !Number.isFinite(stageSize.h) || stageSize.w <= 0 || stageSize.h <= 0) return;
     e.preventDefault();
     const dx = (e.clientX - d.startX) / stageSize.w;
     const dy = (e.clientY - d.startY) / stageSize.h;
@@ -309,6 +316,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
     }
 
     const next = { x, y, w, h };
+    if (![x,y,w,h].every(Number.isFinite)) return;
     // 不讓使用者把框拖到旋轉/校正後空出來的角落
     if (!cropFitsQuad(quad, next)) return;
     setGeo({ crop: next });
@@ -517,7 +525,7 @@ export const ComposeStudio: React.FC<ComposeStudioProps> = ({ image, geo, onChan
            那 15px 是原本讓中心跟一般預覽對齊的固定偏移，照舊加在後面。 */}
       <div
         className="flex-1 min-h-0 px-5 md:px-10"
-        style={{ paddingTop: '15px' }}
+        style={{ paddingTop: '15px', ...(stageInset === undefined ? {} : {paddingLeft:stageInset,paddingRight:stageInset}) }}
       >
         {/* 高度用跟一般預覽同一條上限夾住，兩邊算出來的尺寸才會一模一樣
              （不夾的話 flex-1 的可用高會因為底部欄的小數而差 1px） */}

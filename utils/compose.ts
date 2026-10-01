@@ -70,6 +70,20 @@ export function isGeoIdentity(g: GeoParams) {
     !(g.offset?.x) && !(g.offset?.y) && isCropFull(g.crop);
 }
 
+/** 比例選項本身不改變像素；只有實際幾何改變才重建編輯緩衝。 */
+export function sameGeoPixels(a: GeoParams, b: GeoParams) {
+  return a.quarter === b.quarter && a.angle === b.angle && a.flipH === b.flipH && a.flipV === b.flipV &&
+    a.keyV === b.keyV && a.keyH === b.keyH && (a.zoom ?? 1) === (b.zoom ?? 1) &&
+    (a.offset?.x ?? 0) === (b.offset?.x ?? 0) && (a.offset?.y ?? 0) === (b.offset?.y ?? 0) &&
+    a.crop.x === b.crop.x && a.crop.y === b.crop.y && a.crop.w === b.crop.w && a.crop.h === b.crop.h;
+}
+
+export function validGeo(g: GeoParams) {
+  return [g.quarter, g.angle, g.keyV, g.keyH, g.zoom ?? 1, g.offset?.x ?? 0, g.offset?.y ?? 0,
+    g.crop.x, g.crop.y, g.crop.w, g.crop.h].every(Number.isFinite) &&
+    (g.zoom ?? 1) > 0 && g.crop.w > 0 && g.crop.h > 0;
+}
+
 /** 只有 drawImage 就能完成的部分：90 度旋轉、水平/垂直翻轉。 */
 export function stageCanvas(
   img: CanvasImageSource,

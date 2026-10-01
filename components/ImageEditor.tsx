@@ -7,7 +7,7 @@ import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
-import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity } from '../utils/compose';
+import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
 import { SaveButton } from './SaveButton';
 /* IG 貼文預覽跟拼圖那兩個工具共用同一顆元件 */
 import { IgPreview } from './IgPreview';
@@ -1736,6 +1736,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const [geo, setGeo] = useState<GeoParams>(() => ({ ...DEFAULT_GEO, crop: { ...FULL_CROP } }));
   const [draftGeo, setDraftGeo] = useState<GeoParams | null>(null);
   const composePreviewRef = useRef<HTMLCanvasElement | HTMLImageElement | null>(null);
+  const composeStageLimitRef = useRef<{width:number;height:number}|null>(null);
+  const releaseComposePreview = () => {
+    const snapshot = composePreviewRef.current;
+    composePreviewRef.current = null;
+    composeStageLimitRef.current = null;
+    if (snapshot instanceof HTMLCanvasElement) snapshot.width = snapshot.height = 0;
+  };
+  const bufferGeoRef = useRef<GeoParams>(DEFAULT_GEO);
   const geoRef = useRef<GeoParams>({ ...DEFAULT_GEO, crop: { ...FULL_CROP } });
   useEffect(() => { geoRef.current = geo; }, [geo]);
 
@@ -2165,6 +2173,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       preview: { source: null, dest: null, shared: null, lutted: null, lut0: null, lut100: null, temp: null, sharpenDetail: null, w: 0, h: 0 },
       fast: { source: null, dest: null, shared: null, lutted: null, lut0: null, lut100: null, temp: null, sharpenDetail: null, w: 0, h: 0 }
   });
+  const sharpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (sharpenTimerRef.current !== null) clearTimeout(sharpenTimerRef.current);
+  }, []);
 
   // Reusable 1D LUT buffer to avoid GC stutter during slider interaction
   const baseCorrectionLutRef = useRef<Uint8Array>(new Uint8Array(256));
@@ -3290,6 +3302,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       const scale = Math.max(W / b.w, H / b.h);
       const dw = b.w * scale, dh = b.h * scale;
       sctx.drawImage(src, (W - dw) / 2, (H - dh) / 2, dw, dh);
+      src.width = src.height = 0;
       const thumbSrc = sctx.getImageData(0, 0, W, H).data;
 
       const flat = DEFAULT_PARAMS;          // 一律用預設參數（＝原圖）
@@ -5447,6 +5460,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     initial: boolean,
     warmKey?: string
   ) => {
+      if (!Number.isFinite(srcW) || !Number.isFinite(srcH) || srcW <= 0 || srcH <= 0) return;
+      if (sharpenTimerRef.current !== null) clearTimeout(sharpenTimerRef.current);
+      if (initial) bufferGeoRef.current = DEFAULT_GEO;
       // Preview Size
       const PREVIEW_SIZE = 1800;
       let pw = srcW, ph = srcH;
@@ -5462,15 +5478,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       applyPreviewAspect(pw, ph);
       const pData = pctx.getImageData(0, 0, pw, ph).data;
       const pLen = pData.length;
-
-      // Precalculate sharpen detail immediately in a fast async chunk to prevent locking the UI
-      const precalcSharpenAsync = async (data: Uint8ClampedArray, width: number, height: number): Promise<Int8Array> => {
-          return new Promise(resolve => {
-              setTimeout(() => {
-                  resolve(precomputeSharpenDetail(data, width, height));
-              }, 10);
-          });
-      };
 
       buffers.current = {
           preview: {
@@ -5534,6 +5541,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               sharpenDetail: null,
               w: fw, h: fh
           };
+          fc.width = fc.height = 0;
       }
 
       // 緩衝區換人了，所有跟「上一份像素」綁在一起的快取一律作廢。
@@ -5643,31 +5651,40 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         });
       }
 
-      precalcSharpenAsync(pData, pw, ph).then((pDetail) => {
-          if (buffers.current) {
-              buffers.current.preview.sharpenDetail = pDetail;
-          }
-          const f = buffers.current?.fast;
-          if (f && f.source) {
-              return precalcSharpenAsync(f.source, f.w, f.h).then((fDetail) => {
-                  if (buffers.current?.fast) buffers.current.fast.sharpenDetail = fDetail;
-              });
-          }
-      });
+      // 工作只屬於建立時的那份 buffers；快速切頁／換圖時取消舊工作，
+      // 不讓舊尺寸的銳化結果寫進新的照片，也不堆積大量待算的像素陣列。
+      const ownedBuffers = buffers.current;
+      sharpenTimerRef.current = setTimeout(() => {
+        sharpenTimerRef.current = null;
+        if (buffers.current !== ownedBuffers) return;
+        ownedBuffers.preview.sharpenDetail = precomputeSharpenDetail(pData, pw, ph);
+        const f = ownedBuffers.fast;
+        if (f.source) f.sharpenDetail = precomputeSharpenDetail(f.source, f.w, f.h);
+      }, 10);
+      pc.width = pc.height = 0;
   }, [render, getCurveLuts]);
 
   // 套用構圖：用新的幾何把來源重新算一次，再整個重建預覽緩衝。
   const applyGeo = useCallback((g: GeoParams) => {
+    if (!validGeo(g)) return false;
+    if (sameGeoPixels(bufferGeoRef.current, g)) {
+      geoRef.current = g;
+      setGeo(g);
+      return false;
+    }
     const img = originalImgRef.current;
-    if (!img) return;
+    if (!img) return false;
     const sw = img.naturalWidth || img.width;
     const sh = img.naturalHeight || img.height;
     const src = isGeoIdentity(g) ? img : composeCanvas(img, sw, sh, g, 2400);
     const w = 'width' in src ? (src as HTMLCanvasElement).width : sw;
     const h = 'height' in src ? (src as HTMLCanvasElement).height : sh;
     buildBuffersFromRef.current(src, isGeoIdentity(g) ? sw : w, isGeoIdentity(g) ? sh : h, false);
+    bufferGeoRef.current = g;
     geoRef.current = g;
     setGeo(g);
+    if (src !== img) (src as HTMLCanvasElement).width = (src as HTMLCanvasElement).height = 0;
+    return true;
   }, []);
 
   useEffect(() => { applyGeoRef.current = applyGeo; }, [applyGeo]);
@@ -6449,9 +6466,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      所以這個 effect 不會重複套一次）。 */
   useEffect(() => {
     if (activeCategory !== 'compose' && draftGeo) {
-      applyGeo(draftGeo);
-      addToHistory(paramsRef.current, selectedLutIdx);
+      if (applyGeo(draftGeo)) addToHistory(paramsRef.current, selectedLutIdx);
       setDraftGeo(null);
+      releaseComposePreview();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCategory, draftGeo]);
@@ -6464,7 +6481,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       在同一批更新中读到旧 draft，并确保它绝不会继续冒泡成退出整个编辑器。 */
   const cancelCompose = useCallback(() => {
     const previous = beforeComposeRef.current;
-    composePreviewRef.current = null;
+    releaseComposePreview();
     flushSync(() => setDraftGeo(null));
     setActiveCategory(previous.cat);
     setActiveToolId(previous.tool);
@@ -7716,16 +7733,13 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           onChange={setDraftGeo}
           footerHeight={footerHeight}
           showFooterDivider
-          stageLimit={previewAspect && previewBoxSize.width && previewBoxSize.height ? (() => {
-            const h = Math.min(previewBoxSize.height - 32, (previewBoxSize.width - 32) / previewAspect);
-            return { width: h * previewAspect, height: h };
-          })() : previewFitSize}
+          stageLimit={composeStageLimitRef.current || previewFitSize}
+          stageInset={16}
           onCancel={cancelCompose}
           onApply={() => {
-            applyGeo(draftGeo);
-            addToHistory(paramsRef.current, selectedLutIdx);
+            if (applyGeo(draftGeo)) addToHistory(paramsRef.current, selectedLutIdx);
             setDraftGeo(null);
-            composePreviewRef.current = null;
+            releaseComposePreview();
             setActiveCategory(beforeComposeRef.current.cat);
             setActiveToolId(beforeComposeRef.current.tool);
           }}
@@ -8126,7 +8140,15 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             <Icon name="magic_button" className="text-xl" fill={['effects', 'leak', 'soft', 'halation', 'fx'].includes(activeCategory)} /><span className="text-[9px] font-black uppercase tracking-[0.2em]">特效</span>
           </button>
           <button onClick={() => {
+              if (activeCategory === 'compose') return;
               if (activeCategory !== 'compose') beforeComposeRef.current = { cat: activeCategory, tool: activeToolId };
+              // Capture the actual, already fitted preview before the compose
+              // footer changes the available space. previewAspect is a {w,h}
+              // object, never a numeric ratio; dividing by it produced NaN and
+              // invalid crop geometry after the first pointer move.
+              const bounds = previewFitRef.current?.getBoundingClientRect();
+              composeStageLimitRef.current = bounds && Number.isFinite(bounds.width) && Number.isFinite(bounds.height) && bounds.width > 0 && bounds.height > 0
+                ? {width:bounds.width,height:bounds.height} : previewFitSize;
               const shown = visibleEditorCanvas();
               if (shown && isGeoIdentity(geo)) {
                 const snapshot = document.createElement('canvas');

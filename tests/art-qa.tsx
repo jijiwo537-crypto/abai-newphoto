@@ -7,6 +7,8 @@ import {installSliderTouch} from '../utils/sliderTouch';
 import '../styles.css';
 installSliderTouch();
 const query=new URLSearchParams(location.search);
+if(query.has('glyphglow'))void import('./art-glyph-glow-audit');
+if(query.has('editor')&&query.has('composeAudit'))void import('./editor-compose-audit');
 if(query.has('fixture')&&query.has('refinement'))void import('./art-refinement-audit').then(m=>m.auditArtRefinement());
 if(query.has('fixture')&&(query.has('audit')||(query.has('geometry')&&(navigator as any).standalone)))void import('./art-controls-audit').then(m=>m.auditArtControls());
 function ArtFixture({src}:{src:string}){const [open,setOpen]=React.useState(!query.has('geometry'));return open?<ArtStudio initialSrc={src} onClose={()=>setOpen(false)}/>:<div style={{position:'relative',height:'100vh',background:'#090909'}}><button style={{position:'absolute',top:100,color:'white'}} onClick={()=>setOpen(true)}>重新進入藝術效果</button></div>;}
@@ -24,7 +26,7 @@ if(query.has('creative')){
  ]:[];
  c.toBlob(blob=>createRoot(document.getElementById('root')!).render(<CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={new File([blob!],'photo.png',{type:'image/png'})} initialState={{layout:'mask-right',holeCount:30,holes,objects,holeType:query.get('kind')||'star',glowMode:'image',holeSize:65,sizeJitter:55}}/>));
 }else if(query.has('editor')){
- const c=document.createElement('canvas');c.width=1200;c.height=1600;const g=c.getContext('2d')!;
+ const c=document.createElement('canvas');c.width=query.has('large')?3000:1200;c.height=query.has('long')?5000:query.has('large')?4000:1600;const g=c.getContext('2d')!;g.scale(c.width/1200,c.height/1600);
  const grad=g.createLinearGradient(0,0,1200,1600);grad.addColorStop(0,'#173959');grad.addColorStop(1,'#dfae96');g.fillStyle=grad;g.fillRect(0,0,1200,1600);g.fillStyle='white';g.fillRect(350,150,100,900);g.beginPath();g.arc(800,800,200,0,Math.PI*2);g.fill();
  createRoot(document.getElementById('root')!).render(<ImageEditor imageSrc={c.toDataURL()} lutList={[{id:'none',name:'原始',url:''}]} onSave={()=>{}} onCancel={()=>{}}/>);
 }else {
