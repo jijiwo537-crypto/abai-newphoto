@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-01",
+  "scope": "ASCII art only; no shared editor/keyboard/safe-area changes",
+  "presets": [".:-=+*#/@", "·•。○", "01", ".。⭒✧⭑✦✶"],
+  "coverageDefaults": {"bright": 80, "dark": 80, "edge": 80, "color": 90},
+  "coverageDirection": {"testImage": "grayscale gradient", "percent": [0, 50, 100], "visibleCells": [0, 168, 336]},
+  "characterLayout": "Measured glyph bounds, grapheme segmentation, cell-centered fitted glyphs; same bounds used in preview and SVG export",
+  "languages": ["Chinese", "Japanese with combining kana", "Korean with decomposed Hangul", "mixed CJK/symbols"],
+  "appearance": {"background": ["關閉", "開啟"], "glow": ["關閉", "開啟"]},
+  "unitTests": {"passed": 138, "failed": 0},
+  "build": "passed",
+  "export": {"format": "PNG", "dimensions": [2400, 3200], "mixedCharacters": "visually checked"},
+  "nativePwa": {
+    "device": "iPhone 17 simulator, iOS 26.5",
+    "standalone": true,
+    "input": "Synthetic events on real mounted controls, not physical keyboard or touch",
+    "multilingualVisible": ["中文字", "あいうが", "한글한", "中한あ✶"],
+    "rangeFrameMs": {"p50": 17, "p95": 18},
+    "originalColorDensityFrameMs": {"p50": 21, "p95": 24},
+    "multilingualDensityFrameMs": {"p50": 22, "p95": 27},
+    "whiteMultilingualDensityFrameMs": {"p50": 20, "p95": 24},
+    "limitations": "Coordinate actions still fail noWindowsAvailable; no physical-device typing, IME composition or guaranteed 60 fps claim"
+  }
+}

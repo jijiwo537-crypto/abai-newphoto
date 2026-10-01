@@ -1,5 +1,6 @@
-export interface AsciiOptions { characters:string; columns:number; low:number; high:number; metric:number; invert:boolean; color:boolean; background:boolean; glow?:number; }
-export const ASCII_DEFAULTS:AsciiOptions={characters:' .:-=+*#%@',columns:96,low:0,high:100,metric:0,invert:false,color:false,background:true,glow:0};
+import {ASCII_PRESETS,ASCII_RANGE_LOWS} from './asciiControls.js';
+export interface AsciiOptions { characters:string; columns:number; low:number; high:number; metric:number; invert:boolean; color:boolean; background:boolean; glow?:number; ranges?:number[]; }
+export const ASCII_DEFAULTS:AsciiOptions={characters:ASCII_PRESETS[0],columns:96,low:20,high:100,metric:0,invert:false,color:false,background:true,glow:0,ranges:[...ASCII_RANGE_LOWS]};
 /** Persistent GPU image + glyph atlas. Slider changes only update uniforms. */
 export class AsciiRenderer {
  private gl:WebGLRenderingContext; private program:WebGLProgram; private textures:WebGLTexture[]=[]; private buffer:WebGLBuffer; private chars=''; private count=1;
