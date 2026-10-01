@@ -36,8 +36,9 @@ export async function auditArtControls(){
  click('區域');await settle();click('霧玻璃');click('負片');await settle();click('細節');await benchmark('區域/細節');
  click('節點');await settle();click('輪廓');await settle();click('星星');click('方形');await settle();
  const bounds=(selector:string)=>{const r=document.querySelector(selector)!.getBoundingClientRect();return{x:r.x,y:r.y,w:r.width,h:r.height};};
- click('構圖');await settle();click('元素');await settle();for(const name of ['取景框','圓圈鏈','黃金比例','三分構圖']){binary(name,true);await settle();}
- const elements=Array.from(document.querySelectorAll('.art-elements [role=group]')).map(g=>({name:g.getAttribute('aria-label'),selected:g.querySelector('[aria-pressed=true]')?.textContent}));
+ click('構圖');await settle();click('元素');await settle();for(const name of ['取景框','圓圈鏈','黃金比例']){click(name);await settle();binary(name,true);await settle();}
+ const elements=Array.from(document.querySelectorAll('.art-elements button')).map(b=>({name:b.textContent,enabled:b.getAttribute('data-enabled')}));
+ await benchmark('黃金比例/角度與大小');
  const report={renderer:'screen glyph outlines / fitted graphemes',userAgent:navigator.userAgent,standalone:(navigator as any).standalone,input:'synthetic real mounted controls',characterPixels,multilingual,viewport:[innerWidth,innerHeight],results,elements,history:bounds('.art-history'),nav:bounds('.art-panel nav'),selected:Array.from(document.querySelectorAll('.art-presets button[aria-pressed=true]')).map(b=>b.textContent)};
  const geometry=document.getElementById('art-geometry');if(geometry)geometry.style.display='none';
  const out=document.createElement('pre');out.textContent='iPhone audit complete';Object.assign(out.style,{position:'fixed',top:'65px',left:'12px',zIndex:'9999',color:'#0f0',fontSize:'10px',pointerEvents:'none'});document.body.append(out);

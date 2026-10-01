@@ -4,7 +4,7 @@ import {blurredSource,makeLinks} from './artMaterials.js';
 export const trackingDefaults={mode:'mosaic',detection:'combined',threshold:30,count:0,size:100,pixels:16,blur:20,circles:55,minDistance:55,block:16,minRadius:4,maxRadius:24,stroke:1,labelSize:8,opacity:1,imageOpacity:1,links:125,lineWeight:.8,chain:false,chainCount:7,angle:30,baseRadius:170,ratio:.83,intersections:true,markerSize:5,frame:false,frameSize:68,dash:8,frameStroke:1,starSize:40,starPoints:4,textSize:12,topLeft:'ABAI / VISION',topRight:'IMAGE ANALYSIS',bottomLeft:'SIGNAL / 001',bottomRight:'OBSERVATION',labels:false,palette:'#ffffff',background:'#111111',shape:'circle',format:'1200x1600',noise:false,textureOpacity:.5,texture:null,zones:[],zoneStroke:true,seed:42};
 let cache=null;
 trackingDefaults.linkMode='tree';trackingDefaults.materialStrength=100;trackingDefaults.shapes=['circle'];trackingDefaults.materials=['mosaic'];
-Object.assign(trackingDefaults,{nodeSeed:42,variation:80,sizeVariation:0,golden:false,goldenSize:76,thirds:false,thirdsSize:76});
+Object.assign(trackingDefaults,{nodeSeed:42,variation:80,sizeVariation:0,golden:false,goldenSize:76,goldenAngle:0});
 export function invalidateTracking(){cache=null;}
 function canvas(w,h=w){const c=document.createElement('canvas');c.width=w;c.height=h;return c;}
 function random(seed){let s=seed>>>0;return()=>{s=(Math.imul(s,1664525)+1013904223)>>>0;return s/4294967296;};}
@@ -81,15 +81,19 @@ export function renderTracking(c,source,strength=.6,options={}){
  else if(shape==='bracket'){for(const sx of [-1,1])for(const sy of [-1,1]){c.moveTo(n.x+sx*r*.5,n.y+sy*r);c.lineTo(n.x+sx*r,n.y+sy*r);c.lineTo(n.x+sx*r,n.y+sy*r*.5);}}
  else c.arc(n.x,n.y,r,0,Math.PI*2);c.stroke();if(o.labelSize>0){const text=Math.round(n.x)+','+Math.round(n.y),width=c.measureText(text).width;c.fillText(text,Math.min(w-width-4*k,n.x+n.radius+3*k),Math.max(o.labelSize*k,n.y-3*k));}});
  if(o.frame){const size=Math.min(w,h)*o.frameSize/100,x=(w-size)/2,y=(h-size)/2;c.lineWidth=o.frameStroke*k;c.setLineDash([o.dash*k,o.dash*k]);c.strokeRect(x,y,size,size);c.beginPath();c.moveTo(w/2,y);c.lineTo(w/2,y+size);c.moveTo(x,h/2);c.lineTo(x+size,h/2);c.stroke();c.setLineDash([]);c.beginPath();for(let i=0;i<o.starPoints;i++){const a=i*Math.PI/o.starPoints,dx=Math.cos(a)*o.starSize*k/2,dy=Math.sin(a)*o.starSize*k/2;c.moveTo(w/2-dx,h/2-dy);c.lineTo(w/2+dx,h/2+dy);}c.stroke();}
- if(o.thirds){const size=Math.min(w,h)*o.thirdsSize/100,x=(w-size)/2,y=(h-size)/2;c.lineWidth=o.stroke*k;c.strokeRect(x,y,size,size);c.beginPath();for(const f of [1/3,2/3]){c.moveTo(x+size*f,y);c.lineTo(x+size*f,y+size);c.moveTo(x,y+size*f);c.lineTo(x+size,y+size*f);}c.stroke();}
  if(o.golden){
   // Nested golden rectangles with true quarter-circle arcs, expressed as
   // analytic SVG paths in the preview and the same geometry at export.
   const phi=(1+Math.sqrt(5))/2,size=Math.min(w,h)*o.goldenSize/100;
-  let rw=size,rh=size/phi,x=(w-rw)/2,y=(h-rh)/2;c.lineWidth=o.stroke*k;c.strokeRect(x,y,rw,rh);
+  const angle=(o.goldenAngle||0)*Math.PI/180,cos=Math.cos(angle),sin=Math.sin(angle);
+  const rotate=(x,y)=>[w/2+(x-w/2)*cos-(y-h/2)*sin,h/2+(x-w/2)*sin+(y-h/2)*cos];
+  // Rotate analytic coordinates, not a raster. Canvas and SVG use identical
+  // geometry, including arcs and the fixed center at every size and angle.
+  const rectangle=(x,y,rw,rh)=>{c.beginPath();c.moveTo(...rotate(x,y));c.lineTo(...rotate(x+rw,y));c.lineTo(...rotate(x+rw,y+rh));c.lineTo(...rotate(x,y+rh));c.closePath();c.stroke();};
+  let rw=size,rh=size/phi,x=(w-rw)/2,y=(h-rh)/2;c.lineWidth=o.stroke*k;rectangle(x,y,rw,rh);
   for(let i=0;i<9;i++){const side=Math.min(rw,rh),dir=i%4;let sx=x,sy=y,cx,cy,a;
    if(dir===0){cx=x+side;cy=y+side;a=Math.PI;}else if(dir===1){sx=x+rw-side;cx=sx;cy=y+side;a=-Math.PI/2;}else if(dir===2){sx=x+rw-side;sy=y+rh-side;cx=sx;cy=sy;a=0;}else{sy=y+rh-side;cx=x+side;cy=sy;a=Math.PI/2;}
-   c.strokeRect(sx,sy,side,side);c.beginPath();c.arc(cx,cy,side,a,a+Math.PI/2);c.stroke();
+   rectangle(sx,sy,side,side);c.beginPath();c.arc(...rotate(cx,cy),side,a+angle,a+angle+Math.PI/2);c.stroke();
    if(dir===0){x+=side;rw-=side;}else if(dir===1){y+=side;rh-=side;}else if(dir===2)rw-=side;else rh-=side;
   }
  }

@@ -5,7 +5,7 @@ const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&g
 export class SVGContext{
  constructor(){this.parts=[];this.path='';this.stack=[];this.globalAlpha=1;this.strokeStyle=this.fillStyle='white';this.lineWidth=1;this.font='12px monospace';this.textAlign='left';this.textBaseline='alphabetic';this.dash=[];}
  save(){this.stack.push({globalAlpha:this.globalAlpha,strokeStyle:this.strokeStyle,fillStyle:this.fillStyle,lineWidth:this.lineWidth,font:this.font,textAlign:this.textAlign,textBaseline:this.textBaseline,dash:this.dash});}
- restore(){Object.assign(this,this.stack.pop());}beginPath(){this.path='';}moveTo(x,y){this.path+=`M${x} ${y}`;}lineTo(x,y){this.path+=`L${x} ${y}`;}
+ restore(){Object.assign(this,this.stack.pop());}beginPath(){this.path='';}moveTo(x,y){this.path+=`M${x} ${y}`;}lineTo(x,y){this.path+=`L${x} ${y}`;}closePath(){this.path+='Z';}
  arc(x,y,r,start=0,end=Math.PI*2,anticlockwise=false){if(Math.abs(end-start)>=Math.PI*2){this.path+=`M${x+r} ${y}a${r} ${r} 0 1 0 ${-2*r} 0a${r} ${r} 0 1 0 ${2*r} 0`;return;}const delta=anticlockwise?(start-end+Math.PI*2)%(Math.PI*2):(end-start+Math.PI*2)%(Math.PI*2);this.path+=`M${x+Math.cos(start)*r} ${y+Math.sin(start)*r}A${r} ${r} 0 ${delta>Math.PI?1:0} ${anticlockwise?0:1} ${x+Math.cos(end)*r} ${y+Math.sin(end)*r}`;}
  rect(x,y,w,h){this.path+=`M${x} ${y}h${w}v${h}h${-w}Z`;}
  stroke(){this.parts.push(`<path d="${this.path}" fill="none" stroke="${escape(this.strokeStyle)}" stroke-width="${this.lineWidth}" opacity="${this.globalAlpha}" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="${this.dash.join(' ')}"/>`);}

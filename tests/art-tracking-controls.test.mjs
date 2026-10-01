@@ -23,7 +23,9 @@ test('actual vector rendering isolates node randomness from material randomness'
  try{const source={width:1200,height:1600},render=o=>{const c=new SVGContext();renderTracking(c,source,.6,{...o,detection:'bright',vectorOnly:true,zoneStroke:false});return c.parts.join('');};
   invalidateTracking();const first=render(trackingDefaults);assert.equal(render({...trackingDefaults,seed:99,count:4,sizeVariation:90}),first);
   assert.notEqual(render({...trackingDefaults,nodeSeed:43}),first);assert.notEqual(render({...trackingDefaults,nodeSeed:44}),render({...trackingDefaults,nodeSeed:43}));
-  const golden=render({...trackingDefaults,golden:true});assert.match(golden,/A/);assert.notEqual(golden,first);assert.notEqual(render({...trackingDefaults,thirds:true}),first);
+  const golden=render({...trackingDefaults,golden:true});assert.match(golden,/A/);assert.notEqual(golden,first);
+  const rotated=render({...trackingDefaults,golden:true,goldenAngle:45,goldenSize:150});assert.notEqual(rotated,golden);assert.match(rotated,/A/);assert.doesNotMatch(rotated,/NaN|undefined/);
+  assert.equal(render({...trackingDefaults,thirds:true}),first);
  }finally{globalThis.document=old;invalidateTracking();}
 });
 test('tracking tools expose requested placement, two-state elements and paired outline sliders',()=>{
@@ -31,7 +33,9 @@ test('tracking tools expose requested placement, two-state elements and paired o
  assert.match(ui,/\['tree','標準'\]/);assert.doesNotMatch(ui,/最短路徑|折線|完成放置|區域大小|節點間距|像素大小|區域邊線/);
  assert.match(ui,/tr\('變化','variation',0,100\)/);assert.match(ui,/tr\('間距','minDistance',10,100\)/);
  assert.match(ui,/tr\('變化','sizeVariation',0,100\)/);assert.match(ui,/點擊圖片進行放置/);
- assert.match(ui,/const tt=.*binary/);assert.match(css,/art-zone-stroke-second\{grid-column:2;grid-row:2\}/);
+ assert.match(ui,/const tt=.*binary/);assert.doesNotMatch(ui+css,/三分構圖|art-zone-stroke-second|art-materials-all/);
+ assert.match(ui,/tr\('大小','goldenSize',10,150\)/);assert.match(ui,/tr\('角度','goldenAngle',0,360\)/);
+ assert.match(css,/art-detail-ranges>\.art-range:last-child:nth-child\(odd\)\{grid-column:1\/-1\}/);
  assert.match(css,/art-subtabs button\[aria-pressed=true\]\{color:white\}/);
 });
 test('SVG quarter-circle arcs remain analytic, while existing full circles retain their geometry',()=>{
