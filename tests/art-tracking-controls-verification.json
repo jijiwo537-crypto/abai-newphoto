@@ -1,0 +1,15 @@
+{
+  "date": "2026-10-01",
+  "scope": "ArtStudio ASCII presets and tracking controls/rendering only; no shared keyboard or viewport metadata changes",
+  "ascii": {"fourthPreset": "⭒✧✦⭑✶", "binaryPresetDensity": 100},
+  "elements": ["取景框", "圓圈鏈", "黃金比例", "三分構圖"],
+  "outlineRows": [["大小", "變化"], ["粗細", "間距"]],
+  "regionRows": {"editing": ["數量", ["大小", "變化"]], "threeMaterialDetails": ["馬賽克", ["霧化", "框線"]]},
+  "randomness": "Independent nodeSeed and region seed; actual renderer output comparison proves region reroll does not alter nodes or elements",
+  "browser": {"widths": [320, 402], "trackingSubpages": 9, "verticalControlClipping": 0, "pageErrors": 0, "bottomButtonGapCssPixels": 20},
+  "placement": {"label": "手動放置", "hint": "點擊圖片進行放置", "hintInsetFromPhotoTopCssPixels": 16, "backdrop": "black 76% opacity with 20px backdrop blur"},
+  "export": {"PNG": [2400, 3200], "goldenGeometry": "analytic SVG arcs, same geometry in preview and export", "visuallyChecked": true},
+  "iPhone": {"device": "iPhone 17 simulator, iOS 26.5", "installedStandalonePwa": true, "elementsMultiSelect": "all four enabled together and visually checked", "navigation": {"y": 804, "height": 70, "bottom": 874}, "input": "synthetic events on real mounted controls; not physical-device touch", "noAllDeviceFpsGuarantee": true},
+  "unitTests": {"passed": 144, "failed": 0},
+  "build": "passed"
+}
