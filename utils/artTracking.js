@@ -94,13 +94,10 @@ export function renderTracking(c,source,strength=.6,options={}){
   const wash=c.createLinearGradient(x,y,x+rw,y+rh);wash.addColorStop(0,'#ffffff22');wash.addColorStop(.5,'#ffffff00');wash.addColorStop(1,'#ffffff11');c.globalAlpha=amount;c.fillStyle=wash;c.fillRect(x,y,rw,rh);
  }else if(mode==='negative'){c.globalCompositeOperation='difference';c.globalAlpha=amount;c.fillStyle='white';c.fillRect(x,y,rw,rh);}
  else{
-  const grid=mosaicGrid(rw,rh,o.pixels,k),tw=Math.max(1,Math.ceil(grid.x)),th=Math.max(1,Math.ceil(grid.y));
+  const grid=mosaicGrid(rw,rh,o.pixels,k),tw=grid.x,th=grid.y;
   p.tile.width=tw;p.tile.height=th;const tg=p.tile.getContext('2d');
-  tg.drawImage(source,x,y,rw,rh,0,0,grid.x,grid.y);
-  // Fill partial terminal cells with source edge color, never transparency.
-  if(grid.x<tw)tg.drawImage(source,x+rw-1,y,1,rh,tw-1,0,1,th);
-  if(grid.y<th)tg.drawImage(source,x,y+rh-1,rw,1,0,th-1,tw,1);
-  c.globalAlpha=amount;c.imageSmoothingEnabled=false;c.drawImage(p.tile,x,y,tw*grid.pitch,th*grid.pitch);
+  tg.drawImage(source,x,y,rw,rh,0,0,tw,th);
+  c.globalAlpha=amount;c.imageSmoothingEnabled=false;c.drawImage(p.tile,x,y,rw,rh);
  }
  c.restore();
  }

@@ -3,17 +3,23 @@ import {createRoot} from 'react-dom/client';
 import {CollageTool} from '../components/CollageTool';
 import {ArtStudio} from '../components/ArtStudio';
 import {ImageEditor} from '../components/ImageEditor';
+import {ImageAdjustPanel} from '../components/GridLayoutTool';
+import {FX_DEFAULTS} from '../utils/glEffects';
 import {installSliderTouch} from '../utils/sliderTouch';
 import '../styles.css';
 installSliderTouch();
 const query=new URLSearchParams(location.search);
 if(query.has('glyphglow'))void import('./art-glyph-glow-audit');
 if(query.has('relativeAudit'))void import('./relative-controls-audit').then(m=>m.auditRelativeControls());
-if(query.has('fineAudit'))void import('./editor-fine-slider-audit').then(m=>m.auditFineSlider());
+if(query.has('fineAudit'))void import('./editor-fine-slider-audit').then(m=>m.auditFineSlider()).catch(e=>fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify({kind:'fine-audit-error',error:String(e),stack:e.stack})}));
 if(query.has('editor')&&query.has('composeAudit'))void import('./editor-compose-audit');
 if(query.has('fixture')&&query.has('refinement'))void import('./art-refinement-audit').then(m=>m.auditArtRefinement());
 if(query.has('fixture')&&(query.has('audit')||(query.has('geometry')&&(navigator as any).standalone)))void import('./art-controls-audit').then(m=>m.auditArtControls());
 function ArtFixture({src}:{src:string}){const [open,setOpen]=React.useState(!query.has('geometry'));return open?<ArtStudio initialSrc={src} onClose={()=>setOpen(false)}/>:<div style={{position:'relative',height:'100vh',background:'#090909'}}><button style={{position:'absolute',top:100,color:'white'}} onClick={()=>setOpen(true)}>重新進入藝術效果</button></div>;}
+function SharedPanelFixture({src}:{src:string}){
+ const [img,setImg]=React.useState({id:'qa-panel',src,fx:{...FX_DEFAULTS,fxExposureSpill:60,softThreshold:80}}),[card,setCard]=React.useState('fxExposureSpill'),[detail,setDetail]=React.useState(true),[sub,setSub]=React.useState('effect');
+ return <div style={{height:'100dvh',display:'flex',flexDirection:'column',background:'#080808',color:'white'}}><img src={src} style={{minHeight:0,flex:1,objectFit:'contain',padding:16}}/><div style={{height:'calc(11rem + 58px)'}}><ImageAdjustPanel img={img} set={p=>setImg(s=>({...s,...p}))} lutList={[{id:'none',name:'原始',url:''}]} loadingLut={null} setLoadingLut={()=>{}} lutRevision={0} setLutRevision={()=>{}} adjustSub={sub as any} setAdjustSub={setSub} effectCard={card} setEffectCard={setCard} effectDetail={detail} setEffectDetail={setDetail} shapeMenu="" setShapeMenu={()=>{}} shapeTool="" setShapeTool={()=>{}} tuneTool="" setTuneTool={()=>{}} setTuningEdge={()=>{}} openComposeFor={()=>{}}/></div></div>;
+}
 if(query.has('geometry')){let lastTap='';document.addEventListener('pointerup',e=>{lastTap=(e.target as HTMLElement).closest('button')?.textContent?.slice(0,16)||'canvas';});setInterval(()=>{let el=document.querySelector<HTMLElement>('.art-studio');if(!el)return;let out=document.getElementById('art-geometry');if(!out){out=document.createElement('pre');out.id='art-geometry';Object.assign(out.style,{position:'fixed',top:'120px',left:'8px',zIndex:'9999',fontSize:'10px',background:'#000b',color:'#0f0',pointerEvents:'none'});document.body.append(out);}const r=el.getBoundingClientRect(),nav=el.querySelector('nav')?.getBoundingClientRect();out.textContent=JSON.stringify({standalone:(navigator as any).standalone,tap:lastTap,screen:screen.height,inner:innerHeight,width:innerWidth,visual:visualViewport?.height,scale:visualViewport?.scale,offset:visualViewport?.offsetTop,top:r.top,bottom:r.bottom,height:r.height,navBottom:nav?.bottom,margin:getComputedStyle(el).marginTop},null,2);},500);}
 if(query.has('creative')){
  const c=document.createElement('canvas');c.width=600;c.height=800;
@@ -30,7 +36,7 @@ if(query.has('creative')){
 }else if(query.has('editor')){
  const c=document.createElement('canvas');c.width=query.has('large')?3000:1200;c.height=query.has('long')?5000:query.has('large')?4000:1600;const g=c.getContext('2d')!;g.scale(c.width/1200,c.height/1600);
  const grad=g.createLinearGradient(0,0,1200,1600);grad.addColorStop(0,'#173959');grad.addColorStop(1,'#dfae96');g.fillStyle=grad;g.fillRect(0,0,1200,1600);g.fillStyle='white';g.fillRect(350,150,100,900);g.beginPath();g.arc(800,800,200,0,Math.PI*2);g.fill();
- createRoot(document.getElementById('root')!).render(<ImageEditor imageSrc={c.toDataURL()} lutList={[{id:'none',name:'原始',url:''}]} onSave={()=>{}} onCancel={()=>{}}/>);
+ createRoot(document.getElementById('root')!).render(query.has('sharedPanel')?<SharedPanelFixture src={c.toDataURL()}/>:<ImageEditor imageSrc={c.toDataURL()} lutList={[{id:'none',name:'原始',url:''}]} onSave={()=>{}} onCancel={()=>{}}/>);
 }else {
  const c=document.createElement('canvas');c.width=600;c.height=800;
  const g=c.getContext('2d')!;const gradient=g.createLinearGradient(0,0,600,800);gradient.addColorStop(0,'#34547f');gradient.addColorStop(1,'#d7ac94');g.fillStyle=gradient;g.fillRect(0,0,600,800);g.fillStyle='white';g.font='90px sans-serif';g.fillText('ABAI',80,400);

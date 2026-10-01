@@ -7,6 +7,7 @@ import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
+import {effectControlValue,effectStoredValue,effectControlMin} from '../utils/effectControlValues';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from '../utils/highlightSelection';
 import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
 import { SaveButton } from './SaveButton';
@@ -131,7 +132,7 @@ export const DEFAULT_PARAMS: EditorParams = {
   brightness: 0,
   exposure: 0, contrast: 0, highlights: 0, shadows: 0,
   temp: 0, tint: 0, sat: 0, vib: 0,
-  sharpen: 0, grain: 0, soft: 0, softThreshold: 70,
+  sharpen: 0, grain: 0, soft: 0, softThreshold: 80,
   softRadius: 100, softColor: 0, lutAmount: 100,
   vignette: 0, blur: 0, colorNoise: 0, colorNoise2: 0,
   leakOpacity: 0, leakAngle: 45, leakHue: 15,
@@ -1048,7 +1049,7 @@ const FastSlider = React.memo(({
     const valueTextRef = useRef<HTMLSpanElement>(null);
     // Stored legacy threshold stays compatible with existing projects. The
     // user-facing range now means the brightest N percent, increasing right.
-    const displayValue = toolId === 'softThreshold' ? 100-value : value;
+    const displayValue = effectControlValue(toolId,value);
 
     useEffect(() => {
         if (inputRef.current) {
@@ -1070,7 +1071,7 @@ const FastSlider = React.memo(({
         if (valueTextRef.current) {
             valueTextRef.current.textContent = val.toFixed(0);
         }
-        onUpdate(toolId, toolId === 'softThreshold' ? 100-val : val);
+        onUpdate(toolId,effectStoredValue(toolId,val));
     };
 
     const isLutAmount = toolId === 'lutAmount';
@@ -1192,7 +1193,7 @@ const FastSlider = React.memo(({
             <div style={dense ? {touchAction:'none'} : undefined} className={`relative flex items-center justify-center touch-none ${dense ? 'slider-wrap h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
                 <input 
                     ref={inputRef}
-                    type="range" min={min} max={max} step={step}
+                    type="range" aria-label={label} min={effectControlMin(toolId,min)} max={max} step={step}
                     defaultValue={displayValue}
                     data-fine-drag={dense ? 'true' : undefined}
                     style={dense ? {left:0,width:'100%',height:26,margin:'-13px 0 0',touchAction:'none','--thumb-w':'18px'} as React.CSSProperties : undefined}
@@ -3359,7 +3360,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      再分別套上每一個特效的預設效果。GLSL 那些直接走 applyGlEffects，
      原本就有的柔光／光暈／漏光／模糊／噪點則走 applyComplexEffects。 */
   const FX_THUMB_DEMO: Record<string, Partial<EditorParams>> = {
-    softLight: { soft: 70, softThreshold: 60, softRadius: 100, softColor: 0 },
+    softLight: { soft: 70, softThreshold: 80, softRadius: 100, softColor: 0 },
     halation: { fringeIntensity: 80, fringeSize: 30, fringeFeather: 100, fringeHue: 8 },
     lightLeak: { leakOpacity: 75, leakAngle: 45, leakHue: 15 },
     blur: { blur: 45 },
@@ -3457,9 +3458,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         targetSoft = userSoftRef.current;
       } else {
         targetSoft = 50;
-        if (lutId === 'f21') softThresholdVal = 60;
-        else if (lutId === 'f4') softThresholdVal = 75;
-        else softThresholdVal = 70;
+        softThresholdVal = 80;
       }
     }
 
@@ -3526,7 +3525,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       return { patch: { soft: userSoftRef.current }, manual: softManuallyAdjusted };
     }
     const lutId = lutList[selectedLutIdx]?.id || 'none';
-    const softThresholdVal = lutId === 'f21' ? 60 : lutId === 'f4' ? 75 : 70;
+    const softThresholdVal = 80;
     userSoftRef.current = 100;
     return { patch: { soft: 100, softThreshold: softThresholdVal }, manual: false };
   };
@@ -3788,6 +3787,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (FX_TOOLS[toolId]) {
       warmFx(toolId);
       setActiveFxId(toolId);
+      setActiveToolId(FX_TOOLS[toolId][0].id);
       setActiveCategory('fx');
     }
   };
@@ -6289,6 +6289,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       return { id: 'lutAmount' as keyof EditorParams, label: '強度', min: 0, max: 100, step: 0.1 };
     }
     if (activeToolId === 'curves' || activeToolId === 'hsl') return null; 
+    if (activeCategory === 'fx') return (FX_TOOLS[activeFxId] || []).find(t => t.id === activeToolId);
     let tool = [...ADJUST_TOOLS, ...EFFECT_TOOLS].find(t => t.id === activeToolId);
     /* 特效那一頁選中柔光／光暈／漏光時，外層那根滑桿調的是它們各自的強度參數
        （soft／fringeIntensity／leakOpacity）。 */
@@ -6442,29 +6443,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const sliderRowHidden = activeToolId === 'curves' || activeToolId === 'hsl' || activeCategory === 'compose';
   const subStripHidden = activeCategory === 'compose';
 
-  /* ---- 新特效的細項面板 ------------------------------------------------------
-     以前是兩層：小分類列放參數按鈕，滑桿列一次只顯示按到的那一根。
-     現在把那一個特效的滑桿全部一次攤開，不用再點第二層。
-
-     高度是借來的，不是長出來的：滑桿列從 5rem 撐到 11rem，小分類列同時收成 0，
-     兩者相加還是 5rem + 6rem —— 底部欄總高完全沒變，所以預覽圖的大小也沒變。 */
-  const fxPanel = activeCategory === 'fx';
-  const fxRows = useMemo(() => {
-    const tools = FX_TOOLS[activeFxId] || [];
-    if (!tools.length) return [] as ToolDef[][];
-    const out: ToolDef[][] = [];
-    // 剛好兩根的時候上下各站一行 —— 兩根擠在同一排左右並排會太窄，字都快貼在一起了
-    if (tools.length === 2) return [[tools[0]], [tools[1]]];
-    // 奇數根的時候「強度」自己站一行，剩下的兩兩一排
-    const solo = tools.length % 2 === 1;
-    if (solo) out.push([tools[0]]);
-    const rest = tools.slice(solo ? 1 : 0);
-    for (let i = 0; i < rest.length; i += 2) out.push(rest.slice(i, i + 2));
-    return out;
-  }, [activeFxId]);
-  /** 每一排的高度：排數少就排鬆一點，最多四排時剛好塞得下 */
-  const fxRowH = fxRows.length ? Math.min(52, Math.floor(172 / fxRows.length)) : 52;
-
+  // Every effect detail page uses the same fixed slider + parameter strip.
   /* 從構圖直接切到別的分頁 ＝ 等同按了「完成」，裁切照樣套用。
      只有明確按「取消」才會丟掉（onCancel 會先把 draftGeo 清成 null，
      所以這個 effect 不會重複套一次）。 */
@@ -7763,7 +7742,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       >
         <div ref={setDetailPanelHost} style={{ position: 'absolute', left: 0, right: 0, top: '5rem', height: 0, zIndex: 60 }} />
         <div 
-          className={`flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] ${fxPanel ? 'px-4' : 'px-8'}`}
+          className={`flex flex-col justify-center panel-ease transition-all overflow-hidden bg-[#111] px-8`}
           style={{
               /* 時間長度走 inline style，不要用 duration-0 / duration-[380ms] 這種 class。
                  這個 App 掛的是 Tailwind 的瀏覽器版 JIT，規則是「在 DOM 看到那個 class
@@ -7776,8 +7755,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                  所以這裡只要跟曲線一樣把滑桿列收成 0 就好。
                  這樣底部功能欄的高度變化跟開曲線時完全一樣，
                  小分類列與分頁列都待在原地不動。 */
-              // 特效細項：把小分類列那 6rem 借過來（它同時收成 0），總高不變
-              height: activeCategory === 'compose' ? '0px' : (fxPanel ? '11rem' : '5rem'),
+              // 特效細項與其他工具維持同一個滑桿欄高度。
+              height: activeCategory === 'compose' ? '0px' : '5rem',
               pointerEvents: sliderRowHidden ? 'none' : undefined,
               opacity: sliderRowHidden ? 0 : 1,
               /* 收起來時是 0px 而不是 none —— 寫 none 的話 border-color 會退回
@@ -7787,50 +7766,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               borderBottom: sliderRowHidden ? '0px solid rgba(255, 255, 255, 0.05)' : '1px solid rgba(255, 255, 255, 0.05)'
           }}
         >
-          {/* 新特效：那個特效的滑桿一次全部攤開（左邊一顆返回，右邊兩兩一排）。
-               奇數根時「強度」自己站第一排。 */}
-          {fxPanel && (
-            <div className="w-full h-full flex items-center gap-3">
-              <button
-                onClick={() => { setActiveCategory('effects'); setActiveToolId(activeFxId); }}
-                aria-label="返回特效"
-                className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-colors text-white"
-              >
-                <Icon name="arrow_back" className="text-xl" />
-              </button>
-              <div className="flex-1 min-w-0 flex flex-col justify-center">
-                {fxRows.map((row, ri) => (
-                  <div key={ri} className="flex items-center gap-4" style={{ height: fxRowH }}>
-                    {row.map(t => (
-                      <div key={t.id} className="flex-1 min-w-0">
-                        <FastSlider
-                          value={typeof params[t.id as keyof EditorParams] === 'number' ? params[t.id as keyof EditorParams] as number : 0}
-                          min={t.min} max={t.max} step={t.step ?? 1}
-                          toolId={t.id} label={t.label} snapZero={t.min < 0}
-                          compact dense
-                          onUpdate={(id, val) => {
-                            paramsRef.current = { ...paramsRef.current, [id]: val };
-                            isDirtyRef.current = true;
-                            lastSliderMoveTimeRef.current = performance.now();
-                          }}
-                          onInteractStart={() => { setActiveToolId(t.id); setupFastPreview(t.id); }}
-                          onInteractEnd={() => {
-                            setIsInteracting(false);
-                            fastPreviewCacheRef.current.active = false;
-                            setParams({ ...paramsRef.current });
-                            addToHistory(paramsRef.current, selectedLutIdx);
-                          }}
-                          onReset={handleDoubleTap}
-                          onValueClick={resetParam}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          {!fxPanel && activeTool && !['lightLeak', 'softLight'].includes(activeToolId) && activeToolId !== 'curves' && activeToolId !== 'hsl' && (
+          {activeTool && !['lightLeak', 'softLight'].includes(activeToolId) && activeToolId !== 'curves' && activeToolId !== 'hsl' && (
               <div className="w-full">
                   <FastSlider 
                       value={typeof params[activeTool.id as keyof EditorParams] === 'number' ? params[activeTool.id as keyof EditorParams] as number : 0}
@@ -7951,8 +7887,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               // 構圖的小分類（裁切／角度／翻轉／梯形）由 ComposeStudio 自己畫在
               // 預覽區底部，這一列就讓給它，不然會有兩排小分類。
               // 特效細項時這一列讓給上面的滑桿群（高度剛好對調，總高不變）
-              height: (subStripHidden || fxPanel) ? '0px' : '6rem',
-              opacity: (subStripHidden || fxPanel) ? 0 : 1,
+              height: subStripHidden ? '0px' : '6rem',
+              opacity: subStripHidden ? 0 : 1,
           }}
         >
           {activeCategory === 'filter' && lutList.map((lut, idx) => (
@@ -8114,8 +8050,21 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 ))}
              </div>
           )}
-          {/* 新特效的參數按鈕列已經拿掉了 —— 那個特效的滑桿現在全部直接顯示在上面那一列，
-               不用再點第二層。這一列在特效細項時是收起來的（高度讓給滑桿群）。 */}
+          {activeCategory === 'fx' && (
+             <div className="flex items-center gap-4">
+                <button aria-label="返回特效" onClick={() => { setActiveCategory('effects'); setActiveToolId(activeFxId); }} className="flex flex-col items-center justify-center gap-2 shrink-0 group w-12">
+                    <div className="w-10 h-10 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-all text-white"><Icon name="arrow_back" className="text-xl" /></div>
+                </button>
+                <div className="w-[1px] h-8 bg-white/10 mx-2" />
+                {(FX_TOOLS[activeFxId] || []).map(tool => (
+                    <button key={tool.id} data-fx-param={tool.id} onClick={() => setActiveToolId(tool.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
+                        <div className={'w-10 h-10 rounded-full flex items-center justify-center transition-all ' + (activeToolId === tool.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10')}><Icon name={tool.icon} className="text-lg" fill={activeToolId === tool.id} /></div>
+                        <span className={'text-[9px] font-bold tracking-tighter whitespace-nowrap ' + (activeToolId === tool.id ? 'text-white' : 'text-white/20')}>{tool.label}</span>
+                        <div className={'w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ' + (isParamAdjusted(tool.id) ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50')} />
+                    </button>
+                ))}
+             </div>
+          )}
           {activeCategory === 'mask' && (
              <div className={`flex items-center gap-2 ${maskLocked ? 'opacity-30' : ''}`}>
                 {MASK_TOOLS.map(tool => (

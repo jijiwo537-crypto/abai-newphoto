@@ -148,7 +148,7 @@ export interface PhotoFx {
   vib?: number;
   /** 柔光 0~100 */
   soft?: number;
-  /** 相容既有儲存值：柔光選取最亮的 (100-softThreshold)% 像素，預設30% */
+  /** 相容既有儲存值：柔光選取最亮的 (100-softThreshold)% 像素，預設20% */
   softThreshold?: number;
   /** 柔光擴散 20~100，預設 100 */
   softRadius?: number;

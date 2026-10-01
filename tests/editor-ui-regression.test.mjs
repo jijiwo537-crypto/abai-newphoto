@@ -13,7 +13,7 @@ test('HSL and curves share a control-strip anchored portal', () => {
   assert.match(editor, /data-hsl-panel/);
   assert.match(editor, /data-curves-panel/);
   assert.match(editor, /ref={setDetailPanelHost}/);
-  assert.match(editor, /height: activeCategory === 'compose' \? '0px' : \(fxPanel \? '11rem' : '5rem'\)/);
+  assert.match(editor, /height: activeCategory === 'compose' \? '0px' : '5rem'/);
 });
 test('compose divider is opt-in, preserving other callers', () => {
   assert.match(compose, /showFooterDivider = false/);

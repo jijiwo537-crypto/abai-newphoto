@@ -1,7 +1,9 @@
-// Continuous cell pitch shared by GPU preview and Canvas export/fallback.
+// Density, not cell size: increasing right adds complete cells. Fit integer
+// rows/columns to each mask so terminal cells are never partially clipped.
 export function mosaicGrid(width,height,pixels,scale=1){
- const pitch=Math.max(.01,Number(pixels)*scale);
- return {pitch,x:width/pitch,y:height/pitch};
+ const x=Math.max(1,Math.round(Number(pixels)||1));
+ const y=Math.max(1,Math.round(x*height/Math.max(.01,width)));
+ return {pitch:width/x,cellHeight:height/y,x,y};
 }
 
 // Image-relative confidence avoids an absolute cutoff that rejects every

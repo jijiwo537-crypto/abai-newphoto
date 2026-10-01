@@ -186,13 +186,15 @@ export const FX_DEFS: FxDef[] = [
   },
   {
     id:'fxExposureSpill',label:'柔光ll',icon:'flare',onAmount:60,params:[
-      {id:'fxSpillRange',label:'範圍',icon:'tonality',min:0,max:100,def:30,step:1},
-      {id:'fxSpillDiffusion',label:'擴散',icon:'flare',min:0,max:100,def:50,scale:.02,step:1},
-      {id:'fxSpillStreak',label:'延展',icon:'height',min:0,max:100,def:50,scale:.02,step:1},
+      {id:'fxSpillRange',label:'範圍',icon:'tonality',min:0,max:100,def:20,step:1},
+      {id:'fxSpillDiffusion',label:'擴散',icon:'flare',min:10,max:100,def:50,scale:.02,step:1},
+      {id:'fxSpillHue',label:'色相',icon:'palette',min:0,max:100,def:0,step:1},
     ],handlesAmount:true,
     passes:[spillHighlight,...spillWide,spillHighlight,...spillBlur(5),{body:`
-      vec3 c=blendScreen(texture2D(uSrc,uv).rgb,texture2D(uAux,uv).rgb*uEffectAmount*.9);
-      for(int i=-12;i<=12;i++){c=blendScreen(c,texture2D(uTex,uv+vec2(0.,float(i)*3.*fxSpillStreak/1200.)).rgb*uEffectAmount*.05);}
+      // Zero is neutral, matching the original soft-light hue control.
+      vec3 tint=fxSpillHue<.5?vec3(1.):.5+.5*cos(6.2831853*(fxSpillHue/100.+vec3(0.,.6666667,.3333333)));
+      vec3 c=blendScreen(texture2D(uSrc,uv).rgb,texture2D(uAux,uv).rgb*tint*uEffectAmount*.9);
+      for(int i=-12;i<=12;i++){c=blendScreen(c,texture2D(uTex,uv+vec2(0.,float(i)*3./1200.)).rgb*tint*uEffectAmount*.05);}
       return vec4(c,1.);`}],
   },
   {
@@ -843,7 +845,7 @@ export function applyGlEffects(
     if(!uploadKey||c.highlightKey!==uploadKey||!c.highlightBins){
       c.highlightBins=highlightHistogram(ctx2d.getImageData(0,0,w,h).data);c.highlightKey=uploadKey;
     }
-    spillSelection=selectHighlights(c.highlightBins,params.fxSpillRange??30);
+    spillSelection=selectHighlights(c.highlightBins,params.fxSpillRange??20);
   }
   if(!uploadKey || c.uploadKey!==uploadKey){
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D, srcTex);
@@ -898,7 +900,7 @@ export function applyGlEffects(
       const layerIn = cur;                       // 本層輸入（uSrc）
       let from = cur;
       const spillKey=d.id==='fxExposureSpill' && uploadKey
-        ? uploadKey+'|'+JSON.stringify([params.fxSpillRange??30,params.fxSpillDiffusion??50,active.slice(0,active.indexOf(d)).map(x=>[x.id,params[x.id],...x.params.map(p=>params[p.id]??p.def)])]) : undefined;
+        ? uploadKey+'|'+JSON.stringify([params.fxSpillRange??20,params.fxSpillDiffusion??50,active.slice(0,active.indexOf(d)).map(x=>[x.id,params[x.id],...x.params.map(p=>params[p.id]??p.def)])]) : undefined;
       if(d.id==='fxExposureSpill' && pool.spillKey!==spillKey)pool.spillKey=undefined;
       for (let i = 0; i < d.passes.length; i++) {
         if(spillKey && pool.spillKey===spillKey && pool.narrow && i<d.passes.length-1)continue;

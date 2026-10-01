@@ -34,7 +34,10 @@ export async function auditRelativeControls(){
  click('輪廓');await settle();results.ui.size=document.querySelector<HTMLInputElement>('input[aria-label="大小"]')?.value;
  click('顏色');await settle();results.ui.swatches=document.querySelectorAll('.art-swatches button').length;
  click('構圖');await settle();results.ui.composition=[...document.querySelectorAll('.art-subtabs button')].map(b=>b.textContent);
- click('遮罩');await settle();results.ui.materials=[...document.querySelectorAll('.art-presets button')].map(b=>b.textContent);
+ click('遮罩');await settle();results.ui.maskTabs=[...document.querySelectorAll('.art-subtabs button')].map(b=>b.textContent);
+ const input=(name:string,n:number)=>{const el=document.querySelector<HTMLInputElement>('input[aria-label="'+name+'"]')!;Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(el,String(n));el.dispatchEvent(new Event('input',{bubbles:true}));};
+ input('數量',0);await settle();click('材質');await settle();results.ui.materials=[...document.querySelectorAll('.art-presets button')].map(b=>b.textContent);
+ click('像素');await settle();click('編輯');await settle();results.ui.firstMaterialCount=document.querySelector<HTMLInputElement>('input[aria-label="數量"]')?.value;
  results.scope=results.scope.map((r:any)=>{let h=2166136261;for(const s of r.paths)h=Math.imul(h^s.charCodeAt(0),16777619);return {threshold:r.threshold,hash:h>>>0};});
  (window as any).__relativeAudit=results;
  await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify(results)}).catch(()=>{});

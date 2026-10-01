@@ -16,6 +16,7 @@ import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
+import {effectControlValue,effectStoredValue,effectControlMin} from '../utils/effectControlValues';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
 import { CLASSIC_COORDINATE_VERSION, joinLegacyPages } from '../utils/classicPageCoordinates';
@@ -921,7 +922,7 @@ const FX_ROOT_PARAM: Record<string, { id: string; label: string; min: number; ma
 /** 這一顆卡片的細項滑桿（第一根是強度，hidden 的不出現），跟編輯同一套 */
 const FX_DETAIL: Record<string, [string, string, number, number, number][]> = {
   ...Object.fromEntries(FX_DEFS.map(d => [d.id, [
-    [d.id, d.id === 'fxLowfi' ? '整體強度' : '強度', 0, 100, 0] as [string, string, number, number, number],
+    [d.id, '強度', 0, 100, 0] as [string, string, number, number, number],
     ...d.params.filter(p => !p.hidden).map(p =>
       [p.id, p.label, p.min, p.max, p.def] as [string, string, number, number, number]),
   ]])),
@@ -930,7 +931,7 @@ const FX_DETAIL: Record<string, [string, string, number, number, number][]> = {
 const FX_SUB_TOOLS: Record<string, [string, string, string, number, number, number][]> = {
   softLight: [
     ['soft', '強度', 'blur_on', 0, 100, 0],
-    ['softThreshold', '範圍', 'tonality', 0, 100, 70],
+    ['softThreshold', '範圍', 'tonality', 0, 100, 80],
     ['softRadius', '擴散', 'flare', 20, 100, 100],
     ['softColor', '色相', 'palette', 0, 100, 0],
   ],
@@ -2938,6 +2939,8 @@ export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
   setTuningEdge, openComposeFor, composeOpen, onLeaveCompose, hideShape, hideCompose, deferSlider, onSliderOpenChange, inlineSlider,
 }) => {
+const [detailTool,setDetailTool] = useState('');
+useEffect(() => { setDetailTool(''); }, [effectCard,img.id]);
 const fx = img.fx || {};
 const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
 const fxVal = (key: string, dflt: number) => (fx as any)[key] ?? dflt;
@@ -3037,7 +3040,7 @@ const editorSlider = (
 ) => {
   const input = (cls: string) => (
     <input
-      type="range" min={min} max={max} step={step} value={value}
+      type="range" aria-label={label} min={min} max={max} step={step} value={value}
       onChange={e => onVal(step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value))}
       onPointerDown={hideChrome ? () => setTuningEdge(true) : undefined}
       onPointerUp={hideChrome ? () => setTuningEdge(false) : undefined}
@@ -3074,22 +3077,11 @@ const editorSlider = (
 };
 
 
-/* 特效細項的排法跟「編輯」一致：剛好兩根上下各一行；
-   奇數根時「強度」自己站一行，其餘兩兩一排。 */
+// Fixed 5rem full-width slider + 6rem parameter buttons, shared by both collages.
 const fxDetailOpen = adjustSub === 'effect' && effectDetail && !!effectCard;
-const fxRows = (() => {
-  const tools = (FX_DETAIL[effectCard] || (FX_SUB_TOOLS[effectCard] || []).map(
-    ([k, l, , mn, mx, d]) => [k, l, mn, mx, d] as [string, string, number, number, number]));
-  if (!tools.length) return [] as [string, string, number, number, number][][];
-  if (tools.length === 2) return [[tools[0]], [tools[1]]];
-  const out: [string, string, number, number, number][][] = [];
-  const solo = tools.length % 2 === 1;
-  if (solo) out.push([tools[0]]);
-  const rest = tools.slice(solo ? 1 : 0);
-  for (let i = 0; i < rest.length; i += 2) out.push(rest.slice(i, i + 2));
-  return out;
-})();
-const fxRowH = fxRows.length ? Math.min(52, Math.floor(172 / fxRows.length)) : 52;
+const detailTools = FX_DETAIL[effectCard] || (FX_SUB_TOOLS[effectCard] || []).map(
+ ([k,l,,mn,mx,d]) => [k,l,mn,mx,d] as [string,string,number,number,number]);
+const detailActive = detailTools.find(t=>t[0]===detailTool) || detailTools[0];
 
 // 目前這一段要放什麼
 const sliderArea = (() => {
@@ -3107,8 +3099,11 @@ const sliderArea = (() => {
     );
   }
   if (adjustSub === 'effect') {
-    // 細項是另外一整區（並排滑桿），不走這一根
-    if (effectDetail) return null;
+    if (fxDetailOpen && detailActive) {
+      const [key,label,mn,mx,dflt]=detailActive;
+      return editorSlider(label,effectControlValue(key,fxVal(key,dflt)),effectControlMin(key,mn),mx,
+        v=>setFx({[key]:effectStoredValue(key,v)}));
+    }
     if (!effectCard) return null;
     /* 有些特效的「強度」沒有意義（馬賽克調到一半只是把原圖疊回來），
        那種就在 FX_DEFS 裡設了 rootParam：最外層這根直接調它指定的參數。 */
@@ -3161,59 +3156,23 @@ useEffect(() => { onSliderOpenChange?.(sliderShown); }, [sliderShown, onSliderOp
 
 return (
   <div className="h-full flex flex-col justify-end">
-    {/* 1. 滑桿（跟編輯一樣的 5rem、px-8、底下一條細線）。
-           特效細項時把下面工具列那 6rem 借過來（它同時收成 0），
-           兩段加起來還是 5rem + 6rem —— 預覽圖的大小完全不變。 */}
+    {/* 固定 5rem 滑桿與 6rem 細項列，不改變預覽空間。 */}
     <div
-      className={`flex flex-col justify-center shrink-0 overflow-hidden bg-[#111] ${fxDetailOpen ? 'px-4' : 'px-8'}`}
-      style={{ height: fxDetailOpen ? '11rem' : '5rem', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+      className={`flex flex-col justify-center shrink-0 overflow-hidden bg-[#111] px-8`}
+      style={{ height: '5rem', borderBottom: '1px solid rgba(255,255,255,0.05)' }}
     >
-      {fxDetailOpen ? (
-        <div className="w-full h-full flex items-center gap-3">
-          <button
-            onClick={() => setEffectDetail(false)}
-            aria-label="返回特效"
-            className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-white/10 hover:bg-white/20 transition-colors text-white"
-          >
-            <Icon name="arrow_back" className="text-xl" />
-          </button>
-          <div className="flex-1 min-w-0 flex flex-col justify-center">
-            {fxRows.map((row, ri) => (
-              <div key={ri} className="flex items-center gap-4" style={{ height: fxRowH }}>
-                {row.map(([key, label, mn, mx, dflt]) => (
-                  <div key={key} className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-1 mb-0.5">
-                      <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.12em] truncate pointer-events-none">{label}</span>
-                      <span className="text-[10px] leading-none font-sans tabular-nums font-bold bg-white/10 px-1.5 py-[4px] rounded shrink-0">{Math.round(key==='softThreshold'?100-fxVal(key,dflt):fxVal(key, dflt))}</span>
-                    </div>
-                    <div className="relative h-[26px] flex items-center justify-center touch-none slider-wrap" style={{touchAction:'none'}}>
-                      <input
-                        type="range" min={mn} max={mx} step="1"
-                        value={key==='softThreshold'?100-fxVal(key,dflt):fxVal(key, dflt)}
-                        data-fine-drag="true"
-                        style={{left:0,width:'100%',height:26,margin:'-13px 0 0','--thumb-w':'18px'} as React.CSSProperties}
-                        onChange={e => setFx({ [key]: key==='softThreshold'?100-parseInt(e.target.value):parseInt(e.target.value) })}
-                        className="custom-range dense"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : (deferSlider && sliderArea ? (
+      {deferSlider && sliderArea ? (
         /* key 一變就重播一次：每點一顆工具鈕，滑桿都是「從下面浮上來」 */
         <div key={`${adjustSub}|${tuneTool}|${shapeTool}|${effectCard}|${fx.lut || ''}`}
              className="w-full animate-in fade-in slide-in-from-bottom-2 duration-200">
           {sliderArea}
         </div>
-      ) : sliderArea)}
+      ) : sliderArea}
     </div>
 
     {/* 2. 工具列（6rem、px-4、gap-2、深一階的底色） */}
     <div className="flex items-center px-4 overflow-x-auto no-scrollbar gap-2 bg-[#080808] shrink-0"
-         style={{ height: fxDetailOpen ? '0px' : '6rem', opacity: fxDetailOpen ? 0 : 1 }}>
+         style={{ height: '6rem' }}>
       {/* 濾鏡卡片：外觀跟「編輯」完全一樣 —— 縮圖是這張照片套上這顆濾鏡的樣子，
           名稱壓在下緣，選中的那顆是內描邊的白框（不佔版面、不會位移）。 */}
       {adjustSub === 'filter' && lutList.map((l, li) => {
@@ -3260,9 +3219,20 @@ return (
           () => setTuneTool(id))
       )}
 
+      {fxDetailOpen && <>
+        <button aria-label="返回特效" onClick={()=>setEffectDetail(false)} className="flex flex-col items-center justify-center gap-2 shrink-0 group w-12">
+          <div className="w-10 h-10 rounded-full flex items-center justify-center bg-white/10 text-white"><Icon name="arrow_back" className="text-xl" /></div>
+        </button>
+        <div className="w-[1px] h-8 bg-white/10 mx-2 shrink-0" />
+        {detailTools.map(([key,label,,,dflt])=>{
+          const icon=FX_DEFS.find(d=>d.id===effectCard)?.params.find(p=>p.id===key)?.icon
+            || FX_SUB_TOOLS[effectCard]?.find(t=>t[0]===key)?.[2] || 'percent';
+          return toolBtn(key,label,icon,detailActive?.[0]===key,fxVal(key,dflt)!==dflt,()=>setDetailTool(key));
+        })}
+      </>}
       {/* 特效卡片：跟「編輯」同一份清單、同一種卡片外觀。
           縮圖是這個特效的預設效果，選中的那顆右上角會多一顆編輯鍵（有細項才有）。 */}
-      {adjustSub === 'effect' && FX_ROOT_TOOLS.map(([id, label], fi) => {
+      {adjustSub === 'effect' && !fxDetailOpen && FX_ROOT_TOOLS.map(([id, label], fi) => {
         const amountId = fxAmountId(id);
         const on = fxVal(amountId, 0) !== 0;
         const detail = FX_DETAIL[id] || FX_SUB_TOOLS[id];
