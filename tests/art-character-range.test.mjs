@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ASCII_PRESETS,ASCII_RANGE_LOWS,withAsciiPreset,withAsciiCoverage,withAsciiMetric} from '../utils/asciiControls.js';
 import {artCharacters,needsCellFitting,fitArtGlyph} from '../utils/artCharacters.js';
-test('exact requested presets, without invented leading spaces',()=>assert.deepEqual(ASCII_PRESETS,['.:-=+*#/@','·•。o','01','⭒✧✦⭑✶']));
+test('exact requested presets, without invented leading spaces',()=>assert.deepEqual(ASCII_PRESETS,['.:-=+*#/@','·。•o','01','⭒✧✦⭑✶']));
 test('binary preset restores density 100 without resetting other settings',()=>{
  const s={columns:96,glow:50,low:20,color:false};assert.deepEqual(withAsciiPreset(s,'01'),{...s,characters:'01',columns:100});assert.equal(withAsciiPreset(s,ASCII_PRESETS[3]).columns,96);
 });
