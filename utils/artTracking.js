@@ -4,7 +4,7 @@ import {blurredSource,makeLinks} from './artMaterials.js';
 export const trackingDefaults={mode:'mosaic',detection:'combined',threshold:30,count:0,size:100,pixels:16,blur:20,circles:55,minDistance:55,block:16,minRadius:4,maxRadius:24,stroke:1,labelSize:8,opacity:1,imageOpacity:1,links:125,lineWeight:.8,chain:false,chainCount:11,angle:30,baseRadius:170,ratio:.83,intersections:true,markerSize:5,frame:false,frameSize:68,dash:8,frameStroke:1,starSize:40,starPoints:4,textSize:12,topLeft:'ABAI / VISION',topRight:'IMAGE ANALYSIS',bottomLeft:'SIGNAL / 001',bottomRight:'OBSERVATION',labels:false,palette:'#ffffff',background:'#111111',shape:'circle',format:'1200x1600',noise:false,textureOpacity:.5,texture:null,zones:[],zoneStroke:true,seed:42};
 let cache=null;
 trackingDefaults.linkMode='tree';trackingDefaults.materialStrength=100;trackingDefaults.shapes=['circle'];trackingDefaults.materials=['mosaic'];
-Object.assign(trackingDefaults,{nodeSeed:42,variation:80,sizeVariation:0,golden:false,goldenSize:76,goldenAngle:0});
+Object.assign(trackingDefaults,{nodeSeed:42,variation:80,sizeVariation:0,golden:false,goldenSize:76,goldenAngle:0,angle:null,baseRadius:200});
 export function invalidateTracking(){cache=null;}
 function canvas(w,h=w){const c=document.createElement('canvas');c.width=w;c.height=h;return c;}
 function random(seed){let s=seed>>>0;return()=>{s=(Math.imul(s,1664525)+1013904223)>>>0;return s/4294967296;};}
@@ -23,10 +23,11 @@ export function trackingZones(o){
  return zones.map(point=>({...point,scale:1-Math.max(0,Math.min(1,o.sizeVariation/100))*rng()*.8}));
 }
 export function redistributeRegions(o){const seed=o.seed+1,rng=random(seed^0x9e3779b9);return{...o,seed,zones:(o.zones||[]).map(()=>({x:.1+rng()*.8,y:.1+rng()*.8}))};}
+export function trackingChainAngle(o,w,h){return o.angle==null?Math.atan2(Math.max(1,w),Math.max(1,h))*180/Math.PI:o.angle;}
 export function trackingCircleChain(o,w,h){
  const chain=[];if(!o.chain)return chain;
  const k=Math.min(w,h)/1200;let left={x:w/2,y:h/2,radius:o.baseRadius*k},right={...left};chain.push(left);
- const a=o.angle*Math.PI/180,dx=Math.sin(a),dy=-Math.cos(a);
+ const a=trackingChainAngle(o,w,h)*Math.PI/180,dx=Math.sin(a),dy=-Math.cos(a);
  for(let i=1;i<=Math.ceil((o.chainCount-1)/2);i++){const radius=o.baseRadius*k*Math.pow(o.ratio,i),dist=(left.radius+radius)*.68;left={x:left.x-dx*dist,y:left.y-dy*dist,radius};right={x:right.x+dx*dist,y:right.y+dy*dist,radius};chain.unshift(left);if(chain.length<o.chainCount)chain.push(right);}
  return chain.slice(0,o.chainCount);
 }

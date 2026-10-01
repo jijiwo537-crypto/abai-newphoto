@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {trackingDefaults,trackingRadius,trackingFrameExtent,trackingZones,trackingCircleChain,redistributeRegions,renderTracking,invalidateTracking} from '../utils/artTracking.js';
+import {trackingDefaults,trackingRadius,trackingFrameExtent,trackingZones,trackingChainAngle,trackingCircleChain,redistributeRegions,renderTracking,invalidateTracking} from '../utils/artTracking.js';
 import {firstTrackingElementVisit,preciseAngle} from '../utils/artElementControls.js';
 import {ART_SWATCHES,artHexToHsv,artHsvToHex} from '../utils/artColors.js';
 import {SVGContext} from '../utils/artVector.js';
@@ -66,12 +66,31 @@ test('color controls keep the original colors and white-first rainbow with rever
  assert.equal(artHsvToHex({h:360,s:100,v:100}),'#ff0000');
  assert.doesNotMatch(ui,/tr\('線條透明度'|tr\('底圖透明度'/);
 });
-test('comparison feedback and randomization only brighten borders; contour row clamps bounce',()=>{
+test('comparison uses bare icon feedback while randomization only brightens its border',()=>{
  assert.match(ui,/aria-pressed=\{compare\}/);assert.match(ui,/onLostPointerCapture/);
  assert.match(css,/art-compare\[aria-pressed=true\]/);assert.match(ui,/button.animate\(\[\{borderColor/);
+ const pressed=css.match(/\.art-compare\[aria-pressed=true\]\{([^}]+)\}/)[1];assert.match(pressed,/background:transparent/);assert.match(pressed,/box-shadow:none/);assert.match(pressed,/transform:scale\(\.9\)/);
  assert.doesNotMatch(ui,/button.animate\(\[\{backgroundColor/);
  assert.match(css,/art-scroll\{[^}]*overscroll-behavior:none/);assert.match(ui,/touchmove',move,\{passive:false\}/);
  const outline=ui.match(/section==='輪廓'[^\n]+/)[0];assert.doesNotMatch(outline,/\['none','無'\]/);
+});
+test('art colors follow creative collage geometry without clipping selected swatches',()=>{
+ const colors=readFileSync(new URL('../components/ArtColorControls.tsx',import.meta.url),'utf8');
+ assert.match(colors,/className="designer-color-slider"/);assert.match(colors,/className="slider-wrap"/);
+ assert.match(colors,/KeyboardSafeInput aria-label="色號"/);assert.match(colors,/Icon name="colorize"/);
+ assert.ok(colors.indexOf('className="art-custom-color"')<colors.indexOf('ART_SWATCHES.map'));
+ assert.match(css,/art-swatches button\[aria-pressed=true\]\{border:2px solid white;outline:none\}/);
+ assert.match(css,/width:32px;height:32px/);assert.match(css,/art-color-pair\{[^}]*gap:28px/);
+ assert.doesNotMatch(css,/art-color-range input::/);
+});
+test('circle defaults follow each photo diagonal exactly and use size 200',()=>{
+ const o={...trackingDefaults,chain:true};assert.equal(o.baseRadius,200);assert.equal(o.angle,null);
+ for(const [w,h] of [[600,800],[800,600],[1200,1200],[1600,900],[900,1600]]){
+  const angle=trackingChainAngle(o,w,h);assert.ok(Math.abs(angle-Math.atan2(w,h)*180/Math.PI)<1e-10);
+  for(const n of trackingCircleChain(o,w,h))assert.ok(Math.abs(n.x/w+n.y/h-1)<1e-10);
+ }
+ for(const angle of [0,45,90,180])assert.equal(trackingChainAngle({...o,angle},600,800),angle);
+ assert.match(ui,/Math.round\(trackingChainAngle\(tracking,dimensions.w,dimensions.h\)\)/);
 });
 test('sliders preserve the pending paint, source pixels and direct GPU material result',()=>{
  const gpu=readFileSync(new URL('../utils/artTrackingGpu.js',import.meta.url),'utf8'),vectors=readFileSync(new URL('../utils/artVector.js',import.meta.url),'utf8');

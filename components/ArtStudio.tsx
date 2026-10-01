@@ -4,7 +4,7 @@ import {ASCII_DEFAULTS} from '../utils/asciiRenderer';
 import {ASCII_PRESETS,withAsciiPreset,withAsciiCoverage,withAsciiMetric} from '../utils/asciiControls';
 import {SVGContext,asciiVector,paintAsciiViewport} from '../utils/artVector';
 import {MATERIALS} from '../utils/artMaterials';
-import {trackingDefaults,renderTracking,invalidateTracking,redistributeRegions} from '../utils/artTracking';
+import {trackingDefaults,renderTracking,invalidateTracking,redistributeRegions,trackingChainAngle} from '../utils/artTracking';
 import {firstTrackingElementVisit} from '../utils/artElementControls';
 import {ArtColorControls} from './ArtColorControls';
 import {paintTrackingMaterials} from '../utils/artTrackingGpu';
@@ -187,7 +187,7 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
     {section==='連線'&&<><div className="art-presets art-scroll">{[['none','無'],['tree','標準'],['network','鄰近']].map(([key,name])=><button key={key} aria-pressed={tracking.linkMode===key} onClick={()=>updateTracking('linkMode',key)}>{name}</button>)}</div>{tracking.linkMode!=='none'&&<div className="art-detail-ranges">{tracking.linkMode!=='tree'&&tr('距離','links',0,400)}{tr('粗細','lineWeight',.2,2,.1)}</div>}</>}
    </>}
    {effect==='tracking'&&tab==='構圖'&&<>{groups(['顏色','元素','文字'])}
-    {section==='元素'&&<><div className="art-presets art-elements" role="group" aria-label="選擇要調整的元素">{[['frame','取景框'],['chain','圓圈'],['golden','黃金比例']].map(([key,name])=><button key={key} aria-pressed={element===key} data-enabled={!!tracking[key]} onClick={()=>visitElement(key)}>{name}</button>)}</div>{tt(element==='frame'?'取景框':element==='chain'?'圓圈':'黃金比例',element)}<div className="art-detail-ranges art-element-ranges">{element==='frame'?<>{tr('大小','frameSize',10,100)}{tr('虛線','dash',2,30)}</>:element==='chain'?<>{tr('大小','baseRadius',30,400)}{tr('角度','angle',0,180)}</>:<>{tr('大小','goldenSize',10,150)}{tr('角度','goldenAngle',0,360)}</>}</div></>}
+    {section==='元素'&&<><div className="art-presets art-elements" role="group" aria-label="選擇要調整的元素">{[['frame','取景框'],['chain','圓圈'],['golden','黃金比例']].map(([key,name])=><button key={key} aria-pressed={element===key} data-enabled={!!tracking[key]} onClick={()=>visitElement(key)}>{name}</button>)}</div>{tt(element==='frame'?'取景框':element==='chain'?'圓圈':'黃金比例',element)}<div className="art-detail-ranges art-element-ranges">{element==='frame'?<>{tr('大小','frameSize',10,100)}{tr('虛線','dash',2,30)}</>:element==='chain'?<>{tr('大小','baseRadius',30,400)}{slider('角度',Math.round(trackingChainAngle(tracking,dimensions.w,dimensions.h)),0,180,v=>updateTracking('angle',v))}</>:<>{tr('大小','goldenSize',10,150)}{tr('角度','goldenAngle',0,360)}</>}</div></>}
     {section==='顏色'&&<ArtColorControls value={tracking.palette} onChange={color=>updateTracking('palette',color)}/>}
     {section==='文字'&&<>{tt('角落文字','labels')}<div className="art-text-fields">{[['topLeft','左上'],['topRight','右上'],['bottomLeft','左下'],['bottomRight','右下']].map(([key,name])=><label key={key}>{name}<KeyboardSafeInput aria-label={name+'文字'} value={tracking[key]} maxLength={40} onChange={e=>updateTracking(key,e.target.value)}/></label>)}</div></>}
    </>}

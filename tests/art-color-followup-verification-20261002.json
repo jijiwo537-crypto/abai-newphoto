@@ -1,0 +1,31 @@
+{
+  "date": "2026-10-02",
+  "scope": "ArtStudio comparison feedback, tracking colors and circle defaults only",
+  "tests": {"passed": 154, "failed": 0},
+  "build": "passed",
+  "nativeSafari": {
+    "device": "iPhone 17 simulator, iOS 26.5",
+    "input": "Synthetic events on mounted controls; screenshot visually reviewed",
+    "comparePressed": {"background": "rgba(0, 0, 0, 0)", "boxShadow": "none"},
+    "colorControlsClipped": false,
+    "colorSliderMedianMs": 17,
+    "palette": "32px swatches, inset selection border, left rainbow/pipette, right keyboard-safe hex field",
+    "sliders": "Creative collage shared designer-color-slider: 6px tracks and 14px thumbs"
+  },
+  "browser": {
+    "widths": [320, 402],
+    "mouseDraggedValues": {"hue": 256, "saturation": 73, "value": 73},
+    "hexEntry": "#123456",
+    "editorBeforeHexEntry": {"x": 0, "y": 0, "width": 320, "height": 780},
+    "editorAfterHexEntry": {"x": 0, "y": 0, "width": 320, "height": 780},
+    "PNGExport": [2400, 3200]
+  },
+  "circleDefaults": {
+    "size": 200,
+    "angle": "atan2(image width, image height); auto diagonal until manually adjusted",
+    "aspectRatiosVerified": ["3:4", "4:3", "1:1", "16:9", "9:16"],
+    "diagonalCollinearityError": "less than 1e-10 in normalized coordinates",
+    "manualIntegerAnglesVerified": [0, 45, 90, 180]
+  },
+  "unrelatedSharedStylesChanged": false
+}
