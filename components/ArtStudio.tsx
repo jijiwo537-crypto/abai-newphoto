@@ -5,7 +5,9 @@ import {ASCII_PRESETS,withAsciiPreset,withAsciiCoverage,withAsciiMetric} from '.
 import {SVGContext,asciiVector,paintAsciiViewport} from '../utils/artVector';
 import {MATERIALS} from '../utils/artMaterials';
 import {trackingDefaults,renderTracking,invalidateTracking,redistributeRegions} from '../utils/artTracking';
-import {firstTrackingElementVisit,preciseAngle} from '../utils/artElementControls';
+import {firstTrackingElementVisit} from '../utils/artElementControls';
+import {ArtColorControls} from './ArtColorControls';
+import {paintTrackingMaterials} from '../utils/artTrackingGpu';
 import {processImageFile} from '../utils/imageLoader';
 import {SaveButton} from './SaveButton';
 import {canExportHeic,exportHeic} from '../utils/heicExport';
@@ -41,11 +43,27 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[compare,setCompare]=useState(false),[ready,setReady]=useState(false);
  const [placing,setPlacing]=useState(false),[sourceRevision,setSourceRevision]=useState(0);
  const [element,setElement]=useState('frame');
+ useEffect(()=>{
+  // Suppress only this row's edge rubber-banding. Interior horizontal swipes
+  // remain native; no document or other editor gesture behavior is changed.
+  const rows=root.current?.querySelectorAll<HTMLElement>('.art-scroll');
+  const cleanups:(()=>void)[]=[];
+  rows?.forEach(row=>{
+   let start:{x:number;y:number}|null=null;
+   const down=(e:TouchEvent)=>{start=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null;};
+   const move=(e:TouchEvent)=>{if(!start||e.touches.length!==1)return;const t=e.touches[0],dx=t.clientX-start.x,dy=t.clientY-start.y,max=Math.max(0,row.scrollWidth-row.clientWidth);if((Math.abs(dx)>=Math.abs(dy)&&((row.scrollLeft<=0&&dx>0)||(row.scrollLeft>=max-1&&dx<0)))||Math.abs(dy)>Math.abs(dx)){if(e.cancelable)e.preventDefault();}start={x:t.clientX,y:t.clientY};};
+   const end=()=>{start=null;};
+   row.addEventListener('touchstart',down,{passive:true});row.addEventListener('touchmove',move,{passive:false});row.addEventListener('touchend',end);row.addEventListener('touchcancel',end);
+   cleanups.push(()=>{row.removeEventListener('touchstart',down);row.removeEventListener('touchmove',move);row.removeEventListener('touchend',end);row.removeEventListener('touchcancel',end);});
+  });
+  return()=>cleanups.forEach(cleanup=>cleanup());
+ },[effect,tab,section]);
  const visitedElements=useRef(new Set<string>());
  const [exportFormat,setExportFormat]=useState<'jpg'|'png'|'heic'>('png'),[formatOpen,setFormatOpen]=useState(false),[exportPreview,setExportPreview]=useState('');
  const formatMenu=useRef<HTMLDivElement>(null);
  useEffect(()=>{if(!formatOpen)return;const close=(e:PointerEvent)=>{if(!formatMenu.current?.contains(e.target as Node))setFormatOpen(false);};const escape=(e:KeyboardEvent)=>{if(e.key==='Escape')setFormatOpen(false);};document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape);};},[formatOpen]);
  const asciiCanvas=useRef<HTMLCanvasElement>(null),trackingCanvas=useRef<HTMLCanvasElement>(null),vector=useRef<SVGSVGElement>(null);
+ const trackingGpu=useRef<HTMLCanvasElement>(null);
  const image=useRef<HTMLImageElement|null>(null),input=useRef<HTMLInputElement>(null),frame=useRef(0),importRevision=useRef(0);
  const [dimensions,setDimensions]=useState({w:600,h:800});
  const surface=useRef<HTMLDivElement>(null),preview=useRef<HTMLElement>(null);
@@ -83,39 +101,47 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  const rasterKey=JSON.stringify(original?['original',effect]:effect==='ascii'?['ascii',settings.background]:['tracking',...['materials','zones','count','size','sizeVariation','pixels','blur','seed','nodeSeed','variation','imageOpacity','detection','threshold','circles','minDistance','maxRadius','minRadius','shapes'].map(k=>tracking[k])]);
   if(drawn.current.raster!==rasterKey){
    if(original||effect==='ascii'){c.fillStyle='#080808';c.fillRect(0,0,im.width,im.height);if(original||settings.background)c.drawImage(im,0,0);}
-   else renderTracking(c,im,.6,{...tracking,rasterOnly:true});
+   else if(trackingGpu.current&&paintTrackingMaterials(trackingGpu.current,im,tracking)){trackingGpu.current.style.display='block';trackingCanvas.current!.style.visibility='hidden';}
+   else{if(trackingGpu.current)trackingGpu.current.style.display='none';trackingCanvas.current!.style.visibility='visible';renderTracking(c,im,.6,{...tracking,rasterOnly:true});}
    drawn.current.raster=rasterKey;
   }
+  if(original||effect==='ascii'){if(trackingGpu.current)trackingGpu.current.style.display='none';trackingCanvas.current!.style.visibility='visible';}
   const vectorKey=JSON.stringify(original?['original']:effect==='ascii'?['ascii',settings]:['tracking',{...tracking,opacity:1}]);
   vector.current.style.opacity=original?'1':effect==='tracking'?String(tracking.opacity):'1';
   if(drawn.current.vector!==vectorKey){
-   if(original||effect==='ascii')vector.current.innerHTML='';else{const ctx=new SVGContext();renderTracking(ctx,im,.6,{...tracking,opacity:1,vectorOnly:true});vector.current.innerHTML=ctx.parts.join('');}
+   if(original||effect==='ascii')vector.current.innerHTML='';else{const ctx=new SVGContext(vector.current);renderTracking(ctx,im,.6,{...tracking,opacity:1,vectorOnly:true});ctx.flush();}
    drawn.current.vector=vectorKey;
   }
   if(effect==='ascii')syncVector();
  },[ready,effect,settings,tracking]);
- useEffect(()=>{cancelAnimationFrame(frame.current);frame.current=requestAnimationFrame(()=>draw(compare));return()=>cancelAnimationFrame(frame.current);},[draw,compare]);
+ const paintLatest=useRef({draw,compare});
+ useLayoutEffect(()=>{
+  // One uninterrupted paint queue: incoming slider events replace the pending
+  // settings, never cancel a frame that was already ready to paint.
+  paintLatest.current={draw,compare};
+  if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;const next=paintLatest.current;next.draw(next.compare);});
+ },[draw,compare]);
+ useEffect(()=>()=>cancelAnimationFrame(frame.current),[]);
  const updateTracking=(key:string,value:any)=>setTracking(s=>({...s,[key]:value}));
  const visitElement=(key:string)=>{setElement(key);if(firstTrackingElementVisit(visitedElements.current,key))setTracking(s=>({...s,[key]:true}));};
  const randomizeNodes=(e:React.MouseEvent<HTMLButtonElement>)=>{
   setTracking(s=>({...s,nodeSeed:s.nodeSeed+1}));
   const button=e.currentTarget;button.getAnimations().forEach(animation=>animation.cancel());
-  button.animate([{backgroundColor:'#eeeeee',color:'#111111'},{backgroundColor:'#101010',color:'#eeeeee'}],{duration:420,easing:'ease-out'});
+  button.animate([{borderColor:'#ffffffb3'},{borderColor:'#ffffff16'}],{duration:260,easing:'ease-out'});
  };
  const selectMany=(key:'shapes'|'materials',value:string)=>setTracking(s=>({...s,[key]:value==='none'?[]:s[key].includes(value)?s[key].filter((x:string)=>x!==value):[...s[key],value],...(key==='materials'&&value!=='none'?{count:s.count||(!s.zones.length?3:0)}:{})}));
  const slider=(name:string,value:number,min:number,max:number,change:(v:number)=>void,step=1,unit='')=><label className="art-range"><span>{name}<output>{Number(value.toFixed(2))}{unit}</output></span><input aria-label={name} type="range" min={min} max={max} step={step} value={value} onChange={e=>change(+e.target.value)}/></label>;
  const range=(name:string,key:'columns'|'low',min:number,max:number)=>slider(name,settings[key],min,max,v=>setSettings(s=>({...s,[key]:v,high:100})));
  const tr=(name:string,key:string,min:number,max:number,step=1)=>max===1?slider(name,Math.round(Number(tracking[key])*100),min*100,100,v=>updateTracking(key,v/100)):slider(name,Number(tracking[key]),min,max,v=>updateTracking(key,v),step);
- const goldenAngleControl=()=> <div className="art-range art-angle"><div className="art-angle-caption"><span>角度</span><div className="art-angle-values">{[90,180].map(angle=><button key={angle} aria-label={`黃金比例 ${angle} 度`} aria-pressed={tracking.goldenAngle===angle} onClick={()=>updateTracking('goldenAngle',angle)}>{angle}°</button>)}<KeyboardSafeInput className="art-angle-value" aria-label="黃金比例精確角度" type="number" inputMode="decimal" min={0} max={360} step={.1} value={tracking.goldenAngle} onFocus={e=>e.currentTarget.select()} onChange={e=>{if(e.target.value==='')return;const angle=preciseAngle(e.target.value);if(angle!==null)updateTracking('goldenAngle',angle);}}/></div></div><input aria-label="角度" type="range" min={0} max={360} step={.1} value={tracking.goldenAngle} onChange={e=>updateTracking('goldenAngle',preciseAngle(e.target.value))}/></div>;
  const binary=(name:string,on:boolean,change:(value:boolean)=>void)=><div className="art-color" role="group" aria-label={name}><span>{name}</span><div className="art-presets">{[false,true].map(value=><button key={String(value)} aria-pressed={on===value} onClick={()=>change(value)}>{value?'開啟':'關閉'}</button>)}</div></div>;
  const tt=(name:string,key:string)=>binary(name,!!tracking[key],value=>updateTracking(key,value));
  const groups=(names:string[])=><div className="art-subtabs">{names.map(name=><button key={name} aria-pressed={section===name} onClick={()=>{setSection(name);if(name==='元素')visitElement(element);}}>{name}</button>)}</div>;
  const tabs=effect==='ascii'?['效果','字符','範圍','外觀']:['效果','節點','構圖','遮罩'];
- const selectTab=(name:string)=>{setTab(name);setPlacing(false);setSection(name==='節點'?'偵測':name==='構圖'?'外觀':'材質');};
+ const selectTab=(name:string)=>{setTab(name);setPlacing(false);setSection(name==='節點'?'偵測':name==='構圖'?'顏色':'材質');};
  const save=async()=>{
   if(!ready||busy)return;setBusy(true);setFormatOpen(false);let url='',heicUrl='';
   try{
-   draw(false);const raster=(effect==='ascii'?asciiCanvas.current:trackingCanvas.current)!;
+   draw(false);const raster=(effect==='ascii'?asciiCanvas.current:trackingGpu.current?.style.display==='block'?trackingGpu.current:trackingCanvas.current)!;
    const c=document.createElement('canvas'),scale=Math.max(1,3200/Math.max(dimensions.w,dimensions.h));c.width=Math.round(dimensions.w*scale);c.height=Math.round(dimensions.h*scale);
    const ctx=c.getContext('2d')!;ctx.drawImage(raster,0,0,c.width,c.height);
    const ink=effect==='ascii'?asciiVector(image.current!,settings):vector.current!.innerHTML;
@@ -141,13 +167,14 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
     <div ref={surface} className="art-surface" style={{aspectRatio:`${dimensions.w}/${dimensions.h}`,width:`min(calc(100cqw - 24px), calc((100cqh - 24px) * ${dimensions.w/dimensions.h}))`}}>
     <canvas ref={asciiCanvas} aria-label="字符藝術預覽" style={{display:effect==='ascii'?'block':'none'}}/>
     <canvas ref={trackingCanvas} aria-label="視覺追蹤預覽" style={{display:effect==='tracking'?'block':'none',cursor:placing?'crosshair':undefined}} onPointerDown={placeDown} onPointerUp={placeUp} onPointerCancel={()=>{placeStart.current=null;}}/>
+    <canvas ref={trackingGpu} className="art-material-surface" aria-label="即時遮罩預覽" style={{display:'none',cursor:placing?'crosshair':undefined}} onPointerDown={placeDown} onPointerUp={placeUp} onPointerCancel={()=>{placeStart.current=null;}}/>
     </div>
    </TransformComponent></TransformWrapper></div>:<button className="art-import" onClick={()=>input.current?.click()}><ImagePlus size={28}/>匯入照片</button>}
    <svg ref={vector} className="art-vectors" viewBox={`0 0 ${dimensions.w} ${dimensions.h}`} aria-label="向量藝術圖層"/>
    <canvas ref={asciiInk} className="art-ink" aria-label="即時字符圖層" style={{display:effect==='ascii'&&!compare&&!settings.color?'block':'none'}}/>
    <canvas ref={colorInk} className="art-ink art-color-ink" aria-label="高清字符圖層" style={{display:effect==='ascii'&&!compare&&ready?'block':'none'}}/>
    {placing&&<span ref={placementHint} className="art-placement-hint">點擊圖片進行放置</span>}
-   {src&&<button aria-label="前後對比" className="art-compare" onPointerDown={e=>{e.currentTarget.setPointerCapture(e.pointerId);setCompare(true);}} onPointerUp={()=>setCompare(false)} onPointerCancel={()=>setCompare(false)}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 6H4.5A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18H12" stroke="white" strokeWidth="1.5"/><path d="M12 3v18" stroke="white" strokeWidth="1.5" strokeLinecap="round"/><path d="M12 6h7.5A1.5 1.5 0 0 1 21 7.5v9a1.5 1.5 0 0 1-1.5 1.5H12" stroke="currentColor" strokeWidth="1.5"/></svg></button>}
+   {src&&<button aria-label="前後對比" aria-pressed={compare} className="art-compare" onPointerDown={e=>{e.currentTarget.setPointerCapture(e.pointerId);setCompare(true);}} onPointerUp={()=>setCompare(false)} onPointerCancel={()=>setCompare(false)} onLostPointerCapture={()=>setCompare(false)} onKeyDown={e=>{if(e.key===' '||e.key==='Enter'){e.preventDefault();setCompare(true);}}} onKeyUp={e=>{if(e.key===' '||e.key==='Enter')setCompare(false);}} onBlur={()=>setCompare(false)}><svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 6H4.5A1.5 1.5 0 0 0 3 7.5v9A1.5 1.5 0 0 0 4.5 18H12" stroke="white" strokeWidth="1.5"/><path d="M12 3v18" stroke="white" strokeWidth="1.5" strokeLinecap="round"/><path d="M12 6h7.5A1.5 1.5 0 0 1 21 7.5v9a1.5 1.5 0 0 1-1.5 1.5H12" stroke="currentColor" strokeWidth="1.5"/></svg></button>}
   </section>
   <section className="art-panel" onPointerDownCapture={()=>{if(historyTimer.current)clearTimeout(historyTimer.current);remember();}}><div className={'art-controls'+(effect==='tracking'&&tab!=='效果'?' art-tracking-controls':'')}>
    {tab==='效果'&&<div className="art-effect-list art-presets">{EFFECTS.map(item=><button key={item.id} aria-pressed={effect===item.id} onClick={()=>{setEffect(item.id);setPlacing(false);}}>{item.name}</button>)}</div>}
@@ -156,17 +183,17 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
    {effect==='ascii'&&tab==='外觀'&&<><div className="art-color"><span>字符顏色</span><div className="art-presets"><button aria-pressed={settings.color} onClick={()=>setSettings(s=>({...s,color:true}))}>原色</button><button aria-pressed={!settings.color} onClick={()=>setSettings(s=>({...s,color:false}))}>白色</button></div></div>{binary('保留底圖',settings.background,value=>setSettings(s=>({...s,background:value})))}{binary('發光',!!settings.glow,value=>setSettings(s=>({...s,glow:value?50:0})))}</>}
    {effect==='tracking'&&tab==='節點'&&<>{groups(['偵測','輪廓','連線'])}
     {section==='偵測'&&<><div className="art-presets">{[['combined','綜合'],['bright','亮部'],['dark','暗部'],['contrast','邊緣']].map(([key,name])=><button key={key} aria-pressed={tracking.detection===key} onClick={()=>updateTracking('detection',key)}>{name}</button>)}</div><div className="art-detail-ranges">{tr('範圍','threshold',0,80)}{tr('數量','circles',5,150)}</div><div className="art-presets"><button onClick={randomizeNodes}>隨機分佈</button></div></>}
-    {section==='輪廓'&&<><div className="art-presets art-scroll">{[['none','無'],['circle','圓形'],['square','方形'],['spark','星芒'],['star','星星'],['bracket','聚焦'],['selection','選中框'],['cross','交叉框']].map(([key,name])=><button key={key} aria-pressed={key==='none'?!tracking.shapes.length:tracking.shapes.includes(key)} onClick={()=>selectMany('shapes',key)}>{name}</button>)}</div><div className="art-detail-ranges">{tr('大小','maxRadius',10,80)}{tr('變化','variation',0,100)}{tr('粗細','stroke',.3,3,.1)}{tr('間距','minDistance',10,100)}</div></>}
+    {section==='輪廓'&&<><div className="art-presets art-scroll">{[['circle','圓形'],['square','方形'],['spark','星芒'],['star','星星'],['bracket','聚焦'],['selection','選中框'],['cross','交叉框']].map(([key,name])=><button key={key} aria-pressed={tracking.shapes.includes(key)} onClick={()=>selectMany('shapes',key)}>{name}</button>)}</div><div className="art-detail-ranges">{tr('大小','maxRadius',10,80)}{tr('變化','variation',0,100)}{tr('粗細','stroke',.3,3,.1)}{tr('間距','minDistance',10,100)}</div></>}
     {section==='連線'&&<><div className="art-presets art-scroll">{[['none','無'],['tree','標準'],['network','鄰近']].map(([key,name])=><button key={key} aria-pressed={tracking.linkMode===key} onClick={()=>updateTracking('linkMode',key)}>{name}</button>)}</div>{tracking.linkMode!=='none'&&<div className="art-detail-ranges">{tracking.linkMode!=='tree'&&tr('距離','links',0,400)}{tr('粗細','lineWeight',.2,2,.1)}</div>}</>}
    </>}
-   {effect==='tracking'&&tab==='構圖'&&<>{groups(['外觀','元素','文字'])}
-    {section==='元素'&&<><div className="art-presets art-elements" role="group" aria-label="選擇要調整的元素">{[['frame','取景框'],['chain','圓圈'],['golden','黃金比例']].map(([key,name])=><button key={key} aria-pressed={element===key} data-enabled={!!tracking[key]} onClick={()=>visitElement(key)}>{name}</button>)}</div>{tt(element==='frame'?'取景框':element==='chain'?'圓圈':'黃金比例',element)}<div className="art-detail-ranges art-element-ranges">{element==='frame'?<>{tr('大小','frameSize',10,100)}{tr('虛線','dash',2,30)}</>:element==='chain'?<>{tr('大小','baseRadius',30,400)}{tr('角度','angle',0,180)}</>:<>{tr('大小','goldenSize',10,150)}{goldenAngleControl()}</>}</div></>}
-    {section==='外觀'&&<><div className="art-presets">{[['#ffffff','白色'],['#a8ffdc','薄荷'],['#ffd178','琥珀'],['#ff7899','玫瑰']].map(([key,name])=><button key={key} aria-pressed={tracking.palette===key} onClick={()=>updateTracking('palette',key)}>{name}</button>)}</div>{tr('線條透明度','opacity',0,1,.01)}{tr('底圖透明度','imageOpacity',0,1,.01)}</>}
+   {effect==='tracking'&&tab==='構圖'&&<>{groups(['顏色','元素','文字'])}
+    {section==='元素'&&<><div className="art-presets art-elements" role="group" aria-label="選擇要調整的元素">{[['frame','取景框'],['chain','圓圈'],['golden','黃金比例']].map(([key,name])=><button key={key} aria-pressed={element===key} data-enabled={!!tracking[key]} onClick={()=>visitElement(key)}>{name}</button>)}</div>{tt(element==='frame'?'取景框':element==='chain'?'圓圈':'黃金比例',element)}<div className="art-detail-ranges art-element-ranges">{element==='frame'?<>{tr('大小','frameSize',10,100)}{tr('虛線','dash',2,30)}</>:element==='chain'?<>{tr('大小','baseRadius',30,400)}{tr('角度','angle',0,180)}</>:<>{tr('大小','goldenSize',10,150)}{tr('角度','goldenAngle',0,360)}</>}</div></>}
+    {section==='顏色'&&<ArtColorControls value={tracking.palette} onChange={color=>updateTracking('palette',color)}/>}
     {section==='文字'&&<>{tt('角落文字','labels')}<div className="art-text-fields">{[['topLeft','左上'],['topRight','右上'],['bottomLeft','左下'],['bottomRight','右下']].map(([key,name])=><label key={key}>{name}<KeyboardSafeInput aria-label={name+'文字'} value={tracking[key]} maxLength={40} onChange={e=>updateTracking(key,e.target.value)}/></label>)}</div></>}
    </>}
    {effect==='tracking'&&tab==='遮罩'&&<>{groups(['材質','編輯','細節'])}
     {section==='材質'&&<div className="art-presets">{[['none','無'],...MATERIALS].map(([key,name])=><button key={key} aria-pressed={key==='none'?!tracking.materials.length:tracking.materials.includes(key)} onClick={()=>selectMany('materials',key)}>{name}</button>)}</div>}
-    {section==='編輯'&&<><div className="art-presets"><button aria-pressed={placing} onClick={()=>setPlacing(!placing)}>手動放置</button><button onClick={()=>setTracking(s=>redistributeRegions(s))}>隨機分佈</button><button disabled={!tracking.zones.length&&!tracking.count} onClick={()=>setTracking(s=>({...s,zones:[],count:0}))}>清除</button></div>{tr('數量','count',0,12)}<div className="art-detail-ranges">{tr('大小','size',20,400)}{tr('變化','sizeVariation',0,100)}</div></>}
+    {section==='編輯'&&<><div className="art-presets"><button aria-pressed={placing} onClick={()=>setPlacing(!placing)}>手動放置</button><button onClick={()=>setTracking(s=>redistributeRegions(s))}>隨機分佈</button><button disabled={!tracking.zones.length&&!tracking.count} onClick={()=>setTracking(s=>({...s,zones:[],count:0}))}>清除</button></div>{tr('數量','count',0,30)}<div className="art-detail-ranges">{tr('大小','size',20,400)}{tr('變化','sizeVariation',0,100)}</div></>}
     {section==='細節'&&<><div className="art-detail-ranges">{tracking.materials.includes('mosaic')&&tr('馬賽克','pixels',2,60)}{tracking.materials.includes('glass')&&tr('霧化','blur',0,60)}</div>{tt('框線','zoneStroke')}</>}
    </>}
   </div><nav aria-label="藝術工具">{tabs.map(label=><button key={label} aria-pressed={tab===label} onClick={()=>selectTab(label)}>{label}</button>)}</nav></section>

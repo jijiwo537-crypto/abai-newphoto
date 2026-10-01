@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {trackingDefaults,trackingRadius,trackingZones,trackingCircleChain,redistributeRegions,renderTracking,invalidateTracking} from '../utils/artTracking.js';
+import {trackingDefaults,trackingRadius,trackingFrameExtent,trackingZones,trackingCircleChain,redistributeRegions,renderTracking,invalidateTracking} from '../utils/artTracking.js';
 import {firstTrackingElementVisit,preciseAngle} from '../utils/artElementControls.js';
+import {ART_SWATCHES,artHexToHsv,artHsvToHex} from '../utils/artColors.js';
 import {SVGContext} from '../utils/artVector.js';
 const ui=readFileSync(new URL('../components/ArtStudio.tsx',import.meta.url),'utf8');
 const css=readFileSync(new URL('../components/ArtStudio.css',import.meta.url),'utf8');
@@ -30,12 +31,12 @@ test('actual vector rendering isolates node randomness from material randomness'
  }finally{globalThis.document=old;invalidateTracking();}
 });
 test('tracking tools expose requested placement, two-state elements and paired outline sliders',()=>{
- assert.match(ui,/groups\(\['外觀','元素','文字'\]\)/);assert.match(ui,/groups\(\['材質','編輯','細節'\]\)/);
+ assert.match(ui,/groups\(\['顏色','元素','文字'\]\)/);assert.match(ui,/groups\(\['材質','編輯','細節'\]\)/);
  assert.match(ui,/\['tree','標準'\]/);assert.doesNotMatch(ui,/最短路徑|折線|完成放置|區域大小|節點間距|像素大小|區域邊線/);
  assert.match(ui,/tr\('變化','variation',0,100\)/);assert.match(ui,/tr\('間距','minDistance',10,100\)/);
  assert.match(ui,/tr\('變化','sizeVariation',0,100\)/);assert.match(ui,/點擊圖片進行放置/);
  assert.match(ui,/const tt=.*binary/);assert.doesNotMatch(ui+css,/三分構圖|art-zone-stroke-second|art-materials-all/);
- assert.match(ui,/tr\('大小','goldenSize',10,150\)/);assert.match(ui,/黃金比例精確角度/);assert.match(ui,/step=\{\.1\}/);
+ assert.match(ui,/tr\('大小','goldenSize',10,150\)/);assert.match(ui,/tr\('角度','goldenAngle',0,360\)/);assert.doesNotMatch(ui+css,/黃金比例精確角度|art-angle|goldenAngleControl/);
  assert.match(css,/art-detail-ranges>\.art-range:last-child:nth-child\(odd\)\{grid-column:1\/-1\}/);
  assert.match(css,/art-subtabs button\[aria-pressed=true\]\{color:white\}/);
 });
@@ -44,9 +45,41 @@ test('element visits activate once without undoing a later manual disable',()=>{
  assert.equal(visited.size,3);assert.doesNotMatch(ui,/圓圈鏈|定位角|tab==='區域'/);assert.doesNotMatch(css,/art-elements i/);
  assert.match(ui,/\['selection','選中框'\]/);assert.match(ui,/\['cross','交叉框'\]/);assert.match(ui,/name:'ASCII'/);
 });
-test('golden ratio allows exact quarter and half turns and tenths of a degree',()=>{
- for(const angle of [0,90,180,360,89.9,179.9])assert.equal(preciseAngle(angle),angle);
+test('golden ratio permits every integer angle including exact quarter and half turns',()=>{
+ for(let angle=0;angle<=360;angle++)assert.equal(preciseAngle(angle),angle);
+ assert.equal(preciseAngle(89.9),90);assert.equal(preciseAngle(179.9),180);
  assert.equal(preciseAngle(''),null);assert.equal(preciseAngle('wrong'),null);assert.equal(preciseAngle(999),360);assert.equal(preciseAngle(-1),0);
+});
+test('selected and crossed frames vary up to 1:5 on both axes while retaining squares',()=>{
+ assert.deepEqual(trackingFrameExtent(40,0,.1,1),{rx:40,ry:40});
+ assert.deepEqual(trackingFrameExtent(40,100,0,1),{rx:40,ry:8});
+ assert.deepEqual(trackingFrameExtent(40,100,1,1),{rx:8,ry:40});
+ for(let i=0;i<100;i++)for(const v of [0,50,100]){
+  const {rx,ry}=trackingFrameExtent(40,v,i/99,i);assert.ok(rx>0&&ry>0);assert.ok(Math.max(rx,ry)===40);assert.ok(Math.max(rx/ry,ry/rx)<=5);
+  if(i%4===0)assert.equal(rx,ry);
+ }
+});
+test('color controls keep the original colors and white-first rainbow with reversible HSV',()=>{
+ assert.equal(ART_SWATCHES.length,8);assert.equal(ART_SWATCHES[0][0],'#ffffff');
+ for(const hex of ['#a8ffdc','#ffd178','#ff7899'])assert.ok(ART_SWATCHES.some(([c])=>c===hex));
+ for(const hex of [...ART_SWATCHES.map(([c])=>c),'#000000','#123456'])assert.equal(artHsvToHex(artHexToHsv(hex)),hex);
+ assert.equal(artHsvToHex({h:360,s:100,v:100}),'#ff0000');
+ assert.doesNotMatch(ui,/tr\('線條透明度'|tr\('底圖透明度'/);
+});
+test('comparison feedback and randomization only brighten borders; contour row clamps bounce',()=>{
+ assert.match(ui,/aria-pressed=\{compare\}/);assert.match(ui,/onLostPointerCapture/);
+ assert.match(css,/art-compare\[aria-pressed=true\]/);assert.match(ui,/button.animate\(\[\{borderColor/);
+ assert.doesNotMatch(ui,/button.animate\(\[\{backgroundColor/);
+ assert.match(css,/art-scroll\{[^}]*overscroll-behavior:none/);assert.match(ui,/touchmove',move,\{passive:false\}/);
+ const outline=ui.match(/section==='輪廓'[^\n]+/)[0];assert.doesNotMatch(outline,/\['none','無'\]/);
+});
+test('sliders preserve the pending paint, source pixels and direct GPU material result',()=>{
+ const gpu=readFileSync(new URL('../utils/artTrackingGpu.js',import.meta.url),'utf8'),vectors=readFileSync(new URL('../utils/artVector.js',import.meta.url),'utf8');
+ assert.match(ui,/if\(!frame.current\)frame.current=requestAnimationFrame/);assert.doesNotMatch(ui,/useEffect\(\(\)=>\{cancelAnimationFrame\(frame.current\)/);
+ assert.match(ui,/tr\('數量','count',0,30\)/);assert.match(ui,/new SVGContext\(vector.current\)/);
+ assert.match(ui,/trackingGpu.current\?\.style.display==='block'\?trackingGpu.current/);
+ assert.match(gpu,/canvas.width=w;canvas.height=h/);assert.match(gpu,/blurMaterialTexture/);assert.doesNotMatch(gpu,/getImageData|readPixels|blurredSource/);
+ assert.match(vectors,/canvas.width=source.width;canvas.height=source.height/);
 });
 test('circle extensions preserve all seven original circles and add equally at both ends',()=>{
  const o={...trackingDefaults,chain:true},old=trackingCircleChain({...o,chainCount:7},1200,1600),extended=trackingCircleChain(o,1200,1600);

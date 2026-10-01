@@ -8,5 +8,5 @@ export function firstTrackingElementVisit(visited, key) {
 export function preciseAngle(value) {
  if (String(value).trim()==='') return null;
  const angle=Number(value);
- return Number.isFinite(angle) ? Math.round(Math.max(0,Math.min(360,angle))*10)/10 : null;
+ return Number.isFinite(angle) ? Math.round(Math.max(0,Math.min(360,angle))) : null;
 }

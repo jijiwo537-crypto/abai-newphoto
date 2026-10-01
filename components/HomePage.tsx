@@ -1331,7 +1331,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           )}
           <div className="relative px-[18px] py-4">
             <p className="text-[16px] font-black tracking-[0.04em] text-white">藝術效果</p>
-            <p className="mt-1.5 text-[11px] tracking-[0.14em] text-white/45">把影像，寫成自己的風格</p>
+            <p className="mt-1.5 text-[11px] tracking-[0.14em] text-white/45">探索影像的另一種可能</p>
             <button
               /* 這顆在卡片裡面，要擋住冒泡 —— 不然按它會順便叫出換圖 */
               onClick={e => { e.stopPropagation(); onOpenArt(); }}

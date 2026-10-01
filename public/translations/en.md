@@ -576,3 +576,13 @@
 | {0}曲風榜:{1}筆 | {0} genre chart: {1} results |
 | {0}每日+曲風 | {0} daily + genre |
 | 曲風{0}:都拿不到 | Genre {0}: no sources available |
+| 探索影像的另一種可能 | Explore a new side of your photos |
+| 顏色色票 | Color swatches |
+| 白色 | White |
+| 玫瑰 | Rose |
+| 琥珀 | Amber |
+| 柔黃 | Soft yellow |
+| 薄荷 | Mint |
+| 冰青 | Ice cyan |
+| 霧藍 | Soft blue |
+| 霞紫 | Lilac |

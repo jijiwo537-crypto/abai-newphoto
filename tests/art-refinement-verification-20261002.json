@@ -1,0 +1,40 @@
+{
+  "date": "2026-10-02",
+  "scope": "ArtStudio controls, material rendering, homepage art subtitle only",
+  "automatedTests": {"passed": 152, "failed": 0},
+  "productionBuild": "passed",
+  "nativeAudit": {
+    "device": "iPhone 17 simulator",
+    "system": "iOS 26.5",
+    "browser": "Safari",
+    "input": "Synthetic events on real mounted controls; not physical-device finger input or installed PWA",
+    "photo": {"width": 1154, "height": 1538},
+    "sliderCount": 23,
+    "frameIntervalMedianMs": 17,
+    "worstSliderP95Ms": 22,
+    "worstSingleFrameMs": 27,
+    "mixedMaskCount": 30,
+    "mixedMaskMaterials": ["mosaic", "glass", "negative"],
+    "mosaicSliderMs": {"median": 17, "p95": 18, "max": 19},
+    "glassSliderMs": {"median": 17, "p95": 18, "max": 19},
+    "elementSliderY": {"frame": [603, 603], "circles": [603, 603], "goldenRatio": [603, 603]},
+    "angleStep": 1,
+    "anglesVerified": [90, 180],
+    "controlsClipped": false,
+    "contourOverscroll": "none",
+    "outlineNoneOption": false,
+    "frameVariation": {"squares": 73, "portrait": 21, "landscape": 20, "observedMaxRatio": 4.989880455655483, "analyticMaxRatio": 5},
+    "compareFeedback": "Immediate border and background on press",
+    "randomFeedback": "Border only, 260ms"
+  },
+  "browserRegression": {
+    "widths": [320, 402],
+    "pageErrors": [],
+    "vectorDOMRetainedAcrossSliderChange": true,
+    "export": {"format": "png", "width": 2401, "height": 3200, "meanRGB": 138.185546875, "blank": false},
+    "swatches": ["#ffffff", "#ff7899", "#ffd178", "#f5ee9e", "#a8ffdc", "#9de7ff", "#a6bcff", "#d0adff"]
+  },
+  "qualityPolicy": "Original-resolution source and material canvas; analytic SVG overlay; no interaction-time resolution switch. Unavailable GPU uses full-quality Canvas fallback.",
+  "homeSubtitle": "探索影像的另一種可能",
+  "limitations": "Simulator timing does not guarantee 60fps on every physical device. Native HEIC availability remains platform-dependent."
+}

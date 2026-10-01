@@ -4,11 +4,12 @@ import {readFileSync} from 'node:fs';
 import {trackingDefaults} from '../utils/artTracking.js';
 import {asciiVector} from '../utils/artVector.js';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
-test('outline and material selection use arrays, with none first and only requested types',()=>{
+test('outline and material selection use arrays; only materials retain a none button',()=>{
  const s=read('components/ArtStudio.tsx');
  assert.deepEqual(trackingDefaults.shapes,['circle']);assert.deepEqual(trackingDefaults.materials,['mosaic']);
  assert.match(s,/value==='none'\?\[\]/);assert.match(s,/s\[key\]\.includes\(value\)/);
- assert.match(s,/\['none','無'\],\['circle','圓形'\]/);assert.match(s,/\['star','星星'\]/);
+ assert.match(s,/\['circle','圓形'\],\['square','方形'\]/);assert.match(s,/\['star','星星'\]/);
+ assert.match(s,/\[\['none','無'\],\.\.\.MATERIALS\]/);
  assert.doesNotMatch(s,/菱形|放射|materialStrength|材質強度/);
  assert.match(s,/exportHeic/);assert.match(s,/image\/jpeg/);assert.match(s,/image\/png/);
 });
