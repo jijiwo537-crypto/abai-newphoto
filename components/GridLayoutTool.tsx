@@ -930,7 +930,7 @@ const FX_DETAIL: Record<string, [string, string, number, number, number][]> = {
 const FX_SUB_TOOLS: Record<string, [string, string, string, number, number, number][]> = {
   softLight: [
     ['soft', '強度', 'blur_on', 0, 100, 0],
-    ['softThreshold', '範圍', 'tonality', 0, 95, 70],
+    ['softThreshold', '範圍', 'tonality', 0, 100, 70],
     ['softRadius', '擴散', 'flare', 20, 100, 100],
     ['softColor', '色相', 'palette', 0, 100, 0],
   ],
@@ -3184,13 +3184,15 @@ return (
                   <div key={key} className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1 mb-0.5">
                       <span className="text-[9px] font-black text-white/40 uppercase tracking-[0.12em] truncate pointer-events-none">{label}</span>
-                      <span className="text-[10px] leading-none font-sans tabular-nums font-bold bg-white/10 px-1.5 py-[4px] rounded shrink-0">{Math.round(fxVal(key, dflt))}</span>
+                      <span className="text-[10px] leading-none font-sans tabular-nums font-bold bg-white/10 px-1.5 py-[4px] rounded shrink-0">{Math.round(key==='softThreshold'?100-fxVal(key,dflt):fxVal(key, dflt))}</span>
                     </div>
-                    <div className="relative h-[26px] flex items-center justify-center touch-none">
+                    <div className="relative h-[26px] flex items-center justify-center touch-none slider-wrap" style={{touchAction:'none'}}>
                       <input
                         type="range" min={mn} max={mx} step="1"
-                        value={fxVal(key, dflt)}
-                        onChange={e => setFx({ [key]: parseInt(e.target.value) })}
+                        value={key==='softThreshold'?100-fxVal(key,dflt):fxVal(key, dflt)}
+                        data-fine-drag="true"
+                        style={{left:0,width:'100%',height:26,margin:'-13px 0 0','--thumb-w':'18px'} as React.CSSProperties}
+                        onChange={e => setFx({ [key]: key==='softThreshold'?100-parseInt(e.target.value):parseInt(e.target.value) })}
                         className="custom-range dense"
                       />
                     </div>

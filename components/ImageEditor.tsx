@@ -7,6 +7,7 @@ import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
+import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from '../utils/highlightSelection';
 import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
 import { SaveButton } from './SaveButton';
 /* IG 貼文預覽跟拼圖那兩個工具共用同一顆元件 */
@@ -199,7 +200,7 @@ const ADJUST_TOOLS: ToolDef[] = [
 
 const SOFT_LIGHT_TOOLS: ToolDef[] = [
   { id: 'soft', label: '強度', icon: 'blur_on', min: 0, max: 100 },
-  { id: 'softThreshold', label: '範圍', icon: 'tonality', min: 0, max: 95 },
+  { id: 'softThreshold', label: '範圍', icon: 'tonality', min: 0, max: 100, step: 1 },
   { id: 'softRadius', label: '擴散', icon: 'flare', min: 20, max: 100 },
   { id: 'softColor', label: '色相', icon: 'palette', min: 0, max: 100 },
 ];
@@ -1045,13 +1046,16 @@ const FastSlider = React.memo(({
 }: FastSliderProps) => {
     const inputRef = useRef<HTMLInputElement>(null);
     const valueTextRef = useRef<HTMLSpanElement>(null);
+    // Stored legacy threshold stays compatible with existing projects. The
+    // user-facing range now means the brightest N percent, increasing right.
+    const displayValue = toolId === 'softThreshold' ? 100-value : value;
 
     useEffect(() => {
         if (inputRef.current) {
-            inputRef.current.value = value.toString();
+            inputRef.current.value = displayValue.toString();
         }
         if (valueTextRef.current) {
-            valueTextRef.current.textContent = value.toFixed(0);
+            valueTextRef.current.textContent = displayValue.toFixed(0);
         }
     }, [value, toolId]);
 
@@ -1066,7 +1070,7 @@ const FastSlider = React.memo(({
         if (valueTextRef.current) {
             valueTextRef.current.textContent = val.toFixed(0);
         }
-        onUpdate(toolId, val);
+        onUpdate(toolId, toolId === 'softThreshold' ? 100-val : val);
     };
 
     const isLutAmount = toolId === 'lutAmount';
@@ -1094,7 +1098,7 @@ const FastSlider = React.memo(({
                                 if (onValueClick) onValueClick(toolId);
                             }}
                         >
-                            {value.toFixed(0)}
+                            {displayValue.toFixed(0)}
                         </span>
                     </>
                 ) : isMaskCategory ? (
@@ -1148,7 +1152,7 @@ const FastSlider = React.memo(({
                                 if (onValueClick) onValueClick(toolId);
                             }}
                         >
-                            {value.toFixed(0)}
+                            {displayValue.toFixed(0)}
                         </span>
                     </>
                 ) : (
@@ -1169,7 +1173,7 @@ const FastSlider = React.memo(({
                                     if (onValueClick) onValueClick(toolId);
                                 }}
                             >
-                                {value.toFixed(0)}
+                                {displayValue.toFixed(0)}
                             </span>
                             {onEdit && (
                                 <button
@@ -1185,11 +1189,13 @@ const FastSlider = React.memo(({
                 )}
             </div>
 
-            <div className={`relative flex items-center justify-center touch-none ${dense ? 'h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
+            <div style={dense ? {touchAction:'none'} : undefined} className={`relative flex items-center justify-center touch-none ${dense ? 'slider-wrap h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
                 <input 
                     ref={inputRef}
                     type="range" min={min} max={max} step={step}
-                    defaultValue={value}
+                    defaultValue={displayValue}
+                    data-fine-drag={dense ? 'true' : undefined}
+                    style={dense ? {left:0,width:'100%',height:26,margin:'-13px 0 0',touchAction:'none','--thumb-w':'18px'} as React.CSSProperties : undefined}
                     disabled={disabled}
                     onChange={handleChange}
                     onPointerDown={onInteractStart}
@@ -4045,8 +4051,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         const mCtx = maskCanvas.getContext('2d', { willReadFrequently: true })!;
         mCtx.drawImage(ctx.canvas, 0, 0, mw, mh);
         
-        const glowThreshold = (p.softThreshold / 100) * 255;
         const currentData = mCtx.getImageData(0, 0, mw, mh).data;
+        const highlightSelection = selectHighlights(highlightHistogram(currentData),100-p.softThreshold);
         const mImgData = mCtx.createImageData(mw, mh);
         const mData = mImgData.data;
         
@@ -4058,11 +4064,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         
         for (let i = 0; i < currentData.length; i += 4) {
           const r = currentData[i], g = currentData[i+1], b = currentData[i+2];
-          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
           mData[i] = p.softColor > 0 ? r_c : r; mData[i+1] = p.softColor > 0 ? g_c : g; mData[i+2] = p.softColor > 0 ? b_c : b;
           
-          const diff = lum - glowThreshold;
-          mData[i+3] = diff > 0 ? Math.min(255, diff * 5) : 0;
+          mData[i+3] = 255*highlightWeight(luminanceBin(r,g,b),highlightSelection);
         }
 
         const blurRadius = (p.softRadius / 100) * 80 * scale * procScale;
@@ -7801,7 +7805,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                       <div key={t.id} className="flex-1 min-w-0">
                         <FastSlider
                           value={typeof params[t.id as keyof EditorParams] === 'number' ? params[t.id as keyof EditorParams] as number : 0}
-                          min={t.min} max={t.max} step={t.step || 0.1}
+                          min={t.min} max={t.max} step={t.step ?? 1}
                           toolId={t.id} label={t.label} snapZero={t.min < 0}
                           compact dense
                           onUpdate={(id, val) => {
@@ -7830,7 +7834,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <div className="w-full">
                   <FastSlider 
                       value={typeof params[activeTool.id as keyof EditorParams] === 'number' ? params[activeTool.id as keyof EditorParams] as number : 0}
-                      min={activeTool.min} max={activeTool.max} step={activeTool.step || 0.1}
+                      min={activeTool.min} max={activeTool.max} step={activeTool.step ?? 1}
                       toolId={activeTool.id} label={activeToolId === 'filter_select' ? '強度' : activeTool.label}
                       snapZero={activeTool.min < 0}
                       disabled={!!loadingLutId || maskLocked}

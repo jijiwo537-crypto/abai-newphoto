@@ -29,6 +29,7 @@
  */
 export const FX_REF = 1000;
 const REF = FX_REF;
+import {highlightHistogram,selectHighlights} from './highlightSelection';
 
 /* ---------- 共用工具（著色器端） ---------- */
 export const FX_GLSL_HEADER = `precision highp float;
@@ -37,6 +38,9 @@ uniform sampler2D uTex;
 uniform sampler2D uSrc;
 uniform sampler2D uAux;
 uniform float uEffectAmount;
+uniform float uHighlightReady;
+uniform float uHighlightCut;
+uniform float uHighlightTie;
 uniform vec2  uRes;
 uniform vec2  uTexel;   // 基準像素（與實際解析度無關）
 uniform vec2  uRefRes;  // 基準解析度，只給需要像素格線的效果用
@@ -151,10 +155,10 @@ const amount = (id: string, def = 0): FxParamDef =>
 
 // The lab's F-12: squared highlight isolation, three box-blur pairs,
 // a broad neutral bloom and 25 vertically offset narrow highlight exposures.
-const spillHighlight:FxPass={fromSource:true,body:`vec3 c=texture2D(uTex,uv).rgb;float m=clamp((dot(c,vec3(1./3.))-.55)/.45,0.,1.);return vec4(c*m*m,1.);`};
+const spillHighlight:FxPass={fromSource:true,body:`vec3 c=texture2D(uTex,uv).rgb;float m=clamp((dot(c,vec3(1./3.))-.55)/.45,0.,1.);if(uHighlightReady>.5){float bin=floor(dot(c,vec3(.299,.587,.114))*255.+.5);m=bin>uHighlightCut?1.:bin==uHighlightCut?uHighlightTie:0.;}else{m*=m;}return vec4(c*m,1.);`};
 const spillBlur=(radius:number):FxPass[]=>Array.from({length:6},(_,i)=>({
  dir:(i%2?[0,1]:[1,0]) as [number,number],
- body:`vec3 sum=vec3(0.);for(int i=-${radius};i<=${radius};i++){sum+=texture2D(uTex,uv+uDir*float(i)/400.).rgb;}return vec4(sum/${radius*2+1}.,1.);`,
+ body:`vec3 sum=vec3(0.);for(int i=-${radius};i<=${radius};i++){sum+=texture2D(uTex,uv+uDir*float(i)*fxSpillDiffusion/400.).rgb;}return vec4(sum/${radius*2+1}.,1.);`,
 }));
 const spillWide=spillBlur(18);spillWide[5].preserveOutput=true;
 export const LOWFI_FIXED = Object.freeze({softness:0,bloom:0,exposure:10,grainSize:50,halo:0,haloSize:31,haloFeather:50,haloHue:73});
@@ -181,10 +185,14 @@ export const FX_DEFS: FxDef[] = [
     }],
   },
   {
-    id:'fxExposureSpill',label:'柔光ll',icon:'flare',onAmount:60,params:[],handlesAmount:true,
+    id:'fxExposureSpill',label:'柔光ll',icon:'flare',onAmount:60,params:[
+      {id:'fxSpillRange',label:'範圍',icon:'tonality',min:0,max:100,def:30,step:1},
+      {id:'fxSpillDiffusion',label:'擴散',icon:'flare',min:0,max:100,def:50,scale:.02,step:1},
+      {id:'fxSpillStreak',label:'延展',icon:'height',min:0,max:100,def:50,scale:.02,step:1},
+    ],handlesAmount:true,
     passes:[spillHighlight,...spillWide,spillHighlight,...spillBlur(5),{body:`
       vec3 c=blendScreen(texture2D(uSrc,uv).rgb,texture2D(uAux,uv).rgb*uEffectAmount*.9);
-      for(int i=-12;i<=12;i++){c=blendScreen(c,texture2D(uTex,uv+vec2(0.,float(i)*3./1200.)).rgb*uEffectAmount*.05);}
+      for(int i=-12;i<=12;i++){c=blendScreen(c,texture2D(uTex,uv+vec2(0.,float(i)*3.*fxSpillStreak/1200.)).rgb*uEffectAmount*.05);}
       return vec4(c,1.);`}],
   },
   {
@@ -677,6 +685,8 @@ interface Ctx {
      會卡住的主因之一（配置 4 張全尺寸貼圖不便宜），尺寸沒變就不要動它。 */
   pool: Pool | null;
   uploadKey?: string;
+  highlightKey?: string;
+  highlightBins?: Float64Array;
 }
 
 let ctxCache: Ctx | null = null;
@@ -826,6 +836,15 @@ export function applyGlEffects(
 
   // 來源：把 2D 畫布上傳進來源貼圖
   const uploadKey=sourceKey ? `${w}x${h}|${sourceKey}` : undefined;
+  let spillSelection:{cutoff:number;tie:number}|undefined;
+  if(active.some(d=>d.id==='fxExposureSpill')){
+    // Cached once per underlying photograph/color result. Range dragging
+    // only queries 256 bins; it never reads back or analyzes the GPU image.
+    if(!uploadKey||c.highlightKey!==uploadKey||!c.highlightBins){
+      c.highlightBins=highlightHistogram(ctx2d.getImageData(0,0,w,h).data);c.highlightKey=uploadKey;
+    }
+    spillSelection=selectHighlights(c.highlightBins,params.fxSpillRange??30);
+  }
   if(!uploadKey || c.uploadKey!==uploadKey){
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D, srcTex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
@@ -879,7 +898,7 @@ export function applyGlEffects(
       const layerIn = cur;                       // 本層輸入（uSrc）
       let from = cur;
       const spillKey=d.id==='fxExposureSpill' && uploadKey
-        ? uploadKey+'|'+JSON.stringify(active.slice(0,active.indexOf(d)).map(x=>[x.id,params[x.id],...x.params.map(p=>params[p.id]??p.def)])) : undefined;
+        ? uploadKey+'|'+JSON.stringify([params.fxSpillRange??30,params.fxSpillDiffusion??50,active.slice(0,active.indexOf(d)).map(x=>[x.id,params[x.id],...x.params.map(p=>params[p.id]??p.def)])]) : undefined;
       if(d.id==='fxExposureSpill' && pool.spillKey!==spillKey)pool.spillKey=undefined;
       for (let i = 0; i < d.passes.length; i++) {
         if(spillKey && pool.spillKey===spillKey && pool.narrow && i<d.passes.length-1)continue;
@@ -893,6 +912,8 @@ export function applyGlEffects(
         bind(prog, spillKey && pool.spillKey===spillKey && pool.narrow && i===d.passes.length-1
           ? pool.narrow : texs[pass.fromSource ? layerIn : from], texs[layerIn]);
         gl.uniform1f(gl.getUniformLocation(prog,'uEffectAmount'),Math.max(0,Math.min(1,(params[d.id]||0)/100)));
+        gl.uniform1f(gl.getUniformLocation(prog,'uHighlightReady'),spillSelection?1:0);
+        if(spillSelection){gl.uniform1f(gl.getUniformLocation(prog,'uHighlightCut'),spillSelection.cutoff);gl.uniform1f(gl.getUniformLocation(prog,'uHighlightTie'),spillSelection.tie);}
         if(pool.aux){gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,pool.aux);gl.uniform1i(gl.getUniformLocation(prog,'uAux'),2);}
         gl.uniform2f(gl.getUniformLocation(prog, 'uDir'), pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
         for (const p of d.params) {

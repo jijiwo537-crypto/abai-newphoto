@@ -1,10 +1,11 @@
 // ABAI original image-analysis renderer. No third-party code or visual assets.
 // Derived from our own effects-lab implementation, with an independent app composition.
 import {blurredSource,makeLinks} from './artMaterials.js';
+import {mosaicGrid,rankCandidates,scopedCandidates} from './artSampling.js';
 export const trackingDefaults={mode:'mosaic',detection:'combined',threshold:30,count:0,size:100,pixels:16,blur:20,circles:55,minDistance:55,block:16,minRadius:4,maxRadius:24,stroke:1,labelSize:8,opacity:1,imageOpacity:1,links:125,lineWeight:.8,chain:false,chainCount:11,angle:30,baseRadius:170,ratio:.83,intersections:true,markerSize:5,frame:false,frameSize:68,dash:8,frameStroke:1,starSize:40,starPoints:4,textSize:12,topLeft:'ABAI / VISION',topRight:'IMAGE ANALYSIS',bottomLeft:'SIGNAL / 001',bottomRight:'OBSERVATION',labels:false,palette:'#ffffff',background:'#111111',shape:'circle',format:'1200x1600',noise:false,textureOpacity:.5,texture:null,zones:[],zoneStroke:true,seed:42};
 let cache=null;
 trackingDefaults.linkMode='tree';trackingDefaults.materialStrength=100;trackingDefaults.shapes=['circle'];trackingDefaults.materials=['mosaic'];
-Object.assign(trackingDefaults,{nodeSeed:42,variation:80,sizeVariation:0,golden:false,goldenSize:76,goldenAngle:0,angle:null,baseRadius:200});
+Object.assign(trackingDefaults,{maxRadius:40,nodeSeed:42,variation:80,sizeVariation:0,golden:false,goldenSize:76,goldenAngle:0,angle:null,baseRadius:200});
 export function invalidateTracking(){cache=null;}
 function canvas(w,h=w){const c=document.createElement('canvas');c.width=w;c.height=h;return c;}
 function random(seed){let s=seed>>>0;return()=>{s=(Math.imul(s,1664525)+1013904223)>>>0;return s/4294967296;};}
@@ -44,11 +45,11 @@ function detect(p,o,w,h,k){
  for(let y=step+oy;y<p.sh-step;y+=step)for(let x=step+ox;x<p.sw-step;x+=step){
  const i=y*p.sw+x,l=p.lum[i],contrast=(Math.abs(p.lum[i-step]-p.lum[i+step])+Math.abs(p.lum[i-step*p.sw]-p.lum[i+step*p.sw]))*.5;
  const score=o.detection==='dark'?1-l:o.detection==='bright'?l:o.detection==='contrast'?contrast*3:contrast*2+Math.abs(l-.5)*.5;
- points.push({x:x/p.sw*w,y:y/p.sh*h,score,rank:score+rng()*.08,radiusRand:rng(),aspectRand:aspectRandom(x,y,o.nodeSeed)});
+ points.push({x:x/p.sw*w,y:y/p.sh*h,score,sample:rng(),radiusRand:rng(),aspectRand:aspectRandom(x,y,o.nodeSeed)});
  }
- points.sort((a,b)=>b.rank-a.rank);p.candidates=points;p.candidateKey=candidateKey;}
+ p.candidates=rankCandidates(points);p.candidateKey=candidateKey;}
  const nodes=[],grid=new Map(),distance=Math.max(.01,o.minDistance*k),squared=distance*distance;
- for(const n of p.candidates){if(nodes.length>=o.circles)break;if(n.score*100<o.threshold)continue;const gx=Math.floor(n.x/distance),gy=Math.floor(n.y/distance);let near=false;
+ for(const n of scopedCandidates(p.candidates,o.threshold)){if(nodes.length>=o.circles)break;const gx=Math.floor(n.x/distance),gy=Math.floor(n.y/distance);let near=false;
   for(let dx=-1;dx<=1&&!near;dx++)for(let dy=-1;dy<=1&&!near;dy++)for(const q of grid.get(`${gx+dx}:${gy+dy}`)||[]){if((q.x-n.x)**2+(q.y-n.y)**2<squared){near=true;break;}}
   if(!near){nodes.push(n);const cell=`${gx}:${gy}`;if(!grid.has(cell))grid.set(cell,[]);grid.get(cell).push(n);}
  }
@@ -92,7 +93,15 @@ export function renderTracking(c,source,strength=.6,options={}){
   c.globalAlpha=amount;c.drawImage(p.blur,0,0,w,h);c.globalAlpha=1;
   const wash=c.createLinearGradient(x,y,x+rw,y+rh);wash.addColorStop(0,'#ffffff22');wash.addColorStop(.5,'#ffffff00');wash.addColorStop(1,'#ffffff11');c.globalAlpha=amount;c.fillStyle=wash;c.fillRect(x,y,rw,rh);
  }else if(mode==='negative'){c.globalCompositeOperation='difference';c.globalAlpha=amount;c.fillStyle='white';c.fillRect(x,y,rw,rh);}
- else{const tw=Math.max(1,Math.round(rw/(o.pixels*k))),th=Math.max(1,Math.round(rh/(o.pixels*k)));p.tile.width=tw;p.tile.height=th;p.tile.getContext('2d').drawImage(source,x,y,rw,rh,0,0,tw,th);c.globalAlpha=amount;c.imageSmoothingEnabled=false;c.drawImage(p.tile,x,y,rw,rh);}
+ else{
+  const grid=mosaicGrid(rw,rh,o.pixels,k),tw=Math.max(1,Math.ceil(grid.x)),th=Math.max(1,Math.ceil(grid.y));
+  p.tile.width=tw;p.tile.height=th;const tg=p.tile.getContext('2d');
+  tg.drawImage(source,x,y,rw,rh,0,0,grid.x,grid.y);
+  // Fill partial terminal cells with source edge color, never transparency.
+  if(grid.x<tw)tg.drawImage(source,x+rw-1,y,1,rh,tw-1,0,1,th);
+  if(grid.y<th)tg.drawImage(source,x,y+rh-1,rw,1,0,th-1,tw,1);
+  c.globalAlpha=amount;c.imageSmoothingEnabled=false;c.drawImage(p.tile,x,y,tw*grid.pitch,th*grid.pitch);
+ }
  c.restore();
  }
  c.restore();

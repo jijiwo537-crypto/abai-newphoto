@@ -30,6 +30,7 @@
  * 的 --thumb-w 上，兩邊不可能各走各的。
  */
 
+import {fineSliderValue} from './sliderPrecision';
 /** 看得見的那一條有多高（單邊）。這個範圍內按下去就直接跳值，跟原生一樣。 */
 const CORE_HALF = 9;
 /** 手指橫向移動超過這麼多就算「在拖滑桿」，不算「點一下」 */
@@ -165,6 +166,10 @@ export const installSliderTouch = () => {
     const id = e.pointerId;
     const isTouch = e.pointerType === 'touch';
     const x0 = e.clientX, y0 = e.clientY;
+    const min=Number(el.min||0),max=Number(el.max||100),step=Number(el.step||1);
+    const start=Number(el.value),travel=Math.max(1,r.width-thumbWidth(el));
+    const center=r.left+thumbWidth(el)/2+(start-min)/(max-min)*travel;
+    const fine=el.dataset.fineDrag==='true'&&Math.abs(x0-center)<=Math.max(14,thumbWidth(el));
 
     /* 按下去的當下什麼都不做 —— 手指還可能是要直向捲面板，
        這時候就先跳值的話，捲一次就順手把滑桿也拉走了。
@@ -201,7 +206,7 @@ export const installSliderTouch = () => {
            （dx*2 >= dy）就算拖滑桿；要判成捲面板則得直向明顯大很多
            （超過 14px 而且是橫向的兩倍以上）。兩邊都還沒過門檻就繼續等，
            這段期間什麼都不做，所以不會誤動到任何東西。 */
-        if (dx > DRAG_SLOP && dx * 2 >= dy) {
+        if (dx > (fine ? .5 : DRAG_SLOP) && dx * 2 >= dy) {
           live = true;
           notifyStart(cx, cy);
           /* 抓住這根指頭：接下來不管手指飄到哪一顆按鈕、哪一根滑桿上面，
@@ -211,7 +216,7 @@ export const installSliderTouch = () => {
           dead = true; return false;
         } else return false;
       }
-      setValue(el, valueAt(el, cx));
+      setValue(el, fine ? String(fineSliderValue(start,cx-x0,min,max,step,travel)) : valueAt(el, cx));
       return true;
     };
 
@@ -244,7 +249,7 @@ export const installSliderTouch = () => {
       // 手指明顯在直向滑、或整段被取消：這一下跟滑桿無關
       if (dead || (cancelled && !live)) return;
       // 沒拖過、又是按在看得見的那一條上：跟原生一樣，值跳到手指的位置
-      if (!live && inCore) { live = true; notifyStart(cx, cy); setValue(el, valueAt(el, cx)); }
+      if (!live && inCore) { live = true; notifyStart(cx, cy); if(!fine)setValue(el, valueAt(el, cx)); }
       if (live) {
         /* 有些滑桿是「手放開才算數」的（動畫頁放開後自動重播）——
            它們掛的是滑桿本人的 onPointerUp／onTouchEnd，補一顆給它們。 */

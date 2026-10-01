@@ -8,6 +8,8 @@ import '../styles.css';
 installSliderTouch();
 const query=new URLSearchParams(location.search);
 if(query.has('glyphglow'))void import('./art-glyph-glow-audit');
+if(query.has('relativeAudit'))void import('./relative-controls-audit').then(m=>m.auditRelativeControls());
+if(query.has('fineAudit'))void import('./editor-fine-slider-audit').then(m=>m.auditFineSlider());
 if(query.has('editor')&&query.has('composeAudit'))void import('./editor-compose-audit');
 if(query.has('fixture')&&query.has('refinement'))void import('./art-refinement-audit').then(m=>m.auditArtRefinement());
 if(query.has('fixture')&&(query.has('audit')||(query.has('geometry')&&(navigator as any).standalone)))void import('./art-controls-audit').then(m=>m.auditArtControls());

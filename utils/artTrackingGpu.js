@@ -2,6 +2,7 @@
 // Analytic overlay remains SVG. Material ordering and circular exclusions use
 // the same scene as the Canvas fallback, with no gesture-time quality switch.
 import {trackingMaterialScene} from './artTracking.js';
+import {mosaicGrid} from './artSampling.js';
 const states=new WeakMap();
 function blurMaterialTexture(s,w,h,radius){
  const {gl}=s,key=`${w}:${h}:${radius}`;if(s.blurKey===key)return;
@@ -54,7 +55,8 @@ export function paintTrackingMaterials(canvas,source,options){
   for(const r of regions){
    let count=0;for(const n of circles){if(n.x+n.radius<r.x||n.x-n.radius>r.x+r.rw||n.y+n.radius<r.y||n.y-n.radius>r.y+r.rh)continue;s.circleData[count*3]=n.x;s.circleData[count*3+1]=n.y;s.circleData[count*3+2]=n.radius;if(++count===150)break;}
    gl.uniform1i(u.circleCount,count);if(count)gl.uniform3fv(u.circles,s.circleData.subarray(0,count*3));
-   const mode=r.mode==='glass'?2:r.mode==='negative'?3:1;gl.uniform1f(u.mode,mode);gl.uniform4f(u.rect,r.x,r.y,r.rw,r.rh);gl.uniform2f(u.tiles,Math.max(1,Math.round(r.rw/(o.pixels*k))),Math.max(1,Math.round(r.rh/(o.pixels*k))));
+   const grid=mosaicGrid(r.rw,r.rh,o.pixels,k);
+   const mode=r.mode==='glass'?2:r.mode==='negative'?3:1;gl.uniform1f(u.mode,mode);gl.uniform4f(u.rect,r.x,r.y,r.rw,r.rh);gl.uniform2f(u.tiles,grid.x,grid.y);
    if(mode===3)gl.blendFuncSeparate(gl.ONE_MINUS_DST_COLOR,gl.ONE_MINUS_SRC_ALPHA,gl.ZERO,gl.ONE);else gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA);
    gl.drawArrays(gl.TRIANGLES,0,6);
   }

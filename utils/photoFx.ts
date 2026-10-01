@@ -16,6 +16,7 @@ import {
   type EditorParams,
 } from '../components/ImageEditor';
 import { applyGlEffects, hasActiveFx } from './glEffects';
+import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from './highlightSelection';
 import { bakeColorLut, bakedToTexture } from './lutBake';
 import { LutGpu } from './lutGpu';
 import { loadCachedLut, saveCachedLut } from './lutStore';
@@ -147,7 +148,7 @@ export interface PhotoFx {
   vib?: number;
   /** 柔光 0~100 */
   soft?: number;
-  /** 柔光只作用在比這個亮度更亮的地方 0~95，預設 70 */
+  /** 相容既有儲存值：柔光選取最亮的 (100-softThreshold)% 像素，預設30% */
   softThreshold?: number;
   /** 柔光擴散 20~100，預設 100 */
   softRadius?: number;
@@ -555,19 +556,17 @@ export function applyPhotoFx(
     const cur = mCtx.getImageData(0, 0, mw, mh).data;
     const glow = mCtx.createImageData(mw, mh);
     const gd = glow.data;
-    const threshold = ((fx.softThreshold ?? DEFAULT_PARAMS.softThreshold) / 100) * 255;
+    const selection = selectHighlights(highlightHistogram(cur),100-(fx.softThreshold ?? DEFAULT_PARAMS.softThreshold));
     let r_c = 0, g_c = 0, b_c = 0;
     if (softColor > 0) {
       const [tr, tg, tb] = hslToRgb(softColor / 100, 1.0, 0.5);
       r_c = tr; g_c = tg; b_c = tb;
     }
     for (let i = 0; i < cur.length; i += 4) {
-      const lum = 0.299 * cur[i] + 0.587 * cur[i + 1] + 0.114 * cur[i + 2];
       gd[i] = softColor > 0 ? r_c : cur[i];
       gd[i + 1] = softColor > 0 ? g_c : cur[i + 1];
       gd[i + 2] = softColor > 0 ? b_c : cur[i + 2];
-      const diff = lum - threshold;
-      gd[i + 3] = diff > 0 ? Math.min(255, diff * 5) : 0;
+      gd[i + 3] = 255*highlightWeight(luminanceBin(cur[i],cur[i+1],cur[i+2]),selection);
     }
     fastBlur(glow, mw, mh, ((fx.softRadius ?? 100) / 100) * 80 * scale * procScale, null);
     mCtx.putImageData(glow, 0, 0);
