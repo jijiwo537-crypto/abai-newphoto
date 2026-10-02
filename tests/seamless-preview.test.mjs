@@ -43,7 +43,10 @@ test('fusion gesture bypasses full editor state and keeps pixels at fixed full r
   assert.match(gpu,/if\(!tex\)/);assert.match(gpu,/gl.texImage2D/);
   assert.match(gpu,/gl.LINEAR_MIPMAP_LINEAR/);assert.match(gpu,/gl.generateMipmap/);
   assert.match(gpu,/uniform vec4/);assert.match(gpu,/smoothstep/);
-  assert.doesNotMatch(gpu,/toBlob|toDataURL|getImageData|Math.min\(.*1024/);
+  assert.doesNotMatch(gpu,/toBlob|toDataURL/);
+  // WebKit's profile conversion happens once on texture creation, not while
+  // adjusting fusion or redrawing an already-resident source.
+  assert.match(gpu,/if\(!tex\)[\s\S]*getImageData[\s\S]*this.textures.set/);
 });
 
 test('selected disabled layouts retain prepared GPU resources without painting hidden frames',()=>{

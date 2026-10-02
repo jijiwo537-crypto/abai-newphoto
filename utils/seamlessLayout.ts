@@ -1,4 +1,5 @@
 import { applyPhotoFx, hasPhotoFx, type PhotoFx } from './photoFx';
+import { get2dWide } from './colorSpace';
 
 export type SeamRect = { x: number; y: number; w: number; h: number };
 export type SeamPhoto = { url: string; zoom: number; offsetX: number; offsetY: number; rotation: number; fx?: PhotoFx; opacity?: number };
@@ -77,10 +78,21 @@ export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[]
     });
     width = masterH * aspect; height = masterH;
   }
+  try {
+    const textures=await Promise.all(cells.map(c=>prepareSeamSource(c,revision)));
+    if(cancelled())throw new DOMException('Superseded render','AbortError');
+    // Lazy import avoids initializing a preview renderer during module loading.
+    const {renderSeamlessGpu}=await import('./seamlessPreview');
+    return await renderSeamlessGpu(cells,rects,textures,width,height,amount,cancelled);
+  } catch(error) {
+    if(cancelled()||(error instanceof DOMException&&error.name==='AbortError'))throw error;
+    // Keep the color-managed 2D fallback for devices with unavailable WebGL.
+    console.warn('Seamless export GPU unavailable; using 2D fallback',error);
+  }
   const out = document.createElement('canvas'); out.width = Math.max(1, Math.round(width)); out.height = Math.max(1, Math.round(height));
-  const ctx = out.getContext('2d')!;
+  const ctx = get2dWide(out)!;
   const layer = document.createElement('canvas'); layer.width = out.width; layer.height = out.height;
-  const lc = layer.getContext('2d')!;
+  const lc = get2dWide(layer)!;
   const w = out.width, h = out.height;
   // Even the minimum is a subtle blend; no additional image zoom beyond covering
   // the expanded cell. Exterior edges stay sharp and at their original positions.

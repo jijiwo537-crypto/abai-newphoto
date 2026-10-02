@@ -41,3 +41,23 @@ export function get2dWide(
   }
   return canvas.getContext('2d', opts);
 }
+
+/** Keep the output and imported texture primaries in the same color space.
+ * WebKit exposes drawingBufferColorSpace but not unpackColorSpace: in that
+ * case uploads must use explicitly color-managed pixel bytes, not DOM images. */
+export function configureWebglWide(gl: WebGL2RenderingContext) {
+  const wide = gl as WebGL2RenderingContext & { drawingBufferColorSpace?: string; unpackColorSpace?: string };
+  if (!supportsP3() || !('drawingBufferColorSpace' in wide)) return { colorSpace: 'srgb' as const, directUpload: false };
+  try {
+    wide.drawingBufferColorSpace = 'display-p3';
+    if (wide.drawingBufferColorSpace !== 'display-p3') return { colorSpace: 'srgb' as const, directUpload: false };
+    if ('unpackColorSpace' in wide) {
+      wide.unpackColorSpace = 'display-p3';
+      if (wide.unpackColorSpace === 'display-p3') return { colorSpace: 'display-p3' as const, directUpload: true };
+    }
+    return { colorSpace: 'display-p3' as const, directUpload: false };
+  } catch {
+    // A partially supported implementation still needs matching pixel bytes.
+    return { colorSpace: wide.drawingBufferColorSpace === 'display-p3' ? 'display-p3' as const : 'srgb' as const, directUpload: false };
+  }
+}

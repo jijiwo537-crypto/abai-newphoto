@@ -1,4 +1,5 @@
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
+import { get2dWide } from '../utils/colorSpace';
 const wait=async(n=1)=>{for(let i=0;i<n;i++)await new Promise<void>(r=>requestAnimationFrame(()=>r()));};
 const output=async(report:any)=>{
   const pre=document.createElement('pre');pre.id='fusion-audit-result';pre.textContent=JSON.stringify(report,null,2);pre.style.cssText='position:fixed;top:58px;left:4px;z-index:999999;color:white;background:#111e;font-size:10px;max-width:90vw;max-height:130px;overflow:auto';document.body.append(pre);
@@ -16,7 +17,10 @@ void(async()=>{
     const svg=()=>layout.querySelector<SVGSVGElement>('svg[data-seamless-master]')!;
     const sources=JSON.parse(svg().dataset.sourceKey!)[1].map((c:any)=>c[0]);
     const clonePixels=async()=>{
-      const master=layout.querySelector<HTMLCanvasElement>('canvas[data-seamless-layout]')!,c=document.createElement('canvas');c.width=master.width;c.height=master.height;c.getContext('2d')!.drawImage(master,0,0);return c.getContext('2d')!.getImageData(0,0,c.width,c.height).data;
+      const master=layout.querySelector<HTMLCanvasElement>('canvas[data-seamless-layout]')!,c=document.createElement('canvas');c.width=master.width;c.height=master.height;const ctx=get2dWide(c)!,gl=master.getContext('webgl2');
+      if(gl){const raw=new Uint8Array(c.width*c.height*4),pixels=new Uint8ClampedArray(raw.length);gl.readPixels(0,0,c.width,c.height,gl.RGBA,gl.UNSIGNED_BYTE,raw);for(let y=0;y<c.height;y++)pixels.set(raw.subarray((c.height-1-y)*c.width*4,(c.height-y)*c.width*4),y*c.width*4);ctx.putImageData(new ImageData(pixels,c.width,c.height,{colorSpace:master.dataset.colorSpace as PredefinedColorSpace}),0,0);}
+      else ctx.drawImage(master,0,0);
+      return ctx.getImageData(0,0,c.width,c.height).data;
     };
     // Native SVG and export must share cover/crop and smoothstep feather geometry.
     const pixels:any[]=[];
@@ -28,7 +32,7 @@ void(async()=>{
       const cpu=await renderSeamlessLayout(cells,JSON.parse(root.dataset.seamlessRects!),cpuW,cpuH,amount);
       const expectedCanvas=document.createElement('canvas');expectedCanvas.width=outputW;expectedCanvas.height=outputH;
       const matrix=new DOMMatrix([m.a*view[6]/outputW,m.b*view[6]/outputW,m.c*view[7]/outputH,m.d*view[7]/outputH,m.e,m.f]).inverse();
-      const ec=expectedCanvas.getContext('2d')!;ec.setTransform(matrix);ec.scale(world.width/cpuW,world.height/cpuH);ec.drawImage(cpu,0,0);cpu.width=cpu.height=0;
+      const ec=get2dWide(expectedCanvas)!;ec.setTransform(matrix);ec.scale(world.width/cpuW,world.height/cpuH);ec.drawImage(cpu,0,0);cpu.width=cpu.height=0;
       const expected=ec.getImageData(0,0,outputW,outputH).data;
       let total=0,holes=0,compared=0;
       for(let y=2;y<outputH-2;y++)for(let x=2;x<outputW-2;x++){const i=(y*outputW+x)*4;if(data[i+3]!==255)holes++;if(expected[i+3]<255)continue;compared++;for(let c=0;c<3;c++)total+=Math.abs(data[i+c]-expected[i+c]);}

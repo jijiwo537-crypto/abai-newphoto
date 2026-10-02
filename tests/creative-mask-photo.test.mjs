@@ -47,7 +47,8 @@ test('seamless fusion uses native source pixels and stable SVG geometry without 
   assert.doesNotMatch(component,/<foreignObject/);
   assert.match(component,/resolveSeamSurface\(points,w,h,width\*scale,height\*scale/);
   assert.match(gpu,/gl.uniform4f/);
-  assert.doesNotMatch(gpu,/getImageData|toBlob|toDataURL/);
+  assert.doesNotMatch(gpu,/toBlob|toDataURL/);
+  assert.match(gpu,/if\(!tex\)[\s\S]*getImageData[\s\S]*this.textures.set/,'color conversion is restricted to immutable texture creation');
   const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
   assert.match(grid,/width=\{lbox.w\} height=\{lbox.h\} scale=\{ls\}/);
   assert.match(grid,/left: stableSeamless \? 0/);

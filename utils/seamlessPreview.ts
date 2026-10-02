@@ -1,4 +1,5 @@
 import { seamGeometry, seamImageTransform, type SeamPhoto, type SeamRect } from './seamlessLayout';
+import { configureWebglWide, get2dWide } from './colorSpace';
 export type SeamTexture = { image: CanvasImageSource; width: number; height: number } | null;
 export type SeamView = { width:number;height:number;xx:number;xy:number;x0:number;yx:number;yy:number;y0:number };
 
@@ -8,6 +9,7 @@ class SeamGpu {
   private canvas:HTMLCanvasElement|OffscreenCanvas;
   private transferred:boolean;
   private gl:WebGL2RenderingContext;
+  private color:{colorSpace:'srgb'|'display-p3';directUpload:boolean};
   private programs=new Map<number,WebGLProgram>();
   private textures=new Map<CanvasImageSource,WebGLTexture>();
   private textureBytes=new Map<CanvasImageSource,number>();
@@ -15,12 +17,12 @@ class SeamGpu {
   private invalid=false;
   private uploads=0;
   private buffer:WebGLBuffer|null=null;
-  constructor(canvas:HTMLCanvasElement){
+  constructor(canvas:HTMLCanvasElement,direct=false){
     const webkit=/AppleWebKit/.test(navigator.userAgent)&&(!/Chrome\//.test(navigator.userAgent)||/iPhone|iPad|iPod/.test(navigator.userAgent));
-    this.transferred=!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
+    this.transferred=!direct&&!webkit&&typeof OffscreenCanvas!=='undefined'&&!!canvas.getContext('bitmaprenderer');
     this.canvas=this.transferred?new OffscreenCanvas(canvas.width,canvas.height):canvas;
     const gl=this.canvas.getContext('webgl2',{alpha:false,antialias:false,premultipliedAlpha:false,preserveDrawingBuffer:true}) as WebGL2RenderingContext|null;
-    if(!gl)throw new Error('無縫拼圖 GPU 無法啟動');this.gl=gl;
+    if(!gl)throw new Error('無縫拼圖 GPU 無法啟動');this.gl=gl;this.color=configureWebglWide(gl);
     this.canvas.addEventListener('webglcontextlost',e=>{this.invalid=true;e.preventDefault();if(this.transferred)canvas.dispatchEvent(new Event('webglcontextlost',{cancelable:true}));},{once:true});
     if(this.transferred)this.canvas.addEventListener('webglcontextrestored',()=>canvas.dispatchEvent(new Event('webglcontextrestored')),{once:true});
     this.blank.width=this.blank.height=1;const empty=this.blank.getContext('2d')!;empty.fillStyle='#121212';empty.fillRect(0,0,1,1);
@@ -28,6 +30,13 @@ class SeamGpu {
   }
   dispose(){const gl=this.gl;for(const t of this.textures.values())gl.deleteTexture(t);for(const p of this.programs.values())gl.deleteProgram(p);gl.deleteBuffer(this.buffer);this.textures.clear();this.programs.clear();if(!gl.isContextLost())gl.getExtension('WEBGL_lose_context')?.loseContext();}
   get lost(){return this.invalid||this.gl.isContextLost();}
+  copyPixels(ctx:CanvasRenderingContext2D,x:number,y:number){
+    const gl=this.gl,w=this.canvas.width,h=this.canvas.height;
+    const raw=new Uint8Array(w*h*4),pixels=new Uint8ClampedArray(raw.length);
+    gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,raw);
+    for(let row=0;row<h;row++)pixels.set(raw.subarray((h-1-row)*w*4,(h-row)*w*4),row*w*4);
+    ctx.putImageData(new ImageData(pixels,w,h,{colorSpace:this.color.colorSpace}),x,y);
+  }
   private program(count:number){
     const gl=this.gl;let p=this.programs.get(count);if(p)return p;
     const shader=(type:number,source:string)=>{const s=gl.createShader(type)!;gl.shaderSource(s,source);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw new Error(gl.getShaderInfoLog(s)||'Shader');return s;};
@@ -78,7 +87,21 @@ class SeamGpu {
       gl.activeTexture(gl.TEXTURE0+i);
       const image=source?.image||this.blank;let tex=this.textures.get(image);
       if(!tex){tex=gl.createTexture()!;gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,true);
-        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image as TexImageSource);
+        if(this.color.directUpload){
+          gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image as TexImageSource);
+        }else{
+          // Safari's DOM texture importer can apply the profile twice. Manage
+          // ICC conversion explicitly once at original resolution, then upload
+          // raw bytes in the output color space (no per-gesture readback).
+          const pixels=document.createElement('canvas');pixels.width=source?.width||1;pixels.height=source?.height||1;
+          const ctx=pixels.getContext('2d',{colorSpace:this.color.colorSpace})!;ctx.drawImage(image,0,0);
+          const data=ctx.getImageData(0,0,pixels.width,pixels.height);
+          // Typed-array uploads do not perform UNPACK_PREMULTIPLY_ALPHA_WEBGL.
+          for(let k=0;k<data.data.length;k+=4){const a=data.data[k+3]/255;if(a!==1){data.data[k]*=a;data.data[k+1]*=a;data.data[k+2]*=a;}}
+          gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+          gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,pixels.width,pixels.height,0,gl.RGBA,gl.UNSIGNED_BYTE,data.data);
+          pixels.width=pixels.height=1;
+        }
         // One immutable antialiasing pyramid per original prevents fine photo
         // details shimmering when minified. Trilinear sampling is continuous;
         // dragging and resting never switch resolution/quality modes.
@@ -95,6 +118,7 @@ class SeamGpu {
     gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
     if(this.transferred){const bitmap=(this.canvas as OffscreenCanvas).transferToImageBitmap();target.getContext('bitmaprenderer')!.transferFromImageBitmap(bitmap);bitmap.close();}
     target.dataset.sourceUploads=String(this.uploads);
+    target.dataset.colorSpace=this.color.colorSpace;
     // WebKit displays the GPU surface directly; its transfer/copy forces a
     // synchronous readback. Other engines transfer ownership without a 2D copy.
     // Both paths sample original pixels through the same continuous matrix.
@@ -105,3 +129,23 @@ export function drawSeamPreview(target:HTMLCanvasElement,cells:SeamPhoto[],rects
   let gpu=renderers.get(target);if(!gpu||gpu.lost){gpu=new SeamGpu(target);renderers.set(target,gpu);}gpu.draw(target,cells,rects,sources,amount,view);
 }
 export function disposeSeamPreview(target:HTMLCanvasElement){renderers.get(target)?.dispose();renderers.delete(target);}
+
+/** Export uses exactly the preview's original textures and complementary
+ * weights. Bounded tiles avoid a full-resolution GPU framebuffer allocation;
+ * tagged raw pixels avoid WebKit's drawImage(WebGL) color-space conversion. */
+export async function renderSeamlessGpu(cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],width:number,height:number,amount:number,cancelled:()=>boolean){
+  const out=document.createElement('canvas');out.width=Math.max(1,Math.round(width));out.height=Math.max(1,Math.round(height));const ctx=get2dWide(out)!;
+  const tile=document.createElement('canvas');tile.width=Math.min(1024,out.width);tile.height=Math.min(1024,out.height);
+  const gpu=new SeamGpu(tile,true);
+  try{
+    for(let y=0;y<out.height;y+=1024)for(let x=0;x<out.width;x+=1024){
+      if(cancelled())throw new DOMException('Superseded render','AbortError');
+      if(gpu.lost)throw new Error('無縫拼圖 GPU context lost');
+      tile.width=Math.min(1024,out.width-x);tile.height=Math.min(1024,out.height-y);
+      gpu.draw(tile,cells,rects,sources,amount,{width:out.width,height:out.height,xx:tile.width,xy:0,x0:x,yx:0,yy:tile.height,y0:y});
+      gpu.copyPixels(ctx,x,y);
+      await new Promise<void>(resolve=>setTimeout(resolve,0));
+    }
+    return out;
+  }finally{gpu.dispose();tile.width=tile.height=1;}
+}
