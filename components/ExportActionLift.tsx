@@ -12,8 +12,9 @@ export function ExportActionLift() {
       const media=Array.from(root.querySelectorAll<HTMLImageElement|HTMLVideoElement>('[data-export-media] img, [data-export-media] video'));
       const holders=Array.from(new Set(media.map(m=>m.closest<HTMLElement>('[data-export-media]')!)));
       holders.forEach(h=>{h.style.transform='';h.style.minHeight='';});
-      media.forEach(m=>m.style.maxHeight='');
+      media.forEach(m=>{m.style.maxHeight='';m.style.maxWidth='';});
       const original=media.map(m=>m.getBoundingClientRect());
+      const widths=media.map(m=>getComputedStyle(m).maxWidth);
       const holderHeights=holders.map(h=>h.getBoundingClientRect().height);
       const actionTop=actions.getBoundingClientRect().top-(actions.style.transform?-56:0);
       actions.style.transform='translateY(-56px)';
@@ -23,6 +24,9 @@ export function ExportActionLift() {
       // translated top edge (especially Safari's flex min-content sizing).
       holders.forEach((h,i)=>h.style.minHeight=`${holderHeights[i]}px`);
       media.forEach((m,i)=>{
+        // Desktop also uses a phone-width app shell; 80vw alone can otherwise
+        // make a result wider than that shell. Preserve its original top here.
+        m.style.maxWidth=widths[i]==='none'?`${Math.max(1,root.clientWidth-48)}px`:`min(${widths[i]}, ${Math.max(1,root.clientWidth-48)}px)`;
         const r=original[i];if(r.height>0&&r.bottom>bottom)
           m.style.maxHeight=`${Math.max(1,bottom-r.top)}px`;
       });
