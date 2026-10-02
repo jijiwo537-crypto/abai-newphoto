@@ -41,6 +41,7 @@ test('fusion gesture bypasses full editor state and keeps pixels at fixed full r
   assert.match(component,/window.devicePixelRatio\|\|1/);
   assert.match(component,/data-seam-probe/);
   assert.match(gpu,/if\(!tex\)/);assert.match(gpu,/gl.texImage2D/);
+  assert.match(gpu,/gl.LINEAR_MIPMAP_LINEAR/);assert.match(gpu,/gl.generateMipmap/);
   assert.match(gpu,/uniform vec4/);assert.match(gpu,/smoothstep/);
   assert.doesNotMatch(gpu,/toBlob|toDataURL|getImageData|Math.min\(.*1024/);
 });

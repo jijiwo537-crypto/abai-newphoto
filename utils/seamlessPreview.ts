@@ -57,7 +57,7 @@ class SeamGpu {
   draw(target:HTMLCanvasElement,cells:SeamPhoto[],rects:SeamRect[],sources:SeamTexture[],amount:number,view:SeamView){
     const gl=this.gl,w=view.width,h=view.height,count=rects.length;
     const active=new Set(sources.map(s=>s?.image||this.blank));
-    const incoming=sources.reduce((n,s)=>n+(s&&!this.textures.has(s.image)?s.width*s.height*4:0),0);
+    const incoming=sources.reduce((n,s)=>n+(s&&!this.textures.has(s.image)?s.width*s.height*4*4/3:0),0);
     let resident=Array.from(this.textureBytes.values()).reduce((a,b)=>a+b,0);
     // Evict only inactive source textures. Keep every current photo at original
     // quality, even when a large layout itself needs more than the cache budget.
@@ -77,8 +77,13 @@ class SeamGpu {
       const g=seamGeometry(rects,i,w,h,amount),t=seamImageTransform(c,source?.width||1,source?.height||1,g);
       gl.activeTexture(gl.TEXTURE0+i);
       const image=source?.image||this.blank;let tex=this.textures.get(image);
-      if(!tex){tex=gl.createTexture()!;gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,true);
-        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image as TexImageSource);this.uploads++;this.textures.set(image,tex);this.textureBytes.set(image,(source?.width||1)*(source?.height||1)*4);
+      if(!tex){tex=gl.createTexture()!;gl.bindTexture(gl.TEXTURE_2D,tex);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR_MIPMAP_LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,true);
+        gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image as TexImageSource);
+        // One immutable antialiasing pyramid per original prevents fine photo
+        // details shimmering when minified. Trilinear sampling is continuous;
+        // dragging and resting never switch resolution/quality modes.
+        gl.generateMipmap(gl.TEXTURE_2D);const anisotropy=gl.getExtension('EXT_texture_filter_anisotropic');if(anisotropy)gl.texParameterf(gl.TEXTURE_2D,anisotropy.TEXTURE_MAX_ANISOTROPY_EXT,gl.getParameter(anisotropy.MAX_TEXTURE_MAX_ANISOTROPY_EXT));
+        this.uploads++;this.textures.set(image,tex);this.textureBytes.set(image,(source?.width||1)*(source?.height||1)*4*4/3);
       }else {gl.bindTexture(gl.TEXTURE_2D,tex);this.textures.delete(image);this.textures.set(image,tex);}
       gl.uniform1i(gl.getUniformLocation(p,`photo${i}`),i);
       gl.uniform4f(gl.getUniformLocation(p,`box${i}`),g.ex,g.ey,g.ew,g.eh);
