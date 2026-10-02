@@ -9,6 +9,7 @@ import { FX_DEFS, FX_DEFAULTS, applyGlEffects, disposeFxSurface, hasActiveFx, wa
 import { orderEffectCards } from '../utils/effectDisplayOrder';
 import {effectControlValue,effectStoredValue,effectControlMin} from '../utils/effectControlValues';
 import {effectDetailIcon} from '../utils/effectDetailIcons';
+import {HalationLayer} from '../utils/halationLayer';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from '../utils/highlightSelection';
 import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
 import { SaveButton } from './SaveButton';
@@ -2158,13 +2159,16 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const fxSurfaceRef=useRef<HTMLCanvasElement>(null);
   const fxSurfaceShownRef=useRef(false);
   const fxInputKeyRef=useRef('');
+  const legacyPreviewRef=useRef<{kind:'soft'|'halation'|'leak';key:string}|null>(null);
   const showFxSurface=(shown:boolean)=>{
-    // One presentation surface for both original and effects. Separate DOM GPU
-    // layers can receive different subpixel compositor sampling on iOS.
-    fxSurfaceShownRef.current=false;
+    // Both surfaces share the same absolute box and the parent's transform.
+    // Present the GPU result directly: copying it to 2D forces a synchronous
+    // framebuffer readback on iOS for every slider frame.
+    fxSurfaceShownRef.current=shown;
     const surface=fxSurfaceRef.current,display=displayCanvasRef.current;
-    if(surface)surface.style.visibility='hidden';
-    if(shown&&surface&&display){const ctx=display.getContext('2d');if(ctx){ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.globalAlpha=1;ctx.globalCompositeOperation='copy';ctx.drawImage(surface,0,0,display.width,display.height);ctx.restore();}}
+    if(surface)surface.style.visibility=shown?'visible':'hidden';
+    // Keep the original canvas hit-testable for zoom and mask gestures.
+    if(display){display.style.visibility='visible';display.style.opacity=shown?'0':'1';}
   };
   const visibleEditorCanvas=()=>fxSurfaceShownRef.current ? fxSurfaceRef.current : displayCanvasRef.current;
   useEffect(()=>{const surface=fxSurfaceRef.current;return()=>{if(surface)disposeFxSurface(surface);};},[]);
@@ -2922,6 +2926,11 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   } | null>(null);
 
   const halationPreparedRef = useRef<{ key: string; source: Uint8ClampedArray; blurred: ImageData } | null>(null);
+  const halationLayerRef = useRef<HalationLayer | null>(null);
+  const softLayerRef = useRef<HalationLayer | null>(null);
+  const halationPresentRef=useRef<HalationLayer|null>(null),softPresentRef=useRef<HalationLayer|null>(null);
+  const leakPresentRef=useRef<HalationLayer|null>(null);
+  useEffect(()=>()=>{halationLayerRef.current?.dispose();softLayerRef.current?.dispose();halationPresentRef.current?.dispose();softPresentRef.current?.dispose();leakPresentRef.current?.dispose();},[]);
   const halationCacheStateRef = useRef<{
     /** 這份快取是「哪一張照片」算出來的。
         批量編輯時兩張照片的尺寸常常一模一樣、連結中的參數也一樣，
@@ -3797,6 +3806,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     !!EFFECT_DETAIL_CAT[toolId] || !!(FX_TOOLS[toolId] && FX_TOOLS[toolId].length > 1);
 
   const fxInputKey=(p:EditorParams)=>`${buffersSrcRef.current}|${selectedLutIdx}|${!!lutDataRef.current[lutList[selectedLutIdx]?.id]}|${activeCategory}|${JSON.stringify(Object.fromEntries(Object.entries(p).filter(([key])=>!key.startsWith('fx'))))}|${forceRecalculateEffectsRef.current}`;
+  const legacyInputKey=(p:EditorParams,w:number,h:number,kind:'soft'|'halation'|'leak')=>{
+    const excluded=kind==='soft'?['soft','softThreshold','softRadius','softColor']:kind==='leak'?['leakOpacity','leakAngle','leakHue']:['fringeIntensity','fringeSize','fringeFeather','fringeHue'];
+    return JSON.stringify([buffersSrcRef.current,w,h,lutList[selectedLutIdx]?.id,!!lutDataRef.current[lutList[selectedLutIdx]?.id],toneSig(p),Object.fromEntries(Object.entries(p).filter(([k])=>!excluded.includes(k)))]);
+  };
   const applyComplexEffects = useCallback((ctx: CanvasRenderingContext2D, w: number, h: number, p: EditorParams, scale: number, sharedBuf: Uint8ClampedArray | null, isInteracting: boolean, baking: boolean, sourcePixelData: Uint8ClampedArray | null) => {
     const lut = lutList[selectedLutIdx];
     const lutId = lut?.id || 'none';
@@ -4031,11 +4044,25 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
 
     if (p.soft > 0) {
+      const direct=!baking&&!forceRecalculateEffectsRef.current&&ctx.canvas===displayCanvasRef.current&&fxSurfaceRef.current&&!p.leakOpacity&&!p.fringeIntensity&&!p.vignette&&!p.maskCreated&&!hasActiveFx(p);
+      if(direct){
+        const key=legacyInputKey(p,w,h,'soft');
+        softPresentRef.current ||= new HalationLayer(fxSurfaceRef.current!);
+        if(softPresentRef.current.renderSoft(ctx,w,h,key,p,hslToRgb(p.softColor/100,1,.5))){legacyPreviewRef.current={kind:'soft',key};showFxSurface(true);return;}
+      }
       ctx.save(); 
       ctx.globalCompositeOperation = 'screen'; 
       ctx.globalAlpha = (p.soft / 100) * (p.softColor > 0 ? 3.0 : 1.5);
-
-      if (useSoftCache && cachedSoftCanvasRef.current) {
+      let acceleratedSoft:HTMLCanvasElement|null=null;
+      if(!baking&&!forceRecalculateEffectsRef.current){
+        const {soft,softThreshold,softRadius,softColor,fringeIntensity,fringeSize,fringeFeather,fringeHue,leakOpacity,leakAngle,leakHue,vignette,...upstream}=p;
+        const input=Object.fromEntries(Object.entries(upstream).filter(([key])=>!key.startsWith('fx')));
+        softLayerRef.current ||= new HalationLayer();
+        acceleratedSoft=softLayerRef.current.renderSoft(ctx,w,h,JSON.stringify([buffersSrcRef.current,w,h,lutId,toneStr,input]),p,hslToRgb(p.softColor/100,1,.5));
+      }
+      if(acceleratedSoft){
+        ctx.drawImage(acceleratedSoft,0,0,w,h);
+      } else if (useSoftCache && cachedSoftCanvasRef.current) {
         ctx.drawImage(cachedSoftCanvasRef.current, 0, 0, w, h);
       } else {
         const TARGET_PROC_SIZE = 800;
@@ -4089,6 +4116,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
     // 6. LIGHT LEAK (Always run, fast gradient overlay)
     if (p.leakOpacity > 0) {
+        if(!baking&&!forceRecalculateEffectsRef.current&&ctx.canvas===displayCanvasRef.current&&fxSurfaceRef.current&&!p.fringeIntensity&&!p.vignette&&!p.maskCreated&&!hasActiveFx(p)){
+          const key=legacyInputKey(p,w,h,'leak');leakPresentRef.current ||=new HalationLayer(fxSurfaceRef.current);
+          if(leakPresentRef.current.renderLeak(ctx,w,h,key,p,hslToRgb(p.leakHue/360,1,.5))){legacyPreviewRef.current={kind:'leak',key};showFxSurface(true);return;}
+        }
         ctx.save();
         ctx.globalCompositeOperation = 'screen';
         const opacity = p.leakOpacity;
@@ -4140,7 +4171,24 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         }
     }
 
-    if (p.fringeIntensity > 0) {
+    let acceleratedHalation: HTMLCanvasElement | null = null;
+    const directHalation=p.fringeIntensity>0&&!baking&&!forceRecalculateEffectsRef.current&&ctx.canvas===displayCanvasRef.current&&fxSurfaceRef.current&&!p.vignette&&!p.maskCreated&&!hasActiveFx(p);
+    if(directHalation){
+      const key=legacyInputKey(p,w,h,'halation');
+      halationPresentRef.current ||= new HalationLayer(fxSurfaceRef.current!);
+      if(halationPresentRef.current.render(ctx,w,h,key,p,hslToRgb(p.fringeHue/360,.8,.35))){legacyPreviewRef.current={kind:'halation',key};showFxSurface(true);return;}
+    }
+    if (p.fringeIntensity > 0 && !baking && !forceRecalculateEffectsRef.current) {
+        const {fringeIntensity,fringeSize,fringeFeather,fringeHue,...upstream}=p;
+        // Parameters after this layer do not alter its source pixels.
+        const input=Object.fromEntries(Object.entries(upstream).filter(([key])=>!key.startsWith('fx')&&key!=='vignette'));
+        const key=JSON.stringify([buffersSrcRef.current,w,h,lutId,toneStr,input]);
+        halationLayerRef.current ||= new HalationLayer();
+        acceleratedHalation=halationLayerRef.current.render(ctx,w,h,key,p,hslToRgb(p.fringeHue/360,.8,.35));
+    }
+    if (acceleratedHalation) {
+        ctx.save();ctx.globalCompositeOperation='screen';ctx.drawImage(acceleratedHalation,0,0,w,h);ctx.restore();
+    } else if (p.fringeIntensity > 0) {
         ctx.save();
         ctx.globalCompositeOperation = 'screen'; 
 
@@ -4647,7 +4695,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       // GLSL-only slider changes do not change this pipeline's input pixels.
       // Retain the upload and highlight convolution at their full resolution.
       const sourceKey=!baking && !needsRefinement ? fxInputKey(p) : undefined;
-      const surface=!baking && ctx.canvas===displayCanvasRef.current && (p.fxLowfi>0 || p.fxExposureSpill>0) ? fxSurfaceRef.current : null;
+      const surface=!baking && ctx.canvas===displayCanvasRef.current ? fxSurfaceRef.current : null;
       const painted=applyGlEffects(ctx,w,h,p,sourceKey,surface||undefined);
       if(surface){showFxSurface(!!painted);fxInputKeyRef.current=painted&&sourceKey ? `${w}x${h}|${sourceKey}` : '';if(!painted)applyGlEffects(ctx,w,h,p);}
     }
@@ -4910,8 +4958,18 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     }
     
     const ctx = cvs.getContext('2d')!;
+    const legacy=legacyPreviewRef.current;
+    if(!showOriginalRef.current&&!forceRecalculateEffectsRef.current&&legacy&&legacy.key===legacyInputKey(p,b.w,b.h,legacy.kind)){
+      const painted=legacy.kind==='soft'&&p.soft>0
+        ? softPresentRef.current?.renderSoft(ctx,b.w,b.h,legacy.key,p,hslToRgb(p.softColor/100,1,.5))
+        : legacy.kind==='halation'&&p.fringeIntensity>0
+          ? halationPresentRef.current?.render(ctx,b.w,b.h,legacy.key,p,hslToRgb(p.fringeHue/360,.8,.35))
+          : legacy.kind==='leak'&&p.leakOpacity>0?leakPresentRef.current?.renderLeak(ctx,b.w,b.h,legacy.key,p,hslToRgb(p.leakHue/360,1,.5)):null;
+      if(painted){showFxSurface(true);return;}
+    }
+    legacyPreviewRef.current=null;
     const fastKey=`${b.w}x${b.h}|${fxInputKey(p)}`;
-    if(!showOriginalRef.current && (p.fxLowfi>0||p.fxExposureSpill>0) && fxInputKeyRef.current===fastKey && fxSurfaceRef.current){
+    if(!showOriginalRef.current && hasActiveFx(p) && fxInputKeyRef.current===fastKey && fxSurfaceRef.current){
       if(applyGlEffects(ctx,b.w,b.h,p,fxInputKey(p),fxSurfaceRef.current)){showFxSurface(true);return;}
     }
     showFxSurface(false);fxInputKeyRef.current='';
@@ -8002,7 +8060,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 </button>
                 <div className="w-[1px] h-8 bg-white/10 mx-2"></div>
                 {SOFT_LIGHT_TOOLS.map(tool => (
-                    <button key={tool.id} onClick={() => setActiveToolId(tool.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
+                    <button key={tool.id} data-fx-param={tool.id} onClick={() => setActiveToolId(tool.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeToolId === tool.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}><Icon name={effectDetailIcon(tool.label, tool.icon)} className="text-lg" fill={activeToolId === tool.id} /></div>
                         <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${activeToolId === tool.id ? 'text-white' : 'text-white/20'}`}>{tool.label}</span>
                         <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${isParamAdjusted(tool.id) ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
@@ -8022,7 +8080,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 </button>
                 <div className="w-[1px] h-8 bg-white/10 mx-2"></div>
                 {LEAK_TOOLS.map(tool => (
-                    <button key={tool.id} onClick={() => setActiveToolId(tool.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
+                    <button key={tool.id} data-fx-param={tool.id} onClick={() => setActiveToolId(tool.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeToolId === tool.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}><Icon name={effectDetailIcon(tool.label, tool.icon)} className="text-lg" fill={activeToolId === tool.id} /></div>
                         <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${activeToolId === tool.id ? 'text-white' : 'text-white/20'}`}>{tool.label}</span>
                         <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${isParamAdjusted(tool.id) ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />
@@ -8042,7 +8100,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                 </button>
                 <div className="w-[1px] h-8 bg-white/10 mx-2"></div>
                 {HALATION_TOOLS.map(tool => (
-                    <button key={tool.id} onClick={() => setActiveToolId(tool.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
+                    <button key={tool.id} data-fx-param={tool.id} onClick={() => setActiveToolId(tool.id)} className="flex flex-col items-center gap-1 shrink-0 group w-16">
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${activeToolId === tool.id ? 'bg-white text-black scale-110' : 'bg-white/5 text-white/40 group-hover:bg-white/10'}`}><Icon name={effectDetailIcon(tool.label, tool.icon)} className="text-lg" fill={activeToolId === tool.id} /></div>
                         <span className={`text-[9px] font-bold uppercase tracking-tighter whitespace-nowrap ${activeToolId === tool.id ? 'text-white' : 'text-white/20'}`}>{tool.label}</span>
                         <div className={`w-1 h-1 rounded-full mt-0.5 transition-all duration-200 ${isParamAdjusted(tool.id) ? 'bg-white opacity-100 scale-100' : 'bg-transparent opacity-0 scale-50'}`} />

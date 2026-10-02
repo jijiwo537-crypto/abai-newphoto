@@ -675,6 +675,7 @@ interface Pool {
   aux?: WebGLTexture;
   narrow?: WebGLTexture;
   spillKey?: string;
+  spillSeed?: WebGLTexture;
 }
 
 interface Ctx {
@@ -719,7 +720,7 @@ function getCtx(surface?:HTMLCanvasElement): Ctx | null {
 
 export function disposeFxSurface(canvas:HTMLCanvasElement){
  const c=surfaces.get(canvas);if(!c)return;const {gl,pool}=c;
- if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);gl.deleteFramebuffer(pool.fb);}
+ if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);if(pool.spillSeed)gl.deleteTexture(pool.spillSeed);gl.deleteFramebuffer(pool.fb);}
  c.progs.forEach(p=>gl.deleteProgram(p));gl.deleteBuffer(c.quad);surfaces.delete(canvas);canvas.width=canvas.height=1;
 }
 
@@ -780,6 +781,7 @@ function getPool(c: Ctx, w: number, h: number): Pool {
     gl.deleteTexture(c.pool.src);
     if(c.pool.aux)gl.deleteTexture(c.pool.aux);
     if(c.pool.narrow)gl.deleteTexture(c.pool.narrow);
+    if(c.pool.spillSeed)gl.deleteTexture(c.pool.spillSeed);
     for (const t of c.pool.texs) gl.deleteTexture(t);
   }
   c.pool = {
@@ -818,6 +820,8 @@ export function applyGlEffects(
   params: any,
   sourceKey?: string,
   surface?: HTMLCanvasElement,
+  /** Pixel-regression audit only: retain the original render graph. */
+  auditReference = false,
 ): HTMLCanvasElement | undefined {
   const active = FX_DEFS.filter(d => fxActive(params, d));
   if (!active.length || w < 2 || h < 2) return;
@@ -899,11 +903,15 @@ export function applyGlEffects(
     for (const d of active) {
       const layerIn = cur;                       // 本層輸入（uSrc）
       let from = cur;
+      let fromTexture:WebGLTexture|undefined;
       const spillKey=d.id==='fxExposureSpill' && uploadKey
         ? uploadKey+'|'+JSON.stringify([params.fxSpillRange??20,params.fxSpillDiffusion??50,active.slice(0,active.indexOf(d)).map(x=>[x.id,params[x.id],...x.params.map(p=>params[p.id]??p.def)])]) : undefined;
       if(d.id==='fxExposureSpill' && pool.spillKey!==spillKey)pool.spillKey=undefined;
       for (let i = 0; i < d.passes.length; i++) {
         if(spillKey && pool.spillKey===spillKey && pool.narrow && i<d.passes.length-1)continue;
+        // Wide and narrow blooms isolate the exact same highlights. Keep
+        // that full-resolution seed, instead of calculating it twice.
+        if(!auditReference&&d.id==='fxExposureSpill'&&i===7&&pool.spillSeed){fromTexture=pool.spillSeed;continue;}
         const pass = d.passes[i];
         const prog = compile(c, `${d.id}#${i}`, fxPassSource(d, pass));
         if (!prog) { cleanup(); return; }
@@ -912,7 +920,7 @@ export function applyGlEffects(
         while (to === from || to === layerIn) to++;
         gl.useProgram(prog);
         bind(prog, spillKey && pool.spillKey===spillKey && pool.narrow && i===d.passes.length-1
-          ? pool.narrow : texs[pass.fromSource ? layerIn : from], texs[layerIn]);
+          ? pool.narrow : pass.fromSource ? texs[layerIn] : fromTexture||texs[from], texs[layerIn]);
         gl.uniform1f(gl.getUniformLocation(prog,'uEffectAmount'),Math.max(0,Math.min(1,(params[d.id]||0)/100)));
         gl.uniform1f(gl.getUniformLocation(prog,'uHighlightReady'),spillSelection?1:0);
         if(spillSelection){gl.uniform1f(gl.getUniformLocation(prog,'uHighlightCut'),spillSelection.cutoff);gl.uniform1f(gl.getUniformLocation(prog,'uHighlightTie'),spillSelection.tie);}
@@ -923,20 +931,29 @@ export function applyGlEffects(
           const v = (typeof raw === 'number' ? raw : p.def) * (p.scale ?? 1);
           gl.uniform1f(gl.getUniformLocation(prog, p.id), v);
         }
-        drawTo(texs[to]);
-        if(pass.preserveOutput){
+        let target=texs[to];
+        if(!auditReference&&d.id==='fxExposureSpill'&&i===0){pool.spillSeed ||= makeTex(gl,w,h);target=pool.spillSeed;}
+        if(!auditReference&&pass.preserveOutput){
+          pool.aux ||= makeTex(gl,w,h);target=pool.aux;
+        }
+        if(!auditReference&&spillKey && i===d.passes.length-2){pool.narrow ||= makeTex(gl,w,h);target=pool.narrow;}
+        drawTo(target);
+        if(pass.preserveOutput&&(auditReference||d.id!=='fxExposureSpill')){
           gl.activeTexture(gl.TEXTURE2);
           pool.aux ||= makeTex(gl,w,h);
           gl.bindTexture(gl.TEXTURE_2D,pool.aux);
           gl.copyTexSubImage2D(gl.TEXTURE_2D,0,0,0,0,0,w,h);
         }
         if(spillKey && i===d.passes.length-2){
-          gl.activeTexture(gl.TEXTURE3);pool.narrow ||= makeTex(gl,w,h);
-          gl.bindTexture(gl.TEXTURE_2D,pool.narrow);gl.copyTexSubImage2D(gl.TEXTURE_2D,0,0,0,0,0,w,h);
+          if(auditReference){gl.activeTexture(gl.TEXTURE3);pool.narrow ||= makeTex(gl,w,h);gl.bindTexture(gl.TEXTURE_2D,pool.narrow);gl.copyTexSubImage2D(gl.TEXTURE_2D,0,0,0,0,0,w,h);}
           pool.spillKey=spillKey;
         }
         from = to;
+        fromTexture=target===texs[to]?undefined:target;
       }
+      // These effects already apply their own amount in the final shader.
+      // A second full-frame blend with amount=1 is just an expensive copy.
+      if(d.handlesAmount&&!auditReference){cur=from;continue;}
       // 跟本層輸入按強度插值
       const blend = compile(c, '__blend', BLEND_FS);
       if (!blend) { cleanup(); return; }

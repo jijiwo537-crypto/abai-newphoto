@@ -8,7 +8,7 @@ const PARAMETER_ICONS = Object.freeze({
   '色相 A': 'palette',
   '色相 B': 'palette',
   '角度': 'rotate_right',
-  '方向': 'swap_horiz',
+  '方向': 'zoom_out_map',
   '顆粒': 'grain',
   '色差': 'filter_b_and_w',
   '對比': 'contrast',

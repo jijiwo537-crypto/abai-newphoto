@@ -13,7 +13,7 @@ test('effect controls use the user-approved corresponding parameter icons',()=>{
  }
  assert.equal(effectDetailIcon('色相 A','gradient'),'palette');
  assert.equal(effectDetailIcon('色相 B','gradient'),'palette');
- assert.equal(effectDetailIcon('方向','explore'),'swap_horiz');
+ assert.equal(effectDetailIcon('方向','explore'),'zoom_out_map');
  assert.equal(effectDetailIcon('長度','straighten'),'straighten');
  for(const [label,icon] of [['色差','filter_b_and_w'],['位移','swap_horiz'],['形狀','shapes'],['密度','apps'],['比例','pie_chart'],['錯誤','broken_image'],['變化','scatter_plot'],['數量','apps'],['抖動','waves'],['掃描線','view_day'],['格數','grid_view'],['折射','filter_b_and_w']])assert.equal(effectDetailIcon(label,'unused'),icon);
 });
