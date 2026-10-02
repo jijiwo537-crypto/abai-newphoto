@@ -23,5 +23,6 @@ test('preview uses screen-density font outlines with no release-quality switchin
  const s=read('utils/artVector.js'),gpu=read('utils/artGlyphGpu.js'),css=read('components/ArtStudio.css');
  assert.match(s,/viewport.width\*dpr/);assert.match(s,/viewport.height\*dpr/);assert.match(s,/paintColorGlyphs/);
  assert.doesNotMatch(gpu,/texImage2D[^\n]*,mask\)/);assert.match(gpu,/gl\.DYNAMIC_DRAW/);
- assert.match(css,/left:50%;transform:translateX\(-50%\)/);assert.match(css,/height:70px;padding:3px 12px 19px/);
+ assert.match(css,/left:50%;transform:translateX\(-50%\)/);assert.match(css,/height:46px;padding:4px 16px 0/);
+ const ui=read('components/ArtStudio.tsx');assert.ok(ui.indexOf('<nav aria-label="藝術工具">')<ui.indexOf("<div className={'art-controls'"),'creative-style tabs precede parameters');
 });

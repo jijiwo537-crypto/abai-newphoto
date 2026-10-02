@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft } from 'lucide-react';
 import { Icon } from './Icon';
 import { SaveButton } from './SaveButton';
+import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import { StuckEscape } from './StuckEscape';
 import {
   METHODS, METHOD_LABEL, Method,
@@ -400,11 +401,13 @@ export const ColorMatchStudio: React.FC<Props> = ({
 
   const ready = !!(srcImg && refImg && luts);
 
+  const viewport=useStandaloneToolViewport();
   return (
-    <div className="safe-top absolute inset-0 bg-[#080808] flex flex-col text-white">
+    <div ref={viewport.ref} className={`safe-top relative w-full h-[100dvh] bg-[#080808] flex flex-col text-white ${viewport.standalone?'standalone-tool-viewport':''}`}>
       {/* 滑桿樣式跟編輯器一模一樣 —— 那邊是寫在自己的 style 區塊裡，
           只有編輯器掛著的時候才存在，所以這裡要自己帶一份。 */}
       <style>{`
+        ${standaloneToolViewportCSS}
         .custom-range {
           -webkit-appearance: none; width: calc(100% + 64px); height: 40px;
           background: rgba(0,0,0,0); outline: none; margin: 0 -32px; padding: 0;
@@ -513,6 +516,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         )}
       </div>
 
+      <section className="color-match-panel flex flex-col shrink-0 min-h-0 bg-[#0a0a0a] border-t border-[#1a1a1a]" style={{height:'max(34dvh, 300px)'}}>
       {/* 參考圖那一列。
            還沒選參考圖時就只有「導入參考圖片」一顆，佔滿整列（跟以前一樣）；
            選過之後右邊讓出位子給「替換原始圖片」—— 導入那顆縮短，
@@ -549,7 +553,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       </div>
 
       {/* 滑桿：樣式與佈局比照編輯器。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}
-      <div className={`px-8 shrink-0 border-t border-white/5 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
+      <div className={`px-5 flex-1 min-h-0 flex flex-col justify-center pb-4 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
         <div>
           {/* 強度可以推到 200（100 以上＝比參考圖再更進一步），預設維持 100；
               膚色保護維持 0～100。 */}
@@ -573,22 +577,23 @@ export const ColorMatchStudio: React.FC<Props> = ({
       </div>
 
       {/* 做法：文字按鈕，比照編輯器的工具列 */}
-      <div className={`h-24 flex items-center justify-center px-4 gap-2 shrink-0 bg-[#080808] border-t border-white/5 overflow-x-auto no-scrollbar transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
+      <nav aria-label="仿色工具" className={`order-first h-[46px] flex items-stretch px-4 pt-1 gap-1 shrink-0 border-b border-[#1a1a1a] overflow-x-auto no-scrollbar transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
           {METHODS.map(m => (
             <button
               key={m}
               onClick={() => setPicked(m)}
               data-cm-method={m}
-              className={`flex-1 basis-0 min-w-0 h-10 rounded-full flex items-center justify-center transition-all active:scale-95 ${
-                picked === m ? 'bg-white text-black' : 'bg-white/5 text-white/40'
+              className={`flex-1 basis-0 min-w-0 flex items-center justify-center border-b-2 transition-colors ${
+                picked === m ? 'border-white text-white' : 'border-transparent text-[#555]'
               }`}
             >
-              <span className="text-[11px] font-black tracking-wider whitespace-nowrap">
+              <span className="text-[11px] font-semibold whitespace-nowrap">
                 {METHOD_LABEL[m]}
               </span>
             </button>
           ))}
-      </div>
+      </nav>
+      </section>
 
       {/* 導出畫面蓋在上面就好，不要換一棵樹 ——
           GPU 的畫布是程式自己掛進 stage 的，換樹時 React 會把那個節點拿去重用，

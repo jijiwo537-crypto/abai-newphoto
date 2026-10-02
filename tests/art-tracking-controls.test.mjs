@@ -42,7 +42,7 @@ test('tracking tools expose requested placement, two-state elements and paired o
 });
 test('mask materials share the edit page with no preselected material or placement actions',()=>{
  assert.deepEqual(trackingDefaults.materials,[]);
- const mask=ui.slice(ui.indexOf("effect==='tracking'&&tab==='遮罩'"),ui.indexOf('<nav aria-label="藝術工具">'));
+ const mask=ui.slice(ui.indexOf("effect==='tracking'&&tab==='遮罩'"),ui.indexOf('</section>',ui.indexOf("effect==='tracking'&&tab==='遮罩'")));
  assert.match(mask,/section==='編輯'.*aria-label="遮罩材質"/);
  assert.doesNotMatch(mask,/手動放置|清除|section==='材質'/);
  assert.match(mask,/className="art-mask-toolbar".*groups\(\['編輯','細節'\]\).*className="art-mask-random"/);

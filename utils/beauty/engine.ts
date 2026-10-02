@@ -29,7 +29,7 @@ export const LIQUIFY_SCALE = 4;
 /** 筆刷大小以「長邊 1024px 時的影像像素半徑」為基準，換算後與解析度無關 */
 export const BRUSH_REF_WIDTH = 1024;
 export const DEFAULT_BRUSH: Record<string, number> = {
-  blemish: 14, wrinkle: 32, liquify: 100, makeup: 20,
+  blemish: 14, wrinkle: 32, liquify: 150, makeup: 20,
 };
 export const BRUSH_RANGE: Record<string, [number, number]> = {
   blemish: [5, 55], wrinkle: [10, 90], liquify: [40, 260], makeup: [8, 90],
@@ -332,9 +332,9 @@ export function liquifyDab(
   for (let y = y0; y <= y1; y++) {
     for (let x = x0; x <= x1; x++) {
       const ox = x - mcx, oy = y - mcy;
-      const t = Math.sqrt(ox * ox + oy * oy) / mr;
-      if (t >= 1) continue;
-      const k = 1 - t * t, w = k * k * force;   // C1 連續的羽化，邊緣不會有硬接縫
+      const t2 = (ox * ox + oy * oy) / (mr * mr);
+      if (t2 >= 1) continue;
+      const k = 1 - t2, w = k * k * force;   // Same C1 falloff, without sqrt/square per cell.
       const i = (y * f.w + x) * 2;
       let ax: number, ay: number;
       if (mode === 'push') { ax = -dx * w; ay = -dy * w; }
@@ -342,8 +342,7 @@ export function liquifyDab(
       else if (mode === 'pucker') { ax = ox * LIQUIFY_SCALE * w * 0.42; ay = oy * LIQUIFY_SCALE * w * 0.42; }
       else { const rr = 1 - w * 0.55; f.data[i] *= rr; f.data[i + 1] *= rr; continue; }
       let nx = f.data[i] + ax, ny = f.data[i + 1] + ay;
-      const mag = Math.hypot(nx, ny);
-      if (mag > LIMIT) { nx = nx / mag * LIMIT; ny = ny / mag * LIMIT; }
+      if (nx * nx + ny * ny > LIMIT * LIMIT) { const mag = Math.hypot(nx, ny); nx = nx / mag * LIMIT; ny = ny / mag * LIMIT; }
       f.data[i] = nx; f.data[i + 1] = ny;
     }
   }
@@ -366,22 +365,28 @@ export function recomputeLiquifyMax(f: LiquifyField) {
   f.max = m;
 }
 
-/** 把 src 依位移場變形後寫入 target（target 大小 = rect 大小） */
+/** 把 src 依位移場變形後寫入 target；可重用大於 rect 的緩衝區。 */
 export function warpRegion(src: ImageData, W: number, H: number, f: LiquifyField, target: ImageData, rect: Rect) {
   const out = target.data, sd = src.data;
-  const o2: [number, number] = [0, 0];
+  // Grid X interpolation is identical on every scanline. Compute it once;
+  // Y weights/row offsets once per row, instead of clamping four neighbours
+  // and calling sampleLiquify for every photograph pixel.
+  const ax=new Int32Array(rect.w),bx=new Int32Array(rect.w),xt=new Float64Array(rect.w);
+  for(let x=0;x<rect.w;x++){const fx=(rect.x+x)/LIQUIFY_SCALE,a=Math.floor(fx);ax[x]=clamp(a,0,f.w-1)*2;bx[x]=clamp(a+1,0,f.w-1)*2;xt[x]=fx-a;}
   for (let y = 0; y < rect.h; y++) {
     const gy = rect.y + y;
+    const fy=gy/LIQUIFY_SCALE,c=Math.floor(fy),yt=fy-c,row0=clamp(c,0,f.h-1)*f.w*2,row1=clamp(c+1,0,f.h-1)*f.w*2;
     for (let x = 0; x < rect.w; x++) {
       const gx = rect.x + x;
-      sampleLiquify(f, gx, gy, o2);
-      let sx = gx + o2[0], sy = gy + o2[1];
+      const i0=row0+ax[x],i1=row0+bx[x],i2=row1+ax[x],i3=row1+bx[x],t=xt[x];
+      const a=(1-t)*(1-yt),b=t*(1-yt),c=(1-t)*yt,d=t*yt,fd=f.data;
+      let sx=gx+(fd[i0]*a+fd[i1]*b+fd[i2]*c+fd[i3]*d),sy=gy+(fd[i0+1]*a+fd[i1+1]*b+fd[i2+1]*c+fd[i3+1]*d);
       sx = sx < 0 ? 0 : sx > W - 1.001 ? W - 1.001 : sx;
       sy = sy < 0 ? 0 : sy > H - 1.001 ? H - 1.001 : sy;
       const ix = sx | 0, iy = sy | 0, tx = sx - ix, ty = sy - iy;
       const i00 = (iy * W + ix) * 4, i10 = i00 + 4, i01 = i00 + W * 4, i11 = i01 + 4;
       const w00 = (1 - tx) * (1 - ty), w10 = tx * (1 - ty), w01 = (1 - tx) * ty, w11 = tx * ty;
-      const o = (y * rect.w + x) * 4;
+      const o = (y * target.width + x) * 4;
       out[o] = sd[i00] * w00 + sd[i10] * w10 + sd[i01] * w01 + sd[i11] * w11;
       out[o + 1] = sd[i00 + 1] * w00 + sd[i10 + 1] * w10 + sd[i01 + 1] * w01 + sd[i11 + 1] * w11;
       out[o + 2] = sd[i00 + 2] * w00 + sd[i10 + 2] * w10 + sd[i01 + 2] * w01 + sd[i11 + 2] * w11;

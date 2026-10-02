@@ -7,7 +7,7 @@ test('art uses the editor viewport and shared save control with fixed text-only 
  assert.match(s,/art-studio safe-top/);assert.match(s,/<SaveButton urls=/);
  assert.doesNotMatch(s,/className="art-replace"|EffectArtwork/);assert.match(s,/\['效果','字符','範圍','外觀'\]/);
  assert.match(s,/art-save-pill/);assert.match(s,/aria-label="匯出選項"/);assert.match(s,/canExportHeic/);
- assert.match(css,/art-controls\{[^}]*overflow:hidden/);
+ assert.match(css,/art-controls\{[^}]*overflow-y:auto/);
  assert.match(css,/art-zoom\{[^}]*inset:0/);
  assert.doesNotMatch(s,/作品已準備好|Icon size/);
 });
@@ -31,5 +31,8 @@ test('art controls expose glow and pinch zoom without invert or a header title',
  const s=read('components/ArtStudio.tsx');assert.match(s,/glow:value\?50:0/);assert.doesNotMatch(s,/range\('發光'/);assert.match(s,/TransformWrapper/);assert.match(s,/'暗部'/);assert.doesNotMatch(s,/反轉字符|<span>藝術效果<\/span>/);
 });
 test('GPU effects retain a single visible presentation canvas',()=>{
- const s=read('components/ImageEditor.tsx');const f=s.slice(s.indexOf('const showFxSurface='),s.indexOf('const visibleEditorCanvas='));assert.match(f,/fxSurfaceShownRef.current=false/);assert.match(f,/ctx.setTransform\(1,0,0,1,0,0\)/);assert.match(f,/ctx.drawImage\(surface,0,0,display.width,display.height\)/);assert.doesNotMatch(f,/visibility=.*visible/);
+ const s=read('components/ImageEditor.tsx');const f=s.slice(s.indexOf('const showFxSurface='),s.indexOf('const visibleEditorCanvas='));
+ assert.match(f,/fxSurfaceShownRef.current=shown/);assert.match(f,/surface.style.visibility=shown\?'visible':'hidden'/);
+ assert.match(f,/display.style.opacity=shown\?'0':'1'/);assert.match(f,/display.style.visibility='visible'/);
+ assert.doesNotMatch(f,/ctx.drawImage\(surface/,'direct GPU presentation avoids per-frame readback');
 });

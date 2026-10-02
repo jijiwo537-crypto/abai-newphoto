@@ -8654,11 +8654,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
         {imageState && (
           <div
-            className="absolute right-6 z-[60]"
+            className="absolute right-2 z-[60]"
             /* 動畫頁時往上讓開播放列，並跟著圖片一起平滑移動。
                鍵盤叫出來時整顆淡掉（打字時不需要它，而且會擋到）。 */
             style={{
-              bottom: motionUiOn ? 86 : 24,
+              bottom: motionUiOn ? 76 : 8,
               opacity: kbInset ? 0 : 1,
               pointerEvents: kbInset ? 'none' : undefined,
               transition: `bottom 420ms ${MOTION_EASE}, opacity 220ms ease-out`,
@@ -8668,12 +8668,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             <button 
               onClick={(e) => {
                 e.stopPropagation();
+                const icon=e.currentTarget.querySelector('svg');
+                icon?.getAnimations().forEach(a=>a.cancel());
+                if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches)icon?.animate([
+                  {transform:'rotate(0deg) scale(1)',opacity:.55},
+                  {transform:'rotate(150deg) scale(.86)',opacity:1,offset:.4},
+                  {transform:'rotate(360deg) scale(1)',opacity:.55},
+                ],{duration:420,easing:'cubic-bezier(.22,1,.36,1)'});
                 generateRandomHoles();
               }} 
-              className="p-3 bg-[#111] hover:bg-[#1a1a1a] border border-white/10 hover:border-white/20 text-[#aaa] hover:text-white rounded-full active:scale-95 transition-all flex items-center justify-center backdrop-blur-md"
+              aria-label="隨機圖案"
+              className="p-3 bg-transparent border-0 text-white/40 hover:text-white active:text-white active:scale-90 transition-[color,transform] flex items-center justify-center select-none touch-none"
               title="隨機圖形"
             >
-              <RefreshCw size={18} />
+              <RefreshCw size={24} strokeWidth={1.5} className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]" />
             </button>
           </div>
         )}

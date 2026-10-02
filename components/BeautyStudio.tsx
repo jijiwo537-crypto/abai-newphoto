@@ -6,10 +6,11 @@ import { addExport } from '../utils/exportHistory';
 import { Icon } from './Icon';
 import { ChevronLeft } from 'lucide-react';
 import { SaveButton } from './SaveButton';
+import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import type { ExitChoice } from '../types';
 import {
   Rect, LiquifyMode, LiquifyField,
-  BRUSH_REF_WIDTH, DEFAULT_BRUSH, BRUSH_RANGE, LIP_PRESETS,
+  BRUSH_REF_WIDTH, DEFAULT_BRUSH, BRUSH_RANGE, LIP_PRESETS, LIQUIFY_SCALE,
   healAt, healRect, wrinkleDab, wrinkleRect,
   createLiquifyField, liquifyDab, sampleLiquify, warpRegion, recomputeLiquifyMax,
   hexToRgb, stampAlpha, makeupComposite,
@@ -59,7 +60,7 @@ type LqPreset = 'slim' | 'chest' | 'eye' | 'pucker' | 'restore';
 const LIQUIFY_PRESETS: {
   id: LqPreset; label: string; mode: LiquifyMode; brush?: number; force?: number;
 }[] = [
-  { id: 'slim',    label: '瘦身', mode: 'push',    brush: 100, force: 10 },
+  { id: 'slim',    label: '瘦身', mode: 'push',    brush: 150, force: 10 },
   { id: 'chest',   label: '豐胸', mode: 'bloat',   brush: 100, force: 40 },
   { id: 'eye',     label: '大眼', mode: 'bloat',   brush: 40,  force: 20 },
   { id: 'pucker',  label: '收縮', mode: 'pucker',  brush: 100, force: 40 },
@@ -256,16 +257,17 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
     if (s.lq.max === 0) { ctx.putImageData(s.base, 0, 0, x0, y0, w, h); return; }
     let bufImg = warpBufRef.current;
-    if (!bufImg || bufImg.width !== w || bufImg.height !== h) {
-      bufImg = ctx.createImageData(w, h);
+    if (!bufImg || bufImg.width < w || bufImg.height < h) {
+      bufImg = ctx.createImageData(Math.max(w,bufImg?.width||0), Math.max(h,bufImg?.height||0));
       warpBufRef.current = bufImg;
     }
     warpRegion(s.base, s.W, s.H, s.lq, bufImg, { x: x0, y: y0, w, h });
-    ctx.putImageData(bufImg, x0, y0);
+    ctx.putImageData(bufImg, x0, y0, 0, 0, w, h);
   }, []);
 
   const renderPixelRect = useCallback((r: Rect) => {
     const s = sessionRef.current!;
+    if(cfg.current.tool==='liquify'){render(r);return;}
     const e = Math.ceil(s.lq.max) + 2;
     render({ x: r.x - e, y: r.y - e, w: r.w + e * 2, h: r.h + e * 2 });
   }, [render]);
@@ -458,7 +460,9 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     if (c.tool === 'liquify') {
       liquifyDab(s.lq, p.x, p.y, dx, dy, R, c.force / 100 * 0.9, c.lqMode);
       strokePtsRef.current.push(p.x, p.y, dx, dy);
-      const e = Math.ceil(R * 1.3 + s.lq.max + 6);
+      // Only field cells inside this brush changed. Expanding twice by the
+      // accumulated displacement redrew most of the image on every move.
+      const e = Math.ceil(R + 2 * LIQUIFY_SCALE + 2);
       return { x: p.x - e, y: p.y - e, w: e * 2, h: e * 2 };
     }
 
@@ -678,7 +682,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         } else {
           const f = c.force / 100 * 0.9;
           liquifyDab(s.lq, d.x, d.y, 0, 0, R, f, c.lqMode);
-          const e = Math.ceil(R * 1.3 + s.lq.max + 6);
+          const e = Math.ceil(R + 2 * LIQUIFY_SCALE + 2);
           render({ x: d.x - e, y: d.y - e, w: e * 2, h: e * 2 });
           pushOp({ k: 'liquify', pts: [d.x, d.y, 0, 0], r: R, force: f, mode: c.lqMode });
         }
@@ -890,14 +894,18 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
     </div>
   );
 
+  const viewport=useStandaloneToolViewport();
   return (
-    <div className="safe-top fixed inset-0 bg-[#080808] z-[60] flex flex-col animate-in slide-in-from-right duration-300 font-sans text-white overflow-hidden beauty-root">
+    <div ref={viewport.ref} className={`safe-top relative w-full h-[100dvh] bg-[#080808] z-[60] flex flex-col font-sans text-white overflow-hidden beauty-root ${viewport.standalone?'standalone-tool-viewport':''}`}>
       <style>{`
+        ${standaloneToolViewportCSS}
         .beauty-root {
             -webkit-touch-callout: none;
             -webkit-user-select: none;
             user-select: none;
         }
+        .beauty-swatch{position:relative;overflow:visible;-webkit-tap-highlight-color:transparent}
+        .beauty-swatch-outline{position:absolute;left:-2px;top:-2px;width:32px;height:32px;overflow:visible;pointer-events:none}
         .beauty-root .allow-callout {
             -webkit-touch-callout: default !important;
             -webkit-user-select: auto !important;
@@ -1086,7 +1094,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
 
       {/* 參數區固定高度：切換工具時圖片不會跳動，滑桿位置也永遠對齊。
           額外控制列即使沒有內容也保留空間，四個工具的滑桿才會落在同一個位置。 */}
-      <div className="h-[116px] shrink-0 border-t border-white/[0.06] py-2 flex flex-col">
+      <div className="h-[144px] shrink-0 border-t border-white/[0.06] py-3 flex flex-col" data-beauty-controls>
         <div className="h-8 shrink-0 flex items-center gap-2 overflow-x-auto overflow-y-hidden no-scrollbar px-5">
           {tool === 'liquify' && LIQUIFY_PRESETS.map(m => (
             <button
@@ -1129,13 +1137,15 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                   onClick={() => setMakeupColor(c.hex)}
                   title={c.name}
                   aria-label={c.name}
-                  className={`w-7 h-7 rounded-full shrink-0 transition-all active:scale-90 ${
+                  className={`beauty-swatch w-7 h-7 rounded-full shrink-0 transition-transform active:scale-90 ${
                     makeupColor.toLowerCase() === c.hex.toLowerCase()
-                      ? 'ring-2 ring-white'
+                      ? 'beauty-swatch-selected'
                       : ''
                   }`}
                   style={{ backgroundColor: c.hex }}
-                />
+                >
+                  {makeupColor.toLowerCase()===c.hex.toLowerCase()&&<svg className="beauty-swatch-outline" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="none" stroke="white" strokeWidth="2"/></svg>}
+                </button>
               ))}
             </>
           )}
@@ -1166,15 +1176,15 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         </div>
       </div>
 
-      {/* 保留 48px 觸控高度，但不再用 padding 把內容擠出容器；整組只下移 2px，
-          因此圖標與文字完整可見，文字下方也只剩必要呼吸距離。 */}
-      <div className="border-t border-white/10 bg-black shrink-0">
-      <div className="flex h-12">
+      {/* 與獨立編輯器共用 64px 按鈕列及 12px 底部距離，
+          分隔線下移後，圖標和文字不會被下緣裁切。 */}
+      <div className="border-t border-white/10 bg-black shrink-0" data-beauty-toolbar>
+      <div className="flex h-16 pb-3 box-content">
         {BEAUTY_TOOLS.map(t => (
           <button
             key={t.id}
             onClick={() => setTool(t.id)}
-            className={`flex-1 flex flex-col items-center justify-center gap-0.5 translate-y-0.5 transition-all ${tool === t.id ? 'text-white' : 'text-white/20'}`}
+            className={`flex-1 flex flex-col items-center justify-center gap-1 transition-colors ${tool === t.id ? 'text-white' : 'text-white/20'}`}
           >
             <Icon name={t.icon} className="text-xl" fill={tool === t.id} />
             <span className="text-[9px] font-black uppercase tracking-[0.15em]">{t.label}</span>

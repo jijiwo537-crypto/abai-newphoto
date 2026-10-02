@@ -3,12 +3,15 @@ import {createRoot} from 'react-dom/client';
 import {CollageTool} from '../components/CollageTool';
 import {ArtStudio} from '../components/ArtStudio';
 import {ImageEditor} from '../components/ImageEditor';
+import {BeautyStudio} from '../components/BeautyStudio';
+import {ColorMatchStudio} from '../components/ColorMatchStudio';
 import {ImageAdjustPanel} from '../components/GridLayoutTool';
 import {FX_DEFAULTS} from '../utils/glEffects';
 import {installSliderTouch} from '../utils/sliderTouch';
 import '../styles.css';
 installSliderTouch();
 const query=new URLSearchParams(location.search);
+if(query.has('beautyAudit'))void import('./beauty-interaction-audit').then(m=>m.auditBeauty());
 if(query.has('sliderPerf'))void import('./effect-slider-performance-audit').then(m=>m.auditEffectSliders()).catch(e=>{const out=document.createElement('pre');out.textContent=String(e);out.style.cssText='position:fixed;inset:100px 8px;z-index:99999;color:white;background:#111';document.body.append(out);});
 if(query.has('halationAudit'))void import('./halation-performance-audit').then(m=>m.auditHalation()).catch(e=>{(window as any).__halationError=String(e);const out=document.createElement('pre');out.textContent=String(e);out.style.cssText='position:fixed;inset:100px 8px;z-index:99999;color:white;background:#111';document.body.append(out);});
 if(query.has('glyphglow'))void import('./art-glyph-glow-audit');
@@ -23,7 +26,10 @@ function SharedPanelFixture({src}:{src:string}){
  return <div style={{height:'100dvh',display:'flex',flexDirection:'column',background:'#080808',color:'white'}}><img src={src} style={{minHeight:0,flex:1,objectFit:'contain',padding:16}}/><div style={{height:'calc(11rem + 58px)'}}><ImageAdjustPanel img={img} set={p=>setImg(s=>({...s,...p}))} lutList={[{id:'none',name:'原始',url:''}]} loadingLut={null} setLoadingLut={()=>{}} lutRevision={0} setLutRevision={()=>{}} adjustSub={sub as any} setAdjustSub={setSub} effectCard={card} setEffectCard={setCard} effectDetail={detail} setEffectDetail={setDetail} shapeMenu="" setShapeMenu={()=>{}} shapeTool="" setShapeTool={()=>{}} tuneTool="" setTuneTool={()=>{}} setTuningEdge={()=>{}} openComposeFor={()=>{}}/></div></div>;
 }
 if(query.has('geometry')){let lastTap='';document.addEventListener('pointerup',e=>{lastTap=(e.target as HTMLElement).closest('button')?.textContent?.slice(0,16)||'canvas';});setInterval(()=>{let el=document.querySelector<HTMLElement>('.art-studio');if(!el)return;let out=document.getElementById('art-geometry');if(!out){out=document.createElement('pre');out.id='art-geometry';Object.assign(out.style,{position:'fixed',top:'120px',left:'8px',zIndex:'9999',fontSize:'10px',background:'#000b',color:'#0f0',pointerEvents:'none'});document.body.append(out);}const r=el.getBoundingClientRect(),nav=el.querySelector('nav')?.getBoundingClientRect();out.textContent=JSON.stringify({standalone:(navigator as any).standalone,tap:lastTap,screen:screen.height,inner:innerHeight,width:innerWidth,visual:visualViewport?.height,scale:visualViewport?.scale,offset:visualViewport?.offsetTop,top:r.top,bottom:r.bottom,height:r.height,navBottom:nav?.bottom,margin:getComputedStyle(el).marginTop},null,2);},500);}
-if(query.has('creative')){
+if(query.has('beauty')||query.has('match')){
+ const c=document.createElement('canvas');c.width=1200;c.height=1600;const g=c.getContext('2d')!;const grad=g.createLinearGradient(0,0,1200,1600);grad.addColorStop(0,'#173959');grad.addColorStop(1,'#dfae96');g.fillStyle=grad;g.fillRect(0,0,1200,1600);g.fillStyle='white';g.fillRect(350,150,100,900);g.beginPath();g.arc(800,800,200,0,Math.PI*2);g.fill();const src=c.toDataURL();
+ createRoot(document.getElementById('root')!).render(query.has('beauty')?<BeautyStudio imageSrc={src} onCancel={()=>{}} onHome={()=>{}} onImportNew={()=>{}} onSendToEditor={()=>{}}/>:<ColorMatchStudio imageSrc={src} referenceSrc={src} onCancel={()=>{}} onHome={()=>{}} onImportNew={()=>{}} onPickReference={()=>{}}/>);
+}else if(query.has('creative')){
  const c=document.createElement('canvas');c.width=600;c.height=800;
  const g=c.getContext('2d')!;const grad=g.createLinearGradient(0,0,600,800);grad.addColorStop(0,'#1b527f');grad.addColorStop(1,'#bd9670');g.fillStyle=grad;g.fillRect(0,0,600,800);
  g.fillStyle='white';g.font='80px sans-serif';g.fillText('PHOTO',80,400);
