@@ -4,7 +4,7 @@ import {blurredSource,makeLinks} from './artMaterials.js';
 import {mosaicGrid,rankCandidates,scopedCandidates} from './artSampling.js';
 export const trackingDefaults={mode:'mosaic',detection:'combined',threshold:30,count:0,size:100,pixels:16,blur:20,circles:55,minDistance:55,block:16,minRadius:4,maxRadius:24,stroke:1,labelSize:8,opacity:1,imageOpacity:1,links:125,lineWeight:.8,chain:false,chainCount:11,angle:30,baseRadius:170,ratio:.83,intersections:true,markerSize:5,frame:false,frameSize:68,dash:8,frameStroke:1,starSize:40,starPoints:4,textSize:12,topLeft:'ABAI / VISION',topRight:'IMAGE ANALYSIS',bottomLeft:'SIGNAL / 001',bottomRight:'OBSERVATION',labels:false,palette:'#ffffff',background:'#111111',shape:'circle',format:'1200x1600',noise:false,textureOpacity:.5,texture:null,zones:[],zoneStroke:true,seed:42};
 let cache=null;
-trackingDefaults.linkMode='tree';trackingDefaults.materialStrength=100;trackingDefaults.shapes=['circle'];trackingDefaults.materials=['mosaic'];
+trackingDefaults.linkMode='tree';trackingDefaults.materialStrength=100;trackingDefaults.shapes=['circle'];trackingDefaults.materials=[];
 Object.assign(trackingDefaults,{maxRadius:40,nodeSeed:42,variation:80,sizeVariation:0,golden:false,goldenSize:76,goldenAngle:0,angle:null,baseRadius:200});
 export function invalidateTracking(){cache=null;}
 function canvas(w,h=w){const c=document.createElement('canvas');c.width=w;c.height=h;return c;}

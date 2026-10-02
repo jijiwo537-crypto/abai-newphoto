@@ -31,7 +31,7 @@ test('actual vector rendering isolates node randomness from material randomness'
  }finally{globalThis.document=old;invalidateTracking();}
 });
 test('tracking tools expose requested placement, two-state elements and paired outline sliders',()=>{
- assert.match(ui,/groups\(\['偵測','輪廓','連線','顏色'\]\)/);assert.match(ui,/groups\(\['元素','文字'\]\)/);assert.match(ui,/groups\(\['編輯','材質','細節'\]\)/);
+ assert.match(ui,/groups\(\['偵測','輪廓','連線','顏色'\]\)/);assert.match(ui,/groups\(\['元素','文字'\]\)/);assert.match(ui,/groups\(\['編輯','細節'\]\)/);
  assert.match(ui,/\['tree','標準'\]/);assert.doesNotMatch(ui,/最短路徑|折線|完成放置|區域大小|節點間距|像素大小|區域邊線/);
  assert.match(ui,/tr\('變化','variation',0,100\)/);assert.match(ui,/tr\('間距','minDistance',10,100\)/);
  assert.match(ui,/tr\('變化','sizeVariation',0,100\)/);assert.match(ui,/點擊圖片進行放置/);
@@ -39,6 +39,16 @@ test('tracking tools expose requested placement, two-state elements and paired o
  assert.match(ui,/tr\('大小','goldenSize',10,150\)/);assert.match(ui,/tr\('角度','goldenAngle',0,360\)/);assert.doesNotMatch(ui+css,/黃金比例精確角度|art-angle|goldenAngleControl/);
  assert.match(css,/art-detail-ranges>\.art-range:last-child:nth-child\(odd\)\{grid-column:1\/-1\}/);
  assert.match(css,/art-subtabs button\[aria-pressed=true\]\{color:white\}/);
+});
+test('mask materials share the edit page with no preselected material or placement actions',()=>{
+ assert.deepEqual(trackingDefaults.materials,[]);
+ const mask=ui.slice(ui.indexOf("effect==='tracking'&&tab==='遮罩'"),ui.indexOf('<nav aria-label="藝術工具">'));
+ assert.match(mask,/section==='編輯'.*aria-label="遮罩材質"/);
+ assert.doesNotMatch(mask,/手動放置|清除|section==='材質'/);
+ assert.match(mask,/className="art-mask-toolbar".*groups\(\['編輯','細節'\]\).*className="art-mask-random"/);
+ assert.match(ui,/const randomizeNodes=[\s\S]*?randomizeFeedback\(e.currentTarget\)/);
+ assert.match(ui,/const randomizeMasks=[\s\S]*?redistributeRegions\(s\).*randomizeFeedback\(e.currentTarget\)/);
+ assert.match(css,/art-mask-random\{[^}]*margin-left:auto/);
 });
 test('element visits activate once without undoing a later manual disable',()=>{
  const visited=new Set();for(const key of ['frame','chain','golden']){assert.equal(firstTrackingElementVisit(visited,key),true);assert.equal(firstTrackingElementVisit(visited,key),false);}

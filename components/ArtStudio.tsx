@@ -124,10 +124,15 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  useEffect(()=>()=>cancelAnimationFrame(frame.current),[]);
  const updateTracking=(key:string,value:any)=>setTracking(s=>({...s,[key]:value}));
  const visitElement=(key:string)=>{setElement(key);if(firstTrackingElementVisit(visitedElements.current,key))setTracking(s=>({...s,[key]:true}));};
- const randomizeNodes=(e:React.MouseEvent<HTMLButtonElement>)=>{
-  setTracking(s=>({...s,nodeSeed:s.nodeSeed+1}));
-  const button=e.currentTarget;button.getAnimations().forEach(animation=>animation.cancel());
+ const randomizeFeedback=(button:HTMLButtonElement)=>{
+  button.getAnimations().forEach(animation=>animation.cancel());
   button.animate([{borderColor:'#ffffffb3'},{borderColor:'#ffffff16'}],{duration:260,easing:'ease-out'});
+ };
+ const randomizeNodes=(e:React.MouseEvent<HTMLButtonElement>)=>{
+  setTracking(s=>({...s,nodeSeed:s.nodeSeed+1}));randomizeFeedback(e.currentTarget);
+ };
+ const randomizeMasks=(e:React.MouseEvent<HTMLButtonElement>)=>{
+  setTracking(s=>redistributeRegions(s));randomizeFeedback(e.currentTarget);
  };
  const selectMany=(key:'shapes'|'materials',value:string)=>setTracking(s=>({...s,[key]:value==='none'?[]:s[key].includes(value)?s[key].filter((x:string)=>x!==value):[...s[key],value],...(key==='materials'&&value!=='none'?{count:s.count===0?10:s.count}:{})}));
  const slider=(name:string,value:number,min:number,max:number,change:(v:number)=>void,step=1,unit='')=><label className="art-range"><span>{name}<output>{Number(value.toFixed(2))}{unit}</output></span><input aria-label={name} type="range" min={min} max={max} step={step} value={value} onChange={e=>change(+e.target.value)}/></label>;
@@ -191,9 +196,8 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
     {section==='元素'&&<><div className="art-presets art-elements" role="group" aria-label="選擇要調整的元素">{[['frame','取景框'],['chain','圓圈'],['golden','黃金比例']].map(([key,name])=><button key={key} aria-pressed={element===key} data-enabled={!!tracking[key]} onClick={()=>visitElement(key)}>{name}</button>)}</div>{tt(element==='frame'?'取景框':element==='chain'?'圓圈':'黃金比例',element)}<div className="art-detail-ranges art-element-ranges">{element==='frame'?<>{tr('大小','frameSize',10,100)}{tr('虛線','dash',2,30)}</>:element==='chain'?<>{tr('大小','baseRadius',30,400)}{slider('角度',Math.round(trackingChainAngle(tracking,dimensions.w,dimensions.h)),0,180,v=>updateTracking('angle',v))}</>:<>{tr('大小','goldenSize',10,150)}{tr('角度','goldenAngle',0,360)}</>}</div></>}
     {section==='文字'&&<>{tt('角落文字','labels')}<div className="art-text-fields">{[['topLeft','左上'],['topRight','右上'],['bottomLeft','左下'],['bottomRight','右下']].map(([key,name])=><label key={key}>{name}<KeyboardSafeInput aria-label={name+'文字'} value={tracking[key]} maxLength={40} onChange={e=>updateTracking(key,e.target.value)}/></label>)}</div></>}
    </>}
-   {effect==='tracking'&&tab==='遮罩'&&<>{groups(['編輯','材質','細節'])}
-    {section==='材質'&&<div className="art-presets">{MATERIALS.map(([key,name])=><button key={key} aria-pressed={tracking.materials.includes(key)} onClick={()=>selectMany('materials',key)}>{name}</button>)}</div>}
-    {section==='編輯'&&<><div className="art-presets"><button aria-pressed={placing} onClick={()=>setPlacing(!placing)}>手動放置</button><button onClick={()=>setTracking(s=>redistributeRegions(s))}>隨機分佈</button><button disabled={!tracking.zones.length&&!tracking.count} onClick={()=>setTracking(s=>({...s,zones:[],count:0}))}>清除</button></div>{tr('數量','count',0,30)}<div className="art-detail-ranges">{tr('大小','size',20,400)}{tr('變化','sizeVariation',0,100)}</div></>}
+   {effect==='tracking'&&tab==='遮罩'&&<><div className="art-mask-toolbar">{groups(['編輯','細節'])}<button className="art-mask-random" onClick={randomizeMasks}>隨機分佈</button></div>
+    {section==='編輯'&&<><div className="art-presets" role="group" aria-label="遮罩材質">{MATERIALS.map(([key,name])=><button key={key} aria-pressed={tracking.materials.includes(key)} onClick={()=>selectMany('materials',key)}>{name}</button>)}</div>{tr('數量','count',0,30)}<div className="art-detail-ranges">{tr('大小','size',20,400)}{tr('變化','sizeVariation',0,100)}</div></>}
     {section==='細節'&&<><div className="art-detail-ranges">{tracking.materials.includes('mosaic')&&tr('馬賽克','pixels',2,60)}{tracking.materials.includes('glass')&&tr('霧化','blur',0,60)}</div>{tt('框線','zoneStroke')}</>}
    </>}
   </div><nav aria-label="藝術工具">{tabs.map(label=><button key={label} aria-pressed={tab===label} onClick={()=>selectTab(label)}>{label}</button>)}</nav></section>

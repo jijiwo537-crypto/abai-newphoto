@@ -6,7 +6,7 @@ import {asciiVector} from '../utils/artVector.js';
 const read=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 test('outline and material selection use arrays without a none button',()=>{
  const s=read('components/ArtStudio.tsx');
- assert.deepEqual(trackingDefaults.shapes,['circle']);assert.deepEqual(trackingDefaults.materials,['mosaic']);
+ assert.deepEqual(trackingDefaults.shapes,['circle']);assert.deepEqual(trackingDefaults.materials,[]);
  assert.match(s,/value==='none'\?\[\]/);assert.match(s,/s\[key\]\.includes\(value\)/);
  assert.match(s,/\['circle','圓形'\],\['square','方形'\]/);assert.match(s,/\['star','星星'\]/);
  assert.doesNotMatch(s,/\[\['none','無'\],\.\.\.MATERIALS\]/);

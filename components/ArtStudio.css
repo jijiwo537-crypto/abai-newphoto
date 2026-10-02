@@ -55,6 +55,9 @@
 .art-detail-ranges>.art-range:last-child:nth-child(odd){grid-column:1/-1}
 .art-elements button{display:flex;align-items:center;justify-content:center;gap:7px;min-width:0}
 .art-element-ranges{margin-top:4px}
+.art-mask-toolbar{display:flex;align-items:flex-start;gap:12px;height:30px;margin-bottom:5px}
+.art-mask-toolbar .art-subtabs{margin-bottom:0;min-width:0}
+.art-mask-random{margin-left:auto;flex:none;height:26px;padding:0 8px;font-size:12px;line-height:18px;white-space:nowrap;border:1px solid #ffffff16;border-radius:5px;color:#aaa}
 .art-color-controls{padding-top:5px}
 .art-color-row{display:flex;align-items:center;gap:8px;margin-bottom:12px}
 .art-swatches{display:flex;align-items:center;min-width:0;flex:1;gap:8px;overflow-x:auto;overflow-y:hidden;overscroll-behavior:none;scrollbar-width:none;padding:2px}

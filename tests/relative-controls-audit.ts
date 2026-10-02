@@ -36,8 +36,12 @@ export async function auditRelativeControls(){
  click('構圖');await settle();results.ui.composition=[...document.querySelectorAll('.art-subtabs button')].map(b=>b.textContent);
  click('遮罩');await settle();results.ui.maskTabs=[...document.querySelectorAll('.art-subtabs button')].map(b=>b.textContent);
  const input=(name:string,n:number)=>{const el=document.querySelector<HTMLInputElement>('input[aria-label="'+name+'"]')!;Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(el,String(n));el.dispatchEvent(new Event('input',{bubbles:true}));};
- input('數量',0);await settle();click('材質');await settle();results.ui.materials=[...document.querySelectorAll('.art-presets button')].map(b=>b.textContent);
- click('像素');await settle();click('編輯');await settle();results.ui.firstMaterialCount=document.querySelector<HTMLInputElement>('input[aria-label="數量"]')?.value;
+ input('數量',0);await settle();results.ui.materials=[...document.querySelectorAll('[aria-label="遮罩材質"] button')].map(b=>b.textContent);
+ results.ui.preselectedMaterials=[...document.querySelectorAll('[aria-label="遮罩材質"] button[aria-pressed="true"]')].map(b=>b.textContent);
+ const toolbar=document.querySelector('.art-mask-toolbar')!.getBoundingClientRect(),random=document.querySelector('.art-mask-random')!.getBoundingClientRect();
+ results.ui.randomInTabRow=random.top>=toolbar.top&&random.bottom<=toolbar.bottom;
+ click('像素');await settle();results.ui.firstMaterialCount=document.querySelector<HTMLInputElement>('input[aria-label="數量"]')?.value;
+ click('隨機分佈');results.ui.randomFeedback=document.querySelector('.art-mask-random')!.getAnimations().length>0;await settle();
  results.scope=results.scope.map((r:any)=>{let h=2166136261;for(const s of r.paths)h=Math.imul(h^s.charCodeAt(0),16777619);return {threshold:r.threshold,hash:h>>>0};});
  (window as any).__relativeAudit=results;
  await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify(results)}).catch(()=>{});
