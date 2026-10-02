@@ -816,7 +816,7 @@ interface ColorPickerProps {
 /** 文字圖層的編輯面板：內容、字體、顏色、字距、粗體、邊緣發光。 */
 /** 長按多久才算「要拖去交換」。150ms 太容易誤觸，拉長到 250ms。 */
 /* 圖片交換需要明確長按；250ms 很容易在準備第二根手指縮放時誤觸。 */
-const LONG_PRESS_MS = 380;
+const LONG_PRESS_MS = 304;
 
 
 /**
@@ -15214,6 +15214,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               const radius = layout.seamless || insetLayout ? 0 : layout.radius * ls;
                               const lLeft = (previewW - lw) / 2 + (layout.t?.x || 0);
                               const lTop = (previewH - lh) / 2 + (layout.t?.y || 0);
+                              const emptyFillsPage = nativeLayout && gap === 0 && radius === 0
+                                && !(layout.t?.rot || 0) && layout.images.every(c => !c?.url)
+                                && lLeft <= .001 && lTop <= .001
+                                && lLeft + lw >= previewW - .001 && lTop + lh >= previewH - .001;
                               return (
                               <div
                                 key={layout.id}
@@ -15242,8 +15246,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                      整个布局固定在同一个合成坐标系，缩放时格子、本体与
                                      共享边界作为一块移动，不会各自跳到相邻像素。 */
                                   isolation: 'isolate',
-                                  backfaceVisibility: stableSeamless ? undefined : 'hidden',
-                                  willChange: stableSeamless ? undefined : 'transform',
+                                  backfaceVisibility: stableSeamless || nativeLayout ? undefined : 'hidden',
+                                  willChange: stableSeamless || nativeLayout ? undefined : 'transform',
                                   pointerEvents: activeTab === 'motion' ? 'none' : undefined,
                                   /* 兩指旋轉：直接轉整個外框，裡面的格子、照片、
                                      選取框、四個角、那排按鈕全部跟著轉，
@@ -15262,6 +15266,22 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               {prepareSeamless && <SeamlessLayout previewId={layout.id} enabled={stableSeamless} cells={layout.images} rects={pageActiveTemplate.rects} width={lbox.w} height={lbox.h} scale={ls} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
                               {nativeLayout && <svg data-layout-photo-layer="1" width={lw} height={lh}
                                 className="absolute inset-0 pointer-events-none" style={{zIndex: 0, overflow: 'visible'}}>
+                                {/* Empty backgrounds share the photo plane. Independent HTML
+                                    backgrounds acquire different fractional compositor edges. */}
+                                {gap === 0 && radius === 0 && layout.images.every(c => !c?.url)
+                                  ? <rect data-layout-empty-surface="1" width={lw} height={lh} fill="#0c0c0c"
+                                      // Paint covers the fractional fringe before the shared strip
+                                      // clip. Bounds, snapping and exported geometry do not move.
+                                      stroke={emptyFillsPage ? '#0c0c0c' : undefined}
+                                      strokeWidth={emptyFillsPage ? 2 : 0} />
+                                  : pageActiveTemplate.rects.map((raw, idx) => {
+                                    if (layout.images[idx]?.url) return null;
+                                    const aw = Math.max(1, lw - gap), ah = Math.max(1, lh - gap);
+                                    const r = resolveLayoutRect(raw, aw, ah, layout.overlaySize);
+                                    const w = Math.max(0, r.w * aw - gap), h = Math.max(0, r.h * ah - gap);
+                                    return <rect key={`empty-${idx}`} x={gap + r.x * aw} y={gap + r.y * ah}
+                                      width={w} height={h} rx={Math.min(radius, w / 2, h / 2)} fill="#0c0c0c" />;
+                                  })}
                                 {pageActiveTemplate.rects.map((raw, idx) => {
                                   const c = layout.images[idx];
                                   if (!c?.url) return null;
@@ -15456,9 +15476,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         }}
                                       >
                                         <div 
-                                        className={`w-full h-full relative flex flex-col items-center justify-center rounded-lg bg-[#0c0c0c] transition-[background-color,box-shadow] duration-300 ${
+                                        className={`w-full h-full relative flex flex-col items-center justify-center rounded-lg ${nativeLayout ? '' : 'bg-[#0c0c0c]'} transition-[background-color,box-shadow] duration-300 ${
                                             isSelected && !selectionDragging
-                                              ? 'bg-[#141414] shadow-[0_0_15px_rgba(255,255,255,0.05)]'
+                                              ? (nativeLayout ? '' : 'bg-[#141414] shadow-[0_0_15px_rgba(255,255,255,0.05)]')
                                               : (wholeLayoutSelected ? '' : 'cell-hover')
                                           }`}
                                           style={{
@@ -15466,7 +15486,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             /* 新增布局的 radius 是 0。此时建立 WebKit mask 只会把每个
                                                相邻格子拆成独立合成层，重绘时从中间漏出页面白底；真正
                                                有圆角时才需要这个抗锯齿遮罩。 */
-                                            ...(radius > 0 ? { WebkitMaskImage: '-webkit-radial-gradient(white, black)' } : null),
+                                            ...(!nativeLayout && radius > 0 ? { WebkitMaskImage: '-webkit-radial-gradient(white, black)' } : null),
                                           }}
                                         >
                                           <button
@@ -15785,9 +15805,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 });
                                 /* 所有矩形作为同一个 path 的子路径一次栅格化。即使横线与
                                    竖线在交点相遇，也只会混合一次 alpha，不会叠成更白的点。 */
-                                const d = emptyRects
-                                  .map(r => `M ${r.x} ${r.y} h ${r.w} v ${r.h} h ${-r.w} Z`)
-                                  .join(' ');
+                                const d = emptyRects.map(r => {
+                                  if (gap !== 0) return `M ${r.x} ${r.y} h ${r.w} v ${r.h} h ${-r.w} Z`;
+                                  // The outer perimeter is not a grid line. Stroking it at a
+                                  // fractional preview scale caused the white flashing frame.
+                                  const right = r.x + r.w, bottom = r.y + r.h;
+                                  return [r.x > .001 ? `M${r.x} ${r.y}V${bottom}` : '',
+                                    r.y > .001 ? `M${r.x} ${r.y}H${right}` : '',
+                                    right < lw - .001 ? `M${right} ${r.y}V${bottom}` : '',
+                                    bottom < lh - .001 ? `M${r.x} ${bottom}H${right}` : ''].join(' ');
+                                }).join(' ');
                                 const selectedEmpty = emptyRects.find(r =>
                                   r.idx === selectedIndex && isThisLayoutSelected);
                                 return (
@@ -17489,7 +17516,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {(floatDragPreloadSrc || floatDragSrc) && (
         <div
           id="float-drag-thumbnail"
-          className="fixed pointer-events-none z-[9999] border-2 border-white/80 overflow-hidden bg-transparent flex items-center justify-center will-change-transform"
+          className="fixed pointer-events-none z-[9999] border-2 border-white overflow-hidden bg-transparent flex items-center justify-center will-change-transform"
           style={{
             left: 0,
             top: 0,
@@ -17512,7 +17539,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       {cellDragPreview && (
         <div
           id="mobile-drag-floating-thumbnail"
-          className="fixed pointer-events-none z-[9999] border-2 border-white/80 overflow-hidden bg-transparent flex items-center justify-center will-change-transform"
+          className="fixed pointer-events-none z-[9999] border-2 border-white overflow-hidden bg-transparent flex items-center justify-center will-change-transform"
           style={{
             left: 0,
             top: 0,

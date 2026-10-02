@@ -1652,9 +1652,9 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     return dflt;
   };
   const [igLikes, setIgLikes] = useState(() => readStat('likes', '5,850'));
-  const [igComments, setIgComments] = useState(() => readStat('comments', '6'));
-  const [igReposts, setIgReposts] = useState(() => readStat('reposts', '20'));
-  const [igShares, setIgShares] = useState(() => readStat('shares', '342'));
+  const [igComments] = useState(() => readStat('comments', '6'));
+  const [igReposts] = useState(() => readStat('reposts', '20'));
+  const [igShares] = useState(() => readStat('shares', '342'));
   const [igCaption, setIgCaption] = useState(() => readStat('caption', '和其他人都說讚'));
   const [igLiked, setIgLiked] = useState(() => readStat('liked', '0') === '1');
   const [igSaved, setIgSaved] = useState(() => readStat('saved', '0') === '1');
@@ -1670,22 +1670,15 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
     saveStat('likes', out);
     return out;
   });
-  /** 下面那幾個數字共用的樣式：看起來就是一般文字，點下去才知道能改 */
+  /** 統計是預覽文字，不是輸入欄；按讚仍由愛心按鈕控制。 */
   const statInput = (
-    value: string, onChange: (v: string) => void, commit: (v: string) => void, w: string, title: string,
+    value: string, w: string, title: string,
   ) => (
-    <input
-      value={value}
-      title={title}
-      maxLength={12}
-      onChange={e => onChange(e.target.value.slice(0, 12))}
-      onBlur={e => commit(e.currentTarget.value)}
-      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
-      enterKeyHint="done"
-      inputMode="numeric"
+    <span
+      aria-label={title.replace(/^改/, '')}
       className="text-[14px] font-semibold tabular-nums text-white bg-transparent"
-      style={{ width: w, border: 0, outline: 'none', boxShadow: 'none', padding: 0, margin: 0 }}
-    />
+      style={{ display: 'inline-block', width: w, padding: 0, margin: 0 }}
+    >{value}</span>
   );
 
   /* 這裡本來有一顆右下角的聲音鍵。預覽只是「看版面長怎樣」，
@@ -1933,12 +1926,12 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                       fill={igLiked ? '#ff3040' : 'none'}
                       color={igLiked ? '#ff3040' : 'currentColor'} />
                   </button>
-                  {statInput(igLikes, setIgLikes, v => { setIgLikes(v); saveStat('likes', v); }, `${Math.max(2, igLikes.length)}ch`, '改讚數')}
+                  {statInput(igLikes, `${Math.max(2, igLikes.length)}ch`, '讚數')}
                 </span>
                 <span className="flex items-center gap-[5px]">
                   {/* 依愛心的頭腳對齊；留言那顆照要求再小非常一點點 */}
                   <MessageCircle data-ig="comment" size={24} strokeWidth={1.8} style={{ transform: 'scaleX(-1) translateY(0.45px) scale(0.83)' }} />
-                  {statInput(igComments, setIgComments, v => { setIgComments(v); saveStat('comments', v); }, `${Math.max(1, igComments.length)}ch`, '改留言數')}
+                  {statInput(igComments, `${Math.max(1, igComments.length)}ch`, '留言數')}
                 </span>
                 <span className="flex items-center gap-[5px]">
                   {/* IG 的轉發：兩支對向的循環箭頭（拉高，不能扁扁的） */}
@@ -1948,7 +1941,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                     <path d="M9.4 21 6 17.6l3.4-3.4" />
                     <path d="M6 17.6h9.4a4.6 4.6 0 0 0 4.6-4.6V10.4" />
                   </svg>
-                  {statInput(igReposts, setIgReposts, v => { setIgReposts(v); saveStat('reposts', v); }, `${Math.max(1, igReposts.length)}ch`, '改轉發數')}
+                  {statInput(igReposts, `${Math.max(1, igReposts.length)}ch`, '轉發數')}
                 </span>
                 <span className="flex items-center gap-[5px]">
                   {/* IG 的分享：斜著飛的紙飛機，三個角都帶一點圓角 */}
@@ -1956,7 +1949,7 @@ export const IgPreview: React.FC<IgPreviewProps> = ({
                     <path d="M20.5 3.5 9.9 13.5" />
                     <path d="M20.29 2.98 Q21.5 2.5 21.01 3.7 L14.39 19.8 Q13.9 21 13.29 19.85 L9.9 13.5 4.15 10.41 Q3 9.8 4.21 9.32 Z" />
                   </svg>
-                  {statInput(igShares, setIgShares, v => { setIgShares(v); saveStat('shares', v); }, `${Math.max(1, igShares.length)}ch`, '改分享數')}
+                  {statInput(igShares, `${Math.max(1, igShares.length)}ch`, '分享數')}
                 </span>
               </div>
               <button

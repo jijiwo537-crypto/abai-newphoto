@@ -6,6 +6,8 @@ import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import { idleDefaults } from '../utils/animationDefaults';
 import { get2dWide } from '../utils/colorSpace';
+import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, photoRegionRects, photoRegionHit, swapRegionPhotos, paintPhotoRegion } from '../utils/creativePhotoLayout';
+import type { PhotoRegion, PhotoArrangement } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
@@ -1175,7 +1177,7 @@ interface CollageToolProps {
   /** 濾鏡清單，跟「編輯」「經典拼圖」同一份 */
   lutList?: { id: string; name: string; url: string }[];
   initialFile?: File | null;
-  /** 從首頁一次選了好幾個時，第一個之後的那些 —— 會自動變成物件 */
+  /** 首頁多選的其餘照片：按選取順序加入同一個圖片排版區域。 */
   initialExtras?: File[];
   onImportNew: () => void;
   /** 接續上次時把存下來的參數餵回來 */
@@ -1187,6 +1189,25 @@ interface CollageToolProps {
 export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit, initialFile, initialExtras, onImportNew, initialState, histKey, lutList = [] }) => {
   useKeyboardRecovery();
   const [imageState, setImageState] = useState<any>(null);
+  const [photoRegion, setPhotoRegion] = useState<PhotoRegion | null>(null);
+  const photoRegionRef = useRef(photoRegion);
+  photoRegionRef.current = photoRegion;
+  const decodedRegionPhotos = useRef(new Map<string, HTMLImageElement>());
+  const [photoLayoutOpen, setPhotoLayoutOpen] = useState(false);
+  const photoImportEpoch = useRef(0);
+  const photoRegionEpoch = useRef(0);
+  const loadRegion = async (region: PhotoRegion) => {
+    await Promise.all(region.photos.map(photo => {
+      if (decodedRegionPhotos.current.has(photo.src)) return Promise.resolve();
+      return new Promise<void>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => { decodedRegionPhotos.current.set(photo.src, img); resolve(); };
+        img.onerror = reject;
+        img.src = photo.src;
+      });
+    }));
+    return region;
+  };
   const [layout, setLayout] = useState('mask-bottom');
   const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
   const [canvasRatio, setCanvasRatio] = useState<CanvasRatio>('1:1');
@@ -2282,6 +2303,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     }
     if (st.layout !== undefined) setLayout(st.layout);
+    if (st.photoRegion?.photos?.length && st.__completeDraft !== 1) {
+      const epoch = ++photoRegionEpoch.current;
+      void loadRegion(st.photoRegion).then(region => {
+        if (epoch === photoRegionEpoch.current) setPhotoRegion(region);
+      }).catch(error => console.error('Photo region restore failed', error));
+    }
     if (st.maskScale !== undefined) setMaskScale(st.maskScale);
     if (isCanvasRatio(st.canvasRatio)) setCanvasRatio(st.canvasRatio);
     if (st.holeType !== undefined) setHoleType(st.holeType);
@@ -2382,7 +2409,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialFile]);
 
-  /** 目前這張照片的 object URL。換照片時才回收上一張（見下面的說明）。
+  /** 目前第一張照片的 object URL。仍被多張排版引用時不能提早回收。
       刻意**不**在元件收掉時一併回收：StrictMode 會「掛載→清理→再掛載」，
       那個清理會在照片還在用的時候就把網址收掉，草稿於是又讀不到了
       （正是這裡本來要修的那個 bug）。最後那一張留到分頁關掉為止，
@@ -2390,9 +2417,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const photoUrlRef = useRef<string | null>(null);
   /** 現在當底的那一段影片（沒有影片就是 null）。換底、離開時要收掉。 */
   const baseVidRef = useRef<HTMLVideoElement | null>(null);
-
-  /** 底換好之後要接著加成物件的那幾個檔案（相簿多選時的第二個以後） */
-  const pendingExtrasRef = useRef<File[]>([]);
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     /* 先把元素抓起來再 await —— 這支現在是非同步的，等解碼回來之後
@@ -2403,8 +2427,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const preserveLayout = inputEl === replaceFileInputRef.current;
     /* 創意拼圖恢復為只接受圖片。accept 只會限制相簿介面，分享／拖放仍可能
        帶入影片，所以真正處理之前也必須過濾一次。 */
-    const rawPicked = (Array.from(inputEl.files || []) as File[]).filter(file => !isVideoFile(file));
+    const rawPicked = (Array.from(inputEl.files || []) as File[]).filter(file => !isVideoFile(file)).slice(0, CREATIVE_PHOTO_LIMIT);
     if (!rawPicked.length) { inputEl.value = ''; return; }
+    const epoch = ++photoImportEpoch.current;
+    ++photoRegionEpoch.current;
     /* RAW／HEIC／TIFF 先解成一般 JPEG（影片與一般 JPEG 原樣放行）。
        不解的話 <img> 根本載不出來，畫面就是空白。 */
     const picked: File[] = [];
@@ -2414,10 +2440,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     const file = picked[0];
     if (!file) return;
-    /* 相簿一次選了好幾個：第一個當底，其餘的加成物件。
-       但物件要等底真的擺好（getLayoutOffsets 要有 imageState）才加得進去，
-       所以先寄放在這裡，由下面那支 effect 在底就位之後補上。 */
-    pendingExtrasRef.current = picked.slice(1);
     /* 這張照片就是草稿要存的那張（回來才接得回去）。
        saveDraft 內部是 `fetch(url)` 把位元組讀進 IndexedDB —— 那是非同步的，
        所以這個網址在讀完之前不能回收。以前是 img.onload 一觸發就 revoke，
@@ -2429,7 +2451,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        折衷：只留「現在這一張」，換下一張的時候才把上一張收掉。
        那時候上一張的草稿早就讀完了，不會再有人用到它。 */
     const url = URL.createObjectURL(file);
-    if (photoUrlRef.current && photoUrlRef.current !== url) {
+    if (photoUrlRef.current && photoUrlRef.current !== url && !photoRegionRef.current?.photos.some(p => p.src === photoUrlRef.current)) {
       try { URL.revokeObjectURL(photoUrlRef.current); } catch { /* 收過了就算了 */ }
     }
     photoUrlRef.current = url;
@@ -2438,7 +2460,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        所以擺放這一段抽出來共用，兩條路走的是同一份程式碼。
        w0 / h0 一定要傳進來：影片的原始尺寸在 videoWidth / videoHeight，
        不是 width / height（那兩個是版面用的）。 */
-    const place = (src: HTMLImageElement | HTMLVideoElement, w0: number, h0: number) => {
+    const place = (src: HTMLImageElement | HTMLVideoElement, w0: number, h0: number, grouped = false) => {
       let bw = w0, bh = h0;
       const originalW = bw;
       const originalH = bh;
@@ -2463,7 +2485,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const kk = nextLayout === AROUND
         ? Math.max(geo.iw / Math.max(1, bw), geo.ih / Math.max(1, bh)) : 1;
       const cover = Math.max(1, geo.iw / Math.max(1, bw * kk), geo.ih / Math.max(1, bh * kk));
-      const w = bw * cover, h = bh * cover;
+      const w = grouped ? geo.iw / kk : bw * cover, h = grouped ? geo.ih / kk : bh * cover;
       setImageTransform({
         x: (geo.iw - w * kk) / (2 * kk),
         y: (geo.ih - h * kk) / (2 * kk),
@@ -2480,9 +2502,25 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       inputEl.value = '';
       return;
     }
-    const img = new Image();
-    img.onload = () => place(img, img.width, img.height);
-    img.src = url;
+    try {
+      const sources = [url, ...picked.slice(1, CREATIVE_PHOTO_LIMIT).map(f => URL.createObjectURL(f))];
+      const photos = await Promise.all(sources.map(src => new Promise<{ src: string; width: number; height: number }>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          decodedRegionPhotos.current.set(src, img);
+          resolve({ src, width: img.naturalWidth, height: img.naturalHeight });
+        };
+        img.onerror = reject;
+        img.src = src;
+      })));
+      if (epoch !== photoImportEpoch.current) return;
+      setPhotoRegion({ photos, arrangement: 'grid', landscape: photos[0].width > photos[0].height });
+      const img = decodedRegionPhotos.current.get(url)!;
+      place(img, img.naturalWidth, img.naturalHeight, photos.length > 1);
+    } catch (error) {
+      console.error('Creative photo region import failed', error);
+      alert('圖片讀取失敗，請重新選擇圖片');
+    }
     inputEl.value = '';
   };
 
@@ -2865,16 +2903,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       .catch(() => photos.forEach((f, i) => addMediaObject(f, i)));
   }, [addMediaObject]);
 
-  /* 底就位了 → 把多選時剩下那幾個補成物件。
-     這個 effect 一定要放在 addMediaFiles 後面：相依陣列是在 render 當下就會算的，
-     放前面會直接踩到 TDZ（ReferenceError），不是只有型別檢查會唸。 */
-  useEffect(() => {
-    if (!imageState || !pendingExtrasRef.current.length) return;
-    const extra = pendingExtrasRef.current;
-    pendingExtrasRef.current = [];
-    addMediaFiles(extra);
-  }, [imageState, addMediaFiles]);
-
   /* 換排版時畫布的形狀會整個換掉（例如遮罩從下面搬到上面、或變成四周包圍），
      但浮動物件的座標還停在舊畫布上 —— 來回切幾次就會整個跑到畫面外面不見了。
      這裡在畫布尺寸真的變了的時候，把每個物件的「中心」按比例搬到新畫布的
@@ -2924,6 +2952,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const newK = layout === AROUND
       ? Math.max(o.iw / Math.max(1, imageState.baseW), o.ih / Math.max(1, imageState.baseH)) : 1;
     setImageTransform(t => {
+      if (photoRegionRef.current && photoRegionRef.current.photos.length > 1) {
+        return { x: t.x * oldK / prev.iw * o.iw / newK,
+          y: t.y * oldK / prev.ih * o.ih / newK,
+          w: t.w * oldK / prev.iw * o.iw / newK,
+          h: t.h * oldK / prev.ih * o.ih / newK };
+      }
       let w = t.w, h = t.h;
       const fx = (prev.iw / 2 - t.x * oldK) / Math.max(1, t.w * oldK);
       const fy = (prev.ih / 2 - t.y * oldK) / Math.max(1, t.h * oldK);
@@ -3098,6 +3132,93 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       return hitImg || hitMask;
     }
   }, [getHoleSize, holeType, checkHitHole, layout, maskScale, canvasRatio, imageState, isHoleFullyInsideMask]);
+
+  const regionHold = useRef<{ id: number; index: number; x: number; y: number; timer: number; active: boolean } | null>(null);
+  const [regionSwapPhoto, setRegionSwapPhoto] = useState<string | null>(null);
+  const regionThumbRef = useRef<HTMLCanvasElement>(null);
+  const regionThumbPoint = useRef({ x: 0, y: 0 });
+  const cancelRegionHold = () => {
+    if (regionHold.current) window.clearTimeout(regionHold.current.timer);
+    regionHold.current = null;
+    setRegionSwapPhoto(null);
+  };
+  useEffect(() => () => {
+    if (regionHold.current) window.clearTimeout(regionHold.current.timer);
+  }, []);
+  const hitRegionPhoto = (clientX: number, clientY: number) => {
+    const region = photoRegionRef.current, offs = getLayoutOffsets();
+    const frame = (motionFrameRef.current || canvasRef.current)?.getBoundingClientRect();
+    if (!region || region.photos.length < 2 || !offs || !frame?.width || !frame.height) return -1;
+    const x = (clientX - frame.left) * offs.cw / frame.width;
+    const y = (clientY - frame.top) * offs.ch / frame.height;
+    if (x < offs.ix || y < offs.iy || x > offs.ix + offs.iw || y > offs.iy + offs.ih) return -1;
+    const kk = baseFrameScale(offs), t = imageTransform;
+    return photoRegionHit(photoRegionRects(region.photos.length, region.arrangement),
+      (x - offs.ix - t.x * kk) / (t.w * kk), (y - offs.iy - t.y * kk) / (t.h * kk));
+  };
+  useLayoutEffect(() => {
+    const canvas = regionThumbRef.current, img = regionSwapPhoto && decodedRegionPhotos.current.get(regionSwapPhoto);
+    if (!canvas || !img) return;
+    const size = Math.round(80 * window.devicePixelRatio);
+    canvas.width = canvas.height = size;
+    const g = get2dWide(canvas);
+    if (g) {
+      const d = Math.min(img.naturalWidth, img.naturalHeight);
+      g.drawImage(img, (img.naturalWidth - d) / 2, (img.naturalHeight - d) / 2, d, d, 0, 0, size, size);
+    }
+    const p = regionThumbPoint.current;
+    canvas.style.transform = `translate3d(${p.x}px,${p.y}px,0) translate(-50%,-50%)`;
+  }, [regionSwapPhoto]);
+  const regionPointerDown = (e: React.PointerEvent) => {
+    if (activePointers.current.size || regionHold.current) { cancelRegionHold(); return; }
+    if (motionLockRef.current || brushMode !== 'off' || selectedObjRef.current || selectedTarget
+      || (e.target as Element).closest('button,input,.no-pointer-events')) return;
+    const index = hitRegionPhoto(e.clientX, e.clientY);
+    if (index < 0) return;
+    // Objects/patterns in front of the photo retain their own gesture ownership.
+    const frame = (motionFrameRef.current || canvasRef.current)!.getBoundingClientRect(), offs = getLayoutOffsets()!;
+    const x = (e.clientX - frame.left) * offs.cw / frame.width, y = (e.clientY - frame.top) * offs.ch / frame.height;
+    if (objectsRef.current.some(o => {
+      const r = -(o.rot || 0) * Math.PI / 180;
+      const dx = x - o.x - o.w / 2, dy = y - o.y - o.h / 2;
+      return Math.abs(dx * Math.cos(r) - dy * Math.sin(r)) <= o.w / 2
+        && Math.abs(dx * Math.sin(r) + dy * Math.cos(r)) <= o.h / 2;
+    }) || (layout !== FULL && holesRef.current.some(h => checkHitHole(x, y, h, imageState.globalScale || 1, offs, 'image')))) return;
+    const hold = { id: e.pointerId, index, x: e.clientX, y: e.clientY, timer: 0, active: false };
+    hold.timer = window.setTimeout(() => {
+      if (regionHold.current !== hold || activePointers.current.size !== 1) return;
+      hold.active = true;
+      objDragRef.current = null; baseDragRef.current = null; interactionRef.current = null;
+      regionThumbPoint.current = { x: hold.x, y: hold.y };
+      setRegionSwapPhoto(photoRegionRef.current!.photos[hold.index].src);
+    }, PHOTO_SWAP_HOLD_MS);
+    regionHold.current = hold;
+  };
+  const regionPointerMove = (e: React.PointerEvent) => {
+    const hold = regionHold.current;
+    if (!hold || hold.id !== e.pointerId) return;
+    if (!hold.active) {
+      if (Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 8) cancelRegionHold();
+      return;
+    }
+    e.stopPropagation(); e.preventDefault();
+    regionThumbPoint.current = { x: e.clientX, y: e.clientY };
+    activePointers.current.set(e.pointerId, e);
+    if (regionThumbRef.current) regionThumbRef.current.style.transform = `translate3d(${e.clientX}px,${e.clientY}px,0) translate(-50%,-50%)`;
+  };
+  const regionPointerUp = (e: React.PointerEvent) => {
+    const hold = regionHold.current;
+    if (!hold || hold.id !== e.pointerId) return;
+    if (hold.active) {
+      e.stopPropagation(); e.preventDefault();
+      const index = e.type === 'pointercancel' ? -1 : hitRegionPhoto(e.clientX, e.clientY);
+      setPhotoRegion(region => region ? swapRegionPhotos(region, hold.index, index) : region);
+      activePointers.current.delete(e.pointerId);
+      try { (e.target as Element).releasePointerCapture(e.pointerId); } catch { /* already released */ }
+      setObjDragging(false); objDraggingRef.current = false;
+    }
+    cancelRegionHold();
+  };
 
   const handlePointerDown = (e: React.PointerEvent) => {
     if (!imageState || !canvasRef.current) return;
@@ -4211,7 +4332,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   const chromeSelectionRef = useRef({selectedTarget, selectedPatternSide, selectedObj, baseSelected});
   chromeSelectionRef.current = {selectedTarget, selectedPatternSide, selectedObj, baseSelected};
-  const patternSceneIdentity = useMemo(() => ({}), [imageState, layout, canvasRatio, imageTransform,
+  const patternSceneIdentity = useMemo(() => ({}), [imageState, photoRegion, layout, canvasRatio, imageTransform,
     maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
     stripeN, stripeDir, stripeA, stripeB, holeType, customText, getHoleSize, holeAngle, maskScale,
     objects, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching,
@@ -4477,6 +4598,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     if (isMain) maskCacheKeyRef.current = maskKey;
 
+    const drawBase = (g: CanvasRenderingContext2D, img: any, x: number, y: number, w: number, h: number) => {
+      if (img === baseImg && photoRegion && photoRegion.photos.length > 1) {
+        paintPhotoRegion(g, photoRegion, decodedRegionPhotos.current, x, y, w, h);
+      } else g.drawImage(img, x, y, w, h);
+    };
     const drawImg = (img: any, t: any, ox: number, oy: number, w: number, h: number, kk = 1) => {
       if (!img || !t) return;
       ctx.save();
@@ -4484,7 +4610,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.rect(ox, oy, w, h);
       ctx.clip();
       // kk：整個構圖等比例縮放（四周包圍縮中間那張照片時用）
-      ctx.drawImage(img, ox + t.x * s * kk, oy + t.y * s * kk, t.w * s * kk, t.h * s * kk);
+      drawBase(ctx, img, ox + t.x * s * kk, oy + t.y * s * kk, t.w * s * kk, t.h * s * kk);
       ctx.restore();
     };
 
@@ -4510,7 +4636,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const m = Math.max(maskW / Math.max(1, sw), maskH / Math.max(1, sh));
       /* 底是影片的話還要加上「現在是第幾格」——不加的話這張底圖會一直
          沿用第一幀，畫面上就是「四周包圍的底定格了，只有洞在動」。 */
-      const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}|${baseVidTok}`;
+      const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}|${baseVidTok}|${JSON.stringify(photoRegion)}`;
       const hit = isMain ? aroundBdRef.current : null;
       if (hit && hit.key === key && hit.img === img) return hit.cv;
       const cv = isMain ? holeBackdropCanvasRef.current : document.createElement('canvas');
@@ -4521,7 +4647,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       g.globalAlpha = 1;
       // copy：畫的同時把其餘部分清掉，省一次 clearRect
       g.globalCompositeOperation = 'copy';
-      g.drawImage(img, t.x * s * m, t.y * s * m, t.w * s * m, t.h * s * m);
+      drawBase(g, img, t.x * s * m, t.y * s * m, t.w * s * m, t.h * s * m);
       g.globalCompositeOperation = 'source-over';
       if (isMain) aroundBdRef.current = { key, img, cv };
       return cv;
@@ -6186,7 +6312,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const a0h = animRef.current;
       const sigTop = `${layout}|${maskScale}|${s.toFixed(4)}|${offs.cw}x${offs.ch}|${offs.mx},${offs.my}`
         + `|B${belowBox ? [belowBox.x0, belowBox.y0, belowBox.x1, belowBox.y1].map(v => Math.round(v)).join(',') : ''}`
-        + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}|${baseVidTok}`
+        + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}|${baseVidTok}|${JSON.stringify(photoRegion)}`
         + `|${holeType}|${isTextHole(holeType) ? customText : ''}|${holeAngle}|${linkMode}|${linkColor || ''}`
         + `|${LINK_W.toFixed(3)}`
         + '|H' + holes.map(h => {
@@ -6236,7 +6362,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           // 並排的四種：遮罩那一塊底下就是同一張圖，位置跟 drawBackdrop 一致
           g.save();
           g.beginPath(); g.rect(offs.mx, offs.my, maskW, maskH); g.clip();
-          g.drawImage(img, offs.mx + t.x * s, offs.my + t.y * s, t.w * s, t.h * s);
+          drawBase(g, img, offs.mx + t.x * s, offs.my + t.y * s, t.w * s, t.h * s);
           g.restore();
           if (isMain) { aroundBdRef.current = null; holeBdKeyRef.current = bdKey; }
         }
@@ -6631,7 +6757,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
-  }, [imageState, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
+  }, [imageState, photoRegion, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
       stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle, patternSceneIdentity]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
@@ -6679,6 +6805,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     try { pauseVideos(allVideosRef.current()); } catch { /* 停不了就算了 */ }
     if (choice === 'save') {
       await saveToolDraft('collage', photoUrlRef.current, {
+        photoRegion: photoRegionRef.current,
         layout, maskScale, canvasRatio, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
         stripeN, stripeDir, stripeA: stripeAPick, stripeB,
@@ -6742,6 +6869,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          參數在這一行**同步**準備好（下面那個物件），只把「真的去做」延到
          連續兩格畫面之後 —— 那時候主頁已經畫出來了，慢一點也沒人感覺得到。 */
       const payload = {
+        photoRegion: photoRegionRef.current,
         layout, maskScale, canvasRatio, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
         stripeN, stripeDir, stripeA: stripeAPick, stripeB,
@@ -7446,7 +7574,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      這裡才有辦法一次拿到全部狀態（動畫那幾個是上面才宣告的）。
      取快照與套回快照都寫在這，前段的歷史邏輯只透過 ref 呼叫。 */
   envSrcRef.current = {
-    layout, maskScale, canvasRatio,
+    layout, maskScale, canvasRatio, photoRegion,
     maskColor, patternType, dotColor, dotSize, dotGap,
     stripeN, stripeDir, stripeA: stripeAPick, stripeB,
     maskImageState, maskTransform, imageTransform,
@@ -7459,6 +7587,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   applyEnvRef.current = (e: any) => {
     if (!e) return;
+    if (e.photoRegion && e.photoRegion !== photoRegionRef.current) {
+      const epoch = ++photoRegionEpoch.current;
+      void loadRegion(e.photoRegion).then(region => {
+        if (epoch === photoRegionEpoch.current) setPhotoRegion(region);
+      }).catch(error => console.error('Photo region undo failed', error));
+    }
     setBaseSelected(false);
     setLayout(e.layout); setMaskScale(e.maskScale);
     if (isCanvasRatio(e.canvasRatio)) setCanvasRatio(e.canvasRatio);
@@ -7502,7 +7636,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return () => window.clearTimeout(t);
   }, [
     imageState, pushHistory, markDirty,
-    layout, maskScale, canvasRatio, maskColor, patternType, dotColor, dotSize, dotGap,
+    layout, maskScale, canvasRatio, photoRegion, maskColor, patternType, dotColor, dotSize, dotGap,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
     glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
@@ -7818,6 +7952,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   return (
     <div className="safe-top flex flex-col h-[100dvh] w-full bg-[#0A0A0A] text-white font-sans overflow-hidden animate-in fade-in duration-300">
+      {regionSwapPhoto && <canvas ref={regionThumbRef} data-creative-swap-thumbnail="1"
+        className="fixed pointer-events-none z-[9999] border-2 border-white rounded-[8px]"
+        style={{ left: 0, top: 0, width: 80, height: 80, boxShadow: '0 4px 14px rgba(0,0,0,.34)' }} />}
       <style>{`
         .no-select {
             -webkit-user-select: none !important;
@@ -8305,8 +8442,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             </div>
           </div>
         )}
-        {/* 換底也可以一次選好幾個：第一個當底，其餘自動變成物件。
-            accept 跟首頁那個入口一致（影片也可以當底）。 */}
+        {/* 多選最多九張照片，全部加入同一個圖片排版區域。 */}
         <input type="file" accept={RAW_ACCEPT_IMG} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
         <input type="file" accept={RAW_ACCEPT_IMG} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
         <input type="file" accept="image/*" aria-label="上傳遮罩圖片" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
@@ -8320,6 +8456,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         {imageState && (
           <div
             ref={stageRef}
+            data-creative-stage="1"
+            data-photo-count={photoRegion?.photos.length || 1}
+            data-photo-arrangement={photoRegion?.arrangement || 'grid'}
+            data-canvas-ratio={canvasRatio}
             className="absolute inset-0 overflow-hidden"
             style={{
               touchAction: 'none',
@@ -8334,6 +8474,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                畫布外面那片黑底也能拖、也能兩指縮放。挖洞／筆刷本來就會
                檢查座標落在哪一塊，落在黑底上就自然什麼都不做。 */
             onPointerDown={handlePointerDown}
+            onPointerDownCapture={regionPointerDown}
+            onPointerMoveCapture={regionPointerMove}
+            onPointerUpCapture={regionPointerUp}
+            onPointerCancelCapture={regionPointerUp}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
@@ -8989,8 +9133,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <div className="h-9 grid grid-cols-5 gap-1 bg-[#111] border border-[#222] p-1 rounded-[6px]">
                       {CANVAS_RATIO_BUTTONS.map(([label, portrait, landscape]) => (
                         <button key={label} onClick={() => setCanvasRatio(current => {
-                          /* 換到另一顆時一定先直式；連按同一顆才在直／橫之間切換。 */
-                          if (!ratioButtonActive(current, portrait, landscape)) return portrait;
+                          /* 初次方向跟第一張匯入照片一致；同一顆連按才切換。 */
+                          if (!ratioButtonActive(current, portrait, landscape)) return photoRegion?.landscape ? landscape : portrait;
                           if (portrait === landscape) return portrait;
                           return current === portrait ? landscape : portrait;
                         })}
@@ -9007,6 +9151,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       （最細的一條），分母 = 1 + 值×0.04，所以 50 就是 1/3。
                       四周包圍：1/N 是「單邊邊框寬度佔圖片的比例」，滑到最後
                       （比別人長的那一段尾巴）就是邊框 0 —— 圖片剛好滿版。 */}
+                  <div className={photoRegion && photoRegion.photos.length > 1 ? 'grid grid-cols-2 gap-3' : ''}>
+                  {photoRegion && photoRegion.photos.length > 1 && <div className="flex flex-col min-w-0" data-photo-layout-control>
+                    <span className="text-[10px] font-bold text-[#888] mb-2 tracking-widest">圖片排版</span>
+                    <button type="button" onClick={() => setPhotoLayoutOpen(v => !v)} aria-expanded={photoLayoutOpen}
+                      className="h-9 w-full bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold text-white">
+                      {{ grid: '均分', horizontal: '橫向', vertical: '直向', feature: '主圖' }[photoRegion.arrangement]}
+                    </button>
+                  </div>}
                   {(() => {
                     const around = layout === AROUND;
                     const b = around ? aroundB(maskScale) : 0;
@@ -9040,6 +9192,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       </div>
                     );
                   })()}
+                  </div>
+                  {photoLayoutOpen && photoRegion && photoRegion.photos.length > 1 && <div className="grid grid-cols-4 gap-2" data-photo-layout-options>
+                    {(['grid', 'horizontal', 'vertical', 'feature'] as PhotoArrangement[]).map(mode => <button key={mode}
+                      type="button" onClick={() => { setPhotoRegion(p => p ? { ...p, arrangement: mode } : p); setPhotoLayoutOpen(false); }}
+                      className={`h-10 rounded-[6px] border text-[10px] font-bold ${photoRegion.arrangement === mode ? 'bg-white text-black border-white' : 'bg-[#111] border-[#333] text-white/70'}`}>
+                      {{ grid: '均分', horizontal: '橫向', vertical: '直向', feature: '主圖' }[mode]}
+                    </button>)}
+                  </div>}
                 {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
                     它們講的都是「這張版面長什麼樣」，本來就該在同一頁。
                     -mt-1 是為了讓它跟上面那排的間距，跟這三項彼此之間一樣。 */}

@@ -4,6 +4,11 @@
 
 | 繁體中文 | 英文 |
 |---|---|
+| 圖片排版 | Photo layout |
+| 均分 | Balanced |
+| 橫向 | Horizontal |
+| 直向 | Vertical |
+| 主圖 | Featured |
 | 語言 | Language |
 | 無縫拼圖 | Seamless collage |
 | 融合程度 | Blend strength |

@@ -196,7 +196,7 @@ const App: React.FC = () => {
     // 仍可能繞過它，因此在真正進工具前再做一次內容型別防線。
     const list = (Array.isArray(files) ? files : [files]).filter(file =>
       file.type.startsWith('image/') || /\.(heic|heif|dng|cr2|cr3|nef|arw|orf|rw2|raf|srw|jpe?g|png|webp|gif|bmp|tiff?)$/i.test(file.name),
-    );
+    ).slice(0, 9);
     if (!list.length) return;
     setIsImporting(true);
     setImportPreviewUrl(null);
