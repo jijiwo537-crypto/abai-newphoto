@@ -356,8 +356,8 @@ const RATIOS = [
 ];
 
 /* ── 佈局自己的比例 ──────────────────────────────────────────────────
-   每個佈局可以有自己的長寬比（跟整頁的「版型比例」是兩回事）。沒設就跟頁面
-   一樣，所以舊檔案讀進來畫面完全不變。
+   每個佈局保留自己的長寬比。舊檔案未設比例時，先保持讀入時的樣子；
+   使用者第一次改整頁比例前，會把這個原始比例寫回各佈局。
    設了就把那個比例「contain」進頁面裡並置中，再乘上佈局自己的縮放。
    預覽、IG 預覽、匯出、拖曳吸附四條路全部呼叫這一支，幾何不可能對不上。 */
 const layoutBox = (
@@ -7596,7 +7596,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     t: { x: number; y: number; scale: number; rot?: number };
     /** 圖層堆疊位置：0 = 在所有一般圖片下方，N = 在全部上方。 */
     z: number;
-    /** 這個佈局自己的長寬比（'3:4' 之類）。沒設就跟整頁一樣。 */
+    /** 這個佈局自己的長寬比；舊檔案缺值時在改整頁比例前固定。 */
     ratio?: string;
     /** 這個佈局自己的比例是不是橫過來 */
     landscape?: boolean;
@@ -8666,7 +8666,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (!id) return;
     setPages(prev => prev.map(p => p.layouts.some(l => l.id === id) ? ({
       ...p,
-      layouts: p.layouts.map(l => l.id === id ? { ...l, ...patch } : l),
+      layouts: p.layouts.map(l => l.id === id ? { ...l, ratio: l.ratio || selectedRatio, landscape: l.ratio ? l.landscape : isLandscape, ...patch } : l),
     }) : p));
   };
   const bgColor = activePage.bgColor;
@@ -8962,7 +8962,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const handleAddLayoutToPage = (pageIdx: number, templateIdx = 0, count = 4) => {
-    const item = makeLayout(templateIdx, count);
+    const item = {...makeLayout(templateIdx, count), ratio: selectedRatio, landscape: isLandscape};
     setPages(prev => prev.map((p, idx) => idx === pageIdx ? { ...p, layouts: [...p.layouts, item] } : p));
     setActivePageIndex(pageIdx);
     // 刻意不自動選中新佈局：選中＝進入編輯，會讓下一次點版型變成「換版型」而不是「再加一個」
@@ -9388,6 +9388,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const [selectedRatio, setSelectedRatio] = useState('3:4');
   const [isLandscape, setIsLandscape] = useState(false);
+  const changePageShape = (ratio = selectedRatio, landscape = isLandscape) => {
+    // Freeze legacy layouts before changing the page. Never overwrite an
+    // explicitly edited layout ratio, direction, crop or transform.
+    setPages(prev => prev.map(p => p.layouts.some(l => !l.ratio) ? {...p,
+      layouts: p.layouts.map(l => l.ratio ? l : {...l, ratio: selectedRatio, landscape: isLandscape}),
+    } : p));
+    setSelectedRatio(ratio);setIsLandscape(landscape);
+  };
   const [containerSize, setContainerSize] = useState({ width: 420, height: 420 });
   const [activeTab, setActiveTab] = useState<'layout' | 'ratio' | 'color' | 'add' | 'adjust' | 'pages' | 'brush' | 'motion'>('ratio');
   const normalPreviewSize = useRef<{ width: number; height: number } | null>(null);
@@ -15198,6 +15206,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               const lh = lbox.h * ls;
                               const insetLayout = isInsetLayout(layout);
                               const stableSeamless = !!layout.seamless && !insetLayout;
+                              const prepareSeamless = !insetLayout && (!!layout.seamless || isThisLayoutSelected);
                               const nativeInset = insetLayout && layout.images.every(c => !hasPhotoFx(c.fx));
                               const nativeLayout = !insetLayout && !layout.seamless
                                 && layout.images.every(c => !hasPhotoFx(c.fx));
@@ -15250,7 +15259,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 onTouchEnd={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                                 onTouchCancel={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                               >
-                              {stableSeamless && <SeamlessLayout previewId={layout.id} cells={layout.images} rects={pageActiveTemplate.rects} width={lbox.w} height={lbox.h} scale={ls} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
+                              {prepareSeamless && <SeamlessLayout previewId={layout.id} enabled={stableSeamless} cells={layout.images} rects={pageActiveTemplate.rects} width={lbox.w} height={lbox.h} scale={ls} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
                               {nativeLayout && <svg data-layout-photo-layer="1" width={lw} height={lh}
                                 className="absolute inset-0 pointer-events-none" style={{zIndex: 0, overflow: 'visible'}}>
                                 {pageActiveTemplate.rects.map((raw, idx) => {
@@ -17022,7 +17031,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               <div data-layout-panel="1" className="w-full min-w-0 mx-auto h-full flex flex-row animate-in fade-in duration-300">
                 <div
                   key={activeTab === 'layout' ? 'layout-create' : `layout-edit-${selectedLayoutId}`}
-                  className="w-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden no-scrollbar h-full"
+                  className={`w-full min-w-0 flex-1 h-full ${activeTab === 'layout' ? 'overflow-y-auto overflow-x-hidden no-scrollbar' : 'overflow-hidden'}`}
+                  data-layout-editor={layoutEditMode ? 'true' : undefined}
                   style={{ overscrollBehavior: 'none' }}
                 >
                   {activeTab === 'layout' ? (
@@ -17073,13 +17083,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                     </div>
                   ) : (
                     /* Adjustment sliders - top aligned, smooth and stable without layout jitter */
-                    <div className="w-full min-w-0 space-y-4 pt-2.5 pb-24 px-1">
+                    <div className="w-full min-w-0 space-y-4">
                       {/* 這個佈局自己的比例。跟最左邊那一頁的「版型比例」是兩回事：
                           那邊調的是整張頁面，這裡只調選中的這一個佈局。
                           按鍵樣式跟那一頁同一套；直式／橫式不再包一層底色格子，
                           改成跟上面同一種 grid（同樣的 gap），
                           所以兩顆的左右外緣剛好對齊上面那排比例鍵。
-                          再按一次同一顆比例就取消，回到「跟頁面一樣」。 */}
+                          佈局比例始終獨立保存，不跟著整頁比例一起改。 */}
                       <div className="space-y-1.5">
                         {/* 這一排只放名稱。右邊本來會再寫一次目前的比例，
                             但下面那五顆按鈕自己就會反白標示，寫兩次是重複的。 */}
@@ -17089,10 +17099,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               key={item.id}
                               onClick={() => {
                                 if (selectedIndex !== null) setSelectedIndex(null);
-                                patchLayoutShape({ ratio: layoutRatio === item.id ? undefined : item.id });
+                                patchLayoutShape({ ratio: item.id });
                               }}
                               className={`p-1 py-3 rounded-xl border text-center transition-all flex items-center justify-center ${
-                                layoutRatio === item.id
+                                (layoutRatio || selectedRatio) === item.id
                                   ? 'bg-white border-white text-black font-extrabold shadow-[0_4px_16px_rgba(255,255,255,0.15)]'
                                   : 'bg-white/[0.02] border-white/5 hover:border-white/15 text-white/70 hover:text-white'
                               }`}
@@ -17100,7 +17110,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               <div className="text-xs font-mono tracking-wider">
                                 {item.id === '1:1'
                                   ? '1:1'
-                                  : layoutLandscape
+                                    : (activeLayout?.ratio ? layoutLandscape : isLandscape)
                                     ? `${item.id.split(':')[1]}:${item.id.split(':')[0]}`
                                     : item.name}
                               </div>
@@ -17111,7 +17121,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           <button
                             onClick={() => { if (selectedIndex !== null) setSelectedIndex(null); patchLayoutShape({ landscape: false }); }}
                             className={`py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
-                              !layoutLandscape
+                              !(activeLayout?.ratio ? layoutLandscape : isLandscape)
                                 ? 'bg-white border-white text-black font-extrabold shadow-[0_4px_16px_rgba(255,255,255,0.15)]'
                                 : 'bg-white/[0.02] border-white/5 hover:border-white/15 text-white/70 hover:text-white'
                             }`}
@@ -17122,7 +17132,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                           <button
                             onClick={() => { if (selectedIndex !== null) setSelectedIndex(null); patchLayoutShape({ landscape: true }); }}
                             className={`py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
-                              layoutLandscape
+                              (activeLayout?.ratio ? layoutLandscape : isLandscape)
                                 ? 'bg-white border-white text-black font-extrabold shadow-[0_4px_16px_rgba(255,255,255,0.15)]'
                                 : 'bg-white/[0.02] border-white/5 hover:border-white/15 text-white/70 hover:text-white'
                             }`}
@@ -17201,13 +17211,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             )}
 
             {activeTab === 'ratio' && (
-              <div className="max-w-md mx-auto space-y-4 animate-in fade-in duration-300">
+              <div data-page-ratio-panel="1" className="w-full min-w-0 mx-auto space-y-1.5 animate-in fade-in duration-300">
                 <div className="grid grid-cols-5 gap-1.5">
                   {RATIOS.map((item) => (
                     <button
                       key={item.id}
-                      onClick={() => setSelectedRatio(item.id)}
-                      className={`p-1 py-3.5 rounded-xl border text-center transition-all flex items-center justify-center ${
+                      onClick={() => changePageShape(item.id)}
+                      className={`p-1 py-3 rounded-xl border text-center transition-all flex items-center justify-center ${
                         selectedRatio === item.id
                           ? 'bg-white border-white text-black font-extrabold shadow-[0_4px_16px_rgba(255,255,255,0.15)]'
                           : 'bg-white/[0.02] border-white/5 hover:border-white/15 text-white/70 hover:text-white'
@@ -17227,24 +17237,24 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   ))}
                 </div>
 
-                <div className="flex items-center justify-between bg-white/[0.02] border border-white/5 p-1 rounded-xl gap-1">
+                <div className="grid grid-cols-2 gap-1.5">
                   <button
-                    onClick={() => setIsLandscape(false)}
-                    className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                    onClick={() => changePageShape(selectedRatio, false)}
+                    className={`py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
                       !isLandscape
-                        ? 'bg-white text-black font-extrabold shadow-[0_2px_8px_rgba(255,255,255,0.1)]'
-                        : 'text-white/50 hover:text-white'
+                        ? 'bg-white border-white text-black font-extrabold shadow-[0_4px_16px_rgba(255,255,255,0.15)]'
+                        : 'bg-white/[0.02] border-white/5 hover:border-white/15 text-white/70 hover:text-white'
                     }`}
                   >
                     <Smartphone size={14} className="rotate-0 shrink-0" />
                     <span>直式</span>
                   </button>
                   <button
-                    onClick={() => setIsLandscape(true)}
-                    className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                    onClick={() => changePageShape(selectedRatio, true)}
+                    className={`py-2.5 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
                       isLandscape
-                        ? 'bg-white text-black font-extrabold shadow-[0_2px_8px_rgba(255,255,255,0.1)]'
-                        : 'text-white/50 hover:text-white'
+                        ? 'bg-white border-white text-black font-extrabold shadow-[0_4px_16px_rgba(255,255,255,0.15)]'
+                        : 'bg-white/[0.02] border-white/5 hover:border-white/15 text-white/70 hover:text-white'
                     }`}
                   >
                     <Smartphone size={14} className="rotate-90 shrink-0" />

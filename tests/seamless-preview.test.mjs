@@ -37,13 +37,22 @@ test('fusion gesture bypasses full editor state and keeps pixels at fixed full r
   assert.match(component,/onChange=\{e=>update/);assert.match(component,/onPointerUp=\{commit\}/);
   const input=component.slice(component.indexOf('const update='),component.indexOf('const commit='));
   assert.doesNotMatch(input,/onCommit/);assert.match(input,/requestAnimationFrame/);
-  assert.match(component,/\[sources,cells,rects,w,h,live,contextRevision,width,height,scale\]/);
+  assert.match(component,/\[sources,cells,rects,w,h,live,contextRevision,width,height,scale,enabled\]/);
   assert.match(component,/window.devicePixelRatio\|\|1/);
   assert.match(component,/data-seam-probe/);
   assert.match(gpu,/if\(!tex\)/);assert.match(gpu,/gl.texImage2D/);
   assert.match(gpu,/gl.LINEAR_MIPMAP_LINEAR/);assert.match(gpu,/gl.generateMipmap/);
   assert.match(gpu,/uniform vec4/);assert.match(gpu,/smoothstep/);
   assert.doesNotMatch(gpu,/toBlob|toDataURL|getImageData|Math.min\(.*1024/);
+});
+
+test('selected disabled layouts retain prepared GPU resources without painting hidden frames',()=>{
+  const component=readFileSync(new URL('../components/SeamlessLayout.tsx',import.meta.url),'utf8');
+  const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
+  assert.match(grid,/prepareSeamless = !insetLayout && \(!!layout.seamless \|\| isThisLayoutSelected\)/);
+  assert.match(grid,/enabled=\{stableSeamless\}/);
+  assert.match(component,/if\(!enabled&&warmKey.current===key\)return/);
+  assert.match(component,/visibility:ready&&enabled\?'visible':'hidden'/);
 });
 
 test('screen-aligned fusion samples remain locked to the layout at fractional zoom and rotation',()=>{

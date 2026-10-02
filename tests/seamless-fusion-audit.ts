@@ -48,10 +48,17 @@ void(async()=>{
     // Toggle repeatedly: no stale master, no cancelling the latest frame.
     const toggle=document.querySelector<HTMLButtonElement>('button[aria-label="無縫拼圖"]')!;
     let togglePass=true;
-    for(let i=0;i<3;i++){toggle.click();await wait(3);togglePass&&=!layout.querySelector('[data-seamless-master]');toggle.click();await wait(5);togglePass&&=!!layout.querySelector('[data-seamless-master]');}
+    const retained=layout.querySelector<HTMLCanvasElement>('canvas[data-seamless-layout]')!,uploads=retained.dataset.sourceUploads;
+    const toggleLatency:number[]=[];
+    for(let i=0;i<3;i++){
+      let start=performance.now();toggle.click();await wait();toggleLatency.push(performance.now()-start);
+      togglePass&&=svg().dataset.active==='false'&&retained.style.visibility==='hidden';
+      start=performance.now();toggle.click();await wait();toggleLatency.push(performance.now()-start);
+      togglePass&&=svg().dataset.active==='true'&&retained.style.visibility==='visible'&&layout.querySelector('canvas[data-seamless-layout]')===retained&&retained.dataset.sourceUploads===uploads;
+    }
     const sorted=[...intervals].sort((a,b)=>a-b),median=sorted[Math.floor(sorted.length/2)],p95=sorted[Math.floor(sorted.length*.95)];
     const master=layout.querySelector<HTMLCanvasElement>('canvas[data-seamless-layout]')!;
-    const report={kind:'seamless-live-fusion',ua:navigator.userAgent,scenario:location.search,masterWidth:master.width,masterHeight:master.height,frames:180,pixels,distinctLiveFrames:new Set(displayed).size,finalVisible,committed,togglePass,sourceStable:JSON.stringify(sources)===JSON.stringify(JSON.parse(svg().dataset.sourceKey!)[1].map((c:any)=>c[0])),medianFrameMs:median,p95FrameMs:p95,framesOver34ms:intervals.filter(t=>t>34).length};
+    const report={kind:'seamless-live-fusion',ua:navigator.userAgent,scenario:location.search,masterWidth:master.width,masterHeight:master.height,frames:180,pixels,distinctLiveFrames:new Set(displayed).size,finalVisible,committed,togglePass,toggleLatency,sourceStable:JSON.stringify(sources)===JSON.stringify(JSON.parse(svg().dataset.sourceKey!)[1].map((c:any)=>c[0])),medianFrameMs:median,p95FrameMs:p95,framesOver34ms:intervals.filter(t=>t>34).length};
     await output({...report,pass:pixels.every(p=>p.holes===0&&p.meanRGBDifference<2)&&new Set(displayed).size>70&&finalVisible===0&&committed===0&&togglePass&&median<22&&p95<34});
     if(new URLSearchParams(location.search).has('visual')){
       const input=document.querySelector<HTMLInputElement>('input[aria-label="融合程度"]')!;setter.call(input,'100');input.dispatchEvent(new Event('input',{bubbles:true}));await wait(5);

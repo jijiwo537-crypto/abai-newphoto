@@ -21,14 +21,14 @@ export function SeamlessAmountSlider({ previewId, value, onCommit }: { previewId
   </div>;
 }
 
-export function SeamlessLayout({ previewId, cells, rects, width, height, scale = 1, amount, revision }: { previewId?: string; cells: SeamPhoto[]; rects: SeamRect[]; width: number; height: number; scale?: number; amount: number; revision: number }) {
+export function SeamlessLayout({ previewId, enabled = true, cells, rects, width, height, scale = 1, amount, revision }: { previewId?: string; enabled?: boolean; cells: SeamPhoto[]; rects: SeamRect[]; width: number; height: number; scale?: number; amount: number; revision: number }) {
   const canvas=useRef<HTMLCanvasElement>(null);
-  const svg=useRef<SVGSVGElement>(null),paintCurrent=useRef<()=>void>(()=>{});
+  const svg=useRef<SVGSVGElement>(null),paintCurrent=useRef<()=>void>(()=>{}),warmKey=useRef('');
   const [ready,setReady]=useState(false),[prepared,setPrepared]=useState<{key:string;sources:SeamSource[]}|null>(null),[live,setLive]=useState(amount);
   const [contextRevision,restoreContext]=useState(0);
   useEffect(()=>{
     const element=canvas.current;if(!element)return;
-    const lost=(e:Event)=>{e.preventDefault();setReady(false);},restored=()=>restoreContext(v=>v+1);
+    const lost=(e:Event)=>{e.preventDefault();warmKey.current='';setReady(false);},restored=()=>restoreContext(v=>v+1);
     element.addEventListener('webglcontextlost',lost);element.addEventListener('webglcontextrestored',restored);
     return()=>{element.removeEventListener('webglcontextlost',lost);element.removeEventListener('webglcontextrestored',restored);disposeSeamPreview(element);};
   },[]);
@@ -59,6 +59,11 @@ export function SeamlessLayout({ previewId, cells, rects, width, height, scale =
     const paint=()=>{
       const element=canvas.current,root=svg.current;
       if(!sources||!element||!root){setReady(false);return;}
+      // Keep the selected layout's GPU/photos warm while the switch is off.
+      // It can switch back on without decode, shader compilation or re-upload.
+      // An inactive warm surface does not redraw on workspace gestures.
+      const key=`${sourceKey}:${contextRevision}`;
+      if(!enabled&&warmKey.current===key)return;
       // SVG marker bounds include WebKit's ancestor CSS matrix (getScreenCTM
       // does not). All crop coordinates derive from this exact shared plane.
       const points=Array.from(root.querySelectorAll<SVGCircleElement>('[data-seam-probe]') as NodeListOf<SVGCircleElement>).map(n=>{const b=n.getBoundingClientRect();return{x:b.x+b.width/2,y:b.y+b.height/2};});
@@ -74,17 +79,17 @@ export function SeamlessLayout({ previewId, cells, rects, width, height, scale =
       element.style.transform=`matrix(${surface.transform.join(',')})`;
       element.style.clipPath=`polygon(${surface.clip})`;
       root.dataset.rasterView=JSON.stringify(surface.rasterView);
-      try{drawSeamPreview(element,cells,rects,sources,live,surface.view);setReady(true);element.dataset.paintCount=String(Number(element.dataset.paintCount||0)+1);}
+      try{drawSeamPreview(element,cells,rects,sources,live,surface.view);warmKey.current=key;setReady(true);element.dataset.paintCount=String(Number(element.dataset.paintCount||0)+1);}
       catch(error){setReady(false);console.error('Seamless GPU:',error);}
     };
     paintCurrent.current=paint;paint();
-  },[sources,cells,rects,w,h,live,contextRevision,width,height,scale]);
+  },[sources,cells,rects,w,h,live,contextRevision,width,height,scale,enabled]);
   return <><style>{`[data-seamless="true"]:has(> svg[data-seamless-master][data-ready="true"]) [id^="cell-container-"] { background-color: transparent !important; }
     [data-seamless="true"]:has(> svg[data-seamless-master][data-ready="true"]) .layout-photo-content { visibility: hidden; }`}</style>
-    <svg ref={svg} data-seamless-master data-ready={ready} data-seamless-amount={live} data-source-key={sourceKey} data-seamless-crop={JSON.stringify(cells.map(c=>[c.zoom,c.offsetX,c.offsetY,c.rotation,c.opacity??100]))} data-seamless-rects={JSON.stringify(rects)} viewBox={`0 0 ${w} ${h}`} width={width} height={height} preserveAspectRatio="none" aria-hidden
+    <svg ref={svg} data-seamless-master data-active={enabled} data-ready={ready} data-seamless-amount={live} data-source-key={sourceKey} data-seamless-crop={JSON.stringify(cells.map(c=>[c.zoom,c.offsetX,c.offsetY,c.rotation,c.opacity??100]))} data-seamless-rects={JSON.stringify(rects)} viewBox={`0 0 ${w} ${h}`} width={width} height={height} preserveAspectRatio="none" aria-hidden
       style={{position:'absolute',left:0,top:0,pointerEvents:'none',zIndex:0,transform:`scale(${scale})`,transformOrigin:'0 0',isolation:'isolate',overflow:'hidden'}}>
       <g opacity={0}><circle data-seam-probe cx={0} cy={0} r={.005}/><circle data-seam-probe cx={w} cy={0} r={.005}/><circle data-seam-probe cx={0} cy={h} r={.005}/></g>
     </svg>
-    <canvas ref={canvas} data-seamless-layout width={1} height={1} style={{position:'absolute',left:0,top:0,zIndex:0,pointerEvents:'none',transformOrigin:'0 0',visibility:ready?'visible':'hidden'}}/>
+    <canvas ref={canvas} data-seamless-layout width={1} height={1} style={{position:'absolute',left:0,top:0,zIndex:0,pointerEvents:'none',transformOrigin:'0 0',visibility:ready&&enabled?'visible':'hidden'}}/>
   </>;
 }
