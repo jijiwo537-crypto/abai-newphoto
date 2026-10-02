@@ -61,7 +61,7 @@ import { listExports, loadExport, subscribeExports, type ExportMeta } from './ut
 import type { ExitChoice } from './types';
 
 const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
-  layout: '經典拼圖',
+  layout: '跨頁拼圖',
   editor: '編輯',
   beauty: '美顏',
   collage: '創意拼圖',

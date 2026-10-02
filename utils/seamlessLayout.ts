@@ -18,9 +18,23 @@ function load(url: string) {
 
 /** Shared preview/export renderer. Complementary separable weights form a partition
  * of unity, including T junctions: photos blend into each other, never into the page. */
-export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[], width: number, height: number, amount = 0, revision = 0, cancelled = () => false) {
+export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[], width: number, height: number, amount = 0, revision = 0, cancelled = () => false, sourceResolution = false) {
   const sources = await Promise.all(cells.map(c => c.url ? load(c.url) : null));
   if (cancelled()) throw new DOMException('Superseded render', 'AbortError');
+  if (sourceResolution) {
+    // A preview zoom must not re-sample or asynchronously replace the blend.
+    // Build one source-resolution master in layout-local coordinates instead.
+    const aspect = width / Math.max(.000001, height);
+    let masterH = 1024;
+    sources.forEach((img, i) => {
+      const r = rects[i]; if (!img || !r) return;
+      const turn = Math.abs((cells[i].rotation || 0) % 180) === 90;
+      const iw = turn ? img.naturalHeight : img.naturalWidth;
+      const ih = turn ? img.naturalWidth : img.naturalHeight;
+      masterH = Math.max(masterH, Math.min(iw / Math.max(.000001, r.w * aspect), ih / Math.max(.000001, r.h)));
+    });
+    width = masterH * aspect; height = masterH;
+  }
   const out = document.createElement('canvas'); out.width = Math.max(1, Math.round(width)); out.height = Math.max(1, Math.round(height));
   const ctx = out.getContext('2d')!;
   const layer = document.createElement('canvas'); layer.width = out.width; layer.height = out.height;

@@ -6,6 +6,7 @@ import { addExport } from '../utils/exportHistory';
 import { Icon } from './Icon';
 import { ChevronLeft } from 'lucide-react';
 import { SaveButton } from './SaveButton';
+import { ExportActionLift } from './ExportActionLift';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import type { ExitChoice } from '../types';
 import {
@@ -945,7 +946,8 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
       )}
 
       {saveState === 'success' && finalImage && (
-        <div className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+        <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+          <ExportActionLift />
           <header className="h-14 flex items-center px-5 shrink-0 z-20 bg-black/40 backdrop-blur-xl">
             <button
               onClick={() => { recordProgress(); onHome(); }}
@@ -955,12 +957,12 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             </button>
           </header>
           <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
-            <div className="relative shadow-2xl rounded overflow-hidden max-h-[52vh] max-w-full mb-4">
+            <div data-export-media className="relative shadow-2xl rounded overflow-hidden max-h-[52vh] max-w-full mb-4">
               <img src={finalImage} alt="美顏結果" className="max-w-full max-h-[52vh] object-contain allow-callout relative z-10" />
               <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded"></div>
             </div>
           </div>
-          <div className="flex flex-col gap-3 px-6 pb-8">
+          <div data-export-actions className="flex flex-col gap-3 px-6 pb-8">
             <SaveButton urls={finalImage ? [finalImage] : []} />
             <button
               onClick={() => onSendToEditor(finalImage)}

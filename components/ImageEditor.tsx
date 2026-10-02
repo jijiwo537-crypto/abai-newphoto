@@ -13,6 +13,7 @@ import {HalationLayer} from '../utils/halationLayer';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from '../utils/highlightSelection';
 import { DEFAULT_GEO, FULL_CROP, GeoParams, composeCanvas, isGeoIdentity, sameGeoPixels, validGeo } from '../utils/compose';
 import { SaveButton } from './SaveButton';
+import { ExportActionLift } from './ExportActionLift';
 /* IG 貼文預覽跟拼圖那兩個工具共用同一顆元件 */
 import { IgPreview } from './IgPreview';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
@@ -6847,7 +6848,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       )}
 
       {saveState === 'success' && finalImage && (
-          <div className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+          <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+              <ExportActionLift />
               <header className="h-14 flex items-center px-5 shrink-0 z-20 bg-black/40 backdrop-blur-xl">
                 <button 
                   onClick={(e) => { e.stopPropagation(); recordProgress(); if(onHome) onHome(); }}
@@ -6874,7 +6876,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                            每個定位點都必須停下來，再快的一下也只前進一張。 */
                         style={{ scrollSnapStop: 'always' }}
                       >
-                        <div className="relative shadow-2xl rounded overflow-hidden max-h-[60vh]">
+                        <div data-export-media className="relative shadow-2xl rounded overflow-hidden max-h-[60vh]">
                           <img
                               src={src}
                               alt={`Final Result ${i + 1}`}
@@ -6886,7 +6888,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     ))}
                   </div>
               </div>
-              <div className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
+              <div data-export-actions className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
                    <SaveButton urls={encodedExports.length ? encodedExports : finalImages.length ? finalImages : (finalImage ? [finalImage] : [])} />
                    <div className="flex items-center justify-center gap-4">
                    <button 

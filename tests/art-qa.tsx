@@ -12,6 +12,7 @@ import '../styles.css';
 installSliderTouch();
 const query=new URLSearchParams(location.search);
 if(query.has('stretchAudit'))void import('./shape-stretch-audit');
+if(query.has('maskAudit'))void import('./creative-mask-audit');
 if(query.has('matchAudit'))void import('./match-panel-audit').then(m=>m.auditMatchPanel());
 if(query.has('beautyAudit'))void import('./beauty-interaction-audit').then(m=>m.auditBeauty());
 if(query.has('sliderPerf'))void import('./effect-slider-performance-audit').then(m=>m.auditEffectSliders()).catch(e=>{const out=document.createElement('pre');out.textContent=String(e);out.style.cssText='position:fixed;inset:100px 8px;z-index:99999;color:white;background:#111';document.body.append(out);});

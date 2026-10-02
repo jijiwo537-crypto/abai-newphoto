@@ -30,7 +30,7 @@ test('pattern pages restore the original left icon rail and independent content 
   const block = creative.slice(creative.indexOf("{activeTab === 'shape' && <div"));
   assert.match(block, /title="圖案" aria-label="圖案"/);
   assert.match(block, /title="參數" aria-label="參數"/);
-  assert.match(block, /w-11 -mt-5 -mb-5 -ml-5 border-r/);
+  assert.match(block, /w-11 -ml-5 border-r/);
   assert.match(block, /no-scrollbar pl-3 pr-2 h-full/);
   assert.ok(!block.includes('aria-label="圖案工具"'));
 });

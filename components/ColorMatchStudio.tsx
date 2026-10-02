@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft } from 'lucide-react';
 import { Icon } from './Icon';
 import { SaveButton } from './SaveButton';
+import { ExportActionLift } from './ExportActionLift';
 import { canExportHeic, exportHeic } from '../utils/heicExport';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import { StuckEscape } from './StuckEscape';
@@ -631,19 +632,20 @@ export const ColorMatchStudio: React.FC<Props> = ({
           GPU 的畫布是程式自己掛進 stage 的，換樹時 React 會把那個節點拿去重用，
           畫布就跟著跑到導出畫面上，看起來就是「出現兩張圖」。 */}
       {finalUrl && (
-        <div className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+        <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+        <ExportActionLift />
         <header className="h-14 flex items-center px-5 shrink-0 bg-black/40 backdrop-blur-xl">
           <button onClick={() => setFinalUrl(null)} className="p-2 -ml-2 text-[#888] hover:text-white active:scale-90 transition-colors">
             <ChevronLeft size={22} />
           </button>
         </header>
         <div className="flex-1 flex items-center justify-center p-6">
-          <div className="relative shadow-2xl rounded overflow-hidden max-h-[62vh]">
+          <div data-export-media className="relative shadow-2xl rounded overflow-hidden max-h-[62vh]">
             <img src={finalPreview || finalUrl} alt="仿色結果" className="max-w-full max-h-[62vh] object-contain allow-callout" />
             <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded" />
           </div>
         </div>
-        <div className="flex flex-col gap-3 px-6 pb-8">
+        <div data-export-actions className="flex flex-col gap-3 px-6 pb-8">
           <SaveButton urls={[finalUrl]} />
           {/* 「繼續調整」與「接著調色」併成最下面同一排 */}
           <div className="flex gap-3">

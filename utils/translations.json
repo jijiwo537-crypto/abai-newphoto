@@ -107,11 +107,11 @@
     "ko": "자유 콜라주",
     "en": "Creative collage"
   },
-  "經典拼圖": {
-    "zh-Hans": "经典拼图",
-    "ja": "グリッド",
-    "ko": "그리드 콜라주",
-    "en": "Classic collage"
+  "跨頁拼圖": {
+    "zh-Hans": "跨页拼图",
+    "ja": "連続コラージュ",
+    "ko": "멀티페이지 콜라주",
+    "en": "Multi-page collage"
   },
   "美顏": {
     "zh-Hans": "美颜",

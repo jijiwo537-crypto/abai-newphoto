@@ -3,8 +3,10 @@ import {createRoot} from 'react-dom/client';
 import '../styles.css';
 import {GridLayoutTool} from '../components/GridLayoutTool';
 import {renderSeamlessLayout} from '../utils/seamlessLayout';
+import {SeamlessLayout} from '../components/SeamlessLayout';
 const photo=(color:string)=>'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800"><rect width="600" height="800" fill="${color}"/><circle cx="300" cy="240" r="95" fill="#fff"/><path d="M0 800L300 380L600 800" fill="#333"/></svg>`);
 const cells=['#ff4030','#2080ee','#50ce80'].map((color,i)=>({id:`seam-photo-${i}`,url:photo(color),zoom:1,offsetX:0,offsetY:0,rotation:0,naturalWidth:600,naturalHeight:800}));
+const zoomCells=cells.slice(0,2),zoomRects=[{x:0,y:0,w:.5,h:1},{x:.5,y:0,w:.5,h:1}];
 const state={coordinateVersion:2,pageWidth:309,selectedRatio:'3:4',isLandscape:false,floatingImages:[],pages:[{id:'seam-page',bgColor:'#ff00ff',layouts:[{id:'seam-layout',images:cells.slice(0,2),templateIndex:1,t:{x:0,y:0,scale:.9},gap:8,radius:4,z:0,seamless:true,seamlessAmount:70}]}]};
 async function verify(){
  const sets=[[{x:0,y:0,w:.5,h:1},{x:.5,y:0,w:.5,h:1}], [{x:0,y:0,w:1,h:.5},{x:0,y:.5,w:.5,h:.5},{x:.5,y:.5,w:.5,h:.5}]];
@@ -21,4 +23,20 @@ async function verify(){
  for(const strength of [0,50,100]){const c=await renderSeamlessLayout(cells.slice(0,2),sets[0],600,400,strength);c.style.cssText='width:30%;margin:1%;';panel.append(c)}
  document.body.append(panel);
 }
-createRoot(document.getElementById('root')!).render(<><GridLayoutTool initialState={state} onHome={()=>{}}/><button style={{position:'fixed',top:0,left:0,zIndex:999999,background:'#333',color:'white'}} onClick={verify}>Verify seamless pixels</button></>);
+function ZoomAudit(){
+ const [scale,setScale]=React.useState(1),[result,setResult]=React.useState('正在逐幀檢查');
+ React.useEffect(()=>{let stopped=false;void(async()=>{
+  const frame=()=>new Promise<void>(r=>requestAnimationFrame(()=>r()));
+  while(!document.querySelector('canvas[data-ready="true"]')){if(stopped)return;await frame();}
+  const canvas=document.querySelector('canvas[data-seamless-layout]') as HTMLCanvasElement;
+  const hash=()=>{const p=canvas.getContext('2d')!.getImageData(0,0,canvas.width,canvas.height).data;let h=0;for(let i=0;i<p.length;i+=97)h=(Math.imul(h,31)+p[i])|0;return h;};
+  const initial={w:canvas.width,h:canvas.height,hash:hash(),paints:Number(canvas.dataset.paintCount)},samples:any[]=[];
+  for(let i=0;i<120;i++){if(stopped)return;setScale(.35+1.65*(.5-.5*Math.cos(i*Math.PI/30)));await frame();
+   const rect=canvas.getBoundingClientRect();samples.push({w:canvas.width,h:canvas.height,cssW:rect.width,cssH:rect.height});}
+  setScale(1);await frame();
+  const report={kind:'seamless-zoom-master',ua:navigator.userAgent,pass:samples.every(s=>s.w===initial.w&&s.h===initial.h)&&hash()===initial.hash&&Number(canvas.dataset.paintCount)===initial.paints,frames:samples.length,initial,finalPaints:Number(canvas.dataset.paintCount),finalHash:hash(),cssMin:Math.min(...samples.map(s=>s.cssW)),cssMax:Math.max(...samples.map(s=>s.cssW))};
+  setResult(JSON.stringify(report,null,2));await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify(report)}).catch(()=>{});
+ })();return()=>{stopped=true;};},[]);
+ return <div style={{height:'100dvh',background:'#080808',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}><div data-seamless="true" style={{position:'relative',width:240*scale,height:320*scale,flexShrink:0}}><SeamlessLayout cells={zoomCells} rects={zoomRects} width={240*scale} height={320*scale} amount={70} revision={0}/></div><pre style={{position:'fixed',top:12,left:8,zIndex:99999,color:'white',fontSize:11,background:'#111d',maxWidth:'95vw'}}>{result}</pre></div>;
+}
+createRoot(document.getElementById('root')!).render(new URLSearchParams(location.search).has('zoomAudit')?<ZoomAudit/>:<><GridLayoutTool initialState={state} onHome={()=>{}}/><button style={{position:'fixed',top:0,left:0,zIndex:999999,background:'#333',color:'white'}} onClick={verify}>Verify seamless pixels</button></>);

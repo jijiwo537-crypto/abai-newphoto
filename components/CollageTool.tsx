@@ -73,6 +73,7 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
    所以濾鏡與調節的效果不可能有差。 */
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
 import { SaveButton } from './SaveButton';
+import { ExportActionLift } from './ExportActionLift';
 import type { ExitChoice } from '../types';
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
@@ -306,6 +307,21 @@ const shapePathCache = new Map<string, Path2D>();
 export const creativePreviewFit = (stageW: number, stageH: number, w: number, h: number) =>
   Math.min(Math.max(1, stageW - 32) / w,
     Math.max(1, stageH - 32) / h);
+
+/** Resolve a custom mask photo in mask-local units, preserving its crop when
+ * the layout changes. Legacy drafts keep their original centred cover. */
+export const resolveMaskPhotoTransform = (t: any, iw: number, ih: number, fw: number, fh: number) => {
+  const cover = Math.max(fw / Math.max(1, iw), fh / Math.max(1, ih));
+  if (!t?.frameW || !t?.frameH) {
+    const w = iw * cover, h = ih * cover;
+    return { x: (fw - w) / 2, y: (fh - h) / 2, w, h, frameW: fw, frameH: fh };
+  }
+  const k = Math.max(fw / t.frameW, fh / t.frameH);
+  const w = t.w * k, h = t.h * k;
+  return { x: Math.min(0, Math.max(fw - w, fw / 2 + (t.x - t.frameW / 2) * k)),
+    y: Math.min(0, Math.max(fh - h, fh / 2 + (t.y - t.frameH / 2) * k)),
+    w, h, frameW: fw, frameH: fh };
+};
 
 export const shapePathBox = (
   kind: string, w: number, h: number,
@@ -1217,6 +1233,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [baseSelected, setBaseSelected] = useState(false);
   const baseSelectedRef = useRef(false);
   baseSelectedRef.current = baseSelected;
+  const [maskSelected, setMaskSelected] = useState(false);
+  const maskSelectedRef = useRef(false);
+  maskSelectedRef.current = maskSelected;
   const baseDragRef = useRef<any>(null);
   const basePinchRef = useRef<any>(null);
   /* 動畫目標提示：切換目標時只短暫畫虛線框，不改動正式選取狀態。 */
@@ -1886,7 +1905,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 自訂遮罩的網址要活到草稿真正寫入；过早 revoke 会让下一次自动保存读不到。 */
   const maskDraftUrlRef = useRef<string | null>(null);
   const [imageTransform, setImageTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
-  const [maskTransform, setMaskTransform] = useState({ x: 0, y: 0, w: 0, h: 0 });
+  const [maskTransform, setMaskTransform] = useState<{x:number;y:number;w:number;h:number;frameW?:number;frameH?:number}>({ x: 0, y: 0, w: 0, h: 0 });
   const motionFrameRef = useRef<HTMLDivElement>(null);
   const motionStartRectRef = useRef<DOMRect | null>(null);
   const motionFrameAnimationRef = useRef<Animation | null>(null);
@@ -1896,8 +1915,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setActiveTabState(next);
   }, []);
   useEffect(() => {
-    if (selectedObj || selectedTarget) setBaseSelected(false);
+    if (selectedObj || selectedTarget) { setBaseSelected(false); setMaskSelected(false); }
   }, [selectedObj, selectedTarget]);
+  useEffect(() => { if (!maskImageState) setMaskSelected(false); }, [maskImageState]);
   /* 圖片編輯頁是自己排好三段式高度的整頁面板：外面不能再包內距，
      footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-16 分類列 ＋ 分頁列）。 */
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
@@ -2473,16 +2493,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const img = new Image();
     img.onload = () => {
       if (!imageState) return;
-      const { baseW, baseH } = imageState;
-      const scale = Math.max(baseW / img.width, baseH / img.height);
-      const w = Math.round(img.width * scale);
-      const h = Math.round(img.height * scale);
+      const geo = layoutGeometry(layout, imageState.baseW, imageState.baseH, maskScale, canvasRatio);
       if (maskDraftUrlRef.current && maskDraftUrlRef.current !== url) {
         try { URL.revokeObjectURL(maskDraftUrlRef.current); } catch { /* ignore */ }
       }
       maskDraftUrlRef.current = url;
       setMaskImageState({ img, src: url });
-      setMaskTransform({ x: (baseW - w) / 2, y: (baseH - h) / 2, w, h });
+      setMaskTransform(resolveMaskPhotoTransform(null, img.width, img.height, geo.mw, geo.mh));
+      setMaskSelected(false);
       setSelectedTarget(null);
     };
     img.src = url;
@@ -2694,6 +2712,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const dy = Math.min(0, Math.max(o.ih - h * kk, py));
     return { x: dx / kk, y: dy / kk, w, h };
   }, [imageState, baseFrameScale]);
+
+  const maskPhotoFrame = (o: any) => ({ ix: o.mx, iy: o.my, iw: o.mw, ih: o.mh });
+  const currentMaskPhoto = (o: any) => resolveMaskPhotoTransform(maskTransform,
+    maskImageState.img.width, maskImageState.img.height, o.mw, o.mh);
+  const clampMaskPhoto = (t: any, o: any) => ({ ...t,
+    x: Math.min(0, Math.max(o.iw - t.w, t.x)),
+    y: Math.min(0, Math.max(o.ih - t.h, t.y)), frameW: o.iw, frameH: o.ih });
 
   /** 把符號／圖形清單的選項做成一顆可放在任意座標的物件。
       一般點選與畫筆共用同一份預設，避免兩種入口生成出不同大小或動畫。 */
@@ -3371,14 +3396,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         e.stopPropagation();
         const inPhoto = x >= offs.ix && x <= offs.ix + offs.iw
           && y >= offs.iy && y <= offs.iy + offs.ih;
-        if (baseSelectedRef.current && inPhoto) {
+        const inMaskPhoto = !!maskImageState?.img && !inPhoto
+          && x >= offs.mx && x <= offs.mx + offs.mw && y >= offs.my && y <= offs.my + offs.mh;
+        if (maskSelectedRef.current && inMaskPhoto) {
+          const t = currentMaskPhoto(offs);
+          baseDragRef.current = { startX: x, startY: y, x: t.x, y: t.y, t, moved: false, mask: true };
+          interactionRef.current = { type: 'base_drag', isClick: true, hitItself: true };
+        } else if (baseSelectedRef.current && inPhoto) {
           const t = imageTransform;
           baseDragRef.current = { startX: x, startY: y, x: t.x, y: t.y, t, moved: false };
           interactionRef.current = { type: 'base_drag', isClick: true, hitItself: true };
         } else {
           /* 第一下只負責選取底圖；若原本有別的選取，前面的分支只會先取消它，
              不會在同一下誤選到底圖。 */
-          interactionRef.current = { type: inPhoto ? 'select_base' : 'deselect_base', isClick: true, hitItself: inPhoto };
+          interactionRef.current = { type: inPhoto ? 'select_base' : inMaskPhoto ? 'select_mask' : 'deselect_base', isClick: true, hitItself: inPhoto || inMaskPhoto };
         }
       }
     } else if (activePointers.current.size === 2 && selectedObjRef.current) {
@@ -3439,20 +3470,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const hole = holesRef.current.find(h => h.id === selectedTarget);
       // 捏不是點擊：isClick 留著的話放開時會被當成「點了旁邊」而取消選取
       if (hole) interactionRef.current = { type: 'pinch_hole', id: selectedTarget, isClick: false, hitItself: true, startDist: Math.max(1, Math.hypot(p1.x - p2.x, p1.y - p2.y)) };
-    } else if (activePointers.current.size === 2 && baseSelectedRef.current) {
+    } else if (activePointers.current.size === 2 && (baseSelectedRef.current || maskSelectedRef.current)) {
       e.stopPropagation();
       const pts: any[] = Array.from(activePointers.current.values());
       const p1 = { x: (pts[0].clientX - rect.left) * sx, y: (pts[0].clientY - rect.top) * sy };
       const p2 = { x: (pts[1].clientX - rect.left) * sx, y: (pts[1].clientY - rect.top) * sy };
-      const o = getLayoutOffsets();
+      const layoutOffsets = getLayoutOffsets();
+      const mask = maskSelectedRef.current && !!maskImageState?.img;
+      const o = layoutOffsets && (mask ? maskPhotoFrame(layoutOffsets) : layoutOffsets);
       if (o) {
-        const t = baseDragRef.current?.t || imageTransform;
+        const t = baseDragRef.current?.t || (mask ? currentMaskPhoto(layoutOffsets) : imageTransform);
         movePending.current = null;
-        setImageTransform(t);
-        const kk = baseFrameScale(o);
+        if (mask) setMaskTransform(t); else setImageTransform(t);
+        const kk = mask ? 1 : baseFrameScale(o);
         const mx = (p1.x + p2.x) / 2 - o.ix;
         const my = (p1.y + p2.y) / 2 - o.iy;
         basePinchRef.current = {
+          mask,
           d0: Math.max(1, Math.hypot(p1.x - p2.x, p1.y - p2.y)),
           w0: t.w, h0: t.h,
           anchorX: (mx - t.x * kk) / Math.max(1, t.w * kk),
@@ -3808,9 +3842,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const p1 = { x: (pts[0].clientX - rect.left) * sx, y: (pts[0].clientY - rect.top) * sy };
       const p2 = { x: (pts[1].clientX - rect.left) * sx, y: (pts[1].clientY - rect.top) * sy };
       const pin = basePinchRef.current;
-      const o = getLayoutOffsets();
+      const layoutOffsets = getLayoutOffsets();
+      const o = layoutOffsets && (pin.mask ? maskPhotoFrame(layoutOffsets) : layoutOffsets);
       if (!o) return;
-      const kk = baseFrameScale(o);
+      const kk = pin.mask ? 1 : baseFrameScale(o);
       /* 先把倍率夾到「剛好仍能鋪滿照片框」再算錨點。
          舊版先算一個過小的位置、最後才由 clamp 把尺寸放回最小值，尺寸與位置
          使用不同倍率，繼續往內捏時圖片就會被一格一格推向左邊。 */
@@ -3823,29 +3858,33 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const w = pin.w0 * scale, h = pin.h0 * scale;
       const mx = (p1.x + p2.x) / 2 - o.ix;
       const my = (p1.y + p2.y) / 2 - o.iy;
-      const next = clampBaseTransform({
+      const t = {
         x: (mx - pin.anchorX * w * kk) / kk,
         y: (my - pin.anchorY * h * kk) / kk,
         w, h,
-      }, o);
-      queueMove(() => setImageTransform(next));
+      };
+      const next = pin.mask ? clampMaskPhoto(t, o) : clampBaseTransform(t, o);
+      queueMove(() => { if (pin.mask) setMaskTransform(next); else setImageTransform(next); });
       return;
     }
     if (baseDragRef.current && activePointers.current.size === 1) {
       e.stopPropagation();
       const d = baseDragRef.current;
-      const o = getLayoutOffsets();
+      const layoutOffsets = getLayoutOffsets();
+      const o = layoutOffsets && (d.mask ? maskPhotoFrame(layoutOffsets) : layoutOffsets);
       if (!o) return;
       if (Math.hypot(x - d.startX, y - d.startY) > 3) {
         d.moved = true;
         if (interactionRef.current) interactionRef.current.isClick = false;
       }
-      const kk = baseFrameScale(o);
-      const next = clampBaseTransform({ ...d.t,
+      const kk = d.mask ? 1 : baseFrameScale(o);
+      const t = { ...d.t,
         x: d.x + (x - d.startX) / kk,
         y: d.y + (y - d.startY) / kk,
-      }, o);
-      queueMove(() => setImageTransform(next));
+      };
+      const next = d.mask ? clampMaskPhoto(t, o) : clampBaseTransform(t, o);
+      d.t = next;
+      queueMove(() => { if (d.mask) setMaskTransform(next); else setImageTransform(next); });
       return;
     }
     // 兩指縮放／旋轉浮動物件
@@ -4139,9 +4178,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 還沒選中的圖案：沒移動才算選中；拖了就當作沒發生（不選、也不動任何圖案） */
       if (intr.type === 'select_hole' && intr.isClick) setSelectedTarget(intr.id);
       if (intr.type === 'select_base' && intr.isClick) {
-        setSelectedObj(null); setSelectedTarget(null); setBaseSelected(true);
+        setSelectedObj(null); setSelectedTarget(null); setMaskSelected(false); setBaseSelected(true);
       }
-      if (intr.type === 'deselect_base' && intr.isClick) setBaseSelected(false);
+      if (intr.type === 'select_mask' && intr.isClick) {
+        setSelectedObj(null); setSelectedTarget(null); setBaseSelected(false); setMaskSelected(true);
+      }
+      if (intr.type === 'deselect_base' && intr.isClick) { setBaseSelected(false); setMaskSelected(false); }
       // 按在別顆圖案上但沒拖動 → 把選取換到那一顆
       if (intr.type === 'move_hole' && intr.isClick && intr.pickId) setSelectedTarget(intr.pickId);
       // 已選圖案上方剛好有物件：拖動仍是圖案；只有輕點才切換到該物件。
@@ -4334,11 +4376,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* ⚠ 遮罩本身的長寬一定要進這把鑰匙。底稿現在可能只有 8×8（純色的情況），
        光看 bW/bH 是看不出「遮罩變大變小了」的 —— 少了這兩個，拖比例滑桿時
        紋理就不會跟著重新鋪滿。 */
+    const maskPhoto = hasMaskImg ? resolveMaskPhotoTransform(maskTransform,
+      maskImageState.img.width, maskImageState.img.height, maskW / s, maskH / s) : null;
     const maskKey = isMain ? JSON.stringify([
       bW, bH, maskW | 0, maskH | 0,
       maskColor, patternType, dotColor, dotGap, dotSize, sgs,
       stripeN, stripeDir, stripeA, stripeB,
       maskImageState && maskImageState.img ? (maskImageState.img.src || '1') : '',
+      maskPhoto?.x, maskPhoto?.y, maskPhoto?.w, maskPhoto?.h,
     ]) : '';
     const maskHit = isMain && maskKey === maskCacheKeyRef.current
       && bCanvas.width === bW && bCanvas.height === bH;
@@ -4357,14 +4402,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     bCtx.fillRect(0, 0, bW, bH);
     if (maskImageState && maskImageState.img) {
       const mImg = maskImageState.img;
-      const scale = Math.max(maskW / mImg.width, maskH / mImg.height);
-      const drawW = mImg.width * scale;
-      const drawH = mImg.height * scale;
-      /* 置中截取（cover）。
-         這裡一律置中截取（cover）。 */
-      const drawX = (maskW - drawW) / 2;
-      const drawY = (maskH - drawH) / 2;
-      bCtx.drawImage(mImg, drawX, drawY, drawW, drawH);
+      bCtx.drawImage(mImg, maskPhoto!.x * s, maskPhoto!.y * s, maskPhoto!.w * s, maskPhoto!.h * s);
     }
     }
 
@@ -8024,7 +8062,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       )}
 
       {saveState === 'success' && finalImage && (
-        <div className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+        <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+          <ExportActionLift />
           <header className="h-14 flex items-center px-5 shrink-0 z-20 bg-black/40 backdrop-blur-xl">
             <button 
               onClick={(e) => { e.stopPropagation(); leaveToHome(); }}
@@ -8034,7 +8073,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             </button>
           </header>
           <div className="flex-1 flex flex-col items-center justify-center p-6 relative">
-            <div className="relative shadow-2xl rounded overflow-hidden max-h-[60vh] max-w-full mb-4">
+            <div data-export-media className="relative shadow-2xl rounded overflow-hidden max-h-[60vh] max-w-full mb-4">
               {finalIsVideo ? (
                 <video
                   src={finalImage}
@@ -8057,7 +8096,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded"></div>
             </div>
           </div>
-          <div className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
+          <div data-export-actions className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
             <SaveButton urls={finalImage ? [finalImage] : []} />
             <div className="flex items-center justify-center gap-4">
             <button 
@@ -8270,13 +8309,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             accept 跟首頁那個入口一致（影片也可以當底）。 */}
         <input type="file" accept={RAW_ACCEPT_IMG} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
         <input type="file" accept={RAW_ACCEPT_IMG} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
-        <input type="file" accept="image/*" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
+        <input type="file" accept="image/*" aria-label="上傳遮罩圖片" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
       </header>
       )}
       
       <main 
         className="flex-1 flex items-center justify-center relative p-4 interactive-area overflow-hidden no-callout no-select"
-        onPointerDown={() => { setSelectedTarget(null); setBaseSelected(false); setExportAsk(false); }}
+        onPointerDown={() => { setSelectedTarget(null); setBaseSelected(false); setMaskSelected(false); setExportAsk(false); }}
       >
         {imageState && (
           <div
@@ -8334,6 +8373,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               }}>
               <canvas 
                 ref={canvasRef} 
+                data-mask-photo-transform={import.meta.env.DEV && maskImageState ? JSON.stringify(maskTransform) : undefined}
                 className={`block pointer-events-auto ${baseCss ? '' : 'max-w-full max-h-full'}`}
                 style={{ 
                   touchAction: 'none',
@@ -8384,7 +8424,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const o = selectedObj && !objDragging && !objPinching && !objStretching && !tuningEdge
                   ? objects.find(z => z.id === selectedObj) : null;
                 const shaped = !!(o && shapeSel === o.id && isImgShaped(o.imgShape));
-                if (!baseSelected && (!o || shaped)) return null;
+                if (!baseSelected && !maskSelected && (!o || shaped)) return null;
                 const logicalPerCssPx = off.cw / Math.max(1, (baseCss?.w || off.cw) * displayScale);
                 const ink = o && !shaped
                   ? objectSelectionInk(o, 1, (o.type === 'image' ? 0.375 : 2) * logicalPerCssPx)
@@ -8402,6 +8442,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       transformOrigin: 'top center',
                       transform: 'none' }}
                   >
+                    {maskSelected && maskImageState && (
+                      <>
+                        <defs><clipPath id="creative-mask-photo-selection-clip">
+                          <path fillRule="evenodd" clipRule="evenodd" d={`M${off.mx},${off.my}h${off.mw}v${off.mh}h${-off.mw}z M${off.ix},${off.iy}h${off.iw}v${off.ih}h${-off.iw}z`} />
+                        </clipPath></defs>
+                        <rect data-mask-photo-selection x={off.mx} y={off.my} width={off.mw} height={off.mh}
+                          clipPath="url(#creative-mask-photo-selection-clip)" fill="none" stroke="white"
+                          strokeWidth={0.9} strokeDasharray="4.8 4.8" vectorEffect="non-scaling-stroke" />
+                      </>
+                    )}
                     {baseSelected && (
                       <rect
                         x={off.ix} y={off.iy} width={off.iw} height={off.ih}
@@ -8791,7 +8841,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         {/* overscrollBehavior 用 none 而不是 contain：contain 只擋住「把捲動傳給外層」，
             自己還是會橡皮筋 —— 已經到頂了再往上拉，畫面不該有任何位移。
             動畫頁底部另外留 pb-12，最後一根滑桿才不會貼在最下緣。 */}
-        <div ref={scrollContainerRef} style={{ overscrollBehavior: 'none' }} className={`flex-1 ${objEditImage ? 'overflow-hidden' : `p-5 ${activeTab === 'motion' && !colorPickerTarget ? 'pb-12' : (colorPickerTarget || activeTab === 'shape' || activeTab === 'objedit' ? 'pb-5' : 'pb-20')} custom-scrollbar ${
+        <div ref={scrollContainerRef} style={{ overscrollBehavior: 'none' }} className={`flex-1 min-h-0 ${objEditImage ? 'overflow-hidden' : `${activeTab === 'shape' && !colorPickerTarget ? 'px-5 py-0' : 'p-5'} ${activeTab === 'motion' && !colorPickerTarget ? 'pb-12' : (activeTab === 'shape' && !colorPickerTarget ? '' : colorPickerTarget || activeTab === 'objedit' ? 'pb-5' : 'pb-20')} custom-scrollbar ${
           (activeTab === 'setting' && !colorPickerTarget) ||
           (activeTab === 'add' && !colorPickerTarget) ||
           (activeTab === 'objedit' && !colorPickerTarget) ||
@@ -9850,8 +9900,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </div>
                 );
               })()}
-              {activeTab === 'shape' && <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
-                <div className="flex flex-col shrink-0 w-11 -mt-5 -mb-5 -ml-5 border-r border-white/10 select-none">
+              {activeTab === 'shape' && <div className="max-w-md mx-auto h-full min-h-0 flex flex-row animate-in fade-in duration-300">
+                <div className="flex flex-col shrink-0 w-11 -ml-5 border-r border-white/10 select-none">
                   <button onClick={() => setShapeSub('shape')} title="圖案" aria-label="圖案"
                     className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${shapeSub === 'shape' ? 'text-white' : 'text-[#5a5a5a]'}`}>
                     <Star size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'shape' ? 'scale-110' : 'scale-100'}`} />
@@ -9862,11 +9912,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <SlidersHorizontal size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'style' ? 'scale-110' : 'scale-100'}`} />
                   </button>
                 </div>
-                <div ref={patternPanelRef} className="flex-1 min-w-0 no-scrollbar pl-3 pr-2 h-full overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                <div ref={patternPanelRef} data-pattern-panel className="flex-1 min-h-0 min-w-0 no-scrollbar pl-3 pr-2 h-full py-5 overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
                   {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'snow', 'burst', 'love', 'love3', 'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'zzz', 'text'].map(s => (
-                    <button key={s} onClick={() => handleShapeClick(s)} className={`py-3 flex items-center justify-center rounded-[8px] border transition-all ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
+                    <button key={s} data-pattern-choice={s} aria-label={`圖案 ${s}`} onClick={() => handleShapeClick(s)} className={`h-11 min-w-0 overflow-hidden flex items-center justify-center rounded-[8px] border transition-colors ${holeType === s ? 'bg-[#222] text-white border-white shadow-[0_0_15px_rgba(255,255,255,0.1)]' : 'border-[#1a1a1a] text-[#555] hover:bg-[#111] hover:text-[#888]'}`}>
                       {s === 'circle' ? <Circle size={18} /> : s === 'square' ? <Square size={18} /> : s === 'cross-star' ? <CrossStarIcon size={18} /> : s === 'heart' ? <Heart size={18} /> : s === 'star' ? <Star size={18} /> : s === 'love' ? <span className="text-xs font-black font-mono tracking-tighter leading-none">&lt;3</span> : s === 'love3' ? <span className="text-[10px] font-black font-mono tracking-tighter leading-none">&lt;333</span> : s === 'vortex' ? <VortexIcon size={18} /> : s === 'random-num' ? <span className="text-sm font-bold font-sans leading-none tracking-tight">(9)</span> : SHAPE_IMAGES[s] ? (
                         /* 去背的圖：拿它當遮罩、底色用 currentColor，
                            顏色就跟旁邊那些圖示走同一條規則 ——
@@ -9878,6 +9928,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             display: 'block',
                             width: 26,
                             height: 26 / holeImgRatio(s),
+                            maxWidth: 26,
+                            maxHeight: 26,
                             backgroundColor: 'currentColor',
                             WebkitMaskImage: `url(${SHAPE_IMAGES[s]})`,
                             maskImage: `url(${SHAPE_IMAGES[s]})`,

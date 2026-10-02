@@ -11,6 +11,7 @@ import { paintCachedClassicGlow } from './ClassicGlowCache';
 import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessLayout } from './SeamlessLayout';
+import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
@@ -14664,7 +14665,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       )}
 
       {exportState === 'success' && finalImages.length > 0 && (
-        <div className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+        <div data-export-screen className="absolute inset-0 z-[110] bg-black flex flex-col animate-in fade-in duration-500">
+          <ExportActionLift />
           <header className="h-14 flex items-center px-5 shrink-0 z-20 bg-black/40 backdrop-blur-xl">
             <button 
               onClick={(e) => { e.stopPropagation(); handleLeave(); }}
@@ -14683,7 +14685,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               >
                 {finalImages.map((src, i) => (
                   <div key={src} className="shrink-0 snap-center flex flex-col items-center">
-                    <div className="relative shadow-2xl rounded overflow-hidden">
+                    <div data-export-media className="relative shadow-2xl rounded overflow-hidden">
                       {finalKinds[i] === 'video' ? (
                         // 這一頁有影片，所以輸出的是影片
                         <video
@@ -14722,7 +14724,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               </div>
             )}
           </div>
-          <div className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
+          <div data-export-actions className="bg-black flex flex-col gap-3 px-6 pb-6 pt-2">
             <SaveButton urls={finalImages} />
             <div className="flex items-center justify-center gap-4">
             <button
@@ -14887,15 +14889,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 </>
               )}
             </div>
-            {(pages.some(p => p.layouts.some(l => l.images.some(img => img.url !== ''))) || floatingImages.length > 0) && (
               <button
                 onClick={() => handleExport()}
-                disabled={exportState === 'processing'}
+                disabled={exportState === 'processing' || !(pages.some(p => p.layouts.some(l => l.images.some(img => img.url !== ''))) || floatingImages.length > 0)}
+                style={{ opacity: pages.some(p => p.layouts.some(l => l.images.some(img => img.url !== ''))) || floatingImages.length > 0 ? 1 : .45 }}
                 className="bg-white text-black px-6 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap"
               >
                 儲存
               </button>
-            )}
           </div>
           )}
         </header>

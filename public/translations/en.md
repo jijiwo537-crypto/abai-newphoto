@@ -22,7 +22,7 @@
 | 編輯 | Edit |
 | 相機 | Camera |
 | 創意拼圖 | Creative collage |
-| 經典拼圖 | Classic collage |
+| 跨頁拼圖 | Multi-page collage |
 | 美顏 | Retouch |
 | 仿色 | Color match |
 | 濾鏡 | Filters |

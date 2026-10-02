@@ -66,7 +66,7 @@ const previewMaxOf = (k: string) => PREVIEW_MAX[k] ?? 720;
 
 const TOOL_TILES = [
   { icon: 'layers', label: '創意拼圖', key: 'collage' },
-  { icon: 'grid_view', label: '經典拼圖', key: 'layout' },
+  { icon: 'grid_view', label: '跨頁拼圖', key: 'layout' },
   { icon: 'magic_button', label: '美顏', key: 'beauty' },
   { icon: 'colorize', label: '仿色', key: 'match' },
 ] as const;
