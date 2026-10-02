@@ -29,17 +29,25 @@ test('pattern choices have explicit equal height and scrolling reaches panel edg
   assert.match(source,/data-pattern-panel[\s\S]*?h-full py-5 overflow-y-auto/);
   assert.doesNotMatch(source,/w-11 -mt-5 -mb-5/);
 });
-test('seamless blend samples a source-resolution master independent of uniform zoom',()=>{
+test('seamless fusion uses native source pixels and stable SVG geometry without re-encoding on input',()=>{
   const component=readFileSync(new URL('../components/SeamlessLayout.tsx',import.meta.url),'utf8');
   const renderer=readFileSync(new URL('../utils/seamlessLayout.ts',import.meta.url),'utf8');
-  assert.match(component,/\[cells,rects,aspect,amount,revision\]/);
-  assert.match(component,/aspect,1,amount,revision,\(\)=>cancelled,true/);
+  assert.match(component,/\[sourceKey,revision\]/);
+  assert.match(component,/prepareSeamSource\(c,revision\)/);
+  assert.doesNotMatch(component,/toBlob|createObjectURL|renderSeamlessLayout\(/);
   assert.match(renderer,/if \(sourceResolution\)/);
   assert.match(renderer,/img.naturalWidth/);
-  assert.match(component,/<canvas hidden/);
+  const gpu=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
+  assert.match(gpu,/seamGeometry\(rects,i,w,h,amount\)/);
+  assert.match(gpu,/seamImageTransform\(c,source\?\.width/);
   assert.match(component,/data-seamless-master/);
   assert.match(component,/transform:`scale\(\$\{scale\}\)`/);
-  assert.match(component,/await image\.decode\(\)/);
+  assert.match(component,/onPointerUp=\{commit\}/);
+  assert.match(component,/previews.get\(previewId\)\?\.\(latest.current\)/);
+  assert.doesNotMatch(component,/<foreignObject/);
+  assert.match(component,/resolveSeamSurface\(points,w,h,width\*scale,height\*scale/);
+  assert.match(gpu,/gl.uniform4f/);
+  assert.doesNotMatch(gpu,/getImageData|toBlob|toDataURL/);
   const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
   assert.match(grid,/width=\{lbox.w\} height=\{lbox.h\} scale=\{ls\}/);
   assert.match(grid,/left: stableSeamless \? 0/);

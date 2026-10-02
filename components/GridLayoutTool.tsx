@@ -10,7 +10,7 @@ import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds
 import { paintCachedClassicGlow } from './ClassicGlowCache';
 import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
-import { SeamlessLayout } from './SeamlessLayout';
+import { SeamlessLayout, SeamlessAmountSlider } from './SeamlessLayout';
 import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
@@ -15250,7 +15250,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 onTouchEnd={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                                 onTouchCancel={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                               >
-                              {stableSeamless && <SeamlessLayout cells={layout.images} rects={pageActiveTemplate.rects} width={lbox.w} height={lbox.h} scale={ls} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
+                              {stableSeamless && <SeamlessLayout previewId={layout.id} cells={layout.images} rects={pageActiveTemplate.rects} width={lbox.w} height={lbox.h} scale={ls} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
                               {nativeLayout && <svg data-layout-photo-layer="1" width={lw} height={lh}
                                 className="absolute inset-0 pointer-events-none" style={{zIndex: 0, overflow: 'visible'}}>
                                 {pageActiveTemplate.rects.map((raw, idx) => {
@@ -17150,11 +17150,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-5">
-                        {activeLayout?.seamless && <div className="space-y-1.5 col-span-2">
-                          <div className="flex justify-between text-[11px] font-bold text-white/70"><span>融合程度</span><span className="font-mono text-white">{activeLayout.seamlessAmount ?? 0}</span></div>
-                          <input aria-label="融合程度" type="range" min="0" max="100" step="1" value={activeLayout.seamlessAmount ?? 0} className="premium-slider w-full"
-                            onChange={e => patchActiveLayout(l => ({...l,seamlessAmount:Number(e.target.value)}))} />
-                        </div>}
+                        {activeLayout?.seamless && <SeamlessAmountSlider key={activeLayout.id} previewId={activeLayout.id} value={activeLayout.seamlessAmount??0}
+                          onCommit={value=>patchActiveLayout(l=>({...l,seamlessAmount:value}))}/>}
                       {!activeLayout?.seamless && <>
                       <div className="space-y-1.5">
                         <div className="flex justify-between text-[11px] font-bold text-white/70">

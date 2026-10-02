@@ -16,6 +16,48 @@ function load(url: string) {
   return images.get(url)!;
 }
 
+export type SeamSource = { image: CanvasImageSource; width: number; height: number } | null;
+const previewSources = new Map<string, Promise<SeamSource>>();
+/** Decode/effect processing belongs to source changes, never to a fusion gesture. */
+export function prepareSeamSource(cell: SeamPhoto, revision: number): Promise<SeamSource> {
+  if (!cell.url) return Promise.resolve(null);
+  const key = JSON.stringify([cell.url, cell.fx || {}, revision]);
+  let task = previewSources.get(key);
+  if (!task) {
+    task = load(cell.url).then(async img => {
+      if (!hasPhotoFx(cell.fx)) return { image: img, width: img.naturalWidth, height: img.naturalHeight };
+      const processed = applyPhotoFx(img, img.naturalWidth, img.naturalHeight, cell.fx!);
+      // The effects pipeline reuses scratch canvases. Freeze its full-size result
+      // once, without reducing quality or serializing pixels on every gesture.
+      const canvas=document.createElement('canvas');canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;canvas.getContext('2d')!.drawImage(processed,0,0);
+      return { image: canvas, width: img.naturalWidth, height: img.naturalHeight };
+    }).catch(error => { previewSources.delete(key); throw error; });
+    previewSources.set(key, task);
+    if (previewSources.size > 24) previewSources.delete(previewSources.keys().next().value!);
+  }
+  return task;
+}
+
+/** One continuous layout-local coordinate system, shared by SVG and export. */
+export function seamGeometry(rects: SeamRect[], index: number, w: number, h: number, amount: number) {
+  const r = rects[index];
+  const smallest = Math.min(...rects.map(r => Math.min(r.w * w, r.h * h)));
+  const band = smallest * (.012 + Math.max(0, Math.min(100, amount)) / 100 * .238);
+  const x = r.x*w, y = r.y*h, rw = r.w*w, rh = r.h*h;
+  const left = r.x > .00001 ? band : 0, top = r.y > .00001 ? band : 0;
+  const right = r.x+r.w < .99999 ? band : 0, bottom = r.y+r.h < .99999 ? band : 0;
+  return { rw, rh, left, top, right, bottom, ex:x-left, ey:y-top, ew:rw+left+right, eh:rh+top+bottom };
+}
+
+export function seamImageTransform(c: SeamPhoto, iw: number, ih: number, g: ReturnType<typeof seamGeometry>) {
+  const a=c.rotation*Math.PI/180, cos=Math.abs(Math.cos(a)), sin=Math.abs(Math.sin(a));
+  const scale=Math.max((g.ew*cos+g.eh*sin)/iw,(g.ew*sin+g.eh*cos)/ih)*Math.max(1,c.zoom);
+  const dx=c.offsetX*g.rw, dy=c.offsetY*g.rh;
+  const ux=dx*Math.cos(a)+dy*Math.sin(a), uy=-dx*Math.sin(a)+dy*Math.cos(a);
+  const mx=Math.max(0,(iw*scale-g.ew*cos-g.eh*sin)/2), my=Math.max(0,(ih*scale-g.ew*sin-g.eh*cos)/2);
+  return { scale, tx:Math.max(-mx,Math.min(mx,ux)), ty:Math.max(-my,Math.min(my,uy)), cx:g.ex+g.ew/2, cy:g.ey+g.eh/2, angle:a };
+}
+
 /** Shared preview/export renderer. Complementary separable weights form a partition
  * of unity, including T junctions: photos blend into each other, never into the page. */
 export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[], width: number, height: number, amount = 0, revision = 0, cancelled = () => false, sourceResolution = false) {
@@ -40,20 +82,16 @@ export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[]
   const layer = document.createElement('canvas'); layer.width = out.width; layer.height = out.height;
   const lc = layer.getContext('2d')!;
   const w = out.width, h = out.height;
-  const smallest = Math.min(...rects.map(r => Math.min(r.w * w, r.h * h)));
   // Even the minimum is a subtle blend; no additional image zoom beyond covering
   // the expanded cell. Exterior edges stay sharp and at their original positions.
-  const band = smallest * (.012 + Math.max(0, Math.min(100, amount)) / 100 * .238);
   for (let i=0; i<rects.length; i++) {
     // Yield between photos: switching the feature off must not wait for the
     // remaining full-resolution layers of a now-obsolete render.
     if (i) await new Promise<void>(resolve => setTimeout(resolve, 0));
     if (cancelled()) throw new DOMException('Superseded render', 'AbortError');
     const r = rects[i], c = cells[i], img = sources[i]; if (!c) continue;
-    const x = r.x*w, y = r.y*h, rw = r.w*w, rh = r.h*h;
-    const left = r.x > .00001 ? band : 0, top = r.y > .00001 ? band : 0;
-    const right = r.x+r.w < .99999 ? band : 0, bottom = r.y+r.h < .99999 ? band : 0;
-    const ex=x-left, ey=y-top, ew=rw+left+right, eh=rh+top+bottom;
+    const geometry=seamGeometry(rects,i,w,h,amount);
+    const {left,top,right,bottom,ex,ey,ew,eh}=geometry;
     lc.clearRect(0,0,w,h); lc.save(); lc.beginPath(); lc.rect(ex,ey,ew,eh); lc.clip();
     lc.fillStyle='#121212'; lc.fillRect(ex,ey,ew,eh);
     if (img) {
@@ -61,14 +99,8 @@ export async function renderSeamlessLayout(cells: SeamPhoto[], rects: SeamRect[]
       if (!cached || cached.key!==key) {
         cached={key,source:hasPhotoFx(c.fx) ? applyPhotoFx(img,img.naturalWidth,img.naturalHeight,c.fx!) : img}; processed.set(img,cached);
       }
-      const a=c.rotation*Math.PI/180, cos=Math.abs(Math.cos(a)), sin=Math.abs(Math.sin(a));
-      const scale=Math.max((ew*cos+eh*sin)/img.naturalWidth,(ew*sin+eh*cos)/img.naturalHeight)*Math.max(1,c.zoom);
-      const dx=c.offsetX*rw, dy=c.offsetY*rh;
-      // Clamp offsets in the image's axes so no uncovered strip is introduced.
-      const ux=dx*Math.cos(a)+dy*Math.sin(a), uy=-dx*Math.sin(a)+dy*Math.cos(a);
-      const mx=Math.max(0,(img.naturalWidth*scale-ew*cos-eh*sin)/2), my=Math.max(0,(img.naturalHeight*scale-ew*sin-eh*cos)/2);
-      const tx=Math.max(-mx,Math.min(mx,ux)), ty=Math.max(-my,Math.min(my,uy));
-      lc.translate(ex+ew/2,ey+eh/2); lc.rotate(a); lc.translate(tx,ty); lc.scale(scale,scale);
+      const {cx,cy,angle,tx,ty,scale}=seamImageTransform(c,img.naturalWidth,img.naturalHeight,geometry);
+      lc.translate(cx,cy); lc.rotate(angle); lc.translate(tx,ty); lc.scale(scale,scale);
       lc.globalAlpha=(c.opacity ?? 100)/100; lc.imageSmoothingQuality='high';
       lc.drawImage(cached.source,-img.naturalWidth/2,-img.naturalHeight/2,img.naturalWidth,img.naturalHeight);
     }

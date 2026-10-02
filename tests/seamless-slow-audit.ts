@@ -1,11 +1,11 @@
 // Mounted GridLayoutTool: exercise real corner-resize and preview touch handlers.
 void(async()=>{
  const wait=async(n=1)=>{for(let i=0;i<n;i++)await new Promise<void>(r=>requestAnimationFrame(()=>r()));};
- while(!document.querySelector('svg[data-seamless-master]'))await wait();await wait(30);
+ while(!document.querySelector('svg[data-seamless-master][data-ready="true"]'))await wait();await wait(30);
  const layout=document.querySelector<HTMLElement>('[data-layout-id="seam-layout"]')!;
  (layout.querySelector('[data-cell-id]') as HTMLElement).click();await wait(4);
- const canvas=layout.querySelector<HTMLCanvasElement>('canvas')!,svg=layout.querySelector<SVGSVGElement>('svg[data-seamless-master]')!;
- const source=svg.querySelector('image')!.getAttribute('href'),paints=Number(canvas.dataset.paintCount),samples:any[]=[];
+ const svg=layout.querySelector<SVGSVGElement>('svg[data-seamless-master]')!;
+ const source=svg.dataset.sourceKey,canvas=layout.querySelector<HTMLCanvasElement>('canvas[data-seamless-layout]')!,uploads=canvas.dataset.sourceUploads,samples:any[]=[];
  // Safari's getScreenCTM omits CSS scale on an SVG root. Read the actual
  // rendered bounds instead; this also catches ancestor/layout rounding.
  const geometry=()=>{const r=svg.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,cx:r.x+r.width/2,cy:r.y+r.height/2};};
@@ -31,7 +31,7 @@ void(async()=>{
  pointer('pointerup',0);await wait(4);
  const maxPivotDrift=Math.max(...samples.map(s=>Math.hypot(s.x-initial.x,s.y-initial.y)));
  const backwardSteps=samples.slice(1).filter((s,i)=>i<179?s.w<samples[i].w-1e-5:s.w>samples[i].w+1e-5).length;
- const sourceStable=svg.querySelector('image')!.getAttribute('href')===source&&Number(canvas.dataset.paintCount)===paints;
+ const sourceStable=svg.dataset.sourceKey===source&&canvas.dataset.sourceUploads===uploads;
  // Tap blank space to deselect; a pinch started on the workspace must zoom the
  // whole preview, not an individually selected cell/layout.
  const workspace=layout.closest<HTMLElement>('[data-grid-preview-viewport]')!;
