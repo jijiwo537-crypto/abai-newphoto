@@ -8671,14 +8671,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const icon=e.currentTarget.querySelector('svg');
                 icon?.getAnimations().forEach(a=>a.cancel());
                 if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches)icon?.animate([
-                  {transform:'rotate(0deg) scale(1)',opacity:.55},
-                  {transform:'rotate(150deg) scale(.86)',opacity:1,offset:.4},
-                  {transform:'rotate(360deg) scale(1)',opacity:.55},
-                ],{duration:420,easing:'cubic-bezier(.22,1,.36,1)'});
+                  {transform:'rotate(0deg) scale(1)'},
+                  {transform:'rotate(150deg) scale(.9)',offset:.4},
+                  {transform:'rotate(360deg) scale(1)'},
+                ],{duration:680,easing:'cubic-bezier(.22,1,.36,1)'});
                 generateRandomHoles();
               }} 
               aria-label="隨機圖案"
-              className="p-3 bg-transparent border-0 text-white/40 hover:text-white active:text-white active:scale-90 transition-[color,transform] flex items-center justify-center select-none touch-none"
+              className="p-3 bg-transparent border-0 text-white active:scale-90 transition-transform flex items-center justify-center select-none touch-none"
               title="隨機圖形"
             >
               <RefreshCw size={24} strokeWidth={1.5} className="drop-shadow-[0_2px_8px_rgba(0,0,0,0.8)]" />

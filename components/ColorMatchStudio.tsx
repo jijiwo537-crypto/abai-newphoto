@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft } from 'lucide-react';
 import { Icon } from './Icon';
 import { SaveButton } from './SaveButton';
+import { canExportHeic, exportHeic } from '../utils/heicExport';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import { StuckEscape } from './StuckEscape';
 import {
@@ -67,6 +68,25 @@ export const ColorMatchStudio: React.FC<Props> = ({
      保護開高一點，膚色留住、其他顏色照樣跟著參考圖走。 */
   const [skin, setSkin] = useState(0);
   const [finalUrl, setFinalUrl] = useState<string | null>(null);
+  const [finalPreview, setFinalPreview] = useState<string | null>(null);
+  const finalPreviewRef = useRef<string | null>(null);
+  const [exportFormat, setExportFormat] = useState<'jpg' | 'png' | 'heic'>('png');
+  const [formatOpen, setFormatOpen] = useState(false);
+  const formatMenuRef = useRef<HTMLDivElement>(null);
+  const [saveError, setSaveError] = useState('');
+  useEffect(() => {
+    if (!formatOpen) return;
+    const outside = (e: PointerEvent) => {
+      if (!formatMenuRef.current?.contains(e.target as Node)) setFormatOpen(false);
+    };
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') setFormatOpen(false); };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [formatOpen]);
   /* 成品是 blob 網址：換新的之前先回收，離開時也要回收 */
   const finalUrlRef = useRef<string | null>(null);
   const putFinal = useCallback((u: string) => {
@@ -76,7 +96,10 @@ export const ColorMatchStudio: React.FC<Props> = ({
   }, []);
   /* 離開時晚一點再回收：導出紀錄的縮圖與分享用的檔案都是非同步去讀這個
      網址的，按下儲存後馬上離開的話會來不及讀完。 */
-  useEffect(() => () => { const keep = finalUrlRef.current; setTimeout(() => revokeUrl(keep as any), 15000); }, []);
+  useEffect(() => () => {
+    const keep = finalUrlRef.current, previewKeep = finalPreviewRef.current;
+    setTimeout(() => { revokeUrl(keep); revokeUrl(previewKeep); }, 15000);
+  }, []);
   const [saving, setSaving] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -357,8 +380,27 @@ export const ColorMatchStudio: React.FC<Props> = ({
 
   const leave = () => { record(); onCancel(); };
 
+  const saveCanvas = async (canvas: HTMLCanvasElement) => {
+    // History and browser previews remain lossless PNG; the shared file uses the chosen encoder.
+    const previewUrl = await canvasToUrl(canvas);
+    if (!previewUrl) throw new Error('Unable to encode preview');
+    let fileUrl = previewUrl;
+    try {
+      if (exportFormat === 'heic') fileUrl = await exportHeic(canvas);
+      else if (exportFormat === 'jpg') fileUrl = await canvasToUrl(canvas, 'image/jpeg', 1);
+      if (!fileUrl) throw new Error('Unable to encode export');
+    } catch (error) { revokeUrl(previewUrl); throw error; }
+    revokeUrl(finalPreviewRef.current);
+    finalPreviewRef.current = previewUrl;
+    setFinalPreview(previewUrl);
+    putFinal(fileUrl);
+    await record(previewUrl);
+  };
+
   const handleSave = () => {
     if (!srcImg || !luts) return;
+    setFormatOpen(false);
+    setSaveError('');
     const savingStarted = performance.now();
     const finishSaving = () => window.setTimeout(
       () => setSaving(false),
@@ -373,9 +415,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
       pw ? { rgba: packWeight(pw.weight), w: pw.w, h: pw.h } : null,
     );
     if (gpu) {
-      canvasToUrl(gpu)
-        .then(async u => { putFinal(u); await record(u); })
-        .catch(() => {})
+      saveCanvas(gpu)
+        .catch(() => setSaveError('儲存失敗，請再試一次'))
         .finally(finishSaving);
       return;
     }   // 一樣無損，只是用 blob 網址
@@ -392,10 +433,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
           protect: useWeight(skin / 100), width: w,
         });
         x.putImageData(d, 0, 0);
-        const u = await canvasToUrl(c);
-        putFinal(u);
-        await record(u);
-      } finally { finishSaving(); }
+        await saveCanvas(c);
+      } catch { setSaveError('儲存失敗，請再試一次'); }
+      finally { finishSaving(); }
     }, 30);
   };
 
@@ -439,18 +479,22 @@ export const ColorMatchStudio: React.FC<Props> = ({
         }
         .custom-range::-moz-range-thumb:active { transform: scale(1.15); }
       `}</style>
-      <header className="h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-20">
+      <header className="relative h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-[81]">
         {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
         <button onClick={leave} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
           <ChevronLeft size={22} />
         </button>
-        <button
-          onClick={handleSave}
-          disabled={!ready || saving}
-          className={`px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider whitespace-nowrap transition-transform ${ready && !saving ? 'bg-white text-black active:scale-95' : 'bg-white/15 text-white/40'}`}
-        >
-          儲存
-        </button>
+        <div ref={formatMenuRef}>
+          <div className="flex items-center rounded-full bg-white text-black overflow-hidden h-8">
+            <button onClick={handleSave} disabled={!ready || saving} className="h-8 px-4 text-[11px] font-black tracking-wider disabled:opacity-40 active:scale-95">儲存</button>
+            <span className="h-4 w-px bg-black/20" />
+            <button aria-label="匯出選項" aria-expanded={formatOpen} onClick={() => setFormatOpen(v => !v)} className="h-8 px-2 flex items-center active:opacity-60"><Icon name="more_horiz" className="text-xl" /></button>
+          </div>
+          {formatOpen && <div role="dialog" aria-label="匯出格式" className="absolute top-full left-4 right-4 mt-2 rounded-xl border border-white/15 p-3 shadow-xl" style={{background:'rgba(0,0,0,.92)',backdropFilter:'blur(28px)',WebkitBackdropFilter:'blur(28px)'}}>
+            <p className="text-xs text-white/60 mb-3">匯出格式</p>
+            <div className="flex gap-2">{(['jpg','png','heic'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} disabled={format === 'heic' && !canExportHeic()} onClick={() => setExportFormat(format)} className={`flex-1 h-9 rounded-lg border text-xs uppercase disabled:opacity-25 ${exportFormat === format ? 'bg-white text-black border-white' : 'border-white/15 text-white/70'}`}>{format.toUpperCase()}</button>)}</div>
+          </div>}
+        </div>
       </header>
 
       {/* 預覽。版面從頭到尾長一樣 —— 還沒選參考圖時就先放原圖，
@@ -552,8 +596,12 @@ export const ColorMatchStudio: React.FC<Props> = ({
         )}
       </div>
 
+      <div role="group" aria-label="仿色方法" className={`px-4 flex gap-2 shrink-0 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
+        {METHODS.map(m => <button key={m} onClick={() => setPicked(m)} data-cm-method={m} aria-pressed={picked === m} className={`flex-1 min-w-0 h-9 rounded-lg border text-[11px] font-semibold whitespace-nowrap transition-colors ${picked === m ? 'border-white bg-white text-black' : 'border-white/15 bg-white/[0.03] text-white/55'}`}>{METHOD_LABEL[m]}</button>)}
+      </div>
+
       {/* 滑桿：樣式與佈局比照編輯器。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}
-      <div className={`px-5 flex-1 min-h-0 flex flex-col justify-center pb-4 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
+      <div className={`px-5 pt-3 flex-1 min-h-0 flex flex-col justify-start pb-4 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
         <div>
           {/* 強度可以推到 200（100 以上＝比參考圖再更進一步），預設維持 100；
               膚色保護維持 0～100。 */}
@@ -576,24 +624,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* 做法：文字按鈕，比照編輯器的工具列 */}
-      <nav aria-label="仿色工具" className={`order-first h-[46px] flex items-stretch px-4 pt-1 gap-1 shrink-0 border-b border-[#1a1a1a] overflow-x-auto no-scrollbar transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
-          {METHODS.map(m => (
-            <button
-              key={m}
-              onClick={() => setPicked(m)}
-              data-cm-method={m}
-              className={`flex-1 basis-0 min-w-0 flex items-center justify-center border-b-2 transition-colors ${
-                picked === m ? 'border-white text-white' : 'border-transparent text-[#555]'
-              }`}
-            >
-              <span className="text-[11px] font-semibold whitespace-nowrap">
-                {METHOD_LABEL[m]}
-              </span>
-            </button>
-          ))}
-      </nav>
       </section>
+      {saveError && <div role="alert" className="absolute top-16 left-4 right-4 z-[82] rounded-xl bg-black/90 p-3 text-sm">{saveError}</div>}
 
       {/* 導出畫面蓋在上面就好，不要換一棵樹 ——
           GPU 的畫布是程式自己掛進 stage 的，換樹時 React 會把那個節點拿去重用，
@@ -607,7 +639,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         </header>
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="relative shadow-2xl rounded overflow-hidden max-h-[62vh]">
-            <img src={finalUrl} alt="仿色結果" className="max-w-full max-h-[62vh] object-contain allow-callout" />
+            <img src={finalPreview || finalUrl} alt="仿色結果" className="max-w-full max-h-[62vh] object-contain allow-callout" />
             <div className="absolute inset-0 pointer-events-none ring-1 ring-white/10 rounded" />
           </div>
         </div>
@@ -623,7 +655,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
             </button>
             {onSendToEditor && (
               <button
-                onClick={() => onSendToEditor(finalUrl)}
+                onClick={() => onSendToEditor(finalPreview || finalUrl)}
                 className="flex-1 h-12 rounded-full border border-white/20 bg-white/5 text-white font-bold tracking-widest uppercase active:scale-95 transition-all text-xs"
               >
                 接著調色

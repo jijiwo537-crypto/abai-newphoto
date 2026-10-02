@@ -46,7 +46,7 @@
 .art-export footer{display:flex;flex-direction:column;gap:12px;padding:8px 24px 24px}
 .art-export footer>div{display:flex;gap:16px}
 .art-export footer>div>button{flex:1;height:56px;border-radius:999px;border:1px solid #fff3;background:#ffffff0d;font-size:14px;font-weight:700}
-.art-effect-list{align-items:center;height:100%;margin:0;gap:16px}
+.art-effect-list{align-items:center;height:100%;margin:0;gap:16px;padding-bottom:24px;box-sizing:border-box}
 .art-effect-list button{height:44px;font-size:13px}
 .art-subtabs{display:flex;gap:22px;overflow-x:auto;white-space:nowrap;height:30px;flex:none;scrollbar-width:none;margin-bottom:5px}.art-subtabs button{position:relative;height:26px;font-size:12px;line-height:18px;letter-spacing:.04em;color:#888;padding:0;flex:none;border:0;transition:color .15s}.art-subtabs button[aria-pressed=true]{color:white}.art-subtabs button[aria-pressed=true]:after{content:'';position:absolute;bottom:1px;left:0;right:0;height:1px;background:white}
 .art-tracking-controls .art-range{margin:6px 0;line-height:14px}.art-tracking-controls .art-range input{display:block;margin:3px 0 0;height:22px}.art-tracking-controls .art-toggle{min-height:32px}.art-tracking-controls .art-presets{margin:7px 0}.art-tracking-controls .art-presets button{padding:6px 8px;border-radius:5px}
