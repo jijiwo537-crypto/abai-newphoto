@@ -11,6 +11,7 @@ import {installSliderTouch} from '../utils/sliderTouch';
 import '../styles.css';
 installSliderTouch();
 const query=new URLSearchParams(location.search);
+if(query.has('stretchAudit'))void import('./shape-stretch-audit');
 if(query.has('matchAudit'))void import('./match-panel-audit').then(m=>m.auditMatchPanel());
 if(query.has('beautyAudit'))void import('./beauty-interaction-audit').then(m=>m.auditBeauty());
 if(query.has('sliderPerf'))void import('./effect-slider-performance-audit').then(m=>m.auditEffectSliders()).catch(e=>{const out=document.createElement('pre');out.textContent=String(e);out.style.cssText='position:fixed;inset:100px 8px;z-index:99999;color:white;background:#111';document.body.append(out);});
@@ -21,7 +22,7 @@ if(query.has('fineAudit'))void import('./editor-fine-slider-audit').then(m=>m.au
 if(query.has('editor')&&query.has('composeAudit'))void import('./editor-compose-audit');
 if(query.has('fixture')&&query.has('refinement'))void import('./art-refinement-audit').then(m=>m.auditArtRefinement());
 if(query.has('fixture')&&(query.has('audit')||(query.has('geometry')&&(navigator as any).standalone)))void import('./art-controls-audit').then(m=>m.auditArtControls());
-function ArtFixture({src}:{src:string}){const [open,setOpen]=React.useState(!query.has('geometry'));return open?<ArtStudio initialSrc={src} onClose={()=>setOpen(false)}/>:<div style={{position:'relative',height:'100vh',background:'#090909'}}><button style={{position:'absolute',top:100,color:'white'}} onClick={()=>setOpen(true)}>重新進入藝術效果</button></div>;}
+function ArtFixture({src}:{src:string}){const [open,setOpen]=React.useState(!query.has('geometry'));return open?<ArtStudio initialSrc={src} onClose={()=>setOpen(false)}/>:<div style={{position:'relative',height:'100vh',background:'#090909'}}><button style={{position:'absolute',top:100,color:'white'}} onClick={()=>setOpen(true)}>重新進入藝術效果</button><a href="/art-qa.html?creative&resetSpacing" style={{position:'absolute',top:180,color:'white'}}>檢查創意拼圖重置按鈕</a></div>;}
 function SharedPanelFixture({src}:{src:string}){
  const [img,setImg]=React.useState({id:'qa-panel',src,fx:{...FX_DEFAULTS,fxExposureSpill:60,softThreshold:80}}),[card,setCard]=React.useState('fxExposureSpill'),[detail,setDetail]=React.useState(true),[sub,setSub]=React.useState('effect');
  return <div style={{height:'100dvh',display:'flex',flexDirection:'column',background:'#080808',color:'white'}}><img src={src} style={{minHeight:0,flex:1,objectFit:'contain',padding:16}}/><div style={{height:'calc(11rem + 58px)'}}><ImageAdjustPanel img={img} set={p=>setImg(s=>({...s,...p}))} lutList={[{id:'none',name:'原始',url:''}]} loadingLut={null} setLoadingLut={()=>{}} lutRevision={0} setLutRevision={()=>{}} adjustSub={sub as any} setAdjustSub={setSub} effectCard={card} setEffectCard={setCard} effectDetail={detail} setEffectDetail={setDetail} shapeMenu="" setShapeMenu={()=>{}} shapeTool="" setShapeTool={()=>{}} tuneTool="" setTuneTool={()=>{}} setTuningEdge={()=>{}} openComposeFor={()=>{}}/></div></div>;
@@ -35,7 +36,9 @@ if(query.has('beauty')||query.has('match')){
  const g=c.getContext('2d')!;const grad=g.createLinearGradient(0,0,600,800);grad.addColorStop(0,'#1b527f');grad.addColorStop(1,'#bd9670');g.fillStyle=grad;g.fillRect(0,0,600,800);
  g.fillStyle='white';g.font='80px sans-serif';g.fillText('PHOTO',80,400);
  const holes=Array.from({length:30},(_,i)=>({id:`qa-${i}`,x:70+(i%5)*108,y:65+Math.floor(i/5)*132,side:'both',sizeRand:(i%7)/7,angleRand:0}));
- const objects=query.has('objects')?[
+ const objects=query.has('stretchFixture')?[
+  {id:'qa-stretch',type:'shape',kind:'triangle',filled:false,lineW:6,lineBase:180,w:180,h:180,x:210,y:250,color:'#ffffff'},
+ ]:query.has('objects')?[
   {id:'qa-shape',type:'shape',kind:'star',w:170,h:170,x:230,y:250,color:'#ff5533',opacity:50},
   {id:'qa-below',type:'shape',kind:'circle',w:140,h:140,x:480,y:390,color:'#6655ff',below:true},
   {id:'qa-text',type:'text',text:'ABAI',size:40,w:140,h:50,x:340,y:350,color:'#ffffff',font:'sans-serif'},
@@ -76,7 +79,7 @@ if(query.has('bench')&&query.has('creative')) void (async()=>{
  await wait(30);
  (document.querySelectorAll('button')[10] as HTMLButtonElement).click();await wait();
  const click=(text:string)=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.trim()===text||b.getAttribute('aria-label')===text||b.title===text)?.click();
- click('參數');await wait();click('實線');await wait(10);
+ click('編輯');await wait();click('實線');await wait(10);
  const results:any[]=[];
  const run=async(label:string,index:number)=>{
   const el=document.querySelectorAll<HTMLInputElement>('input[type=range]')[index];

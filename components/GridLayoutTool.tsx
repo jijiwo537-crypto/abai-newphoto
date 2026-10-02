@@ -1176,6 +1176,12 @@ const textureGlyphD = (kind: 'star' | 'heart', cx: number, cy: number, r: number
     + `C ${P(cx + s * 0.55, cy - s * 1.15)} ${P(cx + s * 1.5, cy - s * 0.2)} ${P(cx, cy + s * 0.85)} Z`;
 };
 
+/** Affine squeezing sharpens corners. A fixed miter limit bevels them halfway
+ * through a gesture; scale its allowance by the deformation's condition number.
+ * This changes joins only, not the object's path, size or snapping geometry. */
+export const shapeMiterLimit = (w: number, h: number, base = 4) =>
+  base * Math.max(1, Math.max(Math.abs(w), Math.abs(h)) / Math.max(0.001, Math.min(Math.abs(w), Math.abs(h))));
+
 export const shapePathD = (
   kind: string, w: number, h: number,
   gridBaseW = w, gridBaseH = h,
@@ -1770,13 +1776,14 @@ export const drawCompositeShapeBody = (
   target.lineWidth = Math.max(1, Math.min(w, h) * 0.024);
   target.lineJoin = innerKind === 'star' ? 'miter' : 'round';
   target.lineCap = innerKind === 'star' ? 'butt' : 'round';
-  target.miterLimit = 12;
+  target.miterLimit = shapeMiterLimit(w, h, 12);
   target.stroke(ring);
   const extra = Math.max(0, Math.min(100, style.outlineWidth || 0)) / 100 * target.lineWidth * 2;
   if (extra > 0) {
     // Preserve the original inner edge; add ink only outside the ring centreline.
     const outside = new Path2D();
-    outside.rect(-w * 2, -h * 2, w * 5, h * 5);
+    const allowance = target.lineWidth * target.miterLimit + extra * 2 * target.miterLimit;
+    outside.rect(-allowance, -allowance, w + allowance * 2, h + allowance * 2);
     outside.addPath(ring);
     target.clip(outside, 'evenodd');
     target.lineWidth += extra * 2;
@@ -5239,7 +5246,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
         const outer = Math.min(8, Math.max(0, image.shapeStrokeW || 0)) * (lineBase / 160);
         ctx.lineJoin = image.shape === 'line' ? 'round' : 'miter';
         ctx.lineCap = 'butt';
-        ctx.miterLimit = 4;
+        ctx.miterLimit = shapeMiterLimit(drawW, drawH);
         ctx.fillStyle = color;
         ctx.strokeStyle = color;
         ctx.lineWidth = lw;
@@ -13424,7 +13431,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const dash = fImg.shapeDash || 0;
       ctx.lineWidth = lw;
       ctx.lineJoin = fImg.shape === 'line' ? 'round' : 'miter';
-      ctx.miterLimit = 4;
+      ctx.miterLimit = shapeMiterLimit(fw, fh);
       // 一律平頭：線條的兩端要切齊
       ctx.lineCap = 'butt';
       if (dash > 0) {

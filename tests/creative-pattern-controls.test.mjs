@@ -65,6 +65,7 @@ test('composite shape body changes inner geometry and adds only outward ring ink
   const scope={exports:{},Path2D:Path,COMPOSITE_SHAPE_KINDS:new Set(['square-heart-dual','star-double']),
     DUAL_COLOR_SHAPE_KINDS:new Set(['square-heart-dual']),CUTOUT_SHAPE_KINDS:new Set(),
     compositeInnerKind:k=>k==='star-double'?'star':'heart',shapePathD:()=>'',
+    shapeMiterLimit:new Function('w','h','base = 4',`return ${classic.match(/export const shapeMiterLimit[\s\S]*?=>\s*([^;]+);/)[1]}`),
     insetShapePath:(...p)=>{paths.push(p);return new Path();}};
   vm.runInNewContext(compile(classic.slice(start,end)),scope);
   const ctx={fill(){},save(){},restore(){},stroke(){strokes.push(this.lineWidth);},clip(_,rule){clips.push(rule);}};

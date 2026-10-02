@@ -26,7 +26,7 @@ import {
   ADD_SHAPE_ITEMS, ShapeGlyph, HoleGlyph, CrossStarIcon, VortexIcon, swatchStrip, ColorPick, SmoothRange, GLOW_COLORS as GLOW_SWATCH_COLORS, SOFT_COLORS,
   /* 「新增符號」也是共用的：同一份符號清單、同一頁按鈕 */
   SymbolPicker, symbolFontReady, compositeOutlineInk,
-  shapePathD, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
+  shapePathD, shapeMiterLimit, shapeGlowBlurs, shapeFeatherBlur, drawFeatheredShapeBody, strokeCompositeShape, shapeSupportsFeather, SHAPE_DEFAULT_LINEW, SHAPE_DEFAULT_RATIO, SHAPE_DEFAULT_COLOR, shapeDefaultColorFor, SHAPE_FIT, shapeSupportsStretch, SPECIAL_LINE_KINDS, GRID_SHAPE_KINDS, GRID_DOT_KINDS, DUAL_COLOR_SHAPE_KINDS, DOUBLE_CONTOUR_SHAPE_KINDS, COMPOSITE_SHAPE_KINDS,
 } from './GridLayoutTool';
 /* 真機 iOS 的 Canvas 字形取整與桌面 WebKit 不同；只在動畫 raster 與靜止
    fillText 之間補回同一個實測中心。 */
@@ -302,6 +302,12 @@ const objKeyOf = (list: any[]) =>
  * 路徑的座標是「左上角 (0,0) 到 (w,h)」，呼叫端負責搬到框心。
  */
 const shapePathCache = new Map<string, Path2D>();
+/** Keep the 48px reset hit target below a square preview, including short
+ * Safari viewports. Width-limited previews retain their existing dimensions. */
+export const creativePreviewFit = (stageW: number, stageH: number, w: number, h: number) =>
+  Math.min(Math.max(1, stageW - 32) / w,
+    Math.max(1, stageH - (Math.abs(w - h) < 0.001 ? 112 : 32)) / h);
+
 export const shapePathBox = (
   kind: string, w: number, h: number,
   gridBaseW = w, gridBaseH = h,
@@ -5589,7 +5595,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.lineJoin = o.kind === 'line' ? 'round' : 'miter';
         // 一律平頭：線條的兩端要切齊，不要圓角
         ctx.lineCap = 'butt';
-        ctx.miterLimit = 4;
+        ctx.miterLimit = shapeMiterLimit(bw, bh);
         if ((o.dash || 0) > 0) {
           const seg = lw * (0.6 + ((o.dash || 0) / 100) * 4);
           ctx.setLineDash([seg, seg * 0.85]);
@@ -6749,8 +6755,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       let cssW = 0, cssH = 0;
       if (stEl && cs0.w > 0 && cs0.h > 0) {
         const sb = stEl.getBoundingClientRect();
-        const availW = Math.max(1, sb.width - 32), availH = Math.max(1, sb.height - 32);
-        const f = Math.min(availW / cs0.w, availH / cs0.h);
+        const f = creativePreviewFit(sb.width, sb.height, cs0.w, cs0.h);
         cssW = cs0.w * f; cssH = cs0.h * f;
         setStageSize(prev => (Math.abs(prev.w - sb.width) < 0.5 && Math.abs(prev.h - sb.height) < 0.5)
           ? prev : { w: sb.width, h: sb.height });
@@ -6813,10 +6818,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (st && imageState) {
       const cs = collageSizeOf(layout, imageState.baseW, imageState.baseH, maskScale, canvasRatio);
       const sb = st.getBoundingClientRect();
-      const availW = Math.max(1, sb.width - 32), availH = Math.max(1, sb.height - 32);
       let cssW0 = 0;
-      if (cs.w > 0 && cs.h > 0 && availW > 1 && availH > 1) {
-        const f = Math.min(availW / cs.w, availH / cs.h);
+      if (cs.w > 0 && cs.h > 0 && sb.width > 32 && sb.height > 32) {
+        const f = creativePreviewFit(sb.width, sb.height, cs.w, cs.h);
         cssW0 = cs.w * f;
         setBaseCss({ w: cssW0, h: cs.h * f });
       } else setBaseCss(null);
@@ -8658,7 +8662,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             /* 動畫頁時往上讓開播放列，並跟著圖片一起平滑移動。
                鍵盤叫出來時整顆淡掉（打字時不需要它，而且會擋到）。 */
             style={{
-              bottom: motionUiOn ? 76 : 8,
+              bottom: motionUiOn ? 76 : 0,
               opacity: kbInset ? 0 : 1,
               pointerEvents: kbInset ? 'none' : undefined,
               transition: `bottom 420ms ${MOTION_EASE}, opacity 220ms ease-out`,
@@ -8781,8 +8785,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           </div>
         )}
         
-        {/* pb-20 本來是留給右下角那顆浮動按鈕的空間，但「圖案」頁是左右分欄、
-            自己就會捲，那 80px 只會在下面留一條黑色空白、把工具欄擠得很小。 */}
+        {/* 圖案頁由固定頂部分頁＋可捲動內容組成，不額外加入浮動按鈕的 pb-20。 */}
         {/* 圖片編輯那一頁是「滑桿 5rem ＋ 工具列 6rem ＋ 分類列 h-16」的三段式，
             自己就把整個高度切好了。再包一層 p-5 會整個縮一圈、上面那根滑桿
             還會被擠出可視範圍 —— 所以這一頁完全不加內距，跟經典拼圖一樣。 */}
@@ -8993,6 +8996,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     -mt-1 是為了讓它跟上面那排的間距，跟這三項彼此之間一樣。 */}
                 <div className="grid grid-cols-2 gap-3 !mt-3">
 
+                <div className="min-w-0 h-[47px] flex items-center justify-between gap-2 bg-[#111] px-2.5 border border-[#222] rounded-[6px]">
+                  <span className="text-[10px] font-bold text-[#888]">更換圖片</span>
+                  <button onClick={(e) => {
+                      e.stopPropagation();
+                      replaceFileInputRef.current?.click();
+                    }} className="px-2 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-wider whitespace-nowrap">上傳</button>
+                </div>
+
                 <div className={`min-w-0 h-[47px] flex items-center justify-between gap-1.5 bg-[#111] px-2.5 border border-[#222] rounded-[6px] ${layout === FULL ? 'opacity-35 pointer-events-none' : ''}`}>
                   <span className="text-[10px] font-bold text-[#888] shrink-0">自訂遮罩</span>
                   <div className="flex items-center gap-1.5 min-w-0">
@@ -9005,13 +9016,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       : <button className="w-7 h-6 shrink-0 rounded-[4px] shadow-inner border border-white/10 hover:ring-1 hover:ring-white/30 transition-shadow"
                       aria-label="遮罩顏色" onClick={() => setColorPickerTarget('mask')} style={{ backgroundColor: maskColor }} />}
                   </div>
-                </div>
-                <div className="min-w-0 h-[47px] flex items-center justify-between gap-2 bg-[#111] px-2.5 border border-[#222] rounded-[6px]">
-                  <span className="text-[10px] font-bold text-[#888]">更換圖片</span>
-                  <button onClick={(e) => {
-                      e.stopPropagation();
-                      replaceFileInputRef.current?.click();
-                    }} className="px-2 h-6 text-[9px] bg-white text-black font-bold rounded-[4px] hover:bg-gray-200 transition-colors tracking-wider whitespace-nowrap">上傳</button>
                 </div>
                 {/* 紋理整組收在同一格：選項、顏色、兩根滑桿全部在同一個框裡
                     （跟經典拼圖那一頁排法一致）。 */}
@@ -9847,29 +9851,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </div>
                 );
               })()}
-              {activeTab === 'shape' && <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
-                {/* 左側細長分頁列：上面挑圖案、下面調參數 ——
-                    跟經典拼圖「新增佈局」裡面完全同一種版型（只有圖示、中間一條分隔線） */}
-                <div className="flex flex-col shrink-0 w-11 -mt-5 -mb-5 -ml-5 border-r border-white/10 select-none">
-                  <button
-                    onClick={() => setShapeSub('shape')}
-                    title="圖案" aria-label="圖案"
-                    /* 只做「發亮 + 圖標微放大」。原本是整顆 transition-all，
-                       連 outline / 邊框那些也一起過場，點下去跟移開時看起來會抖。 */
-                    className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${shapeSub === 'shape' ? 'text-white' : 'text-[#5a5a5a]'}`}
-                  >
-                    <Star size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'shape' ? 'scale-110' : 'scale-100'}`} />
-                  </button>
-                  <div className="w-full h-[1px] bg-white/10 shrink-0" />
-                  <button
-                    onClick={() => setShapeSub('style')}
-                    title="參數" aria-label="參數"
-                    className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${shapeSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}
-                  >
-                    <SlidersHorizontal size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'style' ? 'scale-110' : 'scale-100'}`} />
-                  </button>
+              {activeTab === 'shape' && <div className="w-full max-w-md mx-auto h-full min-h-0 flex flex-col animate-in fade-in duration-300">
+                <div role="tablist" aria-label="圖案工具" className="flex shrink-0 gap-7 border-b border-white/10 mb-3 select-none">
+                  {([['shape', '圖案'], ['style', '編輯']] as const).map(([tab, label]) => (
+                    <button key={tab} role="tab" aria-selected={shapeSub === tab}
+                      onClick={() => setShapeSub(tab)}
+                      className={`relative pb-2 text-xs font-bold outline-none transition-colors duration-150 ${shapeSub === tab ? 'text-white' : 'text-[#666]'}`}>
+                      {label}
+                      {shapeSub === tab && <span className="absolute bottom-0 inset-x-0 h-px bg-white" />}
+                    </button>
+                  ))}
                 </div>
-                <div ref={patternPanelRef} className="flex-1 min-w-0 no-scrollbar pl-3 pr-2 h-full overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                <div ref={patternPanelRef} style={{ overscrollBehavior: 'none' }} className="flex-1 min-h-0 min-w-0 no-scrollbar px-2 overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
                   {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'snow', 'burst', 'love', 'love3', 'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'zzz', 'text'].map(s => (

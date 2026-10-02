@@ -27,9 +27,14 @@ test('art effect choices move up only within their own page',()=>{
 });
 test('random pattern feedback uses opaque white and a longer animation',()=>{
  const s=read('components/CollageTool.tsx');
- const block=s.slice(s.indexOf("{transform:'rotate(0deg) scale(1)'",s.indexOf('bottom: motionUiOn ? 76 : 8')),s.indexOf('{/* 動畫頁的播放列'));
+ const block=s.slice(s.indexOf("{transform:'rotate(0deg) scale(1)'",s.indexOf('bottom: motionUiOn ? 76 : 0')),s.indexOf('{/* 動畫頁的播放列'));
  assert.match(block,/duration:680/);
  assert.match(block,/border-0 text-white active:scale-90/);
  assert.ok(!block.includes('opacity:'));
  assert.ok(!block.includes('text-white/40'));
+});
+test('creative reset sits lower without moving animation playback controls',()=>{
+ const s=read('components/CollageTool.tsx');
+ assert.match(s,/bottom: motionUiOn \? 76 : 0/);
+ assert.match(s,/p-3 bg-transparent border-0 text-white/);
 });
