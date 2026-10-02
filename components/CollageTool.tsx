@@ -302,11 +302,10 @@ const objKeyOf = (list: any[]) =>
  * 路徑的座標是「左上角 (0,0) 到 (w,h)」，呼叫端負責搬到框心。
  */
 const shapePathCache = new Map<string, Path2D>();
-/** Keep the 48px reset hit target below a square preview, including short
- * Safari viewports. Width-limited previews retain their existing dimensions. */
+/** Original contain-fit preview: the same 16px inset on every aspect ratio. */
 export const creativePreviewFit = (stageW: number, stageH: number, w: number, h: number) =>
   Math.min(Math.max(1, stageW - 32) / w,
-    Math.max(1, stageH - (Math.abs(w - h) < 0.001 ? 112 : 32)) / h);
+    Math.max(1, stageH - 32) / h);
 
 export const shapePathBox = (
   kind: string, w: number, h: number,
@@ -8785,7 +8784,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           </div>
         )}
         
-        {/* 圖案頁由固定頂部分頁＋可捲動內容組成，不額外加入浮動按鈕的 pb-20。 */}
+        {/* 圖案頁使用左側分類＋獨立捲動內容，不額外加入浮動按鈕的 pb-20。 */}
         {/* 圖片編輯那一頁是「滑桿 5rem ＋ 工具列 6rem ＋ 分類列 h-16」的三段式，
             自己就把整個高度切好了。再包一層 p-5 會整個縮一圈、上面那根滑桿
             還會被擠出可視範圍 —— 所以這一頁完全不加內距，跟經典拼圖一樣。 */}
@@ -9851,18 +9850,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </div>
                 );
               })()}
-              {activeTab === 'shape' && <div className="w-full max-w-md mx-auto h-full min-h-0 flex flex-col animate-in fade-in duration-300">
-                <div role="tablist" aria-label="圖案工具" className="flex shrink-0 gap-7 border-b border-white/10 mb-3 select-none">
-                  {([['shape', '圖案'], ['style', '編輯']] as const).map(([tab, label]) => (
-                    <button key={tab} role="tab" aria-selected={shapeSub === tab}
-                      onClick={() => setShapeSub(tab)}
-                      className={`relative pb-2 text-xs font-bold outline-none transition-colors duration-150 ${shapeSub === tab ? 'text-white' : 'text-[#666]'}`}>
-                      {label}
-                      {shapeSub === tab && <span className="absolute bottom-0 inset-x-0 h-px bg-white" />}
-                    </button>
-                  ))}
+              {activeTab === 'shape' && <div className="max-w-md mx-auto h-full flex flex-row animate-in fade-in duration-300">
+                <div className="flex flex-col shrink-0 w-11 -mt-5 -mb-5 -ml-5 border-r border-white/10 select-none">
+                  <button onClick={() => setShapeSub('shape')} title="圖案" aria-label="圖案"
+                    className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${shapeSub === 'shape' ? 'text-white' : 'text-[#5a5a5a]'}`}>
+                    <Star size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'shape' ? 'scale-110' : 'scale-100'}`} />
+                  </button>
+                  <div className="w-full h-[1px] bg-white/10 shrink-0" />
+                  <button onClick={() => setShapeSub('style')} title="參數" aria-label="參數"
+                    className={`w-full flex-1 flex items-center justify-center outline-none transition-colors duration-150 ${shapeSub === 'style' ? 'text-white' : 'text-[#5a5a5a]'}`}>
+                    <SlidersHorizontal size={18} className={`transition-transform duration-150 will-change-transform ${shapeSub === 'style' ? 'scale-110' : 'scale-100'}`} />
+                  </button>
                 </div>
-                <div ref={patternPanelRef} style={{ overscrollBehavior: 'none' }} className="flex-1 min-h-0 min-w-0 no-scrollbar px-2 overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                <div ref={patternPanelRef} className="flex-1 min-w-0 no-scrollbar pl-3 pr-2 h-full overflow-y-auto overflow-x-hidden [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                 {shapeSub === 'shape' && <div className="pt-0.5 pb-2">
                 <div className="grid grid-cols-5 gap-2 mb-3">
                   {['circle', 'square', 'cross-star', 'heart', 'star', 'flower', 'snow', 'burst', 'love', 'love3', 'pic333', 'vortex', 'random-num', 'seagrass', 'darkstar', 'sparkle', 'aster', 'theta', 'zzz', 'text'].map(s => (

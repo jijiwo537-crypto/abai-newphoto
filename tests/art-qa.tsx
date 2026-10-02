@@ -79,7 +79,7 @@ if(query.has('bench')&&query.has('creative')) void (async()=>{
  await wait(30);
  (document.querySelectorAll('button')[10] as HTMLButtonElement).click();await wait();
  const click=(text:string)=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.trim()===text||b.getAttribute('aria-label')===text||b.title===text)?.click();
- click('編輯');await wait();click('實線');await wait(10);
+ click('參數');await wait();click('實線');await wait(10);
  const results:any[]=[];
  const run=async(label:string,index:number)=>{
   const el=document.querySelectorAll<HTMLInputElement>('input[type=range]')[index];
