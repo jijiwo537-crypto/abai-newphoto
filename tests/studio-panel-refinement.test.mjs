@@ -7,7 +7,8 @@ test('match imports precede option selectors and top-aligned sliders',()=>{
  assert.ok(s.indexOf('data-cm-pickref')<s.indexOf('aria-label="仿色方法"'));
  assert.ok(s.indexOf('aria-label="仿色方法"')<s.indexOf('data-cm-slider'));
  assert.match(s,/aria-pressed=\{picked === m\}/);
- assert.match(s,/pt-3 flex-1 min-h-0 flex flex-col justify-start/);
+ assert.match(s,/pt-2 flex-1 min-h-0 flex flex-col justify-start/);
+ assert.match(s,/<div key=\{label\} className="pt-1">/);
  assert.ok(!s.includes('order-first'));
 });
 test('match save formats use real full-quality encoding and separate lossless preview',()=>{

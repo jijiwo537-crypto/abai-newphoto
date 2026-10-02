@@ -601,12 +601,12 @@ export const ColorMatchStudio: React.FC<Props> = ({
       </div>
 
       {/* 滑桿：樣式與佈局比照編輯器。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}
-      <div className={`px-5 pt-3 flex-1 min-h-0 flex flex-col justify-start pb-4 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
+      <div className={`px-5 pt-2 flex-1 min-h-0 flex flex-col justify-start pb-4 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
         <div>
           {/* 強度可以推到 200（100 以上＝比參考圖再更進一步），預設維持 100；
               膚色保護維持 0～100。 */}
           {([['強度', strength, setStrength, 200], ['膚色保護', skin, setSkin, 100]] as const).map(([label, val, set, max]) => (
-            <div key={label} className="pt-2">
+            <div key={label} className="pt-1">
               <div className="flex justify-between items-center px-1">
                 <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">{label}</span>
                 <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded">{val}</span>
