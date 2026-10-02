@@ -3228,9 +3228,8 @@ return (
         {detailTools.map(([key,label,,,dflt])=>{
           const definition=FX_DEFS.find(d=>d.id===effectCard);
           const existingIcon=definition?.params.find(p=>p.id===key)?.icon || definition?.icon;
-          // Preserve the original soft-light/halation/light-leak icon sets.
-          const icon=FX_SUB_TOOLS[effectCard]?.find(t=>t[0]===key)?.[2]
-            || effectDetailIcon(label,existingIcon || 'blur_on');
+          const icon=effectDetailIcon(label,
+            FX_SUB_TOOLS[effectCard]?.find(t=>t[0]===key)?.[2] || existingIcon || 'blur_on');
           return toolBtn(key,label,icon,detailActive?.[0]===key,fxVal(key,dflt)!==dflt,()=>setDetailTool(key));
         })}
       </>}
