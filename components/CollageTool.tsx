@@ -7971,7 +7971,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       `}</style>
 
       {/* 匯出影片的進度。用同一條算圖管線一格一格畫，所以會花一點時間。 */}
-      {videoProg !== null && (
+      {saveState !== 'success' && videoProg !== null && (
         <div className="fixed inset-0 z-[116] bg-black/90 backdrop-blur-md flex flex-col items-center justify-center gap-4">
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin" />
           <span className="text-[11px] tracking-[0.3em] text-white/60 tabular-nums">{Math.round(videoProg * 100)}%</span>

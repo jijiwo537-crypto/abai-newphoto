@@ -1495,6 +1495,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   const userHalationRef = useRef<number>(50);
   const [showOriginal, setShowOriginal] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'processing' | 'success'>('idle');
+  const saveRequestRef = useRef(0);
+  const saveBusyRef = useRef(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<'png' | 'jpg' | 'heic'>('png');
   const [encodedExports, setEncodedExports] = useState<string[]>([]);
@@ -6294,7 +6296,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   };
 
   const handleSave = () => {
-    if (!originalImgRef.current) return;
+    if (!originalImgRef.current || saveBusyRef.current || saveState !== 'idle') return;
+    saveBusyRef.current = true;
+    const request = ++saveRequestRef.current;
     if (isInteracting) setIsInteracting(false);
     setSaveState('processing');
     setTimeout(async () => {
@@ -6325,6 +6329,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               out.push(await canvasToUrl(canvas, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
               if (exportFormat === 'heic') encoded.push(await exportHeic(canvas));
             }
+            if (request !== saveRequestRef.current) { revokeUrls([...out, ...encoded]); return; }
             revokeUrls(finalImagesRef.current.filter(u => !out.includes(u)));
             finalImagesRef.current = out;
             revokeUrls(encodedExportsRef.current);
@@ -6337,7 +6342,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             addExport('editor', out[safeIdx] || out[0], srcList[safeIdx] || imageSrc, {
               params: paramsRef.current, geo, selectedLutIdx,
             }, histKey || undefined);
-        } catch (e) { console.error("Save failed", e); setSaveState('idle'); }
+        } catch (e) { console.error("Save failed", e); if (request === saveRequestRef.current) setSaveState('idle'); }
+        finally { if (request === saveRequestRef.current) saveBusyRef.current = false; }
     }, 100);
   };
   
@@ -6836,10 +6842,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         .channel-dot.active { transform: scale(1.1); }
       `}</style>
       
-      {(isEditorLoading || !previewLayoutReady) && (
+      {saveState === 'idle' && (isEditorLoading || !previewLayoutReady) && (
         /* 首次解碼期間必須完全遮住預覽；半透明遮罩會把底下 canvas 從初始尺寸
            切換到正確比例的那一幀透出來，看起來就像圖片上下抖了一下。 */
-        <div className="absolute inset-0 z-[120] flex items-center justify-center bg-[#080808]">
+        <div data-editor-initial-loading className="absolute inset-0 z-[120] flex items-center justify-center bg-[#080808]">
           <div className="flex flex-col items-center gap-4 text-white">
             <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
             <p className="text-[10px] font-black tracking-[0.2em] uppercase animate-pulse opacity-70">解析中...</p>
@@ -7023,6 +7029,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
 
       <div
         ref={previewBoxRef}
+        data-editor-preview-box
         /* min-h-0 是長圖的關鍵：flex 子項預設 min-height:auto，會拿內容高度
            撐開自己，把下面工具列推出 viewport。預覽只能使用剩餘空間，長圖
            由內層等比例 contain；工具列因此永遠留在螢幕內。 */
@@ -8188,7 +8195,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
           <div className="w-12 h-12 border-4 border-white/10 border-t-white rounded-full animate-spin mb-6"></div>
           <p className="text-lg font-black uppercase tracking-[0.3em] animate-pulse text-white">正在存檔</p>
           {/* 這一層蓋住返回鍵，所以一定要有出口（見 StuckEscape） */}
-          <StuckEscape onEscape={() => setSaveState('idle')} />
+          <StuckEscape onEscape={() => { ++saveRequestRef.current; saveBusyRef.current = false; setSaveState('idle'); }} />
         </div>
       )}
     </div>

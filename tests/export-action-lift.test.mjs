@@ -9,9 +9,15 @@ test('all six export screens share one lift, including both collage video result
   assert.match(source,/data-export-actions/);assert.match(source,/data-export-media/);
  }
  const source=read('components/ExportActionLift.tsx');
- assert.match(source,/translateY\(-56px\)/);assert.match(source,/original\[i\]\.top-m\.getBoundingClientRect\(\)\.top/);
+ assert.match(source,/previousGap\/2-baseGap/);assert.match(source,/original\[i\]\.top-m\.getBoundingClientRect\(\)\.top/);
  assert.match(source,/minHeight=`\$\{holderHeights\[i\]\}px`/);
  assert.match(source,/loadedmetadata/);assert.match(source,/ResizeObserver/);
+});
+test('success results cannot be covered by initial loading overlays or late video progress',()=>{
+ assert.match(read('components/ImageEditor.tsx'),/saveState === 'idle' && \(isEditorLoading \|\| !previewLayoutReady\)/);
+ assert.match(read('components/ImageEditor.tsx'),/saveBusyRef\.current \|\| saveState !== 'idle'/);
+ assert.match(read('components/BeautyStudio.tsx'),/saveState === 'idle' && isLoading/);
+ assert.match(read('components/CollageTool.tsx'),/saveState !== 'success' && videoProg !== null/);
 });
 test('cross-page name is consistent and empty save remains visible but disabled and dim',()=>{
  for(const path of ['App.tsx','components/HomePage.tsx','locales/copy.tsv','utils/translations.json'])assert.match(read(path),/跨頁拼圖/);

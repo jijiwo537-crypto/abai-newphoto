@@ -21,6 +21,7 @@ if(query.has('glyphglow'))void import('./art-glyph-glow-audit');
 if(query.has('relativeAudit'))void import('./relative-controls-audit').then(m=>m.auditRelativeControls());
 if(query.has('fineAudit'))void import('./editor-fine-slider-audit').then(m=>m.auditFineSlider()).catch(e=>fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify({kind:'fine-audit-error',error:String(e),stack:e.stack})}));
 if(query.has('editor')&&query.has('composeAudit'))void import('./editor-compose-audit');
+if(query.has('editor')&&query.has('exportAudit'))void import('./editor-export-lifecycle-audit');
 if(query.has('fixture')&&query.has('refinement'))void import('./art-refinement-audit').then(m=>m.auditArtRefinement());
 if(query.has('fixture')&&(query.has('audit')||(query.has('geometry')&&(navigator as any).standalone)))void import('./art-controls-audit').then(m=>m.auditArtControls());
 function ArtFixture({src}:{src:string}){const [open,setOpen]=React.useState(!query.has('geometry'));return open?<ArtStudio initialSrc={src} onClose={()=>setOpen(false)}/>:<div style={{position:'relative',height:'100vh',background:'#090909'}}><button style={{position:'absolute',top:100,color:'white'}} onClick={()=>setOpen(true)}>重新進入藝術效果</button><a href="/art-qa.html?creative&resetSpacing" style={{position:'absolute',top:180,color:'white'}}>檢查創意拼圖重置按鈕</a></div>;}

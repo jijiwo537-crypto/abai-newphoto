@@ -36,4 +36,12 @@ test('seamless blend samples a source-resolution master independent of uniform z
   assert.match(component,/aspect,1,amount,revision,\(\)=>cancelled,true/);
   assert.match(renderer,/if \(sourceResolution\)/);
   assert.match(renderer,/img.naturalWidth/);
+  assert.match(component,/<canvas hidden/);
+  assert.match(component,/data-seamless-master/);
+  assert.match(component,/transform:`scale\(\$\{scale\}\)`/);
+  assert.match(component,/await image\.decode\(\)/);
+  const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
+  assert.match(grid,/width=\{lbox.w\} height=\{lbox.h\} scale=\{ls\}/);
+  assert.match(grid,/left: stableSeamless \? 0/);
+  assert.match(grid,/locked\.scale - ns.*locked\.extent.*<= 7/);
 });

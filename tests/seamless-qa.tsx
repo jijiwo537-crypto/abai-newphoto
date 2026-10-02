@@ -8,6 +8,7 @@ const photo=(color:string)=>'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns
 const cells=['#ff4030','#2080ee','#50ce80'].map((color,i)=>({id:`seam-photo-${i}`,url:photo(color),zoom:1,offsetX:0,offsetY:0,rotation:0,naturalWidth:600,naturalHeight:800}));
 const zoomCells=cells.slice(0,2),zoomRects=[{x:0,y:0,w:.5,h:1},{x:.5,y:0,w:.5,h:1}];
 const state={coordinateVersion:2,pageWidth:309,selectedRatio:'3:4',isLandscape:false,floatingImages:[],pages:[{id:'seam-page',bgColor:'#ff00ff',layouts:[{id:'seam-layout',images:cells.slice(0,2),templateIndex:1,t:{x:0,y:0,scale:.9},gap:8,radius:4,z:0,seamless:true,seamlessAmount:70}]}]};
+if(new URLSearchParams(location.search).has('slowAudit'))void import('./seamless-slow-audit');
 async function verify(){
  const sets=[[{x:0,y:0,w:.5,h:1},{x:.5,y:0,w:.5,h:1}], [{x:0,y:0,w:1,h:.5},{x:0,y:.5,w:.5,h:.5},{x:.5,y:.5,w:.5,h:.5}]];
  const report=[];

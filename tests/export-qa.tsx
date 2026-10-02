@@ -21,7 +21,7 @@ function Audit(){
   const r=img.getBoundingClientRect();let clipped=false;
   for(let p=img.parentElement;p&&p!==root;p=p.parentElement){const css=getComputedStyle(p);if(['hidden','auto','scroll','clip'].includes(css.overflowY)){const pr=p.getBoundingClientRect();if(r.top<pr.top-.5||r.bottom>pr.bottom+.5)clipped=true;}}
   const rr=root.getBoundingClientRect();
-  const pass=geometry.media?.length&&geometry.media.every((m:any,i:number)=>Math.abs(m.top-geometry.originalTops[i])<.5&&m.bottom<=geometry.actionTop-15.5)&&r.left>=rr.left-.5&&r.right<=rr.right+.5&&Math.abs(geometry.originalActionTop-geometry.actionTop-56)<.5&&!clipped;
+  const pass=geometry.media?.length&&geometry.media.every((m:any,i:number)=>Math.abs(m.top-geometry.originalTops[i])<.5&&m.bottom<=geometry.actionTop-15.5)&&r.left>=rr.left-.5&&r.right<=rr.right+.5&&Math.abs(geometry.previousGap/2-geometry.buttonGap)<.5&&!clipped;
   results.current.push({...s,pass:!!pass,clipped,...geometry});
   if(index+1<scenarios.length)setIndex(index+1);else{const out={kind:'export-geometry',ua:navigator.userAgent,viewport:{w:innerWidth,h:innerHeight},pass:results.current.every(r=>r.pass),cases:results.current};setReport(out);await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify(out)}).catch(()=>{});}
  })();return()=>{stop=true;};},[index]);

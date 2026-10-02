@@ -1,7 +1,7 @@
 import React, {useLayoutEffect, useRef} from 'react';
 
-/** Lift the complete export action group one button-height. Keep each result's
- * original top coordinate; only shorten its lower edge if space is required. */
+/** Halve the previous result-footer clearance (base padding + 56px lift).
+ * Keep the media's original top; only shorten its lower edge when necessary. */
 export function ExportActionLift() {
   const ref=useRef<HTMLSpanElement>(null);
   useLayoutEffect(()=>{
@@ -9,6 +9,7 @@ export function ExportActionLift() {
     const actions=root?.querySelector<HTMLElement>('[data-export-actions]');
     if(!root||!actions)return;
     const apply=()=>{
+      actions.style.transform='';
       const media=Array.from(root.querySelectorAll<HTMLImageElement|HTMLVideoElement>('[data-export-media] img, [data-export-media] video'));
       const holders=Array.from(new Set(media.map(m=>m.closest<HTMLElement>('[data-export-media]')!)));
       holders.forEach(h=>{h.style.transform='';h.style.minHeight='';});
@@ -16,8 +17,13 @@ export function ExportActionLift() {
       const original=media.map(m=>m.getBoundingClientRect());
       const widths=media.map(m=>getComputedStyle(m).maxWidth);
       const holderHeights=holders.map(h=>h.getBoundingClientRect().height);
-      const actionTop=actions.getBoundingClientRect().top-(actions.style.transform?-56:0);
-      actions.style.transform='translateY(-56px)';
+      const actionTop=actions.getBoundingClientRect().top;
+      const buttons=Array.from(actions.querySelectorAll('button'));
+      const buttonBottom=Math.max(...buttons.map(b=>b.getBoundingClientRect().bottom));
+      const baseGap=Number.isFinite(buttonBottom)?root.getBoundingClientRect().bottom-buttonBottom:24;
+      const previousGap=baseGap+56;
+      const lift=previousGap/2-baseGap;
+      actions.style.transform=`translateY(${-lift}px)`;
       const bottom=actions.getBoundingClientRect().top-16;
       // Reserve the original flow footprint. Otherwise a shorter photo can
       // pull the footer up again, and a horizontal result strip can clip its
@@ -37,7 +43,7 @@ export function ExportActionLift() {
         if(!offsets.has(h))offsets.set(h,original[i].top-m.getBoundingClientRect().top);
       });
       offsets.forEach((dy,h)=>{h.style.transform=`translateY(${dy}px)`;});
-      if(import.meta.env.DEV)root.dataset.exportGeometry=JSON.stringify({originalTops:original.map(r=>r.top),originalActionTop:actionTop,actionTop:actions.getBoundingClientRect().top,media:media.map(m=>{const r=m.getBoundingClientRect();return {top:r.top,bottom:r.bottom,width:r.width,height:r.height};})});
+      if(import.meta.env.DEV)root.dataset.exportGeometry=JSON.stringify({originalTops:original.map(r=>r.top),originalActionTop:actionTop,actionTop:actions.getBoundingClientRect().top,previousGap,buttonGap:root.getBoundingClientRect().bottom-Math.max(...buttons.map(b=>b.getBoundingClientRect().bottom)),media:media.map(m=>{const r=m.getBoundingClientRect();return {top:r.top,bottom:r.bottom,width:r.width,height:r.height};})});
     };
     apply();
     root.addEventListener('load',apply,true);

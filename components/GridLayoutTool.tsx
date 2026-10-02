@@ -11977,6 +11977,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
    * scale 1 時剛好等於整頁，四個邊會同時對齊，拉角的時候會一直被拉回 1。
    * 捏合是兩根手指、位移量大得多，4px 的黏著範圍推得過去，不會卡住。
    */
+  const layoutScaleSnapRef = useRef<{id: string | null; scale: number; extent: number} | null>(null);
   const scaleLayoutSnapped = (next: number, targetId: string | null) => {
     let ns = Math.max(MIN_LAYOUT_SCALE, Math.min(4, next));
     const rect = getPageRect(selectedLayoutPageIdx >= 0 ? selectedLayoutPageIdx : activePageIndex);
@@ -11996,7 +11997,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const ext1 = rotExtent(box.w, box.h, lRot);
     if (enableSnapping) {
       const SNAP = 4;
-      let best = Infinity, bestScale = ns;
+      let best = Infinity, bestScale = ns, bestExtent = 0;
       getAllPageRects().forEach(pr => {
         const cands: { scale: number; extent: number }[] = [];
         if (ext1.bw > 1) {
@@ -12011,10 +12012,19 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           if (!(cand > MIN_LAYOUT_SCALE) || cand > 4) return;
           // 換算成「畫面上差幾個像素」再比門檻，倍率本身的差沒有意義
           const px = Math.abs(cand - ns) * extent / 2 * Math.max(.0001, kRef.current);
-          if (px < SNAP && px < best) { best = px; bestScale = cand; }
+          if (px < SNAP && px < best) { best = px; bestScale = cand; bestExtent = extent; }
         });
       });
-      if (best < SNAP) ns = bestScale;
+      // Keep a captured edge until it really leaves the 7px release band.
+      // One shared raw/snap threshold otherwise flips the entire layout at
+      // slow-pinch sensor noise, even when the feathered photo master is stable.
+      const locked = layoutScaleSnapRef.current;
+      if (locked && locked.id === targetId && Math.abs(locked.scale - ns) * locked.extent / 2 * Math.max(.0001, kRef.current) <= 7) {
+        ns = locked.scale;
+      } else {
+        layoutScaleSnapRef.current = best < SNAP ? {id: targetId, scale: bestScale, extent: bestExtent} : null;
+        if (best < SNAP) ns = bestScale;
+      }
     }
     patchLayoutT({ scale: ns }, targetId);
     /* 只畫「邊」的線（edgeOnly）：捏合時中心點根本不會動，中線會從頭亮到尾 ——
@@ -12482,6 +12492,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   };
 
   const handleWorkspaceTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    layoutScaleSnapRef.current = null;
     /* 長按尚在等待期間，只要第二根手指落下就確定是雙指手勢。無論第二根
        手指落在同一張圖或畫布其他位置，都立即取消格子圖與自由圖片的長按
        計時；只保留原本的單指長按門檻，不再讓它稍後突然搶走縮放。 */
@@ -15186,6 +15197,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               const lw = lbox.w * ls;
                               const lh = lbox.h * ls;
                               const insetLayout = isInsetLayout(layout);
+                              const stableSeamless = !!layout.seamless && !insetLayout;
                               const nativeInset = insetLayout && layout.images.every(c => !hasPhotoFx(c.fx));
                               const nativeLayout = !insetLayout && !layout.seamless
                                 && layout.images.every(c => !hasPhotoFx(c.fx));
@@ -15202,8 +15214,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 data-seamless={layout.seamless && !insetLayout ? 'true' : undefined}
                                 className="absolute"
                                 style={{
-                                  left: `${lLeft}px`,
-                                  top: `${lTop}px`,
+                                  left: stableSeamless ? 0 : `${lLeft}px`,
+                                  top: stableSeamless ? 0 : `${lTop}px`,
                                   width: `${lw}px`,
                                   height: `${lh}px`,
                                   clipPath: pagesMode || (pagesVisual && !!sortOriginalIndices.current) ? (() => {
@@ -15221,13 +15233,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                      整个布局固定在同一个合成坐标系，缩放时格子、本体与
                                      共享边界作为一块移动，不会各自跳到相邻像素。 */
                                   isolation: 'isolate',
-                                  backfaceVisibility: 'hidden',
-                                  willChange: 'transform',
+                                  backfaceVisibility: stableSeamless ? undefined : 'hidden',
+                                  willChange: stableSeamless ? undefined : 'transform',
                                   pointerEvents: activeTab === 'motion' ? 'none' : undefined,
                                   /* 兩指旋轉：直接轉整個外框，裡面的格子、照片、
                                      選取框、四個角、那排按鈕全部跟著轉，
                                      連點擊命中判定都是瀏覽器自己算的。 */
-                                  ...((layout.t?.rot || 0) !== 0
+                                  ...(stableSeamless
+                                    ? { transform: `translate(${lLeft}px, ${lTop}px) rotate(${layout.t?.rot || 0}deg)`, transformOrigin: `${lw / 2}px ${lh / 2}px` }
+                                    : (layout.t?.rot || 0) !== 0
                                     ? { transform: `rotate(${layout.t!.rot}deg)`, transformOrigin: 'center center' }
                                     : null),
                                 }}
@@ -15236,7 +15250,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 onTouchEnd={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                                 onTouchCancel={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                               >
-                              {layout.seamless && !insetLayout && <SeamlessLayout cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
+                              {stableSeamless && <SeamlessLayout cells={layout.images} rects={pageActiveTemplate.rects} width={lbox.w} height={lbox.h} scale={ls} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
                               {nativeLayout && <svg data-layout-photo-layer="1" width={lw} height={lh}
                                 className="absolute inset-0 pointer-events-none" style={{zIndex: 0, overflow: 'visible'}}>
                                 {pageActiveTemplate.rects.map((raw, idx) => {
