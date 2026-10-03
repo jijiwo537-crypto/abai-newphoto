@@ -5,7 +5,6 @@ import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
 import { Icon } from './Icon';
 import { ChevronLeft } from 'lucide-react';
-import {DEFAULT_COLORS} from '../utils/colorPalettes.js';
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
@@ -1134,7 +1133,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
                   className="absolute inset-0 opacity-0 cursor-pointer"
                 />
               </label>
-              {DEFAULT_COLORS.map(hex => ({hex,name:hex})).map(c => (
+              {LIP_PRESETS.map(c => (
                 <button
                   key={c.hex}
                   onClick={() => setMakeupColor(c.hex)}

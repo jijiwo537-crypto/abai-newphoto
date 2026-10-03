@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {LEGACY_TEXT_COLORS,TEXT_COLORS,SHAPE_COLORS,DEFAULT_COLORS,MASK_DEEP_COLORS,CREATIVE_MASK_COLORS} from '../utils/colorPalettes.js';
+import {LEGACY_TEXT_COLORS,TEXT_COLORS,SHAPE_COLORS,DEFAULT_COLORS,STROKE_COLORS,MASK_DEEP_COLORS,CREATIVE_MASK_COLORS} from '../utils/colorPalettes.js';
 import {ART_SWATCHES} from '../utils/artColors.js';
 test('text preserves every original swatch in its original order',()=>{
  assert.deepEqual(TEXT_COLORS.slice(0,16),LEGACY_TEXT_COLORS);
@@ -15,12 +15,16 @@ test('all non-text palettes begin with white and append the entire mask family',
  }
  assert.equal(MASK_DEEP_COLORS[0],'#E3BFB8');assert.equal(MASK_DEEP_COLORS.at(-1),'#E3B8C3');
  assert.deepEqual(CREATIVE_MASK_COLORS.slice(1,15),[...MASK_DEEP_COLORS].reverse());
- for(const color of LEGACY_TEXT_COLORS)assert.ok(CREATIVE_MASK_COLORS.includes(color));
+ for(const color of LEGACY_TEXT_COLORS.slice(1))assert.ok(CREATIVE_MASK_COLORS.includes(color));
+ for(const colors of [SHAPE_COLORS,DEFAULT_COLORS,CREATIVE_MASK_COLORS])assert.ok(!colors.includes('#000000'));
+ assert.deepEqual(STROKE_COLORS.slice(0,2),['#FFFFFF','#000000']);
+ assert.ok(STROKE_COLORS.includes('#000000'));
+ assert.match(fs.readFileSync('components/BeautyStudio.tsx','utf8'),/\{LIP_PRESETS.map\(c =>/);
 });
 test('art retains its original front group followed by old text colors',()=>{
  const colors=ART_SWATCHES.map(([hex])=>hex.toUpperCase());
- assert.deepEqual(colors.slice(0,8),['#FFFFFF','#FF7899','#FFD178','#F5EE9E','#A8FFDC','#9DE7FF','#A6BCFF','#D0ADFF']);
- assert.deepEqual(colors.slice(8),LEGACY_TEXT_COLORS.filter(c=>c!=='#FFFFFF'));
+ assert.deepEqual(colors.slice(0,9),['#FFFFFF','#000000','#FF7899','#FFD178','#F5EE9E','#A8FFDC','#9DE7FF','#A6BCFF','#D0ADFF']);
+ assert.deepEqual(colors.slice(9),LEGACY_TEXT_COLORS.slice(2));
 });
 test('color subpages are fixed, omit hexadecimal fields and reset on edit',()=>{
  const grid=fs.readFileSync('components/GridLayoutTool.tsx','utf8');

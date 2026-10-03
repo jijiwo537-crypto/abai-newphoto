@@ -10,10 +10,13 @@ const cells=['#ff4030','#2080ee','#50ce80'].map((color,i)=>({id:`seam-photo-${i}
 const zoomCells=cells.slice(0,2),zoomRects=[{x:0,y:0,w:.5,h:1},{x:.5,y:0,w:.5,h:1}];
 const state={coordinateVersion:2,pageWidth:309,selectedRatio:'3:4',isLandscape:false,floatingImages:[],pages:[{id:'seam-page',bgColor:'#ff00ff',layouts:[{id:'seam-layout',images:cells.slice(0,params.has('junction')?3:2),templateIndex:params.has('junction')?0:1,t:{x:0,y:0,scale:.9},gap:8,radius:4,z:0,seamless:!params.has('off'),seamlessAmount:70}]}]};
 if(params.has('textureZoom')){
- Object.assign(state,{floatingImages:[{id:'photo-texture',src:photo('#728791'),x:40,y:40,width:229,height:320,scale:1,rotation:0,opacity:100}]});
+ const raster=document.createElement('canvas');raster.width=1200;raster.height=1600;const c=raster.getContext('2d')!;c.fillStyle='#728791';c.fillRect(0,0,1200,1600);c.fillStyle='#eee';for(let y=0;y<1600;y+=16)for(let x=0;x<1200;x+=16)if((x+y)%32===0)c.fillRect(x,y,8,8);
+ Object.assign(state,{floatingImages:[{id:'photo-texture',src:params.has('raster')?raster.toDataURL():photo('#728791'),x:params.has('cross')?-40:40,y:40,width:params.has('cross')?480:229,height:320,scale:1,rotation:0,opacity:100}]});
  Object.assign(state.pages[0],{layouts:[],pattern:{type:params.get('texture')||'dot',size:80,gap:0,color:'#FFFFFF',squash:50}});
- void import('./texture-zoom-audit');
+ if(params.has('multi'))state.pages.push({...state.pages[0],id:'seam-page-2',layouts:[]});
+ if(!params.has('modeAudit'))void import('./texture-zoom-audit');
 }
+if(params.has('modeAudit'))void import('./classic-mode-audit');
 if(params.has('empty')){
  const layout=state.pages[0].layouts[0];layout.images.forEach(c=>{c.url='';});
  layout.t.scale=1;layout.gap=0;layout.radius=0;layout.seamless=false;

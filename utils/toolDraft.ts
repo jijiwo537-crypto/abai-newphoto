@@ -19,7 +19,7 @@ const FLAG_KEY = 'abai:tool-draft';
 /** 太久以前的就不要問了 */
 const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
-export type ToolKind = 'editor' | 'beauty' | 'collage';
+export type ToolKind = 'editor' | 'beauty' | 'collage' | 'match';
 
 export interface ToolDraftMeta {
   tool: ToolKind;
@@ -125,7 +125,7 @@ export function draftTime(): number {
 export function draftTool(): ToolKind | null {
   try {
     const raw = localStorage.getItem(FLAG_KEY + ':tool');
-    return raw === 'editor' || raw === 'beauty' || raw === 'collage' ? raw : null;
+    return raw === 'editor' || raw === 'beauty' || raw === 'collage' || raw === 'match' ? raw : null;
   } catch {
     return null;
   }
@@ -167,7 +167,7 @@ async function externalizeState(value: any, seen = new Map<string, string>()): P
   if (value && typeof value === 'object') {
     const out: any = {};
     for (const [key, raw] of Object.entries(value)) {
-      if ((key === 'src' || key === 'url' || key === 'origSrc') && typeof raw === 'string' && raw) {
+      if ((key === 'src' || key === 'url' || key === 'origSrc' || key === 'referenceSrc') && typeof raw === 'string' && raw) {
         if (raw.startsWith('idbtool:')) { out[key] = raw; continue; }
         let stored = seen.get(raw);
         if (!stored) {
@@ -190,7 +190,7 @@ async function internalizeState(value: any, urls = new Map<string, string>()): P
   if (value && typeof value === 'object') {
     const out: any = {};
     for (const [key, raw] of Object.entries(value)) {
-      if ((key === 'src' || key === 'url' || key === 'origSrc')
+      if ((key === 'src' || key === 'url' || key === 'origSrc' || key === 'referenceSrc')
           && typeof raw === 'string' && raw.startsWith('idbtool:')) {
         const id = raw.slice(8);
         let url = urls.get(id);

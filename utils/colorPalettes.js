@@ -17,9 +17,10 @@ const rotateNear=(colors,hex)=>{const h=values(hex).h;let best=0,d=Infinity;colo
 const tail=rotateNear(MASK_DEEP_COLORS,LEGACY_TEXT_COLORS.at(-1));
 export const SHAPE_COLORS=Object.freeze(unique([...LEGACY_TEXT_COLORS.slice(1),...tail]));
 export const TEXT_COLORS=Object.freeze(['#000000',...SHAPE_COLORS]);
-export const DEFAULT_COLORS=Object.freeze(unique(['#FFFFFF','#000000',...SHAPE_COLORS]));
+export const DEFAULT_COLORS=SHAPE_COLORS;
+export const STROKE_COLORS=Object.freeze(unique(['#FFFFFF','#000000',...SHAPE_COLORS]));
 // Reverse both original mask rings; keep the deeper E3BFB8..E3B8C3
 // family first and insert the old text ring between the two mask rings.
 const reversedDeep=[...MASK_DEEP_COLORS].reverse();
 export const CREATIVE_MASK_COLORS=Object.freeze(unique(['#FFFFFF',...reversedDeep,
- ...rotateNear(LEGACY_TEXT_COLORS.slice(2),reversedDeep.at(-1)),...light.reverse(),'#000000']));
+ ...rotateNear(LEGACY_TEXT_COLORS.slice(2),reversedDeep.at(-1)),...light.reverse()]));

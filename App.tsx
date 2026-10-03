@@ -66,6 +66,7 @@ const TOOL_NAMES: Record<ToolKind | 'layout', string> = {
   editor: '編輯',
   beauty: '美顏',
   collage: '創意拼圖',
+  match: '仿色',
 };
 
 /** 匯入、開啟歷史作品與儲存草稿共用同一顆載入動畫，避免各處長得只「很像」。 */
@@ -143,6 +144,7 @@ const App: React.FC = () => {
   const [artImage, setArtImage] = useState<string | null>(null);
   const artFileInputRef = useRef<HTMLInputElement>(null);
   const [matchRef, setMatchRef] = useState<string | null>(null);
+  const [matchReferenceLoading,setMatchReferenceLoading]=useState(false);
   const [beautyKey, setBeautyKey] = useState(0);
   /* 從歷史紀錄點開來的那一筆是誰。工具再存一次的時候要沿用同一個 key，
      這樣才會「蓋掉同一筆」而不是又多一筆一模一樣的。開新的照片就清掉。 */
@@ -327,7 +329,7 @@ const App: React.FC = () => {
       try {
         const objectUrl = await processImageFile(file, (u) => setImportPreviewUrl(u));
         setMatchImage(objectUrl);
-        setMatchRef(null);
+        if (currentView !== 'match') { setMatchRef(null); setToolDraftState(null); }
         setCurrentView('match');
       } catch (err) {
         console.error('Failed to process image:', err);
@@ -339,13 +341,15 @@ const App: React.FC = () => {
   const handleMatchRefChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      setIsImporting(true);
+      // Reference imports must not cover the original preview with the app's
+      // full-screen black import overlay, even while decoding HEIC/RAW files.
+      setMatchReferenceLoading(true);
       try {
         setMatchRef(await processImageFile(file));
       } catch (err) {
         console.error('Failed to process reference:', err);
         alert('無法處理此圖片格式');
-      } finally { setIsImporting(false); setImportPreviewUrl(null); }
+      } finally { setMatchReferenceLoading(false); }
     }
     if (matchRefInputRef.current) matchRefInputRef.current.value = '';
   };
@@ -451,6 +455,10 @@ const App: React.FC = () => {
         setBeautyImage(draft.src);
         setBeautyKey(prev => prev + 1);
         setCurrentView('beauty');
+      } else if (draft.tool === 'match') {
+        setMatchImage(draft.src);
+        setMatchRef(draft.state?.referenceSrc ?? null);
+        setCurrentView('match');
       } else {
         // 拼貼原本就是吃 File，草稿的照片轉回 File 就能走同一條載入路徑
         const blob = await (await fetch(draft.src)).blob();
@@ -671,8 +679,14 @@ const App: React.FC = () => {
         <ColorMatchStudio
           imageSrc={matchImage}
           referenceSrc={matchRef}
+          referenceLoading={matchReferenceLoading}
           onPickReference={handleMatchRefClick}
-          onCancel={() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); }}
+          initialState={toolDraftState}
+          onRequestExit={requestExit}
+          onCancel={(keepDraft = false) => {
+            if (!keepDraft) clearToolDraft();
+            finishExit(() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); setToolDraftState(null); });
+          }}
           onHome={() => { setCurrentView('home'); setMatchImage(null); setMatchRef(null); }}
           onImportNew={handleMatchImportClick}
           onSendToEditor={handleBeautyToEditor}

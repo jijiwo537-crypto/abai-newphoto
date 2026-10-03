@@ -4,7 +4,7 @@ const ORIGINAL_ART_SWATCHES=[
  ['#ffffff','白色'],['#ff7899','玫瑰'],['#ffd178','琥珀'],['#f5ee9e','柔黃'],
  ['#a8ffdc','薄荷'],['#9de7ff','冰青'],['#a6bcff','霧藍'],['#d0adff','霞紫'],
 ];
-export const ART_SWATCHES=[...ORIGINAL_ART_SWATCHES,...LEGACY_TEXT_COLORS.filter(c=>!ORIGINAL_ART_SWATCHES.some(([hex])=>hex.toUpperCase()===c)).map((c,i)=>[c,i===0?'黑色':`經典色 ${i}`])];
+export const ART_SWATCHES=[ORIGINAL_ART_SWATCHES[0],['#000000','黑色'],...ORIGINAL_ART_SWATCHES.slice(1),...LEGACY_TEXT_COLORS.slice(2).filter(c=>!ORIGINAL_ART_SWATCHES.some(([hex])=>hex.toUpperCase()===c)).map((c,i)=>[c,`經典色 ${i+1}`])];
 export function artHexToHsv(hex){
  const v=parseInt(hex.replace('#',''),16),r=(v>>16)/255,g=((v>>8)&255)/255,b=(v&255)/255;
  const max=Math.max(r,g,b),min=Math.min(r,g,b),d=max-min;

@@ -8,7 +8,8 @@ const creative = readFileSync(new URL('../components/CollageTool.tsx', import.me
 test('classic media uses a shared affine preview transform, not per-child CSS zoom layout', () => {
   const block = grid.slice(grid.indexOf('// CSS zoom relayouts every descendant'), grid.indexOf('// CSS zoom relayouts every descendant') + 650);
   assert.match(block, /zoom = ''/);
-  assert.match(block, /scale\(\$\{k\}\)/);
+  assert.match(grid,/col.style.transform=`translate\(\$\{x\}px, \$\{fraction.y\}px\) scale\(\$\{k\}\)`/);
+  assert.match(grid,/stripLayoutFractionRef.current=\{x:m-layoutX,y:stripTopRef.current-layoutY\}/);
   assert.doesNotMatch(block, /zoom = String/);
 });
 

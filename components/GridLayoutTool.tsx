@@ -22,7 +22,7 @@ import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
-import {DEFAULT_COLORS,SHAPE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes.js';
+import {DEFAULT_COLORS,SHAPE_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes.js';
 import {effectControlValue,effectStoredValue,effectControlMin,effectControlStep} from '../utils/effectControlValues';
 import {effectPreset} from '../utils/effectPresets';
 import {effectDetailIcon} from '../utils/effectDetailIcons';
@@ -2149,9 +2149,11 @@ export const TextEditorPanel: React.FC<{
                 {slider('描邊', layer.strokeWidth || 0, 0, 2, v => onChange({ strokeWidth: v }), 'px', 0.04)}
               </div>
               <ColorPick compact label="顏色" value={layer.strokeColor || '#000000'}
+                colors={STROKE_COLORS}
                 onPick={c => onChange({ strokeColor: c })}
                 onOpen={() => onPickColor ? onPickColor('stroke') : setColorPage({
                   value: layer.strokeColor || '#000000',
+                  colors: STROKE_COLORS,
                   onPick: c => onChange({ strokeColor: c }),
                 })} />
             </div>
@@ -2291,9 +2293,11 @@ export const ShapeEditorPanel: React.FC<{
                 v => onChange({ shapeStrokeW: v / 12.5 }))}
             </div>
             <ColorPick compact label="顏色" value={layer.shapeStrokeColor || '#000000'}
+              colors={STROKE_COLORS}
               onPick={c => onChange({ shapeStrokeColor: c })}
               onOpen={() => setColorPage({
                 value: layer.shapeStrokeColor || '#000000',
+                colors: STROKE_COLORS,
                 onPick: c => onChange({ shapeStrokeColor: c }),
               })} />
           </div>}
@@ -2654,7 +2658,7 @@ const sliderArea = (() => {
     const subTool = sub?.find(t => t[0] === shapeTool);
     if (subTool) {
       // 描邊色跟發光色用同一組色票
-      if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, SOFT_COLORS, c => set({ imgStrokeColor: c }), true);
+      if (subTool[0] === 'imgStrokeColor') return swatchStrip(img.imgStrokeColor, STROKE_COLORS, c => set({ imgStrokeColor: c }), true);
       if (subTool[0] === 'imgGlowColor') return swatchStrip(img.imgGlowColor, GLOW_COLORS, c => set({ imgGlowColor: c }), true);
       const k = subTool[0] as 'imgStrokeWidth' | 'imgGlow' | 'imgStrokeDash' | 'imgStrokeGap';
       // 形狀的滑桿都會動到圖片邊緣，拖的時候把選取框收起來。
@@ -9310,6 +9314,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** scrollLeft 在 WebKit 只會落在離散像素；保留不足一像素的尾數，用純平移補回。
       這跟創意拼圖的 viewT.tx 一樣，只負責位置，不參與縮放與光柵化。 */
   const stripSubpixelXRef = useRef(0);
+  const stripLayoutFractionRef = useRef({x:0,y:0});
+  const applyStripPose = useCallback((k:number) => {
+    const col=pagesColRef.current,chrome=chromeLayerRef.current;
+    const fraction=stripLayoutFractionRef.current;
+    const x=fraction.x+stripSubpixelXRef.current*k;
+    // Keep one 2D affine transform for the entire gesture. Switching between
+    // scale() and translate3d()+scale() as scroll rounding crosses zero makes
+    // WebKit promote/demote the strip, invalidating its rasterization mid-pinch.
+    if(col)col.style.transform=`translate(${x}px, ${fraction.y}px) scale(${k})`;
+    if(chrome){chrome.style.left='0px';chrome.style.top='0px';chrome.style.transform=`translate(${x/k}px, ${fraction.y/k}px)`;}
+  },[]);
   const kAnimRef = useRef<{
     from: number; to: number; t0: number; fromTop: number; toTop: number;
   } | null>(null);
@@ -9347,9 +9362,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     // 跟 stripOffset 同一條式子，但頁寬取自 ref —— 這支是 useCallback([])，
     // 直接用外面的 stripOffset 會一直沿用第一次 render 那時候的頁寬
     const m = Math.max(16, (w - pw * k) / 2);
+    const layoutX=Math.round(m),layoutY=Math.round(stripTopRef.current);
+    stripLayoutFractionRef.current={x:m-layoutX,y:stripTopRef.current-layoutY};
     if (shell) {
-      shell.style.marginLeft = `${m}px`;
-      shell.style.marginTop = `${stripTopRef.current}px`;
+      // Integer layout plus fractional transform avoids 1/64px layout snapping
+      // moving the preview centre backwards during an otherwise monotonic pinch.
+      shell.style.marginLeft = `${layoutX}px`;
+      shell.style.marginTop = `${layoutY}px`;
       shell.style.width = `${(n * pw) * k}px`;
       shell.style.height = `${previewHRef.current * k}px`;
     }
@@ -9377,18 +9396,15 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       /* SVG 的 non-scaling-stroke 在 WebKit native zoom 下仍会被 zoom 放大。
          每帧把布局格线的内容线宽反向除掉 k，最终落到屏幕永远是 1px。 */
       col.style.setProperty('--layout-grid-stroke', `${1 / Math.max(0.0001, k)}px`);
-      const sub = stripSubpixelXRef.current;
       // CSS zoom relayouts every descendant, rounding each media box separately.
       // One affine transform keeps backgrounds, native SVG photos and video on
       // the same geometry. ClassicVectorScene still paints at display density;
       // do not promote/cache the whole strip as a low-resolution bitmap.
       (col.style as any).zoom = '';
-      col.style.transform = `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * k}px, 0, 0) ` : ''}scale(${k})`;
       col.style.transformOrigin = '0 0';
       col.style.willChange = '';
       /* 固定在萤幕坐标层的空格提示收到通知后才量中心点。
          事件只排一个 rAF，不在手势处理内同步读取版面。 */
-      if (!liveTransform) col.dispatchEvent(new Event('abai-preview-transform'));
     }
     const chrome = chromeLayerRef.current;
     if (chrome) {
@@ -9396,12 +9412,12 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
          重新光柵化。left 使用內容座標，zoom 後剛好補回 scrollLeft 的次像素
          尾數，兩層中心仍完全重合，但框線／圓點／藥丸／Lucide 圖示保持銳利。 */
       (chrome.style as any).zoom = String(k);
-      chrome.style.left = `${stripSubpixelXRef.current}px`;
-      chrome.style.top = '0px';
       chrome.style.width = `${n * pw}px`;
       chrome.style.height = `${previewHRef.current}px`;
     }
-  }, []);
+    applyStripPose(k);
+    if(!liveTransform)col?.dispatchEvent(new Event('abai-preview-transform'));
+  }, [applyStripPose]);
 
   // 要在「把版面貼成目標倍率」那個 useLayoutEffect 之前先把動畫排好，
   // 不然版面會先一步跳到目標值，動畫就整段被跳過了
@@ -9494,7 +9510,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     const stride = previewWRef.current;
     // 這裡拿到的是「那一頁沒被拖走時」該在的位置。
     // 不去量頁框本身：頁框拖曳時會被移走、還會放大，量它會把位移算兩次。
-    const left0 = rc.left - cont.scrollLeft + m;
+    const left0 = colRect.left;
     const bottom = colRect.top + k * previewHRef.current;
     pageCtlRefs.current.forEach((node, id) => {
       const i = pagesRef.current.findIndex(pg => pg.id === id);
@@ -9595,14 +9611,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
              手勢縮放做這件事，所以退出時頁面放大的每幀會左右跳約 1px。 */
           const actual = cont.scrollLeft;
           stripSubpixelXRef.current = (actual - desired) / Math.max(.0001, k);
-          const col = pagesColRef.current;
-          if (col) {
-            const sub = stripSubpixelXRef.current;
-            const nativeZoom = !!(col.style as any).zoom;
-            col.style.transform = nativeZoom
-              ? (Math.abs(sub) > .0001 ? `translate3d(${sub}px, 0, 0)` : '')
-              : `${Math.abs(sub) > .0001 ? `translate3d(${sub * k}px, 0, 0) ` : ''}scale(${k})`;
-          }
+          applyStripPose(k);
         }
       }
       // 外層（貼在頁框正下方）由這裡每一帧定位 —— 頁框在排頁面時是不動的，
@@ -12244,14 +12253,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
            補回不足一像素的尾數，和創意拼圖「實際尺寸＋純平移」的結構一致。 */
         const actual = cont.scrollLeft;
         stripSubpixelXRef.current = (actual - desired) / Math.max(0.0001, z);
-        const col = pagesColRef.current;
-        if (col) {
-          const sub = stripSubpixelXRef.current;
-          const nativeZoom = !!(col.style as any).zoom;
-          col.style.transform = nativeZoom
-            ? (Math.abs(sub) > 0.0001 ? `translate3d(${sub}px, 0, 0)` : '')
-            : `${Math.abs(sub) > 0.0001 ? `translate3d(${sub * z}px, 0, 0) ` : ''}scale(${z})`;
-        }
+        applyStripPose(z);
       }
       positionPageCtls();
       pagesColRef.current?.dispatchEvent(new Event('abai-preview-transform'));

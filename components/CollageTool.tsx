@@ -17,7 +17,7 @@ import { CreativeSeamless } from '../utils/creativeSeamless';
 import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
 import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCountForLayout} from '../utils/creativePhotoLayout';
 import { createPortal, flushSync } from 'react-dom';
-import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes.js';
+import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes.js';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
@@ -9397,7 +9397,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor'
                 || colorPickerTarget === 'shapeGlow' ? DEFAULT_COLORS
                 : colorPickerTarget === 'mask' ? MASK_SWATCHES
-                : colorPickerTarget === 'textStroke' ? NEW_TEXT_COLORS : DEFAULT_COLORS}
+                : colorPickerTarget === 'textStroke' || colorPickerTarget === 'shapeStroke' ? STROKE_COLORS : DEFAULT_COLORS}
               onClose={() => setColorPickerTarget(null)}
               title={colorPickerTarget === 'mask' ? '遮罩顏色'
                 : colorPickerTarget === 'holeGlow' ? '發光顏色'

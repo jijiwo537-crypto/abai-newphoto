@@ -1,6 +1,8 @@
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
 import { addExport } from '../utils/exportHistory';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { saveDraft } from '../utils/toolDraft';
+import type { ExitChoice } from '../types';
 import { ChevronLeft } from 'lucide-react';
 import { Icon } from './Icon';
 import { SaveButton } from './SaveButton';
@@ -19,7 +21,8 @@ import { buildProtectMapsFrom, resolveWeight, packWeight, ProtectMaps } from '..
 interface Props {
   /** 要調色的照片 */
   imageSrc: string;
-  onCancel: () => void;
+  onCancel: (keepDraft?: boolean) => void;
+  onRequestExit?: () => Promise<ExitChoice>;
   onHome: () => void;
   /** 換一張要調色的照片 */
   onImportNew: () => void;
@@ -27,6 +30,7 @@ interface Props {
   onPickReference: () => void;
   /** 外面選好的參考圖 */
   referenceSrc: string | null;
+  referenceLoading?: boolean;
   /** 從首頁的歷史紀錄點回來時，把當時的參數餵回來 */
   initialState?: any;
   onSendToEditor?: (dataUrl: string) => void;
@@ -57,7 +61,7 @@ const toImageData = (img: HTMLImageElement, max: number): ImageData => {
 
 export const ColorMatchStudio: React.FC<Props> = ({
   imageSrc, onCancel, onHome, onImportNew, onPickReference, referenceSrc, onSendToEditor,
-  initialState,
+  initialState, onRequestExit, referenceLoading=false,
 }) => {
   const [srcImg, setSrcImg] = useState<HTMLImageElement | null>(null);
   const [refImg, setRefImg] = useState<HTMLImageElement | null>(null);
@@ -157,8 +161,8 @@ export const ColorMatchStudio: React.FC<Props> = ({
     const my = Math.max(0, (kk - 1) * c.h * 0.5);
     setViewT({ k: kk, tx: Math.max(-mx, Math.min(mx, tx)), ty: Math.max(-my, Math.min(my, ty)) });
   }, []);
-  // 換圖、換參考圖就把縮放歸零
-  useEffect(() => { setViewT({ k: 1, tx: 0, ty: 0 }); }, [imageSrc, referenceSrc]);
+  // A reference changes color, not the original photograph's framing.
+  useEffect(() => { setViewT({ k: 1, tx: 0, ty: 0 }); }, [imageSrc]);
 
   const onStageDown = (e: React.PointerEvent) => {
     // 前後對比那顆按鈕自己有事情要做，不要被當成縮放
@@ -216,10 +220,11 @@ export const ColorMatchStudio: React.FC<Props> = ({
     return () => { gl?.canvas.remove(); gl?.dispose(); glRef.current = null; };
   }, []);
 
-  useEffect(() => { maskRef.current = null; weightRef.current = null; weightForRef.current = -1; loadImage(imageSrc).then(setSrcImg).catch(() => {}); }, [imageSrc]);
+  useEffect(() => { let active=true; loadImage(imageSrc).then(image=>{if(active){maskRef.current=null;weightRef.current=null;weightForRef.current=-1;setSrcImg(image);}}).catch(() => {});return()=>{active=false;}; }, [imageSrc]);
   useEffect(() => {
     if (!referenceSrc) { setRefImg(null); return; }
-    loadImage(referenceSrc).then(setRefImg).catch(() => {});
+    let active=true;loadImage(referenceSrc).then(image=>{if(active)setRefImg(image);}).catch(() => {});
+    return()=>{active=false;};
   }, [referenceSrc]);
 
   // 兩張都到齊 → 把四種方法各烘一顆 LUT
@@ -253,17 +258,18 @@ export const ColorMatchStudio: React.FC<Props> = ({
   }, [srcImg, refImg]);
 
   // 圖片與 LUT 上傳到 GPU（各只做一次）
-  useEffect(() => {
+  useLayoutEffect(() => {
     const gl = glRef.current;
-    glReadyRef.current = false;
-    glWeightRef.current = null;
-    setGlReady(false);
-    if (gl) gl.canvas.classList.add('hidden');
     if (!gl || !preview || !luts) return;
     try {
       gl.setImage(preview as unknown as TexImageSource, preview.width, preview.height);
       for (const m of METHODS) gl.setLut(m, luts[m]);
-      glReadyRef.current = true;
+      glWeightRef.current = null;
+      const pw=useWeight(skin/100);
+      if(pw){gl.setProtectMap(packWeight(pw.weight),pw.w,pw.h);glWeightRef.current=weightRef.current;}
+      else gl.clearProtectMap();
+      // Upload, draw, and reveal atomically before the browser presents a frame.
+      glReadyRef.current = gl.draw(picked,strength/100,skin/100);
     } catch { glReadyRef.current = false; }
     gl.canvas.classList.toggle('hidden', !glReadyRef.current);
     setGlReady(glReadyRef.current);
@@ -315,7 +321,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     if (img) ctx.putImageData(img, 0, 0);
   };
 
-  useEffect(() => { paint(); }, [paint]);
+  useLayoutEffect(() => { paint(); }, [paint]);
 
   // 導出畫面蓋上來的時候，把 GPU 畫布也收起來。它已經被不透明的浮層擋住了，
   // 但收起來才不會有任何機會露出第二張圖。
@@ -332,7 +338,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
     restoredRef.current = true;
     const st = initialState;
     if (st.picked) setPicked(st.picked);
-    if (st.strength !== undefined) setStrength(st.strength);
+    if (st.strength !== undefined) setStrength(Math.max(0,Math.min(150,st.strength)));
     if (st.skin !== undefined) setSkin(st.skin);
   }, [initialState]);
 
@@ -380,7 +386,17 @@ export const ColorMatchStudio: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcImg, luts, referenceSrc, picked, strength, skin, imageSrc, renderResult]);
 
-  const leave = () => { record(); onCancel(); };
+  const exitPending=useRef(false);
+  const leave = async () => {
+    if(exitPending.current)return;exitPending.current=true;
+    try{
+      if(!referenceSrc){onCancel();return;}
+      const choice=onRequestExit?await onRequestExit():'discard';
+      if(choice==='cancel')return;
+      if(choice==='save'){await saveDraft('match',imageSrc,matchState());await record();}
+      onCancel(choice==='save');
+    }finally{exitPending.current=false;}
+  };
 
   const saveCanvas = async (canvas: HTMLCanvasElement) => {
     // History and browser previews remain lossless PNG; the shared file uses the chosen encoder.
@@ -504,6 +520,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           GPU 版的畫布是程式自己掛進 stage 的，下面那個是沒有 WebGL2 時的備援。 */}
       <div
         ref={stageRef}
+        data-color-match-stage
         className="flex-1 min-h-0 relative overflow-hidden touch-none"
         onPointerDown={onStageDown}
         onPointerMove={onStageMove}
@@ -520,6 +537,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         {/* 縮放層。內距與置中原封不動搬進來，1 倍時的版面跟以前一模一樣 */}
         <div
           ref={zoomRef}
+          data-color-match-zoom
           className="absolute inset-0 flex items-center justify-center p-4"
           style={{
             transform: `translate(${viewT.tx}px, ${viewT.ty}px) scale(${viewT.k})`,
@@ -534,10 +552,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
             <img src={imageSrc} alt="" className="max-w-full max-h-full object-contain rounded-sm shadow-2xl" />
           )}
         </div>
-        {busy && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 bg-black/45 pointer-events-none">
-            <div className="w-8 h-8 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-            <span className="text-[10px] font-black tracking-[0.25em] text-white/85">分析色彩中</span>
+        {(busy || referenceLoading) && (
+          <div className="absolute top-3 right-3 p-2 rounded-full bg-black/60 pointer-events-none" aria-label="分析色彩中">
+            <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
           </div>
         )}
         {ready && (
@@ -571,6 +588,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
       <div className="px-4 pt-3 pb-3 shrink-0 flex items-stretch gap-2">
         <button
           onClick={onPickReference}
+          disabled={referenceLoading}
           data-cm-pickref
           className={`${referenceSrc ? 'flex-1 min-w-0' : 'w-full'} h-14 rounded-2xl border border-white/10 bg-white/[0.04] flex items-center gap-3 px-3 active:scale-[0.99] transition-transform`}
         >
@@ -605,9 +623,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
       {/* 滑桿：樣式與佈局比照編輯器。一直都在，還沒算好就變淡、不能點，版面才不會跳 */}
       <div className={`px-5 pt-2 flex-1 min-h-0 flex flex-col justify-start pb-4 transition-opacity ${ready ? '' : 'opacity-30 pointer-events-none'}`}>
         <div>
-          {/* 強度可以推到 200（100 以上＝比參考圖再更進一步），預設維持 100；
+          {/* 強度可以推到 150（100 以上＝比參考圖再更進一步），預設維持 100；
               膚色保護維持 0～100。 */}
-          {([['強度', strength, setStrength, 200], ['膚色保護', skin, setSkin, 100]] as const).map(([label, val, set, max]) => (
+          {([['強度', strength, setStrength, 150], ['膚色保護', skin, setSkin, 100]] as const).map(([label, val, set, max]) => (
             <div key={label} className="pt-1">
               <div className="flex justify-between items-center px-1">
                 <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em]">{label}</span>
