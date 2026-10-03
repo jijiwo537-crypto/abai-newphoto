@@ -5,7 +5,9 @@
   "iphone": {
     "device": "iPhone 17 iOS 26.5 Simulator Safari",
     "processingSizeDuringAndAfterDrag": [1786,1340],
-    "twoAnimationFramesMs": {"brightness":32.85,"exposure":36.83,"contrast":29.83,"highlights":67.33,"shadows":31,"temperature":32.67,"tint":33.33,"saturation":30.67,"vibrance":32.83},
+    "twoAnimationFramesMs": {"brightness":33.05,"exposure":32.5,"contrast":30.5,"highlights":30.5,"shadows":32.83,"temperature":32.5,"tint":33,"saturation":32.83,"vibrance":31},
+    "releaseSampleMaximumChannelDifference": 1,
+    "idleUploadPriming": "All three stages uploaded and flushed once before cache becomes ready; no readbacks in slider paint",
     "allNineFunctionalChecksPassed": true,
     "sixtyFpsForEveryToolClaimed": false
   },

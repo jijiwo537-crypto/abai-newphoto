@@ -37,7 +37,16 @@ export class PhotoAdjustmentBlend {
       immutable.getContext('2d')!.drawImage(processed,0,0,w,h);
       this.stages.push(immutable);
       if(this.stages.length<3)this.timer=setTimeout(build,32);
-      else {this.timer=null;this.ready();}
+      else {
+        // Canvas commands can remain queued in WebKit. Upload all immutable
+        // stages before declaring the cache ready, otherwise the first drag
+        // pays that deferred work even though its JS paint takes <1 ms.
+        this.output=document.createElement('canvas');this.output.width=w;this.output.height=h;
+        const ctx=this.output.getContext('2d')!;
+        for(const stage of this.stages)ctx.drawImage(stage,0,0);
+        ctx.getImageData(0,0,1,1);
+        this.timer=null;this.ready();
+      }
     };
     this.timer=setTimeout(build,80);
   }
