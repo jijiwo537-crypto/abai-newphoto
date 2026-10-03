@@ -70,7 +70,7 @@ const drawTextShape: typeof drawTextShapeRaw = (ctx,type,text,x,y,size,fill,out=
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
 import { paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
   STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
-import { paintMaskTexture } from '../utils/maskTexture';
+import { paintMaskTexture, maskTextureSizeFromUi, maskTextureSizeToUi } from '../utils/maskTexture';
 import { ComposeStudio } from './ComposeStudio';
 import { StuckEscape } from './StuckEscape';
 /* 影片：包成一個「長得跟 <img> 一樣」的來源，畫布那邊一行都不必改。
@@ -9589,7 +9589,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     </div>
                   ) : patternType !== 'none' && (
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
-                      <CompactSlider wide label="大小" value={dotSize} min={0} max={100} onChange={setDotSize} />
+                      <CompactSlider wide label="大小" value={maskTextureSizeToUi(dotSize)} min={0} max={100} step={1} onChange={(v:number)=>setDotSize(maskTextureSizeFromUi(v))} />
                       <CompactSlider wide label="間距" value={dotGap} min={0} max={100} onChange={setDotGap} />
                       <div className="col-span-2" data-mask-texture-squash>
                         <CompactSlider wide label="壓扁" value={dotSquash} min={0} max={100} onChange={setDotSquash} />

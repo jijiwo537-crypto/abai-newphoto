@@ -2,6 +2,7 @@
 import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState } from 'react';
 import { loadCameraLut, readyCameraLut } from '../utils/cameraLuts';
 import {CAMERA_FX_ZERO, CAMERA_LOWFI_GLSL, CAMERA_HIGHLIGHT_FS, CAMERA_SPILL_STEP, type CameraFx} from '../utils/cameraEffects';
+import {cameraPreviewGeometry} from '../utils/cameraPreview';
 
 /** 拍照時可以即時看到的特效，跟編輯頁同款、數值都是 0–100 */
 export type ViewfinderFx = CameraFx;
@@ -42,6 +43,7 @@ uniform float u_exposure;
 uniform float u_kelvin;
 uniform bool u_isUserFacing;
 uniform float u_zoom;
+uniform vec2 u_crop;
 in vec2 v_texCoord;
 out vec4 outColor;
 
@@ -54,7 +56,7 @@ void main() {
     vec2 tc = v_texCoord;
     if (u_isUserFacing) tc.x = 1.0 - tc.x;
     // 數位變焦：從中心往內裁一塊再放大（硬體變焦做不到的倍率才會用到）
-    tc = (tc - 0.5) / max(u_zoom, 0.0001) + 0.5;
+    tc = (tc - 0.5) * u_crop / max(u_zoom, 0.0001) + 0.5;
 
     vec4 source = texture(u_video, tc);
     vec3 rgb = source.rgb;
@@ -162,6 +164,7 @@ uniform float u_soft2;
 uniform float u_halo;
 uniform float u_lowfi;
 uniform vec2 u_res;
+uniform vec2 u_effectCrop;
 in vec2 v_texCoord;
 out vec4 outColor;
 ${CAMERA_LOWFI_GLSL}
@@ -170,12 +173,14 @@ void main() {
     /* 離屏畫布的原點在左下、螢幕在左上，所以讀回來要把 Y 翻回去，
        不然套上特效整張會上下顛倒。 */
     vec2 tc = vec2(v_texCoord.x, 1.0 - v_texCoord.y);
+    tc = (tc - .5) * u_effectCrop + .5;
     vec3 base = texture(u_scene, tc).rgb;
     vec3 bl   = texture(u_blur,  tc).rgb;
 
         /* 朦朧：跟編輯頁同一組係數 —— 模糊過的自己用 0.625 的不透明度蓋上去 */
     vec3 c = mix(base, bl, u_blurAmt * 0.625);
-    if(u_lowfi>0.){vec2 shift=lowfiShift(tc);vec3 ab=vec3(texture(u_scene,tc+shift).r,base.g,texture(u_scene,tc-shift).b);c+=(ab-base)*u_lowfi;}
+    vec2 sensorUV=tc;
+    if(u_lowfi>0.){vec2 shift=lowfiShift(sensorUV);vec3 ab=vec3(texture(u_scene,tc+shift).r,base.g,texture(u_scene,tc-shift).b);c+=(ab-base)*u_lowfi;}
 
     /* 柔光：亮部圖層（RGB×A）用濾色疊回去，疊加量是強度 ×1.5。
        畫布的 globalAlpha 上限是 1，所以這裡也夾到 1，跟編輯頁一致。 */
@@ -195,7 +200,7 @@ void main() {
       c=1.-(1.-c)*(1.-texture(u_spill,tc).rgb*u_soft2*.9);
       for(int i=-12;i<=12;i++){vec3 n=texture(u_narrow,tc+vec2(0.,float(i)*3./1200.)).rgb;c=1.-(1.-c)*(1.-n*u_soft2*.05);}
     }
-    if(u_lowfi>0.)c=mix(c,lowfiColor(c,tc,u_res,dot(base,vec3(.2126,.7152,.0722))),u_lowfi);
+    if(u_lowfi>0.)c=mix(c,lowfiColor(c,sensorUV,u_res,dot(base,vec3(.2126,.7152,.0722))),u_lowfi);
     outColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 `;
@@ -212,6 +217,13 @@ const GLOW_PASSES = 4;
 
 export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserFacing, fx, digitalZoom, onClick, onPointerDown, onPointerUp, onPointerCancel }: ViewfinderProps, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const previewSizeRef=useRef({w:0,h:0});
+  useEffect(()=>{
+    const canvas=canvasRef.current;if(!canvas)return;
+    const measure=()=>{const r=canvas.getBoundingClientRect();previewSizeRef.current={w:r.width,h:r.height};};
+    const observer=new ResizeObserver(measure);observer.observe(canvas);measure();
+    return()=>observer.disconnect();
+  },[]);
   const glRef = useRef<WebGL2RenderingContext | null>(null);
   const progRef = useRef<WebGLProgram | null>(null);
   const blurProgRef = useRef<WebGLProgram | null>(null);
@@ -457,14 +469,21 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
        所以拍下來的顏色、特效跟畫面上看到的一定一致。 */
     const draw = (source: TexImageSource, W: number, H: number) => {
       const f = fxRef.current;
+      const input=source as any;
+      const sourceW=input.videoWidth||input.naturalWidth||input.width||W;
+      const sourceH=input.videoHeight||input.naturalHeight||input.height||H;
+      const geometry=cameraPreviewGeometry(W,H,1,sourceW,sourceH);
+      const cropX=geometry.cropX,cropY=geometry.cropY;
       const soft = (f.soft || 0) / 100, blurAmt = (f.blur || 0) / 100;
       const soft2=(f.soft2||0)/100,halo=(f.halo||0)/100,lowfi=(f.lowfi||0)/100;
       const anyFx = soft > 0 || blurAmt > 0 || soft2>0 || halo>0 || lowfi>0;
-      const rt = anyFx ? ensureTargets(W, H) : null;
+      // All effect passes share sensor coordinates; crop only the final screen pass.
+      // This keeps highlight selection and blur extents identical to the captured still.
+      const rt = anyFx ? ensureTargets(sourceW, sourceH) : null;
 
       // ---- 第一趟：影像 → 曝光／色溫／濾鏡 ----
       gl.bindFramebuffer(gl.FRAMEBUFFER, anyFx ? rt!.scene!.fb : null);
-      gl.viewport(0, 0, W, H);
+      gl.viewport(0, 0, anyFx ? sourceW : W, anyFx ? sourceH : H);
       gl.useProgram(prog);
 
       gl.activeTexture(gl.TEXTURE0);
@@ -478,6 +497,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.uniform1f(gl.getUniformLocation(prog, 'u_exposure'), pr.exposure);
       gl.uniform1f(gl.getUniformLocation(prog, 'u_kelvin'), pr.kelvin);
       gl.uniform1f(gl.getUniformLocation(prog, 'u_zoom'), zoomRef.current);
+      gl.uniform2f(gl.getUniformLocation(prog,'u_crop'),anyFx ? 1 : cropX,anyFx ? 1 : cropY);
       gl.uniform1i(gl.getUniformLocation(prog, 'u_isUserFacing'), pr.isUserFacing ? 1 : 0);
 
       if (useLut) {
@@ -575,7 +595,8 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
         gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,target!.tex);gl.uniform1i(gl.getUniformLocation(cp,name),unit);
       }
       gl.uniform1f(gl.getUniformLocation(cp,'u_soft2'),soft2);gl.uniform1f(gl.getUniformLocation(cp,'u_halo'),halo);gl.uniform1f(gl.getUniformLocation(cp,'u_lowfi'),lowfi);
-      gl.uniform2f(gl.getUniformLocation(cp,'u_res'),W,H);
+      gl.uniform2f(gl.getUniformLocation(cp,'u_res'),sourceW,sourceH);
+      gl.uniform2f(gl.getUniformLocation(cp,'u_effectCrop'),cropX,cropY);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     };
 
@@ -586,11 +607,14 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       draw(src, w, h);
     };
 
+    const previewLimit=gl.getParameter(gl.MAX_RENDERBUFFER_SIZE) as number;
     const tick = () => {
       if (!stillActiveRef.current && video && video.readyState >= 2) {
-        if (canvasRef.current && (canvasRef.current.width !== video.videoWidth || canvasRef.current.height !== video.videoHeight)) {
-          canvasRef.current.width = video.videoWidth;
-          canvasRef.current.height = video.videoHeight;
+        const size=previewSizeRef.current;
+        const target=size.w&&size.h?cameraPreviewGeometry(size.w,size.h,window.devicePixelRatio,video.videoWidth,video.videoHeight,previewLimit):{w:video.videoWidth,h:video.videoHeight};
+        if (canvasRef.current && (canvasRef.current.width !== target.w || canvasRef.current.height !== target.h)) {
+          canvasRef.current.width = target.w;
+          canvasRef.current.height = target.h;
         }
         draw(video, gl.canvas.width, gl.canvas.height);
       }
@@ -649,7 +673,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   return (
     <div className="w-full h-full relative" onClick={onClick}
          onPointerDown={onPointerDown} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}>
-        <canvas ref={canvasRef} className="w-full h-full object-cover block" />
+        <canvas ref={canvasRef} className="w-full h-full block" data-camera-viewfinder />
     </div>
   );
 });

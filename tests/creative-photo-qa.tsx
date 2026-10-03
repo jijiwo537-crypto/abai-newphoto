@@ -14,7 +14,7 @@ const files=await Promise.all(colors.slice(0,params.has('single')?1:params.has('
 }));
 const floating=params.has('swaps')?[{id:'qa-float-a',type:'image',src:URL.createObjectURL(files[9]),x:500,y:220,w:120,h:90,rot:0,opacity:100},{id:'qa-float-b',type:'image',src:URL.createObjectURL(files[1]),x:680,y:350,w:120,h:90,rot:0,opacity:100}]:[];
 createRoot(document.getElementById('root')!).render(params.has('textureAudit')
- ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,2)} initialState={{holeCount:0,patternType:'dot',dotSize:100,dotGap:0,dotSquash:50}}/>
+ ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialState={{canvasRatio:'1:1',holeCount:0,patternType:'dot',dotSize:15,dotGap:0,dotSquash:50}}/>
  : params.has('v10')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,2)} initialState={{holeCount:6,holeType:'circle'}}/>
  : params.has('v9')

@@ -8,6 +8,7 @@ import { ImageEditor } from './ImageEditor';
 import { createPortal } from 'react-dom';
 import { processImageFile } from '../utils/imageLoader';
 import {CAMERA_FX_ITEMS} from '../utils/cameraEffects';
+import {preferCameraResolution} from '../utils/cameraPreview';
 
 // Extend MediaStream types to support zoom
 declare global {
@@ -311,6 +312,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
         streamRef.current = mediaStream; // Update Ref
         
         const vTrack = mediaStream.getVideoTracks()[0];
+        await preferCameraResolution(vTrack,viewfinderRef.current?.maxTextureSize?.()??4096);
+        if(!mounted){mediaStream.getTracks().forEach(t=>t.stop());return;}
         setVideoTrack(vTrack);
         /* 有些 Android 是「軌道真的跑起來之後」才把 torch／zoom 這些能力填進去，
            開機那一瞬間問會拿到空的 —— 結果就是明明有閃光燈卻顯示沒有。
@@ -345,7 +348,10 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                 if (mounted) {
                     setStream(basicStream);
                     streamRef.current = basicStream; // Update Ref
-                    setVideoTrack(basicStream.getVideoTracks()[0]);
+                    const basicTrack=basicStream.getVideoTracks()[0];
+                    await preferCameraResolution(basicTrack,viewfinderRef.current?.maxTextureSize?.()??4096);
+                    if(!mounted){basicStream.getTracks().forEach(t=>t.stop());return;}
+                    setVideoTrack(basicTrack);
                     if (videoEl) {
                         videoEl.srcObject = basicStream;
                         videoEl.play();
@@ -904,10 +910,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             style={getFrameStyle()}
           >
             {/* 返回鍵屬於相機畫面本身，和右上角的更多按鈕平行對稱。 */}
-            {!showGallery && !editingPhoto && activeControl !== 'filters' && activeControl !== 'effects' && (
+            {!showGallery && !editingPhoto && activeControl !== 'filters' && (
               <div className="absolute top-1 left-2 z-50">
                 <button
-                  onClick={(e) => { e.stopPropagation(); onHome(); }}
+                  aria-label={activeControl==='effects'?'返回相機':'返回主頁'}
+                  data-camera-effects-back={activeControl==='effects'?true:undefined}
+                  onClick={(e) => { e.stopPropagation(); if(activeControl==='effects'){triggerHaptic();setActiveControl('none');}else onHome(); }}
                   className="w-10 h-10 rounded-full flex items-center justify-center text-white/70 hover:text-white transition-colors"
                 >
                   <Icon name="arrow_back" className="text-2xl drop-shadow-md" />
@@ -1107,7 +1115,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                   <Icon name="bolt" className="text-[28px]" fill={flashOn} />
               </button>
 
-              <button onClick={() => setActiveControl('effects')} className="p-3 active:scale-90 transition-transform shrink-0 text-white">
+              <button aria-label="開啟特效" onClick={() => setActiveControl('effects')} className="p-3 active:scale-90 transition-transform shrink-0 text-white">
                 <Icon name="magic_button" className="text-[28px]" fill={fxOn} />
               </button>
 
@@ -1147,8 +1155,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             </div>
           ) : activeControl === 'effects' ? (
             /* 特效與曝光／白平衡共用同一個 56px 控制列高度，打開時觀景窗不會上移。 */
-            <div className="w-full flex items-center animate-in h-full justify-center px-10 relative">
-              <div className="flex items-center gap-2 overflow-x-auto w-full no-scrollbar">
+            <div data-camera-effects-row className="w-full flex items-center animate-in h-full">
+              <div className="grid grid-cols-5 gap-2 w-full min-w-0">
                 {FX_ITEMS.map(it => {
                   const on = fx[it.id] > 0;
                   return (
@@ -1157,7 +1165,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                       aria-pressed={on}
                       data-camera-effect={it.id}
                       onClick={() => { triggerHaptic(); setFx(prev => ({ ...prev, [it.id]: on ? 0 : it.on })); }}
-                      className={`shrink-0 px-4 h-10 rounded-full text-[12px] font-bold tracking-[0.12em] border transition-all active:scale-95 ${
+                      className={`min-w-0 px-1 h-10 rounded-full text-[11px] font-bold border transition-colors active:scale-95 ${
                         on ? 'bg-white text-black border-white' : 'bg-white/5 text-white/60 border-white/15'
                       }`}
                     >
@@ -1166,13 +1174,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                   );
                 })}
               </div>
-              <button
-                onClick={() => { triggerHaptic(); setActiveControl('none'); }}
-                aria-label="收合特效"
-                className="absolute right-5 top-1/2 -translate-y-1/2 w-7 h-9 text-white/45 hover:text-white flex items-center justify-center active:scale-90 transition-all"
-              >
-                <Icon name="expand_more" className="text-lg" />
-              </button>
             </div>
           ) : (
             <div className="w-full flex flex-col items-center animate-in h-full justify-center">

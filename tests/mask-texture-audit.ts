@@ -8,7 +8,7 @@ void(async()=>{
   const g=c.getContext('2d')!;g.fillStyle='#fff';
   const draw=(v:number)=>{g.clearRect(0,0,80,40);paintMaskTexture(g,'dot',80,40,10,40,v);};
   const a=(x:number,y:number)=>g.getImageData(x,y,1,1).data[3];
-  draw(50);check('left and right edge glyphs remain visible',a(0,20)>240&&a(79,20)>240);
+  draw(50);check('half-covered left and right glyphs disappear',a(0,20)===0&&a(79,20)===0);
   check('neutral circle has full horizontal and vertical radius',a(47,20)>240&&a(40,27)>240);
   draw(0);check('left squashes each glyph vertically only',a(45,20)>120&&a(40,27)===0,{along:a(45,20),across:a(40,27)});
   draw(100);check('right squashes each glyph horizontally only',a(47,20)===0&&a(40,25)>120,{along:a(40,25),across:a(47,20)});
