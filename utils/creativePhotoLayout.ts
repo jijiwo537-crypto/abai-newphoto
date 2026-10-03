@@ -11,10 +11,10 @@ export type PhotoRegion = { photos: RegionPhoto[]; arrangement: PhotoArrangement
 export type PhotoRect = { x: number; y: number; w: number; h: number; squareOverlay?:boolean; overlayAspect?:number };
 
 /** Creative-only additions: persisted cross-page template indices remain unchanged. */
-const overlayTemplate=(name:string,positions:('top'|'bottom')[],aspect:number)=>({name,rects:[
+const overlayTemplate=(name:string,positions:('top'|'bottom')[],aspect:number)=>{const width=aspect===1?.32:.384;return {name,rects:[
   {x:0,y:0,w:1,h:.5},{x:0,y:.5,w:1,h:.5},
-  ...positions.map(side=>({x:.34,y:(side==='top'?.25:.75)-.16/aspect,w:.32,h:.32/aspect,overlayAspect:aspect})),
-]});
+  ...positions.map(side=>({x:(1-width)/2,y:(side==='top'?.25:.75)-width/(2*aspect),w:width,h:width/aspect,overlayAspect:aspect})),
+]};};
 const CREATIVE_TEMPLATE_MAP:Record<number,{name:string;rects:PhotoRect[]}[]>={...TEMPLATE_MAP,
   3:[...TEMPLATE_MAP[3],overlayTemplate('上層方形',['top'],1),overlayTemplate('上層橫式',['top'],4/3),overlayTemplate('下層橫式',['bottom'],4/3)],
   4:[...TEMPLATE_MAP[4],overlayTemplate('上下雙層橫式',['top','bottom'],4/3)],
@@ -49,7 +49,7 @@ export function regionRects(region: PhotoRegion, width = 1, height = 1): PhotoRe
   if (region.templateIndex === undefined) return photoRegionRects(region.photos.length, region.arrangement);
   return (photoTemplates(region.photos.length)[region.templateIndex] || photoTemplates(region.photos.length)[0]).rects.map(r => {
     if (!r.squareOverlay && !r.overlayAspect) return r;
-    const side = Math.min(width, height) * .3328, w = side / width, h = side / (r.overlayAspect||1) / height;
+    const side = Math.min(width, height) * .3328 * (r.overlayAspect&&r.overlayAspect!==1?1.2:1), w = side / width, h = side / (r.overlayAspect||1) / height;
     return { ...r, x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h };
   });
 }

@@ -24,6 +24,18 @@ test('new overlays remain centered and physically 1:1 or landscape 4:3 on every 
   const base=seamlessPhotoBase(region);assert.equal(base.photos.length,2);assert.equal(base.seamlessAmount,70);assert.deepEqual(regionRects(base),[{x:0,y:0,w:1,h:.5},{x:0,y:.5,w:1,h:.5}]);assert.equal(region.photos.length,n);
  }
 });
+test('landscape insets grow by 20 percent without changing square insets or crossing their half',()=>{
+ for(const n of [3,4])for(const [index,t] of photoTemplates(n).entries()){
+  if(!t.rects.some(r=>r.overlayAspect))continue;
+  const region={photos:Array.from({length:n},()=>({src:'photo',width:900,height:600})),arrangement:'grid',templateIndex:index};
+  for(const [w,h] of [[300,400],[900,300],[300,900]]){
+   for(const r of regionRects(region,w,h).slice(2)){
+    assert.ok(Math.abs(r.w*w/Math.min(w,h)-.3328*(r.overlayAspect===1?1:1.2))<1e-10);
+    const center=r.y+r.h/2;assert.ok(r.x>=0&&r.x+r.w<=1&&r.y>=(center<.5?0:.5)&&r.y+r.h<=(center<.5?.5:1));
+   }
+  }
+ }
+});
 test('dark feedback uses one full-resolution RGB cache, preserving alpha and original image',()=>{
  const fills=[],draws=[],ctx={globalCompositeOperation:'source-over',drawImage(...args){draws.push(args)},fillRect(...args){fills.push({op:this.globalCompositeOperation,color:this.fillStyle,args})}};
  let allocations=0;globalThis.document={createElement(){allocations++;return {width:0,height:0,getContext(){return ctx}}}};

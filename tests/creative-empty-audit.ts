@@ -6,6 +6,8 @@ try{
   if(!stage)throw Error('Missing two-photo fixture');await wait(20);
   document.querySelector<HTMLButtonElement>('button[aria-label="所有圖片佈局"]')!.click();await wait(2);
   document.querySelector<HTMLButtonElement>('[data-layout-count="9"][data-layout-index="0"]')!.click();await wait(5);
+  check('template selection keeps the picker open',!!document.querySelector('[data-photo-layout-options]'));
+  document.querySelector<HTMLButtonElement>('[aria-label="返回圖片排版"]')!.click();await wait(2);
   const photos=()=>JSON.parse(stage!.dataset.photoTransforms!);
   check('larger layout keeps both photos and exposes seven empty slots',photos().length===9&&photos().filter((p:any)=>p.src).length===2&&document.querySelectorAll('[data-photo-cell] button').length===7);
   const input=document.querySelector<HTMLInputElement>('input[aria-label="填入圖片排版"]')!,dt=new DataTransfer();

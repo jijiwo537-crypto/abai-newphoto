@@ -37,7 +37,7 @@ void(async()=>{
    const index=photoTemplates(n).findIndex(t=>t.name===name);
    document.querySelector<HTMLButtonElement>(`[data-layout-count="${n}"][data-layout-index="${index}"]`)!.click();await wait(10);
    check('mounted layout '+name,stage!.dataset.photoTemplateIndex===String(index)&&stage!.dataset.photoCount===String(n)&&!!document.querySelector('[data-creative-seamless]'));
-   document.querySelector<HTMLButtonElement>('[aria-label="所有圖片佈局"]')!.click();await wait();
+   check('picker remains open after '+name,!!document.querySelector('[data-photo-layout-options]'));
   }
   document.querySelector<HTMLButtonElement>('[aria-label="返回圖片排版"]')!.click();await wait();
   document.querySelector<HTMLButtonElement>('button[title="更多"]')!.click();await wait();

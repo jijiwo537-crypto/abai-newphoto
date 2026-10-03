@@ -1229,6 +1229,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [layout, setLayout] = useState('mask-bottom');
   const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
   const [canvasRatio, setCanvasRatio] = useState<CanvasRatio>('1:1');
+  const [canvasRatioBeforeFull, setCanvasRatioBeforeFull] = useState<CanvasRatio|null>(null);
   const [holeType, setHoleType] = useState('star'); 
   const [customText, setCustomText] = useState('Abai'); 
   const [holeSize, setHoleSize] = useState(25); 
@@ -2330,6 +2331,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     if (st.maskScale !== undefined) setMaskScale(st.maskScale);
     if (isCanvasRatio(st.canvasRatio)) setCanvasRatio(st.canvasRatio);
+    setCanvasRatioBeforeFull(isCanvasRatio(st.canvasRatioBeforeFull)?st.canvasRatioBeforeFull:null);
     if (st.holeType !== undefined) setHoleType(st.holeType);
     if (st.customText !== undefined) setCustomText(st.customText);
     if (st.holeSize !== undefined) setHoleSize(st.holeSize);
@@ -7000,7 +7002,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (choice === 'save') {
       await saveToolDraft('collage', photoUrlRef.current, {
         photoRegion: photoRegionRef.current,
-        layout, maskScale, canvasRatio, holeType, customText, holeSize, sizeJitter, holeAngle,
+        layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
         stripeN, stripeDir, stripeA: stripeAPick, stripeB,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
@@ -7010,7 +7012,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       await recordHistoryRef.current?.();
     }
     onHome(choice === 'save');
-  }, [onRequestExit, onHome, initialState, histKey, layout, maskScale, canvasRatio, holeType, customText, holeSize, sizeJitter,
+  }, [onRequestExit, onHome, initialState, histKey, layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText, holeSize, sizeJitter,
       holeAngle, holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap,
       symmetryEnabled, stripeN, stripeDir, stripeAPick, stripeB, glowMode, holeGlowColor,
       glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor]);
@@ -7064,7 +7066,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          連續兩格畫面之後 —— 那時候主頁已經畫出來了，慢一點也沒人感覺得到。 */
       const payload = {
         photoRegion: photoRegionRef.current,
-        layout, maskScale, canvasRatio, holeType, customText, holeSize, sizeJitter, holeAngle,
+        layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText, holeSize, sizeJitter, holeAngle,
         holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
         stripeN, stripeDir, stripeA: stripeAPick, stripeB,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
@@ -7079,7 +7081,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const key = histIdRef.current;
       await addExport('collage', out, srcUrl, payload, key);
     } catch { /* 記錄失敗不能影響離開 */ }
-  }, [imageState, getLayoutOffsets, renderToCanvas, layout, maskScale, canvasRatio, holeType, customText,
+  }, [imageState, getLayoutOffsets, renderToCanvas, layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText,
       holeSize, sizeJitter, holeAngle, holeCount, holes, maskColor, patternType, dotColor,
       dotSize, dotGap, symmetryEnabled, glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
       glowMoImg, glowMoText, linkColor]);
@@ -7282,10 +7284,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [igPreview, imageState]);
 
 
-  /* IG 直式最長只吃到 4:5（0.8）。比它更長的畫布發出去一定會被裁，
-     預覽也就不是發文後的樣子 —— 那顆按鈕直接不出現。
-     直式照片配「遮罩在下」或「遮罩在上」時畫布會被拉得更長（照片高＋遮罩高），
-     幾乎一定會落在這條線外面，這是刻意的。 */
+  /* 3:4 必須能開啟完整預覽；不能沿用舊的 4:5 門檻而隱藏按鈕。
+     四周包圍仍保留原本較寬鬆的長圖判定。 */
   const igSupported = (() => {
     const o = getLayoutOffsets();
     if (!o || !o.cw || !o.ch) return false;
@@ -7293,8 +7293,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* 四周包圍寬鬆一點：照片四周本來就有一圈遮罩，IG 就算裁也是裁到那圈邊，
        照片本身不會被切到 —— 所以只要原圖不比 2:3 更長就給預覽。
        （這個排版的畫布跟原圖同比例，所以直接看畫布就等於看原圖。）
-       其餘四種是照片直接貼邊，超過 IG 的直式上限 4:5 就會裁到照片。 */
-    const limit = layout === AROUND ? 2 / 3 : 4 / 5;
+       其餘排版至少支援使用者選擇的直式 3:4。 */
+    const limit = layout === AROUND ? 2 / 3 : 3 / 4;
     return o.cw / o.ch >= limit - 0.001;
   })();
 
@@ -7805,7 +7805,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      這裡才有辦法一次拿到全部狀態（動畫那幾個是上面才宣告的）。
      取快照與套回快照都寫在這，前段的歷史邏輯只透過 ref 呼叫。 */
   envSrcRef.current = {
-    layout, maskScale, canvasRatio, photoRegion,
+    layout, maskScale, canvasRatio, canvasRatioBeforeFull, photoRegion,
     maskColor, patternType, dotColor, dotSize, dotGap,
     stripeN, stripeDir, stripeA: stripeAPick, stripeB,
     maskImageState, maskTransform, imageTransform,
@@ -7828,6 +7828,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setBaseSelected(false);
     setLayout(e.layout); setMaskScale(e.maskScale);
     if (isCanvasRatio(e.canvasRatio)) setCanvasRatio(e.canvasRatio);
+    setCanvasRatioBeforeFull(isCanvasRatio(e.canvasRatioBeforeFull)?e.canvasRatioBeforeFull:null);
     setMaskColor(e.maskColor); setPatternType(e.patternType);
     setDotColor(e.dotColor); setDotSize(e.dotSize); setDotGap(e.dotGap);
     if (e.stripeN !== undefined) setStripeN(e.stripeN);
@@ -7868,7 +7869,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return () => window.clearTimeout(t);
   }, [
     imageState, pushHistory, markDirty,
-    layout, maskScale, canvasRatio, photoRegion, maskColor, patternType, dotColor, dotSize, dotGap,
+    layout, maskScale, canvasRatio, canvasRatioBeforeFull, photoRegion, maskColor, patternType, dotColor, dotSize, dotGap,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
     glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
@@ -8204,7 +8205,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   </svg>;
   const applyPhotoTemplate=(count:number,index:number)=>{
     if(photoRegionRef.current)commitRegion(changePhotoTemplate(photoRegionRef.current,count,index));
-    setSelectedRegionPhoto(null);setBaseSelected(false);setPhotoLayoutOpen(false);
+    setSelectedRegionPhoto(null);setBaseSelected(false);
   };
   const photoLayoutControls=photoRegion && <div className="flex flex-col min-w-0" data-photo-layout-control>
     <span className="text-[10px] font-bold text-[#888] mb-2 tracking-widest">圖片排版</span>
@@ -9305,7 +9306,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               <span className="text-[10px] font-bold text-[#888] tracking-widest">圖片排版</span>
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-none px-5 pb-5"><div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
-              {PHOTO_LAYOUT_COUNTS.flatMap(count=>photoTemplates(count).map((t,i)=><button key={`${count}-${i}`} aria-label={`${count}張 ${t.name}`} title={`${count}張: ${t.name}`} data-layout-count={count} data-layout-index={i} onClick={()=>applyPhotoTemplate(count,i)} className="p-1.5 rounded-xl border flex items-center justify-center transition-colors aspect-square bg-white/[0.02] border-white/5 text-white/60 hover:border-white/15 hover:bg-white/[0.04] active:bg-white/10">{layoutThumbnail(t.rects,false,true)}</button>))}
+              {PHOTO_LAYOUT_COUNTS.flatMap(count=>photoTemplates(count).map((t,i)=>{const selected=photoRegion.photos.length===count&&photoRegion.templateIndex===i;return <button key={`${count}-${i}`} aria-label={`${count}張 ${t.name}`} aria-pressed={selected} title={`${count}張: ${t.name}`} data-layout-count={count} data-layout-index={i} onClick={()=>applyPhotoTemplate(count,i)} className={`p-1.5 rounded-xl border flex items-center justify-center transition-colors aspect-square ${selected?'bg-white/[0.07] border-white/60 text-white':'bg-white/[0.02] border-white/5 text-white/60 hover:border-white/15 hover:bg-white/[0.04]'} active:bg-white/10`}>{layoutThumbnail(t.rects,false,true)}</button>;}))}
             </div></div>
           </div>}
           {colorPickerTarget ? (
@@ -9401,15 +9402,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <div className="h-9 flex items-center justify-between gap-1.5 bg-[#111] border border-[#222] px-1.5 rounded-[6px] w-full">
                       {[FULL, 'mask-bottom', 'mask-top', 'mask-left', 'mask-right', AROUND].map(t => (
                         <button key={t} onClick={() => {
-                          if(t===FULL)setCanvasRatio('3:4');
+                          if(t===FULL){
+                            if(layout!==FULL||canvasRatioBeforeFull===null)setCanvasRatioBeforeFull(canvasRatio);
+                            setCanvasRatio('3:4');
+                          }
                           if (t === layout) return;
                           const leavingFull = layout === FULL && t !== FULL;
+                          const restoredRatio = canvasRatioBeforeFull || canvasRatio;
                           const restoredCount = leavingFull ? holeCountBeforeFullRef.current : holeCount;
                           if (t === FULL) {
                             holeCountBeforeFullRef.current = holeCount;
                             setHoleCount(8);
                           } else if (leavingFull) {
                             setHoleCount(restoredCount);
+                            setCanvasRatio(restoredRatio);
+                            setCanvasRatioBeforeFull(null);
                           }
                           // 排版、比例、圖案在同一批更新裡一起換，中間不會露出半舊半新的那一格
                           setLayout(t);
@@ -9433,7 +9440,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                              看見圖案出現後又跳位。原本就已是 8 才由按鈕直接建立。 */
                           const desiredCount = t === FULL ? 8 : restoredCount;
                           if (holeCount === desiredCount) {
-                            generateRandomHoles(true, t, 'none', desiredCount,t===FULL?'3:4':undefined);
+                            generateRandomHoles(true, t, 'none', desiredCount,t===FULL?'3:4':leavingFull?restoredRatio:undefined);
                           }
                         }} className="focus:outline-none" aria-label={t === FULL ? '滿版' : `遮罩排版 ${t}`} title={t === FULL ? '滿版' : undefined}>
                           <LayoutIcon type={t} active={layout === t} />
