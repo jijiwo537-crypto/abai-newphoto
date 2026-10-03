@@ -16,7 +16,7 @@ import { exportHeic } from '../utils/heicExport';
 import { CreativeSeamless } from '../utils/creativeSeamless';
 import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
 import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCountForLayout} from '../utils/creativePhotoLayout';
-import { createPortal } from 'react-dom';
+import { createPortal, flushSync } from 'react-dom';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
@@ -3202,6 +3202,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionThumbRef=useRef<HTMLCanvasElement>(null);
   const regionThumbPoint=useRef({x:0,y:0});
   const regionTouches=useRef(new Map<number,{x:number;y:number}>());
+  const regionEditTap=useRef<{x:number;y:number;away:boolean;moved:boolean}|null>(null);
   const regionTap=useRef<{id:number;index:number|null;x:number;y:number;moved:boolean}|null>(null);
   const regionScenePinch=useRef(false);
   const regionGesture=useRef<{index:number;photo:any;cx:number;cy:number;distance:number;w:number;h:number}|null>(null);
@@ -3295,18 +3296,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const leavingSelectedPhoto=!!source&&(
       selectedRegionPhotoRef.current!==null&&(source.kind!=='region'||source.index!==selectedRegionPhotoRef.current)
       ||baseSelectedRef.current&&(source.kind!=='region'||source.index!==0));
-    const own=regionTouches.current.size>0||(multi&&selectedRegionPhotoRef.current===source.index);
+    // Selection owns the gesture, not the photo underneath the first finger.
+    // The capture layer must not turn a selected object/pattern into a photo tap.
+    const otherSelection=!!selectedObjRef.current||!!selectedTarget||baseSelectedRef.current||maskSelectedRef.current;
+    const own=regionTouches.current.size>0||(!otherSelection&&selectedRegionPhotoRef.current!==null);
     if(own){
       const p=regionCoordinates(e.clientX,e.clientY);if(!p)return;
       e.stopPropagation();e.preventDefault();try{e.currentTarget.setPointerCapture(e.pointerId);}catch{}
       if(!regionTouches.current.size){
-        if(source?.kind!=='region')return;
-        if(!photoContent(source)?.src){regionUploadIndex.current=source.index;regionUploadRef.current?.click();return;}
-        selectedRegionPhotoRef.current=source.index;setSelectedRegionPhoto(source.index);
+        const index=selectedRegionPhotoRef.current;
+        if(index===null||!photoRegionRef.current?.photos[index]?.src)return;
+        regionEditTap.current={x:e.clientX,y:e.clientY,away:source?.kind!=='region'||source.index!==index,moved:false};
         setSelectedObj(null);setSelectedTarget(null);setBaseSelected(false);setMaskSelected(false);
-      }
+      }else if(regionEditTap.current)regionEditTap.current.moved=true;
       regionTouches.current.set(e.pointerId,{x:p.x,y:p.y});resetRegionGesture();
-    }else {
+    }else if(!otherSelection){
       if(!second&&leavingSelectedPhoto){
         regionScenePinch.current=false;regionTap.current={id:e.pointerId,index:null,x:e.clientX,y:e.clientY,moved:false};
       }else if(!second&&multi){
@@ -3341,6 +3345,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     }
     if(!regionTouches.current.has(e.pointerId))return;
+    if(regionEditTap.current&&Math.hypot(e.clientX-regionEditTap.current.x,e.clientY-regionEditTap.current.y)>8)regionEditTap.current.moved=true;
     e.stopPropagation();e.preventDefault();const p=regionCoordinates(e.clientX,e.clientY),d=regionGesture.current,region=photoRegionRef.current;
     if(!p||!d||!region)return;
     regionTouches.current.set(e.pointerId,{x:p.x,y:p.y});const pts=[...regionTouches.current.values()],a=pts[0],b=pts[1]||a;
@@ -3372,7 +3377,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       cancelRegionHold();
     }
     if(owned){e.stopPropagation();e.preventDefault();regionTouches.current.delete(e.pointerId);resetRegionGesture();
-      if(!regionTouches.current.size)finishRegionEdit();
+      if(!regionTouches.current.size){
+        finishRegionEdit();
+        if(e.type!=='pointercancel'&&regionEditTap.current?.away&&!regionEditTap.current.moved){selectedRegionPhotoRef.current=null;setSelectedRegionPhoto(null);}
+        regionEditTap.current=null;
+      }
       try{e.currentTarget.releasePointerCapture(e.pointerId);}catch{}}
   };
 
@@ -3457,6 +3466,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           && x >= offs.mx && x <= offs.mx + offs.mw && y >= offs.my && y <= offs.my + offs.mh;
         if (inOriginal) clickedSide = 'image';
         else if (inMask) clickedSide = 'mask';
+      }
+
+      // Once selected, base/custom-mask photos can be edited from any point in
+      // the preview workspace. Only a stationary tap outside deselects them.
+      if(brushMode==='off'&&offs&&(baseSelectedRef.current||maskSelectedRef.current)){
+        e.stopPropagation();
+        const mask=maskSelectedRef.current&&!!maskImageState?.img;
+        const t=mask?currentMaskPhoto(offs):imageTransform;
+        baseDragRef.current={startX:x,startY:y,x:t.x,y:t.y,t,moved:false,mask};
+        interactionRef.current={type:'base_drag',isClick:true,hitItself:mask?clickedSide==='mask':clickedSide==='image'};
+        return;
       }
 
       /* ── 誰在上面就先選誰 ──────────────────────────────────────────
@@ -3701,6 +3721,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       /* 選中物件時兩指是在縮放／旋轉那個物件 —— 不再縮放整個預覽。
          沒選中任何東西時才會落到下面那條「雙指縮放預覽」。 */
       e.stopPropagation();
+      // A queued drag sample must be committed before taking the pinch origin.
+      // Otherwise a second finger within the same frame restores the old pose.
+      flushSync(() => flushMoveNow());
       objDragRef.current = null;
       /* 第一根手指落在形狀外面時，上面那一段已經把「選中形狀」退掉了 ——
          但第二根手指跟上就代表這其實是一個縮放手勢，不是「點外面退出去」。
@@ -4480,6 +4503,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         setSelectedObj(null); setSelectedTarget(null); setBaseSelected(false); setMaskSelected(true);
       }
       if (intr.type === 'deselect_base' && intr.isClick) { setBaseSelected(false); setMaskSelected(false); }
+      if (intr.type === 'base_drag' && intr.isClick && !intr.hitItself) { setBaseSelected(false); setMaskSelected(false); }
       // 按在別顆圖案上但沒拖動 → 把選取換到那一顆
       if (intr.type === 'move_hole' && intr.isClick && intr.pickId) setSelectedTarget(intr.pickId);
       // 已選圖案上方剛好有物件：拖動仍是圖案；只有輕點才切換到該物件。
@@ -8734,6 +8758,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             data-photo-objects={import.meta.env.DEV?JSON.stringify(objects.filter(o=>o.type==='image').map(({id,src,x,y,w,h,vid})=>({id,src,x,y,w,h,vid}))):undefined}
             data-scene-geometry={import.meta.env.DEV?JSON.stringify(getLayoutOffsets()):undefined}
             data-selected-region-photo={selectedRegionPhoto??''}
+            data-selected-object={import.meta.env.DEV?selectedObj??'':undefined}
+            data-scene-objects={import.meta.env.DEV?JSON.stringify(objects.map(({id,x,y,w,h,type})=>({id,x,y,w,h,type}))):undefined}
             data-canvas-ratio={canvasRatio}
             className="absolute inset-0 overflow-hidden"
             style={{
