@@ -16,6 +16,11 @@ export function photoTemplates(count: number) {
   const extra = [{ name: '直欄', rects: photoRegionRects(count, 'horizontal') }, { name: '橫欄', rects: photoRegionRects(count, 'vertical') }];
   return [...original, ...extra].slice(0, 4);
 }
+/** Quick choices do not change persisted catalog indices. */
+export function quickPhotoTemplateIndices(count:number){
+  const templates=photoTemplates(count);
+  return count===4?[0,1,2,templates.length-1]:[0,1,2,3];
+}
 export function regionRects(region: PhotoRegion, width = 1, height = 1): PhotoRect[] {
   if (region.templateIndex === undefined) return photoRegionRects(region.photos.length, region.arrangement);
   return (photoTemplates(region.photos.length)[region.templateIndex] || photoTemplates(region.photos.length)[0]).rects.map(r => {

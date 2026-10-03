@@ -5,7 +5,15 @@ import ts from 'typescript';
 const source=readFileSync(new URL('../utils/creativePhotoLayout.ts',import.meta.url),'utf8');
 const catalog=ts.transpileModule(readFileSync(new URL('../utils/layoutTemplates.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText.replace("'./layoutTemplates'",`'data:text/javascript;base64,${Buffer.from(catalog).toString('base64')}'`);
-const {photoRegionRects,photoRegionHit,swapRegionPhotos,paintPhotoRegion,PHOTO_SWAP_HOLD_MS,regionRects,photoTemplates,changePhotoTemplate,photoCrop}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+const {photoRegionRects,photoRegionHit,swapRegionPhotos,paintPhotoRegion,PHOTO_SWAP_HOLD_MS,regionRects,photoTemplates,quickPhotoTemplateIndices,changePhotoTemplate,photoCrop}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+test('four-photo shortcut ends with the cross-page special overlay without changing catalog indices',()=>{
+ assert.deepEqual(quickPhotoTemplateIndices(4),[0,1,2,5]);assert.equal(photoTemplates(4)[quickPhotoTemplateIndices(4)[3]].name,'上下雙層方形');
+ const c=readFileSync(new URL('../components/CollageTool.tsx',import.meta.url),'utf8');
+ assert.match(c,/aria-label="所有圖片佈局"[\s\S]*?<circle cx="5"/);assert.match(c,/aria-label="返回圖片排版"/);
+ assert.match(c,/fixed inset-0 z-\[105\]/);assert.doesNotMatch(c,/max-h-56.*data-photo-layout-options/);
+ assert.match(c,/if\(JSON.stringify\(hover\)!==JSON.stringify\(swapHoverRef.current\)\)/);
+ assert.match(c,/region.photos.map\([\s\S]*?offsetX,offsetY\}:q\)\},true\)/);
+});
 test('all four arrangements fill exactly one region, in import order, for 2 through 9 photos',()=>{
  for(const mode of ['grid','horizontal','vertical','feature'])for(let n=1;n<=9;n++){
   const rects=photoRegionRects(n,mode); assert.equal(rects.length,n);

@@ -43,6 +43,10 @@ void(async()=>{
   check('opaque white long-press border',!!thumb&&getComputedStyle(thumb).borderColor==='rgb(255, 255, 255)');
   check('thumbnail center follows finger',!!tr&&Math.abs(tr.left+tr.width/2-a.x)<1&&Math.abs(tr.top+tr.height/2-a.y)<1,{tr,a});
   check('held source is visibly dimmed',pixel(.08,.08)[0]<before[0]*.6,{before,during:pixel(.08,.08)});
+  pointer('pointermove',71,b);await wait(3);
+  check('dim follows hovered photo, never the source simultaneously',pixel(.08,.08)[0]===before[0]&&pixel(.75,.75)[0]<last[0]*.6);
+  pointer('pointermove',71,point(.5,-.05));await wait(3);
+  check('all photos restore when finger leaves image',pixel(.08,.08)[0]===before[0]&&pixel(.75,.75)[0]===last[0]);
   pointer('pointermove',71,b);pointer('pointerup',71,b);await wait(8);
   check('region photos swap',Math.abs(pixel(.08,.08)[0]-pixel(.08,.08)[1])<3&&pixel(.75,.75)[0]>180);
   await new Promise(r=>setTimeout(r,600));document.querySelector<HTMLButtonElement>('button[title="復原"]')!.click();await wait(8);
@@ -62,6 +66,10 @@ void(async()=>{
   check('draft retains originals and independent crop metadata',draft?.state?.photoRegion?.photos?.length===9&&draft.state.photoRegion.photos.some((p:any)=>p.zoom>1));
   document.querySelector<HTMLButtonElement>('button[aria-label="所有圖片佈局"]')!.click();await wait(2);
   const choices=document.querySelectorAll<HTMLButtonElement>('[data-layout-count]');
+  const picker=document.querySelector<HTMLElement>('[data-photo-layout-options]')!,pickerRect=picker.getBoundingClientRect();
+  check('more opens an independent full-screen layout page with back',pickerRect.height>=innerHeight-2&&!!picker.querySelector('[aria-label="返回圖片排版"]'));
+  const back=picker.querySelector<HTMLElement>('[aria-label="返回圖片排版"]')!,br=back.getBoundingClientRect();
+  check('full-screen layout back button is above the editor header',back.contains(document.elementFromPoint(br.x+br.width/2,br.y+br.height/2)));
   check('complete template catalog supports every count',Array.from({length:9},(_,i)=>i+1).every(n=>[...choices].some(b=>b.dataset.layoutCount===String(n))));
   document.querySelector<HTMLButtonElement>('[data-layout-count="1"]')!.click();await wait(5);
   document.querySelector<HTMLButtonElement>('button[aria-label="所有圖片佈局"]')!.click();await wait(2);

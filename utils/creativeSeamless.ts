@@ -1,16 +1,25 @@
 import {drawSeamPreview,disposeSeamPreview,copySeamPreviewPixels} from './seamlessPreview';
 import {get2dWide} from './colorSpace';
 import {regionRects,type PhotoRegion} from './creativePhotoLayout';
+import {CreativeFeatherSurface} from './creativeFeatherSurface';
 /** One GPU surface per editor. Render just the visible physical-pixel viewport,
  * not an enormous zoomed composite. Source photos keep their original quality. */
 export class CreativeSeamless {
   private surface:HTMLCanvasElement|null=null;
   private colorTile:HTMLCanvasElement|null=null;
-  paint(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,dim=-1){
+  private interactive=new CreativeFeatherSurface();
+  paint(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,dim=-1,preview=false){
     if(!region.seamless||region.photos.length<2)return false;
     const rects=regionRects(region,w,h);
     if(Math.abs(rects.reduce((a,r)=>a+r.w*r.h,0)-1)>1e-5)return false;
     const m=ctx.getTransform();if(m.b||m.c||m.a<=0||m.d<=0)return false;
+    if(preview){
+      if(ctx.globalCompositeOperation==='copy'){ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);ctx.restore();}
+      ctx.save();ctx.globalCompositeOperation='source-over';ctx.beginPath();ctx.rect(x,y,w,h);ctx.clip();
+      try{const done=this.interactive.paint(ctx,region,decoded,x,y,w,h);
+        if(done&&dim>=0){const r=rects[dim];ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(x+r.x*w,y+r.y*h,r.w*w,r.h*h);}return done;
+      }finally{ctx.restore();}
+    }
     const left=Math.max(0,Math.floor(x*m.a+m.e)),top=Math.max(0,Math.floor(y*m.d+m.f));
     const right=Math.min(ctx.canvas.width,Math.ceil((x+w)*m.a+m.e)),bottom=Math.min(ctx.canvas.height,Math.ceil((y+h)*m.d+m.f));
     if(right<=left||bottom<=top)return true;
@@ -41,5 +50,5 @@ export class CreativeSeamless {
       return true;
     }finally{ctx.restore();}
   }
-  dispose(){if(this.surface){disposeSeamPreview(this.surface);this.surface.width=this.surface.height=1;this.surface=null;}if(this.colorTile){this.colorTile.width=this.colorTile.height=1;this.colorTile=null;}}
+  dispose(){this.interactive.dispose();if(this.surface){disposeSeamPreview(this.surface);this.surface.width=this.surface.height=1;this.surface=null;}if(this.colorTile){this.colorTile.width=this.colorTile.height=1;this.colorTile=null;}}
 }

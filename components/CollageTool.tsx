@@ -6,7 +6,7 @@ import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import { idleDefaults } from '../utils/animationDefaults';
 import { get2dWide } from '../utils/colorSpace';
-import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, regionRects, photoTemplates, changePhotoTemplate, photoRegionHit, paintPhotoRegion } from '../utils/creativePhotoLayout';
+import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, regionRects, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion } from '../utils/creativePhotoLayout';
 import { stampBounds, stampsHaveSafeGap } from '../utils/patternBrushSpacing';
 import { CreativeSeamless } from '../utils/creativeSeamless';
 import { createPortal } from 'react-dom';
@@ -1194,7 +1194,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [imageState, setImageState] = useState<any>(null);
   const [photoRegion, setPhotoRegion] = useState<PhotoRegion | null>(null);
   const photoRegionRef = useRef(photoRegion);
-  photoRegionRef.current = photoRegion;
+  const committedRegionRef=useRef(photoRegion);
+  if(committedRegionRef.current!==photoRegion){photoRegionRef.current=photoRegion;committedRegionRef.current=photoRegion;}
+  const regionPaintRef=useRef<()=>void>(()=>{});
+  const regionPaintRaf=useRef(0);
+  useEffect(()=>()=>{if(regionPaintRaf.current)cancelAnimationFrame(regionPaintRaf.current);},[]);
   const decodedRegionPhotos = useRef(new Map<string, HTMLImageElement>());
   const creativeSeam = useRef<CreativeSeamless|null>(null);
   useEffect(()=>()=>creativeSeam.current?.dispose(),[]);
@@ -3166,11 +3170,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionHold = useRef<{ id:number;source:PhotoSource;x:number;y:number;timer:number;active:boolean } | null>(null);
   const [regionSwapPhoto,setRegionSwapPhoto]=useState<string|null>(null);
   const [swapSource,setSwapSource]=useState<PhotoSource|null>(null);
+  const swapHoverRef=useRef<PhotoSource|null>(null);
   const regionThumbRef=useRef<HTMLCanvasElement>(null);
   const regionThumbPoint=useRef({x:0,y:0});
   const regionTouches=useRef(new Map<number,{x:number;y:number}>());
   const regionGesture=useRef<{index:number;photo:any;cx:number;cy:number;distance:number;w:number;h:number}|null>(null);
-  const commitRegion=(next:PhotoRegion)=>{photoRegionRef.current=next;setPhotoRegion(next);};
+  const commitRegion=(next:PhotoRegion,live=false)=>{
+    photoRegionRef.current=next;
+    if(!live){setPhotoRegion(next);return;}
+    if(!regionPaintRaf.current)regionPaintRaf.current=requestAnimationFrame(()=>{regionPaintRaf.current=0;regionPaintRef.current();});
+  };
+  const finishRegionEdit=()=>{
+    if(regionPaintRaf.current){cancelAnimationFrame(regionPaintRaf.current);regionPaintRaf.current=0;regionPaintRef.current();}
+    setPhotoRegion(photoRegionRef.current);
+  };
   const regionCoordinates=(clientX:number,clientY:number)=>{
     const off=getLayoutOffsets(),frame=(motionFrameRef.current||canvasRef.current)?.getBoundingClientRect();
     if(!off||!frame?.width||!frame.height)return null;
@@ -3224,7 +3237,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const cancelRegionHold=()=>{
     if(regionHold.current)window.clearTimeout(regionHold.current.timer);
-    regionHold.current=null;setRegionSwapPhoto(null);setSwapSource(null);
+    regionHold.current=null;setRegionSwapPhoto(null);swapHoverRef.current=null;setSwapSource(null);
   };
   useEffect(()=>()=>{if(regionHold.current)window.clearTimeout(regionHold.current.timer);},[]);
   useEffect(()=>{if(selectedObj||selectedTarget||maskSelected)setSelectedRegionPhoto(null);},[selectedObj,selectedTarget,maskSelected]);
@@ -3265,7 +3278,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(regionHold.current!==hold||regionTouches.current.size+activePointers.current.size!==1)return;
       const photo=photoContent(source);if(!photo?.src)return;
       hold.active=true;objDragRef.current=null;baseDragRef.current=null;interactionRef.current=null;regionGesture.current=null;
-      regionThumbPoint.current={x:hold.x,y:hold.y};setSwapSource(source);setRegionSwapPhoto(photo.src);
+      regionThumbPoint.current={x:hold.x,y:hold.y};swapHoverRef.current=source;setSwapSource(source);setRegionSwapPhoto(photo.src);
     },PHOTO_SWAP_HOLD_MS);regionHold.current=hold;
   };
   const regionPointerMove=(e:React.PointerEvent)=>{
@@ -3278,6 +3291,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(p&&regionTouches.current.has(e.pointerId))regionTouches.current.set(e.pointerId,{x:p.x,y:p.y});
         if(activePointers.current.has(e.pointerId))activePointers.current.set(e.pointerId,e);
         if(regionThumbRef.current)regionThumbRef.current.style.transform=`translate3d(${e.clientX}px,${e.clientY}px,0) translate(-50%,-50%)`;
+        const hover=photoAt(e.clientX,e.clientY);
+        if(JSON.stringify(hover)!==JSON.stringify(swapHoverRef.current)){swapHoverRef.current=hover;setSwapSource(hover);}
         return;
       }
     }
@@ -3290,7 +3305,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const mx=(d.photo.width*cover/d.w-1)/2,my=(d.photo.height*cover/d.h-1)/2;
     const offsetX=Math.max(-mx,Math.min(mx,(d.photo.offsetX||0)+((a.x+b.x)/2-d.cx)/d.w));
     const offsetY=Math.max(-my,Math.min(my,(d.photo.offsetY||0)+((a.y+b.y)/2-d.cy)/d.h));
-    commitRegion({...region,photos:region.photos.map((q,i)=>i===d.index?{...q,zoom,offsetX,offsetY}:q)});
+    commitRegion({...region,photos:region.photos.map((q,i)=>i===d.index?{...q,zoom,offsetX,offsetY}:q)},true);
   };
   const regionPointerUp=(e:React.PointerEvent)=>{
     const hold=regionHold.current,owned=regionTouches.current.has(e.pointerId);
@@ -3304,6 +3319,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       cancelRegionHold();
     }
     if(owned){e.stopPropagation();e.preventDefault();regionTouches.current.delete(e.pointerId);resetRegionGesture();
+      if(!regionTouches.current.size)finishRegionEdit();
       try{e.currentTarget.releasePointerCapture(e.pointerId);}catch{}}
   };
 
@@ -3832,7 +3848,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const stageRef = useRef<HTMLDivElement>(null);
   const [viewT, setViewT] = useState({ k: 1, tx: 0, ty: 0 });
   const viewTRef = useRef(viewT);
-  viewTRef.current = viewT;
+  const committedViewRef = useRef(viewT);
+  if (committedViewRef.current !== viewT) { viewTRef.current = viewT; committedViewRef.current = viewT; }
   const viewPinchRef = useRef<{ d0: number; k0: number; cx: number; cy: number } | null>(null);
   /* 預覽畫布要畫多細。
      工作解析度只有 1080（為了拖曳順），螢幕上又是 CSS transform 放大 ——
@@ -3879,12 +3896,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const pendingViewRef = useRef<{ k: number; tx: number; ty: number } | null>(null);
   const viewFrameRef = useRef(0);
-  const flushView = useCallback(() => {
+  const liveViewPaintRef = useRef<((next:{k:number;tx:number;ty:number})=>void)|null>(null);
+  const flushView = useCallback((commit = false) => {
     if (viewFrameRef.current) cancelAnimationFrame(viewFrameRef.current);
     viewFrameRef.current = 0;
     const next = pendingViewRef.current;
     pendingViewRef.current = null;
-    if (next) setViewT(next);
+    if (next && !commit && viewPinchRef.current && liveViewPaintRef.current) liveViewPaintRef.current(next);
+    else if (next || commit) setViewT(next || viewTRef.current);
   }, []);
   useEffect(() => () => { if (viewFrameRef.current) cancelAnimationFrame(viewFrameRef.current); }, []);
   const applyView = useCallback((k: number, tx: number, ty: number) => {
@@ -3897,7 +3916,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const next = { k: kk, tx: Math.max(-mx, Math.min(mx, tx)), ty: Math.max(-my, Math.min(my, ty)) };
     pendingViewRef.current = next;
     viewTRef.current = next;
-    if (!viewFrameRef.current) viewFrameRef.current = requestAnimationFrame(flushView);
+    if (!viewFrameRef.current) viewFrameRef.current = requestAnimationFrame(() => flushView());
   }, [flushView]);
   /* 「還能放大到幾倍而不糊」的上限 —— 由記憶體預算反推。
      算不到那麼細就不讓你再放大，所以任何倍率下都是清楚的，
@@ -4344,7 +4363,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
 
   const handlePointerUp = (e: React.PointerEvent) => {
-    flushView();
+    flushView(true);
     // 還沒送出的那一格先補上，物件才不會停在上一格的位置
     flushMoveNow();
     // 已選中的文字／符號，點一下（沒有拖動）→ 直接在畫布上改字
@@ -4433,6 +4452,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const linkGlowTilesRef = useRef<LinkGlowTiles|null>(null);
   useEffect(()=>()=>linkGlowTilesRef.current?.dispose(),[]);
   const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1) => {
+    const photoRegion=photoRegionRef.current;
     const debugPaintStart = import.meta.env.DEV ? performance.now() : 0;
     const {selectedTarget, selectedPatternSide, selectedObj, baseSelected} = chromeSelectionRef.current;
     if (!imageState) return;
@@ -4481,16 +4501,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       && !motionLockRef.current && stageRef.current && uiRect.width > 0;
     const vp = canWindow ? previewViewport(tW,tH,uiRect,stageRef.current!.getBoundingClientRect()) : {x:0,y:0,w:tW,h:tH};
     const windowed = vp.x!==0 || vp.y!==0 || vp.w!==tW || vp.h!==tH;
+    // Reuse capacity while pinching, without changing the physical pixel/CSS
+    // mapping. Spare backing pixels are cleared, so no scene can leak out.
+    const bucketed=isMain&&canWindow&&baseCssWRef.current>0&&!!viewPinchRef.current;
+    const backingW=bucketed?Math.ceil(vp.w/256)*256:vp.w,backingH=bucketed?Math.ceil(vp.h/256)*256:vp.h;
     if(windowed && thumbRef.current){thumbRef.current.width=thumbRef.current.height=1;thumbRef.current=null;}
     if (isMain) {
-      Object.assign(targetCanvas.style,windowed
-        ? {position:'absolute',left:`${vp.x/offs.cw*100}%`,top:`${vp.y/offs.ch*100}%`,width:`${vp.w/offs.cw*100}%`,height:`${vp.h/offs.ch*100}%`}
+      Object.assign(targetCanvas.style,windowed||bucketed
+        ? {position:'absolute',left:`${vp.x/offs.cw*100}%`,top:`${vp.y/offs.ch*100}%`,width:`${backingW/offs.cw*100}%`,height:`${backingH/offs.ch*100}%`}
         : {position:'relative',left:'0px',top:'0px',width:'100%',height:'100%'});
     }
-    if (targetCanvas.width !== vp.w || targetCanvas.height !== vp.h) {
-      targetCanvas.width = vp.w;
-      targetCanvas.height = vp.h;
+    if (targetCanvas.width !== backingW || targetCanvas.height !== backingH) {
+      targetCanvas.width = backingW;
+      targetCanvas.height = backingH;
     }
+    if(bucketed){ctx.setTransform(1,0,0,1,0,0);ctx.clearRect(0,0,backingW,backingH);}
     /* 指派寬高會順便把 context 狀態全部重置；現在尺寸沒變就不指派了，
        所以 transform／透明度／合成模式要自己歸位，免得上一格的狀態殘留。 */
     ctx.setTransform(1, 0, 0, 1, -vp.x, -vp.y);
@@ -4693,7 +4718,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (img === baseImg && photoRegion && (photoRegion.multi || photoRegion.photos.length>1)) {
         const dim=isMain && swapSource?.kind==='region' ? swapSource.index : -1;
         creativeSeam.current ||= new CreativeSeamless();
-        if(!creativeSeam.current.paint(g,photoRegion,decodedRegionPhotos.current,x,y,w,h,dim))
+        if(!creativeSeam.current.paint(g,photoRegion,decodedRegionPhotos.current,x,y,w,h,dim,isMain))
           paintPhotoRegion(g, photoRegion, decodedRegionPhotos.current, x, y, w, h, dim);
       } else {
         const alpha=g.globalAlpha;
@@ -7422,7 +7447,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 拖滑桿時 holes 每一格都是新陣列 → renderToCanvas 的身分跟著換 →
      播放迴圈會被拆掉重建幾十次。走 ref 就不會，rAF 從頭到尾只有一個。 */
   const renderToCanvasRef = useRef(renderToCanvas);
+  regionPaintRef.current=()=>{
+    if(canvasRef.current){lastPatternPaintRef.current=null;renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);}
+    if(import.meta.env.DEV&&stageRef.current)stageRef.current.dataset.photoTransforms=JSON.stringify(photoRegionRef.current?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0})));
+  };
   renderToCanvasRef.current = renderToCanvas;
+  // Pinch frames update only scene geometry and the full-density canvas.
+  // Commit the final view to React on release; the tool panels do not need to
+  // rebuild their entire tree sixty times per second during a canvas gesture.
+  liveViewPaintRef.current = baseCss && imageState ? next => {
+    const frame=motionFrameRef.current, canvas=canvasRef.current;
+    if(!frame || !canvas)return;
+    const parent=frame.parentElement;
+    if(parent){parent.style.transition='none';parent.style.transform=`translate(${next.tx}px, ${next.ty}px)`;}
+    frame.style.transition='none';
+    frame.style.width=`${baseCss.w*next.k}px`;frame.style.height=`${baseCss.h*next.k}px`;
+    const cs=collageSizeOf(layout,imageState.baseW,imageState.baseH,maskScale,canvasRatio);
+    const scale=fitScale(baseCss.w,cs.w,next.k);
+    previewScaleRef.current=scale;
+    lastPatternPaintRef.current=null;
+    renderToCanvasRef.current(canvas,scale);
+  } : null;
   useLayoutEffect(()=>{
     if(!imageState || !baseCss || motionLockRef.current || !canvasRef.current) return;
     const cs=collageSizeOf(layout,imageState.baseW,imageState.baseH,maskScale,canvasRatio);
@@ -8058,7 +8103,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       })} className={`min-w-0 rounded-[3px] text-[9px] font-bold tabular-nums ${ratioButtonActive(canvasRatio,portrait,landscape)?'bg-white text-black':'text-[#777]'}`}>{label}</button>)}
     </div>
   </div>;
-  const layoutThumbnail=(rects:any[]) => <svg viewBox="0 0 24 24" className="w-5 h-5 mx-auto" fill="none" stroke="currentColor" strokeWidth=".65">
+  const layoutThumbnail=(rects:any[],active=false,large=false) => large?<svg viewBox="0 0 100 100" className="w-full h-full text-white/60">
+    {rects.map((r,i)=><rect key={i} x={r.x*100+4} y={r.y*100+4} width={r.w*100-8} height={r.h*100-8} rx={4} fill={r.squareOverlay?'#111':'currentColor'} fillOpacity={r.squareOverlay?1:.1} stroke="currentColor" strokeWidth="2.5"/>)}
+  </svg>:<svg viewBox="0 0 24 24" className={`w-5 h-5 mx-auto transition-[color,transform] ${active?'scale-110':''}`} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round">
     {rects.map((r,i)=><rect key={i} x={2+r.x*20} y={2+r.y*20} width={r.w*20} height={r.h*20} fill={r.squareOverlay?'#111':undefined}/>)}
   </svg>;
   const applyPhotoTemplate=(count:number,index:number)=>{
@@ -8068,10 +8115,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const photoLayoutControls=photoRegion && <div className="flex flex-col min-w-0" data-photo-layout-control>
     <span className="text-[10px] font-bold text-[#888] mb-2 tracking-widest">圖片排版</span>
     <div className="h-9 grid grid-cols-5 gap-1 bg-[#111] border border-[#222] p-1 rounded-[6px]">
-      {Array.from({length:4},(_,i)=>{const t=photoTemplates(photoRegion.photos.length)[i];return <button key={i} disabled={!t}
+      {quickPhotoTemplateIndices(photoRegion.photos.length).map(i=>{const t=photoTemplates(photoRegion.photos.length)[i];return <button key={i} disabled={!t}
         aria-label={t?.name||'無排版'} data-photo-template={i} onClick={()=>applyPhotoTemplate(photoRegion.photos.length,i)}
-        className={`rounded-[3px] ${photoRegion.templateIndex===i?'text-white bg-[#333]':'text-[#777]'} disabled:opacity-20`}>{t?layoutThumbnail(t.rects):null}</button>;})}
-      <button aria-label="所有圖片佈局" aria-expanded={photoLayoutOpen} onClick={()=>setPhotoLayoutOpen(v=>!v)} className="text-white flex items-center justify-center"><Blocks size={16}/></button>
+        className={`rounded-[3px] flex items-center justify-center focus:outline-none active:scale-95 transition-[color,transform] ${photoRegion.templateIndex===i?'text-white':'text-[#444]'} disabled:opacity-20`}>{t?layoutThumbnail(t.rects,photoRegion.templateIndex===i):null}</button>;})}
+      <button aria-label="所有圖片佈局" aria-expanded={photoLayoutOpen} onClick={()=>setPhotoLayoutOpen(true)} className="text-[#444] flex items-center justify-center focus:outline-none active:scale-95 transition-[color,transform]"><svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></button>
     </div>
   </div>;
   const uploadRegionPhotos=async(e:React.ChangeEvent<HTMLInputElement>)=>{
@@ -8092,6 +8139,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   return (
     <div className="safe-top flex flex-col h-[100dvh] w-full bg-[#0A0A0A] text-white font-sans overflow-hidden animate-in fade-in duration-300">
+      {photoLayoutOpen&&photoRegion&&<div role="dialog" aria-modal="true" aria-label="所有圖片佈局" data-photo-layout-options className="fixed inset-0 z-[105] safe-top bg-[#0A0A0A] flex flex-col animate-in fade-in duration-200">
+        <div className="h-14 shrink-0 border-b border-[#1a1a1a] flex items-center gap-2 px-5">
+          <button aria-label="返回圖片排版" onClick={()=>setPhotoLayoutOpen(false)} className="w-9 h-9 -ml-2 flex items-center justify-center text-white/60 hover:text-white active:scale-90 transition-[color,transform]"><Icon name="arrow_back" className="text-[20px]"/></button>
+          <span className="text-[10px] font-bold text-[#888] tracking-widest">圖片排版</span>
+        </div>
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-none p-5"><div className="max-w-md mx-auto grid grid-cols-4 sm:grid-cols-5 gap-2 pb-10">
+          {[2,3,1,4,5,6,7,8,9].flatMap(count=>photoTemplates(count).map((t,i)=><button key={`${count}-${i}`} aria-label={`${count}張 ${t.name}`} title={`${count}張: ${t.name}`}
+            data-layout-count={count} data-layout-index={i} onClick={()=>applyPhotoTemplate(count,i)} className="p-1.5 rounded-xl border flex items-center justify-center transition-colors aspect-square bg-white/[0.02] border-white/5 text-white/60 hover:border-white/15 hover:bg-white/[0.04] active:bg-white/10">
+            {layoutThumbnail(t.rects,false,true)}</button>))}
+        </div></div>
+      </div>}
       {regionSwapPhoto && createPortal(<canvas ref={regionThumbRef} data-creative-swap-thumbnail="1"
         className="fixed pointer-events-none z-[9999] border-2 border-white rounded-[8px]"
         style={{ left: 0, top: 0, width: 80, height: 80, boxShadow: '0 4px 14px rgba(0,0,0,.34)' }} />,document.body)}
@@ -9334,20 +9392,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   {photoRegion && photoRegion.photos.length>1 && Math.abs(regionRects(photoRegion).reduce((sum,r)=>sum+r.w*r.h,0)-1)<.00001 && <div className="space-y-3" data-creative-seamless>
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-bold text-[#888]">無縫拼圖</span>
-                      <div className="flex gap-1">{[false,true].map(on=><button key={String(on)} aria-pressed={!!photoRegion.seamless===on} onClick={()=>commitRegion({...photoRegion,seamless:on})}
+                      <div className="flex gap-1">{[false,true].map(on=><button key={String(on)} aria-pressed={!!photoRegion.seamless===on} onClick={()=>commitRegion({...photoRegionRef.current!,seamless:on})}
                         className={`h-7 px-4 rounded-[4px] text-[10px] font-bold ${!!photoRegion.seamless===on?'bg-white text-black':'bg-[#161616] text-[#888]'}`}>{on?'開啟':'關閉'}</button>)}</div>
                     </div>
-                    {photoRegion.seamless && <div><div className="flex justify-between text-[10px] text-[#888] mb-2"><span>融合程度</span><span>{photoRegion.seamlessAmount||0}</span></div>
-                      <RafRange min={0} max={100} step={1} value={photoRegion.seamlessAmount||0} onChange={v=>commitRegion({...photoRegionRef.current!,seamlessAmount:v})}/>
+                    {photoRegion.seamless && <div>
+                      <RegionLiveRange value={photoRegion.seamlessAmount||0} onChange={v=>commitRegion({...photoRegionRef.current!,seamlessAmount:v},true)} onCommit={finishRegionEdit}/>
                     </div>}
-                  </div>}
-                  {photoLayoutOpen && photoRegion && <div role="dialog" aria-label="所有圖片佈局" className="max-h-56 overflow-y-auto overscroll-contain border border-[#333] rounded-lg p-3 space-y-3" data-photo-layout-options>
-                    {[2,3,1,4,5,6,7,8,9].map(count=><div key={count}>
-                      <div className="text-[10px] text-[#888] mb-2">{count} 張</div>
-                      <div className="grid grid-cols-5 gap-2">{photoTemplates(count).map((t,i)=><button key={i} aria-label={`${count}張 ${t.name}`}
-                        data-layout-count={count} data-layout-index={i} onClick={()=>applyPhotoTemplate(count,i)} className="h-10 bg-[#161616] border border-[#333] rounded-md text-white">
-                        {layoutThumbnail(t.rects)}</button>)}</div>
-                    </div>)}
                   </div>}
                 {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
                     它們講的都是「這張版面長什麼樣」，本來就該在同一頁。
@@ -10408,6 +10458,17 @@ const useRafOnChange = (onChange: (v: number) => void) => {
     if (q !== null) cb.current(q);
   }, []);
   return { push, flush };
+};
+
+/** This leaf owns the slider feedback. The large editor only commits state
+ * at gesture end; its paint scheduler consumes the latest value each frame. */
+const RegionLiveRange=({value,onChange,onCommit}:{value:number;onChange:(v:number)=>void;onCommit:()=>void})=>{
+  const [shown,setShown]=React.useState(value);
+  React.useEffect(()=>setShown(value),[value]);
+  return <><div className="flex justify-between text-[10px] text-[#888] mb-2"><span>融合程度</span><span>{shown}</span></div>
+    <input aria-label="融合程度" type="range" min={0} max={100} step={1} value={shown} className="premium-slider w-full"
+      onChange={e=>{const v=Number(e.target.value);setShown(v);onChange(v);}} onPointerDown={e=>e.stopPropagation()}
+      onPointerUp={onCommit} onPointerCancel={onCommit} onTouchEnd={onCommit} onKeyUp={onCommit}/></>;
 };
 
 /** 只有一根軌道的滑桿，同樣把輸入收斂到每一幀一次 */
