@@ -17,6 +17,7 @@ import { CreativeSeamless } from '../utils/creativeSeamless';
 import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
 import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCountForLayout} from '../utils/creativePhotoLayout';
 import { createPortal, flushSync } from 'react-dom';
+import {DEFAULT_COLORS,CREATIVE_MASK_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes.js';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
@@ -662,7 +663,7 @@ const hueRing = (baseHex: string, n: number): string[] => {
 };
 /* 色票整組搬到 utils/pattern.ts 了 —— 遮罩、紋理、條紋的兩個顏色都吃同一份，
    所以全 App 每一個挑顏色的地方看到的色票一模一樣。這裡只是接回來。 */
-export const MASK_SWATCHES: string[] = TEX_SWATCHES;
+export const MASK_SWATCHES: string[] = [...CREATIVE_MASK_COLORS];
 
 /* 把任意顏色換成「發光色票裡同色系的那一顆」。
    比的是色相：飽和度與亮度一律用色票自己的（那正是發光看起來乾淨的原因），
@@ -1049,14 +1050,7 @@ interface ColorPickerProps {
 /** 韓系拼貼常見的柔和底色，與經典拼圖同一組 */
 // 跟經典拼圖用同一組色票（相近的顏色排在一起）：
 // 白 → 暖白 → 暖灰 → 奶油 → 米 → 粉 → 黃 → 綠／薄荷／淺青 → 藍 → 紫
-const KOREAN_PRESETS = [
-  '#FFFFFF', '#FAF6F0', '#EAE6DF', '#F1E7DB', '#E7DACB',
-  '#F6DCD8', '#F4C2C2',
-  '#F7E9C8', '#FFF1A5',
-  '#DCE7DB', '#CBEAD6', '#9BD4C3', '#B8E3D8', '#D2E8E1',
-  '#D7E3EF', '#E2DCEC',
-];
-
+const KOREAN_PRESETS = [...DEFAULT_COLORS];
 const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onClose, title, swatches }) => {
   const [hsv, setHsv] = useState(() => hexToHsv(color));
   const [hexInput, setHexInput] = useState(color);
@@ -1097,11 +1091,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
   };
 
   // 前段跟經典拼圖同一組色票（相近的顏色排在一起），後段保留原本的灰階
-  const PRESET_COLORS = [
-    ...KOREAN_PRESETS,
-    '#F0F0F0', '#D9D9D9', '#BFBFBF', '#A6A6A6', '#8C8C8C',
-    '#737373', '#595959', '#404040', '#262626', '#1A1A1A', '#000000',
-  ];
+  const PRESET_COLORS = KOREAN_PRESETS;
 
   return (
     <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -2891,7 +2881,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }]);
       setSelectedObj(id);
       setSelectedTarget(null);
-      setActiveTab('objedit');   // 匯入完直接進編輯頁，跟新增文字一致
+      setColorPickerTarget(null); setActiveTab('objedit');   // 匯入完直接進編輯頁，跟新增文字一致
     };
     if (isVideoFile(f)) {
       loadVideoEl(url).then(v => {
@@ -9170,7 +9160,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 { t: '下移一層', on: act(() => move(-1)), el: <MoveDown size={14} />, off: objects[0]?.id === o.id && !!o.below },
                 { t: '上移一層', on: act(() => move(1)), el: <MoveUp size={14} />, off: objects[objects.length - 1]?.id === o.id && !o.below },
                 { t: '複製', on: act(dup), el: <Copy size={14} />, off: false },
-                { t: o.type === 'text' ? (o.sym ? '編輯符號' : '編輯文字') : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => setActiveTab('objedit')), el: <Sliders size={14} />, off: false },
+                { t: o.type === 'text' ? (o.sym ? '編輯符號' : '編輯文字') : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => { setColorPickerTarget(null); setActiveTab('objedit'); }), el: <Sliders size={14} />, off: false },
                 { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
               ].map(b => (
                 /* 鬆手才觸發。以前綁在 onPointerDown，手指一碰到就動作 ——
@@ -9405,10 +9395,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 else setDotColor(c); }}
               /* 紋理與條紋的顏色一律用遮罩那一組色票 —— 全 App 一致 */
               swatches={colorPickerTarget === 'holeGlow' || colorPickerTarget === 'linkColor'
-                || colorPickerTarget === 'shapeGlow' ? GLOW_SWATCHES
-                : /^(mask|dot|stripeA|stripeB|shapeDot|shapeStripeA|shapeStripeB|shapeInner)$/.test(colorPickerTarget || '')
-                  ? MASK_SWATCHES
-                : undefined}
+                || colorPickerTarget === 'shapeGlow' ? DEFAULT_COLORS
+                : colorPickerTarget === 'mask' ? MASK_SWATCHES
+                : colorPickerTarget === 'textStroke' ? NEW_TEXT_COLORS : DEFAULT_COLORS}
               onClose={() => setColorPickerTarget(null)}
               title={colorPickerTarget === 'mask' ? '遮罩顏色'
                 : colorPickerTarget === 'holeGlow' ? '發光顏色'
@@ -9646,7 +9635,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   }]);
                   setSelectedObj(id);
                   setSelectedTarget(null);
-                  setActiveTab('objedit');   // 新增完直接進編輯頁，跟經典拼圖一樣
+                  setColorPickerTarget(null); setActiveTab('objedit');   // 新增完直接進編輯頁，跟經典拼圖一樣
                 };
                 /**
                  * 新增一顆符號。

@@ -23,7 +23,7 @@ test('layout creation and common editing are separate routes without sidebar tab
   const picker = source.slice(source.indexOf('allTemplatesFlattened.map'), source.indexOf('/* Adjustment sliders'));
   assert.ok(picker.includes('handleAddLayoutToPage(activePageIndex, idx, count)'));
   assert.ok(!picker.includes('setTemplateIndex('));
-  assert.ok(source.includes("e.stopPropagation(); setActiveTab('adjust');"));
+  assert.match(source,/e.stopPropagation\(\); setObjectEditorRevision\(v=>v\+1\); setActiveTab\('adjust'\);/);
 });
 
 test('rounded layout photos have no dark backing and use the inner padded dimensions', () => {

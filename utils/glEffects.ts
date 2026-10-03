@@ -31,6 +31,7 @@ export const FX_REF = 1000;
 const REF = FX_REF;
 import {highlightHistogram,selectHighlights} from './highlightSelection';
 import {LOWFI_LUT_GLSL,bindLowfiLut,warmLowfiLut} from './lowfiLut';
+import {LowfiHaloMask} from './lowfiHalo';
 
 /* ---------- 共用工具（著色器端） ---------- */
 export const FX_GLSL_HEADER = `precision highp float;
@@ -39,6 +40,7 @@ varying vec2 vUv;
 uniform sampler2D uTex;
 uniform sampler2D uSrc;
 uniform sampler2D uAux;
+uniform sampler2D uLowfiHalo;
 uniform float uEffectAmount;
 uniform float uHighlightReady;
 uniform float uHighlightCut;
@@ -173,9 +175,10 @@ export const FX_DEFS: FxDef[] = [
     id:'fxLowfi',label:'低保真',icon:'grain',onAmount:50,
     params:[
       {id:'fxLowfiGrain',label:'顆粒',icon:'grain',min:0,max:100,def:60},
-      {id:'fxLowfiFilter',label:'濾鏡',icon:'filter',min:0,max:100,def:55,step:1},
+      {id:'fxLowfiFilter',label:'濾鏡',icon:'filter',min:0,max:100,def:80,step:1},
       {id:'fxLowfiAberration',label:'色差',icon:'filter',min:0,max:100,def:50},
       {id:'fxLowfiContrast',label:'對比',icon:'contrast',min:0,max:100,def:10,step:1},
+      {id:'fxLowfiHalo',label:'光暈',icon:'flare',min:0,max:100,def:50,step:1},
     ],
     passes:[{body:`
       vec2 delta=uv-.5;float rad=dot(delta,delta);vec2 shift=delta*fxLowfiAberration*.00008*(.15+rad*3.);
@@ -185,6 +188,14 @@ export const FX_DEFS: FxDef[] = [
       c=mix(c,lowfiLookup(c),fxLowfiFilter/100.);
       c=((c-.5)*(1.+fxLowfiContrast*.004)+.5)*exp2(${LOWFI_FIXED.exposure*.008});
       c+=fxLowfiGrain*1.6*(.55+.45*(1.-l))*(mono*.55+noise*.85)/255.;
+      // Fixed legacy halation: diffusion 10, range 100, hue 254.
+      float alpha=texture2D(uLowfiHalo,uv).a;
+      float darkMask=max(0.,1.-dot(texture2D(uTex,uv).rgb,vec3(.299,.587,.114)));
+      float halo=min(1.,alpha*darkMask*(fxLowfiHalo/50.*3.));
+      if(alpha>.005&&halo>.001){
+        vec3 tint=vec3(51.,18.,161.)/255.; // Same rounded HSL(254°, 80%, 35%) as halation.
+        c=blendScreen(c,floor(tint*255.*halo+.5)/255.);
+      }
       return vec4(clamp(c,0.,1.),1.);`
     }],
   },
@@ -694,6 +705,7 @@ interface Ctx {
   uploadKey?: string;
   highlightKey?: string;
   highlightBins?: Float64Array;
+  lowfiHalo?:LowfiHaloMask;
 }
 
 let ctxCache: Ctx | null = null;
@@ -724,6 +736,7 @@ function getCtx(surface?:HTMLCanvasElement): Ctx | null {
 
 export function disposeFxSurface(canvas:HTMLCanvasElement){
  const c=surfaces.get(canvas);if(!c)return;const {gl,pool}=c;
+ c.lowfiHalo?.dispose(gl);
  if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);if(pool.spillSeed)gl.deleteTexture(pool.spillSeed);gl.deleteFramebuffer(pool.fb);}
  c.progs.forEach(p=>gl.deleteProgram(p));gl.deleteBuffer(c.quad);surfaces.delete(canvas);canvas.width=canvas.height=1;
 }
@@ -930,7 +943,11 @@ export function applyGlEffects(
         gl.uniform1f(gl.getUniformLocation(prog,'uHighlightReady'),spillSelection?1:0);
         if(spillSelection){gl.uniform1f(gl.getUniformLocation(prog,'uHighlightCut'),spillSelection.cutoff);gl.uniform1f(gl.getUniformLocation(prog,'uHighlightTie'),spillSelection.tie);}
         if(pool.aux){gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,pool.aux);gl.uniform1i(gl.getUniformLocation(prog,'uAux'),2);}
-        if(d.id==='fxLowfi')bindLowfiLut(gl,prog);
+        if(d.id==='fxLowfi'){
+          bindLowfiLut(gl,prog);
+          c.lowfiHalo ||= new LowfiHaloMask();
+          c.lowfiHalo.bind(gl,prog,ctx2d.canvas,w,h,uploadKey);
+        }
         gl.uniform2f(gl.getUniformLocation(prog, 'uDir'), pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
         for (const p of d.params) {
           const raw = params[p.id];

@@ -37,10 +37,13 @@ test('keyboard fields edit in a viewport-top portal rather than panning bottom t
   assert.match(field, /createPortal/);
   assert.match(field, /focus\(\{ preventScroll: true \}\)/);
   assert.match(field, /fontSize: 16/);
-  for (const name of ['CollageTool', 'GridLayoutTool']) {
+  for (const name of ['CollageTool']) {
     const tool = readFileSync(new URL(`../components/${name}.tsx`, import.meta.url), 'utf8');
     assert.match(tool, /<KeyboardSafeInput/);
   }
+  // Crosspage colors deliberately no longer expose a hex field.
+  const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
+  assert.doesNotMatch(grid, /aria-label="色號"/);
 });
 test('halation retains exact precomputed pixels and blur for strength/hue changes', () => {
   assert.match(editor, /fringeIntensity: _strength, fringeHue: _hue, fringeFeather: _feather/);

@@ -217,8 +217,5 @@ const hueRing = (baseHex: string, n: number): string[] => {
   return hues.map(h => hslToHexLocal(h, sat, l));
 };
 
-export const TEX_SWATCHES: string[] = [
-  '#FFFFFF',
-  ...hueRing(MASK_BASE_LIGHT, 14),
-  ...hueRing(MASK_BASE_DEEP, 14),
-];
+import {DEFAULT_COLORS} from './colorPalettes.js';
+export const TEX_SWATCHES: string[] = [...DEFAULT_COLORS];

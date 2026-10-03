@@ -70,9 +70,9 @@ test('selected and crossed frames vary up to 1:5 on both axes while retaining sq
  }
 });
 test('color controls keep the original colors and white-first rainbow with reversible HSV',()=>{
- assert.equal(ART_SWATCHES.length,8);assert.equal(ART_SWATCHES[0][0],'#ffffff');
+ assert.equal(ART_SWATCHES.length,23);assert.equal(ART_SWATCHES[0][0],'#ffffff');
  for(const hex of ['#a8ffdc','#ffd178','#ff7899'])assert.ok(ART_SWATCHES.some(([c])=>c===hex));
- for(const hex of [...ART_SWATCHES.map(([c])=>c),'#000000','#123456'])assert.equal(artHsvToHex(artHexToHsv(hex)),hex);
+ for(const hex of [...ART_SWATCHES.map(([c])=>c),'#000000','#123456'])assert.equal(artHsvToHex(artHexToHsv(hex)),hex.toLowerCase());
  assert.equal(artHsvToHex({h:360,s:100,v:100}),'#ff0000');
  assert.doesNotMatch(ui,/tr\('線條透明度'|tr\('底圖透明度'/);
 });

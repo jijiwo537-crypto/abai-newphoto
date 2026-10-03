@@ -22,6 +22,7 @@ import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
+import {DEFAULT_COLORS,SHAPE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes.js';
 import {effectControlValue,effectStoredValue,effectControlMin} from '../utils/effectControlValues';
 import {effectDetailIcon} from '../utils/effectDetailIcons';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
@@ -665,7 +666,7 @@ const GLOW_RAMP = (() => {
 })();
 
 /** 名稱裡有「發光」的功能用這一組：亮度就是基準色本身的亮度 */
-export const GLOW_COLORS = ['#FFFFFF', ...GLOW_RAMP.hues.map(h => glowHslToHex(h, GLOW_RAMP.sat, GLOW_RAMP.l))];
+export const GLOW_COLORS = [...DEFAULT_COLORS];
 
 /**
  * 其他借用同一組色票的功能（文字、描邊、圖形、底色…）用這一組：
@@ -673,15 +674,14 @@ export const GLOW_COLORS = ['#FFFFFF', ...GLOW_RAMP.hues.map(h => glowHslToHex(h
  * 只亮一點點，還是同一條漸層。
  */
 const GLOW_BASE_HSV = hexToHsv(GLOW_BASE);
-export const SOFT_COLORS =
-  ['#FFFFFF', ...GLOW_RAMP.hues.map(h => hsvToHex(h, GLOW_BASE_HSV.s, 90))];
+export const SOFT_COLORS = [...SHAPE_COLORS];
 
 /**
  * 文字顏色／文字描邊用的色票。
  * 就是上面那組淡的，只在最前面多墊一顆純黑 ——
  * 有黑色的色票，黑色一律排在純白前面。
  */
-const TEXT_COLORS = ['#000000', ...SOFT_COLORS];
+const TEXT_COLORS = [...NEW_TEXT_COLORS];
 
 /**
  * 色票列：第一顆固定是自訂顏色（開系統調色盤），後面才是預設色。
@@ -731,7 +731,7 @@ export const ColorPickerPage: React.FC<{
     }
   }, []);
   return (
-  <div ref={rootRef} className="animate-in fade-in duration-200 pt-1 pb-24">
+  <div ref={rootRef} data-fixed-color-page className="h-full overflow-hidden animate-in fade-in duration-200 pt-1 pb-1">
     <div className="h-[38px] flex items-center gap-1">
       <button
         onClick={onBack}
@@ -743,7 +743,6 @@ export const ColorPickerPage: React.FC<{
         <span>返回</span>
       </button>
       <div className="ml-auto flex items-center gap-2">
-        <span className="text-[9px] font-mono text-white/40">{(value || '').toUpperCase()}</span>
         <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
       </div>
     </div>
@@ -751,7 +750,7 @@ export const ColorPickerPage: React.FC<{
         跟紋理顏色那一頁是同一顆元件、同一種操作。
         外面包一層高度 auto 的盒子：挑色器的根是 h-full，直接放會撐滿整格。 */}
     <div>
-      <ColorPickerEmbedded color={value || '#FFFFFF'} onChange={onPick} onClose={onBack} />
+      <ColorPickerEmbedded color={value || '#FFFFFF'} colors={colors} onChange={onPick} onClose={onBack} />
     </div>
   </div>
   );
@@ -1881,7 +1880,6 @@ export const ColorPick: React.FC<{
       >
         <span className="text-[10px] font-bold text-[#888] shrink-0">{label}</span>
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-[9px] font-mono text-white/40">{(value || '').toUpperCase()}</span>
           <div className="w-5 h-4 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
         </div>
       </div>
@@ -1963,13 +1961,12 @@ export const TextEditorPanel: React.FC<{
     >
       <span className="text-[10px] font-bold text-[#888]">{label}</span>
       <div className="flex items-center gap-2">
-        <span className="text-[9px] font-mono text-white/40">{value}</span>
         <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
       </div>
     </div>
   );
 
-  const swatchRow = (value: string | undefined, onPick: (c: string) => void, colors = TEXT_COLORS) => (
+  const swatchRow = (value: string | undefined, onPick: (c: string) => void, colors = symbol ? DEFAULT_COLORS : TEXT_COLORS) => (
     <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-0.5 py-0.5">
       {/* 第一顆固定是自訂顏色 */}
       <CustomColorButton value={value || '#FFFFFF'} onPick={onPick} />
@@ -2047,7 +2044,7 @@ export const TextEditorPanel: React.FC<{
         </button>
       </div>}
 
-      <div className={`flex-1 no-scrollbar h-full overflow-y-auto overflow-x-hidden pr-2 ${symbol ? 'pl-2' : 'pl-3'}`}>
+      <div className={`flex-1 no-scrollbar h-full ${colorPage ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden pr-2 ${symbol ? 'pl-2' : 'pl-3'}`}>
         {colorPage && (
           <ColorPickerPage
             value={colorPage.value}
@@ -2242,7 +2239,7 @@ export const ShapeEditorPanel: React.FC<{
     <div
       className="max-w-md mx-auto h-full animate-in fade-in duration-300"
     >
-      <div className="h-full overflow-y-auto overflow-x-hidden no-scrollbar px-2">
+      <div className={`h-full ${colorPage ? 'overflow-hidden' : 'overflow-y-auto'} overflow-x-hidden no-scrollbar px-2`}>
         {colorPage && (
           <ColorPickerPage
             value={colorPage.value}
@@ -2946,40 +2943,14 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
     onChange(newHex);
   };
 
-  const handleHexInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    let val = e.target.value.toUpperCase();
-    if (val.length > 0 && !val.startsWith('#')) val = '#' + val;
-    setHexInput(val);
-    
-    if (/^#[0-9A-F]{6}$/i.test(val)) {
-      setHsv(hexToHsv(val));
-      onChange(val);
-    }
-  };
-
   // 跟發光同一條漸層，明度提到 90%；第一顆是純白
-  const PRESETS = colors || SOFT_COLORS;
-
-  /* 色號欄。沒有頂列時跟色票並排（原本的樣子）；
-     有頂列時搬上去跟返回鍵平行，色票就能佔滿整排。 */
-  const hexBox = (
-    <KeyboardSafeInput
-      type="text"
-      value={hexInput}
-      onChange={handleHexInputChange}
-      maxLength={7}
-      aria-label="色號"
-      style={{ fontSize: 16 }}
-      className="shrink-0 h-8 w-[86px] bg-[#1A1A1A] border border-[#333] rounded-[7px] px-2 text-white font-mono text-xs outline-none focus:border-white/50"
-    />
-  );
+  const PRESETS = colors || [...DEFAULT_COLORS];
 
   return (
     <div className="h-full flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-300">
       {headerLeft && (
         <div className="h-[38px] flex items-center gap-1 px-0.5 shrink-0">
           {headerLeft}
-          <div className="ml-auto">{hexBox}</div>
         </div>
       )}
       <div className="flex items-center gap-2 mb-3">
@@ -8312,7 +8283,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     setSelectedLayoutId(null);
     setEditingTextId(id);
     // 新增完直接進文字編輯頁，省掉「再按一次工具列的編輯」那一步
-    setActiveTab('adjust');
+    setObjectEditorRevision(v=>v+1); setActiveTab('adjust');
   };
 
   /**
@@ -9678,6 +9649,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   // 離開「新增」分頁就退回大按鈕那一層，下次進來不會停在圖案清單
   useEffect(() => { if (activeTab !== 'add') setAddSub('root'); }, [activeTab]);
   const [colorPickerActive, setColorPickerActive] = useState(false);
+  const [objectEditorRevision,setObjectEditorRevision]=useState(0);
   /** 編輯頁選到的是圖片（不是文字）—— 這時整個工具欄要換成跟「編輯」一樣的三段式 */
   /* 這個旗標控制外框要不要再包一層 p-4。編輯圖片的那套介面自己就把邊界算好了，
      多包一層 padding 就會整個縮一圈、位置也跟著偏 —— 佈局裡的格子走的是同一套
@@ -15251,7 +15223,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                           </button>
                                           {/* 跟浮動圖片同一顆「圖片調整」，進的是同一個編輯面板 */}
                                           <button
-                                            onClick={(e) => { e.stopPropagation(); setActiveTab('adjust'); }}
+                                            onClick={(e) => { e.stopPropagation(); setObjectEditorRevision(v=>v+1); setActiveTab('adjust'); }}
                                             title="圖片調整"
                                             style={{ width: 26 / Math.max(0.0001, kRef.current), height: 26 / Math.max(0.0001, kRef.current) }}
                                             className="text-black hover:text-neutral-400 rounded-full transition-colors flex items-center justify-center"
@@ -15461,7 +15433,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                         );
                                       })()}
                                       <button
-                                        onClick={(e) => { e.stopPropagation(); setActiveTab('adjust'); }}
+                                        onClick={(e) => { e.stopPropagation(); setObjectEditorRevision(v=>v+1); setActiveTab('adjust'); }}
                                         title="佈局調整"
                                         style={{ width: 28 * layoutUiInv, height: 28 * layoutUiInv }}
                                         className="rounded-full hover:bg-black/10 flex items-center justify-center text-black"
@@ -15618,7 +15590,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               setEditingTextId(fImg.id);
                               setInlineEditId(null);
                             }
-                            setActiveTab('adjust');
+                            setObjectEditorRevision(v=>v+1); setActiveTab('adjust');
                             return;
                           }
                           if (action === 'copy') {
@@ -16165,7 +16137,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           螢幕夠高就用 36dvh。 */}
       <footer
         className="bg-[#0a0a0a] border-t border-[#1a1a1a] flex flex-col z-[50] no-select shrink-0 transition-transform duration-300 ease-out"
-        style={{ height: 'max(36dvh, 310px)', visibility: igPreview ? 'hidden' : undefined }}
+        style={{ height: activeTab === 'color' ? 'max(45dvh, 400px)' : 'max(36dvh, 310px)', visibility: igPreview ? 'hidden' : undefined }}
       >
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* Tabs list */}
@@ -16344,7 +16316,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               if (layer.text !== undefined) {
                 return (
                   <TextEditorPanel
-                    key={`text-editor-${layer.id}`}
+                    key={`text-editor-${layer.id}-${objectEditorRevision}`}
                     layer={layer}
                     symbol={!!layer.sym}
                     onChange={patch => patchTextLayer(layer.id, withGlowInit(layer, patch))}
@@ -16357,7 +16329,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               if (layer.shape) {
                 return (
                   <ShapeEditorPanel
-                    key={`shape-editor-${layer.id}`}
+                    key={`shape-editor-${layer.id}-${objectEditorRevision}`}
                     layer={layer}
                     onChange={patch => patchTextLayer(layer.id, withGlowInit(layer, patch))}
                     onTuningChange={active => handleVectorTuning(layer.id, active)}
@@ -16809,7 +16781,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
             {activeTab === 'color' && (colorSub === 'stripeA' || colorSub === 'stripeB') && (
               /* 條紋的兩個顏色：跟紋理顏色同一頁、同一組色票 */
-              <div className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto overflow-x-hidden no-scrollbar pb-16">
+              <div className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-hidden no-scrollbar">
                 <div>
                   <ColorPickerEmbedded
                     color={colorSub === 'stripeA' ? stripeA : stripeB}
@@ -16833,7 +16805,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             {activeTab === 'color' && colorSub === 'pattern' && (
               /* 紋理專屬的調色頁：從紋理那一排的色塊點進來，跟創意拼圖一樣。
                  挑色器本身用的是跟底色完全同一顆元件。 */
-              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-y-auto overflow-x-hidden no-scrollbar pb-16">
+              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-200 h-full overflow-hidden no-scrollbar">
                 {/* 返回鍵交給挑色器放在頂列，色號跟它平行 ——
                     色票那一排就整排都是色票，不會被色號擠掉一大截。 */}
                 <div>
@@ -16861,7 +16833,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
               /* 上面是原本的底色挑色器（一個字沒動），下面緊接著背景紋理。
                  這一頁比原本高，所以自己捲 —— 外層那一格的 overflow 名單
                  是所有分頁共用的，完全沒動，別的分頁不受影響。 */
-              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-y-auto overflow-x-hidden no-scrollbar pb-16">
+              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-hidden no-scrollbar">
                 {/* 外面包一層高度 auto 的盒子：ColorPickerEmbedded 的根是 h-full，
                      直接放在這個「有固定高度」的捲動格裡會整個撐滿，把下面的紋理
                      推到很遠。包一層之後 100% 會解析成 auto，它就只佔自己需要的高度。 */}
@@ -16874,7 +16846,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 </div>
                 {/* 紋理整組收在同一格裡：選項、顏色、兩根滑桿都在同一個框內。
                     mt-5 是為了跟上面的底色挑色器拉開一點距離。 */}
-                <div className="mt-5">
+                <div className="mt-2">
                   <div className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden">
                     <div className="h-[47px] flex items-center justify-between px-3">
                       <span className="text-[10px] font-bold text-[#888]">紋理</span>
