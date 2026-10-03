@@ -13,7 +13,10 @@ export function KeyboardSafeInput(props: React.InputHTMLAttributes<HTMLInputElem
     const place = () => {
       if (!panel.current) return;
       const bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
-      panel.current.style.top = `${Math.max(8, bottom - panel.current.offsetHeight - 12)}px`;
+      const preview=document.querySelector('[data-creative-stage] canvas')?.parentElement?.getBoundingClientRect();
+      const available=(vv?.width||window.innerWidth)-48;
+      panel.current.style.width=`${Math.min(available,preview?.width?Math.max(240,preview.width-16):available)}px`;
+      panel.current.style.top = `${Math.max(8, bottom - panel.current.offsetHeight - 6)}px`;
     };
     place();
     vv?.addEventListener('resize', place);
@@ -40,7 +43,7 @@ export function KeyboardSafeInput(props: React.InputHTMLAttributes<HTMLInputElem
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); show(); } }} />
     {open && createPortal(<div className="fixed inset-0 z-[1000]" role="dialog" aria-label={props['aria-label'] || props.placeholder}>
       <button className="absolute inset-0 bg-black/30" aria-label="完成" onClick={close} />
-      <div ref={panel} className="absolute left-4 right-4 flex items-center gap-3 rounded-xl bg-[#242424] p-3 shadow-xl">
+      <div ref={panel} data-keyboard-safe-panel className="absolute left-1/2 -translate-x-1/2 flex items-center gap-3 rounded-xl bg-[#242424] p-3 shadow-xl">
         <input {...props} ref={field} readOnly={false} className="min-w-0 flex-1 rounded-lg bg-black/30 px-3 py-2 text-white outline-none"
           style={{ fontSize: 16, caretColor: '#fff', border: '1px solid #fff', outline: 'none', boxShadow: 'none', accentColor: '#fff' }} onBlur={() => setOpen(false)}
           onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); close(); } }} />

@@ -9,6 +9,15 @@ export type PhotoArrangement = 'grid' | 'horizontal' | 'vertical' | 'feature';
 export type RegionPhoto = { src: string; width: number; height: number; zoom?: number; offsetX?: number; offsetY?: number };
 export type PhotoRegion = { photos: RegionPhoto[]; arrangement: PhotoArrangement; landscape: boolean; templateIndex?: number; multi?: boolean; overflowPhotos?: RegionPhoto[]; seamless?: boolean; seamlessAmount?: number };
 export type PhotoRect = { x: number; y: number; w: number; h: number; squareOverlay?:boolean; overlayAspect?:number };
+/** Keep old switch-based drafts readable, including enabled minimum feather. */
+export function creativeSeamlessSliderValue(region:PhotoRegion){
+  const amount=Math.max(0,Math.min(100,Math.round(region.seamlessAmount||0)));
+  return region.seamless?Math.max(1,amount):0;
+}
+export function withCreativeSeamlessAmount(region:PhotoRegion,value:number):PhotoRegion{
+  const amount=Math.max(0,Math.min(100,Math.round(value)));
+  return {...region,seamless:amount>=1,seamlessAmount:amount};
+}
 
 /** Creative-only additions: persisted cross-page template indices remain unchanged. */
 const overlayTemplate=(name:string,positions:('top'|'bottom')[],aspect:number)=>{const width=aspect===1?.32:.384;return {name,rects:[

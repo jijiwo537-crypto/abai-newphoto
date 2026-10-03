@@ -5,7 +5,14 @@ import ts from 'typescript';
 const source=readFileSync(new URL('../utils/creativePhotoLayout.ts',import.meta.url),'utf8');
 const catalog=ts.transpileModule(readFileSync(new URL('../utils/layoutTemplates.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText.replace("'./layoutTemplates'",`'data:text/javascript;base64,${Buffer.from(catalog).toString('base64')}'`);
-const {photoRegionRects,photoRegionHit,swapRegionPhotos,paintPhotoRegion,PHOTO_SWAP_HOLD_MS,regionRects,photoTemplates,quickPhotoTemplateIndices,changePhotoTemplate,photoCrop,PHOTO_LAYOUT_COUNTS,dimmedPhotoSource,clearPhotoDimmer,seamlessPhotoBase}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+const {photoRegionRects,photoRegionHit,swapRegionPhotos,paintPhotoRegion,PHOTO_SWAP_HOLD_MS,regionRects,photoTemplates,quickPhotoTemplateIndices,changePhotoTemplate,photoCrop,PHOTO_LAYOUT_COUNTS,dimmedPhotoSource,clearPhotoDimmer,seamlessPhotoBase,creativeSeamlessSliderValue,withCreativeSeamlessAmount}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+test('always-visible feather slider enables from one and preserves threshold values',()=>{
+ const region={photos:[],arrangement:'grid',landscape:false};
+ for(const value of [0,1,2,30,100]){const next=withCreativeSeamlessAmount(region,value);assert.equal(next.seamless,value>=1);assert.equal(creativeSeamlessSliderValue(next),value);assert.equal(next.photos,region.photos);}
+ assert.equal(creativeSeamlessSliderValue({...region,seamless:true,seamlessAmount:0}),1);
+ assert.equal(creativeSeamlessSliderValue({...region,seamless:false,seamlessAmount:75}),0);
+ assert.equal(withCreativeSeamlessAmount(region,150).seamlessAmount,100);
+});
 test('picker preserves shared cross-page templates and appends four creative-only overlays',async()=>{
  const {TEMPLATE_MAP}=await import(`data:text/javascript;base64,${Buffer.from(catalog).toString('base64')}`);
  assert.deepEqual(PHOTO_LAYOUT_COUNTS,[2,3,4,5,6,7,8,9,10]);

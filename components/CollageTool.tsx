@@ -13,6 +13,7 @@ import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { CreativeSeamless } from '../utils/creativeSeamless';
 import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
+import {creativeSeamlessSliderValue,withCreativeSeamlessAmount} from '../utils/creativePhotoLayout';
 import { createPortal } from 'react-dom';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
@@ -632,10 +633,11 @@ export const GLOW_SWATCHES: string[] = (() => {
 
 /* 遮罩用的色票。做法跟發光那組一模一樣：只轉色相、飽和度與亮度完全不動，
    照色相由小到大排成一圈漸層。這裡放兩圈 ——
-   淡的那一圈以 #D2E8E1 為基準（＝遮罩的預設色），
+   淡的那一圈保留以 #D2E8E1 為基準的既有色票，
    深一點的那一圈以 #B8E3D8 為基準，兩種濃淡都給得到。
    第一顆固定純白。 */
 const MASK_BASE_LIGHT = '#D2E8E1';
+const CREATIVE_MASK_DEFAULT = '#CFE6DE';
 const MASK_BASE_DEEP = '#B8E3D8';
 /** 把一個顏色拆成 HSL，只換色相繞一圈，回傳 n 顆照色相排好的顏色 */
 const hueRing = (baseHex: string, n: number): string[] => {
@@ -2025,7 +2027,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [tuneTool, setTuneTool] = useState('');
   const [loadingLut, setLoadingLut] = useState<string | null>(null);
   const [lutRevision, setLutRevision] = useState(0);
-  const [maskColor, setMaskColor] = useState('#D2E8E1'); 
+  const [maskColor, setMaskColor] = useState(CREATIVE_MASK_DEFAULT);
   const [patternType, setPatternType] = useState('none'); 
   const [dotColor, setDotColor] = useState('#728C86'); 
   const [dotSize, setDotSize] = useState(15); 
@@ -2123,9 +2125,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 圖案發光：預設關閉。開啟後每個圖案周圍散出一圈光，
      跟圖片、文字的發光同一種感覺（同一套「三段模糊疊起來」的做法）。 */
   const [glowMode, setGlowMode] = useState<'off' | 'both' | 'mask' | 'image'>('off');
-  /* 預設就跟遮罩同色（遮罩的預設是 #D2E8E1）—— 一開就是同步的，
+  /* 預設就跟遮罩同色 —— 一開就是同步的，
      使用者不必先去動一次遮罩顏色才對得起來。 */
-  const [holeGlowColor, setHoleGlowColor] = useState(MASK_BASE_LIGHT);
+  const [holeGlowColor, setHoleGlowColor] = useState(CREATIVE_MASK_DEFAULT);
   /** 發光自己的常駐動畫（'none' | 'twinkle' | 'blink' | 'glitch'） */
   const [glowIdle, setGlowIdle] = useState('none');
   /** 發光常駐動畫的幅度（0～100）與速度（20～180，100＝原速） */
@@ -7112,6 +7114,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
   }, [imageState, renderToCanvas, previewScale, layout, maskScale, canvasRatio, maxPreviewScale]);
 
+  // The layout catalog grows the footer. Follow its actual animated stage size,
+  // using the same contain geometry as the normal preview (not a second scale).
+  useLayoutEffect(() => {
+    const stage=stageRef.current;
+    if(!stage||!imageState)return;
+    const observer=new ResizeObserver(()=>{
+      const {width,height}=stage.getBoundingClientRect();
+      const cs=collageSizeOf(layout,imageState.baseW,imageState.baseH,maskScale,canvasRatio);
+      const fit=creativePreviewFit(width,height,cs.w,cs.h);
+      setStageSize(prev=>prev.w===width&&prev.h===height?prev:{w:width,h:height});
+      setBaseCss(prev=>prev?.w===cs.w*fit&&prev.h===cs.h*fit?prev:{w:cs.w*fit,h:cs.h*fit});
+      baseCssWRef.current=cs.w*fit;
+    });
+    observer.observe(stage);
+    return ()=>observer.disconnect();
+  },[imageState,layout,maskScale,canvasRatio]);
+
   useEffect(() => { 
     if (saveState !== 'idle') return;
     let id = requestAnimationFrame(() => renderCanvas()); 
@@ -8179,13 +8198,30 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(photoRegionRef.current)commitRegion(changePhotoTemplate(photoRegionRef.current,count,index));
     setSelectedRegionPhoto(null);setBaseSelected(false);
   };
+  const photoLayoutTimerRef=useRef<number>();
+  useEffect(()=>()=>window.clearTimeout(photoLayoutTimerRef.current),[]);
+  const changePhotoLayoutOpen=(open:boolean)=>{
+    // Preserve a complete scene through the geometric tween: no canvas clears,
+    // intermediate composites or photo re-encoding on each animation frame.
+    window.clearTimeout(photoLayoutTimerRef.current);
+    motionTransitionUntilRef.current=0;
+    forceFullPreviewRef.current=true;
+    if(canvasRef.current)renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);
+    forceFullPreviewRef.current=false;
+    motionTransitionUntilRef.current=performance.now()+340;
+    setPhotoLayoutOpen(open);
+    photoLayoutTimerRef.current=window.setTimeout(()=>{
+      motionTransitionUntilRef.current=0;
+      if(canvasRef.current)renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);
+    },350);
+  };
   const photoLayoutControls=photoRegion && <div className="flex flex-col min-w-0" data-photo-layout-control>
     <span className="text-[10px] font-bold text-[#888] mb-2 tracking-widest">圖片排版</span>
     <div className="h-9 grid grid-cols-5 gap-1 bg-[#111] border border-[#222] p-1 rounded-[6px]">
       {quickPhotoTemplateIndices(photoRegion.photos.length).map(i=>{const t=photoTemplates(photoRegion.photos.length)[i];return <button key={i} disabled={!t}
         aria-label={t?.name||'無排版'} data-photo-template={i} onClick={()=>applyPhotoTemplate(photoRegion.photos.length,i)}
         className={`rounded-[3px] flex items-center justify-center focus:outline-none active:scale-95 transition-[color,transform] ${photoRegion.templateIndex===i?'text-white':'text-[#444]'} disabled:opacity-20`}>{t?layoutThumbnail(t.rects,photoRegion.templateIndex===i):null}</button>;})}
-      <button aria-label="所有圖片佈局" aria-expanded={photoLayoutOpen} onClick={()=>setPhotoLayoutOpen(true)} className="text-[#444] flex items-center justify-center focus:outline-none active:scale-95 transition-[color,transform]"><svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></button>
+      <button aria-label="所有圖片佈局" aria-expanded={photoLayoutOpen} onClick={()=>changePhotoLayoutOpen(true)} className="text-[#444] flex items-center justify-center focus:outline-none active:scale-95 transition-[color,transform]"><svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></button>
     </div>
   </div>;
   const uploadRegionPhotos=async(e:React.ChangeEvent<HTMLInputElement>)=>{
@@ -8570,10 +8606,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   return 'off';
                 });
               }}
-              className={`p-1.5 rounded-md border transition-all active:scale-90 flex items-center justify-center ${
+              data-creative-brush-toggle
+              className={`p-1.5 bg-transparent transition-colors active:scale-90 flex items-center justify-center ${
                 brushMode === 'pen' || brushMode === 'eraser'
-                  ? 'bg-white/10 border-white text-white font-bold shadow-[0_0_8px_rgba(255,255,255,0.2)]'
-                  : 'bg-transparent border-transparent text-[#888] hover:text-white'
+                  ? 'text-white'
+                  : 'text-[#888] hover:text-white'
               }`}
               title={brushMode === 'pen' ? '畫筆模式（再按切換為橡皮擦）' : brushMode === 'eraser' ? '橡皮擦模式（再按關閉）' : '開啟畫筆'}
             >
@@ -8718,6 +8755,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             data-photo-arrangement={photoRegion?.arrangement || 'grid'}
             data-photo-template-index={photoRegion?.templateIndex}
             data-photo-transforms={import.meta.env.DEV?JSON.stringify(photoRegion?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0}))):undefined}
+            data-photo-seamless={import.meta.env.DEV?JSON.stringify({on:!!photoRegion?.seamless,amount:photoRegion?.seamlessAmount||0}):undefined}
             data-pattern-stamps={import.meta.env.DEV?JSON.stringify(holes.map(h=>({...h,size:getHoleSize(h)}))):undefined}
             data-photo-objects={import.meta.env.DEV?JSON.stringify(objects.filter(o=>o.type==='image').map(({id,src,x,y,w,h,vid})=>({id,src,x,y,w,h,vid}))):undefined}
             data-scene-geometry={import.meta.env.DEV?JSON.stringify(getLayoutOffsets()):undefined}
@@ -9252,7 +9290,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     （實測 287px → 300px，畫面位移 6.5px）。
                     一律用最高的那個值，進哪一頁、開不開滑桿，預覽都不會動。 */
                  style={{
-          height: 'max(34dvh, 300px)',
+          height: photoLayoutOpen ? 'max(48dvh, 390px)' : 'max(34dvh, 300px)',
+          flexShrink: 0,
           /* 鍵盤升起時整條往上移，剛好讓輸入框的下緣貼著鍵盤上緣。
              用 transform 而不是改高度：transform 走合成執行緒，
              升起與收回都是滑順的動畫，不會硬切。 */
@@ -9266,7 +9305,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 key={id} 
                 data-creative-tab={id}
                 onClick={() => {
-                  setPhotoLayoutOpen(false);
+                  if(photoLayoutOpen)changePhotoLayoutOpen(false);
                   setActiveTab(id);
                   /* 已經點進「新增符號／新增圖形」的時候再點一次加號，
                      就回到新增的主頁 —— 不必特地去按左上角的返回鍵。 */
@@ -9299,7 +9338,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         }`}`}>
           {photoLayoutOpen&&photoRegion&&<div role="dialog" aria-label="所有圖片佈局" data-photo-layout-options className="absolute inset-0 z-[61] bg-[#0A0A0A] flex flex-col animate-in fade-in duration-200">
             <div className="h-10 shrink-0 flex items-center gap-2 px-5">
-              <button aria-label="返回圖片排版" onClick={()=>setPhotoLayoutOpen(false)} className="w-9 h-9 -ml-2 flex items-center justify-center text-white/60 active:scale-90"><Icon name="arrow_back" className="text-[20px]"/></button>
+              <button aria-label="返回圖片排版" onClick={()=>changePhotoLayoutOpen(false)} className="w-9 h-9 -ml-2 flex items-center justify-center text-white/60 active:scale-90"><Icon name="arrow_back" className="text-[20px]"/></button>
               <span className="text-[10px] font-bold text-[#888] tracking-widest">圖片排版</span>
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-none px-5 pb-5"><div className="grid grid-cols-4 sm:grid-cols-5 gap-2">
@@ -9491,14 +9530,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   })()}
                   </div>
                   {photoRegion && photoRegion.photos.length>1 && seamlessPhotoBase(photoRegion) && <div className="space-y-3" data-creative-seamless>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[10px] font-bold text-[#888]">無縫拼圖</span>
-                      <div className="flex gap-1">{[false,true].map(on=><button key={String(on)} aria-pressed={!!photoRegion.seamless===on} onClick={()=>commitRegion({...photoRegionRef.current!,seamless:on})}
-                        className={`h-7 px-4 rounded-[4px] text-[10px] font-bold ${!!photoRegion.seamless===on?'bg-white text-black':'bg-[#161616] text-[#888]'}`}>{on?'開啟':'關閉'}</button>)}</div>
+                    <span className="text-[10px] font-bold text-[#888]">無縫拼圖</span>
+                    <div>
+                      <RegionLiveRange value={creativeSeamlessSliderValue(photoRegion)} onChange={v=>commitRegion(withCreativeSeamlessAmount(photoRegionRef.current!,v),true)} onCommit={finishRegionEdit}/>
                     </div>
-                    {photoRegion.seamless && <div>
-                      <RegionLiveRange value={photoRegion.seamlessAmount||0} onChange={v=>commitRegion({...photoRegionRef.current!,seamlessAmount:v},true)} onCommit={finishRegionEdit}/>
-                    </div>}
                   </div>}
                 {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
                     它們講的都是「這張版面長什麼樣」，本來就該在同一頁。

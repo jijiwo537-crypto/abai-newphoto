@@ -43,7 +43,9 @@ test('keyboard pan is compensated and original tool geometry restored after dism
 test('temporary fields sit above the visual keyboard viewport with white focus styling', () => {
   const source=readFileSync(new URL('../components/KeyboardSafeInput.tsx',import.meta.url),'utf8');
   assert.match(source,/vv\.offsetTop \+ vv\.height/);
-  assert.match(source,/bottom - panel\.current\.offsetHeight - 12/);
+  assert.match(source,/bottom - panel\.current\.offsetHeight - 6/);
+  assert.match(source,/preview\.width-16/);
+  assert.match(source,/left-1\/2 -translate-x-1\/2/);
   assert.match(source,/caretColor: '#fff'/);
   assert.match(source,/fontSize: 16/);
   assert.match(source,/focus\(\{ preventScroll: true \}\)/);

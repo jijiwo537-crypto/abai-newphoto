@@ -27,7 +27,8 @@ void(async()=>{
   const exp=document.querySelector<HTMLElement>('[aria-label="創意拼圖匯出設定"]')!;
   check('more popup aligns with save format popup',Math.abs(menutop-exp.getBoundingClientRect().top)<=1);
   document.querySelector<HTMLButtonElement>('[data-creative-export-options-toggle]')!.click();await wait();
-  document.querySelectorAll<HTMLButtonElement>('[data-creative-seamless] button')[1].click();await wait(15);
+  const seamSlider=document.querySelector<HTMLInputElement>('[data-creative-seamless] input')!;
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(seamSlider,'2');seamSlider.dispatchEvent(new Event('input',{bubbles:true}));seamSlider.dispatchEvent(new PointerEvent('pointerup',{bubbles:true}));await wait(15);
   // Solid-color fixture samples stay away from the high-frequency numeral
   // glyphs: CPU and GPU use different, equally valid minification kernels.
   const points=[[.1,.1],[.1,.5],[.43,.43],[.9,.7]],g=canvas.getContext('2d')!;let pixels:number[][]=[];

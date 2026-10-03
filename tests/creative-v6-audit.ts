@@ -21,7 +21,8 @@ void(async()=>{
   document.querySelector<HTMLButtonElement>('[data-photo-template="5"]')!.click();await wait(10);
   const beforeTop=pixel(.42,.18),beforeBottom=pixel(.42,.68),beforeSeam=pixel(.1,.5);
   const seam=document.querySelector<HTMLElement>('[data-creative-seamless]');check('special square layout exposes seamless controls',!!seam);
-  seam!.querySelectorAll<HTMLButtonElement>('button')[1].click();await wait(20);
+  const seamSlider=seam!.querySelector<HTMLInputElement>('input')!;
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(seamSlider,'2');seamSlider.dispatchEvent(new Event('input',{bubbles:true}));seamSlider.dispatchEvent(new PointerEvent('pointerup',{bubbles:true}));await wait(20);
   const afterSeam=pixel(.1,.5);
   check('only large background photos blend',afterSeam[0]>beforeSeam[0]+20&&afterSeam[1]<beforeSeam[1]-20,{beforeSeam,afterSeam});
   check('both foreground square photos remain pixel-identical',JSON.stringify(beforeTop)===JSON.stringify(pixel(.42,.18))&&JSON.stringify(beforeBottom)===JSON.stringify(pixel(.42,.68)),{beforeTop,afterTop:pixel(.42,.18),beforeBottom,afterBottom:pixel(.42,.68)});

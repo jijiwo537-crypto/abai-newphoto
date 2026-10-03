@@ -19,18 +19,18 @@ void(async()=>{
   const r=canvas.getBoundingClientRect(),x=r.left+r.width*.08,y=r.top+r.height*.08;
   pointer('pointerdown',301,x,y);pointer('pointerdown',302,x+r.width*.10,y);pointer('pointermove',302,x+r.width*.20,y);await next();pointer('pointerup',302,x+r.width*.20,y);pointer('pointerup',301,x,y);await next();
   pointer('pointerdown',303,x,y);await measure('selected photo pan',i=>pointer('pointermove',303,x+Math.sin(i*.08)*20,y+Math.cos(i*.08)*15));pointer('pointerup',303,x,y);await next();
-  const seam=document.querySelector<HTMLElement>('[data-creative-seamless]')!,on=seam.querySelectorAll<HTMLButtonElement>('button')[1],off=seam.querySelectorAll<HTMLButtonElement>('button')[0];
-  const started=performance.now(),before=Number(canvas.dataset.paintCount||0);on.click();let toggled=0;
+  const seam=document.querySelector<HTMLElement>('[data-creative-seamless]')!,slider=seam.querySelector<HTMLInputElement>('input[type=range]')!,setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!;
+  const setAmount=(v:number)=>{setter.call(slider,String(v));slider.dispatchEvent(new Event('input',{bubbles:true}));slider.dispatchEvent(new PointerEvent('pointerup',{bubbles:true}));};
+  const started=performance.now(),before=Number(canvas.dataset.paintCount||0);setAmount(2);let toggled=0;
   while(Number(canvas.dataset.paintCount||0)===before&&toggled<30){await next();toggled++;}
   check('seam toggle paints within two frames',toggled<=2,{frames:toggled,ms:performance.now()-started});
   pointer('pointerdown',304,x,y);await measure('seamless selected photo pan',i=>pointer('pointermove',304,x+Math.sin(i*.08)*20,y+Math.cos(i*.08)*15));pointer('pointerup',304,x,y);await next();
-  const slider=seam.querySelector<HTMLInputElement>('input[type=range]')!,setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!;
   slider.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:305}));
   await measure('fusion slider',i=>{setter.call(slider,String(Math.round((Math.sin(i*.06)+1)*50)));slider.dispatchEvent(new Event('input',{bubbles:true}));});
   slider.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:305}));await next();
-  const last=Number(canvas.dataset.paintCount||0);off.click();await next();await next();check('seam disable immediately repaints',Number(canvas.dataset.paintCount||0)>last);
+  const last=Number(canvas.dataset.paintCount||0);setAmount(0);await next();await next();check('seam disable immediately repaints',Number(canvas.dataset.paintCount||0)>last);
   if(new URLSearchParams(location.search).has('zoom')){
-    on.click();await next();await next();const s=stage.getBoundingClientRect(),cr=canvas.getBoundingClientRect();
+    setAmount(2);await next();await next();const s=stage.getBoundingClientRect(),cr=canvas.getBoundingClientRect();
     const yy=Math.min(s.bottom-3,cr.bottom+8),mid=(s.left+s.right)/2,span=Math.min(s.width*.15,60);
     const viewPointer=(type:string,id:number,xx:number)=>stage!.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerId:id,pointerType:'touch',clientX:xx,clientY:yy,buttons:type==='pointerup'?0:1}));
     viewPointer('pointerdown',306,mid-span);await next();viewPointer('pointerdown',307,mid+span);await next();
