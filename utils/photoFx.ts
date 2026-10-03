@@ -103,7 +103,7 @@ const gpuColorChain = (
       if (!src || !g.setSource(src, w, h)) return false;
       gpuSrcKey = srcKey;
     }
-    const paint = (film: Uint8ClampedArray | null, filmSize: number, into: HTMLCanvasElement) => {
+    const paint = (film: Uint8ClampedArray | null, filmSize: number, into: CanvasRenderingContext2D) => {
       const bakeKey = colorKey + '|' + (film ? srcToken(film) : 'none') + '|' + filmSize;
       let texture = colorBakeCache.get(bakeKey);
       if (!texture) {
@@ -116,14 +116,21 @@ const gpuColorChain = (
       const drawn = g.draw();
       if (!drawn) return false;
       // GPU 的畫布下一次 draw 就會被蓋掉，先拓到自己的畫布上
-      into.getContext('2d')!.drawImage(drawn, 0, 0);
+      into.drawImage(drawn, 0, 0);
       return true;
     };
     const needBlend = !!lut && amount < 1;
+    // No blend: copy the GPU result straight to the final full-resolution
+    // surface. An intermediate canvas adds a complete image upload/copy and
+    // readback on WebKit, even though no further colour processing needs it.
+    if (!needBlend) {
+      ctx.clearRect(0,0,w,h);
+      return paint(lut ? lut.data : null,lut ? lut.size : 0,ctx);
+    }
     gpuC0 = reuse(gpuC0, w, h);
-    if (needBlend && !paint(null, 0, gpuC0)) return false;
+    if (!paint(null, 0, gpuC0.getContext('2d')!)) return false;
     gpuC1 = reuse(gpuC1, w, h);
-    if (!paint(lut ? lut.data : null, lut ? lut.size : 0, gpuC1)) return false;
+    if (!paint(lut ? lut.data : null, lut ? lut.size : 0, gpuC1.getContext('2d')!)) return false;
     ctx.clearRect(0, 0, w, h);
     if (needBlend) ctx.drawImage(gpuC0, 0, 0);
     ctx.save();
@@ -408,7 +415,7 @@ export function applyPhotoFx(
    *       來源是影片的時候一秒要跑幾十次，每次開一張幾百萬像素的畫布，
    *       手機的畫布記憶體幾秒就會被系統收走（＝閃退回主畫面）。
    *       尺寸一樣就直接沿用，連 width 都不重設（重設等於重新配置一次）。 */
-  opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement; preferSeparableCpu?: boolean },
+  opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement; preferSeparableCpu?: boolean; gpuSurface?: boolean },
 ): HTMLCanvasElement {
   const out = opts?.out || document.createElement('canvas');
   const oW = Math.max(1, Math.round(w)), oH = Math.max(1, Math.round(h));
@@ -416,7 +423,10 @@ export function applyPhotoFx(
      那正是「來源是影片」時每一格都會發生、又完全不必要的那一次配置。 */
   const resized = out.width !== oW || out.height !== oH;
   if (resized) { out.width = oW; out.height = oH; }
-  const ctx = out.getContext('2d', { willReadFrequently: true })!;
+  // Static region photos read source pixels once, then composite GPU results.
+  // A CPU-backed destination forces a GPU -> CPU -> GPU round trip each frame.
+  const exactChannels = opts?.preferSeparableCpu && !fx.lut && !fx.temp && !fx.tint && !fx.sat && !fx.vib && !fx.shadows && !fx.highlights;
+  const ctx = out.getContext('2d', { willReadFrequently: !opts?.gpuSurface || !!exactChannels })!;
   /* 沿用上一輪那張畫布時，裡面的東西還在。下面的 drawImage 是「整張鋪滿」，
      不透明的來源會自己蓋掉，但去背的 PNG 會疊在舊的上面 —— 所以要先清乾淨。
      剛換過尺寸的畫布本來就是空的，那一趟就不必清。 */

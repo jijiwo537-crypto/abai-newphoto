@@ -71,6 +71,7 @@ export class LutGpu {
   private lutSize = 0;
   private srcW = 0;
   private srcH = 0;
+  private maxTextureSize: number;
   /** 上下文被系統收走時變 true，呼叫端看到就退回 CPU */
   lost = false;
   readonly canvas: HTMLCanvasElement;
@@ -84,6 +85,7 @@ export class LutGpu {
     this.lutTex = lutTex;
     this.uScale = gl.getUniformLocation(prog, 'uScale');
     this.uOffset = gl.getUniformLocation(prog, 'uOffset');
+    this.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
     canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); this.lost = true; });
     canvas.addEventListener('webglcontextrestored', () => { this.lost = true; });
   }
@@ -153,7 +155,7 @@ export class LutGpu {
 
   /** 這張圖的尺寸這台裝置吃得下嗎（吃不下就讓呼叫端走 CPU） */
   fits(w: number, h: number): boolean {
-    const max = this.gl.getParameter(this.gl.MAX_TEXTURE_SIZE) as number;
+    const max = this.maxTextureSize;
     return w <= max && h <= max;
   }
 

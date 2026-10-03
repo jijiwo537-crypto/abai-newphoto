@@ -1393,12 +1393,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           同一格畫面裡 fxCanvasOf 可能被呼叫不只一次，第二次的參數已經跟
           第一次一樣了，逐次判斷會在 640 與 1600 之間來回重算（實測 640 與
           1600 各算了 30 次，等於完全沒省到）。 */
-    if (isMain && lv.key && lv.key !== baseKey) lv.liveUntil = now + 300;
-    const live = isMain && lv.liveUntil > now;
+    const regionPhoto = o.id?.startsWith('region-fx-');
+    if (isMain && !regionPhoto && lv.key && lv.key !== baseKey) lv.liveUntil = now + 300;
+    const live = isMain && !regionPhoto && lv.liveUntil > now;
     /* 匯出時工作尺寸放寬到 2400：成品現在最少也有 2400px 長邊（見 EXPORT_MIN_DIM），
        圖片物件如果還卡在 1600，畫上去等於被放大過 —— 那一顆就會比旁邊的
        圖形與文字糊。預覽維持 1600（拖曳中 640），手感完全沒動到。 */
     let cap = live ? 640 : (isMain ? 1600 : 2400);
+    // Base-photo previews must use the preview route, not the export route.
+    // Keep ordinary full preview density (never its live/640 shortcut), and
+    // grow it to the actual canvas pixel footprint when the view is enlarged.
+    if (isMain && regionPhoto) cap = Math.max(1600, Math.ceil(onScreenPx));
     /* 只有影片吃這個夾子 —— 圖片的成品是算一次就留著的，多算沒有代價，
        維持原本的尺寸才不會讓任何既有的畫面變糊。 */
     if (vidCap > 0) cap = Math.min(cap, vidCap);
@@ -1470,7 +1475,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        是同一張，交回去重用完全正確。 */
     const reuse = scratch ? scratch.base : undefined;
     const base = applyPhotoFx(srcEl, iw, ih, o.fx || {}, {
-      cacheSource: !isVid, fast: live, out: reuse, preferSeparableCpu: o.id?.startsWith('region-fx-'),
+      cacheSource: !isVid, fast: live, out: reuse, gpuSurface: o.id?.startsWith('region-fx-'),
+      preferSeparableCpu: o.id?.startsWith('region-fx-'),
     });
     const finish = () => {
       if (!isMain) return;
@@ -2035,8 +2041,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [maskColor, setMaskColor] = useState(CREATIVE_MASK_DEFAULT);
   const [patternType, setPatternType] = useState('none'); 
   const [dotColor, setDotColor] = useState('#728C86'); 
-  const [dotSize, setDotSize] = useState(15); 
-  const [dotGap, setDotGap] = useState(20);
+  const [dotSize, setDotSize] = useState(maskTextureSizeFromUi(10));
+  const [dotGap, setDotGap] = useState(maskTextureGapFromUi(20));
   const [dotSquash, setDotSquash] = useState(50);
   /* 條紋：兩個顏色、粗細、方向。跟點點／星星／愛心共用同一個「紋理」選單，
      但參數不一樣（沒有間距，改成粗細＋方向），所以各自存。 */
@@ -3209,12 +3215,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionTap=useRef<{id:number;index:number|null;x:number;y:number;moved:boolean}|null>(null);
   const regionScenePinch=useRef(false);
   const regionGesture=useRef<{index:number;photo:any;cx:number;cy:number;distance:number;w:number;h:number}|null>(null);
+  const regionLiveUntil=useRef(0);
+  const regionSliderHeld=useRef(false);
+  const regionThumbTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
+  useEffect(()=>()=>{if(regionThumbTimer.current!==null)clearTimeout(regionThumbTimer.current);},[]);
   const commitRegion=(next:PhotoRegion,live=false)=>{
     photoRegionRef.current=next;
+    if(live)regionLiveUntil.current=performance.now()+350;
     if(!live){setPhotoRegion(next);return;}
     if(!regionPaintRaf.current)regionPaintRaf.current=requestAnimationFrame(()=>{regionPaintRaf.current=0;regionPaintRef.current();});
   };
   const finishRegionEdit=()=>{
+    regionSliderHeld.current=false;
+    regionLiveUntil.current=performance.now()+350;
+    if(regionThumbTimer.current!==null)clearTimeout(regionThumbTimer.current);
+    regionThumbTimer.current=setTimeout(()=>{regionThumbTimer.current=null;if(!regionSliderHeld.current)regionPaintRef.current();},400);
     if(regionPaintRaf.current){cancelAnimationFrame(regionPaintRaf.current);regionPaintRaf.current=0;regionPaintRef.current();}
     setPhotoRegion(photoRegionRef.current);
   };
@@ -4786,15 +4801,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const original = decodedRegionPhotos.current.get(p.src);
       if (!original || !p.fx || !hasPhotoFx(p.fx)) return p;
       const fxStarted = import.meta.env.DEV ? performance.now() : 0;
-      const processed = fxCanvasOf({...p,id:`region-fx-${i}@${p.src}`,img:original}, false);
+      const onPx=Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*s;
+      const processed = fxCanvasOf({...p,id:`region-fx-${i}@${p.src}`,img:original}, isMain,onPx);
       if (import.meta.env.DEV && isMain && processed) {
+        targetCanvas.dataset.regionFxSize=JSON.stringify([(processed as HTMLCanvasElement).width,(processed as HTMLCanvasElement).height]);
         targetCanvas.dataset.regionFxMs=String(performance.now()-fxStarted);
         targetCanvas.dataset.regionFxBackend=(processed as HTMLCanvasElement).dataset?.colorBackend || '';
       }
       if (!processed) return p;
       // Reused effect canvases are mutable: feather caches must see parameter
       // revisions even when the canvas identity is unchanged.
-      const src=`region-processed-${i}@${p.src}@${JSON.stringify(p.fx)}`;
+      const src=`region-processed-${i}@${p.src}@${JSON.stringify(p.fx)}@${(processed as HTMLCanvasElement).width}x${(processed as HTMLCanvasElement).height}`;
       regionDecoded.set(src, processed as HTMLImageElement);
       // Crop coordinates must use the processed surface dimensions, not the
       // original decode dimensions (the shared effects renderer may cap size).
@@ -6779,7 +6796,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (isMain && !windowed) {
       const nowT = performance.now();
       // 手勢期間不額外縮製歷史縮圖；畫面仍以原解析度繪製。
-      if (activePointers.current.size === 0 && nowT - thumbAtRef.current > 400) {
+      if (activePointers.current.size === 0 && !regionSliderHeld.current && nowT > regionLiveUntil.current && nowT - thumbAtRef.current > 400) {
         thumbAtRef.current = nowT;
         try {
           let tc = thumbRef.current;
@@ -9933,7 +9950,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 const patch = (d: any) => {
                   if (regionEditing && photoRegionRef.current) {
                     clearPhotoDimmer();
-                    commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===editRegionIndex ? {...p,...d} : p)});
+                    commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===editRegionIndex ? {...p,...d} : p)},!!d.fx);
                   } else setObjects(prev => prev.map(o => o.id === sel.id ? { ...o, ...d } : o));
                 };
                 const move = (dir: number) => setObjects(prev => {
@@ -10167,6 +10184,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                          只有面板看的那條網址。 */
                       img={panelImgOf(sel)}
                       hideShape={regionEditing}
+                      isolateFxUpdates={regionEditing}
+                      onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;} : undefined}
+                      onAdjustmentCommit={regionEditing ? finishRegionEdit : undefined}
                       set={(d: any) => patch(d)} lutList={lutList}
                       loadingLut={loadingLut} setLoadingLut={setLoadingLut}
                       lutRevision={lutRevision} setLutRevision={setLutRevision}

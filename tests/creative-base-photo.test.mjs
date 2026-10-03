@@ -33,5 +33,6 @@ test('selected base frame retains full stroke on all four clipped edges',()=>{
 test('base effects reuse full quality buffers and feather caches track revisions',()=>{
  assert.match(s,/isVid \|\| o\.id\?\.startsWith\('region-fx-'\)/);
  assert.match(s,/region-processed-.*JSON\.stringify\(p.fx\)/);
- assert.match(s,/fxCanvasOf\(\{\.\.\.p,id:`region-fx-\$\{i\}@\$\{p.src\}`,img:original\}, false\)/);
+ assert.match(s,/fxCanvasOf\(\{\.\.\.p,id:`region-fx-\$\{i\}@\$\{p.src\}`,img:original\}, isMain/);
+ assert.match(s,/const live = isMain && !regionPhoto/);
 });

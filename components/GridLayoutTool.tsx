@@ -2467,6 +2467,10 @@ export type ImageAdjustPanelProps = {
   hideCompose?: boolean;
   /** 滑桿排成一排：名稱、軌道、數值全部同一列，上面不再有一排字 */
   inlineSlider?: boolean;
+  /** Region editing paints from refs; only this small panel updates while tuning. */
+  isolateFxUpdates?: boolean;
+  onAdjustmentStart?: () => void;
+  onAdjustmentCommit?: () => void;
 };
 
 export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
@@ -2474,11 +2478,43 @@ export const ImageAdjustPanel: React.FC<ImageAdjustPanelProps> = ({
   adjustSub, setAdjustSub, effectCard, setEffectCard, effectDetail, setEffectDetail,
   shapeMenu, setShapeMenu, shapeTool, setShapeTool, tuneTool, setTuneTool,
   setTuningEdge, openComposeFor, composeOpen, onLeaveCompose, hideShape, hideCompose, deferSlider, onSliderOpenChange, inlineSlider,
+  isolateFxUpdates, onAdjustmentStart, onAdjustmentCommit,
 }) => {
 const [detailTool,setDetailTool] = useState('');
 useEffect(() => { setDetailTool(''); }, [effectCard,img.id]);
-const fx = img.fx || {};
-const setFx = (patch: Partial<PhotoFx>) => set({ fx: { ...fx, ...patch } });
+const [,setLocalFx] = useState<PhotoFx>(img.fx || {});
+const liveFx = useRef<PhotoFx>(img.fx || {});
+const pendingCommit = useRef<ReturnType<typeof setTimeout> | null>(null);
+const sliderInput = useRef(false);
+const sliderHeld = useRef(false);
+const commitAdjustmentRef = useRef(onAdjustmentCommit);
+commitAdjustmentRef.current = onAdjustmentCommit;
+useLayoutEffect(() => {
+  if(!isolateFxUpdates)return;
+  liveFx.current = img.fx || {};
+  setLocalFx(liveFx.current);
+},[img.id,img.fx,isolateFxUpdates]);
+const finishAdjustment = () => {
+  sliderHeld.current=false;
+  if(pendingCommit.current === null)return;
+  clearTimeout(pendingCommit.current);pendingCommit.current=null;
+  setLocalFx(liveFx.current);
+  commitAdjustmentRef.current?.();
+};
+useEffect(() => () => {
+  if(pendingCommit.current !== null){clearTimeout(pendingCommit.current);pendingCommit.current=null;commitAdjustmentRef.current?.();}
+},[]);
+const fx = isolateFxUpdates ? liveFx.current : (img.fx || {});
+const setFx = (patch: Partial<PhotoFx>) => {
+  const next = {...(isolateFxUpdates ? liveFx.current : fx),...patch};
+  if(isolateFxUpdates){
+    liveFx.current=next;
+    if(!sliderInput.current)setLocalFx(next);
+    if(pendingCommit.current !== null)clearTimeout(pendingCommit.current);
+    pendingCommit.current=setTimeout(()=>{if(!sliderHeld.current)finishAdjustment();},180);
+  }
+  set({fx:next});
+};
 const fxVal = (key: string, dflt: number) => (fx as any)[key] ?? dflt;
 /* 卡片牆的縮圖來源。
    影片不能直接用 img.src —— 卡片是把網址塞進 <img> 重畫的，
@@ -2576,8 +2612,20 @@ const editorSlider = (
 ) => {
   const input = (cls: string) => (
     <input
-      type="range" aria-label={label} min={min} max={max} step={step} value={value}
-      onChange={e => onVal(step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value))}
+      key={`${img.id}|${adjustSub}|${tuneTool}|${shapeTool}|${effectCard}|${detailTool}`}
+      type="range" aria-label={label} min={min} max={max} step={step}
+      {...(isolateFxUpdates ? {defaultValue:value} : {value})}
+      ref={el=>{if(el && isolateFxUpdates && pendingCommit.current===null)el.value=String(value);}}
+      onChange={e => {
+        const v=step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value);
+        sliderInput.current=true;
+        try {onVal(v);} finally {sliderInput.current=false;}
+        if(isolateFxUpdates){
+          const row=e.currentTarget.closest('[data-adjust-slider]');
+          const number=row?.querySelector('[data-adjust-number]');
+          if(number)number.textContent=step<1?v.toFixed(1):String(v);
+        }
+      }}
       onPointerDown={hideChrome ? () => setTuningEdge(true) : undefined}
       onPointerUp={hideChrome ? () => setTuningEdge(false) : undefined}
       onPointerCancel={hideChrome ? () => setTuningEdge(false) : undefined}
@@ -2589,21 +2637,21 @@ const editorSlider = (
      軌道用 dense 那一版 —— 原本那版刻意往左右各溢出 32px（讓圓點可以滑到
      邊緣外），排成一排時會壓到兩邊的字。 */
   if (inlineSlider) return (
-    <div className="w-full flex items-center gap-3">
+    <div className="w-full flex items-center gap-3" data-adjust-slider>
       <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] pointer-events-none shrink-0">{label}</span>
       {swatches}
       <div className="relative flex-1 min-w-0 h-11 flex items-center touch-none">
         {input('custom-range dense')}
       </div>
-      <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0 text-center min-w-[2.6rem]">{step < 1 ? value.toFixed(1) : value}</span>
+      <span data-adjust-number className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0 text-center min-w-[2.6rem]">{step < 1 ? value.toFixed(1) : value}</span>
     </div>
   );
   return (
-    <div className="w-full pt-1.5">
+    <div className="w-full pt-1.5" data-adjust-slider>
       <div className="flex items-center justify-between gap-2 mb-0.5">
         <span className="text-[10px] font-black text-white/40 uppercase tracking-[0.2em] pointer-events-none shrink-0">{label}</span>
         {swatches}
-        <span className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0">{value}</span>
+        <span data-adjust-number className="text-xs font-sans tabular-nums font-bold bg-white/10 px-2 py-0.5 rounded shrink-0">{value}</span>
       </div>
       <div className="relative h-11 flex items-center justify-center touch-none">
         {input('custom-range')}
@@ -2691,7 +2739,13 @@ const sliderShown = fxDetailOpen || !!sliderArea;
 useEffect(() => { onSliderOpenChange?.(sliderShown); }, [sliderShown, onSliderOpenChange]);
 
 return (
-  <div className="h-full flex flex-col justify-end">
+  <div className="h-full flex flex-col justify-end"
+    onPointerDownCapture={isolateFxUpdates ? e=>{
+      if((e.target as Element).closest('input[type=range],.slider-wrap')){sliderHeld.current=true;onAdjustmentStart?.();}
+    } : undefined}
+    onPointerUpCapture={isolateFxUpdates ? finishAdjustment : undefined}
+    onPointerCancelCapture={isolateFxUpdates ? finishAdjustment : undefined}
+    onKeyUpCapture={isolateFxUpdates ? finishAdjustment : undefined}>
     {/* 固定 5rem 滑桿與 6rem 細項列，不改變預覽空間。 */}
     <div
       className={`flex flex-col justify-center shrink-0 overflow-hidden bg-[#111] px-8`}
