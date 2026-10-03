@@ -11,3 +11,9 @@ export function effectStoredValue(key,value){
  return value;
 }
 export function effectControlMin(key,min){return key==='fxSpillDiffusion'?0:min;}
+
+// Optical distances/angles are continuous, unlike cell counts or random seeds.
+// Their small stored ranges used to have only 21–81 stops on a full-width track.
+const continuous = new Set(['fxPearlFreq','fxRgbAmount','fxBlocksAmount','fxSliceAmount','fxSpinAngle','fxMotionLength']);
+export function effectControlStep(key,step=1){return continuous.has(key)?Math.min(step,.1):step;}
+export function isContinuousEffectControl(key){return continuous.has(key);}

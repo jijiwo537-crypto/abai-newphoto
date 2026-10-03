@@ -23,7 +23,8 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, 
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
 import {DEFAULT_COLORS,SHAPE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes.js';
-import {effectControlValue,effectStoredValue,effectControlMin} from '../utils/effectControlValues';
+import {effectControlValue,effectStoredValue,effectControlMin,effectControlStep} from '../utils/effectControlValues';
+import {effectPreset} from '../utils/effectPresets';
 import {effectDetailIcon} from '../utils/effectDetailIcons';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
 import { saveDraft, loadDraft, clearDraft, hasDraft } from '../utils/collageDraft';
@@ -742,9 +743,6 @@ export const ColorPickerPage: React.FC<{
         <ChevronLeft size={14} />
         <span>返回</span>
       </button>
-      <div className="ml-auto flex items-center gap-2">
-        <div className="w-6 h-5 rounded-[4px] shadow-inner border border-white/10" style={{ backgroundColor: value }} />
-      </div>
     </div>
     {/* 色票只排一排（排不下就橫向捲），下面接色相／飽和度／明度 ——
         跟紋理顏色那一頁是同一顆元件、同一種操作。
@@ -2635,7 +2633,7 @@ const sliderArea = (() => {
     if (fxDetailOpen && detailActive) {
       const [key,label,mn,mx,dflt]=detailActive;
       return editorSlider(label,effectControlValue(key,fxVal(key,dflt)),effectControlMin(key,mn),mx,
-        v=>setFx({[key]:effectStoredValue(key,v)}));
+        v=>setFx({[key]:effectStoredValue(key,v)}),undefined,false,effectControlStep(key));
     }
     if (!effectCard) return null;
     /* 有些特效的「強度」沒有意義（馬賽克調到一半只是把原圖疊回來），
@@ -2783,7 +2781,7 @@ return (
               <div className="absolute inset-0 bg-[#1a1a1a]" />
               <CardThumb src={cardSrc} delay={fi * 24}
                          cacheKey={`${cardSrc}|fx:${id}`}
-                         fx={{ [fxAmountId(id)]: FX_ON_AMOUNT[id] ?? 100 } as PhotoFx} />
+                         fx={effectPreset(id,FX_DEFS) as PhotoFx} />
               <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
                 <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${on ? 'text-white' : 'text-white/60'}`}>
                   {label}

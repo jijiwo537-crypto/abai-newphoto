@@ -46,6 +46,7 @@ if(query.has('audit'))void(async()=>{
   check('shape color page opens',!!panel.querySelector('[data-fixed-color-page]'));
   check('color page has no hexadecimal input',!panel.querySelector('input[type="text"]'));
   const fixed=panel.querySelector<HTMLElement>('[data-fixed-color-page]');check('color page is fixed',!!fixed&&getComputedStyle(fixed.parentElement!).overflowY==='hidden');
+  check('color page header has no extra color square',!!fixed&&!fixed.firstElementChild?.querySelector('[style*="background"]'));
   check('color page controls fit its panel',!!fixed&&Array.from(fixed.querySelectorAll('input[type="range"]')).every(r=>r.getBoundingClientRect().bottom<panel.getBoundingClientRect().bottom));
   button('重新編輯').click();await wait();check('editing again closes nested color page',!panel.querySelector('[data-fixed-color-page]'));
   for(const mode of ['text','symbol','mask','art']){button(mode).click();await wait();const swatches=Array.from(panel.querySelectorAll<HTMLElement>('button')).filter(b=>b.style.backgroundColor&&b.style.backgroundColor!=='transparent');check(mode+' palette starts correctly',swatches[0]?.style.backgroundColor===(mode==='text'?'rgb(0, 0, 0)':'rgb(255, 255, 255)'),swatches[0]?.style.backgroundColor);}

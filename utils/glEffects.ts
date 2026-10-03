@@ -706,6 +706,7 @@ interface Ctx {
   highlightKey?: string;
   highlightBins?: Float64Array;
   lowfiHalo?:LowfiHaloMask;
+  plainTex?:WebGLTexture;
 }
 
 let ctxCache: Ctx | null = null;
@@ -737,6 +738,7 @@ function getCtx(surface?:HTMLCanvasElement): Ctx | null {
 export function disposeFxSurface(canvas:HTMLCanvasElement){
  const c=surfaces.get(canvas);if(!c)return;const {gl,pool}=c;
  c.lowfiHalo?.dispose(gl);
+ if(c.plainTex)gl.deleteTexture(c.plainTex);
  if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);if(pool.spillSeed)gl.deleteTexture(pool.spillSeed);gl.deleteFramebuffer(pool.fb);}
  c.progs.forEach(p=>gl.deleteProgram(p));gl.deleteBuffer(c.quad);surfaces.delete(canvas);canvas.width=canvas.height=1;
 }
@@ -803,11 +805,33 @@ function getPool(c: Ctx, w: number, h: number): Pool {
   }
   c.pool = {
     w, h,
-    src: makeTex(gl, w, h),
+    src: c.plainTex || makeTex(gl, w, h),
     texs: [makeTex(gl, w, h), makeTex(gl, w, h), makeTex(gl, w, h)],
     fb: gl.createFramebuffer()!,
   };
+  c.plainTex=undefined; // Transfer ownership, rather than keeping a fifth full-size texture.
   return c.pool;
+}
+
+/** Keep unedited and edited photos on the very same compositor surface.
+ * Canvas2D and WebGL layers can rasterize a fractional CSS origin differently
+ * on WebKit; toggling between them must not change the photograph's framing.
+ * This is a full-resolution identity pass, not a reduced-quality proxy. */
+export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,surface:HTMLCanvasElement):boolean{
+ const c=getCtx(surface);if(!c||c.gl.isContextLost()||w>c.maxTex||h>c.maxTex||w<2||h<2)return false;
+ const {gl}=c;
+ try{
+  if(surface.width!==w)surface.width=w;if(surface.height!==h)surface.height=h;
+  const program=compile(c,'__present_source','precision highp float;varying vec2 vUv;uniform sampler2D uTex;void main(){gl_FragColor=texture2D(uTex,vUv);}');
+  if(!program)return false;
+  const source=c.pool?.w===w&&c.pool?.h===h?c.pool.src:(c.plainTex ||= makeTex(gl,w,h));
+  gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,source);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,ctx.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
+  c.uploadKey=undefined; // A later effect must not reuse a source-key from an earlier render.
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.disable(gl.BLEND);gl.disable(gl.DEPTH_TEST);gl.disable(gl.DITHER);
+  gl.bindBuffer(gl.ARRAY_BUFFER,c.quad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+  gl.useProgram(program);gl.uniform1i(gl.getUniformLocation(program,'uTex'),0);gl.drawArrays(gl.TRIANGLES,0,3);gl.flush();return true;
+ }catch{return false;}
 }
 
 /**

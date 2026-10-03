@@ -216,7 +216,7 @@ export const installSliderTouch = () => {
           dead = true; return false;
         } else return false;
       }
-      setValue(el, fine ? String(fineSliderValue(start,cx-x0,min,max,step,travel)) : valueAt(el, cx));
+      setValue(el, fine ? String(fineSliderValue(start,cx-x0,min,max,step,travel,el.dataset.smoothRange==='true')) : valueAt(el, cx));
       return true;
     };
 

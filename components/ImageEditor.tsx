@@ -5,10 +5,11 @@ import { isIdentityCurve, boundedCurvePath } from '../utils/editorCurveGeometry'
 import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
 import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
-import { FX_DEFS, FX_DEFAULTS, applyGlEffects, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
+import { FX_DEFS, FX_DEFAULTS, applyGlEffects, presentFxSource, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
 import {warmLowfiLut} from '../utils/lowfiLut';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
-import {effectControlValue,effectStoredValue,effectControlMin} from '../utils/effectControlValues';
+import {effectControlValue,effectStoredValue,effectControlMin,effectControlStep,isContinuousEffectControl} from '../utils/effectControlValues';
+import {effectPreset,LEGACY_EFFECT_PRESETS} from '../utils/effectPresets';
 import {effectDetailIcon} from '../utils/effectDetailIcons';
 import {HalationLayer} from '../utils/halationLayer';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from '../utils/highlightSelection';
@@ -260,12 +261,6 @@ const EFFECT_AMOUNT: Record<string, string> = {
   lightLeak: 'leakOpacity',
 };
 const effectAmountId = (id: string) => EFFECT_AMOUNT[id] || id;
-
-/** 在清單裡點下這顆特效時要套的強度（已經開著的就不動它） */
-const EFFECT_ON_AMOUNT: Record<string, number> = {
-  lightLeak: 100,
-  ...Object.fromEntries(FX_DEFS.map(d => [d.id, d.onAmount ?? 100])),
-};
 
 /** 每一張特效卡片「自己的」參數鍵 —— 一次只能套一個，切到別顆時其餘的都要歸零 */
 const EFFECT_OWN_KEYS: Record<string, string[]> = {
@@ -1197,7 +1192,8 @@ const FastSlider = React.memo(({
             <div style={dense ? {touchAction:'none'} : undefined} className={`relative flex items-center justify-center touch-none ${dense ? 'slider-wrap h-[26px]' : compact ? 'h-[30px]' : 'h-12'}`}>
                 <input 
                     ref={inputRef}
-                    type="range" aria-label={label} min={effectControlMin(toolId,min)} max={max} step={step}
+                    type="range" aria-label={label} min={effectControlMin(toolId,min)} max={max} step={effectControlStep(toolId,step)}
+                    data-smooth-range={isContinuousEffectControl(toolId)?'true':undefined}
                     defaultValue={displayValue}
                     data-fine-drag={dense ? 'true' : undefined}
                     style={dense ? {left:0,width:'100%',height:26,margin:'-13px 0 0',touchAction:'none','--thumb-w':'18px'} as React.CSSProperties : undefined}
@@ -2177,6 +2173,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if(display){display.style.visibility='visible';display.style.opacity=shown?'0':'1';}
   };
   const visibleEditorCanvas=()=>fxSurfaceShownRef.current ? fxSurfaceRef.current : displayCanvasRef.current;
+  const presentEditorSource=(ctx:CanvasRenderingContext2D,w:number,h:number)=>{
+    const surface=fxSurfaceRef.current;
+    showFxSurface(!!surface&&presentFxSource(ctx,w,h,surface));
+  };
   useEffect(()=>{const surface=fxSurfaceRef.current;return()=>{if(surface)disposeFxSurface(surface);};},[]);
   useLayoutEffect(()=>{showFxSurface(false);fxInputKeyRef.current='';},[activeSrc]);
   const helperCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -3374,13 +3374,6 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
   /* 特效縮圖：跟濾鏡那排同一套 —— 先把目前的預覽縮成小圖，
      再分別套上每一個特效的預設效果。GLSL 那些直接走 applyGlEffects，
      原本就有的柔光／光暈／漏光／模糊／噪點則走 applyComplexEffects。 */
-  const FX_THUMB_DEMO: Record<string, Partial<EditorParams>> = {
-    softLight: { soft: 70, softThreshold: 80, softRadius: 100, softColor: 0 },
-    halation: { fringeIntensity: 80, fringeSize: 30, fringeFeather: 100, fringeHue: 8 },
-    lightLeak: { leakOpacity: 75, leakAngle: 45, leakHue: 15 },
-    blur: { blur: 45 },
-    colorNoise: { colorNoise: 70 },
-  };
   /** 「還沒算到這一格」時先頂著的底圖（沒有套任何特效的樣子）的鍵 */
   const FX_THUMB_BASE = '__base';
   /* applyComplexEffects 宣告在後面，用 ref 取用（它每次 render 都會更新） */
@@ -3393,7 +3386,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const t = window.setTimeout(() => {
       const b = buffers.current.preview;
       if (!b || !b.source || !b.w || !b.h) return;
-      const sig = [thumbSrcOf(buffersSrcRef.current), b.w, b.h].join('|');
+      const sig = [thumbSrcOf(buffersSrcRef.current), b.w, b.h, selectedLutIdx].join('|');
       if (sig === fxThumbSigRef.current) return;
       const forSrc = thumbSrcOf(buffersSrcRef.current);
       noteThumbSrc(forSrc);
@@ -3440,8 +3433,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
         EFFECT_TOOLS,
         (tool) => {
           cctx.putImageData(new ImageData(new Uint8ClampedArray(baseData), W, H), 0, 0);
-          const demo: EditorParams = { ...flat, ...NO_EFFECT_PARAMS, ...(FX_THUMB_DEMO[tool.id] || {}) } as EditorParams;
-          if (FX_TOOLS[tool.id]) demo[tool.id as `fx${string}`] = 100;
+          const lutId=lutList[selectedLutIdx]?.id;
+          const blurDefault=lutId==='f22'||lutId==='f23'?30:40;
+          const demo: EditorParams = { ...flat, ...NO_EFFECT_PARAMS, ...effectPreset(tool.id,FX_DEFS,blurDefault) } as EditorParams;
           try {
             applyComplexEffectsRef.current(cctx, W, H, demo, Math.max(W, H) / 1080,
               new Uint8ClampedArray(baseData.length), false, true, baseData);
@@ -3455,7 +3449,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       );
     }, fresh ? 0 : 300);
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [activeCategory, lutList, previewAspect, activeSrc, buffersTick]);
+  }, [activeCategory, lutList, selectedLutIdx, previewAspect, activeSrc, buffersTick]);
 
   const handleFilterSelect = (idx: number) => {
     quickFilterRef.current = true;   // 先出低解析度那張，畫面才會馬上有反應
@@ -3542,7 +3536,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const lutId = lutList[selectedLutIdx]?.id || 'none';
     const softThresholdVal = 80;
     userSoftRef.current = 100;
-    return { patch: { soft: 100, softThreshold: softThresholdVal }, manual: false };
+    return { patch: { ...LEGACY_EFFECT_PRESETS.softLight,softThreshold:softThresholdVal }, manual: false };
   };
   const blurOnPatch = (fresh = false) => {
     if (!fresh && blurManuallyAdjusted && userBlurRef.current !== 0) {
@@ -3559,14 +3553,14 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
       return { patch: { grain: g.grain, colorNoise: g.colorNoise, colorNoise2: g.colorNoise2 }, manual: grainManuallyAdjusted };
     }
     userGrainRef.current = { grain: 0, colorNoise: 40, colorNoise2: 0 };
-    return { patch: { colorNoise: 40, grain: 0, colorNoise2: 0 }, manual: false };
+    return { patch: { ...LEGACY_EFFECT_PRESETS.colorNoise }, manual: false };
   };
   const halationOnPatch = (fresh = false) => {
     if (!fresh && halationManuallyAdjusted && userHalationRef.current !== 0) {
       return { patch: { fringeIntensity: userHalationRef.current }, manual: halationManuallyAdjusted };
     }
     userHalationRef.current = 100;
-    return { patch: { fringeIntensity: 100, fringeHue: 8, fringeSize: 10, fringeFeather: 100 }, manual: false };
+    return { patch: { ...LEGACY_EFFECT_PRESETS.halation }, manual: false };
   };
 
   const toggleSoftLight = () => {
@@ -3772,8 +3766,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     else if (toolId === 'colorNoise') { const on = grainOnPatch(true); Object.assign(next, on.patch); manGrain = on.manual; }
     else if (toolId === 'halation') { const on = halationOnPatch(true); Object.assign(next, on.patch); manHalation = on.manual; }
     else {
-      const on = EFFECT_ON_AMOUNT[toolId];
-      if (on) (next as any)[amountId] = on;
+      Object.assign(next,effectPreset(toolId,FX_DEFS));
     }
 
     const sOn = toolId === 'softLight', bOn = toolId === 'blur';
@@ -5028,6 +5021,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             ctx.drawImage(pixelBufferCanvas, 0, 0);
         }
         cvs.style.filter = 'none';
+        presentEditorSource(ctx,b.w,b.h);
         return;
     }
 
@@ -5311,6 +5305,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     const scale = Math.max(b.w, b.h) / 1080;
     // Pass b.dest as sourcePixelData for noise masking
     applyComplexEffects(ctx, b.w, b.h, pRender, scale, b.shared, isInteracting, false, b.dest);
+    if(!fxSurfaceShownRef.current)presentEditorSource(ctx,b.w,b.h);
 
     if (quickPass) {
       quickFilterRef.current = false;
