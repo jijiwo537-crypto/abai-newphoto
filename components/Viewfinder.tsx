@@ -3,6 +3,7 @@ import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState } f
 import { loadCameraLut, readyCameraLut } from '../utils/cameraLuts';
 import {CAMERA_FX_ZERO, CAMERA_LOWFI_GLSL, CAMERA_HIGHLIGHT_FS, CAMERA_SPILL_STEP, type CameraFx} from '../utils/cameraEffects';
 import {cameraPreviewGeometry} from '../utils/cameraPreview';
+import {bindLowfiLut} from '../utils/lowfiLut';
 
 /** 拍照時可以即時看到的特效，跟編輯頁同款、數值都是 0–100 */
 export type ViewfinderFx = CameraFx;
@@ -597,6 +598,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.uniform1f(gl.getUniformLocation(cp,'u_soft2'),soft2);gl.uniform1f(gl.getUniformLocation(cp,'u_halo'),halo);gl.uniform1f(gl.getUniformLocation(cp,'u_lowfi'),lowfi);
       gl.uniform2f(gl.getUniformLocation(cp,'u_res'),sourceW,sourceH);
       gl.uniform2f(gl.getUniformLocation(cp,'u_effectCrop'),cropX,cropY);
+      if(lowfi>0)bindLowfiLut(gl,cp);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     };
 

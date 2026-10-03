@@ -43,7 +43,9 @@ export function maskTextureVisibility(type:string,px:number,py:number,rx:number,
   return Math.max(0,Math.min(1,area(poly)/total));
 }
 export const maskTextureSizeFromUi=(value:number)=>Math.max(0,Math.min(100,value))*1.3;
-export const maskTextureSizeToUi=(value:number)=>Math.max(0,Math.min(100,value/1.3));
+export const maskTextureSizeToUi=(value:number)=>Math.round(Math.max(0,Math.min(100,value/1.3))*1e8)/1e8;
+export const maskTextureSquashFromUi=(value:number)=>20+Math.max(0,Math.min(100,value))*.6;
+export const maskTextureSquashToUi=(value:number)=>Math.round(Math.max(0,Math.min(100,(value-20)/.6))*1e8)/1e8;
 
 /** Keep mostly visible glyphs, hiding half-glyph boundary ties as requested. */
 export function paintMaskTexture(ctx: CanvasRenderingContext2D, type: string,

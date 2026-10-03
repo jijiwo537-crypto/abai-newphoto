@@ -6,6 +6,7 @@ import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
 import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
+import {warmLowfiLut} from '../utils/lowfiLut';
 import { orderEffectCards } from '../utils/effectDisplayOrder';
 import {effectControlValue,effectStoredValue,effectControlMin} from '../utils/effectControlValues';
 import {effectDetailIcon} from '../utils/effectDetailIcons';
@@ -1682,6 +1683,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
      背景預載不會動到 loadingLutId，少了這個通知，還沒載完就先算過的那幾格
      會一直停在沒套濾鏡的墊底圖，直到使用者去點某一顆濾鏡才更新。 */
   const [lutReadyTick, setLutReadyTick] = useState(0);
+  useEffect(()=>{let active=true;void warmLowfiLut().then(()=>{if(active){setLutReadyTick(t=>t+1);setParams(p=>({...p}));}}).catch(console.error);return()=>{active=false;};},[]);
   /** 濾鏡檔載好了，但畫面還沒用它算過 —— 轉圈要撐到那一輪畫完 */
   const pendingLutPaintRef = useRef<string | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
@@ -6326,6 +6328,9 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               const img = i === safeIdx && originalImgRef.current
                 ? originalImgRef.current
                 : await loadImg(srcList[i]);
+              // Only lowfi exports depend on this LUT; other formats/effects
+              // must not be blocked by a lookup-image network failure.
+              if (Number(snap.params.fxLowfi) > 0) await warmLowfiLut();
               const canvas = renderOneCanvas(img, snap);
               out.push(await canvasToUrl(canvas, exportFormat === 'jpg' ? 'image/jpeg' : 'image/png', 1));
               if (exportFormat === 'heic') encoded.push(await exportHeic(canvas));

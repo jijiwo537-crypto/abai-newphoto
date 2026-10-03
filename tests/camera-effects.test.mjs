@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 test('camera effects expose the three requested toggles and shared editor defaults',()=>{
  const config=readFileSync(new URL('../utils/cameraEffects.ts',import.meta.url),'utf8');
- for(const id of ['soft2','halo','lowfi'])assert.match(config,new RegExp(`id:'${id}'`));
+ for(const id of ['soft','blur','lowfi'])assert.match(config,new RegExp(`id:'${id}'`));
+ for(const id of ['soft2','halo'])assert.doesNotMatch(config,new RegExp(`id:'${id}'`));
  assert.match(config,/FX_DEFS.find\(d=>d.id==='fxExposureSpill'\)/);
  assert.match(config,/FX_DEFS.find\(d=>d.id==='fxLowfi'\)/);
  const ui=readFileSync(new URL('../components/CameraInterface.tsx',import.meta.url),'utf8');

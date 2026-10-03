@@ -40,6 +40,7 @@
  */
 
 import { FX_DEFS, fxActive, fxPassSource, FX_BLEND_FS, FX_VS, FX_REF, type FxDef } from './glEffects';
+import {bindLowfiLut} from './lowfiLut';
 import { activeCpuFx, CPU_FX_DEFAULTS, type CpuFxDef } from './videoFxCpu';
 
 /* ── 特效（那一整排「朦朧／動態模糊／VHS／馬賽克…」）─────────────────
@@ -558,6 +559,7 @@ export class VideoGl {
           this.fxBind(prog, T[pass.fromSource ? layerIn : from], T[layerIn], W, H);
           gl.uniform1f(gl.getUniformLocation(prog,'uEffectAmount'),Math.max(0,Math.min(1,(this.fxParams?.[d.id]||0)/100)));
           if(this.fxAux){gl.activeTexture(gl.TEXTURE6);gl.bindTexture(gl.TEXTURE_2D,this.fxAux);gl.uniform1i(gl.getUniformLocation(prog,'uAux'),6);}
+          if(d.id==='fxLowfi')bindLowfiLut(gl,prog);
           gl.uniform2f(gl.getUniformLocation(prog, 'uDir'),
             pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
           for (const pp of d.params) {

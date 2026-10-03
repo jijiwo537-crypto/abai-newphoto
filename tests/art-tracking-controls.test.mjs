@@ -87,7 +87,7 @@ test('comparison uses bare icon feedback while randomization only brightens its 
 test('art colors follow creative collage geometry without clipping selected swatches',()=>{
  const colors=readFileSync(new URL('../components/ArtColorControls.tsx',import.meta.url),'utf8');
  assert.match(colors,/className="designer-color-slider"/);assert.match(colors,/className="slider-wrap"/);
- assert.match(colors,/KeyboardSafeInput aria-label="色號"/);assert.match(colors,/Icon name="colorize"/);
+ assert.doesNotMatch(colors,/KeyboardSafeInput aria-label="色號"/);assert.match(colors,/Icon name="colorize"/);
  assert.ok(colors.indexOf('className="art-custom-color"')<colors.indexOf('ART_SWATCHES.map'));
  assert.match(css,/art-swatches button\[aria-pressed=true\]\{border:2px solid white;outline:none\}/);
  assert.match(css,/width:32px;height:32px/);assert.match(css,/art-color-pair\{[^}]*gap:28px/);

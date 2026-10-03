@@ -1156,7 +1156,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           ) : activeControl === 'effects' ? (
             /* 特效與曝光／白平衡共用同一個 56px 控制列高度，打開時觀景窗不會上移。 */
             <div data-camera-effects-row className="w-full flex items-center animate-in h-full">
-              <div className="grid grid-cols-5 gap-2 w-full min-w-0">
+              <div className="grid grid-cols-3 gap-2 w-full min-w-0">
                 {FX_ITEMS.map(it => {
                   const on = fx[it.id] > 0;
                   return (

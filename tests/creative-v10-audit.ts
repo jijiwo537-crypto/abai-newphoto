@@ -11,7 +11,7 @@ void(async()=>{
   check('initial six patterns and normal texture visible',count()===6&&!texture().hidden,{count:count()});
   const click=async(label:string)=>{document.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click();await wait(20);};
   await click('遮罩排版 mask-top');check('non-full transitions retain count',count()===6);
-  for(const [label,expected] of [['滿版',9],['遮罩排版 mask-bottom',14],['滿版',21],['遮罩排版 mask-left',30],['滿版',30],['遮罩排版 mask-bottom',30]] as const){
+  for(const [label,expected] of [['滿版',6],['遮罩排版 mask-bottom',6],['滿版',6],['遮罩排版 mask-left',6],['滿版',6],['遮罩排版 mask-bottom',6]] as const){
    await click(label);
    check(label+' count '+expected,count()===expected,{count:count()});
    check(label+' texture visibility',texture().hidden===(label==='滿版'));

@@ -4,6 +4,7 @@ import '../styles.css';
 import {Viewfinder,FX_ZERO,type ViewfinderFx} from '../components/Viewfinder';
 import {CAMERA_FX_ITEMS} from '../utils/cameraEffects';
 import {CameraInterface} from '../components/CameraInterface';
+import {warmLowfiLut} from '../utils/lowfiLut';
 function Audit(){
  const ref=useRef<any>(null),[fx,setFx]=useState<ViewfinderFx>(FX_ZERO),[status,setStatus]=useState('驗證中');
  const source=useRef<HTMLCanvasElement|null>(null);
@@ -26,7 +27,7 @@ function Audit(){
   const check=(name:string,pass:boolean,detail?:any)=>report.checks.push({name,pass,detail});
   void(async()=>{
    try{
-    await wait(12);
+    await warmLowfiLut();await wait(12);
     const live=document.querySelector<HTMLCanvasElement>('[data-camera-viewfinder]')!,bounds=live.getBoundingClientRect();
     check('live preview renders at native screen density',live.width>=Math.floor(bounds.width*devicePixelRatio)&&live.height>=Math.floor(bounds.height*devicePixelRatio),{width:live.width,height:live.height,cssWidth:bounds.width,cssHeight:bounds.height,dpr:devicePixelRatio});
     const base=sample();

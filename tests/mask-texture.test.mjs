@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 const source=readFileSync(new URL('../utils/maskTexture.ts',import.meta.url),'utf8');
 const js=ts.transpileModule(source.replace(/import .*?;\n/,'const patternGlyph=()=>{};\n'),{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
-const {maskTextureScale,paintMaskTexture,maskTextureVisibility,maskTextureSizeFromUi,maskTextureSizeToUi}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+const {maskTextureScale,paintMaskTexture,maskTextureVisibility,maskTextureSizeFromUi,maskTextureSizeToUi,maskTextureSquashFromUi,maskTextureSquashToUi}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
 test('squash centre preserves size, left compresses vertically, right horizontally',()=>{
  assert.deepEqual(maskTextureScale(50),{x:1,y:1});
  assert.deepEqual(maskTextureScale(0),{x:1,y:.1});
@@ -38,10 +38,15 @@ test('visible area counts the actual glyph, including compressed and corner case
 test('size slider maps 0–100 to existing physical 0–130 without changing saved defaults',()=>{
  assert.equal(maskTextureSizeFromUi(100),130);
  assert.equal(maskTextureSizeFromUi(0),0);
- assert.ok(Math.abs(maskTextureSizeFromUi(maskTextureSizeToUi(15))-15)<1e-10);
+ assert.ok(Math.abs(maskTextureSizeFromUi(maskTextureSizeToUi(15))-15)<1e-7);
+ for(let n=0;n<=100;n++)assert.equal(maskTextureSizeToUi(maskTextureSizeFromUi(n)),n);
  const src=readFileSync(new URL('../components/CollageTool.tsx',import.meta.url),'utf8');
  assert.match(src,/value=\{maskTextureSizeToUi\(dotSize\)\}/);
  assert.match(src,/setDotSize\(maskTextureSizeFromUi\(v\)\)/);
+});
+test('squash 0–100 represents old 20–80, centred at 50',()=>{
+ assert.equal(maskTextureSquashFromUi(0),20);assert.equal(maskTextureSquashFromUi(100),80);assert.equal(maskTextureSquashFromUi(50),50);
+ for(let n=0;n<=100;n++)assert.equal(maskTextureSquashToUi(maskTextureSquashFromUi(n)),n);
 });
 test('squash participates in rendering cache, history and full-width non-stripe UI',()=>{
  const src=readFileSync(new URL('../components/CollageTool.tsx',import.meta.url),'utf8');

@@ -30,9 +30,11 @@
 export const FX_REF = 1000;
 const REF = FX_REF;
 import {highlightHistogram,selectHighlights} from './highlightSelection';
+import {LOWFI_LUT_GLSL,bindLowfiLut,warmLowfiLut} from './lowfiLut';
 
 /* ---------- 共用工具（著色器端） ---------- */
 export const FX_GLSL_HEADER = `precision highp float;
+${LOWFI_LUT_GLSL}
 varying vec2 vUv;
 uniform sampler2D uTex;
 uniform sampler2D uSrc;
@@ -171,14 +173,16 @@ export const FX_DEFS: FxDef[] = [
     id:'fxLowfi',label:'低保真',icon:'grain',onAmount:50,
     params:[
       {id:'fxLowfiGrain',label:'顆粒',icon:'grain',min:0,max:100,def:60},
+      {id:'fxLowfiFilter',label:'濾鏡',icon:'filter',min:0,max:100,def:55,step:1},
       {id:'fxLowfiAberration',label:'色差',icon:'filter',min:0,max:100,def:50},
-      {id:'fxLowfiContrast',label:'對比',icon:'contrast',min:0,max:100,def:55},
+      {id:'fxLowfiContrast',label:'對比',icon:'contrast',min:0,max:100,def:10,step:1},
     ],
     passes:[{body:`
       vec2 delta=uv-.5;float rad=dot(delta,delta);vec2 shift=delta*fxLowfiAberration*.00008*(.15+rad*3.);
       vec3 c=vec3(texture2D(uTex,uv+shift).r,texture2D(uTex,uv).g,texture2D(uTex,uv-shift).b);
       float l=luma(texture2D(uTex,uv).rgb);vec2 cell=floor(uv*vec2(1200.,1200.*uRes.y/uRes.x)/${.5+LOWFI_FIXED.grainSize*.025});
       float mono=hash21(cell+731.)-.5;vec3 noise=vec3(hash21(cell+1949.),hash21(cell+2896.),hash21(cell+3843.))-.5;
+      c=mix(c,lowfiLookup(c),fxLowfiFilter/100.);
       c=((c-.5)*(1.+fxLowfiContrast*.004)+.5)*exp2(${LOWFI_FIXED.exposure*.008});
       c+=fxLowfiGrain*1.6*(.55+.45*(1.-l))*(mono*.55+noise*.85)/255.;
       return vec4(clamp(c,0.,1.),1.);`
@@ -798,6 +802,7 @@ function getPool(c: Ctx, w: number, h: number): Pool {
  * 第一次拖滑桿才編譯＋連結會卡一下，所以展開某個特效的參數列時就先叫這支。
  */
 export function warmFx(fxId: string): void {
+  if(fxId==='fxLowfi')void warmLowfiLut().catch(()=>{});
   const d = FX_DEFS.find(x => x.id === fxId);
   if (!d) return;
   const c = getCtx();
@@ -925,6 +930,7 @@ export function applyGlEffects(
         gl.uniform1f(gl.getUniformLocation(prog,'uHighlightReady'),spillSelection?1:0);
         if(spillSelection){gl.uniform1f(gl.getUniformLocation(prog,'uHighlightCut'),spillSelection.cutoff);gl.uniform1f(gl.getUniformLocation(prog,'uHighlightTie'),spillSelection.tie);}
         if(pool.aux){gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,pool.aux);gl.uniform1i(gl.getUniformLocation(prog,'uAux'),2);}
+        if(d.id==='fxLowfi')bindLowfiLut(gl,prog);
         gl.uniform2f(gl.getUniformLocation(prog, 'uDir'), pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
         for (const p of d.params) {
           const raw = params[p.id];

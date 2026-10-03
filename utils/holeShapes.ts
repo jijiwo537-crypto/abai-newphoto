@@ -458,7 +458,7 @@ export const dotGridOf = (unitW: number, unitH: number, size = 50, gap = 20) => 
 export const paintDots = (
   c: CanvasRenderingContext2D,
   unitW: number, unitH: number, covW: number, covH: number,
-  size = 50, gap = 20, color = '#FFFFFF', kind: string = 'dot',
+  size = 50, gap = 20, color = '#FFFFFF', kind: string = 'dot', squash = 50,
 ) => {
   const { r, dx, dy } = dotGridOf(unitW, unitH, size, gap);
   c.fillStyle = color;
@@ -467,7 +467,7 @@ export const paintDots = (
     const shiftX = Math.abs(j) % 2 === 1 ? dx / 2 : 0;
     for (let i = -rx; i <= rx; i++) {
       // 圖案本身跟背景紋理共用同一支（點點／星星／愛心都是它畫的）
-      patternGlyph(c, kind, i * dx + shiftX, j * dy, r);
+      patternGlyph(c, kind, i * dx + shiftX, j * dy, r, squash);
     }
   }
 };
@@ -536,7 +536,7 @@ export const paintTex = (
        座標基準，因此每顆圖案與網格節奏都能保持完全一致。 */
     paintDots(c, baseW, baseH, covW, covH,
       o.texSize ?? o.dotSize ?? 50, o.texGap ?? o.dotGap ?? 20,
-      o.texColor || o.dotColor || '#FFFFFF', t);
+      o.texColor || o.dotColor || '#FFFFFF', t, o.texSquash ?? o.dotSquash ?? 50);
   } else if (t === 'stripe') {
     paintStripes(c, unitW, unitH, covW, covH,
       o.stripeN ?? SN_DEF, o.stripeDir === 'h' ? 'h' : 'v',
@@ -559,12 +559,12 @@ export const drawHoleShape = (
     hole: string; text?: string; filled?: boolean; color?: string; lineW?: number;
     glow?: number | boolean; glowColor?: string;
     strokeW?: number; strokeColor?: string;
-    dots?: boolean; dotSize?: number; dotGap?: number; dotColor?: string;
+    dots?: boolean; dotSize?: number; dotGap?: number; dotColor?: string; dotSquash?:number;
     /** 紋理：'none' | 'dot' | 'stripe'（沒給就照舊看 dots） */
     tex?: string; stripeN?: number; stripeDir?: string; stripeA?: string; stripeB?: string;
     /** 非條紋紋理的固定座標基準；呼叫端傳入當前 Canvas 像素尺寸。 */
     textureBaseW?: number; textureBaseH?: number;
-    texSize?: number; texGap?: number; texColor?: string;
+    texSize?: number; texGap?: number; texColor?: string; texSquash?:number;
     id?: string; randomNumber?: number;
     /** 線寬的單位。不給就照外框的長邊 / 160 —— 那會讓「圖形拉大」連框線
      *  也跟著變粗，所以呼叫端想要「粗細固定」時就把不含縮放的那個值傳進來。 */

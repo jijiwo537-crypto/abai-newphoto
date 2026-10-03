@@ -44,6 +44,8 @@ import {
 import { SHAPE_IMAGES } from '../utils/shapeImages';
 import { paintPattern, PatternOpts, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, stripeBand, STRIPE_A, STRIPE_B,
   STRIPE_N_DEFAULT, STRIPE_N_MAX, isGridTex } from '../utils/pattern';
+import { maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
+import { PatternLayer } from './PatternLayer';
 import { ComposeStudio } from './ComposeStudio';
 import { StuckEscape } from './StuckEscape';
 import { VIDEO_ACCEPT, loadVideoEl, isVideoEl } from '../utils/videoSource';
@@ -2395,6 +2397,7 @@ export const ShapeEditorPanel: React.FC<{
               <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                 {slider('大小', layer.shapeDotSize ?? 50, 0, 100, v => onChange({ shapeDotSize: v }))}
                 {slider('間距', layer.shapeDotGap ?? 20, 0, 100, v => onChange({ shapeDotGap: v }))}
+                <div className="col-span-2">{slider('壓扁', maskTextureSquashToUi(layer.shapeDotSquash ?? 50), 0, 100, v => onChange({ shapeDotSquash: maskTextureSquashFromUi(v) }))}</div>
               </div>
             )}
           </div>
@@ -2921,33 +2924,6 @@ return (
 );
 };
 
-/** 預覽用的紋理層。跟匯出走同一支 paintPattern，看到什麼就是存出來什麼。 */
-const PatternLayer: React.FC<{ w: number; h: number; opts: PatternOpts }> = ({ w, h, opts }) => {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const cv = ref.current;
-    if (!cv) return;
-    const raw = Math.min(2, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
-    const dpr = Math.min(raw, 2000 / Math.max(1, Math.max(w, h)));   // 長邊封頂，避免幾十 MB 的畫布
-    const pw = Math.max(1, Math.round(w * dpr));
-    const ph = Math.max(1, Math.round(h * dpr));
-    if (cv.width !== pw) cv.width = pw;
-    if (cv.height !== ph) cv.height = ph;
-    const g = cv.getContext('2d');
-    if (!g) return;
-    g.clearRect(0, 0, pw, ph);
-    if (opts.type === 'none') return;
-    g.save(); g.scale(dpr, dpr); paintPattern(g, w, h, opts); g.restore();
-    /* ⚠ 條紋那四個參數一定要進來。
-       少了它們，改數量／方向／兩個顏色時這一層根本不會重畫 ——
-       但匯出走的是同一支 paintPattern、吃的是當下的值，
-       於是「預覽看到的」跟「存出來的」會不一樣。 */
-  }, [w, h, opts.type, opts.color, opts.size, opts.gap,
-      opts.stripeN, opts.stripeDir, opts.stripeA, opts.stripeB]);
-  if (opts.type === 'none' || w <= 0 || h <= 0) return null;
-  return <canvas ref={ref} className="absolute inset-0 pointer-events-none" style={{ width: w, height: h }} />;
-};
-
 const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onClose, headerLeft, colors }) => {
   const [hsv, setHsv] = useState(() => hexToHsv(color));
   const [hexInput, setHexInput] = useState(color);
@@ -3009,7 +2985,7 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
       <div className="flex items-center gap-2 mb-3">
         {/* 韓系拼貼常用色：一點就換。
             內距是留給選取外框的，否則第一顆與外框上緣會被捲動容器裁掉。 */}
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 px-0.5 py-0.5">
+        <div className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 px-0.5 py-0.5">
           {/* 第一顆固定是自訂顏色 */}
           <CustomColorButton
             value={/^#[0-9A-F]{6}$/i.test(hexInput) ? hexInput : color}
@@ -3030,7 +3006,6 @@ const ColorPickerEmbedded: React.FC<ColorPickerProps> = ({ color, onChange, onCl
             );
           })}
         </div>
-        {!headerLeft && hexBox}
       </div>
       
       <div className="flex-1 flex flex-col space-y-3">
@@ -3924,6 +3899,7 @@ interface FloatingImage {
   shapeDotSize?: number;
   /** 點點間距 0~100（預設 20） */
   shapeDotGap?: number;
+  shapeDotSquash?: number;
   /** 點點顏色（預設白） */
   shapeDotColor?: string;
   /** 紋理種類：'none' | 'dot' | 'stripe'。沒給就照舊看 shapeDots。 */
@@ -4749,7 +4725,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
       lineW: image.shapeLineW, glow: image.shapeGlow as any,
       glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW,
       strokeColor: image.shapeStrokeColor, dots: image.shapeDots,
-      dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
+      dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
       tex: image.shapeTex, stripeN: image.shapeStripeN, stripeDir: image.shapeStripeDir,
       stripeA: image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR,
       stripeB: image.shapeStripeB || '#FFFFFF', id: image.id,
@@ -4820,7 +4796,7 @@ const paintClassicSceneVector = (ctx: CanvasRenderingContext2D, image: FloatingI
             if (tx === 'none') return;
             tc.save(); tc.clip(bodyPath); tc.translate(drawW / 2, drawH / 2);
             if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, drawW, drawH, drawW, drawH, {
-              tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
+              tex: tx, dotSize: image.shapeDotSize, dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
               textureBaseW: (image.shapeTextureBaseW || image.width) * contentScale,
               textureBaseH: (image.shapeTextureBaseH || image.height) * contentScale,
             });
@@ -6093,7 +6069,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
     glowColor: image.shapeGlowColor, strokeW: image.shapeStrokeW,
     strokeColor: image.shapeStrokeColor,
     dots: image.shapeDots, dotSize: image.shapeDotSize,
-    dotGap: image.shapeDotGap, dotColor: image.shapeDotColor,
+    dotGap: image.shapeDotGap, dotSquash: image.shapeDotSquash, dotColor: image.shapeDotColor,
     tex: image.shapeTex, stripeN: image.shapeStripeN, stripeDir: image.shapeStripeDir,
     stripeA: image.shapeStripeA || image.color || SHAPE_DEFAULT_COLOR,
     stripeB: image.shapeStripeB || '#FFFFFF',
@@ -12958,7 +12934,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           stripeA: fImg.shapeStripeA || fImg.color || SHAPE_DEFAULT_COLOR,
           stripeB: fImg.shapeStripeB || '#FFFFFF',
           dots: fImg.shapeDots, dotSize: fImg.shapeDotSize,
-          dotGap: fImg.shapeDotGap, dotColor: fImg.shapeDotColor,
+          dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
           id: fImg.id,
           // 線寬的單位不含 scale（上面已經 ctx.scale 過了）—— 跟預覽同一條規則
           lineUnit: ((fImg.shapeLineBase || Math.max(fImg.width, fImg.height)) * scaleFactor)
@@ -13041,7 +13017,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         tc.translate(fw / 2, fh / 2);   // 紋理那兩支都是以圖形中心為原點
         if (tx === 'dot' || tx === 'star' || tx === 'heart') paintTex(tc, fw, fh, fw, fh, {
           tex: tx,
-          dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotColor: fImg.shapeDotColor,
+          dotSize: fImg.shapeDotSize, dotGap: fImg.shapeDotGap, dotSquash: fImg.shapeDotSquash, dotColor: fImg.shapeDotColor,
           textureBaseW: (fImg.shapeTextureBaseW || fImg.width) * scaleFactor,
           textureBaseH: (fImg.shapeTextureBaseH || fImg.height) * scaleFactor,
         });
@@ -16963,6 +16939,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                         {patternSlider('大小', patternSize, setPatternSize)}
                         {patternSlider('間距', patternGap, setPatternGap)}
+                        <div className="col-span-2">{patternSlider('壓扁', maskTextureSquashToUi(patternOpts.squash ?? 50), (v: number) => patchPattern({ squash: maskTextureSquashFromUi(v) }))}</div>
                       </div>
                     )}
                   </div>

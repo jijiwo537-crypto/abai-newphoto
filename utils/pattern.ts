@@ -48,8 +48,9 @@ export const isGridTex = (t?: string) => t === 'dot' || t === 'star' || t === 'h
 export const patternGlyph = (
   c: CanvasRenderingContext2D,
   kind: string,
-  cx: number, cy: number, r: number,
+  cx: number, cy: number, r: number, squash = 50,
 ) => {
+  if(squash!==50){const v=Math.max(20,Math.min(80,squash));c.save();c.translate(cx,cy);c.scale(v>50?1-(v-50)*.018:1,v<50?.1+v*.018:1);patternGlyph(c,kind,0,0,r);c.restore();return;}
   c.beginPath();
   if (kind === 'star') {
     const R = r * 1.38;
@@ -132,6 +133,7 @@ export interface PatternOpts {
   size: number;
   /** UI 上的 0~100，對應實際間距 40~140 */
   gap: number;
+  squash?: number;
   /** 條紋：條數 0~30、方向、兩個顏色 */
   stripeN?: number;
   stripeDir?: string;
@@ -171,7 +173,7 @@ export const paintPattern = (
     for (let i = -rangeX; i <= rangeX; i++) {
       const px = w / 2 + i * dx + shiftX;
       if (px + pad < 0 || px - pad > w) continue;
-      patternGlyph(ctx, o.type, px, py, r);
+      patternGlyph(ctx, o.type, px, py, r, o.squash ?? 50);
     }
   }
   ctx.restore();

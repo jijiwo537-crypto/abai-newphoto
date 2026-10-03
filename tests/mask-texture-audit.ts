@@ -17,6 +17,20 @@ void(async()=>{
   check('real editor full-width squash slider defaults to centre',!!input&&input.value==='50'&&wrap!.classList.contains('col-span-2'));
   check('real editor texture remains visible',!document.querySelector<HTMLElement>('[data-creative-texture]')?.hidden);
   wrap?.scrollIntoView({block:'end'});
+  if(new URLSearchParams(location.search).has('sliderAudit')){
+   const sliders=Array.from(document.querySelectorAll<HTMLInputElement>('[data-creative-texture] input[type=range]'));
+   const cv=document.querySelector<HTMLCanvasElement>('[data-creative-stage] canvas')!;
+   const sample=()=>{const g=cv.getContext('2d')!;const d=g.getImageData(0,0,cv.width,cv.height).data;let sum=0;for(let i=0;i<d.length;i+=16)sum+=d[i];return sum;};
+   for(let index=0;index<sliders.length;index++){
+    const el=sliders[index],host=el.closest('.slider-wrap')!,r=el.getBoundingClientRect(),y=r.top+r.height/2;
+    const x=r.left+r.width*.2,before=sample();
+    host.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:91,pointerType:'touch',clientX:x,clientY:y}));
+    const observed=[];
+    for(let j=0;j<14;j++){window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,pointerId:91,pointerType:'touch',clientX:r.left+r.width*(.2+j*.05),clientY:y}));await wait(2);observed.push(el.value);}
+    window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:91,pointerType:'touch',clientX:r.left+r.width*.85,clientY:y}));await wait(4);
+    check('slider '+index+' continuously updates value and canvas',new Set(observed).size>8&&before!==sample(),{observed,before,after:sample()});
+   }
+  }
   report.pass=report.checks.every((v:any)=>v.pass);
  }catch(e){report.pass=false;report.error=String(e);}
  await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify(report)}).catch(()=>{});
