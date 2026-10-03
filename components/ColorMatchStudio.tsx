@@ -553,7 +553,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           )}
         </div>
         {(busy || referenceLoading) && (
-          <div className="absolute top-3 right-3 p-2 rounded-full bg-black/60 pointer-events-none" aria-label="分析色彩中">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" role="status" aria-label="分析色彩中">
             <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
           </div>
         )}

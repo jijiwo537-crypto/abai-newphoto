@@ -16137,7 +16137,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           螢幕夠高就用 36dvh。 */}
       <footer
         className="bg-[#0a0a0a] border-t border-[#1a1a1a] flex flex-col z-[50] no-select shrink-0 transition-transform duration-300 ease-out"
-        style={{ height: activeTab === 'color' ? 'max(45dvh, 400px)' : 'max(36dvh, 310px)', visibility: igPreview ? 'hidden' : undefined }}
+        data-classic-controller
+        style={{ height: 'max(36dvh, 310px)', visibility: igPreview ? 'hidden' : undefined }}
       >
         <div className="flex-1 flex flex-col h-full overflow-hidden">
           {/* Tabs list */}
@@ -16190,7 +16191,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           </div>
 
           {/* Tabs Content */}
-          <div className={`flex-1 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
+          <div className={`flex-1 min-h-0 no-scrollbar ${imageEditMode ? '' : 'p-4 pb-4'} ${['ratio', 'color', 'layout', 'adjust', 'pages'].includes(activeTab) ? 'overflow-hidden' : 'overflow-y-auto overflow-x-hidden'}`}>
 
             {activeTab === 'motion' && (() => {
               const target = motionItems.find(f => f.id === motionTargetId) || null;
@@ -16830,10 +16831,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
             )}
 
             {activeTab === 'color' && colorSub === 'bg' && (
-              /* 上面是原本的底色挑色器（一個字沒動），下面緊接著背景紋理。
-                 這一頁比原本高，所以自己捲 —— 外層那一格的 overflow 名單
-                 是所有分頁共用的，完全沒動，別的分頁不受影響。 */
-              <div ref={colorTabRef} className="max-w-md mx-auto animate-in fade-in duration-300 h-full overflow-hidden no-scrollbar">
+              /* 工具欄維持共用高度；套用紋理才讓此頁捲動，不縮小預覽。 */
+              <div ref={colorTabRef} data-classic-background-panel data-texture-active={patternType !== 'none'} className={`max-w-md mx-auto animate-in fade-in duration-300 h-full no-scrollbar ${patternType !== 'none' ? 'overflow-y-auto overflow-x-hidden overscroll-contain' : 'overflow-hidden'}`}>
                 {/* 外面包一層高度 auto 的盒子：ColorPickerEmbedded 的根是 h-full，
                      直接放在這個「有固定高度」的捲動格裡會整個撐滿，把下面的紋理
                      推到很遠。包一層之後 100% 會解析成 auto，它就只佔自己需要的高度。 */}

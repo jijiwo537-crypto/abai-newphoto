@@ -9,7 +9,7 @@ const query=new URLSearchParams(location.search);
 let choice:'save'|'discard'|'cancel'='cancel',promptCount=0,left=false;
 function Fixture(){
  const [src,setSrc]=React.useState(original),[ref,setRef]=React.useState<string|null>(null);
- return <><ColorMatchStudio imageSrc={src} referenceSrc={ref} onCancel={()=>{left=true;}} onHome={()=>{left=true;}} onPickReference={()=>setRef(reference)} onImportNew={()=>setSrc(replacement)} onRequestExit={async()=>{promptCount++;return choice;}}/>
+ return <><ColorMatchStudio imageSrc={src} referenceSrc={ref} referenceLoading={query.has('loading')} onCancel={()=>{left=true;}} onHome={()=>{left=true;}} onPickReference={()=>setRef(reference)} onImportNew={()=>setSrc(replacement)} onRequestExit={async()=>{promptCount++;return choice;}}/>
  <button id="qa-change-reference" style={{position:'fixed',top:0,left:0,zIndex:99999}} onClick={()=>setRef(photo('#89a35e'))}>更換參考圖</button></>;
 }
 const root=createRoot(document.getElementById('root')!);
