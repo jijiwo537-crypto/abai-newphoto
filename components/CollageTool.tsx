@@ -6,8 +6,11 @@ import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import { idleDefaults } from '../utils/animationDefaults';
 import { get2dWide } from '../utils/colorSpace';
-import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, photoRegionRects, photoRegionHit, swapRegionPhotos, paintPhotoRegion } from '../utils/creativePhotoLayout';
-import type { PhotoRegion, PhotoArrangement } from '../utils/creativePhotoLayout';
+import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, regionRects, photoTemplates, changePhotoTemplate, photoRegionHit, paintPhotoRegion } from '../utils/creativePhotoLayout';
+import { stampBounds, stampsHaveSafeGap } from '../utils/patternBrushSpacing';
+import { CreativeSeamless } from '../utils/creativeSeamless';
+import { createPortal } from 'react-dom';
+import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { saveDraft as saveToolDraft } from '../utils/toolDraft';
 import { addExport } from '../utils/exportHistory';
@@ -1193,12 +1196,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const photoRegionRef = useRef(photoRegion);
   photoRegionRef.current = photoRegion;
   const decodedRegionPhotos = useRef(new Map<string, HTMLImageElement>());
+  const creativeSeam = useRef<CreativeSeamless|null>(null);
+  useEffect(()=>()=>creativeSeam.current?.dispose(),[]);
   const [photoLayoutOpen, setPhotoLayoutOpen] = useState(false);
+  const [selectedRegionPhoto, setSelectedRegionPhoto] = useState<number | null>(null);
+  const selectedRegionPhotoRef = useRef<number | null>(null);
+  selectedRegionPhotoRef.current = selectedRegionPhoto;
+  const regionUploadRef = useRef<HTMLInputElement>(null);
+  const regionUploadIndex = useRef(0);
   const photoImportEpoch = useRef(0);
   const photoRegionEpoch = useRef(0);
   const loadRegion = async (region: PhotoRegion) => {
-    await Promise.all(region.photos.map(photo => {
-      if (decodedRegionPhotos.current.has(photo.src)) return Promise.resolve();
+    await Promise.all([...region.photos,...(region.overflowPhotos||[])].map(photo => {
+      if (!photo.src || decodedRegionPhotos.current.has(photo.src)) return Promise.resolve();
       return new Promise<void>((resolve, reject) => {
         const img = new Image();
         img.onload = () => { decodedRegionPhotos.current.set(photo.src, img); resolve(); };
@@ -1206,7 +1216,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         img.src = photo.src;
       });
     }));
-    return region;
+    return {...region,multi:region.multi ?? region.photos.length>1};
   };
   const [layout, setLayout] = useState('mask-bottom');
   const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
@@ -2514,7 +2524,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         img.src = src;
       })));
       if (epoch !== photoImportEpoch.current) return;
-      setPhotoRegion({ photos, arrangement: 'grid', landscape: photos[0].width > photos[0].height });
+      setPhotoRegion({ photos, arrangement: 'grid', templateIndex: 0, multi: photos.length > 1, landscape: photos[0].width > photos[0].height });
+      setSelectedRegionPhoto(null);
       const img = decodedRegionPhotos.current.get(url)!;
       place(img, img.naturalWidth, img.naturalHeight, photos.length > 1);
     } catch (error) {
@@ -2952,7 +2963,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const newK = layout === AROUND
       ? Math.max(o.iw / Math.max(1, imageState.baseW), o.ih / Math.max(1, imageState.baseH)) : 1;
     setImageTransform(t => {
-      if (photoRegionRef.current && photoRegionRef.current.photos.length > 1) {
+      if (photoRegionRef.current && (photoRegionRef.current.multi || photoRegionRef.current.photos.length > 1)) {
         return { x: t.x * oldK / prev.iw * o.iw / newK,
           y: t.y * oldK / prev.ih * o.ih / newK,
           w: t.w * oldK / prev.iw * o.iw / newK,
@@ -3003,6 +3014,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const k = layout === AROUND ? AROUND_SCALE : 1;
     return baseSize * gs * k * (h.localScale || 1);
   }, [holeSize, sizeJitter, imageState?.globalScale, layout]);
+
+  useEffect(()=>{
+    if(!isTextHole(holeType))whenIdle(()=>patternPathBounds(holeType,1));
+  },[holeType]);
+  const canBrushStamp = (candidate: any) => {
+    const bounds = (h: any) => {
+      const size = getHoleSize(h);
+      const ink = isTextHole(holeType) ? glyphInk(holeType, holeGlyph(holeType, customText, h), size) : patternPathBounds(holeType, size);
+      const angle=h.angle ?? holeAngle,a=angle*Math.PI/180;
+      const dx='x' in ink?ink.x+ink.w/2:0,dy='y' in ink?ink.y+ink.h/2:0;
+      return stampBounds(h.x+dx*Math.cos(a)-dy*Math.sin(a),h.y+dx*Math.sin(a)+dy*Math.cos(a),ink.w,ink.h,angle,size);
+    };
+    const a = bounds(candidate);
+    return holesRef.current.every(h => {
+      if (h.side && candidate.side && h.side !== 'both' && candidate.side !== 'both' && h.side !== candidate.side) return true;
+      return stampsHaveSafeGap(a, bounds(h));
+    });
+  };
 
   const isHoleFullyInsideMask = useCallback((h: any, s: number, maskW: number, maskH: number) => {
     // Generated patterns retain the inset rule. A manually placed pattern is
@@ -3133,91 +3162,149 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
   }, [getHoleSize, holeType, checkHitHole, layout, maskScale, canvasRatio, imageState, isHoleFullyInsideMask]);
 
-  const regionHold = useRef<{ id: number; index: number; x: number; y: number; timer: number; active: boolean } | null>(null);
-  const [regionSwapPhoto, setRegionSwapPhoto] = useState<string | null>(null);
-  const regionThumbRef = useRef<HTMLCanvasElement>(null);
-  const regionThumbPoint = useRef({ x: 0, y: 0 });
-  const cancelRegionHold = () => {
-    if (regionHold.current) window.clearTimeout(regionHold.current.timer);
-    regionHold.current = null;
-    setRegionSwapPhoto(null);
+  type PhotoSource = {kind:'region';index:number} | {kind:'object';id:string};
+  const regionHold = useRef<{ id:number;source:PhotoSource;x:number;y:number;timer:number;active:boolean } | null>(null);
+  const [regionSwapPhoto,setRegionSwapPhoto]=useState<string|null>(null);
+  const [swapSource,setSwapSource]=useState<PhotoSource|null>(null);
+  const regionThumbRef=useRef<HTMLCanvasElement>(null);
+  const regionThumbPoint=useRef({x:0,y:0});
+  const regionTouches=useRef(new Map<number,{x:number;y:number}>());
+  const regionGesture=useRef<{index:number;photo:any;cx:number;cy:number;distance:number;w:number;h:number}|null>(null);
+  const commitRegion=(next:PhotoRegion)=>{photoRegionRef.current=next;setPhotoRegion(next);};
+  const regionCoordinates=(clientX:number,clientY:number)=>{
+    const off=getLayoutOffsets(),frame=(motionFrameRef.current||canvasRef.current)?.getBoundingClientRect();
+    if(!off||!frame?.width||!frame.height)return null;
+    return {off,x:(clientX-frame.left)*off.cw/frame.width,y:(clientY-frame.top)*off.ch/frame.height,frame};
   };
-  useEffect(() => () => {
-    if (regionHold.current) window.clearTimeout(regionHold.current.timer);
-  }, []);
-  const hitRegionPhoto = (clientX: number, clientY: number) => {
-    const region = photoRegionRef.current, offs = getLayoutOffsets();
-    const frame = (motionFrameRef.current || canvasRef.current)?.getBoundingClientRect();
-    if (!region || region.photos.length < 2 || !offs || !frame?.width || !frame.height) return -1;
-    const x = (clientX - frame.left) * offs.cw / frame.width;
-    const y = (clientY - frame.top) * offs.ch / frame.height;
-    if (x < offs.ix || y < offs.iy || x > offs.ix + offs.iw || y > offs.iy + offs.ih) return -1;
-    const kk = baseFrameScale(offs), t = imageTransform;
-    return photoRegionHit(photoRegionRects(region.photos.length, region.arrangement),
-      (x - offs.ix - t.x * kk) / (t.w * kk), (y - offs.iy - t.y * kk) / (t.h * kk));
+  const regionCell=(index:number)=>{
+    const region=photoRegionRef.current,off=getLayoutOffsets();if(!region||!off)return null;
+    const k=baseFrameScale(off),t=imageTransform,r=regionRects(region,t.w*k,t.h*k)[index];if(!r)return null;
+    return {x:off.ix+(t.x+r.x*t.w)*k,y:off.iy+(t.y+r.y*t.h)*k,w:r.w*t.w*k,h:r.h*t.h*k};
   };
-  useLayoutEffect(() => {
-    const canvas = regionThumbRef.current, img = regionSwapPhoto && decodedRegionPhotos.current.get(regionSwapPhoto);
-    if (!canvas || !img) return;
-    const size = Math.round(80 * window.devicePixelRatio);
-    canvas.width = canvas.height = size;
-    const g = get2dWide(canvas);
-    if (g) {
-      const d = Math.min(img.naturalWidth, img.naturalHeight);
-      g.drawImage(img, (img.naturalWidth - d) / 2, (img.naturalHeight - d) / 2, d, d, 0, 0, size, size);
+  const hitRegionPhoto=(clientX:number,clientY:number)=>{
+    const region=photoRegionRef.current,p=regionCoordinates(clientX,clientY);if(!region||!p)return -1;
+    const {off,x,y}=p;if(x<off.ix||y<off.iy||x>off.ix+off.iw||y>off.iy+off.ih)return -1;
+    const k=baseFrameScale(off),t=imageTransform;
+    return photoRegionHit(regionRects(region,t.w*k,t.h*k),(x-off.ix-t.x*k)/(t.w*k),(y-off.iy-t.y*k)/(t.h*k));
+  };
+  const photoAt=(clientX:number,clientY:number):PhotoSource|null=>{
+    const p=regionCoordinates(clientX,clientY);if(!p)return null;
+    for(let i=objectsRef.current.length-1;i>=0;i--){
+      const o=objectsRef.current[i],r=-(o.rot||0)*Math.PI/180,dx=p.x-o.x-o.w/2,dy=p.y-o.y-o.h/2;
+      if(Math.abs(dx*Math.cos(r)-dy*Math.sin(r))<=o.w/2&&Math.abs(dx*Math.sin(r)+dy*Math.cos(r))<=o.h/2)
+        return o.type==='image'&&o.img&&!o.vid&&!isVideoEl(o.img)?{kind:'object',id:o.id}:null;
     }
-    const p = regionThumbPoint.current;
-    canvas.style.transform = `translate3d(${p.x}px,${p.y}px,0) translate(-50%,-50%)`;
-  }, [regionSwapPhoto]);
-  const regionPointerDown = (e: React.PointerEvent) => {
-    if (activePointers.current.size || regionHold.current) { cancelRegionHold(); return; }
-    if (motionLockRef.current || brushMode !== 'off' || selectedObjRef.current || selectedTarget
-      || (e.target as Element).closest('button,input,.no-pointer-events')) return;
-    const index = hitRegionPhoto(e.clientX, e.clientY);
-    if (index < 0) return;
-    // Objects/patterns in front of the photo retain their own gesture ownership.
-    const frame = (motionFrameRef.current || canvasRef.current)!.getBoundingClientRect(), offs = getLayoutOffsets()!;
-    const x = (e.clientX - frame.left) * offs.cw / frame.width, y = (e.clientY - frame.top) * offs.ch / frame.height;
-    if (objectsRef.current.some(o => {
-      const r = -(o.rot || 0) * Math.PI / 180;
-      const dx = x - o.x - o.w / 2, dy = y - o.y - o.h / 2;
-      return Math.abs(dx * Math.cos(r) - dy * Math.sin(r)) <= o.w / 2
-        && Math.abs(dx * Math.sin(r) + dy * Math.cos(r)) <= o.h / 2;
-    }) || (layout !== FULL && holesRef.current.some(h => checkHitHole(x, y, h, imageState.globalScale || 1, offs, 'image')))) return;
-    const hold = { id: e.pointerId, index, x: e.clientX, y: e.clientY, timer: 0, active: false };
-    hold.timer = window.setTimeout(() => {
-      if (regionHold.current !== hold || activePointers.current.size !== 1) return;
-      hold.active = true;
-      objDragRef.current = null; baseDragRef.current = null; interactionRef.current = null;
-      regionThumbPoint.current = { x: hold.x, y: hold.y };
-      setRegionSwapPhoto(photoRegionRef.current!.photos[hold.index].src);
-    }, PHOTO_SWAP_HOLD_MS);
-    regionHold.current = hold;
+    if(layout!==FULL&&holesRef.current.some(h=>checkHitHole(p.x,p.y,h,imageState?.globalScale||1,p.off,'image')))return null;
+    const index=hitRegionPhoto(clientX,clientY);
+    return index<0?null:{kind:'region',index};
   };
-  const regionPointerMove = (e: React.PointerEvent) => {
-    const hold = regionHold.current;
-    if (!hold || hold.id !== e.pointerId) return;
-    if (!hold.active) {
-      if (Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > 8) cancelRegionHold();
-      return;
-    }
-    e.stopPropagation(); e.preventDefault();
-    regionThumbPoint.current = { x: e.clientX, y: e.clientY };
-    activePointers.current.set(e.pointerId, e);
-    if (regionThumbRef.current) regionThumbRef.current.style.transform = `translate3d(${e.clientX}px,${e.clientY}px,0) translate(-50%,-50%)`;
+  const photoContent=(source:PhotoSource)=>{
+    if(source.kind==='region')return photoRegionRef.current?.photos[source.index]||null;
+    const o=objectsRef.current.find(o=>o.id===source.id);if(!o?.img)return null;
+    const src=o.src||o.img.src;
+    decodedRegionPhotos.current.set(src,o.img);
+    return {src,width:o.img.naturalWidth||o.img.width,height:o.img.naturalHeight||o.img.height};
   };
-  const regionPointerUp = (e: React.PointerEvent) => {
-    const hold = regionHold.current;
-    if (!hold || hold.id !== e.pointerId) return;
-    if (hold.active) {
-      e.stopPropagation(); e.preventDefault();
-      const index = e.type === 'pointercancel' ? -1 : hitRegionPhoto(e.clientX, e.clientY);
-      setPhotoRegion(region => region ? swapRegionPhotos(region, hold.index, index) : region);
-      activePointers.current.delete(e.pointerId);
-      try { (e.target as Element).releasePointerCapture(e.pointerId); } catch { /* already released */ }
-      setObjDragging(false); objDraggingRef.current = false;
+  const swapPhotos=(a:PhotoSource,b:PhotoSource)=>{
+    if(JSON.stringify(a)===JSON.stringify(b))return;
+    const pa=photoContent(a),pb=photoContent(b);if(!pa?.src||!pb?.src)return;
+    const region=photoRegionRef.current;
+    const photos=region?.photos.map((p,i)=>a.kind==='region'&&a.index===i?pb:b.kind==='region'&&b.index===i?pa:p);
+    if(region&&photos)commitRegion({...region,photos});
+    if(region&&!region.multi&&region.photos.length===1&&photos&&photos[0]!==region.photos[0]){
+      const p=photos[0];photoUrlRef.current=p.src;
+      setImageState(prev=>({...prev,img:decodedRegionPhotos.current.get(p.src),originalW:p.width,originalH:p.height}));
     }
-    cancelRegionHold();
+    const next=objectsRef.current.map(o=>{
+      const p=a.kind==='object'&&a.id===o.id?pb:b.kind==='object'&&b.id===o.id?pa:null;
+      if(p){objFxCache.current.delete(o.id);fxLiveRef.current.delete(o.id);}
+      return p?{...o,src:p.src,origSrc:p.src,img:decodedRegionPhotos.current.get(p.src),geo:undefined}:o;
+    });
+    objectsRef.current=next;setObjects(next);
+  };
+  const cancelRegionHold=()=>{
+    if(regionHold.current)window.clearTimeout(regionHold.current.timer);
+    regionHold.current=null;setRegionSwapPhoto(null);setSwapSource(null);
+  };
+  useEffect(()=>()=>{if(regionHold.current)window.clearTimeout(regionHold.current.timer);},[]);
+  useEffect(()=>{if(selectedObj||selectedTarget||maskSelected)setSelectedRegionPhoto(null);},[selectedObj,selectedTarget,maskSelected]);
+  const resetRegionGesture=()=>{
+    const index=selectedRegionPhotoRef.current,region=photoRegionRef.current;
+    if(index===null||!region||!regionTouches.current.size){regionGesture.current=null;return;}
+    const pts=[...regionTouches.current.values()],a=pts[0],b=pts[1]||a,cell=regionCell(index);
+    if(!cell)return;
+    regionGesture.current={index,photo:{...region.photos[index]},cx:(a.x+b.x)/2,cy:(a.y+b.y)/2,
+      distance:pts.length>1?Math.max(1,Math.hypot(a.x-b.x,a.y-b.y)):0,w:cell.w,h:cell.h};
+  };
+  useLayoutEffect(()=>{
+    const c=regionThumbRef.current,img=regionSwapPhoto&&decodedRegionPhotos.current.get(regionSwapPhoto);if(!c||!img)return;
+    const size=Math.round(80*window.devicePixelRatio);c.width=c.height=size;const g=get2dWide(c);
+    if(g){const d=Math.min(img.naturalWidth,img.naturalHeight);g.drawImage(img,(img.naturalWidth-d)/2,(img.naturalHeight-d)/2,d,d,0,0,size,size);}
+    const p=regionThumbPoint.current;c.style.transform=`translate3d(${p.x}px,${p.y}px,0) translate(-50%,-50%)`;
+  },[regionSwapPhoto]);
+  const regionPointerDown=(e:React.PointerEvent)=>{
+    if(motionLockRef.current||brushMode!=='off'||(e.target as Element).closest('button,input,.no-pointer-events'))return;
+    const second=activePointers.current.size||regionTouches.current.size||regionHold.current;
+    if(second)cancelRegionHold();
+    const source=photoAt(e.clientX,e.clientY);
+    const own=regionTouches.current.size>0||(source?.kind==='region'&&photoRegionRef.current?.multi);
+    if(own){
+      const p=regionCoordinates(e.clientX,e.clientY);if(!p)return;
+      e.stopPropagation();e.preventDefault();try{e.currentTarget.setPointerCapture(e.pointerId);}catch{}
+      if(!regionTouches.current.size){
+        if(source?.kind!=='region')return;
+        if(!photoContent(source)?.src){regionUploadIndex.current=source.index;regionUploadRef.current?.click();return;}
+        selectedRegionPhotoRef.current=source.index;setSelectedRegionPhoto(source.index);
+        setSelectedObj(null);setSelectedTarget(null);setBaseSelected(false);setMaskSelected(false);
+      }
+      regionTouches.current.set(e.pointerId,{x:p.x,y:p.y});resetRegionGesture();
+    }else setSelectedRegionPhoto(null);
+    if(second||!source||!photoContent(source)?.src)return;
+    const hold={id:e.pointerId,source,x:e.clientX,y:e.clientY,timer:0,active:false};
+    hold.timer=window.setTimeout(()=>{
+      if(regionHold.current!==hold||regionTouches.current.size+activePointers.current.size!==1)return;
+      const photo=photoContent(source);if(!photo?.src)return;
+      hold.active=true;objDragRef.current=null;baseDragRef.current=null;interactionRef.current=null;regionGesture.current=null;
+      regionThumbPoint.current={x:hold.x,y:hold.y};setSwapSource(source);setRegionSwapPhoto(photo.src);
+    },PHOTO_SWAP_HOLD_MS);regionHold.current=hold;
+  };
+  const regionPointerMove=(e:React.PointerEvent)=>{
+    const hold=regionHold.current;
+    if(hold?.id===e.pointerId){
+      if(!hold.active&&Math.hypot(e.clientX-hold.x,e.clientY-hold.y)>8)cancelRegionHold();
+      if(hold.active){
+        e.stopPropagation();e.preventDefault();regionThumbPoint.current={x:e.clientX,y:e.clientY};
+        const p=regionCoordinates(e.clientX,e.clientY);
+        if(p&&regionTouches.current.has(e.pointerId))regionTouches.current.set(e.pointerId,{x:p.x,y:p.y});
+        if(activePointers.current.has(e.pointerId))activePointers.current.set(e.pointerId,e);
+        if(regionThumbRef.current)regionThumbRef.current.style.transform=`translate3d(${e.clientX}px,${e.clientY}px,0) translate(-50%,-50%)`;
+        return;
+      }
+    }
+    if(!regionTouches.current.has(e.pointerId))return;
+    e.stopPropagation();e.preventDefault();const p=regionCoordinates(e.clientX,e.clientY),d=regionGesture.current,region=photoRegionRef.current;
+    if(!p||!d||!region)return;
+    regionTouches.current.set(e.pointerId,{x:p.x,y:p.y});const pts=[...regionTouches.current.values()],a=pts[0],b=pts[1]||a;
+    const zoom=Math.max(1,Math.min(8,(d.photo.zoom||1)*(d.distance?Math.hypot(a.x-b.x,a.y-b.y)/d.distance:1)));
+    const cover=Math.max(d.w/d.photo.width,d.h/d.photo.height)*zoom;
+    const mx=(d.photo.width*cover/d.w-1)/2,my=(d.photo.height*cover/d.h-1)/2;
+    const offsetX=Math.max(-mx,Math.min(mx,(d.photo.offsetX||0)+((a.x+b.x)/2-d.cx)/d.w));
+    const offsetY=Math.max(-my,Math.min(my,(d.photo.offsetY||0)+((a.y+b.y)/2-d.cy)/d.h));
+    commitRegion({...region,photos:region.photos.map((q,i)=>i===d.index?{...q,zoom,offsetX,offsetY}:q)});
+  };
+  const regionPointerUp=(e:React.PointerEvent)=>{
+    const hold=regionHold.current,owned=regionTouches.current.has(e.pointerId);
+    if(hold?.id===e.pointerId){
+      if(hold.active){
+        e.stopPropagation();e.preventDefault();const target=e.type==='pointercancel'?null:photoAt(e.clientX,e.clientY);
+        if(target)swapPhotos(hold.source,target);
+        activePointers.current.delete(e.pointerId);setObjDragging(false);objDraggingRef.current=false;
+        try{e.currentTarget.releasePointerCapture(e.pointerId);}catch{}
+      }
+      cancelRegionHold();
+    }
+    if(owned){e.stopPropagation();e.preventDefault();regionTouches.current.delete(e.pointerId);resetRegionGesture();
+      try{e.currentTarget.releasePointerCapture(e.pointerId);}catch{}}
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -3442,7 +3529,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           }
 
           if (localX >= 0 && localY >= 0) {
-            // A new stroke may overlap any existing pattern, including its centre.
+            // Initial contact and subsequent stamps use identical ink spacing.
             {
               const newHole = {
                 id: Math.random().toString(36).substr(2, 9),
@@ -3452,9 +3539,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 randomNumber: Math.floor(Math.random() * 10),
                 side: layout === AROUND ? clickedSide : 'both'
               };
-              const nextHoles = [...holesRef.current, newHole];
-              holesRef.current = nextHoles;
-              setHoles(nextHoles);
+              if (canBrushStamp(newHole)) {
+                const nextHoles = [...holesRef.current, newHole];
+                holesRef.current = nextHoles;
+                setHoles(nextHoles);
+              }
               lastDrawPosRef.current = { x: localX, y: localY };
             }
             interactionRef.current = { type: 'brush_draw', startX: x, startY: y, clickedSide };
@@ -4173,7 +4262,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         }
 
         if (localX >= 0 && localY >= 0) {
-          // Suppress only duplicate stationary events, not nearby/overlapping motifs.
+          // Test scene-space ink, including size variation and rotation.
           if (localX !== lastDrawPosRef.current.x || localY !== lastDrawPosRef.current.y) {
             const newHole = {
               id: Math.random().toString(36).substr(2, 9),
@@ -4182,10 +4271,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               randomFactor: Math.random() * 2 - 1,
               side: layout === AROUND ? intr.clickedSide : 'both'
             };
-            const nextHoles = [...holesRef.current, newHole];
-            holesRef.current = nextHoles;
-            setHoles(nextHoles);
-            lastDrawPosRef.current = { x: localX, y: localY };
+            if (canBrushStamp(newHole)) {
+              const nextHoles = [...holesRef.current, newHole];
+              holesRef.current = nextHoles;
+              setHoles(nextHoles);
+              lastDrawPosRef.current = { x: localX, y: localY };
+            }
           }
         }
       }
@@ -4332,7 +4423,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   const chromeSelectionRef = useRef({selectedTarget, selectedPatternSide, selectedObj, baseSelected});
   chromeSelectionRef.current = {selectedTarget, selectedPatternSide, selectedObj, baseSelected};
-  const patternSceneIdentity = useMemo(() => ({}), [imageState, photoRegion, layout, canvasRatio, imageTransform,
+  const patternSceneIdentity = useMemo(() => ({}), [imageState, photoRegion, swapSource, layout, canvasRatio, imageTransform,
     maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
     stripeN, stripeDir, stripeA, stripeB, holeType, customText, getHoleSize, holeAngle, maskScale,
     objects, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching,
@@ -4599,9 +4690,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (isMain) maskCacheKeyRef.current = maskKey;
 
     const drawBase = (g: CanvasRenderingContext2D, img: any, x: number, y: number, w: number, h: number) => {
-      if (img === baseImg && photoRegion && photoRegion.photos.length > 1) {
-        paintPhotoRegion(g, photoRegion, decodedRegionPhotos.current, x, y, w, h);
-      } else g.drawImage(img, x, y, w, h);
+      if (img === baseImg && photoRegion && (photoRegion.multi || photoRegion.photos.length>1)) {
+        const dim=isMain && swapSource?.kind==='region' ? swapSource.index : -1;
+        creativeSeam.current ||= new CreativeSeamless();
+        if(!creativeSeam.current.paint(g,photoRegion,decodedRegionPhotos.current,x,y,w,h,dim))
+          paintPhotoRegion(g, photoRegion, decodedRegionPhotos.current, x, y, w, h, dim);
+      } else {
+        const alpha=g.globalAlpha;
+        if(isMain&&swapSource?.kind==='region'&&swapSource.index===0)g.globalAlpha=alpha*.35;
+        g.drawImage(img,x,y,w,h);g.globalAlpha=alpha;
+      }
     };
     const drawImg = (img: any, t: any, ox: number, oy: number, w: number, h: number, kk = 1) => {
       if (!img || !t) return;
@@ -4636,7 +4734,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const m = Math.max(maskW / Math.max(1, sw), maskH / Math.max(1, sh));
       /* 底是影片的話還要加上「現在是第幾格」——不加的話這張底圖會一直
          沿用第一幀，畫面上就是「四周包圍的底定格了，只有洞在動」。 */
-      const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}|${baseVidTok}|${JSON.stringify(photoRegion)}`;
+      const key = `${W}|${H}|${s}|${m.toFixed(6)}|${t.x}|${t.y}|${t.w}|${t.h}|${baseVidTok}|${JSON.stringify(photoRegion)}|${isMain?JSON.stringify(swapSource):''}`;
       const hit = isMain ? aroundBdRef.current : null;
       if (hit && hit.key === key && hit.img === img) return hit.cv;
       const cv = isMain ? holeBackdropCanvasRef.current : document.createElement('canvas');
@@ -5613,7 +5711,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const internalWave = f?.gridWave !== undefined
         && (f.waveMix === undefined || f.waveMix > 1e-5)
         && !(o.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind));
-      const objectAlpha = ((o.opacity ?? ((o.alpha ?? 1) * 100)) / 100) * (f ? f.a : 1);
+      const objectAlpha = ((o.opacity ?? ((o.alpha ?? 1) * 100)) / 100) * (f ? f.a : 1) * (isMain && swapSource?.kind==='object' && swapSource.id===o.id ? .35 : 1);
       /* 半透明圖形必須先以不透明狀態合成完整本體、紋理、描邊與三層光，
          最後整張只套一次 alpha。若直接讓每一道筆畫各自半透明，重疊處會
          累加變深，甚至看見暫存畫布的矩形邊界。 */
@@ -6312,7 +6410,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const a0h = animRef.current;
       const sigTop = `${layout}|${maskScale}|${s.toFixed(4)}|${offs.cw}x${offs.ch}|${offs.mx},${offs.my}`
         + `|B${belowBox ? [belowBox.x0, belowBox.y0, belowBox.x1, belowBox.y1].map(v => Math.round(v)).join(',') : ''}`
-        + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}|${baseVidTok}|${JSON.stringify(photoRegion)}`
+        + `|${maskW}x${maskH}|${t.x},${t.y},${t.w},${t.h}|${(img as any).src || ''}|${baseVidTok}|${JSON.stringify(photoRegion)}|${isMain?JSON.stringify(swapSource):''}`
         + `|${holeType}|${isTextHole(holeType) ? customText : ''}|${holeAngle}|${linkMode}|${linkColor || ''}`
         + `|${LINK_W.toFixed(3)}`
         + '|H' + holes.map(h => {
@@ -6757,7 +6855,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
-  }, [imageState, photoRegion, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
+  }, [imageState, photoRegion, swapSource, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
       stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle, patternSceneIdentity]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
@@ -7587,6 +7685,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   applyEnvRef.current = (e: any) => {
     if (!e) return;
+    setSelectedRegionPhoto(null);regionTouches.current.clear();regionGesture.current=null;cancelRegionHold();
     if (e.photoRegion && e.photoRegion !== photoRegionRef.current) {
       const epoch = ++photoRegionEpoch.current;
       void loadRegion(e.photoRegion).then(region => {
@@ -7950,11 +8049,52 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     setHoleAngle(val);
   };
 
+  const ratioControls = <div className="flex flex-col min-w-0" data-photo-ratio-control>
+    <span className="text-[10px] font-bold text-[#888] mb-2 tracking-widest">比例</span>
+    <div className="h-9 grid grid-cols-5 gap-1 bg-[#111] border border-[#222] p-1 rounded-[6px]">
+      {CANVAS_RATIO_BUTTONS.map(([label,portrait,landscape])=><button key={label} onClick={()=>setCanvasRatio(current=>{
+        if(!ratioButtonActive(current,portrait,landscape))return photoRegion?.landscape ? landscape : portrait;
+        return portrait===landscape?portrait:current===portrait?landscape:portrait;
+      })} className={`min-w-0 rounded-[3px] text-[9px] font-bold tabular-nums ${ratioButtonActive(canvasRatio,portrait,landscape)?'bg-white text-black':'text-[#777]'}`}>{label}</button>)}
+    </div>
+  </div>;
+  const layoutThumbnail=(rects:any[]) => <svg viewBox="0 0 24 24" className="w-5 h-5 mx-auto" fill="none" stroke="currentColor" strokeWidth=".65">
+    {rects.map((r,i)=><rect key={i} x={2+r.x*20} y={2+r.y*20} width={r.w*20} height={r.h*20} fill={r.squareOverlay?'#111':undefined}/>)}
+  </svg>;
+  const applyPhotoTemplate=(count:number,index:number)=>{
+    if(photoRegionRef.current)commitRegion(changePhotoTemplate(photoRegionRef.current,count,index));
+    setSelectedRegionPhoto(null);setBaseSelected(false);setPhotoLayoutOpen(false);
+  };
+  const photoLayoutControls=photoRegion && <div className="flex flex-col min-w-0" data-photo-layout-control>
+    <span className="text-[10px] font-bold text-[#888] mb-2 tracking-widest">圖片排版</span>
+    <div className="h-9 grid grid-cols-5 gap-1 bg-[#111] border border-[#222] p-1 rounded-[6px]">
+      {Array.from({length:4},(_,i)=>{const t=photoTemplates(photoRegion.photos.length)[i];return <button key={i} disabled={!t}
+        aria-label={t?.name||'無排版'} data-photo-template={i} onClick={()=>applyPhotoTemplate(photoRegion.photos.length,i)}
+        className={`rounded-[3px] ${photoRegion.templateIndex===i?'text-white bg-[#333]':'text-[#777]'} disabled:opacity-20`}>{t?layoutThumbnail(t.rects):null}</button>;})}
+      <button aria-label="所有圖片佈局" aria-expanded={photoLayoutOpen} onClick={()=>setPhotoLayoutOpen(v=>!v)} className="text-white flex items-center justify-center"><Blocks size={16}/></button>
+    </div>
+  </div>;
+  const uploadRegionPhotos=async(e:React.ChangeEvent<HTMLInputElement>)=>{
+    const files=Array.from(e.target.files||[]) as File[];e.target.value='';if(!files.length)return;
+    const old=photoRegionRef.current;if(!old)return;
+    const empty=old.photos.map((p,i)=>!p.src?i:-1).filter(i=>i>=0);
+    const first=regionUploadIndex.current;const slots=[first,...empty.filter(i=>i!==first)];
+    try{
+      const normalized=await normalizeImageFiles(files.slice(0,slots.length));
+      const photos=await Promise.all(normalized.map(f=>new Promise<any>((resolve,reject)=>{
+        const src=URL.createObjectURL(f),img=new Image();img.onload=()=>{decodedRegionPhotos.current.set(src,img);resolve({src,width:img.naturalWidth,height:img.naturalHeight});};img.onerror=()=>{URL.revokeObjectURL(src);reject(Error('圖片無法讀取'));};img.src=src;
+      })));
+      // Do not overwrite a different layout selected while decoding.
+      if(photoRegionRef.current!==old)return;
+      commitRegion({...old,photos:old.photos.map((p,i)=>slots.includes(i)?photos[slots.indexOf(i)]||p:p)});
+    }catch(error){console.error(error);alert('圖片讀取失敗，請重新選擇圖片');}
+  };
+
   return (
     <div className="safe-top flex flex-col h-[100dvh] w-full bg-[#0A0A0A] text-white font-sans overflow-hidden animate-in fade-in duration-300">
-      {regionSwapPhoto && <canvas ref={regionThumbRef} data-creative-swap-thumbnail="1"
+      {regionSwapPhoto && createPortal(<canvas ref={regionThumbRef} data-creative-swap-thumbnail="1"
         className="fixed pointer-events-none z-[9999] border-2 border-white rounded-[8px]"
-        style={{ left: 0, top: 0, width: 80, height: 80, boxShadow: '0 4px 14px rgba(0,0,0,.34)' }} />}
+        style={{ left: 0, top: 0, width: 80, height: 80, boxShadow: '0 4px 14px rgba(0,0,0,.34)' }} />,document.body)}
       <style>{`
         .no-select {
             -webkit-user-select: none !important;
@@ -8445,6 +8585,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         {/* 多選最多九張照片，全部加入同一個圖片排版區域。 */}
         <input type="file" accept={RAW_ACCEPT_IMG} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
         <input type="file" accept={RAW_ACCEPT_IMG} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
+        <input type="file" accept={RAW_ACCEPT_IMG} multiple aria-label="填入圖片排版" className="hidden" ref={regionUploadRef} onChange={uploadRegionPhotos} />
         <input type="file" accept="image/*" aria-label="上傳遮罩圖片" className="hidden" ref={maskFileInputRef} onChange={handleMaskImageUpload} />
       </header>
       )}
@@ -8459,6 +8600,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             data-creative-stage="1"
             data-photo-count={photoRegion?.photos.length || 1}
             data-photo-arrangement={photoRegion?.arrangement || 'grid'}
+            data-photo-template-index={photoRegion?.templateIndex}
+            data-photo-transforms={import.meta.env.DEV?JSON.stringify(photoRegion?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0}))):undefined}
+            data-pattern-stamps={import.meta.env.DEV?JSON.stringify(holes.map(h=>({...h,size:getHoleSize(h)}))):undefined}
+            data-photo-objects={import.meta.env.DEV?JSON.stringify(objects.filter(o=>o.type==='image').map(({id,src,x,y,w,h,vid})=>({id,src,x,y,w,h,vid}))):undefined}
+            data-scene-geometry={import.meta.env.DEV?JSON.stringify(getLayoutOffsets()):undefined}
+            data-selected-region-photo={selectedRegionPhoto??''}
             data-canvas-ratio={canvasRatio}
             className="absolute inset-0 overflow-hidden"
             style={{
@@ -8540,6 +8687,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               {/* 選中框是純介面，不再烘進畫布。SVG 疊在所有畫布內容之上，
                   overflow:visible 讓線條即使跨到旁邊的黑色遮罩或畫布外側也完整顯示；
                   vector-effect 則確保預覽放大縮小後仍維持相同粗細。 */}
+              {photoRegion?.multi && (()=>{
+                const off=getLayoutOffsets();if(!off)return null;
+                const k=baseFrameScale(off),t=imageTransform,rects=regionRects(photoRegion,t.w*k,t.h*k);
+                return <div className="absolute inset-0 pointer-events-none" style={{zIndex:5,overflow:'hidden'}} data-region-cell-overlay>
+                  {rects.map((r,i)=>{
+                    const cell=regionCell(i)!;
+                    const left=Math.max(off.ix,cell.x),top=Math.max(off.iy,cell.y),right=Math.min(off.ix+off.iw,cell.x+cell.w),bottom=Math.min(off.iy+off.ih,cell.y+cell.h);
+                    if(right<=left||bottom<=top)return null;
+                    return <div key={i} data-photo-cell={i} className="absolute flex items-center justify-center" style={{left:`${left/off.cw*100}%`,top:`${top/off.ch*100}%`,width:`${(right-left)/off.cw*100}%`,height:`${(bottom-top)/off.ch*100}%`,border:activeTab!=='motion'&&selectedRegionPhoto===i?'1px dashed white':undefined}}>
+                      {!photoRegion.photos[i].src && <button className="pointer-events-auto text-white/60 flex flex-col items-center gap-1 text-[10px]" onClick={()=>{regionUploadIndex.current=i;regionUploadRef.current?.click();}}><Plus size={20}/><span>選擇相片</span></button>}
+                    </div>;
+                  })}
+                </div>;
+              })()}
               {activeTab !== 'motion' && selectedPattern && !animRef.current && !composeState && (() => {
                 const off=getLayoutOffsets(); if(!off) return null;
                 const h=selectedPattern, size=getHoleSize(h);
@@ -9126,24 +9287,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     </div>
                   </div>
 
-                  <div className="flex flex-col min-w-0">
-                    <div className="text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
-                      <span>比例</span>
-                    </div>
-                    <div className="h-9 grid grid-cols-5 gap-1 bg-[#111] border border-[#222] p-1 rounded-[6px]">
-                      {CANVAS_RATIO_BUTTONS.map(([label, portrait, landscape]) => (
-                        <button key={label} onClick={() => setCanvasRatio(current => {
-                          /* 初次方向跟第一張匯入照片一致；同一顆連按才切換。 */
-                          if (!ratioButtonActive(current, portrait, landscape)) return photoRegion?.landscape ? landscape : portrait;
-                          if (portrait === landscape) return portrait;
-                          return current === portrait ? landscape : portrait;
-                        })}
-                          className={`min-w-0 rounded-[3px] text-[9px] font-bold tabular-nums transition-colors ${ratioButtonActive(canvasRatio, portrait, landscape) ? 'bg-white text-black' : 'text-[#777] hover:text-white'}`}>
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  {photoRegion?.multi ? photoLayoutControls : ratioControls}
                 </div>
 
                   {/* 原本的比例滑桿實際控制遮罩佔圖片多少，現在改名為「佔比」。
@@ -9151,14 +9295,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       （最細的一條），分母 = 1 + 值×0.04，所以 50 就是 1/3。
                       四周包圍：1/N 是「單邊邊框寬度佔圖片的比例」，滑到最後
                       （比別人長的那一段尾巴）就是邊框 0 —— 圖片剛好滿版。 */}
-                  <div className={photoRegion && photoRegion.photos.length > 1 ? 'grid grid-cols-2 gap-3' : ''}>
-                  {photoRegion && photoRegion.photos.length > 1 && <div className="flex flex-col min-w-0" data-photo-layout-control>
-                    <span className="text-[10px] font-bold text-[#888] mb-2 tracking-widest">圖片排版</span>
-                    <button type="button" onClick={() => setPhotoLayoutOpen(v => !v)} aria-expanded={photoLayoutOpen}
-                      className="h-9 w-full bg-[#111] border border-[#222] rounded-[6px] text-[10px] font-bold text-white">
-                      {{ grid: '均分', horizontal: '橫向', vertical: '直向', feature: '主圖' }[photoRegion.arrangement]}
-                    </button>
-                  </div>}
+                  <div className={photoRegion?.multi ? 'grid grid-cols-2 gap-3' : ''}>
+                  {photoRegion?.multi && ratioControls}
                   {(() => {
                     const around = layout === AROUND;
                     const b = around ? aroundB(maskScale) : 0;
@@ -9193,12 +9331,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     );
                   })()}
                   </div>
-                  {photoLayoutOpen && photoRegion && photoRegion.photos.length > 1 && <div className="grid grid-cols-4 gap-2" data-photo-layout-options>
-                    {(['grid', 'horizontal', 'vertical', 'feature'] as PhotoArrangement[]).map(mode => <button key={mode}
-                      type="button" onClick={() => { setPhotoRegion(p => p ? { ...p, arrangement: mode } : p); setPhotoLayoutOpen(false); }}
-                      className={`h-10 rounded-[6px] border text-[10px] font-bold ${photoRegion.arrangement === mode ? 'bg-white text-black border-white' : 'bg-[#111] border-[#333] text-white/70'}`}>
-                      {{ grid: '均分', horizontal: '橫向', vertical: '直向', feature: '主圖' }[mode]}
-                    </button>)}
+                  {photoRegion && photoRegion.photos.length>1 && Math.abs(regionRects(photoRegion).reduce((sum,r)=>sum+r.w*r.h,0)-1)<.00001 && <div className="space-y-3" data-creative-seamless>
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold text-[#888]">無縫拼圖</span>
+                      <div className="flex gap-1">{[false,true].map(on=><button key={String(on)} aria-pressed={!!photoRegion.seamless===on} onClick={()=>commitRegion({...photoRegion,seamless:on})}
+                        className={`h-7 px-4 rounded-[4px] text-[10px] font-bold ${!!photoRegion.seamless===on?'bg-white text-black':'bg-[#161616] text-[#888]'}`}>{on?'開啟':'關閉'}</button>)}</div>
+                    </div>
+                    {photoRegion.seamless && <div><div className="flex justify-between text-[10px] text-[#888] mb-2"><span>融合程度</span><span>{photoRegion.seamlessAmount||0}</span></div>
+                      <RafRange min={0} max={100} step={1} value={photoRegion.seamlessAmount||0} onChange={v=>commitRegion({...photoRegionRef.current!,seamlessAmount:v})}/>
+                    </div>}
+                  </div>}
+                  {photoLayoutOpen && photoRegion && <div role="dialog" aria-label="所有圖片佈局" className="max-h-56 overflow-y-auto overscroll-contain border border-[#333] rounded-lg p-3 space-y-3" data-photo-layout-options>
+                    {[2,3,1,4,5,6,7,8,9].map(count=><div key={count}>
+                      <div className="text-[10px] text-[#888] mb-2">{count} 張</div>
+                      <div className="grid grid-cols-5 gap-2">{photoTemplates(count).map((t,i)=><button key={i} aria-label={`${count}張 ${t.name}`}
+                        data-layout-count={count} data-layout-index={i} onClick={()=>applyPhotoTemplate(count,i)} className="h-10 bg-[#161616] border border-[#333] rounded-md text-white">
+                        {layoutThumbnail(t.rects)}</button>)}</div>
+                    </div>)}
                   </div>}
                 {/* 遮罩的三項（自訂遮罩、顏色、紋理）接在排版與比例下面 ——
                     它們講的都是「這張版面長什麼樣」，本來就該在同一頁。

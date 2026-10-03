@@ -24,7 +24,7 @@ test('selected pattern controls split mirrored copies and change only the select
   const scope={selectedTarget:'a',selectedPatternSide:'mask',holes,holeSize:25,holeAngle:0,
     setHoles(fn){holes=fn(holes);},setHoleSize(){throw Error('must not change group');},setHoleAngle(){throw Error('must not change group');}};
   const start=creative.indexOf('  const selectedPattern = holes.find');
-  const end=creative.indexOf('\n  return (',start);
+  const end=creative.indexOf('\n  const ratioControls',start);
   vm.runInNewContext(compile(creative.slice(start,end)+'\nglobalThis.size=handleHoleSizeChange;globalThis.angle=handleAngleChange;'),scope);
   scope.size(75);
   assert.equal(holes.length,3);

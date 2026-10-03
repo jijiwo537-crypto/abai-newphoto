@@ -129,6 +129,11 @@ export function drawSeamPreview(target:HTMLCanvasElement,cells:SeamPhoto[],rects
   let gpu=renderers.get(target);if(!gpu||gpu.lost){gpu=new SeamGpu(target);renderers.set(target,gpu);}gpu.draw(target,cells,rects,sources,amount,view);
 }
 export function disposeSeamPreview(target:HTMLCanvasElement){renderers.get(target)?.dispose();renderers.delete(target);}
+/** A 2D collage composition cannot display the WebGL layer directly. On
+ * WebKit use tagged raw pixels, avoiding its second DOM color conversion. */
+export function copySeamPreviewPixels(target:HTMLCanvasElement,ctx:CanvasRenderingContext2D){
+  const gpu=renderers.get(target);if(!gpu)throw new Error('Missing seam renderer');gpu.copyPixels(ctx,0,0);
+}
 
 /** Export uses exactly the preview's original textures and complementary
  * weights. Bounded tiles avoid a full-resolution GPU framebuffer allocation;

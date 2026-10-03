@@ -5,7 +5,8 @@ import ts from 'typescript';
 const source = fs.readFileSync(new URL('../components/GridLayoutTool.tsx', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('GridLayoutTool.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const declarations = ast.statements.filter(s => ts.isVariableStatement(s) && s.declarationList.declarations.some(d => ['resolveLayoutRect', 'TEMPLATE_MAP'].includes(d.name.getText(ast))));
-const js = ts.transpileModule(declarations.map(d => d.getText(ast)).join('\n') + '\nexport {resolveLayoutRect,TEMPLATE_MAP};', {compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const catalog = fs.readFileSync(new URL('../utils/layoutTemplates.ts',import.meta.url),'utf8').replace('export const TEMPLATE_MAP','const TEMPLATE_MAP');
+const js = ts.transpileModule(catalog+'\n'+declarations.map(d => d.getText(ast)).join('\n') + '\nexport {resolveLayoutRect,TEMPLATE_MAP};', {compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const {resolveLayoutRect,TEMPLATE_MAP} = await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
 
 test('new four-photo layout preserves previous indexes and has square foreground cells', () => {

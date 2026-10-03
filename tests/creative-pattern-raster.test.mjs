@@ -34,7 +34,7 @@ test('special pattern tiles reuse exact-resolution pixels without rerasterizing 
 test('group size still scales individually resized patterns',()=>{
   const source=fs.readFileSync('components/CollageTool.tsx','utf8');
   const start=source.indexOf('const getHoleSize =');
-  const end=source.indexOf('\n\n  const isHoleFullyInsideMask',start);
+  const end=source.indexOf('\n\n',source.indexOf('  }, [holeSize',start));
   const scope={useCallback:fn=>fn,imageState:{globalScale:1},holeSize:0,sizeJitter:0,layout:'mask-right',AROUND:'around'};
   vm.runInNewContext(compile(source.slice(start,end)+'\nglobalThis.size=getHoleSize;'),scope);
   const individual={localScale:2};assert.equal(scope.size(individual),50);
