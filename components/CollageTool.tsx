@@ -1782,7 +1782,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [composeState, setComposeState] = useState<{ id: string; img: HTMLImageElement | HTMLVideoElement; geo: GeoParams; vid?: boolean } | null>(null);
 
   const openComposeFor = useCallback((id: string) => {
-    const o = objectsRef.current.find(z => z.id === id);
+    const regionIndex = id.startsWith('region-photo-') ? Number(id.slice(13)) : -1;
+    const o = regionIndex >= 0 ? photoRegionRef.current?.photos[regionIndex] : objectsRef.current.find(z => z.id === id);
     if (!o || !o.src) return;
     /* 影片直接把那個 <video> 交給構圖介面 —— 它跟 <img> 一樣畫得上畫布。
        （另外開一張 <img> 去讀影片的網址是讀不到的，那正是經典拼圖那邊
@@ -1802,13 +1803,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const applyComposeToObj = useCallback(() => {
     setComposeState(st => {
       if (!st) return null;
-      const o = objectsRef.current.find(z => z.id === st.id);
+      const regionIndex = st.id.startsWith('region-photo-') ? Number(st.id.slice(13)) : -1;
+      const o = regionIndex >= 0 ? photoRegionRef.current?.photos[regionIndex] : objectsRef.current.find(z => z.id === st.id);
       if (!o) return null;
       const srcUrl = o.origSrc || o.src;
       const finish = (newSrc: string, aspect: number) => {
         const el = new Image();
         el.onload = () => {
-          setObjects(prev => prev.map(f => {
+          if (regionIndex >= 0 && photoRegionRef.current) {
+            decodedRegionPhotos.current.set(newSrc, el);
+            const region = photoRegionRef.current;
+            const next = {...region, photos: region.photos.map((p,i)=>i===regionIndex
+              ? {...p,src:newSrc,origSrc:srcUrl,geo:st.geo,width:el.naturalWidth,height:el.naturalHeight} : p)};
+            photoRegionRef.current = next;
+            setPhotoRegion(next);
+          } else setObjects(prev => prev.map(f => {
             if (f.id !== st.id) return f;
             const nh = Math.max(8, f.w / aspect);
             return { ...f, img: el, src: newSrc, origSrc: srcUrl, geo: st.geo, y: f.y + (f.h - nh) / 2, h: nh };
@@ -1956,7 +1965,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 圖片編輯頁是自己排好三段式高度的整頁面板：外面不能再包內距，
      footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-16 分類列 ＋ 分頁列）。 */
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
-    && !!objects.find(o => o.id === selectedObj && o.type === 'image');
+    && (selectedRegionPhoto !== null || !!objects.find(o => o.id === selectedObj && o.type === 'image'));
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   /** 正在畫布上直接編輯的那一段文字（null＝沒有在編輯）。
@@ -2013,6 +2022,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [adjustSub, setAdjustSub] = useState<'shape' | 'tune' | 'filter' | 'effect'>('filter');
   const [effectCard, setEffectCard] = useState<string | null>(null);
   const [effectDetail, setEffectDetail] = useState(false);
+  useLayoutEffect(() => {
+    if (selectedRegionPhoto !== null) { setAdjustSub('filter'); setEffectCard(null); setEffectDetail(false); }
+  }, [selectedRegionPhoto]);
   const [shapeMenu, setShapeMenu] = useState('root');
   /* 一進編輯頁不預先選好任何工具：滑桿要點下工具鈕才浮出來 */
   const [shapeTool, setShapeTool] = useState('');
@@ -4523,7 +4535,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
   const chromeSelectionRef = useRef({selectedTarget, selectedPatternSide, selectedObj, baseSelected});
   chromeSelectionRef.current = {selectedTarget, selectedPatternSide, selectedObj, baseSelected};
-  const patternSceneIdentity = useMemo(() => ({}), [imageState, photoRegion, swapSource, layout, canvasRatio, imageTransform,
+  const patternSceneIdentity = useMemo(() => ({}), [imageState, photoRegion, swapSource, selectedRegionPhoto, layout, canvasRatio, imageTransform,
     maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
     stripeN, stripeDir, stripeA, stripeB, holeType, customText, getHoleSize, holeAngle, maskScale,
     objects, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching,
@@ -4768,24 +4780,37 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     if (isMain) maskCacheKeyRef.current = maskKey;
 
-    const drawBase = (g: CanvasRenderingContext2D, img: any, x: number, y: number, w: number, h: number) => {
+    const regionDecoded = new Map(decodedRegionPhotos.current);
+    const regionForPaint = photoRegion ? {...photoRegion,photos:photoRegion.photos.map((p,i)=>{
+      const original = decodedRegionPhotos.current.get(p.src);
+      if (!original || !p.fx || !hasPhotoFx(p.fx)) return p;
+      const processed = fxCanvasOf({...p,id:`region-fx-${i}@${p.src}`,img:original}, false);
+      if (!processed) return p;
+      const src=`region-processed-${i}@${p.src}`;
+      regionDecoded.set(src, processed as HTMLImageElement);
+      // Crop coordinates must use the processed surface dimensions, not the
+      // original decode dimensions (the shared effects renderer may cap size).
+      return {...p,src,width:(processed as any).naturalWidth || (processed as any).width,
+        height:(processed as any).naturalHeight || (processed as any).height};
+    })} : null;
+    const drawBase = (g: CanvasRenderingContext2D, img: any, x: number, y: number, w: number, h: number, allowDim = false) => {
       if (img === baseImg && photoRegion && (photoRegion.multi || photoRegion.photos.length>1)) {
-        const dim=isMain && swapSource?.kind==='region' ? swapSource.index : -1;
+        const dim=isMain && allowDim && swapSource?.kind==='region' ? swapSource.index : -1;
         creativeSeam.current ||= new CreativeSeamless();
-        if(!creativeSeam.current.paint(g,photoRegion,decodedRegionPhotos.current,x,y,w,h,dim,isMain))
-          paintPhotoRegion(g, photoRegion, decodedRegionPhotos.current, x, y, w, h, dim);
+        if(!creativeSeam.current.paint(g,regionForPaint!,regionDecoded,x,y,w,h,dim,isMain))
+          paintPhotoRegion(g, regionForPaint!, regionDecoded, x, y, w, h, dim);
       } else {
-        g.drawImage(isMain&&swapSource?.kind==='region'&&swapSource.index===0?dimmedPhotoSource(img):img,x,y,w,h);
+        g.drawImage(isMain&&allowDim&&swapSource?.kind==='region'&&swapSource.index===0?dimmedPhotoSource(img):img,x,y,w,h);
       }
     };
-    const drawImg = (img: any, t: any, ox: number, oy: number, w: number, h: number, kk = 1) => {
+    const drawImg = (img: any, t: any, ox: number, oy: number, w: number, h: number, kk = 1, allowDim = false) => {
       if (!img || !t) return;
       ctx.save();
       ctx.beginPath();
       ctx.rect(ox, oy, w, h);
       ctx.clip();
       // kk：整個構圖等比例縮放（四周包圍縮中間那張照片時用）
-      drawBase(ctx, img, ox + t.x * s * kk, oy + t.y * s * kk, t.w * s * kk, t.h * s * kk);
+      drawBase(ctx, img, ox + t.x * s * kk, oy + t.y * s * kk, t.w * s * kk, t.h * s * kk, allowDim);
       ctx.restore();
     };
 
@@ -4835,7 +4860,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.drawImage(bd, 0, 0);
       ctx.restore();
     };
-    const drawCentreImage = () => drawImg(baseImg as any, imageTransform, offs.ix, offs.iy, iw, ih, kIn);
+    const drawCentreImage = () => {
+      drawImg(baseImg as any, imageTransform, offs.ix, offs.iy, iw, ih, kIn, true);
+      // Base-photo chrome belongs to the base layer, beneath objects/patterns.
+      const index = selectedRegionPhotoRef.current;
+      if (!isMain || !photoRegion?.multi || index === null || activeTab === 'motion' || hideChromeRef.current || animRef.current) return;
+      const t=imageTransform,rects=regionRects(photoRegion,t.w*s*kIn,t.h*s*kIn),r=rects[index];
+      if (!r) return;
+      ctx.save();ctx.beginPath();ctx.rect(offs.ix,offs.iy,iw,ih);ctx.clip();
+      // Higher photo cells in overlay layouts must also cover this base frame.
+      rects.forEach((cell,i)=>{if(i>index&&photoRegion.photos[i].src){
+        ctx.beginPath();ctx.rect(offs.ix,offs.iy,iw,ih);
+        ctx.rect(offs.ix+(t.x+cell.x*t.w)*s*kIn,offs.iy+(t.y+cell.y*t.h)*s*kIn,cell.w*t.w*s*kIn,cell.h*t.h*s*kIn);
+        ctx.clip('evenodd');
+      }});
+      ctx.strokeStyle='white';ctx.lineWidth=uiPx;ctx.setLineDash([4*uiPx,4*uiPx]);
+      ctx.strokeRect(offs.ix+(t.x+r.x*t.w)*s*kIn,offs.iy+(t.y+r.y*t.h)*s*kIn,r.w*t.w*s*kIn,r.h*t.h*s*kIn);
+      ctx.restore();
+    };
     const drawBackdrop = () => (layout === AROUND
       ? drawBackdropAround()
       : drawImg(baseImg as any, imageTransform, offs.mx, offs.my, maskW, maskH));
@@ -6736,7 +6778,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const th = Math.max(1, Math.round(targetCanvas.height * tk));
           if (tc.width !== tw || tc.height !== th) { tc.width = tw; tc.height = th; }
           const tg = tc.getContext('2d');
-          if (tg) { tg.imageSmoothingQuality = 'high'; tg.drawImage(targetCanvas, 0, 0, tw, th); }
+          if (tg) {
+            tg.imageSmoothingQuality = 'high';
+            // Base selection is intentionally part of scene ordering, but must
+            // never leak into history/draft thumbnails. This clean render is
+            // bounded to the existing thumbnail size, not the live preview.
+            if (selectedRegionPhotoRef.current !== null) renderToCanvas(tc, s * tk);
+            else tg.drawImage(targetCanvas, 0, 0, tw, th);
+          }
         } catch { /* 拍不成就算了，下次再拍 */ }
       }
     }
@@ -6918,7 +6967,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
-  }, [imageState, photoRegion, swapSource, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
+  }, [imageState, photoRegion, swapSource, selectedRegionPhoto, activeTab, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
       stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle, patternSceneIdentity]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
@@ -8864,7 +8913,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     const cell=regionCell(i)!;
                     const left=Math.max(off.ix,cell.x),top=Math.max(off.iy,cell.y),right=Math.min(off.ix+off.iw,cell.x+cell.w),bottom=Math.min(off.iy+off.ih,cell.y+cell.h);
                     if(right<=left||bottom<=top)return null;
-                    return <div key={i} data-photo-cell={i} className="absolute flex items-center justify-center" style={{left:`${left/off.cw*100}%`,top:`${top/off.ch*100}%`,width:`${(right-left)/off.cw*100}%`,height:`${(bottom-top)/off.ch*100}%`,border:activeTab!=='motion'&&selectedRegionPhoto===i?'1px dashed white':undefined}}>
+                    return <div key={i} data-photo-cell={i} className="absolute flex items-center justify-center" style={{left:`${left/off.cw*100}%`,top:`${top/off.ch*100}%`,width:`${(right-left)/off.cw*100}%`,height:`${(bottom-top)/off.ch*100}%`}}>
                       {!photoRegion.photos[i].src && <button aria-label="選擇相片" className="pointer-events-auto absolute inset-0" onClick={()=>{regionUploadIndex.current=i;regionUploadRef.current?.click();}}/>}
                     </div>;
                   })}
@@ -9866,8 +9915,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 );
               })()}
               {activeTab === 'objedit' && (() => {
-                const sel = objects.find(o => o.id === selectedObj) || null;
-                const patch = (d: any) => setObjects(prev => prev.map(o => o.id === sel.id ? { ...o, ...d } : o));
+                const regionPhoto = selectedRegionPhoto !== null ? photoRegion?.photos[selectedRegionPhoto] : null;
+                const regionEditing = !!regionPhoto?.src;
+                const sel = regionEditing ? {...regionPhoto,id:`region-photo-${selectedRegionPhoto}`,type:'image',img:decodedRegionPhotos.current.get(regionPhoto.src)} : objects.find(o => o.id === selectedObj) || null;
+                const patch = (d: any) => {
+                  if (regionEditing && photoRegionRef.current) {
+                    clearPhotoDimmer();
+                    commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===selectedRegionPhoto ? {...p,...d} : p)});
+                  } else setObjects(prev => prev.map(o => o.id === sel.id ? { ...o, ...d } : o));
+                };
                 const move = (dir: number) => setObjects(prev => {
                   const i = prev.findIndex(o => o.id === sel.id);
                   const j = i + dir;
@@ -10098,6 +10154,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                          真正畫到畫布上的還是 sel.img（那段影片本人），這裡換掉的
                          只有面板看的那條網址。 */
                       img={panelImgOf(sel)}
+                      hideShape={regionEditing}
                       set={(d: any) => patch(d)} lutList={lutList}
                       loadingLut={loadingLut} setLoadingLut={setLoadingLut}
                       lutRevision={lutRevision} setLutRevision={setLutRevision}
