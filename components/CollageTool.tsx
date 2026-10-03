@@ -4,16 +4,18 @@ import { previewViewport } from '../utils/previewViewport';
 import { LinkGlowTiles } from '../utils/linkGlowTiles';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
+import {CollageExportOptions} from './CollageExportOptions';
+import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import { idleDefaults } from '../utils/animationDefaults';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, dimmedPhotoSource, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
 import { stampBounds, brushStepReached, type StampBounds } from '../utils/patternBrushSpacing';
 import { patternEntranceRanks, type PatternDirection } from '../utils/patternEntrance';
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
-import { canExportHeic, exportHeic } from '../utils/heicExport';
+import { exportHeic } from '../utils/heicExport';
 import { CreativeSeamless } from '../utils/creativeSeamless';
 import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
-import {creativeSeamlessSliderValue,withCreativeSeamlessAmount} from '../utils/creativePhotoLayout';
+import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCountForLayout} from '../utils/creativePhotoLayout';
 import { createPortal } from 'react-dom';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
@@ -66,8 +68,9 @@ import {
 const drawTextShape: typeof drawTextShapeRaw = (ctx,type,text,x,y,size,fill,out=false,angle=0) =>
   drawTextShapeRaw(ctx,type,text,x,y,size,fill,out,angle,true);
 /* 構圖跟「編輯」「經典拼圖」共用同一個 ComposeStudio */
-import { patternGlyph, paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
+import { paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
   STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
+import { paintMaskTexture } from '../utils/maskTexture';
 import { ComposeStudio } from './ComposeStudio';
 import { StuckEscape } from './StuckEscape';
 /* 影片：包成一個「長得跟 <img> 一樣」的來源，畫布那邊一行都不必改。
@@ -1263,7 +1266,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   } | null>(null);
   const [holeCount, setHoleCount] = useState(11);
   /** 滿版本身沒有遮罩圖案，但數量欄不能被重設成 0；離開滿版時精準還原。 */
-  const holeCountBeforeFullRef = useRef(11);
   const [holes, setHoles] = useState<any[]>([]); 
   /* 浮動物件：疊在拼圖最上層的圖片與文字。
      跟「挖洞」完全分開 —— 洞是把遮罩打穿，這些是貼上去的圖層。
@@ -2032,6 +2034,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [dotColor, setDotColor] = useState('#728C86'); 
   const [dotSize, setDotSize] = useState(15); 
   const [dotGap, setDotGap] = useState(20);
+  const [dotSquash, setDotSquash] = useState(50);
   /* 條紋：兩個顏色、粗細、方向。跟點點／星星／愛心共用同一個「紋理」選單，
      但參數不一樣（沒有間距，改成粗細＋方向），所以各自存。 */
   const [stripeN, setStripeN] = useState(STRIPE_N_DEFAULT);
@@ -2347,6 +2350,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (st.dotColor !== undefined) setDotColor(st.dotColor);
     if (st.dotSize !== undefined) setDotSize(st.dotSize);
     if (st.dotGap !== undefined) setDotGap(st.dotGap);
+    setDotSquash(st.dotSquash ?? 50);
     if (st.stripeN !== undefined) setStripeN(st.stripeN);
     if (st.stripeDir === 'h' || st.stripeDir === 'v') setStripeDir(st.stripeDir);
     if (st.stripeA !== undefined) setStripeAPick(st.stripeA);
@@ -4506,7 +4510,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const chromeSelectionRef = useRef({selectedTarget, selectedPatternSide, selectedObj, baseSelected});
   chromeSelectionRef.current = {selectedTarget, selectedPatternSide, selectedObj, baseSelected};
   const patternSceneIdentity = useMemo(() => ({}), [imageState, photoRegion, swapSource, layout, canvasRatio, imageTransform,
-    maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
+    maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
     stripeN, stripeDir, stripeA, stripeB, holeType, customText, getHoleSize, holeAngle, maskScale,
     objects, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching,
     fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
@@ -4680,7 +4684,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       maskImageState.img.width, maskImageState.img.height, maskW / s, maskH / s) : null;
     const maskKey = isMain ? JSON.stringify([
       bW, bH, maskW | 0, maskH | 0,
-      maskColor, patternType, dotColor, dotGap, dotSize, sgs,
+      maskColor, patternType, dotColor, dotGap, dotSize, dotSquash, sgs,
       stripeN, stripeDir, stripeA, stripeB,
       maskImageState && maskImageState.img ? (maskImageState.img.src || '1') : '',
       maskPhoto?.x, maskPhoto?.y, maskPhoto?.w, maskPhoto?.h,
@@ -4745,35 +4749,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const actualDotSize = (5 + (dotSize / 100) * 15) * sgs;
       const actualDotGap = (40 + dotGap) * sgs;
       
-      const r = actualDotSize / 2;
-      // 邊緣的預留空間，上下左右完全一樣，且預留空間縮小以充分貼合邊界
-      const pad = r + 2 * sgs; 
-      
-      const dx = actualDotGap;
-      const dy = actualDotGap * Math.sqrt(3) / 2; // 半落重複 staggered 三角網格高度
-      
-      const rangeX = Math.ceil(maskW / dx) + 2;
-      const rangeY = Math.ceil(maskH / dy) + 2;
-      
-      for (let j = -rangeY; j <= rangeY; j++) {
-        const py = maskH / 2 + j * dy;
-        
-        const isOddRow = Math.abs(j) % 2 === 1;
-        const shiftX = isOddRow ? dx / 2 : 0;
-        
-        for (let i = -rangeX; i <= rangeX; i++) {
-          const px = maskW / 2 + i * dx + shiftX;
-          // 邊界檢查 (上下距離與左右距離皆必須在 [pad, size-pad] 內)
-          if (
-            px - r >= pad && 
-            px + r <= maskW - pad &&
-            py - r >= pad &&
-            py + r <= maskH - pad
-          ) {
-            patternGlyph(fCtx, patternType, px, py, r);
-          }
-        }
-      }
+      paintMaskTexture(fCtx, patternType, maskW, maskH,
+        actualDotSize / 2, actualDotGap, dotSquash);
     }
     if (isMain) maskCacheKeyRef.current = maskKey;
 
@@ -6927,7 +6904,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        （交給疊在上面的 textarea），可是這串相依沒有它的話，開始編輯與結束
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
-  }, [imageState, photoRegion, swapSource, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize,
+  }, [imageState, photoRegion, swapSource, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
       stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle, patternSceneIdentity]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
@@ -6977,7 +6954,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       await saveToolDraft('collage', photoUrlRef.current, {
         photoRegion: photoRegionRef.current,
         layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText, holeSize, sizeJitter, holeAngle,
-        holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
+        holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash, symmetryEnabled,
         stripeN, stripeDir, stripeA: stripeAPick, stripeB,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
         objects: objectsRef.current.map(({ img, ...rest }: any) => rest),
@@ -6987,7 +6964,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     onHome(choice === 'save');
   }, [onRequestExit, onHome, initialState, histKey, layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText, holeSize, sizeJitter,
-      holeAngle, holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap,
+      holeAngle, holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash,
       symmetryEnabled, stripeN, stripeDir, stripeAPick, stripeB, glowMode, holeGlowColor,
       glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor]);
 
@@ -7041,7 +7018,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const payload = {
         photoRegion: photoRegionRef.current,
         layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText, holeSize, sizeJitter, holeAngle,
-        holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, symmetryEnabled,
+        holeCount, holes, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash, symmetryEnabled,
         stripeN, stripeDir, stripeA: stripeAPick, stripeB,
         glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText, linkColor,
         /* 新增進來的內容（圖片／文字／圖形）也要一起記 —— 以前這一項不存在，
@@ -7057,7 +7034,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     } catch { /* 記錄失敗不能影響離開 */ }
   }, [imageState, getLayoutOffsets, renderToCanvas, layout, maskScale, canvasRatio, canvasRatioBeforeFull, holeType, customText,
       holeSize, sizeJitter, holeAngle, holeCount, holes, maskColor, patternType, dotColor,
-      dotSize, dotGap, symmetryEnabled, glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
+      dotSize, dotGap, dotSquash, symmetryEnabled, glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed,
       glowMoImg, glowMoText, linkColor]);
   /* leaveToHome 定義在 recordHistory 前面（它要先煞車再記錄），所以走 ref */
   const recordHistoryRef = useRef(recordHistory);
@@ -7327,7 +7304,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [exportAsk, setExportAsk] = useState(false);
   const [exportOptionsOpen,setExportOptionsOpen]=useState(false);
   const [imageExportFormat,setImageExportFormat]=useState<'png'|'jpg'|'heic'>('png');
-  const [videoExportFormat,setVideoExportFormat]=useState<'auto'|'mp4'|'webm'>('auto');
+  const [videoExportFormat,setVideoExportFormat]=useState<CollageVideoFormat>('auto');
   const [videoExportFps,setVideoExportFps]=useState(0);
   const [videoExportQuality,setVideoExportQuality]=useState(40_000_000);
   const exportOptionsRef=useRef<HTMLDivElement>(null);
@@ -7797,7 +7774,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      取快照與套回快照都寫在這，前段的歷史邏輯只透過 ref 呼叫。 */
   envSrcRef.current = {
     layout, maskScale, canvasRatio, canvasRatioBeforeFull, photoRegion,
-    maskColor, patternType, dotColor, dotSize, dotGap,
+    maskColor, patternType, dotColor, dotSize, dotGap, dotSquash,
     stripeN, stripeDir, stripeA: stripeAPick, stripeB,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
@@ -7821,7 +7798,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (isCanvasRatio(e.canvasRatio)) setCanvasRatio(e.canvasRatio);
     setCanvasRatioBeforeFull(isCanvasRatio(e.canvasRatioBeforeFull)?e.canvasRatioBeforeFull:null);
     setMaskColor(e.maskColor); setPatternType(e.patternType);
-    setDotColor(e.dotColor); setDotSize(e.dotSize); setDotGap(e.dotGap);
+    setDotColor(e.dotColor); setDotSize(e.dotSize); setDotGap(e.dotGap); setDotSquash(e.dotSquash ?? 50);
     if (e.stripeN !== undefined) setStripeN(e.stripeN);
     if (e.stripeDir === 'h' || e.stripeDir === 'v') setStripeDir(e.stripeDir);
     if (e.stripeA !== undefined) setStripeAPick(e.stripeA);
@@ -7860,7 +7837,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return () => window.clearTimeout(t);
   }, [
     imageState, pushHistory, markDirty,
-    layout, maskScale, canvasRatio, canvasRatioBeforeFull, photoRegion, maskColor, patternType, dotColor, dotSize, dotGap,
+    layout, maskScale, canvasRatio, canvasRatioBeforeFull, photoRegion, maskColor, patternType, dotColor, dotSize, dotGap, dotSquash,
     maskImageState, maskTransform, imageTransform,
     holeType, customText, holeSize, sizeJitter, holeAngle, holeCount, symmetryEnabled,
     glowMode, holeGlowColor, glowIdle, glowAmp, glowSpeed, glowMoImg, glowMoText,
@@ -8011,8 +7988,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (hasVid) { await rewindVideos(vids); playVideos(vids); }
       animRef.current = buildAnim(0);
       renderToCanvas(cv, scale);          // 先畫第一格，不然開頭會錄到黑畫面
-      const mime = (videoExportFormat==='mp4'?['video/mp4;codecs=avc1','video/mp4']:videoExportFormat==='webm'?['video/webm;codecs=vp9','video/webm']:['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm'])
-        .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || '';
+      const mime = collageVideoMime(videoExportFormat);
       if(!mime)throw Error('此裝置不支援所選的影片格式');
       /* 動態成品至少 50fps；高幀率影片素材則保留其來源幀率。 */
       const stream = (cv as any).captureStream(videoExportFps || preferredVideoFrameRate(vids));
@@ -8730,12 +8706,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             </div>
           </div>
         )}
-        {exportOptionsOpen&&<div ref={exportOptionsRef} role="dialog" aria-label="創意拼圖匯出設定" style={PREMIUM_GLASS} className="absolute left-4 right-4 top-full mt-2 z-[81] p-3 rounded-2xl border border-white/15 flex flex-col gap-3">
-          <ExportOptionRow label="圖片格式" value={imageExportFormat} choices={[['jpg','JPG'],['png','PNG'],['heic','HEIC']]} disabled={v=>v==='heic'&&!canExportHeic()} onChange={v=>setImageExportFormat(v as any)}/>
-          <ExportOptionRow label="影片格式" value={videoExportFormat} choices={[['auto','自動'],['mp4','MP4'],['webm','WEBM']]} disabled={v=>v!=='auto'&&(typeof MediaRecorder==='undefined'||![`video/${v}`,`video/${v};codecs=${v==='mp4'?'avc1':'vp9'}`].some(t=>MediaRecorder.isTypeSupported(t)))} onChange={v=>setVideoExportFormat(v as any)}/>
-          <ExportOptionRow label="影片幀率" value={String(videoExportFps)} choices={[['0','自動'],['30','30'],['50','50'],['60','60'],['120','120']]} onChange={v=>setVideoExportFps(Number(v))}/>
-          <ExportOptionRow label="影片畫質" value={String(videoExportQuality)} choices={[['16000000','標準'],['28000000','高'],['40000000','最高']]} onChange={v=>setVideoExportQuality(Number(v))}/>
-        </div>}
+        {exportOptionsOpen&&<CollageExportOptions label="創意拼圖匯出設定" panelRef={exportOptionsRef} imageFormat={imageExportFormat} videoFormat={videoExportFormat} fps={videoExportFps} quality={videoExportQuality} onImage={setImageExportFormat} onVideo={setVideoExportFormat} onFps={setVideoExportFps} onQuality={setVideoExportQuality}/>}
         {/* 多選最多九張照片，全部加入同一個圖片排版區域。 */}
         <input type="file" accept={RAW_ACCEPT_IMG} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
         <input type="file" accept={RAW_ACCEPT_IMG} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
@@ -8759,6 +8730,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             data-photo-transforms={import.meta.env.DEV?JSON.stringify(photoRegion?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0}))):undefined}
             data-photo-seamless={import.meta.env.DEV?JSON.stringify({on:!!photoRegion?.seamless,amount:photoRegion?.seamlessAmount||0}):undefined}
             data-pattern-stamps={import.meta.env.DEV?JSON.stringify(holes.map(h=>({...h,size:getHoleSize(h)}))):undefined}
+            data-pattern-count={import.meta.env.DEV?holeCount:undefined}
             data-photo-objects={import.meta.env.DEV?JSON.stringify(objects.filter(o=>o.type==='image').map(({id,src,x,y,w,h,vid})=>({id,src,x,y,w,h,vid}))):undefined}
             data-scene-geometry={import.meta.env.DEV?JSON.stringify(getLayoutOffsets()):undefined}
             data-selected-region-photo={selectedRegionPhoto??''}
@@ -9447,12 +9419,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           if (t === layout) return;
                           const leavingFull = layout === FULL && t !== FULL;
                           const restoredRatio = canvasRatioBeforeFull || canvasRatio;
-                          const restoredCount = leavingFull ? holeCountBeforeFullRef.current : holeCount;
-                          if (t === FULL) {
-                            holeCountBeforeFullRef.current = holeCount;
-                            setHoleCount(8);
-                          } else if (leavingFull) {
-                            setHoleCount(restoredCount);
+                          const desiredCount=creativePatternCountForLayout(holeCount,layout,t);
+                          setHoleCount(desiredCount);
+                          if (leavingFull) {
                             setCanvasRatio(restoredRatio);
                             setCanvasRatioBeforeFull(null);
                           }
@@ -9471,12 +9440,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           if (t === AROUND && layout !== AROUND) setHoleSize(v => Math.min(100, v + 10));
                           else if (t !== AROUND && layout === AROUND) setHoleSize(v => Math.max(0, v - 10));
                           setSelectedTarget(null);
-                          /* 滿版同樣要真的建立八顆圖案，而不是只把數字改成 8。
-                             其他排版仍恢復進滿版前的數量。 */
-                          /* holeCount 從別的數字改成 8 時，下方既有 effect 會在同一
-                             次 commit 後重灑；這裡不能再先灑一次，否則使用者會
-                             看見圖案出現後又跳位。原本就已是 8 才由按鈕直接建立。 */
-                          const desiredCount = t === FULL ? 8 : restoredCount;
+                          // Count changes regenerate once via the existing effect;
+                          // unchanged counts (including the cap) regenerate here.
                           if (holeCount === desiredCount) {
                             generateRandomHoles(true, t, 'none', desiredCount,t===FULL?'3:4':leavingFull?restoredRatio:undefined);
                           }
@@ -9565,7 +9530,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 </div>
                 {/* 紋理整組收在同一格：選項、顏色、兩根滑桿全部在同一個框裡
                     （跟經典拼圖那一頁排法一致）。 */}
-                <div hidden={!!maskImageState} className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden col-span-2 order-3 w-full">
+                <div data-creative-texture hidden={!!maskImageState || layout === FULL} className="bg-[#111] border border-[#222] rounded-[6px] overflow-hidden col-span-2 order-3 w-full">
                   <div className="h-[47px] flex items-center justify-between px-3">
                     <span className="text-[10px] font-bold text-[#888]">紋理</span>
                     <div className="flex items-center gap-2">
@@ -9626,6 +9591,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                       <CompactSlider wide label="大小" value={dotSize} min={0} max={100} onChange={setDotSize} />
                       <CompactSlider wide label="間距" value={dotGap} min={0} max={100} onChange={setDotGap} />
+                      <div className="col-span-2" data-mask-texture-squash>
+                        <CompactSlider wide label="壓扁" value={dotSquash} min={0} max={100} onChange={setDotSquash} />
+                      </div>
                     </div>
                   )}
                 </div>
@@ -10603,11 +10571,10 @@ const useRafOnChange = (onChange: (v: number) => void) => {
 
 /** This leaf owns the slider feedback. The large editor only commits state
  * at gesture end; its paint scheduler consumes the latest value each frame. */
-const ExportOptionRow=({label,value,choices,onChange,disabled}:{label:string;value:string;choices:readonly (readonly [string,string])[];onChange:(value:string)=>void;disabled?:(value:string)=>boolean})=><div className="flex flex-col gap-1.5"><span className="text-[10px] text-white/50">{label}</span><div className="flex gap-1.5">{choices.map(([v,name])=><button key={v} aria-pressed={value===v} disabled={disabled?.(v)} onClick={()=>onChange(v)} className={`flex-1 h-8 rounded-lg text-[11px] font-medium transition-colors active:scale-95 disabled:text-white/30 ${value===v?'bg-white text-black':'bg-[#303034] text-white/90'}`}>{name}</button>)}</div></div>;
 const RegionLiveRange=({value,onChange,onCommit}:{value:number;onChange:(v:number)=>void;onCommit:()=>void})=>{
   const [shown,setShown]=React.useState(value);
   React.useEffect(()=>setShown(value),[value]);
-  return <><div className="flex justify-between text-[10px] text-[#888] mb-2"><span>融合程度</span><span>{shown}</span></div>
+  return <>
     <input aria-label="融合程度" type="range" min={0} max={100} step={1} value={shown} className="premium-slider w-full"
       onChange={e=>{const v=Number(e.target.value);setShown(v);onChange(v);}} onPointerDown={e=>e.stopPropagation()}
       onPointerUp={onCommit} onPointerCancel={onCommit} onTouchEnd={onCommit} onKeyUp={onCommit}/></>;

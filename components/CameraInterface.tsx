@@ -7,6 +7,7 @@ import { Viewfinder, FX_ZERO, type ViewfinderFx } from './Viewfinder';
 import { ImageEditor } from './ImageEditor';
 import { createPortal } from 'react-dom';
 import { processImageFile } from '../utils/imageLoader';
+import {CAMERA_FX_ITEMS} from '../utils/cameraEffects';
 
 // Extend MediaStream types to support zoom
 declare global {
@@ -22,14 +23,9 @@ type AspectRatio = '16:9' | '3:2';
 type TimerMode = 0 | 3 | 10;
 type ActiveControl = 'none' | 'kelvin' | 'exposure' | 'filters' | 'effects';
 
-/* 拍照時就能即時看到的三種特效。名稱與滑桿範圍跟編輯頁一致，
-   拍下來的就是畫面上看到的樣子（快門是直接抓 WebGL 畫布）。 */
-/* 跟編輯頁同款的兩個特效（編輯頁的「朦朧」就是這條模糊）。
-   拍照時只要開關，不用調整 —— 強度固定用調好的這一組。 */
-const FX_ITEMS: { id: keyof ViewfinderFx; label: string; on: number }[] = [
-  { id: 'soft', label: '柔光', on: 70 },
-  { id: 'blur', label: '朦朧', on: 70 },
-];
+/* 五種即時特效只切換開關；預覽和快門共用 WebGL 管線。
+   柔光ll、低保真的初始參數直接讀取編輯器定義。 */
+const FX_ITEMS = CAMERA_FX_ITEMS;
 
 /** 變焦按鈕上寫幾倍就真的是幾倍 */
 const ZOOM_STEPS: { label: string; factor: number; mm: string }[] = [
@@ -209,7 +205,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
   const [activeControl, setActiveControl] = useState<ActiveControl>('none');
   const [selectedLutIdx, setSelectedLutIdx] = useState(0);
   const [fx, setFx] = useState<ViewfinderFx>(FX_ZERO);
-  const fxOn = fx.soft > 0 || fx.blur > 0;
+  const fxOn = FX_ITEMS.some(item => fx[item.id] > 0);
 
   const [flashOn, setFlashOn] = useState(false);
   
@@ -1152,14 +1148,16 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
           ) : activeControl === 'effects' ? (
             /* 特效與曝光／白平衡共用同一個 56px 控制列高度，打開時觀景窗不會上移。 */
             <div className="w-full flex items-center animate-in h-full justify-center px-10 relative">
-              <div className="flex items-center justify-center gap-3">
+              <div className="flex items-center gap-2 overflow-x-auto w-full no-scrollbar">
                 {FX_ITEMS.map(it => {
                   const on = fx[it.id] > 0;
                   return (
                     <button
                       key={it.id}
+                      aria-pressed={on}
+                      data-camera-effect={it.id}
                       onClick={() => { triggerHaptic(); setFx(prev => ({ ...prev, [it.id]: on ? 0 : it.on })); }}
-                      className={`px-5 h-10 rounded-full text-[12px] font-bold tracking-[0.12em] border transition-all active:scale-95 ${
+                      className={`shrink-0 px-4 h-10 rounded-full text-[12px] font-bold tracking-[0.12em] border transition-all active:scale-95 ${
                         on ? 'bg-white text-black border-white' : 'bg-white/5 text-white/60 border-white/15'
                       }`}
                     >

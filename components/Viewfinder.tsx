@@ -1,14 +1,11 @@
 
 import React, { useRef, useEffect, forwardRef, useImperativeHandle, useState } from 'react';
 import { loadCameraLut, readyCameraLut } from '../utils/cameraLuts';
+import {CAMERA_FX_ZERO, CAMERA_LOWFI_GLSL, CAMERA_HIGHLIGHT_FS, CAMERA_SPILL_STEP, type CameraFx} from '../utils/cameraEffects';
 
 /** 拍照時可以即時看到的特效，跟編輯頁同款、數值都是 0–100 */
-export interface ViewfinderFx {
-  soft: number;   // 柔光：亮部挑出來模糊之後用濾色疊回去
-  blur: number;   // 朦朧：模糊過的自己淡淡蓋一層
-}
-
-export const FX_ZERO: ViewfinderFx = { soft: 0, blur: 0 };
+export type ViewfinderFx = CameraFx;
+export const FX_ZERO = CAMERA_FX_ZERO;
 
 interface ViewfinderProps {
   video: HTMLVideoElement | null;
@@ -109,6 +106,9 @@ uniform sampler2D u_tex;
 uniform vec2 u_step;      // 一個紋素的大小 × 方向
 uniform float u_radius;   // 幾個紋素
 uniform float u_brightTh; // >=0 時只取亮部（柔光用），<0 是一般模糊
+uniform int u_mode;
+uniform int u_box;
+uniform sampler2D u_cut;
 in vec2 v_texCoord;
 out vec4 outColor;
 
@@ -120,8 +120,10 @@ out vec4 outColor;
       邊緣附近的顏色會偏向亮的那一側。 */
 vec4 tap(vec2 uv) {
     vec4 c = texture(u_tex, uv);
-    if (u_brightTh < 0.0) return c;
     float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+    if(u_mode==1){float cut=texture(u_cut,vec2(.5)).r;return vec4(c.rgb*smoothstep(cut-.004,cut+.004,lum),1.);}
+    if(u_mode==2){float m=pow(clamp((lum-160./255.)/(95./255.),0.,1.),1.5);return vec4(vec3(m),1.);}
+    if (u_brightTh < 0.0) return c;
     return vec4(c.rgb, clamp((lum - u_brightTh) * 5.0, 0.0, 1.0));
 }
 
@@ -132,6 +134,7 @@ const float W1 = 0.3162162162;
 const float W2 = 0.0702702703;
 
 void main() {
+    if(u_box>0){vec4 s=vec4(0.);for(int i=-18;i<=18;i++){if(abs(i)<=u_box)s+=tap(v_texCoord+u_step*float(i));}outColor=s/float(u_box*2+1);return;}
     vec2 d1 = u_step * O1 * u_radius;
     vec2 d2 = u_step * O2 * u_radius;
     vec4 c = tap(v_texCoord) * W0;
@@ -152,8 +155,16 @@ uniform sampler2D u_blur;   // 一般模糊（朦朧用）
 uniform sampler2D u_glow;   // 亮部模糊（柔光用）
 uniform float u_soft;    // 0–1
 uniform float u_blurAmt; // 0–1
+uniform sampler2D u_spill;
+uniform sampler2D u_narrow;
+uniform sampler2D u_haloTex;
+uniform float u_soft2;
+uniform float u_halo;
+uniform float u_lowfi;
+uniform vec2 u_res;
 in vec2 v_texCoord;
 out vec4 outColor;
+${CAMERA_LOWFI_GLSL}
 
 void main() {
     /* 離屏畫布的原點在左下、螢幕在左上，所以讀回來要把 Y 翻回去，
@@ -164,6 +175,7 @@ void main() {
 
         /* 朦朧：跟編輯頁同一組係數 —— 模糊過的自己用 0.625 的不透明度蓋上去 */
     vec3 c = mix(base, bl, u_blurAmt * 0.625);
+    if(u_lowfi>0.){vec2 shift=lowfiShift(tc);vec3 ab=vec3(texture(u_scene,tc+shift).r,base.g,texture(u_scene,tc-shift).b);c+=(ab-base)*u_lowfi;}
 
     /* 柔光：亮部圖層（RGB×A）用濾色疊回去，疊加量是強度 ×1.5。
        畫布的 globalAlpha 上限是 1，所以這裡也夾到 1，跟編輯頁一致。 */
@@ -173,6 +185,17 @@ void main() {
         c = 1.0 - (1.0 - c) * (1.0 - clamp(glow, 0.0, 1.0));
     }
 
+    if(u_halo>0.){
+      float lum=dot(base,vec3(.299,.587,.114));
+      float m=min(1.,texture(u_haloTex,tc).r*(1.-lum)*u_halo*6.);
+      vec3 tint=vec3(.63,.145,.07); // HSL 8°, 80%, 35%, same as editor
+      c=1.-(1.-c)*(1.-tint*m);
+    }
+    if(u_soft2>0.){
+      c=1.-(1.-c)*(1.-texture(u_spill,tc).rgb*u_soft2*.9);
+      for(int i=-12;i<=12;i++){vec3 n=texture(u_narrow,tc+vec2(0.,float(i)*3./1200.)).rgb;c=1.-(1.-c)*(1.-n*u_soft2*.05);}
+    }
+    if(u_lowfi>0.)c=mix(c,lowfiColor(c,tc,u_res,dot(base,vec3(.2126,.7152,.0722))),u_lowfi);
     outColor = vec4(clamp(c, 0.0, 1.0), 1.0);
 }
 `;
@@ -193,6 +216,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
   const progRef = useRef<WebGLProgram | null>(null);
   const blurProgRef = useRef<WebGLProgram | null>(null);
   const compProgRef = useRef<WebGLProgram | null>(null);
+  const highlightProgRef = useRef<WebGLProgram | null>(null);
   const videoTexRef = useRef<WebGLTexture | null>(null);
   const lutTexRef = useRef<WebGLTexture | null>(null);
   const [lutLoaded, setLutLoaded] = useState(false);
@@ -220,7 +244,14 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     gw: number; gh: number;
     gPing: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
     gPong: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
-  }>({ w: 0, h: 0, bw: 0, bh: 0, gw: 0, gh: 0, scene: null, ping: null, pong: null, blurOut: null, gPing: null, gPong: null });
+    sw:number;sh:number;
+    sPing: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
+    sPong: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
+    wide: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
+    narrow: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
+    halo: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
+    cut: { fb: WebGLFramebuffer; tex: WebGLTexture } | null;
+  }>({ w: 0, h: 0, bw: 0, bh: 0, gw: 0, gh: 0, sw:0,sh:0,scene: null, ping: null, pong: null, blurOut: null, gPing: null, gPong: null,sPing:null,sPong:null,wide:null,narrow:null,halo:null,cut:null });
 
   /* 滑桿是每一幀都可能在動的，放進 effect 依賴會不停重建 render loop。
      用 ref 讓迴圈每一幀讀最新值，迴圈本身只建立一次。 */
@@ -311,6 +342,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       const s = gl.createShader(type)!;
       gl.shaderSource(s, src);
       gl.compileShader(s);
+      if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))console.error('[camera shader]',gl.getShaderInfoLog(s));
       return s;
     };
     const link = (fs: string) => {
@@ -318,6 +350,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.attachShader(p, createShader(gl.VERTEX_SHADER, VS_SOURCE));
       gl.attachShader(p, createShader(gl.FRAGMENT_SHADER, fs));
       gl.linkProgram(p);
+      if(!gl.getProgramParameter(p,gl.LINK_STATUS))console.error('[camera program]',gl.getProgramInfoLog(p));
       return p;
     };
 
@@ -325,6 +358,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     progRef.current = prog;
     blurProgRef.current = link(FS_BLUR);
     compProgRef.current = link(FS_COMPOSITE);
+    highlightProgRef.current = link(CAMERA_HIGHLIGHT_FS);
 
     const pos = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
     const uvs = new Float32Array([0, 1, 1, 1, 0, 0, 1, 0]);
@@ -348,7 +382,7 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       if (aUv >= 0) { gl.enableVertexAttribArray(aUv); gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 0, 0); }
     };
     // 三個程式的屬性位置都是 0/1，所以綁一次就好；保險起見全部走一遍
-    bind(prog); bind(blurProgRef.current); bind(compProgRef.current);
+    bind(prog); bind(blurProgRef.current); bind(compProgRef.current);bind(highlightProgRef.current);
 
     videoTexRef.current = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, videoTexRef.current);
@@ -359,13 +393,14 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
 
     return () => {
       const rt = rtRef.current;
-      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.gPing, rt.gPong]) {
+      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.gPing, rt.gPong,rt.sPing,rt.sPong,rt.wide,rt.narrow,rt.halo,rt.cut]) {
         if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
       }
-      rtRef.current = { w: 0, h: 0, bw: 0, bh: 0, gw: 0, gh: 0, scene: null, ping: null, pong: null, blurOut: null, gPing: null, gPong: null };
+      rtRef.current = { w: 0, h: 0, bw: 0, bh: 0, gw: 0, gh: 0, sw:0,sh:0,scene: null, ping: null, pong: null, blurOut: null, gPing: null, gPong: null,sPing:null,sPong:null,wide:null,narrow:null,halo:null,cut:null };
       gl.deleteProgram(prog);
       if (blurProgRef.current) gl.deleteProgram(blurProgRef.current);
       if (compProgRef.current) gl.deleteProgram(compProgRef.current);
+      if (highlightProgRef.current) gl.deleteProgram(highlightProgRef.current);
       gl.deleteTexture(videoTexRef.current);
       lutCacheRef.current.forEach(tex => gl.deleteTexture(tex));
       lutCacheRef.current.clear();
@@ -406,12 +441,14 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       // 柔光的光暈自己一個固定大小的小格網，跟畫面解析度脫鉤
       const gk = Math.max(w, h) / GLOW_LONG;
       const gw = Math.max(2, Math.round(w / gk)), gh = Math.max(2, Math.round(h / gk));
-      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.gPing, rt.gPong]) {
+      const sk=Math.max(w,h)/512,sw=Math.max(2,Math.round(w/sk)),sh=Math.max(2,Math.round(h/sk));
+      for (const t of [rt.scene, rt.ping, rt.pong, rt.blurOut, rt.gPing, rt.gPong,rt.sPing,rt.sPong,rt.wide,rt.narrow,rt.halo,rt.cut]) {
         if (t) { gl.deleteFramebuffer(t.fb); gl.deleteTexture(t.tex); }
       }
       const next = { w, h, bw, bh, gw, gh, scene: makeTarget(w, h), ping: makeTarget(bw, bh),
                      pong: makeTarget(bw, bh), blurOut: makeTarget(bw, bh),
-                     gPing: makeTarget(gw, gh), gPong: makeTarget(gw, gh) };
+                     gPing: makeTarget(gw, gh), gPong: makeTarget(gw, gh),sw,sh,
+                     sPing:makeTarget(sw,sh),sPong:makeTarget(sw,sh),wide:makeTarget(sw,sh),narrow:makeTarget(sw,sh),halo:makeTarget(sw,sh),cut:makeTarget(1,1) };
       rtRef.current = next;
       return next;
     };
@@ -421,7 +458,8 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
     const draw = (source: TexImageSource, W: number, H: number) => {
       const f = fxRef.current;
       const soft = (f.soft || 0) / 100, blurAmt = (f.blur || 0) / 100;
-      const anyFx = soft > 0 || blurAmt > 0;
+      const soft2=(f.soft2||0)/100,halo=(f.halo||0)/100,lowfi=(f.lowfi||0)/100;
+      const anyFx = soft > 0 || blurAmt > 0 || soft2>0 || halo>0 || lowfi>0;
       const rt = anyFx ? ensureTargets(W, H) : null;
 
       // ---- 第一趟：影像 → 曝光／色溫／濾鏡 ----
@@ -452,7 +490,13 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       if (!anyFx) return;
 
       const bp = blurProgRef.current!, cp = compProgRef.current!;
-      const { bw, bh, gw, gh, scene, ping, pong, blurOut, gPing, gPong } = rt!;
+      const { bw, bh, gw, gh, sw,sh,scene, ping, pong, blurOut, gPing, gPong,sPing,sPong,wide,narrow,halo:haloTarget,cut } = rt!;
+
+      if(soft2>0){
+        gl.useProgram(highlightProgRef.current);gl.bindFramebuffer(gl.FRAMEBUFFER,cut!.fb);gl.viewport(0,0,1,1);
+        gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,scene!.tex);
+        gl.uniform1i(gl.getUniformLocation(highlightProgRef.current!,'u_tex'),0);gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+      }
 
       gl.useProgram(bp);
       gl.viewport(0, 0, bw, bh);
@@ -466,26 +510,31 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
                      W2: number, H2: number,
                      a: { fb: WebGLFramebuffer; tex: WebGLTexture },
                      b: { fb: WebGLFramebuffer; tex: WebGLTexture },
-                     out: { fb: WebGLFramebuffer; tex: WebGLTexture }) => {
+                     out: { fb: WebGLFramebuffer; tex: WebGLTexture },mode=0,box=0) => {
+        gl.useProgram(bp);
         gl.viewport(0, 0, W2, H2);
         let srcTex: WebGLTexture = scene!.tex;
         for (let i = 0; i < passes; i++) {
           const last = i === passes - 1;
           gl.uniform1f(gl.getUniformLocation(bp, 'u_radius'), radius);
+          gl.uniform1i(gl.getUniformLocation(bp,'u_mode'),i===0?mode:0);
+          gl.uniform1i(gl.getUniformLocation(bp,'u_box'),box);
+          gl.activeTexture(gl.TEXTURE3);gl.bindTexture(gl.TEXTURE_2D,cut!.tex);gl.uniform1i(gl.getUniformLocation(bp,'u_cut'),3);
           // 亮部萃取只在第一趟做，之後就是單純的模糊
           gl.uniform1f(gl.getUniformLocation(bp, 'u_brightTh'), i === 0 ? brightTh : -1);
           gl.bindFramebuffer(gl.FRAMEBUFFER, a.fb);
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, srcTex);
           gl.uniform1i(gl.getUniformLocation(bp, 'u_tex'), 0);
-          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 1 / W2, 0);
+          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), box?CAMERA_SPILL_STEP:1 / W2, 0);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
           gl.uniform1f(gl.getUniformLocation(bp, 'u_brightTh'), -1);
+          gl.uniform1i(gl.getUniformLocation(bp,'u_mode'),0);
           gl.bindFramebuffer(gl.FRAMEBUFFER, last ? out.fb : b.fb);
           gl.activeTexture(gl.TEXTURE0);
           gl.bindTexture(gl.TEXTURE_2D, a.tex);
-          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 0, 1 / H2);
+          gl.uniform2f(gl.getUniformLocation(bp, 'u_step'), 0, box?CAMERA_SPILL_STEP:1 / H2);
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
           srcTex = last ? out.tex : b.tex;
@@ -504,6 +553,8 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
         // 強度只影響最後疊上去的量，擴散範圍不變 —— 編輯頁也是這樣。
         glowTex = chain(GLOW_RADIUS, GLOW_PASSES, 0.70, gw, gh, gPing!, gPong!, gPong!);
       }
+      if(soft2>0){chain(1,3,-1,sw,sh,sPing!,sPong!,wide!,1,18);chain(1,3,-1,sw,sh,sPing!,sPong!,narrow!,1,5);}
+      if(halo>0)chain(Math.max(.2,sw*.08*.8553125*.30/2),2,-1,sw,sh,sPing!,sPong!,haloTarget!,2);
 
       // ---- 最後一趟：清晰 + 模糊 合成到畫面 ----
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -520,6 +571,11 @@ export const Viewfinder = forwardRef(({ video, lutUrl, exposure, kelvin, isUserF
       gl.uniform1i(gl.getUniformLocation(cp, 'u_glow'), 2);
       gl.uniform1f(gl.getUniformLocation(cp, 'u_soft'), soft);
       gl.uniform1f(gl.getUniformLocation(cp, 'u_blurAmt'), blurAmt);
+      for(const [unit,name,target] of [[3,'u_spill',wide],[4,'u_narrow',narrow],[5,'u_haloTex',haloTarget]] as const){
+        gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,target!.tex);gl.uniform1i(gl.getUniformLocation(cp,name),unit);
+      }
+      gl.uniform1f(gl.getUniformLocation(cp,'u_soft2'),soft2);gl.uniform1f(gl.getUniformLocation(cp,'u_halo'),halo);gl.uniform1f(gl.getUniformLocation(cp,'u_lowfi'),lowfi);
+      gl.uniform2f(gl.getUniformLocation(cp,'u_res'),W,H);
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     };
 

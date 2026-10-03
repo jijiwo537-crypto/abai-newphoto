@@ -31,7 +31,7 @@ test('creative export settings are connected to real encoders, track rate and bi
  assert.match(c,/imageExportFormat==='jpg'\?'image\/jpeg'/);
  assert.match(c,/captureStream\(videoExportFps \|\| preferredVideoFrameRate\(vids\)\)/);
  assert.match(c,/videoBitsPerSecond: videoExportQuality/);
- assert.match(c,/videoExportFormat==='mp4'\?\['video\/mp4/);
+ assert.match(c,/collageVideoMime\(videoExportFormat\)/);
  assert.doesNotMatch(c,/w-px h-4 bg-white\/10 mx-1/);
 });
 test('floating panels share dark translucent glass while buttons stay opaque',()=>{

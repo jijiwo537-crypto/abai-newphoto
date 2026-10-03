@@ -19,10 +19,12 @@ const extFor = (type: string, url: string): string => {
   if (type.includes('png')) return 'png';
   if (type.includes('heic') || type.includes('heif')) return 'heic';
   if (type.includes('webm')) return 'webm';
+  if (type.includes('quicktime')) return 'mov';
   if (type.includes('mp4')) return 'mp4';
   if (type.includes('jpeg') || type.includes('jpg')) return 'jpg';
   if (url.includes('.mp4')) return 'mp4';
   if (url.includes('.webm')) return 'webm';
+  if (url.includes('.mov')) return 'mov';
   return 'png';
 };
 

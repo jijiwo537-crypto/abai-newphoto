@@ -3,6 +3,9 @@ import { createPortal, flushSync } from 'react-dom';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
+import {CollageExportOptions} from './CollageExportOptions';
+import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
+import {exportHeic} from '../utils/heicExport';
 import { idleDefaults } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
@@ -8947,6 +8950,17 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 有東西被選取時，畫布就進入編輯狀態：手勢全部給選取物，不再左右滑動 */
   const anySelected = selectedIndex !== null || selectedFloatingId !== null || layoutSelected;
   const [exportState, setExportState] = useState<'idle' | 'processing' | 'success'>('idle');
+  const [exportOptionsOpen,setExportOptionsOpen]=useState(false);
+  const [imageExportFormat,setImageExportFormat]=useState<'png'|'jpg'|'heic'>('png');
+  const [videoExportFormat,setVideoExportFormat]=useState<CollageVideoFormat>('auto');
+  const [videoExportFps,setVideoExportFps]=useState(0);
+  const [videoExportQuality,setVideoExportQuality]=useState(40_000_000);
+  const exportOptionsRef=useRef<HTMLDivElement>(null);
+  useEffect(()=>{
+    if(!exportOptionsOpen)return;
+    const close=(e:PointerEvent)=>{if(!exportOptionsRef.current?.contains(e.target as Node)&&!(e.target as Element).closest('[data-grid-export-options-toggle]'))setExportOptionsOpen(false);};
+    document.addEventListener('pointerdown',close,true);return()=>document.removeEventListener('pointerdown',close,true);
+  },[exportOptionsOpen]);
   /* 匯出時的進度。整批共用一個畫面（不是每頁各跑一次）：
        videoProg  —— 0～1；只有「這批裡有影片」才會有值，純圖片是 null
        videoLabel —— 每頁都是影片就是「正在匯出影片」，混到圖片就是「正在匯出成品」 */
@@ -13911,10 +13925,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       const recordPageVideo = async (pageIdx: number, pageLeft: number): Promise<string> => {
         const { rc, composite, dur, vids } = await preparePageVideo(pageIdx, pageLeft);
 
-        const mime = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm']
-          .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || '';
-        const stream = rc.captureStream(preferredVideoFrameRate(vids));
-        const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 12_000_000 } : undefined);
+        const mime = collageVideoMime(videoExportFormat);
+        if(!mime)throw Error('此裝置不支援所選的影片格式');
+        const stream = rc.captureStream(videoExportFps||preferredVideoFrameRate(vids));
+        const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: videoExportQuality });
         const chunks: Blob[] = [];
         rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
         const done = new Promise<Blob>(res => { rec.onstop = () => res(new Blob(chunks, { type: mime || 'video/webm' })); });
@@ -14038,7 +14052,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
         /* 一定要走 canvasToUrl，不能直接叫 toBlob：畫布很大又碰上記憶體吃緊時，
            iOS 的 toBlob 有機會永遠不回來（見 utils/blobUrl 的看門狗）——
            那時候整個匯出就停在「正在匯出成品」，而那一層蓋著返回鍵。 */
-        const url = await canvasToUrl(canvas);
+        const format=silent?'png':imageExportFormat;
+        const url = format==='heic'?await exportHeic(canvas):await canvasToUrl(canvas,format==='jpg'?'image/jpeg':'image/png',1);
         if (!url) throw new Error('Blob creation failed');
         urls.push(url);
         kinds.push('image');
@@ -14331,7 +14346,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
       {/* Top Header */}
       <header
-        className="h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-50 bg-black/90 backdrop-blur-md"
+        className="relative h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-50 bg-black/90 backdrop-blur-md"
         /* IG 預覽期間只隱藏、不移出版面。display:none 會讓工作區突然增高，
            關閉預覽時 ResizeObserver 再把畫布推回去，正是回來時那一下抖動。 */
         style={{ visibility: igPreview ? 'hidden' : undefined }}
@@ -14434,16 +14449,20 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                 </>
               )}
             </div>
+              <div className="h-7 rounded-full bg-white text-black shadow-lg flex items-center overflow-hidden">
               <button
-                onClick={() => handleExport()}
+                onClick={() => {setExportOptionsOpen(false);setMoreOpen(false);handleExport();}}
                 disabled={exportState === 'processing' || !(pages.some(p => p.layouts.some(l => l.images.some(img => img.url !== ''))) || floatingImages.length > 0)}
                 style={{ opacity: pages.some(p => p.layouts.some(l => l.images.some(img => img.url !== ''))) || floatingImages.length > 0 ? 1 : .45 }}
-                className="bg-white text-black px-6 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-transform whitespace-nowrap"
+                className="h-full pl-4 pr-2 text-[11px] font-black whitespace-nowrap active:opacity-60"
               >
                 儲存
               </button>
+              <button data-grid-export-options-toggle aria-label="跨頁拼圖匯出選項" aria-expanded={exportOptionsOpen} onClick={()=>{setMoreOpen(false);setExportOptionsOpen(v=>!v);}} className="h-full w-7 pr-1 flex items-center justify-center active:opacity-60"><Icon name="more_horiz" className="text-[16px]"/></button>
+              </div>
           </div>
           )}
+          {exportOptionsOpen&&<CollageExportOptions label="跨頁拼圖匯出設定" panelRef={exportOptionsRef} imageFormat={imageExportFormat} videoFormat={videoExportFormat} fps={videoExportFps} quality={videoExportQuality} onImage={setImageExportFormat} onVideo={setVideoExportFormat} onFps={setVideoExportFps} onQuality={setVideoExportQuality}/>}
         </header>
 
       {/* Hidden File Inputs */}

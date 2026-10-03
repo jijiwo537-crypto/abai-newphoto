@@ -9,6 +9,10 @@ export type PhotoArrangement = 'grid' | 'horizontal' | 'vertical' | 'feature';
 export type RegionPhoto = { src: string; width: number; height: number; zoom?: number; offsetX?: number; offsetY?: number };
 export type PhotoRegion = { photos: RegionPhoto[]; arrangement: PhotoArrangement; landscape: boolean; templateIndex?: number; multi?: boolean; overflowPhotos?: RegionPhoto[]; seamless?: boolean; seamlessAmount?: number };
 export type PhotoRect = { x: number; y: number; w: number; h: number; squareOverlay?:boolean; overlayAspect?:number };
+/** Only crossing into/out of full-image layout grows the pattern population. */
+export function creativePatternCountForLayout(count:number,from:string,to:string){
+  return Math.min(30,Math.max(0,Math.round(count*(from!==to&&(from==='image-full'||to==='image-full')?1.5:1))));
+}
 /** Keep old switch-based drafts readable, including enabled minimum feather. */
 export function creativeSeamlessSliderValue(region:PhotoRegion){
   const amount=Math.max(0,Math.min(100,Math.round(region.seamlessAmount||0)));
