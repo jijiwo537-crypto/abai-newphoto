@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { createPortal, flushSync } from 'react-dom';
+import { classicTextureSizeFromUi, classicTextureSizeToUi } from '../utils/classicTextureSize';
 import { motion, AnimatePresence, Reorder } from 'motion/react';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
@@ -8159,9 +8160,9 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   /** 顏色分頁的捲動容器：換子頁時要捲回最上面 */
   const colorTabRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => { if (colorTabRef.current) colorTabRef.current.scrollTop = 0; }, [colorSub]);
-  const patternSize = patternOpts.size;
+  const patternSize = classicTextureSizeToUi(patternOpts.size);
   const patternGap = patternOpts.gap;
-  const setPatternSize = (v: number) => patchPattern({ size: v });
+  const setPatternSize = (v: number) => patchPattern({ size: classicTextureSizeFromUi(v) });
   const setPatternGap = (v: number) => patchPattern({ gap: v });
   /* 條紋：粗細、方向、兩個顏色。跟點點／星星／愛心共用同一個「紋理」選單，
      但參數不一樣（沒有間距，改成粗細＋方向）。 */
@@ -16440,8 +16441,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         用了會直接把「emoji_symbols」這串英文字印在按鈕上、
                         還會撐爆格子蓋到隔壁兩顆。改用跟旁邊「新增文字」「新增圖形」
                         同一套的 lucide 線條圖示。 */}
-                    {/* 圖標直接用清單裡的第五顆符號，一看就知道這一頁是什麼 */}
-                    <span className="text-white opacity-80 text-[15px] leading-none whitespace-nowrap h-6 flex items-center">{SYMBOLS[4]}</span>
+                    <span className="text-white opacity-80 h-6 flex items-center" data-add-symbol-icon="vortex"><VortexIcon size={18} /></span>
                     <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增符號</span>
                   </button>
                   <button
@@ -16914,7 +16914,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       </div>
                     )}
                   </div>
-                  <div className="h-2" />
+                  <div data-classic-texture-bottom-space className={patternType !== 'none' ? 'h-[44px]' : 'h-2'} />
                 </div>
               </div>
             )}

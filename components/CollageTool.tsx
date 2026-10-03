@@ -9768,8 +9768,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             用了會直接把「emoji_symbols」這串英文字印在按鈕上、
                             還會撐爆格子蓋到隔壁兩顆。改用跟旁邊「新增文字」「新增圖形」
                             同一套的 lucide 線條圖示。 */}
-                        {/* 圖標直接用清單裡的第五顆符號，一看就知道這一頁是什麼 */}
-                        <span className="text-white opacity-80 text-[15px] leading-none whitespace-nowrap h-6 flex items-center">{SYMBOLS[4]}</span>
+                        <span className="text-white opacity-80 h-6 flex items-center" data-add-symbol-icon="vortex"><VortexIcon size={18} /></span>
                         <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增符號</span>
                       </button>
                       <button
