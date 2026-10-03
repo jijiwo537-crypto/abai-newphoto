@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 const code=ts.transpileModule(readFileSync(new URL('../utils/patternBrushSpacing.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
-const {stampBounds,stampsHaveSafeGap}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
-test('brush stamps require half-size empty space, including a new stroke',()=>{
+const {stampBounds,stampsHaveSafeGap,brushStepReached}=await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`);
+test('legacy generation gap remains unchanged',()=>{
  const a=stampBounds(0,0,100,100,0,100);
  assert.equal(stampsHaveSafeGap(a,stampBounds(149,0,100,100,0,100)),false);
  assert.equal(stampsHaveSafeGap(a,stampBounds(150,0,100,100,0,100)),true);
@@ -24,5 +24,11 @@ test('scene-space spacing is invariant under preview zoom',()=>{
   assert.equal(stampsHaveSafeGap(scale(a),scale(b)),stampsHaveSafeGap(a,b));
  }
  const src=readFileSync(new URL('../components/CollageTool.tsx',import.meta.url),'utf8');
- assert.equal((src.match(/if \(canBrushStamp\(newHole\)\)/g)||[]).length,2);
+ assert.doesNotMatch(src,/canBrushStamp/);
+ assert.match(src,/brushStepReached\(lastPatternStampRef.current,bounds\)/);
+});
+test('brush cadence is exactly 80 percent of the previous interval, without a global placement veto',()=>{
+ const a=stampBounds(0,0,100,100,0,100);
+ assert.equal(brushStepReached(a,stampBounds(119,0,100,100,0,100)),false);
+ assert.equal(brushStepReached(a,stampBounds(120,0,100,100,0,100)),true);
 });

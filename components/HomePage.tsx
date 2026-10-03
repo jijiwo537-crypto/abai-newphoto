@@ -10,11 +10,12 @@ import {
 } from '../utils/auth';
 import { loadAvatar, saveAvatarFromFile, removeAvatar } from '../utils/avatar';
 import { installHomeScroll } from '../utils/homeScroll';
+import { PREMIUM_GLASS } from '../utils/premiumGlass';
 
 const CONTACT_EMAIL = 'chi888969930522@gmail.com';
 const CONTACT_IG = 'abai_is.perfect';
 const CONTACT_IG_URL = 'https://www.instagram.com/abai_is.perfect/';
-const SETTINGS_GLASS = { background: 'rgba(0,0,0,.92)', backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)', boxShadow: 'inset 0 1px 0 rgba(255,255,255,.04),0 12px 36px rgba(0,0,0,.3)' };
+const SETTINGS_GLASS = PREMIUM_GLASS;
 
 interface HomePageProps {
   onOpenCamera: () => void;
@@ -1835,10 +1836,10 @@ export const HomePage: React.FC<HomePageProps> = ({
           </div>
           <AnimatePresence mode="wait" initial={false}><motion.div key={settingsPage} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
           {settingsPage === 'menu' ? <div className="flex flex-col gap-2">
-            <button className="min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => { setSettingsOpen(false); setContactOpen(true); }}>聯絡資訊</button>
-            <button className="min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('language')}>語言</button>
+            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => { setSettingsOpen(false); setContactOpen(true); }}>聯絡資訊</button>
+            <button className="premium-glass-button min-h-12 px-4 py-3 rounded-xl border border-white/10 text-left text-[13px] font-normal tracking-wide" onClick={() => setSettingsPage('language')}>語言</button>
           </div> : <div className="flex flex-col gap-2">{LOCALES.map(l => <button key={l.id} lang={l.id} onClick={() => changeLocale(l.id)} aria-pressed={getLocale() === l.id}
-            className={`min-h-12 px-4 py-3 rounded-xl text-[13px] font-normal flex justify-between items-center border ${getLocale() === l.id ? 'border-white bg-white/10' : 'border-white/10'}`}>
+            className={`premium-glass-button min-h-12 px-4 py-3 rounded-xl text-[13px] font-normal flex justify-between items-center border ${getLocale() === l.id ? 'border-white' : 'border-white/10'}`}>
             <span>{l.name}</span>{getLocale() === l.id && <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>}
           </button>)}</div>}
           </motion.div></AnimatePresence>
@@ -1882,7 +1883,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                 {/* 電子郵件 —— 點下去複製。複製成功的回饋在整張卡下面，卡裡不放東西 */}
                 <button
                   onClick={copyEmail}
-                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-white/[0.05] border border-white/10 text-left hover:bg-white/[0.1] active:scale-[0.98] transition-[background-color,transform] duration-300"
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-[#262628] border border-white/10 text-left hover:bg-[#303032] active:scale-[0.98] transition-[background-color,transform] duration-300"
                 >
                   <span className="w-9 h-9 shrink-0 rounded-full bg-white/[0.08] flex items-center justify-center text-white/70">
                     <Icon name="mail" className="text-[18px]" />
@@ -1896,7 +1897,7 @@ export const HomePage: React.FC<HomePageProps> = ({
                   href={CONTACT_IG_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-white/[0.05] border border-white/10 hover:bg-white/[0.1] active:scale-[0.98] transition-[background-color,transform] duration-300"
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-[#262628] border border-white/10 hover:bg-[#303032] active:scale-[0.98] transition-[background-color,transform] duration-300"
                 >
                   <span className="w-9 h-9 shrink-0 rounded-full bg-white/[0.08] flex items-center justify-center text-white/70">
                     <InstagramGlyph />

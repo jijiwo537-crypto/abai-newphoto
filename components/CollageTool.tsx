@@ -7,7 +7,10 @@ import { KeyboardSafeInput } from './KeyboardSafeInput';
 import { idleDefaults } from '../utils/animationDefaults';
 import { get2dWide } from '../utils/colorSpace';
 import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, regionRects, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion } from '../utils/creativePhotoLayout';
-import { stampBounds, stampsHaveSafeGap } from '../utils/patternBrushSpacing';
+import { stampBounds, brushStepReached, type StampBounds } from '../utils/patternBrushSpacing';
+import { patternEntranceRanks, type PatternDirection } from '../utils/patternEntrance';
+import { PREMIUM_GLASS } from '../utils/premiumGlass';
+import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { CreativeSeamless } from '../utils/creativeSeamless';
 import { createPortal } from 'react-dom';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
@@ -914,6 +917,7 @@ export const speedFromDur = (d: number) =>
 export type MoCfg = {
   /** 進場 */
   delay: number; dur: number; in: string;
+  direction?: PatternDirection;
   /** 常駐 */
   idle: string; amp: number; speed: number;
 };
@@ -2112,6 +2116,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 一顆圖案的光暈成品，鍵＝真正決定長相的那幾項（見 glowInto） */
   const glowBmpRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const [brushMode, setBrushMode] = useState<'off' | 'pen' | 'eraser'>('off');
+  useEffect(()=>{if(activeTab==='motion'){setBrushMode('off');setObjectBrushChoice(null);}},[activeTab]);
   const [symmetryEnabled, setSymmetryEnabled] = useState(true);
   /* 圖案發光：預設關閉。開啟後每個圖案周圍散出一圈光，
      跟圖片、文字的發光同一種感覺（同一套「三段模糊疊起來」的做法）。 */
@@ -2824,6 +2829,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const w = raw.w * k, h = raw.h * k;
     const obj = {
       ...raw,
+      brushStamp: true,
       x: cx - w / 2, y: cy - h / 2, w, h,
       ...(raw.type === 'text' ? { size: raw.size * k } : null),
       ...(raw.type === 'shape' ? {
@@ -3022,19 +3028,32 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(()=>{
     if(!isTextHole(holeType))whenIdle(()=>patternPathBounds(holeType,1));
   },[holeType]);
-  const canBrushStamp = (candidate: any) => {
-    const bounds = (h: any) => {
+  const lastPatternStampRef = useRef<StampBounds|null>(null);
+  const brushStampBounds = (h: any) => {
       const size = getHoleSize(h);
       const ink = isTextHole(holeType) ? glyphInk(holeType, holeGlyph(holeType, customText, h), size) : patternPathBounds(holeType, size);
       const angle=h.angle ?? holeAngle,a=angle*Math.PI/180;
       const dx='x' in ink?ink.x+ink.w/2:0,dy='y' in ink?ink.y+ink.h/2:0;
       return stampBounds(h.x+dx*Math.cos(a)-dy*Math.sin(a),h.y+dx*Math.sin(a)+dy*Math.cos(a),ink.w,ink.h,angle,size);
-    };
-    const a = bounds(candidate);
-    return holesRef.current.every(h => {
-      if (h.side && candidate.side && h.side !== 'both' && candidate.side !== 'both' && h.side !== candidate.side) return true;
-      return stampsHaveSafeGap(a, bounds(h));
+  };
+  const eraseBrushObjects = (a:{x:number;y:number},b=a) => {
+    const palette=objectBrushChoiceRef.current;
+    if(!palette)return;
+    const next=objectsRef.current.filter(o=>{
+      const matches=o.brushStamp || (palette.type==='shape'&&o.type==='shape'&&o.kind===palette.item?.kind)
+        || (palette.type==='symbol'&&o.sym&&o.text===palette.symbol);
+      if(!matches)return true;
+      const angle=-(o.rot||0)*Math.PI/180,cx=o.x+o.w/2,cy=o.y+o.h/2;
+      const local=(p:{x:number;y:number})=>({x:(p.x-cx)*Math.cos(angle)-(p.y-cy)*Math.sin(angle),y:(p.x-cx)*Math.sin(angle)+(p.y-cy)*Math.cos(angle)});
+      const p=local(a),q=local(b),dx=q.x-p.x,dy=q.y-p.y;
+      let lo=0,hi=1;
+      for(const [v,d,half] of [[p.x,dx,o.w/2],[p.y,dy,o.h/2]]){
+        if(Math.abs(d)<1e-8){if(Math.abs(v)>half)return true;}
+        else {const t1=(-half-v)/d,t2=(half-v)/d;lo=Math.max(lo,Math.min(t1,t2));hi=Math.min(hi,Math.max(t1,t2));if(lo>hi)return true;}
+      }
+      return false;
     });
+    if(next.length!==objectsRef.current.length){objectsRef.current=next;setObjects(next);}
   };
 
   const isHoleFullyInsideMask = useCallback((h: any, s: number, maskW: number, maskH: number) => {
@@ -3516,6 +3535,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         }
       }
       strokeStartHolesRef.current = holesRef.current;
+      strokeStartObjectsRef.current = objectsRef.current;
 
       if (brushMode === 'pen') {
         e.stopPropagation();
@@ -3555,11 +3575,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 randomNumber: Math.floor(Math.random() * 10),
                 side: layout === AROUND ? clickedSide : 'both'
               };
-              if (canBrushStamp(newHole)) {
-                const nextHoles = [...holesRef.current, newHole];
-                holesRef.current = nextHoles;
-                setHoles(nextHoles);
-              }
+              const nextHoles = [...holesRef.current, newHole];
+              holesRef.current = nextHoles;setHoles(nextHoles);
+              lastPatternStampRef.current=brushStampBounds(newHole);
               lastDrawPosRef.current = { x: localX, y: localY };
             }
             interactionRef.current = { type: 'brush_draw', startX: x, startY: y, clickedSide };
@@ -3568,6 +3586,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         return;
       } else if (brushMode === 'eraser') {
         e.stopPropagation();
+        if(objectBrushChoiceRef.current){
+          eraseBrushObjects({x,y});
+          interactionRef.current={type:'brush_object_erase',startX:x,startY:y,lastX:x,lastY:y,isClick:false};return;
+        }
         if (offs && clickedSide) {
           const hitHoles = holesRef.current.filter(h => checkHitHole(x, y, h, gs, offs, clickedSide));
           if (hitHoles.length > 0) {
@@ -3726,9 +3748,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       e.stopPropagation();
       const intr = interactionRef.current;
       // 第一根手指剛剛畫下去的那一下要收回來，不然縮放會順手戳一個洞
-      if ((intr?.type === 'brush_draw' || intr?.type === 'brush_erase') && strokeStartHolesRef.current) {
+      if (intr?.type?.startsWith('brush_') && strokeStartHolesRef.current) {
         holesRef.current = strokeStartHolesRef.current;
         setHoles(strokeStartHolesRef.current);
+        if(strokeStartObjectsRef.current){objectsRef.current=strokeStartObjectsRef.current;setObjects(strokeStartObjectsRef.current);}
       }
       interactionRef.current = null;
       lastDrawPosRef.current = null;
@@ -3888,6 +3911,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
   /** 第一根手指落下時的挖洞狀態 —— 第二根手指跟上時要把它畫的那一下收回去 */
   const strokeStartHolesRef = useRef<any[] | null>(null);
+  const strokeStartObjectsRef = useRef<any[] | null>(null);
   const stageBox = () => {
     const el = stageRef.current;
     if (!el) return { x: 0, y: 0, w: 1, h: 1 };
@@ -4290,11 +4314,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               randomFactor: Math.random() * 2 - 1,
               side: layout === AROUND ? intr.clickedSide : 'both'
             };
-            if (canBrushStamp(newHole)) {
+            const bounds=brushStampBounds(newHole);
+            if (!lastPatternStampRef.current || brushStepReached(lastPatternStampRef.current,bounds)) {
               const nextHoles = [...holesRef.current, newHole];
               holesRef.current = nextHoles;
               setHoles(nextHoles);
               lastDrawPosRef.current = { x: localX, y: localY };
+              lastPatternStampRef.current=bounds;
             }
           }
         }
@@ -4310,6 +4336,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           lastDrawPosRef.current = { x, y };
         }
       }
+    } else if (intr.type === 'brush_object_erase') {
+      eraseBrushObjects({x:intr.lastX,y:intr.lastY},{x,y});intr.lastX=x;intr.lastY=y;
     } else if (intr.type === 'brush_erase') {
       const offs = getLayoutOffsets();
       if (offs && intr.clickedSide) {
@@ -4424,7 +4452,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       } else if (intr.isClick && !intr.hitItself) {
         setSelectedTarget(null);
       }
-      if (intr.type === 'brush_draw' || intr.type === 'brush_object' || intr.type === 'brush_erase' || intr.type === 'move_hole' || intr.type === 'pinch_hole') {
+      if (intr.type === 'brush_draw' || intr.type === 'brush_object' || intr.type === 'brush_object_erase' || intr.type === 'brush_erase' || intr.type === 'move_hole' || intr.type === 'pinch_hole') {
         if (!(intr.type === 'move_hole' && intr.isClick)) {
           pushHistory(holesRef.current, objectsRef.current);
         }
@@ -4436,6 +4464,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       interactionRef.current = null;
       lastDrawPosRef.current = null;
       strokeStartHolesRef.current = null;
+      strokeStartObjectsRef.current = null;
     }
     setForceRender(p => p + 1);
   };
@@ -6755,12 +6784,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.shadowColor = 'rgba(0, 0, 0, 0.28)';
       ctx.shadowBlur = 3 * uiPx;
       ctx.setLineDash([4.8 * uiPx, 4.8 * uiPx]);
-      const frameOne = (h: any, x: number, y: number) => {
+      const frameOne = (h: any, x: number, y: number,side:'image'|'mask') => {
         const A = hA(h);
-        if (!A.on) return;
+        if (!A.on || A.a<=.004 || A.k<=.002) return;
         const sz = getHoleSize(h) * A.k * s;
         const currentAngle = (h.angle !== undefined ? h.angle : holeAngle) + A.rot;
         ctx.save();
+        ctx.beginPath();
+        if(side==='image')ctx.rect(offs.ix,offs.iy,iw,ih);
+        else {ctx.rect(offs.mx,offs.my,maskW,maskH);if(layout===AROUND)ctx.rect(offs.ix,offs.iy,iw,ih);}
+        ctx.clip(side==='mask'&&layout===AROUND?'evenodd':'nonzero');
         ctx.translate(x, y);
         ctx.rotate(currentAngle * Math.PI / 180);
         if (isTextHole(holeType)) {
@@ -6776,9 +6809,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       holes.forEach(h => {
         const A = hA(h);
         const side = h.side || 'both';
-        if (side === 'both' || side === 'image') frameOne(h, A.x * s + offs.ix, A.y * s + offs.iy);
-        if ((side === 'both' || side === 'mask') && isHoleFullyInsideMask(h, 1, maskW, maskH)) {
-          frameOne(h, A.x * s + offs.mx, A.y * s + offs.my);
+        if (side === 'both' || side === 'image') frameOne(h, A.x * s + offs.ix, A.y * s + offs.iy,'image');
+        if ((side === 'both' || side === 'mask') && (layout===AROUND || isHoleFullyInsideMask(h, s, maskW, maskH))) {
+          frameOne(h, A.x * s + offs.mx, A.y * s + offs.my,'mask');
         }
       });
       ctx.restore();
@@ -7263,6 +7296,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const videoAbortRef = useRef(false);
   /** 按下儲存後從下方延伸出來的兩顆按鈕 */
   const [exportAsk, setExportAsk] = useState(false);
+  const [exportOptionsOpen,setExportOptionsOpen]=useState(false);
+  const [imageExportFormat,setImageExportFormat]=useState<'png'|'jpg'|'heic'>('png');
+  const [videoExportFormat,setVideoExportFormat]=useState<'auto'|'mp4'|'webm'>('auto');
+  const [videoExportFps,setVideoExportFps]=useState(0);
+  const [videoExportQuality,setVideoExportQuality]=useState(40_000_000);
+  const exportOptionsRef=useRef<HTMLDivElement>(null);
+  useEffect(()=>{
+    if(!exportOptionsOpen)return;
+    const close=(e:PointerEvent)=>{if(!exportOptionsRef.current?.contains(e.target as Node)&&!(e.target as Element).closest('[data-creative-export-options-toggle]'))setExportOptionsOpen(false);};
+    document.addEventListener('pointerdown',close,true);return()=>document.removeEventListener('pointerdown',close,true);
+  },[exportOptionsOpen]);
 
   const hasLink = linkMode !== 'none' && linkableType(holeType);
   /** 切換動畫目標時只更新動畫面板與短暫虛線提示，不改正式選取狀態。 */
@@ -7392,18 +7436,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /** 給一個時間 t，算出這一格每個元素長什麼樣 */
   const buildAnim = useCallback((t: number) => {
     const nHole = Math.max(1, holesRef.current.length);
+    const ranks=patternEntranceRanks(holesRef.current,moShape.direction);
     // 圖案是一群，進場要在 moShape.dur 之內一顆一顆錯開
     const POP = Math.min(0.5, moShape.dur * 0.45);
     const stepH = nHole > 1 ? Math.max(0, (moShape.dur - POP) / (nHole - 1)) : 0;
       const shapeCfg = (i: number): MoCfg => ({
         ...moShape,
         idle: moShape.idle === 'grid-wave' ? 'pattern-breathe' : moShape.idle,
-        delay: moShape.delay + i * stepH,
+        delay: moShape.delay + (ranks.get(holesRef.current[i]?.id) ?? i) * stepH,
         dur: POP,
       });
     /** 第 i 顆圖案「已經看得出來」的時間（POP 的兩成）——線從這一刻就能接上去 */
     const holeUpAt = (i: number) => moShape.in === 'none'
-      ? 0 : moShape.delay + i * stepH + POP * 0.2;
+      ? 0 : moShape.delay + (ranks.get(holesRef.current[i]?.id) ?? i) * stepH + POP * 0.2;
     const ez = linkEase(moLink.ease);
     return {
       hole: (h: any, i: number) => composeMo(shapeCfg(i), t, hashId(h.id) % 628 / 100),
@@ -7900,6 +7945,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 等一格，讓「取消選取」先進畫面，選取框才不會被錄進去
     await new Promise(r => requestAnimationFrame(() => r(null)));
     const cv = document.createElement('canvas');
+    let exportStream:MediaStream|null=null;
     try {
       /* renderScale 是「相對於工作區大小」的倍率，不是像素數 ——
          以前寫成 min(1, 720/長邊)，長邊本來就小於 720 的話等於 scale=1，
@@ -7930,11 +7976,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (hasVid) { await rewindVideos(vids); playVideos(vids); }
       animRef.current = buildAnim(0);
       renderToCanvas(cv, scale);          // 先畫第一格，不然開頭會錄到黑畫面
-      const mime = ['video/mp4;codecs=avc1', 'video/webm;codecs=vp9', 'video/webm']
+      const mime = (videoExportFormat==='mp4'?['video/mp4;codecs=avc1','video/mp4']:videoExportFormat==='webm'?['video/webm;codecs=vp9','video/webm']:['video/mp4;codecs=avc1','video/mp4','video/webm;codecs=vp9','video/webm'])
         .find(t => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || '';
+      if(!mime)throw Error('此裝置不支援所選的影片格式');
       /* 動態成品至少 50fps；高幀率影片素材則保留其來源幀率。 */
-      const stream = (cv as any).captureStream(preferredVideoFrameRate(vids));
-      const rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 40_000_000 } : undefined);
+      const stream = (cv as any).captureStream(videoExportFps || preferredVideoFrameRate(vids));
+      exportStream=stream;
+      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: videoExportQuality });
       const chunks: Blob[] = [];
       rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
       const done = new Promise<Blob>(res => { rec.onstop = () => res(new Blob(chunks, { type: mime || 'video/webm' })); });
@@ -7970,6 +8018,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ]);
       // 取消：錄到一半的東西直接丟掉，什麼都不改
       if (videoAbortRef.current) return;
+      if(!blob.size)throw Error('影片編碼沒有產生資料');
       revokeUrl(finalUrlRef.current);
       const url = URL.createObjectURL(blob);
       finalUrlRef.current = url;
@@ -7978,12 +8027,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       setSaveState('success');
     } catch (e) {
       console.error('動態影片做不出來', e);
+      setSaveState('idle');alert('影片儲存失敗，請更換格式後重試');
     } finally {
+      exportStream?.getTracks().forEach(track=>track.stop());
       cv.width = 0; cv.height = 0;
       animRef.current = null;
       setVideoProg(null);
     }
-  }, [getLayoutOffsets, imageState, videoProg, buildAnim, motionTotal, renderToCanvas, layout, maskScale, allVideos]);
+  }, [getLayoutOffsets, imageState, videoProg, buildAnim, motionTotal, renderToCanvas, layout, maskScale, allVideos,videoExportFormat,videoExportFps,videoExportQuality]);
   const handleSave = () => {
     if (!imageState) return;
     setSelectedTarget(null);
@@ -8019,8 +8070,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         animRef.current = null;
         renderToCanvas(exportCanvas, exportScale);
         
-        // 一樣是無損 PNG，只是改用 blob 網址拿在手上（dataURL 會多吃一份 33% 膨脹的字串）
-        const url = await canvasToUrl(exportCanvas);
+        // 用所選格式編碼，再持有 blob 網址，避免 dataURL 額外的字串記憶體。
+        const url = imageExportFormat==='heic'?await exportHeic(exportCanvas):await canvasToUrl(exportCanvas,imageExportFormat==='jpg'?'image/jpeg':'image/png',1);
         // 兩條路都轉不出來（見 canvasToUrl）——當成失敗收掉，不要停在「正在存檔」
         if (!url) throw new Error('導出的圖轉不出來');
         revokeUrl(finalUrlRef.current);
@@ -8464,10 +8515,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         </div>
       )}
 
-      {/* 這一列的排法整個照抄經典拼圖：返回｜筆刷｜分隔線｜復原｜重做｜分隔線｜三個點｜儲存。
-          只有筆刷是創意拼圖自己的，留在外面；對稱收進三個點裡面。 */}
+      {/* 返回、筆刷、復原、重做、更多、儲存；不加豎分隔線。 */}
       {saveState !== 'success' && (
-      <header className="h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-[100] bg-black/90 backdrop-blur-md">
+      <header className="relative h-14 border-b border-[#1a1a1a] flex items-center justify-between px-4 z-[100] bg-black/90">
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -8484,7 +8534,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         {imageState && !composeState && (
           <div className="flex items-center gap-2">
             {/* 畫筆／橡皮擦：創意拼圖獨有，留在外面 */}
-            <button
+            {activeTab !== 'motion' && <button
               onClick={(e) => {
                 e.stopPropagation();
                 const paletteReady = activeTab === 'add' && (
@@ -8498,8 +8548,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       ? objectBrushChoice.symbol === addPaletteChoice.symbol
                       : objectBrushChoice.item?.id === addPaletteChoice.item?.id);
                   if (brushMode === 'pen' && same) {
-                    setBrushMode('off');
-                    setObjectBrushChoice(null);
+                    setBrushMode('eraser');
+                  } else if (brushMode === 'eraser' && same) {
+                    setBrushMode('off');setObjectBrushChoice(null);
                   } else {
                     setObjectBrushChoice(addPaletteChoice);
                     setBrushMode('pen');
@@ -8522,9 +8573,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               title={brushMode === 'pen' ? '畫筆模式（再按切換為橡皮擦）' : brushMode === 'eraser' ? '橡皮擦模式（再按關閉）' : '開啟畫筆'}
             >
               {brushMode === 'eraser' ? <Eraser size={18} /> : brushMode === 'pen' ? <Paintbrush size={18} /> : <MousePointer size={18} />}
-            </button>
-
-            <div className="w-px h-4 bg-white/10 mx-1 shrink-0" />
+            </button>}
 
             <button
               onClick={(e) => { e.stopPropagation(); undo(); }}
@@ -8543,12 +8592,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               <Icon name="redo" className="text-xl" />
             </button>
 
-            <div className="w-px h-4 bg-white/10 mx-1 shrink-0" />
-
-            {/* 三個點：對稱與對齊都收在這裡（樣式跟經典拼圖同一份） */}
+            {/* 三個點：預覽與對齊。 */}
             <div className="relative" ref={moreWrapRef}>
               <button
-                onClick={() => setMoreOpen(o => !o)}
+                onClick={() => {setExportOptionsOpen(false);setExportAsk(false);setMoreOpen(o => !o);}}
                 className={`w-9 h-9 flex items-center justify-center transition-colors active:scale-90 ${moreOpen ? 'text-white' : 'text-white/70'}`}
                 title="更多"
               >
@@ -8557,20 +8604,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               {moreOpen && (
                 <>
                   <div className="fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)} />
-                  <div className="absolute right-0 top-11 z-[61] w-36 rounded-2xl bg-[#1b1b1b] border border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                  <div role="dialog" aria-label="創意拼圖更多選項" style={PREMIUM_GLASS} className="absolute right-0 top-11 z-[61] w-36 rounded-2xl border border-white/10 overflow-hidden animate-in fade-in zoom-in-95 duration-150 p-1.5">
                     {/* 最上面是 IG 預覽，跟經典拼圖同一顆（比例 IG 吃不下時整個不出現） */}
                     {igSupported && (
                       <>
                         <button
                           onClick={() => { setMoreOpen(false); openIgPreview(); }}
-                          className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90 hover:bg-white/10 transition-colors"
+                          className="w-full h-11 px-3 rounded-xl bg-[#262628] flex items-center text-[12px] font-bold text-white/90 hover:bg-[#303032] transition-colors"
                         >
                           <span>預覽</span>
                         </button>
-                        <div className="h-px bg-white/10" />
+                        <div className="h-1.5" />
                       </>
                     )}
-                    <div className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90">
+                    <div className="w-full h-11 px-3 rounded-xl bg-[#262628] flex items-center text-[12px] font-bold text-white/90">
                       <span>對齊</span>
                       <button
                         onClick={(e) => {
@@ -8584,7 +8631,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                         aria-checked={enableSnapping}
                         title={enableSnapping ? '關閉對齊' : '開啟對齊'}
                         className={`ml-auto relative shrink-0 w-[38px] h-[22px] rounded-full transition-colors duration-200 ${
-                          enableSnapping ? 'bg-white' : 'bg-white/[0.14]'
+                          enableSnapping ? 'bg-white' : 'bg-[#454547]'
                         }`}
                       >
                         <span className={`absolute top-[3px] left-[3px] w-4 h-4 rounded-full transition-transform duration-200 ease-out ${
@@ -8599,20 +8646,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
             {/* 儲存：點一下，兩顆選項從它正下方延伸出來（不論有沒有設動畫都有影片） */}
             <div className="relative shrink-0">
-              <button
-                onClick={(e) => { e.stopPropagation(); setExportAsk(v => !v); }}
-                className={`px-6 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wider shadow-lg active:scale-95 transition-all whitespace-nowrap ${
-                  exportAsk ? 'bg-white/15 text-white' : 'bg-white text-black'
-                }`}
-              >
-                儲存
-              </button>
+              <div className="h-7 rounded-full bg-white text-black shadow-lg flex items-center overflow-hidden">
+                <button onClick={(e)=>{e.stopPropagation();setExportOptionsOpen(false);setMoreOpen(false);setExportAsk(v=>!v);}} className="h-full pl-4 pr-2 text-[11px] font-black whitespace-nowrap active:opacity-60">儲存</button>
+                <button data-creative-export-options-toggle aria-label="創意拼圖匯出選項" aria-expanded={exportOptionsOpen} onClick={()=>{setExportAsk(false);setMoreOpen(false);setExportOptionsOpen(v=>!v);}} className="h-full w-7 pr-1 flex items-center justify-center active:opacity-60"><Icon name="more_horiz" className="text-[16px]"/></button>
+              </div>
               {/* 展開／收合都走同一組 transition，所以兩個方向都是順的。
                   刻意不用 scale：這兩顆裡面是線條圖示（SVG），整塊被縮放時
                   每一格的線寬都要重新取樣，看起來就是圖示在抖。
                   只用淡入＋往下滑，圖示從頭到尾都是 1:1，不會抖。 */}
               <div
-                className="absolute right-0 top-full mt-2 z-[60] flex flex-col gap-2 origin-top-right transition-[opacity,transform] duration-200 ease-out"
+                className="absolute right-0 top-full mt-1.5 z-[60] flex flex-col gap-1 origin-top-right transition-[opacity,transform] duration-200 ease-out"
                 style={{
                   opacity: exportAsk ? 1 : 0,
                   transform: exportAsk ? 'translateY(0)' : 'translateY(-6px)',
@@ -8640,6 +8683,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             </div>
           </div>
         )}
+        {exportOptionsOpen&&<div ref={exportOptionsRef} role="dialog" aria-label="創意拼圖匯出設定" style={PREMIUM_GLASS} className="absolute left-4 right-4 top-full mt-2 z-[81] p-3 rounded-2xl border border-white/15 flex flex-col gap-3">
+          <ExportOptionRow label="圖片格式" value={imageExportFormat} choices={[['jpg','JPG'],['png','PNG'],['heic','HEIC']]} disabled={v=>v==='heic'&&!canExportHeic()} onChange={v=>setImageExportFormat(v as any)}/>
+          <ExportOptionRow label="影片格式" value={videoExportFormat} choices={[['auto','自動'],['mp4','MP4'],['webm','WEBM']]} disabled={v=>v!=='auto'&&(typeof MediaRecorder==='undefined'||![`video/${v}`,`video/${v};codecs=${v==='mp4'?'avc1':'vp9'}`].some(t=>MediaRecorder.isTypeSupported(t)))} onChange={v=>setVideoExportFormat(v as any)}/>
+          <ExportOptionRow label="影片幀率" value={String(videoExportFps)} choices={[['0','自動'],['30','30'],['50','50'],['60','60'],['120','120']]} onChange={v=>setVideoExportFps(Number(v))}/>
+          <ExportOptionRow label="影片畫質" value={String(videoExportQuality)} choices={[['16000000','標準'],['28000000','高'],['40000000','最高']]} onChange={v=>setVideoExportQuality(Number(v))}/>
+        </div>}
         {/* 多選最多九張照片，全部加入同一個圖片排版區域。 */}
         <input type="file" accept={RAW_ACCEPT_IMG} multiple className="hidden" ref={fileInputRef} onChange={handleImageUpload} />
         <input type="file" accept={RAW_ACCEPT_IMG} className="hidden" ref={replaceFileInputRef} onChange={handleImageUpload} />
@@ -8657,6 +8706,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             ref={stageRef}
             data-creative-stage="1"
             data-photo-count={photoRegion?.photos.length || 1}
+            data-brush-objects={import.meta.env.DEV?JSON.stringify(objects.filter(o=>o.brushStamp).map(({id,x,y,w,h,type})=>({id,x,y,w,h,type}))):undefined}
             data-photo-arrangement={photoRegion?.arrangement || 'grid'}
             data-photo-template-index={photoRegion?.templateIndex}
             data-photo-transforms={import.meta.env.DEV?JSON.stringify(photoRegion?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0}))):undefined}
@@ -9181,6 +9231,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             {['setting', 'shape', 'add', 'objedit', 'motion'].map(id => (
               <button 
                 key={id} 
+                data-creative-tab={id}
                 onClick={() => {
                   setActiveTab(id);
                   /* 已經點進「新增符號／新增圖形」的時候再點一次加號，
@@ -10161,6 +10212,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             </button>
                           ))}
                         </div>
+                        {moTarget==='shape'&&<><p className="text-[10px] font-bold text-[#666] mt-3 mb-2">方向</p><div className="grid grid-cols-5 gap-1.5">
+                          {([['left-right','左至右'],['right-left','右至左'],['top-bottom','上至下'],['bottom-top','下至上'],['random','隨機']] as const).map(([direction,name])=><button key={direction} aria-pressed={(cur.direction||'left-right')===direction} className={cell((cur.direction||'left-right')===direction)} onClick={()=>{setCur({direction});replayMotion();}}>{name}</button>)}
+                        </div></>}
                         <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                           <CompactSlider label="起始" value={Number(cur.delay.toFixed(1))} min={0} max={3} step={0.1} decimals={1} fixedDecimals
                             onCommit={replayMotion}
@@ -10462,6 +10516,7 @@ const useRafOnChange = (onChange: (v: number) => void) => {
 
 /** This leaf owns the slider feedback. The large editor only commits state
  * at gesture end; its paint scheduler consumes the latest value each frame. */
+const ExportOptionRow=({label,value,choices,onChange,disabled}:{label:string;value:string;choices:readonly (readonly [string,string])[];onChange:(value:string)=>void;disabled?:(value:string)=>boolean})=><div className="flex flex-col gap-1.5"><span className="text-[10px] text-white/50">{label}</span><div className="flex gap-1.5">{choices.map(([v,name])=><button key={v} aria-pressed={value===v} disabled={disabled?.(v)} onClick={()=>onChange(v)} className={`flex-1 h-8 rounded-lg text-[11px] font-medium transition-colors active:scale-95 disabled:opacity-30 ${value===v?'bg-white text-black':'bg-[#262628] text-white/75'}`}>{name}</button>)}</div></div>;
 const RegionLiveRange=({value,onChange,onCommit}:{value:number;onChange:(v:number)=>void;onCommit:()=>void})=>{
   const [shown,setShown]=React.useState(value);
   React.useEffect(()=>setShown(value),[value]);

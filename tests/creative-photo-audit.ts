@@ -83,10 +83,10 @@ void(async()=>{
   for(let u=.055;u<.95;u+=.005)pointer('pointermove',81,brushPoint(u,.18));pointer('pointerup',81,brushPoint(.95,.18));await wait(5);
   const stamps=()=>JSON.parse(stage!.dataset.patternStamps!);const count=stamps().length;
   pointer('pointerdown',82,brushStart);pointer('pointerup',82,brushStart);await wait(2);
-  check('new brush stroke cannot overlap existing ink',count>2&&stamps().length===count,{count,after:stamps().length});
-  const {patternPathBounds}=await import('../utils/holeShapes');const {stampBounds,stampsHaveSafeGap}=await import('../utils/patternBrushSpacing');
-  const bounds=stamps().map((h:any)=>{const b=patternPathBounds('star',h.size);return stampBounds(h.x+b.x+b.w/2,h.y+b.y+b.h/2,b.w,b.h,h.angle||0,h.size);});
-  check('every stamp retains at least half-size edge gap',bounds.every((a:any,i:number)=>bounds.slice(i+1).every((b:any)=>stampsHaveSafeGap(a,b))),bounds);
+  check('a new brush stroke can paint over existing ink',count>2&&stamps().length===count+1,{count,after:stamps().length});
+  const {patternPathBounds}=await import('../utils/holeShapes');const {stampBounds,brushStepReached}=await import('../utils/patternBrushSpacing');
+  const bounds=stamps().slice(0,count).map((h:any)=>{const b=patternPathBounds('star',h.size);return stampBounds(h.x+b.x+b.w/2,h.y+b.y+b.h/2,b.w,b.h,h.angle||0,h.size);});
+  check('stroke cadence is 20 percent shorter and independent of old artwork',bounds.every((a:any,i:number)=>!i||brushStepReached(bounds[i-1],a)),bounds);
   if(new URLSearchParams(location.search).has('swaps')){
     // Stop the brush before testing floating-photo / region swaps.
     document.querySelector<HTMLButtonElement>('button[title="畫筆模式（再按切換為橡皮擦）"]')!.click();await wait(2);

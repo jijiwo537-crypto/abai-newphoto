@@ -6,6 +6,7 @@ import { Icon } from './Icon';
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
 import { canExportHeic, exportHeic } from '../utils/heicExport';
+import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import {useStandaloneToolViewport,standaloneToolViewportCSS} from '../utils/useStandaloneToolViewport';
 import { StuckEscape } from './StuckEscape';
 import {
@@ -480,7 +481,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
         }
         .custom-range::-moz-range-thumb:active { transform: scale(1.15); }
       `}</style>
-      <header className="relative h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 backdrop-blur-xl z-[81]">
+      <header className={`relative h-14 flex items-center justify-between px-4 shrink-0 bg-black/40 ${formatOpen?'':'backdrop-blur-xl'} z-[81]`}>
         {/* 退出鍵跟經典拼圖同一顆：左箭頭、同樣的顏色與按壓回饋 */}
         <button onClick={leave} className="p-2 -ml-2 text-[#aaa] hover:text-white transition-colors active:scale-90">
           <ChevronLeft size={22} />
@@ -491,9 +492,9 @@ export const ColorMatchStudio: React.FC<Props> = ({
             <span className="h-4 w-px bg-black/20" />
             <button aria-label="匯出選項" aria-expanded={formatOpen} onClick={() => setFormatOpen(v => !v)} className="h-8 px-2 flex items-center active:opacity-60"><Icon name="more_horiz" className="text-xl" /></button>
           </div>
-          {formatOpen && <div role="dialog" aria-label="匯出格式" className="absolute top-full left-4 right-4 mt-2 rounded-xl border border-white/15 p-3 shadow-xl" style={{background:'rgba(0,0,0,.92)',backdropFilter:'blur(28px)',WebkitBackdropFilter:'blur(28px)'}}>
+          {formatOpen && <div role="dialog" aria-label="匯出格式" className="absolute top-full left-4 right-4 mt-2 rounded-xl border border-white/15 p-3 shadow-xl" style={PREMIUM_GLASS}>
             <p className="text-xs text-white/60 mb-3">匯出格式</p>
-            <div className="flex gap-2">{(['jpg','png','heic'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} disabled={format === 'heic' && !canExportHeic()} onClick={() => setExportFormat(format)} className={`flex-1 h-9 rounded-lg border text-xs uppercase disabled:opacity-25 ${exportFormat === format ? 'bg-white text-black border-white' : 'border-white/15 text-white/70'}`}>{format.toUpperCase()}</button>)}</div>
+            <div className="flex gap-2">{(['jpg','png','heic'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} disabled={format === 'heic' && !canExportHeic()} onClick={() => setExportFormat(format)} className={`flex-1 h-9 rounded-lg border text-xs uppercase disabled:opacity-25 ${exportFormat === format ? 'bg-white text-black border-white' : 'bg-[#262628] border-white/15 text-white/70'}`}>{format.toUpperCase()}</button>)}</div>
           </div>}
         </div>
       </header>

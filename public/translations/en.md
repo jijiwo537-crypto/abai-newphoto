@@ -591,3 +591,13 @@
 | 冰青 | Ice cyan |
 | 霧藍 | Soft blue |
 | 霞紫 | Lilac |
+| 圖片格式 | Image format |
+| 影片格式 | Video format |
+| 影片幀率 | Frame rate |
+| 影片畫質 | Video quality |
+| 左至右 | Left to right |
+| 右至左 | Right to left |
+| 上至下 | Top to bottom |
+| 下至上 | Bottom to top |
+| 高 | High |
+| 最高 | Highest |

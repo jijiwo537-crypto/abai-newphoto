@@ -11,3 +11,12 @@ export function stampsHaveSafeGap(a: StampBounds, b: StampBounds): boolean {
   const dy = Math.max(0, Math.abs(a.y - b.y) - (a.h + b.h) / 2);
   return Math.hypot(dx, dy) + 1e-8 >= Math.max(a.size, b.size) / 2;
 }
+/** Only consecutive ink in this stroke controls cadence. Existing artwork is
+ * never a placement veto. The previous centre interval is reduced by 20%. */
+export function brushStepReached(a: StampBounds, b: StampBounds): boolean {
+  const dx=Math.abs(a.x-b.x),dy=Math.abs(a.y-b.y),d=Math.hypot(dx,dy);
+  if(!d)return false;
+  const ux=dx/d,uy=dy/d;
+  const interval=((a.w+b.w)*ux/2+(a.h+b.h)*uy/2+Math.max(a.size,b.size)/2)*.8;
+  return d+1e-8>=interval;
+}

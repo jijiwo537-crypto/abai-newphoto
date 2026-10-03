@@ -71,7 +71,7 @@ test('parallax has one property owner from first layout and neutral black panels
  assert.match(home,/const cssTimeline = useRef\(typeof CSS/);
  assert.match(home,/const y = rawY \* edge \* edge \* \(3 - 2 \* edge\)/);
  for(const file of ['components/HomePage.tsx','components/ImageEditor.tsx']){
-  assert.match(source(file),/background: 'rgba\(0,0,0,.92\)'/);
+  assert.match(source(file),/PREMIUM_GLASS/);
   assert.doesNotMatch(source(file),/rgba\(30,32,37,.84\)/);
  }
  const h=800;const f=y=>{const q=Math.min(1,Math.max(0,y)/(h*.12));return Math.max(0,y)*q*q*(3-2*q)};
