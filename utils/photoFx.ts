@@ -79,6 +79,7 @@ const putSrcPx = (k: string, v: SrcPx) => {
 };
 let gpuC0: HTMLCanvasElement | null = null;
 let gpuC1: HTMLCanvasElement | null = null;
+const colorBakeCache = new Map<string, Uint8Array>();
 const reuse = (c: HTMLCanvasElement | null, w: number, h: number) => {
   const cv = c || document.createElement('canvas');
   if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
@@ -88,7 +89,7 @@ const reuse = (c: HTMLCanvasElement | null, w: number, h: number) => {
 const gpuColorChain = (
   ctx: CanvasRenderingContext2D, getSrc: () => Uint8ClampedArray | null, w: number, h: number,
   p: EditorParams, lut: { data: Uint8ClampedArray; size: number } | null,
-  amount: number, baseLut: Uint8Array, srcKey: string,
+  amount: number, baseLut: Uint8Array, srcKey: string, colorKey: string,
 ): boolean => {
   const g = getGpu();
   if (!g || !g.fits(w, h)) return false;
@@ -103,11 +104,15 @@ const gpuColorChain = (
       gpuSrcKey = srcKey;
     }
     const paint = (film: Uint8ClampedArray | null, filmSize: number, into: HTMLCanvasElement) => {
-      const baked = bakeColorLut(
-        (a, d, ww, hh) => processPixels(a, d, ww, hh, p, film, filmSize, baseLut, null, false, IDENTITY_CURVE_LUTS),
-        33,
-      );
-      if (!g.setLut(bakedToTexture(baked), 33)) return false;
+      const bakeKey = colorKey + '|' + (film ? srcToken(film) : 'none') + '|' + filmSize;
+      let texture = colorBakeCache.get(bakeKey);
+      if (!texture) {
+        texture = bakedToTexture(bakeColorLut(
+          (a, d, ww, hh) => processPixels(a, d, ww, hh, p, film, filmSize, baseLut, null, false, IDENTITY_CURVE_LUTS), 33));
+        colorBakeCache.set(bakeKey, texture);
+        while (colorBakeCache.size > 4) colorBakeCache.delete(colorBakeCache.keys().next().value!);
+      }
+      if (!g.setLut(texture, 33)) return false;
       const drawn = g.draw();
       if (!drawn) return false;
       // GPU 的畫布下一次 draw 就會被蓋掉，先拓到自己的畫布上
@@ -403,7 +408,7 @@ export function applyPhotoFx(
    *       來源是影片的時候一秒要跑幾十次，每次開一張幾百萬像素的畫布，
    *       手機的畫布記憶體幾秒就會被系統收走（＝閃退回主畫面）。
    *       尺寸一樣就直接沿用，連 width 都不重設（重設等於重新配置一次）。 */
-  opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement },
+  opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement; preferSeparableCpu?: boolean },
 ): HTMLCanvasElement {
   const out = opts?.out || document.createElement('canvas');
   const oW = Math.max(1, Math.round(w)), oH = Math.max(1, Math.round(h));
@@ -461,9 +466,12 @@ export function applyPhotoFx(
        正是上面要省掉的那一步。改成給每個來源物件一個固定編號（WeakMap），
        同一張圖重畫時鑰匙一樣，貼圖就不必重傳。 */
     const k = `${srcToken(source)}|${out.width}x${out.height}`;
-    gpuOk = gpuColorChain(ctx, readPixels, out.width, out.height, p, lut, amt, baseLut, k);
+    const separable = !lut && !p.temp && !p.tint && !p.sat && !p.vib && !p.shadows && !p.highlights;
+    if (!(opts?.preferSeparableCpu && separable))
+      gpuOk = gpuColorChain(ctx, readPixels, out.width, out.height, p, lut, amt, baseLut, k, colorKeyOf(fx));
   }
 
+  if (import.meta.env.DEV) out.dataset.colorBackend = gpuOk ? 'gpu' : 'cpu';
   if (!gpuOk) {
 
   readPixels();

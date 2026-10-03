@@ -1425,7 +1425,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          cv／off —— 只有套了形狀才會用到的那兩張（見下面）
        尺寸一樣就連 width 都不重設，等於整段完全不配置記憶體。 */
     let scratch: VidScratch | null = null;
-    if (isVid) {
+    if (isVid || o.id?.startsWith('region-fx-')) {
       scratch = vidScratchRef.current.get(o.id) || null;
       if (!scratch) {
         scratch = {
@@ -1470,7 +1470,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        是同一張，交回去重用完全正確。 */
     const reuse = scratch ? scratch.base : undefined;
     const base = applyPhotoFx(srcEl, iw, ih, o.fx || {}, {
-      cacheSource: !isVid, fast: live, out: reuse,
+      cacheSource: !isVid, fast: live, out: reuse, preferSeparableCpu: o.id?.startsWith('region-fx-'),
     });
     const finish = () => {
       if (!isMain) return;
@@ -1966,7 +1966,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 圖片編輯頁是自己排好三段式高度的整頁面板：外面不能再包內距，
      footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-16 分類列 ＋ 分頁列）。 */
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
-    && (selectedRegionPhoto !== null || !!objects.find(o => o.id === selectedObj && o.type === 'image'));
+    && (selectedRegionPhoto !== null || baseSelected || !!objects.find(o => o.id === selectedObj && o.type === 'image'));
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   /** 正在畫布上直接編輯的那一段文字（null＝沒有在編輯）。
@@ -2024,8 +2024,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [effectCard, setEffectCard] = useState<string | null>(null);
   const [effectDetail, setEffectDetail] = useState(false);
   useLayoutEffect(() => {
-    if (selectedRegionPhoto !== null) { setAdjustSub('filter'); setEffectCard(null); setEffectDetail(false); }
-  }, [selectedRegionPhoto]);
+    if (selectedRegionPhoto !== null || baseSelected) { setAdjustSub('filter'); setEffectCard(null); setEffectDetail(false); }
+  }, [selectedRegionPhoto, baseSelected]);
   const [shapeMenu, setShapeMenu] = useState('root');
   /* 一進編輯頁不預先選好任何工具：滑桿要點下工具鈕才浮出來 */
   const [shapeTool, setShapeTool] = useState('');
@@ -4785,9 +4785,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const regionForPaint = photoRegion ? {...photoRegion,photos:photoRegion.photos.map((p,i)=>{
       const original = decodedRegionPhotos.current.get(p.src);
       if (!original || !p.fx || !hasPhotoFx(p.fx)) return p;
+      const fxStarted = import.meta.env.DEV ? performance.now() : 0;
       const processed = fxCanvasOf({...p,id:`region-fx-${i}@${p.src}`,img:original}, false);
+      if (import.meta.env.DEV && isMain && processed) {
+        targetCanvas.dataset.regionFxMs=String(performance.now()-fxStarted);
+        targetCanvas.dataset.regionFxBackend=(processed as HTMLCanvasElement).dataset?.colorBackend || '';
+      }
       if (!processed) return p;
-      const src=`region-processed-${i}@${p.src}`;
+      // Reused effect canvases are mutable: feather caches must see parameter
+      // revisions even when the canvas identity is unchanged.
+      const src=`region-processed-${i}@${p.src}@${JSON.stringify(p.fx)}`;
       regionDecoded.set(src, processed as HTMLImageElement);
       // Crop coordinates must use the processed surface dimensions, not the
       // original decode dimensions (the shared effects renderer may cap size).
@@ -4801,7 +4808,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(!creativeSeam.current.paint(g,regionForPaint!,regionDecoded,x,y,w,h,dim,isMain))
           paintPhotoRegion(g, regionForPaint!, regionDecoded, x, y, w, h, dim);
       } else {
-        g.drawImage(isMain&&allowDim&&swapSource?.kind==='region'&&swapSource.index===0?dimmedPhotoSource(img):img,x,y,w,h);
+        const single = img === baseImg && regionForPaint?.photos.length === 1
+          ? regionDecoded.get(regionForPaint.photos[0].src) || img : img;
+        g.drawImage(isMain&&allowDim&&swapSource?.kind==='region'&&swapSource.index===0?dimmedPhotoSource(single):single,x,y,w,h);
       }
     };
     const drawImg = (img: any, t: any, ox: number, oy: number, w: number, h: number, kk = 1, allowDim = false) => {
@@ -4876,7 +4885,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.clip('evenodd');
       }});
       ctx.strokeStyle='white';ctx.lineWidth=uiPx;ctx.setLineDash([4*uiPx,4*uiPx]);
-      ctx.strokeRect(offs.ix+(t.x+r.x*t.w)*s*kIn,offs.iy+(t.y+r.y*t.h)*s*kIn,r.w*t.w*s*kIn,r.h*t.h*s*kIn);
+      // Keep the entire stroke inside the cell, including the clipped outer edges.
+      ctx.strokeRect(offs.ix+(t.x+r.x*t.w)*s*kIn+uiPx/2,offs.iy+(t.y+r.y*t.h)*s*kIn+uiPx/2,Math.max(0,r.w*t.w*s*kIn-uiPx),Math.max(0,r.h*t.h*s*kIn-uiPx));
       ctx.restore();
     };
     const drawBackdrop = () => (layout === AROUND
@@ -9655,7 +9665,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   ) : patternType !== 'none' && (
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                       <CompactSlider wide label="大小" value={maskTextureSizeToUi(dotSize)} min={0} max={100} step={1} onChange={(v:number)=>setDotSize(maskTextureSizeFromUi(v))} />
-                      <CompactSlider wide label="間距" value={maskTextureGapToUi(dotGap)} min={0} max={100} onChange={(v:number)=>setDotGap(maskTextureGapFromUi(v))} />
+                      <CompactSlider wide label="間距" value={maskTextureGapToUi(dotGap)} min={0} max={100} step={1} onChange={(v:number)=>setDotGap(maskTextureGapFromUi(v))} />
                       <div className="col-span-2" data-mask-texture-squash>
                         <CompactSlider wide label="壓扁" value={maskTextureSquashToUi(dotSquash)} min={0} max={100} onChange={(v:number)=>setDotSquash(maskTextureSquashFromUi(v))} />
                       </div>
@@ -9916,13 +9926,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 );
               })()}
               {activeTab === 'objedit' && (() => {
-                const regionPhoto = selectedRegionPhoto !== null ? photoRegion?.photos[selectedRegionPhoto] : null;
+                const editRegionIndex = selectedRegionPhoto ?? (baseSelected ? 0 : null);
+                const regionPhoto = editRegionIndex !== null ? photoRegion?.photos[editRegionIndex] : null;
                 const regionEditing = !!regionPhoto?.src;
-                const sel = regionEditing ? {...regionPhoto,id:`region-photo-${selectedRegionPhoto}`,type:'image',img:decodedRegionPhotos.current.get(regionPhoto.src)} : objects.find(o => o.id === selectedObj) || null;
+                const sel = regionEditing ? {...regionPhoto,id:`region-photo-${editRegionIndex}`,type:'image',img:decodedRegionPhotos.current.get(regionPhoto.src)} : objects.find(o => o.id === selectedObj) || null;
                 const patch = (d: any) => {
                   if (regionEditing && photoRegionRef.current) {
                     clearPhotoDimmer();
-                    commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===selectedRegionPhoto ? {...p,...d} : p)});
+                    commitRegion({...photoRegionRef.current,photos:photoRegionRef.current.photos.map((p,i)=>i===editRegionIndex ? {...p,...d} : p)});
                   } else setObjects(prev => prev.map(o => o.id === sel.id ? { ...o, ...d } : o));
                 };
                 const move = (dir: number) => setObjects(prev => {

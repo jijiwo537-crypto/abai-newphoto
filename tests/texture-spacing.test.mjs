@@ -7,7 +7,8 @@ const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext
 const {spacedTextureRadius:r,maskTextureGapFromUi:from,maskTextureGapToUi:to}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
 test('mask gap UI 0–100 maps to -10–100; saved gaps round trip',()=>{
  assert.equal(from(0),-10);assert.ok(Math.abs(from(100)-100)<1e-9);
- for(let v=-10;v<=100;v++)assert.ok(Math.abs(from(to(v))-v)<1e-9);
+ for(let v=-10;v<=100;v++)assert.ok(Math.abs(from(to(v))-v)<=.55+1e-9);
+ for(let v=0;v<=100;v++)assert.equal(to(from(v)),v);
 });
 test('old minimum gap preserves its maximum size; largest gap doubles actual diameter',()=>{
  for(const kind of ['dot','star','heart']){

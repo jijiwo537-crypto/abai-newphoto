@@ -9,4 +9,4 @@ export function spacedTextureRadius(radius: number, pitch: number, unit: number,
   return Math.min(radius * growth, available * .48 / extent);
 }
 export const maskTextureGapFromUi = (value: number) => -10 + Math.max(0, Math.min(100, value)) * 1.1;
-export const maskTextureGapToUi = (value: number) => Math.max(0, Math.min(100, (value + 10) / 1.1));
+export const maskTextureGapToUi = (value: number) => Math.round(Math.max(0, Math.min(100, (value + 10) / 1.1)));

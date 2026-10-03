@@ -832,6 +832,26 @@ export const processPixels = (
   const sLUT = 0.12156862745; // 31 / 255
   let ditherIdx = 0;
 
+  // With independent channel corrections, tetrahedral interpolation reduces
+  // exactly to three 1D tables. Keep the same master LUT and dithering, but do
+  // not recompute RGB tetrahedra for millions of pixels on every slider tick.
+  if (!useNearestLut && !hasLut && !hasHsl && !hasCurves && !hasTempTint &&
+      !hasVib && satMult === 1 && shadows === 0 && highlights === 0 && !hasSharpen) {
+    const rr=new Float64Array(256),gg=new Float64Array(256),bb=new Float64Array(256);
+    for(let v=0;v<256;v++){
+      const f=v*sLUT,a=f|0,b=a===31?31:a+1,t=f-a;
+      rr[v]=masterLUT_R[a]*(1-t)+masterLUT_R[b]*t;
+      gg[v]=masterLUT_G[a<<5]*(1-t)+masterLUT_G[b<<5]*t;
+      bb[v]=masterLUT_B[a<<10]*(1-t)+masterLUT_B[b<<10]*t;
+    }
+    for(let i=0;i<len;i+=4){
+      const d=ditherTable[(i>>>2)&4095];
+      destData[i]=rr[sourceData[i]]+d;destData[i+1]=gg[sourceData[i+1]]+d;
+      destData[i+2]=bb[sourceData[i+2]]+d;destData[i+3]=255;
+    }
+    return;
+  }
+
   // Split into explicit loops to guarantee CPU JIT vectorization and no block de-opts
   if (useNearestLut) {
       // Nearest-neighbor sampling: extremely fast for high-res previews during interaction (~60fps)

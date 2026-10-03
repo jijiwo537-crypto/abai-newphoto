@@ -20,3 +20,18 @@ test('base-photo composition persists back to the region and thumbnail excludes 
  assert.match(s,/src:newSrc,origSrc:srcUrl,geo:st\.geo,width:el\.naturalWidth,height:el\.naturalHeight/);
  assert.match(s,/if \(selectedRegionPhotoRef\.current !== null\) renderToCanvas\(tc, s \* tk\)/);
 });
+test('single imported base image shares the editor and rendered adjusted source',()=>{
+ assert.match(s,/selectedRegionPhoto \?\? \(baseSelected \? 0 : null\)/);
+ assert.match(s,/regionForPaint\?\.photos.length === 1/);
+ assert.match(s,/i===editRegionIndex \? \{\.\.\.p,\.\.\.d\}/);
+});
+test('selected base frame retains full stroke on all four clipped edges',()=>{
+ assert.match(s,/t\.x\+r\.x\*t\.w\)\*s\*kIn\+uiPx\/2/);
+ assert.match(s,/r\.w\*t\.w\*s\*kIn-uiPx/);
+ assert.match(s,/r\.h\*t\.h\*s\*kIn-uiPx/);
+});
+test('base effects reuse full quality buffers and feather caches track revisions',()=>{
+ assert.match(s,/isVid \|\| o\.id\?\.startsWith\('region-fx-'\)/);
+ assert.match(s,/region-processed-.*JSON\.stringify\(p.fx\)/);
+ assert.match(s,/fxCanvasOf\(\{\.\.\.p,id:`region-fx-\$\{i\}@\$\{p.src\}`,img:original\}, false\)/);
+});
