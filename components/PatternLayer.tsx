@@ -1,5 +1,6 @@
 import React, { useId } from 'react';
 import { PatternOpts, stripeBand, STRIPE_A, STRIPE_B } from '../utils/pattern';
+import { spacedTextureRadius } from '../utils/textureSpacing';
 
 /** Logical vector geometry stays unchanged throughout a pinch. The browser
  * samples paths at the current display scale, never a capped preview bitmap. */
@@ -8,8 +9,9 @@ export const PatternLayer: React.FC<{w:number;h:number;opts:PatternOpts}> = Reac
   if(o.type==='none'||w<=0||h<=0)return null;
   const horizontal=o.stripeDir==='h';
   const {band,n}=stripeBand(horizontal?h:w,o.stripeN);
-  const r=(5+(o.size??50)*.15)*w/2000;
+  const baseRadius=(5+(o.size??50)*.15)*w/2000;
   const dx=(40+(o.gap??20))*w/1000,dy=dx*Math.sqrt(3)/2;
+  const r=spacedTextureRadius(baseRadius,dx,w/1000,w,h,o.type);
   const squash=Math.max(20,Math.min(80,o.squash??50));
   const sx=squash>50?1-(squash-50)*.018:1,sy=squash<50?.1+squash*.018:1;
   const R=r*1.38,s=r*1.22;

@@ -1,4 +1,5 @@
 import {paintMaskTexture} from '../utils/maskTexture';
+import {spacedTextureRadius,maskTextureGapFromUi,maskTextureGapToUi} from '../utils/textureSpacing';
 void(async()=>{
  const report:any={kind:'mask-texture',ua:navigator.userAgent,checks:[]};
  const check=(name:string,pass:boolean,detail?:any)=>report.checks.push({name,pass,detail});
@@ -16,6 +17,18 @@ void(async()=>{
   const input=wrap?.querySelector<HTMLInputElement>('input');
   check('real editor full-width squash slider defaults to centre',!!input&&input.value==='50'&&wrap!.classList.contains('col-span-2'));
   check('real editor texture remains visible',!document.querySelector<HTMLElement>('[data-creative-texture]')?.hidden);
+  if(new URLSearchParams(location.search).has('spacingAudit')){
+   const sliders=Array.from(document.querySelectorAll<HTMLInputElement>('[data-creative-texture] input[type=range]'));
+   check('minimum displayed gap maps to physical -10',maskTextureGapFromUi(0)===-10&&Math.abs(maskTextureGapToUi(-10))<1e-8);
+   for(const kind of ['dot','star','heart']){
+    const low=spacedTextureRadius(12.25,40,1,600,600,kind),high=spacedTextureRadius(12.25,140,1,600,600,kind);
+    check(kind+' maximum physical size doubles without touching neighbours',low===12.25&&high===24.5&&high*2*(kind==='star'?1.38:kind==='heart'?1.22:1)<140);
+    check(kind+' radius is invariant across zoom and narrow layouts constrain size',Math.abs(spacedTextureRadius(12.25*7,140*7,7,600*7,600*7,kind)/7-high)<1e-8&&spacedTextureRadius(12.25,140,1,30,600,kind)<high);
+   }
+   const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!;
+   for(const el of sliders.slice(0,2)){set.call(el,'100');el.dispatchEvent(new Event('input',{bubbles:true}));await wait(4);}
+   check('real size and spacing controls retain displayed 0–100',sliders.slice(0,2).every(el=>el.min==='0'&&el.max==='100'&&el.value==='100'));
+  }
   wrap?.scrollIntoView({block:'end'});
   if(new URLSearchParams(location.search).has('sliderAudit')){
    const sliders=Array.from(document.querySelectorAll<HTMLInputElement>('[data-creative-texture] input[type=range]'));

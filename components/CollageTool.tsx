@@ -72,6 +72,7 @@ const drawTextShape: typeof drawTextShapeRaw = (ctx,type,text,x,y,size,fill,out=
 import { paintPattern, paintStripesRect, TEX_OPTIONS, TEX_SWATCHES, STRIPE_DIRS, STRIPE_A, STRIPE_B, isGridTex,
   STRIPE_N_DEFAULT, STRIPE_N_MAX } from '../utils/pattern';
 import { paintMaskTexture, maskTextureSizeFromUi, maskTextureSizeToUi, maskTextureSquashFromUi, maskTextureSquashToUi } from '../utils/maskTexture';
+import { spacedTextureRadius, maskTextureGapFromUi, maskTextureGapToUi } from '../utils/textureSpacing';
 import { ComposeStudio } from './ComposeStudio';
 import { StuckEscape } from './StuckEscape';
 /* 影片：包成一個「長得跟 <img> 一樣」的來源，畫布那邊一行都不必改。
@@ -4776,7 +4777,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const actualDotGap = (40 + dotGap) * sgs;
       
       paintMaskTexture(fCtx, patternType, maskW, maskH,
-        actualDotSize / 2, actualDotGap, dotSquash);
+        spacedTextureRadius(actualDotSize / 2, actualDotGap, sgs, maskW, maskH, patternType), actualDotGap, dotSquash);
     }
     if (isMain) maskCacheKeyRef.current = maskKey;
 
@@ -9654,7 +9655,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   ) : patternType !== 'none' && (
                     <div className="grid grid-cols-2 gap-x-7 gap-y-4 px-3 pt-2 pb-3 border-t border-[#1c1c1c]">
                       <CompactSlider wide label="大小" value={maskTextureSizeToUi(dotSize)} min={0} max={100} step={1} onChange={(v:number)=>setDotSize(maskTextureSizeFromUi(v))} />
-                      <CompactSlider wide label="間距" value={dotGap} min={0} max={100} onChange={setDotGap} />
+                      <CompactSlider wide label="間距" value={maskTextureGapToUi(dotGap)} min={0} max={100} onChange={(v:number)=>setDotGap(maskTextureGapFromUi(v))} />
                       <div className="col-span-2" data-mask-texture-squash>
                         <CompactSlider wide label="壓扁" value={maskTextureSquashToUi(dotSquash)} min={0} max={100} onChange={(v:number)=>setDotSquash(maskTextureSquashFromUi(v))} />
                       </div>
@@ -9817,7 +9818,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             用了會直接把「emoji_symbols」這串英文字印在按鈕上、
                             還會撐爆格子蓋到隔壁兩顆。改用跟旁邊「新增文字」「新增圖形」
                             同一套的 lucide 線條圖示。 */}
-                        <span className="text-white opacity-80 h-6 flex items-center" data-add-symbol-icon="vortex"><VortexIcon size={18} /></span>
+                        <span className="text-white opacity-80 h-6 flex items-center" data-add-symbol-icon="vortex" style={{transform:'translateX(-1.125px)'}}><VortexIcon size={18} /></span>
                         <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增符號</span>
                       </button>
                       <button

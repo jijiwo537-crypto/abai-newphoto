@@ -16441,7 +16441,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         用了會直接把「emoji_symbols」這串英文字印在按鈕上、
                         還會撐爆格子蓋到隔壁兩顆。改用跟旁邊「新增文字」「新增圖形」
                         同一套的 lucide 線條圖示。 */}
-                    <span className="text-white opacity-80 h-6 flex items-center" data-add-symbol-icon="vortex"><VortexIcon size={18} /></span>
+                    <span className="text-white opacity-80 h-6 flex items-center" data-add-symbol-icon="vortex" style={{transform:'translateX(-1.125px)'}}><VortexIcon size={18} /></span>
                     <span className="text-[11px] font-bold tracking-widest text-white/90 whitespace-nowrap">新增符號</span>
                   </button>
                   <button

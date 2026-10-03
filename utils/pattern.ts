@@ -12,6 +12,7 @@
  */
 
 /** 尺寸換算的基準寬度 */
+import { spacedTextureRadius } from './textureSpacing';
 const REF_W = 1000;
 
 /** 紋理的種類 */
@@ -154,8 +155,9 @@ export const paintPattern = (
     return;
   }
   const s = w / REF_W;
-  const r = ((5 + (o.size ?? 50) / 100 * 15) * s) / 2;
+  const baseRadius = ((5 + (o.size ?? 50) / 100 * 15) * s) / 2;
   const dgap = (40 + (o.gap ?? 20)) * s;
+  const r = spacedTextureRadius(baseRadius, dgap, s, w, h, o.type);
   if (r <= 0.05 || dgap <= 0.5) return;
 
   const dx = dgap;

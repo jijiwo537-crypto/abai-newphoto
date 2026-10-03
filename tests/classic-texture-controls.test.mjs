@@ -16,5 +16,5 @@ test('texture page gains 36px scroll room without changing the preview',()=>{
  assert.match(grid,/height: 'max\(36dvh, 310px\)'/);
 });
 test('add-symbol buttons use the creative third-row second vortex icon',()=>{
- for(const file of ['GridLayoutTool','CollageTool'])assert.match(fs.readFileSync(`components/${file}.tsx`,'utf8'),/data-add-symbol-icon="vortex"><VortexIcon size=\{18\}/);
+ for(const file of ['GridLayoutTool','CollageTool'])assert.match(fs.readFileSync(`components/${file}.tsx`,'utf8'),/data-add-symbol-icon="vortex" style=\{\{transform:'translateX\(-1.125px\)'\}\}><VortexIcon size=\{18\}/);
 });
