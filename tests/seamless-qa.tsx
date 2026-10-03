@@ -14,6 +14,7 @@ if(params.has('empty')){
  layout.t.scale=1;layout.gap=0;layout.radius=0;layout.seamless=false;
 }
 if(params.has('emptyAudit'))void import('./empty-layout-audit');
+if(params.has('chromeAudit'))void import('./collage-chrome-audit');
 if(new URLSearchParams(location.search).has('slowAudit'))void import('./seamless-slow-audit');
 if(new URLSearchParams(location.search).has('fusionAudit'))void import('./seamless-fusion-audit');
 if(params.has('panelAudit'))void import('./layout-panel-audit');

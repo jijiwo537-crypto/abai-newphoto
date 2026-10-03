@@ -14,6 +14,7 @@ import { SeamlessLayout, SeamlessAmountSlider } from './SeamlessLayout';
 import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
+import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
 import { get2dWide } from '../utils/colorSpace';
@@ -1808,117 +1809,31 @@ export const SymbolPicker: React.FC<{
  * 在它上面的照片、文字、图形或符号会自然盖住它，不再由 document.body 上的
  * 全画面 Portal 无条件压在最前面。
  *
- * 加号与文字仍以萤幕像素为基准：外层预览缩放时，用反向倍率抵销；当格子本身
- * 小于提示的自然尺寸时再等比缩小。更新只写合成 transform，不重新排版字体。
+ * 提示使用同一个 SVG 世界坐标，和格子一起连续缩放。字体不逐帧重排，
+ * 也没有第二个反向缩放层，避免 WebKit 的两套取整规则互相拉扯。
  */
 const LayoutEmptyPromptLayer: React.FC<{
   cells: { x: number; y: number; w: number; h: number }[];
+  width:number;
+  height:number;
   hidden?: boolean;
-}> = ({ cells, hidden = false }) => {
-  const layerRef = useRef<HTMLDivElement>(null);
-
-  const place = useCallback(() => {
-    const layer = layerRef.current;
-    const scaledColumn = layer?.closest('[data-grid-pages-column]') as HTMLElement | null;
-    if (!layer || !scaledColumn) return;
-
-    // Use the exact shared matrix, not offsetWidth (which rounds CSS pixels).
-    const previewScale = Number(scaledColumn.style.getPropertyValue('--preview-scale')) || 1;
-    const k = Math.max(0.0001, previewScale);
-    const points = layer.querySelectorAll<HTMLElement>('[data-layout-empty-prompt-anchor]');
-
-    points.forEach(point => {
-      const prompt = point.querySelector<HTMLElement>('[data-layout-empty-prompt]');
-      if (!prompt) return;
-      const cellScreenW = parseFloat(point.style.width) * k;
-      const cellScreenH = parseFloat(point.style.height) * k;
-      const fit = Math.max(0.18, Math.min(1, cellScreenW / 92, cellScreenH / 60));
-      const ui = fit / k;
-
-      // Keep font metrics fixed. Changing fontSize each pinch frame reshapes and
-      // hints the label at different sizes before the parent scales it back.
-      // The combined ancestor/child transform retains the final screen size.
-      prompt.style.width = '76px';
-      prompt.style.height = '44px';
-      prompt.style.transform = `translate(-50%, -50%) scale(${ui})`;
-      const plus = prompt.querySelector<SVGElement>('[data-layout-empty-plus]');
-      if (plus) {
-        plus.style.width = '16px';
-        plus.style.height = '16px';
-        plus.style.top = '3px';
-      }
-      const label = prompt.querySelector<HTMLElement>('[data-layout-empty-label]');
-      if (label) {
-        label.style.top = '28.5px';
-        label.style.fontSize = '9px';
-        label.style.letterSpacing = '1.2px';
-      }
-    });
-  }, []);
-
-  useLayoutEffect(() => {
-    if (hidden) return;
-    const layer = layerRef.current;
-    const scaledColumn = layer?.closest('[data-grid-pages-column]') as HTMLElement | null;
-    if (!layer || !scaledColumn) return;
-    let raf = 0;
-    const schedule = () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => { raf = 0; place(); });
-    };
-    place();
-    // This event is sent after the final pinch/scroll matrix is committed.
-    // Deferring to another frame briefly shows the previous inverse size.
-    scaledColumn.addEventListener('abai-preview-transform', place);
-    window.addEventListener('resize', schedule);
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-      scaledColumn.removeEventListener('abai-preview-transform', place);
-      window.removeEventListener('resize', schedule);
-    };
-  }, [cells, hidden, place]);
-
-  return (
-    <div
-      ref={layerRef}
-      data-layout-empty-prompts="1"
-      aria-hidden
-      className="absolute inset-0 pointer-events-none z-[6]"
-      style={{ visibility: hidden ? 'hidden' : 'visible' }}
-    >
-      {cells.map((cell, idx) => (
-        <i
-          key={idx}
-          data-layout-empty-prompt-anchor="1"
-          className="absolute block pointer-events-none"
-          style={{ left: cell.x, top: cell.y, width: cell.w, height: cell.h }}
-        >
-          <span
-            data-layout-empty-prompt="1"
-            className="absolute left-1/2 top-1/2 block text-white/20 not-italic"
-            style={{ transformOrigin: 'center center', textRendering: 'geometricPrecision' }}
-          >
-            <svg
-              data-layout-empty-plus="1"
-              width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden
-              className="absolute left-1/2 -translate-x-1/2"
-              shapeRendering="geometricPrecision"
-            >
-              <path d="M1 8H15M8 1V15" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
-            </svg>
-            <span
-              data-layout-empty-label="1"
-              className="absolute left-1/2 -translate-x-1/2 whitespace-nowrap font-bold leading-none"
-              style={{ fontFamily: fontStack(DEFAULT_FONT), textRendering: 'geometricPrecision' }}
-            >
-              選擇相片
-            </span>
-          </span>
-        </i>
-      ))}
-    </div>
-  );
-};
+}> = ({ cells, width, height, hidden = false }) => (
+  <svg data-layout-empty-prompts="1" aria-hidden
+    viewBox={`0 0 ${width} ${height}`}
+    className="absolute inset-0 w-full h-full pointer-events-none z-[6]"
+    style={{visibility:hidden?'hidden':'visible'}}>
+    {cells.map((cell,idx)=>{
+      const fit=Math.max(.18,Math.min(1,cell.w/92,cell.h/60));
+      return <g key={idx} data-layout-empty-prompt="1"
+        transform={`translate(${cell.x+cell.w/2} ${cell.y+cell.h/2}) scale(${fit})`}
+        fill="white" opacity=".2">
+        <path data-layout-empty-plus="1" d={SOLID_PLUS_PATH} transform="translate(-8 -19)"/>
+        <text data-layout-empty-label="1" x="0" y="12" textAnchor="middle"
+          fontSize="8" fontWeight="700" fontFamily={fontStack(DEFAULT_FONT)}>選擇相片</text>
+      </g>;
+    })}
+  </svg>
+);
 
 /**
  * 兩段式的顏色欄：平常只是一列（標題＋色號＋一小塊顏色），
@@ -10060,12 +9975,14 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     }
     vectorScene.set('__alignment-guides', {
       z: 475000,
+      animateUntil: Infinity,
       paint: ctx => {
         const k = Math.max(.0001, kRef.current || 1);
-        const width = 2 / k;
+        const width = 1.6 / k;
         const totalWidth = pages.length * previewW;
         let bounds: SceneBounds = { x: 0, y: 0, width: 0, height: 0 };
-        ctx.fillStyle = '#3b82f6';
+        ctx.strokeStyle = '#3b82f6';ctx.lineWidth=width;
+        ctx.setLineDash([6/k,5/k]);ctx.lineDashOffset=-(performance.now()*.018%11)/k;
         for (const guide of activeGuidelines) {
           const vertical = guide.type === 'vertical';
           const x = vertical
@@ -10074,10 +9991,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
           const y = vertical ? 0 : Math.max(0, Math.min(previewH - width, guide.coord - width / 2));
           const w = vertical ? width : (guide.x1 ?? totalWidth) - x;
           const h = vertical ? previewH : width;
-          ctx.fillRect(x, y, w, h);
+          ctx.beginPath();
+          if(vertical){ctx.moveTo(x+width/2,y);ctx.lineTo(x+width/2,y+h);}
+          else{ctx.moveTo(x,y+width/2);ctx.lineTo(x+w,y+width/2);}
+          ctx.stroke();
           bounds = unionSceneBounds(bounds, sceneRectBounds(ctx, x, y, w, h));
         }
-        return bounds;
+        ctx.setLineDash([]);ctx.lineDashOffset=0;return bounds;
       },
     });
     vectorScene.flush();
@@ -14472,7 +14392,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                       堆疊環境裡（見下面工作區那層的註解），所以選單一定在畫布的
                       照片、佈局上面 */}
                   <div className="fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)} />
-                  <div className="absolute right-0 top-11 z-[61] w-36 rounded-2xl bg-[#1b1b1b] border border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                  <div role="dialog" aria-label="跨頁拼圖更多選項" className="absolute right-0 top-[calc(100%+18px)] z-[61] w-36 rounded-2xl bg-[#101010] border border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
                     {/* 直式 2:3、9:16 IG 吃不下，這一顆就整個不出現 */}
                     {igPreviewSupported && (
                       <>
@@ -15411,16 +15331,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 });
                                 /* 所有矩形作为同一个 path 的子路径一次栅格化。即使横线与
                                    竖线在交点相遇，也只会混合一次 alpha，不会叠成更白的点。 */
-                                const d = emptyRects.map(r => {
-                                  if (gap !== 0) return `M ${r.x} ${r.y} h ${r.w} v ${r.h} h ${-r.w} Z`;
-                                  // The outer perimeter is not a grid line. Stroking it at a
-                                  // fractional preview scale caused the white flashing frame.
-                                  const right = r.x + r.w, bottom = r.y + r.h;
-                                  return [r.x > .001 ? `M${r.x} ${r.y}V${bottom}` : '',
-                                    r.y > .001 ? `M${r.x} ${r.y}H${right}` : '',
-                                    right < lw - .001 ? `M${right} ${r.y}V${bottom}` : '',
-                                    bottom < lh - .001 ? `M${r.x} ${bottom}H${right}` : ''].join(' ');
-                                }).join(' ');
+                                // The outer perimeter is not a grid line. Shared
+                                // empty-cell edges are emitted once, not per cell.
+                                const d = emptyCellSeparators(pageActiveTemplate.rects.map(r=>resolveLayoutRect(r,lw-gap,lh-gap,layout.overlaySize)),layout.images.map(c=>!c?.url))
+                                  .map(l=>`M${gap/2+l.x1*(lw-gap)} ${gap/2+l.y1*(lh-gap)}L${gap/2+l.x2*(lw-gap)} ${gap/2+l.y2*(lh-gap)}`).join(' ');
                                 const selectedEmpty = emptyRects.find(r =>
                                   r.idx === selectedIndex && isThisLayoutSelected);
                                 return (
@@ -15437,6 +15351,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     d={d}
                                     fill="none"
                                     stroke="rgba(255,255,255,0.10)"
+                                    strokeDasharray="3 3"
                                     style={{ strokeWidth: 'var(--layout-grid-stroke, 1px)' }}
                                   />
                                   {selectedEmpty && (
@@ -15448,7 +15363,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                     />
                                   )}
                                 </svg>
-                                {!insetLayout && <LayoutEmptyPromptLayer cells={emptyRects} hidden={pagesMode || pagesVisual} />}
+                                {!insetLayout && <LayoutEmptyPromptLayer cells={emptyRects} width={lw} height={lh} hidden={pagesMode || pagesVisual} />}
                                 </>
                                 );
                               })()}

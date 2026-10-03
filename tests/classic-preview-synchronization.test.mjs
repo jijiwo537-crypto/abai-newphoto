@@ -11,13 +11,13 @@ test('shape glow maps display 0..100 to strength 0..50 in both editors', () => {
 });
 
 test('empty cell chrome updates in the same geometry frame, not a following frame', () => {
-  assert.match(grid, /addEventListener\('abai-preview-transform', place\)/);
-  assert.match(grid, /removeEventListener\('abai-preview-transform', place\)/);
   const start = grid.indexOf('const LayoutEmptyPromptLayer');
   const prompt = grid.slice(start, grid.indexOf('export const ColorPick:', start));
   assert.doesNotMatch(prompt, /\.offsetWidth|\.offsetHeight/);
-  assert.match(prompt, /label\.style\.fontSize = '9px'/);
-  assert.match(prompt, /translate\(-50%, -50%\) scale\(\$\{ui\}\)/);
+  assert.match(prompt, /fontSize="8"/);
+  assert.match(prompt, /viewBox=\{`0 0 \$\{width\} \$\{height\}`\}/);
+  assert.match(prompt, /d=\{SOLID_PLUS_PATH\}/);
+  assert.doesNotMatch(prompt, /requestAnimationFrame|previewScale|setTransform/);
 });
 
 test('plain layout cells use shared SVG geometry while filters and seamless rendering remain separate', () => {
@@ -66,11 +66,13 @@ test('transition UI lifetime follows the actual pose, including equal-size mode 
   assert.match(pinch, /setPagesVisual\(false\)/);
 });
 
-test('alignment guides use a separate two-screen-pixel scene entry above seams', () => {
+test('alignment guides animate dashes in a separate slightly thinner scene entry above seams', () => {
   const guide = grid.slice(grid.indexOf("vectorScene.set('__alignment-guides'"), grid.indexOf('// Measure container size dynamically', grid.indexOf("vectorScene.set('__alignment-guides'")));
   assert.match(guide, /z: 475000/);
-  assert.match(guide, /const width = 2 \/ k/);
-  assert.match(guide, /ctx.fillRect\(x, y, w, h\)/);
+  assert.match(guide, /const width = 1.6 \/ k/);
+  assert.match(guide, /ctx.setLineDash\(\[6\/k,5\/k\]\)/);
+  assert.match(guide, /animateUntil: Infinity/);
+  assert.match(guide, /ctx.stroke\(\)/);
   assert.doesNotMatch(grid, /return activeGuidelines.map/);
 });
 

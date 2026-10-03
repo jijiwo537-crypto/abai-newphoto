@@ -42,7 +42,7 @@ void(async()=>{
   document.querySelector<HTMLButtonElement>('[aria-label="返回圖片排版"]')!.click();await wait();
   document.querySelector<HTMLButtonElement>('button[title="更多"]')!.click();await wait();
   const glass=document.querySelector<HTMLElement>('[aria-label="創意拼圖更多選項"]')!,menuTop=glass.getBoundingClientRect().top;
-  check('more menu buttons share deep glass color', [...glass.querySelectorAll<HTMLElement>('.premium-glass-button')].length>0&&[...glass.querySelectorAll<HTMLElement>('.premium-glass-button')].every(b=>getComputedStyle(b).backgroundColor===getComputedStyle(glass).backgroundColor));
+  check('more menu uses the original flat rows and darker solid surface',getComputedStyle(glass).backgroundColor==='rgb(16, 16, 16)'&&!glass.querySelector('.premium-glass-button'));
   document.querySelector<HTMLButtonElement>('[data-creative-export-options-toggle]')!.click();await wait();
   // The actual menu is attached directly below the header.
   const exportGlass=document.querySelector<HTMLElement>('[aria-label="創意拼圖匯出設定"]')!;

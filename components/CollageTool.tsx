@@ -12,6 +12,7 @@ import { patternEntranceRanks, type PatternDirection } from '../utils/patternEnt
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import { canExportHeic, exportHeic } from '../utils/heicExport';
 import { CreativeSeamless } from '../utils/creativeSeamless';
+import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
 import { createPortal } from 'react-dom';
 import type { PhotoRegion } from '../utils/creativePhotoLayout';
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
@@ -6747,37 +6748,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     }
 
-    if (isMain && !hideChromeRef.current && guides.length) {
-      ctx.save();
-      /* 經典拼圖那邊是 2 CSS px 的 bg-blue-500。這裡畫在畫布上，
-         所以要把 2 CSS px 換算成畫布單位（畫布可能比螢幕細很多倍）。
-
-         offs.cw 已經是「畫布像素」了（它是 baseW×s 算出來的），
-         以前這裡又多乘了一次 s —— 於是工作倍率愈高線就愈粗：
-         倍率 1 時剛好 2 CSS px（看起來正常），倍率 1.5 時變成 2.9 CSS px。
-         四周包圍的畫布沒有多出來的那條遮罩，總像素比較少，倍率上限給得比
-         別的排版高，所以最先被看出來變粗的就是它。 */
-      const cssW0 = baseCssWRef.current || 1;
-      const shown = cssW0 * Math.max(1, viewTRef.current.k);
-      ctx.strokeStyle = '#3B82F6';
-      const glw = Math.max(1, 2 * offs.cw / shown);
-      ctx.lineWidth = glw;
-      /* 畫布最外圈那兩條線本來剛好壓在邊界上，一半會被畫布外的黑底吃掉，
-         看起來就比中間那幾條細一半。往內縮半個線寬，整條都留在畫布裡。 */
-      const clamp = (v: number, max: number) => Math.min(Math.max(v, glw / 2), max - glw / 2);
-      guides.forEach(g => {
-        ctx.beginPath();
-        if (g.x !== undefined) {
-          const gx = clamp(g.x * s, offs.cw);
-          ctx.moveTo(gx, 0); ctx.lineTo(gx, offs.ch);
-        } else {
-          const gy = clamp(g.y * s, offs.ch);
-          ctx.moveTo(0, gy); ctx.lineTo(offs.cw, gy);
-        }
-        ctx.stroke();
-      });
-      ctx.restore();
-    }
+    // Alignment chrome is an animated SVG above the scene. Moving its dash
+    // phase must never repaint the original photographs or feather surfaces.
 
     /* 有造型的圖片仍沿著造型本身描框；一般矩形框與底圖虛線框改由畫布上方
        的獨立 SVG overlay 顯示。overlay 不受畫布裁切，因此靠著黑色遮罩或
@@ -8640,20 +8612,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               {moreOpen && (
                 <>
                   <div className="fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)} />
-                  <div role="dialog" aria-label="創意拼圖更多選項" style={PREMIUM_GLASS} className="absolute right-0 top-[calc(100%+18px)] z-[61] w-36 rounded-2xl border border-white/10 overflow-hidden animate-in fade-in zoom-in-95 duration-150 p-1.5">
+                  <div role="dialog" aria-label="創意拼圖更多選項" className="absolute right-0 top-[calc(100%+18px)] z-[61] w-36 rounded-2xl bg-[#101010] border border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
                     {/* 最上面是 IG 預覽，跟經典拼圖同一顆（比例 IG 吃不下時整個不出現） */}
                     {igSupported && (
                       <>
                         <button
                           onClick={() => { setMoreOpen(false); openIgPreview(); }}
-                          className="w-full h-11 px-3 rounded-xl premium-glass-button flex items-center text-[12px] font-bold text-white/90 hover:brightness-125 transition-[filter]"
+                          className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90 hover:bg-white/10 transition-colors"
                         >
                           <span>預覽</span>
                         </button>
-                        <div className="h-1.5" />
+                        <div className="h-px bg-white/10" />
                       </>
                     )}
-                    <div className="w-full h-11 px-3 rounded-xl premium-glass-button flex items-center text-[12px] font-bold text-white/90">
+                    <div className="w-full h-11 px-4 flex items-center text-[12px] font-bold text-white/90">
                       <span>對齊</span>
                       <button
                         onClick={(e) => {
@@ -8831,16 +8803,41 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               {/* 選中框是純介面，不再烘進畫布。SVG 疊在所有畫布內容之上，
                   overflow:visible 讓線條即使跨到旁邊的黑色遮罩或畫布外側也完整顯示；
                   vector-effect 則確保預覽放大縮小後仍維持相同粗細。 */}
+              {!!guides.length && !hideChromeRef.current && (()=>{
+                const off=getLayoutOffsets();if(!off)return null;
+                const half=.8*off.cw/Math.max(1,(baseCss?.w||off.cw)*displayScale);
+                const clamp=(v:number,max:number)=>Math.min(max-half,Math.max(half,v));
+                return <svg data-creative-alignment-guides viewBox={`0 0 ${off.cw} ${off.ch}`} className="absolute inset-0 w-full h-full pointer-events-none" style={{zIndex:7}}>
+                  {guides.map((g,i)=><line key={i} className="creative-alignment-dash" x1={g.x===undefined?0:clamp(g.x,off.cw)} x2={g.x===undefined?off.cw:clamp(g.x,off.cw)} y1={g.x===undefined?clamp(g.y,off.ch):0} y2={g.x===undefined?clamp(g.y,off.ch):off.ch} stroke="white" strokeWidth="1.6" vectorEffect="non-scaling-stroke" strokeDasharray="6 5"/>)}
+                </svg>;
+              })()}
               {photoRegion?.multi && (()=>{
                 const off=getLayoutOffsets();if(!off)return null;
                 const k=baseFrameScale(off),t=imageTransform,rects=regionRects(photoRegion,t.w*k,t.h*k);
+                const px=off.cw/Math.max(1,baseCss?.w||off.cw);
+                const empty=photoRegion.photos.map(p=>!p.src);
                 return <div className="absolute inset-0 pointer-events-none" style={{zIndex:5,overflow:'hidden'}} data-region-cell-overlay>
+                  <svg viewBox={`0 0 ${off.cw} ${off.ch}`} className="absolute inset-0 w-full h-full pointer-events-none" data-photo-cell-chrome>
+                    <defs><clipPath id="creative-cell-chrome-clip"><rect x={off.ix} y={off.iy} width={off.iw} height={off.ih}/></clipPath></defs>
+                    <g clipPath="url(#creative-cell-chrome-clip)">
+                    {emptyCellSeparators(rects,empty).map((l,i)=><line key={i} data-empty-separator x1={off.ix+(t.x+l.x1*t.w)*k} y1={off.iy+(t.y+l.y1*t.h)*k} x2={off.ix+(t.x+l.x2*t.w)*k} y2={off.iy+(t.y+l.y2*t.h)*k} stroke="rgba(255,255,255,.35)" strokeWidth={px*.7} strokeDasharray={`${px*3} ${px*3}`}/>)}
+                    {rects.map((r,i)=>{
+                      if(!empty[i])return null;const cell=regionCell(i)!;
+                      const cx=cell.x+cell.w/2,cy=cell.y+cell.h/2;
+                      const fit=Math.min(1,cell.w/(70*px),cell.h/(50*px)),u=px*fit;
+                      return <g key={i} data-empty-prompt transform={`translate(${cx} ${cy}) scale(${u})`} fill="white" opacity=".6">
+                        <path data-empty-plus d={SOLID_PLUS_PATH} transform="translate(-8 -19)"/>
+                        <text data-empty-label x="0" y="12" textAnchor="middle" fontSize="8" fontWeight="500" fontFamily="sans-serif">選擇相片</text>
+                      </g>;
+                    })}
+                    </g>
+                  </svg>
                   {rects.map((r,i)=>{
                     const cell=regionCell(i)!;
                     const left=Math.max(off.ix,cell.x),top=Math.max(off.iy,cell.y),right=Math.min(off.ix+off.iw,cell.x+cell.w),bottom=Math.min(off.iy+off.ih,cell.y+cell.h);
                     if(right<=left||bottom<=top)return null;
                     return <div key={i} data-photo-cell={i} className="absolute flex items-center justify-center" style={{left:`${left/off.cw*100}%`,top:`${top/off.ch*100}%`,width:`${(right-left)/off.cw*100}%`,height:`${(bottom-top)/off.ch*100}%`,border:activeTab!=='motion'&&selectedRegionPhoto===i?'1px dashed white':undefined}}>
-                      {!photoRegion.photos[i].src && <button className="pointer-events-auto text-white/60 flex flex-col items-center gap-1 text-[10px]" onClick={()=>{regionUploadIndex.current=i;regionUploadRef.current?.click();}}><Plus size={20}/><span>選擇相片</span></button>}
+                      {!photoRegion.photos[i].src && <button aria-label="選擇相片" className="pointer-events-auto absolute inset-0" onClick={()=>{regionUploadIndex.current=i;regionUploadRef.current?.click();}}/>}
                     </div>;
                   })}
                 </div>;
