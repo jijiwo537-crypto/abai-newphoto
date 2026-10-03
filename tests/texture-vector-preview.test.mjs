@@ -18,3 +18,11 @@ test('squash is persisted and passed into every classic shape texture renderer',
  assert.match(read('../components/CollageTool.tsx'),/dotSquash:maskTextureSquashFromUi\(v\)/);
  assert.match(read('../utils/holeShapes.ts'),/o\.texSquash \?\? o\.dotSquash \?\? 50/);
 });
+test('shape squash is only offered for dot, star and heart, never none or stripes',()=>{
+ for(const file of ['../components/CollageTool.tsx','../components/GridLayoutTool.tsx']){
+  const code=read(file);
+  assert.match(code,/isGridTex\(tex\) && <div className="col-span-2">\{(?:shapeSlider|slider)\('壓扁'/);
+  assert.match(code,/\) : patternType !== 'none' && \(/);
+ }
+ assert.match(read('../utils/pattern.ts'),/isGridTex = \(t\?: string\) => t === 'dot' \|\| t === 'star' \|\| t === 'heart'/);
+});
