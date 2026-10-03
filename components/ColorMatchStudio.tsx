@@ -494,7 +494,7 @@ export const ColorMatchStudio: React.FC<Props> = ({
           </div>
           {formatOpen && <div role="dialog" aria-label="匯出格式" className="absolute top-full left-4 right-4 mt-2 rounded-xl border border-white/15 p-3 shadow-xl" style={PREMIUM_GLASS}>
             <p className="text-xs text-white/60 mb-3">匯出格式</p>
-            <div className="flex gap-2">{(['jpg','png','heic'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} disabled={format === 'heic' && !canExportHeic()} onClick={() => setExportFormat(format)} className={`flex-1 h-9 rounded-lg border text-xs uppercase disabled:opacity-25 ${exportFormat === format ? 'bg-white text-black border-white' : 'bg-[#262628] border-white/15 text-white/70'}`}>{format.toUpperCase()}</button>)}</div>
+            <div className="flex gap-2">{(['jpg','png','heic'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} disabled={format === 'heic' && !canExportHeic()} onClick={() => setExportFormat(format)} className={`flex-1 h-9 rounded-lg border text-xs uppercase disabled:text-white/30 ${exportFormat === format ? 'bg-white text-black border-white' : 'bg-[#303034] border-white/15 text-white/90'}`}>{format.toUpperCase()}</button>)}</div>
           </div>}
         </div>
       </header>

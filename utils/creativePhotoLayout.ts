@@ -11,11 +11,25 @@ export type PhotoRegion = { photos: RegionPhoto[]; arrangement: PhotoArrangement
 export type PhotoRect = { x: number; y: number; w: number; h: number };
 
 export function photoTemplates(count: number) {
-  const original = TEMPLATE_MAP[count] || [];
-  if (count < 2 || original.length >= 4) return original;
-  const extra = [{ name: '直欄', rects: photoRegionRects(count, 'horizontal') }, { name: '橫欄', rects: photoRegionRects(count, 'vertical') }];
-  return [...original, ...extra].slice(0, 4);
+  return TEMPLATE_MAP[count] || [];
 }
+/** Picker choices exclude single-photo layouts, without invalidating old drafts. */
+export const PHOTO_LAYOUT_COUNTS=[2,3,4,5,6,7,8,9,10] as const;
+let dimSource:CanvasImageSource|null=null,dimCanvas:HTMLCanvasElement|null=null;
+/** Darken RGB while retaining the source alpha; one full-resolution cached
+ * source only. In particular, an opaque overlay photo remains opaque. */
+export function dimmedPhotoSource(source:CanvasImageSource):CanvasImageSource{
+  if(source===dimSource&&dimCanvas)return dimCanvas;
+  const image=source as any,w=image.naturalWidth||image.videoWidth||image.width,h=image.naturalHeight||image.videoHeight||image.height;
+  if(!w||!h)return source;
+  const canvas=dimCanvas||(dimCanvas=document.createElement('canvas'));canvas.width=w;canvas.height=h;
+  let g:CanvasRenderingContext2D|null=null;
+  try{g=canvas.getContext('2d',{colorSpace:'display-p3'});}catch{}
+  g ||= canvas.getContext('2d');if(!g)return source;
+  g.drawImage(source,0,0,w,h);g.globalCompositeOperation='source-atop';g.fillStyle='rgba(0,0,0,.65)';g.fillRect(0,0,w,h);g.globalCompositeOperation='source-over';
+  dimSource=source;return canvas;
+}
+export function clearPhotoDimmer(){if(dimCanvas)dimCanvas.width=dimCanvas.height=1;dimSource=null;}
 /** Quick choices do not change persisted catalog indices. */
 export function quickPhotoTemplateIndices(count:number){
   const templates=photoTemplates(count);
@@ -30,7 +44,7 @@ export function regionRects(region: PhotoRegion, width = 1, height = 1): PhotoRe
   });
 }
 export function changePhotoTemplate(region: PhotoRegion, count: number, templateIndex: number): PhotoRegion {
-  count = Math.max(1, Math.min(CREATIVE_PHOTO_LIMIT, count));
+  count = Math.max(2, Math.min(10, count));
   const all = [...region.photos, ...(region.overflowPhotos || [])];
   const photos = Array.from({length: count}, (_, i) => all[i] || {src: '', width: 1, height: 1});
   return {...region, photos, overflowPhotos: all.slice(count).filter(p => p.src), templateIndex, multi: true};
@@ -100,10 +114,7 @@ export function paintPhotoRegion(ctx: CanvasRenderingContext2D, region: PhotoReg
     const dx = x + r.x * w, dy = y + r.y * h, dw = r.w * w, dh = r.h * h;
     if (!img) {ctx.save();ctx.fillStyle='#0c0c0c';ctx.fillRect(dx,dy,dw,dh);ctx.restore();return;}
     const {sx,sy,sw,sh}=photoCrop(photo,dw,dh);
-    const alpha=ctx.globalAlpha;
-    if(i===dimIndex)ctx.globalAlpha=alpha*.35;
-    ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
-    ctx.globalAlpha=alpha;
+    ctx.drawImage(i===dimIndex?dimmedPhotoSource(img):img, sx, sy, sw, sh, dx, dy, dw, dh);
   });
   ctx.globalCompositeOperation = previousComposite;
 }

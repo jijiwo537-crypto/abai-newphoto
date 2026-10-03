@@ -6948,8 +6948,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
               <div role="dialog" aria-label="匯出選項" className="absolute left-4 right-4 top-full mt-2 z-[81] rounded-xl border border-white/15 p-3 shadow-xl" style={PREMIUM_GLASS}>
                 <div className="text-xs text-white/50 mb-2">匯出格式</div>
                 <div className="flex gap-2">
-                  {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : 'bg-[#262628]'}`}>{format.toUpperCase()}</button>)}
-                  <button disabled={!canExportHeic()} aria-pressed={exportFormat === 'heic'} onClick={() => setExportFormat('heic')} className={`flex-1 py-2 rounded-lg text-xs disabled:opacity-35 ${exportFormat === 'heic' ? 'bg-white text-black' : 'bg-[#262628]'}`}>HEIC</button>
+                  {(['jpg', 'png'] as const).map(format => <button key={format} aria-pressed={exportFormat === format} onClick={() => setExportFormat(format)} className={`flex-1 py-2 rounded-lg text-xs ${exportFormat === format ? 'bg-white text-black' : 'bg-[#303034]'}`}>{format.toUpperCase()}</button>)}
+                  <button disabled={!canExportHeic()} aria-pressed={exportFormat === 'heic'} onClick={() => setExportFormat('heic')} className={`flex-1 py-2 rounded-lg text-xs disabled:opacity-35 ${exportFormat === 'heic' ? 'bg-white text-black' : 'bg-[#303034]'}`}>HEIC</button>
                 </div>
               </div>
             </>}

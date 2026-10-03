@@ -1883,9 +1883,9 @@ export const HomePage: React.FC<HomePageProps> = ({
                 {/* 電子郵件 —— 點下去複製。複製成功的回饋在整張卡下面，卡裡不放東西 */}
                 <button
                   onClick={copyEmail}
-                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-[#262628] border border-white/10 text-left hover:bg-[#303032] active:scale-[0.98] transition-[background-color,transform] duration-300"
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-[#303034] border border-white/10 text-left hover:bg-[#303032] active:scale-[0.98] transition-[background-color,transform] duration-300"
                 >
-                  <span className="w-9 h-9 shrink-0 rounded-full bg-white/[0.08] flex items-center justify-center text-white/70">
+                  <span className="w-9 h-9 shrink-0 rounded-full bg-white/[0.08] flex items-center justify-center text-white/90">
                     <Icon name="mail" className="text-[18px]" />
                   </span>
                   {/* 不用 truncate：窄螢幕寧可換行也不要把地址藏起來 */}
@@ -1897,9 +1897,9 @@ export const HomePage: React.FC<HomePageProps> = ({
                   href={CONTACT_IG_URL}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-[#262628] border border-white/10 hover:bg-[#303032] active:scale-[0.98] transition-[background-color,transform] duration-300"
+                  className="w-full flex items-center gap-3 p-3 rounded-2xl bg-[#303034] border border-white/10 hover:bg-[#303032] active:scale-[0.98] transition-[background-color,transform] duration-300"
                 >
-                  <span className="w-9 h-9 shrink-0 rounded-full bg-white/[0.08] flex items-center justify-center text-white/70">
+                  <span className="w-9 h-9 shrink-0 rounded-full bg-white/[0.08] flex items-center justify-center text-white/90">
                     <InstagramGlyph />
                   </span>
                   <span className="flex-1 min-w-0 text-[12px] leading-snug text-white/90 break-all">{CONTACT_IG}</span>

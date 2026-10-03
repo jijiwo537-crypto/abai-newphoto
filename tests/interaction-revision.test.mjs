@@ -39,7 +39,7 @@ test('classic and creative use identical object idle defaults', async () => {
 
 test('drag-to-pinch preserves the committed position; thumbnails are keyed to their photo', () => {
   const creative = source('components/CollageTool.tsx');
-  const branch = creative.slice(creative.indexOf('} else if (activePointers.current.size === 2 && selectedTarget)'), creative.indexOf('} else if (activePointers.current.size === 2 && (baseSelectedRef.current'));
+  const branch = creative.slice(creative.indexOf('} else if (activePointers.current.size === 2 && !regionScenePinch.current && selectedTarget)'), creative.indexOf('} else if (activePointers.current.size === 2 && !regionScenePinch.current && (baseSelectedRef.current'));
   assert.match(branch, /flushMoveNow\(\)/);
   assert.doesNotMatch(branch, /initX|initY|setHoles/);
   assert.match(source('components/GridLayoutTool.tsx'), /paintedKey === cacheKey \? 'visible' : 'hidden'/);

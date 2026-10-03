@@ -5,12 +5,31 @@ import ts from 'typescript';
 const source=readFileSync(new URL('../utils/creativePhotoLayout.ts',import.meta.url),'utf8');
 const catalog=ts.transpileModule(readFileSync(new URL('../utils/layoutTemplates.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText.replace("'./layoutTemplates'",`'data:text/javascript;base64,${Buffer.from(catalog).toString('base64')}'`);
-const {photoRegionRects,photoRegionHit,swapRegionPhotos,paintPhotoRegion,PHOTO_SWAP_HOLD_MS,regionRects,photoTemplates,quickPhotoTemplateIndices,changePhotoTemplate,photoCrop}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+const {photoRegionRects,photoRegionHit,swapRegionPhotos,paintPhotoRegion,PHOTO_SWAP_HOLD_MS,regionRects,photoTemplates,quickPhotoTemplateIndices,changePhotoTemplate,photoCrop,PHOTO_LAYOUT_COUNTS,dimmedPhotoSource,clearPhotoDimmer}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+test('picker exposes exactly the shared cross-page templates, excludes one, and permits ten cells',async()=>{
+ const {TEMPLATE_MAP}=await import(`data:text/javascript;base64,${Buffer.from(catalog).toString('base64')}`);
+ assert.deepEqual(PHOTO_LAYOUT_COUNTS,[2,3,4,5,6,7,8,9,10]);
+ for(const n of PHOTO_LAYOUT_COUNTS)assert.deepEqual(photoTemplates(n),TEMPLATE_MAP[n]);
+ const region={photos:[{src:'a',width:900,height:600}],arrangement:'grid'};
+ assert.equal(changePhotoTemplate(region,10,0).photos.length,10);
+ assert.equal(changePhotoTemplate(region,1,0).photos.length,2);
+});
+test('dark feedback uses one full-resolution RGB cache, preserving alpha and original image',()=>{
+ const fills=[],draws=[],ctx={globalCompositeOperation:'source-over',drawImage(...args){draws.push(args)},fillRect(...args){fills.push({op:this.globalCompositeOperation,color:this.fillStyle,args})}};
+ let allocations=0;globalThis.document={createElement(){allocations++;return {width:0,height:0,getContext(){return ctx}}}};
+ try{
+  const image={naturalWidth:4096,naturalHeight:3072},a=dimmedPhotoSource(image),b=dimmedPhotoSource(image);
+  assert.equal(a,b);assert.equal(allocations,1);assert.equal(draws.length,1);
+  assert.deepEqual([a.width,a.height],[4096,3072]);assert.equal(draws[0][0],image);
+  assert.equal(fills[0].op,'source-atop');assert.equal(fills[0].color,'rgba(0,0,0,.65)');
+  assert.equal(ctx.globalCompositeOperation,'source-over');clearPhotoDimmer();assert.equal(a.width,1);
+ }finally{delete globalThis.document;}
+});
 test('four-photo shortcut ends with the cross-page special overlay without changing catalog indices',()=>{
  assert.deepEqual(quickPhotoTemplateIndices(4),[0,1,2,5]);assert.equal(photoTemplates(4)[quickPhotoTemplateIndices(4)[3]].name,'上下雙層方形');
  const c=readFileSync(new URL('../components/CollageTool.tsx',import.meta.url),'utf8');
  assert.match(c,/aria-label="所有圖片佈局"[\s\S]*?<circle cx="5"/);assert.match(c,/aria-label="返回圖片排版"/);
- assert.match(c,/fixed inset-0 z-\[105\]/);assert.doesNotMatch(c,/max-h-56.*data-photo-layout-options/);
+ assert.match(c,/absolute inset-0 z-\[61\]/);assert.doesNotMatch(c,/max-h-56.*data-photo-layout-options/);
  assert.match(c,/if\(JSON.stringify\(hover\)!==JSON.stringify\(swapHoverRef.current\)\)/);
  assert.match(c,/region.photos.map\([\s\S]*?offsetX,offsetY\}:q\)\},true\)/);
 });
@@ -56,9 +75,9 @@ test('template picker shares cross-page geometry, retains unused originals and s
  const region={photos:[{src:'a',width:900,height:600},{src:'b',width:900,height:600}],arrangement:'grid',templateIndex:0,landscape:true};
  const expanded=changePhotoTemplate(region,4,0);
  assert.deepEqual(expanded.photos.map(p=>p.src),['a','b','','']);
- const small=changePhotoTemplate(expanded,1,0),back=changePhotoTemplate(small,4,0);
+ const small=changePhotoTemplate(expanded,2,0),back=changePhotoTemplate(small,4,0);
  assert.deepEqual(back.photos.map(p=>p.src),['a','b','','']);
- for(let n=2;n<=9;n++)assert.ok(photoTemplates(n).length>=4);
+ for(let n=2;n<=10;n++)assert.ok(photoTemplates(n).length>0);
  const squares=changePhotoTemplate(region,4,photoTemplates(4).length-1),rects=regionRects(squares,300,500);
  assert.ok(Math.abs(rects[2].w*300-rects[2].h*500)<1e-10);
  assert.equal(photoRegionHit(rects,.5,.25),2);

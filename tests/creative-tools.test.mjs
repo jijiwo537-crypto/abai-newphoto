@@ -13,7 +13,7 @@ test('pattern entrance uses spatial ranks in all four directions and stable rand
  assert.deepEqual([...patternEntranceRanks(holes,'random')],[...patternEntranceRanks(holes,'random')]);
  assert.equal(new Set(patternEntranceRanks(holes,'random').values()).size,3);
  const c=read('components/CollageTool.tsx');assert.match(c,/patternEntranceRanks\(holesRef.current,moShape.direction\)/);
- assert.equal((c.match(/ranks.get\(holesRef.current\[i\]\?\.id\)/g)||[]).length,2);
+ assert.match(c,/ranks.get\(h.id\)/);assert.match(c,/ranks.get\(orderedHoles\[i\]\?\.id\)/);assert.doesNotMatch(c,/shapeCfg\(i\)/);
 });
 test('brush eraser handles palette objects and pinch cancels both kinds of unfinished ink',()=>{
  const c=read('components/CollageTool.tsx');assert.match(c,/brushStamp: true/);
@@ -23,7 +23,7 @@ test('brush eraser handles palette objects and pinch cancels both kinds of unfin
 });
 test('group flash clips to visible artwork with the same alpha and scale checks',()=>{
  const c=read('components/CollageTool.tsx'),flash=c.slice(c.indexOf('const groupFlash ='),c.indexOf('/* 選取框只畫'));
- assert.match(flash,/A.a<=.004 \|\| A.k<=.002/);assert.match(flash,/isHoleFullyInsideMask\(h, s,/);
+ assert.doesNotMatch(flash,/!A.on|A.a<=/);assert.match(flash,/Resting artwork/);assert.match(flash,/isHoleFullyInsideMask\(h, s,/);
  assert.match(flash,/ctx.clip\(side==='mask'&&layout===AROUND\?'evenodd':'nonzero'\)/);
 });
 test('creative export settings are connected to real encoders, track rate and bitrate',()=>{
@@ -36,6 +36,6 @@ test('creative export settings are connected to real encoders, track rate and bi
 });
 test('floating panels share dark translucent glass while buttons stay opaque',()=>{
  for(const p of ['components/HomePage.tsx','components/ImageEditor.tsx','components/ColorMatchStudio.tsx','components/CollageTool.tsx'])assert.match(read(p),/PREMIUM_GLASS/);
- assert.match(read('utils/premiumGlass.ts'),/rgba\(18,18,20,.82\)/);assert.match(read('components/ArtStudio.css'),/background:rgba\(18,18,20,.82\)/);
+ assert.match(read('utils/premiumGlass.ts'),/rgba\(10,10,12,.94\)/);assert.match(read('components/ArtStudio.css'),/background:rgba\(10,10,12,.94\)/);
  assert.match(read('components/HomePage.tsx'),/premium-glass-button/);
 });
