@@ -5,14 +5,24 @@ import ts from 'typescript';
 const source=readFileSync(new URL('../utils/creativePhotoLayout.ts',import.meta.url),'utf8');
 const catalog=ts.transpileModule(readFileSync(new URL('../utils/layoutTemplates.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
 const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText.replace("'./layoutTemplates'",`'data:text/javascript;base64,${Buffer.from(catalog).toString('base64')}'`);
-const {photoRegionRects,photoRegionHit,swapRegionPhotos,paintPhotoRegion,PHOTO_SWAP_HOLD_MS,regionRects,photoTemplates,quickPhotoTemplateIndices,changePhotoTemplate,photoCrop,PHOTO_LAYOUT_COUNTS,dimmedPhotoSource,clearPhotoDimmer}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
-test('picker exposes exactly the shared cross-page templates, excludes one, and permits ten cells',async()=>{
+const {photoRegionRects,photoRegionHit,swapRegionPhotos,paintPhotoRegion,PHOTO_SWAP_HOLD_MS,regionRects,photoTemplates,quickPhotoTemplateIndices,changePhotoTemplate,photoCrop,PHOTO_LAYOUT_COUNTS,dimmedPhotoSource,clearPhotoDimmer,seamlessPhotoBase}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
+test('picker preserves shared cross-page templates and appends four creative-only overlays',async()=>{
  const {TEMPLATE_MAP}=await import(`data:text/javascript;base64,${Buffer.from(catalog).toString('base64')}`);
  assert.deepEqual(PHOTO_LAYOUT_COUNTS,[2,3,4,5,6,7,8,9,10]);
- for(const n of PHOTO_LAYOUT_COUNTS)assert.deepEqual(photoTemplates(n),TEMPLATE_MAP[n]);
+ for(const n of PHOTO_LAYOUT_COUNTS){assert.deepEqual(photoTemplates(n).slice(0,TEMPLATE_MAP[n].length),TEMPLATE_MAP[n]);assert.equal(photoTemplates(n).length,TEMPLATE_MAP[n].length+(n===3?3:n===4?1:0));}
  const region={photos:[{src:'a',width:900,height:600}],arrangement:'grid'};
  assert.equal(changePhotoTemplate(region,10,0).photos.length,10);
  assert.equal(changePhotoTemplate(region,1,0).photos.length,2);
+});
+test('new overlays remain centered and physically 1:1 or landscape 4:3 on every canvas',()=>{
+ for(const [n,name,aspect,sides] of [[3,'上層方形',1,[.25]],[3,'上層橫式',4/3,[.25]],[3,'下層橫式',4/3,[.75]],[4,'上下雙層橫式',4/3,[.25,.75]]]){
+  const region={photos:Array.from({length:n},(_,i)=>({src:'p'+i,width:900,height:600})),arrangement:'grid',templateIndex:photoTemplates(n).findIndex(t=>t.name===name),seamless:true,seamlessAmount:70};
+  for(const [w,h]of [[300,400],[800,300],[600,600]]){
+   const r=regionRects(region,w,h);assert.equal(r.length,n);
+   r.slice(2).forEach((cell,i)=>{assert.ok(Math.abs(cell.w*w/(cell.h*h)-aspect)<1e-10);assert.ok(Math.abs(cell.x+cell.w/2-.5)<1e-10);assert.ok(Math.abs(cell.y+cell.h/2-sides[i])<1e-10);});
+  }
+  const base=seamlessPhotoBase(region);assert.equal(base.photos.length,2);assert.equal(base.seamlessAmount,70);assert.deepEqual(regionRects(base),[{x:0,y:0,w:1,h:.5},{x:0,y:.5,w:1,h:.5}]);assert.equal(region.photos.length,n);
+ }
 });
 test('dark feedback uses one full-resolution RGB cache, preserving alpha and original image',()=>{
  const fills=[],draws=[],ctx={globalCompositeOperation:'source-over',drawImage(...args){draws.push(args)},fillRect(...args){fills.push({op:this.globalCompositeOperation,color:this.fillStyle,args})}};
@@ -78,7 +88,7 @@ test('template picker shares cross-page geometry, retains unused originals and s
  const small=changePhotoTemplate(expanded,2,0),back=changePhotoTemplate(small,4,0);
  assert.deepEqual(back.photos.map(p=>p.src),['a','b','','']);
  for(let n=2;n<=10;n++)assert.ok(photoTemplates(n).length>0);
- const squares=changePhotoTemplate(region,4,photoTemplates(4).length-1),rects=regionRects(squares,300,500);
+ const squares=changePhotoTemplate(region,4,photoTemplates(4).findIndex(t=>t.name==='上下雙層方形')),rects=regionRects(squares,300,500);
  assert.ok(Math.abs(rects[2].w*300-rects[2].h*500)<1e-10);
  assert.equal(photoRegionHit(rects,.5,.25),2);
 });

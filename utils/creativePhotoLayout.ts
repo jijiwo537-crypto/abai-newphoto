@@ -8,10 +8,20 @@ export const PHOTO_SWAP_HOLD_MS = 304;
 export type PhotoArrangement = 'grid' | 'horizontal' | 'vertical' | 'feature';
 export type RegionPhoto = { src: string; width: number; height: number; zoom?: number; offsetX?: number; offsetY?: number };
 export type PhotoRegion = { photos: RegionPhoto[]; arrangement: PhotoArrangement; landscape: boolean; templateIndex?: number; multi?: boolean; overflowPhotos?: RegionPhoto[]; seamless?: boolean; seamlessAmount?: number };
-export type PhotoRect = { x: number; y: number; w: number; h: number };
+export type PhotoRect = { x: number; y: number; w: number; h: number; squareOverlay?:boolean; overlayAspect?:number };
+
+/** Creative-only additions: persisted cross-page template indices remain unchanged. */
+const overlayTemplate=(name:string,positions:('top'|'bottom')[],aspect:number)=>({name,rects:[
+  {x:0,y:0,w:1,h:.5},{x:0,y:.5,w:1,h:.5},
+  ...positions.map(side=>({x:.34,y:(side==='top'?.25:.75)-.16/aspect,w:.32,h:.32/aspect,overlayAspect:aspect})),
+]});
+const CREATIVE_TEMPLATE_MAP:Record<number,{name:string;rects:PhotoRect[]}[]>={...TEMPLATE_MAP,
+  3:[...TEMPLATE_MAP[3],overlayTemplate('上層方形',['top'],1),overlayTemplate('上層橫式',['top'],4/3),overlayTemplate('下層橫式',['bottom'],4/3)],
+  4:[...TEMPLATE_MAP[4],overlayTemplate('上下雙層橫式',['top','bottom'],4/3)],
+};
 
 export function photoTemplates(count: number) {
-  return TEMPLATE_MAP[count] || [];
+  return CREATIVE_TEMPLATE_MAP[count] || [];
 }
 /** Picker choices exclude single-photo layouts, without invalidating old drafts. */
 export const PHOTO_LAYOUT_COUNTS=[2,3,4,5,6,7,8,9,10] as const;
@@ -33,15 +43,22 @@ export function clearPhotoDimmer(){if(dimCanvas)dimCanvas.width=dimCanvas.height
 /** Quick choices do not change persisted catalog indices. */
 export function quickPhotoTemplateIndices(count:number){
   const templates=photoTemplates(count);
-  return count===4?[0,1,2,templates.length-1]:[0,1,2,3];
+  return count===4?[0,1,2,templates.findIndex(t=>t.name==='上下雙層方形')]:[0,1,2,3];
 }
 export function regionRects(region: PhotoRegion, width = 1, height = 1): PhotoRect[] {
   if (region.templateIndex === undefined) return photoRegionRects(region.photos.length, region.arrangement);
   return (photoTemplates(region.photos.length)[region.templateIndex] || photoTemplates(region.photos.length)[0]).rects.map(r => {
-    if (!('squareOverlay' in r) || !r.squareOverlay) return r;
-    const side = Math.min(width, height) * .3328, w = side / width, h = side / height;
+    if (!r.squareOverlay && !r.overlayAspect) return r;
+    const side = Math.min(width, height) * .3328, w = side / width, h = side / (r.overlayAspect||1) / height;
     return { ...r, x: r.x + (r.w - w) / 2, y: r.y + (r.h - h) / 2, w, h };
   });
+}
+/** Feather the two background halves only; foreground insets stay untouched. */
+export function seamlessPhotoBase(region:PhotoRegion):PhotoRegion|null{
+  const rects=regionRects(region),overlay=rects.findIndex(r=>r.squareOverlay||r.overlayAspect);
+  if(overlay===2&&rects.slice(2).every(r=>r.squareOverlay||r.overlayAspect))
+    return {...region,photos:region.photos.slice(0,2),templateIndex:undefined,arrangement:'vertical'};
+  return Math.abs(rects.reduce((sum,r)=>sum+r.w*r.h,0)-1)<1e-5?region:null;
 }
 export function changePhotoTemplate(region: PhotoRegion, count: number, templateIndex: number): PhotoRegion {
   count = Math.max(2, Math.min(10, count));
@@ -98,7 +115,7 @@ export function swapRegionPhotos(region: PhotoRegion, a: number, b: number): Pho
 }
 
 export function paintPhotoRegion(ctx: CanvasRenderingContext2D, region: PhotoRegion,
-  decoded: Map<string, HTMLImageElement>, x: number, y: number, w: number, h: number, dimIndex = -1) {
+  decoded: Map<string, HTMLImageElement>, x: number, y: number, w: number, h: number, dimIndex = -1, indices?:readonly number[]) {
   const rects = regionRects(region, w, h);
   const previousComposite = ctx.globalCompositeOperation;
   // A multi-image draw must not use `copy` per cell (it erases previous cells).
@@ -110,6 +127,7 @@ export function paintPhotoRegion(ctx: CanvasRenderingContext2D, region: PhotoReg
     ctx.globalCompositeOperation = 'source-over';
   }
   rects.forEach((r, i) => {
+    if(indices&&!indices.includes(i))return;
     const photo = region.photos[i], img = decoded.get(photo.src);
     const dx = x + r.x * w, dy = y + r.y * h, dw = r.w * w, dh = r.h * h;
     if (!img) {ctx.save();ctx.fillStyle='#0c0c0c';ctx.fillRect(dx,dy,dw,dh);ctx.restore();return;}

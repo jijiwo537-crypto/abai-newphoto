@@ -76,7 +76,7 @@ void(async()=>{
   const back=picker.querySelector<HTMLElement>('[aria-label="返回圖片排版"]')!,br=back.getBoundingClientRect();
   check('lower layout back button remains actionable',back.contains(document.elementFromPoint(br.x+br.width/2,br.y+br.height/2)));
   const {TEMPLATE_MAP}=await import('../utils/layoutTemplates');
-  check('exact shared catalog, 2 to 10 photos, no one-photo option',Array.from({length:9},(_,i)=>i+2).every(n=>[...choices].filter(b=>b.dataset.layoutCount===String(n)).length===TEMPLATE_MAP[n].length)&&![...choices].some(b=>b.dataset.layoutCount==='1'));
+  check('shared catalog plus four creative overlays, 2 to 10 photos, no one-photo option',Array.from({length:9},(_,i)=>i+2).every(n=>[...choices].filter(b=>b.dataset.layoutCount===String(n)).length===TEMPLATE_MAP[n].length+(n===3?3:n===4?1:0))&&![...choices].some(b=>b.dataset.layoutCount==='1'));
   document.querySelector<HTMLButtonElement>('[data-layout-count="2"]')!.click();await wait(5);
   document.querySelector<HTMLButtonElement>('button[aria-label="所有圖片佈局"]')!.click();await wait(2);
   document.querySelector<HTMLButtonElement>('[data-layout-count="9"][data-layout-index="0"]')!.click();await wait(5);

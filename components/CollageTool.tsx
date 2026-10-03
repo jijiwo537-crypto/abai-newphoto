@@ -6,7 +6,7 @@ import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
 import { KeyboardSafeInput } from './KeyboardSafeInput';
 import { idleDefaults } from '../utils/animationDefaults';
 import { get2dWide } from '../utils/colorSpace';
-import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, dimmedPhotoSource, clearPhotoDimmer } from '../utils/creativePhotoLayout';
+import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, dimmedPhotoSource, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
 import { stampBounds, brushStepReached, type StampBounds } from '../utils/patternBrushSpacing';
 import { patternEntranceRanks, type PatternDirection } from '../utils/patternEntrance';
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
@@ -2625,7 +2625,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        env 監看器一起記成「一格」，不然一次操作會佔掉兩格上一步） */
   const generateRandomHoles = useCallback((isInitial: boolean = false, layoutOverride?: string,
                                            record: 'reset' | 'push' | 'none' = isInitial ? 'reset' : 'push',
-                                           countOverride?: number) => {
+                                           countOverride?: number, ratioOverride?:CanvasRatio) => {
     if (!imageState) return;
     const { baseW, baseH, globalScale: gs } = imageState;
     const mappedHoleSize = 25 + (holeSize / 100) * 125;
@@ -2642,7 +2642,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 跟 getHoleSize 用同一個固定倍率（不再跟著比例滑桿變）
     const drawnS = around ? s * AROUND_SCALE : s;
     const p = around ? drawnS * 0.75 + 25 * gs : s / 2 + 25 * gs;
-    const geo = layoutGeometry(lay, baseW, baseH, maskScale, canvasRatio);
+    const geo = layoutGeometry(lay, baseW, baseH, maskScale, ratioOverride||canvasRatio);
     const fieldW = around ? geo.mw : geo.iw;
     const fieldH = around ? geo.mh : geo.ih;
 
@@ -3193,7 +3193,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionThumbRef=useRef<HTMLCanvasElement>(null);
   const regionThumbPoint=useRef({x:0,y:0});
   const regionTouches=useRef(new Map<number,{x:number;y:number}>());
-  const regionTap=useRef<{id:number;index:number;x:number;y:number;moved:boolean}|null>(null);
+  const regionTap=useRef<{id:number;index:number|null;x:number;y:number;moved:boolean}|null>(null);
   const regionScenePinch=useRef(false);
   const regionGesture=useRef<{index:number;photo:any;cx:number;cy:number;distance:number;w:number;h:number}|null>(null);
   const commitRegion=(next:PhotoRegion,live=false)=>{
@@ -3283,6 +3283,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const source=photoAt(e.clientX,e.clientY);
     if(second&&regionTap.current){regionScenePinch.current=true;regionTap.current=null;selectedRegionPhotoRef.current=null;selectedObjRef.current=null;baseSelectedRef.current=false;maskSelectedRef.current=false;setSelectedRegionPhoto(null);setSelectedObj(null);setSelectedTarget(null);setBaseSelected(false);setMaskSelected(false);}
     const multi=source?.kind==='region'&&photoRegionRef.current?.multi;
+    const leavingSelectedPhoto=!!source&&(
+      selectedRegionPhotoRef.current!==null&&(source.kind!=='region'||source.index!==selectedRegionPhotoRef.current)
+      ||baseSelectedRef.current&&(source.kind!=='region'||source.index!==0));
     const own=regionTouches.current.size>0||(multi&&selectedRegionPhotoRef.current===source.index);
     if(own){
       const p=regionCoordinates(e.clientX,e.clientY);if(!p)return;
@@ -3295,7 +3298,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       regionTouches.current.set(e.pointerId,{x:p.x,y:p.y});resetRegionGesture();
     }else {
-      if(!second&&multi){
+      if(!second&&leavingSelectedPhoto){
+        regionScenePinch.current=false;regionTap.current={id:e.pointerId,index:null,x:e.clientX,y:e.clientY,moved:false};
+      }else if(!second&&multi){
         if(!photoContent(source)?.src){e.stopPropagation();regionUploadIndex.current=source.index;regionUploadRef.current?.click();return;}
         regionScenePinch.current=false;regionTap.current={id:e.pointerId,index:source.index,x:e.clientX,y:e.clientY,moved:false};
       }else setSelectedRegionPhoto(null);
@@ -3344,6 +3349,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       regionTap.current=null;
       if(!hold?.active&&!tap.moved&&e.type!=='pointercancel'&&activePointers.current.size===1){
         selectedRegionPhotoRef.current=tap.index;setSelectedRegionPhoto(tap.index);
+        selectedObjRef.current=null;baseSelectedRef.current=false;maskSelectedRef.current=false;
         setSelectedObj(null);setSelectedTarget(null);setBaseSelected(false);setMaskSelected(false);
       }
     }
@@ -8192,9 +8198,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     </div>
   </div>;
   const layoutThumbnail=(rects:any[],active=false,large=false) => large?<svg viewBox="0 0 100 100" className="w-full h-full text-white/60">
-    {rects.map((r,i)=><rect key={i} x={r.x*100+4} y={r.y*100+4} width={r.w*100-8} height={r.h*100-8} rx={4} fill={r.squareOverlay?'#111':'currentColor'} fillOpacity={r.squareOverlay?1:.1} stroke="currentColor" strokeWidth="2.5"/>)}
+    {rects.map((r,i)=><rect key={i} x={r.x*100+4} y={r.y*100+4} width={r.w*100-8} height={r.h*100-8} rx={4} fill={r.squareOverlay||r.overlayAspect?'#111':'currentColor'} fillOpacity={r.squareOverlay||r.overlayAspect?1:.1} stroke="currentColor" strokeWidth="2.5"/>)}
   </svg>:<svg viewBox="0 0 24 24" className={`w-5 h-5 mx-auto transition-[color,transform] ${active?'scale-110':''}`} fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round">
-    {rects.map((r,i)=><rect key={i} x={2+r.x*20} y={2+r.y*20} width={r.w*20} height={r.h*20} fill={r.squareOverlay?'#111':undefined}/>)}
+    {rects.map((r,i)=><rect key={i} x={2+r.x*20} y={2+r.y*20} width={r.w*20} height={r.h*20} fill={r.squareOverlay||r.overlayAspect?'#111':undefined}/>)}
   </svg>;
   const applyPhotoTemplate=(count:number,index:number)=>{
     if(photoRegionRef.current)commitRegion(changePhotoTemplate(photoRegionRef.current,count,index));
@@ -8633,20 +8639,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               {moreOpen && (
                 <>
                   <div className="fixed inset-0 z-[60]" onClick={() => setMoreOpen(false)} />
-                  <div role="dialog" aria-label="創意拼圖更多選項" style={PREMIUM_GLASS} className="absolute right-0 top-11 z-[61] w-36 rounded-2xl border border-white/10 overflow-hidden animate-in fade-in zoom-in-95 duration-150 p-1.5">
+                  <div role="dialog" aria-label="創意拼圖更多選項" style={PREMIUM_GLASS} className="absolute right-0 top-[calc(100%+18px)] z-[61] w-36 rounded-2xl border border-white/10 overflow-hidden animate-in fade-in zoom-in-95 duration-150 p-1.5">
                     {/* 最上面是 IG 預覽，跟經典拼圖同一顆（比例 IG 吃不下時整個不出現） */}
                     {igSupported && (
                       <>
                         <button
                           onClick={() => { setMoreOpen(false); openIgPreview(); }}
-                          className="w-full h-11 px-3 rounded-xl bg-[#303034] flex items-center text-[12px] font-bold text-white/90 hover:bg-[#303032] transition-colors"
+                          className="w-full h-11 px-3 rounded-xl premium-glass-button flex items-center text-[12px] font-bold text-white/90 hover:brightness-125 transition-[filter]"
                         >
                           <span>預覽</span>
                         </button>
                         <div className="h-1.5" />
                       </>
                     )}
-                    <div className="w-full h-11 px-3 rounded-xl bg-[#303034] flex items-center text-[12px] font-bold text-white/90">
+                    <div className="w-full h-11 px-3 rounded-xl premium-glass-button flex items-center text-[12px] font-bold text-white/90">
                       <span>對齊</span>
                       <button
                         onClick={(e) => {
@@ -9395,6 +9401,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     <div className="h-9 flex items-center justify-between gap-1.5 bg-[#111] border border-[#222] px-1.5 rounded-[6px] w-full">
                       {[FULL, 'mask-bottom', 'mask-top', 'mask-left', 'mask-right', AROUND].map(t => (
                         <button key={t} onClick={() => {
+                          if(t===FULL)setCanvasRatio('3:4');
                           if (t === layout) return;
                           const leavingFull = layout === FULL && t !== FULL;
                           const restoredCount = leavingFull ? holeCountBeforeFullRef.current : holeCount;
@@ -9426,7 +9433,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                              看見圖案出現後又跳位。原本就已是 8 才由按鈕直接建立。 */
                           const desiredCount = t === FULL ? 8 : restoredCount;
                           if (holeCount === desiredCount) {
-                            generateRandomHoles(true, t, 'none', desiredCount);
+                            generateRandomHoles(true, t, 'none', desiredCount,t===FULL?'3:4':undefined);
                           }
                         }} className="focus:outline-none" aria-label={t === FULL ? '滿版' : `遮罩排版 ${t}`} title={t === FULL ? '滿版' : undefined}>
                           <LayoutIcon type={t} active={layout === t} />
@@ -9479,7 +9486,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     );
                   })()}
                   </div>
-                  {photoRegion && photoRegion.photos.length>1 && Math.abs(regionRects(photoRegion).reduce((sum,r)=>sum+r.w*r.h,0)-1)<.00001 && <div className="space-y-3" data-creative-seamless>
+                  {photoRegion && photoRegion.photos.length>1 && seamlessPhotoBase(photoRegion) && <div className="space-y-3" data-creative-seamless>
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] font-bold text-[#888]">無縫拼圖</span>
                       <div className="flex gap-1">{[false,true].map(on=><button key={String(on)} aria-pressed={!!photoRegion.seamless===on} onClick={()=>commitRegion({...photoRegionRef.current!,seamless:on})}
@@ -10251,8 +10258,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             </button>
                           ))}
                         </div>
-                        {moTarget==='shape'&&<><p className="text-[10px] font-bold text-[#666] mt-3 mb-2">方向</p><div className="grid grid-cols-5 gap-1.5">
-                          {([['left-right','左至右'],['right-left','右至左'],['top-bottom','上至下'],['bottom-top','下至上'],['random','隨機']] as const).map(([direction,name])=><button key={direction} aria-pressed={(cur.direction||'left-right')===direction} className={cell((cur.direction||'left-right')===direction)} onClick={()=>{setCur({direction});replayMotion();}}>{name}</button>)}
+                        {moTarget==='shape'&&<><p className="text-[10px] font-bold text-[#666] mt-3 mb-2">進場方向</p><div className="grid grid-cols-5 gap-1.5">
+                          {([['random','隨機'],['left-right','左至右'],['right-left','右至左'],['top-bottom','上至下'],['bottom-top','下至上']] as const).map(([direction,name])=><button key={direction} aria-pressed={(cur.direction||'left-right')===direction} className={cell((cur.direction||'left-right')===direction)} onClick={()=>{setCur({direction});replayMotion();}}>{name}</button>)}
                         </div></>}
                         <div className="grid grid-cols-2 gap-x-7 gap-y-4 mt-3">
                           <CompactSlider label="起始" value={Number(cur.delay.toFixed(1))} min={0} max={3} step={0.1} decimals={1} fixedDecimals
