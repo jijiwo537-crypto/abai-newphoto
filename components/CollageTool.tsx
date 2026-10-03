@@ -8208,9 +8208,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     forceFullPreviewRef.current=true;
     if(canvasRef.current)renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);
     forceFullPreviewRef.current=false;
-    motionTransitionUntilRef.current=performance.now()+340;
+    const deadline=performance.now()+340;
+    motionTransitionUntilRef.current=deadline;
     setPhotoLayoutOpen(open);
     photoLayoutTimerRef.current=window.setTimeout(()=>{
+      if(motionTransitionUntilRef.current!==deadline)return;
       motionTransitionUntilRef.current=0;
       if(canvasRef.current)renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);
     },350);
