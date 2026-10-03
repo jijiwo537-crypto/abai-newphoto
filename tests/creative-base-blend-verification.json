@@ -1,0 +1,14 @@
+{
+  "date": "2026-10-04",
+  "fixture": "4096x3072 base photo",
+  "implementation": "Full-resolution idle-prepared endpoint composition, matching ImageEditor interaction strategy; exact shared pipeline on release and export",
+  "iphone": {
+    "device": "iPhone 17 iOS 26.5 Simulator Safari",
+    "processingSizeDuringAndAfterDrag": [1786,1340],
+    "twoAnimationFramesMs": {"brightness":32.85,"exposure":36.83,"contrast":29.83,"highlights":67.33,"shadows":31,"temperature":32.67,"tint":33.33,"saturation":30.67,"vibrance":32.83},
+    "allNineFunctionalChecksPassed": true,
+    "sixtyFpsForEveryToolClaimed": false
+  },
+  "desktop": {"processingSizeDuringAndAfterDrag":[1600,1200],"releaseSampleMaximumChannelDifference":1},
+  "limitations": ["First use falls back to exact rendering if cache preparation has not finished", "Cache memory is bounded; larger surfaces retain exact processing instead of lowering resolution", "These measurements do not verify every effect slider or physical iPhone performance"]
+}

@@ -1,0 +1,14 @@
+{
+  "date": "2026-10-04",
+  "scope": "Visual tracking composition elements",
+  "devices": ["393x852 browser viewport", "iPhone 17 iOS 26.5 Simulator Safari"],
+  "checks": {
+    "goldenRatioAndSelectorRowRemoved": true,
+    "bothControlGroupsVisibleWithoutScrolling": true,
+    "offDisablesBothSliders": true,
+    "onEnablesBothSliders": true,
+    "reentryPreservesManualOff": true
+  },
+  "iphoneSliderBottoms": [595, 595, 684, 684],
+  "iphonePanelBottom": 714
+}

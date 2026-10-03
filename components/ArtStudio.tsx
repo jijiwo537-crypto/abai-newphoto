@@ -43,7 +43,6 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  const [tracking,setTracking]=useState(()=>({...trackingDefaults,zones:[] as {x:number;y:number}[]}));
  const [error,setError]=useState(''),[busy,setBusy]=useState(false),[compare,setCompare]=useState(false),[ready,setReady]=useState(false);
  const [placing,setPlacing]=useState(false),[sourceRevision,setSourceRevision]=useState(0);
- const [element,setElement]=useState('frame');
  useEffect(()=>{
   // Suppress only this row's edge rubber-banding. Interior horizontal swipes
   // remain native; no document or other editor gesture behavior is changed.
@@ -124,7 +123,7 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  },[draw,compare]);
  useEffect(()=>()=>cancelAnimationFrame(frame.current),[]);
  const updateTracking=(key:string,value:any)=>setTracking(s=>({...s,[key]:value}));
- const visitElement=(key:string)=>{setElement(key);if(firstTrackingElementVisit(visitedElements.current,key))setTracking(s=>({...s,[key]:true}));};
+ const visitElements=()=>{if(firstTrackingElementVisit(visitedElements.current,'frame'))setTracking(s=>({...s,frame:true}));};
  const randomizeFeedback=(button:HTMLButtonElement)=>{
   button.getAnimations().forEach(animation=>animation.cancel());
   button.animate([{borderColor:'#ffffffb3'},{borderColor:'#ffffff16'}],{duration:260,easing:'ease-out'});
@@ -141,9 +140,9 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
  const tr=(name:string,key:string,min:number,max:number,step=1)=>max===1?slider(name,Math.round(Number(tracking[key])*100),min*100,100,v=>updateTracking(key,v/100)):slider(name,Number(tracking[key]),min,max,v=>updateTracking(key,v),step);
  const binary=(name:string,on:boolean,change:(value:boolean)=>void)=><div className="art-color" role="group" aria-label={name}><span>{name}</span><div className="art-presets">{[false,true].map(value=><button key={String(value)} aria-pressed={on===value} onClick={()=>change(value)}>{value?'開啟':'關閉'}</button>)}</div></div>;
  const tt=(name:string,key:string)=>binary(name,!!tracking[key],value=>updateTracking(key,value));
- const groups=(names:string[])=><div className="art-subtabs">{names.map(name=><button key={name} aria-pressed={section===name} onClick={()=>{setSection(name);if(name==='元素')visitElement(element);}}>{name}</button>)}</div>;
+ const groups=(names:string[])=><div className="art-subtabs">{names.map(name=><button key={name} aria-pressed={section===name} onClick={()=>{setSection(name);if(name==='元素')visitElements();}}>{name}</button>)}</div>;
  const tabs=effect==='ascii'?['效果','字符','範圍','外觀']:['效果','節點','構圖','遮罩'];
- const selectTab=(name:string)=>{setTab(name);setPlacing(false);setSection(name==='節點'?'偵測':name==='構圖'?'元素':'編輯');if(name==='構圖')visitElement(element);};
+ const selectTab=(name:string)=>{setTab(name);setPlacing(false);setSection(name==='節點'?'偵測':name==='構圖'?'元素':'編輯');if(name==='構圖')visitElements();};
  const save=async()=>{
   if(!ready||busy)return;setBusy(true);setFormatOpen(false);let url='',heicUrl='';
   try{
@@ -194,7 +193,10 @@ export function ArtStudio({onClose,initialSrc=''}:{onClose:()=>void;initialSrc?:
     {section==='連線'&&<><div className="art-presets art-scroll">{[['none','無'],['tree','標準'],['network','鄰近']].map(([key,name])=><button key={key} aria-pressed={tracking.linkMode===key} onClick={()=>updateTracking('linkMode',key)}>{name}</button>)}</div>{tracking.linkMode!=='none'&&<div className="art-detail-ranges">{tracking.linkMode!=='tree'&&tr('距離','links',0,400)}{tr('粗細','lineWeight',.2,2,.1)}</div>}</>}
    </>}
    {effect==='tracking'&&tab==='構圖'&&<>{groups(['元素','文字'])}
-    {section==='元素'&&<><div className="art-presets art-elements" role="group" aria-label="選擇要調整的元素">{[['frame','取景框'],['chain','圓圈'],['golden','黃金比例']].map(([key,name])=><button key={key} aria-pressed={element===key} data-enabled={!!tracking[key]} onClick={()=>visitElement(key)}>{name}</button>)}</div>{tt(element==='frame'?'取景框':element==='chain'?'圓圈':'黃金比例',element)}<div className="art-detail-ranges art-element-ranges">{element==='frame'?<>{tr('大小','frameSize',10,100)}{tr('虛線','dash',2,30)}</>:element==='chain'?<>{tr('大小','baseRadius',30,400)}{slider('角度',Math.round(trackingChainAngle(tracking,dimensions.w,dimensions.h)),0,180,v=>updateTracking('angle',v))}</>:<>{tr('大小','goldenSize',10,150)}{tr('角度','goldenAngle',0,360)}</>}</div></>}
+    {section==='元素'&&<div className="art-element-stack">
+     <section aria-label="取景框設定">{tt('取景框','frame')}<fieldset disabled={!tracking.frame} className="art-detail-ranges art-element-ranges" aria-label="取景框調整">{tr('大小','frameSize',10,100)}{tr('虛線','dash',2,30)}</fieldset></section>
+     <section aria-label="圓圈設定">{tt('圓圈','chain')}<fieldset disabled={!tracking.chain} className="art-detail-ranges art-element-ranges" aria-label="圓圈調整">{tr('大小','baseRadius',30,400)}{slider('角度',Math.round(trackingChainAngle(tracking,dimensions.w,dimensions.h)),0,180,v=>updateTracking('angle',v))}</fieldset></section>
+    </div>}
     {section==='文字'&&<>{tt('角落文字','labels')}<div className="art-text-fields">{[['topLeft','左上'],['topRight','右上'],['bottomLeft','左下'],['bottomRight','右下']].map(([key,name])=><label key={key}>{name}<KeyboardSafeInput aria-label={name+'文字'} value={tracking[key]} maxLength={40} onChange={e=>updateTracking(key,e.target.value)}/></label>)}</div></>}
    </>}
    {effect==='tracking'&&tab==='遮罩'&&<><div className="art-mask-toolbar">{groups(['編輯','細節'])}<button className="art-mask-random" onClick={randomizeMasks}>隨機分佈</button></div>

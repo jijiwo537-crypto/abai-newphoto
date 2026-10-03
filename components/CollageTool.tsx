@@ -87,6 +87,7 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
+import {PhotoAdjustmentBlend,BLEND_ADJUSTMENTS} from '../utils/photoAdjustmentBlend';
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
 import type { ExitChoice } from '../types';
@@ -1314,6 +1315,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 每個圖片物件跑完管線之後的成品，快取起來 —— 參數沒變就不重跑。
      key 是「物件 id + 參數指紋」，所以只有動到的那一張會重算。 */
   const objFxCache = useRef<Map<string, { key: string; cv: HTMLCanvasElement }>>(new Map());
+  const regionBlendTool=useRef('');
+  const regionBlend=useRef<PhotoAdjustmentBlend|null>(null);
+  regionBlend.current??=new PhotoAdjustmentBlend(()=>regionPaintRef.current());
+  useEffect(()=>()=>regionBlend.current?.clear(),[]);
   /** 每顆物件上一次的「效果參數指紋 / 算完的時間 / 花了多久」——
       用來判斷「這顆的參數是不是正在被連續改動」（也就是手指還在滑桿上）。 */
   const fxLiveRef = useRef<Map<string, { key: string; at: number; liveUntil: number }>>(new Map());
@@ -1370,7 +1375,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* 什麼都沒套的時候直接用來源本人。影片的「來源本人」是那一格的畫布
        （見 utils/videoSource 的 videoFrame）——**不能**把 <video> 直接交出去，
        那會讓畫布端每一格多付十幾毫秒（那正是導入影片後掉格數的原因）。 */
-    if ((!o.fx || !hasPhotoFx(o.fx)) && !hasShape && !needGeo) return videoFrame(o.img, vidCap);
+    if ((!o.fx || !hasPhotoFx(o.fx)) && !hasShape && !needGeo && !(isMain&&o.id?.startsWith('region-fx-')&&regionBlendTool.current)) return videoFrame(o.img, vidCap);
 
     /* ── 拖圖片調整的滑桿時先用小一號的工作尺寸 ─────────────────────────
        每動一格都要把整張圖重新套一次調整。1600px 的工作尺寸在沒有 GPU 的
@@ -1415,7 +1420,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const isVid = vTok !== 0 || isVideoEl(o.img);
     const key = baseKey + '|' + cap + (isVid ? '|v' + vTok : '');
     const hit = objFxCache.current.get(o.id);
-    if (hit && hit.key === key) return hit.cv;
     /* ── 這裡以前有一個「影片＋形狀就限速到 20fps」的閘門，已經拿掉 ────────
        當初加它是因為那條路一格要開三、四張離屏畫布，一秒六十次會把記憶體灌爆。
        現在那幾張都固定重複使用（vidScratchRef），而且工作尺寸夾到了螢幕上
@@ -1464,6 +1468,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 上限 1600：物件在畫面上不會比這更大，再高只是白燒記憶體
     const k = Math.min(1, cap / Math.max(w0, h0));
     const iw = Math.max(1, Math.round(w0 * k)), ih = Math.max(1, Math.round(h0 * k));
+    const selectedBase=regionPhoto&&isMain&&o.id?.startsWith(`region-fx-${selectedRegionPhotoRef.current??0}@`);
+    if(selectedBase&&regionBlendTool.current) {
+      regionBlend.current!.prepare(srcEl,iw,ih,o.fx||{},regionBlendTool.current);
+      if(regionSliderHeld.current) {
+        const blended=regionBlend.current!.paint(srcEl,iw,ih,o.fx||{},regionBlendTool.current);
+        if(blended)return blended;
+      }
+    }
+    if (hit && hit.key === key) return hit.cv;
     /* cacheSource：o.img 是載進來就不再變的一張 <img>，同一個尺寸的來源像素
        讀一次就夠。拖滑桿時每一格省掉一次 drawImage ＋ 一次 getImageData。
        影片剛好相反 —— 它每一格都不一樣，留著只會畫出上一格。
@@ -2036,8 +2049,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 一進編輯頁不預先選好任何工具：滑桿要點下工具鈕才浮出來 */
   const [shapeTool, setShapeTool] = useState('');
   const [tuneTool, setTuneTool] = useState('');
+  regionBlendTool.current=(baseSelected||selectedRegionPhoto!==null)&&adjustSub==='tune'&&BLEND_ADJUSTMENTS.has(tuneTool)?tuneTool:'';
+  useEffect(()=>{
+    if(!regionBlendTool.current)regionBlend.current?.clear();
+    regionPaintRef.current();
+  },[adjustSub,tuneTool,selectedRegionPhoto,baseSelected]);
   const [loadingLut, setLoadingLut] = useState<string | null>(null);
   const [lutRevision, setLutRevision] = useState(0);
+  useEffect(()=>{regionBlend.current?.clear();regionPaintRef.current();},[lutRevision]);
   const [maskColor, setMaskColor] = useState(CREATIVE_MASK_DEFAULT);
   const [patternType, setPatternType] = useState('none'); 
   const [dotColor, setDotColor] = useState('#728C86'); 
@@ -3227,6 +3246,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const finishRegionEdit=()=>{
     regionSliderHeld.current=false;
+    regionBlend.current?.setHeld(false);
+    // Replace the interaction composite with the exact shared pipeline now,
+    // not at the thumbnail debounce deadline.
+    objFxCache.current.clear();
+    regionPaintRef.current();
     regionLiveUntil.current=performance.now()+350;
     if(regionThumbTimer.current!==null)clearTimeout(regionThumbTimer.current);
     regionThumbTimer.current=setTimeout(()=>{regionThumbTimer.current=null;if(!regionSliderHeld.current)regionPaintRef.current();},400);
@@ -4799,11 +4823,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const regionDecoded = new Map(decodedRegionPhotos.current);
     const regionForPaint = photoRegion ? {...photoRegion,photos:photoRegion.photos.map((p,i)=>{
       const original = decodedRegionPhotos.current.get(p.src);
-      if (!original || !p.fx || !hasPhotoFx(p.fx)) return p;
+      if (!original || ((!p.fx || !hasPhotoFx(p.fx)) && !(isMain&&regionBlendTool.current&&i===(selectedRegionPhotoRef.current??0)))) return p;
       const fxStarted = import.meta.env.DEV ? performance.now() : 0;
       const onPx=Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*s;
       const processed = fxCanvasOf({...p,id:`region-fx-${i}@${p.src}`,img:original}, isMain,onPx);
       if (import.meta.env.DEV && isMain && processed) {
+        targetCanvas.dataset.regionBlendReady=String(regionBlend.current?.isReady);
         targetCanvas.dataset.regionFxSize=JSON.stringify([(processed as HTMLCanvasElement).width,(processed as HTMLCanvasElement).height]);
         targetCanvas.dataset.regionFxMs=String(performance.now()-fxStarted);
         targetCanvas.dataset.regionFxBackend=(processed as HTMLCanvasElement).dataset?.colorBackend || '';
@@ -10185,7 +10210,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       img={panelImgOf(sel)}
                       hideShape={regionEditing}
                       isolateFxUpdates={regionEditing}
-                      onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;} : undefined}
+                      onAdjustmentStart={regionEditing ? ()=>{regionSliderHeld.current=true;regionBlend.current?.setHeld(true);} : undefined}
                       onAdjustmentCommit={regionEditing ? finishRegionEdit : undefined}
                       set={(d: any) => patch(d)} lutList={lutList}
                       loadingLut={loadingLut} setLoadingLut={setLoadingLut}

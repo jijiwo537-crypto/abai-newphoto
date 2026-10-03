@@ -14,10 +14,12 @@ void(async()=>{
   const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!;
   const hold=(el:HTMLInputElement,type:string)=>{const box=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerId:2551,pointerType:'touch',clientX:box.left+box.width/2,clientY:box.top+box.height/2,buttons:type==='pointerdown'?1:0}));};
   const pixel=()=>Array.from(canvas.getContext('2d')!.getImageData(Math.round((o.ix+o.iw*.1)*canvas.width/o.cw),Math.round((o.iy+o.ih*.1)*canvas.height/o.ch),1,1).data);
+  if(new URLSearchParams(location.search).has('blendAudit')){const start=performance.now();while(canvas.dataset.regionBlendReady!=='true'&&performance.now()-start<10000)await wait(2);}
   const before=pixel(),times:number[]=[],sizes:string[]=[];
   hold(input,'pointerdown');
   for(let v=1;v<=20;v++){const t=performance.now();setter.call(input,String(v));input.dispatchEvent(new Event('input',{bubbles:true}));await wait(2);times.push(performance.now()-t);sizes.push(canvas.dataset.regionFxSize||'');}
-  hold(input,'pointerup');
+  const dragPixel=pixel();hold(input,'pointerup');
+  check('release color delta measured',true,{drag:dragPixel,release:pixel(),maxDelta:Math.max(...pixel().slice(0,3).map((v,i)=>Math.abs(v-dragPixel[i])))});
   check('single base adjustment updates throughout drag',pixel()[1]>before[1],{before,after:pixel()});
   check('single base slider retains latest value',input.value==='20');
   await wait(20);
@@ -26,14 +28,16 @@ void(async()=>{
   check('full quality drag timing collected',times.every(Number.isFinite),{meanTwoFrames:times.reduce((a,b)=>a+b)/times.length,maxTwoFrames:Math.max(...times),fxMs:canvas.dataset.regionFxMs,paintMs:canvas.dataset.paintMs,backend:canvas.dataset.regionFxBackend});
   for(const name of ['曝光','對比','高光','陰影','色溫','色調','飽和度','自然飽和度']){
    btn(name)!.click();await wait(4);
+   if(new URLSearchParams(location.search).has('blendAudit')){const start=performance.now();while(canvas.dataset.regionBlendReady!=='true'&&performance.now()-start<10000)await wait(2);}
    const slider=Array.from(document.querySelectorAll<HTMLInputElement>('input[type=range]')).find(el=>el.min==='-100')!;
    const ms:number[]=[];const painted=Number(canvas.dataset.paintCount);
    // Do not read GPU pixels between animation frames: getImageData forces a
    // synchronous GPU readback and measures the test's own stall, not tuning.
    hold(slider,'pointerdown');
    for(let v=1;v<=6;v++){const t=performance.now();setter.call(slider,String(v));slider.dispatchEvent(new Event('input',{bubbles:true}));await wait(2);ms.push(performance.now()-t);}
+   const liveMetrics={fxMs:canvas.dataset.regionFxMs,paintMs:canvas.dataset.paintMs,backend:canvas.dataset.regionFxBackend};
    hold(slider,'pointerup');
-   check(`${name} live update and final value`,slider.value==='6'&&Number(canvas.dataset.paintCount)>painted,{meanTwoFrames:ms.reduce((a,b)=>a+b)/ms.length,fxMs:canvas.dataset.regionFxMs,paintMs:canvas.dataset.paintMs,backend:canvas.dataset.regionFxBackend});
+   check(`${name} live update and final value`,slider.value==='6'&&Number(canvas.dataset.paintCount)>painted,{meanTwoFrames:ms.reduce((a,b)=>a+b)/ms.length,...liveMetrics});
   }
  }catch(e){check('exception',false,String(e));}
  const idleTimes:number[]=[];for(let i=0;i<10;i++){const t=performance.now();await wait(2);idleTimes.push(performance.now()-t);}

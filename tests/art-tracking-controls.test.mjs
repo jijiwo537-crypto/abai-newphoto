@@ -36,7 +36,9 @@ test('tracking tools expose requested placement, two-state elements and paired o
  assert.match(ui,/tr\('變化','variation',0,100\)/);assert.match(ui,/tr\('間距','minDistance',10,100\)/);
  assert.match(ui,/tr\('變化','sizeVariation',0,100\)/);assert.match(ui,/點擊圖片進行放置/);
  assert.match(ui,/const tt=.*binary/);assert.doesNotMatch(ui+css,/三分構圖|art-zone-stroke-second|art-materials-all/);
- assert.match(ui,/tr\('大小','goldenSize',10,150\)/);assert.match(ui,/tr\('角度','goldenAngle',0,360\)/);assert.doesNotMatch(ui+css,/黃金比例精確角度|art-angle|goldenAngleControl/);
+ assert.doesNotMatch(ui,/黃金比例|goldenSize|goldenAngle|art-elements|setElement/);
+ assert.match(ui,/fieldset disabled=\{!tracking.frame\}/);assert.match(ui,/fieldset disabled=\{!tracking.chain\}/);
+ assert.match(ui,/aria-label="取景框設定"/);assert.match(ui,/aria-label="圓圈設定"/);
  assert.match(css,/art-detail-ranges>\.art-range:last-child:nth-child\(odd\)\{grid-column:1\/-1\}/);
  assert.match(css,/art-subtabs button\[aria-pressed=true\]\{color:white\}/);
 });
