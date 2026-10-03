@@ -1475,7 +1475,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        是同一張，交回去重用完全正確。 */
     const reuse = scratch ? scratch.base : undefined;
     const base = applyPhotoFx(srcEl, iw, ih, o.fx || {}, {
-      cacheSource: !isVid, fast: live, out: reuse, gpuSurface: o.id?.startsWith('region-fx-'),
+      cacheSource: !isVid, fast: live, out: reuse,
       preferSeparableCpu: o.id?.startsWith('region-fx-'),
     });
     const finish = () => {

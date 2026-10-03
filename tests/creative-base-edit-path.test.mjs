@@ -22,6 +22,8 @@ test('base FX paints live, commits on release, and retains its full-resolution p
  assert.match(collage,/!regionSliderHeld.current && nowT > regionLiveUntil.current && nowT - thumbAtRef.current > 400/);
  assert.match(collage,/if\(live\)regionLiveUntil.current=performance.now\(\)\+350/);
 });
-test('unblended GPU colour results copy directly to the unchanged final surface',()=>{
- assert.match(fx,/if \(!needBlend\) \{\s*ctx.clearRect\(0,0,w,h\);\s*return paint\(lut \? lut.data : null,lut \? lut.size : 0,ctx\);/);
+test('base-photo colour math keeps the existing full-quality shared renderer',()=>{
+ assert.match(collage,/preferSeparableCpu: o.id\?\.startsWith\('region-fx-'\)/);
+ assert.match(fx,/willReadFrequently: true/);
+ assert.match(fx,/processPixels\(/);
 });
