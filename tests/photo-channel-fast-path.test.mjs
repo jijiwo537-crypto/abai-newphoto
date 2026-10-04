@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import ts from 'typescript';
-const source=fs.readFileSync('components/ImageEditor.tsx','utf8');
-const fn=source.slice(source.indexOf('export const processPixels ='),source.indexOf('// ... (ImageEditorProps'));
+const source=fs.readFileSync('utils/photoPixelCore.ts','utf8');
+const fn=source.slice(source.indexOf('export const processPixels ='));
 const pre=`const masterLUT_R=new Float32Array(32768),masterLUT_G=new Float32Array(32768),masterLUT_B=new Float32Array(32768);
 const ditherTable=Float32Array.from({length:4096},(_,i)=>((i*71%1024)/1024-.5)*.75);
 const DEFAULT_HSL=Array.from({length:8},()=>({h:0,s:0,l:0}));const HSL_CENTERS=Float32Array.from([0,30,60,120,180,240,270,300]);

@@ -329,6 +329,7 @@ const toParams = (fx: PhotoFx): EditorParams => ({
   vib: fx.vib || 0,
   lutAmount: fx.lutAmount ?? 100,
 });
+export const photoFxParams = toParams;
 
 /**
  * 把「這一組調整的整條顏色鏈」烤成一顆 33³ 查色表，交給 GPU 用。

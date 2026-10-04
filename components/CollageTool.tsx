@@ -87,6 +87,7 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
+import {PhotoSceneColour,supportsSceneColour} from '../utils/photoSceneColour';
 import {PhotoAdjustmentBlend,BLEND_ADJUSTMENTS} from '../utils/photoAdjustmentBlend';
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
@@ -1325,6 +1326,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionBlend=useRef<PhotoAdjustmentBlend|null>(null);
   const regionWarmStage=useRef<{index:number;canvas:HTMLCanvasElement}|null>(null);
   const regionSceneKey=useRef('');
+  const regionGpuSceneKey=useRef('');
+  const regionColour=useRef<PhotoSceneColour|null>(null);
+  const regionColourActive=useRef(false);
+  useEffect(()=>()=>regionColour.current?.dispose(),[]);
   const regionSceneStamp=useRef<{key:string;renderer:any;scale:number;source:CanvasImageSource;w:number;h:number;sceneW:number;sceneH:number}|null>(null);
   regionBlend.current??=new PhotoAdjustmentBlend(()=>{
     // Warming the cache does not change the visible result. Repainting the
@@ -2078,7 +2083,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 一進編輯頁不預先選好任何工具：滑桿要點下工具鈕才浮出來 */
   const [shapeTool, setShapeTool] = useState('');
   const [tuneTool, setTuneTool] = useState('');
-  regionBlendTool.current=(baseSelected||selectedRegionPhoto!==null)&&adjustSub==='tune'&&BLEND_ADJUSTMENTS.has(tuneTool)?tuneTool:'';
+  regionBlendTool.current=(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune'&&BLEND_ADJUSTMENTS.has(tuneTool))?(adjustSub==='filter'?'brightness':tuneTool):'';
+  regionColourActive.current=(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune');
   useEffect(()=>{
     if(!regionBlendTool.current)regionBlend.current?.clear();
     regionPaintRef.current();
@@ -4611,12 +4617,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
   // Committing the selected slider changes React's callback identity, but not
   // the cached scene endpoints. Only actual scene edits invalidate those.
-  regionSceneKey.current=JSON.stringify([imageState,imageState?.img?.src,maskImageState?.img?.src,
+  const regionSceneValue=[imageState,imageState?.img?.src,maskImageState?.img?.src,
     photoRegion&&{...photoRegion,photos:photoRegion.photos.map((p,i)=>i===(selectedRegionPhotoRef.current??0)?{...p,fx:{...p.fx,[regionBlendTool.current]:0}}:p)},
     swapSource,selectedRegionPhoto,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,
     patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,
     objects,shapeSel,selectedObj,selectedTarget,selectedPatternSide,baseSelected,editingTextId,guides,tuningEdge,objDragging,objPinching,objStretching,
-    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle]);
+    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle];
+  regionSceneKey.current=JSON.stringify(regionSceneValue);
+  regionGpuSceneKey.current=JSON.stringify(regionSceneValue.map((value,i)=>i===3&&photoRegion?{...photoRegion,photos:photoRegion.photos.map((p,j)=>j===(selectedRegionPhotoRef.current??0)?{...p,fx:{}}:p)}:value));
   const lastPatternPaintRef = useRef<{identity:object;holes:any[];scale:number}|null>(null);
   const forceFullPreviewRef = useRef(false);
   const linkGlowTilesRef = useRef<LinkGlowTiles|null>(null);
@@ -4630,6 +4638,36 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Resizing a canvas clears it immediately, so never resize during the tween.
     if (targetCanvas === canvasRef.current && performance.now() < motionTransitionUntilRef.current) return;
     const stamp=regionSceneStamp.current,index=selectedRegionPhotoRef.current??0,photo=photoRegion?.photos[index];
+    if(targetCanvas===canvasRef.current&&!previewCapture){
+      const original=photo&&decodedRegionPhotos.current.get(photo.src);
+      if(regionColourActive.current&&original&&supportsSceneColour(photo?.fx)&&!animRef.current&&!viewPinchRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
+        regionColour.current??=new PhotoSceneColour();const colour=regionColour.current;
+        const signature=regionGpuSceneKey.current;
+        if(!colour.ready||colour.signature!==signature||colour.width!==targetCanvas.width||colour.height!==targetCanvas.height||colour.scale!==renderScale){
+          const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
+          const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale));
+          const k=Math.min(1,cap/Math.max(w,h)),iw=Math.max(1,Math.round(w*k)),ih=Math.max(1,Math.round(h*k));
+          const scenes:HTMLCanvasElement[]=[];
+          try{
+            for(const fill of [null,'black','white']){
+              const source=document.createElement('canvas');source.width=iw;source.height=ih;
+              const g=source.getContext('2d')!;g.drawImage(original,0,0,iw,ih);
+              if(fill){g.globalCompositeOperation='source-in';g.fillStyle=fill;g.fillRect(0,0,iw,ih);}
+              regionWarmStage.current={index,canvas:source};
+              const capture=document.createElement('canvas');renderToCanvasRef.current(capture,renderScale,true);scenes.push(capture);
+              source.width=source.height=1;
+            }
+            colour.prepare(targetCanvas,signature,renderScale,scenes);
+            colour.canvas.dataset.photoFxSize=JSON.stringify([iw,ih]);
+          }finally{regionWarmStage.current=null;for(const cv of scenes)cv.width=cv.height=1;}
+        }
+        if(colour.ready&&colour.signature===signature&&colour.draw(photo!.fx||{})){
+          if(import.meta.env.DEV){targetCanvas.dataset.regionFxSize=colour.canvas.dataset.photoFxSize;targetCanvas.dataset.regionFxBackend='resident-scene-gpu';targetCanvas.dataset.regionFxMs='0';targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount||0)+1);targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);}
+          return;
+        }
+      }
+      regionColour.current?.hide();
+    }
     if(targetCanvas===canvasRef.current&&regionSliderHeld.current&&!previewCapture&&!animRef.current&&!viewPinchRef.current&&stamp?.key===regionSceneKey.current&&stamp.scale===renderScale&&stamp.sceneW===targetCanvas.width&&stamp.sceneH===targetCanvas.height&&photo){
       const scene=regionBlend.current?.paint(stamp.source,stamp.w,stamp.h,photo.fx||{},regionBlendTool.current);
       if(scene){

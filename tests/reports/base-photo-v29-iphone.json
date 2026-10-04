@@ -1,0 +1,822 @@
+{
+  "date": "2026-10-04",
+  "environment": "iPhone 17 iOS 26.5 Simulator, Safari; not a physical iPhone",
+  "scope": "Creative base-photo filter/tonal editing; full-resolution live GPU presentation",
+  "limits": "Performance is measured on this simulator, not a guarantee for every physical device or spatial effect.",
+  "nodeTests": {
+    "passed": 284,
+    "failed": 0
+  },
+  "results": [
+    {
+      "kind": "photo-scene-colour",
+      "pass": true,
+      "checks": [
+        {
+          "name": "GPU scene preparation succeeds",
+          "pass": true
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {},
+            "max": 0,
+            "mean": 0
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "brightness": 30
+            },
+            "max": 2,
+            "mean": 0.2262420654296875
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "exposure": -20
+            },
+            "max": 2,
+            "mean": 0.22345733642578125
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "contrast": 30,
+              "shadows": 20,
+              "highlights": -30
+            },
+            "max": 2,
+            "mean": 0.23603057861328125
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "temp": 23,
+              "tint": -21
+            },
+            "max": 2,
+            "mean": 0.2125396728515625
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "sat": -27,
+              "vib": 30
+            },
+            "max": 2,
+            "mean": 0.2391815185546875
+          }
+        }
+      ]
+    },
+    {
+      "kind": "base-edit-preflight",
+      "route": "?four&huge&busyEdit&singleEditAudit&native-master-final-v29",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "canvas": [
+        1799,
+        1799
+      ],
+      "fxSize": "[2399,1799]"
+    },
+    {
+      "kind": "creative-single-edit",
+      "route": "?four&huge&busyEdit&singleEditAudit&native-master-final-v29",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "visibility": "visible",
+      "idleTwoFrames": 33.30000000000018,
+      "pass": true,
+      "checks": [
+        {
+          "name": "stress fixture enables links on 30 glowing patterns",
+          "pass": true
+        },
+        {
+          "name": "single base opens image editor",
+          "pass": true
+        },
+        {
+          "name": "base editor omits shape",
+          "pass": true
+        },
+        {
+          "name": "release color delta measured",
+          "pass": true,
+          "detail": {
+            "drag": [
+              225,
+              86,
+              80,
+              255
+            ],
+            "release": [
+              225,
+              86,
+              80,
+              255
+            ],
+            "maxDelta": 0
+          }
+        },
+        {
+          "name": "single base adjustment updates throughout drag",
+          "pass": true,
+          "detail": {
+            "before": [
+              221,
+              82,
+              76,
+              255
+            ],
+            "after": [
+              225,
+              86,
+              80,
+              255
+            ]
+          }
+        },
+        {
+          "name": "single base slider retains latest value",
+          "pass": true
+        },
+        {
+          "name": "drag and settled processing keep identical full preview resolution",
+          "pass": true,
+          "detail": {
+            "sizes": [
+              "[2399,1799]"
+            ],
+            "settled": "[2399,1799]"
+          }
+        },
+        {
+          "name": "full quality drag timing collected",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.149999999999956,
+            "maxFrame": 20,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "曝光 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.633333333333333,
+            "maxFrame": 18.00000000000091,
+            "meanInputMs": 0.2,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.551724137931004,
+            "maxColourFrame": 21,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "對比 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.633333333333333,
+            "maxFrame": 17.00000000000091,
+            "meanInputMs": 0.06666666666663636,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.86206896551721,
+            "maxColourFrame": 20,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "高光 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.666666666666668,
+            "maxFrame": 17.00000000000182,
+            "meanInputMs": 0.16666666666666666,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.75862068965517,
+            "maxColourFrame": 19,
+            "fxMs": "0",
+            "paintMs": "1",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "陰影 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.666666666666668,
+            "maxFrame": 17.00000000000182,
+            "meanInputMs": 0.06666666666666667,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.827586206896488,
+            "maxColourFrame": 22,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "色溫 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.733333333333334,
+            "maxFrame": 20,
+            "meanInputMs": 0.09999999999993937,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 17.24137931034483,
+            "maxColourFrame": 34,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "色調 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.666666666666668,
+            "maxFrame": 17.00000000000182,
+            "meanInputMs": 0.1,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.75862068965517,
+            "maxColourFrame": 19,
+            "fxMs": "0",
+            "paintMs": "1",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "飽和度 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.633333333333333,
+            "maxFrame": 17.00000000000182,
+            "meanInputMs": 0.13333333333339398,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.586206896551722,
+            "maxColourFrame": 21,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "自然飽和度 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.633333333333333,
+            "maxFrame": 17.00000000000182,
+            "meanInputMs": 0.03333333333333333,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.79310344827586,
+            "maxColourFrame": 20,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "base-edit-preflight",
+      "route": "?single&huge&singleEditAudit&native-single-master-final-v29",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "canvas": [
+        1785,
+        1785
+      ],
+      "fxSize": "[1786,1340]"
+    },
+    {
+      "kind": "creative-single-edit",
+      "route": "?single&huge&singleEditAudit&native-single-master-final-v29",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "visibility": "visible",
+      "idleTwoFrames": 33.1,
+      "pass": true,
+      "checks": [
+        {
+          "name": "single base opens image editor",
+          "pass": true
+        },
+        {
+          "name": "base editor omits shape",
+          "pass": true
+        },
+        {
+          "name": "release color delta measured",
+          "pass": true,
+          "detail": {
+            "drag": [
+              225,
+              86,
+              80,
+              255
+            ],
+            "release": [
+              225,
+              86,
+              80,
+              255
+            ],
+            "maxDelta": 0
+          }
+        },
+        {
+          "name": "single base adjustment updates throughout drag",
+          "pass": true,
+          "detail": {
+            "before": [
+              221,
+              82,
+              76,
+              255
+            ],
+            "after": [
+              225,
+              86,
+              80,
+              255
+            ]
+          }
+        },
+        {
+          "name": "single base slider retains latest value",
+          "pass": true
+        },
+        {
+          "name": "drag and settled processing keep identical full preview resolution",
+          "pass": true,
+          "detail": {
+            "sizes": [
+              "[1786,1340]"
+            ],
+            "settled": "[1786,1340]"
+          }
+        },
+        {
+          "name": "full quality drag timing collected",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.100000000000023,
+            "maxFrame": 18,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "曝光 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.633333333333333,
+            "maxFrame": 17.00000000000091,
+            "meanInputMs": 0.20000000000006063,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.655172413793103,
+            "maxColourFrame": 21,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "對比 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.633333333333333,
+            "maxFrame": 17.00000000000091,
+            "meanInputMs": 0.2,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.862068965517242,
+            "maxColourFrame": 20,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "高光 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.633333333333333,
+            "maxFrame": 21,
+            "meanInputMs": 0.26666666666669697,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 17.03448275862069,
+            "maxColourFrame": 23,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "陰影 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.633333333333333,
+            "maxFrame": 17.00000000000091,
+            "meanInputMs": 0.23333333333336365,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.689655172413794,
+            "maxColourFrame": 19,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "色溫 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.666666666666668,
+            "maxFrame": 20,
+            "meanInputMs": 0.26666666666669697,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.75862068965517,
+            "maxColourFrame": 21,
+            "fxMs": "0",
+            "paintMs": "1",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "色調 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.666666666666668,
+            "maxFrame": 17.00000000000091,
+            "meanInputMs": 0.2333333333332727,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.75862068965517,
+            "maxColourFrame": 19,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "飽和度 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.633333333333304,
+            "maxFrame": 18.99999999999909,
+            "meanInputMs": 0.1333333333332727,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.551724137931096,
+            "maxColourFrame": 20.00000000000182,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        },
+        {
+          "name": "自然飽和度 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.633333333333393,
+            "maxFrame": 17.00000000000182,
+            "meanInputMs": 0.19999999999993937,
+            "sameEvent": 0,
+            "inputs": 30,
+            "colourFrames": 30,
+            "meanColourFrame": 16.79310344827586,
+            "maxColourFrame": 20,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "resident-scene-gpu"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "creative-base-photo",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "pass": true,
+      "checks": [
+        {
+          "name": "holding a base photo dims only its central photo",
+          "pass": true
+        },
+        {
+          "name": "mask backdrop and its photo cutouts remain unchanged",
+          "pass": true
+        },
+        {
+          "name": "base photo selected",
+          "pass": true
+        },
+        {
+          "name": "selection is not an above-scene DOM border",
+          "pass": true
+        },
+        {
+          "name": "base frame stays beneath the foreground object",
+          "pass": true
+        },
+        {
+          "name": "base frame remains visible outside the covering object",
+          "pass": true
+        },
+        {
+          "name": "base photo opens the shared image editor",
+          "pass": true
+        },
+        {
+          "name": "base photo has no shape editing category",
+          "pass": true
+        },
+        {
+          "name": "adjustment immediately changes only the selected base photo",
+          "pass": true
+        },
+        {
+          "name": "other base photos keep their own adjustment parameters",
+          "pass": true
+        },
+        {
+          "name": "high-resolution effect surfaces keep the complete cell covered",
+          "pass": true,
+          "detail": [
+            [
+              231,
+              91,
+              86,
+              255
+            ],
+            [
+              231,
+              91,
+              86,
+              255
+            ],
+            [
+              231,
+              91,
+              86,
+              255
+            ]
+          ]
+        },
+        {
+          "name": "base photo adjustments persist in the draft",
+          "pass": true,
+          "detail": {
+            "tool": "collage",
+            "value": 45
+          }
+        }
+      ]
+    },
+    {
+      "kind": "photo-scene-colour",
+      "pass": true,
+      "checks": [
+        {
+          "name": "GPU scene preparation succeeds",
+          "pass": true
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {},
+            "max": 0,
+            "mean": 0
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "brightness": 30
+            },
+            "max": 2,
+            "mean": 0.2282562255859375
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "exposure": -20
+            },
+            "max": 2,
+            "mean": 0.22315216064453125
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "contrast": 30,
+              "shadows": 20,
+              "highlights": -30
+            },
+            "max": 2,
+            "mean": 0.2362213134765625
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "temp": 23,
+              "tint": -21
+            },
+            "max": 2,
+            "mean": 0.2185821533203125
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "sat": -27,
+              "vib": 30
+            },
+            "max": 2,
+            "mean": 0.23705291748046875
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "lut": "scene-audit-filter",
+              "lutAmount": 50,
+              "contrast": 20
+            },
+            "max": 3,
+            "mean": 0.30450439453125
+          }
+        },
+        {
+          "name": "resident presentation draws",
+          "pass": true
+        },
+        {
+          "name": "colour and foreground remain consistent with standard renderer",
+          "pass": true,
+          "detail": {
+            "fx": {
+              "lut": "scene-audit-filter",
+              "lutAmount": 100
+            },
+            "max": 3,
+            "mean": 0.2712860107421875
+          }
+        }
+      ]
+    },
+    {
+      "kind": "editor-compare-v28",
+      "route": "?editor&compareAudit&native-final-v29",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "pass": true,
+      "checks": [
+        {
+          "name": "馬賽克 comparison 1",
+          "pass": true,
+          "delta": 0
+        },
+        {
+          "name": "馬賽克 comparison 2",
+          "pass": true,
+          "delta": 0
+        },
+        {
+          "name": "馬賽克 comparison 3",
+          "pass": true,
+          "delta": 0
+        },
+        {
+          "name": "玻璃磚 comparison 1",
+          "pass": true,
+          "delta": 0
+        },
+        {
+          "name": "玻璃磚 comparison 2",
+          "pass": true,
+          "delta": 0
+        },
+        {
+          "name": "玻璃磚 comparison 3",
+          "pass": true,
+          "delta": 0
+        }
+      ]
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import {copySceneColourPixels} from '../utils/photoSceneColour';
 void(async()=>{
  const wait=async(n=4)=>{for(let i=0;i<n;i++)await new Promise<void>(r=>requestAnimationFrame(()=>r()));};
  const checks:any[]=[],check=(name:string,pass:boolean,detail?:any)=>checks.push({name,pass,detail});
@@ -5,7 +6,9 @@ void(async()=>{
   let stage:HTMLElement;for(let i=0;i<500;i++){stage=document.querySelector('[data-creative-stage]')!;if(stage?.dataset.photoCount==='2'&&stage.dataset.sceneGeometry&&document.querySelector('[data-photo-cell="0"]'))break;await wait(1);}await wait(20);
   const canvas=stage!.querySelector('canvas')!,g=canvas.getContext('2d')!;
   const scene=()=>JSON.parse(stage.dataset.sceneGeometry!);
-  const pixels=(rect:any)=>{const o=scene(),k=canvas.width/o.cw;return g.getImageData(Math.round(rect.x*k),Math.round(rect.y*k),Math.max(1,Math.floor(rect.w*k)),Math.max(1,Math.floor(rect.h*k))).data;};
+  const pixels=(rect:any)=>{const o=scene(),k=canvas.width/o.cw,visible=stage.querySelector<HTMLCanvasElement>('[data-base-colour-presentation]');let read=g;
+   if(visible&&visible.style.display!=='none'){const copy=document.createElement('canvas');copy.width=canvas.width;copy.height=canvas.height;read=copy.getContext('2d',{colorSpace:g.getContextAttributes().colorSpace})!;copySceneColourPixels(visible,read);}
+   return read.getImageData(Math.round(rect.x*k),Math.round(rect.y*k),Math.max(1,Math.floor(rect.w*k)),Math.max(1,Math.floor(rect.h*k))).data;};
   const digest=(rect:any)=>{let n=2166136261;for(const x of pixels(rect))n=Math.imul(n^x,16777619);return n>>>0;};
   const o=scene(),mask={x:o.mx+2,y:o.my+2,w:o.mw-4,h:o.mh-4};
   const cell=document.querySelector('[data-photo-cell="0"]')!.getBoundingClientRect(),point={x:cell.left+cell.width*.2,y:cell.top+cell.height*.2};

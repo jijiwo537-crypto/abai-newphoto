@@ -1,3 +1,4 @@
+import {copySceneColourPixels} from '../utils/photoSceneColour';
 void(async()=>{
  const checks:any[]=[],check=(name:string,pass:boolean,detail?:any)=>checks.push({name,pass,detail});
  const wait=async(n=4)=>{for(let i=0;i<n;i++)await new Promise<void>(r=>requestAnimationFrame(()=>r()));};
@@ -20,7 +21,12 @@ void(async()=>{
   const input=Array.from(document.querySelectorAll<HTMLInputElement>('input[type=range]')).find(el=>el.min==='-100')!;
   const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!;
   const hold=(el:HTMLInputElement,type:string)=>{const box=el.getBoundingClientRect();el.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerId:2551,pointerType:'touch',clientX:box.left+box.width/2,clientY:box.top+box.height/2,buttons:type==='pointerdown'?1:0}));};
-  const pixel=()=>Array.from(canvas.getContext('2d')!.getImageData(Math.round((o.ix+o.iw*.1)*canvas.width/o.cw),Math.round((o.iy+o.ih*.1)*canvas.height/o.ch),1,1).data);
+  const pixel=()=>{
+   const visible=stage!.querySelector<HTMLCanvasElement>('[data-base-colour-presentation]');
+   let source=canvas;
+   if(visible&&visible.style.display!=='none'){source=document.createElement('canvas');source.width=canvas.width;source.height=canvas.height;copySceneColourPixels(visible,source.getContext('2d',{colorSpace:canvas.getContext('2d')!.getContextAttributes().colorSpace})!);}
+   return Array.from(source.getContext('2d')!.getImageData(Math.round((o.ix+o.iw*.1)*canvas.width/o.cw),Math.round((o.iy+o.ih*.1)*canvas.height/o.ch),1,1).data);
+  };
   if(new URLSearchParams(location.search).has('blendAudit')){const start=performance.now();while(canvas.dataset.regionBlendReady!=='true'&&performance.now()-start<10000)await wait(2);}
   await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify({kind:'base-edit-preflight',route:location.search,ua:navigator.userAgent,canvas:[canvas.width,canvas.height],fxSize:canvas.dataset.regionFxSize,ready:canvas.dataset.regionBlendReady})}).catch(()=>{});
   const before=pixel(),times:number[]=[],sizes:string[]=[];
@@ -39,14 +45,17 @@ void(async()=>{
    btn(name)!.click();await wait(4);
    if(new URLSearchParams(location.search).has('blendAudit')){const start=performance.now();while(canvas.dataset.regionBlendReady!=='true'&&performance.now()-start<10000)await wait(2);}
    const slider=Array.from(document.querySelectorAll<HTMLInputElement>('input[type=range]')).find(el=>el.min==='-100')!;
-   const ms:number[]=[],latency:number[]=[],sameEvent:boolean[]=[];const painted=Number(canvas.dataset.paintCount);
+   const ms:number[]=[],latency:number[]=[],sameEvent:boolean[]=[];const painted=Number(canvas.dataset.paintCount),colourStart=performance.now();
    // Do not read GPU pixels between animation frames: getImageData forces a
    // synchronous GPU readback and measures the test's own stall, not tuning.
    hold(slider,'pointerdown');
    for(let v=1;v<=30;v++){const t=performance.now(),count=canvas.dataset.paintCount;setter.call(slider,String(v));slider.dispatchEvent(new Event('input',{bubbles:true}));latency.push(performance.now()-t);sameEvent.push(canvas.dataset.paintCount!==count);await wait(1);ms.push(performance.now()-t);}
    const liveMetrics={fxMs:canvas.dataset.regionFxMs,paintMs:canvas.dataset.paintMs,backend:canvas.dataset.regionFxBackend};
    hold(slider,'pointerup');
-   check(`${name} live update and final value`,slider.value==='30'&&Number(canvas.dataset.paintCount)>painted,{meanFrame:ms.reduce((a,b)=>a+b)/ms.length,maxFrame:Math.max(...ms),meanInputMs:latency.reduce((a,b)=>a+b)/latency.length,sameEvent:sameEvent.filter(Boolean).length,inputs:sameEvent.length,...liveMetrics});
+   await wait(4);
+   const visible=stage!.querySelector<HTMLCanvasElement>('[data-base-colour-presentation]');
+   const colourTimes:number[]=JSON.parse(visible?.dataset.colourFrameTimes||'[]').filter((t:number)=>t>=colourStart),colourIntervals=colourTimes.slice(1).map((t,i)=>t-colourTimes[i]);
+   check(`${name} live update and final value`,slider.value==='30'&&Number(canvas.dataset.paintCount)>painted,{meanFrame:ms.reduce((a,b)=>a+b)/ms.length,maxFrame:Math.max(...ms),meanInputMs:latency.reduce((a,b)=>a+b)/latency.length,sameEvent:sameEvent.filter(Boolean).length,inputs:sameEvent.length,colourFrames:colourTimes.length,meanColourFrame:colourIntervals.length?colourIntervals.reduce((a,b)=>a+b)/colourIntervals.length:null,maxColourFrame:colourIntervals.length?Math.max(...colourIntervals):null,...liveMetrics});
   }
  }catch(e){check('exception',false,String(e));}
  const idleTimes:number[]=[];for(let i=0;i<10;i++){const t=performance.now();await wait(2);idleTimes.push(performance.now()-t);}

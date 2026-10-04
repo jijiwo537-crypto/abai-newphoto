@@ -28,7 +28,8 @@ createRoot(document.getElementById('root')!).render(params.has('textureAudit')
  : params.has('ig')
  ? <IgPreview shots={files.slice(0,2).map(f=>URL.createObjectURL(f))} frame={{w:3,h:2}} pageCount={2} faces={[]} onClose={()=>{}}/>
  : <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={params.has('direction')?{layout:'image-full',canvasRatio:'3:2',holeCount:4,holeSize:15,maskColor:'#FFFFFF',holes:[{id:'right',x:700,y:100,side:'image'},{id:'left',x:100,y:200,side:'image'},{id:'middle',x:400,y:500,side:'image'},{id:'absent',x:-200,y:200,side:'mask'}]}:params.has('audit')||params.has('four')?{holeCount:0,layout:'image-full',canvasRatio:'3:2',objects:floating}:{holeCount:0}}/>);
-if(params.has('singleEditAudit'))void import('./creative-single-edit-audit');
+if(params.has('sceneColourAudit'))void import('./photo-scene-colour-audit');
+else if(params.has('singleEditAudit'))void import('./creative-single-edit-audit');
 else if(params.has('baseAudit'))void import('./creative-base-photo-audit');
 else if(params.has('textureAudit'))void import('./mask-texture-audit');
 else if(params.has('exportAudit'))void import('./collage-export-audit');
