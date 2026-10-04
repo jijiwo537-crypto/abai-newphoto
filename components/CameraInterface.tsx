@@ -1087,12 +1087,12 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
       <section className="flex flex-col px-6 pt-4 pb-16">
         <div className={`flex justify-center relative mb-2 transition-all duration-300 ${activeControl === 'filters' ? 'h-30' : 'h-14'}`}>
           {activeControl === 'none' ? (
-            <div className="flex items-center justify-between w-full max-sm px-0 animate-in h-full gap-1 overflow-x-auto no-scrollbar">
+            <div data-camera-main-row className="flex items-center justify-between w-full max-sm px-0 h-full gap-1 overflow-x-auto no-scrollbar">
               <button onClick={() => setActiveControl('exposure')} className="p-3 active:scale-90 transition-transform shrink-0">
                 <Icon name="exposure" className="text-[28px]" />
               </button>
               
-              <button onClick={() => setActiveControl('kelvin')} className="p-3 active:scale-90 transition-transform shrink-0">
+              <button aria-label="色溫" onClick={() => setActiveControl('kelvin')} className="p-3 w-[52px] h-[52px] flex items-center justify-center active:scale-90 transition-transform shrink-0">
                 <Icon name="device_thermostat" className="text-[28px]" />
               </button>
 

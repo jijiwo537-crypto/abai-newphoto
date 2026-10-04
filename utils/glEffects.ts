@@ -686,10 +686,10 @@ const sceneContexts=new WeakMap<WebGLRenderingContext,Ctx>();
 /** A shared final compositor for modern effects and the editor's legacy optics.
  * Effect kernels stay in photo coordinates; only this final pass enters scene
  * coordinates. No intermediate photo is read back or resampled on the CPU. */
-export function composeFxScene(gl:WebGLRenderingContext,photo:WebGLTexture,scene:FxScene):boolean{
+function prepareFxScene(gl:WebGLRenderingContext,scene:FxScene){
  let c=sceneContexts.get(gl);
  if(!c){c={gl,canvas:gl.canvas as HTMLCanvasElement,quad:null!,progs:new Map(),pool:null,maxTex:gl.getParameter(gl.MAX_TEXTURE_SIZE)};sceneContexts.set(gl,c);}
- const program=compile(c,'__scene',SCENE_FS);if(!program)return false;
+ const program=compile(c,'__scene',SCENE_FS);if(!program)return null;
  const changed=c.scene?.value!==scene;
  if(changed){
   if(c.scene){gl.deleteTexture(c.scene.black);gl.deleteTexture(c.scene.white);}
@@ -704,6 +704,15 @@ export function composeFxScene(gl:WebGLRenderingContext,photo:WebGLTexture,scene
   };
   c.scene={value:scene,black:upload(scene.black),white:upload(scene.white),wide};
  }
+ return {c,program,changed};
+}
+/** Upload immutable scene endpoints during idle, never on the first FX tap. */
+export function warmFxScene(surface:HTMLCanvasElement,scene:FxScene){
+ const c=getCtx(surface);if(c)prepareFxScene(c.gl,scene);
+}
+export function composeFxScene(gl:WebGLRenderingContext,photo:WebGLTexture,scene:FxScene):boolean{
+ const ready=prepareFxScene(gl,scene);if(!ready)return false;
+ const {c,program,changed}=ready;
  gl.useProgram(program);
  for(const [unit,name,tex] of [[0,'uPhoto',photo],[1,'uBlack',c.scene!.black],[2,'uWhite',c.scene!.white]] as const){gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(uniformLocation(gl,program,name),unit);}
  gl.uniform2f(uniformLocation(gl,program,'uScene'),scene.black.width,scene.black.height);gl.uniform1f(uniformLocation(gl,program,'uWide'),c.scene!.wide?1:0);

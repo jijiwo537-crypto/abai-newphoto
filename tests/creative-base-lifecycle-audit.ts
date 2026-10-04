@@ -38,7 +38,8 @@ void(async()=>{
    slider.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:2402,pointerType:'touch',clientX:box.x+box.width*.5,clientY:box.y+box.height*.5}));
    await wait(3);
    report.samples.push({round:round+1,id,clickMs,mean:ms.reduce((a,b)=>a+b)/ms.length,max:Math.max(...ms),over50:ms.filter(v=>v>50).length,maxEffectMs:Math.max(...effectMs),sourceSizes:[...sizes],spatialOverlays:stage.querySelectorAll('[data-base-spatial-presentation]').length});
-   check('editing GPU overlay retired '+round,stage.querySelectorAll('[data-base-spatial-presentation]').length===0);
+   check('editing GPU overlay hidden '+round,[...stage.querySelectorAll<HTMLElement>('[data-base-spatial-presentation]')].every(el=>el.style.display==='none'));
+   check('bounded resident overlay '+round,stage.querySelectorAll('[data-base-spatial-presentation]').length<=1);
   }
   report.pass=report.checks.every((c:any)=>c.pass);
  }catch(e){report.error=String(e);report.pass=false;}

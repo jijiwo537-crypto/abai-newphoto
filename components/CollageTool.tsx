@@ -92,7 +92,7 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface} from '../utils/photoFx';
-import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
+import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
 import {FX_DEFS} from '../utils/glEffects';
 import {PhotoSceneColour,supportsSceneColour} from '../utils/photoSceneColour';
 import {PhotoAdjustmentBlend,BLEND_ADJUSTMENTS} from '../utils/photoAdjustmentBlend';
@@ -1325,6 +1325,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const objFxCache = useRef<Map<string, { key: string; cv: HTMLCanvasElement }>>(new Map());
   const regionFxSurfaces = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const regionPreviewCaps=useRef(new Map<string,number>());
+  const regionStaticSnapshot=useRef<{cv:HTMLCanvasElement}|null>(null);
   useEffect(()=>{
     const keys=new Set(photoRegion?.photos.map((p,i)=>`region-fx-${i}@${p.src}`)||[]);
     for(const [key,cv] of regionFxSurfaces.current)if(!keys.has(key)){releasePhotoFxSurface(cv);cv.width=cv.height=1;regionFxSurfaces.current.delete(key);objFxCache.current.delete(key);regionPreviewCaps.current.delete(key);}
@@ -1442,7 +1443,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Keep ordinary full preview density (never its live/640 shortcut), and
     // grow it to the actual canvas pixel footprint when the view is enlarged.
     if (isMain && regionPhoto) {
-      cap=photoPreviewCapacity(onScreenPx,regionPreviewCaps.current.get(o.id)||0,Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height));
+      const sourceSize=Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height);
+      // Reserve the common occupancy-slider footprint once. Growing from
+      // 1792 to 2048 mid-gesture otherwise reruns the entire effects chain.
+      cap=photoPreviewCapacity(onScreenPx,Math.max(regionPreviewCaps.current.get(o.id)||0,Math.min(sourceSize,2048)),sourceSize);
       regionPreviewCaps.current.set(o.id,cap);
     }
     /* 只有影片吃這個夾子 —— 圖片的成品是算一次就留著的，多算沒有代價，
@@ -2037,7 +2041,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
     && (selectedRegionPhoto !== null || baseSelected || !!objects.find(o => o.id === selectedObj && o.type === 'image'));
   useEffect(()=>{
-    const selectedKey=objEditImage?(selectedRegionPhoto??(baseSelected?0:null)):null;
+    const index=selectedRegionPhoto??0,photo=photoRegion?.photos[index];
+    if(!photo||!hasPhotoFx(photo.fx)||!objEditImage)return;
+    let cancelled=false;
+    // Prepare reusable exact photo pixels after an edit settles, not on the
+    // first occupancy input. The final scene stays visible and untouched.
+    void awaitPhotoIdle().then(()=>{
+      if(cancelled||!canvasRef.current)return;
+      const original=decodedRegionPhotos.current.get(photo.src);if(!original)return;
+      const id=`region-fx-${index}@${photo.src}`;
+      const cv=fxCanvasOf({...photo,id,img:original},true,Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*previewScaleRef.current);
+      const cached=objFxCache.current.get(id);if(!cv||!cached)return;
+      const snapshot=document.createElement('canvas');snapshot.width=cv.width;snapshot.height=cv.height;
+      snapshot.getContext('2d')!.drawImage(cv,0,0);
+      objFxCache.current.set(id,{key:cached.key,cv:snapshot});regionStaticSnapshot.current={cv:snapshot};
+    });
+    return ()=>{cancelled=true;};
+  },[photoRegion,objEditImage,selectedRegionPhoto]);
+  useEffect(()=>{
+    // Keep ONE current photo's shader surface through tab switches. Leaving
+    // editing is not a source change; destroying it here recompiles on return.
+    const selectedKey=selectedRegionPhoto??(photoRegionRef.current?.photos.length?0:null);
     const currentSrc=selectedKey===null?null:photoRegionRef.current?.photos[selectedKey]?.src;
     const keep=currentSrc?`region-fx-${selectedKey}@${currentSrc}`:null;
     for(const [key,surface] of regionFxSurfaces.current){
@@ -2050,14 +2074,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const scratch=vidScratchRef.current.get(key);if(scratch){for(const cv of Object.values(scratch))if(cv instanceof HTMLCanvasElement)cv.width=cv.height=1;vidScratchRef.current.delete(key);}
     }
     if(!objEditImage){
-      regionColour.current?.dispose();regionColour.current=null;
+      regionColour.current?.hide();
       const resident=regionSpatial.current;
-      if(resident){resident.shown?.remove();resident.scene.black.width=resident.scene.black.height=resident.scene.white.width=resident.scene.white.height=1;regionSpatial.current=null;}
-      if(regionSpatialInput.current){releasePhotoFxSurface(regionSpatialInput.current);regionSpatialInput.current=null;}
+      if(resident?.shown)resident.shown.style.display='none';
+      // Geometry sliders consume a 2D snapshot, not repeated WebGL->2D
+      // readbacks. Keep the shader itself warm for the next edit.
+      if(keep){const cached=objFxCache.current.get(keep);if(cached&&cached.cv!==regionStaticSnapshot.current?.cv){
+        const snapshot=document.createElement('canvas');snapshot.width=cached.cv.width;snapshot.height=cached.cv.height;
+        snapshot.getContext('2d')!.drawImage(cached.cv,0,0);
+        objFxCache.current.set(keep,{key:cached.key,cv:snapshot});regionStaticSnapshot.current={cv:snapshot};
+      }}
       regionBlend.current?.clear();
-      return;
     }
-    if(selectedRegionPhoto===null&&!baseSelected)return;
+    if(selectedKey===null)return;
     let cancelled=false;
     void(async()=>{
       // One shader family per idle slot. Real pointer interactions take
@@ -2065,11 +2094,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       for(const id of ['fxMosaic',...FX_DEFS.filter(d=>d.id!=='fxMosaic').map(d=>d.id)]){
         await awaitPhotoIdle();if(cancelled)return;
         regionSpatialInput.current??=document.createElement('canvas');
-        warmPhotoFxSurface(regionSpatialInput.current,id);
+        warmPhotoFxSurface(regionSpatialInput.current,id,regionSpatial.current?.scene);
       }
     })();
     return ()=>{cancelled=true;};
-  },[objEditImage,selectedRegionPhoto,baseSelected]);
+  },[objEditImage,selectedRegionPhoto,baseSelected,photoRegion?.photos[0]?.src]);
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   /** 正在畫布上直接編輯的那一段文字（null＝沒有在編輯）。
@@ -4758,6 +4787,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             if(previous){previous.scene.black.width=previous.scene.black.height=previous.scene.white.width=previous.scene.white.height=1;}
             regionSpatialInput.current??=document.createElement('canvas');
             regionSpatial.current={key:signature,scale:renderScale,scene:{black:scenes[1],white:scenes[2],placements},input:regionSpatialInput.current};
+            const prepared=regionSpatial.current;
+            void awaitPhotoIdle().then(()=>{
+              if(regionSpatial.current!==prepared||leavingRef.current||!regionColourActive.current)return;
+              warmPhotoFxSurface(prepared.input,'fxMosaic',prepared.scene);
+              // Compile-only preflight misses the costly first real texture
+              // upload/pool allocation. Prime the actual source and compositor
+              // offscreen; no effect is applied to the user's photo here.
+              applyPhotoFx(original,iw,ih,{...FX_PARAM_DEFAULTS,...photo?.fx,fxMosaic:100},{cacheSource:true,gpuSurface:true,out:prepared.input,scene:prepared.scene});
+            });
             colour.canvas.dataset.photoFxSize=JSON.stringify([iw,ih]);
           }finally{regionWarmStage.current=null;regionPlacements.current=null;for(const cv of scenes)if(cv!==regionSpatial.current?.scene.black&&cv!==regionSpatial.current?.scene.white)cv.width=cv.height=1;}
         }
@@ -7016,7 +7054,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (isMain && !windowed) {
       const nowT = performance.now();
       // 手勢期間不額外縮製歷史縮圖；畫面仍以原解析度繪製。
-      if (!previewCapture && activePointers.current.size === 0 && !regionSliderHeld.current && nowT > regionLiveUntil.current && nowT - thumbAtRef.current > 400) {
+      if (!previewCapture && !isPhotoInteractionBusy() && activePointers.current.size === 0 && !regionSliderHeld.current && nowT > regionLiveUntil.current && nowT - thumbAtRef.current > 400) {
         thumbAtRef.current = nowT;
         try {
           let tc = thumbRef.current;
@@ -10884,6 +10922,7 @@ const useRafOnChange = (onChange: (v: number) => void) => {
     pending.current = null;
   }, []);
   const push = React.useCallback((v: number) => {
+    deferHeavyWork();
     pending.current = v;
     if (raf.current) return;
     raf.current = requestAnimationFrame(() => {
@@ -10916,15 +10955,19 @@ const RegionLiveRange=({value,onChange,onCommit}:{value:number;onChange:(v:numbe
 /** 只有一根軌道的滑桿，同樣把輸入收斂到每一幀一次 */
 const RafRange = ({ min, max, step, value, onChange }: any) => {
   const { push, flush } = useRafOnChange(onChange);
+  const release=React.useRef<(()=>void)|null>(null);
+  const finish=()=>{flush();release.current?.();release.current=null;};
+  React.useEffect(()=>()=>{release.current?.();},[]);
   return (
     <div className="slider-wrap w-full" style={{height:16}}>
     <input
       type="range" min={min} max={max} step={step} value={value}
       onChange={e => push(Number(e.target.value))}
-      onPointerUp={flush}
-      onTouchEnd={flush}
+      onPointerUp={finish}
+      onPointerCancel={finish}
+      onTouchEnd={finish}
       onKeyUp={flush}
-      onPointerDown={e => e.stopPropagation()}
+      onPointerDown={e => {e.stopPropagation();release.current?.();release.current=holdPhotoInteraction();}}
       className="premium-slider w-full"
     />
     </div>

@@ -70,3 +70,4 @@ function Audit(){
  <div className="flex flex-wrap gap-2 pt-4">{CAMERA_FX_ITEMS.map(it=><button key={it.id} aria-pressed={fx[it.id]>0} className="border rounded-full px-3 py-2" onClick={()=>setFx(p=>({...p,[it.id]:p[it.id]?0:it.on}))}>{it.label}</button>)}</div></main>;
 }
 createRoot(document.getElementById('root')!).render(new URLSearchParams(location.search).has('ui')?<CameraInterface onHome={()=>{}} lutList={[{id:'original',name:'原始',url:''}]} />:<Audit/>);
+if(new URLSearchParams(location.search).has('returnAudit'))void import('./camera-return-audit');

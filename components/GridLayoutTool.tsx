@@ -3742,8 +3742,19 @@ const makeCardThumb = (img: HTMLImageElement, fx: PhotoFx): HTMLCanvasElement | 
 const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: number }> = ({ src, cacheKey, fx, delay = 0 }) => {
   const ref = useRef<HTMLCanvasElement | null>(null);
   const [paintedKey, setPaintedKey] = useState('');
-  useEffect(() => {
+  useLayoutEffect(() => {
     let dead = false;
+    const copy = (thumb: HTMLCanvasElement) => {
+      const cvs=ref.current;if(dead||!cvs)return;
+      cvs.width=thumb.width;cvs.height=thumb.height;
+      const ctx=cvs.getContext('2d')!;
+      ctx.globalCompositeOperation='copy';ctx.drawImage(thumb,0,0);
+      ctx.globalCompositeOperation='source-over';setPaintedKey(cacheKey);
+    };
+    // Cache hits must paint before the first visible frame, not after an idle
+    // wait plus the card's stagger delay. Only cold computation is deferred.
+    const cached=cardThumbCache.get(cacheKey);
+    if(cached){copy(cached);return ()=>{dead=true;};}
     const paint = async () => {
       await awaitPhotoIdle();
       const cvs = ref.current;
@@ -3759,7 +3770,7 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
         }
         const made = makeCardThumb(img, fx);
         if (!made || !made.width || !made.height) return;
-        if (cardThumbCache.size > 200) cardThumbCache.clear();
+        if (cardThumbCache.size >= 200) cardThumbCache.delete(cardThumbCache.keys().next().value!);
         cardThumbCache.set(cacheKey, made);
         thumb = made;
       }
