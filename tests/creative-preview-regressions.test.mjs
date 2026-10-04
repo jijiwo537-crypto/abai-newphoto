@@ -32,7 +32,7 @@ test('pattern count is capped for controls and generation',()=>{
 });
 test('preview content does not use a full-surface CSS blur filter',()=>{
   assert.ok(!creative.includes('drop-shadow-[0_20px_50px'));
-  assert.ok(creative.includes("boxShadow: '0 20px 50px rgba(255,255,255,0.05)'"));
+  assert.ok(creative.includes("boxShadow: 'none'"));
 });
 test('motion uses one size endpoint without a nested scale transition',()=>{
   assert.ok(creative.includes('const displayScale = motionUiOn ? mScale : viewT.k;'));
