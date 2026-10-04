@@ -31,7 +31,7 @@ test('spatial base sliders keep an immutable input and a resident final scene',(
 test('legacy optics reuse the editor kernels without a release-resolution switch',()=>{
  assert.match(fx,/layer:new HalationLayer/);assert.match(fx,/layer.renderSoft/);assert.match(fx,/layer.renderBlur/);assert.match(fx,/layer.renderSimple/);
  const layer=read('../utils/halationLayer.ts');assert.match(layer,/composeFxScene\(gl,this.sceneResult!,this.scene\)/);
- assert.match(collage,/if \(isMain && regionPhoto\) cap = Math.max\(1600, Math.ceil\(onScreenPx\)\)/);
+ assert.match(collage,/cap=photoPreviewCapacity\(onScreenPx/);
  assert.match(fx,/releasePhotoFxSurface/);assert.match(gl,/disposeFxScene\(gl\)/);
 });
 test('colour worker and actual float shader are primed before the first input',()=>{

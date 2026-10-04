@@ -25,6 +25,6 @@ test('effect processing stays in sensor coordinates and camera controls cannot b
  assert.match(view,/tc = \(tc - \.5\) \* u_effectCrop \+ \.5/);
  assert.doesNotMatch(view,/className="[^"]*object-cover/);
  const ui=readFileSync(new URL('../components/CameraInterface.tsx',import.meta.url),'utf8');
- assert.match(ui,/grid grid-cols-3 gap-2 flex-1 min-w-0/);
+ assert.match(ui,/grid grid-cols-3 gap-2 w-\[calc\(100%-96px\)\] min-w-0/);
  assert.match(ui,/data-camera-effects-back/);
 });

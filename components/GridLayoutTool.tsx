@@ -2863,7 +2863,7 @@ return (
                   onClick={e => { e.stopPropagation(); setEffectDetail(true); }}
                   onPointerDown={e => e.stopPropagation()}
                   style={{ position: 'absolute', top: 3, right: 3, width: 22, height: 22 }}
-                  className="rounded-full flex items-center justify-center bg-black/55 border border-white/25 text-white active:scale-90 transition-transform"
+                  className="rounded-full flex items-center justify-center bg-black/55 text-white active:scale-90 transition-transform"
                 >
                   <Icon name="tune" className="text-[13px]" />
                 </span>
@@ -14114,7 +14114,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
            對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
            長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
            判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
-        .slider-wrap { position: relative; touch-action: pan-y; }
+        .slider-wrap { position: relative; touch-action: none; }
         /* touch-action 一定要寫在 .slider-wrap 上、不能只寫在 ::before：
            偽元素被點到時，瀏覽器查的是「產生它的那個元素」的 touch-action ——
            寫在 ::before 上等於沒寫，橫向拖曳會被當成捲動而中途被收走

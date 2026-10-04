@@ -881,6 +881,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
   const sliderRow = (label: string, value: number, min: number, max: number, onChange: (v: number) => void) => (
     <div className="flex items-center gap-3 h-6">
       <span className="text-[10px] font-bold tracking-[0.15em] text-white/40 w-12 shrink-0">{label}</span>
+      <div className="slider-wrap flex-1" style={{height:22}}>
       <input
         type="range" min={min} max={max} value={value}
         onChange={(ev) => onChange(Number(ev.target.value))}
@@ -891,6 +892,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
         aria-label={label}
         className="flex-1 beauty-range"
       />
+      </div>
       <span className="text-[11px] font-mono tabular-nums text-white/80 w-8 text-right shrink-0">{value}</span>
     </div>
   );
@@ -914,6 +916,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             pointer-events: auto !important;
         }
         .beauty-range {
+            --thumb-w: 16px;
             -webkit-appearance: none;
             appearance: none;
             /* 33px ＋ 上下各 -5.5px：看起來還是 22px 高，觸控範圍變 1.5 倍 */
@@ -921,6 +924,7 @@ export const BeautyStudio: React.FC<BeautyStudioProps> = ({
             background: transparent;
             cursor: pointer;
         }
+        .slider-wrap > input.beauty-range { height:22px; margin:-11px 0 0; }
         .beauty-range::-webkit-slider-runnable-track {
             height: 2px; background: rgba(255,255,255,.2); border-radius: 2px;
         }

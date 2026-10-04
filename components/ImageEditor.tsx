@@ -7653,7 +7653,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     /* 位置與尺寸走 inline style：這幾個是全 App 唯一用到的 arbitrary class，
                        瀏覽器版 Tailwind 的 JIT 要等看到才產生規則，第一次會先畫錯一幀 */
                     style={{ position: 'absolute', top: 3, right: 3, width: 22, height: 22 }}
-                    className="rounded-full flex items-center justify-center bg-black/55 border border-white/25 text-white active:scale-90 transition-transform"
+                    className="rounded-full flex items-center justify-center bg-black/55 text-white active:scale-90 transition-transform"
                   >
                     <Icon name="tune" className="text-[13px]" />
                   </span>

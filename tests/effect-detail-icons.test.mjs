@@ -12,6 +12,7 @@ test('effect controls use the user-approved corresponding parameter icons',()=>{
   assert.ok(editor.includes(`label: '${label}', icon: '${icon}'`),`${label} must already exist in the original editor`);
  }
  assert.equal(effectDetailIcon('色相 A','gradient'),'palette');
+ assert.equal(effectDetailIcon('濾鏡','filter'),effectDetailIcon('色相 A','gradient'));
  assert.equal(effectDetailIcon('色相 B','gradient'),'palette');
  assert.equal(effectDetailIcon('方向','explore'),'zoom_out_map');
  assert.equal(effectDetailIcon('長度','straighten'),'straighten');

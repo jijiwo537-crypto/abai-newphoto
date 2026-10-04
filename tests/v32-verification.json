@@ -1,0 +1,382 @@
+{
+  "version": "v32",
+  "date": "2026-10-04",
+  "unitTests": {
+    "passed": 302,
+    "failed": 0
+  },
+  "build": "passed",
+  "nativeLifecycleReports": [
+    {
+      "kind": "creative-base-lifecycle",
+      "route": "?single&huge&lifecycleAudit&run=v32",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "round": 1,
+          "id": "fxMosaic",
+          "clickMs": 204,
+          "mean": 30.541666666666647,
+          "max": 175.99999999999955,
+          "over50": 3,
+          "maxEffectMs": 75,
+          "sourceSizes": [
+            "[1792,1344]",
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 2,
+          "id": "fxGlass",
+          "clickMs": 20,
+          "mean": 16.666666666666668,
+          "max": 17.00000000000091,
+          "over50": 0,
+          "maxEffectMs": 0,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 3,
+          "id": "fxLowfi",
+          "clickMs": 70,
+          "mean": 16.666666666666668,
+          "max": 17.00000000000091,
+          "over50": 0,
+          "maxEffectMs": 1,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 4,
+          "id": "fxExposureSpill",
+          "clickMs": 44,
+          "mean": 18.75,
+          "max": 74,
+          "over50": 1,
+          "maxEffectMs": 1.0000000000009095,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 5,
+          "id": "fxMosaic",
+          "clickMs": 18,
+          "mean": 21.166666666666668,
+          "max": 75,
+          "over50": 2,
+          "maxEffectMs": 0,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 6,
+          "id": "fxGlass",
+          "clickMs": 19,
+          "mean": 18.041666666666668,
+          "max": 65,
+          "over50": 1,
+          "maxEffectMs": 0.999999999998181,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 7,
+          "id": "fxLowfi",
+          "clickMs": 56,
+          "mean": 16.666666666666668,
+          "max": 17.00000000000182,
+          "over50": 0,
+          "maxEffectMs": 0,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 8,
+          "id": "fxExposureSpill",
+          "clickMs": 47,
+          "mean": 18.75,
+          "max": 85,
+          "over50": 1,
+          "maxEffectMs": 1,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 9,
+          "id": "fxMosaic",
+          "clickMs": 18,
+          "mean": 21.166666666666668,
+          "max": 75,
+          "over50": 2,
+          "maxEffectMs": 1.000000000001819,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 10,
+          "id": "fxGlass",
+          "clickMs": 19,
+          "mean": 18.041666666666668,
+          "max": 65.00000000000182,
+          "over50": 1,
+          "maxEffectMs": 0,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 11,
+          "id": "fxLowfi",
+          "clickMs": 58,
+          "mean": 16.666666666666668,
+          "max": 17.000000000003638,
+          "over50": 0,
+          "maxEffectMs": 0,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 12,
+          "id": "fxExposureSpill",
+          "clickMs": 40,
+          "mean": 18.75,
+          "max": 79,
+          "over50": 1,
+          "maxEffectMs": 1,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 13,
+          "id": "fxMosaic",
+          "clickMs": 18,
+          "mean": 18.041666666666668,
+          "max": 63,
+          "over50": 1,
+          "maxEffectMs": 1,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 14,
+          "id": "fxGlass",
+          "clickMs": 19,
+          "mean": 18.041666666666668,
+          "max": 65,
+          "over50": 1,
+          "maxEffectMs": 0,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 15,
+          "id": "fxLowfi",
+          "clickMs": 55,
+          "mean": 16.666666666666668,
+          "max": 17.000000000003638,
+          "over50": 0,
+          "maxEffectMs": 1,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        },
+        {
+          "round": 16,
+          "id": "fxExposureSpill",
+          "clickMs": 43,
+          "mean": 18.75,
+          "max": 83,
+          "over50": 1,
+          "maxEffectMs": 1,
+          "sourceSizes": [
+            "[2048,1536]"
+          ],
+          "spatialOverlays": 0
+        }
+      ],
+      "checks": [
+        {
+          "name": "effect applied 0",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 0",
+          "pass": true
+        },
+        {
+          "name": "effect applied 1",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 1",
+          "pass": true
+        },
+        {
+          "name": "effect applied 2",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 2",
+          "pass": true
+        },
+        {
+          "name": "effect applied 3",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 3",
+          "pass": true
+        },
+        {
+          "name": "effect applied 4",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 4",
+          "pass": true
+        },
+        {
+          "name": "effect applied 5",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 5",
+          "pass": true
+        },
+        {
+          "name": "effect applied 6",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 6",
+          "pass": true
+        },
+        {
+          "name": "effect applied 7",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 7",
+          "pass": true
+        },
+        {
+          "name": "effect applied 8",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 8",
+          "pass": true
+        },
+        {
+          "name": "effect applied 9",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 9",
+          "pass": true
+        },
+        {
+          "name": "effect applied 10",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 10",
+          "pass": true
+        },
+        {
+          "name": "effect applied 11",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 11",
+          "pass": true
+        },
+        {
+          "name": "effect applied 12",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 12",
+          "pass": true
+        },
+        {
+          "name": "effect applied 13",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 13",
+          "pass": true
+        },
+        {
+          "name": "effect applied 14",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 14",
+          "pass": true
+        },
+        {
+          "name": "effect applied 15",
+          "pass": true,
+          "detail": "resident-spatial-scene-gpu"
+        },
+        {
+          "name": "editing GPU overlay retired 15",
+          "pass": true
+        }
+      ],
+      "pass": true
+    }
+  ],
+  "sliderValidation": {
+    "regression": "44px thumb ownership, diagonal updates, scroll prevention and release passed",
+    "nativeSafari": "Verified layout and seamless track tap updates in iPhone 17 / iOS 26.5 Simulator",
+    "limitations": [
+      "Simulator automation drag emitted no pointermove events; do not count it as a verified real touch drag.",
+      "No physical iPhone benchmark; no universal 60fps guarantee."
+    ]
+  }
+}

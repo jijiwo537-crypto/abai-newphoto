@@ -175,8 +175,8 @@ export const FX_DEFS: FxDef[] = [
   {
     id:'fxLowfi',label:'低保真',icon:'grain',onAmount:50,
     params:[
-      {id:'fxLowfiGrain',label:'顆粒',icon:'grain',min:0,max:100,def:60},
-      {id:'fxLowfiFilter',label:'濾鏡',icon:'filter',min:0,max:100,def:80,step:1},
+      {id:'fxLowfiGrain',label:'顆粒',icon:'grain',min:0,max:100,def:50},
+      {id:'fxLowfiFilter',label:'濾鏡',icon:'palette',min:0,max:100,def:80,step:1},
       {id:'fxLowfiAberration',label:'色差',icon:'filter',min:0,max:100,def:50},
       {id:'fxLowfiContrast',label:'對比',icon:'contrast',min:0,max:100,def:10,step:1},
       {id:'fxLowfiHalo',label:'光暈',icon:'flare',min:0,max:100,def:50,step:1},
@@ -767,6 +767,9 @@ export function disposeFxSurface(canvas:HTMLCanvasElement){
  if(c.plainTex)gl.deleteTexture(c.plainTex);
  if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);if(pool.spillSeed)gl.deleteTexture(pool.spillSeed);gl.deleteFramebuffer(pool.fb);}
  c.progs.forEach(p=>gl.deleteProgram(p));gl.deleteBuffer(c.quad);surfaces.delete(canvas);canvas.width=canvas.height=1;
+ // An explicitly disposed surface is never reused. Release the native context
+ // too, rather than waiting for mobile Safari's nondeterministic GC.
+ gl.getExtension('WEBGL_lose_context')?.loseContext();
 }
 
 function compile(c: Ctx, key: string, fs: string): WebGLProgram | null {
@@ -864,11 +867,11 @@ export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,s
  * 先把某個特效的著色器編好。
  * 第一次拖滑桿才編譯＋連結會卡一下，所以展開某個特效的參數列時就先叫這支。
  */
-export function warmFx(fxId: string): void {
+export function warmFx(fxId: string, surface?: HTMLCanvasElement): void {
   if(fxId==='fxLowfi')void warmLowfiLut().catch(()=>{});
   const d = FX_DEFS.find(x => x.id === fxId);
   if (!d) return;
-  const c = getCtx();
+  const c = getCtx(surface);
   if (!c) return;
   try {
     compile(c, '__copy', `${GLSL_HEADER}\nvoid main(){ gl_FragColor = vec4(texture2D(uTex, vUv).rgb, 1.0); }`);

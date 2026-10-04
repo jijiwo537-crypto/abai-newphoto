@@ -15,7 +15,7 @@ import {
   DEFAULT_PARAMS,
   type EditorParams,
 } from '../components/ImageEditor';
-import { applyGlEffects, hasActiveFx, FX_DEFS, disposeFxSurface, type FxScene } from './glEffects';
+import { applyGlEffects, hasActiveFx, FX_DEFS, disposeFxSurface, warmFx, type FxScene } from './glEffects';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from './highlightSelection';
 import { bakeColorLut, bakedToTexture } from './lutBake';
 import { LutGpu } from './lutGpu';
@@ -90,6 +90,13 @@ const opticalInputs=new WeakMap<HTMLCanvasElement,{key:string;source:HTMLCanvasE
 // WebKit's noise-texture interpolation does not match its Canvas overlay.
 // Keep grain on the established renderer rather than changing its appearance.
 export const supportsResidentPhotoEffects=(fx:PhotoFx={})=>!fx.colorNoise&&(hasActiveFx(fx)||!!(fx.soft||fx.fringeIntensity||fx.leakOpacity||fx.blur||fx.vignette));
+/** Prime the SAME context used by the selected base photo, not a throwaway
+ * thumbnail context. No pixels or effect values are changed by preflight. */
+export function warmPhotoFxSurface(input:HTMLCanvasElement,id:string){
+  let retained=effectInputs.get(input);
+  if(!retained){retained={key:'',source:document.createElement('canvas'),surface:document.createElement('canvas')};effectInputs.set(input,retained);}
+  warmFx(id,retained.surface);
+}
 export function releasePhotoFxSurface(input:HTMLCanvasElement){
   const optical=opticalInputs.get(input);if(optical){optical.layer.dispose();optical.source.width=optical.source.height=1;opticalInputs.delete(input);}
   const retained=effectInputs.get(input);if(!retained)return;

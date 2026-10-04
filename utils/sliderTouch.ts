@@ -9,8 +9,8 @@
  *   ‧ 按在多出來的那一圈裡：
  *       手指橫向移動超過 4px → 當作拖曳
  *       放開時還沒移動       → 當作點擊，把這一下轉交給底下那個元素
- *   ‧ 直向滑動 → touch-action: pan-y，瀏覽器自己捲，這裡收到
- *                pointercancel 就收工
+ *   ‧ 滑桿區內使用 touch-action:none，避免瀏覽器把拖動改成頁面捲動。
+ *     面板其他區域仍照常捲動。
  *
  * ── 為什麼整套手勢都自己接（滑桿掛了 pointer-events: none）─────────────
  * 試過兩種比較省事的做法，都不行：
@@ -171,10 +171,10 @@ export const installSliderTouch = () => {
     const center=r.left+thumbWidth(el)/2+(start-min)/(max-min)*travel;
     const fine=el.dataset.fineDrag==='true'&&Math.abs(x0-center)<=Math.max(14,thumbWidth(el));
 
-    /* 按下去的當下什麼都不做 —— 手指還可能是要直向捲面板，
-       這時候就先跳值的話，捲一次就順手把滑桿也拉走了。
-       所以先「不決定」，等手指往哪邊走比較多才算數。 */
-    let live = false;   // 已經認定是在拖滑桿（認定之後就再也不會反悔）
+    // 白點周圍至少44px的觸控區立即取得手勢，但不跳值。
+    // 其他透明區仍等待橫向拖動，避免遮住相鄰按鈕的點擊。
+    const onThumb = Math.abs(x0-center)<=22 && Math.abs(y0-(r.top+r.height/2))<=22;
+    let live = onThumb;   // 已經認定是在拖滑桿（認定之後就再也不會反悔）
     let dead = false;   // 已經認定使用者是在捲面板，這一下從頭到尾不關滑桿的事
     let done = false;
     let notifiedStart = false;
@@ -216,20 +216,18 @@ export const installSliderTouch = () => {
           dead = true; return false;
         } else return false;
       }
-      setValue(el, fine ? String(fineSliderValue(start,cx-x0,min,max,step,travel,el.dataset.smoothRange==='true')) : valueAt(el, cx));
+      setValue(el, fine ? String(fineSliderValue(start,cx-x0,min,max,step,travel,el.dataset.smoothRange==='true')) : valueAt(el, onThumb ? cx-x0+center : cx));
       return true;
     };
 
     const onMove = (m: PointerEvent) => {
       if (m.pointerId !== id) return;
-      advance(m.clientX, m.clientY);
+      if (advance(m.clientX, m.clientY) && m.cancelable) m.preventDefault();
     };
 
     /* 觸控多接一條，而且是 passive:false —— 這是「拖到一半不會被瀏覽器搶走」
-       的關鍵。.slider-wrap 是 touch-action: pan-y，手指只要往下帶一點，
-       瀏覽器就可能把這一整段手勢收去捲頁面並且發 pointercancel，滑桿當場斷掉。
-       確定是在拖滑桿之後就 preventDefault，瀏覽器從此不會插手；
-       還沒確定、或已經判成捲面板時完全不擋，原本的捲動手感一點都沒變。 */
+       的關鍵。搭配滑桿區的 touch-action:none，弧線拖曳不會變成頁面捲動。
+       面板其他區域的捲動不受影響。 */
     const onTouchMove = (t: TouchEvent) => {
       if (t.touches.length !== 1) return;          // 兩指以上是縮放，不要碰
       const f = t.touches[0];
@@ -279,6 +277,10 @@ export const installSliderTouch = () => {
       window.addEventListener('touchmove', onTouchMove, TM_OPT);
       window.addEventListener('touchend', onTouchEnd, true);
       window.addEventListener('touchcancel', onTouchEnd, true);
+    }
+    if (onThumb) {
+      notifyStart(x0,y0);
+      try { wrap.setPointerCapture(id); } catch { /* Detached test surfaces have no capture. */ }
     }
   }, true);
 };

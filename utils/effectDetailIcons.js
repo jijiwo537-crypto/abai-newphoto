@@ -6,6 +6,7 @@ const PARAMETER_ICONS = Object.freeze({
   '擴散': 'flare',
   '色相': 'palette',
   '色相 A': 'palette',
+  '濾鏡': 'palette',
   '色相 B': 'palette',
   '角度': 'rotate_right',
   '方向': 'zoom_out_map',

@@ -12,7 +12,7 @@ test('new creative texture defaults use the displayed 10/20 mapping',()=>{
 });
 test('base FX paints live, commits on release, and retains its full-resolution path',()=>{
  assert.match(collage,/fxCanvasOf\(\{\.\.\.p,id:`region-fx-\$\{i\}@\$\{p.src\}`,img:original\}, isMain/);
- assert.match(collage,/isMain && regionPhoto\) cap = Math.max\(1600, Math.ceil\(onScreenPx\)\)/);
+ assert.match(collage,/if \(isMain && regionPhoto\) \{[\s\S]{0,80}cap=photoPreviewCapacity\(onScreenPx/);
  assert.match(collage,/const live = isMain && !regionPhoto/);
  assert.match(collage,/isolateFxUpdates=\{regionEditing\}/);
  assert.match(collage,/onAdjustmentCommit=\{regionEditing \? finishRegionEdit : undefined\}/);

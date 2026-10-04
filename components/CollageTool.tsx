@@ -88,6 +88,10 @@ import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } 
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
+import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
+import {warmPhotoFxSurface} from '../utils/photoFx';
+import {awaitPhotoIdle} from '../utils/photoInteractionIdle';
+import {FX_DEFS} from '../utils/glEffects';
 import {PhotoSceneColour,supportsSceneColour} from '../utils/photoSceneColour';
 import {PhotoAdjustmentBlend,BLEND_ADJUSTMENTS} from '../utils/photoAdjustmentBlend';
 import { SaveButton } from './SaveButton';
@@ -1318,9 +1322,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      key 是「物件 id + 參數指紋」，所以只有動到的那一張會重算。 */
   const objFxCache = useRef<Map<string, { key: string; cv: HTMLCanvasElement }>>(new Map());
   const regionFxSurfaces = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  const regionPreviewCaps=useRef(new Map<string,number>());
   useEffect(()=>{
     const keys=new Set(photoRegion?.photos.map((p,i)=>`region-fx-${i}@${p.src}`)||[]);
-    for(const [key,cv] of regionFxSurfaces.current)if(!keys.has(key)){releasePhotoFxSurface(cv);cv.width=cv.height=1;regionFxSurfaces.current.delete(key);objFxCache.current.delete(key);}
+    for(const [key,cv] of regionFxSurfaces.current)if(!keys.has(key)){releasePhotoFxSurface(cv);cv.width=cv.height=1;regionFxSurfaces.current.delete(key);objFxCache.current.delete(key);regionPreviewCaps.current.delete(key);}
   },[photoRegion]);
   useEffect(()=>()=>{for(const cv of regionFxSurfaces.current.values()){releasePhotoFxSurface(cv);cv.width=cv.height=1;}regionFxSurfaces.current.clear();},[]);
   const regionBlendTool=useRef('');
@@ -1332,8 +1337,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionColourActive=useRef(false);
   const regionSpatialActive=useRef(false);
   const regionPlacements=useRef<FxPlacement[]|null>(null);
+  const regionSpatialInput=useRef<HTMLCanvasElement|null>(null);
   const regionSpatial=useRef<{key:string;scale:number;scene:FxScene;input:HTMLCanvasElement;shown?:HTMLCanvasElement}|null>(null);
-  useEffect(()=>()=>{const r=regionSpatial.current;if(r){releasePhotoFxSurface(r.input);r.scene.black.width=r.scene.black.height=r.scene.white.width=r.scene.white.height=1;}},[]);
+  useEffect(()=>()=>{const r=regionSpatial.current;if(r){r.shown?.remove();r.scene.black.width=r.scene.black.height=r.scene.white.width=r.scene.white.height=1;}if(regionSpatialInput.current)releasePhotoFxSurface(regionSpatialInput.current);},[]);
   useEffect(()=>()=>regionColour.current?.dispose(),[]);
   const regionSceneStamp=useRef<{key:string;renderer:any;scale:number;source:CanvasImageSource;w:number;h:number;sceneW:number;sceneH:number}|null>(null);
   regionBlend.current??=new PhotoAdjustmentBlend(()=>{
@@ -1433,7 +1439,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Base-photo previews must use the preview route, not the export route.
     // Keep ordinary full preview density (never its live/640 shortcut), and
     // grow it to the actual canvas pixel footprint when the view is enlarged.
-    if (isMain && regionPhoto) cap = Math.max(1600, Math.ceil(onScreenPx));
+    if (isMain && regionPhoto) {
+      cap=photoPreviewCapacity(onScreenPx,regionPreviewCaps.current.get(o.id)||0,Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height));
+      regionPreviewCaps.current.set(o.id,cap);
+    }
     /* 只有影片吃這個夾子 —— 圖片的成品是算一次就留著的，多算沒有代價，
        維持原本的尺寸才不會讓任何既有的畫面變糊。 */
     if (vidCap > 0) cap = Math.min(cap, vidCap);
@@ -2025,6 +2034,40 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-16 分類列 ＋ 分頁列）。 */
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
     && (selectedRegionPhoto !== null || baseSelected || !!objects.find(o => o.id === selectedObj && o.type === 'image'));
+  useEffect(()=>{
+    const selectedKey=objEditImage?(selectedRegionPhoto??(baseSelected?0:null)):null;
+    const currentSrc=selectedKey===null?null:photoRegionRef.current?.photos[selectedKey]?.src;
+    const keep=currentSrc?`region-fx-${selectedKey}@${currentSrc}`:null;
+    for(const [key,surface] of regionFxSurfaces.current){
+      if(key===keep)continue;
+      const cached=objFxCache.current.get(key);
+      // Snapshot once, at unchanged resolution. Geometry edits reuse these
+      // exact pixels instead of keeping a GPU pipeline for every old photo.
+      if(cached){const snapshot=document.createElement('canvas');snapshot.width=cached.cv.width;snapshot.height=cached.cv.height;snapshot.getContext('2d')!.drawImage(cached.cv,0,0);objFxCache.current.set(key,{key:cached.key,cv:snapshot});}
+      releasePhotoFxSurface(surface);surface.width=surface.height=1;regionFxSurfaces.current.delete(key);
+      const scratch=vidScratchRef.current.get(key);if(scratch){for(const cv of Object.values(scratch))if(cv instanceof HTMLCanvasElement)cv.width=cv.height=1;vidScratchRef.current.delete(key);}
+    }
+    if(!objEditImage){
+      regionColour.current?.dispose();regionColour.current=null;
+      const resident=regionSpatial.current;
+      if(resident){resident.shown?.remove();resident.scene.black.width=resident.scene.black.height=resident.scene.white.width=resident.scene.white.height=1;regionSpatial.current=null;}
+      if(regionSpatialInput.current){releasePhotoFxSurface(regionSpatialInput.current);regionSpatialInput.current=null;}
+      regionBlend.current?.clear();
+      return;
+    }
+    if(selectedRegionPhoto===null&&!baseSelected)return;
+    let cancelled=false;
+    void(async()=>{
+      // One shader family per idle slot. Real pointer interactions take
+      // priority; shader compilation never changes preview quality.
+      for(const id of ['fxMosaic',...FX_DEFS.filter(d=>d.id!=='fxMosaic').map(d=>d.id)]){
+        await awaitPhotoIdle();if(cancelled)return;
+        regionSpatialInput.current??=document.createElement('canvas');
+        warmPhotoFxSurface(regionSpatialInput.current,id);
+      }
+    })();
+    return ()=>{cancelled=true;};
+  },[objEditImage,selectedRegionPhoto,baseSelected]);
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   /** 正在畫布上直接編輯的那一段文字（null＝沒有在編輯）。
@@ -2088,9 +2131,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 一進編輯頁不預先選好任何工具：滑桿要點下工具鈕才浮出來 */
   const [shapeTool, setShapeTool] = useState('');
   const [tuneTool, setTuneTool] = useState('');
-  regionBlendTool.current=(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune'&&BLEND_ADJUSTMENTS.has(tuneTool))?(adjustSub==='filter'?'brightness':tuneTool):'';
-  regionColourActive.current=(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune');
-  regionSpatialActive.current=(baseSelected||selectedRegionPhoto!==null)&&adjustSub==='effect';
+  regionBlendTool.current=activeTab==='objedit'&&(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune'&&BLEND_ADJUSTMENTS.has(tuneTool))?(adjustSub==='filter'?'brightness':tuneTool):'';
+  regionColourActive.current=activeTab==='objedit'&&(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune');
+  regionSpatialActive.current=activeTab==='objedit'&&(baseSelected||selectedRegionPhoto!==null)&&adjustSub==='effect';
   useEffect(()=>{
     if(!regionBlendTool.current)regionBlend.current?.clear();
     regionPaintRef.current();
@@ -4651,7 +4694,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const key=regionGpuSceneKey.current;
         let resident=regionSpatial.current;
         if(!resident||resident.key!==key||resident.scale!==renderScale||resident.scene.black.width!==targetCanvas.width||resident.scene.black.height!==targetCanvas.height){
-          resident?.shown?.remove();if(resident)releasePhotoFxSurface(resident.input);
+          // Scene geometry changes, not the immutable photo or its shaders.
+          // Keep the actual GPU context; repeatedly rebuilding it exhausts
+          // WebKit's context and canvas memory budgets after several edits.
+          resident?.shown?.remove();
           if(resident){resident.scene.black.width=resident.scene.black.height=resident.scene.white.width=resident.scene.white.height=1;}
           const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
           const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale)),k=Math.min(1,cap/Math.max(w,h));
@@ -4664,7 +4710,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const capture=document.createElement('canvas');renderToCanvasRef.current(capture,renderScale,true);scenes.push(capture);
             placements=regionPlacements.current;source.width=source.height=1;
           }}finally{regionWarmStage.current=null;regionPlacements.current=null;aroundBdRef.current=null;}
-          resident={key,scale:renderScale,scene:{black:scenes[0],white:scenes[1],placements},input:document.createElement('canvas')};regionSpatial.current=resident;
+          regionSpatialInput.current??=document.createElement('canvas');
+          resident={key,scale:renderScale,scene:{black:scenes[0],white:scenes[1],placements},input:resident?.input||regionSpatialInput.current};regionSpatial.current=resident;
         }
         if(resident.scene.placements.length>0&&resident.scene.placements.length<=8){
           const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
@@ -4688,19 +4735,27 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
           const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale));
           const k=Math.min(1,cap/Math.max(w,h)),iw=Math.max(1,Math.round(w*k)),ih=Math.max(1,Math.round(h*k));
-          const scenes:HTMLCanvasElement[]=[];
+          const scenes:HTMLCanvasElement[]=[];let placements:FxPlacement[]=[];
           try{
             for(const fill of [null,'black','white']){
               const source=document.createElement('canvas');source.width=iw;source.height=ih;
               const g=source.getContext('2d')!;g.drawImage(original,0,0,iw,ih);
               if(fill){g.globalCompositeOperation='source-in';g.fillStyle=fill;g.fillRect(0,0,iw,ih);}
               regionWarmStage.current={index,canvas:source};
+              regionPlacements.current=[];
               const capture=document.createElement('canvas');renderToCanvasRef.current(capture,renderScale,true);scenes.push(capture);
+              placements=regionPlacements.current;
               source.width=source.height=1;
             }
             colour.prepare(targetCanvas,signature,renderScale,scenes);
+            // These exact endpoints are also needed by spatial effects.
+            // Capture once while entering editing, not on the first FX click.
+            const previous=regionSpatial.current;previous?.shown?.remove();
+            if(previous){previous.scene.black.width=previous.scene.black.height=previous.scene.white.width=previous.scene.white.height=1;}
+            regionSpatialInput.current??=document.createElement('canvas');
+            regionSpatial.current={key:signature,scale:renderScale,scene:{black:scenes[1],white:scenes[2],placements},input:regionSpatialInput.current};
             colour.canvas.dataset.photoFxSize=JSON.stringify([iw,ih]);
-          }finally{regionWarmStage.current=null;for(const cv of scenes)cv.width=cv.height=1;}
+          }finally{regionWarmStage.current=null;regionPlacements.current=null;for(const cv of scenes)if(cv!==regionSpatial.current?.scene.black&&cv!==regionSpatial.current?.scene.white)cv.width=cv.height=1;}
         }
         if(colour.ready&&colour.signature===signature&&colour.draw(photo!.fx||{})){
           if(import.meta.env.DEV){targetCanvas.dataset.regionFxSize=colour.canvas.dataset.photoFxSize;targetCanvas.dataset.regionFxBackend='resident-scene-gpu';targetCanvas.dataset.regionFxMs='0';targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount||0)+1);targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);}
@@ -8606,7 +8661,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
            對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
            長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
            判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
-        .slider-wrap { position: relative; touch-action: pan-y; }
+        .slider-wrap { position: relative; touch-action: none; }
         /* touch-action 一定要寫在 .slider-wrap 上、不能只寫在 ::before：
            偽元素被點到時，瀏覽器查的是「產生它的那個元素」的 touch-action ——
            寫在 ::before 上等於沒寫，橫向拖曳會被當成捲動而中途被收走
@@ -10843,16 +10898,17 @@ const useRafOnChange = (onChange: (v: number) => void) => {
 const RegionLiveRange=({value,onChange,onCommit}:{value:number;onChange:(v:number)=>void;onCommit:()=>void})=>{
   const [shown,setShown]=React.useState(value);
   React.useEffect(()=>setShown(value),[value]);
-  return <>
+  return <div className="slider-wrap w-full" style={{height:16}}>
     <input aria-label="融合程度" type="range" min={0} max={100} step={1} value={shown} className="premium-slider w-full"
       onChange={e=>{const v=Number(e.target.value);setShown(v);onChange(v);}} onPointerDown={e=>e.stopPropagation()}
-      onPointerUp={onCommit} onPointerCancel={onCommit} onTouchEnd={onCommit} onKeyUp={onCommit}/></>;
+      onPointerUp={onCommit} onPointerCancel={onCommit} onTouchEnd={onCommit} onKeyUp={onCommit}/></div>;
 };
 
 /** 只有一根軌道的滑桿，同樣把輸入收斂到每一幀一次 */
 const RafRange = ({ min, max, step, value, onChange }: any) => {
   const { push, flush } = useRafOnChange(onChange);
   return (
+    <div className="slider-wrap w-full" style={{height:16}}>
     <input
       type="range" min={min} max={max} step={step} value={value}
       onChange={e => push(Number(e.target.value))}
@@ -10862,6 +10918,7 @@ const RafRange = ({ min, max, step, value, onChange }: any) => {
       onPointerDown={e => e.stopPropagation()}
       className="premium-slider w-full"
     />
+    </div>
   );
 };
 

@@ -1154,9 +1154,8 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             </div>
           ) : activeControl === 'effects' ? (
             /* 特效與曝光／白平衡共用同一個 56px 控制列高度，打開時觀景窗不會上移。 */
-            <div data-camera-effects-row className="w-full flex items-center gap-2 animate-in h-full">
-              <button aria-label="返回相機" data-camera-effects-back onClick={()=>{triggerHaptic();setActiveControl('none');}} className="w-9 h-10 shrink-0 flex items-center justify-center text-white/75 active:text-white"><Icon name="arrow_back" className="text-xl" /></button>
-              <div className="grid grid-cols-3 gap-2 flex-1 min-w-0">
+            <div data-camera-effects-row className="w-full relative flex items-center justify-center animate-in h-full">
+              <div className="grid grid-cols-3 gap-2 w-[calc(100%-96px)] min-w-0">
                 {FX_ITEMS.map(it => {
                   const on = fx[it.id] > 0;
                   return (
@@ -1174,6 +1173,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
                   );
                 })}
               </div>
+              <button aria-label="返回相機" data-camera-effects-back onClick={()=>{triggerHaptic();setActiveControl('none');}} className="absolute right-5 top-1/2 -translate-y-1/2 w-7 h-9 text-white/45 hover:text-white flex items-center justify-center active:scale-90 transition-all"><Icon name="expand_more" className="text-lg" /></button>
             </div>
           ) : (
             <div className="w-full flex flex-col items-center animate-in h-full justify-center">

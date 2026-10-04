@@ -135,7 +135,7 @@ select:focus, select:focus-visible {
    對 range 的拖曳沒有作用）—— 想按下面那顆按鈕，動到的卻是上面那根滑桿。
    長在 ::before 上就沒有任何原生行為要對抗：手勢改由 utils/sliderTouch.ts
    判讀，橫向移動＝拖滑桿，放開時沒移動＝把這一下轉交給底下的元素。 */
-.slider-wrap { position: relative; touch-action: pan-y; }
+.slider-wrap { position: relative; touch-action: none; }
 /* touch-action 一定要寫在 .slider-wrap 上、不能只寫在 ::before：
    偽元素被點到時，瀏覽器查的是「產生它的那個元素」的 touch-action ——
    寫在 ::before 上等於沒寫，橫向拖曳會被當成捲動而中途被收走
