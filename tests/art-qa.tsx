@@ -11,6 +11,7 @@ import {installSliderTouch} from '../utils/sliderTouch';
 import '../styles.css';
 installSliderTouch();
 const query=new URLSearchParams(location.search);
+if(query.has('compareAudit'))void import('./editor-compare-surface-audit');
 if(query.has('elementsAudit'))void import('./art-elements-audit');
 if(query.has('registrationAudit'))void import('./editor-effect-registration-audit').then(m=>m.auditEffectRegistration());
 if(query.has('stretchAudit'))void import('./shape-stretch-audit');

@@ -10,7 +10,7 @@ test('base tuning caches full-density frames without interaction resolution redu
  assert.doesNotMatch(helper,/640|fast:true|readPixels/);
  assert.match(helper,/ctx.getImageData\(0,0,1,1\)/);
  assert.doesNotMatch(helper.slice(helper.indexOf('  paint('),helper.indexOf('  clear()')),/getImageData/);
- assert.match(helper,/if\(this.held\).*setTimeout\(build,80\)/);
+ assert.doesNotMatch(helper,/if\(this.held\).*setTimeout\(build,80\)/);
  assert.match(helper,/this.generation\+\+/);
  assert.match(helper,/project\?16_000_000:4_000_000/);
  assert.match(helper,/projected.width\*projected.height>4_000_000/);

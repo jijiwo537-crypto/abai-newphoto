@@ -23,7 +23,9 @@ test('base FX paints live, commits on release, and retains its full-resolution p
  assert.match(collage,/if\(live\)regionLiveUntil.current=performance.now\(\)\+350/);
 });
 test('base-photo colour math keeps the existing full-quality shared renderer',()=>{
- assert.match(collage,/preferSeparableCpu: o.id\?\.startsWith\('region-fx-'\)/);
- assert.match(fx,/willReadFrequently: true/);
+ assert.doesNotMatch(collage,/preferSeparableCpu: o.id\?\.startsWith\('region-fx-'\)/);
+ assert.match(collage,/regionFxSurfaces.current.get\(o.id\)/);
+ assert.match(fx,/willReadFrequently: !opts\?\.gpuSurface/);
+ assert.match(collage,/gpuSurface: regionPhoto/);
  assert.match(fx,/processPixels\(/);
 });

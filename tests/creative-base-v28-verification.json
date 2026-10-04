@@ -1,0 +1,533 @@
+{
+  "version": "v28",
+  "method": "Synthetic pointer/range events in Chromium and iPhone 17 Simulator Safari. No physical iPhone frame-rate guarantee.",
+  "limitations": [
+    "Final gpuSurface backing change is Chromium verified; Mac locked before its last native rerun.",
+    "Preparing full-density caches can still incur a cold-start frame spike."
+  ],
+  "reports": [
+    {
+      "kind": "base-edit-preflight",
+      "route": "?single&huge&singleEditAudit&cold-v28c-native",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "canvas": [
+        1785,
+        1785
+      ],
+      "fxSize": "[1786,1340]",
+      "ready": "false"
+    },
+    {
+      "kind": "creative-single-edit",
+      "route": "?single&huge&singleEditAudit&cold-v28c-native",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "visibility": "visible",
+      "idleTwoFrames": 55.3,
+      "pass": true,
+      "checks": [
+        {
+          "name": "single base opens image editor",
+          "pass": true
+        },
+        {
+          "name": "base editor omits shape",
+          "pass": true
+        },
+        {
+          "name": "release color delta measured",
+          "pass": true,
+          "detail": {
+            "drag": [
+              224,
+              86,
+              81,
+              255
+            ],
+            "release": [
+              224,
+              87,
+              80,
+              255
+            ],
+            "maxDelta": 1
+          }
+        },
+        {
+          "name": "single base adjustment updates throughout drag",
+          "pass": true,
+          "detail": {
+            "before": [
+              221,
+              82,
+              76,
+              255
+            ],
+            "after": [
+              224,
+              87,
+              80,
+              255
+            ]
+          }
+        },
+        {
+          "name": "single base slider retains latest value",
+          "pass": true
+        },
+        {
+          "name": "drag and settled processing keep identical full preview resolution",
+          "pass": true,
+          "detail": {
+            "sizes": [
+              "[1786,1340]"
+            ],
+            "settled": "[1786,1340]"
+          }
+        },
+        {
+          "name": "full quality drag timing collected",
+          "pass": true,
+          "detail": {
+            "meanFrame": 18.25,
+            "maxFrame": 71,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "曝光 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 45.53333333333333,
+            "maxFrame": 333,
+            "meanInputMs": 0.2333333333332727,
+            "sameEvent": 27,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "對比 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 15.933333333333273,
+            "maxFrame": 23,
+            "meanInputMs": 0.36666666666663633,
+            "sameEvent": 30,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "高光 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.566666666666666,
+            "maxFrame": 20,
+            "meanInputMs": 0.5999999999999394,
+            "sameEvent": 30,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "陰影 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.133333333333333,
+            "maxFrame": 18,
+            "meanInputMs": 0.5666666666666667,
+            "sameEvent": 30,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0.999999999998181",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "色溫 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.566666666666666,
+            "maxFrame": 17.00000000000182,
+            "meanInputMs": 0.2666666666667273,
+            "sameEvent": 30,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "色調 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.433333333333334,
+            "maxFrame": 25,
+            "meanInputMs": 0.23333333333339396,
+            "sameEvent": 30,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "飽和度 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.833333333333332,
+            "maxFrame": 37,
+            "meanInputMs": 0.4,
+            "sameEvent": 30,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "自然飽和度 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.8,
+            "maxFrame": 26,
+            "meanInputMs": 0.29999999999987875,
+            "sameEvent": 30,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0",
+            "backend": "full-resolution-scene-blend"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "base-edit-preflight",
+      "route": "?single&huge&singleEditAudit&cold-v28d",
+      "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+      "canvas": [
+        1215,
+        1215
+      ],
+      "fxSize": "[1600,1200]",
+      "ready": "false"
+    },
+    {
+      "kind": "creative-single-edit",
+      "route": "?single&huge&singleEditAudit&cold-v28d",
+      "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+      "visibility": "visible",
+      "idleTwoFrames": 33.09000000059605,
+      "pass": true,
+      "checks": [
+        {
+          "name": "single base opens image editor",
+          "pass": true
+        },
+        {
+          "name": "base editor omits shape",
+          "pass": true
+        },
+        {
+          "name": "release color delta measured",
+          "pass": true,
+          "detail": {
+            "drag": [
+              224,
+              86,
+              81,
+              255
+            ],
+            "release": [
+              225,
+              86,
+              80,
+              255
+            ],
+            "maxDelta": 1
+          }
+        },
+        {
+          "name": "single base adjustment updates throughout drag",
+          "pass": true,
+          "detail": {
+            "before": [
+              221,
+              82,
+              76,
+              255
+            ],
+            "after": [
+              225,
+              86,
+              80,
+              255
+            ]
+          }
+        },
+        {
+          "name": "single base slider retains latest value",
+          "pass": true
+        },
+        {
+          "name": "drag and settled processing keep identical full preview resolution",
+          "pass": true,
+          "detail": {
+            "sizes": [
+              "[1600,1200]"
+            ],
+            "settled": "[1600,1200]"
+          }
+        },
+        {
+          "name": "full quality drag timing collected",
+          "pass": true,
+          "detail": {
+            "meanFrame": 21.059999999403953,
+            "maxFrame": 91.5,
+            "fxMs": "0",
+            "paintMs": "0.19999998807907104",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "曝光 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 17.609999999403954,
+            "maxFrame": 57.80000001192093,
+            "meanInputMs": 0.28000000019868215,
+            "sameEvent": 24,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0.09999999403953552",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "對比 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.65,
+            "maxFrame": 38.5,
+            "meanInputMs": 0.26333333452542623,
+            "sameEvent": 24,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0.19999998807907104",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "高光 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.616666666666667,
+            "maxFrame": 39.400000005960464,
+            "meanInputMs": 0.2600000043710073,
+            "sameEvent": 24,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0.09999999403953552",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "陰影 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.659999999403954,
+            "maxFrame": 31.799999982118607,
+            "meanInputMs": 0.30000000099341073,
+            "sameEvent": 23,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0.09999999403953552",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "色溫 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 17.793333333730697,
+            "maxFrame": 61.69999998807907,
+            "meanInputMs": 0.35,
+            "sameEvent": 22,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0.10000002384185791",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "色調 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.833333333333332,
+            "maxFrame": 41.79999998211861,
+            "meanInputMs": 0.28000000019868215,
+            "sameEvent": 24,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0.09999999403953552",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "飽和度 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 17.213333333532017,
+            "maxFrame": 54.5,
+            "meanInputMs": 0.3433333327372869,
+            "sameEvent": 24,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0.19999998807907104",
+            "backend": "full-resolution-scene-blend"
+          }
+        },
+        {
+          "name": "自然飽和度 live update and final value",
+          "pass": true,
+          "detail": {
+            "meanFrame": 16.833333333333332,
+            "maxFrame": 39.80000001192093,
+            "meanInputMs": 0.2933333307504654,
+            "sameEvent": 25,
+            "inputs": 30,
+            "fxMs": "0",
+            "paintMs": "0.09999999403953552",
+            "backend": "full-resolution-scene-blend"
+          }
+        }
+      ]
+    },
+    {
+      "kind": "editor-compare-v28",
+      "route": "?editor&compareAudit&v28-final2",
+      "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+      "pass": true,
+      "checks": [
+        {
+          "name": "馬賽克 comparison 1",
+          "pass": true,
+          "delta": 0
+        },
+        {
+          "name": "馬賽克 comparison 2",
+          "pass": true,
+          "delta": 0
+        },
+        {
+          "name": "馬賽克 comparison 3",
+          "pass": true,
+          "delta": 0
+        },
+        {
+          "name": "玻璃磚 comparison 1",
+          "pass": true,
+          "delta": 0
+        },
+        {
+          "name": "玻璃磚 comparison 2",
+          "pass": true,
+          "delta": 0
+        },
+        {
+          "name": "玻璃磚 comparison 3",
+          "pass": true,
+          "delta": 0
+        }
+      ]
+    },
+    {
+      "kind": "creative-base-photo",
+      "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+      "pass": true,
+      "checks": [
+        {
+          "name": "holding a base photo dims only its central photo",
+          "pass": true
+        },
+        {
+          "name": "mask backdrop and its photo cutouts remain unchanged",
+          "pass": true
+        },
+        {
+          "name": "base photo selected",
+          "pass": true
+        },
+        {
+          "name": "selection is not an above-scene DOM border",
+          "pass": true
+        },
+        {
+          "name": "base frame stays beneath the foreground object",
+          "pass": true
+        },
+        {
+          "name": "base frame remains visible outside the covering object",
+          "pass": true
+        },
+        {
+          "name": "base photo opens the shared image editor",
+          "pass": true
+        },
+        {
+          "name": "base photo has no shape editing category",
+          "pass": true
+        },
+        {
+          "name": "adjustment immediately changes only the selected base photo",
+          "pass": true
+        },
+        {
+          "name": "other base photos keep their own adjustment parameters",
+          "pass": true
+        },
+        {
+          "name": "high-resolution effect surfaces keep the complete cell covered",
+          "pass": true,
+          "detail": [
+            [
+              230,
+              92,
+              86,
+              255
+            ],
+            [
+              230,
+              92,
+              86,
+              255
+            ],
+            [
+              230,
+              92,
+              86,
+              255
+            ]
+          ]
+        },
+        {
+          "name": "base photo adjustments persist in the draft",
+          "pass": true,
+          "detail": {
+            "tool": "collage",
+            "value": 45
+          }
+        }
+      ]
+    }
+  ]
+}

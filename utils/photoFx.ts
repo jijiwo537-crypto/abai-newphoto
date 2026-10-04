@@ -408,7 +408,7 @@ export function applyPhotoFx(
    *       來源是影片的時候一秒要跑幾十次，每次開一張幾百萬像素的畫布，
    *       手機的畫布記憶體幾秒就會被系統收走（＝閃退回主畫面）。
    *       尺寸一樣就直接沿用，連 width 都不重設（重設等於重新配置一次）。 */
-  opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement; preferSeparableCpu?: boolean },
+  opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement; preferSeparableCpu?: boolean; gpuSurface?: boolean },
 ): HTMLCanvasElement {
   const out = opts?.out || document.createElement('canvas');
   const oW = Math.max(1, Math.round(w)), oH = Math.max(1, Math.round(h));
@@ -416,7 +416,10 @@ export function applyPhotoFx(
      那正是「來源是影片」時每一格都會發生、又完全不必要的那一次配置。 */
   const resized = out.width !== oW || out.height !== oH;
   if (resized) { out.width = oW; out.height = oH; }
-  const ctx = out.getContext('2d', { willReadFrequently: true })!;
+  // A CPU-backed output forces GPU results back to main memory on every
+  // slider frame. Cached photo sources are read once; their live output must
+  // remain GPU-backed. Other callers keep their established CPU behaviour.
+  const ctx = out.getContext('2d', { willReadFrequently: !opts?.gpuSurface })!;
   /* 沿用上一輪那張畫布時，裡面的東西還在。下面的 drawImage 是「整張鋪滿」，
      不透明的來源會自己蓋掉，但去背的 PNG 會疊在舊的上面 —— 所以要先清乾淨。
      剛換過尺寸的畫布本來就是空的，那一趟就不必清。 */

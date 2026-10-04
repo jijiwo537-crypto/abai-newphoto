@@ -5857,6 +5857,10 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
                     dctx.drawImage(compareSnapRef.current, 0, 0);
                     dctx.globalCompositeOperation = 'source-over';
                     cvs.style.filter = 'none';
+                    // Comparison presented the original on the GPU surface.
+                    // Restoring only the hidden 2D canvas leaves that original
+                    // visible forever (notably mosaic / glass-brick effects).
+                    presentEditorSource(dctx, b.w, b.h);
                     lastRenderedShowOriginalRef.current = false;
                     lastRenderTimeRef.current = now;
                     rafId = requestAnimationFrame(tick);

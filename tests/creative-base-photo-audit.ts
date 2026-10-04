@@ -38,8 +38,9 @@ void(async()=>{
   const cellRight=(cell.right-frame.left)/frame.width*o.cw;
   const corners=[[20,20],[cellRight-20,80],[100,bottom-20]].map(([x,y])=>Array.from(pixels({x,y,w:1,h:1})).slice(0,4));
   check('high-resolution effect surfaces keep the complete cell covered',corners.every(p=>p[0]>220&&p[1]>40&&p[3]===255),corners);
-  const {loadDraft}=await import('../utils/toolDraft');await new Promise(r=>setTimeout(r,1500));const draft=await loadDraft();
-  check('base photo adjustments persist in the draft',draft?.state?.photoRegion?.photos[0]?.fx?.brightness===45);
+  const {loadDraft}=await import('../utils/toolDraft');let draft:any;const deadline=performance.now()+5000;
+  do{await new Promise(r=>setTimeout(r,100));draft=await loadDraft();}while(draft?.state?.photoRegion?.photos[0]?.fx?.brightness!==45&&performance.now()<deadline);
+  check('base photo adjustments persist in the draft',draft?.state?.photoRegion?.photos[0]?.fx?.brightness===45,{tool:draft?.tool,value:draft?.state?.photoRegion?.photos[0]?.fx?.brightness});
  }catch(e){check('runtime exception',false,String(e));}
  const report={kind:'creative-base-photo',ua:navigator.userAgent,pass:checks.every(c=>c.pass),checks};
  const pre=document.createElement('pre');pre.id='base-photo-result';pre.dataset.report=JSON.stringify(report);pre.style.cssText='position:fixed;top:60px;left:8px;max-width:95vw;max-height:220px;overflow:auto;background:#111e;color:white;font-size:10px;z-index:99999';pre.textContent=JSON.stringify(report,null,2);document.body.append(pre);

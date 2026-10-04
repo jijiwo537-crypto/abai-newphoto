@@ -1315,6 +1315,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   /* 每個圖片物件跑完管線之後的成品，快取起來 —— 參數沒變就不重跑。
      key 是「物件 id + 參數指紋」，所以只有動到的那一張會重算。 */
   const objFxCache = useRef<Map<string, { key: string; cv: HTMLCanvasElement }>>(new Map());
+  const regionFxSurfaces = useRef<Map<string, HTMLCanvasElement>>(new Map());
+  useEffect(()=>{
+    const keys=new Set(photoRegion?.photos.map((p,i)=>`region-fx-${i}@${p.src}`)||[]);
+    for(const [key,cv] of regionFxSurfaces.current)if(!keys.has(key)){cv.width=cv.height=1;regionFxSurfaces.current.delete(key);objFxCache.current.delete(key);}
+  },[photoRegion]);
+  useEffect(()=>()=>{for(const cv of regionFxSurfaces.current.values())cv.width=cv.height=1;regionFxSurfaces.current.clear();},[]);
   const regionBlendTool=useRef('');
   const regionBlend=useRef<PhotoAdjustmentBlend|null>(null);
   const regionWarmStage=useRef<{index:number;canvas:HTMLCanvasElement}|null>(null);
@@ -1506,10 +1512,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        連 width 都不重設，等於整段完全不配置記憶體。
        沒套形狀的時候回傳的就是 base 本人 —— 那時候快取裡那張跟 scratch.base
        是同一張，交回去重用完全正確。 */
-    const reuse = scratch ? scratch.base : undefined;
+    let reuse = scratch ? scratch.base : undefined;
+    if(regionPhoto){
+      reuse=regionFxSurfaces.current.get(o.id);
+      if(!reuse){reuse=document.createElement('canvas');regionFxSurfaces.current.set(o.id,reuse);}
+    }
     const base = applyPhotoFx(srcEl, iw, ih, o.fx || {}, {
-      cacheSource: !isVid, fast: live, out: reuse,
-      preferSeparableCpu: o.id?.startsWith('region-fx-'),
+      cacheSource: !isVid, fast: live, out: reuse, gpuSurface: regionPhoto,
     });
     const finish = () => {
       if (!isMain) return;

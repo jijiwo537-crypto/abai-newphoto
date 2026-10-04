@@ -34,10 +34,14 @@ export class PhotoAdjustmentBlend {
     const generation=this.generation;
     const build=()=>{
       if(generation!==this.generation)return;
-      if(this.held){this.timer=setTimeout(build,80);return;}
+      // Do not suspend preparation for the entire gesture. A user can touch
+      // the slider before idle preparation finishes; waiting for pointer-up
+      // traps every subsequent input in the slow exact-render fallback.
+      // Build one immutable endpoint per task, then let the same gesture use
+      // the completed cache. Generation guards still cancel obsolete tools.
       const i=this.stages.length;
       const stageFx={...fx,[tool]:this.values[i]};
-      const processed=applyPhotoFx(source,w,h,stageFx,{cacheSource:true,preferSeparableCpu:true});
+      const processed=applyPhotoFx(source,w,h,stageFx,{cacheSource:true,gpuSurface:true});
       const projected=project?project(processed,stageFx):processed;
       if(projected.width*projected.height>4_000_000){this.clear();return;}
       const immutable=document.createElement('canvas');immutable.width=projected.width;immutable.height=projected.height;
