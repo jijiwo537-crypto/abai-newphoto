@@ -39,3 +39,26 @@ test('colour worker and actual float shader are primed before the first input',(
  assert.match(colour,/const identity=new Float32Array\(32\*32\*32\*4\)/);
  assert.match(read('../utils/photoLut.worker.ts'),/if\(event.data.warm\)/);
 });
+test('editor LUTs decode and bake their exact master tables outside the UI thread',()=>{
+ const worker=read('../utils/lutDecode.worker.ts'),colour=read('../utils/photoSceneColour.ts');
+ assert.match(fx,/new Worker\(new URL\('\.\/lutDecode.worker.ts'/);
+ assert.match(worker,/new OffscreenCanvas/);
+ assert.match(worker,/needsLutAtlasRepair\(url\)\?repairLutAtlas/);
+ assert.match(worker,/bakePixelMaster\(\{\.\.\.params,lutAmount:100\},cached\)/);
+ assert.match(fx,/preparedPlainFilter\?\?=/);
+ assert.match(colour,/getPreparedFilterPair\(fx.lut\)/);
+ assert.match(read('../App.tsx'),/warmEditorLuts\(LUT_LIST\)/);
+});
+test('cold thumbnails are serialized and button clicks defer optional background work',()=>{
+ assert.match(panel,/cardThumbWork\.then\(async/);
+ assert.match(panel,/if\(cancelled\(\)\)return/);
+ assert.match(panel,/onClickCapture=.*deferHeavyWork/);
+ assert.match(panel,/<CardSourceThumb src=\{src\}/);
+ assert.match(panel,/if\(request!==lutChoiceSerial.current\)return/);
+});
+test('panel rerenders read the live base photograph rather than overwrite a newer effect',()=>{
+ assert.match(collage,/const regionPhoto = editRegionIndex !== null \? photoRegionRef.current\?\.photos\[editRegionIndex\]/);
+});
+test('the pinch-resized preview frame has no large blurred chrome layer',()=>{
+ assert.doesNotMatch(collage,/boxShadow: '0 20px 50px rgba\(255,255,255,0\.05\)'/);
+});

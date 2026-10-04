@@ -89,7 +89,7 @@ import { IgPreview } from './IgPreview';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } from '../utils/compose';
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork, warmEditorLuts } from '../utils/photoFx';
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface} from '../utils/photoFx';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
@@ -1361,6 +1361,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionColour=useRef<PhotoSceneColour|null>(null);
   const regionColourActive=useRef(false);
   const regionSpatialActive=useRef(false);
+  const regionPreflight=useRef(false);
   const regionPrimedSource=useRef('');
   const regionPlacements=useRef<FxPlacement[]|null>(null);
   const regionSpatialInput=useRef<HTMLCanvasElement|null>(null);
@@ -2149,12 +2150,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       // Prime the actual source/pool while the imported photo is idle, before
       // opening the editor. Shader-only warm-up leaves the first texture upload
       // and framebuffer allocation on the first effect click in WebKit.
-      await awaitPhotoIdle();
+      await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
       const source=currentSrc&&decodedRegionPhotos.current.get(currentSrc);
-      if(!cancelled&&source&&regionPrimedSource.current!==currentSrc&&!regionSpatial.current?.shown){
+      if(!cancelled&&source&&regionPrimedSource.current!==currentSrc&&!regionSpatial.current?.shown&&!hasPhotoFx(photoRegionRef.current?.photos[selectedKey]?.fx)&&!activePointers.current.size){
         regionSpatialInput.current??=document.createElement('canvas');
         const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height,k=Math.min(1,1600/Math.max(w,h));
         applyPhotoFx(source,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),{...FX_PARAM_DEFAULTS,fxMosaic:100},{cacheSource:true,gpuSurface:true,out:regionSpatialInput.current});
+        applyPhotoFx(source,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),{...FX_PARAM_DEFAULTS,fxExposureSpill:100},{cacheSource:true,gpuSurface:true,out:regionSpatialInput.current});
         regionPrimedSource.current=currentSrc!;
       }
       // One shader family per idle slot. Real pointer interactions take
@@ -2166,7 +2168,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     })();
     return ()=>{cancelled=true;};
-  },[objEditImage,selectedRegionPhoto,baseSelected,photoRegion?.photos[0]?.src]);
+  },[objEditImage,selectedRegionPhoto,baseSelected,photoRegion?.photos[0]?.src,imageState]);
   /** 「圖案」頁的左側子分頁：挑圖案／調參數 */
   const [shapeSub, setShapeSub] = useState<'shape' | 'style'>('shape');
   /** 正在畫布上直接編輯的那一段文字（null＝沒有在編輯）。
@@ -4307,13 +4309,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   }, [viewT.k, imageState, layout, maskScale, canvasRatio, maxPreviewScale, fitScale, baseCss]);
 
   useEffect(() => {
-    if (activeTab !== 'objedit' || adjustSub !== 'filter') return;
     let alive = true;
+    void warmEditorLuts(lutList);
     (async () => {
       for (const l of lutList) {
         if (!alive) return;
         if (!l.url || getLoadedLut(l.id)) continue;
         await loadLut(l.id, l.url);
+        // A decoded background card is not a scene edit. Do not rebuild the
+        // collage's React tree while the user is pinching or sliding.
+        await awaitPhotoIdle();
         if (!alive) return;
         setLutRevision(n => n + 1);
         // Loading another card must not invalidate the full-size GPU scene.
@@ -4321,7 +4326,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
     })();
     return () => { alive = false; };
-  }, [activeTab, adjustSub, lutList]);
+  }, [lutList]);
 
 
 
@@ -4820,7 +4825,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop){
       const original=photo&&decodedRegionPhotos.current.get(photo.src);
       const sceneGeometryGesture=!!objDragRef.current||!!objPinchRef.current||!!objStretchRef.current||!!baseDragRef.current||!!basePinchRef.current||!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
-      if(regionSpatialActive.current&&original&&supportsResidentPhotoEffects(photo?.fx)&&!sceneGeometryGesture&&!photoRegion?.seamless&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
+      if((regionSpatialActive.current||regionPreflight.current)&&original&&(supportsResidentPhotoEffects(photo?.fx)||regionPreflight.current)&&!sceneGeometryGesture&&!photoRegion?.seamless&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
         const key=regionGpuSceneKey.current;
         let resident=regionSpatial.current;
         if(!resident||resident.key!==key||resident.scale!==renderScale||resident.scene.black.width!==targetCanvas.width||resident.scene.black.height!==targetCanvas.height){
@@ -8033,6 +8038,43 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   renderToCanvasRef.current = renderToCanvas;
   useEffect(()=>{
+    if(!imageState||!photoRegion?.photos.length)return;
+    let cancelled=false;
+    void(async()=>{
+      // Wait for the actual import geometry/source, not a fixed idle timeout.
+      // The first render can still have a zero-sized placeholder canvas.
+      for(let i=0;i<60;i++){
+        await new Promise<void>(r=>requestAnimationFrame(()=>r()));
+        if(cancelled)return;
+        const cv=canvasRef.current,p=photoRegionRef.current?.photos[0];
+        if(cv&&cv.width>32&&cv.height>32&&previewScaleRef.current>0&&p&&decodedRegionPhotos.current.has(p.src))break;
+      }
+      await warmLowfiLut();
+      const cv=canvasRef.current,p=photoRegionRef.current?.photos[0];
+      if(cancelled||!cv||cv.width<=32||!p||hasPhotoFx(p.fx)||activePointers.current.size)return;
+      const existing=regionSpatial.current;
+      if(existing?.key===regionGpuSceneKey.current&&existing.scale===previewScaleRef.current&&existing.scene.black.width===cv.width&&existing.scene.black.height===cv.height)return;
+      // Capture unchanged scene coverage at import time, not on the first
+      // effect click. No effect is enabled and the visible result is unchanged.
+      try{
+        regionPreflight.current=true;renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);
+        const ready=regionSpatial.current,source=decodedRegionPhotos.current.get(p.src);
+        if(ready&&source&&!ready.shown){
+          const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height;
+          const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*previewScaleRef.current)),k=Math.min(1,cap/Math.max(w,h));
+          for(const id of ['fxMosaic','fxLowfi','fxExposureSpill']){
+            const primed=applyPhotoFx(source,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),{...FX_PARAM_DEFAULTS,[id]:100},{cacheSource:true,gpuSurface:true,out:ready.input,scene:ready.scene});
+            // WebKit can defer the real texture/shader work until presentation.
+            // Fence only this import-time preflight, never an interaction frame.
+            if(primed instanceof HTMLCanvasElement&&primed!==ready.input)primed.getContext('webgl2')?.finish();
+          }
+        }
+      }
+      finally{regionPreflight.current=false;}
+    })();
+    return()=>{cancelled=true;};
+  },[imageState,photoRegion?.photos[0]?.src]);
+  useEffect(()=>{
     if(!import.meta.env.DEV)return;
     const reference=(event:Event)=>{const detail=(event as CustomEvent).detail;if(detail?.canvas instanceof HTMLCanvasElement)renderToCanvasRef.current(detail.canvas,previewScaleRef.current,true);};
     document.addEventListener('abai:qa-preview-reference',reference);
@@ -9325,7 +9367,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               <div ref={motionFrameRef} style={{
                 position: 'relative', lineHeight: 0, flexShrink: 0,
                 transformOrigin: 'top left',
-                boxShadow: '0 20px 50px rgba(255,255,255,0.05)',
+                // A blurred shadow on a continuously resized, viewport-sized
+                // canvas forces WebKit to rasterize another large layer every
+                // pinch frame. This is chrome, not image/glow content.
+                boxShadow: 'none',
                 transition: (motionUiOn || previousMotionTabRef.current || motionTransitioning) ? 'none'
                   : (viewPinchRef.current || viewT.k === 1 || sizeSnapRef.current) ? 'none' : 'width 90ms linear, height 90ms linear',
                 ...(baseCss
@@ -10395,7 +10440,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               })()}
               {activeTab === 'objedit' && (() => {
                 const editRegionIndex = selectedRegionPhoto ?? (baseSelected ? 0 : null);
-                const regionPhoto = editRegionIndex !== null ? photoRegion?.photos[editRegionIndex] : null;
+                // Live editing owns the ref until the gesture/debounce commits.
+                // A tab/effect-card render must not feed the previous React
+                // snapshot back into ImageAdjustPanel and erase a newer FX.
+                const regionPhoto = editRegionIndex !== null ? photoRegionRef.current?.photos[editRegionIndex] : null;
                 const regionEditing = !!regionPhoto?.src;
                 const sel = regionEditing ? {...regionPhoto,id:`region-photo-${editRegionIndex}`,type:'image',img:decodedRegionPhotos.current.get(regionPhoto.src)} : objects.find(o => o.id === selectedObj) || null;
                 const patch = (d: any) => {

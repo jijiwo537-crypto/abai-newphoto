@@ -268,6 +268,29 @@ export const hasPhotoFx = (fx?: PhotoFx) => {
 type LutData = { data: Uint8ClampedArray; size: number };
 const lutCache = new Map<string, LutData>();
 const lutPending = new Map<string, Promise<LutData | null>>();
+const eagerLuts = new Set<string>();
+let lutDecoder:Worker|null=null;
+let lutDecodeSerial=0;
+const lutDecodeJobs=new Map<number,(value:LutData|null)=>void>();
+const preparedFilterPairs=new Map<string,{tex:Float32Array;plain:Float32Array}>();
+let preparedPlainFilter:Float32Array|undefined;
+export function getPreparedFilterPair(id:string){return preparedFilterPairs.get(id);}
+function decodeLutOffThread(url:string,lutId:string,cached?:LutData):Promise<LutData|null>{
+  if(typeof Worker==='undefined'||typeof OffscreenCanvas==='undefined')return Promise.resolve(null);
+  try{
+    if(!lutDecoder){
+      lutDecoder=new Worker(new URL('./lutDecode.worker.ts',import.meta.url),{type:'module'});
+      lutDecoder.onmessage=({data})=>{const done=lutDecodeJobs.get(data.id);lutDecodeJobs.delete(data.id);done?.(data.error?null:{data:data.data,size:data.size,...{preparedPair:{tex:data.tex,plain:data.plain}}});};
+      lutDecoder.onerror=()=>{for(const done of lutDecodeJobs.values())done(null);lutDecodeJobs.clear();lutDecoder?.terminate();lutDecoder=null;};
+    }
+    const id=++lutDecodeSerial;
+    return new Promise(resolve=>{lutDecodeJobs.set(id,value=>{
+      const pair=(value as any)?.preparedPair;
+      if(pair){preparedPlainFilter??=pair.plain;preparedFilterPairs.set(lutId,{tex:pair.tex,plain:preparedPlainFilter!});}
+      resolve(value?{data:value.data,size:value.size}:null);
+    });lutDecoder!.postMessage({id,url:new URL(url,document.baseURI).href,cached,params:photoFxParams({lut:lutId,lutAmount:100})});});
+  }catch{return Promise.resolve(null);}
+}
 
 /* ── 重活的排程 ────────────────────────────────────────────────────
    解一顆濾鏡＝一次 512×512 的 getImageData ＋ 一輪 64³ 的搬運迴圈，
@@ -297,6 +320,7 @@ export function loadLut(
   if (!url || id === 'none') return Promise.resolve(null);
   const hit = lutCache.get(id);
   if (hit) return Promise.resolve(hit);
+  if (eager) eagerLuts.add(id);
   const pending = lutPending.get(id);
   if (pending) return pending;
 
@@ -304,13 +328,15 @@ export function loadLut(
     // 先問本機：以前解過的表直接讀回來，不用下載也不用重新解碼
     const cacheUrl=needsLutAtlasRepair(url)?url+'#'+LUT_ATLAS_REPAIR_REVISION:url;
     const cached = await loadCachedLut(id, cacheUrl);
-    if (cached) { lutCache.set(id, cached); return cached; }
+    const decoded=await decodeLutOffThread(url,id,cached||undefined);
+    if(decoded){lutCache.set(id,decoded);saveCachedLut(id,cacheUrl,decoded.data,decoded.size);return decoded;}
+    if(cached){lutCache.set(id,cached);return cached;}
     return new Promise<LutData | null>(resolve => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => { (async () => {
       // 背景預載：等手指放開、等這一格有空，才做這一塊同步運算
-      if (!eager) await whenIdle();
+      if (!eagerLuts.has(id)) await whenIdle();
       try {
         const size = img.width === img.height ? img.width / 8 : 64;
         const size2 = size * size;
@@ -348,6 +374,16 @@ export function loadLut(
   })();
   lutPending.set(id, task);
   return task;
+}
+
+/** Start preparing the editor's actual LUT cache before any filter panel opens.
+ * Camera image prefetch alone does not prepare these decoded colour tables. */
+export async function warmEditorLuts(list: readonly {id:string;url:string}[]): Promise<void> {
+  let next=0;
+  const entries=list.filter(l=>l.url&&l.id!=='none');
+  await Promise.all(Array.from({length:3},async()=>{
+    while(next<entries.length){const l=entries[next++];await loadLut(l.id,l.url);}
+  }));
 }
 
 /* ── 套用 ──────────────────────────────────────────────────────────── */

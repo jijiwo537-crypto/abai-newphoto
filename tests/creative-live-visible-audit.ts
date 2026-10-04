@@ -29,6 +29,17 @@ void(async()=>{
  document.querySelector<HTMLButtonElement>('[data-creative-tab="objedit"]')!.click();await wait();
  [...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent?.trim().endsWith('特效'))!.click();await wait();
  const original=pixels();
+ if(new URLSearchParams(location.search).has('rapid')){
+  const times:any[]=[];
+  for(let i=0;i<24;i++){
+   const id=['fxMosaic','fxGlass','fxLowfi','fxExposureSpill'][i%4];
+   const card=document.querySelector<HTMLButtonElement>(`[data-fx-card="${id}"]`)!;
+   const previous=pixels(),start=performance.now();card.click();await wait(2);
+   const elapsed=performance.now()-start,delta=difference(previous,pixels());
+   times.push({id,ms:elapsed,selected:card.getAttribute('aria-pressed')==='true',difference:delta,paint:canvas.dataset.paintMs,rebuilds:canvas.dataset.spatialRebuilds,reason:canvas.dataset.sceneRebuildReason,backend:canvas.dataset.regionFxBackend});
+  }
+  check('rapid effects select and change presented pixels',times.every(t=>t.selected&&t.difference>.1),times);
+ }
  document.querySelector<HTMLButtonElement>('[data-fx-card="fxMosaic"]')!.click();await wait(20);
  const firstChange=difference(original,pixels());
  check('first effect changes presented photograph while selected',firstChange>.1,{difference:firstChange});

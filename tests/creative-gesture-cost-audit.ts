@@ -24,7 +24,10 @@ void(async()=>{
    const g=JSON.parse(stage.dataset.sceneGeometry!);tap(point(g.ix+g.iw*.2,g.iy+g.ih*.2));await wait();
    document.querySelector<HTMLButtonElement>('[data-creative-tab="objedit"]')!.click();await wait(20);
    const b=[...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent?.trim().endsWith('特效'))!;let t=performance.now();b.click();await tick();report.effectEntryMs=performance.now()-t;await wait(2);
-   document.querySelector<HTMLButtonElement>('[data-fx-card="fxLowfi"]')!.click();await wait(25);
+   if(params.has('filterGesture')){
+    [...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent?.trim().endsWith('濾鏡'))!.click();
+    await wait(30);document.querySelector<HTMLButtonElement>('[data-lut-card]')!.click();await wait(90);
+   }else{document.querySelector<HTMLButtonElement>('[data-fx-card="fxLowfi"]')!.click();await wait(25);}
   }
   let geo=JSON.parse(stage.dataset.sceneGeometry!),p=params.has('mask')?point(geo.cw*.5,geo.ch*.5):point(geo.ix+geo.iw*.2,geo.iy+geo.ih*.2);
   const posesBefore=stage.dataset.photoTransforms;pointer('pointerdown',3602,p);

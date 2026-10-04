@@ -1,4 +1,4 @@
-import {bakePhotoFxLut,colorKeyOf,getLoadedLut,hasPhotoFx,photoFxParams,type PhotoFx} from './photoFx';
+import {bakePhotoFxLut,colorKeyOf,getLoadedLut,getPreparedFilterPair,hasPhotoFx,photoFxParams,type PhotoFx} from './photoFx';
 import {copyPixelDither} from './photoPixelCore';
 import {hasActiveFx} from './glEffects';
 import {configureWebglWide} from './colorSpace';
@@ -145,6 +145,12 @@ export class PhotoSceneColour {
   gl.useProgram(p);
   gl.uniform1i(gl.getUniformLocation(p,'wide'),this.colourSpace.colorSpace==='display-p3'?1:0);
   if(key!==this.key||film!==this.film){
+   // Import-time worker preparation uses the identical floating-point master
+   // pipeline. Only consume it for an otherwise unadjusted photo.
+   if(fx.lut&&this.canPair(fx)&&key===this.bakeKey({lut:fx.lut,lutAmount:100})){
+    const prepared=getPreparedFilterPair(fx.lut);
+    if(prepared)this.lutCache.set(key,{...prepared,film,master:true});
+   }
    const cached=this.lutCache.get(key);
    if(cached&&cached.film===film){
     this.generation++;this.pending=null;this.requestedKey='';

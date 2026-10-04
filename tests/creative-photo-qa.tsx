@@ -17,7 +17,7 @@ const files=await Promise.all(colors.slice(0,params.has('single')?1:params.has('
 const floating=params.has('swaps')?[{id:'qa-float-a',type:'image',src:URL.createObjectURL(files[9]),x:500,y:220,w:120,h:90,rot:0,opacity:100},{id:'qa-float-b',type:'image',src:URL.createObjectURL(files[1]),x:680,y:350,w:120,h:90,rot:0,opacity:100}]:[];
 createRoot(document.getElementById('root')!).render(params.has('swapStress')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{layout:'image-full',canvasRatio:'3:4',holeCount:30,glowMode:'image',holeType:'star',holeSize:12,objects:Array.from({length:8},(_,i)=>({id:`swap-shape-${i}`,type:'shape',kind:i%2?'star':'grid-orbits',filled:i%2===1,color:'#fff',x:700,y:100+i*100,w:30,h:30,rot:0,shapeGlow:true,shapeGlowAmount:25}))}}/>
- : (params.has('coldEditAudit')||params.has('coldEffectsAudit')||params.has('liveVisible'))&&params.has('realFilters')
+ : (params.has('coldEditAudit')||params.has('coldEffectsAudit')||params.has('liveVisible')||params.has('gestureCost'))&&params.has('realFilters')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} lutList={Array.from({length:22},(_,i)=>({id:`cold-${params.get('run')||'audit'}-f${i+1}`,name:`F${i+1}`,url:`/luts/f${i+1}.webp`}))} initialState={{holeCount:0}}/>
  : params.has('spatialIntegrationAudit')&&params.has('around')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{holeCount:2,layout:'mask-around',holeSize:45,holeType:'circle',holes:[{id:'audit-a',x:100,y:100,side:'mask'},{id:'audit-b',x:600,y:500,side:'mask'}]}}/>

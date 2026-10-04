@@ -2501,6 +2501,8 @@ const [,setLocalFx] = useState<PhotoFx>(img.fx || {});
 const liveFx = useRef<PhotoFx>(img.fx || {});
 const pendingCommit = useRef<ReturnType<typeof setTimeout> | null>(null);
 const sliderInput = useRef(false);
+const lutChoiceSerial = useRef(0);
+useEffect(()=>{lutChoiceSerial.current++;setLoadingLut(null);return()=>{lutChoiceSerial.current++;};},[img.id]);
 const sliderHeld = useRef(false);
 const releaseBackgroundHold=useRef<(()=>void)|null>(null);
 const commitAdjustmentRef = useRef(onAdjustmentCommit);
@@ -2761,7 +2763,9 @@ useEffect(() => { onSliderOpenChange?.(sliderShown); }, [sliderShown, onSliderOp
 
 return (
   <div className="h-full flex flex-col justify-end"
+    onClickCapture={e=>{if((e.target as Element).closest('button'))deferHeavyWork();}}
     onPointerDownCapture={isolateFxUpdates ? e=>{
+      deferHeavyWork();
       if((e.target as Element).closest('input[type=range],.slider-wrap')){releaseBackgroundHold.current?.();releaseBackgroundHold.current=holdPhotoInteraction();sliderHeld.current=true;onAdjustmentStart?.();}
     } : undefined}
     onPointerUpCapture={isolateFxUpdates ? finishAdjustment : undefined}
@@ -2792,10 +2796,18 @@ return (
           <button
             key={l.id}
             data-lut-card={l.id}
+            aria-pressed={active}
             onClick={async () => {
               if (active) return;
+              const request=++lutChoiceSerial.current;
               // eager：使用者正在等這一顆，不排隊（背景預載那一支才要等空檔）
-              if (l.url) { setLoadingLut(l.id); await loadLut(l.id, l.url, true); setLoadingLut(null); }
+              if (l.url && !getLoadedLut(l.id)) {
+                setLoadingLut(l.id);
+                const loaded=await loadLut(l.id,l.url,true);
+                if(request!==lutChoiceSerial.current)return;
+                setLoadingLut(null);
+                if(!loaded)return;
+              } else setLoadingLut(null);
               /* 強度用跟編輯頁同一份預設值（F3 是 70、F12 是 50…）——
                  以前這裡一律 100，同一顆濾鏡在拼圖裡就比編輯頁濃。 */
               setFx({ lut: l.id, lutAmount: lutDefaultAmount(l.id) });
@@ -2854,6 +2866,7 @@ return (
           <button
             key={id}
             data-fx-card={id}
+            aria-pressed={on}
             onClick={() => pickEffect(id)}
             className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
           >
@@ -3723,6 +3736,40 @@ const CARD_W = 64, CARD_H = 76;
 /** 縮圖用的實際像素密度，2～3 之間 —— 太低會糊，太高只是白算 */
 const CARD_DPR = Math.max(2, Math.min(3, Math.round(typeof window !== 'undefined' ? (window.devicePixelRatio || 2) : 2)));
 const cardThumbCache = new Map<string, HTMLCanvasElement>();
+const cardSourceThumbCache=new Map<string,HTMLCanvasElement>();
+const CardSourceThumb:React.FC<{src:string}>=({src})=>{
+  const ref=useRef<HTMLCanvasElement|null>(null);
+  useLayoutEffect(()=>{
+    let dead=false;const img=getPreviewImg(src);
+    const paint=()=>{
+      if(dead||!ref.current||!img.naturalWidth)return;
+      let base=cardSourceThumbCache.get(src);
+      if(!base){
+        base=document.createElement('canvas');base.width=CARD_W*CARD_DPR;base.height=CARD_H*CARD_DPR;
+        const scale=Math.max(base.width/img.naturalWidth,base.height/img.naturalHeight);
+        base.getContext('2d')!.drawImage(img,(base.width-img.naturalWidth*scale)/2,(base.height-img.naturalHeight*scale)/2,img.naturalWidth*scale,img.naturalHeight*scale);
+        if(cardSourceThumbCache.size>=20){const key=cardSourceThumbCache.keys().next().value!;const old=cardSourceThumbCache.get(key)!;old.width=old.height=1;cardSourceThumbCache.delete(key);}
+        cardSourceThumbCache.set(src,base);
+      }
+      ref.current.getContext('2d')!.drawImage(base,0,0);
+    };
+    if(img.complete)paint();else img.addEventListener('load',paint,{once:true});
+    return()=>{dead=true;img.removeEventListener('load',paint);};
+  },[src]);
+  return <canvas ref={ref} width={CARD_W*CARD_DPR} height={CARD_H*CARD_DPR} className="absolute inset-0 w-full h-full object-cover"/>;
+};
+// A panel contains dozens of cold cards. Independent idle callbacks all wake
+// together and used to compile every thumbnail before the next input event.
+let cardThumbWork:Promise<void>=Promise.resolve();
+function queueCardThumb(work:()=>void,cancelled:()=>boolean):Promise<void>{
+  const task=cardThumbWork.then(async()=>{
+    if(cancelled())return;
+    await new Promise<void>(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>r())));
+    if(cancelled())return;
+    await awaitPhotoIdle();if(!cancelled())work();
+  });
+  cardThumbWork=task.catch(()=>{});return task;
+}
 
 /** 這一格縮圖：把來源縮成卡片大小之後才套效果，所以很快 */
 const makeCardThumb = (img: HTMLImageElement, fx: PhotoFx): HTMLCanvasElement | null => {
@@ -3762,7 +3809,7 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
     const cached=cardThumbCache.get(cacheKey);
     if(cached){copy(cached);return detach;}
     const paint = async () => {
-      await awaitPhotoIdle();
+      await queueCardThumb(()=>{
       const cvs = ref.current;
       if (dead || !cvs) return;
       let thumb = cardThumbCache.get(cacheKey);
@@ -3782,13 +3829,14 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
       }
       if (dead || !ref.current) return;
       copy(thumb);
+      },()=>dead);
     };
     // 一次算 20 幾張會卡住主執行緒，錯開一點點就順了
     const t = setTimeout(()=>{void paint();}, delay);
     return () => { detach();clearTimeout(t); };
   }, [src, cacheKey, delay]);
   return <>
-    {paintedKey!==cacheKey&&<img src={src} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover" />}
+    {paintedKey!==cacheKey&&<CardSourceThumb src={src}/>}
     <div ref={ref} className="absolute inset-0 w-full h-full object-cover" style={{ visibility: paintedKey === cacheKey ? 'visible' : 'hidden' }} />
   </>;
 };

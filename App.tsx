@@ -11,6 +11,7 @@ import { ArtStudio } from './components/ArtStudio';
 import { warmCameraLuts } from './utils/cameraLuts';
 import { warmFontSamples } from './utils/fonts';
 import {warmLowfiLut} from './utils/lowfiLut';
+import {warmEditorLuts} from './utils/photoFx';
 
 type AppView = 'home' | 'camera' | 'editor' | 'collage' | 'layout' | 'beauty' | 'match' | 'art';
 
@@ -111,6 +112,7 @@ const App: React.FC = () => {
     return () => observer.disconnect();
   }, []);
   useEffect(() => { void warmCameraLuts(LUT_LIST.map(lut => lut.url)); }, []);
+  useEffect(() => { void warmEditorLuts(LUT_LIST); }, []);
   useEffect(() => { void warmLowfiLut().catch(console.error); }, []);
   // 上次沒做完的東西一律先問過再接回去，不要一開 App 就直接跳進去。
   // 兩份草稿（經典拼圖／其他工具）取比較新的那一份。
