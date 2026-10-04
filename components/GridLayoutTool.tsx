@@ -2542,7 +2542,9 @@ const cardSrc = (img.isVideo && img.poster) ? img.poster : img.src;
 /* 點特效卡片＝只留這一顆（其他整組歸零）；
    長按＝疊在現在這些上面，好幾個同時生效（再長按一次就關掉那一顆）。 */
 const pickEffect = (id: string) => {
-  if (FX_DETAIL[id]) warmFx(id);      // 先把著色器編好，第一次拖才不會卡
+  // Base photos use a dedicated GPU surface. Compiling the unrelated shared
+  // thumbnail context here blocks the click and then compiles everything twice.
+  if (FX_DETAIL[id]&&!isolateFxUpdates) warmFx(id);
   setEffectCard(id);
   setEffectDetail(false);
   const amountId = fxAmountId(id);
@@ -2960,6 +2962,9 @@ return (
           key={id}
           onClick={() => {
             if (id === 'compose') { openComposeFor(img.id); return; }
+            // Let the new controls paint before background thumbnail shaders
+            // occupy the main thread. This does not change preview resolution.
+            deferHeavyWork();
             /* 從構圖切到別的分類：先把當下裁切的結果確認掉再切過去 ——
                不然構圖介面會一直蓋在上面，看起來就只是「圖標亮了但沒反應」。 */
             if (composeOpen) onLeaveCompose?.();

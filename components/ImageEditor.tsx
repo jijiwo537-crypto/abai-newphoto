@@ -3,6 +3,7 @@ import { ComposeStudio, COMPOSE_WARMUP_CLASSES } from './ComposeStudio';
 import { LUT_DEFAULT_AMOUNT } from '../utils/photoFx';
 import { isIdentityCurve, boundedCurvePath } from '../utils/editorCurveGeometry';
 import { loadCachedLut, saveCachedLut } from '../utils/lutStore';
+import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from '../utils/lutAtlasRepair.js';
 import { bakeColorLut, bakedToTexture } from '../utils/lutBake';
 import { LutGpu } from '../utils/lutGpu';
 import { FX_DEFS, FX_DEFAULTS, applyGlEffects, presentFxSource, disposeFxSurface, hasActiveFx, warmFx, type FxDef } from '../utils/glEffects';
@@ -2764,7 +2765,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
     if (!loadingPromisesRef.current[lut.id]) {
       loadingPromisesRef.current[lut.id] = (async () => {
         // 先問本機：以前解過的表直接讀回來，不用下載也不用重新解碼重排
-        const cached = await loadCachedLut(lut.id, lut.url);
+        const cacheUrl=needsLutAtlasRepair(lut.url)?lut.url+'#'+LUT_ATLAS_REPAIR_REVISION:lut.url;
+        const cached = await loadCachedLut(lut.id, cacheUrl);
         if (cached) {
           lutDataRef.current[lut.id] = cached;
           setLutReadyTick(t => t + 1);
@@ -2780,7 +2782,8 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             c.width = img.width; c.height = img.height;
             const ctx = c.getContext('2d', { willReadFrequently: true })!;
             ctx.drawImage(img, 0, 0);
-            const data = ctx.getImageData(0, 0, img.width, img.height).data;
+            const originalData = ctx.getImageData(0, 0, img.width, img.height).data;
+            const data=needsLutAtlasRepair(lut.url)?repairLutAtlas(originalData,img.width,img.height).data:originalData;
             const lutData = new Uint8ClampedArray(size * size * size * 3);
             for (let b = 0; b < size; b++) {
               for (let g = 0; g < size; g++) {
@@ -2794,7 +2797,7 @@ export const ImageEditor: React.FC<ImageEditorProps> = ({ histKey, imageSrc, bat
             }
             lutDataRef.current[lut.id] = { data: lutData, size };
             setLutReadyTick(t => t + 1);
-            saveCachedLut(lut.id, lut.url, lutData, size);   // 收進本機，下次不用再解一次
+            saveCachedLut(lut.id, cacheUrl, lutData, size);
             resolve();
           };
           img.onerror = () => resolve();

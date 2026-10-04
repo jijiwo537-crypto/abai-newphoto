@@ -1,0 +1,385 @@
+{
+  "scope": [
+    "lowfi LUT",
+    "F3",
+    "F19"
+  ],
+  "ordinaryFiltersUntouchedExcept": [
+    "F3",
+    "F19"
+  ],
+  "audit": {
+    "F3": {
+      "changedChannels": 0
+    },
+    "F19": {
+      "changedChannels": 2,
+      "maxChannelDelta": 1
+    },
+    "lowfi": {
+      "boundaryChannelUpdates": 18734,
+      "maxChannelDelta": 249
+    }
+  },
+  "interiorPolicy": "All pixels outside the outer two atlas rows/columns remain byte-identical.",
+  "nativeDevice": "iPhone 17 / iOS 26.5 Simulator",
+  "physicalDeviceTested": false,
+  "tests": 293,
+  "nativeReports": [
+    {
+      "kind": "creative-cold-effects",
+      "route": "?single&huge&coldEffectsAudit&realFilters&run=v31",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 109,
+          "mean": 16.2,
+          "max": 39,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 16.7,
+          "max": 19,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 16.649999999999977,
+          "max": 17.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 919.0000000000005,
+          "mean": 15.7,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 16.7,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 96,
+          "mean": 16.05,
+          "max": 17,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 16.65,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 16.65,
+          "max": 22,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 143,
+          "mean": 16.999999999999954,
+          "max": 35.99999999999909,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 16.699999999999953,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 142.99999999999818,
+          "mean": 19.5,
+          "max": 78,
+          "over50": 1
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 16.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 16.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        }
+      ]
+    },
+    {
+      "kind": "creative-cold-effects",
+      "route": "?single&huge&coldEffectsAudit&realFilters&run=v31",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 146,
+          "mean": 16.2,
+          "max": 27,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 16.700000000000024,
+          "max": 17.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 1073.999999999999,
+          "mean": 16.300000000000047,
+          "max": 20.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 16.65,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 94,
+          "mean": 16.15,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 16.65,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 16.650000000000045,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 152.9999999999991,
+          "mean": 17.350000000000044,
+          "max": 35,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 16.65,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 16.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 146,
+          "mean": 19.35,
+          "max": 92,
+          "over50": 1
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 16.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 16.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        }
+      ]
+    },
+    {
+      "kind": "creative-cold-effects",
+      "route": "?single&huge&coldEffectsAudit&realFilters&run=v31",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 100,
+          "mean": 16.4,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 16.649999999999977,
+          "max": 18.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 909.0000000000005,
+          "mean": 16.24999999999998,
+          "max": 17.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 16.65,
+          "max": 21,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 16.649999999999956,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 92.99999999999909,
+          "mean": 16.150000000000045,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 16.800000000000047,
+          "max": 19.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 173.9999999999991,
+          "mean": 17.15,
+          "max": 40,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 16.700000000000045,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 134.0000000000009,
+          "mean": 19.149999999999956,
+          "max": 79,
+          "over50": 1
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.00000000000182,
+          "over50": 0
+        }
+      ]
+    }
+  ],
+  "knownLimitations": [
+    "Cold first mosaic activation still takes around 0.9–1.1 seconds in the automated immediate-entry test; no universal instant-click or 60fps guarantee."
+  ],
+  "cameraProof": "Same-row back button with narrower effects cards visually verified in Simulator."
+}

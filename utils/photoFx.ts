@@ -20,6 +20,7 @@ import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from '
 import { bakeColorLut, bakedToTexture } from './lutBake';
 import { LutGpu } from './lutGpu';
 import { loadCachedLut, saveCachedLut } from './lutStore';
+import {repairLutAtlas,needsLutAtlasRepair,LUT_ATLAS_REPAIR_REVISION} from './lutAtlasRepair.js';
 import {HalationLayer} from './halationLayer';
 
 /* ── 拼圖的 GPU 顏色鏈 ────────────────────────────────────────────────
@@ -262,7 +263,8 @@ export function loadLut(
 
   const task = (async (): Promise<LutData | null> => {
     // 先問本機：以前解過的表直接讀回來，不用下載也不用重新解碼
-    const cached = await loadCachedLut(id, url);
+    const cacheUrl=needsLutAtlasRepair(url)?url+'#'+LUT_ATLAS_REPAIR_REVISION:url;
+    const cached = await loadCachedLut(id, cacheUrl);
     if (cached) { lutCache.set(id, cached); return cached; }
     return new Promise<LutData | null>(resolve => {
     const img = new Image();
@@ -277,7 +279,8 @@ export function loadLut(
         c.width = img.width; c.height = img.height;
         const ctx = c.getContext('2d', { willReadFrequently: true })!;
         ctx.drawImage(img, 0, 0);
-        const px = ctx.getImageData(0, 0, img.width, img.height).data;
+        const originalPx = ctx.getImageData(0, 0, img.width, img.height).data;
+        const px=needsLutAtlasRepair(url)?repairLutAtlas(originalPx,img.width,img.height).data:originalPx;
         const data = new Uint8ClampedArray(size * size * size * 3);
         for (let b = 0; b < size; b++) {
           for (let g = 0; g < size; g++) {
@@ -294,7 +297,7 @@ export function loadLut(
         }
         const out = { data, size };
         lutCache.set(id, out);
-        saveCachedLut(id, url, data, size);
+        saveCachedLut(id, cacheUrl, data, size);
         resolve(out);
       } catch {
         resolve(null);

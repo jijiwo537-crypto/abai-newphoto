@@ -910,12 +910,11 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             style={getFrameStyle()}
           >
             {/* 返回鍵屬於相機畫面本身，和右上角的更多按鈕平行對稱。 */}
-            {!showGallery && !editingPhoto && activeControl !== 'filters' && (
+            {!showGallery && !editingPhoto && activeControl !== 'filters' && activeControl !== 'effects' && (
               <div className="absolute top-1 left-2 z-50">
                 <button
-                  aria-label={activeControl==='effects'?'返回相機':'返回主頁'}
-                  data-camera-effects-back={activeControl==='effects'?true:undefined}
-                  onClick={(e) => { e.stopPropagation(); if(activeControl==='effects'){triggerHaptic();setActiveControl('none');}else onHome(); }}
+                  aria-label="返回主頁"
+                  onClick={(e) => { e.stopPropagation(); onHome(); }}
                   className="w-10 h-10 rounded-full flex items-center justify-center text-white/70 hover:text-white transition-colors"
                 >
                   <Icon name="arrow_back" className="text-2xl drop-shadow-md" />
@@ -1155,8 +1154,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             </div>
           ) : activeControl === 'effects' ? (
             /* 特效與曝光／白平衡共用同一個 56px 控制列高度，打開時觀景窗不會上移。 */
-            <div data-camera-effects-row className="w-full flex items-center animate-in h-full">
-              <div className="grid grid-cols-3 gap-2 w-full min-w-0">
+            <div data-camera-effects-row className="w-full flex items-center gap-2 animate-in h-full">
+              <button aria-label="返回相機" data-camera-effects-back onClick={()=>{triggerHaptic();setActiveControl('none');}} className="w-9 h-10 shrink-0 flex items-center justify-center text-white/75 active:text-white"><Icon name="arrow_back" className="text-xl" /></button>
+              <div className="grid grid-cols-3 gap-2 flex-1 min-w-0">
                 {FX_ITEMS.map(it => {
                   const on = fx[it.id] > 0;
                   return (
