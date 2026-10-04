@@ -247,8 +247,8 @@ const EFFECT_TOOLS: ToolDef[] = orderEffectCards<ToolDef>([
   /* 暗角搬到下面跟亮角放一起了（fxVignette），這裡不再放單滑桿那顆。
      舊作品裡的 params.vignette 仍然照樣算得出來，只是不再從介面調整。 */
   /* 銳化已經搬到「調節」的最後面了，這一排不再列它 */
-  /* 最後三項（馬賽克／結晶化／玻璃磚）不再顯示；底層定義保留，確保舊作品仍可正確還原。 */
-  ...FX_DEFS.filter(d => d.id !== 'fxSharpen').slice(0, -3)
+  /* 與拼圖圖片編輯共用完整特效清單；銳化仍只在調節中。 */
+  ...FX_DEFS.filter(d => d.id !== 'fxSharpen')
     .map(d => ({ id: d.id, label: d.label, icon: d.icon, min: 0, max: 100 })),
 ], item => item.id);
 

@@ -591,37 +591,6 @@ export const FX_DEFS: FxDef[] = [
     }],
   },
   {
-    id: 'fxCrystal', label: '結晶化', icon: 'diamond',
-    onAmount: 100,
-    /* 跟馬賽克同一種：只留「密度」一根，而且放在最外層 —— 點卡片不再進細項頁。
-       其餘三根都藏起來（值照舊，外觀完全不變），細項頁沒東西可放就不會打開。 */
-    rootParam: 'fxCrystalCells',
-    params: [
-      { id: 'fxCrystalCells', label: '密度', icon: 'apps', min: 5, max: 150, def: 50, hidden: true },
-      { id: 'fxCrystalJitter', label: '不規則', icon: 'shuffle', min: 0, max: 100, def: 90, scale: 0.01, hidden: true },
-      { id: 'fxCrystalEdge', label: '胞壁寬', icon: 'border_style', min: 0, max: 20, def: 0, scale: 0.01 , hidden: true },
-      { id: 'fxCrystalDark', label: '胞壁深', icon: 'nights_stay', min: 0, max: 100, def: 0, scale: 0.01 , hidden: true },
-    ],
-    passes: [{
-      body: `
-  vec2 grid = fxCrystalCells * vec2(1.0, uRes.y / uRes.x);
-  vec2 g = floor(uv * grid), f = fract(uv * grid);
-  float d1 = 8.0, d2 = 8.0; vec2 best = vec2(0.0);
-  for(int y = -1; y <= 1; y++){
-    for(int x = -1; x <= 1; x++){
-      vec2 o = vec2(float(x), float(y));
-      vec2 pp = o + mix(vec2(0.5), hash22(g + o), fxCrystalJitter);
-      float d = length(pp - f);
-      if(d < d1){ d2 = d1; d1 = d; best = g + pp; }
-      else if(d < d2){ d2 = d; }
-    }
-  }
-  vec3 c = texture2D(uTex, clamp(best / grid, 0.0, 1.0)).rgb;
-  float wall = smoothstep(0.0, max(fxCrystalEdge, 1e-3), d2 - d1);
-  return vec4(c * mix(1.0 - fxCrystalDark, 1.0, wall), 1.0);`,
-    }],
-  },
-  {
     id: 'fxGlass', label: '玻璃磚', icon: 'window',
     onAmount: 100,
     params: [

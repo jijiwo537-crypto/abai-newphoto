@@ -61,7 +61,7 @@ test('photo-relative node scope changes deterministic sampling on a low-contrast
  assert.equal(new Set(samples.map(s=>JSON.stringify(s))).size,5);
  for(let i=0;i<samples.length;i++)assert.ok(samples[i].every(n=>n.confidence>=[10,30,50,70,90][i]/100));
  assert.deepEqual(scopedCandidates(points,30),scopedCandidates(points,30));
- assert.equal(trackingDefaults.maxRadius,40);
+ assert.equal(trackingDefaults.maxRadius,60);
 });
 test('dense slider thumb never jumps on grab and advances by one unit per pixel at most',()=>{
  for(const max of [100,180,360])for(const start of [0,20,60]){

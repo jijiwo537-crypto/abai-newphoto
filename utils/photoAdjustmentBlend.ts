@@ -1,4 +1,5 @@
 import {applyPhotoFx, type PhotoFx} from './photoFx';
+import {get2dWide} from './colorSpace';
 
 // Same full-density interaction strategy as ImageEditor: prepare immutable
 // endpoints while idle, then composite them instead of reprocessing every pixel
@@ -17,11 +18,14 @@ export class PhotoAdjustmentBlend {
   constructor(private ready:()=>void) {}
   get isReady() { return this.stages.length===3; }
   setHeld(value:boolean) { this.held=value; }
-  prepare(source:CanvasImageSource,w:number,h:number,fx:PhotoFx,tool:string) {
+  prepare(source:CanvasImageSource,w:number,h:number,fx:PhotoFx,tool:string,project?:(photo:HTMLCanvasElement,fx:PhotoFx)=>HTMLCanvasElement) {
     if(!BLEND_ADJUSTMENTS.has(tool))return;
     // Bound cache memory, not rendering quality. Very large previews keep the
     // exact full-resolution pipeline instead of allocating four huge surfaces.
-    if(w*h>4_000_000){if(this.source)this.clear();return;}
+    // A projected collage stores the on-screen scene, not the larger decoded
+    // photograph. Bound those separately: a 4K source can legitimately exceed
+    // four million pixels while the actual preview cache still fits in 64 MB.
+    if(w*h>(project?16_000_000:4_000_000)){if(this.source)this.clear();return;}
     const sig=JSON.stringify([w,h,tool,{...fx,[tool]:0}]);
     if(this.source===source&&this.signature===sig)return;
     this.clear();this.source=source;this.signature=sig;
@@ -32,19 +36,31 @@ export class PhotoAdjustmentBlend {
       if(generation!==this.generation)return;
       if(this.held){this.timer=setTimeout(build,80);return;}
       const i=this.stages.length;
-      const processed=applyPhotoFx(source,w,h,{...fx,[tool]:this.values[i]},{cacheSource:true,preferSeparableCpu:true});
-      const immutable=document.createElement('canvas');immutable.width=w;immutable.height=h;
-      immutable.getContext('2d')!.drawImage(processed,0,0,w,h);
+      const stageFx={...fx,[tool]:this.values[i]};
+      const processed=applyPhotoFx(source,w,h,stageFx,{cacheSource:true,preferSeparableCpu:true});
+      const projected=project?project(processed,stageFx):processed;
+      if(projected.width*projected.height>4_000_000){this.clear();return;}
+      const immutable=document.createElement('canvas');immutable.width=projected.width;immutable.height=projected.height;
+      (project?get2dWide(immutable):immutable.getContext('2d'))!.drawImage(projected,0,0);
+      if(project&&projected!==processed)projected.width=projected.height=1;
       this.stages.push(immutable);
       if(this.stages.length<3)this.timer=setTimeout(build,32);
       else {
         // Canvas commands can remain queued in WebKit. Upload all immutable
         // stages before declaring the cache ready, otherwise the first drag
         // pays that deferred work even though its JS paint takes <1 ms.
-        this.output=document.createElement('canvas');this.output.width=w;this.output.height=h;
-        const ctx=this.output.getContext('2d')!;
-        for(const stage of this.stages)ctx.drawImage(stage,0,0);
-        ctx.getImageData(0,0,1,1);
+        this.output=document.createElement('canvas');this.output.width=immutable.width;this.output.height=immutable.height;
+        const ctx=(project?get2dWide(this.output):this.output.getContext('2d'))!;
+        // Flush each upload independently. WebKit can discard earlier opaque
+        // draws if all three are queued before the readback, leaving the anchor
+        // and negative endpoint to upload on the first finger movement.
+        for(const stage of this.stages){ctx.drawImage(stage,0,0);ctx.getImageData(0,0,1,1);}
+        // Also preflight the actual alpha-composite path, not just opaque
+        // uploads; its first backing-store allocation must happen while idle.
+        for(const endpoint of [1,2]){
+          this.paint(source,w,h,{...fx,[tool]:(this.anchor+this.values[endpoint])/2},tool);
+          ctx.getImageData(0,0,1,1);
+        }
         this.timer=null;this.ready();
       }
     };
@@ -57,7 +73,8 @@ export class PhotoAdjustmentBlend {
     const span=this.values[endpoint]-this.anchor;
     const alpha=span?(value-this.anchor)/span:0;
     this.output??=document.createElement('canvas');
-    if(this.output.width!==w||this.output.height!==h){this.output.width=w;this.output.height=h;}
+    const ow=this.stages[0].width,oh=this.stages[0].height;
+    if(this.output.width!==ow||this.output.height!==oh){this.output.width=ow;this.output.height=oh;}
     const ctx=this.output.getContext('2d')!;ctx.globalAlpha=1;ctx.globalCompositeOperation='copy';ctx.drawImage(this.stages[0],0,0);
     ctx.globalCompositeOperation='source-over';ctx.globalAlpha=Math.max(0,Math.min(1,alpha));ctx.drawImage(this.stages[endpoint],0,0);ctx.globalAlpha=1;
     this.output.dataset.colorBackend='full-resolution-blend';

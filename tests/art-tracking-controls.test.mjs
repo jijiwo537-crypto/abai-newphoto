@@ -31,7 +31,10 @@ test('actual vector rendering isolates node randomness from material randomness'
  }finally{globalThis.document=old;invalidateTracking();}
 });
 test('tracking tools expose requested placement, two-state elements and paired outline sliders',()=>{
- assert.match(ui,/groups\(\['偵測','輪廓','連線','顏色'\]\)/);assert.match(ui,/groups\(\['元素','文字'\]\)/);assert.match(ui,/groups\(\['編輯','細節'\]\)/);
+ assert.match(ui,/groups\(\['偵測','輪廓','連線','顏色'\]\)/);assert.match(ui,/\['效果','節點','元素','遮罩'\]/);assert.match(ui,/groups\(\['編輯','細節'\]\)/);
+ assert.doesNotMatch(ui,/groups\(\['元素','文字'\]\)|角落文字|firstTrackingElementVisit/);
+ assert.equal(trackingDefaults.frame,false);
+ assert.equal(trackingDefaults.maxRadius,60);assert.match(ui,/tr\('大小','maxRadius',10,100\)/);
  assert.match(ui,/\['tree','標準'\]/);assert.doesNotMatch(ui,/最短路徑|折線|完成放置|區域大小|節點間距|像素大小|區域邊線/);
  assert.match(ui,/tr\('變化','variation',0,100\)/);assert.match(ui,/tr\('間距','minDistance',10,100\)/);
  assert.match(ui,/tr\('變化','sizeVariation',0,100\)/);assert.match(ui,/點擊圖片進行放置/);

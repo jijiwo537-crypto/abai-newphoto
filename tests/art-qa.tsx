@@ -22,6 +22,7 @@ if(query.has('halationAudit'))void import('./halation-performance-audit').then(m
 if(query.has('glyphglow'))void import('./art-glyph-glow-audit');
 if(query.has('relativeAudit'))void import('./relative-controls-audit').then(m=>m.auditRelativeControls());
 if(query.has('fineAudit'))void import('./editor-fine-slider-audit').then(m=>m.auditFineSlider()).catch(e=>fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify({kind:'fine-audit-error',error:String(e),stack:e.stack})}));
+if(query.has('catalogAudit'))void import('./editor-catalog-audit');
 if(query.has('editor')&&query.has('composeAudit'))void import('./editor-compose-audit');
 if(query.has('editor')&&query.has('exportAudit'))void import('./editor-export-lifecycle-audit');
 if(query.has('fixture')&&query.has('refinement'))void import('./art-refinement-audit').then(m=>m.auditArtRefinement());

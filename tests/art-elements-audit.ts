@@ -5,7 +5,9 @@ void(async()=>{
  const check=(name:string,pass:boolean,detail?:unknown)=>checks.push({name,pass,detail});
  while(!document.querySelector('.art-effect-list'))await frame();
  const click=(name:string)=>Array.from(document.querySelectorAll('button')).find(b=>b.textContent?.trim()===name)!.click();
- click('視覺追蹤');await wait();click('構圖');await wait();
+ click('視覺追蹤');await wait();click('元素');await wait();
+ check('composition renamed elements and text subpage removed',!document.querySelector('.art-subtabs')&&!document.body.textContent?.includes('角落文字'));
+ check('viewfinder starts off on first entry',(document.querySelector('fieldset[aria-label="取景框調整"]') as HTMLFieldSetElement).disabled);
  check('golden ratio and selector row removed',!document.body.textContent?.includes('黃金比例')&&!document.querySelector('.art-elements'));
  const group=(key:string)=>document.querySelector<HTMLElement>(`section[aria-label="${key}設定"]`)!;
  for(const name of ['取景框','圓圈']){
@@ -17,7 +19,7 @@ void(async()=>{
   check(name+' enabled while on',Array.from(section.querySelectorAll('input')).every(i=>i.matches(':enabled')));
   toggle('關閉').click();await wait();
  }
- click('節點');await wait();click('構圖');await wait();
+ click('節點');await wait();click('元素');await wait();
  check('reentry retains manual off states',Array.from(document.querySelectorAll('.art-element-stack fieldset')).every(f=>(f as HTMLFieldSetElement).disabled));
  const bounds=Array.from(document.querySelectorAll('.art-element-stack input')).map(i=>{const r=i.getBoundingClientRect();return{x:r.x,y:r.y,bottom:r.bottom,width:r.width};});
  const panel=document.querySelector('.art-controls')!.getBoundingClientRect();

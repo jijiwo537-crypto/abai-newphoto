@@ -15,6 +15,8 @@ const files=await Promise.all(colors.slice(0,params.has('single')?1:params.has('
 const floating=params.has('swaps')?[{id:'qa-float-a',type:'image',src:URL.createObjectURL(files[9]),x:500,y:220,w:120,h:90,rot:0,opacity:100},{id:'qa-float-b',type:'image',src:URL.createObjectURL(files[1]),x:680,y:350,w:120,h:90,rot:0,opacity:100}]:[];
 createRoot(document.getElementById('root')!).render(params.has('textureAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialState={{canvasRatio:'1:1',holeCount:0,patternType:'dot',dotSize:15,dotGap:0,dotSquash:50}}/>
+ : params.has('busyEdit')
+ ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{holeCount:30,layout:'mask-right',holeSize:15,holeType:'star',glowMode:'image',holes:Array.from({length:30},(_,i)=>({id:`busy-${i}`,x:30+(i%5)*48,y:55+Math.floor(i/5)*140,side:'mask'}))}}/>
  : params.has('baseAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,2)} initialState={{holeCount:1,layout:'mask-right',holeSize:65,holeType:'circle',holes:[{id:'mask-hole',x:100,y:100,side:'mask'}],objects:[{id:'cover',type:'shape',kind:'rect',filled:true,color:'#121212',x:350,y:200,w:100,h:200,rot:0}]}}/>
  : params.has('v10')

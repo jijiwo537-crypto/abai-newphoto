@@ -1317,7 +1317,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const objFxCache = useRef<Map<string, { key: string; cv: HTMLCanvasElement }>>(new Map());
   const regionBlendTool=useRef('');
   const regionBlend=useRef<PhotoAdjustmentBlend|null>(null);
-  regionBlend.current??=new PhotoAdjustmentBlend(()=>regionPaintRef.current());
+  const regionWarmStage=useRef<{index:number;canvas:HTMLCanvasElement}|null>(null);
+  const regionSceneKey=useRef('');
+  const regionSceneStamp=useRef<{key:string;renderer:any;scale:number;source:CanvasImageSource;w:number;h:number;sceneW:number;sceneH:number}|null>(null);
+  regionBlend.current??=new PhotoAdjustmentBlend(()=>{
+    // Warming the cache does not change the visible result. Repainting the
+    // exact collage here queues avoidable GPU work just before the first drag.
+    if(import.meta.env.DEV&&canvasRef.current)canvasRef.current.dataset.regionBlendReady=String(regionBlend.current?.isReady);
+  });
   useEffect(()=>()=>regionBlend.current?.clear(),[]);
   /** 每顆物件上一次的「效果參數指紋 / 算完的時間 / 花了多久」——
       用來判斷「這顆的參數是不是正在被連續改動」（也就是手指還在滑桿上）。 */
@@ -1355,6 +1362,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
    */
   const fxCanvasOf = useCallback((o: any, isMain = false, onScreenPx = 0): CanvasImageSource | null => {
     if (!o.img) return null;
+    const warm=regionWarmStage.current;
+    if(warm&&o.id?.startsWith(`region-fx-${warm.index}@`))return warm.canvas;
     const shape = {
       r: o.imgRadius || 0, f: o.feather || 0,
       sw: o.imgStrokeWidth || 0, sg: o.imgStrokeGap || 0, sc: o.imgStrokeColor || '#FFFFFF', sd: o.imgStrokeDash || 0,
@@ -1469,12 +1478,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const k = Math.min(1, cap / Math.max(w0, h0));
     const iw = Math.max(1, Math.round(w0 * k)), ih = Math.max(1, Math.round(h0 * k));
     const selectedBase=regionPhoto&&isMain&&o.id?.startsWith(`region-fx-${selectedRegionPhotoRef.current??0}@`);
-    if(selectedBase&&regionBlendTool.current) {
-      regionBlend.current!.prepare(srcEl,iw,ih,o.fx||{},regionBlendTool.current);
-      if(regionSliderHeld.current) {
-        const blended=regionBlend.current!.paint(srcEl,iw,ih,o.fx||{},regionBlendTool.current);
-        if(blended)return blended;
-      }
+    const main=canvasRef.current;
+    if(selectedBase&&regionBlendTool.current&&!warm&&main&&main.width*main.height<=4_000_000&&!animRef.current&&!isVid&&!objectsRef.current.some(v=>isVideoEl(v.img))) {
+      const renderer=renderToCanvasRef.current,scale=previewScaleRef.current;
+      const stamp=regionSceneStamp.current;
+      if(stamp?.key!==regionSceneKey.current||stamp.scale!==scale||stamp.sceneW!==main.width||stamp.sceneH!==main.height)regionBlend.current!.clear();
+      regionSceneStamp.current={key:regionSceneKey.current,renderer,scale,source:srcEl,w:iw,h:ih,sceneW:main.width,sceneH:main.height};
+      regionBlend.current!.prepare(srcEl,iw,ih,o.fx||{},regionBlendTool.current,(photo,fx)=>{
+        const previous=photoRegionRef.current,index=selectedRegionPhotoRef.current??0;
+        const capture=document.createElement('canvas');
+        if(!previous)return photo;
+        try {
+          regionWarmStage.current={index,canvas:photo};
+          photoRegionRef.current={...previous,photos:previous.photos.map((p,i)=>i===index?{...p,fx}:p)};
+          renderer(capture,scale,true);
+          return capture;
+        }finally{photoRegionRef.current=previous;regionWarmStage.current=null;}
+      });
     }
     if (hit && hit.key === key) return hit.cv;
     /* cacheSource：o.img 是載進來就不再變的一張 <img>，同一個尺寸的來源像素
@@ -3242,6 +3262,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     photoRegionRef.current=next;
     if(live)regionLiveUntil.current=performance.now()+350;
     if(!live){setPhotoRegion(next);return;}
+    if(regionSliderHeld.current&&regionBlend.current?.isReady&&regionSceneStamp.current?.key===regionSceneKey.current){regionPaintRef.current();return;}
     if(!regionPaintRaf.current)regionPaintRaf.current=requestAnimationFrame(()=>{regionPaintRaf.current=0;regionPaintRef.current();});
   };
   const finishRegionEdit=()=>{
@@ -3249,12 +3270,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     regionBlend.current?.setHeld(false);
     // Replace the interaction composite with the exact shared pipeline now,
     // not at the thumbnail debounce deadline.
-    objFxCache.current.clear();
-    regionPaintRef.current();
     regionLiveUntil.current=performance.now()+350;
     if(regionThumbTimer.current!==null)clearTimeout(regionThumbTimer.current);
     regionThumbTimer.current=setTimeout(()=>{regionThumbTimer.current=null;if(!regionSliderHeld.current)regionPaintRef.current();},400);
-    if(regionPaintRaf.current){cancelAnimationFrame(regionPaintRaf.current);regionPaintRaf.current=0;regionPaintRef.current();}
+    if(regionPaintRaf.current){cancelAnimationFrame(regionPaintRaf.current);regionPaintRaf.current=0;}
+    regionPaintRef.current();
     setPhotoRegion(photoRegionRef.current);
   };
   const regionCoordinates=(clientX:number,clientY:number)=>{
@@ -4580,11 +4600,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     stripeN, stripeDir, stripeA, stripeB, holeType, customText, getHoleSize, holeAngle, maskScale,
     objects, shapeSel, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching,
     fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle]);
+  // Committing the selected slider changes React's callback identity, but not
+  // the cached scene endpoints. Only actual scene edits invalidate those.
+  regionSceneKey.current=JSON.stringify([imageState,imageState?.img?.src,maskImageState?.img?.src,
+    photoRegion&&{...photoRegion,photos:photoRegion.photos.map((p,i)=>i===(selectedRegionPhotoRef.current??0)?{...p,fx:{...p.fx,[regionBlendTool.current]:0}}:p)},
+    swapSource,selectedRegionPhoto,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,
+    patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,
+    objects,shapeSel,selectedObj,selectedTarget,selectedPatternSide,baseSelected,editingTextId,guides,tuningEdge,objDragging,objPinching,objStretching,
+    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle]);
   const lastPatternPaintRef = useRef<{identity:object;holes:any[];scale:number}|null>(null);
   const forceFullPreviewRef = useRef(false);
   const linkGlowTilesRef = useRef<LinkGlowTiles|null>(null);
   useEffect(()=>()=>linkGlowTilesRef.current?.dispose(),[]);
-  const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1) => {
+  const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1, previewCapture=false) => {
     const photoRegion=photoRegionRef.current;
     const debugPaintStart = import.meta.env.DEV ? performance.now() : 0;
     const {selectedTarget, selectedPatternSide, selectedObj, baseSelected} = chromeSelectionRef.current;
@@ -4592,6 +4620,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // All painting routes share this guard, including pause/selection effects.
     // Resizing a canvas clears it immediately, so never resize during the tween.
     if (targetCanvas === canvasRef.current && performance.now() < motionTransitionUntilRef.current) return;
+    const stamp=regionSceneStamp.current,index=selectedRegionPhotoRef.current??0,photo=photoRegion?.photos[index];
+    if(targetCanvas===canvasRef.current&&regionSliderHeld.current&&!previewCapture&&!animRef.current&&!viewPinchRef.current&&stamp?.key===regionSceneKey.current&&stamp.scale===renderScale&&stamp.sceneW===targetCanvas.width&&stamp.sceneH===targetCanvas.height&&photo){
+      const scene=regionBlend.current?.paint(stamp.source,stamp.w,stamp.h,photo.fx||{},regionBlendTool.current);
+      if(scene){
+        const g=get2dWide(targetCanvas)!;g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='copy';g.drawImage(scene,0,0);g.globalCompositeOperation='source-over';
+        if(import.meta.env.DEV){targetCanvas.dataset.regionFxSize=JSON.stringify([stamp.w,stamp.h]);targetCanvas.dataset.regionFxBackend='full-resolution-scene-blend';targetCanvas.dataset.regionFxMs='0';targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount||0)+1);targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);}
+        return;
+      }
+    }
     const { baseW, baseH, globalScale: gs } = imageState;
     /* alpha:true —— 拼圖的畫布本來就會被底圖與遮罩鋪滿，
        所以留不留 alpha 看起來一樣；留著是為了遮罩以外那圈不要被填成黑色。 */
@@ -4602,7 +4639,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     /* 1 個 CSS 像素等於幾個畫布像素。
        選取的虛線一律用它換算 —— 畫布是「預覽放多大就多畫多少像素」，
        線寬若照畫布像素寫死，放大預覽時看起來就會跟著變粗。 */
-    const isMain = targetCanvas === canvasRef.current;
+    const isMain = targetCanvas === canvasRef.current || previewCapture;
     const uiRect = (isMain ? motionFrameRef.current || targetCanvas : targetCanvas).getBoundingClientRect();
     const sw = baseW * s;
     const sh = baseH * s;
@@ -6821,7 +6858,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if (isMain && !windowed) {
       const nowT = performance.now();
       // 手勢期間不額外縮製歷史縮圖；畫面仍以原解析度繪製。
-      if (activePointers.current.size === 0 && !regionSliderHeld.current && nowT > regionLiveUntil.current && nowT - thumbAtRef.current > 400) {
+      if (!previewCapture && activePointers.current.size === 0 && !regionSliderHeld.current && nowT > regionLiveUntil.current && nowT - thumbAtRef.current > 400) {
         thumbAtRef.current = nowT;
         try {
           let tc = thumbRef.current;

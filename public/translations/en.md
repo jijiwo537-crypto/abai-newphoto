@@ -477,7 +477,6 @@
 | 玻璃磚 | Glass blocks |
 | 珍珠光澤 | Pearlescence |
 | 磷光暈 | Phosphor glow |
-| 結晶化 | Crystallize |
 | 胞壁寬 | Cell border width |
 | 胞壁深 | Cell border depth |
 | 色度偏移 | Chroma shift |
