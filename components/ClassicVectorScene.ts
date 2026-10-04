@@ -80,11 +80,13 @@ export class ClassicVectorScene {
     const alpha=(node:Element)=>{let a=1;for(let n:Element|null=node;n&&n!==host;n=n.parentElement)a*=Number(getComputedStyle(n).opacity);return a;};
     const level=(node:Element)=>{
       const wrapper=node.closest<HTMLElement>('[data-layout-wrapper], [data-floating-id]');
-      return Number(wrapper?.style.zIndex||0);
+      const ink=Number(wrapper?.style.zIndex||0),page=Number(node.closest<HTMLElement>('[data-page-id]')?.style.zIndex||0);
+      return page>ink?page+ink:ink;
     };
     const owned=(node:Element)=>{const id=node.closest('[data-floating-id]')?.getAttribute('data-floating-id');return !!id&&this.entries.has(id);};
     for(const page of host.querySelectorAll<HTMLElement>(':scope > [data-page-id]')){
-      jobs.push({z:-1000,paint:()=>{const {m,w,h}=cssMatrix(page);setScreen(m);g.fillStyle=getComputedStyle(page).backgroundColor;g.fillRect(0,0,w,h);this.pagePatternPainter?.(g,page.dataset.pageId!,w,h);}});
+      const pageZ=Number(page.style.zIndex||-1000);if(pageZ>=z)continue;
+      jobs.push({z:pageZ,paint:()=>{const {m,w,h}=cssMatrix(page);setScreen(m);g.fillStyle=getComputedStyle(page).backgroundColor;g.fillRect(0,0,w,h);this.pagePatternPainter?.(g,page.dataset.pageId!,w,h);}});
     }
     // Layout SVG image CTMs include cell cropping, rotation, page pose and zoom.
     for(const node of host.querySelectorAll<SVGGraphicsElement>('[data-layout-wrapper] svg image, [data-layout-wrapper] svg rect')){
