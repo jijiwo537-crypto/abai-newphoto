@@ -1361,6 +1361,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionColour=useRef<PhotoSceneColour|null>(null);
   const regionColourActive=useRef(false);
   const regionSpatialActive=useRef(false);
+  const regionPrimedSource=useRef('');
   const regionPlacements=useRef<FxPlacement[]|null>(null);
   const regionSpatialInput=useRef<HTMLCanvasElement|null>(null);
   const regionSpatial=useRef<{key:string;scale:number;scene:FxScene;input:HTMLCanvasElement;shown?:HTMLCanvasElement}|null>(null);
@@ -1595,15 +1596,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     if (!hasShape) {
       let result=base;
-      if(regionPhoto&&isMain&&reuse&&base!==reuse){
+      if(regionPhoto&&isMain&&reuse&&base!==reuse&&!regionSliderHeld.current&&!regionTouches.current.size){
         // Geometry-only rendering needs immutable photo pixels, not an entire
         // native-size shader pool. Release the pool immediately after copying,
         // including when the user never pauses long enough for an idle job.
         const snapshot=document.createElement('canvas');snapshot.width=base.width;snapshot.height=base.height;
-        snapshot.getContext('2d')!.drawImage(base,0,0);result=snapshot;regionStaticSnapshot.current={cv:snapshot};
+        snapshot.getContext('2d')!.drawImage(base,0,0);snapshot.dataset.regionImmutable='1';result=snapshot;regionStaticSnapshot.current={cv:snapshot};
         compactPhotoFxSurface(reuse);releasePhotoFxReadbacks(srcEl);
       }
-      objFxCache.current.set(o.id, { key, cv: result }); finish(); return result;
+      objFxCache.current.set(o.id, { key, cv: result });
+      // Explicitly release replaced native snapshots. Waiting for WebKit's
+      // garbage collection can retain dozens of 50 MB photo buffers after
+      // repeated edits and trigger a tab-process restart.
+      if(regionPhoto&&hit?.cv!==result&&hit?.cv instanceof HTMLCanvasElement&&hit.cv.dataset.regionImmutable==='1')hit.cv.width=hit.cv.height=1;
+      finish(); return result;
     }
 
     /* 這一段是經典拼圖 FloatingImageLayer 那條管線的逐段複製（同樣的函式、
@@ -2099,6 +2105,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(cv===regionStaticSnapshot.current?.cv)return;
       const snapshot=document.createElement('canvas');snapshot.width=cv.width;snapshot.height=cv.height;
       snapshot.getContext('2d')!.drawImage(cv,0,0);
+      snapshot.dataset.regionImmutable='1';
       objFxCache.current.set(id,{key:cached.key,cv:snapshot});regionStaticSnapshot.current={cv:snapshot};
       // The immutable native-resolution snapshot owns these pixels now. The
       // editing compositor has its own warm context; retaining a second full
@@ -2139,6 +2146,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(selectedKey===null)return;
     let cancelled=false;
     void(async()=>{
+      // Prime the actual source/pool while the imported photo is idle, before
+      // opening the editor. Shader-only warm-up leaves the first texture upload
+      // and framebuffer allocation on the first effect click in WebKit.
+      await awaitPhotoIdle();
+      const source=currentSrc&&decodedRegionPhotos.current.get(currentSrc);
+      if(!cancelled&&source&&regionPrimedSource.current!==currentSrc&&!regionSpatial.current?.shown){
+        regionSpatialInput.current??=document.createElement('canvas');
+        const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height,k=Math.min(1,1600/Math.max(w,h));
+        applyPhotoFx(source,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),{...FX_PARAM_DEFAULTS,fxMosaic:100},{cacheSource:true,gpuSurface:true,out:regionSpatialInput.current});
+        regionPrimedSource.current=currentSrc!;
+      }
       // One shader family per idle slot. Real pointer interactions take
       // priority; shader compilation never changes preview quality.
       for(const id of ['fxMosaic',...FX_DEFS.filter(d=>d.id!=='fxMosaic').map(d=>d.id)]){
@@ -4849,7 +4867,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
       if(regionColourActive.current&&original&&supportsSceneColour(photo?.fx)&&!sceneGeometryGesture&&!regionTouches.current.size&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
         regionColour.current??=new PhotoSceneColour();const colour=regionColour.current;
-        const signature=regionGpuSceneKey.current;
+        // Colour endpoints contain the actual cropped photograph, not just
+        // coverage. Unlike the spatial compositor they cannot reuse pixels
+        // captured before a pan/zoom of that photograph.
+        const signature=regionGpuSceneKey.current+'|crop:'+JSON.stringify([photo?.zoom,photo?.offsetX,photo?.offsetY]);
         if(!colour.ready||colour.signature!==signature||colour.width!==targetCanvas.width||colour.height!==targetCanvas.height||colour.scale!==renderScale){
           if(import.meta.env.DEV){targetCanvas.dataset.colourRebuilds=String(Number(targetCanvas.dataset.colourRebuilds||0)+1);targetCanvas.dataset.sceneRebuildReason=JSON.stringify({key:colour.signature!==signature,scale:[colour.scale,renderScale],size:[colour.width,colour.height,targetCanvas.width,targetCanvas.height]});}
           const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
@@ -4873,7 +4894,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             const previous=regionSpatial.current;previous?.shown?.remove();
             if(previous){previous.scene.black.width=previous.scene.black.height=previous.scene.white.width=previous.scene.white.height=1;}
             regionSpatialInput.current??=document.createElement('canvas');
-            regionSpatial.current={key:signature,scale:renderScale,scene:{black:scenes[1],white:scenes[2],placements},input:regionSpatialInput.current};
+            // Spatial coverage does not include crop coordinates: those are
+            // UV uniforms. Keeping the colour-only crop suffix here discarded
+            // the already primed scene on the very first effect click.
+            regionSpatial.current={key:regionGpuSceneKey.current,scale:renderScale,scene:{black:scenes[1],white:scenes[2],placements},input:regionSpatialInput.current};
             const prepared=regionSpatial.current;
             void awaitPhotoIdle().then(async()=>{
               if(regionSpatial.current!==prepared||leavingRef.current||!regionColourActive.current)return;
@@ -4881,14 +4905,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
               // Compile-only preflight misses the costly first real texture
               // upload/pool allocation. Prime the actual source and compositor
               // offscreen; no effect is applied to the user's photo here.
-              applyPhotoFx(original,iw,ih,{...FX_PARAM_DEFAULTS,...photo?.fx,fxMosaic:100},{cacheSource:true,gpuSurface:true,out:prepared.input,scene:prepared.scene});
+              // Allocate/upload offscreen only while this spatial surface has
+              // NEVER been presented. A visible effect surface must never be
+              // repainted by a delayed warm-up task.
+              if(!prepared.shown&&supportsSceneColour(photoRegionRef.current?.photos[index]?.fx))
+                applyPhotoFx(original,iw,ih,{...FX_PARAM_DEFAULTS,...photo?.fx,fxMosaic:100},{cacheSource:true,gpuSurface:true,out:prepared.input,scene:prepared.scene});
               // These two families additionally upload a LUT / analyze the
               // photograph's highlights. Prime them in separate idle slots.
               for(const id of ['fxLowfi','fxExposureSpill']){
                 if(id==='fxLowfi')await warmLowfiLut();
                 await awaitPhotoIdle();
                 if(regionSpatial.current!==prepared||leavingRef.current||!regionColourActive.current)return;
-                applyPhotoFx(original,iw,ih,{...FX_PARAM_DEFAULTS,...photo?.fx,[id]:100},{cacheSource:true,gpuSurface:true,out:prepared.input,scene:prepared.scene});
+                warmPhotoFxSurface(prepared.input,id,prepared.scene);
               }
             }).catch(()=>{/* Optional preflight must never interrupt editing. */});
             colour.canvas.dataset.photoFxSize=JSON.stringify([iw,ih]);
@@ -5141,7 +5169,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const regionDecoded = new Map(decodedRegionPhotos.current);
     const regionForPaint = photoRegion ? {...photoRegion,photos:photoRegion.photos.map((p,i)=>{
       const original = decodedRegionPhotos.current.get(p.src);
-      if (!original || ((!p.fx || !hasPhotoFx(p.fx)) && !(isMain&&regionBlendTool.current&&i===(selectedRegionPhotoRef.current??0)))) return p;
+      // Endpoint captures must replace even an UNEDITED photo. Otherwise
+      // black and white endpoints both contain the original, coverage is zero,
+      // and the resident compositor silently displays an unchanged image.
+      const capturingPhoto=regionWarmStage.current?.index===i;
+      if (!original || (!capturingPhoto&&(!p.fx || !hasPhotoFx(p.fx)) && !(isMain&&regionBlendTool.current&&i===(selectedRegionPhotoRef.current??0)))) return p;
       const fxStarted = import.meta.env.DEV ? performance.now() : 0;
       const onPx=Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*s;
       const processed = fxCanvasOf({...p,id:`region-fx-${i}@${p.src}`,img:original}, isMain,onPx);

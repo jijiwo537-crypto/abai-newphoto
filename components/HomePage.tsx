@@ -1322,9 +1322,9 @@ export const HomePage: React.FC<HomePageProps> = ({
               />
             </>
           )}
-          <div className="relative min-h-[92px] px-5 py-6 flex items-center justify-between gap-5">
-            <span className="text-[18px] font-semibold tracking-[0.06em] text-white">藝術效果</span>
-            <span className="h-8 pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-semibold tracking-[0.04em] flex items-center gap-1 shrink-0">
+          <div className="relative px-[18px] pt-7 pb-4">
+            <span className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">藝術效果</span>
+            <span className="mt-3 h-[26px] w-fit pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 shrink-0">
               立即使用
               {pillArrow}
             </span>
