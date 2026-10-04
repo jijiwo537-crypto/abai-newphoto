@@ -1,5 +1,6 @@
 import {applyPhotoFx, type PhotoFx} from './photoFx';
 import {get2dWide} from './colorSpace';
+import {awaitPhotoIdle} from './photoInteractionIdle';
 
 // Same full-density interaction strategy as ImageEditor: prepare immutable
 // endpoints while idle, then composite them instead of reprocessing every pixel
@@ -32,7 +33,11 @@ export class PhotoAdjustmentBlend {
     this.anchor=Math.max(-100,Math.min(100,Number(fx[tool])||0));
     this.values=[this.anchor,-100,100];
     const generation=this.generation;
-    const build=()=>{
+    const build=async()=>{
+      // Exact endpoint captures can flush a multi-megapixel GPU readback.
+      // A short timer is NOT idle: it used to interrupt the next tab click.
+      // Recheck the generation after waiting; obsolete editors must not build.
+      await awaitPhotoIdle();
       if(generation!==this.generation)return;
       // Do not suspend preparation for the entire gesture. A user can touch
       // the slider before idle preparation finishes; waiting for pointer-up

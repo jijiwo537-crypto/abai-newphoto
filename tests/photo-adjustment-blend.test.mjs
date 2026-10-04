@@ -24,3 +24,8 @@ test('only selected creative base preview blends; release and export retain exac
  assert.match(collage,/stamp\?\.key===regionSceneKey.current/);
  assert.match(collage,/\[regionBlendTool.current\]:0/);
 });
+test('background endpoint captures wait for interaction idle and cancel obsolete editors',()=>{
+ assert.match(helper,/import \{awaitPhotoIdle\} from '\.\/photoInteractionIdle'/);
+ assert.match(helper,/const build=async\(\)=>\{[\s\S]*?await awaitPhotoIdle\(\);\s*if\(generation!==this.generation\)return;/);
+ assert.match(helper,/if\(this.stages.length<3\)this.timer=setTimeout\(build,32\)/);
+});
