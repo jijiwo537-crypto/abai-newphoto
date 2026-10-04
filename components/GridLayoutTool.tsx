@@ -11,6 +11,8 @@ import { idleDefaults } from '../utils/animationDefaults';
 import { ArrowLeft, ChevronLeft, Download, Plus, Trash2, RotateCw, Sliders, SlidersHorizontal, LayoutGrid, Sparkles, Asterisk, MoveUp, MoveDown, Check, RefreshCw, Maximize2, Move, Smartphone, Image as ImageIcon, Crop, Palette, Magnet, Type, Bold, Italic, Copy, GalleryHorizontal, ChevronRight, Heart, Circle, Square, Star, Hexagon, Blocks, MessageCircle, Bookmark, Volume2, VolumeX, Shapes, Film, Play, Pause } from 'lucide-react';
 import { Icon } from './Icon';
 import { ClassicVectorScene, sceneRectBounds, unionSceneBounds, type SceneBounds } from './ClassicVectorScene';
+import {MASK_SHAPE_ITEMS,isBackdropMask,maskGeometry,maskDefaults,drawBackdropMask} from '../utils/backdropMasks';
+import {BackdropMaskControls} from './BackdropMaskControls';
 import { paintCachedClassicGlow } from './ClassicGlowCache';
 import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
@@ -800,6 +802,7 @@ export const shapePathD = (
   gridDotRadius = Math.min(gridBaseW, gridBaseH) / 160 * 2.325,
   ringReveal = 1,
 ): string => {
+  if(kind.startsWith('mask-'))kind=kind.includes('circle')||kind.includes('feather')?'circle':'square';
   const a = w / 2, b = h / 2, cx = a, cy = b;
   /* gridBaseW/H 會跟著「等比例縮放」一起變，但四邊擠壓時保持不動。
      因此縮放只會把整張網格等比放大；只有變形才會增加重複單位。 */
@@ -1149,6 +1152,7 @@ const STRETCH_OUTLINE_KINDS = new Set([
   'pentagon', 'hexagon', 'star', 'star8', 'heart', 'ellipse',
 ]);
 export const shapeSupportsStretch = (shape: string | undefined, filled: boolean | undefined, holeType?: string) => {
+  if(isBackdropMask(shape))return true;
   if (!shape || shape === 'line') return false;
   if (shape === 'wave' || shape === 'lightning-wave' || GRID_SHAPE_KINDS.has(shape)) return true;
   if (shape === 'hole') return false;
@@ -1441,6 +1445,15 @@ const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval
  */
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
   const maskId = React.useId().replace(/:/g, '');
+  if(isBackdropMask(item.kind))return <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+    <defs><clipPath id={`material-${maskId}`}>{maskGeometry(item.kind)==='circle'?<circle cx="12" cy="12" r="10"/>:<rect x="2" y="2" width="20" height="20"/>}</clipPath></defs>
+    <g clipPath={`url(#material-${maskId})`}>
+      {item.kind==='mask-mosaic'||item.kind==='mask-bricks'?Array.from({length:25},(_,i)=><rect key={i} x={2+i%5*4} y={2+Math.floor(i/5)*4} width={item.kind==='mask-bricks'?3.2:4} height={item.kind==='mask-bricks'?3.2:4} fill="currentColor" opacity={.2+(i*7%11)/14}/> ):<>
+      <rect x="2" y="2" width="20" height="20" fill="currentColor" opacity=".18"/>
+      {item.kind==='mask-negative'?<path d="M12 2H22V22H12Z" fill="currentColor"/>:<>{[5,9,13,17].map((y,i)=><path key={y} d={`M2 ${y}H22`} stroke="currentColor" strokeWidth="2" opacity={item.kind==='mask-frost-feather'?.25+i*.1:.5}/>)}</>}
+      </>}
+    </g><path d={maskGeometry(item.kind)==='circle'?'M22 12A10 10 0 1 1 2 12A10 10 0 1 1 22 12':'M2 2H22V22H2Z'} fill="none" stroke="currentColor" strokeWidth=".8" opacity={item.kind==='mask-frost-feather'?.4:1}/>
+  </svg>;
   const isLine = item.kind === 'line';
   const isGridGlyph = GRID_SHAPE_KINDS.has(item.kind);
   /* viewBox 與圖案的框一樣大 —— 每一顆圖案的長邊都剛好等於 size（預設 20px），
@@ -2237,6 +2250,7 @@ export const ShapeEditorPanel: React.FC<{
     </div>
   );
 
+  if(isBackdropMask(layer.shape))return <BackdropMaskControls kind={layer.shape!} settings={layer} onChange={onChange} onInteraction={setTuning}/>;
   return (
     <div
       className="max-w-md mx-auto h-full animate-in fade-in duration-300"
@@ -3826,6 +3840,10 @@ const getPreviewImg = (src: string) => {
 };
 
 interface FloatingImage {
+  maskAmount?:number;
+  maskCells?:number;
+  maskRefract?:number;
+  maskFeather?:number;
   id: string;
   src: string;
   x: number;
@@ -6161,6 +6179,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       // Sorting is driven by the page's shared frame clock, not a second loop.
       animateUntil: sortPage ? 0 : shift.at + 220,
       paint: (ctx, density) => {
+        const backdropRoot=ctx.getTransform();
         // Live slider values belong to the renderer too, not only the React
         // editor. Read the latest draft at paint time so a queued scene frame
         // cannot replay the pre-drag glow/style while React is committing.
@@ -6216,7 +6235,10 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           + (motionFrame?.dy ?? 0) * image.height * image.scale);
         ctx.rotate((image.rotation + (motionFrame?.rot ?? 0)) * Math.PI / 180);
         ctx.scale(scale * (motionFrame?.fx ?? 1), scale);
-        if (isScenePhoto) {
+        if(isBackdropMask(image.shape)){
+          const source=scene.backdrop(ctx,(dragShift?.live?450100:60)+stackIndex*2,density,backdropRoot);
+          drawBackdropMask(ctx,image.shape!,image.width,image.height,image,source);
+        } else if (isScenePhoto) {
           const source = getPreviewImg(image.src);
           if (source.complete && source.naturalWidth) {
             const cx = image.x + image.width / 2, cy = image.y + image.height / 2;
@@ -8416,6 +8438,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
       y: (rect ? rect.centerY : previewH / 2) - h / 2,
       width: w, height: h, scale: 1, rotation: (it as any).rot || 0,
       shape: it.kind,
+      ...(isBackdropMask(it.kind)?maskDefaults(it.kind):{}),
       shapeItemId: it.id,
       // 借來的圖案：kind 一律是 'hole'，真正畫哪一顆看 holeType
       holeType: (it as HoleShapeItem).hole,
@@ -9936,6 +9959,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
   const containerRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (!pagesContainerRef.current || !containerRef.current) return;
+    vectorScene.imageResolver=getPreviewImg;
+    vectorScene.pagePatternPainter=(ctx,id,w,h)=>{const page=pagesRef.current.find(p=>p.id===id);if(page)paintPattern(ctx,w,h,pagePattern(page));};
     return vectorScene.attach(pagesContainerRef.current, containerRef.current, () => kRef.current || 1);
   }, [vectorScene]);
   useLayoutEffect(() => {
@@ -13098,6 +13123,16 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     };
     for (const fImg of layers) {
       const frame = fImg.isVideo ? null : motionFrame;
+      if(isBackdropMask(fImg.shape)){
+        ctx.save();try{
+          ctx.globalAlpha*=((fImg.opacity??100)/100)*(frame?.a??1);
+          ctx.scale(scaleFactor,scaleFactor);
+          ctx.translate(fImg.x+fImg.width/2+(frame?.dx??0)*fImg.width*fImg.scale,fImg.y+fImg.height/2+(frame?.dy??0)*fImg.height*fImg.scale);
+          ctx.rotate((fImg.rotation+(frame?.rot??0))*Math.PI/180);
+          ctx.scale(fImg.scale*(frame?.k??1)*(frame?.fx??1),fImg.scale*(frame?.k??1));
+          drawBackdropMask(ctx,fImg.shape!,fImg.width,fImg.height,fImg);
+        }finally{ctx.restore();}continue;
+      }
       if (fImg.shape || fImg.text !== undefined) {
         // Compose in physical target coordinates. Object-local scratch bounds
         // cannot be compared to page-local canvas dimensions after translation
@@ -16583,6 +16618,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                         ['邊框', lineList.filter(i => !GRID_SHAPE_KINDS.has(i.kind))],
                         ['線條', ADD_SHAPE_ITEMS.filter(i => SPECIAL_LINE_KINDS.has(i.kind))],
                         ['網格', ADD_SHAPE_ITEMS.filter(i => GRID_SHAPE_KINDS.has(i.kind))],
+                        ['遮罩', MASK_SHAPE_ITEMS],
                       ] as const);
                     })().map(([label, list]) => (
                       <div key={label} className="mb-3">
@@ -16592,7 +16628,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                             <button
                               key={it.id}
                               onClick={() => handleAddShapeLayer(it)}
-                              aria-label={it.id}
+                              aria-label={'label' in it ? String(it.label) : it.id}
+                              title={'label' in it ? String(it.label) : it.id}
                               className="h-11 rounded-[10px] bg-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85"
                             >
                               {(it as any).hole

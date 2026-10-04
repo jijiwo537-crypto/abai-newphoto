@@ -20,7 +20,7 @@ export async function auditArtRefinement(){
   click('字符');await measure('ASCII 字符');click('範圍');await measure('ASCII 範圍');click('效果');await settle();click('視覺追蹤');await settle();
   for(const [tab,section] of [['節點','偵測'],['節點','輪廓'],['節點','連線'],['節點','顏色'],['構圖','元素'],['遮罩','編輯']]){click(tab);await settle();click(section);await measure(tab+'/'+section);}
   click('構圖');await settle();click('元素');await settle();for(const name of ['圓圈','黃金比例']){click(name);await measure('元素/'+name);}
-  click('遮罩');await settle();click('編輯');await settle();await change('數量',30);click('材質');await settle();click('霧玻璃');click('負片');await settle();click('細節');await measure('30 遮罩/細節');
+  click('遮罩');await settle();click('編輯');await settle();await change('數量',30);click('材質');await settle();click('毛玻璃');click('負片');await settle();click('細節');await measure('30 遮罩/細節');
   await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify({kind:'art-slider-refinement',ua:navigator.userAgent,input:'synthetic real mounted controls',frames})});
   click('效果');await settle();
  }

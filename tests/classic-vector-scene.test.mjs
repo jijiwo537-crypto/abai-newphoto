@@ -4,7 +4,7 @@ import {build} from 'esbuild';
 
 // Geometry/layer regression tests without a browser GPU. Visual QA additionally
 // runs grid-qa.html in iOS Simulator Safari.
-const compiled = (await build({entryPoints:[new URL('../components/ClassicVectorScene.ts', import.meta.url).pathname],bundle:true,write:false,format:'esm',platform:'node',target:'es2022'})).outputFiles[0].text;
+const compiled = (await build({entryPoints:[new URL('../components/ClassicVectorScene.ts', import.meta.url).pathname],bundle:true,write:false,format:'esm',platform:'node',target:'es2022',loader:{'.jpg':'text'}})).outputFiles[0].text;
 const {ClassicVectorScene,sceneRectBounds,unionSceneBounds} = await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
 let nextFrame = 0;
 globalThis.requestAnimationFrame = () => ++nextFrame;

@@ -1,5 +1,7 @@
 
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
+import {MASK_SHAPE_ITEMS,isBackdropMask,maskDefaults,drawBackdropMask,disposeBackdropMasks} from '../utils/backdropMasks';
+import {BackdropMaskControls} from './BackdropMaskControls';
 import { previewViewport } from '../utils/previewViewport';
 import { LinkGlowTiles } from '../utils/linkGlowTiles';
 import { useKeyboardRecovery } from '../utils/useKeyboardRecovery';
@@ -2169,6 +2171,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [, setForceRender] = useState(0);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  useEffect(()=>{const canvas=canvasRef.current;return()=>{if(canvas)disposeBackdropMasks(canvas);};},[imageState?.img]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   /* 進到顏色調整頁時捲回最上面 —— 不然會沿用剛剛那一頁捲到哪就停在哪 */
   useLayoutEffect(() => {
@@ -2925,6 +2928,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const h = it.ratio ? Math.max(4, Math.round(w * it.ratio)) : w;
       return {
         id, type: 'shape', kind: it.kind, hole: it.hole, filled: it.filled, shapeItemId: it.id,
+        ...(isBackdropMask(it.kind)?maskDefaults(it.kind):{}),
         lineBase: (it.kind === 'wave' || it.kind === 'lightning-wave')
           ? Math.max(8, Math.round(short * 0.24)) : Math.max(w, h),
         textureBaseW: w, textureBaseH: h,
@@ -4838,7 +4842,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const priorPatternPaint = lastPatternPaintRef.current;
     const canRetain = isMain && !windowed && !animRef.current && !motionTargetFlashRef.current && !hideChromeRef.current
       && linkMode === 'none' && glowIdle === 'none' && !guides.length
-      && !isVideoEl(imageState.img) && !objects.some(o => isVideoEl(o.img));
+      && !isVideoEl(imageState.img) && !objects.some(o => isVideoEl(o.img)||isBackdropMask(o.kind));
     let dirtyPatternRect: {x:number;y:number;w:number;h:number}|null = null;
     if (canRetain && priorPatternPaint?.identity === patternSceneIdentity && priorPatternPaint.scale === s) {
       const previousById = new Map(priorPatternPaint.holes.map(h => [h.id, h]));
@@ -6071,13 +6075,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
          Safari 的分段縮放仍會讓邊緣看起來閃一下。 */
       const internalWave = f?.gridWave !== undefined
         && (f.waveMix === undefined || f.waveMix > 1e-5)
-        && !(o.type === 'shape' && GRID_SHAPE_KINDS.has(o.kind));
+        && !(o.type === 'shape' && (GRID_SHAPE_KINDS.has(o.kind)||isBackdropMask(o.kind)));
       const objectAlpha = ((o.opacity ?? ((o.alpha ?? 1) * 100)) / 100) * (f ? f.a : 1);
       const dimPhoto=isMain&&swapSource?.kind==='object'&&swapSource.id===o.id;
       /* 半透明圖形必須先以不透明狀態合成完整本體、紋理、描邊與三層光，
          最後整張只套一次 alpha。若直接讓每一道筆畫各自半透明，重疊處會
          累加變深，甚至看見暫存畫布的矩形邊界。 */
-      const flattenShapeAlpha = o.type === 'shape' && objectAlpha < 0.999;
+      const flattenShapeAlpha = o.type === 'shape' && !isBackdropMask(o.kind) && objectAlpha < 0.999;
       const layer = (internalWave || flattenShapeAlpha) ? waveLayer() : null;
       const paintObject = (ctx: CanvasRenderingContext2D, flattened = false) => {
       ctx.save();
@@ -6085,7 +6089,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.rotate(((o.rot || 0) + (f ? f.rot : 0)) * Math.PI / 180);
       if (f && (f.k !== 1 || f.fx !== 1)) ctx.scale(f.k * f.fx, f.k);
       ctx.globalAlpha = flattened ? 1 : objectAlpha;
-      if (o.type === 'image' && o.img) {
+      if (o.type==='shape'&&isBackdropMask(o.kind)) {
+        drawBackdropMask(ctx,o.kind,o.w*s,o.h*s,o);
+      } else if (o.type === 'image' && o.img) {
         /* 虛線描邊有常駐動畫時，描邊不能烤進快取那張（快取是靠參數當 key 的，
            每一帧都變等於每一帧重算整張圖）。改成：快取那張不畫描邊，
            描邊在這裡即時畫一圈 —— 只是一條路徑，成本幾乎是零。 */
@@ -10131,6 +10137,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             ['邊框', lineList.filter(i2 => !GRID_SHAPE_KINDS.has(i2.kind))],
                             ['線條', ADD_SHAPE_ITEMS.filter(i2 => SPECIAL_LINE_KINDS.has(i2.kind))],
                             ['網格', ADD_SHAPE_ITEMS.filter(i2 => GRID_SHAPE_KINDS.has(i2.kind))],
+                            ['遮罩', MASK_SHAPE_ITEMS],
                           ] as const);
                         })().map(([label, list]) => (
                           <div key={label} className="mb-3">
@@ -10145,7 +10152,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                     if (brushMode === 'pen' && objectBrushChoice) setObjectBrushChoice(choice);
                                     addShape(it);
                                   }}
-                                  aria-label={it.id}
+                                  aria-label={'label' in it ? String(it.label) : it.id}
+                                  title={'label' in it ? String(it.label) : it.id}
                                   aria-pressed={addPaletteChoice?.type === 'shape' && addPaletteChoice.item?.id === it.id}
                                   className={`h-11 rounded-[10px] bg-white/5 border ${addPaletteChoice?.type === 'shape' && addPaletteChoice.item?.id === it.id ? 'border-white' : 'border-white/10 hover:border-white/30'} hover:bg-white/10 active:scale-95 transition-all flex items-center justify-center text-white/85`}
                                 >
@@ -10186,6 +10194,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                   </div>
                 );
                 if (sel.type === 'shape') {
+                  if(isBackdropMask(sel.kind))return <BackdropMaskControls kind={sel.kind} settings={sel} onChange={patch}/>;
                   const isLine = SPECIAL_LINE_KINDS.has(sel.kind || '');
                   const isGrid = GRID_SHAPE_KINDS.has(sel.kind);
                   const hasWidth = isLine || isGrid || !sel.filled;

@@ -312,7 +312,7 @@ export const FX_DEFS: FxDef[] = [
     params: [
       { id: 'fxY2kThresh', label: '範圍', icon: 'exposure', min: 0, max: 100, def: 55, scale: 0.01 },
       { id: 'fxY2kHueA', label: '色相 A', icon: 'format_color_fill', min: 0, max: 360, def: 190 },
-      { id: 'fxY2kHueB', label: '色相 B', icon: 'gradient', min: 0, max: 360, def: 313 },
+      { id: 'fxY2kHueB', label: '色相 B', icon: 'gradient', min: 0, max: 360, def: 260 },
     ],
     passes: [
       // 1）只留比門檻亮的部分
@@ -406,7 +406,7 @@ export const FX_DEFS: FxDef[] = [
     id: 'fxRgbShift', label: '色散', icon: 'filter_b_and_w',
     onAmount: 100,
     params: [
-      { id: 'fxRgbAmount', label: '位移', icon: 'straighten', min: 0, max: 40, def: 8 },
+      { id: 'fxRgbAmount', label: '位移', icon: 'straighten', min: 0, max: 40, def: 5 },
       { id: 'fxRgbAngle', label: '方向', icon: 'explore', min: 0, max: 360, def: 0 },
     ],
     passes: [{

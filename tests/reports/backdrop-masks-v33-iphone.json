@@ -1,0 +1,140 @@
+{
+  "kind": "backdrop-masks-v33",
+  "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+  "checks": [
+    {
+      "name": "方形馬賽克 changes lower ink",
+      "pass": true,
+      "detail": {
+        "difference": 18091800
+      }
+    },
+    {
+      "name": "方形馬賽克 leaves outside unchanged",
+      "pass": true
+    },
+    {
+      "name": "方形玻璃磚 changes lower ink",
+      "pass": true,
+      "detail": {
+        "difference": 18630056
+      }
+    },
+    {
+      "name": "方形玻璃磚 leaves outside unchanged",
+      "pass": true
+    },
+    {
+      "name": "方形毛玻璃 changes lower ink",
+      "pass": true,
+      "detail": {
+        "difference": 18630000
+      }
+    },
+    {
+      "name": "方形毛玻璃 leaves outside unchanged",
+      "pass": true
+    },
+    {
+      "name": "方形負片 changes lower ink",
+      "pass": true,
+      "detail": {
+        "difference": 37255632
+      }
+    },
+    {
+      "name": "方形負片 leaves outside unchanged",
+      "pass": true
+    },
+    {
+      "name": "圓形毛玻璃 changes lower ink",
+      "pass": true,
+      "detail": {
+        "difference": 18567326
+      }
+    },
+    {
+      "name": "圓形毛玻璃 leaves outside unchanged",
+      "pass": true
+    },
+    {
+      "name": "羽化圓形毛玻璃 changes lower ink",
+      "pass": true,
+      "detail": {
+        "difference": 16110350
+      }
+    },
+    {
+      "name": "羽化圓形毛玻璃 leaves outside unchanged",
+      "pass": true
+    },
+    {
+      "name": "negative inverts exact sampled RGB",
+      "pass": true
+    },
+    {
+      "name": "higher object stays above material",
+      "pass": true
+    },
+    {
+      "name": "rotated and squeezed feather mask renders without black output",
+      "pass": true
+    },
+    {
+      "name": "huge offscreen mask remains viewport bounded",
+      "pass": true,
+      "detail": {
+        "ms": 6
+      }
+    },
+    {
+      "name": "classic snapshot includes lower but excludes higher entries",
+      "pass": true,
+      "detail": {
+        "pixel": [
+          192,
+          32,
+          64,
+          255
+        ]
+      }
+    },
+    {
+      "name": "classic snapshot includes page background",
+      "pass": true
+    },
+    {
+      "name": "moving frosted mask stays inside a 60fps render budget",
+      "pass": true,
+      "detail": {
+        "mean": 6.300000000000002,
+        "max": 9
+      }
+    },
+    {
+      "name": "GPU renderer runs without fallback",
+      "pass": true,
+      "detail": {
+        "gpuFrames": 39,
+        "cpuFrames": 0,
+        "lastError": "",
+        "renderMs": 6,
+        "compositeMs": 0,
+        "uploadMs": 6
+      }
+    }
+  ],
+  "timings": {
+    "mean": 6.300000000000002,
+    "max": 9
+  },
+  "backend": {
+    "gpuFrames": 39,
+    "cpuFrames": 0,
+    "lastError": "",
+    "renderMs": 6,
+    "compositeMs": 0,
+    "uploadMs": 6
+  },
+  "pass": true
+}

@@ -3569,6 +3569,14 @@
     "ko": "고화질",
     "en": "High"
   },
+  "毛玻璃": {"zh-Hans":"毛玻璃","ja":"すりガラス","ko":"반투명 유리","en":"Frosted glass"},
+  "遮罩": {"zh-Hans":"遮罩","ja":"マスク","ko":"마스크","en":"Masks"},
+  "方形馬賽克": {"zh-Hans":"方形马赛克","ja":"四角モザイク","ko":"사각 모자이크","en":"Square mosaic"},
+  "方形玻璃磚": {"zh-Hans":"方形玻璃砖","ja":"四角ガラスブロック","ko":"사각 유리 블록","en":"Square glass bricks"},
+  "方形毛玻璃": {"zh-Hans":"方形毛玻璃","ja":"四角すりガラス","ko":"사각 반투명 유리","en":"Square frosted glass"},
+  "方形負片": {"zh-Hans":"方形负片","ja":"四角ネガ","ko":"사각 네거티브","en":"Square negative"},
+  "圓形毛玻璃": {"zh-Hans":"圆形毛玻璃","ja":"円形すりガラス","ko":"원형 반투명 유리","en":"Circle frosted glass"},
+  "羽化圓形毛玻璃": {"zh-Hans":"羽化圆形毛玻璃","ja":"ぼかし円形ガラス","ko":"페더 원형 유리","en":"Feathered circle glass"},
   "最高": {
     "zh-Hans": "最高",
     "ja": "最高画質",

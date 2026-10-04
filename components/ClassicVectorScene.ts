@@ -3,6 +3,7 @@
  * Pinch, scroll and animation all repaint the same logical scene coordinates.
  */
 import { ClassicPhotoLayer, type PhotoPaint } from './ClassicPhotoLayer';
+import {disposeBackdropMasks} from '../utils/backdropMasks';
 
 export type SceneBounds = { x: number; y: number; width: number; height: number };
 export const sceneRectBounds = (ctx: CanvasRenderingContext2D, x: number, y: number,
@@ -47,6 +48,79 @@ export class ClassicVectorScene {
   private pageRects: { x: number; y: number; width: number; height: number }[] = [];
   private paintedScrollLeft = NaN;
   private paintedScrollTop = NaN;
+  imageResolver: (src: string) => HTMLImageElement = src => { const image=new Image();image.src=src;return image; };
+  pagePatternPainter?: (ctx:CanvasRenderingContext2D,id:string,width:number,height:number)=>void;
+  private backdropSurface: HTMLCanvasElement | null = null;
+  private capturingBackdrop = false;
+
+  /** Replay lower ink into the same physical viewport. DOM photos/layouts and
+   * vector entries share this snapshot; UI, guides and higher ink are excluded. */
+  backdrop(target: CanvasRenderingContext2D, z: number, density: number, root: DOMMatrix) {
+    if(this.capturingBackdrop || !this.host)return target.canvas;
+    const host=this.host, hr=host.getBoundingClientRect(), k=Math.max(.0001,this.scale());
+    const canvas=this.backdropSurface??(this.backdropSurface=document.createElement('canvas'));
+    if(canvas.width!==target.canvas.width)canvas.width=target.canvas.width;
+    if(canvas.height!==target.canvas.height)canvas.height=target.canvas.height;
+    const g=canvas.getContext('2d')!;
+    g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,canvas.width,canvas.height);
+    const screenToScene=new DOMMatrix([1/k,0,0,1/k,-hr.left/k,-hr.top/k]);
+    const jobs:{z:number;paint:()=>void}[]=[];
+    const cssMatrix=(node:Element)=>{
+      let linear=new DOMMatrix();
+      for(let n:Element|null=node;n;n=n.parentElement){const t=getComputedStyle(n).transform;if(t!=='none')linear=new DOMMatrix(t).multiply(linear);}
+      linear.e=linear.f=0;
+      const rect=node.getBoundingClientRect(),w=(node as HTMLElement).offsetWidth||rect.width,h=(node as HTMLElement).offsetHeight||rect.height;
+      const corners=[[0,0],[w,0],[0,h],[w,h]].map(([x,y])=>linear.transformPoint({x,y}));
+      const minX=Math.min(...corners.map(p=>p.x)),minY=Math.min(...corners.map(p=>p.y));
+      const spanX=Math.max(...corners.map(p=>p.x))-minX,spanY=Math.max(...corners.map(p=>p.y))-minY;
+      const q=spanX>0?rect.width/spanX:spanY>0?rect.height/spanY:1;
+      return {m:new DOMMatrix([linear.a*q,linear.b*q,linear.c*q,linear.d*q,rect.left-minX*q,rect.top-minY*q]),w,h};
+    };
+    const setScreen=(m:DOMMatrix)=>g.setTransform(root.multiply(screenToScene).multiply(m));
+    const alpha=(node:Element)=>{let a=1;for(let n:Element|null=node;n&&n!==host;n=n.parentElement)a*=Number(getComputedStyle(n).opacity);return a;};
+    const level=(node:Element)=>{
+      const wrapper=node.closest<HTMLElement>('[data-layout-wrapper], [data-floating-id]');
+      return Number(wrapper?.style.zIndex||0);
+    };
+    const owned=(node:Element)=>{const id=node.closest('[data-floating-id]')?.getAttribute('data-floating-id');return !!id&&this.entries.has(id);};
+    for(const page of host.querySelectorAll<HTMLElement>(':scope > [data-page-id]')){
+      jobs.push({z:-1000,paint:()=>{const {m,w,h}=cssMatrix(page);setScreen(m);g.fillStyle=getComputedStyle(page).backgroundColor;g.fillRect(0,0,w,h);this.pagePatternPainter?.(g,page.dataset.pageId!,w,h);}});
+    }
+    // Layout SVG image CTMs include cell cropping, rotation, page pose and zoom.
+    for(const node of host.querySelectorAll<SVGGraphicsElement>('[data-layout-wrapper] svg image, [data-layout-wrapper] svg rect')){
+      if(node.closest('defs')||owned(node)||level(node)>=z)continue;
+      jobs.push({z:level(node),paint:()=>{
+        const m=node.getScreenCTM();if(!m)return;g.globalAlpha=alpha(node);
+        for(let n:Element|null=node.parentElement;n&&n!==host;n=n.parentElement){
+          const clip=n.getAttribute('clip-path')?.match(/url\(#(.+)\)/)?.[1];
+          if(!clip)continue;
+          const definition=document.getElementById(clip),nm=(n as SVGGraphicsElement).getScreenCTM?.();
+          if(!definition||!nm)continue;setScreen(nm);g.beginPath();
+          for(const r of definition.querySelectorAll('rect'))g.roundRect(r.x.baseVal.value,r.y.baseVal.value,r.width.baseVal.value,r.height.baseVal.value,r.rx.baseVal.value||0);
+          g.clip();
+        }
+        setScreen(m);
+        if(node.tagName==='image'){
+          const image=node as SVGImageElement,src=this.imageResolver(image.href.baseVal);
+          if(src.complete&&src.naturalWidth)g.drawImage(src,image.x.baseVal.value,image.y.baseVal.value,image.width.baseVal.value,image.height.baseVal.value);
+        }else{const rect=node as SVGRectElement;g.fillStyle=getComputedStyle(rect).fill;g.beginPath();g.roundRect(rect.x.baseVal.value,rect.y.baseVal.value,rect.width.baseVal.value,rect.height.baseVal.value,rect.rx.baseVal.value||0);g.fill();}
+      }});
+    }
+    for(const node of host.querySelectorAll<HTMLCanvasElement|HTMLImageElement|HTMLVideoElement>('[data-layout-wrapper] canvas, [data-floating-id] canvas, [data-floating-id] img, [data-floating-id] video')){
+      if(owned(node)||level(node)>=z||!node.getBoundingClientRect().width||getComputedStyle(node).visibility==='hidden')continue;
+      jobs.push({z:level(node),paint:()=>{
+        if(node instanceof HTMLImageElement&&(!node.complete||!node.naturalWidth))return;
+        if(node instanceof HTMLVideoElement&&node.readyState<2)return;
+        for(let n:HTMLElement|null=node.parentElement;n&&n!==host;n=n.parentElement){const style=getComputedStyle(n);if(style.overflow==='hidden'||style.overflow==='clip'){const c=cssMatrix(n);setScreen(c.m);g.beginPath();g.roundRect(0,0,c.w,c.h,Math.min(parseFloat(style.borderRadius)||0,c.w/2,c.h/2));g.clip();}}
+        const {m,w,h}=cssMatrix(node);setScreen(m);g.globalAlpha=alpha(node);g.drawImage(node,0,0,w,h);
+      }});
+    }
+    for(const entry of this.entries.values())if(entry.z<z)jobs.push({z:entry.z,paint:()=>{g.setTransform(root);g.globalAlpha=typeof entry.opacity==='function'?entry.opacity():entry.opacity??1;entry.paint(g,density);}});
+    const active=this.activePhoto;this.activePhoto=null;this.capturingBackdrop=true;
+    try{for(const job of jobs.sort((a,b)=>a.z-b.z)){g.save();try{job.paint();}finally{g.restore();}}}
+    finally{this.capturingBackdrop=false;this.activePhoto=active;}
+    return canvas;
+  }
 
   private onScroll = () => {
     const viewport = this.viewport;
@@ -112,7 +186,8 @@ export class ClassicVectorScene {
     this.viewport?.removeEventListener('scroll', this.onScroll);
     this.host?.parentElement?.removeEventListener('abai-preview-transform', this.flush);
     this.observer?.disconnect();
-    this.surfaces.forEach(canvas => { canvas.remove(); canvas.width = canvas.height = 1; });
+    this.surfaces.forEach(canvas => { disposeBackdropMasks(canvas);canvas.remove(); canvas.width = canvas.height = 1; });
+    if(this.backdropSurface){disposeBackdropMasks(this.backdropSurface);this.backdropSurface.width=this.backdropSurface.height=1;this.backdropSurface=null;}
     this.surfaces = [];
     this.photos.forEach(photo => photo.remove()); this.photos.clear();
     this.photoContext = null; this.activePhoto = null;

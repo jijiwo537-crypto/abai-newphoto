@@ -1,6 +1,6 @@
 // Original ABAI region treatments. Use an explicit separable GPU kernel instead
 // of Canvas filter, which is not implemented consistently in iOS WebKit.
-export const MATERIALS=[['mosaic','像素'],['glass','霧玻璃'],['negative','負片']];
+export const MATERIALS=[['mosaic','像素'],['glass','毛玻璃'],['negative','負片']];
 let gpu;
 function gpuBlur(source,w,h,radius){
  if(gpu===false)return null;

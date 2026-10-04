@@ -33,7 +33,7 @@ export async function auditArtControls(){
  document.querySelector<HTMLButtonElement>('[role=dialog] button[aria-label=完成]')!.click();await settle();await benchmark('多語字符');click('外觀');await settle();click('白色');await settle();click('字符');await benchmark('多語白色字符');
  click('效果');await settle();click('視覺追蹤');await settle();
  for(const [tab,section] of [['節點','偵測'],['節點','輪廓'],['節點','連線'],['構圖','顏色'],['構圖','元素'],['遮罩','編輯']]){click(tab);await settle();click(section);await benchmark(tab+'/'+section);}
- click('遮罩');await settle();click('霧玻璃');click('負片');await settle();click('細節');await benchmark('遮罩/細節');
+ click('遮罩');await settle();click('毛玻璃');click('負片');await settle();click('細節');await benchmark('遮罩/細節');
  click('節點');await settle();click('輪廓');await settle();click('星星');click('方形');await settle();
  const bounds=(selector:string)=>{const r=document.querySelector(selector)!.getBoundingClientRect();return{x:r.x,y:r.y,w:r.width,h:r.height};};
  click('構圖');await settle();click('元素');await settle();for(const name of ['取景框','圓圈','黃金比例']){click(name);await settle();binary(name,true);await settle();}
