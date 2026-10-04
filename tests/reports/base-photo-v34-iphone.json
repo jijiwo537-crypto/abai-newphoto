@@ -1,0 +1,1502 @@
+{
+  "camera": {
+    "kind": "camera-return-v34",
+    "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+    "checks": [
+      {
+        "name": "stable thermostat 0",
+        "pass": true
+      },
+      {
+        "name": "stable thermostat 1",
+        "pass": true
+      },
+      {
+        "name": "stable thermostat 2",
+        "pass": true
+      },
+      {
+        "name": "stable thermostat 3",
+        "pass": true
+      },
+      {
+        "name": "stable thermostat 4",
+        "pass": true
+      },
+      {
+        "name": "stable thermostat 5",
+        "pass": true
+      },
+      {
+        "name": "stable thermostat 6",
+        "pass": true
+      },
+      {
+        "name": "stable thermostat 7",
+        "pass": true
+      },
+      {
+        "name": "stable thermostat 8",
+        "pass": true
+      },
+      {
+        "name": "stable thermostat 9",
+        "pass": true
+      },
+      {
+        "name": "stable thermostat 10",
+        "pass": true
+      },
+      {
+        "name": "stable thermostat 11",
+        "pass": true
+      }
+    ],
+    "samples": [
+      {
+        "round": 1,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      },
+      {
+        "round": 2,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      },
+      {
+        "round": 3,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      },
+      {
+        "round": 4,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      },
+      {
+        "round": 5,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      },
+      {
+        "round": 6,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      },
+      {
+        "round": 7,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      },
+      {
+        "round": 8,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      },
+      {
+        "round": 9,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      },
+      {
+        "round": 10,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      },
+      {
+        "round": 11,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      },
+      {
+        "round": 12,
+        "shift": 0,
+        "rects": [
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ],
+          [
+            84.390625,
+            516,
+            52,
+            52
+          ]
+        ]
+      }
+    ],
+    "pass": true
+  },
+  "base": {
+    "kind": "creative-base-lifecycle",
+    "route": "?single&huge&lifecycleAudit&nativeV34=6",
+    "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+    "samples": [
+      {
+        "round": 1,
+        "id": "fxMosaic",
+        "clickMs": 21.000000000000455,
+        "mean": 16.624999999999982,
+        "max": 18,
+        "over50": 0,
+        "maxEffectMs": 0,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 2,
+        "id": "fxGlass",
+        "clickMs": 34,
+        "mean": 17.416666666666703,
+        "max": 23.00000000000091,
+        "over50": 0,
+        "maxEffectMs": 1,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 3,
+        "id": "fxLowfi",
+        "clickMs": 19,
+        "mean": 16.75,
+        "max": 31,
+        "over50": 0,
+        "maxEffectMs": 1,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 4,
+        "id": "fxExposureSpill",
+        "clickMs": 16.99999999999909,
+        "mean": 16.666666666666703,
+        "max": 18,
+        "over50": 0,
+        "maxEffectMs": 1,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 5,
+        "id": "fxMosaic",
+        "clickMs": 17,
+        "mean": 16.666666666666668,
+        "max": 17.00000000000091,
+        "over50": 0,
+        "maxEffectMs": 0.9999999999990905,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 6,
+        "id": "fxGlass",
+        "clickMs": 17,
+        "mean": 16.666666666666668,
+        "max": 17,
+        "over50": 0,
+        "maxEffectMs": 1,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 7,
+        "id": "fxLowfi",
+        "clickMs": 17,
+        "mean": 16.749999999999925,
+        "max": 18,
+        "over50": 0,
+        "maxEffectMs": 1,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 8,
+        "id": "fxExposureSpill",
+        "clickMs": 17,
+        "mean": 16.66666666666659,
+        "max": 17.00000000000182,
+        "over50": 0,
+        "maxEffectMs": 0,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 9,
+        "id": "fxMosaic",
+        "clickMs": 17,
+        "mean": 16.666666666666668,
+        "max": 20,
+        "over50": 0,
+        "maxEffectMs": 0,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 10,
+        "id": "fxGlass",
+        "clickMs": 17,
+        "mean": 16.666666666666668,
+        "max": 17.00000000000182,
+        "over50": 0,
+        "maxEffectMs": 0,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 11,
+        "id": "fxLowfi",
+        "clickMs": 17.99999999999818,
+        "mean": 16.583333333333332,
+        "max": 18,
+        "over50": 0,
+        "maxEffectMs": 1,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 12,
+        "id": "fxExposureSpill",
+        "clickMs": 17,
+        "mean": 16.666666666666668,
+        "max": 19,
+        "over50": 0,
+        "maxEffectMs": 1.000000000001819,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 13,
+        "id": "fxMosaic",
+        "clickMs": 17,
+        "mean": 16.666666666666668,
+        "max": 20,
+        "over50": 0,
+        "maxEffectMs": 1,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 14,
+        "id": "fxGlass",
+        "clickMs": 18,
+        "mean": 20.958333333333332,
+        "max": 108,
+        "over50": 1,
+        "maxEffectMs": 1.000000000001819,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 15,
+        "id": "fxLowfi",
+        "clickMs": 19,
+        "mean": 16.666666666666668,
+        "max": 17.000000000003638,
+        "over50": 0,
+        "maxEffectMs": 1,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      },
+      {
+        "round": 16,
+        "id": "fxExposureSpill",
+        "clickMs": 18,
+        "mean": 16.666666666666668,
+        "max": 17,
+        "over50": 0,
+        "maxEffectMs": 0,
+        "sourceSizes": [
+          "[2048,1536]"
+        ],
+        "spatialOverlays": 1
+      }
+    ],
+    "checks": [
+      {
+        "name": "effect applied 0",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 0",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 0",
+        "pass": true
+      },
+      {
+        "name": "effect applied 1",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 1",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 1",
+        "pass": true
+      },
+      {
+        "name": "effect applied 2",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 2",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 2",
+        "pass": true
+      },
+      {
+        "name": "effect applied 3",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 3",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 3",
+        "pass": true
+      },
+      {
+        "name": "effect applied 4",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 4",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 4",
+        "pass": true
+      },
+      {
+        "name": "effect applied 5",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 5",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 5",
+        "pass": true
+      },
+      {
+        "name": "effect applied 6",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 6",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 6",
+        "pass": true
+      },
+      {
+        "name": "effect applied 7",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 7",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 7",
+        "pass": true
+      },
+      {
+        "name": "effect applied 8",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 8",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 8",
+        "pass": true
+      },
+      {
+        "name": "effect applied 9",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 9",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 9",
+        "pass": true
+      },
+      {
+        "name": "effect applied 10",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 10",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 10",
+        "pass": true
+      },
+      {
+        "name": "effect applied 11",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 11",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 11",
+        "pass": true
+      },
+      {
+        "name": "effect applied 12",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 12",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 12",
+        "pass": true
+      },
+      {
+        "name": "effect applied 13",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 13",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 13",
+        "pass": true
+      },
+      {
+        "name": "effect applied 14",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 14",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 14",
+        "pass": true
+      },
+      {
+        "name": "effect applied 15",
+        "pass": true,
+        "detail": "resident-spatial-scene-gpu"
+      },
+      {
+        "name": "editing GPU overlay hidden 15",
+        "pass": true
+      },
+      {
+        "name": "bounded resident overlay 15",
+        "pass": true
+      }
+    ],
+    "pass": true
+  },
+  "quality": {
+    "kind": "creative-spatial-integration",
+    "route": "?single&huge&spatialIntegrationAudit&v34=release",
+    "pass": true,
+    "checks": [
+      {
+        "id": "fxGlass",
+        "pass": true,
+        "max": 39,
+        "mean": 0.001389015902047452,
+        "largeFraction": 0.00005216007044996528,
+        "w": 1215,
+        "h": 1215,
+        "samples": [
+          {
+            "actual": [
+              221,
+              82,
+              76,
+              255
+            ],
+            "expected": [
+              221,
+              82,
+              76,
+              255
+            ]
+          },
+          {
+            "actual": [
+              221,
+              82,
+              76,
+              255
+            ],
+            "expected": [
+              221,
+              82,
+              76,
+              255
+            ]
+          },
+          {
+            "actual": [
+              221,
+              82,
+              76,
+              255
+            ],
+            "expected": [
+              221,
+              82,
+              76,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "id": "fxExposureSpill",
+        "pass": true,
+        "max": 20,
+        "mean": 0.0008921404257481075,
+        "largeFraction": 0.000022862368541380887,
+        "w": 1215,
+        "h": 1215,
+        "samples": [
+          {
+            "actual": [
+              225,
+              93,
+              87,
+              255
+            ],
+            "expected": [
+              225,
+              93,
+              87,
+              255
+            ]
+          },
+          {
+            "actual": [
+              225,
+              94,
+              88,
+              255
+            ],
+            "expected": [
+              225,
+              94,
+              88,
+              255
+            ]
+          },
+          {
+            "actual": [
+              225,
+              93,
+              87,
+              255
+            ],
+            "expected": [
+              225,
+              93,
+              87,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "id": "softLight",
+        "pass": true,
+        "max": 21,
+        "mean": 0.0007334586529831157,
+        "largeFraction": 0.000023370421175633796,
+        "w": 1215,
+        "h": 1215,
+        "samples": [
+          {
+            "actual": [
+              224,
+              90,
+              85,
+              255
+            ],
+            "expected": [
+              224,
+              90,
+              85,
+              255
+            ]
+          },
+          {
+            "actual": [
+              224,
+              90,
+              85,
+              255
+            ],
+            "expected": [
+              224,
+              90,
+              85,
+              255
+            ]
+          },
+          {
+            "actual": [
+              224,
+              90,
+              85,
+              255
+            ],
+            "expected": [
+              224,
+              90,
+              85,
+              255
+            ]
+          }
+        ]
+      },
+      {
+        "id": "halation",
+        "pass": true,
+        "max": 20,
+        "mean": 0.0008098358989991363,
+        "largeFraction": 0.000023201070297549493,
+        "w": 1215,
+        "h": 1215,
+        "samples": [
+          {
+            "actual": [
+              221,
+              82,
+              76,
+              255
+            ],
+            "expected": [
+              221,
+              82,
+              76,
+              255
+            ]
+          },
+          {
+            "actual": [
+              221,
+              82,
+              76,
+              255
+            ],
+            "expected": [
+              221,
+              82,
+              76,
+              255
+            ]
+          },
+          {
+            "actual": [
+              221,
+              82,
+              76,
+              255
+            ],
+            "expected": [
+              221,
+              82,
+              76,
+              255
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "scope": {
+    "device": "iPhone 17 / iOS 26.5 Simulator Safari",
+    "input": "Scripted real-component pointer/input events; native camera return also observed",
+    "source": "4096×3072 fixture",
+    "limitations": "Not a physical iPhone GPU benchmark; isolated long frames are recorded, not hidden."
+  }
+}

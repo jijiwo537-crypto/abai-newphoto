@@ -31,7 +31,7 @@ import { SYMBOLS } from '../utils/symbols';
 /* 文字編輯面板直接沿用經典拼圖那一顆 —— 用同一份程式碼，
    才是真正的「100% 一樣」（字體卡片牆、字距、粗體、描邊、發光全都在裡面）。 */
 import {
-  TextEditorPanel, ImageAdjustPanel,
+  TextEditorPanel, ImageAdjustPanel, FX_PARAM_DEFAULTS,
   /* 圓角／羽化／描邊／發光全部改用經典拼圖那幾支：同一份程式碼，
      連羽化的三次盒狀模糊、發光的距離場都一樣，不會再有兩套外觀。 */
   cornerR, roundRectPath, makeShapeMask, makeGlowCanvas, GLOW_BLUR_UNIT, GLOW_EXTENT,
@@ -93,6 +93,7 @@ import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, supportsResi
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface} from '../utils/photoFx';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
+import {warmLowfiLut} from '../utils/lowfiLut';
 import {FX_DEFS} from '../utils/glEffects';
 import {PhotoSceneColour,supportsSceneColour} from '../utils/photoSceneColour';
 import {PhotoAdjustmentBlend,BLEND_ADJUSTMENTS} from '../utils/photoAdjustmentBlend';
@@ -4788,14 +4789,22 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             regionSpatialInput.current??=document.createElement('canvas');
             regionSpatial.current={key:signature,scale:renderScale,scene:{black:scenes[1],white:scenes[2],placements},input:regionSpatialInput.current};
             const prepared=regionSpatial.current;
-            void awaitPhotoIdle().then(()=>{
+            void awaitPhotoIdle().then(async()=>{
               if(regionSpatial.current!==prepared||leavingRef.current||!regionColourActive.current)return;
               warmPhotoFxSurface(prepared.input,'fxMosaic',prepared.scene);
               // Compile-only preflight misses the costly first real texture
               // upload/pool allocation. Prime the actual source and compositor
               // offscreen; no effect is applied to the user's photo here.
               applyPhotoFx(original,iw,ih,{...FX_PARAM_DEFAULTS,...photo?.fx,fxMosaic:100},{cacheSource:true,gpuSurface:true,out:prepared.input,scene:prepared.scene});
-            });
+              // These two families additionally upload a LUT / analyze the
+              // photograph's highlights. Prime them in separate idle slots.
+              for(const id of ['fxLowfi','fxExposureSpill']){
+                if(id==='fxLowfi')await warmLowfiLut();
+                await awaitPhotoIdle();
+                if(regionSpatial.current!==prepared||leavingRef.current||!regionColourActive.current)return;
+                applyPhotoFx(original,iw,ih,{...FX_PARAM_DEFAULTS,...photo?.fx,[id]:100},{cacheSource:true,gpuSurface:true,out:prepared.input,scene:prepared.scene});
+              }
+            }).catch(()=>{/* Optional preflight must never interrupt editing. */});
             colour.canvas.dataset.photoFxSize=JSON.stringify([iw,ih]);
           }finally{regionWarmStage.current=null;regionPlacements.current=null;for(const cv of scenes)if(cv!==regionSpatial.current?.scene.black&&cv!==regionSpatial.current?.scene.white)cv.width=cv.height=1;}
         }

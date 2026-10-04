@@ -1085,9 +1085,9 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
 
       {/* 比上一版下移 16px；仍比最初多留 24px，底部不會再顯得擁擠。 */}
       <section className="flex flex-col px-6 pt-4 pb-16">
-        <div className={`flex justify-center relative mb-2 transition-all duration-300 ${activeControl === 'filters' ? 'h-30' : 'h-14'}`}>
+        <div className={`flex justify-center relative mb-2 transition-[height] duration-300 ${activeControl === 'filters' ? 'h-30' : 'h-14'}`}>
           {activeControl === 'none' ? (
-            <div data-camera-main-row className="flex items-center justify-between w-full max-sm px-0 h-full gap-1 overflow-x-auto no-scrollbar">
+            <div data-camera-main-row key="camera-main-controls" className="flex items-center justify-between w-full max-sm px-0 h-14 gap-1 overflow-x-auto no-scrollbar [&>button]:w-[52px] [&>button]:h-[52px] [&>button]:flex [&>button]:items-center [&>button]:justify-center">
               <button onClick={() => setActiveControl('exposure')} className="p-3 active:scale-90 transition-transform shrink-0">
                 <Icon name="exposure" className="text-[28px]" />
               </button>
@@ -1154,7 +1154,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onHome, lutLis
             </div>
           ) : activeControl === 'effects' ? (
             /* 特效與曝光／白平衡共用同一個 56px 控制列高度，打開時觀景窗不會上移。 */
-            <div data-camera-effects-row className="w-full relative flex items-center justify-center animate-in h-full">
+            <div data-camera-effects-row key="camera-effect-controls" className="w-full relative flex items-center justify-center animate-in h-full">
               <div className="grid grid-cols-3 gap-2 w-[calc(100%-96px)] min-w-0">
                 {FX_ITEMS.map(it => {
                   const on = fx[it.id] > 0;

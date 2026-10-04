@@ -588,7 +588,7 @@ const FX_CARD_KEYS: Record<string, string[]> = Object.fromEntries(
  * 面板把門檻拉到 20，再去點別顆、回頭再點柔光，門檻還是 20；同一顆特效打開
  * 兩次得到不一樣的結果，跟編輯頁也對不起來。
  */
-const FX_PARAM_DEFAULTS: Record<string, number> = {
+export const FX_PARAM_DEFAULTS: Record<string, number> = {
   ...Object.fromEntries(FX_ALL_AMOUNTS.map(k => [k, 0])),
   ...Object.fromEntries(FX_ROOT_TOOLS.flatMap(([id]) => (
     FX_DETAIL[id] ? FX_DETAIL[id].map(t => [t[0], t[4]] as [string, number])

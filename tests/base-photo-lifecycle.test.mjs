@@ -30,6 +30,8 @@ test('leaving base editing hides one bounded warm pipeline and snapshots geometr
  assert.match(collage,/if\(resident\?\.shown\)resident.shown.style.display='none'/);
  assert.match(collage,/regionStaticSnapshot.current=\{cv:snapshot\}/);
  assert.match(collage,/useEffect\(\(\)=>\(\)=>regionColour.current\?\.dispose\(\),\[\]\)/);
+ assert.match(collage,/ImageAdjustPanel, FX_PARAM_DEFAULTS/);
+ assert.match(read('../components/GridLayoutTool.tsx'),/export const FX_PARAM_DEFAULTS/);
  assert.match(collage,/regionSpatialActive.current=activeTab==='objedit'/);
  assert.match(collage,/regionColourActive.current=activeTab==='objedit'/);
  assert.match(gl,/getExtension\('WEBGL_lose_context'\)\?\.loseContext\(\)/);
