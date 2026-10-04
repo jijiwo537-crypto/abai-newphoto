@@ -1,4 +1,4 @@
-import {drawBackdropMask,MASK_SHAPE_ITEMS,disposeBackdropMasks,backdropMaskDiagnostics} from '../utils/backdropMasks';
+import {drawBackdropMask,drawBackdropMaskBatch,MASK_SHAPE_ITEMS,disposeBackdropMasks,backdropMaskDiagnostics} from '../utils/backdropMasks';
 import {ClassicVectorScene} from '../components/ClassicVectorScene';
 const root=document.getElementById('root')!;
 const title=document.createElement('h2');title.textContent='六種動態遮罩驗證';root.append(title);
@@ -10,6 +10,16 @@ const base=()=>{g.setTransform(1,0,0,1,0,0);g.fillStyle='#204060';g.fillRect(0,0
 const pix=(x:number,y:number)=>Array.from(g.getImageData(x,y,1,1).data);
 const wait=()=>new Promise<void>(r=>requestAnimationFrame(()=>r()));
 void(async()=>{try{
+ // Compare the new GPU layer chain against the original sequential compositor,
+ // including transparent input and native analytic circle/star boundaries.
+ for(const shape of ['square','circle','star'] as const){
+  base();const original=document.createElement('canvas');original.width=c.width;original.height=c.height;original.getContext('2d')!.drawImage(c,0,0);
+  const layers=MASK_SHAPE_ITEMS.map((item,i)=>({kind:item.kind,w:260,h:330,settings:{maskShape:shape,maskCells:15,maskAmount:50},matrix:new DOMMatrix().translate(190+i*65,340+i*60).rotate(i*8),opacity:1}));
+  for(const layer of layers){g.save();g.setTransform(layer.matrix);drawBackdropMask(g,layer.kind,layer.w,layer.h,layer.settings);g.restore();}
+  const expected=g.getImageData(0,0,c.width,c.height).data;g.setTransform(1,0,0,1,0,0);g.drawImage(original,0,0);drawBackdropMaskBatch(g,layers,[{source:original,key:'native-photo-'+shape,rect:[0,0,c.width,c.height],uv:[0,0,1,1],clip:[0,0,c.width,c.height]}]);
+  const actual=g.getImageData(0,0,c.width,c.height).data;let sum=0,severe=0;for(let i=0;i<actual.length;i+=4){const d=Math.max(...[0,1,2].map(k=>Math.abs(actual[i+k]-expected[i+k])));sum+=d;if(d>12)severe++;}
+  check('batched '+shape+' preserves sequential appearance',sum/(c.width*c.height)<2&&severe/(c.width*c.height)<.015,{mean:sum/(c.width*c.height),severe:severe/(c.width*c.height)});original.width=original.height=1;await wait();
+ }
  for(const item of MASK_SHAPE_ITEMS){base();const before=g.getImageData(200,300,300,300).data,outside=pix(20,20);g.save();g.translate(360,480);drawBackdropMask(g,item.kind,400,500,{maskCells:12,maskAmount:100,maskFeather:40});g.restore();const after=g.getImageData(200,300,300,300).data;let diff=0;for(let i=0;i<before.length;i+=4)diff+=Math.abs(before[i]-after[i])+Math.abs(before[i+1]-after[i+1])+Math.abs(before[i+2]-after[i+2]);check(item.label+' changes lower ink',diff>1000,{difference:diff});check(item.label+' leaves outside unchanged',JSON.stringify(outside)===JSON.stringify(pix(20,20)));await wait();}
  for(const item of MASK_SHAPE_ITEMS)for(const shape of ['square','circle','star'] as const){base();const before=pix(360,480),corner=pix(175,245);g.save();g.translate(360,480);drawBackdropMask(g,item.kind,400,500,{maskShape:shape,maskCells:15,maskAmount:100});g.restore();check(item.label+' '+shape+' remains visible',pix(360,480).slice(0,3).some((v,i)=>Math.abs(v-before[i])>4));if(shape!=='square')check(shape+' native clip leaves corner unchanged',JSON.stringify(corner)===JSON.stringify(pix(175,245)));await wait();}
  for(const zoom of [.3,1,4,15,.8,9,1]){base();g.save();g.translate(360,480);g.scale(zoom,zoom);drawBackdropMask(g,'mask-mosaic',400,500,{maskCells:15,maskShape:'star'});g.restore();check('zoom '+zoom+' mask keeps opaque center',pix(360,480)[3]===255);await wait();}

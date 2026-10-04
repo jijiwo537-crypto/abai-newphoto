@@ -1,6 +1,6 @@
 
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
-import {MASK_SHAPE_ITEMS,isBackdropMask,maskDefaults,drawBackdropMask,disposeBackdropMasks} from '../utils/backdropMasks';
+import {MASK_SHAPE_ITEMS,isBackdropMask,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
 import {BackdropMaskControls} from './BackdropMaskControls';
 import { previewViewport } from '../utils/previewViewport';
 import { LinkGlowTiles } from '../utils/linkGlowTiles';
@@ -1421,6 +1421,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       z: o.imgShapeZoom || 1,
     };
     const hasShape = shape.r || shape.f || shape.sw || shape.g || isImgShaped(shape.k);
+    if(!isMain&&o.id?.startsWith('region-fx-')){
+      const preview=objFxCache.current.get(o.id);
+      const required=Math.min(2400,Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height));
+      if(!hasShape&&preview?.key.startsWith(JSON.stringify([o.fx,shape])+'|')&&Math.max(preview.cv.width,preview.cv.height)>=required)return preview.cv;
+      // History/export must not replace a live photo's work surface or cache
+      // key with a different-sized result halfway through a gesture.
+      o={...o,id:`export-${o.id}`};
+    }
     /* 影片裁切過的話，就算沒有效果也沒有形狀，也還是要走下面那條路
        （每一格都要先把構圖套上去）。照片的構圖是烤成一張新圖的，不受影響。 */
     const needGeo = isVideoEl(o.img) && o.geo && !isGeoIdentity(o.geo);
@@ -1468,7 +1476,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const sourceSize=Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height);
       // Reserve the common occupancy-slider footprint once. Growing from
       // 1792 to 2048 mid-gesture otherwise reruns the entire effects chain.
-      cap=photoPreviewCapacity(onScreenPx,Math.max(regionPreviewCaps.current.get(o.id)||0,Math.min(sourceSize,2048)),sourceSize);
+      // Geometry must never change the effect work surface. Retain original
+      // photo density once instead of crossing capacity buckets while pinching
+      // (each crossing used to synchronously rerun the complete FX pipeline).
+      cap=photoPreviewCapacity(onScreenPx,Math.max(regionPreviewCaps.current.get(o.id)||0,sourceSize),sourceSize);
       regionPreviewCaps.current.set(o.id,cap);
     }
     /* 只有影片吃這個夾子 —— 圖片的成品是算一次就留著的，多算沒有代價，
@@ -1532,7 +1543,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const iw = Math.max(1, Math.round(w0 * k)), ih = Math.max(1, Math.round(h0 * k));
     const selectedBase=regionPhoto&&isMain&&o.id?.startsWith(`region-fx-${selectedRegionPhotoRef.current??0}@`);
     const main=canvasRef.current;
-    if(selectedBase&&regionBlendTool.current&&!warm&&main&&main.width*main.height<=4_000_000&&!animRef.current&&!isVid&&!objectsRef.current.some(v=>isVideoEl(v.img))) {
+    if(selectedBase&&regionBlendTool.current&&!warm&&main&&main.width*main.height<=4_000_000&&!animRef.current&&!isVid&&!objectsRef.current.some(v=>isVideoEl(v.img)||isBackdropMask(v.kind))) {
       const renderer=renderToCanvasRef.current,scale=previewScaleRef.current;
       const stamp=regionSceneStamp.current;
       if(stamp?.key!==regionSceneKey.current||stamp.scale!==scale||stamp.sceneW!==main.width||stamp.sceneH!==main.height)regionBlend.current!.clear();
@@ -4159,16 +4170,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const pendingViewRef = useRef<{ k: number; tx: number; ty: number } | null>(null);
   const viewFrameRef = useRef(0);
+  const wheelCommitRef=useRef<ReturnType<typeof setTimeout>|null>(null);
+  const wheelUntilRef=useRef(0);
   const liveViewPaintRef = useRef<((next:{k:number;tx:number;ty:number})=>void)|null>(null);
   const flushView = useCallback((commit = false) => {
     if (viewFrameRef.current) cancelAnimationFrame(viewFrameRef.current);
     viewFrameRef.current = 0;
     const next = pendingViewRef.current;
     pendingViewRef.current = null;
-    if (next && !commit && viewPinchRef.current && liveViewPaintRef.current) liveViewPaintRef.current(next);
+    if (next && !commit && liveViewPaintRef.current) liveViewPaintRef.current(next);
     else if (next || commit) setViewT(next || viewTRef.current);
   }, []);
   useEffect(() => () => { if (viewFrameRef.current) cancelAnimationFrame(viewFrameRef.current); }, []);
+  useEffect(()=>()=>{if(wheelCommitRef.current!==null)clearTimeout(wheelCommitRef.current);},[]);
   const applyView = useCallback((k: number, tx: number, ty: number) => {
     if (motionLockRef.current) return;
     const c = stageBox();
@@ -4731,7 +4745,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   // them invalidated 2/3 full-scene endpoint captures on every navigation.
   const gpuSceneFingerprint=useMemo(()=>JSON.stringify([
     imageState,imageState?.img?.src,maskImageState?.img?.src,
-    photoRegion&&{...photoRegion,photos:photoRegion.photos.map((p,j)=>j===(selectedRegionPhotoRef.current??0)?{...p,fx:{}}:p)},
+    // The selected photo's crop is a compositor uniform. Black/white scene
+    // coverage is unchanged by panning/zooming INSIDE its cell.
+    photoRegion&&{...photoRegion,photos:photoRegion.photos.map((p,j)=>j===(selectedRegionPhotoRef.current??0)?{...p,fx:{},zoom:1,offsetX:0,offsetY:0}:p)},
     layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,
     stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,objects,
     fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,selectedRegionPhoto??0
@@ -4745,6 +4761,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,swapSource
   ],compactSceneValue),[imageState,photoRegion,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,swapSource]);
   const lastPatternPaintRef = useRef<{identity:object;holes:any[];scale:number}|null>(null);
+  const backdropPrefix=useRef<{key:string;canvas:HTMLCanvasElement}|null>(null);
+  useEffect(()=>()=>{if(backdropPrefix.current)backdropPrefix.current.canvas.width=backdropPrefix.current.canvas.height=1;},[]);
   const forceFullPreviewRef = useRef(false);
   const linkGlowTilesRef = useRef<LinkGlowTiles|null>(null);
   useEffect(()=>()=>linkGlowTilesRef.current?.dispose(),[]);
@@ -4762,7 +4780,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const hasBackdrop=objectsRef.current.some(o=>isBackdropMask(o.kind));
     if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop){
       const original=photo&&decodedRegionPhotos.current.get(photo.src);
-      if(regionSpatialActive.current&&original&&supportsResidentPhotoEffects(photo?.fx)&&!photoRegion?.seamless&&!animRef.current&&!viewPinchRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
+      const sceneGeometryGesture=!!objDragRef.current||!!objPinchRef.current||!!objStretchRef.current||!!baseDragRef.current||!!basePinchRef.current||!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
+      if(regionSpatialActive.current&&original&&supportsResidentPhotoEffects(photo?.fx)&&!sceneGeometryGesture&&!photoRegion?.seamless&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
         const key=regionGpuSceneKey.current;
         let resident=regionSpatial.current;
         if(!resident||resident.key!==key||resident.scale!==renderScale||resident.scene.black.width!==targetCanvas.width||resident.scene.black.height!==targetCanvas.height){
@@ -4787,6 +4806,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           resident={key,scale:renderScale,scene:{black:scenes[0],white:scenes[1],placements},input:resident?.input||regionSpatialInput.current};regionSpatial.current=resident;
         }
         if(resident.scene.placements.length>0&&resident.scene.placements.length<=8){
+          // Mutate only UV uniforms on the SAME scene identity. Replacing the
+          // scene object would re-upload two full canvases on every movement.
+          for(const placement of resident.scene.placements)if(photoRegion?.multi||photoRegion!.photos.length>1){
+            const crop=photoCrop(photo!,Math.abs(placement.rect[2]),Math.abs(placement.rect[3]));
+            placement.uv=[crop.sx/photo!.width,crop.sy/photo!.height,crop.sw/photo!.width,crop.sh/photo!.height];
+          }
           const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
           const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale)),k=Math.min(1,cap/Math.max(w,h));
           const shown=applyPhotoFx(original,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),photo!.fx||{},{cacheSource:true,gpuSurface:true,out:resident.input,scene:resident.scene});
@@ -4795,13 +4820,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             shown.style.cssText='position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none';
             shown.dataset.baseSpatialPresentation='1';targetCanvas.parentElement?.append(shown);resident.shown=shown;
             regionColour.current?.hide();
-            if(import.meta.env.DEV){targetCanvas.dataset.regionFxBackend='resident-spatial-scene-gpu';targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);}
+            if(import.meta.env.DEV){targetCanvas.dataset.regionFxBackend='resident-spatial-scene-gpu';targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount||0)+1);targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);}
             return;
           }
         }
       }
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
-      if(regionColourActive.current&&original&&supportsSceneColour(photo?.fx)&&!animRef.current&&!viewPinchRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
+      if(regionColourActive.current&&original&&supportsSceneColour(photo?.fx)&&!sceneGeometryGesture&&!regionTouches.current.size&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
         regionColour.current??=new PhotoSceneColour();const colour=regionColour.current;
         const signature=regionGpuSceneKey.current;
         if(!colour.ready||colour.signature!==signature||colour.width!==targetCanvas.width||colour.height!==targetCanvas.height||colour.scale!==renderScale){
@@ -4908,7 +4933,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const windowed = vp.x!==0 || vp.y!==0 || vp.w!==tW || vp.h!==tH;
     // Reuse capacity while pinching, without changing the physical pixel/CSS
     // mapping. Spare backing pixels are cleared, so no scene can leak out.
-    const bucketed=isMain&&canWindow&&baseCssWRef.current>0&&!!viewPinchRef.current;
+    const bucketed=isMain&&canWindow&&baseCssWRef.current>0&&(!!viewPinchRef.current||performance.now()<wheelUntilRef.current);
     const backingW=bucketed?Math.ceil(vp.w/256)*256:vp.w,backingH=bucketed?Math.ceil(vp.h/256)*256:vp.h;
     if(windowed && thumbRef.current){thumbRef.current.width=thumbRef.current.height=1;thumbRef.current=null;}
     if (isMain) {
@@ -5115,7 +5140,21 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       return {...p,src,width:(processed as any).naturalWidth || (processed as any).width,
         height:(processed as any).naturalHeight || (processed as any).height};
     })} : null;
+    // Native source textures are invariant under preview zoom. Reconstruct
+    // this photo-only backdrop on the GPU rather than uploading the enlarged
+    // 2D viewport every frame. Complex/vector/pattern scenes retain the general
+    // compositor; never rasterize their edges into a lower-density snapshot.
+    const maskPhotosReady=!photoRegion||(photoRegion.photos.every(p=>p.src&&decodedRegionPhotos.current.has(p.src))&&regionRects(photoRegion,iw,ih).length===photoRegion.photos.length);
+    const directMaskPhotos:BackdropPhotoLayer[]|null=isMain&&!previewCapture&&hasBackdrop&&maskPhotosReady&&layout!==AROUND&&(layout===FULL||patternType==='none'&&!maskImageState)&&!holes.length&&!animRef.current&&!swapSource&&!baseSelected&&selectedRegionPhotoRef.current===null&&!photoRegion?.seamless&&objects.every(o=>!o.below&&o.type==='shape'&&isBackdropMask(o.kind)&&o.kind!=='mask-frost-feather')?[]:null;
     const drawBase = (g: CanvasRenderingContext2D, img: any, x: number, y: number, w: number, h: number, allowDim = false, clip?:number[]) => {
+      if(directMaskPhotos&&img===baseImg){
+        const m=g.getTransform(),transform=(r:number[])=>[m.a*r[0]+m.e,m.d*r[1]+m.f,m.a*r[2],m.d*r[3]],multi=photoRegion&&(photoRegion.multi||photoRegion.photos.length>1);
+        const cells=multi?regionRects(regionForPaint!,w,h):[{x:0,y:0,w:1,h:1}];
+        cells.forEach((cell,j)=>{const p=regionForPaint?.photos[j],source=p?regionDecoded.get(p.src):img;if(!source)return;
+          const r=[x+cell.x*w,y+cell.y*h,cell.w*w,cell.h*h],bounds=clip||[x,y,w,h],left=Math.max(r[0],bounds[0]),top=Math.max(r[1],bounds[1]),crop=multi&&p?photoCrop(p,r[2],r[3]):null;
+          directMaskPhotos.push({source,key:p?.src||imageState.src||'base',rect:transform(r),uv:crop&&p?[crop.sx/p.width,crop.sy/p.height,crop.sw/p.width,crop.sh/p.height]:[0,0,1,1],clip:transform([left,top,Math.max(0,Math.min(r[0]+r[2],bounds[0]+bounds[2])-left),Math.max(0,Math.min(r[1]+r[3],bounds[1]+bounds[3])-top)])});
+        });
+      }
       if(regionPlacements.current&&img===baseImg){
         const m=g.getTransform(),transform=(r:number[])=>[m.a*r[0]+m.e,m.d*r[1]+m.f,m.a*r[2],m.d*r[3]];
         const cell=photoRegion&&(photoRegion.multi||photoRegion.photos.length>1)?regionRects(regionForPaint!,w,h)[index]:{x:0,y:0,w:1,h:1};
@@ -5945,6 +5984,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
 
     let lmc: HTMLCanvasElement = isMain ? lowerMaskCanvasRef.current : document.createElement('canvas');
     const drawMaskLayer = () => {
+    if(directMaskPhotos){const rect=[offs.mx-vp.x,offs.my-vp.y,maskW,maskH];directMaskPhotos.push({source:bCanvas,key:`mask-solid-${maskColor}`,rect,uv:[0,0,1,1],clip:rect});}
     /* ── 這裡以前是動畫閃退的主因 ───────────────────────────────────────
        原本每一格都寫一次 lmc.width / lmc.height。指派 canvas.width 就算值
        完全一樣，瀏覽器也會把整塊點陣**重新配置**一次。播動畫時一秒 30 格、
@@ -6154,7 +6194,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       waveObjectCtx.translate(-vp.x,-vp.y);
       return { canvas: waveObjectCanvas, ctx: waveObjectCtx };
     };
-    const drawObjects = (list: any[]) => list.forEach(o => {
+    let maskBatch:BackdropMaskLayer[]|null=null;
+    const drawObject = (o:any) => {
       /* 播動態時，每個物件有自己的一格（出場 ＋ 常駐）。
          靜態時 f 是 null，這一段完全不影響畫面。 */
       const f = animRef.current ? animRef.current.obj(o, objIndex.get(o.id) ?? 0) : null;
@@ -6179,13 +6220,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (f && (f.k !== 1 || f.fx !== 1)) ctx.scale(f.k * f.fx, f.k);
       ctx.globalAlpha = flattened ? 1 : objectAlpha;
       if (o.type==='shape'&&isBackdropMask(o.kind)) {
+        if(maskBatch){maskBatch.push({kind:o.kind,w:o.w*s,h:o.h*s,settings:o,matrix:ctx.getTransform(),opacity:ctx.globalAlpha});ctx.restore();return;}
         // Cache unchanged lower ink, not the mask bitmap. Dragging changes only
         // shader/clip geometry; source pixels are uploaded again only on an edit.
         const maskIndex=objIndex.get(o.id)??0;
         const lower=objects.filter((item,index)=>o.below?item.below&&index<maskIndex:item.below||index<maskIndex).map(item=>{const map=backdropObjectTokens.current;if(!map.has(item))map.set(item,++backdropObjectSerial.current);return map.get(item);});
         const sourceStamp=isMain&&!animRef.current&&!f&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img))
-          ? `${backdropSceneFingerprint}|${lower.join(',')}|${o.below?'below':'above'}|${s}|${vp.x},${vp.y}|${targetCanvas.width}x${targetCanvas.height}`:undefined;
-        drawBackdropMask(ctx,o.kind,o.w*s,o.h*s,o,ctx.canvas,sourceStamp);
+          ? `${backdropSceneFingerprint}|${JSON.stringify(photoRegion,compactSceneValue)}|${lower.join(',')}|${o.below?'below':'above'}|${s}|${vp.x},${vp.y}|${targetCanvas.width}x${targetCanvas.height}`:undefined;
+        drawBackdropMask(ctx,o.kind,o.w*s,o.h*s,o,ctx.canvas,sourceStamp,o.id);
       } else if (o.type === 'image' && o.img) {
         /* 虛線描邊有常駐動畫時，描邊不能烤進快取那張（快取是靠參數當 key 的，
            每一帧都變等於每一帧重算整張圖）。改成：快取那張不畫描邊，
@@ -6831,7 +6873,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         ctx.restore();
       }
       ctx.restore();
-    });
+    };
+    const drawObjects=(list:any[])=>{
+      for(let i=0;i<list.length;){
+        let end=i;while(end<list.length&&list[end].type==='shape'&&isBackdropMask(list[end].kind)&&list[end].kind!=='mask-frost-feather')end++;
+        if(isMain&&!animRef.current&&(end-i>1||end>i&&directMaskPhotos?.length)){
+          maskBatch=[];try{for(let j=i;j<end;j++)drawObject(list[j]);drawBackdropMaskBatch(ctx,maskBatch,directMaskPhotos?.length?directMaskPhotos:undefined);}finally{maskBatch=null;}i=end;
+        }else{drawObject(list[i]);i++;}
+      }
+    };
 
     /* 標了 below 的物件插在「底圖鋪好之後、所有圖案之前」——
        所以圖片側的圖案會蓋在它上面，遮罩側則是被遮罩蓋住、只從洞裡透出來。
@@ -7063,7 +7113,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!isMain) bd.width = 0;
     };
 
-    if (layout === FULL) {
+    const prefixCacheable=isMain&&!previewCapture&&!directMaskPhotos&&hasBackdrop&&objects.some(o=>o.id===selectedObj&&isBackdropMask(o.kind))&&!animRef.current&&!editingTextId&&!shapeSel&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img));
+    const prefixEnd=prefixCacheable?aboveObjs.findIndex(o=>o.id===selectedObj&&isBackdropMask(o.kind)):-1;
+    const prefixAbove=prefixEnd>0?aboveObjs.slice(0,prefixEnd):[];
+    // Live sliders and in-cell crop gestures update refs before React state.
+    // Include the actual photo revision, not only the last committed render.
+    const livePhotoKey=JSON.stringify(photoRegion,compactSceneValue);
+    const prefixKey=prefixCacheable?`${backdropSceneFingerprint}|${livePhotoKey}|${[...belowObjs,...prefixAbove].map(item=>{const tokens=backdropObjectTokens.current;if(!tokens.has(item))tokens.set(item,++backdropObjectSerial.current);return tokens.get(item);}).join(',')}|${s}|${vp.x},${vp.y}|${targetCanvas.width}x${targetCanvas.height}`:'';
+    const cachedPrefix=prefixCacheable&&backdropPrefix.current?.key===prefixKey?backdropPrefix.current:null;
+    if(cachedPrefix){
+      ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.globalCompositeOperation='copy';ctx.drawImage(cachedPrefix.canvas,0,0);ctx.restore();
+    }else if (layout === FULL) {
       /* 滿版本身沒有遮罩區，但仍保留「圖案」層。圖案直接使用圖片側既有
          的同一支繪製器覆在底圖上，數量、位置、動畫、發光與其他排版一致；
          只是不再建立或顯示任何遮罩色塊。 */
@@ -7091,12 +7151,20 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       drawImageSideHoles();
     }
 
+    if(prefixCacheable&&!cachedPrefix){
+      drawObjects(prefixAbove);
+      const prefix=backdropPrefix.current?.canvas||document.createElement('canvas');
+      if(prefix.width!==targetCanvas.width)prefix.width=targetCanvas.width;if(prefix.height!==targetCanvas.height)prefix.height=targetCanvas.height;
+      const g=get2dWide(prefix)!;g.setTransform(1,0,0,1,0,0);g.globalCompositeOperation='copy';g.drawImage(targetCanvas,0,0);g.globalCompositeOperation='source-over';
+      backdropPrefix.current={key:prefixKey,canvas:prefix};
+    }
+
     // ctx.beginPath();
     // if (layout.includes('bottom') || layout.includes('top')) { ctx.moveTo(0, sh); ctx.lineTo(sw, sh); }
     // else { ctx.moveTo(sw, 0); ctx.lineTo(sw, sh); }
     // ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = sgs; ctx.stroke();
 
-    drawObjects(aboveObjs);
+    drawObjects(aboveObjs.slice(prefixAbove.length));
 
     /* ── 歷史紀錄的縮圖，就在這一行拍 ────────────────────────────────
        這裡是「成品都畫完了、選取框還沒畫上去」的唯一一個時間點 ——
@@ -9171,9 +9239,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             onPointerUp={handlePointerUp}
             onPointerCancel={handlePointerUp}
             onWheel={(e) => {
+              deferHeavyWork();wheelUntilRef.current=performance.now()+160;
+              if(wheelCommitRef.current!==null)clearTimeout(wheelCommitRef.current);
+              wheelCommitRef.current=setTimeout(()=>{wheelCommitRef.current=null;wheelUntilRef.current=0;flushView(true);},160);
               const c = stageBox();
               const v = viewTRef.current;
-              const k = Math.max(1, Math.min(6, v.k * (e.deltaY < 0 ? 1.18 : 1 / 1.18)));
+              // Trackpads emit small deltas at refresh rate. A fixed 18% jump
+              // per event forces full-range backing changes even for a tiny
+              // movement. Respect distance while retaining the same limits.
+              const delta=e.deltaY*(e.deltaMode===1?16:e.deltaMode===2?c.h:1);
+              const k = Math.max(1, Math.min(6, v.k * Math.exp(Math.max(-.1655,Math.min(.1655,-delta*.002)))));
               const ax = e.clientX - c.x, ay = e.clientY - c.y;
               applyView(k, ax - ((ax - v.tx) / v.k) * k, ay - ((ay - v.ty) / v.k) * k);
             }}
