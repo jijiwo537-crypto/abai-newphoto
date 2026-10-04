@@ -28,6 +28,8 @@ export type SceneEntry = {
   z: number;
   opacity?: number | (() => number);
   animateUntil?: number | (() => number);
+  /** Lower-ink revision; undefined opts dynamic/unknown content out of caching. */
+  backdropKey?: () => unknown;
   paint: (ctx: CanvasRenderingContext2D, pixelsPerUnit: number) => void | SceneBounds;
 };
 
@@ -50,8 +52,12 @@ export class ClassicVectorScene {
   private paintedScrollTop = NaN;
   imageResolver: (src: string) => HTMLImageElement = src => { const image=new Image();image.src=src;return image; };
   pagePatternPainter?: (ctx:CanvasRenderingContext2D,id:string,width:number,height:number)=>void;
+  pagePatternKey?: (id:string)=>unknown;
   private backdropSurface: HTMLCanvasElement | null = null;
   private capturingBackdrop = false;
+  backdropCacheStamp: string | undefined;
+  private backdropTokens = new WeakMap<object,number>();
+  private backdropSerial = 0;
 
   /** Replay lower ink into the same physical viewport. DOM photos/layouts and
    * vector entries share this snapshot; UI, guides and higher ink are excluded. */
@@ -65,6 +71,8 @@ export class ClassicVectorScene {
     g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,canvas.width,canvas.height);
     const screenToScene=new DOMMatrix([1/k,0,0,1/k,-hr.left/k,-hr.top/k]);
     const jobs:{z:number;paint:()=>void}[]=[];
+    const tokens=this.backdropTokens,token=(o:object)=>{if(!tokens.has(o))tokens.set(o,++this.backdropSerial);return tokens.get(o);};
+    const keys:unknown[]=[z,density,root.toString(),hr.left,hr.top,k,canvas.width,canvas.height];let cacheable=true;
     const cssMatrix=(node:Element)=>{
       let linear=new DOMMatrix();
       for(let n:Element|null=node;n;n=n.parentElement){const t=getComputedStyle(n).transform;if(t!=='none')linear=new DOMMatrix(t).multiply(linear);}
@@ -86,11 +94,14 @@ export class ClassicVectorScene {
     const owned=(node:Element)=>{const id=node.closest('[data-floating-id]')?.getAttribute('data-floating-id');return !!id&&this.entries.has(id);};
     for(const page of host.querySelectorAll<HTMLElement>(':scope > [data-page-id]')){
       const pageZ=Number(page.style.zIndex||-1000);if(pageZ>=z)continue;
+      const pose=cssMatrix(page);keys.push(['page',page.dataset.pageId,pageZ,pose.m.toString(),pose.w,pose.h,getComputedStyle(page).backgroundColor,this.pagePatternPainter&&token(this.pagePatternPainter),this.pagePatternKey?.(page.dataset.pageId!)]);
       jobs.push({z:pageZ,paint:()=>{const {m,w,h}=cssMatrix(page);setScreen(m);g.fillStyle=getComputedStyle(page).backgroundColor;g.fillRect(0,0,w,h);this.pagePatternPainter?.(g,page.dataset.pageId!,w,h);}});
     }
     // Layout SVG image CTMs include cell cropping, rotation, page pose and zoom.
     for(const node of host.querySelectorAll<SVGGraphicsElement>('[data-layout-wrapper] svg image, [data-layout-wrapper] svg rect')){
       if(node.closest('defs')||owned(node)||level(node)>=z)continue;
+      // Layout clips/materials can update independently of entry registration.
+      cacheable=false;
       jobs.push({z:level(node),paint:()=>{
         const m=node.getScreenCTM();if(!m)return;g.globalAlpha=alpha(node);
         for(let n:Element|null=node.parentElement;n&&n!==host;n=n.parentElement){
@@ -110,6 +121,7 @@ export class ClassicVectorScene {
     }
     for(const node of host.querySelectorAll<HTMLCanvasElement|HTMLImageElement|HTMLVideoElement>('[data-layout-wrapper] canvas, [data-floating-id] canvas, [data-floating-id] img, [data-floating-id] video')){
       if(owned(node)||level(node)>=z||!node.getBoundingClientRect().width||getComputedStyle(node).visibility==='hidden')continue;
+      cacheable=false;
       jobs.push({z:level(node),paint:()=>{
         if(node instanceof HTMLImageElement&&(!node.complete||!node.naturalWidth))return;
         if(node instanceof HTMLVideoElement&&node.readyState<2)return;
@@ -117,7 +129,12 @@ export class ClassicVectorScene {
         const {m,w,h}=cssMatrix(node);setScreen(m);g.globalAlpha=alpha(node);g.drawImage(node,0,0,w,h);
       }});
     }
-    for(const entry of this.entries.values())if(entry.z<z)jobs.push({z:entry.z,paint:()=>{g.setTransform(root);g.globalAlpha=typeof entry.opacity==='function'?entry.opacity():entry.opacity??1;entry.paint(g,density);}});
+    for(const entry of this.entries.values())if(entry.z<z){
+      const revision=entry.backdropKey?.();if(revision===undefined)cacheable=false;
+      keys.push([token(entry),entry.z,revision,typeof entry.opacity==='function'?entry.opacity():entry.opacity??1]);
+      jobs.push({z:entry.z,paint:()=>{g.setTransform(root);g.globalAlpha=typeof entry.opacity==='function'?entry.opacity():entry.opacity??1;entry.paint(g,density);}});
+    }
+    this.backdropCacheStamp=cacheable?JSON.stringify(keys):undefined;
     const active=this.activePhoto;this.activePhoto=null;this.capturingBackdrop=true;
     try{for(const job of jobs.sort((a,b)=>a.z-b.z)){g.save();try{job.paint();}finally{g.restore();}}}
     finally{this.capturingBackdrop=false;this.activePhoto=active;}
@@ -196,7 +213,7 @@ export class ClassicVectorScene {
     this.pageMatrices = [];
     this.pageRects = [];
     this.paintedScrollLeft = this.paintedScrollTop = NaN;
-    if (this.alphaSurface) this.alphaSurface.width = this.alphaSurface.height = 1;
+    if (this.alphaSurface) {disposeBackdropMasks(this.alphaSurface);this.alphaSurface.width = this.alphaSurface.height = 1;}
     this.alphaSurface = null;
     this.host = this.viewport = null;
   }
@@ -267,7 +284,7 @@ export class ClassicVectorScene {
     }
     while (this.surfaces.length > runs.length) {
       const canvas = this.surfaces.pop()!;
-      canvas.remove(); canvas.width = canvas.height = 1;
+      disposeBackdropMasks(canvas);canvas.remove(); canvas.width = canvas.height = 1;
     }
     // Prepare every stacking surface before measuring any of them. Alternating
     // photo/vector layers otherwise force a fresh layout for each surface on

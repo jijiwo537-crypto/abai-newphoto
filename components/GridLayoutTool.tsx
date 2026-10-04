@@ -1446,11 +1446,11 @@ const GLYPH_ZOOM: Record<string, number> = { star: 1.1, star8: 1.22, 'cloud-oval
 export const ShapeGlyph: React.FC<{ item: ShapeItem; size?: number }> = ({ item, size = 20 }) => {
   const maskId = React.useId().replace(/:/g, '');
   if(isBackdropMask(item.kind))return <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
-    <defs><clipPath id={`material-${maskId}`}>{maskGeometry(item.kind)==='circle'?<circle cx="12" cy="12" r="10"/>:<rect x="2" y="2" width="20" height="20"/>}</clipPath></defs>
+    <defs><clipPath id={`material-${maskId}`}>{maskGeometry(item.kind)==='circle'?<circle cx="12" cy="12" r="10"/>:<rect x="2" y="2" width="20" height="20"/>}</clipPath><linearGradient id={`heat-${maskId}`} x1="0" y1="1" x2="1" y2="0"><stop stopColor="#2d0e7c"/><stop offset=".5" stopColor="#ff5519"/><stop offset="1" stopColor="#ffde42"/></linearGradient></defs>
     <g clipPath={`url(#material-${maskId})`}>
       {item.kind==='mask-mosaic'||item.kind==='mask-bricks'?Array.from({length:25},(_,i)=><rect key={i} x={2+i%5*4} y={2+Math.floor(i/5)*4} width={item.kind==='mask-bricks'?3.2:4} height={item.kind==='mask-bricks'?3.2:4} fill="currentColor" opacity={.2+(i*7%11)/14}/> ):<>
       <rect x="2" y="2" width="20" height="20" fill="currentColor" opacity=".18"/>
-      {item.kind==='mask-negative'?<path d="M12 2H22V22H12Z" fill="currentColor"/>:<>{[5,9,13,17].map((y,i)=><path key={y} d={`M2 ${y}H22`} stroke="currentColor" strokeWidth="2" opacity={item.kind==='mask-frost-feather'?.25+i*.1:.5}/>)}</>}
+      {item.kind==='mask-negative'||item.kind==='mask-monochrome'?<path d={item.kind==='mask-monochrome'?'M2 22L22 2V22Z':'M12 2H22V22H12Z'} fill="currentColor"/>:item.kind==='mask-thermal'?<rect x="2" y="2" width="20" height="20" fill={`url(#heat-${maskId})`}/>:<>{[5,9,13,17].map((y,i)=><path key={y} d={`M2 ${y}H22`} stroke="currentColor" strokeWidth="2" opacity={item.kind==='mask-frost-feather'?.25+i*.1:.5}/>)}</>}
       </>}
     </g><path d={maskGeometry(item.kind)==='circle'?'M22 12A10 10 0 1 1 2 12A10 10 0 1 1 22 12':'M2 2H22V22H2Z'} fill="none" stroke="currentColor" strokeWidth=".8" opacity={item.kind==='mask-frost-feather'?.4:1}/>
   </svg>;
@@ -3740,21 +3740,27 @@ const makeCardThumb = (img: HTMLImageElement, fx: PhotoFx): HTMLCanvasElement | 
 
 /** 濾鏡／特效卡片上的那張縮圖。算好之前先畫底圖，不會有空洞。 */
 const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: number }> = ({ src, cacheKey, fx, delay = 0 }) => {
-  const ref = useRef<HTMLCanvasElement | null>(null);
-  const [paintedKey, setPaintedKey] = useState('');
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [paintedKey, setPaintedKey] = useState(()=>cardThumbCache.has(cacheKey)?cacheKey:'');
   useLayoutEffect(() => {
     let dead = false;
+    const mount=ref.current;
+    const detach=()=>{dead=true;mount?.replaceChildren();};
     const copy = (thumb: HTMLCanvasElement) => {
-      const cvs=ref.current;if(dead||!cvs)return;
-      cvs.width=thumb.width;cvs.height=thumb.height;
-      const ctx=cvs.getContext('2d')!;
-      ctx.globalCompositeOperation='copy';ctx.drawImage(thumb,0,0);
-      ctx.globalCompositeOperation='source-over';setPaintedKey(cacheKey);
+      const host=ref.current;if(dead||!host)return;
+      // The immutable cached canvas is already a complete thumbnail. Reparent
+      // it instead of reading/copying every cached GPU bitmap on every tab.
+      // Concurrent panels get an isolated copy; the normal single editor does
+      // not allocate or upload another bank of canvases/full-size <img>s.
+      let shown=thumb;
+      if(thumb.parentElement?.isConnected&&thumb.parentElement!==host){shown=document.createElement('canvas');shown.width=thumb.width;shown.height=thumb.height;shown.getContext('2d')!.drawImage(thumb,0,0);}
+      shown.style.cssText='width:100%;height:100%;display:block;object-fit:cover';
+      host.replaceChildren(shown);setPaintedKey(cacheKey);
     };
     // Cache hits must paint before the first visible frame, not after an idle
     // wait plus the card's stagger delay. Only cold computation is deferred.
     const cached=cardThumbCache.get(cacheKey);
-    if(cached){copy(cached);return ()=>{dead=true;};}
+    if(cached){copy(cached);return detach;}
     const paint = async () => {
       await awaitPhotoIdle();
       const cvs = ref.current;
@@ -3775,24 +3781,15 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
         thumb = made;
       }
       if (dead || !ref.current) return;
-      cvs.width = thumb.width; cvs.height = thumb.height;
-      const ctx = cvs.getContext('2d')!;
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalAlpha = 1;
-      ctx.filter = 'none';
-      ctx.globalCompositeOperation = 'copy';
-      ctx.drawImage(thumb, 0, 0);
-      ctx.restore();
-      setPaintedKey(cacheKey);
+      copy(thumb);
     };
     // 一次算 20 幾張會卡住主執行緒，錯開一點點就順了
     const t = setTimeout(()=>{void paint();}, delay);
-    return () => { dead = true; clearTimeout(t); };
+    return () => { detach();clearTimeout(t); };
   }, [src, cacheKey, delay]);
   return <>
-    <img src={src} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover" />
-    <canvas ref={ref} className="absolute inset-0 w-full h-full object-cover" style={{ visibility: paintedKey === cacheKey ? 'visible' : 'hidden' }} />
+    {paintedKey!==cacheKey&&<img src={src} alt="" draggable={false} className="absolute inset-0 w-full h-full object-cover" />}
+    <div ref={ref} className="absolute inset-0 w-full h-full object-cover" style={{ visibility: paintedKey === cacheKey ? 'visible' : 'hidden' }} />
   </>;
 };
 
@@ -3852,6 +3849,7 @@ const getPreviewImg = (src: string) => {
 
 interface FloatingImage {
   maskAmount?:number;
+  maskShape?:'square'|'circle'|'star';
   maskCells?:number;
   maskRefract?:number;
   maskFeather?:number;
@@ -6189,6 +6187,16 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
       },
       // Sorting is driven by the page's shared frame clock, not a second loop.
       animateUntil: sortPage ? 0 : shift.at + 220,
+      backdropKey: () => {
+        // A draft, motion frame or sorting pose is content, not selection UI.
+        // Unknown DOM/video layers are opted out by the scene collector.
+        const current={...committedImage,...classicVectorDraft(committedImage.id)};
+        const source=current.src?getPreviewImg(current.src):null;
+        return JSON.stringify([Object.fromEntries(Object.entries(current).filter(([key])=>key!=='src')),
+          source?.complete,source?.naturalWidth,sceneMotionFrame?.(current,stackIndex),
+          performance.now()<shift.at+220?performance.now():0,
+          sortPage?scene.pageTransform(sortPage.index)?.toString():null]);
+      },
       paint: (ctx, density) => {
         const backdropRoot=ctx.getTransform();
         // Live slider values belong to the renderer too, not only the React
@@ -6248,7 +6256,7 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
         ctx.scale(scale * (motionFrame?.fx ?? 1), scale);
         if(isBackdropMask(image.shape)){
           const source=scene.backdrop(ctx,(dragShift?.live?450100:60)+stackIndex*2,density,backdropRoot);
-          drawBackdropMask(ctx,image.shape!,image.width,image.height,image,source);
+          drawBackdropMask(ctx,image.shape!,image.width,image.height,image,source,scene.backdropCacheStamp);
         } else if (isScenePhoto) {
           const source = getPreviewImg(image.src);
           if (source.complete && source.naturalWidth) {
@@ -6422,14 +6430,14 @@ const FloatingImageComponentBase: React.FC<FloatingImageComponentProps> = ({
           <Copy size={14 * previewInv} />
         </button>
         {/* 編輯鍵：文字與圖片都用同一顆（跟佈局那顆同款） */}
-        <button
+        {image.shape!=='mask-negative'&&<button
           onClick={(e) => { e.stopPropagation(); onLayerAction('edit'); }}
           title={image.text !== undefined ? '編輯文字' : image.shape ? '圖形調整' : '圖片調整'}
           style={{ width: 28 * previewInv, height: 28 * previewInv }}
           className="rounded-full hover:bg-black/10 flex items-center justify-center text-black"
         >
           <Sliders size={14 * previewInv} />
-        </button>
+        </button>}
         <button onClick={(e) => { e.stopPropagation(); onLayerAction('delete'); }} title="刪除" style={{ width: 28 * previewInv, height: 28 * previewInv }}
           className="rounded-full hover:bg-black/10 flex items-center justify-center text-black">
           <Trash2 size={14 * previewInv} />
@@ -9972,6 +9980,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
     if (!pagesContainerRef.current || !containerRef.current) return;
     vectorScene.imageResolver=getPreviewImg;
     vectorScene.pagePatternPainter=(ctx,id,w,h)=>{const page=pagesRef.current.find(p=>p.id===id);if(page)paintPattern(ctx,w,h,pagePattern(page));};
+    vectorScene.pagePatternKey=id=>{const page=pagesRef.current.find(p=>p.id===id);return page&&pagePattern(page);};
     return vectorScene.attach(pagesContainerRef.current, containerRef.current, () => kRef.current || 1);
   }, [vectorScene]);
   useLayoutEffect(() => {

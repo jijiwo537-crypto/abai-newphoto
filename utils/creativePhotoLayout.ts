@@ -53,6 +53,21 @@ export function dimmedPhotoSource(source:CanvasImageSource):CanvasImageSource{
   dimSource=source;return canvas;
 }
 export function clearPhotoDimmer(){if(dimCanvas)dimCanvas.width=dimCanvas.height=1;dimSource=null;}
+/** Isolate only visible screen pixels. Direct original sampling, unchanged
+ * density/alpha, even when the photo is zoomed far beyond the viewport. */
+export function drawDimmedPhoto(ctx:CanvasRenderingContext2D,source:CanvasImageSource,sx:number,sy:number,sw:number,sh:number,dx:number,dy:number,dw:number,dh:number){
+ const m=ctx.getTransform(),corners=[[dx,dy],[dx+dw,dy],[dx,dy+dh],[dx+dw,dy+dh]].map(([x,y])=>m.transformPoint({x,y}));
+ const left=Math.max(0,Math.floor(Math.min(...corners.map(p=>p.x))-1)),top=Math.max(0,Math.floor(Math.min(...corners.map(p=>p.y))-1));
+ const right=Math.min(ctx.canvas.width,Math.ceil(Math.max(...corners.map(p=>p.x))+1)),bottom=Math.min(ctx.canvas.height,Math.ceil(Math.max(...corners.map(p=>p.y))+1));
+ const w=right-left,h=bottom-top;if(w<=0||h<=0)return;
+ const canvas=dimCanvas||(dimCanvas=document.createElement('canvas')),W=Math.ceil(w/64)*64,H=Math.ceil(h/64)*64;
+ if(canvas.width<W)canvas.width=W;if(canvas.height<H)canvas.height=H;dimSource=null;
+ let g:CanvasRenderingContext2D|null=null;try{g=canvas.getContext('2d',{colorSpace:ctx.getContextAttributes().colorSpace});}catch{}g ||=canvas.getContext('2d');if(!g)return;
+ g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='source-over';g.clearRect(0,0,canvas.width,canvas.height);
+ g.setTransform(m.a,m.b,m.c,m.d,m.e-left,m.f-top);g.drawImage(source,sx,sy,sw,sh,dx,dy,dw,dh);
+ g.setTransform(1,0,0,1,0,0);g.globalCompositeOperation='source-atop';g.fillStyle='rgba(0,0,0,.65)';g.fillRect(0,0,w,h);g.globalCompositeOperation='source-over';
+ ctx.save();ctx.setTransform(1,0,0,1,0,0);ctx.drawImage(canvas,0,0,w,h,left,top,w,h);ctx.restore();
+}
 /** Quick choices do not change persisted catalog indices. */
 export function quickPhotoTemplateIndices(count:number){
   const templates=photoTemplates(count);
@@ -145,7 +160,11 @@ export function paintPhotoRegion(ctx: CanvasRenderingContext2D, region: PhotoReg
     const dx = x + r.x * w, dy = y + r.y * h, dw = r.w * w, dh = r.h * h;
     if (!img) {ctx.save();ctx.fillStyle='#0c0c0c';ctx.fillRect(dx,dy,dw,dh);ctx.restore();return;}
     const {sx,sy,sw,sh}=photoCrop(photo,dw,dh);
-    ctx.drawImage(i===dimIndex?dimmedPhotoSource(img):img, sx, sy, sw, sh, dx, dy, dw, dh);
+    // Darken only the visible sampling footprint, never duplicate a 48MP source.
+    if(i!==dimIndex)ctx.drawImage(img,sx,sy,sw,sh,dx,dy,dw,dh);
+    else{
+      drawDimmedPhoto(ctx,img,sx,sy,sw,sh,dx,dy,dw,dh);
+    }
   });
   ctx.globalCompositeOperation = previousComposite;
 }

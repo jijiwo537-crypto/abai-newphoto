@@ -2,7 +2,7 @@ import {drawBackdropMask,MASK_SHAPE_ITEMS,disposeBackdropMasks,backdropMaskDiagn
 import {ClassicVectorScene} from '../components/ClassicVectorScene';
 const root=document.getElementById('root')!;
 const title=document.createElement('h2');title.textContent='六種動態遮罩驗證';root.append(title);
-const report:any={kind:'backdrop-masks-v33',ua:navigator.userAgent,checks:[]};
+const report:any={kind:'backdrop-masks-v35',ua:navigator.userAgent,checks:[]};
 const check=(name:string,pass:boolean,detail?:any)=>report.checks.push({name,pass,detail});
 const c=document.createElement('canvas');c.width=720;c.height=960;c.style.cssText='width:100%;max-width:360px';root.append(c);
 const g=c.getContext('2d',{willReadFrequently:true})!;
@@ -11,6 +11,8 @@ const pix=(x:number,y:number)=>Array.from(g.getImageData(x,y,1,1).data);
 const wait=()=>new Promise<void>(r=>requestAnimationFrame(()=>r()));
 void(async()=>{try{
  for(const item of MASK_SHAPE_ITEMS){base();const before=g.getImageData(200,300,300,300).data,outside=pix(20,20);g.save();g.translate(360,480);drawBackdropMask(g,item.kind,400,500,{maskCells:12,maskAmount:100,maskFeather:40});g.restore();const after=g.getImageData(200,300,300,300).data;let diff=0;for(let i=0;i<before.length;i+=4)diff+=Math.abs(before[i]-after[i])+Math.abs(before[i+1]-after[i+1])+Math.abs(before[i+2]-after[i+2]);check(item.label+' changes lower ink',diff>1000,{difference:diff});check(item.label+' leaves outside unchanged',JSON.stringify(outside)===JSON.stringify(pix(20,20)));await wait();}
+ for(const item of MASK_SHAPE_ITEMS)for(const shape of ['square','circle','star'] as const){base();const before=pix(360,480),corner=pix(175,245);g.save();g.translate(360,480);drawBackdropMask(g,item.kind,400,500,{maskShape:shape,maskCells:15,maskAmount:100});g.restore();check(item.label+' '+shape+' remains visible',pix(360,480).slice(0,3).some((v,i)=>Math.abs(v-before[i])>4));if(shape!=='square')check(shape+' native clip leaves corner unchanged',JSON.stringify(corner)===JSON.stringify(pix(175,245)));await wait();}
+ for(const zoom of [.3,1,4,15,.8,9,1]){base();g.save();g.translate(360,480);g.scale(zoom,zoom);drawBackdropMask(g,'mask-mosaic',400,500,{maskCells:15,maskShape:'star'});g.restore();check('zoom '+zoom+' mask keeps opaque center',pix(360,480)[3]===255);await wait();}
  base();const before=pix(360,480);g.save();g.translate(360,480);drawBackdropMask(g,'mask-negative',400,500);g.restore();check('negative inverts exact sampled RGB',pix(360,480).slice(0,3).every((v,i)=>Math.abs(v-(255-before[i]))<2));
  g.fillStyle='#fff';g.fillRect(340,460,40,40);check('higher object stays above material',pix(350,470).slice(0,3).every(v=>v===255));
  base();g.save();g.translate(360,480);g.rotate(.37);g.scale(1.6,.5);drawBackdropMask(g,'mask-frost-feather',300,300,{maskAmount:60,maskFeather:70});g.restore();check('rotated and squeezed feather mask renders without black output',pix(360,480).slice(0,3).every(v=>v>10));

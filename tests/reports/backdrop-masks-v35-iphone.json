@@ -1,0 +1,2206 @@
+{
+  "core": {
+    "kind": "backdrop-masks-v35",
+    "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+    "checks": [
+      {
+        "name": "方形馬賽克 changes lower ink",
+        "pass": true,
+        "detail": {
+          "difference": 18091800
+        }
+      },
+      {
+        "name": "方形馬賽克 leaves outside unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形玻璃磚 changes lower ink",
+        "pass": true,
+        "detail": {
+          "difference": 18630056
+        }
+      },
+      {
+        "name": "方形玻璃磚 leaves outside unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形毛玻璃 changes lower ink",
+        "pass": true,
+        "detail": {
+          "difference": 18630000
+        }
+      },
+      {
+        "name": "方形毛玻璃 leaves outside unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形負片 changes lower ink",
+        "pass": true,
+        "detail": {
+          "difference": 37255632
+        }
+      },
+      {
+        "name": "方形負片 leaves outside unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形黑白 changes lower ink",
+        "pass": true,
+        "detail": {
+          "difference": 18313728
+        }
+      },
+      {
+        "name": "方形黑白 leaves outside unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形熱成像 changes lower ink",
+        "pass": true,
+        "detail": {
+          "difference": 26331696
+        }
+      },
+      {
+        "name": "方形熱成像 leaves outside unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形馬賽克 square remains visible",
+        "pass": true
+      },
+      {
+        "name": "方形馬賽克 circle remains visible",
+        "pass": true
+      },
+      {
+        "name": "circle native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形馬賽克 star remains visible",
+        "pass": true
+      },
+      {
+        "name": "star native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形玻璃磚 square remains visible",
+        "pass": true
+      },
+      {
+        "name": "方形玻璃磚 circle remains visible",
+        "pass": true
+      },
+      {
+        "name": "circle native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形玻璃磚 star remains visible",
+        "pass": true
+      },
+      {
+        "name": "star native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形毛玻璃 square remains visible",
+        "pass": true
+      },
+      {
+        "name": "方形毛玻璃 circle remains visible",
+        "pass": true
+      },
+      {
+        "name": "circle native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形毛玻璃 star remains visible",
+        "pass": true
+      },
+      {
+        "name": "star native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形負片 square remains visible",
+        "pass": true
+      },
+      {
+        "name": "方形負片 circle remains visible",
+        "pass": true
+      },
+      {
+        "name": "circle native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形負片 star remains visible",
+        "pass": true
+      },
+      {
+        "name": "star native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形黑白 square remains visible",
+        "pass": true
+      },
+      {
+        "name": "方形黑白 circle remains visible",
+        "pass": true
+      },
+      {
+        "name": "circle native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形黑白 star remains visible",
+        "pass": true
+      },
+      {
+        "name": "star native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形熱成像 square remains visible",
+        "pass": true
+      },
+      {
+        "name": "方形熱成像 circle remains visible",
+        "pass": true
+      },
+      {
+        "name": "circle native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "方形熱成像 star remains visible",
+        "pass": true
+      },
+      {
+        "name": "star native clip leaves corner unchanged",
+        "pass": true
+      },
+      {
+        "name": "zoom 0.3 mask keeps opaque center",
+        "pass": true
+      },
+      {
+        "name": "zoom 1 mask keeps opaque center",
+        "pass": true
+      },
+      {
+        "name": "zoom 4 mask keeps opaque center",
+        "pass": true
+      },
+      {
+        "name": "zoom 15 mask keeps opaque center",
+        "pass": true
+      },
+      {
+        "name": "zoom 0.8 mask keeps opaque center",
+        "pass": true
+      },
+      {
+        "name": "zoom 9 mask keeps opaque center",
+        "pass": true
+      },
+      {
+        "name": "zoom 1 mask keeps opaque center",
+        "pass": true
+      },
+      {
+        "name": "negative inverts exact sampled RGB",
+        "pass": true
+      },
+      {
+        "name": "higher object stays above material",
+        "pass": true
+      },
+      {
+        "name": "rotated and squeezed feather mask renders without black output",
+        "pass": true
+      },
+      {
+        "name": "huge offscreen mask remains viewport bounded",
+        "pass": true,
+        "detail": {
+          "ms": 8
+        }
+      },
+      {
+        "name": "classic snapshot includes lower but excludes higher entries",
+        "pass": true,
+        "detail": {
+          "pixel": [
+            192,
+            32,
+            64,
+            255
+          ]
+        }
+      },
+      {
+        "name": "classic snapshot includes page background",
+        "pass": true
+      },
+      {
+        "name": "moving frosted mask stays inside a 60fps render budget",
+        "pass": true,
+        "detail": {
+          "mean": 6.266666666666697,
+          "max": 8
+        }
+      },
+      {
+        "name": "GPU renderer runs without fallback",
+        "pass": true,
+        "detail": {
+          "gpuFrames": 64,
+          "cpuFrames": 0,
+          "uploads": 64,
+          "reuses": 0,
+          "lastError": "",
+          "renderMs": 6,
+          "compositeMs": 1.0000000000004547,
+          "uploadMs": 6
+        }
+      }
+    ],
+    "timings": {
+      "mean": 6.266666666666697,
+      "max": 8
+    },
+    "backend": {
+      "gpuFrames": 64,
+      "cpuFrames": 0,
+      "uploads": 64,
+      "reuses": 0,
+      "lastError": "",
+      "renderMs": 6,
+      "compositeMs": 1.0000000000004547,
+      "uploadMs": 6
+    },
+    "pass": true
+  },
+  "largeMask": {
+    "kind": "backdrop-mask-interactions-v35",
+    "route": "?mask=mask-frost&huge&interactionAudit&nativeV35=4",
+    "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+    "checks": [
+      {
+        "name": "mask selected",
+        "pass": true
+      },
+      {
+        "name": "shape controls visible before sliders",
+        "pass": true
+      },
+      {
+        "name": "no opacity slider",
+        "pass": true
+      },
+      {
+        "name": "圓形 selected",
+        "pass": true
+      },
+      {
+        "name": "圓形 keeps visible center",
+        "pass": true
+      },
+      {
+        "name": "星形 selected",
+        "pass": true
+      },
+      {
+        "name": "星形 keeps visible center",
+        "pass": true
+      },
+      {
+        "name": "方形 selected",
+        "pass": true
+      },
+      {
+        "name": "方形 keeps visible center",
+        "pass": true
+      },
+      {
+        "name": "deselection keeps mask pixels 0",
+        "pass": true,
+        "detail": {
+          "before": [
+            106,
+            110,
+            120,
+            255
+          ],
+          "after": [
+            106,
+            110,
+            120,
+            255
+          ]
+        }
+      },
+      {
+        "name": "editor remains usable 0",
+        "pass": true
+      },
+      {
+        "name": "deselection keeps mask pixels 1",
+        "pass": true,
+        "detail": {
+          "before": [
+            106,
+            110,
+            120,
+            255
+          ],
+          "after": [
+            106,
+            110,
+            120,
+            255
+          ]
+        }
+      },
+      {
+        "name": "editor remains usable 1",
+        "pass": true
+      },
+      {
+        "name": "deselection keeps mask pixels 2",
+        "pass": true,
+        "detail": {
+          "before": [
+            106,
+            110,
+            120,
+            255
+          ],
+          "after": [
+            106,
+            110,
+            120,
+            255
+          ]
+        }
+      },
+      {
+        "name": "editor remains usable 2",
+        "pass": true
+      },
+      {
+        "name": "deselection keeps mask pixels 3",
+        "pass": true,
+        "detail": {
+          "before": [
+            106,
+            110,
+            120,
+            255
+          ],
+          "after": [
+            106,
+            110,
+            120,
+            255
+          ]
+        }
+      },
+      {
+        "name": "editor remains usable 3",
+        "pass": true
+      },
+      {
+        "name": "deselection keeps mask pixels 4",
+        "pass": true,
+        "detail": {
+          "before": [
+            106,
+            110,
+            120,
+            255
+          ],
+          "after": [
+            106,
+            110,
+            120,
+            255
+          ]
+        }
+      },
+      {
+        "name": "editor remains usable 4",
+        "pass": true
+      },
+      {
+        "name": "deselection keeps mask pixels 5",
+        "pass": true,
+        "detail": {
+          "before": [
+            106,
+            110,
+            120,
+            255
+          ],
+          "after": [
+            106,
+            110,
+            120,
+            255
+          ]
+        }
+      },
+      {
+        "name": "editor remains usable 5",
+        "pass": true
+      },
+      {
+        "name": "deselection keeps mask pixels 6",
+        "pass": true,
+        "detail": {
+          "before": [
+            106,
+            110,
+            120,
+            255
+          ],
+          "after": [
+            106,
+            110,
+            120,
+            255
+          ]
+        }
+      },
+      {
+        "name": "editor remains usable 6",
+        "pass": true
+      },
+      {
+        "name": "deselection keeps mask pixels 7",
+        "pass": true,
+        "detail": {
+          "before": [
+            106,
+            110,
+            120,
+            255
+          ],
+          "after": [
+            106,
+            110,
+            120,
+            255
+          ]
+        }
+      },
+      {
+        "name": "editor remains usable 7",
+        "pass": true
+      },
+      {
+        "name": "no runtime errors",
+        "pass": true,
+        "detail": []
+      }
+    ],
+    "frames": [
+      16,
+      17,
+      17,
+      16,
+      17,
+      16,
+      17,
+      17,
+      16,
+      17,
+      17,
+      16,
+      17,
+      17,
+      16,
+      17,
+      16,
+      16,
+      17,
+      17.00000000000091,
+      15.99999999999909,
+      17,
+      16,
+      17,
+      17,
+      16,
+      16.99999999999909,
+      17.00000000000182,
+      16.99999999999909,
+      16,
+      17,
+      17.00000000000091,
+      14.000000000001819,
+      16.99999999999818,
+      19,
+      16,
+      15,
+      17,
+      17,
+      16,
+      17,
+      16,
+      17,
+      17,
+      17,
+      16,
+      17.00000000000182,
+      16.99999999999818,
+      16,
+      17,
+      20,
+      13,
+      16,
+      17,
+      16,
+      17,
+      17.00000000000182,
+      16,
+      16.99999999999818,
+      17,
+      16,
+      16,
+      17,
+      17,
+      14,
+      20.00000000000182,
+      25.99999999999818,
+      15,
+      14,
+      12,
+      12,
+      16,
+      17,
+      16,
+      24,
+      10,
+      16,
+      23.00000000000182,
+      10.999999999998181,
+      18.00000000000182,
+      15,
+      17,
+      17,
+      16,
+      17,
+      17,
+      16,
+      19.00000000000182,
+      14.999999999998181,
+      21,
+      19,
+      10,
+      22,
+      11,
+      21,
+      12,
+      5,
+      40,
+      20,
+      21,
+      15,
+      34.00000000000182,
+      30.99999999999818,
+      24,
+      13,
+      17,
+      7,
+      33.00000000000182,
+      11.999999999998181,
+      25,
+      24.00000000000182,
+      16.99999999999818,
+      63,
+      9,
+      20.00000000000182,
+      22.99999999999818,
+      34,
+      38,
+      7,
+      44,
+      23,
+      19,
+      5,
+      24,
+      24,
+      9.000000000001819,
+      5.999999999998181,
+      16
+    ],
+    "paint": [
+      1,
+      1,
+      0,
+      1,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      1,
+      0,
+      1,
+      0,
+      0,
+      2,
+      2,
+      1.0000000000009095,
+      1.0000000000009095,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0.9999999999990905,
+      0,
+      1.000000000001819,
+      0.9999999999990905,
+      0,
+      0,
+      1.0000000000009095,
+      2,
+      2,
+      0,
+      0,
+      1,
+      0,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0.999999999998181,
+      2,
+      2,
+      1,
+      1,
+      1,
+      1,
+      1,
+      0,
+      1.000000000001819,
+      0,
+      0,
+      1,
+      0,
+      0,
+      1,
+      1,
+      2,
+      2,
+      1,
+      0,
+      0,
+      1,
+      1,
+      0,
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0.999999999998181,
+      1,
+      1,
+      1,
+      1,
+      0,
+      1,
+      0,
+      1,
+      1,
+      0,
+      0,
+      1,
+      1,
+      0,
+      1,
+      1,
+      1,
+      0,
+      1,
+      0,
+      1,
+      1,
+      3,
+      0,
+      1.000000000001819,
+      1.000000000001819,
+      0,
+      0,
+      0,
+      0,
+      1,
+      1,
+      0.999999999998181,
+      1,
+      1,
+      1,
+      0.999999999998181,
+      0,
+      1.000000000001819,
+      1,
+      1,
+      0,
+      1.000000000001819,
+      1.000000000001819,
+      0,
+      0,
+      1,
+      1,
+      1
+    ],
+    "diagnostics": {
+      "gpuFrames": 147,
+      "cpuFrames": 0,
+      "uploads": 1,
+      "reuses": 146,
+      "lastError": "",
+      "renderMs": 0,
+      "compositeMs": 0,
+      "uploadMs": 0
+    },
+    "timings": {
+      "mean": 17.91406250000002,
+      "max": 63
+    },
+    "pass": true
+  },
+  "swap": {
+    "kind": "creative-swap-stress-v35",
+    "route": "?four&large&swapStress&nativeV35=1",
+    "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+    "checks": [
+      {
+        "name": "thumbnail visible 0",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 0",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 0",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 0",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 1",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 1",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 1",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 1",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 2",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 2",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 2",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 2",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 3",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 3",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 3",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 3",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 4",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 4",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 4",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 4",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 5",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 5",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 5",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 5",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 6",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 6",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 6",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 6",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 7",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 7",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 7",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 7",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 8",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 8",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 8",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 8",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 9",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 9",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 9",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 9",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 10",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 10",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 10",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 10",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 11",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 11",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 11",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 11",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 12",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 12",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 12",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 12",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 13",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 13",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 13",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 13",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 14",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 14",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 14",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 14",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 15",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 15",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 15",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 15",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 16",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 16",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 16",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 16",
+        "pass": true
+      },
+      {
+        "name": "thumbnail visible 17",
+        "pass": true
+      },
+      {
+        "name": "exchange keeps all four sources 17",
+        "pass": true
+      },
+      {
+        "name": "exchange changes target sources 17",
+        "pass": true
+      },
+      {
+        "name": "thumbnail released 17",
+        "pass": true
+      },
+      {
+        "name": "no runtime errors",
+        "pass": true,
+        "detail": []
+      }
+    ],
+    "samples": [
+      {
+        "round": 0,
+        "mean": 16.5,
+        "max": 17.000000000003638
+      },
+      {
+        "round": 1,
+        "mean": 16.375000000000455,
+        "max": 26
+      },
+      {
+        "round": 2,
+        "mean": 16.75,
+        "max": 17
+      },
+      {
+        "round": 3,
+        "mean": 16.625,
+        "max": 17.000000000003638
+      },
+      {
+        "round": 4,
+        "mean": 16.624999999999545,
+        "max": 17
+      },
+      {
+        "round": 5,
+        "mean": 16.625000000000455,
+        "max": 17.000000000003638
+      },
+      {
+        "round": 6,
+        "mean": 16.624999999999545,
+        "max": 17.000000000003638
+      },
+      {
+        "round": 7,
+        "mean": 16.625,
+        "max": 17.000000000003638
+      },
+      {
+        "round": 8,
+        "mean": 16.625000000000455,
+        "max": 17.000000000003638
+      },
+      {
+        "round": 9,
+        "mean": 22.12499999999909,
+        "max": 44
+      },
+      {
+        "round": 10,
+        "mean": 16.75,
+        "max": 17.000000000007276
+      },
+      {
+        "round": 11,
+        "mean": 16.625,
+        "max": 17.000000000007276
+      },
+      {
+        "round": 12,
+        "mean": 16.62499999999909,
+        "max": 17.000000000007276
+      },
+      {
+        "round": 13,
+        "mean": 16.75,
+        "max": 17.000000000007276
+      },
+      {
+        "round": 14,
+        "mean": 16.625,
+        "max": 17.000000000007276
+      },
+      {
+        "round": 15,
+        "mean": 16.625,
+        "max": 17.000000000007276
+      },
+      {
+        "round": 16,
+        "mean": 16.62500000000091,
+        "max": 17.000000000007276
+      },
+      {
+        "round": 17,
+        "mean": 16.625,
+        "max": 17.000000000007276
+      }
+    ],
+    "pass": true
+  },
+  "tabs": {
+    "kind": "creative-tab-switch-v35",
+    "route": "?single&huge&tabAudit&productionV35=2",
+    "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+    "checks": [
+      {
+        "name": "active setting 0",
+        "pass": true
+      },
+      {
+        "name": "active shape 0",
+        "pass": true
+      },
+      {
+        "name": "active add 0",
+        "pass": true
+      },
+      {
+        "name": "active objedit 0",
+        "pass": true
+      },
+      {
+        "name": "active setting 1",
+        "pass": true
+      },
+      {
+        "name": "active shape 1",
+        "pass": true
+      },
+      {
+        "name": "active add 1",
+        "pass": true
+      },
+      {
+        "name": "active objedit 1",
+        "pass": true
+      },
+      {
+        "name": "active setting 2",
+        "pass": true
+      },
+      {
+        "name": "active shape 2",
+        "pass": true
+      },
+      {
+        "name": "active add 2",
+        "pass": true
+      },
+      {
+        "name": "active objedit 2",
+        "pass": true
+      },
+      {
+        "name": "active setting 3",
+        "pass": true
+      },
+      {
+        "name": "active shape 3",
+        "pass": true
+      },
+      {
+        "name": "active add 3",
+        "pass": true
+      },
+      {
+        "name": "active objedit 3",
+        "pass": true
+      },
+      {
+        "name": "active setting 4",
+        "pass": true
+      },
+      {
+        "name": "active shape 4",
+        "pass": true
+      },
+      {
+        "name": "active add 4",
+        "pass": true
+      },
+      {
+        "name": "active objedit 4",
+        "pass": true
+      },
+      {
+        "name": "active setting 5",
+        "pass": true
+      },
+      {
+        "name": "active shape 5",
+        "pass": true
+      },
+      {
+        "name": "active add 5",
+        "pass": true
+      },
+      {
+        "name": "active objedit 5",
+        "pass": true
+      },
+      {
+        "name": "active setting 6",
+        "pass": true
+      },
+      {
+        "name": "active shape 6",
+        "pass": true
+      },
+      {
+        "name": "active add 6",
+        "pass": true
+      },
+      {
+        "name": "active objedit 6",
+        "pass": true
+      },
+      {
+        "name": "active setting 7",
+        "pass": true
+      },
+      {
+        "name": "active shape 7",
+        "pass": true
+      },
+      {
+        "name": "active add 7",
+        "pass": true
+      },
+      {
+        "name": "active objedit 7",
+        "pass": true
+      },
+      {
+        "name": "active setting 8",
+        "pass": true
+      },
+      {
+        "name": "active shape 8",
+        "pass": true
+      },
+      {
+        "name": "active add 8",
+        "pass": true
+      },
+      {
+        "name": "active objedit 8",
+        "pass": true
+      },
+      {
+        "name": "active setting 9",
+        "pass": true
+      },
+      {
+        "name": "active shape 9",
+        "pass": true
+      },
+      {
+        "name": "active add 9",
+        "pass": true
+      },
+      {
+        "name": "active objedit 9",
+        "pass": true
+      },
+      {
+        "name": "active setting 10",
+        "pass": true
+      },
+      {
+        "name": "active shape 10",
+        "pass": true
+      },
+      {
+        "name": "active add 10",
+        "pass": true
+      },
+      {
+        "name": "active objedit 10",
+        "pass": true
+      },
+      {
+        "name": "active setting 11",
+        "pass": true
+      },
+      {
+        "name": "active shape 11",
+        "pass": true
+      },
+      {
+        "name": "active add 11",
+        "pass": true
+      },
+      {
+        "name": "active objedit 11",
+        "pass": true
+      },
+      {
+        "name": "photo editor remains usable",
+        "pass": true
+      },
+      {
+        "name": "no long tab-switch tasks",
+        "pass": true,
+        "detail": {
+          "mean": 33.13095238095242,
+          "max": 93
+        }
+      }
+    ],
+    "samples": [
+      {
+        "round": 0,
+        "name": "濾鏡",
+        "ms": 17,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 0,
+        "name": "調節",
+        "ms": 27,
+        "paint": 5,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 0,
+        "name": "特效",
+        "ms": 36,
+        "paint": 0,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 0,
+        "name": "setting",
+        "ms": 22,
+        "paint": 0,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 0,
+        "name": "shape",
+        "ms": 93,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 0,
+        "name": "add",
+        "ms": 18,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 0,
+        "name": "objedit",
+        "ms": 58,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 1,
+        "name": "濾鏡",
+        "ms": 17,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 1,
+        "name": "調節",
+        "ms": 40,
+        "paint": 6,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 1,
+        "name": "特效",
+        "ms": 62,
+        "paint": 1.0000000000009095,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 1,
+        "name": "setting",
+        "ms": 33,
+        "paint": 1.0000000000009095,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 1,
+        "name": "shape",
+        "ms": 44,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 1,
+        "name": "add",
+        "ms": 21.00000000000091,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 1,
+        "name": "objedit",
+        "ms": 67,
+        "paint": 1.9999999999990905,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 2,
+        "name": "濾鏡",
+        "ms": 17,
+        "paint": 3,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 2,
+        "name": "調節",
+        "ms": 35,
+        "paint": 7,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 2,
+        "name": "特效",
+        "ms": 50,
+        "paint": 0.9999999999990905,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 2,
+        "name": "setting",
+        "ms": 27,
+        "paint": 0.9999999999990905,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 2,
+        "name": "shape",
+        "ms": 34,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 2,
+        "name": "add",
+        "ms": 18,
+        "paint": 2.0000000000009095,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 2,
+        "name": "objedit",
+        "ms": 44,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 3,
+        "name": "濾鏡",
+        "ms": 17,
+        "paint": 3,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 3,
+        "name": "調節",
+        "ms": 27.00000000000091,
+        "paint": 4.9999999999990905,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 3,
+        "name": "特效",
+        "ms": 41,
+        "paint": 1,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 3,
+        "name": "setting",
+        "ms": 23,
+        "paint": 1,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 3,
+        "name": "shape",
+        "ms": 26,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 3,
+        "name": "add",
+        "ms": 17,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 3,
+        "name": "objedit",
+        "ms": 39,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 4,
+        "name": "濾鏡",
+        "ms": 17,
+        "paint": 1.9999999999990905,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 4,
+        "name": "調節",
+        "ms": 25,
+        "paint": 5,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 4,
+        "name": "特效",
+        "ms": 33,
+        "paint": 0,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 4,
+        "name": "setting",
+        "ms": 20,
+        "paint": 0,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 4,
+        "name": "shape",
+        "ms": 28,
+        "paint": 2.0000000000009095,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 4,
+        "name": "add",
+        "ms": 17,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 4,
+        "name": "objedit",
+        "ms": 44,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 5,
+        "name": "濾鏡",
+        "ms": 17,
+        "paint": 3,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 5,
+        "name": "調節",
+        "ms": 29,
+        "paint": 4.9999999999990905,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 5,
+        "name": "特效",
+        "ms": 40,
+        "paint": 0,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 5,
+        "name": "setting",
+        "ms": 24,
+        "paint": 0,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 5,
+        "name": "shape",
+        "ms": 29.00000000000091,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 5,
+        "name": "add",
+        "ms": 17,
+        "paint": 0.9999999999990905,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 5,
+        "name": "objedit",
+        "ms": 39,
+        "paint": 2.0000000000009095,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 6,
+        "name": "濾鏡",
+        "ms": 17,
+        "paint": 2.9999999999990905,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 6,
+        "name": "調節",
+        "ms": 26,
+        "paint": 4,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 6,
+        "name": "特效",
+        "ms": 37,
+        "paint": 0,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 6,
+        "name": "setting",
+        "ms": 22.00000000000091,
+        "paint": 0,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 6,
+        "name": "shape",
+        "ms": 27.00000000000091,
+        "paint": 0.9999999999990905,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 6,
+        "name": "add",
+        "ms": 15.99999999999909,
+        "paint": 0.9999999999990905,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 6,
+        "name": "objedit",
+        "ms": 41,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 7,
+        "name": "濾鏡",
+        "ms": 16,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 7,
+        "name": "調節",
+        "ms": 39,
+        "paint": 4,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 7,
+        "name": "特效",
+        "ms": 69,
+        "paint": 1,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 7,
+        "name": "setting",
+        "ms": 37,
+        "paint": 1,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 7,
+        "name": "shape",
+        "ms": 45,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 7,
+        "name": "add",
+        "ms": 19,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 7,
+        "name": "objedit",
+        "ms": 61,
+        "paint": 2.000000000001819,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 8,
+        "name": "濾鏡",
+        "ms": 16,
+        "paint": 3,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 8,
+        "name": "調節",
+        "ms": 32,
+        "paint": 7,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 8,
+        "name": "特效",
+        "ms": 48,
+        "paint": 1.000000000001819,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 8,
+        "name": "setting",
+        "ms": 27,
+        "paint": 1.000000000001819,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 8,
+        "name": "shape",
+        "ms": 32,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 8,
+        "name": "add",
+        "ms": 20,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 8,
+        "name": "objedit",
+        "ms": 77,
+        "paint": 1.000000000001819,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 9,
+        "name": "濾鏡",
+        "ms": 17,
+        "paint": 4,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 9,
+        "name": "調節",
+        "ms": 40,
+        "paint": 7,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 9,
+        "name": "特效",
+        "ms": 59,
+        "paint": 1,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 9,
+        "name": "setting",
+        "ms": 31,
+        "paint": 1,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 9,
+        "name": "shape",
+        "ms": 43,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 9,
+        "name": "add",
+        "ms": 18.99999999999818,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 9,
+        "name": "objedit",
+        "ms": 60,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 10,
+        "name": "濾鏡",
+        "ms": 17,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 10,
+        "name": "調節",
+        "ms": 31,
+        "paint": 5,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 10,
+        "name": "特效",
+        "ms": 47.00000000000182,
+        "paint": 1,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 10,
+        "name": "setting",
+        "ms": 25,
+        "paint": 1,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 10,
+        "name": "shape",
+        "ms": 29,
+        "paint": 1.000000000001819,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 10,
+        "name": "add",
+        "ms": 17.00000000000182,
+        "paint": 2,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 10,
+        "name": "objedit",
+        "ms": 53,
+        "paint": 0.999999999998181,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 11,
+        "name": "濾鏡",
+        "ms": 16,
+        "paint": 3,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 11,
+        "name": "調節",
+        "ms": 35.00000000000182,
+        "paint": 7,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 11,
+        "name": "特效",
+        "ms": 53.99999999999818,
+        "paint": 0,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 11,
+        "name": "setting",
+        "ms": 28,
+        "paint": 0,
+        "backend": "resident-spatial-scene-gpu",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 11,
+        "name": "shape",
+        "ms": 28,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 11,
+        "name": "add",
+        "ms": 17,
+        "paint": 1,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      },
+      {
+        "round": 11,
+        "name": "objedit",
+        "ms": 43.99999999999818,
+        "paint": 2.000000000001819,
+        "backend": "",
+        "colour": "1",
+        "reason": "{\"key\":true,\"scale\":[0,1.6528476322717507],\"size\":[0,0,1785,1785]}"
+      }
+    ],
+    "timings": {
+      "mean": 33.13095238095242,
+      "max": 93
+    },
+    "pass": true
+  },
+  "negative": {
+    "kind": "backdrop-mask-interactions-v35",
+    "route": "?mask=mask-negative&interactionAudit",
+    "ua": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+    "checks": [
+      {
+        "name": "mask selected",
+        "pass": true
+      },
+      {
+        "name": "negative has a read-only explanation",
+        "pass": true
+      },
+      {
+        "name": "negative has no controls",
+        "pass": true
+      }
+    ],
+    "frames": [],
+    "paint": [],
+    "pass": true,
+    "diagnostics": {
+      "gpuFrames": 4,
+      "cpuFrames": 0,
+      "uploads": 1,
+      "reuses": 3,
+      "lastError": "",
+      "renderMs": 0,
+      "compositeMs": 0.19999998807907104,
+      "uploadMs": 0
+    }
+  },
+  "verification": {
+    "regressions": 321,
+    "build": "passed",
+    "environment": "iPhone 17 Simulator, iOS 26.5 Safari; production React QA runtime for tabs and core; PointerEvent audits operate actual mounted components, not physical two-finger touch input",
+    "limitations": "This is not a physical-device guarantee; simulator scheduling intervals include system/UI overhead. Original photo sampling and effect quality are retained."
+  },
+  "changes": [
+    "Exclude backdrop masks from transparent object-tile and photo endpoint caches",
+    "Initialize all WebGL samplers; reuse stable lower ink uploads and blur without object-sized offscreen allocation",
+    "Replace two circle preset picker entries with monochrome and thermal; preserve legacy drafts",
+    "Requested control removals and shape selectors; negative is read-only",
+    "Visible-pixel photo swap dimming preserves alpha and releases temporary memory",
+    "Reuse immutable thumbnail canvases and short icon URLs; remove UI state from scene endpoint keys"
+  ]
+}

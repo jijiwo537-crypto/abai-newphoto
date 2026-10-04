@@ -10,7 +10,7 @@ import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import { idleDefaults } from '../utils/animationDefaults';
 import { get2dWide } from '../utils/colorSpace';
-import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, dimmedPhotoSource, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
+import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, drawDimmedPhoto, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
 import { hasActiveFx, type FxScene, type FxPlacement } from '../utils/glEffects';
 import { stampBounds, brushStepReached, type StampBounds } from '../utils/patternBrushSpacing';
 import { patternEntranceRanks, type PatternDirection } from '../utils/patternEntrance';
@@ -100,6 +100,18 @@ import {PhotoAdjustmentBlend,BLEND_ADJUSTMENTS} from '../utils/photoAdjustmentBl
 import { SaveButton } from './SaveButton';
 import { ExportActionLift } from './ExportActionLift';
 import type { ExitChoice } from '../types';
+
+// Keep embedded icon bytes intact, but never reparse a huge base64 CSS mask
+// on each first panel layout. These tiny immutable asset URLs live with module.
+const patternIconUrls=new Map<string,string>();
+const warmedPatternIcons=new Set<string>();
+const patternIconUrl=(source:string)=>{
+  if(!source.startsWith('data:'))return source;
+  let url=patternIconUrls.get(source);if(url)return url;
+  const split=source.indexOf(','),header=source.slice(0,split),bytes=atob(source.slice(split+1));
+  url=URL.createObjectURL(new Blob([Uint8Array.from(bytes,c=>c.charCodeAt(0))],{type:header.slice(5).split(';')[0]}));
+  patternIconUrls.set(source,url);return url;
+};
 
 import { pushHistory as pushHistoryEntry } from '../utils/history';
 import { preferredVideoFrameRate } from '../utils/videoFrameRate';
@@ -1337,6 +1349,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionWarmStage=useRef<{index:number;canvas:HTMLCanvasElement}|null>(null);
   const regionSceneKey=useRef('');
   const regionGpuSceneKey=useRef('');
+  const sceneSourceTokens=useRef(new Map<string,number>());
+  const sceneTokenCounter=useRef(0);
+  const compactSceneValue=(_key:string,value:any)=>{
+    if(typeof value==='string'&&(value.startsWith('data:')||value.startsWith('blob:'))){
+      const map=sceneSourceTokens.current;
+      if(!map.has(value)){if(map.size>=64)map.delete(map.keys().next().value!);map.set(value,++sceneTokenCounter.current);}
+      return `source:${map.get(value)}`;
+    }return value;
+  };
   const regionColour=useRef<PhotoSceneColour|null>(null);
   const regionColourActive=useRef(false);
   const regionSpatialActive=useRef(false);
@@ -2053,6 +2074,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const id=`region-fx-${index}@${photo.src}`;
       const cv=fxCanvasOf({...photo,id,img:original},true,Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*previewScaleRef.current);
       const cached=objFxCache.current.get(id);if(!cv||!cached)return;
+      if(cv===regionStaticSnapshot.current?.cv)return;
       const snapshot=document.createElement('canvas');snapshot.width=cv.width;snapshot.height=cv.height;
       snapshot.getContext('2d')!.drawImage(cv,0,0);
       objFxCache.current.set(id,{key:cached.key,cv:snapshot});regionStaticSnapshot.current={cv:snapshot};
@@ -2080,11 +2102,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(resident?.shown)resident.shown.style.display='none';
       // Geometry sliders consume a 2D snapshot, not repeated WebGL->2D
       // readbacks. Keep the shader itself warm for the next edit.
-      if(keep){const cached=objFxCache.current.get(keep);if(cached&&cached.cv!==regionStaticSnapshot.current?.cv){
-        const snapshot=document.createElement('canvas');snapshot.width=cached.cv.width;snapshot.height=cached.cv.height;
-        snapshot.getContext('2d')!.drawImage(cached.cv,0,0);
-        objFxCache.current.set(keep,{key:cached.key,cv:snapshot});regionStaticSnapshot.current={cv:snapshot};
-      }}
+      // The settled-edit effect already keeps exact reusable pixels. A tab
+      // click must not synchronously read back another multi-megapixel GPU frame.
       regionBlend.current?.clear();
     }
     if(selectedKey===null)return;
@@ -3428,7 +3447,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   const cancelRegionHold=()=>{
     if(regionHold.current)window.clearTimeout(regionHold.current.timer);
-    regionHold.current=null;setRegionSwapPhoto(null);swapHoverRef.current=null;setSwapSource(null);
+    regionHold.current=null;setRegionSwapPhoto(null);swapHoverRef.current=null;setSwapSource(null);clearPhotoDimmer();
   };
   useEffect(()=>()=>{if(regionHold.current)window.clearTimeout(regionHold.current.timer);clearPhotoDimmer();},[]);
   useEffect(()=>{if(selectedObj||selectedTarget||maskSelected)setSelectedRegionPhoto(null);},[selectedObj,selectedTarget,maskSelected]);
@@ -4707,8 +4726,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,
     objects,shapeSel,selectedObj,selectedTarget,selectedPatternSide,baseSelected,editingTextId,guides,tuningEdge,objDragging,objPinching,objStretching,
     fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle];
-  regionSceneKey.current=JSON.stringify(regionSceneValue);
-  regionGpuSceneKey.current=JSON.stringify(regionSceneValue.map((value,i)=>i===3&&photoRegion?{...photoRegion,photos:photoRegion.photos.map((p,j)=>j===(selectedRegionPhotoRef.current??0)?{...p,fx:{}}:p)}:value));
+  regionSceneKey.current=JSON.stringify(regionSceneValue,compactSceneValue);
+  // Selection, pills, gestures and tabs are UI, not scene pixels. Including
+  // them invalidated 2/3 full-scene endpoint captures on every navigation.
+  const gpuSceneFingerprint=useMemo(()=>JSON.stringify([
+    imageState,imageState?.img?.src,maskImageState?.img?.src,
+    photoRegion&&{...photoRegion,photos:photoRegion.photos.map((p,j)=>j===(selectedRegionPhotoRef.current??0)?{...p,fx:{}}:p)},
+    layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,
+    stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,objects,
+    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,selectedRegionPhoto??0
+  ],compactSceneValue),
+  [imageState,photoRegion,selectedRegionPhoto,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,objects,fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle]);
+  regionGpuSceneKey.current=gpuSceneFingerprint;
+  const backdropObjectTokens=useRef(new WeakMap<object,number>()),backdropObjectSerial=useRef(0);
+  const backdropSceneFingerprint=useMemo(()=>JSON.stringify([
+    imageState,photoRegion,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,
+    stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,
+    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,swapSource
+  ],compactSceneValue),[imageState,photoRegion,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,swapSource]);
   const lastPatternPaintRef = useRef<{identity:object;holes:any[];scale:number}|null>(null);
   const forceFullPreviewRef = useRef(false);
   const linkGlowTilesRef = useRef<LinkGlowTiles|null>(null);
@@ -4722,12 +4757,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Resizing a canvas clears it immediately, so never resize during the tween.
     if (targetCanvas === canvasRef.current && performance.now() < motionTransitionUntilRef.current) return;
     const stamp=regionSceneStamp.current,index=selectedRegionPhotoRef.current??0,photo=photoRegion?.photos[index];
-    if(targetCanvas===canvasRef.current&&!previewCapture){
+    // Backdrop-dependent materials are nonlinear. Black/white photo endpoints
+    // cannot reconstruct them; use the shared live scene when masks are present.
+    const hasBackdrop=objectsRef.current.some(o=>isBackdropMask(o.kind));
+    if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop){
       const original=photo&&decodedRegionPhotos.current.get(photo.src);
       if(regionSpatialActive.current&&original&&supportsResidentPhotoEffects(photo?.fx)&&!photoRegion?.seamless&&!animRef.current&&!viewPinchRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
         const key=regionGpuSceneKey.current;
         let resident=regionSpatial.current;
         if(!resident||resident.key!==key||resident.scale!==renderScale||resident.scene.black.width!==targetCanvas.width||resident.scene.black.height!==targetCanvas.height){
+          if(import.meta.env.DEV){targetCanvas.dataset.spatialRebuilds=String(Number(targetCanvas.dataset.spatialRebuilds||0)+1);targetCanvas.dataset.sceneRebuildReason=JSON.stringify({key:resident?.key!==key,scale:[resident?.scale,renderScale],size:[resident?.scene.black.width,resident?.scene.black.height,targetCanvas.width,targetCanvas.height]});}
           // Scene geometry changes, not the immutable photo or its shaders.
           // Keep the actual GPU context; repeatedly rebuilding it exhausts
           // WebKit's context and canvas memory budgets after several edits.
@@ -4766,6 +4805,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         regionColour.current??=new PhotoSceneColour();const colour=regionColour.current;
         const signature=regionGpuSceneKey.current;
         if(!colour.ready||colour.signature!==signature||colour.width!==targetCanvas.width||colour.height!==targetCanvas.height||colour.scale!==renderScale){
+          if(import.meta.env.DEV){targetCanvas.dataset.colourRebuilds=String(Number(targetCanvas.dataset.colourRebuilds||0)+1);targetCanvas.dataset.sceneRebuildReason=JSON.stringify({key:colour.signature!==signature,scale:[colour.scale,renderScale],size:[colour.width,colour.height,targetCanvas.width,targetCanvas.height]});}
           const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
           const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale));
           const k=Math.min(1,cap/Math.max(w,h)),iw=Math.max(1,Math.round(w*k)),ih=Math.max(1,Math.round(h*k));
@@ -4815,7 +4855,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       regionColour.current?.hide();
     }
-    if(targetCanvas===canvasRef.current&&regionSliderHeld.current&&!previewCapture&&!animRef.current&&!viewPinchRef.current&&stamp?.key===regionSceneKey.current&&stamp.scale===renderScale&&stamp.sceneW===targetCanvas.width&&stamp.sceneH===targetCanvas.height&&photo){
+    if(hasBackdrop){regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';}
+    if(!hasBackdrop&&targetCanvas===canvasRef.current&&regionSliderHeld.current&&!previewCapture&&!animRef.current&&!viewPinchRef.current&&stamp?.key===regionSceneKey.current&&stamp.scale===renderScale&&stamp.sceneW===targetCanvas.width&&stamp.sceneH===targetCanvas.height&&photo){
       const scene=regionBlend.current?.paint(stamp.source,stamp.w,stamp.h,photo.fx||{},regionBlendTool.current);
       if(scene){
         const g=get2dWide(targetCanvas)!;g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='copy';g.drawImage(scene,0,0);g.globalCompositeOperation='source-over';
@@ -5092,7 +5133,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       } else {
         const single = img === baseImg && regionForPaint?.photos.length === 1
           ? regionDecoded.get(regionForPaint.photos[0].src) || img : img;
-        g.drawImage(isMain&&allowDim&&swapSource?.kind==='region'&&swapSource.index===0?dimmedPhotoSource(single):single,x,y,w,h);
+        if(isMain&&allowDim&&swapSource?.kind==='region'&&swapSource.index===0)drawDimmedPhoto(g,single,0,0,single.naturalWidth||single.width,single.naturalHeight||single.height,x,y,w,h);
+        else g.drawImage(single,x,y,w,h);
       }
     };
     const drawImg = (img: any, t: any, ox: number, oy: number, w: number, h: number, kk = 1, allowDim = false) => {
@@ -6137,7 +6179,13 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (f && (f.k !== 1 || f.fx !== 1)) ctx.scale(f.k * f.fx, f.k);
       ctx.globalAlpha = flattened ? 1 : objectAlpha;
       if (o.type==='shape'&&isBackdropMask(o.kind)) {
-        drawBackdropMask(ctx,o.kind,o.w*s,o.h*s,o);
+        // Cache unchanged lower ink, not the mask bitmap. Dragging changes only
+        // shader/clip geometry; source pixels are uploaded again only on an edit.
+        const maskIndex=objIndex.get(o.id)??0;
+        const lower=objects.filter((item,index)=>o.below?item.below&&index<maskIndex:item.below||index<maskIndex).map(item=>{const map=backdropObjectTokens.current;if(!map.has(item))map.set(item,++backdropObjectSerial.current);return map.get(item);});
+        const sourceStamp=isMain&&!animRef.current&&!f&&!isVideoEl(imageState.img)&&!objects.some(v=>isVideoEl(v.img))
+          ? `${backdropSceneFingerprint}|${lower.join(',')}|${o.below?'below':'above'}|${s}|${vp.x},${vp.y}|${targetCanvas.width}x${targetCanvas.height}`:undefined;
+        drawBackdropMask(ctx,o.kind,o.w*s,o.h*s,o,ctx.canvas,sourceStamp);
       } else if (o.type === 'image' && o.img) {
         /* 虛線描邊有常駐動畫時，描邊不能烤進快取那張（快取是靠參數當 key 的，
            每一帧都變等於每一帧重算整張圖）。改成：快取那張不畫描邊，
@@ -6152,7 +6200,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         /* 有形狀效果時畫布比原圖大一圈（留給發光與描邊），
            畫的時候要等比放大回去，圖片本體才會剛好落在原本的框上。 */
         const padX = (src2 as any).__padX || 0, padY = (src2 as any).__padY || 0;
-        if(dimPhoto)src2=dimmedPhotoSource(src2);
         const ew = o.w * s * (1 + padX * 2), eh = o.h * s * (1 + padY * 2);
         /* 圖片的發光是「烤」在成品畫布裡的，沒辦法只調光的濃度。
            要讓光會閃，就再備一張「完全沒有光」的同款成品：
@@ -6173,8 +6220,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
           } else {
             ctx.drawImage(src2, -ew / 2, -eh / 2, ew, eh);
           }
-        } else
-        ctx.drawImage(src2, -ew / 2, -eh / 2, ew, eh);
+        } else if(dimPhoto)drawDimmedPhoto(ctx,src2,0,0,src2.naturalWidth||src2.width,src2.naturalHeight||src2.height,-ew/2,-eh/2,ew,eh);
+        else ctx.drawImage(src2, -ew / 2, -eh / 2, ew, eh);
 
         /* 即時畫的虛線描邊。幾何跟烤進快取那條完全一樣：
            以圖片外緣往外讓半個線寬，圓角再加半個線寬。
@@ -6699,7 +6746,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // Reuse unchanged, unselected vector/text objects at their exact backing
         // resolution. The moving object remains live; exports and animations
         // always use the original painter. No lower-resolution interaction tier.
-        const eligible = isMain && !f && o.type !== 'image' && o.id !== selectedObj
+        const eligible = isMain && !f && o.type !== 'image' && !isBackdropMask(o.kind) && o.id !== selectedObj
           && o.id !== editingTextId && !motionTargetFlashRef.current;
         const tiles = staticObjectTilesRef.current;
         const cached = eligible ? tiles.get(o.id) : null;
@@ -7263,7 +7310,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
   }, [imageState, photoRegion, swapSource, selectedRegionPhoto, activeTab, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
-      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle, patternSceneIdentity]);
+      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle, patternSceneIdentity,backdropSceneFingerprint]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
      離開創意拼圖時記一筆。key 用「這一次拼圖」的 id（從歷史紀錄點進來的話
@@ -7478,6 +7525,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(() => {
     let alive = true;
     Object.keys(SHAPE_IMAGES).forEach(k => {
+      if(!warmedPatternIcons.has(k)){warmedPatternIcons.add(k);const icon=new Image();icon.src=patternIconUrl(SHAPE_IMAGES[k]);void icon.decode?.().catch(()=>{});}
       const im = getHoleImg(k);
       if (!im || (im.complete && im.naturalWidth)) return;
       im.addEventListener('load', () => { if (alive) renderCanvas(); }, { once: true });
@@ -9512,7 +9560,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                 { t: '複製', on: act(dup), el: <Copy size={14} />, off: false },
                 { t: o.type === 'text' ? (o.sym ? '編輯符號' : '編輯文字') : o.type === 'shape' ? '圖形調整' : '圖片調整', on: act(() => { setColorPickerTarget(null); setActiveTab('objedit'); }), el: <Sliders size={14} />, off: false },
                 { t: '刪除', on: act(() => { setObjects(prev => prev.filter(z => z.id !== o.id)); setSelectedObj(null); }), el: <Trash2 size={14} />, off: false },
-              ].map(b => (
+              ].filter(b=>!(o.kind==='mask-negative'&&b.el.type===Sliders)).map(b => (
                 /* 鬆手才觸發。以前綁在 onPointerDown，手指一碰到就動作 ——
                    碰錯了也來不及滑開取消，而且複製／刪除這種不好還原的動作
                    按下去就發生了。改成 onClick：一定要「在同一顆按鈕上按下並放開」
@@ -10779,8 +10827,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             maxWidth: 26,
                             maxHeight: 26,
                             backgroundColor: 'currentColor',
-                            WebkitMaskImage: `url(${SHAPE_IMAGES[s]})`,
-                            maskImage: `url(${SHAPE_IMAGES[s]})`,
+                            WebkitMaskImage: `url(${patternIconUrl(SHAPE_IMAGES[s])})`,
+                            maskImage: `url(${patternIconUrl(SHAPE_IMAGES[s])})`,
                             WebkitMaskSize: 'contain',
                             maskSize: 'contain',
                             WebkitMaskRepeat: 'no-repeat',
