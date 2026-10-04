@@ -8,9 +8,9 @@ in vec2 p;out vec2 uv;void main(){uv=vec2(p.x*.5+.5,.5-p.y*.5);gl_Position=vec4(
 const frag=`#version 300 es
 precision highp float;precision highp sampler3D;
 uniform sampler2D originalScene;uniform sampler2D blackScene;uniform sampler2D whiteScene;
-uniform sampler3D colours;uniform bool identity;uniform bool wide;uniform bool masterMode;in vec2 uv;out vec4 outColor;
-vec3 lookup(vec3 c){
- if(!masterMode)return texture(colours,c*(32./33.)+(.5/33.)).rgb;
+uniform sampler3D colours;uniform sampler3D plainColours;uniform bool paired;uniform float filmWeight;uniform bool identity;uniform bool wide;uniform bool masterMode;in vec2 uv;out vec4 outColor;
+vec3 lookup(sampler3D table,vec3 c){
+ if(!masterMode)return texture(table,c*(32./33.)+(.5/33.)).rgb;
  vec3 f=c*31.;ivec3 a=ivec3(floor(f)),b=min(a+1,ivec3(31));vec3 d=f-vec3(a);
  ivec3 iA,iB;vec4 w;
  if(d.r>d.g){if(d.g>d.b){iA=ivec3(b.r,a.g,a.b);iB=ivec3(b.r,b.g,a.b);w=vec4(1.-d.r,d.r-d.g,d.g-d.b,d.b);}
@@ -19,7 +19,7 @@ vec3 lookup(vec3 c){
  else{if(d.b>d.g){iA=ivec3(a.r,a.g,b.b);iB=ivec3(a.r,b.g,b.b);w=vec4(1.-d.b,d.b-d.g,d.g-d.r,d.r);}
  else if(d.b>d.r){iA=ivec3(a.r,b.g,a.b);iB=ivec3(a.r,b.g,b.b);w=vec4(1.-d.g,d.g-d.b,d.b-d.r,d.r);}
  else{iA=ivec3(a.r,b.g,a.b);iB=ivec3(b.r,b.g,a.b);w=vec4(1.-d.g,d.g-d.r,d.r-d.b,d.b);}}
- return texelFetch(colours,a,0).rgb*w.x+texelFetch(colours,iA,0).rgb*w.y+texelFetch(colours,iB,0).rgb*w.z+texelFetch(colours,b,0).rgb*w.w;
+ return texelFetch(table,a,0).rgb*w.x+texelFetch(table,iA,0).rgb*w.y+texelFetch(table,iB,0).rgb*w.z+texelFetch(table,b,0).rgb*w.w;
 }
 vec3 linearRGB(vec3 c){return mix(c/12.92,pow((max(c,vec3(0.))+.055)/1.055,vec3(2.4)),step(vec3(.04045),c));}
 vec3 encodedRGB(vec3 c){c=max(c,vec3(0.));return mix(c*12.92,1.055*pow(c,vec3(1./2.4))-.055,step(vec3(.0031308),c));}
@@ -32,7 +32,9 @@ void main(){
  vec3 coverage=max(white-black,vec3(0.));
  if(max(coverage.r,max(coverage.g,coverage.b))<.002){outColor=original;return;}
  vec3 photo=clamp((original.rgb-black)/max(coverage,vec3(.0001)),0.,1.);
- vec3 changed=toWide(lookup(toSrgb(photo)));
+ vec3 inputColour=toSrgb(photo),mapped=lookup(colours,inputColour);
+ if(paired)mapped=mix(lookup(plainColours,inputColour),mapped,filmWeight);
+ vec3 changed=toWide(mapped);
  outColor=vec4(clamp(black+coverage*changed,0.,1.),original.a);
 }`;
 
@@ -55,6 +57,8 @@ export class PhotoSceneColour {
  private program:WebGLProgram|null=null;
  private textures:WebGLTexture[]=[];
  private lut:WebGLTexture|null=null;
+ private plainLut:WebGLTexture|null=null;
+ private paired=false;
   private key='';private film:unknown;
   private worker:Worker|null=null;
   private workerFilm:unknown;
@@ -64,7 +68,7 @@ export class PhotoSceneColour {
   private requestedKey='';
   private workerFailed=false;
   private latestFx:PhotoFx={};
-  private lutCache=new Map<string,{tex:Uint8Array|Float32Array;film:unknown;master:boolean}>();
+  private lutCache=new Map<string,{tex:Uint8Array|Float32Array;plain?:Float32Array;film:unknown;master:boolean}>();
   private masterMode=false;
   private workerStarted=0;
   private colourSpace:{colorSpace:'srgb'|'display-p3';directUpload:boolean}={colorSpace:'srgb',directUpload:false};
@@ -79,7 +83,7 @@ export class PhotoSceneColour {
   this.canvas.addEventListener('webglcontextrestored',()=>{
    // Restored contexts invalidate every GPU resource. Rebuild from the exact
    // scene on the next paint; never keep displaying a stale colour surface.
-   this.gl=null;this.program=null;this.textures=[];this.lut=null;
+   this.gl=null;this.program=null;this.textures=[];this.lut=null;this.plainLut=null;this.paired=false;
    this.signature='';this.key='';this.film=undefined;this.masterMode=false;
   });
  }
@@ -106,6 +110,11 @@ export class PhotoSceneColour {
    for(const direction of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T,gl.TEXTURE_WRAP_R])gl.texParameteri(gl.TEXTURE_3D,direction,gl.CLAMP_TO_EDGE);
    gl.uniform1i(gl.getUniformLocation(p,'colours'),3);
    gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA8,33,33,33,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+   this.plainLut=gl.createTexture();gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_3D,this.plainLut);
+   gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
+   for(const direction of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T,gl.TEXTURE_WRAP_R])gl.texParameteri(gl.TEXTURE_3D,direction,gl.CLAMP_TO_EDGE);
+   gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA32F,32,32,32,0,gl.RGBA,gl.FLOAT,null);
+   gl.uniform1i(gl.getUniformLocation(p,'plainColours'),4);
    this.canvas.style.cssText='position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none;display:none';
    this.canvas.dataset.baseColourPresentation='1';
   }
@@ -130,7 +139,7 @@ export class PhotoSceneColour {
  }
  draw(fx:PhotoFx,synchronous=false):boolean{
   if(!this.ready||!supportsSceneColour(fx))return false;
-  const gl=this.gl!,p=this.program!,key=colorKeyOf(fx),film=getLoadedLut(fx.lut);
+  const gl=this.gl!,p=this.program!,film=getLoadedLut(fx.lut),key=this.bakeKey(fx);
   this.latestFx=fx;
   if(!hasPhotoFx(fx)&&this.requestedKey){this.generation++;this.requestedKey='';this.pending=null;}
   gl.useProgram(p);
@@ -139,7 +148,7 @@ export class PhotoSceneColour {
    const cached=this.lutCache.get(key);
    if(cached&&cached.film===film){
     this.generation++;this.pending=null;this.requestedKey='';
-    gl.uniform1i(gl.getUniformLocation(p,'identity'),0);this.installLut(cached.tex,cached.master);
+    gl.uniform1i(gl.getUniformLocation(p,'identity'),0);this.installLut(cached.tex,cached.master,cached.plain);
     this.key=key;this.film=film;
    }else if(!synchronous&&!this.workerFailed&&hasPhotoFx(fx)&&typeof Worker!=='undefined'){
     if(key!==this.requestedKey||film!==this.film){this.requestedKey=key;this.pending={fx:{...fx},key,film,generation:this.generation};this.runWorker();}
@@ -149,11 +158,15 @@ export class PhotoSceneColour {
    if(lut)this.installLut(lut.tex,false);
    this.key=key;this.film=film;}
   }
-  gl.viewport(0,0,this.width,this.height);gl.drawArrays(gl.TRIANGLES,0,3);this.recordFrame();this.canvas.style.display='block';return true;
+  this.setFilmWeight();gl.viewport(0,0,this.width,this.height);gl.drawArrays(gl.TRIANGLES,0,3);this.recordFrame();this.canvas.style.display='block';return true;
  }
+ private canPair(fx:PhotoFx){return !!getLoadedLut(fx.lut)&&photoFxParams(fx).hsl.every(b=>!b.h&&!b.s&&!b.l);}
+ private bakeKey(fx:PhotoFx){return this.canPair(fx)?'pair:'+colorKeyOf({...fx,lutAmount:100}):colorKeyOf(fx);}
+ private setFilmWeight(){const gl=this.gl!;gl.uniform1f(gl.getUniformLocation(this.program!,'filmWeight'),Math.pow((this.latestFx.lutAmount??100)/100,2));}
  private recordFrame(){
-  if(!import.meta.env.DEV||this.canvas.dataset.presentedColourKey===this.key)return;
-  this.canvas.dataset.presentedColourKey=this.key;
+  const displayed=this.paired?this.key+'|amount:'+(this.latestFx.lutAmount??100):this.key;
+  if(!import.meta.env.DEV||this.canvas.dataset.presentedColourKey===displayed)return;
+  this.canvas.dataset.presentedColourKey=displayed;
   const times=JSON.parse(this.canvas.dataset.colourFrameTimes||'[]');times.push(performance.now());this.canvas.dataset.colourFrameTimes=JSON.stringify(times.slice(-100));
  }
  hide(){this.canvas.style.display='none';}
@@ -168,11 +181,11 @@ export class PhotoSceneColour {
      if(e.data.warmReady)return;
      this.workerBusy=false;
      if(e.data.error){this.failWorker();return;}
-     if(!e.data.error&&e.data.generation===this.generation&&this.ready){
+     if(!e.data.error&&e.data.generation===this.generation&&e.data.key===this.bakeKey(this.latestFx)&&this.ready){
       const gl=this.gl!;gl.useProgram(this.program!);gl.uniform1i(gl.getUniformLocation(this.program!,'identity'),0);
-      this.installLut(e.data.tex,!!e.data.master);
+      this.installLut(e.data.tex,!!e.data.master,e.data.plain);this.setFilmWeight();
       this.key=e.data.key;this.film=this.workerFilm;
-      this.lutCache.set(this.key,{tex:e.data.tex,film:this.film,master:!!e.data.master});
+      this.lutCache.set(this.key,{tex:e.data.tex,plain:e.data.plain,film:this.film,master:!!e.data.master});
       while(this.lutCache.size>8)this.lutCache.delete(this.lutCache.keys().next().value!);
       gl.drawArrays(gl.TRIANGLES,0,3);this.recordFrame();
       if(import.meta.env.DEV){const jobs=JSON.parse(this.canvas.dataset.colourJobs||'[]');jobs.push({at:performance.now(),bake:e.data.bakeMs,total:performance.now()-this.workerStarted});this.canvas.dataset.colourJobs=JSON.stringify(jobs.slice(-100));}
@@ -190,16 +203,18 @@ export class PhotoSceneColour {
   const job=this.pending;this.pending=null;this.workerBusy=true;
   this.workerStarted=performance.now();
   const filmChanged=job.film!==this.workerFilm;this.workerFilm=job.film;
-  this.worker!.postMessage({id:job.key,key:job.key,generation:job.generation,params:photoFxParams(job.fx),filmChanged,filmData:filmChanged?job.film:undefined});
+  this.worker!.postMessage({id:job.key,key:job.key,generation:job.generation,params:photoFxParams(job.fx),paired:this.canPair(job.fx),filmChanged,filmData:filmChanged?job.film:undefined});
  }
  private failWorker(){this.worker?.terminate();this.worker=null;this.workerBusy=false;this.workerFailed=true;this.pending=null;this.requestedKey='';if(this.canvas.style.display!=='none')this.draw(this.latestFx,true);}
- private installLut(tex:Uint8Array|Float32Array,master:boolean){
+ private installLut(tex:Uint8Array|Float32Array,master:boolean,plain?:Float32Array){
   const gl=this.gl!,n=master?32:33,type=master?gl.FLOAT:gl.UNSIGNED_BYTE;
   gl.activeTexture(gl.TEXTURE3);gl.bindTexture(gl.TEXTURE_3D,this.lut);
   if(master!==this.masterMode)gl.texImage3D(gl.TEXTURE_3D,0,master?gl.RGBA32F:gl.RGBA8,n,n,n,0,gl.RGBA,type,tex);
   else gl.texSubImage3D(gl.TEXTURE_3D,0,0,0,0,n,n,n,gl.RGBA,type,tex);
   gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MIN_FILTER,master?gl.NEAREST:gl.LINEAR);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MAG_FILTER,master?gl.NEAREST:gl.LINEAR);
   this.masterMode=master;gl.uniform1i(gl.getUniformLocation(this.program!,'masterMode'),master?1:0);
+  this.paired=!!plain;gl.uniform1i(gl.getUniformLocation(this.program!,'paired'),plain?1:0);
+  if(plain){gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_3D,this.plainLut);gl.texSubImage3D(gl.TEXTURE_3D,0,0,0,0,32,32,32,gl.RGBA,gl.FLOAT,plain);}
  }
  dispose(){this.worker?.terminate();this.worker=null;this.pending=null;this.canvas.remove();this.gl?.getExtension('WEBGL_lose_context')?.loseContext();this.gl=null;this.program=null;this.signature='';}
 }

@@ -36,6 +36,8 @@ precision highp float;
 precision highp sampler3D;
 uniform sampler2D uImage;
 uniform sampler3D uLut;
+uniform sampler3D uPlainLut;
+uniform float uMix;
 /* 邊界修正：查色表的第一個與最後一個格點分別落在 0 與 1 的「格心」上，
    直接用 0～1 去取樣會在兩端各少半格，暗部與亮部就會偏掉。
    scale/offset 把座標壓進 [半格, 1-半格]，跟 CPU 版的格點對法完全一致。 */
@@ -47,7 +49,9 @@ out vec4 fragColor;
 void main() {
   vec4 src = texture(uImage, vUv);
   vec3 c = clamp(src.rgb, 0.0, 1.0) * uScale + uOffset;
-  fragColor = vec4(texture(uLut, c).rgb, src.a);
+  vec3 colour=texture(uLut,c).rgb;
+  if(uMix>=0.)colour=mix(texture(uPlainLut,c).rgb,colour,uMix);
+  fragColor = vec4(colour, src.a);
 }`;
 
 const compile = (gl: WebGL2RenderingContext, type: number, src: string) => {
@@ -66,6 +70,9 @@ export class LutGpu {
   private prog: WebGLProgram;
   private imgTex: WebGLTexture;
   private lutTex: WebGLTexture;
+  private plainTex: WebGLTexture|null=null;
+  private lastLut:Uint8Array|null=null;
+  private lastPlain:Uint8Array|null=null;
   private uScale: WebGLUniformLocation | null;
   private uOffset: WebGLUniformLocation | null;
   private lutSize = 0;
@@ -86,6 +93,11 @@ export class LutGpu {
     this.uScale = gl.getUniformLocation(prog, 'uScale');
     this.uOffset = gl.getUniformLocation(prog, 'uOffset');
     this.maxTextureSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+    this.plainTex=gl.createTexture();gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_3D,this.plainTex);
+    for(const direction of [gl.TEXTURE_WRAP_S,gl.TEXTURE_WRAP_T,gl.TEXTURE_WRAP_R])gl.texParameteri(gl.TEXTURE_3D,direction,gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_3D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+    gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA8,1,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));
+    gl.uniform1i(gl.getUniformLocation(prog,'uPlainLut'),2);gl.uniform1f(gl.getUniformLocation(prog,'uMix'),-1);
     canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); this.lost = true; });
     canvas.addEventListener('webglcontextrestored', () => { this.lost = true; });
   }
@@ -175,7 +187,7 @@ export class LutGpu {
   }
 
   /** 換一顆查色表（換濾鏡／動滑桿都走這裡，幾百 KB，很便宜） */
-  setLut(tex: Uint8Array, size: number): boolean {
+  setLut(tex: Uint8Array, size: number, immutable=false): boolean {
     if (this.lost) return false;
     const gl = this.gl;
     gl.activeTexture(gl.TEXTURE1);
@@ -183,14 +195,22 @@ export class LutGpu {
     if (size !== this.lutSize) {
       gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, size, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, tex);
       this.lutSize = size;
-    } else {
+    } else if(!immutable||this.lastLut!==tex) {
       gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, 0, size, size, size, gl.RGBA, gl.UNSIGNED_BYTE, tex);
     }
     gl.useProgram(this.prog);
+    this.lastLut=tex;gl.uniform1f(gl.getUniformLocation(this.prog,'uMix'),-1);
     // 半格內縮，跟 CPU 版的格點對法一致
     gl.uniform1f(this.uScale, (size - 1) / size);
     gl.uniform1f(this.uOffset, 0.5 / size);
     return true;
+  }
+
+  setLutMix(full:Uint8Array,plain:Uint8Array,size:number,weight:number):boolean{
+    if(!this.setLut(full,size,true))return false;
+    const gl=this.gl;
+    if(this.lastPlain!==plain){gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_3D,this.plainTex);gl.texImage3D(gl.TEXTURE_3D,0,gl.RGBA8,size,size,size,0,gl.RGBA,gl.UNSIGNED_BYTE,plain);this.lastPlain=plain;}
+    gl.uniform1f(gl.getUniformLocation(this.prog,'uMix'),weight);return true;
   }
 
   /** 畫一張。回傳的是這個類別自己的畫布，呼叫端 drawImage 過去就好。 */

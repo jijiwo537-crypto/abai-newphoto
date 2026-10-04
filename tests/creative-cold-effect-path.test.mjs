@@ -22,7 +22,7 @@ test('filter thumbnails invalidate only their own decoded LUT and yield before p
 test('spatial base sliders keep an immutable input and a resident final scene',()=>{
  assert.match(fx,/effectInputs = new WeakMap/);assert.match(fx,/d.params.map\(e => e.id\)/);
  assert.match(fx,/retained.source.getContext\('2d'\).*inputKey, retained.surface, false, opts\?\.scene/);
- assert.match(collage,/regionSpatialActive.current=.*adjustSub==='effect'/);
+ assert.match(collage,/regionSpatialActive.current=activeTab!=='motion'&&activeTab!=='setting'&&\(baseSelected\|\|selectedRegionPhoto!==null\);/);
  assert.match(collage,/targetCanvas===canvasRef.current&&!previewCapture/);
  assert.match(collage,/shown!==resident.input&&shown.width===targetCanvas.width/);
  assert.match(collage,/resident.shown&&resident.shown!==shown\)resident.shown.remove/);

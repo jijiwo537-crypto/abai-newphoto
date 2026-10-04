@@ -21,6 +21,8 @@ createRoot(document.getElementById('root')!).render(params.has('swapStress')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} lutList={Array.from({length:22},(_,i)=>({id:`cold-${params.get('run')||'audit'}-f${i+1}`,name:`F${i+1}`,url:`/luts/f${i+1}.webp`}))} initialState={{holeCount:0}}/>
  : params.has('spatialIntegrationAudit')&&params.has('around')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{holeCount:2,layout:'mask-around',holeSize:45,holeType:'circle',holes:[{id:'audit-a',x:100,y:100,side:'mask'},{id:'audit-b',x:600,y:500,side:'mask'}]}}/>
+ : params.has('lifecycleAudit')
+ ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{holeCount:0,layout:'mask-right',canvasRatio:'3:2'}}/>
  : params.has('textureAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialState={{canvasRatio:'1:1',holeCount:0,patternType:'dot',dotSize:15,dotGap:0,dotSquash:50}}/>
  : params.has('busyEdit')

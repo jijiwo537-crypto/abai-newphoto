@@ -15,7 +15,8 @@ import {
   DEFAULT_PARAMS,
   type EditorParams,
 } from '../components/ImageEditor';
-import { applyGlEffects, hasActiveFx, FX_DEFS, disposeFxSurface, warmFx, warmFxScene, type FxScene } from './glEffects';
+import { applyGlEffects, hasActiveFx, FX_DEFS, disposeFxSurface, compactFxSurface, warmFx, warmFxScene, type FxScene } from './glEffects';
+import type {FxColourInput} from './fxColourInput';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from './highlightSelection';
 import { bakeColorLut, bakedToTexture } from './lutBake';
 import { LutGpu } from './lutGpu';
@@ -41,12 +42,10 @@ const getGpu = (): LutGpu | null => {
   /* 掉了就把它清掉，下一次呼叫會建一個新的 —— 不能一掉就永久退回 CPU */
   if (gpuInst && gpuInst.lost) {
     gpuInst = undefined;
-    gpuSrcKey = '';
     return null;
   }
   return gpuInst || null;
 };
-let gpuSrcKey = '';
 /* 每個來源物件的固定編號。用 WeakMap，圖片被回收時這裡也跟著消失。 */
 let srcSeq = 0;
 const srcIds = new WeakMap<object, string>();
@@ -82,10 +81,13 @@ const putSrcPx = (k: string, v: SrcPx) => {
 let gpuC0: HTMLCanvasElement | null = null;
 let gpuC1: HTMLCanvasElement | null = null;
 const colorBakeCache = new Map<string, Uint8Array>();
+const strengthPairCache=new Map<string,{full:Uint8Array;plain:Uint8Array}>();
 // A spatial-effect slider does not change its photograph's colour result.
 // Retain that exact full-resolution input, and keep the effect render target
 // separate: never read the previous effect result as the next frame's source.
-const effectInputs = new WeakMap<HTMLCanvasElement, { key: string; source: HTMLCanvasElement; surface: HTMLCanvasElement }>();
+type EffectInput={key:string;source:HTMLCanvasElement;surface:HTMLCanvasElement;colourInput?:FxColourInput;rawKey?:string};
+const effectInputs = new WeakMap<HTMLCanvasElement, EffectInput>();
+const gpuSourceKeys=new WeakMap<LutGpu,string>();
 const opticalInputs=new WeakMap<HTMLCanvasElement,{key:string;source:HTMLCanvasElement;layer:HalationLayer}>();
 // WebKit's noise-texture interpolation does not match its Canvas overlay.
 // Keep grain on the established renderer rather than changing its appearance.
@@ -103,6 +105,21 @@ export function releasePhotoFxSurface(input:HTMLCanvasElement){
   const retained=effectInputs.get(input);if(!retained)return;
   retained.surface.remove();disposeFxSurface(retained.surface);retained.source.width=retained.source.height=1;effectInputs.delete(input);
 }
+/** Native-resolution baking is finished once the caller has its immutable
+ * result. Drop CPU readbacks and duplicate blend canvases, not result pixels
+ * or the live editing compositor. */
+export function releasePhotoFxReadbacks(source:CanvasImageSource){
+  const prefix=srcToken(source)+'|';
+  for(const key of srcPxCache.keys())if(key.startsWith(prefix))srcPxCache.delete(key);
+  if(gpuC0)gpuC0.width=gpuC0.height=1;
+  if(gpuC1)gpuC1.width=gpuC1.height=1;
+}
+export function compactPhotoFxSurface(input:HTMLCanvasElement){
+ const optical=opticalInputs.get(input);if(optical){optical.layer.dispose();optical.source.width=optical.source.height=1;opticalInputs.delete(input);}
+ const retained=effectInputs.get(input);
+ if(retained){compactFxSurface(retained.surface);retained.source.width=retained.source.height=1;retained.colourInput=undefined;retained.rawKey=undefined;retained.key='';}
+ input.width=input.height=1;
+}
 const spatialKeys = new Set(FX_DEFS.flatMap(d => [d.id, ...d.params.map(e => e.id)]));
 const effectInputKey = (source: CanvasImageSource, w: number, h: number, fx: PhotoFx) =>
   `${srcToken(source)}|${w}x${h}|${JSON.stringify(Object.entries(fx).filter(([k]) => !spatialKeys.has(k)).sort(([a], [b]) => a.localeCompare(b)))}|${getLoadedLut(fx.lut) ? 'ready' : 'pending'}`;
@@ -115,7 +132,7 @@ const reuse = (c: HTMLCanvasElement | null, w: number, h: number) => {
 const gpuColorChain = (
   ctx: CanvasRenderingContext2D, getSrc: () => Uint8ClampedArray | null, w: number, h: number,
   p: EditorParams, lut: { data: Uint8ClampedArray; size: number } | null,
-  amount: number, baseLut: Uint8Array, srcKey: string, colorKey: string,
+  amount: number, baseLut: Uint8Array, srcKey: string, colorKey: string, residentStrength=false,
 ): boolean => {
   const g = getGpu();
   if (!g || !g.fits(w, h)) return false;
@@ -124,10 +141,25 @@ const gpuColorChain = (
        拖滑桿時圖沒換，貼圖早就在 GPU 上了 —— 以前照樣每一格
        getImageData 一次再複製一份（1600×1200 就是兩趟 7.7MB），
        那是白花的，而且是連 GPU 這條快路都躲不掉的固定成本。 */
-    if (gpuSrcKey !== srcKey) {
+    if (gpuSourceKeys.get(g) !== srcKey) {
       const src = getSrc();
       if (!src || !g.setSource(src, w, h)) return false;
-      gpuSrcKey = srcKey;
+      gpuSourceKeys.set(g,srcKey);
+    }
+    // Film strength is affine when the downstream HSL is unchanged. Cache
+    // the endpoints, not 100 separately baked strengths. This is confined to
+    // the live base-photo compositor; exports retain their established path.
+    if(residentStrength&&lut&&p.hsl.every(b=>!b.h&&!b.s&&!b.l)){
+      const params={...p,lutAmount:100},pairKey=JSON.stringify(params)+'|'+srcToken(lut.data);
+      let pair=strengthPairCache.get(pairKey);
+      if(!pair){
+        const bake=(film:Uint8ClampedArray|null)=>bakedToTexture(bakeColorLut((a,d,ww,hh)=>processPixels(a,d,ww,hh,params,film,film?lut.size:0,baseLut,null,false,IDENTITY_CURVE_LUTS),33));
+        pair={full:bake(lut.data),plain:bake(null)};strengthPairCache.set(pairKey,pair);
+        while(strengthPairCache.size>8)strengthPairCache.delete(strengthPairCache.keys().next().value!);
+      }
+      if(!g.setLutMix(pair.full,pair.plain,33,amount*amount))return false;
+      const drawn=g.draw();if(!drawn)return false;
+      ctx.clearRect(0,0,w,h);ctx.drawImage(drawn,0,0);return true;
     }
     const paint = (film: Uint8ClampedArray | null, filmSize: number, into: HTMLCanvasElement) => {
       const bakeKey = colorKey + '|' + (film ? srcToken(film) : 'none') + '|' + filmSize;
@@ -146,8 +178,7 @@ const gpuColorChain = (
       return true;
     };
     const needBlend = !!lut && amount < 1;
-    gpuC0 = reuse(gpuC0, w, h);
-    if (needBlend && !paint(null, 0, gpuC0)) return false;
+    if (needBlend) { gpuC0 = reuse(gpuC0, w, h); if(!paint(null, 0, gpuC0)) return false; }
     gpuC1 = reuse(gpuC1, w, h);
     if (!paint(lut ? lut.data : null, lut ? lut.size : 0, gpuC1)) return false;
     ctx.clearRect(0, 0, w, h);
@@ -450,8 +481,24 @@ export function applyPhotoFx(
   const inputKey = residentEffects ? effectInputKey(source, oW, oH, fx) : '';
   const retained = residentEffects ? effectInputs.get(out) : undefined;
   if (retained?.key === inputKey) {
-    const result = applyGlEffects(retained.source.getContext('2d')!, oW, oH, fx, inputKey, retained.surface, false, opts?.scene);
+    const result = applyGlEffects(retained.source.getContext('2d')!, oW, oH, fx, inputKey, retained.surface, false, opts?.scene,retained.colourInput);
     if (result) return result;
+  }
+  // Filter + spatial effects previously crossed GPU -> CPU canvas -> GPU on
+  // every strength input. Keep the source and LUT in the effect context.
+  const residentFilm=opts?.scene&&residentEffects?getLoadedLut(fx.lut):null;
+  if(residentFilm&&![fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].some(Boolean)&&toParams(fx).hsl.every(b=>!b.h&&!b.s&&!b.l)){
+    const started=import.meta.env.DEV?performance.now():0;
+    const record:EffectInput=retained||{key:'',source:document.createElement('canvas'),surface:document.createElement('canvas')};
+    const rawKey=`${srcToken(source)}|${oW}x${oH}`,params={...toParams(fx),lutAmount:100},base=new Uint8Array(256);
+    generateBaseCorrectionLut(params.exposure,params.contrast,params.brightness,base);
+    const pairKey=JSON.stringify(params)+'|'+srcToken(residentFilm.data);
+    let pair=strengthPairCache.get(pairKey);
+    if(!pair){const bake=(film:Uint8ClampedArray|null)=>bakedToTexture(bakeColorLut((a,d,ww,hh)=>processPixels(a,d,ww,hh,params,film,film?residentFilm.size:0,base,null,false,IDENTITY_CURVE_LUTS),33));pair={full:bake(residentFilm.data),plain:bake(null)};strengthPairCache.set(pairKey,pair);while(strengthPairCache.size>8)strengthPairCache.delete(strengthPairCache.keys().next().value!);}
+    if(record.rawKey!==rawKey){record.source.width=oW;record.source.height=oH;record.source.getContext('2d')!.drawImage(source,0,0,oW,oH);record.rawKey=rawKey;}
+    record.colourInput={...pair,amount:((fx.lutAmount??100)/100)**2,sourceKey:rawKey};record.key=inputKey;effectInputs.set(out,record);
+    const result=applyGlEffects(record.source.getContext('2d')!,oW,oH,fx,inputKey,record.surface,false,opts!.scene,record.colourInput);
+    if(result){if(import.meta.env.DEV)result.dataset.colourFxTiming=JSON.stringify({total:performance.now()-started,phases:result.dataset.fxPhases});return result;}
   }
   // A CPU-backed output forces GPU results back to main memory on every
   // slider frame. Cached photo sources are read once; their live output must
@@ -512,7 +559,7 @@ export function applyPhotoFx(
     const k = `${srcToken(source)}|${out.width}x${out.height}`;
     const separable = !lut && !p.temp && !p.tint && !p.sat && !p.vib && !p.shadows && !p.highlights;
     if (!(opts?.preferSeparableCpu && separable))
-      gpuOk = gpuColorChain(ctx, readPixels, out.width, out.height, p, lut, amt, baseLut, k, colorKeyOf(fx));
+      gpuOk = !!gpuColorChain(ctx, readPixels, out.width, out.height, p, lut, amt, baseLut, k, colorKeyOf(fx),!!opts?.scene);
   }
 
   if (import.meta.env.DEV) out.dataset.colorBackend = gpuOk ? 'gpu' : 'cpu';
@@ -731,6 +778,7 @@ export function applyPhotoFx(
       input.clearRect(0, 0, W, H);
       input.drawImage(out, 0, 0);
       record.key = inputKey;
+      record.colourInput=undefined;record.rawKey=undefined;
       effectInputs.set(out, record);
       const result = applyGlEffects(input, W, H, fx, inputKey, record.surface, false, opts?.scene);
       if (result) return result;

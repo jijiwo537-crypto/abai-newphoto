@@ -10,11 +10,16 @@ self.onmessage=async(event:MessageEvent)=>{
   }
   self.postMessage({warmReady:true});return;
  }
- const {id,key,generation,params,dither,filmChanged,filmData}=event.data;
+ const {id,key,generation,params,dither,filmChanged,filmData,paired}=event.data;
  if(dither){setPixelDither(dither);return;}
  try{
   const started=performance.now();
   if(filmChanged)film=filmData;
+  if(paired&&film){
+   const plain=bakePixelMaster({...params,lutAmount:0},null);
+   const tex=bakePixelMaster({...params,lutAmount:100},film);
+   self.postMessage({id,key,generation,tex,plain,master:true,bakeMs:performance.now()-started},[tex.buffer,plain.buffer]);return;
+  }
   // The existing photo pipeline blends film twice. With identity HSL/curves
   // this is algebraically the same film weight squared, without a second bake.
   const amount=params.lutAmount/100;

@@ -27,19 +27,22 @@ void(async()=>{
    setting();await wait(3);
    const inputs=[...document.querySelectorAll<HTMLInputElement>('footer input[type=range]')];
    const slider=inputs.find(s=>s.closest('.flex-col')?.textContent?.includes('佔比'))||inputs[0];
-   if(!slider)throw Error('occupancy slider missing');
+   if(!slider||slider.disabled)throw Error('occupancy slider missing or disabled');
+   const seenGeometry=new Set([stage.dataset.sceneGeometry]);
    const box=slider.getBoundingClientRect();
    slider.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:2402,pointerType:'touch',clientX:box.x+box.width*.5,clientY:box.y+box.height*.5,buttons:1}));
    const ms:number[]=[],effectMs:number[]=[],sizes=new Set<string>();
    for(let i=0;i<24;i++){
     const t=performance.now();setter.call(slider,String(20+Math.round(60*Math.sin(i*Math.PI/24))));slider.dispatchEvent(new Event('input',{bubbles:true}));await tick();ms.push(performance.now()-t);
-    effectMs.push(Number(canvas.dataset.regionFxMs||0));sizes.add(canvas.dataset.regionFxSize||'');
+    effectMs.push(Number(canvas.dataset.regionFxMs||0));sizes.add(canvas.dataset.regionFxSize||'');seenGeometry.add(stage.dataset.sceneGeometry);
    }
    slider.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:2402,pointerType:'touch',clientX:box.x+box.width*.5,clientY:box.y+box.height*.5}));
    await wait(3);
+   check('occupancy really changes geometry '+round,seenGeometry.size>1);
    report.samples.push({round:round+1,id,clickMs,mean:ms.reduce((a,b)=>a+b)/ms.length,max:Math.max(...ms),over50:ms.filter(v=>v>50).length,maxEffectMs:Math.max(...effectMs),sourceSizes:[...sizes],spatialOverlays:stage.querySelectorAll('[data-base-spatial-presentation]').length});
    check('editing GPU overlay hidden '+round,[...stage.querySelectorAll<HTMLElement>('[data-base-spatial-presentation]')].every(el=>el.style.display==='none'));
    check('bounded resident overlay '+round,stage.querySelectorAll('[data-base-spatial-presentation]').length<=1);
+   await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify({kind:'lifecycle-progress',route:location.search,round:round+1})}).catch(()=>{});
   }
   report.pass=report.checks.every((c:any)=>c.pass);
  }catch(e){report.error=String(e);report.pass=false;}

@@ -89,7 +89,7 @@ import { IgPreview } from './IgPreview';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } from '../utils/compose';
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, releasePhotoFxReadbacks, compactPhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
 import {photoPreviewCapacity} from '../utils/photoPreviewResolution';
 import {warmPhotoFxSurface} from '../utils/photoFx';
 import {awaitPhotoIdle, holdPhotoInteraction, isPhotoInteractionBusy} from '../utils/photoInteractionIdle';
@@ -1543,7 +1543,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const iw = Math.max(1, Math.round(w0 * k)), ih = Math.max(1, Math.round(h0 * k));
     const selectedBase=regionPhoto&&isMain&&o.id?.startsWith(`region-fx-${selectedRegionPhotoRef.current??0}@`);
     const main=canvasRef.current;
-    if(selectedBase&&regionBlendTool.current&&!warm&&main&&main.width*main.height<=4_000_000&&!animRef.current&&!isVid&&!objectsRef.current.some(v=>isVideoEl(v.img)||isBackdropMask(v.kind))) {
+    if(selectedBase&&regionBlendTool.current&&!supportsSceneColour(o.fx)&&!supportsResidentPhotoEffects(o.fx)&&!warm&&main&&main.width*main.height<=4_000_000&&!animRef.current&&!isVid&&!objectsRef.current.some(v=>isVideoEl(v.img)||isBackdropMask(v.kind))) {
       const renderer=renderToCanvasRef.current,scale=previewScaleRef.current;
       const stamp=regionSceneStamp.current;
       if(stamp?.key!==regionSceneKey.current||stamp.scale!==scale||stamp.sceneW!==main.width||stamp.sceneH!==main.height)regionBlend.current!.clear();
@@ -1593,7 +1593,18 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         }, 240);
       }
     };
-    if (!hasShape) { objFxCache.current.set(o.id, { key, cv: base }); finish(); return base; }
+    if (!hasShape) {
+      let result=base;
+      if(regionPhoto&&isMain&&reuse&&base!==reuse){
+        // Geometry-only rendering needs immutable photo pixels, not an entire
+        // native-size shader pool. Release the pool immediately after copying,
+        // including when the user never pauses long enough for an idle job.
+        const snapshot=document.createElement('canvas');snapshot.width=base.width;snapshot.height=base.height;
+        snapshot.getContext('2d')!.drawImage(base,0,0);result=snapshot;regionStaticSnapshot.current={cv:snapshot};
+        compactPhotoFxSurface(reuse);releasePhotoFxReadbacks(srcEl);
+      }
+      objFxCache.current.set(o.id, { key, cv: result }); finish(); return result;
+    }
 
     /* 這一段是經典拼圖 FloatingImageLayer 那條管線的逐段複製（同樣的函式、
        同樣的順序）：先把圖畫進一張「比框大 lw 一圈」的離屏畫布，用
@@ -2089,6 +2100,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const snapshot=document.createElement('canvas');snapshot.width=cv.width;snapshot.height=cv.height;
       snapshot.getContext('2d')!.drawImage(cv,0,0);
       objFxCache.current.set(id,{key:cached.key,cv:snapshot});regionStaticSnapshot.current={cv:snapshot};
+      // The immutable native-resolution snapshot owns these pixels now. The
+      // editing compositor has its own warm context; retaining a second full
+      // photo FX pool here adds several native-size textures per edited photo.
+      const surface=regionFxSurfaces.current.get(id);
+      if(surface)compactPhotoFxSurface(surface);
+      releasePhotoFxReadbacks(original);
+      const scratch=vidScratchRef.current.get(id);
+      if(scratch){for(const item of Object.values(scratch))if(item instanceof HTMLCanvasElement&&item!==snapshot)item.width=item.height=1;vidScratchRef.current.delete(id);}
     });
     return ()=>{cancelled=true;};
   },[photoRegion,objEditImage,selectedRegionPhoto]);
@@ -2107,7 +2126,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       releasePhotoFxSurface(surface);surface.width=surface.height=1;regionFxSurfaces.current.delete(key);
       const scratch=vidScratchRef.current.get(key);if(scratch){for(const cv of Object.values(scratch))if(cv instanceof HTMLCanvasElement)cv.width=cv.height=1;vidScratchRef.current.delete(key);}
     }
-    if(!objEditImage){
+    if(!objEditImage&&selectedKey===null){
       regionColour.current?.hide();
       const resident=regionSpatial.current;
       if(resident?.shown)resident.shown.style.display='none';
@@ -2194,8 +2213,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [shapeTool, setShapeTool] = useState('');
   const [tuneTool, setTuneTool] = useState('');
   regionBlendTool.current=activeTab==='objedit'&&(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune'&&BLEND_ADJUSTMENTS.has(tuneTool))?(adjustSub==='filter'?'brightness':tuneTool):'';
-  regionColourActive.current=activeTab==='objedit'&&(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune');
-  regionSpatialActive.current=activeTab==='objedit'&&(baseSelected||selectedRegionPhoto!==null)&&adjustSub==='effect';
+  regionColourActive.current=activeTab!=='motion'&&activeTab!=='setting'&&(baseSelected||selectedRegionPhoto!==null);
+  // Existing effects remain on the GPU when switching to filters/adjustments.
+  // The tab is UI state, not a reason to fall back to a native-size CPU render.
+  regionSpatialActive.current=activeTab!=='motion'&&activeTab!=='setting'&&(baseSelected||selectedRegionPhoto!==null);
   useEffect(()=>{
     if(!regionBlendTool.current)regionBlend.current?.clear();
     regionPaintRef.current();
@@ -3388,7 +3409,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(()=>()=>{if(regionThumbTimer.current!==null)clearTimeout(regionThumbTimer.current);},[]);
   const commitRegion=(next:PhotoRegion,live=false)=>{
     photoRegionRef.current=next;
-    if(live)regionLiveUntil.current=performance.now()+350;
+    if(live){regionLiveUntil.current=performance.now()+350;deferHeavyWork(600);}
     if(!live){setPhotoRegion(next);return;}
     if(regionSliderHeld.current&&regionBlend.current?.isReady&&regionSceneStamp.current?.key===regionSceneKey.current){regionPaintRef.current();return;}
     if(!regionPaintRaf.current)regionPaintRaf.current=requestAnimationFrame(()=>{regionPaintRaf.current=0;regionPaintRef.current();});
@@ -8699,7 +8720,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
 
   return (
-    <div className="safe-top flex flex-col h-[100dvh] w-full bg-[#0A0A0A] text-white font-sans overflow-hidden animate-in fade-in duration-300">
+    <div onPointerDownCapture={()=>deferHeavyWork(600)} onClickCapture={()=>deferHeavyWork(600)} className="safe-top flex flex-col h-[100dvh] w-full bg-[#0A0A0A] text-white font-sans overflow-hidden animate-in fade-in duration-300">
       {regionSwapPhoto && createPortal(<canvas ref={regionThumbRef} data-creative-swap-thumbnail="1"
         className="fixed pointer-events-none z-[9999] border-2 border-white rounded-[8px]"
         style={{ left: 0, top: 0, width: 80, height: 80, boxShadow: '0 4px 14px rgba(0,0,0,.34)' }} />,document.body)}

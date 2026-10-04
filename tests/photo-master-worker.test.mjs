@@ -2,6 +2,17 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 const source=fs.readFileSync('utils/photoPixelCore.ts','utf8');
 const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
 const core=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+test('resident film strength matches every original full precision master without rebaking',()=>{
+ const identity=[{x:0,y:0},{x:255,y:255}];
+ const p={brightness:23,exposure:-14,contrast:19,highlights:-32,shadows:20,temp:30,tint:-21,sat:40,vib:25,lutAmount:100,sharpen:0,hsl:Array.from({length:8},()=>({h:0,s:0,l:0})),curves:{rgb:identity,r:identity,g:identity,b:identity}};
+ const film={size:4,data:Uint8ClampedArray.from({length:4*4*4*3},(_,i)=>(i*31+47)%256)};
+ const plain=core.bakePixelMaster({...p,lutAmount:0},null),full=core.bakePixelMaster(p,film);
+ for(const strength of [0,1,10,33,50,70,99,100]){
+  const weight=(strength/100)**2,expected=core.bakePixelMaster({...p,lutAmount:100*weight},film);
+  let worst=0;for(let i=0;i<expected.length;i++)worst=Math.max(worst,Math.abs(plain[i]+(full[i]-plain[i])*weight-expected[i]));
+  assert.ok(worst<2e-7,`strength ${strength}: error ${worst}`);
+ }
+});
 test('worker extraction preserves the original pixel function byte for byte',()=>{
  assert.equal(createHash('sha256').update(source.slice(source.indexOf('export const processPixels =')).trim()).digest('hex'),'4069c42ee40bb26d6e62a522b677dd691504aea14dde99637b36090d8b5cd7c5');
 });

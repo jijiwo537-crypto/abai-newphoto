@@ -10,9 +10,10 @@ void(async()=>{
   for(const type of ['pointerdown','pointerup'])canvas.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerId:2411,pointerType:'touch',clientX:x,clientY:y,buttons:type==='pointerdown'?1:0}));
   await wait(2);document.querySelector<HTMLButtonElement>('[data-creative-tab="objedit"]')!.click();await wait(2);
   const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!;
-  for(const id of ['filter','fxMosaic','fxGlass','fxExposureSpill','fxLowfi',...(location.search.includes('legacy')?['softLight','halation','lightLeak','blur','colorNoise']:[])]){
+  for(const id of location.search.includes('oneEffect')?['filter',new URLSearchParams(location.search).get('effect')||'fxLowfi','filter']:['filter','fxMosaic','fxGlass','fxExposureSpill','fxLowfi',...(location.search.includes('combined')?['filter']:[]),...(location.search.includes('legacy')?['softLight','halation','lightLeak','blur','colorNoise']:[])]){
    const startSelect=performance.now();
    if(id==='filter'){
+    btn('濾鏡')?.click();await tick();
     const card=document.querySelector<HTMLButtonElement>('[data-lut-card]')!;card.click();
     for(let i=0;i<400&&!document.querySelector('input[type=range]');i++)await tick();
    }else{
@@ -23,10 +24,10 @@ void(async()=>{
    if(!slider)throw Error('missing slider '+id);
    const pointer=(type:string)=>{const b=slider.getBoundingClientRect();slider.dispatchEvent(new PointerEvent(type,{bubbles:true,pointerId:2412,pointerType:'touch',clientX:b.x+b.width/2,clientY:b.y+b.height/2,buttons:type==='pointerdown'?1:0}));};
    for(let round=0;round<3;round++){
-    const ms:number[]=[];pointer('pointerdown');
-    for(let i=0;i<20;i++){const t=performance.now(),v=10+Math.round(80*Math.sin(i*Math.PI/20));setter.call(slider,String(v));slider.dispatchEvent(new Event('input',{bubbles:true}));await tick();ms.push(performance.now()-t);}
+    const ms:number[]=[],presented:string[]=[],phases:any[]=[];pointer('pointerdown');
+    for(let i=0;i<20;i++){const t=performance.now(),v=10+Math.round(80*Math.sin(i*Math.PI/20));setter.call(slider,String(v));slider.dispatchEvent(new Event('input',{bubbles:true}));await tick();ms.push(performance.now()-t);presented.push(document.querySelector<HTMLElement>('[data-base-colour-presentation]')?.dataset.presentedColourKey||'');phases.push({backend:canvas.dataset.regionFxBackend,paint:canvas.dataset.paintMs,timing:document.querySelector<HTMLElement>('[data-base-spatial-presentation]')?.dataset.colourFxTiming});}
     pointer('pointerup');await wait(4);
-    samples.push({id,round:round+1,selectionMs:round===0?performance.now()-startSelect-ms.reduce((a,b)=>a+b):undefined,mean:ms.reduce((a,b)=>a+b)/ms.length,max:Math.max(...ms),over50:ms.filter(v=>v>50).length});
+    samples.push({id,round:round+1,fxPhases:document.querySelector<HTMLElement>('[data-base-spatial-presentation]')?.dataset.fxPhases,selectionMs:round===0?performance.now()-startSelect-ms.reduce((a,b)=>a+b):undefined,mean:ms.reduce((a,b)=>a+b)/ms.length,max:Math.max(...ms),over50:ms.filter(v=>v>50).length,presentedUpdates:presented.filter((v,i)=>v&&v!==presented[i-1]).length,presented: id==='filter'?presented:undefined,phases:id==='filter'?phases:undefined});
    }
    if(location.search.includes('details')){
     const detail=document.querySelector<HTMLElement>(`[data-fx-card="${id}"] [aria-label="調整細項"]`);

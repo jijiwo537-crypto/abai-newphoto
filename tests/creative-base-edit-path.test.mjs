@@ -21,7 +21,7 @@ test('base FX paints live, commits on release, and retains its full-resolution p
  assert.match(panel,/onPointerUpCapture=\{isolateFxUpdates \? finishAdjustment/);
  assert.match(panel,/isolateFxUpdates \? \{defaultValue:value\} : \{value\}/);
  assert.match(collage,/!regionSliderHeld.current && nowT > regionLiveUntil.current && nowT - thumbAtRef.current > 400/);
- assert.match(collage,/if\(live\)regionLiveUntil.current=performance.now\(\)\+350/);
+ assert.match(collage,/if\(live\)\{regionLiveUntil.current=performance.now\(\)\+350;deferHeavyWork\(600\);\}/);
 });
 test('base-photo colour math keeps the existing full-quality shared renderer',()=>{
  assert.doesNotMatch(collage,/preferSeparableCpu: o.id\?\.startsWith\('region-fx-'\)/);

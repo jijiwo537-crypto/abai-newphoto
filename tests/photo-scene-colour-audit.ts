@@ -14,9 +14,9 @@ void(async()=>{
  try{
   check('GPU scene preparation succeeds',presenter.prepare(main,'audit',1,[original,black,white]));
   await loadLut('scene-audit-filter','/luts/f1.webp',true);
-  for(const fx of [{},{brightness:30},{exposure:-20},{contrast:30,shadows:20,highlights:-30},{temp:23,tint:-21},{sat:-27,vib:30},{lut:'scene-audit-filter',lutAmount:50,contrast:20},{lut:'scene-audit-filter',lutAmount:100}]){
+  for(const fx of [{},{brightness:30},{exposure:-20},{contrast:30,shadows:20,highlights:-30},{temp:23,tint:-21},{sat:-27,vib:30},...[0,1,25,50,75,99,100].map(lutAmount=>({lut:'scene-audit-filter',lutAmount,contrast:20}))]){
    check('resident presentation draws',presenter.draw(fx));
-   if(hasPhotoFx(fx)){const end=performance.now()+5000;while(presenter.canvas.dataset.presentedColourKey!==colorKeyOf(fx)&&performance.now()<end)await new Promise(r=>requestAnimationFrame(r));}
+   if(hasPhotoFx(fx)){const end=performance.now()+5000,expected=fx.lut?'pair:'+colorKeyOf({...fx,lutAmount:100})+'|amount:'+fx.lutAmount:colorKeyOf(fx);while(presenter.canvas.dataset.presentedColourKey!==expected&&performance.now()<end)await new Promise(r=>requestAnimationFrame(r));}
    const copy=document.createElement('canvas');copy.width=256;copy.height=128;const c=get2dWide(copy)!;copySceneColourPixels(presenter.canvas,c);
    const a=c.getImageData(0,0,256,128).data,b=scene(applyPhotoFx(source,256,128,fx,{cacheSource:true,gpuSurface:true})).getContext('2d')!.getImageData(0,0,256,128).data;
    let max=0,sum=0;for(let i=0;i<a.length;i++){const d=Math.abs(a[i]-b[i]);max=Math.max(max,d);sum+=d;}

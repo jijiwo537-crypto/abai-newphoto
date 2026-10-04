@@ -22,7 +22,7 @@ test('effects preflight uses the real persistent surface and shares captured end
  assert.match(collage,/scene:\{black:scenes\[1\],white:scenes\[2\],placements\}/);
  assert.match(collage,/input:resident\?\.input\|\|regionSpatialInput.current/);
 });
-test('leaving base editing hides one bounded warm pipeline and snapshots geometry pixels',()=>{
+test('tab changes retain one bounded warm pipeline and snapshots keep geometry pixels',()=>{
  const collage=read('../components/CollageTool.tsx'),gl=read('../utils/glEffects.ts');
  assert.match(collage,/snapshot.width=cached.cv.width;snapshot.height=cached.cv.height/);
  assert.match(collage,/releasePhotoFxSurface\(surface\)/);
@@ -32,14 +32,21 @@ test('leaving base editing hides one bounded warm pipeline and snapshots geometr
  assert.match(collage,/useEffect\(\(\)=>\(\)=>regionColour.current\?\.dispose\(\),\[\]\)/);
  assert.match(collage,/ImageAdjustPanel, FX_PARAM_DEFAULTS/);
  assert.match(read('../components/GridLayoutTool.tsx'),/export const FX_PARAM_DEFAULTS/);
- assert.match(collage,/regionSpatialActive.current=activeTab==='objedit'/);
- assert.match(collage,/regionColourActive.current=activeTab==='objedit'/);
+ assert.match(collage,/regionSpatialActive.current=activeTab!=='motion'/);
+ assert.match(collage,/regionColourActive.current=activeTab!=='motion'/);
  assert.match(gl,/getExtension\('WEBGL_lose_context'\)\?\.loseContext\(\)/);
 });
 test('returning camera controls has stable thermostat geometry without entry translation',()=>{
  const ui=read('../components/CameraInterface.tsx');
  const row=ui.slice(ui.indexOf('<div data-camera-main-row'),ui.indexOf("activeControl === 'filters' ?",ui.indexOf('<div data-camera-main-row')));
  assert.doesNotMatch(row,/animate-in/);assert.match(row,/aria-label="色溫".*w-\[52px\] h-\[52px\]/);
+});
+test('continuous geometry gestures release native effect pools without waiting for idle',()=>{
+ const collage=read('../components/CollageTool.tsx');
+ const block=collage.slice(collage.indexOf('if(regionPhoto&&isMain&&reuse&&base!==reuse)'),collage.indexOf('if(regionPhoto&&isMain&&reuse&&base!==reuse)')+900);
+ assert.ok(block.indexOf('drawImage(base,0,0)')<block.indexOf('compactPhotoFxSurface(reuse)'));
+ assert.match(block,/releasePhotoFxReadbacks\(srcEl\)/);
+ assert.match(collage,/regionSpatialActive.current=activeTab!=='motion'&&activeTab!=='setting'/);
 });
 test('cached thumbnails paint in layout phase before idle or stagger and evict individually',()=>{
  const panel=read('../components/GridLayoutTool.tsx');

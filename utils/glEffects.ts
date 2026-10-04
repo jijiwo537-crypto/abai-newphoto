@@ -31,8 +31,10 @@ export const FX_REF = 1000;
 const REF = FX_REF;
 import {highlightHistogram,selectHighlights} from './highlightSelection';
 import {LOWFI_LUT_GLSL,bindLowfiLut,warmLowfiLut} from './lowfiLut';
-import {LowfiHaloMask} from './lowfiHalo';
+import {LowfiHaloMask,LOWFI_HALO_SEED,LOWFI_HALO_BLUR} from './lowfiHalo';
 import {uniformLocation} from './uniformLocation';
+import {FX_COLOUR_SHADER,colourAtlas,type FxColourInput} from './fxColourInput';
+import {GpuHighlightHistogram} from './gpuHighlightHistogram';
 
 /* ---------- 共用工具（著色器端） ---------- */
 export const FX_GLSL_HEADER = `precision highp float;
@@ -46,6 +48,7 @@ uniform float uEffectAmount;
 uniform float uHighlightReady;
 uniform float uHighlightCut;
 uniform float uHighlightTie;
+uniform highp sampler2D uHighlightSelection;
 uniform vec2  uRes;
 uniform vec2  uTexel;   // 基準像素（與實際解析度無關）
 uniform vec2  uRefRes;  // 基準解析度，只給需要像素格線的效果用
@@ -160,7 +163,7 @@ const amount = (id: string, def = 0): FxParamDef =>
 
 // The lab's F-12: squared highlight isolation, three box-blur pairs,
 // a broad neutral bloom and 25 vertically offset narrow highlight exposures.
-const spillHighlight:FxPass={fromSource:true,body:`vec3 c=texture2D(uTex,uv).rgb;float m=clamp((dot(c,vec3(1./3.))-.55)/.45,0.,1.);if(uHighlightReady>.5){float bin=floor(dot(c,vec3(.299,.587,.114))*255.+.5);m=bin>uHighlightCut?1.:bin==uHighlightCut?uHighlightTie:0.;}else{m*=m;}return vec4(c*m,1.);`};
+const spillHighlight:FxPass={fromSource:true,body:`vec3 c=texture2D(uTex,uv).rgb;float m=clamp((dot(c,vec3(1./3.))-.55)/.45,0.,1.);if(uHighlightReady>.5){vec2 selection=uHighlightReady>1.5?texture2D(uHighlightSelection,vec2(.5)).rg:vec2(uHighlightCut,uHighlightTie);float bin=floor(dot(c,vec3(.299,.587,.114))*255.+.5);m=bin>selection.x?1.:bin==selection.x?selection.y:0.;}else{m*=m;}return vec4(c*m,1.);`};
 const spillBlur=(radius:number):FxPass[]=>Array.from({length:6},(_,i)=>({
  dir:(i%2?[0,1]:[1,0]) as [number,number],
  body:`vec3 sum=vec3(0.);for(int i=-${radius};i<=${radius};i++){sum+=texture2D(uTex,uv+uDir*float(i)*fxSpillDiffusion/400.).rgb;}return vec4(sum/${radius*2+1}.,1.);`,
@@ -675,7 +678,11 @@ interface Ctx {
   uploadKey?: string;
   highlightKey?: string;
   highlightBins?: Float64Array;
+  highlightPixels?:Uint8Array;
+  gpuHistogram?:GpuHighlightHistogram|null;
+  renderedKey?:string;renderedScene?:FxScene;renderedColour?:FxColourInput;
   lowfiHalo?:LowfiHaloMask;
+  colour?:{full:WebGLTexture;plain:WebGLTexture;target:WebGLTexture;w:number;h:number;fullValue?:Uint8Array;plainValue?:Uint8Array};
   plainTex?:WebGLTexture;
   scene?: { value: FxScene; black: WebGLTexture; white: WebGLTexture; wide: boolean };
 }
@@ -768,9 +775,27 @@ function getCtx(surface?:HTMLCanvasElement): Ctx | null {
 }
 
 
+/** Release photo-sized storage after a native snapshot, retaining compiled
+ * programs so the next edit does not have to compile the same shaders again. */
+export function compactFxSurface(canvas:HTMLCanvasElement){
+ const c=surfaces.get(canvas);if(!c)return;const {gl,pool}=c;
+ c.uploadKey=undefined;c.highlightKey=undefined;c.highlightBins=undefined;
+ c.renderedKey=undefined;c.renderedScene=undefined;c.renderedColour=undefined;
+ c.highlightPixels=undefined;
+ c.gpuHistogram?.dispose();c.gpuHistogram=undefined;
+ c.lowfiHalo?.dispose(gl);c.lowfiHalo=undefined;
+ if(c.colour){for(const t of [c.colour.full,c.colour.plain,c.colour.target])gl.deleteTexture(t);c.colour=undefined;}
+ disposeFxScene(gl);
+ if(c.scene){gl.deleteTexture(c.scene.black);gl.deleteTexture(c.scene.white);c.scene=undefined;}
+ if(c.plainTex){gl.deleteTexture(c.plainTex);c.plainTex=undefined;}
+ if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);if(pool.spillSeed)gl.deleteTexture(pool.spillSeed);gl.deleteFramebuffer(pool.fb);c.pool=null;}
+ canvas.width=canvas.height=1;
+}
 export function disposeFxSurface(canvas:HTMLCanvasElement){
  const c=surfaces.get(canvas);if(!c)return;const {gl,pool}=c;
  c.lowfiHalo?.dispose(gl);
+ c.gpuHistogram?.dispose();
+ if(c.colour)for(const t of [c.colour.full,c.colour.plain,c.colour.target])gl.deleteTexture(t);
  disposeFxScene(gl);
  if(c.scene){gl.deleteTexture(c.scene.black);gl.deleteTexture(c.scene.white);}
  if(c.plainTex)gl.deleteTexture(c.plainTex);
@@ -820,6 +845,7 @@ export function fxPassSource(d: FxDef, pass: FxPass): string {
 }
 
 function makeTex(gl: WebGLRenderingContext, w: number, h: number): WebGLTexture {
+  const previous=gl.getParameter(gl.TEXTURE_BINDING_2D) as WebGLTexture|null;
   const t = gl.createTexture()!;
   gl.bindTexture(gl.TEXTURE_2D, t);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
@@ -827,6 +853,7 @@ function makeTex(gl: WebGLRenderingContext, w: number, h: number): WebGLTexture 
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.bindTexture(gl.TEXTURE_2D,previous);
   return t;
 }
 
@@ -866,6 +893,7 @@ export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,s
   gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,source);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,ctx.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
   c.uploadKey=undefined; // A later effect must not reuse a source-key from an earlier render.
+  c.renderedKey=undefined;
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.disable(gl.BLEND);gl.disable(gl.DEPTH_TEST);gl.disable(gl.DITHER);
   gl.bindBuffer(gl.ARRAY_BUFFER,c.quad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
   gl.useProgram(program);gl.uniform1i(uniformLocation(gl,program,'uTex'),0);gl.drawArrays(gl.TRIANGLES,0,3);gl.flush();return true;
@@ -885,6 +913,8 @@ export function warmFx(fxId: string, surface?: HTMLCanvasElement): void {
   try {
     compile(c, '__copy', `${GLSL_HEADER}\nvoid main(){ gl_FragColor = vec4(texture2D(uTex, vUv).rgb, 1.0); }`);
     compile(c, '__blend', BLEND_FS);
+    compile(c,'__residentColour',FX_COLOUR_SHADER);
+    if(fxId==='fxLowfi'){compile(c,'__lowfiHaloSeed',LOWFI_HALO_SEED);compile(c,'__lowfiHaloBlur',LOWFI_HALO_BLUR);}
     d.passes.forEach((pass, i) => compile(c, `${d.id}#${i}`, fxPassSource(d, pass)));
   } catch { /* 預熱失敗就算了，真的要用的時候還會再編一次 */ }
 }
@@ -903,6 +933,7 @@ export function applyGlEffects(
   /** Pixel-regression audit only: retain the original render graph. */
   auditReference = false,
   scene?: FxScene,
+  colour?:FxColourInput,
 ): HTMLCanvasElement | undefined {
   const active = FX_DEFS.filter(d => fxActive(params, d));
   if (!active.length || w < 2 || h < 2) return;
@@ -914,18 +945,25 @@ export function applyGlEffects(
   if (w > c.maxTex || h > c.maxTex) return;
 
   const outputW=scene?.black.width||w,outputH=scene?.black.height||h;
+  const renderKey=sourceKey?`${sourceKey}|${w}x${h}|${JSON.stringify(params)}|${JSON.stringify(scene?.placements)}`:undefined;
+  // A tab/selection repaint is not an effect change. Keep the already drawn
+  // full-quality frame instead of running every effect pass a second time.
+  if(renderKey&&c.renderedKey===renderKey&&c.renderedScene===scene&&c.renderedColour===colour&&c.canvas.width===outputW&&c.canvas.height===outputH)return c.canvas;
   if(c.canvas.width!==outputW)c.canvas.width = outputW;
   if(c.canvas.height!==outputH)c.canvas.height = outputH;
   gl.viewport(0, 0, w, h);
 
   // 貼圖與 framebuffer 都是重複使用的，尺寸沒變就不重配
   const pool = getPool(c, w, h);
-  const { src: srcTex, texs, fb } = pool;
+  const { src: rawTex, texs, fb } = pool;
+  let srcTex=rawTex;
 
   // 來源：把 2D 畫布上傳進來源貼圖
   const uploadKey=sourceKey ? `${w}x${h}|${sourceKey}` : undefined;
+  const auditStart=import.meta.env.DEV?performance.now():0;
   let spillSelection:{cutoff:number;tie:number}|undefined;
-  if(active.some(d=>d.id==='fxExposureSpill')){
+  let spillSelectionTexture:WebGLTexture|null=null;
+  if(!colour&&active.some(d=>d.id==='fxExposureSpill')){
     // Cached once per underlying photograph/color result. Range dragging
     // only queries 256 bins; it never reads back or analyzes the GPU image.
     if(!uploadKey||c.highlightKey!==uploadKey||!c.highlightBins){
@@ -933,13 +971,17 @@ export function applyGlEffects(
     }
     spillSelection=selectHighlights(c.highlightBins,params.fxSpillRange??20);
   }
-  if(!uploadKey || c.uploadKey!==uploadKey){
+  const rawUploadKey=colour?`${w}x${h}|${colour.sourceKey}`:uploadKey;
+  if(!rawUploadKey || c.uploadKey!==rawUploadKey){
     gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D, srcTex);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, ctx2d.canvas);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
-    c.uploadKey=uploadKey;
+    c.uploadKey=rawUploadKey;
   }
+  const auditUpload=import.meta.env.DEV?performance.now()-auditStart:0;
+  let auditHalo=0;
+  let auditHistogram=0;
 
   const cleanup = () => { gl.bindFramebuffer(gl.FRAMEBUFFER, null); };
 
@@ -974,6 +1016,40 @@ export function applyGlEffects(
   };
 
   try {
+    if(colour){
+      if(c.colour&&(c.colour.w!==w||c.colour.h!==h)){for(const t of [c.colour.full,c.colour.plain,c.colour.target])gl.deleteTexture(t);c.colour=undefined;}
+      c.colour ||= {full:makeTex(gl,1089,33),plain:makeTex(gl,1089,33),target:makeTex(gl,w,h),w,h};
+      const p=compile(c,'__residentColour',FX_COLOUR_SHADER);if(!p)return;
+      gl.useProgram(p);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,rawTex);gl.uniform1i(uniformLocation(gl,p,'uTex'),0);
+      for(const [unit,name,field] of [[4,'uFull','full'],[5,'uPlain','plain']] as const){
+        gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,c.colour[field]);
+        const identity=field==='full'?'fullValue':'plainValue';
+        if(c.colour[identity]!==colour[field]){gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,1089,33,gl.RGBA,gl.UNSIGNED_BYTE,colourAtlas(colour[field]));c.colour[identity]=colour[field];}
+        gl.uniform1i(uniformLocation(gl,p,name),unit);
+      }
+      gl.uniform1f(uniformLocation(gl,p,'uMix'),colour.amount);drawTo(c.colour.target);srcTex=c.colour.target;
+      if(active.some(d=>d.id==='fxExposureSpill')){
+        const histogramStart=import.meta.env.DEV?performance.now():0;
+        if(c.gpuHistogram===undefined)c.gpuHistogram=GpuHighlightHistogram.create(gl);
+        if(c.gpuHistogram)spillSelectionTexture=c.gpuHistogram.prepare(srcTex,w,h,uploadKey,params.fxSpillRange??20,c.quad,(key,fs)=>compile(c,key,fs));
+        gl.bindBuffer(gl.ARRAY_BUFFER,c.quad);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.viewport(0,0,w,h);
+        if(!spillSelectionTexture){
+          if(!uploadKey||c.highlightKey!==uploadKey||!c.highlightBins){
+            gl.bindFramebuffer(gl.FRAMEBUFFER,fb);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,srcTex,0);
+            if(c.highlightPixels?.length!==w*h*4)c.highlightPixels=new Uint8Array(w*h*4);
+            gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,c.highlightPixels);c.highlightBins=highlightHistogram(c.highlightPixels);
+            c.highlightKey=uploadKey;
+          }
+          spillSelection=selectHighlights(c.highlightBins,params.fxSpillRange??20);
+        }
+        if(import.meta.env.DEV)auditHistogram=performance.now()-histogramStart;
+      }
+    }
+    let gpuHalo=false;
+    if(scene&&!auditReference&&active.some(d=>d.id==='fxLowfi')){
+      c.lowfiHalo ||= new LowfiHaloMask();
+      gpuHalo=c.lowfiHalo.prepareGpu(gl,srcTex,w,h,uploadKey,fb,(key,fs)=>compile(c,key,fs));
+    }
     // 目前的畫面放在 texs[0]
     const copy = compile(c, '__copy', `${GLSL_HEADER}\nvoid main(){ gl_FragColor = vec4(texture2D(uTex, vUv).rgb, 1.0); }`);
     if (!copy) { cleanup(); return; }
@@ -1004,13 +1080,16 @@ export function applyGlEffects(
         bind(prog, spillKey && pool.spillKey===spillKey && pool.narrow && i===d.passes.length-1
           ? pool.narrow : pass.fromSource ? texs[layerIn] : fromTexture||texs[from], texs[layerIn]);
         gl.uniform1f(uniformLocation(gl,prog,'uEffectAmount'),Math.max(0,Math.min(1,(params[d.id]||0)/100)));
-        gl.uniform1f(uniformLocation(gl,prog,'uHighlightReady'),spillSelection?1:0);
+        gl.uniform1f(uniformLocation(gl,prog,'uHighlightReady'),spillSelectionTexture?2:spillSelection?1:0);
+        if(spillSelectionTexture){gl.activeTexture(gl.TEXTURE7);gl.bindTexture(gl.TEXTURE_2D,spillSelectionTexture);gl.uniform1i(uniformLocation(gl,prog,'uHighlightSelection'),7);}
         if(spillSelection){gl.uniform1f(uniformLocation(gl,prog,'uHighlightCut'),spillSelection.cutoff);gl.uniform1f(uniformLocation(gl,prog,'uHighlightTie'),spillSelection.tie);}
         if(pool.aux){gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,pool.aux);gl.uniform1i(uniformLocation(gl,prog,'uAux'),2);}
         if(d.id==='fxLowfi'){
           bindLowfiLut(gl,prog);
           c.lowfiHalo ||= new LowfiHaloMask();
-          c.lowfiHalo.bind(gl,prog,ctx2d.canvas,w,h,uploadKey);
+          const haloStart=import.meta.env.DEV?performance.now():0;
+          if(gpuHalo)c.lowfiHalo.bindGpu(gl,prog);else c.lowfiHalo.bind(gl,prog,ctx2d.canvas,w,h,uploadKey);
+          if(import.meta.env.DEV)auditHalo+=performance.now()-haloStart;
         }
         gl.uniform2f(uniformLocation(gl,prog, 'uDir'), pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
         for (const p of d.params) {
@@ -1062,6 +1141,8 @@ export function applyGlEffects(
       ctx2d.save();ctx2d.globalCompositeOperation = 'copy';ctx2d.globalAlpha = 1;
       ctx2d.drawImage(c.canvas, 0, 0, w, h);ctx2d.restore();
     }
+    if(import.meta.env.DEV)c.canvas.dataset.fxPhases=JSON.stringify({upload:auditUpload,halo:auditHalo,histogram:auditHistogram,gpuHistogram:!!c.gpuHistogram,selection:c.gpuHistogram?.diagnostic});
+    c.renderedKey=renderKey;c.renderedScene=scene;c.renderedColour=colour;
     return c.canvas;
   } catch (e) {
     console.warn('[glEffects] failed:', e);

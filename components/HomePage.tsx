@@ -1295,18 +1295,10 @@ export const HomePage: React.FC<HomePageProps> = ({
           ))}
         </div>
 
-        {/* 新增：橫幅。按鈕沿用「立即使用」那一顆，沒有新的設計語言。
-
-             ⚠️ 暫時的：點這張卡片就可以換一張底圖，純粹拿來看效果。
-             沒有上傳／替換／刪除那幾顆小鈕了 —— 卡片本身就是那顆鈕，
-             而且只能換、不能清空。圖只存在這台裝置的 localStorage，
-             不會上傳任何地方。之後接上真的活動資料時，把 promoBg 這一組
-             （狀態、input、卡片上的 onClick）拿掉就行，其他部分不用動。 */}
-        <div
-          role="button"
+        {/* One accessible entry, with a shared horizontal title/action baseline. */}
+        <button
+          type="button"
           aria-label="開啟藝術效果"
-          tabIndex={0}
-          onKeyDown={e => { if(e.key==='Enter'||e.key===' '){e.preventDefault();onOpenArt();} }}
           onClick={onOpenArt}
           className="relative z-10 mt-[14px] shrink-0 rounded-[14px] border border-white/[0.08] overflow-hidden text-left active:scale-[0.995] transition-transform duration-300"
           style={{ background: previews.promo ? undefined : 'rgba(255,255,255,.03)' }}
@@ -1330,18 +1322,14 @@ export const HomePage: React.FC<HomePageProps> = ({
               />
             </>
           )}
-          <div className="relative px-[18px] pt-7 pb-4">
-            <p className="text-[16px] font-black tracking-[0.04em] text-white">藝術效果</p>
-            <button
-              /* 這顆在卡片裡面，要擋住冒泡 —— 不然按它會順便叫出換圖 */
-              onClick={e => { e.stopPropagation(); onOpenArt(); }}
-              className="mt-3 h-[26px] pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 active:scale-95 transition-transform duration-300"
-            >
+          <div className="relative min-h-[92px] px-5 py-6 flex items-center justify-between gap-5">
+            <span className="text-[18px] font-semibold tracking-[0.06em] text-white">藝術效果</span>
+            <span className="h-8 pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-semibold tracking-[0.04em] flex items-center gap-1 shrink-0">
               立即使用
               {pillArrow}
-            </button>
+            </span>
           </div>
-        </div>
+        </button>
 
         {/* 首頁只顯示推薦；歷史紀錄集中在「我的」。 */}
         <div className="relative z-10 mt-[12px] shrink-0">{recommendationSection}</div>

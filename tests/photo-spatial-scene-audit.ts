@@ -1,4 +1,4 @@
-import {applyPhotoFx,loadLut} from '../utils/photoFx';
+import {applyPhotoFx,loadLut,compactPhotoFxSurface,releasePhotoFxSurface} from '../utils/photoFx';
 import {get2dWide} from '../utils/colorSpace';
 import type {FxScene} from '../utils/glEffects';
 void(async()=>{
@@ -13,9 +13,15 @@ void(async()=>{
  const scene:FxScene={black:draw(flat('black')),white:draw(flat('white')),placements:[{rect:[30,40,400,260],uv:[0,0,1,1],clip:[30,40,400,260]}]};
  const input=document.createElement('canvas');
  await loadLut('spatial-audit','/luts/f1.webp',true);
- for(const fx of [{fxMosaic:100,fxMosaicCells:60},{fxGlass:55},{fxExposureSpill:50},{fxLowfi:50},{fxGlass:40,lut:'spatial-audit',lutAmount:70},{soft:40,softRadius:60},{fringeIntensity:50,fringeSize:40},{leakOpacity:70,leakAngle:45},{blur:50},{vignette:50}]){
+ for(const fx of [{fxMosaic:100,fxMosaicCells:60},{fxGlass:55},{fxExposureSpill:50},{fxExposureSpill:50,lut:'spatial-audit',lutAmount:70},{fxLowfi:50},...[0,25,50,75,100].map(lutAmount=>({fxLowfi:50,lut:'spatial-audit',lutAmount})),{fxGlass:40,lut:'spatial-audit',lutAmount:70},{soft:40,softRadius:60},{fringeIntensity:50,fringeSize:40},{leakOpacity:70,leakAngle:45},{blur:50},{vignette:50}]){
   const live=applyPhotoFx(source,320,240,fx,{cacheSource:true,gpuSurface:true,out:input,scene});
   const gl=live.getContext('webgl')!,bytes=new Uint8Array(480*360*4);gl.readPixels(0,0,480,360,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
+  const firstSelection=live.dataset.fxPhases;
+  compactPhotoFxSurface(input);
+  const rebuilt=applyPhotoFx(source,320,240,fx,{cacheSource:true,gpuSurface:true,out:input,scene});
+  const reg=rebuilt.getContext('webgl')!,again=new Uint8Array(bytes.length);reg.readPixels(0,0,480,360,reg.RGBA,reg.UNSIGNED_BYTE,again);
+  let compactMax=0,compactTotal=0;for(let i=0;i<bytes.length;i++){const d=Math.abs(bytes[i]-again[i]);compactMax=Math.max(compactMax,d);compactTotal+=d;}
+  checks.push({fx,compactRestoresExactPixels:true,compactMax,compactMean:compactTotal/bytes.length,firstSelection,secondSelection:rebuilt.dataset.fxPhases,pass:bytes.every((v,i)=>v===again[i])});
   const flipped=new Uint8ClampedArray(bytes.length);for(let y=0;y<360;y++)flipped.set(bytes.subarray(y*480*4,(y+1)*480*4),(359-y)*480*4);
   const copy=document.createElement('canvas');copy.width=480;copy.height=360;const c=get2dWide(copy)!;
   c.putImageData(new ImageData(flipped,480,360,{colorSpace:(gl as any).drawingBufferColorSpace==='display-p3'?'display-p3':'srgb'}),0,0);
@@ -27,6 +33,7 @@ void(async()=>{
   }
   checks.push({fx,max,mean:total/count,pass:total/count<1.5&&max<30});
  }
+ releasePhotoFxSurface(input);
  const report={kind:'photo-spatial-scene',pass:checks.every(c=>c.pass),checks};
  const pre=document.createElement('pre');pre.hidden=true;pre.id='spatial-scene-result';pre.dataset.report=JSON.stringify(report);document.body.append(pre);
  await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify(report)}).catch(()=>{});
