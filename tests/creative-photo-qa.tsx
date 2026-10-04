@@ -9,11 +9,17 @@ const params=new URLSearchParams(location.search);
 const colors=['#ef4444','#22c55e','#3b82f6','#eab308','#a855f7','#f97316','#06b6d4','#ec4899','#888888','#ffffff'];
 const files=await Promise.all(colors.slice(0,params.has('single')?1:params.has('four')?4:params.has('empty')||params.has('baseAudit')?2:10).map(async(color,i)=>{
  const c=document.createElement('canvas');c.width=params.has('huge')?4096:params.has('large')?2048:params.has('portrait')?600:900;c.height=params.has('huge')?3072:params.has('large')?1536:params.has('portrait')?900:600;
- const g=c.getContext('2d')!;g.fillStyle=color;g.fillRect(0,0,c.width,c.height);g.fillStyle='white';g.font='bold 100px sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillText(String(i+1),c.width/2,c.height/2);
+ const g=c.getContext('2d')!;g.fillStyle=color;
+ if(params.has('gradient')){const gradient=g.createLinearGradient(0,0,c.width,c.height);gradient.addColorStop(0,color);gradient.addColorStop(.5,'#13254f');gradient.addColorStop(1,'#fef1b7');g.fillStyle=gradient;}
+ g.fillRect(0,0,c.width,c.height);g.fillStyle='white';g.font='bold 100px sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillText(String(i+1),c.width/2,c.height/2);
  const blob=await new Promise<Blob>(r=>c.toBlob(b=>r(b!),'image/png'));return new File([blob],`photo-${i+1}.png`,{type:'image/png'});
 }));
 const floating=params.has('swaps')?[{id:'qa-float-a',type:'image',src:URL.createObjectURL(files[9]),x:500,y:220,w:120,h:90,rot:0,opacity:100},{id:'qa-float-b',type:'image',src:URL.createObjectURL(files[1]),x:680,y:350,w:120,h:90,rot:0,opacity:100}]:[];
-createRoot(document.getElementById('root')!).render(params.has('textureAudit')
+createRoot(document.getElementById('root')!).render((params.has('coldEditAudit')||params.has('coldEffectsAudit'))&&params.has('realFilters')
+ ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} lutList={Array.from({length:22},(_,i)=>({id:`cold-${params.get('run')||'audit'}-f${i+1}`,name:`F${i+1}`,url:`/luts/f${i+1}.webp`}))} initialState={{holeCount:0}}/>
+ : params.has('spatialIntegrationAudit')&&params.has('around')
+ ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{holeCount:2,layout:'mask-around',holeSize:45,holeType:'circle',holes:[{id:'audit-a',x:100,y:100,side:'mask'},{id:'audit-b',x:600,y:500,side:'mask'}]}}/>
+ : params.has('textureAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialState={{canvasRatio:'1:1',holeCount:0,patternType:'dot',dotSize:15,dotGap:0,dotSquash:50}}/>
  : params.has('busyEdit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={{holeCount:30,layout:'mask-right',holeSize:15,holeType:'star',glowMode:'image',holes:Array.from({length:30},(_,i)=>({id:`busy-${i}`,x:30+(i%5)*48,y:55+Math.floor(i/5)*140,side:'mask'}))}}/>
@@ -28,7 +34,11 @@ createRoot(document.getElementById('root')!).render(params.has('textureAudit')
  : params.has('ig')
  ? <IgPreview shots={files.slice(0,2).map(f=>URL.createObjectURL(f))} frame={{w:3,h:2}} pageCount={2} faces={[]} onClose={()=>{}}/>
  : <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={params.has('direction')?{layout:'image-full',canvasRatio:'3:2',holeCount:4,holeSize:15,maskColor:'#FFFFFF',holes:[{id:'right',x:700,y:100,side:'image'},{id:'left',x:100,y:200,side:'image'},{id:'middle',x:400,y:500,side:'image'},{id:'absent',x:-200,y:200,side:'mask'}]}:params.has('audit')||params.has('four')?{holeCount:0,layout:'image-full',canvasRatio:'3:2',objects:floating}:{holeCount:0}}/>);
-if(params.has('sceneColourAudit'))void import('./photo-scene-colour-audit');
+if(params.has('spatialIntegrationAudit'))void import('./creative-spatial-integration-audit');
+else if(params.has('spatialSceneAudit'))void import('./photo-spatial-scene-audit');
+else if(params.has('coldEffectsAudit'))void import('./creative-cold-effects-audit');
+else if(params.has('coldEditAudit'))void import('./creative-cold-edit-audit');
+else if(params.has('sceneColourAudit'))void import('./photo-scene-colour-audit');
 else if(params.has('singleEditAudit'))void import('./creative-single-edit-audit');
 else if(params.has('baseAudit'))void import('./creative-base-photo-audit');
 else if(params.has('textureAudit'))void import('./mask-texture-audit');

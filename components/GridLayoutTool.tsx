@@ -21,6 +21,7 @@ import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
 import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
+import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
 import {DEFAULT_COLORS,SHAPE_COLORS,STROKE_COLORS,TEXT_COLORS as NEW_TEXT_COLORS} from '../utils/colorPalettes.js';
@@ -2487,6 +2488,7 @@ const liveFx = useRef<PhotoFx>(img.fx || {});
 const pendingCommit = useRef<ReturnType<typeof setTimeout> | null>(null);
 const sliderInput = useRef(false);
 const sliderHeld = useRef(false);
+const releaseBackgroundHold=useRef<(()=>void)|null>(null);
 const commitAdjustmentRef = useRef(onAdjustmentCommit);
 commitAdjustmentRef.current = onAdjustmentCommit;
 useLayoutEffect(() => {
@@ -2496,16 +2498,19 @@ useLayoutEffect(() => {
 },[img.id,img.fx,isolateFxUpdates]);
 const finishAdjustment = () => {
   sliderHeld.current=false;
+  releaseBackgroundHold.current?.();releaseBackgroundHold.current=null;
   if(pendingCommit.current === null)return;
   clearTimeout(pendingCommit.current);pendingCommit.current=null;
   setLocalFx(liveFx.current);
   commitAdjustmentRef.current?.();
 };
 useEffect(() => () => {
+  releaseBackgroundHold.current?.();releaseBackgroundHold.current=null;
   if(pendingCommit.current !== null){clearTimeout(pendingCommit.current);pendingCommit.current=null;commitAdjustmentRef.current?.();}
 },[]);
 const fx = isolateFxUpdates ? liveFx.current : (img.fx || {});
 const setFx = (patch: Partial<PhotoFx>) => {
+  deferHeavyWork();
   const next = {...(isolateFxUpdates ? liveFx.current : fx),...patch};
   if(isolateFxUpdates){
     liveFx.current=next;
@@ -2741,7 +2746,7 @@ useEffect(() => { onSliderOpenChange?.(sliderShown); }, [sliderShown, onSliderOp
 return (
   <div className="h-full flex flex-col justify-end"
     onPointerDownCapture={isolateFxUpdates ? e=>{
-      if((e.target as Element).closest('input[type=range],.slider-wrap')){sliderHeld.current=true;onAdjustmentStart?.();}
+      if((e.target as Element).closest('input[type=range],.slider-wrap')){releaseBackgroundHold.current?.();releaseBackgroundHold.current=holdPhotoInteraction();sliderHeld.current=true;onAdjustmentStart?.();}
     } : undefined}
     onPointerUpCapture={isolateFxUpdates ? finishAdjustment : undefined}
     onPointerCancelCapture={isolateFxUpdates ? finishAdjustment : undefined}
@@ -2785,7 +2790,7 @@ return (
             <div className="relative w-full h-[76px] rounded-lg bg-[#111] overflow-hidden">
               <div className="absolute inset-0 bg-[#1a1a1a]" />
               <CardThumb src={cardSrc} delay={li * 24}
-                         cacheKey={`${cardSrc}|lut:${l.id}|${lutRevision}`}
+                         cacheKey={`${cardSrc}|lut:${l.id}|${getLoadedLut(l.id)?'ready':'pending'}`}
                          fx={{ lut: l.id, lutAmount: lutDefaultAmount(l.id) }} />
               {loadingLut === l.id && (
                 <div className="absolute inset-0 flex items-center justify-center bg-black/40">
@@ -3720,7 +3725,8 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
   const [paintedKey, setPaintedKey] = useState('');
   useEffect(() => {
     let dead = false;
-    const paint = () => {
+    const paint = async () => {
+      await awaitPhotoIdle();
       const cvs = ref.current;
       if (dead || !cvs) return;
       let thumb = cardThumbCache.get(cacheKey);
@@ -3751,7 +3757,7 @@ const CardThumb: React.FC<{ src: string; cacheKey: string; fx: PhotoFx; delay?: 
       setPaintedKey(cacheKey);
     };
     // 一次算 20 幾張會卡住主執行緒，錯開一點點就順了
-    const t = setTimeout(paint, delay);
+    const t = setTimeout(()=>{void paint();}, delay);
     return () => { dead = true; clearTimeout(t); };
   }, [src, cacheKey, delay]);
   return <>

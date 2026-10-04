@@ -1,0 +1,2177 @@
+{
+  "version": 30,
+  "complete": false,
+  "environment": "iPhone 17 iOS 26.5 Simulator Safari (not a physical iPhone)",
+  "tests": {
+    "node": 289,
+    "failed": 0
+  },
+  "quality": "Native 10 resident kernels differed by at most one code value away from crop seams. Color noise excluded from resident path because native pixel comparison failed.",
+  "limits": [
+    "Cold performance varies; latest run still has slow frames and does not meet all-slider 60fps requirement.",
+    "Soft ll range and diffusion remain costly.",
+    "Seamless, oversized scenes and animated/video combinations retain original full-quality fallback.",
+    "First effect selection can still require preparation; no resolution reduction used."
+  ],
+  "reports": [
+    {
+      "kind": "creative-cold-effects",
+      "route": "?single&huge&coldEffectsAudit&realFilters&run=effects-v30",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 170,
+          "mean": 15.8,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 16.700000000000045,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 16.6,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 1160,
+          "mean": 383.7,
+          "max": 427,
+          "over50": 20
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 369.8,
+          "max": 396,
+          "over50": 20
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 374,
+          "max": 392.99999999999636,
+          "over50": 20
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 539,
+          "mean": 383.9,
+          "max": 458.00000000000364,
+          "over50": 20
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 379,
+          "max": 418,
+          "over50": 20
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 373.35,
+          "max": 399,
+          "over50": 20
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 626.0000000000073,
+          "mean": 422.85,
+          "max": 437.9999999999927,
+          "over50": 20
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 436.5999999999996,
+          "max": 613,
+          "over50": 20
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 439.75,
+          "max": 493,
+          "over50": 20
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 744,
+          "mean": 406.1,
+          "max": 482,
+          "over50": 20
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 405.05,
+          "max": 433,
+          "over50": 20
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 403.85,
+          "max": 422,
+          "over50": 20
+        }
+      ]
+    },
+    {
+      "kind": "creative-cold-effects",
+      "route": "?single&huge&coldEffectsAudit&realFilters&run=resident-v30",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 111,
+          "mean": 16.9,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 16.699999999999978,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 926,
+          "mean": 128.7,
+          "max": 157,
+          "over50": 20
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 122.6,
+          "max": 140,
+          "over50": 19
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 123.7,
+          "max": 137,
+          "over50": 19
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 279.0000000000018,
+          "mean": 130.2,
+          "max": 139,
+          "over50": 20
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 120.24999999999991,
+          "max": 147,
+          "over50": 19
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 135.45,
+          "max": 181,
+          "over50": 19
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 384,
+          "mean": 127.45,
+          "max": 158,
+          "over50": 20
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 129.8500000000002,
+          "max": 180,
+          "over50": 19
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 124.2,
+          "max": 142,
+          "over50": 19
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 432.99999999999636,
+          "mean": 126.70000000000019,
+          "max": 132,
+          "over50": 20
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 125.15,
+          "max": 145,
+          "over50": 19
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 122.20000000000036,
+          "max": 141.00000000000728,
+          "over50": 19
+        }
+      ]
+    },
+    {
+      "kind": "creative-cold-effects",
+      "route": "?single&huge&coldEffectsAudit&realFilters&run=scene-v30",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 110.00000000000045,
+          "mean": 16.95,
+          "max": 22.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 16.65,
+          "max": 17.999999999999545,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 16.65,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 1003.9999999999991,
+          "mean": 129.8,
+          "max": 156,
+          "over50": 20
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 129.45,
+          "max": 173,
+          "over50": 19
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 128.5,
+          "max": 155,
+          "over50": 19
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 307.0000000000018,
+          "mean": 133.7999999999999,
+          "max": 159,
+          "over50": 20
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 123.7,
+          "max": 137,
+          "over50": 19
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 123.9,
+          "max": 149.99999999999636,
+          "over50": 19
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 367,
+          "mean": 131.65,
+          "max": 159,
+          "over50": 20
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 125.15,
+          "max": 144.99999999999636,
+          "over50": 19
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 120.80000000000018,
+          "max": 132,
+          "over50": 19
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 392,
+          "mean": 142.1,
+          "max": 182.00000000000364,
+          "over50": 20
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 121.45,
+          "max": 132.99999999999272,
+          "over50": 19
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 125.6,
+          "max": 145,
+          "over50": 19
+        }
+      ]
+    },
+    {
+      "kind": "creative-cold-effects",
+      "route": "?single&huge&coldEffectsAudit&realFilters&run=spatial-v30",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 112,
+          "mean": 15.75,
+          "max": 17.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 16.699999999999978,
+          "max": 18.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 1494.000000000001,
+          "mean": 26.95,
+          "max": 231,
+          "over50": 1
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 16.65,
+          "max": 27,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 16.75,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 173,
+          "mean": 16.35,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 16.65,
+          "max": 22,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 16.599999999999863,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 212.00000000000182,
+          "mean": 17.749999999999908,
+          "max": 46.99999999999818,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 16.7,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 213.99999999999636,
+          "mean": 15.950000000000092,
+          "max": 21,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 16.7,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 16.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        }
+      ]
+    },
+    {
+      "kind": "creative-cold-effects",
+      "route": "?single&huge&coldEffectsAudit&realFilters&legacy&run=full-v30",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "error": "TypeError: null is not an object (evaluating 'document.querySelector(`[data-fx-card=\"${id}\"]`).click')",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 107.99999999999955,
+          "mean": 15.85,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 16.650000000000023,
+          "max": 21.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.999999999999545,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 1234.000000000001,
+          "mean": 15.799999999999955,
+          "max": 18.99999999999909,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 16.699999999999953,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 87.99999999999909,
+          "mean": 16.400000000000045,
+          "max": 18.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 16.7,
+          "max": 22,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 16.7,
+          "max": 18.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 231.9999999999991,
+          "mean": 16.75,
+          "max": 35.99999999999909,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 16.700000000000045,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 224,
+          "mean": 15.45,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 16.70000000000009,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 16.7,
+          "max": 24,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 1,
+          "selectionMs": 1171,
+          "mean": 15.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 3,
+          "mean": 16.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "round": 1,
+          "selectionMs": 511.9999999999982,
+          "mean": 16.05,
+          "max": 19,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "round": 3,
+          "mean": 16.7,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "round": 1,
+          "selectionMs": 499,
+          "mean": 15.9,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "round": 2,
+          "mean": 16.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "round": 3,
+          "mean": 16.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "blur",
+          "round": 1,
+          "selectionMs": 474.9999999999982,
+          "mean": 16.25,
+          "max": 24,
+          "over50": 0
+        },
+        {
+          "id": "blur",
+          "round": 2,
+          "mean": 16.9,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "blur",
+          "round": 3,
+          "mean": 16.75,
+          "max": 19,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 1,
+          "selectionMs": 495.9999999999927,
+          "mean": 16.00000000000018,
+          "max": 17.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.000000000003638,
+          "over50": 0
+        }
+      ]
+    },
+    {
+      "kind": "creative-cold-effects",
+      "route": "?single&huge&coldEffectsAudit&realFilters&legacy&details&run=details-v30",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 111.99999999999909,
+          "mean": 16.25000000000002,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 16.7,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 16.7,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 972.9999999999995,
+          "mean": 15.5,
+          "max": 17.99999999999909,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 16.75,
+          "max": 18.00000000000091,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 179.00000000000182,
+          "mean": 15.899999999999954,
+          "max": 22,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 16.75,
+          "max": 17.99999999999909,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 16.75,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 270.9999999999982,
+          "mean": 17.250000000000046,
+          "max": 41,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 16.70000000000009,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "detail": "範圍",
+          "mean": 42.75,
+          "max": 50.00000000000182,
+          "over50": 1
+        },
+        {
+          "id": "fxExposureSpill",
+          "detail": "擴散",
+          "mean": 43.45,
+          "max": 55,
+          "over50": 2
+        },
+        {
+          "id": "fxExposureSpill",
+          "detail": "色相",
+          "mean": 16.5,
+          "max": 21,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 248.99999999999818,
+          "mean": 16.75,
+          "max": 26,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 16.749999999999908,
+          "max": 17.99999999999818,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "顆粒",
+          "mean": 17.2,
+          "max": 25,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "色差",
+          "mean": 16.250000000000092,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "濾鏡",
+          "mean": 16.05,
+          "max": 19,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "對比",
+          "mean": 16.55000000000009,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "光暈",
+          "mean": 16.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 1,
+          "selectionMs": 675,
+          "mean": 16.25,
+          "max": 20.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 2,
+          "mean": 16.70000000000009,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "detail": "範圍",
+          "mean": 25.05,
+          "max": 28,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "detail": "擴散",
+          "mean": 23.3,
+          "max": 27,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "detail": "色相",
+          "mean": 16.45,
+          "max": 17,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "round": 1,
+          "selectionMs": 556,
+          "mean": 15.6,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "round": 2,
+          "mean": 16.65,
+          "max": 18.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "round": 3,
+          "mean": 16.699999999999818,
+          "max": 17,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "detail": "範圍",
+          "mean": 16.65,
+          "max": 17.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "detail": "擴散",
+          "mean": 17.15,
+          "max": 22,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "detail": "色相",
+          "mean": 16.65,
+          "max": 17,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "round": 1,
+          "selectionMs": 573.0000000000036,
+          "mean": 15.499999999999819,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "round": 2,
+          "mean": 16.7,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "round": 3,
+          "mean": 16.7,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "detail": "角度",
+          "mean": 16.70000000000018,
+          "max": 17.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "detail": "色相",
+          "mean": 16.65,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "blur",
+          "round": 1,
+          "selectionMs": 744.0000000000036,
+          "mean": 18.65,
+          "max": 25,
+          "over50": 0
+        },
+        {
+          "id": "blur",
+          "round": 2,
+          "mean": 17.899999999999817,
+          "max": 22,
+          "over50": 0
+        },
+        {
+          "id": "blur",
+          "round": 3,
+          "mean": 17.15,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 1,
+          "selectionMs": 508,
+          "mean": 15.45,
+          "max": 17.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 3,
+          "mean": 16.649999999999817,
+          "max": 17.000000000003638,
+          "over50": 0
+        }
+      ]
+    },
+    {
+      "kind": "creative-cold-effects",
+      "route": "?four&huge&coldEffectsAudit&realFilters&legacy&run=four-v30",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 108.99999999999955,
+          "mean": 16.6,
+          "max": 17.000000000000455,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17,
+          "over50": 0
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 1644,
+          "mean": 16.95,
+          "max": 32,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 16.75,
+          "max": 21,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 16.75,
+          "max": 18.99999999999909,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 174,
+          "mean": 16.3,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 16.65,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 16.75,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 226.99999999999818,
+          "mean": 17,
+          "max": 38,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 229,
+          "mean": 16.05,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 16.7,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 17.000000000000092,
+          "max": 19.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 1,
+          "selectionMs": 1143.9999999999982,
+          "mean": 19.7,
+          "max": 43.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 2,
+          "mean": 23.35,
+          "max": 76.00000000000182,
+          "over50": 2
+        },
+        {
+          "id": "softLight",
+          "round": 3,
+          "mean": 16.69999999999991,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "round": 1,
+          "selectionMs": 1020,
+          "mean": 16.5,
+          "max": 19,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "round": 2,
+          "mean": 16.64999999999991,
+          "max": 17.00000000000182,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "round": 3,
+          "mean": 16.64999999999991,
+          "max": 17.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "round": 1,
+          "selectionMs": 583,
+          "mean": 15.85,
+          "max": 32,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "round": 2,
+          "mean": 16.7,
+          "max": 18,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "round": 3,
+          "mean": 16.65,
+          "max": 17,
+          "over50": 0
+        },
+        {
+          "id": "blur",
+          "round": 1,
+          "selectionMs": 528.0000000000036,
+          "mean": 16.949999999999818,
+          "max": 19,
+          "over50": 0
+        },
+        {
+          "id": "blur",
+          "round": 2,
+          "mean": 17.75,
+          "max": 21.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "blur",
+          "round": 3,
+          "mean": 17.85,
+          "max": 20.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 1,
+          "selectionMs": 482,
+          "mean": 15.9,
+          "max": 17.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 2,
+          "mean": 16.7,
+          "max": 17.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 3,
+          "mean": 16.7,
+          "max": 17.000000000003638,
+          "over50": 0
+        }
+      ]
+    },
+    {
+      "kind": "creative-cold-effects",
+      "route": "?single&huge&coldEffectsAudit&realFilters&legacy&details&run=uniform-v30",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 414.0000000000009,
+          "mean": 43.899999999999956,
+          "max": 250,
+          "over50": 3
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 45.1,
+          "max": 70,
+          "over50": 7
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 74.49999999999991,
+          "max": 340,
+          "over50": 11
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 6178,
+          "mean": 17.75,
+          "max": 24,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 16.65,
+          "max": 19.000000000003638,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 18.05,
+          "max": 20,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 138,
+          "mean": 29.35,
+          "max": 50,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 38.15,
+          "max": 116,
+          "over50": 3
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 51.3,
+          "max": 105,
+          "over50": 10
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 1261,
+          "mean": 36.45,
+          "max": 94,
+          "over50": 1
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 27.04999999999982,
+          "max": 35,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 26.05,
+          "max": 33.00000000000364,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "detail": "範圍",
+          "mean": 123.5,
+          "max": 162,
+          "over50": 20
+        },
+        {
+          "id": "fxExposureSpill",
+          "detail": "擴散",
+          "mean": 114.65,
+          "max": 139,
+          "over50": 19
+        },
+        {
+          "id": "fxExposureSpill",
+          "detail": "色相",
+          "mean": 27.850000000000183,
+          "max": 38,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 931,
+          "mean": 55.35,
+          "max": 249,
+          "over50": 6
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 39.3,
+          "max": 61,
+          "over50": 3
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 30.2,
+          "max": 45,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "顆粒",
+          "mean": 28.749999999999638,
+          "max": 39,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "色差",
+          "mean": 29.2,
+          "max": 45,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "濾鏡",
+          "mean": 34.45,
+          "max": 59,
+          "over50": 3
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "對比",
+          "mean": 32.5,
+          "max": 47.999999999992724,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "光暈",
+          "mean": 31,
+          "max": 62,
+          "over50": 1
+        },
+        {
+          "id": "softLight",
+          "round": 1,
+          "selectionMs": 1306,
+          "mean": 23.6,
+          "max": 36,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 2,
+          "mean": 22.2,
+          "max": 33,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 3,
+          "mean": 27.850000000000364,
+          "max": 67,
+          "over50": 1
+        },
+        {
+          "id": "softLight",
+          "detail": "範圍",
+          "mean": 69.95,
+          "max": 291,
+          "over50": 12
+        },
+        {
+          "id": "softLight",
+          "detail": "擴散",
+          "mean": 46.85,
+          "max": 64,
+          "over50": 8
+        },
+        {
+          "id": "softLight",
+          "detail": "色相",
+          "mean": 34.55,
+          "max": 52,
+          "over50": 1
+        },
+        {
+          "id": "halation",
+          "round": 1,
+          "selectionMs": 1469.9999999999927,
+          "mean": 26.4,
+          "max": 37,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "round": 2,
+          "mean": 25.6,
+          "max": 38,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "round": 3,
+          "mean": 25.800000000000363,
+          "max": 42,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "detail": "範圍",
+          "mean": 25.55,
+          "max": 42.000000000007276,
+          "over50": 0
+        },
+        {
+          "id": "halation",
+          "detail": "擴散",
+          "mean": 35.75,
+          "max": 79,
+          "over50": 2
+        },
+        {
+          "id": "halation",
+          "detail": "色相",
+          "mean": 36.59999999999964,
+          "max": 83.00000000000728,
+          "over50": 4
+        },
+        {
+          "id": "lightLeak",
+          "round": 1,
+          "selectionMs": 2408.9999999999854,
+          "mean": 114.85000000000036,
+          "max": 462,
+          "over50": 19
+        },
+        {
+          "id": "lightLeak",
+          "round": 2,
+          "mean": 70.9,
+          "max": 126,
+          "over50": 16
+        },
+        {
+          "id": "lightLeak",
+          "round": 3,
+          "mean": 37.75,
+          "max": 56.999999999992724,
+          "over50": 5
+        },
+        {
+          "id": "lightLeak",
+          "detail": "角度",
+          "mean": 25.7,
+          "max": 69,
+          "over50": 2
+        },
+        {
+          "id": "lightLeak",
+          "detail": "色相",
+          "mean": 35.6,
+          "max": 81,
+          "over50": 3
+        },
+        {
+          "id": "blur",
+          "round": 1,
+          "selectionMs": 1784.9999999999927,
+          "mean": 33.15000000000036,
+          "max": 64,
+          "over50": 1
+        },
+        {
+          "id": "blur",
+          "round": 2,
+          "mean": 34.35,
+          "max": 48.999999999992724,
+          "over50": 0
+        },
+        {
+          "id": "blur",
+          "round": 3,
+          "mean": 36.100000000000364,
+          "max": 43.000000000007276,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 1,
+          "selectionMs": 1222.0000000000073,
+          "mean": 37.299999999999635,
+          "max": 99,
+          "over50": 4
+        },
+        {
+          "id": "colorNoise",
+          "round": 2,
+          "mean": 28.650000000000365,
+          "max": 38.99999999998545,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 3,
+          "mean": 34.5,
+          "max": 69.99999999999272,
+          "over50": 2
+        }
+      ]
+    },
+    {
+      "kind": "creative-cold-effects",
+      "route": "?single&huge&coldEffectsAudit&realFilters&legacy&details&run=uniform-proof-v30",
+      "ua": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1",
+      "samples": [
+        {
+          "id": "filter",
+          "round": 1,
+          "selectionMs": 730,
+          "mean": 53.4,
+          "max": 347,
+          "over50": 4
+        },
+        {
+          "id": "filter",
+          "round": 2,
+          "mean": 41.40000000000009,
+          "max": 169,
+          "over50": 3
+        },
+        {
+          "id": "filter",
+          "round": 3,
+          "mean": 24.85,
+          "max": 43,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 1,
+          "selectionMs": 5327.000000000004,
+          "mean": 37.2,
+          "max": 97,
+          "over50": 3
+        },
+        {
+          "id": "fxMosaic",
+          "round": 2,
+          "mean": 22.5,
+          "max": 36,
+          "over50": 0
+        },
+        {
+          "id": "fxMosaic",
+          "round": 3,
+          "mean": 24.25,
+          "max": 49,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 1,
+          "selectionMs": 152,
+          "mean": 26.05,
+          "max": 54.00000000000364,
+          "over50": 1
+        },
+        {
+          "id": "fxGlass",
+          "round": 2,
+          "mean": 20.899999999999817,
+          "max": 36,
+          "over50": 0
+        },
+        {
+          "id": "fxGlass",
+          "round": 3,
+          "mean": 21.899999999999817,
+          "max": 42,
+          "over50": 0
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 1,
+          "selectionMs": 825,
+          "mean": 29.95,
+          "max": 60,
+          "over50": 1
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 2,
+          "mean": 34.95,
+          "max": 61,
+          "over50": 2
+        },
+        {
+          "id": "fxExposureSpill",
+          "round": 3,
+          "mean": 53.54999999999982,
+          "max": 120,
+          "over50": 8
+        },
+        {
+          "id": "fxExposureSpill",
+          "detail": "範圍",
+          "mean": 118.80000000000018,
+          "max": 149.00000000000364,
+          "over50": 20
+        },
+        {
+          "id": "fxExposureSpill",
+          "detail": "擴散",
+          "mean": 117.15,
+          "max": 138,
+          "over50": 19
+        },
+        {
+          "id": "fxExposureSpill",
+          "detail": "色相",
+          "mean": 31.5,
+          "max": 44,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 1,
+          "selectionMs": 386,
+          "mean": 26.75,
+          "max": 35.99999999999636,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 2,
+          "mean": 26.75,
+          "max": 36,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "round": 3,
+          "mean": 26.15,
+          "max": 43,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "顆粒",
+          "mean": 29.45,
+          "max": 61,
+          "over50": 1
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "色差",
+          "mean": 32.64999999999982,
+          "max": 62.00000000000364,
+          "over50": 1
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "濾鏡",
+          "mean": 33.25,
+          "max": 48,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "對比",
+          "mean": 29.8,
+          "max": 40.999999999992724,
+          "over50": 0
+        },
+        {
+          "id": "fxLowfi",
+          "detail": "光暈",
+          "mean": 34.2,
+          "max": 87,
+          "over50": 1
+        },
+        {
+          "id": "softLight",
+          "round": 1,
+          "selectionMs": 1348,
+          "mean": 26.4,
+          "max": 46,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 2,
+          "mean": 21.05,
+          "max": 28,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "round": 3,
+          "mean": 19.8,
+          "max": 26,
+          "over50": 0
+        },
+        {
+          "id": "softLight",
+          "detail": "範圍",
+          "mean": 49.05,
+          "max": 80,
+          "over50": 4
+        },
+        {
+          "id": "softLight",
+          "detail": "擴散",
+          "mean": 48.899999999999636,
+          "max": 62.999999999992724,
+          "over50": 10
+        },
+        {
+          "id": "softLight",
+          "detail": "色相",
+          "mean": 48,
+          "max": 129,
+          "over50": 6
+        },
+        {
+          "id": "halation",
+          "round": 1,
+          "selectionMs": 2827,
+          "mean": 81.1,
+          "max": 197,
+          "over50": 13
+        },
+        {
+          "id": "halation",
+          "round": 2,
+          "mean": 43.69999999999963,
+          "max": 91,
+          "over50": 5
+        },
+        {
+          "id": "halation",
+          "round": 3,
+          "mean": 49.8,
+          "max": 112,
+          "over50": 8
+        },
+        {
+          "id": "halation",
+          "detail": "範圍",
+          "mean": 28,
+          "max": 54,
+          "over50": 2
+        },
+        {
+          "id": "halation",
+          "detail": "擴散",
+          "mean": 47.55,
+          "max": 158,
+          "over50": 4
+        },
+        {
+          "id": "halation",
+          "detail": "色相",
+          "mean": 52.65,
+          "max": 84,
+          "over50": 11
+        },
+        {
+          "id": "lightLeak",
+          "round": 1,
+          "selectionMs": 2593.9999999999927,
+          "mean": 30.350000000000364,
+          "max": 41,
+          "over50": 0
+        },
+        {
+          "id": "lightLeak",
+          "round": 2,
+          "mean": 35.8,
+          "max": 58,
+          "over50": 3
+        },
+        {
+          "id": "lightLeak",
+          "round": 3,
+          "mean": 54.6,
+          "max": 203,
+          "over50": 6
+        },
+        {
+          "id": "lightLeak",
+          "detail": "角度",
+          "mean": 52.6,
+          "max": 99,
+          "over50": 7
+        },
+        {
+          "id": "lightLeak",
+          "detail": "色相",
+          "mean": 53.85,
+          "max": 114.00000000000728,
+          "over50": 8
+        },
+        {
+          "id": "blur",
+          "round": 1,
+          "selectionMs": 2767.9999999999927,
+          "mean": 45.25,
+          "max": 162,
+          "over50": 4
+        },
+        {
+          "id": "blur",
+          "round": 2,
+          "mean": 27.4,
+          "max": 43,
+          "over50": 0
+        },
+        {
+          "id": "blur",
+          "round": 3,
+          "mean": 27.6,
+          "max": 33,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 1,
+          "selectionMs": 1204.9999999999927,
+          "mean": 22.249999999999638,
+          "max": 27.999999999992724,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 2,
+          "mean": 17.750000000000362,
+          "max": 20.000000000014552,
+          "over50": 0
+        },
+        {
+          "id": "colorNoise",
+          "round": 3,
+          "mean": 20.65,
+          "max": 35,
+          "over50": 0
+        }
+      ]
+    },
+    {
+      "kind": "creative-spatial-integration",
+      "route": "?four&gradient&around&spatialIntegrationAudit&run=final-v30",
+      "pass": true,
+      "checks": [
+        {
+          "id": "fxGlass",
+          "pass": true,
+          "max": 99,
+          "mean": 0.02817884633789956,
+          "largeFraction": 0.0011913591158223028,
+          "w": 1791,
+          "h": 1791,
+          "samples": [
+            {
+              "actual": [
+                211,
+                229,
+                222,
+                255
+              ],
+              "expected": [
+                211,
+                229,
+                222,
+                255
+              ]
+            },
+            {
+              "actual": [
+                24,
+                37,
+                76,
+                255
+              ],
+              "expected": [
+                24,
+                37,
+                76,
+                255
+              ]
+            },
+            {
+              "actual": [
+                61,
+                71,
+                94,
+                255
+              ],
+              "expected": [
+                61,
+                71,
+                94,
+                255
+              ]
+            }
+          ]
+        },
+        {
+          "id": "fxExposureSpill",
+          "pass": true,
+          "max": 75,
+          "mean": 0.01477438061951921,
+          "largeFraction": 0.00003226630079487331,
+          "w": 1791,
+          "h": 1791,
+          "samples": [
+            {
+              "actual": [
+                211,
+                229,
+                222,
+                255
+              ],
+              "expected": [
+                211,
+                229,
+                222,
+                255
+              ]
+            },
+            {
+              "actual": [
+                33,
+                46,
+                81,
+                255
+              ],
+              "expected": [
+                33,
+                46,
+                81,
+                255
+              ]
+            },
+            {
+              "actual": [
+                61,
+                71,
+                94,
+                255
+              ],
+              "expected": [
+                61,
+                71,
+                94,
+                255
+              ]
+            }
+          ]
+        },
+        {
+          "id": "softLight",
+          "pass": true,
+          "max": 93,
+          "mean": 0.014794644479921787,
+          "largeFraction": 0.000036708762498515284,
+          "w": 1791,
+          "h": 1791,
+          "samples": [
+            {
+              "actual": [
+                211,
+                229,
+                222,
+                255
+              ],
+              "expected": [
+                211,
+                229,
+                222,
+                255
+              ]
+            },
+            {
+              "actual": [
+                33,
+                46,
+                81,
+                255
+              ],
+              "expected": [
+                33,
+                46,
+                81,
+                255
+              ]
+            },
+            {
+              "actual": [
+                61,
+                71,
+                94,
+                255
+              ],
+              "expected": [
+                61,
+                71,
+                94,
+                255
+              ]
+            }
+          ]
+        },
+        {
+          "id": "halation",
+          "pass": true,
+          "max": 75,
+          "mean": 0.016067760478676026,
+          "largeFraction": 0.00004723038232293049,
+          "w": 1791,
+          "h": 1791,
+          "samples": [
+            {
+              "actual": [
+                211,
+                229,
+                222,
+                255
+              ],
+              "expected": [
+                211,
+                229,
+                222,
+                255
+              ]
+            },
+            {
+              "actual": [
+                33,
+                46,
+                81,
+                255
+              ],
+              "expected": [
+                33,
+                46,
+                81,
+                255
+              ]
+            },
+            {
+              "actual": [
+                61,
+                71,
+                94,
+                255
+              ],
+              "expected": [
+                61,
+                71,
+                94,
+                255
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -8,7 +8,8 @@ import {CollageExportOptions} from './CollageExportOptions';
 import {collageVideoMime,type CollageVideoFormat} from '../utils/collageVideoFormat';
 import { idleDefaults } from '../utils/animationDefaults';
 import { get2dWide } from '../utils/colorSpace';
-import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, dimmedPhotoSource, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
+import { CREATIVE_PHOTO_LIMIT, PHOTO_SWAP_HOLD_MS, PHOTO_LAYOUT_COUNTS, regionRects, photoCrop, photoTemplates, quickPhotoTemplateIndices, changePhotoTemplate, photoRegionHit, paintPhotoRegion, dimmedPhotoSource, clearPhotoDimmer, seamlessPhotoBase } from '../utils/creativePhotoLayout';
+import { hasActiveFx, type FxScene, type FxPlacement } from '../utils/glEffects';
 import { stampBounds, brushStepReached, type StampBounds } from '../utils/patternBrushSpacing';
 import { patternEntranceRanks, type PatternDirection } from '../utils/patternEntrance';
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
@@ -86,7 +87,7 @@ import { IgPreview } from './IgPreview';
 import { DEFAULT_GEO, GeoParams, composeCanvas, isGeoIdentity, geoFrameCanvas } from '../utils/compose';
 /* 圖片調整走跟「編輯」「經典拼圖」完全同一條像素管線 —— 同一份程式碼，
    所以濾鏡與調節的效果不可能有差。 */
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, supportsResidentPhotoEffects, hasPhotoFx, loadLut, getLoadedLut, deferHeavyWork } from '../utils/photoFx';
 import {PhotoSceneColour,supportsSceneColour} from '../utils/photoSceneColour';
 import {PhotoAdjustmentBlend,BLEND_ADJUSTMENTS} from '../utils/photoAdjustmentBlend';
 import { SaveButton } from './SaveButton';
@@ -1319,9 +1320,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionFxSurfaces = useRef<Map<string, HTMLCanvasElement>>(new Map());
   useEffect(()=>{
     const keys=new Set(photoRegion?.photos.map((p,i)=>`region-fx-${i}@${p.src}`)||[]);
-    for(const [key,cv] of regionFxSurfaces.current)if(!keys.has(key)){cv.width=cv.height=1;regionFxSurfaces.current.delete(key);objFxCache.current.delete(key);}
+    for(const [key,cv] of regionFxSurfaces.current)if(!keys.has(key)){releasePhotoFxSurface(cv);cv.width=cv.height=1;regionFxSurfaces.current.delete(key);objFxCache.current.delete(key);}
   },[photoRegion]);
-  useEffect(()=>()=>{for(const cv of regionFxSurfaces.current.values())cv.width=cv.height=1;regionFxSurfaces.current.clear();},[]);
+  useEffect(()=>()=>{for(const cv of regionFxSurfaces.current.values()){releasePhotoFxSurface(cv);cv.width=cv.height=1;}regionFxSurfaces.current.clear();},[]);
   const regionBlendTool=useRef('');
   const regionBlend=useRef<PhotoAdjustmentBlend|null>(null);
   const regionWarmStage=useRef<{index:number;canvas:HTMLCanvasElement}|null>(null);
@@ -1329,6 +1330,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionGpuSceneKey=useRef('');
   const regionColour=useRef<PhotoSceneColour|null>(null);
   const regionColourActive=useRef(false);
+  const regionSpatialActive=useRef(false);
+  const regionPlacements=useRef<FxPlacement[]|null>(null);
+  const regionSpatial=useRef<{key:string;scale:number;scene:FxScene;input:HTMLCanvasElement;shown?:HTMLCanvasElement}|null>(null);
+  useEffect(()=>()=>{const r=regionSpatial.current;if(r){releasePhotoFxSurface(r.input);r.scene.black.width=r.scene.black.height=r.scene.white.width=r.scene.white.height=1;}},[]);
   useEffect(()=>()=>regionColour.current?.dispose(),[]);
   const regionSceneStamp=useRef<{key:string;renderer:any;scale:number;source:CanvasImageSource;w:number;h:number;sceneW:number;sceneH:number}|null>(null);
   regionBlend.current??=new PhotoAdjustmentBlend(()=>{
@@ -1438,7 +1443,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        暫停時 videoToken 不會變，那些快取一樣全部命中，一格都不會白算。 */
     const vTok = isVideoEl(o.img) ? videoToken(o.img) : 0;
     const isVid = vTok !== 0 || isVideoEl(o.img);
-    const key = baseKey + '|' + cap + (isVid ? '|v' + vTok : '');
+    const key = baseKey + '|' + cap + '|lutReady:' + !!getLoadedLut(o.fx?.lut) + (isVid ? '|v' + vTok : '');
     const hit = objFxCache.current.get(o.id);
     /* ── 這裡以前有一個「影片＋形狀就限速到 20fps」的閘門，已經拿掉 ────────
        當初加它是因為那條路一格要開三、四張離屏畫布，一秒六十次會把記憶體灌爆。
@@ -2085,6 +2090,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const [tuneTool, setTuneTool] = useState('');
   regionBlendTool.current=(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune'&&BLEND_ADJUSTMENTS.has(tuneTool))?(adjustSub==='filter'?'brightness':tuneTool):'';
   regionColourActive.current=(baseSelected||selectedRegionPhoto!==null)&&(adjustSub==='filter'||adjustSub==='tune');
+  regionSpatialActive.current=(baseSelected||selectedRegionPhoto!==null)&&adjustSub==='effect';
   useEffect(()=>{
     if(!regionBlendTool.current)regionBlend.current?.clear();
     regionPaintRef.current();
@@ -4161,7 +4167,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         await loadLut(l.id, l.url);
         if (!alive) return;
         setLutRevision(n => n + 1);
-        setFxTick(t => t + 1);
+        // Loading another card must not invalidate the full-size GPU scene.
+        if(photoRegionRef.current?.photos.some(p=>p.fx?.lut===l.id)||objectsRef.current.some(o=>o.fx?.lut===l.id))setFxTick(t => t + 1);
       }
     })();
     return () => { alive = false; };
@@ -4640,6 +4647,40 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const stamp=regionSceneStamp.current,index=selectedRegionPhotoRef.current??0,photo=photoRegion?.photos[index];
     if(targetCanvas===canvasRef.current&&!previewCapture){
       const original=photo&&decodedRegionPhotos.current.get(photo.src);
+      if(regionSpatialActive.current&&original&&supportsResidentPhotoEffects(photo?.fx)&&!photoRegion?.seamless&&!animRef.current&&!viewPinchRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
+        const key=regionGpuSceneKey.current;
+        let resident=regionSpatial.current;
+        if(!resident||resident.key!==key||resident.scale!==renderScale||resident.scene.black.width!==targetCanvas.width||resident.scene.black.height!==targetCanvas.height){
+          resident?.shown?.remove();if(resident)releasePhotoFxSurface(resident.input);
+          if(resident){resident.scene.black.width=resident.scene.black.height=resident.scene.white.width=resident.scene.white.height=1;}
+          const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
+          const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale)),k=Math.min(1,cap/Math.max(w,h));
+          const iw=Math.max(1,Math.round(w*k)),ih=Math.max(1,Math.round(h*k));
+          const scenes:HTMLCanvasElement[]=[];let placements:FxPlacement[]=[];
+          try{for(const fill of ['black','white']){
+            const source=document.createElement('canvas');source.width=iw;source.height=ih;
+            const g=source.getContext('2d')!;g.drawImage(original,0,0,iw,ih);g.globalCompositeOperation='source-in';g.fillStyle=fill;g.fillRect(0,0,iw,ih);
+            regionWarmStage.current={index,canvas:source};regionPlacements.current=[];aroundBdRef.current=null;
+            const capture=document.createElement('canvas');renderToCanvasRef.current(capture,renderScale,true);scenes.push(capture);
+            placements=regionPlacements.current;source.width=source.height=1;
+          }}finally{regionWarmStage.current=null;regionPlacements.current=null;aroundBdRef.current=null;}
+          resident={key,scale:renderScale,scene:{black:scenes[0],white:scenes[1],placements},input:document.createElement('canvas')};regionSpatial.current=resident;
+        }
+        if(resident.scene.placements.length>0&&resident.scene.placements.length<=8){
+          const w=original.naturalWidth||original.width,h=original.naturalHeight||original.height;
+          const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*renderScale)),k=Math.min(1,cap/Math.max(w,h));
+          const shown=applyPhotoFx(original,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),photo!.fx||{},{cacheSource:true,gpuSurface:true,out:resident.input,scene:resident.scene});
+          if(shown!==resident.input&&shown.width===targetCanvas.width&&shown.height===targetCanvas.height){
+            if(resident.shown&&resident.shown!==shown)resident.shown.remove();
+            shown.style.cssText='position:absolute;inset:0;width:100%;height:100%;z-index:2;pointer-events:none';
+            shown.dataset.baseSpatialPresentation='1';targetCanvas.parentElement?.append(shown);resident.shown=shown;
+            regionColour.current?.hide();
+            if(import.meta.env.DEV){targetCanvas.dataset.regionFxBackend='resident-spatial-scene-gpu';targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);}
+            return;
+          }
+        }
+      }
+      if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
       if(regionColourActive.current&&original&&supportsSceneColour(photo?.fx)&&!animRef.current&&!viewPinchRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
         regionColour.current??=new PhotoSceneColour();const colour=regionColour.current;
         const signature=regionGpuSceneKey.current;
@@ -4927,7 +4968,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       return {...p,src,width:(processed as any).naturalWidth || (processed as any).width,
         height:(processed as any).naturalHeight || (processed as any).height};
     })} : null;
-    const drawBase = (g: CanvasRenderingContext2D, img: any, x: number, y: number, w: number, h: number, allowDim = false) => {
+    const drawBase = (g: CanvasRenderingContext2D, img: any, x: number, y: number, w: number, h: number, allowDim = false, clip?:number[]) => {
+      if(regionPlacements.current&&img===baseImg){
+        const m=g.getTransform(),transform=(r:number[])=>[m.a*r[0]+m.e,m.d*r[1]+m.f,m.a*r[2],m.d*r[3]];
+        const cell=photoRegion&&(photoRegion.multi||photoRegion.photos.length>1)?regionRects(regionForPaint!,w,h)[index]:{x:0,y:0,w:1,h:1};
+        if(cell){const r=[x+cell.x*w,y+cell.y*h,cell.w*w,cell.h*h],p=regionForPaint?.photos[index];
+          const crop=p&&photoRegion&&(photoRegion.multi||photoRegion.photos.length>1)?photoCrop(p,r[2],r[3]):null;
+          const bounds=clip||[0,0,g.canvas.width,g.canvas.height],left=Math.max(r[0],bounds[0]),top=Math.max(r[1],bounds[1]);
+          regionPlacements.current.push({rect:transform(r),uv:crop&&p?[crop.sx/p.width,crop.sy/p.height,crop.sw/p.width,crop.sh/p.height]:[0,0,1,1],clip:transform([left,top,Math.max(0,Math.min(r[0]+r[2],bounds[0]+bounds[2])-left),Math.max(0,Math.min(r[1]+r[3],bounds[1]+bounds[3])-top)])});
+        }
+      }
       if (img === baseImg && photoRegion && (photoRegion.multi || photoRegion.photos.length>1)) {
         const dim=isMain && allowDim && swapSource?.kind==='region' ? swapSource.index : -1;
         creativeSeam.current ||= new CreativeSeamless();
@@ -4946,7 +4996,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.rect(ox, oy, w, h);
       ctx.clip();
       // kk：整個構圖等比例縮放（四周包圍縮中間那張照片時用）
-      drawBase(ctx, img, ox + t.x * s * kk, oy + t.y * s * kk, t.w * s * kk, t.h * s * kk, allowDim);
+      drawBase(ctx, img, ox + t.x * s * kk, oy + t.y * s * kk, t.w * s * kk, t.h * s * kk, allowDim, [ox,oy,w,h]);
       ctx.restore();
     };
 
@@ -7705,6 +7755,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(import.meta.env.DEV&&stageRef.current)stageRef.current.dataset.photoTransforms=JSON.stringify(photoRegionRef.current?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0})));
   };
   renderToCanvasRef.current = renderToCanvas;
+  useEffect(()=>{
+    if(!import.meta.env.DEV)return;
+    const reference=(event:Event)=>{const detail=(event as CustomEvent).detail;if(detail?.canvas instanceof HTMLCanvasElement)renderToCanvasRef.current(detail.canvas,previewScaleRef.current,true);};
+    document.addEventListener('abai:qa-preview-reference',reference);
+    return()=>document.removeEventListener('abai:qa-preview-reference',reference);
+  },[]);
   // Pinch frames update only scene geometry and the full-density canvas.
   // Commit the final view to React on release; the tool panels do not need to
   // rebuild their entire tree sixty times per second during a canvas gesture.

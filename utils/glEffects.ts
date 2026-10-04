@@ -32,6 +32,7 @@ const REF = FX_REF;
 import {highlightHistogram,selectHighlights} from './highlightSelection';
 import {LOWFI_LUT_GLSL,bindLowfiLut,warmLowfiLut} from './lowfiLut';
 import {LowfiHaloMask} from './lowfiHalo';
+import {uniformLocation} from './uniformLocation';
 
 /* ---------- 共用工具（著色器端） ---------- */
 export const FX_GLSL_HEADER = `precision highp float;
@@ -676,11 +677,60 @@ interface Ctx {
   highlightBins?: Float64Array;
   lowfiHalo?:LowfiHaloMask;
   plainTex?:WebGLTexture;
+  scene?: { value: FxScene; black: WebGLTexture; white: WebGLTexture; wide: boolean };
 }
+
+export type FxPlacement = { rect: number[]; uv: number[]; clip: number[] };
+export type FxScene = { black: HTMLCanvasElement; white: HTMLCanvasElement; placements: FxPlacement[] };
+const sceneContexts=new WeakMap<WebGLRenderingContext,Ctx>();
+/** A shared final compositor for modern effects and the editor's legacy optics.
+ * Effect kernels stay in photo coordinates; only this final pass enters scene
+ * coordinates. No intermediate photo is read back or resampled on the CPU. */
+export function composeFxScene(gl:WebGLRenderingContext,photo:WebGLTexture,scene:FxScene):boolean{
+ let c=sceneContexts.get(gl);
+ if(!c){c={gl,canvas:gl.canvas as HTMLCanvasElement,quad:null!,progs:new Map(),pool:null,maxTex:gl.getParameter(gl.MAX_TEXTURE_SIZE)};sceneContexts.set(gl,c);}
+ const program=compile(c,'__scene',SCENE_FS);if(!program)return false;
+ const changed=c.scene?.value!==scene;
+ if(changed){
+  if(c.scene){gl.deleteTexture(c.scene.black);gl.deleteTexture(c.scene.white);}
+  const wideGl=gl as any;let wide=false;
+  try{wideGl.drawingBufferColorSpace='display-p3';wide=wideGl.drawingBufferColorSpace==='display-p3';}catch{}
+  const upload=(canvas:HTMLCanvasElement)=>{
+   const tex=makeTex(gl,canvas.width,canvas.height);gl.bindTexture(gl.TEXTURE_2D,tex);
+   const pixels=canvas.getContext('2d')!.getImageData(0,0,canvas.width,canvas.height,{colorSpace:wide?'display-p3':'srgb'} as any);
+   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);const flipped=new Uint8ClampedArray(pixels.data.length);
+   for(let y=0;y<canvas.height;y++)flipped.set(pixels.data.subarray(y*canvas.width*4,(y+1)*canvas.width*4),(canvas.height-1-y)*canvas.width*4);
+   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,canvas.width,canvas.height,0,gl.RGBA,gl.UNSIGNED_BYTE,flipped);return tex;
+  };
+  c.scene={value:scene,black:upload(scene.black),white:upload(scene.white),wide};
+ }
+ gl.useProgram(program);
+ for(const [unit,name,tex] of [[0,'uPhoto',photo],[1,'uBlack',c.scene!.black],[2,'uWhite',c.scene!.white]] as const){gl.activeTexture(gl.TEXTURE0+unit);gl.bindTexture(gl.TEXTURE_2D,tex);gl.uniform1i(uniformLocation(gl,program,name),unit);}
+ gl.uniform2f(uniformLocation(gl,program,'uScene'),scene.black.width,scene.black.height);gl.uniform1f(uniformLocation(gl,program,'uWide'),c.scene!.wide?1:0);
+ gl.uniform1i(uniformLocation(gl,program,'uCount'),Math.min(8,scene.placements.length));
+ for(let i=0;i<Math.min(8,scene.placements.length);i++){const p=scene.placements[i];for(const [name,values] of [['uRect',p.rect],['uCrop',p.uv],['uClip',p.clip]] as const)gl.uniform4fv(uniformLocation(gl,program,`${name}[${i}]`),values);}
+ gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,scene.black.width,scene.black.height);gl.drawArrays(gl.TRIANGLES,0,3);gl.flush();
+ if(changed)gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(4));
+ return true;
+}
+export function disposeFxScene(gl:WebGLRenderingContext){const c=sceneContexts.get(gl);if(!c)return;if(c.scene){gl.deleteTexture(c.scene.black);gl.deleteTexture(c.scene.white);}c.progs.forEach(p=>gl.deleteProgram(p));sceneContexts.delete(gl);}
+const SCENE_FS = `precision highp float;
+varying vec2 vUv;uniform sampler2D uPhoto;uniform sampler2D uBlack;uniform sampler2D uWhite;
+uniform vec2 uScene;uniform vec4 uRect[8];uniform vec4 uCrop[8];uniform vec4 uClip[8];uniform int uCount;uniform float uWide;
+vec3 linearize(vec3 c){return mix(c/12.92,pow((c+.055)/1.055,vec3(2.4)),step(vec3(.04045),c));}
+vec3 encode(vec3 c){return mix(c*12.92,1.055*pow(max(c,vec3(0.)),vec3(1./2.4))-.055,step(vec3(.0031308),c));}
+void main(){vec2 point=vec2(vUv.x,1.-vUv.y)*uScene;vec2 sampleUv=vec2(0.);bool found=false;
+for(int i=0;i<8;i++){if(i>=uCount)break;vec4 r=uRect[i];vec4 clip=uClip[i];
+if(point.x>=clip.x&&point.y>=clip.y&&point.x<=clip.x+clip.z&&point.y<=clip.y+clip.w){sampleUv=uCrop[i].xy+(point-r.xy)/r.zw*uCrop[i].zw;found=true;}}
+vec4 black=texture2D(uBlack,vUv);vec3 coverage=max(vec3(0.),texture2D(uWhite,vUv).rgb-black.rgb);
+vec3 photo=texture2D(uPhoto,vec2(sampleUv.x,1.-sampleUv.y)).rgb;
+if(uWide>.5)photo=encode(mat3(.82259287,.03319951,.01708535,.17753395,.96678350,.07239572,0.,0.,.91030148)*linearize(photo));
+gl_FragColor=vec4(clamp(black.rgb+(found?coverage*photo:vec3(0.)),0.,1.),black.a);}`;
 
 let ctxCache: Ctx | null = null;
 let ctxFailed = false;
 const surfaces=new WeakMap<HTMLCanvasElement,Ctx>();
+const watchedSurfaces=new WeakSet<HTMLCanvasElement>();
 
 function getCtx(surface?:HTMLCanvasElement): Ctx | null {
   if(surface && surfaces.has(surface))return surfaces.get(surface)!;
@@ -688,6 +738,11 @@ function getCtx(surface?:HTMLCanvasElement): Ctx | null {
   if (!surface && ctxCache) return ctxCache;
   try {
     const canvas = surface || document.createElement('canvas');
+    if(!watchedSurfaces.has(canvas)){
+      watchedSurfaces.add(canvas);
+      canvas.addEventListener('webglcontextlost',e=>e.preventDefault());
+      canvas.addEventListener('webglcontextrestored',()=>{const old=surface?surfaces.get(canvas):ctxCache;if(old)disposeFxScene(old.gl);if(surface)surfaces.delete(canvas);else{ctxCache=null;ctxFailed=false;}});
+    }
     const gl = (canvas.getContext('webgl', { premultipliedAlpha: false, preserveDrawingBuffer: true })
       || canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
     if (!gl) { if(!surface)ctxFailed = true; return null; }
@@ -707,6 +762,8 @@ function getCtx(surface?:HTMLCanvasElement): Ctx | null {
 export function disposeFxSurface(canvas:HTMLCanvasElement){
  const c=surfaces.get(canvas);if(!c)return;const {gl,pool}=c;
  c.lowfiHalo?.dispose(gl);
+ disposeFxScene(gl);
+ if(c.scene){gl.deleteTexture(c.scene.black);gl.deleteTexture(c.scene.white);}
  if(c.plainTex)gl.deleteTexture(c.plainTex);
  if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);if(pool.spillSeed)gl.deleteTexture(pool.spillSeed);gl.deleteFramebuffer(pool.fb);}
  c.progs.forEach(p=>gl.deleteProgram(p));gl.deleteBuffer(c.quad);surfaces.delete(canvas);canvas.width=canvas.height=1;
@@ -799,7 +856,7 @@ export function presentFxSource(ctx:CanvasRenderingContext2D,w:number,h:number,s
   c.uploadKey=undefined; // A later effect must not reuse a source-key from an earlier render.
   gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.disable(gl.BLEND);gl.disable(gl.DEPTH_TEST);gl.disable(gl.DITHER);
   gl.bindBuffer(gl.ARRAY_BUFFER,c.quad);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
-  gl.useProgram(program);gl.uniform1i(gl.getUniformLocation(program,'uTex'),0);gl.drawArrays(gl.TRIANGLES,0,3);gl.flush();return true;
+  gl.useProgram(program);gl.uniform1i(uniformLocation(gl,program,'uTex'),0);gl.drawArrays(gl.TRIANGLES,0,3);gl.flush();return true;
  }catch{return false;}
 }
 
@@ -833,18 +890,20 @@ export function applyGlEffects(
   surface?: HTMLCanvasElement,
   /** Pixel-regression audit only: retain the original render graph. */
   auditReference = false,
+  scene?: FxScene,
 ): HTMLCanvasElement | undefined {
   const active = FX_DEFS.filter(d => fxActive(params, d));
   if (!active.length || w < 2 || h < 2) return;
 
   const c = getCtx(surface);
-  if (!c) return;
+  if (!c || c.gl.isContextLost()) return;
   const { gl } = c;
   // 超過這台裝置的貼圖上限就放棄（導出超大圖時可能發生），不要畫出壞掉的結果
   if (w > c.maxTex || h > c.maxTex) return;
 
-  if(c.canvas.width!==w)c.canvas.width = w;
-  if(c.canvas.height!==h)c.canvas.height = h;
+  const outputW=scene?.black.width||w,outputH=scene?.black.height||h;
+  if(c.canvas.width!==outputW)c.canvas.width = outputW;
+  if(c.canvas.height!==outputH)c.canvas.height = outputH;
   gl.viewport(0, 0, w, h);
 
   // 貼圖與 framebuffer 都是重複使用的，尺寸沒變就不重配
@@ -891,15 +950,15 @@ export function applyGlEffects(
   const bind = (prog: WebGLProgram, texMain: WebGLTexture, texSrc: WebGLTexture) => {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, texMain);
-    gl.uniform1i(gl.getUniformLocation(prog, 'uTex'), 0);
+    gl.uniform1i(uniformLocation(gl,prog, 'uTex'), 0);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, texSrc);
-    gl.uniform1i(gl.getUniformLocation(prog, 'uSrc'), 1);
-    gl.uniform2f(gl.getUniformLocation(prog, 'uRes'), w, h);
+    gl.uniform1i(uniformLocation(gl,prog, 'uSrc'), 1);
+    gl.uniform2f(uniformLocation(gl,prog, 'uRes'), w, h);
     // 基準像素：橫向 1/REF，縱向換算成同樣的實際距離
-    gl.uniform2f(gl.getUniformLocation(prog, 'uTexel'), 1 / REF, (w / h) / REF);
-    gl.uniform2f(gl.getUniformLocation(prog, 'uRefRes'), REF, REF * h / w);
-    gl.uniform1f(gl.getUniformLocation(prog, 'uTime'), 0);
+    gl.uniform2f(uniformLocation(gl,prog, 'uTexel'), 1 / REF, (w / h) / REF);
+    gl.uniform2f(uniformLocation(gl,prog, 'uRefRes'), REF, REF * h / w);
+    gl.uniform1f(uniformLocation(gl,prog, 'uTime'), 0);
   };
 
   try {
@@ -932,20 +991,20 @@ export function applyGlEffects(
         gl.useProgram(prog);
         bind(prog, spillKey && pool.spillKey===spillKey && pool.narrow && i===d.passes.length-1
           ? pool.narrow : pass.fromSource ? texs[layerIn] : fromTexture||texs[from], texs[layerIn]);
-        gl.uniform1f(gl.getUniformLocation(prog,'uEffectAmount'),Math.max(0,Math.min(1,(params[d.id]||0)/100)));
-        gl.uniform1f(gl.getUniformLocation(prog,'uHighlightReady'),spillSelection?1:0);
-        if(spillSelection){gl.uniform1f(gl.getUniformLocation(prog,'uHighlightCut'),spillSelection.cutoff);gl.uniform1f(gl.getUniformLocation(prog,'uHighlightTie'),spillSelection.tie);}
-        if(pool.aux){gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,pool.aux);gl.uniform1i(gl.getUniformLocation(prog,'uAux'),2);}
+        gl.uniform1f(uniformLocation(gl,prog,'uEffectAmount'),Math.max(0,Math.min(1,(params[d.id]||0)/100)));
+        gl.uniform1f(uniformLocation(gl,prog,'uHighlightReady'),spillSelection?1:0);
+        if(spillSelection){gl.uniform1f(uniformLocation(gl,prog,'uHighlightCut'),spillSelection.cutoff);gl.uniform1f(uniformLocation(gl,prog,'uHighlightTie'),spillSelection.tie);}
+        if(pool.aux){gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,pool.aux);gl.uniform1i(uniformLocation(gl,prog,'uAux'),2);}
         if(d.id==='fxLowfi'){
           bindLowfiLut(gl,prog);
           c.lowfiHalo ||= new LowfiHaloMask();
           c.lowfiHalo.bind(gl,prog,ctx2d.canvas,w,h,uploadKey);
         }
-        gl.uniform2f(gl.getUniformLocation(prog, 'uDir'), pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
+        gl.uniform2f(uniformLocation(gl,prog, 'uDir'), pass.dir ? pass.dir[0] : 1, pass.dir ? pass.dir[1] : 0);
         for (const p of d.params) {
           const raw = params[p.id];
           const v = (typeof raw === 'number' ? raw : p.def) * (p.scale ?? 1);
-          gl.uniform1f(gl.getUniformLocation(prog, p.id), v);
+          gl.uniform1f(uniformLocation(gl,prog, p.id), v);
         }
         let target=texs[to];
         if(!auditReference&&d.id==='fxExposureSpill'&&i===0){pool.spillSeed ||= makeTex(gl,w,h);target=pool.spillSeed;}
@@ -977,16 +1036,15 @@ export function applyGlEffects(
       while (to === from || to === layerIn) to++;
       gl.useProgram(blend);
       bind(blend, texs[from], texs[layerIn]);
-      gl.uniform1f(gl.getUniformLocation(blend, 'uAmount'), d.handlesAmount ? 1 : Math.max(0, Math.min(1, (params[d.id] || 0) / 100)));
+      gl.uniform1f(uniformLocation(gl,blend, 'uAmount'), d.handlesAmount ? 1 : Math.max(0, Math.min(1, (params[d.id] || 0) / 100)));
       drawTo(texs[to]);
       cur = to;
     }
 
     // 畫到預設 framebuffer，再貼回 2D 畫布
-    gl.useProgram(copy);
-    bind(copy, texs[cur], texs[cur]);
-    drawTo(null);
-    gl.flush();
+    if(scene){
+      if(!composeFxScene(gl,texs[cur],scene))return;
+    }else{gl.useProgram(copy);bind(copy, texs[cur], texs[cur]);drawTo(null);gl.flush();}
 
     if(!surface){
       ctx2d.save();ctx2d.globalCompositeOperation = 'copy';ctx2d.globalAlpha = 1;

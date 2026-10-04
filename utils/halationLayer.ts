@@ -1,5 +1,7 @@
 import {blurAlpha} from './alphaBoxBlur.js';
 import {highlightHistogram,selectHighlights} from './highlightSelection';
+import {composeFxScene,disposeFxScene,type FxScene} from './glEffects';
+import {uniformLocation} from './uniformLocation';
 
 /** Persistent halation layer: identical 800px highlight kernel at rest and
  * during input. Radius changes only blur one byte/channel; hue and feather
@@ -33,6 +35,14 @@ export class HalationLayer {
   private softBlur?: WebGLProgram;
   private softTextures: WebGLTexture[]=[];
   private leak?:WebGLProgram;
+  private simple?:WebGLProgram;
+  private noiseTex?:WebGLTexture;
+  private mixLayer=false;
+  private scene?:FxScene;
+  private sceneResult?:WebGLTexture;
+  private sceneResultSize='';
+  setScene(scene?:FxScene){this.scene=scene;}
+  get lost(){return !!this.gl&&(this.gl.isContextLost()||!!this.program&&!this.gl.isProgram(this.program));}
   constructor(private presentation?:HTMLCanvasElement){this.canvas=presentation||document.createElement('canvas');}
 
   private init() {
@@ -66,7 +76,7 @@ export class HalationLayer {
       gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);return t;};
     this.sourceTex=texture();this.maskTex=texture();
-    for(const n of ['source','mask','color','amount','falloff','soft','premultiply'])this.uniforms[n]=gl.getUniformLocation(p,n);
+    for(const n of ['source','mask','color','amount','falloff','soft','premultiply'])this.uniforms[n]=uniformLocation(gl,p,n);
     const makeProgram=(body:string)=>{
       const v=shader(gl.VERTEX_SHADER,'attribute vec2 p; varying vec2 uv; void main(){uv=p*.5+.5;gl_Position=vec4(p,0.,1.);}');
       const f=shader(gl.FRAGMENT_SHADER,body);if(!v||!f)return null;
@@ -82,18 +92,25 @@ export class HalationLayer {
     this.leak=makeProgram(`precision highp float;varying vec2 uv;uniform sampler2D base;uniform vec2 size;uniform vec2 direction;uniform vec3 color;uniform float amount;
       void main(){vec3 b=texture2D(base,uv).rgb;vec2 pixel=(vec2(uv.x,1.-uv.y)-.5)*size;float a=clamp(dot(pixel,direction)/(max(size.x,size.y)*1.5),0.,1.)*amount;gl_FragColor=vec4(b+(1.-b)*color*a,1.);}`)||undefined;
     if(this.presentation){
-      const f=shader(gl.FRAGMENT_SHADER,'precision highp float; varying vec2 uv; uniform sampler2D base; uniform sampler2D layer; uniform float strength; void main(){vec3 b=texture2D(base,uv).rgb;vec3 l=texture2D(layer,uv).rgb*strength;gl_FragColor=vec4(b+(1.-b)*l,1.);}');
+      const f=shader(gl.FRAGMENT_SHADER,'precision highp float; varying vec2 uv; uniform sampler2D base; uniform sampler2D layer; uniform float strength; uniform float mixLayer; void main(){vec3 b=texture2D(base,uv).rgb;vec3 l=texture2D(layer,uv).rgb;gl_FragColor=vec4(mixLayer>.5?mix(b,l,strength):b+(1.-b)*l*strength,1.);}');
       const v=shader(gl.VERTEX_SHADER,'attribute vec2 p; varying vec2 uv; void main(){uv=p*.5+.5;gl_Position=vec4(p,0.,1.);}');
       if(!f||!v)return false;const c=gl.createProgram()!;gl.attachShader(c,v);gl.attachShader(c,f);gl.bindAttribLocation(c,0,'p');gl.linkProgram(c);gl.deleteShader(v);gl.deleteShader(f);
       if(!gl.getProgramParameter(c,gl.LINK_STATUS))return false;this.composite=c;this.baseTex=texture();this.layerTex=texture();
     }
+    this.simple=makeProgram(`precision highp float;varying vec2 uv;uniform sampler2D base;uniform sampler2D noise;uniform vec2 size;uniform float vignette;uniform float grain;
+      void main(){vec3 b=texture2D(base,uv).rgb;vec2 pixel=vec2(uv.x,1.-uv.y)*size;
+      vec3 n=texture2D(noise,fract(pixel/(max(size.x,size.y)/1080.*512.))).rgb;
+      vec3 overlay=mix(2.*b*n,1.-2.*(1.-b)*(1.-n),step(vec3(.5),b));b=mix(b,overlay,grain*.63);
+      float radial=clamp((length(pixel-size*.5)-size.x/3.)/(max(size.x,size.y)-size.x/3.),0.,1.);
+      b*=1.-radial*min(1.,vignette*.8);gl_FragColor=vec4(b,1.);}`)||undefined;
     return true;
   }
 
   private begin(ctx:CanvasRenderingContext2D,w:number,h:number,mw:number,mh:number,key:string){
     const gl=this.gl!;gl.disable(gl.BLEND);gl.disable(gl.DEPTH_TEST);gl.disable(gl.DITHER);
     if(this.presentation){
-      if(this.canvas.width!==w)this.canvas.width=w;if(this.canvas.height!==h)this.canvas.height=h;
+      const ow=this.scene?.black.width||w,oh=this.scene?.black.height||h;
+      if(this.canvas.width!==ow)this.canvas.width=ow;if(this.canvas.height!==oh)this.canvas.height=oh;
       if(this.presentKey!==key){
         gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.baseTex!);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);
         gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,ctx.canvas);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
@@ -104,17 +121,30 @@ export class HalationLayer {
       gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer!);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.layerTex!,0);
     }else gl.bindFramebuffer(gl.FRAMEBUFFER,null);
   }
+  private resultTarget(w:number,h:number){
+    const gl=this.gl!;
+    if(!this.scene){gl.bindFramebuffer(gl.FRAMEBUFFER,null);return;}
+    this.sceneResult ||=gl.createTexture()!;
+    gl.activeTexture(gl.TEXTURE4);gl.bindTexture(gl.TEXTURE_2D,this.sceneResult);
+    if(this.sceneResultSize!==`${w}x${h}`){gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);this.sceneResultSize=`${w}x${h}`;
+      gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);}
+    gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer!);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,this.sceneResult,0);
+  }
   private finish(w:number,h:number,strength=1){
     const gl=this.gl!;
     if(this.presentation){
       gl.useProgram(this.composite!);gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.baseTex!);gl.activeTexture(gl.TEXTURE3);gl.bindTexture(gl.TEXTURE_2D,this.layerTex!);
-      gl.uniform1i(gl.getUniformLocation(this.composite!,'base'),2);gl.uniform1i(gl.getUniformLocation(this.composite!,'layer'),3);
-      gl.uniform1f(gl.getUniformLocation(this.composite!,'strength'),strength>1?1:strength);gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);gl.drawArrays(gl.TRIANGLES,0,3);
+      gl.uniform1i(uniformLocation(gl,this.composite!,'base'),2);gl.uniform1i(uniformLocation(gl,this.composite!,'layer'),3);
+      gl.uniform1f(uniformLocation(gl,this.composite!,'strength'),strength>1?1:strength);
+      gl.uniform1f(uniformLocation(gl,this.composite!,'mixLayer'),this.mixLayer?1:0);
+      this.resultTarget(w,h);gl.viewport(0,0,w,h);gl.drawArrays(gl.TRIANGLES,0,3);
+      if(this.scene)composeFxScene(gl,this.sceneResult!,this.scene);
     }
     return this.canvas;
   }
 
   render(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:any,color:number[]):HTMLCanvasElement|null {
+    this.mixLayer=false;
     if(!this.init())return null;
     const gl=this.gl!,mw=Math.max(1,Math.floor(w*Math.min(1,800/Math.max(w,h)))),mh=Math.max(1,Math.floor(h*Math.min(1,800/Math.max(w,h))));
     if(this.presentation&&(w>this.maxTextureSize||h>this.maxTextureSize))return null;
@@ -150,6 +180,7 @@ export class HalationLayer {
   }
 
   renderSoft(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:any,color:number[]):HTMLCanvasElement|null {
+    this.mixLayer=false;
     if(!this.init())return null;
     const gl=this.gl!,ratio=Math.min(1,800/Math.max(w,h)),mw=Math.max(1,Math.floor(w*ratio)),mh=Math.max(1,Math.floor(h*ratio)),count=mw*mh;
     if(this.presentation&&(w>this.maxTextureSize||h>this.maxTextureSize))return null;
@@ -168,18 +199,18 @@ export class HalationLayer {
     gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.viewport(0,0,mw,mh);
     if(changedRadius||this.softRange!==p.softThreshold){
       const draw=(program:WebGLProgram,input:WebGLTexture,target:WebGLTexture)=>{
-        gl.useProgram(program);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,input);gl.uniform1i(gl.getUniformLocation(program,'source'),0);
+        gl.useProgram(program);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,input);gl.uniform1i(uniformLocation(gl,program,'source'),0);
         gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer!);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,target,0);gl.drawArrays(gl.TRIANGLES,0,3);
       };
       if(this.softRange!==p.softThreshold){
         const selected=selectHighlights(this.softBins!,100-p.softThreshold);gl.useProgram(this.softSeed!);
-        gl.uniform1f(gl.getUniformLocation(this.softSeed!,'cutoff'),selected.cutoff);gl.uniform1f(gl.getUniformLocation(this.softSeed!,'tie'),selected.tie);
+        gl.uniform1f(uniformLocation(gl,this.softSeed!,'cutoff'),selected.cutoff);gl.uniform1f(uniformLocation(gl,this.softSeed!,'tie'),selected.tie);
         draw(this.softSeed!,this.sourceTex!,this.softTextures[0]);
       }
       if(radius>=1){
         for(let i=0;i<4;i++){
-          gl.useProgram(this.softBlur!);gl.uniform1f(gl.getUniformLocation(this.softBlur!,'radius'),radius);
-          gl.uniform2f(gl.getUniformLocation(this.softBlur!,'step'),i%2?0:1/mw,i%2?1/mh:0);
+          gl.useProgram(this.softBlur!);gl.uniform1f(uniformLocation(gl,this.softBlur!,'radius'),radius);
+          gl.uniform2f(uniformLocation(gl,this.softBlur!,'step'),i%2?0:1/mw,i%2?1/mh:0);
           draw(this.softBlur!,i===0?this.softTextures[0]:this.softTextures[i%2?1:2],this.softTextures[i%2?2:1]);
         }
       }
@@ -196,14 +227,41 @@ export class HalationLayer {
 
   renderLeak(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:any,color:number[]):HTMLCanvasElement|null {
     if(!this.presentation||!this.init()||!this.leak||w>this.maxTextureSize||h>this.maxTextureSize)return null;
-    const gl=this.gl!;this.begin(ctx,w,h,1,1,key);gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,w,h);
+    const gl=this.gl!;this.begin(ctx,w,h,1,1,key);this.resultTarget(w,h);gl.viewport(0,0,w,h);
     gl.useProgram(this.leak);gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
-    gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.baseTex!);gl.uniform1i(gl.getUniformLocation(this.leak,'base'),2);
-    const angle=(p.leakAngle-180)*Math.PI/180;gl.uniform2f(gl.getUniformLocation(this.leak,'size'),w,h);gl.uniform2f(gl.getUniformLocation(this.leak,'direction'),Math.cos(angle),Math.sin(angle));
-    gl.uniform3f(gl.getUniformLocation(this.leak,'color'),color[0]/255,color[1]/255,color[2]/255);gl.uniform1f(gl.getUniformLocation(this.leak,'amount'),p.leakOpacity/100);
-    gl.drawArrays(gl.TRIANGLES,0,3);return this.canvas;
+    gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.baseTex!);gl.uniform1i(uniformLocation(gl,this.leak,'base'),2);
+    const angle=(p.leakAngle-180)*Math.PI/180;gl.uniform2f(uniformLocation(gl,this.leak,'size'),w,h);gl.uniform2f(uniformLocation(gl,this.leak,'direction'),Math.cos(angle),Math.sin(angle));
+    gl.uniform3f(uniformLocation(gl,this.leak,'color'),color[0]/255,color[1]/255,color[2]/255);gl.uniform1f(uniformLocation(gl,this.leak,'amount'),p.leakOpacity/100);
+    gl.drawArrays(gl.TRIANGLES,0,3);if(this.scene)composeFxScene(gl,this.sceneResult!,this.scene);return this.canvas;
+  }
+
+  renderBlur(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,amount:number):HTMLCanvasElement|null{
+    if(!this.init()||!this.presentation)return null;
+    const gl=this.gl!,ratio=Math.min(1,800/Math.max(w,h)),mw=Math.max(1,Math.floor(w*ratio)),mh=Math.max(1,Math.floor(h*ratio));
+    if(this.key!==key){
+      this.sample.width=mw;this.sample.height=mh;this.sample.getContext('2d')!.drawImage(ctx.canvas,0,0,mw,mh);
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,this.sourceTex!);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,1);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,this.sample);gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,0);
+      for(const tex of this.softTextures){gl.bindTexture(gl.TEXTURE_2D,tex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,mw,mh,0,gl.RGBA,gl.UNSIGNED_BYTE,null);}this.key=key;
+    }
+    this.begin(ctx,w,h,mw,mh,key);const radius=Math.floor(amount/6*(Math.max(w,h)/1080)*ratio*1.5);
+    gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);gl.viewport(0,0,mw,mh);
+    let source=this.sourceTex!;
+    for(let i=0;i<4;i++){const target=i===3?this.layerTex!:this.softTextures[i%2];gl.useProgram(this.softBlur!);
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,source);gl.uniform1i(uniformLocation(gl,this.softBlur!,'source'),0);gl.uniform1f(uniformLocation(gl,this.softBlur!,'radius'),radius);gl.uniform2f(uniformLocation(gl,this.softBlur!,'step'),i%2?0:1/mw,i%2?1/mh:0);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,this.framebuffer!);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,target,0);gl.drawArrays(gl.TRIANGLES,0,3);source=target;
+    }
+    this.mixLayer=true;return this.finish(w,h,amount/240*1.5);
+  }
+  renderSimple(ctx:CanvasRenderingContext2D,w:number,h:number,key:string,p:any,noise:HTMLCanvasElement):HTMLCanvasElement|null{
+    if(!this.init()||!this.presentation||!this.simple)return null;const gl=this.gl!;
+    this.begin(ctx,w,h,1,1,key);this.resultTarget(w,h);
+    if(!this.noiseTex){this.noiseTex=gl.createTexture()!;gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,this.noiseTex);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,noise);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);}
+    gl.useProgram(this.simple);gl.bindBuffer(gl.ARRAY_BUFFER,this.quad!);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+    gl.activeTexture(gl.TEXTURE2);gl.bindTexture(gl.TEXTURE_2D,this.baseTex!);gl.uniform1i(uniformLocation(gl,this.simple,'base'),2);gl.activeTexture(gl.TEXTURE5);gl.bindTexture(gl.TEXTURE_2D,this.noiseTex);gl.uniform1i(uniformLocation(gl,this.simple,'noise'),5);
+    gl.uniform2f(uniformLocation(gl,this.simple,'size'),w,h);gl.uniform1f(uniformLocation(gl,this.simple,'vignette'),(p.vignette||0)/100);gl.uniform1f(uniformLocation(gl,this.simple,'grain'),(p.colorNoise||0)/100);
+    gl.viewport(0,0,w,h);gl.drawArrays(gl.TRIANGLES,0,3);if(this.scene)composeFxScene(gl,this.sceneResult!,this.scene);return this.canvas;
   }
 
   dispose(){const gl=this.gl;if(gl){if(this.sourceTex)gl.deleteTexture(this.sourceTex);if(this.maskTex)gl.deleteTexture(this.maskTex);if(this.baseTex)gl.deleteTexture(this.baseTex);if(this.layerTex)gl.deleteTexture(this.layerTex);this.softTextures.forEach(t=>gl.deleteTexture(t));if(this.softSeed)gl.deleteProgram(this.softSeed);if(this.softBlur)gl.deleteProgram(this.softBlur);if(this.framebuffer)gl.deleteFramebuffer(this.framebuffer);if(this.composite)gl.deleteProgram(this.composite);if(this.quad)gl.deleteBuffer(this.quad);if(this.program)gl.deleteProgram(this.program);}
-    if(gl&&this.leak)gl.deleteProgram(this.leak);this.canvas.width=this.sample.width=1;this.alpha=this.blurred=this.scratch=new Uint8ClampedArray(0);this.softSource=undefined;this.key='';}
+    if(gl){disposeFxScene(gl);if(this.sceneResult)gl.deleteTexture(this.sceneResult);if(this.noiseTex)gl.deleteTexture(this.noiseTex);if(this.simple)gl.deleteProgram(this.simple);}if(gl&&this.leak)gl.deleteProgram(this.leak);this.canvas.width=this.sample.width=1;this.alpha=this.blurred=this.scratch=new Uint8ClampedArray(0);this.softSource=undefined;this.key='';}
 }

@@ -66,9 +66,13 @@ export class PhotoSceneColour {
   private latestFx:PhotoFx={};
   private lutCache=new Map<string,{tex:Uint8Array|Float32Array;film:unknown;master:boolean}>();
   private masterMode=false;
+  private workerStarted=0;
   private colourSpace:{colorSpace:'srgb'|'display-p3';directUpload:boolean}={colorSpace:'srgb',directUpload:false};
  signature='';width=0;height=0;scale=0;
  constructor(){
+  // Start decoding and compiling the worker when the scene is created, not on
+  // the first slider input. Warm-up stays off the UI thread and is interruptible.
+  if(typeof Worker!=='undefined'&&this.ensureWorker())this.worker!.postMessage({warm:photoFxParams({})});
   this.canvas.addEventListener('webglcontextlost',event=>{
    event.preventDefault();this.generation++;this.pending=null;this.requestedKey='';this.hide();
   });
@@ -113,7 +117,14 @@ export class PhotoSceneColour {
   this.signature=signature;this.width=main.width;this.height=main.height;this.scale=scale;this.key='';this.film=undefined;
   this.generation++;this.requestedKey='';this.pending=null;
   main.parentElement?.append(this.canvas);
-  this.draw({brightness:1},true);
+  // Preflight the actual float master texture and tetrahedral shader, rather
+  // than the old RGBA8 path (which left float allocation on the first drag).
+  const identity=new Float32Array(32*32*32*4);
+  for(let b=0;b<32;b++)for(let g=0;g<32;g++)for(let r=0;r<32;r++){const i=((b*32+g)*32+r)*4;identity.set([r/31,g/31,b/31,1],i);}
+  gl.useProgram(this.program!);this.installLut(identity,true);
+  gl.uniform1i(gl.getUniformLocation(this.program!,'identity'),0);
+  gl.uniform1i(gl.getUniformLocation(this.program!,'wide'),this.colourSpace.colorSpace==='display-p3'?1:0);
+  gl.viewport(0,0,this.width,this.height);gl.drawArrays(gl.TRIANGLES,0,3);
   gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(4));
   this.hide();return true;
  }
@@ -129,7 +140,7 @@ export class PhotoSceneColour {
    if(cached&&cached.film===film){
     this.generation++;this.pending=null;this.requestedKey='';
     gl.uniform1i(gl.getUniformLocation(p,'identity'),0);this.installLut(cached.tex,cached.master);
-    this.key=key;this.film=film;this.canvas.dataset.presentedColourKey=key;
+    this.key=key;this.film=film;
    }else if(!synchronous&&!this.workerFailed&&hasPhotoFx(fx)&&typeof Worker!=='undefined'){
     if(key!==this.requestedKey||film!==this.film){this.requestedKey=key;this.pending={fx:{...fx},key,film,generation:this.generation};this.runWorker();}
    }else{
@@ -138,17 +149,23 @@ export class PhotoSceneColour {
    if(lut)this.installLut(lut.tex,false);
    this.key=key;this.film=film;}
   }
-  gl.viewport(0,0,this.width,this.height);gl.drawArrays(gl.TRIANGLES,0,3);this.canvas.style.display='block';return true;
+  gl.viewport(0,0,this.width,this.height);gl.drawArrays(gl.TRIANGLES,0,3);this.recordFrame();this.canvas.style.display='block';return true;
+ }
+ private recordFrame(){
+  if(!import.meta.env.DEV||this.canvas.dataset.presentedColourKey===this.key)return;
+  this.canvas.dataset.presentedColourKey=this.key;
+  const times=JSON.parse(this.canvas.dataset.colourFrameTimes||'[]');times.push(performance.now());this.canvas.dataset.colourFrameTimes=JSON.stringify(times.slice(-100));
  }
  hide(){this.canvas.style.display='none';}
- private runWorker(){
-  if(this.workerBusy||!this.pending)return;
+ private ensureWorker(){
+  if(this.workerFailed)return false;
   if(!this.worker){
    try{
     this.worker=new Worker(new URL('./photoLut.worker.ts',import.meta.url),{type:'module'});
     this.workerFilm=undefined;
     this.worker.postMessage({dither:copyPixelDither()});
     this.worker.onmessage=e=>{
+     if(e.data.warmReady)return;
      this.workerBusy=false;
      if(e.data.error){this.failWorker();return;}
      if(!e.data.error&&e.data.generation===this.generation&&this.ready){
@@ -157,17 +174,23 @@ export class PhotoSceneColour {
       this.key=e.data.key;this.film=this.workerFilm;
       this.lutCache.set(this.key,{tex:e.data.tex,film:this.film,master:!!e.data.master});
       while(this.lutCache.size>8)this.lutCache.delete(this.lutCache.keys().next().value!);
-      gl.drawArrays(gl.TRIANGLES,0,3);this.canvas.dataset.presentedColourKey=this.key;
-      const times=JSON.parse(this.canvas.dataset.colourFrameTimes||'[]');times.push(performance.now());this.canvas.dataset.colourFrameTimes=JSON.stringify(times.slice(-100));
+      gl.drawArrays(gl.TRIANGLES,0,3);this.recordFrame();
+      if(import.meta.env.DEV){const jobs=JSON.parse(this.canvas.dataset.colourJobs||'[]');jobs.push({at:performance.now(),bake:e.data.bakeMs,total:performance.now()-this.workerStarted});this.canvas.dataset.colourJobs=JSON.stringify(jobs.slice(-100));}
      }
      this.runWorker();
     };
     this.worker.onerror=()=>this.failWorker();
-   }catch{this.workerFailed=true;this.draw(this.latestFx,true);return;}
+   }catch{this.workerFailed=true;return false;}
   }
+  return true;
+ }
+ private runWorker(){
+  if(this.workerBusy||!this.pending)return;
+  if(!this.ensureWorker()){this.draw(this.latestFx,true);return;}
   const job=this.pending;this.pending=null;this.workerBusy=true;
+  this.workerStarted=performance.now();
   const filmChanged=job.film!==this.workerFilm;this.workerFilm=job.film;
-  this.worker.postMessage({id:job.key,key:job.key,generation:job.generation,params:photoFxParams(job.fx),filmChanged,filmData:filmChanged?job.film:undefined});
+  this.worker!.postMessage({id:job.key,key:job.key,generation:job.generation,params:photoFxParams(job.fx),filmChanged,filmData:filmChanged?job.film:undefined});
  }
  private failWorker(){this.worker?.terminate();this.worker=null;this.workerBusy=false;this.workerFailed=true;this.pending=null;this.requestedKey='';if(this.canvas.style.display!=='none')this.draw(this.latestFx,true);}
  private installLut(tex:Uint8Array|Float32Array,master:boolean){

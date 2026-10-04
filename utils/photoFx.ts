@@ -15,11 +15,12 @@ import {
   DEFAULT_PARAMS,
   type EditorParams,
 } from '../components/ImageEditor';
-import { applyGlEffects, hasActiveFx } from './glEffects';
+import { applyGlEffects, hasActiveFx, FX_DEFS, disposeFxSurface, type FxScene } from './glEffects';
 import {highlightHistogram,selectHighlights,highlightWeight,luminanceBin} from './highlightSelection';
 import { bakeColorLut, bakedToTexture } from './lutBake';
 import { LutGpu } from './lutGpu';
 import { loadCachedLut, saveCachedLut } from './lutStore';
+import {HalationLayer} from './halationLayer';
 
 /* ── 拼圖的 GPU 顏色鏈 ────────────────────────────────────────────────
    上一版我寫壞過一次：每被呼叫一次就重新上傳整張圖、烤兩次 65³ 的表、
@@ -80,6 +81,22 @@ const putSrcPx = (k: string, v: SrcPx) => {
 let gpuC0: HTMLCanvasElement | null = null;
 let gpuC1: HTMLCanvasElement | null = null;
 const colorBakeCache = new Map<string, Uint8Array>();
+// A spatial-effect slider does not change its photograph's colour result.
+// Retain that exact full-resolution input, and keep the effect render target
+// separate: never read the previous effect result as the next frame's source.
+const effectInputs = new WeakMap<HTMLCanvasElement, { key: string; source: HTMLCanvasElement; surface: HTMLCanvasElement }>();
+const opticalInputs=new WeakMap<HTMLCanvasElement,{key:string;source:HTMLCanvasElement;layer:HalationLayer}>();
+// WebKit's noise-texture interpolation does not match its Canvas overlay.
+// Keep grain on the established renderer rather than changing its appearance.
+export const supportsResidentPhotoEffects=(fx:PhotoFx={})=>!fx.colorNoise&&(hasActiveFx(fx)||!!(fx.soft||fx.fringeIntensity||fx.leakOpacity||fx.blur||fx.vignette));
+export function releasePhotoFxSurface(input:HTMLCanvasElement){
+  const optical=opticalInputs.get(input);if(optical){optical.layer.dispose();optical.source.width=optical.source.height=1;opticalInputs.delete(input);}
+  const retained=effectInputs.get(input);if(!retained)return;
+  retained.surface.remove();disposeFxSurface(retained.surface);retained.source.width=retained.source.height=1;effectInputs.delete(input);
+}
+const spatialKeys = new Set(FX_DEFS.flatMap(d => [d.id, ...d.params.map(e => e.id)]));
+const effectInputKey = (source: CanvasImageSource, w: number, h: number, fx: PhotoFx) =>
+  `${srcToken(source)}|${w}x${h}|${JSON.stringify(Object.entries(fx).filter(([k]) => !spatialKeys.has(k)).sort(([a], [b]) => a.localeCompare(b)))}|${getLoadedLut(fx.lut) ? 'ready' : 'pending'}`;
 const reuse = (c: HTMLCanvasElement | null, w: number, h: number) => {
   const cv = c || document.createElement('canvas');
   if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
@@ -223,24 +240,8 @@ const lutPending = new Map<string, Promise<LutData | null>>();
      ① 使用者的手指沒有在畫面上（工具會呼叫 deferHeavyWork 把時間往後推）
      ② 瀏覽器這一格有空（requestIdleCallback）
    使用者真的點下某一顆濾鏡時走 eager，不等，維持原本的反應速度。 */
-let heavyBusyUntil = 0;
-/** 「現在正在跟畫面互動，重活先等一下」。拖曳時每一格呼叫一次就好，成本是一次賦值。 */
-export function deferHeavyWork(ms = 350): void {
-  const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + ms;
-  if (t > heavyBusyUntil) heavyBusyUntil = t;
-}
-
-const nap = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
-
-/** 等到「手指放開」而且「這一格有空」。最多等 waitMs，免得永遠等不到 */
-async function whenIdle(waitMs = 4000): Promise<void> {
-  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
-  const deadline = now() + waitMs;
-  while (now() < heavyBusyUntil && now() < deadline) await nap(80);
-  const ric = (globalThis as any).requestIdleCallback;
-  if (typeof ric !== 'function') { await nap(0); return; }
-  await new Promise<void>(res => ric(() => res(), { timeout: Math.max(0, deadline - now()) }));
-}
+export {deferHeavyWork} from './photoInteractionIdle';
+import {awaitPhotoIdle as whenIdle} from './photoInteractionIdle';
 
 export function getLoadedLut(id?: string): LutData | null {
   if (!id || id === 'none') return null;
@@ -409,7 +410,7 @@ export function applyPhotoFx(
    *       來源是影片的時候一秒要跑幾十次，每次開一張幾百萬像素的畫布，
    *       手機的畫布記憶體幾秒就會被系統收走（＝閃退回主畫面）。
    *       尺寸一樣就直接沿用，連 width 都不重設（重設等於重新配置一次）。 */
-  opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement; preferSeparableCpu?: boolean; gpuSurface?: boolean },
+  opts?: { cacheSource?: boolean; fast?: boolean; out?: HTMLCanvasElement; preferSeparableCpu?: boolean; gpuSurface?: boolean; scene?: FxScene },
 ): HTMLCanvasElement {
   const out = opts?.out || document.createElement('canvas');
   const oW = Math.max(1, Math.round(w)), oH = Math.max(1, Math.round(h));
@@ -417,6 +418,30 @@ export function applyPhotoFx(
      那正是「來源是影片」時每一格都會發生、又完全不必要的那一次配置。 */
   const resized = out.width !== oW || out.height !== oH;
   if (resized) { out.width = oW; out.height = oH; }
+  if(opts?.scene&&opts.cacheSource&&!hasActiveFx(fx)&&[fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].filter(Boolean).length===1){
+    const kind=fx.soft?'soft':fx.fringeIntensity?'halo':fx.leakOpacity?'leak':fx.blur?'blur':'simple';
+    const keys=kind==='soft'?['soft','softThreshold','softRadius','softColor']:kind==='halo'?['fringeIntensity','fringeSize','fringeFeather','fringeHue']:kind==='leak'?['leakOpacity','leakAngle','leakHue']:kind==='blur'?['blur']:['vignette','colorNoise'];
+    const baseFx=Object.fromEntries(Object.entries(fx).filter(([k])=>!keys.includes(k))) as PhotoFx;
+    const key=effectInputKey(source,oW,oH,baseFx)+'|'+kind;
+    let optical=opticalInputs.get(out);
+    if(!optical||optical.key!==key||optical.layer.lost){
+      if(optical){optical.layer.dispose();optical.source.width=optical.source.height=1;}
+      optical={key,source:applyPhotoFx(source,oW,oH,baseFx,{cacheSource:true,gpuSurface:true}),layer:new HalationLayer(document.createElement('canvas'))};opticalInputs.set(out,optical);
+    }
+    optical.layer.setScene(opts.scene);const p={...toParams(fx),...fx},ctx=optical.source.getContext('2d')!;
+    const result=kind==='soft'?optical.layer.renderSoft(ctx,oW,oH,key,p,hslToRgb((fx.softColor||0)/100,1,.5)):
+      kind==='halo'?optical.layer.render(ctx,oW,oH,key,p,hslToRgb((fx.fringeHue??8)/360,.8,.35)):
+      kind==='leak'?optical.layer.renderLeak(ctx,oW,oH,key,p,hslToRgb((fx.leakHue??15)/360,1,.5)):
+      kind==='blur'?optical.layer.renderBlur(ctx,oW,oH,key,fx.blur!):optical.layer.renderSimple(ctx,oW,oH,key,p,getNoisePattern());
+    if(result)return result;
+  }
+  const residentEffects = !!opts?.gpuSurface && !!opts.cacheSource && hasActiveFx(fx);
+  const inputKey = residentEffects ? effectInputKey(source, oW, oH, fx) : '';
+  const retained = residentEffects ? effectInputs.get(out) : undefined;
+  if (retained?.key === inputKey) {
+    const result = applyGlEffects(retained.source.getContext('2d')!, oW, oH, fx, inputKey, retained.surface, false, opts?.scene);
+    if (result) return result;
+  }
   // A CPU-backed output forces GPU results back to main memory on every
   // slider frame. Cached photo sources are read once; their live output must
   // remain GPU-backed. Other callers keep their established CPU behaviour.
@@ -455,7 +480,11 @@ export function applyPhotoFx(
 
   const baseLut = new Uint8Array(256);
   generateBaseCorrectionLut(p.exposure, p.contrast, p.brightness, baseLut);
-  let gpuOk = false;
+  // Identity colour is exactly the source, including its original alpha.
+  // Spatial effects alone must not trigger an unnecessary LUT render/readback.
+  const identityColour = !lut && ADJUST_KEYS.every(([k]) => !fx[k]);
+  let gpuOk = identityColour;
+  if (identityColour && hit) ctx.drawImage(source, 0, 0, out.width, out.height);
 
   /* 先試 GPU。這條路完全不需要把像素讀回來 ——
      後面的噪點、模糊、柔光全部在畫布上合成，沒有人要 dest 那份陣列。
@@ -463,7 +492,7 @@ export function applyPhotoFx(
   /* 這裡本來也有一套校準（先各量一次 CPU 與 GPU、慢就退回）。拿掉了 ——
      軟體模擬的 GL 已經在 LutGpu.create() 就被擋掉，這裡不需要再猜一次；
      而只憑一次取樣下永久判斷，反而會在真手機上誤判成「不要用 GPU」。 */
-  {
+  if (!identityColour) {
     const amt = (fx.lutAmount ?? 100) / 100;
     /* 來源鍵：來源物件的身分 ＋ 尺寸。以前是「尺寸＋四個取樣點」，
        但取樣點得先把整張像素讀出來 —— 為了算一把鑰匙付一次全圖回讀，
@@ -682,7 +711,21 @@ export function applyPhotoFx(
 
   /* GLSL 特效接在整條管線的最後面，跟「編輯」那邊同一個順序、同一支函式，
      所以兩邊調同一個特效會得到同一張圖。全部都是 0 就整段跳過。 */
-  if (hasActiveFx(fx)) applyGlEffects(ctx, W, H, fx);
+  if (hasActiveFx(fx)) {
+    if (residentEffects) {
+      const record = retained || { key: '', source: document.createElement('canvas'), surface: document.createElement('canvas') };
+      if (record.source.width !== W) record.source.width = W;
+      if (record.source.height !== H) record.source.height = H;
+      const input = record.source.getContext('2d')!;
+      input.clearRect(0, 0, W, H);
+      input.drawImage(out, 0, 0);
+      record.key = inputKey;
+      effectInputs.set(out, record);
+      const result = applyGlEffects(input, W, H, fx, inputKey, record.surface, false, opts?.scene);
+      if (result) return result;
+    }
+    applyGlEffects(ctx, W, H, fx);
+  }
 
   return out;
 }
