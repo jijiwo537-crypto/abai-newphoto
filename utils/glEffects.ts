@@ -751,15 +751,24 @@ const surfaces=new WeakMap<HTMLCanvasElement,Ctx>();
 const watchedSurfaces=new WeakSet<HTMLCanvasElement>();
 
 function getCtx(surface?:HTMLCanvasElement): Ctx | null {
-  if(surface && surfaces.has(surface))return surfaces.get(surface)!;
+  const previous=surface?surfaces.get(surface):ctxCache;
+  const lost=!!previous?.gl.isContextLost();
+  if(previous&&!lost)return previous;
+  if(previous&&lost){
+    // WebKit can evict an older context while another effect is being used.
+    // Returning that dead cache silently skips the effect on subsequent frames.
+    // Recover with fresh storage; do not wait for an optional restored event.
+    disposeFxScene(previous.gl);previous.canvas.remove();previous.canvas.width=previous.canvas.height=1;
+    if(surface)surfaces.delete(surface);else{ctxCache=null;ctxFailed=false;}
+  }
   if (!surface && ctxFailed) return null;
   if (!surface && ctxCache) return ctxCache;
   try {
-    const canvas = surface || document.createElement('canvas');
+    const canvas = !lost&&surface ? surface : document.createElement('canvas');
     if(!watchedSurfaces.has(canvas)){
       watchedSurfaces.add(canvas);
       canvas.addEventListener('webglcontextlost',e=>e.preventDefault());
-      canvas.addEventListener('webglcontextrestored',()=>{const old=surface?surfaces.get(canvas):ctxCache;if(old)disposeFxScene(old.gl);if(surface)surfaces.delete(canvas);else{ctxCache=null;ctxFailed=false;}});
+      canvas.addEventListener('webglcontextrestored',()=>{const old=surface?surfaces.get(surface):ctxCache;if(old?.canvas!==canvas)return;disposeFxScene(old.gl);if(surface)surfaces.delete(surface);else{ctxCache=null;ctxFailed=false;}});
     }
     const gl = (canvas.getContext('webgl', { premultipliedAlpha: false, preserveDrawingBuffer: true })
       || canvas.getContext('experimental-webgl')) as WebGLRenderingContext | null;
@@ -792,7 +801,7 @@ export function compactFxSurface(canvas:HTMLCanvasElement){
  if(c.scene){gl.deleteTexture(c.scene.black);gl.deleteTexture(c.scene.white);c.scene=undefined;}
  if(c.plainTex){gl.deleteTexture(c.plainTex);c.plainTex=undefined;}
  if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);if(pool.spillSeed)gl.deleteTexture(pool.spillSeed);gl.deleteFramebuffer(pool.fb);c.pool=null;}
- canvas.width=canvas.height=1;
+ c.canvas.width=c.canvas.height=canvas.width=canvas.height=1;
 }
 export function disposeFxSurface(canvas:HTMLCanvasElement){
  const c=surfaces.get(canvas);if(!c)return;const {gl,pool}=c;
@@ -803,7 +812,7 @@ export function disposeFxSurface(canvas:HTMLCanvasElement){
  if(c.scene){gl.deleteTexture(c.scene.black);gl.deleteTexture(c.scene.white);}
  if(c.plainTex)gl.deleteTexture(c.plainTex);
  if(pool){gl.deleteTexture(pool.src);pool.texs.forEach(t=>gl.deleteTexture(t));if(pool.aux)gl.deleteTexture(pool.aux);if(pool.narrow)gl.deleteTexture(pool.narrow);if(pool.spillSeed)gl.deleteTexture(pool.spillSeed);gl.deleteFramebuffer(pool.fb);}
- c.progs.forEach(p=>gl.deleteProgram(p));gl.deleteBuffer(c.quad);surfaces.delete(canvas);canvas.width=canvas.height=1;
+  c.progs.forEach(p=>gl.deleteProgram(p));gl.deleteBuffer(c.quad);surfaces.delete(canvas);c.canvas.remove();c.canvas.width=c.canvas.height=canvas.width=canvas.height=1;
  // An explicitly disposed surface is never reused. Release the native context
  // too, rather than waiting for mobile Safari's nondeterministic GC.
  gl.getExtension('WEBGL_lose_context')?.loseContext();

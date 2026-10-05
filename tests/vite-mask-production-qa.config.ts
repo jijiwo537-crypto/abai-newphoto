@@ -10,6 +10,7 @@ export default defineConfig(env=>mergeConfig(typeof base==='function'?base(env):
   interaction:path.resolve('backdrop-mask-ui-qa.html'),
   photos:path.resolve('creative-photo-qa.html'),
   spatial:path.resolve('photo-spatial-qa.html'),
+  seam:path.resolve('creative-seam-qa.html'),
  }}},
  preview:{host:'0.0.0.0',port:5199},
 }));

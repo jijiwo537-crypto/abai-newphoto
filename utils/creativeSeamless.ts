@@ -1,4 +1,4 @@
-import {drawSeamPreview,disposeSeamPreview,copySeamPreviewPixels} from './seamlessPreview';
+import {drawSeamPreview,disposeSeamPreview,copySeamPreviewPixels,type SeamView} from './seamlessPreview';
 import {get2dWide} from './colorSpace';
 import {regionRects,seamlessPhotoBase,paintPhotoRegion,type PhotoRegion} from './creativePhotoLayout';
 import {CreativeFeatherSurface} from './creativeFeatherSurface';
@@ -7,7 +7,56 @@ import {CreativeFeatherSurface} from './creativeFeatherSurface';
 export class CreativeSeamless {
   private surface:HTMLCanvasElement|null=null;
   private colorTile:HTMLCanvasElement|null=null;
+  private presentation:HTMLCanvasElement|null=null;
+  private firstView:SeamView|null=null;
+  private pendingPresentation:(()=>void)|null=null;
   private interactive=new CreativeFeatherSurface();
+  warm(region:PhotoRegion,decoded:Map<string,HTMLImageElement>){
+    const base=seamlessPhotoBase(region);if(!base||this.presentation?.style.display==='block')return;
+    const surface=this.presentation||(this.presentation=document.createElement('canvas'));
+    surface.width=surface.height=1;
+    drawSeamPreview(surface,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,1000,1000),
+      base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;}),0,{width:1000,height:1000,xx:1000,xy:0,x0:0,yx:0,yy:1000,y0:0},true);
+    surface.style.display='none';
+  }
+  /** Display the original-texture compositor beneath the transparent photo
+   * window. Main-canvas vector objects and selection chrome remain above it.
+   * This avoids WebKit's synchronous GPU-to-2D readback on every seam input. */
+  present(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,page:number[]){
+    const base=seamlessPhotoBase(region);if(!base||base.photos.some(p=>!p.src||!decoded.has(p.src)))return false;
+    const m=ctx.getTransform();if(m.b||m.c||m.a<=0||m.d<=0)return false;
+    if(this.presentation?.dataset.sourceUploads&&this.presentation.getContext('webgl2')?.isContextLost()){
+      disposeSeamPreview(this.presentation);this.presentation.remove();this.presentation.width=this.presentation.height=1;this.presentation=null;
+    }
+    const surface=this.presentation||(this.presentation=document.createElement('canvas'));
+    const main=ctx.canvas;
+    const visible=main.closest('[data-creative-stage]')?.getBoundingClientRect(),box=main.getBoundingClientRect();
+    const sx=box.width?main.width/box.width:1,sy=box.height?main.height/box.height:1;
+    const l=visible?Math.max(0,Math.floor((visible.left-box.left)*sx)):0,t=visible?Math.max(0,Math.floor((visible.top-box.top)*sy)):0;
+    const r=visible?Math.min(main.width,Math.ceil((visible.right-box.left)*sx)):main.width,b=visible?Math.min(main.height,Math.ceil((visible.bottom-box.top)*sy)):main.height;
+    const W=Math.max(1,r-l),H=Math.max(1,b-t);
+    if(surface.width!==W)surface.width=W;if(surface.height!==H)surface.height=H;
+    const sources=base.photos.map(p=>{const image=decoded.get(p.src);return image?{image,width:p.width,height:p.height}:null;});
+    const left=Math.max(0,page[0],x*m.a+m.e),top=Math.max(0,page[1],y*m.d+m.f);
+    const right=Math.min(main.width,page[0]+page[2],(x+w)*m.a+m.e),bottom=Math.min(main.height,page[1]+page[3],(y+h)*m.d+m.f);
+    // Keep identical physical-pixel sampling, but allocate only pixels visible
+    // in the editor. A retained pinch capacity must not enlarge this GPU plane.
+    const view:SeamView={width:w,height:h,xx:W/m.a,xy:0,x0:(l-m.e)/m.a-x,yx:0,yy:H/m.d,y0:(t-m.f)/m.d-y,clip:[(left-l)/W,(top-t)/H,(right-l)/W,(bottom-t)/H]};
+    const first=this.firstView;if(!first)this.firstView=view;
+    // A split canvas draws the same photos twice (image and mask window).
+    // Submit the combined two-window shader once, after both placements have
+    // been collected, instead of shading the entire viewport twice per frame.
+    this.pendingPresentation=()=>drawSeamPreview(surface,base.photos.map(p=>({url:p.src,zoom:p.zoom||1,offsetX:p.offsetX||0,offsetY:p.offsetY||0,rotation:0})),regionRects(base,w,h),sources,region.seamless?(region.seamlessAmount||0):-1,first?{...first,other:{...view,clip:view.clip!}}:view,true);
+    const parent=main.parentElement?.getBoundingClientRect();
+    Object.assign(surface.style,{position:'absolute',left:`${box.left-(parent?.left||box.left)+l/sx}px`,top:`${box.top-(parent?.top||box.top)+t/sy}px`,width:`${W/sx}px`,height:`${H/sy}px`,zIndex:'0',pointerEvents:'none',display:'block'});
+    surface.dataset.presentationX=String(l);surface.dataset.presentationY=String(t);
+    surface.dataset.creativeSeamPresentation='1';if(surface.parentElement!==main.parentElement)main.parentElement?.prepend(surface);
+    ctx.clearRect(x,y,w,h);return true;
+  }
+  beginFrame(){this.firstView=null;this.pendingPresentation=null;}
+  flush(){const draw=this.pendingPresentation;this.pendingPresentation=null;if(draw)draw();else this.hide();}
+  hide(){this.firstView=null;this.pendingPresentation=null;if(this.presentation)this.presentation.style.display='none';}
+  get shown(){return this.presentation?.style.display==='block';}
   paint(ctx:CanvasRenderingContext2D,region:PhotoRegion,decoded:Map<string,HTMLImageElement>,x:number,y:number,w:number,h:number,dim=-1,preview=false){
     if(!region.seamless||region.photos.length<2)return false;
     const base=seamlessPhotoBase(region);if(!base)return false;
@@ -53,5 +102,5 @@ export class CreativeSeamless {
       return true;
     }finally{ctx.restore();}
   }
-  dispose(){this.interactive.dispose();if(this.surface){disposeSeamPreview(this.surface);this.surface.width=this.surface.height=1;this.surface=null;}if(this.colorTile){this.colorTile.width=this.colorTile.height=1;this.colorTile=null;}}
+  dispose(){this.interactive.dispose();if(this.presentation){disposeSeamPreview(this.presentation);this.presentation.remove();this.presentation.width=this.presentation.height=1;this.presentation=null;}if(this.surface){disposeSeamPreview(this.surface);this.surface.width=this.surface.height=1;this.surface=null;}if(this.colorTile){this.colorTile.width=this.colorTile.height=1;this.colorTile=null;}}
 }

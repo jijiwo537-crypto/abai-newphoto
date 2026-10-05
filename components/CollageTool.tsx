@@ -1244,7 +1244,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         regionDrawables.current.set(src,drawable);
       }catch{/* Keep the decoded image on browsers without bitmap support. */}
       finally{bitmap?.close();if(surface)surface.width=surface.height=1;}
-    }})();
+    }
+    await awaitPhotoIdle();if(cancelled)return;
+    const region=photoRegionRef.current;
+    if(region&&region.photos.length>1){
+      const decoded=new Map(decodedRegionPhotos.current);
+      try{creativeSeam.current??=new CreativeSeamless();creativeSeam.current.warm(region,decoded);}catch{}
+    }
+    })();
     return ()=>{cancelled=true;};
   },[photoRegion?.photos.map(p=>p.src).join('|'),imageState]);
   useEffect(()=>()=>{for(const bitmap of regionDrawables.current.values())bitmap.close();regionDrawables.current.clear();},[]);
@@ -1442,10 +1449,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(cell){const dw=Math.abs(transform.w)*cell.w,dh=Math.abs(transform.h)*cell.h,crop=photoCrop(photo,dw,dh);
       required=sourceSize*Math.max(dw*scale/Math.max(1,crop.sw),dh*scale/Math.max(1,crop.sh));}
     const id=`region-fx-${index}@${photo.src}`;
-    const cap=photoPreviewCapacity(required,Math.max(regionPreviewCaps.current.get(id)||0,1600),sourceSize);
+    // Reserve the source's normal photo-resolution tier before its first
+    // effect input. A preview pinch must not cross the old 1600 -> 2048 tier
+    // and rebuild the whole filter/effect pipeline under the fingers.
+    // Larger originals still grow to physical display demand; no lower-quality
+    // interaction mode is used and only the current slot owns a shader pool.
+    const cap=photoPreviewCapacity(required,Math.max(regionPreviewCaps.current.get(id)||0,Math.min(sourceSize,4096)),sourceSize);
     regionPreviewCaps.current.set(id,cap);return cap;
   };
-  const fxCanvasOf = useCallback((o: any, isMain = false, onScreenPx = 0): CanvasImageSource | null => {
+  const fxCanvasOf = useCallback((o: any, isMain = false, onScreenPx = 0, prepareNative = false): CanvasImageSource | null => {
     if (!o.img) return null;
     const warm=regionWarmStage.current;
     if(warm&&o.id?.startsWith(`region-fx-${warm.index}@`))return warm.canvas;
@@ -1519,6 +1531,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       // only grows, and always exceeds physical display demand; no live/640
       // quality shortcut is used for a base photograph.
       cap=regionEffectCapacity(o,slot,o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height,onScreenPx);
+      if(prepareNative)cap=Math.max(o.img.naturalWidth||o.img.width,o.img.naturalHeight||o.img.height);
     }
     /* 只有影片吃這個夾子 —— 圖片的成品是算一次就留著的，多算沒有代價，
        維持原本的尺寸才不會讓任何既有的畫面變糊。 */
@@ -1531,6 +1544,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const isVid = vTok !== 0 || isVideoEl(o.img);
     const key = baseKey + '|' + cap + '|lutReady:' + !!getLoadedLut(o.fx?.lut) + (isVid ? '|v' + vTok : '');
     const hit = objFxCache.current.get(o.id);
+    // An immutable original-resolution result is independent of the display
+    // footprint. Zoom/occupancy changes sample it; they never rebake effects.
+    if(hit?.cv instanceof HTMLCanvasElement&&hit.cv.dataset.regionImmutable==='1'
+      &&hit.key.startsWith(baseKey+'|')&&hit.key.includes('|lutReady:'+!!getLoadedLut(o.fx?.lut))
+      &&Math.max(hit.cv.width,hit.cv.height)>=cap)return hit.cv;
     // A geometry-only redraw must not prepare effects or touch a GPU pool.
     // In particular the fallback blend preparation used to precede this hit.
     // The key contains every pixel-affecting parameter. A selected photo's
@@ -1638,7 +1656,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     if (!hasShape) {
       let result=base;
-      if(regionPhoto&&isMain&&reuse&&base!==reuse&&!regionSliderHeld.current&&!regionTouches.current.size){
+      if(regionPhoto&&isMain&&reuse&&base!==reuse&&!regionSliderHeld.current&&!regionTouches.current.size&&(!photoRegionRef.current?.seamless||!selectedBase||prepareNative)){
         // Geometry-only rendering needs immutable photo pixels, not an entire
         // native-size shader pool. Release the pool immediately after copying,
         // including when the user never pauses long enough for an idle job.
@@ -1647,9 +1665,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(snapshot.height!==base.height)snapshot.height=base.height;
         snapshot.getContext('2d')!.clearRect(0,0,snapshot.width,snapshot.height);
         snapshot.getContext('2d')!.drawImage(base,0,0);snapshot.dataset.regionImmutable='1';result=snapshot;regionStaticSnapshot.current={cv:snapshot};
-        compactPhotoFxSurface(reuse);releasePhotoFxReadbacks(srcEl);
+        // Keep only the selected photograph warm. Other slots are compacted
+        // here and the selection lifecycle below releases the previous slot.
+        // Compacting this input after every slider pause caused the next input
+        // to allocate/upload its whole effect pipeline again.
+        if(!selectedBase||prepareNative)compactPhotoFxSurface(reuse);
+        releasePhotoFxReadbacks(srcEl);
       }
       objFxCache.current.set(o.id, { key, cv: result });
+      if(result instanceof HTMLCanvasElement)result.dataset.seamRevision=key;
       // Explicitly release replaced native snapshots. Waiting for WebKit's
       // garbage collection can retain dozens of 50 MB photo buffers after
       // repeated edits and trigger a tab-process restart.
@@ -2138,7 +2162,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     && (selectedRegionPhoto !== null || baseSelected || !!objects.find(o => o.id === selectedObj && o.type === 'image'));
   useEffect(()=>{
     const index=selectedRegionPhoto??0,photo=photoRegion?.photos[index];
-    if(!photo||!hasPhotoFx(photo.fx)||!objEditImage)return;
+    if(!photo||!hasPhotoFx(photo.fx)||activeTab==='motion'||photoRegion?.seamless&&objEditImage)return;
     let cancelled=false;
     // Prepare reusable exact photo pixels after an edit settles, not on the
     // first occupancy input. The final scene stays visible and untouched.
@@ -2146,7 +2170,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if(cancelled||!canvasRef.current)return;
       const original=decodedRegionPhotos.current.get(photo.src);if(!original)return;
       const id=`region-fx-${index}@${photo.src}`;
-      const cv=fxCanvasOf({...photo,id,img:original},true,Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*previewScaleRef.current);
+      const cv=fxCanvasOf({...photo,id,img:original},true,Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*previewScaleRef.current,true);
       const cached=objFxCache.current.get(id);if(!cv||!cached)return;
       if(cv instanceof HTMLCanvasElement&&cv.dataset.regionImmutable==='1')return;
       const snapshot=document.createElement('canvas');
@@ -2156,17 +2180,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       snapshot.getContext('2d')!.drawImage(cv,0,0);
       snapshot.dataset.regionImmutable='1';
       objFxCache.current.set(id,{key:cached.key,cv:snapshot});regionStaticSnapshot.current={cv:snapshot};
-      // The immutable native-resolution snapshot owns these pixels now. The
-      // editing compositor has its own warm context; retaining a second full
-      // photo FX pool here adds several native-size textures per edited photo.
-      const surface=regionFxSurfaces.current.get(id);
-      if(surface)compactPhotoFxSurface(surface);
+      // The immutable snapshot owns these pixels; keep compiled programs but
+      // release redundant native-size render targets.
       releasePhotoFxReadbacks(original);
       const scratch=vidScratchRef.current.get(id);
       if(scratch){for(const item of Object.values(scratch))if(item instanceof HTMLCanvasElement&&item!==snapshot)item.width=item.height=1;vidScratchRef.current.delete(id);}
     });
     return ()=>{cancelled=true;};
-  },[photoRegion,objEditImage,selectedRegionPhoto]);
+  },[photoRegion,objEditImage,selectedRegionPhoto,activeTab]);
   useEffect(()=>{
     // Keep ONE current photo's shader surface through tab switches. Leaving
     // editing is not a source change; destroying it here recompiles on return.
@@ -2182,7 +2203,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       releasePhotoFxSurface(surface);surface.width=surface.height=1;regionFxSurfaces.current.delete(key);
       const scratch=vidScratchRef.current.get(key);if(scratch){for(const cv of Object.values(scratch))if(cv instanceof HTMLCanvasElement)cv.width=cv.height=1;vidScratchRef.current.delete(key);}
     }
-    if(!objEditImage&&selectedKey===null){
+    if(!objEditImage){
       regionColour.current?.hide();
       const resident=regionSpatial.current;
       if(resident?.shown)resident.shown.style.display='none';
@@ -2191,6 +2212,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       // The settled-edit effect already keeps exact reusable pixels. A tab
       // click must not synchronously read back another multi-megapixel GPU frame.
       regionBlend.current?.clear();
+      // The prior selectedKey===null condition never ran for a populated
+      // collage (it falls back to photo zero). It retained a full editing
+      // framebuffer and native effect pool alongside the geometry renderer.
+      // Preserve compiled programs, but release those unused pixel buffers.
+      if(resident){
+        compactPhotoFxSurface(resident.input);
+        resident.scene.black.width=resident.scene.black.height=1;
+        resident.scene.white.width=resident.scene.white.height=1;
+        resident.shown?.remove();regionSpatial.current=null;
+      }
     }
     if(selectedKey===null)return;
     let cancelled=false;
@@ -2198,7 +2229,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       // Prime the actual source/pool while the imported photo is idle, before
       // opening the editor. Shader-only warm-up leaves the first texture upload
       // and framebuffer allocation on the first effect click in WebKit.
-      await new Promise<void>(resolve=>requestAnimationFrame(()=>resolve()));
+      await awaitPhotoIdle();
       const source=currentSrc&&decodedRegionPhotos.current.get(currentSrc);
       if(!cancelled&&source&&regionPrimedSource.current!==currentSrc&&!regionSpatial.current?.shown&&!hasPhotoFx(photoRegionRef.current?.photos[selectedKey]?.fx)&&!activePointers.current.size){
         regionSpatialInput.current??=document.createElement('canvas');
@@ -3535,21 +3566,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const o=objectsRef.current.find(o=>o.id===source.id);if(!o?.img)return null;
     const src=o.src||o.img.src;
     decodedRegionPhotos.current.set(src,o.img);
-    return {src,width:o.img.naturalWidth||o.img.width,height:o.img.naturalHeight||o.img.height};
+    return {src,width:o.img.naturalWidth||o.img.width,height:o.img.naturalHeight||o.img.height,fx:o.fx};
   };
   const swapPhotos=(a:PhotoSource,b:PhotoSource)=>{
     if(JSON.stringify(a)===JSON.stringify(b))return;
     const pa=photoContent(a),pb=photoContent(b);if(!pa?.src||!pb?.src)return;
+    deferHeavyWork(600);
     const region=photoRegionRef.current;
     const photos=region?.photos.map((p,i)=>a.kind==='region'&&a.index===i?pb:b.kind==='region'&&b.index===i?pa:p);
-    if(region&&photos&&a.kind==='region'&&b.kind==='region'){
+    if(region&&photos){
       // Effect pixels belong to the photograph, not its slot. Moving a ready
       // photograph must not synchronously rebake its full-resolution effects.
       for(const cache of [objFxCache.current,fxLiveRef.current,regionPreviewCaps.current,regionFxSurfaces.current,vidScratchRef.current] as Map<string,any>[]){
-        const ka=`region-fx-${a.index}@${pa.src}`,kb=`region-fx-${b.index}@${pb.src}`;
+        const ka=a.kind==='region'?`region-fx-${a.index}@${pa.src}`:a.id;
+        const kb=b.kind==='region'?`region-fx-${b.index}@${pb.src}`:b.id;
         const va=cache.get(ka),vb=cache.get(kb);cache.delete(ka);cache.delete(kb);
-        if(va!==undefined)cache.set(`region-fx-${b.index}@${pa.src}`,va);
-        if(vb!==undefined)cache.set(`region-fx-${a.index}@${pb.src}`,vb);
+        if(va!==undefined)cache.set(b.kind==='region'?`region-fx-${b.index}@${pa.src}`:b.id,va);
+        if(vb!==undefined)cache.set(a.kind==='region'?`region-fx-${a.index}@${pb.src}`:a.id,vb);
       }
     }
     if(region&&photos)commitRegion({...region,photos});
@@ -3559,8 +3592,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     const next=objectsRef.current.map(o=>{
       const p=a.kind==='object'&&a.id===o.id?pb:b.kind==='object'&&b.id===o.id?pa:null;
-      if(p){objFxCache.current.delete(o.id);fxLiveRef.current.delete(o.id);}
-      return p?{...o,src:p.src,origSrc:p.src,img:decodedRegionPhotos.current.get(p.src),geo:undefined}:o;
+      if(!p)return o;
+      // A region is a crop slot, whereas an added image is a free photograph.
+      // Reusing the old free image's width/height stretches a replacement with
+      // another aspect ratio. Keep its centre and area, use the new source ratio.
+      const scale=Math.sqrt(Math.abs(o.w*o.h)/Math.max(1,p.width*p.height));
+      const w=p.width*scale,h=p.height*scale;
+      return {...o,x:o.x+(o.w-w)/2,y:o.y+(o.h-h)/2,w,h,
+        src:p.src,origSrc:p.src,img:decodedRegionPhotos.current.get(p.src),fx:p.fx,geo:undefined,
+        imgShape:undefined,imgShapeX:0,imgShapeY:0,imgShapeZoom:1};
     });
     objectsRef.current=next;setObjects(next);
   };
@@ -4295,6 +4335,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const viewFrameRef = useRef(0);
   const wheelCommitRef=useRef<ReturnType<typeof setTimeout>|null>(null);
   const wheelUntilRef=useRef(0);
+  const wheelPhotoReleaseRef=useRef<(()=>void)|null>(null);
   const liveViewPaintRef = useRef<((next:{k:number;tx:number;ty:number})=>void)|null>(null);
   const flushView = useCallback((commit = false) => {
     if (viewFrameRef.current) cancelAnimationFrame(viewFrameRef.current);
@@ -4305,7 +4346,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     else if (next || commit) setViewT(next || viewTRef.current);
   }, []);
   useEffect(() => () => { if (viewFrameRef.current) cancelAnimationFrame(viewFrameRef.current); }, []);
-  useEffect(()=>()=>{if(wheelCommitRef.current!==null)clearTimeout(wheelCommitRef.current);},[]);
+  useEffect(()=>()=>{if(wheelCommitRef.current!==null)clearTimeout(wheelCommitRef.current);wheelPhotoReleaseRef.current?.();},[]);
   const applyView = useCallback((k: number, tx: number, ty: number) => {
     if (motionLockRef.current) return;
     const c = stageBox();
@@ -4908,6 +4949,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Backdrop-dependent materials are nonlinear. Black/white photo endpoints
     // cannot reconstruct them; use the shared live scene when masks are present.
     const hasBackdrop=objectsRef.current.some(o=>isBackdropMask(o.kind));
+    if(targetCanvas===canvasRef.current)creativeSeam.current?.beginFrame();
     if(targetCanvas===canvasRef.current&&(regionHold.current?.active||swapPaintForced.current)){
       regionColour.current?.hide();
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
@@ -5279,14 +5321,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // ImageBitmap pins decoded native pixels. HTMLImageElement can lazily
     // re-decode its compressed source after memory eviction in the first pinch.
     // No resize, quality reduction or per-zoom image loading is involved.
-    if(isMain)for(const [src,bitmap] of regionDrawables.current)regionDecoded.set(src,bitmap as unknown as HTMLImageElement);
+    // The seamless GPU compositor pins its own original textures. Import the
+    // tagged originals directly: WebKit can discard a P3 bitmap's profile.
+    // Plain and feathered photo grids share the resident original textures.
+    // Changing seam strength must not replace every GPU source with an
+    // ImageBitmap and then upload the originals again on the first input.
+    if(isMain&&!photoRegion?.seamless&&(layout===AROUND||hasBackdrop||animRef.current||regionHold.current?.active))for(const [src,bitmap] of regionDrawables.current)regionDecoded.set(src,bitmap as unknown as HTMLImageElement);
     const regionForPaint = photoRegion ? {...photoRegion,photos:photoRegion.photos.map((p,i)=>{
       const original = decodedRegionPhotos.current.get(p.src);
       // Endpoint captures must replace even an UNEDITED photo. Otherwise
       // black and white endpoints both contain the original, coverage is zero,
       // and the resident compositor silently displays an unchanged image.
       const capturingPhoto=regionWarmStage.current?.index===i;
-      if (!original || (!capturingPhoto&&(!p.fx || !hasPhotoFx(p.fx)) && !(isMain&&regionBlendTool.current&&i===(selectedRegionPhotoRef.current??0)))) return p;
+      if (!original || (!capturingPhoto&&(!p.fx || !hasPhotoFx(p.fx)) && !(isMain&&objEditImage&&regionBlendTool.current&&i===(selectedRegionPhotoRef.current??0)))) return p;
       const fxStarted = import.meta.env.DEV ? performance.now() : 0;
       const onPx=Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*s;
       const processed = fxCanvasOf({...p,id:`region-fx-${i}@${p.src}`,img:original}, isMain,onPx);
@@ -5334,6 +5381,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const hover=swapHoverRef.current;
         const dim=isMain && allowDim && hover?.kind==='region' ? hover.index : -1;
         creativeSeam.current ||= new CreativeSeamless();
+        if(g===ctx&&targetCanvas===canvasRef.current&&!previewCapture&&layout!==AROUND&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&dim<0){
+          const m=g.getTransform(),bounds=clip||[0,0,tW,tH];
+          try{if(creativeSeam.current.present(g,regionForPaint!,regionDecoded,x,y,w,h,[bounds[0]*m.a+m.e,bounds[1]*m.d+m.f,bounds[2]*m.a,bounds[3]*m.d])){
+            const base=seamlessPhotoBase(regionForPaint!);
+            if(base&&base!==regionForPaint)paintPhotoRegion(g,regionForPaint!,regionDecoded,x,y,w,h,dim,regionForPaint!.photos.slice(2).map((_,i)=>i+2));
+            return;
+          }}
+          catch{creativeSeam.current.hide();}
+        }
         if(!creativeSeam.current.paint(g,regionForPaint!,regionDecoded,x,y,w,h,dim,isMain))
           paintPhotoRegion(g, regionForPaint!, regionDecoded, x, y, w, h, dim);
       } else {
@@ -7342,6 +7398,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // ctx.strokeStyle = 'rgba(255,255,255,0.2)'; ctx.lineWidth = sgs; ctx.stroke();
 
     drawObjects(aboveObjs.slice(prefixAbove.length));
+    if(targetCanvas===canvasRef.current)creativeSeam.current?.flush();
 
     /* ── 歷史紀錄的縮圖，就在這一行拍 ────────────────────────────────
        這裡是「成品都畫完了、選取框還沒畫上去」的唯一一個時間點 ——
@@ -7370,7 +7427,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             // Base selection is intentionally part of scene ordering, but must
             // never leak into history/draft thumbnails. This clean render is
             // bounded to the existing thumbnail size, not the live preview.
-            if (selectedRegionPhotoRef.current !== null) renderToCanvas(tc, s * tk);
+            if (selectedRegionPhotoRef.current !== null || creativeSeam.current?.shown) renderToCanvas(tc, s * tk);
             else tg.drawImage(targetCanvas, 0, 0, tw, th);
           }
         } catch { /* 拍不成就算了，下次再拍 */ }
@@ -7797,7 +7854,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // 這一次的尺寸變化不要做過場動畫（放大狀態下換排版才不會拉一下）
     sizeSnapRef.current = true;
     const st = stageRef.current;
-    const cv = canvasRef.current;
     if (st && imageState) {
       const cs = collageSizeOf(layout, imageState.baseW, imageState.baseH, maskScale, canvasRatio);
       const sb = st.getBoundingClientRect();
@@ -7815,8 +7871,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const ps0 = cssW0 ? fitScale(cssW0, cs.w, 1) : 1;
       setPreviewScale(prev => (Math.abs(prev - ps0) < 0.01 ? prev : ps0));
       previewScaleRef.current = ps0;
-      // 同一格就把新比例的內容畫上去，不留任何「舊圖被拉伸」的空窗
-      if (cv) { try { renderToCanvasRef.current(cv, ps0); syncDrawnRef.current = { fn: renderToCanvasRef.current, ps: ps0 }; } catch { /* 這一格畫不出來就等下一格 */ } }
+      // setBaseCss commits synchronously from this layout effect. Its layout
+      // effect below paints once AFTER the new CSS dimensions are installed,
+      // still before presentation. Painting here too uses the old DOM size and
+      // doubles the full-quality work on almost every occupancy input.
     } else setBaseCss(null);
     const t = window.setTimeout(() => { sizeSnapRef.current = false; }, 260);
     return () => window.clearTimeout(t);
@@ -8174,6 +8232,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       // Downloading the lowfi LUT must not hold up unrelated optical shader
       // preflight. Its own ready callback repaints once the LUT is available.
       void warmLowfiLut().catch(()=>{});
+      await awaitPhotoIdle();
       const cv=canvasRef.current,p=photoRegionRef.current?.photos[0];
       if(cancelled||!cv||cv.width<=32||!p||hasPhotoFx(p.fx)||activePointers.current.size)return;
       // Capture unchanged scene coverage at import time, not on the first
@@ -8199,7 +8258,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   },[imageState,photoRegion?.photos[0]?.src]);
   useEffect(()=>{
     if(!import.meta.env.DEV)return;
-    const reference=(event:Event)=>{const detail=(event as CustomEvent).detail;if(detail?.canvas instanceof HTMLCanvasElement)renderToCanvasRef.current(detail.canvas,previewScaleRef.current,true);};
+    const reference=(event:Event)=>{const detail=(event as CustomEvent).detail;if(detail?.canvas instanceof HTMLCanvasElement)renderToCanvasRef.current(detail.canvas,previewScaleRef.current,!detail.export);};
     document.addEventListener('abai:qa-preview-reference',reference);
     return()=>document.removeEventListener('abai:qa-preview-reference',reference);
   },[]);
@@ -9458,8 +9517,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
             onPointerCancel={handlePointerUp}
             onWheel={(e) => {
               deferHeavyWork();wheelUntilRef.current=performance.now()+160;
+              wheelPhotoReleaseRef.current??=holdPhotoInteraction();
               if(wheelCommitRef.current!==null)clearTimeout(wheelCommitRef.current);
-              wheelCommitRef.current=setTimeout(()=>{wheelCommitRef.current=null;wheelUntilRef.current=0;flushView(true);},160);
+              wheelCommitRef.current=setTimeout(()=>{wheelCommitRef.current=null;wheelUntilRef.current=0;flushView(true);wheelPhotoReleaseRef.current?.();wheelPhotoReleaseRef.current=null;},160);
               const c = stageBox();
               const v = viewTRef.current;
               // Trackpads emit small deltas at refresh rate. A fixed 18% jump
@@ -10186,7 +10246,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                       ? aroundK((AROUND_STEPS - v) / AROUND_STEPS)
                       : 1 / (1 + v * 0.04));
                     return (
-                      <div className={`flex flex-col w-full ${layout === FULL ? 'opacity-35 pointer-events-none' : ''}`}>
+                      <div data-creative-occupancy className={`flex flex-col w-full ${layout === FULL ? 'opacity-35 pointer-events-none' : ''}`}>
                         <div className="flex items-baseline justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
                           <span>佔比</span>
                           <span className="text-white font-sans tabular-nums tracking-normal normal-case">{label}</span>
@@ -11301,11 +11361,15 @@ const useRafOnChange = (onChange: (v: number) => void) => {
  * at gesture end; its paint scheduler consumes the latest value each frame. */
 const RegionLiveRange=({value,onChange,onCommit}:{value:number;onChange:(v:number)=>void;onCommit:()=>void})=>{
   const [shown,setShown]=React.useState(value);
+  const release=React.useRef<(()=>void)|null>(null);
+  const finish=()=>{release.current?.();release.current=null;onCommit();};
+  React.useEffect(()=>()=>release.current?.(),[]);
   React.useEffect(()=>setShown(value),[value]);
   return <div className="slider-wrap w-full" style={{height:16}}>
     <input aria-label="融合程度" type="range" min={0} max={100} step={1} value={shown} className="premium-slider w-full"
-      onChange={e=>{const v=Number(e.target.value);setShown(v);onChange(v);}} onPointerDown={e=>e.stopPropagation()}
-      onPointerUp={onCommit} onPointerCancel={onCommit} onTouchEnd={onCommit} onKeyUp={onCommit}/></div>;
+      onChange={e=>{const v=Number(e.target.value);setShown(v);deferHeavyWork();onChange(v);}}
+      onPointerDown={e=>{e.stopPropagation();release.current?.();release.current=holdPhotoInteraction();}}
+      onPointerUp={finish} onPointerCancel={finish} onTouchEnd={finish} onKeyUp={finish}/></div>;
 };
 
 /** 只有一根軌道的滑桿，同樣把輸入收斂到每一幀一次 */

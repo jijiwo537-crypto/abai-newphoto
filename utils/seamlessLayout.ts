@@ -43,7 +43,9 @@ export function prepareSeamSource(cell: SeamPhoto, revision: number): Promise<Se
 export function seamGeometry(rects: SeamRect[], index: number, w: number, h: number, amount: number) {
   const r = rects[index];
   const smallest = Math.min(...rects.map(r => Math.min(r.w * w, r.h * h)));
-  const band = smallest * (.012 + Math.max(0, Math.min(100, amount)) / 100 * .238);
+  // Negative amount is the same original-photo GPU compositor without fusion.
+  // UI/export seamless values remain 0..100 with their original feather curve.
+  const band = amount<0?0:smallest * (.012 + Math.max(0, Math.min(100, amount)) / 100 * .238);
   const x = r.x*w, y = r.y*h, rw = r.w*w, rh = r.h*h;
   const left = r.x > .00001 ? band : 0, top = r.y > .00001 ? band : 0;
   const right = r.x+r.w < .99999 ? band : 0, bottom = r.y+r.h < .99999 ? band : 0;

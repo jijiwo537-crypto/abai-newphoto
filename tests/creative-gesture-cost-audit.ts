@@ -25,9 +25,13 @@ void(async()=>{
    const g=JSON.parse(stage.dataset.sceneGeometry!);tap(point(g.ix+g.iw*.2,g.iy+g.ih*.2));await wait();
    document.querySelector<HTMLButtonElement>('[data-creative-tab="objedit"]')!.click();await wait(20);
    const b=[...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent?.trim().endsWith('特效'))!;let t=performance.now();b.click();await tick();report.effectEntryMs=performance.now()-t;await wait(2);
-   if(params.has('filterGesture')){
+   if(params.has('filterGesture')||params.has('combinedGesture')){
     [...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent?.trim().endsWith('濾鏡'))!.click();
     await wait(30);document.querySelector<HTMLButtonElement>('[data-lut-card]')!.click();await wait(90);
+    if(params.has('combinedGesture')){
+     [...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent?.trim().endsWith('特效'))!.click();await wait(3);
+     document.querySelector<HTMLButtonElement>('[data-fx-card="fxLowfi"]')!.click();await wait(3);
+    }
    }else{document.querySelector<HTMLButtonElement>('[data-fx-card="fxLowfi"]')!.click();await wait(25);}
   }
   let geo=JSON.parse(stage.dataset.sceneGeometry!),p=params.has('mask')?point(geo.cw*.5,geo.ch*.5):point(geo.ix+geo.iw*.2,geo.iy+geo.ih*.2);
@@ -46,11 +50,20 @@ void(async()=>{
    pointer('pointerup',3605,q,input);await wait();
   }
   document.querySelector<HTMLButtonElement>('[data-creative-tab="setting"]')!.click();await wait();
+  if(params.has('geometrySliders')){
+   const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!;
+   for(const [name,selector] of [['occupancy slider','[data-creative-occupancy] input'],['seamless slider','[data-creative-seamless] input']]){
+    const input=document.querySelector<HTMLInputElement>(selector);if(!input)throw Error('missing '+name);
+    const b=input.getBoundingClientRect(),q={x:b.x+b.width*.5,y:b.y+b.height*.5};pointer('pointerdown',3610,q,input);
+    await measure(name,i=>{setter.call(input,String(10+Math.round(60*(.5+.5*Math.sin(i*.1)))));input.dispatchEvent(new Event('input',{bubbles:true}));});
+    pointer('pointerup',3610,q,input);await wait();
+   }
+  }
   const outer=stage.getBoundingClientRect();tap({x:outer.left+2,y:outer.top+2});await wait();
   check('preview selection cleared',!stage.dataset.selectedObject&&!stage.dataset.selectedRegionPhoto);
   const midPoint={x:(outer.left+outer.right)/2,y:(outer.top+outer.bottom)/2},touchWidths:number[]=[];
   pointer('pointerdown',3606,{x:midPoint.x-35,y:midPoint.y},stage);pointer('pointerdown',3607,{x:midPoint.x+35,y:midPoint.y},stage);
-  await measure('preview touch pinch',i=>{touchWidths.push(canvas.parentElement!.getBoundingClientRect().width);const d=35*(1.55+.5*Math.sin(i*.075));pointer('pointermove',3606,{x:midPoint.x-d,y:midPoint.y},stage);pointer('pointermove',3607,{x:midPoint.x+d,y:midPoint.y},stage);});
+  await measure('preview touch pinch',i=>{touchWidths.push(canvas.parentElement!.getBoundingClientRect().width);const d=35*(params.has('maxZoom')?4.5+1.5*Math.sin(i*.075):1.55+.5*Math.sin(i*.075));pointer('pointermove',3606,{x:midPoint.x-d,y:midPoint.y},stage);pointer('pointermove',3607,{x:midPoint.x+d,y:midPoint.y},stage);});
   pointer('pointerup',3606,{x:midPoint.x-35,y:midPoint.y},stage);pointer('pointerup',3607,{x:midPoint.x+35,y:midPoint.y},stage);await wait();
   check('touch preview really zoomed',Math.max(...touchWidths)-Math.min(...touchWidths)>30);
   // Wheel uses the same live view paint as pinch, without selected-item

@@ -268,7 +268,7 @@ export const ADJUST_KEYS = [
 /** 有沒有動過任何一項；沒動過就完全不用跑管線 */
 export const hasPhotoFx = (fx?: PhotoFx) => {
   if (!fx) return false;
-  if (fx.lut && fx.lut !== 'none') return true;
+  if (fx.lut && fx.lut !== 'none' && (fx.lutAmount ?? 100)>0) return true;
   if (fx.soft || fx.blur || fx.colorNoise || fx.vignette || fx.leakOpacity || fx.fringeIntensity) return true;
   if (hasActiveFx(fx)) return true;
   return ADJUST_KEYS.some(([k]) => !!fx[k]);

@@ -5,8 +5,8 @@ test('only centre photo painting requests swap dimming',()=>{
  assert.match(s,/offs\.ix, offs\.iy, iw, ih, kIn, true/);
 });
 test('swap pixels move with their photo cache and bypass editing overlays',()=>{
- assert.match(s,/cache.set\(`region-fx-\$\{b.index\}@\$\{pa.src\}`,va\)/);
- assert.match(s,/cache.set\(`region-fx-\$\{a.index\}@\$\{pb.src\}`,vb\)/);
+ assert.match(s,/cache.set\(b.kind==='region'\?`region-fx-\$\{b.index\}@\$\{pa.src\}`:b.id,va\)/);
+ assert.match(s,/cache.set\(a.kind==='region'\?`region-fx-\$\{a.index\}@\$\{pb.src\}`:a.id,vb\)/);
  assert.match(s,/!regionHold.current\?\.active&&!swapPaintForced.current/);
  assert.match(s,/try\{regionPaintRef.current\(\);\}finally\{swapPaintForced.current=false;\}/);
  assert.match(s,/photoGestureRelease.current\?\?=holdPhotoInteraction\(\)/);
@@ -25,7 +25,7 @@ test('base photos edit through the same image panel without shapes',()=>{
 test('base-photo composition persists back to the region and thumbnail excludes its frame',()=>{
  assert.match(s,/regionIndex >= 0 \? photoRegionRef\.current\?\.photos\[regionIndex\]/);
  assert.match(s,/src:newSrc,origSrc:srcUrl,geo:st\.geo,width:el\.naturalWidth,height:el\.naturalHeight/);
- assert.match(s,/if \(selectedRegionPhotoRef\.current !== null\) renderToCanvas\(tc, s \* tk\)/);
+ assert.match(s,/if \(selectedRegionPhotoRef\.current !== null \|\| creativeSeam\.current\?\.shown\) renderToCanvas\(tc, s \* tk\)/);
 });
 test('single imported base image shares the editor and rendered adjusted source',()=>{
  assert.match(s,/selectedRegionPhoto \?\? \(baseSelected \? 0 : null\)/);

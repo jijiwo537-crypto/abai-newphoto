@@ -58,7 +58,7 @@ void(async()=>{
  releasePhotoFxSurface(input);
  // Geometry changes also use isolated photograph caches without an FxScene.
  // Verify the resident optical path against the unchanged export renderer.
- for(const fx of [{soft:40,softRadius:60},{fringeIntensity:50,fringeSize:40},{leakOpacity:70,leakAngle:45},{blur:50},{vignette:50}]){
+ for(const fx of [{soft:40,softRadius:60},{fringeIntensity:50,fringeSize:40},{leakOpacity:70,leakAngle:45},{blur:50},{vignette:50},...[0,25,50,75,100].map(lutAmount=>({fxLowfi:50,lut:'spatial-audit',lutAmount})),{fxGlass:40,lut:'spatial-audit',lutAmount:70}]){
   const output=document.createElement('canvas');
   const live=applyPhotoFx(source,320,240,fx,{cacheSource:true,gpuSurface:true,out:output});
   const copy=document.createElement('canvas');copy.width=320;copy.height=240;
@@ -69,7 +69,7 @@ void(async()=>{
   const b=get2dWide(baseline)!;b.drawImage(applyPhotoFx(source,320,240,fx),0,0);
   const actual=c.getImageData(0,0,320,240).data,expected=b.getImageData(0,0,320,240).data;
   let max=0,total=0,count=0;for(let i=0;i<actual.length;i++)if(i%4!==3){const d=Math.abs(actual[i]-expected[i]);max=Math.max(max,d);total+=d;count++;}
-  checks.push({fx,isolatedPhotograph:true,max,mean:total/count,pass:total/count<1.5&&max<30});
+  checks.push({fx,isolatedPhotograph:true,max,mean:total/count,centres:[...actual.slice((120*320+160)*4,(120*320+160)*4+4),...expected.slice((120*320+160)*4,(120*320+160)*4+4)],pass:total/count<1.5&&max<30});
   releasePhotoFxSurface(output);output.width=output.height=copy.width=copy.height=baseline.width=baseline.height=1;
  }
  const report={kind:'photo-spatial-scene',pass:checks.every(c=>c.pass),checks};

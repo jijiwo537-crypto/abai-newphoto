@@ -2873,13 +2873,16 @@ return (
       {adjustSub === 'effect' && !fxDetailOpen && FX_ROOT_TOOLS.map(([id, label], fi) => {
         const amountId = fxAmountId(id);
         const on = fxVal(amountId, 0) !== 0;
+        // Selection is UI state, not the amount of the applied effect. Zero
+        // must leave the card selected and its detail editor reachable.
+        const selected = effectCard === id;
         const detail = FX_DETAIL[id] || FX_SUB_TOOLS[id];
         const hasDetail = !!detail && detail.length > 1;
         return (
           <button
             key={id}
             data-fx-card={id}
-            aria-pressed={on}
+            aria-pressed={selected}
             onClick={() => pickEffect(id)}
             className="flex flex-col items-center gap-2 shrink-0 group w-[64px]"
           >
@@ -2889,13 +2892,12 @@ return (
                          cacheKey={`${cardSrc}|fx:${id}`}
                          fx={effectPreset(id,FX_DEFS) as PhotoFx} />
               <div className="absolute inset-x-0 bottom-0 h-[16px] bg-[#0b0b0b]/90 flex items-center justify-center pb-[2px]">
-                <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${on ? 'text-white' : 'text-white/60'}`}>
+                <span className={`text-[8px] font-black uppercase tracking-widest leading-none whitespace-nowrap ${selected || on ? 'text-white' : 'text-white/60'}`}>
                   {label}
                 </span>
               </div>
-              {/* 白框＝這個特效正在生效；只是選到但沒開的不畫 */}
-              {on && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
-              {on && hasDetail && (
+              {(selected || on) && <div className="absolute inset-0 rounded-lg ring-2 ring-inset ring-white pointer-events-none" />}
+              {selected && hasDetail && (
                 // 卡片本身就是一顆 button，裡面不能再放 button，所以用 span
                 <span
                   role="button"

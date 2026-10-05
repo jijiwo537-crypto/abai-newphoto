@@ -19,6 +19,14 @@ test('fusion expands only interior edges continuously and keeps outer edges fixe
     if(t>=0&&t<=1)assert.ok(Math.abs((1-smooth)+smooth-1)<1e-12);
   }
 });
+test('non-fusion GPU photos keep exact cell edges without a feather band',()=>{
+ const rects=[{x:0,y:0,w:.5,h:1},{x:.5,y:0,w:.5,h:1}];
+ for(let i=0;i<2;i++){
+  const g=seamGeometry(rects,i,900,600,-1);
+  assert.equal(g.ex,i*450);assert.equal(g.ey,0);assert.equal(g.ew,450);assert.equal(g.eh,600);
+  assert.equal(g.left+g.right+g.top+g.bottom,0);
+ }
+});
 test('preview/export inverse crop matches arbitrary rotation, offsets, opacity and source sizes',()=>{
   const rects=[{x:0,y:0,w:1,h:.5},{x:0,y:.5,w:.5,h:.5},{x:.5,y:.5,w:.5,h:.5}];
   for(const amount of [0,20,50,100])for(const rotation of [0,15,90,123,180,270])for(const index of [0,1,2]){
@@ -40,13 +48,13 @@ test('fusion gesture bypasses full editor state and keeps pixels at fixed full r
   assert.match(component,/\[sources,cells,rects,w,h,live,contextRevision,width,height,scale,enabled\]/);
   assert.match(component,/window.devicePixelRatio\|\|1/);
   assert.match(component,/data-seam-probe/);
-  assert.match(gpu,/if\(!tex\)/);assert.match(gpu,/gl.texImage2D/);
+  assert.match(gpu,/if\(!tex\|\|this\.revisions\.get\(image\)!==revision\)/);assert.match(gpu,/gl.texImage2D/);
   assert.match(gpu,/gl.LINEAR_MIPMAP_LINEAR/);assert.match(gpu,/gl.generateMipmap/);
   assert.match(gpu,/uniform vec4/);assert.match(gpu,/smoothstep/);
   assert.doesNotMatch(gpu,/toBlob|toDataURL/);
   // WebKit's profile conversion happens once on texture creation, not while
   // adjusting fusion or redrawing an already-resident source.
-  assert.match(gpu,/if\(!tex\)[\s\S]*getImageData[\s\S]*this.textures.set/);
+  assert.match(gpu,/if\(!tex\|\|this\.revisions\.get\(image\)!==revision\)[\s\S]*getImageData[\s\S]*this.textures.set/);
 });
 
 test('selected disabled layouts retain prepared GPU resources without painting hidden frames',()=>{

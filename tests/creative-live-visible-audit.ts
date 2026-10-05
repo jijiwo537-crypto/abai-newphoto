@@ -1,3 +1,5 @@
+import {get2dWide} from '../utils/colorSpace';
+import {copySeamPreviewPixels} from '../utils/seamlessPreview';
 // Verify presented pixels during pointer-held edits, not just committed state.
 void(async()=>{
  const tick=()=>new Promise(r=>requestAnimationFrame(r));
@@ -16,16 +18,34 @@ void(async()=>{
  :{x:Math.round(64*geometry.ix/geometry.cw),y:Math.round(64*geometry.iy/geometry.ch),w:Math.max(1,Math.floor(64*geometry.iw/geometry.cw)),h:Math.max(1,Math.floor(64*geometry.ih/geometry.ch))};
  const extract=(g:CanvasRenderingContext2D)=>g.getImageData(roi.x,roi.y,roi.w,roi.h).data;
  const pixels=()=>{
-  const cv=document.createElement('canvas');cv.width=64;cv.height=64;const g=cv.getContext('2d')!;
+  const cv=document.createElement('canvas');cv.width=64;cv.height=64;const g=get2dWide(cv)!;
   // Reconstruct the displayed sibling order. A stale overlay hiding a freshly
   // painted main canvas must fail this audit.
   for(const source of canvas.parentElement!.querySelectorAll('canvas')){
    if(getComputedStyle(source).display==='none'||!source.width||!source.height)continue;
-   g.drawImage(source,0,0,64,64);
+   const gl=source.getContext('webgl2')||source.getContext('webgl');
+   if(gl){
+    if(source.dataset.creativeSeamPresentation){
+     const copy=document.createElement('canvas');copy.width=source.width;copy.height=source.height;
+     const bounds=source.getBoundingClientRect();
+     copySeamPreviewPixels(source,get2dWide(copy)!);g.drawImage(copy,64*(bounds.left-rect.left)/rect.width,64*(bounds.top-rect.top)/rect.height,64*bounds.width/rect.width,64*bounds.height/rect.height);copy.width=copy.height=1;continue;
+    }
+    const bytes=new Uint8Array(source.width*source.height*4),flipped=new Uint8ClampedArray(bytes.length);
+    gl.readPixels(0,0,source.width,source.height,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
+    for(let y=0;y<source.height;y++)flipped.set(bytes.subarray(y*source.width*4,(y+1)*source.width*4),(source.height-1-y)*source.width*4);
+    const copy=document.createElement('canvas');copy.width=source.width;copy.height=source.height;
+    get2dWide(copy)!.putImageData(new ImageData(flipped,source.width,source.height,{colorSpace:(gl as any).drawingBufferColorSpace==='display-p3'?'display-p3':'srgb'}),0,0);
+    g.drawImage(copy,0,0,64,64);copy.width=copy.height=1;
+   }else g.drawImage(source,0,0,64,64);
   }
   return extract(g);
  };
  const difference=(a:Uint8ClampedArray,b:Uint8ClampedArray)=>a.reduce((n,v,i)=>n+Math.abs(v-b[i]),0)/a.length;
+ if(new URLSearchParams(location.search).has('seamLive')){
+  const seam=document.querySelector<HTMLInputElement>('[data-creative-seamless] input')!;
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!.call(seam,'35');
+  seam.dispatchEvent(new Event('input',{bubbles:true}));await wait(30);
+ }
  pointer('pointerdown',4101);pointer('pointerup',4101);await wait();
  document.querySelector<HTMLButtonElement>('[data-creative-tab="objedit"]')!.click();await wait();
  [...document.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent?.trim().endsWith('特效'))!.click();await wait();
@@ -57,10 +77,10 @@ void(async()=>{
  const firstChange=difference(original,pixels());
  check('first effect changes presented photograph while selected',firstChange>.1,{difference:firstChange});
  const reference=document.createElement('canvas');
- document.dispatchEvent(new CustomEvent('abai:qa-preview-reference',{detail:{canvas:reference}}));
+ document.dispatchEvent(new CustomEvent('abai:qa-preview-reference',{detail:{canvas:reference,export:new URLSearchParams(location.search).has('seamLive')}}));
  const sample=document.createElement('canvas');sample.width=sample.height=64;
- sample.getContext('2d')!.drawImage(reference,0,0,64,64);
- const referenceDifference=difference(extract(sample.getContext('2d')!),pixels());
+ get2dWide(sample)!.drawImage(reference,0,0,64,64);
+ const referenceDifference=difference(extract(get2dWide(sample)!),pixels());
  // Native WebKit's P3 GPU-to-2D copy introduces <1.2% channel conversion
  // error; a frozen/missing effect fails the independent live-change checks.
  check('selected GPU result matches full renderer',referenceDifference<3,{difference:referenceDifference,tolerance:3});
@@ -72,6 +92,8 @@ void(async()=>{
  pointer('pointerdown',4102,q,input);set.call(input,'0');input.dispatchEvent(new Event('input',{bubbles:true}));await wait(8);
  const during=pixels();check('effect pixels change before release',difference(before,during)>1,{difference:difference(before,during)});
  pointer('pointerup',4102,q,input);await wait(5);
+ const zeroCard=document.querySelector<HTMLButtonElement>('[data-fx-card="fxLowfi"]')!;
+ check('zero strength keeps effect selected and editable',zeroCard.getAttribute('aria-pressed')==='true'&&!!zeroCard.querySelector('[aria-label="調整細項"]'));
  pointer('pointerdown',4104,{x:p.x-25,y:p.y});pointer('pointerdown',4105,{x:p.x+25,y:p.y});
  pointer('pointermove',4104,{x:p.x-55,y:p.y});pointer('pointermove',4105,{x:p.x+55,y:p.y});await wait(8);
  pointer('pointerup',4104,{x:p.x-55,y:p.y});pointer('pointerup',4105,{x:p.x+55,y:p.y});await wait();
