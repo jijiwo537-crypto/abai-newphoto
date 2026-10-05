@@ -24,13 +24,34 @@ export function SeamlessAmountSlider({ previewId, value, onCommit }: { previewId
 }
 
 export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, rects, width, height, scale = 1, amount, revision }: { previewId?: string; enabled?: boolean; cells: (SeamPhoto&{id?:string})[]; rects: SeamRect[]; width: number; height: number; scale?: number; amount: number; revision: number }) {
-  const [cells,setCells]=useState(inputCells);
-  useLayoutEffect(()=>setCells(inputCells),[inputCells]);
-  useEffect(()=>{const clean=inputCells.filter(c=>c.id).map(c=>subscribeCellPhoto(c.id!,fx=>setCells(prev=>prev.map(p=>p.id===c.id?{...p,fx}:p))));return()=>clean.forEach(f=>f());},[inputCells.map(c=>c.id).join('|')]);
+  const cells=inputCells;
+  const cellsRef=useRef(cells);
+  useLayoutEffect(()=>{cellsRef.current=cells;},[cells]);
+  const sourcesRef=useRef<SeamSource[]|null>(null),originals=useRef(new Map<string,SeamSource>());
+  const liveFrame=useRef(0),dirtyPhotos=useRef(new Set<string>());
   const canvas=useRef<HTMLCanvasElement>(null);
   const effectSurfaces=useRef(new Map<string,HTMLCanvasElement>());
+  useEffect(()=>{const urls=new Set(cells.map(c=>c.url));for(const key of originals.current.keys())if(!urls.has(key))originals.current.delete(key);const ids=new Set(cells.map((c,i)=>c.id||String(i)));for(const [id,cv] of effectSurfaces.current)if(!ids.has(id)){releasePhotoFxSurface(cv);cv.width=cv.height=1;effectSurfaces.current.delete(id);}},[cells]);
   useEffect(()=>()=>{for(const cv of effectSurfaces.current.values()){releasePhotoFxSurface(cv);cv.width=cv.height=1;}effectSurfaces.current.clear();},[]);
   const svg=useRef<SVGSVGElement>(null),paintCurrent=useRef<()=>void>(()=>{}),warmKey=useRef('');
+  useEffect(()=>{
+    const clean=cells.filter(c=>c.id).map(c=>subscribeCellPhoto(c.id!,fx=>{
+      cellsRef.current=cellsRef.current.map(p=>p.id===c.id?{...p,fx}:p);dirtyPhotos.current.add(c.id!);
+      if(liveFrame.current)return;
+      liveFrame.current=requestAnimationFrame(()=>{
+        liveFrame.current=0;const current=sourcesRef.current;if(!current)return;
+        sourcesRef.current=current.map((source,i)=>{
+          const photo=cellsRef.current[i];if(!photo?.id||!dirtyPhotos.current.has(photo.id))return source;
+          const original=originals.current.get(photo.url);if(!original)return source;
+          if(!hasPhotoFx(photo.fx))return original;
+          let input=effectSurfaces.current.get(photo.id);if(!input){input=document.createElement('canvas');effectSurfaces.current.set(photo.id,input);}
+          const image=applyPhotoFx(original.image,original.width,original.height,photo.fx!,{cacheSource:true,gpuSurface:true,out:input});
+          image.dataset.seamRevision=JSON.stringify([photo.url,photo.fx,revision]);return {...original,image};
+        });dirtyPhotos.current.clear();paintCurrent.current();
+      });
+    }));
+    return()=>{clean.forEach(f=>f());cancelAnimationFrame(liveFrame.current);liveFrame.current=0;dirtyPhotos.current.clear();};
+  },[cells.map(c=>c.id).join('|'),revision]);
   const [ready,setReady]=useState(false),[prepared,setPrepared]=useState<{key:string;sources:SeamSource[]}|null>(null),[live,setLive]=useState(amount);
   const [contextRevision,restoreContext]=useState(0);
   useEffect(()=>{
@@ -53,20 +74,20 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
     let cancelled=false;
     Promise.all(cells.map(async(c,i)=>{
       const original=await prepareSeamSource({...c,fx:undefined},revision);
+      if(!cancelled&&original)originals.current.set(c.url,original);
       if(cancelled||!original||!hasPhotoFx(c.fx))return original;
       const id=c.id||String(i);let input=effectSurfaces.current.get(id);
       if(!input){input=document.createElement('canvas');effectSurfaces.current.set(id,input);}
       const image=applyPhotoFx(original.image,original.width,original.height,c.fx!,{cacheSource:true,gpuSurface:true,out:input});
       image.dataset.seamRevision=JSON.stringify([c.url,c.fx,revision]);
       return {...original,image};
-    })).then(sources=>{if(!cancelled)setPrepared({key:sourceKey,sources});}).catch(error=>{if(!cancelled)console.error('Seamless sources:',error);});
+    })).then(sources=>{if(!cancelled){sourcesRef.current=sources;setPrepared({key:sourceKey,sources});}}).catch(error=>{if(!cancelled)console.error('Seamless sources:',error);});
     return()=>{cancelled=true;};
   },[sourceKey,revision]);
   const aspect=Math.round(width/Math.max(.000001,height)*1e8)/1e8;
   // Keep the last complete frame visible until the next complete source set
   // is ready; parameter input must not expose the original/blank fallback.
   const sources=prepared?.sources||null;
-  const cellsRef=useRef(cells);cellsRef.current=cells;
   const placementKey=JSON.stringify(cells.map(c=>[c.zoom,c.offsetX,c.offsetY,c.rotation,c.opacity]));
   // Retain the established source-resolution local plane. Zoom never changes
   // the original textures; visible pixels are sampled at constant screen density.
@@ -98,7 +119,7 @@ export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, re
       element.style.transform=`matrix(${surface.transform.join(',')})`;
       element.style.clipPath=`polygon(${surface.clip})`;
       root.dataset.rasterView=JSON.stringify(surface.rasterView);
-      try{drawSeamPreview(element,cellsRef.current,rects,sources,live,surface.view);warmKey.current=key;setReady(true);element.dataset.paintCount=String(Number(element.dataset.paintCount||0)+1);}
+      try{drawSeamPreview(element,cellsRef.current,rects,sourcesRef.current||sources,live,surface.view);warmKey.current=key;setReady(true);element.dataset.paintCount=String(Number(element.dataset.paintCount||0)+1);}
       catch(error){setReady(false);console.error('Seamless GPU:',error);}
     };
     paintCurrent.current=paint;paint();

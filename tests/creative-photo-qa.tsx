@@ -22,7 +22,9 @@ for(const [i,color] of fixtureColors.entries()){
 }
 const floating=params.has('swaps')?[{id:'qa-float-a',type:'image',src:URL.createObjectURL(files[9]),x:500,y:220,w:120,h:90,rot:0,opacity:100},{id:'qa-float-b',type:'image',src:URL.createObjectURL(files[1]),x:680,y:350,w:120,h:90,rot:0,opacity:100}]:[];
 const glowKinds=params.has('solid')?['circle','square','rounded','star','star-rounded','star-double','heart','diamond','square-star-dual','square-heart-dual','square-star-cutout','square-heart-cutout']:['grid-h','grid-cross','grid-frame','grid-dots-staggered','grid-dots','grid-dots-fade','grid-dots-fade-diagonal','grid-diag','grid-diag-cross','grid-plus','grid-orbits','grid-chevron'];
-createRoot(document.getElementById('root')!).render(params.has('snapshotAudit')
+createRoot(document.getElementById('root')!).render(params.has('occupancyLiveAudit')
+ ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={params.has('single')?[]:files.slice(1,3)} initialState={{layout:params.has('around')?'mask-around':'mask-right',canvasRatio:'3:2',holeCount:0}}/>
+ : params.has('snapshotAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1,3)} initialState={{layout:'mask-right',canvasRatio:'3:2',holeCount:0,maskColor:'#000000',objects:[{id:'affine-marker',type:'shape',kind:'rect',filled:true,color:'#00FF00',x:420,y:250,w:100,h:100,rot:0}]}}/>
  : params.has('glowAudit')
  ? <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialState={{layout:'image-full',canvasRatio:'3:2',holeCount:0,objects:glowKinds.map((kind,i)=>({id:`glow-${i}`,type:'shape',kind,filled:params.has('solid')||kind.includes('dots'),color:'#00ffff',glow:0,x:30+i%4*210,y:30+Math.floor(i/4)*180,w:140,h:120,lineW:6,rot:0}))}}/>
@@ -59,7 +61,8 @@ createRoot(document.getElementById('root')!).render(params.has('snapshotAudit')
  : params.has('ig')
  ? <IgPreview shots={files.slice(0,2).map(f=>URL.createObjectURL(f))} frame={{w:3,h:2}} pageCount={2} faces={[]} onClose={()=>{}}/>
  : <CollageTool onHome={()=>{}} onImportNew={()=>{}} initialFile={files[0]} initialExtras={files.slice(1)} initialState={params.has('direction')?{layout:'image-full',canvasRatio:'3:2',holeCount:4,holeSize:15,maskColor:'#FFFFFF',holes:[{id:'right',x:700,y:100,side:'image'},{id:'left',x:100,y:200,side:'image'},{id:'middle',x:400,y:500,side:'image'},{id:'absent',x:-200,y:200,side:'mask'}]}:params.has('audit')||params.has('four')?{holeCount:0,layout:'image-full',canvasRatio:'3:2',objects:floating}:{holeCount:0}}/>);
-if(params.has('snapshotAudit'))void import('./creative-snapshot-audit');
+if(params.has('occupancyLiveAudit'))void import('./creative-occupancy-live-audit');
+else if(params.has('snapshotAudit'))void import('./creative-snapshot-audit');
 else if(params.has('glowAudit'))void import('./creative-grid-glow-audit');
 else if(params.has('textWarpAudit'))void import('./creative-text-warp-audit');
 else if(params.has('edgeAudit'))void import('./creative-photo-edge-audit');

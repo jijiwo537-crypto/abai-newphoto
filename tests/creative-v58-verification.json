@@ -1,0 +1,23 @@
+{
+  "scope": "Live occupancy geometry and seamless cell editing",
+  "environment": "Single existing in-app browser tab; not an iPhone device performance certification",
+  "occupancy": {
+    "singlePhotoSideMask": {"values": [5,80,20,60], "heldVsReleasedMeanPixelDifference": [0,0,0,0]},
+    "threePhotoSideMask": {"values": [5,80,20,60], "heldVsReleasedMeanPixelDifference": [0,0,0,0]},
+    "threePhotoAroundMask": {"values": [5,80,20,60], "heldVsReleasedMeanPixelDifference": [0,0,0,0]},
+    "implementation": "Live and committed photo crop share reframeBasePhoto; live object and pattern positions use the committed geometry mapping"
+  },
+  "seamlessCellEditing": {
+    "selectionGeometryDifference": 0,
+    "selectionPixelDifference": 0,
+    "heldEffectPixelDifference": 0.7847222222222222,
+    "releasePixelDifference": 0,
+    "transparentInteriorPixels": 0,
+    "persistentSurface": true,
+    "fps": 42.52303330970941,
+    "performanceTargetMet": false,
+    "note": "Full-source effect processing and seamless texture transfer still need performance work. An experimental texSubImage2D change regressed throughput and was removed."
+  },
+  "regressionTests": {"passed": 33, "failed": 0},
+  "quality": "No gesture-specific reduction in source resolution or sampling quality"
+}

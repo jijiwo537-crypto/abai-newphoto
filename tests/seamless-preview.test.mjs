@@ -45,7 +45,9 @@ test('fusion gesture bypasses full editor state and keeps pixels at fixed full r
   assert.match(component,/onChange=\{e=>update/);assert.match(component,/onPointerUp=\{commit\}/);
   const input=component.slice(component.indexOf('const update='),component.indexOf('const commit='));
   assert.doesNotMatch(input,/onCommit/);assert.match(input,/requestAnimationFrame/);
-  assert.match(component,/\[sources,cells,rects,w,h,live,contextRevision,width,height,scale,enabled\]/);
+  assert.match(component,/\[sources,placementKey,rects,w,h,live,contextRevision,width,height,scale,enabled\]/);
+  assert.match(component,/const placementKey=JSON.stringify\(cells.map\(c=>\[c.zoom,c.offsetX,c.offsetY,c.rotation,c.opacity\]\)\)/);
+  assert.match(component,/drawSeamPreview\(element,cellsRef.current,rects,sourcesRef.current\|\|sources/);
   assert.match(component,/window.devicePixelRatio\|\|1/);
   assert.match(component,/data-seam-probe/);
   assert.match(gpu,/if\(!tex\|\|this\.revisions\.get\(image\)!==revision\)/);assert.match(gpu,/gl.texImage2D/);

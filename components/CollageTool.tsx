@@ -1,5 +1,6 @@
 
 import { canvasToUrl, revokeUrl } from '../utils/blobUrl';
+import { reframeBasePhoto } from '../utils/reframeBasePhoto';
 import {MASK_SHAPE_ITEMS,isBackdropMask,maskDefaults,drawBackdropMask,drawBackdropMaskBatch,disposeBackdropMasks,type BackdropMaskLayer,type BackdropPhotoLayer} from '../utils/backdropMasks';
 import {BackdropMaskControls} from './BackdropMaskControls';
 import { previewViewport } from '../utils/previewViewport';
@@ -3298,28 +3299,8 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
 
     /* 底圖保留原本看向的焦點；若新照片框較大，只補到剛好鋪滿，絕不露黑邊。 */
-    const oldK = prev.layout === AROUND
-      ? Math.max(prev.iw / Math.max(1, imageState.baseW), prev.ih / Math.max(1, imageState.baseH)) : 1;
-    const newK = layout === AROUND
-      ? Math.max(o.iw / Math.max(1, imageState.baseW), o.ih / Math.max(1, imageState.baseH)) : 1;
-    setImageTransform(t => {
-      if (photoRegionRef.current && (photoRegionRef.current.multi || photoRegionRef.current.photos.length > 1)) {
-        return { x: t.x * oldK / prev.iw * o.iw / newK,
-          y: t.y * oldK / prev.ih * o.ih / newK,
-          w: t.w * oldK / prev.iw * o.iw / newK,
-          h: t.h * oldK / prev.ih * o.ih / newK };
-      }
-      let w = t.w, h = t.h;
-      const fx = (prev.iw / 2 - t.x * oldK) / Math.max(1, t.w * oldK);
-      const fy = (prev.ih / 2 - t.y * oldK) / Math.max(1, t.h * oldK);
-      const cover = Math.max(1, o.iw / Math.max(1, w * newK), o.ih / Math.max(1, h * newK));
-      w *= cover; h *= cover;
-      let dx = o.iw / 2 - fx * w * newK;
-      let dy = o.ih / 2 - fy * h * newK;
-      dx = Math.min(0, Math.max(o.iw - w * newK, dx));
-      dy = Math.min(0, Math.max(o.ih - h * newK, dy));
-      return { x: dx / newK, y: dy / newK, w, h };
-    });
+    setImageTransform(t => reframeBasePhoto(t,prev,{...o,layout},imageState.baseW,imageState.baseH,
+      !!photoRegionRef.current&&(!!photoRegionRef.current.multi||photoRegionRef.current.photos.length>1),AROUND));
   }, [getLayoutOffsets]);
 
   /* 圖片與遮罩的交界：並排的四種各有一條，四周包圍是原圖那個框的四條邊。 */
@@ -4964,10 +4945,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const pinchBackingCapacity=useRef<{w:number;h:number}|null>(null);
   const linkGlowTilesRef = useRef<LinkGlowTiles|null>(null);
   useEffect(()=>()=>linkGlowTilesRef.current?.dispose(),[]);
+  const committedImageTransform=imageTransform,committedHoles=holes;
   const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1, previewCapture=false) => {
     const maskScale=liveMaskScale.current??maskScaleValue.current;
     const photoRegion=photoRegionRef.current;
-    const objects=objectsRef.current;
+    let objects=objectsRef.current;
+    let imageTransform=committedImageTransform,holes=committedHoles;
+    if(liveMaskScale.current!==null&&imageState){
+      const {baseW,baseH}=imageState;
+      const prev=layoutGeometry(layout,baseW,baseH,maskScaleValue.current,canvasRatio);
+      const next=layoutGeometry(layout,baseW,baseH,maskScale,canvasRatio);
+      imageTransform=reframeBasePhoto(imageTransform,{...prev,layout},{...next,layout},baseW,baseH,
+        !!photoRegion&&(!!photoRegion.multi||photoRegion.photos.length>1),AROUND);
+      objects=objects.map(ob=>({...ob,x:Math.min(Math.max((ob.x+ob.w/2)*next.cw/prev.cw,0),next.cw)-ob.w/2,y:Math.min(Math.max((ob.y+ob.h/2)*next.ch/prev.ch,0),next.ch)-ob.h/2}));
+      const oldW=layout===AROUND?prev.cw:prev.iw,oldH=layout===AROUND?prev.ch:prev.ih;
+      const newW=layout===AROUND?next.cw:next.iw,newH=layout===AROUND?next.ch:next.ih;
+      holes=holes.map(h=>({...h,x:h.x/oldW*newW,y:h.y/oldH*newH}));
+    }
     const debugPaintStart = import.meta.env.DEV ? performance.now() : 0;
     const debugSections:Record<string,number>={};let debugPrevious=debugPaintStart;
     const debugSection=(name:string)=>{if(import.meta.env.DEV){const now=performance.now();debugSections[name]=now-debugPrevious;debugPrevious=now;}};
