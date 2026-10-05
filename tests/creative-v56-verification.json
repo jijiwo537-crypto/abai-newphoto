@@ -1,0 +1,28 @@
+{
+  "version": "v56",
+  "date": "2026-10-06",
+  "environment": "One in-app browser tab, 402x874 viewport. Simulator was not running; these are not physical iPhone measurements.",
+  "changes": [
+    "Immutable maximum-preview-density static scene tiles share one parent mapping; no per-object rerasterization during static preview zoom.",
+    "Sixteen-pixel source guards and outer-edge extrusion prevent transparent sampling at photo/mask/page boundaries. Cache is capped at 256 MiB and never silently downsampled.",
+    "Photo-edit GPU surfaces are hidden when leaving base-photo editing so stale complete scenes cannot cover live shape glow.",
+    "Remove shape opacity controls in both editors without rewriting existing saved object alpha.",
+    "Selection bounds and live line/grid painters use identical continuous stroke-width geometry."
+  ],
+  "results": {
+    "focusedNodeTests": {"passed": 20, "failed": 0},
+    "snapshotZoom": {"passed": true, "frames": 100, "allFramesUseSnapshot": true, "whiteOrTransparentCracks": 0, "p95PaintMs": 0.9, "maximumPaintMs": 1.3, "maximumNormalizedInkBoundSpread": 0.001386},
+    "gridGlowAndHandles": {"passed": true, "shapes": 12, "checks": 25, "glowVerifiedBeforeRelease": true, "thicknessSteps": 51},
+    "solidAndCompositeGlow": {"passed": true, "shapes": 12, "checks": 24, "glowVerifiedBeforeRelease": true},
+    "basePhotoEditingRegression": {"runtimeErrors": 0, "sliderUpdates": 300, "maximumFrameIntervalMs": 19.1, "intervalsOver50Ms": 0, "effects": ["filter", "fxMosaic", "fxGlass", "fxExposureSpill", "fxLowfi"]},
+    "productionBuild": "passed",
+    "observedTaskRelatedRSSGiB": 2.29
+  },
+  "limitations": [
+    "Raster ink-bound samples fluctuate by roughly one sampling pixel; the immutable scene transform itself is shared exactly. This is not a claim of identical pixel colours at different zooms.",
+    "A legacy strict boundary-colour test rejects legitimate filtered transitions from 24-gray photos to a black mask. The new whole-scene test checks opacity and foreign colours instead, excluding only the saturated green marker's Display-P3 anti-aliased rim.",
+    "Snapshots apply to static, unselected scenes. Editing, animations and video retain the live painter; exports retain their original rendering route.",
+    "Preparing a new scene snapshot is bounded background work, not a guarantee of zero work immediately after every edit or of 60 fps on every iPhone.",
+    "Process RSS is an observation, not control over all macOS applications or compressed memory."
+  ]
+}

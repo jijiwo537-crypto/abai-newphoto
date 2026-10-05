@@ -2282,14 +2282,12 @@ export const ShapeEditorPanel: React.FC<{
                   onPick:c=>onChange({shapeInnerColor:c})})} />}
             </div>
           )}
-          {hasWidth && <div className="grid grid-cols-2 gap-5 px-2">
+          {hasWidth && <div className={`grid ${hasDash ? 'grid-cols-2' : 'grid-cols-1'} gap-5 px-2`}>
             {isGridShape ? slider(GRID_DOT_KINDS.has(layer.shape!) ? '大小' : '粗細', Math.round(((layer.shapeLineW ?? 6) - 6) / 12 * 100), 0, 100,
               v => onChange({ shapeLineW: 6 + v * .12 }))
               : slider('粗細', Math.round((layer.shapeLineW ?? 6) * 10), 1, 100, v => onChange({ shapeLineW: v / 10 }))}
-            {hasDash ? slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))
-              : slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
+            {hasDash && slider('虛線', layer.shapeDash || 0, 0, 100, v => onChange({ shapeDash: v }))}
           </div>}
-          {hasDash && <div className="px-2">{slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}</div>}
           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的（點一下才攤開色票） */}
           <div className="flex items-center gap-3 px-2 order-1 w-full">
             <div className="flex-1 min-w-0">
@@ -2320,8 +2318,6 @@ export const ShapeEditorPanel: React.FC<{
           {isDoubleContour && (
             <div className="px-2 order-2 w-full">
               {slider('外框粗細', layer.shapeOutlineWidth ?? 0, 0, 100, v => onChange({ shapeOutlineWidth: v }))}
-              <div className="h-3.5" />
-              {slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
             </div>
           )}
           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
@@ -2418,9 +2414,6 @@ export const ShapeEditorPanel: React.FC<{
           </div>
             );
           })()}
-          {!isDoubleContour && !hasWidth && <div className="px-2 order-4 w-full">
-            {slider('透明度', layer.opacity ?? 100, 0, 100, v => onChange({ opacity: v }))}
-          </div>}
           {canFeather && (
             <div className="px-2 order-5 w-full">
               {slider('羽化', layer.shapeFeather || 0, 0, 100, v => onChange({ shapeFeather: v }))}

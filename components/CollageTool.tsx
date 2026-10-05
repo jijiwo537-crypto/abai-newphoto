@@ -17,6 +17,7 @@ import { patternEntranceRanks, type PatternDirection } from '../utils/patternEnt
 import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import { exportHeic } from '../utils/heicExport';
 import { CreativeSeamless } from '../utils/creativeSeamless';
+import { StableSceneTiles, type SceneWindow } from '../utils/stableSceneTiles';
 import { scenePixelEdge } from '../utils/scenePixelGrid';
 import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
 import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCountForLayout} from '../utils/creativePhotoLayout';
@@ -457,7 +458,11 @@ const objectSelectionInk = (o: any, scale: number, gap: number) => {
     if (contour) return { x:contour.x-gap, y:contour.y-gap, w:contour.w+gap*2, h:contour.h+gap*2 };
     const fit = SHAPE_FIT[o.kind] || [0, 0, 1, 1];
     const unit = ((o as any).lineBase || Math.max(o.w, o.h)) * scale / 160;
-    const line = Math.max(.4, (o.lineW ?? 6) * unit);
+    // The frame follows the same continuous stroke geometry as the painter.
+    // In particular grids use a 1.5-unit base stroke, not a six-unit stroke.
+    const line = GRID_SHAPE_KINDS.has(o.kind)
+      ? 1.5 * unit * Math.max(1, Math.min(3, (o.lineW ?? 6) / 6))
+      : Math.max(.4 * scale, (o.lineW ?? 6) * unit);
     const edge = gap + ((o.filled && o.kind !== 'line') ? 0 : line / 2) + (o.strokeW || 0) * unit;
     return {
       x: bw * fit[0] - edge, y: bh * fit[1] - edge,
@@ -4946,6 +4951,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const backdropPrefix=useRef<{key:string;canvas:HTMLCanvasElement}|null>(null);
   useEffect(()=>()=>{if(backdropPrefix.current)backdropPrefix.current.canvas.width=backdropPrefix.current.canvas.height=1;},[]);
   const forceFullPreviewRef = useRef(false);
+  const stableScene=useRef(new StableSceneTiles());
+  const sceneTileWindow=useRef<SceneWindow|null>(null);
+  const stableSceneKey=JSON.stringify([backdropSceneFingerprint,objects,photoRegion,lutRevision],compactSceneValue);
+  const stableSceneKeyRef=useRef(stableSceneKey);stableSceneKeyRef.current=stableSceneKey;
+  useEffect(()=>()=>stableScene.current.dispose(),[]);
   const pinchBackingCapacity=useRef<{w:number;h:number}|null>(null);
   const linkGlowTilesRef = useRef<LinkGlowTiles|null>(null);
   useEffect(()=>()=>linkGlowTilesRef.current?.dispose(),[]);
@@ -4969,7 +4979,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       regionColour.current?.hide();
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
     }
-    if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop&&!regionHold.current?.active&&!swapPaintForced.current){
+    const basePhotoEditing=activeTab==='objedit'&&!selectedObj&&(baseSelected||selectedRegionPhotoRef.current!==null);
+    // A resident photo-edit surface contains the old complete scene. It must
+    // never obscure subsequent live object/glow painting after leaving editing.
+    if(targetCanvas===canvasRef.current&&!basePhotoEditing&&!regionPreflight.current){
+      regionColour.current?.hide();
+      if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
+    }
+    if(targetCanvas===canvasRef.current&&!previewCapture&&!hasBackdrop&&!regionHold.current?.active&&!swapPaintForced.current&&(basePhotoEditing||regionPreflight.current)){
       const original=photo&&decodedRegionPhotos.current.get(photo.src);
       const sceneGeometryGesture=!!objDragRef.current||!!objPinchRef.current||!!objStretchRef.current||!!baseDragRef.current||!!basePinchRef.current||!!viewPinchRef.current||performance.now()<wheelUntilRef.current;
       if((regionSpatialActive.current||regionPreflight.current)&&original&&(supportsResidentPhotoEffects(photo?.fx)||regionPreflight.current)&&!sceneGeometryGesture&&!photoRegion?.seamless&&!animRef.current&&targetCanvas.width*targetCanvas.height<=4_000_000&&!objectsRef.current.some(v=>isVideoEl(v.img))){
@@ -5129,17 +5146,17 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Raster dimensions are integers, scene dimensions are continuous. Map
     // them once for every layer; do not let each photo inherit a changing
     // fractional CSS stretch when the preview crosses a backing-size step.
-    const rasterX=isMain&&!previewCapture?tW/offs.cw:1;
-    const rasterY=isMain&&!previewCapture?tH/offs.ch:1;
+    const rasterX=isMain?tW/offs.cw:1;
+    const rasterY=isMain?tH/offs.ch:1;
     // Static layers use full-scene coordinates but rasterize only the viewport.
     // Animations and exports retain their existing full-frame renderer.
     const canWindow = isMain && !forceFullPreviewRef.current && !animRef.current
       && !motionLockRef.current && stageRef.current && uiRect.width > 0;
-    const vp = canWindow ? previewViewport(tW,tH,uiRect,stageRef.current!.getBoundingClientRect()) : {x:0,y:0,w:tW,h:tH};
+    const vp = sceneTileWindow.current || (canWindow ? previewViewport(tW,tH,uiRect,stageRef.current!.getBoundingClientRect()) : {x:0,y:0,w:tW,h:tH});
     const windowed = vp.x!==0 || vp.y!==0 || vp.w!==tW || vp.h!==tH;
     // Reuse capacity while pinching, without changing the physical pixel/CSS
     // mapping. Spare backing pixels are cleared, so no scene can leak out.
-    const bucketed=isMain&&canWindow&&baseCssWRef.current>0&&(!!viewPinchRef.current||performance.now()<wheelUntilRef.current);
+    const bucketed=isMain&&!previewCapture&&canWindow&&baseCssWRef.current>0&&(!!viewPinchRef.current||performance.now()<wheelUntilRef.current);
     let backingW=bucketed?Math.ceil(vp.w/256)*256:vp.w,backingH=bucketed?Math.ceil(vp.h/256)*256:vp.h;
     if(targetCanvas===canvasRef.current){
       if(bucketed){
@@ -5148,7 +5165,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         pinchBackingCapacity.current={w:backingW,h:backingH};
       }else pinchBackingCapacity.current=null;
     }
-    if(windowed && thumbRef.current){thumbRef.current.width=thumbRef.current.height=1;thumbRef.current=null;}
+    if(!previewCapture&&windowed && thumbRef.current){thumbRef.current.width=thumbRef.current.height=1;thumbRef.current=null;}
     if (isMain) {
       Object.assign(targetCanvas.style,windowed||bucketed
         ? {position:'absolute',left:`${vp.x/tW*100}%`,top:`${vp.y/tH*100}%`,width:`${backingW/tW*100}%`,height:`${backingH/tH*100}%`}
@@ -5170,10 +5187,23 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ctx.beginPath();ctx.rect(0,0,offs.cw,offs.ch);ctx.clip();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
+    const sceneIsStatic=!selectedObj&&!selectedTarget&&!baseSelected&&!animRef.current&&!motionTargetFlashRef.current&&!editingTextId&&!swapSource&&!regionSliderHeld.current&&!regionHold.current?.active
+      &&!objDragRef.current&&!objPinchRef.current&&!objStretchRef.current&&!baseDragRef.current&&!basePinchRef.current&&!interactionRef.current
+      &&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
+    // No source rasterization, shader upload, per-object rounding, or rebuilding
+    // at a new zoom. Every pixel uses the same immutable parent coordinate map.
+    const liveSceneKey=JSON.stringify([backdropSceneFingerprint,objects,photoRegion,lutRevision],compactSceneValue);
+    if(targetCanvas===canvasRef.current&&!previewCapture&&sceneIsStatic&&stableScene.current.paint(ctx,liveSceneKey,offs.cw,offs.ch)){
+      regionColour.current?.hide();if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
+      drawnScaleRef.current=s;lastMainDrawRef.current=performance.now();
+      if(import.meta.env.DEV){targetCanvas.dataset.sceneSnapshot='tiles';targetCanvas.dataset.paintCount=String(Number(targetCanvas.dataset.paintCount||0)+1);targetCanvas.dataset.paintMs=String(performance.now()-debugPaintStart);targetCanvas.dataset.viewport=JSON.stringify(vp);targetCanvas.dataset.fullSize=JSON.stringify([tW,tH]);}
+      return;
+    }
+    if(targetCanvas===canvasRef.current&&import.meta.env.DEV)targetCanvas.dataset.sceneSnapshot='live';
 
     const priorPatternPaint = lastPatternPaintRef.current;
     debugSection('geometry');
-    const canRetain = isMain && !windowed && !animRef.current && !motionTargetFlashRef.current && !hideChromeRef.current
+    const canRetain = isMain && !previewCapture && !windowed && !animRef.current && !motionTargetFlashRef.current && !hideChromeRef.current
       && linkMode === 'none' && glowIdle === 'none' && !guides.length
       && !isVideoEl(imageState.img) && !objects.some(o => isVideoEl(o.img)||isBackdropMask(o.kind));
     let dirtyPatternRect: {x:number;y:number;w:number;h:number}|null = null;
@@ -5227,7 +5257,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        所有「畫面座標 ↔ 畫布座標」的換算都要用這個，不能用 previewScale ——
        影片播放中會刻意畫得小一號（見影片那支迴圈），兩者就不一樣了，
        用錯的話點擊位置、拖曳、那排白色鍵全部會偏掉。 */
-    if (isMain) {
+    if (targetCanvas === canvasRef.current) {
       drawnScaleRef.current = renderScale;
       /* 主畫布這一格是什麼時候畫的。影片那支迴圈拿它當節拍器：
          拖物件、拉滑桿的時候 React 本來就在每一格重畫，那些重畫同樣會
@@ -6622,7 +6652,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const unit = ((o as any).lineBase || Math.max(o.w, o.h)) * s / 160;
         const lw = GRID_SHAPE_KINDS.has(o.kind)
           ? 1.5 * unit * Math.max(1, Math.min(3, (o.lineW ?? 6) / 6))
-          : Math.max(0.4, (o.lineW ?? 6) * unit);
+          : Math.max(0.4 * s, (o.lineW ?? 6) * unit);
         const col = o.color || SHAPE_DEFAULT_COLOR;
         const solid = o.filled && o.kind !== 'line';
         ctx.save();
@@ -7071,7 +7101,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // Reuse unchanged, unselected vector/text objects at their exact backing
         // resolution. The moving object remains live; exports and animations
         // always use the original painter. No lower-resolution interaction tier.
-        const eligible = isMain && !f && o.type !== 'image' && !isBackdropMask(o.kind) && o.id !== selectedObj
+        const eligible = isMain && !previewCapture && !f && o.type !== 'image' && !isBackdropMask(o.kind) && o.id !== selectedObj
           && o.id !== editingTextId && !motionTargetFlashRef.current;
         const tiles = staticObjectTilesRef.current;
         const cached = eligible ? tiles.get(o.id) : null;
@@ -7672,7 +7702,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        編輯都不會重畫 —— 開始時畫布上還留著上一版的字，跟輸入框疊成兩份；
        結束時畫布上那一份還是被跳過的，字就整個不見了。 */
   }, [imageState, photoRegion, swapSource, selectedRegionPhoto, activeTab, layout, canvasRatio, imageTransform, maskColor, maskImageState, maskTransform, patternType, dotColor, dotGap, dotSize, dotSquash,
-      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle, patternSceneIdentity,backdropSceneFingerprint]);
+      stripeN, stripeDir, stripeA, stripeB, holes, holeType, getHoleSize, customText, holeAngle, maskScale, isHoleFullyInsideMask, objects, shapeSel, shapeSel ? selectedObj : null, editingTextId, guides, tuningEdge, objDragging, objPinching, objStretching, fxCanvasOf, fxTick, linkMode, linkColor, glowMode, holeGlowColor, glowIdle, patternSceneIdentity,backdropSceneFingerprint,lutRevision,stableSceneKey]);
 
   /* ── 首頁的歷史紀錄 ────────────────────────────────────────────────
      離開創意拼圖時記一筆。key 用「這一次拼圖」的 id（從歷史紀錄點進來的話
@@ -8274,6 +8304,24 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(import.meta.env.DEV&&stageRef.current)stageRef.current.dataset.photoTransforms=JSON.stringify(photoRegionRef.current?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0})));
   };
   renderToCanvasRef.current = renderToCanvas;
+  useEffect(()=>{
+    if(!imageState||stableScene.current.key===stableSceneKey)return;
+    let cancelled=false;
+    const valid=()=>!cancelled&&stableSceneKeyRef.current===stableSceneKey&&!animRef.current
+      &&!activePointers.current.size&&!regionSliderHeld.current&&!regionHold.current?.active
+      &&!editingTextId&&!swapSource&&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
+    const timer=window.setTimeout(()=>{
+      if(!valid())return;
+      const scale=maxPreviewScale();
+      const g=layoutGeometry(layout,imageState.baseW*scale,imageState.baseH*scale,maskScale,canvasRatio);
+      void stableScene.current.prepare(stableSceneKey,Math.floor(g.cw),Math.floor(g.ch),scale,(tile,v)=>{
+        const prior=hideChromeRef.current;
+        try{sceneTileWindow.current=v;hideChromeRef.current=true;renderToCanvasRef.current(tile,scale,true);}
+        finally{sceneTileWindow.current=null;hideChromeRef.current=prior;lastPatternPaintRef.current=null;}
+      },valid).then(ready=>{if(import.meta.env.DEV&&canvasRef.current)canvasRef.current.dataset.scenePreparation=stableScene.current.status;if(ready&&valid())regionPaintRef.current();});
+    },240);
+    return()=>{cancelled=true;window.clearTimeout(timer);};
+  },[stableSceneKey,imageState,layout,maskScale,canvasRatio,maxPreviewScale,viewT,editingTextId,swapSource,activeTab,objDragging,objPinching,objStretching]);
   const regionShadersPrimed=useRef(false);
   useEffect(()=>{
     if(!imageState||!photoRegion?.photos.length||regionShadersPrimed.current)return;
@@ -10727,14 +10775,12 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                                 onClick={()=>setColorPickerTarget('shapeInner')} />}
                             </div>
                           )}
-                          {hasWidth && <div className="grid grid-cols-2 gap-5 px-2">
+                          {hasWidth && <div className={`grid ${hasDash ? 'grid-cols-2' : 'grid-cols-1'} gap-5 px-2`}>
                             {isGrid ? shapeSlider(GRID_DOT_KINDS.has(sel.kind) ? '大小' : '粗細', Math.round(((sel.lineW ?? 6) - 6) / 12 * 100), 0, 100,
                               (v: number) => patch({ lineW: 6 + v * .12 }))
                               : shapeSlider('粗細', Math.round((sel.lineW ?? 6) * 10), 1, 100, (v: number) => patch({ lineW: v / 10 }))}
-                            {hasDash ? shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))
-                              : shapeSlider('透明度', sel.opacity ?? 100, 0, 100, (v: number) => patch({ opacity: v }))}
+                            {hasDash && shapeSlider('虛線', sel.dash || 0, 0, 100, (v: number) => patch({ dash: v }))}
                           </div>}
-                          {hasDash && <div className="px-2">{shapeSlider('透明度', sel.opacity ?? 100, 0, 100, (v: number) => patch({ opacity: v }))}</div>}
                           {/* 發光、描邊各自跟自己的顏色並排；顏色是兩段式的
                               （點一下才攤開色票），所以從 0 拉到 1 的瞬間
                               不會有欄位突然冒出來閃一下。 */}
@@ -10763,9 +10809,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                             <div className="px-2 order-2 w-full">
                               {shapeSlider('外框粗細', sel.outlineWidth ?? 0, 0, 100,
                                 (v: number) => patch({ outlineWidth: v }))}
-                              <div className="h-3.5" />
-                              {shapeSlider('透明度', sel.opacity ?? 100, 0, 100,
-                                (v: number) => patch({ opacity: v }))}
                             </div>
                           )}
                           {/* 紋理整組收在同一格：種類、顏色、滑桿全部在同一個框裡
@@ -10852,10 +10895,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                           </div>
                             );
                           })()}
-                          {!isDoubleContour && !hasWidth && <div className="px-2 order-4 w-full">
-                            {shapeSlider('透明度', sel.opacity ?? 100, 0, 100,
-                              (v: number) => patch({ opacity: v }))}
-                          </div>}
                           {shapeSupportsFeather(sel.kind, sel.filled, sel.hole) && (
                             <div className="px-2 order-5 w-full">
                               {shapeSlider('羽化', sel.shapeFeather || 0, 0, 100,
