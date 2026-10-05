@@ -1495,6 +1495,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const isVid = vTok !== 0 || isVideoEl(o.img);
     const key = baseKey + '|' + cap + '|lutReady:' + !!getLoadedLut(o.fx?.lut) + (isVid ? '|v' + vTok : '');
     const hit = objFxCache.current.get(o.id);
+    // A geometry-only redraw must not prepare effects or touch a GPU pool.
+    // In particular the fallback blend preparation used to precede this hit.
+    if (hit && hit.key === key && (!regionBlendTool.current || !!viewPinchRef.current || !!baseDragRef.current || !!basePinchRef.current)) return hit.cv;
     /* ── 這裡以前有一個「影片＋形狀就限速到 20fps」的閘門，已經拿掉 ────────
        當初加它是因為那條路一格要開三、四張離屏畫布，一秒六十次會把記憶體灌爆。
        現在那幾張都固定重複使用（vidScratchRef），而且工作尺寸夾到了螢幕上
@@ -1601,7 +1604,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         // Geometry-only rendering needs immutable photo pixels, not an entire
         // native-size shader pool. Release the pool immediately after copying,
         // including when the user never pauses long enough for an idle job.
-        const snapshot=document.createElement('canvas');snapshot.width=base.width;snapshot.height=base.height;
+        const snapshot=hit?.cv instanceof HTMLCanvasElement&&hit.cv.dataset.regionImmutable==='1'?hit.cv:document.createElement('canvas');
+        if(snapshot.width!==base.width)snapshot.width=base.width;
+        if(snapshot.height!==base.height)snapshot.height=base.height;
+        snapshot.getContext('2d')!.clearRect(0,0,snapshot.width,snapshot.height);
         snapshot.getContext('2d')!.drawImage(base,0,0);snapshot.dataset.regionImmutable='1';result=snapshot;regionStaticSnapshot.current={cv:snapshot};
         compactPhotoFxSurface(reuse);releasePhotoFxReadbacks(srcEl);
       }
@@ -2103,8 +2109,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const id=`region-fx-${index}@${photo.src}`;
       const cv=fxCanvasOf({...photo,id,img:original},true,Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*previewScaleRef.current);
       const cached=objFxCache.current.get(id);if(!cv||!cached)return;
-      if(cv===regionStaticSnapshot.current?.cv)return;
-      const snapshot=document.createElement('canvas');snapshot.width=cv.width;snapshot.height=cv.height;
+      if(cv instanceof HTMLCanvasElement&&cv.dataset.regionImmutable==='1')return;
+      const snapshot=document.createElement('canvas');
+      if(snapshot.width!==cv.width)snapshot.width=cv.width;
+      if(snapshot.height!==cv.height)snapshot.height=cv.height;
+      snapshot.getContext('2d')!.clearRect(0,0,snapshot.width,snapshot.height);
       snapshot.getContext('2d')!.drawImage(cv,0,0);
       snapshot.dataset.regionImmutable='1';
       objFxCache.current.set(id,{key:cached.key,cv:snapshot});regionStaticSnapshot.current={cv:snapshot};
@@ -2161,7 +2170,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       }
       // One shader family per idle slot. Real pointer interactions take
       // priority; shader compilation never changes preview quality.
-      for(const id of ['fxMosaic',...FX_DEFS.filter(d=>d.id!=='fxMosaic').map(d=>d.id)]){
+      for(const id of ['fxMosaic','softLight','halation','lightLeak',...FX_DEFS.filter(d=>d.id!=='fxMosaic').map(d=>d.id)]){
         await awaitPhotoIdle();if(cancelled)return;
         regionSpatialInput.current??=document.createElement('canvas');
         warmPhotoFxSurface(regionSpatialInput.current,id,regionSpatial.current?.scene);
@@ -8062,7 +8071,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         if(ready&&source&&!ready.shown){
           const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height;
           const cap=Math.max(1600,Math.ceil(Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*previewScaleRef.current)),k=Math.min(1,cap/Math.max(w,h));
-          for(const id of ['fxMosaic','fxLowfi','fxExposureSpill']){
+          for(const id of ['soft','fringeIntensity','leakOpacity','fxMosaic','fxLowfi','fxExposureSpill']){
             const primed=applyPhotoFx(source,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),{...FX_PARAM_DEFAULTS,[id]:100},{cacheSource:true,gpuSurface:true,out:ready.input,scene:ready.scene});
             // WebKit can defer the real texture/shader work until presentation.
             // Fence only this import-time preflight, never an interaction frame.

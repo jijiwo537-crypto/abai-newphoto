@@ -44,6 +44,8 @@ export class HalationLayer {
   setScene(scene?:FxScene){this.scene=scene;}
   get lost(){return !!this.gl&&(this.gl.isContextLost()||!!this.program&&!this.gl.isProgram(this.program));}
   constructor(private presentation?:HTMLCanvasElement){this.canvas=presentation||document.createElement('canvas');}
+  /** Compile once before interaction without changing any presented pixels. */
+  warm(){return this.init();}
 
   private init() {
     if (this.failed) return false;

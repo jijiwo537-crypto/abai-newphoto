@@ -62,3 +62,31 @@ test('panel rerenders read the live base photograph rather than overwrite a newe
 test('the pinch-resized preview frame has no large blurred chrome layer',()=>{
  assert.doesNotMatch(collage,/boxShadow: '0 20px 50px rgba\(255,255,255,0\.05\)'/);
 });
+test('optical switching reuses its source and context, and geometry hits precede blend preparation',()=>{
+ assert.match(fx,/const sourceKey=effectInputKey\(source,oW,oH,baseFx\)/);
+ assert.match(fx,/if\(!optical\|\|optical.layer.lost\)/);
+ assert.doesNotMatch(fx,/if\(!optical\|\|optical.key!==key\|\|optical.layer.lost\)/);
+ assert.match(fx,/optical.layer.warm\(\)/);
+ const start=collage.indexOf('const hit = objFxCache.current.get(o.id);');
+ assert.ok(collage.indexOf('if (hit && hit.key === key && (!regionBlendTool.current',start)<collage.indexOf('regionBlend.current!.prepare',start));
+ assert.match(collage,/const snapshot=hit\?\.cv instanceof HTMLCanvasElement&&hit.cv.dataset.regionImmutable==='1'\?hit.cv/);
+});
+test('320 optical changes allocate one renderer and update the correct effect each time',()=>{
+ const branch=fx.slice(fx.indexOf('  if(opts?.scene&&opts.cacheSource'),fx.indexOf('  const residentEffects ='));
+ let allocations=0,disposals=0,sourcePaints=0;const calls=[];
+ const canvas=()=>({width:1,height:1,getContext:()=>({})});
+ class Layer{
+  lost=false;constructor(){allocations++;}setScene(){}dispose(){disposals++;}
+  renderSoft(){calls.push('soft');return canvas();}render(){calls.push('halo');return canvas();}
+  renderLeak(){calls.push('leak');return canvas();}
+ }
+ const context={opticalInputs:new WeakMap(),opticalKeys:new Set(['soft','softThreshold','softRadius','softColor','fringeIntensity','fringeSize','fringeFeather','fringeHue','leakOpacity','leakAngle','leakHue','blur','colorNoise','vignette']),HalationLayer:Layer,document:{createElement:canvas},hasActiveFx:()=>false,effectInputKey:(_s,w,h,p)=>JSON.stringify([w,h,p]),applyPhotoFx:(_s,_w,_h,_p,o)=>{sourcePaints++;return o.out;},releasePhotoFxSurface:()=>{},toParams:()=>({}),hslToRgb:()=>[],getNoisePattern:canvas};
+ vm.createContext(context);
+ const code='this.run=function(source,out,fx){const oW=100,oH=100,opts={scene:{},cacheSource:true};'+branch+'};';
+ vm.runInContext(ts.transpile(code,{target:ts.ScriptTarget.ES2022}),context);
+ const out=canvas(),source=canvas();
+ for(let i=0;i<320;i++)context.run(source,out,[{soft:40},{fringeIntensity:20},{leakOpacity:50}][i%3]);
+ assert.equal(allocations,1);assert.equal(disposals,0);assert.equal(sourcePaints,1);
+ assert.deepEqual(calls.slice(0,6),['soft','halo','leak','soft','halo','leak']);
+ context.run(source,out,{soft:20,brightness:3});assert.equal(sourcePaints,2);assert.equal(allocations,1);
+});

@@ -89,19 +89,30 @@ type EffectInput={key:string;source:HTMLCanvasElement;surface:HTMLCanvasElement;
 const effectInputs = new WeakMap<HTMLCanvasElement, EffectInput>();
 const gpuSourceKeys=new WeakMap<LutGpu,string>();
 const opticalInputs=new WeakMap<HTMLCanvasElement,{key:string;source:HTMLCanvasElement;layer:HalationLayer}>();
+const opticalKeys = new Set(['soft','softThreshold','softRadius','softColor','fringeIntensity','fringeSize','fringeFeather','fringeHue','leakOpacity','leakAngle','leakHue','blur','colorNoise','vignette']);
 // WebKit's noise-texture interpolation does not match its Canvas overlay.
 // Keep grain on the established renderer rather than changing its appearance.
 export const supportsResidentPhotoEffects=(fx:PhotoFx={})=>!fx.colorNoise&&(hasActiveFx(fx)||!!(fx.soft||fx.fringeIntensity||fx.leakOpacity||fx.blur||fx.vignette));
 /** Prime the SAME context used by the selected base photo, not a throwaway
  * thumbnail context. No pixels or effect values are changed by preflight. */
 export function warmPhotoFxSurface(input:HTMLCanvasElement,id:string,scene?:FxScene){
+  if(['softLight','halation','lightLeak'].includes(id)){
+    let optical=opticalInputs.get(input);
+    if(!optical||optical.layer.lost){
+      if(optical){optical.layer.dispose();releasePhotoFxSurface(optical.source);optical.source.width=optical.source.height=1;}
+      optical={key:'',source:document.createElement('canvas'),layer:new HalationLayer(document.createElement('canvas'))};
+      opticalInputs.set(input,optical);
+    }
+    optical.layer.warm();
+    return;
+  }
   let retained=effectInputs.get(input);
   if(!retained){retained={key:'',source:document.createElement('canvas'),surface:document.createElement('canvas')};effectInputs.set(input,retained);}
   warmFx(id,retained.surface);
   if(scene)warmFxScene(retained.surface,scene);
 }
 export function releasePhotoFxSurface(input:HTMLCanvasElement){
-  const optical=opticalInputs.get(input);if(optical){optical.layer.dispose();optical.source.width=optical.source.height=1;opticalInputs.delete(input);}
+  const optical=opticalInputs.get(input);if(optical){optical.layer.dispose();releasePhotoFxSurface(optical.source);optical.source.width=optical.source.height=1;opticalInputs.delete(input);}
   const retained=effectInputs.get(input);if(!retained)return;
   retained.surface.remove();disposeFxSurface(retained.surface);retained.source.width=retained.source.height=1;effectInputs.delete(input);
 }
@@ -498,13 +509,20 @@ export function applyPhotoFx(
   if (resized) { out.width = oW; out.height = oH; }
   if(opts?.scene&&opts.cacheSource&&!hasActiveFx(fx)&&[fx.soft,fx.fringeIntensity,fx.leakOpacity,fx.blur,fx.colorNoise,fx.vignette].filter(Boolean).length===1){
     const kind=fx.soft?'soft':fx.fringeIntensity?'halo':fx.leakOpacity?'leak':fx.blur?'blur':'simple';
-    const keys=kind==='soft'?['soft','softThreshold','softRadius','softColor']:kind==='halo'?['fringeIntensity','fringeSize','fringeFeather','fringeHue']:kind==='leak'?['leakOpacity','leakAngle','leakHue']:kind==='blur'?['blur']:['vignette','colorNoise'];
-    const baseFx=Object.fromEntries(Object.entries(fx).filter(([k])=>!keys.includes(k))) as PhotoFx;
-    const key=effectInputKey(source,oW,oH,baseFx)+'|'+kind;
+    // The optical family shares one source and one context. The active kind
+    // belongs to the render key, NOT the allocation key: switching soft/halo/
+    // leak used to dispose and recompile the entire WebGL renderer each time.
+    const baseFx=Object.fromEntries(Object.entries(fx).filter(([k])=>!opticalKeys.has(k))) as PhotoFx;
+    const sourceKey=effectInputKey(source,oW,oH,baseFx);
+    const key=sourceKey+'|'+kind;
     let optical=opticalInputs.get(out);
-    if(!optical||optical.key!==key||optical.layer.lost){
-      if(optical){optical.layer.dispose();optical.source.width=optical.source.height=1;}
-      optical={key,source:applyPhotoFx(source,oW,oH,baseFx,{cacheSource:true,gpuSurface:true}),layer:new HalationLayer(document.createElement('canvas'))};opticalInputs.set(out,optical);
+    if(!optical||optical.layer.lost){
+      if(optical){optical.layer.dispose();releasePhotoFxSurface(optical.source);optical.source.width=optical.source.height=1;}
+      optical={key:'',source:document.createElement('canvas'),layer:new HalationLayer(document.createElement('canvas'))};opticalInputs.set(out,optical);
+    }
+    if(optical.key!==sourceKey){
+      applyPhotoFx(source,oW,oH,baseFx,{cacheSource:true,out:optical.source,gpuSurface:true});
+      optical.key=sourceKey;
     }
     optical.layer.setScene(opts.scene);const p={...toParams(fx),...fx},ctx=optical.source.getContext('2d')!;
     const result=kind==='soft'?optical.layer.renderSoft(ctx,oW,oH,key,p,hslToRgb((fx.softColor||0)/100,1,.5)):

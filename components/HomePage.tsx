@@ -1324,6 +1324,7 @@ export const HomePage: React.FC<HomePageProps> = ({
           )}
           <div className="relative px-[18px] pt-7 pb-4">
             <span className="relative -top-1 block text-[16px] font-black tracking-[0.04em] text-white">藝術效果</span>
+            <span className="block text-[11px] leading-relaxed tracking-[0.04em] text-white/65">把照片，變成你的視覺作品</span>
             <span className="mt-3 h-[26px] w-fit pl-4 pr-3 rounded-full bg-white text-black text-[11px] font-black tracking-[0.06em] flex items-center gap-0.5 shrink-0">
               立即使用
               {pillArrow}

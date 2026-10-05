@@ -31,14 +31,26 @@ void(async()=>{
  const original=pixels();
  if(new URLSearchParams(location.search).has('rapid')){
   const times:any[]=[];
-  for(let i=0;i<24;i++){
-   const id=['fxMosaic','fxGlass','fxLowfi','fxExposureSpill'][i%4];
+  const stress=new URLSearchParams(location.search).has('longSwitch');
+  const ids=stress?['softLight','halation','lightLeak','fxMosaic','fxGlass','fxLowfi','fxExposureSpill','fxMotion','fxSpin','fxAberration']:['fxMosaic','fxGlass','fxLowfi','fxExposureSpill'];
+  for(let i=0;i<(stress?320:24);i++){
+   const id=ids[i%ids.length];
    const card=document.querySelector<HTMLButtonElement>(`[data-fx-card="${id}"]`)!;
+   if(!card)throw Error('missing effect '+id);
    const previous=pixels(),start=performance.now();card.click();await wait(2);
-   const elapsed=performance.now()-start,delta=difference(previous,pixels());
+   let elapsed=performance.now()-start;
+   let delta=difference(previous,pixels());
+   const minimum=id==='fxSpin'?.005:.1;
+   // Observe the next actual presentation, rather than assuming React and
+   // WebKit always present on the second scheduled animation callback.
+   for(let frame=0;delta<=minimum&&frame<4;frame++){await tick();elapsed=performance.now()-start;delta=difference(previous,pixels());}
    times.push({id,ms:elapsed,selected:card.getAttribute('aria-pressed')==='true',difference:delta,paint:canvas.dataset.paintMs,rebuilds:canvas.dataset.spatialRebuilds,reason:canvas.dataset.sceneRebuildReason,backend:canvas.dataset.regionFxBackend});
+   if(stress&&i%20===19)await fetch('http://127.0.0.1:5192/results',{method:'POST',body:JSON.stringify({kind:'long-switch-progress',route:location.search,count:i+1,samples:times.slice(-20)})}).catch(()=>{});
+   // Alternate fast clicks with settling: exercise native snapshot allocation
+   // as well as the resident editing renderer, rather than only a hot loop.
+   if(stress&&i%40===39)await wait(60);
   }
-  check('rapid effects select and change presented pixels',times.every(t=>t.selected&&t.difference>.1),times);
+  check('rapid effects select and change presented pixels',times.every(t=>t.selected&&t.difference>(t.id==='fxSpin'?.005:.1)),times);
  }
  document.querySelector<HTMLButtonElement>('[data-fx-card="fxMosaic"]')!.click();await wait(20);
  const firstChange=difference(original,pixels());
