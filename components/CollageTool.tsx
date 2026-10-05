@@ -2234,7 +2234,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         resident.shown?.remove();regionSpatial.current=null;
       }
     }
-    if(selectedKey===null)return;
+    // Changing the first slot during a swap is not entering image editing.
+    // Do not upload/re-prime all effect kernels behind a geometry-only swap.
+    if(selectedKey===null||!objEditImage)return;
     let cancelled=false;
     void(async()=>{
       // Prime the actual source/pool while the imported photo is idle, before
@@ -5122,6 +5124,11 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
        iOS 的畫布記憶體一碰到上限就把整頁收掉 —— 那就是閃退。
        截成整數之後畫出來的尺寸跟以前一模一樣（setter 本來就是這樣截的）。 */
     const tW = Math.max(1, offs.cw | 0), tH = Math.max(1, offs.ch | 0);
+    // Raster dimensions are integers, scene dimensions are continuous. Map
+    // them once for every layer; do not let each photo inherit a changing
+    // fractional CSS stretch when the preview crosses a backing-size step.
+    const rasterX=isMain&&!previewCapture?tW/offs.cw:1;
+    const rasterY=isMain&&!previewCapture?tH/offs.ch:1;
     // Static layers use full-scene coordinates but rasterize only the viewport.
     // Animations and exports retain their existing full-frame renderer.
     const canWindow = isMain && !forceFullPreviewRef.current && !animRef.current
@@ -5142,7 +5149,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(windowed && thumbRef.current){thumbRef.current.width=thumbRef.current.height=1;thumbRef.current=null;}
     if (isMain) {
       Object.assign(targetCanvas.style,windowed||bucketed
-        ? {position:'absolute',left:`${vp.x/offs.cw*100}%`,top:`${vp.y/offs.ch*100}%`,width:`${backingW/offs.cw*100}%`,height:`${backingH/offs.ch*100}%`}
+        ? {position:'absolute',left:`${vp.x/tW*100}%`,top:`${vp.y/tH*100}%`,width:`${backingW/tW*100}%`,height:`${backingH/tH*100}%`}
         : {position:'relative',left:'0px',top:'0px',width:'100%',height:'100%'});
     }
     if (targetCanvas.width !== backingW || targetCanvas.height !== backingH) {
@@ -5155,10 +5162,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const frameContext=ctx;
     frameContext.save();
     try {
-    ctx.setTransform(1, 0, 0, 1, -vp.x, -vp.y);
+    ctx.setTransform(rasterX, 0, 0, rasterY, -vp.x, -vp.y);
     // Retained backing capacity is transparent storage, not extra page area.
-    // Keep the same integer page clip when shrinking within that capacity.
-    ctx.beginPath();ctx.rect(0,0,tW,tH);ctx.clip();
+    // Map the continuous page clip to the exact integer raster boundary.
+    ctx.beginPath();ctx.rect(0,0,offs.cw,offs.ch);ctx.clip();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
 
@@ -7186,7 +7193,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       const hit = isMain ? holeTopCacheRef.current : null;
       if (hit && hit.key === sigTop) {
         ctx.save();
-        ctx.setTransform(1, 0, 0, 1, -vp.x, -vp.y);
+        ctx.setTransform(rasterX, 0, 0, rasterY, -vp.x, -vp.y);
         ctx.globalAlpha = 1;
         ctx.drawImage(hit.c, 0, 0, hit.rw, hit.rh, hit.rx, hit.ry, hit.rw, hit.rh);
         ctx.restore();
@@ -7349,7 +7356,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (useLayer && topCv) {
         ctx2.setTransform(1, 0, 0, 1, 0, 0);
         ctx0.save();
-        ctx0.setTransform(1, 0, 0, 1, -vp.x, -vp.y);
+        ctx0.setTransform(rasterX, 0, 0, rasterY, -vp.x, -vp.y);
         ctx0.globalAlpha = 1;
         ctx0.drawImage(topCv, 0, 0, rw0, rh0, rx0, ry0, rw0, rh0);
         ctx0.restore();

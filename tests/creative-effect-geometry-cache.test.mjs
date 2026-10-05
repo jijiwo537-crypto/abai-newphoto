@@ -89,3 +89,17 @@ test('photo window clips and clearing use the shader pixel-centre boundary rule'
   }
  }
 });
+test('every preview layer shares one exact integer-raster to continuous-scene map',()=>{
+ assert.match(collage,/rasterX=isMain&&!previewCapture\?tW\/offs.cw:1/);
+ assert.match(collage,/vp.x\/tW\*100/);
+ assert.match(collage,/backingW\/tW\*100/);
+ assert.equal((collage.match(/setTransform\(rasterX, 0, 0, rasterY, -vp.x, -vp.y\)/g)||[]).length,3);
+ assert.match(collage,/selectedKey===null\|\|!objEditImage\)return/);
+ for(const logical of [1000.001,1000.49,1000.99,1307.111,1703.73]){
+  const raster=Math.floor(logical),css=358.7;
+  for(const fraction of [.1,.33,.5,.71,.9]){
+   const pixel=logical*fraction*(raster/logical);
+   assert.ok(Math.abs(pixel/raster*css-fraction*css)<1e-10);
+  }
+ }
+});

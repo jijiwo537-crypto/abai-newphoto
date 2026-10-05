@@ -1,0 +1,17 @@
+{
+  "scope": "Shared continuous scene-to-integer raster mapping and swap warm-up gating",
+  "environment": "Production React QA, Chromium IAB, 402x874 viewport; not native iPhone",
+  "tests": {
+    "targetedRegression": { "passed": 58, "failed": 0 },
+    "portrait3072x4096Swaps": { "withoutEffects": 18, "withEffects": 18, "firstPresentedFramePassed": true, "maxReleaseMs": 14.9 },
+    "intermediateZoomBorderPixels": { "samples": 120, "passed": true, "fixture": "white photographs; does not measure natural-image feature jitter" },
+    "seamPresentation": { "passed": true },
+    "ninePhotoGestureCost": { "passed": true, "observedRafFps": 59.9 },
+    "detailedPortraitLiveEffects": { "passed": true, "switches": 24, "maxSwitchMs": 89.7, "fullRendererMeanChannelError": 0.012 }
+  },
+  "limitations": [
+    "Low-detail synthetic fixtures can fail fixed pixel-difference thresholds; detailed portrait fixture passed without relaxing thresholds.",
+    "Native simulator was not restarted because its startup previously exceeded the user's memory budget.",
+    "RSS guards do not guarantee the host application's total compressed/GPU memory."
+  ]
+}

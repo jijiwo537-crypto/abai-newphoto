@@ -26,9 +26,10 @@ void(async()=>{
    }
    copy.width=copy.height=1;return {min,bad,n,bytes:gpu.dataset.residentTextureBytes};
   };
-  for(let i=0;i<60;i++){
-   const r=stage.getBoundingClientRect();stage.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,clientX:r.x+r.width/2,clientY:r.y+r.height/2,deltaY:i<30?-30:30}));await wait(3);
-   if(i%3===0)report.samples.push({i,...scan()});
+  const eachFrame=new URLSearchParams(location.search).has('eachFrame'),frames=eachFrame?120:60;
+  for(let i=0;i<frames;i++){
+   const r=stage.getBoundingClientRect();stage.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,clientX:r.x+r.width/2,clientY:r.y+r.height/2,deltaY:(i<frames/2?-1:1)*(eachFrame?15:30)}));await wait(3);
+   if(eachFrame||i%3===0)report.samples.push({i,...scan()});
   }
   report.checks.push({name:'no dark cracks in filled photo borders through zoom',pass:report.samples.every((s:any)=>s.bad===0),detail:report.samples});report.pass=report.checks.every((c:any)=>c.pass);
  }catch(e){report.error=String(e);report.pass=false;}

@@ -13,7 +13,7 @@ const files:File[]=[];
 const fixtureColors=colors.slice(0,params.has('mixedSwap')?5:params.has('single')?1:params.has('three')?3:params.has('four')?4:params.has('nine')?9:params.has('empty')||params.has('baseAudit')?2:10);
 for(const [i,color] of fixtureColors.entries()){
  const portrait=params.has('portrait')||params.has('mixedSwap')&&i===4;
- const c=document.createElement('canvas');c.width=params.has('huge')?4096:params.has('large')?2048:portrait?600:900;c.height=params.has('huge')?3072:params.has('large')?1536:portrait?900:600;
+ const c=document.createElement('canvas');c.width=params.has('huge')?(portrait?3072:4096):params.has('large')?(portrait?1536:2048):portrait?600:900;c.height=params.has('huge')?(portrait?4096:3072):params.has('large')?(portrait?2048:1536):portrait?900:600;
  const g=c.getContext('2d')!;g.fillStyle=params.has('edgeAudit')?'white':color;
  if(params.has('gradient')){const gradient=g.createLinearGradient(0,0,c.width,c.height);gradient.addColorStop(0,color);gradient.addColorStop(.5,'#13254f');gradient.addColorStop(1,'#fef1b7');g.fillStyle=gradient;}
  g.fillRect(0,0,c.width,c.height);g.fillStyle='white';g.font='bold 100px sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillText(String(i+1),c.width/2,c.height/2);
