@@ -17,12 +17,14 @@ import { paintCachedClassicGlow } from './ClassicGlowCache';
 import { settledSortSeams } from '../utils/sortSeams';
 import { swapFloatingMedia } from '../utils/swapFloatingMedia.mjs';
 import { SeamlessLayout, SeamlessAmountSlider } from './SeamlessLayout';
+import {LayoutPhotoSurface} from './LayoutPhotoSurface';
+import {subscribeCellPhoto,updateCellPhoto} from '../utils/liveCellPhoto';
 import { ExportActionLift } from './ExportActionLift';
 import { renderSeamlessLayout } from '../utils/seamlessLayout';
 import { TEMPLATE_MAP } from '../utils/layoutTemplates';
 import {SOLID_PLUS_PATH,emptyCellSeparators} from '../utils/photoCellChrome';
 import { FONTS, FONT_CATEGORIES, FONT_SAMPLE, FontCategory, DEFAULT_FONT, SYMBOL_FONT, ensureFont, ensureItalic, knownItalic, fontCssLoaded, waitForFont, fontStack, prepareFontSample, warmTextFonts } from '../utils/fonts';
-import { PhotoFx, ADJUST_KEYS, applyPhotoFx, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
+import { PhotoFx, ADJUST_KEYS, applyPhotoFx, releasePhotoFxSurface, hasPhotoFx, loadLut, getLoadedLut, bakePhotoFxLut, lutDefaultAmount, colorKeyOf, getNoisePattern } from '../utils/photoFx';
 import {awaitPhotoIdle,deferHeavyWork,holdPhotoInteraction} from '../utils/photoInteractionIdle';
 import { get2dWide } from '../utils/colorSpace';
 import { FX_DEFS, warmFx } from '../utils/glEffects';
@@ -3860,40 +3862,26 @@ const previewImgCache = new Map<string, HTMLImageElement>();
  * 套了就換成 canvas，用跟浮動圖片同一支 applyPhotoFx 算，
  * 外層的裁切、縮放、位移邏輯都不動。
  */
-const CellFxImage: React.FC<{
-  url: string;
-  fx: PhotoFx;
-  style: React.CSSProperties;
-  lutRevision: number;
-  boxW: number;
-  boxH: number;
-}> = ({ url, fx, style, lutRevision, boxW, boxH }) => {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useLayoutEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    const img = getPreviewImg(url);
-    const draw = () => {
-      if (!img.naturalWidth) return;
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      // 算到「畫面上真的有幾個實體像素」，套了濾鏡才不會變糊
-      const MAX = Math.min(1600, Math.max(640, Math.round(Math.max(boxW, boxH) * dpr)));
-      const ar = img.naturalWidth / img.naturalHeight;
-      const w = ar >= 1 ? MAX : Math.max(16, Math.round(MAX * ar));
-      const h = ar >= 1 ? Math.max(16, Math.round(MAX / ar)) : MAX;
-      const out = applyPhotoFx(img, w, h, fx);
-      if (c.width !== w) c.width = w;
-      if (c.height !== h) c.height = h;
-      const g = c.getContext('2d');
-      if (!g) return;
-      g.clearRect(0, 0, w, h);
-      g.drawImage(out, 0, 0, w, h);
+const CellFxImage: React.FC<{id:string;url:string;fx:PhotoFx;style:React.CSSProperties;lutRevision:number;boxW:number;boxH:number}> = ({id,url,fx,style,lutRevision}) => {
+  const host=useRef<HTMLDivElement>(null),input=useRef<HTMLCanvasElement|null>(null),frame=useRef(0),latest=useRef(fx),draw=useRef(()=>{});
+  latest.current=fx;
+  const schedule=()=>{if(!frame.current)frame.current=requestAnimationFrame(()=>{frame.current=0;draw.current();});};
+  useEffect(()=>subscribeCellPhoto(id,next=>{latest.current=next;schedule();}),[id]);
+  useEffect(()=>()=>{cancelAnimationFrame(frame.current);if(input.current){releasePhotoFxSurface(input.current);input.current.width=input.current.height=1;}},[]);
+  useLayoutEffect(()=>{
+    let dead=false;const img=getPreviewImg(url);
+    draw.current=()=>{
+      if(dead||!img.naturalWidth||!host.current)return;
+      input.current??=document.createElement('canvas');
+      const out=applyPhotoFx(img,img.naturalWidth,img.naturalHeight,latest.current,{cacheSource:true,gpuSurface:true,out:input.current});
+      out.style.cssText='width:100%;height:100%;display:block;pointer-events:none';
+      if(host.current.firstChild!==out)host.current.replaceChildren(out);
     };
-    if (img.complete && img.naturalWidth) { draw(); return; }
-    img.addEventListener('load', draw);
-    return () => img.removeEventListener('load', draw);
-  }, [url, fx, lutRevision, boxW, boxH]);
-  return <canvas ref={ref} style={style} />;
+    if(img.complete&&img.naturalWidth)draw.current();else img.addEventListener('load',schedule);
+    return()=>{dead=true;img.removeEventListener('load',schedule);};
+  },[url,lutRevision]);
+  useLayoutEffect(schedule,[fx]);
+  return <div ref={host} style={style}/>;
 };
 
 const getPreviewImg = (src: string) => {
@@ -8369,6 +8357,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
 
   const setImages = (newImages: ImageCell[] | ((prev: ImageCell[]) => ImageCell[])) => {
     patchActiveLayout(l => ({ ...l, images: typeof newImages === 'function' ? newImages(l.images) : newImages }));
+  };
+  const pendingCellFx=useRef(new Map<string,PhotoFx>());
+  const commitCellFx=()=>{
+    if(!pendingCellFx.current.size)return;
+    const changes=new Map(pendingCellFx.current);pendingCellFx.current.clear();
+    setPages(prev=>prev.map(p=>({...p,layouts:p.layouts.map(l=>l.images.some(c=>changes.has(c.id))
+      ?{...l,images:l.images.map(c=>changes.has(c.id)?{...c,fx:changes.get(c.id)}:c)}:l)})));
   };
 
   const setTemplateIndex = (newTmplIdx: number | ((prev: number) => number)) => {
@@ -14873,18 +14868,13 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                               const lh = lbox.h * ls;
                               const insetLayout = isInsetLayout(layout);
                               const stableSeamless = !!layout.seamless && !insetLayout;
-                              const prepareSeamless = !insetLayout && (!!layout.seamless || isThisLayoutSelected);
+                              const prepareSeamless = !insetLayout && !!layout.seamless;
                               const nativeInset = insetLayout && layout.images.every(c => !hasPhotoFx(c.fx));
-                              const nativeLayout = !insetLayout && !layout.seamless
-                                && layout.images.every(c => !hasPhotoFx(c.fx));
+                              const nativeLayout = !insetLayout && !layout.seamless;
                               const gap = layout.seamless || insetLayout ? 0 : layout.gap * ls;
                               const radius = layout.seamless || insetLayout ? 0 : layout.radius * ls;
                               const lLeft = (previewW - lw) / 2 + (layout.t?.x || 0);
                               const lTop = (previewH - lh) / 2 + (layout.t?.y || 0);
-                              const emptyFillsPage = nativeLayout && gap === 0 && radius === 0
-                                && !(layout.t?.rot || 0) && layout.images.every(c => !c?.url)
-                                && lLeft <= .001 && lTop <= .001
-                                && lLeft + lw >= previewW - .001 && lTop + lh >= previewH - .001;
                               return (
                               <div
                                 key={layout.id}
@@ -14931,53 +14921,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                 onTouchCancel={isThisLayoutSelected ? handleLayoutTouchEnd : undefined}
                               >
                               {prepareSeamless && <SeamlessLayout previewId={layout.id} enabled={stableSeamless} cells={layout.images} rects={pageActiveTemplate.rects} width={lbox.w} height={lbox.h} scale={ls} amount={layout.seamlessAmount ?? 0} revision={lutRevision} />}
-                              {nativeLayout && <svg data-layout-photo-layer="1" width={lw} height={lh}
-                                className="absolute inset-0 pointer-events-none" style={{zIndex: 0, overflow: 'visible'}}>
-                                {/* Empty backgrounds share the photo plane. Independent HTML
-                                    backgrounds acquire different fractional compositor edges. */}
-                                {gap === 0 && radius === 0 && layout.images.every(c => !c?.url)
-                                  ? <rect data-layout-empty-surface="1" width={lw} height={lh} fill="#0c0c0c"
-                                      // Paint covers the fractional fringe before the shared strip
-                                      // clip. Bounds, snapping and exported geometry do not move.
-                                      stroke={emptyFillsPage ? '#0c0c0c' : undefined}
-                                      strokeWidth={emptyFillsPage ? 2 : 0} />
-                                  : pageActiveTemplate.rects.map((raw, idx) => {
-                                    if (layout.images[idx]?.url) return null;
-                                    const aw = Math.max(1, lw - gap), ah = Math.max(1, lh - gap);
-                                    const r = resolveLayoutRect(raw, aw, ah, layout.overlaySize);
-                                    const w = Math.max(0, r.w * aw - gap), h = Math.max(0, r.h * ah - gap);
-                                    return <rect key={`empty-${idx}`} x={gap + r.x * aw} y={gap + r.y * ah}
-                                      width={w} height={h} rx={Math.min(radius, w / 2, h / 2)} fill="#0c0c0c" />;
-                                  })}
-                                {pageActiveTemplate.rects.map((raw, idx) => {
-                                  const c = layout.images[idx];
-                                  if (!c?.url) return null;
-                                  // All cell clips and source images share one SVG user space.
-                                  // Separate HTML percent centers/padding/transforms otherwise
-                                  // round independently while the ancestor preview is scaled.
-                                  const inset = gap / 2;
-                                  const aw = Math.max(1, lw - gap), ah = Math.max(1, lh - gap);
-                                  const r = resolveLayoutRect(raw, aw, ah, layout.overlaySize);
-                                  const x = inset + r.x * aw, y = inset + r.y * ah;
-                                  const w = Math.max(1, r.w * aw), h = Math.max(1, r.h * ah);
-                                  const cw = Math.max(0, w - gap), ch = Math.max(0, h - gap);
-                                  const cr = c.imgRadius ? cornerR(c.imgRadius, cw, ch) : Math.min(radius, cw / 2, ch / 2);
-                                  const iw = c.naturalWidth || 800, ih = c.naturalHeight || 600;
-                                  const turn = !!(c.rotation % 180);
-                                  const s = Math.max(w / (turn ? ih : iw), h / (turn ? iw : ih)) * 1.02 * c.zoom;
-                                  const clip = `layout-photo-${layout.id}-${idx}`;
-                                  return <g key={c.id}>
-                                    <defs><clipPath id={clip} clipPathUnits="userSpaceOnUse">
-                                      <rect x={x + gap / 2} y={y + gap / 2} width={cw} height={ch} rx={cr}/>
-                                    </clipPath></defs>
-                                    <g clipPath={`url(#${clip})`}>
-                                      <image href={c.url} x={-iw / 2} y={-ih / 2} width={iw} height={ih}
-                                        opacity={(c.opacity ?? 100) / 100} preserveAspectRatio="none"
-                                        transform={`translate(${x + w / 2 + c.offsetX * w} ${y + h / 2 + c.offsetY * h}) rotate(${c.rotation}) scale(${s})`}/>
-                                    </g>
-                                  </g>;
-                                })}
-                              </svg>}
+                              {nativeLayout && <LayoutPhotoSurface cells={layout.images} rects={pageActiveTemplate.rects} width={lw} height={lh} gap={gap} radius={radius} revision={lutRevision}/>}
                               {nativeInset && <svg data-inset-photo-layer="1" width={lw} height={lh}
                                 className="absolute inset-0 pointer-events-none" style={{zIndex: 15, overflow: 'visible'}}>
                                 {pageActiveTemplate.rects.map((raw, idx) => {
@@ -15309,9 +15253,10 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                             opacity: (cell.opacity ?? 100) / 100,
                                             pointerEvents: 'none',
                                           };
-                                          return <div className="layout-photo-content" style={{display:nativeInset || nativeLayout ? 'none' : 'contents'}}>{hasPhotoFx(cell.fx)
+                                          return <div className="layout-photo-content" style={{display:nativeInset || nativeLayout ? 'none' : 'contents'}}>{!nativeInset&&!nativeLayout&&!stableSeamless&&(hasPhotoFx(cell.fx)
                                             ? (
                                               <CellFxImage
+                                                id={cell.id}
                                                 url={cell.url}
                                                 fx={cell.fx!}
                                                 style={photoStyle}
@@ -15320,7 +15265,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                                                 boxH={cellHeight}
                                               />
                                             )
-                                            : <img src={cell.url} alt="cell" style={photoStyle} />}</div>;
+                                            : <img src={cell.url} alt="cell" style={photoStyle} />)}</div>;
                                         })()}
 
                                         {/* Thin solid outline on top of the image */}
@@ -16521,7 +16466,7 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   const cellPatch: Partial<ImageCell> = {};
                   if ('fx' in patch) cellPatch.fx = (patch as any).fx;
                   if (!Object.keys(cellPatch).length) return;
-                  setImages(prev => prev.map((c, i) => (i === selectedIndex ? { ...c, ...cellPatch } : c)));
+                  if(cellPatch.fx){pendingCellFx.current.set(selCell.id,cellPatch.fx);updateCellPhoto(selCell.id,cellPatch.fx);}
                   return;
                 }
                 setFloatingImages(prev => prev.map(f => (f.id === img.id ? { ...f, ...patch } : f)));
@@ -16540,6 +16485,8 @@ export const GridLayoutTool: React.FC<GridLayoutToolProps> = ({ histKey, onHome,
                   setTuningEdge={setTuningEdge} openComposeFor={openComposeFor}
                   composeOpen={!!composeState} onLeaveCompose={applyComposeToLayer}
                   hideShape={!!selCell}
+                  isolateFxUpdates={!!selCell}
+                  onAdjustmentCommit={selCell?commitCellFx:undefined}
                 />
               );
             })()}

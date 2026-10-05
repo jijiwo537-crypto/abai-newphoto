@@ -3,6 +3,7 @@
  * drawn directly at the requested preview/export scale; no composite thumbnail
  * is substituted while zooming. */
 import { TEMPLATE_MAP } from './layoutTemplates';
+import {drawCoveredPhoto} from './coveredPhoto';
 export const CREATIVE_PHOTO_LIMIT = 9;
 export const PHOTO_SWAP_HOLD_MS = 304;
 export type PhotoArrangement = 'grid' | 'horizontal' | 'vertical' | 'feature';
@@ -161,7 +162,7 @@ export function paintPhotoRegion(ctx: CanvasRenderingContext2D, region: PhotoReg
     if (!img) {ctx.save();ctx.fillStyle='#0c0c0c';ctx.fillRect(dx,dy,dw,dh);ctx.restore();return;}
     const {sx,sy,sw,sh}=photoCrop(photo,dw,dh);
     // Darken only the visible sampling footprint, never duplicate a 48MP source.
-    if(i!==dimIndex)ctx.drawImage(img,sx,sy,sw,sh,dx,dy,dw,dh);
+    if(i!==dimIndex)drawCoveredPhoto(ctx,img,sx,sy,sw,sh,dx,dy,dw,dh);
     else{
       drawDimmedPhoto(ctx,img,sx,sy,sw,sh,dx,dy,dw,dh);
     }

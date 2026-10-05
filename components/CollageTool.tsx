@@ -18,6 +18,7 @@ import { PREMIUM_GLASS } from '../utils/premiumGlass';
 import { exportHeic } from '../utils/heicExport';
 import { CreativeSeamless } from '../utils/creativeSeamless';
 import { StableSceneTiles, type SceneWindow } from '../utils/stableSceneTiles';
+import {drawCoveredPhoto} from '../utils/coveredPhoto';
 import { scenePixelEdge } from '../utils/scenePixelGrid';
 import {emptyCellSeparators,SOLID_PLUS_PATH} from '../utils/photoCellChrome';
 import {creativeSeamlessSliderValue,withCreativeSeamlessAmount,creativePatternCountForLayout} from '../utils/creativePhotoLayout';
@@ -1290,6 +1291,10 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     return {...region,multi:region.multi ?? region.photos.length>1};
   };
   const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
+  const liveMaskScale=useRef<number|null>(null);
+  const maskScaleValue=useRef(maskScale);maskScaleValue.current=maskScale;
+  const occupancyFrame=useRef(0);
+  useEffect(()=>()=>cancelAnimationFrame(occupancyFrame.current),[]);
   const [canvasRatio, setCanvasRatio] = useState<CanvasRatio>('1:1');
   const [canvasRatioBeforeFull, setCanvasRatioBeforeFull] = useState<CanvasRatio|null>(null);
   const [holeType, setHoleType] = useState('star'); 
@@ -4937,9 +4942,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     photoRegion&&{...photoRegion,photos:photoRegion.photos.map((p,j)=>j===(selectedRegionPhotoRef.current??0)?{...p,fx:{},zoom:1,offsetX:0,offsetY:0}:p)},
     layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,
     stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,objects,
-    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,selectedRegionPhoto??0
+    fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle,selectedRegionPhoto,baseSelected
   ],compactSceneValue),
-  [imageState,photoRegion,selectedRegionPhoto,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,objects,fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle]);
+  [imageState,photoRegion,selectedRegionPhoto,baseSelected,layout,canvasRatio,imageTransform,maskColor,maskImageState,maskTransform,patternType,dotColor,dotGap,dotSize,dotSquash,stripeN,stripeDir,stripeA,stripeB,holes,holeType,customText,holeSize,sizeJitter,holeAngle,maskScale,objects,fxTick,linkMode,linkColor,glowMode,holeGlowColor,glowIdle]);
   regionGpuSceneKey.current=gpuSceneFingerprint;
   const backdropObjectTokens=useRef(new WeakMap<object,number>()),backdropObjectSerial=useRef(0);
   const backdropSceneFingerprint=useMemo(()=>JSON.stringify([
@@ -4960,6 +4965,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const linkGlowTilesRef = useRef<LinkGlowTiles|null>(null);
   useEffect(()=>()=>linkGlowTilesRef.current?.dispose(),[]);
   const renderToCanvas = useCallback((targetCanvas: HTMLCanvasElement, renderScale: number = 1, previewCapture=false) => {
+    const maskScale=liveMaskScale.current??maskScaleValue.current;
     const photoRegion=photoRegionRef.current;
     const objects=objectsRef.current;
     const debugPaintStart = import.meta.env.DEV ? performance.now() : 0;
@@ -4974,7 +4980,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     // Backdrop-dependent materials are nonlinear. Black/white photo endpoints
     // cannot reconstruct them; use the shared live scene when masks are present.
     const hasBackdrop=objectsRef.current.some(o=>isBackdropMask(o.kind));
-    if(targetCanvas===canvasRef.current)creativeSeam.current?.beginFrame();
+    if(targetCanvas===canvasRef.current){creativeSeam.current?.beginFrame();targetCanvas.dataset.creativePhotoComposition='single-canvas';}
     if(targetCanvas===canvasRef.current&&(regionHold.current?.active||swapPaintForced.current)){
       regionColour.current?.hide();
       if(regionSpatial.current?.shown)regionSpatial.current.shown.style.display='none';
@@ -5187,7 +5193,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     ctx.beginPath();ctx.rect(0,0,offs.cw,offs.ch);ctx.clip();
     ctx.globalAlpha = 1;
     ctx.globalCompositeOperation = 'source-over';
-    const sceneIsStatic=!selectedObj&&!selectedTarget&&!baseSelected&&!animRef.current&&!motionTargetFlashRef.current&&!editingTextId&&!swapSource&&!regionSliderHeld.current&&!regionHold.current?.active
+    const sceneIsStatic=liveMaskScale.current===null&&!selectedObj&&!selectedTarget&&!baseSelected&&selectedRegionPhotoRef.current===null&&!regionPhotoEditingRef.current&&!animRef.current&&!motionTargetFlashRef.current&&!editingTextId&&!swapSource&&!regionSliderHeld.current&&!regionHold.current?.active
       &&!objDragRef.current&&!objPinchRef.current&&!objStretchRef.current&&!baseDragRef.current&&!basePinchRef.current&&!interactionRef.current
       &&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
     // No source rasterization, shader upload, per-object rounding, or rebuilding
@@ -5431,7 +5437,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const hover=swapHoverRef.current;
         const dim=isMain && allowDim && hover?.kind==='region' ? hover.index : -1;
         creativeSeam.current ||= new CreativeSeamless();
-        if(g===ctx&&targetCanvas===canvasRef.current&&!previewCapture&&layout!==AROUND&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&dim<0){
+        if(photoRegion.seamless&&g===ctx&&targetCanvas===canvasRef.current&&!previewCapture&&layout!==AROUND&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&dim<0){
           const m=g.getTransform(),bounds=clip||[0,0,tW,tH];
           try{if(creativeSeam.current.present(g,regionForPaint!,regionDecoded,x,y,w,h,[bounds[0]*m.a+m.e,bounds[1]*m.d+m.f,bounds[2]*m.a,bounds[3]*m.d],[vp.w,vp.h])){
             const base=seamlessPhotoBase(regionForPaint!);
@@ -5446,7 +5452,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         const single = img === baseImg && regionForPaint?.photos.length === 1
           ? regionDecoded.get(regionForPaint.photos[0].src) || img : img;
         if(isMain&&allowDim&&swapHoverRef.current?.kind==='region'&&swapHoverRef.current.index===0)drawDimmedPhoto(g,single,0,0,single.naturalWidth||single.width,single.naturalHeight||single.height,x,y,w,h);
-        else g.drawImage(single,x,y,w,h);
+        else drawCoveredPhoto(g,single,0,0,single.naturalWidth||single.width,single.naturalHeight||single.height,x,y,w,h);
       }
     };
     const drawImg = (img: any, t: any, ox: number, oy: number, w: number, h: number, kk = 1, allowDim = false) => {
@@ -5454,7 +5460,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       ctx.save();
       ctx.beginPath();
       const matrix=ctx.getTransform();
-      if(isMain&&!previewCapture&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&photoRegion&&layout!==AROUND&&img===baseImg&&matrix.b===0&&matrix.c===0&&matrix.a>0&&matrix.d>0){
+      if(isMain&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&photoRegion&&layout!==AROUND&&img===baseImg&&matrix.b===0&&matrix.c===0&&matrix.a>0&&matrix.d>0){
         // The GPU window accepts pixel centres, not antialiased fractional
         // canvas clips. Use the same integer ownership for its transparent
         // main-canvas window, without changing source crop or logical geometry.
@@ -6303,7 +6309,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     const pasteMask=()=>{
       ctx.save();
       const matrix=ctx.getTransform();
-      if(isMain&&!previewCapture&&!animRef.current&&layout!==AROUND&&!hasBackdrop&&!regionHold.current?.active&&matrix.b===0&&matrix.c===0&&matrix.a>0&&matrix.d>0){
+      if(isMain&&!animRef.current&&layout!==AROUND&&!hasBackdrop&&!regionHold.current?.active&&matrix.b===0&&matrix.c===0&&matrix.a>0&&matrix.d>0){
         // Same half-open pixel partition as drawImg: the common image/mask
         // edge is quantized once by the same rule, never by separate widths.
         const left=scenePixelEdge(offs.mx,matrix.a,matrix.e),top=scenePixelEdge(offs.my,matrix.d,matrix.f);
@@ -8305,12 +8311,14 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   };
   renderToCanvasRef.current = renderToCanvas;
   useEffect(()=>{
-    if(!imageState||stableScene.current.key===stableSceneKey)return;
+    if(!imageState||stableScene.current.key===stableSceneKey||objEditImage||selectedRegionPhoto!==null||baseSelected||selectedObj||selectedTarget)return;
     let cancelled=false;
     const valid=()=>!cancelled&&stableSceneKeyRef.current===stableSceneKey&&!animRef.current
-      &&!activePointers.current.size&&!regionSliderHeld.current&&!regionHold.current?.active
+      &&!activePointers.current.size&&!isPhotoInteractionBusy()&&!regionSliderHeld.current&&!regionHold.current?.active
+      &&!regionPhotoEditingRef.current&&selectedRegionPhotoRef.current===null
+      &&!chromeSelectionRef.current.baseSelected&&!chromeSelectionRef.current.selectedObj&&!chromeSelectionRef.current.selectedTarget
       &&!editingTextId&&!swapSource&&!isVideoEl(imageState.img)&&!objects.some(o=>isVideoEl(o.img));
-    const timer=window.setTimeout(()=>{
+    void awaitPhotoIdle().then(()=>{
       if(!valid())return;
       const scale=maxPreviewScale();
       const g=layoutGeometry(layout,imageState.baseW*scale,imageState.baseH*scale,maskScale,canvasRatio);
@@ -8319,9 +8327,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
         try{sceneTileWindow.current=v;hideChromeRef.current=true;renderToCanvasRef.current(tile,scale,true);}
         finally{sceneTileWindow.current=null;hideChromeRef.current=prior;lastPatternPaintRef.current=null;}
       },valid).then(ready=>{if(import.meta.env.DEV&&canvasRef.current)canvasRef.current.dataset.scenePreparation=stableScene.current.status;if(ready&&valid())regionPaintRef.current();});
-    },240);
-    return()=>{cancelled=true;window.clearTimeout(timer);};
-  },[stableSceneKey,imageState,layout,maskScale,canvasRatio,maxPreviewScale,viewT,editingTextId,swapSource,activeTab,objDragging,objPinching,objStretching]);
+    });
+    return()=>{cancelled=true;};
+  },[stableSceneKey,imageState,layout,maskScale,canvasRatio,maxPreviewScale,viewT,editingTextId,swapSource,activeTab,objDragging,objPinching,objStretching,objEditImage,selectedRegionPhoto,baseSelected,selectedObj,selectedTarget]);
   const regionShadersPrimed=useRef(false);
   useEffect(()=>{
     if(!imageState||!photoRegion?.photos.length||regionShadersPrimed.current)return;
@@ -10343,23 +10351,41 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
                     const value = around
                       ? Math.round(Math.max(0, Math.min(max, (1 - b) * AROUND_STEPS)))
                       : Math.round(Math.max(0, Math.min(100, (1 / maskScale - 1) * 25)));
-                    const apply = (v: number) => setMaskScale(around
-                      ? aroundK((AROUND_STEPS - v) / AROUND_STEPS)
-                      : 1 / (1 + v * 0.04));
+                    const apply = (v: number) => {
+                      liveMaskScale.current=around?aroundK((AROUND_STEPS-v)/AROUND_STEPS):1/(1+v*.04);
+                      const output=document.querySelector('[data-creative-occupancy-value]');
+                      if(output){const border=aroundB(liveMaskScale.current);output.textContent=around?(border<.004?'滿版':`1/${num(1/border)}`):`1/${num(1/liveMaskScale.current)}`;}
+                      if(occupancyFrame.current)return;
+                      occupancyFrame.current=requestAnimationFrame(()=>{
+                        occupancyFrame.current=0;
+                        const frame=motionFrameRef.current,canvas=canvasRef.current,stage=stageRef.current;
+                        if(!frame||!canvas||!stage||!imageState||liveMaskScale.current===null)return;
+                        const cs=collageSizeOf(layout,imageState.baseW,imageState.baseH,liveMaskScale.current,canvasRatio),b=stage.getBoundingClientRect();
+                        const fit=creativePreviewFit(b.width,b.height,cs.w,cs.h),scale=fitScale(cs.w*fit,cs.w,1);
+                        viewTRef.current={k:1,tx:0,ty:0};
+                        if(frame.parentElement){frame.parentElement.style.transition='none';frame.parentElement.style.transform='translate(0px,0px)';}
+                        frame.style.transition='none';frame.style.width=`${cs.w*fit}px`;frame.style.height=`${cs.h*fit}px`;
+                        baseCssWRef.current=cs.w*fit;previewScaleRef.current=scale;lastPatternPaintRef.current=null;
+                        renderToCanvasRef.current(canvas,scale);
+                      });
+                    };
+                    const commit=()=>{cancelAnimationFrame(occupancyFrame.current);occupancyFrame.current=0;const next=liveMaskScale.current;liveMaskScale.current=null;if(next!==null)setMaskScale(next);};
                     return (
                       <div data-creative-occupancy className={`flex flex-col w-full ${layout === FULL ? 'opacity-35 pointer-events-none' : ''}`}>
                         <div className="flex items-baseline justify-between text-[10px] font-bold text-[#888] mb-2 uppercase tracking-widest">
                           <span>佔比</span>
-                          <span className="text-white font-sans tabular-nums tracking-normal normal-case">{label}</span>
+                          <span data-creative-occupancy-value className="text-white font-sans tabular-nums tracking-normal normal-case">{label}</span>
                         </div>
                         {/* 滑桿就是滑桿：不套外框、不墊底色方塊，只留一條軌道 */}
                         <div className="h-9 flex items-center px-1 w-full">
                           {/* 比例是最重的一根滑桿（每動一格整張拼圖要重畫），
                               所以也走「一格畫面最多送一次」（見 useRafOnChange）。 */}
-                          <RafRange
+                          <RegionLiveRange
                             min={0} max={max} step={1}
                             value={value}
                             onChange={apply}
+                            onCommit={commit}
+                            label="佔比"
                           />
                         </div>
                       </div>
@@ -11451,14 +11477,14 @@ const useRafOnChange = (onChange: (v: number) => void) => {
 
 /** This leaf owns the slider feedback. The large editor only commits state
  * at gesture end; its paint scheduler consumes the latest value each frame. */
-const RegionLiveRange=({value,onChange,onCommit}:{value:number;onChange:(v:number)=>void;onCommit:()=>void})=>{
+const RegionLiveRange=({value,onChange,onCommit,min=0,max=100,step=1,label='融合程度'}:{value:number;onChange:(v:number)=>void;onCommit:()=>void;min?:number;max?:number;step?:number;label?:string})=>{
   const [shown,setShown]=React.useState(value);
   const release=React.useRef<(()=>void)|null>(null);
   const finish=()=>{release.current?.();release.current=null;onCommit();};
   React.useEffect(()=>()=>release.current?.(),[]);
   React.useEffect(()=>setShown(value),[value]);
   return <div className="slider-wrap w-full" style={{height:16}}>
-    <input aria-label="融合程度" type="range" min={0} max={100} step={1} value={shown} className="premium-slider w-full"
+    <input aria-label={label} type="range" min={min} max={max} step={step} value={shown} className="premium-slider w-full"
       onChange={e=>{const v=Number(e.target.value);setShown(v);deferHeavyWork();onChange(v);}}
       onPointerDown={e=>{e.stopPropagation();release.current?.();release.current=holdPhotoInteraction();}}
       onPointerUp={finish} onPointerCancel={finish} onTouchEnd={finish} onKeyUp={finish}/></div>;

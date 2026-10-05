@@ -1,0 +1,25 @@
+{
+  "version": "v57",
+  "date": "2026-10-06",
+  "scope": "Live photo edit and grouped preview regressions",
+  "desktopBrowser": "Chromium 154, 402 x 874 viewport",
+  "creative": {
+    "liveEffectFilterAndPosePixels": "pass, visible before release",
+    "zeroEffectRetainsSelection": "pass",
+    "combinedFilterEffectGestures": "pass",
+    "occupancyBeforeFps": 31.76,
+    "occupancyAfterFps": [59.34,60],
+    "seamlessFps": [59.99,60.04],
+    "previewPinchFps": 60,
+    "staticPixelScan": {"frames":100,"whiteCracks":0,"transparentCracks":0,"p95PaintMs":1.1,"maxPaintMs":1.8}
+  },
+  "classic": {
+    "ordinaryLayout": {"selectionGeometryDelta":0,"selectionPixelDelta":0,"releasePixelDelta":0,"transparentPixels":0,"fps":59.34,"p95FrameMs":18},
+    "seamlessLayout": {"selectionGeometryDelta":0,"selectionPixelDelta":0,"releasePixelDelta":0,"transparentPixels":0,"fps":48.19,"p95FrameMs":33.4},
+    "qualification": "Large full-source seamless effect edits do not yet sustain 60fps; do not describe all paths as 60fps verified."
+  },
+  "iphoneSimulator": {"model":"iPhone 17 iOS 26.5","creativeLiveVisible":"pass, result received from Safari after launching via Simulator UI","remaining":"Manual selection/zoom follow-up blocked by host lock; not a physical iPhone performance certification."},
+  "nodeRegressionTests": {"passed":33,"failed":0},
+  "typecheck": "Repository-wide tsc is not clean; existing ImportMeta.env and other type errors remain. Production Vite build passed.",
+  "quality": "No interaction-only resolution tier; source effects and backing buffers retain their resolution through release."
+}

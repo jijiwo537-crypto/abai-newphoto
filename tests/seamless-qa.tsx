@@ -22,6 +22,7 @@ if(params.has('empty')){
  layout.t.scale=1;layout.gap=0;layout.radius=0;layout.seamless=false;
 }
 if(params.has('emptyAudit'))void import('./empty-layout-audit');
+if(params.has('cellEditAudit')){state.pages[0].layouts[0].gap=0;state.pages[0].layouts[0].radius=0;void import('./layout-photo-edit-audit');}
 if(params.has('exportAudit'))void import('./collage-export-audit');
 if(params.has('chromeAudit'))void import('./collage-chrome-audit');
 if(new URLSearchParams(location.search).has('slowAudit'))void import('./seamless-slow-audit');

@@ -4,7 +4,8 @@ import {readFileSync} from 'node:fs';
 import ts from 'typescript';
 const source=readFileSync(new URL('../utils/creativePhotoLayout.ts',import.meta.url),'utf8');
 const catalog=ts.transpileModule(readFileSync(new URL('../utils/layoutTemplates.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
-const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText.replace("'./layoutTemplates'",`'data:text/javascript;base64,${Buffer.from(catalog).toString('base64')}'`);
+const moduleUrl=path=>{const text=readFileSync(new URL(path,import.meta.url),'utf8');let js=ts.transpileModule(text,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;if(path.endsWith('coveredPhoto.ts'))js=js.replace("'./scenePixelGrid'",`'${moduleUrl('../utils/scenePixelGrid.ts')}'`);return `data:text/javascript;base64,${Buffer.from(js).toString('base64')}`;};
+const js=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText.replace("'./layoutTemplates'",`'data:text/javascript;base64,${Buffer.from(catalog).toString('base64')}'`).replace("'./coveredPhoto'",`'${moduleUrl('../utils/coveredPhoto.ts')}'`);
 const {photoRegionRects,photoRegionHit,swapRegionPhotos,paintPhotoRegion,PHOTO_SWAP_HOLD_MS,regionRects,photoTemplates,quickPhotoTemplateIndices,changePhotoTemplate,photoCrop,PHOTO_LAYOUT_COUNTS,dimmedPhotoSource,clearPhotoDimmer,seamlessPhotoBase,creativeSeamlessSliderValue,withCreativeSeamlessAmount}=await import(`data:text/javascript;base64,${Buffer.from(js).toString('base64')}`);
 test('always-visible feather slider enables from one and preserves threshold values',()=>{
  const region={photos:[],arrangement:'grid',landscape:false};
@@ -81,7 +82,7 @@ test('swapping is immutable, preserves the layout and first-import orientation, 
 });
 test('painting uses the original decoded images, exact shared boundaries and cover crops without a temporary composite',()=>{
  const region={photos:[{src:'a',width:1200,height:800},{src:'b',width:800,height:1200}],arrangement:'horizontal'},images=new Map([['a',{}],['b',{}]]),calls=[];
- const ctx={canvas:{width:1000,height:1000},globalCompositeOperation:'copy',save(){},restore(){},setTransform(){},clearRect(){},drawImage(...args){calls.push(args)}};
+ const ctx={canvas:{width:1000,height:1000},globalCompositeOperation:'copy',getTransform(){return {a:1,b:1,c:0,d:1,e:0,f:0}},save(){},restore(){},setTransform(){},clearRect(){},drawImage(...args){calls.push(args)}};
  paintPhotoRegion(ctx,region,images,17.3,29.8,309.71,411.09);
  assert.equal(calls.length,2);assert.equal(calls[0][0],images.get('a'));assert.equal(calls[1][0],images.get('b'));
  assert.ok(Math.abs(calls[0][5]+calls[0][7]-calls[1][5])<1e-12);
@@ -95,10 +96,11 @@ test('imports, gestures, drafts and readonly IG statistics are wired into the mo
  assert.match(grid,/const LONG_PRESS_MS = 304/);assert.doesNotMatch(grid,/border-2 border-white\/80/);
  const stat=ig.slice(ig.indexOf('const statInput'),ig.indexOf('/* 這裡本來有一顆右下角'));
  assert.match(stat,/<span/);assert.doesNotMatch(stat,/<input|inputMode|onChange=|contentEditable/);
- assert.match(grid,/data-layout-empty-surface="1"/);assert.match(grid,/The outer perimeter is not a grid line/);
+ const surface=readFileSync(new URL('../components/LayoutPhotoSurface.tsx',import.meta.url),'utf8');
+ assert.match(surface,/data-layout-photo-surface/);assert.match(grid,/The outer perimeter is not a grid line/);
  assert.match(grid,/backfaceVisibility: stableSeamless \|\| nativeLayout \? undefined/);
  assert.match(grid,/willChange: stableSeamless \|\| nativeLayout \? undefined/);
- assert.match(grid,/strokeWidth=\{emptyFillsPage \? 2 : 0\}/);
+ assert.match(surface,/drawCoveredPhoto/);
 });
 test('template picker shares cross-page geometry, retains unused originals and supports empty cells',()=>{
  const region={photos:[{src:'a',width:900,height:600},{src:'b',width:900,height:600}],arrangement:'grid',templateIndex:0,landscape:true};

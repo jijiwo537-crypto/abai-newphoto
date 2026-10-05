@@ -71,6 +71,16 @@ void(async()=>{
   const s=stage.getBoundingClientRect(),mid=(s.left+s.right)/2,y=(s.top+s.bottom)/2,widths:number[]=[];
   await measure('preview zoom',i=>{widths.push(canvas.parentElement!.getBoundingClientRect().width);stage!.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,clientX:mid,clientY:y,deltaY:i%24<12?-10:10}));});await wait();
   check('preview actually zoomed',Math.max(...widths)-Math.min(...widths)>30,{min:Math.min(...widths),max:Math.max(...widths)});
+  if(params.has('geometrySliders')){
+    document.querySelector<HTMLButtonElement>('[data-creative-tab="setting"]')!.click();await wait();
+    for(const selector of ['[data-creative-occupancy] input','[data-creative-seamless] input']){
+      const input=document.querySelector<HTMLInputElement>(selector)!;if(!input)throw Error('missing '+selector);
+      const set=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')!.set!,r=input.getBoundingClientRect(),p={x:r.x+r.width/2,y:r.y+r.height/2};
+      pointer('pointerdown',3650,p,input);
+      await measure(selector,i=>{set.call(input,String(10+i%60));input.dispatchEvent(new Event('input',{bubbles:true}));});
+      pointer('pointerup',3650,p,input);await wait();
+    }
+  }
   check('no runtime errors',!errors.length,errors);report.maskDiagnostics={...backdropMaskDiagnostics};report.pass=report.checks.every((c:any)=>c.pass);
  }catch(e){report.error=String(e);report.pass=false;}
  const pre=document.createElement('pre');pre.id='gesture-cost-result';pre.hidden=true;pre.dataset.report=JSON.stringify(report);document.body.append(pre);

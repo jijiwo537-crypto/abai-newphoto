@@ -57,10 +57,10 @@ test('fusion gesture bypasses full editor state and keeps pixels at fixed full r
   assert.match(gpu,/if\(!tex\|\|this\.revisions\.get\(image\)!==revision\)[\s\S]*getImageData[\s\S]*this.textures.set/);
 });
 
-test('selected disabled layouts retain prepared GPU resources without painting hidden frames',()=>{
+test('selection alone does not allocate a second seamless renderer',()=>{
   const component=readFileSync(new URL('../components/SeamlessLayout.tsx',import.meta.url),'utf8');
   const grid=readFileSync(new URL('../components/GridLayoutTool.tsx',import.meta.url),'utf8');
-  assert.match(grid,/prepareSeamless = !insetLayout && \(!!layout.seamless \|\| isThisLayoutSelected\)/);
+  assert.match(grid,/prepareSeamless = !insetLayout && !!layout.seamless/);
   assert.match(grid,/enabled=\{stableSeamless\}/);
   assert.match(component,/if\(!enabled&&warmKey.current===key\)return/);
   assert.match(component,/visibility:ready&&enabled\?'visible':'hidden'/);

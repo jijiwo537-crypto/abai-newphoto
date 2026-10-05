@@ -2,6 +2,8 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { prepareSeamSource, type SeamSource, type SeamPhoto, type SeamRect } from '../utils/seamlessLayout';
 import { drawSeamPreview, disposeSeamPreview } from '../utils/seamlessPreview';
 import { resolveSeamSurface } from '../utils/seamlessSurfaceGeometry';
+import {subscribeCellPhoto} from '../utils/liveCellPhoto';
+import {applyPhotoFx,hasPhotoFx,releasePhotoFxSurface} from '../utils/photoFx';
 
 // Fusion input updates only the layout renderer, not the entire editor.
 const previews = new Map<string, (amount: number) => void>();
@@ -21,8 +23,13 @@ export function SeamlessAmountSlider({ previewId, value, onCommit }: { previewId
   </div>;
 }
 
-export function SeamlessLayout({ previewId, enabled = true, cells, rects, width, height, scale = 1, amount, revision }: { previewId?: string; enabled?: boolean; cells: SeamPhoto[]; rects: SeamRect[]; width: number; height: number; scale?: number; amount: number; revision: number }) {
+export function SeamlessLayout({ previewId, enabled = true, cells:inputCells, rects, width, height, scale = 1, amount, revision }: { previewId?: string; enabled?: boolean; cells: (SeamPhoto&{id?:string})[]; rects: SeamRect[]; width: number; height: number; scale?: number; amount: number; revision: number }) {
+  const [cells,setCells]=useState(inputCells);
+  useLayoutEffect(()=>setCells(inputCells),[inputCells]);
+  useEffect(()=>{const clean=inputCells.filter(c=>c.id).map(c=>subscribeCellPhoto(c.id!,fx=>setCells(prev=>prev.map(p=>p.id===c.id?{...p,fx}:p))));return()=>clean.forEach(f=>f());},[inputCells.map(c=>c.id).join('|')]);
   const canvas=useRef<HTMLCanvasElement>(null);
+  const effectSurfaces=useRef(new Map<string,HTMLCanvasElement>());
+  useEffect(()=>()=>{for(const cv of effectSurfaces.current.values()){releasePhotoFxSurface(cv);cv.width=cv.height=1;}effectSurfaces.current.clear();},[]);
   const svg=useRef<SVGSVGElement>(null),paintCurrent=useRef<()=>void>(()=>{}),warmKey=useRef('');
   const [ready,setReady]=useState(false),[prepared,setPrepared]=useState<{key:string;sources:SeamSource[]}|null>(null),[live,setLive]=useState(amount);
   const [contextRevision,restoreContext]=useState(0);
@@ -44,11 +51,23 @@ export function SeamlessLayout({ previewId, enabled = true, cells, rects, width,
   const sourceKey=JSON.stringify([revision,cells.map(c=>[c.url,c.fx||{}])]);
   useEffect(()=>{
     let cancelled=false;
-    Promise.all(cells.map(c=>prepareSeamSource(c,revision))).then(sources=>{if(!cancelled)setPrepared({key:sourceKey,sources});}).catch(error=>{if(!cancelled)console.error('Seamless sources:',error);});
+    Promise.all(cells.map(async(c,i)=>{
+      const original=await prepareSeamSource({...c,fx:undefined},revision);
+      if(cancelled||!original||!hasPhotoFx(c.fx))return original;
+      const id=c.id||String(i);let input=effectSurfaces.current.get(id);
+      if(!input){input=document.createElement('canvas');effectSurfaces.current.set(id,input);}
+      const image=applyPhotoFx(original.image,original.width,original.height,c.fx!,{cacheSource:true,gpuSurface:true,out:input});
+      image.dataset.seamRevision=JSON.stringify([c.url,c.fx,revision]);
+      return {...original,image};
+    })).then(sources=>{if(!cancelled)setPrepared({key:sourceKey,sources});}).catch(error=>{if(!cancelled)console.error('Seamless sources:',error);});
     return()=>{cancelled=true;};
   },[sourceKey,revision]);
   const aspect=Math.round(width/Math.max(.000001,height)*1e8)/1e8;
-  const sources=prepared?.key===sourceKey?prepared.sources:null;
+  // Keep the last complete frame visible until the next complete source set
+  // is ready; parameter input must not expose the original/blank fallback.
+  const sources=prepared?.sources||null;
+  const cellsRef=useRef(cells);cellsRef.current=cells;
+  const placementKey=JSON.stringify(cells.map(c=>[c.zoom,c.offsetX,c.offsetY,c.rotation,c.opacity]));
   // Retain the established source-resolution local plane. Zoom never changes
   // the original textures; visible pixels are sampled at constant screen density.
   let masterH=1024;
@@ -79,11 +98,11 @@ export function SeamlessLayout({ previewId, enabled = true, cells, rects, width,
       element.style.transform=`matrix(${surface.transform.join(',')})`;
       element.style.clipPath=`polygon(${surface.clip})`;
       root.dataset.rasterView=JSON.stringify(surface.rasterView);
-      try{drawSeamPreview(element,cells,rects,sources,live,surface.view);warmKey.current=key;setReady(true);element.dataset.paintCount=String(Number(element.dataset.paintCount||0)+1);}
+      try{drawSeamPreview(element,cellsRef.current,rects,sources,live,surface.view);warmKey.current=key;setReady(true);element.dataset.paintCount=String(Number(element.dataset.paintCount||0)+1);}
       catch(error){setReady(false);console.error('Seamless GPU:',error);}
     };
     paintCurrent.current=paint;paint();
-  },[sources,cells,rects,w,h,live,contextRevision,width,height,scale,enabled]);
+  },[sources,placementKey,rects,w,h,live,contextRevision,width,height,scale,enabled]);
   return <><style>{`[data-seamless="true"]:has(> svg[data-seamless-master][data-ready="true"]) [id^="cell-container-"] { background-color: transparent !important; }
     [data-seamless="true"]:has(> svg[data-seamless-master][data-ready="true"]) .layout-photo-content { visibility: hidden; }`}</style>
     <svg ref={svg} data-seamless-master data-active={enabled} data-ready={ready} data-seamless-amount={live} data-source-key={sourceKey} data-seamless-crop={JSON.stringify(cells.map(c=>[c.zoom,c.offsetX,c.offsetY,c.rotation,c.opacity??100]))} data-seamless-rects={JSON.stringify(rects)} viewBox={`0 0 ${w} ${h}`} width={width} height={height} preserveAspectRatio="none" aria-hidden
