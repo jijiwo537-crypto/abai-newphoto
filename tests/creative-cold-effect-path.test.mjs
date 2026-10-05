@@ -31,7 +31,7 @@ test('spatial base sliders keep an immutable input and a resident final scene',(
 test('legacy optics reuse the editor kernels without a release-resolution switch',()=>{
  assert.match(fx,/layer:new HalationLayer/);assert.match(fx,/layer.renderSoft/);assert.match(fx,/layer.renderBlur/);assert.match(fx,/layer.renderSimple/);
  const layer=read('../utils/halationLayer.ts');assert.match(layer,/composeFxScene\(gl,this.sceneResult!,this.scene\)/);
- assert.match(collage,/cap=photoPreviewCapacity\(onScreenPx/);
+ assert.match(collage,/cap=regionEffectCapacity\(o,slot/);
  assert.match(fx,/releasePhotoFxSurface/);assert.match(gl,/disposeFxScene\(gl\)/);
 });
 test('colour worker and actual float shader are primed before the first input',()=>{
@@ -72,7 +72,9 @@ test('optical switching reuses its source and context, and geometry hits precede
  assert.match(collage,/const snapshot=hit\?\.cv instanceof HTMLCanvasElement&&hit.cv.dataset.regionImmutable==='1'\?hit.cv/);
 });
 test('320 optical changes allocate one renderer and update the correct effect each time',()=>{
- const branch=fx.slice(fx.indexOf('  if(opts?.scene&&opts.cacheSource'),fx.indexOf('  const residentEffects ='));
+ const branchStart=fx.indexOf('  if(opts?.gpuSurface&&opts.cacheSource');
+ assert.ok(branchStart>=0);
+ const branch=fx.slice(branchStart,fx.indexOf('  const residentEffects =',branchStart));
  let allocations=0,disposals=0,sourcePaints=0;const calls=[];
  const canvas=()=>({width:1,height:1,getContext:()=>({})});
  class Layer{
@@ -82,7 +84,7 @@ test('320 optical changes allocate one renderer and update the correct effect ea
  }
  const context={opticalInputs:new WeakMap(),opticalKeys:new Set(['soft','softThreshold','softRadius','softColor','fringeIntensity','fringeSize','fringeFeather','fringeHue','leakOpacity','leakAngle','leakHue','blur','colorNoise','vignette']),HalationLayer:Layer,document:{createElement:canvas},hasActiveFx:()=>false,effectInputKey:(_s,w,h,p)=>JSON.stringify([w,h,p]),applyPhotoFx:(_s,_w,_h,_p,o)=>{sourcePaints++;return o.out;},releasePhotoFxSurface:()=>{},toParams:()=>({}),hslToRgb:()=>[],getNoisePattern:canvas};
  vm.createContext(context);
- const code='this.run=function(source,out,fx){const oW=100,oH=100,opts={scene:{},cacheSource:true};'+branch+'};';
+ const code='this.run=function(source,out,fx){const oW=100,oH=100,opts={scene:{},cacheSource:true,gpuSurface:true};'+branch+'};';
  vm.runInContext(ts.transpile(code,{target:ts.ScriptTarget.ES2022}),context);
  const out=canvas(),source=canvas();
  for(let i=0;i<320;i++)context.run(source,out,[{soft:40},{fringeIntensity:20},{leakOpacity:50}][i%3]);

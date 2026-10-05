@@ -1224,10 +1224,16 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   useEffect(()=>()=>{if(regionPaintRaf.current)cancelAnimationFrame(regionPaintRaf.current);},[]);
   const decodedRegionPhotos = useRef(new Map<string, HTMLImageElement>());
   const regionDrawables=useRef(new Map<string,ImageBitmap>());
+  const [layout, setLayout] = useState('mask-bottom');
   useEffect(()=>{
     let cancelled=false;const sources=new Set(photoRegion?.photos.map(p=>p.src).filter(Boolean));
     for(const [src,bitmap] of regionDrawables.current)if(!sources.has(src)){bitmap.close();regionDrawables.current.delete(src);}
-    void(async()=>{for(const src of sources){
+    // The normal grid renderer already retains original GPU textures. Native
+    // ImageBitmaps duplicate every decoded photograph and are needed only by
+    // the surrounding-layout CPU fallback, not by swapping or grid zoom.
+    const needsPinnedBitmap=layout===AROUND;
+    if(!needsPinnedBitmap){for(const bitmap of regionDrawables.current.values())bitmap.close();regionDrawables.current.clear();}
+    void(async()=>{for(const src of needsPinnedBitmap?sources:[]){
       if(regionDrawables.current.has(src))continue;
       await awaitPhotoIdle();if(cancelled)return;
       const img=decodedRegionPhotos.current.get(src);if(!img||typeof createImageBitmap!=='function')continue;
@@ -1253,7 +1259,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }
     })();
     return ()=>{cancelled=true;};
-  },[photoRegion?.photos.map(p=>p.src).join('|'),imageState]);
+  },[photoRegion?.photos.map(p=>p.src).join('|'),imageState,layout]);
   useEffect(()=>()=>{for(const bitmap of regionDrawables.current.values())bitmap.close();regionDrawables.current.clear();},[]);
   const creativeSeam = useRef<CreativeSeamless|null>(null);
   useEffect(()=>()=>creativeSeam.current?.dispose(),[]);
@@ -1277,7 +1283,6 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     }));
     return {...region,multi:region.multi ?? region.photos.length>1};
   };
-  const [layout, setLayout] = useState('mask-bottom');
   const [maskScale, setMaskScale] = useState(DEFAULT_MASK_SCALE);
   const [canvasRatio, setCanvasRatio] = useState<CanvasRatio>('1:1');
   const [canvasRatioBeforeFull, setCanvasRatioBeforeFull] = useState<CanvasRatio|null>(null);
@@ -1371,6 +1376,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
   const regionFxSurfaces = useRef<Map<string, HTMLCanvasElement>>(new Map());
   const regionPreviewCaps=useRef(new Map<string,number>());
   const regionStaticSnapshot=useRef<{cv:HTMLCanvasElement}|null>(null);
+  const regionPhotoEditingRef=useRef(false);
   useEffect(()=>{
     const keys=new Set(photoRegion?.photos.map((p,i)=>`region-fx-${i}@${p.src}`)||[]);
     for(const [key,cv] of regionFxSurfaces.current)if(!keys.has(key)){releasePhotoFxSurface(cv);cv.width=cv.height=1;regionFxSurfaces.current.delete(key);objFxCache.current.delete(key);regionPreviewCaps.current.delete(key);}
@@ -1656,7 +1662,7 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     };
     if (!hasShape) {
       let result=base;
-      if(regionPhoto&&isMain&&reuse&&base!==reuse&&!regionSliderHeld.current&&!regionTouches.current.size&&(!photoRegionRef.current?.seamless||!selectedBase||prepareNative)){
+      if(regionPhoto&&isMain&&reuse&&base!==reuse&&!regionSliderHeld.current&&!regionTouches.current.size&&(!regionPhotoEditingRef.current||prepareNative)){
         // Geometry-only rendering needs immutable photo pixels, not an entire
         // native-size shader pool. Release the pool immediately after copying,
         // including when the user never pauses long enough for an idle job.
@@ -2160,14 +2166,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
      footer 也要夠高（5rem 滑桿 ＋ 6rem 工具列 ＋ h-16 分類列 ＋ 分頁列）。 */
   const objEditImage = activeTab === 'objedit' && !colorPickerTarget
     && (selectedRegionPhoto !== null || baseSelected || !!objects.find(o => o.id === selectedObj && o.type === 'image'));
+  regionPhotoEditingRef.current=objEditImage;
   useEffect(()=>{
     const index=selectedRegionPhoto??0,photo=photoRegion?.photos[index];
-    if(!photo||!hasPhotoFx(photo.fx)||activeTab==='motion'||photoRegion?.seamless&&objEditImage)return;
+    // Never bake a native-size master between clicks in the editing panel.
+    // The resident live pipeline already presents the current effect; native
+    // snapshots are prepared only after leaving editing, without competing
+    // with the next tap for allocation, upload or readback work.
+    if(!photo||!hasPhotoFx(photo.fx)||activeTab==='motion'||objEditImage)return;
     let cancelled=false;
     // Prepare reusable exact photo pixels after an edit settles, not on the
     // first occupancy input. The final scene stays visible and untouched.
     void awaitPhotoIdle().then(()=>{
-      if(cancelled||!canvasRef.current)return;
+      if(cancelled||regionPhotoEditingRef.current||!canvasRef.current)return;
       const original=decodedRegionPhotos.current.get(photo.src);if(!original)return;
       const id=`region-fx-${index}@${photo.src}`;
       const cv=fxCanvasOf({...photo,id,img:original},true,Math.max(Math.abs(imageTransform.w),Math.abs(imageTransform.h))*previewScaleRef.current,true);
@@ -5403,7 +5414,15 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       if (!img || !t) return;
       ctx.save();
       ctx.beginPath();
-      ctx.rect(ox, oy, w, h);
+      const matrix=ctx.getTransform();
+      if(isMain&&!previewCapture&&!hasBackdrop&&!animRef.current&&!regionHold.current?.active&&photoRegion&&layout!==AROUND&&img===baseImg&&matrix.b===0&&matrix.c===0&&matrix.a>0&&matrix.d>0){
+        // The GPU window accepts pixel centres, not antialiased fractional
+        // canvas clips. Use the same integer ownership for its transparent
+        // main-canvas window, without changing source crop or logical geometry.
+        const left=Math.ceil(ox*matrix.a+matrix.e-.5),top=Math.ceil(oy*matrix.d+matrix.f-.5);
+        const right=Math.ceil((ox+w)*matrix.a+matrix.e-.5),bottom=Math.ceil((oy+h)*matrix.d+matrix.f-.5);
+        ctx.setTransform(1,0,0,1,0,0);ctx.rect(left,top,right-left,bottom-top);ctx.setTransform(matrix);
+      }else ctx.rect(ox, oy, w, h);
       ctx.clip();
       // kk：整個構圖等比例縮放（四周包圍縮中間那張照片時用）
       drawBase(ctx, img, ox + t.x * s * kk, oy + t.y * s * kk, t.w * s * kk, t.h * s * kk, allowDim, [ox,oy,w,h]);
@@ -8217,8 +8236,9 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
     if(import.meta.env.DEV&&stageRef.current)stageRef.current.dataset.photoTransforms=JSON.stringify(photoRegionRef.current?.photos.map(p=>({src:p.src,zoom:p.zoom||1,x:p.offsetX||0,y:p.offsetY||0})));
   };
   renderToCanvasRef.current = renderToCanvas;
+  const regionShadersPrimed=useRef(false);
   useEffect(()=>{
-    if(!imageState||!photoRegion?.photos.length)return;
+    if(!imageState||!photoRegion?.photos.length||regionShadersPrimed.current)return;
     let cancelled=false;
     void(async()=>{
       // Wait for the actual import geometry/source, not a fixed idle timeout.
@@ -8240,16 +8260,19 @@ export const CollageTool: React.FC<CollageToolProps> = ({ onHome, onRequestExit,
       try{
         regionPreflight.current=true;renderToCanvasRef.current(canvasRef.current,previewScaleRef.current);
         const ready=regionSpatial.current,source=decodedRegionPhotos.current.get(p.src);
+        regionPreflight.current=false;
         if(ready&&source&&!ready.shown){
           const w=source.naturalWidth||source.width,h=source.naturalHeight||source.height;
           const transform=latestImageTransform.current;
           const cap=regionEffectCapacity(p,0,w,h,Math.max(Math.abs(transform.w),Math.abs(transform.h))*previewScaleRef.current),k=Math.min(1,cap/Math.max(w,h));
           for(const id of ['soft','fringeIntensity','leakOpacity','fxMosaic','fxLowfi','fxExposureSpill']){
+            await awaitPhotoIdle();if(cancelled)return;
             const primed=applyPhotoFx(source,Math.max(1,Math.round(w*k)),Math.max(1,Math.round(h*k)),{...FX_PARAM_DEFAULTS,[id]:100},{cacheSource:true,gpuSurface:true,out:ready.input,scene:ready.scene});
             // WebKit can defer the real texture/shader work until presentation.
             // Fence only this import-time preflight, never an interaction frame.
             if(primed instanceof HTMLCanvasElement&&primed!==ready.input)(primed.getContext('webgl2')||primed.getContext('webgl'))?.finish();
           }
+          regionShadersPrimed.current=true;
         }
       }
       finally{regionPreflight.current=false;}

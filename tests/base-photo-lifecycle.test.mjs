@@ -43,7 +43,9 @@ test('returning camera controls has stable thermostat geometry without entry tra
 });
 test('continuous geometry gestures release native effect pools without waiting for idle',()=>{
  const collage=read('../components/CollageTool.tsx');
- const block=collage.slice(collage.indexOf('if(regionPhoto&&isMain&&reuse&&base!==reuse)'),collage.indexOf('if(regionPhoto&&isMain&&reuse&&base!==reuse)')+900);
+ const start=collage.indexOf('if(regionPhoto&&isMain&&reuse&&base!==reuse');
+ assert.ok(start>=0);
+ const block=collage.slice(start,collage.indexOf('objFxCache.current.set(o.id',start));
  assert.ok(block.indexOf('drawImage(base,0,0)')<block.indexOf('compactPhotoFxSurface(reuse)'));
  assert.match(block,/releasePhotoFxReadbacks\(srcEl\)/);
  assert.match(collage,/regionSpatialActive.current=activeTab!=='motion'&&activeTab!=='setting'/);
@@ -51,8 +53,8 @@ test('continuous geometry gestures release native effect pools without waiting f
 test('cached thumbnails paint in layout phase before idle or stagger and evict individually',()=>{
  const panel=read('../components/GridLayoutTool.tsx');
  const card=panel.slice(panel.indexOf('const CardThumb:'),panel.indexOf('const previewImgCache'));
- assert.match(card,/useLayoutEffect/);assert.ok(card.indexOf('if(cached){copy(cached)')<card.indexOf('await awaitPhotoIdle()'));
- assert.doesNotMatch(card,/cardThumbCache.clear/);assert.match(card,/cardThumbCache.delete\(cardThumbCache.keys\(\).next\(\).value!/);
+ assert.match(card,/useLayoutEffect/);assert.ok(card.indexOf('if(cached){copy(cached)')<card.indexOf('await queueCardThumb('));
+ assert.doesNotMatch(card,/cardThumbCache.clear/);assert.match(panel,/const oldKey=cardThumbCache.keys\(\).next\(\).value!/);assert.match(panel,/cardThumbCache.delete\(oldKey\)/);
 });
 test('camera effect cards stay symmetric while close control matches exposure',()=>{
  const ui=read('../components/CameraInterface.tsx');

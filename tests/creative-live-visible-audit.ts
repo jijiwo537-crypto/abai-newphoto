@@ -53,8 +53,10 @@ void(async()=>{
  if(new URLSearchParams(location.search).has('rapid')){
   const times:any[]=[];
   const stress=new URLSearchParams(location.search).has('longSwitch');
+  const requested=Number(new URLSearchParams(location.search).get('switchCount'));
+  const switchCount=requested>0?Math.min(320,Math.floor(requested)):stress?320:24;
   const ids=stress?['softLight','halation','lightLeak','fxMosaic','fxGlass','fxLowfi','fxExposureSpill','fxMotion','fxSpin','fxAberration']:['fxMosaic','fxGlass','fxLowfi','fxExposureSpill'];
-  for(let i=0;i<(stress?320:24);i++){
+  for(let i=0;i<switchCount;i++){
    const id=ids[i%ids.length];
    const card=document.querySelector<HTMLButtonElement>(`[data-fx-card="${id}"]`)!;
    if(!card)throw Error('missing effect '+id);

@@ -35,8 +35,10 @@ test('leaving base editing releases unused scene storage even with photo zero pr
  assert.match(collage,/if\(!objEditImage\)\{[\s\S]*compactPhotoFxSurface\(resident.input\)/);
  assert.doesNotMatch(collage,/if\(!objEditImage&&selectedKey===null\)/);
 });
-test('live seamless editing does not synchronously snapshot every effect click',()=>{
- assert.match(collage,/!photoRegionRef.current\?\.seamless\|\|!selectedBase\|\|prepareNative/);
+test('all live base editing avoids synchronous snapshots and native idle bakes',()=>{
+ assert.match(collage,/!regionPhotoEditingRef.current\|\|prepareNative/);
+ assert.match(collage,/activeTab==='motion'\|\|objEditImage\)return/);
+ assert.match(collage,/cancelled\|\|regionPhotoEditingRef.current\|\|!canvasRef.current/);
  assert.match(collage,/result.dataset.seamRevision=key/);
 });
 test('wheel zoom holds background photo work until the gesture commits',()=>{
@@ -49,4 +51,41 @@ test('seam GPU capability and uniform queries are cached outside the hot path',(
  assert.match(seam,/if\(count>this.maxTextureUnits\)/);
  assert.match(seam,/if\(!locations!.has\(name\)\)/);
  assert.equal((seam.match(/gl.getParameter\(/g)||[]).length,1);
+});
+test('ordinary photo grids do not retain duplicate native bitmaps',()=>{
+ assert.match(collage,/const needsPinnedBitmap=layout===AROUND/);
+ assert.match(collage,/for\(const src of needsPinnedBitmap\?sources:\[\]\)/);
+});
+test('swapping photo zero does not rerun the editor shader preflight',()=>{
+ assert.match(collage,/regionShadersPrimed.current\)return/);
+ assert.match(collage,/regionShadersPrimed.current=true/);
+ assert.match(collage,/await awaitPhotoIdle\(\);if\(cancelled\)return;/);
+});
+test('compacting optical editing also releases its nested effect surface',()=>{
+ const fx=readFileSync(new URL('../utils/photoFx.ts',import.meta.url),'utf8');
+ const compact=fx.slice(fx.indexOf('export function compactPhotoFxSurface'),fx.indexOf('const spatialKeys'));
+ assert.match(compact,/releasePhotoFxSurface\(optical.source\)/);
+});
+test('non-feathered pixels have exactly one photo owner at fractional boundaries',()=>{
+ const seam=readFileSync(new URL('../utils/seamlessPreview.ts',import.meta.url),'utf8');
+ assert.match(seam,/if\(distance<nearest\)\{nearest=distance;owner=/);
+ assert.match(seam,/!fused\?owner==/);
+ assert.match(seam,/image instanceof HTMLCanvasElement/);
+ assert.match(seam,/this.textureBytes.clear\(\);this.revisions.clear\(\)/);
+});
+test('photo window clips and clearing use the shader pixel-centre boundary rule',()=>{
+ const creative=readFileSync(new URL('../utils/creativeSeamless.ts',import.meta.url),'utf8');
+ assert.match(collage,/Math.ceil\(ox\*matrix.a\+matrix.e-\.5\)/);
+ assert.match(creative,/clearLeft=Math.ceil\(left-\.5\)/);
+ assert.match(creative,/ctx.setTransform\(1,0,0,1,0,0\)/);
+ // Adjacent windows always partition integer pixel centres, independently
+ // of fractional preview zoom, with neither overlap nor unowned pixels.
+ for(const scale of [.17,.333,.85,1,1.51,3.07,5.99]){
+  const edges=[.13,120.37,250.91].map(x=>x*scale+.29);
+  const split=edges.map(x=>Math.ceil(x-.5));
+  for(let pixel=split[0];pixel<split[2];pixel++){
+   const owners=(pixel>=split[0]&&pixel<split[1]?1:0)+(pixel>=split[1]&&pixel<split[2]?1:0);
+   assert.equal(owners,1);
+  }
+ }
 });

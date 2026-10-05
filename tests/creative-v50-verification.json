@@ -1,0 +1,15 @@
+{
+  "scope": "Creative collage base-photo editing, swaps, and preview boundaries",
+  "runtime": "Codex in-app Chromium browser; production React build with QA instrumentation",
+  "mobileStatus": "Current iOS 26.5 Simulator rerun stopped at memory warning; not a completed mobile pass",
+  "checks": {
+    "sourceRegressionTests": {"passed": 57, "failed": 0},
+    "whitePhotoBoundaryAudit": {"photos": 3, "zoomFrames": 60, "pixelScans": 20, "passed": true},
+    "nativeSizePhotoSwaps": {"photos": 3, "sourceSize": [4096, 3072], "swaps": 18, "releaseMsRange": [8.3, 15.4], "firstFramePixelsPassed": true},
+    "rapidEffects": {"photos": 3, "sourceSize": [4096, 3072], "switches": 320, "maximumMs": 124.5, "over250Ms": 0, "livePixelsPassed": true},
+    "fusionPreviewExport": {"specialFourPhotoSplitLayout": true, "passed": true},
+    "ninePhotoGestures": {"sourceSize": [2048, 1536], "fpsRange": [59.93, 60], "passed": true}
+  },
+  "quality": "No gesture-time quality reduction added; current photos retain original GPU textures; inactive edited buffers are evicted",
+  "memoryPolicy": "One QA page; Simulator and build not concurrent; owned build/test stops at 4.5 GB tracked RSS or low system reserve. RSS is not a hard total-footprint guarantee."
+}

@@ -126,7 +126,7 @@ export function releasePhotoFxReadbacks(source:CanvasImageSource){
   if(gpuC1)gpuC1.width=gpuC1.height=1;
 }
 export function compactPhotoFxSurface(input:HTMLCanvasElement){
- const optical=opticalInputs.get(input);if(optical){optical.layer.dispose();optical.source.width=optical.source.height=1;opticalInputs.delete(input);}
+ const optical=opticalInputs.get(input);if(optical){optical.layer.dispose();releasePhotoFxSurface(optical.source);optical.source.width=optical.source.height=1;opticalInputs.delete(input);}
  const retained=effectInputs.get(input);
  if(retained){compactFxSurface(retained.surface);retained.source.width=retained.source.height=1;retained.colourInput=undefined;retained.rawKey=undefined;retained.key='';}
  input.width=input.height=1;

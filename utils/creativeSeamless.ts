@@ -51,7 +51,13 @@ export class CreativeSeamless {
     Object.assign(surface.style,{position:'absolute',left:`${box.left-(parent?.left||box.left)+l/sx}px`,top:`${box.top-(parent?.top||box.top)+t/sy}px`,width:`${W/sx}px`,height:`${H/sy}px`,zIndex:'0',pointerEvents:'none',display:'block'});
     surface.dataset.presentationX=String(l);surface.dataset.presentationY=String(t);
     surface.dataset.creativeSeamPresentation='1';if(surface.parentElement!==main.parentElement)main.parentElement?.prepend(surface);
-    ctx.clearRect(x,y,w,h);return true;
+    // Remove opaque main-canvas pixels at exactly the same pixel centres as
+    // the shader's photo window. Fractional clearRect/clip edges otherwise
+    // leave a varying alpha fringe above an already-filled GPU photograph.
+    const clearLeft=Math.ceil(left-.5),clearTop=Math.ceil(top-.5);
+    const clearRight=Math.ceil(right-.5),clearBottom=Math.ceil(bottom-.5);
+    ctx.save();ctx.setTransform(1,0,0,1,0,0);
+    ctx.clearRect(clearLeft,clearTop,Math.max(0,clearRight-clearLeft),Math.max(0,clearBottom-clearTop));ctx.restore();return true;
   }
   beginFrame(){this.firstView=null;this.pendingPresentation=null;}
   flush(){const draw=this.pendingPresentation;this.pendingPresentation=null;if(draw)draw();else this.hide();}

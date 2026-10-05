@@ -33,9 +33,13 @@ class SeamGpu {
     this.blank.width=this.blank.height=1;const empty=this.blank.getContext('2d')!;empty.fillStyle='#121212';empty.fillRect(0,0,1,1);
     this.buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
   }
-  dispose(){const gl=this.gl;for(const t of this.textures.values())gl.deleteTexture(t);for(const p of this.programs.values())gl.deleteProgram(p);gl.deleteBuffer(this.buffer);this.textures.clear();this.programs.clear();this.uniforms.clear();this.lastPresentation=null;if(!gl.isContextLost())gl.getExtension('WEBGL_lose_context')?.loseContext();}
+  dispose(){const gl=this.gl;for(const t of this.textures.values())gl.deleteTexture(t);for(const p of this.programs.values())gl.deleteProgram(p);gl.deleteBuffer(this.buffer);this.textures.clear();this.textureBytes.clear();this.revisions.clear();this.programs.clear();this.uniforms.clear();this.lastPresentation=null;if(!gl.isContextLost())gl.getExtension('WEBGL_lose_context')?.loseContext();}
   get lost(){return this.invalid||this.gl.isContextLost();}
-  copyPixels(ctx:CanvasRenderingContext2D,x:number,y:number){
+  copyPixels(ctx:CanvasRenderingContext2D,x:number,y:number,presentation?:HTMLCanvasElement){
+    // Chromium transfers the rendered bitmap into the displayed canvas and
+    // clears the OffscreenCanvas framebuffer. Read the displayed bitmap, not
+    // the now-empty framebuffer; WebKit and tiled exports still read raw GL.
+    if(this.transferred&&presentation){ctx.drawImage(presentation,x,y);return;}
     // A displayed WebGL canvas need not retain an extra framebuffer copy.
     // Pixel audits/exports explicitly redraw before reading, in the same task.
     if(this.presentationOnly)this.lastPresentation?.();
@@ -51,9 +55,10 @@ class SeamGpu {
     const vs=shader(gl.VERTEX_SHADER,`#version 300 es
       in vec2 position;out vec2 uv;void main(){uv=vec2((position.x+1.)*.5,(1.-position.y)*.5);gl_Position=vec4(position,0.,1.);}`);
     const uniforms=Array.from({length:count},(_,i)=>`uniform sampler2D photo${i};uniform vec4 box${i};uniform vec4 edges${i};uniform vec4 crop${i};uniform vec4 source${i};uniform float opacity${i};uniform bool srgb${i};`).join('\n');
+    const owners=Array.from({length:count},(_,i)=>`{vec4 b=box${i};vec2 outside=max(max(b.xy-p,p-(b.xy+b.zw)),vec2(0.));float distance=dot(outside,outside);if(distance<nearest){nearest=distance;owner=${i};}}`).join('\n');
     const layers=Array.from({length:count},(_,i)=>`{
       vec4 b=box${i},e=edges${i},c=crop${i},s=source${i};
-      if(p.x>=b.x&&p.y>=b.y&&p.x<=b.x+b.z&&p.y<=b.y+b.w){
+      if(!fused?owner==${i}:(p.x>=b.x&&p.y>=b.y&&p.x<=b.x+b.z&&p.y<=b.y+b.w)){
         float wx=(e.x>0.?smoothstep(b.x,b.x+2.*e.x,p.x):1.)*(e.z>0.?1.-smoothstep(b.x+b.z-2.*e.z,b.x+b.z,p.x):1.);
         float wy=(e.y>0.?smoothstep(b.y,b.y+2.*e.y,p.y):1.)*(e.w>0.?1.-smoothstep(b.y+b.w-2.*e.w,b.y+b.w,p.y):1.);
         vec2 d=p-(b.xy+b.zw*.5);d=vec2(d.x*s.z+d.y*s.w,-d.x*s.w+d.y*s.z)-c.xy;
@@ -64,7 +69,7 @@ class SeamGpu {
       }
     }`).join('\n');
     const fs=shader(gl.FRAGMENT_SHADER,`#version 300 es
-      precision highp float;in vec2 uv;out vec4 color;uniform vec2 size;uniform vec3 viewX;uniform vec3 viewY;
+      precision highp float;in vec2 uv;out vec4 color;uniform vec2 size;uniform vec3 viewX;uniform vec3 viewY;uniform bool fused;
       uniform bool zones;uniform bool second;uniform vec4 clip;uniform vec4 otherClip;uniform vec3 otherX;uniform vec3 otherY;
       ${uniforms}
       vec3 toP3(vec3 v){vec3 linear=mix(v/12.92,pow((v+.055)/1.055,vec3(2.4)),step(vec3(.04045),v));
@@ -73,7 +78,9 @@ class SeamGpu {
       void main(){bool a=all(greaterThanEqual(uv,clip.xy))&&all(lessThanEqual(uv,clip.zw));bool b=second&&all(greaterThanEqual(uv,otherClip.xy))&&all(lessThanEqual(uv,otherClip.zw));
         if(zones&&!a&&!b){color=vec4(0.);return;}
         vec3 vx=zones&&!a&&b?otherX:viewX,vy=zones&&!a&&b?otherY:viewY;
-        vec2 p=clamp(vec2(dot(uv,vx.xy)+vx.z,dot(uv,vy.xy)+vy.z),vec2(.00001),size-vec2(.00001));vec3 sum=vec3(0.);float coverage=0.;${layers}
+        vec2 p=clamp(vec2(dot(uv,vx.xy)+vx.z,dot(uv,vy.xy)+vy.z),vec2(.00001),size-vec2(.00001));
+        float nearest=1.e30;int owner=-1;if(!fused){${owners}}
+        vec3 sum=vec3(0.);float coverage=0.;${layers}
         color=vec4(sum/max(.000001,min(1.,coverage)),1.);}`);
     p=gl.createProgram()!;gl.attachShader(p,vs);gl.attachShader(p,fs);gl.linkProgram(p);gl.deleteShader(vs);gl.deleteShader(fs);
     if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw new Error(gl.getProgramInfoLog(p)||'Program');
@@ -85,11 +92,12 @@ class SeamGpu {
     const active=new Set(sources.map(s=>s?.image||this.blank));
     const incoming=sources.reduce((n,s)=>n+(s&&!this.textures.has(s.image)?s.width*s.height*4*4/3:0),0);
     let resident=Array.from(this.textureBytes.values()).reduce((a,b)=>a+b,0);
-    // Evict only inactive source textures. Keep every current photo at original
-    // quality, even when a large layout itself needs more than the cache budget.
+    // Edited canvases are transient results, not reusable photo originals.
+    // Release them as soon as another result replaces them, rather than
+    // retaining a second native-size copy throughout repeated edits/swaps.
     for(const [image,tex] of this.textures){
-      if(resident+incoming<=128*1024*1024&&this.textures.size<=24)break;
       if(active.has(image))continue;
+      if(!(image instanceof HTMLCanvasElement)&&resident+incoming<=32*1024*1024&&this.textures.size<=12)continue;
       resident-=this.textureBytes.get(image)||0;gl.deleteTexture(tex);this.textures.delete(image);this.textureBytes.delete(image);this.revisions.delete(image);
     }
     if(count>this.maxTextureUnits)throw new Error('佈局相片數超過 GPU 上限');
@@ -99,6 +107,7 @@ class SeamGpu {
     const uniform=(name:string)=>{if(!locations!.has(name))locations!.set(name,gl.getUniformLocation(p,name));return locations!.get(name)!;};
     const loc=gl.getAttribLocation(p,'position');gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
     gl.uniform2f(uniform('size'),w,h);
+    gl.uniform1i(uniform('fused'),amount>=0?1:0);
     gl.uniform3f(uniform('viewX'),view.xx,view.xy,view.x0);gl.uniform3f(uniform('viewY'),view.yx,view.yy,view.y0);
     gl.uniform1i(uniform('zones'),view.clip?1:0);gl.uniform1i(uniform('second'),view.other?1:0);
     gl.uniform4fv(uniform('clip'),view.clip||[-1,-1,2,2]);
@@ -158,6 +167,8 @@ class SeamGpu {
     gl.drawArrays(gl.TRIANGLE_STRIP,0,4);gl.disable(gl.SCISSOR_TEST);
     if(this.transferred){const bitmap=(this.canvas as OffscreenCanvas).transferToImageBitmap();target.getContext('bitmaprenderer')!.transferFromImageBitmap(bitmap);bitmap.close();}
     target.dataset.sourceUploads=String(this.uploads);
+    target.dataset.residentTextureBytes=String(Array.from(this.textureBytes.values()).reduce((a,b)=>a+b,0));
+    target.dataset.residentTextures=String(this.textures.size);
     target.dataset.colorSpace=this.color.colorSpace;
     // WebKit displays the GPU surface directly; its transfer/copy forces a
     // synchronous readback. Other engines transfer ownership without a 2D copy.
@@ -172,7 +183,7 @@ export function disposeSeamPreview(target:HTMLCanvasElement){renderers.get(targe
 /** A 2D collage composition cannot display the WebGL layer directly. On
  * WebKit use tagged raw pixels, avoiding its second DOM color conversion. */
 export function copySeamPreviewPixels(target:HTMLCanvasElement,ctx:CanvasRenderingContext2D,x=0,y=0){
-  const gpu=renderers.get(target);if(!gpu)throw new Error('Missing seam renderer');gpu.copyPixels(ctx,x,y);
+  const gpu=renderers.get(target);if(!gpu)throw new Error('Missing seam renderer');gpu.copyPixels(ctx,x,y,target);
 }
 
 /** Export uses exactly the preview's original textures and complementary
